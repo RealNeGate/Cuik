@@ -236,6 +236,8 @@ static void gen_stmt(TB_Function* func, StmtIndex s) {
 		TB_Label if_false = tb_inst_new_label_id(func);
 		
 		Val cond = gen_expr(func, stmt_arena.data[s].expr);
+		cvt_l2r(func, &cond, TYPE_BOOL);
+		
 		tb_inst_if(func, cond.reg, if_true, if_false);
 		tb_inst_label(func, if_true);
 		gen_stmt(func, stmt_arena.data[s].body);
@@ -261,6 +263,8 @@ static void gen_stmt(TB_Function* func, StmtIndex s) {
 		tb_inst_label(func, header);
 		
 		Val cond = gen_expr(func, stmt_arena.data[s].expr);
+		cvt_l2r(func, &cond, TYPE_BOOL);
+		
 		tb_inst_if(func, cond.reg, body, exit);
 		
 		tb_inst_label(func, body);
