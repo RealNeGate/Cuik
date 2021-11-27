@@ -178,6 +178,42 @@ static StmtIndex parse_stmt(Lexer* l) {
 		return n;
 	}
 	
+	if (l->token_type == TOKEN_KW_if) {
+		lexer_read(l);
+		
+		StmtIndex n = push_stmt_arena(1);
+		stmt_arena.data[n].op = STMT_IF;
+		
+		expect(l, '(');
+		stmt_arena.data[n].expr = parse_expr(l);
+		expect(l, ')');
+		
+		stmt_arena.data[n].body = parse_stmt(l);
+		
+		if (l->token_type == TOKEN_KW_else) {
+			lexer_read(l);
+			stmt_arena.data[n].body2 = parse_stmt(l);
+		} else {
+			stmt_arena.data[n].body2 = 0;
+		}
+		
+		return n;
+	}
+	
+	if (l->token_type == TOKEN_KW_while) {
+		lexer_read(l);
+		
+		StmtIndex n = push_stmt_arena(1);
+		stmt_arena.data[n].op = STMT_WHILE;
+		
+		expect(l, '(');
+		stmt_arena.data[n].expr = parse_expr(l);
+		expect(l, ')');
+		
+		stmt_arena.data[n].body = parse_stmt(l);
+		return n;
+	}
+	
 	if (l->token_type == ';') {
 		lexer_read(l);
 		return 0;
@@ -284,13 +320,47 @@ static ExprIndex parse_expr_l0(Lexer* l) {
 	}
 }
 
+static ExprIndex parse_expr_l1(Lexer* l) {
+	ExprIndex e = parse_expr_l0(l);
+	
+	while (l->token_type == '[') {
+		if (l->token_type == '[') {
+			ExprIndex base = e;
+			e = push_expr_arena(1);
+			
+			lexer_read(l);
+			ExprIndex index = parse_expr(l);
+			expect(l, ']');
+			
+			Type* type = &type_arena.data[expr_arena.data[base].type];
+			TypeIndex elem_type = 0;
+			if (type->kind == KIND_PTR) elem_type = type->ptr_to;
+			else if (type->kind == KIND_ARRAY) elem_type = type->array_of;
+			else abort();
+			
+			expr_arena.data[e].op = EXPR_SUBSCRIPT;
+			expr_arena.data[e].type = elem_type;
+			expr_arena.data[e].subscript.base = base;
+			expr_arena.data[e].subscript.index = index;
+			continue;
+		}
+		
+		// TODO(NeGate): Function call
+		// TODO(NeGate): Dot
+		// TODO(NeGate): Arrow
+	}
+	
+	return e;
+}
+
 // * / %
 static ExprIndex parse_expr_l3(Lexer* l) {
-	ExprIndex lhs = parse_expr_l0(l);
+	ExprIndex lhs = parse_expr_l1(l);
 	
 	while (l->token_type == TOKEN_TIMES ||
 		   l->token_type == TOKEN_SLASH ||
 		   l->token_type == TOKEN_PERCENT) {
+		ExprIndex e = push_expr_arena(1);
 		ExprOp op;
 		switch (l->token_type) {
 			case TOKEN_TIMES: op = EXPR_TIMES; break;
@@ -300,9 +370,8 @@ static ExprIndex parse_expr_l3(Lexer* l) {
 		}
 		lexer_read(l);
 		
-		ExprIndex rhs = parse_expr_l0(l);
+		ExprIndex rhs = parse_expr_l1(l);
 		
-		ExprIndex e = push_expr_arena(1);
 		expr_arena.data[e].op = op;
 		expr_arena.data[e].type = get_common_type(expr_arena.data[lhs].type,
 												  expr_arena.data[rhs].type);
@@ -319,9 +388,9 @@ static ExprIndex parse_expr_l3(Lexer* l) {
 static ExprIndex parse_expr_l4(Lexer* l) {
 	ExprIndex lhs = parse_expr_l3(l);
 	
-	while (l->token_type == TOKEN_TIMES ||
-		   l->token_type == TOKEN_SLASH ||
-		   l->token_type == TOKEN_PERCENT) {
+	while (l->token_type == TOKEN_PLUS ||
+		   l->token_type == TOKEN_MINUS) {
+		ExprIndex e = push_expr_arena(1);
 		ExprOp op;
 		switch (l->token_type) {
 			case TOKEN_PLUS: op = EXPR_PLUS; break;
@@ -332,7 +401,6 @@ static ExprIndex parse_expr_l4(Lexer* l) {
 		
 		ExprIndex rhs = parse_expr_l3(l);
 		
-		ExprIndex e = push_expr_arena(1);
 		expr_arena.data[e].op = op;
 		expr_arena.data[e].type = get_common_type(expr_arena.data[lhs].type,
 												  expr_arena.data[rhs].type);
@@ -360,6 +428,8 @@ static ExprIndex parse_expr_l14(Lexer* l) {
 		   l->token_type == TOKEN_XOR_EQUAL ||
 		   l->token_type == TOKEN_LEFT_SHIFT_EQUAL ||
 		   l->token_type == TOKEN_RIGHT_SHIFT_EQUAL) {
+		ExprIndex e = push_expr_arena(1);
+		
 		ExprOp op;
 		switch (l->token_type) {
 			case TOKEN_ASSIGN: op = EXPR_ASSIGN; break;
@@ -379,10 +449,8 @@ static ExprIndex parse_expr_l14(Lexer* l) {
 		
 		ExprIndex rhs = parse_expr_l4(l);
 		
-		ExprIndex e = push_expr_arena(1);
 		expr_arena.data[e].op = op;
-		expr_arena.data[e].type = get_common_type(expr_arena.data[lhs].type,
-												  expr_arena.data[rhs].type);
+		expr_arena.data[e].type = expr_arena.data[lhs].type;
 		expr_arena.data[e].bin_op.left = lhs;
 		expr_arena.data[e].bin_op.right = rhs;
 		
@@ -482,11 +550,26 @@ static Decl parse_declarator(Lexer* l, TypeIndex type) {
 	} else if (l->token_type == '[') {
 		lexer_read(l);
 		
-		// TODO(NeGate): Implement array typedecl properly
-		if (l->token_type != ']') abort();
-		lexer_read(l);
+		long long count;
 		
-		type = new_array(type, 1);
+		// TODO(NeGate): Implement array typedecl properly
+		if (l->token_type == ']') {
+			count = 0; 
+			lexer_read(l);
+		} else if (l->token_type == TOKEN_NUMBER) {
+			char temp[16];
+			memcpy_s(temp, 16, l->token_start, l->token_end - l->token_start);
+			temp[l->token_end - l->token_start] = '\0';
+			lexer_read(l);
+			
+			count = atoll(temp);
+			
+			expect(l, ']');
+		} else {
+			abort();
+		}
+		
+		type = new_array(type, count);
 	}
 	
 	return (Decl){ type, name };

@@ -69,6 +69,20 @@ static Val gen_expr(TB_Function* func, ExprIndex e) {
 				.reg = stmt_arena.data[stmt].backing.r
 			};
 		}
+		case EXPR_SUBSCRIPT: {
+			Val base = gen_expr(func, expr_arena.data[e].subscript.base);
+			Val index = gen_expr(func, expr_arena.data[e].subscript.index);
+			
+			assert(base.value_type == LVALUE);
+			cvt_l2r(func, &index, type_index);
+			
+			int stride = type->size;
+			return (Val) {
+				.value_type = LVALUE,
+				.type = type_index,
+				.reg = tb_inst_array_access(func, base.reg, index.reg, stride)
+			};
+		}
 		case EXPR_PLUS:
 		case EXPR_MINUS:
 		case EXPR_TIMES:
@@ -132,8 +146,11 @@ static Val gen_expr(TB_Function* func, ExprIndex e) {
 			
 			assert(l.value_type == LVALUE);
 			
-			Val ld_l = l;
-			cvt_l2r(func, &ld_l, type_index);
+			Val ld_l;
+			if (expr_arena.data[e].op != EXPR_ASSIGN) {
+				ld_l = l;
+				cvt_l2r(func, &ld_l, type_index);
+			}
 			
 			TB_Register data;
 			TB_DataType dt = ctype_to_tbtype(type);
@@ -214,6 +231,43 @@ static void gen_stmt(TB_Function* func, StmtIndex s) {
 		cvt_l2r(func, &v, type_index);
 		
 		tb_inst_ret(func, ctype_to_tbtype(type), v.reg);
+	} else if (stmt_arena.data[s].op == STMT_IF) {
+		TB_Label if_true = tb_inst_new_label_id(func);
+		TB_Label if_false = tb_inst_new_label_id(func);
+		
+		Val cond = gen_expr(func, stmt_arena.data[s].expr);
+		tb_inst_if(func, cond.reg, if_true, if_false);
+		tb_inst_label(func, if_true);
+		gen_stmt(func, stmt_arena.data[s].body);
+		
+		tb_inst_label(func, if_false);
+		if (stmt_arena.data[s].body2) {
+			TB_Label exit = tb_inst_new_label_id(func);
+			tb_inst_goto(func, exit);
+			
+			tb_inst_label(func, if_false);
+			gen_stmt(func, stmt_arena.data[s].body2);
+			
+			// fallthrough
+			tb_inst_label(func, exit);
+		} else {
+			tb_inst_label(func, if_false);
+		}
+	} else if (stmt_arena.data[s].op == STMT_WHILE) {
+		TB_Label header = tb_inst_new_label_id(func);
+		TB_Label body = tb_inst_new_label_id(func);
+		TB_Label exit = tb_inst_new_label_id(func);
+		
+		tb_inst_label(func, header);
+		
+		Val cond = gen_expr(func, stmt_arena.data[s].expr);
+		tb_inst_if(func, cond.reg, body, exit);
+		
+		tb_inst_label(func, body);
+		gen_stmt(func, stmt_arena.data[s].body);
+		
+		tb_inst_goto(func, header);
+		tb_inst_label(func, exit);
 	} else {
 		abort();
 	}

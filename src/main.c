@@ -22,6 +22,11 @@ int main(int argc, char* argv[]) {
 		"\tx |= 16;\n"
 		"\tx ^= 16;\n"
 		"\tint y = (x * x);\n"
+		"\tif (y) y = 16;\n"
+		"\tif (x) { y = 16; } else { x = 16; }\n"
+		"\twhile (x) { x -= 1; }\n"
+		"\tshort apple[16];\n"
+		"\tapple[0] = 16;\n"
 		"\t\n"
 		"\treturn y;\n"
 		"}\n";
