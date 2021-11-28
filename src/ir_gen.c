@@ -242,7 +242,6 @@ static void gen_stmt(TB_Function* func, StmtIndex s) {
 		tb_inst_label(func, if_true);
 		gen_stmt(func, stmt_arena.data[s].body);
 		
-		tb_inst_label(func, if_false);
 		if (stmt_arena.data[s].body2) {
 			TB_Label exit = tb_inst_new_label_id(func);
 			tb_inst_goto(func, exit);
@@ -271,6 +270,19 @@ static void gen_stmt(TB_Function* func, StmtIndex s) {
 		gen_stmt(func, stmt_arena.data[s].body);
 		
 		tb_inst_goto(func, header);
+		tb_inst_label(func, exit);
+	} else if (stmt_arena.data[s].op == STMT_DO_WHILE) {
+		TB_Label body = tb_inst_new_label_id(func);
+		TB_Label exit = tb_inst_new_label_id(func);
+		
+		tb_inst_label(func, body);
+		
+		gen_stmt(func, stmt_arena.data[s].body);
+		
+		Val cond = gen_expr(func, stmt_arena.data[s].expr);
+		cvt_l2r(func, &cond, TYPE_BOOL);
+		tb_inst_if(func, cond.reg, body, exit);
+		
 		tb_inst_label(func, exit);
 	} else {
 		abort();

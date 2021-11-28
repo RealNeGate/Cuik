@@ -27,6 +27,7 @@ int main(int argc, char* argv[]) {
 		"\twhile (x) { x -= 1; }\n"
 		"\tshort apple[16];\n"
 		"\tapple[0] = 16;\n"
+		"\tdo { x += 1; } while (y);\n"
 		"\t\n"
 		"\treturn y;\n"
 		"}\n";

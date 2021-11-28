@@ -214,6 +214,28 @@ static StmtIndex parse_stmt(Lexer* l) {
 		return n;
 	}
 	
+	if (l->token_type == TOKEN_KW_do) {
+		lexer_read(l);
+		
+		StmtIndex n = push_stmt_arena(1);
+		stmt_arena.data[n].op = STMT_DO_WHILE;
+		stmt_arena.data[n].body = parse_stmt(l);
+		
+		if (l->token_type != TOKEN_KW_while) {
+			int loc = lexer_get_location(l);
+			
+			printf("error on line %d: expected 'while' got '%.*s'", loc, (int)(l->token_end - l->token_start), l->token_start);
+			abort();
+		}
+		lexer_read(l);
+		
+		expect(l, '(');
+		stmt_arena.data[n].expr = parse_expr(l);
+		expect(l, ')');
+		expect(l, ';');
+		return n;
+	}
+	
 	if (l->token_type == ';') {
 		lexer_read(l);
 		return 0;
