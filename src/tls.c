@@ -37,7 +37,7 @@ void* tls_save() {
 
 void tls_restore(void* p) {
 	size_t i = ((uint8_t*)p) - temp_storage->data;
-	assert(i < temp_storage->used);
+	assert(i <= temp_storage->used);
 	
 	temp_storage->used = i;
 }
