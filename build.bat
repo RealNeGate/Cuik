@@ -2,6 +2,8 @@ call vcvars64
 
 set clang_settings=-march=haswell -O0 -Werror -Wall -Wno-unused-function -g -gcodeview -D_CRT_SECURE_NO_WARNINGS
 
+set tb_src=W:/Workspace/TinyBackend/
+
 set cuik_source_files=src/main.c ^
 	src/lexer.c ^
 	src/tls.c ^

@@ -345,7 +345,7 @@ static ExprIndex parse_expr_l0(Lexer* l) {
 static ExprIndex parse_expr_l1(Lexer* l) {
 	ExprIndex e = parse_expr_l0(l);
 	
-	while (l->token_type == '[') {
+	while (true) {
 		if (l->token_type == '[') {
 			ExprIndex base = e;
 			e = push_expr_arena(1);
@@ -370,6 +370,50 @@ static ExprIndex parse_expr_l1(Lexer* l) {
 		// TODO(NeGate): Function call
 		// TODO(NeGate): Dot
 		// TODO(NeGate): Arrow
+		return e;
+	}
+}
+
+// deref *
+static ExprIndex parse_expr_l2(Lexer* l) {
+	if (l->token_type == '&') {
+		lexer_read(l);
+		
+		ExprIndex value = parse_expr_l1(l);
+		TypeIndex ptr_type = new_pointer(expr_arena.data[value].type);
+		ExprIndex e = push_expr_arena(1);
+		
+		expr_arena.data[e] = (Expr) {
+			.op = EXPR_ADDR,
+			.type = ptr_type,
+			.unary_op.src = value
+		};
+		return e;
+	}
+	
+	int derefs = 0;
+	while (l->token_type == '*') {
+		lexer_read(l);
+		derefs++;
+	}
+	
+	ExprIndex e = parse_expr_l1(l);
+	
+	while (derefs--) {
+		ExprIndex base = e;
+		e = push_expr_arena(1);
+		
+		Type* type = &type_arena.data[expr_arena.data[base].type];
+		TypeIndex deref_type = 0;
+		if (type->kind == KIND_PTR) deref_type = type->ptr_to;
+		else if (type->kind == KIND_ARRAY) deref_type = type->array_of;
+		else abort();
+		
+		expr_arena.data[e] = (Expr) {
+			.op = EXPR_DEREF,
+			.type = deref_type,
+			.unary_op.src = base
+		};
 	}
 	
 	return e;
@@ -377,7 +421,7 @@ static ExprIndex parse_expr_l1(Lexer* l) {
 
 // * / %
 static ExprIndex parse_expr_l3(Lexer* l) {
-	ExprIndex lhs = parse_expr_l1(l);
+	ExprIndex lhs = parse_expr_l2(l);
 	
 	while (l->token_type == TOKEN_TIMES ||
 		   l->token_type == TOKEN_SLASH ||
@@ -392,7 +436,7 @@ static ExprIndex parse_expr_l3(Lexer* l) {
 		}
 		lexer_read(l);
 		
-		ExprIndex rhs = parse_expr_l1(l);
+		ExprIndex rhs = parse_expr_l2(l);
 		
 		expr_arena.data[e].op = op;
 		expr_arena.data[e].type = get_common_type(expr_arena.data[lhs].type,
@@ -570,28 +614,29 @@ static Decl parse_declarator(Lexer* l, TypeIndex type) {
 		
 		tls_restore(args);
 	} else if (l->token_type == '[') {
-		lexer_read(l);
-		
-		long long count;
-		
-		// TODO(NeGate): Implement array typedecl properly
-		if (l->token_type == ']') {
-			count = 0; 
-			lexer_read(l);
-		} else if (l->token_type == TOKEN_NUMBER) {
-			char temp[16];
-			memcpy_s(temp, 16, l->token_start, l->token_end - l->token_start);
-			temp[l->token_end - l->token_start] = '\0';
+		do {
 			lexer_read(l);
 			
-			count = atoll(temp);
+			// TODO(NeGate): Implement array typedecl properly
+			long long count;
+			if (l->token_type == ']') {
+				count = 0; 
+				lexer_read(l);
+			} else if (l->token_type == TOKEN_NUMBER) {
+				char temp[16];
+				memcpy_s(temp, 16, l->token_start, l->token_end - l->token_start);
+				temp[l->token_end - l->token_start] = '\0';
+				lexer_read(l);
+				
+				count = atoll(temp);
+				
+				expect(l, ']');
+			} else {
+				abort();
+			}
 			
-			expect(l, ']');
-		} else {
-			abort();
-		}
-		
-		type = new_array(type, count);
+			type = new_array(type, count);
+		} while (l->token_type == '[');
 	}
 	
 	return (Decl){ type, name };
@@ -633,6 +678,7 @@ static TypeIndex parse_declspec(Lexer* l, Attribs* attr) {
 			case TOKEN_KW_typedef: attr->is_typedef = true; break;
 			case TOKEN_KW_inline: attr->is_inline = true; break;
 			case TOKEN_KW_Thread_local: attr->is_tls = true; break;
+			case TOKEN_KW_auto: break;
 			
 			default: goto done;
 		}
@@ -721,6 +767,7 @@ static bool is_typename(Lexer* l) {
 		case TOKEN_KW_typedef:
 		case TOKEN_KW_inline:
 		case TOKEN_KW_Thread_local:
+		case TOKEN_KW_auto:
 		return true;
 		default:
 		return false;

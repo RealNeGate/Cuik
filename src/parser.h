@@ -2,7 +2,7 @@
 #include "common.h"
 #include "arena.h"
 #include "lexer.h"
-#include "tb.h"
+#include "tb/tb.h"
 
 decl_arena_index(Type, type_arena)
 decl_arena_index(Member, member_arena) // Members used by struct/union types

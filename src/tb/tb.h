@@ -208,35 +208,49 @@ extern "C" {
 	// Public macros
 	// *******************************
 #ifdef __cplusplus
-#define TB_TYPE_VOID() TB_DataType{ TB_VOID, 1 }
+#define TB_TYPE_VOID TB_DataType{ TB_VOID, 1 }
 	
-#define TB_TYPE_I8(c) TB_DataType{ TB_I8, c }
-#define TB_TYPE_I16(c) TB_DataType{ TB_I16, c }
-#define TB_TYPE_I32(c) TB_DataType{ TB_I32, c }
-#define TB_TYPE_I64(c) TB_DataType{ TB_I64, c }
-#define TB_TYPE_I128(c) TB_DataType{ TB_I128, c }
+#define TB_TYPE_I8 TB_DataType{ TB_I8, 1 }
+#define TB_TYPE_I16 TB_DataType{ TB_I16, 1 }
+#define TB_TYPE_I32 TB_DataType{ TB_I32, 1 }
+#define TB_TYPE_I64 TB_DataType{ TB_I64, 1 }
 	
-#define TB_TYPE_F32(c) TB_DataType{ TB_F32, c }
-#define TB_TYPE_F64(c) TB_DataType{ TB_F64, c }
+#define TB_TYPE_F32 TB_DataType{ TB_F32, 1 }
+#define TB_TYPE_F64 TB_DataType{ TB_F64, 1 }
 	
-#define TB_TYPE_BOOL(c) TB_DataType{ TB_BOOL, c }
-#define TB_TYPE_PTR() TB_DataType{ TB_PTR, 1 }
+#define TB_TYPE_BOOL TB_DataType{ TB_BOOL, 1 }
+#define TB_TYPE_PTR TB_DataType{ TB_PTR, 1 }
+	
+#define TB_TYPE_VEC_I8(c) TB_DataType{ TB_I8, c }
+#define TB_TYPE_VEC_I16(c) TB_DataType{ TB_I16, c }
+#define TB_TYPE_VEC_I32(c) TB_DataType{ TB_I32, c }
+#define TB_TYPE_VEC_I64(c) TB_DataType{ TB_I64, c }
+#define TB_TYPE_VEC_F32(c) TB_DataType{ TB_F32, c }
+#define TB_TYPE_VEC_F64(c) TB_DataType{ TB_F64, c }
+#define TB_TYPE_VEC_BOOL(c) TB_DataType{ TB_BOOL, c }
 	
 #else
 	
-#define TB_TYPE_VOID() (TB_DataType){ TB_VOID, 1 }
+#define TB_TYPE_VOID (TB_DataType){ TB_VOID, 1 }
 	
-#define TB_TYPE_I8(c) (TB_DataType){ TB_I8, c }
-#define TB_TYPE_I16(c) (TB_DataType){ TB_I16, c }
-#define TB_TYPE_I32(c) (TB_DataType){ TB_I32, c }
-#define TB_TYPE_I64(c) (TB_DataType){ TB_I64, c }
-#define TB_TYPE_I128(c) (TB_DataType){ TB_I128, c }
+#define TB_TYPE_I8 (TB_DataType){ TB_I8, 1 }
+#define TB_TYPE_I16 (TB_DataType){ TB_I16, 1 }
+#define TB_TYPE_I32 (TB_DataType){ TB_I32, 1 }
+#define TB_TYPE_I64 (TB_DataType){ TB_I64, 1 }
 	
-#define TB_TYPE_F32(c) (TB_DataType){ TB_F32, c }
-#define TB_TYPE_F64(c) (TB_DataType){ TB_F64, c }
+#define TB_TYPE_F32 (TB_DataType){ TB_F32, 1 }
+#define TB_TYPE_F64 (TB_DataType){ TB_F64, 1 }
 	
-#define TB_TYPE_BOOL(c) (TB_DataType){ TB_BOOL, c }
-#define TB_TYPE_PTR() (TB_DataType){ TB_PTR, 1 }
+#define TB_TYPE_BOOL (TB_DataType){ TB_BOOL, 1 }
+#define TB_TYPE_PTR (TB_DataType){ TB_PTR, 1 }
+	
+#define TB_TYPE_VEC_I8(c) (TB_DataType){ TB_I8, c }
+#define TB_TYPE_VEC_I16(c) (TB_DataType){ TB_I16, c }
+#define TB_TYPE_VEC_I32(c) (TB_DataType){ TB_I32, c }
+#define TB_TYPE_VEC_I64(c) (TB_DataType){ TB_I64, c }
+#define TB_TYPE_VEC_F32(c) (TB_DataType){ TB_F32, c }
+#define TB_TYPE_VEC_F64(c) (TB_DataType){ TB_F64, c }
+	
 #endif
 	
 	// *******************************

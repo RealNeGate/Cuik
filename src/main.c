@@ -6,32 +6,6 @@
 int main(int argc, char* argv[]) {
 	clock_t t1 = clock();
 	
-	//
-	// TODO(NeGate): Preprocess file
-	//
-    const char* text = "int main(int argc, char* argv[]) {\n"
-		"\n"
-		"\tint x = 16;\n"
-		"\t\n"
-		"\tx = 640;\n"
-		"\tx += 16;\n"
-		"\tx -= 16;\n"
-		"\tx *= 64;\n"
-		"\tx /= 16;\n"
-		"\tx &= 16;\n"
-		"\tx |= 16;\n"
-		"\tx ^= 16;\n"
-		"\tint y = (x * x);\n"
-		"\tif (y) y = 16;\n"
-		"\tif (x) { y = 16; } else { x = 16; }\n"
-		"\twhile (x) { x -= 1; }\n"
-		"\tshort apple[16];\n"
-		"\tapple[0] = 16;\n"
-		"\tdo { x += 1; } while (y);\n"
-		"\t\n"
-		"\treturn y;\n"
-		"}\n";
-	
 #if 0
 	Lexer l = (Lexer) { text };
     do {
@@ -45,6 +19,37 @@ int main(int argc, char* argv[]) {
 						   &features,
 						   TB_OPT_O0,
 						   1, false);
+	
+	//
+	// TODO(NeGate): Preprocess file
+	//
+    const char* text = 
+		"int main(int argc, char* argv[]) {\n"
+		"\n"
+		"\tint x = 16;\n"
+		"\tint* ptr = &x;\n"
+		"\tint** ptr2 = &ptr;\n"
+		"\tint val = **ptr2;\n"
+		"\t\n"
+		"\tx = 640;\n"
+		"\tx += 16;\n"
+		"\tx -= 16;\n"
+		"\tx *= 64;\n"
+		"\tx /= 16;\n"
+		"\tx &= 16;\n"
+		"\tx |= 16;\n"
+		"\tx ^= 16;\n"
+		"\tint y = (x * x);\n"
+		"\tif (y) y = 16;\n"
+		"\tif (x) { y = 16; } else { x = 16; }\n"
+		"\twhile (x) { x -= 1; }\n"
+		//"\tshort apple[16];\n"
+		//"\tapple[0] = 16;\n"
+		"\tchar table[8][8];\n"
+		"\tdo { table[x][x] = 16; x += 1; } while (y);\n"
+		"\t\n"
+		"\treturn y;\n"
+		"}\n";
 	
 	// Parse
 	TopLevel tl = parse_file(&(Lexer) { text });
