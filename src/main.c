@@ -26,6 +26,7 @@ int main(int argc, char* argv[]) {
     const char* text = 
 		"int foo() { return 16; }\n"
 		"int bar() { int x = 16; return x++; }\n"
+		"int baz() { int* x = 0; x++; x--; x += 16; x -= 16; *x++ = 16; return *x; }\n"
 		"int main(int argc, char* argv[]) {\n"
 		"\n"
 		"\tint x = 16;\n"

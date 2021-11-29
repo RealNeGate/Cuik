@@ -55,6 +55,43 @@ static void cvt_l2r(TB_Function* func, IRVal* restrict v, TypeIndex dst_type) {
 	}
 }
 
+static IRVal gen_expr(TB_Function* func, ExprIndex e);
+
+// direction is either 1 for addition or -1 for subtraction
+// pointer arithmatic can only have one pointer
+static IRVal gen_ptr_arithmatic(TB_Function* func, TypeIndex elem_type, ExprIndex a, ExprIndex b, int direction) {
+	Type* a_type = &type_arena.data[expr_arena.data[a].type];
+	Type* b_type = &type_arena.data[expr_arena.data[b].type];
+	
+	// Decide who's the pointer
+	if (b_type->kind == KIND_PTR) {
+		swap(a, b);
+		
+		if (a_type->kind == KIND_PTR) {
+			// TODO(NeGate): Make a better error for
+			// (ptr + ptr) arithmatic
+			abort();
+		}
+	}
+	
+	// resolve them a:ptr, b:ulong
+	IRVal base = gen_expr(func, a);
+	IRVal index = gen_expr(func, b);
+	
+	assert(base.value_type == LVALUE);
+	
+	// the index type is always long... or int maybe
+	// if we support 32bit platforms at some point
+	cvt_l2r(func, &index, TYPE_ULONG);
+	
+	int stride = type_arena.data[elem_type].size;
+	return (IRVal) {
+		.value_type = LVALUE,
+		.type = elem_type,
+		.reg = tb_inst_array_access(func, base.reg, index.reg, direction * stride)
+	};
+}
+
 static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 	TypeIndex type_index = expr_arena.data[e].type;
 	Type* restrict type = &type_arena.data[type_index];
@@ -96,21 +133,10 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 			};
 		}
 		case EXPR_SUBSCRIPT: {
-			IRVal base = gen_expr(func, expr_arena.data[e].subscript.base);
-			IRVal index = gen_expr(func, expr_arena.data[e].subscript.index);
+			ExprIndex a = expr_arena.data[e].subscript.base;
+			ExprIndex b = expr_arena.data[e].subscript.index;
 			
-			assert(base.value_type == LVALUE);
-			
-			// the index type is always long... or int maybe
-			// if we support 32bit platforms at some point
-			cvt_l2r(func, &index, TYPE_ULONG);
-			
-			int stride = type->size;
-			return (IRVal) {
-				.value_type = LVALUE,
-				.type = type_index,
-				.reg = tb_inst_array_access(func, base.reg, index.reg, stride)
-			};
+			return gen_ptr_arithmatic(func, type_index, a, b, 1);
 		}
 		case EXPR_POST_INC:
 		case EXPR_POST_DEC: {
@@ -119,32 +145,51 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 			IRVal src = gen_expr(func, expr_arena.data[e].unary_op.src);
 			assert(src.value_type == LVALUE);
 			
-			// TODO(NeGate): Implement pointer arithmatic
-			assert(type->kind != KIND_PTR);
-			
 			IRVal loaded = src;
 			cvt_l2r(func, &loaded, type_index);
 			
-			// increment
-			TB_DataType dt = ctype_to_tbtype(type);
-			TB_ArithmaticBehavior ab = type->is_unsigned ? TB_CAN_WRAP : TB_ASSUME_NSW;
-			
-			TB_Register one = tb_inst_iconst(func, dt, 1);
-			
-			TB_Register operation;
-			if (is_inc) operation = tb_inst_add(func, dt, loaded.reg, one, ab);
-			else operation = tb_inst_sub(func, dt, loaded.reg, one, ab);
-			
-			tb_inst_store(func, dt, src.reg, operation, type->align);
-			
-			return (IRVal) {
-				.value_type = RVALUE,
-				.type = type_index,
-				.reg = loaded.reg
-			};
+			if (type->kind == KIND_PTR) {
+				// pointer arithmatic
+				int stride = type_arena.data[type->ptr_to].size;
+				
+				TB_Register operation = tb_inst_member_access(func, loaded.reg, is_inc ? stride : -stride);
+				tb_inst_store(func, TB_TYPE_PTR, src.reg, operation, type->align);
+				
+				return (IRVal) {
+					.value_type = RVALUE,
+					.type = type_index,
+					.reg = loaded.reg
+				};
+			} else {
+				TB_DataType dt = ctype_to_tbtype(type);
+				TB_ArithmaticBehavior ab = type->is_unsigned ? TB_CAN_WRAP : TB_ASSUME_NSW;
+				
+				TB_Register one = tb_inst_iconst(func, dt, 1);
+				
+				TB_Register operation;
+				if (is_inc) operation = tb_inst_add(func, dt, loaded.reg, one, ab);
+				else operation = tb_inst_sub(func, dt, loaded.reg, one, ab);
+				
+				tb_inst_store(func, dt, src.reg, operation, type->align);
+				
+				return (IRVal) {
+					.value_type = RVALUE,
+					.type = type_index,
+					.reg = loaded.reg
+				};
+			}
 		}
 		case EXPR_PLUS:
 		case EXPR_MINUS:
+		if (type->kind == KIND_PTR) {
+			// pointer arithmatic
+			ExprIndex a = expr_arena.data[e].bin_op.left;
+			ExprIndex b = expr_arena.data[e].bin_op.right;
+			int dir = expr_arena.data[e].op == EXPR_PLUS ? 1 : -1;
+			
+			return gen_ptr_arithmatic(func, type->ptr_to, a, b, dir);
+		}
+		// fallthrough
 		case EXPR_TIMES:
 		case EXPR_SLASH:
 		case EXPR_AND:
@@ -191,9 +236,29 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 				.reg = data
 			};
 		}
-		case EXPR_ASSIGN:
 		case EXPR_PLUS_ASSIGN:
 		case EXPR_MINUS_ASSIGN:
+		if (type->kind == KIND_PTR) {
+			int dir = expr_arena.data[e].op == EXPR_PLUS_ASSIGN ? 1 : -1;
+			int stride = type_arena.data[type->ptr_to].size;
+			
+			// pointer arithmatic
+			IRVal l = gen_expr(func, expr_arena.data[e].bin_op.left);
+			IRVal r = gen_expr(func, expr_arena.data[e].bin_op.right);
+			cvt_l2r(func, &r, type_index);
+			
+			assert(l.value_type == LVALUE);
+			
+			// TODO(NeGate): Maybe some type checking errors?
+			IRVal loaded = l;
+			cvt_l2r(func, &loaded, TYPE_ULONG);
+			
+			TB_Register arith = tb_inst_array_access(func, loaded.reg, r.reg, dir * stride);
+			tb_inst_store(func, TB_TYPE_PTR, l.reg, arith, type->align);
+			return l;
+		}
+		// fallthrough
+		case EXPR_ASSIGN:
 		case EXPR_TIMES_ASSIGN:
 		case EXPR_SLASH_ASSIGN:
 		case EXPR_AND_ASSIGN:

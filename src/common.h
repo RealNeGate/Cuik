@@ -17,6 +17,12 @@ typedef struct string { const char* data; size_t length; } string;
 #define cast(type, expr) ((type)(expr))
 #define panic(...) do { printf(__VA_ARGS__); abort(); } while(0)
 
+#define swap(a, b) do { \
+typeof(a) temp = a; \
+a = b; \
+b = temp; \
+} while(0)
+
 void tls_init();
 void* tls_push(size_t size);
 void* tls_pop(size_t size);
