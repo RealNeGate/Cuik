@@ -196,9 +196,9 @@ void lexer_read(Lexer* restrict l) {
         case '+':
         current++;
         
-        if (*current == '-') {
+        if (*current == '+') {
             current++;
-            l->token_type = TOKEN_DECREMENT;
+            l->token_type = TOKEN_INCREMENT;
             break;
         } else if (*current == '=') {
             current++;
@@ -302,8 +302,7 @@ void lexer_read(Lexer* restrict l) {
 		break;
 		case 'A' ... 'Z':
 		case 'a' ... 'z':
-		case '_': case '$': {
-			__builtin_prefetch(identifier_char_tbl);
+		case '_': {
 			do {
 				current++;
 			} while (is_identifier_not_first_char(*((unsigned char*)current)));
