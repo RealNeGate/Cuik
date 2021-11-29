@@ -137,7 +137,7 @@ extern "C" {
 		// Boolean
 		TB_BOOL,
 		// Integers
-		TB_I8, TB_I16, TB_I32, TB_I64, TB_I128,
+		TB_I8, TB_I16, TB_I32, TB_I64,
 		// IEEE 754 Floating point
 		TB_F32, TB_F64,
 		// Pointers
@@ -147,7 +147,7 @@ extern "C" {
 		TB_MAX_TYPES
 	};
 	
-#define TB_IS_INTEGER_TYPE(x) ((x) >= TB_I8 && (x) <= TB_I128)
+#define TB_IS_INTEGER_TYPE(x) ((x) >= TB_I8 && (x) <= TB_I64)
 #define TB_IS_FLOAT_TYPE(x) ((x) >= TB_F32 && (x) <= TB_F64)
 #define TB_IS_POINTER_TYPE(x) ((x) == TB_PTR)
 	
@@ -155,11 +155,6 @@ extern "C" {
 		uint8_t type;
 		uint8_t count; // 0 is illegal, except on VOID, it doesn't matter there
 	} TB_DataType;
-	
-	typedef struct TB_Int128 {
-		uint64_t lo;
-		uint64_t hi;
-	} TB_Int128;
 	
 	typedef struct TB_FeatureConstraints {
 		int max_vector_width[TB_MAX_TYPES];
@@ -298,7 +293,6 @@ extern "C" {
 	TB_API void tb_inst_store(TB_Function* f, TB_DataType dt, TB_Register addr, TB_Register val, uint32_t alignment);
 	
 	TB_API TB_Register tb_inst_iconst(TB_Function* f, TB_DataType dt, uint64_t imm);
-	TB_API TB_Register tb_inst_iconst128(TB_Function* f, TB_DataType dt, TB_Int128 imm);
 	
 	TB_API TB_Register tb_inst_fconst(TB_Function* f, TB_DataType dt, double imm);
 	
