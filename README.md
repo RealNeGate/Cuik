@@ -1,3 +1,3 @@
-# Cuik
+# Cuik (pronounced 'Quick')
 
 lmao unfinished
