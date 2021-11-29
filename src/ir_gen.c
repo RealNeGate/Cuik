@@ -112,6 +112,37 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 				.reg = tb_inst_array_access(func, base.reg, index.reg, stride)
 			};
 		}
+		case EXPR_POST_INC:
+		case EXPR_POST_DEC: {
+			bool is_inc = (expr_arena.data[e].op == EXPR_POST_INC);
+			
+			IRVal src = gen_expr(func, expr_arena.data[e].unary_op.src);
+			assert(src.value_type == LVALUE);
+			
+			// TODO(NeGate): Implement pointer arithmatic
+			assert(type->kind != KIND_PTR);
+			
+			IRVal loaded = src;
+			cvt_l2r(func, &loaded, type_index);
+			
+			// increment
+			TB_DataType dt = ctype_to_tbtype(type);
+			TB_ArithmaticBehavior ab = type->is_unsigned ? TB_CAN_WRAP : TB_ASSUME_NSW;
+			
+			TB_Register one = tb_inst_iconst(func, dt, 1);
+			
+			TB_Register operation;
+			if (is_inc) operation = tb_inst_add(func, dt, loaded.reg, one, ab);
+			else operation = tb_inst_sub(func, dt, loaded.reg, one, ab);
+			
+			tb_inst_store(func, dt, src.reg, operation, type->align);
+			
+			return (IRVal) {
+				.value_type = RVALUE,
+				.type = type_index,
+				.reg = loaded.reg
+			};
+		}
 		case EXPR_PLUS:
 		case EXPR_MINUS:
 		case EXPR_TIMES:
@@ -121,6 +152,7 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 		case EXPR_XOR:
 		case EXPR_SHL:
 		case EXPR_SHR: {
+			// TODO(NeGate): Implement pointer arithmatic for PLUS and MINUS.
 			IRVal l = gen_expr(func, expr_arena.data[e].bin_op.left);
 			IRVal r = gen_expr(func, expr_arena.data[e].bin_op.right);
 			cvt_l2r(func, &l, type_index);
@@ -177,6 +209,8 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 			
 			IRVal ld_l;
 			if (expr_arena.data[e].op != EXPR_ASSIGN) {
+				// don't do this conversion for ASSIGN, since it won't
+				// be needing it
 				ld_l = l;
 				cvt_l2r(func, &ld_l, type_index);
 			}

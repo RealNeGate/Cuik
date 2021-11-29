@@ -1,5 +1,9 @@
+// It's not actually an arena but more of a big dynamic array
+// that's used for a variety of language constructs (mostly
+// "flattened" trees like the Types and AST)
 #pragma once
 
+// Let's you forward decl the index
 #define decl_arena_index(type, arena) \
 typedef int type ## Index;
 

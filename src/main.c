@@ -24,6 +24,8 @@ int main(int argc, char* argv[]) {
 	// TODO(NeGate): Preprocess file
 	//
     const char* text = 
+		"int foo() { return 16; }\n"
+		"int bar() { int x = 16; return x++; }\n"
 		"int main(int argc, char* argv[]) {\n"
 		"\n"
 		"\tint x = 16;\n"

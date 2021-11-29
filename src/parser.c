@@ -292,6 +292,9 @@ static StmtIndex parse_stmt(Lexer* l) {
 
 ////////////////////////////////
 // EXPRESSIONS
+//
+// Quick reference:
+// https://en.cppreference.com/w/c/language/operator_precedence
 ////////////////////////////////
 static ExprIndex parse_expr_l0(Lexer* l) {
 	if (l->token_type == '(') {
@@ -345,7 +348,10 @@ static ExprIndex parse_expr_l0(Lexer* l) {
 static ExprIndex parse_expr_l1(Lexer* l) {
 	ExprIndex e = parse_expr_l0(l);
 	
-	while (true) {
+	// after any of the: [] () . ->
+	// it'll restart and take a shot at matching another
+	// piece of the expression.
+	try_again: {
 		if (l->token_type == '[') {
 			ExprIndex base = e;
 			e = push_expr_arena(1);
@@ -364,17 +370,31 @@ static ExprIndex parse_expr_l1(Lexer* l) {
 			expr_arena.data[e].type = elem_type;
 			expr_arena.data[e].subscript.base = base;
 			expr_arena.data[e].subscript.index = index;
-			continue;
+			goto try_again;
 		}
 		
 		// TODO(NeGate): Function call
 		// TODO(NeGate): Dot
 		// TODO(NeGate): Arrow
+		
+		// post fix
+		if (l->token_type == TOKEN_INCREMENT || l->token_type == TOKEN_DECREMENT) {
+			bool is_inc = l->token_type == TOKEN_INCREMENT;
+			lexer_read(l);
+			
+			ExprIndex src = e;
+			
+			e = push_expr_arena(1);
+			expr_arena.data[e].op = is_inc ? EXPR_POST_INC : EXPR_POST_DEC;
+			expr_arena.data[e].type = expr_arena.data[src].type;
+			expr_arena.data[e].unary_op.src = src;
+		}
+		
 		return e;
 	}
 }
 
-// deref *
+// deref* address&
 static ExprIndex parse_expr_l2(Lexer* l) {
 	if (l->token_type == '&') {
 		lexer_read(l);

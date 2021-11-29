@@ -253,11 +253,6 @@ typedef struct Symbol {
 	TypeIndex type : 24;
 	StorageClass storage_class : 8;
 	StmtIndex stmt;
-	
-	/*union {
-		TB_Register reg;
-		TB_Function* func;
-	};*/
 } Symbol;
 
 decl_arena(Type, type_arena)
@@ -273,7 +268,8 @@ TypeIndex new_array(TypeIndex base, int count);
 TypeIndex get_common_type(TypeIndex ty1, TypeIndex ty2);
 
 typedef struct TopLevel {
-	int start, end;
+	// refs to the top-level statements in a translation unit.
+	StmtIndexIndex start, end;
 } TopLevel;
 
 TopLevel parse_file(Lexer* lex);
