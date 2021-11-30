@@ -10,6 +10,9 @@ typedef struct IRVal {
 
 TB_Module* mod;
 
+// Maps param_num -> TB_Register
+static _Thread_local TB_Register* parameter_map;
+
 static TB_DataType ctype_to_tbtype(const Type* t) {
 	switch (t->kind) {
 		case KIND_VOID: return TB_TYPE_VOID;
@@ -113,6 +116,15 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 				.reg = stmt_arena.data[stmt].backing.r
 			};
 		}
+		case EXPR_PARAM: {
+			int param_num = expr_arena.data[e].param_num;
+			
+			return (IRVal) {
+				.value_type = LVALUE,
+				.type = type_index,
+				.reg = parameter_map[param_num]
+			};
+		}
 		case EXPR_ADDR: {
 			IRVal src = gen_expr(func, expr_arena.data[e].unary_op.src);
 			assert(src.value_type == LVALUE);
@@ -130,6 +142,65 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 				.value_type = LVALUE,
 				.type = type_index,
 				.reg = src.reg
+			};
+		}
+		case EXPR_CALL: {
+			// TODO(NeGate): Optimize this!
+			ExprIndex target = expr_arena.data[e].call.target;
+			
+			Type* func_type = &type_arena.data[expr_arena.data[target].type];
+			ArgIndex arg_start = func_type->func.arg_start;
+			ArgIndex arg_end = func_type->func.arg_end;
+			ArgIndex arg_count = arg_end - arg_start;
+			
+			ExprIndexIndex param_start = expr_arena.data[e].call.param_start;
+			ExprIndexIndex param_end = expr_arena.data[e].call.param_end;
+			ExprIndexIndex param_count = param_end - param_start;
+			
+			if (param_count != arg_count) {
+				abort();
+			}
+			
+			TB_Register* params = tls_push(param_count * sizeof(TB_Register));
+			
+			// Resolve parameters
+			for (size_t i = 0; i < param_count; i++) {
+				ExprIndex p = expr_ref_arena.data[param_start + i];
+				Arg* a = &arg_arena.data[arg_start + i];
+				
+				IRVal src = gen_expr(func, p);
+				cvt_l2r(func, &src, a->type);
+				
+				params[i] = src.reg;
+			}
+			
+			// Call function
+			Expr* target_expr = &expr_arena.data[target];
+			TB_DataType dt = ctype_to_tbtype(type);
+			
+			TB_Register r = TB_NULL_REG;
+			if (target_expr->op == EXPR_VAR) {
+				StmtIndex var = target_expr->var;
+				StmtOp stmt_op = stmt_arena.data[var].op;
+				
+				if (stmt_op == STMT_FUNC_DECL) {
+					r = tb_inst_call(func, dt, stmt_arena.data[var].backing.f, param_count, params);
+				} else if (stmt_op == STMT_DECL) {
+					r = tb_inst_ecall(func, dt, stmt_arena.data[var].backing.e, param_count, params);
+				} else {
+					abort();
+				}
+			} else {
+				IRVal ptr = gen_expr(func, target);
+				cvt_l2r(func, &ptr, type_index);
+				r = tb_inst_vcall(func, dt, ptr.reg, param_count, params);
+			}
+			
+			tls_restore(params);
+			return (IRVal) {
+				.value_type = RVALUE,
+				.type = type_index,
+				.reg = r
 			};
 		}
 		case EXPR_SUBSCRIPT: {
@@ -333,6 +404,10 @@ static void gen_stmt(TB_Function* func, StmtIndex s) {
 			}
 			break;
 		}
+		case STMT_FUNC_DECL: {
+			// TODO(NeGate): No nested functions
+			abort();
+		}
 		case STMT_DECL: {
 			//Attribs attrs = stmt_arena.data[s].attrs;
 			TypeIndex type_index = stmt_arena.data[s].decl_type;
@@ -439,13 +514,45 @@ static void gen_stmt(TB_Function* func, StmtIndex s) {
 	}
 }
 
-static void gen_func(StmtIndex s) {
+static void gen_func(TypeIndex type, StmtIndex s) {
+	// Clear TLS
+	tls_init();
+	
 	TB_Function* func = tb_function_create(mod, stmt_arena.data[s].decl_name, TB_TYPE_I64);
 	stmt_arena.data[s].backing.f = func;
 	
-	gen_stmt(func, stmt_arena.data[s].body);
+	// Parameters
+	ArgIndex arg_start = type_arena.data[type].func.arg_start;
+	ArgIndex arg_end = type_arena.data[type].func.arg_end;
+	ArgIndex arg_count = arg_end - arg_start;
 	
-	tb_function_print(func, stdout);
+	TB_Register* params = parameter_map = tls_push(arg_count * sizeof(TB_Register));
+	for (int i = 0; i < arg_count; i++) {
+		Arg* a = &arg_arena.data[arg_start + i];
+		
+		// Decide on the data type
+		TB_DataType dt;
+		Type* arg_type = &type_arena.data[a->type];
+		
+		if (arg_type->kind == KIND_STRUCT) {
+			dt = TB_TYPE_PTR;
+		} else {
+			dt = ctype_to_tbtype(arg_type);
+		}
+		
+		params[i] = tb_inst_param(func, dt);
+	}
+	
+	// give them stack slots
+	for (int i = 0; i < arg_count; i++) {
+		params[i] = tb_inst_param_addr(func, params[i]);
+	}
+	
+	// Body
+	// NOTE(NeGate): STMT_FUNC_DECL is always followed by a compound block
+	gen_stmt(func, s + 1);
+	
+	//tb_function_print(func, stdout);
 	tb_module_compile_func(mod, func);
 }
 
@@ -453,10 +560,20 @@ void gen_ir(TopLevel tl) {
 	for (StmtIndexIndex i = tl.start; i != tl.end; i++) {
 		StmtIndex s = stmt_ref_arena.data[i];
 		
-		if (stmt_arena.data[s].op == STMT_DECL) {
+		if (stmt_arena.data[s].op == STMT_FUNC_DECL) {
+			TypeIndex type = stmt_arena.data[s].decl_type;
+			assert(type_arena.data[type].kind == KIND_FUNC);
+			
+			gen_func(type, s);
+		} else if (stmt_arena.data[s].op == STMT_DECL) {
 			TypeIndex type = stmt_arena.data[s].decl_type;
 			
-			if (type_arena.data[type].kind == KIND_FUNC) gen_func(s);
+			// TODO(NeGate): Implement other global forward decls
+			if (type_arena.data[type].kind != KIND_FUNC) {
+				abort();
+			}
+			
+			stmt_arena.data[s].backing.e = tb_module_extern(mod, stmt_arena.data[s].decl_name);
 		}
 	}
 }

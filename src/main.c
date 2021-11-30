@@ -3,9 +3,36 @@
 #include "ir_gen.h"
 #include <time.h>
 
-int main(int argc, char* argv[]) {
-	clock_t t1 = clock();
+#include <sys/stat.h>
+
+#ifdef _WIN32
+#define fileno _fileno
+#define fstat _fstat
+#define stat _stat
+#endif
+
+static char* read_entire_file(const char* filepath) {
+	FILE* file = fopen(filepath, "rb");
+	if (!file) return NULL;
 	
+	int descriptor = fileno(file);
+	
+	struct stat file_stats;
+	if (fstat(descriptor, &file_stats) == -1) return NULL;
+	
+	int length = file_stats.st_size;
+	char* data = malloc(length + 1);
+	
+	fseek(file, 0, SEEK_SET);
+	size_t length_read = fread(data, 1, length, file);
+	
+	data[length_read] = '\0';
+	fclose(file);
+	
+	return data;
+}
+
+int main(int argc, char* argv[]) {
 #if 0
 	Lexer l = (Lexer) { text };
     do {
@@ -13,6 +40,8 @@ int main(int argc, char* argv[]) {
         printf("%d\t%.*s\n", l.token_type, (int)(l.token_end - l.token_start), l.token_start);
     } while (l.token_type);
 #else
+	clock_t t1 = clock();
+	
 	TB_FeatureSet features = { 0 };
 	mod = tb_module_create(TB_ARCH_X86_64,
 						   TB_SYSTEM_WINDOWS,
@@ -23,39 +52,14 @@ int main(int argc, char* argv[]) {
 	//
 	// TODO(NeGate): Preprocess file
 	//
-    const char* text = 
-		"int foo() { return 16; }\n"
-		"int bar() { int x = 16; return x++; }\n"
-		"int baz() { int* x = 0; x++; x--; x += 16; x -= 16; *x++ = 16; return *x; }\n"
-		"int main(int argc, char* argv[]) {\n"
-		"\n"
-		"\tint x = 16;\n"
-		"\tint* ptr = &x;\n"
-		"\tint** ptr2 = &ptr;\n"
-		"\tint val = **ptr2;\n"
-		"\t\n"
-		"\tx = 640;\n"
-		"\tx += 16;\n"
-		"\tx -= 16;\n"
-		"\tx *= 64;\n"
-		"\tx /= 16;\n"
-		"\tx &= 16;\n"
-		"\tx |= 16;\n"
-		"\tx ^= 16;\n"
-		"\tint y = (x * x);\n"
-		"\tif (y) y = 16;\n"
-		"\tif (x) { y = 16; } else { x = 16; }\n"
-		"\twhile (x) { x -= 1; }\n"
-		//"\tshort apple[16];\n"
-		//"\tapple[0] = 16;\n"
-		"\tchar table[8][8];\n"
-		"\tdo { table[x][x] = 16; x += 1; } while (y);\n"
-		"\t\n"
-		"\treturn y;\n"
-		"}\n";
+    char* text = read_entire_file("test.txt");
+	if (!text) {
+		printf("Failed to read file!\n");
+		return 1;
+	}
 	
 	// Parse
-	TopLevel tl = parse_file(&(Lexer) { text });
+	TopLevel tl = parse_file(&(Lexer) { text, text });
 	
 	// Generate IR
 	gen_ir(tl);
@@ -68,11 +72,12 @@ int main(int argc, char* argv[]) {
 	if (!tb_module_export(mod, f)) abort();
 	fclose(f);
 	
-	tb_module_destroy(mod);
-#endif
-	
 	clock_t t2 = clock();
 	double delta_ms = ((t2 - t1) / (double)CLOCKS_PER_SEC) * 1000.0;
 	printf("compilation took %f ms\n", delta_ms);
+	
+	tb_module_destroy(mod);
+	free(text);
+#endif
 	return 0;
 }

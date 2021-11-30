@@ -3,9 +3,14 @@
 impl_arena(Stmt, stmt_arena)
 impl_arena(StmtIndex, stmt_ref_arena)
 impl_arena(Expr, expr_arena)
+impl_arena(ExprIndex, expr_ref_arena)
 
 static int symbol_count = 0;
 static Symbol symbols[64 * 1024];
+
+static int typedef_count = 0;
+static char* typedef_names[64 * 1024];
+static TypeIndex typedefs[64 * 1024];
 
 static void expect(Lexer* l, char ch);
 static StmtIndex parse_stmt(Lexer* l);
@@ -24,6 +29,7 @@ TopLevel parse_file(Lexer* l) {
 	init_stmt_ref_arena(4 * 1024);
 	init_arg_arena(4 * 1024);
 	init_expr_arena(4 * 1024);
+	init_expr_ref_arena(4 * 1024);
 	init_type_arena(4 * 1024);
 	init_member_arena(4 * 1024);
 	
@@ -63,7 +69,21 @@ TopLevel parse_file(Lexer* l) {
 		TypeIndex type = parse_declspec(l, &attr);
 		
 		if (attr.is_typedef) {
+			bool first = true;
+			while (l->token_type != ';') {
+				if (!first) {
+					first = false;
+					expect(l, ',');
+				}
+				
+				Decl decl = parse_declarator(l, type);
+				
+				int i = typedef_count++;
+				typedefs[i] = decl.type;
+				typedef_names[i] = decl.name;
+			}
 			
+			expect(l, ';');
 		} else {
 			if (l->token_type == ';') {
 				lexer_read(l);
@@ -82,28 +102,56 @@ TopLevel parse_file(Lexer* l) {
 					.decl_name = decl.name,
 				};
 				
-				int func_symbol = symbol_count++;
-				symbols[func_symbol] = (Symbol){
+				symbols[symbol_count++] = (Symbol){
 					.name = decl.name,
 					.type = decl.type,
 					.storage_class = attr.is_static ? STORAGE_STATIC_FUNC : STORAGE_FUNC,
 					.stmt = n
 				};
+				int savepoint = symbol_count;
 				
 				if (l->token_type == '{') {
+					ArgIndex arg_start = type_arena.data[decl.type].func.arg_start;
+					ArgIndex arg_end = type_arena.data[decl.type].func.arg_end;
+					
+					int p = 0; // param counter
+					for (ArgIndex i = arg_start; i != arg_end; i++) {
+						Arg* a = &arg_arena.data[i];
+						
+						symbols[symbol_count++] = (Symbol){
+							.name = a->name,
+							.type = a->type,
+							.storage_class = STORAGE_PARAM,
+							.param_num = p
+						};
+						p += 1;
+					}
+					
 					lexer_read(l);
-					stmt_arena.data[n].body = parse_compound_stmt(l);
+					
+					stmt_arena.data[n].op = STMT_FUNC_DECL;
+					
+					// NOTE(NeGate): STMT_FUNC_DECL is always followed by a compound block
+#if NDEBUG
+					parse_compound_stmt(l);
+#else
+					StmtIndex body = parse_compound_stmt(l);
+					assert(body == n + 1);
+#endif
 				} else if (l->token_type == ';') {
-					// TODO(NeGate): Forward decl
-					abort();
+					// Forward decl
+					lexer_read(l);
 				} else {
 					abort();
 				}
 				
+				symbol_count = savepoint;
+				
 				*((StmtIndex*)tls_push(sizeof(StmtIndex))) = n;
 				top_level_count++;
 			} else {
-				
+				// TODO(NeGate): Normal decls
+				abort();
 			}
 		}
 	}
@@ -308,7 +356,7 @@ static ExprIndex parse_expr_l0(Lexer* l) {
 		const char* ident = l->token_start;
 		
 		size_t i = symbol_count;
-		while (--i) {
+		while (i--) {
 			// TODO(NeGate): Implement string interning
 			const char* sym = symbols[i].name;
 			size_t sym_length = strlen(sym);
@@ -316,9 +364,16 @@ static ExprIndex parse_expr_l0(Lexer* l) {
 			if (sym_length == length &&
 				memcmp(ident, sym, length) == 0) {
 				ExprIndex e = push_expr_arena(1);
-				expr_arena.data[e].op = EXPR_VAR;
-				expr_arena.data[e].type = symbols[i].type;
-				expr_arena.data[e].var = symbols[i].stmt;
+				
+				if (symbols[i].storage_class == STORAGE_PARAM) {
+					expr_arena.data[e].op = EXPR_PARAM;
+					expr_arena.data[e].type = symbols[i].type;
+					expr_arena.data[e].param_num = symbols[i].param_num;
+				} else {
+					expr_arena.data[e].op = EXPR_VAR;
+					expr_arena.data[e].type = symbols[i].type;
+					expr_arena.data[e].var = symbols[i].stmt;
+				}
 				
 				lexer_read(l);
 				return e;
@@ -373,7 +428,48 @@ static ExprIndex parse_expr_l1(Lexer* l) {
 			goto try_again;
 		}
 		
-		// TODO(NeGate): Function call
+		// Function call
+		if (l->token_type == '(') {
+			lexer_read(l);
+			
+			ExprIndex target = e;
+			e = push_expr_arena(1);
+			
+			size_t param_count = 0;
+			void* params = tls_save();
+			
+			while (l->token_type != ')') {
+				if (param_count) {
+					expect(l, ',');
+				}
+				
+				*((ExprIndex*) tls_push(sizeof(ExprIndex))) = parse_expr(l);
+				param_count++;
+			}
+			
+			if (l->token_type != ')') {
+				generic_error(l, "Unclosed parameter list!");
+			}
+			lexer_read(l);
+			
+			ExprIndexIndex start = push_expr_ref_arena(param_count);
+			memcpy(&expr_ref_arena.data[start], params, param_count * sizeof(ExprIndex));
+			
+			Type* func_type = &type_arena.data[expr_arena.data[target].type];
+			if (func_type->kind != KIND_FUNC) {
+				generic_error(l, "Call with non-function target");
+			}
+			
+			expr_arena.data[e].op = EXPR_CALL;
+			expr_arena.data[e].type = func_type->func.return_type;
+			expr_arena.data[e].call.target = target;
+			expr_arena.data[e].call.param_start = start;
+			expr_arena.data[e].call.param_end = start + param_count;
+			
+			tls_restore(params);
+			goto try_again;
+		}
+		
 		// TODO(NeGate): Dot
 		// TODO(NeGate): Arrow
 		
@@ -593,7 +689,12 @@ static Decl parse_declarator(Lexer* l, TypeIndex type) {
 		
 		size_t arg_count = 0;
 		void* args = tls_save();
+		
 		while (l->token_type != ')') {
+			if (arg_count) {
+				expect(l, ',');
+			}
+			
 			Attribs arg_attr = { 0 };
 			TypeIndex arg_base_type = parse_declspec(l, &arg_attr);
 			
@@ -608,17 +709,12 @@ static Decl parse_declarator(Lexer* l, TypeIndex type) {
 				arg_type = new_pointer(arg_type);
 			}
 			
+			// TODO(NeGate): Error check that no attribs are set
 			*((Arg*)tls_push(sizeof(Arg))) = (Arg) {
 				.type = arg_type,
-				.attr = arg_attr,
 				.name = arg_decl.name
 			};
 			arg_count++;
-			
-			if (l->token_type == ',') {
-				// eat comma
-				lexer_read(l);
-			}
 		}
 		
 		if (l->token_type != ')') {
@@ -627,7 +723,7 @@ static Decl parse_declarator(Lexer* l, TypeIndex type) {
 		lexer_read(l);
 		
 		ArgIndex start = push_arg_arena(arg_count);
-		memcpy(&arg_arena.data[start], args, arg_count * sizeof(ArgIndex));
+		memcpy(&arg_arena.data[start], args, arg_count * sizeof(Arg));
 		
 		type_arena.data[type].func.arg_start = start;
 		type_arena.data[type].func.arg_end = start + arg_count;
@@ -700,10 +796,33 @@ static TypeIndex parse_declspec(Lexer* l, Attribs* attr) {
 			case TOKEN_KW_Thread_local: attr->is_tls = true; break;
 			case TOKEN_KW_auto: break;
 			
+			case TOKEN_IDENTIFIER: {
+				if (counter) goto done;
+				
+				size_t len = l->token_end - l->token_start;
+				
+				int i = typedef_count;
+				while (i--) {
+					size_t typedef_len = strlen(typedef_names[i]);
+					
+					if (len == typedef_len &&
+						memcmp(l->token_start, typedef_names[i], len) == 0) {
+						type = typedefs[i];
+						counter += OTHER;
+						break;
+					}
+				}
+				
+				if (counter) break;
+				
+				// if not a typename, this isn't a typedecl
+				goto done;
+			}
 			default: goto done;
 		}
 		
 		switch (counter) {
+			case 0: break; // not resolved yet
 			case VOID:
 			type = TYPE_VOID;
 			break;
@@ -759,6 +878,9 @@ static TypeIndex parse_declspec(Lexer* l, Attribs* attr) {
 			case LONG + DOUBLE:
 			type = TYPE_DOUBLE;
 			break;
+			case OTHER:
+			assert(type);
+			break;
 			default:
 			generic_error(l, "invalid type");
 			break;
@@ -789,6 +911,21 @@ static bool is_typename(Lexer* l) {
 		case TOKEN_KW_Thread_local:
 		case TOKEN_KW_auto:
 		return true;
+		case TOKEN_IDENTIFIER: {
+			size_t len = l->token_end - l->token_start;
+			
+			int i = typedef_count;
+			while (i--) {
+				size_t typedef_len = strlen(typedef_names[i]);
+				
+				if (len == typedef_len &&
+					memcmp(l->token_start, typedef_names[i], len) == 0) {
+					return true;
+				}
+			}
+			
+			return false;
+		}
 		default:
 		return false;
 	}

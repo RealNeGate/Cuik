@@ -11,6 +11,7 @@ decl_arena_index(Arg, arg_arena) // refs to Types used by the function types
 decl_arena_index(Stmt, stmt_arena)
 decl_arena_index(StmtIndex, stmt_ref_arena)
 decl_arena_index(Expr, expr_arena)
+decl_arena_index(ExprIndex, expr_ref_arena)
 
 typedef int SymbolIndex;
 
@@ -55,7 +56,6 @@ typedef struct Attribs {
 
 typedef struct Arg {
 	TypeIndex type;
-	Attribs attr;
 	char* name;
 } Arg;
 
@@ -109,7 +109,7 @@ enum {
 	TYPE_DOUBLE
 };
 
-// TODO(NeGate): for loops are actually two nodes right next to each other
+// NOTE(NeGate): for loops are actually two nodes right next to each other
 // it's a STMT_FOR and STMT_FOR2 where FOR stores the init and cond respectively,
 // then FOR2 stores the next and body statements respectively.
 typedef enum StmtOp {
@@ -117,6 +117,9 @@ typedef enum StmtOp {
 	
 	STMT_COMPOUND,
 	STMT_DECL,
+	
+	// NOTE(NeGate): Always followed by a compound block
+	STMT_FUNC_DECL,
 	STMT_EXPR,
 	
 	STMT_IF,
@@ -135,6 +138,8 @@ typedef enum ExprOp {
 	
 	EXPR_NUM,
 	EXPR_VAR,
+	EXPR_CAST,
+	EXPR_PARAM, // special case of EXPR_VAR
 	EXPR_ASSIGN,
 	EXPR_PLUS_ASSIGN,
 	EXPR_MINUS_ASSIGN,
@@ -171,6 +176,7 @@ typedef enum ExprOp {
 	EXPR_DEREF,
 	EXPR_ADDR,
 	EXPR_SUBSCRIPT,
+	EXPR_CALL,
 	
 	EXPR_PRE_INC,
 	EXPR_PRE_DEC,
@@ -209,6 +215,7 @@ typedef struct Stmt {
 	union {
 		TB_Register r;
 		TB_Function* f;
+		TB_ExternalID e;
 	} backing;
 } Stmt;
 
@@ -218,6 +225,7 @@ typedef struct Expr {
 	
 	union {
 		StmtIndex var;
+		int param_num;
 		struct {
 			ExprIndex left, right;
 		} bin_op;
@@ -227,6 +235,10 @@ typedef struct Expr {
 		struct {
 			ExprIndex src;
 		} unary_op;
+		struct {
+			ExprIndex target;
+			ExprIndexIndex param_start, param_end;
+		} call;
 		long long num;
 	};
 } Expr;
@@ -252,7 +264,12 @@ typedef struct Symbol {
 	char* name;
 	TypeIndex type : 24;
 	StorageClass storage_class : 8;
-	StmtIndex stmt;
+	
+	union {
+		// used if storage_class == STORAGE_PARAM
+		int param_num;
+		StmtIndex stmt;
+	};
 } Symbol;
 
 decl_arena(Type, type_arena)
@@ -261,6 +278,7 @@ decl_arena(Arg, arg_arena)
 decl_arena(Stmt, stmt_arena)
 decl_arena(StmtIndex, stmt_ref_arena)
 decl_arena(Expr, expr_arena)
+decl_arena(ExprIndex, expr_ref_arena)
 
 TypeIndex new_func();
 TypeIndex new_pointer(TypeIndex base);

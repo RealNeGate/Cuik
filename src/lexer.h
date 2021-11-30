@@ -97,6 +97,7 @@ typedef enum TokenType {
 } TokenType;
 
 typedef struct Lexer {
+    const char* start;
     const char* current;
     
     // current token info

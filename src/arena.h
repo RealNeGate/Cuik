@@ -1,6 +1,10 @@
 // It's not actually an arena but more of a big dynamic array
 // that's used for a variety of language constructs (mostly
 // "flattened" trees like the Types and AST)
+//
+// TODO(NeGate): Each of these arenas has a "null" element
+// meaning that the first element is reserved and cleared to
+// zero.
 #pragma once
 
 // Let's you forward decl the index

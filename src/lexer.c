@@ -332,10 +332,13 @@ void lexer_read(Lexer* restrict l) {
 }
 
 int lexer_get_location(Lexer* restrict l) {
-	int num = 0;
-	while (*l->current) {
+	int num = 1;
+	
+	const char* start = l->start;
+	while (start != l->current) {
 		num += (*l->current == '\n');
-		l->current++;
+		start++;
 	}
+	
 	return num;
 }
