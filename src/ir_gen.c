@@ -221,9 +221,13 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 			
 			if (type->kind == KIND_PTR) {
 				// pointer arithmatic
-				int stride = type_arena.data[type->ptr_to].size;
+				TB_Register stride = tb_inst_iconst(func, TB_TYPE_PTR, type_arena.data[type->ptr_to].size);
+				TB_ArithmaticBehavior ab = TB_CAN_WRAP;
 				
-				TB_Register operation = tb_inst_member_access(func, loaded.reg, is_inc ? stride : -stride);
+				TB_Register operation;
+				if (is_inc) operation = tb_inst_add(func, TB_TYPE_PTR, loaded.reg, stride, ab);
+				else operation = tb_inst_sub(func, TB_TYPE_PTR, loaded.reg, stride, ab);
+				
 				tb_inst_store(func, TB_TYPE_PTR, src.reg, operation, type->align);
 				
 				return (IRVal) {
@@ -552,7 +556,9 @@ static void gen_func(TypeIndex type, StmtIndex s) {
 	// NOTE(NeGate): STMT_FUNC_DECL is always followed by a compound block
 	gen_stmt(func, s + 1);
 	
-	//tb_function_print(func, stdout);
+	tb_function_print(func, stdout);
+	printf("\n\n\n");
+	
 	tb_module_compile_func(mod, func);
 }
 

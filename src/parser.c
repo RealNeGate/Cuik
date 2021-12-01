@@ -69,12 +69,13 @@ TopLevel parse_file(Lexer* l) {
 		TypeIndex type = parse_declspec(l, &attr);
 		
 		if (attr.is_typedef) {
-			bool first = true;
+			// TODO(NeGate): Kinda ugly
+			// don't expect one the first time
+			bool expect_comma = false;
 			while (l->token_type != ';') {
-				if (!first) {
-					first = false;
+				if (expect_comma) {
 					expect(l, ',');
-				}
+				} else expect_comma = true;
 				
 				Decl decl = parse_declarator(l, type);
 				
@@ -190,6 +191,51 @@ static StmtIndex parse_compound_stmt(Lexer* l) {
 		if (s) {
 			*((StmtIndex*)tls_push(sizeof(StmtIndex))) = s;
 			count++;
+		} else if (is_typename(l)) {
+			Attribs attr = { 0 };
+			TypeIndex type = parse_declspec(l, &attr);
+			
+			// TODO(NeGate): Kinda ugly
+			// don't expect one the first time
+			bool expect_comma = false;
+			while (l->token_type != ';') {
+				if (expect_comma) {
+					expect(l, ',');
+				} else expect_comma = true;
+				
+				Decl decl = parse_declarator(l, type);
+				
+				StmtIndex n = push_stmt_arena(1);
+				stmt_arena.data[n] = (Stmt) {
+					.op = STMT_DECL,
+					.decl_type = decl.type,
+					.decl_name = decl.name,
+				};
+				symbols[symbol_count++] = (Symbol){
+					.name = decl.name,
+					.type = decl.type,
+					.storage_class = STORAGE_LOCAL,
+					.stmt = n
+				};
+				
+				if (l->token_type == '=') {
+					// initial value
+					lexer_read(l);
+					
+					stmt_arena.data[n].expr = parse_expr(l);
+				}
+				
+				*((StmtIndex*)tls_push(sizeof(StmtIndex))) = n;
+				count++;
+			}
+			
+			expect(l, ';');
+		} else {
+			StmtIndex n = push_stmt_arena(1);
+			stmt_arena.data[n].op = STMT_EXPR;
+			stmt_arena.data[n].expr = parse_expr(l);
+			
+			expect(l, ';');
 		}
 	}
 	expect(l, '}');
@@ -206,6 +252,7 @@ static StmtIndex parse_compound_stmt(Lexer* l) {
 	return node;
 }
 
+// TODO(NeGate): Doesn't handle declarators or expression-statements
 static StmtIndex parse_stmt(Lexer* l) {
 	if (l->token_type == '{') {
 		lexer_read(l);
@@ -289,53 +336,7 @@ static StmtIndex parse_stmt(Lexer* l) {
 		return 0;
 	}
 	
-	// either decl or expr
-	if (is_typename(l)) {
-		Attribs attr = { 0 };
-		TypeIndex type = parse_declspec(l, &attr);
-		Decl decl = parse_declarator(l, type);
-		
-		StmtIndex n = push_stmt_arena(1);
-		stmt_arena.data[n] = (Stmt) {
-			.op = STMT_DECL,
-			.decl_type = decl.type,
-			.decl_name = decl.name,
-		};
-		symbols[symbol_count++] = (Symbol){
-			.name = decl.name,
-			.type = decl.type,
-			.storage_class = STORAGE_LOCAL,
-			.stmt = n
-		};
-		
-		if (l->token_type == ';') {
-			// uninitialized
-			lexer_read(l);
-			
-			stmt_arena.data[n].expr = 0;
-		} else if (l->token_type == '=') {
-			// expression
-			lexer_read(l);
-			
-			stmt_arena.data[n].expr = parse_expr(l);
-			
-			expect(l, ';');
-		} else if (l->token_type == '{') {
-			// TODO(NeGate): initializer list
-			abort();
-		} else {
-			generic_error(l, "Expected semicolon or decl-init.");
-		}
-		
-		return n;
-	}
-	
-	StmtIndex n = push_stmt_arena(1);
-	stmt_arena.data[n].op = STMT_EXPR;
-	stmt_arena.data[n].expr = parse_expr(l);
-	
-	expect(l, ';');
-	return n;
+	return 0;
 }
 
 ////////////////////////////////
