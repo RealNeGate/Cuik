@@ -7,6 +7,42 @@ int baz() { int* x = 0; x++; x--; x += 16; x -= 16; *x++ = 16; return *x; }
 Index foo2() { return 16; }
 int params(int x, int y) { return x + y; }
 
+int baz2(int *a, int *b)
+{
+    *a = 5;
+    *b = 6;
+    return *a + *b;
+}
+
+int bar2(int x) {
+	int y = x + 1, z = x + 2;
+	int w, a;
+	return y + z;
+}
+
+int sum_of(int n, int* arr) {
+	int i = 0;
+	int sum = 0;
+	while (i < n) {
+		sum += arr[i];
+	}
+	return sum;
+}
+
+int fast_fib(int n) {
+    int a = 0;
+	int b = 1;
+
+	int i = n - 1;
+    while(i--) {
+		int c = a + b;
+		a = b;
+		b = c;
+	}
+
+	return b;
+}
+
 int main(int argc, char* argv[]) {
 	int a = params(1, 56);
 	ExitProcess(0);
@@ -25,9 +61,10 @@ int main(int argc, char* argv[]) {
 	x |= 16;
 	x ^= 16;
 
-	int y = (x * x);
+	int y = (x * 2);
 	if (y) y = 16;
 	if (x) { y = 16; } else { x = 16; }
+
 	while (x) { x -= 1; }
 
 	short apple[16];
@@ -35,9 +72,9 @@ int main(int argc, char* argv[]) {
 
 	char table[8][8];
 	char z = (table[0] + 1);
-	y = 4;
 
-	do { table[x][x] = 16; x += 1; } while (y);
+	int z = 4;
+	do { table[z][z] = 16; } while (z--);
 
 	return y;
 }

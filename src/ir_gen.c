@@ -1,11 +1,15 @@
 #include "ir_gen.h"
 
-enum { LVALUE, RVALUE };
+enum { LVALUE, RVALUE, LVALUE_FUNC, LVALUE_EFUNC };
 
 typedef struct IRVal {
 	int value_type;
-	TB_Register reg;
 	TypeIndex type;
+	union {
+		TB_Register reg;
+		TB_Function* func;
+		TB_ExternalID ext;
+	};
 } IRVal;
 
 TB_Module* mod;
@@ -31,28 +35,29 @@ static TB_DataType ctype_to_tbtype(const Type* t) {
 }
 
 static void cvt_l2r(TB_Function* func, IRVal* restrict v, TypeIndex dst_type) {
+	Type* src = &type_arena.data[v->type];
 	if (v->value_type == LVALUE) {
 		v->value_type = RVALUE;
 		
-		Type* src = &type_arena.data[v->type];
 		v->reg = tb_inst_load(func, ctype_to_tbtype(src), v->reg, src->align);
+	}
+	
+	// Cast into correct type
+	if (v->type != dst_type) {
+		Type* dst = &type_arena.data[dst_type];
 		
-		if (v->type != dst_type) {
-			Type* dst = &type_arena.data[dst_type];
-			
-			if (src->kind >= KIND_CHAR &&
-				src->kind <= KIND_LONG &&
-				dst->kind >= KIND_CHAR && 
-				dst->kind <= KIND_LONG) {
-				// if it's an integer, handle some implicit casts
-				if (dst->kind > src->kind) {
-					// up-casts
-					if (dst->is_unsigned) v->reg = tb_inst_zxt(func, v->reg, ctype_to_tbtype(dst));
-					else v->reg = tb_inst_sxt(func, v->reg, ctype_to_tbtype(dst));
-				} else if (dst->kind < src->kind) {
-					// down-casts
-					v->reg = tb_inst_trunc(func, v->reg, ctype_to_tbtype(dst));
-				}
+		if (src->kind >= KIND_CHAR &&
+			src->kind <= KIND_LONG &&
+			dst->kind >= KIND_CHAR && 
+			dst->kind <= KIND_LONG) {
+			// if it's an integer, handle some implicit casts
+			if (dst->kind > src->kind) {
+				// up-casts
+				if (dst->is_unsigned) v->reg = tb_inst_zxt(func, v->reg, ctype_to_tbtype(dst));
+				else v->reg = tb_inst_sxt(func, v->reg, ctype_to_tbtype(dst));
+			} else if (dst->kind < src->kind) {
+				// down-casts
+				v->reg = tb_inst_trunc(func, v->reg, ctype_to_tbtype(dst));
 			}
 		}
 	}
@@ -109,6 +114,23 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 		}
 		case EXPR_VAR: {
 			StmtIndex stmt = expr_arena.data[e].var;
+			StmtOp stmt_op = stmt_arena.data[stmt].op;
+			
+			if (type->kind == KIND_FUNC) {
+				if (stmt_op == STMT_FUNC_DECL) {
+					return (IRVal) {
+						.value_type = LVALUE_FUNC,
+						.type = type_index,
+						.func = stmt_arena.data[stmt].backing.f
+					};
+				} else if (stmt_op == STMT_DECL) {
+					return (IRVal) {
+						.value_type = LVALUE_EFUNC,
+						.type = type_index,
+						.ext = stmt_arena.data[stmt].backing.e
+					};
+				}
+			}
 			
 			return (IRVal) {
 				.value_type = LVALUE,
@@ -186,25 +208,17 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 			}
 			
 			// Call function
-			Expr* target_expr = &expr_arena.data[target];
+			IRVal func_ptr = gen_expr(func, target);
 			TB_DataType dt = ctype_to_tbtype(type);
+			TB_Register r;
 			
-			TB_Register r = TB_NULL_REG;
-			if (target_expr->op == EXPR_VAR) {
-				StmtIndex var = target_expr->var;
-				StmtOp stmt_op = stmt_arena.data[var].op;
-				
-				if (stmt_op == STMT_FUNC_DECL) {
-					r = tb_inst_call(func, dt, stmt_arena.data[var].backing.f, param_count, params);
-				} else if (stmt_op == STMT_DECL) {
-					r = tb_inst_ecall(func, dt, stmt_arena.data[var].backing.e, param_count, params);
-				} else {
-					abort();
-				}
+			if (func_ptr.value_type == LVALUE_FUNC) {
+				r = tb_inst_call(func, dt, func_ptr.func, param_count, params);
+			} else if (func_ptr.value_type == LVALUE_EFUNC) {
+				r = tb_inst_ecall(func, dt, func_ptr.ext, param_count, params);
 			} else {
-				IRVal ptr = gen_expr(func, target);
-				cvt_l2r(func, &ptr, type_index);
-				r = tb_inst_vcall(func, dt, ptr.reg, param_count, params);
+				cvt_l2r(func, &func_ptr, type_index);
+				r = tb_inst_vcall(func, dt, func_ptr.reg, param_count, params);
 			}
 			
 			tls_restore(params);
