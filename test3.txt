@@ -1,0 +1,64 @@
+
+typedef unsigned int UINT;
+typedef unsigned int DWORD;
+
+typedef void* HWND;
+typedef void* HICON;
+typedef void* HMENU;
+typedef void* HBRUSH;
+typedef void* HCURSOR;
+typedef void* HMODULE;
+typedef void* LPVOID;
+typedef const char* LPCSTR;
+
+typedef int INT_PTR, *PINT_PTR;
+typedef unsigned int UINT_PTR, *PUINT_PTR;
+
+typedef long LONG_PTR, *PLONG_PTR;
+typedef unsigned long ULONG_PTR, *PULONG_PTR;
+
+typedef UINT_PTR            WPARAM;
+typedef LONG_PTR            LPARAM;
+typedef LONG_PTR            LRESULT;
+
+typedef void* HINSTANCE;
+typedef void(*WNDPROC)(HWND, UINT, WPARAM, LPARAM);
+
+typedef struct tagWNDCLASSA {
+  UINT      style;
+  WNDPROC   lpfnWndProc;
+  int       cbClsExtra;
+  int       cbWndExtra;
+  HINSTANCE hInstance;
+  HICON     hIcon;
+  HCURSOR   hCursor;
+  HBRUSH    hbrBackground;
+  LPCSTR    lpszMenuName;
+  LPCSTR    lpszClassName;
+} WNDCLASSA, *PWNDCLASSA, *NPWNDCLASSA, *LPWNDCLASSA;
+
+HWND CreateWindowExA(
+  DWORD     dwExStyle,
+  LPCSTR    lpClassName,
+  LPCSTR    lpWindowName,
+  DWORD     dwStyle,
+  int       X,
+  int       Y,
+  int       nWidth,
+  int       nHeight,
+  HWND      hWndParent,
+  HMENU     hMenu,
+  HINSTANCE hInstance,
+  LPVOID    lpParam
+);
+
+HMODULE GetModuleHandleA(
+  LPCSTR lpModuleName
+);
+
+int main() {
+	WNDCLASSA wc;
+	wc.hInstance = GetModuleHandleA(0);
+
+	return 0;
+}
