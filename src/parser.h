@@ -239,6 +239,10 @@ typedef struct Expr {
 			ExprIndex src;
 		} unary_op;
 		struct {
+			ExprIndex base;
+			Member* member;
+		} dot;
+		struct {
 			ExprIndex target;
 			ExprIndexIndex param_start, param_end;
 		} call;

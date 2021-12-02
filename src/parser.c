@@ -435,6 +435,38 @@ static ExprIndex parse_expr_l1(Lexer* l) {
 			goto try_again;
 		}
 		
+		// Member access
+		if (l->token_type == '.') {
+			lexer_read(l);
+			if (l->token_type != TOKEN_IDENTIFIER) {
+				generic_error(l, "Expected identifier after member access a.b");
+			}
+			
+			ExprIndex base = e;
+			Type* restrict record_type = &type_arena.data[expr_arena.data[e].type];
+			
+			size_t len = l->token_end - l->token_start;
+			e = push_expr_arena(1);
+			
+			MemberIndex start = record_type->record.kids_start;
+			MemberIndex end = record_type->record.kids_end;
+			for (MemberIndex m = start; m < end; m++) {
+				size_t member_len = strlen(member_arena.data[m].name);
+				
+				if (len == member_len && memcmp(l->token_start, member_arena.data[m].name, len) == 0) {
+					expr_arena.data[e].op = EXPR_DOT;
+					expr_arena.data[e].type = member_arena.data[m].type;
+					expr_arena.data[e].dot.base = base;
+					expr_arena.data[e].dot.member = &member_arena.data[m];
+					
+					lexer_read(l);
+					goto try_again;
+				}
+			}
+			
+			generic_error(l, "AAAA");
+		}
+		
 		// Function call
 		if (l->token_type == '(') {
 			lexer_read(l);
@@ -476,9 +508,6 @@ static ExprIndex parse_expr_l1(Lexer* l) {
 			tls_restore(params);
 			goto try_again;
 		}
-		
-		// TODO(NeGate): Dot
-		// TODO(NeGate): Arrow
 		
 		// post fix
 		if (l->token_type == TOKEN_INCREMENT || l->token_type == TOKEN_DECREMENT) {
@@ -1097,6 +1126,7 @@ static bool is_typename(Lexer* l) {
 		case TOKEN_KW_Thread_local:
 		case TOKEN_KW_auto:
 		return true;
+		
 		case TOKEN_IDENTIFIER: {
 			size_t len = l->token_end - l->token_start;
 			

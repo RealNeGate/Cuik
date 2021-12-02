@@ -220,6 +220,18 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 			
 			return gen_ptr_arithmatic(func, type_index, a, b, 1);
 		}
+		case EXPR_DOT: {
+			IRVal src = gen_expr(func, expr_arena.data[e].dot.base);
+			assert(src.value_type == LVALUE);
+			
+			Member* m = expr_arena.data[e].dot.member;
+			
+			return (IRVal) {
+				.value_type = LVALUE,
+				.type = type_index,
+				.reg = tb_inst_member_access(func, src.reg, m->offset)
+			};
+		}
 		case EXPR_POST_INC:
 		case EXPR_POST_DEC: {
 			bool is_inc = (expr_arena.data[e].op == EXPR_POST_INC);
