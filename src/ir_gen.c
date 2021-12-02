@@ -118,11 +118,22 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 		}
 		case EXPR_PARAM: {
 			int param_num = expr_arena.data[e].param_num;
+			TB_Register reg = parameter_map[param_num];
+			
+			if (type->kind == KIND_PTR) {
+				reg = tb_inst_load(func, TB_TYPE_PTR, reg, 8);
+				
+				return (IRVal) {
+					.value_type = LVALUE,
+					.type = type_index,
+					.reg = reg
+				};
+			}
 			
 			return (IRVal) {
 				.value_type = LVALUE,
 				.type = type_index,
-				.reg = parameter_map[param_num]
+				.reg = reg
 			};
 		}
 		case EXPR_ADDR: {
