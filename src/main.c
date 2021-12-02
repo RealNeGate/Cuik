@@ -49,10 +49,8 @@ int main(int argc, char* argv[]) {
 						   TB_OPT_O0,
 						   1, false);
 	
-	//
 	// TODO(NeGate): Preprocess file
-	//
-    char* text = read_entire_file("test.txt");
+    char* text = read_entire_file("test3.txt");
 	if (!text) {
 		printf("Failed to read file!\n");
 		return 1;

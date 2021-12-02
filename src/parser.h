@@ -63,32 +63,34 @@ typedef struct Type {
     TypeKind kind;
     int size;  // sizeof
     int align; // _Alignof
-    bool is_atomic;
+	
+	bool is_const : 1;
+    bool is_atomic : 1;
     
     union {
         // Integers
         bool is_unsigned;
         
         // Arrays
-		TypeIndex array_of; 
+		TypeIndex array_of;
 		
         // Pointers
-		TypeIndex ptr_to; 
+		TypeIndex ptr_to;
 		
 		// Function
 		struct {
-			const char* name;
+			char* name;
 			TypeIndex return_type;
 			ArgIndex arg_start, arg_end;
 			
 			// TODO(NeGate): Attributes
 		} func;
 		
-		// Structs
+		// Structs/Unions
 		struct {
-			const char* tag;
+			char* name;
 			MemberIndex kids_start, kids_end;
-		} members;
+		} record;
     };
 } Type;
 
@@ -176,6 +178,7 @@ typedef enum ExprOp {
 	EXPR_DEREF,
 	EXPR_ADDR,
 	EXPR_SUBSCRIPT,
+	EXPR_DOT,
 	EXPR_CALL,
 	
 	EXPR_PRE_INC,
@@ -281,6 +284,8 @@ decl_arena(Expr, expr_arena)
 decl_arena(ExprIndex, expr_ref_arena)
 
 TypeIndex new_func();
+TypeIndex new_struct();
+TypeIndex copy_type(TypeIndex base);
 TypeIndex new_pointer(TypeIndex base);
 TypeIndex new_array(TypeIndex base, int count);
 TypeIndex get_common_type(TypeIndex ty1, TypeIndex ty2);

@@ -22,6 +22,8 @@ static Decl parse_declarator(Lexer* l, TypeIndex type);
 static bool is_typename(Lexer* l);
 static _Noreturn void generic_error(Lexer* l, const char* msg);
 
+inline static int align_up(int a, int b) { return a + (b - (a % b)) % b; }
+
 TopLevel parse_file(Lexer* l) {
 	tls_init();
 	
@@ -78,6 +80,7 @@ TopLevel parse_file(Lexer* l) {
 				} else expect_comma = true;
 				
 				Decl decl = parse_declarator(l, type);
+				assert(decl.name);
 				
 				int i = typedef_count++;
 				typedefs[i] = decl.type;
@@ -685,6 +688,8 @@ static ExprIndex parse_expr(Lexer* l) {
 ////////////////////////////////
 // TYPES
 ////////////////////////////////
+static TypeIndex parse_type_suffix(Lexer* l, TypeIndex type, char* name);
+
 static Decl parse_declarator(Lexer* l, TypeIndex type) {
 	// handle pointers
 	while (l->token_type == '*') {
@@ -702,16 +707,65 @@ static Decl parse_declarator(Lexer* l, TypeIndex type) {
 		}
 	}
 	
-	// TODO(NeGate): Implement ("(" ident ")" | "(" declarator ")")
+	if (l->token_type == '(') {
+		// TODO(NeGate): I don't like this code...
+		// it essentially just skips over the stuff in the
+		// parenthesis to do the suffix then comes back
+		// for the parenthesis after wards, restoring back to
+		// the end of the declarator when it's done.
+		//
+		// should be right after the (
+		lexer_read(l);
+		Lexer saved = *l;
+		
+		parse_declarator(l, TYPE_NONE);
+		
+		expect(l, ')');
+		type = parse_type_suffix(l, type, NULL);
+		
+		Lexer saved_end = *l;
+		*l = saved;
+		
+		Decl d = parse_declarator(l, type);
+		
+		// inherit name
+		if (!d.name) {
+			TypeIndex t = d.type;
+			
+			if (type_arena.data[t].kind == KIND_PTR) {
+				t = type_arena.data[d.type].ptr_to;
+				
+				if (type_arena.data[t].kind == KIND_FUNC) {
+					d.name = type_arena.data[t].func.name;
+				} else if (type_arena.data[t].kind == KIND_STRUCT) {
+					d.name = type_arena.data[t].record.name;
+				} else if (type_arena.data[t].kind == KIND_UNION) {
+					d.name = type_arena.data[t].record.name;
+				}
+			}
+		}
+		
+		*l = saved_end;
+		return d;
+	}
+	
 	// TODO(NeGate): I don't wanna use malloc but we prototyping
-	size_t len = l->token_end - l->token_start;
-	char* name = malloc(len + 1);
+	char* name = NULL;
+	if (l->token_type == TOKEN_IDENTIFIER) {
+		size_t len = l->token_end - l->token_start;
+		name = malloc(len + 1);
+		
+		memcpy(name, l->token_start, len);
+		name[len] = '\0';
+		
+		lexer_read(l);
+	}
 	
-	memcpy(name, l->token_start, len);
-	name[len] = '\0';
-	
-	lexer_read(l);
-	
+	type = parse_type_suffix(l, type, name);
+	return (Decl){ type, name };
+}
+
+static TypeIndex parse_type_suffix(Lexer* l, TypeIndex type, char* name) {
 	// type suffixes like array [] and function ()
 	if (l->token_type == '(') {
 		lexer_read(l);
@@ -791,7 +845,7 @@ static Decl parse_declarator(Lexer* l, TypeIndex type) {
 		} while (l->token_type == '[');
 	}
 	
-	return (Decl){ type, name };
+	return type;
 }
 
 // https://github.com/rui314/chibicc/blob/90d1f7f199cc55b13c7fdb5839d1409806633fdb/parse.c#L381
@@ -812,6 +866,9 @@ static TypeIndex parse_declspec(Lexer* l, Attribs* attr) {
 	
 	int counter = 0;
 	TypeIndex type = TYPE_NONE;
+	
+	bool is_atomic = false;
+	bool is_const = false;
 	do {
 		switch (l->token_type) {
 			case TOKEN_KW_void: counter += VOID; break;
@@ -830,7 +887,91 @@ static TypeIndex parse_declspec(Lexer* l, Attribs* attr) {
 			case TOKEN_KW_typedef: attr->is_typedef = true; break;
 			case TOKEN_KW_inline: attr->is_inline = true; break;
 			case TOKEN_KW_Thread_local: attr->is_tls = true; break;
+			
+			case TOKEN_KW_Atomic: is_atomic = true; break;
+			case TOKEN_KW_const: is_const = true; break;
 			case TOKEN_KW_auto: break;
+			
+			case TOKEN_KW_struct: {
+				if (counter) goto done;
+				lexer_read(l);
+				
+				char* name = NULL;
+				if (l->token_type == TOKEN_IDENTIFIER) {
+					size_t len = l->token_end - l->token_start;
+					name = malloc(len + 1);
+					
+					memcpy(name, l->token_start, len);
+					name[len] = '\0';
+					
+					lexer_read(l);
+				}
+				
+				if (l->token_type == '{') {
+					lexer_read(l);
+					
+					type = new_struct();
+					type_arena.data[type].record.name = name;
+					counter += OTHER;
+					
+					size_t member_count = 0;
+					Member* members = tls_save();
+					
+					int offset = 0;
+					
+					// struct/union are aligned to the biggest member alignment
+					int align = 0;
+					
+					while (l->token_type != '}') {
+						Attribs member_attr = { 0 };
+						TypeIndex member_base_type = parse_declspec(l, &member_attr);
+						
+						Decl decl = parse_declarator(l, member_base_type);
+						TypeIndex member_type = decl.type;
+						
+						if (type_arena.data[member_type].kind == KIND_FUNC) {
+							generic_error(l, "Naw dawg");
+						}
+						
+						offset = align_up(offset, type_arena.data[member_type].align);
+						
+						// TODO(NeGate): Error check that no attribs are set
+						tls_push(sizeof(Member));
+						members[member_count++] = (Member) {
+							.type = member_type,
+							.name = decl.name
+						};
+						
+						offset += type_arena.data[member_type].size;
+						
+						if (type_arena.data[member_type].align > align) {
+							align = type_arena.data[member_type].align;
+						}
+						
+						expect(l, ';');
+					}
+					
+					if (l->token_type != '}') {
+						generic_error(l, "Unclosed member list!");
+					}
+					
+					offset = align_up(offset, align);
+					type_arena.data[type].size = offset;
+					type_arena.data[type].align = align;
+					
+					MemberIndex start = push_arg_arena(member_count);
+					memcpy(&member_arena.data[start], members, member_count * sizeof(Member));
+					
+					type_arena.data[type].record.kids_start = start;
+					type_arena.data[type].record.kids_end = start + member_count;
+					
+					tls_restore(members);
+				} else {
+					// must be a forward decl
+					abort();
+				}
+				break;
+			}
 			
 			case TOKEN_IDENTIFIER: {
 				if (counter) goto done;
@@ -926,7 +1067,16 @@ static TypeIndex parse_declspec(Lexer* l, Attribs* attr) {
 	} while (true);
 	
 	done:
-	assert(type);
+	if (type == 0) {
+		generic_error(l, "Unknown typename");
+	}
+	
+	if (is_atomic || is_const) {
+		type = copy_type(type);
+		type_arena.data[type].is_atomic = is_atomic;
+		type_arena.data[type].is_const = is_const;
+	}
+	
 	return type;
 }
 

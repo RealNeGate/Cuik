@@ -15,6 +15,22 @@ TypeIndex new_func() {
 	return t;
 }
 
+TypeIndex copy_type(TypeIndex base) {
+	TypeIndex t = push_type_arena(1);
+	type_arena.data[t] = type_arena.data[base];
+	
+	return t;
+}
+
+TypeIndex new_struct() {
+	TypeIndex t = push_type_arena(1);
+	type_arena.data[t] = (Type){
+		.kind = KIND_STRUCT
+	};
+	
+	return t;
+}
+
 TypeIndex new_pointer(TypeIndex base) {
 	TypeIndex t = push_type_arena(1);
 	type_arena.data[t] = (Type){

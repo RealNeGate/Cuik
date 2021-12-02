@@ -338,8 +338,8 @@ int lexer_get_location(Lexer* restrict l) {
 	
 	const char* start = l->start;
 	while (start != l->current) {
-		num += (*l->current == '\n');
-		start++;
+		num += (*start == '\n');
+		start += 1;
 	}
 	
 	return num;
