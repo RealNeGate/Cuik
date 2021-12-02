@@ -13,6 +13,9 @@ typedef enum TokenType {
 	
     TOKEN_HASH = '#',
     
+    TOKEN_LESS = '<',
+    TOKEN_GREATER = '>',
+	
     TOKEN_BRACKET_OPEN = '[',
     TOKEN_BRACKET_CLOSE = ']',
     

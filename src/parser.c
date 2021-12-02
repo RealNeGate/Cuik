@@ -231,9 +231,12 @@ static StmtIndex parse_compound_stmt(Lexer* l) {
 			
 			expect(l, ';');
 		} else {
-			StmtIndex n = push_stmt_arena(1);
-			stmt_arena.data[n].op = STMT_EXPR;
-			stmt_arena.data[n].expr = parse_expr(l);
+			StmtIndex s = push_stmt_arena(1);
+			stmt_arena.data[s].op = STMT_EXPR;
+			stmt_arena.data[s].expr = parse_expr(l);
+			
+			*((StmtIndex*)tls_push(sizeof(StmtIndex))) = s;
+			count++;
 			
 			expect(l, ';');
 		}
@@ -596,9 +599,41 @@ static ExprIndex parse_expr_l4(Lexer* l) {
 	return lhs;
 }
 
+// >= > <= <
+static ExprIndex parse_expr_l6(Lexer* l) {
+	ExprIndex lhs = parse_expr_l4(l);
+	
+	while (l->token_type == TOKEN_GREATER_EQUAL ||
+		   l->token_type == TOKEN_LESS_EQUAL || 
+		   l->token_type == TOKEN_GREATER ||
+		   l->token_type == TOKEN_LESS) {
+		ExprIndex e = push_expr_arena(1);
+		ExprOp op;
+		switch (l->token_type) {
+			case TOKEN_LESS:          op = EXPR_CMPLT; break;
+			case TOKEN_LESS_EQUAL:    op = EXPR_CMPLE; break;
+			case TOKEN_GREATER:       op = EXPR_CMPGT; break;
+			case TOKEN_GREATER_EQUAL: op = EXPR_CMPGE; break;
+			default: __builtin_unreachable();
+		}
+		lexer_read(l);
+		
+		ExprIndex rhs = parse_expr_l4(l);
+		
+		expr_arena.data[e].op = op;
+		expr_arena.data[e].type = TYPE_BOOL;
+		expr_arena.data[e].bin_op.left = lhs;
+		expr_arena.data[e].bin_op.right = rhs;
+		
+		lhs = e;
+	}
+	
+	return lhs;
+}
+
 // = += -= *= /= %= <<= >>= &= ^= |=
 static ExprIndex parse_expr_l14(Lexer* l) {
-	ExprIndex lhs = parse_expr_l4(l);
+	ExprIndex lhs = parse_expr_l6(l);
 	
 	while (l->token_type == TOKEN_ASSIGN ||
 		   l->token_type == TOKEN_PLUS_EQUAL ||
@@ -630,7 +665,7 @@ static ExprIndex parse_expr_l14(Lexer* l) {
 		}
 		lexer_read(l);
 		
-		ExprIndex rhs = parse_expr_l4(l);
+		ExprIndex rhs = parse_expr_l6(l);
 		
 		expr_arena.data[e].op = op;
 		expr_arena.data[e].type = expr_arena.data[lhs].type;

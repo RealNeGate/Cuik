@@ -232,6 +232,7 @@ void lexer_read(Lexer* restrict l) {
         l->token_type = TOKEN_MINUS;
         break;
         case '>': {
+			current++;
 			if (*current == '>') {
 				current++;
 				
@@ -248,6 +249,7 @@ void lexer_read(Lexer* restrict l) {
 			break;
 		}
 		case '<': {
+			current++;
 			if (*current == '<') {
 				current++;
 				

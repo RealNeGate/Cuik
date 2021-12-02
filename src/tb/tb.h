@@ -329,15 +329,10 @@ extern "C" {
 	TB_API TB_Register tb_inst_cmp_eq(TB_Function* f, TB_DataType dt, TB_Register a, TB_Register b);
 	TB_API TB_Register tb_inst_cmp_ne(TB_Function* f, TB_DataType dt, TB_Register a, TB_Register b);
 	
-	TB_API TB_Register tb_inst_cmp_slt(TB_Function* f, TB_DataType dt, TB_Register a, TB_Register b);
-	TB_API TB_Register tb_inst_cmp_sle(TB_Function* f, TB_DataType dt, TB_Register a, TB_Register b);
-	TB_API TB_Register tb_inst_cmp_sgt(TB_Function* f, TB_DataType dt, TB_Register a, TB_Register b);
-	TB_API TB_Register tb_inst_cmp_sge(TB_Function* f, TB_DataType dt, TB_Register a, TB_Register b);
-	
-	TB_API TB_Register tb_inst_cmp_ult(TB_Function* f, TB_DataType dt, TB_Register a, TB_Register b);
-	TB_API TB_Register tb_inst_cmp_ule(TB_Function* f, TB_DataType dt, TB_Register a, TB_Register b);
-	TB_API TB_Register tb_inst_cmp_ugt(TB_Function* f, TB_DataType dt, TB_Register a, TB_Register b);
-	TB_API TB_Register tb_inst_cmp_uge(TB_Function* f, TB_DataType dt, TB_Register a, TB_Register b);
+	TB_API TB_Register tb_inst_cmp_ilt(TB_Function* f, TB_DataType dt, TB_Register a, TB_Register b, bool signedness);
+	TB_API TB_Register tb_inst_cmp_ile(TB_Function* f, TB_DataType dt, TB_Register a, TB_Register b, bool signedness);
+	TB_API TB_Register tb_inst_cmp_igt(TB_Function* f, TB_DataType dt, TB_Register a, TB_Register b, bool signedness);
+	TB_API TB_Register tb_inst_cmp_ige(TB_Function* f, TB_DataType dt, TB_Register a, TB_Register b, bool signedness);
 	
 	TB_API TB_Register tb_inst_cmp_flt(TB_Function* f, TB_DataType dt, TB_Register a, TB_Register b);
 	TB_API TB_Register tb_inst_cmp_fle(TB_Function* f, TB_DataType dt, TB_Register a, TB_Register b);

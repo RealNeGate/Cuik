@@ -272,7 +272,6 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 		case EXPR_XOR:
 		case EXPR_SHL:
 		case EXPR_SHR: {
-			// TODO(NeGate): Implement pointer arithmatic for PLUS and MINUS.
 			IRVal l = gen_expr(func, expr_arena.data[e].bin_op.left);
 			IRVal r = gen_expr(func, expr_arena.data[e].bin_op.right);
 			cvt_l2r(func, &l, type_index);
@@ -308,6 +307,48 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 			return (IRVal) {
 				.value_type = RVALUE,
 				.type = type_index,
+				.reg = data
+			};
+		}
+		case EXPR_CMPGT:
+		case EXPR_CMPGE:
+		case EXPR_CMPLT:
+		case EXPR_CMPLE: {
+			ExprIndex lhs = expr_arena.data[e].bin_op.left;
+			ExprIndex rhs = expr_arena.data[e].bin_op.right;
+			IRVal l = gen_expr(func, lhs);
+			IRVal r = gen_expr(func, rhs);
+			
+			type_index = get_common_type(expr_arena.data[lhs].type,
+										 expr_arena.data[rhs].type);
+			
+			cvt_l2r(func, &l, type_index);
+			cvt_l2r(func, &r, type_index);
+			
+			TB_DataType dt = ctype_to_tbtype(&type_arena.data[type_index]);
+			
+			TB_Register data;
+			if (type->kind == KIND_FLOAT || type->kind == KIND_DOUBLE) {
+				switch (expr_arena.data[e].op) {
+					case EXPR_CMPGT: data = tb_inst_cmp_fgt(func, dt, l.reg, r.reg); break;
+					case EXPR_CMPGE: data = tb_inst_cmp_fge(func, dt, l.reg, r.reg); break;
+					case EXPR_CMPLT: data = tb_inst_cmp_flt(func, dt, l.reg, r.reg); break;
+					case EXPR_CMPLE: data = tb_inst_cmp_fle(func, dt, l.reg, r.reg); break;
+					default: abort();
+				}
+			} else {
+				switch (expr_arena.data[e].op) {
+					case EXPR_CMPGT: data = tb_inst_cmp_igt(func, dt, l.reg, r.reg, !type->is_unsigned); break;
+					case EXPR_CMPGE: data = tb_inst_cmp_ige(func, dt, l.reg, r.reg, !type->is_unsigned); break;
+					case EXPR_CMPLT: data = tb_inst_cmp_ilt(func, dt, l.reg, r.reg, !type->is_unsigned); break;
+					case EXPR_CMPLE: data = tb_inst_cmp_ile(func, dt, l.reg, r.reg, !type->is_unsigned); break;
+					default: abort();
+				}
+			}
+			
+			return (IRVal) {
+				.value_type = RVALUE,
+				.type = TYPE_BOOL,
 				.reg = data
 			};
 		}
