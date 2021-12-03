@@ -56,7 +56,7 @@ extern "C" {
 	// If on, the labels aren't marked in the object file
 	// might save on performance at the cost of some assembly
 	// readability.
-#define TB_STRIP_LABELS 0
+#define TB_STRIP_LABELS 1
 	
 #if defined(__x86_64__) || defined(_M_X64) || defined(_M_AMD64)
 #define TB_HOST_ARCH TB_HOST_X86_64
