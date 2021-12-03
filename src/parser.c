@@ -1,18 +1,31 @@
 #include "parser.h"
 
+#define STB_DS_IMPLEMENTATION
+#include "stb_ds.h"
+
 impl_arena(Stmt, stmt_arena)
 impl_arena(StmtIndex, stmt_ref_arena)
 impl_arena(Expr, expr_arena)
 impl_arena(ExprIndex, expr_ref_arena)
 
-static int symbol_count = 0;
-static Symbol symbols[64 * 1024];
+// for the global hash table
+typedef struct SymbolEntry {
+	char* key;
+	Symbol value;
+} SymbolEntry;
+
+static SymbolEntry* global_symbols;
+
+static int local_symbol_count = 0;
+static Symbol local_symbols[64 * 1024];
 
 static int typedef_count = 0;
 static char* typedef_names[64 * 1024];
 static TypeIndex typedefs[64 * 1024];
 
 static void expect(Lexer* l, char ch);
+static Symbol* find_local_symbol(Lexer* l);
+static Symbol* find_global_symbol(char* name);
 static StmtIndex parse_stmt(Lexer* l);
 static ExprIndex parse_expr(Lexer* l);
 static StmtIndex parse_compound_stmt(Lexer* l);
@@ -25,6 +38,9 @@ static _Noreturn void generic_error(Lexer* l, const char* msg);
 inline static int align_up(int a, int b) { return a + (b - (a % b)) % b; }
 
 TopLevel parse_file(Lexer* l) {
+	////////////////////////////////
+	// Parsing
+	////////////////////////////////
 	tls_init();
 	
 	init_stmt_arena(4 * 1024);
@@ -61,8 +77,7 @@ TopLevel parse_file(Lexer* l) {
 	////////////////////////////////
 	// Parse translation unit
 	////////////////////////////////
-	size_t top_level_count = 0; // He be fuckin
-	void* top_level = tls_save();
+	StmtIndex* top_level = NULL;
 	
 	lexer_read(l);
 	while (l->token_type) {
@@ -106,13 +121,13 @@ TopLevel parse_file(Lexer* l) {
 					.decl_name = decl.name,
 				};
 				
-				symbols[symbol_count++] = (Symbol){
+				Symbol func_symbol = (Symbol){
 					.name = decl.name,
 					.type = decl.type,
 					.storage_class = attr.is_static ? STORAGE_STATIC_FUNC : STORAGE_FUNC,
 					.stmt = n
 				};
-				int savepoint = symbol_count;
+				shput(global_symbols, decl.name, func_symbol);
 				
 				if (l->token_type == '{') {
 					ArgIndex arg_start = type_arena.data[decl.type].func.arg_start;
@@ -122,7 +137,7 @@ TopLevel parse_file(Lexer* l) {
 					for (ArgIndex i = arg_start; i != arg_end; i++) {
 						Arg* a = &arg_arena.data[i];
 						
-						symbols[symbol_count++] = (Symbol){
+						local_symbols[local_symbol_count++] = (Symbol){
 							.name = a->name,
 							.type = a->type,
 							.storage_class = STORAGE_PARAM,
@@ -149,10 +164,8 @@ TopLevel parse_file(Lexer* l) {
 					abort();
 				}
 				
-				symbol_count = savepoint;
-				
-				*((StmtIndex*)tls_push(sizeof(StmtIndex))) = n;
-				top_level_count++;
+				arrput(top_level, n);
+				local_symbol_count = 0;
 			} else {
 				// TODO(NeGate): Normal decls
 				abort();
@@ -160,17 +173,49 @@ TopLevel parse_file(Lexer* l) {
 		}
 	}
 	
-	// Finalize top-level set of nodes
-	StmtIndexIndex start = push_stmt_ref_arena(top_level_count);
-	memcpy(&stmt_ref_arena.data[start], top_level, top_level_count * sizeof(ArgIndex));
+	////////////////////////////////
+	// Semantics
+	////////////////////////////////
+	// NOTE(NeGate): Best thing about tables is that I don't actually have
+	// walk a tree to check all nodes :)
+	for (size_t i = 0; i < expr_arena.count; i++) {
+		if (expr_arena.data[i].op == EXPR_UNKNOWN_SYMBOL) {
+			Symbol* sym = find_global_symbol(expr_arena.data[i].unknown_sym);
+			if (!sym) abort();
+			assert(sym->storage_class != STORAGE_PARAM);
+			
+			expr_arena.data[i].op = EXPR_SYMBOL;
+			expr_arena.data[i].symbol = sym->stmt;
+		}
+	}
 	
-	TopLevel tl = {
-		start,
-		start + top_level_count
-	};
+	return (TopLevel) { top_level };
+}
+
+static Symbol* find_local_symbol(Lexer* l) {
+	const char* name = l->token_start;
+	size_t length = l->token_end - l->token_start;
 	
-	tls_restore(top_level);
-	return tl;
+	// Try local variables
+	size_t i = local_symbol_count;
+	while (i--) {
+		// TODO(NeGate): Implement string interning
+		const char* sym = local_symbols[i].name;
+		size_t sym_length = strlen(sym);
+		
+		if (sym_length == length && memcmp(name, sym, length) == 0) {
+			return &local_symbols[i];
+		}
+	}
+	
+	return NULL;
+}
+
+static Symbol* find_global_symbol(char* name) {
+	ptrdiff_t search = shgeti(global_symbols, name);
+	
+	if (search >= 0) return &global_symbols[search].value;
+	return NULL;
 }
 
 ////////////////////////////////
@@ -178,7 +223,7 @@ TopLevel parse_file(Lexer* l) {
 ////////////////////////////////
 static StmtIndex parse_compound_stmt(Lexer* l) {
 	// mark when the local scope starts
-	int saved = symbol_count;
+	int saved = local_symbol_count;
 	
 	StmtIndex node = push_stmt_arena(1);
 	stmt_arena.data[node] = (Stmt) {
@@ -214,7 +259,7 @@ static StmtIndex parse_compound_stmt(Lexer* l) {
 					.decl_type = decl.type,
 					.decl_name = decl.name,
 				};
-				symbols[symbol_count++] = (Symbol){
+				local_symbols[local_symbol_count++] = (Symbol){
 					.name = decl.name,
 					.type = decl.type,
 					.storage_class = STORAGE_LOCAL,
@@ -245,8 +290,7 @@ static StmtIndex parse_compound_stmt(Lexer* l) {
 		}
 	}
 	expect(l, '}');
-	
-	symbol_count = saved;
+	local_symbol_count = saved;
 	
 	StmtIndexIndex start = push_stmt_ref_arena(count);
 	memcpy(&stmt_ref_arena.data[start], body, count * sizeof(ArgIndex));
@@ -359,35 +403,33 @@ static ExprIndex parse_expr_l0(Lexer* l) {
 		
 		return e;
 	} else if (l->token_type == TOKEN_IDENTIFIER) {
-		size_t length = l->token_end - l->token_start;
-		const char* ident = l->token_start;
+		Symbol* sym = find_local_symbol(l);
 		
-		size_t i = symbol_count;
-		while (i--) {
-			// TODO(NeGate): Implement string interning
-			const char* sym = symbols[i].name;
-			size_t sym_length = strlen(sym);
-			
-			if (sym_length == length &&
-				memcmp(ident, sym, length) == 0) {
-				ExprIndex e = push_expr_arena(1);
-				
-				if (symbols[i].storage_class == STORAGE_PARAM) {
-					expr_arena.data[e].op = EXPR_PARAM;
-					expr_arena.data[e].type = symbols[i].type;
-					expr_arena.data[e].param_num = symbols[i].param_num;
-				} else {
-					expr_arena.data[e].op = EXPR_VAR;
-					expr_arena.data[e].type = symbols[i].type;
-					expr_arena.data[e].var = symbols[i].stmt;
-				}
-				
-				lexer_read(l);
-				return e;
+		ExprIndex e = push_expr_arena(1);
+		if (sym) {
+			if (sym->storage_class == STORAGE_PARAM) {
+				expr_arena.data[e] = (Expr) {
+					.op = EXPR_PARAM,
+					.param_num = sym->param_num
+				};
+			} else {
+				expr_arena.data[e] = (Expr) {
+					.op = EXPR_SYMBOL,
+					.symbol = sym->stmt
+				};
 			}
+		} else {
+			// We'll defer any global identifier resolution
+			char* name = atoms_put(l->token_end - l->token_start, l->token_start);
+			
+			expr_arena.data[e] = (Expr) {
+				.op = EXPR_UNKNOWN_SYMBOL,
+				.unknown_sym = name
+			};
 		}
 		
-		generic_error(l, "Could not find identifier!");
+		lexer_read(l);
+		return e;
 	} else if (l->token_type == TOKEN_NUMBER) {
 		char temp[16];
 		memcpy_s(temp, 16, l->token_start, l->token_end - l->token_start);
@@ -442,29 +484,15 @@ static ExprIndex parse_expr_l1(Lexer* l) {
 				generic_error(l, "Expected identifier after member access a.b");
 			}
 			
+			char* name = atoms_put(l->token_end - l->token_start, l->token_start);
+			
 			ExprIndex base = e;
-			Type* restrict record_type = &type_arena.data[expr_arena.data[e].type];
-			
-			size_t len = l->token_end - l->token_start;
 			e = push_expr_arena(1);
-			
-			MemberIndex start = record_type->record.kids_start;
-			MemberIndex end = record_type->record.kids_end;
-			for (MemberIndex m = start; m < end; m++) {
-				size_t member_len = strlen(member_arena.data[m].name);
-				
-				if (len == member_len && memcmp(l->token_start, member_arena.data[m].name, len) == 0) {
-					expr_arena.data[e].op = EXPR_DOT;
-					expr_arena.data[e].type = member_arena.data[m].type;
-					expr_arena.data[e].dot.base = base;
-					expr_arena.data[e].dot.member = &member_arena.data[m];
-					
-					lexer_read(l);
-					goto try_again;
-				}
-			}
-			
-			generic_error(l, "AAAA");
+			expr_arena.data[e] = (Expr) {
+				.op = EXPR_DOT,
+				.dot = { base, name }
+			};
+			goto try_again;
 		}
 		
 		// Function call
@@ -494,22 +522,17 @@ static ExprIndex parse_expr_l1(Lexer* l) {
 			ExprIndexIndex start = push_expr_ref_arena(param_count);
 			memcpy(&expr_ref_arena.data[start], params, param_count * sizeof(ExprIndex));
 			
-			Type* func_type = &type_arena.data[expr_arena.data[target].type];
-			if (func_type->kind != KIND_FUNC) {
-				generic_error(l, "Call with non-function target");
-			}
-			
-			expr_arena.data[e].op = EXPR_CALL;
-			expr_arena.data[e].type = func_type->func.return_type;
-			expr_arena.data[e].call.target = target;
-			expr_arena.data[e].call.param_start = start;
-			expr_arena.data[e].call.param_end = start + param_count;
+			expr_arena.data[e] = (Expr) {
+				.op = EXPR_CALL,
+				.call = { target, start, start + param_count }
+			};
 			
 			tls_restore(params);
 			goto try_again;
 		}
 		
-		// post fix
+		// post fix, you can only put one and just after all the other operators
+		// in this precendence.
 		if (l->token_type == TOKEN_INCREMENT || l->token_type == TOKEN_DECREMENT) {
 			bool is_inc = l->token_type == TOKEN_INCREMENT;
 			lexer_read(l);
@@ -589,12 +612,10 @@ static ExprIndex parse_expr_l3(Lexer* l) {
 		lexer_read(l);
 		
 		ExprIndex rhs = parse_expr_l2(l);
-		
-		expr_arena.data[e].op = op;
-		expr_arena.data[e].type = get_common_type(expr_arena.data[lhs].type,
-												  expr_arena.data[rhs].type);
-		expr_arena.data[e].bin_op.left = lhs;
-		expr_arena.data[e].bin_op.right = rhs;
+		expr_arena.data[e] = (Expr) {
+			.op = op,
+			.bin_op = { lhs, rhs }
+		};
 		
 		lhs = e;
 	}
@@ -618,12 +639,10 @@ static ExprIndex parse_expr_l4(Lexer* l) {
 		lexer_read(l);
 		
 		ExprIndex rhs = parse_expr_l3(l);
-		
-		expr_arena.data[e].op = op;
-		expr_arena.data[e].type = get_common_type(expr_arena.data[lhs].type,
-												  expr_arena.data[rhs].type);
-		expr_arena.data[e].bin_op.left = lhs;
-		expr_arena.data[e].bin_op.right = rhs;
+		expr_arena.data[e] = (Expr) {
+			.op = op,
+			.bin_op = { lhs, rhs }
+		};
 		
 		lhs = e;
 	}
@@ -651,11 +670,10 @@ static ExprIndex parse_expr_l6(Lexer* l) {
 		lexer_read(l);
 		
 		ExprIndex rhs = parse_expr_l4(l);
-		
-		expr_arena.data[e].op = op;
-		expr_arena.data[e].type = TYPE_BOOL;
-		expr_arena.data[e].bin_op.left = lhs;
-		expr_arena.data[e].bin_op.right = rhs;
+		expr_arena.data[e] = (Expr) {
+			.op = op,
+			.bin_op = { lhs, rhs }
+		};
 		
 		lhs = e;
 	}
@@ -698,11 +716,10 @@ static ExprIndex parse_expr_l14(Lexer* l) {
 		lexer_read(l);
 		
 		ExprIndex rhs = parse_expr_l6(l);
-		
-		expr_arena.data[e].op = op;
-		expr_arena.data[e].type = expr_arena.data[lhs].type;
-		expr_arena.data[e].bin_op.left = lhs;
-		expr_arena.data[e].bin_op.right = rhs;
+		expr_arena.data[e] = (Expr) {
+			.op = op,
+			.bin_op = { lhs, rhs }
+		};
 		
 		lhs = e;
 	}
@@ -778,15 +795,9 @@ static Decl parse_declarator(Lexer* l, TypeIndex type) {
 		return d;
 	}
 	
-	// TODO(NeGate): I don't wanna use malloc but we prototyping
 	char* name = NULL;
 	if (l->token_type == TOKEN_IDENTIFIER) {
-		size_t len = l->token_end - l->token_start;
-		name = malloc(len + 1);
-		
-		memcpy(name, l->token_start, len);
-		name[len] = '\0';
-		
+		name = atoms_put(l->token_end - l->token_start, l->token_start);
 		lexer_read(l);
 	}
 	
@@ -927,12 +938,7 @@ static TypeIndex parse_declspec(Lexer* l, Attribs* attr) {
 				
 				char* name = NULL;
 				if (l->token_type == TOKEN_IDENTIFIER) {
-					size_t len = l->token_end - l->token_start;
-					name = malloc(len + 1);
-					
-					memcpy(name, l->token_start, len);
-					name[len] = '\0';
-					
+					name = atoms_put(l->token_end - l->token_start, l->token_start);
 					lexer_read(l);
 				}
 				

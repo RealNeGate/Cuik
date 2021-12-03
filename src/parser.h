@@ -1,7 +1,9 @@
 #pragma once
 #include "common.h"
+#include "memory.h"
 #include "arena.h"
 #include "lexer.h"
+#include "atoms.h"
 #include "tb/tb.h"
 
 decl_arena_index(Type, type_arena)
@@ -139,7 +141,10 @@ typedef enum ExprOp {
 	EXPR_NONE,
 	
 	EXPR_NUM,
-	EXPR_VAR,
+	
+	EXPR_UNKNOWN_SYMBOL,
+	EXPR_SYMBOL,
+	
 	EXPR_CAST,
 	EXPR_PARAM, // special case of EXPR_VAR
 	EXPR_ASSIGN,
@@ -227,8 +232,12 @@ typedef struct Expr {
 	TypeIndex type : 24;
 	
 	union {
-		StmtIndex var;
+		char* unknown_sym;
+		StmtIndex symbol;
+		
+		// EXPR_PARAM
 		int param_num;
+		
 		struct {
 			ExprIndex left, right;
 		} bin_op;
@@ -240,7 +249,7 @@ typedef struct Expr {
 		} unary_op;
 		struct {
 			ExprIndex base;
-			Member* member;
+			char* name;
 		} dot;
 		struct {
 			ExprIndex target;
@@ -295,8 +304,8 @@ TypeIndex new_array(TypeIndex base, int count);
 TypeIndex get_common_type(TypeIndex ty1, TypeIndex ty2);
 
 typedef struct TopLevel {
-	// refs to the top-level statements in a translation unit.
-	StmtIndexIndex start, end;
+	// stb_ds array
+	StmtIndex* arr;
 } TopLevel;
 
 TopLevel parse_file(Lexer* lex);

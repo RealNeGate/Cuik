@@ -1,6 +1,7 @@
 #include "lexer.h"
 #include "parser.h"
 #include "ir_gen.h"
+#include "atoms.h"
 #include <time.h>
 
 #include <sys/stat.h>
@@ -34,6 +35,26 @@ static char* read_entire_file(const char* filepath) {
 
 int main(int argc, char* argv[]) {
 #if 0
+	/*FILE* file = fopen("test5.txt", "wb");
+	
+	fprintf(file, "void print(int n){}\n");
+	
+	for (int i = 1; i <= 1000000; i++) {
+		fprintf(file, "void fibonacci%d() {\n"
+				"\tint lo = 0;\n"
+				"\tint hi = 1;\n"
+				"\twhile (hi < 10000) {\n"
+				"\t\tint tmp = hi;\n"
+				"\t\thi = hi + lo;\n"
+				"\t\tlo = tmp;\n"
+				"\t\tprint(lo);\n"
+				"\t}\n"
+				"}\n\n", i);
+	}
+	
+	fprintf(file, "\nint main(void* hInstance, void* hPrevInstance, char* lpCmdLine, int nCmdShow) {\n\treturn 0;\n}\n\n");
+	fclose(file);*/
+	
 	Lexer l = (Lexer) { text };
     do {
         lexer_read(&l);
@@ -50,13 +71,14 @@ int main(int argc, char* argv[]) {
 						   1, false);
 	
 	// TODO(NeGate): Preprocess file
-    char* text = read_entire_file("test3.txt");
+	char* text = read_entire_file("test5.txt");
 	if (!text) {
 		printf("Failed to read file!\n");
 		return 1;
 	}
 	
 	// Parse
+	atoms_init();
 	TopLevel tl = parse_file(&(Lexer) { text, text });
 	
 	// Generate IR
@@ -70,12 +92,13 @@ int main(int argc, char* argv[]) {
 	if (!tb_module_export(mod, f)) abort();
 	fclose(f);
 	
+	tb_module_destroy(mod);
+	free(text);
+	atoms_deinit();
+	
 	clock_t t2 = clock();
 	double delta_ms = ((t2 - t1) / (double)CLOCKS_PER_SEC) * 1000.0;
 	printf("compilation took %f ms\n", delta_ms);
-	
-	tb_module_destroy(mod);
-	free(text);
 #endif
 	return 0;
 }

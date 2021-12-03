@@ -139,10 +139,11 @@ TokenType classify_ident(const char* restrict str, size_t len) {
 	int result = _mm_cmpestri(kw128, len,
 							  str128, len,
 							  _SIDD_UBYTE_OPS |
-							  _SIDD_CMP_EQUAL_EACH |
-							  _SIDD_POSITIVE_POLARITY);
+							  _SIDD_CMP_EQUAL_ANY | 
+							  _SIDD_NEGATIVE_POLARITY |
+							  _SIDD_BIT_MASK);
 	
-	return result ? TOKEN_IDENTIFIER : (512 + v);
+	return result == len ? (512 + v) : TOKEN_IDENTIFIER;
 }
 
 void lexer_read(Lexer* restrict l) {

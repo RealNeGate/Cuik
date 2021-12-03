@@ -112,8 +112,8 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 				.reg = tb_inst_iconst(func, ctype_to_tbtype(type), expr_arena.data[e].num)
 			};
 		}
-		case EXPR_VAR: {
-			StmtIndex stmt = expr_arena.data[e].var;
+		case EXPR_SYMBOL: {
+			StmtIndex stmt = expr_arena.data[e].symbol;
 			StmtOp stmt_op = stmt_arena.data[stmt].op;
 			
 			if (type->kind == KIND_FUNC) {
@@ -238,12 +238,13 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 			IRVal src = gen_expr(func, expr_arena.data[e].dot.base);
 			assert(src.value_type == LVALUE);
 			
-			Member* m = expr_arena.data[e].dot.member;
+			//Member* m = expr_arena.data[e].dot.member;
 			
 			return (IRVal) {
 				.value_type = LVALUE,
 				.type = type_index,
-				.reg = tb_inst_member_access(func, src.reg, m->offset)
+				// TODO(NeGate): Fix the member access
+				.reg = tb_inst_member_access(func, src.reg, 0)
 			};
 		}
 		case EXPR_POST_INC:
@@ -600,7 +601,9 @@ static void gen_func(TypeIndex type, StmtIndex s) {
 	// Clear TLS
 	tls_init();
 	
-	TB_Function* func = tb_function_create(mod, stmt_arena.data[s].decl_name, TB_TYPE_I64);
+	const Type* return_type = &type_arena.data[type_arena.data[type].func.return_type];
+	
+	TB_Function* func = tb_function_create(mod, stmt_arena.data[s].decl_name, ctype_to_tbtype(return_type));
 	stmt_arena.data[s].backing.f = func;
 	
 	// Parameters
@@ -634,15 +637,27 @@ static void gen_func(TypeIndex type, StmtIndex s) {
 	// NOTE(NeGate): STMT_FUNC_DECL is always followed by a compound block
 	gen_stmt(func, s + 1);
 	
-	tb_function_print(func, stdout);
-	printf("\n\n\n");
+	TB_Register last = tb_node_get_last_register(func);
+	if (tb_node_is_label(func, last) || !tb_node_is_terminator(func, last)) {
+		if (return_type->kind != KIND_VOID) {
+			// Needs return value
+			abort();
+		}
+		
+		tb_inst_ret(func, TB_TYPE_VOID, TB_NULL_REG);
+	}
+	
+	//tb_function_print(func, stdout);
+	//printf("\n\n\n");
 	
 	tb_module_compile_func(mod, func);
 }
 
 void gen_ir(TopLevel tl) {
-	for (StmtIndexIndex i = tl.start; i != tl.end; i++) {
-		StmtIndex s = stmt_ref_arena.data[i];
+	size_t count = arrlen(tl.arr);
+	
+	for (size_t i = 0; i  < count; i++) {
+		StmtIndex s = tl.arr[i];
 		
 		if (stmt_arena.data[s].op == STMT_FUNC_DECL) {
 			TypeIndex type = stmt_arena.data[s].decl_type;
