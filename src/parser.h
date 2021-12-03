@@ -193,14 +193,13 @@ typedef enum ExprOp {
 } ExprOp;
 
 typedef struct Stmt {
-	StmtOp op : 8;
+	StmtOp op;
 	// STMT_EXPR, STMT_DECL, STMT_RETURN
-	ExprIndex expr : 24;
+	ExprIndex expr;
 	// TODO(NeGate): const char* pos;
-	
 	union {
 		struct {
-			// STMT_DECL
+			// STMT_DECL or STMT_FUNC_DECL
 			Attribs attrs;
 			TypeIndex decl_type : 24;
 			char* decl_name;
@@ -228,8 +227,7 @@ typedef struct Stmt {
 } Stmt;
 
 typedef struct Expr {
-	ExprOp op : 8;
-	TypeIndex type : 24;
+	ExprOp op;
 	
 	union {
 		char* unknown_sym;

@@ -16,6 +16,7 @@ TB_Module* mod;
 
 // Maps param_num -> TB_Register
 static _Thread_local TB_Register* parameter_map;
+static TypeIndex function_type;
 
 static TB_DataType ctype_to_tbtype(const Type* t) {
 	switch (t->kind) {
@@ -63,58 +64,24 @@ static void cvt_l2r(TB_Function* func, IRVal* restrict v, TypeIndex dst_type) {
 	}
 }
 
-static IRVal gen_expr(TB_Function* func, ExprIndex e);
-
-// direction is either 1 for addition or -1 for subtraction
-// pointer arithmatic can only have one pointer
-static IRVal gen_ptr_arithmatic(TB_Function* func, TypeIndex elem_type, ExprIndex a, ExprIndex b, int direction) {
-	Type* a_type = &type_arena.data[expr_arena.data[a].type];
-	Type* b_type = &type_arena.data[expr_arena.data[b].type];
-	
-	// Decide who's the pointer
-	if (b_type->kind == KIND_PTR) {
-		swap(a, b);
-		
-		if (a_type->kind == KIND_PTR) {
-			// TODO(NeGate): Make a better error for
-			// (ptr + ptr) arithmatic
-			abort();
-		}
-	}
-	
-	// resolve them a:ptr, b:ulong
-	IRVal base = gen_expr(func, a);
-	IRVal index = gen_expr(func, b);
-	
-	assert(base.value_type == LVALUE);
-	
-	// the index type is always long... or int maybe
-	// if we support 32bit platforms at some point
-	cvt_l2r(func, &index, TYPE_ULONG);
-	
-	int stride = type_arena.data[elem_type].size;
-	return (IRVal) {
-		.value_type = LVALUE,
-		.type = elem_type,
-		.reg = tb_inst_array_access(func, base.reg, index.reg, direction * stride)
-	};
-}
-
 static IRVal gen_expr(TB_Function* func, ExprIndex e) {
-	TypeIndex type_index = expr_arena.data[e].type;
-	Type* restrict type = &type_arena.data[type_index];
+	const Expr* restrict ep = &expr_arena.data[e];
 	
-	switch (expr_arena.data[e].op) {
+	switch (ep->op) {
 		case EXPR_NUM: {
 			return (IRVal) {
 				.value_type = RVALUE,
-				.type = type_index,
-				.reg = tb_inst_iconst(func, ctype_to_tbtype(type), expr_arena.data[e].num)
+				.type = TYPE_INT,
+				.reg = tb_inst_iconst(func, TB_TYPE_I32, ep->num)
 			};
 		}
 		case EXPR_SYMBOL: {
-			StmtIndex stmt = expr_arena.data[e].symbol;
+			StmtIndex stmt = ep->symbol;
 			StmtOp stmt_op = stmt_arena.data[stmt].op;
+			assert(stmt_op == STMT_DECL || stmt_op == STMT_FUNC_DECL);
+			
+			TypeIndex type_index = stmt_arena.data[stmt].decl_type;
+			Type* type = &type_arena.data[type_index];
 			
 			if (type->kind == KIND_FUNC) {
 				if (stmt_op == STMT_FUNC_DECL) {
@@ -139,64 +106,69 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 			};
 		}
 		case EXPR_PARAM: {
-			int param_num = expr_arena.data[e].param_num;
+			int param_num = ep->param_num;
 			TB_Register reg = parameter_map[param_num];
 			
-			if (type->kind == KIND_PTR) {
+			ArgIndex arg = type_arena.data[function_type].func.arg_start + param_num;
+			TypeIndex arg_type = arg_arena.data[arg].type;
+			
+			if (type_arena.data[arg_type].kind == KIND_PTR) {
 				reg = tb_inst_load(func, TB_TYPE_PTR, reg, 8);
 				
 				return (IRVal) {
 					.value_type = LVALUE,
-					.type = type_index,
+					.type = arg_type,
 					.reg = reg
 				};
 			}
 			
 			return (IRVal) {
 				.value_type = LVALUE,
-				.type = type_index,
+				.type = arg_type,
 				.reg = reg
 			};
 		}
 		case EXPR_ADDR: {
-			IRVal src = gen_expr(func, expr_arena.data[e].unary_op.src);
+			IRVal src = gen_expr(func, ep->unary_op.src);
 			assert(src.value_type == LVALUE);
 			src.value_type = RVALUE;
 			
 			return src;
 		}
 		case EXPR_DEREF: {
-			IRVal src = gen_expr(func, expr_arena.data[e].unary_op.src);
-			cvt_l2r(func, &src, type_index);
+			IRVal src = gen_expr(func, ep->unary_op.src);
+			cvt_l2r(func, &src, src.type);
 			
 			assert(type_arena.data[src.type].kind == KIND_PTR);
 			
 			return (IRVal) {
 				.value_type = LVALUE,
-				.type = type_index,
+				.type = type_arena.data[src.type].ptr_to,
 				.reg = src.reg
 			};
 		}
 		case EXPR_CALL: {
-			// TODO(NeGate): Optimize this!
-			ExprIndex target = expr_arena.data[e].call.target;
+			// TODO(NeGate): It's ugly, fix it
+			ExprIndex target = ep->call.target;
 			
-			Type* func_type = &type_arena.data[expr_arena.data[target].type];
+			// Call function
+			IRVal func_ptr = gen_expr(func, target);
+			
+			TypeIndex func_type_index = func_ptr.type;
+			Type* func_type = &type_arena.data[func_type_index];
+			
 			ArgIndex arg_start = func_type->func.arg_start;
 			ArgIndex arg_end = func_type->func.arg_end;
 			ArgIndex arg_count = arg_end - arg_start;
 			
-			ExprIndexIndex param_start = expr_arena.data[e].call.param_start;
-			ExprIndexIndex param_end = expr_arena.data[e].call.param_end;
+			ExprIndexIndex param_start = ep->call.param_start;
+			ExprIndexIndex param_end = ep->call.param_end;
 			ExprIndexIndex param_count = param_end - param_start;
 			
-			if (param_count != arg_count) {
-				abort();
-			}
-			
-			TB_Register* params = tls_push(param_count * sizeof(TB_Register));
+			if (param_count != arg_count) abort();
 			
 			// Resolve parameters
+			TB_Register* params = tls_push(param_count * sizeof(TB_Register));
 			for (size_t i = 0; i < param_count; i++) {
 				ExprIndex p = expr_ref_arena.data[param_start + i];
 				Arg* a = &arg_arena.data[arg_start + i];
@@ -207,56 +179,84 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 				params[i] = src.reg;
 			}
 			
-			// Call function
-			IRVal func_ptr = gen_expr(func, target);
-			TB_DataType dt = ctype_to_tbtype(type);
-			TB_Register r;
+			// Resolve call target
+			// NOTE(NeGate): Could have been resized in the parameter's gen_expr
+			func_type = &type_arena.data[func_type_index];
+			TypeIndex return_type = func_type->func.return_type;
+			TB_DataType dt = ctype_to_tbtype(&type_arena.data[return_type]);
 			
+			TB_Register r;
 			if (func_ptr.value_type == LVALUE_FUNC) {
 				r = tb_inst_call(func, dt, func_ptr.func, param_count, params);
 			} else if (func_ptr.value_type == LVALUE_EFUNC) {
 				r = tb_inst_ecall(func, dt, func_ptr.ext, param_count, params);
 			} else {
-				cvt_l2r(func, &func_ptr, type_index);
+				cvt_l2r(func, &func_ptr, func_type_index);
 				r = tb_inst_vcall(func, dt, func_ptr.reg, param_count, params);
 			}
 			
 			tls_restore(params);
 			return (IRVal) {
 				.value_type = RVALUE,
-				.type = type_index,
+				.type = return_type,
 				.reg = r
 			};
 		}
 		case EXPR_SUBSCRIPT: {
-			ExprIndex a = expr_arena.data[e].subscript.base;
-			ExprIndex b = expr_arena.data[e].subscript.index;
+			IRVal base = gen_expr(func, ep->subscript.base);
+			IRVal index = gen_expr(func, ep->subscript.index);
 			
-			return gen_ptr_arithmatic(func, type_index, a, b, 1);
+			if (type_arena.data[index.type].kind == KIND_PTR) swap(base, index);
+			
+			assert(base.value_type == LVALUE);
+			cvt_l2r(func, &index, TYPE_ULONG);
+			
+			TypeIndex element_type = type_arena.data[base.type].ptr_to;
+			int stride = type_arena.data[element_type].size;
+			return (IRVal) {
+				.value_type = RVALUE,
+				.type = element_type,
+				.reg = tb_inst_array_access(func, base.reg, index.reg, stride)
+			};
 		}
 		case EXPR_DOT: {
-			IRVal src = gen_expr(func, expr_arena.data[e].dot.base);
+			IRVal src = gen_expr(func, ep->dot.base);
 			assert(src.value_type == LVALUE);
 			
-			//Member* m = expr_arena.data[e].dot.member;
+			char* name = ep->dot.name;
+			Type* restrict record_type = &type_arena.data[src.type];
 			
-			return (IRVal) {
-				.value_type = LVALUE,
-				.type = type_index,
-				// TODO(NeGate): Fix the member access
-				.reg = tb_inst_member_access(func, src.reg, 0)
-			};
+			MemberIndex start = record_type->record.kids_start;
+			MemberIndex end = record_type->record.kids_end;
+			for (MemberIndex m = start; m < end; m++) {
+				Member* member = &member_arena.data[m];
+				
+				// TODO(NeGate): String interning would be nice
+				if (strcmp(name, member->name) == 0) {
+					assert(!member->is_bitfield);
+					
+					return (IRVal) {
+						.value_type = LVALUE,
+						.type = member->type,
+						.reg = tb_inst_member_access(func, src.reg, member->offset)
+					};
+				}
+			}
+			
+			abort();
 		}
 		case EXPR_POST_INC:
 		case EXPR_POST_DEC: {
-			bool is_inc = (expr_arena.data[e].op == EXPR_POST_INC);
+			bool is_inc = (ep->op == EXPR_POST_INC);
 			
-			IRVal src = gen_expr(func, expr_arena.data[e].unary_op.src);
+			IRVal src = gen_expr(func, ep->unary_op.src);
+			TypeIndex type_index = src.type;
 			assert(src.value_type == LVALUE);
 			
 			IRVal loaded = src;
 			cvt_l2r(func, &loaded, type_index);
 			
+			Type* type = &type_arena.data[type_index];
 			if (type->kind == KIND_PTR) {
 				// pointer arithmatic
 				TB_Register stride = tb_inst_iconst(func, TB_TYPE_PTR, type_arena.data[type->ptr_to].size);
@@ -294,15 +294,6 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 		}
 		case EXPR_PLUS:
 		case EXPR_MINUS:
-		if (type->kind == KIND_PTR) {
-			// pointer arithmatic
-			ExprIndex a = expr_arena.data[e].bin_op.left;
-			ExprIndex b = expr_arena.data[e].bin_op.right;
-			int dir = expr_arena.data[e].op == EXPR_PLUS ? 1 : -1;
-			
-			return gen_ptr_arithmatic(func, type->ptr_to, a, b, dir);
-		}
-		// fallthrough
 		case EXPR_TIMES:
 		case EXPR_SLASH:
 		case EXPR_AND:
@@ -310,15 +301,28 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 		case EXPR_XOR:
 		case EXPR_SHL:
 		case EXPR_SHR: {
-			IRVal l = gen_expr(func, expr_arena.data[e].bin_op.left);
-			IRVal r = gen_expr(func, expr_arena.data[e].bin_op.right);
+			IRVal l = gen_expr(func, ep->bin_op.left);
+			IRVal r = gen_expr(func, ep->bin_op.right);
+			
+			TypeIndex type_index = get_common_type(l.type, r.type);
+			Type* restrict type = &type_arena.data[type_index];
+			if (type->kind == KIND_PTR) {
+				// pointer arithmatic
+				/*ExprIndex a = ep->bin_op.left;
+				ExprIndex b = ep->bin_op.right;
+				int dir = ep->op == EXPR_PLUS ? 1 : -1;
+				
+				return gen_ptr_arithmatic(func, type->ptr_to, a, b, dir);*/
+				abort();
+			}
+			
 			cvt_l2r(func, &l, type_index);
 			cvt_l2r(func, &r, type_index);
 			
 			TB_DataType dt = ctype_to_tbtype(type);
 			TB_Register data;
 			if (type->kind == KIND_FLOAT || type->kind == KIND_DOUBLE) {
-				switch (expr_arena.data[e].op) {
+				switch (ep->op) {
 					case EXPR_PLUS: data = tb_inst_fadd(func, dt, l.reg, r.reg); break;
 					case EXPR_MINUS: data = tb_inst_fsub(func, dt, l.reg, r.reg); break;
 					case EXPR_TIMES: data = tb_inst_fmul(func, dt, l.reg, r.reg); break;
@@ -328,7 +332,7 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 			} else {
 				TB_ArithmaticBehavior ab = type->is_unsigned ? TB_CAN_WRAP : TB_ASSUME_NSW;
 				
-				switch (expr_arena.data[e].op) {
+				switch (ep->op) {
 					case EXPR_PLUS: data = tb_inst_add(func, dt, l.reg, r.reg, ab); break;
 					case EXPR_MINUS: data = tb_inst_sub(func, dt, l.reg, r.reg, ab); break;
 					case EXPR_TIMES: data = tb_inst_mul(func, dt, l.reg, r.reg, ab); break;
@@ -352,22 +356,19 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 		case EXPR_CMPGE:
 		case EXPR_CMPLT:
 		case EXPR_CMPLE: {
-			ExprIndex lhs = expr_arena.data[e].bin_op.left;
-			ExprIndex rhs = expr_arena.data[e].bin_op.right;
-			IRVal l = gen_expr(func, lhs);
-			IRVal r = gen_expr(func, rhs);
+			IRVal l = gen_expr(func, ep->bin_op.left);
+			IRVal r = gen_expr(func, ep->bin_op.right);
 			
-			type_index = get_common_type(expr_arena.data[lhs].type,
-										 expr_arena.data[rhs].type);
+			TypeIndex type_index = get_common_type(l.type, r.type);
+			Type* restrict type = &type_arena.data[type_index];
+			TB_DataType dt = ctype_to_tbtype(type);
 			
 			cvt_l2r(func, &l, type_index);
 			cvt_l2r(func, &r, type_index);
 			
-			TB_DataType dt = ctype_to_tbtype(&type_arena.data[type_index]);
-			
 			TB_Register data;
 			if (type->kind == KIND_FLOAT || type->kind == KIND_DOUBLE) {
-				switch (expr_arena.data[e].op) {
+				switch (ep->op) {
 					case EXPR_CMPGT: data = tb_inst_cmp_fgt(func, dt, l.reg, r.reg); break;
 					case EXPR_CMPGE: data = tb_inst_cmp_fge(func, dt, l.reg, r.reg); break;
 					case EXPR_CMPLT: data = tb_inst_cmp_flt(func, dt, l.reg, r.reg); break;
@@ -375,7 +376,7 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 					default: abort();
 				}
 			} else {
-				switch (expr_arena.data[e].op) {
+				switch (ep->op) {
 					case EXPR_CMPGT: data = tb_inst_cmp_igt(func, dt, l.reg, r.reg, !type->is_unsigned); break;
 					case EXPR_CMPGE: data = tb_inst_cmp_ige(func, dt, l.reg, r.reg, !type->is_unsigned); break;
 					case EXPR_CMPLT: data = tb_inst_cmp_ilt(func, dt, l.reg, r.reg, !type->is_unsigned); break;
@@ -392,26 +393,6 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 		}
 		case EXPR_PLUS_ASSIGN:
 		case EXPR_MINUS_ASSIGN:
-		if (type->kind == KIND_PTR) {
-			int dir = expr_arena.data[e].op == EXPR_PLUS_ASSIGN ? 1 : -1;
-			int stride = type_arena.data[type->ptr_to].size;
-			
-			// pointer arithmatic
-			IRVal l = gen_expr(func, expr_arena.data[e].bin_op.left);
-			IRVal r = gen_expr(func, expr_arena.data[e].bin_op.right);
-			cvt_l2r(func, &r, type_index);
-			
-			assert(l.value_type == LVALUE);
-			
-			// TODO(NeGate): Maybe some type checking errors?
-			IRVal loaded = l;
-			cvt_l2r(func, &loaded, TYPE_ULONG);
-			
-			TB_Register arith = tb_inst_array_access(func, loaded.reg, r.reg, dir * stride);
-			tb_inst_store(func, TB_TYPE_PTR, l.reg, arith, type->align);
-			return l;
-		}
-		// fallthrough
 		case EXPR_ASSIGN:
 		case EXPR_TIMES_ASSIGN:
 		case EXPR_SLASH_ASSIGN:
@@ -420,25 +401,40 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 		case EXPR_XOR_ASSIGN:
 		case EXPR_SHL_ASSIGN:
 		case EXPR_SHR_ASSIGN: {
-			IRVal l = gen_expr(func, expr_arena.data[e].bin_op.left);
-			IRVal r = gen_expr(func, expr_arena.data[e].bin_op.right);
-			cvt_l2r(func, &r, type_index);
+			IRVal l = gen_expr(func, ep->bin_op.left);
+			IRVal r = gen_expr(func, ep->bin_op.right);
 			
 			assert(l.value_type == LVALUE);
+			Type* restrict type = &type_arena.data[l.type];
 			
+			// Load inputs
 			IRVal ld_l;
-			if (expr_arena.data[e].op != EXPR_ASSIGN) {
+			if (ep->op != EXPR_ASSIGN) {
 				// don't do this conversion for ASSIGN, since it won't
 				// be needing it
 				ld_l = l;
-				cvt_l2r(func, &ld_l, type_index);
+				cvt_l2r(func, &ld_l, l.type);
+			}
+			cvt_l2r(func, &r, l.type);
+			
+			// Try pointer arithmatic
+			if ((ep->op == EXPR_PLUS_ASSIGN || ep->op == EXPR_MINUS_ASSIGN) &&
+				type->kind == KIND_PTR) {
+				int dir = ep->op == EXPR_PLUS_ASSIGN ? 1 : -1;
+				int stride = type_arena.data[type->ptr_to].size;
+				
+				assert(l.value_type == LVALUE);
+				cvt_l2r(func, &r, l.type);
+				
+				TB_Register arith = tb_inst_array_access(func, ld_l.reg, r.reg, dir * stride);
+				tb_inst_store(func, TB_TYPE_PTR, l.reg, arith, type->align);
+				return l;
 			}
 			
 			TB_Register data;
 			TB_DataType dt = ctype_to_tbtype(type);
-			
 			if (type->kind == KIND_FLOAT || type->kind == KIND_DOUBLE) {
-				switch (expr_arena.data[e].op) {
+				switch (ep->op) {
 					case EXPR_ASSIGN: data = r.reg; break;
 					case EXPR_PLUS_ASSIGN: data = tb_inst_fadd(func, dt, ld_l.reg, r.reg); break;
 					case EXPR_MINUS_ASSIGN: data = tb_inst_fsub(func, dt, ld_l.reg, r.reg); break;
@@ -449,7 +445,7 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 			} else {
 				TB_ArithmaticBehavior ab = type->is_unsigned ? TB_CAN_WRAP : TB_ASSUME_NSW;
 				
-				switch (expr_arena.data[e].op) {
+				switch (ep->op) {
 					case EXPR_ASSIGN: data = r.reg; break;
 					case EXPR_PLUS_ASSIGN: data = tb_inst_add(func, dt, ld_l.reg, r.reg, ab); break;
 					case EXPR_MINUS_ASSIGN: data = tb_inst_sub(func, dt, ld_l.reg, r.reg, ab); break;
@@ -494,21 +490,23 @@ static void gen_stmt(TB_Function* func, StmtIndex s) {
 		case STMT_DECL: {
 			//Attribs attrs = stmt_arena.data[s].attrs;
 			TypeIndex type_index = stmt_arena.data[s].decl_type;
-			Type* restrict type = &type_arena.data[type_index];
+			int kind = type_arena.data[type_index].kind;
+			int size = type_arena.data[type_index].size;
+			int align = type_arena.data[type_index].align;
 			
-			TB_Register addr = tb_inst_local(func, type->size, type->align);
+			TB_Register addr = tb_inst_local(func, size, align);
 			stmt_arena.data[s].backing.r = addr;
 			
 			if (stmt_arena.data[s].expr) {
 				IRVal v = gen_expr(func, stmt_arena.data[s].expr);
 				
-				if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
-					TB_Register size_reg = tb_inst_iconst(func, TB_TYPE_I32, type->size);
+				if (kind == KIND_STRUCT || kind == KIND_UNION) {
+					TB_Register size_reg = tb_inst_iconst(func, TB_TYPE_I32, size);
 					
-					tb_inst_memcpy(func, addr, v.reg, size_reg, type->align);
+					tb_inst_memcpy(func, addr, v.reg, size_reg, align);
 				} else {
 					cvt_l2r(func, &v, type_index);
-					tb_inst_store(func, ctype_to_tbtype(type), addr, v.reg, type->align);
+					tb_inst_store(func, ctype_to_tbtype(&type_arena.data[type_index]), addr, v.reg, align);
 				}
 			}
 			break;
@@ -520,12 +518,10 @@ static void gen_stmt(TB_Function* func, StmtIndex s) {
 		case STMT_RETURN: {
 			ExprIndex e = stmt_arena.data[s].expr;
 			
-			TypeIndex type_index = expr_arena.data[e].type;
-			Type* restrict type = &type_arena.data[type_index];
-			
 			IRVal v = gen_expr(func, e);
-			cvt_l2r(func, &v, type_index);
+			Type* restrict type = &type_arena.data[v.type];
 			
+			cvt_l2r(func, &v, v.type);
 			tb_inst_ret(func, ctype_to_tbtype(type), v.reg);
 			break;
 		}
@@ -635,7 +631,9 @@ static void gen_func(TypeIndex type, StmtIndex s) {
 	
 	// Body
 	// NOTE(NeGate): STMT_FUNC_DECL is always followed by a compound block
+	function_type = type;
 	gen_stmt(func, s + 1);
+	function_type = 0;
 	
 	TB_Register last = tb_node_get_last_register(func);
 	if (tb_node_is_label(func, last) || !tb_node_is_terminator(func, last)) {

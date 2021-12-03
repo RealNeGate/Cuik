@@ -181,7 +181,11 @@ TopLevel parse_file(Lexer* l) {
 	for (size_t i = 0; i < expr_arena.count; i++) {
 		if (expr_arena.data[i].op == EXPR_UNKNOWN_SYMBOL) {
 			Symbol* sym = find_global_symbol(expr_arena.data[i].unknown_sym);
+			
+			// TODO(NeGate): Give a decent error message
 			if (!sym) abort();
+			
+			// Parameters are local and a special case how tf
 			assert(sym->storage_class != STORAGE_PARAM);
 			
 			expr_arena.data[i].op = EXPR_SYMBOL;
@@ -279,7 +283,7 @@ static StmtIndex parse_compound_stmt(Lexer* l) {
 			
 			expect(l, ';');
 		} else {
-			StmtIndex s = push_stmt_arena(1);
+			s = push_stmt_arena(1);
 			stmt_arena.data[s].op = STMT_EXPR;
 			stmt_arena.data[s].expr = parse_expr(l);
 			
@@ -438,9 +442,10 @@ static ExprIndex parse_expr_l0(Lexer* l) {
 		long long i = atoll(temp);
 		
 		ExprIndex e = push_expr_arena(1);
-		expr_arena.data[e].op = EXPR_NUM;
-		expr_arena.data[e].type = TYPE_INT;
-		expr_arena.data[e].num = i;
+		expr_arena.data[e] = (Expr) {
+			.op = EXPR_NUM,
+			.num = i
+		};
 		
 		lexer_read(l);
 		return e;
@@ -464,14 +469,7 @@ static ExprIndex parse_expr_l1(Lexer* l) {
 			ExprIndex index = parse_expr(l);
 			expect(l, ']');
 			
-			Type* type = &type_arena.data[expr_arena.data[base].type];
-			TypeIndex elem_type = 0;
-			if (type->kind == KIND_PTR) elem_type = type->ptr_to;
-			else if (type->kind == KIND_ARRAY) elem_type = type->array_of;
-			else abort();
-			
 			expr_arena.data[e].op = EXPR_SUBSCRIPT;
-			expr_arena.data[e].type = elem_type;
 			expr_arena.data[e].subscript.base = base;
 			expr_arena.data[e].subscript.index = index;
 			goto try_again;
@@ -541,7 +539,6 @@ static ExprIndex parse_expr_l1(Lexer* l) {
 			
 			e = push_expr_arena(1);
 			expr_arena.data[e].op = is_inc ? EXPR_POST_INC : EXPR_POST_DEC;
-			expr_arena.data[e].type = expr_arena.data[src].type;
 			expr_arena.data[e].unary_op.src = src;
 		}
 		
@@ -555,12 +552,10 @@ static ExprIndex parse_expr_l2(Lexer* l) {
 		lexer_read(l);
 		
 		ExprIndex value = parse_expr_l1(l);
-		TypeIndex ptr_type = new_pointer(expr_arena.data[value].type);
-		ExprIndex e = push_expr_arena(1);
 		
+		ExprIndex e = push_expr_arena(1);
 		expr_arena.data[e] = (Expr) {
 			.op = EXPR_ADDR,
-			.type = ptr_type,
 			.unary_op.src = value
 		};
 		return e;
@@ -578,15 +573,8 @@ static ExprIndex parse_expr_l2(Lexer* l) {
 		ExprIndex base = e;
 		e = push_expr_arena(1);
 		
-		Type* type = &type_arena.data[expr_arena.data[base].type];
-		TypeIndex deref_type = 0;
-		if (type->kind == KIND_PTR) deref_type = type->ptr_to;
-		else if (type->kind == KIND_ARRAY) deref_type = type->array_of;
-		else abort();
-		
 		expr_arena.data[e] = (Expr) {
 			.op = EXPR_DEREF,
-			.type = deref_type,
 			.unary_op.src = base
 		};
 	}
