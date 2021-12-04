@@ -8,7 +8,9 @@ set cuik_source_files=src/main.c ^
 	src/types.c ^
 	src/parser.c ^
 	src/ir_gen.c ^
-	src/memory_win32.c
+	src/atoms.c ^
+	src/memory_win32.c ^
+	ext/threads_msvc.c
 
 mkdir build
 clang %clang_settings% %cuik_source_files% tinybackend.lib -o build/cuik.exe
