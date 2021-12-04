@@ -1,6 +1,8 @@
 .vs/
 build/
 
+tests/test5.txt
+
 debug.bat
 run.bat
 run4coder.bat

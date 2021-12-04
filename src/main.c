@@ -86,7 +86,7 @@ int main(int argc, char* argv[]) {
 						   1, false);
 	
 	// TODO(NeGate): Preprocess file
-	unsigned char* text = read_entire_file("test3.txt");
+	unsigned char* text = read_entire_file("tests/test3.txt");
 	if (!text) {
 		printf("Failed to read file!\n");
 		return 1;

@@ -1,3 +1,4 @@
+cd W:/Workspace/Cuik
 call vcvars64
 
 set clang_settings=-march=haswell -O0 -Werror -Wall -Wno-unused-function -g -gcodeview -D_CRT_SECURE_NO_WARNINGS
@@ -6,9 +7,9 @@ set cuik_source_files=src/main.c ^
 	src/lexer.c ^
 	src/tls.c ^
 	src/types.c ^
+	src/atoms.c ^
 	src/parser.c ^
 	src/ir_gen.c ^
-	src/atoms.c ^
 	src/memory_win32.c ^
 	ext/threads_msvc.c
 
