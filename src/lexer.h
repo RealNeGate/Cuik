@@ -1,7 +1,8 @@
 #pragma once
 #include "common.h"
 
-typedef enum TokenType {
+// NOTE(NeGate): I originally called it TokenType but windows a bih on god
+typedef enum TknType {
     TOKEN_ACCESSOR = '.',
     
     TOKEN_PLUS = '+',
@@ -53,8 +54,7 @@ typedef enum TokenType {
     TOKEN_EQUALITY      = '=' + 256,  /* ==  */
 	
 	// Keywords
-	TOKEN_KW_alignof = 512,
-	TOKEN_KW_auto,
+	TOKEN_KW_auto = 512,
 	TOKEN_KW_break,
 	TOKEN_KW_case,
 	TOKEN_KW_char,
@@ -89,6 +89,7 @@ typedef enum TokenType {
 	TOKEN_KW_volatile,
 	TOKEN_KW_while,
 	TOKEN_KW_Alignas,
+	TOKEN_KW_Alignof,
 	TOKEN_KW_Atomic,
 	TOKEN_KW_Bool,
 	TOKEN_KW_Complex,
@@ -97,16 +98,16 @@ typedef enum TokenType {
 	TOKEN_KW_Noreturn,
 	TOKEN_KW_Static_assert,
 	TOKEN_KW_Thread_local,
-} TokenType;
+} TknType;
 
 typedef struct Lexer {
-    const char* start;
-    const char* current;
+    const unsigned char* start;
+    const unsigned char* current;
     
     // current token info
-	TokenType token_type;
-    const char* token_start;
-    const char* token_end;
+	TknType token_type;
+    const unsigned char* token_start;
+    const unsigned char* token_end;
 } Lexer;
 
 void lexer_read(Lexer* restrict l);

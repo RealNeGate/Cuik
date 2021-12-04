@@ -10,7 +10,7 @@ impl_arena(ExprIndex, expr_ref_arena)
 
 // for the global hash table
 typedef struct SymbolEntry {
-	char* key;
+	Atom key;
 	Symbol value;
 } SymbolEntry;
 
@@ -20,7 +20,7 @@ static int local_symbol_count = 0;
 static Symbol local_symbols[64 * 1024];
 
 static int typedef_count = 0;
-static char* typedef_names[64 * 1024];
+static Atom typedef_names[64 * 1024];
 static TypeIndex typedefs[64 * 1024];
 
 static void expect(Lexer* l, char ch);
@@ -180,10 +180,13 @@ TopLevel parse_file(Lexer* l) {
 	// walk a tree to check all nodes :)
 	for (size_t i = 0; i < expr_arena.count; i++) {
 		if (expr_arena.data[i].op == EXPR_UNKNOWN_SYMBOL) {
-			Symbol* sym = find_global_symbol(expr_arena.data[i].unknown_sym);
+			Symbol* sym = find_global_symbol((char*)expr_arena.data[i].unknown_sym);
 			
 			// TODO(NeGate): Give a decent error message
-			if (!sym) abort();
+			if (!sym) {
+				printf("Could not find symbol: %s\n", (char*)expr_arena.data[i].unknown_sym);
+				abort();
+			}
 			
 			// Parameters are local and a special case how tf
 			assert(sym->storage_class != STORAGE_PARAM);
@@ -197,15 +200,15 @@ TopLevel parse_file(Lexer* l) {
 }
 
 static Symbol* find_local_symbol(Lexer* l) {
-	const char* name = l->token_start;
+	const unsigned char* name = l->token_start;
 	size_t length = l->token_end - l->token_start;
 	
 	// Try local variables
 	size_t i = local_symbol_count;
 	while (i--) {
 		// TODO(NeGate): Implement string interning
-		const char* sym = local_symbols[i].name;
-		size_t sym_length = strlen(sym);
+		const unsigned char* sym = local_symbols[i].name;
+		size_t sym_length = strlen((const char*)sym);
 		
 		if (sym_length == length && memcmp(name, sym, length) == 0) {
 			return &local_symbols[i];
@@ -424,7 +427,7 @@ static ExprIndex parse_expr_l0(Lexer* l) {
 			}
 		} else {
 			// We'll defer any global identifier resolution
-			char* name = atoms_put(l->token_end - l->token_start, l->token_start);
+			Atom name = atoms_put(l->token_end - l->token_start, l->token_start);
 			
 			expr_arena.data[e] = (Expr) {
 				.op = EXPR_UNKNOWN_SYMBOL,
@@ -482,7 +485,7 @@ static ExprIndex parse_expr_l1(Lexer* l) {
 				generic_error(l, "Expected identifier after member access a.b");
 			}
 			
-			char* name = atoms_put(l->token_end - l->token_start, l->token_start);
+			Atom name = atoms_put(l->token_end - l->token_start, l->token_start);
 			
 			ExprIndex base = e;
 			e = push_expr_arena(1);
@@ -490,6 +493,8 @@ static ExprIndex parse_expr_l1(Lexer* l) {
 				.op = EXPR_DOT,
 				.dot = { base, name }
 			};
+			
+			lexer_read(l);
 			goto try_again;
 		}
 		
@@ -722,7 +727,7 @@ static ExprIndex parse_expr(Lexer* l) {
 ////////////////////////////////
 // TYPES
 ////////////////////////////////
-static TypeIndex parse_type_suffix(Lexer* l, TypeIndex type, char* name);
+static TypeIndex parse_type_suffix(Lexer* l, TypeIndex type, Atom name);
 
 static Decl parse_declarator(Lexer* l, TypeIndex type) {
 	// handle pointers
@@ -783,7 +788,7 @@ static Decl parse_declarator(Lexer* l, TypeIndex type) {
 		return d;
 	}
 	
-	char* name = NULL;
+	Atom name = NULL;
 	if (l->token_type == TOKEN_IDENTIFIER) {
 		name = atoms_put(l->token_end - l->token_start, l->token_start);
 		lexer_read(l);
@@ -793,7 +798,7 @@ static Decl parse_declarator(Lexer* l, TypeIndex type) {
 	return (Decl){ type, name };
 }
 
-static TypeIndex parse_type_suffix(Lexer* l, TypeIndex type, char* name) {
+static TypeIndex parse_type_suffix(Lexer* l, TypeIndex type, Atom name) {
 	// type suffixes like array [] and function ()
 	if (l->token_type == '(') {
 		lexer_read(l);
@@ -924,7 +929,7 @@ static TypeIndex parse_declspec(Lexer* l, Attribs* attr) {
 				if (counter) goto done;
 				lexer_read(l);
 				
-				char* name = NULL;
+				Atom name = NULL;
 				if (l->token_type == TOKEN_IDENTIFIER) {
 					name = atoms_put(l->token_end - l->token_start, l->token_start);
 					lexer_read(l);
@@ -956,19 +961,23 @@ static TypeIndex parse_declspec(Lexer* l, Attribs* attr) {
 							generic_error(l, "Naw dawg");
 						}
 						
-						offset = align_up(offset, type_arena.data[member_type].align);
+						int member_align = type_arena.data[member_type].align;
+						int member_size = type_arena.data[member_type].size;
+						
+						offset = align_up(offset, member_align);
 						
 						// TODO(NeGate): Error check that no attribs are set
 						tls_push(sizeof(Member));
 						members[member_count++] = (Member) {
 							.type = member_type,
-							.name = decl.name
+							.name = decl.name,
+							.offset = offset,
+							.align = member_align
 						};
 						
-						offset += type_arena.data[member_type].size;
-						
-						if (type_arena.data[member_type].align > align) {
-							align = type_arena.data[member_type].align;
+						offset += member_size;
+						if (member_align > align) {
+							align = member_align;
 						}
 						
 						expect(l, ';');
@@ -1003,7 +1012,7 @@ static TypeIndex parse_declspec(Lexer* l, Attribs* attr) {
 				
 				int i = typedef_count;
 				while (i--) {
-					size_t typedef_len = strlen(typedef_names[i]);
+					size_t typedef_len = strlen((const char*)typedef_names[i]);
 					
 					if (len == typedef_len &&
 						memcmp(l->token_start, typedef_names[i], len) == 0) {
@@ -1126,7 +1135,7 @@ static bool is_typename(Lexer* l) {
 			
 			int i = typedef_count;
 			while (i--) {
-				size_t typedef_len = strlen(typedef_names[i]);
+				size_t typedef_len = strlen((const char*)typedef_names[i]);
 				
 				if (len == typedef_len &&
 					memcmp(l->token_start, typedef_names[i], len) == 0) {

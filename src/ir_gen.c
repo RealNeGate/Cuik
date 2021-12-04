@@ -30,6 +30,7 @@ static TB_DataType ctype_to_tbtype(const Type* t) {
 		case KIND_DOUBLE: return TB_TYPE_F64;
 		case KIND_ENUM: return TB_TYPE_I32;
 		case KIND_PTR: return TB_TYPE_PTR;
+		case KIND_ARRAY: return TB_TYPE_PTR;
 		case KIND_FUNC: return TB_TYPE_PTR;
 		default: abort(); // TODO
 	}
@@ -39,8 +40,13 @@ static void cvt_l2r(TB_Function* func, IRVal* restrict v, TypeIndex dst_type) {
 	Type* src = &type_arena.data[v->type];
 	if (v->value_type == LVALUE) {
 		v->value_type = RVALUE;
-		
 		v->reg = tb_inst_load(func, ctype_to_tbtype(src), v->reg, src->align);
+	} else if (v->value_type == LVALUE_FUNC) {
+		v->value_type = RVALUE;
+		v->reg = tb_inst_get_func_address(func, v->func);
+	} else if (v->value_type == LVALUE_EFUNC) {
+		v->value_type = RVALUE;
+		v->reg = tb_inst_get_extern_address(func, v->ext);
 	}
 	
 	// Cast into correct type
@@ -206,7 +212,8 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 			IRVal base = gen_expr(func, ep->subscript.base);
 			IRVal index = gen_expr(func, ep->subscript.index);
 			
-			if (type_arena.data[index.type].kind == KIND_PTR) swap(base, index);
+			if (type_arena.data[index.type].kind == KIND_PTR ||
+				type_arena.data[index.type].kind == KIND_ARRAY) swap(base, index);
 			
 			assert(base.value_type == LVALUE);
 			cvt_l2r(func, &index, TYPE_ULONG);
@@ -214,7 +221,7 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 			TypeIndex element_type = type_arena.data[base.type].ptr_to;
 			int stride = type_arena.data[element_type].size;
 			return (IRVal) {
-				.value_type = RVALUE,
+				.value_type = LVALUE,
 				.type = element_type,
 				.reg = tb_inst_array_access(func, base.reg, index.reg, stride)
 			};
@@ -223,7 +230,7 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 			IRVal src = gen_expr(func, ep->dot.base);
 			assert(src.value_type == LVALUE);
 			
-			char* name = ep->dot.name;
+			Atom name = ep->dot.name;
 			Type* restrict record_type = &type_arena.data[src.type];
 			
 			MemberIndex start = record_type->record.kids_start;
@@ -232,7 +239,7 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 				Member* member = &member_arena.data[m];
 				
 				// TODO(NeGate): String interning would be nice
-				if (strcmp(name, member->name) == 0) {
+				if (cstr_equals(name, member->name)) {
 					assert(!member->is_bitfield);
 					
 					return (IRVal) {
@@ -484,7 +491,7 @@ static void gen_stmt(TB_Function* func, StmtIndex s) {
 			break;
 		}
 		case STMT_FUNC_DECL: {
-			// TODO(NeGate): No nested functions
+			// TODO(NeGate): No nested functions... maybe?
 			abort();
 		}
 		case STMT_DECL: {
@@ -507,6 +514,15 @@ static void gen_stmt(TB_Function* func, StmtIndex s) {
 				} else {
 					cvt_l2r(func, &v, type_index);
 					tb_inst_store(func, ctype_to_tbtype(&type_arena.data[type_index]), addr, v.reg, align);
+				}
+			} else {
+				// uninitialized
+				if (kind == KIND_STRUCT) {
+					// TODO(NeGate): Remove this!!
+					TB_Register size_reg = tb_inst_iconst(func, TB_TYPE_I32, size);
+					TB_Register zero = tb_inst_iconst(func, TB_TYPE_I8, 0);
+					
+					tb_inst_memset(func, addr, zero, size_reg, align);
 				}
 			}
 			break;
@@ -593,23 +609,18 @@ static void gen_stmt(TB_Function* func, StmtIndex s) {
 	}
 }
 
-static void gen_func(TypeIndex type, StmtIndex s) {
-	// Clear TLS
-	tls_init();
-	
+static void gen_func_header(TypeIndex type, StmtIndex s) {
 	const Type* return_type = &type_arena.data[type_arena.data[type].func.return_type];
 	
-	TB_Function* func = tb_function_create(mod, stmt_arena.data[s].decl_name, ctype_to_tbtype(return_type));
+	TB_Function* func = tb_function_create(mod, (char*) stmt_arena.data[s].decl_name, ctype_to_tbtype(return_type));
 	stmt_arena.data[s].backing.f = func;
 	
 	// Parameters
 	ArgIndex arg_start = type_arena.data[type].func.arg_start;
 	ArgIndex arg_end = type_arena.data[type].func.arg_end;
-	ArgIndex arg_count = arg_end - arg_start;
 	
-	TB_Register* params = parameter_map = tls_push(arg_count * sizeof(TB_Register));
-	for (int i = 0; i < arg_count; i++) {
-		Arg* a = &arg_arena.data[arg_start + i];
+	for (ArgIndex i = arg_start; i < arg_end; i++) {
+		Arg* a = &arg_arena.data[i];
 		
 		// Decide on the data type
 		TB_DataType dt;
@@ -621,12 +632,27 @@ static void gen_func(TypeIndex type, StmtIndex s) {
 			dt = ctype_to_tbtype(arg_type);
 		}
 		
-		params[i] = tb_inst_param(func, dt);
+		assert(tb_inst_param(func, dt) == 2 + (i - arg_start));
 	}
+}
+
+static void gen_func_body(TypeIndex type, StmtIndex s) {
+	// Clear TLS
+	tls_init();
+	
+	TB_Function* func = stmt_arena.data[s].backing.f;
+	
+	// Parameters
+	ArgIndex arg_start = type_arena.data[type].func.arg_start;
+	ArgIndex arg_end = type_arena.data[type].func.arg_end;
+	ArgIndex arg_count = arg_end - arg_start;
+	
+	TB_Register* params = parameter_map = tls_push(arg_count * sizeof(TB_Register));
 	
 	// give them stack slots
 	for (int i = 0; i < arg_count; i++) {
-		params[i] = tb_inst_param_addr(func, params[i]);
+		// TODO(NeGate): Hacky but a simple way to infer the register for the parameter
+		params[i] = tb_inst_param_addr(func, 2 + i);
 	}
 	
 	// Body
@@ -635,6 +661,7 @@ static void gen_func(TypeIndex type, StmtIndex s) {
 	gen_stmt(func, s + 1);
 	function_type = 0;
 	
+	Type* return_type = &type_arena.data[type_arena.data[type].func.return_type];
 	TB_Register last = tb_node_get_last_register(func);
 	if (tb_node_is_label(func, last) || !tb_node_is_terminator(func, last)) {
 		if (return_type->kind != KIND_VOID) {
@@ -651,7 +678,7 @@ static void gen_func(TypeIndex type, StmtIndex s) {
 	tb_module_compile_func(mod, func);
 }
 
-void gen_ir(TopLevel tl) {
+void gen_ir_stage1(TopLevel tl) {
 	size_t count = arrlen(tl.arr);
 	
 	for (size_t i = 0; i  < count; i++) {
@@ -661,7 +688,7 @@ void gen_ir(TopLevel tl) {
 			TypeIndex type = stmt_arena.data[s].decl_type;
 			assert(type_arena.data[type].kind == KIND_FUNC);
 			
-			gen_func(type, s);
+			gen_func_header(type, s);
 		} else if (stmt_arena.data[s].op == STMT_DECL) {
 			TypeIndex type = stmt_arena.data[s].decl_type;
 			
@@ -670,7 +697,22 @@ void gen_ir(TopLevel tl) {
 				abort();
 			}
 			
-			stmt_arena.data[s].backing.e = tb_module_extern(mod, stmt_arena.data[s].decl_name);
+			stmt_arena.data[s].backing.e = tb_module_extern(mod, (char*) stmt_arena.data[s].decl_name);
+		}
+	}
+}
+
+void gen_ir_stage2(TopLevel tl) {
+	size_t count = arrlen(tl.arr);
+	
+	for (size_t i = 0; i  < count; i++) {
+		StmtIndex s = tl.arr[i];
+		
+		if (stmt_arena.data[s].op == STMT_FUNC_DECL) {
+			TypeIndex type = stmt_arena.data[s].decl_type;
+			assert(type_arena.data[type].kind == KIND_FUNC);
+			
+			gen_func_body(type, s);
 		}
 	}
 }

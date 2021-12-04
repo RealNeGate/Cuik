@@ -3,6 +3,8 @@
 #include "ir_gen.h"
 #include "atoms.h"
 #include <time.h>
+#include <stdatomic.h>
+#include "../ext/threads.h"
 
 #include <sys/stat.h>
 
@@ -12,7 +14,7 @@
 #define stat _stat
 #endif
 
-static char* read_entire_file(const char* filepath) {
+static unsigned char* read_entire_file(const char* filepath) {
 	FILE* file = fopen(filepath, "rb");
 	if (!file) return NULL;
 	
@@ -22,7 +24,7 @@ static char* read_entire_file(const char* filepath) {
 	if (fstat(descriptor, &file_stats) == -1) return NULL;
 	
 	int length = file_stats.st_size;
-	char* data = malloc(length + 1);
+	unsigned char* data = malloc(length + 1);
 	
 	fseek(file, 0, SEEK_SET);
 	size_t length_read = fread(data, 1, length, file);
@@ -52,14 +54,27 @@ int main(int argc, char* argv[]) {
 				"}\n\n", i);
 	}
 	
-	fprintf(file, "\nint main(void* hInstance, void* hPrevInstance, char* lpCmdLine, int nCmdShow) {\n\treturn 0;\n}\n\n");
+	fprintf(file, "\nint WinMain(void* hInstance, void* hPrevInstance, char* lpCmdLine, int nCmdShow) {\n\treturn 0;\n}\n\n");
 	fclose(file);*/
 	
-	Lexer l = (Lexer) { text };
+	unsigned char* text = read_entire_file("test5.txt");
+	if (!text) {
+		printf("Failed to read file!\n");
+		return 1;
+	}
+	
+	clock_t t1 = clock();
+	
+	Lexer l = (Lexer) { text, text };
     do {
         lexer_read(&l);
-        printf("%d\t%.*s\n", l.token_type, (int)(l.token_end - l.token_start), l.token_start);
+        //printf("%d\t%.*s\n", l.token_type, (int)(l.token_end - l.token_start), l.token_start);
     } while (l.token_type);
+	
+	clock_t t2 = clock();
+	double delta_ms = ((t2 - t1) / (double)CLOCKS_PER_SEC) * 1000.0;
+	printf("lexing took %f ms\n", delta_ms);
+	printf("%f gigs / second\n", (135889014.0 / (double)(delta_ms / 1000.0)) / 1000000000.0);
 #else
 	clock_t t1 = clock();
 	
@@ -71,7 +86,7 @@ int main(int argc, char* argv[]) {
 						   1, false);
 	
 	// TODO(NeGate): Preprocess file
-	char* text = read_entire_file("test5.txt");
+	unsigned char* text = read_entire_file("test3.txt");
 	if (!text) {
 		printf("Failed to read file!\n");
 		return 1;
@@ -82,7 +97,8 @@ int main(int argc, char* argv[]) {
 	TopLevel tl = parse_file(&(Lexer) { text, text });
 	
 	// Generate IR
-	gen_ir(tl);
+	gen_ir_stage1(tl);
+	gen_ir_stage2(tl);
 	
 	// Compile
 	if (!tb_module_compile(mod)) abort();

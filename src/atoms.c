@@ -23,7 +23,7 @@ void atoms_deinit() {
 	}
 }
 
-Atom atoms_get(size_t len, const char* str) {
+Atom atoms_get(size_t len, const unsigned char* str) {
 	/*const char first_char = str[0];
 	Atoms_Segment* c = atoms_base;
 	
@@ -48,7 +48,7 @@ Atom atoms_get(size_t len, const char* str) {
 	return NULL;
 }
 
-Atom atoms_put(size_t len, const char* str) {
+Atom atoms_put(size_t len, const unsigned char* str) {
 	assert(len > 0);
 	
 	//Atom test = atoms_get(len, str);
@@ -64,7 +64,7 @@ Atom atoms_put(size_t len, const char* str) {
 	assert(amount_needed < sizeof(atoms_base->data));
 	
 	if (atoms_top->used + amount_needed < sizeof(atoms_base->data)) {
-		char* ptr = &atoms_top->data[atoms_top->used];
+		unsigned char* ptr = &atoms_top->data[atoms_top->used];
 		atoms_top->used += amount_needed;
 		
 		memcpy(ptr, str, len);
@@ -91,6 +91,6 @@ Atom atoms_put(size_t len, const char* str) {
 	}
 }
 
-Atom atoms_putc(const char* str) {
-	return atoms_put(strlen(str), str);
+Atom atoms_putc(const unsigned char* str) {
+	return atoms_put(strlen((const char*)str), str);
 }

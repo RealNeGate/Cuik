@@ -1,6 +1,10 @@
 
+typedef int BOOL;
+typedef long LONG;
 typedef unsigned int UINT;
 typedef unsigned int DWORD;
+
+typedef short ATOM;
 
 typedef void* HWND;
 typedef void* HICON;
@@ -9,6 +13,7 @@ typedef void* HBRUSH;
 typedef void* HCURSOR;
 typedef void* HMODULE;
 typedef void* LPVOID;
+typedef void* LRESULT;
 typedef const char* LPCSTR;
 
 typedef int INT_PTR, *PINT_PTR;
@@ -24,6 +29,11 @@ typedef LONG_PTR            LRESULT;
 typedef void* HINSTANCE;
 typedef void(*WNDPROC)(HWND, UINT, WPARAM, LPARAM);
 
+typedef struct tagPOINT {
+  LONG x;
+  LONG y;
+} POINT, *PPOINT;
+
 typedef struct tagWNDCLASSA {
   UINT      style;
   WNDPROC   lpfnWndProc;
@@ -37,28 +47,59 @@ typedef struct tagWNDCLASSA {
   LPCSTR    lpszClassName;
 } WNDCLASSA, *PWNDCLASSA, *NPWNDCLASSA, *LPWNDCLASSA;
 
-HWND CreateWindowExA(
-  DWORD     dwExStyle,
-  LPCSTR    lpClassName,
-  LPCSTR    lpWindowName,
-  DWORD     dwStyle,
-  int       X,
-  int       Y,
-  int       nWidth,
-  int       nHeight,
-  HWND      hWndParent,
-  HMENU     hMenu,
-  HINSTANCE hInstance,
-  LPVOID    lpParam
-);
+typedef struct tagMSG {
+  HWND   hwnd;
+  UINT   message;
+  WPARAM wParam;
+  LPARAM lParam;
+  DWORD  time;
+  POINT  pt;
+  DWORD  lPrivate;
+} MSG, *PMSG, *NPMSG, *LPMSG;
 
-HMODULE GetModuleHandleA(
-  LPCSTR lpModuleName
-);
+HMODULE GetModuleHandleA(LPCSTR lpModuleName);
+LRESULT DefWindowProcA(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam);
+BOOL GetMessageA(LPMSG lpMsg, HWND hWnd, UINT wMsgFilterMin, UINT wMsgFilterMax);
+BOOL TranslateMessage(const MSG *lpMsg);
+LRESULT DispatchMessageA(const MSG *lpMsg);
+BOOL ShowWindow(HWND hWnd, int nCmdShow);
+ATOM RegisterClassA(const WNDCLASSA* wc);
+BOOL SetFocus(HWND hWnd);
+DWORD GetLastError();
 
-int main() {
+HWND CreateWindowExA(DWORD dwExStyle, LPCSTR lpClassName, 
+	LPCSTR lpWindowName, DWORD dwStyle,
+	int X, int Y, int nWidth, int nHeight,
+	HWND hWndParent, HMENU hMenu, HINSTANCE hInstance, LPVOID lpParam);
+
+int entry() {
+	char name[4];
+	name[0] = 84;
+	name[1] = 83;
+	name[2] = 84;
+	name[3] = 0;
+
 	WNDCLASSA wc;
 	wc.hInstance = GetModuleHandleA(0);
+	wc.lpfnWndProc = DefWindowProcA;
+	wc.lpszClassName = &name;
+	RegisterClassA(&wc);
+	GetLastError();
+	
+	HWND window = CreateWindowExA(262144, &name,
+									&name, 768,
+									400, 400, 1600, 900,
+								    0, 0, wc.hInstance, 0);
+
+	ShowWindow(window, 10);
+	SetFocus(window);
+	
+	while (1) {
+		MSG msg;
+		GetMessageA(&msg, 0, 0, 0);
+		TranslateMessage(&msg);
+		DispatchMessageA(&msg);
+	}
 
 	return 0;
 }

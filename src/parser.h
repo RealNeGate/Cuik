@@ -38,7 +38,7 @@ typedef enum TypeKind {
 // Used by unions and structs
 typedef struct Member {
 	TypeIndex type;
-	char* name;
+	Atom name;
 	
 	int align;
 	int offset;
@@ -58,7 +58,7 @@ typedef struct Attribs {
 
 typedef struct Arg {
 	TypeIndex type;
-	char* name;
+	Atom name;
 } Arg;
 
 typedef struct Type {
@@ -81,7 +81,7 @@ typedef struct Type {
 		
 		// Function
 		struct {
-			char* name;
+			Atom name;
 			TypeIndex return_type;
 			ArgIndex arg_start, arg_end;
 			
@@ -90,7 +90,7 @@ typedef struct Type {
 		
 		// Structs/Unions
 		struct {
-			char* name;
+			Atom name;
 			MemberIndex kids_start, kids_end;
 		} record;
     };
@@ -202,7 +202,7 @@ typedef struct Stmt {
 			// STMT_DECL or STMT_FUNC_DECL
 			Attribs attrs;
 			TypeIndex decl_type : 24;
-			char* decl_name;
+			Atom decl_name;
 		};
 		struct {
 			// STMT_IF, STMT_FOR, STMT_WHILE, STMT_DO_WHILE
@@ -230,7 +230,7 @@ typedef struct Expr {
 	ExprOp op;
 	
 	union {
-		char* unknown_sym;
+		Atom unknown_sym;
 		StmtIndex symbol;
 		
 		// EXPR_PARAM
@@ -247,7 +247,7 @@ typedef struct Expr {
 		} unary_op;
 		struct {
 			ExprIndex base;
-			char* name;
+			Atom name;
 		} dot;
 		struct {
 			ExprIndex target;
@@ -259,7 +259,7 @@ typedef struct Expr {
 
 typedef struct Decl {
 	TypeIndex type;
-	char* name;
+	Atom name;
 } Decl;
 
 typedef enum StorageClass {
@@ -275,7 +275,7 @@ typedef enum StorageClass {
 } StorageClass;
 
 typedef struct Symbol {
-	char* name;
+	Atom name;
 	TypeIndex type : 24;
 	StorageClass storage_class : 8;
 	

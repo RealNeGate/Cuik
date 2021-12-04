@@ -7,5 +7,9 @@
 
 extern TB_Module* mod;
 
-void gen_ir(TopLevel tl);
+// stage 1 is forward declarations
+void gen_ir_stage1(TopLevel tl);
+
+// stage 2 is definitions
+void gen_ir_stage2(TopLevel tl);
 
