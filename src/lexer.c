@@ -48,26 +48,43 @@ const char keywords[][16] = {
 	"_Thread_local"
 };
 
-// AUTO-GENERATED
-// A-Z a-z 0-9 _
-static _Alignas(64) uint8_t identifier_char_tbl[] = {
-	0x00,0x00,0x00,0x00,
-	0x00,0x00,0xff,0x03,
-	0xfe,0xff,0xff,0x87,
-	0xfe,0xff,0xff,0x07,
-	0x00,0x00,0x00,0x00,
-	0x00,0x00,0x00,0x00,
-	0x00,0x00,0x00,0x00,
-	0x00,0x00,0x00,0x00,
+enum {
+	// A-Z a-z _
+	CHAR_CLASS_IDENT_START = 1,
+	// A-Z a-z 0-9 _
+	CHAR_CLASS_IDENT,
+	// 0-9
+	CHAR_CLASS_NUMBER,
+	// ;{}()
+	CHAR_CLASS_SEPARATOR,
+	// # ##
+	CHAR_CLASS_MULTICHAR,
+	// + ++ +=
+	CHAR_CLASS_MULTICHAR2,
+	// > >= >> >>= < <= << <<=
+	CHAR_CLASS_MULTICHAR3,
+	// - -> -- -=
+	CHAR_CLASS_MULTICHAR4
 };
 
-__attribute__((always_inline))
-static bool is_identifier_not_first_char(char ch) {
-	size_t i = ch;
-	size_t index = i / 8;
-	size_t shift = i & 7;
-	return (identifier_char_tbl[index] >> shift) & 1;
-}
+static _Alignas(64) uint8_t char_classes[256] = {
+	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+	0x00,0x06,0x00,0x05,0x00,0x00,0x06,0x00,0x04,0x04,0x06,0x06,0x04,0x08,0x04,0x06,
+	0x03,0x03,0x03,0x03,0x03,0x03,0x03,0x03,0x03,0x03,0x00,0x04,0x07,0x06,0x07,0x00,
+	0x00,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x02,
+	0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x04,0x00,0x04,0x06,0x02,
+	0x00,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x02,
+	0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x04,0x06,0x04,0x00,0x00,
+	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+};
 
 // AUTO-GENERATED
 // \t \n \r *space*
@@ -135,7 +152,6 @@ TknType classify_ident(const unsigned char* restrict str, size_t len) {
 		15,7,13,17,42,43,1,12,6,8,31,2,9,11,24,28,18,16,33,10,23,29,37,14,0,36,3,22,4,25,27,26,21,40,32,30,35,39,5,19,34,41,38,20,
 	};
 	
-	
 	// HASH STRING
 	uint32_t n = hash_with_len(str, len);
 	
@@ -164,189 +180,118 @@ TknType classify_ident(const unsigned char* restrict str, size_t len) {
 							  _SIDD_NEGATIVE_POLARITY |
 							  _SIDD_BIT_MASK);
 	
-	return result == len ? (512 + v) : TOKEN_IDENTIFIER;
+	return result == len ? (640 + v) : TOKEN_IDENTIFIER;
 }
 
 void lexer_read(Lexer* restrict l) {
     const unsigned char* current = l->current;
     
+	// Skip any whitespace and comments
     // branchless space skip
     current += (*current == ' ');
 	
-    redo_lex:;
-    const unsigned char* start = current;
-    switch (*start) {
-        case '\0':
-        l->token_type = '\0';
-        break;
-        case '\r':
-        current++;
-        
-        // it's expected these are next to each other because
-        // Windows, fast path a fallthrough
-        if (*current != '\n') goto redo_lex;
-        case '\n': {
-            // Do a branchless SIMD skip of up to 16 tabs after a newline.
+	// NOTE(NeGate): We canonicalized spaces \t \r \v
+	// in the preprocessor so we don't need to handle them
+	redo_lex: {
+		if (*current == '\0') {
+			// quit, we're done
+			l->token_type = '\0';
+			return;
+		} else if (*current == '\n') {
+			// Do a branchless SIMD skip of up to 16 tabs after a newline.
             __m128i chars = _mm_loadu_si128((__m128i *)current);
             int len = __builtin_ffs(~_mm_movemask_epi8(_mm_cmpeq_epi8(chars, _mm_set1_epi8('\n'))));
             current += len - 1;
             goto redo_lex;
-        }
-        case ' ':
-        case '\t':
-        case '\v':
-        // slow path
-        do {
-            current++;
-        } while (is_space(*current));
-        goto redo_lex;
-        case '\"':
-        current++;
-		
-        do {
-            __m128i chars = _mm_loadu_si128((__m128i *)current);
-            int len = __builtin_ffs(_mm_movemask_epi8(_mm_cmpeq_epi8(chars, _mm_set1_epi8('\"'))));
-            
-            if (len) {
-                current += len;
-                if (current[-1] == '\"' && current[-2] != '\\') break;
-            } else {
-                current += 16;
-            }
-        } while (*current);
-        
-        l->token_type = TOKEN_STRING;
-        break;
-        case '+':
-        current++;
-        
-        if (*current == '+') {
-            current++;
-            l->token_type = TOKEN_INCREMENT;
-            break;
-        } else if (*current == '=') {
-            current++;
-            l->token_type = TOKEN_PLUS_EQUAL;
-            break;
-        }
-        
-        l->token_type = TOKEN_PLUS;
-        break;
-        case '-':
-        current++;
-		
-        if (*current == '-') {
-            current++;
-            l->token_type = TOKEN_DECREMENT;
-            break;
-        } else if (*current == '>') {
-            current++;
-            l->token_type = TOKEN_ARROW;
-            break;
-        } else if (*current == '=') {
-            current++;
-            l->token_type = TOKEN_MINUS_EQUAL;
-            break;
-        }
-        
-        l->token_type = TOKEN_MINUS;
-        break;
-        case '>': {
-			current++;
-			if (*current == '>') {
-				current++;
-				
-				if (*current == '=') {
-					current++;
-					l->token_type = TOKEN_RIGHT_SHIFT_EQUAL;
-				} else {
-					l->token_type = TOKEN_RIGHT_SHIFT;
-				}
-				break;
+		} else if (*current == ' ' || *current == '\t') {
+			// slow path
+			do { current++; } while (is_space(*current));
+			goto redo_lex;
+		} else if (*current == '/') {
+			if (current[1] == '/') {
+				do { current++; } while (*current && *current != '\n');
+				goto redo_lex;
 			}
-			
-			l->token_type = '>';
-			break;
 		}
-		case '<': {
-			current++;
-			if (*current == '<') {
+	}
+	
+	////////////////////////////////
+	// Try to actually parse a token
+	////////////////////////////////
+    const unsigned char* start = current;
+	uint8_t initial_class = char_classes[*current++];
+	
+	switch (initial_class) {
+		case CHAR_CLASS_IDENT: {
+			while (char_classes[*current] >= CHAR_CLASS_IDENT &&
+				   char_classes[*current] <= CHAR_CLASS_NUMBER) {
 				current++;
-				
-				if (*current == '=') {
-					current++;
-					l->token_type = TOKEN_LEFT_SHIFT_EQUAL;
-				} else {
-					l->token_type = TOKEN_LEFT_SHIFT;
-				}
-				break;
 			}
-			
-			l->token_type = '<';
-			break;
-		}
-		case '*':
-		case '/':
-		case '&':
-		case '%':
-		case '|':
-		case '^':
-		case '!':
-		case '=': {
-			int t = *current++;
-			if (*current == '=') {
-				current++;
-				t += 256;
-			}
-			
-			l->token_type = t;
-			break;
-		}
-		case '#':
-		current++;
-		
-		if (*current == '#') {
-			current++;
-			l->token_type = TOKEN_DOUBLE_HASH;
-			break;
-		}
-		
-		l->token_type = TOKEN_HASH;
-		goto redo_lex;
-		case '~':
-		case '.':
-		case ';':
-		case ',':
-		case '(':
-		case ')':
-		case '[':
-		case ']':
-		case '{':
-		case '}':
-		current++;
-		l->token_type = *start;
-		break;
-		case 'A' ... 'Z':
-		case 'a' ... 'z':
-		case '_': {
-			__builtin_prefetch(identifier_char_tbl);
-			do {
-				current++;
-			} while (is_identifier_not_first_char(*current));
 			
 			l->token_type = classify_ident(start, current - start);
 			break;
 		}
-		case '0' ... '9':
-		do {
-			current++;
-		} while (*current >= '0' && *current <= '9');
-		l->token_type = TOKEN_NUMBER;
-		break;
-		default: 
-		l->token_type = TOKEN_INVALID;
+		case CHAR_CLASS_NUMBER: {
+			while (char_classes[*current] & CHAR_CLASS_NUMBER) { current++; }
+			l->token_type = TOKEN_NUMBER;
+			break;
+		}
+		case CHAR_CLASS_SEPARATOR: {
+			l->token_type = *start;
+			break;
+		}
+		case CHAR_CLASS_MULTICHAR: {
+			l->token_type = *start;
+			if (*current == *start) {
+				l->token_type += 256;
+				current++;
+			}
+			break;
+		}
+		case CHAR_CLASS_MULTICHAR2: {
+			l->token_type = *start;
+			if (*current == '=') {
+				l->token_type += 256;
+				current++;
+			} else if (*current == *start && *current != '*') {
+				l->token_type += 256;
+				current++;
+			}
+			break;
+		}
+		case CHAR_CLASS_MULTICHAR3: {
+			l->token_type = *start;
+			if (*current == '=') {
+				l->token_type += 256;
+				current++;
+			} else if (*current == *start) {
+				l->token_type += 384;
+				current++;
+				
+				if (*current == '=') {
+					l->token_type += 128;
+					current++;
+				}
+			}
+			break;
+		}
+		case CHAR_CLASS_MULTICHAR4: {
+			l->token_type = *start;
+			
+			if (*current == '-') {
+				l->token_type = TOKEN_DECREMENT;
+				current++;
+			} else if (*current == '=') {
+				l->token_type = TOKEN_MINUS_EQUAL;
+				current++;
+			} else if (*current == '>') {
+				l->token_type = TOKEN_ARROW;
+				current++;
+			}
+			break;
+		}
+		default:
 		abort();
-		break;
 	}
 	
 	l->token_start = start;

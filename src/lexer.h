@@ -32,14 +32,9 @@ typedef enum TknType {
     
     TOKEN_INVALID,
 	
-    TOKEN_INCREMENT,                  /* ++  */
-    TOKEN_DECREMENT,                  /* --  */
-    TOKEN_LEFT_SHIFT,                 /* <<  */
-    TOKEN_RIGHT_SHIFT,                /* >>  */
-	TOKEN_LEFT_SHIFT_EQUAL,           /* >>= */
-	TOKEN_RIGHT_SHIFT_EQUAL,          /* <<= */
     TOKEN_ARROW,                      /* ->  */
     TOKEN_DOUBLE_HASH   = '#' + 256,  /* ##  */
+	
     TOKEN_PLUS_EQUAL    = '+' + 256,  /* +=  */
     TOKEN_MINUS_EQUAL   = '-' + 256,  /* -=  */
     TOKEN_TIMES_EQUAL   = '*' + 256,  /* *=  */
@@ -49,12 +44,20 @@ typedef enum TknType {
     TOKEN_AND_EQUAL     = '&' + 256,  /* &=  */
     TOKEN_XOR_EQUAL     = '^' + 256,  /* ^=  */
     TOKEN_NOT_EQUAL     = '!' + 256,  /* !=  */
+    TOKEN_EQUALITY      = '=' + 256,  /* ==  */
     TOKEN_GREATER_EQUAL = '>' + 256,  /* >=  */
     TOKEN_LESS_EQUAL    = '<' + 256,  /* <=  */
-    TOKEN_EQUALITY      = '=' + 256,  /* ==  */
+	
+    TOKEN_LEFT_SHIFT    = '<' + 384,  /* <<  */
+    TOKEN_RIGHT_SHIFT   = '>' + 384,  /* >>  */
+	
+	TOKEN_LEFT_SHIFT_EQUAL ='<' + 512,/* <<= */
+	TOKEN_RIGHT_SHIFT_EQUAL='>' + 512,/* >>= */
+    TOKEN_INCREMENT       = '+' + 512,/* ++  */
+    TOKEN_DECREMENT       = '+' + 512,/* --  */
 	
 	// Keywords
-	TOKEN_KW_auto = 512,
+	TOKEN_KW_auto = 640,
 	TOKEN_KW_break,
 	TOKEN_KW_case,
 	TOKEN_KW_char,

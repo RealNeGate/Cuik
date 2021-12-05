@@ -632,7 +632,9 @@ static void gen_func_header(TypeIndex type, StmtIndex s) {
 			dt = ctype_to_tbtype(arg_type);
 		}
 		
-		assert(tb_inst_param(func, dt) == 2 + (i - arg_start));
+		TB_Register p = tb_inst_param(func, dt);
+		((void)p);
+		assert(p == 2 + (i - arg_start));
 	}
 }
 

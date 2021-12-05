@@ -60,6 +60,10 @@ int main(int argc, char* argv[]) {
 	x &= 16;
 	x |= 16;
 	x ^= 16;
+	x >>= 16;
+
+	struct Point* start = 0;
+	start->x = 16;
 
 	int y = (x * 2);
 	if (y) y = 16;
@@ -75,6 +79,10 @@ int main(int argc, char* argv[]) {
 
 	int z = 4;
 	do { table[z][z] = 16; } while (z--);
+
+	if (x && z) {
+		x = 16;
+	}
 
 	return y;
 }

@@ -2,6 +2,7 @@
 build/
 
 *.obj
+*.exe
 
 tests/test5.txt
 

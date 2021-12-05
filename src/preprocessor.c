@@ -26,6 +26,7 @@ typedef enum PProc_State {
 } PProc_State;
 
 typedef struct PProc_Scope {
+	const char* directory;
 	const char* file_path;
 	const char* contents;
 } PProc_Scope;
@@ -45,36 +46,33 @@ typedef struct Context {
 	const char** macro_bucket_values_end;
 } Context;
 
+// NOTE(NeGate): Also performs normalization
 static char* read_entire_file(const char* file_path);
+
 static PProc_State classify(unsigned char ch);
 static uint64_t hash_ident(const char* at, size_t length);
 static const char* skip_to_macro_end(const char* curr);
-static bool is_space(unsigned char ch);
 static bool file_exists(const char *filename);
 static bool is_defined(Context* restrict c, const char* start, size_t length);
 static bool find_define(Context* restrict c, string* out_val, const char* start, size_t length);
-static const char* skip_directive_body(const char* curr);//
-static const char* eval(Context* restrict c, int* out, const char* str);
+static const char* skip_directive_body(const char* curr);
 
 static const char* SYSTEM_LIBS[] = {
 	"W:/Windows Kits/10/Include/10.0.19041.0/ucrt/",
-	"W:/Visual Studio/2019/Community/VC/Tools/MSVC/14.29.30037/include/"
+	"W:/Windows Kits/10/Include/10.0.19041.0/um/",
+	"W:/Windows Kits/10/Include/10.0.19041.0/shared/",
+	"W:/Visual Studio/2019/Community/VC/Tools/MSVC/14.29.30037/include/",
 };
 
 enum { NUM_SYSTEM_LIBS = sizeof(SYSTEM_LIBS) / sizeof(SYSTEM_LIBS[0]) };
 
-#define SKIP_WHITESPACE() \
-while (is_space(*input)) { \
-input++; \
-}
+#define SKIP_SPACE() while (*input == ' ') { input++; }
+#define READ_IDENT() while (classify(*input) == PPROC_STATE_IDENT){ input++; }
 
-#define READ_IDENT() \
-while (classify(*input) == PPROC_STATE_IDENT){ \
-input++; \
-}
+#include "preprocessor_eval.h"
 
 const unsigned char* preprocess_file(const char* base_file_path) {
-	char* start_output = allocate_virtual_memory(MEGABYTES(16));
+	char* start_output = allocate_virtual_memory(MEGABYTES(256));
 	
 	// TODO(NeGate): each entry is 16bytes (we can do better...) 
 	size_t sz = sizeof(void*) * MACRO_BUCKET_COUNT * SLOTS_PER_MACRO_BUCKET;
@@ -90,13 +88,14 @@ const unsigned char* preprocess_file(const char* base_file_path) {
 	int top = 0;
 	PProc_Scope stack[32];
 	
-	stack[top++] = (PProc_Scope){ base_file_path, read_entire_file(base_file_path) };
+	stack[top++] = (PProc_Scope){ "", base_file_path, read_entire_file(base_file_path) };
 	
 	// simple state machine
 	char* output = start_output;
 	do {
 		PProc_Scope* s = &stack[--top];
 		
+		const char* directory = s->directory;
 		const char* file_path = s->file_path;
 		const char* input = s->contents;
 		const char* start_of_fresh = s->contents;
@@ -146,20 +145,22 @@ const unsigned char* preprocess_file(const char* base_file_path) {
 					}
 					
 					input++; // skip #
+					SKIP_SPACE();
 					
-					SKIP_WHITESPACE();
-					if (*input == '\0') abort();
-					
-					const char* directive_start = input;
-					READ_IDENT();
-					
-					size_t directive_len = input - directive_start;
-					if (directive_len == 6 && memcmp(directive_start, "define", 6) == 0) {
-						SKIP_WHITESPACE();
-						if (*input == '\0') abort();
+					// NOTE(NeGate): technically over-reads but we have slack space
+					// NOTE(NeGate): We also normalized the text so we should be expecting
+					// a space right after most directives
+					if (memcmp(input, "define ", 7) == 0) {
+						input += 7;
+						SKIP_SPACE();
 						
 						const char* name_start = input;
 						READ_IDENT();
+						
+						if (input == name_start) {
+							printf("#define must be followed by an identifier\n");
+							abort();
+						}
 						
 						// Hash name
 						size_t name_len = input - name_start;
@@ -168,6 +169,7 @@ const unsigned char* preprocess_file(const char* base_file_path) {
 							+ c.macro_bucket_count[slot];
 						
 						// Insert into buckets
+						c.macro_bucket_count[slot]++;
 						c.macro_bucket_keys[e] = name_start;
 						c.macro_bucket_keys_length[e] = input - name_start;
 						
@@ -177,8 +179,9 @@ const unsigned char* preprocess_file(const char* base_file_path) {
 						
 						c.macro_bucket_values_start[e] = def_start;
 						c.macro_bucket_values_end[e] = input;
-					} else if (directive_len == 7 && memcmp(directive_start, "include", 7) == 0) {
-						SKIP_WHITESPACE();
+					} else if (memcmp(input, "include ", 8) == 0) {
+						input += 8;
+						SKIP_SPACE();
 						
 						const char* quote_start = input + 1;
 						bool system_libs = false;
@@ -215,7 +218,12 @@ const unsigned char* preprocess_file(const char* base_file_path) {
 						
 						const char* quote_end = input - 1;
 						if (quote_start == quote_end) abort();
-						//if (*input != '\r' && *input != '\n') abort();
+						
+						SKIP_SPACE();
+						if (*input != '\n') {
+							printf("Expected newline after include\n");
+							abort();
+						}
 						
 						// Search for file in system libs
 						char path[260];
@@ -235,34 +243,53 @@ const unsigned char* preprocess_file(const char* base_file_path) {
 						
 						if (!success) {
 							// Try local includes
-							sprintf_s(path, 260, "%.*s", (int) (quote_end - quote_start), quote_start);
+							sprintf_s(path, 260, "%s%.*s", directory, (int) (quote_end - quote_start), quote_start);
 							
 							if (file_exists(path)) success = true;
 						}
 						
 						// save out info
-						stack[top++] = (PProc_Scope){ file_path, input };
+						stack[top++] = (PProc_Scope){ directory, file_path, input };
 						
 						// TODO(NeGate): We really shouldn't be making heap allocations within this
 						// code... it's supposed to be faster, we're supposed to be better than that
-						stack[top++] = (PProc_Scope){ _strdup(path), read_entire_file(path) };
+						char* new_path = _strdup(path);
+						char* new_dir = _strdup(path);
+						
+						// just trim at the last slash
+						// TODO(NeGate): Clean up
+						char* curr = new_dir;
+						char* slash = NULL;
+						while (*curr) {
+							if (*curr == '/') slash = curr;
+							curr++;
+						}
+						
+						if (slash) {
+							slash[1] = '\0';
+						}
+						
+						stack[top++] = (PProc_Scope){ new_dir, new_path, read_entire_file(path) };
 						
 						// restart scope within this include
+						input = start_of_fresh;
 						goto end_scope;
-					} else if (directive_len == 2 && memcmp(directive_start, "if", 2) == 0) {
-						SKIP_WHITESPACE();
-						if (*input == '\0') abort();
+					} else if (memcmp(input, "if ", 3) == 0) {
+						input += 3;
 						
-						int result;
-						input = eval(&c, &result, input);
+						const char* end = input;
+						while (*end && *end != '\n') end++; 
+						
+						int result = eval(&c, input);
+						input = end;
 						
 						if (result) c.depth++;
 						else input = skip_directive_body(input);
 						
 						c.scope_eval[c.depth] = result;
-					} else if (directive_len == 4 && memcmp(directive_start, "else", 4) == 0) {
-						SKIP_WHITESPACE();
-						if (*input == '\0') abort();
+					} else if (memcmp(input, "else", 4) == 0) {
+						// TODO(NeGate): Handle the whitespace right after
+						input += 5;
 						
 						// if it didn't evaluate any of the other options
 						// do this
@@ -271,12 +298,14 @@ const unsigned char* preprocess_file(const char* base_file_path) {
 							c.scope_eval[c.depth] = 1; // got something at least.
 						}
 						else input = skip_directive_body(input);
-					} else if (directive_len == 4 && memcmp(directive_start, "elif", 4) == 0) {
-						SKIP_WHITESPACE();
-						if (*input == '\0') abort();
+					} else if (memcmp(input, "elif ", 5) == 0) {
+						input += 5;
 						
-						int result;
-						input = eval(&c, &result, input);
+						const char* end = input;
+						while (*end && *end != '\n') end++; 
+						
+						int result = eval(&c, input);
+						input = end;
 						
 						// if it didn't evaluate any of the other options
 						// try to do this
@@ -287,44 +316,59 @@ const unsigned char* preprocess_file(const char* base_file_path) {
 							c.scope_eval[c.depth] = result;
 						}
 						else input = skip_directive_body(input);
-					} else if (directive_len == 5 && memcmp(directive_start, "ifdef", 5) == 0) {
-						SKIP_WHITESPACE();
-						if (*input == '\0') abort();
+					} else if (memcmp(input, "ifdef ", 6) == 0) {
+						input += 6;
+						SKIP_SPACE();
 						
 						const char* name_start = input;
 						READ_IDENT();
+						
+						if (input == name_start) {
+							printf("#ifdef must be followed by an identifier\n");
+							abort();
+						}
+						
 						size_t name_len = input - name_start;
-						
-						//if (*input != '\r' && *input != '\n') abort();
-						
 						if (!is_defined(&c, name_start, name_len)) input = skip_directive_body(input);
 						else c.depth++;
-					} else if (directive_len == 6 && memcmp(directive_start, "ifndef", 6) == 0) {
-						SKIP_WHITESPACE();
-						if (*input == '\0') abort();
+					} else if (memcmp(input, "ifndef ", 7) == 0) {
+						input += 7;
+						SKIP_SPACE();
 						
 						const char* name_start = input;
 						READ_IDENT();
+						
+						if (input == name_start) {
+							printf("#ifndef must be followed by an identifier\n");
+							abort();
+						}
+						
 						size_t name_len = input - name_start;
-						
-						//if (*input != '\r' && *input != '\n') abort();
-						
 						if (is_defined(&c, name_start, name_len)) input = skip_directive_body(input);
 						else c.depth++;
-					} else if (directive_len == 5 && memcmp(directive_start, "endif", 5) == 0) {
-						if (c.depth == 0) panic("Too many endifs\n");
+					} else if (memcmp(input, "endif", 5) == 0) {
+						input += 5;
 						
+						// TODO(NeGate): Handle the whitespace right after
+						if (c.depth == 0) panic("Too many endifs\n");
 						c.depth--;
-					} else if (directive_len == 6 && memcmp(directive_start, "pragma", 6) == 0) {
-						SKIP_WHITESPACE();
+					} else if (memcmp(input, "pragma ", 7) == 0) {
+						input += 7;
+						SKIP_SPACE();
+						
 						if (*input == '\0') abort();
 						READ_IDENT();
-					} else if (directive_len == 5 && memcmp(directive_start, "undef", 5) == 0) {
-						SKIP_WHITESPACE();
-						if (*input == '\0') abort();
+					} else if (memcmp(input, "undef ", 6) == 0) {
+						input += 6;
+						SKIP_SPACE();
 						
 						const char* name_start = input;
 						READ_IDENT();
+						
+						if (input == name_start) {
+							printf("#undef must be followed by an identifier\n");
+							abort();
+						}
 						
 						// Hash name
 						size_t name_len = input - name_start;
@@ -347,6 +391,14 @@ const unsigned char* preprocess_file(const char* base_file_path) {
 						abort();
 					}
 					
+					/*if (*input != '\n') {
+						printf("Expected newline\n");
+						abort();
+					}*/
+					
+					SKIP_SPACE();
+					input += (*input == '\n');
+					
 					start_of_fresh = input;
 					break;
 				}
@@ -358,8 +410,8 @@ const unsigned char* preprocess_file(const char* base_file_path) {
 					string def;
 					if (find_define(&c, &def, name_start, name_len)) {
 						// Copy any clean input
-						memcpy(output, start_of_fresh, input - start_of_fresh);
-						output += input - start_of_fresh;
+						memcpy(output, start_of_fresh, name_start - start_of_fresh);
+						output += name_start - start_of_fresh;
 						
 						// Replace identifier
 						memcpy(output, def.data, def.length);
@@ -374,8 +426,10 @@ const unsigned char* preprocess_file(const char* base_file_path) {
 		
 		end_scope:
 		// Copy any clean input
-		memcpy(output, start_of_fresh, input - start_of_fresh);
-		output += input - start_of_fresh;
+		if (input != start_of_fresh) {
+			memcpy(output, start_of_fresh, input - start_of_fresh);
+			output += input - start_of_fresh;
+		}
 	} while (top > 0);
 	
 	free_virtual_memory((void*)c.macro_bucket_keys);
@@ -387,107 +441,99 @@ const unsigned char* preprocess_file(const char* base_file_path) {
 }
 
 //
-// Preprocessor expression evaluator
-//
-static const char* eval_atom(Context* restrict c, int* out, const char* input) {
-	SKIP_WHITESPACE();
-	
-	const char* name_start = input;
-	READ_IDENT();
-	size_t name_len = input - name_start;
-	
-	if (name_len == 7 && memcmp(name_start, "defined", 7) == 0) {
-		SKIP_WHITESPACE();
-		
-		if (classify(*input) == PPROC_STATE_IDENT) {
-			const char* ident_start = input;
-			READ_IDENT();
-			size_t ident_len = input - ident_start;
-			
-			if (ident_len == 0) abort();
-			*out = is_defined(c, ident_start, ident_len);
-		} else {
-			if (*input != '(') abort();
-			input++;
-			SKIP_WHITESPACE();
-			
-			const char* ident_start = input;
-			READ_IDENT();
-			size_t ident_len = input - ident_start;
-			
-			SKIP_WHITESPACE();
-			if (*input != ')') abort();
-			input++;
-			SKIP_WHITESPACE();
-			
-			if (ident_len == 0) abort();
-			*out = is_defined(c, ident_start, ident_len);
-		}
-	} else if (*input >= '0' && *input <= '9') {
-		// TODO(NeGate)
-		abort();
-	} else if (classify(*input) == PPROC_STATE_IDENT) {
-		const char* name_start = input;
-		READ_IDENT();
-		size_t name_len = input - name_start;
-		
-		string def;
-		if (find_define(c, &def, name_start, name_len)) {
-			// TODO(NeGate): 
-		} else abort();
-	} else abort();
-	
-	return input;
-}
-
-// If can read at least that much at this point
-static bool is_cond_bin_op(const char* input) {
-	char c0 = input[0];
-	char c1 = input[1];
-	
-	if (c0 == '|' && c1 == '|') return true;
-	if (c0 == '&' && c1 == '&') return true;
-	
-	return false;
-}
-
-static const char* eval(Context* restrict c, int* out, const char* input) {
-	int left;
-	input = eval_atom(c, &left, input);
-	
-	while (is_cond_bin_op(input)) {
-		// either || or &&
-		char op = *input;
-		input += 2;
-		
-		int right;
-		input = eval_atom(c, &right, input);
-		
-		if (op == '&') {
-			left = left & right;
-		} else if (op == '|') {
-			left = left | right;
-		}
-	}
-	
-	*out = left;
-	return input;
-}
-
-//
 // File IO
 //
 static char* read_entire_file(const char* file_path) {
-	FILE* f = fopen(file_path, "rb");
-	char* text = (char*) malloc(1 << 20);
-	int len = f ? (int) fread(text, 1, 1<<20, f) : -1;
-	if (len < 0) {
-		fprintf(stderr, "Error opening file\n");
-		free(text);
-		fclose(f);
-		abort();
+	////////////////////////////////
+	// Read file
+	////////////////////////////////
+	char* text;
+	int len;
+	{
+		FILE* file = fopen(file_path, "rb");
+		int descriptor = fileno(file);
+		
+		struct stat file_stats;
+		if (fstat(descriptor, &file_stats) == -1) return NULL;
+		
+		len  = file_stats.st_size;
+		text = malloc(len + 16);
+		
+		fseek(file, 0, SEEK_SET);
+		size_t length_read = fread(text, 1, len, file);
+		
+		text[length_read] = '\0';
+		fclose(file);
 	}
-	fclose(f);
+	
+	////////////////////////////////
+	// Remove \r
+	////////////////////////////////
+	{
+		char* in = text;
+		char* out = text;
+		
+		while (in[0]) {
+			if (in[0] == '\r') {
+				// skips 2 if it's \r\n and one if \r
+				in += 1;
+				in += (*in == '\n');
+				
+				*out++ = '\n';
+			} else {
+				*out++ = *in++;
+			}
+		}
+		
+		memset(out, 0, 16);
+		len = (out - text);
+	}
+	
+	////////////////////////////////
+	// Remove tabs, stitch together backslash-newline cases
+	////////////////////////////////
+	{
+		char* stream = text;
+		size_t batch_count = (len + 15) / 16;
+		while (batch_count--) {
+			__m128i bytes = _mm_loadu_si128((__m128i*) stream);
+			
+			// Replace all tabs with spaces
+			__m128i test_ident = _mm_cmpeq_epi8(bytes, _mm_set1_epi8('\t'));
+			bytes = _mm_blendv_epi8(bytes, _mm_set1_epi8(' '), test_ident);
+			
+			// Try to append lines in the backslash-newline case
+			__m128i test_backslash = _mm_cmpeq_epi8(bytes, _mm_set1_epi8('\\'));
+			int test_backslash_mask = _mm_movemask_epi8(test_backslash);
+			
+			if (test_backslash_mask) {
+				_mm_storeu_si128((__m128i*) stream, bytes);
+				char* end = stream + 16;
+				
+				do {
+					int offset = _tzcnt_u32(test_backslash_mask);
+					
+					test_backslash_mask >>= offset+1;
+					stream += offset+1;
+					
+					// NOTE(NeGate): This stuff is pretty slow code
+					// so hopefully it doesn't get called a lot
+					if (*stream == '\n') {
+						memmove(stream - 1, stream + 1, (len + 16) - 2);
+						
+						len -= 2;
+						stream -= 2;
+						batch_count = (len + 15) / 16;
+					}
+				} while (test_backslash_mask);
+				
+				stream = end;
+			} else {
+				_mm_storeu_si128((__m128i*) stream, bytes);
+				stream += 16;
+			}
+		}
+	}
 	
 	return text;
 }
@@ -520,25 +566,6 @@ static PProc_State classify(unsigned char ch) {
 	size_t shift = (ch % 4) * 2;
 	
 	return (PProc_State) ((classifier_table[index] >> shift) & 0b11);
-}
-
-static _Alignas(64) uint8_t space_char_tbl[] = {
-	0x00,0x26,0x00,0x00,
-	0x01,0x00,0x00,0x00,
-	0x00,0x00,0x00,0x00,
-	0x00,0x00,0x00,0x00,
-	0x00,0x00,0x00,0x00,
-	0x00,0x00,0x00,0x00,
-	0x00,0x00,0x00,0x00,
-	0x00,0x00,0x00,0x00
-};
-
-__attribute__((always_inline))
-static bool is_space(unsigned char ch) {
-	size_t i = ch;
-	size_t index = i / 8;
-	size_t shift = i & 7;
-	return (space_char_tbl[index] >> shift) & 1;
 }
 
 //
@@ -636,6 +663,7 @@ static const char* skip_directive_body(const char* input) {
 	
 	while (true) {
 		PProc_State state = classify(*input);
+		
 		switch (state) {
 			case PPROC_STATE_NULL: abort(); // unfinished macro scope
 			case PPROC_STATE_CLEAN: {
@@ -662,23 +690,31 @@ static const char* skip_directive_body(const char* input) {
 			case PPROC_STATE_DIRECTIVE: {
 				input++; // skip #
 				
-				SKIP_WHITESPACE();
+				SKIP_SPACE();
 				if (*input == '\0') abort();
 				
 				const char* directive_start = input;
 				READ_IDENT();
 				
 				size_t directive_len = input - directive_start;
-				if (directive_len == 2 && memcmp(directive_start, "if", 2) == 0) {
-					depth++;
-				} else if (directive_len == 5 && memcmp(directive_start, "ifdef", 5) == 0) {
-					depth++;
-				} else if (directive_len == 6 && memcmp(directive_start, "ifndef", 6) == 0) {
-					depth++;
-				} else if (directive_len == 5 && memcmp(directive_start, "endif", 5) == 0) {
-					if (depth == 0) goto done;
-					depth--;
+				switch (directive_len) {
+					case 2:
+					if (memcmp(directive_start, "if", 2) == 0) depth++;
+					break;
+					case 5:
+					if (memcmp(directive_start, "ifdef", 5) == 0) depth++;
+					else if (memcmp(directive_start, "endif", 5) == 0) {
+						if (depth == 0) goto done;
+						depth--;
+					}
+					break;
+					case 6:
+					if (memcmp(directive_start, "ifndef", 6) == 0) depth++;
+					break;
+					default: 
+					break;
 				}
+				
 				break;
 			}
 			case PPROC_STATE_IDENT: input += 1; break;

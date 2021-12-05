@@ -41,24 +41,26 @@ static unsigned char* read_entire_file(const char* filepath) {
 
 int main(int argc, char* argv[]) {
 #if 0
-	unsigned char* text = read_entire_file("tests/test5.txt");
+	unsigned char* text = read_entire_file("tests/test.txt");
 	if (!text) {
 		printf("Failed to read file!\n");
 		return 1;
 	}
 	
-	clock_t t1 = clock();
+	//clock_t t1 = clock();
 	
 	Lexer l = (Lexer) { text, text };
     do {
         lexer_read(&l);
-        //printf("%d\t%.*s\n", l.token_type, (int)(l.token_end - l.token_start), l.token_start);
+        printf("%d\t%.*s\n", l.token_type, (int)(l.token_end - l.token_start), l.token_start);
     } while (l.token_type);
 	
-	clock_t t2 = clock();
-	double delta_ms = ((t2 - t1) / (double)CLOCKS_PER_SEC) * 1000.0;
-	printf("lexing took %f ms\n", delta_ms);
-	printf("%f gigs / second\n", (135889014.0 / (double)(delta_ms / 1000.0)) / 1000000000.0);
+	//clock_t t2 = clock();
+	//double delta_ms = ((t2 - t1) / (double)CLOCKS_PER_SEC) * 1000.0;
+	//printf("lexing took %f ms\n", delta_ms);
+	
+	// NOTE(NeGate): Hard-coded the size of test5.txt because im lame
+	//printf("%f gigs / second\n", (135889014.0 / (double)(delta_ms / 1000.0)) / 1000000000.0);
 #else
 	clock_t t1 = clock();
 	
@@ -70,7 +72,7 @@ int main(int argc, char* argv[]) {
 						   1, false);
 	
 	// TODO(NeGate): Preprocess file
-	const unsigned char* text = preprocess_file("tests/test3.txt");
+	const unsigned char* text = preprocess_file("tests/test5.txt");
 	if (!text) {
 		printf("Failed to read file!\n");
 		return 1;
@@ -127,7 +129,7 @@ int main(int argc, char* argv[]) {
 		
 		swprintf(cmd_line, 1024,
 				 L"/nologo /machine:amd64 /subsystem:console"
-				 " /debug:none /entry:entry /pdb:%s.pdb /out:%s.exe /libpath:\"%s\""
+				 " /debug:none /entry:WinMain /pdb:%s.pdb /out:%s.exe /libpath:\"%s\""
 				 " /libpath:\"%s\" /libpath:\"%s\" -nodefaultlib %S %s.obj",
 				 output_file_no_ext, output_file_no_ext,
 				 vswhere.vs_library_path, vswhere.windows_sdk_ucrt_library_path, vswhere.windows_sdk_um_library_path,
