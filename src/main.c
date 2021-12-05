@@ -1,3 +1,4 @@
+#include "preprocessor.h"
 #include "lexer.h"
 #include "parser.h"
 #include "ir_gen.h"
@@ -5,10 +6,13 @@
 #include <time.h>
 #include <stdatomic.h>
 #include "../ext/threads.h"
+#include "microsoft_craziness.h"
 
 #include <sys/stat.h>
 
 #ifdef _WIN32
+#include <windows.h>
+
 #define fileno _fileno
 #define fstat _fstat
 #define stat _stat
@@ -37,27 +41,7 @@ static unsigned char* read_entire_file(const char* filepath) {
 
 int main(int argc, char* argv[]) {
 #if 0
-	/*FILE* file = fopen("test5.txt", "wb");
-	
-	fprintf(file, "void print(int n){}\n");
-	
-	for (int i = 1; i <= 1000000; i++) {
-		fprintf(file, "void fibonacci%d() {\n"
-				"\tint lo = 0;\n"
-				"\tint hi = 1;\n"
-				"\twhile (hi < 10000) {\n"
-				"\t\tint tmp = hi;\n"
-				"\t\thi = hi + lo;\n"
-				"\t\tlo = tmp;\n"
-				"\t\tprint(lo);\n"
-				"\t}\n"
-				"}\n\n", i);
-	}
-	
-	fprintf(file, "\nint WinMain(void* hInstance, void* hPrevInstance, char* lpCmdLine, int nCmdShow) {\n\treturn 0;\n}\n\n");
-	fclose(file);*/
-	
-	unsigned char* text = read_entire_file("test5.txt");
+	unsigned char* text = read_entire_file("tests/test5.txt");
 	if (!text) {
 		printf("Failed to read file!\n");
 		return 1;
@@ -86,7 +70,7 @@ int main(int argc, char* argv[]) {
 						   1, false);
 	
 	// TODO(NeGate): Preprocess file
-	unsigned char* text = read_entire_file("tests/test3.txt");
+	const unsigned char* text = preprocess_file("tests/test3.txt");
 	if (!text) {
 		printf("Failed to read file!\n");
 		return 1;
@@ -102,19 +86,86 @@ int main(int argc, char* argv[]) {
 	
 	// Compile
 	if (!tb_module_compile(mod)) abort();
+	free_virtual_memory((void*)text);
 	
 	// Generate object file
-	FILE* f = fopen("./test_x64.obj", "wb");
+	const char* obj_output_path = "test_x64.obj";
+	FILE* f = fopen(obj_output_path, "wb");
 	if (!tb_module_export(mod, f)) abort();
 	fclose(f);
 	
 	tb_module_destroy(mod);
-	free(text);
 	atoms_deinit();
 	
 	clock_t t2 = clock();
 	double delta_ms = ((t2 - t1) / (double)CLOCKS_PER_SEC) * 1000.0;
 	printf("compilation took %f ms\n", delta_ms);
+	
+	// Linking
+#if _WIN32
+	{
+		// NOTE(NeGate): Windows still a bih, im forcing the 
+		// W functions because im a bitch too
+		// TODO(NeGate): Clean up this code and make it so that more
+		// options are exposed in the frontend.
+		const char* output_path = "test_x64";
+		wchar_t* cmd_line = malloc(1024 * sizeof(wchar_t));
+		const char* libraries = "kernel32.lib user32.lib Gdi32.lib";
+		
+		MicrosoftCraziness_Find_Result vswhere = MicrosoftCraziness_find_visual_studio_and_windows_sdk();
+		
+		wchar_t working_dir[260];
+		DWORD working_dir_len = GetCurrentDirectoryW(260, working_dir);
+		for (size_t i = 0; i < working_dir_len; i++) {
+			if (working_dir[i] == '\\') working_dir[i] = '/';
+		}
+		working_dir[working_dir_len++] = '/';
+		working_dir[working_dir_len] = '\0';
+		
+		wchar_t output_file_no_ext[260];
+		swprintf(output_file_no_ext, 260, L"%s%S", working_dir, output_path);
+		
+		swprintf(cmd_line, 1024,
+				 L"/nologo /machine:amd64 /subsystem:console"
+				 " /debug:none /entry:entry /pdb:%s.pdb /out:%s.exe /libpath:\"%s\""
+				 " /libpath:\"%s\" /libpath:\"%s\" -nodefaultlib %S %s.obj",
+				 output_file_no_ext, output_file_no_ext,
+				 vswhere.vs_library_path, vswhere.windows_sdk_ucrt_library_path, vswhere.windows_sdk_um_library_path,
+				 libraries, output_file_no_ext
+				 );
+		
+		wchar_t* exe_path = malloc(260 * sizeof(wchar_t));
+		swprintf(exe_path, 260, L"%s\\link.exe", vswhere.vs_exe_path);
+		
+		STARTUPINFOW si = {
+			.cb = sizeof(STARTUPINFOW),
+			.dwFlags = STARTF_USESTDHANDLES,
+			.hStdInput = GetStdHandle(STD_INPUT_HANDLE),
+			.hStdError = GetStdHandle(STD_ERROR_HANDLE),
+			.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE)
+		};
+		PROCESS_INFORMATION pi = {};
+		
+		printf("Linker command:\n%S %S\n", exe_path, cmd_line);
+		if (!CreateProcessW(exe_path, cmd_line, NULL, NULL, TRUE, 0, NULL, working_dir, &si, &pi)) {
+			panic("Linker command could not be executed.");
+		}
+		
+		// Wait until child process exits.
+		WaitForSingleObject(pi.hProcess, INFINITE);
+		
+		// Close process and thread handles. 
+		CloseHandle(pi.hProcess);
+		CloseHandle(pi.hThread);
+		
+		MicrosoftCraziness_free_resources(&vswhere);
+	}
 #endif
+	
+	clock_t t3 = clock();
+	delta_ms = ((t3 - t2) / (double)CLOCKS_PER_SEC) * 1000.0;
+	printf("linking took %f ms\n", delta_ms);
+#endif
+	
 	return 0;
 }
