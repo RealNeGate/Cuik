@@ -32,31 +32,8 @@ static char* read_entire_file(const char* file_path) {
 		fseek(file, 0, SEEK_SET);
 		size_t length_read = fread(text, 1, len, file);
 		
-		text[length_read] = '\0';
+		memset(&text[length_read], 0, 16);
 		fclose(file);
-	}
-	
-	////////////////////////////////
-	// Remove \r
-	////////////////////////////////
-	{
-		char* in = text;
-		char* out = text;
-		
-		while (in[0]) {
-			if (in[0] == '\r') {
-				// skips 2 if it's \r\n and one if \r
-				in += 1;
-				in += (*in == '\n');
-				
-				*out++ = '\n';
-			} else {
-				*out++ = *in++;
-			}
-		}
-		
-		memset(out, 0, 16);
-		len = (out - text);
 	}
 	
 	////////////////////////////////

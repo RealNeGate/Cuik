@@ -210,6 +210,17 @@ void lexer_read(Lexer* restrict l) {
             int len = __builtin_ffs(~_mm_movemask_epi8(_mm_cmpeq_epi8(chars, _mm_set1_epi8('\n'))));
             current += len - 1;
             goto redo_lex;
+		} else if (*current == '\r') {
+			l->hit_line = true;
+			
+			// Do a branchless SIMD skip of up to 16 tabs after a newline.
+            __m128i chars = _mm_loadu_si128((__m128i *)current);
+			__m128i mask = _mm_cmpeq_epi8(chars, _mm_set1_epi8('\r'));
+			mask = _mm_or_si128(mask, _mm_cmpeq_epi8(chars, _mm_set1_epi8('\n')));
+			
+            int len = __builtin_ffs(~_mm_movemask_epi8(mask));
+            current += len - 1;
+            goto redo_lex;
 		} else if (*current == ' ' || *current == '\t') {
 			// slow path
 			do { current++; } while (is_space(*current));
