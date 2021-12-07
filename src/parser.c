@@ -23,21 +23,21 @@ static int typedef_count = 0;
 static Atom typedef_names[64 * 1024];
 static TypeIndex typedefs[64 * 1024];
 
-static void expect(Lexer* l, char ch);
-static Symbol* find_local_symbol(Lexer* l);
+static void expect(TokenStream* restrict s, char ch);
+static Symbol* find_local_symbol(TokenStream* restrict s);
 static Symbol* find_global_symbol(char* name);
-static StmtIndex parse_stmt(Lexer* l);
-static ExprIndex parse_expr(Lexer* l);
-static StmtIndex parse_compound_stmt(Lexer* l);
-static bool try_parse_declspec(Lexer* l, Attribs* attr);
-static TypeIndex parse_declspec(Lexer* l, Attribs* attr);
-static Decl parse_declarator(Lexer* l, TypeIndex type);
-static bool is_typename(Lexer* l);
-static _Noreturn void generic_error(Lexer* l, const char* msg);
+static StmtIndex parse_stmt(TokenStream* restrict s);
+static ExprIndex parse_expr(TokenStream* restrict s);
+static StmtIndex parse_compound_stmt(TokenStream* restrict s);
+static bool try_parse_declspec(TokenStream* restrict s, Attribs* attr);
+static TypeIndex parse_declspec(TokenStream* restrict s, Attribs* attr);
+static Decl parse_declarator(TokenStream* restrict s, TypeIndex type);
+static bool is_typename(TokenStream* restrict s);
+static _Noreturn void generic_error(TokenStream* restrict s, const char* msg);
 
 inline static int align_up(int a, int b) { return a + (b - (a % b)) % b; }
 
-TopLevel parse_file(Lexer* l) {
+TopLevel parse_file(TokenStream* restrict s) {
 	////////////////////////////////
 	// Parsing
 	////////////////////////////////
@@ -79,22 +79,21 @@ TopLevel parse_file(Lexer* l) {
 	////////////////////////////////
 	StmtIndex* top_level = NULL;
 	
-	lexer_read(l);
-	while (l->token_type) {
+	while (tokens_get(s)->type) {
 		// program = (typedef | function-definition | global-variable)*
 		Attribs attr = { 0 };
-		TypeIndex type = parse_declspec(l, &attr);
+		TypeIndex type = parse_declspec(s, &attr);
 		
 		if (attr.is_typedef) {
 			// TODO(NeGate): Kinda ugly
 			// don't expect one the first time
 			bool expect_comma = false;
-			while (l->token_type != ';') {
+			while (tokens_get(s)->type != ';') {
 				if (expect_comma) {
-					expect(l, ',');
+					expect(s, ',');
 				} else expect_comma = true;
 				
-				Decl decl = parse_declarator(l, type);
+				Decl decl = parse_declarator(s, type);
 				assert(decl.name);
 				
 				int i = typedef_count++;
@@ -102,14 +101,14 @@ TopLevel parse_file(Lexer* l) {
 				typedef_names[i] = decl.name;
 			}
 			
-			expect(l, ';');
+			expect(s, ';');
 		} else {
-			if (l->token_type == ';') {
-				lexer_read(l);
+			if (tokens_get(s)->type == ';') {
+				tokens_next(s);
 				continue;
 			}
 			
-			Decl decl = parse_declarator(l, type);
+			Decl decl = parse_declarator(s, type);
 			
 			if (type_arena.data[decl.type].kind == KIND_FUNC) {
 				// function
@@ -129,7 +128,7 @@ TopLevel parse_file(Lexer* l) {
 				};
 				shput(global_symbols, decl.name, func_symbol);
 				
-				if (l->token_type == '{') {
+				if (tokens_get(s)->type == '{') {
 					ArgIndex arg_start = type_arena.data[decl.type].func.arg_start;
 					ArgIndex arg_end = type_arena.data[decl.type].func.arg_end;
 					
@@ -146,20 +145,20 @@ TopLevel parse_file(Lexer* l) {
 						p += 1;
 					}
 					
-					lexer_read(l);
+					tokens_next(s);
 					
 					stmt_arena.data[n].op = STMT_FUNC_DECL;
 					
 					// NOTE(NeGate): STMT_FUNC_DECL is always followed by a compound block
 #if NDEBUG
-					parse_compound_stmt(l);
+					parse_compound_stmt(s);
 #else
-					StmtIndex body = parse_compound_stmt(l);
+					StmtIndex body = parse_compound_stmt(s);
 					assert(body == n + 1);
 #endif
-				} else if (l->token_type == ';') {
+				} else if (tokens_get(s)->type == ';') {
 					// Forward decl
-					lexer_read(l);
+					tokens_next(s);
 				} else {
 					abort();
 				}
@@ -199,9 +198,10 @@ TopLevel parse_file(Lexer* l) {
 	return (TopLevel) { top_level };
 }
 
-static Symbol* find_local_symbol(Lexer* l) {
-	const unsigned char* name = l->token_start;
-	size_t length = l->token_end - l->token_start;
+static Symbol* find_local_symbol(TokenStream* restrict s) {
+	Token* t = tokens_get(s);
+	const unsigned char* name = t->start;
+	size_t length = t->end - t->start;
 	
 	// Try local variables
 	size_t i = local_symbol_count;
@@ -228,7 +228,7 @@ static Symbol* find_global_symbol(char* name) {
 ////////////////////////////////
 // STATEMENTS
 ////////////////////////////////
-static StmtIndex parse_compound_stmt(Lexer* l) {
+static StmtIndex parse_compound_stmt(TokenStream* restrict s) {
 	// mark when the local scope starts
 	int saved = local_symbol_count;
 	
@@ -237,28 +237,28 @@ static StmtIndex parse_compound_stmt(Lexer* l) {
 		.op = STMT_COMPOUND
 	};
 	
-	size_t count = 0; // He be fuckin
+	size_t body_count = 0; // He be fuckin
 	void* body = tls_save();
 	
-	while (l->token_type != '}') {
-		StmtIndex s = parse_stmt(l);
+	while (tokens_get(s)->type != '}') {
+		StmtIndex stmt = parse_stmt(s);
 		
-		if (s) {
-			*((StmtIndex*)tls_push(sizeof(StmtIndex))) = s;
-			count++;
-		} else if (is_typename(l)) {
+		if (stmt) {
+			*((StmtIndex*)tls_push(sizeof(StmtIndex))) = stmt;
+			body_count++;
+		} else if (is_typename(s)) {
 			Attribs attr = { 0 };
-			TypeIndex type = parse_declspec(l, &attr);
+			TypeIndex type = parse_declspec(s, &attr);
 			
 			// TODO(NeGate): Kinda ugly
 			// don't expect one the first time
 			bool expect_comma = false;
-			while (l->token_type != ';') {
+			while (tokens_get(s)->type != ';') {
 				if (expect_comma) {
-					expect(l, ',');
+					expect(s, ',');
 				} else expect_comma = true;
 				
-				Decl decl = parse_declarator(l, type);
+				Decl decl = parse_declarator(s, type);
 				
 				StmtIndex n = push_stmt_arena(1);
 				stmt_arena.data[n] = (Stmt) {
@@ -273,78 +273,78 @@ static StmtIndex parse_compound_stmt(Lexer* l) {
 					.stmt = n
 				};
 				
-				if (l->token_type == '=') {
+				if (tokens_get(s)->type == '=') {
 					// initial value
-					lexer_read(l);
+					tokens_next(s);
 					
-					stmt_arena.data[n].expr = parse_expr(l);
+					stmt_arena.data[n].expr = parse_expr(s);
 				}
 				
 				*((StmtIndex*)tls_push(sizeof(StmtIndex))) = n;
-				count++;
+				body_count++;
 			}
 			
-			expect(l, ';');
+			expect(s, ';');
 		} else {
-			s = push_stmt_arena(1);
-			stmt_arena.data[s].op = STMT_EXPR;
-			stmt_arena.data[s].expr = parse_expr(l);
+			stmt = push_stmt_arena(1);
+			stmt_arena.data[stmt].op = STMT_EXPR;
+			stmt_arena.data[stmt].expr = parse_expr(s);
 			
-			*((StmtIndex*)tls_push(sizeof(StmtIndex))) = s;
-			count++;
+			*((StmtIndex*)tls_push(sizeof(StmtIndex))) = stmt;
+			body_count++;
 			
-			expect(l, ';');
+			expect(s, ';');
 		}
 	}
-	expect(l, '}');
+	expect(s, '}');
 	local_symbol_count = saved;
 	
-	StmtIndexIndex start = push_stmt_ref_arena(count);
-	memcpy(&stmt_ref_arena.data[start], body, count * sizeof(ArgIndex));
+	StmtIndexIndex start = push_stmt_ref_arena(body_count);
+	memcpy(&stmt_ref_arena.data[start], body, body_count * sizeof(ArgIndex));
 	
 	stmt_arena.data[node].kids_start = start;
-	stmt_arena.data[node].kids_end = start + count;
+	stmt_arena.data[node].kids_end = start + body_count;
 	
 	tls_restore(body);
 	return node;
 }
 
 // TODO(NeGate): Doesn't handle declarators or expression-statements
-static StmtIndex parse_stmt(Lexer* l) {
-	if (l->token_type == '{') {
-		lexer_read(l);
-		return parse_compound_stmt(l);
+static StmtIndex parse_stmt(TokenStream* restrict s) {
+	if (tokens_get(s)->type == '{') {
+		tokens_next(s);
+		return parse_compound_stmt(s);
 	}
 	
-	if (l->token_type == TOKEN_KW_return) {
-		lexer_read(l);
+	if (tokens_get(s)->type == TOKEN_KW_return) {
+		tokens_next(s);
 		
 		StmtIndex n = push_stmt_arena(1);
 		stmt_arena.data[n].op = STMT_RETURN;
 		
-		if (l->token_type != ';') {
-			stmt_arena.data[n].expr = parse_expr(l);
+		if (tokens_get(s)->type != ';') {
+			stmt_arena.data[n].expr = parse_expr(s);
 		}
 		
-		expect(l, ';');
+		expect(s, ';');
 		return n;
 	}
 	
-	if (l->token_type == TOKEN_KW_if) {
-		lexer_read(l);
+	if (tokens_get(s)->type == TOKEN_KW_if) {
+		tokens_next(s);
 		
 		StmtIndex n = push_stmt_arena(1);
 		stmt_arena.data[n].op = STMT_IF;
 		
-		expect(l, '(');
-		stmt_arena.data[n].expr = parse_expr(l);
-		expect(l, ')');
+		expect(s, '(');
+		stmt_arena.data[n].expr = parse_expr(s);
+		expect(s, ')');
 		
-		stmt_arena.data[n].body = parse_stmt(l);
+		stmt_arena.data[n].body = parse_stmt(s);
 		
-		if (l->token_type == TOKEN_KW_else) {
-			lexer_read(l);
-			stmt_arena.data[n].body2 = parse_stmt(l);
+		if (tokens_get(s)->type == TOKEN_KW_else) {
+			tokens_next(s);
+			stmt_arena.data[n].body2 = parse_stmt(s);
 		} else {
 			stmt_arena.data[n].body2 = 0;
 		}
@@ -352,44 +352,43 @@ static StmtIndex parse_stmt(Lexer* l) {
 		return n;
 	}
 	
-	if (l->token_type == TOKEN_KW_while) {
-		lexer_read(l);
+	if (tokens_get(s)->type == TOKEN_KW_while) {
+		tokens_next(s);
 		
 		StmtIndex n = push_stmt_arena(1);
 		stmt_arena.data[n].op = STMT_WHILE;
 		
-		expect(l, '(');
-		stmt_arena.data[n].expr = parse_expr(l);
-		expect(l, ')');
+		expect(s, '(');
+		stmt_arena.data[n].expr = parse_expr(s);
+		expect(s, ')');
 		
-		stmt_arena.data[n].body = parse_stmt(l);
+		stmt_arena.data[n].body = parse_stmt(s);
 		return n;
 	}
 	
-	if (l->token_type == TOKEN_KW_do) {
-		lexer_read(l);
+	if (tokens_get(s)->type == TOKEN_KW_do) {
+		tokens_next(s);
 		
 		StmtIndex n = push_stmt_arena(1);
 		stmt_arena.data[n].op = STMT_DO_WHILE;
-		stmt_arena.data[n].body = parse_stmt(l);
+		stmt_arena.data[n].body = parse_stmt(s);
 		
-		if (l->token_type != TOKEN_KW_while) {
-			int loc = lexer_get_location(l);
-			
-			printf("error on line %d: expected 'while' got '%.*s'", loc, (int)(l->token_end - l->token_start), l->token_start);
+		if (tokens_get(s)->type != TOKEN_KW_while) {
+			//int loc = lexer_get_location(s);
+			//printf("error on line %d: expected 'while' got '%.*s'", loc, (int)(l->token_end - l->token_start), l->token_start);
 			abort();
 		}
-		lexer_read(l);
+		tokens_next(s);
 		
-		expect(l, '(');
-		stmt_arena.data[n].expr = parse_expr(l);
-		expect(l, ')');
-		expect(l, ';');
+		expect(s, '(');
+		stmt_arena.data[n].expr = parse_expr(s);
+		expect(s, ')');
+		expect(s, ';');
 		return n;
 	}
 	
-	if (l->token_type == ';') {
-		lexer_read(l);
+	if (tokens_get(s)->type == ';') {
+		tokens_next(s);
 		return 0;
 	}
 	
@@ -402,15 +401,15 @@ static StmtIndex parse_stmt(Lexer* l) {
 // Quick reference:
 // https://en.cppreference.com/w/c/language/operator_precedence
 ////////////////////////////////
-static ExprIndex parse_expr_l0(Lexer* l) {
-	if (l->token_type == '(') {
-		lexer_read(l);
-		ExprIndex e = parse_expr(l);
-		expect(l, ')');
+static ExprIndex parse_expr_l0(TokenStream* restrict s) {
+	if (tokens_get(s)->type == '(') {
+		tokens_next(s);
+		ExprIndex e = parse_expr(s);
+		expect(s, ')');
 		
 		return e;
-	} else if (l->token_type == TOKEN_IDENTIFIER) {
-		Symbol* sym = find_local_symbol(l);
+	} else if (tokens_get(s)->type == TOKEN_IDENTIFIER) {
+		Symbol* sym = find_local_symbol(s);
 		
 		ExprIndex e = push_expr_arena(1);
 		if (sym) {
@@ -427,7 +426,8 @@ static ExprIndex parse_expr_l0(Lexer* l) {
 			}
 		} else {
 			// We'll defer any global identifier resolution
-			Atom name = atoms_put(l->token_end - l->token_start, l->token_start);
+			Token* t = tokens_get(s);
+			Atom name = atoms_put(t->end - t->start, t->start);
 			
 			expr_arena.data[e] = (Expr) {
 				.op = EXPR_UNKNOWN_SYMBOL,
@@ -435,12 +435,17 @@ static ExprIndex parse_expr_l0(Lexer* l) {
 			};
 		}
 		
-		lexer_read(l);
+		tokens_next(s);
 		return e;
-	} else if (l->token_type == TOKEN_NUMBER) {
+	} else if (tokens_get(s)->type == TOKEN_NUMBER) {
+		Token* t = tokens_get(s);
+		
+		size_t len = t->end - t->start;
+		assert(len < 15);
+		
 		char temp[16];
-		memcpy_s(temp, 16, l->token_start, l->token_end - l->token_start);
-		temp[l->token_end - l->token_start] = '\0';
+		memcpy(temp, t->start, len);
+		temp[len] = '\0';
 		
 		long long i = atoll(temp);
 		
@@ -450,27 +455,27 @@ static ExprIndex parse_expr_l0(Lexer* l) {
 			.num = i
 		};
 		
-		lexer_read(l);
+		tokens_next(s);
 		return e;
 	} else {
-		generic_error(l, "Could not parse expression!");
+		generic_error(s, "Could not parse expression!");
 	}
 }
 
-static ExprIndex parse_expr_l1(Lexer* l) {
-	ExprIndex e = parse_expr_l0(l);
+static ExprIndex parse_expr_l1(TokenStream* restrict s) {
+	ExprIndex e = parse_expr_l0(s);
 	
 	// after any of the: [] () . ->
 	// it'll restart and take a shot at matching another
 	// piece of the expression.
 	try_again: {
-		if (l->token_type == '[') {
+		if (tokens_get(s)->type == '[') {
 			ExprIndex base = e;
 			e = push_expr_arena(1);
 			
-			lexer_read(l);
-			ExprIndex index = parse_expr(l);
-			expect(l, ']');
+			tokens_next(s);
+			ExprIndex index = parse_expr(s);
+			expect(s, ']');
 			
 			expr_arena.data[e].op = EXPR_SUBSCRIPT;
 			expr_arena.data[e].subscript.base = base;
@@ -479,13 +484,14 @@ static ExprIndex parse_expr_l1(Lexer* l) {
 		}
 		
 		// Member access
-		if (l->token_type == '.') {
-			lexer_read(l);
-			if (l->token_type != TOKEN_IDENTIFIER) {
-				generic_error(l, "Expected identifier after member access a.b");
+		if (tokens_get(s)->type == '.') {
+			tokens_next(s);
+			if (tokens_get(s)->type != TOKEN_IDENTIFIER) {
+				generic_error(s, "Expected identifier after member access a.b");
 			}
 			
-			Atom name = atoms_put(l->token_end - l->token_start, l->token_start);
+			Token* t = tokens_get(s);
+			Atom name = atoms_put(t->end - t->start, t->start);
 			
 			ExprIndex base = e;
 			e = push_expr_arena(1);
@@ -494,13 +500,13 @@ static ExprIndex parse_expr_l1(Lexer* l) {
 				.dot = { base, name }
 			};
 			
-			lexer_read(l);
+			tokens_next(s);
 			goto try_again;
 		}
 		
 		// Function call
-		if (l->token_type == '(') {
-			lexer_read(l);
+		if (tokens_get(s)->type == '(') {
+			tokens_next(s);
 			
 			ExprIndex target = e;
 			e = push_expr_arena(1);
@@ -508,19 +514,19 @@ static ExprIndex parse_expr_l1(Lexer* l) {
 			size_t param_count = 0;
 			void* params = tls_save();
 			
-			while (l->token_type != ')') {
+			while (tokens_get(s)->type != ')') {
 				if (param_count) {
-					expect(l, ',');
+					expect(s, ',');
 				}
 				
-				*((ExprIndex*) tls_push(sizeof(ExprIndex))) = parse_expr(l);
+				*((ExprIndex*) tls_push(sizeof(ExprIndex))) = parse_expr(s);
 				param_count++;
 			}
 			
-			if (l->token_type != ')') {
-				generic_error(l, "Unclosed parameter list!");
+			if (tokens_get(s)->type != ')') {
+				generic_error(s, "Unclosed parameter list!");
 			}
-			lexer_read(l);
+			tokens_next(s);
 			
 			ExprIndexIndex start = push_expr_ref_arena(param_count);
 			memcpy(&expr_ref_arena.data[start], params, param_count * sizeof(ExprIndex));
@@ -536,9 +542,9 @@ static ExprIndex parse_expr_l1(Lexer* l) {
 		
 		// post fix, you can only put one and just after all the other operators
 		// in this precendence.
-		if (l->token_type == TOKEN_INCREMENT || l->token_type == TOKEN_DECREMENT) {
-			bool is_inc = l->token_type == TOKEN_INCREMENT;
-			lexer_read(l);
+		if (tokens_get(s)->type == TOKEN_INCREMENT || tokens_get(s)->type == TOKEN_DECREMENT) {
+			bool is_inc = tokens_get(s)->type == TOKEN_INCREMENT;
+			tokens_next(s);
 			
 			ExprIndex src = e;
 			
@@ -552,11 +558,11 @@ static ExprIndex parse_expr_l1(Lexer* l) {
 }
 
 // deref* address&
-static ExprIndex parse_expr_l2(Lexer* l) {
-	if (l->token_type == '&') {
-		lexer_read(l);
+static ExprIndex parse_expr_l2(TokenStream* restrict s) {
+	if (tokens_get(s)->type == '&') {
+		tokens_next(s);
 		
-		ExprIndex value = parse_expr_l1(l);
+		ExprIndex value = parse_expr_l1(s);
 		
 		ExprIndex e = push_expr_arena(1);
 		expr_arena.data[e] = (Expr) {
@@ -567,12 +573,12 @@ static ExprIndex parse_expr_l2(Lexer* l) {
 	}
 	
 	int derefs = 0;
-	while (l->token_type == '*') {
-		lexer_read(l);
+	while (tokens_get(s)->type == '*') {
+		tokens_next(s);
 		derefs++;
 	}
 	
-	ExprIndex e = parse_expr_l1(l);
+	ExprIndex e = parse_expr_l1(s);
 	
 	while (derefs--) {
 		ExprIndex base = e;
@@ -588,23 +594,23 @@ static ExprIndex parse_expr_l2(Lexer* l) {
 }
 
 // * / %
-static ExprIndex parse_expr_l3(Lexer* l) {
-	ExprIndex lhs = parse_expr_l2(l);
+static ExprIndex parse_expr_l3(TokenStream* restrict s) {
+	ExprIndex lhs = parse_expr_l2(s);
 	
-	while (l->token_type == TOKEN_TIMES ||
-		   l->token_type == TOKEN_SLASH ||
-		   l->token_type == TOKEN_PERCENT) {
+	while (tokens_get(s)->type == TOKEN_TIMES ||
+		   tokens_get(s)->type == TOKEN_SLASH ||
+		   tokens_get(s)->type == TOKEN_PERCENT) {
 		ExprIndex e = push_expr_arena(1);
 		ExprOp op;
-		switch (l->token_type) {
+		switch (tokens_get(s)->type) {
 			case TOKEN_TIMES: op = EXPR_TIMES; break;
 			case TOKEN_SLASH: op = EXPR_SLASH; break;
 			case TOKEN_PERCENT: op = EXPR_PERCENT; break;
 			default: __builtin_unreachable();
 		}
-		lexer_read(l);
+		tokens_next(s);
 		
-		ExprIndex rhs = parse_expr_l2(l);
+		ExprIndex rhs = parse_expr_l2(s);
 		expr_arena.data[e] = (Expr) {
 			.op = op,
 			.bin_op = { lhs, rhs }
@@ -617,21 +623,21 @@ static ExprIndex parse_expr_l3(Lexer* l) {
 }
 
 // + -
-static ExprIndex parse_expr_l4(Lexer* l) {
-	ExprIndex lhs = parse_expr_l3(l);
+static ExprIndex parse_expr_l4(TokenStream* restrict s) {
+	ExprIndex lhs = parse_expr_l3(s);
 	
-	while (l->token_type == TOKEN_PLUS ||
-		   l->token_type == TOKEN_MINUS) {
+	while (tokens_get(s)->type == TOKEN_PLUS ||
+		   tokens_get(s)->type == TOKEN_MINUS) {
 		ExprIndex e = push_expr_arena(1);
 		ExprOp op;
-		switch (l->token_type) {
+		switch (tokens_get(s)->type) {
 			case TOKEN_PLUS: op = EXPR_PLUS; break;
 			case TOKEN_MINUS: op = EXPR_MINUS; break;
 			default: __builtin_unreachable();
 		}
-		lexer_read(l);
+		tokens_next(s);
 		
-		ExprIndex rhs = parse_expr_l3(l);
+		ExprIndex rhs = parse_expr_l3(s);
 		expr_arena.data[e] = (Expr) {
 			.op = op,
 			.bin_op = { lhs, rhs }
@@ -644,25 +650,25 @@ static ExprIndex parse_expr_l4(Lexer* l) {
 }
 
 // >= > <= <
-static ExprIndex parse_expr_l6(Lexer* l) {
-	ExprIndex lhs = parse_expr_l4(l);
+static ExprIndex parse_expr_l6(TokenStream* restrict s) {
+	ExprIndex lhs = parse_expr_l4(s);
 	
-	while (l->token_type == TOKEN_GREATER_EQUAL ||
-		   l->token_type == TOKEN_LESS_EQUAL || 
-		   l->token_type == TOKEN_GREATER ||
-		   l->token_type == TOKEN_LESS) {
+	while (tokens_get(s)->type == TOKEN_GREATER_EQUAL ||
+		   tokens_get(s)->type == TOKEN_LESS_EQUAL || 
+		   tokens_get(s)->type == TOKEN_GREATER ||
+		   tokens_get(s)->type == TOKEN_LESS) {
 		ExprIndex e = push_expr_arena(1);
 		ExprOp op;
-		switch (l->token_type) {
+		switch (tokens_get(s)->type) {
 			case TOKEN_LESS:          op = EXPR_CMPLT; break;
 			case TOKEN_LESS_EQUAL:    op = EXPR_CMPLE; break;
 			case TOKEN_GREATER:       op = EXPR_CMPGT; break;
 			case TOKEN_GREATER_EQUAL: op = EXPR_CMPGE; break;
 			default: __builtin_unreachable();
 		}
-		lexer_read(l);
+		tokens_next(s);
 		
-		ExprIndex rhs = parse_expr_l4(l);
+		ExprIndex rhs = parse_expr_l4(s);
 		expr_arena.data[e] = (Expr) {
 			.op = op,
 			.bin_op = { lhs, rhs }
@@ -675,24 +681,24 @@ static ExprIndex parse_expr_l6(Lexer* l) {
 }
 
 // = += -= *= /= %= <<= >>= &= ^= |=
-static ExprIndex parse_expr_l14(Lexer* l) {
-	ExprIndex lhs = parse_expr_l6(l);
+static ExprIndex parse_expr_l14(TokenStream* restrict s) {
+	ExprIndex lhs = parse_expr_l6(s);
 	
-	while (l->token_type == TOKEN_ASSIGN ||
-		   l->token_type == TOKEN_PLUS_EQUAL ||
-		   l->token_type == TOKEN_MINUS_EQUAL ||
-		   l->token_type == TOKEN_TIMES_EQUAL ||
-		   l->token_type == TOKEN_SLASH_EQUAL ||
-		   l->token_type == TOKEN_PERCENT_EQUAL ||
-		   l->token_type == TOKEN_AND_EQUAL ||
-		   l->token_type == TOKEN_OR_EQUAL ||
-		   l->token_type == TOKEN_XOR_EQUAL ||
-		   l->token_type == TOKEN_LEFT_SHIFT_EQUAL ||
-		   l->token_type == TOKEN_RIGHT_SHIFT_EQUAL) {
+	while (tokens_get(s)->type == TOKEN_ASSIGN ||
+		   tokens_get(s)->type == TOKEN_PLUS_EQUAL ||
+		   tokens_get(s)->type == TOKEN_MINUS_EQUAL ||
+		   tokens_get(s)->type == TOKEN_TIMES_EQUAL ||
+		   tokens_get(s)->type == TOKEN_SLASH_EQUAL ||
+		   tokens_get(s)->type == TOKEN_PERCENT_EQUAL ||
+		   tokens_get(s)->type == TOKEN_AND_EQUAL ||
+		   tokens_get(s)->type == TOKEN_OR_EQUAL ||
+		   tokens_get(s)->type == TOKEN_XOR_EQUAL ||
+		   tokens_get(s)->type == TOKEN_LEFT_SHIFT_EQUAL ||
+		   tokens_get(s)->type == TOKEN_RIGHT_SHIFT_EQUAL) {
 		ExprIndex e = push_expr_arena(1);
 		
 		ExprOp op;
-		switch (l->token_type) {
+		switch (tokens_get(s)->type) {
 			case TOKEN_ASSIGN: op = EXPR_ASSIGN; break;
 			case TOKEN_PLUS_EQUAL: op = EXPR_PLUS_ASSIGN; break;
 			case TOKEN_MINUS_EQUAL: op = EXPR_MINUS_ASSIGN; break;
@@ -706,9 +712,9 @@ static ExprIndex parse_expr_l14(Lexer* l) {
 			case TOKEN_RIGHT_SHIFT_EQUAL: op = EXPR_SHR_ASSIGN; break;
 			default: __builtin_unreachable();
 		}
-		lexer_read(l);
+		tokens_next(s);
 		
-		ExprIndex rhs = parse_expr_l6(l);
+		ExprIndex rhs = parse_expr_l6(s);
 		expr_arena.data[e] = (Expr) {
 			.op = op,
 			.bin_op = { lhs, rhs }
@@ -720,33 +726,33 @@ static ExprIndex parse_expr_l14(Lexer* l) {
 	return lhs;
 }
 
-static ExprIndex parse_expr(Lexer* l) {
-	return parse_expr_l14(l);
+static ExprIndex parse_expr(TokenStream* restrict s) {
+	return parse_expr_l14(s);
 }
 
 ////////////////////////////////
 // TYPES
 ////////////////////////////////
-static TypeIndex parse_type_suffix(Lexer* l, TypeIndex type, Atom name);
+static TypeIndex parse_type_suffix(TokenStream* restrict s, TypeIndex type, Atom name);
 
-static Decl parse_declarator(Lexer* l, TypeIndex type) {
+static Decl parse_declarator(TokenStream* restrict s, TypeIndex type) {
 	// handle pointers
-	while (l->token_type == '*') {
+	while (tokens_get(s)->type == '*') {
 		type = new_pointer(type);
-		lexer_read(l);
+		tokens_next(s);
 		
 		// TODO(NeGate): parse qualifiers
-		switch (l->token_type) {
+		switch (tokens_get(s)->type) {
 			case TOKEN_KW_const:
 			case TOKEN_KW_volatile:
 			case TOKEN_KW_restrict: 
-			lexer_read(l);
+			tokens_next(s);
 			break;
 			default: break;
 		}
 	}
 	
-	if (l->token_type == '(') {
+	if (tokens_get(s)->type == '(') {
 		// TODO(NeGate): I don't like this code...
 		// it essentially just skips over the stuff in the
 		// parenthesis to do the suffix then comes back
@@ -754,18 +760,18 @@ static Decl parse_declarator(Lexer* l, TypeIndex type) {
 		// the end of the declarator when it's done.
 		//
 		// should be right after the (
-		lexer_read(l);
-		Lexer saved = *l;
+		tokens_next(s);
+		size_t saved = s->current;
 		
-		parse_declarator(l, TYPE_NONE);
+		parse_declarator(s, TYPE_NONE);
 		
-		expect(l, ')');
-		type = parse_type_suffix(l, type, NULL);
+		expect(s, ')');
+		type = parse_type_suffix(s, type, NULL);
 		
-		Lexer saved_end = *l;
-		*l = saved;
+		size_t saved_end = s->current;
+		s->current = saved;
 		
-		Decl d = parse_declarator(l, type);
+		Decl d = parse_declarator(s, type);
 		
 		// inherit name
 		if (!d.name) {
@@ -784,24 +790,25 @@ static Decl parse_declarator(Lexer* l, TypeIndex type) {
 			}
 		}
 		
-		*l = saved_end;
+		s->current = saved_end;
 		return d;
 	}
 	
 	Atom name = NULL;
-	if (l->token_type == TOKEN_IDENTIFIER) {
-		name = atoms_put(l->token_end - l->token_start, l->token_start);
-		lexer_read(l);
+	Token* t = tokens_get(s);
+	if (t->type == TOKEN_IDENTIFIER) {
+		name = atoms_put(t->end - t->start, t->start);
+		tokens_next(s);
 	}
 	
-	type = parse_type_suffix(l, type, name);
+	type = parse_type_suffix(s, type, name);
 	return (Decl){ type, name };
 }
 
-static TypeIndex parse_type_suffix(Lexer* l, TypeIndex type, Atom name) {
+static TypeIndex parse_type_suffix(TokenStream* restrict s, TypeIndex type, Atom name) {
 	// type suffixes like array [] and function ()
-	if (l->token_type == '(') {
-		lexer_read(l);
+	if (tokens_get(s)->type == '(') {
+		tokens_next(s);
 		
 		// TODO(NeGate): implement (void) param
 		TypeIndex return_type = type;
@@ -813,15 +820,15 @@ static TypeIndex parse_type_suffix(Lexer* l, TypeIndex type, Atom name) {
 		size_t arg_count = 0;
 		void* args = tls_save();
 		
-		while (l->token_type != ')') {
+		while (tokens_get(s)->type != ')') {
 			if (arg_count) {
-				expect(l, ',');
+				expect(s, ',');
 			}
 			
 			Attribs arg_attr = { 0 };
-			TypeIndex arg_base_type = parse_declspec(l, &arg_attr);
+			TypeIndex arg_base_type = parse_declspec(s, &arg_attr);
 			
-			Decl arg_decl = parse_declarator(l, arg_base_type);
+			Decl arg_decl = parse_declarator(s, arg_base_type);
 			TypeIndex arg_type = arg_decl.type;
 			
 			if (type_arena.data[arg_type].kind == KIND_ARRAY) {
@@ -840,10 +847,10 @@ static TypeIndex parse_type_suffix(Lexer* l, TypeIndex type, Atom name) {
 			arg_count++;
 		}
 		
-		if (l->token_type != ')') {
-			generic_error(l, "Unclosed parameter list!");
+		if (tokens_get(s)->type != ')') {
+			generic_error(s, "Unclosed parameter list!");
 		}
-		lexer_read(l);
+		tokens_next(s);
 		
 		ArgIndex start = push_arg_arena(arg_count);
 		memcpy(&arg_arena.data[start], args, arg_count * sizeof(Arg));
@@ -852,37 +859,42 @@ static TypeIndex parse_type_suffix(Lexer* l, TypeIndex type, Atom name) {
 		type_arena.data[type].func.arg_end = start + arg_count;
 		
 		tls_restore(args);
-	} else if (l->token_type == '[') {
+	} else if (tokens_get(s)->type == '[') {
 		do {
-			lexer_read(l);
+			tokens_next(s);
 			
 			// TODO(NeGate): Implement array typedecl properly
 			long long count;
-			if (l->token_type == ']') {
+			
+			Token* t = tokens_get(s);
+			if (t->type == ']') {
 				count = 0; 
-				lexer_read(l);
-			} else if (l->token_type == TOKEN_NUMBER) {
+				tokens_next(s);
+			} else if (t->type == TOKEN_NUMBER) {
+				size_t len = t->end - t->start;
+				assert(len < 15);
+				
 				char temp[16];
-				memcpy_s(temp, 16, l->token_start, l->token_end - l->token_start);
-				temp[l->token_end - l->token_start] = '\0';
-				lexer_read(l);
+				memcpy(temp, t->start, len);
+				temp[len] = '\0';
 				
 				count = atoll(temp);
+				tokens_next(s);
 				
-				expect(l, ']');
+				expect(s, ']');
 			} else {
 				abort();
 			}
 			
 			type = new_array(type, count);
-		} while (l->token_type == '[');
+		} while (tokens_get(s)->type == '[');
 	}
 	
 	return type;
 }
 
 // https://github.com/rui314/chibicc/blob/90d1f7f199cc55b13c7fdb5839d1409806633fdb/parse.c#L381
-static TypeIndex parse_declspec(Lexer* l, Attribs* attr) {
+static TypeIndex parse_declspec(TokenStream* restrict s, Attribs* attr) {
 	enum {
 		VOID     = 1 << 0,
 		BOOL     = 1 << 2,
@@ -903,7 +915,7 @@ static TypeIndex parse_declspec(Lexer* l, Attribs* attr) {
 	bool is_atomic = false;
 	bool is_const = false;
 	do {
-		switch (l->token_type) {
+		switch (tokens_get(s)->type) {
 			case TOKEN_KW_void: counter += VOID; break;
 			case TOKEN_KW_Bool: counter += BOOL; break;
 			case TOKEN_KW_char: counter += CHAR; break;
@@ -927,16 +939,17 @@ static TypeIndex parse_declspec(Lexer* l, Attribs* attr) {
 			
 			case TOKEN_KW_struct: {
 				if (counter) goto done;
-				lexer_read(l);
+				tokens_next(s);
 				
 				Atom name = NULL;
-				if (l->token_type == TOKEN_IDENTIFIER) {
-					name = atoms_put(l->token_end - l->token_start, l->token_start);
-					lexer_read(l);
+				Token* t = tokens_get(s);
+				if (tokens_get(s)->type == TOKEN_IDENTIFIER) {
+					name = atoms_put(t->end - t->start, t->start);
+					tokens_next(s);
 				}
 				
-				if (l->token_type == '{') {
-					lexer_read(l);
+				if (tokens_get(s)->type == '{') {
+					tokens_next(s);
 					
 					type = new_struct();
 					type_arena.data[type].record.name = name;
@@ -950,15 +963,15 @@ static TypeIndex parse_declspec(Lexer* l, Attribs* attr) {
 					// struct/union are aligned to the biggest member alignment
 					int align = 0;
 					
-					while (l->token_type != '}') {
+					while (tokens_get(s)->type != '}') {
 						Attribs member_attr = { 0 };
-						TypeIndex member_base_type = parse_declspec(l, &member_attr);
+						TypeIndex member_base_type = parse_declspec(s, &member_attr);
 						
-						Decl decl = parse_declarator(l, member_base_type);
+						Decl decl = parse_declarator(s, member_base_type);
 						TypeIndex member_type = decl.type;
 						
 						if (type_arena.data[member_type].kind == KIND_FUNC) {
-							generic_error(l, "Naw dawg");
+							generic_error(s, "Naw dawg");
 						}
 						
 						int member_align = type_arena.data[member_type].align;
@@ -980,11 +993,11 @@ static TypeIndex parse_declspec(Lexer* l, Attribs* attr) {
 							align = member_align;
 						}
 						
-						expect(l, ';');
+						expect(s, ';');
 					}
 					
-					if (l->token_type != '}') {
-						generic_error(l, "Unclosed member list!");
+					if (tokens_get(s)->type != '}') {
+						generic_error(s, "Unclosed member list!");
 					}
 					
 					offset = align_up(offset, align);
@@ -1008,14 +1021,15 @@ static TypeIndex parse_declspec(Lexer* l, Attribs* attr) {
 			case TOKEN_IDENTIFIER: {
 				if (counter) goto done;
 				
-				size_t len = l->token_end - l->token_start;
+				Token* t = tokens_get(s);
+				size_t len = t->end - t->start;
 				
 				int i = typedef_count;
 				while (i--) {
 					size_t typedef_len = strlen((const char*)typedef_names[i]);
 					
 					if (len == typedef_len &&
-						memcmp(l->token_start, typedef_names[i], len) == 0) {
+						memcmp(t->start, typedef_names[i], len) == 0) {
 						type = typedefs[i];
 						counter += OTHER;
 						break;
@@ -1091,16 +1105,16 @@ static TypeIndex parse_declspec(Lexer* l, Attribs* attr) {
 			assert(type);
 			break;
 			default:
-			generic_error(l, "invalid type");
+			generic_error(s, "invalid type");
 			break;
 		}
 		
-		lexer_read(l);
+		tokens_next(s);
 	} while (true);
 	
 	done:
 	if (type == 0) {
-		generic_error(l, "Unknown typename");
+		generic_error(s, "Unknown typename");
 	}
 	
 	if (is_atomic || is_const) {
@@ -1112,8 +1126,10 @@ static TypeIndex parse_declspec(Lexer* l, Attribs* attr) {
 	return type;
 }
 
-static bool is_typename(Lexer* l) {
-	switch (l->token_type) {
+static bool is_typename(TokenStream* restrict s) {
+	Token* t = tokens_get(s);
+	
+	switch (t->type) {
 		case TOKEN_KW_void:
 		case TOKEN_KW_char:
 		case TOKEN_KW_short:
@@ -1131,14 +1147,14 @@ static bool is_typename(Lexer* l) {
 		return true;
 		
 		case TOKEN_IDENTIFIER: {
-			size_t len = l->token_end - l->token_start;
+			size_t len = t->end - t->start;
 			
 			int i = typedef_count;
 			while (i--) {
 				size_t typedef_len = strlen((const char*)typedef_names[i]);
 				
 				if (len == typedef_len &&
-					memcmp(l->token_start, typedef_names[i], len) == 0) {
+					memcmp(t->start, typedef_names[i], len) == 0) {
 					return true;
 				}
 			}
@@ -1153,20 +1169,18 @@ static bool is_typename(Lexer* l) {
 ////////////////////////////////
 // ERRORS
 ////////////////////////////////
-static _Noreturn void generic_error(Lexer* l, const char* msg) {
-	int loc = lexer_get_location(l);
-	
-	printf("error on line %d: %s\n", loc, msg);
+static _Noreturn void generic_error(TokenStream* restrict s, const char* msg) {
+	//int loc = lexer_get_location(s);
+	//printf("error on line %d: %s\n", loc, msg);
 	abort();
 }
 
-static void expect(Lexer* l, char ch) {
-	if (l->token_type != ch) {
-		int loc = lexer_get_location(l);
-		
-		printf("error on line %d: expected '%c' got '%.*s'", loc, ch, (int)(l->token_end - l->token_start), l->token_start);
+static void expect(TokenStream* restrict s, char ch) {
+	if (tokens_get(s)->type != ch) {
+		//int loc = lexer_get_location(s);
+		//printf("error on line %d: expected '%c' got '%.*s'", loc, ch, (int)(l->token_end - l->token_start), l->token_start);
 		abort();
 	}
 	
-	lexer_read(l);
+	tokens_next(s);
 }

@@ -306,4 +306,4 @@ typedef struct TopLevel {
 	StmtIndex* arr;
 } TopLevel;
 
-TopLevel parse_file(Lexer* lex);
+TopLevel parse_file(TokenStream* restrict s);

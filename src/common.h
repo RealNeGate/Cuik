@@ -8,7 +8,7 @@
 #include <assert.h>
 #include <stdbool.h>
 
-typedef struct string { const char* data; size_t length; } string; 
+typedef struct string { const unsigned char* data; size_t length; } string; 
 
 #define KILOBYTES(x) ((x) << 10ull)
 #define MEGABYTES(x) ((x) << 20ull)

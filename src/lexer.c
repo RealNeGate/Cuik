@@ -57,25 +57,27 @@ enum {
 	CHAR_CLASS_NUMBER,
 	// ;{}()
 	CHAR_CLASS_SEPARATOR,
-	// # ##
-	CHAR_CLASS_MULTICHAR,
 	// + ++ +=
-	CHAR_CLASS_MULTICHAR2,
+	CHAR_CLASS_MULTICHAR1,
 	// > >= >> >>= < <= << <<=
-	CHAR_CLASS_MULTICHAR3,
+	CHAR_CLASS_MULTICHAR2,
 	// - -> -- -=
-	CHAR_CLASS_MULTICHAR4
+	CHAR_CLASS_MULTICHAR3,
+	// 'foo' "bar"
+	CHAR_CLASS_STRING,
+	// . ...
+	CHAR_CLASS_DOT
 };
 
 static _Alignas(64) uint8_t char_classes[256] = {
 	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
 	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
-	0x00,0x06,0x00,0x05,0x00,0x00,0x06,0x00,0x04,0x04,0x06,0x06,0x04,0x08,0x04,0x06,
-	0x03,0x03,0x03,0x03,0x03,0x03,0x03,0x03,0x03,0x03,0x00,0x04,0x07,0x06,0x07,0x00,
+	0x00,0x05,0x08,0x04,0x02,0x00,0x05,0x08,0x04,0x04,0x05,0x05,0x04,0x07,0x09,0x05,
+	0x03,0x03,0x03,0x03,0x03,0x03,0x03,0x03,0x03,0x03,0x04,0x04,0x06,0x05,0x06,0x04,
 	0x00,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x02,
-	0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x04,0x00,0x04,0x06,0x02,
+	0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x04,0x00,0x04,0x05,0x02,
 	0x00,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x02,
-	0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x04,0x06,0x04,0x00,0x00,
+	0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x02,0x04,0x05,0x04,0x04,0x00,
 	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
 	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
 	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
@@ -172,15 +174,17 @@ TknType classify_ident(const unsigned char* restrict str, size_t len) {
 	__m128i kw128  = _mm_loadu_si128((__m128i*) &keywords[v]);
 	__m128i str128 = _mm_loadu_si128((__m128i*) str);
 	
+	int kw_len = __builtin_ffs(_mm_movemask_epi8(_mm_cmpeq_epi8(kw128, _mm_set1_epi8('\0')))) - 1;
+	
 	// NOTE(NeGate): Fancy x86 strcmp crap :)
-	int result = _mm_cmpestri(kw128, len,
+	int result = _mm_cmpestri(kw128, kw_len,
 							  str128, len,
 							  _SIDD_UBYTE_OPS |
-							  _SIDD_CMP_EQUAL_ANY | 
+							  _SIDD_CMP_EQUAL_EACH | 
 							  _SIDD_NEGATIVE_POLARITY |
-							  _SIDD_BIT_MASK);
+							  _SIDD_UNIT_MASK);
 	
-	return result == len ? (640 + v) : TOKEN_IDENTIFIER;
+	return result == 16 ? (640 + v) : TOKEN_IDENTIFIER;
 }
 
 void lexer_read(Lexer* restrict l) {
@@ -195,9 +199,12 @@ void lexer_read(Lexer* restrict l) {
 	redo_lex: {
 		if (*current == '\0') {
 			// quit, we're done
+			l->hit_line = true;
 			l->token_type = '\0';
 			return;
 		} else if (*current == '\n') {
+			l->hit_line = true;
+			
 			// Do a branchless SIMD skip of up to 16 tabs after a newline.
             __m128i chars = _mm_loadu_si128((__m128i *)current);
             int len = __builtin_ffs(~_mm_movemask_epi8(_mm_cmpeq_epi8(chars, _mm_set1_epi8('\n'))));
@@ -210,6 +217,13 @@ void lexer_read(Lexer* restrict l) {
 		} else if (*current == '/') {
 			if (current[1] == '/') {
 				do { current++; } while (*current && *current != '\n');
+				goto redo_lex;
+			} else if (current[1] == '*') {
+				current++;
+				
+				do { current++; } while (*current && !(current[0] == '/' && current[-1] == '*'));
+				
+				current++;
 				goto redo_lex;
 			}
 		}
@@ -240,18 +254,10 @@ void lexer_read(Lexer* restrict l) {
 			l->token_type = *start;
 			break;
 		}
-		case CHAR_CLASS_MULTICHAR: {
-			l->token_type = *start;
-			if (*current == *start) {
-				l->token_type += 256;
-				current++;
-			}
-			break;
-		}
-		case CHAR_CLASS_MULTICHAR2: {
+		case CHAR_CLASS_MULTICHAR1: {
 			l->token_type = *start;
 			if (*current == '=') {
-				l->token_type += 256;
+				l->token_type += 384;
 				current++;
 			} else if (*current == *start && *current != '*') {
 				l->token_type += 256;
@@ -259,7 +265,7 @@ void lexer_read(Lexer* restrict l) {
 			}
 			break;
 		}
-		case CHAR_CLASS_MULTICHAR3: {
+		case CHAR_CLASS_MULTICHAR2: {
 			l->token_type = *start;
 			if (*current == '=') {
 				l->token_type += 256;
@@ -275,7 +281,7 @@ void lexer_read(Lexer* restrict l) {
 			}
 			break;
 		}
-		case CHAR_CLASS_MULTICHAR4: {
+		case CHAR_CLASS_MULTICHAR3: {
 			l->token_type = *start;
 			
 			if (*current == '-') {
@@ -288,6 +294,36 @@ void lexer_read(Lexer* restrict l) {
 				l->token_type = TOKEN_ARROW;
 				current++;
 			}
+			break;
+		}
+		case CHAR_CLASS_STRING: {
+			char quote_type = *start;
+			__m128 pattern = _mm_set1_epi8(quote_type);
+			
+			do {
+				__m128i chars = _mm_loadu_si128((__m128i *)current);
+				int len = __builtin_ffs(_mm_movemask_epi8(_mm_cmpeq_epi8(chars, pattern)));
+				
+				if (len) {
+					current += len;
+					if (current[-1] == '\"' && current[-2] != '\\') break;
+				} else {
+					current += 16;
+				}
+			} while (*current);
+			
+			l->token_type = quote_type;
+			break;
+		}
+		case CHAR_CLASS_DOT: {
+			if (current[1] == '.' && current[1] == '.') {
+				current += 2;
+				
+				l->token_type = TOKEN_TRIPLE_DOT;
+				break;
+			}
+			
+			l->token_type = '.';
 			break;
 		}
 		default:
@@ -308,5 +344,5 @@ int lexer_get_location(Lexer* restrict l) {
 		start += 1;
 	}
 	
-	return num;
+	return l->base_line + num;
 }

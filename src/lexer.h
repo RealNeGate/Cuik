@@ -1,5 +1,6 @@
 #pragma once
 #include "common.h"
+#include "stb_ds.h"
 
 // NOTE(NeGate): I originally called it TokenType but windows a bih on god
 typedef enum TknType {
@@ -14,6 +15,9 @@ typedef enum TknType {
 	
     TOKEN_HASH = '#',
     
+    TOKEN_COLON = ':',
+    TOKEN_SEMICOLON = ';',
+	
     TOKEN_LESS = '<',
     TOKEN_GREATER = '>',
 	
@@ -25,29 +29,35 @@ typedef enum TknType {
     
     TOKEN_BRACE_OPEN = '{',
     TOKEN_BRACE_CLOSE = '}',
+	
+    TOKEN_STRING_SINGLE_QUOTE = '\'',
+    TOKEN_STRING_DOUBLE_QUOTE = '\"',
     
     TOKEN_IDENTIFIER = 256,
 	TOKEN_NUMBER,
-    TOKEN_STRING,
+	TOKEN_TRIPLE_DOT,
     
     TOKEN_INVALID,
 	
     TOKEN_ARROW,                      /* ->  */
     TOKEN_DOUBLE_HASH   = '#' + 256,  /* ##  */
 	
-    TOKEN_PLUS_EQUAL    = '+' + 256,  /* +=  */
-    TOKEN_MINUS_EQUAL   = '-' + 256,  /* -=  */
-    TOKEN_TIMES_EQUAL   = '*' + 256,  /* *=  */
-    TOKEN_SLASH_EQUAL   = '/' + 256,  /* /=  */
-    TOKEN_PERCENT_EQUAL = '%' + 256,  /* %=  */
-    TOKEN_OR_EQUAL      = '|' + 256,  /* |=  */
-    TOKEN_AND_EQUAL     = '&' + 256,  /* &=  */
-    TOKEN_XOR_EQUAL     = '^' + 256,  /* ^=  */
-    TOKEN_NOT_EQUAL     = '!' + 256,  /* !=  */
-    TOKEN_EQUALITY      = '=' + 256,  /* ==  */
+    TOKEN_DOUBLE_AND    = '&' + 256,  /* &=  */
+    TOKEN_DOUBLE_OR     = '|' + 256,  /* |=  */
+	
+    TOKEN_PLUS_EQUAL    = '+' + 384,  /* +=  */
+    TOKEN_MINUS_EQUAL   = '-' + 384,  /* -=  */
+    TOKEN_TIMES_EQUAL   = '*' + 384,  /* *=  */
+    TOKEN_SLASH_EQUAL   = '/' + 384,  /* /=  */
+    TOKEN_PERCENT_EQUAL = '%' + 384,  /* %=  */
+    TOKEN_OR_EQUAL      = '|' + 384,  /* |=  */
+    TOKEN_AND_EQUAL     = '&' + 384,  /* &=  */
+    TOKEN_XOR_EQUAL     = '^' + 384,  /* ^=  */
+    TOKEN_NOT_EQUAL     = '!' + 384,  /* !=  */
+    TOKEN_EQUALITY      = '=' + 384,  /* ==  */
+	
     TOKEN_GREATER_EQUAL = '>' + 256,  /* >=  */
     TOKEN_LESS_EQUAL    = '<' + 256,  /* <=  */
-	
     TOKEN_LEFT_SHIFT    = '<' + 384,  /* <<  */
     TOKEN_RIGHT_SHIFT   = '>' + 384,  /* >>  */
 	
@@ -103,16 +113,51 @@ typedef enum TknType {
 	TOKEN_KW_Thread_local,
 } TknType;
 
+typedef struct Token {
+	TknType type;
+    const unsigned char* start;
+    const unsigned char* end;
+} Token;
+
+typedef struct TokenStream {
+	// stb_ds array
+	Token* tokens;
+	size_t current;
+} TokenStream;
+
 typedef struct Lexer {
+	const char* filepath;
+	
     const unsigned char* start;
     const unsigned char* current;
+	
+	int base_line;
     
-    // current token info
+    // when reading it spotted a line or EOF, it must be manually reset
+	bool hit_line; 
+	
+	// current token info
 	TknType token_type;
     const unsigned char* token_start;
     const unsigned char* token_end;
 } Lexer;
 
+// this is used by the preprocessor to scan tokens in
 void lexer_read(Lexer* restrict l);
 int lexer_get_location(Lexer* restrict l);
 
+inline static bool lexer_match(Lexer* restrict l, size_t len, const char str[]) {
+	if ((l->token_end - l->token_start) != len) return false;
+	
+	return memcmp(l->token_start, str, len) == 0;
+}
+
+// this is used by the parser to get the next token
+inline static Token* tokens_get(TokenStream* restrict s) {
+	return &s->tokens[s->current];
+}
+
+inline static void tokens_next(TokenStream* restrict s) {
+	assert(s->current < arrlen(s->tokens));
+	s->current += 1;
+}

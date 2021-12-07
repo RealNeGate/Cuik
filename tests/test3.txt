@@ -88,7 +88,7 @@ HWND CreateWindowExA(DWORD dwExStyle, LPCSTR lpClassName,
 	int X, int Y, int nWidth, int nHeight,
 	HWND hWndParent, HMENU hMenu, HINSTANCE hInstance, LPVOID lpParam);
 
-int entry() {
+int WinMain() {
 	char name[4];
 	name[0] = 84;
 	name[1] = 83;

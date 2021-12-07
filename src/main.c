@@ -1,8 +1,8 @@
-#include "preprocessor.h"
-#include "lexer.h"
+#include "preproc.h"
 #include "parser.h"
 #include "ir_gen.h"
 #include "atoms.h"
+#include "stb_ds.h"
 #include <time.h>
 #include <stdatomic.h>
 #include "../ext/threads.h"
@@ -40,28 +40,6 @@ static unsigned char* read_entire_file(const char* filepath) {
 }
 
 int main(int argc, char* argv[]) {
-#if 0
-	unsigned char* text = read_entire_file("tests/test.txt");
-	if (!text) {
-		printf("Failed to read file!\n");
-		return 1;
-	}
-	
-	//clock_t t1 = clock();
-	
-	Lexer l = (Lexer) { text, text };
-    do {
-        lexer_read(&l);
-        printf("%d\t%.*s\n", l.token_type, (int)(l.token_end - l.token_start), l.token_start);
-    } while (l.token_type);
-	
-	//clock_t t2 = clock();
-	//double delta_ms = ((t2 - t1) / (double)CLOCKS_PER_SEC) * 1000.0;
-	//printf("lexing took %f ms\n", delta_ms);
-	
-	// NOTE(NeGate): Hard-coded the size of test5.txt because im lame
-	//printf("%f gigs / second\n", (135889014.0 / (double)(delta_ms / 1000.0)) / 1000000000.0);
-#else
 	clock_t t1 = clock();
 	
 	TB_FeatureSet features = { 0 };
@@ -71,16 +49,12 @@ int main(int argc, char* argv[]) {
 						   TB_OPT_O0,
 						   1, false);
 	
-	// TODO(NeGate): Preprocess file
-	const unsigned char* text = preprocess_file("tests/test5.txt");
-	if (!text) {
-		printf("Failed to read file!\n");
-		return 1;
-	}
+	// Preprocess file
+	TokenStream s = preprocess_translation_unit("tests/test5.txt");
 	
 	// Parse
 	atoms_init();
-	TopLevel tl = parse_file(&(Lexer) { text, text });
+	TopLevel tl = parse_file(&s);
 	
 	// Generate IR
 	gen_ir_stage1(tl);
@@ -88,7 +62,7 @@ int main(int argc, char* argv[]) {
 	
 	// Compile
 	if (!tb_module_compile(mod)) abort();
-	free_virtual_memory((void*)text);
+	arrfree(s.tokens);
 	
 	// Generate object file
 	const char* obj_output_path = "test_x64.obj";
@@ -167,7 +141,6 @@ int main(int argc, char* argv[]) {
 	clock_t t3 = clock();
 	delta_ms = ((t3 - t2) / (double)CLOCKS_PER_SEC) * 1000.0;
 	printf("linking took %f ms\n", delta_ms);
-#endif
 	
 	return 0;
 }
