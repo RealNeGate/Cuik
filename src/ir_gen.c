@@ -680,41 +680,33 @@ static void gen_func_body(TypeIndex type, StmtIndex s) {
 	tb_module_compile_func(mod, func);
 }
 
-void gen_ir_stage1(TopLevel tl) {
-	size_t count = arrlen(tl.arr);
+void gen_ir_stage1(TopLevel tl, size_t i) {
+	StmtIndex s = tl.arr[i];
 	
-	for (size_t i = 0; i  < count; i++) {
-		StmtIndex s = tl.arr[i];
+	if (stmt_arena.data[s].op == STMT_FUNC_DECL) {
+		TypeIndex type = stmt_arena.data[s].decl_type;
+		assert(type_arena.data[type].kind == KIND_FUNC);
 		
-		if (stmt_arena.data[s].op == STMT_FUNC_DECL) {
-			TypeIndex type = stmt_arena.data[s].decl_type;
-			assert(type_arena.data[type].kind == KIND_FUNC);
-			
-			gen_func_header(type, s);
-		} else if (stmt_arena.data[s].op == STMT_DECL) {
-			TypeIndex type = stmt_arena.data[s].decl_type;
-			
-			// TODO(NeGate): Implement other global forward decls
-			if (type_arena.data[type].kind != KIND_FUNC) {
-				abort();
-			}
-			
-			stmt_arena.data[s].backing.e = tb_module_extern(mod, (char*) stmt_arena.data[s].decl_name);
+		gen_func_header(type, s);
+	} else if (stmt_arena.data[s].op == STMT_DECL) {
+		TypeIndex type = stmt_arena.data[s].decl_type;
+		
+		// TODO(NeGate): Implement other global forward decls
+		if (type_arena.data[type].kind != KIND_FUNC) {
+			abort();
 		}
+		
+		stmt_arena.data[s].backing.e = tb_module_extern(mod, (char*) stmt_arena.data[s].decl_name);
 	}
 }
 
-void gen_ir_stage2(TopLevel tl) {
-	size_t count = arrlen(tl.arr);
+void gen_ir_stage2(TopLevel tl, size_t i) {
+	StmtIndex s = tl.arr[i];
 	
-	for (size_t i = 0; i  < count; i++) {
-		StmtIndex s = tl.arr[i];
+	if (stmt_arena.data[s].op == STMT_FUNC_DECL) {
+		TypeIndex type = stmt_arena.data[s].decl_type;
+		assert(type_arena.data[type].kind == KIND_FUNC);
 		
-		if (stmt_arena.data[s].op == STMT_FUNC_DECL) {
-			TypeIndex type = stmt_arena.data[s].decl_type;
-			assert(type_arena.data[type].kind == KIND_FUNC);
-			
-			gen_func_body(type, s);
-		}
+		gen_func_body(type, s);
 	}
 }

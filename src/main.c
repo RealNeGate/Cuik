@@ -8,57 +8,123 @@
 #include "../ext/threads.h"
 #include "microsoft_craziness.h"
 
-#include <sys/stat.h>
+// frontend worker threads
+#define NUM_THREADS 2
+#define MAX_MUNCH 16384
 
-#ifdef _WIN32
-#include <windows.h>
+static thrd_t threads[NUM_THREADS];
 
-#define fileno _fileno
-#define fstat _fstat
-#define stat _stat
-#endif
+static _Atomic size_t tasks_reserved;
+static _Atomic size_t tasks_complete;
+static _Atomic bool is_running;
+static size_t tasks_count;
 
-static unsigned char* read_entire_file(const char* filepath) {
-	FILE* file = fopen(filepath, "rb");
-	if (!file) return NULL;
+// Frontend IR Gen has two stages, one places all
+// forward decls (0) and one places all function bodies (1)
+static int frontend_stage;
+static TopLevel top_level;
+
+static int task_thread(void* param) {
+	while (is_running) {
+		size_t t = atomic_fetch_add(&tasks_reserved, MAX_MUNCH);
+		
+		if (t+(MAX_MUNCH-1) >= tasks_count) {
+			if (t < tasks_count) {
+				for (size_t i = t; i < tasks_count; i++) {
+					if (frontend_stage == 0) gen_ir_stage1(top_level, i);
+					else gen_ir_stage2(top_level, i);
+				}
+				tasks_complete += (tasks_count - t);
+			}
+			
+			while (tasks_reserved >= tasks_count) { 
+				thrd_yield();
+				if (!is_running) return 0;
+			}
+			
+			continue;
+		}
+		
+		for (size_t i = 0; i < MAX_MUNCH; i++) {
+			if (frontend_stage == 0) gen_ir_stage1(top_level, t+i);
+			else gen_ir_stage2(top_level, t+i);
+		}
+		
+		tasks_complete += MAX_MUNCH;
+	}
 	
-	int descriptor = fileno(file);
+	return 0;
+}
+
+static void dispatch_tasks(size_t count) {
+	tasks_count = count;
+	tasks_complete = 0;
+	tasks_reserved = 0;
 	
-	struct stat file_stats;
-	if (fstat(descriptor, &file_stats) == -1) return NULL;
+	//printf("Doing Stage%d... (%zu tasks)\n", frontend_stage+1, tasks_count);
 	
-	int length = file_stats.st_size;
-	unsigned char* data = malloc(length + 1);
+	// wait until it's completed
+    while (tasks_complete < tasks_count) { 
+		thrd_yield();
+	}
 	
-	fseek(file, 0, SEEK_SET);
-	size_t length_read = fread(data, 1, length, file);
-	
-	data[length_read] = '\0';
-	fclose(file);
-	
-	return data;
+	//printf("Done with Stage%d! %zu\n", frontend_stage+1, tasks_complete);
 }
 
 int main(int argc, char* argv[]) {
 	clock_t t1 = clock();
+	
+	// Parse CLI
+	const char* output_path = NULL;
+	
+	// TODO(NeGate) parse cli
+	
+	if (output_path == NULL) {
+		output_path = "test_x64";
+		printf("No output file, defaulting to test_x64.exe...\n");
+	}
 	
 	TB_FeatureSet features = { 0 };
 	mod = tb_module_create(TB_ARCH_X86_64,
 						   TB_SYSTEM_WINDOWS,
 						   &features,
 						   TB_OPT_O0,
-						   4, false);
+						   2, false);
 	
 	// Preprocess file
 	TokenStream s = preprocess_translation_unit("tests/test5.txt");
 	
 	// Parse
 	atoms_init();
-	TopLevel tl = parse_file(&s);
+	top_level = parse_file(&s);
 	
 	// Generate IR
-	gen_ir_stage1(tl);
-	gen_ir_stage2(tl);
+	{
+		is_running = true;
+		for (int i = 0; i < NUM_THREADS; i++) {
+			thrd_create(&threads[i], task_thread, NULL);
+		}
+		
+		size_t func_count = arrlen(top_level.arr);
+		
+		// Forward decls
+		frontend_stage = 0;
+		dispatch_tasks(func_count);
+		
+		// Generate bodies
+		frontend_stage = 1;
+		dispatch_tasks(func_count);
+		
+		// Just let's the threads know that 
+		// they might need to die now
+		tasks_count = 0;
+		tasks_complete = 0;
+		
+		is_running = false;
+		for (int i = 0; i < NUM_THREADS; i++) {
+			thrd_join(threads[i], NULL);
+		}
+	}
 	
 	// Compile
 	if (!tb_module_compile(mod)) abort();
@@ -84,7 +150,6 @@ int main(int argc, char* argv[]) {
 		// W functions because im a bitch too
 		// TODO(NeGate): Clean up this code and make it so that more
 		// options are exposed in the frontend.
-		const char* output_path = "test_x64";
 		wchar_t* cmd_line = malloc(1024 * sizeof(wchar_t));
 		const char* libraries = "kernel32.lib user32.lib Gdi32.lib";
 		
