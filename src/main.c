@@ -47,7 +47,7 @@ int main(int argc, char* argv[]) {
 						   TB_SYSTEM_WINDOWS,
 						   &features,
 						   TB_OPT_O0,
-						   1, false);
+						   4, false);
 	
 	// Preprocess file
 	TokenStream s = preprocess_translation_unit("tests/test5.txt");

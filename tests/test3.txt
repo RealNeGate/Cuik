@@ -100,7 +100,6 @@ int WinMain() {
 	wc.lpfnWndProc = DefWindowProcA;
 	wc.lpszClassName = &name;
 	RegisterClassA(&wc);
-	GetLastError();
 	
 	HWND window = CreateWindowExA(262144, &name,
 									&name, 768,
