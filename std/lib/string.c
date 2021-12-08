@@ -26,3 +26,4 @@ void* memcpy(void* restrict s1, const void* restrict s2, size_t n) {
 	
 	return s1;
 }
+

@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<root>
+ <rdmgr>
+  <timestamp type="u64_t">1638986277</timestamp>
+  <hostname>DESKTOP-7JBJLF5</hostname>
+  <os>windows</os>
+  <product>Intel® oneAPI VTune™ Profiler 2021.9.0</product>
+  <buildNumber type="s32_t">621210</buildNumber>
+  <logicalCPUCount type="s32_t">12</logicalCPUCount>
+  <physicalCoreCount type="s32_t">6</physicalCoreCount>
+  <processorPackageCount type="s32_t">1</processorPackageCount>
+  <CPUFrequency type="s64_t">3700000000</CPUFrequency>
+  <CPUFamily type="s32_t">6</CPUFamily>
+  <CPUModel type="s32_t">158</CPUModel>
+  <CPUStepping type="s32_t">10</CPUStepping>
+  <CPUBrandName>Intel(R) Core(TM) i7-8700K CPU @ 3.70GHz</CPUBrandName>
+  <isa>avx2</isa>
+  <collectionTimeBegin type="u64_t">1638986277</collectionTimeBegin>
+  <collectionTimeEnd type="u64_t">1638986286</collectionTimeEnd>
+  <variables>
+   <at>ps</at>
+  </variables>
+ </rdmgr>
+</root>

@@ -1,0 +1,13 @@
+<?xml version='1.0' encoding='UTF-8'?>
+
+<bag xmlns:unsignedLong="http://www.w3.org/2001/XMLSchema#unsignedLong">
+ <entry path="grouper" unsignedLong:size="1">
+  <indexFields>
+   <field path="global_elapsed_time_data_scale"/>
+  </indexFields>
+  <int64Fields>
+   <field path="global_elapsed_time_data_duration"/>
+  </int64Fields>
+  <doubleFields/>
+ </entry>
+</bag>

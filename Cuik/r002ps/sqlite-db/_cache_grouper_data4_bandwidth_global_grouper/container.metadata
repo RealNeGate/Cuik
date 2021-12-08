@@ -1,0 +1,18 @@
+<?xml version='1.0' encoding='UTF-8'?>
+
+<bag xmlns:unsignedLong="http://www.w3.org/2001/XMLSchema#unsignedLong">
+ <entry path="grouper" unsignedLong:size="2">
+  <indexFields>
+   <field path="bandwidth_utilization_data_attr"/>
+   <field path="bandwidth_utilization_data_scale"/>
+  </indexFields>
+  <int64Fields>
+   <field path="bandwidth_utilization_data_duration"/>
+  </int64Fields>
+  <doubleFields>
+   <field path="bandwidth_utilization_data_count"/>
+   <field path="bandwidth_utilization_data_inst_count"/>
+   <field path="bandwidth_utilization_data_bandwidth_value_max"/>
+  </doubleFields>
+ </entry>
+</bag>

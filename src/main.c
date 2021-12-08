@@ -9,8 +9,8 @@
 #include "microsoft_craziness.h"
 
 // frontend worker threads
-#define NUM_THREADS 1
-#define MAX_MUNCH 16384
+#define NUM_THREADS 12
+#define MAX_MUNCH 256
 
 static thrd_t threads[NUM_THREADS];
 
@@ -105,15 +105,8 @@ int main(int argc, char* argv[]) {
 		printf("No output file, defaulting to test_x64.exe...\n");
 	}
 	
-	TB_FeatureSet features = { 0 };
-	mod = tb_module_create(TB_ARCH_X86_64,
-						   TB_SYSTEM_WINDOWS,
-						   &features,
-						   TB_OPT_O1,
-						   1, false);
-	
 	// Preprocess file
-	TokenStream s = preprocess_translation_unit("std/lib/string.c");
+	TokenStream s = preprocess_translation_unit("tests/test5.txt");
 	
 	// Parse
 	atoms_init();
@@ -126,15 +119,20 @@ int main(int argc, char* argv[]) {
 			thrd_create(&threads[i], task_thread, NULL);
 		}
 		
-		size_t func_count = arrlen(top_level.arr);
+		TB_FeatureSet features = { 0 };
+		mod = tb_module_create(TB_ARCH_X86_64,
+							   TB_SYSTEM_WINDOWS,
+							   &features,
+							   TB_OPT_O0,
+							   NUM_THREADS, false);
 		
 		// Forward decls
 		frontend_stage = 0;
-		dispatch_tasks(func_count);
+		dispatch_tasks(arrlen(top_level.arr));
 		
 		// Generate bodies
 		frontend_stage = 1;
-		dispatch_tasks(func_count);
+		dispatch_tasks(arrlen(top_level.arr));
 		
 		// Just let's the threads know that 
 		// they might need to die now
@@ -165,7 +163,7 @@ int main(int argc, char* argv[]) {
 	printf("compilation took %f ms\n", delta_ms);
 	
 	// Linking
-#if _WIN32
+#if 0 /* _WIN32 */
 	{
 		// NOTE(NeGate): Windows still a bih, im forcing the 
 		// W functions because im a bitch too

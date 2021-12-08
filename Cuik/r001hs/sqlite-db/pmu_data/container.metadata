@@ -1,0 +1,23 @@
+<?xml version='1.0' encoding='UTF-8'?>
+
+<bag xmlns:unsignedLong="http://www.w3.org/2001/XMLSchema#unsignedLong">
+ <entry path="end_tsc" unsignedLong:size="168">
+  <indexFields>
+   <field path="dd_sample"/>
+   <field path="attr.callsite"/>
+   <field path="attr.event_type"/>
+   <field path="attr.cpu"/>
+   <field path="__bucket_idx.dd_thread"/>
+   <field path="nextSampleAttr.event_type"/>
+   <field path="nextSampleAttr.callsite"/>
+  </indexFields>
+  <int64Fields>
+   <field path="duration"/>
+   <field path="count"/>
+   <field path="start_tsc"/>
+  </int64Fields>
+  <doubleFields>
+   <field path="nextCpuUsageDelta"/>
+  </doubleFields>
+ </entry>
+</bag>

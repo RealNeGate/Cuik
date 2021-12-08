@@ -45,18 +45,17 @@ int WinMain() {
 		GetMessageA(&msg, 0, 0, 0);
 		TranslateMessage(&msg);
 	
-		if (msg.message == WM_QUIT ||
+		/*if (msg.message == WM_QUIT ||
 			msg.message == WM_CLOSE||
 			msg.message == WM_SIZE ||
 			msg.message == WM_CHAR ||
 			msg.message == WM_KEYDOWN) {
 			// forward the relevant messages
 			PostThreadMessageA(main_thread_id, msg.message, msg.wParam, msg.lParam);
-		} else {
+		} else {*/
 			DispatchMessageA(&msg);
-		}
+		//}
 	}
 
 	return 0;
 }
-
