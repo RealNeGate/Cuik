@@ -1,0 +1,9 @@
+
+#include <stdbool.h>
+#include <stdint.h>
+#include <windows.h>
+
+void WinMain() {
+	ExitProcess(0);	
+}
+

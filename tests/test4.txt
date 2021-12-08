@@ -11,6 +11,6 @@ void fibonacci1() {
     }
 }
 
-int entry(void* hInstance, void* hPrevInstance, char* lpCmdLine, int nCmdShow) {
+int WinMain(void* hInstance, void* hPrevInstance, char* lpCmdLine, int nCmdShow) {
     return 0;
 }

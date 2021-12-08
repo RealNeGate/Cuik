@@ -18,6 +18,9 @@ TB_Module* mod;
 static _Thread_local TB_Register* parameter_map;
 static TypeIndex function_type;
 
+static TB_Label short_circuit_true;
+static TB_Label short_circuit_false;
+
 static TB_DataType ctype_to_tbtype(const Type* t) {
 	switch (t->kind) {
 		case KIND_VOID: return TB_TYPE_VOID;
@@ -118,16 +121,6 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 			ArgIndex arg = type_arena.data[function_type].func.arg_start + param_num;
 			TypeIndex arg_type = arg_arena.data[arg].type;
 			
-			if (type_arena.data[arg_type].kind == KIND_PTR) {
-				reg = tb_inst_load(func, TB_TYPE_PTR, reg, 8);
-				
-				return (IRVal) {
-					.value_type = LVALUE,
-					.type = arg_type,
-					.reg = reg
-				};
-			}
-			
 			return (IRVal) {
 				.value_type = LVALUE,
 				.type = arg_type,
@@ -138,6 +131,12 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 			IRVal src = gen_expr(func, ep->unary_op.src);
 			assert(src.value_type == LVALUE);
 			src.value_type = RVALUE;
+			
+			return src;
+		}
+		case EXPR_CAST: {
+			IRVal src = gen_expr(func, ep->cast.src);
+			src.type = ep->cast.type;
 			
 			return src;
 		}
@@ -216,6 +215,7 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 				type_arena.data[index.type].kind == KIND_ARRAY) swap(base, index);
 			
 			assert(base.value_type == LVALUE);
+			cvt_l2r(func, &base, base.type);
 			cvt_l2r(func, &index, TYPE_ULONG);
 			
 			TypeIndex element_type = type_arena.data[base.type].ptr_to;
@@ -299,6 +299,79 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 				};
 			}
 		}
+		case EXPR_LOGICAL_AND:
+		case EXPR_LOGICAL_OR: {
+			bool is_and = (ep->op == EXPR_LOGICAL_AND);
+			
+			if (short_circuit_true) {
+				TB_Label rhs_lbl = tb_inst_new_label_id(func);
+				
+				// Eval first operand
+				IRVal a = gen_expr(func, ep->bin_op.left);
+				cvt_l2r(func, &a, TYPE_BOOL);
+				
+				if (is_and) {
+					tb_inst_if(func, a.reg, rhs_lbl, short_circuit_false);
+				} else {
+					tb_inst_if(func, a.reg, short_circuit_true, rhs_lbl);
+				}
+				
+				// Eval second operand
+				tb_inst_label(func, rhs_lbl);
+				IRVal b = gen_expr(func, ep->bin_op.right);
+				cvt_l2r(func, &b, TYPE_BOOL);
+				
+				tb_inst_if(func, b.reg, short_circuit_true, short_circuit_false);
+				
+				return (IRVal) {
+					.value_type = RVALUE,
+					.type = TYPE_VOID,
+					.reg = 0
+				};
+			} else {
+				TB_Label rhs_lbl = tb_inst_new_label_id(func);
+				TB_Label phi_lbl = tb_inst_new_label_id(func);
+				
+				// Eval first operand
+				IRVal a = gen_expr(func, ep->bin_op.left);
+				cvt_l2r(func, &a, TYPE_BOOL);
+				
+				TB_Label entry = tb_get_current_label(func);
+				if (is_and) {
+					tb_inst_if(func, a.reg, rhs_lbl, phi_lbl);
+				} else {
+					tb_inst_if(func, a.reg, phi_lbl, rhs_lbl);
+				}
+				
+				// Eval second operand
+				tb_inst_label(func, rhs_lbl);
+				IRVal b = gen_expr(func, ep->bin_op.right);
+				cvt_l2r(func, &b, TYPE_BOOL);
+				
+				TB_Label exit = tb_get_current_label(func);
+				
+				// Don't actually need this
+				tb_inst_goto(func, phi_lbl);
+				
+				tb_inst_label(func, phi_lbl);
+				TB_Register result_on_skip = tb_inst_iconst(func, TB_TYPE_BOOL, is_and ? 0 : 1);
+				if (exit) {
+					TB_Register result = tb_inst_phi2(func, TB_TYPE_BOOL, entry, result_on_skip, exit, b.reg);
+					
+					return (IRVal) {
+						.value_type = RVALUE,
+						.type = TYPE_BOOL,
+						.reg = result
+					};
+				} else {
+					return (IRVal) {
+						.value_type = RVALUE,
+						.type = TYPE_BOOL,
+						.reg = result_on_skip
+					};
+				}
+			}
+		}
 		case EXPR_PLUS:
 		case EXPR_MINUS:
 		case EXPR_TIMES:
@@ -357,6 +430,28 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 				.value_type = RVALUE,
 				.type = type_index,
 				.reg = data
+			};
+		}
+		case EXPR_CMPEQ:
+		case EXPR_CMPNE: {
+			IRVal l = gen_expr(func, ep->bin_op.left);
+			IRVal r = gen_expr(func, ep->bin_op.right);
+			
+			TypeIndex type_index = get_common_type(l.type, r.type);
+			Type* restrict type = &type_arena.data[type_index];
+			TB_DataType dt = ctype_to_tbtype(type);
+			
+			cvt_l2r(func, &l, type_index);
+			cvt_l2r(func, &r, type_index);
+			
+			TB_Register result;
+			if (ep->op == EXPR_CMPEQ) result = tb_inst_cmp_eq(func, dt, l.reg, r.reg);
+			else result = tb_inst_cmp_ne(func, dt, l.reg, r.reg);
+			
+			return (IRVal) {
+				.value_type = RVALUE,
+				.type = TYPE_BOOL,
+				.reg = result
 			};
 		}
 		case EXPR_CMPGT:
@@ -542,13 +637,26 @@ static void gen_stmt(TB_Function* func, StmtIndex s) {
 			break;
 		}
 		case STMT_IF: {
+			ExprIndex cond_expr = stmt_arena.data[s].expr;
 			TB_Label if_true = tb_inst_new_label_id(func);
 			TB_Label if_false = tb_inst_new_label_id(func);
 			
-			IRVal cond = gen_expr(func, stmt_arena.data[s].expr);
-			cvt_l2r(func, &cond, TYPE_BOOL);
+			{
+				//short_circuit_true = if_true;
+				//short_circuit_false = if_false;
+				
+				IRVal cond = gen_expr(func, cond_expr);
+				
+				//if (expr_arena.data[cond_expr].op != EXPR_LOGICAL_AND &&
+				//expr_arena.data[cond_expr].op != EXPR_LOGICAL_OR) {
+				cvt_l2r(func, &cond, TYPE_BOOL);
+				tb_inst_if(func, cond.reg, if_true, if_false);
+				//}
+				
+				//short_circuit_true = 0;
+				//short_circuit_false = 0;
+			}
 			
-			tb_inst_if(func, cond.reg, if_true, if_false);
 			tb_inst_label(func, if_true);
 			gen_stmt(func, stmt_arena.data[s].body);
 			
@@ -674,8 +782,8 @@ static void gen_func_body(TypeIndex type, StmtIndex s) {
 		tb_inst_ret(func, TB_TYPE_VOID, TB_NULL_REG);
 	}
 	
-	//tb_function_print(func, stdout);
-	//printf("\n\n\n");
+	tb_function_print(func, stdout);
+	printf("\n\n\n");
 	
 	tb_module_compile_func(mod, func);
 }

@@ -9,7 +9,7 @@
 #include "microsoft_craziness.h"
 
 // frontend worker threads
-#define NUM_THREADS 2
+#define NUM_THREADS 1
 #define MAX_MUNCH 16384
 
 static thrd_t threads[NUM_THREADS];
@@ -72,6 +72,27 @@ static void dispatch_tasks(size_t count) {
 }
 
 int main(int argc, char* argv[]) {
+#if 0
+	TokenStream s = preprocess_translation_unit("std/lib/string.c");
+	FILE* f = fopen("aa.txt", "w");
+	
+	size_t token_count = arrlen(s.tokens);
+	size_t j = 8;
+	for (size_t i = 0; i < token_count; i++) {
+		Token* t = &s.tokens[i];
+		fprintf(f, "%.*s ", (int)(t->end - t->start), t->start);
+		
+		j--;
+		if (j == 0) {
+			j = 8;
+			fprintf(f, "\n");
+		}
+	}
+	
+	fclose(f);
+	
+	((void)threads);
+#else
 	clock_t t1 = clock();
 	
 	// Parse CLI
@@ -88,11 +109,11 @@ int main(int argc, char* argv[]) {
 	mod = tb_module_create(TB_ARCH_X86_64,
 						   TB_SYSTEM_WINDOWS,
 						   &features,
-						   TB_OPT_O0,
-						   2, false);
+						   TB_OPT_O1,
+						   1, false);
 	
 	// Preprocess file
-	TokenStream s = preprocess_translation_unit("tests/test5.txt");
+	TokenStream s = preprocess_translation_unit("std/lib/string.c");
 	
 	// Parse
 	atoms_init();
@@ -206,6 +227,7 @@ int main(int argc, char* argv[]) {
 	clock_t t3 = clock();
 	delta_ms = ((t3 - t2) / (double)CLOCKS_PER_SEC) * 1000.0;
 	printf("linking took %f ms\n", delta_ms);
+#endif
 	
 	return 0;
 }

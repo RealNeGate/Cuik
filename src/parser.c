@@ -32,6 +32,7 @@ static StmtIndex parse_compound_stmt(TokenStream* restrict s);
 static bool try_parse_declspec(TokenStream* restrict s, Attribs* attr);
 static TypeIndex parse_declspec(TokenStream* restrict s, Attribs* attr);
 static Decl parse_declarator(TokenStream* restrict s, TypeIndex type);
+static TypeIndex parse_typename(TokenStream* restrict s);
 static bool is_typename(TokenStream* restrict s);
 static _Noreturn void generic_error(TokenStream* restrict s, const char* msg);
 
@@ -463,6 +464,26 @@ static ExprIndex parse_expr_l0(TokenStream* restrict s) {
 }
 
 static ExprIndex parse_expr_l1(TokenStream* restrict s) {
+	if (tokens_get(s)->type == '(') {
+		tokens_next(s);
+		
+		if (is_typename(s)) {
+			TypeIndex type = parse_typename(s);
+			expect(s, ')');
+			
+			// TODO(NeGate): Handle compound literal
+			ExprIndex base = parse_expr_l0(s);
+			ExprIndex e = push_expr_arena(1);
+			
+			expr_arena.data[e].op = EXPR_CAST;
+			expr_arena.data[e].cast.type = type;
+			expr_arena.data[e].cast.src = base;
+			return e;
+		}
+		
+		tokens_prev(s);
+	}
+	
 	ExprIndex e = parse_expr_l0(s);
 	
 	// after any of the: [] () . ->
@@ -680,9 +701,73 @@ static ExprIndex parse_expr_l6(TokenStream* restrict s) {
 	return lhs;
 }
 
+// == !=
+static ExprIndex parse_expr_l7(TokenStream* restrict s) {
+	ExprIndex lhs = parse_expr_l6(s);
+	
+	while (tokens_get(s)->type == TOKEN_NOT_EQUAL ||
+		   tokens_get(s)->type == TOKEN_EQUALITY) {
+		ExprIndex e = push_expr_arena(1);
+		ExprOp op = tokens_get(s)->type == TOKEN_EQUALITY ? EXPR_CMPEQ : EXPR_CMPNE;
+		tokens_next(s);
+		
+		ExprIndex rhs = parse_expr_l6(s);
+		expr_arena.data[e] = (Expr) {
+			.op = op,
+			.bin_op = { lhs, rhs }
+		};
+		
+		lhs = e;
+	}
+	
+	return lhs;
+}
+
+// &&
+static ExprIndex parse_expr_l11(TokenStream* restrict s) {
+	ExprIndex lhs = parse_expr_l7(s);
+	
+	while (tokens_get(s)->type == TOKEN_DOUBLE_AND) {
+		ExprIndex e = push_expr_arena(1);
+		ExprOp op = EXPR_LOGICAL_AND;
+		tokens_next(s);
+		
+		ExprIndex rhs = parse_expr_l6(s);
+		expr_arena.data[e] = (Expr) {
+			.op = op,
+			.bin_op = { lhs, rhs }
+		};
+		
+		lhs = e;
+	}
+	
+	return lhs;
+}
+
+// ||
+static ExprIndex parse_expr_l12(TokenStream* restrict s) {
+	ExprIndex lhs = parse_expr_l11(s);
+	
+	while (tokens_get(s)->type == TOKEN_DOUBLE_OR) {
+		ExprIndex e = push_expr_arena(1);
+		ExprOp op = EXPR_LOGICAL_OR;
+		tokens_next(s);
+		
+		ExprIndex rhs = parse_expr_l11(s);
+		expr_arena.data[e] = (Expr) {
+			.op = op,
+			.bin_op = { lhs, rhs }
+		};
+		
+		lhs = e;
+	}
+	
+	return lhs;
+}
+
 // = += -= *= /= %= <<= >>= &= ^= |=
 static ExprIndex parse_expr_l14(TokenStream* restrict s) {
-	ExprIndex lhs = parse_expr_l6(s);
+	ExprIndex lhs = parse_expr_l12(s);
 	
 	while (tokens_get(s)->type == TOKEN_ASSIGN ||
 		   tokens_get(s)->type == TOKEN_PLUS_EQUAL ||
@@ -714,7 +799,7 @@ static ExprIndex parse_expr_l14(TokenStream* restrict s) {
 		}
 		tokens_next(s);
 		
-		ExprIndex rhs = parse_expr_l6(s);
+		ExprIndex rhs = parse_expr_l12(s);
 		expr_arena.data[e] = (Expr) {
 			.op = op,
 			.bin_op = { lhs, rhs }
@@ -803,6 +888,68 @@ static Decl parse_declarator(TokenStream* restrict s, TypeIndex type) {
 	
 	type = parse_type_suffix(s, type, name);
 	return (Decl){ type, name };
+}
+
+// it's like a declarator with a skin fade,
+// int*        int[16]       const char* restrict
+static TypeIndex parse_abstract_declarator(TokenStream* restrict s, TypeIndex type) {
+	// handle pointers
+	while (tokens_get(s)->type == '*') {
+		type = new_pointer(type);
+		tokens_next(s);
+		
+		// TODO(NeGate): parse qualifiers
+		switch (tokens_get(s)->type) {
+			case TOKEN_KW_const:
+			case TOKEN_KW_volatile:
+			case TOKEN_KW_restrict: 
+			tokens_next(s);
+			break;
+			default: break;
+		}
+	}
+	
+	if (tokens_get(s)->type == '(') {
+		// TODO(NeGate): I don't like this code...
+		// it essentially just skips over the stuff in the
+		// parenthesis to do the suffix then comes back
+		// for the parenthesis after wards, restoring back to
+		// the end of the declarator when it's done.
+		//
+		// should be right after the (
+		tokens_next(s);
+		size_t saved = s->current;
+		
+		parse_abstract_declarator(s, TYPE_NONE);
+		
+		expect(s, ')');
+		type = parse_type_suffix(s, type, NULL);
+		
+		size_t saved_end = s->current;
+		s->current = saved;
+		
+		TypeIndex d = parse_abstract_declarator(s, type);
+		s->current = saved_end;
+		return d;
+	}
+	
+	Atom name = NULL;
+	Token* t = tokens_get(s);
+	if (t->type == TOKEN_IDENTIFIER) {
+		name = atoms_put(t->end - t->start, t->start);
+		tokens_next(s);
+	}
+	
+	type = parse_type_suffix(s, type, name);
+	return type;
+}
+
+static TypeIndex parse_typename(TokenStream* restrict s) {
+	// TODO(NeGate): Check if attributes are set, they shouldn't
+	// be in this context.
+	Attribs attr = { 0 };
+	TypeIndex type = parse_declspec(s, &attr);
+	return parse_abstract_declarator(s, type);
 }
 
 static TypeIndex parse_type_suffix(TokenStream* restrict s, TypeIndex type, Atom name) {
@@ -1137,6 +1284,7 @@ static bool is_typename(TokenStream* restrict s) {
 		case TOKEN_KW_long:
 		case TOKEN_KW_float:
 		case TOKEN_KW_double:
+		case TOKEN_KW_Bool:
 		case TOKEN_KW_signed:
 		case TOKEN_KW_unsigned:
 		case TOKEN_KW_static:

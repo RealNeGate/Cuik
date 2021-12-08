@@ -53,6 +53,7 @@ typedef struct Attribs {
 	bool is_static  : 1;
 	bool is_typedef : 1;
 	bool is_inline  : 1;
+	bool is_extern  : 1;
 	bool is_tls     : 1;
 } Attribs;
 
@@ -236,6 +237,10 @@ typedef struct Expr {
 		// EXPR_PARAM
 		int param_num;
 		
+		struct {
+			TypeIndex type;
+			ExprIndex src;
+		} cast;
 		struct {
 			ExprIndex left, right;
 		} bin_op;

@@ -157,6 +157,11 @@ inline static Token* tokens_get(TokenStream* restrict s) {
 	return &s->tokens[s->current];
 }
 
+inline static void tokens_prev(TokenStream* restrict s) {
+	assert(s->current > 0);
+	s->current -= 1;
+}
+
 inline static void tokens_next(TokenStream* restrict s) {
 	assert(s->current < arrlen(s->tokens));
 	s->current += 1;

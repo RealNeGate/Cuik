@@ -14,7 +14,6 @@ typedef struct string { const unsigned char* data; size_t length; } string;
 #define MEGABYTES(x) ((x) << 20ull)
 #define GIGABYTES(x) ((x) << 30ull)
 
-#define cast(type, expr) ((type)(expr))
 #define panic(...) do { printf(__VA_ARGS__); abort(); } while(0)
 
 #define swap(a, b) do { \

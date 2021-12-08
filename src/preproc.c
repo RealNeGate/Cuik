@@ -35,10 +35,8 @@ typedef struct Context {
 } Context;
 
 static const char* SYSTEM_LIBS[] = {
-	"W:/Windows Kits/10/Include/10.0.19041.0/ucrt/",
-	"W:/Windows Kits/10/Include/10.0.19041.0/um/",
-	"W:/Windows Kits/10/Include/10.0.19041.0/shared/",
-	"W:/Visual Studio/2019/Community/VC/Tools/MSVC/14.29.30133/include/"
+	// TODO(NeGate): Fix this up
+	"W:/Workspace/Cuik/std/include/",
 };
 
 enum { NUM_SYSTEM_LIBS = sizeof(SYSTEM_LIBS) / sizeof(SYSTEM_LIBS[0]) };

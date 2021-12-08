@@ -168,7 +168,7 @@ TknType classify_ident(const unsigned char* restrict str, size_t len) {
 	size_t v = values[i];
 	
 	// short circuit, relatively helpful
-	if (keywords[v][0] != str[0]) return TOKEN_IDENTIFIER;
+	//if (keywords[v][0] != str[0]) return TOKEN_IDENTIFIER;
 	
 	// VERIFY
 	__m128i kw128  = _mm_loadu_si128((__m128i*) &keywords[v]);
