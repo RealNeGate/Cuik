@@ -63,8 +63,8 @@ typedef enum TknType {
 	
 	TOKEN_LEFT_SHIFT_EQUAL ='<' + 512,/* <<= */
 	TOKEN_RIGHT_SHIFT_EQUAL='>' + 512,/* >>= */
-    TOKEN_INCREMENT       = '+' + 512,/* ++  */
-    TOKEN_DECREMENT       = '+' + 512,/* --  */
+    TOKEN_INCREMENT       = '+' + 256,/* ++  */
+    TOKEN_DECREMENT       = '-' + 256,/* --  */
 	
 	// Keywords
 	TOKEN_KW_auto = 640,
@@ -117,6 +117,7 @@ typedef struct Token {
 	TknType type;
     const unsigned char* start;
     const unsigned char* end;
+	int line;
 } Token;
 
 typedef struct TokenStream {
@@ -131,7 +132,7 @@ typedef struct Lexer {
     const unsigned char* start;
     const unsigned char* current;
 	
-	int base_line;
+	int current_line;
     
     // when reading it spotted a line or EOF, it must be manually reset
 	bool hit_line; 
@@ -144,7 +145,6 @@ typedef struct Lexer {
 
 // this is used by the preprocessor to scan tokens in
 void lexer_read(Lexer* restrict l);
-int lexer_get_location(Lexer* restrict l);
 
 inline static bool lexer_match(Lexer* restrict l, size_t len, const char str[]) {
 	if ((l->token_end - l->token_start) != len) return false;

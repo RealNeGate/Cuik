@@ -104,16 +104,19 @@ TokenStream preprocess_translation_unit(const char* filepath) {
 
 static void preprocess_file(Context* restrict c, TokenStream* restrict s, const char* directory, const char* filepath) {
 	unsigned char* text = (unsigned char*)read_entire_file(filepath);
-	Lexer l = (Lexer) { filepath, text, text };
+	Lexer l = (Lexer) { filepath, text, text, 1 };
 	
 	lexer_read(&l);
     do {
 		l.hit_line = false;
 		if (l.token_type == TOKEN_IDENTIFIER) {
+			int line = l.current_line;
+			
 			if (!is_defined(c, l.token_start, l.token_end - l.token_start)) {
 				// FAST PATH
-				Token t = { l.token_type, l.token_start, l.token_end };
+				Token t = { l.token_type, l.token_start, l.token_end, line };
 				arrput(s->tokens, t);
+				
 				lexer_read(&l);
 			} else {
 				// SLOW SHIT WHICH ALLOCATES SOME SPACE OUT THE SHTUFFS
@@ -128,7 +131,7 @@ static void preprocess_file(Context* restrict c, TokenStream* restrict s, const 
 				lexer_read(&tmp_lex);
 				
 				while (tmp_lex.token_type) {
-					Token t = { tmp_lex.token_type, tmp_lex.token_start, tmp_lex.token_end };
+					Token t = { tmp_lex.token_type, tmp_lex.token_start, tmp_lex.token_end, line };
 					arrput(s->tokens, t);
 					lexer_read(&tmp_lex);
 				}
@@ -408,7 +411,8 @@ static void preprocess_file(Context* restrict c, TokenStream* restrict s, const 
 				generic_error(&l, "unknown directive!");
 			}
 		} else {
-			Token t = { l.token_type, l.token_start, l.token_end };
+			int line = l.current_line;
+			Token t = { l.token_type, l.token_start, l.token_end, line };
 			arrput(s->tokens, t);
 			lexer_read(&l);
 		}
@@ -459,16 +463,14 @@ static void skip_directive_body(Lexer* l) {
 }
 
 static _Noreturn void generic_error(Lexer* l, const char* msg) {
-	int loc = lexer_get_location(l);
-	
+	int loc = l->current_line;
 	printf("error %s:%d: %s\n", l->filepath, loc, msg);
 	abort();
 }
 
 static void expect(Lexer* l, char ch) {
 	if (l->token_type != ch) {
-		int loc = lexer_get_location(l);
-		
+		int loc = l->current_line;
 		printf("error %s:%d: expected '%c' got '%.*s'", l->filepath, loc, ch, (int)(l->token_end - l->token_start), l->token_start);
 		abort();
 	}
@@ -852,10 +854,16 @@ static unsigned char* expand(Context* restrict c, unsigned char* restrict out, L
 		if (l->token_type == '(') {
 			depth++;
 			
+			*out++ = '(';
+			*out++ = ' ';
+			
 			lexer_read(l);
 		} else if (l->token_type == ')') {
 			if (depth == 0) break;
 			depth--;
+			
+			*out++ = ')';
+			*out++ = ' ';
 			
 			lexer_read(l);
 		} else if (l->token_type != TOKEN_IDENTIFIER) {
@@ -877,7 +885,7 @@ static unsigned char* expand(Context* restrict c, unsigned char* restrict out, L
 
 static int eval(Context* restrict c, Lexer* l) {
 	// Expand
-	int line = lexer_get_location(l) + 1;
+	int line = l->current_line + 1;
 	unsigned char* out_start = tls_push(4096);
 	unsigned char* out_end = expand(c, out_start, l);
 	*out_end++ = '\n';

@@ -184,7 +184,7 @@ TopLevel parse_file(TokenStream* restrict s) {
 			
 			// TODO(NeGate): Give a decent error message
 			if (!sym) {
-				printf("Could not find symbol: %s\n", (char*)expr_arena.data[i].unknown_sym);
+				printf("error %d: could not find symbol: %s\n", expr_arena.data[i].line, (char*)expr_arena.data[i].unknown_sym);
 				abort();
 			}
 			
@@ -375,8 +375,9 @@ static StmtIndex parse_stmt(TokenStream* restrict s) {
 		stmt_arena.data[n].body = parse_stmt(s);
 		
 		if (tokens_get(s)->type != TOKEN_KW_while) {
-			//int loc = lexer_get_location(s);
-			//printf("error on line %d: expected 'while' got '%.*s'", loc, (int)(l->token_end - l->token_start), l->token_start);
+			Token* t = tokens_get(s);
+			
+			printf("error on line %d: expected 'while' got '%.*s'", t->line, (int)(t->end - t->start), t->start);
 			abort();
 		}
 		tokens_next(s);
@@ -410,6 +411,7 @@ static ExprIndex parse_expr_l0(TokenStream* restrict s) {
 		
 		return e;
 	} else if (tokens_get(s)->type == TOKEN_IDENTIFIER) {
+		int line = tokens_get(s)->line;
 		Symbol* sym = find_local_symbol(s);
 		
 		ExprIndex e = push_expr_arena(1);
@@ -417,11 +419,13 @@ static ExprIndex parse_expr_l0(TokenStream* restrict s) {
 			if (sym->storage_class == STORAGE_PARAM) {
 				expr_arena.data[e] = (Expr) {
 					.op = EXPR_PARAM,
+					.line = line,
 					.param_num = sym->param_num
 				};
 			} else {
 				expr_arena.data[e] = (Expr) {
 					.op = EXPR_SYMBOL,
+					.line = line,
 					.symbol = sym->stmt
 				};
 			}
@@ -432,6 +436,7 @@ static ExprIndex parse_expr_l0(TokenStream* restrict s) {
 			
 			expr_arena.data[e] = (Expr) {
 				.op = EXPR_UNKNOWN_SYMBOL,
+				.line = line,
 				.unknown_sym = name
 			};
 		}
@@ -1318,15 +1323,17 @@ static bool is_typename(TokenStream* restrict s) {
 // ERRORS
 ////////////////////////////////
 static _Noreturn void generic_error(TokenStream* restrict s, const char* msg) {
-	//int loc = lexer_get_location(s);
-	//printf("error on line %d: %s\n", loc, msg);
+	Token* t = tokens_get(s);
+	
+	printf("error on line %d: %s\n", t->line, msg);
 	abort();
 }
 
 static void expect(TokenStream* restrict s, char ch) {
 	if (tokens_get(s)->type != ch) {
-		//int loc = lexer_get_location(s);
-		//printf("error on line %d: expected '%c' got '%.*s'", loc, ch, (int)(l->token_end - l->token_start), l->token_start);
+		Token* t = tokens_get(s);
+		
+		printf("error on line %d: expected '%c' got '%.*s'", t->line, ch, (int)(t->end - t->start), t->start);
 		abort();
 	}
 	

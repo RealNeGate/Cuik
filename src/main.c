@@ -77,16 +77,15 @@ int main(int argc, char* argv[]) {
 	FILE* f = fopen("aa.txt", "w");
 	
 	size_t token_count = arrlen(s.tokens);
-	size_t j = 8;
+	size_t last_line = 0;
 	for (size_t i = 0; i < token_count; i++) {
 		Token* t = &s.tokens[i];
-		fprintf(f, "%.*s ", (int)(t->end - t->start), t->start);
-		
-		j--;
-		if (j == 0) {
-			j = 8;
-			fprintf(f, "\n");
+		if (last_line != t->line) {
+			fprintf(f, "\n\t%d:\t", t->line);
+			last_line = t->line;
 		}
+		
+		fprintf(f, "%.*s ", (int)(t->end - t->start), t->start);
 	}
 	
 	fclose(f);
@@ -106,7 +105,7 @@ int main(int argc, char* argv[]) {
 	}
 	
 	// Preprocess file
-	TokenStream s = preprocess_translation_unit("tests/test5.txt");
+	TokenStream s = preprocess_translation_unit("std/lib/string.c");
 	
 	// Parse
 	atoms_init();

@@ -209,6 +209,7 @@ void lexer_read(Lexer* restrict l) {
             __m128i chars = _mm_loadu_si128((__m128i *)current);
             int len = __builtin_ffs(~_mm_movemask_epi8(_mm_cmpeq_epi8(chars, _mm_set1_epi8('\n'))));
             current += len - 1;
+			l->current_line += len - 1;
             goto redo_lex;
 		} else if (*current == '\r') {
 			l->hit_line = true;
@@ -344,16 +345,4 @@ void lexer_read(Lexer* restrict l) {
 	l->token_start = start;
 	l->token_end = current;
 	l->current = current;
-}
-
-int lexer_get_location(Lexer* restrict l) {
-	int num = 1;
-	
-	const unsigned char* start = l->start;
-	while (start != l->current) {
-		num += (*start == '\n');
-		start += 1;
-	}
-	
-	return l->base_line + num;
 }

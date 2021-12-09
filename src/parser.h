@@ -229,6 +229,7 @@ typedef struct Stmt {
 
 typedef struct Expr {
 	ExprOp op;
+	int line;
 	
 	union {
 		Atom unknown_sym;

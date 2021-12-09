@@ -10,7 +10,10 @@ typedef struct TemporaryStorage {
 static _Thread_local TemporaryStorage* temp_storage;
 
 void tls_init() {
-	if (!temp_storage) temp_storage = malloc(TEMPORARY_STORAGE_SIZE);
+	if (__builtin_expect(!temp_storage, 0)) {
+		temp_storage = malloc(TEMPORARY_STORAGE_SIZE);
+	}
+	
 	temp_storage->used = 0;
 }
 
