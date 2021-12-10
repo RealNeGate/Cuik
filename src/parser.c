@@ -1067,7 +1067,8 @@ static TypeIndex parse_declspec(TokenStream* restrict s, Attribs* attr) {
 	bool is_atomic = false;
 	bool is_const = false;
 	do {
-		switch (tokens_get(s)->type) {
+		TknType tkn_type = tokens_get(s)->type;
+		switch (tkn_type) {
 			case TOKEN_KW_void: counter += VOID; break;
 			case TOKEN_KW_Bool: counter += BOOL; break;
 			case TOKEN_KW_char: counter += CHAR; break;
@@ -1089,9 +1090,12 @@ static TypeIndex parse_declspec(TokenStream* restrict s, Attribs* attr) {
 			case TOKEN_KW_const: is_const = true; break;
 			case TOKEN_KW_auto: break;
 			
-			case TOKEN_KW_struct: {
+			case TOKEN_KW_struct:
+			case TOKEN_KW_union: {
 				if (counter) goto done;
 				tokens_next(s);
+				
+				bool is_union = tkn_type == TOKEN_KW_union;
 				
 				Atom name = NULL;
 				Token* t = tokens_get(s);
@@ -1103,13 +1107,14 @@ static TypeIndex parse_declspec(TokenStream* restrict s, Attribs* attr) {
 				if (tokens_get(s)->type == '{') {
 					tokens_next(s);
 					
-					type = new_struct();
+					type = new_record(is_union);
 					type_arena.data[type].record.name = name;
 					counter += OTHER;
 					
 					size_t member_count = 0;
 					Member* members = tls_save();
 					
+					// for unions this just represents the max size
 					int offset = 0;
 					
 					// struct/union are aligned to the biggest member alignment
@@ -1136,11 +1141,16 @@ static TypeIndex parse_declspec(TokenStream* restrict s, Attribs* attr) {
 						members[member_count++] = (Member) {
 							.type = member_type,
 							.name = decl.name,
-							.offset = offset,
+							.offset = is_union ? 0 : offset,
 							.align = member_align
 						};
 						
-						offset += member_size;
+						if (is_union) {
+							if (member_size < offset) offset = member_size;
+						} else {
+							offset += member_size;
+						}
+						
 						if (member_align > align) {
 							align = member_align;
 						}
@@ -1164,7 +1174,7 @@ static TypeIndex parse_declspec(TokenStream* restrict s, Attribs* attr) {
 					
 					tls_restore(members);
 				} else {
-					// must be a forward decl
+					// TODO(NeGate): must be a forward decl, handle it
 					abort();
 				}
 				break;

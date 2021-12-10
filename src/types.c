@@ -22,10 +22,10 @@ TypeIndex copy_type(TypeIndex base) {
 	return t;
 }
 
-TypeIndex new_struct() {
+TypeIndex new_record(bool is_union) {
 	TypeIndex t = push_type_arena(1);
 	type_arena.data[t] = (Type){
-		.kind = KIND_STRUCT
+		.kind = is_union ? KIND_UNION : KIND_STRUCT
 	};
 	
 	return t;

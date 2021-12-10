@@ -10,6 +10,8 @@
 
 // frontend worker threads
 #define NUM_THREADS 12
+
+// this is how many IR gen tasks it tries to grab at any one time
 #define MAX_MUNCH 256
 
 static thrd_t threads[NUM_THREADS];
@@ -61,19 +63,15 @@ static void dispatch_tasks(size_t count) {
 	tasks_complete = 0;
 	tasks_reserved = 0;
 	
-	//printf("Doing Stage%d... (%zu tasks)\n", frontend_stage+1, tasks_count);
-	
 	// wait until it's completed
     while (tasks_complete < tasks_count) { 
 		thrd_yield();
 	}
-	
-	//printf("Done with Stage%d! %zu\n", frontend_stage+1, tasks_complete);
 }
 
 int main(int argc, char* argv[]) {
-#if 0
-	TokenStream s = preprocess_translation_unit("std/lib/string.c");
+#if 1
+	TokenStream s = preprocess_translation_unit("tests/test8.txt");
 	FILE* f = fopen("aa.txt", "w");
 	
 	size_t token_count = arrlen(s.tokens);
@@ -105,7 +103,7 @@ int main(int argc, char* argv[]) {
 	}
 	
 	// Preprocess file
-	TokenStream s = preprocess_translation_unit("std/lib/string.c");
+	TokenStream s = preprocess_translation_unit("tests/test8.txt");
 	
 	// Parse
 	atoms_init();

@@ -1,6 +1,11 @@
 
-#include <stdbool.h>
-#include <stdint.h>
+//#include <stdbool.h>
+//#include <stdint.h>
+
+#define _X86_
+#define _M_AMD64
+#define _WIN64
+#define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
 void WinMain() {

@@ -7,6 +7,8 @@
 #define SLOTS_PER_MACRO_BUCKET 32768
 #define MACRO_BUCKET_COUNT 32
 
+#define THE_SHTUFFS_SIZE (32 << 20)
+
 typedef struct PragmaOnceEntry {
 	char* key;
 	int value;
@@ -37,6 +39,7 @@ typedef struct Context {
 static const char* SYSTEM_LIBS[] = {
 	// TODO(NeGate): Fix this up
 	"W:/Workspace/Cuik/std/include/",
+	"W:/Workspace/Cuik/std/include/winapi/",
 };
 
 enum { NUM_SYSTEM_LIBS = sizeof(SYSTEM_LIBS) / sizeof(SYSTEM_LIBS[0]) };
@@ -86,7 +89,7 @@ TokenStream preprocess_translation_unit(const char* filepath) {
 	c.macro_bucket_values_start = allocate_virtual_memory(sz);
 	c.macro_bucket_values_end = allocate_virtual_memory(sz);
 	
-	c.the_shtuffs = allocate_virtual_memory(1 << 20);
+	c.the_shtuffs = allocate_virtual_memory(THE_SHTUFFS_SIZE);
 	c.the_shtuffs_size = 0;
 	memset(c.macro_bucket_count, 0, MACRO_BUCKET_COUNT * sizeof(int));
 	
@@ -102,13 +105,45 @@ TokenStream preprocess_translation_unit(const char* filepath) {
 	return s;
 }
 
+// TODO(NeGate): Fix this up please...
+static void expand_double_hash(Context* restrict c, Token* last, Lexer* restrict l, int line) {
+	unsigned char* out_start = c->the_shtuffs + c->the_shtuffs_size;
+	c->the_shtuffs_size += 4096;
+	assert(c->the_shtuffs_size < THE_SHTUFFS_SIZE);
+	
+	unsigned char* out = out_start;
+	{
+		memcpy(out, last->start, last->end - last->start);
+		out += last->end - last->start;
+		
+		lexer_read(l);
+		
+		memcpy(out, l->token_start, l->token_end - l->token_start);
+		out += l->token_end - l->token_start;
+		
+		*out++ = '\0';
+		lexer_read(l);
+	}
+	
+	// join tokens
+	Lexer tmp_lex = (Lexer) { l->filepath, out_start, out_start };
+	lexer_read(&tmp_lex);
+	
+	// make nice joined token
+	*last = (Token){ tmp_lex.token_type, tmp_lex.token_start, tmp_lex.token_end, line };
+	
+	lexer_read(&tmp_lex);
+	assert(tmp_lex.token_type == 0);
+}
+
 static void preprocess_file(Context* restrict c, TokenStream* restrict s, const char* directory, const char* filepath) {
 	unsigned char* text = (unsigned char*)read_entire_file(filepath);
 	Lexer l = (Lexer) { filepath, text, text, 1 };
 	
 	lexer_read(&l);
-    do {
+	do {
 		l.hit_line = false;
+		
 		if (l.token_type == TOKEN_IDENTIFIER) {
 			int line = l.current_line;
 			
@@ -121,21 +156,40 @@ static void preprocess_file(Context* restrict c, TokenStream* restrict s, const 
 			} else {
 				// SLOW SHIT WHICH ALLOCATES SOME SPACE OUT THE SHTUFFS
 				// Expand
-				unsigned char* out_start = c->the_shtuffs + c->the_shtuffs_size;
-				c->the_shtuffs_size += 4096;
+				unsigned char* out_start = &c->the_shtuffs[c->the_shtuffs_size];
 				
 				unsigned char* out_end = expand_ident(c, out_start, &l);
 				*out_end++ = '\0';
+				
+				c->the_shtuffs_size += (out_end - out_start) + 1;
+				assert(c->the_shtuffs_size < THE_SHTUFFS_SIZE);
 				
 				Lexer tmp_lex = (Lexer) { filepath, out_start, out_start };
 				lexer_read(&tmp_lex);
 				
 				while (tmp_lex.token_type) {
-					Token t = { tmp_lex.token_type, tmp_lex.token_start, tmp_lex.token_end, line };
-					arrput(s->tokens, t);
-					lexer_read(&tmp_lex);
+					Token t;
+					if (tmp_lex.token_type == TOKEN_DOUBLE_HASH) {
+						assert(arrlen(s->tokens) > 0);
+						Token* last = &s->tokens[arrlen(s->tokens) - 1];
+						
+						expand_double_hash(c, last, &tmp_lex, line);
+					} else {
+						t = (Token){ tmp_lex.token_type, tmp_lex.token_start, tmp_lex.token_end, line };
+						
+						arrput(s->tokens, t);
+						lexer_read(&tmp_lex);
+					}
 				}
 			}
+		} else if (l.token_type == TOKEN_DOUBLE_HASH) {
+			int line = l.current_line;
+			lexer_read(&l);
+			
+			assert(arrlen(s->tokens) > 0);
+			Token* last = &s->tokens[arrlen(s->tokens) - 1];
+			
+			expand_double_hash(c, last, &l, line);
 		} else if (l.token_type == '#') {
 			lexer_read(&l);
 			
@@ -483,9 +537,9 @@ static void expect(Lexer* l, char ch) {
 // based on the refterm hash by Casey Muratori
 //
 static char unsigned overhang_mask[32] = {
-    255, 255, 255, 255, 255, 255, 255, 255,
 	255, 255, 255, 255, 255, 255, 255, 255,
-    0,   0,   0,   0,   0,   0,   0,   0,
+	255, 255, 255, 255, 255, 255, 255, 255,
+	0,   0,   0,   0,   0,   0,   0,   0,
 	0,   0,   0,   0,   0,   0,   0,   0
 };
 
@@ -827,7 +881,7 @@ static unsigned char* expand_ident(Context* restrict c, unsigned char* restrict 
 				
 				lexer_read(&def_lex);
 			}
-		} else {
+		} else if (def.length) {
 			// expand and append
 			Lexer temp_lex = (Lexer) { l->filepath, def.data, def.data };
 			lexer_read(&temp_lex);

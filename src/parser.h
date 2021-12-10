@@ -301,7 +301,7 @@ decl_arena(Expr, expr_arena)
 decl_arena(ExprIndex, expr_ref_arena)
 
 TypeIndex new_func();
-TypeIndex new_struct();
+TypeIndex new_record(bool is_union);
 TypeIndex copy_type(TypeIndex base);
 TypeIndex new_pointer(TypeIndex base);
 TypeIndex new_array(TypeIndex base, int count);

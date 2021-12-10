@@ -49,8 +49,7 @@ const char keywords[][16] = {
 };
 
 enum {
-	// A-Z a-z _
-	CHAR_CLASS_IDENT_START = 1,
+	CHAR_CLASS_NULL,
 	// A-Z a-z 0-9 _
 	CHAR_CLASS_IDENT,
 	// 0-9
@@ -66,11 +65,51 @@ enum {
 	// 'foo' "bar"
 	CHAR_CLASS_STRING,
 	// . ...
-	CHAR_CLASS_DOT
+	CHAR_CLASS_DOT,
+	// # ##
+	CHAR_CLASS_HASH
 };
 
 static _Alignas(64) uint8_t char_classes[256] = {
-	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+	['A' ... 'Z'] = CHAR_CLASS_IDENT,
+	['a' ... 'z'] = CHAR_CLASS_IDENT,
+	['_'] = CHAR_CLASS_IDENT,
+	
+	['0' ... '9'] = CHAR_CLASS_NUMBER,
+	
+	['?'] = CHAR_CLASS_SEPARATOR,
+	[';'] = CHAR_CLASS_SEPARATOR,
+	[':'] = CHAR_CLASS_SEPARATOR,
+	[','] = CHAR_CLASS_SEPARATOR,
+	['('] = CHAR_CLASS_SEPARATOR,
+	[')'] = CHAR_CLASS_SEPARATOR,
+	['{'] = CHAR_CLASS_SEPARATOR,
+	['}'] = CHAR_CLASS_SEPARATOR,
+	
+	['+'] = CHAR_CLASS_MULTICHAR1,
+	['*'] = CHAR_CLASS_MULTICHAR1,
+	['/'] = CHAR_CLASS_MULTICHAR1,
+	['%'] = CHAR_CLASS_MULTICHAR1,
+	['!'] = CHAR_CLASS_MULTICHAR1,
+	['='] = CHAR_CLASS_MULTICHAR1,
+	['&'] = CHAR_CLASS_MULTICHAR1,
+	['^'] = CHAR_CLASS_MULTICHAR1,
+	['|'] = CHAR_CLASS_MULTICHAR1,
+	['~'] = CHAR_CLASS_MULTICHAR1,
+	
+	['>'] = CHAR_CLASS_MULTICHAR2,
+	['<'] = CHAR_CLASS_MULTICHAR2,
+	
+	['-'] = CHAR_CLASS_MULTICHAR3,
+	
+	['\"'] = CHAR_CLASS_STRING,
+	['\''] = CHAR_CLASS_STRING,
+	
+	['.'] = CHAR_CLASS_DOT,
+	
+	['#'] = CHAR_CLASS_HASH,
+	
+	/*0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
 	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
 	0x00,0x05,0x08,0x04,0x02,0x00,0x05,0x08,0x04,0x04,0x05,0x05,0x04,0x07,0x09,0x05,
 	0x03,0x03,0x03,0x03,0x03,0x03,0x03,0x03,0x03,0x03,0x04,0x04,0x06,0x05,0x06,0x04,
@@ -85,7 +124,7 @@ static _Alignas(64) uint8_t char_classes[256] = {
 	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
 	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
 	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
-	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,*/
 };
 
 // AUTO-GENERATED
@@ -229,6 +268,8 @@ void lexer_read(Lexer* restrict l) {
 		} else if (*current == '/') {
 			if (current[1] == '/') {
 				do { current++; } while (*current && *current != '\n');
+				
+				l->hit_line = true;
 				goto redo_lex;
 			} else if (current[1] == '*') {
 				current++;
@@ -236,6 +277,7 @@ void lexer_read(Lexer* restrict l) {
 				do { current++; } while (*current && !(current[0] == '/' && current[-1] == '*'));
 				
 				current++;
+				l->hit_line = true;
 				goto redo_lex;
 			}
 		}
@@ -248,6 +290,7 @@ void lexer_read(Lexer* restrict l) {
 	uint8_t initial_class = char_classes[*current++];
 	
 	switch (initial_class) {
+		case CHAR_CLASS_NULL: break;
 		case CHAR_CLASS_IDENT: {
 			while (char_classes[*current] >= CHAR_CLASS_IDENT &&
 				   char_classes[*current] <= CHAR_CLASS_NUMBER) {
@@ -258,7 +301,7 @@ void lexer_read(Lexer* restrict l) {
 			break;
 		}
 		case CHAR_CLASS_NUMBER: {
-			while (char_classes[*current] & CHAR_CLASS_NUMBER) { current++; }
+			while (char_classes[*current] == CHAR_CLASS_NUMBER) { current++; }
 			l->token_type = TOKEN_NUMBER;
 			break;
 		}
@@ -318,7 +361,7 @@ void lexer_read(Lexer* restrict l) {
 				
 				if (len) {
 					current += len;
-					if (current[-1] == '\"' && current[-2] != '\\') break;
+					if (current[-1] == quote_type && current[-2] != '\\') break;
 				} else {
 					current += 16;
 				}
@@ -328,7 +371,7 @@ void lexer_read(Lexer* restrict l) {
 			break;
 		}
 		case CHAR_CLASS_DOT: {
-			if (current[1] == '.' && current[1] == '.') {
+			if (current[0] == '.' && current[1] == '.') {
 				current += 2;
 				
 				l->token_type = TOKEN_TRIPLE_DOT;
@@ -336,6 +379,16 @@ void lexer_read(Lexer* restrict l) {
 			}
 			
 			l->token_type = '.';
+			break;
+		}
+		case CHAR_CLASS_HASH: {
+			if (*current == '#') {
+				current++;
+				l->token_type = TOKEN_DOUBLE_HASH;
+				break;
+			}
+			
+			l->token_type = TOKEN_HASH;
 			break;
 		}
 		default:
