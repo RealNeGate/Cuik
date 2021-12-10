@@ -1729,6 +1729,8 @@ extern "C" {
 #else
 #error "undefined processor type"
 #endif
+	
+	
 	typedef CONTEXT *PCONTEXT,*LPCONTEXT;
 	typedef struct _EXCEPTION_RECORD {
 		DWORD ExceptionCode;

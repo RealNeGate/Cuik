@@ -8,6 +8,16 @@ impl_arena(StmtIndex, stmt_ref_arena)
 impl_arena(Expr, expr_arena)
 impl_arena(ExprIndex, expr_ref_arena)
 
+// this means types which can be incomplete
+// not just currently imcomplete so structs,
+// unions and enums
+typedef struct IncompleteType {
+	Atom key;
+	TypeIndex value;
+} IncompleteType;
+
+static IncompleteType* incomplete_types;
+
 // for the global hash table
 typedef struct SymbolEntry {
 	Atom key;
@@ -224,6 +234,13 @@ static Symbol* find_global_symbol(char* name) {
 	
 	if (search >= 0) return &global_symbols[search].value;
 	return NULL;
+}
+
+static TypeIndex find_incomplete_type(char* name) {
+	ptrdiff_t search = shgeti(incomplete_types, name);
+	
+	if (search >= 0) return incomplete_types[search].value;
+	return 0;
 }
 
 ////////////////////////////////
@@ -1107,8 +1124,19 @@ static TypeIndex parse_declspec(TokenStream* restrict s, Attribs* attr) {
 				if (tokens_get(s)->type == '{') {
 					tokens_next(s);
 					
-					type = new_record(is_union);
-					type_arena.data[type].record.name = name;
+					type = name ? find_incomplete_type((char*)name) : 0;
+					if (type) {
+						// can't re-complete a struct
+						assert(type_arena.data[type].is_incomplete);
+					} else {
+						type = new_record(is_union);
+						type_arena.data[type].is_incomplete = false;
+						type_arena.data[type].record.name = name;
+						
+						// can't forward decl unnamed records so we
+						// don't track it
+						if (name) shput(incomplete_types, name, type);
+					}
 					counter += OTHER;
 					
 					size_t member_count = 0;
@@ -1133,8 +1161,9 @@ static TypeIndex parse_declspec(TokenStream* restrict s, Attribs* attr) {
 						
 						int member_align = type_arena.data[member_type].align;
 						int member_size = type_arena.data[member_type].size;
-						
-						offset = align_up(offset, member_align);
+						if (!is_union) {
+							offset = align_up(offset, member_align);
+						}
 						
 						// TODO(NeGate): Error check that no attribs are set
 						tls_push(sizeof(Member));
@@ -1151,10 +1180,7 @@ static TypeIndex parse_declspec(TokenStream* restrict s, Attribs* attr) {
 							offset += member_size;
 						}
 						
-						if (member_align > align) {
-							align = member_align;
-						}
-						
+						if (member_align > align) align = member_align;
 						expect(s, ';');
 					}
 					
@@ -1175,7 +1201,20 @@ static TypeIndex parse_declspec(TokenStream* restrict s, Attribs* attr) {
 					tls_restore(members);
 				} else {
 					// TODO(NeGate): must be a forward decl, handle it
-					abort();
+					if (name == NULL) generic_error(s, "Cannot have unnamed forward struct reference.");
+					
+					type = find_incomplete_type((char*)name);
+					if (!type) {
+						type = new_record(is_union);
+						type_arena.data[type].record.name = name;
+						type_arena.data[type].is_incomplete = true;
+						
+						shput(incomplete_types, name, type);
+					}
+					counter += OTHER;
+					
+					// push back one
+					tokens_prev(s);
 				}
 				break;
 			}

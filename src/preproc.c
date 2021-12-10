@@ -217,7 +217,6 @@ static void preprocess_file(Context* restrict c, TokenStream* restrict s, const 
 					c->depth++;
 					c->scope_eval[c->depth] = 1;
 				} else {
-					c->scope_eval[c->depth] = 0;
 					skip_directive_body(&l);
 				}
 			} else if (l.token_type == TOKEN_IDENTIFIER) {
@@ -285,7 +284,6 @@ static void preprocess_file(Context* restrict c, TokenStream* restrict s, const 
 						c->depth++;
 						c->scope_eval[c->depth] = 1;
 					} else {
-						c->scope_eval[c->depth] = 0;
 						skip_directive_body(&l);
 					}
 					

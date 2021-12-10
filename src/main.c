@@ -70,7 +70,7 @@ static void dispatch_tasks(size_t count) {
 }
 
 int main(int argc, char* argv[]) {
-#if 1
+#if 0
 	TokenStream s = preprocess_translation_unit("tests/test8.txt");
 	FILE* f = fopen("aa.txt", "w");
 	

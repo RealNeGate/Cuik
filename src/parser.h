@@ -69,6 +69,7 @@ typedef struct Type {
 	
 	bool is_const : 1;
     bool is_atomic : 1;
+	bool is_incomplete : 1;
     
     union {
         // Integers

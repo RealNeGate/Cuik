@@ -68,6 +68,1011 @@
 	108:	typedef DWORDLONG * PDWORDLONG ; 
 	109:	typedef DWORDLONG ULONGLONG , * PULONGLONG ; 
 	110:	typedef LONGLONG USN ; 
+	120:	typedef BYTE BOOLEAN , * PBOOLEAN ; 
+	45:	typedef int LONG32 , * PLONG32 ; 
+	47:	typedef int INT32 , * PINT32 ; 
+	49:	typedef unsigned int ULONG32 , * PULONG32 ; 
+	50:	typedef unsigned int DWORD32 , * PDWORD32 ; 
+	51:	typedef unsigned int UINT32 , * PUINT32 ; 
+	53:	typedef long long INT_PTR , * PINT_PTR ; 
+	54:	typedef unsigned long long UINT_PTR , * PUINT_PTR ; 
+	55:	typedef long long LONG_PTR , * PLONG_PTR ; 
+	56:	typedef unsigned long long ULONG_PTR , * PULONG_PTR ; 
+	57:	typedef unsigned long long HANDLE_PTR ; 
+	58:	typedef unsigned int UHALF_PTR , * PUHALF_PTR ; 
+	59:	typedef int HALF_PTR , * PHALF_PTR ; 
+	89:	typedef int INT_PTR , * PINT_PTR ; 
+	90:	typedef unsigned int UINT_PTR , * PUINT_PTR ; 
+	91:	typedef long LONG_PTR , * PLONG_PTR ; 
+	92:	typedef unsigned long ULONG_PTR , * PULONG_PTR ; 
+	93:	typedef unsigned short UHALF_PTR , * PUHALF_PTR ; 
+	94:	typedef short HALF_PTR , * PHALF_PTR ; 
+	95:	typedef unsigned long HANDLE_PTR ; 
+	97:	typedef ULONG_PTR SIZE_T , * PSIZE_T ; 
+	98:	typedef LONG_PTR SSIZE_T , * PSSIZE_T ; 
+	99:	typedef ULONG_PTR DWORD_PTR , * PDWORD_PTR ; 
+	100:	typedef long long LONG64 , * PLONG64 ; 
+	101:	typedef long long INT64 , * PINT64 ; 
+	102:	typedef unsigned long long ULONG64 , * PULONG64 ; 
+	103:	typedef unsigned long long DWORD64 , * PDWORD64 ; 
+	104:	typedef unsigned long long UINT64 , * PUINT64 ; 
+	1077:	typedef DWORD ACCESS_MASK , * PACCESS_MASK ; 
+	1080:	typedef struct _GUID { 
+	1081:	unsigned long Data1 ; 
+	1082:	unsigned short Data2 ; 
+	1083:	unsigned short Data3 ; 
+	1084:	unsigned char Data4 [ 8 ] ; 
+	1085:	} GUID , * REFGUID , * LPGUID ; 
+	1088:	typedef struct _GENERIC_MAPPING { 
+	1089:	ACCESS_MASK GenericRead ; 
+	1090:	ACCESS_MASK GenericWrite ; 
+	1091:	ACCESS_MASK GenericExecute ; 
+	1092:	ACCESS_MASK GenericAll ; 
+	1093:	} GENERIC_MAPPING , * PGENERIC_MAPPING ; 
+	1094:	typedef struct _ACE_HEADER { 
+	1095:	BYTE AceType ; 
+	1096:	BYTE AceFlags ; 
+	1097:	WORD AceSize ; 
+	1098:	} ACE_HEADER ; 
+	1099:	typedef struct _ACCESS_ALLOWED_ACE { 
+	1100:	ACE_HEADER Header ; 
+	1101:	ACCESS_MASK Mask ; 
+	1102:	DWORD SidStart ; 
+	1103:	} ACCESS_ALLOWED_ACE ; 
+	1104:	typedef struct _ACCESS_DENIED_ACE { 
+	1105:	ACE_HEADER Header ; 
+	1106:	ACCESS_MASK Mask ; 
+	1107:	DWORD SidStart ; 
+	1108:	} ACCESS_DENIED_ACE ; 
+	1109:	typedef struct _SYSTEM_AUDIT_ACE { 
+	1110:	ACE_HEADER Header ; 
+	1111:	ACCESS_MASK Mask ; 
+	1112:	DWORD SidStart ; 
+	1113:	} SYSTEM_AUDIT_ACE ; 
+	1114:	typedef SYSTEM_AUDIT_ACE * PSYSTEM_AUDIT_ACE ; 
+	1115:	typedef struct _SYSTEM_ALARM_ACE { 
+	1116:	ACE_HEADER Header ; 
+	1117:	ACCESS_MASK Mask ; 
+	1118:	DWORD SidStart ; 
+	1119:	} SYSTEM_ALARM_ACE , * PSYSTEM_ALARM_ACE ; 
+	1120:	typedef struct _ACCESS_ALLOWED_OBJECT_ACE { 
+	1121:	ACE_HEADER Header ; 
+	1122:	ACCESS_MASK Mask ; 
+	1123:	DWORD Flags ; 
+	1124:	GUID ObjectType ; 
+	1125:	GUID InheritedObjectType ; 
+	1126:	DWORD SidStart ; 
+	1127:	} ACCESS_ALLOWED_OBJECT_ACE , * PACCESS_ALLOWED_OBJECT_ACE ; 
+	1128:	typedef struct _ACCESS_DENIED_OBJECT_ACE { 
+	1129:	ACE_HEADER Header ; 
+	1130:	ACCESS_MASK Mask ; 
+	1131:	DWORD Flags ; 
+	1132:	GUID ObjectType ; 
+	1133:	GUID InheritedObjectType ; 
+	1134:	DWORD SidStart ; 
+	1135:	} ACCESS_DENIED_OBJECT_ACE , * PACCESS_DENIED_OBJECT_ACE ; 
+	1136:	typedef struct _SYSTEM_AUDIT_OBJECT_ACE { 
+	1137:	ACE_HEADER Header ; 
+	1138:	ACCESS_MASK Mask ; 
+	1139:	DWORD Flags ; 
+	1140:	GUID ObjectType ; 
+	1141:	GUID InheritedObjectType ; 
+	1142:	DWORD SidStart ; 
+	1143:	} SYSTEM_AUDIT_OBJECT_ACE , * PSYSTEM_AUDIT_OBJECT_ACE ; 
+	1144:	typedef struct _SYSTEM_ALARM_OBJECT_ACE { 
+	1145:	ACE_HEADER Header ; 
+	1146:	ACCESS_MASK Mask ; 
+	1147:	DWORD Flags ; 
+	1148:	GUID ObjectType ; 
+	1149:	GUID InheritedObjectType ; 
+	1150:	DWORD SidStart ; 
+	1151:	} SYSTEM_ALARM_OBJECT_ACE , * PSYSTEM_ALARM_OBJECT_ACE ; 
+	1152:	typedef struct _ACL { 
+	1153:	BYTE AclRevision ; 
+	1154:	BYTE Sbz1 ; 
+	1155:	WORD AclSize ; 
+	1156:	WORD AceCount ; 
+	1157:	WORD Sbz2 ; 
+	1158:	} ACL , * PACL ; 
+	1159:	typedef struct _ACL_REVISION_INFORMATION { 
+	1160:	DWORD AclRevision ; 
+	1161:	} ACL_REVISION_INFORMATION ; 
+	1162:	typedef struct _ACL_SIZE_INFORMATION { 
+	1163:	DWORD AceCount ; 
+	1164:	DWORD AclBytesInUse ; 
+	1165:	DWORD AclBytesFree ; 
+	1166:	} ACL_SIZE_INFORMATION ; 
+	1180:	typedef struct _FLOATING_SAVE_AREA { 
+	1181:	DWORD ControlWord ; 
+	1182:	DWORD StatusWord ; 
+	1183:	DWORD TagWord ; 
+	1184:	DWORD ErrorOffset ; 
+	1185:	DWORD ErrorSelector ; 
+	1186:	DWORD DataOffset ; 
+	1187:	DWORD DataSelector ; 
+	1188:	BYTE RegisterArea [ 80 ] ; 
+	1189:	DWORD Cr0NpxState ; 
+	1190:	} FLOATING_SAVE_AREA ; 
+	1191:	typedef struct _CONTEXT { 
+	1192:	DWORD ContextFlags ; 
+	1193:	DWORD Dr0 ; 
+	1194:	DWORD Dr1 ; 
+	1195:	DWORD Dr2 ; 
+	1196:	DWORD Dr3 ; 
+	1197:	DWORD Dr6 ; 
+	1198:	DWORD Dr7 ; 
+	1199:	FLOATING_SAVE_AREA FloatSave ; 
+	1200:	DWORD SegGs ; 
+	1201:	DWORD SegFs ; 
+	1202:	DWORD SegEs ; 
+	1203:	DWORD SegDs ; 
+	1204:	DWORD Edi ; 
+	1205:	DWORD Esi ; 
+	1206:	DWORD Ebx ; 
+	1207:	DWORD Edx ; 
+	1208:	DWORD Ecx ; 
+	1209:	DWORD Eax ; 
+	1210:	DWORD Ebp ; 
+	1211:	DWORD Eip ; 
+	1212:	DWORD SegCs ; 
+	1213:	DWORD EFlags ; 
+	1214:	DWORD Esp ; 
+	1215:	DWORD SegSs ; 
+	1216:	BYTE ExtendedRegisters [ 512 ] ; 
+	1217:	} CONTEXT ; 
+	1626:	typedef CONTEXT * PCONTEXT , * LPCONTEXT ; 
+	1627:	typedef struct _EXCEPTION_RECORD { 
+	1628:	DWORD ExceptionCode ; 
+	1629:	DWORD ExceptionFlags ; 
+	1630:	struct _EXCEPTION_RECORD * ExceptionRecord ; 
+	1631:	PVOID ExceptionAddress ; 
+	1632:	DWORD NumberParameters ; 
+	1633:	DWORD ExceptionInformation [ 15 ] ; 
+	1634:	} EXCEPTION_RECORD , * PEXCEPTION_RECORD ; 
+	1635:	typedef struct _EXCEPTION_POINTERS { 
+	1636:	PEXCEPTION_RECORD ExceptionRecord ; 
+	1637:	PCONTEXT ContextRecord ; 
+	1638:	} EXCEPTION_POINTERS , * PEXCEPTION_POINTERS , * LPEXCEPTION_POINTERS ; 
+	1639:	typedef union _LARGE_INTEGER { 
+	1640:	struct { 
+	1641:	DWORD LowPart ; 
+	1642:	LONG HighPart ; 
+	1643:	} u ; 
+	1645:	_ANONYMOUS_STRUCT struct { 
+	1646:	DWORD LowPart ; 
+	1647:	LONG HighPart ; 
+	1648:	} ; 
+	1650:	LONGLONG QuadPart ; 
+	1651:	} LARGE_INTEGER , * PLARGE_INTEGER ; 
+	1652:	typedef union _ULARGE_INTEGER { 
+	1653:	struct { 
+	1654:	DWORD LowPart ; 
+	1655:	DWORD HighPart ; 
+	1656:	} u ; 
+	1658:	_ANONYMOUS_STRUCT struct { 
+	1659:	DWORD LowPart ; 
+	1660:	DWORD HighPart ; 
+	1661:	} ; 
+	1663:	ULONGLONG QuadPart ; 
+	1664:	} ULARGE_INTEGER , * PULARGE_INTEGER ; 
+	1665:	typedef LARGE_INTEGER LUID , * PLUID ; 
+	1667:	typedef struct _LUID_AND_ATTRIBUTES { 
+	1668:	LUID Luid ; 
+	1669:	DWORD Attributes ; 
+	1670:	} LUID_AND_ATTRIBUTES ; 
+	1672:	typedef LUID_AND_ATTRIBUTES LUID_AND_ATTRIBUTES_ARRAY [ 1 ] ; 
+	1673:	typedef LUID_AND_ATTRIBUTES_ARRAY * PLUID_AND_ATTRIBUTES_ARRAY ; 
+	1674:	typedef struct _PRIVILEGE_SET { 
+	1675:	DWORD PrivilegeCount ; 
+	1676:	DWORD Control ; 
+	1677:	LUID_AND_ATTRIBUTES Privilege [ 1 ] ; 
+	1678:	} PRIVILEGE_SET , * PPRIVILEGE_SET ; 
+	1679:	typedef struct _SECURITY_ATTRIBUTES { 
+	1680:	DWORD nLength ; 
+	1681:	LPVOID lpSecurityDescriptor ; 
+	1682:	BOOL bInheritHandle ; 
+	1683:	} SECURITY_ATTRIBUTES , * PSECURITY_ATTRIBUTES , * LPSECURITY_ATTRIBUTES ; 
+	1684:	typedef enum _SECURITY_IMPERSONATION_LEVEL { 
+	1685:	SecurityAnonymous , 
+	1686:	SecurityIdentification , 
+	1687:	SecurityImpersonation , 
+	1688:	SecurityDelegation 
+	1689:	} SECURITY_IMPERSONATION_LEVEL ; 
+	1690:	typedef BOOLEAN SECURITY_CONTEXT_TRACKING_MODE , * PSECURITY_CONTEXT_TRACKING_MODE ; 
+	1691:	typedef struct _SECURITY_QUALITY_OF_SERVICE { 
+	1692:	DWORD Length ; 
+	1693:	SECURITY_IMPERSONATION_LEVEL ImpersonationLevel ; 
+	1694:	SECURITY_CONTEXT_TRACKING_MODE ContextTrackingMode ; 
+	1695:	BOOLEAN EffectiveOnly ; 
+	1696:	} SECURITY_QUALITY_OF_SERVICE , * PSECURITY_QUALITY_OF_SERVICE ; 
+	1697:	typedef PVOID PACCESS_TOKEN ; 
+	1698:	typedef struct _SE_IMPERSONATION_STATE { 
+	1699:	PACCESS_TOKEN Token ; 
+	1700:	BOOLEAN CopyOnOpen ; 
+	1701:	BOOLEAN EffectiveOnly ; 
+	1702:	SECURITY_IMPERSONATION_LEVEL Level ; 
+	1703:	} SE_IMPERSONATION_STATE , * PSE_IMPERSONATION_STATE ; 
+	1704:	typedef struct _SID_IDENTIFIER_AUTHORITY { 
+	1705:	BYTE Value [ 6 ] ; 
+	1706:	} SID_IDENTIFIER_AUTHORITY , * PSID_IDENTIFIER_AUTHORITY , * LPSID_IDENTIFIER_AUTHORITY ; 
+	1707:	typedef PVOID PSID ; 
+	1708:	typedef struct _SID { 
+	1709:	BYTE Revision ; 
+	1710:	BYTE SubAuthorityCount ; 
+	1711:	SID_IDENTIFIER_AUTHORITY IdentifierAuthority ; 
+	1712:	DWORD SubAuthority [ 1 ] ; 
+	1713:	} SID , * PISID ; 
+	1714:	typedef struct _SID_AND_ATTRIBUTES { 
+	1715:	PSID Sid ; 
+	1716:	DWORD Attributes ; 
+	1717:	} SID_AND_ATTRIBUTES ; 
+	1718:	typedef SID_AND_ATTRIBUTES SID_AND_ATTRIBUTES_ARRAY [ 1 ] ; 
+	1719:	typedef SID_AND_ATTRIBUTES_ARRAY * PSID_AND_ATTRIBUTES_ARRAY ; 
+	1720:	typedef struct _TOKEN_SOURCE { 
+	1721:	CHAR SourceName [ 8 ] ; 
+	1722:	LUID SourceIdentifier ; 
+	1723:	} TOKEN_SOURCE , * PTOKEN_SOURCE ; 
+	1724:	typedef struct _TOKEN_CONTROL { 
+	1725:	LUID TokenId ; 
+	1726:	LUID AuthenticationId ; 
+	1727:	LUID ModifiedId ; 
+	1728:	TOKEN_SOURCE TokenSource ; 
+	1729:	} TOKEN_CONTROL , * PTOKEN_CONTROL ; 
+	1730:	typedef struct _TOKEN_DEFAULT_DACL { 
+	1731:	PACL DefaultDacl ; 
+	1732:	} TOKEN_DEFAULT_DACL , * PTOKEN_DEFAULT_DACL ; 
+	1733:	typedef struct _TOKEN_GROUPS { 
+	1734:	DWORD GroupCount ; 
+	1735:	SID_AND_ATTRIBUTES Groups [ 1 ] ; 
+	1736:	} TOKEN_GROUPS , * PTOKEN_GROUPS , * LPTOKEN_GROUPS ; 
+	1737:	typedef struct _TOKEN_OWNER { 
+	1738:	PSID Owner ; 
+	1739:	} TOKEN_OWNER , * PTOKEN_OWNER ; 
+	1740:	typedef struct _TOKEN_PRIMARY_GROUP { 
+	1741:	PSID PrimaryGroup ; 
+	1742:	} TOKEN_PRIMARY_GROUP , * PTOKEN_PRIMARY_GROUP ; 
+	1743:	typedef struct _TOKEN_PRIVILEGES { 
+	1744:	DWORD PrivilegeCount ; 
+	1745:	LUID_AND_ATTRIBUTES Privileges [ 1 ] ; 
+	1746:	} TOKEN_PRIVILEGES , * PTOKEN_PRIVILEGES , * LPTOKEN_PRIVILEGES ; 
+	1747:	typedef enum tagTOKEN_TYPE { TokenPrimary = 1 , TokenImpersonation } TOKEN_TYPE ; 
+	1748:	typedef struct _TOKEN_STATISTICS { 
+	1749:	LUID TokenId ; 
+	1750:	LUID AuthenticationId ; 
+	1751:	LARGE_INTEGER ExpirationTime ; 
+	1752:	TOKEN_TYPE TokenType ; 
+	1753:	SECURITY_IMPERSONATION_LEVEL ImpersonationLevel ; 
+	1754:	DWORD DynamicCharged ; 
+	1755:	DWORD DynamicAvailable ; 
+	1756:	DWORD GroupCount ; 
+	1757:	DWORD PrivilegeCount ; 
+	1758:	LUID ModifiedId ; 
+	1759:	} TOKEN_STATISTICS ; 
+	1760:	typedef struct _TOKEN_USER { 
+	1761:	SID_AND_ATTRIBUTES User ; 
+	1762:	} TOKEN_USER , * PTOKEN_USER ; 
+	1763:	typedef DWORD SECURITY_INFORMATION , * PSECURITY_INFORMATION ; 
+	1764:	typedef WORD SECURITY_DESCRIPTOR_CONTROL , * PSECURITY_DESCRIPTOR_CONTROL ; 
+	1765:	typedef struct _SECURITY_DESCRIPTOR { 
+	1766:	BYTE Revision ; 
+	1767:	BYTE Sbz1 ; 
+	1768:	SECURITY_DESCRIPTOR_CONTROL Control ; 
+	1769:	PSID Owner ; 
+	1770:	PSID Group ; 
+	1771:	PACL Sacl ; 
+	1772:	PACL Dacl ; 
+	1773:	} SECURITY_DESCRIPTOR , * PSECURITY_DESCRIPTOR , * PISECURITY_DESCRIPTOR ; 
+	1774:	typedef enum _TOKEN_INFORMATION_CLASS { 
+	1775:	TokenUser = 1 , TokenGroups , TokenPrivileges , TokenOwner , 
+	1776:	TokenPrimaryGroup , TokenDefaultDacl , TokenSource , TokenType , 
+	1777:	TokenImpersonationLevel , TokenStatistics , TokenRestrictedSids , 
+	1778:	TokenSessionId 
+	1779:	} TOKEN_INFORMATION_CLASS ; 
+	1780:	typedef enum _SID_NAME_USE { 
+	1781:	SidTypeUser = 1 , SidTypeGroup , SidTypeDomain , SidTypeAlias , SidTypeWellKnownGroup , 
+	1782:	SidTypeDeletedAccount , SidTypeInvalid , SidTypeUnknown 
+	1783:	} SID_NAME_USE , * PSID_NAME_USE ; 
+	1784:	typedef struct _QUOTA_LIMITS { 
+	1785:	SIZE_T PagedPoolLimit ; 
+	1786:	SIZE_T NonPagedPoolLimit ; 
+	1787:	SIZE_T MinimumWorkingSetSize ; 
+	1788:	SIZE_T MaximumWorkingSetSize ; 
+	1789:	SIZE_T PagefileLimit ; 
+	1790:	LARGE_INTEGER TimeLimit ; 
+	1791:	} QUOTA_LIMITS , * PQUOTA_LIMITS ; 
+	1792:	typedef struct _IO_COUNTERS { 
+	1793:	ULONGLONG ReadOperationCount ; 
+	1794:	ULONGLONG WriteOperationCount ; 
+	1795:	ULONGLONG OtherOperationCount ; 
+	1796:	ULONGLONG ReadTransferCount ; 
+	1797:	ULONGLONG WriteTransferCount ; 
+	1798:	ULONGLONG OtherTransferCount ; 
+	1799:	} IO_COUNTERS , * PIO_COUNTERS ; 
+	1800:	typedef struct _FILE_NOTIFY_INFORMATION { 
+	1801:	DWORD NextEntryOffset ; 
+	1802:	DWORD Action ; 
+	1803:	DWORD FileNameLength ; 
+	1804:	WCHAR FileName [ 1 ] ; 
+	1805:	} FILE_NOTIFY_INFORMATION , * PFILE_NOTIFY_INFORMATION ; 
+	1806:	typedef struct _TAPE_ERASE { 
+	1807:	DWORD Type ; 
+	1808:	BOOLEAN Immediate ; 
+	1809:	} TAPE_ERASE , * PTAPE_ERASE ; 
+	1810:	typedef struct _TAPE_GET_DRIVE_PARAMETERS { 
+	1811:	BOOLEAN ECC ; 
+	1812:	BOOLEAN Compression ; 
+	1813:	BOOLEAN DataPadding ; 
+	1814:	BOOLEAN ReportSetmarks ; 
+	1815:	DWORD DefaultBlockSize ; 
+	1816:	DWORD MaximumBlockSize ; 
+	1817:	DWORD MinimumBlockSize ; 
+	1818:	DWORD MaximumPartitionCount ; 
+	1819:	DWORD FeaturesLow ; 
+	1820:	DWORD FeaturesHigh ; 
+	1821:	DWORD EOTWarningZoneSize ; 
+	1822:	} TAPE_GET_DRIVE_PARAMETERS , * PTAPE_GET_DRIVE_PARAMETERS ; 
+	1823:	typedef struct _TAPE_GET_MEDIA_PARAMETERS { 
+	1824:	LARGE_INTEGER Capacity ; 
+	1825:	LARGE_INTEGER Remaining ; 
+	1826:	DWORD BlockSize ; 
+	1827:	DWORD PartitionCount ; 
+	1828:	BOOLEAN WriteProtected ; 
+	1829:	} TAPE_GET_MEDIA_PARAMETERS , * PTAPE_GET_MEDIA_PARAMETERS ; 
+	1830:	typedef struct _TAPE_GET_POSITION { 
+	1831:	ULONG Type ; 
+	1832:	ULONG Partition ; 
+	1833:	ULONG OffsetLow ; 
+	1834:	ULONG OffsetHigh ; 
+	1835:	} TAPE_GET_POSITION , * PTAPE_GET_POSITION ; 
+	1836:	typedef struct _TAPE_PREPARE { 
+	1837:	DWORD Operation ; 
+	1838:	BOOLEAN Immediate ; 
+	1839:	} TAPE_PREPARE , * PTAPE_PREPARE ; 
+	1840:	typedef struct _TAPE_SET_DRIVE_PARAMETERS { 
+	1841:	BOOLEAN ECC ; 
+	1842:	BOOLEAN Compression ; 
+	1843:	BOOLEAN DataPadding ; 
+	1844:	BOOLEAN ReportSetmarks ; 
+	1845:	ULONG EOTWarningZoneSize ; 
+	1846:	} TAPE_SET_DRIVE_PARAMETERS , * PTAPE_SET_DRIVE_PARAMETERS ; 
+	1847:	typedef struct _TAPE_SET_MEDIA_PARAMETERS { 
+	1848:	ULONG BlockSize ; 
+	1849:	} TAPE_SET_MEDIA_PARAMETERS , * PTAPE_SET_MEDIA_PARAMETERS ; 
+	1850:	typedef struct _TAPE_SET_POSITION { 
+	1851:	DWORD Method ; 
+	1852:	DWORD Partition ; 
+	1853:	LARGE_INTEGER Offset ; 
+	1854:	BOOLEAN Immediate ; 
+	1855:	} TAPE_SET_POSITION , * PTAPE_SET_POSITION ; 
+	1856:	typedef struct _TAPE_WRITE_MARKS { 
+	1857:	DWORD Type ; 
+	1858:	DWORD Count ; 
+	1859:	BOOLEAN Immediate ; 
+	1860:	} TAPE_WRITE_MARKS , * PTAPE_WRITE_MARKS ; 
+	1861:	typedef struct _TAPE_CREATE_PARTITION { 
+	1862:	DWORD Method ; 
+	1863:	DWORD Count ; 
+	1864:	DWORD Size ; 
+	1865:	} TAPE_CREATE_PARTITION , * PTAPE_CREATE_PARTITION ; 
+	1866:	typedef struct _MEMORY_BASIC_INFORMATION { 
+	1867:	PVOID BaseAddress ; 
+	1868:	PVOID AllocationBase ; 
+	1869:	DWORD AllocationProtect ; 
+	1870:	DWORD RegionSize ; 
+	1871:	DWORD State ; 
+	1872:	DWORD Protect ; 
+	1873:	DWORD Type ; 
+	1874:	} MEMORY_BASIC_INFORMATION , * PMEMORY_BASIC_INFORMATION ; 
+	1875:	typedef struct _MESSAGE_RESOURCE_ENTRY { 
+	1876:	WORD Length ; 
+	1877:	WORD Flags ; 
+	1878:	BYTE Text [ 1 ] ; 
+	1879:	} MESSAGE_RESOURCE_ENTRY , * PMESSAGE_RESOURCE_ENTRY ; 
+	1880:	typedef struct _MESSAGE_RESOURCE_BLOCK { 
+	1881:	DWORD LowId ; 
+	1882:	DWORD HighId ; 
+	1883:	DWORD OffsetToEntries ; 
+	1884:	} MESSAGE_RESOURCE_BLOCK , * PMESSAGE_RESOURCE_BLOCK ; 
+	1885:	typedef struct _MESSAGE_RESOURCE_DATA { 
+	1886:	DWORD NumberOfBlocks ; 
+	1887:	MESSAGE_RESOURCE_BLOCK Blocks [ 1 ] ; 
+	1888:	} MESSAGE_RESOURCE_DATA , * PMESSAGE_RESOURCE_DATA ; 
+	1889:	typedef struct _LIST_ENTRY { 
+	1890:	struct _LIST_ENTRY * Flink ; 
+	1891:	struct _LIST_ENTRY * Blink ; 
+	1892:	} LIST_ENTRY , * PLIST_ENTRY ; 
+	1893:	typedef struct _RTL_CRITICAL_SECTION_DEBUG { 
+	1894:	WORD Type ; 
+	1895:	WORD CreatorBackTraceIndex ; 
+	1896:	struct _RTL_CRITICAL_SECTION * CriticalSection ; 
+	1897:	LIST_ENTRY ProcessLocksList ; 
+	1898:	DWORD EntryCount ; 
+	1899:	DWORD ContentionCount ; 
+	1900:	DWORD Spare [ 2 ] ; 
+	1901:	} RTL_CRITICAL_SECTION_DEBUG , * PRTL_CRITICAL_SECTION_DEBUG ; 
+	1902:	typedef struct _RTL_CRITICAL_SECTION { 
+	1903:	PRTL_CRITICAL_SECTION_DEBUG DebugInfo ; 
+	1904:	LONG LockCount ; 
+	1905:	LONG RecursionCount ; 
+	1906:	HANDLE OwningThread ; 
+	1907:	HANDLE LockSemaphore ; 
+	1908:	DWORD Reserved ; 
+	1909:	} RTL_CRITICAL_SECTION , * PRTL_CRITICAL_SECTION ; 
+	1910:	typedef struct _EVENTLOGRECORD { 
+	1911:	DWORD Length ; 
+	1912:	DWORD Reserved ; 
+	1913:	DWORD RecordNumber ; 
+	1914:	DWORD TimeGenerated ; 
+	1915:	DWORD TimeWritten ; 
+	1916:	DWORD EventID ; 
+	1917:	WORD EventType ; 
+	1918:	WORD NumStrings ; 
+	1919:	WORD EventCategory ; 
+	1920:	WORD ReservedFlags ; 
+	1921:	DWORD ClosingRecordNumber ; 
+	1922:	DWORD StringOffset ; 
+	1923:	DWORD UserSidLength ; 
+	1924:	DWORD UserSidOffset ; 
+	1925:	DWORD DataLength ; 
+	1926:	DWORD DataOffset ; 
+	1927:	} EVENTLOGRECORD , * PEVENTLOGRECORD ; 
+	1928:	typedef struct _OSVERSIONINFOA { 
+	1929:	DWORD dwOSVersionInfoSize ; 
+	1930:	DWORD dwMajorVersion ; 
+	1931:	DWORD dwMinorVersion ; 
+	1932:	DWORD dwBuildNumber ; 
+	1933:	DWORD dwPlatformId ; 
+	1934:	CHAR szCSDVersion [ 128 ] ; 
+	1935:	} OSVERSIONINFOA , * POSVERSIONINFOA , * LPOSVERSIONINFOA ; 
+	1936:	typedef struct _OSVERSIONINFOW { 
+	1937:	DWORD dwOSVersionInfoSize ; 
+	1938:	DWORD dwMajorVersion ; 
+	1939:	DWORD dwMinorVersion ; 
+	1940:	DWORD dwBuildNumber ; 
+	1941:	DWORD dwPlatformId ; 
+	1942:	WCHAR szCSDVersion [ 128 ] ; 
+	1943:	} OSVERSIONINFOW , * POSVERSIONINFOW , * LPOSVERSIONINFOW ; 
+	1944:	typedef struct _OSVERSIONINFOEXA { 
+	1945:	DWORD dwOSVersionInfoSize ; 
+	1946:	DWORD dwMajorVersion ; 
+	1947:	DWORD dwMinorVersion ; 
+	1948:	DWORD dwBuildNumber ; 
+	1949:	DWORD dwPlatformId ; 
+	1950:	CHAR szCSDVersion [ 128 ] ; 
+	1951:	WORD wServicePackMajor ; 
+	1952:	WORD wServicePackMinor ; 
+	1953:	WORD wSuiteMask ; 
+	1954:	BYTE wProductType ; 
+	1955:	BYTE wReserved ; 
+	1956:	} OSVERSIONINFOEXA , * POSVERSIONINFOEXA , * LPOSVERSIONINFOEXA ; 
+	1957:	typedef struct _OSVERSIONINFOEXW { 
+	1958:	DWORD dwOSVersionInfoSize ; 
+	1959:	DWORD dwMajorVersion ; 
+	1960:	DWORD dwMinorVersion ; 
+	1961:	DWORD dwBuildNumber ; 
+	1962:	DWORD dwPlatformId ; 
+	1963:	WCHAR szCSDVersion [ 128 ] ; 
+	1964:	WORD wServicePackMajor ; 
+	1965:	WORD wServicePackMinor ; 
+	1966:	WORD wSuiteMask ; 
+	1967:	BYTE wProductType ; 
+	1968:	BYTE wReserved ; 
+	1969:	} OSVERSIONINFOEXW , * POSVERSIONINFOEXW , * LPOSVERSIONINFOEXW ; 
+	1971:	typedef struct _IMAGE_VXD_HEADER { 
+	1972:	WORD e32_magic ; 
+	1973:	BYTE e32_border ; 
+	1974:	BYTE e32_worder ; 
+	1975:	DWORD e32_level ; 
+	1976:	WORD e32_cpu ; 
+	1977:	WORD e32_os ; 
+	1978:	DWORD e32_ver ; 
+	1979:	DWORD e32_mflags ; 
+	1980:	DWORD e32_mpages ; 
+	1981:	DWORD e32_startobj ; 
+	1982:	DWORD e32_eip ; 
+	1983:	DWORD e32_stackobj ; 
+	1984:	DWORD e32_esp ; 
+	1985:	DWORD e32_pagesize ; 
+	1986:	DWORD e32_lastpagesize ; 
+	1987:	DWORD e32_fixupsize ; 
+	1988:	DWORD e32_fixupsum ; 
+	1989:	DWORD e32_ldrsize ; 
+	1990:	DWORD e32_ldrsum ; 
+	1991:	DWORD e32_objtab ; 
+	1992:	DWORD e32_objcnt ; 
+	1993:	DWORD e32_objmap ; 
+	1994:	DWORD e32_itermap ; 
+	1995:	DWORD e32_rsrctab ; 
+	1996:	DWORD e32_rsrccnt ; 
+	1997:	DWORD e32_restab ; 
+	1998:	DWORD e32_enttab ; 
+	1999:	DWORD e32_dirtab ; 
+	2000:	DWORD e32_dircnt ; 
+	2001:	DWORD e32_fpagetab ; 
+	2002:	DWORD e32_frectab ; 
+	2003:	DWORD e32_impmod ; 
+	2004:	DWORD e32_impmodcnt ; 
+	2005:	DWORD e32_impproc ; 
+	2006:	DWORD e32_pagesum ; 
+	2007:	DWORD e32_datapage ; 
+	2008:	DWORD e32_preload ; 
+	2009:	DWORD e32_nrestab ; 
+	2010:	DWORD e32_cbnrestab ; 
+	2011:	DWORD e32_nressum ; 
+	2012:	DWORD e32_autodata ; 
+	2013:	DWORD e32_debuginfo ; 
+	2014:	DWORD e32_debuglen ; 
+	2015:	DWORD e32_instpreload ; 
+	2016:	DWORD e32_instdemand ; 
+	2017:	DWORD e32_heapsize ; 
+	2018:	BYTE e32_res3 [ 12 ] ; 
+	2019:	DWORD e32_winresoff ; 
+	2020:	DWORD e32_winreslen ; 
+	2021:	WORD e32_devid ; 
+	2022:	WORD e32_ddkver ; 
+	2023:	} IMAGE_VXD_HEADER , * PIMAGE_VXD_HEADER ; 
+	2026:	typedef struct _IMAGE_FILE_HEADER { 
+	2027:	WORD Machine ; 
+	2028:	WORD NumberOfSections ; 
+	2029:	DWORD TimeDateStamp ; 
+	2030:	DWORD PointerToSymbolTable ; 
+	2031:	DWORD NumberOfSymbols ; 
+	2032:	WORD SizeOfOptionalHeader ; 
+	2033:	WORD Characteristics ; 
+	2034:	} IMAGE_FILE_HEADER , * PIMAGE_FILE_HEADER ; 
+	2035:	typedef struct _IMAGE_DATA_DIRECTORY { 
+	2036:	DWORD VirtualAddress ; 
+	2037:	DWORD Size ; 
+	2038:	} IMAGE_DATA_DIRECTORY , * PIMAGE_DATA_DIRECTORY ; 
+	2039:	typedef struct _IMAGE_OPTIONAL_HEADER { 
+	2040:	WORD Magic ; 
+	2041:	BYTE MajorLinkerVersion ; 
+	2042:	BYTE MinorLinkerVersion ; 
+	2043:	DWORD SizeOfCode ; 
+	2044:	DWORD SizeOfInitializedData ; 
+	2045:	DWORD SizeOfUninitializedData ; 
+	2046:	DWORD AddressOfEntryPoint ; 
+	2047:	DWORD BaseOfCode ; 
+	2048:	DWORD BaseOfData ; 
+	2049:	DWORD ImageBase ; 
+	2050:	DWORD SectionAlignment ; 
+	2051:	DWORD FileAlignment ; 
+	2052:	WORD MajorOperatingSystemVersion ; 
+	2053:	WORD MinorOperatingSystemVersion ; 
+	2054:	WORD MajorImageVersion ; 
+	2055:	WORD MinorImageVersion ; 
+	2056:	WORD MajorSubsystemVersion ; 
+	2057:	WORD MinorSubsystemVersion ; 
+	2058:	DWORD Reserved1 ; 
+	2059:	DWORD SizeOfImage ; 
+	2060:	DWORD SizeOfHeaders ; 
+	2061:	DWORD CheckSum ; 
+	2062:	WORD Subsystem ; 
+	2063:	WORD DllCharacteristics ; 
+	2064:	DWORD SizeOfStackReserve ; 
+	2065:	DWORD SizeOfStackCommit ; 
+	2066:	DWORD SizeOfHeapReserve ; 
+	2067:	DWORD SizeOfHeapCommit ; 
+	2068:	DWORD LoaderFlags ; 
+	2069:	DWORD NumberOfRvaAndSizes ; 
+	2070:	IMAGE_DATA_DIRECTORY DataDirectory [ 16 ] ; 
+	2071:	} IMAGE_OPTIONAL_HEADER , * PIMAGE_OPTIONAL_HEADER ; 
+	2072:	typedef struct _IMAGE_ROM_OPTIONAL_HEADER { 
+	2073:	WORD Magic ; 
+	2074:	BYTE MajorLinkerVersion ; 
+	2075:	BYTE MinorLinkerVersion ; 
+	2076:	DWORD SizeOfCode ; 
+	2077:	DWORD SizeOfInitializedData ; 
+	2078:	DWORD SizeOfUninitializedData ; 
+	2079:	DWORD AddressOfEntryPoint ; 
+	2080:	DWORD BaseOfCode ; 
+	2081:	DWORD BaseOfData ; 
+	2082:	DWORD BaseOfBss ; 
+	2083:	DWORD GprMask ; 
+	2084:	DWORD CprMask [ 4 ] ; 
+	2085:	DWORD GpValue ; 
+	2086:	} IMAGE_ROM_OPTIONAL_HEADER , * PIMAGE_ROM_OPTIONAL_HEADER ; 
+	2089:	typedef struct _IMAGE_DOS_HEADER { 
+	2090:	WORD e_magic ; 
+	2091:	WORD e_cblp ; 
+	2092:	WORD e_cp ; 
+	2093:	WORD e_crlc ; 
+	2094:	WORD e_cparhdr ; 
+	2095:	WORD e_minalloc ; 
+	2096:	WORD e_maxalloc ; 
+	2097:	WORD e_ss ; 
+	2098:	WORD e_sp ; 
+	2099:	WORD e_csum ; 
+	2100:	WORD e_ip ; 
+	2101:	WORD e_cs ; 
+	2102:	WORD e_lfarlc ; 
+	2103:	WORD e_ovno ; 
+	2104:	WORD e_res [ 4 ] ; 
+	2105:	WORD e_oemid ; 
+	2106:	WORD e_oeminfo ; 
+	2107:	WORD e_res2 [ 10 ] ; 
+	2108:	LONG e_lfanew ; 
+	2109:	} IMAGE_DOS_HEADER , * PIMAGE_DOS_HEADER ; 
+	2110:	typedef struct _IMAGE_OS2_HEADER { 
+	2111:	WORD ne_magic ; 
+	2112:	CHAR ne_ver ; 
+	2113:	CHAR ne_rev ; 
+	2114:	WORD ne_enttab ; 
+	2115:	WORD ne_cbenttab ; 
+	2116:	LONG ne_crc ; 
+	2117:	WORD ne_flags ; 
+	2118:	WORD ne_autodata ; 
+	2119:	WORD ne_heap ; 
+	2120:	WORD ne_stack ; 
+	2121:	LONG ne_csip ; 
+	2122:	LONG ne_sssp ; 
+	2123:	WORD ne_cseg ; 
+	2124:	WORD ne_cmod ; 
+	2125:	WORD ne_cbnrestab ; 
+	2126:	WORD ne_segtab ; 
+	2127:	WORD ne_rsrctab ; 
+	2128:	WORD ne_restab ; 
+	2129:	WORD ne_modtab ; 
+	2130:	WORD ne_imptab ; 
+	2131:	LONG ne_nrestab ; 
+	2132:	WORD ne_cmovent ; 
+	2133:	WORD ne_align ; 
+	2134:	WORD ne_cres ; 
+	2135:	BYTE ne_exetyp ; 
+	2136:	BYTE ne_flagsothers ; 
+	2137:	WORD ne_pretthunks ; 
+	2138:	WORD ne_psegrefbytes ; 
+	2139:	WORD ne_swaparea ; 
+	2140:	WORD ne_expver ; 
+	2141:	} IMAGE_OS2_HEADER , * PIMAGE_OS2_HEADER ; 
+	2144:	typedef struct _IMAGE_NT_HEADERS { 
+	2145:	DWORD Signature ; 
+	2146:	IMAGE_FILE_HEADER FileHeader ; 
+	2147:	IMAGE_OPTIONAL_HEADER OptionalHeader ; 
+	2148:	} IMAGE_NT_HEADERS , * PIMAGE_NT_HEADERS ; 
+	2149:	typedef struct _IMAGE_ROM_HEADERS { 
+	2150:	IMAGE_FILE_HEADER FileHeader ; 
+	2151:	IMAGE_ROM_OPTIONAL_HEADER OptionalHeader ; 
+	2152:	} IMAGE_ROM_HEADERS , * PIMAGE_ROM_HEADERS ; 
+	2153:	typedef struct _IMAGE_SECTION_HEADER { 
+	2154:	BYTE Name [ 8 ] ; 
+	2155:	union { 
+	2156:	DWORD PhysicalAddress ; 
+	2157:	DWORD VirtualSize ; 
+	2158:	} Misc ; 
+	2159:	DWORD VirtualAddress ; 
+	2160:	DWORD SizeOfRawData ; 
+	2161:	DWORD PointerToRawData ; 
+	2162:	DWORD PointerToRelocations ; 
+	2163:	DWORD PointerToLinenumbers ; 
+	2164:	WORD NumberOfRelocations ; 
+	2165:	WORD NumberOfLinenumbers ; 
+	2166:	DWORD Characteristics ; 
+	2167:	} IMAGE_SECTION_HEADER , * PIMAGE_SECTION_HEADER ; 
+	2170:	typedef struct _IMAGE_SYMBOL { 
+	2171:	union { 
+	2172:	BYTE ShortName [ 8 ] ; 
+	2173:	struct { 
+	2174:	DWORD Short ; 
+	2175:	DWORD Long ; 
+	2176:	} Name ; 
+	2177:	PBYTE LongName [ 2 ] ; 
+	2178:	} N ; 
+	2179:	DWORD Value ; 
+	2180:	SHORT SectionNumber ; 
+	2181:	WORD Type ; 
+	2182:	BYTE StorageClass ; 
+	2183:	BYTE NumberOfAuxSymbols ; 
+	2184:	} IMAGE_SYMBOL , * PIMAGE_SYMBOL ; 
+	2185:	typedef union _IMAGE_AUX_SYMBOL { 
+	2186:	struct { 
+	2187:	DWORD TagIndex ; 
+	2188:	union { 
+	2189:	struct { 
+	2190:	WORD Linenumber ; 
+	2191:	WORD Size ; 
+	2192:	} LnSz ; 
+	2193:	DWORD TotalSize ; 
+	2194:	} Misc ; 
+	2195:	union { 
+	2196:	struct { 
+	2197:	DWORD PointerToLinenumber ; 
+	2198:	DWORD PointerToNextFunction ; 
+	2199:	} Function ; 
+	2200:	struct { 
+	2201:	WORD Dimension [ 4 ] ; 
+	2202:	} Array ; 
+	2203:	} FcnAry ; 
+	2204:	WORD TvIndex ; 
+	2205:	} Sym ; 
+	2206:	struct { 
+	2207:	BYTE Name [ 18 ] ; 
+	2208:	} File ; 
+	2209:	struct { 
+	2210:	DWORD Length ; 
+	2211:	WORD NumberOfRelocations ; 
+	2212:	WORD NumberOfLinenumbers ; 
+	2213:	DWORD CheckSum ; 
+	2214:	SHORT Number ; 
+	2215:	BYTE Selection ; 
+	2216:	} Section ; 
+	2217:	} IMAGE_AUX_SYMBOL , * PIMAGE_AUX_SYMBOL ; 
+	2218:	typedef struct _IMAGE_COFF_SYMBOLS_HEADER { 
+	2219:	DWORD NumberOfSymbols ; 
+	2220:	DWORD LvaToFirstSymbol ; 
+	2221:	DWORD NumberOfLinenumbers ; 
+	2222:	DWORD LvaToFirstLinenumber ; 
+	2223:	DWORD RvaToFirstByteOfCode ; 
+	2224:	DWORD RvaToLastByteOfCode ; 
+	2225:	DWORD RvaToFirstByteOfData ; 
+	2226:	DWORD RvaToLastByteOfData ; 
+	2227:	} IMAGE_COFF_SYMBOLS_HEADER , * PIMAGE_COFF_SYMBOLS_HEADER ; 
+	2228:	typedef struct _IMAGE_RELOCATION { 
+	2229:	_ANONYMOUS_UNION union { 
+	2230:	DWORD VirtualAddress ; 
+	2231:	DWORD RelocCount ; 
+	2232:	} DUMMYUNIONNAME ; 
+	2233:	DWORD SymbolTableIndex ; 
+	2234:	WORD Type ; 
+	2235:	} IMAGE_RELOCATION , * PIMAGE_RELOCATION ; 
+	2238:	typedef struct _IMAGE_BASE_RELOCATION { 
+	2239:	DWORD VirtualAddress ; 
+	2240:	DWORD SizeOfBlock ; 
+	2241:	} IMAGE_BASE_RELOCATION , * PIMAGE_BASE_RELOCATION ; 
+	2244:	typedef struct _IMAGE_LINENUMBER { 
+	2245:	union { 
+	2246:	DWORD SymbolTableIndex ; 
+	2247:	DWORD VirtualAddress ; 
+	2248:	} Type ; 
+	2249:	WORD Linenumber ; 
+	2250:	} IMAGE_LINENUMBER , * PIMAGE_LINENUMBER ; 
+	2253:	typedef struct _IMAGE_ARCHIVE_MEMBER_HEADER { 
+	2254:	BYTE Name [ 16 ] ; 
+	2255:	BYTE Date [ 12 ] ; 
+	2256:	BYTE UserID [ 6 ] ; 
+	2257:	BYTE GroupID [ 6 ] ; 
+	2258:	BYTE Mode [ 8 ] ; 
+	2259:	BYTE Size [ 10 ] ; 
+	2260:	BYTE EndHeader [ 2 ] ; 
+	2261:	} IMAGE_ARCHIVE_MEMBER_HEADER , * PIMAGE_ARCHIVE_MEMBER_HEADER ; 
+	2262:	typedef struct _IMAGE_EXPORT_DIRECTORY { 
+	2263:	DWORD Characteristics ; 
+	2264:	DWORD TimeDateStamp ; 
+	2265:	WORD MajorVersion ; 
+	2266:	WORD MinorVersion ; 
+	2267:	DWORD Name ; 
+	2268:	DWORD Base ; 
+	2269:	DWORD NumberOfFunctions ; 
+	2270:	DWORD NumberOfNames ; 
+	2271:	PDWORD * AddressOfFunctions ; 
+	2272:	PDWORD * AddressOfNames ; 
+	2273:	PWORD * AddressOfNameOrdinals ; 
+	2274:	} IMAGE_EXPORT_DIRECTORY , * PIMAGE_EXPORT_DIRECTORY ; 
+	2275:	typedef struct _IMAGE_IMPORT_BY_NAME { 
+	2276:	WORD Hint ; 
+	2277:	BYTE Name [ 1 ] ; 
+	2278:	} IMAGE_IMPORT_BY_NAME , * PIMAGE_IMPORT_BY_NAME ; 
+	2279:	typedef struct _IMAGE_THUNK_DATA { 
+	2280:	union { 
+	2281:	PBYTE ForwarderString ; 
+	2282:	PDWORD Function ; 
+	2283:	DWORD Ordinal ; 
+	2284:	PIMAGE_IMPORT_BY_NAME AddressOfData ; 
+	2285:	} u1 ; 
+	2286:	} IMAGE_THUNK_DATA , * PIMAGE_THUNK_DATA ; 
+	2287:	typedef struct _IMAGE_IMPORT_DESCRIPTOR { 
+	2288:	_ANONYMOUS_UNION union { 
+	2289:	DWORD Characteristics ; 
+	2290:	PIMAGE_THUNK_DATA OriginalFirstThunk ; 
+	2291:	} DUMMYUNIONNAME ; 
+	2292:	DWORD TimeDateStamp ; 
+	2293:	DWORD ForwarderChain ; 
+	2294:	DWORD Name ; 
+	2295:	PIMAGE_THUNK_DATA FirstThunk ; 
+	2296:	} IMAGE_IMPORT_DESCRIPTOR , * PIMAGE_IMPORT_DESCRIPTOR ; 
+	2297:	typedef struct _IMAGE_BOUND_IMPORT_DESCRIPTOR { 
+	2298:	DWORD TimeDateStamp ; 
+	2299:	WORD OffsetModuleName ; 
+	2300:	WORD NumberOfModuleForwarderRefs ; 
+	2301:	} IMAGE_BOUND_IMPORT_DESCRIPTOR , * PIMAGE_BOUND_IMPORT_DESCRIPTOR ; 
+	2302:	typedef struct _IMAGE_BOUND_FORWARDER_REF { 
+	2303:	DWORD TimeDateStamp ; 
+	2304:	WORD OffsetModuleName ; 
+	2305:	WORD Reserved ; 
+	2306:	} IMAGE_BOUND_FORWARDER_REF , * PIMAGE_BOUND_FORWARDER_REF ; 
+	2307:	typedef void ( __stdcall * PIMAGE_TLS_CALLBACK ) ( PVOID , DWORD , PVOID ) ; 
+	2308:	typedef struct _IMAGE_TLS_DIRECTORY { 
+	2309:	DWORD StartAddressOfRawData ; 
+	2310:	DWORD EndAddressOfRawData ; 
+	2311:	PDWORD AddressOfIndex ; 
+	2312:	PIMAGE_TLS_CALLBACK * AddressOfCallBacks ; 
+	2313:	DWORD SizeOfZeroFill ; 
+	2314:	DWORD Characteristics ; 
+	2315:	} IMAGE_TLS_DIRECTORY , * PIMAGE_TLS_DIRECTORY ; 
+	2316:	typedef struct _IMAGE_RESOURCE_DIRECTORY { 
+	2317:	DWORD Characteristics ; 
+	2318:	DWORD TimeDateStamp ; 
+	2319:	WORD MajorVersion ; 
+	2320:	WORD MinorVersion ; 
+	2321:	WORD NumberOfNamedEntries ; 
+	2322:	WORD NumberOfIdEntries ; 
+	2323:	} IMAGE_RESOURCE_DIRECTORY , * PIMAGE_RESOURCE_DIRECTORY ; 
+	2324:	_ANONYMOUS_STRUCT typedef struct _IMAGE_RESOURCE_DIRECTORY_ENTRY { 
+	2325:	_ANONYMOUS_UNION union { 
+	2326:	_ANONYMOUS_STRUCT struct { 
+	2327:	DWORD NameOffset : 31 ; 
+	2328:	DWORD NameIsString : 1 ; 
+	2329:	} DUMMYSTRUCTNAME ; 
+	2330:	DWORD Name ; 
+	2331:	WORD Id ; 
+	2332:	} DUMMYUNIONNAME ; 
+	2333:	_ANONYMOUS_UNION union { 
+	2334:	DWORD OffsetToData ; 
+	2335:	_ANONYMOUS_STRUCT struct { 
+	2336:	DWORD OffsetToDirectory : 31 ; 
+	2337:	DWORD DataIsDirectory : 1 ; 
+	2338:	} DUMMYSTRUCTNAME2 ; 
+	2339:	} DUMMYUNIONNAME2 ; 
+	2340:	} IMAGE_RESOURCE_DIRECTORY_ENTRY , * PIMAGE_RESOURCE_DIRECTORY_ENTRY ; 
+	2341:	typedef struct _IMAGE_RESOURCE_DIRECTORY_STRING { 
+	2342:	WORD Length ; 
+	2343:	CHAR NameString [ 1 ] ; 
+	2344:	} IMAGE_RESOURCE_DIRECTORY_STRING , * PIMAGE_RESOURCE_DIRECTORY_STRING ; 
+	2345:	typedef struct _IMAGE_RESOURCE_DIR_STRING_U { 
+	2346:	WORD Length ; 
+	2347:	WCHAR NameString [ 1 ] ; 
+	2348:	} IMAGE_RESOURCE_DIR_STRING_U , * PIMAGE_RESOURCE_DIR_STRING_U ; 
+	2349:	typedef struct _IMAGE_RESOURCE_DATA_ENTRY { 
+	2350:	DWORD OffsetToData ; 
+	2351:	DWORD Size ; 
+	2352:	DWORD CodePage ; 
+	2353:	DWORD Reserved ; 
+	2354:	} IMAGE_RESOURCE_DATA_ENTRY , * PIMAGE_RESOURCE_DATA_ENTRY ; 
+	2355:	typedef struct _IMAGE_LOAD_CONFIG_DIRECTORY { 
+	2356:	DWORD Characteristics ; 
+	2357:	DWORD TimeDateStamp ; 
+	2358:	WORD MajorVersion ; 
+	2359:	WORD MinorVersion ; 
+	2360:	DWORD GlobalFlagsClear ; 
+	2361:	DWORD GlobalFlagsSet ; 
+	2362:	DWORD CriticalSectionDefaultTimeout ; 
+	2363:	DWORD DeCommitFreeBlockThreshold ; 
+	2364:	DWORD DeCommitTotalFreeThreshold ; 
+	2365:	PVOID LockPrefixTable ; 
+	2366:	DWORD MaximumAllocationSize ; 
+	2367:	DWORD VirtualMemoryThreshold ; 
+	2368:	DWORD ProcessHeapFlags ; 
+	2369:	DWORD Reserved [ 4 ] ; 
+	2370:	} IMAGE_LOAD_CONFIG_DIRECTORY , * PIMAGE_LOAD_CONFIG_DIRECTORY ; 
+	2371:	typedef struct _IMAGE_RUNTIME_FUNCTION_ENTRY { 
+	2372:	DWORD BeginAddress ; 
+	2373:	DWORD EndAddress ; 
+	2374:	PVOID ExceptionHandler ; 
+	2375:	PVOID HandlerData ; 
+	2376:	DWORD PrologEndAddress ; 
+	2377:	} IMAGE_RUNTIME_FUNCTION_ENTRY , * PIMAGE_RUNTIME_FUNCTION_ENTRY ; 
+	2378:	typedef struct _IMAGE_DEBUG_DIRECTORY { 
+	2379:	DWORD Characteristics ; 
+	2380:	DWORD TimeDateStamp ; 
+	2381:	WORD MajorVersion ; 
+	2382:	WORD MinorVersion ; 
+	2383:	DWORD Type ; 
+	2384:	DWORD SizeOfData ; 
+	2385:	DWORD AddressOfRawData ; 
+	2386:	DWORD PointerToRawData ; 
+	2387:	} IMAGE_DEBUG_DIRECTORY , * PIMAGE_DEBUG_DIRECTORY ; 
+	2388:	typedef struct _FPO_DATA { 
+	2389:	DWORD ulOffStart ; 
+	2390:	DWORD cbProcSize ; 
+	2391:	DWORD cdwLocals ; 
+	2392:	WORD cdwParams ; 
+	2393:	WORD cbProlog : 8 ; 
+	2394:	WORD cbRegs : 3 ; 
+	2395:	WORD fHasSEH : 1 ; 
+	2396:	WORD fUseBP : 1 ; 
+	2397:	WORD reserved : 1 ; 
+	2398:	WORD cbFrame : 2 ; 
+	2399:	} FPO_DATA , * PFPO_DATA ; 
+	2400:	typedef struct _IMAGE_DEBUG_MISC { 
+	2401:	DWORD DataType ; 
+	2402:	DWORD Length ; 
+	2403:	BOOLEAN Unicode ; 
+	2404:	BYTE Reserved [ 3 ] ; 
+	2405:	BYTE Data [ 1 ] ; 
+	2406:	} IMAGE_DEBUG_MISC , * PIMAGE_DEBUG_MISC ; 
+	2407:	typedef struct _IMAGE_FUNCTION_ENTRY { 
+	2408:	DWORD StartingAddress ; 
+	2409:	DWORD EndingAddress ; 
+	2410:	DWORD EndOfPrologue ; 
+	2411:	} IMAGE_FUNCTION_ENTRY , * PIMAGE_FUNCTION_ENTRY ; 
+	2412:	typedef struct _IMAGE_SEPARATE_DEBUG_HEADER { 
+	2413:	WORD Signature ; 
+	2414:	WORD Flags ; 
+	2415:	WORD Machine ; 
+	2416:	WORD Characteristics ; 
+	2417:	DWORD TimeDateStamp ; 
+	2418:	DWORD CheckSum ; 
+	2419:	DWORD ImageBase ; 
+	2420:	DWORD SizeOfImage ; 
+	2421:	DWORD NumberOfSections ; 
+	2422:	DWORD ExportedNamesSize ; 
+	2423:	DWORD DebugDirectorySize ; 
+	2424:	DWORD Reserved [ 3 ] ; 
+	2425:	} IMAGE_SEPARATE_DEBUG_HEADER , * PIMAGE_SEPARATE_DEBUG_HEADER ; 
+	2427:	typedef enum _CM_SERVICE_NODE_TYPE { 
+	2428:	DriverType = 1 , 
+	2429:	FileSystemType = 2 , 
+	2430:	Win32ServiceOwnProcess = 16 , 
+	2431:	Win32ServiceShareProcess = 32 , 
+	2432:	AdapterType = 4 , 
+	2433:	RecognizerType = 8 
+	2434:	} SERVICE_NODE_TYPE ; 
+	2435:	typedef enum _CM_SERVICE_LOAD_TYPE { 
+	2436:	BootLoad = 0 , 
+	2437:	SystemLoad = 1 , 
+	2438:	AutoLoad = 2 , 
+	2439:	DemandLoad = 3 , 
+	2440:	DisableLoad = 4 
+	2441:	} SERVICE_LOAD_TYPE ; 
+	2442:	typedef enum _CM_ERROR_CONTROL_TYPE { 
+	2443:	IgnoreError = 0 , 
+	2444:	NormalError = 1 , 
+	2445:	SevereError = 2 , 
+	2446:	CriticalError = 3 
+	2447:	} SERVICE_ERROR_TYPE ; 
+	2448:	typedef struct _NT_TIB { 
+	2449:	struct _EXCEPTION_REGISTRATION_RECORD * ExceptionList ; 
+	2450:	PVOID StackBase ; 
+	2451:	PVOID StackLimit ; 
+	2452:	PVOID SubSystemTib ; 
+	2453:	_ANONYMOUS_UNION union { 
+	2454:	PVOID FiberData ; 
+	2455:	DWORD Version ; 
+	2456:	} DUMMYUNIONNAME ; 
+	2457:	PVOID ArbitraryUserPointer ; 
+	2458:	struct _NT_TIB * Self ; 
+	2459:	} NT_TIB , * PNT_TIB ; 
+	2460:	typedef struct _REPARSE_DATA_BUFFER { 
+	2461:	DWORD ReparseTag ; 
+	2462:	WORD ReparseDataLength ; 
+	2463:	WORD Reserved ; 
+	2464:	_ANONYMOUS_UNION union { 
+	2465:	struct { 
+	2466:	WORD SubstituteNameOffset ; 
+	2467:	WORD SubstituteNameLength ; 
+	2468:	WORD PrintNameOffset ; 
+	2469:	WORD PrintNameLength ; 
+	2470:	WCHAR PathBuffer [ 1 ] ; 
+	2471:	} SymbolicLinkReparseBuffer ; 
+	2472:	struct { 
+	2473:	WORD SubstituteNameOffset ; 
+	2474:	WORD SubstituteNameLength ; 
+	2475:	WORD PrintNameOffset ; 
+	2476:	WORD PrintNameLength ; 
+	2477:	WCHAR PathBuffer [ 1 ] ; 
+	2478:	} MountPointReparseBuffer ; 
+	2479:	struct { 
+	2480:	BYTE DataBuffer [ 1 ] ; 
+	2481:	} GenericReparseBuffer ; 
+	2482:	} DUMMYUNIONNAME ; 
+	2483:	} REPARSE_DATA_BUFFER , * PREPARSE_DATA_BUFFER ; 
+	2484:	typedef struct _REPARSE_GUID_DATA_BUFFER { 
+	2485:	DWORD ReparseTag ; 
+	2486:	WORD ReparseDataLength ; 
+	2487:	WORD Reserved ; 
+	2488:	GUID ReparseGuid ; 
+	2489:	struct { 
+	2490:	BYTE DataBuffer [ 1 ] ; 
+	2491:	} GenericReparseBuffer ; 
+	2492:	} REPARSE_GUID_DATA_BUFFER , * PREPARSE_GUID_DATA_BUFFER ; 
+	2493:	typedef struct _REPARSE_POINT_INFORMATION { 
+	2494:	WORD ReparseDataLength ; 
+	2495:	WORD UnparsedNameLength ; 
+	2496:	} REPARSE_POINT_INFORMATION , * PREPARSE_POINT_INFORMATION ; 
+	2501:	typedef OSVERSIONINFOA OSVERSIONINFO , * POSVERSIONINFO , * LPOSVERSIONINFO ; 
+	2502:	typedef OSVERSIONINFOEXA OSVERSIONINFOEX , * POSVERSIONINFOEX , * LPOSVERSIONINFOEX ; 
+	2531:	extern PVOID GetCurrentFiber ( void ) ; 
+	2533:	extern PVOID GetFiberData ( void ) ; 
 	129:	typedef UINT WPARAM ; 
 	130:	typedef LONG LPARAM ; 
 	131:	typedef LONG LRESULT ; 
@@ -250,13 +1255,6 @@
 	170:	BOOL WriteConsoleOutputAttribute ( HANDLE , const WORD * , DWORD , COORD , PDWORD ) ; 
 	171:	BOOL WriteConsoleOutputCharacterA ( HANDLE , LPCSTR , DWORD , COORD , PDWORD ) ; 
 	172:	BOOL WriteConsoleOutputCharacterW ( HANDLE , LPCWSTR , DWORD , COORD , PDWORD ) ; 
-	69:	typedef struct _GUID 
-	70:	{ 
-	71:	unsigned long Data1 ; 
-	72:	unsigned short Data2 ; 
-	73:	unsigned short Data3 ; 
-	74:	unsigned char Data4 [ 8 ] ; 
-	75:	} GUID , * REFGUID , * LPGUID ; 
 	79:	typedef GUID UUID ; 
 	81:	typedef GUID IID ; 
 	82:	typedef GUID CLSID ; 
@@ -544,7 +1542,7 @@
 	777:	DWORD dwStreamAttributes ; 
 	778:	LARGE_INTEGER Size ; 
 	779:	DWORD dwStreamNameSize ; 
-	780:	WCHAR cStreamName [ ANYSIZE_ARRAY ] ; 
+	780:	WCHAR cStreamName [ 1 ] ; 
 	781:	} WIN32_STREAM_ID ; 
 	782:	typedef enum _FINDEX_INFO_LEVELS { 
 	783:	FindExInfoStandard , 
@@ -4049,7 +5047,6 @@
 	3328:	typedef CBT_CREATEWNDA CBT_CREATEWND , * LPCBT_CREATEWND ; 
 	3329:	typedef MDICREATESTRUCTA MDICREATESTRUCT , * LPMDICREATESTRUCT ; 
 	3330:	typedef MULTIKEYHELPA MULTIKEYHELP , * PMULTIKEYHELP , * LPMULTIKEYHELP ; 
-	415:	typedef long LONG_PTR ; 
 	419:	typedef DWORD LCTYPE ; 
 	420:	typedef DWORD CALTYPE ; 
 	421:	typedef DWORD CALID ; 
@@ -4408,6 +5405,186 @@
 	101:	LONG RegUnLoadKeyA ( HKEY , LPCSTR ) ; 
 	102:	LONG RegUnLoadKeyW ( HKEY , LPCWSTR ) ; 
 	130:	typedef VALENTA VALENT , * PVALENT ; 
+	70:	typedef struct _SERVICE_STATUS { 
+	71:	DWORD dwServiceType ; 
+	72:	DWORD dwCurrentState ; 
+	73:	DWORD dwControlsAccepted ; 
+	74:	DWORD dwWin32ExitCode ; 
+	75:	DWORD dwServiceSpecificExitCode ; 
+	76:	DWORD dwCheckPoint ; 
+	77:	DWORD dwWaitHint ; 
+	78:	} SERVICE_STATUS , * LPSERVICE_STATUS ; 
+	79:	typedef struct _SERVICE_STATUS_PROCESS { 
+	80:	DWORD dwServiceType ; 
+	81:	DWORD dwCurrentState ; 
+	82:	DWORD dwControlsAccepted ; 
+	83:	DWORD dwWin32ExitCode ; 
+	84:	DWORD dwServiceSpecificExitCode ; 
+	85:	DWORD dwCheckPoint ; 
+	86:	DWORD dwWaitHint ; 
+	87:	DWORD dwProcessId ; 
+	88:	DWORD dwServiceFlags ; 
+	89:	} SERVICE_STATUS_PROCESS , * LPSERVICE_STATUS_PROCESS ; 
+	90:	typedef enum _SC_STATUS_TYPE { 
+	91:	SC_STATUS_PROCESS_INFO = 0 
+	92:	} SC_STATUS_TYPE ; 
+	93:	typedef enum _SC_ENUM_TYPE { 
+	94:	SC_ENUM_PROCESS_INFO = 0 
+	95:	} SC_ENUM_TYPE ; 
+	96:	typedef struct _ENUM_SERVICE_STATUSA { 
+	97:	LPSTR lpServiceName ; 
+	98:	LPSTR lpDisplayName ; 
+	99:	SERVICE_STATUS ServiceStatus ; 
+	100:	} ENUM_SERVICE_STATUSA , * LPENUM_SERVICE_STATUSA ; 
+	101:	typedef struct _ENUM_SERVICE_STATUSW { 
+	102:	LPWSTR lpServiceName ; 
+	103:	LPWSTR lpDisplayName ; 
+	104:	SERVICE_STATUS ServiceStatus ; 
+	105:	} ENUM_SERVICE_STATUSW , * LPENUM_SERVICE_STATUSW ; 
+	106:	typedef struct _ENUM_SERVICE_STATUS_PROCESSA { 
+	107:	LPSTR lpServiceName ; 
+	108:	LPSTR lpDisplayName ; 
+	109:	SERVICE_STATUS_PROCESS ServiceStatusProcess ; 
+	110:	} ENUM_SERVICE_STATUS_PROCESSA , * LPENUM_SERVICE_STATUS_PROCESSA ; 
+	111:	typedef struct _ENUM_SERVICE_STATUS_PROCESSW { 
+	112:	LPWSTR lpServiceName ; 
+	113:	LPWSTR lpDisplayName ; 
+	114:	SERVICE_STATUS_PROCESS ServiceStatusProcess ; 
+	115:	} ENUM_SERVICE_STATUS_PROCESSW , * LPENUM_SERVICE_STATUS_PROCESSW ; 
+	116:	typedef struct _QUERY_SERVICE_CONFIGA { 
+	117:	DWORD dwServiceType ; 
+	118:	DWORD dwStartType ; 
+	119:	DWORD dwErrorControl ; 
+	120:	LPSTR lpBinaryPathName ; 
+	121:	LPSTR lpLoadOrderGroup ; 
+	122:	DWORD dwTagId ; 
+	123:	LPSTR lpDependencies ; 
+	124:	LPSTR lpServiceStartName ; 
+	125:	LPSTR lpDisplayName ; 
+	126:	} QUERY_SERVICE_CONFIGA , * LPQUERY_SERVICE_CONFIGA ; 
+	127:	typedef struct _QUERY_SERVICE_CONFIGW { 
+	128:	DWORD dwServiceType ; 
+	129:	DWORD dwStartType ; 
+	130:	DWORD dwErrorControl ; 
+	131:	LPWSTR lpBinaryPathName ; 
+	132:	LPWSTR lpLoadOrderGroup ; 
+	133:	DWORD dwTagId ; 
+	134:	LPWSTR lpDependencies ; 
+	135:	LPWSTR lpServiceStartName ; 
+	136:	LPWSTR lpDisplayName ; 
+	137:	} QUERY_SERVICE_CONFIGW , * LPQUERY_SERVICE_CONFIGW ; 
+	138:	typedef struct _QUERY_SERVICE_LOCK_STATUSA { 
+	139:	DWORD fIsLocked ; 
+	140:	LPSTR lpLockOwner ; 
+	141:	DWORD dwLockDuration ; 
+	142:	} QUERY_SERVICE_LOCK_STATUSA , * LPQUERY_SERVICE_LOCK_STATUSA ; 
+	143:	typedef struct _QUERY_SERVICE_LOCK_STATUSW { 
+	144:	DWORD fIsLocked ; 
+	145:	LPWSTR lpLockOwner ; 
+	146:	DWORD dwLockDuration ; 
+	147:	} QUERY_SERVICE_LOCK_STATUSW , * LPQUERY_SERVICE_LOCK_STATUSW ; 
+	148:	typedef void ( * LPSERVICE_MAIN_FUNCTIONA ) ( DWORD , LPSTR * ) ; 
+	149:	typedef void ( * LPSERVICE_MAIN_FUNCTIONW ) ( DWORD , LPWSTR * ) ; 
+	150:	typedef struct _SERVICE_TABLE_ENTRYA { 
+	151:	LPSTR lpServiceName ; 
+	152:	LPSERVICE_MAIN_FUNCTIONA lpServiceProc ; 
+	153:	} SERVICE_TABLE_ENTRYA , * LPSERVICE_TABLE_ENTRYA ; 
+	154:	typedef struct _SERVICE_TABLE_ENTRYW { 
+	155:	LPWSTR lpServiceName ; 
+	156:	LPSERVICE_MAIN_FUNCTIONW lpServiceProc ; 
+	157:	} SERVICE_TABLE_ENTRYW , * LPSERVICE_TABLE_ENTRYW ; 
+	158:	typedef struct SC_HANDLE__ { int i ; } * SC_HANDLE ; 
+	159:	typedef SC_HANDLE * LPSC_HANDLE ; 
+	160:	typedef PVOID SC_LOCK ; 
+	161:	typedef DWORD SERVICE_STATUS_HANDLE ; 
+	162:	typedef void ( * LPHANDLER_FUNCTION ) ( DWORD ) ; 
+	163:	typedef DWORD ( * LPHANDLER_FUNCTION_EX ) ( DWORD , DWORD , LPVOID , LPVOID ) ; 
+	164:	typedef struct _SERVICE_DESCRIPTIONA { 
+	165:	LPSTR lpDescription ; 
+	166:	} SERVICE_DESCRIPTIONA , * LPSERVICE_DESCRIPTIONA ; 
+	167:	typedef struct _SERVICE_DESCRIPTIONW { 
+	168:	LPWSTR lpDescription ; 
+	169:	} SERVICE_DESCRIPTIONW , * LPSERVICE_DESCRIPTIONW ; 
+	170:	typedef enum _SC_ACTION_TYPE { 
+	171:	SC_ACTION_NONE = 0 , 
+	172:	SC_ACTION_RESTART = 1 , 
+	173:	SC_ACTION_REBOOT = 2 , 
+	174:	SC_ACTION_RUN_COMMAND = 3 
+	175:	} SC_ACTION_TYPE ; 
+	176:	typedef struct _SC_ACTION { 
+	177:	SC_ACTION_TYPE Type ; 
+	178:	DWORD Delay ; 
+	179:	} SC_ACTION , * LPSC_ACTION ; 
+	180:	typedef struct _SERVICE_FAILURE_ACTIONSA { 
+	181:	DWORD dwResetPeriod ; 
+	182:	LPSTR lpRebootMsg ; 
+	183:	LPSTR lpCommand ; 
+	184:	DWORD cActions ; 
+	185:	SC_ACTION * lpsaActions ; 
+	186:	} SERVICE_FAILURE_ACTIONSA , * LPSERVICE_FAILURE_ACTIONSA ; 
+	187:	typedef struct _SERVICE_FAILURE_ACTIONSW { 
+	188:	DWORD dwResetPeriod ; 
+	189:	LPWSTR lpRebootMsg ; 
+	190:	LPWSTR lpCommand ; 
+	191:	DWORD cActions ; 
+	192:	SC_ACTION * lpsaActions ; 
+	193:	} SERVICE_FAILURE_ACTIONSW , * LPSERVICE_FAILURE_ACTIONSW ; 
+	195:	BOOL ChangeServiceConfigA ( SC_HANDLE , DWORD , DWORD , DWORD , LPCSTR , LPCSTR , LPDWORD , LPCSTR , LPCSTR , LPCSTR , LPCSTR ) ; 
+	196:	BOOL ChangeServiceConfigW ( SC_HANDLE , DWORD , DWORD , DWORD , LPCWSTR , LPCWSTR , LPDWORD , LPCWSTR , LPCWSTR , LPCWSTR , LPCWSTR ) ; 
+	197:	BOOL ChangeServiceConfig2A ( SC_HANDLE , DWORD , LPVOID ) ; 
+	198:	BOOL ChangeServiceConfig2W ( SC_HANDLE , DWORD , LPVOID ) ; 
+	199:	BOOL CloseServiceHandle ( SC_HANDLE ) ; 
+	200:	BOOL ControlService ( SC_HANDLE , DWORD , LPSERVICE_STATUS ) ; 
+	201:	SC_HANDLE CreateServiceA ( SC_HANDLE , LPCSTR , LPCSTR , DWORD , DWORD , DWORD , DWORD , LPCSTR , LPCSTR , PDWORD , LPCSTR , LPCSTR , LPCSTR ) ; 
+	202:	SC_HANDLE CreateServiceW ( SC_HANDLE , LPCWSTR , LPCWSTR , DWORD , DWORD , DWORD , DWORD , LPCWSTR , LPCWSTR , PDWORD , LPCWSTR , LPCWSTR , LPCWSTR ) ; 
+	203:	BOOL DeleteService ( SC_HANDLE ) ; 
+	204:	BOOL EnumDependentServicesA ( SC_HANDLE , DWORD , LPENUM_SERVICE_STATUSA , DWORD , PDWORD , PDWORD ) ; 
+	205:	BOOL EnumDependentServicesW ( SC_HANDLE , DWORD , LPENUM_SERVICE_STATUSW , DWORD , PDWORD , PDWORD ) ; 
+	206:	BOOL EnumServicesStatusA ( SC_HANDLE , DWORD , DWORD , LPENUM_SERVICE_STATUSA , DWORD , PDWORD , PDWORD , PDWORD ) ; 
+	207:	BOOL EnumServicesStatusW ( SC_HANDLE , DWORD , DWORD , LPENUM_SERVICE_STATUSW , DWORD , PDWORD , PDWORD , PDWORD ) ; 
+	208:	BOOL EnumServicesStatusExA ( SC_HANDLE , SC_ENUM_TYPE , DWORD , DWORD , LPBYTE , DWORD , LPDWORD , LPDWORD , LPDWORD , LPCSTR ) ; 
+	209:	BOOL EnumServicesStatusExW ( SC_HANDLE , SC_ENUM_TYPE , DWORD , DWORD , LPBYTE , DWORD , LPDWORD , LPDWORD , LPDWORD , LPCWSTR ) ; 
+	210:	BOOL GetServiceDisplayNameA ( SC_HANDLE , LPCSTR , LPSTR , PDWORD ) ; 
+	211:	BOOL GetServiceDisplayNameW ( SC_HANDLE , LPCWSTR , LPWSTR , PDWORD ) ; 
+	212:	BOOL GetServiceKeyNameA ( SC_HANDLE , LPCSTR , LPSTR , PDWORD ) ; 
+	213:	BOOL GetServiceKeyNameW ( SC_HANDLE , LPCWSTR , LPWSTR , PDWORD ) ; 
+	214:	SC_LOCK LockServiceDatabase ( SC_HANDLE ) ; 
+	215:	BOOL NotifyBootConfigStatus ( BOOL ) ; 
+	216:	SC_HANDLE OpenSCManagerA ( LPCSTR , LPCSTR , DWORD ) ; 
+	217:	SC_HANDLE OpenSCManagerW ( LPCWSTR , LPCWSTR , DWORD ) ; 
+	218:	SC_HANDLE OpenServiceA ( SC_HANDLE , LPCSTR , DWORD ) ; 
+	219:	SC_HANDLE OpenServiceW ( SC_HANDLE , LPCWSTR , DWORD ) ; 
+	220:	BOOL QueryServiceConfigA ( SC_HANDLE , LPQUERY_SERVICE_CONFIGA , DWORD , PDWORD ) ; 
+	221:	BOOL QueryServiceConfigW ( SC_HANDLE , LPQUERY_SERVICE_CONFIGW , DWORD , PDWORD ) ; 
+	222:	BOOL QueryServiceConfig2A ( SC_HANDLE , DWORD , LPBYTE , DWORD , LPDWORD ) ; 
+	223:	BOOL QueryServiceConfig2W ( SC_HANDLE , DWORD , LPBYTE , DWORD , LPDWORD ) ; 
+	224:	BOOL QueryServiceLockStatusA ( SC_HANDLE , LPQUERY_SERVICE_LOCK_STATUSA , DWORD , PDWORD ) ; 
+	225:	BOOL QueryServiceLockStatusW ( SC_HANDLE , LPQUERY_SERVICE_LOCK_STATUSW , DWORD , PDWORD ) ; 
+	226:	BOOL QueryServiceObjectSecurity ( SC_HANDLE , SECURITY_INFORMATION , PSECURITY_DESCRIPTOR , DWORD , LPDWORD ) ; 
+	227:	BOOL QueryServiceStatus ( SC_HANDLE , LPSERVICE_STATUS ) ; 
+	228:	BOOL QueryServiceStatusEx ( SC_HANDLE , SC_STATUS_TYPE , LPBYTE , DWORD , LPDWORD ) ; 
+	229:	SERVICE_STATUS_HANDLE RegisterServiceCtrlHandlerA ( LPCSTR , LPHANDLER_FUNCTION ) ; 
+	230:	SERVICE_STATUS_HANDLE RegisterServiceCtrlHandlerW ( LPCWSTR , LPHANDLER_FUNCTION ) ; 
+	231:	SERVICE_STATUS_HANDLE RegisterServiceCtrlHandlerExA ( LPCSTR , LPHANDLER_FUNCTION_EX , LPVOID ) ; 
+	232:	SERVICE_STATUS_HANDLE RegisterServiceCtrlHandlerExW ( LPCWSTR , LPHANDLER_FUNCTION_EX , LPVOID ) ; 
+	233:	BOOL SetServiceObjectSecurity ( SC_HANDLE , SECURITY_INFORMATION , PSECURITY_DESCRIPTOR ) ; 
+	234:	BOOL SetServiceStatus ( SERVICE_STATUS_HANDLE , LPSERVICE_STATUS ) ; 
+	235:	BOOL StartServiceA ( SC_HANDLE , DWORD , LPCSTR * ) ; 
+	236:	BOOL StartServiceCtrlDispatcherA ( LPSERVICE_TABLE_ENTRYA ) ; 
+	237:	BOOL StartServiceCtrlDispatcherW ( LPSERVICE_TABLE_ENTRYW ) ; 
+	238:	BOOL StartServiceW ( SC_HANDLE , DWORD , LPCWSTR ) ; 
+	239:	BOOL UnlockServiceDatabase ( SC_LOCK ) ; 
+	274:	typedef ENUM_SERVICE_STATUSA ENUM_SERVICE_STATUS , * LPENUM_SERVICE_STATUS ; 
+	275:	typedef ENUM_SERVICE_STATUS_PROCESSA ENUM_SERVICE_STATUS_PROCESS ; 
+	276:	typedef LPENUM_SERVICE_STATUS_PROCESSA LPENUM_SERVICE_STATUS_PROCESS ; 
+	277:	typedef QUERY_SERVICE_CONFIGA QUERY_SERVICE_CONFIG , * LPQUERY_SERVICE_CONFIG ; 
+	278:	typedef QUERY_SERVICE_LOCK_STATUSA QUERY_SERVICE_LOCK_STATUS , * LPQUERY_SERVICE_LOCK_STATUS ; 
+	279:	typedef SERVICE_TABLE_ENTRYA SERVICE_TABLE_ENTRY , * LPSERVICE_TABLE_ENTRY ; 
+	280:	typedef LPSERVICE_MAIN_FUNCTIONA LPSERVICE_MAIN_FUNCTION ; 
+	281:	typedef SERVICE_DESCRIPTIONA SERVICE_DESCRIPTION ; 
+	282:	typedef LPSERVICE_DESCRIPTIONA LPSERVICE_DESCRIPTION ; 
+	283:	typedef SERVICE_FAILURE_ACTIONSA SERVICE_FAILURE_ACTIONS ; 
+	284:	typedef LPSERVICE_FAILURE_ACTIONSA LPSERVICE_FAILURE_ACTIONS ; 
 	11:	void WinMain ( ) { 
 	12:	ExitProcess ( 0 ) ; 
 	13:	} 
