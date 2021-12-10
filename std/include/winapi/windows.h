@@ -82,6 +82,9 @@
 #endif
 #endif
 
+// TODO: Tie this into _Noreturn 
+#define DECLSPEC_NORETURN
+
 #include <stdarg.h>
 #include <windef.h>
 #include <wincon.h>

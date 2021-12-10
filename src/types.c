@@ -3,6 +3,18 @@
 impl_arena(Type, type_arena)
 impl_arena(Member, member_arena)
 impl_arena(Arg, arg_arena)
+impl_arena(EnumEntry, enum_entry_arena)
+
+TypeIndex new_enum() {
+	TypeIndex t = push_type_arena(1);
+	type_arena.data[t] = (Type){
+		.kind = KIND_ENUM,
+		.size = 4,
+		.align = 4
+	};
+	
+	return t;
+}
 
 TypeIndex new_func() {
 	TypeIndex t = push_type_arena(1);

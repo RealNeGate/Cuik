@@ -8,8 +8,7 @@
 #define stat _stat
 #endif
 
-// NOTE(NeGate): Replaces all \t \v with spaces and removing all
-// carriage returns.
+// NOTE(NeGate): Replaces all \t \v with spaces
 //
 // NOTE(NeGate): This code requires SSE4.1, it's not impossible to make
 // ARM variants and such but yea.

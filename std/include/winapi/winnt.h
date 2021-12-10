@@ -145,7 +145,8 @@ extern "C" {
 	typedef BYTE BOOLEAN,*PBOOLEAN;
 #endif
 	
-#define NTAPI __stdcall
+	// TODO: fix this
+#define NTAPI //__stdcall
 #include <basetsd.h>
 #define APPLICATION_ERROR_MASK       0x20000000
 #define ERROR_SEVERITY_SUCCESS       0x00000000
@@ -2612,45 +2613,16 @@ extern "C" {
 	typedef OSVERSIONINFOEXA OSVERSIONINFOEX,*POSVERSIONINFOEX,*LPOSVERSIONINFOEX;
 #endif
 	
-#if defined(__GNUC__)
-	
-	PVOID GetCurrentFiber(void);
-	PVOID GetFiberData(void);
-	
-	PVOID GetCurrentFiber(void);
-	extern __inline__ PVOID GetCurrentFiber(void)
-	{
-		void* ret;
-		__asm__ volatile (
-						  "movl	%%fs:0x10,%0"
-						  : "=r" (ret) /* allow use of reg eax,ebx,ecx,edx,esi,edi */
-						  :
-						  );
-		return ret;
-	}
-	
-	PVOID GetFiberData(void);
-	extern __inline__ PVOID GetFiberData(void)
-	{
-		void* ret;
-		__asm__ volatile (
-						  "movl	%%fs:0x10,%0\n"
-						  "movl	(%0),%0"
-						  : "=r" (ret) /* allow use of reg eax,ebx,ecx,edx,esi,edi */
-						  :
-						  );
-		return ret;
-	}
-	
-#else
-	
+	// TODO: Implement this assembly mess
 	extern PVOID GetCurrentFiber(void);
+	extern PVOID GetFiberData(void);
+	
+#if 0
 #pragma aux GetCurrentFiber = \
 "mov	eax, dword ptr fs:0x10" \
 value [eax] \
 modify [eax];
 	
-	extern PVOID GetFiberData(void);
 #pragma aux GetFiberData = \
 "mov	eax, dword ptr fs:0x10" \
 "mov	eax, [eax]" \

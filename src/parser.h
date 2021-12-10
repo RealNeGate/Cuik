@@ -9,6 +9,7 @@
 decl_arena_index(Type, type_arena)
 decl_arena_index(Member, member_arena) // Members used by struct/union types
 decl_arena_index(Arg, arg_arena) // refs to Types used by the function types
+decl_arena_index(EnumEntry, enum_entry_arena)
 
 decl_arena_index(Stmt, stmt_arena)
 decl_arena_index(StmtIndex, stmt_ref_arena)
@@ -57,6 +58,11 @@ typedef struct Attribs {
 	bool is_tls     : 1;
 } Attribs;
 
+typedef struct EnumEntry {
+	Atom name;
+	int value;
+} EnumEntry;
+
 typedef struct Arg {
 	TypeIndex type;
 	Atom name;
@@ -95,6 +101,12 @@ typedef struct Type {
 			Atom name;
 			MemberIndex kids_start, kids_end;
 		} record;
+		
+		// Enumerators
+		struct {
+			Atom name;
+			EnumEntryIndex start, end;
+		} enumerator;
     };
 } Type;
 
@@ -296,12 +308,15 @@ typedef struct Symbol {
 decl_arena(Type, type_arena)
 decl_arena(Member, member_arena)
 decl_arena(Arg, arg_arena)
+decl_arena(EnumEntry, enum_entry_arena)
+
 decl_arena(Stmt, stmt_arena)
 decl_arena(StmtIndex, stmt_ref_arena)
 decl_arena(Expr, expr_arena)
 decl_arena(ExprIndex, expr_ref_arena)
 
 TypeIndex new_func();
+TypeIndex new_enum();
 TypeIndex new_record(bool is_union);
 TypeIndex copy_type(TypeIndex base);
 TypeIndex new_pointer(TypeIndex base);

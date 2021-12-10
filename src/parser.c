@@ -43,6 +43,7 @@ static bool try_parse_declspec(TokenStream* restrict s, Attribs* attr);
 static TypeIndex parse_declspec(TokenStream* restrict s, Attribs* attr);
 static Decl parse_declarator(TokenStream* restrict s, TypeIndex type);
 static TypeIndex parse_typename(TokenStream* restrict s);
+static int parse_const_expr(TokenStream* restrict s);
 static bool is_typename(TokenStream* restrict s);
 static _Noreturn void generic_error(TokenStream* restrict s, const char* msg);
 
@@ -57,6 +58,7 @@ TopLevel parse_file(TokenStream* restrict s) {
 	init_stmt_arena(4 * 1024);
 	init_stmt_ref_arena(4 * 1024);
 	init_arg_arena(4 * 1024);
+	init_enum_entry_arena(4 * 1024);
 	init_expr_arena(4 * 1024);
 	init_expr_ref_arena(4 * 1024);
 	init_type_arena(4 * 1024);
@@ -1032,27 +1034,13 @@ static TypeIndex parse_type_suffix(TokenStream* restrict s, TypeIndex type, Atom
 		do {
 			tokens_next(s);
 			
-			// TODO(NeGate): Implement array typedecl properly
 			long long count;
-			
-			Token* t = tokens_get(s);
-			if (t->type == ']') {
+			if (tokens_get(s)->type == ']') {
 				count = 0; 
 				tokens_next(s);
-			} else if (t->type == TOKEN_NUMBER) {
-				size_t len = t->end - t->start;
-				assert(len < 15);
-				
-				char temp[16];
-				memcpy(temp, t->start, len);
-				temp[len] = '\0';
-				
-				count = atoll(temp);
-				tokens_next(s);
-				
-				expect(s, ']');
 			} else {
-				abort();
+				count = parse_const_expr(s);
+				expect(s, ']');
 			}
 			
 			type = new_array(type, count);
@@ -1101,6 +1089,7 @@ static TypeIndex parse_declspec(TokenStream* restrict s, Attribs* attr) {
 			case TOKEN_KW_static: attr->is_static = true; break;
 			case TOKEN_KW_typedef: attr->is_typedef = true; break;
 			case TOKEN_KW_inline: attr->is_inline = true; break;
+			case TOKEN_KW_extern: attr->is_extern = true; break;
 			case TOKEN_KW_Thread_local: attr->is_tls = true; break;
 			
 			case TOKEN_KW_Atomic: is_atomic = true; break;
@@ -1167,12 +1156,23 @@ static TypeIndex parse_declspec(TokenStream* restrict s, Attribs* attr) {
 						
 						// TODO(NeGate): Error check that no attribs are set
 						tls_push(sizeof(Member));
-						members[member_count++] = (Member) {
+						
+						Member* member = &members[member_count++];
+						*member = (Member) {
 							.type = member_type,
 							.name = decl.name,
 							.offset = is_union ? 0 : offset,
 							.align = member_align
 						};
+						
+						if (tokens_get(s)->type == ':') {
+							tokens_next(s);
+							
+							// TODO(NeGate): Handle bitfields a lot better
+							member->is_bitfield = true;
+							member->bit_offset = 0;
+							member->bit_width = parse_const_expr(s);
+						}
 						
 						if (is_union) {
 							if (member_size < offset) offset = member_size;
@@ -1192,7 +1192,7 @@ static TypeIndex parse_declspec(TokenStream* restrict s, Attribs* attr) {
 					type_arena.data[type].size = offset;
 					type_arena.data[type].align = align;
 					
-					MemberIndex start = push_arg_arena(member_count);
+					MemberIndex start = push_member_arena(member_count);
 					memcpy(&member_arena.data[start], members, member_count * sizeof(Member));
 					
 					type_arena.data[type].record.kids_start = start;
@@ -1213,9 +1213,62 @@ static TypeIndex parse_declspec(TokenStream* restrict s, Attribs* attr) {
 					}
 					counter += OTHER;
 					
-					// push back one
+					// push back one because we push it forward one later but 
+					// shouldn't
 					tokens_prev(s);
 				}
+				break;
+			}
+			
+			case TOKEN_KW_enum: {
+				if (counter) goto done;
+				tokens_next(s);
+				
+				Token* t = tokens_get(s);
+				Atom name = NULL;
+				if (tokens_get(s)->type == TOKEN_IDENTIFIER) {
+					name = atoms_put(t->end - t->start, t->start);
+					tokens_next(s);
+				}
+				
+				type = new_enum();
+				type_arena.data[type].enumerator.name = name;
+				
+				expect(s, '{');
+				type_arena.data[type].enumerator.start = enum_entry_arena.count;
+				
+				// starts at zero and after any entry it increments
+				// you can override it by using:
+				// identifier = int-const-expr
+				int cursor = 0;
+				
+				while (tokens_get(s)->type != '}') {
+					EnumEntryIndex e = push_enum_entry_arena(1);
+					
+					// parse name
+					Token* t = tokens_get(s);
+					if (t->type != TOKEN_IDENTIFIER) {
+						generic_error(s, "expected identifier for enum name entry.");
+					}
+					
+					enum_entry_arena.data[e].name = atoms_put(t->end - t->start, t->start);
+					tokens_next(s);
+					
+					if (tokens_get(s)->type == '=') {
+						tokens_next(s);
+						
+						cursor = parse_const_expr(s);
+					}
+					
+					enum_entry_arena.data[e].value = cursor++;
+					if (tokens_get(s)->type == ',') tokens_next(s);
+				}
+				
+				if (tokens_get(s)->type != '}') {
+					generic_error(s, "Unclosed enum list!");
+				}
+				
+				type_arena.data[type].enumerator.end = enum_entry_arena.count;
 				break;
 			}
 			
@@ -1341,10 +1394,15 @@ static bool is_typename(TokenStream* restrict s) {
 		case TOKEN_KW_Bool:
 		case TOKEN_KW_signed:
 		case TOKEN_KW_unsigned:
+		case TOKEN_KW_struct:
+		case TOKEN_KW_union:
+		case TOKEN_KW_enum:
+		case TOKEN_KW_extern:
 		case TOKEN_KW_static:
 		case TOKEN_KW_typedef:
 		case TOKEN_KW_inline:
 		case TOKEN_KW_Thread_local:
+		case TOKEN_KW_Atomic:
 		case TOKEN_KW_auto:
 		return true;
 		
@@ -1366,6 +1424,41 @@ static bool is_typename(TokenStream* restrict s) {
 		default:
 		return false;
 	}
+}
+
+// TODO(NeGate): Correctly handle const-expr
+static int parse_const_expr_l0(TokenStream* restrict s) {
+	Token* restrict t = tokens_get(s);
+	
+	if (t->type == TOKEN_NUMBER) {
+		size_t len = t->end - t->start;
+		assert(len < 15);
+		
+		char temp[16];
+		memcpy(temp, t->start, len);
+		temp[len] = '\0';
+		
+		tokens_next(s);
+		return atoi(temp);
+	}
+	
+	generic_error(s, "Could not parse constant expression");
+}
+
+static int parse_const_expr(TokenStream* restrict s) {
+	int left = parse_const_expr_l0(s);
+	
+	while (tokens_get(s)->type == TOKEN_PLUS ||
+		   tokens_get(s)->type == TOKEN_MINUS) {
+		TknType type = tokens_get(s)->type;
+		tokens_next(s);
+		
+		int right = parse_const_expr_l0(s);
+		if (type == TOKEN_PLUS) left += right;
+		else left -= right;
+	}
+	
+	return left;
 }
 
 ////////////////////////////////
