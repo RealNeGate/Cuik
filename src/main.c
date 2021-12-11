@@ -9,7 +9,7 @@
 #include "microsoft_craziness.h"
 
 // frontend worker threads
-#define NUM_THREADS 12
+#define NUM_THREADS 1
 
 // this is how many IR gen tasks it tries to grab at any one time
 #define MAX_MUNCH 256
@@ -160,7 +160,7 @@ int main(int argc, char* argv[]) {
 	printf("compilation took %f ms\n", delta_ms);
 	
 	// Linking
-#if 0 // _WIN32
+#if _WIN32
 	{
 		// NOTE(NeGate): Windows still a bih, im forcing the 
 		// W functions because im a bitch too

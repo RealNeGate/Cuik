@@ -214,9 +214,17 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 			if (type_arena.data[index.type].kind == KIND_PTR ||
 				type_arena.data[index.type].kind == KIND_ARRAY) swap(base, index);
 			
-			assert(base.value_type == LVALUE);
-			cvt_l2r(func, &base, base.type);
 			cvt_l2r(func, &index, TYPE_ULONG);
+			
+			if (base.value_type == RVALUE) {
+				TypeIndex element_type = type_arena.data[base.type].ptr_to;
+				int stride = type_arena.data[element_type].size;
+				return (IRVal) {
+					.value_type = LVALUE,
+					.type = element_type,
+					.reg = tb_inst_array_access(func, base.reg, index.reg, stride)
+				};
+			}
 			
 			TypeIndex element_type = type_arena.data[base.type].ptr_to;
 			int stride = type_arena.data[element_type].size;
@@ -787,8 +795,8 @@ static void gen_func_body(TypeIndex type, StmtIndex s) {
 		tb_inst_ret(func, TB_NULL_REG);
 	}
 	
-	//tb_function_print(func, stdout);
-	//printf("\n\n\n");
+	tb_function_print(func, stdout);
+	printf("\n\n\n");
 	
 	tb_module_compile_func(mod, func);
 }

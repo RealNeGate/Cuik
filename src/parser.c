@@ -42,6 +42,7 @@ static Symbol* find_local_symbol(TokenStream* restrict s);
 static Symbol* find_global_symbol(char* name);
 static StmtIndex parse_stmt(TokenStream* restrict s);
 static ExprIndex parse_expr(TokenStream* restrict s);
+static StmtIndex parse_stmt_or_expr(TokenStream* restrict s);
 static StmtIndex parse_compound_stmt(TokenStream* restrict s);
 static bool try_parse_declspec(TokenStream* restrict s, Attribs* attr);
 static TypeIndex parse_declspec(TokenStream* restrict s, Attribs* attr);
@@ -363,11 +364,11 @@ static StmtIndex parse_stmt(TokenStream* restrict s) {
 		stmt_arena.data[n].expr = parse_expr(s);
 		expect(s, ')');
 		
-		stmt_arena.data[n].body = parse_stmt(s);
+		stmt_arena.data[n].body = parse_stmt_or_expr(s);
 		
 		if (tokens_get(s)->type == TOKEN_KW_else) {
 			tokens_next(s);
-			stmt_arena.data[n].body2 = parse_stmt(s);
+			stmt_arena.data[n].body2 = parse_stmt_or_expr(s);
 		} else {
 			stmt_arena.data[n].body2 = 0;
 		}
@@ -385,7 +386,7 @@ static StmtIndex parse_stmt(TokenStream* restrict s) {
 		stmt_arena.data[n].expr = parse_expr(s);
 		expect(s, ')');
 		
-		stmt_arena.data[n].body = parse_stmt(s);
+		stmt_arena.data[n].body = parse_stmt_or_expr(s);
 		return n;
 	}
 	
@@ -394,7 +395,7 @@ static StmtIndex parse_stmt(TokenStream* restrict s) {
 		
 		StmtIndex n = push_stmt_arena(1);
 		stmt_arena.data[n].op = STMT_DO_WHILE;
-		stmt_arena.data[n].body = parse_stmt(s);
+		stmt_arena.data[n].body = parse_stmt_or_expr(s);
 		
 		if (tokens_get(s)->type != TOKEN_KW_while) {
 			Token* t = tokens_get(s);
@@ -417,6 +418,17 @@ static StmtIndex parse_stmt(TokenStream* restrict s) {
 	}
 	
 	return 0;
+}
+
+static StmtIndex parse_stmt_or_expr(TokenStream* restrict s) {
+	StmtIndex stmt = parse_stmt(s);
+	if (stmt) return stmt;
+	
+	stmt = push_stmt_arena(1);
+	stmt_arena.data[stmt].op = STMT_EXPR;
+	stmt_arena.data[stmt].expr = parse_expr(s);
+	
+	return stmt;
 }
 
 ////////////////////////////////

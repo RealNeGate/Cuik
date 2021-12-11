@@ -8,6 +8,14 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
+LRESULT main_wnd_proc(HWND wnd, UINT message, WPARAM wparam, LPARAM lparam) {
+	if (message == WM_QUIT) {
+		ExitProcess(0);
+	}
+
+	return DefWindowProcA(wnd, message, wparam, lparam);
+}
+
 void WinMain() {
 	char name[4];
 	name[0] = 84;
@@ -17,7 +25,7 @@ void WinMain() {
 
 	WNDCLASSA wc;
 	wc.hInstance = GetModuleHandleA(0);
-	wc.lpfnWndProc = DefWindowProcA;
+	wc.lpfnWndProc = main_wnd_proc;
 	wc.lpszClassName = &name;
 	RegisterClassA(&wc);
 	
@@ -34,8 +42,6 @@ void WinMain() {
 		MSG msg;
 		GetMessageA(&msg, 0, 0, 0);
 		TranslateMessage(&msg);
-		if (msg.message == WM_QUIT) return;
-
 		DispatchMessageA(&msg);
 	}
 
