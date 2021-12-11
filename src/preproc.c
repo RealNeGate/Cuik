@@ -397,7 +397,7 @@ static void preprocess_file(Context* restrict c, TokenStream* restrict s, const 
 							slash[1] = '\0';
 						}
 						
-						printf("  %s\n", new_path);
+						//printf("  %s\n", new_path);
 						preprocess_file(c, s, new_dir, new_path);
 					}
 				} else if (lexer_match(&l, 6, "pragma")) {
@@ -483,7 +483,7 @@ static void skip_directive_body(Lexer* l) {
 			if (l->token_type == TOKEN_IDENTIFIER) {
 				if (lexer_match(l, 5, "ifdef")) depth++;
 				else if (lexer_match(l, 6, "ifndef")) depth++;
-				else if (lexer_match(l, 6, "elif")) {
+				else if (lexer_match(l, 4, "elif")) {
 					// elif does both entering a scope and exiting one
 					if (depth == 0) {
 						*l = saved;

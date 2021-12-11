@@ -629,11 +629,14 @@ static void gen_stmt(TB_Function* func, StmtIndex s) {
 		case STMT_RETURN: {
 			ExprIndex e = stmt_arena.data[s].expr;
 			
-			IRVal v = gen_expr(func, e);
-			Type* restrict type = &type_arena.data[v.type];
-			
-			cvt_l2r(func, &v, v.type);
-			tb_inst_ret(func, ctype_to_tbtype(type), v.reg);
+			if (e) {
+				IRVal v = gen_expr(func, e);
+				
+				cvt_l2r(func, &v, v.type);
+				tb_inst_ret(func, v.reg);
+			} else {
+				tb_inst_ret(func, TB_NULL_REG);
+			}
 			break;
 		}
 		case STMT_IF: {
@@ -720,12 +723,14 @@ static void gen_stmt(TB_Function* func, StmtIndex s) {
 static void gen_func_header(TypeIndex type, StmtIndex s) {
 	const Type* return_type = &type_arena.data[type_arena.data[type].func.return_type];
 	
-	TB_Function* func = tb_function_create(mod, (char*) stmt_arena.data[s].decl_name, ctype_to_tbtype(return_type));
-	stmt_arena.data[s].backing.f = func;
-	
 	// Parameters
 	ArgIndex arg_start = type_arena.data[type].func.arg_start;
 	ArgIndex arg_end = type_arena.data[type].func.arg_end;
+	
+	TB_FunctionPrototype* proto = tb_prototype_create(mod,
+													  TB_STDCALL,
+													  ctype_to_tbtype(return_type),
+													  arg_end - arg_start, false);
 	
 	for (ArgIndex i = arg_start; i < arg_end; i++) {
 		Arg* a = &arg_arena.data[i];
@@ -740,10 +745,11 @@ static void gen_func_header(TypeIndex type, StmtIndex s) {
 			dt = ctype_to_tbtype(arg_type);
 		}
 		
-		TB_Register p = tb_inst_param(func, dt);
-		((void)p);
-		assert(p == 2 + (i - arg_start));
+		tb_prototype_add_param(proto, dt);
 	}
+	
+	TB_Function* func = tb_prototype_build(mod, proto, (char*) stmt_arena.data[s].decl_name);
+	stmt_arena.data[s].backing.f = func;
 }
 
 static void gen_func_body(TypeIndex type, StmtIndex s) {
@@ -759,10 +765,9 @@ static void gen_func_body(TypeIndex type, StmtIndex s) {
 	
 	TB_Register* params = parameter_map = tls_push(arg_count * sizeof(TB_Register));
 	
-	// give them stack slots
+	// gimme stack slots
 	for (int i = 0; i < arg_count; i++) {
-		// TODO(NeGate): Hacky but a simple way to infer the register for the parameter
-		params[i] = tb_inst_param_addr(func, 2 + i);
+		params[i] = tb_inst_param_addr(func, i);
 	}
 	
 	// Body
@@ -779,7 +784,7 @@ static void gen_func_body(TypeIndex type, StmtIndex s) {
 			abort();
 		}
 		
-		tb_inst_ret(func, TB_TYPE_VOID, TB_NULL_REG);
+		tb_inst_ret(func, TB_NULL_REG);
 	}
 	
 	//tb_function_print(func, stdout);
@@ -802,6 +807,10 @@ void gen_ir_stage1(TopLevel tl, size_t i) {
 		// TODO(NeGate): Implement other global forward decls
 		if (type_arena.data[type].kind != KIND_FUNC) {
 			abort();
+		}
+		
+		if (!stmt_arena.data[s].attrs.is_used) {
+			return;
 		}
 		
 		stmt_arena.data[s].backing.e = tb_module_extern(mod, (char*) stmt_arena.data[s].decl_name);

@@ -26,12 +26,13 @@ static char* read_entire_file(const char* file_path) {
 		if (fstat(descriptor, &file_stats) == -1) return NULL;
 		
 		len  = file_stats.st_size;
-		text = malloc(len + 16);
+		text = malloc(len + 17);
 		
 		fseek(file, 0, SEEK_SET);
 		size_t length_read = fread(text, 1, len, file);
 		
-		memset(&text[length_read], 0, 16);
+		// fat null terminator
+		memset(&text[length_read], 0, 17);
 		fclose(file);
 	}
 	
@@ -42,7 +43,10 @@ static char* read_entire_file(const char* file_path) {
 		char* stream = text;
 		size_t batch_count = (len + 15) / 16;
 		while (batch_count--) {
-			__m128i bytes = _mm_loadu_si128((__m128i*) stream);
+			//ptrdiff_t pos = (uintptr_t)stream - (uintptr_t)text;
+			//assert(pos < len);
+			
+			__m128i bytes = _mm_load_si128((__m128i*) stream);
 			
 			// Replace all tabs with spaces
 			__m128i test_ident = _mm_cmpeq_epi8(bytes, _mm_set1_epi8('\t'));
@@ -53,7 +57,7 @@ static char* read_entire_file(const char* file_path) {
 			int test_backslash_mask = _mm_movemask_epi8(test_backslash);
 			
 			if (test_backslash_mask) {
-				_mm_storeu_si128((__m128i*) stream, bytes);
+				_mm_store_si128((__m128i*) stream, bytes);
 				char* end = stream + 16;
 				
 				do {
@@ -73,13 +77,13 @@ static char* read_entire_file(const char* file_path) {
 						
 						len -= 2;
 						stream -= 2;
-						batch_count = (remaining + 15) / 16;
+						batch_count = ((remaining + 15) / 16) - 1;
 					}
 				} while (test_backslash_mask);
 				
 				stream = end;
 			} else {
-				_mm_storeu_si128((__m128i*) stream, bytes);
+				_mm_store_si128((__m128i*) stream, bytes);
 				stream += 16;
 			}
 		}

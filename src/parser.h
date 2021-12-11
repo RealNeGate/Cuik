@@ -56,6 +56,12 @@ typedef struct Attribs {
 	bool is_inline  : 1;
 	bool is_extern  : 1;
 	bool is_tls     : 1;
+	
+	// NOTE(NeGate): In all honesty, this should probably not be
+	// here since it's used in cases that aren't relevant to attribs.
+	// mainly STMT_DECL, it keeps track of if anyone's referenced it
+	// so we can garbage collect the symbol later.
+	bool is_used    : 1;
 } Attribs;
 
 typedef struct EnumEntry {
@@ -92,6 +98,7 @@ typedef struct Type {
 			Atom name;
 			TypeIndex return_type;
 			ArgIndex arg_start, arg_end;
+			bool has_varargs;
 			
 			// TODO(NeGate): Attributes
 		} func;
@@ -210,7 +217,9 @@ typedef struct Stmt {
 	StmtOp op;
 	// STMT_EXPR, STMT_DECL, STMT_RETURN
 	ExprIndex expr;
+	
 	// TODO(NeGate): const char* pos;
+	
 	union {
 		struct {
 			// STMT_DECL or STMT_FUNC_DECL

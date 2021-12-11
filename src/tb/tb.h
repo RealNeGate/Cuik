@@ -106,6 +106,11 @@ extern "C" {
 		TB_SYSTEM_ANDROID
 	} TB_System;
 	
+	typedef enum TB_CallingConv {
+		TB_CDECL,
+		TB_STDCALL
+	} TB_CallingConv;
+	
 	typedef enum TB_BranchHint {
 		TB_BRANCH_HINT_NONE,
 		TB_BRANCH_HINT_LIKELY,
@@ -113,22 +118,18 @@ extern "C" {
 	} TB_BranchHint;
 	
 	typedef enum TB_OptLevel {
+		// no optimizer run
 		TB_OPT_O0,
 		
-		// DCE
-		// CSE
-		// MEM2REG
+		// run optimizer with all optimizations
 		TB_OPT_O1,
 		
-		// DCE
-		// CSE
-		// MEM2REG
+		// same as O1 but favors size, will aggresively deduplicate
+		// (at least that's the plan :P)
 		TB_OPT_SIZE,
 		
-		// DCE
-		// CSE
-		// MEM2REG
-		// LOOP_UNROLL
+		// same as O1 but favors speed, will aggresively unroll
+		// sometimes (at least that's the plan :P)
 		TB_OPT_SPEED,
 	} TB_OptLevel;
 	
@@ -197,7 +198,7 @@ extern "C" {
 	typedef int TB_ExternalID;
 	typedef struct TB_Module TB_Module;
 	typedef struct TB_Function TB_Function;
-	typedef struct TB_FunctionOutput TB_FunctionOutput;
+	typedef struct TB_FunctionPrototype TB_FunctionPrototype;
 	
 	// *******************************
 	// Public macros
@@ -248,16 +249,13 @@ extern "C" {
 	
 #endif
 	
-	// *******************************
-	// Public functions
-	// *******************************
 	TB_API void tb_get_constraints(TB_Arch target_arch, const TB_FeatureSet* features, TB_FeatureConstraints* constraints);
 	
-	TB_API TB_Module* tb_module_create(TB_Arch target_arch, TB_System target_system, const TB_FeatureSet* features, int optimization_level, int max_threads, bool preserve_ir_after_submit);
 	// preserve_ir_after_submit means that after the tb_module_compile_func(...) you can 
 	// still access the IR, this comes at a higher overall memory usage cost since the
 	// IR is kept in memory for the lifetime of the compile but this is not an issue when
 	// debugging.
+	TB_API TB_Module* tb_module_create(TB_Arch target_arch, TB_System target_system, const TB_FeatureSet* features, int optimization_level, int max_threads, bool preserve_ir_after_submit);
 	
 	TB_API bool tb_module_compile_func(TB_Module* m, TB_Function* f);
 	TB_API size_t tb_DEBUG_module_get_full_node_count(TB_Module* m);
@@ -271,18 +269,41 @@ extern "C" {
 	TB_API void* tb_module_get_jit_func_by_id(TB_Module* m, size_t i);
 	TB_API void* tb_module_get_jit_func(TB_Module* m, TB_Function* f);
 	
-	TB_API TB_Function* tb_function_create(TB_Module* m, const char* name, TB_DataType return_dt);
 	TB_API TB_ExternalID tb_module_extern(TB_Module* m, const char* name);
 	TB_API TB_FileID tb_register_file(TB_Module* m, const char* path);
 	
+	////////////////////////////////
+	// Function Prototypes
+	////////////////////////////////
+	// creates a function prototype used to define a function's parameters and 
+	// return type.
 	//
-	// Function IR building
-	//
+	// function prototypes do not get freed individually and last for the entire run
+	// of the backend, they can also be reused for multiple functions which have matching
+	// prototypes.
+	TB_API TB_FunctionPrototype* tb_prototype_create(TB_Module* m, TB_CallingConv conv, TB_DataType return_dt, int num_params, bool has_varargs);
+	
+	// adds a parameter to the function prototype, TB doesn't support struct
+	// parameters so the frontend must lower them to pointers or any other type
+	// depending on their preferred ABI. 
+	TB_API void tb_prototype_add_param(TB_FunctionPrototype* p, TB_DataType dt);
+	
+	// same as tb_prototype_add_param(...) but takes an array
+	TB_API void tb_prototype_add_params(TB_FunctionPrototype* p, size_t count, const TB_DataType* dt);
+	
+	// adds a parameter to the function prototype, TB doesn't support struct
+	// parameters so the frontend must lower them to pointers or any other type
+	// depending on their preferred ABI. 
+	TB_API TB_Function* tb_prototype_build(TB_Module* m, TB_FunctionPrototype* p, const char* name);
+	
+	////////////////////////////////
+	// Function IR Generation
+	////////////////////////////////
 	TB_API TB_Label tb_get_current_label(TB_Function* f);
 	TB_API void tb_inst_loc(TB_Function* f, TB_FileID file, int line);
 	
-	TB_API TB_Register tb_inst_param(TB_Function* f, TB_DataType dt);
-	TB_API TB_Register tb_inst_param_addr(TB_Function* f, TB_Register param);
+	TB_API TB_Register tb_inst_param(TB_Function* f, int param_id);
+	TB_API TB_Register tb_inst_param_addr(TB_Function* f, int param_id);
 	
 	TB_API TB_Register tb_inst_sxt(TB_Function* f, TB_Register src, TB_DataType dt);
 	TB_API TB_Register tb_inst_zxt(TB_Function* f, TB_Register src, TB_DataType dt);
@@ -342,15 +363,15 @@ extern "C" {
 	TB_API TB_Register tb_inst_cmp_fgt(TB_Function* f, TB_DataType dt, TB_Register a, TB_Register b);
 	TB_API TB_Register tb_inst_cmp_fge(TB_Function* f, TB_DataType dt, TB_Register a, TB_Register b);
 	
-	TB_API TB_Label tb_inst_new_label_id(TB_Function* f);
 	// Gives you a reference to a local label, doesn't place it anywhere.
+	TB_API TB_Label tb_inst_new_label_id(TB_Function* f);
 	
 	TB_API TB_Register tb_inst_phi2(TB_Function* f, TB_DataType dt, TB_Label a_label, TB_Register a, TB_Label b_label, TB_Register b);
 	TB_API TB_Register tb_inst_label(TB_Function* f, TB_Label id);
 	TB_API void tb_inst_goto(TB_Function* f, TB_Label id);
 	TB_API TB_Register tb_inst_if(TB_Function* f, TB_Register cond, TB_Label if_true, TB_Label if_false);
 	TB_API void tb_inst_switch(TB_Function* f, TB_DataType dt, TB_Register key, TB_Label default_label, size_t entry_count, const TB_SwitchEntry* entries);
-	TB_API void tb_inst_ret(TB_Function* f, TB_DataType dt, TB_Register value);
+	TB_API void tb_inst_ret(TB_Function* f, TB_Register value);
 	
 	TB_API void tb_function_print(TB_Function* f, FILE* out);
 	
@@ -360,15 +381,15 @@ extern "C" {
 	TB_API TB_Register tb_node_get_last_register(TB_Function* f);
 	TB_API TB_DataType tb_node_get_data_type(TB_Function* f, TB_Register r);
 	
-	TB_API void tb_get_function_get_local_info(TB_Function* f, TB_Register r, int* size, int* align);
 	// Returns the size and alignment of a LOCAL node, both must
 	// be valid addresses
+	TB_API void tb_get_function_get_local_info(TB_Function* f, TB_Register r, int* size, int* align);
 	
-	TB_API bool tb_node_is_conditional(TB_Function* f, TB_Register r);
 	// is an IF node?
+	TB_API bool tb_node_is_conditional(TB_Function* f, TB_Register r);
 	
-	TB_API bool tb_node_is_terminator(TB_Function* f, TB_Register r);
 	// is an IF, GOTO, RET, SWITCH, or LABEL node?
+	TB_API bool tb_node_is_terminator(TB_Function* f, TB_Register r);
 	
 	TB_API bool tb_node_is_label(TB_Function* f, TB_Register r);
 	
@@ -377,9 +398,9 @@ extern "C" {
 	
 	TB_API TB_Register tb_node_load_get_address(TB_Function* f, TB_Register r);
 	
+	// These work for any floating point, comparison, or integer arithmatic ops
 	TB_API TB_Register tb_node_arith_get_left(TB_Function* f, TB_Register r);
 	TB_API TB_Register tb_node_arith_get_right(TB_Function* f, TB_Register r);
-	// These work for any floating point, comparison, or integer arithmatic ops
 	
 #ifdef __cplusplus
 }

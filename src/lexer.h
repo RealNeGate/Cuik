@@ -146,7 +146,7 @@ typedef struct Lexer {
 // this is used by the preprocessor to scan tokens in
 void lexer_read(Lexer* restrict l);
 
-inline static bool lexer_match(Lexer* restrict l, size_t len, const char str[]) {
+inline static bool lexer_match(Lexer* restrict l, size_t len, const char str[len]) {
 	if ((l->token_end - l->token_start) != len) return false;
 	
 	return memcmp(l->token_start, str, len) == 0;

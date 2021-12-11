@@ -130,6 +130,7 @@ int main(int argc, char* argv[]) {
 		// Generate bodies
 		frontend_stage = 1;
 		dispatch_tasks(arrlen(top_level.arr));
+		arrfree(s.tokens);
 		
 		// Just let's the threads know that 
 		// they might need to die now
@@ -144,7 +145,6 @@ int main(int argc, char* argv[]) {
 	
 	// Compile
 	if (!tb_module_compile(mod)) abort();
-	arrfree(s.tokens);
 	
 	// Generate object file
 	const char* obj_output_path = "test_x64.obj";
@@ -160,7 +160,7 @@ int main(int argc, char* argv[]) {
 	printf("compilation took %f ms\n", delta_ms);
 	
 	// Linking
-#if 0 /* _WIN32 */
+#if 0 // _WIN32
 	{
 		// NOTE(NeGate): Windows still a bih, im forcing the 
 		// W functions because im a bitch too
@@ -185,7 +185,8 @@ int main(int argc, char* argv[]) {
 		swprintf(cmd_line, 1024,
 				 L"/nologo /machine:amd64 /subsystem:console"
 				 " /debug:none /entry:WinMain /pdb:%s.pdb /out:%s.exe /libpath:\"%s\""
-				 " /libpath:\"%s\" /libpath:\"%s\" -nodefaultlib %S %s.obj",
+				 " /libpath:\"%s\" /libpath:\"%s\" -nodefaultlib %S %s.obj"
+				 " kernel32.lib user32.lib",
 				 output_file_no_ext, output_file_no_ext,
 				 vswhere.vs_library_path, vswhere.windows_sdk_ucrt_library_path, vswhere.windows_sdk_um_library_path,
 				 libraries, output_file_no_ext

@@ -9,6 +9,36 @@
 #include <windows.h>
 
 void WinMain() {
-	ExitProcess(0);	
+	char name[4];
+	name[0] = 84;
+	name[1] = 83;
+	name[2] = 84;
+	name[3] = 0;
+
+	WNDCLASSA wc;
+	wc.hInstance = GetModuleHandleA(0);
+	wc.lpfnWndProc = DefWindowProcA;
+	wc.lpszClassName = &name;
+	RegisterClassA(&wc);
+	
+	HWND window = CreateWindowExA(262144, &name,
+									&name, 13565952,
+									100, 100, 1600, 900,
+								    0, 0, wc.hInstance, 0);
+
+	// Display the window
+	ShowWindow(window, SW_SHOWDEFAULT);
+	SetFocus(window);
+	
+	while (1) {
+		MSG msg;
+		GetMessageA(&msg, 0, 0, 0);
+		TranslateMessage(&msg);
+		if (msg.message == WM_QUIT) return;
+
+		DispatchMessageA(&msg);
+	}
+
+	ExitProcess(0);
 }
 

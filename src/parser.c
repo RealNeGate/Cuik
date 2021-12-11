@@ -29,9 +29,13 @@ static SymbolEntry* global_symbols;
 static int local_symbol_count = 0;
 static Symbol local_symbols[64 * 1024];
 
-static int typedef_count = 0;
-static Atom typedef_names[64 * 1024];
-static TypeIndex typedefs[64 * 1024];
+// for the global hash table
+typedef struct TypedefEntry {
+	Atom key;
+	TypeIndex value;
+} TypedefEntry;
+
+static TypedefEntry* typedefs;
 
 static void expect(TokenStream* restrict s, char ch);
 static Symbol* find_local_symbol(TokenStream* restrict s);
@@ -109,9 +113,7 @@ TopLevel parse_file(TokenStream* restrict s) {
 				Decl decl = parse_declarator(s, type);
 				assert(decl.name);
 				
-				int i = typedef_count++;
-				typedefs[i] = decl.type;
-				typedef_names[i] = decl.name;
+				shput(typedefs, decl.name, decl.type);
 			}
 			
 			expect(s, ';');
@@ -202,6 +204,7 @@ TopLevel parse_file(TokenStream* restrict s) {
 			
 			// Parameters are local and a special case how tf
 			assert(sym->storage_class != STORAGE_PARAM);
+			stmt_arena.data[sym->stmt].attrs.is_used = true;
 			
 			expr_arena.data[i].op = EXPR_SYMBOL;
 			expr_arena.data[i].symbol = sym->stmt;
@@ -442,6 +445,8 @@ static ExprIndex parse_expr_l0(TokenStream* restrict s) {
 					.param_num = sym->param_num
 				};
 			} else {
+				stmt_arena.data[sym->stmt].attrs.is_used = true;
+				
 				expr_arena.data[e] = (Expr) {
 					.op = EXPR_SYMBOL,
 					.line = line,
@@ -990,10 +995,18 @@ static TypeIndex parse_type_suffix(TokenStream* restrict s, TypeIndex type, Atom
 		
 		size_t arg_count = 0;
 		void* args = tls_save();
+		bool has_varargs = false;
 		
 		while (tokens_get(s)->type != ')') {
 			if (arg_count) {
 				expect(s, ',');
+			}
+			
+			if (tokens_get(s)->type == TOKEN_TRIPLE_DOT) {
+				tokens_next(s);
+				
+				has_varargs = true;
+				break;
 			}
 			
 			Attribs arg_attr = { 0 };
@@ -1276,21 +1289,15 @@ static TypeIndex parse_declspec(TokenStream* restrict s, Attribs* attr) {
 				if (counter) goto done;
 				
 				Token* t = tokens_get(s);
-				size_t len = t->end - t->start;
+				Atom name = atoms_put(t->end - t->start, t->start);
 				
-				int i = typedef_count;
-				while (i--) {
-					size_t typedef_len = strlen((const char*)typedef_names[i]);
-					
-					if (len == typedef_len &&
-						memcmp(t->start, typedef_names[i], len) == 0) {
-						type = typedefs[i];
-						counter += OTHER;
-						break;
-					}
+				ptrdiff_t search = shgeti(typedefs, name);
+				
+				if (search >= 0) {
+					type = typedefs[search].value;
+					counter += OTHER;
+					break;
 				}
-				
-				if (counter) break;
 				
 				// if not a typename, this isn't a typedecl
 				goto done;
@@ -1407,19 +1414,11 @@ static bool is_typename(TokenStream* restrict s) {
 		return true;
 		
 		case TOKEN_IDENTIFIER: {
-			size_t len = t->end - t->start;
+			Token* t = tokens_get(s);
+			Atom name = atoms_put(t->end - t->start, t->start);
 			
-			int i = typedef_count;
-			while (i--) {
-				size_t typedef_len = strlen((const char*)typedef_names[i]);
-				
-				if (len == typedef_len &&
-					memcmp(t->start, typedef_names[i], len) == 0) {
-					return true;
-				}
-			}
-			
-			return false;
+			ptrdiff_t search = shgeti(typedefs, name);
+			return (search >= 0);
 		}
 		default:
 		return false;
