@@ -308,6 +308,8 @@ extern "C" {
 	TB_API TB_Register tb_inst_sxt(TB_Function* f, TB_Register src, TB_DataType dt);
 	TB_API TB_Register tb_inst_zxt(TB_Function* f, TB_Register src, TB_DataType dt);
 	TB_API TB_Register tb_inst_trunc(TB_Function* f, TB_Register src, TB_DataType dt);
+	TB_API TB_Register tb_inst_int2ptr(TB_Function* f, TB_Register src);
+	TB_API TB_Register tb_inst_ptr2int(TB_Function* f, TB_Register src, TB_DataType dt);
 	
 	TB_API TB_Register tb_inst_local(TB_Function* f, uint32_t size, uint32_t alignment);
 	TB_API TB_Register tb_inst_load(TB_Function* f, TB_DataType dt, TB_Register addr, uint32_t alignment);

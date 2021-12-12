@@ -294,8 +294,8 @@ void lexer_read(Lexer* restrict l) {
 	switch (initial_class) {
 		case CHAR_CLASS_NULL: break;
 		case CHAR_CLASS_IDENT: {
-			while (char_classes[*current] >= CHAR_CLASS_IDENT &&
-				   char_classes[*current] <= CHAR_CLASS_NUMBER) {
+			while (char_classes[*current] == CHAR_CLASS_IDENT ||
+				   char_classes[*current] == CHAR_CLASS_NUMBER) {
 				current++;
 			}
 			
@@ -303,8 +303,23 @@ void lexer_read(Lexer* restrict l) {
 			break;
 		}
 		case CHAR_CLASS_NUMBER: {
-			while (char_classes[*current] == CHAR_CLASS_NUMBER) { current++; }
-			l->token_type = TOKEN_NUMBER;
+			if (current[-1] == '0' && current[0] == 'x') {
+				current++;
+				
+				while ((*current >= '0' && *current <= '9') ||
+					   (*current >= 'A' && *current <= 'F') ||
+					   (*current >= 'a' && *current <= 'f')) { current++; }
+				
+				if (*current == '.') {
+					// TODO(NeGate): floats
+					abort();
+				}
+				
+				l->token_type = TOKEN_INTEGER;
+			} else {
+				while (char_classes[*current] == CHAR_CLASS_NUMBER) { current++; }
+				l->token_type = TOKEN_INTEGER;
+			}
 			break;
 		}
 		case CHAR_CLASS_SEPARATOR: {
@@ -400,4 +415,12 @@ void lexer_read(Lexer* restrict l) {
 	l->token_start = start;
 	l->token_end = current;
 	l->current = current;
+}
+
+int64_t parse_int(size_t len, const char* str) {
+	char* end;
+	int64_t i = strtol(str, &end, 0);
+	if (end != &str[len]) abort();
+	
+	return i;
 }

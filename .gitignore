@@ -4,6 +4,8 @@ Cuik/
 
 *.obj
 *.exe
+*.ilk
+*.pdb
 
 tests/test5.txt
 

@@ -34,7 +34,8 @@ typedef enum TknType {
     TOKEN_STRING_DOUBLE_QUOTE = '\"',
     
     TOKEN_IDENTIFIER = 256,
-	TOKEN_NUMBER,
+	TOKEN_INTEGER,
+	TOKEN_FLOAT,
 	TOKEN_TRIPLE_DOT,
     
     TOKEN_INVALID,
@@ -115,8 +116,8 @@ typedef enum TknType {
 
 typedef struct Token {
 	TknType type;
-    const unsigned char* start;
-    const unsigned char* end;
+	const unsigned char* start;
+	const unsigned char* end;
 	int line;
 } Token;
 
@@ -145,6 +146,7 @@ typedef struct Lexer {
 
 // this is used by the preprocessor to scan tokens in
 void lexer_read(Lexer* restrict l);
+int64_t parse_int(size_t len, const char* str);
 
 inline static bool lexer_match(Lexer* restrict l, size_t len, const char str[len]) {
 	if ((l->token_end - l->token_start) != len) return false;
@@ -155,6 +157,12 @@ inline static bool lexer_match(Lexer* restrict l, size_t len, const char str[len
 // this is used by the parser to get the next token
 inline static Token* tokens_get(TokenStream* restrict s) {
 	return &s->tokens[s->current];
+}
+
+// there should be a NULL token so as long as we can read [current]
+// we can read one ahead.
+inline static Token* tokens_peek(TokenStream* restrict s) {
+	return &s->tokens[s->current + 1];
 }
 
 inline static void tokens_prev(TokenStream* restrict s) {
