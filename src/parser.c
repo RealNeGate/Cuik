@@ -62,35 +62,10 @@ TopLevel parse_file(TokenStream* restrict s) {
 	
 	init_stmt_arena(4 * 1024);
 	init_stmt_ref_arena(4 * 1024);
-	init_arg_arena(4 * 1024);
 	init_enum_entry_arena(4 * 1024);
 	init_expr_arena(4 * 1024);
 	init_expr_ref_arena(4 * 1024);
-	init_type_arena(4 * 1024);
-	init_member_arena(4 * 1024);
-	
-	const static Type default_types[] = {
-		[TYPE_NONE] = { KIND_VOID, 0, 0 },
-		
-		[TYPE_VOID] = { KIND_VOID, 0, 0 },
-		[TYPE_BOOL] = { KIND_BOOL, 1, 1 },
-		
-		[TYPE_CHAR] = { KIND_CHAR, 1, 1 },
-		[TYPE_SHORT] = { KIND_SHORT, 2, 2 },
-		[TYPE_INT] = { KIND_INT, 4, 4 },
-		[TYPE_LONG] = { KIND_LONG, 8, 8 },
-		
-		[TYPE_UCHAR] = { KIND_CHAR, 1, 1, .is_unsigned = true },
-		[TYPE_USHORT] = { KIND_SHORT, 2, 2, .is_unsigned = true },
-		[TYPE_UINT] = { KIND_INT, 4, 4, .is_unsigned = true },
-		[TYPE_ULONG] = { KIND_LONG, 8, 8, .is_unsigned = true },
-		
-		[TYPE_FLOAT] = { KIND_FLOAT, 4, 4 },
-		[TYPE_DOUBLE] = { KIND_DOUBLE, 8, 8 }
-	};
-	
-	memcpy(type_arena.data, default_types, sizeof(default_types));
-	type_arena.count = sizeof(default_types) / sizeof(default_types[0]);
+	init_types();
 	
 	////////////////////////////////
 	// Parse translation unit
@@ -479,17 +454,9 @@ static ExprIndex parse_expr_l0(TokenStream* restrict s) {
 		
 		tokens_next(s);
 		return e;
-	} else if (tokens_get(s)->type == TOKEN_NUMBER) {
+	} else if (tokens_get(s)->type == TOKEN_INTEGER) {
 		Token* t = tokens_get(s);
-		
-		size_t len = t->end - t->start;
-		assert(len < 15);
-		
-		char temp[16];
-		memcpy(temp, t->start, len);
-		temp[len] = '\0';
-		
-		long long i = atoll(temp);
+		int64_t i = parse_int(t->end - t->start, (const char*)t->start);
 		
 		ExprIndex e = push_expr_arena(1);
 		expr_arena.data[e] = (Expr) {
@@ -595,6 +562,7 @@ static ExprIndex parse_expr_l1(TokenStream* restrict s) {
 			
 			expr_arena.data[e] = (Expr) {
 				.op = EXPR_CALL,
+				.line = tokens_get(s)->line,
 				.call = { target, start, start + param_count }
 			};
 			
@@ -629,6 +597,7 @@ static ExprIndex parse_expr_l2(TokenStream* restrict s) {
 		ExprIndex e = push_expr_arena(1);
 		expr_arena.data[e] = (Expr) {
 			.op = EXPR_ADDR,
+			.line = tokens_get(s)->line,
 			.unary_op.src = value
 		};
 		return e;
@@ -648,6 +617,7 @@ static ExprIndex parse_expr_l2(TokenStream* restrict s) {
 		
 		expr_arena.data[e] = (Expr) {
 			.op = EXPR_DEREF,
+			.line = tokens_get(s)->line,
 			.unary_op.src = base
 		};
 	}
@@ -675,6 +645,7 @@ static ExprIndex parse_expr_l3(TokenStream* restrict s) {
 		ExprIndex rhs = parse_expr_l2(s);
 		expr_arena.data[e] = (Expr) {
 			.op = op,
+			.line = tokens_get(s)->line,
 			.bin_op = { lhs, rhs }
 		};
 		
@@ -702,6 +673,7 @@ static ExprIndex parse_expr_l4(TokenStream* restrict s) {
 		ExprIndex rhs = parse_expr_l3(s);
 		expr_arena.data[e] = (Expr) {
 			.op = op,
+			.line = tokens_get(s)->line,
 			.bin_op = { lhs, rhs }
 		};
 		
@@ -733,6 +705,7 @@ static ExprIndex parse_expr_l6(TokenStream* restrict s) {
 		ExprIndex rhs = parse_expr_l4(s);
 		expr_arena.data[e] = (Expr) {
 			.op = op,
+			.line = tokens_get(s)->line,
 			.bin_op = { lhs, rhs }
 		};
 		
@@ -755,6 +728,7 @@ static ExprIndex parse_expr_l7(TokenStream* restrict s) {
 		ExprIndex rhs = parse_expr_l6(s);
 		expr_arena.data[e] = (Expr) {
 			.op = op,
+			.line = tokens_get(s)->line,
 			.bin_op = { lhs, rhs }
 		};
 		
@@ -776,6 +750,7 @@ static ExprIndex parse_expr_l11(TokenStream* restrict s) {
 		ExprIndex rhs = parse_expr_l6(s);
 		expr_arena.data[e] = (Expr) {
 			.op = op,
+			.line = tokens_get(s)->line,
 			.bin_op = { lhs, rhs }
 		};
 		
@@ -797,6 +772,7 @@ static ExprIndex parse_expr_l12(TokenStream* restrict s) {
 		ExprIndex rhs = parse_expr_l11(s);
 		expr_arena.data[e] = (Expr) {
 			.op = op,
+			.line = tokens_get(s)->line,
 			.bin_op = { lhs, rhs }
 		};
 		
@@ -843,6 +819,7 @@ static ExprIndex parse_expr_l14(TokenStream* restrict s) {
 		ExprIndex rhs = parse_expr_l12(s);
 		expr_arena.data[e] = (Expr) {
 			.op = op,
+			.line = tokens_get(s)->line,
 			.bin_op = { lhs, rhs }
 		};
 		
@@ -1441,16 +1418,10 @@ static bool is_typename(TokenStream* restrict s) {
 static int parse_const_expr_l0(TokenStream* restrict s) {
 	Token* restrict t = tokens_get(s);
 	
-	if (t->type == TOKEN_NUMBER) {
-		size_t len = t->end - t->start;
-		assert(len < 15);
-		
-		char temp[16];
-		memcpy(temp, t->start, len);
-		temp[len] = '\0';
-		
+	if (t->type == TOKEN_INTEGER) {
+		int64_t i = parse_int(t->end - t->start, (const char*)t->start);
 		tokens_next(s);
-		return atoi(temp);
+		return i;
 	}
 	
 	generic_error(s, "Could not parse constant expression");

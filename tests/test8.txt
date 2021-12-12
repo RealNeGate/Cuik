@@ -24,13 +24,13 @@ int main(int argc, char** argv, char** env) {
 	name[3] = 0;
 
 	WNDCLASSA wc;
-	wc.hInstance = GetModuleHandleA(0);
+	wc.hInstance = GetModuleHandleA(NULL);
 	wc.lpfnWndProc = main_wnd_proc;
-	wc.lpszClassName = &name;
+	wc.lpszClassName = name;
 	RegisterClassA(&wc);
 	
-	HWND window = CreateWindowExA(262144, &name,
-									&name, 13565952,
+	HWND window = CreateWindowExA(262144, name,
+									name, 0xCF0000,
 									400, 400, 1600, 900,
 								    NULL, NULL, NULL, NULL);
 
@@ -42,7 +42,7 @@ int main(int argc, char** argv, char** env) {
 	
 	while (1) {
 		MSG msg;
-		GetMessageA(&msg, 0, 0, 0);
+		GetMessageA(&msg, NULL, 0, 0);
 		TranslateMessage(&msg);
 		DispatchMessageA(&msg);
 	}

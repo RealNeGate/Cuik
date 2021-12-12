@@ -42,8 +42,17 @@ static TB_DataType ctype_to_tbtype(const Type* t) {
 static void cvt_l2r(TB_Function* func, IRVal* restrict v, TypeIndex dst_type) {
 	Type* src = &type_arena.data[v->type];
 	if (v->value_type == LVALUE) {
-		v->value_type = RVALUE;
-		v->reg = tb_inst_load(func, ctype_to_tbtype(src), v->reg, src->align);
+		// Implicit array to pointer
+		if (src->kind == KIND_ARRAY) {
+			// just pass the address don't load
+			v->type = new_pointer_locked(src->array_of);
+			v->value_type = RVALUE;
+			
+			src = &type_arena.data[v->type];
+		} else {
+			v->value_type = RVALUE;
+			v->reg = tb_inst_load(func, ctype_to_tbtype(src), v->reg, src->align);
+		}
 	} else if (v->value_type == LVALUE_FUNC) {
 		v->value_type = RVALUE;
 		v->reg = tb_inst_get_func_address(func, v->func);
@@ -52,15 +61,20 @@ static void cvt_l2r(TB_Function* func, IRVal* restrict v, TypeIndex dst_type) {
 		v->reg = tb_inst_get_extern_address(func, v->ext);
 	}
 	
+	// Implicit function to pointer
+	if (src->kind == KIND_FUNC) {
+		v->type = new_pointer_locked(v->type);
+		src = &type_arena.data[v->type];
+	}
+	
 	// Cast into correct type
-	// TODO(NeGate): Implement ptr<->int casts 
 	// TODO(NeGate): Implement float casts
 	if (v->type != dst_type) {
 		Type* dst = &type_arena.data[dst_type];
 		
-		if (src->kind >= KIND_CHAR &&
+		if (src->kind >= KIND_BOOL &&
 			src->kind <= KIND_LONG &&
-			dst->kind >= KIND_CHAR && 
+			dst->kind >= KIND_BOOL && 
 			dst->kind <= KIND_LONG) {
 			// if it's an integer, handle some implicit casts
 			if (dst->kind > src->kind) {
@@ -71,6 +85,20 @@ static void cvt_l2r(TB_Function* func, IRVal* restrict v, TypeIndex dst_type) {
 				// down-casts
 				v->reg = tb_inst_trunc(func, v->reg, ctype_to_tbtype(dst));
 			}
+		} else if (src->kind == KIND_PTR &&
+				   dst->kind == KIND_PTR) {
+			// void* -> T* is fine
+			// T* -> void* is also fine
+			// A* -> B*    is not, unless they actually do match
+			if (src->ptr_to != TYPE_VOID && dst->ptr_to != TYPE_VOID) {
+				if (!type_equal(src->ptr_to, dst->ptr_to)) {
+					printf("No implicit cast between these types.");
+					abort();
+				}
+			}
+		} else {
+			printf("No implicit cast between these types.");
+			abort();
 		}
 	}
 }
@@ -132,8 +160,9 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 		case EXPR_ADDR: {
 			IRVal src = gen_expr(func, ep->unary_op.src);
 			assert(src.value_type == LVALUE);
-			src.value_type = RVALUE;
 			
+			src.type = new_pointer_locked(src.type);
+			src.value_type = RVALUE;
 			return src;
 		}
 		case EXPR_CAST: {
@@ -147,13 +176,15 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 				src_type->kind <= KIND_LONG &&
 				dst_type->kind == KIND_PTR) {
 				src.reg = tb_inst_int2ptr(func, src.reg);
+				src.type = ep->cast.type;
 			} else if (dst_type->kind >= KIND_CHAR &&
 					   dst_type->kind <= KIND_LONG &&
 					   src_type->kind == KIND_PTR) {
 				src.reg = tb_inst_ptr2int(func, src.reg, ctype_to_tbtype(dst_type));
+				src.type = ep->cast.type;
 			}
 			
-			src.type = ep->cast.type;
+			cvt_l2r(func, &src, ep->cast.type);
 			return src;
 		}
 		case EXPR_DEREF: {
@@ -811,8 +842,8 @@ static void gen_func_body(TypeIndex type, StmtIndex s) {
 		tb_inst_ret(func, TB_NULL_REG);
 	}
 	
-	//tb_function_print(func, stdout);
-	//printf("\n\n\n");
+	tb_function_print(func, stdout);
+	printf("\n\n\n");
 	
 	tb_module_compile_func(mod, func);
 }

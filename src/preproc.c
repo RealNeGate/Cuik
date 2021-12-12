@@ -650,7 +650,7 @@ static int eval_l0(Context* restrict c, Lexer* l) {
 	}
 	
 	int val;
-	if (l->token_type == TOKEN_NUMBER) {
+	if (l->token_type == TOKEN_INTEGER) {
 		char temp[16];
 		memcpy_s(temp, 16, l->token_start, l->token_end - l->token_start);
 		temp[l->token_end - l->token_start] = '\0';

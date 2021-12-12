@@ -329,12 +329,16 @@ TypeIndex new_enum();
 TypeIndex new_record(bool is_union);
 TypeIndex copy_type(TypeIndex base);
 TypeIndex new_pointer(TypeIndex base);
+TypeIndex new_pointer_locked(TypeIndex base);
 TypeIndex new_array(TypeIndex base, int count);
 TypeIndex get_common_type(TypeIndex ty1, TypeIndex ty2);
+bool type_equal(TypeIndex a, TypeIndex b);
 
 typedef struct TopLevel {
 	// stb_ds array
 	StmtIndex* arr;
 } TopLevel;
+
+void init_types();
 
 TopLevel parse_file(TokenStream* restrict s);
