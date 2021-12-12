@@ -29,11 +29,10 @@ int main(int argc, char** argv, char** env) {
 	wc.lpszClassName = &name;
 	RegisterClassA(&wc);
 	
-	void* nullptr = 0;
 	HWND window = CreateWindowExA(262144, &name,
 									&name, 13565952,
 									400, 400, 1600, 900,
-								    nullptr, nullptr, nullptr, nullptr);
+								    NULL, NULL, NULL, NULL);
 
 	GetLastError();
 

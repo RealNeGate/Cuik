@@ -138,8 +138,22 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 		}
 		case EXPR_CAST: {
 			IRVal src = gen_expr(func, ep->cast.src);
-			src.type = ep->cast.type;
+			if (src.type == ep->cast.type) return src;
 			
+			Type* restrict src_type = &type_arena.data[src.type];
+			Type* restrict dst_type = &type_arena.data[ep->cast.type];
+			
+			if (src_type->kind >= KIND_CHAR &&
+				src_type->kind <= KIND_LONG &&
+				dst_type->kind == KIND_PTR) {
+				src.reg = tb_inst_int2ptr(func, src.reg);
+			} else if (dst_type->kind >= KIND_CHAR &&
+					   dst_type->kind <= KIND_LONG &&
+					   src_type->kind == KIND_PTR) {
+				src.reg = tb_inst_ptr2int(func, src.reg, ctype_to_tbtype(dst_type));
+			}
+			
+			src.type = ep->cast.type;
 			return src;
 		}
 		case EXPR_DEREF: {
