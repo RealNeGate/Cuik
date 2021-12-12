@@ -16,7 +16,7 @@ LRESULT main_wnd_proc(HWND wnd, UINT message, WPARAM wparam, LPARAM lparam) {
 	return DefWindowProcA(wnd, message, wparam, lparam);
 }
 
-void WinMain() {
+int main() {
 	char name[4];
 	name[0] = 84;
 	name[1] = 83;
@@ -45,6 +45,6 @@ void WinMain() {
 		DispatchMessageA(&msg);
 	}
 
-	ExitProcess(0);
+	return 0;
 }
 

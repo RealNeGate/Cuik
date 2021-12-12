@@ -795,8 +795,8 @@ static void gen_func_body(TypeIndex type, StmtIndex s) {
 		tb_inst_ret(func, TB_NULL_REG);
 	}
 	
-	tb_function_print(func, stdout);
-	printf("\n\n\n");
+	//tb_function_print(func, stdout);
+	//printf("\n\n\n");
 	
 	tb_module_compile_func(mod, func);
 }

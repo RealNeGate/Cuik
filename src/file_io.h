@@ -20,6 +20,11 @@ static char* read_entire_file(const char* file_path) {
 	int len;
 	{
 		FILE* file = fopen(file_path, "rb");
+		if (!file) {
+			printf("Could not read file: %s\n", file_path);
+			abort();
+		}
+		
 		int descriptor = fileno(file);
 		
 		struct stat file_stats;
