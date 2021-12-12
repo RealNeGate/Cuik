@@ -53,6 +53,8 @@ static void cvt_l2r(TB_Function* func, IRVal* restrict v, TypeIndex dst_type) {
 	}
 	
 	// Cast into correct type
+	// TODO(NeGate): Implement ptr<->int casts 
+	// TODO(NeGate): Implement float casts
 	if (v->type != dst_type) {
 		Type* dst = &type_arena.data[dst_type];
 		
@@ -163,14 +165,14 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 			Type* func_type = &type_arena.data[func_type_index];
 			
 			ArgIndex arg_start = func_type->func.arg_start;
-			ArgIndex arg_end = func_type->func.arg_end;
-			ArgIndex arg_count = arg_end - arg_start;
+			//ArgIndex arg_end = func_type->func.arg_end;
+			//ArgIndex arg_count = arg_end - arg_start;
 			
 			ExprIndexIndex param_start = ep->call.param_start;
 			ExprIndexIndex param_end = ep->call.param_end;
 			ExprIndexIndex param_count = param_end - param_start;
 			
-			if (param_count != arg_count) abort();
+			//if (param_count != arg_count) abort();
 			
 			// Resolve parameters
 			TB_Register* params = tls_push(param_count * sizeof(TB_Register));

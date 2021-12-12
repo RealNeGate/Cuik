@@ -7,16 +7,16 @@
 #define _WIN64
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
-
+ 
 LRESULT main_wnd_proc(HWND wnd, UINT message, WPARAM wparam, LPARAM lparam) {
-	if (message == WM_QUIT) {
+	if (message == WM_DESTROY) {
 		ExitProcess(0);
 	}
-
+	
 	return DefWindowProcA(wnd, message, wparam, lparam);
 }
 
-int main() {
+int main(int argc, char** argv, char** env) {
 	char name[4];
 	name[0] = 84;
 	name[1] = 83;
@@ -29,10 +29,13 @@ int main() {
 	wc.lpszClassName = &name;
 	RegisterClassA(&wc);
 	
+	void* nullptr = 0;
 	HWND window = CreateWindowExA(262144, &name,
 									&name, 13565952,
-									100, 100, 1600, 900,
-								    0, 0, wc.hInstance, 0);
+									400, 400, 1600, 900,
+								    nullptr, nullptr, nullptr, nullptr);
+
+	GetLastError();
 
 	// Display the window
 	ShowWindow(window, SW_SHOWDEFAULT);

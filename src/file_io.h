@@ -9,9 +9,6 @@
 #endif
 
 // NOTE(NeGate): Replaces all \t \v with spaces
-//
-// NOTE(NeGate): This code requires SSE4.1, it's not impossible to make
-// ARM variants and such but yea.
 static char* read_entire_file(const char* file_path) {
 	////////////////////////////////
 	// Read file
@@ -44,6 +41,8 @@ static char* read_entire_file(const char* file_path) {
 	////////////////////////////////
 	// Remove tabs, stitch together backslash-newline cases
 	////////////////////////////////
+	// NOTE(NeGate): This code requires SSE4.1, it's not impossible to make
+	// ARM variants and such but yea.
 	{
 		char* stream = text;
 		size_t batch_count = (len + 15) / 16;

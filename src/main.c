@@ -145,7 +145,7 @@ static void compile_project(const char source_file[], const char filename[]) {
 	
 	clock_t t2 = clock();
 	double delta_ms = (t2 - t1) / (double)CLOCKS_PER_SEC;
-	printf("compilation took %f s\n", delta_ms);
+	printf("compilation took %.03f seconds\n", delta_ms);
 }
 
 #if _WIN32
@@ -173,7 +173,7 @@ static void link_object_file(const char filename[]) {
 	static wchar_t cmd_line[1024];
 	swprintf(cmd_line, 1024,
 			 L"/nologo /machine:amd64 /subsystem:console"
-			 " /debug:none /entry:mainCRTStartup /pdb:%s.pdb /out:%s.exe /libpath:\"%s\""
+			 " /debug:full /entry:mainCRTStartup /pdb:%s.pdb /out:%s.exe /libpath:\"%s\""
 			 " /libpath:\"%s\" /libpath:\"%s\" /defaultlib:libcmt %S %s.obj",
 			 output_file_no_ext, output_file_no_ext,
 			 vswhere.vs_library_path, vswhere.windows_sdk_ucrt_library_path, vswhere.windows_sdk_um_library_path,
@@ -207,7 +207,7 @@ static void link_object_file(const char filename[]) {
 	
 	clock_t t2 = clock();
 	double delta_ms = (t2 - t1) / (double)CLOCKS_PER_SEC;
-	printf("linking took %f s\n", delta_ms);
+	printf("linking took %.03f seconds\n", delta_ms);
 }
 #else
 #error "Implement linker for this platform"
