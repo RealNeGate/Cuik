@@ -1,0 +1,8 @@
+
+union Foo {
+  int x;
+  char y[16];
+  long long z;
+};
+
+

@@ -191,7 +191,7 @@ static void link_object_file(const char filename[]) {
 	};
 	PROCESS_INFORMATION pi = {};
 	
-	printf("Linker command:\n%S %S\n", exe_path, cmd_line);
+	//printf("Linker command:\n%S %S\n", exe_path, cmd_line);
 	if (!CreateProcessW(exe_path, cmd_line, NULL, NULL, TRUE, 0, NULL, working_dir, &si, &pi)) {
 		panic("Linker command could not be executed.");
 	}
