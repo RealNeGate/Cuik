@@ -380,12 +380,19 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 				};
 			}
 		}
-		case EXPR_LOGICAL_AND: {
-			// TODO(NeGate): Implement this!
-			abort();
-		}
+		case EXPR_LOGICAL_AND:
 		case EXPR_LOGICAL_OR: {
-			//bool is_and = (ep->op == EXPR_LOGICAL_AND);
+			// a && b
+			//
+			//          if (a) { goto try_rhs } else { goto false }
+			// try_rhs: if (b) { goto true    } else { goto false }
+			//
+			//
+			// a || b
+			//
+			//          if (a) { goto true    } else { goto try_rhs }
+			// try_rhs: if (b) { goto true    } else { goto false }
+			bool is_and = (ep->op == EXPR_LOGICAL_AND);
 			TB_Label try_rhs_lbl = tb_inst_new_label_id(func);
 			
 			// Eval first operand
@@ -393,15 +400,22 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 			
 			TB_Label true_lbl, false_lbl;
 			if (a.value_type == RVALUE_PHI) {
-				true_lbl = a.phi.if_true;
-				
-				// tie the previous phi into the next phi
-				// this is a logical or so it fallsthrough
-				// after a false.
-				tb_inst_label(func, a.phi.if_false);
-				tb_inst_goto(func, try_rhs_lbl);
-				
-				false_lbl = tb_inst_new_label_id(func);
+				// chain the previous phi.
+				// for logical OR, it's the false label.
+				// for logical AND, it's the true label.
+				if (is_and) {
+					tb_inst_label(func, a.phi.if_true);
+					tb_inst_goto(func, try_rhs_lbl);
+					
+					true_lbl = tb_inst_new_label_id(func);
+					false_lbl = a.phi.if_false;
+				} else {
+					tb_inst_label(func, a.phi.if_false);
+					tb_inst_goto(func, try_rhs_lbl);
+					
+					true_lbl = a.phi.if_true;
+					false_lbl = tb_inst_new_label_id(func);
+				}
 			} else {
 				true_lbl = tb_inst_new_label_id(func);
 				false_lbl = tb_inst_new_label_id(func);
