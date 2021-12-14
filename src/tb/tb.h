@@ -47,12 +47,6 @@ extern "C" {
 #define TB_HOST_UNKNOWN 0
 #define TB_HOST_X86_64 1
 	
-	// While generating the IR, it's possible to
-	// perform some optimizations on the spot such
-	// as CSE and constant folding, if this define
-	// is 0, the CSE is disabled.
-#define TB_FRONTEND_OPT 0
-	
 	// If on, the labels aren't marked in the object file
 	// might save on performance at the cost of some assembly
 	// readability.
@@ -157,10 +151,6 @@ extern "C" {
 		uint8_t count; // 0 is illegal, except on VOID, it doesn't matter there
 	} TB_DataType;
 	
-	typedef struct TB_FeatureConstraints {
-		int max_vector_width[TB_MAX_TYPES];
-	} TB_FeatureConstraints;
-	
 	typedef struct TB_FeatureSet {
 		struct {
 			bool sse3 : 1;
@@ -194,8 +184,11 @@ extern "C" {
 	typedef int TB_Register;
 	typedef int TB_Reg; // short-hand
 	
-	typedef int TB_FileID;
-	typedef int TB_ExternalID;
+	typedef unsigned int TB_FileID;
+	typedef unsigned int TB_ExternalID;
+	typedef unsigned int TB_GlobalID;
+	typedef unsigned int TB_InitializerID;
+	
 	typedef struct TB_Module TB_Module;
 	typedef struct TB_Function TB_Function;
 	typedef struct TB_FunctionPrototype TB_FunctionPrototype;
@@ -249,8 +242,6 @@ extern "C" {
 	
 #endif
 	
-	TB_API void tb_get_constraints(TB_Arch target_arch, const TB_FeatureSet* features, TB_FeatureConstraints* constraints);
-	
 	// preserve_ir_after_submit means that after the tb_module_compile_func(...) you can 
 	// still access the IR, this comes at a higher overall memory usage cost since the
 	// IR is kept in memory for the lifetime of the compile but this is not an issue when
@@ -280,7 +271,7 @@ extern "C" {
 	//
 	// function prototypes do not get freed individually and last for the entire run
 	// of the backend, they can also be reused for multiple functions which have matching
-	// prototypes.
+	// signatures.
 	TB_API TB_FunctionPrototype* tb_prototype_create(TB_Module* m, TB_CallingConv conv, TB_DataType return_dt, int num_params, bool has_varargs);
 	
 	// adds a parameter to the function prototype, TB doesn't support struct
@@ -295,6 +286,19 @@ extern "C" {
 	// parameters so the frontend must lower them to pointers or any other type
 	// depending on their preferred ABI. 
 	TB_API TB_Function* tb_prototype_build(TB_Module* m, TB_FunctionPrototype* p, const char* name);
+	
+	////////////////////////////////
+	// Constant Initializers
+	////////////////////////////////
+	// NOTE: the max relocations is a cap and thus it can be bigger than the actually
+	// number needed.
+	TB_API TB_InitializerID tb_initializer_create(TB_Module* m, size_t size, size_t align, size_t max_objects);
+	
+	// clears out an entire region with zeroes
+	TB_API void tb_initializer_add_zero(TB_Module* m, TB_InitializerID id, size_t offset, size_t size);
+	
+	// returns a buffer which the user can fill to then have represented in the initializer
+	TB_API void* tb_initializer_add_region(TB_Module* m, TB_InitializerID id, size_t offset, size_t size);
 	
 	////////////////////////////////
 	// Function IR Generation
@@ -315,8 +319,10 @@ extern "C" {
 	TB_API TB_Register tb_inst_load(TB_Function* f, TB_DataType dt, TB_Register addr, uint32_t alignment);
 	TB_API void tb_inst_store(TB_Function* f, TB_DataType dt, TB_Register addr, TB_Register val, uint32_t alignment);
 	
-	TB_API TB_Register tb_inst_iconst(TB_Function* f, TB_DataType dt, uint64_t imm);
+	TB_API TB_Register tb_inst_volatile_load(TB_Function* f, TB_DataType dt, TB_Register addr, uint32_t alignment);
+	TB_API void tb_inst_volatile_store(TB_Function* f, TB_DataType dt, TB_Register addr, TB_Register val, uint32_t alignment);
 	
+	TB_API TB_Register tb_inst_iconst(TB_Function* f, TB_DataType dt, uint64_t imm);
 	TB_API TB_Register tb_inst_fconst(TB_Function* f, TB_DataType dt, double imm);
 	
 	TB_API TB_Register tb_inst_array_access(TB_Function* f, TB_Register base, TB_Register index, uint32_t stride);
@@ -324,6 +330,7 @@ extern "C" {
     
 	TB_API TB_Register tb_inst_get_func_address(TB_Function* f, const TB_Function* target);
 	TB_API TB_Register tb_inst_get_extern_address(TB_Function* f, TB_ExternalID target);
+	TB_API TB_Register tb_inst_get_global_address(TB_Function* f, TB_GlobalID target);
 	
 	TB_API TB_Register tb_inst_call(TB_Function* f, TB_DataType dt, const TB_Function* target, size_t param_count, const TB_Register* params);
 	TB_API TB_Register tb_inst_vcall(TB_Function* f, TB_DataType dt, TB_Register target, size_t param_count, const TB_Register* params);
@@ -377,9 +384,9 @@ extern "C" {
 	
 	TB_API void tb_function_print(TB_Function* f, FILE* out);
 	
-	//
+	////////////////////////////////
 	// IR access
-	//
+	////////////////////////////////
 	TB_API TB_Register tb_node_get_last_register(TB_Function* f);
 	TB_API TB_DataType tb_node_get_data_type(TB_Function* f, TB_Register r);
 	

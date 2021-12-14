@@ -207,6 +207,8 @@ typedef enum ExprOp {
 	EXPR_DOT,
 	EXPR_CALL,
 	
+	EXPR_INITIALIZER,
+	
 	EXPR_PRE_INC,
 	EXPR_PRE_DEC,
 	EXPR_POST_INC,

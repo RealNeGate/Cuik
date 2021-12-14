@@ -1,14 +1,31 @@
 #include "ir_gen.h"
 
-enum { LVALUE, RVALUE, LVALUE_FUNC, LVALUE_EFUNC };
+enum { 
+	RVALUE,
+	
+	LVALUE,
+	LVALUE_FUNC,
+	LVALUE_EFUNC,
+	
+	// if value is a special kind of rvalue
+	// it essentially represents a phi node
+	// where it's true on one path and false
+	// on the other.
+	RVALUE_PHI
+};
 
 typedef struct IRVal {
 	int value_type;
 	TypeIndex type;
+	
 	union {
 		TB_Register reg;
 		TB_Function* func;
 		TB_ExternalID ext;
+		struct {
+			TB_Label if_true;
+			TB_Label if_false;
+		} phi;
 	};
 } IRVal;
 
@@ -17,9 +34,6 @@ TB_Module* mod;
 // Maps param_num -> TB_Register
 static _Thread_local TB_Register* parameter_map;
 static TypeIndex function_type;
-
-static TB_Label short_circuit_true;
-static TB_Label short_circuit_false;
 
 static TB_DataType ctype_to_tbtype(const Type* t) {
 	switch (t->kind) {
@@ -41,7 +55,19 @@ static TB_DataType ctype_to_tbtype(const Type* t) {
 
 static void cvt_l2r(TB_Function* func, IRVal* restrict v, TypeIndex dst_type) {
 	Type* src = &type_arena.data[v->type];
-	if (v->value_type == LVALUE) {
+	if (v->value_type == RVALUE_PHI) {
+		TB_Label merger = tb_inst_new_label_id(func);
+		
+		tb_inst_label(func, v->phi.if_true);
+		TB_Register one = tb_inst_iconst(func, TB_TYPE_BOOL, 1);
+		
+		tb_inst_label(func, v->phi.if_false);
+		TB_Register zero = tb_inst_iconst(func, TB_TYPE_BOOL, 0); 
+		
+		tb_inst_label(func, merger);
+		v->value_type = RVALUE;
+		v->reg = tb_inst_phi2(func, ctype_to_tbtype(src), v->phi.if_true, one, v->phi.if_false, zero);
+	} else if (v->value_type == LVALUE) {
 		// Implicit array to pointer
 		if (src->kind == KIND_ARRAY) {
 			// just pass the address don't load
@@ -354,78 +380,50 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 				};
 			}
 		}
-		case EXPR_LOGICAL_AND:
+		case EXPR_LOGICAL_AND: {
+			// TODO(NeGate): Implement this!
+			abort();
+		}
 		case EXPR_LOGICAL_OR: {
-			bool is_and = (ep->op == EXPR_LOGICAL_AND);
+			//bool is_and = (ep->op == EXPR_LOGICAL_AND);
+			TB_Label try_rhs_lbl = tb_inst_new_label_id(func);
 			
-			if (short_circuit_true) {
-				TB_Label rhs_lbl = tb_inst_new_label_id(func);
+			// Eval first operand
+			IRVal a = gen_expr(func, ep->bin_op.left);
+			
+			TB_Label true_lbl, false_lbl;
+			if (a.value_type == RVALUE_PHI) {
+				true_lbl = a.phi.if_true;
 				
-				// Eval first operand
-				IRVal a = gen_expr(func, ep->bin_op.left);
-				cvt_l2r(func, &a, TYPE_BOOL);
+				// tie the previous phi into the next phi
+				// this is a logical or so it fallsthrough
+				// after a false.
+				tb_inst_label(func, a.phi.if_false);
+				tb_inst_goto(func, try_rhs_lbl);
 				
-				if (is_and) {
-					tb_inst_if(func, a.reg, rhs_lbl, short_circuit_false);
-				} else {
-					tb_inst_if(func, a.reg, short_circuit_true, rhs_lbl);
-				}
-				
-				// Eval second operand
-				tb_inst_label(func, rhs_lbl);
-				IRVal b = gen_expr(func, ep->bin_op.right);
-				cvt_l2r(func, &b, TYPE_BOOL);
-				
-				tb_inst_if(func, b.reg, short_circuit_true, short_circuit_false);
-				
-				return (IRVal) {
-					.value_type = RVALUE,
-					.type = TYPE_VOID,
-					.reg = 0
-				};
+				false_lbl = tb_inst_new_label_id(func);
 			} else {
-				TB_Label rhs_lbl = tb_inst_new_label_id(func);
-				TB_Label phi_lbl = tb_inst_new_label_id(func);
+				true_lbl = tb_inst_new_label_id(func);
+				false_lbl = tb_inst_new_label_id(func);
 				
-				// Eval first operand
-				IRVal a = gen_expr(func, ep->bin_op.left);
 				cvt_l2r(func, &a, TYPE_BOOL);
-				
-				TB_Label entry = tb_get_current_label(func);
-				if (is_and) {
-					tb_inst_if(func, a.reg, rhs_lbl, phi_lbl);
-				} else {
-					tb_inst_if(func, a.reg, phi_lbl, rhs_lbl);
-				}
-				
-				// Eval second operand
-				tb_inst_label(func, rhs_lbl);
-				IRVal b = gen_expr(func, ep->bin_op.right);
-				cvt_l2r(func, &b, TYPE_BOOL);
-				
-				TB_Label exit = tb_get_current_label(func);
-				
-				// Don't actually need this
-				tb_inst_goto(func, phi_lbl);
-				
-				tb_inst_label(func, phi_lbl);
-				TB_Register result_on_skip = tb_inst_iconst(func, TB_TYPE_BOOL, is_and ? 0 : 1);
-				if (exit) {
-					TB_Register result = tb_inst_phi2(func, TB_TYPE_BOOL, entry, result_on_skip, exit, b.reg);
-					
-					return (IRVal) {
-						.value_type = RVALUE,
-						.type = TYPE_BOOL,
-						.reg = result
-					};
-				} else {
-					return (IRVal) {
-						.value_type = RVALUE,
-						.type = TYPE_BOOL,
-						.reg = result_on_skip
-					};
-				}
+				tb_inst_if(func, a.reg, true_lbl, try_rhs_lbl);
 			}
+			
+			// Eval second operand
+			tb_inst_label(func, try_rhs_lbl);
+			
+			IRVal b = gen_expr(func, ep->bin_op.right);
+			cvt_l2r(func, &b, TYPE_BOOL);
+			tb_inst_if(func, b.reg, true_lbl, false_lbl);
+			
+			// we delay placement of the labels so that we can
+			// fold multiple shortcircuits together
+			return (IRVal) {
+				.value_type = RVALUE_PHI,
+				.type = TYPE_BOOL,
+				.phi = { true_lbl, false_lbl }
+			};
 		}
 		case EXPR_PLUS:
 		case EXPR_MINUS:
@@ -696,23 +694,19 @@ static void gen_stmt(TB_Function* func, StmtIndex s) {
 		}
 		case STMT_IF: {
 			ExprIndex cond_expr = stmt_arena.data[s].expr;
-			TB_Label if_true = tb_inst_new_label_id(func);
-			TB_Label if_false = tb_inst_new_label_id(func);
 			
-			{
-				//short_circuit_true = if_true;
-				//short_circuit_false = if_false;
+			IRVal cond = gen_expr(func, cond_expr);
+			
+			TB_Label if_true, if_false;
+			if (cond.value_type == RVALUE_PHI) {
+				if_true = cond.phi.if_true;
+				if_false = cond.phi.if_false;
+			} else {
+				if_true = tb_inst_new_label_id(func);
+				if_false = tb_inst_new_label_id(func);
 				
-				IRVal cond = gen_expr(func, cond_expr);
-				
-				//if (expr_arena.data[cond_expr].op != EXPR_LOGICAL_AND &&
-				//expr_arena.data[cond_expr].op != EXPR_LOGICAL_OR) {
 				cvt_l2r(func, &cond, TYPE_BOOL);
 				tb_inst_if(func, cond.reg, if_true, if_false);
-				//}
-				
-				//short_circuit_true = 0;
-				//short_circuit_false = 0;
 			}
 			
 			tb_inst_label(func, if_true);
@@ -842,8 +836,8 @@ static void gen_func_body(TypeIndex type, StmtIndex s) {
 		tb_inst_ret(func, TB_NULL_REG);
 	}
 	
-	//tb_function_print(func, stdout);
-	//printf("\n\n\n");
+	tb_function_print(func, stdout);
+	printf("\n\n\n");
 	
 	tb_module_compile_func(mod, func);
 }
