@@ -4,6 +4,7 @@ enum {
 	RVALUE,
 	
 	LVALUE,
+	LVALUE_LABEL,
 	LVALUE_FUNC,
 	LVALUE_EFUNC,
 	
@@ -26,6 +27,7 @@ typedef struct IRVal {
 			TB_Label if_true;
 			TB_Label if_false;
 		} phi;
+		TB_Label label;
 	};
 } IRVal;
 
@@ -67,6 +69,9 @@ static void cvt_l2r(TB_Function* func, IRVal* restrict v, TypeIndex dst_type) {
 		tb_inst_label(func, merger);
 		v->value_type = RVALUE;
 		v->reg = tb_inst_phi2(func, ctype_to_tbtype(src), v->phi.if_true, one, v->phi.if_false, zero);
+	} else if (v->value_type == LVALUE_LABEL) {
+		// TODO(NeGate)
+		abort();
 	} else if (v->value_type == LVALUE) {
 		// Implicit array to pointer
 		if (src->kind == KIND_ARRAY) {
@@ -153,12 +158,18 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 		case EXPR_SYMBOL: {
 			StmtIndex stmt = ep->symbol;
 			StmtOp stmt_op = stmt_arena.data[stmt].op;
-			assert(stmt_op == STMT_DECL || stmt_op == STMT_FUNC_DECL);
+			assert(stmt_op == STMT_DECL || stmt_op == STMT_LABEL || stmt_op == STMT_FUNC_DECL);
 			
 			TypeIndex type_index = stmt_arena.data[stmt].decl_type;
 			Type* type = &type_arena.data[type_index];
 			
-			if (type->kind == KIND_FUNC) {
+			if (stmt_op == STMT_LABEL) {
+				return (IRVal) {
+					.value_type = LVALUE_LABEL,
+					.type = TYPE_NONE,
+					.label = stmt_arena.data[stmt].backing.l
+				};
+			} else if (type->kind == KIND_FUNC) {
 				if (stmt_op == STMT_FUNC_DECL) {
 					return (IRVal) {
 						.value_type = LVALUE_FUNC,
@@ -655,6 +666,24 @@ static void gen_stmt(TB_Function* func, StmtIndex s) {
 		case STMT_NONE: {
 			break;
 		}
+		case STMT_LABEL: {
+			tb_inst_label(func, stmt_arena.data[s].backing.l);
+			break;
+		}
+		case STMT_GOTO: {
+			IRVal target = gen_expr(func, stmt_arena.data[s].expr);
+			
+			if (target.value_type == LVALUE_LABEL) {
+				tb_inst_goto(func, target.label);
+			} else {
+				// TODO(NeGate): Handle computed goto case
+				abort();
+			}
+			
+			// spawn a fallthrough just in case
+			tb_inst_label(func, tb_inst_new_label_id(func));
+			break;
+		}
 		case STMT_COMPOUND: {
 			StmtIndexIndex start = stmt_arena.data[s].kids_start;
 			StmtIndexIndex end = stmt_arena.data[s].kids_end;
@@ -789,7 +818,7 @@ static void gen_stmt(TB_Function* func, StmtIndex s) {
 			break;
 		}
 		case STMT_FOR: {
-			
+			// TODO(NeGate)
 			break;
 		}
 		case STMT_FOR2:
@@ -829,7 +858,7 @@ static void gen_func_header(TypeIndex type, StmtIndex s) {
 	stmt_arena.data[s].backing.f = func;
 }
 
-static void gen_func_body(TypeIndex type, StmtIndex s) {
+static void gen_func_body(TypeIndex type, StmtIndex s, StmtIndex end) {
 	// Clear TLS
 	tls_init();
 	
@@ -845,6 +874,15 @@ static void gen_func_body(TypeIndex type, StmtIndex s) {
 	// gimme stack slots
 	for (int i = 0; i < arg_count; i++) {
 		params[i] = tb_inst_param_addr(func, i);
+	}
+	
+	// TODO(NeGate): Ok fix this up later but essentially we need to prepass
+	// over the nodes to find the label statements, then forward declare the labels
+	// in TB.
+	for (StmtIndex i = s+1; i < end; i++) {
+		if (stmt_arena.data[i].op == STMT_LABEL) {
+			stmt_arena.data[i].backing.l = tb_inst_new_label_id(func);
+		}
 	}
 	
 	// Body
@@ -896,11 +934,12 @@ void gen_ir_stage1(TopLevel tl, size_t i) {
 
 void gen_ir_stage2(TopLevel tl, size_t i) {
 	StmtIndex s = tl.arr[i];
+	StmtIndex end = i + 1 < arrlen(tl.arr) ? tl.arr[i+1] : stmt_arena.count;
 	
 	if (stmt_arena.data[s].op == STMT_FUNC_DECL) {
 		TypeIndex type = stmt_arena.data[s].decl_type;
 		assert(type_arena.data[type].kind == KIND_FUNC);
 		
-		gen_func_body(type, s);
+		gen_func_body(type, s, end);
 	}
 }

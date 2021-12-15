@@ -145,10 +145,12 @@ typedef enum StmtOp {
 	
 	// NOTE(NeGate): Always followed by a compound block
 	STMT_FUNC_DECL,
+	STMT_LABEL,
 	STMT_EXPR,
 	
 	STMT_IF,
 	STMT_DO_WHILE,
+	STMT_GOTO,
 	
 	STMT_FOR,
 	STMT_FOR2,
@@ -226,6 +228,8 @@ typedef struct Stmt {
 	// TODO(NeGate): const char* pos;
 	
 	union {
+		// STMT_LABEL
+		Atom label_name;
 		struct {
 			// STMT_DECL or STMT_FUNC_DECL
 			Attribs attrs;
@@ -251,6 +255,7 @@ typedef struct Stmt {
 		TB_Register r;
 		TB_Function* f;
 		TB_ExternalID e;
+		TB_Label l;
 	} backing;
 } Stmt;
 

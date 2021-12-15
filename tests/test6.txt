@@ -18,6 +18,9 @@ LRESULT main_wnd_proc(HWND wnd, UINT message, WPARAM wparam, LPARAM lparam) {
 // NOTE(NeGate): this is where the actual logic goes, the entry point thread is where
 // the window is going to be handled so that resize and move don't stall things.
 static DWORD main_thread(LPVOID param) {
+test_label:
+	goto test_label;
+
 	return 0;
 }
 

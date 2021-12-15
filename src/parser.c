@@ -37,6 +37,14 @@ typedef struct TypedefEntry {
 
 static TypedefEntry* typedefs;
 
+// for the global hash table
+typedef struct LabelEntry {
+	Atom key;
+	StmtIndex value;
+} LabelEntry;
+
+static LabelEntry* labels;
+
 static void expect(TokenStream* restrict s, char ch);
 static Symbol* find_local_symbol(TokenStream* restrict s);
 static Symbol* find_global_symbol(char* name);
@@ -387,6 +395,32 @@ static StmtIndex parse_stmt(TokenStream* restrict s) {
 		return n;
 	}
 	
+	if (tokens_get(s)->type == TOKEN_KW_goto) {
+		tokens_next(s);
+		
+		StmtIndex n = push_stmt_arena(1);
+		stmt_arena.data[n].op = STMT_GOTO;
+		stmt_arena.data[n].expr = parse_expr(s);
+		
+		expect(s, ';');
+		return n;
+	}
+	
+	if (tokens_get(s)->type == TOKEN_IDENTIFIER &&
+		tokens_peek(s)->type == TOKEN_COLON) {
+		Token* t = tokens_get(s);
+		Atom name = atoms_put(t->end - t->start, t->start);
+		
+		StmtIndex n = push_stmt_arena(1);
+		stmt_arena.data[n].op = STMT_LABEL;
+		stmt_arena.data[n].label_name = name;
+		shput(labels, name, n);
+		
+		tokens_next(s);
+		tokens_next(s);
+		return n;
+	}
+	
 	if (tokens_get(s)->type == ';') {
 		tokens_next(s);
 		return 0;
@@ -447,11 +481,20 @@ static ExprIndex parse_expr_l0(TokenStream* restrict s) {
 			Token* t = tokens_get(s);
 			Atom name = atoms_put(t->end - t->start, t->start);
 			
-			expr_arena.data[e] = (Expr) {
-				.op = EXPR_UNKNOWN_SYMBOL,
-				.line = line,
-				.unknown_sym = name
-			};
+			ptrdiff_t search = shgeti(labels, name);
+			if (search >= 0) {
+				expr_arena.data[e] = (Expr) {
+					.op = EXPR_SYMBOL,
+					.line = line,
+					.symbol = labels[search].value
+				};
+			} else {
+				expr_arena.data[e] = (Expr) {
+					.op = EXPR_UNKNOWN_SYMBOL,
+					.line = line,
+					.unknown_sym = name
+				};
+			}
 		}
 		
 		tokens_next(s);
