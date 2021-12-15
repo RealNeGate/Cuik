@@ -155,6 +155,9 @@ TopLevel parse_file(TokenStream* restrict s) {
 					StmtIndex body = parse_compound_stmt(s);
 					assert(body == n + 1);
 #endif
+					
+					// this is probably not the best but yea
+					shfree(labels);
 				} else if (tokens_get(s)->type == ';') {
 					// Forward decl
 					tokens_next(s);
