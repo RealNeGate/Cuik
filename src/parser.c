@@ -412,6 +412,8 @@ static StmtIndex parse_stmt_or_expr(TokenStream* restrict s) {
 // Quick reference:
 // https://en.cppreference.com/w/c/language/operator_precedence
 ////////////////////////////////
+static ExprIndex parse_expr_l14(TokenStream* restrict s);
+
 static ExprIndex parse_expr_l0(TokenStream* restrict s) {
 	if (tokens_get(s)->type == '(') {
 		tokens_next(s);
@@ -560,7 +562,10 @@ static ExprIndex parse_expr_l1(TokenStream* restrict s) {
 					expect(s, ',');
 				}
 				
-				*((ExprIndex*) tls_push(sizeof(ExprIndex))) = parse_expr(s);
+				// NOTE(NeGate): This is a funny little work around because
+				// i don't wanna parse the comma operator within the expression
+				// i wanna parse it here so we just skip it.
+				*((ExprIndex*) tls_push(sizeof(ExprIndex))) = parse_expr_l14(s);
 				param_count++;
 			}
 			
@@ -841,8 +846,29 @@ static ExprIndex parse_expr_l14(TokenStream* restrict s) {
 	return lhs;
 }
 
+static ExprIndex parse_expr_l15(TokenStream* restrict s) {
+	ExprIndex lhs = parse_expr_l14(s);
+	
+	while (tokens_get(s)->type == TOKEN_COMMA) {
+		ExprIndex e = push_expr_arena(1);
+		ExprOp op = EXPR_COMMA;
+		tokens_next(s);
+		
+		ExprIndex rhs = parse_expr_l14(s);
+		expr_arena.data[e] = (Expr) {
+			.op = op,
+			.line = tokens_get(s)->line,
+			.bin_op = { lhs, rhs }
+		};
+		
+		lhs = e;
+	}
+	
+	return lhs;
+}
+
 static ExprIndex parse_expr(TokenStream* restrict s) {
-	return parse_expr_l14(s);
+	return parse_expr_l15(s);
 }
 
 ////////////////////////////////

@@ -449,6 +449,10 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 				.phi = { true_lbl, false_lbl }
 			};
 		}
+		case EXPR_COMMA: {
+			gen_expr(func, ep->bin_op.left);
+			return gen_expr(func, ep->bin_op.right);
+		}
 		case EXPR_PLUS:
 		case EXPR_MINUS:
 		case EXPR_TIMES:
@@ -860,8 +864,8 @@ static void gen_func_body(TypeIndex type, StmtIndex s) {
 		tb_inst_ret(func, TB_NULL_REG);
 	}
 	
-	tb_function_print(func, stdout);
-	printf("\n\n\n");
+	//tb_function_print(func, stdout);
+	//printf("\n\n\n");
 	
 	tb_module_compile_func(mod, func);
 }

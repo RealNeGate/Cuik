@@ -79,6 +79,22 @@ static void dump_macro_defines(Context* restrict c) {
 	}
 }
 
+static void predefine_macro(Context* restrict c, const char* name) {
+	size_t len = strlen(name);
+	
+	// Hash name
+	uint64_t slot = hash_ident((const unsigned char*)name, len);
+	uint64_t e = c->macro_bucket_count[slot] + (slot * SLOTS_PER_MACRO_BUCKET);
+	
+	// Insert into buckets
+	c->macro_bucket_count[slot] += 1;
+	c->macro_bucket_keys[e] = (const unsigned char*)name;
+	c->macro_bucket_keys_length[e] = len;
+	
+	c->macro_bucket_values_start[e] = NULL;
+	c->macro_bucket_values_end[e] = NULL;
+}
+
 TokenStream preprocess_translation_unit(const char* filepath) {
 	tls_init();
 	size_t sz = sizeof(void*) * MACRO_BUCKET_COUNT * SLOTS_PER_MACRO_BUCKET;
@@ -92,6 +108,11 @@ TokenStream preprocess_translation_unit(const char* filepath) {
 	c.the_shtuffs = allocate_virtual_memory(THE_SHTUFFS_SIZE);
 	c.the_shtuffs_size = 0;
 	memset(c.macro_bucket_count, 0, MACRO_BUCKET_COUNT * sizeof(int));
+	
+	predefine_macro(&c, "_X86_");
+	predefine_macro(&c, "_WIN32");
+	predefine_macro(&c, "_WIN64");
+	predefine_macro(&c, "_M_AMD64");
 	
 	TokenStream s = { 0 };
 	preprocess_file(&c, &s, "", filepath);
@@ -375,7 +396,9 @@ static void preprocess_file(Context* restrict c, TokenStream* restrict s, const 
 					}
 					
 					if (!success) {
-						generic_error(&l, "Could not find file!");
+						int loc = l.current_line;
+						printf("error %s:%d: Could not find file! %.*s\n", l.filepath, loc, (int) (end - start), start);
+						abort();
 					}
 					
 					PragmaOnceEntry* e = shgetp_null(c->pragma_once_s, path);

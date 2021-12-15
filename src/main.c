@@ -95,6 +95,9 @@ static void compile_project(const char source_file[], const char filename[]) {
 	atoms_init();
 	top_level = parse_file(&s);
 	
+	// Uncomment for fun :)
+	//print_tree(top_level);
+	
 	// Generate IR
 	{
 		is_running = true;
@@ -214,6 +217,7 @@ static void link_object_file(const char filename[]) {
 #endif
 
 int main(int argc, char* argv[]) {
+#if 1
 	if (argc == 1) {
 		printf("Expected command!\n");
 		print_help(argv[0]);
@@ -235,6 +239,7 @@ int main(int argc, char* argv[]) {
 		
 		static char temp_buffer[260];
 		memcpy_s(temp_buffer, 260, source_file, (int)(ext - source_file));
+		temp_buffer[ext - source_file] = '\0';
 		
 		compile_project(source_file, temp_buffer);
 		link_object_file(temp_buffer);
@@ -247,9 +252,8 @@ int main(int argc, char* argv[]) {
 		print_help(argv[0]);
 		return -1;
 	}
-	
-#if 0
-	TokenStream s = preprocess_translation_unit("tests/test8.txt");
+#else
+	TokenStream s = preprocess_translation_unit("tests/stb_image.txt");
 	FILE* f = fopen("aa.txt", "w");
 	
 	size_t token_count = arrlen(s.tokens);

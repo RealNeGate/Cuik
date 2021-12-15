@@ -10,6 +10,7 @@ set cuik_source_files=src/main.c ^
 	src/atoms.c ^
 	src/parser.c ^
 	src/ir_gen.c ^
+	src/tree_printer.c ^
 	src/memory_win32.c ^
 	src/microsoft_craziness.cpp ^
 	ext/threads_msvc.c

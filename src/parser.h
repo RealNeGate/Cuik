@@ -192,6 +192,8 @@ typedef enum ExprOp {
 	EXPR_SHL,
 	EXPR_SHR,
 	
+	EXPR_COMMA,
+	
 	EXPR_CMPEQ,
 	EXPR_CMPNE,
 	EXPR_CMPGE,
@@ -349,3 +351,4 @@ typedef struct TopLevel {
 void init_types();
 
 TopLevel parse_file(TokenStream* restrict s);
+void print_tree(TopLevel tl);

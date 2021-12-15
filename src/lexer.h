@@ -5,6 +5,7 @@
 // NOTE(NeGate): I originally called it TokenType but windows a bih on god
 typedef enum TknType {
     TOKEN_ACCESSOR = '.',
+    TOKEN_COMMA = ',',
     
     TOKEN_PLUS = '+',
     TOKEN_MINUS = '-',
