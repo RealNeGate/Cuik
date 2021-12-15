@@ -33,7 +33,7 @@ int main(int argc, char** argv, char** env) {
 	name[2] = 84;
 	name[3] = 0;
 
-	printf(name);
+	printf("Hello, World!");
 
 	//uintptr_t name_as_int = (uintptr_t)&name;
 

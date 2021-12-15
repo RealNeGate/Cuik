@@ -1,17 +1,16 @@
-﻿//  _______ _             ____             _                  _ 
-// |__   __(_)           |  _ \           | |                | |
-//    | |   _ _ __  _   _| |_) | __ _  ___| | _____ _ __   __| |
-//    | |  | | '_ \| | | |  _ < / _` |/ __| |/ / _ \ '_ \ / _` |
-//    | |  | | | | | |_| | |_) | (_| | (__|   <  __/ | | | (_| |
-//    |_|  |_|_| |_|\__, |____/ \__,_|\___|_|\_\___|_| |_|\__,_|
-//                   __/ |                                      
-//                  |___/
-// 
-//    It's a relatively small compiler backend all behind a
-//    simple C API! To get started: TODO
 //
-#ifndef _TINYBACKEND_H_
-#define _TINYBACKEND_H_
+//  _______ _ _     _      ____  ______ 
+// |__   __(_) |   | |    |  _ \|  ____|
+//    | |   _| | __| | ___| |_) | |__   
+//    | |  | | |/ _` |/ _ \  _ <|  __|  
+//    | |  | | | (_| |  __/ |_) | |____ 
+//    |_|  |_|_|\__,_|\___|____/|______|
+//
+//    It's a relatively small compiler backend all
+//    behind a simple C API!
+//
+#ifndef _TILDEBACKEND_H_
+#define _TILDEBACKEND_H_
 
 #ifdef __cplusplus
 extern "C" {
@@ -242,18 +241,35 @@ extern "C" {
 	
 #endif
 	
+	////////////////////////////////
+	// Module management
+	////////////////////////////////
+	// Creates a module with the correct target and settings
+	// the max_threads defines how many worker threads the backend will spawn, you're expected
+	// to spawn an equivalent amount of threads and generate IR for optimal performance.
+	//
 	// preserve_ir_after_submit means that after the tb_module_compile_func(...) you can 
 	// still access the IR, this comes at a higher overall memory usage cost since the
 	// IR is kept in memory for the lifetime of the compile but this is not an issue when
 	// debugging.
 	TB_API TB_Module* tb_module_create(TB_Arch target_arch, TB_System target_system, const TB_FeatureSet* features, int optimization_level, int max_threads, bool preserve_ir_after_submit);
 	
+	// Validates & passes a function to the code gen stage to be optimized (if specified) and 
+	// converted into machine code.
 	TB_API bool tb_module_compile_func(TB_Module* m, TB_Function* f);
+	
+	// NOTE: Don't use this it's for testing purposes.
 	TB_API size_t tb_DEBUG_module_get_full_node_count(TB_Module* m);
+	
+	// Frees all resources for the TB_Module and it's functions, globals and compiled code.
 	TB_API void tb_module_destroy(TB_Module* m);
 	
+	// Waits for the machine code generation to finish before continuing.
 	TB_API bool tb_module_compile(TB_Module* m);
+	
+	// Exports an object file with all the machine code and symbols generated.
 	TB_API bool tb_module_export(TB_Module* m, FILE* f);
+	
 	TB_API void tb_module_export_jit(TB_Module* m);
 	
 	TB_API void* tb_module_get_jit_func_by_name(TB_Module* m, const char* name);
@@ -290,15 +306,19 @@ extern "C" {
 	////////////////////////////////
 	// Constant Initializers
 	////////////////////////////////
-	// NOTE: the max relocations is a cap and thus it can be bigger than the actually
-	// number needed.
+	// NOTE: the max objects is a cap and thus it can be bigger than the actual
+	// number used.
 	TB_API TB_InitializerID tb_initializer_create(TB_Module* m, size_t size, size_t align, size_t max_objects);
-	
-	// clears out an entire region with zeroes
-	TB_API void tb_initializer_add_zero(TB_Module* m, TB_InitializerID id, size_t offset, size_t size);
 	
 	// returns a buffer which the user can fill to then have represented in the initializer
 	TB_API void* tb_initializer_add_region(TB_Module* m, TB_InitializerID id, size_t offset, size_t size);
+	
+	////////////////////////////////
+	// Constant Initializers
+	////////////////////////////////
+	// NOTE: the max relocations is a cap and thus it can be bigger than the actually
+	// number needed.
+	TB_API TB_GlobalID tb_global_create(TB_Module* m, TB_InitializerID);
 	
 	////////////////////////////////
 	// Function IR Generation
@@ -322,8 +342,16 @@ extern "C" {
 	TB_API TB_Register tb_inst_volatile_load(TB_Function* f, TB_DataType dt, TB_Register addr, uint32_t alignment);
 	TB_API void tb_inst_volatile_store(TB_Function* f, TB_DataType dt, TB_Register addr, TB_Register val, uint32_t alignment);
 	
+	TB_API void tb_inst_initialize_mem(TB_Function* f, TB_Register addr, TB_InitializerID src);
+	
 	TB_API TB_Register tb_inst_iconst(TB_Function* f, TB_DataType dt, uint64_t imm);
 	TB_API TB_Register tb_inst_fconst(TB_Function* f, TB_DataType dt, double imm);
+	
+	// string is a UTF-8 null terminated string
+	TB_API TB_Register tb_inst_const_cstr(TB_Function* f, const char* str);
+	
+	// string is a slice of bytes
+	TB_API TB_Register tb_inst_const_string(TB_Function* f, const char* str, size_t len);
 	
 	TB_API TB_Register tb_inst_array_access(TB_Function* f, TB_Register base, TB_Register index, uint32_t stride);
 	TB_API TB_Register tb_inst_member_access(TB_Function* f, TB_Register base, int32_t offset);

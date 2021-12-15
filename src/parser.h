@@ -162,6 +162,7 @@ typedef enum ExprOp {
 	EXPR_NONE,
 	
 	EXPR_NUM,
+	EXPR_STR,
 	
 	EXPR_UNKNOWN_SYMBOL,
 	EXPR_SYMBOL,
@@ -283,6 +284,10 @@ typedef struct Expr {
 			ExprIndex target;
 			ExprIndexIndex param_start, param_end;
 		} call;
+		struct {
+			const unsigned char* start;
+			const unsigned char* end;
+		} str;
 		long long num;
 	};
 } Expr;

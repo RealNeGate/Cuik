@@ -140,6 +140,16 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 				.reg = tb_inst_iconst(func, TB_TYPE_I32, ep->num)
 			};
 		}
+		case EXPR_STR: {
+			const char* start = (const char*)(ep->str.start + 1);
+			const char* end = (const char*)(ep->str.end - 1);
+			
+			return (IRVal) {
+				.value_type = LVALUE,
+				.type = new_array(TYPE_CHAR, end-start),
+				.reg = tb_inst_const_string(func, start, end-start)
+			};
+		}
 		case EXPR_SYMBOL: {
 			StmtIndex stmt = ep->symbol;
 			StmtOp stmt_op = stmt_arena.data[stmt].op;

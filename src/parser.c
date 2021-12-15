@@ -466,6 +466,18 @@ static ExprIndex parse_expr_l0(TokenStream* restrict s) {
 		
 		tokens_next(s);
 		return e;
+	} else if (tokens_get(s)->type == TOKEN_STRING_DOUBLE_QUOTE) {
+		Token* t = tokens_get(s);
+		
+		ExprIndex e = push_expr_arena(1);
+		expr_arena.data[e] = (Expr) {
+			.op = EXPR_STR,
+			.str.start = t->start,
+			.str.end = t->end
+		};
+		
+		tokens_next(s);
+		return e;
 	} else {
 		generic_error(s, "Could not parse expression!");
 	}
