@@ -38,8 +38,8 @@ typedef struct Context {
 
 static const char* SYSTEM_LIBS[] = {
 	// TODO(NeGate): Fix this up
-	"W:/Workspace/Cuik/std/include/",
-	"W:/Workspace/Cuik/std/include/winapi/",
+	"std/include/",
+	"std/include/winapi/",
 };
 
 enum { NUM_SYSTEM_LIBS = sizeof(SYSTEM_LIBS) / sizeof(SYSTEM_LIBS[0]) };
@@ -377,7 +377,8 @@ static void preprocess_file(Context* restrict c, TokenStream* restrict s, const 
 					bool success = false;
 					if (system_libs) {
 						for (size_t i = 0; i < NUM_SYSTEM_LIBS; i++) {
-							sprintf_s(path, 260, "%s%.*s",
+							sprintf_s(path, 260, "%s%s%.*s",
+									  compiler_directory,
 									  SYSTEM_LIBS[i],
 									  (int) (end - start), start);
 							

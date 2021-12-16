@@ -8,6 +8,8 @@
 #include "../ext/threads.h"
 #include "microsoft_craziness.h"
 
+char compiler_directory[260];
+
 #define COMPILER_VERSION ""
 
 // frontend worker threads
@@ -233,14 +235,59 @@ int main(int argc, char* argv[]) {
 			return -1;
 		}
 		
+		// Get compiler directory
+		{
+			// find the slash before the last slash
+			// TODO(NeGate): Fix this code up it's a mess
+			char* slash = strrchr(argv[0], '/');
+			if (slash) {
+				*slash = '\0';
+				slash = strrchr(argv[0], '/');
+				
+				if (!slash) {
+					printf("Could not find compiler binary path\n");
+					abort();
+				}
+			} else {
+				// try the other slashes i guess :P
+				slash = strrchr(argv[0], '\\');
+				
+				if (slash) {
+					*slash = '\0';
+					slash = strrchr(argv[0], '\\');
+					
+					if (!slash) {
+						printf("Could not find compiler binary path\n");
+						abort();
+					}
+				} else {
+					printf("Could not find compiler binary path\n");
+					abort();
+				}
+			}
+			
+			size_t slash_pos = slash - argv[0];
+			memcpy_s(compiler_directory, 258, argv[0], slash_pos);
+			compiler_directory[slash_pos] = '/';
+			
+			for (size_t i = 0; i < 260; i++) {
+				if (compiler_directory[i] == '\\') compiler_directory[i] = '/';
+			}
+		}
+		
+		// its a global it should be cleared already
+		//compiler_directory[slash_pos] = 0;
+		
+		// Get filename without extension
 		const char* source_file = argv[2];
 		const char* ext = strrchr(source_file, '.');
 		if (!ext) ext = source_file + strlen(source_file);
 		
-		static char temp_buffer[260];
-		memcpy_s(temp_buffer, 260, source_file, (int)(ext - source_file));
+		static char temp_buffer[259];
+		memcpy_s(temp_buffer, 260, source_file, ext - source_file);
 		temp_buffer[ext - source_file] = '\0';
 		
+		// Build project
 		compile_project(source_file, temp_buffer);
 		link_object_file(temp_buffer);
 	} else if (strcmp(cmd, "bindgen") == 0) {
