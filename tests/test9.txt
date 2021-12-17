@@ -1,8 +1,6 @@
 
-union Foo {
-  int x;
-  char y[16];
-  long long z;
-};
-
-
+int main() {
+	int a = 16;
+	int b = 16;
+	return 0;
+}

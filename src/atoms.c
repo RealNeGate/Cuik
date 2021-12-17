@@ -21,6 +21,8 @@ void atoms_deinit() {
 		free(c);
 		c = next;
 	}
+	
+	atoms_base = atoms_top = NULL;
 }
 
 Atom atoms_get(size_t len, const unsigned char* str) {

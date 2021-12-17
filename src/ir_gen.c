@@ -160,7 +160,7 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 			StmtOp stmt_op = stmt_arena.data[stmt].op;
 			assert(stmt_op == STMT_DECL || stmt_op == STMT_LABEL || stmt_op == STMT_FUNC_DECL);
 			
-			TypeIndex type_index = stmt_arena.data[stmt].decl_type;
+			TypeIndex type_index = stmt_arena.data[stmt].decl.type;
 			Type* type = &type_arena.data[type_index];
 			
 			if (stmt_op == STMT_LABEL) {
@@ -701,7 +701,7 @@ static void gen_stmt(TB_Function* func, StmtIndex s) {
 		}
 		case STMT_DECL: {
 			//Attribs attrs = stmt_arena.data[s].attrs;
-			TypeIndex type_index = stmt_arena.data[s].decl_type;
+			TypeIndex type_index = stmt_arena.data[s].decl.type;
 			int kind = type_arena.data[type_index].kind;
 			int size = type_arena.data[type_index].size;
 			int align = type_arena.data[type_index].align;
@@ -854,7 +854,7 @@ static void gen_func_header(TypeIndex type, StmtIndex s) {
 		tb_prototype_add_param(proto, dt);
 	}
 	
-	TB_Function* func = tb_prototype_build(mod, proto, (char*) stmt_arena.data[s].decl_name);
+	TB_Function* func = tb_prototype_build(mod, proto, (char*) stmt_arena.data[s].decl.name);
 	stmt_arena.data[s].backing.f = func;
 }
 
@@ -912,23 +912,23 @@ void gen_ir_stage1(TopLevel tl, size_t i) {
 	StmtIndex s = tl.arr[i];
 	
 	if (stmt_arena.data[s].op == STMT_FUNC_DECL) {
-		TypeIndex type = stmt_arena.data[s].decl_type;
+		TypeIndex type = stmt_arena.data[s].decl.type;
 		assert(type_arena.data[type].kind == KIND_FUNC);
 		
 		gen_func_header(type, s);
 	} else if (stmt_arena.data[s].op == STMT_DECL) {
-		TypeIndex type = stmt_arena.data[s].decl_type;
+		TypeIndex type = stmt_arena.data[s].decl.type;
 		
 		// TODO(NeGate): Implement other global forward decls
 		if (type_arena.data[type].kind != KIND_FUNC) {
 			abort();
 		}
 		
-		if (!stmt_arena.data[s].attrs.is_used) {
+		if (!stmt_arena.data[s].decl.attrs.is_used) {
 			return;
 		}
 		
-		stmt_arena.data[s].backing.e = tb_module_extern(mod, (char*) stmt_arena.data[s].decl_name);
+		stmt_arena.data[s].backing.e = tb_module_extern(mod, (char*) stmt_arena.data[s].decl.name);
 	}
 }
 
@@ -937,7 +937,7 @@ void gen_ir_stage2(TopLevel tl, size_t i) {
 	StmtIndex end = i + 1 < arrlen(tl.arr) ? tl.arr[i+1] : stmt_arena.count;
 	
 	if (stmt_arena.data[s].op == STMT_FUNC_DECL) {
-		TypeIndex type = stmt_arena.data[s].decl_type;
+		TypeIndex type = stmt_arena.data[s].decl.type;
 		assert(type_arena.data[type].kind == KIND_FUNC);
 		
 		gen_func_body(type, s, end);

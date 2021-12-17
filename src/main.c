@@ -8,6 +8,10 @@
 #include "../ext/threads.h"
 #include "microsoft_craziness.h"
 
+// used for the weird stuff in the live compiler
+#include <signal.h>
+#include <setjmp.h>
+
 char compiler_directory[260];
 
 #define COMPILER_VERSION ""
@@ -80,6 +84,7 @@ static void print_help(const char* executable_path) {
 		   "Commands:\n"
 		   "  build      Compiles the input file/directory\n"
 		   "  run        Compiles & runs the input file/directory\n"
+		   "  live       Live recompilation of C into the terminal as you edit\n"
 		   "  version    Prints the installed compiler's version\n"
 		   "  bindgen    Generate API binding descriptions\n"
 		   "  help       More detailed help for the input command\n"
@@ -87,7 +92,7 @@ static void print_help(const char* executable_path) {
 		   executable_path);
 }
 
-static void compile_project(const char source_file[], const char filename[]) {
+static void compile_project(const char source_file[], const char obj_output_path[]) {
 	clock_t t1 = clock();
 	
 	// Preprocess file
@@ -122,6 +127,7 @@ static void compile_project(const char source_file[], const char filename[]) {
 		frontend_stage = 1;
 		dispatch_tasks(arrlen(top_level.arr));
 		arrfree(s.tokens);
+		arrfree(top_level.arr);
 		
 		// Just let's the threads know that 
 		// they might need to die now
@@ -138,9 +144,6 @@ static void compile_project(const char source_file[], const char filename[]) {
 	if (!tb_module_compile(mod)) abort();
 	
 	// Generate object file
-	static char obj_output_path[260];
-	sprintf_s(obj_output_path, 260, "%s.obj", filename);
-	
 	FILE* f = fopen(obj_output_path, "wb");
 	if (!tb_module_export(mod, f)) abort();
 	fclose(f);
@@ -172,7 +175,7 @@ static void link_object_file(const char filename[]) {
 	working_dir[working_dir_len++] = '/';
 	working_dir[working_dir_len] = '\0';
 	
-	wchar_t output_file_no_ext[260];
+	static wchar_t output_file_no_ext[260];
 	swprintf(output_file_no_ext, 260, L"%s%S", working_dir, filename);
 	
 	static wchar_t cmd_line[1024];
@@ -184,7 +187,7 @@ static void link_object_file(const char filename[]) {
 			 vswhere.vs_library_path, vswhere.windows_sdk_ucrt_library_path, vswhere.windows_sdk_um_library_path,
 			 libraries, output_file_no_ext);
 	
-	wchar_t* exe_path = malloc(260 * sizeof(wchar_t));
+	static wchar_t exe_path[260];
 	swprintf(exe_path, 260, L"%s\\link.exe", vswhere.vs_exe_path);
 	
 	STARTUPINFOW si = {
@@ -214,9 +217,106 @@ static void link_object_file(const char filename[]) {
 	double delta_ms = (t2 - t1) / (double)CLOCKS_PER_SEC;
 	printf("linking took %.03f seconds\n", delta_ms);
 }
+
+static bool disassemble_object_file(const char filename[]) {
+	clock_t t1 = clock();
+	MicrosoftCraziness_Find_Result vswhere = MicrosoftCraziness_find_visual_studio_and_windows_sdk();
+	
+	static wchar_t cmd_line[260];
+	swprintf(cmd_line, 260, L"%s\\dumpbin.exe /nologo /disasm:nobytes %S.obj", vswhere.vs_exe_path, filename);
+	
+	STARTUPINFOW si = {
+		.cb = sizeof(STARTUPINFOW),
+		.dwFlags = STARTF_USESTDHANDLES,
+		.hStdInput = GetStdHandle(STD_INPUT_HANDLE),
+		.hStdError = GetStdHandle(STD_ERROR_HANDLE),
+		.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE)
+	};
+	
+	PROCESS_INFORMATION pi = {};
+	if (!CreateProcessW(NULL, cmd_line, NULL, NULL, TRUE, 0, NULL, NULL, &si, &pi)) {
+		printf("Disassembly failed!\n");
+		return false;
+	}
+	
+	// Wait until child process exits.
+	WaitForSingleObject(pi.hProcess, INFINITE);
+	
+	// Close process and thread handles. 
+	CloseHandle(pi.hProcess);
+	CloseHandle(pi.hThread);
+	
+	MicrosoftCraziness_free_resources(&vswhere);
+	
+	clock_t t2 = clock();
+	double delta_ms = (t2 - t1) / (double)CLOCKS_PER_SEC;
+	printf("disassembly took %.03f seconds\n", delta_ms);
+	return true;
+}
+
+static uint64_t get_last_write_time(const char filepath[]) {
+	WIN32_FIND_DATA data;
+	FindFirstFile(filepath, &data);
+	
+	ULARGE_INTEGER i;
+	i.LowPart = data.ftLastWriteTime.dwLowDateTime;
+	i.HighPart = data.ftLastWriteTime.dwHighDateTime;
+	return i.QuadPart;
+}
 #else
-#error "Implement linker for this platform"
+#error "Implement linker & disassembler for this platform"
 #endif
+
+static void get_compiler_directory(const char executable_path[]) {
+	// find the slash before the last slash
+	// TODO(NeGate): Fix this code up it's a mess
+	char* slash = strrchr(executable_path, '/');
+	if (slash) {
+		*slash = '\0';
+		slash = strrchr(executable_path, '/');
+		
+		if (!slash) {
+			printf("Could not find compiler binary path\n");
+			abort();
+		}
+	} else {
+		// try the other slashes i guess :P
+		slash = strrchr(executable_path, '\\');
+		
+		if (slash) {
+			*slash = '\0';
+			slash = strrchr(executable_path, '\\');
+			
+			if (!slash) {
+				printf("Could not find compiler binary path\n");
+				abort();
+			}
+		} else {
+			printf("Could not find compiler binary path\n");
+			abort();
+		}
+	}
+	
+	size_t slash_pos = slash - executable_path;
+	memcpy_s(compiler_directory, 258, executable_path, slash_pos);
+	compiler_directory[slash_pos] = '/';
+	
+	for (size_t i = 0; i < 260; i++) {
+		if (compiler_directory[i] == '\\') compiler_directory[i] = '/';
+	}
+	
+	// its a global it should be zero there already
+	//compiler_directory[slash_pos] = 0;
+}
+
+static jmp_buf live_compiler_savepoint;
+
+static void live_compiler_abort(int signo) {
+	longjmp(live_compiler_savepoint, 1);
+}
+
+static char filename[260];
+static char obj_output_path[260];
 
 int main(int argc, char* argv[]) {
 #if 1
@@ -226,70 +326,95 @@ int main(int argc, char* argv[]) {
 		return -1;
 	}
 	
+	get_compiler_directory(argv[0]);
+	
 	char* cmd = argv[1];
 	if (strcmp(cmd, "run") == 0) {
 		printf("Not ready yet sorry!\n");
-	} else if (strcmp(cmd, "build") == 0) {
+	} else if (strcmp(cmd, "live") == 0) {
 		if (argc < 2) {
 			printf("Expected filename\n");
 			return -1;
 		}
-		
-		// Get compiler directory
-		{
-			// find the slash before the last slash
-			// TODO(NeGate): Fix this code up it's a mess
-			char* slash = strrchr(argv[0], '/');
-			if (slash) {
-				*slash = '\0';
-				slash = strrchr(argv[0], '/');
-				
-				if (!slash) {
-					printf("Could not find compiler binary path\n");
-					abort();
-				}
-			} else {
-				// try the other slashes i guess :P
-				slash = strrchr(argv[0], '\\');
-				
-				if (slash) {
-					*slash = '\0';
-					slash = strrchr(argv[0], '\\');
-					
-					if (!slash) {
-						printf("Could not find compiler binary path\n");
-						abort();
-					}
-				} else {
-					printf("Could not find compiler binary path\n");
-					abort();
-				}
-			}
-			
-			size_t slash_pos = slash - argv[0];
-			memcpy_s(compiler_directory, 258, argv[0], slash_pos);
-			compiler_directory[slash_pos] = '/';
-			
-			for (size_t i = 0; i < 260; i++) {
-				if (compiler_directory[i] == '\\') compiler_directory[i] = '/';
-			}
-		}
-		
-		// its a global it should be cleared already
-		//compiler_directory[slash_pos] = 0;
 		
 		// Get filename without extension
 		const char* source_file = argv[2];
 		const char* ext = strrchr(source_file, '.');
 		if (!ext) ext = source_file + strlen(source_file);
 		
-		static char temp_buffer[259];
-		memcpy_s(temp_buffer, 260, source_file, ext - source_file);
-		temp_buffer[ext - source_file] = '\0';
+		memcpy_s(filename, 260, source_file, ext - source_file);
+		filename[ext - source_file] = '\0';
+		
+		sprintf_s(obj_output_path, 260, "%s.obj", filename);
 		
 		// Build project
-		compile_project(source_file, temp_buffer);
-		link_object_file(temp_buffer);
+#if _WIN32
+		if (signal(SIGABRT, live_compiler_abort) == SIG_ERR) {
+			printf("Failed to set signal handler.\n");
+			return -1;
+		}
+		
+		uint64_t original_last_write = get_last_write_time(source_file);
+		while (true) {
+			system("cls");
+			
+			// bootlegy exception handler...
+			if (setjmp(live_compiler_savepoint) == 0) {
+				compile_project(source_file, obj_output_path);
+				disassemble_object_file(filename);
+			} else {
+				// set exception handling again because it's unset once it's signalled... i think?
+				if (signal(SIGABRT, live_compiler_abort) == SIG_ERR) {
+					printf("Failed to set signal handler.\n");
+					return -1;
+				}
+			}
+			
+			// Wait for the user to save again
+			while (true) {
+				uint64_t current_last_write = get_last_write_time(source_file);
+				if (original_last_write != current_last_write) {
+					original_last_write = current_last_write;
+					
+					// wait for it to finish writing before trying to compile
+					int ticks = 0;
+					while (GetFileAttributesA(source_file) == INVALID_FILE_ATTRIBUTES) {
+						SleepEx(1, FALSE);
+						
+						if (ticks++ > 100) {
+							printf("Live compiler timeout!");
+							abort();
+						}
+					}
+					break;
+				}
+				
+				SleepEx(100, FALSE);
+			}
+		}
+#else
+		printf("Live compiler not supported");
+		return -1;
+#endif
+	} else if (strcmp(cmd, "build") == 0) {
+		if (argc < 2) {
+			printf("Expected filename\n");
+			return -1;
+		}
+		
+		// Get filename without extension
+		const char* source_file = argv[2];
+		const char* ext = strrchr(source_file, '.');
+		if (!ext) ext = source_file + strlen(source_file);
+		
+		memcpy_s(filename, 260, source_file, ext - source_file);
+		filename[ext - source_file] = '\0';
+		
+		sprintf_s(obj_output_path, 260, "%s.obj", filename);
+		
+		// Build project
+		compile_project(source_file, obj_output_path);
+		link_object_file(filename);
 	} else if (strcmp(cmd, "bindgen") == 0) {
 		printf("Not ready yet sorry!\n");
 	} else if (strcmp(cmd, "help") == 0) {

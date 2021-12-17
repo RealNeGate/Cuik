@@ -115,8 +115,8 @@ TopLevel parse_file(TokenStream* restrict s) {
 				StmtIndex n = push_stmt_arena(1);
 				stmt_arena.data[n] = (Stmt) {
 					.op = STMT_DECL,
-					.decl_type = decl.type,
-					.decl_name = decl.name,
+					.decl.type = decl.type,
+					.decl.name = decl.name,
 				};
 				
 				Symbol func_symbol = (Symbol){
@@ -191,12 +191,15 @@ TopLevel parse_file(TokenStream* restrict s) {
 			
 			// Parameters are local and a special case how tf
 			assert(sym->storage_class != STORAGE_PARAM);
-			stmt_arena.data[sym->stmt].attrs.is_used = true;
+			stmt_arena.data[sym->stmt].decl.attrs.is_used = true;
 			
 			expr_arena.data[i].op = EXPR_SYMBOL;
 			expr_arena.data[i].symbol = sym->stmt;
 		}
 	}
+	
+	local_symbol_count = 0;
+	shfree(global_symbols);
 	
 	return (TopLevel) { top_level };
 }
@@ -273,8 +276,8 @@ static StmtIndex parse_compound_stmt(TokenStream* restrict s) {
 				StmtIndex n = push_stmt_arena(1);
 				stmt_arena.data[n] = (Stmt) {
 					.op = STMT_DECL,
-					.decl_type = decl.type,
-					.decl_name = decl.name,
+					.decl.type = decl.type,
+					.decl.name = decl.name,
 				};
 				local_symbols[local_symbol_count++] = (Symbol){
 					.name = decl.name,
@@ -416,7 +419,7 @@ static StmtIndex parse_stmt(TokenStream* restrict s) {
 		
 		StmtIndex n = push_stmt_arena(1);
 		stmt_arena.data[n].op = STMT_LABEL;
-		stmt_arena.data[n].label_name = name;
+		stmt_arena.data[n].label.name = name;
 		shput(labels, name, n);
 		
 		tokens_next(s);
@@ -471,7 +474,7 @@ static ExprIndex parse_expr_l0(TokenStream* restrict s) {
 					.param_num = sym->param_num
 				};
 			} else {
-				stmt_arena.data[sym->stmt].attrs.is_used = true;
+				stmt_arena.data[sym->stmt].decl.attrs.is_used = true;
 				
 				expr_arena.data[e] = (Expr) {
 					.op = EXPR_SYMBOL,

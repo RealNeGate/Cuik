@@ -218,6 +218,8 @@ typedef enum ExprOp {
 	EXPR_PRE_DEC,
 	EXPR_POST_INC,
 	EXPR_POST_DEC,
+	
+	EXPR_MAX
 } ExprOp;
 
 typedef struct Stmt {
@@ -228,14 +230,23 @@ typedef struct Stmt {
 	// TODO(NeGate): const char* pos;
 	
 	union {
-		// STMT_LABEL
-		Atom label_name;
 		struct {
-			// STMT_DECL or STMT_FUNC_DECL
+			int decl_count;
+		} for1;
+		// STMT_FOR2
+		struct {
+			StmtIndex body, next;
+		} for2;
+		// STMT_LABEL
+		struct {
+			Atom name;
+		} label;
+		// STMT_DECL or STMT_FUNC_DECL
+		struct {
 			Attribs attrs;
-			TypeIndex decl_type : 24;
-			Atom decl_name;
-		};
+			TypeIndex type;
+			Atom name;
+		} decl;
 		struct {
 			// STMT_IF, STMT_FOR, STMT_WHILE, STMT_DO_WHILE
 			// STMT_DECL if it's a function

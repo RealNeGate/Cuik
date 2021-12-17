@@ -24,10 +24,15 @@ type ## Index push_ ## arena (size_t c);
 #define impl_arena(type, arena) \
 type ## Arena arena; \
 void init_ ## arena (size_t c) { \
+if (arena.data) { \
+arena.count = 1; \
+memset(&arena.data[0], 0, sizeof(arena.data[0])); \
+} else { \
 arena.capacity = c; \
 arena.count = 1; \
 arena.data = malloc(arena.capacity * sizeof(arena.data[0])); \
 memset(&arena.data[0], 0, sizeof(arena.data[0])); \
+} \
 } \
 void free_ ## arena () { \
 arena.capacity = arena.count = 0; \

@@ -117,8 +117,12 @@ TokenStream preprocess_translation_unit(const char* filepath) {
 	TokenStream s = { 0 };
 	preprocess_file(&c, &s, "", filepath);
 	
+	Token t = { 0, NULL, NULL, 0 };
+	arrput(s.tokens, t);
+	
 	//dump_macro_defines(&c);
 	
+	free_virtual_memory((void*)c.the_shtuffs);
 	free_virtual_memory((void*)c.macro_bucket_keys);
 	free_virtual_memory((void*)c.macro_bucket_keys_length);
 	free_virtual_memory((void*)c.macro_bucket_values_start);
@@ -160,6 +164,8 @@ static void expand_double_hash(Context* restrict c, Token* last, Lexer* restrict
 static void preprocess_file(Context* restrict c, TokenStream* restrict s, const char* directory, const char* filepath) {
 	unsigned char* text = (unsigned char*)read_entire_file(filepath);
 	Lexer l = (Lexer) { filepath, text, text, 1 };
+	
+	printf("%s\n\n\n", text);
 	
 	lexer_read(&l);
 	do {
