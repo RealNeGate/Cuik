@@ -261,7 +261,8 @@ void lexer_read(Lexer* restrict l) {
 			mask = _mm_or_si128(mask, _mm_cmpeq_epi8(chars, _mm_set1_epi8('\n')));
 			
             int len = __builtin_ffs(~_mm_movemask_epi8(mask));
-            current += (len / 2) - 1;
+            current += len - 1;
+			l->current_line += (len/2) - 1;
             goto redo_lex;
 		} else if (*current == ' ' || *current == '\t') {
 			// slow path

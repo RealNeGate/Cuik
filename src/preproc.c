@@ -165,8 +165,6 @@ static void preprocess_file(Context* restrict c, TokenStream* restrict s, const 
 	unsigned char* text = (unsigned char*)read_entire_file(filepath);
 	Lexer l = (Lexer) { filepath, text, text, 1 };
 	
-	printf("%s\n\n\n", text);
-	
 	lexer_read(&l);
 	do {
 		l.hit_line = false;

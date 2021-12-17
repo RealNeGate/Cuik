@@ -1,0 +1,4 @@
+
+int cuik_metaprogram() {
+	return 0;
+}

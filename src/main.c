@@ -1,9 +1,12 @@
+// TODO(NeGate): This code would love some eyeballs but like those with skills
+// in fixing it not judging it because it's self-aware and would rather people
+// not hurt it's poor shit-box code feelings.
 #include "preproc.h"
 #include "parser.h"
 #include "ir_gen.h"
 #include "atoms.h"
+#include "timer.h"
 #include "stb_ds.h"
-#include <time.h>
 #include <stdatomic.h>
 #include "../ext/threads.h"
 #include "microsoft_craziness.h"
@@ -12,6 +15,7 @@
 #include <signal.h>
 #include <setjmp.h>
 
+// used by the preprocessor
 char compiler_directory[260];
 
 #define COMPILER_VERSION ""
@@ -55,11 +59,6 @@ static int task_thread(void* param) {
 			continue;
 		}
 		
-		for (size_t i = 0; i < MAX_MUNCH; i++) {
-			if (frontend_stage == 0) gen_ir_stage1(top_level, t+i);
-			else gen_ir_stage2(top_level, t+i);
-		}
-		
 		tasks_complete += MAX_MUNCH;
 	}
 	
@@ -92,9 +91,7 @@ static void print_help(const char* executable_path) {
 		   executable_path);
 }
 
-static void compile_project(const char source_file[], const char obj_output_path[]) {
-	clock_t t1 = clock();
-	
+static void compile_project(TB_Arch arch, TB_System sys, const char source_file[], bool is_multithreaded) {
 	// Preprocess file
 	TokenStream s = preprocess_translation_unit(source_file);
 	
@@ -106,18 +103,32 @@ static void compile_project(const char source_file[], const char obj_output_path
 	//print_tree(top_level);
 	
 	// Generate IR
-	{
+	// TODO(NeGate): Globals amirite... yea maybe i'll maybe move the TB_Module from the
+	// globals but at the same time, it's a thread safe interface for the most part you're
+	// supposed to keep a global one and use it across multiple threads.
+	if (!is_multithreaded) {
+		// NOTE(NeGate): The metaprogram always compiles on one thread for simplicity
+		TB_FeatureSet features = { 0 };
+		mod = tb_module_create(TB_ARCH_X86_64, TB_SYSTEM_WINDOWS, &features, TB_OPT_O0, 1, false);
+		
+		// Forward decls
+		size_t func_count = arrlen(top_level.arr);
+		for (size_t i = 0; i < func_count; i++) {
+			gen_ir_stage1(top_level, i);
+		}
+		
+		// IR generation
+		for (size_t i = 0; i < func_count; i++) {
+			gen_ir_stage2(top_level, i);
+		}
+	} else {
 		is_running = true;
 		for (int i = 0; i < NUM_THREADS; i++) {
 			thrd_create(&threads[i], task_thread, NULL);
 		}
 		
 		TB_FeatureSet features = { 0 };
-		mod = tb_module_create(TB_ARCH_X86_64,
-							   TB_SYSTEM_WINDOWS,
-							   &features,
-							   TB_OPT_O0,
-							   NUM_THREADS, false);
+		mod = tb_module_create(arch, sys, &features, TB_OPT_O0, NUM_THREADS, false);
 		
 		// Forward decls
 		frontend_stage = 0;
@@ -126,6 +137,7 @@ static void compile_project(const char source_file[], const char obj_output_path
 		// Generate bodies
 		frontend_stage = 1;
 		dispatch_tasks(arrlen(top_level.arr));
+		
 		arrfree(s.tokens);
 		arrfree(top_level.arr);
 		
@@ -139,21 +151,10 @@ static void compile_project(const char source_file[], const char obj_output_path
 			thrd_join(threads[i], NULL);
 		}
 	}
+	atoms_deinit();
 	
 	// Compile
 	if (!tb_module_compile(mod)) abort();
-	
-	// Generate object file
-	FILE* f = fopen(obj_output_path, "wb");
-	if (!tb_module_export(mod, f)) abort();
-	fclose(f);
-	
-	tb_module_destroy(mod);
-	atoms_deinit();
-	
-	clock_t t2 = clock();
-	double delta_ms = (t2 - t1) / (double)CLOCKS_PER_SEC;
-	printf("compilation took %.03f seconds\n", delta_ms);
 }
 
 #if _WIN32
@@ -180,15 +181,12 @@ static void link_object_file(const char filename[]) {
 	
 	static wchar_t cmd_line[1024];
 	swprintf(cmd_line, 1024,
-			 L"/nologo /machine:amd64 /subsystem:console"
+			 L"%s\\link.exe /nologo /machine:amd64 /subsystem:console"
 			 " /debug:full /entry:mainCRTStartup /pdb:%s.pdb /out:%s.exe /libpath:\"%s\""
 			 " /libpath:\"%s\" /libpath:\"%s\" /defaultlib:libcmt %S %s.obj",
-			 output_file_no_ext, output_file_no_ext,
+			 vswhere.vs_exe_path, output_file_no_ext, output_file_no_ext,
 			 vswhere.vs_library_path, vswhere.windows_sdk_ucrt_library_path, vswhere.windows_sdk_um_library_path,
 			 libraries, output_file_no_ext);
-	
-	static wchar_t exe_path[260];
-	swprintf(exe_path, 260, L"%s\\link.exe", vswhere.vs_exe_path);
 	
 	STARTUPINFOW si = {
 		.cb = sizeof(STARTUPINFOW),
@@ -200,7 +198,7 @@ static void link_object_file(const char filename[]) {
 	PROCESS_INFORMATION pi = {};
 	
 	//printf("Linker command:\n%S %S\n", exe_path, cmd_line);
-	if (!CreateProcessW(exe_path, cmd_line, NULL, NULL, TRUE, 0, NULL, working_dir, &si, &pi)) {
+	if (!CreateProcessW(NULL, cmd_line, NULL, NULL, TRUE, 0, NULL, working_dir, &si, &pi)) {
 		panic("Linker command could not be executed.");
 	}
 	
@@ -309,17 +307,39 @@ static void get_compiler_directory(const char executable_path[]) {
 	//compiler_directory[slash_pos] = 0;
 }
 
+// NOTE(NeGate): This is lowkey a mess but essentially if
+// the live-compiler crashes we wanna just ignore it and continue
 static jmp_buf live_compiler_savepoint;
-
 static void live_compiler_abort(int signo) {
 	longjmp(live_compiler_savepoint, 1);
 }
 
-static char filename[260];
-static char obj_output_path[260];
+static TB_Arch get_host_architecture() {
+#if defined(__x86_64__) || defined(_M_X64)
+	return TB_ARCH_X86_64;
+#elif defined(__aarch64__) || defined(_M_ARM64)
+	return TB_ARCH_AARCH64;
+#else
+	abort();
+#endif
+}
+
+static TB_System get_host_system() {
+#if defined(_WIN32)
+	return TB_SYSTEM_WINDOWS;
+#elif defined(__MACH__)
+	return TB_SYSTEM_MACOS;
+#elif defined(unix) || defined(__unix__) || defined(__unix)
+	return TB_SYSTEM_LINUX;
+#else
+	abort();
+#endif
+}
 
 int main(int argc, char* argv[]) {
-#if 1
+	static char filename[260];
+	static char obj_output_path[260];
+	
 	if (argc == 1) {
 		printf("Expected command!\n");
 		print_help(argv[0]);
@@ -328,14 +348,74 @@ int main(int argc, char* argv[]) {
 	
 	get_compiler_directory(argv[0]);
 	
+	TB_Arch host_arch = get_host_architecture();
+	TB_System host_sys = get_host_system();
+	
+	// TODO(NeGate): Make some command line options for these
+	TB_Arch target_arch = TB_ARCH_X86_64;
+	TB_System target_sys = TB_SYSTEM_WINDOWS;
+	
 	char* cmd = argv[1];
 	if (strcmp(cmd, "run") == 0) {
-		printf("Not ready yet sorry!\n");
-	} else if (strcmp(cmd, "live") == 0) {
-		if (argc < 2) {
-			printf("Expected filename\n");
-			return -1;
+		panic("Not ready yet sorry!\n");
+	} else if (strcmp(cmd, "build") == 0) {
+		if (argc < 2) panic("Expected filename\n");
+		
+		// Get filename without extension
+		const char* source_file = argv[2];
+		const char* ext = strrchr(source_file, '.');
+		if (!ext) ext = source_file + strlen(source_file);
+		
+		memcpy_s(filename, 260, source_file, ext - source_file);
+		filename[ext - source_file] = '\0';
+		
+		sprintf_s(obj_output_path, 260, "%s.obj", filename);
+		
+		// Parse any other options
+		void* meta_entry = NULL;
+		
+		int i = 3;
+		while (i < argc) {
+			if (strcmp(argv[i], "-M") == 0) {
+				i++;
+				if (i >= argc) panic("Missing option");
+				if (meta_entry) panic("You can only specify one metaprogram.");
+				
+				// JIT compile the metaprogram
+				timed_block("meta compilation") {
+					compile_project(host_arch, host_sys, argv[i], false);
+					
+					tb_module_export_jit(mod);
+				}
+				
+				meta_entry = tb_module_get_jit_func_by_name(mod, "cuik_metaprogram");
+				if (meta_entry == NULL) {
+					panic("Metaprogram missing entrypoint, expected: cuik_metaprogram()");
+				}
+			}
+			
+			i++;
 		}
+		
+		// TODO(NeGate): Run metaprogram on AST
+		timed_block("metaprogram") {
+			
+		}
+		
+		// Build project
+		timed_block("compilation") {
+			compile_project(target_arch, target_sys, source_file, true);
+			
+			FILE* f = fopen(obj_output_path, "wb");
+			if (!tb_module_export(mod, f)) abort();
+			fclose(f);
+			
+			tb_module_destroy(mod);
+		}
+		
+		link_object_file(filename);
+	} else if (strcmp(cmd, "live") == 0) {
+		if (argc < 2) panic("Expected filename\n");
 		
 		// Get filename without extension
 		const char* source_file = argv[2];
@@ -350,7 +430,7 @@ int main(int argc, char* argv[]) {
 		// Build project
 #if _WIN32
 		if (signal(SIGABRT, live_compiler_abort) == SIG_ERR) {
-			printf("Failed to set signal handler.\n");
+			panic("Failed to set signal handler.\n");
 			return -1;
 		}
 		
@@ -360,7 +440,15 @@ int main(int argc, char* argv[]) {
 			
 			// bootlegy exception handler...
 			if (setjmp(live_compiler_savepoint) == 0) {
-				compile_project(source_file, obj_output_path);
+				timed_block("compilation") {
+					compile_project(target_arch, target_sys, source_file, true);
+					
+					FILE* f = fopen(obj_output_path, "wb");
+					if (!tb_module_export(mod, f)) abort();
+					fclose(f);
+					
+					tb_module_destroy(mod);
+				}
 				disassemble_object_file(filename);
 			} else {
 				// set exception handling again because it's unset once it's signalled... i think?
@@ -396,25 +484,6 @@ int main(int argc, char* argv[]) {
 		printf("Live compiler not supported");
 		return -1;
 #endif
-	} else if (strcmp(cmd, "build") == 0) {
-		if (argc < 2) {
-			printf("Expected filename\n");
-			return -1;
-		}
-		
-		// Get filename without extension
-		const char* source_file = argv[2];
-		const char* ext = strrchr(source_file, '.');
-		if (!ext) ext = source_file + strlen(source_file);
-		
-		memcpy_s(filename, 260, source_file, ext - source_file);
-		filename[ext - source_file] = '\0';
-		
-		sprintf_s(obj_output_path, 260, "%s.obj", filename);
-		
-		// Build project
-		compile_project(source_file, obj_output_path);
-		link_object_file(filename);
 	} else if (strcmp(cmd, "bindgen") == 0) {
 		printf("Not ready yet sorry!\n");
 	} else if (strcmp(cmd, "help") == 0) {
@@ -424,24 +493,6 @@ int main(int argc, char* argv[]) {
 		print_help(argv[0]);
 		return -1;
 	}
-#else
-	TokenStream s = preprocess_translation_unit("tests/stb_image.txt");
-	FILE* f = fopen("aa.txt", "w");
-	
-	size_t token_count = arrlen(s.tokens);
-	size_t last_line = 0;
-	for (size_t i = 0; i < token_count; i++) {
-		Token* t = &s.tokens[i];
-		if (last_line != t->line) {
-			fprintf(f, "\n\t%d:\t", t->line);
-			last_line = t->line;
-		}
-		
-		fprintf(f, "%.*s ", (int)(t->end - t->start), t->start);
-	}
-	
-	fclose(f);
-#endif
 	
 	return 0;
 }
