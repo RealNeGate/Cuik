@@ -1,4 +1,7 @@
+#include <cuik/meta.h>
 
-int cuik_metaprogram() {
-	return 0;
+extern void putchar(int ch);
+
+void cuik_metaprogram(TUnit* t) {
+	putchar('H');
 }

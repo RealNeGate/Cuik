@@ -148,6 +148,7 @@ typedef struct Lexer {
 // this is used by the preprocessor to scan tokens in
 void lexer_read(Lexer* restrict l);
 int64_t parse_int(size_t len, const char* str);
+TknType classify_ident(const unsigned char* restrict str, size_t len);
 
 inline static bool lexer_match(Lexer* restrict l, size_t len, const char str[len]) {
 	if ((l->token_end - l->token_start) != len) return false;

@@ -72,15 +72,19 @@ static char* read_entire_file(const char* file_path) {
 					
 					// NOTE(NeGate): This stuff is pretty slow code
 					// so hopefully it doesn't get called a lot
-					if (*stream == '\n') {
+					if (*stream == '\r' || *stream == '\n') {
+						bool has_cr = (*stream == '\r');
+						int sequence_len = has_cr ? 3 : 2;
+						int line_end_len = has_cr ? 2 : 1;
+						
 						int current_pos = stream - text;
 						assert(current_pos < len);
 						
-						int remaining = len - (current_pos - 1);
-						memmove(stream - 1, stream + 1, remaining + (16 - 2));
+						int remaining = len - (current_pos - line_end_len);
+						memmove(stream - line_end_len, stream + line_end_len, remaining + (16 - sequence_len));
 						
-						len -= 2;
-						stream -= 2;
+						len -= sequence_len;
+						stream -= sequence_len;
 						batch_count = ((remaining + 15) / 16) - 1;
 					}
 				} while (test_backslash_mask);

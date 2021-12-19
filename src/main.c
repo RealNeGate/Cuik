@@ -1,6 +1,7 @@
 // TODO(NeGate): This code would love some eyeballs but like those with skills
 // in fixing it not judging it because it's self-aware and would rather people
 // not hurt it's poor shit-box code feelings.
+#include "microsoft_craziness.h"
 #include "preproc.h"
 #include "parser.h"
 #include "ir_gen.h"
@@ -9,14 +10,13 @@
 #include "stb_ds.h"
 #include <stdatomic.h>
 #include "../ext/threads.h"
-#include "microsoft_craziness.h"
+
+// the cuik metaprogramming library stuff
+#include "../std/include/cuik/meta.h"
 
 // used for the weird stuff in the live compiler
 #include <signal.h>
 #include <setjmp.h>
-
-// used by the preprocessor
-char compiler_directory[260];
 
 #define COMPILER_VERSION ""
 
@@ -37,6 +37,10 @@ static size_t tasks_count;
 // forward decls (0) and one places all function bodies (1)
 static int frontend_stage;
 static TopLevel top_level;
+
+#if _WIN32
+static MicrosoftCraziness_Find_Result vswhere;
+#endif
 
 static int task_thread(void* param) {
 	while (is_running) {
@@ -82,6 +86,7 @@ static void print_help(const char* executable_path) {
 		   "  \n"
 		   "Commands:\n"
 		   "  build      Compiles the input file/directory\n"
+		   "  preproc    Runs the preprocessor on a file\n"
 		   "  run        Compiles & runs the input file/directory\n"
 		   "  live       Live recompilation of C into the terminal as you edit\n"
 		   "  version    Prints the installed compiler's version\n"
@@ -91,16 +96,33 @@ static void print_help(const char* executable_path) {
 		   executable_path);
 }
 
+static void set_preprocessor_info(CPP_Context* cpp_ctx) {
+	// TODO(NeGate): Automatically detect these somehow...
+	cpp_add_include_directory(cpp_ctx, "W:\\Windows Kits\\10\\Include\\10.0.19041.0\\ucrt\\");
+	cpp_add_include_directory(cpp_ctx, "W:\\Visual Studio\\2019\\Community\\VC\\Tools\\MSVC\\14.29.30133\\include\\");
+	
+	cpp_define_empty(cpp_ctx, "_X86_");
+	cpp_define_empty(cpp_ctx, "_WIN32");
+	cpp_define_empty(cpp_ctx, "_WIN64");
+	cpp_define_empty(cpp_ctx, "_M_X64");
+	cpp_define_empty(cpp_ctx, "_M_AMD64");
+	cpp_define_empty(cpp_ctx, "_CRT_SECURE_NO_WARNINGS");
+	
+	cpp_define(cpp_ctx, "__int64", "long long");
+}
+
 static void compile_project(TB_Arch arch, TB_System sys, const char source_file[], bool is_multithreaded) {
 	// Preprocess file
-	TokenStream s = preprocess_translation_unit(source_file);
+	CPP_Context cpp_ctx;
+	cpp_init(&cpp_ctx);
+	set_preprocessor_info(&cpp_ctx);
+	
+	TokenStream s = cpp_process(&cpp_ctx, source_file);
+	cpp_finalize(&cpp_ctx);
 	
 	// Parse
 	atoms_init();
 	top_level = parse_file(&s);
-	
-	// Uncomment for fun :)
-	//print_tree(top_level);
 	
 	// Generate IR
 	// TODO(NeGate): Globals amirite... yea maybe i'll maybe move the TB_Module from the
@@ -151,6 +173,8 @@ static void compile_project(TB_Arch arch, TB_System sys, const char source_file[
 			thrd_join(threads[i], NULL);
 		}
 	}
+	
+	cpp_deinit(&cpp_ctx);
 	atoms_deinit();
 	
 	// Compile
@@ -166,7 +190,6 @@ static void link_object_file(const char filename[]) {
 	clock_t t1 = clock();
 	
 	const char* libraries = "kernel32.lib user32.lib Gdi32.lib";
-	MicrosoftCraziness_Find_Result vswhere = MicrosoftCraziness_find_visual_studio_and_windows_sdk();
 	
 	static wchar_t working_dir[260];
 	DWORD working_dir_len = GetCurrentDirectoryW(260, working_dir);
@@ -209,8 +232,6 @@ static void link_object_file(const char filename[]) {
 	CloseHandle(pi.hProcess);
 	CloseHandle(pi.hThread);
 	
-	MicrosoftCraziness_free_resources(&vswhere);
-	
 	clock_t t2 = clock();
 	double delta_ms = (t2 - t1) / (double)CLOCKS_PER_SEC;
 	printf("linking took %.03f seconds\n", delta_ms);
@@ -218,7 +239,6 @@ static void link_object_file(const char filename[]) {
 
 static bool disassemble_object_file(const char filename[]) {
 	clock_t t1 = clock();
-	MicrosoftCraziness_Find_Result vswhere = MicrosoftCraziness_find_visual_studio_and_windows_sdk();
 	
 	static wchar_t cmd_line[260];
 	swprintf(cmd_line, 260, L"%s\\dumpbin.exe /nologo /disasm:nobytes %S.obj", vswhere.vs_exe_path, filename);
@@ -244,8 +264,6 @@ static bool disassemble_object_file(const char filename[]) {
 	CloseHandle(pi.hProcess);
 	CloseHandle(pi.hThread);
 	
-	MicrosoftCraziness_free_resources(&vswhere);
-	
 	clock_t t2 = clock();
 	double delta_ms = (t2 - t1) / (double)CLOCKS_PER_SEC;
 	printf("disassembly took %.03f seconds\n", delta_ms);
@@ -265,46 +283,30 @@ static uint64_t get_last_write_time(const char filepath[]) {
 #error "Implement linker & disassembler for this platform"
 #endif
 
-static void get_compiler_directory(const char executable_path[]) {
-	// find the slash before the last slash
-	// TODO(NeGate): Fix this code up it's a mess
-	char* slash = strrchr(executable_path, '/');
-	if (slash) {
-		*slash = '\0';
-		slash = strrchr(executable_path, '/');
-		
-		if (!slash) {
-			printf("Could not find compiler binary path\n");
-			abort();
+static void dump_tokens(const char source_file[]) {
+	// Preprocess file
+	CPP_Context cpp_ctx;
+	cpp_init(&cpp_ctx);
+	set_preprocessor_info(&cpp_ctx);
+	
+	TokenStream s = cpp_process(&cpp_ctx, source_file);
+	cpp_finalize(&cpp_ctx);
+	
+	FILE* f = fopen("./a.txt", "w");
+	
+	size_t token_count = arrlen(s.tokens);
+	size_t last_line = 0;
+	for (size_t i = 0; i < token_count; i++) {
+		Token* t = &s.tokens[i];
+		if (last_line != t->line) {
+			fprintf(f, "\n\t%d:\t", t->line);
+			last_line = t->line;
 		}
-	} else {
-		// try the other slashes i guess :P
-		slash = strrchr(executable_path, '\\');
 		
-		if (slash) {
-			*slash = '\0';
-			slash = strrchr(executable_path, '\\');
-			
-			if (!slash) {
-				printf("Could not find compiler binary path\n");
-				abort();
-			}
-		} else {
-			printf("Could not find compiler binary path\n");
-			abort();
-		}
+		fprintf(f, "%.*s ", (int)(t->end - t->start), t->start);
 	}
 	
-	size_t slash_pos = slash - executable_path;
-	memcpy_s(compiler_directory, 258, executable_path, slash_pos);
-	compiler_directory[slash_pos] = '/';
-	
-	for (size_t i = 0; i < 260; i++) {
-		if (compiler_directory[i] == '\\') compiler_directory[i] = '/';
-	}
-	
-	// its a global it should be zero there already
-	//compiler_directory[slash_pos] = 0;
+	fclose(f);
 }
 
 // NOTE(NeGate): This is lowkey a mess but essentially if
@@ -346,8 +348,11 @@ int main(int argc, char* argv[]) {
 		return -1;
 	}
 	
-	get_compiler_directory(argv[0]);
+#if _WIN32
+	vswhere = MicrosoftCraziness_find_visual_studio_and_windows_sdk();
+#endif
 	
+	// Detect host hardware
 	TB_Arch host_arch = get_host_architecture();
 	TB_System host_sys = get_host_system();
 	
@@ -358,6 +363,11 @@ int main(int argc, char* argv[]) {
 	char* cmd = argv[1];
 	if (strcmp(cmd, "run") == 0) {
 		panic("Not ready yet sorry!\n");
+	} else if (strcmp(cmd, "preproc") == 0) {
+		if (argc < 2) panic("Expected filename\n");
+		
+		const char* source_file = argv[2];
+		dump_tokens(source_file);
 	} else if (strcmp(cmd, "build") == 0) {
 		if (argc < 2) panic("Expected filename\n");
 		
@@ -372,7 +382,7 @@ int main(int argc, char* argv[]) {
 		sprintf_s(obj_output_path, 260, "%s.obj", filename);
 		
 		// Parse any other options
-		void* meta_entry = NULL;
+		CuikMetaEntrypoint* meta_entry = NULL;
 		
 		int i = 3;
 		while (i < argc) {
@@ -392,15 +402,17 @@ int main(int argc, char* argv[]) {
 				if (meta_entry == NULL) {
 					panic("Metaprogram missing entrypoint, expected: cuik_metaprogram()");
 				}
+				
+				// TODO(NeGate): Link up the metaprogramming runtime support
+				tb_jit_import(mod, "putchar", putchar);
 			}
 			
 			i++;
 		}
 		
-		// TODO(NeGate): Run metaprogram on AST
-		timed_block("metaprogram") {
-			
-		}
+		// TODO(NeGate): Run metaprogram entrypoint which sets up the hooks
+		// for the parser
+		if (meta_entry) meta_entry(NULL);
 		
 		// Build project
 		timed_block("compilation") {
@@ -494,5 +506,8 @@ int main(int argc, char* argv[]) {
 		return -1;
 	}
 	
+#if _WIN32
+	MicrosoftCraziness_free_resources(&vswhere);
+#endif
 	return 0;
 }

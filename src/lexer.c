@@ -43,9 +43,12 @@ const char keywords[][16] = {
 	"_Complex",
 	"_Generic",
 	"_Imaginary",
+	//"_Pragma",
 	"_Noreturn",
+	"_Thread_local",
 	"_Static_assert",
-	"_Thread_local"
+	//"__cdecl",
+	//"__pragma",
 };
 
 enum {
@@ -262,7 +265,7 @@ void lexer_read(Lexer* restrict l) {
 			
             int len = __builtin_ffs(~_mm_movemask_epi8(mask));
             current += len - 1;
-			l->current_line += (len/2) - 1;
+			l->current_line += (len - 1) / 2;
             goto redo_lex;
 		} else if (*current == ' ' || *current == '\t') {
 			// slow path
@@ -300,7 +303,7 @@ void lexer_read(Lexer* restrict l) {
 				current++;
 			}
 			
-			l->token_type = classify_ident(start, current - start);
+			l->token_type = TOKEN_IDENTIFIER;
 			break;
 		}
 		case CHAR_CLASS_NUMBER: {

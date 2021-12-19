@@ -276,6 +276,9 @@ extern "C" {
 	TB_API void* tb_module_get_jit_func_by_id(TB_Module* m, size_t i);
 	TB_API void* tb_module_get_jit_func(TB_Module* m, TB_Function* f);
 	
+	// Binds an external to an address
+	TB_API bool tb_jit_import(TB_Module* m, const char* name, void* address);
+	
 	TB_API TB_ExternalID tb_module_extern(TB_Module* m, const char* name);
 	TB_API TB_FileID tb_register_file(TB_Module* m, const char* path);
 	
