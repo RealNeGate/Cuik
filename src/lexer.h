@@ -110,9 +110,12 @@ typedef enum TknType {
 	TOKEN_KW_Complex,
 	TOKEN_KW_Generic,
 	TOKEN_KW_Imaginary,
+	TOKEN_KW_Pragma,
 	TOKEN_KW_Noreturn,
 	TOKEN_KW_Static_assert,
 	TOKEN_KW_Thread_local,
+	TOKEN_KW_stdcall,
+	TOKEN_KW_cdecl
 } TknType;
 
 typedef struct Token {

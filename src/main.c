@@ -109,6 +109,7 @@ static void set_preprocessor_info(CPP_Context* cpp_ctx) {
 	cpp_define_empty(cpp_ctx, "_CRT_SECURE_NO_WARNINGS");
 	
 	cpp_define(cpp_ctx, "__int64", "long long");
+	cpp_define(cpp_ctx, "__pragma", "_Pragma");
 }
 
 static void compile_project(TB_Arch arch, TB_System sys, const char source_file[], bool is_multithreaded) {

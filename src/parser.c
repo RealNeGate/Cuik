@@ -1182,6 +1182,9 @@ static TypeIndex parse_declspec(TokenStream* restrict s, Attribs* attr) {
 			case TOKEN_KW_extern: attr->is_extern = true; break;
 			case TOKEN_KW_Thread_local: attr->is_tls = true; break;
 			
+			case TOKEN_KW_cdecl: break;
+			case TOKEN_KW_stdcall: break;
+			
 			case TOKEN_KW_Atomic: is_atomic = true; break;
 			case TOKEN_KW_const: is_const = true; break;
 			case TOKEN_KW_auto: break;
