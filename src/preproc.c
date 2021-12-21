@@ -24,7 +24,7 @@ static bool find_define(CPP_Context* restrict c, string* out_val, const unsigned
 
 // this one outputs the location of the arguments list, if there's not one
 // then it's just not a parenthesis
-static bool find_define2(CPP_Context* restrict c, string* out_val, const unsigned char** out_args, const unsigned char* start, size_t length);
+static bool find_define2(CPP_Context* restrict c, size_t* out_index, const unsigned char* start, size_t length);
 
 void cpp_init(CPP_Context* ctx) {
 	size_t sz = sizeof(void*) * MACRO_BUCKET_COUNT * SLOTS_PER_MACRO_BUCKET;
@@ -668,7 +668,7 @@ static bool find_define(CPP_Context* restrict c, string* out_val, const unsigned
 	return false;
 }
 
-static bool find_define2(CPP_Context* restrict c, string* out_val, const unsigned char** out_args, const unsigned char* start, size_t length) {
+static bool find_define2(CPP_Context* restrict c, size_t* out_index, const unsigned char* start, size_t length) {
 	uint64_t slot = hash_ident(start, length);
 	size_t count = c->macro_bucket_count[slot];
 	size_t base = (slot * SLOTS_PER_MACRO_BUCKET);
@@ -678,18 +678,7 @@ static bool find_define2(CPP_Context* restrict c, string* out_val, const unsigne
 		
 		if (c->macro_bucket_keys_length[e] == length &&
 			memcmp(c->macro_bucket_keys[e], start, length) == 0) {
-			
-			const unsigned char* start = c->macro_bucket_values_start[e];
-			const unsigned char* end = c->macro_bucket_values_end[e];
-			
-			*out_args = c->macro_bucket_keys[e] +
-				c->macro_bucket_keys_length[e];
-			
-			*out_val = (string) { 
-				.data = start,
-				.length = end - start
-			};
-			
+			*out_index = e;
 			return true;
 		}
 	}
@@ -832,15 +821,19 @@ static unsigned char* expand_ident(CPP_Context* restrict c, unsigned char* restr
 		return out;
 	}
 	
-	string def;
-	const unsigned char* args;
-	if (find_define2(c, &def, &args, token_data, token_length)) {
+	size_t def_i;
+	if (find_define2(c, &def_i, token_data, token_length)) {
 		lexer_read(l);
+		
+		string def = { 
+			.data = c->macro_bucket_values_start[def_i],
+			.length = c->macro_bucket_values_end[def_i] - c->macro_bucket_values_start[def_i]
+		};
+		
+		const unsigned char* args = c->macro_bucket_keys[def_i] + c->macro_bucket_keys_length[def_i];
 		
 		// function macro
 		if (*args == '(' && l->token_type == '(') {
-			lexer_read(l);
-			
 			////////////////////////////////
 			// Parse the parameters into a map
 			////////////////////////////////
@@ -849,14 +842,15 @@ static unsigned char* expand_ident(CPP_Context* restrict c, unsigned char* restr
 			const unsigned char** value_ranges = tls_save();
 			int value_count = 0;
 			
+			lexer_read(l);
 			while (l->token_type != ')') {
 				tls_push(2 * sizeof(const unsigned char*));
 				int i = value_count++;
 				
 				value_ranges[i*2 + 0] = l->token_start;
+				
 				int paren_depth = 0;
-				do { 
-					lexer_read(l);
+				while (true) {
 					if (l->token_type == '(') {
 						paren_depth++;
 					} else if (l->token_type == ')') {
@@ -865,8 +859,11 @@ static unsigned char* expand_ident(CPP_Context* restrict c, unsigned char* restr
 					} else if (l->token_type == ',') {
 						if (paren_depth == 0) break;
 					}
-				} while (!l->hit_line);
+					lexer_read(l);
+				}
+				
 				value_ranges[i*2 + 1] = l->token_start;
+				if (l->token_type == ',') lexer_read(l);
 			}
 			
 			expect(l, ')');
@@ -906,7 +903,12 @@ static unsigned char* expand_ident(CPP_Context* restrict c, unsigned char* restr
 				////////////////////////////////
 				// Stream over the text hoping
 				// to replace some identifiers
+				// then expand the result one more
+				// time
 				////////////////////////////////
+				unsigned char* temp_expansion_start = tls_push(4096);
+				unsigned char* temp_expansion = temp_expansion_start;
+				
 				Lexer def_lex = (Lexer) { l->filepath, def.data, def.data };
 				lexer_read(&def_lex);
 				
@@ -930,9 +932,9 @@ static unsigned char* expand_ident(CPP_Context* restrict c, unsigned char* restr
 						// TODO(NeGate): Error message
 						if (as_string) abort();
 						
-						memcpy(out, token_data, token_length);
-						out += token_length;
-						*out++ = ' ';
+						memcpy(temp_expansion, token_data, token_length);
+						temp_expansion+= token_length;
+						*temp_expansion++ = ' ';
 						
 						lexer_read(&def_lex);
 						continue;
@@ -954,25 +956,43 @@ static unsigned char* expand_ident(CPP_Context* restrict c, unsigned char* restr
 						const unsigned char* end   = value_ranges[index*2 + 1];
 						const unsigned char* start = value_ranges[index*2 + 0];
 						
-						if (as_string) *out++ = '\"';
+						if (as_string) *temp_expansion++ = '\"';
 						
-						memcpy(out, start, end-start);
-						out += end-start;
+						memcpy(temp_expansion, start, end-start);
+						temp_expansion += end-start;
 						
-						if (as_string) *out++ = '\"';
-						*out++ = ' ';
+						if (as_string) *temp_expansion++ = '\"';
+						*temp_expansion++ = ' ';
 						
 						as_string = false;
 					} else {
 						// TODO(NeGate): Error message
 						if (as_string) abort();
 						
-						memcpy(out, token_data, token_length);
-						out += token_length;
-						*out++ = ' ';
+						memcpy(temp_expansion, token_data, token_length);
+						temp_expansion += token_length;
+						*temp_expansion++ = ' ';
 					}
 					
 					lexer_read(&def_lex);
+				}
+				
+				if (temp_expansion_start != temp_expansion) {
+					// expand and append
+					Lexer temp_lex = (Lexer) { l->filepath, temp_expansion_start, temp_expansion_start };
+					lexer_read(&temp_lex);
+					
+					*temp_expansion++ = '\0';
+					
+					// NOTE(NeGate): We need to disable the current macro define
+					// so it doesn't recurse.
+					size_t saved_length = c->macro_bucket_keys_length[def_i];
+					c->macro_bucket_keys_length[def_i] = 0;
+					
+					out = expand(c, out, &temp_lex);
+					tls_restore(temp_expansion_start);
+					
+					c->macro_bucket_keys_length[def_i] = saved_length;
 				}
 			}
 		} else if (def.length) {

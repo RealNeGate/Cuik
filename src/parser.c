@@ -964,6 +964,7 @@ static Decl parse_declarator(TokenStream* restrict s, TypeIndex type) {
 		Decl d = parse_declarator(s, type);
 		
 		// inherit name
+		// TODO(NeGate): I'm not sure if this is correct ngl
 		if (!d.name) {
 			TypeIndex t = d.type;
 			

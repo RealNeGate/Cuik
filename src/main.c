@@ -299,7 +299,7 @@ static void dump_tokens(const char source_file[]) {
 	for (size_t i = 0; i < token_count; i++) {
 		Token* t = &s.tokens[i];
 		if (last_line != t->line) {
-			fprintf(f, "\n\t%d:\t", t->line);
+			fprintf(f, "\n%3d:\t", t->line);
 			last_line = t->line;
 		}
 		
