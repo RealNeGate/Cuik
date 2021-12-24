@@ -361,7 +361,8 @@ static StmtIndex parse_compound_stmt(TokenStream* restrict s) {
 					// initial value
 					tokens_next(s);
 					
-					stmt_arena.data[n].expr = parse_expr(s);
+					ExprIndex e = parse_expr(s);
+					stmt_arena.data[n].expr = e;
 				}
 				
 				*((StmtIndex*)tls_push(sizeof(StmtIndex))) = n;
@@ -372,7 +373,9 @@ static StmtIndex parse_compound_stmt(TokenStream* restrict s) {
 		} else {
 			stmt = push_stmt_arena(1);
 			stmt_arena.data[stmt].op = STMT_EXPR;
-			stmt_arena.data[stmt].expr = parse_expr(s);
+			
+			ExprIndex e = parse_expr(s);
+			stmt_arena.data[stmt].expr = e;
 			
 			*((StmtIndex*)tls_push(sizeof(StmtIndex))) = stmt;
 			body_count++;
@@ -407,7 +410,8 @@ static StmtIndex parse_stmt(TokenStream* restrict s) {
 		stmt_arena.data[n].op = STMT_RETURN;
 		
 		if (tokens_get(s)->type != ';') {
-			stmt_arena.data[n].expr = parse_expr(s);
+			ExprIndex e = parse_expr(s);
+			stmt_arena.data[n].expr = e;
 		}
 		
 		expect(s, ';');
@@ -421,14 +425,18 @@ static StmtIndex parse_stmt(TokenStream* restrict s) {
 		stmt_arena.data[n].op = STMT_IF;
 		
 		expect(s, '(');
-		stmt_arena.data[n].expr = parse_expr(s);
+		ExprIndex e = parse_expr(s);
+		stmt_arena.data[n].expr = e;
 		expect(s, ')');
 		
-		stmt_arena.data[n].body = parse_stmt_or_expr(s);
+		StmtIndex body = parse_stmt_or_expr(s);
+		stmt_arena.data[n].body = body;
 		
 		if (tokens_get(s)->type == TOKEN_KW_else) {
 			tokens_next(s);
-			stmt_arena.data[n].body2 = parse_stmt_or_expr(s);
+			
+			StmtIndex body2 = parse_stmt_or_expr(s);
+			stmt_arena.data[n].body2 = body2;
 		} else {
 			stmt_arena.data[n].body2 = 0;
 		}
@@ -443,7 +451,8 @@ static StmtIndex parse_stmt(TokenStream* restrict s) {
 		stmt_arena.data[n].op = STMT_WHILE;
 		
 		expect(s, '(');
-		stmt_arena.data[n].expr = parse_expr(s);
+		ExprIndex e = parse_expr(s);
+		stmt_arena.data[n].expr = e;
 		expect(s, ')');
 		
 		StmtIndex body = parse_stmt_or_expr(s);
@@ -456,7 +465,9 @@ static StmtIndex parse_stmt(TokenStream* restrict s) {
 		
 		StmtIndex n = push_stmt_arena(1);
 		stmt_arena.data[n].op = STMT_DO_WHILE;
-		stmt_arena.data[n].body = parse_stmt_or_expr(s);
+		
+		StmtIndex body = parse_stmt_or_expr(s);
+		stmt_arena.data[n].body = body;
 		
 		if (tokens_get(s)->type != TOKEN_KW_while) {
 			Token* t = tokens_get(s);
@@ -467,7 +478,10 @@ static StmtIndex parse_stmt(TokenStream* restrict s) {
 		tokens_next(s);
 		
 		expect(s, '(');
-		stmt_arena.data[n].expr = parse_expr(s);
+		
+		ExprIndex e = parse_expr(s);
+		stmt_arena.data[n].expr = e;
+		
 		expect(s, ')');
 		expect(s, ';');
 		return n;
@@ -478,7 +492,9 @@ static StmtIndex parse_stmt(TokenStream* restrict s) {
 		
 		StmtIndex n = push_stmt_arena(1);
 		stmt_arena.data[n].op = STMT_GOTO;
-		stmt_arena.data[n].expr = parse_expr(s);
+		
+		ExprIndex e = parse_expr(s);
+		stmt_arena.data[n].expr = e;
 		
 		expect(s, ';');
 		return n;
