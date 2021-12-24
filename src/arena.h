@@ -42,6 +42,7 @@ type ## Index push_ ## arena (size_t c) { \
 if (arena.count + c >= arena.capacity) { \
 arena.capacity *= 2; \
 arena.data = realloc(arena.data, arena.capacity * sizeof(arena.data[0])); \
+if (arena.data == NULL) { printf("Out of memory: " #arena "!\n"); abort(); } \
 } \
 size_t i = arena.count; \
 arena.count += c; \

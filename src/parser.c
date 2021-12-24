@@ -81,7 +81,33 @@ TopLevel parse_file(TokenStream* restrict s) {
 	StmtIndex* top_level = NULL;
 	
 	while (tokens_get(s)->type) {
-		// program = (typedef | function-definition | global-variable)*
+		if (tokens_get(s)->type == TOKEN_KW_Pragma) {
+			tokens_next(s);
+			expect(s, '(');
+			
+			int depth = 0;
+			while (tokens_get(s)->type) {
+				if (tokens_get(s)->type == '(') depth++;
+				else if (tokens_get(s)->type == ')') {
+					if (depth == 0) break;
+					depth--;
+				}
+				
+				tokens_next(s);
+			}
+			
+			expect(s, ')');
+			continue;
+		}
+		
+		if (tokens_get(s)->type == TOKEN_KW_declspec) {
+			tokens_next(s);
+			expect(s, '(');
+			tokens_next(s);
+			expect(s, ')');
+			continue;
+		}
+		
 		Attribs attr = { 0 };
 		TypeIndex type = parse_declspec(s, &attr);
 		
@@ -168,8 +194,51 @@ TopLevel parse_file(TokenStream* restrict s) {
 				arrput(top_level, n);
 				local_symbol_count = 0;
 			} else {
-				// TODO(NeGate): Normal decls
-				abort();
+				// Normal decls
+				assert(decl.name);
+				
+				StmtIndex n = push_stmt_arena(1);
+				stmt_arena.data[n] = (Stmt) {
+					.op = STMT_DECL,
+					.decl.type = decl.type,
+					.decl.name = decl.name,
+				};
+				arrput(top_level, n);
+				
+				Symbol sym = (Symbol){
+					.name = decl.name,
+					.type = decl.type,
+					.storage_class = attr.is_static ? STORAGE_STATIC_VAR : STORAGE_GLOBAL,
+					.stmt = n
+				};
+				shput(global_symbols, decl.name, sym);
+				
+				if (tokens_get(s)->type == ',') {
+					while (tokens_get(s)->type != ';') {
+						expect(s, ',');
+						
+						Decl decl = parse_declarator(s, type);
+						assert(decl.name);
+						
+						StmtIndex n = push_stmt_arena(1);
+						stmt_arena.data[n] = (Stmt) {
+							.op = STMT_DECL,
+							.decl.type = decl.type,
+							.decl.name = decl.name,
+						};
+						arrput(top_level, n);
+						
+						Symbol sym = (Symbol){
+							.name = decl.name,
+							.type = decl.type,
+							.storage_class = attr.is_static ? STORAGE_STATIC_VAR : STORAGE_GLOBAL,
+							.stmt = n
+						};
+						shput(global_symbols, decl.name, sym);
+					}
+				}
+				
+				expect(s, ';');
 			}
 		}
 	}
@@ -177,6 +246,8 @@ TopLevel parse_file(TokenStream* restrict s) {
 	////////////////////////////////
 	// Semantics
 	////////////////////////////////
+	// NOTE(NeGate): This is a C extension, it allows normal symbols like
+	// functions
 	// NOTE(NeGate): Best thing about tables is that I don't actually have
 	// walk a tree to check all nodes :)
 	for (size_t i = 0; i < expr_arena.count; i++) {
@@ -375,7 +446,8 @@ static StmtIndex parse_stmt(TokenStream* restrict s) {
 		stmt_arena.data[n].expr = parse_expr(s);
 		expect(s, ')');
 		
-		stmt_arena.data[n].body = parse_stmt_or_expr(s);
+		StmtIndex body = parse_stmt_or_expr(s);
+		stmt_arena.data[n].body = body;
 		return n;
 	}
 	
@@ -936,6 +1008,8 @@ static Decl parse_declarator(TokenStream* restrict s, TypeIndex type) {
 			case TOKEN_KW_const:
 			case TOKEN_KW_volatile:
 			case TOKEN_KW_restrict: 
+			case TOKEN_KW_cdecl:
+			case TOKEN_KW_stdcall:
 			tokens_next(s);
 			break;
 			default: break;
@@ -1009,6 +1083,8 @@ static TypeIndex parse_abstract_declarator(TokenStream* restrict s, TypeIndex ty
 			case TOKEN_KW_const:
 			case TOKEN_KW_volatile:
 			case TOKEN_KW_restrict: 
+			case TOKEN_KW_cdecl:
+			case TOKEN_KW_stdcall:
 			tokens_next(s);
 			break;
 			default: break;
@@ -1118,6 +1194,9 @@ static TypeIndex parse_type_suffix(TokenStream* restrict s, TypeIndex type, Atom
 		
 		type_arena.data[type].func.arg_start = start;
 		type_arena.data[type].func.arg_end = start + arg_count;
+		
+		// TODO(NeGate): Actually implement var args
+		((void)has_varargs);
 		
 		tls_restore(args);
 	} else if (tokens_get(s)->type == '[') {
@@ -1234,46 +1313,56 @@ static TypeIndex parse_declspec(TokenStream* restrict s, Attribs* attr) {
 						Attribs member_attr = { 0 };
 						TypeIndex member_base_type = parse_declspec(s, &member_attr);
 						
-						Decl decl = parse_declarator(s, member_base_type);
-						TypeIndex member_type = decl.type;
-						
-						if (type_arena.data[member_type].kind == KIND_FUNC) {
-							generic_error(s, "Naw dawg");
-						}
-						
-						int member_align = type_arena.data[member_type].align;
-						int member_size = type_arena.data[member_type].size;
-						if (!is_union) {
-							offset = align_up(offset, member_align);
-						}
-						
-						// TODO(NeGate): Error check that no attribs are set
-						tls_push(sizeof(Member));
-						
-						Member* member = &members[member_count++];
-						*member = (Member) {
-							.type = member_type,
-							.name = decl.name,
-							.offset = is_union ? 0 : offset,
-							.align = member_align
-						};
-						
-						if (tokens_get(s)->type == ':') {
-							tokens_next(s);
+						// TODO(NeGate): Kinda ugly
+						// don't expect one the first time
+						bool expect_comma = false;
+						while (tokens_get(s)->type != ';') {
+							if (expect_comma) {
+								expect(s, ',');
+							} else expect_comma = true;
 							
-							// TODO(NeGate): Handle bitfields a lot better
-							member->is_bitfield = true;
-							member->bit_offset = 0;
-							member->bit_width = parse_const_expr(s);
+							Decl decl = parse_declarator(s, member_base_type);
+							TypeIndex member_type = decl.type;
+							
+							if (type_arena.data[member_type].kind == KIND_FUNC) {
+								generic_error(s, "Naw dawg");
+							}
+							
+							int member_align = type_arena.data[member_type].align;
+							int member_size = type_arena.data[member_type].size;
+							if (!is_union) {
+								offset = align_up(offset, member_align);
+							}
+							
+							// TODO(NeGate): Error check that no attribs are set
+							tls_push(sizeof(Member));
+							
+							Member* member = &members[member_count++];
+							*member = (Member) {
+								.type = member_type,
+								.name = decl.name,
+								.offset = is_union ? 0 : offset,
+								.align = member_align
+							};
+							
+							if (tokens_get(s)->type == ':') {
+								tokens_next(s);
+								
+								// TODO(NeGate): Handle bitfields a lot better
+								member->is_bitfield = true;
+								member->bit_offset = 0;
+								member->bit_width = parse_const_expr(s);
+							}
+							
+							if (is_union) {
+								if (member_size < offset) offset = member_size;
+							} else {
+								offset += member_size;
+							}
+							
+							if (member_align > align) align = member_align;
 						}
 						
-						if (is_union) {
-							if (member_size < offset) offset = member_size;
-						} else {
-							offset += member_size;
-						}
-						
-						if (member_align > align) align = member_align;
 						expect(s, ';');
 					}
 					

@@ -1,9 +1,9 @@
 #pragma once
 
+#include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
-#include <string.h>
 #include <limits.h>
 #include <assert.h>
 #include <stdbool.h>
@@ -32,3 +32,9 @@ void* tls_peek(size_t distance);
 inline static bool cstr_equals(const unsigned char* str1, const unsigned char* str2) {
 	return strcmp((const char*)str1, (const char*)str2) == 0;
 }
+
+// NOTE(NeGate): This isn't correct just a shitty workaround
+#ifdef CUIK_NEEDS_SAFE_FUNCTIONS
+#define memcpy_s(dst, dstsz, src, count) memcpy(dst, src, count)
+#define sprintf_s(str, num, fmt, ...) sprintf(str, fmt, __VA_ARGS__)
+#endif

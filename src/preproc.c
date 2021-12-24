@@ -46,15 +46,15 @@ void cpp_deinit(CPP_Context* ctx) {
 		cpp_finalize(ctx);
 	}
 	
-	free_virtual_memory((void*)ctx->the_shtuffs);
+	free((void*)ctx->the_shtuffs);
 	ctx->the_shtuffs = NULL;
 }
 
 void cpp_finalize(CPP_Context* ctx) {
-	free_virtual_memory((void*)ctx->macro_bucket_keys);
-	free_virtual_memory((void*)ctx->macro_bucket_keys_length);
-	free_virtual_memory((void*)ctx->macro_bucket_values_start);
-	free_virtual_memory((void*)ctx->macro_bucket_values_end);
+	free((void*)ctx->macro_bucket_keys);
+	free((void*)ctx->macro_bucket_keys_length);
+	free((void*)ctx->macro_bucket_values_start);
+	free((void*)ctx->macro_bucket_values_end);
 	
 	ctx->macro_bucket_keys = NULL;
 	ctx->macro_bucket_keys_length = NULL;
@@ -447,23 +447,17 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 					PragmaOnceEntry* e = shgetp_null(c->pragma_once_s, path);
 					if (e == NULL) {
 						// TODO(NeGate): Remove these heap allocations later they're... evil!!!
-						char* new_path = _strdup(path);
-						char* new_dir = _strdup(path);
+						char* new_path = strdup(path);
+						char* new_dir = strdup(path);
 						
-						// just trim at the last slash
-						// TODO(NeGate): Clean up
-						char* curr = new_dir;
-						char* slash = NULL;
-						while (*curr) {
-							if (*curr == '/') slash = curr;
-							curr++;
+						char* slash = strrchr(new_dir, '\\');
+						if (!slash) {
+							slash = strrchr(new_dir, '/');
+							if (!slash) abort();
 						}
+						slash[1] = '\0';
 						
-						if (slash) {
-							slash[1] = '\0';
-						}
-						
-						printf("  %s\n", new_path);
+						//printf("  %s\n", new_path);
 						preprocess_file(c, s, new_dir, new_path);
 					}
 				} else if (lexer_match(&l, 6, "pragma")) {

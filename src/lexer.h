@@ -114,8 +114,9 @@ typedef enum TknType {
 	TOKEN_KW_Noreturn,
 	TOKEN_KW_Static_assert,
 	TOKEN_KW_Thread_local,
+	TOKEN_KW_cdecl,
 	TOKEN_KW_stdcall,
-	TOKEN_KW_cdecl
+	TOKEN_KW_declspec,
 } TknType;
 
 typedef struct Token {

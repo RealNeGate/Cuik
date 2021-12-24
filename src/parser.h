@@ -324,6 +324,7 @@ typedef enum StorageClass {
 	
 	STORAGE_FUNC,
 	STORAGE_PARAM,
+	STORAGE_GLOBAL,
 	STORAGE_LOCAL
 } StorageClass;
 

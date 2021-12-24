@@ -47,8 +47,9 @@ const char keywords[][16] = {
     "_Noreturn",
     "_Static_assert",
     "_Thread_local",
-    "__stdcall",
     "__cdecl",
+    "__stdcall",
+	"__declspec"
 };
 
 enum {
@@ -129,7 +130,7 @@ static _Alignas(64) uint8_t space_char_tbl[] = {
 };
 
 __attribute__((always_inline))
-static bool is_space(char ch) {
+inline static bool is_space(char ch) {
 	size_t i = ch;
 	size_t index = i / 8;
 	size_t shift = i & 7;
@@ -172,13 +173,13 @@ TknType classify_ident(const unsigned char* restrict str, size_t len) {
 		0x657ACFE2,0x65D6DED8,0x676E6F6C,0x696CD3D7,0x6C6968DC,0x6D756E65,0x6E67CDD8,0x6F696EE3,
 		0x6F6F42CB,0x6F746F67,0x6F747561,0x6FD7AACC,0x72616863,0x726F68E7,0x736E6FD7,0x7461D7DC,
 		0x7469DFD6,0x7572E8D6,0x7574D3E4,0xC2DC2C38,0xC6D8D8EA,0xCDD8DCDC,0xCFDBAFC6,0xD1CEB9C4,
-		0xD9E3DDCC,0xDBCCD9E5,0xDCCDAFC6,0xE0D4C32F,0xE4E4C332,0xE5D4AFCF,0xE8D6CEE4,0xFFFFFFFF,
+		0xD5D82F27,0xD9E3DDCC,0xDBCCD9E5,0xDCCDAFC6,0xE0D4C32F,0xE4E4C332,0xE5D4AFCF,0xE8D6CEE4,
 		0xFFFFFFFF,0xFFFFFFFF,0xFFFFFFFF,0xFFFFFFFF,0xFFFFFFFF,0xFFFFFFFF,0xFFFFFFFF,0xFFFFFFFF,
 		0xFFFFFFFF,0xFFFFFFFF,0xFFFFFFFF,0xFFFFFFFF,0xFFFFFFFF,0xFFFFFFFF,0xFFFFFFFF,0xFFFFFFFF,
 		
 	};
 	const static uint32_t values[64] = {
-		15,7,13,17,43,44,1,12,41,6,8,31,46,2,9,11,24,28,18,16,33,10,23,29,37,14,0,36,3,22,4,25,27,26,21,40,32,30,35,39,5,19,34,45,42,38,20,
+		15,7,13,17,43,44,1,12,41,6,8,31,45,2,9,11,24,28,18,16,33,10,23,29,37,14,0,36,3,22,4,25,27,26,21,40,32,30,35,39,47,5,19,34,46,42,38,20,
 	};
 	
 	// HASH STRING
@@ -357,7 +358,7 @@ void lexer_read(Lexer* restrict l) {
 		}
 		case CHAR_CLASS_STRING: {
 			char quote_type = *start;
-			__m128 pattern = _mm_set1_epi8(quote_type);
+			__m128i pattern = _mm_set1_epi8(quote_type);
 			
 			do {
 				__m128i chars = _mm_loadu_si128((__m128i *)current);

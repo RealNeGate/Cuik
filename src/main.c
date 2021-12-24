@@ -11,9 +11,6 @@
 #include <stdatomic.h>
 #include "../ext/threads.h"
 
-// the cuik metaprogramming library stuff
-#include "../std/include/cuik/meta.h"
-
 // used for the weird stuff in the live compiler
 #include <signal.h>
 #include <setjmp.h>
@@ -24,7 +21,7 @@
 #define NUM_THREADS 6
 
 // this is how many IR gen tasks it tries to grab at any one time
-#define MAX_MUNCH 256
+#define MAX_MUNCH 1024
 
 static thrd_t threads[NUM_THREADS];
 
@@ -63,6 +60,10 @@ static int task_thread(void* param) {
 			continue;
 		}
 		
+		for (size_t i = 0; i < MAX_MUNCH; i++) {
+			if (frontend_stage == 0) gen_ir_stage1(top_level, t+i);
+			else gen_ir_stage2(top_level, t+i);
+		}
 		tasks_complete += MAX_MUNCH;
 	}
 	
@@ -97,8 +98,14 @@ static void print_help(const char* executable_path) {
 }
 
 static void set_preprocessor_info(CPP_Context* cpp_ctx) {
+	// TODO(NeGate): We should implement cross-compilation features, it just
+	// means we somehow expose this stuff so that the user can provide it.
+	
+#ifdef _WIN32
 	// TODO(NeGate): Automatically detect these somehow...
 	cpp_add_include_directory(cpp_ctx, "W:\\Windows Kits\\10\\Include\\10.0.19041.0\\ucrt\\");
+	cpp_add_include_directory(cpp_ctx, "W:\\Windows Kits\\10\\Include\\10.0.19041.0\\um\\");
+	cpp_add_include_directory(cpp_ctx, "W:\\Windows Kits\\10\\Include\\10.0.19041.0\\shared\\");
 	cpp_add_include_directory(cpp_ctx, "W:\\Visual Studio\\2019\\Community\\VC\\Tools\\MSVC\\14.29.30133\\include\\");
 	
 	cpp_define_empty(cpp_ctx, "_X86_");
@@ -110,6 +117,13 @@ static void set_preprocessor_info(CPP_Context* cpp_ctx) {
 	
 	cpp_define(cpp_ctx, "__int64", "long long");
 	cpp_define(cpp_ctx, "__pragma", "_Pragma");
+	cpp_define(cpp_ctx, "__inline", "inline");
+#else
+	// TODO(NeGate): Automatically detect these somehow...
+	cpp_add_include_directory(cpp_ctx, "/usr/lib/gcc/x86_64-linux-gnu/9/include");
+	cpp_add_include_directory(cpp_ctx, "/usr/local/include");
+	cpp_add_include_directory(cpp_ctx, "/usr/include");
+#endif
 }
 
 static void compile_project(TB_Arch arch, TB_System sys, const char source_file[], bool is_multithreaded) {
@@ -130,7 +144,6 @@ static void compile_project(TB_Arch arch, TB_System sys, const char source_file[
 	// globals but at the same time, it's a thread safe interface for the most part you're
 	// supposed to keep a global one and use it across multiple threads.
 	if (!is_multithreaded) {
-		// NOTE(NeGate): The metaprogram always compiles on one thread for simplicity
 		TB_FeatureSet features = { 0 };
 		mod = tb_module_create(TB_ARCH_X86_64, TB_SYSTEM_WINDOWS, &features, TB_OPT_O0, 1, false);
 		
@@ -280,11 +293,17 @@ static uint64_t get_last_write_time(const char filepath[]) {
 	i.HighPart = data.ftLastWriteTime.dwHighDateTime;
 	return i.QuadPart;
 }
+#elif defined(__unix__)
+static void link_object_file(const char filename[]) {
+	
+}
 #else
 #error "Implement linker & disassembler for this platform"
 #endif
 
 static void dump_tokens(const char source_file[]) {
+	clock_t t1 = clock();
+	
 	// Preprocess file
 	CPP_Context cpp_ctx;
 	cpp_init(&cpp_ctx);
@@ -292,6 +311,10 @@ static void dump_tokens(const char source_file[]) {
 	
 	TokenStream s = cpp_process(&cpp_ctx, source_file);
 	cpp_finalize(&cpp_ctx);
+	
+	clock_t t2 = clock();
+	double delta_ms = (t2 - t1) / (double)CLOCKS_PER_SEC;
+	printf("preprocessor took %.03f seconds\n", delta_ms);
 	
 	FILE* f = fopen("./a.txt", "w");
 	
@@ -317,7 +340,7 @@ static void live_compiler_abort(int signo) {
 	longjmp(live_compiler_savepoint, 1);
 }
 
-static TB_Arch get_host_architecture() {
+/*static TB_Arch get_host_architecture() {
 #if defined(__x86_64__) || defined(_M_X64)
 	return TB_ARCH_X86_64;
 #elif defined(__aarch64__) || defined(_M_ARM64)
@@ -337,10 +360,10 @@ static TB_System get_host_system() {
 #else
 	abort();
 #endif
-}
+}*/
 
 int main(int argc, char* argv[]) {
-	static char filename[260];
+	static char filename[256];
 	static char obj_output_path[260];
 	
 	if (argc == 1) {
@@ -354,8 +377,8 @@ int main(int argc, char* argv[]) {
 #endif
 	
 	// Detect host hardware
-	TB_Arch host_arch = get_host_architecture();
-	TB_System host_sys = get_host_system();
+	//TB_Arch host_arch = get_host_architecture();
+	//TB_System host_sys = get_host_system();
 	
 	// TODO(NeGate): Make some command line options for these
 	TB_Arch target_arch = TB_ARCH_X86_64;
@@ -383,45 +406,26 @@ int main(int argc, char* argv[]) {
 		sprintf_s(obj_output_path, 260, "%s.obj", filename);
 		
 		// Parse any other options
-		CuikMetaEntrypoint* meta_entry = NULL;
+		bool is_check_mode = false;
 		
 		int i = 3;
 		while (i < argc) {
-			if (strcmp(argv[i], "-M") == 0) {
-				i++;
-				if (i >= argc) panic("Missing option");
-				if (meta_entry) panic("You can only specify one metaprogram.");
-				
-				// JIT compile the metaprogram
-				timed_block("meta compilation") {
-					compile_project(host_arch, host_sys, argv[i], false);
-					
-					tb_module_export_jit(mod);
-				}
-				
-				meta_entry = tb_module_get_jit_func_by_name(mod, "cuik_metaprogram");
-				if (meta_entry == NULL) {
-					panic("Metaprogram missing entrypoint, expected: cuik_metaprogram()");
-				}
-				
-				// TODO(NeGate): Link up the metaprogramming runtime support
-				tb_jit_import(mod, "putchar", putchar);
+			if (strcmp(argv[i], "-V") == 0) {
+				is_check_mode = true;
 			}
 			
 			i++;
 		}
 		
-		// TODO(NeGate): Run metaprogram entrypoint which sets up the hooks
-		// for the parser
-		if (meta_entry) meta_entry(NULL);
-		
 		// Build project
 		timed_block("compilation") {
 			compile_project(target_arch, target_sys, source_file, true);
 			
-			FILE* f = fopen(obj_output_path, "wb");
-			if (!tb_module_export(mod, f)) abort();
-			fclose(f);
+			if (!is_check_mode) {
+				FILE* f = fopen(obj_output_path, "wb");
+				if (!tb_module_export(mod, f)) abort();
+				fclose(f);
+			}
 			
 			tb_module_destroy(mod);
 		}
