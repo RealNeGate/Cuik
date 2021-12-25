@@ -6,7 +6,7 @@
 
 #define LINKER_STRING_BUFFER_CAP 8192
 
-void linker_init(Linker* l) {
+bool linker_init(Linker* l) {
 	// NOTE(NeGate): Windows has a max command line length of 32768 iirc,
 	// so this seems reasonable
 	*l = (Linker) {
@@ -16,6 +16,10 @@ void linker_init(Linker* l) {
 	
 #if _WIN32
 	l->vswhere = MicrosoftCraziness_find_visual_studio_and_windows_sdk();
+	
+	return (l->vswhere.vs_exe_path != NULL);
+#else
+	return true;
 #endif
 }
 
@@ -37,7 +41,9 @@ void linker_add_default_libpaths(Linker* l) {
 }
 
 #if _WIN32
-void linker_add_libpath_wide(Linker* l, const wchar_t filepath[]) {
+void linker_add_libpath_wide(Linker* l, const wchar_t* filepath) {
+	assert(filepath);
+	
 	size_t filepath_len = wcslen(filepath) + 1;
 	if (l->libpaths_top + filepath_len >= LINKER_STRING_BUFFER_CAP) abort();
 	
@@ -87,7 +93,7 @@ void linker_add_input_file(Linker* l, const char filepath[]) {
 // Like im pretty sure %S doesn't do the UTF-8 conversion and im being lazy about it.
 enum { CMD_LINE_MAX = 8192 };
 
-bool linker_invoke(Linker* l, const char filename[], bool linked_with_crt) {
+bool linker_invoke(Linker* l, const char* filename, bool linked_with_crt) {
 #if defined(_WIN32)
 	wchar_t cmd_line[CMD_LINE_MAX];
 	int cmd_line_len = swprintf(cmd_line, CMD_LINE_MAX,

@@ -109,16 +109,17 @@ static void set_preprocessor_info(CPP_Context* cpp_ctx) {
 	cpp_add_include_directory(cpp_ctx, "W:\\Windows Kits\\10\\Include\\10.0.19041.0\\shared\\");
 	cpp_add_include_directory(cpp_ctx, "W:\\Visual Studio\\2019\\Community\\VC\\Tools\\MSVC\\14.29.30133\\include\\");
 	
-	cpp_define_empty(cpp_ctx, "_X86_");
-	cpp_define_empty(cpp_ctx, "_WIN32");
-	cpp_define_empty(cpp_ctx, "_WIN64");
-	cpp_define_empty(cpp_ctx, "_M_X64");
-	cpp_define_empty(cpp_ctx, "_M_AMD64");
-	cpp_define_empty(cpp_ctx, "_CRT_SECURE_NO_WARNINGS");
+	// TODO(NeGate): Fix this up but the macro hashing function needs at least 16 bytes
+	cpp_define_empty(cpp_ctx, (char[16]) { "_X86_" });
+	cpp_define_empty(cpp_ctx, (char[16]) { "_WIN32" });
+	cpp_define_empty(cpp_ctx, (char[16]) { "_WIN64" });
+	cpp_define_empty(cpp_ctx, (char[16]) { "_M_X64" });
+	cpp_define_empty(cpp_ctx, (char[16]) { "_M_AMD64" });
+	cpp_define_empty(cpp_ctx, (char[32]) { "_CRT_SECURE_NO_WARNINGS" });
 	
-	cpp_define(cpp_ctx, "__int64", "long long");
-	cpp_define(cpp_ctx, "__pragma", "_Pragma");
-	cpp_define(cpp_ctx, "__inline", "inline");
+	cpp_define(cpp_ctx, (char[16]) { "__int64" }, "long long");
+	cpp_define(cpp_ctx, (char[16]) { "__pragma" }, "_Pragma");
+	cpp_define(cpp_ctx, (char[16]) { "__inline" }, "inline");
 #else
 	// TODO(NeGate): Automatically detect these somehow...
 	cpp_add_include_directory(cpp_ctx, "/usr/lib/gcc/x86_64-linux-gnu/9/include");
@@ -256,6 +257,11 @@ int main(int argc, char* argv[]) {
 				is_object_only = true;
 				break;
 				
+				case 'o':
+				i++;
+				if (i >= argc) panic("Expected filename\n");
+				break;
+				
 				default:
 				printf("Unknown option: %s\n", argv[i]);
 				print_help(argv[0]);
@@ -305,10 +311,8 @@ int main(int argc, char* argv[]) {
 				tb_module_destroy(mod);
 			}
 			
-			if (!is_object_only) {
-				Linker l;
-				linker_init(&l);
-				
+			Linker l;
+			if (!is_object_only && linker_init(&l)) {
 				// Add system libraries
 				linker_add_default_libpaths(&l);
 				

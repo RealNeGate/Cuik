@@ -11,27 +11,28 @@
 // All strings you might put in should be UTF-8
 typedef struct Linker Linker;
 
-void linker_init(Linker* l);
+// True if success
+bool linker_init(Linker* l);
 void linker_deinit(Linker* l);
 
 // This just locates the system libraries and adds them
 void linker_add_default_libpaths(Linker* l);
 
 // Adds a directory to the library searches
-void linker_add_libpath(Linker* l, const char filepath[]);
+void linker_add_libpath(Linker* l, const char* filepath);
 
 #if _WIN32
 // Windows native strings are UTF-16 so i provide an option for that if you
 // want.
-void linker_add_libpath_wide(Linker* l, const wchar_t filepath[]);
+void linker_add_libpath_wide(Linker* l, const wchar_t* filepath);
 #endif
 
 // This can be a static library or object file
-void linker_add_input_file(Linker* l, const char filename[]);
+void linker_add_input_file(Linker* l, const char* filenpath);
 
 // Calls the system linker
 // return true if it succeeds
-bool linker_invoke(Linker* l, const char filename[], bool linked_with_crt);
+bool linker_invoke(Linker* l, const char* filename, bool linked_with_crt);
 
 ////////////////////////////////
 // Private definitions
