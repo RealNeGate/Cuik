@@ -98,7 +98,7 @@ bool linker_invoke(Linker* l, const char* filename, bool linked_with_crt) {
 	wchar_t cmd_line[CMD_LINE_MAX];
 	int cmd_line_len = swprintf(cmd_line, CMD_LINE_MAX,
 								L"%s\\link.exe /nologo /machine:amd64 /subsystem:console"
-								" /debug:full /entry:mainCRTStartup /pdb:%S.pdb /out:%S.exe ",
+								" /debug:none /entry:mainCRTStartup /pdb:%S.pdb /out:%S.exe ",
 								l->vswhere.vs_exe_path, filename, filename);
 	
 	// Add all the libpaths

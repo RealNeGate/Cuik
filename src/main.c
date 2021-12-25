@@ -311,19 +311,21 @@ int main(int argc, char* argv[]) {
 				tb_module_destroy(mod);
 			}
 			
-			Linker l;
-			if (!is_object_only && linker_init(&l)) {
-				// Add system libraries
-				linker_add_default_libpaths(&l);
-				
-				// Add input files
-				linker_add_input_file(&l, "kernel32.lib");
-				linker_add_input_file(&l, "user32.lib");
-				linker_add_input_file(&l, "Gdi32.lib");
-				linker_add_input_file(&l, obj_output_path);
-				
-				linker_invoke(&l, filename, true);
-				linker_deinit(&l);
+			if (!is_object_only && mode == COMPILER_MODE_BUILD) {
+				Linker l;
+				if (linker_init(&l)) {
+					// Add system libraries
+					linker_add_default_libpaths(&l);
+					
+					// Add input files
+					linker_add_input_file(&l, "kernel32.lib");
+					linker_add_input_file(&l, "user32.lib");
+					linker_add_input_file(&l, "Gdi32.lib");
+					linker_add_input_file(&l, obj_output_path);
+					
+					linker_invoke(&l, filename, true);
+					linker_deinit(&l);
+				}
 			}
 			break;
 		}
