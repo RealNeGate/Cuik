@@ -396,6 +396,7 @@ static void live_compiler_abort(int signo) {
 	longjmp(live_compiler_savepoint, 1);
 }
 
+#if _WIN32
 static bool disassemble_object_file(const wchar_t vs_exe_path[], const char filename[]) {
 	clock_t t1 = clock();
 	
@@ -438,6 +439,7 @@ static uint64_t get_last_write_time(const char filepath[]) {
 	i.HighPart = data.ftLastWriteTime.dwHighDateTime;
 	return i.QuadPart;
 }
+#endif
 
 static bool live_compile(const char source_file[], const char obj_output_path[], const char filename[]) {
 #if _WIN32

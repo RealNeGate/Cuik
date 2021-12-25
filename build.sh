@@ -8,6 +8,7 @@ cuik_source_files="src/main.c
 	src/atoms.c
 	src/parser.c
 	src/ir_gen.c
+	src/linker.c
 	src/tree_printer.c"
 
 gcc $c_settings $cuik_source_files tinybackend.a -lpthread -fPIC -o build/cuik

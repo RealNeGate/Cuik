@@ -29,9 +29,11 @@ void linker_deinit(Linker* l) {
 }
 
 void linker_add_default_libpaths(Linker* l) {
+#if _WIN32
 	linker_add_libpath_wide(l, l->vswhere.vs_library_path);
 	linker_add_libpath_wide(l, l->vswhere.windows_sdk_ucrt_library_path);
 	linker_add_libpath_wide(l, l->vswhere.windows_sdk_um_library_path);
+#endif
 }
 
 #if _WIN32
@@ -46,21 +48,39 @@ void linker_add_libpath_wide(Linker* l, const wchar_t filepath[]) {
 #endif
 
 void linker_add_libpath(Linker* l, const char filepath[]) {
+#if _WIN32
 	size_t remaining = LINKER_STRING_BUFFER_CAP - l->libpaths_top;
 	OS_String output = &l->libpaths_buffer[l->libpaths_top];
 	
 	int number_of_wide_chars = MultiByteToWideChar(65001 /* UTF8 */, 0, filepath, -1,  output, remaining);
 	l->libpaths_top += number_of_wide_chars;
 	l->libpaths_count++;
+#else
+	size_t filepath_len = strlen(filepath) + 1;
+	if (l->libpaths_top + filepath_len >= LINKER_STRING_BUFFER_CAP) abort();
+	
+	memcpy(&l->libpaths_buffer[l->libpaths_top], filepath, filepath_len * sizeof(char));
+	l->libpaths_top += filepath_len;
+	l->libpaths_count++;
+#endif
 }
 
 void linker_add_input_file(Linker* l, const char filepath[]) {
+#if _WIN32
 	size_t remaining = LINKER_STRING_BUFFER_CAP - l->input_file_top;
 	OS_String output = &l->input_file_buffer[l->input_file_top];
 	
 	int number_of_wide_chars = MultiByteToWideChar(65001 /* UTF8 */, 0, filepath, -1,  output, remaining);
 	l->input_file_top += number_of_wide_chars;
 	l->input_file_count++;
+#else
+	size_t filepath_len = strlen(filepath) + 1;
+	if (l->input_file_top + filepath_len >= LINKER_STRING_BUFFER_CAP) abort();
+	
+	memcpy(&l->libpaths_buffer[l->input_file_top], filepath, filepath_len * sizeof(char));
+	l->input_file_top += filepath_len;
+	l->input_file_count++;
+#endif
 }
 
 // TODO(NeGate): Do some testing to make sure this works with unicode input.
@@ -121,6 +141,8 @@ bool linker_invoke(Linker* l, const char filename[], bool linked_with_crt) {
 	CloseHandle(pi.hProcess);
 	CloseHandle(pi.hThread);
 	return true;
+#elif defined(__unix__)
+	return false;
 #else
 #error "Implement system linker on other platforms"
 #endif
