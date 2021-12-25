@@ -33,6 +33,12 @@ inline static bool cstr_equals(const unsigned char* str1, const unsigned char* s
 	return strcmp((const char*)str1, (const char*)str2) == 0;
 }
 
+#if _WIN32
+typedef wchar_t* OS_String;
+#else
+typedef char* OS_String;
+#endif
+
 // NOTE(NeGate): This isn't correct just a shitty workaround
 #ifdef CUIK_NEEDS_SAFE_FUNCTIONS
 #define memcpy_s(dst, dstsz, src, count) memcpy(dst, src, count)

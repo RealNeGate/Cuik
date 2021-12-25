@@ -49,7 +49,6 @@ static void expect(TokenStream* restrict s, char ch);
 static Symbol* find_local_symbol(TokenStream* restrict s);
 static Symbol* find_global_symbol(char* name);
 static StmtIndex parse_stmt(TokenStream* restrict s);
-static ExprIndex parse_expr(TokenStream* restrict s);
 static StmtIndex parse_stmt_or_expr(TokenStream* restrict s);
 static StmtIndex parse_compound_stmt(TokenStream* restrict s);
 static bool try_parse_declspec(TokenStream* restrict s, Attribs* attr);
@@ -59,6 +58,12 @@ static TypeIndex parse_typename(TokenStream* restrict s);
 static int parse_const_expr(TokenStream* restrict s);
 static bool is_typename(TokenStream* restrict s);
 static _Noreturn void generic_error(TokenStream* restrict s, const char* msg);
+
+static ExprIndex parse_expr(TokenStream* restrict s);
+
+// It's like parse_expr but it doesn't do anything with comma operators to avoid
+// parsing issues.
+static ExprIndex parse_expr_l14(TokenStream* restrict s);
 
 inline static int align_up(int a, int b) { return a + (b - (a % b)) % b; }
 
@@ -363,7 +368,7 @@ static StmtIndex parse_compound_stmt(TokenStream* restrict s) {
 					// initial value
 					tokens_next(s);
 					
-					ExprIndex e = parse_expr(s);
+					ExprIndex e = parse_expr_l14(s);
 					stmt_arena.data[n].expr = e;
 				}
 				
@@ -532,6 +537,7 @@ static StmtIndex parse_stmt_or_expr(TokenStream* restrict s) {
 	stmt = push_stmt_arena(1);
 	stmt_arena.data[stmt].op = STMT_EXPR;
 	stmt_arena.data[stmt].expr = parse_expr(s);
+	expect(s, ';');
 	
 	return stmt;
 }
@@ -542,8 +548,6 @@ static StmtIndex parse_stmt_or_expr(TokenStream* restrict s) {
 // Quick reference:
 // https://en.cppreference.com/w/c/language/operator_precedence
 ////////////////////////////////
-static ExprIndex parse_expr_l14(TokenStream* restrict s);
-
 static ExprIndex parse_expr_l0(TokenStream* restrict s) {
 	if (tokens_get(s)->type == '(') {
 		tokens_next(s);
@@ -659,9 +663,11 @@ static ExprIndex parse_expr_l1(TokenStream* restrict s) {
 			ExprIndex index = parse_expr(s);
 			expect(s, ']');
 			
-			expr_arena.data[e].op = EXPR_SUBSCRIPT;
-			expr_arena.data[e].subscript.base = base;
-			expr_arena.data[e].subscript.index = index;
+			expr_arena.data[e] = (Expr) {
+				.op = EXPR_SUBSCRIPT,
+				.line = tokens_get(s)->line,
+				.subscript = { base, index }
+			};
 			goto try_again;
 		}
 		
@@ -735,8 +741,11 @@ static ExprIndex parse_expr_l1(TokenStream* restrict s) {
 			ExprIndex src = e;
 			
 			e = push_expr_arena(1);
-			expr_arena.data[e].op = is_inc ? EXPR_POST_INC : EXPR_POST_DEC;
-			expr_arena.data[e].unary_op.src = src;
+			expr_arena.data[e] = (Expr) {
+				.op = is_inc ? EXPR_POST_INC : EXPR_POST_DEC,
+				.line = tokens_get(s)->line,
+				.unary_op.src = src
+			};
 		}
 		
 		return e;

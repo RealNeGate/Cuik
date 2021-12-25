@@ -1,15 +1,19 @@
 // TODO(NeGate): This code would love some eyeballs but like those with skills
 // in fixing it not judging it because it's self-aware and would rather people
 // not hurt it's poor shit-box code feelings.
-#include "microsoft_craziness.h"
 #include "preproc.h"
 #include "parser.h"
 #include "ir_gen.h"
 #include "atoms.h"
 #include "timer.h"
+#include "linker.h"
 #include "stb_ds.h"
 #include <stdatomic.h>
 #include "../ext/threads.h"
+
+#if _WIN32
+#include "microsoft_craziness.h"
+#endif
 
 // used for the weird stuff in the live compiler
 #include <signal.h>
@@ -34,10 +38,6 @@ static size_t tasks_count;
 // forward decls (0) and one places all function bodies (1)
 static int frontend_stage;
 static TopLevel top_level;
-
-#if _WIN32
-static MicrosoftCraziness_Find_Result vswhere;
-#endif
 
 static int task_thread(void* param) {
 	while (is_running) {
@@ -83,7 +83,7 @@ static void dispatch_tasks(size_t count) {
 
 static void print_help(const char* executable_path) {
 	printf("Usage:\n"
-		   "  %s command [arguments]\n"
+		   "  %s [command] [filepath] [arguments]\n"
 		   "  \n"
 		   "Commands:\n"
 		   "  build      Compiles the input file/directory\n"
@@ -196,67 +196,211 @@ static void compile_project(TB_Arch arch, TB_System sys, const char source_file[
 	if (!tb_module_compile(mod)) abort();
 }
 
-#if _WIN32
-// NOTE(NeGate): Windows still a bih, im forcing the 
-// W functions because im a bitch too
-// TODO(NeGate): Clean up this code and make it so that more
-// options are exposed in the frontend.
-static void link_object_file(const char filename[]) {
+typedef enum CompilerMode {
+	COMPILER_MODE_NONE,
+	
+	// continuously compiled when changed are made to the file
+	// from there it's disassembled and shown in the terminal.
+	COMPILER_MODE_LIVE,
+	
+	// only does preproc and returns a text form of that annotation
+	COMPILER_MODE_PREPROC,
+	
+	// only does preproc, lex, parse and type checking without
+	// emitting any output other than errors
+	COMPILER_MODE_CHECK,
+	
+	// compiles an executable unless -c is marked
+	COMPILER_MODE_BUILD,
+} CompilerMode;
+
+// TODO(NeGate): Make some command line options for these
+static TB_Arch target_arch = TB_ARCH_X86_64;
+static TB_System target_sys = TB_SYSTEM_WINDOWS;
+
+static bool live_compile(const char source_file[], const char obj_output_path[], const char filename[]);
+static bool dump_tokens(const char source_file[]);
+
+int main(int argc, char* argv[]) {
+	static char filename[256];
+	static char obj_output_path[260];
+	
+	if (argc == 1) {
+		printf("Expected command!\n");
+		print_help(argv[0]);
+		return -1;
+	}
+	
+	// parse command
+	CompilerMode mode = COMPILER_MODE_NONE;
+	
+	const char* cmd = argv[1];
+	if (strcmp(cmd, "live") == 0) mode = COMPILER_MODE_LIVE;
+	else if (strcmp(cmd, "preproc") == 0) mode = COMPILER_MODE_PREPROC;
+	else if (strcmp(cmd, "check") == 0) mode = COMPILER_MODE_CHECK;
+	else if (strcmp(cmd, "build") == 0) mode = COMPILER_MODE_BUILD;
+	else {
+		printf("Unknown command: %s\n", cmd);
+		print_help(argv[0]);
+		return -1;
+	}
+	
+	// all options require a file path right after
+	if (argc < 2) {
+		printf("Expected filename\n");
+		return -1;
+	}
+	
+	// -c
+	bool is_object_only = false;
+	
+	int i = 3;
+	while (i < argc) {
+		if (strcmp(argv[i], "-c") == 0) is_object_only = true;
+		else {
+			printf("Unknown option: %s\n", argv[i]);
+			print_help(argv[0]);
+			return -1;
+		}
+	}
+	
+	switch (mode) {
+		case COMPILER_MODE_PREPROC: {
+			if (argc < 2) panic("Expected filename\n");
+			
+			const char* source_file = argv[2];
+			dump_tokens(source_file);
+			break;
+		}
+		case COMPILER_MODE_CHECK:
+		case COMPILER_MODE_BUILD: {
+			// Get filename without extension
+			const char* source_file = argv[2];
+			const char* ext = strrchr(source_file, '.');
+			if (!ext) ext = source_file + strlen(source_file);
+			
+			memcpy_s(filename, 260, source_file, ext - source_file);
+			filename[ext - source_file] = '\0';
+			
+			sprintf_s(obj_output_path, 260, "%s.obj", filename);
+			
+			// Build project
+			timed_block("compilation") {
+				compile_project(target_arch, target_sys, source_file, true);
+				
+				if (mode == COMPILER_MODE_BUILD) {
+					FILE* f = fopen(obj_output_path, "wb");
+					if (!tb_module_export(mod, f)) abort();
+					fclose(f);
+				}
+				
+				tb_module_destroy(mod);
+			}
+			
+			if (!is_object_only) {
+				Linker l;
+				linker_init(&l);
+				
+				// Add system libraries
+				linker_add_default_libpaths(&l);
+				
+				// Add input files
+				linker_add_input_file(&l, "kernel32.lib");
+				linker_add_input_file(&l, "user32.lib");
+				linker_add_input_file(&l, "Gdi32.lib");
+				linker_add_input_file(&l, obj_output_path);
+				
+				linker_invoke(&l, filename, true);
+				linker_deinit(&l);
+			}
+			break;
+		}
+		case COMPILER_MODE_LIVE: {
+			if (argc < 2) {
+				printf("Expected filename\n");
+				return -1;
+			}
+			
+			// Get filename without extension
+			const char* source_file = argv[2];
+			const char* ext = strrchr(source_file, '.');
+			if (!ext) ext = source_file + strlen(source_file);
+			
+			memcpy_s(filename, 260, source_file, ext - source_file);
+			filename[ext - source_file] = '\0';
+			
+			sprintf_s(obj_output_path, 260, "%s.obj", filename);
+			
+			if (!live_compile(source_file, obj_output_path, filename)) {
+				printf("Live compiler error!\n");
+				return -1;
+			}
+			break;
+		}
+		default: {
+			printf("Not ready yet sorry!\n");
+			return -1;
+		}
+	}
+	
+	return 0;
+}
+
+////////////////////////////////
+// Preprocessor Dump
+////////////////////////////////
+static bool dump_tokens(const char source_file[]) {
 	clock_t t1 = clock();
 	
-	const char* libraries = "kernel32.lib user32.lib Gdi32.lib";
+	// Preprocess file
+	CPP_Context cpp_ctx;
+	cpp_init(&cpp_ctx);
+	set_preprocessor_info(&cpp_ctx);
 	
-	static wchar_t working_dir[260];
-	DWORD working_dir_len = GetCurrentDirectoryW(260, working_dir);
-	for (size_t i = 0; i < working_dir_len; i++) {
-		if (working_dir[i] == '\\') working_dir[i] = '/';
-	}
-	working_dir[working_dir_len++] = '/';
-	working_dir[working_dir_len] = '\0';
-	
-	static wchar_t output_file_no_ext[260];
-	swprintf(output_file_no_ext, 260, L"%s%S", working_dir, filename);
-	
-	static wchar_t cmd_line[1024];
-	swprintf(cmd_line, 1024,
-			 L"%s\\link.exe /nologo /machine:amd64 /subsystem:console"
-			 " /debug:full /entry:mainCRTStartup /pdb:%s.pdb /out:%s.exe /libpath:\"%s\""
-			 " /libpath:\"%s\" /libpath:\"%s\" /defaultlib:libcmt %S %s.obj",
-			 vswhere.vs_exe_path, output_file_no_ext, output_file_no_ext,
-			 vswhere.vs_library_path, vswhere.windows_sdk_ucrt_library_path, vswhere.windows_sdk_um_library_path,
-			 libraries, output_file_no_ext);
-	
-	STARTUPINFOW si = {
-		.cb = sizeof(STARTUPINFOW),
-		.dwFlags = STARTF_USESTDHANDLES,
-		.hStdInput = GetStdHandle(STD_INPUT_HANDLE),
-		.hStdError = GetStdHandle(STD_ERROR_HANDLE),
-		.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE)
-	};
-	PROCESS_INFORMATION pi = {};
-	
-	//printf("Linker command:\n%S %S\n", exe_path, cmd_line);
-	if (!CreateProcessW(NULL, cmd_line, NULL, NULL, TRUE, 0, NULL, working_dir, &si, &pi)) {
-		panic("Linker command could not be executed.");
-	}
-	
-	// Wait until child process exits.
-	WaitForSingleObject(pi.hProcess, INFINITE);
-	
-	// Close process and thread handles. 
-	CloseHandle(pi.hProcess);
-	CloseHandle(pi.hThread);
+	TokenStream s = cpp_process(&cpp_ctx, source_file);
+	cpp_finalize(&cpp_ctx);
 	
 	clock_t t2 = clock();
 	double delta_ms = (t2 - t1) / (double)CLOCKS_PER_SEC;
-	printf("linking took %.03f seconds\n", delta_ms);
+	printf("preprocessor took %.03f seconds\n", delta_ms);
+	
+	FILE* f = fopen("./a.txt", "w");
+	if (!f) {
+		printf("Could not open file a.txt\n");
+		return false;
+	}
+	
+	size_t token_count = arrlen(s.tokens);
+	size_t last_line = 0;
+	for (size_t i = 0; i < token_count; i++) {
+		Token* t = &s.tokens[i];
+		if (last_line != t->line) {
+			fprintf(f, "\n%3d:\t", t->line);
+			last_line = t->line;
+		}
+		
+		fprintf(f, "%.*s ", (int)(t->end - t->start), t->start);
+	}
+	
+	fclose(f);
+	return true;
 }
 
-static bool disassemble_object_file(const char filename[]) {
+////////////////////////////////
+// Live compiler functionality
+////////////////////////////////
+// NOTE(NeGate): This is lowkey a mess but essentially if
+// the live-compiler crashes we wanna just ignore it and continue
+static jmp_buf live_compiler_savepoint;
+static void live_compiler_abort(int signo) {
+	longjmp(live_compiler_savepoint, 1);
+}
+
+static bool disassemble_object_file(const wchar_t vs_exe_path[], const char filename[]) {
 	clock_t t1 = clock();
 	
 	static wchar_t cmd_line[260];
-	swprintf(cmd_line, 260, L"%s\\dumpbin.exe /nologo /disasm:nobytes %S.obj", vswhere.vs_exe_path, filename);
+	swprintf(cmd_line, 260, L"%s\\dumpbin.exe /nologo /disasm:nobytes %S.obj", vs_exe_path, filename);
 	
 	STARTUPINFOW si = {
 		.cb = sizeof(STARTUPINFOW),
@@ -294,219 +438,66 @@ static uint64_t get_last_write_time(const char filepath[]) {
 	i.HighPart = data.ftLastWriteTime.dwHighDateTime;
 	return i.QuadPart;
 }
-#elif defined(__unix__)
-static void link_object_file(const char filename[]) {
-	
-}
-#else
-#error "Implement linker & disassembler for this platform"
-#endif
 
-static void dump_tokens(const char source_file[]) {
-	clock_t t1 = clock();
-	
-	// Preprocess file
-	CPP_Context cpp_ctx;
-	cpp_init(&cpp_ctx);
-	set_preprocessor_info(&cpp_ctx);
-	
-	TokenStream s = cpp_process(&cpp_ctx, source_file);
-	cpp_finalize(&cpp_ctx);
-	
-	clock_t t2 = clock();
-	double delta_ms = (t2 - t1) / (double)CLOCKS_PER_SEC;
-	printf("preprocessor took %.03f seconds\n", delta_ms);
-	
-	FILE* f = fopen("./a.txt", "w");
-	
-	size_t token_count = arrlen(s.tokens);
-	size_t last_line = 0;
-	for (size_t i = 0; i < token_count; i++) {
-		Token* t = &s.tokens[i];
-		if (last_line != t->line) {
-			fprintf(f, "\n%3d:\t", t->line);
-			last_line = t->line;
-		}
-		
-		fprintf(f, "%.*s ", (int)(t->end - t->start), t->start);
-	}
-	
-	fclose(f);
-}
-
-// NOTE(NeGate): This is lowkey a mess but essentially if
-// the live-compiler crashes we wanna just ignore it and continue
-static jmp_buf live_compiler_savepoint;
-static void live_compiler_abort(int signo) {
-	longjmp(live_compiler_savepoint, 1);
-}
-
-/*static TB_Arch get_host_architecture() {
-#if defined(__x86_64__) || defined(_M_X64)
-	return TB_ARCH_X86_64;
-#elif defined(__aarch64__) || defined(_M_ARM64)
-	return TB_ARCH_AARCH64;
-#else
-	abort();
-#endif
-}
-
-static TB_System get_host_system() {
-#if defined(_WIN32)
-	return TB_SYSTEM_WINDOWS;
-#elif defined(__MACH__)
-	return TB_SYSTEM_MACOS;
-#elif defined(unix) || defined(__unix__) || defined(__unix)
-	return TB_SYSTEM_LINUX;
-#else
-	abort();
-#endif
-}*/
-
-int main(int argc, char* argv[]) {
-	static char filename[256];
-	static char obj_output_path[260];
-	
-	if (argc == 1) {
-		printf("Expected command!\n");
-		print_help(argv[0]);
-		return -1;
-	}
-	
-	printf("command line input: ");
-	for (int i = 1; i < argc; i++) printf("%s ", argv[i]);
-	printf("\n");
-	
+static bool live_compile(const char source_file[], const char obj_output_path[], const char filename[]) {
 #if _WIN32
-	vswhere = MicrosoftCraziness_find_visual_studio_and_windows_sdk();
-#endif
+	MicrosoftCraziness_Find_Result vswhere = MicrosoftCraziness_find_visual_studio_and_windows_sdk();
 	
-	// Detect host hardware
-	//TB_Arch host_arch = get_host_architecture();
-	//TB_System host_sys = get_host_system();
+	if (signal(SIGABRT, live_compiler_abort) == SIG_ERR) {
+		printf("Failed to set signal handler.\n");
+		return false;
+	}
 	
-	// TODO(NeGate): Make some command line options for these
-	TB_Arch target_arch = TB_ARCH_X86_64;
-	TB_System target_sys = TB_SYSTEM_WINDOWS;
-	
-	char* cmd = argv[1];
-	if (strcmp(cmd, "run") == 0) {
-		panic("Not ready yet sorry!\n");
-	} else if (strcmp(cmd, "preproc") == 0) {
-		if (argc < 2) panic("Expected filename\n");
+	uint64_t original_last_write = get_last_write_time(source_file);
+	while (true) {
+		system("cls");
 		
-		const char* source_file = argv[2];
-		dump_tokens(source_file);
-	} else if (strcmp(cmd, "build") == 0 || strcmp(cmd, "check") == 0) {
-		if (argc < 2) panic("Expected filename\n");
-		bool is_check_mode = strcmp(cmd, "check") == 0;
-		
-		// Get filename without extension
-		const char* source_file = argv[2];
-		const char* ext = strrchr(source_file, '.');
-		if (!ext) ext = source_file + strlen(source_file);
-		
-		memcpy_s(filename, 260, source_file, ext - source_file);
-		filename[ext - source_file] = '\0';
-		
-		sprintf_s(obj_output_path, 260, "%s.obj", filename);
-		
-		// Build project
-		timed_block("compilation") {
-			compile_project(target_arch, target_sys, source_file, true);
-			
-			if (!is_check_mode) {
+		// bootlegy exception handler...
+		if (setjmp(live_compiler_savepoint) == 0) {
+			timed_block("compilation") {
+				compile_project(target_arch, target_sys, source_file, true);
+				
 				FILE* f = fopen(obj_output_path, "wb");
 				if (!tb_module_export(mod, f)) abort();
 				fclose(f);
-			}
-			
-			tb_module_destroy(mod);
-		}
-		
-		link_object_file(filename);
-	} else if (strcmp(cmd, "live") == 0) {
-		if (argc < 2) panic("Expected filename\n");
-		
-		// Get filename without extension
-		const char* source_file = argv[2];
-		const char* ext = strrchr(source_file, '.');
-		if (!ext) ext = source_file + strlen(source_file);
-		
-		memcpy_s(filename, 260, source_file, ext - source_file);
-		filename[ext - source_file] = '\0';
-		
-		sprintf_s(obj_output_path, 260, "%s.obj", filename);
-		
-		// Build project
-#if _WIN32
-		if (signal(SIGABRT, live_compiler_abort) == SIG_ERR) {
-			panic("Failed to set signal handler.\n");
-			return -1;
-		}
-		
-		uint64_t original_last_write = get_last_write_time(source_file);
-		while (true) {
-			system("cls");
-			
-			// bootlegy exception handler...
-			if (setjmp(live_compiler_savepoint) == 0) {
-				timed_block("compilation") {
-					compile_project(target_arch, target_sys, source_file, true);
-					
-					FILE* f = fopen(obj_output_path, "wb");
-					if (!tb_module_export(mod, f)) abort();
-					fclose(f);
-					
-					tb_module_destroy(mod);
-				}
-				disassemble_object_file(filename);
-			} else {
-				// set exception handling again because it's unset once it's signalled... i think?
-				if (signal(SIGABRT, live_compiler_abort) == SIG_ERR) {
-					printf("Failed to set signal handler.\n");
-					return -1;
-				}
-			}
-			
-			// Wait for the user to save again
-			while (true) {
-				uint64_t current_last_write = get_last_write_time(source_file);
-				if (original_last_write != current_last_write) {
-					original_last_write = current_last_write;
-					
-					// wait for it to finish writing before trying to compile
-					int ticks = 0;
-					while (GetFileAttributesA(source_file) == INVALID_FILE_ATTRIBUTES) {
-						SleepEx(1, FALSE);
-						
-						if (ticks++ > 100) {
-							printf("Live compiler timeout!");
-							abort();
-						}
-					}
-					break;
-				}
 				
-				SleepEx(100, FALSE);
+				tb_module_destroy(mod);
+			}
+			
+			disassemble_object_file(vswhere.vs_exe_path, filename);
+		} else {
+			// set exception handling again because it's unset once it's
+			// signalled... i think?
+			if (signal(SIGABRT, live_compiler_abort) == SIG_ERR) {
+				printf("Failed to set signal handler.\n");
+				return false;
 			}
 		}
-#else
-		printf("Live compiler not supported");
-		return -1;
-#endif
-	} else if (strcmp(cmd, "bindgen") == 0) {
-		printf("Not ready yet sorry!\n");
-	} else if (strcmp(cmd, "help") == 0) {
-		print_help(argv[0]);
-	} else {
-		printf("Unknown command: %s\n", cmd);
-		print_help(argv[0]);
-		return -1;
+		
+		// Wait for the user to save again
+		while (true) {
+			uint64_t current_last_write = get_last_write_time(source_file);
+			if (original_last_write != current_last_write) {
+				original_last_write = current_last_write;
+				
+				// wait for it to finish writing before trying to compile
+				int ticks = 0;
+				while (GetFileAttributesA(source_file) == INVALID_FILE_ATTRIBUTES) {
+					SleepEx(1, FALSE);
+					
+					if (ticks++ > 100) {
+						printf("Live compiler timeout!");
+						return false;
+					}
+				}
+				break;
+			}
+			
+			SleepEx(100, FALSE);
+		}
 	}
-	
-#if _WIN32
-	MicrosoftCraziness_free_resources(&vswhere);
+#else
+	printf("Live compiler not supported");
+	return -1;
 #endif
-	return 0;
 }

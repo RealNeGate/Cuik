@@ -309,17 +309,12 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 			if (type_arena.data[index.type].kind == KIND_PTR ||
 				type_arena.data[index.type].kind == KIND_ARRAY) swap(base, index);
 			
-			cvt_l2r(func, &index, TYPE_ULONG);
-			
-			if (base.value_type == RVALUE) {
-				TypeIndex element_type = type_arena.data[base.type].ptr_to;
-				int stride = type_arena.data[element_type].size;
-				return (IRVal) {
-					.value_type = LVALUE,
-					.type = element_type,
-					.reg = tb_inst_array_access(func, base.reg, index.reg, stride)
-				};
+			if (type_arena.data[base.type].kind == KIND_ARRAY) {
+				base.type = new_pointer_locked(type_arena.data[base.type].array_of);
 			}
+			
+			cvt_l2r(func, &base, base.type);
+			cvt_l2r(func, &index, TYPE_ULONG);
 			
 			TypeIndex element_type = type_arena.data[base.type].ptr_to;
 			int stride = type_arena.data[element_type].size;
@@ -481,12 +476,18 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 			Type* restrict type = &type_arena.data[type_index];
 			if (type->kind == KIND_PTR) {
 				// pointer arithmatic
-				/*ExprIndex a = ep->bin_op.left;
-				ExprIndex b = ep->bin_op.right;
 				int dir = ep->op == EXPR_PLUS ? 1 : -1;
+				int stride = type_arena.data[type->ptr_to].size;
 				
-				return gen_ptr_arithmatic(func, type->ptr_to, a, b, dir);*/
-				abort();
+				assert(l.value_type == LVALUE);
+				cvt_l2r(func, &l, type_index);
+				cvt_l2r(func, &r, TYPE_ULONG);
+				
+				return (IRVal) {
+					.value_type = RVALUE,
+					.type = type_index,
+					.reg = tb_inst_array_access(func, l.reg, r.reg, dir * stride)
+				};
 			}
 			
 			cvt_l2r(func, &l, type_index);
@@ -610,7 +611,6 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 				ld_l = l;
 				cvt_l2r(func, &ld_l, l.type);
 			}
-			cvt_l2r(func, &r, l.type);
 			
 			// Try pointer arithmatic
 			if ((ep->op == EXPR_PLUS_ASSIGN || ep->op == EXPR_MINUS_ASSIGN) &&
@@ -619,12 +619,14 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 				int stride = type_arena.data[type->ptr_to].size;
 				
 				assert(l.value_type == LVALUE);
-				cvt_l2r(func, &r, l.type);
+				cvt_l2r(func, &r, TYPE_ULONG);
 				
 				TB_Register arith = tb_inst_array_access(func, ld_l.reg, r.reg, dir * stride);
 				tb_inst_store(func, TB_TYPE_PTR, l.reg, arith, type->align);
 				return l;
 			}
+			
+			cvt_l2r(func, &r, l.type);
 			
 			TB_Register data;
 			TB_DataType dt = ctype_to_tbtype(type);

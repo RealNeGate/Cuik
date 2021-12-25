@@ -3,7 +3,7 @@ typedef int Index;
 void ExitProcess(unsigned int code);
 int foo() { return 16; }
 int bar() { int x = 16; return x++; }
-int baz() { int* x = 0; x++; x--; x += 16; x -= 16; *x++ = 16; return *x; }
+int baz() { int* x = (void*)0; x++; x--; x += 16; x -= 16; *x++ = 16; return *x; }
 Index foo2() { return 16; }
 int params(int x, int y) { return x + y; }
 
@@ -60,10 +60,10 @@ int main(int argc, char* argv[]) {
 	x &= 16;
 	x |= 16;
 	x ^= 16;
-	x >>= 16;
+	x <<= 16;
 
-	struct Point* start = 0;
-	start->x = 16;
+	//struct Point* start = 0;
+	//start->x = 16;
 
 	int y = (x * 2);
 	if (y) y = 16;
@@ -75,10 +75,10 @@ int main(int argc, char* argv[]) {
 	apple[0] = 16;
 
 	char table[8][8];
-	char z = (table[0] + 1);
+	char z = (table[0][0] + 1);
 
-	int z = 4;
-	do { table[z][z] = 16; } while (z--);
+	int w = 4;
+	do { table[z][z] = 16; } while (w--);
 
 	if (x && z) {
 		x = 16;
