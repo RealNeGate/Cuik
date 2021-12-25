@@ -83,7 +83,7 @@ static void dispatch_tasks(size_t count) {
 
 static void print_help(const char* executable_path) {
 	printf("Usage:\n"
-		   "  %s [command] [filepath] [arguments]\n"
+		   "  %s [command] [arguments] [filepath]\n"
 		   "  \n"
 		   "Commands:\n"
 		   "  build      Compiles the input file/directory\n"
@@ -245,37 +245,45 @@ int main(int argc, char* argv[]) {
 		return -1;
 	}
 	
-	// all options require a file path right after
-	if (argc < 2) {
-		printf("Expected filename\n");
-		return -1;
-	}
-	
 	// -c
 	bool is_object_only = false;
 	
-	int i = 3;
+	int i = 2;
 	while (i < argc) {
-		if (strcmp(argv[i], "-c") == 0) is_object_only = true;
-		else {
-			printf("Unknown option: %s\n", argv[i]);
-			print_help(argv[0]);
-			return -1;
-		}
+		if (argv[i][0] == '-') {
+			switch (argv[i][1]) {
+				case 'c': 
+				is_object_only = true;
+				break;
+				
+				default:
+				printf("Unknown option: %s\n", argv[i]);
+				print_help(argv[0]);
+				return -1;
+			}
+		} else break;
+		
+		i++;
+	}
+	
+	// all options require a file path right after
+	if (i >= argc) {
+		printf("Expected filename\n");
+		return -1;
 	}
 	
 	switch (mode) {
 		case COMPILER_MODE_PREPROC: {
 			if (argc < 2) panic("Expected filename\n");
 			
-			const char* source_file = argv[2];
+			const char* source_file = argv[i];
 			dump_tokens(source_file);
 			break;
 		}
 		case COMPILER_MODE_CHECK:
 		case COMPILER_MODE_BUILD: {
 			// Get filename without extension
-			const char* source_file = argv[2];
+			const char* source_file = argv[i];
 			const char* ext = strrchr(source_file, '.');
 			if (!ext) ext = source_file + strlen(source_file);
 			
@@ -322,7 +330,7 @@ int main(int argc, char* argv[]) {
 			}
 			
 			// Get filename without extension
-			const char* source_file = argv[2];
+			const char* source_file = argv[i];
 			const char* ext = strrchr(source_file, '.');
 			if (!ext) ext = source_file + strlen(source_file);
 			
