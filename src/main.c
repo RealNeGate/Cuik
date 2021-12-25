@@ -87,6 +87,7 @@ static void print_help(const char* executable_path) {
 		   "  \n"
 		   "Commands:\n"
 		   "  build      Compiles the input file/directory\n"
+		   "  check      Check for errors in the input file/directory.\n"
 		   "  preproc    Runs the preprocessor on a file\n"
 		   "  run        Compiles & runs the input file/directory\n"
 		   "  live       Live recompilation of C into the terminal as you edit\n"
@@ -372,6 +373,10 @@ int main(int argc, char* argv[]) {
 		return -1;
 	}
 	
+	printf("command line input: ");
+	for (int i = 1; i < argc; i++) printf("%s ", argv[i]);
+	printf("\n");
+	
 #if _WIN32
 	vswhere = MicrosoftCraziness_find_visual_studio_and_windows_sdk();
 #endif
@@ -392,8 +397,9 @@ int main(int argc, char* argv[]) {
 		
 		const char* source_file = argv[2];
 		dump_tokens(source_file);
-	} else if (strcmp(cmd, "build") == 0) {
+	} else if (strcmp(cmd, "build") == 0 || strcmp(cmd, "check") == 0) {
 		if (argc < 2) panic("Expected filename\n");
+		bool is_check_mode = strcmp(cmd, "check") == 0;
 		
 		// Get filename without extension
 		const char* source_file = argv[2];
@@ -404,18 +410,6 @@ int main(int argc, char* argv[]) {
 		filename[ext - source_file] = '\0';
 		
 		sprintf_s(obj_output_path, 260, "%s.obj", filename);
-		
-		// Parse any other options
-		bool is_check_mode = false;
-		
-		int i = 3;
-		while (i < argc) {
-			if (strcmp(argv[i], "-V") == 0) {
-				is_check_mode = true;
-			}
-			
-			i++;
-		}
 		
 		// Build project
 		timed_block("compilation") {

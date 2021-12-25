@@ -60,6 +60,11 @@ typedef struct PragmaOnceEntry {
 	int value;
 } PragmaOnceEntry;
 
+typedef struct CPP_IncludeOnce {
+	char* key;
+	int value;
+} CPP_IncludeOnce;
+
 struct CPP_Context {
 	// how deep into directive scopes (#if, #ifndef, #ifdef) is it
 	int depth;
@@ -72,7 +77,7 @@ struct CPP_Context {
 	unsigned char* the_shtuffs;
 	
 	// hashmap
-	PragmaOnceEntry* pragma_once_s;
+	CPP_IncludeOnce* include_once;
 	
 	// system libraries
 	char** system_include_dirs;

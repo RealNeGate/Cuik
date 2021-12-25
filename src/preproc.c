@@ -444,7 +444,7 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 						abort();
 					}
 					
-					PragmaOnceEntry* e = shgetp_null(c->pragma_once_s, path);
+					CPP_IncludeOnce* e = shgetp_null(c->include_once, path);
 					if (e == NULL) {
 						// TODO(NeGate): Remove these heap allocations later they're... evil!!!
 						char* new_path = strdup(path);
@@ -464,8 +464,11 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 					lexer_read(&l);
 					
 					if (lexer_match(&l, 4, "once")) {
-						PragmaOnceEntry e = (PragmaOnceEntry){ .key = (char*)filepath, .value = 0 };
-						shputs(c->pragma_once_s, e);
+						CPP_IncludeOnce e = (CPP_IncludeOnce){ 
+							.key = (char*)filepath,
+							.value = 0
+						};
+						shputs(c->include_once, e);
 						
 						lexer_read(&l);
 						

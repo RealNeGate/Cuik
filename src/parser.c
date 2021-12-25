@@ -161,12 +161,14 @@ TopLevel parse_file(TokenStream* restrict s) {
 					for (ArgIndex i = arg_start; i != arg_end; i++) {
 						Arg* a = &arg_arena.data[i];
 						
-						local_symbols[local_symbol_count++] = (Symbol){
-							.name = a->name,
-							.type = a->type,
-							.storage_class = STORAGE_PARAM,
-							.param_num = p
-						};
+						if (a->name) {
+							local_symbols[local_symbol_count++] = (Symbol){
+								.name = a->name,
+								.type = a->type,
+								.storage_class = STORAGE_PARAM,
+								.param_num = p
+							};
+						}
 						p += 1;
 					}
 					
@@ -1155,12 +1157,20 @@ static TypeIndex parse_type_suffix(TokenStream* restrict s, TypeIndex type, Atom
 	if (tokens_get(s)->type == '(') {
 		tokens_next(s);
 		
-		// TODO(NeGate): implement (void) param
 		TypeIndex return_type = type;
 		
 		type = new_func();
 		type_arena.data[type].func.name = name;
 		type_arena.data[type].func.return_type = return_type;
+		
+		if (tokens_get(s)->type == TOKEN_KW_void) {
+			tokens_next(s);
+			expect(s, ')');
+			
+			type_arena.data[type].func.arg_start = 0;
+			type_arena.data[type].func.arg_end = 0;
+			return type;
+		}
 		
 		size_t arg_count = 0;
 		void* args = tls_save();

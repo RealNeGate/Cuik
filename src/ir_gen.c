@@ -35,7 +35,7 @@ TB_Module* mod;
 
 // Maps param_num -> TB_Register
 static _Thread_local TB_Register* parameter_map;
-static TypeIndex function_type;
+static _Thread_local TypeIndex function_type;
 
 static TB_DataType ctype_to_tbtype(const Type* t) {
 	switch (t->kind) {
@@ -197,6 +197,7 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 			
 			ArgIndex arg = type_arena.data[function_type].func.arg_start + param_num;
 			TypeIndex arg_type = arg_arena.data[arg].type;
+			assert(arg_type);
 			
 			return (IRVal) {
 				.value_type = LVALUE,
@@ -861,6 +862,7 @@ static void gen_func_header(TypeIndex type, StmtIndex s) {
 static void gen_func_body(TypeIndex type, StmtIndex s, StmtIndex end) {
 	// Clear TLS
 	tls_init();
+	assert(type);
 	
 	TB_Function* func = stmt_arena.data[s].backing.f;
 	
