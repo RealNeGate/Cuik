@@ -11,7 +11,6 @@ set cuik_source_files=src/main.c ^
 	src/parser.c ^
 	src/ir_gen.c ^
 	src/linker.c ^
-	src/tree_printer.c ^
 	src/microsoft_craziness.cpp ^
 	ext/threads_msvc.c
 

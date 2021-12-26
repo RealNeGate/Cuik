@@ -665,16 +665,18 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 }
 
 static void gen_stmt(TB_Function* func, StmtIndex s) {
-	switch (stmt_arena.data[s].op) {
+	Stmt* restrict sp = &stmt_arena.data[s];
+	
+	switch (sp->op) {
 		case STMT_NONE: {
 			break;
 		}
 		case STMT_LABEL: {
-			tb_inst_label(func, stmt_arena.data[s].backing.l);
+			tb_inst_label(func, sp->backing.l);
 			break;
 		}
 		case STMT_GOTO: {
-			IRVal target = gen_expr(func, stmt_arena.data[s].expr);
+			IRVal target = gen_expr(func, sp->goto_.target);
 			
 			if (target.value_type == LVALUE_LABEL) {
 				tb_inst_goto(func, target.label);
@@ -688,8 +690,8 @@ static void gen_stmt(TB_Function* func, StmtIndex s) {
 			break;
 		}
 		case STMT_COMPOUND: {
-			StmtIndexIndex start = stmt_arena.data[s].kids_start;
-			StmtIndexIndex end = stmt_arena.data[s].kids_end;
+			StmtIndexIndex start = sp->compound.kids_start;
+			StmtIndexIndex end = sp->compound.kids_end;
 			
 			for (StmtIndexIndex i = start; i != end; i++) {
 				StmtIndex s = stmt_ref_arena.data[i];
@@ -704,16 +706,16 @@ static void gen_stmt(TB_Function* func, StmtIndex s) {
 		}
 		case STMT_DECL: {
 			//Attribs attrs = stmt_arena.data[s].attrs;
-			TypeIndex type_index = stmt_arena.data[s].decl.type;
+			TypeIndex type_index = sp->decl.type;
 			int kind = type_arena.data[type_index].kind;
 			int size = type_arena.data[type_index].size;
 			int align = type_arena.data[type_index].align;
 			
 			TB_Register addr = tb_inst_local(func, size, align);
-			stmt_arena.data[s].backing.r = addr;
+			sp->backing.r = addr;
 			
-			if (stmt_arena.data[s].expr) {
-				IRVal v = gen_expr(func, stmt_arena.data[s].expr);
+			if (sp->decl.initial) {
+				IRVal v = gen_expr(func, sp->decl.initial);
 				
 				if (kind == KIND_STRUCT || kind == KIND_UNION) {
 					TB_Register size_reg = tb_inst_iconst(func, TB_TYPE_I32, size);
@@ -736,11 +738,11 @@ static void gen_stmt(TB_Function* func, StmtIndex s) {
 			break;
 		}
 		case STMT_EXPR: {
-			gen_expr(func, stmt_arena.data[s].expr);
+			gen_expr(func, sp->expr.expr);
 			break;
 		}
 		case STMT_RETURN: {
-			ExprIndex e = stmt_arena.data[s].expr;
+			ExprIndex e = sp->return_.expr;
 			
 			if (e) {
 				IRVal v = gen_expr(func, e);
@@ -753,9 +755,7 @@ static void gen_stmt(TB_Function* func, StmtIndex s) {
 			break;
 		}
 		case STMT_IF: {
-			ExprIndex cond_expr = stmt_arena.data[s].expr;
-			
-			IRVal cond = gen_expr(func, cond_expr);
+			IRVal cond = gen_expr(func, sp->if_.cond);
 			
 			TB_Label if_true, if_false;
 			if (cond.value_type == RVALUE_PHI) {
@@ -770,14 +770,14 @@ static void gen_stmt(TB_Function* func, StmtIndex s) {
 			}
 			
 			tb_inst_label(func, if_true);
-			gen_stmt(func, stmt_arena.data[s].body);
+			gen_stmt(func, sp->if_.body);
 			
-			if (stmt_arena.data[s].body2) {
+			if (sp->if_.next) {
 				TB_Label exit = tb_inst_new_label_id(func);
 				tb_inst_goto(func, exit);
 				
 				tb_inst_label(func, if_false);
-				gen_stmt(func, stmt_arena.data[s].body2);
+				gen_stmt(func, sp->if_.next);
 				
 				// fallthrough
 				tb_inst_label(func, exit);
@@ -793,13 +793,13 @@ static void gen_stmt(TB_Function* func, StmtIndex s) {
 			
 			tb_inst_label(func, header);
 			
-			IRVal cond = gen_expr(func, stmt_arena.data[s].expr);
+			IRVal cond = gen_expr(func, sp->while_.cond);
 			cvt_l2r(func, &cond, TYPE_BOOL);
 			
 			tb_inst_if(func, cond.reg, body, exit);
 			
 			tb_inst_label(func, body);
-			gen_stmt(func, stmt_arena.data[s].body);
+			gen_stmt(func, sp->while_.body);
 			
 			tb_inst_goto(func, header);
 			tb_inst_label(func, exit);
@@ -811,9 +811,9 @@ static void gen_stmt(TB_Function* func, StmtIndex s) {
 			
 			tb_inst_label(func, body);
 			
-			gen_stmt(func, stmt_arena.data[s].body);
+			gen_stmt(func, sp->while_.body);
 			
-			IRVal cond = gen_expr(func, stmt_arena.data[s].expr);
+			IRVal cond = gen_expr(func, sp->while_.cond);
 			cvt_l2r(func, &cond, TYPE_BOOL);
 			tb_inst_if(func, cond.reg, body, exit);
 			
@@ -822,9 +822,28 @@ static void gen_stmt(TB_Function* func, StmtIndex s) {
 		}
 		case STMT_FOR: {
 			// TODO(NeGate)
+			TB_Label header = tb_inst_new_label_id(func);
+			TB_Label body = tb_inst_new_label_id(func);
+			TB_Label exit = tb_inst_new_label_id(func);
+			
+			gen_stmt(func, sp->for_.first);
+			
+			tb_inst_label(func, header);
+			
+			IRVal cond = gen_expr(func, sp->for_.cond);
+			cvt_l2r(func, &cond, TYPE_BOOL);
+			tb_inst_if(func, cond.reg, body, exit);
+			
+			tb_inst_label(func, body);
+			
+			gen_stmt(func, sp->for_.body);
+			gen_expr(func, sp->for_.next);
+			
+			tb_inst_goto(func, header);
+			tb_inst_label(func, exit);
 			break;
 		}
-		case STMT_FOR2:
+		default:
 		__builtin_unreachable();
 	}
 }
