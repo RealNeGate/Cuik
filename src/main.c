@@ -19,7 +19,7 @@
 #include <signal.h>
 #include <setjmp.h>
 
-#define COMPILER_VERSION ""
+#define COMPILER_VERSION "v0.01"
 
 // frontend worker threads
 #define NUM_THREADS 4
@@ -200,6 +200,9 @@ static void compile_project(TB_Arch arch, TB_System sys, const char source_file[
 typedef enum CompilerMode {
 	COMPILER_MODE_NONE,
 	
+	// print version
+	COMPILER_MODE_VERSION,
+	
 	// continuously compiled when changed are made to the file
 	// from there it's disassembled and shown in the terminal.
 	COMPILER_MODE_LIVE,
@@ -237,6 +240,7 @@ int main(int argc, char* argv[]) {
 	
 	const char* cmd = argv[1];
 	if (strcmp(cmd, "live") == 0) mode = COMPILER_MODE_LIVE;
+	if (strcmp(cmd, "version") == 0) mode = COMPILER_MODE_VERSION;
 	else if (strcmp(cmd, "preproc") == 0) mode = COMPILER_MODE_PREPROC;
 	else if (strcmp(cmd, "check") == 0) mode = COMPILER_MODE_CHECK;
 	else if (strcmp(cmd, "build") == 0) mode = COMPILER_MODE_BUILD;
@@ -272,7 +276,12 @@ int main(int argc, char* argv[]) {
 		i++;
 	}
 	
-	// all options require a file path right after
+	if (mode == COMPILER_MODE_VERSION) {
+		printf("%s\n", COMPILER_VERSION);
+		return 0;
+	}
+	
+	// all options (well except version) require a file path right after
 	if (i >= argc) {
 		printf("Expected filename\n");
 		return -1;
