@@ -239,7 +239,7 @@ int main(int argc, char* argv[]) {
 	
 	const char* cmd = argv[1];
 	if (strcmp(cmd, "live") == 0) mode = COMPILER_MODE_LIVE;
-	if (strcmp(cmd, "version") == 0) mode = COMPILER_MODE_VERSION;
+	else if (strcmp(cmd, "version") == 0) mode = COMPILER_MODE_VERSION;
 	else if (strcmp(cmd, "preproc") == 0) mode = COMPILER_MODE_PREPROC;
 	else if (strcmp(cmd, "check") == 0) mode = COMPILER_MODE_CHECK;
 	else if (strcmp(cmd, "build") == 0) mode = COMPILER_MODE_BUILD;

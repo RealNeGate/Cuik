@@ -184,6 +184,7 @@ extern "C" {
 	typedef int TB_Reg; // short-hand
 	
 	typedef unsigned int TB_FileID;
+	typedef unsigned int TB_FunctionID;
 	typedef unsigned int TB_ExternalID;
 	typedef unsigned int TB_GlobalID;
 	typedef unsigned int TB_InitializerID;
@@ -412,6 +413,9 @@ extern "C" {
 	////////////////////////////////
 	// IR access
 	////////////////////////////////
+	TB_API TB_FunctionID tb_function_get_id(TB_Module* m, TB_Function* f);
+	TB_API TB_Function* tb_get_function_by_id(TB_Module* m, TB_FunctionID id);
+	
 	TB_API TB_Register tb_node_get_last_register(TB_Function* f);
 	TB_API TB_DataType tb_node_get_data_type(TB_Function* f, TB_Register r);
 	

@@ -134,17 +134,15 @@ enum {
 	TYPE_DOUBLE
 };
 
-// NOTE(NeGate): for loops are actually two nodes right next to each other
-// it's a STMT_FOR and STMT_FOR2 where FOR stores the init and cond respectively,
-// then FOR2 stores the next and body statements respectively.
 typedef enum StmtOp {
 	STMT_NONE,
 	
 	STMT_COMPOUND,
 	STMT_DECL,
 	
-	// NOTE(NeGate): Always followed by a compound block
+	// NOTE(NeGate): It's a decl that's followed by a compound block
 	STMT_FUNC_DECL,
+	
 	STMT_LABEL,
 	STMT_EXPR,
 	
@@ -153,7 +151,6 @@ typedef enum StmtOp {
 	STMT_GOTO,
 	
 	STMT_FOR,
-	STMT_FOR2,
 	
 	STMT_WHILE,
 	
@@ -224,49 +221,59 @@ typedef enum ExprOp {
 
 typedef struct Stmt {
 	StmtOp op;
-	// STMT_EXPR, STMT_DECL, STMT_RETURN
-	ExprIndex expr;
 	SourceLocIndex loc;
 	
-	union {
-		struct {
-			int decl_count;
-		} for1;
-		// STMT_FOR2
-		struct {
-			StmtIndex body, next;
-		} for2;
-		// STMT_LABEL
-		struct {
-			Atom name;
-		} label;
-		// STMT_DECL or STMT_FUNC_DECL
-		struct {
-			Attribs attrs;
-			TypeIndex type;
-			Atom name;
-		} decl;
-		struct {
-			// STMT_IF, STMT_FOR, STMT_WHILE, STMT_DO_WHILE
-			// STMT_DECL if it's a function
-			StmtIndex body;
-			
-			// STMT_IF, STMT_FOR
-			StmtIndex body2;
-		};
-		struct {
-			// STMT_COMPOUND
-			StmtIndex kids_start;
-			StmtIndex kids_end;
-		};
-	};
-	
+	// Used by the backend for backend-y things
 	union {
 		TB_Register r;
-		TB_Function* f;
+		TB_FunctionID f;
 		TB_ExternalID e;
 		TB_Label l;
 	} backing;
+	
+	union {
+		struct StmtCompound {
+			StmtIndex kids_start;
+			StmtIndex kids_end;
+		} compound;
+		struct StmtExpr {
+			ExprIndex expr;
+		} expr;
+		struct StmtReturn {
+			ExprIndex expr;
+		} return_;
+		struct StmtGoto {
+			ExprIndex target;
+		} goto_;
+		struct StmtLabel {
+			Atom name;
+		} label;
+		struct StmtDecl {
+			Attribs attrs;
+			TypeIndex type;
+			Atom name;
+			ExprIndex initial;
+		} decl;
+		struct StmtFor {
+			StmtIndex first;
+			ExprIndex cond;
+			StmtIndex body;
+			ExprIndex next;
+		} for_;
+		struct StmtWhile {
+			ExprIndex cond;
+			StmtIndex body;
+		} while_;
+		struct StmtDoWhile {
+			ExprIndex cond;
+			StmtIndex body;
+		} do_while;
+		struct StmtIf {
+			ExprIndex cond;
+			StmtIndex body;
+			StmtIndex next;
+		} if_;
+	};
 } Stmt;
 
 typedef struct Expr {

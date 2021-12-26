@@ -58,6 +58,7 @@ static TypeIndex parse_typename(TokenStream* restrict s);
 static int parse_const_expr(TokenStream* restrict s);
 static bool is_typename(TokenStream* restrict s);
 static _Noreturn void generic_error(TokenStream* restrict s, const char* msg);
+static void parse_decl_or_expr(TokenStream* restrict s, size_t* body_count);
 
 static ExprIndex parse_expr(TokenStream* restrict s);
 
@@ -66,6 +67,13 @@ static ExprIndex parse_expr(TokenStream* restrict s);
 static ExprIndex parse_expr_l14(TokenStream* restrict s);
 
 inline static int align_up(int a, int b) { return a + (b - (a % b)) % b; }
+
+inline StmtIndex make_stmt(TokenStream* restrict s, StmtOp op) {
+	StmtIndex n = push_stmt_arena(1);
+	stmt_arena.data[n].op = op;
+	stmt_arena.data[n].loc = tokens_get(s)->location;
+	return n;
+}
 
 TopLevel parse_file(TokenStream* restrict s) {
 	////////////////////////////////
@@ -143,11 +151,10 @@ TopLevel parse_file(TokenStream* restrict s) {
 			if (type_arena.data[decl.type].kind == KIND_FUNC) {
 				// function
 				// TODO(NeGate): Check for redefines
-				StmtIndex n = push_stmt_arena(1);
-				stmt_arena.data[n] = (Stmt) {
-					.op = STMT_DECL,
-					.decl.type = decl.type,
-					.decl.name = decl.name,
+				StmtIndex n = make_stmt(s, STMT_DECL);
+				stmt_arena.data[n].decl = (struct StmtDecl){
+					.type = decl.type,
+					.name = decl.name
 				};
 				
 				Symbol func_symbol = (Symbol){
@@ -204,11 +211,10 @@ TopLevel parse_file(TokenStream* restrict s) {
 				// Normal decls
 				assert(decl.name);
 				
-				StmtIndex n = push_stmt_arena(1);
-				stmt_arena.data[n] = (Stmt) {
-					.op = STMT_DECL,
-					.decl.type = decl.type,
-					.decl.name = decl.name,
+				StmtIndex n = make_stmt(s, STMT_DECL);
+				stmt_arena.data[n].decl = (struct StmtDecl){
+					.type = decl.type,
+					.name = decl.name
 				};
 				arrput(top_level, n);
 				
@@ -227,11 +233,10 @@ TopLevel parse_file(TokenStream* restrict s) {
 						Decl decl = parse_declarator(s, type);
 						assert(decl.name);
 						
-						StmtIndex n = push_stmt_arena(1);
-						stmt_arena.data[n] = (Stmt) {
-							.op = STMT_DECL,
-							.decl.type = decl.type,
-							.decl.name = decl.name,
+						StmtIndex n = make_stmt(s, STMT_DECL);
+						stmt_arena.data[n].decl = (struct StmtDecl){
+							.type = decl.type,
+							.name = decl.name
 						};
 						arrput(top_level, n);
 						
@@ -326,10 +331,7 @@ static StmtIndex parse_compound_stmt(TokenStream* restrict s) {
 	// mark when the local scope starts
 	int saved = local_symbol_count;
 	
-	StmtIndex node = push_stmt_arena(1);
-	stmt_arena.data[node] = (Stmt) {
-		.op = STMT_COMPOUND
-	};
+	StmtIndex node = make_stmt(s, STMT_COMPOUND);
 	
 	size_t body_count = 0; // He be fuckin
 	void* body = tls_save();
@@ -340,57 +342,8 @@ static StmtIndex parse_compound_stmt(TokenStream* restrict s) {
 		if (stmt) {
 			*((StmtIndex*)tls_push(sizeof(StmtIndex))) = stmt;
 			body_count++;
-		} else if (is_typename(s)) {
-			Attribs attr = { 0 };
-			TypeIndex type = parse_declspec(s, &attr);
-			
-			// TODO(NeGate): Kinda ugly
-			// don't expect one the first time
-			bool expect_comma = false;
-			while (tokens_get(s)->type != ';') {
-				if (expect_comma) {
-					expect(s, ',');
-				} else expect_comma = true;
-				
-				Decl decl = parse_declarator(s, type);
-				
-				StmtIndex n = push_stmt_arena(1);
-				stmt_arena.data[n] = (Stmt) {
-					.op = STMT_DECL,
-					.decl.type = decl.type,
-					.decl.name = decl.name,
-				};
-				local_symbols[local_symbol_count++] = (Symbol){
-					.name = decl.name,
-					.type = decl.type,
-					.storage_class = STORAGE_LOCAL,
-					.stmt = n
-				};
-				
-				if (tokens_get(s)->type == '=') {
-					// initial value
-					tokens_next(s);
-					
-					ExprIndex e = parse_expr_l14(s);
-					stmt_arena.data[n].expr = e;
-				}
-				
-				*((StmtIndex*)tls_push(sizeof(StmtIndex))) = n;
-				body_count++;
-			}
-			
-			expect(s, ';');
 		} else {
-			stmt = push_stmt_arena(1);
-			stmt_arena.data[stmt].op = STMT_EXPR;
-			
-			ExprIndex e = parse_expr(s);
-			stmt_arena.data[stmt].expr = e;
-			
-			*((StmtIndex*)tls_push(sizeof(StmtIndex))) = stmt;
-			body_count++;
-			
-			expect(s, ';');
+			parse_decl_or_expr(s, &body_count);
 		}
 	}
 	expect(s, '}');
@@ -399,8 +352,10 @@ static StmtIndex parse_compound_stmt(TokenStream* restrict s) {
 	StmtIndexIndex start = push_stmt_ref_arena(body_count);
 	memcpy(&stmt_ref_arena.data[start], body, body_count * sizeof(ArgIndex));
 	
-	stmt_arena.data[node].kids_start = start;
-	stmt_arena.data[node].kids_end = start + body_count;
+	stmt_arena.data[node].compound = (struct StmtCompound) {
+		.kids_start = start,
+		.kids_end = start + body_count
+	};
 	
 	tls_restore(body);
 	return node;
@@ -416,13 +371,15 @@ static StmtIndex parse_stmt(TokenStream* restrict s) {
 	if (tokens_get(s)->type == TOKEN_KW_return) {
 		tokens_next(s);
 		
-		StmtIndex n = push_stmt_arena(1);
-		stmt_arena.data[n].op = STMT_RETURN;
-		
+		ExprIndex e = 0;
 		if (tokens_get(s)->type != ';') {
-			ExprIndex e = parse_expr(s);
-			stmt_arena.data[n].expr = e;
+			e = parse_expr(s);
 		}
+		
+		StmtIndex n = make_stmt(s, STMT_RETURN);
+		stmt_arena.data[n].return_ = (struct StmtReturn){
+			.expr = e
+		};
 		
 		expect(s, ';');
 		return n;
@@ -430,54 +387,113 @@ static StmtIndex parse_stmt(TokenStream* restrict s) {
 	
 	if (tokens_get(s)->type == TOKEN_KW_if) {
 		tokens_next(s);
-		
-		StmtIndex n = push_stmt_arena(1);
-		stmt_arena.data[n].op = STMT_IF;
+		StmtIndex n = make_stmt(s, STMT_IF);
 		
 		expect(s, '(');
-		ExprIndex e = parse_expr(s);
-		stmt_arena.data[n].expr = e;
+		ExprIndex cond = parse_expr(s);
 		expect(s, ')');
 		
 		StmtIndex body = parse_stmt_or_expr(s);
-		stmt_arena.data[n].body = body;
+		stmt_arena.data[n].if_.body = body;
 		
+		StmtIndex next = 0;
 		if (tokens_get(s)->type == TOKEN_KW_else) {
 			tokens_next(s);
-			
-			StmtIndex body2 = parse_stmt_or_expr(s);
-			stmt_arena.data[n].body2 = body2;
-		} else {
-			stmt_arena.data[n].body2 = 0;
+			next = parse_stmt_or_expr(s);
 		}
 		
+		stmt_arena.data[n].if_ = (struct StmtIf){
+			.cond = cond,
+			.body = body,
+			.next = next
+		};
 		return n;
 	}
 	
 	if (tokens_get(s)->type == TOKEN_KW_while) {
 		tokens_next(s);
-		
-		StmtIndex n = push_stmt_arena(1);
-		stmt_arena.data[n].op = STMT_WHILE;
+		StmtIndex n = make_stmt(s, STMT_WHILE);
 		
 		expect(s, '(');
-		ExprIndex e = parse_expr(s);
-		stmt_arena.data[n].expr = e;
+		ExprIndex cond = parse_expr(s);
 		expect(s, ')');
 		
 		StmtIndex body = parse_stmt_or_expr(s);
-		stmt_arena.data[n].body = body;
+		stmt_arena.data[n].while_ = (struct StmtWhile){
+			.cond = cond,
+			.body = body
+		};
+		return n;
+	}
+	
+	if (tokens_get(s)->type == TOKEN_KW_for) {
+		tokens_next(s);
+		StmtIndex n = make_stmt(s, STMT_FOR);
+		
+		int saved = local_symbol_count;
+		expect(s, '(');
+		
+		// it's either nothing, a declaration, or an expression
+		StmtIndex first = 0;
+		if (tokens_get(s)->type == ';') {
+			/* nothing */
+			tokens_next(s);
+		} else {
+			// NOTE(NeGate): This is just a decl list or a single expression.
+			first = make_stmt(s, STMT_COMPOUND);
+			
+			size_t body_count = 0; // He be fuckin
+			void* body = tls_save();
+			{
+				parse_decl_or_expr(s, &body_count);
+			}
+			StmtIndexIndex start = push_stmt_ref_arena(body_count);
+			memcpy(&stmt_ref_arena.data[start], body, body_count * sizeof(ArgIndex));
+			
+			stmt_arena.data[first].compound = (struct StmtCompound) {
+				.kids_start = start,
+				.kids_end = start + body_count
+			};
+			tls_restore(body);
+		}
+		
+		ExprIndex cond = 0;
+		if (tokens_get(s)->type == ';') {
+			/* nothing */
+			tokens_next(s);
+		} else {
+			cond = parse_expr(s);
+			expect(s, ';');
+		}
+		
+		ExprIndex next = 0;
+		if (tokens_get(s)->type == ')') {
+			/* nothing */
+			tokens_next(s);
+		} else {
+			next = parse_expr(s);
+			expect(s, ')');
+		}
+		
+		StmtIndex body = parse_stmt_or_expr(s);
+		
+		// restore local symbol scope
+		local_symbol_count = saved;
+		
+		stmt_arena.data[n].for_ = (struct StmtFor){
+			.first = first,
+			.cond = cond,
+			.body = body,
+			.next = next
+		};
 		return n;
 	}
 	
 	if (tokens_get(s)->type == TOKEN_KW_do) {
 		tokens_next(s);
-		
-		StmtIndex n = push_stmt_arena(1);
-		stmt_arena.data[n].op = STMT_DO_WHILE;
+		StmtIndex n = make_stmt(s, STMT_DO_WHILE);
 		
 		StmtIndex body = parse_stmt_or_expr(s);
-		stmt_arena.data[n].body = body;
 		
 		if (tokens_get(s)->type != TOKEN_KW_while) {
 			Token* t = tokens_get(s);
@@ -490,22 +506,27 @@ static StmtIndex parse_stmt(TokenStream* restrict s) {
 		
 		expect(s, '(');
 		
-		ExprIndex e = parse_expr(s);
-		stmt_arena.data[n].expr = e;
+		ExprIndex cond = parse_expr(s);
 		
 		expect(s, ')');
 		expect(s, ';');
+		
+		stmt_arena.data[n].do_while = (struct StmtDoWhile){
+			.cond = cond,
+			.body = body
+		};
 		return n;
 	}
 	
 	if (tokens_get(s)->type == TOKEN_KW_goto) {
 		tokens_next(s);
 		
-		StmtIndex n = push_stmt_arena(1);
-		stmt_arena.data[n].op = STMT_GOTO;
+		StmtIndex n = make_stmt(s, STMT_GOTO);
 		
-		ExprIndex e = parse_expr(s);
-		stmt_arena.data[n].expr = e;
+		ExprIndex target = parse_expr(s);
+		stmt_arena.data[n].goto_ = (struct StmtGoto){
+			.target = target
+		};
 		
 		expect(s, ';');
 		return n;
@@ -516,9 +537,10 @@ static StmtIndex parse_stmt(TokenStream* restrict s) {
 		Token* t = tokens_get(s);
 		Atom name = atoms_put(t->end - t->start, t->start);
 		
-		StmtIndex n = push_stmt_arena(1);
-		stmt_arena.data[n].op = STMT_LABEL;
-		stmt_arena.data[n].label.name = name;
+		StmtIndex n = make_stmt(s, STMT_LABEL);
+		stmt_arena.data[n].label = (struct StmtLabel){
+			.name = name
+		};
 		shput(labels, name, n);
 		
 		tokens_next(s);
@@ -534,13 +556,71 @@ static StmtIndex parse_stmt(TokenStream* restrict s) {
 	return 0;
 }
 
+static void parse_decl_or_expr(TokenStream* restrict s, size_t* body_count) {
+	if (is_typename(s)) {
+		Attribs attr = { 0 };
+		TypeIndex type = parse_declspec(s, &attr);
+		
+		// TODO(NeGate): Kinda ugly
+		// don't expect one the first time
+		bool expect_comma = false;
+		while (tokens_get(s)->type != ';') {
+			if (expect_comma) {
+				expect(s, ',');
+			} else expect_comma = true;
+			
+			StmtIndex n = make_stmt(s, STMT_DECL);
+			
+			Decl decl = parse_declarator(s, type);
+			ExprIndex initial = 0;
+			if (tokens_get(s)->type == '=') {
+				tokens_next(s);
+				initial = parse_expr_l14(s);
+			}
+			
+			stmt_arena.data[n].decl = (struct StmtDecl){
+				.type = decl.type,
+				.name = decl.name,
+				.initial = initial
+			};
+			
+			local_symbols[local_symbol_count++] = (Symbol){
+				.name = decl.name,
+				.type = decl.type,
+				.storage_class = STORAGE_LOCAL,
+				.stmt = n
+			};
+			
+			*((StmtIndex*)tls_push(sizeof(StmtIndex))) = n;
+			*body_count += 1;
+		}
+		
+		expect(s, ';');
+	} else {
+		StmtIndex n = make_stmt(s, STMT_EXPR);
+		
+		ExprIndex expr = parse_expr(s);
+		stmt_arena.data[n].expr = (struct StmtExpr){
+			.expr = expr
+		};
+		
+		*((StmtIndex*)tls_push(sizeof(StmtIndex))) = n;
+		*body_count += 1;
+		expect(s, ';');
+	}
+}
+
 static StmtIndex parse_stmt_or_expr(TokenStream* restrict s) {
 	StmtIndex stmt = parse_stmt(s);
 	if (stmt) return stmt;
 	
-	stmt = push_stmt_arena(1);
-	stmt_arena.data[stmt].op = STMT_EXPR;
-	stmt_arena.data[stmt].expr = parse_expr(s);
+	StmtIndex n = make_stmt(s, STMT_EXPR);
+	
+	ExprIndex expr = parse_expr(s);
+	stmt_arena.data[n].expr = (struct StmtExpr){
+		.expr = expr
+	};
+	
 	expect(s, ';');
 	
 	return stmt;
