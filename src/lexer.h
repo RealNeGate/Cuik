@@ -119,17 +119,27 @@ typedef enum TknType {
 	TOKEN_KW_declspec,
 } TknType;
 
+typedef int SourceLocIndex;
+
+typedef struct SourceLoc {
+	const unsigned char* file;
+	int line;
+} SourceLoc;
+
 typedef struct Token {
 	TknType type;
+	SourceLocIndex location;
 	const unsigned char* start;
 	const unsigned char* end;
-	int line;
 } Token;
 
 typedef struct TokenStream {
 	// stb_ds array
 	Token* tokens;
 	size_t current;
+	
+	// stb_ds array
+	SourceLoc* line_arena;
 } TokenStream;
 
 typedef struct Lexer {

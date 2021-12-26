@@ -263,7 +263,10 @@ TopLevel parse_file(TokenStream* restrict s) {
 			
 			// TODO(NeGate): Give a decent error message
 			if (!sym) {
-				printf("error %d: could not find symbol: %s\n", expr_arena.data[i].line, (char*)expr_arena.data[i].unknown_sym);
+				Token* t = tokens_get(s);
+				SourceLoc* loc = &s->line_arena[t->location];
+				
+				printf("%s:%d: error: could not find symbol: %s\n", loc->file, loc->line, (char*)expr_arena.data[i].unknown_sym);
 				abort();
 			}
 			
@@ -478,8 +481,9 @@ static StmtIndex parse_stmt(TokenStream* restrict s) {
 		
 		if (tokens_get(s)->type != TOKEN_KW_while) {
 			Token* t = tokens_get(s);
+			SourceLoc* loc = &s->line_arena[t->location];
 			
-			printf("error on line %d: expected 'while' got '%.*s'", t->line, (int)(t->end - t->start), t->start);
+			printf("%s:%d: error: expected 'while' got '%.*s'\n", loc->file, loc->line, (int)(t->end - t->start), t->start);
 			abort();
 		}
 		tokens_next(s);
@@ -556,7 +560,7 @@ static ExprIndex parse_expr_l0(TokenStream* restrict s) {
 		
 		return e;
 	} else if (tokens_get(s)->type == TOKEN_IDENTIFIER) {
-		int line = tokens_get(s)->line;
+		SourceLocIndex loc = tokens_get(s)->location;
 		Symbol* sym = find_local_symbol(s);
 		
 		ExprIndex e = push_expr_arena(1);
@@ -564,7 +568,7 @@ static ExprIndex parse_expr_l0(TokenStream* restrict s) {
 			if (sym->storage_class == STORAGE_PARAM) {
 				expr_arena.data[e] = (Expr) {
 					.op = EXPR_PARAM,
-					.line = line,
+					.loc = loc,
 					.param_num = sym->param_num
 				};
 			} else {
@@ -572,7 +576,7 @@ static ExprIndex parse_expr_l0(TokenStream* restrict s) {
 				
 				expr_arena.data[e] = (Expr) {
 					.op = EXPR_SYMBOL,
-					.line = line,
+					.loc = loc,
 					.symbol = sym->stmt
 				};
 			}
@@ -585,13 +589,13 @@ static ExprIndex parse_expr_l0(TokenStream* restrict s) {
 			if (search >= 0) {
 				expr_arena.data[e] = (Expr) {
 					.op = EXPR_SYMBOL,
-					.line = line,
+					.loc = loc,
 					.symbol = labels[search].value
 				};
 			} else {
 				expr_arena.data[e] = (Expr) {
 					.op = EXPR_UNKNOWN_SYMBOL,
-					.line = line,
+					.loc = loc,
 					.unknown_sym = name
 				};
 			}
@@ -606,6 +610,7 @@ static ExprIndex parse_expr_l0(TokenStream* restrict s) {
 		ExprIndex e = push_expr_arena(1);
 		expr_arena.data[e] = (Expr) {
 			.op = EXPR_NUM,
+			.loc = tokens_get(s)->location,
 			.num = i
 		};
 		
@@ -617,6 +622,7 @@ static ExprIndex parse_expr_l0(TokenStream* restrict s) {
 		ExprIndex e = push_expr_arena(1);
 		expr_arena.data[e] = (Expr) {
 			.op = EXPR_STR,
+			.loc = tokens_get(s)->location,
 			.str.start = t->start,
 			.str.end = t->end
 		};
@@ -640,9 +646,11 @@ static ExprIndex parse_expr_l1(TokenStream* restrict s) {
 			ExprIndex base = parse_expr_l0(s);
 			ExprIndex e = push_expr_arena(1);
 			
-			expr_arena.data[e].op = EXPR_CAST;
-			expr_arena.data[e].cast.type = type;
-			expr_arena.data[e].cast.src = base;
+			expr_arena.data[e] = (Expr) {
+				.op = EXPR_CAST,
+				.loc = tokens_get(s)->location,
+				.cast = { type, base }
+			};
 			return e;
 		}
 		
@@ -665,7 +673,7 @@ static ExprIndex parse_expr_l1(TokenStream* restrict s) {
 			
 			expr_arena.data[e] = (Expr) {
 				.op = EXPR_SUBSCRIPT,
-				.line = tokens_get(s)->line,
+				.loc = tokens_get(s)->location,
 				.subscript = { base, index }
 			};
 			goto try_again;
@@ -685,6 +693,7 @@ static ExprIndex parse_expr_l1(TokenStream* restrict s) {
 			e = push_expr_arena(1);
 			expr_arena.data[e] = (Expr) {
 				.op = EXPR_DOT,
+				.loc = tokens_get(s)->location,
 				.dot = { base, name }
 			};
 			
@@ -724,7 +733,7 @@ static ExprIndex parse_expr_l1(TokenStream* restrict s) {
 			
 			expr_arena.data[e] = (Expr) {
 				.op = EXPR_CALL,
-				.line = tokens_get(s)->line,
+				.loc = tokens_get(s)->location,
 				.call = { target, start, start + param_count }
 			};
 			
@@ -743,7 +752,7 @@ static ExprIndex parse_expr_l1(TokenStream* restrict s) {
 			e = push_expr_arena(1);
 			expr_arena.data[e] = (Expr) {
 				.op = is_inc ? EXPR_POST_INC : EXPR_POST_DEC,
-				.line = tokens_get(s)->line,
+				.loc = tokens_get(s)->location,
 				.unary_op.src = src
 			};
 		}
@@ -762,7 +771,7 @@ static ExprIndex parse_expr_l2(TokenStream* restrict s) {
 		ExprIndex e = push_expr_arena(1);
 		expr_arena.data[e] = (Expr) {
 			.op = EXPR_ADDR,
-			.line = tokens_get(s)->line,
+			.loc = tokens_get(s)->location,
 			.unary_op.src = value
 		};
 		return e;
@@ -782,7 +791,7 @@ static ExprIndex parse_expr_l2(TokenStream* restrict s) {
 		
 		expr_arena.data[e] = (Expr) {
 			.op = EXPR_DEREF,
-			.line = tokens_get(s)->line,
+			.loc = tokens_get(s)->location,
 			.unary_op.src = base
 		};
 	}
@@ -810,7 +819,7 @@ static ExprIndex parse_expr_l3(TokenStream* restrict s) {
 		ExprIndex rhs = parse_expr_l2(s);
 		expr_arena.data[e] = (Expr) {
 			.op = op,
-			.line = tokens_get(s)->line,
+			.loc = tokens_get(s)->location,
 			.bin_op = { lhs, rhs }
 		};
 		
@@ -838,7 +847,7 @@ static ExprIndex parse_expr_l4(TokenStream* restrict s) {
 		ExprIndex rhs = parse_expr_l3(s);
 		expr_arena.data[e] = (Expr) {
 			.op = op,
-			.line = tokens_get(s)->line,
+			.loc = tokens_get(s)->location,
 			.bin_op = { lhs, rhs }
 		};
 		
@@ -870,7 +879,7 @@ static ExprIndex parse_expr_l6(TokenStream* restrict s) {
 		ExprIndex rhs = parse_expr_l4(s);
 		expr_arena.data[e] = (Expr) {
 			.op = op,
-			.line = tokens_get(s)->line,
+			.loc = tokens_get(s)->location,
 			.bin_op = { lhs, rhs }
 		};
 		
@@ -893,7 +902,7 @@ static ExprIndex parse_expr_l7(TokenStream* restrict s) {
 		ExprIndex rhs = parse_expr_l6(s);
 		expr_arena.data[e] = (Expr) {
 			.op = op,
-			.line = tokens_get(s)->line,
+			.loc = tokens_get(s)->location,
 			.bin_op = { lhs, rhs }
 		};
 		
@@ -915,7 +924,7 @@ static ExprIndex parse_expr_l11(TokenStream* restrict s) {
 		ExprIndex rhs = parse_expr_l6(s);
 		expr_arena.data[e] = (Expr) {
 			.op = op,
-			.line = tokens_get(s)->line,
+			.loc = tokens_get(s)->location,
 			.bin_op = { lhs, rhs }
 		};
 		
@@ -937,7 +946,7 @@ static ExprIndex parse_expr_l12(TokenStream* restrict s) {
 		ExprIndex rhs = parse_expr_l11(s);
 		expr_arena.data[e] = (Expr) {
 			.op = op,
-			.line = tokens_get(s)->line,
+			.loc = tokens_get(s)->location,
 			.bin_op = { lhs, rhs }
 		};
 		
@@ -984,7 +993,7 @@ static ExprIndex parse_expr_l14(TokenStream* restrict s) {
 		ExprIndex rhs = parse_expr_l12(s);
 		expr_arena.data[e] = (Expr) {
 			.op = op,
-			.line = tokens_get(s)->line,
+			.loc = tokens_get(s)->location,
 			.bin_op = { lhs, rhs }
 		};
 		
@@ -1005,7 +1014,7 @@ static ExprIndex parse_expr_l15(TokenStream* restrict s) {
 		ExprIndex rhs = parse_expr_l14(s);
 		expr_arena.data[e] = (Expr) {
 			.op = op,
-			.line = tokens_get(s)->line,
+			.loc = tokens_get(s)->location,
 			.bin_op = { lhs, rhs }
 		};
 		
@@ -1663,16 +1672,18 @@ static int parse_const_expr(TokenStream* restrict s) {
 ////////////////////////////////
 static _Noreturn void generic_error(TokenStream* restrict s, const char* msg) {
 	Token* t = tokens_get(s);
+	SourceLoc* loc = &s->line_arena[t->location];
 	
-	printf("error on line %d: %s\n", t->line, msg);
+	printf("%s:%d: error: %s\n", loc->file, loc->line, msg);
 	abort();
 }
 
 static void expect(TokenStream* restrict s, char ch) {
 	if (tokens_get(s)->type != ch) {
 		Token* t = tokens_get(s);
+		SourceLoc* loc = &s->line_arena[t->location];
 		
-		printf("error on line %d: expected '%c' got '%.*s'", t->line, ch, (int)(t->end - t->start), t->start);
+		printf("%s:%d: error: expected '%c' got '%.*s'", loc->file, loc->line, ch, (int)(t->end - t->start), t->start);
 		abort();
 	}
 	

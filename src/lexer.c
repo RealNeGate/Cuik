@@ -308,6 +308,14 @@ void lexer_read(Lexer* restrict l) {
 				while (char_classes[*current] == CHAR_CLASS_NUMBER) { current++; }
 				l->token_type = TOKEN_INTEGER;
 			}
+			
+			// TODO(NeGate): Fix up the suffixes
+			uint32_t next_three_chars = *((uint32_t*)current) & 0xFFFFFF;
+			if (next_three_chars == ('U' | ('L' << 8) | ('L' << 16))) {
+				current += 3;
+			} else if (next_three_chars == ('u' | ('l' << 8) | ('l' << 16))) {
+				current += 3;
+			}
 			break;
 		}
 		case CHAR_CLASS_SEPARATOR: {

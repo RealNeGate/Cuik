@@ -109,17 +109,16 @@ static void set_preprocessor_info(CPP_Context* cpp_ctx) {
 	cpp_add_include_directory(cpp_ctx, "W:\\Windows Kits\\10\\Include\\10.0.19041.0\\shared\\");
 	cpp_add_include_directory(cpp_ctx, "W:\\Visual Studio\\2019\\Community\\VC\\Tools\\MSVC\\14.29.30133\\include\\");
 	
-	// TODO(NeGate): Fix this up but the macro hashing function needs at least 16 bytes
-	cpp_define_empty(cpp_ctx, (char[16]) { "_X86_" });
-	cpp_define_empty(cpp_ctx, (char[16]) { "_WIN32" });
-	cpp_define_empty(cpp_ctx, (char[16]) { "_WIN64" });
-	cpp_define_empty(cpp_ctx, (char[16]) { "_M_X64" });
-	cpp_define_empty(cpp_ctx, (char[16]) { "_M_AMD64" });
-	cpp_define_empty(cpp_ctx, (char[32]) { "_CRT_SECURE_NO_WARNINGS" });
+	cpp_define_empty(cpp_ctx, "_X86_");
+	cpp_define_empty(cpp_ctx, "_WIN32");
+	cpp_define_empty(cpp_ctx, "_WIN64");
+	cpp_define_empty(cpp_ctx, "_M_X64");
+	cpp_define_empty(cpp_ctx, "_M_AMD64");
+	cpp_define_empty(cpp_ctx, "_CRT_SECURE_NO_WARNINGS");
 	
-	cpp_define(cpp_ctx, (char[16]) { "__int64" }, "long long");
-	cpp_define(cpp_ctx, (char[16]) { "__pragma" }, "_Pragma");
-	cpp_define(cpp_ctx, (char[16]) { "__inline" }, "inline");
+	cpp_define(cpp_ctx, "__int64", "long long");
+	cpp_define(cpp_ctx, "__pragma(x)", "_Pragma(#x)");
+	cpp_define(cpp_ctx, "__inline", "inline");
 #else
 	// TODO(NeGate): Automatically detect these somehow...
 	cpp_add_include_directory(cpp_ctx, "/usr/lib/gcc/x86_64-linux-gnu/9/include");
@@ -387,19 +386,47 @@ static bool dump_tokens(const char source_file[]) {
 	double delta_ms = (t2 - t1) / (double)CLOCKS_PER_SEC;
 	printf("preprocessor took %.03f seconds\n", delta_ms);
 	
-	FILE* f = fopen("./a.txt", "w");
+	FILE* f = fopen("./preprocessed.c", "w");
 	if (!f) {
 		printf("Could not open file a.txt\n");
 		return false;
 	}
 	
 	size_t token_count = arrlen(s.tokens);
-	size_t last_line = 0;
+	
+	const unsigned char* last_file = NULL;
+	int last_line = 0;
+	
 	for (size_t i = 0; i < token_count; i++) {
 		Token* t = &s.tokens[i];
-		if (last_line != t->line) {
-			fprintf(f, "\n%3d:\t", t->line);
-			last_line = t->line;
+		SourceLoc* loc = &s.line_arena[t->location];
+		
+		if (last_file != loc->file) {
+			char str[260];
+			
+			// TODO(NeGate): Kinda shitty but i just wanna duplicate
+			// the backslashes to avoid them being treated as an escape
+			const char* in = (const char*)loc->file;
+			char* out = str;
+			
+			while (*in) {
+				if (*in == '\\') {
+					*out++ = '\\';
+					*out++ = '\\';
+					in++;
+				} else {
+					*out++ = *in++;
+				}
+			}
+			*out++ = '\0';
+			
+			fprintf(f, "\n#line %d \"%s\"\t", loc->line, str);
+			last_file = loc->file;
+		}
+		
+		if (last_line != loc->line) {
+			fprintf(f, "\n/* line %3d */\t", loc->line);
+			last_line = loc->line;
 		}
 		
 		fprintf(f, "%.*s ", (int)(t->end - t->start), t->start);

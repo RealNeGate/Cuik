@@ -226,8 +226,7 @@ typedef struct Stmt {
 	StmtOp op;
 	// STMT_EXPR, STMT_DECL, STMT_RETURN
 	ExprIndex expr;
-	
-	// TODO(NeGate): const char* pos;
+	SourceLocIndex loc;
 	
 	union {
 		struct {
@@ -272,7 +271,7 @@ typedef struct Stmt {
 
 typedef struct Expr {
 	ExprOp op;
-	int line;
+	SourceLocIndex loc;
 	
 	union {
 		Atom unknown_sym;

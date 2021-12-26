@@ -1,3 +1,5 @@
+// TODO(NeGate): This code leaks filenames but it doesn't actually matter because this
+// is a compiler and momma aint raised no bitch.
 #include "preproc.h"
 #include "memory.h"
 #include "file_io.h"
@@ -66,10 +68,20 @@ void cpp_add_include_directory(CPP_Context* ctx, const char dir[]) {
 	arrput(ctx->system_include_dirs, strdup(dir));
 }
 
-void cpp_define_empty(CPP_Context* ctx, const char key[]) {
+void cpp_define_empty(CPP_Context* ctx, const char* key) {
 	size_t len = strlen(key);
 	
-	// Hash name
+	// TODO(NeGate): Work around to get any of the macro bucket
+	// keys to be at 16bytes aligned
+	size_t pad_len = (len + 15) & ~15;
+	char* newkey = malloc(pad_len);
+	memcpy(newkey, key, len+1);
+	key = newkey;
+	
+	// Hash name, name doesn't include parenthesis part btw
+	const char* paren = strrchr(key, '(');
+	len = paren ? paren - key : len;
+	
 	uint64_t slot = hash_ident((const unsigned char*)key, len);
 	uint64_t e = ctx->macro_bucket_count[slot] + (slot * SLOTS_PER_MACRO_BUCKET);
 	
@@ -82,10 +94,22 @@ void cpp_define_empty(CPP_Context* ctx, const char key[]) {
 	ctx->macro_bucket_values_end[e] = NULL;
 }
 
-void cpp_define(CPP_Context* ctx, const char key[], const char value[]) {
+void cpp_define(CPP_Context* ctx, const char* key, const char* value) {
+	// TODO(NeGate): Fix up this code a bit because i really dislike how the 
+	// parenthesis are detected
 	size_t len = strlen(key);
 	
-	// Hash name
+	// TODO(NeGate): Work around to get any of the macro bucket
+	// keys to be at 16bytes aligned
+	size_t pad_len = (len + 15) & ~15;
+	char* newkey = malloc(pad_len);
+	memcpy(newkey, key, len+1);
+	key = newkey;
+	
+	// Hash name, name doesn't include parenthesis part btw
+	const char* paren = strrchr(key, '(');
+	len = paren ? paren - key : len;
+	
 	uint64_t slot = hash_ident((const unsigned char*)key, len);
 	uint64_t e = ctx->macro_bucket_count[slot] + (slot * SLOTS_PER_MACRO_BUCKET);
 	
@@ -125,14 +149,23 @@ TokenStream cpp_process(CPP_Context* ctx, const char filepath[]) {
 	TokenStream s = { 0 };
 	preprocess_file(ctx, &s, "", filepath);
 	
-	Token t = { 0, NULL, NULL, 0 };
+	Token t = { 0, 0, NULL, NULL };
 	arrput(s.tokens, t);
 	
 	return s;
 }
 
+inline static SourceLocIndex get_source_location(Lexer* restrict l, TokenStream* restrict s) {
+	SourceLocIndex i = arrlen(s->line_arena);
+	
+	SourceLoc loc = { (const unsigned char*)l->filepath, l->current_line };
+	arrput(s->line_arena, loc);
+	
+	return i;
+}
+
 // TODO(NeGate): Fix this up please...
-static void expand_double_hash(CPP_Context* restrict c, Token* last, Lexer* restrict l, int line) {
+static void expand_double_hash(CPP_Context* restrict c, Token* last, Lexer* restrict l, SourceLocIndex loc) {
 	unsigned char* out_start = c->the_shtuffs + c->the_shtuffs_size;
 	c->the_shtuffs_size += 4096;
 	assert(c->the_shtuffs_size < THE_SHTUFFS_SIZE);
@@ -164,12 +197,17 @@ static void expand_double_hash(CPP_Context* restrict c, Token* last, Lexer* rest
 	if (tmp_lex.token_type == TOKEN_IDENTIFIER) {
 		*last = (Token){ 
 			classify_ident(tmp_lex.token_start, tmp_lex.token_end - tmp_lex.token_start),
+			loc,
 			tmp_lex.token_start,
-			tmp_lex.token_end,
-			line
+			tmp_lex.token_end
 		};
 	} else {
-		*last = (Token){ tmp_lex.token_type, tmp_lex.token_start, tmp_lex.token_end, line };
+		*last = (Token){ 
+			tmp_lex.token_type,
+			loc,
+			tmp_lex.token_start,
+			tmp_lex.token_end
+		};
 	}
 	lexer_read(&tmp_lex);
 	
@@ -189,14 +227,14 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 		l.hit_line = false;
 		
 		if (l.token_type == TOKEN_IDENTIFIER) {
-			int line = l.current_line;
+			SourceLocIndex loc = get_source_location(&l, s);
 			
 			if (!is_defined(c, l.token_start, l.token_end - l.token_start)) {
 				// FAST PATH
 				Token t = { 
 					classify_ident(l.token_start, l.token_end - l.token_start),
-					l.token_start, l.token_end,
-					line 
+					loc,
+					l.token_start, l.token_end
 				};
 				arrput(s->tokens, t);
 				
@@ -223,9 +261,9 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 						if (tmp_lex.token_type == TOKEN_IDENTIFIER) {
 							t = (Token){ 
 								classify_ident(tmp_lex.token_start, tmp_lex.token_end - tmp_lex.token_start),
+								loc,
 								tmp_lex.token_start,
 								tmp_lex.token_end,
-								line
 							};
 							
 							arrput(s->tokens, t);
@@ -234,9 +272,14 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 							assert(arrlen(s->tokens) > 0);
 							Token* last = &s->tokens[arrlen(s->tokens) - 1];
 							
-							expand_double_hash(c, last, &tmp_lex, line);
+							expand_double_hash(c, last, &tmp_lex, loc);
 						} else {
-							t = (Token){ tmp_lex.token_type, tmp_lex.token_start, tmp_lex.token_end, line };
+							t = (Token){ 
+								tmp_lex.token_type,
+								loc,
+								tmp_lex.token_start,
+								tmp_lex.token_end
+							};
 							
 							arrput(s->tokens, t);
 							lexer_read(&tmp_lex);
@@ -518,6 +561,9 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 							break;
 						}
 					}
+				} else if (lexer_match(&l, 5, "error")) {
+					cpp_dump(c);
+					generic_error(&l, "error directive!");
 				} else {
 					generic_error(&l, "unknown directive!");
 				}
@@ -525,8 +571,13 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 				generic_error(&l, "unknown directive!");
 			}
 		} else {
-			int line = l.current_line;
-			Token t = { l.token_type, l.token_start, l.token_end, line };
+			Token t = { 
+				l.token_type, 
+				get_source_location(&l, s),
+				l.token_start,
+				l.token_end
+			};
+			
 			arrput(s->tokens, t);
 			lexer_read(&l);
 		}
