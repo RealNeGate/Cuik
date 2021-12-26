@@ -25,7 +25,10 @@ static char* read_entire_file(const char* file_path) {
 		int descriptor = fileno(file);
 		
 		struct stat file_stats;
-		if (fstat(descriptor, &file_stats) == -1) return NULL;
+		if (fstat(descriptor, &file_stats) == -1) {
+			fclose(file);
+			return NULL;
+		}
 		
 		len  = file_stats.st_size;
 		text = malloc(len + 17);

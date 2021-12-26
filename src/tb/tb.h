@@ -245,17 +245,10 @@ extern "C" {
 	// Module management
 	////////////////////////////////
 	// Creates a module with the correct target and settings
-	// the max_threads defines how many worker threads the backend will spawn, you're expected
-	// to spawn an equivalent amount of threads and generate IR for optimal performance.
-	//
-	// preserve_ir_after_submit means that after the tb_module_compile_func(...) you can 
-	// still access the IR, this comes at a higher overall memory usage cost since the
-	// IR is kept in memory for the lifetime of the compile but this is not an issue when
-	// debugging.
-	TB_API TB_Module* tb_module_create(TB_Arch target_arch, TB_System target_system, const TB_FeatureSet* features, int optimization_level, int max_threads, bool preserve_ir_after_submit);
+	TB_API TB_Module* tb_module_create(TB_Arch target_arch, TB_System target_system, const TB_FeatureSet* features, TB_OptLevel opt_level);
 	
-	// Validates & passes a function to the code gen stage to be optimized (if specified) and 
-	// converted into machine code.
+	// Validates IR & compiles the function into machine code.
+	// returns false if it fails.
 	TB_API bool tb_module_compile_func(TB_Module* m, TB_Function* f);
 	
 	// NOTE: Don't use this it's for testing purposes.
@@ -414,6 +407,7 @@ extern "C" {
 	TB_API void tb_inst_ret(TB_Function* f, TB_Register value);
 	
 	TB_API void tb_function_print(TB_Function* f, FILE* out);
+	TB_API void tb_function_free(TB_Function* f);
 	
 	////////////////////////////////
 	// IR access

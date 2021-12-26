@@ -29,6 +29,14 @@ int sum_of(int n, int* arr) {
 	return sum;
 }
 
+int sum_of2(int n, int* arr) {
+	int sum = 0;
+	for (int i = 0; i < n; i++) {
+		sum += arr[i];
+	}
+	return sum;
+}
+
 int fast_fib(int n) {
     int a = 0;
 	int b = 1;

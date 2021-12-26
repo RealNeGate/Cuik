@@ -22,10 +22,10 @@
 #define COMPILER_VERSION ""
 
 // frontend worker threads
-#define NUM_THREADS 6
+#define NUM_THREADS 4
 
 // this is how many IR gen tasks it tries to grab at any one time
-#define MAX_MUNCH 1024
+#define MAX_MUNCH 4096
 
 static thrd_t threads[NUM_THREADS];
 
@@ -147,7 +147,7 @@ static void compile_project(TB_Arch arch, TB_System sys, const char source_file[
 	// supposed to keep a global one and use it across multiple threads.
 	if (!is_multithreaded) {
 		TB_FeatureSet features = { 0 };
-		mod = tb_module_create(TB_ARCH_X86_64, TB_SYSTEM_WINDOWS, &features, TB_OPT_O0, 1, false);
+		mod = tb_module_create(TB_ARCH_X86_64, TB_SYSTEM_WINDOWS, &features, TB_OPT_O0);
 		
 		// Forward decls
 		size_t func_count = arrlen(top_level.arr);
@@ -166,7 +166,7 @@ static void compile_project(TB_Arch arch, TB_System sys, const char source_file[
 		}
 		
 		TB_FeatureSet features = { 0 };
-		mod = tb_module_create(arch, sys, &features, TB_OPT_O0, NUM_THREADS, false);
+		mod = tb_module_create(arch, sys, &features, TB_OPT_O0);
 		
 		// Forward decls
 		frontend_stage = 0;
@@ -446,11 +446,13 @@ static bool disassemble_object_file(const wchar_t vs_exe_path[], const char file
 
 static uint64_t get_last_write_time(const char filepath[]) {
 	WIN32_FIND_DATA data;
-	FindFirstFile(filepath, &data);
+	HANDLE handle = FindFirstFile(filepath, &data);
 	
 	ULARGE_INTEGER i;
 	i.LowPart = data.ftLastWriteTime.dwLowDateTime;
 	i.HighPart = data.ftLastWriteTime.dwHighDateTime;
+	
+	FindClose(handle);
 	return i.QuadPart;
 }
 #endif

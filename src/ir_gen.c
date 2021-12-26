@@ -910,6 +910,7 @@ static void gen_func_body(TypeIndex type, StmtIndex s, StmtIndex end) {
 	//printf("\n\n\n");
 	
 	tb_module_compile_func(mod, func);
+	tb_function_free(func);
 }
 
 void gen_ir_stage1(TopLevel tl, size_t i) {
