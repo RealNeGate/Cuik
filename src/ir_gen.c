@@ -821,10 +821,6 @@ static void gen_stmt(TB_Function* func, StmtIndex s) {
 			break;
 		}
 		case STMT_FOR: {
-<<<<<<< HEAD
-=======
-			// TODO(NeGate)
->>>>>>> 34dbd0f94d4326337ecd4f139cb493ebd4a1e42d
 			TB_Label header = tb_inst_new_label_id(func);
 			TB_Label body = tb_inst_new_label_id(func);
 			TB_Label exit = tb_inst_new_label_id(func);
