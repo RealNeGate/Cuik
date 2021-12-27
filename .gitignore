@@ -7,8 +7,8 @@ Cuik/
 *.ilk
 *.pdb
 
-tests/stb_image.txt
-tests/test5.txt
+tests/stb_image.c
+tests/test5.c
 
 debug.bat
 run.bat
