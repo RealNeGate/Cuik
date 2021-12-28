@@ -22,7 +22,7 @@
 #define COMPILER_VERSION "v0.01"
 
 // frontend worker threads
-#define NUM_THREADS 4
+#define NUM_THREADS 10
 
 // this is how many IR gen tasks it tries to grab at any one time
 #define MAX_MUNCH 4096
@@ -33,6 +33,11 @@ static _Atomic size_t tasks_reserved;
 static _Atomic size_t tasks_complete;
 static _Atomic bool is_running;
 static size_t tasks_count;
+
+// signalled when it's about to finish to notify the main
+// thread to wait on the last few tasks
+static cnd_t tasks_condition;
+static mtx_t tasks_mutex;
 
 // Frontend IR Gen has two stages, one places all
 // forward decls (0) and one places all function bodies (1)
@@ -49,14 +54,15 @@ static int task_thread(void* param) {
 					if (frontend_stage == 0) gen_ir_stage1(top_level, i);
 					else gen_ir_stage2(top_level, i);
 				}
+				
 				tasks_complete += (tasks_count - t);
+				cnd_signal(&tasks_condition);
 			}
 			
 			while (tasks_reserved >= tasks_count) { 
 				thrd_yield();
 				if (!is_running) return 0;
 			}
-			
 			continue;
 		}
 		
@@ -74,6 +80,8 @@ static void dispatch_tasks(size_t count) {
 	tasks_count = count;
 	tasks_complete = 0;
 	tasks_reserved = 0;
+	
+	cnd_wait(&tasks_condition, &tasks_mutex);
 	
 	// wait until it's completed
     while (tasks_complete < tasks_count) { 
@@ -160,6 +168,8 @@ static void compile_project(TB_Arch arch, TB_System sys, const char source_file[
 		}
 	} else {
 		is_running = true;
+		cnd_init(&tasks_condition);
+		mtx_init(&tasks_mutex, mtx_plain);
 		for (int i = 0; i < NUM_THREADS; i++) {
 			thrd_create(&threads[i], task_thread, NULL);
 		}
@@ -187,6 +197,8 @@ static void compile_project(TB_Arch arch, TB_System sys, const char source_file[
 		for (int i = 0; i < NUM_THREADS; i++) {
 			thrd_join(threads[i], NULL);
 		}
+		mtx_destroy(&tasks_mutex);
+		cnd_destroy(&tasks_condition);
 	}
 	
 	cpp_deinit(&cpp_ctx);
