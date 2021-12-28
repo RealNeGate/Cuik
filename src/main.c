@@ -25,7 +25,7 @@
 #define NUM_THREADS 10
 
 // this is how many IR gen tasks it tries to grab at any one time
-#define MAX_MUNCH 4096
+#define MAX_MUNCH 8192
 
 static thrd_t threads[NUM_THREADS];
 
@@ -35,7 +35,8 @@ static _Atomic bool is_running;
 static size_t tasks_count;
 
 // signalled when it's about to finish to notify the main
-// thread to wait on the last few tasks
+// thread to wake up because it's about to finish with the
+// parallel dispatch
 static cnd_t tasks_condition;
 static mtx_t tasks_mutex;
 
@@ -325,9 +326,7 @@ int main(int argc, char* argv[]) {
 				compile_project(target_arch, target_sys, source_file, true);
 				
 				if (mode == COMPILER_MODE_BUILD) {
-					FILE* f = fopen(obj_output_path, "wb");
-					if (!tb_module_export(mod, f)) abort();
-					fclose(f);
+					if (!tb_module_export(mod, obj_output_path)) abort();
 				}
 				
 				tb_module_destroy(mod);
@@ -525,10 +524,7 @@ static bool live_compile(const char source_file[], const char obj_output_path[],
 			timed_block("compilation") {
 				compile_project(target_arch, target_sys, source_file, true);
 				
-				FILE* f = fopen(obj_output_path, "wb");
-				if (!tb_module_export(mod, f)) abort();
-				fclose(f);
-				
+				if (!tb_module_export(mod, obj_output_path)) abort();
 				tb_module_destroy(mod);
 			}
 			

@@ -66,7 +66,7 @@ static ExprIndex parse_expr_l14(TokenStream* restrict s);
 
 inline static int align_up(int a, int b) { return a + (b - (a % b)) % b; }
 
-inline StmtIndex make_stmt(TokenStream* restrict s, StmtOp op) {
+inline static StmtIndex make_stmt(TokenStream* restrict s, StmtOp op) {
 	StmtIndex n = push_stmt_arena(1);
 	stmt_arena.data[n].op = op;
 	stmt_arena.data[n].loc = tokens_get(s)->location;
@@ -90,6 +90,8 @@ TopLevel parse_file(TokenStream* restrict s) {
 	StmtIndex* top_level = NULL;
 	
 	while (tokens_get(s)->type) {
+		// TODO(NeGate): Correctly parse pragmas instead of
+		// ignoring them.
 		if (tokens_get(s)->type == TOKEN_KW_Pragma) {
 			tokens_next(s);
 			expect(s, '(');
@@ -109,6 +111,8 @@ TopLevel parse_file(TokenStream* restrict s) {
 			continue;
 		}
 		
+		// TODO(NeGate): Correctly parse declspec instead of
+		// ignoring them.
 		if (tokens_get(s)->type == TOKEN_KW_declspec) {
 			tokens_next(s);
 			expect(s, '(');

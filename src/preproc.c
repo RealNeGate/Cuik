@@ -1,5 +1,5 @@
-// TODO(NeGate): This code leaks filenames but it doesn't actually matter because this
-// is a compiler and momma aint raised no bitch.
+// NOTE(NeGate): This code leaks the filename strings but it doesn't actually matter
+// because this is a compiler and momma aint raised no bitch.
 #include "preproc.h"
 #include "memory.h"
 #include "file_io.h"
