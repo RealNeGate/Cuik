@@ -6,6 +6,7 @@
 // meaning that the first element is reserved and cleared to
 // zero.
 #pragma once
+#include "common.h"
 
 // Let's you forward decl the index
 #define decl_arena_index(type, arena) \
@@ -48,3 +49,6 @@ size_t i = arena.count; \
 arena.count += c; \
 return i; \
 }
+
+void* arena_alloc(size_t size, size_t align);
+void arena_free();

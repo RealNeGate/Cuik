@@ -12,9 +12,7 @@ decl_arena_index(Arg, arg_arena) // refs to Types used by the function types
 decl_arena_index(EnumEntry, enum_entry_arena)
 
 decl_arena_index(Stmt, stmt_arena)
-decl_arena_index(StmtIndex, stmt_ref_arena)
 decl_arena_index(Expr, expr_arena)
-decl_arena_index(ExprIndex, expr_ref_arena)
 
 typedef int SymbolIndex;
 
@@ -233,8 +231,8 @@ typedef struct Stmt {
 	
 	union {
 		struct StmtCompound {
-			StmtIndex kids_start;
-			StmtIndex kids_end;
+			StmtIndex* kids;
+			int kids_count;
 		} compound;
 		struct StmtExpr {
 			ExprIndex expr;
@@ -306,7 +304,9 @@ typedef struct Expr {
 		} dot;
 		struct {
 			ExprIndex target;
-			ExprIndexIndex param_start, param_end;
+			int param_count;
+			
+			ExprIndex* param_start;
 		} call;
 		struct {
 			const unsigned char* start;
@@ -315,6 +315,8 @@ typedef struct Expr {
 		long long num;
 	};
 } Expr;
+
+_Static_assert(sizeof(Expr) <= 24, "We shouldn't exceed 24 bytes");
 
 typedef struct Decl {
 	TypeIndex type;
@@ -352,9 +354,7 @@ decl_arena(Arg, arg_arena)
 decl_arena(EnumEntry, enum_entry_arena)
 
 decl_arena(Stmt, stmt_arena)
-decl_arena(StmtIndex, stmt_ref_arena)
 decl_arena(Expr, expr_arena)
-decl_arena(ExprIndex, expr_ref_arena)
 
 TypeIndex new_func();
 TypeIndex new_enum();

@@ -4,9 +4,7 @@
 #include "stb_ds.h"
 
 impl_arena(Stmt, stmt_arena)
-impl_arena(StmtIndex, stmt_ref_arena)
 impl_arena(Expr, expr_arena)
-impl_arena(ExprIndex, expr_ref_arena)
 
 // this means types which can be incomplete
 // not just currently imcomplete so structs,
@@ -82,10 +80,8 @@ TopLevel parse_file(TokenStream* restrict s) {
 	tls_init();
 	
 	init_stmt_arena(4 * 1024);
-	init_stmt_ref_arena(4 * 1024);
 	init_enum_entry_arena(4 * 1024);
 	init_expr_arena(4 * 1024);
-	init_expr_ref_arena(4 * 1024);
 	init_types();
 	
 	////////////////////////////////
@@ -349,12 +345,12 @@ static StmtIndex parse_compound_stmt(TokenStream* restrict s) {
 	expect(s, '}');
 	local_symbol_count = saved;
 	
-	StmtIndexIndex start = push_stmt_ref_arena(body_count);
-	memcpy(&stmt_ref_arena.data[start], body, body_count * sizeof(ArgIndex));
+	StmtIndex* stmt_array = arena_alloc(body_count * sizeof(StmtIndex), _Alignof(StmtIndex));
+	memcpy(stmt_array, body, body_count * sizeof(StmtIndex));
 	
 	stmt_arena.data[node].compound = (struct StmtCompound) {
-		.kids_start = start,
-		.kids_end = start + body_count
+		.kids = stmt_array,
+		.kids_count = body_count
 	};
 	
 	tls_restore(body);
@@ -447,12 +443,13 @@ static StmtIndex parse_stmt(TokenStream* restrict s) {
 			{
 				parse_decl_or_expr(s, &body_count);
 			}
-			StmtIndexIndex start = push_stmt_ref_arena(body_count);
-			memcpy(&stmt_ref_arena.data[start], body, body_count * sizeof(ArgIndex));
+			
+			StmtIndex* stmt_array = arena_alloc(body_count * sizeof(StmtIndex), _Alignof(StmtIndex));
+			memcpy(stmt_array, body, body_count * sizeof(StmtIndex));
 			
 			stmt_arena.data[first].compound = (struct StmtCompound) {
-				.kids_start = start,
-				.kids_end = start + body_count
+				.kids = stmt_array,
+				.kids_count = body_count
 			};
 			tls_restore(body);
 		}
@@ -808,13 +805,14 @@ static ExprIndex parse_expr_l1(TokenStream* restrict s) {
 			}
 			tokens_next(s);
 			
-			ExprIndexIndex start = push_expr_ref_arena(param_count);
-			memcpy(&expr_ref_arena.data[start], params, param_count * sizeof(ExprIndex));
+			// Copy parameter refs into more permanent storage
+			ExprIndex* param_start = arena_alloc(param_count * sizeof(ExprIndex), _Alignof(ExprIndex));
+			memcpy(param_start, params, param_count * sizeof(ExprIndex));
 			
 			expr_arena.data[e] = (Expr) {
 				.op = EXPR_CALL,
 				.loc = tokens_get(s)->location,
-				.call = { target, start, start + param_count }
+				.call = { target, param_count, param_start }
 			};
 			
 			tls_restore(params);

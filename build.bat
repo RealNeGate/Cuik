@@ -7,6 +7,7 @@ set cuik_source_files=src/main.c ^
 	src/lexer.c ^
 	src/tls.c ^
 	src/types.c ^
+	src/arena.c ^
 	src/atoms.c ^
 	src/parser.c ^
 	src/ir_gen.c ^

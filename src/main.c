@@ -73,6 +73,7 @@ static int task_thread(void* param) {
 		tasks_complete += MAX_MUNCH;
 	}
 	
+	arena_free();
 	return 0;
 }
 
@@ -202,6 +203,7 @@ static void compile_project(TB_Arch arch, TB_System sys, const char source_file[
 	}
 	
 	cpp_deinit(&cpp_ctx);
+	arena_free();
 	atoms_deinit();
 	
 	// Compile

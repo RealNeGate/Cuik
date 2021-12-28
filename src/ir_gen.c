@@ -261,22 +261,20 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 			//ArgIndex arg_end = func_type->func.arg_end;
 			//ArgIndex arg_count = arg_end - arg_start;
 			
-			ExprIndexIndex param_start = ep->call.param_start;
-			ExprIndexIndex param_end = ep->call.param_end;
-			ExprIndexIndex param_count = param_end - param_start;
+			ExprIndex* params = ep->call.param_start;
+			int param_count = ep->call.param_count;
 			
 			//if (param_count != arg_count) abort();
 			
 			// Resolve parameters
-			TB_Register* params = tls_push(param_count * sizeof(TB_Register));
+			TB_Register* ir_params = tls_push(param_count * sizeof(TB_Register));
 			for (size_t i = 0; i < param_count; i++) {
-				ExprIndex p = expr_ref_arena.data[param_start + i];
 				Arg* a = &arg_arena.data[arg_start + i];
 				
-				IRVal src = gen_expr(func, p);
+				IRVal src = gen_expr(func, params[i]);
 				cvt_l2r(func, &src, a->type);
 				
-				params[i] = src.reg;
+				ir_params[i] = src.reg;
 			}
 			
 			// Resolve call target
@@ -287,15 +285,15 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 			
 			TB_Register r;
 			if (func_ptr.value_type == LVALUE_FUNC) {
-				r = tb_inst_call(func, dt, func_ptr.func, param_count, params);
+				r = tb_inst_call(func, dt, func_ptr.func, param_count, ir_params);
 			} else if (func_ptr.value_type == LVALUE_EFUNC) {
-				r = tb_inst_ecall(func, dt, func_ptr.ext, param_count, params);
+				r = tb_inst_ecall(func, dt, func_ptr.ext, param_count, ir_params);
 			} else {
 				cvt_l2r(func, &func_ptr, func_type_index);
-				r = tb_inst_vcall(func, dt, func_ptr.reg, param_count, params);
+				r = tb_inst_vcall(func, dt, func_ptr.reg, param_count, ir_params);
 			}
 			
-			tls_restore(params);
+			tls_restore(ir_params);
 			return (IRVal) {
 				.value_type = RVALUE,
 				.type = return_type,
@@ -690,13 +688,11 @@ static void gen_stmt(TB_Function* func, StmtIndex s) {
 			break;
 		}
 		case STMT_COMPOUND: {
-			StmtIndexIndex start = sp->compound.kids_start;
-			StmtIndexIndex end = sp->compound.kids_end;
+			StmtIndex* kids = sp->compound.kids;
+			size_t count = sp->compound.kids_count;
 			
-			for (StmtIndexIndex i = start; i != end; i++) {
-				StmtIndex s = stmt_ref_arena.data[i];
-				
-				gen_stmt(func, s);
+			for (size_t i = 0; i < count; i++) {
+				gen_stmt(func, kids[i]);
 			}
 			break;
 		}
