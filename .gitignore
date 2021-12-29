@@ -9,7 +9,6 @@ Cuik/
 
 tests/stb_image.c
 tests/test5.c
-tests/the_pile/
 
 debug.bat
 run.bat
