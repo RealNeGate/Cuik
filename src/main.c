@@ -143,7 +143,7 @@ static void compile_project(TB_Arch arch, TB_System sys, const char source_file[
 	cpp_init(&cpp_ctx);
 	set_preprocessor_info(&cpp_ctx);
 	
-	TokenStream s = cpp_process(&cpp_ctx, source_file);
+	TokenStream s = ir_gen_tokens = cpp_process(&cpp_ctx, source_file);
 	cpp_finalize(&cpp_ctx);
 	
 	// Parse

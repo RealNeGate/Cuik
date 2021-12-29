@@ -31,6 +31,7 @@ typedef struct IRVal {
 	};
 } IRVal;
 
+TokenStream ir_gen_tokens;
 TB_Module* mod;
 
 // Maps param_num -> TB_Register
@@ -55,7 +56,13 @@ static TB_DataType ctype_to_tbtype(const Type* t) {
 	}
 }
 
-static void cvt_l2r(TB_Function* func, IRVal* restrict v, TypeIndex dst_type) {
+static _Noreturn void sema_error(SourceLocIndex loc, const char* msg) {
+	SourceLoc* l = &ir_gen_tokens.line_arena[loc];
+	printf("%s:%d: error: %s\n", l->file, l->line, msg);
+	abort();
+}
+
+static void cvt_l2r(SourceLocIndex loc, TB_Function* func, IRVal* restrict v, TypeIndex dst_type) {
 	Type* src = &type_arena.data[v->type];
 	if (v->value_type == RVALUE_PHI) {
 		TB_Label merger = tb_inst_new_label_id(func);
@@ -70,8 +77,7 @@ static void cvt_l2r(TB_Function* func, IRVal* restrict v, TypeIndex dst_type) {
 		v->value_type = RVALUE;
 		v->reg = tb_inst_phi2(func, ctype_to_tbtype(src), v->phi.if_true, one, v->phi.if_false, zero);
 	} else if (v->value_type == LVALUE_LABEL) {
-		// TODO(NeGate)
-		abort();
+		sema_error(loc, "TODO");
 	} else if (v->value_type == LVALUE) {
 		// Implicit array to pointer
 		if (src->kind == KIND_ARRAY) {
@@ -123,13 +129,11 @@ static void cvt_l2r(TB_Function* func, IRVal* restrict v, TypeIndex dst_type) {
 			// A* -> B*    is not, unless they actually do match
 			if (src->ptr_to != TYPE_VOID && dst->ptr_to != TYPE_VOID) {
 				if (!type_equal(src->ptr_to, dst->ptr_to)) {
-					printf("No implicit cast between these types.");
-					abort();
+					sema_error(loc, "No implicit cast between these types.");
 				}
 			}
 		} else {
-			printf("No implicit cast between these types.");
-			abort();
+			sema_error(loc, "No implicit cast between these types.");
 		}
 	}
 }
@@ -138,11 +142,18 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 	const Expr* restrict ep = &expr_arena.data[e];
 	
 	switch (ep->op) {
-		case EXPR_NUM: {
+		case EXPR_INT: {
 			return (IRVal) {
 				.value_type = RVALUE,
 				.type = TYPE_INT,
-				.reg = tb_inst_iconst(func, TB_TYPE_I32, ep->num)
+				.reg = tb_inst_iconst(func, TB_TYPE_I32, ep->int_num)
+			};
+		}
+		case EXPR_FLOAT: {
+			return (IRVal) {
+				.value_type = RVALUE,
+				.type = TYPE_DOUBLE,
+				.reg = tb_inst_fconst(func, TB_TYPE_F64, ep->float_num)
 			};
 		}
 		case EXPR_STR: {
@@ -232,12 +243,12 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 				src.type = ep->cast.type;
 			}
 			
-			cvt_l2r(func, &src, ep->cast.type);
+			cvt_l2r(ep->loc, func, &src, ep->cast.type);
 			return src;
 		}
 		case EXPR_DEREF: {
 			IRVal src = gen_expr(func, ep->unary_op.src);
-			cvt_l2r(func, &src, src.type);
+			cvt_l2r(ep->loc, func, &src, src.type);
 			
 			assert(type_arena.data[src.type].kind == KIND_PTR);
 			
@@ -272,7 +283,7 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 				Arg* a = &arg_arena.data[arg_start + i];
 				
 				IRVal src = gen_expr(func, params[i]);
-				cvt_l2r(func, &src, a->type);
+				cvt_l2r(ep->loc, func, &src, a->type);
 				
 				ir_params[i] = src.reg;
 			}
@@ -289,7 +300,7 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 			} else if (func_ptr.value_type == LVALUE_EFUNC) {
 				r = tb_inst_ecall(func, dt, func_ptr.ext, param_count, ir_params);
 			} else {
-				cvt_l2r(func, &func_ptr, func_type_index);
+				cvt_l2r(ep->loc, func, &func_ptr, func_type_index);
 				r = tb_inst_vcall(func, dt, func_ptr.reg, param_count, ir_params);
 			}
 			
@@ -311,8 +322,8 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 				base.type = new_pointer_locked(type_arena.data[base.type].array_of);
 			}
 			
-			cvt_l2r(func, &base, base.type);
-			cvt_l2r(func, &index, TYPE_ULONG);
+			cvt_l2r(ep->loc, func, &base, base.type);
+			cvt_l2r(ep->loc, func, &index, TYPE_ULONG);
 			
 			TypeIndex element_type = type_arena.data[base.type].ptr_to;
 			int stride = type_arena.data[element_type].size;
@@ -328,6 +339,9 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 			
 			Atom name = ep->dot.name;
 			Type* restrict record_type = &type_arena.data[src.type];
+			if (record_type->kind != KIND_STRUCT && record_type->kind != KIND_UNION) {
+				sema_error(ep->loc, "Cannot get the member of a non-record type.");
+			}
 			
 			MemberIndex start = record_type->record.kids_start;
 			MemberIndex end = record_type->record.kids_end;
@@ -336,6 +350,7 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 				
 				// TODO(NeGate): String interning would be nice
 				if (cstr_equals(name, member->name)) {
+					// TODO(NeGate): Implement bitfields
 					assert(!member->is_bitfield);
 					
 					return (IRVal) {
@@ -346,7 +361,51 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 				}
 			}
 			
-			abort();
+			sema_error(ep->loc, "Could not find member under that name.");
+		}
+		case EXPR_ARROW: {
+			IRVal src = gen_expr(func, ep->dot.base);
+			assert(src.value_type == LVALUE);
+			
+			Atom name = ep->dot.name;
+			
+			Type* restrict ptr_type = &type_arena.data[src.type];
+			Type* restrict record_type;
+			if (ptr_type->kind == KIND_PTR) {
+				record_type = &type_arena.data[ptr_type->ptr_to];
+			} else if (ptr_type->kind == KIND_ARRAY) {
+				record_type = &type_arena.data[ptr_type->array_of];
+			} else {
+				sema_error(ep->loc, "Cannot dereference non-pointer type.");
+			}
+			
+			// dereference and leave me with the address
+			cvt_l2r(ep->loc, func, &src, src.type);
+			src.value_type = LVALUE;
+			
+			if (record_type->kind != KIND_STRUCT && record_type->kind != KIND_UNION) {
+				sema_error(ep->loc, "Cannot get the member of a non-record type.");
+			}
+			
+			MemberIndex start = record_type->record.kids_start;
+			MemberIndex end = record_type->record.kids_end;
+			for (MemberIndex m = start; m < end; m++) {
+				Member* member = &member_arena.data[m];
+				
+				// TODO(NeGate): String interning would be nice
+				if (cstr_equals(name, member->name)) {
+					// TODO(NeGate): Implement bitfields
+					assert(!member->is_bitfield);
+					
+					return (IRVal) {
+						.value_type = LVALUE,
+						.type = member->type,
+						.reg = tb_inst_member_access(func, src.reg, member->offset)
+					};
+				}
+			}
+			
+			sema_error(ep->loc, "Could not find member under that name.");
 		}
 		case EXPR_POST_INC:
 		case EXPR_POST_DEC: {
@@ -357,7 +416,7 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 			assert(src.value_type == LVALUE);
 			
 			IRVal loaded = src;
-			cvt_l2r(func, &loaded, type_index);
+			cvt_l2r(ep->loc, func, &loaded, type_index);
 			
 			Type* type = &type_arena.data[type_index];
 			if (type->kind == KIND_PTR) {
@@ -435,7 +494,7 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 				true_lbl = tb_inst_new_label_id(func);
 				false_lbl = tb_inst_new_label_id(func);
 				
-				cvt_l2r(func, &a, TYPE_BOOL);
+				cvt_l2r(ep->loc, func, &a, TYPE_BOOL);
 				tb_inst_if(func, a.reg, true_lbl, try_rhs_lbl);
 			}
 			
@@ -443,7 +502,7 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 			tb_inst_label(func, try_rhs_lbl);
 			
 			IRVal b = gen_expr(func, ep->bin_op.right);
-			cvt_l2r(func, &b, TYPE_BOOL);
+			cvt_l2r(ep->loc, func, &b, TYPE_BOOL);
 			tb_inst_if(func, b.reg, true_lbl, false_lbl);
 			
 			// we delay placement of the labels so that we can
@@ -478,8 +537,8 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 				int stride = type_arena.data[type->ptr_to].size;
 				
 				assert(l.value_type == LVALUE);
-				cvt_l2r(func, &l, type_index);
-				cvt_l2r(func, &r, TYPE_ULONG);
+				cvt_l2r(ep->loc, func, &l, type_index);
+				cvt_l2r(ep->loc, func, &r, TYPE_ULONG);
 				
 				return (IRVal) {
 					.value_type = RVALUE,
@@ -488,8 +547,8 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 				};
 			}
 			
-			cvt_l2r(func, &l, type_index);
-			cvt_l2r(func, &r, type_index);
+			cvt_l2r(ep->loc, func, &l, type_index);
+			cvt_l2r(ep->loc, func, &r, type_index);
 			
 			TB_DataType dt = ctype_to_tbtype(type);
 			TB_Register data;
@@ -533,8 +592,8 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 			Type* restrict type = &type_arena.data[type_index];
 			TB_DataType dt = ctype_to_tbtype(type);
 			
-			cvt_l2r(func, &l, type_index);
-			cvt_l2r(func, &r, type_index);
+			cvt_l2r(ep->loc, func, &l, type_index);
+			cvt_l2r(ep->loc, func, &r, type_index);
 			
 			TB_Register result;
 			if (ep->op == EXPR_CMPEQ) result = tb_inst_cmp_eq(func, dt, l.reg, r.reg);
@@ -557,8 +616,8 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 			Type* restrict type = &type_arena.data[type_index];
 			TB_DataType dt = ctype_to_tbtype(type);
 			
-			cvt_l2r(func, &l, type_index);
-			cvt_l2r(func, &r, type_index);
+			cvt_l2r(ep->loc, func, &l, type_index);
+			cvt_l2r(ep->loc, func, &r, type_index);
 			
 			TB_Register data;
 			if (type->kind == KIND_FLOAT || type->kind == KIND_DOUBLE) {
@@ -607,7 +666,7 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 				// don't do this conversion for ASSIGN, since it won't
 				// be needing it
 				ld_l = l;
-				cvt_l2r(func, &ld_l, l.type);
+				cvt_l2r(ep->loc, func, &ld_l, l.type);
 			}
 			
 			// Try pointer arithmatic
@@ -617,14 +676,14 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 				int stride = type_arena.data[type->ptr_to].size;
 				
 				assert(l.value_type == LVALUE);
-				cvt_l2r(func, &r, TYPE_ULONG);
+				cvt_l2r(ep->loc, func, &r, TYPE_ULONG);
 				
 				TB_Register arith = tb_inst_array_access(func, ld_l.reg, r.reg, dir * stride);
 				tb_inst_store(func, TB_TYPE_PTR, l.reg, arith, type->align);
 				return l;
 			}
 			
-			cvt_l2r(func, &r, l.type);
+			cvt_l2r(ep->loc, func, &r, l.type);
 			
 			TB_Register data;
 			TB_DataType dt = ctype_to_tbtype(type);
@@ -718,7 +777,7 @@ static void gen_stmt(TB_Function* func, StmtIndex s) {
 					
 					tb_inst_memcpy(func, addr, v.reg, size_reg, align);
 				} else {
-					cvt_l2r(func, &v, type_index);
+					cvt_l2r(sp->loc, func, &v, type_index);
 					tb_inst_store(func, ctype_to_tbtype(&type_arena.data[type_index]), addr, v.reg, align);
 				}
 			} else {
@@ -743,7 +802,7 @@ static void gen_stmt(TB_Function* func, StmtIndex s) {
 			if (e) {
 				IRVal v = gen_expr(func, e);
 				
-				cvt_l2r(func, &v, v.type);
+				cvt_l2r(sp->loc, func, &v, v.type);
 				tb_inst_ret(func, v.reg);
 			} else {
 				tb_inst_ret(func, TB_NULL_REG);
@@ -761,7 +820,7 @@ static void gen_stmt(TB_Function* func, StmtIndex s) {
 				if_true = tb_inst_new_label_id(func);
 				if_false = tb_inst_new_label_id(func);
 				
-				cvt_l2r(func, &cond, TYPE_BOOL);
+				cvt_l2r(sp->loc, func, &cond, TYPE_BOOL);
 				tb_inst_if(func, cond.reg, if_true, if_false);
 			}
 			
@@ -790,7 +849,7 @@ static void gen_stmt(TB_Function* func, StmtIndex s) {
 			tb_inst_label(func, header);
 			
 			IRVal cond = gen_expr(func, sp->while_.cond);
-			cvt_l2r(func, &cond, TYPE_BOOL);
+			cvt_l2r(sp->loc, func, &cond, TYPE_BOOL);
 			
 			tb_inst_if(func, cond.reg, body, exit);
 			
@@ -810,7 +869,7 @@ static void gen_stmt(TB_Function* func, StmtIndex s) {
 			gen_stmt(func, sp->while_.body);
 			
 			IRVal cond = gen_expr(func, sp->while_.cond);
-			cvt_l2r(func, &cond, TYPE_BOOL);
+			cvt_l2r(sp->loc, func, &cond, TYPE_BOOL);
 			tb_inst_if(func, cond.reg, body, exit);
 			
 			tb_inst_label(func, exit);
@@ -826,7 +885,7 @@ static void gen_stmt(TB_Function* func, StmtIndex s) {
 			tb_inst_label(func, header);
 			
 			IRVal cond = gen_expr(func, sp->for_.cond);
-			cvt_l2r(func, &cond, TYPE_BOOL);
+			cvt_l2r(sp->loc, func, &cond, TYPE_BOOL);
 			tb_inst_if(func, cond.reg, body, exit);
 			
 			tb_inst_label(func, body);
@@ -914,7 +973,7 @@ static void gen_func_body(TypeIndex type, StmtIndex s, StmtIndex end) {
 	if (tb_node_is_label(func, last) || !tb_node_is_terminator(func, last)) {
 		if (return_type->kind != KIND_VOID) {
 			// Needs return value
-			abort();
+			sema_error(stmt_arena.data[s].loc, "Expected return with value.");
 		}
 		
 		tb_inst_ret(func, TB_NULL_REG);

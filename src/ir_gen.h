@@ -5,6 +5,7 @@
 #include "tb/tb.h"
 #include "stb_ds.h"
 
+extern TokenStream ir_gen_tokens;
 extern TB_Module* mod;
 
 // stage 1 is forward declarations

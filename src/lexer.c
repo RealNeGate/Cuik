@@ -231,40 +231,33 @@ void lexer_read(Lexer* restrict l) {
 			l->token_type = '\0';
 			return;
 		} else if (*current == '\n') {
-			l->hit_line = true;
+			current++;
 			
-			// Do a branchless SIMD skip of up to 16 tabs after a newline.
-            __m128i chars = _mm_loadu_si128((__m128i *)current);
-            int len = __builtin_ffs(~_mm_movemask_epi8(_mm_cmpeq_epi8(chars, _mm_set1_epi8('\n'))));
-            current += len - 1;
-			l->current_line += len - 1;
+			l->hit_line = true;
+			l->current_line += 1;
             goto redo_lex;
 		} else if (*current == '\r') {
+			current++;
+			current += (*current == '\n') ? 1 : 0;
+			
 			l->hit_line = true;
-			
-			// Do a branchless SIMD skip of up to 16 tabs after a newline.
-            __m128i chars = _mm_loadu_si128((__m128i *)current);
-			__m128i mask = _mm_cmpeq_epi8(chars, _mm_set1_epi8('\r'));
-			mask = _mm_or_si128(mask, _mm_cmpeq_epi8(chars, _mm_set1_epi8('\n')));
-			
-            int len = __builtin_ffs(~_mm_movemask_epi8(mask));
-            current += len - 1;
-			l->current_line += (len - 1) / 2;
-            goto redo_lex;
+			l->current_line += 1;
+			goto redo_lex;
 		} else if (*current == ' ' || *current == '\t') {
 			// slow path
-			do { current++; } while (is_space(*current));
+			do { l->current_line += (*current == '\n'); current++; } while (is_space(*current));
 			goto redo_lex;
 		} else if (*current == '/') {
 			if (current[1] == '/') {
 				do { current++; } while (*current && *current != '\n');
 				
 				l->hit_line = true;
+				l->current_line += 1;
 				goto redo_lex;
 			} else if (current[1] == '*') {
 				current++;
 				
-				do { current++; } while (*current && !(current[0] == '/' && current[-1] == '*'));
+				do { l->current_line += (*current == '\n'); current++;  } while (*current && !(current[0] == '/' && current[-1] == '*'));
 				
 				current++;
 				l->hit_line = true;
@@ -307,14 +300,30 @@ void lexer_read(Lexer* restrict l) {
 			} else {
 				while (char_classes[*current] == CHAR_CLASS_NUMBER) { current++; }
 				l->token_type = TOKEN_INTEGER;
+				
+				if (*current == '.') {
+					// floats
+					l->token_type = TOKEN_FLOAT;
+					current++;
+					
+					while (char_classes[*current] == CHAR_CLASS_NUMBER) { current++; }
+				}
 			}
 			
 			// TODO(NeGate): Fix up the suffixes
-			uint32_t next_three_chars = *((uint32_t*)current) & 0xFFFFFF;
-			if (next_three_chars == ('U' | ('L' << 8) | ('L' << 16))) {
-				current += 3;
-			} else if (next_three_chars == ('u' | ('l' << 8) | ('l' << 16))) {
-				current += 3;
+			if (l->token_type == TOKEN_INTEGER) {
+				// Best thing about putting padding space after the lexer string is
+				// that we can read ahead like this :)
+				uint32_t next_three_chars = *((uint32_t*)current) & 0xFFFFFF;
+				if (next_three_chars == ('U' | ('L' << 8) | ('L' << 16))) {
+					current += 3;
+				} else if (next_three_chars == ('u' | ('l' << 8) | ('l' << 16))) {
+					current += 3;
+				}
+			} else if (l->token_type == TOKEN_FLOAT) {
+				if (*current == 'f' || *current == 'd') {
+					current += 1;
+				}
 			}
 			break;
 		}
@@ -417,6 +426,16 @@ int64_t parse_int(size_t len, const char* str) {
 	char* end;
 	int64_t i = strtol(str, &end, 0);
 	if (end != &str[len]) abort();
+	
+	return i;
+}
+
+double parse_float(size_t len, const char* str) {
+	char* end;
+	double i = strtod(str, &end);
+	if (end != &str[len]) {
+		if (*end != 'f' && *end != 'd') abort();
+	}
 	
 	return i;
 }

@@ -158,7 +158,8 @@ typedef enum StmtOp {
 typedef enum ExprOp {
 	EXPR_NONE,
 	
-	EXPR_NUM,
+	EXPR_INT,
+	EXPR_FLOAT,
 	EXPR_STR,
 	
 	EXPR_UNKNOWN_SYMBOL,
@@ -205,6 +206,7 @@ typedef enum ExprOp {
 	EXPR_ADDR,
 	EXPR_SUBSCRIPT,
 	EXPR_DOT,
+	EXPR_ARROW,
 	EXPR_CALL,
 	
 	EXPR_INITIALIZER,
@@ -303,6 +305,10 @@ typedef struct Expr {
 			Atom name;
 		} dot;
 		struct {
+			ExprIndex base;
+			Atom name;
+		} arrow;
+		struct {
 			ExprIndex target;
 			int param_count;
 			
@@ -312,7 +318,9 @@ typedef struct Expr {
 			const unsigned char* start;
 			const unsigned char* end;
 		} str;
-		long long num;
+		
+		double float_num;
+		long long int_num;
 	};
 } Expr;
 

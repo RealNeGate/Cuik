@@ -570,8 +570,6 @@ static void parse_decl_or_expr(TokenStream* restrict s, size_t* body_count) {
 				expect(s, ',');
 			} else expect_comma = true;
 			
-			StmtIndex n = make_stmt(s, STMT_DECL);
-			
 			Decl decl = parse_declarator(s, type);
 			ExprIndex initial = 0;
 			if (tokens_get(s)->type == '=') {
@@ -579,6 +577,7 @@ static void parse_decl_or_expr(TokenStream* restrict s, size_t* body_count) {
 				initial = parse_expr_l14(s);
 			}
 			
+			StmtIndex n = make_stmt(s, STMT_DECL);
 			stmt_arena.data[n].decl = (struct StmtDecl){
 				.type = decl.type,
 				.name = decl.name,
@@ -684,15 +683,28 @@ static ExprIndex parse_expr_l0(TokenStream* restrict s) {
 		
 		tokens_next(s);
 		return e;
+	} else if (tokens_get(s)->type == TOKEN_FLOAT) {
+		Token* t = tokens_get(s);
+		double i = parse_float(t->end - t->start, (const char*)t->start);
+		
+		ExprIndex e = push_expr_arena(1);
+		expr_arena.data[e] = (Expr) {
+			.op = EXPR_FLOAT,
+			.loc = tokens_get(s)->location,
+			.float_num = i
+		};
+		
+		tokens_next(s);
+		return e;
 	} else if (tokens_get(s)->type == TOKEN_INTEGER) {
 		Token* t = tokens_get(s);
 		int64_t i = parse_int(t->end - t->start, (const char*)t->start);
 		
 		ExprIndex e = push_expr_arena(1);
 		expr_arena.data[e] = (Expr) {
-			.op = EXPR_NUM,
+			.op = EXPR_INT,
 			.loc = tokens_get(s)->location,
-			.num = i
+			.int_num = i
 		};
 		
 		tokens_next(s);
@@ -757,6 +769,28 @@ static ExprIndex parse_expr_l1(TokenStream* restrict s) {
 				.loc = tokens_get(s)->location,
 				.subscript = { base, index }
 			};
+			goto try_again;
+		}
+		
+		// Pointer member access
+		if (tokens_get(s)->type == TOKEN_ARROW) {
+			tokens_next(s);
+			if (tokens_get(s)->type != TOKEN_IDENTIFIER) {
+				generic_error(s, "Expected identifier after member access a.b");
+			}
+			
+			Token* t = tokens_get(s);
+			Atom name = atoms_put(t->end - t->start, t->start);
+			
+			ExprIndex base = e;
+			e = push_expr_arena(1);
+			expr_arena.data[e] = (Expr) {
+				.op = EXPR_ARROW,
+				.loc = tokens_get(s)->location,
+				.arrow = { base, name }
+			};
+			
+			tokens_next(s);
 			goto try_again;
 		}
 		
