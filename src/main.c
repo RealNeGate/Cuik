@@ -45,6 +45,12 @@ static mtx_t tasks_mutex;
 static int frontend_stage;
 static TopLevel top_level;
 
+static struct CompilerSettings {
+	bool is_object_only;              // -c
+	const char* output_path;          // -o
+	TB_OptLevel optimization_level;   // -O
+} settings;
+
 static int task_thread(void* param) {
 	while (is_running) {
 		size_t t = atomic_fetch_add(&tasks_reserved, MAX_MUNCH);
@@ -83,9 +89,8 @@ static void dispatch_tasks(size_t count) {
 	tasks_complete = 0;
 	tasks_reserved = 0;
 	
-	cnd_wait(&tasks_condition, &tasks_mutex);
-	
 	// wait until it's completed
+	cnd_wait(&tasks_condition, &tasks_mutex);
     while (tasks_complete < tasks_count) { 
 		thrd_yield();
 	}
@@ -177,7 +182,7 @@ static void compile_project(TB_Arch arch, TB_System sys, const char source_file[
 		}
 		
 		TB_FeatureSet features = { 0 };
-		mod = tb_module_create(arch, sys, &features, TB_OPT_O0);
+		mod = tb_module_create(arch, sys, &features, settings.optimization_level);
 		
 		// Forward decls
 		frontend_stage = 0;
@@ -264,20 +269,22 @@ int main(int argc, char* argv[]) {
 		return -1;
 	}
 	
-	// -c
-	bool is_object_only = false;
-	
 	int i = 2;
 	while (i < argc) {
 		if (argv[i][0] == '-') {
 			switch (argv[i][1]) {
 				case 'c': 
-				is_object_only = true;
+				settings.is_object_only = true;
+				break;
+				
+				case 'O':
+				settings.optimization_level = TB_OPT_O1;
 				break;
 				
 				case 'o':
 				i++;
 				if (i >= argc) panic("Expected filename\n");
+				settings.output_path = argv[i];
 				break;
 				
 				default:
@@ -332,7 +339,7 @@ int main(int argc, char* argv[]) {
 				tb_module_destroy(mod);
 			}
 			
-			if (!is_object_only && mode == COMPILER_MODE_BUILD) {
+			if (!settings.is_object_only && mode == COMPILER_MODE_BUILD) {
 				Linker l;
 				if (linker_init(&l)) {
 					// Add system libraries

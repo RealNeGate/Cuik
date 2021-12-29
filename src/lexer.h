@@ -38,7 +38,7 @@ typedef enum TknType {
 	TOKEN_INTEGER,
 	TOKEN_FLOAT,
 	TOKEN_TRIPLE_DOT,
-    
+	
     TOKEN_INVALID,
 	
     TOKEN_ARROW,                      /* ->  */
@@ -143,15 +143,24 @@ typedef struct TokenStream {
 } TokenStream;
 
 typedef struct Lexer {
+	////////////////////////////////
+	// USER-PROVIDED
+	////////////////////////////////
 	const char* filepath;
-	
     const unsigned char* start;
     const unsigned char* current;
-	
 	int current_line;
-    
+	
+	// used to store special tokens like backslash-newline joining
+	size_t temp_buffer_capacity;
+	size_t temp_buffer_used;
+	unsigned char* temp_buffer;
+	
+	////////////////////////////////
+	// INTERNALS
+	////////////////////////////////
     // when reading it spotted a line or EOF, it must be manually reset
-	bool hit_line; 
+	bool hit_line;
 	
 	// current token info
 	TknType token_type;

@@ -215,6 +215,42 @@ TknType classify_ident(const unsigned char* restrict str, size_t len) {
 	return result == 16 ? (640 + v) : TOKEN_IDENTIFIER;
 }
 
+static int line_counter(size_t len, const unsigned char* str) {
+#if 1
+	int line_count = 0;
+	for (size_t i = 0; i < len; i++) {
+		line_count += (str[i] == '\n');
+	}
+	
+	return line_count;
+#else
+	static unsigned char overhang_mask[32] = {
+		255, 255, 255, 255,  255, 255, 255, 255,  255, 255, 255, 255,  255, 255, 255, 255,
+		0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0
+	};
+	
+	size_t line_count = 0;
+	size_t chunk_count = len / 16;
+	while (chunk_count) {
+		__m128i str128 = _mm_loadu_si128((__m128i*) str);
+		str += 16;
+		
+		unsigned int lf_mask = _mm_movemask_epi8(_mm_cmpeq_epi8(str128, _mm_set1_epi8('\n')));
+		line_count += __builtin_popcount(lf_mask);
+	}
+	
+	size_t overhang = len % 16;
+	__m128 str128 = _mm_and_si128(str, _mm_loadu_si128((__m128i*) &overhang_mask[16 - overhang]));
+	unsigned int lf_mask = _mm_movemask_epi8(_mm_cmpeq_epi8(str128, _mm_set1_epi8('\n')));
+	line_count += __builtin_popcount(lf_mask);
+	
+	return line_count;
+#endif
+}
+
+// NOTE(NeGate): The input string has a fat null terminator of 16bytes to allow
+// for some optimizations overall, one of the important ones is being able to read
+// a whole 16byte SIMD register at once for any SIMD optimizations. 
 void lexer_read(Lexer* restrict l) {
     const unsigned char* current = l->current;
     
@@ -230,22 +266,18 @@ void lexer_read(Lexer* restrict l) {
 			l->hit_line = true;
 			l->token_type = '\0';
 			return;
-		} else if (*current == '\n') {
-			current++;
+		} else if (*current == '\r' || *current == '\n') {
+			current += (current[0] + current[1] == '\r' + '\n') ? 2 : 1;
 			
 			l->hit_line = true;
 			l->current_line += 1;
             goto redo_lex;
-		} else if (*current == '\r') {
-			current++;
-			current += (*current == '\n') ? 1 : 0;
+		} else if (*current == ' ') {
+			// SIMD space skip
+			__m128i chars = _mm_loadu_si128((__m128i *)current);
+			int len = __builtin_ffs(~_mm_movemask_epi8(_mm_cmpeq_epi8(chars, _mm_set1_epi8(' '))));
 			
-			l->hit_line = true;
-			l->current_line += 1;
-			goto redo_lex;
-		} else if (*current == ' ' || *current == '\t') {
-			// slow path
-			do { l->current_line += (*current == '\n'); current++; } while (is_space(*current));
+			current += len - 1;
 			goto redo_lex;
 		} else if (*current == '/') {
 			if (current[1] == '/') {
@@ -257,9 +289,11 @@ void lexer_read(Lexer* restrict l) {
 			} else if (current[1] == '*') {
 				current++;
 				
-				do { l->current_line += (*current == '\n'); current++;  } while (*current && !(current[0] == '/' && current[-1] == '*'));
-				
+				const unsigned char* start = current;
+				do { current++; } while (*current && !(current[0] == '/' && current[-1] == '*'));
 				current++;
+				
+				l->current_line += line_counter(current - start, start);
 				l->hit_line = true;
 				goto redo_lex;
 			}
@@ -269,7 +303,7 @@ void lexer_read(Lexer* restrict l) {
 	////////////////////////////////
 	// Try to actually parse a token
 	////////////////////////////////
-    const unsigned char* start = current;
+	const unsigned char* start = current;
 	uint8_t initial_class = char_classes[*current++];
 	
 	switch (initial_class) {
@@ -313,7 +347,7 @@ void lexer_read(Lexer* restrict l) {
 			// TODO(NeGate): Fix up the suffixes
 			if (l->token_type == TOKEN_INTEGER) {
 				// Best thing about putting padding space after the lexer string is
-				// that we can read ahead like this :)
+				// that we can read extra bytes :)
 				uint32_t next_three_chars = *((uint32_t*)current) & 0xFFFFFF;
 				if (next_three_chars == ('U' | ('L' << 8) | ('L' << 16))) {
 					current += 3;
@@ -378,12 +412,26 @@ void lexer_read(Lexer* restrict l) {
 			__m128i pattern = _mm_set1_epi8(quote_type);
 			
 			do {
-				__m128i chars = _mm_loadu_si128((__m128i *)current);
-				int len = __builtin_ffs(_mm_movemask_epi8(_mm_cmpeq_epi8(chars, pattern)));
+				__m128i bytes = _mm_loadu_si128((__m128i *)current);
+				
+				// strings either end at the quote or are cut off early via a 
+				// newline unless you put a backslash-newline joiner.
+				__m128i test_quote = _mm_cmpeq_epi8(bytes, pattern);
+				__m128i test_newline = _mm_cmpeq_epi8(bytes, _mm_set1_epi8('\n'));
+				__m128i test = _mm_or_si128(test_quote, test_newline);
+				int len = __builtin_ffs(_mm_movemask_epi8(test));
 				
 				if (len) {
 					current += len;
-					if (current[-1] == quote_type && current[-2] != '\\') break;
+					l->current_line += (current[-1] == '\n');
+					
+					// backslash join
+					if (current[-1] == '\n' && current[-2] == '\\') continue;
+					
+					// escape + quote like \"
+					if (current[-1] == quote_type && current[-2] == '\\') continue;
+					
+					break;
 				} else {
 					current += 16;
 				}
@@ -417,9 +465,63 @@ void lexer_read(Lexer* restrict l) {
 		abort();
 	}
 	
-	l->token_start = start;
-	l->token_end = current;
-	l->current = current;
+	if (current[0] == '\\' && current[1] == '\n') {
+		// it increments the line counter but it doesn't mark a hit_line
+		// because the line terminator technically is removed. 
+		l->current_line += 1;
+		
+		// backslash-newline joining
+		size_t len = current - start;
+		if (l->temp_buffer_used + len > l->temp_buffer_capacity) {
+			printf("Lexer error: out of memory!");
+			abort();
+		}
+		
+		// start by copying over the original token
+		unsigned char* temp = &l->temp_buffer[l->temp_buffer_used];
+		memcpy(temp, start, len);
+		current += 2;
+		
+		start = current;
+		while (*current && *current != '\n' && *current != ' ') {
+			char c0 = current[0], c1 = current[1];
+			
+			if (c0 == '\\' && c1 == '\n') current += 2;
+			else current += 1;
+		}
+		
+		// tally up lines
+		l->current_line += line_counter(current - start, start);
+		
+		memcpy(&temp[len], start, current - start);
+		len += (current - start);
+		
+		// null terminator to top it off
+		temp[len] = '\0';
+		
+		l->temp_buffer_used += len;
+		if (l->temp_buffer_used > l->temp_buffer_capacity) {
+			printf("Lexer error: out of memory!");
+			abort();
+		}
+		
+		// Relex the joined string:
+		// Kinda recursive in a way but... shut up?
+		Lexer joined_string_lexer = (Lexer) { "", temp, temp, 1 };
+		lexer_read(&joined_string_lexer);
+		
+		l->token_start = joined_string_lexer.token_start;
+		l->token_end = joined_string_lexer.token_end;
+		
+		// NOTE(NeGate): Basically take the remaining token stuff we didn't parse
+		// and just pass that but the issue is that these are two separate buffers
+		// so we do a little "magic?".
+		l->current = start + ((joined_string_lexer.token_end - temp) - (joined_string_lexer.token_end - joined_string_lexer.token_start));
+	} else {
+		l->token_start = start;
+		l->token_end = current;
+		l->current = current;
+	}
 }
 
 int64_t parse_int(size_t len, const char* str) {
