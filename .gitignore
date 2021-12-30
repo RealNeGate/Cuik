@@ -9,6 +9,7 @@ Cuik/
 
 tests/stb_image.c
 tests/test5.c
+preprocessed.c
 
 debug.bat
 run.bat

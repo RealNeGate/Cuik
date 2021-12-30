@@ -13,7 +13,7 @@ _Thread_local ArenaSegment* arena_base;
 _Thread_local ArenaSegment* arena_top;
 
 void* arena_alloc(size_t size, size_t align) {
-	// align to max_align
+	// alignment must be a power of two
 	size_t align_mask = align-1;
 	size = (size + align_mask) & ~align_mask;
 	
