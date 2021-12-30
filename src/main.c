@@ -21,13 +21,10 @@
 
 #define COMPILER_VERSION "v0.01"
 
-// frontend worker threads
-#define NUM_THREADS 10
-
 // this is how many IR gen tasks it tries to grab at any one time
 #define MAX_MUNCH 8192
 
-static thrd_t threads[NUM_THREADS];
+static thrd_t threads[TB_MAX_THREADS];
 
 static _Atomic size_t tasks_reserved;
 static _Atomic size_t tasks_complete;
@@ -49,6 +46,7 @@ static struct CompilerSettings {
 	bool is_object_only;              // -c
 	const char* output_path;          // -o
 	TB_OptLevel optimization_level;   // -O
+	int num_of_worker_threads;
 } settings;
 
 static int task_thread(void* param) {
@@ -177,7 +175,7 @@ static void compile_project(TB_Arch arch, TB_System sys, const char source_file[
 		is_running = true;
 		cnd_init(&tasks_condition);
 		mtx_init(&tasks_mutex, mtx_plain);
-		for (int i = 0; i < NUM_THREADS; i++) {
+		for (int i = 0; i < settings.num_of_worker_threads; i++) {
 			thrd_create(&threads[i], task_thread, NULL);
 		}
 		
@@ -201,7 +199,7 @@ static void compile_project(TB_Arch arch, TB_System sys, const char source_file[
 		tasks_complete = 0;
 		
 		is_running = false;
-		for (int i = 0; i < NUM_THREADS; i++) {
+		for (int i = 0; i < settings.num_of_worker_threads; i++) {
 			thrd_join(threads[i], NULL);
 		}
 		mtx_destroy(&tasks_mutex);
@@ -268,6 +266,19 @@ int main(int argc, char* argv[]) {
 		print_help(argv[0]);
 		return -1;
 	}
+	
+#ifdef _WIN32
+	SYSTEM_INFO sysinfo;
+	GetSystemInfo(&sysinfo);
+	
+	// Just kinda guesses something that seems ok ish for now
+	// eventually we'll wanna use all cores but it's not honestly
+	// helpful currently since code gen is the only parallel stage.
+	settings.num_of_worker_threads = (sysinfo.dwNumberOfProcessors / 2) - 1;
+	if (settings.num_of_worker_threads <= 0) settings.num_of_worker_threads = 1;
+#else
+	settings.num_of_worker_threads = 1;
+#endif
 	
 	int i = 2;
 	while (i < argc) {
