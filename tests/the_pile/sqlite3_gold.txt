@@ -2225,16 +2225,16 @@ line 8470: # define SQLITE_FUNC_NEEDCOLL 0x08
 line 8471: # define SQLITE_FUNC_PRIVATE 0x10 
 line 8472: # define SQLITE_FUNC_COUNT 0x20 
 line 8473: # define SQLITE_FUNC_COALESCE 0x40 
-line 8500: # define FUNCTION ( zName , nArg , iArg , bNC , xFunc ) \ 
-line 8501: { nArg , SQLITE_UTF8 , bNC * SQLITE_FUNC_NEEDCOLL , \ 
+line 8500: # define FUNCTION ( zName , nArg , iArg , bNC , xFunc ) 
+line 8501: { nArg , SQLITE_UTF8 , bNC * SQLITE_FUNC_NEEDCOLL , 
 line 8502: SQLITE_INT_TO_PTR ( iArg ) , 0 , xFunc , 0 , 0 , # zName , 0 } 
-line 8503: # define STR_FUNCTION ( zName , nArg , pArg , bNC , xFunc ) \ 
-line 8504: { nArg , SQLITE_UTF8 , bNC * SQLITE_FUNC_NEEDCOLL , \ 
+line 8503: # define STR_FUNCTION ( zName , nArg , pArg , bNC , xFunc ) 
+line 8504: { nArg , SQLITE_UTF8 , bNC * SQLITE_FUNC_NEEDCOLL , 
 line 8505: pArg , 0 , xFunc , 0 , 0 , # zName , 0 } 
-line 8506: # define LIKEFUNC ( zName , nArg , arg , flags ) \ 
+line 8506: # define LIKEFUNC ( zName , nArg , arg , flags ) 
 line 8507: { nArg , SQLITE_UTF8 , flags , ( void * ) arg , 0 , likeFunc , 0 , 0 , # zName , 0 } 
-line 8508: # define AGGREGATE ( zName , nArg , arg , nc , xStep , xFinal ) \ 
-line 8509: { nArg , SQLITE_UTF8 , nc * SQLITE_FUNC_NEEDCOLL , \ 
+line 8508: # define AGGREGATE ( zName , nArg , arg , nc , xStep , xFinal ) 
+line 8509: { nArg , SQLITE_UTF8 , nc * SQLITE_FUNC_NEEDCOLL , 
 line 8510: SQLITE_INT_TO_PTR ( arg ) , 0 , 0 , xStep , xFinal , # zName , 0 } 
 line 8518: struct Savepoint { 
 line 8519: char * zName ; 
@@ -2869,10 +2869,10 @@ line 9898: SQLITE_PRIVATE int sqlite3WalkSelectFrom ( Walker * , Select * ) ;
 line 9904: # define WRC_Continue 0 
 line 9905: # define WRC_Prune 1 
 line 9906: # define WRC_Abort 2 
-line 9912: # define SQLITE_SKIP_UTF8 ( zIn ) { \ 
-line 9913: if ( ( * ( zIn ++ ) ) >= 0xc0 ) { \ 
-line 9914: while ( ( * zIn & 0xc0 ) == 0x80 ) { zIn ++ ; } \ 
-line 9915: } \ 
+line 9912: # define SQLITE_SKIP_UTF8 ( zIn ) { 
+line 9913: if ( ( * ( zIn ++ ) ) >= 0xc0 ) { 
+line 9914: while ( ( * zIn & 0xc0 ) == 0x80 ) { zIn ++ ; } 
+line 9915: } 
 line 9916: } 
 line 9924: # ifdef SQLITE_DEBUG 
 line 9925: SQLITE_PRIVATE int sqlite3Corrupt ( void ) ; 
@@ -2880,7 +2880,7 @@ line 9926: # define SQLITE_CORRUPT_BKPT sqlite3Corrupt ( )
 line 9927: # else 
 line 9928: # define SQLITE_CORRUPT_BKPT SQLITE_CORRUPT 
 line 9929: # endif 
-line 9935: # if ! defined ( SQLITE_ASCII ) || \ 
+line 9935: # if ! defined ( SQLITE_ASCII ) || 
 line 9936: ( defined ( SQLITE_ENABLE_FTS3 ) && defined ( SQLITE_AMALGAMATION ) ) 
 line 9937: # include < ctype . h > 
 line 9938: # endif 
@@ -3604,7 +3604,7 @@ line 10916: return SQLITE_OK ;
 line 10917: } 
 line 10966: # include < time . h > 
 line 10968: # ifndef SQLITE_OMIT_DATETIME_FUNCS 
-line 10982: # if ! defined ( HAVE_LOCALTIME_R ) && ! defined ( HAVE_LOCALTIME_S ) && \ 
+line 10982: # if ! defined ( HAVE_LOCALTIME_R ) && ! defined ( HAVE_LOCALTIME_S ) && 
 line 10983: defined ( _MSC_VER ) && defined ( _CRT_INSECURE_DEPRECATE ) 
 line 10984: # define HAVE_LOCALTIME_S 1 
 line 10985: # endif 
@@ -4379,10 +4379,10 @@ line 12023: }
 line 12042: # define _SQLITE_OS_C_ 1 
 line 12043: # undef _SQLITE_OS_C_ 
 line 12062: # if defined ( SQLITE_TEST ) && ( SQLITE_OS_WIN == 0 ) 
-line 12063: # define DO_OS_MALLOC_TEST ( x ) if ( ! x || ! sqlite3IsMemJournal ( x ) ) { \ 
-line 12064: void * pTstAlloc = sqlite3Malloc ( 10 ) ; \ 
-line 12065: if ( ! pTstAlloc ) return SQLITE_IOERR_NOMEM ; \ 
-line 12066: sqlite3_free ( pTstAlloc ) ; \ 
+line 12063: # define DO_OS_MALLOC_TEST ( x ) if ( ! x || ! sqlite3IsMemJournal ( x ) ) { 
+line 12064: void * pTstAlloc = sqlite3Malloc ( 10 ) ; 
+line 12065: if ( ! pTstAlloc ) return SQLITE_IOERR_NOMEM ; 
+line 12066: sqlite3_free ( pTstAlloc ) ; 
 line 12067: } 
 line 12068: # else 
 line 12069: # define DO_OS_MALLOC_TEST ( x ) 
@@ -4598,7 +4598,7 @@ line 12360: void ( * xBenignBegin ) ( void ) ;
 line 12361: void ( * xBenignEnd ) ( void ) ; 
 line 12362: } sqlite3Hooks = { 0 , 0 } ; 
 line 12370: # ifdef SQLITE_OMIT_WSD 
-line 12371: # define wsdHooksInit \ 
+line 12371: # define wsdHooksInit 
 line 12372: BenignMallocHooks * x = & GLOBAL ( BenignMallocHooks , sqlite3Hooks ) 
 line 12373: # define wsdHooks x [ 0 ] 
 line 12374: # else 
@@ -7700,7 +7700,7 @@ line 17642: # ifdef SQLITE_OMIT_INCRBLOB
 line 17643: # undef MEM_Zero 
 line 17644: # define MEM_Zero 0x0000 
 line 17645: # endif 
-line 17651: # define MemSetTypeFlag ( p , f ) \ 
+line 17651: # define MemSetTypeFlag ( p , f ) 
 line 17652: ( ( p ) -> flags = ( ( p ) -> flags & ~ ( MEM_TypeMask | MEM_Zero ) ) | f ) 
 line 17664: struct VdbeFunc { 
 line 17665: FuncDef * pFunc ; 
@@ -7862,75 +7862,75 @@ line 17884: 0x08 , 0x09 , 0x0a , 0x0b , 0x0c , 0x0d , 0x0e , 0x0f ,
 line 17885: 0x00 , 0x01 , 0x02 , 0x03 , 0x04 , 0x05 , 0x06 , 0x07 , 
 line 17886: 0x00 , 0x01 , 0x02 , 0x03 , 0x00 , 0x01 , 0x00 , 0x00 , 
 line 17887: } ; 
-line 17890: # define WRITE_UTF8 ( zOut , c ) { \ 
-line 17891: if ( c < 0x00080 ) { \ 
-line 17892: * zOut ++ = ( u8 ) ( c & 0xFF ) ; \ 
-line 17893: } \ 
-line 17894: else if ( c < 0x00800 ) { \ 
-line 17895: * zOut ++ = 0xC0 + ( u8 ) ( ( c >> 6 ) & 0x1F ) ; \ 
-line 17896: * zOut ++ = 0x80 + ( u8 ) ( c & 0x3F ) ; \ 
-line 17897: } \ 
-line 17898: else if ( c < 0x10000 ) { \ 
-line 17899: * zOut ++ = 0xE0 + ( u8 ) ( ( c >> 12 ) & 0x0F ) ; \ 
-line 17900: * zOut ++ = 0x80 + ( u8 ) ( ( c >> 6 ) & 0x3F ) ; \ 
-line 17901: * zOut ++ = 0x80 + ( u8 ) ( c & 0x3F ) ; \ 
-line 17902: } else { \ 
-line 17903: * zOut ++ = 0xF0 + ( u8 ) ( ( c >> 18 ) & 0x07 ) ; \ 
-line 17904: * zOut ++ = 0x80 + ( u8 ) ( ( c >> 12 ) & 0x3F ) ; \ 
-line 17905: * zOut ++ = 0x80 + ( u8 ) ( ( c >> 6 ) & 0x3F ) ; \ 
-line 17906: * zOut ++ = 0x80 + ( u8 ) ( c & 0x3F ) ; \ 
-line 17907: } \ 
+line 17890: # define WRITE_UTF8 ( zOut , c ) { 
+line 17891: if ( c < 0x00080 ) { 
+line 17892: * zOut ++ = ( u8 ) ( c & 0xFF ) ; 
+line 17893: } 
+line 17894: else if ( c < 0x00800 ) { 
+line 17895: * zOut ++ = 0xC0 + ( u8 ) ( ( c >> 6 ) & 0x1F ) ; 
+line 17896: * zOut ++ = 0x80 + ( u8 ) ( c & 0x3F ) ; 
+line 17897: } 
+line 17898: else if ( c < 0x10000 ) { 
+line 17899: * zOut ++ = 0xE0 + ( u8 ) ( ( c >> 12 ) & 0x0F ) ; 
+line 17900: * zOut ++ = 0x80 + ( u8 ) ( ( c >> 6 ) & 0x3F ) ; 
+line 17901: * zOut ++ = 0x80 + ( u8 ) ( c & 0x3F ) ; 
+line 17902: } else { 
+line 17903: * zOut ++ = 0xF0 + ( u8 ) ( ( c >> 18 ) & 0x07 ) ; 
+line 17904: * zOut ++ = 0x80 + ( u8 ) ( ( c >> 12 ) & 0x3F ) ; 
+line 17905: * zOut ++ = 0x80 + ( u8 ) ( ( c >> 6 ) & 0x3F ) ; 
+line 17906: * zOut ++ = 0x80 + ( u8 ) ( c & 0x3F ) ; 
+line 17907: } 
 line 17908: } 
-line 17910: # define WRITE_UTF16LE ( zOut , c ) { \ 
-line 17911: if ( c <= 0xFFFF ) { \ 
-line 17912: * zOut ++ = ( u8 ) ( c & 0x00FF ) ; \ 
-line 17913: * zOut ++ = ( u8 ) ( ( c >> 8 ) & 0x00FF ) ; \ 
-line 17914: } else { \ 
-line 17915: * zOut ++ = ( u8 ) ( ( ( c >> 10 ) & 0x003F ) + ( ( ( c - 0x10000 ) >> 10 ) & 0x00C0 ) ) ; \ 
-line 17916: * zOut ++ = ( u8 ) ( 0x00D8 + ( ( ( c - 0x10000 ) >> 18 ) & 0x03 ) ) ; \ 
-line 17917: * zOut ++ = ( u8 ) ( c & 0x00FF ) ; \ 
-line 17918: * zOut ++ = ( u8 ) ( 0x00DC + ( ( c >> 8 ) & 0x03 ) ) ; \ 
-line 17919: } \ 
+line 17910: # define WRITE_UTF16LE ( zOut , c ) { 
+line 17911: if ( c <= 0xFFFF ) { 
+line 17912: * zOut ++ = ( u8 ) ( c & 0x00FF ) ; 
+line 17913: * zOut ++ = ( u8 ) ( ( c >> 8 ) & 0x00FF ) ; 
+line 17914: } else { 
+line 17915: * zOut ++ = ( u8 ) ( ( ( c >> 10 ) & 0x003F ) + ( ( ( c - 0x10000 ) >> 10 ) & 0x00C0 ) ) ; 
+line 17916: * zOut ++ = ( u8 ) ( 0x00D8 + ( ( ( c - 0x10000 ) >> 18 ) & 0x03 ) ) ; 
+line 17917: * zOut ++ = ( u8 ) ( c & 0x00FF ) ; 
+line 17918: * zOut ++ = ( u8 ) ( 0x00DC + ( ( c >> 8 ) & 0x03 ) ) ; 
+line 17919: } 
 line 17920: } 
-line 17922: # define WRITE_UTF16BE ( zOut , c ) { \ 
-line 17923: if ( c <= 0xFFFF ) { \ 
-line 17924: * zOut ++ = ( u8 ) ( ( c >> 8 ) & 0x00FF ) ; \ 
-line 17925: * zOut ++ = ( u8 ) ( c & 0x00FF ) ; \ 
-line 17926: } else { \ 
-line 17927: * zOut ++ = ( u8 ) ( 0x00D8 + ( ( ( c - 0x10000 ) >> 18 ) & 0x03 ) ) ; \ 
-line 17928: * zOut ++ = ( u8 ) ( ( ( c >> 10 ) & 0x003F ) + ( ( ( c - 0x10000 ) >> 10 ) & 0x00C0 ) ) ; \ 
-line 17929: * zOut ++ = ( u8 ) ( 0x00DC + ( ( c >> 8 ) & 0x03 ) ) ; \ 
-line 17930: * zOut ++ = ( u8 ) ( c & 0x00FF ) ; \ 
-line 17931: } \ 
+line 17922: # define WRITE_UTF16BE ( zOut , c ) { 
+line 17923: if ( c <= 0xFFFF ) { 
+line 17924: * zOut ++ = ( u8 ) ( ( c >> 8 ) & 0x00FF ) ; 
+line 17925: * zOut ++ = ( u8 ) ( c & 0x00FF ) ; 
+line 17926: } else { 
+line 17927: * zOut ++ = ( u8 ) ( 0x00D8 + ( ( ( c - 0x10000 ) >> 18 ) & 0x03 ) ) ; 
+line 17928: * zOut ++ = ( u8 ) ( ( ( c >> 10 ) & 0x003F ) + ( ( ( c - 0x10000 ) >> 10 ) & 0x00C0 ) ) ; 
+line 17929: * zOut ++ = ( u8 ) ( 0x00DC + ( ( c >> 8 ) & 0x03 ) ) ; 
+line 17930: * zOut ++ = ( u8 ) ( c & 0x00FF ) ; 
+line 17931: } 
 line 17932: } 
-line 17934: # define READ_UTF16LE ( zIn , TERM , c ) { \ 
-line 17935: c = ( * zIn ++ ) ; \ 
-line 17936: c += ( ( * zIn ++ ) << 8 ) ; \ 
-line 17937: if ( c >= 0xD800 && c < 0xE000 && TERM ) { \ 
-line 17938: int c2 = ( * zIn ++ ) ; \ 
-line 17939: c2 += ( ( * zIn ++ ) << 8 ) ; \ 
-line 17940: c = ( c2 & 0x03FF ) + ( ( c & 0x003F ) << 10 ) + ( ( ( c & 0x03C0 ) + 0x0040 ) << 10 ) ; \ 
-line 17941: } \ 
+line 17934: # define READ_UTF16LE ( zIn , TERM , c ) { 
+line 17935: c = ( * zIn ++ ) ; 
+line 17936: c += ( ( * zIn ++ ) << 8 ) ; 
+line 17937: if ( c >= 0xD800 && c < 0xE000 && TERM ) { 
+line 17938: int c2 = ( * zIn ++ ) ; 
+line 17939: c2 += ( ( * zIn ++ ) << 8 ) ; 
+line 17940: c = ( c2 & 0x03FF ) + ( ( c & 0x003F ) << 10 ) + ( ( ( c & 0x03C0 ) + 0x0040 ) << 10 ) ; 
+line 17941: } 
 line 17942: } 
-line 17944: # define READ_UTF16BE ( zIn , TERM , c ) { \ 
-line 17945: c = ( ( * zIn ++ ) << 8 ) ; \ 
-line 17946: c += ( * zIn ++ ) ; \ 
-line 17947: if ( c >= 0xD800 && c < 0xE000 && TERM ) { \ 
-line 17948: int c2 = ( ( * zIn ++ ) << 8 ) ; \ 
-line 17949: c2 += ( * zIn ++ ) ; \ 
-line 17950: c = ( c2 & 0x03FF ) + ( ( c & 0x003F ) << 10 ) + ( ( ( c & 0x03C0 ) + 0x0040 ) << 10 ) ; \ 
-line 17951: } \ 
+line 17944: # define READ_UTF16BE ( zIn , TERM , c ) { 
+line 17945: c = ( ( * zIn ++ ) << 8 ) ; 
+line 17946: c += ( * zIn ++ ) ; 
+line 17947: if ( c >= 0xD800 && c < 0xE000 && TERM ) { 
+line 17948: int c2 = ( ( * zIn ++ ) << 8 ) ; 
+line 17949: c2 += ( * zIn ++ ) ; 
+line 17950: c = ( c2 & 0x03FF ) + ( ( c & 0x003F ) << 10 ) + ( ( ( c & 0x03C0 ) + 0x0040 ) << 10 ) ; 
+line 17951: } 
 line 17952: } 
-line 17981: # define READ_UTF8 ( zIn , zTerm , c ) \ 
-line 17982: c = * ( zIn ++ ) ; \ 
-line 17983: if ( c >= 0xc0 ) { \ 
-line 17984: c = sqlite3Utf8Trans1 [ c - 0xc0 ] ; \ 
-line 17985: while ( zIn != zTerm && ( * zIn & 0xc0 ) == 0x80 ) { \ 
-line 17986: c = ( c << 6 ) + ( 0x3f & * ( zIn ++ ) ) ; \ 
-line 17987: } \ 
-line 17988: if ( c < 0x80 \ 
-line 17989: || ( c & 0xFFFFF800 ) == 0xD800 \ 
-line 17990: || ( c & 0xFFFFFFFE ) == 0xFFFE ) { c = 0xFFFD ; } \ 
+line 17981: # define READ_UTF8 ( zIn , zTerm , c ) 
+line 17982: c = * ( zIn ++ ) ; 
+line 17983: if ( c >= 0xc0 ) { 
+line 17984: c = sqlite3Utf8Trans1 [ c - 0xc0 ] ; 
+line 17985: while ( zIn != zTerm && ( * zIn & 0xc0 ) == 0x80 ) { 
+line 17986: c = ( c << 6 ) + ( 0x3f & * ( zIn ++ ) ) ; 
+line 17987: } 
+line 17988: if ( c < 0x80 
+line 17989: || ( c & 0xFFFFF800 ) == 0xD800 
+line 17990: || ( c & 0xFFFFFFFE ) == 0xFFFE ) { c = 0xFFFD ; } 
 line 17991: } 
 line 17992: SQLITE_PRIVATE int sqlite3Utf8Read ( 
 line 17993: const unsigned char * zIn , 
@@ -9179,9 +9179,9 @@ line 20008: # define OSTRACE2 ( X , Y ) if ( sqlite3OSTrace ) sqlite3DebugPrintf
 line 20009: # define OSTRACE3 ( X , Y , Z ) if ( sqlite3OSTrace ) sqlite3DebugPrintf ( X , Y , Z ) 
 line 20010: # define OSTRACE4 ( X , Y , Z , A ) if ( sqlite3OSTrace ) sqlite3DebugPrintf ( X , Y , Z , A ) 
 line 20011: # define OSTRACE5 ( X , Y , Z , A , B ) if ( sqlite3OSTrace ) sqlite3DebugPrintf ( X , Y , Z , A , B ) 
-line 20012: # define OSTRACE6 ( X , Y , Z , A , B , C ) \ 
+line 20012: # define OSTRACE6 ( X , Y , Z , A , B , C ) 
 line 20013: if ( sqlite3OSTrace ) sqlite3DebugPrintf ( X , Y , Z , A , B , C ) 
-line 20014: # define OSTRACE7 ( X , Y , Z , A , B , C , D ) \ 
+line 20014: # define OSTRACE7 ( X , Y , Z , A , B , C , D ) 
 line 20015: if ( sqlite3OSTrace ) sqlite3DebugPrintf ( X , Y , Z , A , B , C , D ) 
 line 20016: # else 
 line 20017: # define OSTRACE1 ( X ) 
@@ -9195,7 +9195,7 @@ line 20024: # endif
 line 20030: # ifdef SQLITE_PERFORMANCE_TRACE 
 line 20053: # ifndef _HWTIME_H_ 
 line 20054: # define _HWTIME_H_ 
-line 20062: # if ( defined ( __GNUC__ ) || defined ( _MSC_VER ) ) && \ 
+line 20062: # if ( defined ( __GNUC__ ) || defined ( _MSC_VER ) ) && 
 line 20063: ( defined ( i386 ) || defined ( __i386__ ) || defined ( _M_IX86 ) ) 
 line 20065: # if defined ( __GNUC__ ) 
 line 20067: __inline__ sqlite_uint64 sqlite3Hwtime ( void ) { 
@@ -9255,25 +9255,25 @@ line 20148: SQLITE_API int sqlite3_io_error_benign = 0 ;
 line 20149: SQLITE_API int sqlite3_diskfull_pending = 0 ; 
 line 20150: SQLITE_API int sqlite3_diskfull = 0 ; 
 line 20151: # define SimulateIOErrorBenign ( X ) sqlite3_io_error_benign = ( X ) 
-line 20152: # define SimulateIOError ( CODE ) \ 
-line 20153: if ( ( sqlite3_io_error_persist && sqlite3_io_error_hit ) \ 
-line 20154: || sqlite3_io_error_pending -- == 1 ) \ 
+line 20152: # define SimulateIOError ( CODE ) 
+line 20153: if ( ( sqlite3_io_error_persist && sqlite3_io_error_hit ) 
+line 20154: || sqlite3_io_error_pending -- == 1 ) 
 line 20155: { local_ioerr ( ) ; CODE ; } 
 line 20156: static void local_ioerr ( ) { 
 line 20157: IOTRACE ( ( "IOERR\n" ) ) ; 
 line 20158: sqlite3_io_error_hit ++ ; 
 line 20159: if ( ! sqlite3_io_error_benign ) sqlite3_io_error_hardhit ++ ; 
 line 20160: } 
-line 20161: # define SimulateDiskfullError ( CODE ) \ 
-line 20162: if ( sqlite3_diskfull_pending ) { \ 
-line 20163: if ( sqlite3_diskfull_pending == 1 ) { \ 
-line 20164: local_ioerr ( ) ; \ 
-line 20165: sqlite3_diskfull = 1 ; \ 
-line 20166: sqlite3_io_error_hit = 1 ; \ 
-line 20167: CODE ; \ 
-line 20168: } else { \ 
-line 20169: sqlite3_diskfull_pending -- ; \ 
-line 20170: } \ 
+line 20161: # define SimulateDiskfullError ( CODE ) 
+line 20162: if ( sqlite3_diskfull_pending ) { 
+line 20163: if ( sqlite3_diskfull_pending == 1 ) { 
+line 20164: local_ioerr ( ) ; 
+line 20165: sqlite3_diskfull = 1 ; 
+line 20166: sqlite3_io_error_hit = 1 ; 
+line 20167: CODE ; 
+line 20168: } else { 
+line 20169: sqlite3_diskfull_pending -- ; 
+line 20170: } 
 line 20171: } 
 line 20172: # else 
 line 20173: # define SimulateIOErrorBenign ( X ) 
@@ -10135,9 +10135,9 @@ line 21533: # define OSTRACE2 ( X , Y ) if ( sqlite3OSTrace ) sqlite3DebugPrintf
 line 21534: # define OSTRACE3 ( X , Y , Z ) if ( sqlite3OSTrace ) sqlite3DebugPrintf ( X , Y , Z ) 
 line 21535: # define OSTRACE4 ( X , Y , Z , A ) if ( sqlite3OSTrace ) sqlite3DebugPrintf ( X , Y , Z , A ) 
 line 21536: # define OSTRACE5 ( X , Y , Z , A , B ) if ( sqlite3OSTrace ) sqlite3DebugPrintf ( X , Y , Z , A , B ) 
-line 21537: # define OSTRACE6 ( X , Y , Z , A , B , C ) \ 
+line 21537: # define OSTRACE6 ( X , Y , Z , A , B , C ) 
 line 21538: if ( sqlite3OSTrace ) sqlite3DebugPrintf ( X , Y , Z , A , B , C ) 
-line 21539: # define OSTRACE7 ( X , Y , Z , A , B , C , D ) \ 
+line 21539: # define OSTRACE7 ( X , Y , Z , A , B , C , D ) 
 line 21540: if ( sqlite3OSTrace ) sqlite3DebugPrintf ( X , Y , Z , A , B , C , D ) 
 line 21541: # else 
 line 21542: # define OSTRACE1 ( X ) 
@@ -10151,7 +10151,7 @@ line 21549: # endif
 line 21555: # ifdef SQLITE_PERFORMANCE_TRACE 
 line 21578: # ifndef _HWTIME_H_ 
 line 21579: # define _HWTIME_H_ 
-line 21587: # if ( defined ( __GNUC__ ) || defined ( _MSC_VER ) ) && \ 
+line 21587: # if ( defined ( __GNUC__ ) || defined ( _MSC_VER ) ) && 
 line 21588: ( defined ( i386 ) || defined ( __i386__ ) || defined ( _M_IX86 ) ) 
 line 21590: # if defined ( __GNUC__ ) 
 line 21592: __inline__ sqlite_uint64 sqlite3Hwtime ( void ) { 
@@ -10211,25 +10211,25 @@ line 21673: SQLITE_API int sqlite3_io_error_benign = 0 ;
 line 21674: SQLITE_API int sqlite3_diskfull_pending = 0 ; 
 line 21675: SQLITE_API int sqlite3_diskfull = 0 ; 
 line 21676: # define SimulateIOErrorBenign ( X ) sqlite3_io_error_benign = ( X ) 
-line 21677: # define SimulateIOError ( CODE ) \ 
-line 21678: if ( ( sqlite3_io_error_persist && sqlite3_io_error_hit ) \ 
-line 21679: || sqlite3_io_error_pending -- == 1 ) \ 
+line 21677: # define SimulateIOError ( CODE ) 
+line 21678: if ( ( sqlite3_io_error_persist && sqlite3_io_error_hit ) 
+line 21679: || sqlite3_io_error_pending -- == 1 ) 
 line 21680: { local_ioerr ( ) ; CODE ; } 
 line 21681: static void local_ioerr ( ) { 
 line 21682: IOTRACE ( ( "IOERR\n" ) ) ; 
 line 21683: sqlite3_io_error_hit ++ ; 
 line 21684: if ( ! sqlite3_io_error_benign ) sqlite3_io_error_hardhit ++ ; 
 line 21685: } 
-line 21686: # define SimulateDiskfullError ( CODE ) \ 
-line 21687: if ( sqlite3_diskfull_pending ) { \ 
-line 21688: if ( sqlite3_diskfull_pending == 1 ) { \ 
-line 21689: local_ioerr ( ) ; \ 
-line 21690: sqlite3_diskfull = 1 ; \ 
-line 21691: sqlite3_io_error_hit = 1 ; \ 
-line 21692: CODE ; \ 
-line 21693: } else { \ 
-line 21694: sqlite3_diskfull_pending -- ; \ 
-line 21695: } \ 
+line 21686: # define SimulateDiskfullError ( CODE ) 
+line 21687: if ( sqlite3_diskfull_pending ) { 
+line 21688: if ( sqlite3_diskfull_pending == 1 ) { 
+line 21689: local_ioerr ( ) ; 
+line 21690: sqlite3_diskfull = 1 ; 
+line 21691: sqlite3_io_error_hit = 1 ; 
+line 21692: CODE ; 
+line 21693: } else { 
+line 21694: sqlite3_diskfull_pending -- ; 
+line 21695: } 
 line 21696: } 
 line 21697: # else 
 line 21698: # define SimulateIOErrorBenign ( X ) 
@@ -10452,7 +10452,7 @@ line 22061: }
 line 22062: # endif 
 line 22175: # if SQLITE_THREADSAFE && defined ( __linux__ ) 
 line 22176: # define SET_THREADID ( X ) ( X ) -> tid = pthread_self ( ) 
-line 22177: # define CHECK_THREADID ( X ) ( threadsOverrideEachOthersLocks == 0 && \ 
+line 22177: # define CHECK_THREADID ( X ) ( threadsOverrideEachOthersLocks == 0 && 
 line 22178: ! pthread_equal ( ( X ) -> tid , pthread_self ( ) ) ) 
 line 22179: # else 
 line 22180: # define SET_THREADID ( X ) 
@@ -11893,27 +11893,27 @@ line 24700: static int unixDeviceCharacteristics ( sqlite3_file * NotUsed ) {
 line 24701: UNUSED_PARAMETER ( NotUsed ) ; 
 line 24702: return 0 ; 
 line 24703: } 
-line 24745: # define IOMETHODS ( FINDER , METHOD , CLOSE , LOCK , UNLOCK , CKLOCK ) \ 
-line 24746: static const sqlite3_io_methods METHOD = { \ 
-line 24747: 1 , \ 
-line 24748: CLOSE , \ 
-line 24749: unixRead , \ 
-line 24750: unixWrite , \ 
-line 24751: unixTruncate , \ 
-line 24752: unixSync , \ 
-line 24753: unixFileSize , \ 
-line 24754: LOCK , \ 
-line 24755: UNLOCK , \ 
-line 24756: CKLOCK , \ 
-line 24757: unixFileControl , \ 
-line 24758: unixSectorSize , \ 
-line 24759: unixDeviceCharacteristics \ 
-line 24760: } ; \ 
-line 24761: static const sqlite3_io_methods * FINDER ## Impl ( const char * z , unixFile * p ) { \ 
-line 24762: UNUSED_PARAMETER ( z ) ; UNUSED_PARAMETER ( p ) ; \ 
-line 24763: return & METHOD ; \ 
-line 24764: } \ 
-line 24765: static const sqlite3_io_methods * ( * const FINDER ) ( const char * , unixFile * p ) \ 
+line 24745: # define IOMETHODS ( FINDER , METHOD , CLOSE , LOCK , UNLOCK , CKLOCK ) 
+line 24746: static const sqlite3_io_methods METHOD = { 
+line 24747: 1 , 
+line 24748: CLOSE , 
+line 24749: unixRead , 
+line 24750: unixWrite , 
+line 24751: unixTruncate , 
+line 24752: unixSync , 
+line 24753: unixFileSize , 
+line 24754: LOCK , 
+line 24755: UNLOCK , 
+line 24756: CKLOCK , 
+line 24757: unixFileControl , 
+line 24758: unixSectorSize , 
+line 24759: unixDeviceCharacteristics 
+line 24760: } ; 
+line 24761: static const sqlite3_io_methods * FINDER ## Impl ( const char * z , unixFile * p ) { 
+line 24762: UNUSED_PARAMETER ( z ) ; UNUSED_PARAMETER ( p ) ; 
+line 24763: return & METHOD ; 
+line 24764: } 
+line 24765: static const sqlite3_io_methods * ( * const FINDER ) ( const char * , unixFile * p ) 
 line 24766: = FINDER ## Impl ; 
 line 24773: IOMETHODS ( 
 line 24774: posixIoFinder , 
@@ -13143,25 +13143,25 @@ line 26763: return SQLITE_OK ;
 line 26764: } 
 line 26768: # endif 
 line 26791: SQLITE_API int sqlite3_os_init ( void ) { 
-line 26812: # define UNIXVFS ( VFSNAME , FINDER ) { \ 
-line 26813: 1 , \ 
-line 26814: sizeof ( unixFile ) , \ 
-line 26815: MAX_PATHNAME , \ 
-line 26816: 0 , \ 
-line 26817: VFSNAME , \ 
-line 26818: ( void * ) & FINDER , \ 
-line 26819: unixOpen , \ 
-line 26820: unixDelete , \ 
-line 26821: unixAccess , \ 
-line 26822: unixFullPathname , \ 
-line 26823: unixDlOpen , \ 
-line 26824: unixDlError , \ 
-line 26825: unixDlSym , \ 
-line 26826: unixDlClose , \ 
-line 26827: unixRandomness , \ 
-line 26828: unixSleep , \ 
-line 26829: unixCurrentTime , \ 
-line 26830: unixGetLastError \ 
+line 26812: # define UNIXVFS ( VFSNAME , FINDER ) { 
+line 26813: 1 , 
+line 26814: sizeof ( unixFile ) , 
+line 26815: MAX_PATHNAME , 
+line 26816: 0 , 
+line 26817: VFSNAME , 
+line 26818: ( void * ) & FINDER , 
+line 26819: unixOpen , 
+line 26820: unixDelete , 
+line 26821: unixAccess , 
+line 26822: unixFullPathname , 
+line 26823: unixDlOpen , 
+line 26824: unixDlError , 
+line 26825: unixDlSym , 
+line 26826: unixDlClose , 
+line 26827: unixRandomness , 
+line 26828: unixSleep , 
+line 26829: unixCurrentTime , 
+line 26830: unixGetLastError 
 line 26831: } 
 line 26840: static sqlite3_vfs aVfs [ ] = { 
 line 26841: # if SQLITE_ENABLE_LOCKING_STYLE && ( OS_VXWORKS || defined ( __APPLE__ ) ) 
@@ -13216,9 +13216,9 @@ line 26982: # define OSTRACE2 ( X , Y ) if ( sqlite3OSTrace ) sqlite3DebugPrintf
 line 26983: # define OSTRACE3 ( X , Y , Z ) if ( sqlite3OSTrace ) sqlite3DebugPrintf ( X , Y , Z ) 
 line 26984: # define OSTRACE4 ( X , Y , Z , A ) if ( sqlite3OSTrace ) sqlite3DebugPrintf ( X , Y , Z , A ) 
 line 26985: # define OSTRACE5 ( X , Y , Z , A , B ) if ( sqlite3OSTrace ) sqlite3DebugPrintf ( X , Y , Z , A , B ) 
-line 26986: # define OSTRACE6 ( X , Y , Z , A , B , C ) \ 
+line 26986: # define OSTRACE6 ( X , Y , Z , A , B , C ) 
 line 26987: if ( sqlite3OSTrace ) sqlite3DebugPrintf ( X , Y , Z , A , B , C ) 
-line 26988: # define OSTRACE7 ( X , Y , Z , A , B , C , D ) \ 
+line 26988: # define OSTRACE7 ( X , Y , Z , A , B , C , D ) 
 line 26989: if ( sqlite3OSTrace ) sqlite3DebugPrintf ( X , Y , Z , A , B , C , D ) 
 line 26990: # else 
 line 26991: # define OSTRACE1 ( X ) 
@@ -13232,7 +13232,7 @@ line 26998: # endif
 line 27004: # ifdef SQLITE_PERFORMANCE_TRACE 
 line 27027: # ifndef _HWTIME_H_ 
 line 27028: # define _HWTIME_H_ 
-line 27036: # if ( defined ( __GNUC__ ) || defined ( _MSC_VER ) ) && \ 
+line 27036: # if ( defined ( __GNUC__ ) || defined ( _MSC_VER ) ) && 
 line 27037: ( defined ( i386 ) || defined ( __i386__ ) || defined ( _M_IX86 ) ) 
 line 27039: # if defined ( __GNUC__ ) 
 line 27041: __inline__ sqlite_uint64 sqlite3Hwtime ( void ) { 
@@ -13292,25 +13292,25 @@ line 27122: SQLITE_API int sqlite3_io_error_benign = 0 ;
 line 27123: SQLITE_API int sqlite3_diskfull_pending = 0 ; 
 line 27124: SQLITE_API int sqlite3_diskfull = 0 ; 
 line 27125: # define SimulateIOErrorBenign ( X ) sqlite3_io_error_benign = ( X ) 
-line 27126: # define SimulateIOError ( CODE ) \ 
-line 27127: if ( ( sqlite3_io_error_persist && sqlite3_io_error_hit ) \ 
-line 27128: || sqlite3_io_error_pending -- == 1 ) \ 
+line 27126: # define SimulateIOError ( CODE ) 
+line 27127: if ( ( sqlite3_io_error_persist && sqlite3_io_error_hit ) 
+line 27128: || sqlite3_io_error_pending -- == 1 ) 
 line 27129: { local_ioerr ( ) ; CODE ; } 
 line 27130: static void local_ioerr ( ) { 
 line 27131: IOTRACE ( ( "IOERR\n" ) ) ; 
 line 27132: sqlite3_io_error_hit ++ ; 
 line 27133: if ( ! sqlite3_io_error_benign ) sqlite3_io_error_hardhit ++ ; 
 line 27134: } 
-line 27135: # define SimulateDiskfullError ( CODE ) \ 
-line 27136: if ( sqlite3_diskfull_pending ) { \ 
-line 27137: if ( sqlite3_diskfull_pending == 1 ) { \ 
-line 27138: local_ioerr ( ) ; \ 
-line 27139: sqlite3_diskfull = 1 ; \ 
-line 27140: sqlite3_io_error_hit = 1 ; \ 
-line 27141: CODE ; \ 
-line 27142: } else { \ 
-line 27143: sqlite3_diskfull_pending -- ; \ 
-line 27144: } \ 
+line 27135: # define SimulateDiskfullError ( CODE ) 
+line 27136: if ( sqlite3_diskfull_pending ) { 
+line 27137: if ( sqlite3_diskfull_pending == 1 ) { 
+line 27138: local_ioerr ( ) ; 
+line 27139: sqlite3_diskfull = 1 ; 
+line 27140: sqlite3_io_error_hit = 1 ; 
+line 27141: CODE ; 
+line 27142: } else { 
+line 27143: sqlite3_diskfull_pending -- ; 
+line 27144: } 
 line 27145: } 
 line 27146: # else 
 line 27147: # define SimulateIOErrorBenign ( X ) 
@@ -15639,7 +15639,7 @@ line 30793: * pnRecyclable = nRecyclable ;
 line 30794: } 
 line 30795: # endif 
 line 30866: # define ROWSET_ALLOCATION_SIZE 1024 
-line 30871: # define ROWSET_ENTRY_PER_CHUNK \ 
+line 30871: # define ROWSET_ENTRY_PER_CHUNK 
 line 30872: ( ( ROWSET_ALLOCATION_SIZE - 8 ) / sizeof ( struct RowSetEntry ) ) 
 line 30877: struct RowSetEntry { 
 line 30878: i64 v ; 
@@ -15900,10 +15900,10 @@ line 31317: # define PAGER_RESERVED 2
 line 31318: # define PAGER_EXCLUSIVE 4 
 line 31319: # define PAGER_SYNCED 5 
 line 31324: # ifdef SQLITE_HAS_CODEC 
-line 31325: # define CODEC1 ( P , D , N , X , E ) \ 
+line 31325: # define CODEC1 ( P , D , N , X , E ) 
 line 31326: if ( P -> xCodec && P -> xCodec ( P -> pCodec , D , N , X ) == 0 ) { E ; } 
-line 31327: # define CODEC2 ( P , D , N , X , E , O ) \ 
-line 31328: if ( P -> xCodec == 0 ) { O = ( char * ) D ; } else \ 
+line 31327: # define CODEC2 ( P , D , N , X , E , O ) 
+line 31328: if ( P -> xCodec == 0 ) { O = ( char * ) D ; } else 
 line 31329: if ( ( O = ( char * ) ( P -> xCodec ( P -> pCodec , D , N , X ) ) ) == 0 ) { E ; } 
 line 31330: # else 
 line 31331: # define CODEC1 ( P , D , N , X , E ) 
@@ -18411,8 +18411,8 @@ line 37167: # define PTRMAP_FREEPAGE 2
 line 37168: # define PTRMAP_OVERFLOW1 3 
 line 37169: # define PTRMAP_OVERFLOW2 4 
 line 37170: # define PTRMAP_BTREE 5 
-line 37175: # define btreeIntegrity ( p ) \ 
-line 37176: assert ( p -> pBt -> inTransaction != TRANS_NONE || p -> pBt -> nTransaction == 0 ) ; \ 
+line 37175: # define btreeIntegrity ( p ) 
+line 37176: assert ( p -> pBt -> inTransaction != TRANS_NONE || p -> pBt -> nTransaction == 0 ) ; 
 line 37177: assert ( p -> pBt -> inTransaction >= p -> inTrans ) ; 
 line 37187: # ifndef SQLITE_OMIT_AUTOVACUUM 
 line 37188: # define ISAUTOVACUUM ( pBt -> autoVacuum ) 
@@ -18987,9 +18987,9 @@ line 38249: assert ( pCur -> eState == CURSOR_VALID || pCur -> eState == CURSOR_
 line 38250: } 
 line 38251: return rc ; 
 line 38252: } 
-line 38254: # define restoreCursorPosition ( p ) \ 
-line 38255: ( p -> eState >= CURSOR_REQUIRESEEK ? \ 
-line 38256: btreeRestoreCursorPosition ( p ) : \ 
+line 38254: # define restoreCursorPosition ( p ) 
+line 38255: ( p -> eState >= CURSOR_REQUIRESEEK ? 
+line 38256: btreeRestoreCursorPosition ( p ) : 
 line 38257: SQLITE_OK ) 
 line 38267: SQLITE_PRIVATE int sqlite3BtreeCursorHasMoved ( BtCursor * pCur , int * pHasMoved ) { 
 line 38268: int rc ; 
@@ -19081,7 +19081,7 @@ line 38390: # define ptrmapPut ( w , x , y , z , rc )
 line 38391: # define ptrmapGet ( w , x , y , z ) SQLITE_OK 
 line 38392: # define ptrmapPutOvflPtr ( x , y , rc ) 
 line 38393: # endif 
-line 38402: # define findCell ( P , I ) \ 
+line 38402: # define findCell ( P , I ) 
 line 38403: ( ( P ) -> aData + ( ( P ) -> maskPage & get2byte ( & ( P ) -> aData [ ( P ) -> cellOffset + 2 * ( I ) ] ) ) ) 
 line 38409: static u8 * findOverflowCell ( MemPage * pPage , int iCell ) { 
 line 38410: int i ; 
@@ -19156,7 +19156,7 @@ line 38503: pInfo -> iOverflow = ( u16 ) ( pInfo -> nLocal + n ) ;
 line 38504: pInfo -> nSize = pInfo -> iOverflow + 4 ; 
 line 38505: } 
 line 38506: } 
-line 38507: # define parseCell ( pPage , iCell , pInfo ) \ 
+line 38507: # define parseCell ( pPage , iCell , pInfo ) 
 line 38508: btreeParseCellPtr ( ( pPage ) , findCell ( ( pPage ) , ( iCell ) ) , ( pInfo ) ) 
 line 38509: static void btreeParseCell ( 
 line 38510: MemPage * pPage , 
@@ -20743,13 +20743,13 @@ line 41031: assertCellInfo ( pCur ) ;
 line 41032: } 
 line 41033: } 
 line 41034: # else 
-line 41036: # define getCellInfo ( pCur ) \ 
-line 41037: if ( pCur -> info . nSize == 0 ) { \ 
-line 41038: int iPage = pCur -> iPage ; \ 
-line 41039: btreeParseCell ( pCur -> apPage [ iPage ] , pCur -> aiIdx [ iPage ] , & pCur -> info ) ; \ 
-line 41040: pCur -> validNKey = 1 ; \ 
-line 41041: } else { \ 
-line 41042: assertCellInfo ( pCur ) ; \ 
+line 41036: # define getCellInfo ( pCur ) 
+line 41037: if ( pCur -> info . nSize == 0 ) { 
+line 41038: int iPage = pCur -> iPage ; 
+line 41039: btreeParseCell ( pCur -> apPage [ iPage ] , pCur -> aiIdx [ iPage ] , & pCur -> info ) ; 
+line 41040: pCur -> validNKey = 1 ; 
+line 41041: } else { 
+line 41042: assertCellInfo ( pCur ) ; 
 line 41043: } 
 line 41044: # endif 
 line 41046: # ifndef NDEBUG 
@@ -25057,7 +25057,7 @@ line 47978: } else {
 line 47979: return & p -> aOp [ addr ] ; 
 line 47980: } 
 line 47981: } 
-line 47983: # if ! defined ( SQLITE_OMIT_EXPLAIN ) || ! defined ( NDEBUG ) \ 
+line 47983: # if ! defined ( SQLITE_OMIT_EXPLAIN ) || ! defined ( NDEBUG ) 
 line 47984: || defined ( VDBE_PROFILE ) || defined ( SQLITE_DEBUG ) 
 line 47989: static char * displayP4 ( Op * pOp , char * zTemp , int nTemp ) { 
 line 47990: char * zP4 = zTemp ; 
@@ -27430,11 +27430,11 @@ line 51741: # define UPDATE_MAX_BLOBSIZE ( P ) updateMaxBlobsize ( P )
 line 51742: # else 
 line 51743: # define UPDATE_MAX_BLOBSIZE ( P ) 
 line 51744: # endif 
-line 51750: # define Stringify ( P , enc ) \ 
-line 51751: if ( ( ( P ) -> flags & ( MEM_Str | MEM_Blob ) ) == 0 && sqlite3VdbeMemStringify ( P , enc ) ) \ 
+line 51750: # define Stringify ( P , enc ) 
+line 51751: if ( ( ( P ) -> flags & ( MEM_Str | MEM_Blob ) ) == 0 && sqlite3VdbeMemStringify ( P , enc ) ) 
 line 51752: { goto no_mem ; } 
-line 51765: # define Deephemeralize ( P ) \ 
-line 51766: if ( ( ( P ) -> flags & MEM_Ephem ) != 0 \ 
+line 51765: # define Deephemeralize ( P ) 
+line 51766: if ( ( ( P ) -> flags & MEM_Ephem ) != 0 
 line 51767: && sqlite3VdbeMemMakeWriteable ( P ) ) { goto no_mem ; } 
 line 51773: # define ExpandBlob ( P ) ( ( ( P ) -> flags & MEM_Zero ) ? sqlite3VdbeMemExpandBlob ( P ) : 0 ) 
 line 51781: SQLITE_PRIVATE void sqlite3VdbeMemStoreType ( Mem * pMem ) { 
@@ -27647,7 +27647,7 @@ line 52070: # endif
 line 52073: # ifdef VDBE_PROFILE 
 line 52096: # ifndef _HWTIME_H_ 
 line 52097: # define _HWTIME_H_ 
-line 52105: # if ( defined ( __GNUC__ ) || defined ( _MSC_VER ) ) && \ 
+line 52105: # if ( defined ( __GNUC__ ) || defined ( _MSC_VER ) ) && 
 line 52106: ( defined ( i386 ) || defined ( __i386__ ) || defined ( _M_IX86 ) ) 
 line 52108: # if defined ( __GNUC__ ) 
 line 52110: __inline__ sqlite_uint64 sqlite3Hwtime ( void ) { 
@@ -27689,7 +27689,7 @@ line 52161: SQLITE_PRIVATE sqlite_uint64 sqlite3Hwtime ( void ) { return ( ( sql
 line 52163: # endif 
 line 52165: # endif 
 line 52170: # endif 
-line 52182: # define CHECK_FOR_INTERRUPT \ 
+line 52182: # define CHECK_FOR_INTERRUPT 
 line 52183: if ( db -> u1 . isInterrupted ) goto abort_due_to_interrupt ; 
 line 52185: # ifdef SQLITE_DEBUG 
 line 52186: static int fileExists ( sqlite3 * db , const char * zFile ) { 
@@ -33215,7 +33215,7 @@ line 61100: pItem -> iAlias = pOldItem -> iAlias ;
 line 61101: } 
 line 61102: return pNew ; 
 line 61103: } 
-line 61111: # if ! defined ( SQLITE_OMIT_VIEW ) || ! defined ( SQLITE_OMIT_TRIGGER ) \ 
+line 61111: # if ! defined ( SQLITE_OMIT_VIEW ) || ! defined ( SQLITE_OMIT_TRIGGER ) 
 line 61112: || ! defined ( SQLITE_OMIT_SUBQUERY ) 
 line 61113: SQLITE_PRIVATE SrcList * sqlite3SrcListDup ( sqlite3 * db , SrcList * p , int flags ) { 
 line 61114: SrcList * pNew ; 
@@ -37165,8 +37165,8 @@ line 67117: sqlite3DbFree ( db , zName ) ;
 line 67118: return ; 
 line 67119: } 
 line 67129: # define STRICMP ( x , y ) 
-line 67130: ( sqlite3UpperToLower [ * ( unsigned char * ) ( x ) ] == \ 
-line 67131: sqlite3UpperToLower [ * ( unsigned char * ) ( y ) ] \ 
+line 67130: ( sqlite3UpperToLower [ * ( unsigned char * ) ( x ) ] == 
+line 67131: sqlite3UpperToLower [ * ( unsigned char * ) ( y ) ] 
 line 67132: && sqlite3StrICmp ( ( x ) + 1 , ( y ) + 1 ) == 0 ) 
 line 67142: SQLITE_PRIVATE void sqlite3AddColumn ( Parse * pParse , Token * pName ) { 
 line 67143: Table * p ; 
@@ -43282,7 +43282,7 @@ line 76560: int nExt ;
 line 76561: void ( * * aExt ) ( void ) ; 
 line 76562: } sqlite3Autoext = { 0 , 0 } ; 
 line 76570: # ifdef SQLITE_OMIT_WSD 
-line 76571: # define wsdAutoextInit \ 
+line 76571: # define wsdAutoextInit 
 line 76572: sqlite3AutoExtList * x = & GLOBAL ( sqlite3AutoExtList , sqlite3Autoext ) 
 line 76573: # define wsdAutoext x [ 0 ] 
 line 76574: # else 
@@ -57558,7 +57558,7 @@ line 97527: # endif
 line 97528: return rc ; 
 line 97529: } 
 line 97550: # ifdef SQLITE_ENABLE_UNLOCK_NOTIFY 
-line 97561: # define assertMutexHeld ( ) \ 
+line 97561: # define assertMutexHeld ( ) 
 line 97562: assert ( sqlite3_mutex_held ( sqlite3MutexAlloc ( SQLITE_MUTEX_STATIC_MASTER ) ) ) 
 line 97570: static sqlite3 * SQLITE_WSD sqlite3BlockedList = 0 ; 
 line 97572: # ifndef NDEBUG 
@@ -63644,7 +63644,7 @@ line 107273: # define VARIANT_RSTARTREE_REINSERT 1
 line 107278: # define VARIANT_GUTTMAN_QUADRATIC_SPLIT 0 
 line 107279: # define VARIANT_GUTTMAN_LINEAR_SPLIT 0 
 line 107280: # define VARIANT_RSTARTREE_SPLIT 1 
-line 107282: # define VARIANT_GUTTMAN_SPLIT \ 
+line 107282: # define VARIANT_GUTTMAN_SPLIT 
 line 107283: ( VARIANT_GUTTMAN_LINEAR_SPLIT || VARIANT_GUTTMAN_QUADRATIC_SPLIT ) 
 line 107285: # if VARIANT_GUTTMAN_QUADRATIC_SPLIT 
 line 107286: # define PickNext QuadraticPickNext 
@@ -63717,10 +63717,10 @@ line 107398: union RtreeCoord {
 line 107399: float f ; 
 line 107400: int i ; 
 line 107401: } ; 
-line 107408: # define DCOORD ( coord ) ( \ 
-line 107409: ( pRtree -> eCoordType == RTREE_COORD_REAL32 ) ? \ 
-line 107410: ( ( double ) coord . f ) : \ 
-line 107411: ( ( double ) coord . i ) \ 
+line 107408: # define DCOORD ( coord ) ( 
+line 107409: ( pRtree -> eCoordType == RTREE_COORD_REAL32 ) ? 
+line 107410: ( ( double ) coord . f ) : 
+line 107411: ( ( double ) coord . i ) 
 line 107412: ) 
 line 107417: struct RtreeConstraint { 
 line 107418: int iCoord ; 

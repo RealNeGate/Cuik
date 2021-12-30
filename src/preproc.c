@@ -11,7 +11,7 @@
 #define strdup(x) _strdup(x)
 #endif
 
-static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, const char* directory, const char* filepath);
+static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, const char* directory, const char* filepath, int depth);
 static uint64_t hash_ident(const unsigned char* at, size_t length);
 static bool is_defined(CPP_Context* restrict c, const unsigned char* start, size_t length);
 static void expect(Lexer* l, char ch);
@@ -147,7 +147,7 @@ void cpp_dump(CPP_Context* ctx) {
 
 TokenStream cpp_process(CPP_Context* ctx, const char filepath[]) {
 	TokenStream s = { 0 };
-	preprocess_file(ctx, &s, "", filepath);
+	preprocess_file(ctx, &s, "", filepath, 1);
 	
 	Token t = { 0, 0, NULL, NULL };
 	arrput(s.tokens, t);
@@ -164,10 +164,24 @@ inline static SourceLocIndex get_source_location(Lexer* restrict l, TokenStream*
 	return i;
 }
 
+inline static void cpp_push_scope(CPP_Context* restrict ctx, Lexer* restrict l) {
+	ctx->depth++;
+	if (ctx->depth >= CPP_MAX_SCOPE_DEPTH) {
+		generic_error(l, "Exceeded max scope depth!");
+	}
+}
+
+inline static void cpp_pop_scope(CPP_Context* restrict ctx, Lexer* restrict l) {
+	if (ctx->depth == 0) {
+		generic_error(l, "Too many endifs\n");
+	}
+	ctx->depth--;
+}
+
 // TODO(NeGate): Fix this up please...
 static void expand_double_hash(CPP_Context* restrict c, Token* last, Lexer* restrict l, SourceLocIndex loc) {
 	unsigned char* out_start = c->the_shtuffs + c->the_shtuffs_size;
-	c->the_shtuffs_size += 4096;
+	c->the_shtuffs_size += 256;
 	assert(c->the_shtuffs_size < THE_SHTUFFS_SIZE);
 	
 	unsigned char* out = out_start;
@@ -218,7 +232,7 @@ static void expand_double_hash(CPP_Context* restrict c, Token* last, Lexer* rest
 	}
 }
 
-static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, const char* directory, const char* filepath) {
+static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, const char* directory, const char* filepath, int depth) {
 	unsigned char* text = (unsigned char*)read_entire_file(filepath);
 	Lexer l = (Lexer) { filepath, text, text, 1 };
 	
@@ -304,7 +318,7 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 					
 					assert(!l.hit_line);
 					if (eval(c, &l)) {
-						c->depth++;
+						cpp_push_scope(c, &l);
 						c->scope_eval[c->depth] = 1;
 					} else {
 						c->scope_eval[c->depth] = 0;
@@ -320,7 +334,7 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 					// if it didn't evaluate any of the other options
 					// do this
 					if (c->scope_eval[c->depth] == 0) {
-						c->depth++;
+						cpp_push_scope(c, &l);
 						c->scope_eval[c->depth] = 1;
 					} else {
 						skip_directive_body(&l);
@@ -386,7 +400,7 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 					// if it didn't evaluate any of the other options
 					// try to do this
 					if (c->scope_eval[c->depth] == 0 && eval(c, &l)) {
-						c->depth++;
+						cpp_push_scope(c, &l);
 						c->scope_eval[c->depth] = 1;
 					} else {
 						skip_directive_body(&l);
@@ -405,7 +419,7 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 						c->scope_eval[c->depth] = 0;
 						skip_directive_body(&l);
 					} else {
-						c->depth++;
+						cpp_push_scope(c, &l);
 						c->scope_eval[c->depth] = 1;
 						lexer_read(&l);
 					}
@@ -417,7 +431,7 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 					}
 					
 					if (is_defined(c, l.token_start, l.token_end - l.token_start)) {
-						c->depth++;
+						cpp_push_scope(c, &l);
 						c->scope_eval[c->depth] = 1;
 						lexer_read(&l);
 					} else {
@@ -426,12 +440,7 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 					}
 				} else if (lexer_match(&l, 5, "endif")) {
 					lexer_read(&l);
-					
-					if (c->depth == 0) {
-						generic_error(&l, "Too many endifs\n");
-					}
-					
-					c->depth--;
+					cpp_pop_scope(c, &l);
 				} else if (lexer_match(&l, 7, "include")) {
 					lexer_read(&l);
 					
@@ -459,7 +468,7 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 					// Search for file in system libs
 					char path[260];
 					bool success = false;
-					if (is_system_include) {
+					{
 						size_t num_system_include_dirs = arrlen(c->system_include_dirs);
 						
 						for (size_t i = 0; i < num_system_include_dirs; i++) {
@@ -477,7 +486,6 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 					if (!success) {
 						// Try local includes
 						sprintf_s(path, 260, "%s%.*s", directory, (int) (end - start), start);
-						
 						if (file_exists(path)) success = true;
 					}
 					
@@ -487,9 +495,16 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 						abort();
 					}
 					
+					for (size_t i = 0; i < 260; i++) {
+						if (path[i] >= 'A' && path[i] <= 'Z') {
+							path[i] -= ('A' - 'a');
+						}
+					}
+					
 					CPP_IncludeOnce* e = shgetp_null(c->include_once, path);
 					if (e == NULL) {
-						// TODO(NeGate): Remove these heap allocations later they're... evil!!!
+						// TODO(NeGate): Remove these heap allocations later
+						// they're... evil!!!
 						char* new_path = strdup(path);
 						char* new_dir = strdup(path);
 						
@@ -500,8 +515,12 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 						}
 						slash[1] = '\0';
 						
-						//printf("  %s\n", new_path);
-						preprocess_file(c, s, new_dir, new_path);
+#if 0
+						for (int i = 0; i < depth; i++) printf("  ");
+						printf("%s\n", new_path);
+#endif
+						
+						preprocess_file(c, s, new_dir, new_path, depth + 1);
 					}
 				} else if (lexer_match(&l, 6, "pragma")) {
 					lexer_read(&l);
@@ -1048,7 +1067,14 @@ static unsigned char* expand_ident(CPP_Context* restrict c, unsigned char* restr
 			Lexer temp_lex = (Lexer) { l->filepath, def.data, def.data };
 			lexer_read(&temp_lex);
 			
+			// NOTE(NeGate): We need to disable the current macro define
+			// so it doesn't recurse.
+			size_t saved_length = c->macro_bucket_keys_length[def_i];
+			c->macro_bucket_keys_length[def_i] = 0;
+			
 			out = expand(c, out, &temp_lex);
+			
+			c->macro_bucket_keys_length[def_i] = saved_length;
 		}
 		
 		return out;

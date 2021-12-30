@@ -1,5 +1,6 @@
 #pragma once
 #include "common.h"
+#include "arena.h"
 #include "stb_ds.h"
 
 // NOTE(NeGate): I originally called it TokenType but windows a bih on god
@@ -150,11 +151,6 @@ typedef struct Lexer {
     const unsigned char* start;
     const unsigned char* current;
 	int current_line;
-	
-	// used to store special tokens like backslash-newline joining
-	size_t temp_buffer_capacity;
-	size_t temp_buffer_used;
-	unsigned char* temp_buffer;
 	
 	////////////////////////////////
 	// INTERNALS

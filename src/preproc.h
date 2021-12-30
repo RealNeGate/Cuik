@@ -65,13 +65,9 @@ typedef struct CPP_IncludeOnce {
 	int value;
 } CPP_IncludeOnce;
 
+enum { CPP_MAX_SCOPE_DEPTH = 1024 };
+
 struct CPP_Context {
-	// how deep into directive scopes (#if, #ifndef, #ifdef) is it
-	int depth;
-	// tells you if the current scope has had an entry evaluated,
-	// this is important for choosing when to check #elif and #endif
-	int scope_eval[64];
-	
 	// used to store macro expansion results
 	size_t the_shtuffs_size;
 	unsigned char* the_shtuffs;
@@ -82,10 +78,17 @@ struct CPP_Context {
 	// system libraries
 	char** system_include_dirs;
 	
+	// how deep into directive scopes (#if, #ifndef, #ifdef) is it
+	int depth;
+	
 	// TODO(NeGate): Remove this and put a proper hash map or literally anything else
 	const unsigned char** macro_bucket_keys;
 	size_t* macro_bucket_keys_length;
 	const unsigned char** macro_bucket_values_start;
 	const unsigned char** macro_bucket_values_end;
 	int macro_bucket_count[MACRO_BUCKET_COUNT];
+	
+	// tells you if the current scope has had an entry evaluated,
+	// this is important for choosing when to check #elif and #endif
+	int scope_eval[CPP_MAX_SCOPE_DEPTH];
 };

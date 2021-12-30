@@ -224,6 +224,7 @@ static int line_counter(size_t len, const unsigned char* str) {
 	
 	return line_count;
 #else
+	// TODO(NeGate): Test this out a bit before using it
 	static unsigned char overhang_mask[32] = {
 		255, 255, 255, 255,  255, 255, 255, 255,  255, 255, 255, 255,  255, 255, 255, 255,
 		0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0
@@ -297,6 +298,14 @@ void lexer_read(Lexer* restrict l) {
 				l->hit_line = true;
 				goto redo_lex;
 			}
+		} else if (current[0] == '\\' && (current[1] == '\r' || current[1] == '\n')) {
+			// this happens when there's a backslash-newline that doesn't
+			// necessarily need to join tokens but just joins the lines
+			current += 1;
+			current += (current[0] + current[1] == '\r' + '\n') ? 2 : 1;
+			
+			l->current_line += 1;
+			goto redo_lex;
 		}
 	}
 	
@@ -344,20 +353,9 @@ void lexer_read(Lexer* restrict l) {
 				}
 			}
 			
-			// TODO(NeGate): Fix up the suffixes
-			if (l->token_type == TOKEN_INTEGER) {
-				// Best thing about putting padding space after the lexer string is
-				// that we can read extra bytes :)
-				uint32_t next_three_chars = *((uint32_t*)current) & 0xFFFFFF;
-				if (next_three_chars == ('U' | ('L' << 8) | ('L' << 16))) {
-					current += 3;
-				} else if (next_three_chars == ('u' | ('l' << 8) | ('l' << 16))) {
-					current += 3;
-				}
-			} else if (l->token_type == TOKEN_FLOAT) {
-				if (*current == 'f' || *current == 'd') {
-					current += 1;
-				}
+			// suffix
+			while (char_classes[*current] == CHAR_CLASS_IDENT) {
+				current++;
 			}
 			break;
 		}
@@ -465,22 +463,21 @@ void lexer_read(Lexer* restrict l) {
 		abort();
 	}
 	
-	if (current[0] == '\\' && current[1] == '\n') {
+	if (current[0] == '\\' && (current[1] == '\r' || current[1] == '\n')) {
+		// TODO(NeGate): This code could use emotional help... if you're smart
+		// and/or cool please consider providing it.
+		
 		// it increments the line counter but it doesn't mark a hit_line
 		// because the line terminator technically is removed. 
 		l->current_line += 1;
 		
-		// backslash-newline joining
-		size_t len = current - start;
-		if (l->temp_buffer_used + len > l->temp_buffer_capacity) {
-			printf("Lexer error: out of memory!");
-			abort();
-		}
+		// save out the original token position
+		l->token_start = start;
+		l->token_end = current;
 		
-		// start by copying over the original token
-		unsigned char* temp = &l->temp_buffer[l->temp_buffer_used];
-		memcpy(temp, start, len);
-		current += 2;
+		// skip backslash and newline
+		current += 1;
+		current += (current[0] + current[1] == '\r' + '\n') ? 2 : 1;
 		
 		start = current;
 		while (*current && *current != '\n' && *current != ' ') {
@@ -493,21 +490,28 @@ void lexer_read(Lexer* restrict l) {
 		// tally up lines
 		l->current_line += line_counter(current - start, start);
 		
-		memcpy(&temp[len], start, current - start);
-		len += (current - start);
-		
-		// null terminator to top it off
-		temp[len] = '\0';
-		
-		l->temp_buffer_used += len;
-		if (l->temp_buffer_used > l->temp_buffer_capacity) {
-			printf("Lexer error: out of memory!");
-			abort();
+		// generate buffer with conjoined string
+		unsigned char* conjoined_buffer;
+		{
+			size_t len = l->token_end - l->token_start;
+			size_t len2 = current - start;
+			
+			conjoined_buffer = arena_alloc((len + len2 + 15) & ~15, 16);
+			if (!conjoined_buffer) {
+				printf("Lexer error: out of memory!");
+				abort();
+			}
+			
+			memcpy(conjoined_buffer, l->token_start, len);
+			memcpy(conjoined_buffer + len, start, len2);
+			
+			// null terminator to top it off
+			conjoined_buffer[len + len2] = '\0';
 		}
 		
 		// Relex the joined string:
 		// Kinda recursive in a way but... shut up?
-		Lexer joined_string_lexer = (Lexer) { "", temp, temp, 1 };
+		Lexer joined_string_lexer = (Lexer) { "", conjoined_buffer, conjoined_buffer, 1 };
 		lexer_read(&joined_string_lexer);
 		
 		l->token_start = joined_string_lexer.token_start;
@@ -516,7 +520,7 @@ void lexer_read(Lexer* restrict l) {
 		// NOTE(NeGate): Basically take the remaining token stuff we didn't parse
 		// and just pass that but the issue is that these are two separate buffers
 		// so we do a little "magic?".
-		l->current = start + ((joined_string_lexer.token_end - temp) - (joined_string_lexer.token_end - joined_string_lexer.token_start));
+		l->current = start + ((joined_string_lexer.token_end - conjoined_buffer) - (joined_string_lexer.token_end - joined_string_lexer.token_start));
 	} else {
 		l->token_start = start;
 		l->token_end = current;
