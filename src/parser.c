@@ -211,7 +211,7 @@ TopLevel parse_file(TokenStream* restrict s) {
 				// Normal decls
 				assert(decl.name);
 				
-				StmtIndex n = make_stmt(s, STMT_DECL);
+				StmtIndex n = make_stmt(s, STMT_GLOBAL_DECL);
 				stmt_arena.data[n].decl = (struct StmtDecl){
 					.type = decl.type,
 					.name = decl.name
@@ -233,7 +233,7 @@ TopLevel parse_file(TokenStream* restrict s) {
 						Decl decl = parse_declarator(s, type);
 						assert(decl.name);
 						
-						StmtIndex n = make_stmt(s, STMT_DECL);
+						StmtIndex n = make_stmt(s, STMT_GLOBAL_DECL);
 						stmt_arena.data[n].decl = (struct StmtDecl){
 							.type = decl.type,
 							.name = decl.name

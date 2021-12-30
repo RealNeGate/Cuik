@@ -138,6 +138,9 @@ typedef enum StmtOp {
 	STMT_COMPOUND,
 	STMT_DECL,
 	
+	// It's a normal decl but global
+	STMT_GLOBAL_DECL,
+	
 	// NOTE(NeGate): It's a decl that's followed by a compound block
 	STMT_FUNC_DECL,
 	
@@ -228,6 +231,7 @@ typedef struct Stmt {
 		TB_Register r;
 		TB_FunctionID f;
 		TB_ExternalID e;
+		TB_GlobalID g;
 		TB_Label l;
 	} backing;
 	

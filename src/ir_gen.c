@@ -169,12 +169,18 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 		case EXPR_SYMBOL: {
 			StmtIndex stmt = ep->symbol;
 			StmtOp stmt_op = stmt_arena.data[stmt].op;
-			assert(stmt_op == STMT_DECL || stmt_op == STMT_LABEL || stmt_op == STMT_FUNC_DECL);
+			assert(stmt_op == STMT_DECL || stmt_op == STMT_LABEL || stmt_op == STMT_GLOBAL_DECL || stmt_op == STMT_FUNC_DECL);
 			
 			TypeIndex type_index = stmt_arena.data[stmt].decl.type;
 			Type* type = &type_arena.data[type_index];
 			
-			if (stmt_op == STMT_LABEL) {
+			if (stmt_op == STMT_GLOBAL_DECL) {
+				return (IRVal) {
+					.value_type = LVALUE,
+					.type = type_index,
+					.reg = tb_inst_get_global_address(func, stmt_arena.data[stmt].backing.g)
+				};
+			} else if (stmt_op == STMT_LABEL) {
 				return (IRVal) {
 					.value_type = LVALUE_LABEL,
 					.type = TYPE_NONE,
@@ -997,16 +1003,28 @@ void gen_ir_stage1(TopLevel tl, size_t i) {
 	} else if (stmt_arena.data[s].op == STMT_DECL) {
 		TypeIndex type = stmt_arena.data[s].decl.type;
 		
-		// TODO(NeGate): Implement other global forward decls
-		if (type_arena.data[type].kind != KIND_FUNC) {
-			abort();
+		if (!stmt_arena.data[s].decl.attrs.is_used) {
+			return;
 		}
+		
+		if (type_arena.data[type].kind != KIND_FUNC) {
+			sema_error(stmt_arena.data[s].loc, "TODO");
+		}
+		
+		char* name = (char*) stmt_arena.data[s].decl.name;
+		stmt_arena.data[s].backing.e = tb_extern_create(mod, name);
+	} else if (stmt_arena.data[s].op == STMT_GLOBAL_DECL) {
+		TypeIndex type = stmt_arena.data[s].decl.type;
 		
 		if (!stmt_arena.data[s].decl.attrs.is_used) {
 			return;
 		}
 		
-		stmt_arena.data[s].backing.e = tb_module_extern(mod, (char*) stmt_arena.data[s].decl.name);
+		char* name = (char*) stmt_arena.data[s].decl.name;
+		
+		// TODO(NeGate): Implement real global initializers
+		TB_InitializerID init = tb_initializer_create(mod, type_arena.data[type].size, type_arena.data[type].align, 0);
+		stmt_arena.data[s].backing.g = tb_global_create(mod, name, init);
 	}
 }
 

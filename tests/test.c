@@ -7,6 +7,12 @@ int baz() { int* x = (void*)0; x++; x--; x += 16; x -= 16; *x++ = 16; return *x;
 Index foo2() { return 16; }
 int params(int x, int y) { return x + y; }
 
+int counter;
+
+void beans() {
+	counter += 4;
+}
+
 int baz2(int *a, int *b)
 {
     *a = 5;

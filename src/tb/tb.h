@@ -273,8 +273,8 @@ extern "C" {
 	// Binds an external to an address
 	TB_API bool tb_jit_import(TB_Module* m, const char* name, void* address);
 	
-	TB_API TB_ExternalID tb_module_extern(TB_Module* m, const char* name);
-	TB_API TB_FileID tb_register_file(TB_Module* m, const char* path);
+	TB_API TB_ExternalID tb_extern_create(TB_Module* m, const char* name);
+	TB_API TB_FileID tb_file_create(TB_Module* m, const char* path);
 	
 	////////////////////////////////
 	// Function Prototypes
@@ -313,9 +313,7 @@ extern "C" {
 	////////////////////////////////
 	// Constant Initializers
 	////////////////////////////////
-	// NOTE: the max relocations is a cap and thus it can be bigger than the actually
-	// number needed.
-	TB_API TB_GlobalID tb_global_create(TB_Module* m, TB_InitializerID);
+	TB_API TB_GlobalID tb_global_create(TB_Module* m, const char* name, TB_InitializerID initializer);
 	
 	////////////////////////////////
 	// Function IR Generation
