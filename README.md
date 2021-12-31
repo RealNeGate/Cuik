@@ -1,6 +1,6 @@
 # Cuik (pronounced 'Quick')
 
-![Cuik 2 Icy 4 U](/Capture.png)
+![Cuik 2 Icy 4 U](/logo.PNG)
 
 lmao unfinished
 
