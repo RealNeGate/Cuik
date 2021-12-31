@@ -5,5 +5,5 @@ int count_newlines(int n, char arr[]) {
 		count += (arr[i] == 10);
 	}
 
-	return 0;
+	return count;
 }

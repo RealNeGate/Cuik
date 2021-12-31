@@ -9,6 +9,7 @@
 #include "linker.h"
 #include "stb_ds.h"
 #include <stdatomic.h>
+#include "settings.h"
 #include "../ext/threads.h"
 
 #if _WIN32
@@ -42,12 +43,7 @@ static mtx_t tasks_mutex;
 static int frontend_stage;
 static TopLevel top_level;
 
-static struct CompilerSettings {
-	bool is_object_only;              // -c
-	const char* output_path;          // -o
-	TB_OptLevel optimization_level;   // -O
-	int num_of_worker_threads;
-} settings;
+CompilerSettings settings;
 
 static int task_thread(void* param) {
 	while (is_running) {
@@ -159,7 +155,7 @@ static void compile_project(TB_Arch arch, TB_System sys, const char source_file[
 	// supposed to keep a global one and use it across multiple threads.
 	if (!is_multithreaded) {
 		TB_FeatureSet features = { 0 };
-		mod = tb_module_create(TB_ARCH_X86_64, TB_SYSTEM_WINDOWS, &features, TB_OPT_O0);
+		mod = tb_module_create(arch, sys, &features, settings.optimization_level);
 		
 		// Forward decls
 		size_t func_count = arrlen(top_level.arr);
@@ -189,6 +185,11 @@ static void compile_project(TB_Arch arch, TB_System sys, const char source_file[
 		// Generate bodies
 		frontend_stage = 1;
 		dispatch_tasks(arrlen(top_level.arr));
+		
+		if (sema_error_count) {
+			printf("compiled with %d errors\n", sema_error_count);
+			abort();
+		}
 		
 		arrfree(s.tokens);
 		arrfree(top_level.arr);
@@ -290,6 +291,10 @@ int main(int argc, char* argv[]) {
 				
 				case 'O':
 				settings.optimization_level = TB_OPT_O1;
+				break;
+				
+				case 'P':
+				settings.pedantic = true;
 				break;
 				
 				case 'o':

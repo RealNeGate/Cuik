@@ -1,4 +1,5 @@
 #include "ir_gen.h"
+#include "settings.h"
 
 enum { 
 	RVALUE,
@@ -38,6 +39,8 @@ TB_Module* mod;
 static _Thread_local TB_Register* parameter_map;
 static _Thread_local TypeIndex function_type;
 
+_Atomic int sema_error_count;
+
 static TB_DataType ctype_to_tbtype(const Type* t) {
 	switch (t->kind) {
 		case KIND_VOID: return TB_TYPE_VOID;
@@ -56,7 +59,13 @@ static TB_DataType ctype_to_tbtype(const Type* t) {
 	}
 }
 
-static _Noreturn void sema_error(SourceLocIndex loc, const char* msg) {
+static void sema_error(SourceLocIndex loc, const char* msg) {
+	SourceLoc* l = &ir_gen_tokens.line_arena[loc];
+	printf("%s:%d: error: %s\n", l->file, l->line, msg);
+	sema_error_count++;
+}
+
+static _Noreturn void sema_fatal(SourceLocIndex loc, const char* msg) {
 	SourceLoc* l = &ir_gen_tokens.line_arena[loc];
 	printf("%s:%d: error: %s\n", l->file, l->line, msg);
 	abort();
@@ -77,7 +86,7 @@ static void cvt_l2r(SourceLocIndex loc, TB_Function* func, IRVal* restrict v, Ty
 		v->value_type = RVALUE;
 		v->reg = tb_inst_phi2(func, ctype_to_tbtype(src), v->phi.if_true, one, v->phi.if_false, zero);
 	} else if (v->value_type == LVALUE_LABEL) {
-		sema_error(loc, "TODO");
+		sema_fatal(loc, "TODO");
 	} else if (v->value_type == LVALUE) {
 		// Implicit array to pointer
 		if (src->kind == KIND_ARRAY) {
@@ -129,11 +138,11 @@ static void cvt_l2r(SourceLocIndex loc, TB_Function* func, IRVal* restrict v, Ty
 			// A* -> B*    is not, unless they actually do match
 			if (src->ptr_to != TYPE_VOID && dst->ptr_to != TYPE_VOID) {
 				if (!type_equal(src->ptr_to, dst->ptr_to)) {
-					sema_error(loc, "No implicit cast between these types.");
+					sema_fatal(loc, "No implicit cast between these types.");
 				}
 			}
 		} else {
-			sema_error(loc, "No implicit cast between these types.");
+			sema_fatal(loc, "No implicit cast between these types.");
 		}
 	}
 }
@@ -345,8 +354,20 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 			
 			Atom name = ep->dot.name;
 			Type* restrict record_type = &type_arena.data[src.type];
+			if (record_type->kind == KIND_PTR) {
+				record_type = &type_arena.data[record_type->ptr_to];
+				
+				if (settings.pedantic) {
+					sema_error(ep->loc, "Implicit dereference is a non-standard extension (disable -P to allow it).");
+				}
+				
+				// dereference and leave me with the address
+				cvt_l2r(ep->loc, func, &src, src.type);
+				src.value_type = LVALUE;
+			}
+			
 			if (record_type->kind != KIND_STRUCT && record_type->kind != KIND_UNION) {
-				sema_error(ep->loc, "Cannot get the member of a non-record type.");
+				sema_fatal(ep->loc, "Cannot get the member of a non-record type.");
 			}
 			
 			MemberIndex start = record_type->record.kids_start;
@@ -367,7 +388,7 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 				}
 			}
 			
-			sema_error(ep->loc, "Could not find member under that name.");
+			sema_fatal(ep->loc, "Could not find member under that name.");
 		}
 		case EXPR_ARROW: {
 			IRVal src = gen_expr(func, ep->dot.base);
@@ -382,7 +403,8 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 			} else if (ptr_type->kind == KIND_ARRAY) {
 				record_type = &type_arena.data[ptr_type->array_of];
 			} else {
-				sema_error(ep->loc, "Cannot dereference non-pointer type.");
+				record_type = NULL;
+				sema_fatal(ep->loc, "Cannot dereference non-pointer type.");
 			}
 			
 			// dereference and leave me with the address
@@ -390,7 +412,7 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 			src.value_type = LVALUE;
 			
 			if (record_type->kind != KIND_STRUCT && record_type->kind != KIND_UNION) {
-				sema_error(ep->loc, "Cannot get the member of a non-record type.");
+				sema_fatal(ep->loc, "Cannot get the member of a non-record type.");
 			}
 			
 			MemberIndex start = record_type->record.kids_start;
@@ -411,7 +433,7 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 				}
 			}
 			
-			sema_error(ep->loc, "Could not find member under that name.");
+			sema_fatal(ep->loc, "Could not find member under that name.");
 		}
 		case EXPR_POST_INC:
 		case EXPR_POST_DEC: {
@@ -979,7 +1001,7 @@ static void gen_func_body(TypeIndex type, StmtIndex s, StmtIndex end) {
 	if (tb_node_is_label(func, last) || !tb_node_is_terminator(func, last)) {
 		if (return_type->kind != KIND_VOID) {
 			// Needs return value
-			sema_error(stmt_arena.data[s].loc, "Expected return with value.");
+			sema_fatal(stmt_arena.data[s].loc, "Expected return with value.");
 		}
 		
 		tb_inst_ret(func, TB_NULL_REG);
@@ -1008,7 +1030,7 @@ void gen_ir_stage1(TopLevel tl, size_t i) {
 		}
 		
 		if (type_arena.data[type].kind != KIND_FUNC) {
-			sema_error(stmt_arena.data[s].loc, "TODO");
+			sema_fatal(stmt_arena.data[s].loc, "TODO");
 		}
 		
 		char* name = (char*) stmt_arena.data[s].decl.name;

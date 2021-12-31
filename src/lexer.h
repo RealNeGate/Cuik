@@ -111,6 +111,7 @@ typedef enum TknType {
 	TOKEN_KW_Complex,
 	TOKEN_KW_Generic,
 	TOKEN_KW_Imaginary,
+	TOKEN_KW_Let,
 	TOKEN_KW_Pragma,
 	TOKEN_KW_Noreturn,
 	TOKEN_KW_Static_assert,

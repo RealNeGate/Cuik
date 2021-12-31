@@ -266,7 +266,6 @@ TopLevel parse_file(TokenStream* restrict s) {
 		if (expr_arena.data[i].op == EXPR_UNKNOWN_SYMBOL) {
 			Symbol* sym = find_global_symbol((char*)expr_arena.data[i].unknown_sym);
 			
-			// TODO(NeGate): Give a decent error message
 			if (!sym) {
 				Token* t = tokens_get(s);
 				SourceLoc* loc = &s->line_arena[t->location];
