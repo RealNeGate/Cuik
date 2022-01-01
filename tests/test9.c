@@ -5,6 +5,9 @@ struct Foo {
 };
 
 int bar(struct Foo* f) {
-	// this should only compile with -P (pedantic) disabled.
-	return f.a + f.b;
+	return f.a + foo() + f.b;
+}
+
+int foo() {
+	return 16;
 }

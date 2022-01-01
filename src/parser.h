@@ -86,7 +86,10 @@ typedef struct Type {
         bool is_unsigned;
         
         // Arrays
-		TypeIndex array_of;
+		struct {
+			TypeIndex array_of;
+			int array_count;
+		};
 		
         // Pointers
 		TypeIndex ptr_to;
@@ -280,6 +283,35 @@ typedef struct Stmt {
 	};
 } Stmt;
 
+// designated initializer member
+// .x = 5
+// [4] = 6
+typedef enum InitNodeDesignator {
+	INIT_NONE,
+	INIT_ARRAY,
+	INIT_MEMBER
+} InitNodeDesignator;
+
+typedef struct InitNode {
+	// the children are directly after
+	// this node, if the value is 0
+	// then there's no children and we
+	// are expected to find an expression
+	// here.
+	int kids_count;
+	ExprIndex expr;
+	InitNodeDesignator mode;
+	union {
+		// INIT_MEMBER
+		Atom member_name;
+		
+		// INIT_ARRAY
+		struct {
+			int start, count;
+		};
+	};
+} InitNode;
+
 typedef struct Expr {
 	ExprOp op;
 	SourceLocIndex loc;
@@ -322,6 +354,11 @@ typedef struct Expr {
 			const unsigned char* start;
 			const unsigned char* end;
 		} str;
+		struct {
+			TypeIndex type;
+			int count;
+			InitNode* nodes;
+		} init;
 		
 		double float_num;
 		long long int_num;

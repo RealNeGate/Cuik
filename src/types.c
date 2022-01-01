@@ -98,7 +98,8 @@ TypeIndex new_array(TypeIndex base, int count) {
 		.kind = KIND_ARRAY,
 		.size = size * count,
 		.align = align,
-		.array_of = base
+		.array_of = base,
+		.array_count = count
 	};
 	
 	return t;

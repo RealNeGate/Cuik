@@ -79,6 +79,8 @@ int main(int argc, char* argv[]) {
 	struct Point* start = (struct Point*)0;
 	start->x = 16;
 	
+	*start = init_point(4, 3);
+	
 	int y = (x * 2);
 	if (y) y = 16;
 	if (x) { y = 16; } else { x = 16; }
@@ -101,6 +103,10 @@ int main(int argc, char* argv[]) {
 	//float abc = 0.0f;
 	//float def = 4.34f;
 	return y;
+}
+
+struct Point init_point(int x, int y) {
+	return (struct Point){ .x = x, y };
 }
 
 struct Point {

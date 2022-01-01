@@ -155,7 +155,7 @@ static void compile_project(TB_Arch arch, TB_System sys, const char source_file[
 	// supposed to keep a global one and use it across multiple threads.
 	if (!is_multithreaded) {
 		TB_FeatureSet features = { 0 };
-		mod = tb_module_create(arch, sys, &features, settings.optimization_level);
+		mod = tb_module_create(arch, sys, &features);
 		
 		// Forward decls
 		size_t func_count = arrlen(top_level.arr);
@@ -176,7 +176,7 @@ static void compile_project(TB_Arch arch, TB_System sys, const char source_file[
 		}
 		
 		TB_FeatureSet features = { 0 };
-		mod = tb_module_create(arch, sys, &features, settings.optimization_level);
+		mod = tb_module_create(arch, sys, &features);
 		
 		// Forward decls
 		frontend_stage = 0;
@@ -277,6 +277,7 @@ int main(int argc, char* argv[]) {
 	// helpful currently since code gen is the only parallel stage.
 	settings.num_of_worker_threads = (sysinfo.dwNumberOfProcessors / 2) - 1;
 	if (settings.num_of_worker_threads <= 0) settings.num_of_worker_threads = 1;
+	//settings.num_of_worker_threads = 1;
 #else
 	settings.num_of_worker_threads = 1;
 #endif
@@ -291,6 +292,10 @@ int main(int argc, char* argv[]) {
 				
 				case 'O':
 				settings.optimization_level = TB_OPT_O1;
+				break;
+				
+				case 'p':
+				settings.print_tb_ir = true;
 				break;
 				
 				case 'P':
@@ -475,13 +480,6 @@ static bool dump_tokens(const char source_file[]) {
 ////////////////////////////////
 // Live compiler functionality
 ////////////////////////////////
-// NOTE(NeGate): This is lowkey a mess but essentially if
-// the live-compiler crashes we wanna just ignore it and continue
-static jmp_buf live_compiler_savepoint;
-static void live_compiler_abort(int signo) {
-	longjmp(live_compiler_savepoint, 1);
-}
-
 #if _WIN32
 static bool disassemble_object_file(const wchar_t vs_exe_path[], const char filename[]) {
 	clock_t t1 = clock();
@@ -527,22 +525,27 @@ static uint64_t get_last_write_time(const char filepath[]) {
 	FindClose(handle);
 	return i.QuadPart;
 }
-#endif
+
+// NOTE(NeGate): This is lowkey a mess but essentially if
+// the live-compiler crashes we wanna just ignore it and continue
+static jmp_buf live_compiler_savepoint;
+static void live_compiler_abort(int signo) {
+	longjmp(live_compiler_savepoint, 1);
+}
 
 static bool live_compile(const char source_file[], const char obj_output_path[], const char filename[]) {
-#if _WIN32
 	MicrosoftCraziness_Find_Result vswhere = MicrosoftCraziness_find_visual_studio_and_windows_sdk();
-	
-	if (signal(SIGABRT, live_compiler_abort) == SIG_ERR) {
-		printf("Failed to set signal handler.\n");
-		return false;
-	}
-	
+    
 	uint64_t original_last_write = get_last_write_time(source_file);
 	while (true) {
 		system("cls");
 		
 		// bootlegy exception handler...
+		if (signal(SIGABRT, live_compiler_abort) == SIG_ERR) {
+			printf("Failed to set signal handler.\n");
+			return false;
+		}
+		
 		if (setjmp(live_compiler_savepoint) == 0) {
 			timed_block("compilation") {
 				compile_project(target_arch, target_sys, source_file, true);
@@ -552,13 +555,6 @@ static bool live_compile(const char source_file[], const char obj_output_path[],
 			}
 			
 			disassemble_object_file(vswhere.vs_exe_path, filename);
-		} else {
-			// set exception handling again because it's unset once it's
-			// signalled... i think?
-			if (signal(SIGABRT, live_compiler_abort) == SIG_ERR) {
-				printf("Failed to set signal handler.\n");
-				return false;
-			}
 		}
 		
 		// Wait for the user to save again
@@ -583,8 +579,7 @@ static bool live_compile(const char source_file[], const char obj_output_path[],
 			SleepEx(100, FALSE);
 		}
 	}
-#else
-	printf("Live compiler not supported");
-	return -1;
-#endif
 }
+#else
+#warning "No live compiler supported"
+#endif

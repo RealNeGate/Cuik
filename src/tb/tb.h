@@ -30,6 +30,11 @@ extern "C" {
 #include <stdbool.h>
 #include <inttypes.h>
 	
+	// https://semver.org/
+#define TB_VERSION_MAJOR 0
+#define TB_VERSION_MINOR 1
+#define TB_VERSION_PATCH 0
+	
 #ifndef TB_MAX_THREADS
 #define TB_MAX_THREADS 16
 #endif
@@ -42,6 +47,8 @@ extern "C" {
 #ifndef TB_MAX_FUNCTIONS
 #define TB_MAX_FUNCTIONS (1 << 22)
 #endif
+	
+#define TB_API extern
 	
 #define TB_HOST_UNKNOWN 0
 #define TB_HOST_X86_64 1
@@ -57,10 +64,8 @@ extern "C" {
 #define TB_HOST_ARCH TB_HOST_UNKNOWN
 #endif
 	
-#define TB_API extern
-	
 #define TB_NULL_REG ((TB_Register)0)
-#define TB_REG_MAX ((TB_Register)INT32_MAX)
+#define TB_REG_MAX ((TB_Register)INT_MAX)
 	
 	typedef enum TB_ArithmaticBehavior {
 		// No overflow will assume the value does not 
@@ -246,7 +251,7 @@ extern "C" {
 	// Module management
 	////////////////////////////////
 	// Creates a module with the correct target and settings
-	TB_API TB_Module* tb_module_create(TB_Arch target_arch, TB_System target_system, const TB_FeatureSet* features, TB_OptLevel opt_level);
+	TB_API TB_Module* tb_module_create(TB_Arch target_arch, TB_System target_system, const TB_FeatureSet* features);
 	
 	// Validates IR & compiles the function into machine code.
 	// returns false if it fails.
@@ -318,7 +323,10 @@ extern "C" {
 	////////////////////////////////
 	// Function IR Generation
 	////////////////////////////////
-	TB_API TB_Label tb_get_current_label(TB_Function* f);
+	TB_API void tb_function_print(TB_Function* f, FILE* out);
+	TB_API void tb_function_free(TB_Function* f);
+	
+	TB_API TB_Label tb_inst_get_current_label(TB_Function* f);
 	TB_API void tb_inst_loc(TB_Function* f, TB_FileID file, int line);
 	
 	TB_API TB_Register tb_inst_param(TB_Function* f, int param_id);
@@ -405,8 +413,23 @@ extern "C" {
 	TB_API void tb_inst_switch(TB_Function* f, TB_DataType dt, TB_Register key, TB_Label default_label, size_t entry_count, const TB_SwitchEntry* entries);
 	TB_API void tb_inst_ret(TB_Function* f, TB_Register value);
 	
-	TB_API void tb_function_print(TB_Function* f, FILE* out);
-	TB_API void tb_function_free(TB_Function* f);
+	////////////////////////////////
+	// Optimizer
+	////////////////////////////////
+	TB_API void tb_function_optimize(TB_Function* f, TB_OptLevel opt);
+	
+	TB_API bool tb_opt_mem2reg(TB_Function* f);
+	TB_API bool tb_opt_dead_expr_elim(TB_Function* f);
+	TB_API bool tb_opt_dead_block_elim(TB_Function* f);
+	TB_API bool tb_opt_fold(TB_Function* f);
+	TB_API bool tb_opt_load_elim(TB_Function* f);
+	TB_API bool tb_opt_inline(TB_Function* f);
+	TB_API bool tb_opt_hoist_locals(TB_Function* f);
+	TB_API bool tb_opt_canonicalize(TB_Function* f);
+	TB_API bool tb_opt_deshort_circuit(TB_Function* f);
+	TB_API bool tb_opt_remove_pass_node(TB_Function* f);
+	TB_API bool tb_opt_strength_reduction(TB_Function* f);
+	TB_API bool tb_opt_compact_dead_regs(TB_Function* f);
 	
 	////////////////////////////////
 	// IR access

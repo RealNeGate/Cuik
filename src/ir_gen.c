@@ -39,7 +39,12 @@ TB_Module* mod;
 static _Thread_local TB_Register* parameter_map;
 static _Thread_local TypeIndex function_type;
 
+// For aggregate returns
+static _Thread_local TB_Register return_value_address;
+
 _Atomic int sema_error_count;
+
+static IRVal gen_expr(TB_Function* func, ExprIndex e);
 
 static TB_DataType ctype_to_tbtype(const Type* t) {
 	switch (t->kind) {
@@ -52,9 +57,14 @@ static TB_DataType ctype_to_tbtype(const Type* t) {
 		case KIND_FLOAT: return TB_TYPE_F32;
 		case KIND_DOUBLE: return TB_TYPE_F64;
 		case KIND_ENUM: return TB_TYPE_I32;
-		case KIND_PTR: return TB_TYPE_PTR;
-		case KIND_ARRAY: return TB_TYPE_PTR;
-		case KIND_FUNC: return TB_TYPE_PTR;
+		
+		case KIND_PTR: 
+		case KIND_FUNC:
+		case KIND_ARRAY: 
+		case KIND_STRUCT:
+		case KIND_UNION:
+		return TB_TYPE_PTR;
+		
 		default: abort(); // TODO
 	}
 }
@@ -147,6 +157,200 @@ static void cvt_l2r(SourceLocIndex loc, TB_Function* func, IRVal* restrict v, Ty
 	}
 }
 
+// Does pointer math scary you? this is like mostly just addition but yea
+static InitNode* count_max_tb_init_objects(int node_count, InitNode* node, int* out_count) {
+	for (int i = 0; i < node_count; i++) {
+		if (node->kids_count == 0) {
+			*out_count += 1;
+		} else {
+			node = count_max_tb_init_objects(node->kids_count, node, out_count);
+		}
+		
+		node += 1;
+	}
+	
+	return node;
+}
+
+// TODO(NeGate): Revisit this code as a smarter man...
+// if the addr is 0 then we only apply constant initializers.
+// func doesn't need to be non-NULL if it's addr is NULL.
+static InitNode* eval_initializer_objects(TB_Function* func, TB_InitializerID init, TB_Register addr, TypeIndex t, int node_count, InitNode* node, int* offset) {
+	// TODO(NeGate): Implement line info for this code for error handling.
+	SourceLocIndex loc = 0;
+	
+	// Identify boundaries:
+	//   Scalar types are 1
+	//   Records depend on the member count
+	//   Arrays are based on array count
+	int bounds;
+	{
+		Type* restrict type = &type_arena.data[t];
+		switch (type->kind) {
+			case KIND_ARRAY:
+			bounds = type->array_count; 
+			break;
+			
+			case KIND_UNION: case KIND_STRUCT:
+			bounds = type->record.kids_end - type->record.kids_start;
+			break;
+			
+			default: 
+			bounds = 1;
+			break;
+		}
+	}
+	
+	// Starts at the first node and just keep traversing through any nodes with children.
+	int cursor = 0;
+	for (int i = 0; i < node_count; i++) {
+		// NOTE(NeGate): We reload this value because it's possible that
+		// expression IR generation may clobber the type_arena.
+		Type* restrict type = &type_arena.data[t];
+		
+		// if there's no designator then the cursor
+		// just keeps incrementing
+		int pos, pos_end;
+		if (node->mode == INIT_MEMBER) {
+			if (type->kind != KIND_STRUCT && type->kind != KIND_UNION) {
+				sema_fatal(loc, "Cannot get the member of a non-record type.");
+			}
+			
+			pos = pos_end = -1;
+			
+			MemberIndex start = type->record.kids_start;
+			MemberIndex end = type->record.kids_end;
+			for (MemberIndex m = start; m < end; m++) {
+				Member* member = &member_arena.data[m];
+				
+				// TODO(NeGate): String interning would be nice
+				if (cstr_equals(node->member_name, member->name)) {
+					pos = cursor;
+					pos_end = cursor + 1;
+					cursor = pos_end;
+					break;
+				}
+			}
+			
+			if (pos < 0) {
+				sema_fatal(loc, "Could not find member under that name.");
+			}
+		} else if (node->mode == INIT_ARRAY) {
+			if (type->kind != KIND_ARRAY) {
+				sema_fatal(loc, "Cannot apply array initializer to non-array type.");
+			}
+			
+			pos = node->start;
+			pos_end = node->start + node->count;
+			cursor = pos_end;
+		} else {
+			if (type->kind != KIND_STRUCT && type->kind != KIND_UNION && type->kind != KIND_ARRAY) {
+				sema_fatal(loc, "Compound literal with multiple elements must be a struct, union or array.");
+			}
+			
+			pos = cursor;
+			pos_end = cursor + 1;
+			cursor++;
+		}
+		
+		// Validate indices
+		if (pos < 0 || pos >= bounds) {
+			sema_fatal(loc, "Initializer out of range, TODO error ugly");
+		} else if (pos_end <= 0 && pos_end > bounds) {
+			sema_fatal(loc, "Initializer out of range, TODO error ugly");
+		}
+		
+		// TODO(NeGate): Implement array range initializer
+		if (pos + 1 != pos_end) {
+			sema_fatal(loc, "TODO");
+		}
+		
+		// Identify entry type
+		TypeIndex child_type;
+		if (type->kind == KIND_ARRAY) {
+			child_type = type->array_of;
+		} else if (type->kind == KIND_UNION || type->kind == KIND_STRUCT) {
+			child_type = member_arena.data[type->record.kids_start + pos].type;
+		} else {
+			child_type = t;
+		}
+		
+		// traverse children
+		int relative_offset = 0;
+		if (type->kind == KIND_ARRAY) {
+			relative_offset += type_arena.data[type->array_of].size * pos;
+		} else if (type->kind == KIND_UNION || type->kind == KIND_STRUCT) {
+			relative_offset += member_arena.data[type->record.kids_start + pos].offset;
+		}
+		
+		if (node->kids_count > 0) {
+			*offset += relative_offset;
+			node = eval_initializer_objects(func, init, addr, child_type, node->kids_count, node, offset);
+		} else {
+			// initialize a value
+			assert(func);
+			assert(node->expr);
+			
+			TB_Register effective_addr;
+			if (addr) {
+				effective_addr = tb_inst_member_access(func, addr, *offset + relative_offset);
+			} else effective_addr = addr;
+			
+			switch (expr_arena.data[node->expr].op) {
+				// TODO(NeGate): Implement constants for literals
+				// to allow for more stuff to be precomputed.
+				// case EXPR_INT: 
+				// ...
+				// break;
+				
+				// dynamic expressions
+				default:
+				if (addr) {
+					IRVal v = gen_expr(func, node->expr);
+					
+					TypeKind kind = type_arena.data[child_type].kind;
+					int size = type_arena.data[child_type].size;
+					int align = type_arena.data[child_type].align;
+					
+					if (kind == KIND_STRUCT || kind == KIND_UNION || kind == KIND_ARRAY) {
+						TB_Register size_reg = tb_inst_iconst(func, TB_TYPE_I64, size);
+						tb_inst_memcpy(func, effective_addr, v.reg, size_reg, align);
+					} else {
+						cvt_l2r(loc, func, &v, child_type);
+						tb_inst_store(func, ctype_to_tbtype(&type_arena.data[child_type]), effective_addr, v.reg, align);
+					}
+				}
+				break;
+			}
+		}
+		
+		node += 1;
+	}
+	
+	return node;
+}
+
+static TB_Register gen_local_initializer(TB_Function* func, TypeIndex t, int node_count, InitNode* nodes) {
+	// Walk initializer for max constant expression initializers.
+	int max_tb_objects;
+	count_max_tb_init_objects(node_count, nodes, &max_tb_objects);
+	
+	TB_InitializerID init = tb_initializer_create(mod, 
+												  type_arena.data[t].size,
+												  type_arena.data[t].align, 
+												  max_tb_objects);
+	
+	TB_Register addr = tb_inst_local(func, type_arena.data[t].size, type_arena.data[t].align);
+	
+	// Initialize all const expressions
+	eval_initializer_objects(func, init, TB_NULL_REG, t, node_count, nodes, &(int) { 0 });
+	tb_inst_initialize_mem(func, addr, init);
+	
+	// Initialize all dynamic expressions
+	eval_initializer_objects(func, init, addr, t, node_count, nodes, &(int) { 0 });
+	return addr;
+}
+
 static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 	const Expr* restrict ep = &expr_arena.data[e];
 	
@@ -173,6 +377,15 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 				.value_type = LVALUE,
 				.type = new_array(TYPE_CHAR, end-start),
 				.reg = tb_inst_const_string(func, start, end-start)
+			};
+		}
+		case EXPR_INITIALIZER: {
+			TB_Register r = gen_local_initializer(func, ep->init.type, ep->init.count, ep->init.nodes);
+			
+			return (IRVal) {
+				.value_type = LVALUE,
+				.type = ep->init.type,
+				.reg = r
 			};
 		}
 		case EXPR_SYMBOL: {
@@ -292,31 +505,51 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 			
 			//if (param_count != arg_count) abort();
 			
+			// NOTE(NeGate): returning aggregates requires us
+			// to allocate our own space and pass it to the 
+			// callee.
+			bool is_aggregate_return = false;
+			TB_Register return_buffer = 0;
+			TypeIndex return_type = func_type->func.return_type;
+			if (type_arena.data[return_type].kind == KIND_STRUCT ||
+				type_arena.data[return_type].kind == KIND_UNION) {
+				is_aggregate_return = true;
+				
+				return_buffer = tb_inst_local(func, type_arena.data[return_type].size, type_arena.data[return_type].align);
+			}
+			
+			// includes "aggregate return value address"
+			size_t real_param_count = param_count + is_aggregate_return;
+			
 			// Resolve parameters
-			TB_Register* ir_params = tls_push(param_count * sizeof(TB_Register));
+			TB_Register* ir_params = tls_push(real_param_count * sizeof(TB_Register));
+			
+			if (is_aggregate_return) {
+				ir_params[0] = return_buffer;
+			}
+			
 			for (size_t i = 0; i < param_count; i++) {
 				Arg* a = &arg_arena.data[arg_start + i];
 				
 				IRVal src = gen_expr(func, params[i]);
 				cvt_l2r(ep->loc, func, &src, a->type);
 				
-				ir_params[i] = src.reg;
+				ir_params[is_aggregate_return+i] = src.reg;
 			}
 			
 			// Resolve call target
 			// NOTE(NeGate): Could have been resized in the parameter's gen_expr
 			func_type = &type_arena.data[func_type_index];
-			TypeIndex return_type = func_type->func.return_type;
 			TB_DataType dt = ctype_to_tbtype(&type_arena.data[return_type]);
 			
 			TB_Register r;
 			if (func_ptr.value_type == LVALUE_FUNC) {
-				r = tb_inst_call(func, dt, func_ptr.func, param_count, ir_params);
+				r = tb_inst_call(func, dt, func_ptr.func, real_param_count, ir_params);
 			} else if (func_ptr.value_type == LVALUE_EFUNC) {
-				r = tb_inst_ecall(func, dt, func_ptr.ext, param_count, ir_params);
+				r = tb_inst_ecall(func, dt, func_ptr.ext, real_param_count, ir_params);
 			} else {
 				cvt_l2r(ep->loc, func, &func_ptr, func_type_index);
-				r = tb_inst_vcall(func, dt, func_ptr.reg, param_count, ir_params);
+				r = tb_inst_vcall(func, dt, func_ptr.reg, real_param_count, ir_params);
 			}
 			
 			tls_restore(ir_params);
@@ -801,7 +1034,7 @@ static void gen_stmt(TB_Function* func, StmtIndex s) {
 				IRVal v = gen_expr(func, sp->decl.initial);
 				
 				if (kind == KIND_STRUCT || kind == KIND_UNION) {
-					TB_Register size_reg = tb_inst_iconst(func, TB_TYPE_I32, size);
+					TB_Register size_reg = tb_inst_iconst(func, TB_TYPE_I64, size);
 					
 					tb_inst_memcpy(func, addr, v.reg, size_reg, align);
 				} else {
@@ -830,8 +1063,22 @@ static void gen_stmt(TB_Function* func, StmtIndex s) {
 			if (e) {
 				IRVal v = gen_expr(func, e);
 				
-				cvt_l2r(sp->loc, func, &v, v.type);
-				tb_inst_ret(func, v.reg);
+				if (type_arena.data[v.type].kind == KIND_STRUCT ||
+					type_arena.data[v.type].kind == KIND_UNION) {
+					// returning aggregates just copies into the first parameter
+					// which is agreed to be a caller owned buffer.
+					int size = type_arena.data[v.type].size;
+					int align = type_arena.data[v.type].align;
+					
+					TB_Register dst_address = tb_inst_load(func, TB_TYPE_PTR, return_value_address, 8);
+					TB_Register size_reg = tb_inst_iconst(func, TB_TYPE_I64, size);
+					
+					tb_inst_memcpy(func, dst_address, v.reg, size_reg, align);
+					tb_inst_ret(func, TB_NULL_REG);
+				} else {
+					cvt_l2r(sp->loc, func, &v, v.type);
+					tb_inst_ret(func, v.reg);
+				}
 			} else {
 				tb_inst_ret(func, TB_NULL_REG);
 			}
@@ -933,27 +1180,36 @@ static void gen_stmt(TB_Function* func, StmtIndex s) {
 static void gen_func_header(TypeIndex type, StmtIndex s) {
 	const Type* return_type = &type_arena.data[type_arena.data[type].func.return_type];
 	
+	bool is_aggregate_return = false;
+	if (return_type->kind == KIND_STRUCT ||
+		return_type->kind == KIND_UNION) {
+		is_aggregate_return = true;
+	}
+	
 	// Parameters
 	ArgIndex arg_start = type_arena.data[type].func.arg_start;
 	ArgIndex arg_end = type_arena.data[type].func.arg_end;
 	
-	TB_FunctionPrototype* proto = tb_prototype_create(mod,
-													  TB_STDCALL,
+	ArgIndex arg_count = arg_end - arg_start;
+	
+	// aggregate return values take up the first parameter slot.
+	if (is_aggregate_return) arg_count += 1;
+	
+	TB_FunctionPrototype* proto = tb_prototype_create(mod, TB_STDCALL,
 													  ctype_to_tbtype(return_type),
-													  arg_end - arg_start, false);
+													  arg_count,
+													  false);
+	
+	if (is_aggregate_return) {
+		tb_prototype_add_param(proto, TB_TYPE_PTR);
+	}
 	
 	for (ArgIndex i = arg_start; i < arg_end; i++) {
 		Arg* a = &arg_arena.data[i];
 		
 		// Decide on the data type
-		TB_DataType dt;
 		Type* arg_type = &type_arena.data[a->type];
-		
-		if (arg_type->kind == KIND_STRUCT) {
-			dt = TB_TYPE_PTR;
-		} else {
-			dt = ctype_to_tbtype(arg_type);
-		}
+		TB_DataType dt = ctype_to_tbtype(arg_type);
 		
 		tb_prototype_add_param(proto, dt);
 	}
@@ -976,9 +1232,25 @@ static void gen_func_body(TypeIndex type, StmtIndex s, StmtIndex end) {
 	
 	TB_Register* params = parameter_map = tls_push(arg_count * sizeof(TB_Register));
 	
-	// gimme stack slots
-	for (int i = 0; i < arg_count; i++) {
-		params[i] = tb_inst_param_addr(func, i);
+	Type* restrict return_type = &type_arena.data[type_arena.data[type].func.return_type];
+	
+	// mark return value address (if it applies)
+	// and get stack slots for parameters
+	if (return_type->kind == KIND_STRUCT ||
+		return_type->kind == KIND_UNION) {
+		return_value_address = tb_inst_param_addr(func, 0);
+		
+		// gimme stack slots
+		for (int i = 0; i < arg_count; i++) {
+			params[i] = tb_inst_param_addr(func, 1+i);
+		}
+	} else {
+		return_value_address = TB_NULL_REG;
+		
+		// gimme stack slots
+		for (int i = 0; i < arg_count; i++) {
+			params[i] = tb_inst_param_addr(func, i);
+		}
 	}
 	
 	// TODO(NeGate): Ok fix this up later but essentially we need to prepass
@@ -996,19 +1268,29 @@ static void gen_func_body(TypeIndex type, StmtIndex s, StmtIndex end) {
 	gen_stmt(func, s + 1);
 	function_type = 0;
 	
-	Type* return_type = &type_arena.data[type_arena.data[type].func.return_type];
-	TB_Register last = tb_node_get_last_register(func);
-	if (tb_node_is_label(func, last) || !tb_node_is_terminator(func, last)) {
-		if (return_type->kind != KIND_VOID) {
-			// Needs return value
-			sema_fatal(stmt_arena.data[s].loc, "Expected return with value.");
+	{
+		Type* restrict return_type = &type_arena.data[type_arena.data[type].func.return_type];
+		TB_Register last = tb_node_get_last_register(func);
+		if (tb_node_is_label(func, last) || !tb_node_is_terminator(func, last)) {
+			if (return_type->kind != KIND_VOID &&
+				return_type->kind != KIND_STRUCT &&
+				return_type->kind != KIND_UNION) {
+				// Needs return value
+				sema_fatal(stmt_arena.data[s].loc, "Expected return with value.");
+			}
+			
+			tb_inst_ret(func, TB_NULL_REG);
 		}
-		
-		tb_inst_ret(func, TB_NULL_REG);
 	}
 	
-	//tb_function_print(func, stdout);
-	//printf("\n\n\n");
+	if (settings.print_tb_ir) {
+		tb_function_print(func, stdout);
+		printf("\n\n\n");
+	}
+	
+	if (settings.optimization_level != TB_OPT_O0) {
+		tb_function_optimize(func, settings.optimization_level);
+	}
 	
 	tb_module_compile_func(mod, func);
 	tb_function_free(func);

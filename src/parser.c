@@ -57,7 +57,6 @@ static int parse_const_expr(TokenStream* restrict s);
 static bool is_typename(TokenStream* restrict s);
 static _Noreturn void generic_error(TokenStream* restrict s, const char* msg);
 static void parse_decl_or_expr(TokenStream* restrict s, size_t* body_count);
-
 static ExprIndex parse_expr(TokenStream* restrict s);
 
 // It's like parse_expr but it doesn't do anything with comma operators to avoid
@@ -631,6 +630,133 @@ static StmtIndex parse_stmt_or_expr(TokenStream* restrict s) {
 // Quick reference:
 // https://en.cppreference.com/w/c/language/operator_precedence
 ////////////////////////////////
+
+// NOTE(NeGate): This function will push all nodes it makes onto the temporary
+// storage where parse_initializer will move them into permanent storage.
+static void parse_initializer_member(TokenStream* restrict s) {
+	// Parse designator, it's just chains of:
+	// [const-expr]
+	// .identifier
+	InitNode* current = NULL;
+	try_again: {
+		if (tokens_get(s)->type == '[') {
+			int start = parse_const_expr(s);
+			if (start < 0) {
+				// TODO(NeGate): Error messages
+				generic_error(s, "Array initializer range is broken.");
+			}
+			
+			// GNU-extension: array range initializer
+			int count = 1;
+			if (tokens_get(s)->type == TOKEN_TRIPLE_DOT) {
+				tokens_next(s);
+				
+				count = parse_const_expr(s) - start;
+				if (count <= 1) {
+					// TODO(NeGate): Error messages
+					generic_error(s, "Array initializer range is broken.");
+				}
+			}
+			expect(s, ']');
+			
+			current = (InitNode*) tls_push(sizeof(InitNode));
+			*current = (InitNode) {
+				.kids_count = 1,
+				.start = start,
+				.count = count
+			};
+			goto try_again;
+		}
+		
+		if (tokens_get(s)->type == '.') {
+			tokens_next(s);
+			
+			Token* t = tokens_get(s);
+			Atom name = atoms_put(t->end - t->start, t->start);
+			tokens_next(s);
+			
+			current = (InitNode*) tls_push(sizeof(InitNode));
+			*current = (InitNode) {
+				.kids_count = 1,
+				.member_name = name
+			};
+			goto try_again;
+		}
+	}
+	
+	// if it has no designator make a dummy one.
+	if (!current) {
+		current = (InitNode*) tls_push(sizeof(InitNode));
+		*current = (InitNode) {
+			.kids_count = 1,
+			.member_name = NULL
+		};
+	} else {
+		expect(s, '=');
+	}
+	
+	// it can either be a normal expression
+	// or a nested designated initializer
+	if (tokens_get(s)->type == '{') {
+		tokens_next(s);
+		
+		size_t local_count = 0;
+		
+		// don't expect one the first time
+		bool expect_comma = false;
+		while (tokens_get(s)->type == '}') {
+			if (expect_comma) {
+				expect(s, ',');
+			} else expect_comma = true;
+			
+			parse_initializer_member(s);
+			local_count += 1;
+		}
+		
+		current->kids_count = local_count;
+	} else {
+		// parse without comma operator
+		current->kids_count = 0;
+		current->expr = parse_expr_l14(s);
+	}
+}
+
+static ExprIndex parse_initializer(TokenStream* restrict s, TypeIndex type) {
+	// TODO(NeGate): Handle compound literal
+	size_t count = 0;
+	InitNode* start = tls_save();
+	
+	// don't expect one the first time
+	bool expect_comma = false;
+	while (tokens_get(s)->type != '}') {
+		if (expect_comma) {
+			expect(s, ',');
+		} else expect_comma = true;
+		
+		parse_initializer_member(s);
+		count += 1;
+	}
+	
+	// eat trailing comma
+	if (tokens_get(s)->type == ',') {
+		tokens_next(s);
+	}
+	
+	expect(s, '}');
+	
+	InitNode* permanent_store = arena_alloc(count * sizeof(InitNode), _Alignof(InitNode));
+	memcpy(permanent_store, start, count * sizeof(InitNode));
+	tls_restore(start);
+	
+	ExprIndex e = push_expr_arena(1);
+	expr_arena.data[e] = (Expr) {
+		.op = EXPR_INITIALIZER,
+		.loc = tokens_get(s)->location,
+		.init = { type, count, permanent_store }
+	};
+	return e;
+}
+
 static ExprIndex parse_expr_l0(TokenStream* restrict s) {
 	if (tokens_get(s)->type == '(') {
 		tokens_next(s);
@@ -734,16 +860,21 @@ static ExprIndex parse_expr_l1(TokenStream* restrict s) {
 			TypeIndex type = parse_typename(s);
 			expect(s, ')');
 			
-			// TODO(NeGate): Handle compound literal
-			ExprIndex base = parse_expr_l0(s);
-			ExprIndex e = push_expr_arena(1);
-			
-			expr_arena.data[e] = (Expr) {
-				.op = EXPR_CAST,
-				.loc = tokens_get(s)->location,
-				.cast = { type, base }
-			};
-			return e;
+			if (tokens_get(s)->type == '{') {
+				tokens_next(s);
+				
+				return parse_initializer(s, type);
+			} else {
+				ExprIndex base = parse_expr_l0(s);
+				ExprIndex e = push_expr_arena(1);
+				
+				expr_arena.data[e] = (Expr) {
+					.op = EXPR_CAST,
+					.loc = tokens_get(s)->location,
+					.cast = { type, base }
+				};
+				return e;
+			}
 		}
 		
 		tokens_prev(s);
