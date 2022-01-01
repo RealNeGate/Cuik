@@ -1,7 +1,5 @@
 # Cuik (pronounced 'Quick')
 
-![Cuik 2 Icy 4 U](/logo.PNG)
-
 lmao unfinished
 
 The plan is a modern C compiler which can mostly work with Clang, GCC, and MSVC while also introducing some new ideas.
