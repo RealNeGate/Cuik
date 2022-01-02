@@ -23,7 +23,7 @@ int main(int argc, char* argv[]) {
 	if (argc <= 3) {
 		printf("Expected:\n");
 		printf("\t%s bake [input C file] [output test file]\n", argv[0]);
-		printf("\t%s OR \n", argv[0]);
+		printf("\t\tOR \n");
 		printf("\t%s test [input C file] [test file]\n", argv[0]);
 		return -1;
 	}
@@ -34,8 +34,6 @@ int main(int argc, char* argv[]) {
 	// tests/the_pile/sqlite3.c
 	unsigned char* text = (unsigned char*)read_entire_file(input_file);
 	Lexer l = (Lexer) { "", text, text, 1 };
-	l.temp_buffer_capacity = 1 << 20;
-	l.temp_buffer = malloc(1 << 20);
 	
 	if (strcmp(argv[1], "bake") == 0) {
 		FILE* f = fopen(test_file, "w");

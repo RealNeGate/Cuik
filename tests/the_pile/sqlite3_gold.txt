@@ -121,10 +121,11 @@ line 381: # if defined ( SQLITE_SYSTEM_MALLOC ) + defined ( SQLITE_MEMDEBUG )
 line 382: + defined ( SQLITE_MEMORY_SIZE ) + defined ( SQLITE_MMAP_HEAP_SIZE ) 
 line 383: + defined ( SQLITE_POW2_MEMORY_SIZE ) > 1 
 line 384: # error 
-line 386: "At most one of the following compile-time configuration options\
- is allows: SQLITE_SYSTEM_MALLOC, SQLITE_MEMDEBUG, SQLITE_MEMORY_SIZE,\
- SQLITE_MMAP_HEAP_SIZE, SQLITE_POW2_MEMORY_SIZE" 
-line 387: # endif 
+line 385: "At most one of the following compile-time configuration options\
+ is allows : SQLITE_SYSTEM_MALLOC , SQLITE_MEMDEBUG , SQLITE_MEMORY_SIZE 
+line 386: , SQLITE_MMAP_HEAP_SIZE , SQLITE_POW2_MEMORY_SIZE 
+line 387: "
+ # endif 
 line 388: # if defined ( SQLITE_SYSTEM_MALLOC ) + defined ( SQLITE_MEMDEBUG ) 
 line 389: + defined ( SQLITE_MEMORY_SIZE ) + defined ( SQLITE_MMAP_HEAP_SIZE ) 
 line 390: + defined ( SQLITE_POW2_MEMORY_SIZE ) == 0 
@@ -1121,7 +1122,7 @@ line 6471: # undef SQLITE_MIXED_ENDIAN_64BIT_FLOAT
 line 6472: # undef SQLITE_HAVE_ISNAN 
 line 6473: # endif 
 line 6474: # ifndef SQLITE_BIG_DBL 
-line 6475: # define SQLITE_BIG_DBL ( 1 e99 ) 
+line 6475: # define SQLITE_BIG_DBL ( 1e 99 ) 
 line 6476: # endif 
 line 6483: # ifdef SQLITE_OMIT_TEMPDB 
 line 6484: # define OMIT_TEMPDB 1 
@@ -7155,10 +7156,10 @@ line 16777: length = 3 ;
 line 16778: break ; 
 line 16779: } 
 line 16780: if ( realvalue > 0.0 ) { 
-line 16781: while ( realvalue >= 1 e32 && exp <= 350 ) { realvalue *= 1 e - 32 ; exp += 32 ; } 
-line 16782: while ( realvalue >= 1 e8 && exp <= 350 ) { realvalue *= 1 e - 8 ; exp += 8 ; } 
+line 16781: while ( realvalue >= 1e 32 && exp <= 350 ) { realvalue *= 1e - 32 ; exp += 32 ; } 
+line 16782: while ( realvalue >= 1e 8 && exp <= 350 ) { realvalue *= 1e - 8 ; exp += 8 ; } 
 line 16783: while ( realvalue >= 10.0 && exp <= 350 ) { realvalue *= 0.1 ; exp ++ ; } 
-line 16784: while ( realvalue < 1 e - 8 ) { realvalue *= 1 e8 ; exp -= 8 ; } 
+line 16784: while ( realvalue < 1e - 8 ) { realvalue *= 1e 8 ; exp -= 8 ; } 
 line 16785: while ( realvalue < 1.0 ) { realvalue *= 10.0 ; exp -- ; } 
 line 16786: if ( exp > 350 ) { 
 line 16787: if ( prefix == '-' ) { 
@@ -8394,17 +8395,17 @@ line 18757: s = sign < 0 ? - s : s ;
 line 18761: if ( e ) { 
 line 18762: double scale = 1.0 ; 
 line 18764: if ( e > 307 && e < 342 ) { 
-line 18765: while ( e % 308 ) { scale *= 1.0 e + 1 ; e -= 1 ; } 
+line 18765: while ( e % 308 ) { scale *= 1.0e+1 ; e -= 1 ; } 
 line 18766: if ( esign < 0 ) { 
 line 18767: result = s / scale ; 
-line 18768: result /= 1.0 e + 308 ; 
+line 18768: result /= 1.0e+308 ; 
 line 18769: } else { 
 line 18770: result = s * scale ; 
-line 18771: result *= 1.0 e + 308 ; 
+line 18771: result *= 1.0e+308 ; 
 line 18772: } 
 line 18773: } else { 
-line 18776: while ( e % 22 ) { scale *= 1.0 e + 1 ; e -= 1 ; } 
-line 18777: while ( e > 0 ) { scale *= 1.0 e + 22 ; e -= 22 ; } 
+line 18776: while ( e % 22 ) { scale *= 1.0e+1 ; e -= 1 ; } 
+line 18777: while ( e > 0 ) { scale *= 1.0e+22 ; e -= 22 ; } 
 line 18778: if ( esign < 0 ) { 
 line 18779: result = s / scale ; 
 line 18780: } else { 
@@ -9222,13 +9223,14 @@ line 20094: __inline__ sqlite_uint64 sqlite3Hwtime ( void ) {
 line 20095: unsigned long long retval ; 
 line 20096: unsigned long junk ; 
 line 20097: __asm__ __volatile__ ( 
-line 20102: "\n\
-          1:      mftbu   %1\n\
-                  mftb    %L0\n\
-                  mftbu   %0\n\
-                  cmpw    %0,%1\n\
-                  bne     1b" 
-line 20103: : "=r" ( retval ) , "=r" ( junk ) ) ; 
+line 20098: "\n\
+ 1 : mftbu % 1 \ 
+line 20099: n mftb % L0 \ 
+line 20100: n mftbu % 0 \ 
+line 20101: n cmpw % 0 , % 1 \ 
+line 20102: n bne 1b 
+line 20103: "
+ : "=r" ( retval ) , "=r" ( junk ) ) ; 
 line 20104: return retval ; 
 line 20105: } 
 line 20107: # else 
@@ -9294,7 +9296,7 @@ line 20200: HFILE h ;
 line 20201: char * pathToDel ; 
 line 20202: unsigned char locktype ; 
 line 20203: } ; 
-line 20205: # define LOCK_TIMEOUT 10 L 
+line 20205: # define LOCK_TIMEOUT 10L 
 line 20215: static int os2Close ( sqlite3_file * id ) { 
 line 20216: APIRET rc = NO_ERROR ; 
 line 20217: os2File * pFile ; 
@@ -9318,7 +9320,7 @@ line 20241: void * pBuf ,
 line 20242: int amt , 
 line 20243: sqlite3_int64 offset 
 line 20244: ) { 
-line 20245: ULONG fileLocation = 0 L ; 
+line 20245: ULONG fileLocation = 0L ; 
 line 20246: ULONG got ; 
 line 20247: os2File * pFile = ( os2File * ) id ; 
 line 20248: assert ( id != 0 ) ; 
@@ -9343,7 +9345,7 @@ line 20272: const void * pBuf ,
 line 20273: int amt , 
 line 20274: sqlite3_int64 offset 
 line 20275: ) { 
-line 20276: ULONG fileLocation = 0 L ; 
+line 20276: ULONG fileLocation = 0L ; 
 line 20277: APIRET rc = NO_ERROR ; 
 line 20278: ULONG wrote ; 
 line 20279: os2File * pFile = ( os2File * ) id ; 
@@ -9414,9 +9416,9 @@ line 20368: memset ( & LockArea , 0 , sizeof ( LockArea ) ) ;
 line 20369: memset ( & UnlockArea , 0 , sizeof ( UnlockArea ) ) ; 
 line 20370: LockArea . lOffset = SHARED_FIRST ; 
 line 20371: LockArea . lRange = SHARED_SIZE ; 
-line 20372: UnlockArea . lOffset = 0 L ; 
-line 20373: UnlockArea . lRange = 0 L ; 
-line 20374: res = DosSetFileLocks ( pFile -> h , & UnlockArea , & LockArea , LOCK_TIMEOUT , 1 L ) ; 
+line 20372: UnlockArea . lOffset = 0L ; 
+line 20373: UnlockArea . lRange = 0L ; 
+line 20374: res = DosSetFileLocks ( pFile -> h , & UnlockArea , & LockArea , LOCK_TIMEOUT , 1L ) ; 
 line 20375: OSTRACE3 ( "GETREADLOCK %d res=%d\n" , pFile -> h , res ) ; 
 line 20376: return res ; 
 line 20377: } 
@@ -9426,11 +9428,11 @@ line 20384: UnlockArea ;
 line 20385: APIRET res ; 
 line 20386: memset ( & LockArea , 0 , sizeof ( LockArea ) ) ; 
 line 20387: memset ( & UnlockArea , 0 , sizeof ( UnlockArea ) ) ; 
-line 20388: LockArea . lOffset = 0 L ; 
-line 20389: LockArea . lRange = 0 L ; 
+line 20388: LockArea . lOffset = 0L ; 
+line 20389: LockArea . lRange = 0L ; 
 line 20390: UnlockArea . lOffset = SHARED_FIRST ; 
 line 20391: UnlockArea . lRange = SHARED_SIZE ; 
-line 20392: res = DosSetFileLocks ( id -> h , & UnlockArea , & LockArea , LOCK_TIMEOUT , 1 L ) ; 
+line 20392: res = DosSetFileLocks ( id -> h , & UnlockArea , & LockArea , LOCK_TIMEOUT , 1L ) ; 
 line 20393: OSTRACE3 ( "UNLOCK-READLOCK file handle=%d res=%d?\n" , id -> h , res ) ; 
 line 20394: return res ; 
 line 20395: } 
@@ -9458,10 +9460,10 @@ line 20456: if ( pFile -> locktype == NO_LOCK
 line 20457: || ( locktype == EXCLUSIVE_LOCK && pFile -> locktype == RESERVED_LOCK ) 
 line 20458: ) { 
 line 20459: LockArea . lOffset = PENDING_BYTE ; 
-line 20460: LockArea . lRange = 1 L ; 
-line 20461: UnlockArea . lOffset = 0 L ; 
-line 20462: UnlockArea . lRange = 0 L ; 
-line 20465: res = DosSetFileLocks ( pFile -> h , & UnlockArea , & LockArea , 100 L , 0 L ) ; 
+line 20460: LockArea . lRange = 1L ; 
+line 20461: UnlockArea . lOffset = 0L ; 
+line 20462: UnlockArea . lRange = 0L ; 
+line 20465: res = DosSetFileLocks ( pFile -> h , & UnlockArea , & LockArea , 100L , 0L ) ; 
 line 20466: if ( res == NO_ERROR ) { 
 line 20467: gotPendingLock = 1 ; 
 line 20468: OSTRACE3 ( "LOCK %d pending lock boolean set.  res=%d\n" , pFile -> h , res ) ; 
@@ -9478,10 +9480,10 @@ line 20481: }
 line 20485: if ( locktype == RESERVED_LOCK && res == NO_ERROR ) { 
 line 20486: assert ( pFile -> locktype == SHARED_LOCK ) ; 
 line 20487: LockArea . lOffset = RESERVED_BYTE ; 
-line 20488: LockArea . lRange = 1 L ; 
-line 20489: UnlockArea . lOffset = 0 L ; 
-line 20490: UnlockArea . lRange = 0 L ; 
-line 20491: res = DosSetFileLocks ( pFile -> h , & UnlockArea , & LockArea , LOCK_TIMEOUT , 0 L ) ; 
+line 20488: LockArea . lRange = 1L ; 
+line 20489: UnlockArea . lOffset = 0L ; 
+line 20490: UnlockArea . lRange = 0L ; 
+line 20491: res = DosSetFileLocks ( pFile -> h , & UnlockArea , & LockArea , LOCK_TIMEOUT , 0L ) ; 
 line 20492: if ( res == NO_ERROR ) { 
 line 20493: newLocktype = RESERVED_LOCK ; 
 line 20494: } 
@@ -9498,9 +9500,9 @@ line 20510: res = unlockReadLock ( pFile ) ;
 line 20511: OSTRACE2 ( "unreadlock = %d\n" , res ) ; 
 line 20512: LockArea . lOffset = SHARED_FIRST ; 
 line 20513: LockArea . lRange = SHARED_SIZE ; 
-line 20514: UnlockArea . lOffset = 0 L ; 
-line 20515: UnlockArea . lRange = 0 L ; 
-line 20516: res = DosSetFileLocks ( pFile -> h , & UnlockArea , & LockArea , LOCK_TIMEOUT , 0 L ) ; 
+line 20514: UnlockArea . lOffset = 0L ; 
+line 20515: UnlockArea . lRange = 0L ; 
+line 20516: res = DosSetFileLocks ( pFile -> h , & UnlockArea , & LockArea , LOCK_TIMEOUT , 0L ) ; 
 line 20517: if ( res == NO_ERROR ) { 
 line 20518: newLocktype = EXCLUSIVE_LOCK ; 
 line 20519: } else { 
@@ -9511,11 +9513,11 @@ line 20523: OSTRACE3 ( "LOCK %d acquire exclusive lock.  res=%d\n" , pFile -> h 
 line 20524: } 
 line 20529: if ( gotPendingLock && locktype == SHARED_LOCK ) { 
 line 20530: int r ; 
-line 20531: LockArea . lOffset = 0 L ; 
-line 20532: LockArea . lRange = 0 L ; 
+line 20531: LockArea . lOffset = 0L ; 
+line 20532: LockArea . lRange = 0L ; 
 line 20533: UnlockArea . lOffset = PENDING_BYTE ; 
-line 20534: UnlockArea . lRange = 1 L ; 
-line 20535: r = DosSetFileLocks ( pFile -> h , & UnlockArea , & LockArea , LOCK_TIMEOUT , 0 L ) ; 
+line 20534: UnlockArea . lRange = 1L ; 
+line 20535: r = DosSetFileLocks ( pFile -> h , & UnlockArea , & LockArea , LOCK_TIMEOUT , 0L ) ; 
 line 20536: OSTRACE3 ( "LOCK %d unlocking pending/is shared. r=%d\n" , pFile -> h , r ) ; 
 line 20537: } 
 line 20542: if ( res == NO_ERROR ) { 
@@ -9543,18 +9545,18 @@ line 20569: APIRET rc = NO_ERROR ;
 line 20570: memset ( & LockArea , 0 , sizeof ( LockArea ) ) ; 
 line 20571: memset ( & UnlockArea , 0 , sizeof ( UnlockArea ) ) ; 
 line 20572: LockArea . lOffset = RESERVED_BYTE ; 
-line 20573: LockArea . lRange = 1 L ; 
-line 20574: UnlockArea . lOffset = 0 L ; 
-line 20575: UnlockArea . lRange = 0 L ; 
-line 20576: rc = DosSetFileLocks ( pFile -> h , & UnlockArea , & LockArea , LOCK_TIMEOUT , 0 L ) ; 
+line 20573: LockArea . lRange = 1L ; 
+line 20574: UnlockArea . lOffset = 0L ; 
+line 20575: UnlockArea . lRange = 0L ; 
+line 20576: rc = DosSetFileLocks ( pFile -> h , & UnlockArea , & LockArea , LOCK_TIMEOUT , 0L ) ; 
 line 20577: OSTRACE3 ( "TEST WR-LOCK %d lock reserved byte rc=%d\n" , pFile -> h , rc ) ; 
 line 20578: if ( rc == NO_ERROR ) { 
 line 20579: APIRET rcu = NO_ERROR ; 
-line 20580: LockArea . lOffset = 0 L ; 
-line 20581: LockArea . lRange = 0 L ; 
+line 20580: LockArea . lOffset = 0L ; 
+line 20581: LockArea . lRange = 0L ; 
 line 20582: UnlockArea . lOffset = RESERVED_BYTE ; 
-line 20583: UnlockArea . lRange = 1 L ; 
-line 20584: rcu = DosSetFileLocks ( pFile -> h , & UnlockArea , & LockArea , LOCK_TIMEOUT , 0 L ) ; 
+line 20583: UnlockArea . lRange = 1L ; 
+line 20584: rcu = DosSetFileLocks ( pFile -> h , & UnlockArea , & LockArea , LOCK_TIMEOUT , 0L ) ; 
 line 20585: OSTRACE3 ( "TEST WR-LOCK %d unlock reserved byte r=%d\n" , pFile -> h , rcu ) ; 
 line 20586: } 
 line 20587: r = ! ( rc == NO_ERROR ) ; 
@@ -9577,11 +9579,11 @@ line 20615: assert ( locktype <= SHARED_LOCK ) ;
 line 20616: OSTRACE4 ( "UNLOCK %d to %d was %d\n" , pFile -> h , locktype , pFile -> locktype ) ; 
 line 20617: type = pFile -> locktype ; 
 line 20618: if ( type >= EXCLUSIVE_LOCK ) { 
-line 20619: LockArea . lOffset = 0 L ; 
-line 20620: LockArea . lRange = 0 L ; 
+line 20619: LockArea . lOffset = 0L ; 
+line 20620: LockArea . lRange = 0L ; 
 line 20621: UnlockArea . lOffset = SHARED_FIRST ; 
 line 20622: UnlockArea . lRange = SHARED_SIZE ; 
-line 20623: res = DosSetFileLocks ( pFile -> h , & UnlockArea , & LockArea , LOCK_TIMEOUT , 0 L ) ; 
+line 20623: res = DosSetFileLocks ( pFile -> h , & UnlockArea , & LockArea , LOCK_TIMEOUT , 0L ) ; 
 line 20624: OSTRACE3 ( "UNLOCK %d exclusive lock res=%d\n" , pFile -> h , res ) ; 
 line 20625: if ( locktype == SHARED_LOCK && getReadLock ( pFile ) != NO_ERROR ) { 
 line 20628: OSTRACE3 ( "UNLOCK %d to %d getReadLock() failed\n" , pFile -> h , locktype ) ; 
@@ -9589,11 +9591,11 @@ line 20629: rc = SQLITE_IOERR_UNLOCK ;
 line 20630: } 
 line 20631: } 
 line 20632: if ( type >= RESERVED_LOCK ) { 
-line 20633: LockArea . lOffset = 0 L ; 
-line 20634: LockArea . lRange = 0 L ; 
+line 20633: LockArea . lOffset = 0L ; 
+line 20634: LockArea . lRange = 0L ; 
 line 20635: UnlockArea . lOffset = RESERVED_BYTE ; 
-line 20636: UnlockArea . lRange = 1 L ; 
-line 20637: res = DosSetFileLocks ( pFile -> h , & UnlockArea , & LockArea , LOCK_TIMEOUT , 0 L ) ; 
+line 20636: UnlockArea . lRange = 1L ; 
+line 20637: res = DosSetFileLocks ( pFile -> h , & UnlockArea , & LockArea , LOCK_TIMEOUT , 0L ) ; 
 line 20638: OSTRACE3 ( "UNLOCK %d reserved res=%d\n" , pFile -> h , res ) ; 
 line 20639: } 
 line 20640: if ( locktype == NO_LOCK && type >= SHARED_LOCK ) { 
@@ -9601,11 +9603,11 @@ line 20641: res = unlockReadLock ( pFile ) ;
 line 20642: OSTRACE5 ( "UNLOCK %d is %d want %d res=%d\n" , pFile -> h , type , locktype , res ) ; 
 line 20643: } 
 line 20644: if ( type >= PENDING_LOCK ) { 
-line 20645: LockArea . lOffset = 0 L ; 
-line 20646: LockArea . lRange = 0 L ; 
+line 20645: LockArea . lOffset = 0L ; 
+line 20646: LockArea . lRange = 0L ; 
 line 20647: UnlockArea . lOffset = PENDING_BYTE ; 
-line 20648: UnlockArea . lRange = 1 L ; 
-line 20649: res = DosSetFileLocks ( pFile -> h , & UnlockArea , & LockArea , LOCK_TIMEOUT , 0 L ) ; 
+line 20648: UnlockArea . lRange = 1L ; 
+line 20649: res = DosSetFileLocks ( pFile -> h , & UnlockArea , & LockArea , LOCK_TIMEOUT , 0L ) ; 
 line 20650: OSTRACE3 ( "UNLOCK %d pending res=%d\n" , pFile -> h , res ) ; 
 line 20651: } 
 line 20652: pFile -> locktype = locktype ; 
@@ -9706,7 +9708,7 @@ line 20825: }
 line 20826: } 
 line 20830: j = sqlite3Strlen30 ( zTempPath ) ; 
 line 20831: while ( j > 0 && ( zTempPath [ j - 1 ] == '\\' || zTempPath[j-1] == ' / 
-line 20832: '
+line 20832: '
  || zTempPath [ j - 1 ] == ' ' ) ) { 
 line 20833: j -- ; 
 line 20834: } 
@@ -9714,11 +9716,11 @@ line 20835: zTempPath [ j ] = '\0' ;
 line 20836: if ( ! sqlite3_temp_directory ) { 
 line 20837: char * zTempPathUTF = convertCpPathToUtf8 ( zTempPath ) ; 
 line 20838: sqlite3_snprintf ( nBuf - 30 , zBuf , 
-line 20840: "%s\\"SQLITE_TEMP_FILE_PREFIX, zTempPathUTF );
+line 20840: "%s\\"SQLITE_TEMP_FILE_PREFIX, zTempPathUTF );
  free ( zTempPathUTF ) ; 
 line 20841: } else { 
 line 20842: sqlite3_snprintf ( nBuf - 30 , zBuf , 
-line 20844: "%s\\"SQLITE_TEMP_FILE_PREFIX, zTempPath );
+line 20844: "%s\\"SQLITE_TEMP_FILE_PREFIX, zTempPath );
  } 
 line 20845: j = sqlite3Strlen30 ( zBuf ) ; 
 line 20846: sqlite3_randomness ( 20 , & zBuf [ j ] ) ; 
@@ -9811,7 +9813,7 @@ line 20958: zNameCp = convertUtf8PathToCp ( zName ) ;
 line 20959: rc = DosOpen ( ( PSZ ) zNameCp , 
 line 20960: & h , 
 line 20961: & ulAction , 
-line 20962: 0 L , 
+line 20962: 0L , 
 line 20963: ulFileAttribute , 
 line 20964: ulOpenFlags , 
 line 20965: ulOpenMode , 
@@ -9900,11 +9902,11 @@ line 21073: }
 line 21074: static void * os2DlSym ( sqlite3_vfs * pVfs , void * pHandle , const char * zSymbol ) { 
 line 21075: PFN pfn ; 
 line 21076: APIRET rc ; 
-line 21077: rc = DosQueryProcAddr ( ( HMODULE ) pHandle , 0 L , zSymbol , & pfn ) ; 
+line 21077: rc = DosQueryProcAddr ( ( HMODULE ) pHandle , 0L , zSymbol , & pfn ) ; 
 line 21078: if ( rc != NO_ERROR ) { 
 line 21082: char _zSymbol [ 256 ] = "_" ; 
 line 21083: strncat ( _zSymbol , zSymbol , 255 ) ; 
-line 21084: rc = DosQueryProcAddr ( ( HMODULE ) pHandle , 0 L , _zSymbol , & pfn ) ; 
+line 21084: rc = DosQueryProcAddr ( ( HMODULE ) pHandle , 0L , _zSymbol , & pfn ) ; 
 line 21085: } 
 line 21086: return rc != NO_ERROR ? 0 : ( void * ) pfn ; 
 line 21087: } 
@@ -9944,7 +9946,7 @@ line 21127: n += sizeofULong ;
 line 21128: } 
 line 21132: if ( sizeofULong <= nBuf - n ) { 
 line 21133: ULONG ulSysInfo [ QSV_MAX ] ; 
-line 21134: DosQuerySysInfo ( 1 L , QSV_MAX , ulSysInfo , sizeofULong * QSV_MAX ) ; 
+line 21134: DosQuerySysInfo ( 1L , QSV_MAX , ulSysInfo , sizeofULong * QSV_MAX ) ; 
 line 21136: memcpy ( & zBuf [ n ] , & ulSysInfo [ QSV_MS_COUNT - 1 ] , sizeofULong ) ; 
 line 21137: n += sizeofULong ; 
 line 21139: if ( sizeofULong <= nBuf - n ) { 
@@ -10178,13 +10180,14 @@ line 21619: __inline__ sqlite_uint64 sqlite3Hwtime ( void ) {
 line 21620: unsigned long long retval ; 
 line 21621: unsigned long junk ; 
 line 21622: __asm__ __volatile__ ( 
-line 21627: "\n\
-          1:      mftbu   %1\n\
-                  mftb    %L0\n\
-                  mftbu   %0\n\
-                  cmpw    %0,%1\n\
-                  bne     1b" 
-line 21628: : "=r" ( retval ) , "=r" ( junk ) ) ; 
+line 21623: "\n\
+ 1 : mftbu % 1 \ 
+line 21624: n mftb % L0 \ 
+line 21625: n mftbu % 0 \ 
+line 21626: n cmpw % 0 , % 1 \ 
+line 21627: n bne 1b 
+line 21628: "
+ : "=r" ( retval ) , "=r" ( junk ) ) ; 
 line 21629: return retval ; 
 line 21630: } 
 line 21632: # else 
@@ -10819,7 +10822,7 @@ line 22830: pLock -> cnt ++ ;
 line 22831: pFile -> pOpen -> nLock ++ ; 
 line 22832: goto end_lock ; 
 line 22833: } 
-line 22840: lock . l_len = 1 L ; 
+line 22840: lock . l_len = 1L ; 
 line 22841: lock . l_whence = SEEK_SET ; 
 line 22842: if ( locktype == SHARED_LOCK 
 line 22843: || ( locktype == EXCLUSIVE_LOCK && pFile -> locktype < PENDING_LOCK ) 
@@ -10841,7 +10844,7 @@ line 22863: assert ( pLock -> cnt == 0 ) ;
 line 22864: assert ( pLock -> locktype == 0 ) ; 
 line 22867: s = rangeLock ( pFile , F_RDLCK , & tErrno ) ; 
 line 22870: lock . l_start = PENDING_BYTE ; 
-line 22871: lock . l_len = 1 L ; 
+line 22871: lock . l_len = 1L ; 
 line 22872: lock . l_type = F_UNLCK ; 
 line 22873: if ( fcntl ( pFile -> h , F_SETLK , & lock ) != 0 ) { 
 line 22874: if ( s != - 1 ) { 
@@ -10982,7 +10985,7 @@ line 23061: }
 line 23062: lock . l_type = F_UNLCK ; 
 line 23063: lock . l_whence = SEEK_SET ; 
 line 23064: lock . l_start = PENDING_BYTE ; 
-line 23065: lock . l_len = 2 L ; assert ( PENDING_BYTE + 1 == RESERVED_BYTE ) ; 
+line 23065: lock . l_len = 2L ; assert ( PENDING_BYTE + 1 == RESERVED_BYTE ) ; 
 line 23066: if ( fcntl ( h , F_SETLK , & lock ) != ( - 1 ) ) { 
 line 23067: pLock -> locktype = SHARED_LOCK ; 
 line 23068: } else { 
@@ -11000,7 +11003,7 @@ line 23084: pLock -> cnt -- ;
 line 23085: if ( pLock -> cnt == 0 ) { 
 line 23086: lock . l_type = F_UNLCK ; 
 line 23087: lock . l_whence = SEEK_SET ; 
-line 23088: lock . l_start = lock . l_len = 0 L ; 
+line 23088: lock . l_start = lock . l_len = 0L ; 
 line 23089: SimulateIOErrorBenign ( 1 ) ; 
 line 23090: SimulateIOError ( h = ( - 1 ) ) 
 line 23091: SimulateIOErrorBenign ( 0 ) ; 
@@ -13259,13 +13262,14 @@ line 27068: __inline__ sqlite_uint64 sqlite3Hwtime ( void ) {
 line 27069: unsigned long long retval ; 
 line 27070: unsigned long junk ; 
 line 27071: __asm__ __volatile__ ( 
-line 27076: "\n\
-          1:      mftbu   %1\n\
-                  mftb    %L0\n\
-                  mftbu   %0\n\
-                  cmpw    %0,%1\n\
-                  bne     1b" 
-line 27077: : "=r" ( retval ) , "=r" ( junk ) ) ; 
+line 27072: "\n\
+ 1 : mftbu % 1 \ 
+line 27073: n mftb % L0 \ 
+line 27074: n mftbu % 0 \ 
+line 27075: n cmpw % 0 , % 1 \ 
+line 27076: n bne 1b 
+line 27077: "
+ : "=r" ( retval ) , "=r" ( junk ) ) ; 
 line 27078: return retval ; 
 line 27079: } 
 line 27081: # else 
@@ -13505,7 +13509,7 @@ line 27460: ZeroMemory ( & pFile -> local , sizeof ( pFile -> local ) ) ;
 line 27464: zTok = CharLowerW ( zName ) ; 
 line 27465: for ( ; * zTok ; zTok ++ ) { 
 line 27466: if ( * zTok == '\\') *zTok = ' _ 
-line 27467: ';
+line 27467: ';
  } 
 line 27470: pFile -> hMutex = CreateMutexW ( NULL , FALSE , zName ) ; 
 line 27471: if ( ! pFile -> hMutex ) { 
@@ -14089,10 +14093,10 @@ line 28331: }
 line 28332: # endif 
 line 28333: } 
 line 28334: for ( i = sqlite3Strlen30 ( zTempPath ) ; i > 0 && zTempPath [ i - 1 ] == 
-line 28335: '\\'; i--){}
+line 28335: '\\'; i--){}
  zTempPath [ i ] = 0 ; 
 line 28336: sqlite3_snprintf ( nBuf - 30 , zBuf , 
-line 28338: "%s\\"SQLITE_TEMP_FILE_PREFIX, zTempPath);
+line 28338: "%s\\"SQLITE_TEMP_FILE_PREFIX, zTempPath);
  j = sqlite3Strlen30 ( zBuf ) ; 
 line 28339: sqlite3_randomness ( 20 , & zBuf [ j ] ) ; 
 line 28340: for ( i = 0 ; i < 20 ; i ++ , j ++ ) { 
@@ -14418,7 +14422,7 @@ line 28758: if ( isNT ( ) ) {
 line 28760: WCHAR * p = zConverted ; 
 line 28761: for ( ; * p ; p ++ ) { 
 line 28762: if ( * p == 
-line 28763: '\\' ){
+line 28763: '\\' ){
  * p = '\0' ; 
 line 28764: break ; 
 line 28765: } 
@@ -14432,7 +14436,7 @@ line 28772: } else {
 line 28774: char * p = ( char * ) zConverted ; 
 line 28775: for ( ; * p ; p ++ ) { 
 line 28776: if ( * p == 
-line 28777: '\\' ){
+line 28777: '\\' ){
  * p = '\0' ; 
 line 28778: break ; 
 line 28779: } 
@@ -27012,9 +27016,10 @@ line 51061: }
 line 51062: # endif 
 line 51068: # if defined ( SQLITE_OMIT_DECLTYPE ) && defined ( SQLITE_ENABLE_COLUMN_METADATA ) 
 line 51069: # error 
-line 51070: "Must not define both SQLITE_OMIT_DECLTYPE \
-         and SQLITE_ENABLE_COLUMN_METADATA" 
-line 51071: # endif 
+line 51070: "Must not define both SQLITE_OMIT_DECLTYPE \
+ and SQLITE_ENABLE_COLUMN_METADATA 
+line 51071: "
+ # endif 
 line 51073: # ifndef SQLITE_OMIT_DECLTYPE 
 line 51078: SQLITE_API const char * sqlite3_column_decltype ( sqlite3_stmt * pStmt , int N ) { 
 line 51079: return columnName ( 
@@ -27674,13 +27679,14 @@ line 52137: __inline__ sqlite_uint64 sqlite3Hwtime ( void ) {
 line 52138: unsigned long long retval ; 
 line 52139: unsigned long junk ; 
 line 52140: __asm__ __volatile__ ( 
-line 52145: "\n\
-          1:      mftbu   %1\n\
-                  mftb    %L0\n\
-                  mftbu   %0\n\
-                  cmpw    %0,%1\n\
-                  bne     1b" 
-line 52146: : "=r" ( retval ) , "=r" ( junk ) ) ; 
+line 52141: "\n\
+ 1 : mftbu % 1 \ 
+line 52142: n mftb % L0 \ 
+line 52143: n mftbu % 0 \ 
+line 52144: n cmpw % 0 , % 1 \ 
+line 52145: n bne 1b 
+line 52146: "
+ : "=r" ( retval ) , "=r" ( junk ) ) ; 
 line 52147: return retval ; 
 line 52148: } 
 line 52150: # else 
