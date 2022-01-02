@@ -121,10 +121,10 @@ line 381: # if defined ( SQLITE_SYSTEM_MALLOC ) + defined ( SQLITE_MEMDEBUG )
 line 382: + defined ( SQLITE_MEMORY_SIZE ) + defined ( SQLITE_MMAP_HEAP_SIZE ) 
 line 383: + defined ( SQLITE_POW2_MEMORY_SIZE ) > 1 
 line 384: # error 
-line 385: "At most one of the following compile-time configuration options\
+line 385: "At most one of the following compile-time configuration options\
  is allows : SQLITE_SYSTEM_MALLOC , SQLITE_MEMDEBUG , SQLITE_MEMORY_SIZE 
 line 386: , SQLITE_MMAP_HEAP_SIZE , SQLITE_POW2_MEMORY_SIZE 
-line 387: "
+line 387: "
  # endif 
 line 388: # if defined ( SQLITE_SYSTEM_MALLOC ) + defined ( SQLITE_MEMDEBUG ) 
 line 389: + defined ( SQLITE_MEMORY_SIZE ) + defined ( SQLITE_MMAP_HEAP_SIZE ) 
@@ -9223,13 +9223,13 @@ line 20094: __inline__ sqlite_uint64 sqlite3Hwtime ( void ) {
 line 20095: unsigned long long retval ; 
 line 20096: unsigned long junk ; 
 line 20097: __asm__ __volatile__ ( 
-line 20098: "\n\
+line 20098: "\n\
  1 : mftbu % 1 \ 
 line 20099: n mftb % L0 \ 
 line 20100: n mftbu % 0 \ 
 line 20101: n cmpw % 0 , % 1 \ 
 line 20102: n bne 1b 
-line 20103: "
+line 20103: "
  : "=r" ( retval ) , "=r" ( junk ) ) ; 
 line 20104: return retval ; 
 line 20105: } 
@@ -9708,7 +9708,7 @@ line 20825: }
 line 20826: } 
 line 20830: j = sqlite3Strlen30 ( zTempPath ) ; 
 line 20831: while ( j > 0 && ( zTempPath [ j - 1 ] == '\\' || zTempPath[j-1] == ' / 
-line 20832: '
+line 20832: '
  || zTempPath [ j - 1 ] == ' ' ) ) { 
 line 20833: j -- ; 
 line 20834: } 
@@ -9716,11 +9716,11 @@ line 20835: zTempPath [ j ] = '\0' ;
 line 20836: if ( ! sqlite3_temp_directory ) { 
 line 20837: char * zTempPathUTF = convertCpPathToUtf8 ( zTempPath ) ; 
 line 20838: sqlite3_snprintf ( nBuf - 30 , zBuf , 
-line 20840: "%s\\"SQLITE_TEMP_FILE_PREFIX, zTempPathUTF );
+line 20840: "%s\\"SQLITE_TEMP_FILE_PREFIX, zTempPathUTF );
  free ( zTempPathUTF ) ; 
 line 20841: } else { 
 line 20842: sqlite3_snprintf ( nBuf - 30 , zBuf , 
-line 20844: "%s\\"SQLITE_TEMP_FILE_PREFIX, zTempPath );
+line 20844: "%s\\"SQLITE_TEMP_FILE_PREFIX, zTempPath );
  } 
 line 20845: j = sqlite3Strlen30 ( zBuf ) ; 
 line 20846: sqlite3_randomness ( 20 , & zBuf [ j ] ) ; 
@@ -10180,13 +10180,13 @@ line 21619: __inline__ sqlite_uint64 sqlite3Hwtime ( void ) {
 line 21620: unsigned long long retval ; 
 line 21621: unsigned long junk ; 
 line 21622: __asm__ __volatile__ ( 
-line 21623: "\n\
+line 21623: "\n\
  1 : mftbu % 1 \ 
 line 21624: n mftb % L0 \ 
 line 21625: n mftbu % 0 \ 
 line 21626: n cmpw % 0 , % 1 \ 
 line 21627: n bne 1b 
-line 21628: "
+line 21628: "
  : "=r" ( retval ) , "=r" ( junk ) ) ; 
 line 21629: return retval ; 
 line 21630: } 
@@ -13262,13 +13262,13 @@ line 27068: __inline__ sqlite_uint64 sqlite3Hwtime ( void ) {
 line 27069: unsigned long long retval ; 
 line 27070: unsigned long junk ; 
 line 27071: __asm__ __volatile__ ( 
-line 27072: "\n\
+line 27072: "\n\
  1 : mftbu % 1 \ 
 line 27073: n mftb % L0 \ 
 line 27074: n mftbu % 0 \ 
 line 27075: n cmpw % 0 , % 1 \ 
 line 27076: n bne 1b 
-line 27077: "
+line 27077: "
  : "=r" ( retval ) , "=r" ( junk ) ) ; 
 line 27078: return retval ; 
 line 27079: } 
@@ -13509,7 +13509,7 @@ line 27460: ZeroMemory ( & pFile -> local , sizeof ( pFile -> local ) ) ;
 line 27464: zTok = CharLowerW ( zName ) ; 
 line 27465: for ( ; * zTok ; zTok ++ ) { 
 line 27466: if ( * zTok == '\\') *zTok = ' _ 
-line 27467: ';
+line 27467: ';
  } 
 line 27470: pFile -> hMutex = CreateMutexW ( NULL , FALSE , zName ) ; 
 line 27471: if ( ! pFile -> hMutex ) { 
@@ -14093,10 +14093,10 @@ line 28331: }
 line 28332: # endif 
 line 28333: } 
 line 28334: for ( i = sqlite3Strlen30 ( zTempPath ) ; i > 0 && zTempPath [ i - 1 ] == 
-line 28335: '\\'; i--){}
+line 28335: '\\'; i--){}
  zTempPath [ i ] = 0 ; 
 line 28336: sqlite3_snprintf ( nBuf - 30 , zBuf , 
-line 28338: "%s\\"SQLITE_TEMP_FILE_PREFIX, zTempPath);
+line 28338: "%s\\"SQLITE_TEMP_FILE_PREFIX, zTempPath);
  j = sqlite3Strlen30 ( zBuf ) ; 
 line 28339: sqlite3_randomness ( 20 , & zBuf [ j ] ) ; 
 line 28340: for ( i = 0 ; i < 20 ; i ++ , j ++ ) { 
@@ -14422,7 +14422,7 @@ line 28758: if ( isNT ( ) ) {
 line 28760: WCHAR * p = zConverted ; 
 line 28761: for ( ; * p ; p ++ ) { 
 line 28762: if ( * p == 
-line 28763: '\\' ){
+line 28763: '\\' ){
  * p = '\0' ; 
 line 28764: break ; 
 line 28765: } 
@@ -14436,7 +14436,7 @@ line 28772: } else {
 line 28774: char * p = ( char * ) zConverted ; 
 line 28775: for ( ; * p ; p ++ ) { 
 line 28776: if ( * p == 
-line 28777: '\\' ){
+line 28777: '\\' ){
  * p = '\0' ; 
 line 28778: break ; 
 line 28779: } 
@@ -27016,9 +27016,9 @@ line 51061: }
 line 51062: # endif 
 line 51068: # if defined ( SQLITE_OMIT_DECLTYPE ) && defined ( SQLITE_ENABLE_COLUMN_METADATA ) 
 line 51069: # error 
-line 51070: "Must not define both SQLITE_OMIT_DECLTYPE \
+line 51070: "Must not define both SQLITE_OMIT_DECLTYPE \
  and SQLITE_ENABLE_COLUMN_METADATA 
-line 51071: "
+line 51071: "
  # endif 
 line 51073: # ifndef SQLITE_OMIT_DECLTYPE 
 line 51078: SQLITE_API const char * sqlite3_column_decltype ( sqlite3_stmt * pStmt , int N ) { 
@@ -27679,13 +27679,13 @@ line 52137: __inline__ sqlite_uint64 sqlite3Hwtime ( void ) {
 line 52138: unsigned long long retval ; 
 line 52139: unsigned long junk ; 
 line 52140: __asm__ __volatile__ ( 
-line 52141: "\n\
+line 52141: "\n\
  1 : mftbu % 1 \ 
 line 52142: n mftb % L0 \ 
 line 52143: n mftbu % 0 \ 
 line 52144: n cmpw % 0 , % 1 \ 
 line 52145: n bne 1b 
-line 52146: "
+line 52146: "
  : "=r" ( retval ) , "=r" ( junk ) ) ; 
 line 52147: return retval ; 
 line 52148: } 
