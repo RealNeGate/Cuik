@@ -1,9 +1,11 @@
 #pragma once
-#include "common.h"
-#include "arena.h"
-#include "parser.h"
-#include "tb/tb.h"
-#include "stb_ds.h"
+#include <common.h>
+#include <arena.h>
+
+#include <ext/stb_ds.h>
+#include <front/parser.h>
+
+#include "tb.h"
 
 extern TokenStream ir_gen_tokens;
 extern TB_Module* mod;

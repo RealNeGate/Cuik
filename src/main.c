@@ -1,19 +1,20 @@
 // TODO(NeGate): This code would love some eyeballs but like those with skills
 // in fixing it not judging it because it's self-aware and would rather people
 // not hurt it's poor shit-box code feelings.
-#include "preproc.h"
-#include "parser.h"
-#include "ir_gen.h"
-#include "atoms.h"
+#include "common.h"
 #include "timer.h"
-#include "linker.h"
-#include "stb_ds.h"
+#include "front/preproc.h"
+#include "front/parser.h"
+#include "front/atoms.h"
+#include "back/ir_gen.h"
+#include "back/linker.h"
+#include "ext/threads.h"
+#include "ext/stb_ds.h"
 #include <stdatomic.h>
 #include "settings.h"
-#include "../ext/threads.h"
 
 #if _WIN32
-#include "microsoft_craziness.h"
+#include "back/microsoft_craziness.h"
 #endif
 
 // used for the weird stuff in the live compiler

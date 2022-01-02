@@ -1,8 +1,5 @@
 #include "parser.h"
 
-#define STB_DS_IMPLEMENTATION
-#include "stb_ds.h"
-
 impl_arena(Stmt, stmt_arena)
 impl_arena(Expr, expr_arena)
 

@@ -4,7 +4,8 @@
 #include "arena.h"
 #include "lexer.h"
 #include "atoms.h"
-#include "tb/tb.h"
+
+#include <back/tb.h>
 
 decl_arena_index(Type, type_arena)
 decl_arena_index(Member, member_arena) // Members used by struct/union types

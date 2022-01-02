@@ -1,7 +1,7 @@
 #pragma once
 #include "common.h"
 #include "arena.h"
-#include "stb_ds.h"
+#include <ext/stb_ds.h>
 
 // NOTE(NeGate): I originally called it TokenType but windows a bih on god
 typedef enum TknType {

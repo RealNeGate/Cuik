@@ -3,8 +3,7 @@
 #include "preproc.h"
 #include "memory.h"
 #include "file_io.h"
-
-#include "stb_ds.h"
+#include <ext/stb_ds.h>
 
 #if _WIN32
 #include <windows.h>
