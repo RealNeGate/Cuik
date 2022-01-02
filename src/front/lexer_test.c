@@ -36,7 +36,7 @@ int main(int argc, char* argv[]) {
 	Lexer l = (Lexer) { "", text, text, 1 };
 	
 	if (strcmp(argv[1], "bake") == 0) {
-		FILE* f = fopen(test_file, "w");
+		FILE* f = fopen(test_file, "wb");
 		if (!f) {
 			printf("Could not open file: %s\n", test_file);
 			return -1;
@@ -46,7 +46,7 @@ int main(int argc, char* argv[]) {
 		fclose(f);
 		return 0;
 	} else if (strcmp(argv[1], "test") == 0) {
-		FILE* f = fopen("./tmp.txt", "w");
+		FILE* f = fopen("./tmp.txt", "wb");
 		if (!f) {
 			printf("Could not open temporary file: tmp.txt\n");
 			return -1;

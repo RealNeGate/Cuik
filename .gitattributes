@@ -3,12 +3,12 @@
 
 # Explicitly declare text files you want to always be normalized and converted
 # to native line endings on checkout.
-*.c text
-*.cpp text
-*.txt text
-*.h text
-*.svg text
-*.md text
+*.c text eol=lf
+*.cpp text eol=lf
+*.txt text eol=lf
+*.h text eol=lf
+*.svg text eol=lf
+*.md text eol=lf
 
 # Denote all files that are truly binary and should not be modified.
 *.o binary
