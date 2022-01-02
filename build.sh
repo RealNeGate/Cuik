@@ -12,4 +12,5 @@ cuik_source_files="src/main.c
 	src/back/linker.c
 	src/ext/stb_ds.c"
 
+mkdir -p build
 gcc $c_settings $cuik_source_files tinybackend.a -lpthread -fPIC -Isrc -o build/cuik
