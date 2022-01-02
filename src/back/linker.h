@@ -1,5 +1,5 @@
 #pragma once
-#include "common.h"
+#include <common.h>
 
 #if _WIN32
 #include "microsoft_craziness.h"

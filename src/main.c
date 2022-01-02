@@ -582,5 +582,8 @@ static bool live_compile(const char source_file[], const char obj_output_path[],
 	}
 }
 #else
-#warning "No live compiler supported"
+static bool live_compile(const char source_file[], const char obj_output_path[], const char filename[]) {
+	printf("No live compiler supported");
+    return false;
+}
 #endif

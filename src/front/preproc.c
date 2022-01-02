@@ -445,10 +445,9 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 					
 					const unsigned char* start = NULL;
 					const unsigned char* end = NULL;
-					bool is_system_include = false;
 					
 					if (l.token_type == '<') {
-						is_system_include = true;
+                        // Hacky but mostly works
 						start = l.token_start + 1;
 						
 						do {

@@ -1,5 +1,5 @@
 #pragma once
-#include "common.h"
+#include <common.h>
 #include "lexer.h"
 
 #define SLOTS_PER_MACRO_BUCKET 32768

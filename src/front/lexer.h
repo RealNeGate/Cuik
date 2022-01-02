@@ -1,6 +1,6 @@
 #pragma once
-#include "common.h"
-#include "arena.h"
+#include <common.h>
+#include <arena.h>
 #include <ext/stb_ds.h>
 
 // NOTE(NeGate): I originally called it TokenType but windows a bih on god
