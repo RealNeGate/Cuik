@@ -2,7 +2,7 @@
 #include "file_io.h"
 
 #define STB_DS_IMPLEMENTATION
-#include "stb_ds.h"
+#include <ext/stb_ds.h>
 
 static void dump_golden_test(Lexer* l, FILE* f) {
 	int last_line = 0;
