@@ -58,6 +58,7 @@ static bool is_typename(TokenStream* restrict s);
 static _Noreturn void generic_error(TokenStream* restrict s, const char* msg);
 static void parse_decl_or_expr(TokenStream* restrict s, size_t* body_count);
 static ExprIndex parse_expr(TokenStream* restrict s);
+static ExprIndex parse_initializer(TokenStream* restrict s, TypeIndex type);
 
 // It's like parse_expr but it doesn't do anything with comma operators to avoid
 // parsing issues.
@@ -110,13 +111,19 @@ TopLevel parse_file(TokenStream* restrict s) {
 			continue;
 		}
 		
-		// TODO(NeGate): Correctly parse declspec instead of
-		// ignoring them.
 		if (tokens_get(s)->type == TOKEN_KW_declspec) {
 			tokens_next(s);
 			expect(s, '(');
-			tokens_next(s);
-			expect(s, ')');
+			
+			// TODO(NeGate): Correctly parse declspec instead of
+			// ignoring them.
+			int depth = 1;
+			while (depth) {
+				if (tokens_get(s)->type == '(') depth++;
+				else if (tokens_get(s)->type == ')') depth--;
+				
+				tokens_next(s);
+			}
 			continue;
 		}
 		
@@ -570,9 +577,17 @@ static void parse_decl_or_expr(TokenStream* restrict s, size_t* body_count) {
 			
 			Decl decl = parse_declarator(s, type);
 			ExprIndex initial = 0;
+			
 			if (tokens_get(s)->type == '=') {
 				tokens_next(s);
-				initial = parse_expr_l14(s);
+				
+				if (tokens_get(s)->type == '{') {
+					tokens_next(s);
+					
+					initial = parse_initializer(s, TYPE_VOID);
+				} else {
+					initial = parse_expr_l14(s);
+				}
 			}
 			
 			StmtIndex n = make_stmt(s, STMT_DECL);
@@ -865,7 +880,7 @@ static ExprIndex parse_expr_l1(TokenStream* restrict s) {
 				
 				return parse_initializer(s, type);
 			} else {
-				ExprIndex base = parse_expr_l0(s);
+				ExprIndex base = parse_expr_l1(s);
 				ExprIndex e = push_expr_arena(1);
 				
 				expr_arena.data[e] = (Expr) {
@@ -1007,8 +1022,26 @@ static ExprIndex parse_expr_l1(TokenStream* restrict s) {
 	}
 }
 
-// deref* address&
+// deref* address& negate-
 static ExprIndex parse_expr_l2(TokenStream* restrict s) {
+	if (tokens_get(s)->type == '-') {
+		tokens_next(s);
+		ExprIndex value = parse_expr_l2(s);
+		
+		ExprIndex e = push_expr_arena(1);
+		expr_arena.data[e] = (Expr) {
+			.op = EXPR_NEGATE,
+			.loc = tokens_get(s)->location,
+			.unary_op.src = value
+		};
+		return e;
+	}
+	
+	if (tokens_get(s)->type == '+') {
+		tokens_next(s);
+		return parse_expr_l2(s);
+	}
+	
 	if (tokens_get(s)->type == '&') {
 		tokens_next(s);
 		

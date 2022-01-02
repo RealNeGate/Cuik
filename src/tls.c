@@ -18,7 +18,10 @@ void tls_init() {
 }
 
 void* tls_push(size_t size) {
-	assert(sizeof(TemporaryStorage) + temp_storage->used + size < TEMPORARY_STORAGE_SIZE);
+	if (sizeof(TemporaryStorage) + temp_storage->used + size >= TEMPORARY_STORAGE_SIZE) {
+		printf("temporary storage: out of memory!\n");
+		abort();
+	}
     
 	void* ptr = &temp_storage->data[temp_storage->used];
 	temp_storage->used += size;

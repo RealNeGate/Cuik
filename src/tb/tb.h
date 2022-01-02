@@ -332,6 +332,7 @@ extern "C" {
 	TB_API TB_Register tb_inst_param(TB_Function* f, int param_id);
 	TB_API TB_Register tb_inst_param_addr(TB_Function* f, int param_id);
 	
+	TB_API TB_Register tb_inst_fpxt(TB_Function* f, TB_Register src, TB_DataType dt);
 	TB_API TB_Register tb_inst_sxt(TB_Function* f, TB_Register src, TB_DataType dt);
 	TB_API TB_Register tb_inst_zxt(TB_Function* f, TB_Register src, TB_DataType dt);
 	TB_API TB_Register tb_inst_trunc(TB_Function* f, TB_Register src, TB_DataType dt);
@@ -430,6 +431,7 @@ extern "C" {
 	TB_API bool tb_opt_remove_pass_node(TB_Function* f);
 	TB_API bool tb_opt_strength_reduction(TB_Function* f);
 	TB_API bool tb_opt_compact_dead_regs(TB_Function* f);
+	TB_API bool tb_opt_copy_elision(TB_Function* f);
 	
 	////////////////////////////////
 	// IR access

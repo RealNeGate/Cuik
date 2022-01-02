@@ -127,6 +127,7 @@ static void cvt_l2r(SourceLocIndex loc, TB_Function* func, IRVal* restrict v, Ty
 	// TODO(NeGate): Implement float casts
 	if (v->type != dst_type) {
 		Type* dst = &type_arena.data[dst_type];
+		v->type = dst_type;
 		
 		if (src->kind >= KIND_BOOL &&
 			src->kind <= KIND_LONG &&
@@ -151,6 +152,12 @@ static void cvt_l2r(SourceLocIndex loc, TB_Function* func, IRVal* restrict v, Ty
 					sema_fatal(loc, "No implicit cast between these types.");
 				}
 			}
+		} else if (src->kind == KIND_FLOAT &&
+				   dst->kind == KIND_DOUBLE) {
+			v->reg = tb_inst_fpxt(func, v->reg, TB_TYPE_F64);
+		} else if (src->kind == KIND_DOUBLE &&
+				   dst->kind == KIND_FLOAT) {
+			v->reg = tb_inst_trunc(func, v->reg, TB_TYPE_F32);
 		} else {
 			sema_fatal(loc, "No implicit cast between these types.");
 		}
@@ -451,6 +458,17 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 			src.type = new_pointer_locked(src.type);
 			src.value_type = RVALUE;
 			return src;
+		}
+		case EXPR_NEGATE: {
+			IRVal src = gen_expr(func, ep->unary_op.src);
+			cvt_l2r(ep->loc, func, &src, src.type);
+			
+			Type* restrict src_type = &type_arena.data[src.type];
+			return (IRVal) {
+				.value_type = RVALUE,
+				.type = src.type,
+				.reg = tb_inst_neg(func, ctype_to_tbtype(src_type), src.reg)
+			};
 		}
 		case EXPR_CAST: {
 			IRVal src = gen_expr(func, ep->cast.src);
@@ -1027,30 +1045,34 @@ static void gen_stmt(TB_Function* func, StmtIndex s) {
 			int size = type_arena.data[type_index].size;
 			int align = type_arena.data[type_index].align;
 			
-			TB_Register addr = tb_inst_local(func, size, align);
-			sp->backing.r = addr;
-			
+			TB_Register addr = 0;
 			if (sp->decl.initial) {
-				IRVal v = gen_expr(func, sp->decl.initial);
+				Expr* restrict ep = &expr_arena.data[sp->decl.initial];
 				
-				if (kind == KIND_STRUCT || kind == KIND_UNION) {
-					TB_Register size_reg = tb_inst_iconst(func, TB_TYPE_I64, size);
-					
-					tb_inst_memcpy(func, addr, v.reg, size_reg, align);
+				if (ep->op == EXPR_INITIALIZER) {
+					addr = gen_local_initializer(func, type_index, ep->init.count, ep->init.nodes);
 				} else {
-					cvt_l2r(sp->loc, func, &v, type_index);
-					tb_inst_store(func, ctype_to_tbtype(&type_arena.data[type_index]), addr, v.reg, align);
+					addr = tb_inst_local(func, size, align);
+					IRVal v = gen_expr(func, sp->decl.initial);
+					
+					if (kind == KIND_STRUCT || kind == KIND_UNION) {
+						TB_Register size_reg = tb_inst_iconst(func, TB_TYPE_I64, size);
+						
+						tb_inst_memcpy(func, addr, v.reg, size_reg, align);
+					} else {
+						cvt_l2r(sp->loc, func, &v, type_index);
+						tb_inst_store(func, ctype_to_tbtype(&type_arena.data[type_index]), addr, v.reg, align);
+					}
 				}
 			} else {
-				// uninitialized
-				if (kind == KIND_STRUCT) {
-					// TODO(NeGate): Remove this!!
-					TB_Register size_reg = tb_inst_iconst(func, TB_TYPE_I32, size);
-					TB_Register zero = tb_inst_iconst(func, TB_TYPE_I8, 0);
-					
-					tb_inst_memset(func, addr, zero, size_reg, align);
-				}
+				/* uninitialized */
 			}
+			
+			if (addr == TB_NULL_REG) {
+				addr = tb_inst_local(func, size, align);
+			}
+			
+			sp->backing.r = addr;
 			break;
 		}
 		case STMT_EXPR: {

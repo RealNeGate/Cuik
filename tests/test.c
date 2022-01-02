@@ -100,8 +100,10 @@ int main(int argc, char* argv[]) {
 		x = 16;
 	}
 	
-	//float abc = 0.0f;
-	//float def = 4.34f;
+	float abc = 0.0f;
+	float def = 4.34f;
+	double hig = def;
+	
 	return y;
 }
 
