@@ -1,5 +1,5 @@
 # Unix style
-* text=lf
+* text eol=lf
 
 # Explicitly declare text files you want to always be normalized and converted
 # to native line endings on checkout.
@@ -14,3 +14,5 @@
 *.o binary
 *.obj binary
 *.png binary
+*.lib binary
+*.a binary
