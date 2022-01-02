@@ -1,11 +1,11 @@
 .vs/
 build/
-Cuik/
 
 *.obj
 *.exe
 *.ilk
 *.pdb
+*.rdbg
 
 tests/stb_image.c
 tests/test5.c
