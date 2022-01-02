@@ -121,11 +121,10 @@ line 381: # if defined ( SQLITE_SYSTEM_MALLOC ) + defined ( SQLITE_MEMDEBUG )
 line 382: + defined ( SQLITE_MEMORY_SIZE ) + defined ( SQLITE_MMAP_HEAP_SIZE ) 
 line 383: + defined ( SQLITE_POW2_MEMORY_SIZE ) > 1 
 line 384: # error 
-line 385: "At most one of the following compile-time configuration options\
- is allows : SQLITE_SYSTEM_MALLOC , SQLITE_MEMDEBUG , SQLITE_MEMORY_SIZE 
-line 386: , SQLITE_MMAP_HEAP_SIZE , SQLITE_POW2_MEMORY_SIZE 
-line 387: "
- # endif 
+line 386: "At most one of the following compile-time configuration options\
+ is allows: SQLITE_SYSTEM_MALLOC, SQLITE_MEMDEBUG, SQLITE_MEMORY_SIZE,\
+ SQLITE_MMAP_HEAP_SIZE, SQLITE_POW2_MEMORY_SIZE" 
+line 387: # endif 
 line 388: # if defined ( SQLITE_SYSTEM_MALLOC ) + defined ( SQLITE_MEMDEBUG ) 
 line 389: + defined ( SQLITE_MEMORY_SIZE ) + defined ( SQLITE_MMAP_HEAP_SIZE ) 
 line 390: + defined ( SQLITE_POW2_MEMORY_SIZE ) == 0 
@@ -9223,14 +9222,13 @@ line 20094: __inline__ sqlite_uint64 sqlite3Hwtime ( void ) {
 line 20095: unsigned long long retval ; 
 line 20096: unsigned long junk ; 
 line 20097: __asm__ __volatile__ ( 
-line 20098: "\n\
- 1 : mftbu % 1 \ 
-line 20099: n mftb % L0 \ 
-line 20100: n mftbu % 0 \ 
-line 20101: n cmpw % 0 , % 1 \ 
-line 20102: n bne 1b 
-line 20103: "
- : "=r" ( retval ) , "=r" ( junk ) ) ; 
+line 20102: "\n\
+          1:      mftbu   %1\n\
+                  mftb    %L0\n\
+                  mftbu   %0\n\
+                  cmpw    %0,%1\n\
+                  bne     1b" 
+line 20103: : "=r" ( retval ) , "=r" ( junk ) ) ; 
 line 20104: return retval ; 
 line 20105: } 
 line 20107: # else 
@@ -10180,14 +10178,13 @@ line 21619: __inline__ sqlite_uint64 sqlite3Hwtime ( void ) {
 line 21620: unsigned long long retval ; 
 line 21621: unsigned long junk ; 
 line 21622: __asm__ __volatile__ ( 
-line 21623: "\n\
- 1 : mftbu % 1 \ 
-line 21624: n mftb % L0 \ 
-line 21625: n mftbu % 0 \ 
-line 21626: n cmpw % 0 , % 1 \ 
-line 21627: n bne 1b 
-line 21628: "
- : "=r" ( retval ) , "=r" ( junk ) ) ; 
+line 21627: "\n\
+          1:      mftbu   %1\n\
+                  mftb    %L0\n\
+                  mftbu   %0\n\
+                  cmpw    %0,%1\n\
+                  bne     1b" 
+line 21628: : "=r" ( retval ) , "=r" ( junk ) ) ; 
 line 21629: return retval ; 
 line 21630: } 
 line 21632: # else 
@@ -13262,14 +13259,13 @@ line 27068: __inline__ sqlite_uint64 sqlite3Hwtime ( void ) {
 line 27069: unsigned long long retval ; 
 line 27070: unsigned long junk ; 
 line 27071: __asm__ __volatile__ ( 
-line 27072: "\n\
- 1 : mftbu % 1 \ 
-line 27073: n mftb % L0 \ 
-line 27074: n mftbu % 0 \ 
-line 27075: n cmpw % 0 , % 1 \ 
-line 27076: n bne 1b 
-line 27077: "
- : "=r" ( retval ) , "=r" ( junk ) ) ; 
+line 27076: "\n\
+          1:      mftbu   %1\n\
+                  mftb    %L0\n\
+                  mftbu   %0\n\
+                  cmpw    %0,%1\n\
+                  bne     1b" 
+line 27077: : "=r" ( retval ) , "=r" ( junk ) ) ; 
 line 27078: return retval ; 
 line 27079: } 
 line 27081: # else 
@@ -27017,9 +27013,8 @@ line 51062: # endif
 line 51068: # if defined ( SQLITE_OMIT_DECLTYPE ) && defined ( SQLITE_ENABLE_COLUMN_METADATA ) 
 line 51069: # error 
 line 51070: "Must not define both SQLITE_OMIT_DECLTYPE \
- and SQLITE_ENABLE_COLUMN_METADATA 
-line 51071: "
- # endif 
+         and SQLITE_ENABLE_COLUMN_METADATA" 
+line 51071: # endif 
 line 51073: # ifndef SQLITE_OMIT_DECLTYPE 
 line 51078: SQLITE_API const char * sqlite3_column_decltype ( sqlite3_stmt * pStmt , int N ) { 
 line 51079: return columnName ( 
@@ -27679,14 +27674,13 @@ line 52137: __inline__ sqlite_uint64 sqlite3Hwtime ( void ) {
 line 52138: unsigned long long retval ; 
 line 52139: unsigned long junk ; 
 line 52140: __asm__ __volatile__ ( 
-line 52141: "\n\
- 1 : mftbu % 1 \ 
-line 52142: n mftb % L0 \ 
-line 52143: n mftbu % 0 \ 
-line 52144: n cmpw % 0 , % 1 \ 
-line 52145: n bne 1b 
-line 52146: "
- : "=r" ( retval ) , "=r" ( junk ) ) ; 
+line 52145: "\n\
+          1:      mftbu   %1\n\
+                  mftb    %L0\n\
+                  mftbu   %0\n\
+                  cmpw    %0,%1\n\
+                  bne     1b" 
+line 52146: : "=r" ( retval ) , "=r" ( junk ) ) ; 
 line 52147: return retval ; 
 line 52148: } 
 line 52150: # else 
