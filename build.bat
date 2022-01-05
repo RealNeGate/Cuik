@@ -1,6 +1,6 @@
 call vcvars64
 
-set clang_settings=-march=haswell -maes -O2 -DNDEBUG -Werror -Wall -Wno-gnu-designator -Wno-unused-function -g -gcodeview -D_CRT_SECURE_NO_WARNINGS
+set clang_settings=-march=haswell -maes -O0 -Werror -Wall -Wno-gnu-designator -Wno-unused-function -g -gcodeview -D_CRT_SECURE_NO_WARNINGS
 
 set cuik_source_files=src/main.c ^
 	src/tls.c ^
@@ -9,6 +9,7 @@ set cuik_source_files=src/main.c ^
 	src/front/lexer.c ^
 	src/front/types.c ^
 	src/front/atoms.c ^
+	src/front/const_eval.c ^
 	src/front/parser.c ^
 	src/back/ir_gen.c ^
 	src/back/linker.c ^

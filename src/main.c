@@ -124,8 +124,18 @@ static void set_preprocessor_info(CPP_Context* cpp_ctx) {
 	cpp_define_empty(cpp_ctx, "_WIN64");
 	cpp_define_empty(cpp_ctx, "_M_X64");
 	cpp_define_empty(cpp_ctx, "_M_AMD64");
+	cpp_define_empty(cpp_ctx, "_DEBUG");
+	cpp_define_empty(cpp_ctx, "_MT");
+	cpp_define_empty(cpp_ctx, "_CRT_NONSTDC_NO_WARNINGS");
 	cpp_define_empty(cpp_ctx, "_CRT_SECURE_NO_WARNINGS");
 	
+	// NOTE(NeGate): Hack to make these trigger the preprocessor
+	cpp_define_empty(cpp_ctx, "__FILE__");
+	cpp_define_empty(cpp_ctx, "__LINE__");
+	
+	cpp_define(cpp_ctx, "__int8", "char");
+	cpp_define(cpp_ctx, "__int16", "short");
+	cpp_define(cpp_ctx, "__int32", "int");
 	cpp_define(cpp_ctx, "__int64", "long long");
 	cpp_define(cpp_ctx, "__pragma(x)", "_Pragma(#x)");
 	cpp_define(cpp_ctx, "__inline", "inline");

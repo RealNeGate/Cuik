@@ -69,6 +69,12 @@ typedef enum TknType {
     TOKEN_INCREMENT       = '+' + 256,/* ++  */
     TOKEN_DECREMENT       = '-' + 256,/* --  */
 	
+	// this is hacky because ! is a single char
+	// token (sometimes used in !=) but this way
+	// it can share more rules with the rest of the
+	// tokens (less cases in the lexer).
+    TOKEN_DOUBLE_EXCLAMATION = '!' + 256,/* !!  */
+	
 	// Keywords
 	TOKEN_KW_auto = 640,
 	TOKEN_KW_break,
@@ -121,6 +127,15 @@ typedef enum TknType {
 	TOKEN_KW_declspec,
 } TknType;
 
+typedef enum IntSuffix {
+	INT_SUFFIX_NONE = 0 + 0 + 0,
+	INT_SUFFIX_U    = 1 + 0 + 0,
+	INT_SUFFIX_L    = 0 + 2 + 0,
+	INT_SUFFIX_UL   = 1 + 2 + 0,
+	INT_SUFFIX_LL   = 0 + 2 + 2,
+	INT_SUFFIX_ULL  = 1 + 2 + 2,
+} IntSuffix;
+
 typedef int SourceLocIndex;
 
 typedef struct SourceLoc {
@@ -167,7 +182,7 @@ typedef struct Lexer {
 
 // this is used by the preprocessor to scan tokens in
 void lexer_read(Lexer* restrict l);
-int64_t parse_int(size_t len, const char* str);
+int64_t parse_int(size_t len, const char* str, IntSuffix* out_suffix);
 double parse_float(size_t len, const char* str);
 TknType classify_ident(const unsigned char* restrict str, size_t len);
 

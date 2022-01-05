@@ -154,10 +154,15 @@ typedef enum StmtOp {
 	STMT_IF,
 	STMT_DO_WHILE,
 	STMT_GOTO,
-	
 	STMT_FOR,
-	
 	STMT_WHILE,
+	
+	STMT_SWITCH,
+	STMT_CASE,
+	STMT_DEFAULT,
+	
+	STMT_BREAK,
+	STMT_CONTINUE,
 	
 	STMT_RETURN
 } StmtOp;
@@ -167,6 +172,8 @@ typedef enum ExprOp {
 	
 	EXPR_INT,
 	EXPR_FLOAT,
+	
+	EXPR_CHAR,
 	EXPR_STR,
 	
 	EXPR_UNKNOWN_SYMBOL,
@@ -197,6 +204,7 @@ typedef enum ExprOp {
 	EXPR_SHL,
 	EXPR_SHR,
 	
+	EXPR_TERNARY,
 	EXPR_COMMA,
 	
 	EXPR_CMPEQ,
@@ -212,10 +220,17 @@ typedef enum ExprOp {
 	EXPR_DEREF,
 	EXPR_ADDR,
 	EXPR_NEGATE,
+	EXPR_NOT,
 	EXPR_SUBSCRIPT,
 	EXPR_DOT,
 	EXPR_ARROW,
 	EXPR_CALL,
+	
+	EXPR_SIZEOF_T, // on type
+	EXPR_SIZEOF, // on expr
+	
+	EXPR_ALIGNOF_T, // on type
+	EXPR_ALIGNOF, // on expr
 	
 	EXPR_INITIALIZER,
 	
@@ -226,6 +241,14 @@ typedef enum ExprOp {
 	
 	EXPR_MAX
 } ExprOp;
+
+typedef struct ConstValue {
+	bool is_signed;
+	union {
+		intmax_t signed_value;
+		uintmax_t unsigned_value;
+	};
+} ConstValue;
 
 typedef struct Stmt {
 	StmtOp op;
@@ -251,12 +274,37 @@ typedef struct Stmt {
 		struct StmtReturn {
 			ExprIndex expr;
 		} return_;
+		struct StmtContinue {
+			StmtIndex target; // loop
+		} continue_;
+		struct StmtBreak {
+			StmtIndex target; // either a loop or switch
+		} break_;
 		struct StmtGoto {
 			ExprIndex target;
 		} goto_;
 		struct StmtLabel {
 			Atom name;
 		} label;
+		struct StmtCase {
+			intmax_t key;
+			
+			StmtIndex body;
+			StmtIndex next;
+		} case_;
+		struct StmtDefault {
+			StmtIndex body;
+			StmtIndex next;
+		} default_;
+		struct StmtSwitch {
+			ExprIndex condition;
+			StmtIndex body;
+			
+			// points to the first case or default,
+			// and those point to next and so on,
+			// linked lists
+			StmtIndex next;
+		} switch_;
 		struct StmtDecl {
 			Attribs attrs;
 			TypeIndex type;
@@ -330,6 +378,9 @@ typedef struct Expr {
 			ExprIndex src;
 		} cast;
 		struct {
+			ExprIndex left, middle, right;
+		} ternary_op;
+		struct {
 			ExprIndex left, right;
 		} bin_op;
 		struct {
@@ -352,10 +403,19 @@ typedef struct Expr {
 			
 			ExprIndex* param_start;
 		} call;
+		// represent both quoted literals
 		struct {
 			const unsigned char* start;
 			const unsigned char* end;
 		} str;
+		// either sizeof(T) or _Alignof(T)
+		struct {
+			TypeIndex type;
+		} x_of_type;
+		// either sizeof(expr) or _Alignof(expr)
+		struct {
+			ExprIndex expr;
+		} x_of_expr;
 		struct {
 			TypeIndex type;
 			int count;
@@ -363,7 +423,10 @@ typedef struct Expr {
 		} init;
 		
 		double float_num;
-		long long int_num;
+		struct ExprInt {
+			long long num;
+			IntSuffix suffix;
+		} int_num;
 	};
 } Expr;
 
@@ -423,6 +486,9 @@ typedef struct TopLevel {
 } TopLevel;
 
 void init_types();
+StmtIndex resolve_unknown_symbol(StmtIndex i);
+
+ConstValue const_eval(ExprIndex e);
 
 TopLevel parse_file(TokenStream* restrict s);
 void print_tree(TopLevel tl);

@@ -316,6 +316,12 @@ void lexer_read(Lexer* restrict l) {
 	const unsigned char* start = current;
 	uint8_t initial_class = char_classes[*current++];
 	
+	// TODO(NeGate): Hacky but yea
+	if (start[0] == 'L' && start[1] == '\"') {
+		initial_class = CHAR_CLASS_STRING;
+		current++;
+	}
+	
 	switch (initial_class) {
 		case CHAR_CLASS_NULL: break;
 		case CHAR_CLASS_IDENT: {
@@ -414,7 +420,7 @@ void lexer_read(Lexer* restrict l) {
 			break;
 		}
 		case CHAR_CLASS_STRING: {
-			char quote_type = *start;
+			char quote_type = *start == '\'' ? '\'' : '\"';
 			__m128i pattern = _mm_set1_epi8(quote_type);
 			
 			do {
@@ -536,11 +542,24 @@ void lexer_read(Lexer* restrict l) {
 	}
 }
 
-int64_t parse_int(size_t len, const char* str) {
+int64_t parse_int(size_t len, const char* str, IntSuffix* out_suffix) {
 	char* end;
 	int64_t i = strtol(str, &end, 0);
-	if (end != &str[len]) abort();
 	
+	IntSuffix suffix = INT_SUFFIX_NONE;
+	if (end != &str[len]) {
+		do {
+			switch (end[0]) {
+				case 'u': case 'U': suffix |= 1; break;
+				case 'l': case 'L': suffix += 2; break;
+			}
+			end++;
+		} while (end != &str[len]);
+		
+		if (suffix >= 6) abort();
+	}
+	
+	*out_suffix = suffix;
 	return i;
 }
 

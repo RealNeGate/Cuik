@@ -1,3 +1,5 @@
+// TODO(NeGate): Refactor this code...
+
 // NOTE(NeGate): This code leaks the filename strings but it doesn't actually matter
 // because this is a compiler and momma aint raised no bitch.
 #include "preproc.h"
@@ -853,7 +855,35 @@ static unsigned char* expand_ident(CPP_Context* restrict c, unsigned char* restr
 	size_t token_length = l->token_end - l->token_start;
 	const unsigned char* token_data = l->token_start;
 	
-	if (lexer_match(l, 7, "defined")) {
+	if (lexer_match(l, 8, "__FILE__")) {
+		// filepath as a string
+		lexer_read(l);
+		
+		size_t length = strlen(l->filepath);
+		
+		*out++ = '\"';
+		
+		memcpy(out, l->filepath, length); 
+		out += length;
+		
+		*out++ = '\"';
+		*out++ = ' ';
+		return out;
+	} else if (lexer_match(l, 8, "__LINE__")) {
+		// line number as a string
+		lexer_read(l);
+		
+		char buf[10];
+		_itoa(l->current_line, buf, 10);
+		
+		size_t length = strlen(buf);
+		memcpy(out, buf, length);
+		out += length;
+		
+		*out++ = ' ';
+		
+		return out;
+	} else if (lexer_match(l, 7, "defined")) {
 		// optional parenthesis
 		lexer_read(l);
 		
@@ -912,9 +942,9 @@ static unsigned char* expand_ident(CPP_Context* restrict c, unsigned char* restr
 				tls_push(2 * sizeof(const unsigned char*));
 				int i = value_count++;
 				
-				value_ranges[i*2 + 0] = l->token_start;
-				
 				int paren_depth = 0;
+				const unsigned char* start = l->token_start;
+				const unsigned char* end = l->token_start;
 				while (true) {
 					if (l->token_type == '(') {
 						paren_depth++;
@@ -924,10 +954,14 @@ static unsigned char* expand_ident(CPP_Context* restrict c, unsigned char* restr
 					} else if (l->token_type == ',') {
 						if (paren_depth == 0) break;
 					}
+					
+					end = l->token_end;
 					lexer_read(l);
 				}
 				
-				value_ranges[i*2 + 1] = l->token_start;
+				value_ranges[i*2 + 0] = start;
+				value_ranges[i*2 + 1] = end;
+				
 				if (l->token_type == ',') lexer_read(l);
 			}
 			

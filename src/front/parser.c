@@ -40,6 +40,9 @@ typedef struct LabelEntry {
 
 static LabelEntry* labels;
 
+static StmtIndex current_switch_or_case;
+static StmtIndex current_breakable;
+
 static void expect(TokenStream* restrict s, char ch);
 static Symbol* find_local_symbol(TokenStream* restrict s);
 static Symbol* find_global_symbol(char* name);
@@ -50,12 +53,13 @@ static bool try_parse_declspec(TokenStream* restrict s, Attribs* attr);
 static TypeIndex parse_declspec(TokenStream* restrict s, Attribs* attr);
 static Decl parse_declarator(TokenStream* restrict s, TypeIndex type);
 static TypeIndex parse_typename(TokenStream* restrict s);
-static int parse_const_expr(TokenStream* restrict s);
+static intmax_t parse_const_expr(TokenStream* restrict s);
 static bool is_typename(TokenStream* restrict s);
 static _Noreturn void generic_error(TokenStream* restrict s, const char* msg);
 static void parse_decl_or_expr(TokenStream* restrict s, size_t* body_count);
 static ExprIndex parse_expr(TokenStream* restrict s);
 static ExprIndex parse_initializer(TokenStream* restrict s, TypeIndex type);
+static bool skip_over_declspec(TokenStream* restrict s);
 
 // It's like parse_expr but it doesn't do anything with comma operators to avoid
 // parsing issues.
@@ -108,19 +112,7 @@ TopLevel parse_file(TokenStream* restrict s) {
 			continue;
 		}
 		
-		if (tokens_get(s)->type == TOKEN_KW_declspec) {
-			tokens_next(s);
-			expect(s, '(');
-			
-			// TODO(NeGate): Correctly parse declspec instead of
-			// ignoring them.
-			int depth = 1;
-			while (depth) {
-				if (tokens_get(s)->type == '(') depth++;
-				else if (tokens_get(s)->type == ')') depth--;
-				
-				tokens_next(s);
-			}
+		if (skip_over_declspec(s)) {
 			continue;
 		}
 		
@@ -199,7 +191,19 @@ TopLevel parse_file(TokenStream* restrict s) {
 					assert(body == n + 1);
 #endif
 					
-					// this is probably not the best but yea
+					// resolve any unresolved label references 
+					for (size_t i = 0; i < expr_arena.count; i++) {
+						if (expr_arena.data[i].op == EXPR_UNKNOWN_SYMBOL) {
+							const unsigned char* name = expr_arena.data[i].unknown_sym;
+							
+							ptrdiff_t search = shgeti(labels, name);
+							if (search >= 0) {
+								expr_arena.data[i].op = EXPR_SYMBOL;
+								expr_arena.data[i].symbol = labels[search].value;
+							}
+						}
+					}
+					
 					shfree(labels);
 				} else if (tokens_get(s)->type == ';') {
 					// Forward decl
@@ -229,6 +233,18 @@ TopLevel parse_file(TokenStream* restrict s) {
 				};
 				shput(global_symbols, decl.name, sym);
 				
+				if (tokens_get(s)->type == '=') {
+					tokens_next(s);
+					
+					if (tokens_get(s)->type == '{') {
+						tokens_next(s);
+						
+						stmt_arena.data[n].decl.initial = parse_initializer(s, TYPE_VOID);
+					} else {
+						stmt_arena.data[n].decl.initial = parse_expr_l14(s);
+					}
+				}
+				
 				if (tokens_get(s)->type == ',') {
 					while (tokens_get(s)->type != ';') {
 						expect(s, ',');
@@ -250,6 +266,18 @@ TopLevel parse_file(TokenStream* restrict s) {
 							.stmt = n
 						};
 						shput(global_symbols, decl.name, sym);
+						
+						if (tokens_get(s)->type == '=') {
+							tokens_next(s);
+							
+							if (tokens_get(s)->type == '{') {
+								tokens_next(s);
+								
+								stmt_arena.data[n].decl.initial = parse_initializer(s, TYPE_VOID);
+							} else {
+								stmt_arena.data[n].decl.initial = parse_expr_l14(s);
+							}
+						}
 					}
 				}
 				
@@ -262,27 +290,32 @@ TopLevel parse_file(TokenStream* restrict s) {
 	// Semantics
 	////////////////////////////////
 	// NOTE(NeGate): This is a C extension, it allows normal symbols like
-	// functions
-	// NOTE(NeGate): Best thing about tables is that I don't actually have
-	// walk a tree to check all nodes :)
+	// functions to declared out of order.
 	for (size_t i = 0; i < expr_arena.count; i++) {
 		if (expr_arena.data[i].op == EXPR_UNKNOWN_SYMBOL) {
-			Symbol* sym = find_global_symbol((char*)expr_arena.data[i].unknown_sym);
+			const unsigned char* name = expr_arena.data[i].unknown_sym;
 			
-			if (!sym) {
+			if (!resolve_unknown_symbol(i)) {
+				// try enum names
+				// NOTE(NeGate): this might be slow
+				for (size_t j = 1; j < enum_entry_arena.count; j++) {
+					if (cstr_equals(name, enum_entry_arena.data[j].name)) {
+						int value = enum_entry_arena.data[j].value;
+						
+						expr_arena.data[i].op = EXPR_INT;
+						expr_arena.data[i].int_num = (struct ExprInt){ value, INT_SUFFIX_NONE };
+						goto success;
+					}
+				}
+				
 				Token* t = tokens_get(s);
 				SourceLoc* loc = &s->line_arena[t->location];
 				
-				printf("%s:%d: error: could not find symbol: %s\n", loc->file, loc->line, (char*)expr_arena.data[i].unknown_sym);
+				printf("%s:%d: error: could not find symbol: %s\n", loc->file, loc->line, name);
 				abort();
+				
+				success:;
 			}
-			
-			// Parameters are local and a special case how tf
-			assert(sym->storage_class != STORAGE_PARAM);
-			stmt_arena.data[sym->stmt].decl.attrs.is_used = true;
-			
-			expr_arena.data[i].op = EXPR_SYMBOL;
-			expr_arena.data[i].symbol = sym->stmt;
 		}
 	}
 	
@@ -290,6 +323,39 @@ TopLevel parse_file(TokenStream* restrict s) {
 	shfree(global_symbols);
 	
 	return (TopLevel) { top_level };
+}
+
+StmtIndex resolve_unknown_symbol(StmtIndex i) {
+	Symbol* sym = find_global_symbol((char*)expr_arena.data[i].unknown_sym);
+	if (!sym) return 0;
+	
+	// Parameters are local and a special case how tf
+	assert(sym->storage_class != STORAGE_PARAM);
+	stmt_arena.data[sym->stmt].decl.attrs.is_used = true;
+	
+	expr_arena.data[i].op = EXPR_SYMBOL;
+	expr_arena.data[i].symbol = sym->stmt;
+	return sym->stmt;
+}
+
+static bool skip_over_declspec(TokenStream* restrict s) {
+	if (tokens_get(s)->type == TOKEN_KW_declspec) {
+		tokens_next(s);
+		expect(s, '(');
+		
+		// TODO(NeGate): Correctly parse declspec instead of
+		// ignoring them.
+		int depth = 1;
+		while (depth) {
+			if (tokens_get(s)->type == '(') depth++;
+			else if (tokens_get(s)->type == ')') depth--;
+			
+			tokens_next(s);
+		}
+		return true;
+	}
+	
+	return false;
 }
 
 static Symbol* find_local_symbol(TokenStream* restrict s) {
@@ -339,8 +405,9 @@ static StmtIndex parse_compound_stmt(TokenStream* restrict s) {
 	void* body = tls_save();
 	
 	while (tokens_get(s)->type != '}') {
-		StmtIndex stmt = parse_stmt(s);
+		while (tokens_get(s)->type == ';') tokens_next(s);
 		
+		StmtIndex stmt = parse_stmt(s);
 		if (stmt) {
 			*((StmtIndex*)tls_push(sizeof(StmtIndex))) = stmt;
 			body_count++;
@@ -368,9 +435,7 @@ static StmtIndex parse_stmt(TokenStream* restrict s) {
 	if (tokens_get(s)->type == '{') {
 		tokens_next(s);
 		return parse_compound_stmt(s);
-	}
-	
-	if (tokens_get(s)->type == TOKEN_KW_return) {
+	} else if (tokens_get(s)->type == TOKEN_KW_return) {
 		tokens_next(s);
 		
 		ExprIndex e = 0;
@@ -385,9 +450,7 @@ static StmtIndex parse_stmt(TokenStream* restrict s) {
 		
 		expect(s, ';');
 		return n;
-	}
-	
-	if (tokens_get(s)->type == TOKEN_KW_if) {
+	} else if (tokens_get(s)->type == TOKEN_KW_if) {
 		tokens_next(s);
 		StmtIndex n = make_stmt(s, STMT_IF);
 		
@@ -396,7 +459,6 @@ static StmtIndex parse_stmt(TokenStream* restrict s) {
 		expect(s, ')');
 		
 		StmtIndex body = parse_stmt_or_expr(s);
-		stmt_arena.data[n].if_.body = body;
 		
 		StmtIndex next = 0;
 		if (tokens_get(s)->type == TOKEN_KW_else) {
@@ -410,9 +472,102 @@ static StmtIndex parse_stmt(TokenStream* restrict s) {
 			.next = next
 		};
 		return n;
-	}
-	
-	if (tokens_get(s)->type == TOKEN_KW_while) {
+	} else if (tokens_get(s)->type == TOKEN_KW_switch) {
+		tokens_next(s);
+		StmtIndex n = make_stmt(s, STMT_SWITCH);
+		
+		expect(s, '(');
+		ExprIndex cond = parse_expr(s);
+		expect(s, ')');
+		
+		stmt_arena.data[n].switch_ = (struct StmtSwitch){
+			.condition = cond
+		};
+		
+		// begin a new chain but keep the old one
+		StmtIndex old_switch = current_switch_or_case;
+		current_switch_or_case = n;
+		
+		StmtIndex old_breakable = current_breakable;
+		current_breakable = n;
+		{
+			StmtIndex body = parse_stmt_or_expr(s);
+			stmt_arena.data[n].switch_.body = body;
+		}
+		
+		current_breakable = old_breakable;
+		current_switch_or_case = old_switch;
+		return n;
+	} else if (tokens_get(s)->type == TOKEN_KW_case) {
+		// TODO(NeGate): error messages
+		assert(current_switch_or_case);
+		
+		tokens_next(s);
+		StmtIndex n = make_stmt(s, STMT_CASE);
+		
+		Stmt* last_node = &stmt_arena.data[current_switch_or_case];
+		if (last_node->op == STMT_CASE) {
+			last_node->case_.next = n;
+		} else if (last_node->op == STMT_DEFAULT) {
+			last_node->default_.next = n;
+		} else if (last_node->op == STMT_SWITCH) {
+			last_node->switch_.next = n;
+		} else {
+			abort();
+		}
+		
+		intmax_t key = parse_const_expr(s);
+		expect(s, ':');
+		
+		StmtIndex body = parse_stmt_or_expr(s);
+		
+		stmt_arena.data[n].case_ = (struct StmtCase){
+			.key = key,
+			.body = body,
+			.next = 0
+		};
+		current_switch_or_case = n;
+		return n;
+	} else if (tokens_get(s)->type == TOKEN_KW_default) {
+		// TODO(NeGate): error messages
+		assert(current_switch_or_case);
+		
+		tokens_next(s);
+		StmtIndex n = make_stmt(s, STMT_DEFAULT);
+		
+		Stmt* last_node = &stmt_arena.data[current_switch_or_case];
+		if (last_node->op == STMT_CASE) {
+			last_node->case_.next = n;
+		} else if (last_node->op == STMT_DEFAULT) {
+			last_node->default_.next = n;
+		} else if (last_node->op == STMT_SWITCH) {
+			last_node->switch_.next = n;
+		} else {
+			abort();
+		}
+		expect(s, ':');
+		
+		StmtIndex body = parse_stmt_or_expr(s);
+		
+		stmt_arena.data[n].default_ = (struct StmtDefault){
+			.body = body,
+			.next = 0
+		};
+		current_switch_or_case = n;
+		return n;
+	} else if (tokens_get(s)->type == TOKEN_KW_break) {
+		// TODO(NeGate): error messages
+		assert(current_breakable);
+		
+		tokens_next(s);
+		expect(s, ';');
+		
+		StmtIndex n = make_stmt(s, STMT_BREAK);
+		stmt_arena.data[n].break_ = (struct StmtBreak){
+			.target = current_breakable
+		};
+		return n;
+	} else if (tokens_get(s)->type == TOKEN_KW_while) {
 		tokens_next(s);
 		StmtIndex n = make_stmt(s, STMT_WHILE);
 		
@@ -420,15 +575,23 @@ static StmtIndex parse_stmt(TokenStream* restrict s) {
 		ExprIndex cond = parse_expr(s);
 		expect(s, ')');
 		
-		StmtIndex body = parse_stmt_or_expr(s);
+		// Push this as a breakable statement
+		StmtIndex body;
+		{
+			StmtIndex old_breakable = current_breakable;
+			current_breakable = n;
+			
+			body = parse_stmt_or_expr(s);
+			
+			current_breakable = old_breakable;
+		}
+		
 		stmt_arena.data[n].while_ = (struct StmtWhile){
 			.cond = cond,
 			.body = body
 		};
 		return n;
-	}
-	
-	if (tokens_get(s)->type == TOKEN_KW_for) {
+	} else if (tokens_get(s)->type == TOKEN_KW_for) {
 		tokens_next(s);
 		StmtIndex n = make_stmt(s, STMT_FOR);
 		
@@ -478,7 +641,16 @@ static StmtIndex parse_stmt(TokenStream* restrict s) {
 			expect(s, ')');
 		}
 		
-		StmtIndex body = parse_stmt_or_expr(s);
+		// Push this as a breakable statement
+		StmtIndex body;
+		{
+			StmtIndex old_breakable = current_breakable;
+			current_breakable = n;
+			
+			body = parse_stmt_or_expr(s);
+			
+			current_breakable = old_breakable;
+		}
 		
 		// restore local symbol scope
 		local_symbol_count = saved;
@@ -490,13 +662,20 @@ static StmtIndex parse_stmt(TokenStream* restrict s) {
 			.next = next
 		};
 		return n;
-	}
-	
-	if (tokens_get(s)->type == TOKEN_KW_do) {
+	} else if (tokens_get(s)->type == TOKEN_KW_do) {
 		tokens_next(s);
 		StmtIndex n = make_stmt(s, STMT_DO_WHILE);
 		
-		StmtIndex body = parse_stmt_or_expr(s);
+		// Push this as a breakable statement
+		StmtIndex body;
+		{
+			StmtIndex old_breakable = current_breakable;
+			current_breakable = n;
+			
+			body = parse_stmt_or_expr(s);
+			
+			current_breakable = old_breakable;
+		}
 		
 		if (tokens_get(s)->type != TOKEN_KW_while) {
 			Token* t = tokens_get(s);
@@ -519,9 +698,7 @@ static StmtIndex parse_stmt(TokenStream* restrict s) {
 			.body = body
 		};
 		return n;
-	}
-	
-	if (tokens_get(s)->type == TOKEN_KW_goto) {
+	} else if (tokens_get(s)->type == TOKEN_KW_goto) {
 		tokens_next(s);
 		
 		StmtIndex n = make_stmt(s, STMT_GOTO);
@@ -533,10 +710,8 @@ static StmtIndex parse_stmt(TokenStream* restrict s) {
 		
 		expect(s, ';');
 		return n;
-	}
-	
-	if (tokens_get(s)->type == TOKEN_IDENTIFIER &&
-		tokens_peek(s)->type == TOKEN_COLON) {
+	} else if (tokens_get(s)->type == TOKEN_IDENTIFIER &&
+			   tokens_peek(s)->type == TOKEN_COLON) {
 		Token* t = tokens_get(s);
 		Atom name = atoms_put(t->end - t->start, t->start);
 		
@@ -551,16 +726,13 @@ static StmtIndex parse_stmt(TokenStream* restrict s) {
 		return n;
 	}
 	
-	if (tokens_get(s)->type == ';') {
-		tokens_next(s);
-		return 0;
-	}
-	
 	return 0;
 }
 
 static void parse_decl_or_expr(TokenStream* restrict s, size_t* body_count) {
-	if (is_typename(s)) {
+	if (tokens_get(s)->type == ';') {
+		tokens_next(s);
+	} else if (is_typename(s)) {
 		Attribs attr = { 0 };
 		TypeIndex type = parse_declspec(s, &attr);
 		
@@ -621,19 +793,27 @@ static void parse_decl_or_expr(TokenStream* restrict s, size_t* body_count) {
 }
 
 static StmtIndex parse_stmt_or_expr(TokenStream* restrict s) {
-	StmtIndex stmt = parse_stmt(s);
-	if (stmt) return stmt;
-	
-	StmtIndex n = make_stmt(s, STMT_EXPR);
-	
-	ExprIndex expr = parse_expr(s);
-	stmt_arena.data[n].expr = (struct StmtExpr){
-		.expr = expr
-	};
-	
-	expect(s, ';');
-	
-	return stmt;
+	if (tokens_get(s)->type == ';') {
+		tokens_next(s);
+		return 0;
+	} else {
+		StmtIndex stmt = parse_stmt(s);
+		
+		if (stmt) {
+			return stmt;
+		} else {
+			StmtIndex n = make_stmt(s, STMT_EXPR);
+			
+			ExprIndex expr = parse_expr(s);
+			stmt_arena.data[n].expr = (struct StmtExpr){
+				.expr = expr
+			};
+			
+			expect(s, ';');
+			
+			return stmt;
+		}
+	}
 }
 
 ////////////////////////////////
@@ -642,6 +822,7 @@ static StmtIndex parse_stmt_or_expr(TokenStream* restrict s) {
 // Quick reference:
 // https://en.cppreference.com/w/c/language/operator_precedence
 ////////////////////////////////
+static ExprIndex parse_expr_l2(TokenStream* restrict s);
 
 // NOTE(NeGate): This function will push all nodes it makes onto the temporary
 // storage where parse_initializer will move them into permanent storage.
@@ -743,15 +924,12 @@ static ExprIndex parse_initializer(TokenStream* restrict s, TypeIndex type) {
 	while (tokens_get(s)->type != '}') {
 		if (expect_comma) {
 			expect(s, ',');
+			
+			if (tokens_get(s)->type == '}') break;
 		} else expect_comma = true;
 		
 		parse_initializer_member(s);
 		count += 1;
-	}
-	
-	// eat trailing comma
-	if (tokens_get(s)->type == ',') {
-		tokens_next(s);
 	}
 	
 	expect(s, '}');
@@ -770,6 +948,8 @@ static ExprIndex parse_initializer(TokenStream* restrict s, TypeIndex type) {
 }
 
 static ExprIndex parse_expr_l0(TokenStream* restrict s) {
+	SourceLocIndex loc = tokens_get(s)->location;
+	
 	if (tokens_get(s)->type == '(') {
 		tokens_next(s);
 		ExprIndex e = parse_expr(s);
@@ -777,7 +957,6 @@ static ExprIndex parse_expr_l0(TokenStream* restrict s) {
 		
 		return e;
 	} else if (tokens_get(s)->type == TOKEN_IDENTIFIER) {
-		SourceLocIndex loc = tokens_get(s)->location;
 		Symbol* sym = find_local_symbol(s);
 		
 		ExprIndex e = push_expr_arena(1);
@@ -820,6 +999,40 @@ static ExprIndex parse_expr_l0(TokenStream* restrict s) {
 		
 		tokens_next(s);
 		return e;
+	} else if (tokens_get(s)->type == TOKEN_KW_sizeof ||
+			   tokens_get(s)->type == TOKEN_KW_Alignof) {
+		tokens_next(s);
+		
+		bool is_sizeof = tokens_get(s)->type == TOKEN_KW_sizeof;
+		
+		bool has_paren = false;
+		if (tokens_get(s)->type == '(') {
+			has_paren = true;
+			
+			tokens_next(s);
+		}
+		
+		ExprIndex e = push_expr_arena(1);
+		if (is_typename(s)) {
+			TypeIndex type = parse_typename(s);
+			
+			expr_arena.data[e] = (Expr) {
+				.op = is_sizeof ? EXPR_SIZEOF_T : EXPR_ALIGNOF_T,
+				.loc = tokens_get(s)->location,
+				.x_of_type = { type }
+			};
+		} else {
+			ExprIndex expr = parse_expr_l14(s);
+			
+			expr_arena.data[e] = (Expr) {
+				.op = is_sizeof ? EXPR_SIZEOF : EXPR_ALIGNOF,
+				.loc = tokens_get(s)->location,
+				.x_of_expr = { expr }
+			};
+		}
+		
+		if (has_paren) expect(s, ')');
+		return e;
 	} else if (tokens_get(s)->type == TOKEN_FLOAT) {
 		Token* t = tokens_get(s);
 		double i = parse_float(t->end - t->start, (const char*)t->start);
@@ -827,7 +1040,7 @@ static ExprIndex parse_expr_l0(TokenStream* restrict s) {
 		ExprIndex e = push_expr_arena(1);
 		expr_arena.data[e] = (Expr) {
 			.op = EXPR_FLOAT,
-			.loc = tokens_get(s)->location,
+			.loc = loc,
 			.float_num = i
 		};
 		
@@ -835,13 +1048,27 @@ static ExprIndex parse_expr_l0(TokenStream* restrict s) {
 		return e;
 	} else if (tokens_get(s)->type == TOKEN_INTEGER) {
 		Token* t = tokens_get(s);
-		int64_t i = parse_int(t->end - t->start, (const char*)t->start);
+		IntSuffix suffix;
+		int64_t i = parse_int(t->end - t->start, (const char*)t->start, &suffix);
 		
 		ExprIndex e = push_expr_arena(1);
 		expr_arena.data[e] = (Expr) {
 			.op = EXPR_INT,
-			.loc = tokens_get(s)->location,
-			.int_num = i
+			.loc = loc,
+			.int_num = { i, suffix }
+		};
+		
+		tokens_next(s);
+		return e;
+	} else if (tokens_get(s)->type == TOKEN_STRING_SINGLE_QUOTE) {
+		Token* t = tokens_get(s);
+		
+		ExprIndex e = push_expr_arena(1);
+		expr_arena.data[e] = (Expr) {
+			.op = EXPR_CHAR,
+			.loc = loc,
+			.str.start = t->start,
+			.str.end = t->end
 		};
 		
 		tokens_next(s);
@@ -852,7 +1079,7 @@ static ExprIndex parse_expr_l0(TokenStream* restrict s) {
 		ExprIndex e = push_expr_arena(1);
 		expr_arena.data[e] = (Expr) {
 			.op = EXPR_STR,
-			.loc = tokens_get(s)->location,
+			.loc = loc,
 			.str.start = t->start,
 			.str.end = t->end
 		};
@@ -877,7 +1104,7 @@ static ExprIndex parse_expr_l1(TokenStream* restrict s) {
 				
 				return parse_initializer(s, type);
 			} else {
-				ExprIndex base = parse_expr_l1(s);
+				ExprIndex base = parse_expr_l2(s);
 				ExprIndex e = push_expr_arena(1);
 				
 				expr_arena.data[e] = (Expr) {
@@ -1021,33 +1248,86 @@ static ExprIndex parse_expr_l1(TokenStream* restrict s) {
 
 // deref* address& negate-
 static ExprIndex parse_expr_l2(TokenStream* restrict s) {
-	if (tokens_get(s)->type == '-') {
+	// TODO(NeGate): Convert this code into a loop... please?
+	SourceLocIndex loc = tokens_get(s)->location;
+	
+	if (tokens_get(s)->type == '!') {
+		tokens_next(s);
+		ExprIndex value = parse_expr_l2(s);
+		
+		ExprIndex e = push_expr_arena(1);
+		expr_arena.data[e] = (Expr) {
+			.op = EXPR_NOT,
+			.loc = loc,
+			.unary_op.src = value
+		};
+		return e;
+	} else if (tokens_get(s)->type == TOKEN_DOUBLE_EXCLAMATION) {
+		tokens_next(s);
+		ExprIndex value = parse_expr_l2(s);
+		
+		ExprIndex e = push_expr_arena(1);
+		expr_arena.data[e] = (Expr) {
+			.op = EXPR_CAST,
+			.loc = loc,
+			.cast = { TYPE_BOOL, value }
+		};
+		return e;
+	} else if (tokens_get(s)->type == '-') {
 		tokens_next(s);
 		ExprIndex value = parse_expr_l2(s);
 		
 		ExprIndex e = push_expr_arena(1);
 		expr_arena.data[e] = (Expr) {
 			.op = EXPR_NEGATE,
-			.loc = tokens_get(s)->location,
+			.loc = loc,
 			.unary_op.src = value
 		};
 		return e;
-	}
-	
-	if (tokens_get(s)->type == '+') {
+	} else if (tokens_get(s)->type == '~') {
+		tokens_next(s);
+		ExprIndex value = parse_expr_l2(s);
+		
+		ExprIndex e = push_expr_arena(1);
+		expr_arena.data[e] = (Expr) {
+			.op = EXPR_NOT,
+			.loc = loc,
+			.unary_op.src = value
+		};
+		return e;
+	} else if (tokens_get(s)->type == '+') {
 		tokens_next(s);
 		return parse_expr_l2(s);
-	}
-	
-	if (tokens_get(s)->type == '&') {
+	} else if (tokens_get(s)->type == TOKEN_INCREMENT) {
 		tokens_next(s);
+		ExprIndex value = parse_expr_l1(s);
 		
+		ExprIndex e = push_expr_arena(1);
+		expr_arena.data[e] = (Expr) {
+			.op = EXPR_PRE_INC,
+			.loc = loc,
+			.unary_op.src = value
+		};
+		return e;
+	} else if (tokens_get(s)->type == TOKEN_DECREMENT) {
+		tokens_next(s);
+		ExprIndex value = parse_expr_l1(s);
+		
+		ExprIndex e = push_expr_arena(1);
+		expr_arena.data[e] = (Expr) {
+			.op = EXPR_PRE_DEC,
+			.loc = loc,
+			.unary_op.src = value
+		};
+		return e;
+	} else if (tokens_get(s)->type == '&') {
+		tokens_next(s);
 		ExprIndex value = parse_expr_l1(s);
 		
 		ExprIndex e = push_expr_arena(1);
 		expr_arena.data[e] = (Expr) {
 			.op = EXPR_ADDR,
-			.loc = tokens_get(s)->location,
+			.loc = loc,
 			.unary_op.src = value
 		};
 		return e;
@@ -1133,9 +1413,37 @@ static ExprIndex parse_expr_l4(TokenStream* restrict s) {
 	return lhs;
 }
 
+// + -
+static ExprIndex parse_expr_l5(TokenStream* restrict s) {
+	ExprIndex lhs = parse_expr_l4(s);
+	
+	while (tokens_get(s)->type == TOKEN_LEFT_SHIFT ||
+		   tokens_get(s)->type == TOKEN_RIGHT_SHIFT) {
+		ExprIndex e = push_expr_arena(1);
+		ExprOp op;
+		switch (tokens_get(s)->type) {
+			case TOKEN_LEFT_SHIFT: op = EXPR_SHL; break;
+			case TOKEN_RIGHT_SHIFT: op = EXPR_SHR; break;
+			default: __builtin_unreachable();
+		}
+		tokens_next(s);
+		
+		ExprIndex rhs = parse_expr_l4(s);
+		expr_arena.data[e] = (Expr) {
+			.op = op,
+			.loc = tokens_get(s)->location,
+			.bin_op = { lhs, rhs }
+		};
+		
+		lhs = e;
+	}
+	
+	return lhs;
+}
+
 // >= > <= <
 static ExprIndex parse_expr_l6(TokenStream* restrict s) {
-	ExprIndex lhs = parse_expr_l4(s);
+	ExprIndex lhs = parse_expr_l5(s);
 	
 	while (tokens_get(s)->type == TOKEN_GREATER_EQUAL ||
 		   tokens_get(s)->type == TOKEN_LESS_EQUAL || 
@@ -1152,7 +1460,7 @@ static ExprIndex parse_expr_l6(TokenStream* restrict s) {
 		}
 		tokens_next(s);
 		
-		ExprIndex rhs = parse_expr_l4(s);
+		ExprIndex rhs = parse_expr_l5(s);
 		expr_arena.data[e] = (Expr) {
 			.op = op,
 			.loc = tokens_get(s)->location,
@@ -1188,16 +1496,82 @@ static ExprIndex parse_expr_l7(TokenStream* restrict s) {
 	return lhs;
 }
 
+// &
+static ExprIndex parse_expr_l8(TokenStream* restrict s) {
+	ExprIndex lhs = parse_expr_l7(s);
+	
+	while (tokens_get(s)->type == '&') {
+		ExprIndex e = push_expr_arena(1);
+		ExprOp op = EXPR_AND;
+		tokens_next(s);
+		
+		ExprIndex rhs = parse_expr_l7(s);
+		expr_arena.data[e] = (Expr) {
+			.op = op,
+			.loc = tokens_get(s)->location,
+			.bin_op = { lhs, rhs }
+		};
+		
+		lhs = e;
+	}
+	
+	return lhs;
+}
+
+// ^
+static ExprIndex parse_expr_l9(TokenStream* restrict s) {
+	ExprIndex lhs = parse_expr_l8(s);
+	
+	while (tokens_get(s)->type == '^') {
+		ExprIndex e = push_expr_arena(1);
+		ExprOp op = EXPR_XOR;
+		tokens_next(s);
+		
+		ExprIndex rhs = parse_expr_l8(s);
+		expr_arena.data[e] = (Expr) {
+			.op = op,
+			.loc = tokens_get(s)->location,
+			.bin_op = { lhs, rhs }
+		};
+		
+		lhs = e;
+	}
+	
+	return lhs;
+}
+
+// |
+static ExprIndex parse_expr_l10(TokenStream* restrict s) {
+	ExprIndex lhs = parse_expr_l9(s);
+	
+	while (tokens_get(s)->type == '|') {
+		ExprIndex e = push_expr_arena(1);
+		ExprOp op = EXPR_OR;
+		tokens_next(s);
+		
+		ExprIndex rhs = parse_expr_l9(s);
+		expr_arena.data[e] = (Expr) {
+			.op = op,
+			.loc = tokens_get(s)->location,
+			.bin_op = { lhs, rhs }
+		};
+		
+		lhs = e;
+	}
+	
+	return lhs;
+}
+
 // &&
 static ExprIndex parse_expr_l11(TokenStream* restrict s) {
-	ExprIndex lhs = parse_expr_l7(s);
+	ExprIndex lhs = parse_expr_l10(s);
 	
 	while (tokens_get(s)->type == TOKEN_DOUBLE_AND) {
 		ExprIndex e = push_expr_arena(1);
 		ExprOp op = EXPR_LOGICAL_AND;
 		tokens_next(s);
 		
-		ExprIndex rhs = parse_expr_l6(s);
+		ExprIndex rhs = parse_expr_l10(s);
 		expr_arena.data[e] = (Expr) {
 			.op = op,
 			.loc = tokens_get(s)->location,
@@ -1232,9 +1606,36 @@ static ExprIndex parse_expr_l12(TokenStream* restrict s) {
 	return lhs;
 }
 
+// ternary
+static ExprIndex parse_expr_l13(TokenStream* restrict s) {
+	ExprIndex lhs = parse_expr_l12(s);
+	
+	while (tokens_get(s)->type == '?') {
+		SourceLocIndex loc = tokens_get(s)->location;
+		tokens_next(s);
+		
+		ExprIndex mhs = parse_expr(s);
+		
+		expect(s, ':');
+		
+		ExprIndex rhs = parse_expr_l12(s);
+		
+		ExprIndex e = push_expr_arena(1);
+		expr_arena.data[e] = (Expr) {
+			.op = EXPR_TERNARY,
+			.loc = loc,
+			.ternary_op = { lhs, mhs, rhs }
+		};
+		
+		lhs = e;
+	}
+	
+	return lhs;
+}
+
 // = += -= *= /= %= <<= >>= &= ^= |=
 static ExprIndex parse_expr_l14(TokenStream* restrict s) {
-	ExprIndex lhs = parse_expr_l12(s);
+	ExprIndex lhs = parse_expr_l13(s);
 	
 	while (tokens_get(s)->type == TOKEN_ASSIGN ||
 		   tokens_get(s)->type == TOKEN_PLUS_EQUAL ||
@@ -1266,7 +1667,7 @@ static ExprIndex parse_expr_l14(TokenStream* restrict s) {
 		}
 		tokens_next(s);
 		
-		ExprIndex rhs = parse_expr_l12(s);
+		ExprIndex rhs = parse_expr_l13(s);
 		expr_arena.data[e] = (Expr) {
 			.op = op,
 			.loc = tokens_get(s)->location,
@@ -1310,21 +1711,35 @@ static ExprIndex parse_expr(TokenStream* restrict s) {
 static TypeIndex parse_type_suffix(TokenStream* restrict s, TypeIndex type, Atom name);
 
 static Decl parse_declarator(TokenStream* restrict s, TypeIndex type) {
+	// handle calling convention
+	// TODO(NeGate): Actually pass these to the AST
+	parse_another_qualifier2: {
+		switch (tokens_get(s)->type) {
+			case TOKEN_KW_cdecl:
+			case TOKEN_KW_stdcall:
+			tokens_next(s);
+			goto parse_another_qualifier2;
+			default: break;
+		}
+	}
+	
 	// handle pointers
 	while (tokens_get(s)->type == '*') {
 		type = new_pointer(type);
 		tokens_next(s);
 		
 		// TODO(NeGate): parse qualifiers
-		switch (tokens_get(s)->type) {
-			case TOKEN_KW_const:
-			case TOKEN_KW_volatile:
-			case TOKEN_KW_restrict: 
-			case TOKEN_KW_cdecl:
-			case TOKEN_KW_stdcall:
-			tokens_next(s);
-			break;
-			default: break;
+		parse_another_qualifier: {
+			switch (tokens_get(s)->type) {
+				case TOKEN_KW_const:
+				case TOKEN_KW_volatile:
+				case TOKEN_KW_restrict: 
+				case TOKEN_KW_cdecl:
+				case TOKEN_KW_stdcall:
+				tokens_next(s);
+				goto parse_another_qualifier;
+				default: break;
+			}
 		}
 	}
 	
@@ -1385,21 +1800,33 @@ static Decl parse_declarator(TokenStream* restrict s, TypeIndex type) {
 // it's like a declarator with a skin fade,
 // int*        int[16]       const char* restrict
 static TypeIndex parse_abstract_declarator(TokenStream* restrict s, TypeIndex type) {
+	// handle calling convention
+	// TODO(NeGate): Actually pass these to the AST
+	parse_another_qualifier2: {
+		switch (tokens_get(s)->type) {
+			case TOKEN_KW_cdecl:
+			case TOKEN_KW_stdcall:
+			tokens_next(s);
+			goto parse_another_qualifier2;
+			default: break;
+		}
+	}
+	
 	// handle pointers
 	while (tokens_get(s)->type == '*') {
 		type = new_pointer(type);
 		tokens_next(s);
 		
 		// TODO(NeGate): parse qualifiers
-		switch (tokens_get(s)->type) {
-			case TOKEN_KW_const:
-			case TOKEN_KW_volatile:
-			case TOKEN_KW_restrict: 
-			case TOKEN_KW_cdecl:
-			case TOKEN_KW_stdcall:
-			tokens_next(s);
-			break;
-			default: break;
+		parse_another_qualifier: {
+			switch (tokens_get(s)->type) {
+				case TOKEN_KW_const:
+				case TOKEN_KW_volatile:
+				case TOKEN_KW_restrict:
+				tokens_next(s);
+				goto parse_another_qualifier;
+				default: break;
+			}
 		}
 	}
 	
@@ -1457,9 +1884,9 @@ static TypeIndex parse_type_suffix(TokenStream* restrict s, TypeIndex type, Atom
 		type_arena.data[type].func.name = name;
 		type_arena.data[type].func.return_type = return_type;
 		
-		if (tokens_get(s)->type == TOKEN_KW_void) {
+		if (tokens_get(s)->type == TOKEN_KW_void && tokens_peek(s)->type == ')') {
 			tokens_next(s);
-			expect(s, ')');
+			tokens_next(s);
 			
 			type_arena.data[type].func.arg_start = 0;
 			type_arena.data[type].func.arg_end = 0;
@@ -1594,6 +2021,10 @@ static TypeIndex parse_declspec(TokenStream* restrict s, Attribs* attr) {
 				tokens_next(s);
 				
 				bool is_union = tkn_type == TOKEN_KW_union;
+				
+				while (skip_over_declspec(s)) {
+					printf("Btw don't forget about declspecs...\n");
+				}
 				
 				Atom name = NULL;
 				Token* t = tokens_get(s);
@@ -1897,6 +2328,7 @@ static bool is_typename(TokenStream* restrict s) {
 		case TOKEN_KW_static:
 		case TOKEN_KW_typedef:
 		case TOKEN_KW_inline:
+		case TOKEN_KW_const:
 		case TOKEN_KW_Thread_local:
 		case TOKEN_KW_Atomic:
 		case TOKEN_KW_auto:
@@ -1919,7 +2351,9 @@ static int parse_const_expr_l0(TokenStream* restrict s) {
 	Token* restrict t = tokens_get(s);
 	
 	if (t->type == TOKEN_INTEGER) {
-		int64_t i = parse_int(t->end - t->start, (const char*)t->start);
+		IntSuffix suffix;
+		int64_t i = parse_int(t->end - t->start, (const char*)t->start, &suffix);
+		
 		tokens_next(s);
 		return i;
 	}
@@ -1927,20 +2361,15 @@ static int parse_const_expr_l0(TokenStream* restrict s) {
 	generic_error(s, "Could not parse constant expression");
 }
 
-static int parse_const_expr(TokenStream* restrict s) {
-	int left = parse_const_expr_l0(s);
+static intmax_t parse_const_expr(TokenStream* restrict s) {
+	ConstValue v = const_eval(parse_expr_l14(s));
+	intmax_t vi = v.signed_value;
 	
-	while (tokens_get(s)->type == TOKEN_PLUS ||
-		   tokens_get(s)->type == TOKEN_MINUS) {
-		TknType type = tokens_get(s)->type;
-		tokens_next(s);
-		
-		int right = parse_const_expr_l0(s);
-		if (type == TOKEN_PLUS) left += right;
-		else left -= right;
+	if (!v.is_signed && vi != v.unsigned_value) {
+		generic_error(s, "Constant integer cannot be represented as signed integer.");
 	}
 	
-	return left;
+	return vi;
 }
 
 ////////////////////////////////

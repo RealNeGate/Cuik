@@ -1,3 +1,4 @@
+#define STBI_NO_SIMD
 #define STB_IMAGE_IMPLEMENTATION
 
 /* stb_image - v2.26 - public domain image loader - http://nothings.org/stb

@@ -363,10 +363,22 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 	
 	switch (ep->op) {
 		case EXPR_INT: {
+			TB_DataType dt;
+			switch (ep->int_num.suffix) {
+				case INT_SUFFIX_NONE: case INT_SUFFIX_U: 
+				dt = TB_TYPE_I32;
+				break;
+				
+				case INT_SUFFIX_L: case INT_SUFFIX_UL: 
+				case INT_SUFFIX_LL: case INT_SUFFIX_ULL: 
+				dt = TB_TYPE_I64; 
+				break;
+			}
+			
 			return (IRVal) {
 				.value_type = RVALUE,
 				.type = TYPE_INT,
-				.reg = tb_inst_iconst(func, TB_TYPE_I32, ep->int_num)
+				.reg = tb_inst_iconst(func, TB_TYPE_I32, ep->int_num.num)
 			};
 		}
 		case EXPR_FLOAT: {
