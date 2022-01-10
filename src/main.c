@@ -147,6 +147,7 @@ static void set_preprocessor_info(CPP_Context* cpp_ctx) {
 	cpp_define(cpp_ctx, "__inline", "inline");
 #else
 	// TODO(NeGate): Automatically detect these somehow...
+	cpp_add_include_directory(cpp_ctx, "/usr/lib/gcc/x86_64-linux-gnu/10/include");
 	cpp_add_include_directory(cpp_ctx, "/usr/local/include/");
 	cpp_add_include_directory(cpp_ctx, "/usr/include/");
 #endif
