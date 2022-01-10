@@ -9,6 +9,7 @@
 
 #if _WIN32
 #include <windows.h>
+
 #define strdup(x) _strdup(x)
 #endif
 
@@ -876,7 +877,11 @@ static unsigned char* expand_ident(CPP_Context* restrict c, unsigned char* restr
 		lexer_read(l);
 		
 		char buf[10];
+#if _WIN32
 		_itoa(l->current_line, buf, 10);
+#else
+		itoa(l->current_line, buf, 10);
+#endif
 		
 		size_t length = strlen(buf);
 		memcpy(out, buf, length);

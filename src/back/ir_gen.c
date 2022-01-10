@@ -876,7 +876,7 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 			// Load inputs
 			IRVal lhs = gen_expr(func, ep->bin_op.left);
 			
-			TB_Register l;
+			TB_Register l = TB_NULL_REG;
 			if (ep->op != EXPR_ASSIGN) {
 				// don't do this conversion for ASSIGN, since it won't
 				// be needing it

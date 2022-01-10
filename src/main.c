@@ -258,7 +258,12 @@ typedef enum CompilerMode {
 
 // TODO(NeGate): Make some command line options for these
 static TB_Arch target_arch = TB_ARCH_X86_64;
+
+#ifdef _WIN32
 static TB_System target_sys = TB_SYSTEM_WINDOWS;
+#else
+static TB_System target_sys = TB_SYSTEM_LINUX;
+#endif
 
 static bool live_compile(const char source_file[], const char obj_output_path[], const char filename[]);
 static bool dump_tokens(const char source_file[]);
@@ -320,7 +325,6 @@ int main(int argc, char* argv[]) {
 	// helpful currently since code gen is the only parallel stage.
 	settings.num_of_worker_threads = sysinfo.dwNumberOfProcessors - 4;
 	if (settings.num_of_worker_threads <= 0) settings.num_of_worker_threads = 1;
-	settings.num_of_worker_threads = 1;
 #else
 	settings.num_of_worker_threads = 1;
 #endif
@@ -393,7 +397,11 @@ int main(int argc, char* argv[]) {
 			memcpy_s(filename, 260, source_file, ext - source_file);
 			filename[ext - source_file] = '\0';
 			
+#ifdef _WIN32
 			sprintf_s(obj_output_path, 260, "%s.obj", filename);
+#else
+			sprintf_s(obj_output_path, 260, "%s.o", filename);
+#endif
 			
 			// Build project
 			timed_block("compilation") {
@@ -453,7 +461,11 @@ int main(int argc, char* argv[]) {
 			memcpy_s(filename, 260, source_file, ext - source_file);
 			filename[ext - source_file] = '\0';
 			
+#ifdef _WIN32
 			sprintf_s(obj_output_path, 260, "%s.obj", filename);
+#else
+			sprintf_s(obj_output_path, 260, "%s.o", filename);
+#endif
 			
 			if (!live_compile(source_file, obj_output_path, filename)) {
 				printf("Live compiler error!\n");
