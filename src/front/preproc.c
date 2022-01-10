@@ -461,6 +461,8 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 					} else if (l.token_type == TOKEN_STRING_DOUBLE_QUOTE) {
 						start = l.token_start + 1;
 						end = l.token_end - 1;
+						
+						lexer_read(&l);
 					} else {
 						generic_error(&l, "expected file path!");
 					}

@@ -462,6 +462,7 @@ static bool dump_tokens(const char source_file[]) {
 	set_preprocessor_info(&cpp_ctx);
 	
 	TokenStream s = cpp_process(&cpp_ctx, source_file);
+	
 	cpp_finalize(&cpp_ctx);
 	
 	clock_t t2 = clock();
