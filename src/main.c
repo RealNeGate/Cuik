@@ -6,6 +6,7 @@
 #include "front/preproc.h"
 #include "front/parser.h"
 #include "front/atoms.h"
+#include "mid/sema.h"
 #include "back/ir_gen.h"
 #include "back/linker.h"
 #include "ext/threads.h"
@@ -40,7 +41,8 @@ static cnd_t tasks_condition;
 static mtx_t tasks_mutex;
 
 // Frontend IR Gen has two stages, one places all
-// forward decls (0) and one places all function bodies (1)
+// 0 semantic pass & forward decls
+// 1 function bodies
 static int frontend_stage;
 static TopLevel top_level;
 
@@ -53,8 +55,10 @@ static int task_thread(void* param) {
 		if (t+(MAX_MUNCH-1) >= tasks_count) {
 			if (t < tasks_count) {
 				for (size_t i = t; i < tasks_count; i++) {
-					if (frontend_stage == 0) gen_ir_stage1(top_level, i);
-					else gen_ir_stage2(top_level, i);
+					switch (frontend_stage) {
+						case 0: sema_check(top_level, i); break;
+						case 1: gen_ir(top_level, i); break;
+					}
 				}
 				
 				tasks_complete += (tasks_count - t);
@@ -69,8 +73,10 @@ static int task_thread(void* param) {
 		}
 		
 		for (size_t i = 0; i < MAX_MUNCH; i++) {
-			if (frontend_stage == 0) gen_ir_stage1(top_level, t+i);
-			else gen_ir_stage2(top_level, t+i);
+			switch (frontend_stage) {
+				case 0: sema_check(top_level, t+i); break;
+				case 1: gen_ir(top_level, t+i); break;
+			} 
 		}
 		tasks_complete += MAX_MUNCH;
 	}
@@ -171,12 +177,12 @@ static void compile_project(TB_Arch arch, TB_System sys, const char source_file[
 		// Forward decls
 		size_t func_count = arrlen(top_level.arr);
 		for (size_t i = 0; i < func_count; i++) {
-			gen_ir_stage1(top_level, i);
+			sema_check(top_level, i);
 		}
 		
 		// IR generation
 		for (size_t i = 0; i < func_count; i++) {
-			gen_ir_stage2(top_level, i);
+			gen_ir(top_level, i);
 		}
 	} else {
 		is_running = true;
@@ -193,14 +199,14 @@ static void compile_project(TB_Arch arch, TB_System sys, const char source_file[
 		frontend_stage = 0;
 		dispatch_tasks(arrlen(top_level.arr));
 		
-		// Generate bodies
-		frontend_stage = 1;
-		dispatch_tasks(arrlen(top_level.arr));
-		
 		if (sema_error_count) {
 			printf("compiled with %d errors\n", sema_error_count);
 			abort();
 		}
+		
+		// Generate bodies
+		frontend_stage = 1;
+		dispatch_tasks(arrlen(top_level.arr));
 		
 		arrfree(s.tokens);
 		arrfree(top_level.arr);
@@ -255,6 +261,28 @@ static bool live_compile(const char source_file[], const char obj_output_path[],
 static bool dump_tokens(const char source_file[]);
 
 int main(int argc, char* argv[]) {
+#if 0
+	// Use this code to generate the 10 million line test
+	FILE* file = fopen("tests/test5.c", "wb");
+	
+	fprintf(file, "void print(int n){}\n");
+	
+	for (int i = 1; i <= 1000000; i++) {
+		fprintf(file, "void fibonacci%d() {\n"
+				"\tint lo = 0;\n"
+				"\tint hi = 1;\n"
+				"\twhile (hi < 10000) {\n"
+				"\t\tint tmp = hi;\n"
+				"\t\thi = hi + lo;\n"
+				"\t\tlo = tmp;\n"
+				"\t\tprint(lo);\n"
+				"\t}\n"
+				"}\n\n", i);
+	}
+	
+	fprintf(file, "\nint main() {\n\treturn 0;\n}\n\n");
+	fclose(file);
+#else
 	static char filename[256];
 	static char obj_output_path[260];
 	
@@ -286,12 +314,14 @@ int main(int argc, char* argv[]) {
 	// Just kinda guesses something that seems ok ish for now
 	// eventually we'll wanna use all cores but it's not honestly
 	// helpful currently since code gen is the only parallel stage.
-	settings.num_of_worker_threads = (sysinfo.dwNumberOfProcessors / 2) - 1;
+	settings.num_of_worker_threads = sysinfo.dwNumberOfProcessors - 4;
 	if (settings.num_of_worker_threads <= 0) settings.num_of_worker_threads = 1;
 	//settings.num_of_worker_threads = 1;
 #else
 	settings.num_of_worker_threads = 1;
 #endif
+	
+	printf("Starting with %d threads\n", settings.num_of_worker_threads);
 	
 	int i = 2;
 	while (i < argc) {
@@ -486,6 +516,7 @@ static bool dump_tokens(const char source_file[]) {
 	
 	fclose(f);
 	return true;
+#endif
 }
 
 ////////////////////////////////

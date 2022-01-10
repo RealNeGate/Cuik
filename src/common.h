@@ -33,6 +33,18 @@ inline static bool cstr_equals(const unsigned char* str1, const unsigned char* s
 	return strcmp((const char*)str1, (const char*)str2) == 0;
 }
 
+// returns the number of bytes written
+inline static size_t cstr_copy(size_t len, char* dst, const char* src) {
+	size_t i = 0;
+	while (src[i]) {
+		assert(i < len);
+		
+		dst[i] = src[i];
+		i += 1;
+	}
+	return i;
+}
+
 #if _WIN32
 typedef wchar_t* OS_String;
 #else

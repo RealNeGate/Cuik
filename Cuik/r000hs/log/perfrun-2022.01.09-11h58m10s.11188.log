@@ -1,0 +1,111 @@
+93 [11156] INFO perfrun.launcher <> - Launcher main begin
+97 [11156] INFO perfrun.launcher <> - MessageCatalogInit finished
+98 [11156] INFO perfrun.launcher <> - Launcher instance created
+98 [11156] INFO perfrun.launcher <> - argc = 7; cmdline = C:\Program Files (x86)\Intel\oneAPI\vtune\latest\bin64\amplxe-runss.exe --ui-output-format xml --ui-output-fd 1292 --option-file W:\Workspace\Cuik\Cuik\r000hs\config\runss.options 
+118 [11156] INFO perfrun.launcher <> - New signal handler callback was added
+177 [11156] INFO perfrun.launcher <> - create msngr2::ICliToolContext
+178 [11156] INFO perfrun.launcher <> - create file finder object
+183 [11156] INFO perfrun.launcher <> - create a result directory: pattern = W:\Workspace\Cuik\Cuik\r000hs pid = 4294967295
+187 [11156] INFO perfrun.launcher <> - create data directory = W:\Workspace\Cuik\Cuik\r000hs\data.0
+188 [11156] INFO perfrun.launcher <> - Creating the master collection flag
+192 [11156] INFO perfrun.launcher <> - Done creating the master collection flag
+193 [12452] INFO perfrun.launcher <> - plugin [remoteplug] was disabled because it doesn't support the given collection type.
+199 [12452] INFO perfrun.sdk <> - Allocating TMU :W:\Workspace\Cuik\Cuik\r000hs\data.0\systemcollector-11188-DESKTOP-7JBJLF5.sc
+200 [12452] INFO perfrun.launcher <> - plugin [] was disabled because it doesn't support the given collection type.
+205 [12452] INFO perfrun.launcher <> - plugin [] was disabled because it doesn't support the given collection type.
+206 [12452] INFO perfrun.launcher <> - plugin [gpu] was disabled because it doesn't support the given collection type.
+206 [12452] INFO perfrun.launcher <> - plugin [etw.kernel] was disabled because it doesn't support the given collection type.
+207 [12452] INFO perfrun.launcher <> - plugin [etw.dx] was disabled because it doesn't support the given collection type.
+207 [12452] INFO perfrun.launcher <> - plugin [etw.wsa] was disabled because it doesn't support the given collection type.
+209 [12452] INFO perfrun.mrte <> - system-wide mode is 0
+211 [12452] INFO perfrun.mrte <> - Getting  mrte profiling environment ...
+362 [12452] INFO perfrun.mrte <> - INTEL_MRTE_DATA_DIR=W:\Workspace\Cuik\Cuik\r000hs\data.0
+362 [12452] INFO perfrun.mrte <> - INTEL_MRTE_HOST_NAME=DESKTOP-7JBJLF5
+362 [12452] INFO perfrun.mrte <> - JAVA_TOOL_OPTIONS=-agentlib:amplxe_tpssmrte_javaprof_1.0
+362 [12452] INFO perfrun.mrte <> - PATH=C:\Program Files (x86)\Intel\oneAPI\vtune\latest\bin32\runtime;C:\Program Files (x86)\Intel\oneAPI\vtune\latest\bin64\runtime;C:\Program Files\Eclipse Foundation\jdk-8.0.302.8-hotspot\bin;C:\Program Files\Common Files\Oracle\Java\javapath;C:\Program Files (x86)\Common Files\Oracle\Java\javapath;G:\VulkanSDK\1.2.176.1\Bin;C:\Program Files\git\mingw64\bin;C:\Windows\system32;C:\Windows;C:\Windows\System32\Wbem;C:\Windows\System32\WindowsPowerShell\v1.0\;C:\Windows\System32\OpenSSH\;C:\Program Files (x86)\NVIDIA Corporation\PhysX\Common;C:\WINDOWS\system32;C:\WINDOWS;C:\WINDOWS\System32\Wbem;C:\WINDOWS\System32\WindowsPowerShell\v1.0\;C:\WINDOWS\System32\OpenSSH\;G:\Visual Studio\2019\Community\Common7\IDE;C:\Program Files\Intel\Embree3;C:\Program Files\Git\cmd;C:\Program Files\CMake\bin;C:\Program Files\Git\bin;C:\Program Files (x86)\Windows Kits\10\Lib\10.0.17763.0\um\x64;C:\ProgramData\chocolatey\bin;C:\Program Files\NVIDIA Corporation\NVIDIA NvDLISR;C:\Program Files\Git LFS;W:\emsdk;G:\Java\jdk-14.0.1\bin;W:\LLVM\bin;W:\Visual Studio\2019\Community\VC\Tools\MSVC\14.27.29110\bin\Hostx64\x64;C:\Program Files\mingw-w64\x86_64-8.1.0-win32-seh-rt_v6-rev0\mingw64\x86_64-w64-mingw32\bin\;C:\Program Files\AMD\AMDuProf\bin;C:\Users\Yasser\AppData\Local\Android\Sdk\tools;C:\Users\Yasser\AppData\Local\Android\Sdk\platform-tools;C:\WINDOWS\system32;C:\WINDOWS;C:\WINDOWS\System32\Wbem;C:\WINDOWS\System32\WindowsPowerShell\v1.0\;C:\WINDOWS\System32\OpenSSH\;W:\nodejs\;C:\Users\Yasser\.cargo\bin;W:\Visual Studio\2019\Community\MSBuild\Current\Bin;W:\Visual Studio\2019\Community\VC\Auxiliary\Build;C:\Program Files\KTX-Software\bin;C:\Program Files\Android Game Development Extension\bin\;C:\Program Files\VisualSVN Server\bin;C:\Program Files\TortoiseSVN\bin;W:\Visual Studio\2019\Community\Common7\IDE;C:\Make\bin;C:\Users\Yasser\AppData\Local\Programs\Python\Python310\Scripts\;C:\Users\Yasser\AppData\Local\Programs\Python\Python310\;C:\Users\Yasser\.cargo\bin;C:\Users\Yasser\AppData\Local\Microsoft\WindowsApps;C:\Program Files\Intel\Embree3;C:\Users\Yasser\AppData\Local\GitHubDesktop\bin;C:\Users\Yasser;C:\Users\Yasser\AppData\Local\atom\bin;G:\Visual Studio\2019\Community\Common7\IDE;W:\Microsoft VS Code\bin;C:\Program Files (x86)\Vim\vim82;C:\Users\Yasser\AppData\Local\Microsoft\WindowsApps;C:\Users\Yasser\AppData\Roaming\npm;C:\Users\Yasser\.wasmer\bin;C:\Users\Yasser\AppData\Local\Programs\Hyper\resources\bin
+363 [12452] INFO perfrun.mrte <> - COR_ENABLE_PROFILING=1
+363 [12452] INFO perfrun.mrte <> - COR_PROFILER={2603158F-60BC-4915-9795-D85FC7A9A2C8}
+363 [12452] INFO perfrun.mrte <> - COMPLUS_ProfAPI_ProfilerCompatibilitySetting=EnableV2Profiler
+363 [12452] INFO perfrun.mrte <> - CORECLR_ENABLE_PROFILING=1
+363 [12452] INFO perfrun.mrte <> - CORECLR_PROFILER={2603158F-60BC-4915-9795-D85FC7A9A2C8}
+363 [12452] INFO perfrun.mrte <> - CORECLR_PROFILER_PATH=C:\Program Files (x86)\Intel\oneAPI\vtune\latest\bin64/amplxe_tpssmrte_clrprof_1.0.dll
+363 [12452] INFO perfrun.mrte <> - INTEL_MRTE_PROFILER_MODE=mixed
+363 [12452] INFO perfrun.mrte <> - Data directory: W:\Workspace\Cuik\Cuik\r000hs\data.0
+363 [12452] INFO perfrun.mrte <> - Mrte plugin is initialized
+364 [12452] INFO perfrun.launcher <> - plugin [emon] was disabled because it doesn't support the given collection type.
+364 [12452] INFO perfrun.launcher <> - plugin [cuscol] was disabled because it doesn't support the given collection type.
+365 [12452] INFO perfrun.launcher <> - plugin [stdsrc] was disabled because it doesn't support the given collection type.
+366 [12452] INFO perfrun.launcher <> - plugin [sep] was disabled because it doesn't support the given collection type.
+366 [12452] INFO perfrun.launcher <> - plugin [vtsspp] was disabled because it doesn't support the given collection type.
+366 [12452] INFO perfrun.launcher <> - plugin [] was disabled because it doesn't support the given collection type.
+366 [12452] INFO perfrun.launcher <> - plugin [aoclprofile] was disabled because it doesn't support the given collection type.
+367 [12452] INFO perfrun.tpss <> - initialize tpss controller
+368 [12452] INFO perfrun.tpss <> - configure collection mode: value = cpu:counters:nostack
+371 [12452] INFO perfrun.tpss <> - configure collection mode: value = cpu:stack
+371 [12452] INFO perfrun.tpss <> - default obj-size-min=1024
+371 [12452] INFO perfrun.tpss <> - default hash-table-size=0
+373 [12452] INFO perfrun.launcher <> - plugin [exprof] was disabled because it doesn't support the given collection type.
+373 [12452] INFO perfrun.launcher <> - plugin [] was disabled because it doesn't support the given collection type.
+373 [12452] INFO perfrun.launcher <> - plugin [] was disabled because it doesn't support the given collection type.
+373 [12452] INFO perfrun.launcher <> - plugin [] was disabled because it doesn't support the given collection type.
+373 [12452] INFO perfrun.launcher <> - plugin [] was disabled because it doesn't support the given collection type.
+374 [12452] INFO perfrun.launcher <> - plugin [power] was disabled because it doesn't support the given collection type.
+374 [12452] INFO perfrun.launcher <> - plugin [hwloc] was disabled because it doesn't support the given collection type.
+374 [12452] INFO perfrun.launcher <> - plugin [ipmwatch] was disabled because it doesn't support the given collection type.
+374 [12452] INFO perfrun.launcher <> - plugin [os_counters] was disabled because it doesn't support the given collection type.
+375 [12452] INFO perfrun.launcher <> - plugin [l0_metrics] was disabled because it doesn't support the given collection type.
+375 [11156] INFO perfrun.launcher <> - set environment variable: PATH = C:\Program Files (x86)\Intel\oneAPI\vtune\latest\bin32\runtime;C:\Program Files (x86)\Intel\oneAPI\vtune\latest\bin64\runtime;C:\Program Files\Eclipse Foundation\jdk-8.0.302.8-hotspot\bin;C:\Program Files\Common Files\Oracle\Java\javapath;C:\Program Files (x86)\Common Files\Oracle\Java\javapath;G:\VulkanSDK\1.2.176.1\Bin;C:\Program Files\git\mingw64\bin;C:\Windows\system32;C:\Windows;C:\Windows\System32\Wbem;C:\Windows\System32\WindowsPowerShell\v1.0\;C:\Windows\System32\OpenSSH\;C:\Program Files (x86)\NVIDIA Corporation\PhysX\Common;C:\WINDOWS\system32;C:\WINDOWS;C:\WINDOWS\System32\Wbem;C:\WINDOWS\System32\WindowsPowerShell\v1.0\;C:\WINDOWS\System32\OpenSSH\;G:\Visual Studio\2019\Community\Common7\IDE;C:\Program Files\Intel\Embree3;C:\Program Files\Git\cmd;C:\Program Files\CMake\bin;C:\Program Files\Git\bin;C:\Program Files (x86)\Windows Kits\10\Lib\10.0.17763.0\um\x64;C:\ProgramData\chocolatey\bin;C:\Program Files\NVIDIA Corporation\NVIDIA NvDLISR;C:\Program Files\Git LFS;W:\emsdk;G:\Java\jdk-14.0.1\bin;W:\LLVM\bin;W:\Visual Studio\2019\Community\VC\Tools\MSVC\14.27.29110\bin\Hostx64\x64;C:\Program Files\mingw-w64\x86_64-8.1.0-win32-seh-rt_v6-rev0\mingw64\x86_64-w64-mingw32\bin\;C:\Program Files\AMD\AMDuProf\bin;C:\Users\Yasser\AppData\Local\Android\Sdk\tools;C:\Users\Yasser\AppData\Local\Android\Sdk\platform-tools;C:\WINDOWS\system32;C:\WINDOWS;C:\WINDOWS\System32\Wbem;C:\WINDOWS\System32\WindowsPowerShell\v1.0\;C:\WINDOWS\System32\OpenSSH\;W:\nodejs\;C:\Users\Yasser\.cargo\bin;W:\Visual Studio\2019\Community\MSBuild\Current\Bin;W:\Visual Studio\2019\Community\VC\Auxiliary\Build;C:\Program Files\KTX-Software\bin;C:\Program Files\Android Game Development Extension\bin\;C:\Program Files\VisualSVN Server\bin;C:\Program Files\TortoiseSVN\bin;W:\Visual Studio\2019\Community\Common7\IDE;C:\Make\bin;C:\Users\Yasser\AppData\Local\Programs\Python\Python310\Scripts\;C:\Users\Yasser\AppData\Local\Programs\Python\Python310\;C:\Users\Yasser\.cargo\bin;C:\Users\Yasser\AppData\Local\Microsoft\WindowsApps;C:\Program Files\Intel\Embree3;C:\Users\Yasser\AppData\Local\GitHubDesktop\bin;C:\Users\Yasser;C:\Users\Yasser\AppData\Local\atom\bin;G:\Visual Studio\2019\Community\Common7\IDE;W:\Microsoft VS Code\bin;C:\Program Files (x86)\Vim\vim82;C:\Users\Yasser\AppData\Local\Microsoft\WindowsApps;C:\Users\Yasser\AppData\Roaming\npm;C:\Users\Yasser\.wasmer\bin;C:\Users\Yasser\AppData\Local\Programs\Hyper\resources\bin
+375 [11156] INFO perfrun.launcher <> - set environment variable: INTEL_LIBITTNOTIFY32 = C:\Program Files (x86)\Intel\oneAPI\vtune\latest\bin32\runtime\ittnotify_collector.dll
+375 [11156] INFO perfrun.launcher <> - set environment variable: INTEL_LIBITTNOTIFY64 = C:\Program Files (x86)\Intel\oneAPI\vtune\latest\bin64\runtime\ittnotify_collector.dll
+375 [11156] INFO perfrun.launcher <> - set environment variable: INTEL_ITTNOTIFY_GROUPS = 
+376 [11156] INFO perfrun.launcher <> - set environment variable: INTEL_JIT_PROFILER32 = C:\Program Files (x86)\Intel\oneAPI\vtune\latest\bin32\runtime\ittnotify_collector.dll
+376 [11156] INFO perfrun.launcher <> - set environment variable: INTEL_JIT_PROFILER64 = C:\Program Files (x86)\Intel\oneAPI\vtune\latest\bin64\runtime\ittnotify_collector.dll
+376 [11156] INFO perfrun.launcher <> - set environment variable: VS_PROFILER = ittnotify_collector.dll
+376 [11156] INFO perfrun.launcher <> - set environment variable: OMP_TOOL_LIBRARIES = C:\Program Files (x86)\Intel\oneAPI\vtune\latest\bin32\runtime\ittnotify_collector.dll;C:\Program Files (x86)\Intel\oneAPI\vtune\latest\bin64\runtime\ittnotify_collector.dll
+376 [11156] INFO perfrun.launcher <> - set environment variable: ENABLE_JITPROFILING = 1
+376 [11156] INFO perfrun.launcher <> - set environment variable: CL_CONFIG_USE_VTUNE = True
+376 [11156] INFO perfrun.launcher <> - set environment variable: KMP_FORKJOIN_FRAMES = 0
+376 [11156] INFO perfrun.launcher <> - set environment variable: KMP_FORKJOIN_FRAMES_MODE = 0
+376 [11156] INFO perfrun.launcher <> - set environment variable: OMP_TOOL = disabled
+376 [11156] INFO perfrun.launcher <> - set environment variable: INTEL_MRTE_DATA_DIR = W:\Workspace\Cuik\Cuik\r000hs\data.0
+376 [11156] INFO perfrun.launcher <> - set environment variable: INTEL_MRTE_HOST_NAME = DESKTOP-7JBJLF5
+377 [11156] INFO perfrun.launcher <> - set environment variable: JAVA_TOOL_OPTIONS = -agentlib:amplxe_tpssmrte_javaprof_1.0
+377 [11156] INFO perfrun.launcher <> - set environment variable: PATH = C:\Program Files (x86)\Intel\oneAPI\vtune\latest\bin32\runtime;C:\Program Files (x86)\Intel\oneAPI\vtune\latest\bin64\runtime;C:\Program Files\Eclipse Foundation\jdk-8.0.302.8-hotspot\bin;C:\Program Files\Common Files\Oracle\Java\javapath;C:\Program Files (x86)\Common Files\Oracle\Java\javapath;G:\VulkanSDK\1.2.176.1\Bin;C:\Program Files\git\mingw64\bin;C:\Windows\system32;C:\Windows;C:\Windows\System32\Wbem;C:\Windows\System32\WindowsPowerShell\v1.0\;C:\Windows\System32\OpenSSH\;C:\Program Files (x86)\NVIDIA Corporation\PhysX\Common;C:\WINDOWS\system32;C:\WINDOWS;C:\WINDOWS\System32\Wbem;C:\WINDOWS\System32\WindowsPowerShell\v1.0\;C:\WINDOWS\System32\OpenSSH\;G:\Visual Studio\2019\Community\Common7\IDE;C:\Program Files\Intel\Embree3;C:\Program Files\Git\cmd;C:\Program Files\CMake\bin;C:\Program Files\Git\bin;C:\Program Files (x86)\Windows Kits\10\Lib\10.0.17763.0\um\x64;C:\ProgramData\chocolatey\bin;C:\Program Files\NVIDIA Corporation\NVIDIA NvDLISR;C:\Program Files\Git LFS;W:\emsdk;G:\Java\jdk-14.0.1\bin;W:\LLVM\bin;W:\Visual Studio\2019\Community\VC\Tools\MSVC\14.27.29110\bin\Hostx64\x64;C:\Program Files\mingw-w64\x86_64-8.1.0-win32-seh-rt_v6-rev0\mingw64\x86_64-w64-mingw32\bin\;C:\Program Files\AMD\AMDuProf\bin;C:\Users\Yasser\AppData\Local\Android\Sdk\tools;C:\Users\Yasser\AppData\Local\Android\Sdk\platform-tools;C:\WINDOWS\system32;C:\WINDOWS;C:\WINDOWS\System32\Wbem;C:\WINDOWS\System32\WindowsPowerShell\v1.0\;C:\WINDOWS\System32\OpenSSH\;W:\nodejs\;C:\Users\Yasser\.cargo\bin;W:\Visual Studio\2019\Community\MSBuild\Current\Bin;W:\Visual Studio\2019\Community\VC\Auxiliary\Build;C:\Program Files\KTX-Software\bin;C:\Program Files\Android Game Development Extension\bin\;C:\Program Files\VisualSVN Server\bin;C:\Program Files\TortoiseSVN\bin;W:\Visual Studio\2019\Community\Common7\IDE;C:\Make\bin;C:\Users\Yasser\AppData\Local\Programs\Python\Python310\Scripts\;C:\Users\Yasser\AppData\Local\Programs\Python\Python310\;C:\Users\Yasser\.cargo\bin;C:\Users\Yasser\AppData\Local\Microsoft\WindowsApps;C:\Program Files\Intel\Embree3;C:\Users\Yasser\AppData\Local\GitHubDesktop\bin;C:\Users\Yasser;C:\Users\Yasser\AppData\Local\atom\bin;G:\Visual Studio\2019\Community\Common7\IDE;W:\Microsoft VS Code\bin;C:\Program Files (x86)\Vim\vim82;C:\Users\Yasser\AppData\Local\Microsoft\WindowsApps;C:\Users\Yasser\AppData\Roaming\npm;C:\Users\Yasser\.wasmer\bin;C:\Users\Yasser\AppData\Local\Programs\Hyper\resources\bin
+377 [11156] INFO perfrun.launcher <> - set environment variable: COR_ENABLE_PROFILING = 1
+377 [11156] INFO perfrun.launcher <> - set environment variable: COR_PROFILER = {2603158F-60BC-4915-9795-D85FC7A9A2C8}
+377 [11156] INFO perfrun.launcher <> - set environment variable: COMPLUS_ProfAPI_ProfilerCompatibilitySetting = EnableV2Profiler
+377 [11156] INFO perfrun.launcher <> - set environment variable: CORECLR_ENABLE_PROFILING = 1
+377 [11156] INFO perfrun.launcher <> - set environment variable: CORECLR_PROFILER = {2603158F-60BC-4915-9795-D85FC7A9A2C8}
+377 [11156] INFO perfrun.launcher <> - set environment variable: CORECLR_PROFILER_PATH = C:\Program Files (x86)\Intel\oneAPI\vtune\latest\bin64/amplxe_tpssmrte_clrprof_1.0.dll
+377 [11156] INFO perfrun.launcher <> - set environment variable: INTEL_MRTE_PROFILER_MODE = mixed
+381 [11156] INFO perfrun.launcher <> - RpcServer: run RPC server to handle requests
+390 [11156] INFO perfrun.sdk <> - IProcessUtil: the given executable 'W:\Workspace\Cuik\build\cuik.exe' is valid.
+391 [11156] INFO perfrun.launcher <> - Launcher: command line to start before modification = W:\Workspace\Cuik\build\cuik.exe build -c tests/test5.c
+395 [11156] INFO perfrun.launcher <> - Launcher: command line to start after modification = C:\Program Files (x86)\Intel\oneAPI\vtune\2021.9.0\bin64\pin.exe -error_file W:\Workspace\Cuik\Cuik\r000hs\data.0\pinerr.tpsslog -detach_reattach -probe -follow_execv -p32 C:\Program Files (x86)\Intel\oneAPI\vtune\latest\bin32\pin.exe -p64 C:\Program Files (x86)\Intel\oneAPI\vtune\latest\bin64\pin.exe -t64 C:\Program Files (x86)\Intel\oneAPI\vtune\latest\bin64\tpsstool.dll -t C:\Program Files (x86)\Intel\oneAPI\vtune\latest\bin32\tpsstool.dll -server_name tpss_ipc.11188 -prd_dir C:\Program Files (x86)\Intel\oneAPI\vtune\2021.9.0 -- W:\Workspace\Cuik\build\cuik.exe build -c tests/test5.c
+396 [11156] INFO perfrun.launcher <> - ProcessCreator object was created
+397 [11156] INFO perfrun.launcher <> - Launcher: the process was started in suspend mode
+400 [12452] INFO perfrun.itt <> - start itt controller for pid #12952
+400 [12452] INFO perfrun.tpss <> - start tpss controller for pid #12952
+455 [11156] INFO perfrun.launcher <> - Launcher: all plugins were started
+457 [11156] INFO perfrun.launcher <> - DirectoryMonitor object was created
+457 [11156] INFO perfrun.launcher <> - DirectoryMonitor: a callback was added
+457 [11156] INFO perfrun.launcher <> - DirectoryMonitor was started with pingTime = 1000
+457 [11156] INFO perfrun.launcher <> - DeadlineTimer is going to be constructed
+459 [11156] INFO perfrun.launcher <> - DeadlineTimer: a callback was added
+464 [11156] INFO perfrun.launcher <> - Launcher: resume the profiled application and  wait its termination or stop command
+2279 [11156] WARN perfrun.sdk <> - Unexpected exit status - -1073740791, at file: C:\BB\INNLphep2w6r\b\tmpn9bzcj\vcs\perfrun1\sdk\src\utils_win.cpp:559
+2279 [11156] INFO perfrun.launcher <> - Launcher: the profiled application was terminated  with exit code = -1073740791
+2279 [12452] INFO perfrun.launcher <> - Cannot open the given process to PING #9100 : The parameter is incorrect.
+2281 [12452] INFO perfrun.launcher <> - Cannot open the given process to PING #9100 : The parameter is incorrect.
+2287 [12452] INFO perfrun.itt <> - detach itt controller
+2287 [12452] INFO perfrun.itt <> - detach itt controller done
+2287 [12452] INFO perfrun.tpss <> - stop tpss controller
+2288 [12452] INFO perfrun.sdk <> - De-allocating TMU: W:\Workspace\Cuik\Cuik\r000hs\data.0\systemcollector-11188-DESKTOP-7JBJLF5.sc
+2308 [12452] INFO perfrun.system <> - closed the system trace file: W:\Workspace\Cuik\Cuik\r000hs\data.0\systemcollector-11188-DESKTOP-7JBJLF5.sc
+2308 [11156] INFO perfrun.launcher <> - Launcher: all plugins were stopped.
+2308 [11156] INFO perfrun.launcher <> - DeadlineTimer is going to be destroyed
+2309 [11156] INFO perfrun.launcher <> - DeadlineTimer was destroyed
+2309 [11156] INFO perfrun.launcher <> - DirectoryMonitor object was destroyed
+2309 [11156] WARN perfrun.launcher <> - Stop command is ignored because it is received when collection is already stopped, at file: C:\BB\INNLphep2w6r\b\tmpn9bzcj\vcs\perfrun1\launcher\src\command_handler.cpp:212
+2310 [11156] INFO perfrun.launcher <> - Application exit code: -1073740791
+2310 [11156] INFO perfrun.launcher <> - Exit code: 4

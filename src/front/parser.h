@@ -9,7 +9,7 @@
 
 decl_arena_index(Type, type_arena)
 decl_arena_index(Member, member_arena) // Members used by struct/union types
-decl_arena_index(Arg, arg_arena) // refs to Types used by the function types
+decl_arena_index(Param, param_arena)
 decl_arena_index(EnumEntry, enum_entry_arena)
 
 decl_arena_index(Stmt, stmt_arena)
@@ -68,10 +68,10 @@ typedef struct EnumEntry {
 	int value;
 } EnumEntry;
 
-typedef struct Arg {
+typedef struct Param {
 	TypeIndex type;
 	Atom name;
-} Arg;
+} Param;
 
 typedef struct Type {
     TypeKind kind;
@@ -89,7 +89,7 @@ typedef struct Type {
         // Arrays
 		struct {
 			TypeIndex array_of;
-			int array_count;
+			size_t array_count;
 		};
 		
         // Pointers
@@ -99,7 +99,7 @@ typedef struct Type {
 		struct {
 			Atom name;
 			TypeIndex return_type;
-			ArgIndex arg_start, arg_end;
+			ParamIndex param_list, param_count;
 			bool has_varargs;
 			
 			// TODO(NeGate): Attributes
@@ -133,7 +133,9 @@ enum {
 	TYPE_UINT,
 	TYPE_ULONG,
 	TYPE_FLOAT,
-	TYPE_DOUBLE
+	TYPE_DOUBLE,
+	TYPE_STRING,
+	TYPE_WSTRING
 };
 
 typedef enum StmtOp {
@@ -366,6 +368,17 @@ typedef struct Expr {
 	ExprOp op;
 	SourceLocIndex loc;
 	
+	TypeIndex type;
+	
+	// this is the type it'll be desugared into
+	// for example:
+	//
+	//   a + b where a and b are 16bit
+	//
+	//   their cast_type might be int because of C's
+	//   promotion rules.
+	TypeIndex cast_type;
+	
 	union {
 		Atom unknown_sym;
 		StmtIndex symbol;
@@ -390,10 +403,18 @@ typedef struct Expr {
 			ExprIndex src;
 		} unary_op;
 		struct {
+			// once the semantic pass runs over the AST
+			// we'll have proper indices to access the Member
+			MemberIndex member;
+			
 			ExprIndex base;
 			Atom name;
 		} dot;
 		struct {
+			// once the semantic pass runs over the AST
+			// we'll have proper indices to access the Member
+			MemberIndex member;
+			
 			ExprIndex base;
 			Atom name;
 		} arrow;
@@ -424,13 +445,13 @@ typedef struct Expr {
 		
 		double float_num;
 		struct ExprInt {
-			long long num;
+			unsigned long long num;
 			IntSuffix suffix;
 		} int_num;
 	};
 } Expr;
 
-_Static_assert(sizeof(Expr) <= 24, "We shouldn't exceed 24 bytes");
+_Static_assert(sizeof(Expr) <= 32, "We shouldn't exceed 32 bytes");
 
 typedef struct Decl {
 	TypeIndex type;
@@ -464,7 +485,7 @@ typedef struct Symbol {
 
 decl_arena(Type, type_arena)
 decl_arena(Member, member_arena)
-decl_arena(Arg, arg_arena)
+decl_arena(Param, param_arena)
 decl_arena(EnumEntry, enum_entry_arena)
 
 decl_arena(Stmt, stmt_arena)

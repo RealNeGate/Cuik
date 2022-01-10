@@ -1,0 +1,17 @@
+<?xml version='1.0' encoding='UTF-8'?>
+
+<bag xmlns:unsignedLong="http://www.w3.org/2001/XMLSchema#unsignedLong">
+ <entry path="start_tsc" unsignedLong:size="18446744073709551615">
+  <indexFields>
+   <field path="dd_offload_region_operation"/>
+   <field path="dd_offload_region_operation.region.context"/>
+   <field path="dd_offload_region_operation.region.context.process"/>
+   <field path="dd_offload_region_operation.region.context.gpu_node"/>
+  </indexFields>
+  <int64Fields>
+   <field path="count"/>
+   <field path="end_tsc"/>
+  </int64Fields>
+  <doubleFields/>
+ </entry>
+</bag>

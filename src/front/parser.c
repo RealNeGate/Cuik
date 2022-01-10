@@ -161,27 +161,25 @@ TopLevel parse_file(TokenStream* restrict s) {
 				shput(global_symbols, decl.name, func_symbol);
 				
 				if (tokens_get(s)->type == '{') {
-					ArgIndex arg_start = type_arena.data[decl.type].func.arg_start;
-					ArgIndex arg_end = type_arena.data[decl.type].func.arg_end;
+					ParamIndex param_list = type_arena.data[decl.type].func.param_list;
+					ParamIndex param_count = type_arena.data[decl.type].func.param_count;
 					
-					int p = 0; // param counter
-					for (ArgIndex i = arg_start; i != arg_end; i++) {
-						Arg* a = &arg_arena.data[i];
+					for (size_t i = 0; i < param_count; i++) {
+						Param* p = &param_arena.data[param_list + i];
 						
-						if (a->name) {
+						if (p->name) {
 							local_symbols[local_symbol_count++] = (Symbol){
-								.name = a->name,
-								.type = a->type,
+								.name = p->name,
+								.type = p->type,
 								.storage_class = STORAGE_PARAM,
-								.param_num = p
+								.param_num = i
 							};
 						}
-						p += 1;
 					}
-					
 					tokens_next(s);
 					
 					stmt_arena.data[n].op = STMT_FUNC_DECL;
+					ExprIndex starting_point = expr_arena.count;
 					
 					// NOTE(NeGate): STMT_FUNC_DECL is always followed by a compound block
 #if NDEBUG
@@ -192,7 +190,7 @@ TopLevel parse_file(TokenStream* restrict s) {
 #endif
 					
 					// resolve any unresolved label references 
-					for (size_t i = 0; i < expr_arena.count; i++) {
+					for (size_t i = starting_point; i < expr_arena.count; i++) {
 						if (expr_arena.data[i].op == EXPR_UNKNOWN_SYMBOL) {
 							const unsigned char* name = expr_arena.data[i].unknown_sym;
 							
@@ -1156,7 +1154,7 @@ static ExprIndex parse_expr_l1(TokenStream* restrict s) {
 			expr_arena.data[e] = (Expr) {
 				.op = EXPR_ARROW,
 				.loc = tokens_get(s)->location,
-				.arrow = { base, name }
+				.arrow = { .base = base, .name = name }
 			};
 			
 			tokens_next(s);
@@ -1178,7 +1176,7 @@ static ExprIndex parse_expr_l1(TokenStream* restrict s) {
 			expr_arena.data[e] = (Expr) {
 				.op = EXPR_DOT,
 				.loc = tokens_get(s)->location,
-				.dot = { base, name }
+				.dot = { .base = base, .name = name }
 			};
 			
 			tokens_next(s);
@@ -1888,17 +1886,17 @@ static TypeIndex parse_type_suffix(TokenStream* restrict s, TypeIndex type, Atom
 			tokens_next(s);
 			tokens_next(s);
 			
-			type_arena.data[type].func.arg_start = 0;
-			type_arena.data[type].func.arg_end = 0;
+			type_arena.data[type].func.param_list = 0;
+			type_arena.data[type].func.param_count = 0;
 			return type;
 		}
 		
-		size_t arg_count = 0;
-		void* args = tls_save();
+		size_t param_count = 0;
+		void* params = tls_save();
 		bool has_varargs = false;
 		
 		while (tokens_get(s)->type != ')') {
-			if (arg_count) {
+			if (param_count) {
 				expect(s, ',');
 			}
 			
@@ -1912,23 +1910,23 @@ static TypeIndex parse_type_suffix(TokenStream* restrict s, TypeIndex type, Atom
 			Attribs arg_attr = { 0 };
 			TypeIndex arg_base_type = parse_declspec(s, &arg_attr);
 			
-			Decl arg_decl = parse_declarator(s, arg_base_type);
-			TypeIndex arg_type = arg_decl.type;
+			Decl param_decl = parse_declarator(s, arg_base_type);
+			TypeIndex param_type = param_decl.type;
 			
-			if (type_arena.data[arg_type].kind == KIND_ARRAY) {
+			if (type_arena.data[param_type].kind == KIND_ARRAY) {
 				// Array parameters are desugared into pointers
-				arg_type = new_pointer(type_arena.data[arg_type].array_of);
-			} else if (type_arena.data[arg_type].kind == KIND_FUNC) {
+				param_type = new_pointer(type_arena.data[param_type].array_of);
+			} else if (type_arena.data[param_type].kind == KIND_FUNC) {
 				// Function parameters are desugared into pointers
-				arg_type = new_pointer(arg_type);
+				param_type = new_pointer(param_type);
 			}
 			
 			// TODO(NeGate): Error check that no attribs are set
-			*((Arg*)tls_push(sizeof(Arg))) = (Arg) {
-				.type = arg_type,
-				.name = arg_decl.name
+			*((Param*)tls_push(sizeof(Param))) = (Param) {
+				.type = param_type,
+				.name = param_decl.name
 			};
-			arg_count++;
+			param_count++;
 		}
 		
 		if (tokens_get(s)->type != ')') {
@@ -1936,16 +1934,14 @@ static TypeIndex parse_type_suffix(TokenStream* restrict s, TypeIndex type, Atom
 		}
 		tokens_next(s);
 		
-		ArgIndex start = push_arg_arena(arg_count);
-		memcpy(&arg_arena.data[start], args, arg_count * sizeof(Arg));
+		ParamIndex start = push_param_arena(param_count);
+		memcpy(&param_arena.data[start], params, param_count * sizeof(Param));
 		
-		type_arena.data[type].func.arg_start = start;
-		type_arena.data[type].func.arg_end = start + arg_count;
+		type_arena.data[type].func.param_list = start;
+		type_arena.data[type].func.param_count = param_count;
+		type_arena.data[type].func.has_varargs = has_varargs;
 		
-		// TODO(NeGate): Actually implement var args
-		((void)has_varargs);
-		
-		tls_restore(args);
+		tls_restore(params);
 	} else if (tokens_get(s)->type == '[') {
 		do {
 			tokens_next(s);

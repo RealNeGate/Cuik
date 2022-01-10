@@ -3,13 +3,13 @@
 
 impl_arena(Type, type_arena)
 impl_arena(Member, member_arena)
-impl_arena(Arg, arg_arena)
+impl_arena(Param, param_arena)
 impl_arena(EnumEntry, enum_entry_arena)
 
 static mtx_t type_mutex;
 
 void init_types() {
-	init_arg_arena(4 * 1024);
+	init_param_arena(4 * 1024);
 	init_type_arena(4 * 1024);
 	init_member_arena(4 * 1024);
 	
@@ -30,7 +30,10 @@ void init_types() {
 		[TYPE_ULONG] = { KIND_LONG, 8, 8, .is_unsigned = true },
 		
 		[TYPE_FLOAT] = { KIND_FLOAT, 4, 4 },
-		[TYPE_DOUBLE] = { KIND_DOUBLE, 8, 8 }
+		[TYPE_DOUBLE] = { KIND_DOUBLE, 8, 8 },
+		
+		[TYPE_STRING] = { KIND_PTR, 8, 8, .ptr_to = TYPE_CHAR },
+		[TYPE_WSTRING] = { KIND_PTR, 8, 8, .ptr_to = TYPE_SHORT },
 	};
 	
 	memcpy(type_arena.data, default_types, sizeof(default_types));
@@ -187,20 +190,20 @@ bool type_equal(TypeIndex a, TypeIndex b) {
 	if (ty1->kind != ty2->kind) return false;
 	
 	if (ty1->kind == KIND_FUNC) {
-		// match arg count
-		ArgIndex arg_count1 = ty1->func.arg_end - ty1->func.arg_start;
-		ArgIndex arg_count2 = ty2->func.arg_end - ty2->func.arg_start;
-		if (arg_count1 != arg_count2) return false;
+		// match parameters count
+		ParamIndex param_count1 = ty1->func.param_count;
+		ParamIndex param_count2 = ty2->func.param_count;
+		if (param_count1 != param_count2) return false;
 		
 		// match var args
 		if (ty1->func.has_varargs != ty2->func.has_varargs) return false;
 		
-		// match args exactly
-		ArgIndex arg_start1 = ty1->func.arg_start;
-		ArgIndex arg_start2 = ty2->func.arg_start;
-		for (ArgIndex i = 0; i < arg_count1; i++) {
-			if (!type_equal(arg_arena.data[arg_start1 + i].type,
-							arg_arena.data[arg_start2 + i].type)) {
+		// match paramaeters exactly
+		ParamIndex param_list1 = ty1->func.param_list;
+		ParamIndex param_list2 = ty2->func.param_list;
+		for (ParamIndex i = 0; i < param_count1; i++) {
+			if (!type_equal(param_arena.data[param_list1 + i].type,
+							param_arena.data[param_list2 + i].type)) {
 				return false;
 			}
 		}

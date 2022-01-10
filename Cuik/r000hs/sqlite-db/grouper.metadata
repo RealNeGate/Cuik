@@ -1,0 +1,13 @@
+<?xml version='1.0' encoding='UTF-8'?>
+
+<bag>
+ <grouper name="dd_thread" axis="dd_thread" recommendedStorage="container">
+  <entries>
+   <entry instanceTable="marker_global_data" correlationType="global">
+    <groupings>
+     <grouping path="attr"/>
+    </groupings>
+   </entry>
+  </entries>
+ </grouper>
+</bag>

@@ -1,0 +1,82 @@
+<?xml version='1.0' encoding='UTF-8'?>
+
+<bag>
+ <grouper name="dd_thread" axis="dd_thread" recommendedStorage="container">
+  <entries>
+   <entry instanceTable="cpu_data" correlationType="byPrimaryAxis">
+    <groupings>
+     <grouping path="attr"/>
+    </groupings>
+    <standardMetrics>
+     <metric>time</metric>
+     <metric>count</metric>
+     <metric>instanceCount</metric>
+    </standardMetrics>
+    <customMetrics/>
+   </entry>
+   <entry instanceTable="cpu_usage_data" correlationType="global">
+    <groupings>
+     <grouping path="attr.utilization"/>
+    </groupings>
+   </entry>
+   <entry instanceTable="marker_global_data" correlationType="global">
+    <groupings>
+     <grouping path="attr"/>
+    </groupings>
+   </entry>
+  </entries>
+ </grouper>
+ <grouper name="global_data_grouper" recommendedStorage="container">
+  <entries>
+   <entry instanceTable="cpu_usage_data" correlationType="global">
+    <groupings>
+     <grouping path="attr"/>
+    </groupings>
+    <standardMetrics>
+     <metric>time</metric>
+     <metric>count</metric>
+     <metric>instanceCount</metric>
+    </standardMetrics>
+    <customMetrics/>
+   </entry>
+  </entries>
+ </grouper>
+ <grouper name="global_time_interval_metrics" recommendedStorage="container">
+  <entries>
+   <entry instanceTable="cpu_data" correlationType="global">
+    <standardMetrics>
+     <metric>time</metric>
+     <metric>count</metric>
+     <metric>instanceCount</metric>
+    </standardMetrics>
+    <customMetrics/>
+   </entry>
+   <entry instanceTable="global_elapsed_time_data" correlationType="global">
+    <standardMetrics>
+     <metric>time</metric>
+    </standardMetrics>
+    <customMetrics/>
+   </entry>
+  </entries>
+ </grouper>
+ <grouper name="sched_and_counter_metrics" axis="dd_thread" recommendedStorage="container">
+  <entries>
+   <entry instanceTable="counter_data" correlationType="byPrimaryAxis">
+    <groupings>
+     <grouping path="attr"/>
+    </groupings>
+    <standardMetrics>
+     <metric>time</metric>
+     <metric>count</metric>
+     <metric>instanceCount</metric>
+    </standardMetrics>
+    <customMetrics/>
+   </entry>
+   <entry instanceTable="cpu_usage_data" correlationType="global">
+    <groupings>
+     <grouping path="attr.utilization"/>
+    </groupings>
+   </entry>
+  </entries>
+ </grouper>
+</bag>

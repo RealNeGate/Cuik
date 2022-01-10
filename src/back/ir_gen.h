@@ -9,11 +9,28 @@
 
 extern TokenStream ir_gen_tokens;
 extern TB_Module* mod;
-extern _Atomic int sema_error_count;
 
-// stage 1 is forward declarations
-void gen_ir_stage1(TopLevel tl, size_t i);
+static TB_DataType ctype_to_tbtype(const Type* t) {
+	switch (t->kind) {
+		case KIND_VOID: return TB_TYPE_VOID;
+		case KIND_BOOL: return TB_TYPE_BOOL;
+		case KIND_CHAR: return TB_TYPE_I8;
+		case KIND_SHORT: return TB_TYPE_I16;
+		case KIND_INT: return TB_TYPE_I32;
+		case KIND_LONG: return TB_TYPE_I64;
+		case KIND_FLOAT: return TB_TYPE_F32;
+		case KIND_DOUBLE: return TB_TYPE_F64;
+		case KIND_ENUM: return TB_TYPE_I32;
+		
+		case KIND_PTR: 
+		case KIND_FUNC:
+		case KIND_ARRAY: 
+		case KIND_STRUCT:
+		case KIND_UNION:
+		return TB_TYPE_PTR;
+		
+		default: abort(); // TODO
+	}
+}
 
-// stage 2 is definitions
-void gen_ir_stage2(TopLevel tl, size_t i);
-
+void gen_ir(TopLevel tl, size_t i);
