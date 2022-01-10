@@ -2,6 +2,7 @@
 
 // NOTE(NeGate): This code leaks the filename strings but it doesn't actually matter
 // because this is a compiler and momma aint raised no bitch.
+#include <stdlib.h>
 #include "preproc.h"
 #include "memory.h"
 #include "file_io.h"
@@ -877,11 +878,7 @@ static unsigned char* expand_ident(CPP_Context* restrict c, unsigned char* restr
 		lexer_read(l);
 		
 		char buf[10];
-#if _WIN32
-		_itoa(l->current_line, buf, 10);
-#else
-		itoa(l->current_line, buf, 10);
-#endif
+		sprintf_s(buf, 10, "%d", l->current_line);
 		
 		size_t length = strlen(buf);
 		memcpy(out, buf, length);
