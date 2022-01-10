@@ -8,6 +8,8 @@ cuik_source_files="src/main.c
 	src/front/types.c
 	src/front/atoms.c
 	src/front/parser.c
+	src/front/const_eval.c
+	src/mid/sema.c
 	src/back/ir_gen.c
 	src/back/linker.c
 	src/ext/stb_ds.c"
