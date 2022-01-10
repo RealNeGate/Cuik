@@ -499,11 +499,13 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 						abort();
 					}
 					
+#ifdef _WIN32
 					for (size_t i = 0; i < 260; i++) {
 						if (path[i] >= 'A' && path[i] <= 'Z') {
 							path[i] -= ('A' - 'a');
 						}
 					}
+#endif
 					
 					CPP_IncludeOnce* e = shgetp_null(c->include_once, path);
 					if (e == NULL) {
