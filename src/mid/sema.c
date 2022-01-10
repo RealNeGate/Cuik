@@ -64,7 +64,7 @@ static size_t type_as_string(size_t max_len, char buffer[static max_len], TypeIn
 			if (i+12 < max_len) {
 				buffer[i++] = '[';
 				
-				i += sprintf_s(&buffer[i], max_len - i, "%d", type->array_count);
+				i += sprintf_s(&buffer[i], max_len - i, "%zu", type->array_count);
 				
 				buffer[i++] = ']';
 			} else {
