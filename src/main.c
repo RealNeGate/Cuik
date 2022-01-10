@@ -251,6 +251,9 @@ typedef enum CompilerMode {
 	
 	// compiles an executable unless -c is marked
 	COMPILER_MODE_BUILD,
+	
+	// compile & run
+	COMPILER_MODE_RUN,
 } CompilerMode;
 
 // TODO(NeGate): Make some command line options for these
@@ -301,6 +304,7 @@ int main(int argc, char* argv[]) {
 	else if (strcmp(cmd, "preproc") == 0) mode = COMPILER_MODE_PREPROC;
 	else if (strcmp(cmd, "check") == 0) mode = COMPILER_MODE_CHECK;
 	else if (strcmp(cmd, "build") == 0) mode = COMPILER_MODE_BUILD;
+	else if (strcmp(cmd, "run") == 0) mode = COMPILER_MODE_RUN;
 	else {
 		printf("Unknown command: %s\n", cmd);
 		print_help(argv[0]);
@@ -316,7 +320,7 @@ int main(int argc, char* argv[]) {
 	// helpful currently since code gen is the only parallel stage.
 	settings.num_of_worker_threads = sysinfo.dwNumberOfProcessors - 4;
 	if (settings.num_of_worker_threads <= 0) settings.num_of_worker_threads = 1;
-	//settings.num_of_worker_threads = 1;
+	settings.num_of_worker_threads = 1;
 #else
 	settings.num_of_worker_threads = 1;
 #endif
@@ -379,7 +383,8 @@ int main(int argc, char* argv[]) {
 			break;
 		}
 		case COMPILER_MODE_CHECK:
-		case COMPILER_MODE_BUILD: {
+		case COMPILER_MODE_BUILD:
+		case COMPILER_MODE_RUN: {
 			// Get filename without extension
 			const char* source_file = argv[i];
 			const char* ext = strrchr(source_file, '.');
@@ -394,14 +399,14 @@ int main(int argc, char* argv[]) {
 			timed_block("compilation") {
 				compile_project(target_arch, target_sys, source_file, true);
 				
-				if (mode == COMPILER_MODE_BUILD) {
+				if (mode != COMPILER_MODE_CHECK) {
 					if (!tb_module_export(mod, obj_output_path)) abort();
 				}
 				
 				tb_module_destroy(mod);
 			}
 			
-			if (!settings.is_object_only && mode == COMPILER_MODE_BUILD) {
+			if (!settings.is_object_only && mode != COMPILER_MODE_CHECK) {
 				Linker l;
 				if (linker_init(&l)) {
 					// Add system libraries
@@ -415,6 +420,21 @@ int main(int argc, char* argv[]) {
 					
 					linker_invoke(&l, filename, true);
 					linker_deinit(&l);
+					
+					if (mode == COMPILER_MODE_RUN) {
+						static char exe_path[260];
+						sprintf_s(exe_path, 260, "%s.exe", filename);
+						
+						// im dumb btw, just notifying you
+						char* p = exe_path;
+						for (; p; p++) {
+							if (*p == '/') *p = '\\';
+						}
+						
+						printf("\n\n\n");
+						int exit_code = system(exe_path);
+						printf("Exit code: %d\n", exit_code);
+					}
 				}
 			}
 			break;

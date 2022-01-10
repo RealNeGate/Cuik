@@ -145,22 +145,50 @@ TopLevel parse_file(TokenStream* restrict s) {
 			
 			if (type_arena.data[decl.type].kind == KIND_FUNC) {
 				// function
-				// TODO(NeGate): Check for redefines
-				StmtIndex n = make_stmt(s, STMT_DECL);
-				stmt_arena.data[n].decl = (struct StmtDecl){
-					.type = decl.type,
-					.name = decl.name
-				};
+				Symbol* sym = find_global_symbol((char*)decl.name);
 				
-				Symbol func_symbol = (Symbol){
-					.name = decl.name,
-					.type = decl.type,
-					.storage_class = attr.is_static ? STORAGE_STATIC_FUNC : STORAGE_FUNC,
-					.stmt = n
-				};
-				shput(global_symbols, decl.name, func_symbol);
+				StmtIndex n;
+				bool is_redefine = false;
+				bool is_redefining_body = false;
+				if (sym) {
+					is_redefine = true;
+					
+					// TODO(NeGate): Error messages
+					StorageClass sclass = attr.is_static ? STORAGE_STATIC_FUNC : STORAGE_FUNC;
+					if (sym->storage_class != sclass) abort();
+					
+					// convert forward decl into proper function
+					n = sym->stmt;
+					if (stmt_arena.data[n].op == STMT_FUNC_DECL) {
+						is_redefining_body = true;
+					}
+					
+					// TODO(NeGate): Error messages
+					if (!type_equal(stmt_arena.data[n].decl.type, decl.type)) abort();
+				} else {
+					// New symbol
+					n = make_stmt(s, STMT_DECL);
+					stmt_arena.data[n].decl = (struct StmtDecl){
+						.type = decl.type,
+						.name = decl.name,
+						.attrs = attr
+					};
+					
+					Symbol func_symbol = (Symbol){
+						.name = decl.name,
+						.type = decl.type,
+						.storage_class = attr.is_static ? STORAGE_STATIC_FUNC : STORAGE_FUNC,
+						.stmt = n
+					};
+					shput(global_symbols, decl.name, func_symbol);
+				}
 				
 				if (tokens_get(s)->type == '{') {
+					// TODO(NeGate): Error messages
+					if (is_redefining_body) {
+						generic_error(s, "Cannot redefine function decl");
+					}
+					
 					ParamIndex param_list = type_arena.data[decl.type].func.param_list;
 					ParamIndex param_count = type_arena.data[decl.type].func.param_count;
 					
@@ -178,16 +206,10 @@ TopLevel parse_file(TokenStream* restrict s) {
 					}
 					tokens_next(s);
 					
-					stmt_arena.data[n].op = STMT_FUNC_DECL;
 					ExprIndex starting_point = expr_arena.count;
 					
-					// NOTE(NeGate): STMT_FUNC_DECL is always followed by a compound block
-#if NDEBUG
-					parse_compound_stmt(s);
-#else
-					StmtIndex body = parse_compound_stmt(s);
-					assert(body == n + 1);
-#endif
+					stmt_arena.data[n].op = STMT_FUNC_DECL;
+					stmt_arena.data[n].decl.initial = (StmtIndex)parse_compound_stmt(s);
 					
 					// resolve any unresolved label references 
 					for (size_t i = starting_point; i < expr_arena.count; i++) {
@@ -205,12 +227,15 @@ TopLevel parse_file(TokenStream* restrict s) {
 					shfree(labels);
 				} else if (tokens_get(s)->type == ';') {
 					// Forward decl
+					stmt_arena.data[n].decl.initial = (StmtIndex)0;
 					tokens_next(s);
 				} else {
 					abort();
 				}
 				
-				arrput(top_level, n);
+				if (!is_redefine) {
+					arrput(top_level, n);
+				}
 				local_symbol_count = 0;
 			} else {
 				// Normal decls

@@ -802,12 +802,18 @@ void sema_check(TopLevel tl, size_t i) {
 			
 			TB_Linkage linkage = sp->decl.attrs.is_static ? TB_LINKAGE_PRIVATE : TB_LINKAGE_PUBLIC;
 			
+			// TODO(NeGate): Fix this up because it's possibly wrong, essentially
+			// inline linkage means all the definitions must match which isn't necessarily
+			// the same as static where they all can share a name but are different and
+			// internal.
+			if (sp->decl.attrs.is_inline) linkage = TB_LINKAGE_PRIVATE;
+			
 			TB_Function* func = tb_prototype_build(mod, proto, name, linkage);
 			sp->backing.f = tb_function_get_id(mod, func);
 			
 			// type check function body
 			function_stmt = s;
-			sema_stmt(s + 1);
+			sema_stmt((StmtIndex)stmt_arena.data[s].decl.initial);
 			function_stmt = 0;
 			break;
 		}

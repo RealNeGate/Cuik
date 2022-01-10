@@ -308,10 +308,14 @@ typedef struct Stmt {
 			StmtIndex next;
 		} switch_;
 		struct StmtDecl {
-			Attribs attrs;
 			TypeIndex type;
-			Atom name;
+			
+			// NOTE(NeGate): This represents a stmtindex if it's a 
+			// FUNC_DECL
 			ExprIndex initial;
+			
+			Attribs attrs;
+			Atom name;
 		} decl;
 		struct StmtFor {
 			StmtIndex first;

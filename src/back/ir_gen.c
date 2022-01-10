@@ -381,7 +381,7 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 			const char* end = (const char*)(ep->str.end - 1);
 			
 			return (IRVal) {
-				.value_type = LVALUE,
+				.value_type = RVALUE,
 				.type = new_array(TYPE_CHAR, end-start),
 				.reg = tb_inst_string(func, end-start, start)
 			};
@@ -1220,16 +1220,17 @@ static void gen_func_body(TypeIndex type, StmtIndex s, StmtIndex end) {
 	// TODO(NeGate): Ok fix this up later but essentially we need to prepass
 	// over the nodes to find the label statements, then forward declare the labels
 	// in TB.
-	for (StmtIndex i = s+1; i < end; i++) {
+	StmtIndex body = (StmtIndex)stmt_arena.data[s].decl.initial;
+	
+	for (StmtIndex i = body; i < end; i++) {
 		if (stmt_arena.data[i].op == STMT_LABEL) {
 			stmt_arena.data[i].backing.l = tb_inst_new_label_id(func);
 		}
 	}
 	
 	// Body
-	// NOTE(NeGate): STMT_FUNC_DECL is always followed by a compound block
 	function_type = type;
-	gen_stmt(func, s + 1);
+	gen_stmt(func, body);
 	function_type = 0;
 	
 	{
@@ -1262,12 +1263,12 @@ static void gen_func_body(TypeIndex type, StmtIndex s, StmtIndex end) {
 
 void gen_ir(TopLevel tl, size_t i) {
 	StmtIndex s = tl.arr[i];
-	StmtIndex end = i + 1 < arrlen(tl.arr) ? tl.arr[i+1] : stmt_arena.count;
 	
 	if (stmt_arena.data[s].op == STMT_FUNC_DECL) {
 		TypeIndex type = stmt_arena.data[s].decl.type;
 		assert(type_arena.data[type].kind == KIND_FUNC);
 		
+		StmtIndex end = i + 1 < arrlen(tl.arr) ? tl.arr[i+1] : stmt_arena.count;
 		gen_func_body(type, s, end);
 	}
 }

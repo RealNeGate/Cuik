@@ -98,7 +98,7 @@ bool linker_invoke(Linker* l, const char* filename, bool linked_with_crt) {
 	wchar_t cmd_line[CMD_LINE_MAX];
 	int cmd_line_len = swprintf(cmd_line, CMD_LINE_MAX,
 								L"%s\\link.exe /nologo /machine:amd64 /subsystem:console"
-								" /debug:none /entry:mainCRTStartup /pdb:%S.pdb /out:%S.exe ",
+								" /debug:full /entry:mainCRTStartup /pdb:%S.pdb /out:%S.exe ",
 								l->vswhere.vs_exe_path, filename, filename);
 	
 	// Add all the libpaths
@@ -134,7 +134,7 @@ bool linker_invoke(Linker* l, const char* filename, bool linked_with_crt) {
 	};
 	PROCESS_INFORMATION pi = {};
 	
-	//printf("Linker command:\n%S %S\n", exe_path, cmd_line);
+	printf("Linker command:\n%S\n", cmd_line);
 	if (!CreateProcessW(NULL, cmd_line, NULL, NULL, TRUE, 0, NULL, NULL, &si, &pi)) {
 		printf("Linker command could not be executed.");
 		return false;
