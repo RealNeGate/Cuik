@@ -43,6 +43,8 @@ static _Thread_local TypeIndex function_type;
 // For aggregate returns
 static _Thread_local TB_Register return_value_address;
 
+static FILE* tbir_output_file;
+
 static IRVal gen_expr(TB_Function* func, ExprIndex e);
 
 static _Noreturn void sema_fatal(SourceLocIndex loc, const char* fmt, ...) {
@@ -56,6 +58,18 @@ static _Noreturn void sema_fatal(SourceLocIndex loc, const char* fmt, ...) {
 	
 	printf("\n");
 	abort();
+}
+
+static void sema_warn(SourceLocIndex loc, const char* fmt, ...) {
+	SourceLoc* l = &ir_gen_tokens.line_arena[loc];
+	printf("%s:%d: warning: ", l->file, l->line);
+	
+	va_list ap;
+	va_start(ap, fmt);
+	vprintf(fmt, ap);
+	va_end(ap);
+	
+	printf("\n");
 }
 
 static TB_Register cast_reg(TB_Function* func, TB_Register reg, const Type* src, const Type* dst) {
@@ -89,8 +103,19 @@ static TB_Register cast_reg(TB_Function* func, TB_Register reg, const Type* src,
 	} else if (src->kind == KIND_DOUBLE &&
 			   dst->kind == KIND_FLOAT) {
 		reg = tb_inst_trunc(func, reg, TB_TYPE_F32);
+	} else if (src->kind >= KIND_FLOAT &&
+			   src->kind <= KIND_DOUBLE &&
+			   dst->kind >= KIND_CHAR &&
+			   dst->kind <= KIND_LONG) {
+		reg = tb_inst_float2int(func, reg, ctype_to_tbtype(dst));
+	} else if (src->kind >= KIND_CHAR &&
+			   src->kind <= KIND_LONG &&
+			   dst->kind >= KIND_FLOAT &&
+			   dst->kind <= KIND_DOUBLE) {
+		reg = tb_inst_int2float(func, reg, ctype_to_tbtype(dst));
 	}
 	
+	assert(reg);
 	return reg;
 }
 
@@ -150,6 +175,8 @@ static TB_Register cvt2rval(TB_Function* func, const IRVal v, ExprIndex e) {
 static TB_Register as_rvalue(TB_Function* func, ExprIndex e) {
 	return cvt2rval(func, gen_expr(func, e), e);
 }
+
+#include "intrinsics.h"
 
 // Does pointer math scare you? this is like mostly just addition but yea
 static InitNode* count_max_tb_init_objects(int node_count, InitNode* node, int* out_count) {
@@ -352,6 +379,36 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 	Expr* restrict ep = &expr_arena.data[e];
 	
 	switch (ep->op) {
+		case EXPR_CHAR: {
+			// TODO(NeGate): Maybe multichar literals
+			assert(ep->str.start[0] == '\'');
+			
+			char ch = ep->str.start[1];
+			if (ch == '\\') {
+				switch (ep->str.start[2]) {
+					case '0': ch = '\0'; break;
+					case '\\': ch = '\\'; break;
+					case 'a': ch = '\a'; break;
+					case 'b': ch = '\b'; break;
+					case 't': ch = '\t'; break;
+					case 'n': ch = '\n'; break;
+					case 'v': ch = '\v'; break;
+					case 'f': ch = '\f'; break;
+					case 'r': ch = '\r'; break;
+					default: sema_fatal(ep->loc, "Could not recognize escape char literal.");
+				}
+				
+				assert(ep->str.start[3] == '\'');
+			} else {
+				assert(ep->str.start[2] == '\'');
+			}
+			
+			return (IRVal) {
+				.value_type = RVALUE,
+				.type = TYPE_CHAR,
+				.reg = tb_inst_uint(func, TB_TYPE_I8, ch)
+			};
+		}
 		case EXPR_INT: {
 			TB_DataType dt = ctype_to_tbtype(&type_arena.data[ep->type]);
 			
@@ -382,7 +439,7 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 			
 			return (IRVal) {
 				.value_type = RVALUE,
-				.type = new_array(TYPE_CHAR, end-start),
+				.type = ep->type,
 				.reg = tb_inst_string(func, end-start, start)
 			};
 		}
@@ -459,6 +516,16 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 			src.value_type = RVALUE;
 			return src;
 		}
+		case EXPR_LOGICAL_NOT: {
+			TB_Register reg = as_rvalue(func, ep->unary_op.src);
+			TB_DataType dt = tb_node_get_data_type(func, reg);
+			
+			return (IRVal) {
+				.value_type = RVALUE,
+				.type = ep->type,
+				.reg = tb_inst_cmp_eq(func, reg, tb_inst_uint(func, dt, 0))
+			};
+		}
 		case EXPR_NOT: {
 			return (IRVal) {
 				.value_type = RVALUE,
@@ -478,7 +545,7 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 			if (src.type == ep->cast.type) return src;
 			
 			// stuff like ((void) x)
-			if (type_arena.data[src.type].kind == KIND_VOID) {
+			if (type_arena.data[ep->cast.type].kind == KIND_VOID) {
 				return (IRVal) { .value_type = RVALUE, .type = TYPE_VOID, .reg = 0 };
 			}
 			
@@ -496,24 +563,45 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 			};
 		}
 		case EXPR_CALL: {
-			// Call function
-			IRVal func_ptr = gen_expr(func, ep->call.target);
-			
-			TypeIndex func_type_index = func_ptr.type;
-			Type* func_type = &type_arena.data[func_type_index];
-			
 			ExprIndex* args = ep->call.param_start;
 			int arg_count = ep->call.param_count;
+			
+			// Try to see if it's an intrinsic
+			if (expr_arena.data[ep->call.target].op == EXPR_SYMBOL) {
+				StmtIndex sym = expr_arena.data[ep->call.target].symbol;
+				
+				if (stmt_arena.data[sym].op == STMT_DECL) {
+					// Normal builtins start with two underscores
+					// x86 intrinsics start with one underscore then m
+					const char* name = (const char*)stmt_arena.data[sym].decl.name;
+					
+					char c0 = name[0];
+					char c1 = name[1];
+					
+					IntrinsicResult result = { 0 };
+					if (c0 == '_' && c1 == '_') {
+						result = resolve_generic_intrinsic_call(func, name, arg_count, args);
+					} else if (c0 == '_' && c1 == 'm') {
+						result = resolve_x86_intrinsic_call(func, name, arg_count, args);
+					}
+					
+					if (result.success) {
+						return (IRVal) {
+							.value_type = RVALUE,
+							.type = ep->type,
+							.reg = result.reg
+						};
+					}
+				}
+			}
 			
 			// NOTE(NeGate): returning aggregates requires us
 			// to allocate our own space and pass it to the 
 			// callee.
 			bool is_aggregate_return = false;
-			TypeIndex return_type = func_type->func.return_type;
-			if (type_arena.data[return_type].kind == KIND_STRUCT ||
-				type_arena.data[return_type].kind == KIND_UNION) {
+			if (type_arena.data[ep->type].kind == KIND_STRUCT ||
+				type_arena.data[ep->type].kind == KIND_UNION) {
 				is_aggregate_return = true;
-				return_type = TYPE_VOID;
 			}
 			
 			// Resolve parameters
@@ -521,7 +609,7 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 			TB_Register* ir_args = tls_push(real_arg_count * sizeof(TB_Register));
 			
 			if (is_aggregate_return) {
-				ir_args[0] = tb_inst_local(func, type_arena.data[return_type].size, type_arena.data[return_type].align);
+				ir_args[0] = tb_inst_local(func, type_arena.data[ep->type].size, type_arena.data[ep->type].align);
 			}
 			
 			for (size_t i = 0; i < arg_count; i++) {
@@ -532,8 +620,10 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 			//
 			// NOTE(NeGate): Could have been resized in the parameter's gen_expr
 			// so we reload the pointer.
-			func_type = &type_arena.data[func_type_index];
-			TB_DataType dt = ctype_to_tbtype(&type_arena.data[return_type]);
+			IRVal func_ptr = gen_expr(func, ep->call.target);
+			
+			TB_DataType dt = ctype_to_tbtype(&type_arena.data[ep->type]);
+			if (is_aggregate_return) dt = TB_TYPE_VOID;
 			
 			TB_Register r;
 			if (func_ptr.value_type == LVALUE_FUNC) {
@@ -549,7 +639,7 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 			tls_restore(ir_args);
 			return (IRVal) {
 				.value_type = RVALUE,
-				.type = return_type,
+				.type = ep->type,
 				.reg = r
 			};
 		}
@@ -568,6 +658,7 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 			IRVal src = gen_expr(func, ep->dot.base);
 			assert(src.value_type == LVALUE);
 			
+			assert(ep->dot.member);
 			Member* member = &member_arena.data[ep->dot.member];
 			
 			// TODO(NeGate): Implement bitfields
@@ -586,6 +677,7 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 			// so i dont hardcode these everywhere.
 			src = tb_inst_load(func, TB_TYPE_PTR, src, 8);
 			
+			assert(ep->arrow.member);
 			Member* member = &member_arena.data[ep->arrow.member];
 			
 			// TODO(NeGate): Implement bitfields
@@ -740,6 +832,9 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 			TB_Register b = as_rvalue(func, ep->bin_op.right);
 			tb_inst_if(func, b, true_lbl, false_lbl);
 			
+			// Just in case
+			tb_inst_label(func, tb_inst_new_label_id(func));
+			
 			// we delay placement of the labels so that we can
 			// fold multiple shortcircuits together
 			return (IRVal) {
@@ -752,10 +847,44 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 			gen_expr(func, ep->bin_op.left);
 			return gen_expr(func, ep->bin_op.right);
 		}
+		case EXPR_PTRADD:
+		case EXPR_PTRSUB: {
+			TB_Register l = as_rvalue(func, ep->bin_op.left);
+			TB_Register r = as_rvalue(func, ep->bin_op.right);
+			
+			Type* restrict type = &type_arena.data[ep->type];
+			
+			// pointer arithmatic
+			int dir = ep->op == EXPR_PTRADD ? 1 : -1;
+			int stride = type_arena.data[type->ptr_to].size;
+			
+			return (IRVal) {
+				.value_type = RVALUE,
+				.type = ep->type,
+				.reg = tb_inst_array_access(func, l, r, dir * stride)
+			};
+		}
+		case EXPR_PTRDIFF: {
+			TB_Register l = as_rvalue(func, ep->bin_op.left);
+			TB_Register r = as_rvalue(func, ep->bin_op.right);
+			
+			Type* restrict type = &type_arena.data[expr_arena.data[ep->bin_op.left].cast_type];
+			int stride = type_arena.data[type->ptr_to].size;
+			
+			TB_Register diff = tb_inst_sub(func, tb_inst_ptr2int(func, l, TB_TYPE_I64), tb_inst_ptr2int(func, r, TB_TYPE_I64), TB_ASSUME_NSW);
+			TB_Register diff_in_elems = tb_inst_div(func, diff, tb_inst_sint(func, tb_node_get_data_type(func, diff), stride), true);
+			
+			return (IRVal) {
+				.value_type = RVALUE,
+				.type = ep->type,
+				.reg = diff_in_elems
+			};
+		}
 		case EXPR_PLUS:
 		case EXPR_MINUS:
 		case EXPR_TIMES:
 		case EXPR_SLASH:
+		case EXPR_PERCENT:
 		case EXPR_AND:
 		case EXPR_OR:
 		case EXPR_XOR:
@@ -763,19 +892,7 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 		case EXPR_SHR: {
 			TB_Register l = as_rvalue(func, ep->bin_op.left);
 			TB_Register r = as_rvalue(func, ep->bin_op.right);
-			
 			Type* restrict type = &type_arena.data[ep->type];
-			if (type->kind == KIND_PTR) {
-				// pointer arithmatic
-				int dir = ep->op == EXPR_PLUS ? 1 : -1;
-				int stride = type_arena.data[type->ptr_to].size;
-				
-				return (IRVal) {
-					.value_type = RVALUE,
-					.type = ep->type,
-					.reg = tb_inst_array_access(func, l, r, dir * stride)
-				};
-			}
 			
 			TB_Register data;
 			if (type->kind == KIND_FLOAT || type->kind == KIND_DOUBLE) {
@@ -794,6 +911,7 @@ static IRVal gen_expr(TB_Function* func, ExprIndex e) {
 					case EXPR_MINUS: data = tb_inst_sub(func, l, r, ab); break;
 					case EXPR_TIMES: data = tb_inst_mul(func, l, r, ab); break;
 					case EXPR_SLASH: data = tb_inst_div(func, l, r, !type->is_unsigned); break;
+					case EXPR_PERCENT: data = tb_inst_mod(func, l, r, !type->is_unsigned); break;
 					case EXPR_AND: data = tb_inst_and(func, l, r); break;
 					case EXPR_OR: data = tb_inst_or(func, l, r); break;
 					case EXPR_XOR: data = tb_inst_xor(func, l, r); break;
@@ -1096,6 +1214,11 @@ static void gen_stmt(TB_Function* func, StmtIndex s) {
 			break;
 		}
 		case STMT_IF: {
+			// TODO(NeGate): Remove this later because it kills
+			// the codegen a bit in certain cases.
+			TB_Label entry_lbl = tb_inst_new_label_id(func);
+			tb_inst_label(func, entry_lbl);
+			
 			IRVal cond = gen_expr(func, sp->if_.cond);
 			
 			TB_Label if_true, if_false;
@@ -1132,6 +1255,7 @@ static void gen_stmt(TB_Function* func, StmtIndex s) {
 			TB_Label header = tb_inst_new_label_id(func);
 			TB_Label body = tb_inst_new_label_id(func);
 			TB_Label exit = tb_inst_new_label_id(func);
+			sp->backing.l = exit;
 			
 			tb_inst_label(func, header);
 			
@@ -1139,7 +1263,9 @@ static void gen_stmt(TB_Function* func, StmtIndex s) {
 			tb_inst_if(func, cond, body, exit);
 			
 			tb_inst_label(func, body);
-			gen_stmt(func, sp->while_.body);
+			if (sp->while_.body) {
+				gen_stmt(func, sp->while_.body);
+			}
 			
 			tb_inst_goto(func, header);
 			tb_inst_label(func, exit);
@@ -1148,12 +1274,15 @@ static void gen_stmt(TB_Function* func, StmtIndex s) {
 		case STMT_DO_WHILE: {
 			TB_Label body = tb_inst_new_label_id(func);
 			TB_Label exit = tb_inst_new_label_id(func);
+			sp->backing.l = exit;
 			
 			tb_inst_label(func, body);
 			
-			gen_stmt(func, sp->while_.body);
+			if (sp->do_while.body) {
+				gen_stmt(func, sp->do_while.body);
+			}
 			
-			TB_Register cond = as_rvalue(func, sp->while_.cond);
+			TB_Register cond = as_rvalue(func, sp->do_while.cond);
 			tb_inst_if(func, cond, body, exit);
 			
 			tb_inst_label(func, exit);
@@ -1163,21 +1292,90 @@ static void gen_stmt(TB_Function* func, StmtIndex s) {
 			TB_Label header = tb_inst_new_label_id(func);
 			TB_Label body = tb_inst_new_label_id(func);
 			TB_Label exit = tb_inst_new_label_id(func);
+			sp->backing.l = exit;
 			
-			gen_stmt(func, sp->for_.first);
+			if (sp->for_.first) {
+				gen_stmt(func, sp->for_.first);
+			}
 			
 			tb_inst_label(func, header);
 			
-			TB_Register cond = as_rvalue(func, sp->for_.cond);
-			tb_inst_if(func, cond, body, exit);
+			if (sp->for_.cond) {
+				TB_Register cond = as_rvalue(func, sp->for_.cond);
+				tb_inst_if(func, cond, body, exit);
+			} else {
+				tb_inst_goto(func, body);
+			}
 			
 			tb_inst_label(func, body);
 			
 			gen_stmt(func, sp->for_.body);
-			gen_expr(func, sp->for_.next);
+			
+			if (sp->for_.next) {
+				gen_expr(func, sp->for_.next);
+			}
 			
 			tb_inst_goto(func, header);
 			tb_inst_label(func, exit);
+			break;
+		}
+		case STMT_BREAK: {
+			TB_Label target = stmt_arena.data[sp->break_.target].backing.l;
+			tb_inst_goto(func, target);
+			break;
+		}
+		case STMT_CASE:
+		case STMT_DEFAULT: {
+			assert(sp->backing.l);
+			tb_inst_label(func, sp->backing.l);
+			break;
+		}
+		case STMT_SWITCH: {
+			StmtIndex head = sp->switch_.next;
+			
+			size_t entry_count = 0;
+			TB_SwitchEntry* entries = tls_save();
+			
+			TB_Label default_label = 0;
+			while (head) {
+				// reserve label
+				assert((stmt_arena.data[head].op == STMT_CASE) ||
+					   (stmt_arena.data[head].op == STMT_DEFAULT));
+				
+				TB_Label label = tb_inst_new_label_id(func);
+				stmt_arena.data[head].backing.l = label;
+				
+				if (stmt_arena.data[head].op == STMT_CASE) {
+					assert(stmt_arena.data[head].case_.key < UINT32_MAX);
+					tls_push(sizeof(TB_SwitchEntry));
+					entries[entry_count++] = (TB_SwitchEntry) { .key = stmt_arena.data[head].case_.key, .value = label };
+					
+					head = stmt_arena.data[head].case_.next;
+				} else if (stmt_arena.data[head].op == STMT_DEFAULT) {
+					assert(default_label == 0);
+					default_label = label;
+					
+					head = stmt_arena.data[head].default_.next;
+				} else assert(0);
+			}
+			
+			TB_Label break_label = tb_inst_new_label_id(func);
+			sp->backing.l = break_label;
+			
+			// default to fallthrough
+			if (!default_label) {
+				default_label = break_label;
+			}
+			
+			TB_Register key = as_rvalue(func, sp->switch_.condition);
+			TB_DataType dt = tb_node_get_data_type(func, key);
+			
+			tb_inst_switch(func, dt, key, default_label, entry_count, entries);
+			tb_inst_label(func, tb_inst_new_label_id(func));
+			
+			gen_stmt(func, sp->switch_.body);
+			
+			tb_inst_label(func, break_label);
 			break;
 		}
 		default:
@@ -1241,23 +1439,23 @@ static void gen_func_body(TypeIndex type, StmtIndex s, StmtIndex end) {
 				return_type->kind != KIND_STRUCT &&
 				return_type->kind != KIND_UNION) {
 				// Needs return value
-				sema_fatal(stmt_arena.data[s].loc, "Expected return with value.");
+				//sema_warn(stmt_arena.data[s].loc, "Expected return with value.");
 			}
 			
 			tb_inst_ret(func, TB_NULL_REG);
 		}
 	}
 	
-	if (settings.print_tb_ir) {
-		tb_function_print(func, stdout);
-		printf("\n\n\n");
-	}
-	
 	if (settings.optimization_level != TB_OPT_O0) {
 		tb_function_optimize(func, settings.optimization_level);
 	}
 	
-	tb_module_compile_func(mod, func);
+	if (settings.print_tb_ir) {
+		tb_function_print(func, tb_default_print_callback, tbir_output_file);
+		fprintf(tbir_output_file, "\n");
+	} else {
+		tb_module_compile_func(mod, func);
+	}
 	tb_function_free(func);
 }
 

@@ -246,13 +246,17 @@ static TypeIndex sema_expr(ExprIndex e) {
 					return (ep->type = TYPE_UINT);
 				}
 				
-				case INT_SUFFIX_L: 
+				case INT_SUFFIX_L:
 				case INT_SUFFIX_LL:
 				return (ep->type = TYPE_LONG);
 				
-				case INT_SUFFIX_UL: 
-				case INT_SUFFIX_ULL: 
+				case INT_SUFFIX_UL:
+				case INT_SUFFIX_ULL:
 				return (ep->type = TYPE_ULONG);
+				
+				default:
+				sema_error(ep->loc, "Could not represent integer literal.");
+				return (ep->type = TYPE_VOID);
 			}
 		}
 		case EXPR_FLOAT: {
@@ -262,9 +266,11 @@ static TypeIndex sema_expr(ExprIndex e) {
 			return (ep->type = TYPE_CHAR);
 		}
 		case EXPR_STR: {
+			const char* start = (const char*)(ep->str.start + 1);
+			const char* end = (const char*)(ep->str.end - 1);
 			bool is_wide_string = ep->str.start[0] == 'L';
 			
-			return (ep->type = (is_wide_string ? TYPE_WSTRING : TYPE_STRING));
+			return (ep->type = new_array(is_wide_string ? TYPE_SHORT : TYPE_CHAR, (end-start) + 1));
 		}
 		case EXPR_SIZEOF: {
 			TypeIndex src = sema_expr(ep->x_of_expr.expr);
@@ -308,6 +314,10 @@ static TypeIndex sema_expr(ExprIndex e) {
 			}
 			
 			return (ep->type = ep->init.type);
+		}
+		case EXPR_LOGICAL_NOT: {
+			/* TypeIndex src = */ sema_expr(ep->unary_op.src);
+			return (ep->type = TYPE_BOOL);
 		}
 		case EXPR_NOT:
 		case EXPR_NEGATE:
@@ -378,6 +388,8 @@ static TypeIndex sema_expr(ExprIndex e) {
 			if (type_arena.data[func_ptr].kind == KIND_PTR) {
 				func_ptr = type_arena.data[func_ptr].ptr_to;
 			}
+			
+			expr_arena.data[ep->call.target].cast_type = func_ptr;
 			
 			Type* func_type = &type_arena.data[func_ptr];
 			if (func_type->kind != KIND_FUNC) {
@@ -502,6 +514,8 @@ static TypeIndex sema_expr(ExprIndex e) {
 				if (cstr_equals(name, member->name)) {
 					// TODO(NeGate): Implement bitfields
 					assert(!member->is_bitfield);
+					
+					ep->dot.member = m;
 					return (ep->type = member->type);
 				}
 			}
@@ -535,6 +549,8 @@ static TypeIndex sema_expr(ExprIndex e) {
 				if (cstr_equals(name, member->name)) {
 					// TODO(NeGate): Implement bitfields
 					assert(!member->is_bitfield);
+					
+					ep->dot.member = m;
 					return (ep->type = member->type);
 				}
 			}
@@ -568,7 +584,9 @@ static TypeIndex sema_expr(ExprIndex e) {
 			if ((ep->op == EXPR_PLUS ||
 				 ep->op == EXPR_MINUS) &&
 				(type_arena.data[lhs].kind == KIND_PTR || 
-				 type_arena.data[rhs].kind == KIND_PTR)) {
+				 type_arena.data[lhs].kind == KIND_ARRAY || 
+				 type_arena.data[rhs].kind == KIND_PTR ||
+				 type_arena.data[rhs].kind == KIND_ARRAY)) {
 				// Pointer arithmatic
 				if (type_arena.data[rhs].kind == KIND_PTR || type_arena.data[rhs].kind == KIND_ARRAY) {
 					swap(lhs, rhs);
@@ -581,6 +599,7 @@ static TypeIndex sema_expr(ExprIndex e) {
 						expr_arena.data[ep->bin_op.left].cast_type = lhs;
 						expr_arena.data[ep->bin_op.right].cast_type = rhs;
 						
+						ep->op = EXPR_PTRDIFF;
 						return (ep->type = TYPE_LONG);
 					} else {
 						sema_error(ep->loc, "Cannot do pointer addition with two pointer operands, one must be an integral type.");
@@ -590,6 +609,7 @@ static TypeIndex sema_expr(ExprIndex e) {
 					expr_arena.data[ep->bin_op.left].cast_type = lhs;
 					expr_arena.data[ep->bin_op.right].cast_type = TYPE_ULONG;
 					
+					ep->op = ep->op == EXPR_PLUS ? EXPR_PTRADD : EXPR_PTRSUB;
 					return (ep->type = lhs);
 				}
 			} else {
@@ -643,7 +663,6 @@ void sema_stmt(StmtIndex s) {
 	Stmt* restrict sp = &stmt_arena.data[s];
 	
 	switch (sp->op) {
-		case STMT_NONE:
 		case STMT_LABEL: {
 			break;
 		}
@@ -662,12 +681,29 @@ void sema_stmt(StmtIndex s) {
 		}
 		case STMT_DECL: {
 			if (sp->decl.initial) {
-				if (expr_arena.data[sp->decl.initial].op == EXPR_INITIALIZER) {
-					expr_arena.data[sp->decl.initial].init.type = sp->decl.type;
-				}
-				
 				TypeIndex expr_type = sema_expr(sp->decl.initial);
 				
+				Expr* restrict ep = &expr_arena.data[sp->decl.initial];
+				if (ep->op == EXPR_INITIALIZER) {
+					Type* restrict tp = &type_arena.data[sp->decl.type];
+					
+					// Auto-detect array count from initializer
+					if (tp->kind == KIND_ARRAY && tp->array_count == 0) {
+						tp->array_count = ep->init.count;
+						tp->size = ep->init.count * type_arena.data[tp->array_of].size;
+					}
+					
+					ep->init.type = expr_type = sp->decl.type;
+				} else if (ep->op == EXPR_STR) {
+					Type* restrict tp = &type_arena.data[sp->decl.type];
+					
+					// Auto-detect array count from string
+					if (tp->kind == KIND_ARRAY && tp->array_count == 0) {
+						sp->decl.type = expr_type;
+					}
+				}
+				
+				ep->cast_type = sp->decl.type;
 				if (!type_compatible(expr_type, sp->decl.type, sp->decl.initial)) {
 					type_as_string(sizeof(temp_string0), temp_string0, expr_type);
 					type_as_string(sizeof(temp_string1), temp_string1, sp->decl.type);
@@ -709,21 +745,29 @@ void sema_stmt(StmtIndex s) {
 		}
 		case STMT_WHILE: {
 			sema_expr(sp->while_.cond);
-			sema_stmt(sp->while_.body);
+			if (sp->while_.body) {
+				sema_stmt(sp->while_.body);
+			}
 			break;
 		}
 		case STMT_DO_WHILE: {
-			sema_stmt(sp->do_while.body);
+			if (sp->do_while.body) {
+				sema_stmt(sp->do_while.body);
+			}
 			sema_expr(sp->do_while.cond);
 			break;
 		}
 		case STMT_FOR: {
-			sema_stmt(sp->for_.first);
+			if (sp->for_.first) {
+				sema_stmt(sp->for_.first);
+			}
+			
 			if (sp->for_.cond) {
 				sema_expr(sp->for_.cond);
 			}
 			
 			sema_stmt(sp->for_.body);
+			
 			if (sp->for_.next) {
 				sema_expr(sp->for_.next);
 			}
@@ -731,6 +775,7 @@ void sema_stmt(StmtIndex s) {
 		}
 		case STMT_SWITCH: {
 			sema_expr(sp->switch_.condition);
+			sema_stmt(sp->switch_.body);
 			break;
 		}
 		case STMT_CASE: {
@@ -820,7 +865,12 @@ void sema_check(TopLevel tl, size_t i) {
 			if (!sp->decl.attrs.is_used) return;
 			
 			// forward decls
-			sp->backing.e = tb_extern_create(mod, name);
+			// TODO(NeGate): This is hacky
+			if (strcmp(name, "__va_start") == 0) {
+				sp->backing.e = 0;
+			} else {
+				sp->backing.e = tb_extern_create(mod, name);
+			}
 			break;
 		}
 		case STMT_GLOBAL_DECL: {

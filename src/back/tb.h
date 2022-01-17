@@ -18,7 +18,7 @@ extern "C" {
 	
 	// Windows likes it's secure functions, i kinda do too
 	// but only sometimes and this isn't one of them
-#ifndef _CRT_SECURE_NO_WARNINGS
+#if defined(_WIN32) && !defined(_CRT_SECURE_NO_WARNINGS)
 #define _CRT_SECURE_NO_WARNINGS
 #endif
 	
@@ -67,7 +67,7 @@ extern "C" {
 #define TB_NULL_REG ((TB_Register)0)
 #define TB_REG_MAX ((TB_Register)INT_MAX)
 	
-	typedef enum TB_ArithmaticBehavior {
+	typedef enum {
 		// No overflow will assume the value does not 
 		// overflow and if it does this can be considered
 		// undefined behavior with unknown consequences.
@@ -90,12 +90,12 @@ extern "C" {
 		TB_SATURATED_SIGNED
 	} TB_ArithmaticBehavior;
 	
-	typedef enum TB_Arch {
+	typedef enum {
 		TB_ARCH_X86_64,
 		TB_ARCH_AARCH64
 	} TB_Arch;
 	
-	typedef enum TB_System {
+	typedef enum {
 		TB_SYSTEM_WINDOWS,
 		TB_SYSTEM_LINUX,
 		
@@ -104,23 +104,23 @@ extern "C" {
 		TB_SYSTEM_ANDROID
 	} TB_System;
 	
-	typedef enum TB_CallingConv {
+	typedef enum {
 		TB_CDECL,
 		TB_STDCALL
 	} TB_CallingConv;
 	
-	typedef enum TB_BranchHint {
+	typedef enum {
 		TB_BRANCH_HINT_NONE,
 		TB_BRANCH_HINT_LIKELY,
 		TB_BRANCH_HINT_UNLIKELY
 	} TB_BranchHint;
 	
-	typedef enum TB_Linkage {
+	typedef enum {
 		TB_LINKAGE_PUBLIC,
 		TB_LINKAGE_PRIVATE
 	} TB_Linkage;
 	
-	typedef enum TB_MemoryOrder {
+	typedef enum {
 		TB_MEM_ORDER_RELAXED,
 		TB_MEM_ORDER_CONSUME,
 		TB_MEM_ORDER_ACQUIRE,
@@ -129,7 +129,7 @@ extern "C" {
 		TB_MEM_ORDER_SEQ_CST,
 	} TB_MemoryOrder;
 	
-	typedef enum TB_OptLevel {
+	typedef enum {
 		// no optimizer run
 		TB_OPT_O0,
 		
@@ -145,7 +145,14 @@ extern "C" {
 		TB_OPT_SPEED,
 	} TB_OptLevel;
 	
-	typedef enum TB_DataTypeEnum {
+	typedef enum {
+		TB_ERROR_NONE,
+		
+		// evaluated a value with no mapping
+		TB_ERROR_CODEGEN_UNDEF
+	} TB_ErrorCode;
+	
+	typedef enum {
 		TB_VOID,
 		// Boolean
 		TB_BOOL,
@@ -158,6 +165,135 @@ extern "C" {
 		
 		TB_MAX_TYPES
 	} TB_DataTypeEnum;
+	
+	typedef enum {
+		TB_NULL = 0,
+		
+		/* metadata */
+		TB_LINE_INFO,
+		TB_KEEPALIVE,
+		
+		TB_ICALL, /* internal use only, inline call */
+		TB_CALL,  /* standard function call */
+		TB_VCALL, /* virtual call */
+		TB_ECALL, /* extern call */
+		
+		/* Memory operations */
+		TB_STORE,
+		
+		TB_MEMCLR,
+		TB_MEMCPY,
+		TB_MEMSET,
+		TB_MEMCMP,
+		TB_INITIALIZE,
+		
+		/* Atomics */
+		TB_ATOMIC_TEST_AND_SET,
+		TB_ATOMIC_CLEAR,
+		
+		TB_ATOMIC_XCHG,
+		TB_ATOMIC_ADD,
+		TB_ATOMIC_SUB,
+		TB_ATOMIC_AND,
+		TB_ATOMIC_XOR,
+		TB_ATOMIC_OR,
+		
+		TB_ATOMIC_CMPXCHG, /* These are always bundled together */
+		TB_ATOMIC_CMPXCHG2,
+		
+		/* Terminators */
+		TB_LABEL,
+		TB_GOTO,
+		TB_SWITCH,
+		TB_IF,
+		TB_RET,
+		TB_TRAP,
+		TB_UNREACHABLE,
+		
+		/* Load */
+		TB_LOAD,
+		
+		/* Generators */
+		TB_RESTRICT,   // all three of these are the only ways to 
+		TB_LOCAL,      // generate restrict pointers meaning that
+		TB_PARAM_ADDR, // they do not alias with any other pointers
+		
+		TB_PARAM,
+		TB_FUNC_ADDRESS,
+		TB_EFUNC_ADDRESS,
+		TB_GLOBAL_ADDRESS,
+		
+		/* Pointer math */
+		TB_MEMBER_ACCESS,
+		TB_ARRAY_ACCESS,
+		
+		/* Immediates */
+		TB_UNSIGNED_CONST,
+		TB_SIGNED_CONST,
+		TB_FLOAT_CONST,
+		TB_STRING_CONST,
+		
+		/* Conversions */
+		TB_TRUNCATE,
+		TB_FLOAT_EXT,
+		TB_SIGN_EXT,
+		TB_ZERO_EXT,
+		TB_INT2PTR,
+		TB_PTR2INT,
+		TB_INT2FLOAT,
+		TB_FLOAT2INT,
+		
+		/* Unary operations */
+		TB_NOT,
+		TB_NEG,
+		
+		/* Integer arithmatic */
+		TB_AND,
+		TB_OR,
+		TB_XOR,
+		TB_ADD,
+		TB_SUB,
+		TB_MUL,
+		
+		TB_SHL,
+		TB_SHR,
+		TB_SAR,
+		TB_UDIV,
+		TB_SDIV,
+		TB_UMOD,
+		TB_SMOD,
+		
+		// Float arithmatic
+		TB_FADD,
+		TB_FSUB,
+		TB_FMUL,
+		TB_FDIV,
+		
+		// Comparisons
+		TB_CMP_EQ,
+		TB_CMP_NE,
+		TB_CMP_SLT,
+		TB_CMP_SLE,
+		TB_CMP_ULT,
+		TB_CMP_ULE,
+		TB_CMP_FLT,
+		TB_CMP_FLE,
+		
+		/* PHI */
+		// NOTE(NeGate): phi1 and phi2 are just to avoid
+		// using extra space for the common cases
+		TB_PHI1, 
+		TB_PHI2,
+		TB_PHIN,
+		
+		// NOTE(NeGate): only used internally, if you
+		// see one in normal IR things went wrong in
+		// an optimization pass
+		TB_PASS,
+	} TB_RegTypeEnum;
+	
+#define TB_IS_NODE_SIDE_EFFECT(type) ((type) >= TB_LINE_INFO && (type) <= TB_ATOMIC_CMPXCHG2)
+#define TB_IS_NODE_TERMINATOR(type) ((type) >= TB_LABEL && (type) <= TB_RET)
 	
 #define TB_IS_INTEGER_TYPE(x) ((x) >= TB_I8 && (x) <= TB_I64)
 #define TB_IS_FLOAT_TYPE(x) ((x) >= TB_F32 && (x) <= TB_F64)
@@ -242,20 +378,22 @@ extern "C" {
 	
 #else
 	
-#define TB_TYPE_VOID (TB_DataType){ TB_VOID }
+#define TB_TYPE_VOID (TB_DataType){ TB_VOID, 0 }
 	
-#define TB_TYPE_I8 (TB_DataType){ TB_I8 }
-#define TB_TYPE_I16 (TB_DataType){ TB_I16 }
-#define TB_TYPE_I32 (TB_DataType){ TB_I32 }
-#define TB_TYPE_I64 (TB_DataType){ TB_I64 }
+#define TB_TYPE_I8 (TB_DataType){ TB_I8, 0 }
+#define TB_TYPE_I16 (TB_DataType){ TB_I16, 0 }
+#define TB_TYPE_I32 (TB_DataType){ TB_I32, 0 }
+#define TB_TYPE_I64 (TB_DataType){ TB_I64, 0 }
 	
-#define TB_TYPE_F32 (TB_DataType){ TB_F32 }
-#define TB_TYPE_F64 (TB_DataType){ TB_F64 }
+#define TB_TYPE_F32 (TB_DataType){ TB_F32, 0 }
+#define TB_TYPE_F64 (TB_DataType){ TB_F64, 0 }
 	
-#define TB_TYPE_BOOL (TB_DataType){ TB_BOOL }
-#define TB_TYPE_PTR (TB_DataType){ TB_PTR }
+#define TB_TYPE_BOOL (TB_DataType){ TB_BOOL, 0 }
+#define TB_TYPE_PTR (TB_DataType){ TB_PTR, 0 }
 	
 #endif
+	
+	typedef void(*TB_PrintCallback)(void* user_data, const char* fmt, ...);
 	
 	////////////////////////////////
 	// Module management
@@ -333,11 +471,14 @@ extern "C" {
 	////////////////////////////////
 	// Function IR Generation
 	////////////////////////////////
+	// the user_data is expected to be a valid FILE*
+	TB_API void tb_default_print_callback(void* user_data, const char* fmt, ...);
+	
 	// this only allows for power of two vector types
 	TB_API TB_DataType tb_vector_type(TB_DataTypeEnum type, int width);
 	
 	TB_API TB_Function* tb_function_clone(TB_Module* m, TB_Function* f, const char* name);
-	TB_API void tb_function_print(TB_Function* f, FILE* out);
+	TB_API void tb_function_print(TB_Function* f, TB_PrintCallback callback, void* user_data);
 	TB_API void tb_function_free(TB_Function* f);
 	
 	TB_API TB_Label tb_inst_get_current_label(TB_Function* f);
@@ -352,6 +493,8 @@ extern "C" {
 	TB_API TB_Register tb_inst_trunc(TB_Function* f, TB_Register src, TB_DataType dt);
 	TB_API TB_Register tb_inst_int2ptr(TB_Function* f, TB_Register src);
 	TB_API TB_Register tb_inst_ptr2int(TB_Function* f, TB_Register src, TB_DataType dt);
+	TB_API TB_Register tb_inst_int2float(TB_Function* f, TB_Register src, TB_DataType dt);
+	TB_API TB_Register tb_inst_float2int(TB_Function* f, TB_Register src, TB_DataType dt);
 	
 	TB_API TB_Register tb_inst_local(TB_Function* f, uint32_t size, TB_CharUnits align);
 	TB_API TB_Register tb_inst_load(TB_Function* f, TB_DataType dt, TB_Register addr, TB_CharUnits align);
@@ -454,6 +597,8 @@ extern "C" {
 	TB_API TB_Register tb_inst_cmp_fgt(TB_Function* f, TB_Register a, TB_Register b);
 	TB_API TB_Register tb_inst_cmp_fge(TB_Function* f, TB_Register a, TB_Register b);
 	
+	TB_API TB_Register tb_inst_restrict(TB_Function* f, TB_Register value);
+	
 	// Control flow
 	TB_API TB_Register tb_inst_call(TB_Function* f, TB_DataType dt, const TB_Function* target, size_t param_count, const TB_Register* params);
 	TB_API TB_Register tb_inst_vcall(TB_Function* f, TB_DataType dt, TB_Register target, size_t param_count, const TB_Register* params);
@@ -493,6 +638,8 @@ extern "C" {
 	TB_API TB_Function* tb_function_from_id(TB_Module* m, TB_FunctionID id);
 	
 	TB_API TB_Register tb_node_get_last_register(TB_Function* f);
+	
+	TB_API TB_RegTypeEnum tb_node_get_type(TB_Function* f, TB_Register r);
 	TB_API TB_DataType tb_node_get_data_type(TB_Function* f, TB_Register r);
 	
 	// Returns the size and alignment of a LOCAL node, both must

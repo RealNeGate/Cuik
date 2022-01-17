@@ -22,6 +22,7 @@
 #include <signal.h>
 #include <setjmp.h>
 
+#define PRINT_PROGRESS 1
 #define COMPILER_VERSION "v0.01"
 
 // this is how many IR gen tasks it tries to grab at any one time
@@ -403,6 +404,10 @@ int main(int argc, char* argv[]) {
 			sprintf_s(obj_output_path, 260, "%s.o", filename);
 #endif
 			
+			if (settings.print_tb_ir) {
+				tbir_output_file = fopen("./compiled.tbir", "wb");
+			}
+			
 			// Build project
 			timed_block("compilation") {
 				compile_project(target_arch, target_sys, source_file, true);
@@ -412,6 +417,10 @@ int main(int argc, char* argv[]) {
 				}
 				
 				tb_module_destroy(mod);
+			}
+			
+			if (settings.print_tb_ir) {
+				fclose(tbir_output_file);
 			}
 			
 			if (!settings.is_object_only && mode != COMPILER_MODE_CHECK) {

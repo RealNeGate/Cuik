@@ -15,15 +15,14 @@ _Thread_local ArenaSegment* arena_top;
 void* arena_alloc(size_t size, size_t align) {
 	// alignment must be a power of two
 	size_t align_mask = align-1;
-	size = (size + align_mask) & ~align_mask;
 	
 	// If this ever happens... literally how...
 	assert(size < ARENA_SEGMENT_SIZE);
 	
 	void* ptr;
-	if (arena_top && arena_top->used + size < ARENA_SEGMENT_SIZE - sizeof(ArenaSegment)) {
+	if (arena_top && arena_top->used + size + align < ARENA_SEGMENT_SIZE - sizeof(ArenaSegment)) {
 		ptr = &arena_top->data[arena_top->used];
-		arena_top->used += size;
+		arena_top->used = (arena_top->used + size + align_mask) & ~align_mask;
 	} else {
 		// Add new page
 		ArenaSegment* s = (ArenaSegment*)malloc(ARENA_SEGMENT_SIZE);

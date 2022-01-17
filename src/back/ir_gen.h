@@ -8,6 +8,7 @@
 #include "tb.h"
 
 extern TokenStream ir_gen_tokens;
+extern FILE* tbir_output_file;
 extern TB_Module* mod;
 
 static TB_DataType ctype_to_tbtype(const Type* t) {

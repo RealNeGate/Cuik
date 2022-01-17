@@ -206,6 +206,11 @@ typedef enum ExprOp {
 	EXPR_SHL,
 	EXPR_SHR,
 	
+	// these are resolved by semantics pass
+	EXPR_PTRADD,
+	EXPR_PTRSUB,
+	EXPR_PTRDIFF,
+	
 	EXPR_TERNARY,
 	EXPR_COMMA,
 	
@@ -216,6 +221,7 @@ typedef enum ExprOp {
 	EXPR_CMPGT,
 	EXPR_CMPLT,
 	
+	EXPR_LOGICAL_NOT,
 	EXPR_LOGICAL_AND,
 	EXPR_LOGICAL_OR,
 	

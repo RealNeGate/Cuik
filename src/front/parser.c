@@ -482,6 +482,7 @@ static StmtIndex parse_stmt(TokenStream* restrict s) {
 		expect(s, ')');
 		
 		StmtIndex body = parse_stmt_or_expr(s);
+		assert(body);
 		
 		StmtIndex next = 0;
 		if (tokens_get(s)->type == TOKEN_KW_else) {
@@ -541,6 +542,7 @@ static StmtIndex parse_stmt(TokenStream* restrict s) {
 		
 		intmax_t key = parse_const_expr(s);
 		expect(s, ':');
+		current_switch_or_case = n;
 		
 		StmtIndex body = parse_stmt_or_expr(s);
 		
@@ -549,7 +551,6 @@ static StmtIndex parse_stmt(TokenStream* restrict s) {
 			.body = body,
 			.next = 0
 		};
-		current_switch_or_case = n;
 		return n;
 	} else if (tokens_get(s)->type == TOKEN_KW_default) {
 		// TODO(NeGate): error messages
@@ -747,9 +748,9 @@ static StmtIndex parse_stmt(TokenStream* restrict s) {
 		tokens_next(s);
 		tokens_next(s);
 		return n;
+	} else {
+		return 0;
 	}
-	
-	return 0;
 }
 
 static void parse_decl_or_expr(TokenStream* restrict s, size_t* body_count) {
@@ -834,7 +835,7 @@ static StmtIndex parse_stmt_or_expr(TokenStream* restrict s) {
 			
 			expect(s, ';');
 			
-			return stmt;
+			return n;
 		}
 	}
 }
@@ -1280,7 +1281,7 @@ static ExprIndex parse_expr_l2(TokenStream* restrict s) {
 		
 		ExprIndex e = push_expr_arena(1);
 		expr_arena.data[e] = (Expr) {
-			.op = EXPR_NOT,
+			.op = EXPR_LOGICAL_NOT,
 			.loc = loc,
 			.unary_op.src = value
 		};
