@@ -164,8 +164,6 @@ uint32_t hash_with_len(const void* data, size_t len) {
 }
 
 TknType classify_ident(const unsigned char* restrict str, size_t len) {
-	//if (*str != '_' && len > 8) return TOKEN_IDENTIFIER;
-	
 	// BINARY SEARCH ARRAYS
 	const static uint32_t keys[64] = {
 		
@@ -195,9 +193,6 @@ TknType classify_ident(const unsigned char* restrict str, size_t len) {
 	i += (keys[i + 2] <= n) * 2;
 	i += (keys[i + 1] <= n) * 1;
 	size_t v = values[i];
-	
-	// short circuit, relatively helpful
-	//if (keywords[v][0] != str[0]) return TOKEN_IDENTIFIER;
 	
 	// VERIFY
 	__m128i kw128  = _mm_loadu_si128((__m128i*) &keywords[v]);
@@ -295,8 +290,10 @@ void lexer_read(Lexer* restrict l) {
 				do { current++; } while (*current && !(current[0] == '/' && current[-1] == '*'));
 				current++;
 				
-				l->current_line += line_counter(current - start, start);
-				l->hit_line = true;
+				int lines_elapsed = line_counter(current - start, start);
+				
+				l->current_line += lines_elapsed;
+				l->hit_line = (lines_elapsed > 0);
 				goto redo_lex;
 			}
 		} else if (current[0] == '\\' && (current[1] == '\r' || current[1] == '\n')) {

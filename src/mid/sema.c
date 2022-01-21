@@ -664,6 +664,9 @@ void sema_stmt(StmtIndex s) {
 	
 	switch (sp->op) {
 		case STMT_LABEL: {
+			// hacky but we need to reserve the label
+			TB_Function* func = tb_function_from_id(mod, stmt_arena.data[function_stmt].backing.f);
+			sp->backing.l = tb_inst_new_label_id(func);
 			break;
 		}
 		case STMT_GOTO: {
@@ -828,7 +831,7 @@ void sema_check(TopLevel tl, size_t i) {
 			ParamIndex real_param_count = param_count + is_aggregate_return;
 			
 			TB_DataType return_dt = ctype_to_tbtype(return_type);
-			TB_FunctionPrototype* proto = tb_prototype_create(mod, TB_STDCALL, return_dt, real_param_count, false);
+			TB_FunctionPrototype* proto = tb_prototype_create(mod, TB_STDCALL, return_dt, real_param_count, type->func.has_varargs);
 			
 			if (is_aggregate_return) {
 				tb_prototype_add_param(proto, TB_TYPE_PTR);
@@ -841,15 +844,16 @@ void sema_check(TopLevel tl, size_t i) {
 				Type* param_type = &type_arena.data[p->type];
 				TB_DataType dt = ctype_to_tbtype(param_type);
 				
+				assert(dt.width < 8);
 				tb_prototype_add_param(proto, dt);
 			}
 			
 			TB_Linkage linkage = sp->decl.attrs.is_static ? TB_LINKAGE_PRIVATE : TB_LINKAGE_PUBLIC;
 			
 			// TODO(NeGate): Fix this up because it's possibly wrong, essentially
-			// inline linkage means all the definitions must match which isn't necessarily
-			// the same as static where they all can share a name but are different and
-			// internal.
+			// inline linkage means all the definitions must match which isn't
+			// necessarily the same as static where they all can share a name but
+			// are different and internal.
 			if (sp->decl.attrs.is_inline) linkage = TB_LINKAGE_PRIVATE;
 			
 			TB_Function* func = tb_prototype_build(mod, proto, name, linkage);
@@ -867,6 +871,8 @@ void sema_check(TopLevel tl, size_t i) {
 			// forward decls
 			// TODO(NeGate): This is hacky
 			if (strcmp(name, "__va_start") == 0) {
+				sp->backing.e = 0;
+			} else if (memcmp(name, "_mm_", 4) == 0) {
 				sp->backing.e = 0;
 			} else {
 				sp->backing.e = tb_extern_create(mod, name);

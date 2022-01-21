@@ -5,7 +5,7 @@
 
 // TODO(NeGate): Type check this better
 ConstValue const_eval(ExprIndex e) {
-	const Expr* restrict ep = &expr_arena.data[e];
+	const Expr* ep = &expr_arena.data[e];
 	
 	switch (ep->op) {
 		case EXPR_INT: {
@@ -53,7 +53,10 @@ ConstValue const_eval(ExprIndex e) {
 		}
 		
 		case EXPR_PLUS:
+		case EXPR_MINUS:
 		case EXPR_TIMES:
+		case EXPR_AND:
+		case EXPR_OR:
 		case EXPR_SHL:
 		case EXPR_SHR:
 		case EXPR_CMPEQ:
@@ -68,7 +71,10 @@ ConstValue const_eval(ExprIndex e) {
 			bool is_signed = a.is_signed | b.is_signed;
 			switch (ep->op) {
 				case EXPR_PLUS: return (ConstValue){ is_signed, .unsigned_value = a.unsigned_value + b.unsigned_value };
+				case EXPR_MINUS: return (ConstValue){ is_signed, .unsigned_value = a.unsigned_value - b.unsigned_value };
 				case EXPR_TIMES: return (ConstValue){ is_signed, .unsigned_value = a.unsigned_value * b.unsigned_value };
+				case EXPR_AND: return (ConstValue){ is_signed, .unsigned_value = a.unsigned_value & b.unsigned_value };
+				case EXPR_OR: return (ConstValue){ is_signed, .unsigned_value = a.unsigned_value | b.unsigned_value };
 				
 				case EXPR_SHL: return (ConstValue){ is_signed, .unsigned_value = a.unsigned_value << b.unsigned_value };
 				case EXPR_SHR: return (ConstValue){ is_signed, .unsigned_value = a.unsigned_value >> b.unsigned_value };
@@ -99,21 +105,78 @@ ConstValue const_eval(ExprIndex e) {
 				return signed_const(type_arena.data[ep->x_of_type.type].align);
 			}
 			
+			case EXPR_NEGATE: {
+				ConstValue src = const_eval(ep->unary_op.src);
+				return signed_const(-src.signed_value);
+			}
+			
+			case EXPR_ADDR: {
+				// hacky but it just needs to support &(((T*)0)->apple)
+				const Expr* restrict arrow = &expr_arena.data[ep->unary_op.src];
+				if (arrow->op == EXPR_ARROW) {
+					const Expr* restrict arrow_base = &expr_arena.data[arrow->arrow.base];
+					const Type* restrict record_type = NULL;
+					
+					if (arrow_base->op == EXPR_CAST) {
+						record_type = &type_arena.data[arrow_base->cast.type];
+						
+						// dereference
+						if (record_type->kind == KIND_PTR) {
+							record_type = &type_arena.data[record_type->ptr_to];
+						} else {
+							// TODO(NeGate): error messages
+							abort();
+						}
+						
+						if (record_type->kind != KIND_STRUCT && record_type->kind != KIND_UNION) {
+							abort();
+						}
+						
+						ConstValue pointer_value = const_eval(arrow_base->cast.src);
+						assert(pointer_value.unsigned_value == 0 && "I mean i'm not honestly sure if we wanna allow for a non null pointer here");
+						((void)pointer_value);
+					} else {
+						// TODO(NeGate): error messages
+						abort();
+					}
+					
+					Atom name = arrow->arrow.name;
+					MemberIndex start = record_type->record.kids_start;
+					MemberIndex end = record_type->record.kids_end;
+					for (MemberIndex m = start; m < end; m++) {
+						Member* member = &member_arena.data[m];
+						
+						// TODO(NeGate): String interning would be nice
+						if (cstr_equals(name, member->name)) {
+							// TODO(NeGate): error messages
+							if (member->is_bitfield) abort();
+							
+							return unsigned_const(member->offset);
+						}
+					}
+					
+					// TODO(NeGate): error messages
+					abort();
+				}
+				
+				// TODO(NeGate): error messages
+				abort();
+			}
+			
 			case EXPR_CAST: {
 				return const_eval(ep->cast.src);
 			}
 			
 			case EXPR_UNKNOWN_SYMBOL: {
-				const unsigned char* name = expr_arena.data[e].unknown_sym;
+				const unsigned char* name = ep->unknown_sym;
 				StmtIndex s = resolve_unknown_symbol(e);
 				
 				if (!s) {
 					// try enum names
 					// NOTE(NeGate): this might be slow
-					size_t i = enum_entry_arena.count;
-					while (i--) {
-						if (cstr_equals(name, enum_entry_arena.data[i].name)) {
-							return signed_const(enum_entry_arena.data[i].value);
+					for (size_t j = 1; j < enum_entry_arena.count; j++) {
+						if (cstr_equals(name, enum_entry_arena.data[j].name)) {
+							return signed_const(enum_entry_arena.data[j].value);
 						}
 					}
 					

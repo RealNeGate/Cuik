@@ -213,7 +213,7 @@ extern "C" {
 		/* Load */
 		TB_LOAD,
 		
-		/* Generators */
+		/* Pointers */
 		TB_RESTRICT,   // all three of these are the only ways to 
 		TB_LOCAL,      // generate restrict pointers meaning that
 		TB_PARAM_ADDR, // they do not alias with any other pointers
@@ -223,7 +223,6 @@ extern "C" {
 		TB_EFUNC_ADDRESS,
 		TB_GLOBAL_ADDRESS,
 		
-		/* Pointer math */
 		TB_MEMBER_ACCESS,
 		TB_ARRAY_ACCESS,
 		
@@ -242,6 +241,10 @@ extern "C" {
 		TB_PTR2INT,
 		TB_INT2FLOAT,
 		TB_FLOAT2INT,
+		TB_BITCAST,
+		
+		/* Select */
+		TB_SELECT,
 		
 		/* Unary operations */
 		TB_NOT,
@@ -269,7 +272,10 @@ extern "C" {
 		TB_FMUL,
 		TB_FDIV,
 		
-		// Comparisons
+		/* Vectors */
+		
+		
+		/* Comparisons */
 		TB_CMP_EQ,
 		TB_CMP_NE,
 		TB_CMP_SLT,
@@ -290,6 +296,10 @@ extern "C" {
 		// see one in normal IR things went wrong in
 		// an optimization pass
 		TB_PASS,
+		
+		// x86 intrinsics
+		TB_X86INTRIN_SQRT,
+		TB_X86INTRIN_RSQRT,
 	} TB_RegTypeEnum;
 	
 #define TB_IS_NODE_SIDE_EFFECT(type) ((type) >= TB_LINE_INFO && (type) <= TB_ATOMIC_CMPXCHG2)
@@ -300,7 +310,7 @@ extern "C" {
 #define TB_IS_POINTER_TYPE(x) ((x) == TB_PTR)
 	
 	typedef struct TB_DataType {
-		TB_DataTypeEnum type : 8;
+		uint8_t type;
 		
 		// 2^N where N is the width value.
 		// Only integers and floats can be wide.
@@ -333,7 +343,7 @@ extern "C" {
 	typedef int TB_Label;
 	
 	typedef struct TB_SwitchEntry {
-		uint32_t key;
+		int32_t key;
 		TB_Label value;
 	} TB_SwitchEntry;
 	
@@ -495,6 +505,7 @@ extern "C" {
 	TB_API TB_Register tb_inst_ptr2int(TB_Function* f, TB_Register src, TB_DataType dt);
 	TB_API TB_Register tb_inst_int2float(TB_Function* f, TB_Register src, TB_DataType dt);
 	TB_API TB_Register tb_inst_float2int(TB_Function* f, TB_Register src, TB_DataType dt);
+	TB_API TB_Register tb_inst_bitcast(TB_Function* f, TB_Register src, TB_DataType dt);
 	
 	TB_API TB_Register tb_inst_local(TB_Function* f, uint32_t size, TB_CharUnits align);
 	TB_API TB_Register tb_inst_load(TB_Function* f, TB_DataType dt, TB_Register addr, TB_CharUnits align);
@@ -534,6 +545,14 @@ extern "C" {
 	TB_API TB_Register tb_inst_get_func_address(TB_Function* f, const TB_Function* target);
 	TB_API TB_Register tb_inst_get_extern_address(TB_Function* f, TB_ExternalID target);
 	TB_API TB_Register tb_inst_get_global_address(TB_Function* f, TB_GlobalID target);
+	
+	// Performs a conditional select between two values, if the operation is performed
+	// wide then the cond is expected to be the same type as a and b where the condition
+	// is resolved as true if the MSB (per component) is 1.
+	// 
+	// result = cond ? a : b
+	// a, b must match in type
+	TB_API TB_Register tb_inst_select(TB_Function* f, TB_Register cond, TB_Register a, TB_Register b);
 	
 	// Integer arithmatic
 	TB_API TB_Register tb_inst_add(TB_Function* f, TB_Register a, TB_Register b, TB_ArithmaticBehavior arith_behavior);
@@ -582,6 +601,9 @@ extern "C" {
 	TB_API TB_Register tb_inst_fsub(TB_Function* f, TB_Register a, TB_Register b);
 	TB_API TB_Register tb_inst_fmul(TB_Function* f, TB_Register a, TB_Register b);
 	TB_API TB_Register tb_inst_fdiv(TB_Function* f, TB_Register a, TB_Register b);
+	
+	TB_API TB_Register tb_inst_x86_sqrt(TB_Function* f, TB_Register a);
+	TB_API TB_Register tb_inst_x86_rsqrt(TB_Function* f, TB_Register a);
 	
 	// Comparisons
 	TB_API TB_Register tb_inst_cmp_eq(TB_Function* f, TB_Register a, TB_Register b);

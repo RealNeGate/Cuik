@@ -149,8 +149,25 @@ void cpp_dump(CPP_Context* ctx) {
 }
 
 TokenStream cpp_process(CPP_Context* ctx, const char filepath[]) {
+	char* slash = strrchr(filepath, '\\');
+	if (!slash) slash = strrchr(filepath, '/');
+	
+	char directory[260];
+	if (slash) {
+		size_t len = slash - filepath;
+		
+		memcpy(directory, filepath, len);
+#if _WIN32
+		directory[len] = '\\';
+#else
+		directory[len] = '/';
+#endif
+	} else {
+		directory[0] = '\0';
+	}
+	
 	TokenStream s = { 0 };
-	preprocess_file(ctx, &s, "", filepath, 1);
+	preprocess_file(ctx, &s, directory, filepath, 1);
 	
 	Token t = { 0, 0, NULL, NULL };
 	arrput(s.tokens, t);
@@ -515,12 +532,14 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 						char* new_dir = strdup(path);
 						
 						char* slash = strrchr(new_dir, '\\');
-						if (!slash) {
-							slash = strrchr(new_dir, '/');
-							if (!slash) abort();
-						}
-						slash[1] = '\0';
+						if (!slash) slash = strrchr(new_dir, '/');
 						
+						if (slash) {
+							slash[1] = '\\';
+						} else {
+							new_dir[0] = '\\';
+							new_dir[1] = '\0';
+						}
 #if 0
 						for (int i = 0; i < depth; i++) printf("  ");
 						printf("%s\n", new_path);
@@ -969,8 +988,8 @@ static unsigned char* expand_ident(CPP_Context* restrict c, unsigned char* restr
 				value_ranges[i*2 + 1] = end;
 				
 				if (l->token_type == ',') lexer_read(l);
+				l->hit_line = false;
 			}
-			
 			expect(l, ')');
 			
 			// We dont need to parse this part if it expands into nothing
@@ -1046,7 +1065,7 @@ static unsigned char* expand_ident(CPP_Context* restrict c, unsigned char* restr
 					}
 					
 					int index = -1;
-					for (int i = 0; i < key_count; i++) {
+					for (size_t i = 0; i < key_count; i++) {
 						size_t key_length = key_ranges[i*2 + 1] - key_ranges[i*2 + 0];
 						const unsigned char* key = key_ranges[i*2 + 0];
 						
@@ -1063,8 +1082,12 @@ static unsigned char* expand_ident(CPP_Context* restrict c, unsigned char* restr
 						
 						if (as_string) *temp_expansion++ = '\"';
 						
-						memcpy(temp_expansion, start, end-start);
-						temp_expansion += end-start;
+						size_t count = end-start;
+						for (size_t i = 0; i < count; i++) {
+							if (start[i] == '\r' || start[i] == '\n') temp_expansion[i] = ' ';
+							else temp_expansion[i] = start[i];
+						}
+						temp_expansion += count;
 						
 						if (as_string) *temp_expansion++ = '\"';
 						*temp_expansion++ = ' ';
@@ -1074,7 +1097,13 @@ static unsigned char* expand_ident(CPP_Context* restrict c, unsigned char* restr
 						// TODO(NeGate): Error message
 						if (as_string) abort();
 						
-						memcpy(temp_expansion, token_data, token_length);
+						for (size_t i = 0; i < token_length; i++) {
+							if (token_data[i] == '\r' || token_data[i] == '\n') {
+								temp_expansion[i] = ' ';
+							} else {
+								temp_expansion[i] = token_data[i];
+							}
+						}
 						temp_expansion += token_length;
 						*temp_expansion++ = ' ';
 					}

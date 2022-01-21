@@ -93,14 +93,18 @@ typedef struct Type {
 		};
 		
         // Pointers
-		TypeIndex ptr_to;
+		struct {
+			TypeIndex ptr_to;
+			bool is_ptr_restrict : 1;
+		};
 		
 		// Function
 		struct {
 			Atom name;
 			TypeIndex return_type;
 			ParamIndex param_list, param_count;
-			bool has_varargs;
+			
+			bool has_varargs : 1;
 			
 			// TODO(NeGate): Attributes
 		} func;
@@ -109,6 +113,7 @@ typedef struct Type {
 		struct {
 			Atom name;
 			MemberIndex kids_start, kids_end;
+			TB_DataType intrin_type;
 		} record;
 		
 		// Enumerators

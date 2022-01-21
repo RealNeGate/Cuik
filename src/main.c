@@ -140,12 +140,40 @@ static void set_preprocessor_info(CPP_Context* cpp_ctx) {
 	cpp_define_empty(cpp_ctx, "__FILE__");
 	cpp_define_empty(cpp_ctx, "__LINE__");
 	
+	// things we don't handle yet so we just remove them
+	cpp_define_empty(cpp_ctx, "_Frees_ptr_");
+	cpp_define_empty(cpp_ctx, "__forceinline");
+	cpp_define_empty(cpp_ctx, "__unaligned");
+	cpp_define_empty(cpp_ctx, "__analysis_noreturn");
+	cpp_define_empty(cpp_ctx, "__ptr32");
+	cpp_define_empty(cpp_ctx, "__ptr64");
+	cpp_define_empty(cpp_ctx, "_CRT_BEGIN_C_HEADER");
+	cpp_define_empty(cpp_ctx, "_NODISCARD");
+	cpp_define_empty(cpp_ctx, "_Ret_reallocated_bytes_(x,y)");
+	cpp_define_empty(cpp_ctx, "_IRQL_requires_max_(x)");
+	cpp_define_empty(cpp_ctx, "__drv_maxIRQL(x)");
+	cpp_define_empty(cpp_ctx, "_Acquires_shared_lock_(x)");
+	cpp_define_empty(cpp_ctx, "_CRT_INSECURE_DEPRECATE_MEMORY(x)");
+	cpp_define_empty(cpp_ctx, "_CRT_DEPRECATE_TEXT(x)");
+	cpp_define_empty(cpp_ctx, "_CRT_INSECURE_DEPRECATE(x)");
+	
+	// we pretend to be a modern MSVC compiler
+	cpp_define(cpp_ctx, "_MSC_VER", "1929");
+	cpp_define(cpp_ctx, "_MSC_FULL_VER", "192930133");
+	cpp_define(cpp_ctx, "_WIN32_WINNT", "0x0A00");
+	cpp_define(cpp_ctx, "NTDDI_VERSION", "0x0A000008");
+	
 	cpp_define(cpp_ctx, "__int8", "char");
 	cpp_define(cpp_ctx, "__int16", "short");
 	cpp_define(cpp_ctx, "__int32", "int");
 	cpp_define(cpp_ctx, "__int64", "long long");
 	cpp_define(cpp_ctx, "__pragma(x)", "_Pragma(#x)");
 	cpp_define(cpp_ctx, "__inline", "inline");
+	cpp_define(cpp_ctx, "__CRTDECL", "__cdecl");
+	
+	// NOTE(NeGate): We probably shouldn't be defining this...
+	// it's a winnt.h thing
+	cpp_define(cpp_ctx, "ANYSIZE_ARRAY", "1");
 #else
 	// TODO(NeGate): Automatically detect these somehow...
 	cpp_add_include_directory(cpp_ctx, "/usr/lib/gcc/x86_64-linux-gnu/10/include/");
@@ -350,6 +378,10 @@ int main(int argc, char* argv[]) {
 				
 				case 'P':
 				settings.pedantic = true;
+				break;
+				
+				case 's':
+				settings.num_of_worker_threads = 1;
 				break;
 				
 				case 'o':

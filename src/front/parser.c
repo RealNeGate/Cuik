@@ -541,16 +541,16 @@ static StmtIndex parse_stmt(TokenStream* restrict s) {
 		}
 		
 		intmax_t key = parse_const_expr(s);
-		expect(s, ':');
-		current_switch_or_case = n;
 		
-		StmtIndex body = parse_stmt_or_expr(s);
+		current_switch_or_case = n;
+		expect(s, ':');
 		
 		stmt_arena.data[n].case_ = (struct StmtCase){
-			.key = key,
-			.body = body,
-			.next = 0
+			.key = key, .body = 0, .next = 0
 		};
+		
+		StmtIndex body = parse_stmt_or_expr(s);
+		stmt_arena.data[n].case_.body = body;
 		return n;
 	} else if (tokens_get(s)->type == TOKEN_KW_default) {
 		// TODO(NeGate): error messages
@@ -569,15 +569,15 @@ static StmtIndex parse_stmt(TokenStream* restrict s) {
 		} else {
 			abort();
 		}
+		current_switch_or_case = n;
 		expect(s, ':');
 		
-		StmtIndex body = parse_stmt_or_expr(s);
-		
 		stmt_arena.data[n].default_ = (struct StmtDefault){
-			.body = body,
-			.next = 0
+			.body = 0, .next = 0
 		};
-		current_switch_or_case = n;
+		
+		StmtIndex body = parse_stmt_or_expr(s);
+		stmt_arena.data[n].default_.body = body;
 		return n;
 	} else if (tokens_get(s)->type == TOKEN_KW_break) {
 		// TODO(NeGate): error messages
@@ -1107,8 +1107,40 @@ static ExprIndex parse_expr_l0(TokenStream* restrict s) {
 			.str.start = t->start,
 			.str.end = t->end
 		};
-		
 		tokens_next(s);
+		
+		// TODO(NeGate): Kinda janky and ideally i remove the mallocs and reallocs
+		if (tokens_get(s)->type == TOKEN_STRING_DOUBLE_QUOTE) {
+			Token* t = tokens_get(s);
+			
+			size_t len = 0;
+			char* buffer = malloc((t->end - t->start) + 1);
+			
+			memcpy(&buffer[0], t->start, t->end - t->start);
+			len += (t->end - t->start) - 1;
+			
+			printf("%.*s\n\n", (int) len, buffer);
+			
+			do {
+				t = tokens_get(s);
+				buffer = realloc(buffer, len + (t->end - t->start));
+				
+				memcpy(&buffer[len], t->start + 1, t->end - t->start);
+				len += (t->end - t->start) - 2;
+				
+				printf("%.*s\n\n", (int) len, buffer);
+				
+				tokens_next(s);
+			} while (tokens_get(s)->type == TOKEN_STRING_DOUBLE_QUOTE);
+			
+			buffer = realloc(buffer, len + 1);
+			buffer[len] = '\"';
+			printf("%.*s\n\n", (int) len, buffer);
+			
+			expr_arena.data[e].str.start = (const unsigned char*)buffer;
+			expr_arena.data[e].str.end = (const unsigned char*)(buffer + len);
+		}
+		
 		return e;
 	} else {
 		generic_error(s, "Could not parse expression!");
@@ -1752,16 +1784,22 @@ static Decl parse_declarator(TokenStream* restrict s, TypeIndex type) {
 		type = new_pointer(type);
 		tokens_next(s);
 		
-		// TODO(NeGate): parse qualifiers
 		parse_another_qualifier: {
 			switch (tokens_get(s)->type) {
+				case TOKEN_KW_restrict: {
+					type_arena.data[type].is_ptr_restrict = true;
+					tokens_next(s);
+					goto parse_another_qualifier;
+				}
+				
 				case TOKEN_KW_const:
 				case TOKEN_KW_volatile:
-				case TOKEN_KW_restrict: 
 				case TOKEN_KW_cdecl:
-				case TOKEN_KW_stdcall:
-				tokens_next(s);
-				goto parse_another_qualifier;
+				case TOKEN_KW_stdcall: {
+					tokens_next(s);
+					goto parse_another_qualifier;
+				}
+				
 				default: break;
 			}
 		}
@@ -1846,7 +1884,8 @@ static TypeIndex parse_abstract_declarator(TokenStream* restrict s, TypeIndex ty
 			switch (tokens_get(s)->type) {
 				case TOKEN_KW_const:
 				case TOKEN_KW_volatile:
-				case TOKEN_KW_restrict:
+				case TOKEN_KW_cdecl:
+				case TOKEN_KW_stdcall:
 				tokens_next(s);
 				goto parse_another_qualifier;
 				default: break;
@@ -2035,6 +2074,7 @@ static TypeIndex parse_declspec(TokenStream* restrict s, Attribs* attr) {
 			
 			case TOKEN_KW_Atomic: is_atomic = true; break;
 			case TOKEN_KW_const: is_const = true; break;
+			case TOKEN_KW_volatile: break;
 			case TOKEN_KW_auto: break;
 			
 			case TOKEN_KW_struct:
@@ -2066,6 +2106,12 @@ static TypeIndex parse_declspec(TokenStream* restrict s, Attribs* attr) {
 						type = new_record(is_union);
 						type_arena.data[type].is_incomplete = false;
 						type_arena.data[type].record.name = name;
+						
+						if (name && strcmp((const char*)name, "__m128") == 0) {
+							type_arena.data[type].record.intrin_type = tb_vector_type(TB_F32, 4);
+						} else {
+							type_arena.data[type].record.intrin_type = TB_TYPE_VOID;
+						}
 						
 						// can't forward decl unnamed records so we
 						// don't track it
@@ -2128,7 +2174,7 @@ static TypeIndex parse_declspec(TokenStream* restrict s, Attribs* attr) {
 							}
 							
 							if (is_union) {
-								if (member_size < offset) offset = member_size;
+								if (member_size > offset) offset = member_size;
 							} else {
 								offset += member_size;
 							}
@@ -2351,9 +2397,12 @@ static bool is_typename(TokenStream* restrict s) {
 		case TOKEN_KW_typedef:
 		case TOKEN_KW_inline:
 		case TOKEN_KW_const:
+		case TOKEN_KW_volatile:
 		case TOKEN_KW_Thread_local:
 		case TOKEN_KW_Atomic:
 		case TOKEN_KW_auto:
+		case TOKEN_KW_cdecl:
+		case TOKEN_KW_stdcall:
 		return true;
 		
 		case TOKEN_IDENTIFIER: {

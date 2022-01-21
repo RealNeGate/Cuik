@@ -53,6 +53,7 @@ static char* read_entire_file(const char* file_path) {
 		// Replace all \t and \v with spaces
 		__m128i test_ident = _mm_cmpeq_epi8(bytes, _mm_set1_epi8('\t'));
 		test_ident = _mm_or_si128(test_ident, _mm_cmpeq_epi8(bytes, _mm_set1_epi8('\v')));
+		test_ident = _mm_or_si128(test_ident, _mm_cmpeq_epi8(bytes, _mm_set1_epi8(12)));
 		
 		bytes = _mm_blendv_epi8(bytes, _mm_set1_epi8(' '), test_ident);
 		_mm_store_si128((__m128i*) &text[i], bytes);
