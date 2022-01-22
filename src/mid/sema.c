@@ -1,6 +1,7 @@
 #include "sema.h"
 #include "settings.h"
 
+#include <targets/targets.h>
 #include <back/ir_gen.h>
 #include <stdarg.h>
 
@@ -83,10 +84,9 @@ static size_t type_as_string(size_t max_len, char buffer[static max_len], TypeIn
 			}
 			
 			buffer[i++] = '(';
-			for (size_t i = 0; i < param_count; i++) {
-				if (i) buffer[i++] = ',';
-				
-				Param* p = &param_arena.data[param_list + i];
+			for (size_t j = 0; j < param_count; j++) {
+				if (j) buffer[i++] = ',';
+				Param* p = &param_arena.data[param_list + j];
 				
 				i += type_as_string(max_len - i, &buffer[i], p->type);
 				if (p->name) {
@@ -103,6 +103,18 @@ static size_t type_as_string(size_t max_len, char buffer[static max_len], TypeIn
 	
 	buffer[i] = '\0';
 	return i;
+}
+
+static void sema_warn(SourceLocIndex loc, const char* fmt, ...) {
+	SourceLoc* l = &ir_gen_tokens.line_arena[loc];
+	printf("%s:%d: warning: ", l->file, l->line);
+	
+	va_list ap;
+	va_start(ap, fmt);
+	vprintf(fmt, ap);
+	va_end(ap);
+	
+	printf("\n");
 }
 
 static void sema_error(SourceLocIndex loc, const char* fmt, ...) {
@@ -192,6 +204,11 @@ static bool type_compatible(TypeIndex a, TypeIndex b, ExprIndex a_expr) {
 		} else if (src->kind == KIND_DOUBLE ||
 				   dst->kind == KIND_FLOAT) {
 			return true;
+		} else if (src->kind == KIND_FUNC &&
+				   dst->kind == KIND_PTR) {
+			if (type_arena.data[dst->ptr_to].kind == KIND_FUNC) {
+				return type_equal(a, dst->ptr_to);
+			}
 		}
 		
 		return false;
@@ -438,7 +455,6 @@ static TypeIndex sema_expr(ExprIndex e) {
 					goto failure;
 				}
 				
-				// type-check the untyped arguments
 				for (size_t i = 0; i < arg_count; i++) {
 					TypeIndex arg_type = sema_expr(args[i]);
 					
@@ -512,9 +528,6 @@ static TypeIndex sema_expr(ExprIndex e) {
 				
 				// TODO(NeGate): String interning would be nice
 				if (cstr_equals(name, member->name)) {
-					// TODO(NeGate): Implement bitfields
-					assert(!member->is_bitfield);
-					
 					ep->dot.member = m;
 					return (ep->type = member->type);
 				}
@@ -547,9 +560,6 @@ static TypeIndex sema_expr(ExprIndex e) {
 				
 				// TODO(NeGate): String interning would be nice
 				if (cstr_equals(name, member->name)) {
-					// TODO(NeGate): Implement bitfields
-					assert(!member->is_bitfield);
-					
 					ep->dot.member = m;
 					return (ep->type = member->type);
 				}
@@ -726,7 +736,7 @@ void sema_stmt(StmtIndex s) {
 				TypeIndex return_type = type_arena.data[stmt_arena.data[function_stmt].decl.type].func.return_type;
 				
 				if (!type_compatible(expr_type, return_type, sp->return_.expr)) {
-					sema_error(sp->loc, "Value in return statement does not match function signature.");
+					sema_warn(sp->loc, "Value in return statement does not match function signature. (TODO this should be an error)");
 				}
 				
 				expr_arena.data[sp->return_.expr].cast_type = return_type;
@@ -817,6 +827,13 @@ void sema_check(TopLevel tl, size_t i) {
 				break;
 			}
 			
+			if (sp->decl.attrs.is_static || sp->decl.attrs.is_inline) {
+				if (!sp->decl.attrs.is_used) {
+					//sema_warn(sp->loc, "Function '%s' is never used.", name);
+					return;
+				}
+			}
+			
 			bool is_aggregate_return = false;
 			if (return_type->kind == KIND_STRUCT ||
 				return_type->kind == KIND_UNION) {
@@ -870,10 +887,13 @@ void sema_check(TopLevel tl, size_t i) {
 			
 			// forward decls
 			// TODO(NeGate): This is hacky
-			if (strcmp(name, "__va_start") == 0) {
-				sp->backing.e = 0;
-			} else if (memcmp(name, "_mm_", 4) == 0) {
-				sp->backing.e = 0;
+			if (name[0] == '_') {
+				ptrdiff_t search = shgeti(current_target_desc.builtin_func_map, name);
+				
+				// NOTE(NeGate): 0 doesn't mean a null index in this context, it
+				// maps to the first external but i don't care we won't be using it
+				// later on it's just clearer.
+				if (search >= 0) sp->backing.e = 0;
 			} else {
 				sp->backing.e = tb_extern_create(mod, name);
 			}

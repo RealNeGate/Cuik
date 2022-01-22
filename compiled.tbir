@@ -1,0 +1,40 @@
+gen_normals():
+L0: # r1 terminates at r38
+  r2	=	[ptr]      	  PARAM 0
+  r3	=	[ptr]      	  PARAM 1
+  r4	=	[ptr]      	 r2.data[16]
+  r5	=	[f32 x   4]	 *r4 (8 align)
+  r6	=	[ptr]      	 r2.data[80]
+  r7	=	[f32 x   4]	 *r6 (8 align)
+  r8	=	[f32 x   4]	 r5 * r7
+  r9	=	[ptr]      	 r2.data[32]
+  r10	=	[f32 x   4]	 *r9 (8 align)
+  r11	=	[ptr]      	 r2.data[64]
+  r12	=	[f32 x   4]	 *r11 (8 align)
+  r13	=	[f32 x   4]	 r10 * r12
+  r14	=	[f32 x   4]	 r8 - r13
+  r15	=	[ptr]      	 r2.data[48]
+  r16	=	[f32 x   4]	 *r15 (8 align)
+  r17	=	[f32 x   4]	 r10 * r16
+  r18	=	[f32 x   4]	 *r2 (8 align)
+  r19	=	[f32 x   4]	 r18 * r7
+  r20	=	[f32 x   4]	 r17 - r19
+  r21	=	[f32 x   4]	 r18 * r12
+  r22	=	[f32 x   4]	 r5 * r16
+  r23	=	[f32 x   4]	 r21 - r22
+  r24	=	[f32 x   4]	 r14 * r14
+  r25	=	[f32 x   4]	 r20 * r20
+  r26	=	[f32 x   4]	 r24 + r25
+  r27	=	[f32 x   4]	 r23 * r23
+  r28	=	[f32 x   4]	 r26 + r27
+  r29	=	[f32 x   4]	 X86.RSQRT r28
+  r30	=	[f32 x   4]	 r14 * r29
+ *r3 	=	[f32 x   4]	 r30 (8 align)
+  r32	=	[ptr]      	 r3.data[16]
+  r33	=	[f32 x   4]	 r20 * r29
+ *r32 	=	[f32 x   4]	 r33 (8 align)
+  r35	=	[ptr]      	 r3.data[32]
+  r36	=	[f32 x   4]	 r23 * r29
+ *r35 	=	[f32 x   4]	 r36 (8 align)
+  ret		[void]     	 r0
+

@@ -5,9 +5,5 @@ struct Foo {
 };
 
 int bar(struct Foo* f) {
-	return f.a + foo() + f.b;
-}
-
-int foo() {
-	return 16;
+	return f.a + f.b;
 }

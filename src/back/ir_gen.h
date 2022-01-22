@@ -11,6 +11,44 @@ extern TokenStream ir_gen_tokens;
 extern FILE* tbir_output_file;
 extern TB_Module* mod;
 
+typedef enum IRValType {
+	RVALUE,
+	
+	LVALUE,
+	LVALUE_BITS,
+	LVALUE_LABEL,
+	LVALUE_FUNC,
+	LVALUE_EFUNC,
+	
+	// if value is a special kind of rvalue
+	// it essentially represents a phi node
+	// where it's true on one path and false
+	// on the other.
+	RVALUE_PHI
+} IRValType;
+
+typedef struct IRVal {
+	IRValType value_type;
+	TypeIndex type;
+	
+	union {
+		TB_Register reg;
+		TB_Function* func;
+		TB_ExternalID ext;
+		struct {
+			TB_Register reg;
+			
+			short offset;
+			short width;
+		} bits;
+		struct {
+			TB_Label if_true;
+			TB_Label if_false;
+		} phi;
+		TB_Label label;
+	};
+} IRVal;
+
 static TB_DataType ctype_to_tbtype(const Type* t) {
 	switch (t->kind) {
 		case KIND_VOID: return TB_TYPE_VOID;
@@ -38,4 +76,12 @@ static TB_DataType ctype_to_tbtype(const Type* t) {
 	}
 }
 
-void gen_ir(TopLevel tl, size_t i);
+// logging
+// TODO(NeGate): consider merging this with the rest of the logging
+_Noreturn void irgen_fatal(SourceLocIndex loc, const char* fmt, ...);
+void irgen_warn(SourceLocIndex loc, const char* fmt, ...);
+
+TB_Register irgen_as_rvalue(TB_Function* func, ExprIndex e);
+IRVal irgen_expr(TB_Function* func, ExprIndex e);
+void irgen_stmt(TB_Function* func, StmtIndex s);
+void irgen_top_level_stmt(StmtIndex s);

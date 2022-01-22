@@ -193,6 +193,11 @@ bool type_equal(TypeIndex a, TypeIndex b) {
 		// match parameters count
 		ParamIndex param_count1 = ty1->func.param_count;
 		ParamIndex param_count2 = ty2->func.param_count;
+		
+		// if there's no params on it then just pretend like it matches
+		// it helps get stuff like FARPROC to compile properly
+		if (param_count1 == 0 || param_count2 == 0) return true;
+		
 		if (param_count1 != param_count2) return false;
 		
 		// match var args

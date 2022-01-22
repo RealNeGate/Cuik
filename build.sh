@@ -3,6 +3,7 @@ c_settings="-march=haswell -maes -std=gnu11 -DCUIK_NEEDS_SAFE_FUNCTIONS -O2 -DND
 cuik_source_files="src/main.c
 	src/tls.c
 	src/arena.c
+	src/targets/x64.c
 	src/front/preproc.c
 	src/front/lexer.c
 	src/front/types.c

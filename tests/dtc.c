@@ -5,7 +5,7 @@
 #pragma comment (lib, "user32")
 #pragma comment (lib, "gdi32")
 
-struct the_baby
+typedef struct the_baby
 {
     DWORD     dwExStyle;
     LPCWSTR   lpClassName;
@@ -19,12 +19,16 @@ struct the_baby
     HMENU     hMenu;
     HINSTANCE hInstance;
     LPVOID    lpParam;
-};
+} the_baby;
 
 #define CREATE_DANGEROUS_WINDOW (WM_USER + 0x1337)
 #define DESTROY_DANGEROUS_WINDOW (WM_USER + 0x1338)
 
 static DWORD MainThreadID;
+
+// hacky
+extern void* __readgsqword(LONG offset) { return NULL; }
+extern void __stosb(char* ptr, char src, size_t count) {}
 
 static LRESULT CALLBACK ServiceWndProc(HWND Window, UINT Message, WPARAM WParam, LPARAM LParam)
 {
@@ -129,14 +133,14 @@ static DWORD WINAPI MainThread(LPVOID Param)
     WindowClass.cbSize = sizeof(WindowClass);
     WindowClass.lpfnWndProc = &DisplayWndProc;
     WindowClass.hInstance = GetModuleHandleW(NULL);
-    WindowClass.hIcon = LoadIconA(NULL, IDI_APPLICATION);
-    WindowClass.hCursor = LoadCursorA(NULL, IDC_ARROW);
+    //WindowClass.hIcon = LoadIconA(NULL, IDI_APPLICATION);
+    //WindowClass.hCursor = LoadCursorA(NULL, IDC_ARROW);
     WindowClass.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
     WindowClass.lpszClassName = L"Dangerous Class";
     RegisterClassExW(&WindowClass);
 	
     the_baby Baby = {};
-    Baby.dwExStyle = 0;;
+    Baby.dwExStyle = 0;
     Baby.lpClassName = WindowClass.lpszClassName;
     Baby.lpWindowName = L"Dangerous Window";
     Baby.dwStyle = WS_OVERLAPPEDWINDOW|WS_VISIBLE;
@@ -210,8 +214,8 @@ int WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int n
     WindowClass.cbSize = sizeof(WindowClass);
     WindowClass.lpfnWndProc = &ServiceWndProc;
     WindowClass.hInstance = GetModuleHandleW(NULL);
-    WindowClass.hIcon = LoadIconA(NULL, IDI_APPLICATION);
-    WindowClass.hCursor = LoadCursorA(NULL, IDC_ARROW);
+    //WindowClass.hIcon = LoadIconA(NULL, IDI_APPLICATION);
+    //WindowClass.hCursor = LoadCursorA(NULL, IDC_ARROW);
     WindowClass.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
     WindowClass.lpszClassName = L"DTCClass";
     RegisterClassExW(&WindowClass);

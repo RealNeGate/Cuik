@@ -56,6 +56,7 @@ static TypeIndex parse_typename(TokenStream* restrict s);
 static intmax_t parse_const_expr(TokenStream* restrict s);
 static bool is_typename(TokenStream* restrict s);
 static _Noreturn void generic_error(TokenStream* restrict s, const char* msg);
+static void generic_warn(TokenStream* restrict s, const char* msg);
 static void parse_decl_or_expr(TokenStream* restrict s, size_t* body_count);
 static ExprIndex parse_expr(TokenStream* restrict s);
 static ExprIndex parse_initializer(TokenStream* restrict s, TypeIndex type);
@@ -91,6 +92,8 @@ TopLevel parse_file(TokenStream* restrict s) {
 	StmtIndex* top_level = NULL;
 	
 	while (tokens_get(s)->type) {
+		while (tokens_get(s)->type == ';') tokens_next(s);
+		
 		// TODO(NeGate): Correctly parse pragmas instead of
 		// ignoring them.
 		if (tokens_get(s)->type == TOKEN_KW_Pragma) {
@@ -153,13 +156,15 @@ TopLevel parse_file(TokenStream* restrict s) {
 				if (sym) {
 					is_redefine = true;
 					
-					// TODO(NeGate): Error messages
-					StorageClass sclass = attr.is_static ? STORAGE_STATIC_FUNC : STORAGE_FUNC;
-					if (sym->storage_class != sclass) abort();
+					/*StorageClass sclass = attr.is_static ? STORAGE_STATIC_FUNC : STORAGE_FUNC;
+					if (sym->storage_class != sclass) {
+						// TODO(NeGate): Error messages
+						//generic_warn(s, "Storage class changed i think?");
+					}*/
 					
 					// convert forward decl into proper function
 					n = sym->stmt;
-					if (stmt_arena.data[n].op == STMT_FUNC_DECL) {
+					if (stmt_arena.data[n].op == STMT_FUNC_DECL && !attr.is_inline) {
 						is_redefining_body = true;
 					}
 					
@@ -239,7 +244,9 @@ TopLevel parse_file(TokenStream* restrict s) {
 				local_symbol_count = 0;
 			} else {
 				// Normal decls
-				assert(decl.name);
+				if (!decl.name) {
+					generic_error(s, "declaration is missing a name!");
+				}
 				
 				StmtIndex n = make_stmt(s, STMT_GLOBAL_DECL);
 				stmt_arena.data[n].decl = (struct StmtDecl){
@@ -1805,6 +1812,8 @@ static Decl parse_declarator(TokenStream* restrict s, TypeIndex type) {
 		}
 	}
 	
+	skip_over_declspec(s);
+	
 	if (tokens_get(s)->type == '(') {
 		// TODO(NeGate): I don't like this code...
 		// it essentially just skips over the stuff in the
@@ -2101,7 +2110,7 @@ static TypeIndex parse_declspec(TokenStream* restrict s, Attribs* attr) {
 					type = name ? find_incomplete_type((char*)name) : 0;
 					if (type) {
 						// can't re-complete a struct
-						assert(type_arena.data[type].is_incomplete);
+						//assert(!type_arena.data[type].is_incomplete);
 					} else {
 						type = new_record(is_union);
 						type_arena.data[type].is_incomplete = false;
@@ -2134,6 +2143,9 @@ static TypeIndex parse_declspec(TokenStream* restrict s, Attribs* attr) {
 						
 						// TODO(NeGate): Kinda ugly
 						// don't expect one the first time
+						int last_member_size = 0;
+						int current_bit_offset = 0;
+						
 						bool expect_comma = false;
 						while (tokens_get(s)->type != ';') {
 							if (expect_comma) {
@@ -2167,11 +2179,26 @@ static TypeIndex parse_declspec(TokenStream* restrict s, Attribs* attr) {
 							if (tokens_get(s)->type == ':') {
 								tokens_next(s);
 								
-								// TODO(NeGate): Handle bitfields a lot better
+								// if we change data type halfway we split things off
+								if (last_member_size != member_size) {
+									current_bit_offset = 0;
+								}
+								
+								int bit_width = parse_const_expr(s);
+								int bits_in_region = member_size * 8;
+								if (bit_width > bits_in_region) {
+									generic_error(s, "Bitfield cannot fit in this type.");
+								}
+								
+								if (current_bit_offset + bit_width > bits_in_region) {
+									current_bit_offset = 0;
+								}
+								
 								member->is_bitfield = true;
-								member->bit_offset = 0;
-								member->bit_width = parse_const_expr(s);
+								member->bit_offset = current_bit_offset;
+								member->bit_width = bit_width;
 							}
+							last_member_size = member_size;
 							
 							if (is_union) {
 								if (member_size > offset) offset = member_size;
@@ -2232,44 +2259,69 @@ static TypeIndex parse_declspec(TokenStream* restrict s, Attribs* attr) {
 					tokens_next(s);
 				}
 				
-				type = new_enum();
-				type_arena.data[type].enumerator.name = name;
-				
-				expect(s, '{');
-				type_arena.data[type].enumerator.start = enum_entry_arena.count;
-				
-				// starts at zero and after any entry it increments
-				// you can override it by using:
-				// identifier = int-const-expr
-				int cursor = 0;
-				
-				while (tokens_get(s)->type != '}') {
-					EnumEntryIndex e = push_enum_entry_arena(1);
-					
-					// parse name
-					Token* t = tokens_get(s);
-					if (t->type != TOKEN_IDENTIFIER) {
-						generic_error(s, "expected identifier for enum name entry.");
-					}
-					
-					enum_entry_arena.data[e].name = atoms_put(t->end - t->start, t->start);
+				if (tokens_get(s)->type == '{') {
 					tokens_next(s);
 					
-					if (tokens_get(s)->type == '=') {
-						tokens_next(s);
+					type = name ? find_incomplete_type((char*)name) : 0;
+					if (type) {
+						// can't re-complete a enum
+						// TODO(NeGate): error messages
+						assert(type_arena.data[type].enumerator.start != type_arena.data[type].enumerator.start);
+					} else {
+						type = new_enum();
+						type_arena.data[type].enumerator.name = name;
+						type_arena.data[type].enumerator.start = enum_entry_arena.count;
 						
-						cursor = parse_const_expr(s);
+						if (name) shput(incomplete_types, name, type);
 					}
 					
-					enum_entry_arena.data[e].value = cursor++;
-					if (tokens_get(s)->type == ',') tokens_next(s);
+					// starts at zero and after any entry it increments
+					// you can override it by using:
+					// identifier = int-const-expr
+					int cursor = 0;
+					
+					while (tokens_get(s)->type != '}') {
+						EnumEntryIndex e = push_enum_entry_arena(1);
+						
+						// parse name
+						Token* t = tokens_get(s);
+						if (t->type != TOKEN_IDENTIFIER) {
+							generic_error(s, "expected identifier for enum name entry.");
+						}
+						
+						enum_entry_arena.data[e].name = atoms_put(t->end - t->start, t->start);
+						tokens_next(s);
+						
+						if (tokens_get(s)->type == '=') {
+							tokens_next(s);
+							
+							cursor = parse_const_expr(s);
+						}
+						
+						enum_entry_arena.data[e].value = cursor++;
+						if (tokens_get(s)->type == ',') tokens_next(s);
+					}
+					
+					if (tokens_get(s)->type != '}') {
+						generic_error(s, "Unclosed enum list!");
+					}
+					
+					type_arena.data[type].enumerator.end = enum_entry_arena.count;
+				} else {
+					type = find_incomplete_type((char*)name);
+					if (!type) {
+						type = new_enum();
+						type_arena.data[type].record.name = name;
+						type_arena.data[type].is_incomplete = true;
+						
+						shput(incomplete_types, name, type);
+					}
+					counter += OTHER;
+					
+					// push back one because we push it forward one later but 
+					// shouldn't
+					tokens_prev(s);
 				}
-				
-				if (tokens_get(s)->type != '}') {
-					generic_error(s, "Unclosed enum list!");
-				}
-				
-				type_arena.data[type].enumerator.end = enum_entry_arena.count;
 				break;
 			}
 			
@@ -2452,6 +2504,13 @@ static _Noreturn void generic_error(TokenStream* restrict s, const char* msg) {
 	
 	printf("%s:%d: error: %s\n", loc->file, loc->line, msg);
 	abort();
+}
+
+static void generic_warn(TokenStream* restrict s, const char* msg) {
+	Token* t = tokens_get(s);
+	SourceLoc* loc = &s->line_arena[t->location];
+	
+	printf("%s:%d: warning: %s\n", loc->file, loc->line, msg);
 }
 
 static void expect(TokenStream* restrict s, char ch) {

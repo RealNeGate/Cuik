@@ -13,6 +13,7 @@
 #include "ext/stb_ds.h"
 #include <stdatomic.h>
 #include "settings.h"
+#include "targets/targets.h"
 
 #if _WIN32
 #include "back/microsoft_craziness.h"
@@ -22,7 +23,6 @@
 #include <signal.h>
 #include <setjmp.h>
 
-#define PRINT_PROGRESS 1
 #define COMPILER_VERSION "v0.01"
 
 // this is how many IR gen tasks it tries to grab at any one time
@@ -48,6 +48,7 @@ static int frontend_stage;
 static TopLevel top_level;
 
 CompilerSettings settings;
+TargetDescriptor current_target_desc;
 
 static int task_thread(void* param) {
 	while (is_running) {
@@ -58,7 +59,7 @@ static int task_thread(void* param) {
 				for (size_t i = t; i < tasks_count; i++) {
 					switch (frontend_stage) {
 						case 0: sema_check(top_level, i); break;
-						case 1: gen_ir(top_level, i); break;
+						case 1: irgen_top_level_stmt(top_level.arr[i]); break;
 					}
 				}
 				
@@ -76,7 +77,7 @@ static int task_thread(void* param) {
 		for (size_t i = 0; i < MAX_MUNCH; i++) {
 			switch (frontend_stage) {
 				case 0: sema_check(top_level, t+i); break;
-				case 1: gen_ir(top_level, t+i); break;
+				case 1: irgen_top_level_stmt(top_level.arr[t+i]); break;
 			} 
 		}
 		tasks_complete += MAX_MUNCH;
@@ -100,7 +101,7 @@ static void dispatch_tasks(size_t count) {
 
 static void print_help(const char* executable_path) {
 	printf("Usage:\n"
-		   "  %s [command] [arguments] [filepath]\n"
+		   "  %s [command] [filepath] [flags]\n"
 		   "  \n"
 		   "Commands:\n"
 		   "  build      Compiles the input file/directory\n"
@@ -115,71 +116,76 @@ static void print_help(const char* executable_path) {
 		   executable_path);
 }
 
-static void set_preprocessor_info(CPP_Context* cpp_ctx) {
-	// TODO(NeGate): We should implement cross-compilation features, it just
-	// means we somehow expose this stuff so that the user can provide it.
-	
+static void set_preprocessor_info(CPP_Context* cpp) {
+	// TODO(NeGate): Setup a runtime option for this
 #ifdef _WIN32
-	// TODO(NeGate): Automatically detect these somehow...
-	cpp_add_include_directory(cpp_ctx, "W:\\Windows Kits\\10\\Include\\10.0.19041.0\\ucrt\\");
-	cpp_add_include_directory(cpp_ctx, "W:\\Windows Kits\\10\\Include\\10.0.19041.0\\um\\");
-	cpp_add_include_directory(cpp_ctx, "W:\\Windows Kits\\10\\Include\\10.0.19041.0\\shared\\");
-	cpp_add_include_directory(cpp_ctx, "W:\\Visual Studio\\2019\\Community\\VC\\Tools\\MSVC\\14.29.30133\\include\\");
-	
-	cpp_define_empty(cpp_ctx, "_X86_");
-	cpp_define_empty(cpp_ctx, "_WIN32");
-	cpp_define_empty(cpp_ctx, "_WIN64");
-	cpp_define_empty(cpp_ctx, "_M_X64");
-	cpp_define_empty(cpp_ctx, "_M_AMD64");
-	cpp_define_empty(cpp_ctx, "_DEBUG");
-	cpp_define_empty(cpp_ctx, "_MT");
-	cpp_define_empty(cpp_ctx, "_CRT_NONSTDC_NO_WARNINGS");
-	cpp_define_empty(cpp_ctx, "_CRT_SECURE_NO_WARNINGS");
-	
-	// NOTE(NeGate): Hack to make these trigger the preprocessor
-	cpp_define_empty(cpp_ctx, "__FILE__");
-	cpp_define_empty(cpp_ctx, "__LINE__");
-	
-	// things we don't handle yet so we just remove them
-	cpp_define_empty(cpp_ctx, "_Frees_ptr_");
-	cpp_define_empty(cpp_ctx, "__forceinline");
-	cpp_define_empty(cpp_ctx, "__unaligned");
-	cpp_define_empty(cpp_ctx, "__analysis_noreturn");
-	cpp_define_empty(cpp_ctx, "__ptr32");
-	cpp_define_empty(cpp_ctx, "__ptr64");
-	cpp_define_empty(cpp_ctx, "_CRT_BEGIN_C_HEADER");
-	cpp_define_empty(cpp_ctx, "_NODISCARD");
-	cpp_define_empty(cpp_ctx, "_Ret_reallocated_bytes_(x,y)");
-	cpp_define_empty(cpp_ctx, "_IRQL_requires_max_(x)");
-	cpp_define_empty(cpp_ctx, "__drv_maxIRQL(x)");
-	cpp_define_empty(cpp_ctx, "_Acquires_shared_lock_(x)");
-	cpp_define_empty(cpp_ctx, "_CRT_INSECURE_DEPRECATE_MEMORY(x)");
-	cpp_define_empty(cpp_ctx, "_CRT_DEPRECATE_TEXT(x)");
-	cpp_define_empty(cpp_ctx, "_CRT_INSECURE_DEPRECATE(x)");
-	
-	// we pretend to be a modern MSVC compiler
-	cpp_define(cpp_ctx, "_MSC_VER", "1929");
-	cpp_define(cpp_ctx, "_MSC_FULL_VER", "192930133");
-	cpp_define(cpp_ctx, "_WIN32_WINNT", "0x0A00");
-	cpp_define(cpp_ctx, "NTDDI_VERSION", "0x0A000008");
-	
-	cpp_define(cpp_ctx, "__int8", "char");
-	cpp_define(cpp_ctx, "__int16", "short");
-	cpp_define(cpp_ctx, "__int32", "int");
-	cpp_define(cpp_ctx, "__int64", "long long");
-	cpp_define(cpp_ctx, "__pragma(x)", "_Pragma(#x)");
-	cpp_define(cpp_ctx, "__inline", "inline");
-	cpp_define(cpp_ctx, "__CRTDECL", "__cdecl");
-	
-	// NOTE(NeGate): We probably shouldn't be defining this...
-	// it's a winnt.h thing
-	cpp_define(cpp_ctx, "ANYSIZE_ARRAY", "1");
+	bool is_windows_mode = true;
 #else
-	// TODO(NeGate): Automatically detect these somehow...
-	cpp_add_include_directory(cpp_ctx, "/usr/lib/gcc/x86_64-linux-gnu/10/include/");
-	cpp_add_include_directory(cpp_ctx, "/usr/local/include/");
-	cpp_add_include_directory(cpp_ctx, "/usr/include/");
+	bool is_windows_mode = false;
 #endif
+	
+	if (is_windows_mode) {
+		// TODO(NeGate): Automatically detect these somehow...
+		cpp_add_include_directory(cpp, "W:\\Windows Kits\\10\\Include\\10.0.19041.0\\ucrt\\");
+		cpp_add_include_directory(cpp, "W:\\Windows Kits\\10\\Include\\10.0.19041.0\\um\\");
+		cpp_add_include_directory(cpp, "W:\\Windows Kits\\10\\Include\\10.0.19041.0\\shared\\");
+		cpp_add_include_directory(cpp, "W:\\Visual Studio\\2019\\Community\\VC\\Tools\\MSVC\\14.29.30133\\include\\");
+		
+		cpp_define_empty(cpp, "_WIN32");
+		cpp_define_empty(cpp, "_WIN64");
+		cpp_define_empty(cpp, "_DEBUG");
+		cpp_define_empty(cpp, "_MT");
+		cpp_define_empty(cpp, "_CRT_NONSTDC_NO_WARNINGS");
+		cpp_define_empty(cpp, "_CRT_SECURE_NO_WARNINGS");
+		
+		// NOTE(NeGate): Hack to make these trigger the preprocessor
+		cpp_define_empty(cpp, "__FILE__");
+		cpp_define_empty(cpp, "__LINE__");
+		
+		// things we don't handle yet so we just remove them
+		cpp_define_empty(cpp, "_Frees_ptr_");
+		cpp_define_empty(cpp, "__unaligned");
+		cpp_define_empty(cpp, "__analysis_noreturn");
+		cpp_define_empty(cpp, "__ptr32");
+		cpp_define_empty(cpp, "__ptr64");
+		cpp_define_empty(cpp, "_CRT_BEGIN_C_HEADER");
+		cpp_define_empty(cpp, "_NODISCARD");
+		cpp_define_empty(cpp, "_Ret_reallocated_bytes_(x,y)");
+		cpp_define_empty(cpp, "_IRQL_requires_max_(x)");
+		cpp_define_empty(cpp, "__drv_maxIRQL(x)");
+		cpp_define_empty(cpp, "_In_NLS_string_(x)");
+		cpp_define_empty(cpp, "_Acquires_shared_lock_(x)");
+		cpp_define_empty(cpp, "_Translates_Win32_to_HRESULT_(x)");
+		cpp_define_empty(cpp, "_CRT_INSECURE_DEPRECATE_MEMORY(x)");
+		cpp_define_empty(cpp, "_CRT_DEPRECATE_TEXT(x)");
+		cpp_define_empty(cpp, "_CRT_INSECURE_DEPRECATE(x)");
+		
+		// we pretend to be a modern MSVC compiler
+		cpp_define(cpp, "_MSC_VER", "1929");
+		cpp_define(cpp, "_MSC_FULL_VER", "192930133");
+		cpp_define(cpp, "_WIN32_WINNT", "0x0A00");
+		cpp_define(cpp, "NTDDI_VERSION", "0x0A000008");
+		
+		cpp_define(cpp, "__int8", "char");
+		cpp_define(cpp, "__int16", "short");
+		cpp_define(cpp, "__int32", "int");
+		cpp_define(cpp, "__int64", "long long");
+		cpp_define(cpp, "__pragma(x)", "_Pragma(#x)");
+		cpp_define(cpp, "__inline", "inline");
+		cpp_define(cpp, "__forceinline", "inline");
+		cpp_define(cpp, "__CRTDECL", "__cdecl");
+		
+		// NOTE(NeGate): We probably shouldn't be defining this...
+		// it's a winnt.h thing
+		cpp_define(cpp, "ANYSIZE_ARRAY", "1");
+	} else {
+		// TODO(NeGate): Automatically detect these somehow...
+		cpp_add_include_directory(cpp, "/usr/lib/gcc/x86_64-linux-gnu/10/include/");
+		cpp_add_include_directory(cpp, "/usr/local/include/");
+		cpp_add_include_directory(cpp, "/usr/include/");
+	}
+	
+	current_target_desc.set_defines(cpp);
 }
 
 static void compile_project(TB_Arch arch, TB_System sys, const char source_file[], bool is_multithreaded) {
@@ -211,7 +217,7 @@ static void compile_project(TB_Arch arch, TB_System sys, const char source_file[
 		
 		// IR generation
 		for (size_t i = 0; i < func_count; i++) {
-			gen_ir(top_level, i);
+			irgen_top_level_stmt(top_level.arr[i]);
 		}
 	} else {
 		is_running = true;
@@ -345,6 +351,12 @@ int main(int argc, char* argv[]) {
 		return -1;
 	}
 	
+	if (mode == COMPILER_MODE_VERSION) {
+		printf("cuik %s\n", COMPILER_VERSION);
+		printf("program location: %s\n", argv[0]);
+		return 0;
+	}
+	
 #ifdef _WIN32
 	SYSTEM_INFO sysinfo;
 	GetSystemInfo(&sysinfo);
@@ -358,64 +370,97 @@ int main(int argc, char* argv[]) {
 	settings.num_of_worker_threads = 1;
 #endif
 	
-	printf("Starting with %d threads\n", settings.num_of_worker_threads);
+	// input path
+	// TODO(NeGate): support inputting a directory in which
+	// case it'll just compile all the .c files in it together
+	const char* source_file = argv[2];
 	
-	int i = 2;
-	while (i < argc) {
-		if (argv[i][0] == '-') {
-			switch (argv[i][1]) {
-				case 'c': 
-				settings.is_object_only = true;
-				break;
-				
-				case 'O':
-				settings.optimization_level = TB_OPT_O1;
-				break;
-				
-				case 'p':
-				settings.print_tb_ir = true;
-				break;
-				
-				case 'P':
-				settings.pedantic = true;
-				break;
-				
-				case 's':
-				settings.num_of_worker_threads = 1;
-				break;
-				
-				case 'o':
-				i++;
-				if (i >= argc) panic("Expected filename\n");
-				settings.output_path = argv[i];
-				break;
-				
-				default:
-				printf("Unknown option: %s\n", argv[i]);
-				print_help(argv[0]);
+	for (size_t i = 3; i < argc; i++) {
+		if (argv[i][0] != '-') {
+			printf("Invalid flag: %s\n", argv[i]);
+			return -1;
+		}
+		
+		char* key = &argv[i][1];
+		char* value = key;
+		
+		// i'll support both : and = for
+		// the values on compiler options
+		for (; *value; value++) {
+			if (*value == '=') break;
+			if (*value == ':') break;
+		}
+		
+		// split the key and value
+		if (*value) value[-1] = '\0';
+		
+		if (strcmp(key, "arch") == 0) {
+			if (strcmp(value, "x64") == 0) {
+				current_target_desc = get_x64_target_descriptor();
+			} else {
+				printf("unsupported architecture: %s\n", value);
+				printf("Supported archs:\n");
+				printf("\t-arch=x64\n");
+				printf("\n");
 				return -1;
 			}
-		} else break;
-		
-		i++;
+		} else if (strcmp(key, "threads") == 0) {
+			int num;
+			int matches = sscanf(value, "%d", &num);
+			if (matches != 1) {
+				printf("expected integer for thread count\n");
+				return -1;
+			}
+			
+			if (num < 1 || num > TB_MAX_THREADS) {
+				printf("expected thread count between 1-%d\n", TB_MAX_THREADS);
+				return -1;
+			}
+			
+			settings.num_of_worker_threads = num;
+		} else if (strcmp(key, "emit-ir") == 0) {
+			settings.print_tb_ir = true;
+		} else if (strcmp(key, "opt") == 0) {
+			settings.optimization_level = TB_OPT_O1;
+		} else if (strcmp(key, "obj") == 0) {
+			settings.is_object_only = true;
+		} else if (strcmp(key, "out") == 0) {
+			if (*value == '\0') {
+				printf("expected path after -out option\n");
+				return -1;
+			}
+			
+			settings.output_path = value;
+		} else if (strcmp(key, "pedantic") == 0) {
+			settings.pedantic = true;
+		} else {
+			printf("unsupported option: %s\n", key);
+			print_help(argv[0]);
+			return -1;
+		}
 	}
+	
+	if (current_target_desc.set_defines == NULL) {
+		// default to host
+#if defined(_AMD64_) || defined(__amd64__)
+		current_target_desc = get_x64_target_descriptor();
+#else
+		printf("Cannot compile to your target machine");
+		return -1;
+#endif
+	}
+	
+	printf("Starting with %d threads\n", settings.num_of_worker_threads);
 	
 	if (mode == COMPILER_MODE_VERSION) {
 		printf("%s\n", COMPILER_VERSION);
 		return 0;
 	}
 	
-	// all options (well except version) require a file path right after
-	if (i >= argc) {
-		printf("Expected filename\n");
-		return -1;
-	}
-	
 	switch (mode) {
 		case COMPILER_MODE_PREPROC: {
 			if (argc < 2) panic("Expected filename\n");
 			
-			const char* source_file = argv[i];
 			dump_tokens(source_file);
 			break;
 		}
@@ -423,7 +468,6 @@ int main(int argc, char* argv[]) {
 		case COMPILER_MODE_BUILD:
 		case COMPILER_MODE_RUN: {
 			// Get filename without extension
-			const char* source_file = argv[i];
 			const char* ext = strrchr(source_file, '.');
 			if (!ext) ext = source_file + strlen(source_file);
 			
@@ -465,6 +509,8 @@ int main(int argc, char* argv[]) {
 					linker_add_input_file(&l, "kernel32.lib");
 					linker_add_input_file(&l, "user32.lib");
 					linker_add_input_file(&l, "Gdi32.lib");
+					linker_add_input_file(&l, "Onecore.lib");
+					linker_add_input_file(&l, "Onecoreuap.lib");
 					linker_add_input_file(&l, obj_output_path);
 					
 					linker_invoke(&l, filename, true);
@@ -495,7 +541,6 @@ int main(int argc, char* argv[]) {
 			}
 			
 			// Get filename without extension
-			const char* source_file = argv[i];
 			const char* ext = strrchr(source_file, '.');
 			if (!ext) ext = source_file + strlen(source_file);
 			

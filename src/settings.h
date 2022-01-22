@@ -6,6 +6,7 @@ typedef struct CompilerSettings {
 	const char* output_path;          // -o
 	TB_OptLevel optimization_level;   // -O
 	bool pedantic;                    // -P
+	bool windows_mode;                // 
 	
 	int num_of_worker_threads;
 } CompilerSettings;
