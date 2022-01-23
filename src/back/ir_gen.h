@@ -81,7 +81,7 @@ static TB_DataType ctype_to_tbtype(const Type* t) {
 _Noreturn void irgen_fatal(SourceLocIndex loc, const char* fmt, ...);
 void irgen_warn(SourceLocIndex loc, const char* fmt, ...);
 
-TB_Register irgen_as_rvalue(TB_Function* func, ExprIndex e);
-IRVal irgen_expr(TB_Function* func, ExprIndex e);
-void irgen_stmt(TB_Function* func, StmtIndex s);
-void irgen_top_level_stmt(StmtIndex s);
+TB_Register irgen_as_rvalue(TranslationUnit* tu, TB_Function* func, ExprIndex e);
+IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e);
+void irgen_stmt(TranslationUnit* tu, TB_Function* func, StmtIndex s);
+void irgen_top_level_stmt(TranslationUnit* tu, StmtIndex s);

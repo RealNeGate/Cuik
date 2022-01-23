@@ -10,13 +10,13 @@ static void set_defines(CPP_Context* cpp) {
 	cpp_define_empty(cpp, "_WIN64");
 }
 
-TB_Register compile_builtin(TB_Function* func, const char* name, int arg_count, ExprIndex* args) {
+TB_Register compile_builtin(TranslationUnit* tu, TB_Function* func, const char* name, int arg_count, ExprIndex* args) {
 	if (strcmp(name, "__va_start") == 0) {
 		// TODO(NeGate): Remove this later because it will emotionally damage our optimizer.
 		// the issue is that it blatantly accesses out of bounds and we should probably just
 		// have a node for va_start in the backend instead.
-		TB_Register dst = irgen_as_rvalue(func, args[0]);
-		IRVal src = irgen_expr(func, args[1]);
+		TB_Register dst = irgen_as_rvalue(tu, func, args[0]);
+		IRVal src = irgen_expr(tu, func, args[1]);
 		assert(src.value_type == LVALUE);
 		
 		tb_inst_store(func, TB_TYPE_PTR, dst, tb_inst_member_access(func, src.reg, 8), 8);
@@ -89,7 +89,7 @@ TB_Register compile_builtin(TB_Function* func, const char* name, int arg_count, 
 	((void)is_signed);
 	
 	// unary
-	TB_Register left = irgen_as_rvalue(func, args[0]);
+	TB_Register left = irgen_as_rvalue(tu, func, args[0]);
 	TB_DataType left_dt = tb_node_get_data_type(func, left);
 	if (left_dt.type != dt.type || left_dt.width != dt.width) {
 		left = tb_inst_bitcast(func, left, dt);
@@ -102,7 +102,7 @@ TB_Register compile_builtin(TB_Function* func, const char* name, int arg_count, 
 	}
 	
 	// binary
-	TB_Register right = irgen_as_rvalue(func, args[1]);
+	TB_Register right = irgen_as_rvalue(tu, func, args[1]);
 	TB_DataType right_dt = tb_node_get_data_type(func, right);
 	if (right_dt.type != dt.type || right_dt.width != dt.width) {
 		right = tb_inst_bitcast(func, right, dt);

@@ -4,16 +4,19 @@
 #include "arena.h"
 #include "lexer.h"
 #include "atoms.h"
+#include "big_array.h"
 
 #include <back/tb.h>
 
-decl_arena_index(Type, type_arena)
-decl_arena_index(Member, member_arena) // Members used by struct/union types
-decl_arena_index(Param, param_arena)
-decl_arena_index(EnumEntry, enum_entry_arena)
+// Members used by struct/union types
+// NOTE(NeGate): Consider not using an arena for this
+typedef int MemberIndex;
 
-decl_arena_index(Stmt, stmt_arena)
-decl_arena_index(Expr, expr_arena)
+typedef int TypeIndex;
+typedef int ParamIndex;
+typedef int EnumEntryIndex;
+typedef int StmtIndex;
+typedef int ExprIndex;
 
 typedef int SymbolIndex;
 
@@ -105,8 +108,6 @@ typedef struct Type {
 			ParamIndex param_list, param_count;
 			
 			bool has_varargs : 1;
-			
-			// TODO(NeGate): Attributes
 		} func;
 		
 		// Structs/Unions
@@ -124,9 +125,9 @@ typedef struct Type {
     };
 } Type;
 
+// builtin types at the start of the type table
 enum {
 	TYPE_NONE,
-	
 	TYPE_VOID,
 	TYPE_BOOL,
 	TYPE_CHAR,
@@ -498,33 +499,30 @@ typedef struct Symbol {
 	};
 } Symbol;
 
-decl_arena(Type, type_arena)
-decl_arena(Member, member_arena)
-decl_arena(Param, param_arena)
-decl_arena(EnumEntry, enum_entry_arena)
-
-decl_arena(Stmt, stmt_arena)
-decl_arena(Expr, expr_arena)
-
-TypeIndex new_func();
-TypeIndex new_enum();
-TypeIndex new_record(bool is_union);
-TypeIndex copy_type(TypeIndex base);
-TypeIndex new_pointer(TypeIndex base);
-TypeIndex new_pointer_locked(TypeIndex base);
-TypeIndex new_array(TypeIndex base, int count);
-TypeIndex get_common_type(TypeIndex ty1, TypeIndex ty2);
-bool type_equal(TypeIndex a, TypeIndex b);
-
-typedef struct TopLevel {
+typedef struct TranslationUnit {
+	BigArray(Type) types;
+	BigArray(Member) members;
+	BigArray(Param) params;
+	BigArray(EnumEntry) enum_entries;
+	BigArray(Stmt) stmts;
+	BigArray(Expr) exprs;
+	
 	// stb_ds array
-	StmtIndex* arr;
-} TopLevel;
+	// NOTE(NeGate): should this be an stb_ds array?
+	StmtIndex* top_level_stmts;
+} TranslationUnit;
 
-void init_types();
-StmtIndex resolve_unknown_symbol(StmtIndex i);
+TypeIndex new_func(TranslationUnit* tu);
+TypeIndex new_enum(TranslationUnit* tu);
+TypeIndex new_record(TranslationUnit* tu, bool is_union);
+TypeIndex copy_type(TranslationUnit* tu, TypeIndex base);
+TypeIndex new_pointer(TranslationUnit* tu, TypeIndex base);
+TypeIndex new_array(TranslationUnit* tu, TypeIndex base, int count);
+TypeIndex get_common_type(TranslationUnit* tu, TypeIndex ty1, TypeIndex ty2);
+bool type_equal(TranslationUnit* tu, TypeIndex a, TypeIndex b);
 
-ConstValue const_eval(ExprIndex e);
+StmtIndex resolve_unknown_symbol(TranslationUnit* tu, StmtIndex i);
+ConstValue const_eval(TranslationUnit* tu, ExprIndex e);
 
-TopLevel parse_file(TokenStream* restrict s);
-void print_tree(TopLevel tl);
+void init_types(TranslationUnit* tu);
+TranslationUnit parse_file(TokenStream* restrict s);

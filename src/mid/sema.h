@@ -7,4 +7,4 @@
 
 extern _Atomic int sema_error_count;
 
-void sema_check(TopLevel tl, size_t i);
+void sema_check(TranslationUnit* tu, StmtIndex s);

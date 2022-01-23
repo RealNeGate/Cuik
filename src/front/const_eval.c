@@ -4,8 +4,8 @@
 #define signed_const(x) (ConstValue){ true, .signed_value = (x) }
 
 // TODO(NeGate): Type check this better
-ConstValue const_eval(ExprIndex e) {
-	const Expr* ep = &expr_arena.data[e];
+ConstValue const_eval(TranslationUnit* tu, ExprIndex e) {
+	const Expr* ep = &tu->exprs[e];
 	
 	switch (ep->op) {
 		case EXPR_INT: {
@@ -44,11 +44,11 @@ ConstValue const_eval(ExprIndex e) {
 		}
 		
 		case EXPR_TERNARY: {
-			ConstValue cond = const_eval(ep->ternary_op.left);
+			ConstValue cond = const_eval(tu, ep->ternary_op.left);
 			if (cond.unsigned_value != 0) {
-				return const_eval(ep->ternary_op.middle);
+				return const_eval(tu, ep->ternary_op.middle);
 			} else {
-				return const_eval(ep->ternary_op.right);
+				return const_eval(tu, ep->ternary_op.right);
 			}
 		}
 		
@@ -65,8 +65,8 @@ ConstValue const_eval(ExprIndex e) {
 		case EXPR_CMPLE:
 		case EXPR_CMPGT:
 		case EXPR_CMPLT: {
-			ConstValue a = const_eval(ep->bin_op.left);
-			ConstValue b = const_eval(ep->bin_op.right);
+			ConstValue a = const_eval(tu, ep->bin_op.left);
+			ConstValue b = const_eval(tu, ep->bin_op.right);
 			
 			bool is_signed = a.is_signed | b.is_signed;
 			switch (ep->op) {
@@ -102,27 +102,27 @@ ConstValue const_eval(ExprIndex e) {
 			}
 			
 			case EXPR_ALIGNOF_T: {
-				return signed_const(type_arena.data[ep->x_of_type.type].align);
+				return signed_const(tu->types[ep->x_of_type.type].align);
 			}
 			
 			case EXPR_NEGATE: {
-				ConstValue src = const_eval(ep->unary_op.src);
+				ConstValue src = const_eval(tu, ep->unary_op.src);
 				return signed_const(-src.signed_value);
 			}
 			
 			case EXPR_ADDR: {
 				// hacky but it just needs to support &(((T*)0)->apple)
-				const Expr* restrict arrow = &expr_arena.data[ep->unary_op.src];
+				const Expr* restrict arrow = &tu->exprs[ep->unary_op.src];
 				if (arrow->op == EXPR_ARROW) {
-					const Expr* restrict arrow_base = &expr_arena.data[arrow->arrow.base];
+					const Expr* restrict arrow_base = &tu->exprs[arrow->arrow.base];
 					const Type* restrict record_type = NULL;
 					
 					if (arrow_base->op == EXPR_CAST) {
-						record_type = &type_arena.data[arrow_base->cast.type];
+						record_type = &tu->types[arrow_base->cast.type];
 						
 						// dereference
 						if (record_type->kind == KIND_PTR) {
-							record_type = &type_arena.data[record_type->ptr_to];
+							record_type = &tu->types[record_type->ptr_to];
 						} else {
 							// TODO(NeGate): error messages
 							abort();
@@ -132,7 +132,7 @@ ConstValue const_eval(ExprIndex e) {
 							abort();
 						}
 						
-						ConstValue pointer_value = const_eval(arrow_base->cast.src);
+						ConstValue pointer_value = const_eval(tu, arrow_base->cast.src);
 						assert(pointer_value.unsigned_value == 0 && "I mean i'm not honestly sure if we wanna allow for a non null pointer here");
 						((void)pointer_value);
 					} else {
@@ -144,7 +144,7 @@ ConstValue const_eval(ExprIndex e) {
 					MemberIndex start = record_type->record.kids_start;
 					MemberIndex end = record_type->record.kids_end;
 					for (MemberIndex m = start; m < end; m++) {
-						Member* member = &member_arena.data[m];
+						Member* member = &tu->members[m];
 						
 						// TODO(NeGate): String interning would be nice
 						if (cstr_equals(name, member->name)) {
@@ -164,19 +164,19 @@ ConstValue const_eval(ExprIndex e) {
 			}
 			
 			case EXPR_CAST: {
-				return const_eval(ep->cast.src);
+				return const_eval(tu, ep->cast.src);
 			}
 			
 			case EXPR_UNKNOWN_SYMBOL: {
 				const unsigned char* name = ep->unknown_sym;
-				StmtIndex s = resolve_unknown_symbol(e);
+				StmtIndex s = resolve_unknown_symbol(tu, e);
 				
 				if (!s) {
 					// try enum names
 					// NOTE(NeGate): this might be slow
-					for (size_t j = 1; j < enum_entry_arena.count; j++) {
-						if (cstr_equals(name, enum_entry_arena.data[j].name)) {
-							return signed_const(enum_entry_arena.data[j].value);
+					for (size_t j = 1, count = big_array_length(tu->enum_entries); j < count; j++) {
+						if (cstr_equals(name, tu->enum_entries[j].name)) {
+							return signed_const(tu->enum_entries[j].value);
 						}
 					}
 					
@@ -185,21 +185,21 @@ ConstValue const_eval(ExprIndex e) {
 					abort();
 				}
 				
-				Type* restrict type = &type_arena.data[stmt_arena.data[s].decl.type];
+				Type* restrict type = &tu->types[tu->stmts[s].decl.type];
 				if (!type->is_const) {
 					// TODO(NeGate): error messages
 					printf("error: not const :(\n");
 					abort();
 				}
 				
-				if (!stmt_arena.data[s].decl.initial) {
+				if (!tu->stmts[s].decl.initial) {
 					// TODO(NeGate): error messages
 					printf("error: no expression :(\n");
 					abort();
 				}
 				
 				if (type->kind >= KIND_BOOL && type->kind <= KIND_LONG) {
-					return const_eval(stmt_arena.data[s].decl.initial);
+					return const_eval(tu, tu->stmts[s].decl.initial);
 				} else {
 					// TODO(NeGate): error messages
 					printf("error: bad type\n");

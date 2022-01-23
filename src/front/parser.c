@@ -1,96 +1,103 @@
+// NOTE(NeGate): Something to note is that 
+//  a = b
+// has an unspecified eval order so if you do
+//  a[i] = parse(...)
+// and it can somehow resize a then make sure to split it up
+//  e = parse(...)
+//  a[i] = e
 #include "parser.h"
 
-impl_arena(Stmt, stmt_arena)
-impl_arena(Expr, expr_arena)
-
-// this means types which can be incomplete
-// not just currently imcomplete so structs,
-// unions and enums
 typedef struct IncompleteType {
 	Atom key;
 	TypeIndex value;
 } IncompleteType;
 
-static IncompleteType* incomplete_types;
-
-// for the global hash table
 typedef struct SymbolEntry {
 	Atom key;
 	Symbol value;
 } SymbolEntry;
 
-static SymbolEntry* global_symbols;
-
-static int local_symbol_count = 0;
-static Symbol local_symbols[64 * 1024];
-
-// for the global hash table
 typedef struct TypedefEntry {
 	Atom key;
 	TypeIndex value;
 } TypedefEntry;
 
-static TypedefEntry* typedefs;
-
-// for the global hash table
 typedef struct LabelEntry {
 	Atom key;
 	StmtIndex value;
 } LabelEntry;
 
-static LabelEntry* labels;
+_Thread_local static int local_symbol_count = 0;
+_Thread_local static Symbol local_symbols[64 * 1024];
 
-static StmtIndex current_switch_or_case;
-static StmtIndex current_breakable;
+_Thread_local static IncompleteType* incomplete_types;
+_Thread_local static SymbolEntry* global_symbols; // stb_ds hash map
+_Thread_local static TypedefEntry* typedefs; // stb_ds hash map
+_Thread_local static LabelEntry* labels; // stb_ds hash map
+
+_Thread_local static StmtIndex current_switch_or_case;
+_Thread_local static StmtIndex current_breakable;
 
 static void expect(TokenStream* restrict s, char ch);
 static Symbol* find_local_symbol(TokenStream* restrict s);
 static Symbol* find_global_symbol(char* name);
-static StmtIndex parse_stmt(TokenStream* restrict s);
-static StmtIndex parse_stmt_or_expr(TokenStream* restrict s);
-static StmtIndex parse_compound_stmt(TokenStream* restrict s);
-static bool try_parse_declspec(TokenStream* restrict s, Attribs* attr);
-static TypeIndex parse_declspec(TokenStream* restrict s, Attribs* attr);
-static Decl parse_declarator(TokenStream* restrict s, TypeIndex type);
-static TypeIndex parse_typename(TokenStream* restrict s);
-static intmax_t parse_const_expr(TokenStream* restrict s);
-static bool is_typename(TokenStream* restrict s);
-static _Noreturn void generic_error(TokenStream* restrict s, const char* msg);
-static void generic_warn(TokenStream* restrict s, const char* msg);
-static void parse_decl_or_expr(TokenStream* restrict s, size_t* body_count);
-static ExprIndex parse_expr(TokenStream* restrict s);
-static ExprIndex parse_initializer(TokenStream* restrict s, TypeIndex type);
+
+static StmtIndex parse_stmt(TranslationUnit* tu, TokenStream* restrict s);
+static StmtIndex parse_stmt_or_expr(TranslationUnit* tu, TokenStream* restrict s);
+static StmtIndex parse_compound_stmt(TranslationUnit* tu, TokenStream* restrict s);
+static void parse_decl_or_expr(TranslationUnit* tu, TokenStream* restrict s, size_t* body_count);
+
 static bool skip_over_declspec(TokenStream* restrict s);
+static bool try_parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attribs* attr);
+static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attribs* attr);
+
+static Decl parse_declarator(TranslationUnit* tu, TokenStream* restrict s, TypeIndex type);
+static TypeIndex parse_abstract_declarator(TranslationUnit* tu, TokenStream* restrict s, TypeIndex type);
+static TypeIndex parse_typename(TranslationUnit* tu, TokenStream* restrict s);
 
 // It's like parse_expr but it doesn't do anything with comma operators to avoid
 // parsing issues.
-static ExprIndex parse_expr_l14(TokenStream* restrict s);
+static ExprIndex parse_expr_l14(TranslationUnit* tu, TokenStream* restrict s);
+static ExprIndex parse_expr(TranslationUnit* tu, TokenStream* restrict s);
+static intmax_t parse_const_expr(TranslationUnit* tu, TokenStream* restrict s);
+static ExprIndex parse_initializer(TranslationUnit* tu, TokenStream* restrict s, TypeIndex type);
 
-inline static int align_up(int a, int b) { return a + (b - (a % b)) % b; }
+static bool is_typename(TokenStream* restrict s);
 
-inline static StmtIndex make_stmt(TokenStream* restrict s, StmtOp op) {
-	StmtIndex n = push_stmt_arena(1);
-	stmt_arena.data[n].op = op;
-	stmt_arena.data[n].loc = tokens_get(s)->location;
-	return n;
+static _Noreturn void generic_error(TokenStream* restrict s, const char* msg);
+static void generic_warn(TokenStream* restrict s, const char* msg);
+
+static int align_up(int a, int b) { return a + (b - (a % b)) % b; }
+
+static StmtIndex make_stmt(TranslationUnit* tu, TokenStream* restrict s, StmtOp op) {
+	Stmt stmt = {
+		.op = op,
+		.loc = tokens_get(s)->location
+	};
+	big_array_put(tu->stmts, stmt);
+	return big_array_length(tu->stmts) - 1;
 }
 
-TopLevel parse_file(TokenStream* restrict s) {
-	////////////////////////////////
-	// Parsing
-	////////////////////////////////
-	tls_init();
+static ExprIndex make_expr(TranslationUnit* tu) {
+	big_array_put_uninit(tu->exprs, 1);
+	return big_array_length(tu->exprs) - 1;
+}
+
+TranslationUnit parse_file(TokenStream* restrict s) {
+	TranslationUnit tu = {};
+	tu.types = big_array_create(Type);
+	tu.members = big_array_create(Member);
+	tu.params = big_array_create(Param);
+	tu.enum_entries = big_array_create(EnumEntry);
+	tu.stmts = big_array_create(Stmt);
+	tu.exprs = big_array_create(Expr);
 	
-	init_stmt_arena(4 * 1024);
-	init_enum_entry_arena(4 * 1024);
-	init_expr_arena(4 * 1024);
-	init_types();
+	init_types(&tu);
+	tls_init();
 	
 	////////////////////////////////
 	// Parse translation unit
 	////////////////////////////////
-	StmtIndex* top_level = NULL;
-	
 	while (tokens_get(s)->type) {
 		while (tokens_get(s)->type == ';') tokens_next(s);
 		
@@ -116,7 +123,7 @@ TopLevel parse_file(TokenStream* restrict s) {
 		}
 		
 		Attribs attr = { 0 };
-		TypeIndex type = parse_declspec(s, &attr);
+		TypeIndex type = parse_declspec(&tu, s, &attr);
 		
 		if (attr.is_typedef) {
 			// TODO(NeGate): Kinda ugly
@@ -127,7 +134,7 @@ TopLevel parse_file(TokenStream* restrict s) {
 					expect(s, ',');
 				} else expect_comma = true;
 				
-				Decl decl = parse_declarator(s, type);
+				Decl decl = parse_declarator(&tu, s, type);
 				assert(decl.name);
 				
 				shput(typedefs, decl.name, decl.type);
@@ -140,9 +147,9 @@ TopLevel parse_file(TokenStream* restrict s) {
 				continue;
 			}
 			
-			Decl decl = parse_declarator(s, type);
+			Decl decl = parse_declarator(&tu, s, type);
 			
-			if (type_arena.data[decl.type].kind == KIND_FUNC) {
+			if (tu.types[decl.type].kind == KIND_FUNC) {
 				// function
 				Symbol* sym = find_global_symbol((char*)decl.name);
 				
@@ -160,16 +167,16 @@ TopLevel parse_file(TokenStream* restrict s) {
 					
 					// convert forward decl into proper function
 					n = sym->stmt;
-					if (stmt_arena.data[n].op == STMT_FUNC_DECL && !attr.is_inline) {
+					if (tu.stmts[n].op == STMT_FUNC_DECL && !attr.is_inline) {
 						is_redefining_body = true;
 					}
 					
 					// TODO(NeGate): Error messages
-					if (!type_equal(stmt_arena.data[n].decl.type, decl.type)) abort();
+					if (!type_equal(&tu, tu.stmts[n].decl.type, decl.type)) abort();
 				} else {
 					// New symbol
-					n = make_stmt(s, STMT_DECL);
-					stmt_arena.data[n].decl = (struct StmtDecl){
+					n = make_stmt(&tu, s, STMT_DECL);
+					tu.stmts[n].decl = (struct StmtDecl){
 						.type = decl.type,
 						.name = decl.name,
 						.attrs = attr,
@@ -191,11 +198,11 @@ TopLevel parse_file(TokenStream* restrict s) {
 						generic_error(s, "Cannot redefine function decl");
 					}
 					
-					ParamIndex param_list = type_arena.data[decl.type].func.param_list;
-					ParamIndex param_count = type_arena.data[decl.type].func.param_count;
+					ParamIndex param_list = tu.types[decl.type].func.param_list;
+					ParamIndex param_count = tu.types[decl.type].func.param_count;
 					
 					for (size_t i = 0; i < param_count; i++) {
-						Param* p = &param_arena.data[param_list + i];
+						Param* p = &tu.params[param_list + i];
 						
 						if (p->name) {
 							local_symbols[local_symbol_count++] = (Symbol){
@@ -208,20 +215,21 @@ TopLevel parse_file(TokenStream* restrict s) {
 					}
 					tokens_next(s);
 					
-					ExprIndex starting_point = expr_arena.count;
+					ExprIndex starting_point = big_array_length(tu.exprs);
+					StmtIndex body = parse_compound_stmt(&tu, s);
 					
-					stmt_arena.data[n].op = STMT_FUNC_DECL;
-					stmt_arena.data[n].decl.initial = (StmtIndex)parse_compound_stmt(s);
+					tu.stmts[n].op = STMT_FUNC_DECL;
+					tu.stmts[n].decl.initial = (StmtIndex)body;
 					
-					// resolve any unresolved label references 
-					for (size_t i = starting_point; i < expr_arena.count; i++) {
-						if (expr_arena.data[i].op == EXPR_UNKNOWN_SYMBOL) {
-							const unsigned char* name = expr_arena.data[i].unknown_sym;
+					// resolve any unresolved label references
+					for (size_t i = starting_point, count = big_array_length(tu.exprs); i < count; i++) {
+						if (tu.exprs[i].op == EXPR_UNKNOWN_SYMBOL) {
+							const unsigned char* name = tu.exprs[i].unknown_sym;
 							
 							ptrdiff_t search = shgeti(labels, name);
 							if (search >= 0) {
-								expr_arena.data[i].op = EXPR_SYMBOL;
-								expr_arena.data[i].symbol = labels[search].value;
+								tu.exprs[i].op = EXPR_SYMBOL;
+								tu.exprs[i].symbol = labels[search].value;
 							}
 						}
 					}
@@ -235,7 +243,7 @@ TopLevel parse_file(TokenStream* restrict s) {
 				}
 				
 				if (!is_redefine) {
-					arrput(top_level, n);
+					arrput(tu.top_level_stmts, n);
 				}
 				local_symbol_count = 0;
 			} else {
@@ -244,12 +252,12 @@ TopLevel parse_file(TokenStream* restrict s) {
 					generic_error(s, "declaration is missing a name!");
 				}
 				
-				StmtIndex n = make_stmt(s, STMT_GLOBAL_DECL);
-				stmt_arena.data[n].decl = (struct StmtDecl){
+				StmtIndex n = make_stmt(&tu, s, STMT_GLOBAL_DECL);
+				tu.stmts[n].decl = (struct StmtDecl){
 					.type = decl.type,
 					.name = decl.name
 				};
-				arrput(top_level, n);
+				arrput(tu.top_level_stmts, n);
 				
 				Symbol sym = (Symbol){
 					.name = decl.name,
@@ -265,9 +273,9 @@ TopLevel parse_file(TokenStream* restrict s) {
 					if (tokens_get(s)->type == '{') {
 						tokens_next(s);
 						
-						stmt_arena.data[n].decl.initial = parse_initializer(s, TYPE_VOID);
+						tu.stmts[n].decl.initial = parse_initializer(&tu, s, TYPE_VOID);
 					} else {
-						stmt_arena.data[n].decl.initial = parse_expr_l14(s);
+						tu.stmts[n].decl.initial = parse_expr_l14(&tu, s);
 					}
 				}
 				
@@ -275,15 +283,15 @@ TopLevel parse_file(TokenStream* restrict s) {
 					while (tokens_get(s)->type != ';') {
 						expect(s, ',');
 						
-						Decl decl = parse_declarator(s, type);
+						Decl decl = parse_declarator(&tu, s, type);
 						assert(decl.name);
 						
-						StmtIndex n = make_stmt(s, STMT_GLOBAL_DECL);
-						stmt_arena.data[n].decl = (struct StmtDecl){
+						StmtIndex n = make_stmt(&tu, s, STMT_GLOBAL_DECL);
+						tu.stmts[n].decl = (struct StmtDecl){
 							.type = decl.type,
 							.name = decl.name
 						};
-						arrput(top_level, n);
+						arrput(tu.top_level_stmts, n);
 						
 						Symbol sym = (Symbol){
 							.name = decl.name,
@@ -296,13 +304,15 @@ TopLevel parse_file(TokenStream* restrict s) {
 						if (tokens_get(s)->type == '=') {
 							tokens_next(s);
 							
+							ExprIndex initial;
 							if (tokens_get(s)->type == '{') {
 								tokens_next(s);
 								
-								stmt_arena.data[n].decl.initial = parse_initializer(s, TYPE_VOID);
+								initial = parse_initializer(&tu, s, TYPE_VOID);
 							} else {
-								stmt_arena.data[n].decl.initial = parse_expr_l14(s);
+								initial = parse_expr_l14(&tu, s);
 							}
+							tu.stmts[n].decl.initial = initial;
 						}
 					}
 				}
@@ -315,21 +325,25 @@ TopLevel parse_file(TokenStream* restrict s) {
 	////////////////////////////////
 	// Semantics
 	////////////////////////////////
-	// NOTE(NeGate): This is a C extension, it allows normal symbols like
-	// functions to declared out of order.
-	for (size_t i = 0; i < expr_arena.count; i++) {
-		if (expr_arena.data[i].op == EXPR_UNKNOWN_SYMBOL) {
-			const unsigned char* name = expr_arena.data[i].unknown_sym;
+	// NOTE(NeGate): This is a Cuik extension, it allows normal symbols
+	// like functions to declared out of order.
+	for (size_t i = 0, count = big_array_length(tu.exprs); i < count; i++) {
+		if (tu.exprs[i].op == EXPR_SYMBOL) {
+			StmtIndex sym = tu.exprs[i].symbol;
 			
-			if (!resolve_unknown_symbol(i)) {
+			tu.stmts[sym].decl.attrs.is_used = true;
+		} else if (tu.exprs[i].op == EXPR_UNKNOWN_SYMBOL) {
+			if (!resolve_unknown_symbol(&tu, i)) {
 				// try enum names
+				const unsigned char* name = tu.exprs[i].unknown_sym;
+				
 				// NOTE(NeGate): this might be slow
-				for (size_t j = 1; j < enum_entry_arena.count; j++) {
-					if (cstr_equals(name, enum_entry_arena.data[j].name)) {
-						int value = enum_entry_arena.data[j].value;
+				for (size_t j = 1, count = big_array_length(tu.enum_entries); j < count; j++) {
+					if (cstr_equals(name, tu.enum_entries[j].name)) {
+						int value = tu.enum_entries[j].value;
 						
-						expr_arena.data[i].op = EXPR_INT;
-						expr_arena.data[i].int_num = (struct ExprInt){ value, INT_SUFFIX_NONE };
+						tu.exprs[i].op = EXPR_INT;
+						tu.exprs[i].int_num = (struct ExprInt){ value, INT_SUFFIX_NONE };
 						goto success;
 					}
 				}
@@ -348,19 +362,19 @@ TopLevel parse_file(TokenStream* restrict s) {
 	local_symbol_count = 0;
 	shfree(global_symbols);
 	
-	return (TopLevel) { top_level };
+	return tu;
 }
 
-StmtIndex resolve_unknown_symbol(StmtIndex i) {
-	Symbol* sym = find_global_symbol((char*)expr_arena.data[i].unknown_sym);
+StmtIndex resolve_unknown_symbol(TranslationUnit* tu, StmtIndex i) {
+	Symbol* sym = find_global_symbol((char*)tu->exprs[i].unknown_sym);
 	if (!sym) return 0;
 	
 	// Parameters are local and a special case how tf
 	assert(sym->storage_class != STORAGE_PARAM);
-	stmt_arena.data[sym->stmt].decl.attrs.is_used = true;
+	tu->stmts[sym->stmt].decl.attrs.is_used = true;
 	
-	expr_arena.data[i].op = EXPR_SYMBOL;
-	expr_arena.data[i].symbol = sym->stmt;
+	tu->exprs[i].op = EXPR_SYMBOL;
+	tu->exprs[i].symbol = sym->stmt;
 	return sym->stmt;
 }
 
@@ -421,11 +435,11 @@ static TypeIndex find_incomplete_type(char* name) {
 ////////////////////////////////
 // STATEMENTS
 ////////////////////////////////
-static StmtIndex parse_compound_stmt(TokenStream* restrict s) {
+static StmtIndex parse_compound_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 	// mark when the local scope starts
 	int saved = local_symbol_count;
 	
-	StmtIndex node = make_stmt(s, STMT_COMPOUND);
+	StmtIndex node = make_stmt(tu, s, STMT_COMPOUND);
 	
 	size_t body_count = 0; // He be fuckin
 	void* body = tls_save();
@@ -433,12 +447,12 @@ static StmtIndex parse_compound_stmt(TokenStream* restrict s) {
 	while (tokens_get(s)->type != '}') {
 		while (tokens_get(s)->type == ';') tokens_next(s);
 		
-		StmtIndex stmt = parse_stmt(s);
+		StmtIndex stmt = parse_stmt(tu, s);
 		if (stmt) {
 			*((StmtIndex*)tls_push(sizeof(StmtIndex))) = stmt;
 			body_count++;
 		} else {
-			parse_decl_or_expr(s, &body_count);
+			parse_decl_or_expr(tu, s, &body_count);
 		}
 	}
 	expect(s, '}');
@@ -447,7 +461,7 @@ static StmtIndex parse_compound_stmt(TokenStream* restrict s) {
 	StmtIndex* stmt_array = arena_alloc(body_count * sizeof(StmtIndex), _Alignof(StmtIndex));
 	memcpy(stmt_array, body, body_count * sizeof(StmtIndex));
 	
-	stmt_arena.data[node].compound = (struct StmtCompound) {
+	tu->stmts[node].compound = (struct StmtCompound) {
 		.kids = stmt_array,
 		.kids_count = body_count
 	};
@@ -457,20 +471,20 @@ static StmtIndex parse_compound_stmt(TokenStream* restrict s) {
 }
 
 // TODO(NeGate): Doesn't handle declarators or expression-statements
-static StmtIndex parse_stmt(TokenStream* restrict s) {
+static StmtIndex parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 	if (tokens_get(s)->type == '{') {
 		tokens_next(s);
-		return parse_compound_stmt(s);
+		return parse_compound_stmt(tu, s);
 	} else if (tokens_get(s)->type == TOKEN_KW_return) {
 		tokens_next(s);
 		
 		ExprIndex e = 0;
 		if (tokens_get(s)->type != ';') {
-			e = parse_expr(s);
+			e = parse_expr(tu, s);
 		}
 		
-		StmtIndex n = make_stmt(s, STMT_RETURN);
-		stmt_arena.data[n].return_ = (struct StmtReturn){
+		StmtIndex n = make_stmt(tu, s, STMT_RETURN);
+		tu->stmts[n].return_ = (struct StmtReturn){
 			.expr = e
 		};
 		
@@ -478,22 +492,22 @@ static StmtIndex parse_stmt(TokenStream* restrict s) {
 		return n;
 	} else if (tokens_get(s)->type == TOKEN_KW_if) {
 		tokens_next(s);
-		StmtIndex n = make_stmt(s, STMT_IF);
+		StmtIndex n = make_stmt(tu, s, STMT_IF);
 		
 		expect(s, '(');
-		ExprIndex cond = parse_expr(s);
+		ExprIndex cond = parse_expr(tu, s);
 		expect(s, ')');
 		
-		StmtIndex body = parse_stmt_or_expr(s);
+		StmtIndex body = parse_stmt_or_expr(tu, s);
 		assert(body);
 		
 		StmtIndex next = 0;
 		if (tokens_get(s)->type == TOKEN_KW_else) {
 			tokens_next(s);
-			next = parse_stmt_or_expr(s);
+			next = parse_stmt_or_expr(tu, s);
 		}
 		
-		stmt_arena.data[n].if_ = (struct StmtIf){
+		tu->stmts[n].if_ = (struct StmtIf){
 			.cond = cond,
 			.body = body,
 			.next = next
@@ -501,13 +515,13 @@ static StmtIndex parse_stmt(TokenStream* restrict s) {
 		return n;
 	} else if (tokens_get(s)->type == TOKEN_KW_switch) {
 		tokens_next(s);
-		StmtIndex n = make_stmt(s, STMT_SWITCH);
+		StmtIndex n = make_stmt(tu, s, STMT_SWITCH);
 		
 		expect(s, '(');
-		ExprIndex cond = parse_expr(s);
+		ExprIndex cond = parse_expr(tu, s);
 		expect(s, ')');
 		
-		stmt_arena.data[n].switch_ = (struct StmtSwitch){
+		tu->stmts[n].switch_ = (struct StmtSwitch){
 			.condition = cond
 		};
 		
@@ -518,8 +532,8 @@ static StmtIndex parse_stmt(TokenStream* restrict s) {
 		StmtIndex old_breakable = current_breakable;
 		current_breakable = n;
 		{
-			StmtIndex body = parse_stmt_or_expr(s);
-			stmt_arena.data[n].switch_.body = body;
+			StmtIndex body = parse_stmt_or_expr(tu, s);
+			tu->stmts[n].switch_.body = body;
 		}
 		
 		current_breakable = old_breakable;
@@ -530,9 +544,9 @@ static StmtIndex parse_stmt(TokenStream* restrict s) {
 		assert(current_switch_or_case);
 		
 		tokens_next(s);
-		StmtIndex n = make_stmt(s, STMT_CASE);
+		StmtIndex n = make_stmt(tu, s, STMT_CASE);
 		
-		Stmt* last_node = &stmt_arena.data[current_switch_or_case];
+		Stmt* last_node = &tu->stmts[current_switch_or_case];
 		if (last_node->op == STMT_CASE) {
 			last_node->case_.next = n;
 		} else if (last_node->op == STMT_DEFAULT) {
@@ -543,26 +557,26 @@ static StmtIndex parse_stmt(TokenStream* restrict s) {
 			abort();
 		}
 		
-		intmax_t key = parse_const_expr(s);
+		intmax_t key = parse_const_expr(tu, s);
 		
 		current_switch_or_case = n;
 		expect(s, ':');
 		
-		stmt_arena.data[n].case_ = (struct StmtCase){
+		tu->stmts[n].case_ = (struct StmtCase){
 			.key = key, .body = 0, .next = 0
 		};
 		
-		StmtIndex body = parse_stmt_or_expr(s);
-		stmt_arena.data[n].case_.body = body;
+		StmtIndex body = parse_stmt_or_expr(tu, s);
+		tu->stmts[n].case_.body = body;
 		return n;
 	} else if (tokens_get(s)->type == TOKEN_KW_default) {
 		// TODO(NeGate): error messages
 		assert(current_switch_or_case);
 		
 		tokens_next(s);
-		StmtIndex n = make_stmt(s, STMT_DEFAULT);
+		StmtIndex n = make_stmt(tu, s, STMT_DEFAULT);
 		
-		Stmt* last_node = &stmt_arena.data[current_switch_or_case];
+		Stmt* last_node = &tu->stmts[current_switch_or_case];
 		if (last_node->op == STMT_CASE) {
 			last_node->case_.next = n;
 		} else if (last_node->op == STMT_DEFAULT) {
@@ -575,12 +589,12 @@ static StmtIndex parse_stmt(TokenStream* restrict s) {
 		current_switch_or_case = n;
 		expect(s, ':');
 		
-		stmt_arena.data[n].default_ = (struct StmtDefault){
+		tu->stmts[n].default_ = (struct StmtDefault){
 			.body = 0, .next = 0
 		};
 		
-		StmtIndex body = parse_stmt_or_expr(s);
-		stmt_arena.data[n].default_.body = body;
+		StmtIndex body = parse_stmt_or_expr(tu, s);
+		tu->stmts[n].default_.body = body;
 		return n;
 	} else if (tokens_get(s)->type == TOKEN_KW_break) {
 		// TODO(NeGate): error messages
@@ -589,17 +603,17 @@ static StmtIndex parse_stmt(TokenStream* restrict s) {
 		tokens_next(s);
 		expect(s, ';');
 		
-		StmtIndex n = make_stmt(s, STMT_BREAK);
-		stmt_arena.data[n].break_ = (struct StmtBreak){
+		StmtIndex n = make_stmt(tu, s, STMT_BREAK);
+		tu->stmts[n].break_ = (struct StmtBreak){
 			.target = current_breakable
 		};
 		return n;
 	} else if (tokens_get(s)->type == TOKEN_KW_while) {
 		tokens_next(s);
-		StmtIndex n = make_stmt(s, STMT_WHILE);
+		StmtIndex n = make_stmt(tu, s, STMT_WHILE);
 		
 		expect(s, '(');
-		ExprIndex cond = parse_expr(s);
+		ExprIndex cond = parse_expr(tu, s);
 		expect(s, ')');
 		
 		// Push this as a breakable statement
@@ -608,19 +622,19 @@ static StmtIndex parse_stmt(TokenStream* restrict s) {
 			StmtIndex old_breakable = current_breakable;
 			current_breakable = n;
 			
-			body = parse_stmt_or_expr(s);
+			body = parse_stmt_or_expr(tu, s);
 			
 			current_breakable = old_breakable;
 		}
 		
-		stmt_arena.data[n].while_ = (struct StmtWhile){
+		tu->stmts[n].while_ = (struct StmtWhile){
 			.cond = cond,
 			.body = body
 		};
 		return n;
 	} else if (tokens_get(s)->type == TOKEN_KW_for) {
 		tokens_next(s);
-		StmtIndex n = make_stmt(s, STMT_FOR);
+		StmtIndex n = make_stmt(tu, s, STMT_FOR);
 		
 		int saved = local_symbol_count;
 		expect(s, '(');
@@ -632,18 +646,17 @@ static StmtIndex parse_stmt(TokenStream* restrict s) {
 			tokens_next(s);
 		} else {
 			// NOTE(NeGate): This is just a decl list or a single expression.
-			first = make_stmt(s, STMT_COMPOUND);
+			first = make_stmt(tu, s, STMT_COMPOUND);
 			
 			size_t body_count = 0; // He be fuckin
 			void* body = tls_save();
 			{
-				parse_decl_or_expr(s, &body_count);
+				parse_decl_or_expr(tu, s, &body_count);
 			}
-			
 			StmtIndex* stmt_array = arena_alloc(body_count * sizeof(StmtIndex), _Alignof(StmtIndex));
 			memcpy(stmt_array, body, body_count * sizeof(StmtIndex));
 			
-			stmt_arena.data[first].compound = (struct StmtCompound) {
+			tu->stmts[first].compound = (struct StmtCompound) {
 				.kids = stmt_array,
 				.kids_count = body_count
 			};
@@ -655,7 +668,7 @@ static StmtIndex parse_stmt(TokenStream* restrict s) {
 			/* nothing */
 			tokens_next(s);
 		} else {
-			cond = parse_expr(s);
+			cond = parse_expr(tu, s);
 			expect(s, ';');
 		}
 		
@@ -664,7 +677,7 @@ static StmtIndex parse_stmt(TokenStream* restrict s) {
 			/* nothing */
 			tokens_next(s);
 		} else {
-			next = parse_expr(s);
+			next = parse_expr(tu, s);
 			expect(s, ')');
 		}
 		
@@ -674,7 +687,7 @@ static StmtIndex parse_stmt(TokenStream* restrict s) {
 			StmtIndex old_breakable = current_breakable;
 			current_breakable = n;
 			
-			body = parse_stmt_or_expr(s);
+			body = parse_stmt_or_expr(tu, s);
 			
 			current_breakable = old_breakable;
 		}
@@ -682,7 +695,7 @@ static StmtIndex parse_stmt(TokenStream* restrict s) {
 		// restore local symbol scope
 		local_symbol_count = saved;
 		
-		stmt_arena.data[n].for_ = (struct StmtFor){
+		tu->stmts[n].for_ = (struct StmtFor){
 			.first = first,
 			.cond = cond,
 			.body = body,
@@ -691,7 +704,7 @@ static StmtIndex parse_stmt(TokenStream* restrict s) {
 		return n;
 	} else if (tokens_get(s)->type == TOKEN_KW_do) {
 		tokens_next(s);
-		StmtIndex n = make_stmt(s, STMT_DO_WHILE);
+		StmtIndex n = make_stmt(tu, s, STMT_DO_WHILE);
 		
 		// Push this as a breakable statement
 		StmtIndex body;
@@ -699,7 +712,7 @@ static StmtIndex parse_stmt(TokenStream* restrict s) {
 			StmtIndex old_breakable = current_breakable;
 			current_breakable = n;
 			
-			body = parse_stmt_or_expr(s);
+			body = parse_stmt_or_expr(tu, s);
 			
 			current_breakable = old_breakable;
 		}
@@ -715,12 +728,12 @@ static StmtIndex parse_stmt(TokenStream* restrict s) {
 		
 		expect(s, '(');
 		
-		ExprIndex cond = parse_expr(s);
+		ExprIndex cond = parse_expr(tu, s);
 		
 		expect(s, ')');
 		expect(s, ';');
 		
-		stmt_arena.data[n].do_while = (struct StmtDoWhile){
+		tu->stmts[n].do_while = (struct StmtDoWhile){
 			.cond = cond,
 			.body = body
 		};
@@ -728,10 +741,10 @@ static StmtIndex parse_stmt(TokenStream* restrict s) {
 	} else if (tokens_get(s)->type == TOKEN_KW_goto) {
 		tokens_next(s);
 		
-		StmtIndex n = make_stmt(s, STMT_GOTO);
+		StmtIndex n = make_stmt(tu, s, STMT_GOTO);
 		
-		ExprIndex target = parse_expr(s);
-		stmt_arena.data[n].goto_ = (struct StmtGoto){
+		ExprIndex target = parse_expr(tu, s);
+		tu->stmts[n].goto_ = (struct StmtGoto){
 			.target = target
 		};
 		
@@ -742,8 +755,8 @@ static StmtIndex parse_stmt(TokenStream* restrict s) {
 		Token* t = tokens_get(s);
 		Atom name = atoms_put(t->end - t->start, t->start);
 		
-		StmtIndex n = make_stmt(s, STMT_LABEL);
-		stmt_arena.data[n].label = (struct StmtLabel){
+		StmtIndex n = make_stmt(tu, s, STMT_LABEL);
+		tu->stmts[n].label = (struct StmtLabel){
 			.name = name
 		};
 		shput(labels, name, n);
@@ -756,12 +769,12 @@ static StmtIndex parse_stmt(TokenStream* restrict s) {
 	}
 }
 
-static void parse_decl_or_expr(TokenStream* restrict s, size_t* body_count) {
+static void parse_decl_or_expr(TranslationUnit* tu, TokenStream* restrict s, size_t* body_count) {
 	if (tokens_get(s)->type == ';') {
 		tokens_next(s);
 	} else if (is_typename(s)) {
 		Attribs attr = { 0 };
-		TypeIndex type = parse_declspec(s, &attr);
+		TypeIndex type = parse_declspec(tu, s, &attr);
 		
 		// TODO(NeGate): Kinda ugly
 		// don't expect one the first time
@@ -771,7 +784,7 @@ static void parse_decl_or_expr(TokenStream* restrict s, size_t* body_count) {
 				expect(s, ',');
 			} else expect_comma = true;
 			
-			Decl decl = parse_declarator(s, type);
+			Decl decl = parse_declarator(tu, s, type);
 			ExprIndex initial = 0;
 			
 			if (tokens_get(s)->type == '=') {
@@ -780,14 +793,14 @@ static void parse_decl_or_expr(TokenStream* restrict s, size_t* body_count) {
 				if (tokens_get(s)->type == '{') {
 					tokens_next(s);
 					
-					initial = parse_initializer(s, TYPE_VOID);
+					initial = parse_initializer(tu, s, TYPE_VOID);
 				} else {
-					initial = parse_expr_l14(s);
+					initial = parse_expr_l14(tu, s);
 				}
 			}
 			
-			StmtIndex n = make_stmt(s, STMT_DECL);
-			stmt_arena.data[n].decl = (struct StmtDecl){
+			StmtIndex n = make_stmt(tu, s, STMT_DECL);
+			tu->stmts[n].decl = (struct StmtDecl){
 				.type = decl.type,
 				.name = decl.name,
 				.initial = initial
@@ -806,10 +819,10 @@ static void parse_decl_or_expr(TokenStream* restrict s, size_t* body_count) {
 		
 		expect(s, ';');
 	} else {
-		StmtIndex n = make_stmt(s, STMT_EXPR);
+		StmtIndex n = make_stmt(tu, s, STMT_EXPR);
 		
-		ExprIndex expr = parse_expr(s);
-		stmt_arena.data[n].expr = (struct StmtExpr){
+		ExprIndex expr = parse_expr(tu, s);
+		tu->stmts[n].expr = (struct StmtExpr){
 			.expr = expr
 		};
 		
@@ -819,25 +832,24 @@ static void parse_decl_or_expr(TokenStream* restrict s, size_t* body_count) {
 	}
 }
 
-static StmtIndex parse_stmt_or_expr(TokenStream* restrict s) {
+static StmtIndex parse_stmt_or_expr(TranslationUnit* tu, TokenStream* restrict s) {
 	if (tokens_get(s)->type == ';') {
 		tokens_next(s);
 		return 0;
 	} else {
-		StmtIndex stmt = parse_stmt(s);
+		StmtIndex stmt = parse_stmt(tu, s);
 		
 		if (stmt) {
 			return stmt;
 		} else {
-			StmtIndex n = make_stmt(s, STMT_EXPR);
+			StmtIndex n = make_stmt(tu, s, STMT_EXPR);
 			
-			ExprIndex expr = parse_expr(s);
-			stmt_arena.data[n].expr = (struct StmtExpr){
+			ExprIndex expr = parse_expr(tu, s);
+			tu->stmts[n].expr = (struct StmtExpr){
 				.expr = expr
 			};
 			
 			expect(s, ';');
-			
 			return n;
 		}
 	}
@@ -849,18 +861,18 @@ static StmtIndex parse_stmt_or_expr(TokenStream* restrict s) {
 // Quick reference:
 // https://en.cppreference.com/w/c/language/operator_precedence
 ////////////////////////////////
-static ExprIndex parse_expr_l2(TokenStream* restrict s);
+static ExprIndex parse_expr_l2(TranslationUnit* tu, TokenStream* restrict s);
 
 // NOTE(NeGate): This function will push all nodes it makes onto the temporary
 // storage where parse_initializer will move them into permanent storage.
-static void parse_initializer_member(TokenStream* restrict s) {
+static void parse_initializer_member(TranslationUnit* tu, TokenStream* restrict s) {
 	// Parse designator, it's just chains of:
 	// [const-expr]
 	// .identifier
 	InitNode* current = NULL;
 	try_again: {
 		if (tokens_get(s)->type == '[') {
-			int start = parse_const_expr(s);
+			int start = parse_const_expr(tu, s);
 			if (start < 0) {
 				// TODO(NeGate): Error messages
 				generic_error(s, "Array initializer range is broken.");
@@ -871,7 +883,7 @@ static void parse_initializer_member(TokenStream* restrict s) {
 			if (tokens_get(s)->type == TOKEN_TRIPLE_DOT) {
 				tokens_next(s);
 				
-				count = parse_const_expr(s) - start;
+				count = parse_const_expr(tu, s) - start;
 				if (count <= 1) {
 					// TODO(NeGate): Error messages
 					generic_error(s, "Array initializer range is broken.");
@@ -929,7 +941,7 @@ static void parse_initializer_member(TokenStream* restrict s) {
 				expect(s, ',');
 			} else expect_comma = true;
 			
-			parse_initializer_member(s);
+			parse_initializer_member(tu, s);
 			local_count += 1;
 		}
 		
@@ -937,11 +949,11 @@ static void parse_initializer_member(TokenStream* restrict s) {
 	} else {
 		// parse without comma operator
 		current->kids_count = 0;
-		current->expr = parse_expr_l14(s);
+		current->expr = parse_expr_l14(tu, s);
 	}
 }
 
-static ExprIndex parse_initializer(TokenStream* restrict s, TypeIndex type) {
+static ExprIndex parse_initializer(TranslationUnit* tu, TokenStream* restrict s, TypeIndex type) {
 	// TODO(NeGate): Handle compound literal
 	size_t count = 0;
 	InitNode* start = tls_save();
@@ -955,7 +967,7 @@ static ExprIndex parse_initializer(TokenStream* restrict s, TypeIndex type) {
 			if (tokens_get(s)->type == '}') break;
 		} else expect_comma = true;
 		
-		parse_initializer_member(s);
+		parse_initializer_member(tu, s);
 		count += 1;
 	}
 	
@@ -965,8 +977,8 @@ static ExprIndex parse_initializer(TokenStream* restrict s, TypeIndex type) {
 	memcpy(permanent_store, start, count * sizeof(InitNode));
 	tls_restore(start);
 	
-	ExprIndex e = push_expr_arena(1);
-	expr_arena.data[e] = (Expr) {
+	ExprIndex e = make_expr(tu);
+	tu->exprs[e] = (Expr) {
 		.op = EXPR_INITIALIZER,
 		.loc = tokens_get(s)->location,
 		.init = { type, count, permanent_store }
@@ -974,30 +986,28 @@ static ExprIndex parse_initializer(TokenStream* restrict s, TypeIndex type) {
 	return e;
 }
 
-static ExprIndex parse_expr_l0(TokenStream* restrict s) {
+static ExprIndex parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
 	SourceLocIndex loc = tokens_get(s)->location;
 	
 	if (tokens_get(s)->type == '(') {
 		tokens_next(s);
-		ExprIndex e = parse_expr(s);
+		ExprIndex e = parse_expr(tu, s);
 		expect(s, ')');
 		
 		return e;
 	} else if (tokens_get(s)->type == TOKEN_IDENTIFIER) {
 		Symbol* sym = find_local_symbol(s);
 		
-		ExprIndex e = push_expr_arena(1);
+		ExprIndex e = make_expr(tu);
 		if (sym) {
 			if (sym->storage_class == STORAGE_PARAM) {
-				expr_arena.data[e] = (Expr) {
+				tu->exprs[e] = (Expr) {
 					.op = EXPR_PARAM,
 					.loc = loc,
 					.param_num = sym->param_num
 				};
 			} else {
-				stmt_arena.data[sym->stmt].decl.attrs.is_used = true;
-				
-				expr_arena.data[e] = (Expr) {
+				tu->exprs[e] = (Expr) {
 					.op = EXPR_SYMBOL,
 					.loc = loc,
 					.symbol = sym->stmt
@@ -1010,13 +1020,13 @@ static ExprIndex parse_expr_l0(TokenStream* restrict s) {
 			
 			ptrdiff_t search = shgeti(labels, name);
 			if (search >= 0) {
-				expr_arena.data[e] = (Expr) {
+				tu->exprs[e] = (Expr) {
 					.op = EXPR_SYMBOL,
 					.loc = loc,
 					.symbol = labels[search].value
 				};
 			} else {
-				expr_arena.data[e] = (Expr) {
+				tu->exprs[e] = (Expr) {
 					.op = EXPR_UNKNOWN_SYMBOL,
 					.loc = loc,
 					.unknown_sym = name
@@ -1039,19 +1049,19 @@ static ExprIndex parse_expr_l0(TokenStream* restrict s) {
 			tokens_next(s);
 		}
 		
-		ExprIndex e = push_expr_arena(1);
+		ExprIndex e = make_expr(tu);
 		if (is_typename(s)) {
-			TypeIndex type = parse_typename(s);
+			TypeIndex type = parse_typename(tu, s);
 			
-			expr_arena.data[e] = (Expr) {
+			tu->exprs[e] = (Expr) {
 				.op = is_sizeof ? EXPR_SIZEOF_T : EXPR_ALIGNOF_T,
 				.loc = tokens_get(s)->location,
 				.x_of_type = { type }
 			};
 		} else {
-			ExprIndex expr = parse_expr_l14(s);
+			ExprIndex expr = parse_expr_l14(tu, s);
 			
-			expr_arena.data[e] = (Expr) {
+			tu->exprs[e] = (Expr) {
 				.op = is_sizeof ? EXPR_SIZEOF : EXPR_ALIGNOF,
 				.loc = tokens_get(s)->location,
 				.x_of_expr = { expr }
@@ -1064,8 +1074,8 @@ static ExprIndex parse_expr_l0(TokenStream* restrict s) {
 		Token* t = tokens_get(s);
 		double i = parse_float(t->end - t->start, (const char*)t->start);
 		
-		ExprIndex e = push_expr_arena(1);
-		expr_arena.data[e] = (Expr) {
+		ExprIndex e = make_expr(tu);
+		tu->exprs[e] = (Expr) {
 			.op = EXPR_FLOAT,
 			.loc = loc,
 			.float_num = i
@@ -1078,8 +1088,8 @@ static ExprIndex parse_expr_l0(TokenStream* restrict s) {
 		IntSuffix suffix;
 		int64_t i = parse_int(t->end - t->start, (const char*)t->start, &suffix);
 		
-		ExprIndex e = push_expr_arena(1);
-		expr_arena.data[e] = (Expr) {
+		ExprIndex e = make_expr(tu);
+		tu->exprs[e] = (Expr) {
 			.op = EXPR_INT,
 			.loc = loc,
 			.int_num = { i, suffix }
@@ -1090,8 +1100,8 @@ static ExprIndex parse_expr_l0(TokenStream* restrict s) {
 	} else if (tokens_get(s)->type == TOKEN_STRING_SINGLE_QUOTE) {
 		Token* t = tokens_get(s);
 		
-		ExprIndex e = push_expr_arena(1);
-		expr_arena.data[e] = (Expr) {
+		ExprIndex e = make_expr(tu);
+		tu->exprs[e] = (Expr) {
 			.op = EXPR_CHAR,
 			.loc = loc,
 			.str.start = t->start,
@@ -1103,8 +1113,8 @@ static ExprIndex parse_expr_l0(TokenStream* restrict s) {
 	} else if (tokens_get(s)->type == TOKEN_STRING_DOUBLE_QUOTE) {
 		Token* t = tokens_get(s);
 		
-		ExprIndex e = push_expr_arena(1);
-		expr_arena.data[e] = (Expr) {
+		ExprIndex e = make_expr(tu);
+		tu->exprs[e] = (Expr) {
 			.op = EXPR_STR,
 			.loc = loc,
 			.str.start = t->start,
@@ -1140,8 +1150,8 @@ static ExprIndex parse_expr_l0(TokenStream* restrict s) {
 			buffer[len] = '\"';
 			printf("%.*s\n\n", (int) len, buffer);
 			
-			expr_arena.data[e].str.start = (const unsigned char*)buffer;
-			expr_arena.data[e].str.end = (const unsigned char*)(buffer + len);
+			tu->exprs[e].str.start = (const unsigned char*)buffer;
+			tu->exprs[e].str.end = (const unsigned char*)(buffer + len);
 		}
 		
 		return e;
@@ -1150,23 +1160,23 @@ static ExprIndex parse_expr_l0(TokenStream* restrict s) {
 	}
 }
 
-static ExprIndex parse_expr_l1(TokenStream* restrict s) {
+static ExprIndex parse_expr_l1(TranslationUnit* tu, TokenStream* restrict s) {
 	if (tokens_get(s)->type == '(') {
 		tokens_next(s);
 		
 		if (is_typename(s)) {
-			TypeIndex type = parse_typename(s);
+			TypeIndex type = parse_typename(tu, s);
 			expect(s, ')');
 			
 			if (tokens_get(s)->type == '{') {
 				tokens_next(s);
 				
-				return parse_initializer(s, type);
+				return parse_initializer(tu, s, type);
 			} else {
-				ExprIndex base = parse_expr_l2(s);
-				ExprIndex e = push_expr_arena(1);
+				ExprIndex base = parse_expr_l2(tu, s);
+				ExprIndex e = make_expr(tu);
 				
-				expr_arena.data[e] = (Expr) {
+				tu->exprs[e] = (Expr) {
 					.op = EXPR_CAST,
 					.loc = tokens_get(s)->location,
 					.cast = { type, base }
@@ -1178,7 +1188,7 @@ static ExprIndex parse_expr_l1(TokenStream* restrict s) {
 		tokens_prev(s);
 	}
 	
-	ExprIndex e = parse_expr_l0(s);
+	ExprIndex e = parse_expr_l0(tu, s);
 	
 	// after any of the: [] () . ->
 	// it'll restart and take a shot at matching another
@@ -1186,13 +1196,13 @@ static ExprIndex parse_expr_l1(TokenStream* restrict s) {
 	try_again: {
 		if (tokens_get(s)->type == '[') {
 			ExprIndex base = e;
-			e = push_expr_arena(1);
+			e = make_expr(tu);
 			
 			tokens_next(s);
-			ExprIndex index = parse_expr(s);
+			ExprIndex index = parse_expr(tu, s);
 			expect(s, ']');
 			
-			expr_arena.data[e] = (Expr) {
+			tu->exprs[e] = (Expr) {
 				.op = EXPR_SUBSCRIPT,
 				.loc = tokens_get(s)->location,
 				.subscript = { base, index }
@@ -1211,8 +1221,8 @@ static ExprIndex parse_expr_l1(TokenStream* restrict s) {
 			Atom name = atoms_put(t->end - t->start, t->start);
 			
 			ExprIndex base = e;
-			e = push_expr_arena(1);
-			expr_arena.data[e] = (Expr) {
+			e = make_expr(tu);
+			tu->exprs[e] = (Expr) {
 				.op = EXPR_ARROW,
 				.loc = tokens_get(s)->location,
 				.arrow = { .base = base, .name = name }
@@ -1233,8 +1243,8 @@ static ExprIndex parse_expr_l1(TokenStream* restrict s) {
 			Atom name = atoms_put(t->end - t->start, t->start);
 			
 			ExprIndex base = e;
-			e = push_expr_arena(1);
-			expr_arena.data[e] = (Expr) {
+			e = make_expr(tu);
+			tu->exprs[e] = (Expr) {
 				.op = EXPR_DOT,
 				.loc = tokens_get(s)->location,
 				.dot = { .base = base, .name = name }
@@ -1249,7 +1259,7 @@ static ExprIndex parse_expr_l1(TokenStream* restrict s) {
 			tokens_next(s);
 			
 			ExprIndex target = e;
-			e = push_expr_arena(1);
+			e = make_expr(tu);
 			
 			size_t param_count = 0;
 			void* params = tls_save();
@@ -1262,7 +1272,8 @@ static ExprIndex parse_expr_l1(TokenStream* restrict s) {
 				// NOTE(NeGate): This is a funny little work around because
 				// i don't wanna parse the comma operator within the expression
 				// i wanna parse it here so we just skip it.
-				*((ExprIndex*) tls_push(sizeof(ExprIndex))) = parse_expr_l14(s);
+				ExprIndex e = parse_expr_l14(tu, s);
+				*((ExprIndex*) tls_push(sizeof(ExprIndex))) = e;
 				param_count++;
 			}
 			
@@ -1275,7 +1286,7 @@ static ExprIndex parse_expr_l1(TokenStream* restrict s) {
 			ExprIndex* param_start = arena_alloc(param_count * sizeof(ExprIndex), _Alignof(ExprIndex));
 			memcpy(param_start, params, param_count * sizeof(ExprIndex));
 			
-			expr_arena.data[e] = (Expr) {
+			tu->exprs[e] = (Expr) {
 				.op = EXPR_CALL,
 				.loc = tokens_get(s)->location,
 				.call = { target, param_count, param_start }
@@ -1293,8 +1304,8 @@ static ExprIndex parse_expr_l1(TokenStream* restrict s) {
 			
 			ExprIndex src = e;
 			
-			e = push_expr_arena(1);
-			expr_arena.data[e] = (Expr) {
+			e = make_expr(tu);
+			tu->exprs[e] = (Expr) {
 				.op = is_inc ? EXPR_POST_INC : EXPR_POST_DEC,
 				.loc = tokens_get(s)->location,
 				.unary_op.src = src
@@ -1306,16 +1317,16 @@ static ExprIndex parse_expr_l1(TokenStream* restrict s) {
 }
 
 // deref* address& negate-
-static ExprIndex parse_expr_l2(TokenStream* restrict s) {
+static ExprIndex parse_expr_l2(TranslationUnit* tu, TokenStream* restrict s) {
 	// TODO(NeGate): Convert this code into a loop... please?
 	SourceLocIndex loc = tokens_get(s)->location;
 	
 	if (tokens_get(s)->type == '*') {
 		tokens_next(s);
-		ExprIndex value = parse_expr_l2(s);
+		ExprIndex value = parse_expr_l2(tu, s);
 		
-		ExprIndex e = push_expr_arena(1);
-		expr_arena.data[e] = (Expr) {
+		ExprIndex e = make_expr(tu);
+		tu->exprs[e] = (Expr) {
 			.op = EXPR_DEREF,
 			.loc = tokens_get(s)->location,
 			.unary_op.src = value
@@ -1323,10 +1334,10 @@ static ExprIndex parse_expr_l2(TokenStream* restrict s) {
 		return e;
 	} else if (tokens_get(s)->type == '!') {
 		tokens_next(s);
-		ExprIndex value = parse_expr_l2(s);
+		ExprIndex value = parse_expr_l2(tu, s);
 		
-		ExprIndex e = push_expr_arena(1);
-		expr_arena.data[e] = (Expr) {
+		ExprIndex e = make_expr(tu);
+		tu->exprs[e] = (Expr) {
 			.op = EXPR_LOGICAL_NOT,
 			.loc = loc,
 			.unary_op.src = value
@@ -1334,10 +1345,10 @@ static ExprIndex parse_expr_l2(TokenStream* restrict s) {
 		return e;
 	} else if (tokens_get(s)->type == TOKEN_DOUBLE_EXCLAMATION) {
 		tokens_next(s);
-		ExprIndex value = parse_expr_l2(s);
+		ExprIndex value = parse_expr_l2(tu, s);
 		
-		ExprIndex e = push_expr_arena(1);
-		expr_arena.data[e] = (Expr) {
+		ExprIndex e = make_expr(tu);
+		tu->exprs[e] = (Expr) {
 			.op = EXPR_CAST,
 			.loc = loc,
 			.cast = { TYPE_BOOL, value }
@@ -1345,10 +1356,10 @@ static ExprIndex parse_expr_l2(TokenStream* restrict s) {
 		return e;
 	} else if (tokens_get(s)->type == '-') {
 		tokens_next(s);
-		ExprIndex value = parse_expr_l2(s);
+		ExprIndex value = parse_expr_l2(tu, s);
 		
-		ExprIndex e = push_expr_arena(1);
-		expr_arena.data[e] = (Expr) {
+		ExprIndex e = make_expr(tu);
+		tu->exprs[e] = (Expr) {
 			.op = EXPR_NEGATE,
 			.loc = loc,
 			.unary_op.src = value
@@ -1356,10 +1367,10 @@ static ExprIndex parse_expr_l2(TokenStream* restrict s) {
 		return e;
 	} else if (tokens_get(s)->type == '~') {
 		tokens_next(s);
-		ExprIndex value = parse_expr_l2(s);
+		ExprIndex value = parse_expr_l2(tu, s);
 		
-		ExprIndex e = push_expr_arena(1);
-		expr_arena.data[e] = (Expr) {
+		ExprIndex e = make_expr(tu);
+		tu->exprs[e] = (Expr) {
 			.op = EXPR_NOT,
 			.loc = loc,
 			.unary_op.src = value
@@ -1367,13 +1378,13 @@ static ExprIndex parse_expr_l2(TokenStream* restrict s) {
 		return e;
 	} else if (tokens_get(s)->type == '+') {
 		tokens_next(s);
-		return parse_expr_l2(s);
+		return parse_expr_l2(tu, s);
 	} else if (tokens_get(s)->type == TOKEN_INCREMENT) {
 		tokens_next(s);
-		ExprIndex value = parse_expr_l1(s);
+		ExprIndex value = parse_expr_l1(tu, s);
 		
-		ExprIndex e = push_expr_arena(1);
-		expr_arena.data[e] = (Expr) {
+		ExprIndex e = make_expr(tu);
+		tu->exprs[e] = (Expr) {
 			.op = EXPR_PRE_INC,
 			.loc = loc,
 			.unary_op.src = value
@@ -1381,10 +1392,10 @@ static ExprIndex parse_expr_l2(TokenStream* restrict s) {
 		return e;
 	} else if (tokens_get(s)->type == TOKEN_DECREMENT) {
 		tokens_next(s);
-		ExprIndex value = parse_expr_l1(s);
+		ExprIndex value = parse_expr_l1(tu, s);
 		
-		ExprIndex e = push_expr_arena(1);
-		expr_arena.data[e] = (Expr) {
+		ExprIndex e = make_expr(tu);
+		tu->exprs[e] = (Expr) {
 			.op = EXPR_PRE_DEC,
 			.loc = loc,
 			.unary_op.src = value
@@ -1392,28 +1403,28 @@ static ExprIndex parse_expr_l2(TokenStream* restrict s) {
 		return e;
 	} else if (tokens_get(s)->type == '&') {
 		tokens_next(s);
-		ExprIndex value = parse_expr_l1(s);
+		ExprIndex value = parse_expr_l1(tu, s);
 		
-		ExprIndex e = push_expr_arena(1);
-		expr_arena.data[e] = (Expr) {
+		ExprIndex e = make_expr(tu);
+		tu->exprs[e] = (Expr) {
 			.op = EXPR_ADDR,
 			.loc = loc,
 			.unary_op.src = value
 		};
 		return e;
 	} else {
-		return parse_expr_l1(s);
+		return parse_expr_l1(tu, s);
 	}
 }
 
 // * / %
-static ExprIndex parse_expr_l3(TokenStream* restrict s) {
-	ExprIndex lhs = parse_expr_l2(s);
+static ExprIndex parse_expr_l3(TranslationUnit* tu, TokenStream* restrict s) {
+	ExprIndex lhs = parse_expr_l2(tu, s);
 	
 	while (tokens_get(s)->type == TOKEN_TIMES ||
 		   tokens_get(s)->type == TOKEN_SLASH ||
 		   tokens_get(s)->type == TOKEN_PERCENT) {
-		ExprIndex e = push_expr_arena(1);
+		ExprIndex e = make_expr(tu);
 		ExprOp op;
 		switch (tokens_get(s)->type) {
 			case TOKEN_TIMES: op = EXPR_TIMES; break;
@@ -1423,8 +1434,8 @@ static ExprIndex parse_expr_l3(TokenStream* restrict s) {
 		}
 		tokens_next(s);
 		
-		ExprIndex rhs = parse_expr_l2(s);
-		expr_arena.data[e] = (Expr) {
+		ExprIndex rhs = parse_expr_l2(tu, s);
+		tu->exprs[e] = (Expr) {
 			.op = op,
 			.loc = tokens_get(s)->location,
 			.bin_op = { lhs, rhs }
@@ -1437,12 +1448,12 @@ static ExprIndex parse_expr_l3(TokenStream* restrict s) {
 }
 
 // + -
-static ExprIndex parse_expr_l4(TokenStream* restrict s) {
-	ExprIndex lhs = parse_expr_l3(s);
+static ExprIndex parse_expr_l4(TranslationUnit* tu, TokenStream* restrict s) {
+	ExprIndex lhs = parse_expr_l3(tu, s);
 	
 	while (tokens_get(s)->type == TOKEN_PLUS ||
 		   tokens_get(s)->type == TOKEN_MINUS) {
-		ExprIndex e = push_expr_arena(1);
+		ExprIndex e = make_expr(tu);
 		ExprOp op;
 		switch (tokens_get(s)->type) {
 			case TOKEN_PLUS: op = EXPR_PLUS; break;
@@ -1451,8 +1462,8 @@ static ExprIndex parse_expr_l4(TokenStream* restrict s) {
 		}
 		tokens_next(s);
 		
-		ExprIndex rhs = parse_expr_l3(s);
-		expr_arena.data[e] = (Expr) {
+		ExprIndex rhs = parse_expr_l3(tu, s);
+		tu->exprs[e] = (Expr) {
 			.op = op,
 			.loc = tokens_get(s)->location,
 			.bin_op = { lhs, rhs }
@@ -1465,12 +1476,12 @@ static ExprIndex parse_expr_l4(TokenStream* restrict s) {
 }
 
 // + -
-static ExprIndex parse_expr_l5(TokenStream* restrict s) {
-	ExprIndex lhs = parse_expr_l4(s);
+static ExprIndex parse_expr_l5(TranslationUnit* tu, TokenStream* restrict s) {
+	ExprIndex lhs = parse_expr_l4(tu, s);
 	
 	while (tokens_get(s)->type == TOKEN_LEFT_SHIFT ||
 		   tokens_get(s)->type == TOKEN_RIGHT_SHIFT) {
-		ExprIndex e = push_expr_arena(1);
+		ExprIndex e = make_expr(tu);
 		ExprOp op;
 		switch (tokens_get(s)->type) {
 			case TOKEN_LEFT_SHIFT: op = EXPR_SHL; break;
@@ -1479,8 +1490,8 @@ static ExprIndex parse_expr_l5(TokenStream* restrict s) {
 		}
 		tokens_next(s);
 		
-		ExprIndex rhs = parse_expr_l4(s);
-		expr_arena.data[e] = (Expr) {
+		ExprIndex rhs = parse_expr_l4(tu, s);
+		tu->exprs[e] = (Expr) {
 			.op = op,
 			.loc = tokens_get(s)->location,
 			.bin_op = { lhs, rhs }
@@ -1493,14 +1504,14 @@ static ExprIndex parse_expr_l5(TokenStream* restrict s) {
 }
 
 // >= > <= <
-static ExprIndex parse_expr_l6(TokenStream* restrict s) {
-	ExprIndex lhs = parse_expr_l5(s);
+static ExprIndex parse_expr_l6(TranslationUnit* tu, TokenStream* restrict s) {
+	ExprIndex lhs = parse_expr_l5(tu, s);
 	
 	while (tokens_get(s)->type == TOKEN_GREATER_EQUAL ||
 		   tokens_get(s)->type == TOKEN_LESS_EQUAL || 
 		   tokens_get(s)->type == TOKEN_GREATER ||
 		   tokens_get(s)->type == TOKEN_LESS) {
-		ExprIndex e = push_expr_arena(1);
+		ExprIndex e = make_expr(tu);
 		ExprOp op;
 		switch (tokens_get(s)->type) {
 			case TOKEN_LESS:          op = EXPR_CMPLT; break;
@@ -1511,8 +1522,8 @@ static ExprIndex parse_expr_l6(TokenStream* restrict s) {
 		}
 		tokens_next(s);
 		
-		ExprIndex rhs = parse_expr_l5(s);
-		expr_arena.data[e] = (Expr) {
+		ExprIndex rhs = parse_expr_l5(tu, s);
+		tu->exprs[e] = (Expr) {
 			.op = op,
 			.loc = tokens_get(s)->location,
 			.bin_op = { lhs, rhs }
@@ -1525,17 +1536,17 @@ static ExprIndex parse_expr_l6(TokenStream* restrict s) {
 }
 
 // == !=
-static ExprIndex parse_expr_l7(TokenStream* restrict s) {
-	ExprIndex lhs = parse_expr_l6(s);
+static ExprIndex parse_expr_l7(TranslationUnit* tu, TokenStream* restrict s) {
+	ExprIndex lhs = parse_expr_l6(tu, s);
 	
 	while (tokens_get(s)->type == TOKEN_NOT_EQUAL ||
 		   tokens_get(s)->type == TOKEN_EQUALITY) {
-		ExprIndex e = push_expr_arena(1);
+		ExprIndex e = make_expr(tu);
 		ExprOp op = tokens_get(s)->type == TOKEN_EQUALITY ? EXPR_CMPEQ : EXPR_CMPNE;
 		tokens_next(s);
 		
-		ExprIndex rhs = parse_expr_l6(s);
-		expr_arena.data[e] = (Expr) {
+		ExprIndex rhs = parse_expr_l6(tu, s);
+		tu->exprs[e] = (Expr) {
 			.op = op,
 			.loc = tokens_get(s)->location,
 			.bin_op = { lhs, rhs }
@@ -1548,16 +1559,16 @@ static ExprIndex parse_expr_l7(TokenStream* restrict s) {
 }
 
 // &
-static ExprIndex parse_expr_l8(TokenStream* restrict s) {
-	ExprIndex lhs = parse_expr_l7(s);
+static ExprIndex parse_expr_l8(TranslationUnit* tu, TokenStream* restrict s) {
+	ExprIndex lhs = parse_expr_l7(tu, s);
 	
 	while (tokens_get(s)->type == '&') {
-		ExprIndex e = push_expr_arena(1);
+		ExprIndex e = make_expr(tu);
 		ExprOp op = EXPR_AND;
 		tokens_next(s);
 		
-		ExprIndex rhs = parse_expr_l7(s);
-		expr_arena.data[e] = (Expr) {
+		ExprIndex rhs = parse_expr_l7(tu, s);
+		tu->exprs[e] = (Expr) {
 			.op = op,
 			.loc = tokens_get(s)->location,
 			.bin_op = { lhs, rhs }
@@ -1570,16 +1581,16 @@ static ExprIndex parse_expr_l8(TokenStream* restrict s) {
 }
 
 // ^
-static ExprIndex parse_expr_l9(TokenStream* restrict s) {
-	ExprIndex lhs = parse_expr_l8(s);
+static ExprIndex parse_expr_l9(TranslationUnit* tu, TokenStream* restrict s) {
+	ExprIndex lhs = parse_expr_l8(tu, s);
 	
 	while (tokens_get(s)->type == '^') {
-		ExprIndex e = push_expr_arena(1);
+		ExprIndex e = make_expr(tu);
 		ExprOp op = EXPR_XOR;
 		tokens_next(s);
 		
-		ExprIndex rhs = parse_expr_l8(s);
-		expr_arena.data[e] = (Expr) {
+		ExprIndex rhs = parse_expr_l8(tu, s);
+		tu->exprs[e] = (Expr) {
 			.op = op,
 			.loc = tokens_get(s)->location,
 			.bin_op = { lhs, rhs }
@@ -1592,16 +1603,16 @@ static ExprIndex parse_expr_l9(TokenStream* restrict s) {
 }
 
 // |
-static ExprIndex parse_expr_l10(TokenStream* restrict s) {
-	ExprIndex lhs = parse_expr_l9(s);
+static ExprIndex parse_expr_l10(TranslationUnit* tu, TokenStream* restrict s) {
+	ExprIndex lhs = parse_expr_l9(tu, s);
 	
 	while (tokens_get(s)->type == '|') {
-		ExprIndex e = push_expr_arena(1);
+		ExprIndex e = make_expr(tu);
 		ExprOp op = EXPR_OR;
 		tokens_next(s);
 		
-		ExprIndex rhs = parse_expr_l9(s);
-		expr_arena.data[e] = (Expr) {
+		ExprIndex rhs = parse_expr_l9(tu, s);
+		tu->exprs[e] = (Expr) {
 			.op = op,
 			.loc = tokens_get(s)->location,
 			.bin_op = { lhs, rhs }
@@ -1614,16 +1625,16 @@ static ExprIndex parse_expr_l10(TokenStream* restrict s) {
 }
 
 // &&
-static ExprIndex parse_expr_l11(TokenStream* restrict s) {
-	ExprIndex lhs = parse_expr_l10(s);
+static ExprIndex parse_expr_l11(TranslationUnit* tu, TokenStream* restrict s) {
+	ExprIndex lhs = parse_expr_l10(tu, s);
 	
 	while (tokens_get(s)->type == TOKEN_DOUBLE_AND) {
-		ExprIndex e = push_expr_arena(1);
+		ExprIndex e = make_expr(tu);
 		ExprOp op = EXPR_LOGICAL_AND;
 		tokens_next(s);
 		
-		ExprIndex rhs = parse_expr_l10(s);
-		expr_arena.data[e] = (Expr) {
+		ExprIndex rhs = parse_expr_l10(tu, s);
+		tu->exprs[e] = (Expr) {
 			.op = op,
 			.loc = tokens_get(s)->location,
 			.bin_op = { lhs, rhs }
@@ -1636,16 +1647,16 @@ static ExprIndex parse_expr_l11(TokenStream* restrict s) {
 }
 
 // ||
-static ExprIndex parse_expr_l12(TokenStream* restrict s) {
-	ExprIndex lhs = parse_expr_l11(s);
+static ExprIndex parse_expr_l12(TranslationUnit* tu, TokenStream* restrict s) {
+	ExprIndex lhs = parse_expr_l11(tu, s);
 	
 	while (tokens_get(s)->type == TOKEN_DOUBLE_OR) {
-		ExprIndex e = push_expr_arena(1);
+		ExprIndex e = make_expr(tu);
 		ExprOp op = EXPR_LOGICAL_OR;
 		tokens_next(s);
 		
-		ExprIndex rhs = parse_expr_l11(s);
-		expr_arena.data[e] = (Expr) {
+		ExprIndex rhs = parse_expr_l11(tu, s);
+		tu->exprs[e] = (Expr) {
 			.op = op,
 			.loc = tokens_get(s)->location,
 			.bin_op = { lhs, rhs }
@@ -1658,21 +1669,21 @@ static ExprIndex parse_expr_l12(TokenStream* restrict s) {
 }
 
 // ternary
-static ExprIndex parse_expr_l13(TokenStream* restrict s) {
-	ExprIndex lhs = parse_expr_l12(s);
+static ExprIndex parse_expr_l13(TranslationUnit* tu, TokenStream* restrict s) {
+	ExprIndex lhs = parse_expr_l12(tu, s);
 	
 	while (tokens_get(s)->type == '?') {
 		SourceLocIndex loc = tokens_get(s)->location;
 		tokens_next(s);
 		
-		ExprIndex mhs = parse_expr(s);
+		ExprIndex mhs = parse_expr(tu, s);
 		
 		expect(s, ':');
 		
-		ExprIndex rhs = parse_expr_l12(s);
+		ExprIndex rhs = parse_expr_l12(tu, s);
 		
-		ExprIndex e = push_expr_arena(1);
-		expr_arena.data[e] = (Expr) {
+		ExprIndex e = make_expr(tu);
+		tu->exprs[e] = (Expr) {
 			.op = EXPR_TERNARY,
 			.loc = loc,
 			.ternary_op = { lhs, mhs, rhs }
@@ -1685,8 +1696,8 @@ static ExprIndex parse_expr_l13(TokenStream* restrict s) {
 }
 
 // = += -= *= /= %= <<= >>= &= ^= |=
-static ExprIndex parse_expr_l14(TokenStream* restrict s) {
-	ExprIndex lhs = parse_expr_l13(s);
+static ExprIndex parse_expr_l14(TranslationUnit* tu, TokenStream* restrict s) {
+	ExprIndex lhs = parse_expr_l13(tu, s);
 	
 	while (tokens_get(s)->type == TOKEN_ASSIGN ||
 		   tokens_get(s)->type == TOKEN_PLUS_EQUAL ||
@@ -1699,7 +1710,7 @@ static ExprIndex parse_expr_l14(TokenStream* restrict s) {
 		   tokens_get(s)->type == TOKEN_XOR_EQUAL ||
 		   tokens_get(s)->type == TOKEN_LEFT_SHIFT_EQUAL ||
 		   tokens_get(s)->type == TOKEN_RIGHT_SHIFT_EQUAL) {
-		ExprIndex e = push_expr_arena(1);
+		ExprIndex e = make_expr(tu);
 		
 		ExprOp op;
 		switch (tokens_get(s)->type) {
@@ -1718,8 +1729,8 @@ static ExprIndex parse_expr_l14(TokenStream* restrict s) {
 		}
 		tokens_next(s);
 		
-		ExprIndex rhs = parse_expr_l13(s);
-		expr_arena.data[e] = (Expr) {
+		ExprIndex rhs = parse_expr_l13(tu, s);
+		tu->exprs[e] = (Expr) {
 			.op = op,
 			.loc = tokens_get(s)->location,
 			.bin_op = { lhs, rhs }
@@ -1731,16 +1742,16 @@ static ExprIndex parse_expr_l14(TokenStream* restrict s) {
 	return lhs;
 }
 
-static ExprIndex parse_expr_l15(TokenStream* restrict s) {
-	ExprIndex lhs = parse_expr_l14(s);
+static ExprIndex parse_expr_l15(TranslationUnit* tu, TokenStream* restrict s) {
+	ExprIndex lhs = parse_expr_l14(tu, s);
 	
 	while (tokens_get(s)->type == TOKEN_COMMA) {
-		ExprIndex e = push_expr_arena(1);
+		ExprIndex e = make_expr(tu);
 		ExprOp op = EXPR_COMMA;
 		tokens_next(s);
 		
-		ExprIndex rhs = parse_expr_l14(s);
-		expr_arena.data[e] = (Expr) {
+		ExprIndex rhs = parse_expr_l14(tu, s);
+		tu->exprs[e] = (Expr) {
 			.op = op,
 			.loc = tokens_get(s)->location,
 			.bin_op = { lhs, rhs }
@@ -1752,16 +1763,16 @@ static ExprIndex parse_expr_l15(TokenStream* restrict s) {
 	return lhs;
 }
 
-static ExprIndex parse_expr(TokenStream* restrict s) {
-	return parse_expr_l15(s);
+static ExprIndex parse_expr(TranslationUnit* tu, TokenStream* restrict s) {
+	return parse_expr_l15(tu, s);
 }
 
 ////////////////////////////////
 // TYPES
 ////////////////////////////////
-static TypeIndex parse_type_suffix(TokenStream* restrict s, TypeIndex type, Atom name);
+static TypeIndex parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s, TypeIndex type, Atom name);
 
-static Decl parse_declarator(TokenStream* restrict s, TypeIndex type) {
+static Decl parse_declarator(TranslationUnit* tu, TokenStream* restrict s, TypeIndex type) {
 	// handle calling convention
 	// TODO(NeGate): Actually pass these to the AST
 	parse_another_qualifier2: {
@@ -1776,13 +1787,13 @@ static Decl parse_declarator(TokenStream* restrict s, TypeIndex type) {
 	
 	// handle pointers
 	while (tokens_get(s)->type == '*') {
-		type = new_pointer(type);
+		type = new_pointer(tu, type);
 		tokens_next(s);
 		
 		parse_another_qualifier: {
 			switch (tokens_get(s)->type) {
 				case TOKEN_KW_restrict: {
-					type_arena.data[type].is_ptr_restrict = true;
+					tu->types[type].is_ptr_restrict = true;
 					tokens_next(s);
 					goto parse_another_qualifier;
 				}
@@ -1813,30 +1824,30 @@ static Decl parse_declarator(TokenStream* restrict s, TypeIndex type) {
 		tokens_next(s);
 		size_t saved = s->current;
 		
-		parse_declarator(s, TYPE_NONE);
+		parse_declarator(tu, s, TYPE_NONE);
 		
 		expect(s, ')');
-		type = parse_type_suffix(s, type, NULL);
+		type = parse_type_suffix(tu, s, type, NULL);
 		
 		size_t saved_end = s->current;
 		s->current = saved;
 		
-		Decl d = parse_declarator(s, type);
+		Decl d = parse_declarator(tu, s, type);
 		
 		// inherit name
 		// TODO(NeGate): I'm not sure if this is correct ngl
 		if (!d.name) {
 			TypeIndex t = d.type;
 			
-			if (type_arena.data[t].kind == KIND_PTR) {
-				t = type_arena.data[d.type].ptr_to;
+			if (tu->types[t].kind == KIND_PTR) {
+				t = tu->types[d.type].ptr_to;
 				
-				if (type_arena.data[t].kind == KIND_FUNC) {
-					d.name = type_arena.data[t].func.name;
-				} else if (type_arena.data[t].kind == KIND_STRUCT) {
-					d.name = type_arena.data[t].record.name;
-				} else if (type_arena.data[t].kind == KIND_UNION) {
-					d.name = type_arena.data[t].record.name;
+				if (tu->types[t].kind == KIND_FUNC) {
+					d.name = tu->types[t].func.name;
+				} else if (tu->types[t].kind == KIND_STRUCT) {
+					d.name = tu->types[t].record.name;
+				} else if (tu->types[t].kind == KIND_UNION) {
+					d.name = tu->types[t].record.name;
 				}
 			}
 		}
@@ -1852,13 +1863,13 @@ static Decl parse_declarator(TokenStream* restrict s, TypeIndex type) {
 		tokens_next(s);
 	}
 	
-	type = parse_type_suffix(s, type, name);
+	type = parse_type_suffix(tu, s, type, name);
 	return (Decl){ type, name };
 }
 
 // it's like a declarator with a skin fade,
 // int*        int[16]       const char* restrict
-static TypeIndex parse_abstract_declarator(TokenStream* restrict s, TypeIndex type) {
+static TypeIndex parse_abstract_declarator(TranslationUnit* tu, TokenStream* restrict s, TypeIndex type) {
 	// handle calling convention
 	// TODO(NeGate): Actually pass these to the AST
 	parse_another_qualifier2: {
@@ -1873,7 +1884,7 @@ static TypeIndex parse_abstract_declarator(TokenStream* restrict s, TypeIndex ty
 	
 	// handle pointers
 	while (tokens_get(s)->type == '*') {
-		type = new_pointer(type);
+		type = new_pointer(tu, type);
 		tokens_next(s);
 		
 		// TODO(NeGate): parse qualifiers
@@ -1901,15 +1912,15 @@ static TypeIndex parse_abstract_declarator(TokenStream* restrict s, TypeIndex ty
 		tokens_next(s);
 		size_t saved = s->current;
 		
-		parse_abstract_declarator(s, TYPE_NONE);
+		parse_abstract_declarator(tu, s, TYPE_NONE);
 		
 		expect(s, ')');
-		type = parse_type_suffix(s, type, NULL);
+		type = parse_type_suffix(tu, s, type, NULL);
 		
 		size_t saved_end = s->current;
 		s->current = saved;
 		
-		TypeIndex d = parse_abstract_declarator(s, type);
+		TypeIndex d = parse_abstract_declarator(tu, s, type);
 		s->current = saved_end;
 		return d;
 	}
@@ -1921,35 +1932,35 @@ static TypeIndex parse_abstract_declarator(TokenStream* restrict s, TypeIndex ty
 		tokens_next(s);
 	}
 	
-	type = parse_type_suffix(s, type, name);
+	type = parse_type_suffix(tu, s, type, name);
 	return type;
 }
 
-static TypeIndex parse_typename(TokenStream* restrict s) {
+static TypeIndex parse_typename(TranslationUnit* tu, TokenStream* restrict s) {
 	// TODO(NeGate): Check if attributes are set, they shouldn't
 	// be in this context.
 	Attribs attr = { 0 };
-	TypeIndex type = parse_declspec(s, &attr);
-	return parse_abstract_declarator(s, type);
+	TypeIndex type = parse_declspec(tu, s, &attr);
+	return parse_abstract_declarator(tu, s, type);
 }
 
-static TypeIndex parse_type_suffix(TokenStream* restrict s, TypeIndex type, Atom name) {
+static TypeIndex parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s, TypeIndex type, Atom name) {
 	// type suffixes like array [] and function ()
 	if (tokens_get(s)->type == '(') {
 		tokens_next(s);
 		
 		TypeIndex return_type = type;
 		
-		type = new_func();
-		type_arena.data[type].func.name = name;
-		type_arena.data[type].func.return_type = return_type;
+		type = new_func(tu);
+		tu->types[type].func.name = name;
+		tu->types[type].func.return_type = return_type;
 		
 		if (tokens_get(s)->type == TOKEN_KW_void && tokens_peek(s)->type == ')') {
 			tokens_next(s);
 			tokens_next(s);
 			
-			type_arena.data[type].func.param_list = 0;
-			type_arena.data[type].func.param_count = 0;
+			tu->types[type].func.param_list = 0;
+			tu->types[type].func.param_count = 0;
 			return type;
 		}
 		
@@ -1970,17 +1981,17 @@ static TypeIndex parse_type_suffix(TokenStream* restrict s, TypeIndex type, Atom
 			}
 			
 			Attribs arg_attr = { 0 };
-			TypeIndex arg_base_type = parse_declspec(s, &arg_attr);
+			TypeIndex arg_base_type = parse_declspec(tu, s, &arg_attr);
 			
-			Decl param_decl = parse_declarator(s, arg_base_type);
+			Decl param_decl = parse_declarator(tu, s, arg_base_type);
 			TypeIndex param_type = param_decl.type;
 			
-			if (type_arena.data[param_type].kind == KIND_ARRAY) {
+			if (tu->types[param_type].kind == KIND_ARRAY) {
 				// Array parameters are desugared into pointers
-				param_type = new_pointer(type_arena.data[param_type].array_of);
-			} else if (type_arena.data[param_type].kind == KIND_FUNC) {
+				param_type = new_pointer(tu, tu->types[param_type].array_of);
+			} else if (tu->types[param_type].kind == KIND_FUNC) {
 				// Function parameters are desugared into pointers
-				param_type = new_pointer(param_type);
+				param_type = new_pointer(tu, param_type);
 			}
 			
 			// TODO(NeGate): Error check that no attribs are set
@@ -1996,12 +2007,14 @@ static TypeIndex parse_type_suffix(TokenStream* restrict s, TypeIndex type, Atom
 		}
 		tokens_next(s);
 		
-		ParamIndex start = push_param_arena(param_count);
-		memcpy(&param_arena.data[start], params, param_count * sizeof(Param));
+		// Allocate some more permanent storage
+		ParamIndex start = big_array_length(tu->params);
+		big_array_put_uninit(tu->params, param_count);
+		memcpy(&tu->params[start], params, param_count * sizeof(Param));
 		
-		type_arena.data[type].func.param_list = start;
-		type_arena.data[type].func.param_count = param_count;
-		type_arena.data[type].func.has_varargs = has_varargs;
+		tu->types[type].func.param_list = start;
+		tu->types[type].func.param_count = param_count;
+		tu->types[type].func.has_varargs = has_varargs;
 		
 		tls_restore(params);
 	} else if (tokens_get(s)->type == '[') {
@@ -2013,11 +2026,11 @@ static TypeIndex parse_type_suffix(TokenStream* restrict s, TypeIndex type, Atom
 				count = 0; 
 				tokens_next(s);
 			} else {
-				count = parse_const_expr(s);
+				count = parse_const_expr(tu, s);
 				expect(s, ']');
 			}
 			
-			type = new_array(type, count);
+			type = new_array(tu, type, count);
 		} while (tokens_get(s)->type == '[');
 	}
 	
@@ -2025,7 +2038,7 @@ static TypeIndex parse_type_suffix(TokenStream* restrict s, TypeIndex type, Atom
 }
 
 // https://github.com/rui314/chibicc/blob/90d1f7f199cc55b13c7fdb5839d1409806633fdb/parse.c#L381
-static TypeIndex parse_declspec(TokenStream* restrict s, Attribs* attr) {
+static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attribs* attr) {
 	enum {
 		VOID     = 1 << 0,
 		BOOL     = 1 << 2,
@@ -2112,16 +2125,16 @@ static TypeIndex parse_declspec(TokenStream* restrict s, Attribs* attr) {
 					type = name ? find_incomplete_type((char*)name) : 0;
 					if (type) {
 						// can't re-complete a struct
-						//assert(!type_arena.data[type].is_incomplete);
+						//assert(!tu->types[type].is_incomplete);
 					} else {
-						type = new_record(is_union);
-						type_arena.data[type].is_incomplete = false;
-						type_arena.data[type].record.name = name;
+						type = new_record(tu, is_union);
+						tu->types[type].is_incomplete = false;
+						tu->types[type].record.name = name;
 						
 						if (name && strcmp((const char*)name, "__m128") == 0) {
-							type_arena.data[type].record.intrin_type = tb_vector_type(TB_F32, 4);
+							tu->types[type].record.intrin_type = tb_vector_type(TB_F32, 4);
 						} else {
-							type_arena.data[type].record.intrin_type = TB_TYPE_VOID;
+							tu->types[type].record.intrin_type = TB_TYPE_VOID;
 						}
 						
 						// can't forward decl unnamed records so we
@@ -2141,7 +2154,7 @@ static TypeIndex parse_declspec(TokenStream* restrict s, Attribs* attr) {
 					
 					while (tokens_get(s)->type != '}') {
 						Attribs member_attr = { 0 };
-						TypeIndex member_base_type = parse_declspec(s, &member_attr);
+						TypeIndex member_base_type = parse_declspec(tu, s, &member_attr);
 						
 						// TODO(NeGate): Kinda ugly
 						// don't expect one the first time
@@ -2154,15 +2167,15 @@ static TypeIndex parse_declspec(TokenStream* restrict s, Attribs* attr) {
 								expect(s, ',');
 							} else expect_comma = true;
 							
-							Decl decl = parse_declarator(s, member_base_type);
+							Decl decl = parse_declarator(tu, s, member_base_type);
 							TypeIndex member_type = decl.type;
 							
-							if (type_arena.data[member_type].kind == KIND_FUNC) {
+							if (tu->types[member_type].kind == KIND_FUNC) {
 								generic_error(s, "Naw dawg");
 							}
 							
-							int member_align = type_arena.data[member_type].align;
-							int member_size = type_arena.data[member_type].size;
+							int member_align = tu->types[member_type].align;
+							int member_size = tu->types[member_type].size;
 							if (!is_union) {
 								offset = align_up(offset, member_align);
 							}
@@ -2186,7 +2199,7 @@ static TypeIndex parse_declspec(TokenStream* restrict s, Attribs* attr) {
 									current_bit_offset = 0;
 								}
 								
-								int bit_width = parse_const_expr(s);
+								int bit_width = parse_const_expr(tu, s);
 								int bits_in_region = member_size * 8;
 								if (bit_width > bits_in_region) {
 									generic_error(s, "Bitfield cannot fit in this type.");
@@ -2219,14 +2232,16 @@ static TypeIndex parse_declspec(TokenStream* restrict s, Attribs* attr) {
 					}
 					
 					offset = align_up(offset, align);
-					type_arena.data[type].size = offset;
-					type_arena.data[type].align = align;
+					tu->types[type].size = offset;
+					tu->types[type].align = align;
 					
-					MemberIndex start = push_member_arena(member_count);
-					memcpy(&member_arena.data[start], members, member_count * sizeof(Member));
+					MemberIndex start = big_array_length(tu->members);
 					
-					type_arena.data[type].record.kids_start = start;
-					type_arena.data[type].record.kids_end = start + member_count;
+					tu->types[type].record.kids_start = start;
+					tu->types[type].record.kids_end = start + member_count;
+					
+					big_array_put_uninit(tu->members, member_count);
+					memcpy(&tu->members[start], members, member_count * sizeof(Member));
 					
 					tls_restore(members);
 				} else {
@@ -2235,9 +2250,9 @@ static TypeIndex parse_declspec(TokenStream* restrict s, Attribs* attr) {
 					
 					type = find_incomplete_type((char*)name);
 					if (!type) {
-						type = new_record(is_union);
-						type_arena.data[type].record.name = name;
-						type_arena.data[type].is_incomplete = true;
+						type = new_record(tu, is_union);
+						tu->types[type].record.name = name;
+						tu->types[type].is_incomplete = true;
 						
 						shput(incomplete_types, name, type);
 					}
@@ -2268,11 +2283,11 @@ static TypeIndex parse_declspec(TokenStream* restrict s, Attribs* attr) {
 					if (type) {
 						// can't re-complete a enum
 						// TODO(NeGate): error messages
-						assert(type_arena.data[type].enumerator.start != type_arena.data[type].enumerator.start);
+						assert(tu->types[type].enumerator.start != tu->types[type].enumerator.start);
 					} else {
-						type = new_enum();
-						type_arena.data[type].enumerator.name = name;
-						type_arena.data[type].enumerator.start = enum_entry_arena.count;
+						type = new_enum(tu);
+						tu->types[type].enumerator.name = name;
+						tu->types[type].enumerator.start = big_array_length(tu->enum_entries);
 						
 						if (name) shput(incomplete_types, name, type);
 					}
@@ -2283,24 +2298,27 @@ static TypeIndex parse_declspec(TokenStream* restrict s, Attribs* attr) {
 					int cursor = 0;
 					
 					while (tokens_get(s)->type != '}') {
-						EnumEntryIndex e = push_enum_entry_arena(1);
-						
 						// parse name
 						Token* t = tokens_get(s);
 						if (t->type != TOKEN_IDENTIFIER) {
 							generic_error(s, "expected identifier for enum name entry.");
 						}
 						
-						enum_entry_arena.data[e].name = atoms_put(t->end - t->start, t->start);
+						Atom name = atoms_put(t->end - t->start, t->start);
 						tokens_next(s);
 						
 						if (tokens_get(s)->type == '=') {
 							tokens_next(s);
 							
-							cursor = parse_const_expr(s);
+							cursor = parse_const_expr(tu, s);
 						}
 						
-						enum_entry_arena.data[e].value = cursor++;
+						EnumEntry entry = {
+							.name = name,
+							.value = cursor++
+						};
+						big_array_put(tu->enum_entries, entry);
+						
 						if (tokens_get(s)->type == ',') tokens_next(s);
 					}
 					
@@ -2308,13 +2326,13 @@ static TypeIndex parse_declspec(TokenStream* restrict s, Attribs* attr) {
 						generic_error(s, "Unclosed enum list!");
 					}
 					
-					type_arena.data[type].enumerator.end = enum_entry_arena.count;
+					tu->types[type].enumerator.end = big_array_length(tu->enum_entries);
 				} else {
 					type = find_incomplete_type((char*)name);
 					if (!type) {
-						type = new_enum();
-						type_arena.data[type].record.name = name;
-						type_arena.data[type].is_incomplete = true;
+						type = new_enum(tu);
+						tu->types[type].record.name = name;
+						tu->types[type].is_incomplete = true;
 						
 						shput(incomplete_types, name, type);
 					}
@@ -2421,9 +2439,9 @@ static TypeIndex parse_declspec(TokenStream* restrict s, Attribs* attr) {
 	}
 	
 	if (is_atomic || is_const) {
-		type = copy_type(type);
-		type_arena.data[type].is_atomic = is_atomic;
-		type_arena.data[type].is_const = is_const;
+		type = copy_type(tu, type);
+		tu->types[type].is_atomic = is_atomic;
+		tu->types[type].is_const = is_const;
 	}
 	
 	return type;
@@ -2472,23 +2490,8 @@ static bool is_typename(TokenStream* restrict s) {
 	}
 }
 
-// TODO(NeGate): Correctly handle const-expr
-static int parse_const_expr_l0(TokenStream* restrict s) {
-	Token* restrict t = tokens_get(s);
-	
-	if (t->type == TOKEN_INTEGER) {
-		IntSuffix suffix;
-		int64_t i = parse_int(t->end - t->start, (const char*)t->start, &suffix);
-		
-		tokens_next(s);
-		return i;
-	}
-	
-	generic_error(s, "Could not parse constant expression");
-}
-
-static intmax_t parse_const_expr(TokenStream* restrict s) {
-	ConstValue v = const_eval(parse_expr_l14(s));
+static intmax_t parse_const_expr(TranslationUnit* tu, TokenStream* restrict s) {
+	ConstValue v = const_eval(tu, parse_expr_l14(tu, s));
 	intmax_t vi = v.signed_value;
 	
 	if (!v.is_signed && vi != v.unsigned_value) {

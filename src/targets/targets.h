@@ -16,7 +16,7 @@ typedef struct TargetDescriptor {
 	void (*set_defines)(CPP_Context* cpp);
 	
 	// when one of the builtins are triggered we call this to generate it's code
-	TB_Register (*compile_builtin)(TB_Function* func, const char* name,
+	TB_Register (*compile_builtin)(TranslationUnit* tu, TB_Function* func, const char* name, 
 								   int arg_count, ExprIndex* args);
 } TargetDescriptor;
 

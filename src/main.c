@@ -41,11 +41,7 @@ static size_t tasks_count;
 static cnd_t tasks_condition;
 static mtx_t tasks_mutex;
 
-// Frontend IR Gen has two stages, one places all
-// 0 semantic pass & forward decls
-// 1 function bodies
-static int frontend_stage;
-static TopLevel top_level;
+static TranslationUnit translation_unit;
 
 CompilerSettings settings;
 
@@ -60,10 +56,7 @@ static int task_thread(void* param) {
 		if (t+(MAX_MUNCH-1) >= tasks_count) {
 			if (t < tasks_count) {
 				for (size_t i = t; i < tasks_count; i++) {
-					switch (frontend_stage) {
-						case 0: sema_check(top_level, i); break;
-						case 1: irgen_top_level_stmt(top_level.arr[i]); break;
-					}
+					irgen_top_level_stmt(&translation_unit, translation_unit.top_level_stmts[i]);
 				}
 				
 				tasks_complete += (tasks_count - t);
@@ -78,10 +71,7 @@ static int task_thread(void* param) {
 		}
 		
 		for (size_t i = 0; i < MAX_MUNCH; i++) {
-			switch (frontend_stage) {
-				case 0: sema_check(top_level, t+i); break;
-				case 1: irgen_top_level_stmt(top_level.arr[t+i]); break;
-			} 
+			irgen_top_level_stmt(&translation_unit, translation_unit.top_level_stmts[t+i]);
 		}
 		tasks_complete += MAX_MUNCH;
 	}
@@ -197,7 +187,20 @@ static void compile_project(TB_Arch arch, TB_System sys, const char source_file[
 	
 	// Parse
 	atoms_init();
-	top_level = parse_file(&s);
+	translation_unit = parse_file(&s);
+	
+	TB_FeatureSet features = { 0 };
+	mod = tb_module_create(arch, sys, &features);
+	
+	// Semantics pass
+	for (size_t i = 0, count = arrlen(translation_unit.top_level_stmts); i < count; i++) {
+		sema_check(&translation_unit, translation_unit.top_level_stmts[i]);
+	}
+	
+	if (sema_error_count) {
+		printf("compiled with %d errors\n", sema_error_count);
+		abort();
+	}
 	
 	// Generate IR
 	// TODO(NeGate): Globals amirite... yea maybe i'll maybe move the TB_Module from the
@@ -207,15 +210,9 @@ static void compile_project(TB_Arch arch, TB_System sys, const char source_file[
 		TB_FeatureSet features = { 0 };
 		mod = tb_module_create(arch, sys, &features);
 		
-		// Forward decls
-		size_t func_count = arrlen(top_level.arr);
-		for (size_t i = 0; i < func_count; i++) {
-			sema_check(top_level, i);
-		}
-		
 		// IR generation
-		for (size_t i = 0; i < func_count; i++) {
-			irgen_top_level_stmt(top_level.arr[i]);
+		for (size_t i = 0, count = arrlen(translation_unit.top_level_stmts); i < count; i++) {
+			irgen_top_level_stmt(&translation_unit, translation_unit.top_level_stmts[i]);
 		}
 	} else {
 		is_running = true;
@@ -225,24 +222,11 @@ static void compile_project(TB_Arch arch, TB_System sys, const char source_file[
 			thrd_create(&threads[i], task_thread, NULL);
 		}
 		
-		TB_FeatureSet features = { 0 };
-		mod = tb_module_create(arch, sys, &features);
-		
-		// Forward decls
-		frontend_stage = 0;
-		dispatch_tasks(arrlen(top_level.arr));
-		
-		if (sema_error_count) {
-			printf("compiled with %d errors\n", sema_error_count);
-			abort();
-		}
-		
-		// Generate bodies
-		frontend_stage = 1;
-		dispatch_tasks(arrlen(top_level.arr));
+		// Generate IR
+		dispatch_tasks(arrlen(translation_unit.top_level_stmts));
 		
 		arrfree(s.tokens);
-		arrfree(top_level.arr);
+		arrfree(translation_unit.top_level_stmts);
 		
 		// Just let's the threads know that 
 		// they might need to die now

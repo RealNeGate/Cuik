@@ -1,18 +1,7 @@
 #include "parser.h"
 #include "../ext/threads.h"
 
-impl_arena(Type, type_arena)
-impl_arena(Member, member_arena)
-impl_arena(Param, param_arena)
-impl_arena(EnumEntry, enum_entry_arena)
-
-static mtx_t type_mutex;
-
-void init_types() {
-	init_param_arena(4 * 1024);
-	init_type_arena(4 * 1024);
-	init_member_arena(4 * 1024);
-	
+void init_types(TranslationUnit* tu) {
 	const static Type default_types[] = {
 		[TYPE_NONE] = { KIND_VOID, 0, 0 },
 		
@@ -36,68 +25,67 @@ void init_types() {
 		[TYPE_WSTRING] = { KIND_PTR, 8, 8, .ptr_to = TYPE_SHORT },
 	};
 	
-	memcpy(type_arena.data, default_types, sizeof(default_types));
-	type_arena.count = sizeof(default_types) / sizeof(default_types[0]);
+	assert(big_array_length(tu->types) == 1);
 	
-	mtx_init(&type_mutex, mtx_plain);
+	// there's already one slot for the NULL entry in a big arena
+	// which is why there's a - 1
+	big_array_put_uninit(tu->types, (sizeof(default_types) / sizeof(default_types[0])) - 1);
+	memcpy(tu->types, default_types, sizeof(default_types));
 }
 
-TypeIndex new_enum() {
-	TypeIndex t = push_type_arena(1);
-	type_arena.data[t] = (Type){
+TypeIndex new_enum(TranslationUnit* tu) {
+	Type t = {
 		.kind = KIND_ENUM,
 		.size = 4,
 		.align = 4
 	};
 	
-	return t;
+	big_array_put(tu->types, t);
+	return big_array_length(tu->types) - 1;
 }
 
-TypeIndex new_func() {
-	TypeIndex t = push_type_arena(1);
-	type_arena.data[t] = (Type){
+TypeIndex new_func(TranslationUnit* tu) {
+	Type t = {
 		.kind = KIND_FUNC,
 		.size = 8,
 		.align = 8
 	};
 	
-	return t;
+	big_array_put(tu->types, t);
+	return big_array_length(tu->types) - 1;
 }
 
-TypeIndex copy_type(TypeIndex base) {
-	TypeIndex t = push_type_arena(1);
-	type_arena.data[t] = type_arena.data[base];
-	
-	return t;
+TypeIndex copy_type(TranslationUnit* tu, TypeIndex base) {
+	big_array_put(tu->types, tu->types[base]);
+	return big_array_length(tu->types) - 1;
 }
 
-TypeIndex new_record(bool is_union) {
-	TypeIndex t = push_type_arena(1);
-	type_arena.data[t] = (Type){
+TypeIndex new_record(TranslationUnit* tu, bool is_union) {
+	Type t = {
 		.kind = is_union ? KIND_UNION : KIND_STRUCT
 	};
 	
-	return t;
+	big_array_put(tu->types, t);
+	return big_array_length(tu->types) - 1;
 }
 
-TypeIndex new_pointer(TypeIndex base) {
-	TypeIndex t = push_type_arena(1);
-	type_arena.data[t] = (Type){
+TypeIndex new_pointer(TranslationUnit* tu, TypeIndex base) {
+	Type t = {
 		.kind = KIND_PTR,
 		.size = 8,
 		.align = 8,
 		.ptr_to = base
 	};
 	
-	return t;
+	big_array_put(tu->types, t);
+	return big_array_length(tu->types) - 1;
 }
 
-TypeIndex new_array(TypeIndex base, int count) {
-	TypeIndex t = push_type_arena(1);
-	int size = type_arena.data[base].size;
-	int align = type_arena.data[base].align;
+TypeIndex new_array(TranslationUnit* tu, TypeIndex base, int count) {
+	int size = tu->types[base].size;
+	int align = tu->types[base].align;
 	
-	type_arena.data[t] = (Type){
+	Type t = {
 		.kind = KIND_ARRAY,
 		.size = size * count,
 		.align = align,
@@ -105,21 +93,8 @@ TypeIndex new_array(TypeIndex base, int count) {
 		.array_count = count
 	};
 	
-	return t;
-}
-
-TypeIndex new_pointer_locked(TypeIndex base) {
-	mtx_lock(&type_mutex);
-	TypeIndex t = push_type_arena(1);
-	type_arena.data[t] = (Type){
-		.kind = KIND_PTR,
-		.size = 8,
-		.align = 8,
-		.ptr_to = base
-	};
-	mtx_unlock(&type_mutex);
-	
-	return t;
+	big_array_put(tu->types, t);
+	return big_array_length(tu->types) - 1;
 }
 
 // https://github.com/rui314/chibicc/blob/main/type.c
@@ -127,25 +102,24 @@ TypeIndex new_pointer_locked(TypeIndex base) {
 // NOTE(NeGate): this function is called within the IR gen
 // code which is parallel so we need a mutex to avoid messing
 // up the type arena.
-TypeIndex get_common_type(TypeIndex a, TypeIndex b) {
+TypeIndex get_common_type(TranslationUnit* tu, TypeIndex a, TypeIndex b) {
 	if (a == b) return a;
 	
-	Type* types = type_arena.data;
-	Type* restrict ty1 = &types[a];
-	Type* restrict ty2 = &types[b];
+	Type* restrict ty1 = &tu->types[a];
+	Type* restrict ty2 = &tu->types[b];
 	
 	// implictly convert arrays into pointers
 	if (ty1->kind == KIND_ARRAY) {
-		return new_pointer_locked(ty1->array_of);
+		return new_pointer(tu, ty1->array_of);
 	}
 	
 	// implictly convert functions into function pointers
 	if (ty1->kind == KIND_FUNC) {
-		return new_pointer_locked(a);
+		return new_pointer(tu, a);
 	}
 	
 	if (ty2->kind == KIND_FUNC) {
-		return new_pointer_locked(b);
+		return new_pointer(tu, b);
 	}
 	
 	// operations with floats promote up to floats
@@ -158,12 +132,12 @@ TypeIndex get_common_type(TypeIndex a, TypeIndex b) {
 	// promote any small integral types into ints
 	if (ty1->size < 4) {
 		a = TYPE_INT;
-		ty1 = &types[a];
+		ty1 = &tu->types[a];
 	}
 	
 	if (ty2->size < 4) {
 		b = TYPE_INT;
-		ty2 = &types[b];
+		ty2 = &tu->types[b];
 	}
 	
 	// if the types don't match pick the bigger one
@@ -177,10 +151,10 @@ TypeIndex get_common_type(TypeIndex a, TypeIndex b) {
 	return a;
 }
 
-bool type_equal(TypeIndex a, TypeIndex b) {
+bool type_equal(TranslationUnit* tu, TypeIndex a, TypeIndex b) {
 	if (a == b) return true;
 	
-	Type* types = type_arena.data;
+	Type* types = tu->types;
 	Type* restrict ty1 = &types[a];
 	Type* restrict ty2 = &types[b];
 	
@@ -207,15 +181,14 @@ bool type_equal(TypeIndex a, TypeIndex b) {
 		ParamIndex param_list1 = ty1->func.param_list;
 		ParamIndex param_list2 = ty2->func.param_list;
 		for (ParamIndex i = 0; i < param_count1; i++) {
-			if (!type_equal(param_arena.data[param_list1 + i].type,
-							param_arena.data[param_list2 + i].type)) {
+			if (!type_equal(tu, tu->params[param_list1 + i].type, tu->params[param_list2 + i].type)) {
 				return false;
 			}
 		}
 		
 		return true;
 	} else if (ty1->kind == KIND_PTR) {
-		return type_equal(ty1->ptr_to, ty2->ptr_to);
+		return type_equal(tu, ty1->ptr_to, ty2->ptr_to);
 	}
 	
 	// but by default kind matching is enough
