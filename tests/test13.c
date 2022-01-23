@@ -4,8 +4,6 @@
 //#include <stdio.h>
 
 int main() {
-	printf("Hello!");
-	
 	int x,y,n;
 	stbi_load("test.png", &x, &y, &n, 0);
 	printf(stbi_failure_reason());

@@ -1,4 +1,8 @@
+#ifdef _MSC_VER
 #include <emmintrin.h>
+#else
+#include <x86intrin.h>
+#endif
 
 typedef struct TriangleX4 {
 	__m128 ax, ay, az;

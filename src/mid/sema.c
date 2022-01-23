@@ -888,15 +888,18 @@ void sema_check(TopLevel tl, size_t i) {
 			// forward decls
 			// TODO(NeGate): This is hacky
 			if (name[0] == '_') {
-				ptrdiff_t search = shgeti(current_target_desc.builtin_func_map, name);
+				ptrdiff_t search = shgeti(target_desc.builtin_func_map, name);
 				
 				// NOTE(NeGate): 0 doesn't mean a null index in this context, it
 				// maps to the first external but i don't care we won't be using it
 				// later on it's just clearer.
-				if (search >= 0) sp->backing.e = 0;
-			} else {
-				sp->backing.e = tb_extern_create(mod, name);
+				if (search >= 0) {
+					sp->backing.e = 0;
+					break;
+				}
 			}
+			
+			sp->backing.e = tb_extern_create(mod, name);
 			break;
 		}
 		case STMT_GLOBAL_DECL: {

@@ -576,11 +576,10 @@ static IRVal irgen_expr(TB_Function* func, ExprIndex e) {
 					
 					// all builtins start with an underscore
 					if (*name == '_') {
-						ptrdiff_t search = shgeti(current_target_desc.builtin_func_map, name);
+						ptrdiff_t search = shgeti(target_desc.builtin_func_map, name);
 						if (search >= 0) {
-							TB_Register val = current_target_desc.compile_builtin(func, name, arg_count, args);
+							TB_Register val = target_desc.compile_builtin(func, name, arg_count, args);
 							
-							assert(search);
 							return (IRVal) {
 								.value_type = RVALUE,
 								.type = ep->type,

@@ -23,4 +23,4 @@ typedef struct TargetDescriptor {
 TargetDescriptor get_x64_target_descriptor();
 // put any other options here...
 
-extern TargetDescriptor current_target_desc;
+extern TargetDescriptor target_desc;

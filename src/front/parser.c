@@ -115,10 +115,6 @@ TopLevel parse_file(TokenStream* restrict s) {
 			continue;
 		}
 		
-		if (skip_over_declspec(s)) {
-			continue;
-		}
-		
 		Attribs attr = { 0 };
 		TypeIndex type = parse_declspec(s, &attr);
 		
@@ -176,7 +172,8 @@ TopLevel parse_file(TokenStream* restrict s) {
 					stmt_arena.data[n].decl = (struct StmtDecl){
 						.type = decl.type,
 						.name = decl.name,
-						.attrs = attr
+						.attrs = attr,
+						.initial = (StmtIndex)0
 					};
 					
 					Symbol func_symbol = (Symbol){
@@ -232,7 +229,6 @@ TopLevel parse_file(TokenStream* restrict s) {
 					shfree(labels);
 				} else if (tokens_get(s)->type == ';') {
 					// Forward decl
-					stmt_arena.data[n].decl.initial = (StmtIndex)0;
 					tokens_next(s);
 				} else {
 					abort();
@@ -1314,7 +1310,18 @@ static ExprIndex parse_expr_l2(TokenStream* restrict s) {
 	// TODO(NeGate): Convert this code into a loop... please?
 	SourceLocIndex loc = tokens_get(s)->location;
 	
-	if (tokens_get(s)->type == '!') {
+	if (tokens_get(s)->type == '*') {
+		tokens_next(s);
+		ExprIndex value = parse_expr_l2(s);
+		
+		ExprIndex e = push_expr_arena(1);
+		expr_arena.data[e] = (Expr) {
+			.op = EXPR_DEREF,
+			.loc = tokens_get(s)->location,
+			.unary_op.src = value
+		};
+		return e;
+	} else if (tokens_get(s)->type == '!') {
 		tokens_next(s);
 		ExprIndex value = parse_expr_l2(s);
 		
@@ -1394,28 +1401,9 @@ static ExprIndex parse_expr_l2(TokenStream* restrict s) {
 			.unary_op.src = value
 		};
 		return e;
+	} else {
+		return parse_expr_l1(s);
 	}
-	
-	int derefs = 0;
-	while (tokens_get(s)->type == '*') {
-		tokens_next(s);
-		derefs++;
-	}
-	
-	ExprIndex e = parse_expr_l1(s);
-	
-	while (derefs--) {
-		ExprIndex base = e;
-		e = push_expr_arena(1);
-		
-		expr_arena.data[e] = (Expr) {
-			.op = EXPR_DEREF,
-			.loc = tokens_get(s)->location,
-			.unary_op.src = base
-		};
-	}
-	
-	return e;
 }
 
 // * / %
@@ -2086,16 +2074,30 @@ static TypeIndex parse_declspec(TokenStream* restrict s, Attribs* attr) {
 			case TOKEN_KW_volatile: break;
 			case TOKEN_KW_auto: break;
 			
+			case TOKEN_KW_declspec: {
+				// TODO(NeGate): Correctly parse declspec instead of
+				// ignoring them.
+				tokens_next(s);
+				tokens_next(s);
+				
+				int depth = 1;
+				while (depth) {
+					if (tokens_get(s)->type == '(') depth++;
+					else if (tokens_get(s)->type == ')') depth--;
+					
+					tokens_next(s);
+				}
+				
+				tokens_prev(s);
+				break;
+			}
+			
 			case TOKEN_KW_struct:
 			case TOKEN_KW_union: {
 				if (counter) goto done;
 				tokens_next(s);
 				
 				bool is_union = tkn_type == TOKEN_KW_union;
-				
-				while (skip_over_declspec(s)) {
-					printf("Btw don't forget about declspecs...\n");
-				}
 				
 				Atom name = NULL;
 				Token* t = tokens_get(s);
@@ -2450,6 +2452,7 @@ static bool is_typename(TokenStream* restrict s) {
 		case TOKEN_KW_inline:
 		case TOKEN_KW_const:
 		case TOKEN_KW_volatile:
+		case TOKEN_KW_declspec:
 		case TOKEN_KW_Thread_local:
 		case TOKEN_KW_Atomic:
 		case TOKEN_KW_auto:

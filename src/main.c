@@ -48,7 +48,10 @@ static int frontend_stage;
 static TopLevel top_level;
 
 CompilerSettings settings;
-TargetDescriptor current_target_desc;
+
+TB_Arch target_arch;
+TB_System target_system;
+TargetDescriptor target_desc;
 
 static int task_thread(void* param) {
 	while (is_running) {
@@ -117,14 +120,13 @@ static void print_help(const char* executable_path) {
 }
 
 static void set_preprocessor_info(CPP_Context* cpp) {
-	// TODO(NeGate): Setup a runtime option for this
-#ifdef _WIN32
-	bool is_windows_mode = true;
-#else
-	bool is_windows_mode = false;
-#endif
+	cpp_define(cpp, "__CUIKC__", "1");
 	
-	if (is_windows_mode) {
+	// NOTE(NeGate): Hack to make these trigger the preprocessor
+	cpp_define_empty(cpp, "__FILE__");
+	cpp_define_empty(cpp, "__LINE__");
+	
+	if (target_system == TB_SYSTEM_WINDOWS) {
 		// TODO(NeGate): Automatically detect these somehow...
 		cpp_add_include_directory(cpp, "W:\\Windows Kits\\10\\Include\\10.0.19041.0\\ucrt\\");
 		cpp_add_include_directory(cpp, "W:\\Windows Kits\\10\\Include\\10.0.19041.0\\um\\");
@@ -137,10 +139,6 @@ static void set_preprocessor_info(CPP_Context* cpp) {
 		cpp_define_empty(cpp, "_MT");
 		cpp_define_empty(cpp, "_CRT_NONSTDC_NO_WARNINGS");
 		cpp_define_empty(cpp, "_CRT_SECURE_NO_WARNINGS");
-		
-		// NOTE(NeGate): Hack to make these trigger the preprocessor
-		cpp_define_empty(cpp, "__FILE__");
-		cpp_define_empty(cpp, "__LINE__");
 		
 		// things we don't handle yet so we just remove them
 		cpp_define_empty(cpp, "_Frees_ptr_");
@@ -185,7 +183,7 @@ static void set_preprocessor_info(CPP_Context* cpp) {
 		cpp_add_include_directory(cpp, "/usr/include/");
 	}
 	
-	current_target_desc.set_defines(cpp);
+	target_desc.set_defines(cpp);
 }
 
 static void compile_project(TB_Arch arch, TB_System sys, const char source_file[], bool is_multithreaded) {
@@ -366,8 +364,18 @@ int main(int argc, char* argv[]) {
 	// helpful currently since code gen is the only parallel stage.
 	settings.num_of_worker_threads = sysinfo.dwNumberOfProcessors - 4;
 	if (settings.num_of_worker_threads <= 0) settings.num_of_worker_threads = 1;
+	
+	target_sys = TB_SYSTEM_WINDOWS;
 #else
 	settings.num_of_worker_threads = 1;
+	target_sys = TB_SYSTEM_LINUX;
+#endif
+	
+	// Defaults to the host arch as the target
+#if defined(_AMD64_) || defined(__amd64__)
+	target_arch = TB_ARCH_X86_64;
+#else
+#error "Unsupported host compiler... for now"
 #endif
 	
 	// input path
@@ -392,15 +400,28 @@ int main(int argc, char* argv[]) {
 		}
 		
 		// split the key and value
-		if (*value) value[-1] = '\0';
+		if (*value) value[0] = '\0';
 		
 		if (strcmp(key, "arch") == 0) {
 			if (strcmp(value, "x64") == 0) {
-				current_target_desc = get_x64_target_descriptor();
+				target_arch = TB_ARCH_X86_64;
 			} else {
 				printf("unsupported architecture: %s\n", value);
 				printf("Supported archs:\n");
 				printf("\t-arch=x64\n");
+				printf("\n");
+				return -1;
+			}
+		} else if (strcmp(key, "sys") == 0) {
+			if (strcmp(value, "windows") == 0) {
+				target_sys = TB_SYSTEM_WINDOWS;
+			} else if (strcmp(value, "linux") == 0) {
+				target_sys = TB_SYSTEM_LINUX;
+			} else {
+				printf("unsupported architecture: %s\n", value);
+				printf("Supported archs:\n");
+				printf("\t-sys=windows\n");
+				printf("\t-sys=linux\n");
 				printf("\n");
 				return -1;
 			}
@@ -440,17 +461,15 @@ int main(int argc, char* argv[]) {
 		}
 	}
 	
-	if (current_target_desc.set_defines == NULL) {
-		// default to host
-#if defined(_AMD64_) || defined(__amd64__)
-		current_target_desc = get_x64_target_descriptor();
-#else
+	switch (target_arch) {
+		case TB_ARCH_X86_64: 
+		target_desc = get_x64_target_descriptor();
+		break;
+		
+		default:
 		printf("Cannot compile to your target machine");
 		return -1;
-#endif
 	}
-	
-	printf("Starting with %d threads\n", settings.num_of_worker_threads);
 	
 	if (mode == COMPILER_MODE_VERSION) {
 		printf("%s\n", COMPILER_VERSION);
@@ -467,6 +486,8 @@ int main(int argc, char* argv[]) {
 		case COMPILER_MODE_CHECK:
 		case COMPILER_MODE_BUILD:
 		case COMPILER_MODE_RUN: {
+			printf("Starting with %d threads\n", settings.num_of_worker_threads);
+			
 			// Get filename without extension
 			const char* ext = strrchr(source_file, '.');
 			if (!ext) ext = source_file + strlen(source_file);
@@ -488,18 +509,16 @@ int main(int argc, char* argv[]) {
 			timed_block("compilation") {
 				compile_project(target_arch, target_sys, source_file, true);
 				
-				if (mode != COMPILER_MODE_CHECK) {
+				if (settings.print_tb_ir) {
+					fclose(tbir_output_file);
+				} else if (mode != COMPILER_MODE_CHECK) {
 					if (!tb_module_export(mod, obj_output_path)) abort();
 				}
 				
 				tb_module_destroy(mod);
 			}
 			
-			if (settings.print_tb_ir) {
-				fclose(tbir_output_file);
-			}
-			
-			if (!settings.is_object_only && mode != COMPILER_MODE_CHECK) {
+			if (!settings.is_object_only && mode != COMPILER_MODE_CHECK && !settings.print_tb_ir) {
 				Linker l;
 				if (linker_init(&l)) {
 					// Add system libraries

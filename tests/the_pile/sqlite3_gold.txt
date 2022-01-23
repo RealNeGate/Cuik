@@ -9633,7 +9633,7 @@ line 20697: static UconvObject uclCp = NULL ;
 line 20702: static void initUconvObjects ( void ) { 
 line 20703: if ( UniCreateUconvObject ( UTF_8 , & ucUtf8 ) != ULS_SUCCESS ) 
 line 20704: ucUtf8 = NULL ; 
-line 20705: if ( UniCreateUconvObject ( ( UniChar * ) L "@path=yes" , & uclCp ) != ULS_SUCCESS ) 
+line 20705: if ( UniCreateUconvObject ( ( UniChar * ) L"@path=yes" , & uclCp ) != ULS_SUCCESS ) 
 line 20706: uclCp = NULL ; 
 line 20707: } 
 line 20712: static void freeUconvObjects ( void ) { 
