@@ -2112,6 +2112,10 @@ static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, At
 				
 				bool is_union = tkn_type == TOKEN_KW_union;
 				
+				while (skip_over_declspec(s)) {
+					printf("Don't forget about declspec\n");
+				}
+				
 				Atom name = NULL;
 				Token* t = tokens_get(s);
 				if (tokens_get(s)->type == TOKEN_IDENTIFIER) {

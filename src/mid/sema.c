@@ -352,7 +352,19 @@ static TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e) {
 		case EXPR_SYMBOL: {
 			StmtIndex stmt = ep->symbol;
 			
-			return (ep->type = tu->stmts[stmt].decl.type);
+			if (tu->stmts[stmt].op == STMT_LABEL) {
+				return (ep->type = 0);
+			} else {
+				TypeIndex type = tu->stmts[stmt].decl.type;
+				
+				if (tu->types[type].kind == KIND_ARRAY) {
+					// this is the only example where something sets it's own
+					// cast_type it's an exception to the rules.
+					ep->cast_type = new_pointer(tu, tu->types[type].array_of);
+				}
+				
+				return (ep->type = type);
+			}
 		}
 		case EXPR_PARAM: {
 			int param_num = ep->param_num;

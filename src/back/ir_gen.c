@@ -117,7 +117,7 @@ static TB_Register cvt2rval(TranslationUnit* tu, TB_Function* func, const IRVal 
 			if (src->kind == KIND_ARRAY) {
 				// just pass the address don't load
 				const Type* cast_type = &tu->types[ep->cast_type];
-				assert(cast_type->kind == KIND_PTR && cast_type->ptr_to == src->array_of);
+				//assert(cast_type->kind == KIND_PTR && cast_type->ptr_to == src->array_of);
 				
 				src = cast_type;
 				reg = v.reg;
@@ -337,7 +337,7 @@ static InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func
 
 static TB_Register gen_local_initializer(TranslationUnit* tu, TB_Function* func, TypeIndex t, int node_count, InitNode* nodes) {
 	// Walk initializer for max constant expression initializers.
-	int max_tb_objects;
+	int max_tb_objects = 0;
 	count_max_tb_init_objects(node_count, nodes, &max_tb_objects);
 	
 	TB_InitializerID init = tb_initializer_create(mod, 
