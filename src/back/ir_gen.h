@@ -81,6 +81,11 @@ static TB_DataType ctype_to_tbtype(const Type* t) {
 _Noreturn void irgen_fatal(SourceLocIndex loc, const char* fmt, ...);
 void irgen_warn(SourceLocIndex loc, const char* fmt, ...);
 
+InitNode* count_max_tb_init_objects(int node_count, InitNode* node, int* out_count);
+
+// func is NULL then it's not allowed to compute any dynamic initializer expressions
+InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, TB_InitializerID init, TB_Register addr, TypeIndex t, int node_count, InitNode* node, int* offset);
+
 TB_Register irgen_as_rvalue(TranslationUnit* tu, TB_Function* func, ExprIndex e);
 IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e);
 void irgen_stmt(TranslationUnit* tu, TB_Function* func, StmtIndex s);

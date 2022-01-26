@@ -1038,9 +1038,8 @@ static ExprIndex parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
 		return e;
 	} else if (tokens_get(s)->type == TOKEN_KW_sizeof ||
 			   tokens_get(s)->type == TOKEN_KW_Alignof) {
-		tokens_next(s);
-		
 		bool is_sizeof = tokens_get(s)->type == TOKEN_KW_sizeof;
+		tokens_next(s);
 		
 		bool has_paren = false;
 		if (tokens_get(s)->type == '(') {

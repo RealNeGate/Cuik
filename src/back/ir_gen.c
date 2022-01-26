@@ -40,6 +40,132 @@ void irgen_warn(SourceLocIndex loc, const char* fmt, ...) {
 	printf("\n");
 }
 
+static TB_Register gen_string_constant(SourceLocIndex loc, TB_Function* func, size_t len, const char* in) {
+	// it can't be bigger than the original
+	// TODO(NeGate): Improve this setup so that we can fallback to the heap if it
+	// fails.
+	char* out = tls_push(len + 1);
+	
+	size_t out_i = 0, in_i = 0;
+	while (in_i < len) {
+		if (in[in_i] == '\\') {
+			char ch = '\0';
+			switch (in[in_i + 1]) {
+				// TODO(NeGate): Implement the rest of the C char variants
+				// \123 \x6 \U0001f34c
+				case '0' ... '9': {
+					unsigned int num = 0;
+					
+					in_i += 1;
+					while (in_i < len) {
+						char ch = in[in_i];
+						if (!(ch >= '0' && ch <= '9')) break;
+						
+						num *= 10;
+						num += (ch - '0');
+						in_i += 1;
+					}
+					
+					out[out_i++] = num;
+					goto skip_emitting_a_normal_char;
+				}
+				case 'x': case 'X': {
+					unsigned int num = 0;
+					
+					in_i += 2;
+					while (in_i < len) {
+						char ch = in[in_i];
+						
+						if (ch >= 'A' && ch <= 'F') {
+							num <<= 4;
+							num |= (ch - 'A') + 0xA;
+						} else if (ch >= 'a' && ch <= 'f') {
+							num <<= 4;
+							num |= (ch - 'a') + 0xA;
+						} else if (ch >= '0' && ch <= '9') {
+							num <<= 4;
+							num |= (ch - '0');
+						} else break;
+						
+						in_i += 1;
+					}
+					
+					out[out_i++] = num;
+					goto skip_emitting_a_normal_char;
+				}
+				case '\\': ch = '\\'; break;
+				case 'a': ch = '\a'; break;
+				case 'b': ch = '\b'; break;
+				case 't': ch = '\t'; break;
+				case 'n': ch = '\n'; break;
+				case 'v': ch = '\v'; break;
+				case 'f': ch = '\f'; break;
+				case 'r': ch = '\r'; break;
+				case '\'': ch = '\''; break;
+				case '\"': ch = '\"'; break;
+				default: irgen_fatal(loc, "Could not recognize escape in string literal.");
+			}
+			
+			out[out_i++] = ch;
+			in_i += 2;
+			skip_emitting_a_normal_char:;
+		} else {
+			out[out_i++] = in[in_i++];
+		}
+	}
+	
+	assert(out_i <= len);
+	out[out_i++] = '\0';
+	
+	TB_Register reg = tb_inst_string(func, out_i, out);
+	tls_restore(out);
+	
+	return reg;
+}
+
+static TB_Register gen_wide_string_constant(SourceLocIndex loc, TB_Function* func, size_t len, const char* in) {
+	// it can't be bigger than the original
+	// TODO(NeGate): Improve this setup so that we can fallback to the heap if it
+	// fails.
+	wchar_t* out = tls_push((len + 1) * 2);
+	
+	size_t out_i = 0, in_i = 0;
+	while (in_i < len) {
+		if (in[in_i] == '\\') {
+			char ch = '\0';
+			switch (in[in_i + 1]) {
+				// TODO(NeGate): Implement the rest of the C char variants
+				// \123 \x6 \U0001f34c
+				case '0': ch = '\0'; break;
+				case '\\': ch = '\\'; break;
+				case 'a': ch = '\a'; break;
+				case 'b': ch = '\b'; break;
+				case 't': ch = '\t'; break;
+				case 'n': ch = '\n'; break;
+				case 'v': ch = '\v'; break;
+				case 'f': ch = '\f'; break;
+				case 'r': ch = '\r'; break;
+				case '\'': ch = '\''; break;
+				case '\"': ch = '\"'; break;
+				default: irgen_fatal(loc, "Could not recognize escape in string literal.");
+			}
+			
+			out[out_i++] = ch;
+			in_i += 2;
+		} else {
+			out[out_i++] = in[in_i++];
+		}
+	}
+	
+	assert(out_i <= len);
+	out[out_i++] = '\0';
+	
+	TB_Register reg = tb_inst_string(func, out_i * 2, (const char*)out);
+	tls_restore(out);
+	
+	return reg;
+}
+
 static TB_Register cast_reg(TB_Function* func, TB_Register reg, const Type* src, const Type* dst) {
 	// Cast into correct type
 	if (src->kind >= KIND_BOOL &&
@@ -160,7 +286,7 @@ static TB_Register irgen_as_rvalue(TranslationUnit* tu, TB_Function* func, ExprI
 }
 
 // Does pointer math scare you? this is like mostly just addition but yea
-static InitNode* count_max_tb_init_objects(int node_count, InitNode* node, int* out_count) {
+InitNode* count_max_tb_init_objects(int node_count, InitNode* node, int* out_count) {
 	for (int i = 0; i < node_count; i++) {
 		if (node->kids_count == 0) {
 			*out_count += 1;
@@ -177,7 +303,7 @@ static InitNode* count_max_tb_init_objects(int node_count, InitNode* node, int* 
 // TODO(NeGate): Revisit this code as a smarter man...
 // if the addr is 0 then we only apply constant initializers.
 // func doesn't need to be non-NULL if it's addr is NULL.
-static InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, TB_InitializerID init, TB_Register addr, TypeIndex t, int node_count, InitNode* node, int* offset) {
+InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, TB_InitializerID init, TB_Register addr, TypeIndex t, int node_count, InitNode* node, int* offset) {
 	// TODO(NeGate): Implement line info for this code for error handling.
 	SourceLocIndex loc = 0;
 	
@@ -290,42 +416,71 @@ static InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func
 			node = eval_initializer_objects(tu, func, init, addr, child_type, node->kids_count, node, offset);
 		} else {
 			// initialize a value
-			assert(func);
 			assert(node->expr);
 			
-			TB_Register effective_addr;
-			if (addr) {
-				effective_addr = tb_inst_member_access(func, addr, *offset + relative_offset);
-			} else {
-				effective_addr = addr;
+			bool success = false;
+			if (tu->exprs[node->expr].op == EXPR_SYMBOL) {
+				StmtIndex stmt = tu->exprs[node->expr].symbol;
+				StmtOp stmt_op = tu->stmts[stmt].op;
+				
+				// hacky just to make it possible for some symbols to appear in the 
+				// initializers
+				// TODO(NeGate): Fix it up so that more operations can be
+				// performed at compile time and baked into the initializer
+				if (stmt_op == STMT_GLOBAL_DECL) {
+					tb_initializer_add_global(mod, init, *offset + relative_offset, tu->stmts[stmt].backing.g);
+					success = true;
+				} else if (stmt_op == STMT_FUNC_DECL) {
+					tb_initializer_add_function(mod, init, *offset + relative_offset, tu->stmts[stmt].backing.f);
+					success = true;
+				}
 			}
 			
-			switch (tu->exprs[node->expr].op) {
-				// TODO(NeGate): Implement constants for literals
-				// to allow for more stuff to be precomputed.
-				// case EXPR_INT: 
-				// ...
-				// break;
-				
-				// dynamic expressions
-				default:
-				if (addr) {
-					TypeKind kind = tu->types[child_type].kind;
-					int size = tu->types[child_type].size;
-					int align = tu->types[child_type].align;
-					
-					if (kind == KIND_STRUCT || kind == KIND_UNION || kind == KIND_ARRAY) {
-						IRVal v = irgen_expr(tu, func, node->expr);
+			if (!success) {
+				switch (tu->exprs[node->expr].op) {
+					// TODO(NeGate): Implement constants for literals
+					// to allow for more stuff to be precomputed.
+					case EXPR_INT:
+					case EXPR_NEGATE:
+					if (!func) {
+						int size = tu->types[child_type].size;
+						void* region = tb_initializer_add_region(mod, init, *offset + relative_offset, size);
 						
-						TB_Register size_reg = tb_inst_uint(func, TB_TYPE_I64, size);
-						tb_inst_memcpy(func, effective_addr, v.reg, size_reg, align);
-					} else {
-						TB_Register v = irgen_as_rvalue(tu, func, node->expr);
+						ConstValue value = const_eval(tu, node->expr);
 						
-						tb_inst_store(func, ctype_to_tbtype(&tu->types[child_type]), effective_addr, v, align);
+						memset(region, 0, size);
+						memcpy(region, &value, size);
+						break;
+					}
+					// fallthrough
+					// dynamic expressions
+					default: if (addr) {
+						assert(func);
+						
+						TB_Register effective_addr;
+						if (relative_offset) {
+							effective_addr = tb_inst_member_access(func, addr, *offset + relative_offset);
+						} else {
+							effective_addr = addr;
+						}
+						
+						TypeKind kind = tu->types[child_type].kind;
+						int size = tu->types[child_type].size;
+						int align = tu->types[child_type].align;
+						
+						if (kind == KIND_STRUCT || kind == KIND_UNION || kind == KIND_ARRAY) {
+							IRVal v = irgen_expr(tu, func, node->expr);
+							
+							TB_Register size_reg = tb_inst_uint(func, TB_TYPE_I64, size);
+							tb_inst_memcpy(func, effective_addr, v.reg, size_reg, align);
+						} else {
+							TB_Register v = irgen_as_rvalue(tu, func, node->expr);
+							
+							tb_inst_store(func, ctype_to_tbtype(&tu->types[child_type]), effective_addr, v, align);
+						}
+						break;
 					}
 				}
-				break;
 			}
 		}
 		
@@ -415,13 +570,23 @@ static IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 			};
 		}
 		case EXPR_STR: {
-			const char* start = (const char*)(ep->str.start + 1);
-			const char* end = (const char*)(ep->str.end - 1);
+			TB_Register reg;
+			if (ep->str.start[0] == 'L') {
+				const char* start = (const char*)(ep->str.start + 2);
+				const char* end = (const char*)(ep->str.end - 1);
+				
+				reg = gen_wide_string_constant(ep->loc, func, end-start, start);
+			} else {
+				const char* start = (const char*)(ep->str.start + 1);
+				const char* end = (const char*)(ep->str.end - 1);
+				
+				reg = gen_string_constant(ep->loc, func, end-start, start);
+			}
 			
 			return (IRVal) {
 				.value_type = RVALUE,
 				.type = ep->type,
-				.reg = tb_inst_string(func, end-start, start)
+				.reg = reg
 			};
 		}
 		case EXPR_INITIALIZER: {
@@ -535,18 +700,17 @@ static IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 			};
 		}
 		case EXPR_CAST: {
-			IRVal src = irgen_expr(tu, func, ep->cast.src);
-			if (src.type == ep->cast.type) return src;
+			TB_Register src = irgen_as_rvalue(tu, func, ep->cast.src);
 			
 			// stuff like ((void) x)
 			if (tu->types[ep->cast.type].kind == KIND_VOID) {
 				return (IRVal) { .value_type = RVALUE, .type = TYPE_VOID, .reg = 0 };
 			}
 			
-			return (IRVal) { 
+			return (IRVal) {
 				.value_type = RVALUE,
 				.type = ep->cast.type,
-				.reg = irgen_as_rvalue(tu, func, ep->cast.src)
+				.reg = src
 			};
 		}
 		case EXPR_DEREF: {
@@ -1153,6 +1317,24 @@ static IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 static void irgen_stmt(TranslationUnit* tu, TB_Function* func, StmtIndex s) {
 	Stmt* restrict sp = &tu->stmts[s];
 	
+	if (false) {
+		if (tb_inst_get_current_label(func) == 0) {
+			tb_inst_label(func, tb_inst_new_label_id(func));
+		}
+		
+		// TODO(NeGate): Fix this up later!!!
+		static _Thread_local TB_FileID last_file_id = 0;
+		static _Thread_local const char* last_filepath = NULL;
+		
+		SourceLoc* l = &ir_gen_tokens.line_arena[sp->loc];
+		if ((const char*)l->file != last_filepath) {
+			last_filepath = (const char*)l->file;
+			last_file_id = tb_file_create(mod, (const char*)l->file);
+		}
+		
+		tb_inst_loc(func, last_file_id, l->line + 1);
+	}
+	
 	switch (sp->op) {
 		case STMT_NONE: {
 			break;
@@ -1204,7 +1386,12 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, StmtIndex s) {
 				} else {
 					addr = tb_inst_local(func, size, align);
 					
-					if (kind == KIND_STRUCT || kind == KIND_UNION) {
+					if (kind == KIND_ARRAY && ep->op == EXPR_STR) {
+						IRVal v = irgen_expr(tu, func, sp->decl.initial);
+						TB_Register size_reg = tb_inst_uint(func, TB_TYPE_I64, size);
+						
+						tb_inst_memcpy(func, addr, v.reg, size_reg, align);
+					} else if (kind == KIND_STRUCT || kind == KIND_UNION) {
 						if (tu->types[type_index].record.intrin_type.type != TB_VOID) {
 							TB_Register v = irgen_as_rvalue(tu, func, sp->decl.initial);
 							
@@ -1508,7 +1695,10 @@ static void gen_func_body(TranslationUnit* tu, TypeIndex type, StmtIndex s) {
 	} else {
 		tb_module_compile_func(mod, func);
 	}
-	tb_function_free(func);
+	
+	// NOTE(NeGate): Yikes... we can't delete the IR since line info requires it to
+	// stay around... this is a bad thing and we should fix TB to remove that crap.
+	//tb_function_free(func);
 }
 
 void irgen_top_level_stmt(TranslationUnit* tu, StmtIndex s) {

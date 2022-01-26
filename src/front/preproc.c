@@ -528,8 +528,24 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 					if (e == NULL) {
 						// TODO(NeGate): Remove these heap allocations later
 						// they're... evil!!!
-						char* new_path = strdup(path);
-						char* new_dir = strdup(path);
+#ifdef _WIN32
+						char* new_path = malloc(MAX_PATH);
+						char* filename;
+						if (GetFullPathNameA(path, MAX_PATH, new_path, &filename) == 0) {
+							int loc = l.current_line;
+							printf("error %s:%d: Could not resolve path: %s\n", l.filepath, loc, path);
+						}
+						
+						if (filename == NULL) {
+							int loc = l.current_line;
+							printf("error %s:%d: Cannot include directory %s\n", l.filepath, loc, new_path);
+						}
+						
+						char* new_dir = strdup(new_path);
+						new_dir[filename - new_path] = '\0';
+#else
+						char* new_path = realpath(path);
+						char* new_dir = strdup(new_path);
 						
 						char* slash = strrchr(new_dir, '\\');
 						if (!slash) slash = strrchr(new_dir, '/');
@@ -540,9 +556,11 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 							new_dir[0] = '\\';
 							new_dir[1] = '\0';
 						}
+#endif
+						
 #if 0
 						for (int i = 0; i < depth; i++) printf("  ");
-						printf("%s\n", new_path);
+						printf("%s : LINE %d\n", new_path, l.current_line);
 #endif
 						
 						preprocess_file(c, s, new_dir, new_path, depth + 1);
@@ -884,13 +902,22 @@ static unsigned char* expand_ident(CPP_Context* restrict c, unsigned char* restr
 		// filepath as a string
 		lexer_read(l);
 		
-		size_t length = strlen(l->filepath);
-		
 		*out++ = '\"';
-		
-		memcpy(out, l->filepath, length); 
-		out += length;
-		
+		{
+			// TODO(NeGate): Kinda shitty but i just wanna duplicate
+			// the backslashes to avoid them being treated as an escape
+			const char* in = (const char*)l->filepath;
+			
+			while (*in) {
+				if (*in == '\\') {
+					*out++ = '\\';
+					*out++ = '\\';
+					in++;
+				} else {
+					*out++ = *in++;
+				}
+			}
+		}
 		*out++ = '\"';
 		*out++ = ' ';
 		return out;
@@ -1194,7 +1221,7 @@ static unsigned char* expand(CPP_Context* restrict c, unsigned char* restrict ou
 
 static int eval(CPP_Context* restrict c, Lexer* l) {
 	// Expand
-	int line = l->current_line + 1;
+	int line = 1;
 	unsigned char* out_start = tls_push(4096);
 	unsigned char* out_end = expand(c, out_start, l);
 	*out_end++ = '\0';

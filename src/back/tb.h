@@ -473,6 +473,11 @@ extern "C" {
 	// returns a buffer which the user can fill to then have represented in the initializer
 	TB_API void* tb_initializer_add_region(TB_Module* m, TB_InitializerID id, size_t offset, size_t size);
 	
+	// places a relocation for a global at offset, the size of the relocation depends on the pointer size
+	TB_API void tb_initializer_add_global(TB_Module* m, TB_InitializerID id, size_t offset, TB_GlobalID global);
+	TB_API void tb_initializer_add_function(TB_Module* m, TB_InitializerID id, size_t offset, TB_FunctionID func);
+	TB_API void tb_initializer_add_extern(TB_Module* m, TB_InitializerID id, size_t offset, TB_ExternalID external);
+	
 	////////////////////////////////
 	// Constant Initializers
 	////////////////////////////////

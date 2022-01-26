@@ -294,7 +294,7 @@ static TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e) {
 			*ep = (Expr) {
 				.op = EXPR_INT,
 				.type = TYPE_ULONG,
-				.int_num = { tu->types[src].size, INT_SUFFIX_NONE }
+				.int_num = { tu->types[src].size, INT_SUFFIX_ULL }
 			};
 			return (ep->type = TYPE_ULONG);
 		}
@@ -304,7 +304,7 @@ static TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e) {
 			*ep = (Expr) {
 				.op = EXPR_INT,
 				.type = TYPE_ULONG,
-				.int_num = { tu->types[src].align, INT_SUFFIX_NONE }
+				.int_num = { tu->types[src].align, INT_SUFFIX_ULL }
 			};
 			return (ep->type = TYPE_ULONG);
 		}
@@ -456,9 +456,9 @@ static TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e) {
 				
 				// type-check the untyped arguments
 				for (size_t i = param_count; i < arg_count; i++) {
-					sema_expr(tu, args[i]);
+					TypeIndex src = sema_expr(tu, args[i]);
 					
-					tu->exprs[args[i]].cast_type = tu->exprs[args[i]].type;
+					tu->exprs[args[i]].cast_type = src;
 				}
 			} else {
 				if (arg_count != param_count) {
@@ -833,7 +833,7 @@ void sema_check(TranslationUnit* tu, StmtIndex s) {
 			
 			if (sp->decl.attrs.is_static && sp->decl.attrs.is_extern) {
 				sema_error(sp->loc, "Function '%s' cannot be both static and extern.", name);
-				sp->backing.g = 0;
+				sp->backing.f = 0;
 				break;
 			}
 			
@@ -921,8 +921,25 @@ void sema_check(TranslationUnit* tu, StmtIndex s) {
 				break;
 			}
 			
-			// TODO(NeGate): Implement real global initializers
-			TB_InitializerID init = tb_initializer_create(mod, type->size, type->align, 0);
+			TB_InitializerID init;
+			if (sp->decl.initial && tu->exprs[sp->decl.initial].op == EXPR_INITIALIZER) {
+				Expr* restrict ep = &tu->exprs[sp->decl.initial];
+				
+				int node_count = ep->init.count;
+				InitNode* nodes = ep->init.nodes;
+				
+				// Walk initializer for max constant expression initializers.
+				int max_tb_objects = 0;
+				count_max_tb_init_objects(node_count, nodes, &max_tb_objects);
+				
+				init = tb_initializer_create(mod, type->size, type->align, max_tb_objects);
+				
+				// Initialize all const expressions
+				// We don't support anything runtime in these expressions for now
+				eval_initializer_objects(tu, NULL, init, TB_NULL_REG, type_index, node_count, nodes, &(int) { 0 });
+			} else {
+				init = tb_initializer_create(mod, type->size, type->align, 0);
+			}
 			
 			TB_Linkage linkage = sp->decl.attrs.is_static ? TB_LINKAGE_PRIVATE : TB_LINKAGE_PUBLIC;
 			sp->backing.g = tb_global_create(mod, init, name, linkage);

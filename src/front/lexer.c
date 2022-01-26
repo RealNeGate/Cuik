@@ -280,6 +280,7 @@ void lexer_read(Lexer* restrict l) {
 			if (current[1] == '/') {
 				do { current++; } while (*current && *current != '\n');
 				
+				current += 1;
 				l->hit_line = true;
 				l->current_line += 1;
 				goto redo_lex;

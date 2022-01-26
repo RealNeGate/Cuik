@@ -4,11 +4,15 @@
 //#include <stdio.h>
 
 int main() {
-	printf("Trying to load image! %d, %d, %d, %d, %d, %d", 16, 32, 64, 128, 256, 512);
+	printf("Hello, World! %d, %d, %d, %d, %d, %d", 16, 32, 64, 128, 256, 512);
+	putchar('\n');
+	
+	const char* path = "./test.png";
+	printf("Trying to load image! %s", path);
 	putchar('\n');
 	
 	int x,y,n;
-	stbi_load("./test.png", &x, &y, &n, 0);
+	stbi_load(path, &x, &y, &n, 0);
 	printf(stbi_failure_reason());
 	putchar('\n');
 	

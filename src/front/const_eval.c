@@ -101,10 +101,12 @@ ConstValue const_eval(TranslationUnit* tu, ExprIndex e) {
 				default: __builtin_unreachable();
 			}
 			
-			case EXPR_ALIGNOF_T: {
-				return signed_const(tu->types[ep->x_of_type.type].align);
+			case EXPR_SIZEOF_T: {
+				return unsigned_const(tu->types[ep->x_of_type.type].size);
 			}
-			
+			case EXPR_ALIGNOF_T: {
+				return unsigned_const(tu->types[ep->x_of_type.type].align);
+			}
 			case EXPR_NEGATE: {
 				ConstValue src = const_eval(tu, ep->unary_op.src);
 				return signed_const(-src.signed_value);

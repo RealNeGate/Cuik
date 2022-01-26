@@ -30,9 +30,9 @@
 
 static thrd_t threads[TB_MAX_THREADS];
 
-static _Atomic size_t tasks_reserved;
-static _Atomic size_t tasks_complete;
-static _Atomic bool is_running;
+static atomic_size_t tasks_reserved;
+static atomic_size_t tasks_complete;
+static atomic_bool is_running;
 static size_t tasks_count;
 
 // signalled when it's about to finish to notify the main
@@ -384,7 +384,10 @@ int main(int argc, char* argv[]) {
 		}
 		
 		// split the key and value
-		if (*value) value[0] = '\0';
+		if (*value) {
+			value[0] = '\0';
+			value++;
+		}
 		
 		if (strcmp(key, "arch") == 0) {
 			if (strcmp(value, "x64") == 0) {
@@ -479,11 +482,14 @@ int main(int argc, char* argv[]) {
 			memcpy_s(filename, 260, source_file, ext - source_file);
 			filename[ext - source_file] = '\0';
 			
-#ifdef _WIN32
-			sprintf_s(obj_output_path, 260, "%s.obj", filename);
-#else
-			sprintf_s(obj_output_path, 260, "%s.o", filename);
-#endif
+			if (target_sys == TB_SYSTEM_WINDOWS) {
+				sprintf_s(obj_output_path, 260, "%s.obj", filename);
+			} else if (target_sys == TB_SYSTEM_LINUX) {
+				sprintf_s(obj_output_path, 260, "%s.o", filename);
+			} else if (mode != COMPILER_MODE_CHECK) {
+				printf("Unsupported object file\n");
+				abort();
+			}
 			
 			if (settings.print_tb_ir) {
 				tbir_output_file = fopen("./compiled.tbir", "wb");
