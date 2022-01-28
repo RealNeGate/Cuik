@@ -30,13 +30,14 @@ typedef struct LabelEntry {
 _Thread_local static int local_symbol_count = 0;
 _Thread_local static Symbol local_symbols[64 * 1024];
 
-_Thread_local static IncompleteType* incomplete_types;
+_Thread_local static IncompleteType* incomplete_types; // stb_ds hash map
 _Thread_local static SymbolEntry* global_symbols; // stb_ds hash map
 _Thread_local static TypedefEntry* typedefs; // stb_ds hash map
 _Thread_local static LabelEntry* labels; // stb_ds hash map
 
 _Thread_local static StmtIndex current_switch_or_case;
 _Thread_local static StmtIndex current_breakable;
+_Thread_local static StmtIndex current_continuable;
 
 static void expect(TokenStream* restrict s, char ch);
 static Symbol* find_local_symbol(TokenStream* restrict s);
@@ -159,11 +160,13 @@ TranslationUnit parse_file(TokenStream* restrict s) {
 				if (sym) {
 					is_redefine = true;
 					
-					/*StorageClass sclass = attr.is_static ? STORAGE_STATIC_FUNC : STORAGE_FUNC;
-					if (sym->storage_class != sclass) {
-						// TODO(NeGate): Error messages
-						//generic_warn(s, "Storage class changed i think?");
-					}*/
+					StorageClass sclass = attr.is_static ? STORAGE_STATIC_FUNC : STORAGE_FUNC;
+					sym->storage_class = sclass;
+					
+					/*if (sym->storage_class != sclass) {
+											// TODO(NeGate): Error messages
+											//generic_warn(s, "Storage class changed i think?");
+										}*/
 					
 					// convert forward decl into proper function
 					n = sym->stmt;
@@ -171,8 +174,14 @@ TranslationUnit parse_file(TokenStream* restrict s) {
 						is_redefining_body = true;
 					}
 					
+					// TODO(NeGate): we should be erroring if the attributes aren't
+					// compatible
+					tu.stmts[n].decl.attrs = attr;
+					
 					// TODO(NeGate): Error messages
-					if (!type_equal(&tu, tu.stmts[n].decl.type, decl.type)) abort();
+					if (!type_equal(&tu, tu.stmts[n].decl.type, decl.type)) {
+						generic_error(s, "function declaration doesn't match function definition");
+					}
 				} else {
 					// New symbol
 					n = make_stmt(&tu, s, STMT_DECL);
@@ -196,6 +205,8 @@ TranslationUnit parse_file(TokenStream* restrict s) {
 					// TODO(NeGate): Error messages
 					if (is_redefining_body) {
 						generic_error(s, "Cannot redefine function decl");
+					} else if (strcmp((const char*)decl.name, "WinMain") == 0) {
+						settings.using_winmain = true;
 					}
 					
 					ParamIndex param_list = tu.types[decl.type].func.param_list;
@@ -322,9 +333,6 @@ TranslationUnit parse_file(TokenStream* restrict s) {
 		}
 	}
 	
-	////////////////////////////////
-	// Semantics
-	////////////////////////////////
 	// NOTE(NeGate): This is a Cuik extension, it allows normal symbols
 	// like functions to declared out of order.
 	for (size_t i = 0, count = big_array_length(tu.exprs); i < count; i++) {
@@ -348,8 +356,7 @@ TranslationUnit parse_file(TokenStream* restrict s) {
 					}
 				}
 				
-				Token* t = tokens_get(s);
-				SourceLoc* loc = &s->line_arena[t->location];
+				SourceLoc* loc = &s->line_arena[tu.exprs[i].loc];
 				
 				printf("%s:%d: error: could not find symbol: %s\n", loc->file, loc->line, name);
 				abort();
@@ -608,6 +615,18 @@ static StmtIndex parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 			.target = current_breakable
 		};
 		return n;
+	} else if (tokens_get(s)->type == TOKEN_KW_continue) {
+		// TODO(NeGate): error messages
+		assert(current_continuable);
+		
+		tokens_next(s);
+		expect(s, ';');
+		
+		StmtIndex n = make_stmt(tu, s, STMT_CONTINUE);
+		tu->stmts[n].continue_ = (struct StmtContinue){
+			.target = current_continuable
+		};
+		return n;
 	} else if (tokens_get(s)->type == TOKEN_KW_while) {
 		tokens_next(s);
 		StmtIndex n = make_stmt(tu, s, STMT_WHILE);
@@ -621,10 +640,13 @@ static StmtIndex parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 		{
 			StmtIndex old_breakable = current_breakable;
 			current_breakable = n;
+			StmtIndex old_continuable = current_continuable;
+			current_continuable = n;
 			
 			body = parse_stmt_or_expr(tu, s);
 			
 			current_breakable = old_breakable;
+			current_continuable = old_continuable;
 		}
 		
 		tu->stmts[n].while_ = (struct StmtWhile){
@@ -686,10 +708,13 @@ static StmtIndex parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 		{
 			StmtIndex old_breakable = current_breakable;
 			current_breakable = n;
+			StmtIndex old_continuable = current_continuable;
+			current_continuable = n;
 			
 			body = parse_stmt_or_expr(tu, s);
 			
 			current_breakable = old_breakable;
+			current_continuable = old_continuable;
 		}
 		
 		// restore local symbol scope
@@ -711,10 +736,13 @@ static StmtIndex parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 		{
 			StmtIndex old_breakable = current_breakable;
 			current_breakable = n;
+			StmtIndex old_continuable = current_continuable;
+			current_continuable = n;
 			
 			body = parse_stmt_or_expr(tu, s);
 			
 			current_breakable = old_breakable;
+			current_continuable = old_continuable;
 		}
 		
 		if (tokens_get(s)->type != TOKEN_KW_while) {
@@ -785,8 +813,22 @@ static void parse_decl_or_expr(TranslationUnit* tu, TokenStream* restrict s, siz
 			} else expect_comma = true;
 			
 			Decl decl = parse_declarator(tu, s, type);
-			ExprIndex initial = 0;
 			
+			StmtIndex n = make_stmt(tu, s, STMT_DECL);
+			tu->stmts[n].decl = (struct StmtDecl){
+				.type = decl.type,
+				.name = decl.name,
+				.initial = 0
+			};
+			
+			local_symbols[local_symbol_count++] = (Symbol){
+				.name = decl.name,
+				.type = decl.type,
+				.storage_class = STORAGE_LOCAL,
+				.stmt = n
+			};
+			
+			ExprIndex initial = 0;
 			if (tokens_get(s)->type == '=') {
 				tokens_next(s);
 				
@@ -799,20 +841,7 @@ static void parse_decl_or_expr(TranslationUnit* tu, TokenStream* restrict s, siz
 				}
 			}
 			
-			StmtIndex n = make_stmt(tu, s, STMT_DECL);
-			tu->stmts[n].decl = (struct StmtDecl){
-				.type = decl.type,
-				.name = decl.name,
-				.initial = initial
-			};
-			
-			local_symbols[local_symbol_count++] = (Symbol){
-				.name = decl.name,
-				.type = decl.type,
-				.storage_class = STORAGE_LOCAL,
-				.stmt = n
-			};
-			
+			tu->stmts[n].decl.initial = initial;
 			*((StmtIndex*)tls_push(sizeof(StmtIndex))) = n;
 			*body_count += 1;
 		}
@@ -893,6 +922,7 @@ static void parse_initializer_member(TranslationUnit* tu, TokenStream* restrict 
 			
 			current = (InitNode*) tls_push(sizeof(InitNode));
 			*current = (InitNode) {
+				.mode = INIT_ARRAY,
 				.kids_count = 1,
 				.start = start,
 				.count = count
@@ -909,6 +939,7 @@ static void parse_initializer_member(TranslationUnit* tu, TokenStream* restrict 
 			
 			current = (InitNode*) tls_push(sizeof(InitNode));
 			*current = (InitNode) {
+				.mode = INIT_MEMBER,
 				.kids_count = 1,
 				.member_name = name
 			};
@@ -936,7 +967,7 @@ static void parse_initializer_member(TranslationUnit* tu, TokenStream* restrict 
 		
 		// don't expect one the first time
 		bool expect_comma = false;
-		while (tokens_get(s)->type == '}') {
+		while (tokens_get(s)->type != '}') {
 			if (expect_comma) {
 				expect(s, ',');
 			} else expect_comma = true;
@@ -946,6 +977,7 @@ static void parse_initializer_member(TranslationUnit* tu, TokenStream* restrict 
 		}
 		
 		current->kids_count = local_count;
+		expect(s, '}');
 	} else {
 		// parse without comma operator
 		current->kids_count = 0;
@@ -971,10 +1003,11 @@ static ExprIndex parse_initializer(TranslationUnit* tu, TokenStream* restrict s,
 		count += 1;
 	}
 	
+	size_t total_node_count = ((InitNode*)tls_save()) - start;
 	expect(s, '}');
 	
-	InitNode* permanent_store = arena_alloc(count * sizeof(InitNode), _Alignof(InitNode));
-	memcpy(permanent_store, start, count * sizeof(InitNode));
+	InitNode* permanent_store = arena_alloc(total_node_count * sizeof(InitNode), _Alignof(InitNode));
+	memcpy(permanent_store, start, total_node_count * sizeof(InitNode));
 	tls_restore(start);
 	
 	ExprIndex e = make_expr(tu);
@@ -1071,11 +1104,12 @@ static ExprIndex parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
 		return e;
 	} else if (tokens_get(s)->type == TOKEN_FLOAT) {
 		Token* t = tokens_get(s);
+		bool is_float32 = t->end[-1] == 'f';
 		double i = parse_float(t->end - t->start, (const char*)t->start);
 		
 		ExprIndex e = make_expr(tu);
 		tu->exprs[e] = (Expr) {
-			.op = EXPR_FLOAT,
+			.op = is_float32 ? EXPR_FLOAT32 : EXPR_FLOAT64,
 			.loc = loc,
 			.float_num = i
 		};
@@ -1119,38 +1153,43 @@ static ExprIndex parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
 			.str.start = t->start,
 			.str.end = t->end
 		};
+		
+		size_t saved_lexer_pos = s->current;
 		tokens_next(s);
 		
-		// TODO(NeGate): Kinda janky and ideally i remove the mallocs and reallocs
 		if (tokens_get(s)->type == TOKEN_STRING_DOUBLE_QUOTE) {
-			Token* t = tokens_get(s);
+			// Precompute length
+			s->current = saved_lexer_pos;
+			size_t total_len = (t->end - t->start);
+			while (tokens_get(s)->type == TOKEN_STRING_DOUBLE_QUOTE) {
+				Token* segment = tokens_get(s);
+				total_len += (segment->end - segment->start) - 2;
+				tokens_next(s);
+			}
 			
-			size_t len = 0;
-			char* buffer = malloc((t->end - t->start) + 1);
+			size_t curr = 0;
+			char* buffer = arena_alloc(total_len + 2, 4);
+			buffer[curr++] = '\"';
 			
-			memcpy(&buffer[0], t->start, t->end - t->start);
-			len += (t->end - t->start) - 1;
-			
-			printf("%.*s\n\n", (int) len, buffer);
-			
-			do {
-				t = tokens_get(s);
-				buffer = realloc(buffer, len + (t->end - t->start));
+			// Fill up the buffer
+			s->current = saved_lexer_pos;
+			while (tokens_get(s)->type == TOKEN_STRING_DOUBLE_QUOTE) {
+				Token* segment = tokens_get(s);
 				
-				memcpy(&buffer[len], t->start + 1, t->end - t->start);
-				len += (t->end - t->start) - 2;
+				// TODO(NeGate): Implement concat on wide strings
+				assert(segment->start[0] != 'L');
 				
-				printf("%.*s\n\n", (int) len, buffer);
+				size_t len = segment->end - segment->start;
+				memcpy(&buffer[curr], segment->start + 1, len - 2);
+				curr += len - 2;
 				
 				tokens_next(s);
-			} while (tokens_get(s)->type == TOKEN_STRING_DOUBLE_QUOTE);
+			}
 			
-			buffer = realloc(buffer, len + 1);
-			buffer[len] = '\"';
-			printf("%.*s\n\n", (int) len, buffer);
+			buffer[curr++] = '\"';
 			
 			tu->exprs[e].str.start = (const unsigned char*)buffer;
-			tu->exprs[e].str.end = (const unsigned char*)(buffer + len);
+			tu->exprs[e].str.end = (const unsigned char*)(buffer + curr);
 		}
 		
 		return e;
@@ -2112,7 +2151,7 @@ static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, At
 				bool is_union = tkn_type == TOKEN_KW_union;
 				
 				while (skip_over_declspec(s)) {
-					printf("Don't forget about declspec\n");
+					// TODO(NeGate): printf("Don't forget about declspec\n");
 				}
 				
 				Atom name = NULL;
@@ -2394,26 +2433,26 @@ static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, At
 			type = TYPE_USHORT;
 			break;
 			case INT:
+			case LONG:
+			case LONG + INT:
 			case SIGNED:
 			case SIGNED + INT:
+			case SIGNED + LONG:
+			case SIGNED + LONG + INT:
 			type = TYPE_INT;
 			break;
 			case UNSIGNED:
 			case UNSIGNED + INT:
+			case UNSIGNED + LONG:
+			case UNSIGNED + LONG + INT:
 			type = TYPE_UINT;
 			break;
-			case LONG:
-			case LONG + INT:
 			case LONG + LONG:
 			case LONG + LONG + INT:
-			case SIGNED + LONG:
-			case SIGNED + LONG + INT:
 			case SIGNED + LONG + LONG:
 			case SIGNED + LONG + LONG + INT:
 			type = TYPE_LONG;
 			break;
-			case UNSIGNED + LONG:
-			case UNSIGNED + LONG + INT:
 			case UNSIGNED + LONG + LONG:
 			case UNSIGNED + LONG + LONG + INT:
 			type = TYPE_ULONG;

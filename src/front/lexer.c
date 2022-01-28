@@ -540,9 +540,9 @@ void lexer_read(Lexer* restrict l) {
 	}
 }
 
-int64_t parse_int(size_t len, const char* str, IntSuffix* out_suffix) {
+uint64_t parse_int(size_t len, const char* str, IntSuffix* out_suffix) {
 	char* end;
-	int64_t i = strtol(str, &end, 0);
+	uint64_t i = strtoul(str, &end, 0);
 	
 	IntSuffix suffix = INT_SUFFIX_NONE;
 	if (end != &str[len]) {

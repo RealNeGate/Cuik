@@ -520,9 +520,10 @@ int main(int argc, char* argv[]) {
 					linker_add_input_file(&l, "Gdi32.lib");
 					linker_add_input_file(&l, "Onecore.lib");
 					linker_add_input_file(&l, "Onecoreuap.lib");
+					linker_add_input_file(&l, "opengl32.lib");
 					linker_add_input_file(&l, obj_output_path);
 					
-					linker_invoke(&l, filename, true);
+					linker_invoke(&l, filename, settings.using_winmain ? SUBSYSTEM_WINDOWS : SUBSYSTEM_CONSOLE, true);
 					linker_deinit(&l);
 					
 					if (mode == COMPILER_MODE_RUN) {

@@ -5,11 +5,13 @@
 #include <back/ir_gen.h>
 #include <stdarg.h>
 
-_Atomic int sema_error_count;
-_Thread_local StmtIndex function_stmt;
+static _Atomic int sema_error_count;
+static _Thread_local StmtIndex function_stmt;
 
 // two simple temporary buffers to represent type_as_string results
-_Thread_local char temp_string0[256], temp_string1[256];
+static _Thread_local char temp_string0[256], temp_string1[256];
+
+static TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e);
 
 static size_t type_as_string(TranslationUnit* tu, size_t max_len, char buffer[static max_len], TypeIndex type_index) {
 	Type* restrict type = &tu->types[type_index];
@@ -234,6 +236,20 @@ static bool type_compatible(TranslationUnit* tu, TypeIndex a, TypeIndex b, ExprI
 	return true;
 }
 
+static InitNode* walk_initializer_for_sema(TranslationUnit* tu, int node_count, InitNode* node) {
+	for (int i = 0; i < node_count; i++) {
+		if (node->kids_count == 0) {
+			sema_expr(tu, node->expr);
+			
+			node += 1;
+		} else {
+			node = walk_initializer_for_sema(tu, node->kids_count, node + 1);
+		}
+	}
+	
+	return node;
+}
+
 static TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e) {
 	Expr* restrict ep = &tu->exprs[e];
 	
@@ -241,11 +257,11 @@ static TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e) {
 		case EXPR_INT: {
 			switch (ep->int_num.suffix) {
 				case INT_SUFFIX_NONE: {
-					int original = (int)ep->int_num.num;
-					long long expected = (long long)ep->int_num.num;
+					unsigned int original = (unsigned int)ep->int_num.num;
+					unsigned long long expected = (unsigned long long)ep->int_num.num;
 					
 					if (original != expected) {
-						sema_error(ep->loc, "Could not represent integer literal as int.");
+						sema_error(ep->loc, "Could not represent integer literal as int. (%ulld or %ullx)", expected, expected);
 					}
 					
 					return (ep->type = TYPE_INT);
@@ -275,7 +291,10 @@ static TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e) {
 				return (ep->type = TYPE_VOID);
 			}
 		}
-		case EXPR_FLOAT: {
+		case EXPR_FLOAT32: {
+			return (ep->type = TYPE_FLOAT);
+		}
+		case EXPR_FLOAT64: {
 			return (ep->type = TYPE_DOUBLE);
 		}
 		case EXPR_CHAR: {
@@ -325,9 +344,7 @@ static TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e) {
 			return (ep->type = TYPE_ULONG);
 		}
 		case EXPR_INITIALIZER: {
-			for (size_t i = 0; i < ep->init.count; i++) {
-				if (ep->init.nodes[i].kids_count == 0) sema_expr(tu, ep->init.nodes[i].expr);
-			}
+			walk_initializer_for_sema(tu, ep->init.count, ep->init.nodes);
 			
 			return (ep->type = ep->init.type);
 		}
@@ -607,7 +624,7 @@ static TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e) {
 				 tu->types[rhs].kind == KIND_PTR ||
 				 tu->types[rhs].kind == KIND_ARRAY)) {
 				// Pointer arithmatic
-				if (tu->types[rhs].kind == KIND_PTR || tu->types[rhs].kind == KIND_ARRAY) {
+				if (ep->op == EXPR_PLUS && (tu->types[rhs].kind == KIND_PTR || tu->types[rhs].kind == KIND_ARRAY)) {
 					swap(lhs, rhs);
 					swap(ep->bin_op.left, ep->bin_op.right);
 				}
@@ -628,7 +645,7 @@ static TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e) {
 					tu->exprs[ep->bin_op.left].cast_type = lhs;
 					tu->exprs[ep->bin_op.right].cast_type = TYPE_ULONG;
 					
-					ep->op = ep->op == EXPR_PLUS ? EXPR_PTRADD : EXPR_PTRSUB;
+					ep->op = (ep->op == EXPR_PLUS) ? EXPR_PTRADD : EXPR_PTRSUB;
 					return (ep->type = lhs);
 				}
 			} else {
@@ -747,7 +764,7 @@ void sema_stmt(TranslationUnit* tu, StmtIndex s) {
 				TypeIndex return_type = tu->types[tu->stmts[function_stmt].decl.type].func.return_type;
 				
 				if (!type_compatible(tu, expr_type, return_type, sp->return_.expr)) {
-					sema_warn(sp->loc, "Value in return statement does not match function signature. (TODO this should be an error)");
+					//sema_warn(sp->loc, "Value in return statement does not match function signature. (TODO this should be an error)");
 				}
 				
 				tu->exprs[sp->return_.expr].cast_type = return_type;
@@ -881,9 +898,17 @@ void sema_check(TranslationUnit* tu, StmtIndex s) {
 			// inline linkage means all the definitions must match which isn't
 			// necessarily the same as static where they all can share a name but
 			// are different and internal.
-			if (sp->decl.attrs.is_inline) linkage = TB_LINKAGE_PRIVATE;
-			
-			TB_Function* func = tb_prototype_build(mod, proto, name, linkage);
+			TB_Function* func;
+			if (sp->decl.attrs.is_inline) {
+				linkage = TB_LINKAGE_PRIVATE;
+				
+				char temp[1024];
+				sprintf_s(temp, 1024, "%s_%p", name, name);
+				
+				func = tb_prototype_build(mod, proto, temp, linkage);
+			} else {
+				func = tb_prototype_build(mod, proto, name, linkage);
+			}
 			sp->backing.f = tb_function_get_id(mod, func);
 			
 			// type check function body
@@ -936,7 +961,7 @@ void sema_check(TranslationUnit* tu, StmtIndex s) {
 				
 				// Initialize all const expressions
 				// We don't support anything runtime in these expressions for now
-				eval_initializer_objects(tu, NULL, init, TB_NULL_REG, type_index, node_count, nodes, &(int) { 0 });
+				eval_initializer_objects(tu, NULL, init, TB_NULL_REG, type_index, node_count, nodes, 0);
 			} else {
 				init = tb_initializer_create(mod, type->size, type->align, 0);
 			}

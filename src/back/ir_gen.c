@@ -223,21 +223,6 @@ static TB_Register cvt2rval(TranslationUnit* tu, TB_Function* func, const IRVal 
 			reg = v.reg; 
 			break;
 		}
-		case RVALUE_PHI: {
-			TB_Label merger = tb_inst_new_label_id(func);
-			
-			tb_inst_label(func, v.phi.if_true);
-			TB_Register one = tb_inst_bool(func, true);
-			tb_inst_goto(func, merger);
-			
-			tb_inst_label(func, v.phi.if_false);
-			TB_Register zero = tb_inst_bool(func, false);
-			
-			tb_inst_label(func, merger);
-			
-			reg = tb_inst_phi2(func, v.phi.if_true, one, v.phi.if_false, zero);
-			break;
-		}
 		case LVALUE: {
 			// Implicit array to pointer
 			if (src->kind == KIND_ARRAY) {
@@ -285,16 +270,14 @@ static TB_Register irgen_as_rvalue(TranslationUnit* tu, TB_Function* func, ExprI
 	return cvt2rval(tu, func, irgen_expr(tu, func, e), e);
 }
 
-// Does pointer math scare you? this is like mostly just addition but yea
 InitNode* count_max_tb_init_objects(int node_count, InitNode* node, int* out_count) {
 	for (int i = 0; i < node_count; i++) {
 		if (node->kids_count == 0) {
 			*out_count += 1;
+			node += 1;
 		} else {
-			node = count_max_tb_init_objects(node->kids_count, node, out_count);
+			node = count_max_tb_init_objects(node->kids_count, node + 1, out_count);
 		}
-		
-		node += 1;
 	}
 	
 	return node;
@@ -303,7 +286,7 @@ InitNode* count_max_tb_init_objects(int node_count, InitNode* node, int* out_cou
 // TODO(NeGate): Revisit this code as a smarter man...
 // if the addr is 0 then we only apply constant initializers.
 // func doesn't need to be non-NULL if it's addr is NULL.
-InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, TB_InitializerID init, TB_Register addr, TypeIndex t, int node_count, InitNode* node, int* offset) {
+InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, TB_InitializerID init, TB_Register addr, TypeIndex t, int node_count, InitNode* node, int offset) {
 	// TODO(NeGate): Implement line info for this code for error handling.
 	SourceLocIndex loc = 0;
 	
@@ -353,8 +336,8 @@ InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, TB_In
 				
 				// TODO(NeGate): String interning would be nice
 				if (cstr_equals(node->member_name, member->name)) {
-					pos = cursor;
-					pos_end = cursor + 1;
+					pos = (m - start);
+					pos_end = pos + 1;
 					cursor = pos_end;
 					break;
 				}
@@ -395,31 +378,28 @@ InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, TB_In
 		
 		// Identify entry type
 		TypeIndex child_type;
+		int relative_offset;
 		if (type->kind == KIND_ARRAY) {
 			child_type = type->array_of;
+			relative_offset = tu->types[type->array_of].size * pos;
 		} else if (type->kind == KIND_UNION || type->kind == KIND_STRUCT) {
 			child_type = tu->members[type->record.kids_start + pos].type;
+			relative_offset = tu->members[type->record.kids_start + pos].offset;
 		} else {
 			child_type = t;
-		}
-		
-		// traverse children
-		int relative_offset = 0;
-		if (type->kind == KIND_ARRAY) {
-			relative_offset += tu->types[type->array_of].size * pos;
-		} else if (type->kind == KIND_UNION || type->kind == KIND_STRUCT) {
-			relative_offset += tu->members[type->record.kids_start + pos].offset;
+			relative_offset = 0;
 		}
 		
 		if (node->kids_count > 0) {
-			*offset += relative_offset;
-			node = eval_initializer_objects(tu, func, init, addr, child_type, node->kids_count, node, offset);
+			node = eval_initializer_objects(tu, func, init, addr,
+											child_type, node->kids_count,
+											node + 1, offset + relative_offset);
 		} else {
 			// initialize a value
 			assert(node->expr);
 			
 			bool success = false;
-			if (tu->exprs[node->expr].op == EXPR_SYMBOL) {
+			if (!func && tu->exprs[node->expr].op == EXPR_SYMBOL) {
 				StmtIndex stmt = tu->exprs[node->expr].symbol;
 				StmtOp stmt_op = tu->stmts[stmt].op;
 				
@@ -428,10 +408,10 @@ InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, TB_In
 				// TODO(NeGate): Fix it up so that more operations can be
 				// performed at compile time and baked into the initializer
 				if (stmt_op == STMT_GLOBAL_DECL) {
-					tb_initializer_add_global(mod, init, *offset + relative_offset, tu->stmts[stmt].backing.g);
+					tb_initializer_add_global(mod, init, offset + relative_offset, tu->stmts[stmt].backing.g);
 					success = true;
 				} else if (stmt_op == STMT_FUNC_DECL) {
-					tb_initializer_add_function(mod, init, *offset + relative_offset, tu->stmts[stmt].backing.f);
+					tb_initializer_add_function(mod, init, offset + relative_offset, tu->stmts[stmt].backing.f);
 					success = true;
 				}
 			}
@@ -444,7 +424,7 @@ InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, TB_In
 					case EXPR_NEGATE:
 					if (!func) {
 						int size = tu->types[child_type].size;
-						void* region = tb_initializer_add_region(mod, init, *offset + relative_offset, size);
+						void* region = tb_initializer_add_region(mod, init, offset + relative_offset, size);
 						
 						ConstValue value = const_eval(tu, node->expr);
 						
@@ -457,13 +437,6 @@ InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, TB_In
 					default: if (addr) {
 						assert(func);
 						
-						TB_Register effective_addr;
-						if (relative_offset) {
-							effective_addr = tb_inst_member_access(func, addr, *offset + relative_offset);
-						} else {
-							effective_addr = addr;
-						}
-						
 						TypeKind kind = tu->types[child_type].kind;
 						int size = tu->types[child_type].size;
 						int align = tu->types[child_type].align;
@@ -471,10 +444,31 @@ InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, TB_In
 						if (kind == KIND_STRUCT || kind == KIND_UNION || kind == KIND_ARRAY) {
 							IRVal v = irgen_expr(tu, func, node->expr);
 							
+							// placing the address calculation here might improve performance or readability
+							// of IR in the debug builds, for release builds it shouldn't matter
+							TB_Register effective_addr;
+							if (offset + relative_offset) {
+								effective_addr = tb_inst_member_access(func, addr, offset + relative_offset);
+							} else {
+								effective_addr = addr;
+							}
+							
 							TB_Register size_reg = tb_inst_uint(func, TB_TYPE_I64, size);
 							tb_inst_memcpy(func, effective_addr, v.reg, size_reg, align);
 						} else {
+							// hacky but we set the cast so that the rvalue returns a normal value
+							tu->exprs[node->expr].cast_type = child_type;
+							
 							TB_Register v = irgen_as_rvalue(tu, func, node->expr);
+							
+							// placing the address calculation here might improve performance or readability
+							// of IR in the debug builds, for release builds it shouldn't matter
+							TB_Register effective_addr;
+							if (offset + relative_offset) {
+								effective_addr = tb_inst_member_access(func, addr, offset + relative_offset);
+							} else {
+								effective_addr = addr;
+							}
 							
 							tb_inst_store(func, ctype_to_tbtype(&tu->types[child_type]), effective_addr, v, align);
 						}
@@ -482,9 +476,9 @@ InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, TB_In
 					}
 				}
 			}
+			
+			node += 1;
 		}
-		
-		node += 1;
 	}
 	
 	return node;
@@ -503,11 +497,11 @@ static TB_Register gen_local_initializer(TranslationUnit* tu, TB_Function* func,
 	TB_Register addr = tb_inst_local(func, tu->types[t].size, tu->types[t].align);
 	
 	// Initialize all const expressions
-	eval_initializer_objects(tu, func, init, TB_NULL_REG, t, node_count, nodes, &(int) { 0 });
+	eval_initializer_objects(tu, func, init, TB_NULL_REG, t, node_count, nodes, 0);
 	tb_inst_initialize_mem(func, addr, init);
 	
 	// Initialize all dynamic expressions
-	eval_initializer_objects(tu, func, init, addr, t, node_count, nodes, &(int) { 0 });
+	eval_initializer_objects(tu, func, init, addr, t, node_count, nodes, 0);
 	return addr;
 }
 
@@ -562,7 +556,14 @@ static IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 				};
 			}
 		}
-		case EXPR_FLOAT: {
+		case EXPR_FLOAT32: {
+			return (IRVal) {
+				.value_type = RVALUE,
+				.type = TYPE_FLOAT,
+				.reg = tb_inst_float(func, TB_TYPE_F32, ep->float_num)
+			};
+		}
+		case EXPR_FLOAT64: {
 			return (IRVal) {
 				.value_type = RVALUE,
 				.type = TYPE_DOUBLE,
@@ -655,6 +656,15 @@ static IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 			};
 		}
 		case EXPR_ADDR: {
+			uint64_t dst;
+			if (const_eval_try_offsetof_hack(tu, e, &dst)) {
+				return (IRVal) {
+					.value_type = RVALUE,
+					.type = ep->type,
+					.reg = tb_inst_uint(func, TB_TYPE_PTR, dst)
+				};
+			}
+			
 			IRVal src = irgen_expr(tu, func, ep->unary_op.src);
 			
 			if (src.value_type == LVALUE) {
@@ -961,6 +971,8 @@ static IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 				};
 			}
 		}
+		// based on this:
+		// https://github.com/c3lang/c3c/blob/cf56825d26758044fe2a868e65717635864fd723/src/compiler/llvm_codegen_expr.c#L2526
 		case EXPR_LOGICAL_AND:
 		case EXPR_LOGICAL_OR: {
 			// a && b
@@ -974,57 +986,47 @@ static IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 			//          if (a) { goto true    } else { goto try_rhs }
 			// try_rhs: if (b) { goto true    } else { goto false }
 			bool is_and = (ep->op == EXPR_LOGICAL_AND);
-			TB_Label try_rhs_lbl = tb_inst_new_label_id(func);
 			
 			// TODO(NeGate): Remove this later because it kills
 			// the codegen a bit in certain cases.
-			TB_Label entry_lbl = tb_inst_new_label_id(func);
-			tb_inst_label(func, entry_lbl);
+			tb_inst_label(func, tb_inst_new_label_id(func));
+			
+			TB_Label try_rhs_lbl = tb_inst_new_label_id(func);
+			TB_Label phi_lbl = tb_inst_new_label_id(func);
 			
 			// Eval first operand
-			IRVal a = irgen_expr(tu, func, ep->bin_op.left);
+			TB_Register lhs = irgen_as_rvalue(tu, func, ep->bin_op.left);
 			
-			TB_Label true_lbl, false_lbl;
-			if (a.value_type == RVALUE_PHI) {
-				// chain the previous phi.
-				// for logical OR, it's the false label.
-				// for logical AND, it's the true label.
-				if (is_and) {
-					tb_inst_label(func, a.phi.if_true);
-					tb_inst_goto(func, try_rhs_lbl);
-					
-					true_lbl = tb_inst_new_label_id(func);
-					false_lbl = a.phi.if_false;
-				} else {
-					tb_inst_label(func, a.phi.if_false);
-					tb_inst_goto(func, try_rhs_lbl);
-					
-					true_lbl = a.phi.if_true;
-					false_lbl = tb_inst_new_label_id(func);
-				}
+			TB_Label start_block = tb_inst_get_current_label(func);
+			TB_Register result_on_skip = tb_inst_uint(func, TB_TYPE_BOOL, is_and ? 0 : 1);
+			if (is_and) {
+				tb_inst_if(func, lhs, try_rhs_lbl, phi_lbl);
 			} else {
-				true_lbl = tb_inst_new_label_id(func);
-				false_lbl = tb_inst_new_label_id(func);
-				
-				TB_Register a_reg = cvt2rval(tu, func, a, ep->bin_op.left);
-				tb_inst_if(func, a_reg, true_lbl, try_rhs_lbl);
+				tb_inst_if(func, lhs, phi_lbl, try_rhs_lbl);
 			}
 			
 			// Eval second operand
 			tb_inst_label(func, try_rhs_lbl);
 			
-			TB_Register b = irgen_as_rvalue(tu, func, ep->bin_op.right);
-			tb_inst_if(func, b, true_lbl, false_lbl);
+			TB_Register rhs = irgen_as_rvalue(tu, func, ep->bin_op.right);
+			if (tb_node_get_data_type(func, rhs).type != TB_BOOL) {
+				TB_DataType dt = tb_node_get_data_type(func, rhs);
+				
+				rhs = tb_inst_cmp_ne(func, rhs, tb_inst_uint(func, dt, 0));
+			}
 			
-			// Just in case
-			tb_inst_label(func, tb_inst_new_label_id(func));
+			TB_Label end_block = tb_inst_get_current_label(func);
+			
+			// phi node merging block
+			tb_inst_label(func, phi_lbl);
+			TB_Register phi = tb_inst_phi2(func, start_block, result_on_skip, end_block, rhs);
 			
 			// we delay placement of the labels so that we can
 			// fold multiple shortcircuits together
 			return (IRVal) {
-				.value_type = RVALUE_PHI,
+				.value_type = RVALUE,
 				.type = TYPE_BOOL,
-				.phi = { true_lbl, false_lbl }
+				.reg = phi
 			};
 		}
 		case EXPR_COMMA: {
@@ -1055,7 +1057,10 @@ static IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 			Type* restrict type = &tu->types[tu->exprs[ep->bin_op.left].cast_type];
 			int stride = tu->types[type->ptr_to].size;
 			
-			TB_Register diff = tb_inst_sub(func, tb_inst_ptr2int(func, l, TB_TYPE_I64), tb_inst_ptr2int(func, r, TB_TYPE_I64), TB_ASSUME_NSW);
+			l = tb_inst_ptr2int(func, l, TB_TYPE_I64);
+			r = tb_inst_ptr2int(func, r, TB_TYPE_I64);
+			
+			TB_Register diff = tb_inst_sub(func, l, r, TB_ASSUME_NSW);
 			TB_Register diff_in_elems = tb_inst_div(func, diff, tb_inst_sint(func, tb_node_get_data_type(func, diff), stride), true);
 			
 			return (IRVal) {
@@ -1272,20 +1277,13 @@ static IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 			return lhs;
 		}
 		case EXPR_TERNARY: {
-			IRVal cond = irgen_expr(tu, func, ep->ternary_op.left);
+			TB_Register cond = irgen_as_rvalue(tu, func, ep->ternary_op.left);
 			
-			TB_Label if_true, if_false;
+			TB_Label if_true = tb_inst_new_label_id(func);
+			TB_Label if_false = tb_inst_new_label_id(func);
 			TB_Label exit = tb_inst_new_label_id(func);
-			if (cond.value_type == RVALUE_PHI) {
-				if_true = cond.phi.if_true;
-				if_false = cond.phi.if_false;
-			} else {
-				if_true = tb_inst_new_label_id(func);
-				if_false = tb_inst_new_label_id(func);
-				
-				TB_Register reg = cvt2rval(tu, func, cond, ep->ternary_op.left);
-				tb_inst_if(func, reg, if_true, if_false);
-			}
+			
+			tb_inst_if(func, cond, if_true, if_false);
 			
 			TB_Register true_val;
 			{
@@ -1461,20 +1459,13 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, StmtIndex s) {
 			TB_Label entry_lbl = tb_inst_new_label_id(func);
 			tb_inst_label(func, entry_lbl);
 			
-			IRVal cond = irgen_expr(tu, func, sp->if_.cond);
+			TB_Register cond = irgen_as_rvalue(tu, func, sp->if_.cond);
 			
-			TB_Label if_true, if_false;
-			if (cond.value_type == RVALUE_PHI) {
-				if_true = cond.phi.if_true;
-				if_false = cond.phi.if_false;
-			} else {
-				if_true = tb_inst_new_label_id(func);
-				if_false = tb_inst_new_label_id(func);
-				
-				// Cast to bool
-				TB_Register reg = cvt2rval(tu, func, cond, sp->if_.cond);
-				tb_inst_if(func, reg, if_true, if_false);
-			}
+			TB_Label if_true = tb_inst_new_label_id(func);
+			TB_Label if_false = tb_inst_new_label_id(func);
+			
+			// Cast to bool
+			tb_inst_if(func, cond, if_true, if_false);
 			
 			tb_inst_label(func, if_true);
 			irgen_stmt(tu, func, sp->if_.body);
@@ -1494,10 +1485,17 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, StmtIndex s) {
 			break;
 		}
 		case STMT_WHILE: {
-			TB_Label header = tb_inst_new_label_id(func);
 			TB_Label body = tb_inst_new_label_id(func);
+			TB_Label header = tb_inst_new_label_id(func);
 			TB_Label exit = tb_inst_new_label_id(func);
 			sp->backing.l = exit;
+			
+			// NOTE(NeGate): this is hacky but as long as it doesn't
+			// break we should be good... what am i saying im the 
+			// developer of TB :p
+			// essentially we can store both the header and exit labels
+			// implicitly as one if they're next to each other
+			assert(header == exit - 1);
 			
 			tb_inst_label(func, header);
 			
@@ -1516,6 +1514,11 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, StmtIndex s) {
 		case STMT_DO_WHILE: {
 			TB_Label body = tb_inst_new_label_id(func);
 			TB_Label exit = tb_inst_new_label_id(func);
+			
+			// NOTE(NeGate): this is hacky but as long as it doesn't
+			// break we should be good... what am i saying im the 
+			// developer of TB :p
+			assert(body == exit - 1);
 			sp->backing.l = exit;
 			
 			tb_inst_label(func, body);
@@ -1531,10 +1534,17 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, StmtIndex s) {
 			break;
 		}
 		case STMT_FOR: {
-			TB_Label header = tb_inst_new_label_id(func);
 			TB_Label body = tb_inst_new_label_id(func);
+			TB_Label header = tb_inst_new_label_id(func);
 			TB_Label exit = tb_inst_new_label_id(func);
 			sp->backing.l = exit;
+			
+			// NOTE(NeGate): this is hacky but as long as it doesn't
+			// break we should be good... what am i saying im the 
+			// developer of TB :p
+			// essentially we can store both the header and exit labels
+			// implicitly as one if they're next to each other
+			assert(header == exit - 1);
 			
 			if (sp->for_.first) {
 				irgen_stmt(tu, func, sp->for_.first);
@@ -1559,6 +1569,13 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, StmtIndex s) {
 			
 			tb_inst_goto(func, header);
 			tb_inst_label(func, exit);
+			break;
+		}
+		case STMT_CONTINUE: {
+			// this is really hacky but we always store the loop header label one
+			// behind the exit label in terms of IDs.
+			TB_Label target = tu->stmts[sp->continue_.target].backing.l - 1;
+			tb_inst_goto(func, target);
 			break;
 		}
 		case STMT_BREAK: {

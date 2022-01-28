@@ -11,7 +11,10 @@ static void set_defines(CPP_Context* cpp) {
 }
 
 TB_Register compile_builtin(TranslationUnit* tu, TB_Function* func, const char* name, int arg_count, ExprIndex* args) {
-	if (strcmp(name, "__va_start") == 0) {
+	if (strcmp(name, "__debugbreak") == 0) {
+		tb_inst_debugbreak(func);
+		return 0;
+	} else if (strcmp(name, "__va_start") == 0) {
 		// TODO(NeGate): Remove this later because it will emotionally damage our optimizer.
 		// the issue is that it blatantly accesses out of bounds and we should probably just
 		// have a node for va_start in the backend instead.
@@ -130,6 +133,7 @@ TargetDescriptor get_x64_target_descriptor() {
 	BuiltinBinding* builtins = NULL;
 	
 	// msvc intrinsics
+	shput(builtins, "__debugbreak", 1);
 	shput(builtins, "__va_start", 1);
 	shput(builtins, "_umul128", 1);
 	shput(builtins, "_mul128", 1);

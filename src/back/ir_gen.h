@@ -18,13 +18,7 @@ typedef enum IRValType {
 	LVALUE_BITS,
 	LVALUE_LABEL,
 	LVALUE_FUNC,
-	LVALUE_EFUNC,
-	
-	// if value is a special kind of rvalue
-	// it essentially represents a phi node
-	// where it's true on one path and false
-	// on the other.
-	RVALUE_PHI
+	LVALUE_EFUNC
 } IRValType;
 
 typedef struct IRVal {
@@ -41,10 +35,6 @@ typedef struct IRVal {
 			short offset;
 			short width;
 		} bits;
-		struct {
-			TB_Label if_true;
-			TB_Label if_false;
-		} phi;
 		TB_Label label;
 	};
 } IRVal;
@@ -84,7 +74,7 @@ void irgen_warn(SourceLocIndex loc, const char* fmt, ...);
 InitNode* count_max_tb_init_objects(int node_count, InitNode* node, int* out_count);
 
 // func is NULL then it's not allowed to compute any dynamic initializer expressions
-InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, TB_InitializerID init, TB_Register addr, TypeIndex t, int node_count, InitNode* node, int* offset);
+InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, TB_InitializerID init, TB_Register addr, TypeIndex t, int node_count, InitNode* node, int offset);
 
 TB_Register irgen_as_rvalue(TranslationUnit* tu, TB_Function* func, ExprIndex e);
 IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e);

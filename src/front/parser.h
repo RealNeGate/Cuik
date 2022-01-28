@@ -4,6 +4,7 @@
 #include "arena.h"
 #include "lexer.h"
 #include "atoms.h"
+#include "settings.h"
 #include "big_array.h"
 
 #include <back/tb.h>
@@ -179,7 +180,8 @@ typedef enum ExprOp {
 	EXPR_NONE,
 	
 	EXPR_INT,
-	EXPR_FLOAT,
+	EXPR_FLOAT32,
+	EXPR_FLOAT64,
 	
 	EXPR_CHAR,
 	EXPR_STR,
@@ -523,6 +525,7 @@ bool type_equal(TranslationUnit* tu, TypeIndex a, TypeIndex b);
 
 StmtIndex resolve_unknown_symbol(TranslationUnit* tu, StmtIndex i);
 ConstValue const_eval(TranslationUnit* tu, ExprIndex e);
+bool const_eval_try_offsetof_hack(TranslationUnit* tu, ExprIndex e, uint64_t* out);
 
 void init_types(TranslationUnit* tu);
 TranslationUnit parse_file(TokenStream* restrict s);

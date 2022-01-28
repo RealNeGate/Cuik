@@ -91,15 +91,20 @@ void linker_add_input_file(Linker* l, const char filepath[]) {
 
 // TODO(NeGate): Do some testing to make sure this works with unicode input.
 // Like im pretty sure %S doesn't do the UTF-8 conversion and im being lazy about it.
-enum { CMD_LINE_MAX = 8192 };
+enum { CMD_LINE_MAX = 4096 };
 
-bool linker_invoke(Linker* l, const char* filename, bool linked_with_crt) {
+bool linker_invoke(Linker* l, const char* filename, LinkerSubsystem subsystem, bool linked_with_crt) {
 #if defined(_WIN32)
+	const char* subsystem_strings[] = {
+		[SUBSYSTEM_CONSOLE] = "console",
+		[SUBSYSTEM_WINDOWS] = "windows"
+	};
+	
 	wchar_t cmd_line[CMD_LINE_MAX];
 	int cmd_line_len = swprintf(cmd_line, CMD_LINE_MAX,
-								L"%s\\link.exe /nologo /machine:amd64 /subsystem:console"
-								" /debug:full /entry:mainCRTStartup /pdb:%S.pdb /out:%S.exe ",
-								l->vswhere.vs_exe_path, filename, filename);
+								L"%s\\link.exe /nologo /machine:amd64 /subsystem:%S"
+								" /debug:full /pdb:%S.pdb /out:%S.exe ",
+								l->vswhere.vs_exe_path, subsystem_strings[subsystem], filename, filename);
 	
 	// Add all the libpaths
 	{

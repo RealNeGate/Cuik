@@ -371,9 +371,15 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 					uint64_t e = c->macro_bucket_count[slot] + (slot * SLOTS_PER_MACRO_BUCKET);
 					
 					// Insert into buckets
+					if (c->macro_bucket_count[slot] >= SLOTS_PER_MACRO_BUCKET) {
+						generic_error(&l, "cannot store macro, out of memory!");
+					}
+					
 					c->macro_bucket_count[slot] += 1;
 					c->macro_bucket_keys[e] = l.token_start;
-					c->macro_bucket_keys_length[e] = l.token_end - l.token_start;
+					
+					size_t token_length = l.token_end - l.token_start;
+					c->macro_bucket_keys_length[e] = token_length;
 					
 					// if there's a parenthesis directly after the identifier
 					// it's a macro function
@@ -611,9 +617,9 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 						if (c->macro_bucket_keys_length[e] == length &&
 							memcmp(c->macro_bucket_keys[e], start, length) == 0) {
 							// remove swap
-							uint64_t last = c->macro_bucket_count[slot] - 1;
+							uint64_t last = base + (count - 1);
 							
-							if (c->macro_bucket_count[slot] > 1) {
+							if (i != last) {
 								c->macro_bucket_keys_length[e]  = c->macro_bucket_keys_length[last];
 								c->macro_bucket_keys[e]         = c->macro_bucket_keys[last];
 								c->macro_bucket_values_start[e] = c->macro_bucket_values_start[last];
@@ -979,6 +985,28 @@ static unsigned char* expand_ident(CPP_Context* restrict c, unsigned char* restr
 		
 		const unsigned char* args = c->macro_bucket_keys[def_i] + c->macro_bucket_keys_length[def_i];
 		
+		// Sometimes we have a layer of indirection when doing 
+		// preprocessor expansion:
+		//   #define PEAR(X) X;
+		//   #define APPLE PEAR
+		//   APPLE(int a)
+		if (def.length && *args != '(' && l->token_type == '(') {
+			// expand and append
+			Lexer temp_lex = (Lexer) { l->filepath, def.data, def.data };
+			lexer_read(&temp_lex);
+			
+			size_t token_length = temp_lex.token_end - temp_lex.token_start;
+			const unsigned char* token_data = temp_lex.token_start;
+			
+			if (find_define2(c, &def_i, token_data, token_length)) {
+				def = (string){ 
+					.data = c->macro_bucket_values_start[def_i],
+					.length = c->macro_bucket_values_end[def_i] - c->macro_bucket_values_start[def_i]
+				};
+				args = c->macro_bucket_keys[def_i] + c->macro_bucket_keys_length[def_i];
+			}
+		}
+		
 		// function macro
 		if (*args == '(' && l->token_type == '(') {
 			////////////////////////////////
@@ -1084,7 +1112,7 @@ static unsigned char* expand_ident(CPP_Context* restrict c, unsigned char* restr
 						if (as_string) abort();
 						
 						memcpy(temp_expansion, token_data, token_length);
-						temp_expansion+= token_length;
+						temp_expansion += token_length;
 						*temp_expansion++ = ' ';
 						
 						lexer_read(&def_lex);
@@ -1104,10 +1132,10 @@ static unsigned char* expand_ident(CPP_Context* restrict c, unsigned char* restr
 					}
 					
 					if (index >= 0) {
+						if (as_string) *temp_expansion++ = '\"';
+						
 						const unsigned char* end   = value_ranges[index*2 + 1];
 						const unsigned char* start = value_ranges[index*2 + 0];
-						
-						if (as_string) *temp_expansion++ = '\"';
 						
 						size_t count = end-start;
 						for (size_t i = 0; i < count; i++) {
@@ -1156,6 +1184,8 @@ static unsigned char* expand_ident(CPP_Context* restrict c, unsigned char* restr
 					c->macro_bucket_keys_length[def_i] = saved_length;
 				}
 			}
+			
+			tls_restore(value_ranges);
 		} else if (def.length) {
 			// expand and append
 			Lexer temp_lex = (Lexer) { l->filepath, def.data, def.data };

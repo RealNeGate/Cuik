@@ -15,23 +15,23 @@ typedef struct BigArrayHeader {
     char data[];
 } BigArrayHeader;
 
-void* __big_array_create(size_t type_size);
-void  __big_array_destroy(void* ptr);
-void* __big_array_reserve(void* ptr, size_t type_size, size_t extra);
+void* big_array_internal_create(size_t type_size);
+void  big_array_internal_destroy(void* ptr);
+void* big_array_internal_reserve(void* ptr, size_t type_size, size_t extra);
 
 #define BigArray(T) T*
-#define big_array_create(T) __big_array_create(sizeof(T))
-#define big_array_destroy(arr) __big_array_destroy(&arr)
-#define big_array_put(arr, new_data) do {                       \
-arr = __big_array_reserve(arr, sizeof(*arr), 1);        \
-BigArrayHeader* header = ((BigArrayHeader*) arr) - 1;   \
-arr[header->size++] = new_data;                         \
+#define big_array_create(T) big_array_internal_create(sizeof(T))
+#define big_array_destroy(arr) big_array_internal_destroy(&arr)
+#define big_array_put(arr, new_data) do {                             \
+arr = big_array_internal_reserve(arr, sizeof(*arr), 1);       \
+BigArrayHeader* header = ((BigArrayHeader*) arr) - 1;         \
+arr[header->size++] = new_data;                               \
 } while (0)
 #define big_array_length(arr) ((((BigArrayHeader*) (arr)) - 1)->size)
 
-#define big_array_put_uninit(arr, extra) do {                  \
-size_t extra_ = (extra);                               \
-arr = __big_array_reserve(arr, sizeof(*arr), extra_);  \
-BigArrayHeader* header = ((BigArrayHeader*) arr) - 1;  \
-header->size += extra_;                                \
+#define big_array_put_uninit(arr, extra) do {                         \
+size_t extra_ = (extra);                                      \
+arr = big_array_internal_reserve(arr, sizeof(*arr), extra_);  \
+BigArrayHeader* header = ((BigArrayHeader*) arr) - 1;         \
+header->size += extra_;                                       \
 } while (0)

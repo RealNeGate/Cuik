@@ -83,8 +83,26 @@ void enum_test() {
     printf("\tb1=%d\n", b1);
 }
 
+static int strings_equal(const char* src, const char* dst, size_t dstlen)
+{
+    while (*src && dstlen-- && *dst)
+    {
+        if (*src++ != *dst++)
+        {
+            return 0;
+        }
+    }
+
+    return (dstlen && *src == *dst) || (!dstlen && *src == 0);
+}
+
 void string_test() {
 	const char str[] = "Hello";
 	
+	printf("\n");
 	printf("String: %s\n", str);
+	printf("Compare: %s == %s (%d)\n", "Hola", "Hola", strings_equal("Hola", "Hola", 4));
+	printf("Compare: %s != %s (%d)\n", "Hello", "Bye", strings_equal("Hello", "Bye", 3));
+	printf("Compare: %s != %s (%d)\n", "Goat", "Boat", strings_equal("Goat", "Boat", 4));
+	printf("Compare: %s == %s (%d)\n", "Joat", "Joat", strings_equal("Joat", "Joat", 4));
 }

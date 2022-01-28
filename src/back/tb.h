@@ -200,6 +200,7 @@ extern "C" {
 		
 		TB_ATOMIC_CMPXCHG, /* These are always bundled together */
 		TB_ATOMIC_CMPXCHG2,
+		TB_DEBUGBREAK,
 		
 		/* Terminators */
 		TB_LABEL,
@@ -302,7 +303,7 @@ extern "C" {
 		TB_X86INTRIN_RSQRT,
 	} TB_RegTypeEnum;
 	
-#define TB_IS_NODE_SIDE_EFFECT(type) ((type) >= TB_LINE_INFO && (type) <= TB_ATOMIC_CMPXCHG2)
+#define TB_IS_NODE_SIDE_EFFECT(type) ((type) >= TB_LINE_INFO && (type) <= TB_DEBUGBREAK)
 #define TB_IS_NODE_TERMINATOR(type) ((type) >= TB_LABEL && (type) <= TB_RET)
 	
 #define TB_IS_INTEGER_TYPE(x) ((x) >= TB_I8 && (x) <= TB_I64)
@@ -499,6 +500,8 @@ extern "C" {
 	TB_API TB_Label tb_inst_get_current_label(TB_Function* f);
 	TB_API void tb_inst_loc(TB_Function* f, TB_FileID file, int line);
 	
+	TB_API void tb_inst_debugbreak(TB_Function* f);
+	
 	TB_API TB_Register tb_inst_param(TB_Function* f, int param_id);
 	TB_API TB_Register tb_inst_param_addr(TB_Function* f, int param_id);
 	
@@ -642,7 +645,11 @@ extern "C" {
 	////////////////////////////////
 	// Optimizer
 	////////////////////////////////
+	// Applies single function optimizations until it runs out
 	TB_API void tb_function_optimize(TB_Function* f, TB_OptLevel opt);
+	
+	// Applies whole program optimizations until it runs out
+	TB_API void tb_module_optimize(TB_Function* f, TB_OptLevel opt);
 	
 	TB_API bool tb_opt_mem2reg(TB_Function* f);
 	TB_API bool tb_opt_dead_expr_elim(TB_Function* f);

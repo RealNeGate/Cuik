@@ -3,12 +3,42 @@
 #include <sys/stat.h>
 
 #ifdef _WIN32
-#define fileno _fileno
-#define fstat _fstat
-#define stat _stat
+#include <windows.h>
 #endif
 
-// NOTE(NeGate): Replaces all \t \v with spaces
+static void remove_weird_whitespace(size_t len, char* text);
+
+#ifdef _WIN32
+static char* read_entire_file(const char* filepath) {
+	HANDLE file = CreateFileA(filepath, GENERIC_READ, FILE_SHARE_READ, 0, OPEN_EXISTING, 0, 0);
+	if (file == INVALID_HANDLE_VALUE) {
+		panic("error: could not open file '%s'!", filepath);
+	}
+	
+	LARGE_INTEGER file_size;
+	if (!GetFileSizeEx(file, &file_size)) {
+		panic("Internal preprocessor error: could not check file size of '%s'!", filepath);
+	}
+	
+	if (file_size.HighPart) {
+		panic("Internal preprocessor error: file '%s' is too big!", filepath);
+	}
+	
+	char* buffer = malloc(file_size.QuadPart + 17);
+	DWORD bytes_read;
+	if (!ReadFile(file, buffer, file_size.LowPart, &bytes_read, NULL)) {
+		panic("Internal preprocessor error: could not read file '%s'!", filepath);
+	}
+	
+	CloseHandle(file);
+	
+	// fat null terminator
+	memset(&buffer[bytes_read], 0, 17);
+	
+	remove_weird_whitespace(bytes_read, buffer);
+	return buffer;
+}
+#else
 static char* read_entire_file(const char* file_path) {
 	////////////////////////////////
 	// Read file
@@ -42,9 +72,18 @@ static char* read_entire_file(const char* file_path) {
 		fclose(file);
 	}
 	
-	////////////////////////////////
-	// Remove tabs
-	////////////////////////////////
+	
+	return text;
+}
+#endif
+
+static bool file_exists(const char *filename) {
+	struct stat buffer;
+	
+	return (stat(filename, &buffer) == 0);
+}
+
+static void remove_weird_whitespace(size_t len, char* text) {
 	// NOTE(NeGate): This code requires SSE4.1, it's not impossible to make
 	// ARM variants and such but yea.
 	for (size_t i = 0; i < len; i += 16) {
@@ -58,12 +97,4 @@ static char* read_entire_file(const char* file_path) {
 		bytes = _mm_blendv_epi8(bytes, _mm_set1_epi8(' '), test_ident);
 		_mm_store_si128((__m128i*) &text[i], bytes);
 	}
-	
-	return text;
-}
-
-static bool file_exists(const char *filename) {
-	struct stat buffer;
-	
-	return (stat(filename, &buffer) == 0);
 }

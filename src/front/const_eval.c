@@ -3,6 +3,56 @@
 #define unsigned_const(x) (ConstValue){ false, .unsigned_value = (x) }
 #define signed_const(x) (ConstValue){ true, .signed_value = (x) }
 
+bool const_eval_try_offsetof_hack(TranslationUnit* tu, ExprIndex e, uint64_t* out) {
+	const Expr* ep = &tu->exprs[e];
+	
+	// hacky but it just needs to support &(((T*)0)->apple)
+	const Expr* arrow = &tu->exprs[ep->unary_op.src];
+	if (arrow->op == EXPR_ARROW) {
+		const Expr* restrict arrow_base = &tu->exprs[arrow->arrow.base];
+		const Type* restrict record_type = NULL;
+		
+		if (arrow_base->op == EXPR_CAST) {
+			record_type = &tu->types[arrow_base->cast.type];
+			
+			// dereference
+			if (record_type->kind == KIND_PTR) {
+				record_type = &tu->types[record_type->ptr_to];
+			} else {
+				abort();
+			}
+			
+			if (record_type->kind != KIND_STRUCT && record_type->kind != KIND_UNION) {
+				return false;
+			}
+			
+			ConstValue pointer_value = const_eval(tu, arrow_base->cast.src);
+			assert(pointer_value.unsigned_value == 0 && "I mean i'm not honestly sure if we wanna allow for a non null pointer here");
+			((void)pointer_value);
+		} else {
+			return false;
+		}
+		
+		Atom name = arrow->arrow.name;
+		MemberIndex start = record_type->record.kids_start;
+		MemberIndex end = record_type->record.kids_end;
+		for (MemberIndex m = start; m < end; m++) {
+			Member* member = &tu->members[m];
+			
+			// TODO(NeGate): String interning would be nice
+			if (cstr_equals(name, member->name)) {
+				// TODO(NeGate): error messages
+				if (member->is_bitfield) abort();
+				
+				*out = member->offset;
+				return true;
+			}
+		}
+	}
+	
+	return false;
+}
+
 // TODO(NeGate): Type check this better
 ConstValue const_eval(TranslationUnit* tu, ExprIndex e) {
 	const Expr* ep = &tu->exprs[e];
@@ -113,52 +163,9 @@ ConstValue const_eval(TranslationUnit* tu, ExprIndex e) {
 			}
 			
 			case EXPR_ADDR: {
-				// hacky but it just needs to support &(((T*)0)->apple)
-				const Expr* restrict arrow = &tu->exprs[ep->unary_op.src];
-				if (arrow->op == EXPR_ARROW) {
-					const Expr* restrict arrow_base = &tu->exprs[arrow->arrow.base];
-					const Type* restrict record_type = NULL;
-					
-					if (arrow_base->op == EXPR_CAST) {
-						record_type = &tu->types[arrow_base->cast.type];
-						
-						// dereference
-						if (record_type->kind == KIND_PTR) {
-							record_type = &tu->types[record_type->ptr_to];
-						} else {
-							// TODO(NeGate): error messages
-							abort();
-						}
-						
-						if (record_type->kind != KIND_STRUCT && record_type->kind != KIND_UNION) {
-							abort();
-						}
-						
-						ConstValue pointer_value = const_eval(tu, arrow_base->cast.src);
-						assert(pointer_value.unsigned_value == 0 && "I mean i'm not honestly sure if we wanna allow for a non null pointer here");
-						((void)pointer_value);
-					} else {
-						// TODO(NeGate): error messages
-						abort();
-					}
-					
-					Atom name = arrow->arrow.name;
-					MemberIndex start = record_type->record.kids_start;
-					MemberIndex end = record_type->record.kids_end;
-					for (MemberIndex m = start; m < end; m++) {
-						Member* member = &tu->members[m];
-						
-						// TODO(NeGate): String interning would be nice
-						if (cstr_equals(name, member->name)) {
-							// TODO(NeGate): error messages
-							if (member->is_bitfield) abort();
-							
-							return unsigned_const(member->offset);
-						}
-					}
-					
-					// TODO(NeGate): error messages
-					abort();
+				uint64_t dst;
+				if (const_eval_try_offsetof_hack(tu, e, &dst)) {
+					return unsigned_const(dst); 
 				}
 				
 				// TODO(NeGate): error messages
