@@ -25,15 +25,15 @@
 
 #define COMPILER_VERSION "v0.01"
 
-// this is how many IR gen tasks it tries to grab at any one time
-#define MAX_MUNCH 8192
-
 static thrd_t threads[TB_MAX_THREADS];
 
 static atomic_size_t tasks_reserved;
 static atomic_size_t tasks_complete;
 static atomic_bool is_running;
 static size_t tasks_count;
+
+// this is how many IR gen tasks it tries to grab at any one time
+static size_t munch_size;
 
 // signalled when it's about to finish to notify the main
 // thread to wake up because it's about to finish with the
@@ -49,11 +49,15 @@ TB_Arch target_arch;
 TB_System target_system;
 TargetDescriptor target_desc;
 
+// crash_handler.c
+void hook_crash_handler();
+
 static int task_thread(void* param) {
 	while (is_running) {
-		size_t t = atomic_fetch_add(&tasks_reserved, MAX_MUNCH);
+		size_t munch = munch_size;
+		size_t t = atomic_fetch_add(&tasks_reserved, munch);
 		
-		if (t+(MAX_MUNCH-1) >= tasks_count) {
+		if (t+(munch-1) >= tasks_count) {
 			if (t < tasks_count) {
 				for (size_t i = t; i < tasks_count; i++) {
 					irgen_top_level_stmt(&translation_unit, translation_unit.top_level_stmts[i]);
@@ -70,10 +74,10 @@ static int task_thread(void* param) {
 			continue;
 		}
 		
-		for (size_t i = 0; i < MAX_MUNCH; i++) {
+		for (size_t i = 0; i < munch; i++) {
 			irgen_top_level_stmt(&translation_unit, translation_unit.top_level_stmts[t+i]);
 		}
-		tasks_complete += MAX_MUNCH;
+		tasks_complete += munch;
 	}
 	
 	arena_free();
@@ -191,6 +195,7 @@ static void compile_project(TB_Arch arch, TB_System sys, const char source_file[
 	
 	TB_FeatureSet features = { 0 };
 	mod = tb_module_create(arch, sys, &features);
+	irgen_init();
 	
 	// Semantics pass
 	for (size_t i = 0, count = arrlen(translation_unit.top_level_stmts); i < count; i++) {
@@ -218,6 +223,10 @@ static void compile_project(TB_Arch arch, TB_System sys, const char source_file[
 		is_running = true;
 		cnd_init(&tasks_condition);
 		mtx_init(&tasks_mutex, mtx_plain);
+		
+		munch_size = settings.num_of_worker_threads / arrlen(translation_unit.top_level_stmts);
+		if (munch_size < 5) munch_size = 5;
+		
 		for (int i = 0; i < settings.num_of_worker_threads; i++) {
 			thrd_create(&threads[i], task_thread, NULL);
 		}
@@ -241,6 +250,7 @@ static void compile_project(TB_Arch arch, TB_System sys, const char source_file[
 		cnd_destroy(&tasks_condition);
 	}
 	
+	irgen_deinit();
 	cpp_deinit(&cpp_ctx);
 	arena_free();
 	atoms_deinit();
@@ -286,6 +296,8 @@ static bool live_compile(const char source_file[], const char obj_output_path[],
 static bool dump_tokens(const char source_file[]);
 
 int main(int argc, char* argv[]) {
+	hook_crash_handler();
+	
 #if 0
 	// Use this code to generate the 10 million line test
 	FILE* file = fopen("tests/test5.c", "wb");
@@ -432,6 +444,8 @@ int main(int argc, char* argv[]) {
 			settings.optimization_level = TB_OPT_O1;
 		} else if (strcmp(key, "obj") == 0) {
 			settings.is_object_only = true;
+		} else if (strcmp(key, "debug") == 0) {
+			settings.debug_info = true;
 		} else if (strcmp(key, "out") == 0) {
 			if (*value == '\0') {
 				printf("expected path after -out option\n");
@@ -502,7 +516,7 @@ int main(int argc, char* argv[]) {
 				if (settings.print_tb_ir) {
 					fclose(tbir_output_file);
 				} else if (mode != COMPILER_MODE_CHECK) {
-					if (!tb_module_export(mod, obj_output_path)) abort();
+					if (!tb_module_export(mod, obj_output_path, settings.debug_info)) abort();
 				}
 				
 				tb_module_destroy(mod);
@@ -721,7 +735,7 @@ static bool live_compile(const char source_file[], const char obj_output_path[],
 			timed_block("compilation") {
 				compile_project(target_arch, target_sys, source_file, true);
 				
-				if (!tb_module_export(mod, obj_output_path)) abort();
+				if (!tb_module_export(mod, obj_output_path, false)) abort();
 				tb_module_destroy(mod);
 			}
 			

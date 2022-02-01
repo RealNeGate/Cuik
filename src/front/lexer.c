@@ -314,7 +314,7 @@ void lexer_read(Lexer* restrict l) {
 	const unsigned char* start = current;
 	uint8_t initial_class = char_classes[*current++];
 	
-	// TODO(NeGate): Hacky but yea
+	// Hacky but yea
 	if (start[0] == 'L' && start[1] == '\"') {
 		initial_class = CHAR_CLASS_STRING;
 		current++;
@@ -339,12 +339,21 @@ void lexer_read(Lexer* restrict l) {
 					   (*current >= 'A' && *current <= 'F') ||
 					   (*current >= 'a' && *current <= 'f')) { current++; }
 				
-				if (*current == '.') {
-					// TODO(NeGate): floats
-					abort();
-				}
-				
 				l->token_type = TOKEN_INTEGER;
+				if (*current == '.') {
+					// floats
+					l->token_type = TOKEN_FLOAT;
+					current++;
+					
+					while (char_classes[*current] == CHAR_CLASS_NUMBER) { current++; }
+					
+					if (*current == 'p') {
+						current++;
+						if (*current == '+' || *current == '-') current++;
+						
+						while (char_classes[*current] == CHAR_CLASS_NUMBER) { current++; }
+					}
+				}
 			} else {
 				while (char_classes[*current] == CHAR_CLASS_NUMBER) { current++; }
 				l->token_type = TOKEN_INTEGER;
@@ -366,8 +375,23 @@ void lexer_read(Lexer* restrict l) {
 			}
 			
 			// suffix
-			while (char_classes[*current] == CHAR_CLASS_IDENT) {
+			if (*current == 'i') {
 				current++;
+				
+				// at most it's two numbers
+				current += (char_classes[*current] == CHAR_CLASS_NUMBER);
+				current += (char_classes[*current] == CHAR_CLASS_NUMBER);
+			} else if (*current == 'u') {
+				current++;
+				current += (*current == 'i'); // you can also write ui32 or just u32
+				
+				// at most it's two numbers
+				current += (char_classes[*current] == CHAR_CLASS_NUMBER);
+				current += (char_classes[*current] == CHAR_CLASS_NUMBER);
+			} else {
+				while (char_classes[*current] == CHAR_CLASS_IDENT) {
+					current++;
+				}
 			}
 			break;
 		}
@@ -565,7 +589,7 @@ double parse_float(size_t len, const char* str) {
 	char* end;
 	double i = strtod(str, &end);
 	if (end != &str[len]) {
-		if (*end != 'f' && *end != 'd') abort();
+		if (*end != 'f' && *end != 'd' && *end != 'F' && *end != 'D') abort();
 	}
 	
 	return i;

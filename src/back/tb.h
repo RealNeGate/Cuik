@@ -426,7 +426,7 @@ extern "C" {
 	TB_API bool tb_module_compile(TB_Module* m);
 	
 	// Exports an object file with all the machine code and symbols generated.
-	TB_API bool tb_module_export(TB_Module* m, const char* path);
+	TB_API bool tb_module_export(TB_Module* m, const char* path, bool emit_debug_info);
 	
 	TB_API void tb_module_export_jit(TB_Module* m);
 	

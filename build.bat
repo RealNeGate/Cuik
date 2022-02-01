@@ -1,11 +1,12 @@
 call vcvars64
 
-set clang_settings=-march=haswell -maes -O0 -Werror -Wall -Wno-gnu-designator -Wno-unused-function -g -gcodeview -D_CRT_SECURE_NO_WARNINGS
+set clang_settings=-march=haswell -maes -O2 -DNDEBUG -Werror -Wall -Wno-gnu-designator -Wno-unused-function -g -gcodeview -D_CRT_SECURE_NO_WARNINGS -lDbgHelp
 
 set cuik_source_files=src/main.c ^
 	src/tls.c ^
 	src/arena.c ^
 	src/big_array.c ^
+	src/crash_handler.c ^
 	src/targets/x64.c ^
 	src/front/preproc.c ^
 	src/front/lexer.c ^

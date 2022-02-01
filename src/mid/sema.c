@@ -903,7 +903,7 @@ void sema_check(TranslationUnit* tu, StmtIndex s) {
 				linkage = TB_LINKAGE_PRIVATE;
 				
 				char temp[1024];
-				sprintf_s(temp, 1024, "%s_%p", name, name);
+				sprintf_s(temp, 1024, "%s@%d", name, s);
 				
 				func = tb_prototype_build(mod, proto, temp, linkage);
 			} else {
@@ -950,6 +950,9 @@ void sema_check(TranslationUnit* tu, StmtIndex s) {
 			if (sp->decl.initial && tu->exprs[sp->decl.initial].op == EXPR_INITIALIZER) {
 				Expr* restrict ep = &tu->exprs[sp->decl.initial];
 				
+				//type_as_string(tu, sizeof(temp_string0), temp_string0, sp->decl.type);
+				//printf("%s %s = ...;\n", temp_string0, name);
+				
 				int node_count = ep->init.count;
 				InitNode* nodes = ep->init.nodes;
 				
@@ -961,7 +964,9 @@ void sema_check(TranslationUnit* tu, StmtIndex s) {
 				
 				// Initialize all const expressions
 				// We don't support anything runtime in these expressions for now
-				eval_initializer_objects(tu, NULL, init, TB_NULL_REG, type_index, node_count, nodes, 0);
+				eval_initializer_objects(tu, NULL, sp->loc, init, TB_NULL_REG, type_index, node_count, nodes, 0);
+				
+				walk_initializer_for_sema(tu, ep->init.count, ep->init.nodes);
 			} else {
 				init = tb_initializer_create(mod, type->size, type->align, 0);
 			}

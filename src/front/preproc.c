@@ -19,7 +19,7 @@ static uint64_t hash_ident(const unsigned char* at, size_t length);
 static bool is_defined(CPP_Context* restrict c, const unsigned char* start, size_t length);
 static void expect(Lexer* l, char ch);
 static void skip_directive_body(Lexer* l);
-static int eval(CPP_Context* restrict c, Lexer* l);
+static intmax_t eval(CPP_Context* restrict c, Lexer* l);
 static _Noreturn void generic_error(Lexer* l, const char* msg);
 
 static unsigned char* expand_ident(CPP_Context* restrict c, unsigned char* restrict out, Lexer* l);
@@ -805,20 +805,17 @@ static bool find_define2(CPP_Context* restrict c, size_t* out_index, const unsig
 ////////////////////////////////
 // Macro expressions
 ////////////////////////////////
-static int eval_l0(CPP_Context* restrict c, Lexer* l) {
+static intmax_t eval_l0(CPP_Context* restrict c, Lexer* l) {
 	bool flip = false;
 	while (l->token_type == '!') {
 		flip = !flip;
 		lexer_read(l);
 	}
 	
-	int val;
+	intmax_t val;
 	if (l->token_type == TOKEN_INTEGER) {
-		char temp[16];
-		memcpy_s(temp, 16, l->token_start, l->token_end - l->token_start);
-		temp[l->token_end - l->token_start] = '\0';
-		
-		val = atoi(temp);
+		IntSuffix suffix;
+		val = parse_int(l->token_end - l->token_start, (const char*)l->token_start, &suffix);
 		lexer_read(l);
 	} else if (l->token_type == TOKEN_IDENTIFIER) {
 		assert(!is_defined(c, l->token_start, l->token_end - l->token_start));
@@ -836,8 +833,8 @@ static int eval_l0(CPP_Context* restrict c, Lexer* l) {
 	return flip ? !val : val;
 }
 
-static int eval_l6(CPP_Context* restrict c, Lexer* l) {
-	int left = eval_l0(c, l);
+static intmax_t eval_l6(CPP_Context* restrict c, Lexer* l) {
+	intmax_t left = eval_l0(c, l);
 	
 	while (l->token_type == '>' ||
 		   l->token_type == '<' ||
@@ -846,7 +843,7 @@ static int eval_l6(CPP_Context* restrict c, Lexer* l) {
 		int t = l->token_type;
 		lexer_read(l);
 		
-		int right = eval_l0(c, l);
+		intmax_t right = eval_l0(c, l);
 		switch (t) {
 			case '>': left = left > right; break;
 			case '<': left = left < right; break;
@@ -858,15 +855,15 @@ static int eval_l6(CPP_Context* restrict c, Lexer* l) {
 	return left;
 }
 
-static int eval_l7(CPP_Context* restrict c, Lexer* l) {
-	int left = eval_l6(c, l);
+static intmax_t eval_l7(CPP_Context* restrict c, Lexer* l) {
+	intmax_t left = eval_l6(c, l);
 	
 	while (l->token_type == TOKEN_NOT_EQUAL ||
 		   l->token_type == TOKEN_EQUALITY) {
 		int t = l->token_type;
 		lexer_read(l);
 		
-		int right = eval_l6(c, l);
+		intmax_t right = eval_l6(c, l);
 		if (t == TOKEN_EQUALITY) left = (left == right);
 		else left = (left != right);
 	}
@@ -874,13 +871,13 @@ static int eval_l7(CPP_Context* restrict c, Lexer* l) {
 	return left;
 }
 
-static int eval_l11(CPP_Context* restrict c, Lexer* l) {
-	int left = eval_l7(c, l);
+static intmax_t eval_l11(CPP_Context* restrict c, Lexer* l) {
+	intmax_t left = eval_l7(c, l);
 	
 	while (l->token_type == TOKEN_DOUBLE_AND) {
 		lexer_read(l);
 		
-		int right = eval_l7(c, l);
+		intmax_t right = eval_l7(c, l);
 		left = left && right;
 	}
 	
@@ -888,12 +885,12 @@ static int eval_l11(CPP_Context* restrict c, Lexer* l) {
 }
 
 static int eval_l12(CPP_Context* restrict c, Lexer* l) {
-	int left = eval_l11(c, l);
+	intmax_t left = eval_l11(c, l);
 	
 	while (l->token_type == TOKEN_DOUBLE_OR) {
 		lexer_read(l);
 		
-		int right = eval_l11(c, l);
+		intmax_t right = eval_l11(c, l);
 		left = left || right;
 	}
 	
@@ -1249,9 +1246,10 @@ static unsigned char* expand(CPP_Context* restrict c, unsigned char* restrict ou
 	return out;
 }
 
-static int eval(CPP_Context* restrict c, Lexer* l) {
+static intmax_t eval(CPP_Context* restrict c, Lexer* l) {
 	// Expand
-	int line = 1;
+	int line = l->current_line;
+	
 	unsigned char* out_start = tls_push(4096);
 	unsigned char* out_end = expand(c, out_start, l);
 	*out_end++ = '\0';
@@ -1260,7 +1258,7 @@ static int eval(CPP_Context* restrict c, Lexer* l) {
 	Lexer temp_lex = (Lexer) { l->filepath, out_start, out_start, line };
 	lexer_read(&temp_lex);
 	
-	int val = eval_l12(c, &temp_lex);
+	intmax_t val = eval_l12(c, &temp_lex);
 	
 	tls_restore(out_start);
 	return val;

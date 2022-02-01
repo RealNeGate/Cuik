@@ -243,7 +243,6 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
         .lpszClassName = L"opengl_window_class",
     };
     ATOM atom = RegisterClassExW(&wc);
-	GetLastError();
     Assert(atom && "Failed to register window class");
 
     // window properties - width, height and style

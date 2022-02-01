@@ -1119,7 +1119,7 @@ static ExprIndex parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
 	} else if (tokens_get(s)->type == TOKEN_INTEGER) {
 		Token* t = tokens_get(s);
 		IntSuffix suffix;
-		int64_t i = parse_int(t->end - t->start, (const char*)t->start, &suffix);
+		uint64_t i = parse_int(t->end - t->start, (const char*)t->start, &suffix);
 		
 		ExprIndex e = make_expr(tu);
 		tu->exprs[e] = (Expr) {
@@ -2056,6 +2056,9 @@ static TypeIndex parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s,
 		
 		tls_restore(params);
 	} else if (tokens_get(s)->type == '[') {
+		size_t depth = 0;
+		size_t* counts = tls_save();
+		
 		do {
 			tokens_next(s);
 			
@@ -2068,8 +2071,15 @@ static TypeIndex parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s,
 				expect(s, ']');
 			}
 			
-			type = new_array(tu, type, count);
+			tls_push(sizeof(size_t));
+			counts[depth++] = count;
 		} while (tokens_get(s)->type == '[');
+		
+		while (depth--) {
+			type = new_array(tu, type, counts[depth]);
+		}
+		
+		tls_restore(counts);
 	}
 	
 	return type;

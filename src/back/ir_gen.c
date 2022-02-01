@@ -15,6 +15,9 @@ static _Thread_local TB_Register return_value_address;
 
 static FILE* tbir_output_file;
 
+TB_Function* static_init_func;
+static mtx_t static_init_mutex;
+
 _Noreturn void irgen_fatal(SourceLocIndex loc, const char* fmt, ...) {
 	SourceLoc* l = &ir_gen_tokens.line_arena[loc];
 	printf("%s:%d: error: ", l->file, l->line);
@@ -168,9 +171,9 @@ static TB_Register gen_wide_string_constant(SourceLocIndex loc, TB_Function* fun
 
 static TB_Register cast_reg(TB_Function* func, TB_Register reg, const Type* src, const Type* dst) {
 	// Cast into correct type
-	if (src->kind >= KIND_BOOL &&
+	if (src->kind >= KIND_CHAR &&
 		src->kind <= KIND_LONG &&
-		dst->kind >= KIND_BOOL && 
+		dst->kind >= KIND_CHAR && 
 		dst->kind <= KIND_LONG) {
 		if (dst->kind > src->kind) {
 			// up-casts
@@ -180,6 +183,14 @@ static TB_Register cast_reg(TB_Function* func, TB_Register reg, const Type* src,
 			// down-casts
 			reg = tb_inst_trunc(func, reg, ctype_to_tbtype(dst));
 		}
+	} else if (src->kind >= KIND_CHAR &&
+			   src->kind <= KIND_LONG &&
+			   dst->kind == KIND_BOOL) {
+		reg = tb_inst_cmp_ne(func, reg, tb_inst_uint(func, ctype_to_tbtype(src), 0));
+	} else if (src->kind == KIND_BOOL &&
+			   dst->kind >= KIND_CHAR &&
+			   dst->kind <= KIND_LONG) {
+		reg = tb_inst_zxt(func, reg, ctype_to_tbtype(dst));
 	} else if (src->kind >= KIND_CHAR &&
 			   src->kind <= KIND_LONG &&
 			   dst->kind == KIND_PTR) {
@@ -286,10 +297,7 @@ InitNode* count_max_tb_init_objects(int node_count, InitNode* node, int* out_cou
 // TODO(NeGate): Revisit this code as a smarter man...
 // if the addr is 0 then we only apply constant initializers.
 // func doesn't need to be non-NULL if it's addr is NULL.
-InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, TB_InitializerID init, TB_Register addr, TypeIndex t, int node_count, InitNode* node, int offset) {
-	// TODO(NeGate): Implement line info for this code for error handling.
-	SourceLocIndex loc = 0;
-	
+InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, SourceLocIndex loc, TB_InitializerID init, TB_Register addr, TypeIndex t, int node_count, InitNode* node, int offset) {
 	// Identify boundaries:
 	//   Scalar types are 1
 	//   Records depend on the member count
@@ -391,7 +399,7 @@ InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, TB_In
 		}
 		
 		if (node->kids_count > 0) {
-			node = eval_initializer_objects(tu, func, init, addr,
+			node = eval_initializer_objects(tu, func, loc, init, addr,
 											child_type, node->kids_count,
 											node + 1, offset + relative_offset);
 		} else {
@@ -484,7 +492,7 @@ InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, TB_In
 	return node;
 }
 
-static TB_Register gen_local_initializer(TranslationUnit* tu, TB_Function* func, TypeIndex t, int node_count, InitNode* nodes) {
+static TB_Register gen_local_initializer(TranslationUnit* tu, TB_Function* func, SourceLocIndex loc, TypeIndex t, int node_count, InitNode* nodes) {
 	// Walk initializer for max constant expression initializers.
 	int max_tb_objects = 0;
 	count_max_tb_init_objects(node_count, nodes, &max_tb_objects);
@@ -497,12 +505,18 @@ static TB_Register gen_local_initializer(TranslationUnit* tu, TB_Function* func,
 	TB_Register addr = tb_inst_local(func, tu->types[t].size, tu->types[t].align);
 	
 	// Initialize all const expressions
-	eval_initializer_objects(tu, func, init, TB_NULL_REG, t, node_count, nodes, 0);
+	eval_initializer_objects(tu, func, loc, init, TB_NULL_REG, t, node_count, nodes, 0);
 	tb_inst_initialize_mem(func, addr, init);
 	
 	// Initialize all dynamic expressions
-	eval_initializer_objects(tu, func, init, addr, t, node_count, nodes, 0);
+	eval_initializer_objects(tu, func, loc, init, addr, t, node_count, nodes, 0);
 	return addr;
+}
+
+static void insert_label(TB_Function* func) {
+	if (tb_inst_get_current_label(func) == 0) {
+		tb_inst_label(func, tb_inst_new_label_id(func));
+	}
 }
 
 static IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
@@ -591,7 +605,7 @@ static IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 			};
 		}
 		case EXPR_INITIALIZER: {
-			TB_Register r = gen_local_initializer(tu, func, ep->init.type, ep->init.count, ep->init.nodes);
+			TB_Register r = gen_local_initializer(tu, func, ep->loc, ep->init.type, ep->init.count, ep->init.nodes);
 			
 			return (IRVal) {
 				.value_type = LVALUE,
@@ -987,10 +1001,6 @@ static IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 			// try_rhs: if (b) { goto true    } else { goto false }
 			bool is_and = (ep->op == EXPR_LOGICAL_AND);
 			
-			// TODO(NeGate): Remove this later because it kills
-			// the codegen a bit in certain cases.
-			tb_inst_label(func, tb_inst_new_label_id(func));
-			
 			TB_Label try_rhs_lbl = tb_inst_new_label_id(func);
 			TB_Label phi_lbl = tb_inst_new_label_id(func);
 			
@@ -1315,11 +1325,7 @@ static IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 static void irgen_stmt(TranslationUnit* tu, TB_Function* func, StmtIndex s) {
 	Stmt* restrict sp = &tu->stmts[s];
 	
-	if (false) {
-		if (tb_inst_get_current_label(func) == 0) {
-			tb_inst_label(func, tb_inst_new_label_id(func));
-		}
-		
+	if (settings.debug_info) {
 		// TODO(NeGate): Fix this up later!!!
 		static _Thread_local TB_FileID last_file_id = 0;
 		static _Thread_local const char* last_filepath = NULL;
@@ -1380,7 +1386,7 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, StmtIndex s) {
 				Expr* restrict ep = &tu->exprs[sp->decl.initial];
 				
 				if (ep->op == EXPR_INITIALIZER) {
-					addr = gen_local_initializer(tu, func, type_index, ep->init.count, ep->init.nodes);
+					addr = gen_local_initializer(tu, func, ep->loc, type_index, ep->init.count, ep->init.nodes);
 				} else {
 					addr = tb_inst_local(func, size, align);
 					
@@ -1643,6 +1649,10 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, StmtIndex s) {
 		default:
 		__builtin_unreachable();
 	}
+	
+	if (sp->op != STMT_GOTO && sp->op != STMT_RETURN) {
+		insert_label(func);
+	}
 }
 
 static void gen_func_body(TranslationUnit* tu, TypeIndex type, StmtIndex s) {
@@ -1682,6 +1692,11 @@ static void gen_func_body(TranslationUnit* tu, TypeIndex type, StmtIndex s) {
 	// in TB.
 	StmtIndex body = (StmtIndex)tu->stmts[s].decl.initial;
 	
+	// main needs to call the static init
+	if (strcmp((const char*)tu->stmts[s].decl.name, "main") == 0) {
+		tb_inst_call(func, TB_TYPE_VOID, static_init_func, 0, NULL);
+	}
+	
 	// Body
 	function_type = type;
 	irgen_stmt(tu, func, body);
@@ -1718,6 +1733,24 @@ static void gen_func_body(TranslationUnit* tu, TypeIndex type, StmtIndex s) {
 	//tb_function_free(func);
 }
 
+void irgen_init() {
+	mtx_init(&static_init_mutex, mtx_plain);
+	
+	TB_FunctionPrototype* proto = tb_prototype_create(mod, TB_STDCALL, TB_TYPE_VOID, 0, false);
+	static_init_func = tb_prototype_build(mod, proto, "__static_init", TB_LINKAGE_PRIVATE);
+}
+
+void irgen_deinit() {
+	tb_inst_ret(static_init_func, TB_NULL_REG);
+	
+	if (settings.print_tb_ir) {
+		tb_function_print(static_init_func, tb_default_print_callback, tbir_output_file);
+		fprintf(tbir_output_file, "\n");
+	} else {
+		tb_module_compile_func(mod, static_init_func);
+	}
+}
+
 void irgen_top_level_stmt(TranslationUnit* tu, StmtIndex s) {
 	if (tu->stmts[s].op == STMT_FUNC_DECL) {
 		TypeIndex type = tu->stmts[s].decl.type;
@@ -1729,5 +1762,27 @@ void irgen_top_level_stmt(TranslationUnit* tu, StmtIndex s) {
 		}
 		
 		gen_func_body(tu, type, s);
+	} else if (tu->stmts[s].op == STMT_GLOBAL_DECL) {
+		if (!tu->stmts[s].decl.attrs.is_used) return;
+		
+		Expr* restrict ep = &tu->exprs[tu->stmts[s].decl.initial];
+		if (ep->op == EXPR_INITIALIZER) {
+			mtx_lock(&static_init_mutex);
+			
+			TypeIndex t = ep->init.type;
+			if (t == TYPE_VOID) {
+				ep->init.type = t = tu->stmts[s].decl.type;
+			}
+			
+			size_t node_count = ep->init.count;
+			InitNode* nodes = ep->init.nodes;
+			
+			TB_Register addr = tb_inst_get_global_address(static_init_func, tu->stmts[s].backing.g);
+			
+			// Initialize all dynamic expressions
+			eval_initializer_objects(tu, static_init_func, ep->loc, -1, addr, t, node_count, nodes, 0);
+			
+			mtx_unlock(&static_init_mutex);
+		}
 	}
 }

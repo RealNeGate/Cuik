@@ -3,13 +3,15 @@
 #include <stdatomic.h>
 
 typedef struct CompilerSettings {
-	bool is_object_only;
-	bool print_tb_ir;
 	const char* output_path;
 	TB_OptLevel optimization_level;
-	bool pedantic;
-	atomic_bool using_winmain;
 	
+	bool is_object_only : 1;
+	bool print_tb_ir : 1;
+	bool debug_info : 1;
+	bool pedantic : 1;
+	
+	atomic_bool using_winmain;
 	int num_of_worker_threads;
 } CompilerSettings;
 

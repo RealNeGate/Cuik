@@ -8,6 +8,7 @@ Cuik/
 *.pdb
 *.rdbg
 
+tests/the_fuzzer/
 tests/stb_image.c
 tests/test5.c
 preprocessed.c
