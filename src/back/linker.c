@@ -103,7 +103,8 @@ bool linker_invoke(Linker* l, const char* filename, LinkerSubsystem subsystem, b
 	wchar_t cmd_line[CMD_LINE_MAX];
 	int cmd_line_len = swprintf(cmd_line, CMD_LINE_MAX,
 								L"%s\\link.exe /nologo /machine:amd64 /subsystem:%S"
-								" /debug:full /pdb:%S.pdb /out:%S.exe /incremental:no ",
+								" /debug /pdb:%S.pdb /out:%S.exe /incremental:no "
+								" /entry:mainCRTStartup ",
 								l->vswhere.vs_exe_path, subsystem_strings[subsystem], filename, filename);
 	
 	// Add all the libpaths
@@ -118,6 +119,8 @@ bool linker_invoke(Linker* l, const char* filename, LinkerSubsystem subsystem, b
 	
 	if (linked_with_crt) {
 		cmd_line_len += swprintf(&cmd_line[cmd_line_len], CMD_LINE_MAX - cmd_line_len, L"/defaultlib:libcmt ");
+	} else {
+		cmd_line_len += swprintf(&cmd_line[cmd_line_len], CMD_LINE_MAX - cmd_line_len, L"/nodefaultlib ");
 	}
 	
 	// Add all the input files

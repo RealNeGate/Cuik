@@ -232,8 +232,23 @@ TranslationUnit parse_file(TokenStream* restrict s) {
 					tu.stmts[n].op = STMT_FUNC_DECL;
 					tu.stmts[n].decl.initial = (StmtIndex)body;
 					
+					ExprIndex symbol_list_start = 0;
+					ExprIndex symbol_list_end = 0;
+					
 					// resolve any unresolved label references
 					for (size_t i = starting_point, count = big_array_length(tu.exprs); i < count; i++) {
+						if (tu.exprs[i].op == EXPR_SYMBOL ||
+							tu.exprs[i].op == EXPR_UNKNOWN_SYMBOL) {
+							if (symbol_list_start == 0) {
+								// initialize chain
+								symbol_list_start = symbol_list_end = i;
+							} else {
+								// append
+								tu.exprs[symbol_list_end].next_symbol_in_chain = i;
+								symbol_list_end = i;
+							}
+						}
+						
 						if (tu.exprs[i].op == EXPR_UNKNOWN_SYMBOL) {
 							const unsigned char* name = tu.exprs[i].unknown_sym;
 							
@@ -245,6 +260,11 @@ TranslationUnit parse_file(TokenStream* restrict s) {
 						}
 					}
 					
+					if (symbol_list_end) {
+						tu.exprs[symbol_list_end].next_symbol_in_chain = 0;
+					}
+					
+					tu.stmts[body].compound.first_symbol = symbol_list_start;
 					shfree(labels);
 				} else if (tokens_get(s)->type == ';') {
 					// Forward decl
@@ -336,11 +356,7 @@ TranslationUnit parse_file(TokenStream* restrict s) {
 	// NOTE(NeGate): This is a Cuik extension, it allows normal symbols
 	// like functions to declared out of order.
 	for (size_t i = 0, count = big_array_length(tu.exprs); i < count; i++) {
-		if (tu.exprs[i].op == EXPR_SYMBOL) {
-			StmtIndex sym = tu.exprs[i].symbol;
-			
-			tu.stmts[sym].decl.attrs.is_used = true;
-		} else if (tu.exprs[i].op == EXPR_UNKNOWN_SYMBOL) {
+		if (tu.exprs[i].op == EXPR_UNKNOWN_SYMBOL) {
 			if (!resolve_unknown_symbol(&tu, i)) {
 				// try enum names
 				const unsigned char* name = tu.exprs[i].unknown_sym;
@@ -378,7 +394,6 @@ StmtIndex resolve_unknown_symbol(TranslationUnit* tu, StmtIndex i) {
 	
 	// Parameters are local and a special case how tf
 	assert(sym->storage_class != STORAGE_PARAM);
-	tu->stmts[sym->stmt].decl.attrs.is_used = true;
 	
 	tu->exprs[i].op = EXPR_SYMBOL;
 	tu->exprs[i].symbol = sym->stmt;

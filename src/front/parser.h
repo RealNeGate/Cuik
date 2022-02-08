@@ -283,6 +283,11 @@ typedef struct Stmt {
 		struct StmtCompound {
 			StmtIndex* kids;
 			int kids_count;
+			
+			// acceleration structure for scrubbing for symbols
+			// it's a linked list and it's only relevant for the FUNC_DECL's
+			// compound node
+			ExprIndex first_symbol;
 		} compound;
 		struct StmtExpr {
 			ExprIndex expr;
@@ -398,8 +403,22 @@ typedef struct Expr {
 	TypeIndex cast_type;
 	
 	union {
-		Atom unknown_sym;
-		StmtIndex symbol;
+		struct {
+			Atom unknown_sym;
+			
+			// aliases with next_symbol_in_chain
+			ExprIndex next_symbol_in_chain2;
+		};
+		
+		// TODO(NeGate): rename this unnamed struct to 'symbol'
+		struct {
+			// linked list of symbols within a function used to 
+			// analyze used symbols more easily
+			StmtIndex symbol;
+			uint32_t _;
+			
+			ExprIndex next_symbol_in_chain;
+		};
 		
 		// EXPR_PARAM
 		int param_num;
@@ -468,7 +487,7 @@ typedef struct Expr {
 		} int_num;
 	};
 } Expr;
-
+_Static_assert(offsetof(Expr, next_symbol_in_chain) == offsetof(Expr, next_symbol_in_chain2), "these should be aliasing");
 _Static_assert(sizeof(Expr) <= 32, "We shouldn't exceed 32 bytes");
 
 typedef struct Decl {

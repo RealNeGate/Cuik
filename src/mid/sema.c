@@ -917,28 +917,10 @@ void sema_check(TranslationUnit* tu, StmtIndex s) {
 			function_stmt = 0;
 			break;
 		}
-		case STMT_DECL: {
-			if (!sp->decl.attrs.is_used) return;
-			
-			// forward decls
-			// TODO(NeGate): This is hacky
-			if (name[0] == '_') {
-				ptrdiff_t search = shgeti(target_desc.builtin_func_map, name);
-				
-				// NOTE(NeGate): 0 doesn't mean a null index in this context, it
-				// maps to the first external but i don't care we won't be using it
-				// later on it's just clearer.
-				if (search >= 0) {
-					sp->backing.e = 0;
-					break;
-				}
-			}
-			
-			sp->backing.e = tb_extern_create(mod, name);
-			break;
-		}
+		case STMT_DECL:
 		case STMT_GLOBAL_DECL: {
-			if (!sp->decl.attrs.is_used) return;
+			if (!sp->decl.attrs.is_used) break;
+			sema_warn(sp->loc, "Declaration '%s' used.", name);
 			
 			if (sp->decl.attrs.is_static && sp->decl.attrs.is_extern) {
 				sema_error(sp->loc, "Global declaration '%s' cannot be both static and extern.", name);
@@ -946,35 +928,93 @@ void sema_check(TranslationUnit* tu, StmtIndex s) {
 				break;
 			}
 			
-			TB_InitializerID init;
-			if (sp->decl.initial && tu->exprs[sp->decl.initial].op == EXPR_INITIALIZER) {
-				Expr* restrict ep = &tu->exprs[sp->decl.initial];
+			if (sp->decl.attrs.is_extern || sp->decl.initial == 0) {
+				// forward decls
+				// TODO(NeGate): This is hacky
+				if (name[0] == '_') {
+					ptrdiff_t search = shgeti(target_desc.builtin_func_map, name);
+					
+					// NOTE(NeGate): 0 doesn't mean a null index in this context, it
+					// maps to the first external but i don't care we won't be using it
+					// later on it's just clearer.
+					if (search >= 0) {
+						sp->backing.e = 0;
+						break;
+					}
+				}
 				
-				//type_as_string(tu, sizeof(temp_string0), temp_string0, sp->decl.type);
-				//printf("%s %s = ...;\n", temp_string0, name);
-				
-				int node_count = ep->init.count;
-				InitNode* nodes = ep->init.nodes;
-				
-				// Walk initializer for max constant expression initializers.
-				int max_tb_objects = 0;
-				count_max_tb_init_objects(node_count, nodes, &max_tb_objects);
-				
-				init = tb_initializer_create(mod, type->size, type->align, max_tb_objects);
-				
-				// Initialize all const expressions
-				// We don't support anything runtime in these expressions for now
-				eval_initializer_objects(tu, NULL, sp->loc, init, TB_NULL_REG, type_index, node_count, nodes, 0);
-				
-				walk_initializer_for_sema(tu, ep->init.count, ep->init.nodes);
+				sp->backing.e = tb_extern_create(mod, name);
 			} else {
-				init = tb_initializer_create(mod, type->size, type->align, 0);
+				TB_InitializerID init;
+				if (sp->decl.initial && tu->exprs[sp->decl.initial].op == EXPR_INITIALIZER) {
+					Expr* restrict ep = &tu->exprs[sp->decl.initial];
+					
+					//type_as_string(tu, sizeof(temp_string0), temp_string0, sp->decl.type);
+					//printf("%s %s = ...;\n", temp_string0, name);
+					
+					int node_count = ep->init.count;
+					InitNode* nodes = ep->init.nodes;
+					
+					// Walk initializer for max constant expression initializers.
+					int max_tb_objects = 0;
+					count_max_tb_init_objects(node_count, nodes, &max_tb_objects);
+					
+					init = tb_initializer_create(mod, type->size, type->align, max_tb_objects);
+					
+					// Initialize all const expressions
+					// We don't support anything runtime in these expressions for now
+					eval_initializer_objects(tu, NULL, sp->loc, init, TB_NULL_REG, type_index, node_count, nodes, 0);
+					
+					walk_initializer_for_sema(tu, ep->init.count, ep->init.nodes);
+				} else {
+					init = tb_initializer_create(mod, type->size, type->align, 0);
+				}
+				
+				TB_Linkage linkage = sp->decl.attrs.is_static ? TB_LINKAGE_PRIVATE : TB_LINKAGE_PUBLIC;
+				sp->backing.g = tb_global_create(mod, init, name, linkage);
 			}
-			
-			TB_Linkage linkage = sp->decl.attrs.is_static ? TB_LINKAGE_PRIVATE : TB_LINKAGE_PUBLIC;
-			sp->backing.g = tb_global_create(mod, init, name, linkage);
 			break;
 		}
 		default: assert(0);
+	}
+}
+
+static void sema_mark_children(TranslationUnit* tu, ExprIndex e) {
+	Expr* restrict ep = &tu->exprs[e];
+	
+	assert(ep->op == EXPR_SYMBOL);
+	Stmt* restrict sp = &tu->stmts[ep->symbol];
+	
+	if (sp->op == STMT_FUNC_DECL && !sp->decl.attrs.is_used) {
+		sp->decl.attrs.is_used = true;
+		ExprIndex sym = tu->stmts[(StmtIndex)sp->decl.initial].compound.first_symbol;
+		
+		while (sym) {
+			sema_mark_children(tu, sym);
+			sym = tu->exprs[sym].next_symbol_in_chain;
+		}
+	} else if (sp->op == STMT_DECL || sp->op == STMT_GLOBAL_DECL) {
+		sp->decl.attrs.is_used = true;
+	}
+}
+
+void sema_remove_unused(TranslationUnit* tu) {
+	// simple mark and sweep
+	for (size_t s = 0, count = arrlen(tu->top_level_stmts); s < count; s++) {
+		Stmt* restrict sp = &tu->stmts[tu->top_level_stmts[s]];
+		
+		// is root
+		if (sp->op == STMT_FUNC_DECL && !sp->decl.attrs.is_static && !sp->decl.attrs.is_inline) {
+			sp->decl.attrs.is_used = true;
+			
+			ExprIndex sym = tu->stmts[(StmtIndex)sp->decl.initial].compound.first_symbol;
+			while (sym) {
+				sema_mark_children(tu, sym);
+				sym = tu->exprs[sym].next_symbol_in_chain;
+			}
+		} else if (sp->op == STMT_GLOBAL_DECL && !sp->decl.attrs.is_extern && !sp->decl.attrs.is_static && !sp->decl.attrs.is_inline) {
+			printf("GLOBAL DECL: %s\n", sp->decl.name);
+			sp->decl.attrs.is_used = true;
+		}
 	}
 }

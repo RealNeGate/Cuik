@@ -16,10 +16,11 @@ static LONG WINAPI unhandled_exception_handler(PEXCEPTION_POINTERS exception_ptr
 	symbol->MaxNameLen   = 255;
 	symbol->SizeOfStruct = sizeof(SYMBOL_INFO);
 	
+	printf("\nCrash dump:\n");
 	for (size_t i = 0; i < frames; i++) {
 		SymFromAddr(process, (DWORD64)stack[i], 0, symbol);
 		
-		printf("%llu: %s - 0x%llX\n", frames - i - 1, symbol->Name, symbol->Address);
+		printf("    %s - 0x%llX\n", symbol->Name, symbol->Address);
 	}
 	
 	free(symbol);

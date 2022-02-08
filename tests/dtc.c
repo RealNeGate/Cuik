@@ -27,8 +27,17 @@ typedef struct the_baby
 static DWORD MainThreadID;
 
 // hacky
-extern void* __readgsqword(LONG offset) { return NULL; }
-extern void __stosb(char* ptr, char src, size_t count) {}
+#ifdef __CUIKC__
+void* __readgsqword(LONG offset) { return NULL; }
+void __stosb(char* ptr, char src, size_t count) {}
+void _chvalidator_l() {}
+LONG InterlockedExchangeAdd(LONG volatile *Addend, LONG Value) { return 0; }
+long long InterlockedExchangeAdd64(long long volatile *Addend, long long Value) { return 0; }
+unsigned long long __shiftright128 ( unsigned long long _LowPart , unsigned long long _HighPart , unsigned char _Shift ) { return 0; }
+LPUWSTR __stdcall uaw_CharUpperW(LPUWSTR String) { return NULL; }
+#endif
+
+extern void __debugbreak();
 
 static LRESULT CALLBACK ServiceWndProc(HWND Window, UINT Message, WPARAM WParam, LPARAM LParam)
 {
@@ -40,7 +49,6 @@ static LRESULT CALLBACK ServiceWndProc(HWND Window, UINT Message, WPARAM WParam,
        just calls that do CreateWindow and DestroyWindow here on this thread when
        some other thread wants that to happen.
     */
-	
     LRESULT Result = 0;
 	
     switch (Message)
@@ -86,7 +94,6 @@ static LRESULT CALLBACK DisplayWndProc(HWND Window, UINT Message, WPARAM WParam,
        with your main thread and all that.  So just PostThreadMessageW()'ing everything gets
        you out of having to think about it.
     */
-	
     LRESULT Result = 0;
 	
     switch (Message)

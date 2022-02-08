@@ -51,70 +51,12 @@ static TB_Register gen_string_constant(SourceLocIndex loc, TB_Function* func, si
 	
 	size_t out_i = 0, in_i = 0;
 	while (in_i < len) {
-		if (in[in_i] == '\\') {
-			char ch = '\0';
-			switch (in[in_i + 1]) {
-				// TODO(NeGate): Implement the rest of the C char variants
-				// \123 \x6 \U0001f34c
-				case '0' ... '9': {
-					unsigned int num = 0;
-					
-					in_i += 1;
-					while (in_i < len) {
-						char ch = in[in_i];
-						if (!(ch >= '0' && ch <= '9')) break;
-						
-						num *= 10;
-						num += (ch - '0');
-						in_i += 1;
-					}
-					
-					out[out_i++] = num;
-					goto skip_emitting_a_normal_char;
-				}
-				case 'x': case 'X': {
-					unsigned int num = 0;
-					
-					in_i += 2;
-					while (in_i < len) {
-						char ch = in[in_i];
-						
-						if (ch >= 'A' && ch <= 'F') {
-							num <<= 4;
-							num |= (ch - 'A') + 0xA;
-						} else if (ch >= 'a' && ch <= 'f') {
-							num <<= 4;
-							num |= (ch - 'a') + 0xA;
-						} else if (ch >= '0' && ch <= '9') {
-							num <<= 4;
-							num |= (ch - '0');
-						} else break;
-						
-						in_i += 1;
-					}
-					
-					out[out_i++] = num;
-					goto skip_emitting_a_normal_char;
-				}
-				case '\\': ch = '\\'; break;
-				case 'a': ch = '\a'; break;
-				case 'b': ch = '\b'; break;
-				case 't': ch = '\t'; break;
-				case 'n': ch = '\n'; break;
-				case 'v': ch = '\v'; break;
-				case 'f': ch = '\f'; break;
-				case 'r': ch = '\r'; break;
-				case '\'': ch = '\''; break;
-				case '\"': ch = '\"'; break;
-				default: irgen_fatal(loc, "Could not recognize escape in string literal.");
-			}
-			
-			out[out_i++] = ch;
-			in_i += 2;
-			skip_emitting_a_normal_char:;
-		} else {
-			out[out_i++] = in[in_i++];
-		}
+		int ch;
+		intptr_t distance = parse_char(len - in_i, &in[in_i], &ch);
+		if (distance < 0) abort();
+		
+		out[out_i++] = ch;
+		in_i += distance;
 	}
 	
 	assert(out_i <= len);
@@ -134,30 +76,12 @@ static TB_Register gen_wide_string_constant(SourceLocIndex loc, TB_Function* fun
 	
 	size_t out_i = 0, in_i = 0;
 	while (in_i < len) {
-		if (in[in_i] == '\\') {
-			char ch = '\0';
-			switch (in[in_i + 1]) {
-				// TODO(NeGate): Implement the rest of the C char variants
-				// \123 \x6 \U0001f34c
-				case '0': ch = '\0'; break;
-				case '\\': ch = '\\'; break;
-				case 'a': ch = '\a'; break;
-				case 'b': ch = '\b'; break;
-				case 't': ch = '\t'; break;
-				case 'n': ch = '\n'; break;
-				case 'v': ch = '\v'; break;
-				case 'f': ch = '\f'; break;
-				case 'r': ch = '\r'; break;
-				case '\'': ch = '\''; break;
-				case '\"': ch = '\"'; break;
-				default: irgen_fatal(loc, "Could not recognize escape in string literal.");
-			}
-			
-			out[out_i++] = ch;
-			in_i += 2;
-		} else {
-			out[out_i++] = in[in_i++];
-		}
+		int ch;
+		intptr_t distance = parse_char(len - in_i, &in[in_i], &ch);
+		if (distance < 0) abort();
+		
+		out[out_i++] = ch;
+		in_i += distance;
 	}
 	
 	assert(out_i <= len);
@@ -701,7 +625,7 @@ static IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 		}
 		case EXPR_LOGICAL_NOT: {
 			TB_Register reg = irgen_as_rvalue(tu, func, ep->unary_op.src);
-			TB_DataType dt = tb_node_get_data_type(func, reg);
+			TB_DataType dt = tb_function_get_node(func, reg)->dt;
 			
 			return (IRVal) {
 				.value_type = RVALUE,
@@ -1019,8 +943,8 @@ static IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 			tb_inst_label(func, try_rhs_lbl);
 			
 			TB_Register rhs = irgen_as_rvalue(tu, func, ep->bin_op.right);
-			if (tb_node_get_data_type(func, rhs).type != TB_BOOL) {
-				TB_DataType dt = tb_node_get_data_type(func, rhs);
+			if (tb_function_get_node(func, rhs)->dt.type != TB_BOOL) {
+				TB_DataType dt = tb_function_get_node(func, rhs)->dt;
 				
 				rhs = tb_inst_cmp_ne(func, rhs, tb_inst_uint(func, dt, 0));
 			}
@@ -1071,7 +995,7 @@ static IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 			r = tb_inst_ptr2int(func, r, TB_TYPE_I64);
 			
 			TB_Register diff = tb_inst_sub(func, l, r, TB_ASSUME_NSW);
-			TB_Register diff_in_elems = tb_inst_div(func, diff, tb_inst_sint(func, tb_node_get_data_type(func, diff), stride), true);
+			TB_Register diff_in_elems = tb_inst_div(func, diff, tb_inst_sint(func, tb_function_get_node(func, diff)->dt, stride), true);
 			
 			return (IRVal) {
 				.value_type = RVALUE,
@@ -1636,7 +1560,7 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, StmtIndex s) {
 			}
 			
 			TB_Register key = irgen_as_rvalue(tu, func, sp->switch_.condition);
-			TB_DataType dt = tb_node_get_data_type(func, key);
+			TB_DataType dt = tb_function_get_node(func, key)->dt;
 			
 			tb_inst_switch(func, dt, key, default_label, entry_count, entries);
 			tb_inst_label(func, tb_inst_new_label_id(func));

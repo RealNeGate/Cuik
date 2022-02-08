@@ -6,6 +6,7 @@
 
 static void dump_golden_test(Lexer* l, FILE* f) {
 	int last_line = 0;
+	size_t count = 0;
 	while (true) {
 		lexer_read(l);
 		if (l->token_type == 0) break;
@@ -16,7 +17,10 @@ static void dump_golden_test(Lexer* l, FILE* f) {
 		}
 		
 		fprintf(f, "%.*s ", (int)(l->token_end - l->token_start), l->token_start);
+		count++;
 	}
+	
+	printf("%zu tokens lexed...\n", count);
 }
 
 int main(int argc, char* argv[]) {

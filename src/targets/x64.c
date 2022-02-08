@@ -1,7 +1,7 @@
 #include "targets.h"
 
 static void set_defines(CPP_Context* cpp) {
-	cpp_define_empty(cpp, "_X86_");
+	//cpp_define_empty(cpp, "_X86_");
 	cpp_define_empty(cpp, "_M_X64");
 	cpp_define_empty(cpp, "_AMD64_");
 	cpp_define_empty(cpp, "_M_AMD64");
@@ -93,7 +93,7 @@ TB_Register compile_builtin(TranslationUnit* tu, TB_Function* func, const char* 
 	
 	// unary
 	TB_Register left = irgen_as_rvalue(tu, func, args[0]);
-	TB_DataType left_dt = tb_node_get_data_type(func, left);
+	TB_DataType left_dt = tb_function_get_node(func, left)->dt;
 	if (left_dt.type != dt.type || left_dt.width != dt.width) {
 		left = tb_inst_bitcast(func, left, dt);
 	}
@@ -106,7 +106,7 @@ TB_Register compile_builtin(TranslationUnit* tu, TB_Function* func, const char* 
 	
 	// binary
 	TB_Register right = irgen_as_rvalue(tu, func, args[1]);
-	TB_DataType right_dt = tb_node_get_data_type(func, right);
+	TB_DataType right_dt = tb_function_get_node(func, right)->dt;
 	if (right_dt.type != dt.type || right_dt.width != dt.width) {
 		right = tb_inst_bitcast(func, right, dt);
 	}

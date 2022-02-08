@@ -64,6 +64,9 @@ static int task_thread(void* param) {
 				}
 				
 				tasks_complete += (tasks_count - t);
+			}
+			
+			if (t <= tasks_count) {
 				cnd_signal(&tasks_condition);
 			}
 			
@@ -167,6 +170,8 @@ static void set_preprocessor_info(CPP_Context* cpp) {
 		cpp_define(cpp, "__forceinline", "inline");
 		cpp_define(cpp, "__CRTDECL", "__cdecl");
 		
+		cpp_define_empty(cpp, "SQLITE_DISABLE_INTRINSIC");
+		
 		// NOTE(NeGate): We probably shouldn't be defining this...
 		// it's a winnt.h thing
 		cpp_define(cpp, "ANYSIZE_ARRAY", "1");
@@ -187,6 +192,7 @@ static void compile_project(TB_Arch arch, TB_System sys, const char source_file[
 	set_preprocessor_info(&cpp_ctx);
 	
 	TokenStream s = ir_gen_tokens = cpp_process(&cpp_ctx, source_file);
+	
 	cpp_finalize(&cpp_ctx);
 	
 	// Parse
@@ -198,6 +204,8 @@ static void compile_project(TB_Arch arch, TB_System sys, const char source_file[
 	irgen_init();
 	
 	// Semantics pass
+	sema_remove_unused(&translation_unit);
+	
 	for (size_t i = 0, count = arrlen(translation_unit.top_level_stmts); i < count; i++) {
 		sema_check(&translation_unit, translation_unit.top_level_stmts[i]);
 	}
@@ -224,7 +232,7 @@ static void compile_project(TB_Arch arch, TB_System sys, const char source_file[
 		cnd_init(&tasks_condition);
 		mtx_init(&tasks_mutex, mtx_plain);
 		
-		munch_size = settings.num_of_worker_threads / arrlen(translation_unit.top_level_stmts);
+		munch_size = arrlen(translation_unit.top_level_stmts) / settings.num_of_worker_threads;
 		if (munch_size < 5) munch_size = 5;
 		
 		for (int i = 0; i < settings.num_of_worker_threads; i++) {
@@ -377,6 +385,11 @@ int main(int argc, char* argv[]) {
 	// input path
 	// TODO(NeGate): support inputting a directory in which
 	// case it'll just compile all the .c files in it together
+	if (argc == 2) {
+		printf("Expected filename\n");
+		return -1;
+	}
+	
 	const char* source_file = argv[2];
 	
 	for (size_t i = 3; i < argc; i++) {
@@ -479,8 +492,6 @@ int main(int argc, char* argv[]) {
 	
 	switch (mode) {
 		case COMPILER_MODE_PREPROC: {
-			if (argc < 2) panic("Expected filename\n");
-			
 			dump_tokens(source_file);
 			break;
 		}
@@ -596,6 +607,19 @@ int main(int argc, char* argv[]) {
 // Preprocessor Dump
 ////////////////////////////////
 static bool dump_tokens(const char source_file[]) {
+	// Get filename as *.i
+	const char* ext = strrchr(source_file, '.');
+	char output_path[260];
+	if (ext) {
+		char filename[260];
+		memcpy_s(filename, 260, source_file, ext - source_file);
+		filename[ext - source_file] = '\0';
+		
+		sprintf_s(output_path, 260, "%s.i", filename);
+	} else {
+		sprintf_s(output_path, 260, "%s.i", source_file);
+	}
+	
 	clock_t t1 = clock();
 	
 	// Preprocess file
@@ -611,7 +635,7 @@ static bool dump_tokens(const char source_file[]) {
 	double delta_ms = (t2 - t1) / (double)CLOCKS_PER_SEC;
 	printf("preprocessor took %.03f seconds\n", delta_ms);
 	
-	FILE* f = fopen("./preprocessed.c", "w");
+	FILE* f = fopen(output_path, "w");
 	if (!f) {
 		printf("Could not open file a.txt\n");
 		return false;

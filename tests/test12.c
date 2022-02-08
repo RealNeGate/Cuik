@@ -1,6 +1,5 @@
 
 // simple test of aliasing
-// foo can alias so we
 int pointer_alias(int *x, int *y) {
 	*x = 0;
 	*y = 1;
@@ -12,5 +11,3 @@ int pointer_alias2(int* restrict x, int* restrict y) {
 	*y = 1;
 	return *x;
 }
-
-// this example shows how

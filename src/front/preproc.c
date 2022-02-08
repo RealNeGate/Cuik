@@ -349,7 +349,7 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 					assert(l.hit_line);
 				} else if (lexer_match(&l, 4, "else")) {
 					lexer_read(&l);
-					assert(l.hit_line);
+					//assert(l.hit_line);
 					
 					// if it didn't evaluate any of the other options
 					// do this
@@ -822,6 +822,15 @@ static intmax_t eval_l0(CPP_Context* restrict c, Lexer* l) {
 		
 		val = 0;
 		lexer_read(l);
+	} else if (l->token_type == TOKEN_STRING_SINGLE_QUOTE) {
+		int ch;
+		intptr_t distance = parse_char(l->token_end - l->token_start, (const char*)l->token_start, &ch);
+		if (distance < 0) {
+			generic_error(l, "could not parse char literal");
+		}
+		
+		val = ch;
+		lexer_read(l);
 	} else if (l->token_type == '(') {
 		lexer_read(l);
 		val = eval(c, l);
@@ -1147,7 +1156,7 @@ static unsigned char* expand_ident(CPP_Context* restrict c, unsigned char* restr
 						as_string = false;
 					} else {
 						// TODO(NeGate): Error message
-						if (as_string) abort();
+						if (as_string) *temp_expansion++ = '#';
 						
 						for (size_t i = 0; i < token_length; i++) {
 							if (token_data[i] == '\r' || token_data[i] == '\n') {

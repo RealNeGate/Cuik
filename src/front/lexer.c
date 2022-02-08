@@ -594,3 +594,74 @@ double parse_float(size_t len, const char* str) {
 	
 	return i;
 }
+
+intptr_t parse_char(size_t len, const char* str, int* output) {
+	if (str[0] != '\\') {
+		*output = str[0];
+		return 1;
+	}
+	
+	// error: expected something after the backslash
+	if (len < 1) return -1;
+	
+	int ch = 0;
+	size_t i = 1;
+	switch (str[i]) {
+		// TODO(NeGate): Implement the rest of the C char variants
+		// \U0001f34c
+		case '0' ... '9': {
+			unsigned int num = 0;
+			
+			i += 1;
+			while (i < len) {
+				char ch = str[i];
+				if (!(ch >= '0' && ch <= '9')) break;
+				
+				num *= 10;
+				num += (ch - '0');
+				i += 1;
+			}
+			
+			ch = num;
+			break;
+		}
+		case 'x': case 'X': {
+			unsigned int num = 0;
+			
+			i += 2;
+			while (i < len) {
+				char ch = str[i];
+				
+				if (ch >= 'A' && ch <= 'F') {
+					num <<= 4;
+					num |= (ch - 'A') + 0xA;
+				} else if (ch >= 'a' && ch <= 'f') {
+					num <<= 4;
+					num |= (ch - 'a') + 0xA;
+				} else if (ch >= '0' && ch <= '9') {
+					num <<= 4;
+					num |= (ch - '0');
+				} else break;
+				
+				i += 1;
+			}
+			
+			ch = num;
+			break;
+		}
+		case '\\': ch = '\\'; break;
+		case 'a': ch = '\a'; break;
+		case 'b': ch = '\b'; break;
+		case 't': ch = '\t'; break;
+		case 'n': ch = '\n'; break;
+		case 'v': ch = '\v'; break;
+		case 'f': ch = '\f'; break;
+		case 'r': ch = '\r'; break;
+		case '\'': ch = '\''; break;
+		case '\"': ch = '\"'; break;
+		default: return -1;
+	}
+	
+	*output = ch;
+	return i;
+}
