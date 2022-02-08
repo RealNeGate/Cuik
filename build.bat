@@ -5,6 +5,7 @@ set clang_settings=-march=haswell -maes -O0 -Werror -Wall -Wno-gnu-designator -W
 set cuik_source_files=src/main.c ^
 	src/tls.c ^
 	src/arena.c ^
+	src/diagnostic.c ^
 	src/big_array.c ^
 	src/crash_handler.c ^
 	src/targets/x64.c ^

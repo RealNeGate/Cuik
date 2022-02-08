@@ -255,7 +255,7 @@ void lexer_read(Lexer* restrict l) {
     // branchless space skip
     current += (*current == ' ');
 	
-	// NOTE(NeGate): We canonicalized spaces \t \r \v
+	// NOTE(NeGate): We canonicalized spaces \t \v
 	// in the preprocessor so we don't need to handle them
 	redo_lex: {
 		if (*current == '\0') {
@@ -266,6 +266,7 @@ void lexer_read(Lexer* restrict l) {
 		} else if (*current == '\r' || *current == '\n') {
 			current += (current[0] + current[1] == '\r' + '\n') ? 2 : 1;
 			
+			l->line_current = current;
 			l->hit_line = true;
 			l->current_line += 1;
             goto redo_lex;
@@ -281,6 +282,7 @@ void lexer_read(Lexer* restrict l) {
 				do { current++; } while (*current && *current != '\n');
 				
 				current += 1;
+				l->line_current = current;
 				l->hit_line = true;
 				l->current_line += 1;
 				goto redo_lex;
@@ -293,6 +295,7 @@ void lexer_read(Lexer* restrict l) {
 				
 				int lines_elapsed = line_counter(current - start, start);
 				
+				l->line_current = current;
 				l->current_line += lines_elapsed;
 				l->hit_line = (lines_elapsed > 0);
 				goto redo_lex;
@@ -303,6 +306,7 @@ void lexer_read(Lexer* restrict l) {
 			current += 1;
 			current += (current[0] + current[1] == '\r' + '\n') ? 2 : 1;
 			
+			l->line_current = current;
 			l->current_line += 1;
 			goto redo_lex;
 		}

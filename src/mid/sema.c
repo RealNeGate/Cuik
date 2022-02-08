@@ -13,6 +13,10 @@ static _Thread_local char temp_string0[256], temp_string1[256];
 
 static TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e);
 
+#define sema_info(loc, fmt, ...) report(REPORT_INFO, &ir_gen_tokens.line_arena[loc], fmt, __VA_ARGS__)
+#define sema_warn(loc, fmt, ...) report(REPORT_WARNING, &ir_gen_tokens.line_arena[loc], fmt, __VA_ARGS__)
+#define sema_error(loc, fmt, ...) report(REPORT_ERROR, &ir_gen_tokens.line_arena[loc], fmt, __VA_ARGS__)
+
 static size_t type_as_string(TranslationUnit* tu, size_t max_len, char buffer[static max_len], TypeIndex type_index) {
 	Type* restrict type = &tu->types[type_index];
 	
@@ -105,35 +109,6 @@ static size_t type_as_string(TranslationUnit* tu, size_t max_len, char buffer[st
 	
 	buffer[i] = '\0';
 	return i;
-}
-
-static void sema_warn(SourceLocIndex loc, const char* fmt, ...) {
-	SourceLoc* l = &ir_gen_tokens.line_arena[loc];
-	printf("%s:%d: warning: ", l->file, l->line);
-	
-	va_list ap;
-	va_start(ap, fmt);
-	vprintf(fmt, ap);
-	va_end(ap);
-	
-	printf("\n");
-}
-
-static void sema_error(SourceLocIndex loc, const char* fmt, ...) {
-	SourceLoc* l = &ir_gen_tokens.line_arena[loc];
-	printf("%s:%d: error: ", l->file, l->line);
-	
-	va_list ap;
-	va_start(ap, fmt);
-	vprintf(fmt, ap);
-	va_end(ap);
-	
-	printf("\n");
-	
-	if (++sema_error_count == 20) {
-		printf("Too many errors!\n");
-		abort();
-	}
 }
 
 static _Noreturn void sema_fatal(SourceLocIndex loc, const char* fmt, ...) {
@@ -649,6 +624,17 @@ static TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e) {
 					return (ep->type = lhs);
 				}
 			} else {
+				if (!(tu->types[lhs].kind >= KIND_BOOL && 
+					  tu->types[lhs].kind <= KIND_DOUBLE && 
+					  tu->types[rhs].kind >= KIND_BOOL && 
+					  tu->types[rhs].kind <= KIND_DOUBLE)) {
+					type_as_string(tu, sizeof(temp_string0), temp_string0, lhs);
+					type_as_string(tu, sizeof(temp_string1), temp_string1, rhs);
+					
+					sema_error(ep->loc, "Cannot apply binary operator to %s and %s.", temp_string0, temp_string1);
+					return (ep->type = TYPE_VOID);
+				}
+				
 				TypeIndex type = get_common_type(tu, lhs, rhs);
 				tu->exprs[ep->bin_op.left].cast_type = type;
 				tu->exprs[ep->bin_op.right].cast_type = type;
@@ -920,7 +906,6 @@ void sema_check(TranslationUnit* tu, StmtIndex s) {
 		case STMT_DECL:
 		case STMT_GLOBAL_DECL: {
 			if (!sp->decl.attrs.is_used) break;
-			sema_warn(sp->loc, "Declaration '%s' used.", name);
 			
 			if (sp->decl.attrs.is_static && sp->decl.attrs.is_extern) {
 				sema_error(sp->loc, "Global declaration '%s' cannot be both static and extern.", name);
@@ -1013,7 +998,7 @@ void sema_remove_unused(TranslationUnit* tu) {
 				sym = tu->exprs[sym].next_symbol_in_chain;
 			}
 		} else if (sp->op == STMT_GLOBAL_DECL && !sp->decl.attrs.is_extern && !sp->decl.attrs.is_static && !sp->decl.attrs.is_inline) {
-			printf("GLOBAL DECL: %s\n", sp->decl.name);
+			report(REPORT_INFO, &ir_gen_tokens.line_arena[sp->loc], "GLOBAL DECL: %s\n", sp->decl.name);
 			sp->decl.attrs.is_used = true;
 		}
 	}

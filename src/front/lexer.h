@@ -138,9 +138,14 @@ typedef enum IntSuffix {
 
 typedef int SourceLocIndex;
 
+// kinda a lot of info...
 typedef struct SourceLoc {
 	const unsigned char* file;
+	const unsigned char* at;
+	
 	int line;
+	short columns;
+	short length;
 } SourceLoc;
 
 typedef struct Token {
@@ -172,6 +177,7 @@ typedef struct Lexer {
 	// INTERNALS
 	////////////////////////////////
     // when reading it spotted a line or EOF, it must be manually reset
+    const unsigned char* line_current;
 	bool hit_line;
 	
 	// current token info

@@ -6,6 +6,7 @@
 #include "atoms.h"
 #include "settings.h"
 #include "big_array.h"
+#include "diagnostic.h"
 
 #include <back/tb.h>
 

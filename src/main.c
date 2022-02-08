@@ -23,7 +23,8 @@
 #include <signal.h>
 #include <setjmp.h>
 
-#define COMPILER_VERSION "v0.01"
+#define CUIK_COMPILER_MAJOR 0
+#define CUIK_COMPILER_MINOR 1
 
 static thrd_t threads[TB_MAX_THREADS];
 
@@ -117,7 +118,8 @@ static void print_help(const char* executable_path) {
 }
 
 static void set_preprocessor_info(CPP_Context* cpp) {
-	cpp_define(cpp, "__CUIKC__", "1");
+	cpp_define(cpp, "__CUIKC__", STR(CUIK_COMPILER_MAJOR));
+	cpp_define(cpp, "__CUIKC_MINOR__", STR(CUIK_COMPILER_MINOR));
 	
 	// NOTE(NeGate): Hack to make these trigger the preprocessor
 	cpp_define_empty(cpp, "__FILE__");
@@ -197,7 +199,9 @@ static void compile_project(TB_Arch arch, TB_System sys, const char source_file[
 	
 	// Parse
 	atoms_init();
+	
 	translation_unit = parse_file(&s);
+	crash_if_reports(REPORT_ERROR);
 	
 	TB_FeatureSet features = { 0 };
 	mod = tb_module_create(arch, sys, &features);
@@ -209,11 +213,7 @@ static void compile_project(TB_Arch arch, TB_System sys, const char source_file[
 	for (size_t i = 0, count = arrlen(translation_unit.top_level_stmts); i < count; i++) {
 		sema_check(&translation_unit, translation_unit.top_level_stmts[i]);
 	}
-	
-	if (sema_error_count) {
-		printf("compiled with %d errors\n", sema_error_count);
-		abort();
-	}
+	crash_if_reports(REPORT_ERROR);
 	
 	// Generate IR
 	// TODO(NeGate): Globals amirite... yea maybe i'll maybe move the TB_Module from the
@@ -303,6 +303,11 @@ static TB_System target_sys = TB_SYSTEM_LINUX;
 static bool live_compile(const char source_file[], const char obj_output_path[], const char filename[]);
 static bool dump_tokens(const char source_file[]);
 
+static void print_version(const char* install_dir) {
+	printf("cuik version %d.%d\n", CUIK_COMPILER_MAJOR, CUIK_COMPILER_MINOR);
+	printf("install directory: %s\n", install_dir);
+}
+
 int main(int argc, char* argv[]) {
 	hook_crash_handler();
 	
@@ -342,6 +347,8 @@ int main(int argc, char* argv[]) {
 	
 	const char* cmd = argv[1];
 	if (strcmp(cmd, "live") == 0) mode = COMPILER_MODE_LIVE;
+	else if (strcmp(cmd, "--version") == 0) mode = COMPILER_MODE_VERSION;
+	else if (strcmp(cmd, "-v") == 0) mode = COMPILER_MODE_VERSION;
 	else if (strcmp(cmd, "version") == 0) mode = COMPILER_MODE_VERSION;
 	else if (strcmp(cmd, "preproc") == 0) mode = COMPILER_MODE_PREPROC;
 	else if (strcmp(cmd, "check") == 0) mode = COMPILER_MODE_CHECK;
@@ -354,8 +361,7 @@ int main(int argc, char* argv[]) {
 	}
 	
 	if (mode == COMPILER_MODE_VERSION) {
-		printf("cuik %s\n", COMPILER_VERSION);
-		printf("program location: %s\n", argv[0]);
+		print_version(argv[0]);
 		return 0;
 	}
 	
@@ -483,11 +489,6 @@ int main(int argc, char* argv[]) {
 		default:
 		printf("Cannot compile to your target machine");
 		return -1;
-	}
-	
-	if (mode == COMPILER_MODE_VERSION) {
-		printf("%s\n", COMPILER_VERSION);
-		return 0;
 	}
 	
 	switch (mode) {

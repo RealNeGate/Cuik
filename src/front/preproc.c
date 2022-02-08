@@ -178,7 +178,15 @@ TokenStream cpp_process(CPP_Context* ctx, const char filepath[]) {
 inline static SourceLocIndex get_source_location(Lexer* restrict l, TokenStream* restrict s) {
 	SourceLocIndex i = arrlen(s->line_arena);
 	
-	SourceLoc loc = { (const unsigned char*)l->filepath, l->current_line };
+	assert((l->token_start - l->line_current) <= UINT16_MAX);
+	assert((l->token_end - l->token_start) <= UINT16_MAX);
+	SourceLoc loc = { 
+		.file = (const unsigned char*)l->filepath,
+		.at = l->token_start,
+		.line = l->current_line,
+		.columns = l->token_start - l->line_current,
+		.length = l->token_end - l->token_start
+	};
 	arrput(s->line_arena, loc);
 	
 	return i;
