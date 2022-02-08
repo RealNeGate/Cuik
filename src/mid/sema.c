@@ -998,7 +998,6 @@ void sema_remove_unused(TranslationUnit* tu) {
 				sym = tu->exprs[sym].next_symbol_in_chain;
 			}
 		} else if (sp->op == STMT_GLOBAL_DECL && !sp->decl.attrs.is_extern && !sp->decl.attrs.is_static && !sp->decl.attrs.is_inline) {
-			report(REPORT_INFO, &ir_gen_tokens.line_arena[sp->loc], "GLOBAL DECL: %s\n", sp->decl.name);
 			sp->decl.attrs.is_used = true;
 		}
 	}
