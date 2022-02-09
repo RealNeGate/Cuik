@@ -609,14 +609,13 @@ intptr_t parse_char(size_t len, const char* str, int* output) {
 	if (len < 1) return -1;
 	
 	int ch = 0;
-	size_t i = 1;
-	switch (str[i]) {
+	size_t i = 2;
+	switch (str[1]) {
 		// TODO(NeGate): Implement the rest of the C char variants
 		// \U0001f34c
 		case '0' ... '9': {
 			unsigned int num = 0;
 			
-			i += 1;
 			while (i < len) {
 				char ch = str[i];
 				if (!(ch >= '0' && ch <= '9')) break;
@@ -632,7 +631,6 @@ intptr_t parse_char(size_t len, const char* str, int* output) {
 		case 'x': case 'X': {
 			unsigned int num = 0;
 			
-			i += 2;
 			while (i < len) {
 				char ch = str[i];
 				

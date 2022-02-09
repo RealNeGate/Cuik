@@ -934,9 +934,6 @@ void sema_check(TranslationUnit* tu, StmtIndex s) {
 				if (sp->decl.initial && tu->exprs[sp->decl.initial].op == EXPR_INITIALIZER) {
 					Expr* restrict ep = &tu->exprs[sp->decl.initial];
 					
-					//type_as_string(tu, sizeof(temp_string0), temp_string0, sp->decl.type);
-					//printf("%s %s = ...;\n", temp_string0, name);
-					
 					int node_count = ep->init.count;
 					InitNode* nodes = ep->init.nodes;
 					

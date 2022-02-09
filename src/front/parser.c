@@ -2599,7 +2599,7 @@ static void expect(TokenStream* restrict s, char ch) {
 		Token* t = tokens_get(s);
 		SourceLoc* loc = &s->line_arena[t->location];
 		
-		printf("%s:%d: error: expected '%c' got '%.*s'", loc->file, loc->line, ch, (int)(t->end - t->start), t->start);
+		report(REPORT_ERROR, loc, "expected '%c' got '%.*s'", ch, (int)(t->end - t->start), t->start);
 		abort();
 	}
 	
