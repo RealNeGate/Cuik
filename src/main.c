@@ -522,7 +522,11 @@ int main(int argc, char* argv[]) {
 			}
 			
 			if (settings.print_tb_ir) {
-				tbir_output_file = fopen("./compiled.tbir", "wb");
+				// Get filename as *.tbir
+				char tbir_filename[260];
+				sprintf_s(tbir_filename, 260, "%s.tbir", filename);
+				
+				tbir_output_file = fopen(tbir_filename, "wb");
 			}
 			
 			// Build project
