@@ -109,7 +109,7 @@ LRESULT CALLBACK WindowProc(HWND wnd, UINT msg, WPARAM wparam, LPARAM lparam)
 // compares src string with dstlen characters from dst, returns 1 if they are equal, 0 if not
 static int StringsAreEqual(const char* src, const char* dst, size_t dstlen)
 {
-    /*while (*src && dstlen-- && *dst)
+    while (*src && dstlen-- && *dst)
     {
         if (*src++ != *dst++)
         {
@@ -117,10 +117,7 @@ static int StringsAreEqual(const char* src, const char* dst, size_t dstlen)
         }
     }
 
-    return (dstlen && *src == *dst) || (!dstlen && *src == 0);*/
-	size_t srclen = strlen(src);
-	if (dstlen != srclen) return 0;
-    return memcmp(src, dst, dstlen) == 0;
+    return (dstlen && *src == *dst) || (!dstlen && *src == 0);
 }
 
 static PFNWGLCHOOSEPIXELFORMATARBPROC wglChoosePixelFormatARB = NULL;

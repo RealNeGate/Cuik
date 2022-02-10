@@ -104,6 +104,11 @@ static size_t type_as_string(TranslationUnit* tu, size_t max_len, char buffer[st
 			buffer[i++] = ')';
 			break;
 		}
+		case KIND_TYPEOF: {
+			// TODO(NeGate): give some nicer look to this crap
+			i += cstr_copy(max_len - i, &buffer[i], "typeof(???)");
+			break;
+		}
 		default: abort();
 	}
 	
@@ -225,6 +230,37 @@ static InitNode* walk_initializer_for_sema(TranslationUnit* tu, int node_count, 
 	return node;
 }
 
+static void try_resolve_typeof(TranslationUnit* tu, TypeIndex type) {
+	Type* restrict ty = &tu->types[type];
+	
+	// TODO(NeGate): clean this up but essentially we just walk the 
+	// types to ideally find a typeof with an expression
+	while (ty->kind == KIND_PTR ||
+		   ty->kind == KIND_ARRAY ||
+		   ty->kind == KIND_UNION ||
+		   ty->kind == KIND_STRUCT) {
+		// this is soooooo nasty
+		if (ty->kind == KIND_PTR) {
+			ty = &tu->types[ty->ptr_to];
+		} else if (ty->kind == KIND_ARRAY) {
+			ty = &tu->types[ty->array_of];
+		} else if (ty->kind == KIND_UNION || ty->kind == KIND_STRUCT) {
+			MemberIndex start = ty->record.kids_start;
+			MemberIndex end = ty->record.kids_end;
+			
+			for (MemberIndex m = start; m < end; m++) {
+				try_resolve_typeof(tu, tu->members[m].type);
+			}
+		}
+	}
+	
+	if (ty->kind == KIND_TYPEOF) {
+		// spoopy...
+		TypeIndex resolved = sema_expr(tu, ty->typeof_.src);
+		*ty = tu->types[resolved];
+	}
+}
+
 static TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e) {
 	Expr* restrict ep = &tu->exprs[e];
 	
@@ -266,6 +302,9 @@ static TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e) {
 				return (ep->type = TYPE_VOID);
 			}
 		}
+		case EXPR_ENUM: {
+			return (ep->type = TYPE_INT);
+		}
 		case EXPR_FLOAT32: {
 			return (ep->type = TYPE_FLOAT);
 		}
@@ -303,6 +342,8 @@ static TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e) {
 			return (ep->type = TYPE_ULONG);
 		}
 		case EXPR_SIZEOF_T: {
+			try_resolve_typeof(tu, ep->x_of_type.type);
+			
 			*ep = (Expr) {
 				.op = EXPR_INT,
 				.type = TYPE_ULONG,
@@ -311,6 +352,8 @@ static TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e) {
 			return (ep->type = TYPE_ULONG);
 		}
 		case EXPR_ALIGNOF_T: {
+			try_resolve_typeof(tu, ep->x_of_type.type);
+			
 			*ep = (Expr) {
 				.op = EXPR_INT,
 				.type = TYPE_ULONG,
@@ -319,6 +362,7 @@ static TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e) {
 			return (ep->type = TYPE_ULONG);
 		}
 		case EXPR_INITIALIZER: {
+			try_resolve_typeof(tu, ep->init.type);
 			walk_initializer_for_sema(tu, ep->init.count, ep->init.nodes);
 			
 			return (ep->type = ep->init.type);
@@ -366,6 +410,8 @@ static TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e) {
 			return (ep->type = params[param_num].type);
 		}
 		case EXPR_CAST: {
+			try_resolve_typeof(tu, ep->cast.type);
+			
 			/* TypeIndex src = */ sema_expr(tu, ep->cast.src);
 			
 			// set child's cast type
@@ -708,6 +754,8 @@ void sema_stmt(TranslationUnit* tu, StmtIndex s) {
 		}
 		case STMT_DECL: {
 			if (sp->decl.initial) {
+				try_resolve_typeof(tu, sp->decl.type);
+				
 				TypeIndex expr_type = sema_expr(tu, sp->decl.initial);
 				
 				Expr* restrict ep = &tu->exprs[sp->decl.initial];
@@ -930,6 +978,10 @@ void sema_check(TranslationUnit* tu, StmtIndex s) {
 				
 				sp->backing.e = tb_extern_create(mod, name);
 			} else {
+				if (type->align == 0) {
+					sema_error(sp->loc, "Woah!!!");
+				}
+				
 				TB_InitializerID init;
 				if (sp->decl.initial && tu->exprs[sp->decl.initial].op == EXPR_INITIALIZER) {
 					Expr* restrict ep = &tu->exprs[sp->decl.initial];
@@ -965,6 +1017,7 @@ void sema_check(TranslationUnit* tu, StmtIndex s) {
 
 static void sema_mark_children(TranslationUnit* tu, ExprIndex e) {
 	Expr* restrict ep = &tu->exprs[e];
+	if (ep->op == EXPR_ENUM) return;
 	
 	assert(ep->op == EXPR_SYMBOL);
 	Stmt* restrict sp = &tu->stmts[ep->symbol];

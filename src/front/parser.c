@@ -254,6 +254,7 @@ TranslationUnit parse_file(TokenStream* restrict s) {
 							} else {
 								// append
 								tu.exprs[symbol_list_end].next_symbol_in_chain = i;
+								tu.exprs[i].next_symbol_in_chain = 0;
 								symbol_list_end = i;
 							}
 						}
@@ -367,7 +368,7 @@ TranslationUnit parse_file(TokenStream* restrict s) {
 	
 	// NOTE(NeGate): This is a Cuik extension, it allows normal symbols
 	// like functions to declared out of order.
-	for (size_t i = 0, count = big_array_length(tu.exprs); i < count; i++) {
+	for (size_t i = 1, count = big_array_length(tu.exprs); i < count; i++) {
 		if (tu.exprs[i].op == EXPR_UNKNOWN_SYMBOL) {
 			if (!resolve_unknown_symbol(&tu, i)) {
 				// try enum names
@@ -377,18 +378,19 @@ TranslationUnit parse_file(TokenStream* restrict s) {
 				for (size_t j = 1, count = big_array_length(tu.enum_entries); j < count; j++) {
 					if (cstr_equals(name, tu.enum_entries[j].name)) {
 						int value = tu.enum_entries[j].value;
+						ExprIndex chain = tu.exprs[i].next_symbol_in_chain;
 						
-						tu.exprs[i].op = EXPR_INT;
-						tu.exprs[i].int_num = (struct ExprInt){ value, INT_SUFFIX_NONE };
+						tu.exprs[i].op = EXPR_ENUM;
+						tu.exprs[i].enum_val = (struct ExprEnum){ value, chain };
 						goto success;
 					}
 				}
 				
 				SourceLoc* loc = &s->line_arena[tu.exprs[i].loc];
 				report(REPORT_ERROR, loc, "could not find symbol: %s", name);
-				success:;
 			}
 		}
+		success:;
 	}
 	
 	local_symbol_count = 0;
@@ -1101,7 +1103,7 @@ static ExprIndex parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
 		return e;
 	} else if (tokens_get(s)->type == TOKEN_KW_sizeof ||
 			   tokens_get(s)->type == TOKEN_KW_Alignof) {
-		bool is_sizeof = tokens_get(s)->type == TOKEN_KW_sizeof;
+		TknType operation_type = tokens_get(s)->type;
 		tokens_next(s);
 		
 		bool has_paren = false;
@@ -1116,7 +1118,7 @@ static ExprIndex parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
 			TypeIndex type = parse_typename(tu, s);
 			
 			tu->exprs[e] = (Expr) {
-				.op = is_sizeof ? EXPR_SIZEOF_T : EXPR_ALIGNOF_T,
+				.op = operation_type == TOKEN_KW_sizeof ? EXPR_SIZEOF_T : EXPR_ALIGNOF_T,
 				.loc = tokens_get(s)->location,
 				.x_of_type = { type }
 			};
@@ -1124,7 +1126,7 @@ static ExprIndex parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
 			ExprIndex expr = parse_expr_l14(tu, s);
 			
 			tu->exprs[e] = (Expr) {
-				.op = is_sizeof ? EXPR_SIZEOF : EXPR_ALIGNOF,
+				.op = operation_type == TOKEN_KW_sizeof ? EXPR_SIZEOF : EXPR_ALIGNOF,
 				.loc = tokens_get(s)->location,
 				.x_of_expr = { expr }
 			};
@@ -1256,6 +1258,7 @@ static ExprIndex parse_expr_l1(TranslationUnit* tu, TokenStream* restrict s) {
 		tokens_prev(s);
 	}
 	
+	SourceLocIndex loc = tokens_get(s)->location;
 	ExprIndex e = parse_expr_l0(tu, s);
 	
 	// after any of the: [] () . ->
@@ -1272,7 +1275,7 @@ static ExprIndex parse_expr_l1(TranslationUnit* tu, TokenStream* restrict s) {
 			
 			tu->exprs[e] = (Expr) {
 				.op = EXPR_SUBSCRIPT,
-				.loc = tokens_get(s)->location,
+				.loc = loc,
 				.subscript = { base, index }
 			};
 			goto try_again;
@@ -1292,7 +1295,7 @@ static ExprIndex parse_expr_l1(TranslationUnit* tu, TokenStream* restrict s) {
 			e = make_expr(tu);
 			tu->exprs[e] = (Expr) {
 				.op = EXPR_ARROW,
-				.loc = tokens_get(s)->location,
+				.loc = loc,
 				.arrow = { .base = base, .name = name }
 			};
 			
@@ -1314,7 +1317,7 @@ static ExprIndex parse_expr_l1(TranslationUnit* tu, TokenStream* restrict s) {
 			e = make_expr(tu);
 			tu->exprs[e] = (Expr) {
 				.op = EXPR_DOT,
-				.loc = tokens_get(s)->location,
+				.loc = loc,
 				.dot = { .base = base, .name = name }
 			};
 			
@@ -1356,7 +1359,7 @@ static ExprIndex parse_expr_l1(TranslationUnit* tu, TokenStream* restrict s) {
 			
 			tu->exprs[e] = (Expr) {
 				.op = EXPR_CALL,
-				.loc = tokens_get(s)->location,
+				.loc = loc,
 				.call = { target, param_count, param_start }
 			};
 			
@@ -1375,7 +1378,7 @@ static ExprIndex parse_expr_l1(TranslationUnit* tu, TokenStream* restrict s) {
 			e = make_expr(tu);
 			tu->exprs[e] = (Expr) {
 				.op = is_inc ? EXPR_POST_INC : EXPR_POST_DEC,
-				.loc = tokens_get(s)->location,
+				.loc = loc,
 				.unary_op.src = src
 			};
 		}
@@ -2105,6 +2108,7 @@ static TypeIndex parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s,
 		size_t depth = 0;
 		size_t* counts = tls_save();
 		
+		// TODO(NeGate): read some array qualifiers... then throw them away
 		do {
 			tokens_next(s);
 			
@@ -2170,6 +2174,7 @@ static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, At
 	// _Alignas(N) or __declspec(align(N))
 	// 0 means no forced alignment
 	int forced_align = 0;
+	
 	do {
 		TknType tkn_type = tokens_get(s)->type;
 		switch (tkn_type) {
@@ -2185,6 +2190,7 @@ static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, At
 			case TOKEN_KW_unsigned: counter |= UNSIGNED; break;
 			case TOKEN_KW_signed: counter |= SIGNED; break;
 			
+			case TOKEN_KW_register: /* lmao */ break;
 			case TOKEN_KW_static: attr->is_static = true; break;
 			case TOKEN_KW_typedef: attr->is_typedef = true; break;
 			case TOKEN_KW_inline: attr->is_inline = true; break;
@@ -2198,6 +2204,32 @@ static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, At
 			case TOKEN_KW_const: is_const = true; break;
 			case TOKEN_KW_volatile: break;
 			case TOKEN_KW_auto: break;
+			
+			case TOKEN_KW_Typeof: {
+				SourceLoc* loc = &s->line_arena[tokens_get(s)->location];
+				
+				tokens_next(s);
+				if (tokens_get(s)->type != '(') {
+					report(REPORT_ERROR, loc, "expected opening parenthesis for _Typeof");
+					return 0;
+				}
+				tokens_next(s);
+				
+				if (is_typename(s)) {
+					type = parse_typename(tu, s);
+				} else {
+					// we don't particularly resolve typeof for expressions immediately.
+					// instead we just wait until all symbols are resolved properly
+					ExprIndex src = parse_expr(tu, s);
+					type = new_typeof(tu, src);
+				}
+				
+				if (tokens_get(s)->type != ')') {
+					report(REPORT_ERROR, loc, "expected closing parenthesis for _Typeof");
+					return 0;
+				}
+				break;
+			}
 			
 			case TOKEN_KW_Alignas: {
 				SourceLoc* loc = &s->line_arena[tokens_get(s)->location];
@@ -2583,7 +2615,11 @@ static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, At
 		}
 		
 		type = copy_type(tu, type);
-		tu->types[type].align = forced_align;
+		
+		if (forced_align) {
+			tu->types[type].align = forced_align;
+		}
+		
 		tu->types[type].is_atomic = is_atomic;
 		tu->types[type].is_const = is_const;
 	}
@@ -2603,7 +2639,7 @@ static bool is_typename(TokenStream* restrict s) {
 		case TOKEN_KW_typedef: case TOKEN_KW_inline: case TOKEN_KW_const:
 		case TOKEN_KW_volatile: case TOKEN_KW_declspec: case TOKEN_KW_Thread_local:
 		case TOKEN_KW_Alignas: case TOKEN_KW_Atomic: case TOKEN_KW_auto:
-		case TOKEN_KW_cdecl: case TOKEN_KW_stdcall:
+		case TOKEN_KW_cdecl: case TOKEN_KW_stdcall: case TOKEN_KW_Typeof:
 		return true;
 		
 		case TOKEN_IDENTIFIER: {

@@ -1,5 +1,6 @@
 
 void print(int n){}
+
 void fibonacci1() {
     int lo = 0;
     int hi = 1;

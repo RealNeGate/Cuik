@@ -4,55 +4,50 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <DbgHelp.h>
+#include <time.h>
 
 static LONG WINAPI unhandled_exception_handler(PEXCEPTION_POINTERS exception_ptrs) {
-	HANDLE process = GetCurrentProcess();
-	SymInitialize(process, NULL, TRUE);
+	time_t now = time(NULL);
+    
+	char path[_MAX_PATH + 1];
+	sprintf_s(path, _MAX_PATH + 1, "./crash_dump_%lld.dmp", now);
 	
-	void* stack[100];
-	uint16_t frames = CaptureStackBackTrace(0, 100, stack, NULL);
-	SYMBOL_INFO* symbol = (SYMBOL_INFO*) calloc(sizeof(SYMBOL_INFO) + 256 * sizeof(char), 1);
-	
-	symbol->MaxNameLen   = 255;
-	symbol->SizeOfStruct = sizeof(SYMBOL_INFO);
-	
-	printf("\nCrash dump (put out an issue on GitHub or sum idk):\n");
-	
-	char buffer[512];
-	for (size_t i = 0; i < frames; i++) {
-		DWORD64 disp;
-		SymFromAddr(process, (DWORD64)stack[i], &disp, symbol);
-		
-		size_t len = 0;
-		DWORD disp2;
-		IMAGEHLP_LINE line;
-		if (SymGetLineFromAddr64(process, (DWORD64)stack[i], &disp2, &line)) {
-			len = sprintf_s(buffer, 512, "    %s:%lu", line.FileName, line.LineNumber);
-			
-			// pad to 50
-			if (len < 50) {
-				for (int i = len; i < 50; i++) buffer[i] = ' ';
-				len = 50;
-			}
-			
-			len = sprintf_s(&buffer[len], 512 - len, "<%s+%lu>", symbol->Name, disp2);
-		} else {
-			len = sprintf_s(buffer, 512, "    %s", symbol->Name);
-			
-			// pad to 50
-			if (len < 50) {
-				for (int i = len; i < 50; i++) buffer[i] = ' ';
-				len = 50;
-			}
-			
-			len = sprintf_s(&buffer[len], 512 - len, "<0x%lu+%lu>", symbol->Address, disp);
-		}
-		
-		printf("%s\n", buffer);
-		if (strcmp(symbol->Name, "main") == 0) break;
+    char* new_path = malloc(MAX_PATH);
+	if (GetFullPathNameA(path, MAX_PATH, new_path, NULL) == 0) {
+		printf("GetFullPathNameA broke while in the middle of a crash... yikes?");
+		return EXCEPTION_EXECUTE_HANDLER;
 	}
 	
-	free(symbol);
+	printf("A crash happened, please make a Github Issue or something i dont control you :p\n");
+	printf("%s\n\n", new_path);
+	
+	// This writes a dump file to the current dir.
+	// To view this file open it up in Visual Studio
+	// If source and symbols are available you should
+	// along with the crash point.
+	HANDLE crash_dump_file = CreateFileA(path,
+										 GENERIC_WRITE,
+										 0,
+										 NULL,
+										 CREATE_ALWAYS,
+										 FILE_ATTRIBUTE_NORMAL,
+										 NULL);
+	
+	MINIDUMP_EXCEPTION_INFORMATION mini_dump_info = {
+		.ThreadId = GetCurrentThreadId(),
+		.ExceptionPointers = exception_ptrs,
+		.ClientPointers = TRUE
+	};
+	
+	MiniDumpWriteDump(GetCurrentProcess(),
+					  GetCurrentProcessId(),
+					  crash_dump_file,
+					  (MINIDUMP_TYPE)(MiniDumpWithFullMemory | MiniDumpWithHandleData),
+					  &mini_dump_info,
+					  NULL,
+					  NULL);
+	
+	CloseHandle(crash_dump_file);
 	return EXCEPTION_EXECUTE_HANDLER;
 }
 

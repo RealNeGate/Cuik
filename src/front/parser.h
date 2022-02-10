@@ -39,7 +39,12 @@ typedef enum TypeKind {
     KIND_ARRAY,
     KIND_VLA, // variable-length array
     KIND_STRUCT,
-    KIND_UNION
+    KIND_UNION,
+	
+	// weird typeof(expr) type that gets resolved in the semantics pass
+	// this is done to enable typeof to work with out of order decls...
+	// it's a mess but it's worth it
+	KIND_TYPEOF
 } TypeKind;
 
 // Used by unions and structs
@@ -127,6 +132,11 @@ typedef struct Type {
 			Atom name;
 			EnumEntryIndex start, end;
 		} enumerator;
+		
+		// Typeof
+		struct {
+			ExprIndex src;
+		} typeof_;
     };
 } Type;
 
@@ -184,6 +194,7 @@ typedef enum ExprOp {
 	EXPR_NONE,
 	
 	EXPR_INT,
+	EXPR_ENUM,
 	EXPR_FLOAT32,
 	EXPR_FLOAT64,
 	
@@ -427,6 +438,10 @@ typedef struct Expr {
 		// EXPR_PARAM
 		int param_num;
 		
+		struct ExprEnum {
+			int64_t num;
+			ExprIndex next_symbol_in_chain;
+		} enum_val;
 		struct {
 			TypeIndex type;
 			ExprIndex src;
@@ -492,6 +507,7 @@ typedef struct Expr {
 	};
 } Expr;
 _Static_assert(offsetof(Expr, next_symbol_in_chain) == offsetof(Expr, next_symbol_in_chain2), "these should be aliasing");
+_Static_assert(offsetof(Expr, next_symbol_in_chain) == offsetof(Expr, enum_val.next_symbol_in_chain), "these should be aliasing");
 _Static_assert(sizeof(Expr) <= 32, "We shouldn't exceed 32 bytes");
 
 typedef struct Decl {
@@ -543,6 +559,7 @@ TypeIndex new_enum(TranslationUnit* tu);
 TypeIndex new_record(TranslationUnit* tu, bool is_union);
 TypeIndex copy_type(TranslationUnit* tu, TypeIndex base);
 TypeIndex new_pointer(TranslationUnit* tu, TypeIndex base);
+TypeIndex new_typeof(TranslationUnit* tu, ExprIndex src);
 TypeIndex new_array(TranslationUnit* tu, TypeIndex base, int count);
 TypeIndex get_common_type(TranslationUnit* tu, TypeIndex ty1, TypeIndex ty2);
 bool type_equal(TranslationUnit* tu, TypeIndex a, TypeIndex b);

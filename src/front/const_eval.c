@@ -74,6 +74,10 @@ ConstValue const_eval(TranslationUnit* tu, ExprIndex e) {
 			}
 		}
 		
+		case EXPR_ENUM: {
+			return signed_const(ep->enum_val.num);
+		}
+		
 		case EXPR_CHAR: {
 			const char* start = (const char*)(ep->str.start + 1);
 			const char* end = (const char*)(ep->str.end - 1);

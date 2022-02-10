@@ -103,8 +103,7 @@ bool linker_invoke(Linker* l, const char* filename, LinkerSubsystem subsystem, b
 	wchar_t cmd_line[CMD_LINE_MAX];
 	int cmd_line_len = swprintf(cmd_line, CMD_LINE_MAX,
 								L"%s\\link.exe /nologo /machine:amd64 /subsystem:%S"
-								" /debug /pdb:%S.pdb /out:%S.exe /incremental:no "
-								" /entry:mainCRTStartup ",
+								" /debug /pdb:%S.pdb /out:%S.exe /incremental:no ",
 								l->vswhere.vs_exe_path, subsystem_strings[subsystem], filename, filename);
 	
 	// Add all the libpaths

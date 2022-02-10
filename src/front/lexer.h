@@ -117,17 +117,18 @@ typedef enum TknType {
 	TOKEN_KW_Complex,
 	TOKEN_KW_Generic,
 	TOKEN_KW_Imaginary,
-	TOKEN_KW_Let,
 	TOKEN_KW_Pragma,
 	TOKEN_KW_Noreturn,
 	TOKEN_KW_Static_assert,
 	TOKEN_KW_Thread_local,
+	TOKEN_KW_Typeof,
 	TOKEN_KW_cdecl,
 	TOKEN_KW_stdcall,
 	TOKEN_KW_declspec,
 } TknType;
 
 typedef enum IntSuffix {
+	//                u   l   l
 	INT_SUFFIX_NONE = 0 + 0 + 0,
 	INT_SUFFIX_U    = 1 + 0 + 0,
 	INT_SUFFIX_L    = 0 + 2 + 0,

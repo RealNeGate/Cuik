@@ -16,7 +16,7 @@
 // cpp_add_include_directory(&ctx, "some/folder/");
 //
 // cpp_define(&ctx, "SOME_DEFINE", "10");
-// cpp_define_empty(&ctx, "SOME_DEFINE");
+// cpp_define_empty(&ctx, "OTHER_DEFINE");
 // 
 // TokenStream tokens = cpp_process(&ctx, "a.txt");
 //

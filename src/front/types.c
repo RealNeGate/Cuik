@@ -81,6 +81,23 @@ TypeIndex new_pointer(TranslationUnit* tu, TypeIndex base) {
 	return big_array_length(tu->types) - 1;
 }
 
+TypeIndex new_typeof(TranslationUnit* tu, ExprIndex src) {
+	Type t = {
+		.kind = KIND_TYPEOF,
+		
+		// ideally if you try using these it'll crash because things
+		// do sanity checks on align, hopefully none trigger because
+		// we resolve it properly.
+		.size = 0,
+		.align = 0,
+		
+		.typeof_.src = src
+	};
+	
+	big_array_put(tu->types, t);
+	return big_array_length(tu->types) - 1;
+}
+
 TypeIndex new_array(TranslationUnit* tu, TypeIndex base, int count) {
 	int size = tu->types[base].size;
 	int align = tu->types[base].align;
@@ -90,6 +107,7 @@ TypeIndex new_array(TranslationUnit* tu, TypeIndex base, int count) {
 		assert(0 && "Overflow on new_array with big inputs");
 	}
 	
+	assert(align != 0);
 	Type t = {
 		.kind = KIND_ARRAY,
 		.size = dst,

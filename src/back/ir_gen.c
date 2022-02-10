@@ -353,6 +353,7 @@ InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, Sourc
 					// TODO(NeGate): Implement constants for literals
 					// to allow for more stuff to be precomputed.
 					case EXPR_INT:
+					case EXPR_ENUM:
 					case EXPR_NEGATE:
 					if (!func) {
 						int size = tu->types[child_type].size;
@@ -493,6 +494,13 @@ static IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 					.reg = tb_inst_sint(func, dt, ep->int_num.num)
 				};
 			}
+		}
+		case EXPR_ENUM: {
+			return (IRVal) {
+				.value_type = RVALUE,
+				.type = ep->type,
+				.reg = tb_inst_sint(func, TB_TYPE_I32, ep->enum_val.num)
+			};
 		}
 		case EXPR_FLOAT32: {
 			return (IRVal) {
@@ -1617,7 +1625,8 @@ static void gen_func_body(TranslationUnit* tu, TypeIndex type, StmtIndex s) {
 	StmtIndex body = (StmtIndex)tu->stmts[s].decl.initial;
 	
 	// main needs to call the static init
-	if (strcmp((const char*)tu->stmts[s].decl.name, "main") == 0) {
+	if (strcmp((const char*)tu->stmts[s].decl.name, "main") == 0 ||
+		strcmp((const char*)tu->stmts[s].decl.name, "WinMain") == 0) {
 		tb_inst_call(func, TB_TYPE_VOID, static_init_func, 0, NULL);
 	}
 	
