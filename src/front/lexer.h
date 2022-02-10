@@ -141,7 +141,7 @@ typedef int SourceLocIndex;
 // kinda a lot of info...
 typedef struct SourceLoc {
 	const unsigned char* file;
-	const unsigned char* at;
+	const unsigned char* line_str;
 	
 	int line;
 	short columns;

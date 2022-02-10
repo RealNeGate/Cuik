@@ -85,9 +85,14 @@ TypeIndex new_array(TranslationUnit* tu, TypeIndex base, int count) {
 	int size = tu->types[base].size;
 	int align = tu->types[base].align;
 	
+	int dst;
+	if (__builtin_mul_overflow(size, count, &dst)) {
+		assert(0 && "Overflow on new_array with big inputs");
+	}
+	
 	Type t = {
 		.kind = KIND_ARRAY,
-		.size = size * count,
+		.size = dst,
 		.align = align,
 		.array_of = base,
 		.array_count = count

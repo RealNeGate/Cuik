@@ -10,8 +10,10 @@
 
 #include <back/tb.h>
 
+#define MAX_LOCAL_SYMBOLS (2 << 20)
+
 // Members used by struct/union types
-// NOTE(NeGate): Consider not using an arena for this
+// NOTE(NeGate): Consider using an arena for this
 typedef int MemberIndex;
 
 typedef int TypeIndex;
@@ -65,6 +67,7 @@ typedef struct Attribs {
 	// here since it's used in cases that aren't relevant to attribs.
 	// mainly STMT_DECL, it keeps track of if anyone's referenced it
 	// so we can garbage collect the symbol later.
+	bool is_root    : 1;
 	bool is_used    : 1;
 } Attribs;
 
@@ -494,6 +497,7 @@ _Static_assert(sizeof(Expr) <= 32, "We shouldn't exceed 32 bytes");
 typedef struct Decl {
 	TypeIndex type;
 	Atom name;
+	SourceLocIndex loc;
 } Decl;
 
 typedef enum StorageClass {

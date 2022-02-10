@@ -6,6 +6,7 @@
 #include "preproc.h"
 #include "memory.h"
 #include "file_io.h"
+#include "diagnostic.h"
 #include <ext/stb_ds.h>
 
 #if _WIN32
@@ -19,11 +20,11 @@ static uint64_t hash_ident(const unsigned char* at, size_t length);
 static bool is_defined(CPP_Context* restrict c, const unsigned char* start, size_t length);
 static void expect(Lexer* l, char ch);
 static void skip_directive_body(Lexer* l);
-static intmax_t eval(CPP_Context* restrict c, Lexer* l);
+static intmax_t eval(CPP_Context* restrict c, TokenStream* restrict s, Lexer* l);
 static _Noreturn void generic_error(Lexer* l, const char* msg);
 
-static unsigned char* expand_ident(CPP_Context* restrict c, unsigned char* restrict out, Lexer* l);
-static unsigned char* expand(CPP_Context* restrict c, unsigned char* restrict out, Lexer* l);
+static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer* l);
+static void expand(CPP_Context* restrict c, TokenStream* restrict s, Lexer* l);
 
 static bool find_define(CPP_Context* restrict c, string* out_val, const unsigned char* start, size_t length);
 
@@ -177,12 +178,15 @@ TokenStream cpp_process(CPP_Context* ctx, const char filepath[]) {
 
 inline static SourceLocIndex get_source_location(Lexer* restrict l, TokenStream* restrict s) {
 	SourceLocIndex i = arrlen(s->line_arena);
+	if (l->line_current == NULL) {
+		l->line_current = l->start;
+	}
 	
 	assert((l->token_start - l->line_current) <= UINT16_MAX);
 	assert((l->token_end - l->token_start) <= UINT16_MAX);
 	SourceLoc loc = { 
 		.file = (const unsigned char*)l->filepath,
-		.at = l->token_start,
+		.line_str = l->line_current,
 		.line = l->current_line,
 		.columns = l->token_start - l->line_current,
 		.length = l->token_end - l->token_start
@@ -206,21 +210,36 @@ inline static void cpp_pop_scope(CPP_Context* restrict ctx, Lexer* restrict l) {
 	ctx->depth--;
 }
 
-// TODO(NeGate): Fix this up please...
-static void expand_double_hash(CPP_Context* restrict c, Token* last, Lexer* restrict l, SourceLocIndex loc) {
-	unsigned char* out_start = c->the_shtuffs + c->the_shtuffs_size;
-	c->the_shtuffs_size += 256;
-	assert(c->the_shtuffs_size < THE_SHTUFFS_SIZE);
+inline static void* gimme_the_shtuffs(CPP_Context* restrict c, size_t len) {
+	unsigned char* allocation = c->the_shtuffs + c->the_shtuffs_size;
 	
+	c->the_shtuffs_size += len;
+	if (c->the_shtuffs_size >= THE_SHTUFFS_SIZE) {
+		printf("Preprocessor: out of memory!\n");
+		abort();
+	}
+	
+	return allocation;
+}
+
+inline static void trim_the_shtuffs(CPP_Context* restrict c, void* new_top) {
+	size_t i = ((uint8_t*)new_top) - c->the_shtuffs;
+	assert(i <= c->the_shtuffs_size);
+	c->the_shtuffs_size = i;
+}
+
+// TODO(NeGate): Fix this up please...
+static void expand_double_hash(CPP_Context* restrict c, TokenStream* restrict s, Token* last, Lexer* restrict l, SourceLocIndex loc) {
+	unsigned char* out_start = gimme_the_shtuffs(c, 256);
 	unsigned char* out = out_start;
 	
 	// if the concat fails we return here.
 	Lexer savepoint;
 	{
+		// TODO(NeGate): possible buffer overflow here
+		// with unchecked memcpys on static and small allocation
 		memcpy(out, last->start, last->end - last->start);
 		out += last->end - last->start;
-		
-		lexer_read(l);
 		
 		memcpy(out, l->token_start, l->token_end - l->token_start);
 		out += l->token_end - l->token_start;
@@ -237,12 +256,18 @@ static void expand_double_hash(CPP_Context* restrict c, Token* last, Lexer* rest
 	
 	// make nice joined token
 	if (tmp_lex.token_type == TOKEN_IDENTIFIER) {
-		*last = (Token){ 
-			classify_ident(tmp_lex.token_start, tmp_lex.token_end - tmp_lex.token_start),
-			loc,
-			tmp_lex.token_start,
-			tmp_lex.token_end
-		};
+		if (!is_defined(c, tmp_lex.token_start, tmp_lex.token_end - tmp_lex.token_start)) {
+			*last = (Token){ 
+				classify_ident(tmp_lex.token_start, tmp_lex.token_end - tmp_lex.token_start),
+				loc,
+				tmp_lex.token_start,
+				tmp_lex.token_end
+			};
+		} else {
+			arrdelswap(s->tokens, arrlen(s->tokens) - 1);
+			
+			expand_ident(c, s, &tmp_lex);
+		}
 	} else {
 		*last = (Token){ 
 			tmp_lex.token_type,
@@ -269,10 +294,10 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 		l.hit_line = false;
 		
 		if (l.token_type == TOKEN_IDENTIFIER) {
-			SourceLocIndex loc = get_source_location(&l, s);
-			
 			if (!is_defined(c, l.token_start, l.token_end - l.token_start)) {
 				// FAST PATH
+				SourceLocIndex loc = get_source_location(&l, s);
+				
 				Token t = { 
 					classify_ident(l.token_start, l.token_end - l.token_start),
 					loc,
@@ -282,52 +307,9 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 				
 				lexer_read(&l);
 			} else {
-				// SLOW SHIT WHICH ALLOCATES SOME SPACE OUT THE SHTUFFS
-				// Expand
-				unsigned char* out_start = &c->the_shtuffs[c->the_shtuffs_size];
-				unsigned char* out_end = expand_ident(c, out_start, &l);
-				
-				if (out_start == out_end) {
-					// Empty macro
-				} else {
-					*out_end++ = '\0';
-					
-					c->the_shtuffs_size += out_end - out_start;
-					assert(c->the_shtuffs_size < THE_SHTUFFS_SIZE);
-					
-					Lexer tmp_lex = (Lexer) { filepath, out_start, out_start };
-					lexer_read(&tmp_lex);
-					
-					while (tmp_lex.token_type) {
-						Token t;
-						if (tmp_lex.token_type == TOKEN_IDENTIFIER) {
-							t = (Token){ 
-								classify_ident(tmp_lex.token_start, tmp_lex.token_end - tmp_lex.token_start),
-								loc,
-								tmp_lex.token_start,
-								tmp_lex.token_end,
-							};
-							
-							arrput(s->tokens, t);
-							lexer_read(&tmp_lex);
-						} else if (tmp_lex.token_type == TOKEN_DOUBLE_HASH) {
-							assert(arrlen(s->tokens) > 0);
-							Token* last = &s->tokens[arrlen(s->tokens) - 1];
-							
-							expand_double_hash(c, last, &tmp_lex, loc);
-						} else {
-							t = (Token){ 
-								tmp_lex.token_type,
-								loc,
-								tmp_lex.token_start,
-								tmp_lex.token_end
-							};
-							
-							arrput(s->tokens, t);
-							lexer_read(&tmp_lex);
-						}
-					}
-				}
+				// SLOW PATH BECAUSE IT NEEDS TO SPAWN POSSIBLY METRIC SHIT LOADS
+				// OF TOKENS AND EXPAND WITH THE AVERAGE C PREPROCESSOR SPOOKIES
+				expand_ident(c, s, &l);
 			}
 		} else if (l.token_type == TOKEN_DOUBLE_HASH) {
 			int line = l.current_line;
@@ -336,7 +318,7 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 			assert(arrlen(s->tokens) > 0);
 			Token* last = &s->tokens[arrlen(s->tokens) - 1];
 			
-			expand_double_hash(c, last, &l, line);
+			expand_double_hash(c, s, last, &l, line);
 		} else if (l.token_type == '#') {
 			lexer_read(&l);
 			
@@ -345,7 +327,7 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 					lexer_read(&l);
 					
 					assert(!l.hit_line);
-					if (eval(c, &l)) {
+					if (eval(c, s, &l)) {
 						cpp_push_scope(c, &l);
 						c->scope_eval[c->depth] = 1;
 					} else {
@@ -433,7 +415,7 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 					assert(!l.hit_line);
 					// if it didn't evaluate any of the other options
 					// try to do this
-					if (c->scope_eval[c->depth] == 0 && eval(c, &l)) {
+					if (c->scope_eval[c->depth] == 0 && eval(c, s, &l)) {
 						cpp_push_scope(c, &l);
 						c->scope_eval[c->depth] = 1;
 					} else {
@@ -647,8 +629,8 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 				generic_error(&l, "unknown directive!");
 			}
 		} else {
-			Token t = { 
-				l.token_type, 
+			Token t = {
+				l.token_type,
 				get_source_location(&l, s),
 				l.token_start,
 				l.token_end
@@ -810,123 +792,26 @@ static bool find_define2(CPP_Context* restrict c, size_t* out_index, const unsig
 	return false;
 }
 
-////////////////////////////////
-// Macro expressions
-////////////////////////////////
-static intmax_t eval_l0(CPP_Context* restrict c, Lexer* l) {
-	bool flip = false;
-	while (l->token_type == '!') {
-		flip = !flip;
-		lexer_read(l);
-	}
-	
-	intmax_t val;
-	if (l->token_type == TOKEN_INTEGER) {
-		IntSuffix suffix;
-		val = parse_int(l->token_end - l->token_start, (const char*)l->token_start, &suffix);
-		lexer_read(l);
-	} else if (l->token_type == TOKEN_IDENTIFIER) {
-		assert(!is_defined(c, l->token_start, l->token_end - l->token_start));
-		
-		val = 0;
-		lexer_read(l);
-	} else if (l->token_type == TOKEN_STRING_SINGLE_QUOTE) {
-		int ch;
-		intptr_t distance = parse_char(l->token_end - l->token_start, (const char*)l->token_start, &ch);
-		if (distance < 0) {
-			generic_error(l, "could not parse char literal");
-		}
-		
-		val = ch;
-		lexer_read(l);
-	} else if (l->token_type == '(') {
-		lexer_read(l);
-		val = eval(c, l);
-		expect(l, ')');
-	} else {
-		generic_error(l, "could not parse expression!");
-	}
-	
-	return flip ? !val : val;
-}
-
-static intmax_t eval_l6(CPP_Context* restrict c, Lexer* l) {
-	intmax_t left = eval_l0(c, l);
-	
-	while (l->token_type == '>' ||
-		   l->token_type == '<' ||
-		   l->token_type == TOKEN_GREATER_EQUAL ||
-		   l->token_type == TOKEN_LESS_EQUAL) {
-		int t = l->token_type;
-		lexer_read(l);
-		
-		intmax_t right = eval_l0(c, l);
-		switch (t) {
-			case '>': left = left > right; break;
-			case '<': left = left < right; break;
-			case TOKEN_GREATER_EQUAL: left = left >= right; break;
-			case TOKEN_LESS_EQUAL: left = left <= right; break;
-		}
-	}
-	
-	return left;
-}
-
-static intmax_t eval_l7(CPP_Context* restrict c, Lexer* l) {
-	intmax_t left = eval_l6(c, l);
-	
-	while (l->token_type == TOKEN_NOT_EQUAL ||
-		   l->token_type == TOKEN_EQUALITY) {
-		int t = l->token_type;
-		lexer_read(l);
-		
-		intmax_t right = eval_l6(c, l);
-		if (t == TOKEN_EQUALITY) left = (left == right);
-		else left = (left != right);
-	}
-	
-	return left;
-}
-
-static intmax_t eval_l11(CPP_Context* restrict c, Lexer* l) {
-	intmax_t left = eval_l7(c, l);
-	
-	while (l->token_type == TOKEN_DOUBLE_AND) {
-		lexer_read(l);
-		
-		intmax_t right = eval_l7(c, l);
-		left = left && right;
-	}
-	
-	return left;
-}
-
-static int eval_l12(CPP_Context* restrict c, Lexer* l) {
-	intmax_t left = eval_l11(c, l);
-	
-	while (l->token_type == TOKEN_DOUBLE_OR) {
-		lexer_read(l);
-		
-		intmax_t right = eval_l11(c, l);
-		left = left || right;
-	}
-	
-	return left;
-}
-
-static unsigned char* expand_ident(CPP_Context* restrict c, unsigned char* restrict out, Lexer* l) {
+static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer* l) {
 	size_t token_length = l->token_end - l->token_start;
 	const unsigned char* token_data = l->token_start;
 	
-	if (lexer_match(l, 8, "__FILE__")) {
+	if (lexer_match(l, 8, "__FILE__") || lexer_match(l, 9, "L__FILE__")) {
 		// filepath as a string
-		lexer_read(l);
+		unsigned char* out_start = gimme_the_shtuffs(c, MAX_PATH+4);
+		unsigned char* out = out_start;
+		
+		if (token_data[0] == 'L') *out++ = 'L';
 		
 		*out++ = '\"';
 		{
 			// TODO(NeGate): Kinda shitty but i just wanna duplicate
 			// the backslashes to avoid them being treated as an escape
 			const char* in = (const char*)l->filepath;
+			if (strlen(in) >= MAX_PATH) {
+				generic_error(l, "preprocessor error: __FILE__ generated a file path that was too long\n");
+				abort();
+			}
 			
 			while (*in) {
 				if (*in == '\\') {
@@ -938,29 +823,40 @@ static unsigned char* expand_ident(CPP_Context* restrict c, unsigned char* restr
 				}
 			}
 		}
+		
 		*out++ = '\"';
-		*out++ = ' ';
-		return out;
+		*out++ = '\0';
+		trim_the_shtuffs(c, out);
+		
+		Token t = { 
+			TOKEN_STRING_DOUBLE_QUOTE,
+			get_source_location(l, s),
+			out_start,
+			out
+		};
+		arrput(s->tokens, t);
+		lexer_read(l);
 	} else if (lexer_match(l, 8, "__LINE__")) {
 		// line number as a string
+		unsigned char* out = gimme_the_shtuffs(c, 10);
+		size_t length = sprintf_s((char*)out, 10, "%d", l->current_line);
+		
+		trim_the_shtuffs(c, &out[length + 1]);
+		Token t = {
+			TOKEN_INTEGER,
+			get_source_location(l, s),
+			out,
+			out + length
+		};
+		arrput(s->tokens, t);
 		lexer_read(l);
-		
-		char buf[10];
-		sprintf_s(buf, 10, "%d", l->current_line);
-		
-		size_t length = strlen(buf);
-		memcpy(out, buf, length);
-		out += length;
-		
-		*out++ = ' ';
-		
-		return out;
 	} else if (lexer_match(l, 7, "defined")) {
-		// optional parenthesis
 		lexer_read(l);
 		
 		const unsigned char* start = NULL;
 		const unsigned char* end = NULL;
+		
+		// optional parenthesis
 		if (l->token_type == '(') {
 			lexer_read(l);
 			
@@ -983,301 +879,496 @@ static unsigned char* expand_ident(CPP_Context* restrict c, unsigned char* restr
 		
 		bool found = is_defined(c, start, end - start);
 		
-		*out++ = found ? '1' : '0';
-		*out++ = ' ';
-		return out;
-	}
-	
-	size_t def_i;
-	if (find_define2(c, &def_i, token_data, token_length)) {
-		lexer_read(l);
+		// we really just allocated a single byte just to store this lmao
+		unsigned char* out = gimme_the_shtuffs(c, 2);
+		out[0] = found ? '1' : '0';
+		out[1] = '\0';
 		
-		string def = { 
-			.data = c->macro_bucket_values_start[def_i],
-			.length = c->macro_bucket_values_end[def_i] - c->macro_bucket_values_start[def_i]
+		Token t = { 
+			TOKEN_INTEGER, 
+			get_source_location(l, s),
+			out,
+			out + 1
 		};
-		
-		const unsigned char* args = c->macro_bucket_keys[def_i] + c->macro_bucket_keys_length[def_i];
-		
-		// Sometimes we have a layer of indirection when doing 
-		// preprocessor expansion:
-		//   #define PEAR(X) X;
-		//   #define APPLE PEAR
-		//   APPLE(int a)
-		if (def.length && *args != '(' && l->token_type == '(') {
-			// expand and append
-			Lexer temp_lex = (Lexer) { l->filepath, def.data, def.data };
-			lexer_read(&temp_lex);
-			
-			size_t token_length = temp_lex.token_end - temp_lex.token_start;
-			const unsigned char* token_data = temp_lex.token_start;
-			
-			if (find_define2(c, &def_i, token_data, token_length)) {
-				def = (string){ 
-					.data = c->macro_bucket_values_start[def_i],
-					.length = c->macro_bucket_values_end[def_i] - c->macro_bucket_values_start[def_i]
-				};
-				args = c->macro_bucket_keys[def_i] + c->macro_bucket_keys_length[def_i];
-			}
-		}
-		
-		// function macro
-		if (*args == '(' && l->token_type == '(') {
-			////////////////////////////////
-			// Parse the parameters into a map
-			////////////////////////////////
-			// make the start and end of the params, interleaved
-			// start: value_ranges[i*2 + 0], end: value_ranges[i*2 + 1]
-			const unsigned char** value_ranges = tls_save();
-			int value_count = 0;
-			
+		arrput(s->tokens, t);
+	} else {
+		size_t def_i;
+		if (find_define2(c, &def_i, token_data, token_length)) {
 			lexer_read(l);
-			while (l->token_type != ')') {
-				tls_push(2 * sizeof(const unsigned char*));
-				int i = value_count++;
-				
-				int paren_depth = 0;
-				const unsigned char* start = l->token_start;
-				const unsigned char* end = l->token_start;
-				while (true) {
-					if (l->token_type == '(') {
-						paren_depth++;
-					} else if (l->token_type == ')') {
-						if (paren_depth == 0) break;
-						paren_depth--;
-					} else if (l->token_type == ',') {
-						if (paren_depth == 0) break;
-					}
-					
-					end = l->token_end;
-					lexer_read(l);
-				}
-				
-				value_ranges[i*2 + 0] = start;
-				value_ranges[i*2 + 1] = end;
-				
-				if (l->token_type == ',') lexer_read(l);
-				l->hit_line = false;
-			}
-			expect(l, ')');
 			
-			// We dont need to parse this part if it expands into nothing
-			if (def.length) {
-				// Parse macro function arg names
-				const unsigned char** key_ranges = tls_save();
-				int key_count = 0;
+			string def = {
+				.data = c->macro_bucket_values_start[def_i],
+				.length = c->macro_bucket_values_end[def_i] - c->macro_bucket_values_start[def_i]
+			};
+			
+			const unsigned char* args = c->macro_bucket_keys[def_i] + c->macro_bucket_keys_length[def_i];
+			
+			// Sometimes we have a layer of indirection when doing 
+			// preprocessor expansion:
+			//   #define PEAR(X) X;
+			//   #define APPLE PEAR
+			//   APPLE(int a)
+			if (def.length && *args != '(' && l->token_type == '(') {
+				// expand and append
+				Lexer temp_lex = (Lexer) { l->filepath, def.data, def.data };
+				lexer_read(&temp_lex);
 				
-				{
-					Lexer arg_lex = (Lexer) { l->filepath, args, args };
-					lexer_read(&arg_lex);
-					expect(&arg_lex, '(');
-					
-					while (arg_lex.token_type != ')') {
-						if (key_count) {
-							expect(&arg_lex, ',');
-						}
-						
-						if (arg_lex.token_type != TOKEN_IDENTIFIER) {
-							generic_error(&arg_lex, "expected identifier!");
-						}
-						
-						tls_push(2 * sizeof(const unsigned char*));
-						
-						int i = key_count++;
-						key_ranges[i*2 + 0] = arg_lex.token_start;
-						key_ranges[i*2 + 1] = arg_lex.token_end;
-						
-						lexer_read(&arg_lex);
-					}
-					
-					expect(&arg_lex, ')');
+				size_t token_length = temp_lex.token_end - temp_lex.token_start;
+				const unsigned char* token_data = temp_lex.token_start;
+				
+				if (find_define2(c, &def_i, token_data, token_length)) {
+					def = (string){ 
+						.data = c->macro_bucket_values_start[def_i],
+						.length = c->macro_bucket_values_end[def_i] - c->macro_bucket_values_start[def_i]
+					};
+					args = c->macro_bucket_keys[def_i] + c->macro_bucket_keys_length[def_i];
 				}
-				
+			}
+			
+			// function macro
+			if (*args == '(' && l->token_type == '(') {
 				////////////////////////////////
-				// Stream over the text hoping
-				// to replace some identifiers
-				// then expand the result one more
-				// time
+				// Parse the parameters into a map
 				////////////////////////////////
-				unsigned char* temp_expansion_start = tls_push(4096);
-				unsigned char* temp_expansion = temp_expansion_start;
+				// make the start and end of the params, interleaved
+				// start: value_ranges[i*2 + 0], end: value_ranges[i*2 + 1]
+				const unsigned char** value_ranges = tls_save();
+				int value_count = 0;
 				
-				Lexer def_lex = (Lexer) { l->filepath, def.data, def.data };
-				lexer_read(&def_lex);
+				lexer_read(l);
+				while (l->token_type != ')') {
+					tls_push(2 * sizeof(const unsigned char*));
+					int i = value_count++;
+					
+					int paren_depth = 0;
+					const unsigned char* start = l->token_start;
+					const unsigned char* end = l->token_start;
+					while (true) {
+						if (l->token_type == '(') {
+							paren_depth++;
+						} else if (l->token_type == ')') {
+							if (paren_depth == 0) break;
+							paren_depth--;
+						} else if (l->token_type == ',') {
+							if (paren_depth == 0) break;
+						}
+						
+						end = l->token_end;
+						lexer_read(l);
+					}
+					
+					value_ranges[i*2 + 0] = start;
+					value_ranges[i*2 + 1] = end;
+					
+					if (l->token_type == ',') lexer_read(l);
+					l->hit_line = false;
+				}
+				expect(l, ')');
 				
-				// set when a # happens, we expect a macro parameter afterwards
-				bool as_string = false;
-				while (!def_lex.hit_line) {
-					// shadowing...
-					size_t token_length = def_lex.token_end - def_lex.token_start;
-					const unsigned char* token_data = def_lex.token_start;
+				// We dont need to parse this part if it expands into nothing
+				if (def.length) {
+					// Parse macro function arg names
+					const unsigned char** key_ranges = tls_save();
+					int key_count = 0;
 					
-					if (def_lex.token_type == TOKEN_HASH) {
-						// TODO(NeGate): Error message
-						if (as_string) abort();
+					{
+						Lexer arg_lex = (Lexer) { l->filepath, args, args };
+						lexer_read(&arg_lex);
+						expect(&arg_lex, '(');
 						
-						as_string = true;
-						lexer_read(&def_lex);
-						continue;
-					}
-					
-					if (def_lex.token_type != TOKEN_IDENTIFIER) {
-						// TODO(NeGate): Error message
-						if (as_string) abort();
-						
-						memcpy(temp_expansion, token_data, token_length);
-						temp_expansion += token_length;
-						*temp_expansion++ = ' ';
-						
-						lexer_read(&def_lex);
-						continue;
-					}
-					
-					int index = -1;
-					for (size_t i = 0; i < key_count; i++) {
-						size_t key_length = key_ranges[i*2 + 1] - key_ranges[i*2 + 0];
-						const unsigned char* key = key_ranges[i*2 + 0];
-						
-						if (token_length == key_length &&
-							memcmp(key, token_data, token_length) == 0) {
-							index = i;
-							break;
+						while (arg_lex.token_type != ')') {
+							if (key_count) {
+								expect(&arg_lex, ',');
+							}
+							
+							if (arg_lex.token_type != TOKEN_IDENTIFIER) {
+								generic_error(&arg_lex, "expected identifier!");
+							}
+							
+							tls_push(2 * sizeof(const unsigned char*));
+							
+							int i = key_count++;
+							key_ranges[i*2 + 0] = arg_lex.token_start;
+							key_ranges[i*2 + 1] = arg_lex.token_end;
+							
+							lexer_read(&arg_lex);
 						}
+						
+						expect(&arg_lex, ')');
 					}
 					
-					if (index >= 0) {
-						if (as_string) *temp_expansion++ = '\"';
+					////////////////////////////////
+					// Stream over the text hoping
+					// to replace some identifiers
+					// then expand the result one more
+					// time
+					////////////////////////////////
+					unsigned char* temp_expansion_start = gimme_the_shtuffs(c, 4096);
+					unsigned char* temp_expansion = temp_expansion_start;
+					
+					Lexer def_lex = (Lexer) { l->filepath, def.data, def.data };
+					def_lex.current_line = l->current_line;
+					lexer_read(&def_lex);
+					
+					// set when a # happens, we expect a macro parameter afterwards
+					bool as_string = false;
+					while (!def_lex.hit_line) {
+						// shadowing...
+						size_t token_length = def_lex.token_end - def_lex.token_start;
+						const unsigned char* token_data = def_lex.token_start;
 						
-						const unsigned char* end   = value_ranges[index*2 + 1];
-						const unsigned char* start = value_ranges[index*2 + 0];
-						
-						size_t count = end-start;
-						for (size_t i = 0; i < count; i++) {
-							if (start[i] == '\r' || start[i] == '\n') temp_expansion[i] = ' ';
-							else temp_expansion[i] = start[i];
+						if (def_lex.token_type == TOKEN_HASH) {
+							// TODO(NeGate): Error message
+							if (as_string) abort();
+							
+							as_string = true;
+							lexer_read(&def_lex);
+							continue;
 						}
-						temp_expansion += count;
 						
-						if (as_string) *temp_expansion++ = '\"';
-						*temp_expansion++ = ' ';
+						if (def_lex.token_type != TOKEN_IDENTIFIER) {
+							// TODO(NeGate): Error message
+							if (as_string) abort();
+							
+							memcpy(temp_expansion, token_data, token_length);
+							temp_expansion += token_length;
+							*temp_expansion++ = ' ';
+							
+							lexer_read(&def_lex);
+							continue;
+						}
 						
-						as_string = false;
-					} else {
-						// TODO(NeGate): Error message
-						if (as_string) *temp_expansion++ = '#';
-						
-						for (size_t i = 0; i < token_length; i++) {
-							if (token_data[i] == '\r' || token_data[i] == '\n') {
-								temp_expansion[i] = ' ';
-							} else {
-								temp_expansion[i] = token_data[i];
+						int index = -1;
+						for (size_t i = 0; i < key_count; i++) {
+							size_t key_length = key_ranges[i*2 + 1] - key_ranges[i*2 + 0];
+							const unsigned char* key = key_ranges[i*2 + 0];
+							
+							if (token_length == key_length &&
+								memcmp(key, token_data, token_length) == 0) {
+								index = i;
+								break;
 							}
 						}
-						temp_expansion += token_length;
-						*temp_expansion++ = ' ';
+						
+						if (index >= 0) {
+							if (as_string) *temp_expansion++ = '\"';
+							
+							const unsigned char* end   = value_ranges[index*2 + 1];
+							const unsigned char* start = value_ranges[index*2 + 0];
+							
+							size_t count = end-start;
+							for (size_t i = 0; i < count; i++) {
+								if (start[i] == '\r' || start[i] == '\n') {
+									*temp_expansion++ = ' ';
+								} else if (start[i] == '\"' && as_string) {
+									if (i == 0 || (i > 0 && start[i - 1] != '\\')) {
+										*temp_expansion++ = '\\';
+										*temp_expansion++ = '\"';
+									}
+								} else {
+									*temp_expansion++ = start[i];
+								}
+							}
+							
+							if (as_string) *temp_expansion++ = '\"';
+							*temp_expansion++ = ' ';
+							
+							as_string = false;
+						} else {
+							// TODO(NeGate): Error message
+							if (as_string) *temp_expansion++ = '#';
+							
+							for (size_t i = 0; i < token_length; i++) {
+								if (token_data[i] == '\r' || token_data[i] == '\n') {
+									*temp_expansion++ = ' ';
+								} else {
+									*temp_expansion++ = token_data[i];
+								}
+							}
+							*temp_expansion++ = ' ';
+						}
+						
+						lexer_read(&def_lex);
 					}
 					
-					lexer_read(&def_lex);
+					*temp_expansion++ = '\0';
+					trim_the_shtuffs(c, temp_expansion);
+					
+					if (temp_expansion_start != temp_expansion) {
+						// expand and append
+						Lexer temp_lex = (Lexer){ l->filepath, temp_expansion_start, temp_expansion_start };
+						temp_lex.current_line = l->current_line;
+						lexer_read(&temp_lex);
+						
+						*temp_expansion++ = '\0';
+						
+						// NOTE(NeGate): We need to disable the current macro define
+						// so it doesn't recurse.
+						size_t saved_length = c->macro_bucket_keys_length[def_i];
+						c->macro_bucket_keys_length[def_i] = 0;
+						
+						expand(c, s, &temp_lex);
+						
+						c->macro_bucket_keys_length[def_i] = saved_length;
+					}
 				}
 				
-				if (temp_expansion_start != temp_expansion) {
-					// expand and append
-					Lexer temp_lex = (Lexer) { l->filepath, temp_expansion_start, temp_expansion_start };
-					lexer_read(&temp_lex);
-					
-					*temp_expansion++ = '\0';
-					
-					// NOTE(NeGate): We need to disable the current macro define
-					// so it doesn't recurse.
-					size_t saved_length = c->macro_bucket_keys_length[def_i];
-					c->macro_bucket_keys_length[def_i] = 0;
-					
-					out = expand(c, out, &temp_lex);
-					tls_restore(temp_expansion_start);
-					
-					c->macro_bucket_keys_length[def_i] = saved_length;
-				}
+				tls_restore(value_ranges);
+			} else if (def.length) {
+				// expand and append
+				Lexer temp_lex = (Lexer) { l->filepath, def.data, def.data };
+				lexer_read(&temp_lex);
+				
+				// NOTE(NeGate): We need to disable the current macro define
+				// so it doesn't recurse.
+				size_t saved_length = c->macro_bucket_keys_length[def_i];
+				c->macro_bucket_keys_length[def_i] = 0;
+				
+				expand(c, s, &temp_lex);
+				
+				c->macro_bucket_keys_length[def_i] = saved_length;
 			}
+		} else {
+			// Normal identifier
+			assert(l->token_type == TOKEN_IDENTIFIER);
 			
-			tls_restore(value_ranges);
-		} else if (def.length) {
-			// expand and append
-			Lexer temp_lex = (Lexer) { l->filepath, def.data, def.data };
-			lexer_read(&temp_lex);
+			Token t = { 
+				classify_ident(token_data, token_length),
+				get_source_location(l, s),
+				token_data, 
+				token_data + token_length
+			};
 			
-			// NOTE(NeGate): We need to disable the current macro define
-			// so it doesn't recurse.
-			size_t saved_length = c->macro_bucket_keys_length[def_i];
-			c->macro_bucket_keys_length[def_i] = 0;
-			
-			out = expand(c, out, &temp_lex);
-			
-			c->macro_bucket_keys_length[def_i] = saved_length;
+			arrput(s->tokens, t);
+			lexer_read(l);
 		}
-		
-		return out;
 	}
-	
-	// Normal identifier
-	memcpy(out, token_data, token_length);
-	out += token_length;
-	*out++ = ' ';
-	
-	lexer_read(l);
-	return out;
 }
 
-static unsigned char* expand(CPP_Context* restrict c, unsigned char* restrict out, Lexer* l) {
+static void expand(CPP_Context* restrict c, TokenStream* restrict s, Lexer* l) {
 	int depth = 0;
 	
 	while (!l->hit_line) {
 		if (l->token_type == '(') {
 			depth++;
-			
-			*out++ = '(';
-			*out++ = ' ';
-			
-			lexer_read(l);
 		} else if (l->token_type == ')') {
 			if (depth == 0) break;
 			depth--;
-			
-			*out++ = ')';
-			*out++ = ' ';
-			
+		}
+		
+		if (l->token_type == TOKEN_DOUBLE_HASH) {
+			SourceLocIndex loc = get_source_location(l, s);
 			lexer_read(l);
+			
+			assert(arrlen(s->tokens) > 0);
+			Token* last = &s->tokens[arrlen(s->tokens) - 1];
+			
+			expand_double_hash(c, s, last, l, loc);
 		} else if (l->token_type != TOKEN_IDENTIFIER) {
-			size_t token_length = l->token_end - l->token_start;
-			const unsigned char* token_data = l->token_start;
+			Token t = { 
+				l->token_type, 
+				get_source_location(l, s),
+				l->token_start,
+				l->token_end
+			};
 			
-			memcpy(out, token_data, token_length);
-			out += token_length;
-			*out++ = ' ';
-			
+			arrput(s->tokens, t);
 			lexer_read(l);
 		} else {
-			out = expand_ident(c, out, l);
+			expand_ident(c, s, l);
+		}
+	}
+}
+
+////////////////////////////////
+// Macro expressions
+////////////////////////////////
+static intmax_t eval_l0(CPP_Context* restrict c, TokenStream* restrict s) {
+	bool flip = false;
+	while (tokens_get(s)->type == '!') {
+		flip = !flip;
+		tokens_next(s);
+	}
+	
+	intmax_t val;
+	Token* t = tokens_get(s);
+	if (t->type == TOKEN_INTEGER) {
+		IntSuffix suffix;
+		val = parse_int(t->end - t->start, (const char*)t->start, &suffix);
+		
+		tokens_next(s);
+	} else if (t->type == TOKEN_IDENTIFIER) {
+		assert(!is_defined(c, t->start, t->end - t->start));
+		
+		val = 0;
+		tokens_next(s);
+	} else if (t->type == TOKEN_STRING_SINGLE_QUOTE) {
+		int ch;
+		intptr_t distance = parse_char(t->end - t->start, (const char*)t->start, &ch);
+		if (distance < 0) {
+			report(REPORT_ERROR, &s->line_arena[t->location], "could not parse char literal");
+			abort();
+		}
+		
+		val = ch;
+		tokens_next(s);
+	} else if (t->type == '(') {
+		tokens_next(s);
+		val = eval(c, s, NULL);
+		
+		if (tokens_get(s)->type != ')') {
+			report(REPORT_ERROR, &s->line_arena[tokens_get(s)->location], "expected closing parenthesis on macro subexpression");
+			abort();
+		}
+		tokens_next(s);
+	} else {
+		report(REPORT_ERROR, &s->line_arena[t->location], "could not parse expression");
+		abort();
+	}
+	
+	return flip ? !val : val;
+}
+
+static intmax_t eval_l5(CPP_Context* restrict c, TokenStream* restrict s) {
+	intmax_t left = eval_l0(c, s);
+	
+	while (tokens_get(s)->type == TOKEN_LEFT_SHIFT ||
+		   tokens_get(s)->type == TOKEN_RIGHT_SHIFT) {
+		int t = tokens_get(s)->type;
+		tokens_next(s);
+		
+		intmax_t right = eval_l0(c, s);
+		if (t == TOKEN_LEFT_SHIFT) left = (left << right);
+		else left = (uintmax_t)((uintmax_t)left >> (uintmax_t)right);
+	}
+	
+	return left;
+}
+
+static intmax_t eval_l6(CPP_Context* restrict c, TokenStream* restrict s) {
+	intmax_t left = eval_l5(c, s);
+	
+	while (tokens_get(s)->type == '>' ||
+		   tokens_get(s)->type == '<' ||
+		   tokens_get(s)->type == TOKEN_GREATER_EQUAL ||
+		   tokens_get(s)->type == TOKEN_LESS_EQUAL) {
+		int t = tokens_get(s)->type;
+		tokens_next(s);
+		
+		intmax_t right = eval_l5(c, s);
+		switch (t) {
+			case '>': left = left > right; break;
+			case '<': left = left < right; break;
+			case TOKEN_GREATER_EQUAL: left = left >= right; break;
+			case TOKEN_LESS_EQUAL: left = left <= right; break;
 		}
 	}
 	
-	return out;
+	return left;
 }
 
-static intmax_t eval(CPP_Context* restrict c, Lexer* l) {
+static intmax_t eval_l7(CPP_Context* restrict c, TokenStream* restrict s) {
+	intmax_t left = eval_l6(c, s);
+	
+	while (tokens_get(s)->type == TOKEN_NOT_EQUAL ||
+		   tokens_get(s)->type == TOKEN_EQUALITY) {
+		int t = tokens_get(s)->type;
+		tokens_next(s);
+		
+		intmax_t right = eval_l6(c, s);
+		if (t == TOKEN_EQUALITY) left = (left == right);
+		else left = (left != right);
+	}
+	
+	return left;
+}
+
+static intmax_t eval_l8(CPP_Context* restrict c, TokenStream* restrict s) {
+	intmax_t left = eval_l7(c, s);
+	
+	while (tokens_get(s)->type == '&') {
+		tokens_next(s);
+		
+		intmax_t right = eval_l7(c, s);
+		left = left & right;
+	}
+	
+	return left;
+}
+
+static intmax_t eval_l9(CPP_Context* restrict c, TokenStream* restrict s) {
+	intmax_t left = eval_l8(c, s);
+	
+	while (tokens_get(s)->type == '^') {
+		tokens_next(s);
+		
+		intmax_t right = eval_l8(c, s);
+		left = left ^ right;
+	}
+	
+	return left;
+}
+
+static intmax_t eval_l10(CPP_Context* restrict c, TokenStream* restrict s) {
+	intmax_t left = eval_l9(c, s);
+	
+	while (tokens_get(s)->type == '|') {
+		tokens_next(s);
+		
+		intmax_t right = eval_l9(c, s);
+		left = left | right;
+	}
+	
+	return left;
+}
+
+static intmax_t eval_l11(CPP_Context* restrict c, TokenStream* restrict s) {
+	intmax_t left = eval_l10(c, s);
+	
+	while (tokens_get(s)->type == TOKEN_DOUBLE_AND) {
+		tokens_next(s);
+		
+		intmax_t right = eval_l10(c, s);
+		left = left && right;
+	}
+	
+	return left;
+}
+
+static intmax_t eval_l12(CPP_Context* restrict c, TokenStream* restrict s) {
+	intmax_t left = eval_l11(c, s);
+	
+	while (tokens_get(s)->type == TOKEN_DOUBLE_OR) {
+		tokens_next(s);
+		
+		intmax_t right = eval_l11(c, s);
+		left = left || right;
+	}
+	
+	return left;
+}
+
+static intmax_t eval(CPP_Context* restrict c, TokenStream* restrict s, Lexer* l) {
 	// Expand
-	int line = l->current_line;
-	
-	unsigned char* out_start = tls_push(4096);
-	unsigned char* out_end = expand(c, out_start, l);
-	*out_end++ = '\0';
-	
-	// Evaluate
-	Lexer temp_lex = (Lexer) { l->filepath, out_start, out_start, line };
-	lexer_read(&temp_lex);
-	
-	intmax_t val = eval_l12(c, &temp_lex);
-	
-	tls_restore(out_start);
-	return val;
+	if (l) {
+		size_t old_tokens_length = arrlen(s->tokens);
+		s->current = old_tokens_length;
+		
+		expand(c, s, l);
+		
+		// Insert a null token at the end
+		Token t = { 0, 0, NULL, NULL };
+		arrput(s->tokens, t);
+		
+		// Evaluate
+		assert(s->current != arrlen(s->tokens) && "Expected the macro expansion to add something");
+		
+		intmax_t result = eval_l12(c, s);
+		
+		arrsetlen(s->tokens, old_tokens_length);
+		s->current = 0;
+		return result;
+	} else {
+		return eval_l12(c, s);
+	}
 }
-

@@ -10,5 +10,7 @@ typedef enum {
 	REPORT_MAX
 } ReportLevel;
 
+extern bool report_using_thin_errors;
+
 void report(ReportLevel level, SourceLoc* loc, const char* fmt, ...);
 void crash_if_reports(ReportLevel min);

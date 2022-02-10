@@ -1,0 +1,257 @@
+__local_stdio_printf_options@10():
+L0: # r1 terminates at r3
+  r2	=	LOCAL 8 (8 align)
+
+L1: # r3 terminates at r4
+  ret		[ptr]      	 r2
+L2: # r5 terminates at r6
+  ret		[ptr]      	 r0
+_vfprintf_l@643():
+L0: # r1 terminates at r17
+  r2	=	[ptr]      	  PARAM 0
+  r3	=	[ptr]      	  PARAM 1
+  r4	=	[ptr]      	  PARAM 2
+  r5	=	[ptr]      	  PARAM 3
+  r6	=	&PARAM 0
+  r7	=	&PARAM 1
+  r8	=	&PARAM 2
+  r9	=	&PARAM 3
+  r10	=	[ptr]      	CALL __local_stdio_printf_options@10()
+  r11	=	[i64 x   1]	 *r10 (8 align)
+  r12	=	[ptr]      	 *r6 (8 align)
+  r13	=	[ptr]      	 *r7 (8 align)
+  r14	=	[ptr]      	 *r8 (8 align)
+  r15	=	[ptr]      	 *r9 (8 align)
+  r16	=	[i32 x   1]	ECALL __stdio_common_vfprintf(r11, r12, r13, r14, r15)
+  ret		[i32 x   1]	 r16
+L1: # r18 terminates at r19
+  ret		[i32 x   1]	 r0
+printf@737():
+L0: # r1 terminates at r5
+  r2	=	[ptr]      	  PARAM 0
+  r3	=	&PARAM 0
+  r4	=	LOCAL 4 (4 align)
+
+L1: # r5 terminates at r22
+  r6	=	LOCAL 8 (8 align)
+  r7	=	[ptr]      	 r3.data[8]
+ *r6 	=	[ptr]      	 r7 (8 align)
+  r9	=	[i32 x   1]	 1
+  r10	=	[ptr]      	ECALL __acrt_iob_func(r9)
+  r11	=	[ptr]      	 *r3 (8 align)
+  r12	=	[i32 x   1]	 0
+  r13	=	[ptr]      	 INT2PTR r12
+  r14	=	[ptr]      	 *r6 (8 align)
+  r15	=	[i32 x   1]	CALL _vfprintf_l@643(r10, r11, r13, r14)
+ *r4 	=	[i32 x   1]	 r15 (4 align)
+  r17	=	[i32 x   1]	 0
+  r18	=	[ptr]      	 INT2PTR r17
+ *r6 	=	[ptr]      	 r18 (8 align)
+  r20	=	[ptr]      	 *r6 (8 align)
+  r21	=	[i32 x   1]	 *r4 (4 align)
+  ret		[i32 x   1]	 r21
+L2: # r23 terminates at r24
+  ret		[i32 x   1]	 r0
+_vsnprintf_l@870():
+L0: # r1 terminates at r27
+  r2	=	[ptr]      	  PARAM 0
+  r3	=	[i64 x   1]	  PARAM 1
+  r4	=	[ptr]      	  PARAM 2
+  r5	=	[ptr]      	  PARAM 3
+  r6	=	[ptr]      	  PARAM 4
+  r7	=	&PARAM 0
+  r8	=	&PARAM 1
+  r9	=	&PARAM 2
+  r10	=	&PARAM 3
+  r11	=	&PARAM 4
+  r12	=	LOCAL 4 (4 align)
+  r13	=	[ptr]      	CALL __local_stdio_printf_options@10()
+  r14	=	[i64 x   1]	 *r13 (8 align)
+  r15	=	[i64 x   1]	 1
+  r16	=	[i32 x   1]	 0
+  r17	=	[i64 x   1]	 ZXT r16
+  r18	=	[i64 x   1]	 r15 << r17
+  r19	=	[i64 x   1]	 r14 | r18
+  r20	=	[ptr]      	 *r7 (8 align)
+  r21	=	[i64 x   1]	 *r8 (8 align)
+  r22	=	[ptr]      	 *r9 (8 align)
+  r23	=	[ptr]      	 *r10 (8 align)
+  r24	=	[ptr]      	 *r11 (8 align)
+  r25	=	[i32 x   1]	ECALL __stdio_common_vsprintf(r19, r20, r21, r22, r23, r24)
+ *r12 	=	[i32 x   1]	 r25 (4 align)
+
+L1: # r27 terminates at r31
+  r28	=	[i32 x   1]	 *r12 (4 align)
+  r29	=	[i32 x   1]	 0
+  r30	=	[bool]     	 r28 < r29 # signed
+  if (r30)	L2 else L3
+
+L2: # r32 terminates at r35
+  r33	=	[i32 x   1]	 1
+  r34	=	[i32 x   1]	 -1
+  goto L4
+
+L3: # r36 terminates at r38
+  r37	=	[i32 x   1]	 *r12 (4 align)
+
+L4: # r38 terminates at r40
+  r39	=	[i32 x   1]	 PHI L2:r34, L3:r37
+  ret		[i32 x   1]	 r39
+L5: # r41 terminates at r42
+  ret		[i32 x   1]	 r0
+_vsnprintf():
+L0: # r1 terminates at r17
+  r2	=	[ptr]      	  PARAM 0
+  r3	=	[i64 x   1]	  PARAM 1
+  r4	=	[ptr]      	  PARAM 2
+  r5	=	[ptr]      	  PARAM 3
+  r6	=	&PARAM 0
+  r7	=	&PARAM 1
+  r8	=	&PARAM 2
+  r9	=	&PARAM 3
+  r10	=	[ptr]      	 *r6 (8 align)
+  r11	=	[i64 x   1]	 *r7 (8 align)
+  r12	=	[ptr]      	 *r8 (8 align)
+  r13	=	[i32 x   1]	 0
+  r14	=	[ptr]      	 INT2PTR r13
+  r15	=	[ptr]      	 *r9 (8 align)
+  r16	=	[i32 x   1]	CALL _vsnprintf_l@870(r10, r11, r12, r14, r15)
+  ret		[i32 x   1]	 r16
+L1: # r18 terminates at r19
+  ret		[i32 x   1]	 r0
+_vsprintf_l@881():
+L0: # r1 terminates at r18
+  r2	=	[ptr]      	  PARAM 0
+  r3	=	[ptr]      	  PARAM 1
+  r4	=	[ptr]      	  PARAM 2
+  r5	=	[ptr]      	  PARAM 3
+  r6	=	&PARAM 0
+  r7	=	&PARAM 1
+  r8	=	&PARAM 2
+  r9	=	&PARAM 3
+  r10	=	[ptr]      	 *r6 (8 align)
+  r11	=	[i32 x   1]	 1
+  r12	=	[i32 x   1]	 -1
+  r13	=	[i64 x   1]	 ZXT r12
+  r14	=	[ptr]      	 *r7 (8 align)
+  r15	=	[ptr]      	 *r8 (8 align)
+  r16	=	[ptr]      	 *r9 (8 align)
+  r17	=	[i32 x   1]	CALL _vsnprintf_l@870(r10, r13, r14, r15, r16)
+  ret		[i32 x   1]	 r17
+L1: # r19 terminates at r20
+  ret		[i32 x   1]	 r0
+vsprintf():
+L0: # r1 terminates at r17
+  r2	=	[ptr]      	  PARAM 0
+  r3	=	[ptr]      	  PARAM 1
+  r4	=	[ptr]      	  PARAM 2
+  r5	=	&PARAM 0
+  r6	=	&PARAM 1
+  r7	=	&PARAM 2
+  r8	=	[ptr]      	 *r5 (8 align)
+  r9	=	[i32 x   1]	 1
+  r10	=	[i32 x   1]	 -1
+  r11	=	[i64 x   1]	 ZXT r10
+  r12	=	[ptr]      	 *r6 (8 align)
+  r13	=	[i32 x   1]	 0
+  r14	=	[ptr]      	 INT2PTR r13
+  r15	=	[ptr]      	 *r7 (8 align)
+  r16	=	[i32 x   1]	CALL _vsnprintf_l@870(r8, r11, r12, r14, r15)
+  ret		[i32 x   1]	 r16
+L1: # r18 terminates at r19
+  ret		[i32 x   1]	 r0
+sprintf():
+L0: # r1 terminates at r7
+  r2	=	[ptr]      	  PARAM 0
+  r3	=	[ptr]      	  PARAM 1
+  r4	=	&PARAM 0
+  r5	=	&PARAM 1
+  r6	=	LOCAL 4 (4 align)
+
+L1: # r7 terminates at r23
+  r8	=	LOCAL 8 (8 align)
+  r9	=	[ptr]      	 r5.data[8]
+ *r8 	=	[ptr]      	 r9 (8 align)
+  r11	=	[ptr]      	 *r4 (8 align)
+  r12	=	[ptr]      	 *r5 (8 align)
+  r13	=	[i32 x   1]	 0
+  r14	=	[ptr]      	 INT2PTR r13
+  r15	=	[ptr]      	 *r8 (8 align)
+  r16	=	[i32 x   1]	CALL _vsprintf_l@881(r11, r12, r14, r15)
+ *r6 	=	[i32 x   1]	 r16 (4 align)
+  r18	=	[i32 x   1]	 0
+  r19	=	[ptr]      	 INT2PTR r18
+ *r8 	=	[ptr]      	 r19 (8 align)
+  r21	=	[ptr]      	 *r8 (8 align)
+  r22	=	[i32 x   1]	 *r6 (4 align)
+  ret		[i32 x   1]	 r22
+L2: # r24 terminates at r25
+  ret		[i32 x   1]	 r0
+_snprintf():
+L0: # r1 terminates at r9
+  r2	=	[ptr]      	  PARAM 0
+  r3	=	[i64 x   1]	  PARAM 1
+  r4	=	[ptr]      	  PARAM 2
+  r5	=	&PARAM 0
+  r6	=	&PARAM 1
+  r7	=	&PARAM 2
+  r8	=	LOCAL 4 (4 align)
+
+L1: # r9 terminates at r24
+  r10	=	LOCAL 8 (8 align)
+  r11	=	[ptr]      	 r7.data[8]
+ *r10 	=	[ptr]      	 r11 (8 align)
+  r13	=	[ptr]      	 *r5 (8 align)
+  r14	=	[i64 x   1]	 *r6 (8 align)
+  r15	=	[ptr]      	 *r7 (8 align)
+  r16	=	[ptr]      	 *r10 (8 align)
+  r17	=	[i32 x   1]	CALL _vsnprintf(r13, r14, r15, r16)
+ *r8 	=	[i32 x   1]	 r17 (4 align)
+  r19	=	[i32 x   1]	 0
+  r20	=	[ptr]      	 INT2PTR r19
+ *r10 	=	[ptr]      	 r20 (8 align)
+  r22	=	[ptr]      	 *r10 (8 align)
+  r23	=	[i32 x   1]	 *r8 (4 align)
+  ret		[i32 x   1]	 r23
+L2: # r25 terminates at r26
+  ret		[i32 x   1]	 r0
+main():
+L0: # r1 terminates at r7
+  r2	=	[void]     	CALL __static_init()
+  r3	=	[i32 x   1]	 0
+  r4	=	[i32 x   1]	 0
+  r5	=	[bool]     	 r3 != r4
+  r6	=	[bool]     	 0
+  if (r5)	L3 else L4
+
+L3: # r8 terminates at r12
+  r9	=	"Woah!"
+  r10	=	[ptr]      	 0
+  r11	=	[bool]     	 r9 != r10
+
+L4: # r12 terminates at r15
+  r13	=	[bool]     	 PHI L0:r6, L3:r11
+  r14	=	[bool]     	 1
+  if (r13)	L2 else L1
+
+L1: # r16 terminates at r24
+  r17	=	"0"
+  r18	=	"h"
+  r19	=	[i32 x   1]	 0
+  r20	=	[void]     	ECALL _wassert(r17, r18, r19)
+  r21	=	[i32 x   1]	 0
+  r22	=	[i32 x   1]	 0
+  r23	=	[bool]     	 r21 != r22
+
+L2: # r24 terminates at r29
+  r25	=	[bool]     	 PHI L4:r14, L1:r23
+  r26	=	"Hello, World!
+"
+  r27	=	[i32 x   1]	CALL printf@737(r26)
+  r28	=	[i32 x   1]	 0
+  ret		[i32 x   1]	 r28
+L5: # r30 terminates at r31
+  ret		[i32 x   1]	 r0
+__static_init():
+L0: # r1 terminates at r2
+  ret		[void]     	 r0

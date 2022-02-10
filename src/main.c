@@ -95,7 +95,7 @@ static void dispatch_tasks(size_t count) {
 	
 	// wait until it's completed
 	cnd_wait(&tasks_condition, &tasks_mutex);
-    while (tasks_complete < tasks_count) { 
+    while (tasks_complete < tasks_count) {
 		thrd_yield();
 	}
 }
@@ -123,10 +123,12 @@ static void set_preprocessor_info(CPP_Context* cpp) {
 	
 	// NOTE(NeGate): Hack to make these trigger the preprocessor
 	cpp_define_empty(cpp, "__FILE__");
+	cpp_define_empty(cpp, "L__FILE__");
 	cpp_define_empty(cpp, "__LINE__");
 	
 	if (target_system == TB_SYSTEM_WINDOWS) {
 		// TODO(NeGate): Automatically detect these somehow...
+		cpp_add_include_directory(cpp, "W:\\Workspace\\Cuik\\crt\\include\\");
 		cpp_add_include_directory(cpp, "W:\\Windows Kits\\10\\Include\\10.0.19041.0\\ucrt\\");
 		cpp_add_include_directory(cpp, "W:\\Windows Kits\\10\\Include\\10.0.19041.0\\um\\");
 		cpp_add_include_directory(cpp, "W:\\Windows Kits\\10\\Include\\10.0.19041.0\\shared\\");
@@ -172,7 +174,7 @@ static void set_preprocessor_info(CPP_Context* cpp) {
 		cpp_define(cpp, "__forceinline", "inline");
 		cpp_define(cpp, "__CRTDECL", "__cdecl");
 		
-		cpp_define_empty(cpp, "SQLITE_DISABLE_INTRINSIC");
+		//cpp_define_empty(cpp, "SQLITE_DISABLE_INTRINSIC");
 		
 		// NOTE(NeGate): We probably shouldn't be defining this...
 		// it's a winnt.h thing
@@ -465,6 +467,8 @@ int main(int argc, char* argv[]) {
 			settings.is_object_only = true;
 		} else if (strcmp(key, "debug") == 0) {
 			settings.debug_info = true;
+		} else if (strcmp(key, "thin-errors") == 0) {
+			report_using_thin_errors = true;
 		} else if (strcmp(key, "out") == 0) {
 			if (*value == '\0') {
 				printf("expected path after -out option\n");
@@ -556,13 +560,7 @@ int main(int argc, char* argv[]) {
 						static char exe_path[260];
 						sprintf_s(exe_path, 260, "%s.exe", filename);
 						
-						// im dumb btw, just notifying you
-						char* p = exe_path;
-						for (; p; p++) {
-							if (*p == '/') *p = '\\';
-						}
-						
-						printf("\n\n\n");
+						printf("\n\nRunning: %s...\n", exe_path);
 						int exit_code = system(exe_path);
 						printf("Exit code: %d\n", exit_code);
 					}

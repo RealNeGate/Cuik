@@ -913,7 +913,7 @@ void sema_check(TranslationUnit* tu, StmtIndex s) {
 				break;
 			}
 			
-			if (sp->decl.attrs.is_extern || sp->decl.initial == 0) {
+			if (sp->decl.attrs.is_extern || tu->types[sp->decl.type].kind == KIND_FUNC) {
 				// forward decls
 				// TODO(NeGate): This is hacky
 				if (name[0] == '_') {
@@ -954,6 +954,8 @@ void sema_check(TranslationUnit* tu, StmtIndex s) {
 				
 				TB_Linkage linkage = sp->decl.attrs.is_static ? TB_LINKAGE_PRIVATE : TB_LINKAGE_PUBLIC;
 				sp->backing.g = tb_global_create(mod, init, name, linkage);
+				
+				//report(REPORT_INFO, &ir_gen_tokens.line_arena[sp->loc], "Blah! %s %d", sp->decl.name, sp->backing.g);
 			}
 			break;
 		}
@@ -967,16 +969,18 @@ static void sema_mark_children(TranslationUnit* tu, ExprIndex e) {
 	assert(ep->op == EXPR_SYMBOL);
 	Stmt* restrict sp = &tu->stmts[ep->symbol];
 	
-	if (sp->op == STMT_FUNC_DECL && !sp->decl.attrs.is_used) {
-		sp->decl.attrs.is_used = true;
-		ExprIndex sym = tu->stmts[(StmtIndex)sp->decl.initial].compound.first_symbol;
-		
-		while (sym) {
-			sema_mark_children(tu, sym);
-			sym = tu->exprs[sym].next_symbol_in_chain;
+	if (!sp->decl.attrs.is_used) {
+		if (sp->op == STMT_FUNC_DECL) {
+			sp->decl.attrs.is_used = true;
+			ExprIndex sym = tu->stmts[(StmtIndex)sp->decl.initial].compound.first_symbol;
+			
+			while (sym) {
+				sema_mark_children(tu, sym);
+				sym = tu->exprs[sym].next_symbol_in_chain;
+			}
+		} else if (sp->op == STMT_DECL || sp->op == STMT_GLOBAL_DECL) {
+			sp->decl.attrs.is_used = true;
 		}
-	} else if (sp->op == STMT_DECL || sp->op == STMT_GLOBAL_DECL) {
-		sp->decl.attrs.is_used = true;
 	}
 }
 
@@ -985,17 +989,16 @@ void sema_remove_unused(TranslationUnit* tu) {
 	for (size_t s = 0, count = arrlen(tu->top_level_stmts); s < count; s++) {
 		Stmt* restrict sp = &tu->stmts[tu->top_level_stmts[s]];
 		
-		// is root
-		if (sp->op == STMT_FUNC_DECL && !sp->decl.attrs.is_static && !sp->decl.attrs.is_inline) {
+		if (sp->decl.attrs.is_root) {
 			sp->decl.attrs.is_used = true;
 			
-			ExprIndex sym = tu->stmts[(StmtIndex)sp->decl.initial].compound.first_symbol;
-			while (sym) {
-				sema_mark_children(tu, sym);
-				sym = tu->exprs[sym].next_symbol_in_chain;
+			if (sp->op == STMT_FUNC_DECL) {
+				ExprIndex sym = tu->stmts[(StmtIndex)sp->decl.initial].compound.first_symbol;
+				while (sym) {
+					sema_mark_children(tu, sym);
+					sym = tu->exprs[sym].next_symbol_in_chain;
+				}
 			}
-		} else if (sp->op == STMT_GLOBAL_DECL && !sp->decl.attrs.is_extern && !sp->decl.attrs.is_static && !sp->decl.attrs.is_inline) {
-			sp->decl.attrs.is_used = true;
 		}
 	}
 }

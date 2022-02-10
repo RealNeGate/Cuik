@@ -68,7 +68,11 @@ static bool is_typename(TokenStream* restrict s);
 static _Noreturn void generic_error(TokenStream* restrict s, const char* msg);
 static void generic_warn(TokenStream* restrict s, const char* msg);
 
-static int align_up(int a, int b) { return a + (b - (a % b)) % b; }
+static int align_up(int a, int b) { 
+	if (b == 0) return 0;
+	
+	return a + (b - (a % b)) % b;
+}
 
 static StmtIndex make_stmt(TranslationUnit* tu, TokenStream* restrict s, StmtOp op) {
 	Stmt stmt = {
@@ -125,6 +129,7 @@ TranslationUnit parse_file(TokenStream* restrict s) {
 		
 		Attribs attr = { 0 };
 		TypeIndex type = parse_declspec(&tu, s, &attr);
+		attr.is_root = !(attr.is_extern || attr.is_static || attr.is_inline);
 		
 		if (attr.is_typedef) {
 			// TODO(NeGate): Kinda ugly
@@ -163,11 +168,6 @@ TranslationUnit parse_file(TokenStream* restrict s) {
 					StorageClass sclass = attr.is_static ? STORAGE_STATIC_FUNC : STORAGE_FUNC;
 					sym->storage_class = sclass;
 					
-					/*if (sym->storage_class != sclass) {
-											// TODO(NeGate): Error messages
-											//generic_warn(s, "Storage class changed i think?");
-										}*/
-					
 					// convert forward decl into proper function
 					n = sym->stmt;
 					if (tu.stmts[n].op == STMT_FUNC_DECL && !attr.is_inline) {
@@ -176,7 +176,7 @@ TranslationUnit parse_file(TokenStream* restrict s) {
 					
 					// TODO(NeGate): we should be erroring if the attributes aren't
 					// compatible
-					tu.stmts[n].decl.attrs = attr;
+					tu.stmts[n].loc = decl.loc;
 					
 					// TODO(NeGate): Error messages
 					if (!type_equal(&tu, tu.stmts[n].decl.type, decl.type)) {
@@ -185,12 +185,14 @@ TranslationUnit parse_file(TokenStream* restrict s) {
 				} else {
 					// New symbol
 					n = make_stmt(&tu, s, STMT_DECL);
+					tu.stmts[n].loc = decl.loc;
 					tu.stmts[n].decl = (struct StmtDecl){
 						.type = decl.type,
 						.name = decl.name,
 						.attrs = attr,
 						.initial = (StmtIndex)0
 					};
+					tu.stmts[n].decl.attrs.is_root = false;
 					
 					Symbol func_symbol = (Symbol){
 						.name = decl.name,
@@ -212,6 +214,12 @@ TranslationUnit parse_file(TokenStream* restrict s) {
 					ParamIndex param_list = tu.types[decl.type].func.param_list;
 					ParamIndex param_count = tu.types[decl.type].func.param_count;
 					
+					assert(local_symbol_count == 0);
+					if (param_count >= INT16_MAX) {
+						report(REPORT_ERROR, &s->line_arena[decl.loc], "Function parameter count cannot exceed %d (got %d)", param_count, MAX_LOCAL_SYMBOLS);
+						abort();
+					}
+					
 					for (size_t i = 0; i < param_count; i++) {
 						Param* p = &tu.params[param_list + i];
 						
@@ -231,6 +239,7 @@ TranslationUnit parse_file(TokenStream* restrict s) {
 					
 					tu.stmts[n].op = STMT_FUNC_DECL;
 					tu.stmts[n].decl.initial = (StmtIndex)body;
+					tu.stmts[n].decl.attrs = attr;
 					
 					ExprIndex symbol_list_start = 0;
 					ExprIndex symbol_list_end = 0;
@@ -284,6 +293,7 @@ TranslationUnit parse_file(TokenStream* restrict s) {
 				}
 				
 				StmtIndex n = make_stmt(&tu, s, STMT_GLOBAL_DECL);
+				tu.stmts[n].loc = decl.loc;
 				tu.stmts[n].decl = (struct StmtDecl){
 					.type = decl.type,
 					.name = decl.name
@@ -318,8 +328,10 @@ TranslationUnit parse_file(TokenStream* restrict s) {
 						assert(decl.name);
 						
 						StmtIndex n = make_stmt(&tu, s, STMT_GLOBAL_DECL);
+						tu.stmts[n].loc = decl.loc;
 						tu.stmts[n].decl = (struct StmtDecl){
 							.type = decl.type,
+							.attrs = attr,
 							.name = decl.name
 						};
 						arrput(tu.top_level_stmts, n);
@@ -826,11 +838,17 @@ static void parse_decl_or_expr(TranslationUnit* tu, TokenStream* restrict s, siz
 			Decl decl = parse_declarator(tu, s, type);
 			
 			StmtIndex n = make_stmt(tu, s, STMT_DECL);
+			tu->stmts[n].loc = decl.loc;
 			tu->stmts[n].decl = (struct StmtDecl){
 				.type = decl.type,
 				.name = decl.name,
 				.initial = 0
 			};
+			
+			if (local_symbol_count >= MAX_LOCAL_SYMBOLS) {
+				report(REPORT_ERROR, &s->line_arena[decl.loc], "Local symbol count exceeds %d (got %d)", MAX_LOCAL_SYMBOLS, local_symbol_count);
+				abort();
+			}
 			
 			local_symbols[local_symbol_count++] = (Symbol){
 				.name = decl.name,
@@ -1032,7 +1050,7 @@ static ExprIndex parse_initializer(TranslationUnit* tu, TokenStream* restrict s,
 
 static ExprIndex parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
 	Token* t = tokens_get(s);
-	SourceLocIndex loc = tokens_get(s)->location;
+	SourceLocIndex loc = t->location;
 	
 	if (t->type == '(') {
 		tokens_next(s);
@@ -1919,13 +1937,15 @@ static Decl parse_declarator(TranslationUnit* tu, TokenStream* restrict s, TypeI
 	
 	Atom name = NULL;
 	Token* t = tokens_get(s);
+	SourceLocIndex loc = 0;
 	if (t->type == TOKEN_IDENTIFIER) {
+		loc = t->location;
 		name = atoms_put(t->end - t->start, t->start);
 		tokens_next(s);
 	}
 	
 	type = parse_type_suffix(tu, s, type, name);
-	return (Decl){ type, name };
+	return (Decl){ type, name, loc };
 }
 
 // it's like a declarator with a skin fade,
@@ -2006,6 +2026,9 @@ static TypeIndex parse_typename(TranslationUnit* tu, TokenStream* restrict s) {
 }
 
 static TypeIndex parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s, TypeIndex type, Atom name) {
+	assert(s->current > 0);
+	SourceLoc* loc = &s->line_arena[s->tokens[s->current - 1].location];
+	
 	// type suffixes like array [] and function ()
 	if (tokens_get(s)->type == '(') {
 		tokens_next(s);
@@ -2098,8 +2121,22 @@ static TypeIndex parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s,
 			counts[depth++] = count;
 		} while (tokens_get(s)->type == '[');
 		
+		size_t expected_size = tu->types[type].size;
 		while (depth--) {
+			assert(tu->types[type].size == expected_size);
+			
+			uint64_t a = expected_size;
+			uint64_t b = counts[depth];
+			uint64_t result = a * b;
+			
+			// size checks
+			if (result >= INT32_MAX) {
+				report(REPORT_ERROR, loc, "cannot declare an array that exceeds 0x7FFFFFFE bytes (got 0x%zX)", result);
+				abort();
+			}
+			
 			type = new_array(tu, type, counts[depth]);
+			expected_size = result;
 		}
 		
 		tls_restore(counts);
@@ -2129,6 +2166,10 @@ static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, At
 	
 	bool is_atomic = false;
 	bool is_const = false;
+	
+	// _Alignas(N) or __declspec(align(N))
+	// 0 means no forced alignment
+	int forced_align = 0;
 	do {
 		TknType tkn_type = tokens_get(s)->type;
 		switch (tkn_type) {
@@ -2157,6 +2198,26 @@ static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, At
 			case TOKEN_KW_const: is_const = true; break;
 			case TOKEN_KW_volatile: break;
 			case TOKEN_KW_auto: break;
+			
+			case TOKEN_KW_Alignas: {
+				SourceLoc* loc = &s->line_arena[tokens_get(s)->location];
+				
+				tokens_next(s);
+				expect(s, '(');
+				
+				intmax_t new_align = parse_const_expr(tu, s);
+				if (new_align >= INT16_MAX) {
+					report(REPORT_ERROR, loc, "_Alignas(%zu) exceeds max alignment of %zu", new_align, INT16_MAX);
+				} else {
+					forced_align = new_align;
+				}
+				
+				if (tokens_get(s)->type != ')') {
+					report(REPORT_ERROR, loc, "expected closing parenthesis for _Alignas");
+					return 0;
+				}
+				break;
+			}
 			
 			case TOKEN_KW_declspec: {
 				// TODO(NeGate): Correctly parse declspec instead of
@@ -2509,12 +2570,20 @@ static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, At
 	} while (true);
 	
 	done:
+	SourceLoc* loc = &s->line_arena[tokens_get(s)->location];
 	if (type == 0) {
-		generic_error(s, "Unknown typename");
+		report(REPORT_ERROR, loc, "unknown typename");
+		return 0;
 	}
 	
-	if (is_atomic || is_const) {
+	if (is_atomic || is_const || (forced_align && tu->types[type].align != forced_align)) {
+		if (forced_align && forced_align < tu->types[type].align) {
+			report(REPORT_ERROR, loc, "forced alignment %d cannot be smaller than original alignment %d", forced_align, tu->types[type].align);
+			return 0;
+		}
+		
 		type = copy_type(tu, type);
+		tu->types[type].align = forced_align;
 		tu->types[type].is_atomic = is_atomic;
 		tu->types[type].is_const = is_const;
 	}
@@ -2526,40 +2595,26 @@ static bool is_typename(TokenStream* restrict s) {
 	Token* t = tokens_get(s);
 	
 	switch (t->type) {
-		case TOKEN_KW_void:
-		case TOKEN_KW_char:
-		case TOKEN_KW_short:
-		case TOKEN_KW_int:
-		case TOKEN_KW_long:
-		case TOKEN_KW_float:
-		case TOKEN_KW_double:
-		case TOKEN_KW_Bool:
-		case TOKEN_KW_signed:
-		case TOKEN_KW_unsigned:
-		case TOKEN_KW_struct:
-		case TOKEN_KW_union:
-		case TOKEN_KW_enum:
-		case TOKEN_KW_extern:
-		case TOKEN_KW_static:
-		case TOKEN_KW_typedef:
-		case TOKEN_KW_inline:
-		case TOKEN_KW_const:
-		case TOKEN_KW_volatile:
-		case TOKEN_KW_declspec:
-		case TOKEN_KW_Thread_local:
-		case TOKEN_KW_Atomic:
-		case TOKEN_KW_auto:
-		case TOKEN_KW_cdecl:
-		case TOKEN_KW_stdcall:
+		case TOKEN_KW_void: case TOKEN_KW_char: case TOKEN_KW_short:
+		case TOKEN_KW_int: case TOKEN_KW_long: case TOKEN_KW_float:
+		case TOKEN_KW_double: case TOKEN_KW_Bool: case TOKEN_KW_signed:
+		case TOKEN_KW_unsigned: case TOKEN_KW_struct: case TOKEN_KW_union:
+		case TOKEN_KW_enum: case TOKEN_KW_extern: case TOKEN_KW_static:
+		case TOKEN_KW_typedef: case TOKEN_KW_inline: case TOKEN_KW_const:
+		case TOKEN_KW_volatile: case TOKEN_KW_declspec: case TOKEN_KW_Thread_local:
+		case TOKEN_KW_Alignas: case TOKEN_KW_Atomic: case TOKEN_KW_auto:
+		case TOKEN_KW_cdecl: case TOKEN_KW_stdcall:
 		return true;
 		
 		case TOKEN_IDENTIFIER: {
+			// good question...
 			Token* t = tokens_get(s);
 			Atom name = atoms_put(t->end - t->start, t->start);
 			
 			ptrdiff_t search = shgeti(typedefs, name);
 			return (search >= 0);
 		}
+		
 		default:
 		return false;
 	}
