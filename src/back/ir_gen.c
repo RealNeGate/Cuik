@@ -69,7 +69,6 @@ static TB_Register gen_string_constant(SourceLocIndex loc, TB_Function* func, si
 }
 
 static TB_Register gen_wide_string_constant(SourceLocIndex loc, TB_Function* func, size_t len, const char* in) {
-	// it can't be bigger than the original
 	// TODO(NeGate): Improve this setup so that we can fallback to the heap if it
 	// fails.
 	wchar_t* out = tls_push((len + 1) * 2);
@@ -1575,15 +1574,11 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, StmtIndex s) {
 			
 			irgen_stmt(tu, func, sp->switch_.body);
 			
-			tb_inst_label(func, break_label);
+			insert_label(func);
 			break;
 		}
 		default:
 		__builtin_unreachable();
-	}
-	
-	if (sp->op != STMT_GOTO && sp->op != STMT_RETURN) {
-		insert_label(func);
 	}
 }
 

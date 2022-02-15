@@ -25,6 +25,7 @@ static _Noreturn void generic_error(Lexer* l, const char* msg);
 
 static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer* l);
 static void expand(CPP_Context* restrict c, TokenStream* restrict s, Lexer* l);
+static void* gimme_the_shtuffs(CPP_Context* restrict c, size_t len);
 
 static bool find_define(CPP_Context* restrict c, string* out_val, const unsigned char* start, size_t length);
 
@@ -78,20 +79,20 @@ void cpp_define_empty(CPP_Context* ctx, const char* key) {
 	// TODO(NeGate): Work around to get any of the macro bucket
 	// keys to be at 16bytes aligned
 	size_t pad_len = (len + 15) & ~15;
-	char* newkey = malloc(pad_len);
-	memcpy(newkey, key, len+1);
-	key = newkey;
+	char* newkey = gimme_the_shtuffs(ctx, pad_len);
+	memcpy(newkey, key, len);
 	
 	// Hash name, name doesn't include parenthesis part btw
-	const char* paren = strrchr(key, '(');
-	len = paren ? paren - key : len;
+	const char* paren = newkey;
+	while ((paren - newkey) < len && *paren != '(') paren++;
+	len = *paren == '(' ? paren - newkey : len;
 	
-	uint64_t slot = hash_ident((const unsigned char*)key, len);
+	uint64_t slot = hash_ident((const unsigned char*)newkey, len);
 	uint64_t e = ctx->macro_bucket_count[slot] + (slot * SLOTS_PER_MACRO_BUCKET);
 	
 	// Insert into buckets
 	ctx->macro_bucket_count[slot] += 1;
-	ctx->macro_bucket_keys[e] = (const unsigned char*)key;
+	ctx->macro_bucket_keys[e] = (const unsigned char*)newkey;
 	ctx->macro_bucket_keys_length[e] = len;
 	
 	ctx->macro_bucket_values_start[e] = NULL;
@@ -106,24 +107,35 @@ void cpp_define(CPP_Context* ctx, const char* key, const char* value) {
 	// TODO(NeGate): Work around to get any of the macro bucket
 	// keys to be at 16bytes aligned
 	size_t pad_len = (len + 15) & ~15;
-	char* newkey = malloc(pad_len);
-	memcpy(newkey, key, len+1);
-	key = newkey;
+	char* newkey = gimme_the_shtuffs(ctx, pad_len);
+	memcpy(newkey, key, len);
 	
 	// Hash name, name doesn't include parenthesis part btw
-	const char* paren = strrchr(key, '(');
-	len = paren ? paren - key : len;
+	const char* paren = newkey;
+	while ((paren - newkey) < len && *paren != '(') paren++;
+	len = *paren == '(' ? paren - newkey : len;
 	
-	uint64_t slot = hash_ident((const unsigned char*)key, len);
+	uint64_t slot = hash_ident((const unsigned char*)newkey, len);
 	uint64_t e = ctx->macro_bucket_count[slot] + (slot * SLOTS_PER_MACRO_BUCKET);
 	
 	// Insert into buckets
 	ctx->macro_bucket_count[slot] += 1;
-	ctx->macro_bucket_keys[e] = (const unsigned char*)key;
+	ctx->macro_bucket_keys[e] = (const unsigned char*)newkey;
 	ctx->macro_bucket_keys_length[e] = len;
 	
-	ctx->macro_bucket_values_start[e] = (const unsigned char*)value;
-	ctx->macro_bucket_values_end[e] = (const unsigned char*) value + strlen(value);
+	{
+		len = strlen(value);
+		
+		size_t pad_len = (len + 15) & ~15;
+		char* newvalue = gimme_the_shtuffs(ctx, pad_len);
+		memcpy(newvalue, value, len);
+		
+		size_t rem = pad_len - len;
+		memset(newvalue + len, 0, rem);
+		
+		ctx->macro_bucket_values_start[e] = (const unsigned char*) newvalue;
+		ctx->macro_bucket_values_end[e] = (const unsigned char*) newvalue + len;
+	}
 }
 
 void cpp_dump(CPP_Context* ctx) {
@@ -210,7 +222,7 @@ inline static void cpp_pop_scope(CPP_Context* restrict ctx, Lexer* restrict l) {
 	ctx->depth--;
 }
 
-inline static void* gimme_the_shtuffs(CPP_Context* restrict c, size_t len) {
+static void* gimme_the_shtuffs(CPP_Context* restrict c, size_t len) {
 	unsigned char* allocation = c->the_shtuffs + c->the_shtuffs_size;
 	
 	c->the_shtuffs_size += len;
@@ -530,11 +542,13 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 						if (GetFullPathNameA(path, MAX_PATH, new_path, &filename) == 0) {
 							int loc = l.current_line;
 							printf("error %s:%d: Could not resolve path: %s\n", l.filepath, loc, path);
+							abort();
 						}
 						
 						if (filename == NULL) {
 							int loc = l.current_line;
 							printf("error %s:%d: Cannot include directory %s\n", l.filepath, loc, new_path);
+							abort();
 						}
 						
 						char* new_dir = strdup(new_path);
@@ -1117,6 +1131,7 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
 			} else if (def.length) {
 				// expand and append
 				Lexer temp_lex = (Lexer) { l->filepath, def.data, def.data };
+				temp_lex.current_line = l->current_line;
 				lexer_read(&temp_lex);
 				
 				// NOTE(NeGate): We need to disable the current macro define

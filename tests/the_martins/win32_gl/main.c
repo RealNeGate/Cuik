@@ -19,6 +19,7 @@
 #define _USE_MATH_DEFINES
 #include <math.h>
 #include <stddef.h>
+#include <stdio.h>
 
 // replace this with your favorite Assert() implementation
 #include <intrin.h>
@@ -188,6 +189,8 @@ static void GetWglFunctions(void)
         }
 
         size_t length = ext - start;
+		printf("Length: %zu\n", length);
+		//printf("%.*s\n", (int)length, ext - start);
 		if (StringsAreEqual("WGL_ARB_pixel_format", start, length))
         {
             // https://www.khronos.org/registry/OpenGL/extensions/ARB/WGL_ARB_pixel_format.txt
@@ -224,8 +227,10 @@ static void GetWglFunctions(void)
     DestroyWindow(dummy);
 }
 
-int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, int cmdshow)
+int main()
 {
+	HINSTANCE instance = GetModuleHandle(NULL);
+	
     // get WGL functions to be able to create modern GL context
     GetWglFunctions();
 

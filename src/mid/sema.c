@@ -233,27 +233,6 @@ static InitNode* walk_initializer_for_sema(TranslationUnit* tu, int node_count, 
 static void try_resolve_typeof(TranslationUnit* tu, TypeIndex type) {
 	Type* restrict ty = &tu->types[type];
 	
-	// TODO(NeGate): clean this up but essentially we just walk the 
-	// types to ideally find a typeof with an expression
-	while (ty->kind == KIND_PTR ||
-		   ty->kind == KIND_ARRAY ||
-		   ty->kind == KIND_UNION ||
-		   ty->kind == KIND_STRUCT) {
-		// this is soooooo nasty
-		if (ty->kind == KIND_PTR) {
-			ty = &tu->types[ty->ptr_to];
-		} else if (ty->kind == KIND_ARRAY) {
-			ty = &tu->types[ty->array_of];
-		} else if (ty->kind == KIND_UNION || ty->kind == KIND_STRUCT) {
-			MemberIndex start = ty->record.kids_start;
-			MemberIndex end = ty->record.kids_end;
-			
-			for (MemberIndex m = start; m < end; m++) {
-				try_resolve_typeof(tu, tu->members[m].type);
-			}
-		}
-	}
-	
 	if (ty->kind == KIND_TYPEOF) {
 		// spoopy...
 		TypeIndex resolved = sema_expr(tu, ty->typeof_.src);

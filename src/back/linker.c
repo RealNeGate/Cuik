@@ -58,7 +58,7 @@ void linker_add_libpath(Linker* l, const char filepath[]) {
 	size_t remaining = LINKER_STRING_BUFFER_CAP - l->libpaths_top;
 	OS_String output = &l->libpaths_buffer[l->libpaths_top];
 	
-	int number_of_wide_chars = MultiByteToWideChar(65001 /* UTF8 */, 0, filepath, -1,  output, remaining);
+	int number_of_wide_chars = MultiByteToWideChar(65001 /* UTF8 */, 0, filepath, -1, output, remaining);
 	l->libpaths_top += number_of_wide_chars;
 	l->libpaths_count++;
 #else

@@ -524,6 +524,8 @@ void lexer_read(Lexer* restrict l) {
 		current += 1;
 		current += (current[0] + current[1] == '\r' + '\n') ? 2 : 1;
 		
+		l->line_current = current;
+		
 		start = current;
 		while (*current && *current != '\n' && *current != ' ') {
 			char c0 = current[0], c1 = current[1];
