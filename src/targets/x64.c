@@ -22,7 +22,7 @@ TB_Register compile_builtin(TranslationUnit* tu, TB_Function* func, const char* 
 		IRVal src = irgen_expr(tu, func, args[1]);
 		assert(src.value_type == LVALUE);
 		
-		tb_inst_store(func, TB_TYPE_PTR, dst, tb_inst_member_access(func, src.reg, 8), 8);
+		tb_inst_store(func, TB_TYPE_PTR, dst, tb_inst_va_start(func, src.reg), 8);
 		return 0;
 	} else if (strcmp(name, "_mul128") == 0) {
 		return tb_inst_uint(func, TB_TYPE_I64, 0);

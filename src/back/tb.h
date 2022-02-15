@@ -310,6 +310,9 @@ extern "C" {
 		// an optimization pass
 		TB_PASS,
 		
+		// variadic
+		TB_VA_START,
+		
 		// x86 intrinsics
 		TB_X86INTRIN_SQRT,
 		TB_X86INTRIN_RSQRT,
@@ -772,9 +775,6 @@ extern "C" {
 	TB_API TB_Reg tb_inst_fmul(TB_Function* f, TB_Reg a, TB_Reg b);
 	TB_API TB_Reg tb_inst_fdiv(TB_Function* f, TB_Reg a, TB_Reg b);
 	
-	TB_API TB_Reg tb_inst_x86_sqrt(TB_Function* f, TB_Reg a);
-	TB_API TB_Reg tb_inst_x86_rsqrt(TB_Function* f, TB_Reg a);
-	
 	// Comparisons
 	TB_API TB_Reg tb_inst_cmp_eq(TB_Function* f, TB_Reg a, TB_Reg b);
 	TB_API TB_Reg tb_inst_cmp_ne(TB_Function* f, TB_Reg a, TB_Reg b);
@@ -790,6 +790,13 @@ extern "C" {
 	TB_API TB_Reg tb_inst_cmp_fge(TB_Function* f, TB_Reg a, TB_Reg b);
 	
 	TB_API TB_Reg tb_inst_restrict(TB_Function* f, TB_Reg value);
+	
+	// General intrinsics
+	TB_API TB_Reg tb_inst_va_start(TB_Function* f, TB_Reg a);
+	
+	// x86 Intrinsics
+	TB_API TB_Reg tb_inst_x86_sqrt(TB_Function* f, TB_Reg a);
+	TB_API TB_Reg tb_inst_x86_rsqrt(TB_Function* f, TB_Reg a);
 	
 	// Control flow
 	TB_API TB_Reg tb_inst_call(TB_Function* f, TB_DataType dt, const TB_Function* target, size_t param_count, const TB_Reg* params);
