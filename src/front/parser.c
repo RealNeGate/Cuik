@@ -387,7 +387,7 @@ TranslationUnit parse_file(TokenStream* restrict s) {
 				}
 				
 				SourceLoc* loc = &s->line_arena[tu.exprs[i].loc];
-				report(REPORT_ERROR, loc, "could not find symbol: %s", name);
+				report(REPORT_ERROR, loc, "could not resolve symbol: %s", name);
 			}
 		}
 		success:;
@@ -2199,6 +2199,13 @@ static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, At
 			
 			case TOKEN_KW_cdecl: break;
 			case TOKEN_KW_stdcall: break;
+			
+			case TOKEN_KW_Complex:
+			case TOKEN_KW_Imaginary: {
+				SourceLoc* loc = &s->line_arena[tokens_get(s)->location];
+				report(REPORT_ERROR, loc, "Complex types are not supported in CuikC");
+				break;
+			}
 			
 			case TOKEN_KW_Atomic: is_atomic = true; break;
 			case TOKEN_KW_const: is_const = true; break;

@@ -1,8 +1,7 @@
 
-int foo(int count, const _Atomic register long double arr[const restrict volatile static count]) {
-    return arr[0];
-}
-
 int main() {
-    return 0;
+	float _Complex apple = 1 + 2*I;
+	const char* pear = __TIME__;
+	
+	return 0;
 }

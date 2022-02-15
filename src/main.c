@@ -126,6 +126,37 @@ static void set_preprocessor_info(CPP_Context* cpp) {
 	cpp_define_empty(cpp, "L__FILE__");
 	cpp_define_empty(cpp, "__LINE__");
 	
+	cpp_define(cpp, "__STDC__", "1");
+	cpp_define(cpp, "__STDC_VERSION__", "201112L");
+	cpp_define(cpp, "__STDC_HOSTED__", "1");
+	
+	{
+		// The time of translation of the preprocessing translation unit
+		static const char mon_name[][4] = {
+			"Jan", "Feb", "Mar", "Apr", "May", "Jun",
+			"Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+		};
+		
+		time_t rawtime;
+		time(&rawtime);
+		
+		struct tm* timeinfo = localtime(&rawtime);
+		
+		// Mmm dd yyyy
+		char date_str[20];
+		snprintf(date_str, 20, "\"%.3s%3d %d\"", mon_name[timeinfo->tm_mon], timeinfo->tm_mday, 1900 + timeinfo->tm_year);
+		cpp_define(cpp, "__DATE__", date_str);
+		
+		// hh:mm:ss
+		char time_str[20];
+		snprintf(time_str, 20, "\"%.2d:%.2d:%.2d\"", timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
+		cpp_define(cpp, "__TIME__", time_str);
+	}
+	
+	cpp_define_empty(cpp, "__STDC_NO_COMPLEX__");
+	cpp_define_empty(cpp, "__STDC_NO_VLA__");
+	cpp_define_empty(cpp, "__STDC_NO_THREADS__");
+	
 	if (target_system == TB_SYSTEM_WINDOWS) {
 		// TODO(NeGate): Automatically detect these somehow...
 		cpp_add_include_directory(cpp, "W:\\Workspace\\Cuik\\crt\\include\\");
