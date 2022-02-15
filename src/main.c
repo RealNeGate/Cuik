@@ -147,17 +147,6 @@ static void set_preprocessor_info(CPP_Context* cpp) {
 		cpp_define_empty(cpp, "__analysis_noreturn");
 		cpp_define_empty(cpp, "__ptr32");
 		cpp_define_empty(cpp, "__ptr64");
-		cpp_define_empty(cpp, "_CRT_BEGIN_C_HEADER");
-		cpp_define_empty(cpp, "_NODISCARD");
-		cpp_define_empty(cpp, "_Ret_reallocated_bytes_(x,y)");
-		cpp_define_empty(cpp, "_IRQL_requires_max_(x)");
-		cpp_define_empty(cpp, "__drv_maxIRQL(x)");
-		cpp_define_empty(cpp, "_In_NLS_string_(x)");
-		cpp_define_empty(cpp, "_Acquires_shared_lock_(x)");
-		cpp_define_empty(cpp, "_Translates_Win32_to_HRESULT_(x)");
-		cpp_define_empty(cpp, "_CRT_INSECURE_DEPRECATE_MEMORY(x)");
-		cpp_define_empty(cpp, "_CRT_DEPRECATE_TEXT(x)");
-		cpp_define_empty(cpp, "_CRT_INSECURE_DEPRECATE(x)");
 		
 		// we pretend to be a modern MSVC compiler
 		cpp_define(cpp, "_MSC_VER", "1929");
@@ -173,8 +162,6 @@ static void set_preprocessor_info(CPP_Context* cpp) {
 		cpp_define(cpp, "__inline", "inline");
 		cpp_define(cpp, "__forceinline", "inline");
 		cpp_define(cpp, "__CRTDECL", "__cdecl");
-		
-		//cpp_define_empty(cpp, "SQLITE_DISABLE_INTRINSIC");
 		
 		// NOTE(NeGate): We probably shouldn't be defining this...
 		// it's a winnt.h thing
