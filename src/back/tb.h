@@ -187,6 +187,7 @@ extern "C" {
 		/* metadata */
 		TB_LINE_INFO,
 		TB_KEEPALIVE,
+		TB_POISON,
 		
 		TB_ICALL, /* internal use only, inline call */
 		TB_CALL,  /* standard function call */

@@ -7,6 +7,7 @@
 #include "memory.h"
 #include "file_io.h"
 #include "diagnostic.h"
+#include "../timer.h"
 #include <ext/stb_ds.h>
 
 #if _WIN32
@@ -298,6 +299,9 @@ static void expand_double_hash(CPP_Context* restrict c, TokenStream* restrict s,
 }
 
 static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, const char* directory, const char* filepath, int depth) {
+	// hacky but i don't wanna wrap it in a timed_block
+	uint64_t timer_start = timer__now();
+	
 	unsigned char* text = (unsigned char*)read_entire_file(filepath);
 	Lexer l = (Lexer) { filepath, text, text, 1 };
 	
@@ -476,7 +480,7 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 					const unsigned char* end = NULL;
 					
 					if (l.token_type == '<') {
-                        // Hacky but mostly works
+						// Hacky but mostly works
 						start = l.token_start + 1;
 						
 						do {
@@ -654,6 +658,18 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 			lexer_read(&l);
 		}
 	} while (l.token_type);
+	
+	{
+		char temp[256];
+		sprintf_s(temp, 256, "preprocess: %s", filepath);
+		
+		char* p = temp;
+		for (; *p; p++) {
+			if (*p == '\\') *p = '/';
+		}
+		
+		timer__end(temp, timer_start);
+	}
 }
 
 static void skip_directive_body(Lexer* l) {

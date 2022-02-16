@@ -1,8 +1,15 @@
 #include "lexer.h"
 #include "file_io.h"
+#include <timer.h>
 
 #define STB_DS_IMPLEMENTATION
 #include <ext/stb_ds.h>
+
+static void perf_test(Lexer* l) {
+	timed_block("Lexer") {
+		do { lexer_read(l); } while (l->token_type);
+	}
+}
 
 static void dump_golden_test(Lexer* l, FILE* f) {
 	int last_line = 0;
@@ -24,12 +31,25 @@ static void dump_golden_test(Lexer* l, FILE* f) {
 }
 
 int main(int argc, char* argv[]) {
+#if 0
+	if (argc < 2) {
+		printf("Expected file path\n");
+		return 1;
+	}
+	
+	unsigned char* text = (unsigned char*)read_entire_file(argv[1]);
+	Lexer l = (Lexer) { "", text, text, 1 };
+	
+	perf_test(&l);
+	
+	return 0;
+#else
 	if (argc <= 3) {
 		printf("Expected:\n");
 		printf("\t%s bake [input C file] [output test file]\n", argv[0]);
 		printf("\t\tOR \n");
 		printf("\t%s test [input C file] [test file]\n", argv[0]);
-		return -1;
+		return 1;
 	}
 	
 	const char* input_file = argv[2];
@@ -78,4 +98,5 @@ int main(int argc, char* argv[]) {
 		printf("Unknown mode: either 'bake', 'test'\n");
 		return -1;
 	}
+#endif
 }

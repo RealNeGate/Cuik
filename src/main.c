@@ -50,6 +50,11 @@ TB_Arch target_arch;
 TB_System target_system;
 TargetDescriptor target_desc;
 
+// timer.h
+FILE* timer__output;
+int timer__entry_count;
+double timer__freq;
+
 // crash_handler.c
 void hook_crash_handler();
 
@@ -213,27 +218,34 @@ static void compile_project(TB_Arch arch, TB_System sys, const char source_file[
 	cpp_init(&cpp_ctx);
 	set_preprocessor_info(&cpp_ctx);
 	
-	TokenStream s = ir_gen_tokens = cpp_process(&cpp_ctx, source_file);
+	TokenStream s;
+	timed_block("preprocess") {
+		s = ir_gen_tokens = cpp_process(&cpp_ctx, source_file);
+	}
 	
 	cpp_finalize(&cpp_ctx);
 	
 	// Parse
-	atoms_init();
-	
-	translation_unit = parse_file(&s);
-	crash_if_reports(REPORT_ERROR);
+	timed_block("parse") {
+		atoms_init();
+		
+		translation_unit = parse_file(&s);
+		crash_if_reports(REPORT_ERROR);
+	}
 	
 	TB_FeatureSet features = { 0 };
 	mod = tb_module_create(arch, sys, &features);
 	irgen_init();
 	
 	// Semantics pass
-	sema_remove_unused(&translation_unit);
-	
-	for (size_t i = 0, count = arrlen(translation_unit.top_level_stmts); i < count; i++) {
-		sema_check(&translation_unit, translation_unit.top_level_stmts[i]);
+	timed_block("semantics") {
+		sema_remove_unused(&translation_unit);
+		
+		for (size_t i = 0, count = arrlen(translation_unit.top_level_stmts); i < count; i++) {
+			sema_check(&translation_unit, translation_unit.top_level_stmts[i]);
+		}
+		crash_if_reports(REPORT_ERROR);
 	}
-	crash_if_reports(REPORT_ERROR);
 	
 	// Generate IR
 	// TODO(NeGate): Globals amirite... yea maybe i'll maybe move the TB_Module from the
@@ -248,34 +260,36 @@ static void compile_project(TB_Arch arch, TB_System sys, const char source_file[
 			irgen_top_level_stmt(&translation_unit, translation_unit.top_level_stmts[i]);
 		}
 	} else {
-		is_running = true;
-		cnd_init(&tasks_condition);
-		mtx_init(&tasks_mutex, mtx_plain);
-		
-		munch_size = arrlen(translation_unit.top_level_stmts) / settings.num_of_worker_threads;
-		if (munch_size < 5) munch_size = 5;
-		
-		for (int i = 0; i < settings.num_of_worker_threads; i++) {
-			thrd_create(&threads[i], task_thread, NULL);
+		timed_block("ir gen & compile") {
+			is_running = true;
+			cnd_init(&tasks_condition);
+			mtx_init(&tasks_mutex, mtx_plain);
+			
+			munch_size = arrlen(translation_unit.top_level_stmts) / settings.num_of_worker_threads;
+			if (munch_size < 5) munch_size = 5;
+			
+			for (int i = 0; i < settings.num_of_worker_threads; i++) {
+				thrd_create(&threads[i], task_thread, NULL);
+			}
+			
+			// Generate IR
+			dispatch_tasks(arrlen(translation_unit.top_level_stmts));
+			
+			arrfree(s.tokens);
+			arrfree(translation_unit.top_level_stmts);
+			
+			// Just let's the threads know that 
+			// they might need to die now
+			tasks_count = 0;
+			tasks_complete = 0;
+			
+			is_running = false;
+			for (int i = 0; i < settings.num_of_worker_threads; i++) {
+				thrd_join(threads[i], NULL);
+			}
+			mtx_destroy(&tasks_mutex);
+			cnd_destroy(&tasks_condition);
 		}
-		
-		// Generate IR
-		dispatch_tasks(arrlen(translation_unit.top_level_stmts));
-		
-		arrfree(s.tokens);
-		arrfree(translation_unit.top_level_stmts);
-		
-		// Just let's the threads know that 
-		// they might need to die now
-		tasks_count = 0;
-		tasks_complete = 0;
-		
-		is_running = false;
-		for (int i = 0; i < settings.num_of_worker_threads; i++) {
-			thrd_join(threads[i], NULL);
-		}
-		mtx_destroy(&tasks_mutex);
-		cnd_destroy(&tasks_condition);
 	}
 	
 	irgen_deinit();
@@ -483,6 +497,8 @@ int main(int argc, char* argv[]) {
 			settings.optimization_level = TB_OPT_O1;
 		} else if (strcmp(key, "obj") == 0) {
 			settings.is_object_only = true;
+		} else if (strcmp(key, "time") == 0) {
+			settings.is_time_report = true;
 		} else if (strcmp(key, "debug") == 0) {
 			settings.debug_info = true;
 		} else if (strcmp(key, "thin-errors") == 0) {
@@ -547,18 +563,28 @@ int main(int argc, char* argv[]) {
 				tbir_output_file = fopen(tbir_filename, "wb");
 			}
 			
+			if (settings.is_time_report) {
+				char report_filename[260];
+				sprintf_s(report_filename, 260, "%s.json", filename);
+				
+				timer__open(report_filename);
+			}
+			
 			// Build project
-			timed_block("compilation") {
+			timed_block("total") {
 				compile_project(target_arch, target_sys, source_file, true);
 				
-				if (settings.print_tb_ir) {
-					fclose(tbir_output_file);
-				} else if (mode != COMPILER_MODE_CHECK) {
-					if (!tb_module_export(mod, obj_output_path, settings.debug_info)) abort();
+				timed_block("export") {
+					if (settings.print_tb_ir) {
+						fclose(tbir_output_file);
+					} else if (mode != COMPILER_MODE_CHECK) {
+						if (!tb_module_export(mod, obj_output_path, settings.debug_info)) abort();
+					}
+					
+					tb_module_destroy(mod);
 				}
-				
-				tb_module_destroy(mod);
 			}
+			timer__close();
 			
 			if (!settings.is_object_only && mode != COMPILER_MODE_CHECK && !settings.print_tb_ir) {
 				Linker l;
