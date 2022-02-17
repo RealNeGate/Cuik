@@ -17,118 +17,6 @@ static TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e);
 #define sema_warn(loc, fmt, ...) report(REPORT_WARNING, &ir_gen_tokens.line_arena[loc], fmt, __VA_ARGS__)
 #define sema_error(loc, fmt, ...) report(REPORT_ERROR, &ir_gen_tokens.line_arena[loc], fmt, __VA_ARGS__)
 
-static size_t type_as_string(TranslationUnit* tu, size_t max_len, char buffer[static max_len], TypeIndex type_index) {
-	Type* restrict type = &tu->types[type_index];
-	
-	size_t i = 0;
-	switch (type->kind) {
-		case KIND_VOID:  i += snprintf(&buffer[i], max_len - i, "void"); break;
-		case KIND_BOOL:  i += snprintf(&buffer[i], max_len - i, "_Bool"); break;
-		case KIND_CHAR:  i += snprintf(&buffer[i], max_len - i, "char"); break;
-		case KIND_SHORT: i += snprintf(&buffer[i], max_len - i, "short"); break;
-		case KIND_INT:   i += snprintf(&buffer[i], max_len - i, "int"); break;
-		case KIND_LONG:  i += snprintf(&buffer[i], max_len - i, "long"); break;
-		case KIND_FLOAT: i += snprintf(&buffer[i], max_len - i, "float"); break;
-		case KIND_DOUBLE:i += snprintf(&buffer[i], max_len - i, "double"); break;
-		case KIND_ENUM: {
-			i += cstr_copy(max_len - i, &buffer[i], "enum ");
-			
-			if (type->enumerator.name) {
-				i += cstr_copy(max_len - i, &buffer[i], (char*)type->enumerator.name);
-			} else {
-				i += cstr_copy(max_len - i, &buffer[i], "__unnamed__");
-			}
-			break;
-		}
-		case KIND_UNION: {
-			i += cstr_copy(max_len - i, &buffer[i], "union ");
-			
-			if (type->record.name) {
-				i += cstr_copy(max_len - i, &buffer[i], (char*)type->record.name);
-			} else {
-				i += cstr_copy(max_len - i, &buffer[i], "__unnamed__");
-			}
-			break;
-		}
-		case KIND_STRUCT: {
-			i += cstr_copy(max_len - i, &buffer[i], "struct ");
-			
-			if (type->record.name) {
-				i += cstr_copy(max_len - i, &buffer[i], (char*)type->record.name);
-			} else {
-				i += cstr_copy(max_len - i, &buffer[i], "__unnamed__");
-			}
-			break;
-		}
-		case KIND_PTR: {
-			i += type_as_string(tu, max_len - i, &buffer[i], type->ptr_to);
-			buffer[i++] = '*';
-			break;
-		}
-		case KIND_ARRAY: {
-			i += type_as_string(tu, max_len - i, &buffer[i], type->array_of);
-			
-			if (i+12 < max_len) {
-				buffer[i++] = '[';
-				
-				i += sprintf_s(&buffer[i], max_len - i, "%zu", type->array_count);
-				
-				buffer[i++] = ']';
-			} else {
-				abort();
-			}
-			break;
-		}
-		case KIND_FUNC: {
-			ParamIndex param_list = type->func.param_list;
-			ParamIndex param_count = type->func.param_count;
-			
-			i += type_as_string(tu, max_len - i, &buffer[i], type->func.return_type);
-			if (type->func.name) {
-				buffer[i++] = ' ';
-				i += cstr_copy(max_len - i, &buffer[i], (char*)type->func.name);
-			}
-			
-			buffer[i++] = '(';
-			for (size_t j = 0; j < param_count; j++) {
-				if (j) buffer[i++] = ',';
-				Param* p = &tu->params[param_list + j];
-				
-				i += type_as_string(tu, max_len - i, &buffer[i], p->type);
-				if (p->name) {
-					buffer[i++] = ' ';
-					i += cstr_copy(max_len - i, &buffer[i], (char*)p->name);
-				}
-			}
-			
-			buffer[i++] = ')';
-			break;
-		}
-		case KIND_TYPEOF: {
-			// TODO(NeGate): give some nicer look to this crap
-			i += cstr_copy(max_len - i, &buffer[i], "typeof(???)");
-			break;
-		}
-		default: abort();
-	}
-	
-	buffer[i] = '\0';
-	return i;
-}
-
-static _Noreturn void sema_fatal(SourceLocIndex loc, const char* fmt, ...) {
-	SourceLoc* l = &ir_gen_tokens.line_arena[loc];
-	printf("%s:%d: error: ", l->file, l->line);
-	
-	va_list ap;
-	va_start(ap, fmt);
-	vprintf(fmt, ap);
-	va_end(ap);
-	
-	printf("\n");
-	abort();
-}
-
 static bool is_scalar_type(TranslationUnit* tu, TypeIndex type_index) {
 	Type* restrict type = &tu->types[type_index];
 	return (type->kind >= KIND_BOOL && type->kind <= KIND_FUNC);
@@ -422,7 +310,8 @@ static TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e) {
 			} else if (type->kind == KIND_ARRAY) {
 				return (ep->type = type->array_of);
 			} else {
-				sema_fatal(ep->loc, "TODO");
+				sema_error(ep->loc, "TODO");
+				abort();
 			}
 		}
 		case EXPR_CALL: {

@@ -39,6 +39,9 @@ _Thread_local static StmtIndex current_switch_or_case;
 _Thread_local static StmtIndex current_breakable;
 _Thread_local static StmtIndex current_continuable;
 
+// two simple temporary buffers to represent type_as_string results
+static _Thread_local char temp_string0[256], temp_string1[256];
+
 static void expect(TokenStream* restrict s, char ch);
 static Symbol* find_local_symbol(TokenStream* restrict s);
 static Symbol* find_global_symbol(char* name);
@@ -174,14 +177,15 @@ TranslationUnit parse_file(TokenStream* restrict s) {
 						is_redefining_body = true;
 					}
 					
-					// TODO(NeGate): we should be erroring if the attributes aren't
-					// compatible
-					tu.stmts[n].loc = decl.loc;
-					
-					// TODO(NeGate): Error messages
 					if (!type_equal(&tu, tu.stmts[n].decl.type, decl.type)) {
-						generic_error(s, "function declaration doesn't match function definition");
+						type_as_string(&tu, sizeof(temp_string0), temp_string0, decl.type);
+						type_as_string(&tu, sizeof(temp_string1), temp_string1, tu.stmts[n].decl.type);
+						
+						report(REPORT_ERROR, &s->line_arena[decl.loc], "conflicting types for '%s'; currently '%s'", decl.name, temp_string0);
+						report(REPORT_INFO, &s->line_arena[tu.stmts[n].loc], "before it was: '%s'", temp_string1);
 					}
+					
+					tu.stmts[n].loc = decl.loc;
 				} else {
 					// New symbol
 					n = make_stmt(&tu, s, STMT_DECL);
@@ -2569,16 +2573,20 @@ static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, At
 			case LONG:
 			case LONG + INT:
 			case SIGNED:
+			type = TYPE_INT;
+			break;
 			case SIGNED + INT:
 			case SIGNED + LONG:
 			case SIGNED + LONG + INT:
-			type = TYPE_INT;
+			type = settings.is_windows_long ? TYPE_INT : TYPE_LONG;
 			break;
 			case UNSIGNED:
 			case UNSIGNED + INT:
+			type = TYPE_UINT;
+			break;
 			case UNSIGNED + LONG:
 			case UNSIGNED + LONG + INT:
-			type = TYPE_UINT;
+			type = settings.is_windows_long ? TYPE_UINT : TYPE_ULONG;
 			break;
 			case LONG + LONG:
 			case LONG + LONG + INT:

@@ -30,7 +30,6 @@ void* tls_push(size_t size);
 void* tls_pop(size_t size);
 void* tls_save();
 void tls_restore(void* p);
-void* tls_peek(size_t distance);
 
 inline static bool cstr_equals(const unsigned char* str1, const unsigned char* str2) {
 	return strcmp((const char*)str1, (const char*)str2) == 0;

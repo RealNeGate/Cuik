@@ -563,6 +563,7 @@ TypeIndex new_typeof(TranslationUnit* tu, ExprIndex src);
 TypeIndex new_array(TranslationUnit* tu, TypeIndex base, int count);
 TypeIndex get_common_type(TranslationUnit* tu, TypeIndex ty1, TypeIndex ty2);
 bool type_equal(TranslationUnit* tu, TypeIndex a, TypeIndex b);
+size_t type_as_string(TranslationUnit* tu, size_t max_len, char* buffer, TypeIndex type_index);
 
 StmtIndex resolve_unknown_symbol(TranslationUnit* tu, StmtIndex i);
 ConstValue const_eval(TranslationUnit* tu, ExprIndex e);

@@ -99,6 +99,20 @@ TypeIndex new_typeof(TranslationUnit* tu, ExprIndex src) {
 }
 
 TypeIndex new_array(TranslationUnit* tu, TypeIndex base, int count) {
+	if (count == 0) {
+		// these zero-sized arrays don't actually care about incomplete element types 
+		Type t = {
+			.kind = KIND_ARRAY,
+			.size = 0,
+			.align = 0,
+			.array_of = base,
+			.array_count = count
+		};
+		
+		big_array_put(tu->types, t);
+		return big_array_length(tu->types) - 1;
+	}
+	
 	int size = tu->types[base].size;
 	int align = tu->types[base].align;
 	
@@ -217,4 +231,126 @@ bool type_equal(TranslationUnit* tu, TypeIndex a, TypeIndex b) {
 	// but by default kind matching is enough
 	// like for integers, booleans and floats
 	return true;
+}
+
+size_t type_as_string(TranslationUnit* tu, size_t max_len, char* buffer, TypeIndex type_index) {
+	Type* restrict type = &tu->types[type_index];
+	
+	size_t i = 0;
+	switch (type->kind) {
+		case KIND_VOID:  i += cstr_copy(max_len - i, &buffer[i], "void"); break;
+		case KIND_BOOL:  i += cstr_copy(max_len - i, &buffer[i], "_Bool"); break;
+		case KIND_CHAR: {
+			if (type->is_unsigned) i += cstr_copy(max_len - i, &buffer[i], "unsigned ");
+			
+			i += cstr_copy(max_len - i, &buffer[i], "char"); 
+			break;
+		}
+		case KIND_SHORT: {
+			if (type->is_unsigned) i += cstr_copy(max_len - i, &buffer[i], "unsigned ");
+			
+			i += cstr_copy(max_len - i, &buffer[i], "short"); 
+			break;
+		}
+		case KIND_INT: {
+			if (type->is_unsigned) i += cstr_copy(max_len - i, &buffer[i], "unsigned ");
+			
+			i += cstr_copy(max_len - i, &buffer[i], "int"); 
+			break;
+		}
+		case KIND_LONG: {
+			if (type->is_unsigned) i += cstr_copy(max_len - i, &buffer[i], "unsigned ");
+			
+			i += cstr_copy(max_len - i, &buffer[i], settings.is_windows_long ? "long long" : "long");
+			break;
+		}
+		case KIND_FLOAT:  i += cstr_copy(max_len - i, &buffer[i], "float"); break;
+		case KIND_DOUBLE: i += cstr_copy(max_len - i, &buffer[i], "double"); break;
+		case KIND_ENUM: {
+			i += cstr_copy(max_len - i, &buffer[i], "enum ");
+			
+			if (type->enumerator.name) {
+				i += cstr_copy(max_len - i, &buffer[i], (char*)type->enumerator.name);
+			} else {
+				i += cstr_copy(max_len - i, &buffer[i], "__unnamed__");
+			}
+			break;
+		}
+		case KIND_UNION: {
+			i += cstr_copy(max_len - i, &buffer[i], "union ");
+			
+			if (type->record.name) {
+				i += cstr_copy(max_len - i, &buffer[i], (char*)type->record.name);
+			} else {
+				i += cstr_copy(max_len - i, &buffer[i], "__unnamed__");
+			}
+			break;
+		}
+		case KIND_STRUCT: {
+			i += cstr_copy(max_len - i, &buffer[i], "struct ");
+			
+			if (type->record.name) {
+				i += cstr_copy(max_len - i, &buffer[i], (char*)type->record.name);
+			} else {
+				i += cstr_copy(max_len - i, &buffer[i], "__unnamed__");
+			}
+			break;
+		}
+		case KIND_PTR: {
+			i += type_as_string(tu, max_len - i, &buffer[i], type->ptr_to);
+			buffer[i++] = '*';
+			break;
+		}
+		case KIND_ARRAY: {
+			i += type_as_string(tu, max_len - i, &buffer[i], type->array_of);
+			
+			if (i+12 < max_len) {
+				buffer[i++] = '[';
+				
+				i += sprintf_s(&buffer[i], max_len - i, "%zu", type->array_count);
+				
+				buffer[i++] = ']';
+			} else {
+				abort();
+			}
+			break;
+		}
+		case KIND_FUNC: {
+			ParamIndex param_list = type->func.param_list;
+			ParamIndex param_count = type->func.param_count;
+			
+			i += type_as_string(tu, max_len - i, &buffer[i], type->func.return_type);
+			if (type->func.name) {
+				buffer[i++] = ' ';
+				i += cstr_copy(max_len - i, &buffer[i], (char*)type->func.name);
+			}
+			
+			assert(i < max_len);
+			buffer[i++] = '(';
+			
+			for (size_t j = 0; j < param_count; j++) {
+				if (j) buffer[i++] = ',';
+				Param* p = &tu->params[param_list + j];
+				
+				i += type_as_string(tu, max_len - i, &buffer[i], p->type);
+				if (p->name) {
+					buffer[i++] = ' ';
+					i += cstr_copy(max_len - i, &buffer[i], (char*)p->name);
+				}
+			}
+			
+			assert(i < max_len);
+			buffer[i++] = ')';
+			break;
+		}
+		case KIND_TYPEOF: {
+			// TODO(NeGate): give some nicer look to this crap
+			i += cstr_copy(max_len - i, &buffer[i], "typeof(???)");
+			break;
+		}
+		default: abort();
+	}
+	
+	buffer[i] = '\0';
+	return i;
 }

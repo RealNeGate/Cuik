@@ -156,7 +156,11 @@ uint32_t hash_with_len(const void* data, size_t len) {
         if (i < split) mask = -1u;
         else if (i > split) mask = 0u;
 		
-        hash += p[i] & mask;
+		// NOTE(NeGate): hopefully optimizes it out
+		uint32_t p_of_i;
+		memcpy(&p_of_i, &p[i], sizeof(uint32_t));
+		
+		hash += p_of_i & mask;
         i += 1;
     } while (i < 4);
 	

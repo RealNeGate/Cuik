@@ -141,7 +141,7 @@ bool linker_invoke(Linker* l, const char* filename, LinkerSubsystem subsystem, b
 	};
 	PROCESS_INFORMATION pi = {};
 	
-	printf("Linker command:\n%S\n", cmd_line);
+	//printf("Linker command:\n%S\n", cmd_line);
 	if (!CreateProcessW(NULL, cmd_line, NULL, NULL, TRUE, 0, NULL, NULL, &si, &pi)) {
 		printf("Linker command could not be executed.");
 		return false;

@@ -13,12 +13,15 @@ extern FILE* timer__output;
 extern int timer__entry_count;
 extern double timer__freq;
 
-inline static void timer__open(const char* path) {
-	assert(timer__output == NULL);
-	
+// done regardless of the profiler running just to be able to query time in general
+inline static void timer__init() {
     LARGE_INTEGER freq;
     QueryPerformanceFrequency(&freq);
     timer__freq = 1.0 / (double)freq.QuadPart;
+}
+
+inline static void timer__open(const char* path) {
+	assert(timer__output == NULL);
 	
 	timer__output = fopen(path, "wb");
 	fprintf(timer__output, "{\"otherData\": {},\"traceEvents\":[");

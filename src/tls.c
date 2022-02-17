@@ -1,9 +1,12 @@
 #include "common.h"
+#include <stdalign.h>
 
 #define TEMPORARY_STORAGE_SIZE (1 << 20)
 
 typedef struct TemporaryStorage {
-	uint32_t used;
+	size_t used;
+	size_t _;
+	
 	uint8_t data[];
 } TemporaryStorage;
 
@@ -11,7 +14,7 @@ static _Thread_local TemporaryStorage* temp_storage;
 
 void tls_init() {
 	if (__builtin_expect(!temp_storage, 0)) {
-		temp_storage = malloc(TEMPORARY_STORAGE_SIZE);
+		temp_storage = _aligned_malloc(TEMPORARY_STORAGE_SIZE, 16);
 	}
 	
 	temp_storage->used = 0;
@@ -37,6 +40,10 @@ void* tls_pop(size_t size) {
 
 void* tls_save() {
 	assert(sizeof(TemporaryStorage) + temp_storage->used);
+	
+	//size_t align_mask = sizeof(max_align_t) - 1;
+	//temp_storage->used = (temp_storage->used + align_mask) & ~align_mask;
+	
 	return &temp_storage->data[temp_storage->used];
 }
 
@@ -45,10 +52,4 @@ void tls_restore(void* p) {
 	assert(i <= temp_storage->used);
 	
 	temp_storage->used = i;
-}
-
-void* tls_peek(size_t distance) {
-	assert(sizeof(TemporaryStorage) + temp_storage->used > distance);
-    
-	return &temp_storage->data[temp_storage->used - distance];
 }

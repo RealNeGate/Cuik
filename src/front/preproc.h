@@ -65,7 +65,7 @@ typedef struct CPP_IncludeOnce {
 	int value;
 } CPP_IncludeOnce;
 
-enum { CPP_MAX_SCOPE_DEPTH = 1024 };
+enum { CPP_MAX_SCOPE_DEPTH = 2048 };
 
 struct CPP_Context {
 	// used to store macro expansion results
@@ -90,5 +90,5 @@ struct CPP_Context {
 	
 	// tells you if the current scope has had an entry evaluated,
 	// this is important for choosing when to check #elif and #endif
-	int scope_eval[CPP_MAX_SCOPE_DEPTH];
+	bool scope_eval[CPP_MAX_SCOPE_DEPTH];
 };

@@ -9,6 +9,7 @@ Cuik/
 *.rdbg
 *.i
 *.tbir
+*.json
 
 tests/the_fuzzer/
 tests/stb_image.c

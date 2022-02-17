@@ -209,11 +209,12 @@ inline static SourceLocIndex get_source_location(Lexer* restrict l, TokenStream*
 	return i;
 }
 
-inline static void cpp_push_scope(CPP_Context* restrict ctx, Lexer* restrict l) {
-	ctx->depth++;
-	if (ctx->depth >= CPP_MAX_SCOPE_DEPTH) {
+inline static void cpp_push_scope(CPP_Context* restrict ctx, Lexer* restrict l, bool initial) {
+	if (ctx->depth >= CPP_MAX_SCOPE_DEPTH-1) {
 		generic_error(l, "Exceeded max scope depth!");
 	}
+	
+	ctx->scope_eval[ctx->depth++] = initial;
 }
 
 inline static void cpp_pop_scope(CPP_Context* restrict ctx, Lexer* restrict l) {
@@ -344,27 +345,75 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 					
 					assert(!l.hit_line);
 					if (eval(c, s, &l)) {
-						cpp_push_scope(c, &l);
-						c->scope_eval[c->depth] = 1;
+						cpp_push_scope(c, &l, true);
 					} else {
-						c->scope_eval[c->depth] = 0;
+						cpp_push_scope(c, &l, false);
 						skip_directive_body(&l);
 					}
 					
 					// we should be one a different line now
 					assert(l.hit_line);
+				}  else if (lexer_match(&l, 6, "ifndef")) {
+					lexer_read(&l);
+					
+					if (l.token_type != TOKEN_IDENTIFIER) {
+						generic_error(&l, "expected identifier!");
+					}
+					
+					if (!is_defined(c, l.token_start, l.token_end - l.token_start)) {
+						cpp_push_scope(c, &l, true);
+						lexer_read(&l);
+					} else {
+						cpp_push_scope(c, &l, false);
+						skip_directive_body(&l);
+					}
+				} else if (lexer_match(&l, 5, "ifdef")) {
+					lexer_read(&l);
+					
+					if (l.token_type != TOKEN_IDENTIFIER) {
+						generic_error(&l, "expected identifier!");
+					}
+					
+					if (is_defined(c, l.token_start, l.token_end - l.token_start)) {
+						cpp_push_scope(c, &l, true);
+						lexer_read(&l);
+					} else {
+						cpp_push_scope(c, &l, false);
+						skip_directive_body(&l);
+					}
 				} else if (lexer_match(&l, 4, "else")) {
 					lexer_read(&l);
 					//assert(l.hit_line);
 					
 					// if it didn't evaluate any of the other options
 					// do this
-					if (c->scope_eval[c->depth] == 0) {
-						cpp_push_scope(c, &l);
-						c->scope_eval[c->depth] = 1;
+					int last_scope = c->depth - 1;
+					
+					if (!c->scope_eval[last_scope]) {
+						c->scope_eval[last_scope] = true;
 					} else {
 						skip_directive_body(&l);
 					}
+				} else if (lexer_match(&l, 4, "elif")) {
+					lexer_read(&l);
+					
+					assert(!l.hit_line);
+					
+					// if it didn't evaluate any of the other options
+					// try to do this
+					int last_scope = c->depth - 1;
+					
+					if (!c->scope_eval[last_scope] && eval(c, s, &l)) {
+						c->scope_eval[last_scope] = true;
+					} else {
+						skip_directive_body(&l);
+					}
+					
+					// we should be one a different line now
+					assert(l.hit_line);
+				} else if (lexer_match(&l, 5, "endif")) {
+					lexer_read(&l);
+					cpp_pop_scope(c, &l);
 				} else if (lexer_match(&l, 6, "define")) {
 					lexer_read(&l);
 					
@@ -425,54 +474,6 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 					
 					c->macro_bucket_values_start[e] = start;
 					c->macro_bucket_values_end[e] = end;
-				} else if (lexer_match(&l, 4, "elif")) {
-					lexer_read(&l);
-					
-					assert(!l.hit_line);
-					// if it didn't evaluate any of the other options
-					// try to do this
-					if (c->scope_eval[c->depth] == 0 && eval(c, s, &l)) {
-						cpp_push_scope(c, &l);
-						c->scope_eval[c->depth] = 1;
-					} else {
-						skip_directive_body(&l);
-					}
-					
-					// we should be one a different line now
-					assert(l.hit_line);
-				} else if (lexer_match(&l, 6, "ifndef")) {
-					lexer_read(&l);
-					
-					if (l.token_type != TOKEN_IDENTIFIER) {
-						generic_error(&l, "expected identifier!");
-					}
-					
-					if (is_defined(c, l.token_start, l.token_end - l.token_start)) {
-						c->scope_eval[c->depth] = 0;
-						skip_directive_body(&l);
-					} else {
-						cpp_push_scope(c, &l);
-						c->scope_eval[c->depth] = 1;
-						lexer_read(&l);
-					}
-				} else if (lexer_match(&l, 5, "ifdef")) {
-					lexer_read(&l);
-					
-					if (l.token_type != TOKEN_IDENTIFIER) {
-						generic_error(&l, "expected identifier!");
-					}
-					
-					if (is_defined(c, l.token_start, l.token_end - l.token_start)) {
-						cpp_push_scope(c, &l);
-						c->scope_eval[c->depth] = 1;
-						lexer_read(&l);
-					} else {
-						c->scope_eval[c->depth] = 0;
-						skip_directive_body(&l);
-					}
-				} else if (lexer_match(&l, 5, "endif")) {
-					lexer_read(&l);
-					cpp_pop_scope(c, &l);
 				} else if (lexer_match(&l, 7, "include")) {
 					lexer_read(&l);
 					
@@ -574,7 +575,7 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 						
 #if 0
 						for (int i = 0; i < depth; i++) printf("  ");
-						printf("%s : LINE %d\n", new_path, l.current_line);
+						printf("%s\n", new_path);
 #endif
 						
 						preprocess_file(c, s, new_dir, new_path, depth + 1);
@@ -1146,18 +1147,29 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
 				tls_restore(value_ranges);
 			} else if (def.length) {
 				// expand and append
-				Lexer temp_lex = (Lexer) { l->filepath, def.data, def.data };
-				temp_lex.current_line = l->current_line;
-				lexer_read(&temp_lex);
-				
-				// NOTE(NeGate): We need to disable the current macro define
-				// so it doesn't recurse.
-				size_t saved_length = c->macro_bucket_keys_length[def_i];
-				c->macro_bucket_keys_length[def_i] = 0;
-				
-				expand(c, s, &temp_lex);
-				
-				c->macro_bucket_keys_length[def_i] = saved_length;
+				if (*args == '(' && l->token_type != '(') {
+					Token t = { 
+						classify_ident(token_data, token_length),
+						get_source_location(l, s),
+						token_data, 
+						token_data + token_length
+					};
+					
+					arrput(s->tokens, t);
+				} else {
+					Lexer temp_lex = (Lexer) { l->filepath, def.data, def.data };
+					temp_lex.current_line = l->current_line;
+					lexer_read(&temp_lex);
+					
+					// NOTE(NeGate): We need to disable the current macro define
+					// so it doesn't recurse.
+					size_t saved_length = c->macro_bucket_keys_length[def_i];
+					c->macro_bucket_keys_length[def_i] = 0;
+					
+					expand(c, s, &temp_lex);
+					
+					c->macro_bucket_keys_length[def_i] = saved_length;
+				}
 			}
 		} else {
 			// Normal identifier

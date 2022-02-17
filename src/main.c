@@ -197,11 +197,8 @@ static void set_preprocessor_info(CPP_Context* cpp) {
 		cpp_define(cpp, "__pragma(x)", "_Pragma(#x)");
 		cpp_define(cpp, "__inline", "inline");
 		cpp_define(cpp, "__forceinline", "inline");
+		cpp_define(cpp, "__alignof", "_Alignof");
 		cpp_define(cpp, "__CRTDECL", "__cdecl");
-		
-		// NOTE(NeGate): We probably shouldn't be defining this...
-		// it's a winnt.h thing
-		cpp_define(cpp, "ANYSIZE_ARRAY", "1");
 	} else {
 		// TODO(NeGate): Automatically detect these somehow...
 		cpp_add_include_directory(cpp, "/usr/lib/gcc/x86_64-linux-gnu/10/include/");
@@ -410,9 +407,12 @@ int main(int argc, char* argv[]) {
 	if (settings.num_of_worker_threads <= 0) settings.num_of_worker_threads = 1;
 	
 	target_sys = TB_SYSTEM_WINDOWS;
+	settings.is_windows_long = true;
 #else
 	settings.num_of_worker_threads = 1;
+	
 	target_sys = TB_SYSTEM_LINUX;
+	settings.is_windows_long = false;
 #endif
 	
 	// Defaults to the host arch as the target
@@ -563,6 +563,7 @@ int main(int argc, char* argv[]) {
 				tbir_output_file = fopen(tbir_filename, "wb");
 			}
 			
+			timer__init();
 			if (settings.is_time_report) {
 				char report_filename[260];
 				sprintf_s(report_filename, 260, "%s.json", filename);
@@ -571,6 +572,8 @@ int main(int argc, char* argv[]) {
 			}
 			
 			// Build project
+			uint64_t compile_start = timer__now();
+			
 			timed_block("total") {
 				compile_project(target_arch, target_sys, source_file, true);
 				
@@ -584,6 +587,11 @@ int main(int argc, char* argv[]) {
 					tb_module_destroy(mod);
 				}
 			}
+			
+			uint64_t compile_end = timer__now();
+			double elapsed = (compile_end - compile_start) * timer__freq;
+			printf("compiled in %f seconds\n", elapsed);
+			
 			timer__close();
 			
 			if (!settings.is_object_only && mode != COMPILER_MODE_CHECK && !settings.print_tb_ir) {

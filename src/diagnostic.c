@@ -69,7 +69,6 @@ void report(ReportLevel level, SourceLoc* loc, const char* fmt, ...) {
 		while (*line && isspace(*line)) { line++; }
 		size_t dist_from_line_start = line - (const char*)loc->line_str;
 		
-		printf("      | \n");
 		if (*line != '\n') {
 			const char* line_end = line;
 			do { line_end++; } while (*line_end && *line_end != '\n');
@@ -92,7 +91,7 @@ void report(ReportLevel level, SourceLoc* loc, const char* fmt, ...) {
 		for (size_t i = 0; i < start_pos; i++) printf(" ");
 		printf("^");
 		for (size_t i = 1; i < tkn_len; i++) printf("~");
-		printf("\n\n");
+		printf("\n");
 		
 #if _WIN32
 		SetConsoleTextAttribute(console_handle, default_attribs);
