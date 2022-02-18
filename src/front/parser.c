@@ -182,7 +182,7 @@ TranslationUnit parse_file(TokenStream* restrict s) {
 						type_as_string(&tu, sizeof(temp_string1), temp_string1, tu.stmts[n].decl.type);
 						
 						report(REPORT_ERROR, &s->line_arena[decl.loc], "conflicting types for '%s'; currently '%s'", decl.name, temp_string0);
-						report(REPORT_INFO, &s->line_arena[tu.stmts[n].loc], "before it was: '%s'", temp_string1);
+						report(REPORT_INFO, &s->line_arena[tu.stmts[n].loc], "before it was '%s'", temp_string1);
 					}
 					
 					tu.stmts[n].loc = decl.loc;
@@ -320,7 +320,7 @@ TranslationUnit parse_file(TokenStream* restrict s) {
 					if (tokens_get(s)->type == '{') {
 						tokens_next(s);
 						
-						tu.stmts[n].decl.initial = parse_initializer(&tu, s, TYPE_VOID);
+						tu.stmts[n].decl.initial = parse_initializer(&tu, s, TYPE_NONE);
 					} else {
 						tu.stmts[n].decl.initial = parse_expr_l14(&tu, s);
 					}
@@ -357,7 +357,7 @@ TranslationUnit parse_file(TokenStream* restrict s) {
 							if (tokens_get(s)->type == '{') {
 								tokens_next(s);
 								
-								initial = parse_initializer(&tu, s, TYPE_VOID);
+								initial = parse_initializer(&tu, s, TYPE_NONE);
 							} else {
 								initial = parse_expr_l14(&tu, s);
 							}
@@ -872,7 +872,7 @@ static void parse_decl_or_expr(TranslationUnit* tu, TokenStream* restrict s, siz
 				if (tokens_get(s)->type == '{') {
 					tokens_next(s);
 					
-					initial = parse_initializer(tu, s, TYPE_VOID);
+					initial = parse_initializer(tu, s, TYPE_NONE);
 				} else {
 					initial = parse_expr_l14(tu, s);
 				}
@@ -938,6 +938,8 @@ static void parse_initializer_member(TranslationUnit* tu, TokenStream* restrict 
 	InitNode* current = NULL;
 	try_again: {
 		if (tokens_get(s)->type == '[') {
+			tokens_next(s);
+			
 			int start = parse_const_expr(tu, s);
 			if (start < 0) {
 				// TODO(NeGate): Error messages

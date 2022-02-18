@@ -128,6 +128,39 @@ static void try_resolve_typeof(TranslationUnit* tu, TypeIndex type) {
 	}
 }
 
+static InitNode* sema_infer_initializer_array_count(TranslationUnit* tu, int node_count, InitNode* node, int depth, int* out_array_count) {
+	size_t cursor = 0;
+	size_t max = 0;
+	
+	for (int i = 0; i < node_count; i++) {
+		if (depth == 0) {
+			// members shouldn't be here :p
+			if (node->mode == INIT_MEMBER) return 0;
+			else if (node->mode == INIT_ARRAY) {
+				cursor = node->start + node->count;
+				if (cursor > max) max = cursor;
+			}
+			else if (node->mode == INIT_NONE) {
+				cursor++;
+				if (cursor > max) max = cursor;
+			}
+		}
+		
+		if (node->kids_count == 0) {
+			node += 1;
+		} else {
+			node = sema_infer_initializer_array_count(tu, node->kids_count, node + 1, depth + 1, NULL);
+		}
+	}
+	
+	if (depth == 0) {
+		assert(max == (int)max);
+		
+		*out_array_count = max;
+	}
+	return node;
+}
+
 static TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e) {
 	Expr* restrict ep = &tu->exprs[e];
 	
@@ -191,6 +224,7 @@ static TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e) {
 		case EXPR_SIZEOF: {
 			TypeIndex src = sema_expr(tu, ep->x_of_expr.expr);
 			
+			assert(tu->types[src].size && "Something went wrong...");
 			*ep = (Expr) {
 				.op = EXPR_INT,
 				.type = TYPE_ULONG,
@@ -201,6 +235,7 @@ static TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e) {
 		case EXPR_ALIGNOF: {
 			TypeIndex src = sema_expr(tu, ep->x_of_expr.expr);
 			
+			assert(tu->types[src].align && "Something went wrong...");
 			*ep = (Expr) {
 				.op = EXPR_INT,
 				.type = TYPE_ULONG,
@@ -211,6 +246,7 @@ static TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e) {
 		case EXPR_SIZEOF_T: {
 			try_resolve_typeof(tu, ep->x_of_type.type);
 			
+			assert(tu->types[ep->x_of_type.type].size && "Something went wrong...");
 			*ep = (Expr) {
 				.op = EXPR_INT,
 				.type = TYPE_ULONG,
@@ -221,6 +257,7 @@ static TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e) {
 		case EXPR_ALIGNOF_T: {
 			try_resolve_typeof(tu, ep->x_of_type.type);
 			
+			assert(tu->types[ep->x_of_type.type].align && "Something went wrong...");
 			*ep = (Expr) {
 				.op = EXPR_INT,
 				.type = TYPE_ULONG,
@@ -230,8 +267,24 @@ static TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e) {
 		}
 		case EXPR_INITIALIZER: {
 			try_resolve_typeof(tu, ep->init.type);
-			walk_initializer_for_sema(tu, ep->init.count, ep->init.nodes);
 			
+			Type* type = &tu->types[ep->init.type];
+			int old_array_count = type->array_count;
+			
+			int new_array_count;
+			sema_infer_initializer_array_count(tu, ep->init.count, ep->init.nodes, 0, &new_array_count);
+			
+			// if it's 0, then it's unsized and anything goes
+			if (old_array_count != 0) {
+				// verify that everything fits correctly
+				if (old_array_count < new_array_count) {
+					sema_error(ep->loc, "Array cannot fit into declaration (needs %d, got %d)", old_array_count, new_array_count);
+				}
+			} else {
+				ep->init.type = new_array(tu, type->array_of, new_array_count);
+			}
+			
+			walk_initializer_for_sema(tu, ep->init.count, ep->init.nodes);
 			return (ep->type = ep->init.type);
 		}
 		case EXPR_LOGICAL_NOT: {
@@ -624,31 +677,39 @@ void sema_stmt(TranslationUnit* tu, StmtIndex s) {
 			if (sp->decl.initial) {
 				try_resolve_typeof(tu, sp->decl.type);
 				
-				TypeIndex expr_type = sema_expr(tu, sp->decl.initial);
+				if (tu->exprs[sp->decl.initial].op == EXPR_INITIALIZER &&
+					tu->exprs[sp->decl.initial].init.type == 0) {
+					// give it something to go off of
+					tu->exprs[sp->decl.initial].init.type = sp->decl.type;
+				}
+				
+				TypeIndex expr_type_index = sema_expr(tu, sp->decl.initial);
 				
 				Expr* restrict ep = &tu->exprs[sp->decl.initial];
 				if (ep->op == EXPR_INITIALIZER) {
 					Type* restrict tp = &tu->types[sp->decl.type];
+					Type* restrict expr_type = &tu->types[sp->decl.type];
 					
 					// Auto-detect array count from initializer
-					if (tp->kind == KIND_ARRAY && tp->array_count == 0) {
-						tp->array_count = ep->init.count;
-						tp->size = ep->init.count * tu->types[tp->array_of].size;
+					if (tp->kind == KIND_ARRAY && expr_type->kind == KIND_ARRAY) {
+						if (tp->array_count != 0 && tp->array_count < expr_type->array_count) {
+							sema_error(sp->loc, "Array initializer does not fit into declaration (expected %d, got %d)", tp->array_count, expr_type->array_count);
+						} else {
+							sp->decl.type = expr_type_index;
+						}
 					}
-					
-					ep->init.type = expr_type = sp->decl.type;
 				} else if (ep->op == EXPR_STR) {
 					Type* restrict tp = &tu->types[sp->decl.type];
 					
 					// Auto-detect array count from string
 					if (tp->kind == KIND_ARRAY && tp->array_count == 0) {
-						sp->decl.type = expr_type;
+						sp->decl.type = expr_type_index;
 					}
 				}
 				
 				ep->cast_type = sp->decl.type;
-				if (!type_compatible(tu, expr_type, sp->decl.type, sp->decl.initial)) {
-					type_as_string(tu, sizeof(temp_string0), temp_string0, expr_type);
+				if (!type_compatible(tu, expr_type_index, sp->decl.type, sp->decl.initial)) {
+					type_as_string(tu, sizeof(temp_string0), temp_string0, expr_type_index);
 					type_as_string(tu, sizeof(temp_string1), temp_string1, sp->decl.type);
 					
 					sema_error(sp->loc, "Could not implicitly convert type %s into %s.", temp_string0, temp_string1);
@@ -742,7 +803,7 @@ void sema_check(TranslationUnit* tu, StmtIndex s) {
 	Stmt* restrict sp = &tu->stmts[s];
 	
 	TypeIndex type_index = sp->decl.type;
-	Type* restrict type = &tu->types[type_index];
+	Type* type = &tu->types[type_index];
 	
 	char* name = (char*) sp->decl.name;
 	switch (sp->op) {
@@ -831,7 +892,7 @@ void sema_check(TranslationUnit* tu, StmtIndex s) {
 			
 			if (sp->decl.attrs.is_extern || tu->types[sp->decl.type].kind == KIND_FUNC) {
 				// forward decls
-				// TODO(NeGate): This is hacky
+				// This is hacky
 				if (name[0] == '_') {
 					ptrdiff_t search = shgeti(target_desc.builtin_func_map, name);
 					
@@ -846,12 +907,59 @@ void sema_check(TranslationUnit* tu, StmtIndex s) {
 				
 				sp->backing.e = tb_extern_create(mod, name);
 			} else {
-				if (type->align == 0) {
-					sema_error(sp->loc, "Woah!!!");
+				Type* expr_type = NULL;
+				
+				if (sp->decl.initial) {
+					if (tu->exprs[sp->decl.initial].op == EXPR_INITIALIZER &&
+						tu->exprs[sp->decl.initial].init.type == 0) {
+						// give it something to go off of
+						//
+						// doesn't have to be complete in terms of array count
+						// just enough to infer the rest in a sec
+						tu->exprs[sp->decl.initial].init.type = sp->decl.type;
+					}
+					
+					TypeIndex expr_type_index = sema_expr(tu, sp->decl.initial);
+					expr_type = &tu->types[expr_type_index];
+					
+					if (tu->exprs[sp->decl.initial].op == EXPR_INITIALIZER ||
+						tu->exprs[sp->decl.initial].op == EXPR_STR) {
+						if (type->kind == KIND_ARRAY && expr_type->kind == KIND_ARRAY) {
+							if (type_equal(tu, type->array_of, expr_type->array_of)) {
+								if (type->array_count != 0 && type->array_count < expr_type->array_count) {
+									sema_error(sp->loc, "Array initializer does not fit into declaration (expected %d, got %d)", type->array_count, expr_type->array_count);
+								} else {
+									assert(expr_type->array_count);
+									
+									// preserve constness
+									bool is_const = type->is_const;
+									
+									type_index = copy_type(tu, expr_type_index);
+									type = &tu->types[type_index];
+									type->is_const = is_const;
+									
+									sp->decl.type = type_index;
+								}
+							} else {
+								type_as_string(tu, sizeof(temp_string0), temp_string0, expr_type->array_of);
+								type_as_string(tu, sizeof(temp_string1), temp_string1, type->array_of);
+								
+								sema_error(sp->loc, "Array initializer type mismatch (got '%s', expected '%s')", temp_string0, temp_string1);
+							}
+						}
+					}
+					
+					if (!type_equal(tu, type_index, expr_type_index)) {
+						type_as_string(tu, sizeof(temp_string0), temp_string0, type_index);
+						type_as_string(tu, sizeof(temp_string1), temp_string1, expr_type_index);
+						
+						sema_error(sp->loc, "Array initializer type mismatch (got '%s', expected '%s')", temp_string0, temp_string1);
+					}
 				}
 				
+				assert(type->align);
 				TB_InitializerID init;
-				if (sp->decl.initial && tu->exprs[sp->decl.initial].op == EXPR_INITIALIZER) {
+				if (tu->exprs[sp->decl.initial].op == EXPR_INITIALIZER) {
 					Expr* restrict ep = &tu->exprs[sp->decl.initial];
 					
 					int node_count = ep->init.count;
@@ -864,10 +972,7 @@ void sema_check(TranslationUnit* tu, StmtIndex s) {
 					init = tb_initializer_create(mod, type->size, type->align, max_tb_objects);
 					
 					// Initialize all const expressions
-					// We don't support anything runtime in these expressions for now
 					eval_initializer_objects(tu, NULL, sp->loc, init, TB_NULL_REG, type_index, node_count, nodes, 0);
-					
-					walk_initializer_for_sema(tu, ep->init.count, ep->init.nodes);
 				} else {
 					init = tb_initializer_create(mod, type->size, type->align, 0);
 				}

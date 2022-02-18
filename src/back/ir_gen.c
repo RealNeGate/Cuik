@@ -1326,8 +1326,6 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, StmtIndex s) {
 				TB_GlobalID g = tb_global_create(mod, init, name, TB_LINKAGE_PRIVATE);
 				tls_restore(name);
 				
-				printf("Woah! %s\n", sp->decl.name);
-				
 				assert(sp->decl.initial == 0 && "TODO: Implement local static declaration initialization");
 				addr = tb_inst_get_global_address(func, g);
 			} else {

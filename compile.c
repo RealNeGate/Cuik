@@ -10,7 +10,7 @@
 #define OUTPUT_EXEC_NAME "build" SLASH "cuik"
 #endif
 
-static const char* input_files[] = {
+static const char* INPUT_FILES[] = {
 	"src/main.c",
 	"src/tls.c",
 	"src/diagnostic.c",
@@ -40,7 +40,7 @@ static const char* input_files[] = {
 	"src/ext/threads_posix.c"
 #endif
 };
-enum { input_file_count = sizeof(input_files) / sizeof(input_files[0]) };
+enum { INPUT_FILE_COUNT = sizeof(INPUT_FILES) / sizeof(INPUT_FILES[0]) };
 
 #if defined(__GNUC__) || defined(__clang__)
 #define UNIX_STYLE 1
@@ -97,8 +97,8 @@ int main(int argc, char** argv) {
 	cmd_append("tildebackend.lib ");
 	
 	// all the source files
-	for (size_t i = 0; i < input_file_count; i++) {
-		cmd_append(input_files[i]);
+	for (size_t i = 0; i < INPUT_FILE_COUNT; i++) {
+		cmd_append(INPUT_FILES[i]);
 		cmd_append(" ");
 	}
 	

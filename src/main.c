@@ -168,9 +168,13 @@ static void set_preprocessor_info(CPP_Context* cpp) {
 	
 	if (target_system == TB_SYSTEM_WINDOWS) {
 		// TODO(NeGate): Automatically detect these somehow...
+		
+		// win_sdk_root
 		cpp_add_include_directory(cpp, "W:\\Windows Kits\\10\\Include\\10.0.19041.0\\ucrt\\");
 		cpp_add_include_directory(cpp, "W:\\Windows Kits\\10\\Include\\10.0.19041.0\\um\\");
 		cpp_add_include_directory(cpp, "W:\\Windows Kits\\10\\Include\\10.0.19041.0\\shared\\");
+		
+		// vs_library_path
 		cpp_add_include_directory(cpp, "W:\\Visual Studio\\2019\\Community\\VC\\Tools\\MSVC\\14.29.30133\\include\\");
 		
 		cpp_define_empty(cpp, "_WIN32");
@@ -582,7 +586,7 @@ int main(int argc, char* argv[]) {
 		case COMPILER_MODE_CHECK:
 		case COMPILER_MODE_BUILD:
 		case COMPILER_MODE_RUN: {
-			printf("Starting with %d threads\n", settings.num_of_worker_threads);
+			//printf("Starting with %d threads\n", settings.num_of_worker_threads);
 			
 			if (target_sys == TB_SYSTEM_WINDOWS) {
 				sprintf_s(obj_output_path, 260, "%s.obj", filename);

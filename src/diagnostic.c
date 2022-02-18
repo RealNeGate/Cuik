@@ -108,7 +108,7 @@ void report(ReportLevel level, SourceLoc* loc, const char* fmt, ...) {
 void crash_if_reports(ReportLevel min) {
 	for (int i = min; i < REPORT_MAX; i++) {
 		if (tally[i]) {
-			printf("exitted with %d %ss", tally[i], report_names[i]);
+			printf("exitted with %d %s%s", tally[i], report_names[i], tally[i] > 1 ? "s" : "");
 			abort();
 		}
 	}
