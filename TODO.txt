@@ -1,5 +1,8 @@
+CUIK:
 ban redefining keywords
 fix some UCRT locale pointer initialization issues
-better error messages on forward decls not matching the definition
 fix live compiler error handling
 write more crap about x86 intrinsics
+
+TB:
+fix addressof return not working properly

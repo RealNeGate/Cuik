@@ -451,6 +451,8 @@ int main(int argc, char* argv[]) {
 	// Defaults to the host arch as the target
 #if defined(_AMD64_) || defined(__amd64__)
 	target_arch = TB_ARCH_X86_64;
+#elif defined(__aarch64__)
+	target_arch = TB_ARCH_AARCH64;
 #else
 #error "Unsupported host compiler... for now"
 #endif

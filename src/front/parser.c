@@ -301,7 +301,8 @@ TranslationUnit parse_file(TokenStream* restrict s) {
 				tu.stmts[n].loc = decl.loc;
 				tu.stmts[n].decl = (struct StmtDecl){
 					.type = decl.type,
-					.name = decl.name
+					.name = decl.name,
+					.attrs = attr
 				};
 				arrput(tu.top_level_stmts, n);
 				
@@ -336,8 +337,8 @@ TranslationUnit parse_file(TokenStream* restrict s) {
 						tu.stmts[n].loc = decl.loc;
 						tu.stmts[n].decl = (struct StmtDecl){
 							.type = decl.type,
-							.attrs = attr,
-							.name = decl.name
+							.name = decl.name,
+							.attrs = attr
 						};
 						arrput(tu.top_level_stmts, n);
 						
@@ -848,6 +849,7 @@ static void parse_decl_or_expr(TranslationUnit* tu, TokenStream* restrict s, siz
 			tu->stmts[n].decl = (struct StmtDecl){
 				.type = decl.type,
 				.name = decl.name,
+				.attrs = attr,
 				.initial = 0
 			};
 			

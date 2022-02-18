@@ -9,6 +9,7 @@ TB_Module* mod;
 // Maps param_num -> TB_Register
 static _Thread_local TB_Register* parameter_map;
 static _Thread_local TypeIndex function_type;
+static _Thread_local const char* function_name;
 
 // For aggregate returns
 static _Thread_local TB_Register return_value_address;
@@ -416,7 +417,7 @@ InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, Sourc
 	return node;
 }
 
-static TB_Register gen_local_initializer(TranslationUnit* tu, TB_Function* func, SourceLocIndex loc, TypeIndex t, int node_count, InitNode* nodes) {
+static void gen_local_initializer(TranslationUnit* tu, TB_Function* func, SourceLocIndex loc, TB_Register addr, TypeIndex t, int node_count, InitNode* nodes) {
 	// Walk initializer for max constant expression initializers.
 	int max_tb_objects = 0;
 	count_max_tb_init_objects(node_count, nodes, &max_tb_objects);
@@ -426,15 +427,12 @@ static TB_Register gen_local_initializer(TranslationUnit* tu, TB_Function* func,
 												  tu->types[t].align, 
 												  max_tb_objects);
 	
-	TB_Register addr = tb_inst_local(func, tu->types[t].size, tu->types[t].align);
-	
 	// Initialize all const expressions
 	eval_initializer_objects(tu, func, loc, init, TB_NULL_REG, t, node_count, nodes, 0);
 	tb_inst_initialize_mem(func, addr, init);
 	
 	// Initialize all dynamic expressions
 	eval_initializer_objects(tu, func, loc, init, addr, t, node_count, nodes, 0);
-	return addr;
 }
 
 static void insert_label(TB_Function* func) {
@@ -536,12 +534,15 @@ static IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 			};
 		}
 		case EXPR_INITIALIZER: {
-			TB_Register r = gen_local_initializer(tu, func, ep->loc, ep->init.type, ep->init.count, ep->init.nodes);
+			Type* ty = &tu->types[ep->init.type];
+			TB_Register addr = tb_inst_local(func, ty->size, ty->align);
+			
+			gen_local_initializer(tu, func, ep->loc, addr, ep->init.type, ep->init.count, ep->init.nodes);
 			
 			return (IRVal) {
 				.value_type = LVALUE,
 				.type = ep->init.type,
-				.reg = r
+				.reg = addr
 			};
 		}
 		case EXPR_SYMBOL: {
@@ -1306,21 +1307,39 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, StmtIndex s) {
 			abort();
 		}
 		case STMT_DECL: {
-			//Attribs attrs = tu->stmts[s].attrs;
+			Attribs attrs = sp->decl.attrs;
+			
 			TypeIndex type_index = sp->decl.type;
 			int kind = tu->types[type_index].kind;
 			int size = tu->types[type_index].size;
 			int align = tu->types[type_index].align;
 			
 			TB_Register addr = 0;
+			
+			// Allocate from storage
+			if (attrs.is_static) {
+				TB_InitializerID init = tb_initializer_create(mod, size, align, 0);
+				
+				char* name = tls_push(1024);
+				snprintf(name, 1024, "%s$%s@%d", function_name, sp->decl.name, s);
+				
+				TB_GlobalID g = tb_global_create(mod, init, name, TB_LINKAGE_PRIVATE);
+				tls_restore(name);
+				
+				printf("Woah! %s\n", sp->decl.name);
+				
+				assert(sp->decl.initial == 0 && "TODO: Implement local static declaration initialization");
+				addr = tb_inst_get_global_address(func, g);
+			} else {
+				addr = tb_inst_local(func, size, align);
+			}
+			
 			if (sp->decl.initial) {
 				Expr* restrict ep = &tu->exprs[sp->decl.initial];
 				
 				if (ep->op == EXPR_INITIALIZER) {
-					addr = gen_local_initializer(tu, func, ep->loc, type_index, ep->init.count, ep->init.nodes);
+					gen_local_initializer(tu, func, ep->loc, addr, type_index, ep->init.count, ep->init.nodes);
 				} else {
-					addr = tb_inst_local(func, size, align);
-					
 					if (kind == KIND_ARRAY && ep->op == EXPR_STR) {
 						IRVal v = irgen_expr(tu, func, sp->decl.initial);
 						TB_Register size_reg = tb_inst_uint(func, TB_TYPE_I64, size);
@@ -1345,10 +1364,6 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, StmtIndex s) {
 				}
 			} else {
 				/* uninitialized */
-			}
-			
-			if (addr == TB_NULL_REG) {
-				addr = tb_inst_local(func, size, align);
 			}
 			
 			sp->backing.r = addr;
@@ -1627,7 +1642,11 @@ static void gen_func_body(TranslationUnit* tu, TypeIndex type, StmtIndex s) {
 	
 	// Body
 	function_type = type;
+	function_name = (const char*)tu->stmts[s].decl.name;
+	
 	irgen_stmt(tu, func, body);
+	
+	function_name = NULL;
 	function_type = 0;
 	
 	{
