@@ -50,6 +50,8 @@ TB_Arch target_arch;
 TB_System target_system;
 TargetDescriptor target_desc;
 
+static char cuik_include_directory[260];
+
 // timer.h
 FILE* timer__output;
 int timer__entry_count;
@@ -162,9 +164,10 @@ static void set_preprocessor_info(CPP_Context* cpp) {
 	cpp_define_empty(cpp, "__STDC_NO_VLA__");
 	cpp_define_empty(cpp, "__STDC_NO_THREADS__");
 	
+	cpp_add_include_directory(cpp, cuik_include_directory);
+	
 	if (target_system == TB_SYSTEM_WINDOWS) {
 		// TODO(NeGate): Automatically detect these somehow...
-		cpp_add_include_directory(cpp, "W:\\Workspace\\Cuik\\crt\\include\\");
 		cpp_add_include_directory(cpp, "W:\\Windows Kits\\10\\Include\\10.0.19041.0\\ucrt\\");
 		cpp_add_include_directory(cpp, "W:\\Windows Kits\\10\\Include\\10.0.19041.0\\um\\");
 		cpp_add_include_directory(cpp, "W:\\Windows Kits\\10\\Include\\10.0.19041.0\\shared\\");
@@ -197,6 +200,7 @@ static void set_preprocessor_info(CPP_Context* cpp) {
 		cpp_define(cpp, "__pragma(x)", "_Pragma(#x)");
 		cpp_define(cpp, "__inline", "inline");
 		cpp_define(cpp, "__forceinline", "inline");
+		cpp_define(cpp, "__signed__", "signed");
 		cpp_define(cpp, "__alignof", "_Alignof");
 		cpp_define(cpp, "__CRTDECL", "__cdecl");
 	} else {
@@ -249,12 +253,14 @@ static void compile_project(TB_Arch arch, TB_System sys, const char source_file[
 	// globals but at the same time, it's a thread safe interface for the most part you're
 	// supposed to keep a global one and use it across multiple threads.
 	if (!is_multithreaded) {
-		TB_FeatureSet features = { 0 };
-		mod = tb_module_create(arch, sys, &features);
-		
-		// IR generation
-		for (size_t i = 0, count = arrlen(translation_unit.top_level_stmts); i < count; i++) {
-			irgen_top_level_stmt(&translation_unit, translation_unit.top_level_stmts[i]);
+		timed_block("ir gen & compile") {
+			TB_FeatureSet features = { 0 };
+			mod = tb_module_create(arch, sys, &features);
+			
+			// IR generation
+			for (size_t i = 0, count = arrlen(translation_unit.top_level_stmts); i < count; i++) {
+				irgen_top_level_stmt(&translation_unit, translation_unit.top_level_stmts[i]);
+			}
 		}
 	} else {
 		timed_block("ir gen & compile") {
@@ -337,6 +343,7 @@ static bool dump_tokens(const char source_file[]);
 static void print_version(const char* install_dir) {
 	printf("cuik version %d.%d\n", CUIK_COMPILER_MAJOR, CUIK_COMPILER_MINOR);
 	printf("install directory: %s\n", install_dir);
+	printf("cuik include directory: %s\n", cuik_include_directory);
 }
 
 int main(int argc, char* argv[]) {
@@ -364,13 +371,39 @@ int main(int argc, char* argv[]) {
 	fprintf(file, "\nint main() {\n\treturn 0;\n}\n\n");
 	fclose(file);
 #else
-	static char filename[256];
 	static char obj_output_path[260];
 	
 	if (argc == 1) {
 		printf("Expected command!\n");
 		print_help(argv[0]);
 		return -1;
+	}
+	
+	
+	// Detect Cuik include directory
+	{
+		// cuik/build/exe
+		// cuik/
+		// cuik/crt
+		const char* compiler_path = argv[0];
+		
+		int slashes_hit = 0;
+		const char* end = compiler_path + strlen(argv[0]);
+		while (slashes_hit < 2 && end-- != compiler_path) {
+			if (*end == '/') slashes_hit++;
+			else if (*end == '\\') slashes_hit++;
+		}
+		
+		if (slashes_hit < 2) {
+			printf("Could not locate Cuik include directory");
+			abort();
+		}
+		
+#if _WIN32
+		snprintf(cuik_include_directory, 260, "%.*s\\crt\\include\\", (int)(end - compiler_path), compiler_path);
+#else
+		snprintf(cuik_include_directory, 260, "%.*s/crt/include/", (int)(end - compiler_path), compiler_path);
+#endif
 	}
 	
 	// parse command
@@ -431,6 +464,16 @@ int main(int argc, char* argv[]) {
 	}
 	
 	const char* source_file = argv[2];
+	
+	// Get filename without extension
+	static char filename[260];
+	{
+		const char* ext = strrchr(source_file, '.');
+		if (!ext) ext = source_file + strlen(source_file);
+		
+		memcpy_s(filename, 260, source_file, ext - source_file);
+		filename[ext - source_file] = '\0';
+	}
 	
 	for (size_t i = 3; i < argc; i++) {
 		if (argv[i][0] != '-') {
@@ -538,13 +581,6 @@ int main(int argc, char* argv[]) {
 		case COMPILER_MODE_BUILD:
 		case COMPILER_MODE_RUN: {
 			printf("Starting with %d threads\n", settings.num_of_worker_threads);
-			
-			// Get filename without extension
-			const char* ext = strrchr(source_file, '.');
-			if (!ext) ext = source_file + strlen(source_file);
-			
-			memcpy_s(filename, 260, source_file, ext - source_file);
-			filename[ext - source_file] = '\0';
 			
 			if (target_sys == TB_SYSTEM_WINDOWS) {
 				sprintf_s(obj_output_path, 260, "%s.obj", filename);

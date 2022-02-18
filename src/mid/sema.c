@@ -805,7 +805,7 @@ void sema_check(TranslationUnit* tu, StmtIndex s) {
 				linkage = TB_LINKAGE_PRIVATE;
 				
 				char temp[1024];
-				sprintf_s(temp, 1024, "%s@%d", name, s);
+				snprintf(temp, 1024, "%s@%d", name, s);
 				
 				func = tb_prototype_build(mod, proto, temp, linkage);
 			} else {
