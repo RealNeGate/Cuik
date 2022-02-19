@@ -327,7 +327,7 @@ extern "C" {
 #define TB_IS_FLOAT_TYPE(x) ((x) >= TB_F32 && (x) <= TB_F64)
 #define TB_IS_POINTER_TYPE(x) ((x) == TB_PTR)
 	
-	typedef struct TB_DataType {
+	typedef struct {
 		uint8_t type;
 		
 		// 2^N where N is the width value.
@@ -337,7 +337,7 @@ extern "C" {
 	
 	typedef int TB_Label;
 	
-	typedef struct TB_SwitchEntry {
+	typedef struct {
 		int32_t key;
 		TB_Label value;
 	} TB_SwitchEntry;
@@ -534,10 +534,27 @@ extern "C" {
 	static_assert(sizeof(TB_Node) <= 24, "sizeof(TB_Node) <= 24");
 	
 	// represents the atomic cmpxchg result since it's two values
-	typedef struct TB_CmpXchgResult {
+	typedef struct {
 		TB_Reg success;
 		TB_Reg old_value;
 	} TB_CmpXchgResult;
+	
+	typedef struct {
+		size_t count;
+		struct TB_Loop {
+			int parent_loop;
+			
+			// the terminator of the header will exit
+			TB_Register header;
+			
+			// this is where the contents of the loop begin
+			TB_Register body;
+			
+			// this is not part of the loop but instead where
+			// the loop goes on exit
+			TB_Register exit;
+		} loops[];
+	} TB_LoopInfo;
 	
 	// *******************************
 	// Public macros
@@ -821,6 +838,7 @@ extern "C" {
 	// Applies whole program optimizations until it runs out
 	TB_API void tb_module_optimize(TB_Function* f, TB_OptLevel opt);
 	
+	// passes
 	TB_API bool tb_opt_mem2reg(TB_Function* f);
 	TB_API bool tb_opt_dead_expr_elim(TB_Function* f);
 	TB_API bool tb_opt_dead_block_elim(TB_Function* f);
@@ -834,6 +852,9 @@ extern "C" {
 	TB_API bool tb_opt_strength_reduction(TB_Function* f);
 	TB_API bool tb_opt_compact_dead_regs(TB_Function* f);
 	TB_API bool tb_opt_copy_elision(TB_Function* f);
+	
+	// analysis
+	TB_API TB_LoopInfo* tb_function_get_loop_info(TB_Function* f);
 	
 	////////////////////////////////
 	// IR access

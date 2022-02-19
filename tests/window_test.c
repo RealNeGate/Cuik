@@ -13,6 +13,8 @@ LONG InterlockedExchangeAdd(LONG volatile *Addend, LONG Value) { return 0; }
 long long InterlockedExchangeAdd64(long long volatile *Addend, long long Value) { return 0; }
 unsigned long long __shiftright128 ( unsigned long long _LowPart , unsigned long long _HighPart , unsigned char _Shift ) { return 0; }
 LPUWSTR __stdcall uaw_CharUpperW(LPUWSTR String) { return NULL; }
+#else
+LRESULT main_wnd_proc(HWND wnd, UINT message, WPARAM wparam, LPARAM lparam);
 #endif
 
 int main(int argc, char** argv, char** env) {
