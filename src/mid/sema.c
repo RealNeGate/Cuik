@@ -190,10 +190,12 @@ static TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e) {
 				}
 				
 				case INT_SUFFIX_L:
+				return (ep->type = settings.is_windows_long ? TYPE_INT : TYPE_LONG);
+				case INT_SUFFIX_UL:
+				return (ep->type = settings.is_windows_long ? TYPE_UINT : TYPE_ULONG);
+				
 				case INT_SUFFIX_LL:
 				return (ep->type = TYPE_LONG);
-				
-				case INT_SUFFIX_UL:
 				case INT_SUFFIX_ULL:
 				return (ep->type = TYPE_ULONG);
 				
@@ -949,11 +951,11 @@ void sema_check(TranslationUnit* tu, StmtIndex s) {
 						}
 					}
 					
-					if (!type_equal(tu, type_index, expr_type_index)) {
+					if (!type_compatible(tu, expr_type_index, type_index, sp->decl.initial)) {
 						type_as_string(tu, sizeof(temp_string0), temp_string0, type_index);
 						type_as_string(tu, sizeof(temp_string1), temp_string1, expr_type_index);
 						
-						sema_error(sp->loc, "Array initializer type mismatch (got '%s', expected '%s')", temp_string0, temp_string1);
+						sema_error(sp->loc, "Declaration type does not match (got '%s', expected '%s')", temp_string0, temp_string1);
 					}
 				}
 				

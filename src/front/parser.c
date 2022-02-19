@@ -69,7 +69,6 @@ static ExprIndex parse_initializer(TranslationUnit* tu, TokenStream* restrict s,
 static bool is_typename(TokenStream* restrict s);
 
 static _Noreturn void generic_error(TokenStream* restrict s, const char* msg);
-static void generic_warn(TokenStream* restrict s, const char* msg);
 
 static int align_up(int a, int b) { 
 	if (b == 0) return 0;
@@ -2695,13 +2694,6 @@ static _Noreturn void generic_error(TokenStream* restrict s, const char* msg) {
 	
 	report(REPORT_ERROR, loc, msg);
 	abort();
-}
-
-static void generic_warn(TokenStream* restrict s, const char* msg) {
-	Token* t = tokens_get(s);
-	SourceLoc* loc = &s->line_arena[t->location];
-	
-	printf("%s:%d: warning: %s\n", loc->file, loc->line, msg);
 }
 
 static void expect(TokenStream* restrict s, char ch) {

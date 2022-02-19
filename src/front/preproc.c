@@ -168,13 +168,10 @@ TokenStream cpp_process(CPP_Context* ctx, const char filepath[]) {
 	
 	char directory[260];
 	if (slash) {
-		size_t len = slash - filepath;
-		
-		memcpy(directory, filepath, len);
 #if _WIN32
-		directory[len] = '\\';
+		sprintf_s(directory, 260, "%.*s\\", (int)(slash - filepath), filepath);
 #else
-		directory[len] = '/';
+		sprintf_s(directory, 260, "%.*s/", (int)(slash - filepath), filepath);
 #endif
 	} else {
 		directory[0] = '\0';

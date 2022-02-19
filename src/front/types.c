@@ -272,7 +272,7 @@ size_t type_as_string(TranslationUnit* tu, size_t max_len, char* buffer, TypeInd
 			if (type->enumerator.name) {
 				i += cstr_copy(max_len - i, &buffer[i], (char*)type->enumerator.name);
 			} else {
-				i += cstr_copy(max_len - i, &buffer[i], "__unnamed__");
+				i += cstr_copy(max_len - i, &buffer[i], "unnamed");
 			}
 			break;
 		}
@@ -282,7 +282,7 @@ size_t type_as_string(TranslationUnit* tu, size_t max_len, char* buffer, TypeInd
 			if (type->record.name) {
 				i += cstr_copy(max_len - i, &buffer[i], (char*)type->record.name);
 			} else {
-				i += cstr_copy(max_len - i, &buffer[i], "__unnamed__");
+				i += cstr_copy(max_len - i, &buffer[i], "unnamed");
 			}
 			break;
 		}
@@ -292,7 +292,7 @@ size_t type_as_string(TranslationUnit* tu, size_t max_len, char* buffer, TypeInd
 			if (type->record.name) {
 				i += cstr_copy(max_len - i, &buffer[i], (char*)type->record.name);
 			} else {
-				i += cstr_copy(max_len - i, &buffer[i], "__unnamed__");
+				i += cstr_copy(max_len - i, &buffer[i], "unnamed");
 			}
 			break;
 		}
@@ -320,10 +320,6 @@ size_t type_as_string(TranslationUnit* tu, size_t max_len, char* buffer, TypeInd
 			ParamIndex param_count = type->func.param_count;
 			
 			i += type_as_string(tu, max_len - i, &buffer[i], type->func.return_type);
-			if (type->func.name) {
-				buffer[i++] = ' ';
-				i += cstr_copy(max_len - i, &buffer[i], (char*)type->func.name);
-			}
 			
 			assert(i < max_len);
 			buffer[i++] = '(';
@@ -333,10 +329,6 @@ size_t type_as_string(TranslationUnit* tu, size_t max_len, char* buffer, TypeInd
 				Param* p = &tu->params[param_list + j];
 				
 				i += type_as_string(tu, max_len - i, &buffer[i], p->type);
-				if (p->name) {
-					buffer[i++] = ' ';
-					i += cstr_copy(max_len - i, &buffer[i], (char*)p->name);
-				}
 			}
 			
 			assert(i < max_len);
