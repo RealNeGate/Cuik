@@ -1,4 +1,6 @@
-#include <stddef.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdint.h>
 #include <stdbool.h>
 
 // odd structures
@@ -19,79 +21,208 @@ typedef struct {
 } Foo24;
 
 
-// tests with char
-char* foo1(char* a, char* b) { return a - b; }
-char* foo2(char* a, intptr_t b) { return &a[b]; }
-char* foo3(char* a, intptr_t* b, intptr_t c) { return &a[b[c]]; }
-bool foo4(char* a, char* b) { return &a[b - a] == b; }
-char foo5(char**** a) { return ****a; }
-char foo6(char*** a, size_t b, size_t c, size_t d) { return a[b][c][d]; }
-char foo7(char* a, size_t b) { return *((char*) ((uintptr_t) (b + a))); }
-uintptr_t foo8(char* a, size_t b[2], int c, size_t d[2], int e) { return (uintptr_t)&a[b[c] - d[e]]; }
+// tests with int8_t
+ptrdiff_t foo0_int8_t(int8_t* a, int8_t* b) { return a - b; }
+int8_t* foo1_int8_t(int8_t* a, intptr_t b) { return &a[b]; }
+int8_t* foo2_int8_t(int8_t* a, intptr_t* b, intptr_t c) { return &a[b[c]]; }
+bool foo3_int8_t(int8_t* a, int8_t* b) { return &a[b - a] == b; }
+int8_t foo4_int8_t(int8_t**** a) { return ****a; }
+int8_t foo5_int8_t(int8_t*** a, size_t b, size_t c, size_t d) { return a[b][c][d]; }
+int8_t foo6_int8_t(int8_t* a, size_t b) { return *((int8_t*) ((uintptr_t) (b + a))); }
+uintptr_t foo7_int8_t(int8_t* a, size_t b[2], int c, size_t d[2], int e) { return (uintptr_t)&a[b[c] - d[e]]; }
 
-// tests with short
-short* foo9(short* a, short* b) { return a - b; }
-short* foo10(short* a, intptr_t b) { return &a[b]; }
-short* foo11(short* a, intptr_t* b, intptr_t c) { return &a[b[c]]; }
-bool foo12(short* a, short* b) { return &a[b - a] == b; }
-short foo13(short**** a) { return ****a; }
-short foo14(short*** a, size_t b, size_t c, size_t d) { return a[b][c][d]; }
-short foo15(short* a, size_t b) { return *((short*) ((uintptr_t) (b + a))); }
-uintptr_t foo16(short* a, size_t b[2], int c, size_t d[2], int e) { return (uintptr_t)&a[b[c] - d[e]]; }
+// tests with int16_t
+ptrdiff_t foo0_int16_t(int16_t* a, int16_t* b) { return a - b; }
+int16_t* foo1_int16_t(int16_t* a, intptr_t b) { return &a[b]; }
+int16_t* foo2_int16_t(int16_t* a, intptr_t* b, intptr_t c) { return &a[b[c]]; }
+bool foo3_int16_t(int16_t* a, int16_t* b) { return &a[b - a] == b; }
+int16_t foo4_int16_t(int16_t**** a) { return ****a; }
+int16_t foo5_int16_t(int16_t*** a, size_t b, size_t c, size_t d) { return a[b][c][d]; }
+int16_t foo6_int16_t(int16_t* a, size_t b) { return *((int16_t*) ((uintptr_t) (b + a))); }
+uintptr_t foo7_int16_t(int16_t* a, size_t b[2], int c, size_t d[2], int e) { return (uintptr_t)&a[b[c] - d[e]]; }
 
-// tests with int
-int* foo17(int* a, int* b) { return a - b; }
-int* foo18(int* a, intptr_t b) { return &a[b]; }
-int* foo19(int* a, intptr_t* b, intptr_t c) { return &a[b[c]]; }
-bool foo20(int* a, int* b) { return &a[b - a] == b; }
-int foo21(int**** a) { return ****a; }
-int foo22(int*** a, size_t b, size_t c, size_t d) { return a[b][c][d]; }
-int foo23(int* a, size_t b) { return *((int*) ((uintptr_t) (b + a))); }
-uintptr_t foo24(int* a, size_t b[2], int c, size_t d[2], int e) { return (uintptr_t)&a[b[c] - d[e]]; }
+// tests with int32_t
+ptrdiff_t foo0_int32_t(int32_t* a, int32_t* b) { return a - b; }
+int32_t* foo1_int32_t(int32_t* a, intptr_t b) { return &a[b]; }
+int32_t* foo2_int32_t(int32_t* a, intptr_t* b, intptr_t c) { return &a[b[c]]; }
+bool foo3_int32_t(int32_t* a, int32_t* b) { return &a[b - a] == b; }
+int32_t foo4_int32_t(int32_t**** a) { return ****a; }
+int32_t foo5_int32_t(int32_t*** a, size_t b, size_t c, size_t d) { return a[b][c][d]; }
+int32_t foo6_int32_t(int32_t* a, size_t b) { return *((int32_t*) ((uintptr_t) (b + a))); }
+uintptr_t foo7_int32_t(int32_t* a, size_t b[2], int c, size_t d[2], int e) { return (uintptr_t)&a[b[c] - d[e]]; }
 
-// tests with long long
-long long* foo25(long long* a, long long* b) { return a - b; }
-long long* foo26(long long* a, intptr_t b) { return &a[b]; }
-long long* foo27(long long* a, intptr_t* b, intptr_t c) { return &a[b[c]]; }
-bool foo28(long long* a, long long* b) { return &a[b - a] == b; }
-long long foo29(long long**** a) { return ****a; }
-long long foo30(long long*** a, size_t b, size_t c, size_t d) { return a[b][c][d]; }
-long long foo31(long long* a, size_t b) { return *((long long*) ((uintptr_t) (b + a))); }
-uintptr_t foo32(long long* a, size_t b[2], int c, size_t d[2], int e) { return (uintptr_t)&a[b[c] - d[e]]; }
+// tests with int64_t
+ptrdiff_t foo0_int64_t(int64_t* a, int64_t* b) { return a - b; }
+int64_t* foo1_int64_t(int64_t* a, intptr_t b) { return &a[b]; }
+int64_t* foo2_int64_t(int64_t* a, intptr_t* b, intptr_t c) { return &a[b[c]]; }
+bool foo3_int64_t(int64_t* a, int64_t* b) { return &a[b - a] == b; }
+int64_t foo4_int64_t(int64_t**** a) { return ****a; }
+int64_t foo5_int64_t(int64_t*** a, size_t b, size_t c, size_t d) { return a[b][c][d]; }
+int64_t foo6_int64_t(int64_t* a, size_t b) { return *((int64_t*) ((uintptr_t) (b + a))); }
+uintptr_t foo7_int64_t(int64_t* a, size_t b[2], int c, size_t d[2], int e) { return (uintptr_t)&a[b[c] - d[e]]; }
 
 // tests with Foo7
-Foo7* foo33(Foo7* a, Foo7* b) { return a - b; }
-Foo7* foo34(Foo7* a, intptr_t b) { return &a[b]; }
-Foo7* foo35(Foo7* a, intptr_t* b, intptr_t c) { return &a[b[c]]; }
-bool foo36(Foo7* a, Foo7* b) { return &a[b - a] == b; }
-Foo7 foo37(Foo7**** a) { return ****a; }
-Foo7 foo38(Foo7*** a, size_t b, size_t c, size_t d) { return a[b][c][d]; }
-Foo7 foo39(Foo7* a, size_t b) { return *((Foo7*) ((uintptr_t) (b + a))); }
-uintptr_t foo40(Foo7* a, size_t b[2], int c, size_t d[2], int e) { return (uintptr_t)&a[b[c] - d[e]]; }
+ptrdiff_t foo0_Foo7(Foo7* a, Foo7* b) { return a - b; }
+Foo7* foo1_Foo7(Foo7* a, intptr_t b) { return &a[b]; }
+Foo7* foo2_Foo7(Foo7* a, intptr_t* b, intptr_t c) { return &a[b[c]]; }
+bool foo3_Foo7(Foo7* a, Foo7* b) { return &a[b - a] == b; }
+Foo7 foo4_Foo7(Foo7**** a) { return ****a; }
+Foo7 foo5_Foo7(Foo7*** a, size_t b, size_t c, size_t d) { return a[b][c][d]; }
+Foo7 foo6_Foo7(Foo7* a, size_t b) { return *((Foo7*) ((uintptr_t) (b + a))); }
+uintptr_t foo7_Foo7(Foo7* a, size_t b[2], int c, size_t d[2], int e) { return (uintptr_t)&a[b[c] - d[e]]; }
 
 // tests with Foo8
-Foo8* foo41(Foo8* a, Foo8* b) { return a - b; }
-Foo8* foo42(Foo8* a, intptr_t b) { return &a[b]; }
-Foo8* foo43(Foo8* a, intptr_t* b, intptr_t c) { return &a[b[c]]; }
-bool foo44(Foo8* a, Foo8* b) { return &a[b - a] == b; }
-Foo8 foo45(Foo8**** a) { return ****a; }
-Foo8 foo46(Foo8*** a, size_t b, size_t c, size_t d) { return a[b][c][d]; }
-Foo8 foo47(Foo8* a, size_t b) { return *((Foo8*) ((uintptr_t) (b + a))); }
-uintptr_t foo48(Foo8* a, size_t b[2], int c, size_t d[2], int e) { return (uintptr_t)&a[b[c] - d[e]]; }
+ptrdiff_t foo0_Foo8(Foo8* a, Foo8* b) { return a - b; }
+Foo8* foo1_Foo8(Foo8* a, intptr_t b) { return &a[b]; }
+Foo8* foo2_Foo8(Foo8* a, intptr_t* b, intptr_t c) { return &a[b[c]]; }
+bool foo3_Foo8(Foo8* a, Foo8* b) { return &a[b - a] == b; }
+Foo8 foo4_Foo8(Foo8**** a) { return ****a; }
+Foo8 foo5_Foo8(Foo8*** a, size_t b, size_t c, size_t d) { return a[b][c][d]; }
+Foo8 foo6_Foo8(Foo8* a, size_t b) { return *((Foo8*) ((uintptr_t) (b + a))); }
+uintptr_t foo7_Foo8(Foo8* a, size_t b[2], int c, size_t d[2], int e) { return (uintptr_t)&a[b[c] - d[e]]; }
 
 // tests with Foo14
-Foo14* foo49(Foo14* a, Foo14* b) { return a - b; }
-Foo14* foo50(Foo14* a, intptr_t b) { return &a[b]; }
-Foo14* foo51(Foo14* a, intptr_t* b, intptr_t c) { return &a[b[c]]; }
-bool foo52(Foo14* a, Foo14* b) { return &a[b - a] == b; }
-Foo14 foo53(Foo14**** a) { return ****a; }
-Foo14 foo54(Foo14*** a, size_t b, size_t c, size_t d) { return a[b][c][d]; }
-Foo14 foo55(Foo14* a, size_t b) { return *((Foo14*) ((uintptr_t) (b + a))); }
-uintptr_t foo56(Foo14* a, size_t b[2], int c, size_t d[2], int e) { return (uintptr_t)&a[b[c] - d[e]]; }
+ptrdiff_t foo0_Foo14(Foo14* a, Foo14* b) { return a - b; }
+Foo14* foo1_Foo14(Foo14* a, intptr_t b) { return &a[b]; }
+Foo14* foo2_Foo14(Foo14* a, intptr_t* b, intptr_t c) { return &a[b[c]]; }
+bool foo3_Foo14(Foo14* a, Foo14* b) { return &a[b - a] == b; }
+Foo14 foo4_Foo14(Foo14**** a) { return ****a; }
+Foo14 foo5_Foo14(Foo14*** a, size_t b, size_t c, size_t d) { return a[b][c][d]; }
+Foo14 foo6_Foo14(Foo14* a, size_t b) { return *((Foo14*) ((uintptr_t) (b + a))); }
+uintptr_t foo7_Foo14(Foo14* a, size_t b[2], int c, size_t d[2], int e) { return (uintptr_t)&a[b[c] - d[e]]; }
 
 // tests with Foo24
-Foo24* foo57(Foo24* a, Foo24* b) { return a - b; }
-Foo24* foo58(Foo24* a, intptr_t b) { return &a[b]; }
-Foo24* foo59(Foo24* a, intptr_t* b, intptr_t c) { return &a[b[c]]; }
-bool foo60(Foo24* a, Foo24* b) { return &a[b - a] == b; }
-Foo24 foo61(Foo24**** a) { return ****a; }
+ptrdiff_t foo0_Foo24(Foo24* a, Foo24* b) { return a - b; }
+Foo24* foo1_Foo24(Foo24* a, intptr_t b) { return &a[b]; }
+Foo24* foo2_Foo24(Foo24* a, intptr_t* b, intptr_t c) { return &a[b[c]]; }
+bool foo3_Foo24(Foo24* a, Foo24* b) { return &a[b - a] == b; }
+Foo24 foo4_Foo24(Foo24**** a) { return ****a; }
+Foo24 foo5_Foo24(Foo24*** a, size_t b, size_t c, size_t d) { return a[b][c][d]; }
+Foo24 foo6_Foo24(Foo24* a, size_t b) { return *((Foo24*) ((uintptr_t) (b + a))); }
+uintptr_t foo7_Foo24(Foo24* a, size_t b[2], int c, size_t d[2], int e) { return (uintptr_t)&a[b[c] - d[e]]; }
+
+
+int main() {
+	// tests with int8_t
+	{
+		int8_t arr[20];
+		
+		arr[4] = (int8_t){ 69 };
+		
+		ptrdiff_t test0 = foo0_int8_t(&arr[8], &arr[4]);
+		if (test0 != 4) { printf("test fail: foo0_int8_t (got %zu; expected 4)\n", test0); abort(); }
+		
+		int8_t* test1 = foo1_int8_t(arr, 4);
+		int8_t test1_deref = *test1;
+		if (test1_deref != 69) { printf("test fail: foo1_int8_t (got %zu; expected 69)\n", test1_deref); abort(); }
+		
+	}
+
+	// tests with int16_t
+	{
+		int16_t arr[20];
+		
+		arr[4] = (int16_t){ 69 };
+		
+		ptrdiff_t test0 = foo0_int16_t(&arr[8], &arr[4]);
+		if (test0 != 4) { printf("test fail: foo0_int16_t (got %zu; expected 4)\n", test0); abort(); }
+		
+		int16_t* test1 = foo1_int16_t(arr, 4);
+		int16_t test1_deref = *test1;
+		if (test1_deref != 69) { printf("test fail: foo1_int16_t (got %zu; expected 69)\n", test1_deref); abort(); }
+		
+	}
+
+	// tests with int32_t
+	{
+		int32_t arr[20];
+		
+		arr[4] = (int32_t){ 69 };
+		
+		ptrdiff_t test0 = foo0_int32_t(&arr[8], &arr[4]);
+		if (test0 != 4) { printf("test fail: foo0_int32_t (got %zu; expected 4)\n", test0); abort(); }
+		
+		int32_t* test1 = foo1_int32_t(arr, 4);
+		int32_t test1_deref = *test1;
+		if (test1_deref != 69) { printf("test fail: foo1_int32_t (got %zu; expected 69)\n", test1_deref); abort(); }
+		
+	}
+
+	// tests with int64_t
+	{
+		int64_t arr[20];
+		
+		arr[4] = (int64_t){ 69 };
+		
+		ptrdiff_t test0 = foo0_int64_t(&arr[8], &arr[4]);
+		if (test0 != 4) { printf("test fail: foo0_int64_t (got %zu; expected 4)\n", test0); abort(); }
+		
+		int64_t* test1 = foo1_int64_t(arr, 4);
+		int64_t test1_deref = *test1;
+		if (test1_deref != 69) { printf("test fail: foo1_int64_t (got %zu; expected 69)\n", test1_deref); abort(); }
+		
+	}
+
+	// tests with Foo7
+	{
+		Foo7 arr[20];
+		
+		arr[4] = (Foo7){ 69 };
+		
+		ptrdiff_t test0 = foo0_Foo7(&arr[8], &arr[4]);
+		if (test0 != 4) { printf("test fail: foo0_Foo7 (got %zu; expected 4)\n", test0); abort(); }
+		
+		Foo7* test1 = foo1_Foo7(arr, 4);
+		Foo7 test1_deref = *test1;
+		if (test1_deref.data[0] != 69) { printf("test fail: foo1_Foo7 (got %zu; expected 69)\n", test1_deref.data[0]); abort(); }
+		
+	}
+
+	// tests with Foo8
+	{
+		Foo8 arr[20];
+		
+		arr[4] = (Foo8){ 69 };
+		
+		ptrdiff_t test0 = foo0_Foo8(&arr[8], &arr[4]);
+		if (test0 != 4) { printf("test fail: foo0_Foo8 (got %zu; expected 4)\n", test0); abort(); }
+		
+		Foo8* test1 = foo1_Foo8(arr, 4);
+		Foo8 test1_deref = *test1;
+		if (test1_deref.data[0] != 69) { printf("test fail: foo1_Foo8 (got %zu; expected 69)\n", test1_deref.data[0]); abort(); }
+		
+	}
+
+	// tests with Foo14
+	{
+		Foo14 arr[20];
+		
+		arr[4] = (Foo14){ 69 };
+		
+		ptrdiff_t test0 = foo0_Foo14(&arr[8], &arr[4]);
+		if (test0 != 4) { printf("test fail: foo0_Foo14 (got %zu; expected 4)\n", test0); abort(); }
+		
+		Foo14* test1 = foo1_Foo14(arr, 4);
+		Foo14 test1_deref = *test1;
+		if (test1_deref.data[0] != 69) { printf("test fail: foo1_Foo14 (got %zu; expected 69)\n", test1_deref.data[0]); abort(); }
+		
+	}
+
+	// tests with Foo24
+	{
+		Foo24 arr[20];
+		
+		arr[4] = (Foo24){ 69 };
+		
+		ptrdiff_t test0 = foo0_Foo24(&arr[8], &arr[4]);
+		if (test0 != 4) { printf("test fail: foo0_Foo24 (got %zu; expected 4)\n", test0); abort(); }
+		
+		Foo24* test1 = foo1_Foo24(arr, 4);
+		Foo24 test1_deref = *test1;
+		if (test1_deref.data[0] != 69) { printf("test fail: foo1_Foo24 (got %zu; expected 69)\n", test1_deref.data[0]); abort(); }
+		
+	}
+
+	printf("success!\n");
+	return 0;
+}

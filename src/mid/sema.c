@@ -271,19 +271,22 @@ static TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e) {
 			try_resolve_typeof(tu, ep->init.type);
 			
 			Type* type = &tu->types[ep->init.type];
-			int old_array_count = type->array_count;
 			
-			int new_array_count;
-			sema_infer_initializer_array_count(tu, ep->init.count, ep->init.nodes, 0, &new_array_count);
-			
-			// if it's 0, then it's unsized and anything goes
-			if (old_array_count != 0) {
-				// verify that everything fits correctly
-				if (old_array_count < new_array_count) {
-					sema_error(ep->loc, "Array cannot fit into declaration (needs %d, got %d)", old_array_count, new_array_count);
+			if (type->kind == KIND_ARRAY) {
+				int old_array_count = type->array_count;
+				
+				int new_array_count;
+				sema_infer_initializer_array_count(tu, ep->init.count, ep->init.nodes, 0, &new_array_count);
+				
+				// if it's 0, then it's unsized and anything goes
+				if (old_array_count != 0) {
+					// verify that everything fits correctly
+					if (old_array_count < new_array_count) {
+						sema_error(ep->loc, "Array cannot fit into declaration (needs %d, got %d)", old_array_count, new_array_count);
+					}
+				} else {
+					ep->init.type = new_array(tu, type->array_of, new_array_count);
 				}
-			} else {
-				ep->init.type = new_array(tu, type->array_of, new_array_count);
 			}
 			
 			walk_initializer_for_sema(tu, ep->init.count, ep->init.nodes);

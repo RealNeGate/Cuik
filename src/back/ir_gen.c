@@ -20,6 +20,9 @@ static FILE* tbir_output_file;
 TB_Function* static_init_func;
 static mtx_t static_init_mutex;
 
+// it's a single file so we wanna lock when writing to data races
+static mtx_t emit_ir_mutex;
+
 _Noreturn void irgen_fatal(SourceLocIndex loc, const char* fmt, ...) {
 	SourceLoc* l = &ir_gen_tokens.line_arena[loc];
 	printf("%s:%d: error: ", l->file, l->line);
@@ -288,9 +291,9 @@ InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, Sourc
 			pos_end = node->start + node->count;
 			cursor = pos_end;
 		} else {
-			if (type->kind != KIND_STRUCT && type->kind != KIND_UNION && type->kind != KIND_ARRAY) {
-				irgen_fatal(loc, "Compound literal with multiple elements must be a struct, union or array.");
-			}
+			//if (type->kind != KIND_STRUCT && type->kind != KIND_UNION && type->kind != KIND_ARRAY) {
+			//irgen_fatal(loc, "Compound literal with multiple elements must be a struct, union or array.");
+			//}
 			
 			pos = cursor;
 			pos_end = cursor + 1;
@@ -1668,8 +1671,12 @@ static void gen_func_body(TranslationUnit* tu, TypeIndex type, StmtIndex s) {
 	}
 	
 	if (settings.print_tb_ir) {
+		mtx_lock(&emit_ir_mutex);
+		
 		tb_function_print(func, tb_default_print_callback, tbir_output_file);
-		fprintf(tbir_output_file, "\n");
+		fprintf(tbir_output_file, "\n\n\n");
+		
+		mtx_unlock(&emit_ir_mutex);
 	} else {
 		tb_module_compile_func(mod, func);
 	}
@@ -1681,6 +1688,7 @@ static void gen_func_body(TranslationUnit* tu, TypeIndex type, StmtIndex s) {
 
 void irgen_init() {
 	mtx_init(&static_init_mutex, mtx_plain);
+	mtx_init(&emit_ir_mutex, mtx_plain);
 	
 	TB_FunctionPrototype* proto = tb_prototype_create(mod, TB_STDCALL, TB_TYPE_VOID, 0, false);
 	static_init_func = tb_prototype_build(mod, proto, "__static_init", TB_LINKAGE_PRIVATE);
@@ -1690,8 +1698,12 @@ void irgen_deinit() {
 	tb_inst_ret(static_init_func, TB_NULL_REG);
 	
 	if (settings.print_tb_ir) {
+		mtx_lock(&emit_ir_mutex);
+		
 		tb_function_print(static_init_func, tb_default_print_callback, tbir_output_file);
-		fprintf(tbir_output_file, "\n");
+		fprintf(tbir_output_file, "\n\n\n");
+		
+		mtx_unlock(&emit_ir_mutex);
 	} else {
 		tb_module_compile_func(mod, static_init_func);
 	}

@@ -23,4 +23,3 @@ typedef struct CompilerSettings {
 extern TB_Arch target_arch;
 extern TB_System target_sys;
 extern CompilerSettings settings;
-
