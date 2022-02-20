@@ -114,7 +114,7 @@ int main() {
 		
 		int8_t* test1 = foo1_int8_t(arr, 4);
 		int8_t test1_deref = *test1;
-		if (test1_deref != 69) { printf("test fail: foo1_int8_t (got %zu; expected 69)\n", test1_deref); abort(); }
+		if (test1_deref != 69) { printf("test fail: foo1_int8_t (got %zu; expected 69)\n", (size_t)test1_deref); abort(); }
 		
 	}
 
@@ -129,7 +129,7 @@ int main() {
 		
 		int16_t* test1 = foo1_int16_t(arr, 4);
 		int16_t test1_deref = *test1;
-		if (test1_deref != 69) { printf("test fail: foo1_int16_t (got %zu; expected 69)\n", test1_deref); abort(); }
+		if (test1_deref != 69) { printf("test fail: foo1_int16_t (got %zu; expected 69)\n", (size_t)test1_deref); abort(); }
 		
 	}
 
@@ -144,7 +144,7 @@ int main() {
 		
 		int32_t* test1 = foo1_int32_t(arr, 4);
 		int32_t test1_deref = *test1;
-		if (test1_deref != 69) { printf("test fail: foo1_int32_t (got %zu; expected 69)\n", test1_deref); abort(); }
+		if (test1_deref != 69) { printf("test fail: foo1_int32_t (got %zu; expected 69)\n", (size_t)test1_deref); abort(); }
 		
 	}
 
@@ -159,7 +159,7 @@ int main() {
 		
 		int64_t* test1 = foo1_int64_t(arr, 4);
 		int64_t test1_deref = *test1;
-		if (test1_deref != 69) { printf("test fail: foo1_int64_t (got %zu; expected 69)\n", test1_deref); abort(); }
+		if (test1_deref != 69) { printf("test fail: foo1_int64_t (got %zu; expected 69)\n", (size_t)test1_deref); abort(); }
 		
 	}
 
@@ -174,7 +174,7 @@ int main() {
 		
 		Foo7* test1 = foo1_Foo7(arr, 4);
 		Foo7 test1_deref = *test1;
-		if (test1_deref.data[0] != 69) { printf("test fail: foo1_Foo7 (got %zu; expected 69)\n", test1_deref.data[0]); abort(); }
+		if (test1_deref.data[0] != 69) { printf("test fail: foo1_Foo7 (got %zu; expected 69)\n", (size_t)test1_deref.data[0]); abort(); }
 		
 	}
 
@@ -189,7 +189,7 @@ int main() {
 		
 		Foo8* test1 = foo1_Foo8(arr, 4);
 		Foo8 test1_deref = *test1;
-		if (test1_deref.data[0] != 69) { printf("test fail: foo1_Foo8 (got %zu; expected 69)\n", test1_deref.data[0]); abort(); }
+		if (test1_deref.data[0] != 69) { printf("test fail: foo1_Foo8 (got %zu; expected 69)\n", (size_t)test1_deref.data[0]); abort(); }
 		
 	}
 
@@ -204,7 +204,7 @@ int main() {
 		
 		Foo14* test1 = foo1_Foo14(arr, 4);
 		Foo14 test1_deref = *test1;
-		if (test1_deref.data[0] != 69) { printf("test fail: foo1_Foo14 (got %zu; expected 69)\n", test1_deref.data[0]); abort(); }
+		if (test1_deref.data[0] != 69) { printf("test fail: foo1_Foo14 (got %zu; expected 69)\n", (size_t)test1_deref.data[0]); abort(); }
 		
 	}
 
@@ -219,7 +219,7 @@ int main() {
 		
 		Foo24* test1 = foo1_Foo24(arr, 4);
 		Foo24 test1_deref = *test1;
-		if (test1_deref.data[0] != 69) { printf("test fail: foo1_Foo24 (got %zu; expected 69)\n", test1_deref.data[0]); abort(); }
+		if (test1_deref.data[0] != 69) { printf("test fail: foo1_Foo24 (got %zu; expected 69)\n", (size_t)test1_deref.data[0]); abort(); }
 		
 	}
 
