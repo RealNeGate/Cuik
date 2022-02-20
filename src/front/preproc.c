@@ -5,9 +5,9 @@
 #include <stdlib.h>
 #include "preproc.h"
 #include "memory.h"
+#include "../timer.h"
 #include "file_io.h"
 #include "diagnostic.h"
-#include "../timer.h"
 #include <ext/stb_ds.h>
 
 #if _WIN32
@@ -28,11 +28,13 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
 static void expand(CPP_Context* restrict c, TokenStream* restrict s, Lexer* l);
 static void* gimme_the_shtuffs(CPP_Context* restrict c, size_t len);
 
-static bool find_define(CPP_Context* restrict c, string* out_val, const unsigned char* start, size_t length);
+static bool find_define(CPP_Context* restrict c, size_t* out_index, const unsigned char* start, size_t length);
+static size_t insert_define(CPP_Context* restrict c, const unsigned char* start, size_t length);
 
-// this one outputs the location of the arguments list, if there's not one
-// then it's just not a parenthesis
-static bool find_define2(CPP_Context* restrict c, size_t* out_index, const unsigned char* start, size_t length);
+/*static struct Tally {
+	size_t expand_ident_tally;
+	size_t expand_ident_fails;
+} perf_tally;*/
 
 void cpp_init(CPP_Context* ctx) {
 	size_t sz = sizeof(void*) * MACRO_BUCKET_COUNT * SLOTS_PER_MACRO_BUCKET;
@@ -59,6 +61,9 @@ void cpp_deinit(CPP_Context* ctx) {
 }
 
 void cpp_finalize(CPP_Context* ctx) {
+	//printf("IO time: %f seconds (across the %zu files)\n", io_time_tally * timer__freq, io_num_of_files);
+	//__builtin_dump_struct(&perf_tally, &printf);
+	
 	free((void*)ctx->macro_bucket_keys);
 	free((void*)ctx->macro_bucket_keys_length);
 	free((void*)ctx->macro_bucket_values_start);
@@ -192,14 +197,17 @@ inline static SourceLocIndex get_source_location(Lexer* restrict l, TokenStream*
 		l->line_current = l->start;
 	}
 	
-	assert((l->token_start - l->line_current) <= UINT16_MAX);
-	assert((l->token_end - l->token_start) <= UINT16_MAX);
+	intptr_t columns = l->token_start - l->line_current;
+	intptr_t length = l->token_end - l->token_start;
+	
+	assert(columns <= UINT16_MAX);
+	assert(length <= UINT16_MAX);
 	SourceLoc loc = { 
 		.file = (const unsigned char*)l->filepath,
 		.line_str = l->line_current,
 		.line = l->current_line,
-		.columns = l->token_start - l->line_current,
-		.length = l->token_end - l->token_start
+		.columns = columns,
+		.length = length
 	};
 	arrput(s->line_arena, loc);
 	
@@ -764,57 +772,56 @@ static uint64_t hash_ident(const unsigned char* at, size_t length) {
 	hash = _mm_aesdec_si128(hash, _mm_setzero_si128());
 	hash = _mm_aesdec_si128(hash, _mm_setzero_si128());
 	
-	return _mm_extract_epi8(hash, 0) & 31;
+	return ((size_t)_mm_extract_epi32(hash, 0)) % MACRO_BUCKET_COUNT;
 }
 
 static bool is_defined(CPP_Context* restrict c, const unsigned char* start, size_t length) {
-	uint64_t slot = hash_ident(start, length);
-	size_t count = c->macro_bucket_count[slot];
-	size_t base = (slot * SLOTS_PER_MACRO_BUCKET);
-	
-	for (size_t i = 0; i < count; i++) {
-		if (c->macro_bucket_keys_length[base + i] == length &&
-			memcmp(c->macro_bucket_keys[base + i], start, length) == 0) {
-			return true;
-		}
-	}
-	
-	return false;
+	size_t garbage;
+	return find_define(c, &garbage, start, length);
 }
 
-static bool find_define(CPP_Context* restrict c, string* out_val, const unsigned char* start, size_t length) {
-	uint64_t slot = hash_ident(start, length);
-	size_t count = c->macro_bucket_count[slot];
-	size_t base = (slot * SLOTS_PER_MACRO_BUCKET);
-	
-	for (size_t i = 0; i < count; i++) {
-		if (c->macro_bucket_keys_length[base + i] == length &&
-			memcmp(c->macro_bucket_keys[base + i], start, length) == 0) {
-			
-			const unsigned char* s = c->macro_bucket_values_start[base + i];
-			const unsigned char* e = c->macro_bucket_values_end[base + i];
-			
-			*out_val = (string) { .data = s, .length = e - s };
-			return true;
-		}
+// 16byte based compare
+// it doesn't need to be aligned but the valid range must be (len + 15) & ~15
+static bool memory_equals16(const unsigned char* src1, const unsigned char* src2, size_t length) {
+	size_t i = 0;
+	size_t chunk_count = length / 16;
+	while (chunk_count--) {
+		__m128i in1 = _mm_loadu_si128((__m128i*) &src1[i]);
+		__m128i in2 = _mm_loadu_si128((__m128i*) &src2[i]);
+		
+		int compare = _mm_movemask_epi8(_mm_cmpeq_epi8(in1, in2));
+		if (compare != 0xFFFF) return false;
+		
+		i += 16;
 	}
 	
-	return false;
+	size_t overhang = length % 16;
+	__m128i mask = _mm_loadu_si128((__m128i*) (overhang_mask + 16 - overhang));
+	
+	__m128i in1 = _mm_and_si128(_mm_loadu_si128((__m128i*) &src1[i]), mask);
+	__m128i in2 = _mm_and_si128(_mm_loadu_si128((__m128i*) &src2[i]), mask);
+	
+	int compare = _mm_movemask_epi8(_mm_cmpeq_epi8(in1, in2));
+	return compare == 0xFFFF;
 }
 
-static bool find_define2(CPP_Context* restrict c, size_t* out_index, const unsigned char* start, size_t length) {
+static bool find_define(CPP_Context* restrict c, size_t* out_index, const unsigned char* start, size_t length) {
 	uint64_t slot = hash_ident(start, length);
 	size_t count = c->macro_bucket_count[slot];
 	size_t base = (slot * SLOTS_PER_MACRO_BUCKET);
 	
-	for (size_t i = 0; i < count; i++) {
+	size_t i = 0;
+	while (i < count) {
 		size_t e = base + i;
 		
-		if (c->macro_bucket_keys_length[e] == length &&
-			memcmp(c->macro_bucket_keys[e], start, length) == 0) {
-			*out_index = e;
-			return true;
+		if (c->macro_bucket_keys_length[e] == length) {
+			if (memory_equals16(c->macro_bucket_keys[e], start, length)) {
+				*out_index = e;
+				return true;
+			}
 		}
+		
+		i++;
 	}
 	
 	return false;
@@ -921,7 +928,7 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
 		arrput(s->tokens, t);
 	} else {
 		size_t def_i;
-		if (find_define2(c, &def_i, token_data, token_length)) {
+		if (find_define(c, &def_i, token_data, token_length)) {
 			lexer_read(l);
 			
 			string def = {
@@ -944,7 +951,7 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
 				size_t token_length = temp_lex.token_end - temp_lex.token_start;
 				const unsigned char* token_data = temp_lex.token_start;
 				
-				if (find_define2(c, &def_i, token_data, token_length)) {
+				if (find_define(c, &def_i, token_data, token_length)) {
 					def = (string){ 
 						.data = c->macro_bucket_values_start[def_i],
 						.length = c->macro_bucket_values_end[def_i] - c->macro_bucket_values_start[def_i]
@@ -1154,7 +1161,7 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
 					
 					arrput(s->tokens, t);
 				} else {
-					Lexer temp_lex = (Lexer) { l->filepath, def.data, def.data };
+					Lexer temp_lex = (Lexer){ l->filepath, def.data, def.data };
 					temp_lex.current_line = l->current_line;
 					lexer_read(&temp_lex);
 					

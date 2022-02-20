@@ -12,6 +12,7 @@
 extern FILE* timer__output;
 extern int timer__entry_count;
 extern double timer__freq;
+extern mtx_t timer__mutex;
 
 // done regardless of the profiler running just to be able to query time in general
 inline static void timer__init() {
@@ -23,6 +24,7 @@ inline static void timer__init() {
 inline static void timer__open(const char* path) {
 	assert(timer__output == NULL);
 	
+	mtx_init(&timer__mutex, mtx_plain);
 	timer__output = fopen(path, "wb");
 	fprintf(timer__output, "{\"otherData\": {},\"traceEvents\":[");
 }
@@ -46,6 +48,9 @@ inline static void timer__end(const char* name, uint64_t start) {
 	
 	uint64_t end = timer__now();
 	double elapsed_in_seconds = (end - start) * timer__freq;
+	if (elapsed_in_seconds < 0.000001f) return;
+	
+	mtx_lock(&timer__mutex);
 	double start_in_seconds = start * timer__freq;
 	
 	int i = timer__entry_count++;
@@ -75,6 +80,8 @@ inline static void timer__end(const char* name, uint64_t start) {
 #else
 	printf("%s took %.03f seconds\n", name, elapsed_in_seconds);
 #endif
+	
+	mtx_unlock(&timer__mutex);
 }
 
 // Usage:

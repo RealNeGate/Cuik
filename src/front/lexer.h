@@ -179,6 +179,7 @@ typedef struct Lexer {
 	////////////////////////////////
     // when reading it spotted a line or EOF, it must be manually reset
     const unsigned char* line_current;
+	const unsigned char* line_current2;
 	bool hit_line;
 	
 	// current token info

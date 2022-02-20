@@ -56,6 +56,7 @@ static char cuik_include_directory[260];
 FILE* timer__output;
 int timer__entry_count;
 double timer__freq;
+mtx_t timer__mutex;
 
 // crash_handler.c
 void hook_crash_handler();
@@ -207,6 +208,8 @@ static void set_preprocessor_info(CPP_Context* cpp) {
 		cpp_define(cpp, "__signed__", "signed");
 		cpp_define(cpp, "__alignof", "_Alignof");
 		cpp_define(cpp, "__CRTDECL", "__cdecl");
+		
+		cpp_define_empty(cpp, "SQLITE_DISABLE_INTRINSIC");
 	} else {
 		// TODO(NeGate): Automatically detect these somehow...
 		cpp_add_include_directory(cpp, "/usr/lib/gcc/x86_64-linux-gnu/10/include/");

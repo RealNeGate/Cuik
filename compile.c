@@ -62,12 +62,12 @@ int main(int argc, char** argv) {
 #if defined(__GNUC__)
 	printf("Compiling on GCC %d.%d...\n", __GNUC__, __GNUC_MINOR__);
 	
-	cmd_append("gcc -march=haswell -maes -Werror -Wall -Wno-trigraphs -Wno-gnu-designator -Wno-unused-function -g ");
+	cmd_append("gcc -march=haswell -maes -Werror -Wall -Wno-trigraphs -Wno-gnu-designator -Wno-unused-function ");
 	cmd_append("-I src -o " OUTPUT_EXEC_NAME " ");
 #elif defined(__clang__)
 	printf("Compiling on Clang %d.%d.%d...\n", __clang_major__, __clang_minor__, __clang_patchlevel__);
 	
-	cmd_append("clang -march=haswell -maes -Werror -Wall -Wno-trigraphs -Wno-gnu-designator -Wno-unused-function -g ");
+	cmd_append("clang -march=haswell -maes -Werror -Wall -Wno-trigraphs -Wno-gnu-designator -Wno-unused-function ");
 	cmd_append("-I src -o " OUTPUT_EXEC_NAME " ");
 #elif defined(_MSC_VER)
 	printf("Compiling on MSVC %d.%d...\n", _MSC_VER / 100, _MSC_VER % 100);
@@ -80,11 +80,13 @@ int main(int argc, char** argv) {
 #  if defined(RELEASE_BUILD)
 	cmd_append("-O2 -DNDEBUG ");
 #  else
-	cmd_append("-O0 -D_DEBUG ");
+	cmd_append("-O0 ");
 #  endif
 	
 #  if defined(_WIN32)
-	cmd_append("-D_CRT_SECURE_NO_WARNINGS -gcodeview -lole32 -lAdvapi32 -lOleAut32 -lDbgHelp ");
+	cmd_append("-D_CRT_SECURE_NO_WARNINGS -g -gcodeview -lole32 -lAdvapi32 -lOleAut32 -lDbgHelp ");
+#else
+	cmd_append("-g");
 #  endif
 #else
 #  if defined(RELEASE_BUILD)
@@ -101,6 +103,8 @@ int main(int argc, char** argv) {
 		cmd_append(INPUT_FILES[i]);
 		cmd_append(" ");
 	}
+	
+	printf("CMD: %s\n", command_buffer);
 	
 	cmd_run();
 	

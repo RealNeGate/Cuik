@@ -2,8 +2,8 @@
 #include <common.h>
 #include "lexer.h"
 
-#define SLOTS_PER_MACRO_BUCKET 32768
-#define MACRO_BUCKET_COUNT 32
+#define SLOTS_PER_MACRO_BUCKET 1024
+#define MACRO_BUCKET_COUNT 1024
 
 #define THE_SHTUFFS_SIZE (32 << 20)
 
@@ -65,7 +65,7 @@ typedef struct CPP_IncludeOnce {
 	int value;
 } CPP_IncludeOnce;
 
-enum { CPP_MAX_SCOPE_DEPTH = 2048 };
+enum { CPP_MAX_SCOPE_DEPTH = 4096 };
 
 struct CPP_Context {
 	// used to store macro expansion results

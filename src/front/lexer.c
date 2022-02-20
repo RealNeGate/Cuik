@@ -138,31 +138,14 @@ inline static bool is_space(char ch) {
 	return (space_char_tbl[index] >> shift) & 1;
 }
 
-static unsigned char overhang_mask[16] = {
-    255, 255, 255, 255, 255, 255, 255, 255,
-    0,   0,   0,   0,   0,   0,   0,   0,
-};
-
-uint32_t hash_with_len(const void* data, size_t len) {
-    uint32_t* p = (uint32_t*)data;
-    uint32_t hash = 0;
+uint16_t hash_with_len(const void* data, size_t len) {
+    uint8_t* p = (uint8_t*)data;
+    uint16_t hash = 0;
 	
-    uint32_t split = len / 4;
-    uint32_t split_mask = *((uint32_t*)&overhang_mask[8 - (len % 4)]);
-	
-    int i = 0;
-    do {
-        uint32_t mask = split_mask;
-        if (i < split) mask = -1u;
-        else if (i > split) mask = 0u;
-		
-		// NOTE(NeGate): hopefully optimizes it out
-		uint32_t p_of_i;
-		memcpy(&p_of_i, &p[i], sizeof(uint32_t));
-		
-		hash += p_of_i & mask;
-        i += 1;
-    } while (i < 4);
+#pragma unroll 1
+	for (size_t i = 0; i < len; i++) {
+		hash ^= (p[i] << (i % 8));
+	}
 	
     return hash;
 }
@@ -174,24 +157,24 @@ TknType classify_ident(const unsigned char* restrict str, size_t len) {
 	// https://gist.github.com/RealNeGate/397db4aaace43e0499dc8f7b429ccc17
 	//
 	// BINARY SEARCH ARRAYS
-	const static uint32_t keys[64] = {
+	const static uint16_t keys[64] = {
 		
-		0x00006669,0x00006F64,0x00726F66,0x00746E69,0x264BA4A6,0x3330259C,0x616572CD,0x616F6CDA,
-		0x61D3BDC6,0x61DAD1D9,0x6275D4D0,0x64696F76,0x64CFC2C4,0x65736163,0x65736C65,0x6574E6D7,
-		0x657ACFE2,0x65D6DED8,0x676E6F6C,0x696CD3D7,0x6C6968DC,0x6D756E65,0x6E67CDD8,0x6F696EE3,
-		0x6F6F42CB,0x6F746F67,0x6F747561,0x6FD7AACC,0x70DFC3C4,0x72616863,0x726F68E7,0x736E6FD7,
-		0x7461D7DC,0x7469DFD6,0x7572E8D6,0x7574D3E4,0xC2DC2C38,0xC6D8D8EA,0xCDD8DCDC,0xCFDBAFC6,
-		0xD1CEB9C4,0xD5D82F27,0xD9E3DDCC,0xDBCCD9E5,0xDCCDAFC6,0xE0D4C32F,0xE4E4C332,0xE5D4AFCF,
-		0xE8D6CEE4,0xFFFFFFFF,0xFFFFFFFF,0xFFFFFFFF,0xFFFFFFFF,0xFFFFFFFF,0xFFFFFFFF,0xFFFFFFFF,
-		0xFFFFFFFF,0xFFFFFFFF,0xFFFFFFFF,0xFFFFFFFF,0xFFFFFFFF,0xFFFFFFFF,0xFFFFFFFF,0xFFFFFFFF,
+		0x00A5,0x00BA,0x0165,0x0170,0x0205,0x0211,0x0223,0x022C,
+		0x0232,0x0245,0x0259,0x02A7,0x0433,0x0495,0x04AA,0x04DF,
+		0x054A,0x05CF,0x05DD,0x080D,0x081E,0x0820,0x084F,0x0851,
+		0x088D,0x089D,0x09A9,0x0A4B,0x10A3,0x110E,0x1145,0x11AF,
+		0x137D,0x15EE,0x2155,0x21E5,0x21F0,0x22A1,0x22DD,0x2635,
+		0x2681,0x2855,0x2A14,0x2B9C,0x2D8A,0x2DCD,0x2E11,0x34C2,
+		0x3AC1,0xFFFF,0xFFFF,0xFFFF,0xFFFF,0xFFFF,0xFFFF,0xFFFF,
+		0xFFFF,0xFFFF,0xFFFF,0xFFFF,0xFFFF,0xFFFF,0xFFFF,0xFFFF,
 		
 	};
-	const static uint32_t values[64] = {
-		15,7,13,17,43,44,1,12,41,6,8,31,46,2,9,11,24,28,18,16,33,10,23,29,37,14,0,36,45,3,22,4,25,27,26,21,40,32,30,35,39,48,5,19,34,47,42,38,20,
+	const static uint8_t values[64] = {
+		15,7,17,13,10,14,0,31,18,2,9,3,33,29,1,37,12,22,4,16,8,21,25,24,11,23,27,26,45,28,36,41,46,6,35,39,32,40,30,5,47,34,20,19,48,38,42,43,44,
 	};
 	
 	// HASH STRING
-	uint32_t n = hash_with_len(str, len);
+	uint16_t n = hash_with_len(str, len);
 	
 	// BRANCHLESS BINARY SEARCH
 	size_t i = 0;
@@ -258,6 +241,11 @@ static int line_counter(size_t len, const unsigned char* str) {
 // for some optimizations overall, one of the important ones is being able to read
 // a whole 16byte SIMD register at once for any SIMD optimizations. 
 void lexer_read(Lexer* restrict l) {
+	if (l->line_current2) {
+		l->line_current = l->line_current2;
+		l->line_current2 = NULL;
+	}
+	
     const unsigned char* current = l->current;
     
 	// Skip any whitespace and comments
@@ -476,7 +464,7 @@ void lexer_read(Lexer* restrict l) {
 					if (current[-1] == '\n' && current[-2] == '\\') continue;
 					
 					// escape + quote like \"
-					if (current[-1] == quote_type && current[-2] == '\\') continue;
+					if (current[-1] == quote_type && current[-2] == '\\' && current[-3] != '\\') continue;
 					
 					break;
 				} else {
@@ -528,7 +516,7 @@ void lexer_read(Lexer* restrict l) {
 		current += 1;
 		current += (current[0] + current[1] == '\r' + '\n') ? 2 : 1;
 		
-		l->line_current = current;
+		l->line_current2 = current;
 		
 		start = current;
 		while (*current && *current != '\n' && *current != ' ') {
@@ -552,6 +540,8 @@ void lexer_read(Lexer* restrict l) {
 				printf("Lexer error: out of memory!");
 				abort();
 			}
+			
+			l->line_current = conjoined_buffer;
 			
 			memcpy(conjoined_buffer, l->token_start, len);
 			memcpy(conjoined_buffer + len, start, len2);
