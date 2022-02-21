@@ -168,15 +168,33 @@ static void set_preprocessor_info(CPP_Context* cpp) {
 	cpp_add_include_directory(cpp, cuik_include_directory);
 	
 	if (target_system == TB_SYSTEM_WINDOWS) {
-		// TODO(NeGate): Automatically detect these somehow...
-		
 		// win_sdk_root
-		cpp_add_include_directory(cpp, "W:\\Windows Kits\\10\\Include\\10.0.19041.0\\ucrt\\");
-		cpp_add_include_directory(cpp, "W:\\Windows Kits\\10\\Include\\10.0.19041.0\\um\\");
-		cpp_add_include_directory(cpp, "W:\\Windows Kits\\10\\Include\\10.0.19041.0\\shared\\");
+		char filepath[MAX_PATH];
+		
+		if (sprintf_s(filepath, 260, "%S\\ucrt\\", s_vswhere.windows_sdk_include) > MAX_PATH) {
+			printf("internal compiler error: WinSDK include directory too long!\n");
+			abort();
+		}
+		cpp_add_include_directory(cpp, filepath);
+		
+		if (sprintf_s(filepath, 260, "%S\\um\\", s_vswhere.windows_sdk_include) > MAX_PATH) {
+			printf("internal compiler error: WinSDK include directory too long!\n");
+			abort();
+		}
+		cpp_add_include_directory(cpp, filepath);
+		
+		if (sprintf_s(filepath, 260, "%S\\shared\\", s_vswhere.windows_sdk_include) > MAX_PATH) {
+			printf("internal compiler error: WinSDK include directory too long!\n");
+			abort();
+		}
+		cpp_add_include_directory(cpp, filepath);
 		
 		// vs_library_path
-		cpp_add_include_directory(cpp, "W:\\Visual Studio\\2019\\Community\\VC\\Tools\\MSVC\\14.29.30133\\include\\");
+		if (sprintf_s(filepath, 260, "%S\\", s_vswhere.vs_include_path) > MAX_PATH) {
+			printf("internal compiler error: VS include directory too long!\n");
+			abort();
+		}
+		cpp_add_include_directory(cpp, filepath);
 		
 		cpp_define_empty(cpp, "_WIN32");
 		cpp_define_empty(cpp, "_WIN64");
@@ -348,9 +366,11 @@ static bool live_compile(const char source_file[], const char obj_output_path[],
 static bool dump_tokens(const char source_file[]);
 
 static void print_version(const char* install_dir) {
-	printf("cuik version %d.%d\n", CUIK_COMPILER_MAJOR, CUIK_COMPILER_MINOR);
-	printf("install directory: %s\n", install_dir);
+	printf("cuik version %d.%d\n",         CUIK_COMPILER_MAJOR, CUIK_COMPILER_MINOR);
+	printf("install directory: %s\n",      install_dir);
 	printf("cuik include directory: %s\n", cuik_include_directory);
+	printf("windows sdk include: %S\n",    s_vswhere.windows_sdk_include);
+	printf("visual studio include: %S\n",  s_vswhere.vs_include_path);
 }
 
 int main(int argc, char* argv[]) {
@@ -412,6 +432,11 @@ int main(int argc, char* argv[]) {
 		snprintf(cuik_include_directory, 260, "%.*s/crt/include/", (int)(end - compiler_path), compiler_path);
 #endif
 	}
+	
+	// Get system include directories
+#ifdef _WIN32
+	s_vswhere = MicrosoftCraziness_find_visual_studio_and_windows_sdk();
+#endif
 	
 	// parse command
 	CompilerMode mode = COMPILER_MODE_NONE;
@@ -843,8 +868,6 @@ static void live_compiler_abort(int signo) {
 }
 
 static bool live_compile(const char source_file[], const char obj_output_path[], const char filename[]) {
-	MicrosoftCraziness_Find_Result vswhere = MicrosoftCraziness_find_visual_studio_and_windows_sdk();
-    
 	uint64_t original_last_write = get_last_write_time(source_file);
 	while (true) {
 		system("cls");
@@ -863,7 +886,7 @@ static bool live_compile(const char source_file[], const char obj_output_path[],
 				tb_module_destroy(mod);
 			}
 			
-			disassemble_object_file(vswhere.vs_exe_path, filename);
+			disassemble_object_file(s_vswhere.vs_exe_path, filename);
 		}
 		
 		// Wait for the user to save again

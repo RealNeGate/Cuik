@@ -6,6 +6,8 @@
 
 #define LINKER_STRING_BUFFER_CAP 8192
 
+MicrosoftCraziness_Find_Result s_vswhere;
+
 bool linker_init(Linker* l) {
 	// NOTE(NeGate): Windows has a max command line length of 32768 iirc,
 	// so this seems reasonable
@@ -14,29 +16,24 @@ bool linker_init(Linker* l) {
 		.libpaths_buffer = malloc(LINKER_STRING_BUFFER_CAP),
 	};
 	
-#if _WIN32
-	l->vswhere = MicrosoftCraziness_find_visual_studio_and_windows_sdk();
-	
-	return (l->vswhere.vs_exe_path != NULL);
-#else
 	return true;
-#endif
 }
 
 void linker_deinit(Linker* l) {
-#if _WIN32
-	MicrosoftCraziness_free_resources(&l->vswhere);
-#endif
-	
 	free(l->input_file_buffer);
 	free(l->libpaths_buffer);
 }
 
 void linker_add_default_libpaths(Linker* l) {
 #if _WIN32
-	linker_add_libpath_wide(l, l->vswhere.vs_library_path);
-	linker_add_libpath_wide(l, l->vswhere.windows_sdk_ucrt_library_path);
-	linker_add_libpath_wide(l, l->vswhere.windows_sdk_um_library_path);
+	if (s_vswhere.vs_exe_path == NULL) {
+		printf("internal compiler error: Could not locate VS and Windows SDK to link with. You'll need Visual Studio to link with cuik.\n");
+		abort();
+	}
+	
+	linker_add_libpath_wide(l, s_vswhere.vs_library_path);
+	linker_add_libpath_wide(l, s_vswhere.windows_sdk_ucrt_library_path);
+	linker_add_libpath_wide(l, s_vswhere.windows_sdk_um_library_path);
 #endif
 }
 
@@ -104,7 +101,7 @@ bool linker_invoke(Linker* l, const char* filename, LinkerSubsystem subsystem, b
 	int cmd_line_len = swprintf(cmd_line, CMD_LINE_MAX,
 								L"%s\\link.exe /nologo /machine:amd64 /subsystem:%S"
 								" /debug /pdb:%S.pdb /out:%S.exe /incremental:no ",
-								l->vswhere.vs_exe_path, subsystem_strings[subsystem], filename, filename);
+								s_vswhere.vs_exe_path, subsystem_strings[subsystem], filename, filename);
 	
 	// Add all the libpaths
 	{

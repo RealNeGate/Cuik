@@ -381,6 +381,10 @@ InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, Sourc
 						if (kind == KIND_STRUCT || kind == KIND_UNION || kind == KIND_ARRAY) {
 							IRVal v = irgen_expr(tu, func, node->expr);
 							
+							if (!type_equal(tu, v.type, child_type)) {
+								irgen_fatal(loc, "TODO: error messages");
+							}
+							
 							// placing the address calculation here might improve performance or readability
 							// of IR in the debug builds, for release builds it shouldn't matter
 							TB_Register effective_addr;

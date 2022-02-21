@@ -39,20 +39,22 @@
 
 #ifdef __cplusplus
 extern "C" {
-	#endif
+#endif
 	typedef struct MicrosoftCraziness_Find_Result {
 		int windows_sdk_version;   // Zero if no Windows SDK found.
-
+		
 		wchar_t* windows_sdk_root;
+		wchar_t* windows_sdk_include;
 		wchar_t* windows_sdk_um_library_path;
 		wchar_t* windows_sdk_ucrt_library_path;
-
+		
 		wchar_t* vs_exe_path;
+		wchar_t* vs_include_path;
 		wchar_t* vs_library_path;
 	} MicrosoftCraziness_Find_Result;
-
+	
 	MicrosoftCraziness_Find_Result MicrosoftCraziness_find_visual_studio_and_windows_sdk();
-
+	
 	inline void MicrosoftCraziness_free_resources(MicrosoftCraziness_Find_Result* result) {
 		free(result->windows_sdk_root);
 		free(result->windows_sdk_um_library_path);
@@ -60,7 +62,7 @@ extern "C" {
 		free(result->vs_exe_path);
 		free(result->vs_library_path);
 	}
-
+	
 #ifdef __cplusplus
 }
 #endif

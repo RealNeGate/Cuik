@@ -38,10 +38,10 @@
 // I am not making this up: https://github.com/Microsoft/vswhere
 //
 // Several people have therefore found the need to solve this problem
-// themselves. We referred to some of these other solutions when 
+// themselves. We referred to some of these other solutions when
 // figuring out what to do, most prominently ziglang's version,
 // by Ryan Saunderson.
-// 
+//
 // I hate this kind of code. The fact that we have to do this at all
 // is stupid, and the actual maneuvers we need to go through
 // are just painful. If programming were like this all the time,
@@ -317,10 +317,22 @@ void find_windows_kit_root(MicrosoftCraziness_Find_Result* result) {
         defer{ free(windows10_lib); };
 		
         visit_files_w(windows10_lib, &data, win10_best);
+		
         if (data.best_name) {
             result->windows_sdk_version = 10;
             result->windows_sdk_root = data.best_name;
-            return;
+			
+			wchar_t* include_path = (wchar_t*)malloc(MAX_PATH);
+			auto success = swprintf_s(include_path, MAX_PATH,
+									  L"%sInclude\\%d.%d.%d.%d",
+									  windows10_root,
+									  data.best_version[0], data.best_version[1],
+									  data.best_version[2], data.best_version[3]);
+			
+			if (success < MAX_PATH) {
+				result->windows_sdk_include = include_path;
+			}
+			return;
         }
     }
 	
@@ -338,6 +350,17 @@ void find_windows_kit_root(MicrosoftCraziness_Find_Result* result) {
         if (data.best_name) {
             result->windows_sdk_version = 8;
             result->windows_sdk_root = data.best_name;
+			
+			wchar_t* include_path = (wchar_t*)malloc(MAX_PATH);
+			auto success = swprintf_s(include_path, MAX_PATH,
+									  L"%sInclude\\%d.%d.%d.%d",
+									  windows10_root,
+									  data.best_version[0], data.best_version[1],
+									  data.best_version[2], data.best_version[3]);
+			
+			if (success < MAX_PATH) {
+				result->windows_sdk_include = include_path;
+			}
             return;
         }
     }
@@ -417,12 +440,15 @@ bool find_visual_studio_2017_by_fighting_through_microsoft_craziness(MicrosoftCr
         auto version_tail = wcschr(version, '\n');
         if (version_tail)  *version_tail = 0;  // Stomp the data, because nobody cares about it.
 		
+        auto include_path = concat(bstr_inst_path, L"\\VC\\Tools\\MSVC\\", version, L"\\include");
         auto library_path = concat(bstr_inst_path, L"\\VC\\Tools\\MSVC\\", version, L"\\lib\\x64");
         auto library_file = concat(library_path, L"\\vcruntime.lib");  // @Speed: Could have library_path point to this string, with a smaller count, to save on memory flailing!
 		
         if (os_file_exists(library_file)) {
             auto link_exe_path = concat(bstr_inst_path, L"\\VC\\Tools\\MSVC\\", version, L"\\bin\\Hostx64\\x64");
+			
             result->vs_exe_path = link_exe_path;
+            result->vs_include_path = include_path;
             result->vs_library_path = library_path;
             return true;
         }
@@ -463,6 +489,7 @@ void find_visual_studio_by_fighting_through_microsoft_craziness(MicrosoftCrazine
         defer{ free(buffer); };
 		
         auto lib_path = concat(buffer, L"VC\\Lib\\amd64");
+        auto include_path = concat(buffer, L"VC\\Include");
 		
         // Check to see whether a vcruntime.lib actually exists here.
         auto vcruntime_filename = concat(lib_path, L"\\vcruntime.lib");
@@ -470,10 +497,12 @@ void find_visual_studio_by_fighting_through_microsoft_craziness(MicrosoftCrazine
 		
         if (os_file_exists(vcruntime_filename)) {
             result->vs_exe_path = concat(buffer, L"VC\\bin\\amd64");
+			result->vs_include_path = include_path;
             result->vs_library_path = lib_path;
             return;
         }
 		
+        free(include_path);
         free(lib_path);
     }
 	

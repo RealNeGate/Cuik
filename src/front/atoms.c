@@ -25,36 +25,8 @@ void atoms_deinit() {
 	atoms_base = atoms_top = NULL;
 }
 
-Atom atoms_get(size_t len, const unsigned char* str) {
-	/*const char first_char = str[0];
-	Atoms_Segment* c = atoms_base;
-	
-	while (c && c->used) {
-		char* search = c->data;
-		do {
-			const size_t remainder = c->used - (search - c->data);
-			search = memchr(search, first_char, remainder);
-			if (search == NULL) break;
-			
-			bool the_rest_of_the_string_matches = memcmp(search, str, len) == 0 
-				&& search[len] == '\0';
-			
-			if (the_rest_of_the_string_matches) return search;
-			
-			search++;
-		} while (search != &c->data[c->used]);
-		
-		c = c->next;
-	}*/
-	
-	return NULL;
-}
-
 Atom atoms_put(size_t len, const unsigned char* str) {
 	assert(len > 0);
-	
-	//Atom test = atoms_get(len, str);
-	//if (test) return test;
 	
 	// Increment to atom counter
 	atoms_count++;

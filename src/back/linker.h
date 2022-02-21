@@ -3,6 +3,8 @@
 
 #if _WIN32
 #include "microsoft_craziness.h"
+
+extern MicrosoftCraziness_Find_Result s_vswhere;
 #endif
 
 ////////////////////////////////
@@ -57,11 +59,4 @@ struct Linker {
 	OS_String libpaths_buffer;
 	size_t libpaths_top;
 	size_t libpaths_count;
-	
-	// NOTE(NeGate): Maybe we should move this out because it's can
-	// be shared across Linker objects... but it doesn't really matters
-	// for our use cases.
-#if _WIN32
-	MicrosoftCraziness_Find_Result vswhere;
-#endif
 };
