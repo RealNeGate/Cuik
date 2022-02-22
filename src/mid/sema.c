@@ -684,14 +684,13 @@ static TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e) {
 		case EXPR_XOR_ASSIGN:
 		case EXPR_SHL_ASSIGN:
 		case EXPR_SHR_ASSIGN: {
-			TypeIndex type = get_common_type(tu, 
-											 sema_expr(tu, ep->bin_op.left),
-											 sema_expr(tu, ep->bin_op.right));
+			TypeIndex lhs = sema_expr(tu, ep->bin_op.left);
+			sema_expr(tu, ep->bin_op.right);
 			
-			tu->exprs[ep->bin_op.left].cast_type = type;
-			tu->exprs[ep->bin_op.right].cast_type = type;
+			tu->exprs[ep->bin_op.left].cast_type = lhs;
+			tu->exprs[ep->bin_op.right].cast_type = lhs;
 			
-			return (ep->type = type);
+			return (ep->type = lhs);
 		}
 		default:
 		break;
