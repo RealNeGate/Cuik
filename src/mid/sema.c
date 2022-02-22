@@ -926,10 +926,10 @@ void sema_check(TranslationUnit* tu, StmtIndex s) {
 			
 			// type check function body
 			function_stmt = s;
-			sema_stmt(tu, (StmtIndex)tu->stmts[s].decl.initial);
+			sema_stmt(tu, (StmtIndex)sp->decl.initial);
 			function_stmt = 0;
 			break;
-		}
+		}\
 		case STMT_DECL:
 		case STMT_GLOBAL_DECL: {
 			if (!sp->decl.attrs.is_used) break;

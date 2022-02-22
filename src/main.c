@@ -271,6 +271,10 @@ static void compile_project(TB_Arch arch, TB_System sys, const char source_file[
 		crash_if_reports(REPORT_ERROR);
 	}
 	
+	if (settings.print_ast) {
+		ast_dump(&translation_unit, stdout);
+	}
+	
 	// Generate IR
 	// TODO(NeGate): Globals amirite... yea maybe i'll maybe move the TB_Module from the
 	// globals but at the same time, it's a thread safe interface for the most part you're
@@ -566,6 +570,8 @@ int main(int argc, char* argv[]) {
 			}
 			
 			settings.num_of_worker_threads = num;
+		} else if (strcmp(key, "emit-ast") == 0) {
+			settings.print_ast = true;
 		} else if (strcmp(key, "emit-ir") == 0) {
 			settings.print_tb_ir = true;
 		} else if (strcmp(key, "opt") == 0) {
