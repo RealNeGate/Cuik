@@ -68,11 +68,6 @@ static TB_DataType ctype_to_tbtype(const Type* t) {
 	}
 }
 
-// logging
-// TODO(NeGate): consider merging this with the rest of the logging
-_Noreturn void irgen_fatal(SourceLocIndex loc, const char* fmt, ...);
-void irgen_warn(SourceLocIndex loc, const char* fmt, ...);
-
 InitNode* count_max_tb_init_objects(int node_count, InitNode* node, int* out_count);
 
 // func is NULL then it's not allowed to compute any dynamic initializer expressions

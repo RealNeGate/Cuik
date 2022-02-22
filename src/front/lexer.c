@@ -531,10 +531,10 @@ void lexer_read(Lexer* restrict l) {
 		
 		// generate buffer with conjoined string
 		unsigned char* conjoined_buffer;
+		size_t len = l->token_end - l->token_start;
+		size_t len2 = current - start;
+		
 		{
-			size_t len = l->token_end - l->token_start;
-			size_t len2 = current - start;
-			
 			conjoined_buffer = arena_alloc((len + len2 + 15) & ~15, 16);
 			if (!conjoined_buffer) {
 				printf("Lexer error: out of memory!");
@@ -561,7 +561,7 @@ void lexer_read(Lexer* restrict l) {
 		// NOTE(NeGate): Basically take the remaining token stuff we didn't parse
 		// and just pass that but the issue is that these are two separate buffers
 		// so we do a little "magic?".
-		l->current = start + ((joined_string_lexer.token_end - conjoined_buffer) - (joined_string_lexer.token_end - joined_string_lexer.token_start));
+		l->current = start + ((l->token_end - l->token_start) - len);
 	} else {
 		l->token_start = start;
 		l->token_end = current;

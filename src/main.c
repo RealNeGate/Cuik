@@ -196,8 +196,6 @@ static void set_preprocessor_info(CPP_Context* cpp) {
 		}
 		cpp_add_include_directory(cpp, filepath);
 		
-		cpp_define_empty(cpp, "_WIN32");
-		cpp_define_empty(cpp, "_WIN64");
 		cpp_define_empty(cpp, "_DEBUG");
 		cpp_define_empty(cpp, "_MT");
 		cpp_define_empty(cpp, "_CRT_NONSTDC_NO_WARNINGS");
@@ -630,7 +628,7 @@ int main(int argc, char* argv[]) {
 				char tbir_filename[260];
 				sprintf_s(tbir_filename, 260, "%s.tbir", filename);
 				
-				tbir_output_file = fopen(tbir_filename, "wb");
+				tbir_output_file = stdout;//fopen(tbir_filename, "wb");
 			}
 			
 			timer__init();
@@ -888,6 +886,8 @@ static bool live_compile(const char source_file[], const char obj_output_path[],
 			
 			disassemble_object_file(s_vswhere.vs_exe_path, filename);
 		}
+		
+		clear_any_reports();
 		
 		// Wait for the user to save again
 		while (true) {

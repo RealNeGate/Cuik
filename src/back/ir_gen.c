@@ -25,6 +25,7 @@ static mtx_t emit_ir_mutex;
 
 _Noreturn void irgen_fatal(SourceLocIndex loc, const char* fmt, ...) {
 	SourceLoc* l = &ir_gen_tokens.line_arena[loc];
+	
 	printf("%s:%d: error: ", l->file, l->line);
 	
 	va_list ap;
@@ -135,7 +136,11 @@ static TB_Register cast_reg(TB_Function* func, TB_Register reg, const Type* src,
 		reg = tb_inst_fpxt(func, reg, TB_TYPE_F64);
 	} else if (src->kind == KIND_DOUBLE &&
 			   dst->kind == KIND_FLOAT) {
-		reg = tb_inst_trunc(func, reg, TB_TYPE_F32);
+		TB_DataType dt = tb_function_get_node(func, reg)->dt;
+		
+		if (!(dt.type == TB_F32 && dt.width == 0)) {
+			reg = tb_inst_trunc(func, reg, TB_TYPE_F32);
+		}
 	} else if (src->kind >= KIND_FLOAT &&
 			   src->kind <= KIND_DOUBLE &&
 			   dst->kind >= KIND_CHAR &&
@@ -510,35 +515,23 @@ static IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 		case EXPR_FLOAT32: {
 			return (IRVal) {
 				.value_type = RVALUE,
-				.type = TYPE_FLOAT,
-				.reg = tb_inst_float(func, TB_TYPE_F32, ep->float_num)
+				.type = ep->cast_type,
+				.reg = tb_inst_float(func, ep->cast_type == TYPE_DOUBLE ? TB_TYPE_F64 : TB_TYPE_F32, ep->float_num)
 			};
 		}
 		case EXPR_FLOAT64: {
 			return (IRVal) {
 				.value_type = RVALUE,
-				.type = TYPE_DOUBLE,
-				.reg = tb_inst_float(func, TB_TYPE_F64, ep->float_num)
+				.type = ep->cast_type,
+				.reg = tb_inst_float(func, ep->cast_type == TYPE_FLOAT ? TB_TYPE_F32 : TB_TYPE_F64, ep->float_num)
 			};
 		}
 		case EXPR_STR: {
-			TB_Register reg;
-			if (ep->str.start[0] == 'L') {
-				const char* start = (const char*)(ep->str.start + 2);
-				const char* end = (const char*)(ep->str.end - 1);
-				
-				reg = gen_wide_string_constant(ep->loc, func, end-start, start);
-			} else {
-				const char* start = (const char*)(ep->str.start + 1);
-				const char* end = (const char*)(ep->str.end - 1);
-				
-				reg = gen_string_constant(ep->loc, func, end-start, start);
-			}
-			
+			// The string is preprocessed to be a flat and nice byte buffer by the semantics pass
 			return (IRVal) {
 				.value_type = RVALUE,
 				.type = ep->type,
-				.reg = reg
+				.reg = tb_inst_string(func, ep->str.end - ep->str.start, (char*)ep->str.start)
 			};
 		}
 		case EXPR_INITIALIZER: {
@@ -1675,12 +1668,19 @@ static void gen_func_body(TranslationUnit* tu, TypeIndex type, StmtIndex s) {
 	}
 	
 	if (settings.print_tb_ir) {
-		mtx_lock(&emit_ir_mutex);
+		if (mtx_lock(&emit_ir_mutex) != thrd_success) {
+			printf("internal compiler error: mtx_lock(...) failure!");
+			abort();
+		}
 		
 		tb_function_print(func, tb_default_print_callback, tbir_output_file);
 		fprintf(tbir_output_file, "\n\n\n");
+		fflush(tbir_output_file);
 		
-		mtx_unlock(&emit_ir_mutex);
+		if (mtx_unlock(&emit_ir_mutex) != thrd_success) {
+			printf("internal compiler error: mtx_unlock(...) failure!");
+			abort();
+		}
 	} else {
 		tb_module_compile_func(mod, func);
 	}
@@ -1702,12 +1702,19 @@ void irgen_deinit() {
 	tb_inst_ret(static_init_func, TB_NULL_REG);
 	
 	if (settings.print_tb_ir) {
-		mtx_lock(&emit_ir_mutex);
+		if (mtx_lock(&emit_ir_mutex) != thrd_success) {
+			printf("internal compiler error: mtx_lock(...) failure!");
+			abort();
+		}
 		
 		tb_function_print(static_init_func, tb_default_print_callback, tbir_output_file);
 		fprintf(tbir_output_file, "\n\n\n");
+		fflush(tbir_output_file);
 		
-		mtx_unlock(&emit_ir_mutex);
+		if (mtx_unlock(&emit_ir_mutex) != thrd_success) {
+			printf("internal compiler error: mtx_lock(...) failure!");
+			abort();
+		}
 	} else {
 		tb_module_compile_func(mod, static_init_func);
 	}

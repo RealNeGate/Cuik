@@ -217,11 +217,56 @@ static TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e) {
 			return (ep->type = TYPE_CHAR);
 		}
 		case EXPR_STR: {
-			const char* start = (const char*)(ep->str.start + 1);
-			const char* end = (const char*)(ep->str.end - 1);
-			bool is_wide_string = ep->str.start[0] == 'L';
-			
-			return (ep->type = new_array(tu, is_wide_string ? TYPE_SHORT : TYPE_CHAR, (end-start) + 1));
+			if (ep->str.start[0] == 'L') {
+				const char* in = (const char*)(ep->str.start + 2);
+				size_t len = ((const char*)ep->str.end - 1) - in;
+				
+				// it can't be bigger than the original
+				wchar_t* out = arena_alloc((len * 2) + 1, 1);
+				
+				size_t out_i = 0, in_i = 0;
+				while (in_i < len) {
+					int ch;
+					intptr_t distance = parse_char(len - in_i, &in[in_i], &ch);
+					if (distance < 0) abort();
+					
+					assert(ch < 0x80);
+					out[out_i++] = ch;
+					in_i += distance;
+				}
+				
+				assert(out_i <= len);
+				out[out_i++] = '\0';
+				
+				ep->str.start = (unsigned char*) &out[0];
+				ep->str.end = (unsigned char*) &out[out_i];
+				
+				return (ep->type = new_array(tu, TYPE_SHORT, out_i));
+			} else {
+				const char* in = (const char*)(ep->str.start + 1);
+				size_t len = ((const char*)ep->str.end - 1) - in;
+				
+				// it can't be bigger than the original
+				char* out = arena_alloc(len + 1, 1);
+				
+				size_t out_i = 0, in_i = 0;
+				while (in_i < len) {
+					int ch;
+					intptr_t distance = parse_char(len - in_i, &in[in_i], &ch);
+					if (distance < 0) abort();
+					
+					out[out_i++] = ch;
+					in_i += distance;
+				}
+				
+				assert(out_i <= len);
+				out[out_i++] = '\0';
+				
+				ep->str.start = (unsigned char*) &out[0];
+				ep->str.end = (unsigned char*) &out[out_i];
+				
+				return (ep->type = new_array(tu, TYPE_CHAR, out_i));
+			}
 		}
 		case EXPR_SIZEOF: {
 			TypeIndex src = sema_expr(tu, ep->x_of_expr.expr);
@@ -443,7 +488,7 @@ static TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e) {
 						goto failure;
 					}
 					
-					tu->exprs[args[i]].cast_type = tu->exprs[args[i]].type;
+					tu->exprs[args[i]].cast_type = params[i].type;
 				}
 			}
 			
@@ -964,7 +1009,24 @@ void sema_check(TranslationUnit* tu, StmtIndex s) {
 				
 				assert(type->align);
 				TB_InitializerID init;
-				if (tu->exprs[sp->decl.initial].op == EXPR_INITIALIZER) {
+				if (tu->exprs[sp->decl.initial].op == EXPR_STR) {
+					init = tb_initializer_create(mod, type->size, type->align, 1);
+					
+					char* dst = tb_initializer_add_region(mod, init, 0, type->size);
+					Expr* restrict ep = &tu->exprs[sp->decl.initial];
+					
+					memcpy(dst, ep->str.start, ep->str.end - ep->str.start);
+					
+					if (tu->types[sp->decl.type].kind == KIND_PTR) {
+						// if it's a string pointer, then we make a dummy string array and point to that with another initializer
+						char temp[1024];
+						snprintf(temp, 1024, "%s@%d", name, s);
+						TB_GlobalID dummy = tb_global_create(mod, init, temp, TB_LINKAGE_PRIVATE);
+						
+						init = tb_initializer_create(mod, 8, 8, 1);
+						tb_initializer_add_global(mod, init, 0, dummy);
+					}
+				} else if (tu->exprs[sp->decl.initial].op == EXPR_INITIALIZER) {
 					Expr* restrict ep = &tu->exprs[sp->decl.initial];
 					
 					int node_count = ep->init.count;

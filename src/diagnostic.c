@@ -113,3 +113,7 @@ void crash_if_reports(ReportLevel min) {
 		}
 	}
 }
+
+void clear_any_reports() {
+	memset(tally, 0, sizeof(tally));
+}

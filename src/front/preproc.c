@@ -63,6 +63,7 @@ void cpp_deinit(CPP_Context* ctx) {
 void cpp_finalize(CPP_Context* ctx) {
 	//printf("IO time: %f seconds (across the %zu files)\n", io_time_tally * timer__freq, io_num_of_files);
 	//__builtin_dump_struct(&perf_tally, &printf);
+	//cpp_dump(ctx);
 	
 	free((void*)ctx->macro_bucket_keys);
 	free((void*)ctx->macro_bucket_keys_length);
@@ -160,7 +161,7 @@ void cpp_dump(CPP_Context* ctx) {
 			printf("\t'%.*s' -> '%.*s'\n", (int)keylen, key, (int)vallen, val);
 		}
 		
-		printf("\n");
+		//printf("\n");
 		count += ctx->macro_bucket_count[i];
 	}
 	
@@ -1198,9 +1199,6 @@ static void expand(CPP_Context* restrict c, TokenStream* restrict s, Lexer* l) {
 	while (!l->hit_line) {
 		if (l->token_type == '(') {
 			depth++;
-		} else if (l->token_type == ')') {
-			if (depth == 0) break;
-			depth--;
 		}
 		
 		if (l->token_type == TOKEN_DOUBLE_HASH) {
@@ -1223,6 +1221,11 @@ static void expand(CPP_Context* restrict c, TokenStream* restrict s, Lexer* l) {
 			lexer_read(l);
 		} else {
 			expand_ident(c, s, l);
+		}
+		
+		if (l->token_type == ')') {
+			if (depth == 0) break;
+			depth--;
 		}
 	}
 }
