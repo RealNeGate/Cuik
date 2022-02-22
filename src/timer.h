@@ -46,19 +46,21 @@ inline static uint64_t timer__now() {
 inline static void timer__end(const char* name, uint64_t start) {
 	if (timer__output == NULL) return;
 	
+	mtx_lock(&timer__mutex);
+	
 	uint64_t end = timer__now();
 	double elapsed_in_seconds = (end - start) * timer__freq;
-	if (elapsed_in_seconds < 0.000001f) return;
-	
-	mtx_lock(&timer__mutex);
 	double start_in_seconds = start * timer__freq;
+	//if (elapsed_in_seconds < 0.000001f) return;
 	
 	int i = timer__entry_count++;
 	
 #if 1
-	uintptr_t tid = (uintptr_t)thrd_current();
-	tid ^= (tid >> 32);
-	tid &= 0xFFFFFFFF;
+#if _WIN32
+	uint32_t tid = GetCurrentThreadId();
+#else
+	uint32_t tid = 1;
+#endif
 	
 	fprintf(timer__output,
 			"%s"
@@ -68,14 +70,14 @@ inline static void timer__end(const char* name, uint64_t start) {
 			"\"name\":\"%s\",\n"
 			"\"ph\":\"X\",\n"
 			"\"pid\":0,\n"
-			"\"tid\": %d,\n"
+			"\"tid\": %u,\n"
 			"\"ts\": %lld\n"
 			"}\n",
 			
 			i == 0 ? "\n" : ",\n",
 			(long long)(elapsed_in_seconds * 1000000.0),
 			name,
-			(uint32_t)tid,
+			tid,
 			(long long)(start_in_seconds * 1000000.0));
 #else
 	printf("%s took %.03f seconds\n", name, elapsed_in_seconds);

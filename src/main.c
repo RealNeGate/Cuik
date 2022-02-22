@@ -1,3 +1,4 @@
+#if 1
 // TODO(NeGate): This code would love some eyeballs but like those with skills
 // in fixing it not judging it because it's self-aware and would rather people
 // not hurt it's poor shit-box code feelings.
@@ -491,30 +492,11 @@ int main(int argc, char* argv[]) {
 #error "Unsupported host compiler... for now"
 #endif
 	
-	// input path
-	// TODO(NeGate): support inputting a directory in which
-	// case it'll just compile all the .c files in it together
-	if (argc == 2) {
-		printf("Expected filename\n");
-		return -1;
-	}
-	
-	const char* source_file = argv[2];
-	
-	// Get filename without extension
-	static char filename[260];
-	{
-		const char* ext = strrchr(source_file, '.');
-		if (!ext) ext = source_file + strlen(source_file);
-		
-		memcpy_s(filename, 260, source_file, ext - source_file);
-		filename[ext - source_file] = '\0';
-	}
-	
-	for (size_t i = 3; i < argc; i++) {
+	const char* source_file = NULL;
+	for (size_t i = 2; i < argc; i++) {
 		if (argv[i][0] != '-') {
-			printf("Invalid flag: %s\n", argv[i]);
-			return -1;
+			source_file = argv[i];
+			continue;
 		}
 		
 		char* key = &argv[i][1];
@@ -598,6 +580,21 @@ int main(int argc, char* argv[]) {
 			print_help(argv[0]);
 			return -1;
 		}
+	}
+	
+	if (source_file == NULL) {
+		printf("Expected filename\n");
+		return -1;
+	}
+	
+	// Get filename without extension
+	static char filename[260];
+	{
+		const char* ext = strrchr(source_file, '.');
+		if (!ext) ext = source_file + strlen(source_file);
+		
+		memcpy_s(filename, 260, source_file, ext - source_file);
+		filename[ext - source_file] = '\0';
 	}
 	
 	switch (target_arch) {
@@ -923,4 +920,6 @@ static bool live_compile(const char source_file[], const char obj_output_path[],
 	printf("No live compiler supported");
     return false;
 }
+#endif
+
 #endif
