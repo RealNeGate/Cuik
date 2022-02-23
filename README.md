@@ -4,7 +4,7 @@
 
 **warning: unfinished**
 
-The plan is a modern C compiler which can mostly work with Clang, GCC, and MSVC while also introducing some new ideas.
+The plan is a modern C11 compiler which can mostly work with Clang, GCC, and MSVC while also introducing some new ideas.
 
 ## Why write a C compiler?
 * To improve the compile times on debug builds without sacrificing features like I would with TCC.
@@ -12,6 +12,8 @@ The plan is a modern C compiler which can mostly work with Clang, GCC, and MSVC 
 * To add some extensions to improve the workflow of C programmers.
 * Because I can.
 
+## How to install?
+Just take a C compiler and compile the `compile.c` file and run it, if you want an optimized build add `RELEASE_BUILD` as a preprocessor define with `-D` or `/D`
 
 ## How am I doing?
 mostly aight, thanks for asking.
