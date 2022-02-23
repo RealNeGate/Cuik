@@ -312,6 +312,15 @@ static void dump_stmt(TranslationUnit* tu, FILE* stream, StmtIndex s, int depth)
 			}
 			break;
 		}
+		case STMT_WHILE: { 
+			fprintf(stream, "While\n");
+			dump_expr(tu, stream, sp->while_.cond, depth + 1);
+			
+			if (sp->while_.body) {
+				dump_stmt(tu, stream, sp->while_.body, depth + 1);
+			}
+			break;
+		}
 		case STMT_FOR: {
 			fprintf(stream, "For\n");
 			if (sp->for_.first) {
