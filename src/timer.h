@@ -1,93 +1,32 @@
 #pragma once
 
-#if _WIN32
-#include <windows.h>
-#else
-#include <time.h>
-#endif
-
-#include <stdio.h>
+#include <common.h>
 #include "ext/threads.h"
 
-extern FILE* timer__output;
-extern int timer__entry_count;
-extern double timer__freq;
-extern mtx_t timer__mutex;
+extern FILE* timer_output;
+extern double timer_freq;
+extern mtx_t timer_mutex;
 
-// done regardless of the profiler running just to be able to query time in general
-inline static void timer__init() {
-    LARGE_INTEGER freq;
-    QueryPerformanceFrequency(&freq);
-    timer__freq = 1.0 / (double)freq.QuadPart;
-}
+// regardless of if you want to profile code or not, you'll need to initialize
+// the timer be able to use timer_now()
+void timer_init();
 
-inline static void timer__open(const char* path) {
-	assert(timer__output == NULL);
-	
-	mtx_init(&timer__mutex, mtx_plain);
-	timer__output = fopen(path, "wb");
-	fprintf(timer__output, "{\"otherData\": {},\"traceEvents\":[");
-}
+// Opens up a file and emits the profiler output to it, it's a JSON format compatible
+// with chrome://tracing and speedscope
+void timer_open(const char* path);
 
-inline static void timer__close() {
-	if (timer__output == NULL) return;
-	
-	fprintf(timer__output, "]}");
-	fclose(timer__output);
-}
+// Close the profiler file
+void timer_close();
 
-inline static uint64_t timer__now() {
-    LARGE_INTEGER t;
-    QueryPerformanceCounter(&t);
-    return t.QuadPart;
-}
+// Reports a region of time in the profiler file 
+void timer_end(uint64_t start, const char* fmt, ...);
 
-// Magic amirite
-inline static void timer__end(const char* name, uint64_t start) {
-	if (timer__output == NULL) return;
-	
-	mtx_lock(&timer__mutex);
-	
-	uint64_t end = timer__now();
-	double elapsed_in_seconds = (end - start) * timer__freq;
-	double start_in_seconds = start * timer__freq;
-	//if (elapsed_in_seconds < 0.000001f) return;
-	
-	int i = timer__entry_count++;
-	
-#if 1
-#if _WIN32
-	uint32_t tid = GetCurrentThreadId();
-#else
-	uint32_t tid = 1;
-#endif
-	
-	fprintf(timer__output,
-			"%s"
-			"{\n"
-			"\"cat\":\"function\",\n"
-			"\"dur\":%lld,\n"
-			"\"name\":\"%s\",\n"
-			"\"ph\":\"X\",\n"
-			"\"pid\":0,\n"
-			"\"tid\": %u,\n"
-			"\"ts\": %lld\n"
-			"}\n",
-			
-			i == 0 ? "\n" : ",\n",
-			(long long)(elapsed_in_seconds * 1000000.0),
-			name,
-			tid,
-			(long long)(start_in_seconds * 1000000.0));
-#else
-	printf("%s took %.03f seconds\n", name, elapsed_in_seconds);
-#endif
-	
-	mtx_unlock(&timer__mutex);
-}
+// Time in "ticks"
+//   seconds = ticks * timer_freq
+uint64_t timer_now();
 
 // Usage:
-// timed_block("Beans") {
+// timed_block("Beans %d", 5) {
 //   ...
 // }
-#define timed_block(name) for (uint64_t __t1 = timer__now(), __i = 0; __i < 1; __i++, timer__end(name, __t1))
+#define timed_block(...) for (uint64_t __t1 = timer_now(), __i = 0; __i < 1; __i++, timer_end(__t1, __VA_ARGS__))

@@ -6,14 +6,10 @@
 #include <windows.h>
 #endif
 
-static uint64_t io_time_tally;
-static uint64_t io_num_of_files;
 static void remove_weird_whitespace(size_t len, char* text);
 
 #ifdef _WIN32
 static char* read_entire_file(const char* filepath) {
-	uint64_t start = timer__now();
-	
 	HANDLE file = CreateFileA(filepath, GENERIC_READ, FILE_SHARE_READ, 0, OPEN_EXISTING, 0, 0);
 	if (file == INVALID_HANDLE_VALUE) {
 		panic("error: could not open file '%s'!", filepath);
@@ -40,9 +36,6 @@ static char* read_entire_file(const char* filepath) {
 	memset(&buffer[bytes_read], 0, 17);
 	
 	remove_weird_whitespace(bytes_read, buffer);
-	
-	io_time_tally += timer__now() - start;
-	io_num_of_files++;
 	return buffer;
 }
 #else
@@ -78,7 +71,6 @@ static char* read_entire_file(const char* file_path) {
 		memset(&text[length_read], 0, 17);
 		fclose(file);
 	}
-	
 	
 	return text;
 }

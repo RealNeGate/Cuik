@@ -47,20 +47,7 @@ static TranslationUnit translation_unit;
 
 CompilerSettings settings;
 
-TB_Arch target_arch;
-TB_System target_system;
-TargetDescriptor target_desc;
-
 static char cuik_include_directory[260];
-
-// timer.h
-FILE* timer__output;
-int timer__entry_count;
-double timer__freq;
-mtx_t timer__mutex;
-
-// crash_handler.c
-void hook_crash_handler();
 
 static int task_thread(void* param) {
 	while (is_running) {
@@ -746,20 +733,21 @@ static bool dump_tokens(const char source_file[]) {
 		sprintf_s(output_path, 260, "%s.i", source_file);
 	}
 	
-	clock_t t1 = clock();
-	
 	// Preprocess file
-	CPP_Context cpp_ctx;
-	cpp_init(&cpp_ctx);
-	set_preprocessor_info(&cpp_ctx);
-	
-	TokenStream s = cpp_process(&cpp_ctx, source_file);
-	
-	cpp_finalize(&cpp_ctx);
-	
-	clock_t t2 = clock();
-	double delta_ms = (t2 - t1) / (double)CLOCKS_PER_SEC;
-	printf("preprocessor took %.03f seconds\n", delta_ms);
+	uint64_t t1 = timer__now();
+	TokenStream s;
+	{
+		CPP_Context cpp_ctx;
+		cpp_init(&cpp_ctx);
+		set_preprocessor_info(&cpp_ctx);
+		
+		s = cpp_process(&cpp_ctx, source_file);
+		
+		cpp_finalize(&cpp_ctx);
+	}
+	uint64_t t2 = timer__now();
+	double elapsed = (t2 - t1) * timer_freq;
+	printf("preprocessor took %.03f seconds\n", elapsed);
 	
 	FILE* f = fopen(output_path, "w");
 	if (!f) {
@@ -816,38 +804,6 @@ static bool dump_tokens(const char source_file[]) {
 // Live compiler functionality
 ////////////////////////////////
 #if _WIN32
-static bool disassemble_object_file(const wchar_t vs_exe_path[], const char filename[]) {
-	clock_t t1 = clock();
-	
-	static wchar_t cmd_line[260];
-	swprintf(cmd_line, 260, L"%s\\dumpbin.exe /nologo /disasm:nobytes %S.obj", vs_exe_path, filename);
-	
-	STARTUPINFOW si = {
-		.cb = sizeof(STARTUPINFOW),
-		.dwFlags = STARTF_USESTDHANDLES,
-		.hStdInput = GetStdHandle(STD_INPUT_HANDLE),
-		.hStdError = GetStdHandle(STD_ERROR_HANDLE),
-		.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE)
-	};
-	
-	PROCESS_INFORMATION pi = {};
-	if (!CreateProcessW(NULL, cmd_line, NULL, NULL, TRUE, 0, NULL, NULL, &si, &pi)) {
-		printf("Disassembly failed!\n");
-		return false;
-	}
-	
-	// Wait until child process exits.
-	WaitForSingleObject(pi.hProcess, INFINITE);
-	
-	// Close process and thread handles. 
-	CloseHandle(pi.hProcess);
-	CloseHandle(pi.hThread);
-	
-	clock_t t2 = clock();
-	double delta_ms = (t2 - t1) / (double)CLOCKS_PER_SEC;
-	printf("disassembly took %.03f seconds\n", delta_ms);
-	return true;
-}
 
 static uint64_t get_last_write_time(const char filepath[]) {
 	WIN32_FIND_DATA data;
@@ -861,65 +817,6 @@ static uint64_t get_last_write_time(const char filepath[]) {
 	return i.QuadPart;
 }
 
-// NOTE(NeGate): This is lowkey a mess but essentially if
-// the live-compiler crashes we wanna just ignore it and continue
-static jmp_buf live_compiler_savepoint;
-static void live_compiler_abort(int signo) {
-	longjmp(live_compiler_savepoint, 1);
-}
 
-static bool live_compile(const char source_file[], const char obj_output_path[], const char filename[]) {
-	uint64_t original_last_write = get_last_write_time(source_file);
-	while (true) {
-		system("cls");
-		
-		// bootlegy exception handler...
-		if (signal(SIGABRT, live_compiler_abort) == SIG_ERR) {
-			printf("Failed to set signal handler.\n");
-			return false;
-		}
-		
-		if (setjmp(live_compiler_savepoint) == 0) {
-			timed_block("compilation") {
-				compile_project(target_arch, target_sys, source_file, true);
-				
-				if (!tb_module_export(mod, obj_output_path, false)) abort();
-				tb_module_destroy(mod);
-			}
-			
-			disassemble_object_file(s_vswhere.vs_exe_path, filename);
-		}
-		
-		clear_any_reports();
-		
-		// Wait for the user to save again
-		while (true) {
-			uint64_t current_last_write = get_last_write_time(source_file);
-			if (original_last_write != current_last_write) {
-				original_last_write = current_last_write;
-				
-				// wait for it to finish writing before trying to compile
-				int ticks = 0;
-				while (GetFileAttributesA(source_file) == INVALID_FILE_ATTRIBUTES) {
-					SleepEx(1, FALSE);
-					
-					if (ticks++ > 100) {
-						printf("Live compiler timeout!");
-						return false;
-					}
-				}
-				break;
-			}
-			
-			SleepEx(100, FALSE);
-		}
-	}
-}
-#else
-static bool live_compile(const char source_file[], const char obj_output_path[], const char filename[]) {
-	printf("No live compiler supported");
-    return false;
-}
-#endif
 
 #endif

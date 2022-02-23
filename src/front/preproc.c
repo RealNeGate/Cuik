@@ -61,7 +61,6 @@ void cpp_deinit(CPP_Context* ctx) {
 }
 
 void cpp_finalize(CPP_Context* ctx) {
-	//printf("IO time: %f seconds (across the %zu files)\n", io_time_tally * timer__freq, io_num_of_files);
 	//__builtin_dump_struct(&perf_tally, &printf);
 	//cpp_dump(ctx);
 	
@@ -307,7 +306,7 @@ static void expand_double_hash(CPP_Context* restrict c, TokenStream* restrict s,
 
 static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, const char* directory, const char* filepath, int depth) {
 	// hacky but i don't wanna wrap it in a timed_block
-	uint64_t timer_start = timer__now();
+	uint64_t timer_start = timer_now();
 	
 	unsigned char* text = (unsigned char*)read_entire_file(filepath);
 	Lexer l = (Lexer) { filepath, text, text, 1 };
@@ -675,7 +674,7 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 			if (*p == '\\') *p = '/';
 		}
 		
-		timer__end(temp, timer_start);
+		timer_end(timer_start, temp);
 	}
 }
 

@@ -1730,21 +1730,8 @@ void irgen_top_level_stmt(TranslationUnit* tu, StmtIndex s) {
 			if (!tu->stmts[s].decl.attrs.is_used) return;
 		}
 		
-		// hacky but i don't wanna wrap it in a timed_block
-		uint64_t timer_start = timer__now();
-		
-		gen_func_body(tu, type, s);
-		
-		{
-			char temp[256];
-			sprintf_s(temp, 256, "irgen: %s", tu->stmts[s].decl.name);
-			
-			char* p = temp;
-			for (; *p; p++) {
-				if (*p == '\\') *p = '/';
-			}
-			
-			timer__end(temp, timer_start);
+		timed_block("irgen: %s", tu->stmts[s].decl.name) {
+			gen_func_body(tu, type, s);
 		}
 	} else if (tu->stmts[s].op == STMT_GLOBAL_DECL) {
 		if (!tu->stmts[s].decl.attrs.is_used) return;

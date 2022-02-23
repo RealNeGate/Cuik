@@ -17,6 +17,10 @@ typedef struct string { const unsigned char* data; size_t length; } string;
 #define STR2(x) #x
 #define STR(x) STR2(x)
 
+#ifndef MAX_PATH
+#define MAX_PATH 260
+#endif
+
 #define panic(...) do { printf(__VA_ARGS__); abort(); } while(0)
 
 #define swap(a, b) do { \

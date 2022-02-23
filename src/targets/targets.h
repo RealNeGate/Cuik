@@ -1,3 +1,5 @@
+#pragma once
+
 #include "../common.h"
 #include <front/preproc.h>
 #include <back/ir_gen.h>

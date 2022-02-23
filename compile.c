@@ -11,12 +11,14 @@
 #endif
 
 static const char* INPUT_FILES[] = {
-	"src/main.c",
+	"src/main_driver.c",
 	"src/tls.c",
+	"src/timer.c",
 	"src/diagnostic.c",
 	"src/crash_handler.c",
 	"src/big_array.c",
 	"src/arena.c",
+	"src/settings.c",
 	
 	"src/targets/x64.c",
 	
