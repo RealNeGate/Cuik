@@ -15,8 +15,6 @@ static _Thread_local const char* function_name;
 // For aggregate returns
 static _Thread_local TB_Register return_value_address;
 
-static FILE* tbir_output_file;
-
 TB_Function* static_init_func;
 static mtx_t static_init_mutex;
 
@@ -1673,9 +1671,9 @@ static void gen_func_body(TranslationUnit* tu, TypeIndex type, StmtIndex s) {
 			abort();
 		}
 		
-		tb_function_print(func, tb_default_print_callback, tbir_output_file);
-		fprintf(tbir_output_file, "\n\n\n");
-		fflush(tbir_output_file);
+		tb_function_print(func, tb_default_print_callback, stdout);
+		fprintf(stdout, "\n\n\n");
+		fflush(stdout);
 		
 		if (mtx_unlock(&emit_ir_mutex) != thrd_success) {
 			printf("internal compiler error: mtx_unlock(...) failure!");
@@ -1707,9 +1705,9 @@ void irgen_deinit() {
 			abort();
 		}
 		
-		tb_function_print(static_init_func, tb_default_print_callback, tbir_output_file);
-		fprintf(tbir_output_file, "\n\n\n");
-		fflush(tbir_output_file);
+		tb_function_print(static_init_func, tb_default_print_callback, stdout);
+		fprintf(stdout, "\n\n\n");
+		fflush(stdout);
 		
 		if (mtx_unlock(&emit_ir_mutex) != thrd_success) {
 			printf("internal compiler error: mtx_lock(...) failure!");

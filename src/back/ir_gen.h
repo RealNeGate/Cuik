@@ -9,7 +9,6 @@
 #include "tb.h"
 
 extern TokenStream ir_gen_tokens;
-extern FILE* tbir_output_file;
 extern TB_Module* mod;
 extern TB_Function* static_init_func;
 

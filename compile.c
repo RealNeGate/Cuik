@@ -28,9 +28,8 @@ static const char* INPUT_FILES[] = {
 	"src/front/atoms.c",
 	"src/front/const_eval.c",
 	"src/front/types.c",
-	
-	"src/mid/sema.c",
-	"src/mid/ast_dump.c",
+	"src/front/sema.c",
+	"src/front/ast_dump.c",
 	
 	"src/back/ir_gen.c",
 	"src/back/linker.c",

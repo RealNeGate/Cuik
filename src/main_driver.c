@@ -10,9 +10,7 @@
 // Frontend
 #include <front/preproc.h>
 #include <front/parser.h>
-
-// TODO(NeGate): remove the mid/ and just put it into the front/
-#include "mid/sema.h"
+#include <front/sema.h>
 
 // Backend
 #include <back/ir_gen.h>
@@ -242,7 +240,7 @@ static void dispatch_tasks(size_t count) {
 	}
 }
 
-static void compile_project(TB_Arch arch, TB_System sys, bool is_multithreaded) {
+static void compile_project(TB_Arch arch, TB_System sys, bool is_multithreaded, bool is_check) {
 	// Preprocess file
 	CPP_Context cpp_ctx;
 	cpp_init(&cpp_ctx);
@@ -281,51 +279,53 @@ static void compile_project(TB_Arch arch, TB_System sys, bool is_multithreaded) 
 		ast_dump(&translation_unit, stdout);
 	}
 	
-	// Generate IR
-	// TODO(NeGate): Globals amirite... yea maybe i'll maybe move the TB_Module from the
-	// globals but at the same time, it's a thread safe interface for the most part you're
-	// supposed to keep a global one and use it across multiple threads.
-	if (!is_multithreaded) {
-		timed_block("ir gen & compile") {
-			TB_FeatureSet features = { 0 };
-			mod = tb_module_create(arch, sys, &features);
-			
-			// IR generation
-			for (size_t i = 0, count = arrlen(translation_unit.top_level_stmts); i < count; i++) {
-				irgen_top_level_stmt(&translation_unit, translation_unit.top_level_stmts[i]);
+	if (!is_check) {
+		// Generate IR
+		// TODO(NeGate): Globals amirite... yea maybe i'll maybe move the TB_Module from the
+		// globals but at the same time, it's a thread safe interface for the most part you're
+		// supposed to keep a global one and use it across multiple threads.
+		if (!is_multithreaded) {
+			timed_block("ir gen & compile") {
+				TB_FeatureSet features = { 0 };
+				mod = tb_module_create(arch, sys, &features);
+				
+				// IR generation
+				for (size_t i = 0, count = arrlen(translation_unit.top_level_stmts); i < count; i++) {
+					irgen_top_level_stmt(&translation_unit, translation_unit.top_level_stmts[i]);
+				}
 			}
-		}
-	} else {
-		timed_block("ir gen & compile") {
-			is_running = true;
-			cnd_init(&tasks_condition);
-			mtx_init(&tasks_mutex, mtx_plain);
-			
-			// How many statements should each thread even grab
-			tasks_munch_size = (arrlen(translation_unit.top_level_stmts) / settings.num_of_worker_threads) + 1;
-			if (tasks_munch_size < 5) tasks_munch_size = 5;
-			
-			// Divide and conquer!!!
-			for (int i = 0; i < settings.num_of_worker_threads; i++) {
-				thrd_create(&threads[i], task_thread, NULL);
+		} else {
+			timed_block("ir gen & compile") {
+				is_running = true;
+				cnd_init(&tasks_condition);
+				mtx_init(&tasks_mutex, mtx_plain);
+				
+				// How many statements should each thread even grab
+				tasks_munch_size = (arrlen(translation_unit.top_level_stmts) / settings.num_of_worker_threads) + 1;
+				if (tasks_munch_size < 5) tasks_munch_size = 5;
+				
+				// Divide and conquer!!!
+				for (int i = 0; i < settings.num_of_worker_threads; i++) {
+					thrd_create(&threads[i], task_thread, NULL);
+				}
+				
+				dispatch_tasks(arrlen(translation_unit.top_level_stmts));
+				
+				arrfree(s.tokens);
+				arrfree(translation_unit.top_level_stmts);
+				
+				// Just let's the threads know that 
+				// they might need to die now
+				tasks_count = 0;
+				tasks_complete = 0;
+				
+				is_running = false;
+				for (int i = 0; i < settings.num_of_worker_threads; i++) {
+					thrd_join(threads[i], NULL);
+				}
+				mtx_destroy(&tasks_mutex);
+				cnd_destroy(&tasks_condition);
 			}
-			
-			dispatch_tasks(arrlen(translation_unit.top_level_stmts));
-			
-			arrfree(s.tokens);
-			arrfree(translation_unit.top_level_stmts);
-			
-			// Just let's the threads know that 
-			// they might need to die now
-			tasks_count = 0;
-			tasks_complete = 0;
-			
-			is_running = false;
-			for (int i = 0; i < settings.num_of_worker_threads; i++) {
-				thrd_join(threads[i], NULL);
-			}
-			mtx_destroy(&tasks_mutex);
-			cnd_destroy(&tasks_condition);
 		}
 	}
 	
@@ -412,7 +412,7 @@ static bool live_compile() {
 		}
 		
 		if (setjmp(live_compiler_savepoint) == 0) {
-			compile_project(target_arch, target_system, true);
+			compile_project(target_arch, target_system, true, false);
 			
 			if (!tb_module_export(mod, obj_output_path, false)) abort();
 			tb_module_destroy(mod);
@@ -758,14 +758,6 @@ int main(int argc, char* argv[]) {
 				abort();
 			}
 			
-			if (settings.print_tb_ir) {
-				// Get filename as *.tbir
-				char tbir_filename[MAX_PATH];
-				snprintf(tbir_filename, 260, "%s.tbir", cuik_file_no_ext);
-				
-				tbir_output_file = fopen(tbir_filename, "wb");
-			}
-			
 			timer_init();
 			
 			// Open profiler file stream
@@ -777,25 +769,17 @@ int main(int argc, char* argv[]) {
 			}
 			
 			// Build project
-			uint64_t compile_start = timer_now();
-			
 			timed_block("total") {
-				compile_project(target_arch, target_system, true);
+				compile_project(target_arch, target_system, true, mode == COMPILER_MODE_CHECK);
 				
 				timed_block("export") {
-					if (settings.print_tb_ir) {
-						fclose(tbir_output_file);
-					} else if (mode != COMPILER_MODE_CHECK) {
+					if (!settings.print_tb_ir && mode != COMPILER_MODE_CHECK) {
 						if (!tb_module_export(mod, obj_output_path, settings.debug_info)) abort();
 					}
 					
 					tb_module_destroy(mod);
 				}
 			}
-			
-			uint64_t compile_end = timer_now();
-			double elapsed = (compile_end - compile_start) * timer_freq;
-			printf("compiled in %f seconds\n", elapsed);
 			
 			// Close out profiler output (it doesn't include the linking)
 			timer_close();
