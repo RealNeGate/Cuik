@@ -9,6 +9,23 @@ static void dump_expr(TranslationUnit* tu, FILE* stream, ExprIndex e, int depth)
 	for (int i = 0; i < depth; i++) printf("  ");
 	
 	Expr* restrict ep = &tu->exprs[e];
+	if (ep->cast_type != ep->type) {
+		type_as_string(tu, sizeof(temp_string0), temp_string0, ep->type);
+		type_as_string(tu, sizeof(temp_string1), temp_string1, ep->cast_type);
+		
+		if (ep->op == EXPR_CAST) {
+			fprintf(stream, "Cast '%s' -> '%s'\n", temp_string0, temp_string1);
+			
+			depth++;
+			for (int i = 0; i < depth; i++) printf("  ");
+		} else if (ep->cast_type > TYPE_VOID) {
+			fprintf(stream, "ImplicitCast '%s' -> '%s'\n", temp_string0, temp_string1);
+			
+			depth++;
+			for (int i = 0; i < depth; i++) printf("  ");
+		}
+	}
+	
 	switch (ep->op) {
 		case EXPR_INT: {
 			type_as_string(tu, sizeof(temp_string0), temp_string0, ep->type);
@@ -45,7 +62,35 @@ static void dump_expr(TranslationUnit* tu, FILE* stream, ExprIndex e, int depth)
 		case EXPR_STR: {
 			// TODO(NeGate): Convert the string back into a C string literal so we don't cause any weird text printing
 			type_as_string(tu, sizeof(temp_string0), temp_string0, ep->type);
-			fprintf(stream, "StringLiteral \"...\" '%s'\n", temp_string0);
+			
+			const unsigned char* start = ep->str.start;
+			const unsigned char* end = ep->str.end;
+			
+			char* out_start = tls_push(1024);
+			char* out = out_start;
+			
+			while (start != end) {
+				// it's either printed as normal or \x00
+				unsigned int ch = *start;
+				bool is_normal = (*start >= 0x20 && *start < 0x7F);
+				
+				ptrdiff_t len = (out-out_start) + (is_normal ? 1 : 4);
+				if (len >= 1024) break;
+				
+				if (is_normal) {
+					*out++ = ch;
+				} else {
+					*out++ = '\\';
+					*out++ = 'x';
+					*out++ = "0123456789ABCDEF"[(ch>>8) & 0xF];
+					*out++ = "0123456789ABCDEF"[ch & 0xF];
+				}
+				
+				start++;
+			}
+			
+			fprintf(stream, "StringLiteral \"%.*s\" '%s'\n", (int)(out-out_start), out_start, temp_string0);
+			tls_restore(out_start);
 			break;
 		}
 		case EXPR_CALL: {
@@ -157,11 +202,7 @@ static void dump_expr(TranslationUnit* tu, FILE* stream, ExprIndex e, int depth)
 			break;
 		}
 		case EXPR_CAST: {
-			type_as_string(tu, sizeof(temp_string0), temp_string0, ep->type);
-			type_as_string(tu, sizeof(temp_string1), temp_string1, ep->cast.type);
-			fprintf(stream, "Cast '%s' -> '%s'\n", temp_string0, temp_string1);
-			
-			dump_expr(tu, stream, ep->cast.src, depth + 1);
+			dump_expr(tu, stream, ep->cast.src, depth);
 			break;
 		}
 		case EXPR_COMMA:

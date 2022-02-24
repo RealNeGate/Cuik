@@ -19,6 +19,7 @@ static const char* INPUT_FILES[] = {
 	"src/big_array.c",
 	"src/arena.c",
 	"src/settings.c",
+	"src/driver_utils.c",
 	
 	"src/targets/x64.c",
 	
@@ -51,6 +52,71 @@ enum { INPUT_FILE_COUNT = sizeof(INPUT_FILES) / sizeof(INPUT_FILES[0]) };
 #else
 #define UNIX_STYLE 1
 #endif
+
+int tests_working = 0;
+int number_of_tests = 0;
+
+void expect_return_value(const char* path, int expected) {
+	number_of_tests++;
+	
+	printf("Attempt \"%s\"...   ", path);
+	
+	int code;
+	char cmd[1024];
+	
+	// Compile
+	snprintf(cmd, 1024, "cuik build %s.c", path);
+	code = system(cmd);
+	if (code != 0) goto error;
+	
+	// Run
+	snprintf(cmd, 1024, "%s.exe", path);
+	code = system(cmd);
+	if (code != expected) goto error;
+	
+	// Success!
+	printf("Success!\n");
+	tests_working++;
+	return;
+	
+	error:
+	printf("Fail! (code: %d)\n", code);
+}
+
+void expect_stdout(const char* path, const char* expected) {
+	number_of_tests++;
+	
+	printf("Attempt \"%s\"...   ", path);
+	
+	int code;
+	char cmd[1024];
+	
+	// Compile
+	snprintf(cmd, 1024, "cuik build %s.c", path);
+	code = system(cmd);
+	if (code != 0) {
+		printf("Fail! (code: %d)\n", code);
+		return;
+	}
+	
+	// Run
+	snprintf(cmd, 1024, "%s.exe", path);
+	FILE* stream = _popen(cmd, "rb");
+	
+	char data[1024];
+	assert(fread(data, sizeof(data), sizeof(char), stream) < 1024);
+	fclose(stream);
+	
+	if (strcmp(data, expected) != 0) {
+		printf("Fail! (string: %s)\n", data);
+		return;
+	}
+	
+	// Success!
+	printf("Success!\n");
+	tests_working++;
+	return;
+}
 
 int main(int argc, char** argv) {
 	// don't wanna buffer stdout
@@ -107,9 +173,19 @@ int main(int argc, char** argv) {
 	}
 	
 	printf("CMD: %s\n", command_buffer);
-	
 	cmd_run();
-	
 	printf("Outputting cuik to: build/cuik.exe...\n");
+	
+#ifdef TEST_SUITE
+	printf("\n\n\n");
+	printf("Running tests...\n");
+	
+	{
+		expect_return_value("tests"SLASH"the_increment"SLASH"program_termination", 42);
+		expect_stdout("tests"SLASH"the_increment"SLASH"printf_test", "Hello Hel Goodb 127 63 0 254 63 0 32000 32767 4 17 65532 65530 4 16 32000 32767 4 17 65532 65530 4 16 4294967295 6731943 2147483646 16 123456789 57486731943 985429 9123456 1.000000 123000.000000 0.100 0.234 3.000000");
+		
+		printf("===============   Tests (%d succeeded out of %d)   ===============\n", tests_working, number_of_tests);
+	}
+#endif
 	return 0;
 }

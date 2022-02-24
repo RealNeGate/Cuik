@@ -8,7 +8,7 @@
 #include <assert.h>
 #include <stdbool.h>
 
-typedef struct string { const unsigned char* data; size_t length; } string; 
+typedef struct { const unsigned char* data; size_t length; } string; 
 
 #define KILOBYTES(x) ((x) << 10ull)
 #define MEGABYTES(x) ((x) << 20ull)
@@ -19,6 +19,12 @@ typedef struct string { const unsigned char* data; size_t length; } string;
 
 #ifndef MAX_PATH
 #define MAX_PATH 260
+#endif
+
+// just because we use a threads fallback layer which can include windows
+// and such which is annoying... eventually need to modify that out or something
+#ifndef thread_local
+#define thread_local _Thread_local
 #endif
 
 #define panic(...) do { printf(__VA_ARGS__); abort(); } while(0)

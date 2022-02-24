@@ -1,31 +1,9 @@
 // main_driver.c is the entrypoint to the compiler and should also
 // act as a tutorial to writing a custom driver. Currently it doesn't 
 // support multiple input files but that'll be next.
-#include <common.h>
-#include <timer.h>
-#include <settings.h>
-#include <crash_handler.h>
-#include <targets/targets.h>
+#include "driver_utils.h"
 
-// Frontend
-#include <front/preproc.h>
-#include <front/parser.h>
-#include <front/sema.h>
-
-// Backend
-#include <back/ir_gen.h>
-#include <back/linker.h>
-#include <ext/threads.h>
-
-#if _WIN32
-// This is used to detect VS and WinSDK includes and library folders
-#include <back/microsoft_craziness.h>
-#endif
-
-#define CUIK_COMPILER_MAJOR 0
-#define CUIK_COMPILER_MINOR 1
-
-typedef enum CompilerMode {
+typedef enum {
 	COMPILER_MODE_NONE,
 	
 	// print version
@@ -49,10 +27,8 @@ typedef enum CompilerMode {
 	COMPILER_MODE_RUN,
 } CompilerMode;
 
+//static CompilationUnit compilation_unit;
 static TranslationUnit translation_unit;
-
-// %CUIK%/crt/include/
-static char cuik_include_directory[MAX_PATH];
 
 ////////////////////////////////
 // Standard compilation
@@ -110,123 +86,6 @@ static int task_thread(void* param) {
 	return 0;
 }
 
-static void set_preprocessor_info(CPP_Context* cpp) {
-	// CuikC specific
-	cpp_define(cpp, "__CUIKC__", STR(CUIK_COMPILER_MAJOR));
-	cpp_define(cpp, "__CUIKC_MINOR__", STR(CUIK_COMPILER_MINOR));
-	
-	// DO NOT REMOVE THESE, IF THEY'RE MISSING THE PREPROCESSOR
-	// WILL NOT DETECT THEM
-	cpp_define_empty(cpp, "__FILE__");
-	cpp_define_empty(cpp, "L__FILE__");
-	cpp_define_empty(cpp, "__LINE__");
-	
-	// Standard C macros
-	cpp_define(cpp, "__STDC__", "1");
-	cpp_define(cpp, "__STDC_VERSION__", "201112L"); // C11
-	
-	// currently there's no freestanding mode but if there was this would be
-	// turned off for it
-	cpp_define(cpp, "__STDC_HOSTED__", "1");
-	
-	{
-		// The time of translation of the preprocessing translation unit
-		static const char mon_name[][4] = {
-			"Jan", "Feb", "Mar", "Apr", "May", "Jun",
-			"Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
-		};
-		
-		time_t rawtime;
-		time(&rawtime);
-		
-		struct tm* timeinfo = localtime(&rawtime);
-		
-		// Mmm dd yyyy
-		char date_str[20];
-		snprintf(date_str, 20, "\"%.3s%3d %d\"", mon_name[timeinfo->tm_mon], timeinfo->tm_mday, 1900 + timeinfo->tm_year);
-		cpp_define(cpp, "__DATE__", date_str);
-		
-		// hh:mm:ss
-		char time_str[20];
-		snprintf(time_str, 20, "\"%.2d:%.2d:%.2d\"", timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
-		cpp_define(cpp, "__TIME__", time_str);
-	}
-	
-	cpp_define_empty(cpp, "__STDC_NO_COMPLEX__");
-	cpp_define_empty(cpp, "__STDC_NO_VLA__");
-	cpp_define_empty(cpp, "__STDC_NO_THREADS__");
-	
-	cpp_add_include_directory(cpp, cuik_include_directory);
-	
-	// platform specific stuff
-	if (target_system == TB_SYSTEM_WINDOWS) {
-		// WinSDK includes
-		char filepath[MAX_PATH];
-		
-		if (snprintf(filepath, 260, "%S\\ucrt\\", s_vswhere.windows_sdk_include) > MAX_PATH) {
-			printf("internal compiler error: WinSDK include directory too long!\n");
-			abort();
-		}
-		cpp_add_include_directory(cpp, filepath);
-		
-		if (snprintf(filepath, 260, "%S\\um\\", s_vswhere.windows_sdk_include) > MAX_PATH) {
-			printf("internal compiler error: WinSDK include directory too long!\n");
-			abort();
-		}
-		cpp_add_include_directory(cpp, filepath);
-		
-		if (snprintf(filepath, 260, "%S\\shared\\", s_vswhere.windows_sdk_include) > MAX_PATH) {
-			printf("internal compiler error: WinSDK include directory too long!\n");
-			abort();
-		}
-		cpp_add_include_directory(cpp, filepath);
-		
-		// VS include
-		if (snprintf(filepath, 260, "%S\\", s_vswhere.vs_include_path) > MAX_PATH) {
-			printf("internal compiler error: VS include directory too long!\n");
-			abort();
-		}
-		cpp_add_include_directory(cpp, filepath);
-		
-		cpp_define_empty(cpp, "_DEBUG");
-		cpp_define_empty(cpp, "_MT");
-		cpp_define_empty(cpp, "_CRT_NONSTDC_NO_WARNINGS");
-		cpp_define_empty(cpp, "_CRT_SECURE_NO_WARNINGS");
-		
-		// we pretend to be a modern MSVC compiler
-		cpp_define(cpp, "_MSC_VER", "1929");
-		cpp_define(cpp, "_MSC_FULL_VER", "192930133");
-		cpp_define(cpp, "_WIN32_WINNT", "0x0A00");
-		cpp_define(cpp, "NTDDI_VERSION", "0x0A000008");
-		
-		// wrappers over MSVC based keywords and features
-		cpp_define(cpp, "__int8", "char");
-		cpp_define(cpp, "__int16", "short");
-		cpp_define(cpp, "__int32", "int");
-		cpp_define(cpp, "__int64", "long long");
-		cpp_define(cpp, "__pragma(x)", "_Pragma(#x)");
-		cpp_define(cpp, "__inline", "inline");
-		cpp_define(cpp, "__forceinline", "inline");
-		cpp_define(cpp, "__signed__", "signed");
-		cpp_define(cpp, "__alignof", "_Alignof");
-		cpp_define(cpp, "__CRTDECL", "__cdecl");
-		
-		// things we don't handle yet so we just remove them
-		cpp_define_empty(cpp, "_Frees_ptr_");
-		cpp_define_empty(cpp, "__unaligned");
-		cpp_define_empty(cpp, "__analysis_noreturn");
-		cpp_define_empty(cpp, "__ptr32");
-		cpp_define_empty(cpp, "__ptr64");
-	} else {
-		// TODO(NeGate): Automatically detect these somehow...
-		cpp_add_include_directory(cpp, "/usr/lib/gcc/x86_64-linux-gnu/10/include/");
-		cpp_add_include_directory(cpp, "/usr/local/include/");
-		cpp_add_include_directory(cpp, "/usr/include/");
-	}
-	
-	target_desc.set_defines(cpp);
-}
-
 // essentially a parallel_for which performs IR gen on top level statements
 static void dispatch_tasks(size_t count) {
 	tasks_count = count;
@@ -244,7 +103,7 @@ static void compile_project(TB_Arch arch, TB_System sys, bool is_multithreaded, 
 	// Preprocess file
 	CPP_Context cpp_ctx;
 	cpp_init(&cpp_ctx);
-	set_preprocessor_info(&cpp_ctx);
+	cuik_set_cpp_defines(&cpp_ctx);
 	
 	TokenStream s;
 	timed_block("preprocess") {
@@ -267,11 +126,7 @@ static void compile_project(TB_Arch arch, TB_System sys, bool is_multithreaded, 
 	
 	// Semantics pass
 	timed_block("semantics") {
-		sema_remove_unused(&translation_unit);
-		
-		for (size_t i = 0, count = arrlen(translation_unit.top_level_stmts); i < count; i++) {
-			sema_check(&translation_unit, translation_unit.top_level_stmts[i]);
-		}
+		sema_pass(NULL, &translation_unit);
 		crash_if_reports(REPORT_ERROR);
 	}
 	
@@ -460,16 +315,13 @@ static bool live_compile() {
 // Preprocessor dump
 ////////////////////////////////
 static bool dump_tokens() {
-	char output_path[MAX_PATH];
-	snprintf(output_path, 260, "%s.i", cuik_file_no_ext);
-	
 	// Preprocess file
 	uint64_t t1 = timer_now();
 	TokenStream s;
 	{
 		CPP_Context cpp_ctx;
 		cpp_init(&cpp_ctx);
-		set_preprocessor_info(&cpp_ctx);
+		cuik_set_cpp_defines(&cpp_ctx);
 		
 		s = cpp_process(&cpp_ctx, cuik_source_file);
 		
@@ -479,6 +331,8 @@ static bool dump_tokens() {
 	double elapsed = (t2 - t1) * timer_freq;
 	printf("preprocessor took %.03f seconds\n", elapsed);
 	
+	char output_path[MAX_PATH];
+	snprintf(output_path, 260, "%s.i", cuik_file_no_ext);
 	FILE* f = fopen(output_path, "w");
 	if (!f) {
 		printf("Could not open file a.txt\n");
@@ -564,6 +418,8 @@ int main(int argc, char* argv[]) {
 		print_help(argv[0]);
 		return 1;
 	}
+	
+	cuik_detect_crt_include();
 	
 #ifdef _WIN32
 	// This is used to detect includes for the preprocessor
@@ -811,6 +667,8 @@ int main(int argc, char* argv[]) {
 						printf("\n\nRunning: %s...\n", exe_path);
 						int exit_code = system(exe_path);
 						printf("Exit code: %d\n", exit_code);
+						
+						return exit_code;
 					}
 				}
 			}

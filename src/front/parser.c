@@ -27,20 +27,20 @@ typedef struct LabelEntry {
 	StmtIndex value;
 } LabelEntry;
 
-_Thread_local static int local_symbol_count = 0;
-_Thread_local static Symbol local_symbols[64 * 1024];
+thread_local static int local_symbol_count = 0;
+thread_local static Symbol local_symbols[64 * 1024];
 
-_Thread_local static IncompleteType* incomplete_types; // stb_ds hash map
-_Thread_local static SymbolEntry* global_symbols; // stb_ds hash map
-_Thread_local static TypedefEntry* typedefs; // stb_ds hash map
-_Thread_local static LabelEntry* labels; // stb_ds hash map
+thread_local static IncompleteType* incomplete_types; // stb_ds hash map
+thread_local static SymbolEntry* global_symbols; // stb_ds hash map
+thread_local static TypedefEntry* typedefs; // stb_ds hash map
+thread_local static LabelEntry* labels; // stb_ds hash map
 
-_Thread_local static StmtIndex current_switch_or_case;
-_Thread_local static StmtIndex current_breakable;
-_Thread_local static StmtIndex current_continuable;
+thread_local static StmtIndex current_switch_or_case;
+thread_local static StmtIndex current_breakable;
+thread_local static StmtIndex current_continuable;
 
 // two simple temporary buffers to represent type_as_string results
-static _Thread_local char temp_string0[256], temp_string1[256];
+static thread_local char temp_string0[256], temp_string1[256];
 
 static void expect(TokenStream* restrict s, char ch);
 static Symbol* find_local_symbol(TokenStream* restrict s);

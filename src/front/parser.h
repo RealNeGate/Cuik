@@ -541,7 +541,20 @@ typedef struct Symbol {
 	};
 } Symbol;
 
-typedef struct TranslationUnit {
+// these represent exported symbols which may or may not point
+// to either functions internal to the compilation unit or outside
+// of it.
+typedef struct {
+	struct TranslationUnit* tu;
+	StmtIndex stmt;
+} ExportedSymbol;
+
+typedef struct {
+	Atom key;
+	ExportedSymbol value;
+} ExportedSymbolEntry;
+
+typedef struct {
 	BigArray(Type) types;
 	BigArray(Member) members;
 	BigArray(Param) params;
@@ -553,6 +566,12 @@ typedef struct TranslationUnit {
 	// NOTE(NeGate): should this be an stb_ds array?
 	StmtIndex* top_level_stmts;
 } TranslationUnit;
+
+typedef struct {
+	// anything extern might map to a different translation unit within
+	// the same compilation unit which means it's not technically external
+	ExportedSymbolEntry* export_table;
+} CompilationUnit;
 
 TypeIndex new_func(TranslationUnit* tu);
 TypeIndex new_enum(TranslationUnit* tu);

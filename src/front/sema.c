@@ -161,6 +161,22 @@ static InitNode* sema_infer_initializer_array_count(TranslationUnit* tu, int nod
 	return node;
 }
 
+static bool is_assignable_expr(TranslationUnit* tu, ExprIndex e) {
+	Expr* restrict ep = &tu->exprs[e];
+	
+	switch (ep->op) {
+		case EXPR_SYMBOL:
+		case EXPR_DEREF:
+		case EXPR_SUBSCRIPT:
+		case EXPR_ARROW:
+		case EXPR_DOT:
+		return true;
+		
+		default:
+		return false;
+	}
+}
+
 static TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e) {
 	Expr* restrict ep = &tu->exprs[e];
 	
@@ -467,6 +483,16 @@ static TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e) {
 				for (size_t i = param_count; i < arg_count; i++) {
 					TypeIndex src = sema_expr(tu, args[i]);
 					
+					// all integers ranked lower than int are promoted to int
+					if (tu->types[src].kind >= KIND_BOOL && tu->types[src].kind < KIND_INT) {
+						src = TYPE_INT;
+					}
+					
+					// all floats ranked lower than double are promoted to double
+					if (tu->types[src].kind == KIND_FLOAT) {
+						src = TYPE_DOUBLE;
+					}
+					
 					tu->exprs[args[i]].cast_type = src;
 				}
 			} else {
@@ -684,6 +710,14 @@ static TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e) {
 		case EXPR_XOR_ASSIGN:
 		case EXPR_SHL_ASSIGN:
 		case EXPR_SHR_ASSIGN: {
+			if (!is_assignable_expr(tu, ep->bin_op.left)) {
+				sema_error(tu->exprs[ep->bin_op.left].loc, "Left-hand side is not assignable");
+				
+				tu->exprs[ep->bin_op.left].cast_type = 0;
+				tu->exprs[ep->bin_op.right].cast_type = 0;
+				return (ep->type = 0);
+			}
+			
 			TypeIndex lhs = sema_expr(tu, ep->bin_op.left);
 			sema_expr(tu, ep->bin_op.right);
 			
@@ -848,7 +882,7 @@ void sema_stmt(TranslationUnit* tu, StmtIndex s) {
 	}
 }
 
-void sema_check(TranslationUnit* tu, StmtIndex s) {
+static void sema_top_level(TranslationUnit* tu, StmtIndex s) {
 	Stmt* restrict sp = &tu->stmts[s];
 	
 	TypeIndex type_index = sp->decl.type;
@@ -928,7 +962,7 @@ void sema_check(TranslationUnit* tu, StmtIndex s) {
 			sema_stmt(tu, (StmtIndex)sp->decl.initial);
 			function_stmt = 0;
 			break;
-		}\
+		}
 		case STMT_DECL:
 		case STMT_GLOBAL_DECL: {
 			if (!sp->decl.attrs.is_used) break;
@@ -1076,10 +1110,12 @@ static void sema_mark_children(TranslationUnit* tu, ExprIndex e) {
 	}
 }
 
-void sema_remove_unused(TranslationUnit* tu) {
-	// simple mark and sweep
-	for (size_t s = 0, count = arrlen(tu->top_level_stmts); s < count; s++) {
-		Stmt* restrict sp = &tu->stmts[tu->top_level_stmts[s]];
+void sema_pass(CompilationUnit* cu, TranslationUnit* tu) {
+	size_t count = arrlen(tu->top_level_stmts);
+	
+	// simple mark and sweep to remove unused symbols
+	for (size_t i = 0; i < count; i++) {
+		Stmt* restrict sp = &tu->stmts[tu->top_level_stmts[i]];
 		
 		if (sp->decl.attrs.is_root) {
 			sp->decl.attrs.is_used = true;
@@ -1092,5 +1128,10 @@ void sema_remove_unused(TranslationUnit* tu) {
 				}
 			}
 		}
+	}
+	
+	// go through all top level statements and type check
+	for (size_t i = 0; i < count; i++) {
+		sema_top_level(tu, tu->top_level_stmts[i]);
 	}
 }

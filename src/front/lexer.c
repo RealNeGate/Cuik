@@ -365,13 +365,16 @@ void lexer_read(Lexer* restrict l) {
 					current++;
 					
 					while (char_classes[*current] == CHAR_CLASS_NUMBER) { current++; }
+				}
+				
+				if (*current == 'e') {
+					// floats but cooler
+					l->token_type = TOKEN_FLOAT;
 					
-					if (*current == 'e') {
-						current++;
-						if (*current == '+' || *current == '-') current++;
-						
-						while (char_classes[*current] == CHAR_CLASS_NUMBER) { current++; }
-					}
+					current++;
+					if (*current == '+' || *current == '-') current++;
+					
+					while (char_classes[*current] == CHAR_CLASS_NUMBER) { current++; }
 				}
 			}
 			
@@ -384,7 +387,10 @@ void lexer_read(Lexer* restrict l) {
 				current += (char_classes[*current] == CHAR_CLASS_NUMBER);
 			} else if (*current == 'u') {
 				current++;
-				current += (*current == 'i'); // you can also write ui32 or just u32
+				
+				while (char_classes[*current] == CHAR_CLASS_IDENT) {
+					current++;
+				}
 				
 				// at most it's two numbers
 				current += (char_classes[*current] == CHAR_CLASS_NUMBER);
@@ -571,7 +577,7 @@ void lexer_read(Lexer* restrict l) {
 
 uint64_t parse_int(size_t len, const char* str, IntSuffix* out_suffix) {
 	char* end;
-	uint64_t i = strtoul(str, &end, 0);
+	uint64_t i = strtoull(str, &end, 0);
 	
 	IntSuffix suffix = INT_SUFFIX_NONE;
 	if (end != &str[len]) {

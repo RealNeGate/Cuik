@@ -131,7 +131,11 @@ static TB_Register cast_reg(TB_Function* func, TB_Register reg, const Type* src,
 		/* TB has opaque pointers, nothing needs to be done. */
 	} else if (src->kind == KIND_FLOAT &&
 			   dst->kind == KIND_DOUBLE) {
-		reg = tb_inst_fpxt(func, reg, TB_TYPE_F64);
+		TB_DataType dt = tb_function_get_node(func, reg)->dt;
+		
+		if (!(dt.type == TB_F64 && dt.width == 0)) {
+			reg = tb_inst_fpxt(func, reg, TB_TYPE_F64);
+		}
 	} else if (src->kind == KIND_DOUBLE &&
 			   dst->kind == KIND_FLOAT) {
 		TB_DataType dt = tb_function_get_node(func, reg)->dt;
@@ -721,14 +725,30 @@ static IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 			
 			// Resolve parameters
 			size_t real_arg_count = arg_count + is_aggregate_return;
-			TB_Register* ir_args = tls_push(real_arg_count * sizeof(TB_Register));
+			TB_Reg* ir_args = tls_push(real_arg_count * sizeof(TB_Reg));
 			
 			if (is_aggregate_return) {
 				ir_args[0] = tb_inst_local(func, tu->types[ep->type].size, tu->types[ep->type].align);
 			}
 			
+			// point at which it stops being know which parameter types we're
+			// mapping to, if it's arg_count then there's really none
+			size_t varargs_cutoff = arg_count;
+			Type* func_type = &tu->types[tu->exprs[ep->call.target].type];
+			if (func_type->func.has_varargs) {
+				varargs_cutoff = func_type->func.param_count;
+			}
+			
 			for (size_t i = 0; i < arg_count; i++) {
-				ir_args[is_aggregate_return+i] = irgen_as_rvalue(tu, func, args[i]);
+				TB_Reg arg = irgen_as_rvalue(tu, func, args[i]);
+				TB_DataType dt = tb_function_get_node(func, arg)->dt;
+				
+				// convert any float variadic arguments into integers
+				if (i >= varargs_cutoff && dt.type == TB_F64 && dt.width == 0) {
+					arg = tb_inst_bitcast(func, arg, TB_TYPE_I64);
+				}
+				
+				ir_args[is_aggregate_return+i] = arg;
 			}
 			
 			// Resolve call target
@@ -740,13 +760,13 @@ static IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 			TB_DataType dt = ctype_to_tbtype(&tu->types[ep->type]);
 			if (is_aggregate_return) dt = TB_TYPE_VOID;
 			
-			TB_Register r;
+			TB_Reg r;
 			if (func_ptr.value_type == LVALUE_FUNC) {
 				r = tb_inst_call(func, dt, func_ptr.func, real_arg_count, ir_args);
 			} else if (func_ptr.value_type == LVALUE_EFUNC) {
 				r = tb_inst_ecall(func, dt, func_ptr.ext, real_arg_count, ir_args);
 			} else {
-				TB_Register target_reg = cvt2rval(tu, func, func_ptr, ep->call.target);
+				TB_Reg target_reg = cvt2rval(tu, func, func_ptr, ep->call.target);
 				
 				r = tb_inst_vcall(func, dt, target_reg, real_arg_count, ir_args);
 			}
