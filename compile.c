@@ -177,16 +177,14 @@ int main(int argc, char** argv) {
 	cmd_run();
 	printf("Outputting cuik to: build/cuik.exe...\n");
 	
-#ifdef TEST_SUITE
-	printf("\n\n\n");
-	printf("Running tests...\n");
-	
-	{
-		expect_return_value("tests"SLASH"the_increment"SLASH"program_termination", 42);
-		expect_stdout("tests"SLASH"the_increment"SLASH"printf_test", "Hello Hel Goodb 127 63 0 254 63 0 32000 32767 4 17 65532 65530 4 16 32000 32767 4 17 65532 65530 4 16 4294967295 6731943 2147483646 16 123456789 57486731943 985429 9123456 1.000000 123000.000000 0.100 0.234 3.000000");
+	if (argc >= 1 && strcmp(argv[1], "test") == 0) {
+		printf("\n\n\n");
+		printf("Running tests...\n");
+		
+		expect_return_value("tests"SLASH"the_increment"SLASH"iso"SLASH"program_termination", 42);
+		expect_stdout("tests"SLASH"the_increment"SLASH"iso"SLASH"printf_test", "Hello Hel Goodb 127 63 0 254 63 0 32000 32767 4 17 65532 65530 4 16 32000 32767 4 17 65532 65530 4 16 4294967295 6731943 2147483646 16 123456789 57486731943 985429 9123456 1.000000 123000.000000 0.100 0.234 3.000000");
 		
 		printf("===============   Tests (%d succeeded out of %d)   ===============\n", tests_working, number_of_tests);
 	}
-#endif
 	return 0;
 }

@@ -895,7 +895,7 @@ static void sema_top_level(TranslationUnit* tu, StmtIndex s) {
 				break;
 			}
 			
-			if (sp->decl.attrs.is_static || sp->decl.attrs.is_inline) {
+			if (sp->decl.attrs.is_static) {
 				if (!sp->decl.attrs.is_used) {
 					sema_warn(sp->loc, "Function '%s' is never used.", name);
 					return;
