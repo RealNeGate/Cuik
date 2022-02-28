@@ -601,12 +601,67 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 						// We gotta hit a line by now
 						assert(l.hit_line);
 					} else {
-						// TODO(NeGate): Actually implement these...
+						// convert to #pragma blah => _Pragma("blah")
+						SourceLocIndex loc = get_source_location(&l, s);
+						
+						unsigned char* str = gimme_the_shtuffs(c, sizeof("_Pragma"));
+						memcpy(str, "_Pragma", sizeof("_Pragma"));
+						Token t = (Token) {
+							TOKEN_KW_Pragma, loc, str, str + 7
+						};
+						arrput(s->tokens, t);
+						
+						str = gimme_the_shtuffs(c, sizeof("("));
+						str[0] = '('; str[1] = 0;
+						t = (Token){
+							'(', loc, str, str + 1
+						};
+						arrput(s->tokens, t);
+						
 						// Skip until we hit a newline
 						assert(!l.hit_line);
-						do {
+						
+						const unsigned char* start = l.token_start;
+						const unsigned char* end = l.token_start;
+						while (!l.hit_line) {
+							end = l.token_end;
 							lexer_read(&l);
-						} while (!l.hit_line);
+						}
+						
+						// convert pragma content into string
+						{
+							size_t len = end - start;
+							str = gimme_the_shtuffs(c, (len*2)+3);
+							unsigned char* curr = str;
+							
+							*curr++ = '\"';
+							for (size_t i = 0; i < len; i++) {
+								if (start[i] == '\"') {
+									*curr++ = '\\';
+									*curr++ = '\"';
+								} else {
+									*curr++ = start[i];
+								}
+							}
+							*curr++ = '\"';
+							*curr++ = '\0';
+							
+							t = (Token){
+								TOKEN_STRING_DOUBLE_QUOTE,
+								loc,
+								str, curr-1
+							};
+							arrput(s->tokens, t);
+						}
+						
+						str = gimme_the_shtuffs(c, sizeof(")"));
+						str[0] = ')'; str[1] = 0;
+						t = (Token){
+							')',
+							loc,
+							str, str + 1
+						};
+						arrput(s->tokens, t);
 					}
 				} else if (lexer_match(&l, 5, "undef")) {
 					lexer_read(&l);
