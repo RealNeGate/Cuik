@@ -1641,7 +1641,7 @@ static void gen_func_body(TranslationUnit* tu, TypeIndex type, StmtIndex s) {
 			abort();
 		}
 	} else {
-		tb_module_compile_func(mod, func);
+		tb_module_compile_func(mod, func, TB_ISEL_FAST);
 	}
 	
 	// NOTE(NeGate): Yikes... we can't delete the IR since line info requires it to
@@ -1680,7 +1680,7 @@ void irgen_deinit() {
 			abort();
 		}
 	} else {
-		tb_module_compile_func(mod, static_init_func);
+		tb_module_compile_func(mod, static_init_func, TB_ISEL_FAST);
 	}
 }
 

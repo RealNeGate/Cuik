@@ -168,6 +168,12 @@ extern "C" {
 	} TB_OptLevel;
 	
 	typedef enum {
+		// FastISel
+		TB_ISEL_FAST,
+		TB_ISEL_COMPLEX
+	} TB_ISelMode;
+	
+	typedef enum {
 		TB_VOID,
 		// Boolean
 		TB_BOOL,
@@ -599,19 +605,24 @@ extern "C" {
 	TB_API TB_Module* tb_module_create(TB_Arch target_arch, TB_System target_system, const TB_FeatureSet* features);
 	
 	// Validates IR & compiles the function into machine code.
+	// For isel_mode, TB_ISEL_FAST will compile faster but worse codegen
+	// TB_ISEL_COMPLEX will compile slower but better codegen
+	//
 	// returns false if it fails.
-	TB_API bool tb_module_compile_func(TB_Module* m, TB_Function* f);
+	TB_API bool tb_module_compile_func(TB_Module* m, TB_Function* f, TB_ISelMode isel_mode);
 	
 	// Frees all resources for the TB_Module and it's functions, globals and compiled code.
 	TB_API void tb_module_destroy(TB_Module* m);
 	
-	// Waits for the machine code generation to finish before continuing.
+	// Finalizes the compilation phase
 	TB_API bool tb_module_compile(TB_Module* m);
 	
 	// Exports an object file with all the machine code and symbols generated.
 	TB_API bool tb_module_export(TB_Module* m, const char* path, bool emit_debug_info);
 	
-	TB_API void tb_module_export_jit(TB_Module* m);
+	// For isel_mode, TB_ISEL_FAST will compile faster but worse codegen
+	// TB_ISEL_COMPLEX will compile slower but better codegen
+	TB_API void tb_module_export_jit(TB_Module* m, TB_ISelMode isel_mode);
 	
 	TB_API void* tb_module_get_jit_func_by_name(TB_Module* m, const char* name);
 	TB_API void* tb_module_get_jit_func_by_id(TB_Module* m, size_t i);
@@ -865,6 +876,9 @@ extern "C" {
 	TB_API TB_Reg tb_node_get_last_register(TB_Function* f);
 	
 	TB_API TB_Node* tb_function_get_node(TB_Function* f, TB_Reg r);
+	
+	// either an unsigned or signed constant
+	TB_API bool tb_node_is_constant_int(TB_Function* f, TB_Reg r, uint64_t imm);
 	
 	// Returns the size and alignment of a LOCAL node, both must
 	// be valid addresses

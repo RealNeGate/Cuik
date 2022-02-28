@@ -598,43 +598,45 @@ int main(int argc, char* argv[]) {
 			// Build project
 			timed_block("total") {
 				compile_project(obj_output_path, true, mode == COMPILER_MODE_CHECK);
+				
+				if (!settings.is_object_only && mode != COMPILER_MODE_CHECK && !settings.print_tb_ir) {
+					timed_block("linker") {
+						Linker l;
+						if (linker_init(&l)) {
+							// Add system libpaths
+							linker_add_default_libpaths(&l);
+							
+							// Add input libraries
+							linker_add_input_file(&l, "kernel32.lib");
+							linker_add_input_file(&l, "user32.lib");
+							linker_add_input_file(&l, "Gdi32.lib");
+							linker_add_input_file(&l, "Onecore.lib");
+							linker_add_input_file(&l, "Onecoreuap.lib");
+							linker_add_input_file(&l, "opengl32.lib");
+							
+							// Add Cuik output
+							linker_add_input_file(&l, obj_output_path);
+							
+							linker_invoke(&l, cuik_file_no_ext, settings.using_winmain ? SUBSYSTEM_WINDOWS : SUBSYSTEM_CONSOLE, true);
+							linker_deinit(&l);
+							
+							if (mode == COMPILER_MODE_RUN) {
+								char exe_path[MAX_PATH];
+								snprintf(exe_path, 260, "%s.exe", cuik_file_no_ext);
+								
+								printf("\n\nRunning: %s...\n", exe_path);
+								int exit_code = system(exe_path);
+								printf("Exit code: %d\n", exit_code);
+								
+								return exit_code;
+							}
+						}
+					}
+				}
 			}
 			
 			// Close out profiler output (it doesn't include the linking)
 			timer_close();
-			
-			if (!settings.is_object_only && mode != COMPILER_MODE_CHECK && !settings.print_tb_ir) {
-				Linker l;
-				if (linker_init(&l)) {
-					// Add system libpaths
-					linker_add_default_libpaths(&l);
-					
-					// Add input libraries
-					linker_add_input_file(&l, "kernel32.lib");
-					linker_add_input_file(&l, "user32.lib");
-					linker_add_input_file(&l, "Gdi32.lib");
-					linker_add_input_file(&l, "Onecore.lib");
-					linker_add_input_file(&l, "Onecoreuap.lib");
-					linker_add_input_file(&l, "opengl32.lib");
-					
-					// Add Cuik output
-					linker_add_input_file(&l, obj_output_path);
-					
-					linker_invoke(&l, cuik_file_no_ext, settings.using_winmain ? SUBSYSTEM_WINDOWS : SUBSYSTEM_CONSOLE, true);
-					linker_deinit(&l);
-					
-					if (mode == COMPILER_MODE_RUN) {
-						char exe_path[MAX_PATH];
-						snprintf(exe_path, 260, "%s.exe", cuik_file_no_ext);
-						
-						printf("\n\nRunning: %s...\n", exe_path);
-						int exit_code = system(exe_path);
-						printf("Exit code: %d\n", exit_code);
-						
-						return exit_code;
-					}
-				}
-			}
 			break;
 		}
 		case COMPILER_MODE_LIVE: {
