@@ -8,7 +8,6 @@
 
 #include "tb.h"
 
-extern TokenStream ir_gen_tokens;
 extern TB_Module* mod;
 extern TB_Function* static_init_func;
 

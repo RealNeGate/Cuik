@@ -1,6 +1,7 @@
 #pragma once
 #include <common.h>
 #include <arena.h>
+#include <compilation_unit.h>
 
 #include <ext/stb_ds.h>
 #include <front/parser.h>

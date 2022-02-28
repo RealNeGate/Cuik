@@ -554,7 +554,17 @@ typedef struct {
 	ExportedSymbol value;
 } ExportedSymbolEntry;
 
-typedef struct {
+typedef struct TranslationUnit {
+	// chain of TUs for the compilation unit
+	struct TranslationUnit* next;
+	bool is_free;
+	
+	// token stream
+	TokenStream* tokens;
+	
+	// TODO(NeGate): keep track of all files loaded by this TU
+	// so that we can properly free them
+	
 	BigArray(Type) types;
 	BigArray(Member) members;
 	BigArray(Param) params;
@@ -566,12 +576,6 @@ typedef struct {
 	// NOTE(NeGate): should this be an stb_ds array?
 	StmtIndex* top_level_stmts;
 } TranslationUnit;
-
-typedef struct {
-	// anything extern might map to a different translation unit within
-	// the same compilation unit which means it's not technically external
-	ExportedSymbolEntry* export_table;
-} CompilationUnit;
 
 TypeIndex new_func(TranslationUnit* tu);
 TypeIndex new_enum(TranslationUnit* tu);
@@ -589,4 +593,6 @@ ConstValue const_eval(TranslationUnit* tu, ExprIndex e);
 bool const_eval_try_offsetof_hack(TranslationUnit* tu, ExprIndex e, uint64_t* out);
 
 void init_types(TranslationUnit* tu);
-TranslationUnit parse_file(TokenStream* restrict s);
+
+void translation_unit_parse(TranslationUnit* restrict tu, TokenStream* restrict s);
+void translation_unit_deinit(TranslationUnit* tu);

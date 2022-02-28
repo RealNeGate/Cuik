@@ -13,9 +13,9 @@ static _Thread_local char temp_string0[256], temp_string1[256];
 
 static TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e);
 
-#define sema_info(loc, fmt, ...) report(REPORT_INFO, &ir_gen_tokens.line_arena[loc], fmt, __VA_ARGS__)
-#define sema_warn(loc, fmt, ...) report(REPORT_WARNING, &ir_gen_tokens.line_arena[loc], fmt, __VA_ARGS__)
-#define sema_error(loc, fmt, ...) report(REPORT_ERROR, &ir_gen_tokens.line_arena[loc], fmt, __VA_ARGS__)
+#define sema_info(loc, fmt, ...) report(REPORT_INFO, &tu->tokens->line_arena[loc], fmt, __VA_ARGS__)
+#define sema_warn(loc, fmt, ...) report(REPORT_WARNING, &tu->tokens->line_arena[loc], fmt, __VA_ARGS__)
+#define sema_error(loc, fmt, ...) report(REPORT_ERROR, &tu->tokens->line_arena[loc], fmt, __VA_ARGS__)
 
 static bool is_scalar_type(TranslationUnit* tu, TypeIndex type_index) {
 	Type* restrict type = &tu->types[type_index];
@@ -737,12 +737,7 @@ void sema_stmt(TranslationUnit* tu, StmtIndex s) {
 	Stmt* restrict sp = &tu->stmts[s];
 	
 	switch (sp->op) {
-		case STMT_LABEL: {
-			// hacky but we need to reserve the label
-			TB_Function* func = tb_function_from_id(mod, tu->stmts[function_stmt].backing.f);
-			sp->backing.l = tb_inst_new_label_id(func);
-			break;
-		}
+		case STMT_LABEL: break;
 		case STMT_GOTO: {
 			sema_expr(tu, sp->goto_.target);
 			break;
@@ -902,7 +897,7 @@ static void sema_top_level(TranslationUnit* tu, StmtIndex s) {
 			
 			if (sp->decl.attrs.is_static || sp->decl.attrs.is_inline) {
 				if (!sp->decl.attrs.is_used) {
-					//sema_warn(sp->loc, "Function '%s' is never used.", name);
+					sema_warn(sp->loc, "Function '%s' is never used.", name);
 					return;
 				}
 			}

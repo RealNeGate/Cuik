@@ -4,7 +4,6 @@
 #include <stdarg.h>
 #include <targets/targets.h>
 
-TokenStream ir_gen_tokens;
 TB_Module* mod;
 
 // Maps param_num -> TB_Register
@@ -21,10 +20,8 @@ static mtx_t static_init_mutex;
 // it's a single file so we wanna lock when writing to data races
 static mtx_t emit_ir_mutex;
 
-_Noreturn void irgen_fatal(SourceLocIndex loc, const char* fmt, ...) {
-	SourceLoc* l = &ir_gen_tokens.line_arena[loc];
-	
-	printf("%s:%d: error: ", l->file, l->line);
+_Noreturn void internal_error(const char* fmt, ...) {
+	printf("internal compiler error: ");
 	
 	va_list ap;
 	va_start(ap, fmt);
@@ -33,67 +30,6 @@ _Noreturn void irgen_fatal(SourceLocIndex loc, const char* fmt, ...) {
 	
 	printf("\n");
 	abort();
-}
-
-void irgen_warn(SourceLocIndex loc, const char* fmt, ...) {
-	SourceLoc* l = &ir_gen_tokens.line_arena[loc];
-	printf("%s:%d: warning: ", l->file, l->line);
-	
-	va_list ap;
-	va_start(ap, fmt);
-	vprintf(fmt, ap);
-	va_end(ap);
-	
-	printf("\n");
-}
-
-static TB_Register gen_string_constant(SourceLocIndex loc, TB_Function* func, size_t len, const char* in) {
-	// it can't be bigger than the original
-	// TODO(NeGate): Improve this setup so that we can fallback to the heap if it
-	// fails.
-	char* out = tls_push(len + 1);
-	
-	size_t out_i = 0, in_i = 0;
-	while (in_i < len) {
-		int ch;
-		intptr_t distance = parse_char(len - in_i, &in[in_i], &ch);
-		if (distance < 0) abort();
-		
-		out[out_i++] = ch;
-		in_i += distance;
-	}
-	
-	assert(out_i <= len);
-	out[out_i++] = '\0';
-	
-	TB_Register reg = tb_inst_string(func, out_i, out);
-	tls_restore(out);
-	
-	return reg;
-}
-
-static TB_Register gen_wide_string_constant(SourceLocIndex loc, TB_Function* func, size_t len, const char* in) {
-	// TODO(NeGate): Improve this setup so that we can fallback to the heap if it
-	// fails.
-	wchar_t* out = tls_push((len + 1) * 2);
-	
-	size_t out_i = 0, in_i = 0;
-	while (in_i < len) {
-		int ch;
-		intptr_t distance = parse_char(len - in_i, &in[in_i], &ch);
-		if (distance < 0) abort();
-		
-		out[out_i++] = ch;
-		in_i += distance;
-	}
-	
-	assert(out_i <= len);
-	out[out_i++] = '\0';
-	
-	TB_Register reg = tb_inst_string(func, out_i * 2, (const char*)out);
-	tls_restore(out);
-	
-	return reg;
 }
 
 static TB_Register cast_reg(TB_Function* func, TB_Register reg, const Type* src, const Type* dst) {
@@ -267,7 +203,7 @@ InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, Sourc
 		int pos, pos_end;
 		if (node->mode == INIT_MEMBER) {
 			if (type->kind != KIND_STRUCT && type->kind != KIND_UNION) {
-				irgen_fatal(loc, "Cannot get the member of a non-record type.");
+				internal_error("Cannot get the member of a non-record type.");
 			}
 			
 			pos = pos_end = -1;
@@ -287,11 +223,11 @@ InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, Sourc
 			}
 			
 			if (pos < 0) {
-				irgen_fatal(loc, "Could not find member under that name.");
+				internal_error("Could not find member under that name.");
 			}
 		} else if (node->mode == INIT_ARRAY) {
 			if (type->kind != KIND_ARRAY) {
-				irgen_fatal(loc, "Cannot apply array initializer to non-array type.");
+				internal_error("Cannot apply array initializer to non-array type.");
 			}
 			
 			pos = node->start;
@@ -309,14 +245,14 @@ InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, Sourc
 		
 		// Validate indices
 		if (pos < 0 || pos >= bounds) {
-			irgen_fatal(loc, "Initializer out of range, TODO error ugly");
+			internal_error("Initializer out of range, TODO error ugly");
 		} else if (pos_end <= 0 && pos_end > bounds) {
-			irgen_fatal(loc, "Initializer out of range, TODO error ugly");
+			internal_error("Initializer out of range, TODO error ugly");
 		}
 		
 		// TODO(NeGate): Implement array range initializer
 		if (pos + 1 != pos_end) {
-			irgen_fatal(loc, "TODO");
+			internal_error("TODO");
 		}
 		
 		// Identify entry type
@@ -389,7 +325,7 @@ InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, Sourc
 							IRVal v = irgen_expr(tu, func, node->expr);
 							
 							if (!type_equal(tu, v.type, child_type)) {
-								irgen_fatal(loc, "TODO: error messages");
+								internal_error("TODO: error messages");
 							}
 							
 							// placing the address calculation here might improve performance or readability
@@ -476,7 +412,7 @@ static IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 					case 'v': ch = '\v'; break;
 					case 'f': ch = '\f'; break;
 					case 'r': ch = '\r'; break;
-					default: irgen_fatal(ep->loc, "Could not recognize escape char literal.");
+					default: internal_error("Could not recognize escape char literal.");
 				}
 				
 				assert(ep->str.start[3] == '\'');
@@ -563,6 +499,10 @@ static IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 					.reg = tb_inst_get_global_address(func, tu->stmts[stmt].backing.g)
 				};
 			} else if (stmt_op == STMT_LABEL) {
+				if (tu->stmts[stmt].backing.l == 0) {
+					tu->stmts[stmt].backing.l = tb_inst_new_label_id(func);
+				}
+				
 				return (IRVal) {
 					.value_type = LVALUE_LABEL,
 					.type = TYPE_NONE,
@@ -1281,7 +1221,7 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, StmtIndex s) {
 		static _Thread_local TB_FileID last_file_id = 0;
 		static _Thread_local const char* last_filepath = NULL;
 		
-		SourceLoc* l = &ir_gen_tokens.line_arena[sp->loc];
+		SourceLoc* l = &tu->tokens->line_arena[sp->loc];
 		if ((const char*)l->file != last_filepath) {
 			last_filepath = (const char*)l->file;
 			last_file_id = tb_file_create(mod, (const char*)l->file);
@@ -1295,6 +1235,10 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, StmtIndex s) {
 			break;
 		}
 		case STMT_LABEL: {
+			if (sp->backing.l == 0) {
+				sp->backing.l = tb_inst_new_label_id(func);
+			}
+			
 			tb_inst_label(func, sp->backing.l);
 			break;
 		}
@@ -1570,9 +1514,6 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, StmtIndex s) {
 				assert((tu->stmts[head].op == STMT_CASE) ||
 					   (tu->stmts[head].op == STMT_DEFAULT));
 				
-				//SourceLoc* loc = &ir_gen_tokens.line_arena[tu->stmts[head].loc];
-				//printf("Line %d\n", loc->line);
-				
 				TB_Label label = tb_inst_new_label_id(func);
 				tu->stmts[head].backing.l = label;
 				
@@ -1705,13 +1646,18 @@ static void gen_func_body(TranslationUnit* tu, TypeIndex type, StmtIndex s) {
 	
 	// NOTE(NeGate): Yikes... we can't delete the IR since line info requires it to
 	// stay around... this is a bad thing and we should fix TB to remove that crap.
-	//tb_function_free(func);
+	tb_function_free(func);
 }
 
 void irgen_init() {
-	mtx_init(&static_init_mutex, mtx_plain);
 	mtx_init(&emit_ir_mutex, mtx_plain);
+	mtx_init(&static_init_mutex, mtx_plain);
 	
+	TB_FeatureSet features = { 0 };
+	mod = tb_module_create(target_arch, target_system, &features);
+	
+	// static initialization is stuffed into a function which is called at the
+	// start of main(), regardless i wanna get rid of this soon enough but haven't...
 	TB_FunctionPrototype* proto = tb_prototype_create(mod, TB_STDCALL, TB_TYPE_VOID, 0, false);
 	static_init_func = tb_prototype_build(mod, proto, "__static_init", TB_LINKAGE_PRIVATE);
 }

@@ -20,6 +20,7 @@ static const char* INPUT_FILES[] = {
 	"src/arena.c",
 	"src/settings.c",
 	"src/driver_utils.c",
+	"src/compilation_unit.c",
 	
 	"src/targets/x64.c",
 	

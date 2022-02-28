@@ -2,27 +2,39 @@
 #include "sema.h"
 
 // two simple temporary buffers to represent type_as_string results
-static _Thread_local char temp_string0[256], temp_string1[256];
-static _Thread_local StmtIndex function_stmt;
+static thread_local char temp_string0[256], temp_string1[256];
+static thread_local StmtIndex function_stmt;
+static thread_local bool barz[64];
 
-static void dump_expr(TranslationUnit* tu, FILE* stream, ExprIndex e, int depth) {
-	for (int i = 0; i < depth; i++) printf("  ");
+static void print_barz(int depth, bool last_node) {
+	if (last_node) {
+		for (int i = 0; i < depth-1; i++) {
+			printf(barz[i] ? "| " : "  ");
+		}
+		printf("`-");
+	} else {
+		for (int i = 0; i < depth-1; i++) {
+			printf(barz[i] ? "| " : "  ");
+		}
+		printf("|-");
+	}
+	barz[depth-1] = !last_node;
+}
+
+static void dump_expr(TranslationUnit* tu, FILE* stream, ExprIndex e, int depth, bool last_node) {
+	print_barz(depth, last_node);
 	
 	Expr* restrict ep = &tu->exprs[e];
 	if (ep->cast_type != ep->type) {
 		type_as_string(tu, sizeof(temp_string0), temp_string0, ep->type);
 		type_as_string(tu, sizeof(temp_string1), temp_string1, ep->cast_type);
 		
-		if (ep->op == EXPR_CAST) {
-			fprintf(stream, "Cast '%s' -> '%s'\n", temp_string0, temp_string1);
-			
-			depth++;
-			for (int i = 0; i < depth; i++) printf("  ");
-		} else if (ep->cast_type > TYPE_VOID) {
+		if (ep->op != EXPR_CAST && ep->cast_type > TYPE_VOID) {
+			// we don't wanna place implicit casts to void, it's weird
 			fprintf(stream, "ImplicitCast '%s' -> '%s'\n", temp_string0, temp_string1);
 			
 			depth++;
-			for (int i = 0; i < depth; i++) printf("  ");
+			print_barz(depth, true);
 		}
 	}
 	
@@ -97,13 +109,13 @@ static void dump_expr(TranslationUnit* tu, FILE* stream, ExprIndex e, int depth)
 			type_as_string(tu, sizeof(temp_string0), temp_string0, ep->type);
 			fprintf(stream, "FunctionCall '%s'\n", temp_string0);
 			
-			dump_expr(tu, stream, ep->call.target, depth + 1);
-			
 			ExprIndex* args = ep->call.param_start;
 			int arg_count = ep->call.param_count;
 			
+			dump_expr(tu, stream, ep->call.target, depth + 1, arg_count == 0);
+			
 			for (size_t i = 0; i < arg_count; i++) {
-				dump_expr(tu, stream, args[i], depth + 1);
+				dump_expr(tu, stream, args[i], depth + 1, i == (arg_count-1));
 			}
 			break;
 		}
@@ -111,98 +123,102 @@ static void dump_expr(TranslationUnit* tu, FILE* stream, ExprIndex e, int depth)
 			type_as_string(tu, sizeof(temp_string0), temp_string0, ep->type);
 			fprintf(stream, "Ternary '%s'\n", temp_string0);
 			
-			dump_expr(tu, stream, ep->ternary_op.left, depth + 1);
-			dump_expr(tu, stream, ep->ternary_op.middle, depth + 1);
-			dump_expr(tu, stream, ep->ternary_op.right, depth + 1);
+			dump_expr(tu, stream, ep->ternary_op.left, depth + 1, false);
+			dump_expr(tu, stream, ep->ternary_op.middle, depth + 1, false);
+			dump_expr(tu, stream, ep->ternary_op.right, depth + 1, true);
 			break;
 		}
 		case EXPR_ARROW: {
 			type_as_string(tu, sizeof(temp_string0), temp_string0, ep->type);
 			fprintf(stream, "Arrow %s '%s'\n", ep->arrow.name, temp_string0);
 			
-			dump_expr(tu, stream, ep->arrow.base, depth + 1);
+			dump_expr(tu, stream, ep->arrow.base, depth + 1, true);
 			break;
 		}
 		case EXPR_DOT: {
 			type_as_string(tu, sizeof(temp_string0), temp_string0, ep->type);
 			fprintf(stream, "Dot %s '%s'\n", ep->dot.name, temp_string0);
 			
-			dump_expr(tu, stream, ep->dot.base, depth + 1);
+			dump_expr(tu, stream, ep->dot.base, depth + 1, true);
 			break;
 		}
 		case EXPR_SUBSCRIPT: {
 			type_as_string(tu, sizeof(temp_string0), temp_string0, ep->type);
 			fprintf(stream, "Subscript '%s'\n", temp_string0);
 			
-			dump_expr(tu, stream, ep->subscript.base, depth + 1);
-			dump_expr(tu, stream, ep->subscript.index, depth + 1);
+			dump_expr(tu, stream, ep->subscript.base, depth + 1, false);
+			dump_expr(tu, stream, ep->subscript.index, depth + 1, true);
 			break;
 		}
 		case EXPR_DEREF: {
 			type_as_string(tu, sizeof(temp_string0), temp_string0, ep->type);
 			fprintf(stream, "Deref '%s'\n", temp_string0);
 			
-			dump_expr(tu, stream, ep->unary_op.src, depth + 1);
+			dump_expr(tu, stream, ep->unary_op.src, depth + 1, true);
 			break;
 		}
 		case EXPR_ADDR: {
 			type_as_string(tu, sizeof(temp_string0), temp_string0, ep->type);
 			fprintf(stream, "Addr '%s'\n", temp_string0);
 			
-			dump_expr(tu, stream, ep->unary_op.src, depth + 1);
+			dump_expr(tu, stream, ep->unary_op.src, depth + 1, true);
 			break;
 		}
 		case EXPR_POST_INC: {
 			type_as_string(tu, sizeof(temp_string0), temp_string0, ep->type);
 			fprintf(stream, "PostIncrement '%s'\n", temp_string0);
 			
-			dump_expr(tu, stream, ep->unary_op.src, depth + 1);
+			dump_expr(tu, stream, ep->unary_op.src, depth + 1, true);
 			break;
 		}
 		case EXPR_POST_DEC: {
 			type_as_string(tu, sizeof(temp_string0), temp_string0, ep->type);
 			fprintf(stream, "PostDecrement '%s'\n", temp_string0);
 			
-			dump_expr(tu, stream, ep->unary_op.src, depth + 1);
+			dump_expr(tu, stream, ep->unary_op.src, depth + 1, true);
 			break;
 		}
 		case EXPR_PRE_INC: {
 			type_as_string(tu, sizeof(temp_string0), temp_string0, ep->type);
 			fprintf(stream, "PreIncrement '%s'\n", temp_string0);
 			
-			dump_expr(tu, stream, ep->unary_op.src, depth + 1);
+			dump_expr(tu, stream, ep->unary_op.src, depth + 1, true);
 			break;
 		}
 		case EXPR_PRE_DEC: {
 			type_as_string(tu, sizeof(temp_string0), temp_string0, ep->type);
 			fprintf(stream, "PreDecrement '%s'\n", temp_string0);
 			
-			dump_expr(tu, stream, ep->unary_op.src, depth + 1);
+			dump_expr(tu, stream, ep->unary_op.src, depth + 1, true);
 			break;
 		}
 		case EXPR_LOGICAL_NOT: {
 			type_as_string(tu, sizeof(temp_string0), temp_string0, ep->type);
 			fprintf(stream, "LogicalNot '%s'\n", temp_string0);
 			
-			dump_expr(tu, stream, ep->unary_op.src, depth + 1);
+			dump_expr(tu, stream, ep->unary_op.src, depth + 1, true);
 			break;
 		}
 		case EXPR_NOT: {
 			type_as_string(tu, sizeof(temp_string0), temp_string0, ep->type);
 			fprintf(stream, "BinaryNot '%s'\n", temp_string0);
 			
-			dump_expr(tu, stream, ep->unary_op.src, depth + 1);
+			dump_expr(tu, stream, ep->unary_op.src, depth + 1, true);
 			break;
 		}
 		case EXPR_NEGATE: {
 			type_as_string(tu, sizeof(temp_string0), temp_string0, ep->type);
 			fprintf(stream, "Negate '%s'\n", temp_string0);
 			
-			dump_expr(tu, stream, ep->unary_op.src, depth + 1);
+			dump_expr(tu, stream, ep->unary_op.src, depth + 1, true);
 			break;
 		}
 		case EXPR_CAST: {
-			dump_expr(tu, stream, ep->cast.src, depth);
+			type_as_string(tu, sizeof(temp_string0), temp_string0, ep->type);
+			type_as_string(tu, sizeof(temp_string1), temp_string1, ep->cast.type);
+			
+			fprintf(stream, "Cast '%s' -> '%s'\n", temp_string0, temp_string1);
+			dump_expr(tu, stream, ep->cast.src, depth + 1, true);
 			break;
 		}
 		case EXPR_COMMA:
@@ -280,26 +296,33 @@ static void dump_expr(TranslationUnit* tu, FILE* stream, ExprIndex e, int depth)
 			type_as_string(tu, sizeof(temp_string0), temp_string0, ep->type);
 			fprintf(stream, "%s '%s'\n", names[ep->op], temp_string0);
 			
-			dump_expr(tu, stream, ep->bin_op.left, depth + 1);
-			dump_expr(tu, stream, ep->bin_op.right, depth + 1);
+			dump_expr(tu, stream, ep->bin_op.left, depth + 1, false);
+			dump_expr(tu, stream, ep->bin_op.right, depth + 1, true);
 			break;
 		}
 		default: abort();
 	}
+	
+	barz[depth-1] = false;
 }
 
-static void dump_stmt(TranslationUnit* tu, FILE* stream, StmtIndex s, int depth) {
-	for (int i = 0; i < depth; i++) printf("  ");
+static void dump_stmt(TranslationUnit* tu, FILE* stream, StmtIndex s, int depth, bool last_node) {
+	print_barz(depth, last_node);
 	
-	Stmt* restrict sp = &tu->stmts[s];
+	const Stmt* restrict sp = &tu->stmts[s];
 	switch (sp->op) {
 		case STMT_DECL:
 		case STMT_GLOBAL_DECL: {
 			type_as_string(tu, sizeof(temp_string0), temp_string0, sp->decl.type);
-			fprintf(stream, "VarDecl %s '%s'\n", sp->decl.name, temp_string0);
 			
-			if (sp->decl.initial) {
-				dump_expr(tu, stream, tu->stmts[s].decl.initial, depth + 1);
+			if (sp->decl.attrs.is_typedef) {
+				fprintf(stream, "TypedefDecl %s '%s'\n", sp->decl.name, temp_string0);
+			} else {
+				fprintf(stream, "VarDecl %s '%s'\n", sp->decl.name, temp_string0);
+				
+				if (sp->decl.initial) {
+					dump_expr(tu, stream, tu->stmts[s].decl.initial, depth + 1, true);
+				}
 			}
 			break;
 		}
@@ -310,7 +333,7 @@ static void dump_stmt(TranslationUnit* tu, FILE* stream, StmtIndex s, int depth)
 			StmtIndex old_function_stmt = function_stmt;
 			function_stmt = s;
 			
-			dump_stmt(tu, stream, (StmtIndex)sp->decl.initial, depth + 1);
+			dump_stmt(tu, stream, (StmtIndex)sp->decl.initial, depth + 1, true);
 			
 			function_stmt = old_function_stmt;
 			break;
@@ -322,43 +345,45 @@ static void dump_stmt(TranslationUnit* tu, FILE* stream, StmtIndex s, int depth)
 			size_t count = sp->compound.kids_count;
 			
 			for (size_t i = 0; i < count; i++) {
-				dump_stmt(tu, stream, kids[i], depth + 1);
+				dump_stmt(tu, stream, kids[i], depth + 1, i == (count-1));
 			}
 			break;
 		}
 		case STMT_EXPR: {
 			fprintf(stream, "Expr\n");
-			dump_expr(tu, stream, sp->expr.expr, depth + 1);
+			dump_expr(tu, stream, sp->expr.expr, depth + 1, true);
 			break;
 		}
 		case STMT_RETURN: {
 			fprintf(stream, "Return\n");
 			if (sp->return_.expr) {
-				dump_expr(tu, stream, sp->return_.expr, depth + 1);
+				dump_expr(tu, stream, sp->return_.expr, depth + 1, true);
 			}
 			break;
 		}
 		case STMT_IF: {
 			fprintf(stream, "If\n");
-			dump_expr(tu, stream, sp->if_.cond, depth + 1);
+			dump_expr(tu, stream, sp->if_.cond, depth + 1, sp->if_.body == 0);
 			
 			if (sp->if_.body) {
-				dump_stmt(tu, stream, sp->if_.body, depth + 1);
-			}
-			
-			if (sp->if_.next) {
-				for (int i = 0; i < depth; i++) printf("  ");
-				fprintf(stream, "Else\n");
-				dump_stmt(tu, stream, sp->if_.next, depth + 1);
+				dump_stmt(tu, stream, sp->if_.body, depth + 1, sp->if_.next == 0);
+				
+				if (sp->if_.next) {
+					for (int i = 0; i < depth; i++) printf("  ");
+					fprintf(stream, "Else\n");
+					dump_stmt(tu, stream, sp->if_.next, depth + 1, true);
+				}
 			}
 			break;
 		}
 		case STMT_WHILE: { 
 			fprintf(stream, "While\n");
-			dump_expr(tu, stream, sp->while_.cond, depth + 1);
 			
 			if (sp->while_.body) {
-				dump_stmt(tu, stream, sp->while_.body, depth + 1);
+				dump_expr(tu, stream, sp->while_.cond, depth + 1, false);
+				dump_stmt(tu, stream, sp->while_.body, depth + 1, true);
+			} else {
+				dump_expr(tu, stream, sp->while_.cond, depth + 1, true);
 			}
 			break;
 		}
@@ -366,7 +391,7 @@ static void dump_stmt(TranslationUnit* tu, FILE* stream, StmtIndex s, int depth)
 			fprintf(stream, "For\n");
 			if (sp->for_.first) {
 				for (int i = 0; i < depth; i++) printf("  ");
-				fprintf(stream, "  Init:\n");
+				fprintf(stream, "`-Init:\n");
 				
 				if (tu->stmts[sp->for_.first].op == STMT_COMPOUND) {
 					// @shadow
@@ -376,36 +401,41 @@ static void dump_stmt(TranslationUnit* tu, FILE* stream, StmtIndex s, int depth)
 					size_t count = sp_first->compound.kids_count;
 					
 					for (size_t i = 0; i < count; i++) {
-						dump_stmt(tu, stream, kids[i], depth + 2);
+						dump_stmt(tu, stream, kids[i], depth + 2, i == (count-1));
 					}
 				} else {
-					dump_stmt(tu, stream, sp->for_.first, depth + 2);
+					dump_stmt(tu, stream, sp->for_.first, depth + 2, true);
 				}
 			}
 			
 			if (sp->for_.cond) {
 				for (int i = 0; i < depth; i++) printf("  ");
-				fprintf(stream, "  Cond:\n");
-				dump_expr(tu, stream, sp->for_.cond, depth + 2);
+				fprintf(stream, "`-Cond:\n");
+				dump_expr(tu, stream, sp->for_.cond, depth + 2, true);
 			}
 			
 			for (int i = 0; i < depth; i++) printf("  ");
-			fprintf(stream, "  Body:\n");
-			dump_stmt(tu, stream, sp->for_.body, depth + 2);
+			fprintf(stream, "`-Body:\n");
+			dump_stmt(tu, stream, sp->for_.body, depth + 2, true);
 			
 			if (sp->for_.next) {
 				for (int i = 0; i < depth; i++) printf("  ");
-				fprintf(stream, "  Next:\n");
-				dump_expr(tu, stream, sp->for_.next, depth + 1);
+				fprintf(stream, "`-Next:\n");
+				dump_expr(tu, stream, sp->for_.next, depth + 2, true);
 			}
 			break;
 		}
 		default: abort();
 	}
+	
+	barz[depth-1] = false;
 }
 
 void ast_dump(TranslationUnit* tu, FILE* stream) {
+	fprintf(stream, "TranslationUnit\n");
+	barz[0] = true;
+	
 	for (size_t i = 0, count = arrlen(tu->top_level_stmts); i < count; i++) {
-		dump_stmt(tu, stream, tu->top_level_stmts[i], 0);
+		dump_stmt(tu, stream, tu->top_level_stmts[i], 1, i == (count-1));
 	}
 }

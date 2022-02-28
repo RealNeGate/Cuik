@@ -30,7 +30,7 @@ void init_types(TranslationUnit* tu) {
 	// there's already one slot for the NULL entry in a big arena
 	// which is why there's a - 1
 	big_array_put_uninit(tu->types, (sizeof(default_types) / sizeof(default_types[0])) - 1);
-	memcpy(tu->types, default_types, sizeof(default_types));
+	memcpy(&tu->types[0], default_types, sizeof(default_types));
 }
 
 TypeIndex new_enum(TranslationUnit* tu) {

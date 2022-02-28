@@ -29,6 +29,14 @@ void cuik_detect_crt_include() {
 }
 
 void cuik_set_cpp_defines(CPP_Context* cpp) {
+	if (s_vswhere.windows_sdk_include == NULL) {
+		printf("warning: could not automatically find WinSDK include path\n");
+	}
+	
+	if (s_vswhere.vs_include_path == NULL) {
+		printf("warning: could not automatically find VS include path\n");
+	}
+	
 	// CuikC specific
 	cpp_define(cpp, "__CUIKC__", STR(CUIK_COMPILER_MAJOR));
 	cpp_define(cpp, "__CUIKC_MINOR__", STR(CUIK_COMPILER_MINOR));
@@ -100,11 +108,17 @@ void cuik_set_cpp_defines(CPP_Context* cpp) {
 		cpp_add_include_directory(cpp, filepath);
 		
 		// VS include
-		if (snprintf(filepath, 260, "%S\\", s_vswhere.vs_include_path) > MAX_PATH) {
-			printf("internal compiler error: VS include directory too long!\n");
-			abort();
+		if (s_vswhere.vs_include_path) {
+			if (snprintf(filepath, 260, "%S\\", s_vswhere.vs_include_path) > MAX_PATH) {
+				printf("internal compiler error: VS include directory too long!\n");
+				abort();
+			}
+			cpp_add_include_directory(cpp, filepath);
+		} else {
+			// NOTE(NeGate): hacky but apparently the address sanitizer stops me from
+			// getting the VS include path so i'll be passing some not-so-reasonable-default
+			cpp_add_include_directory(cpp, "W:\\Visual Studio\\2019\\Community\\VC\\Tools\\MSVC\\14.29.30133\\include\\");
 		}
-		cpp_add_include_directory(cpp, filepath);
 		
 		cpp_define_empty(cpp, "_DEBUG");
 		cpp_define_empty(cpp, "_MT");
@@ -143,4 +157,37 @@ void cuik_set_cpp_defines(CPP_Context* cpp) {
 	}
 	
 	target_desc.set_defines(cpp);
+}
+
+TranslationUnit* cuik_compile_file(CompilationUnit* cu, const char* path) {
+	TokenStream tokens;
+	CPP_Context cpp_ctx;
+	timed_block("preprocess: %s", path) {
+		cpp_init(&cpp_ctx);
+		cuik_set_cpp_defines(&cpp_ctx);
+		
+		tokens = cpp_process(&cpp_ctx, path);
+		
+		cpp_finalize(&cpp_ctx);
+	}
+	
+	TranslationUnit* tu = malloc(sizeof(TranslationUnit));
+	timed_block("parse %s", path) {
+		translation_unit_parse(tu, &tokens);
+		crash_if_reports(REPORT_ERROR);
+	}
+	
+	// Semantics pass
+	timed_block("sema %s", path) {
+		sema_pass(cu, tu);
+		crash_if_reports(REPORT_ERROR);
+	}
+	
+	// pass off to the compilation unit
+	compilation_unit_append(cu, tu);
+	
+	// free any TU resources (including any cached file refs)
+	arrfree(tokens.tokens);
+	cpp_deinit(&cpp_ctx);
+	return tu;
 }

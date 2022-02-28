@@ -90,16 +90,17 @@ static ExprIndex make_expr(TranslationUnit* tu) {
 	return big_array_length(tu->exprs) - 1;
 }
 
-TranslationUnit parse_file(TokenStream* restrict s) {
-	TranslationUnit tu = {};
-	tu.types = big_array_create(Type);
-	tu.members = big_array_create(Member);
-	tu.params = big_array_create(Param);
-	tu.enum_entries = big_array_create(EnumEntry);
-	tu.stmts = big_array_create(Stmt);
-	tu.exprs = big_array_create(Expr);
+void translation_unit_parse(TranslationUnit* restrict tu, TokenStream* restrict s) {
+	*tu = (TranslationUnit){ 0 };
+	tu->tokens = s;
+	tu->types = big_array_create(Type);
+	tu->members = big_array_create(Member);
+	tu->params = big_array_create(Param);
+	tu->enum_entries = big_array_create(EnumEntry);
+	tu->stmts = big_array_create(Stmt);
+	tu->exprs = big_array_create(Expr);
 	
-	init_types(&tu);
+	init_types(tu);
 	tls_init();
 	
 	////////////////////////////////
@@ -130,7 +131,7 @@ TranslationUnit parse_file(TokenStream* restrict s) {
 		}
 		
 		Attribs attr = { 0 };
-		TypeIndex type = parse_declspec(&tu, s, &attr);
+		TypeIndex type = parse_declspec(tu, s, &attr);
 		attr.is_root = !(attr.is_extern || attr.is_static || attr.is_inline);
 		
 		if (attr.is_typedef) {
@@ -142,9 +143,19 @@ TranslationUnit parse_file(TokenStream* restrict s) {
 					expect(s, ',');
 				} else expect_comma = true;
 				
-				Decl decl = parse_declarator(&tu, s, type);
+				Decl decl = parse_declarator(tu, s, type);
 				assert(decl.name);
 				
+				// make typedef
+				StmtIndex n = make_stmt(tu, s, STMT_DECL);
+				tu->stmts[n].loc = decl.loc;
+				tu->stmts[n].decl = (struct StmtDecl){
+					.name = decl.name,
+					.type = decl.type,
+					.attrs = attr
+				};
+				
+				arrput(tu->top_level_stmts, n);
 				shput(typedefs, decl.name, decl.type);
 			}
 			
@@ -155,9 +166,9 @@ TranslationUnit parse_file(TokenStream* restrict s) {
 				continue;
 			}
 			
-			Decl decl = parse_declarator(&tu, s, type);
+			Decl decl = parse_declarator(tu, s, type);
 			
-			if (tu.types[decl.type].kind == KIND_FUNC) {
+			if (tu->types[decl.type].kind == KIND_FUNC) {
 				// function
 				Symbol* sym = find_global_symbol((char*)decl.name);
 				
@@ -172,30 +183,30 @@ TranslationUnit parse_file(TokenStream* restrict s) {
 					
 					// convert forward decl into proper function
 					n = sym->stmt;
-					if (tu.stmts[n].op == STMT_FUNC_DECL && !attr.is_inline) {
+					if (tu->stmts[n].op == STMT_FUNC_DECL && !attr.is_inline) {
 						is_redefining_body = true;
 					}
 					
-					if (!type_equal(&tu, tu.stmts[n].decl.type, decl.type)) {
-						type_as_string(&tu, sizeof(temp_string0), temp_string0, decl.type);
-						type_as_string(&tu, sizeof(temp_string1), temp_string1, tu.stmts[n].decl.type);
+					if (!type_equal(tu, tu->stmts[n].decl.type, decl.type)) {
+						type_as_string(tu, sizeof(temp_string0), temp_string0, decl.type);
+						type_as_string(tu, sizeof(temp_string1), temp_string1, tu->stmts[n].decl.type);
 						
 						report(REPORT_ERROR, &s->line_arena[decl.loc], "conflicting types for '%s'; currently '%s'", decl.name, temp_string0);
-						report(REPORT_INFO, &s->line_arena[tu.stmts[n].loc], "before it was '%s'", temp_string1);
+						report(REPORT_INFO, &s->line_arena[tu->stmts[n].loc], "before it was '%s'", temp_string1);
 					}
 					
-					tu.stmts[n].loc = decl.loc;
+					tu->stmts[n].loc = decl.loc;
 				} else {
 					// New symbol
-					n = make_stmt(&tu, s, STMT_DECL);
-					tu.stmts[n].loc = decl.loc;
-					tu.stmts[n].decl = (struct StmtDecl){
+					n = make_stmt(tu, s, STMT_DECL);
+					tu->stmts[n].loc = decl.loc;
+					tu->stmts[n].decl = (struct StmtDecl){
 						.type = decl.type,
 						.name = decl.name,
 						.attrs = attr,
 						.initial = (StmtIndex)0
 					};
-					tu.stmts[n].decl.attrs.is_root = false;
+					tu->stmts[n].decl.attrs.is_root = false;
 					
 					Symbol func_symbol = (Symbol){
 						.name = decl.name,
@@ -214,8 +225,8 @@ TranslationUnit parse_file(TokenStream* restrict s) {
 						settings.using_winmain = true;
 					}
 					
-					ParamIndex param_list = tu.types[decl.type].func.param_list;
-					ParamIndex param_count = tu.types[decl.type].func.param_count;
+					ParamIndex param_list = tu->types[decl.type].func.param_list;
+					ParamIndex param_count = tu->types[decl.type].func.param_count;
 					
 					assert(local_symbol_count == 0);
 					if (param_count >= INT16_MAX) {
@@ -224,7 +235,7 @@ TranslationUnit parse_file(TokenStream* restrict s) {
 					}
 					
 					for (size_t i = 0; i < param_count; i++) {
-						Param* p = &tu.params[param_list + i];
+						Param* p = &tu->params[param_list + i];
 						
 						if (p->name) {
 							local_symbols[local_symbol_count++] = (Symbol){
@@ -237,47 +248,47 @@ TranslationUnit parse_file(TokenStream* restrict s) {
 					}
 					tokens_next(s);
 					
-					ExprIndex starting_point = big_array_length(tu.exprs);
-					StmtIndex body = parse_compound_stmt(&tu, s);
+					ExprIndex starting_point = big_array_length(tu->exprs);
+					StmtIndex body = parse_compound_stmt(tu, s);
 					
-					tu.stmts[n].op = STMT_FUNC_DECL;
-					tu.stmts[n].decl.initial = (StmtIndex)body;
-					tu.stmts[n].decl.attrs = attr;
+					tu->stmts[n].op = STMT_FUNC_DECL;
+					tu->stmts[n].decl.initial = (StmtIndex)body;
+					tu->stmts[n].decl.attrs = attr;
 					
 					ExprIndex symbol_list_start = 0;
 					ExprIndex symbol_list_end = 0;
 					
 					// resolve any unresolved label references
-					for (size_t i = starting_point, count = big_array_length(tu.exprs); i < count; i++) {
-						if (tu.exprs[i].op == EXPR_SYMBOL ||
-							tu.exprs[i].op == EXPR_UNKNOWN_SYMBOL) {
+					for (size_t i = starting_point, count = big_array_length(tu->exprs); i < count; i++) {
+						if (tu->exprs[i].op == EXPR_SYMBOL ||
+							tu->exprs[i].op == EXPR_UNKNOWN_SYMBOL) {
 							if (symbol_list_start == 0) {
 								// initialize chain
 								symbol_list_start = symbol_list_end = i;
 							} else {
 								// append
-								tu.exprs[symbol_list_end].next_symbol_in_chain = i;
-								tu.exprs[i].next_symbol_in_chain = 0;
+								tu->exprs[symbol_list_end].next_symbol_in_chain = i;
+								tu->exprs[i].next_symbol_in_chain = 0;
 								symbol_list_end = i;
 							}
 						}
 						
-						if (tu.exprs[i].op == EXPR_UNKNOWN_SYMBOL) {
-							const unsigned char* name = tu.exprs[i].unknown_sym;
+						if (tu->exprs[i].op == EXPR_UNKNOWN_SYMBOL) {
+							const unsigned char* name = tu->exprs[i].unknown_sym;
 							
 							ptrdiff_t search = shgeti(labels, name);
 							if (search >= 0) {
-								tu.exprs[i].op = EXPR_SYMBOL;
-								tu.exprs[i].symbol = labels[search].value;
+								tu->exprs[i].op = EXPR_SYMBOL;
+								tu->exprs[i].symbol = labels[search].value;
 							}
 						}
 					}
 					
 					if (symbol_list_end) {
-						tu.exprs[symbol_list_end].next_symbol_in_chain = 0;
+						tu->exprs[symbol_list_end].next_symbol_in_chain = 0;
 					}
 					
-					tu.stmts[body].compound.first_symbol = symbol_list_start;
+					tu->stmts[body].compound.first_symbol = symbol_list_start;
 					shfree(labels);
 				} else if (tokens_get(s)->type == ';') {
 					// Forward decl
@@ -287,7 +298,7 @@ TranslationUnit parse_file(TokenStream* restrict s) {
 				}
 				
 				if (!is_redefine) {
-					arrput(tu.top_level_stmts, n);
+					arrput(tu->top_level_stmts, n);
 				}
 				local_symbol_count = 0;
 			} else {
@@ -296,14 +307,14 @@ TranslationUnit parse_file(TokenStream* restrict s) {
 					generic_error(s, "declaration is missing a name!");
 				}
 				
-				StmtIndex n = make_stmt(&tu, s, STMT_GLOBAL_DECL);
-				tu.stmts[n].loc = decl.loc;
-				tu.stmts[n].decl = (struct StmtDecl){
+				StmtIndex n = make_stmt(tu, s, STMT_GLOBAL_DECL);
+				tu->stmts[n].loc = decl.loc;
+				tu->stmts[n].decl = (struct StmtDecl){
 					.type = decl.type,
 					.name = decl.name,
 					.attrs = attr
 				};
-				arrput(tu.top_level_stmts, n);
+				arrput(tu->top_level_stmts, n);
 				
 				Symbol sym = (Symbol){
 					.name = decl.name,
@@ -319,9 +330,9 @@ TranslationUnit parse_file(TokenStream* restrict s) {
 					if (tokens_get(s)->type == '{') {
 						tokens_next(s);
 						
-						tu.stmts[n].decl.initial = parse_initializer(&tu, s, TYPE_NONE);
+						tu->stmts[n].decl.initial = parse_initializer(tu, s, TYPE_NONE);
 					} else {
-						tu.stmts[n].decl.initial = parse_expr_l14(&tu, s);
+						tu->stmts[n].decl.initial = parse_expr_l14(tu, s);
 					}
 				}
 				
@@ -329,17 +340,17 @@ TranslationUnit parse_file(TokenStream* restrict s) {
 					while (tokens_get(s)->type != ';') {
 						expect(s, ',');
 						
-						Decl decl = parse_declarator(&tu, s, type);
+						Decl decl = parse_declarator(tu, s, type);
 						assert(decl.name);
 						
-						StmtIndex n = make_stmt(&tu, s, STMT_GLOBAL_DECL);
-						tu.stmts[n].loc = decl.loc;
-						tu.stmts[n].decl = (struct StmtDecl){
+						StmtIndex n = make_stmt(tu, s, STMT_GLOBAL_DECL);
+						tu->stmts[n].loc = decl.loc;
+						tu->stmts[n].decl = (struct StmtDecl){
 							.type = decl.type,
 							.name = decl.name,
 							.attrs = attr
 						};
-						arrput(tu.top_level_stmts, n);
+						arrput(tu->top_level_stmts, n);
 						
 						Symbol sym = (Symbol){
 							.name = decl.name,
@@ -356,11 +367,11 @@ TranslationUnit parse_file(TokenStream* restrict s) {
 							if (tokens_get(s)->type == '{') {
 								tokens_next(s);
 								
-								initial = parse_initializer(&tu, s, TYPE_NONE);
+								initial = parse_initializer(tu, s, TYPE_NONE);
 							} else {
-								initial = parse_expr_l14(&tu, s);
+								initial = parse_expr_l14(tu, s);
 							}
-							tu.stmts[n].decl.initial = initial;
+							tu->stmts[n].decl.initial = initial;
 						}
 					}
 				}
@@ -372,25 +383,25 @@ TranslationUnit parse_file(TokenStream* restrict s) {
 	
 	// NOTE(NeGate): This is a Cuik extension, it allows normal symbols
 	// like functions to declared out of order.
-	for (size_t i = 1, count = big_array_length(tu.exprs); i < count; i++) {
-		if (tu.exprs[i].op == EXPR_UNKNOWN_SYMBOL) {
-			if (!resolve_unknown_symbol(&tu, i)) {
+	for (size_t i = 1, count = big_array_length(tu->exprs); i < count; i++) {
+		if (tu->exprs[i].op == EXPR_UNKNOWN_SYMBOL) {
+			if (!resolve_unknown_symbol(tu, i)) {
 				// try enum names
-				const unsigned char* name = tu.exprs[i].unknown_sym;
+				const unsigned char* name = tu->exprs[i].unknown_sym;
 				
 				// NOTE(NeGate): this might be slow
-				for (size_t j = 1, count = big_array_length(tu.enum_entries); j < count; j++) {
-					if (cstr_equals(name, tu.enum_entries[j].name)) {
-						int value = tu.enum_entries[j].value;
-						ExprIndex chain = tu.exprs[i].next_symbol_in_chain;
+				for (size_t j = 1, count = big_array_length(tu->enum_entries); j < count; j++) {
+					if (cstr_equals(name, tu->enum_entries[j].name)) {
+						int value = tu->enum_entries[j].value;
+						ExprIndex chain = tu->exprs[i].next_symbol_in_chain;
 						
-						tu.exprs[i].op = EXPR_ENUM;
-						tu.exprs[i].enum_val = (struct ExprEnum){ value, chain };
+						tu->exprs[i].op = EXPR_ENUM;
+						tu->exprs[i].enum_val = (struct ExprEnum){ value, chain };
 						goto success;
 					}
 				}
 				
-				SourceLoc* loc = &s->line_arena[tu.exprs[i].loc];
+				SourceLoc* loc = &s->line_arena[tu->exprs[i].loc];
 				report(REPORT_ERROR, loc, "could not resolve symbol: %s", name);
 			}
 		}
@@ -399,7 +410,19 @@ TranslationUnit parse_file(TokenStream* restrict s) {
 	
 	local_symbol_count = 0;
 	shfree(global_symbols);
-	return tu;
+}
+
+void translation_unit_deinit(TranslationUnit* tu) {
+	if (tu->is_free) return;
+	
+	big_array_destroy(tu->types);
+	big_array_destroy(tu->members);
+	big_array_destroy(tu->params);
+	big_array_destroy(tu->enum_entries);
+	big_array_destroy(tu->stmts);
+	big_array_destroy(tu->exprs);
+	arrfree(tu->top_level_stmts);
+	tu->is_free = true;
 }
 
 StmtIndex resolve_unknown_symbol(TranslationUnit* tu, StmtIndex i) {

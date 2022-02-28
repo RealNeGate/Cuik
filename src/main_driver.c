@@ -27,8 +27,10 @@ typedef enum {
 	COMPILER_MODE_RUN,
 } CompilerMode;
 
-//static CompilationUnit compilation_unit;
-static TranslationUnit translation_unit;
+static const char* cuik_source_file;
+static char cuik_file_no_ext[MAX_PATH];
+
+static CompilationUnit compilation_unit;
 
 ////////////////////////////////
 // Standard compilation
@@ -48,8 +50,8 @@ static size_t tasks_munch_size;
 static cnd_t tasks_condition;
 static mtx_t tasks_mutex;
 
-static const char* cuik_source_file;
-static char cuik_file_no_ext[MAX_PATH];
+// whichever one is compiling
+static TranslationUnit* current_translation_unit;
 
 static int task_thread(void* param) {
 	while (is_running) {
@@ -59,7 +61,7 @@ static int task_thread(void* param) {
 		if (t+(munch-1) >= tasks_count) {
 			if (t < tasks_count) {
 				for (size_t i = t; i < tasks_count; i++) {
-					irgen_top_level_stmt(&translation_unit, translation_unit.top_level_stmts[i]);
+					irgen_top_level_stmt(current_translation_unit, current_translation_unit->top_level_stmts[i]);
 				}
 				
 				tasks_complete += (tasks_count - t);
@@ -77,7 +79,7 @@ static int task_thread(void* param) {
 		}
 		
 		for (size_t i = 0; i < munch; i++) {
-			irgen_top_level_stmt(&translation_unit, translation_unit.top_level_stmts[t+i]);
+			irgen_top_level_stmt(current_translation_unit, current_translation_unit->top_level_stmts[t+i]);
 		}
 		tasks_complete += munch;
 	}
@@ -99,98 +101,70 @@ static void dispatch_tasks(size_t count) {
 	}
 }
 
-static void compile_project(TB_Arch arch, TB_System sys, bool is_multithreaded, bool is_check) {
-	// Preprocess file
-	CPP_Context cpp_ctx;
-	cpp_init(&cpp_ctx);
-	cuik_set_cpp_defines(&cpp_ctx);
+static void compile_project(const char* obj_output_path, bool is_multithreaded, bool is_check) {
+	atoms_init();
+	compilation_unit_init(&compilation_unit);
 	
-	TokenStream s;
-	timed_block("preprocess") {
-		s = ir_gen_tokens = cpp_process(&cpp_ctx, cuik_source_file);
-	}
-	
-	cpp_finalize(&cpp_ctx);
-	
-	// Parse
-	timed_block("parse") {
-		atoms_init();
-		
-		translation_unit = parse_file(&s);
-		crash_if_reports(REPORT_ERROR);
-	}
-	
-	TB_FeatureSet features = { 0 };
-	mod = tb_module_create(arch, sys, &features);
 	irgen_init();
 	
-	// Semantics pass
-	timed_block("semantics") {
-		sema_pass(NULL, &translation_unit);
-		crash_if_reports(REPORT_ERROR);
-	}
-	
+	TranslationUnit* tu = cuik_compile_file(&compilation_unit, cuik_source_file);
 	if (settings.print_ast) {
-		ast_dump(&translation_unit, stdout);
+		ast_dump(tu, stdout);
 	}
 	
 	if (!is_check) {
-		// Generate IR
-		// TODO(NeGate): Globals amirite... yea maybe i'll maybe move the TB_Module from the
-		// globals but at the same time, it's a thread safe interface for the most part you're
-		// supposed to keep a global one and use it across multiple threads.
-		if (!is_multithreaded) {
-			timed_block("ir gen & compile") {
-				TB_FeatureSet features = { 0 };
-				mod = tb_module_create(arch, sys, &features);
-				
-				// IR generation
-				for (size_t i = 0, count = arrlen(translation_unit.top_level_stmts); i < count; i++) {
-					irgen_top_level_stmt(&translation_unit, translation_unit.top_level_stmts[i]);
-				}
+		timed_block("ir gen & compile") {
+			is_running = true;
+			cnd_init(&tasks_condition);
+			mtx_init(&tasks_mutex, mtx_plain);
+			
+			// Divide and conquer!!!
+			for (int i = 0; i < settings.num_of_worker_threads; i++) {
+				thrd_create(&threads[i], task_thread, NULL);
 			}
-		} else {
-			timed_block("ir gen & compile") {
-				is_running = true;
-				cnd_init(&tasks_condition);
-				mtx_init(&tasks_mutex, mtx_plain);
+			
+			tasks_munch_size = 200;
+			FOR_EACH_TU(tu, &compilation_unit) {
+				current_translation_unit = tu;
 				
-				// How many statements should each thread even grab
-				tasks_munch_size = (arrlen(translation_unit.top_level_stmts) / settings.num_of_worker_threads) + 1;
-				if (tasks_munch_size < 5) tasks_munch_size = 5;
+				dispatch_tasks(arrlen(tu->top_level_stmts));
 				
-				// Divide and conquer!!!
-				for (int i = 0; i < settings.num_of_worker_threads; i++) {
-					thrd_create(&threads[i], task_thread, NULL);
-				}
-				
-				dispatch_tasks(arrlen(translation_unit.top_level_stmts));
-				
-				arrfree(s.tokens);
-				arrfree(translation_unit.top_level_stmts);
-				
-				// Just let's the threads know that 
-				// they might need to die now
-				tasks_count = 0;
-				tasks_complete = 0;
-				
-				is_running = false;
-				for (int i = 0; i < settings.num_of_worker_threads; i++) {
-					thrd_join(threads[i], NULL);
-				}
-				mtx_destroy(&tasks_mutex);
-				cnd_destroy(&tasks_condition);
+				translation_unit_deinit(tu);
+				current_translation_unit = NULL;
 			}
+			
+			// Just let's the threads know that 
+			// they might need to die now
+			tasks_count = 0;
+			tasks_complete = 0;
+			
+			is_running = false;
+			for (int i = 0; i < settings.num_of_worker_threads; i++) {
+				thrd_join(threads[i], NULL);
+			}
+			
+			mtx_destroy(&tasks_mutex);
+			cnd_destroy(&tasks_condition);
+			irgen_deinit();
 		}
 	}
 	
-	irgen_deinit();
-	cpp_deinit(&cpp_ctx);
+	compilation_unit_deinit(&compilation_unit);
 	arena_free();
 	atoms_deinit();
 	
 	// Compile
-	if (!tb_module_compile(mod)) abort();
+	if (!is_check) {
+		if (!tb_module_compile(mod)) abort();
+		
+		timed_block("export") {
+			if (!settings.print_tb_ir) {
+				if (!tb_module_export(mod, obj_output_path, settings.debug_info)) abort();
+			}
+			
+			tb_module_destroy(mod);
+		}
+	}
 }
 
 ////////////////////////////////
@@ -267,11 +241,7 @@ static bool live_compile() {
 		}
 		
 		if (setjmp(live_compiler_savepoint) == 0) {
-			compile_project(target_arch, target_system, true, false);
-			
-			if (!tb_module_export(mod, obj_output_path, false)) abort();
-			tb_module_destroy(mod);
-			
+			compile_project(obj_output_path, true, false);
 			disassemble_object_file();
 		}
 		
@@ -280,6 +250,7 @@ static bool live_compile() {
 		// Wait for the user to save again
 		while (true) {
 			uint64_t current_last_write = get_last_write_time(cuik_source_file);
+			
 			if (original_last_write != current_last_write) {
 				original_last_write = current_last_write;
 				
@@ -626,15 +597,7 @@ int main(int argc, char* argv[]) {
 			
 			// Build project
 			timed_block("total") {
-				compile_project(target_arch, target_system, true, mode == COMPILER_MODE_CHECK);
-				
-				timed_block("export") {
-					if (!settings.print_tb_ir && mode != COMPILER_MODE_CHECK) {
-						if (!tb_module_export(mod, obj_output_path, settings.debug_info)) abort();
-					}
-					
-					tb_module_destroy(mod);
-				}
+				compile_project(obj_output_path, true, mode == COMPILER_MODE_CHECK);
 			}
 			
 			// Close out profiler output (it doesn't include the linking)

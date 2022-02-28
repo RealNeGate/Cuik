@@ -21,7 +21,7 @@ void* big_array_internal_reserve(void* ptr, size_t type_size, size_t extra);
 
 #define BigArray(T) T*
 #define big_array_create(T) big_array_internal_create(sizeof(T))
-#define big_array_destroy(arr) big_array_internal_destroy(&arr)
+#define big_array_destroy(arr) big_array_internal_destroy(arr)
 #define big_array_put(arr, new_data) do {                             \
 arr = big_array_internal_reserve(arr, sizeof(*arr), 1);       \
 BigArrayHeader* header = ((BigArrayHeader*) arr) - 1;         \
