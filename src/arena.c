@@ -9,8 +9,8 @@ typedef struct ArenaSegment {
 	unsigned char data[];
 } ArenaSegment;
 
-_Thread_local ArenaSegment* arena_base;
-_Thread_local ArenaSegment* arena_top;
+thread_local ArenaSegment* arena_base;
+thread_local ArenaSegment* arena_top;
 
 void* arena_alloc(size_t size, size_t align) {
 	// alignment must be a power of two

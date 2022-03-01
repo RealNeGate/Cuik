@@ -24,7 +24,7 @@ typedef enum {
 	COMPILER_MODE_BUILD,
 	
 	// compile & run
-	COMPILER_MODE_RUN,
+	COMPILER_MODE_RUN
 } CompilerMode;
 
 static const char* cuik_source_file;
@@ -35,14 +35,30 @@ static CompilationUnit compilation_unit;
 ////////////////////////////////
 // Standard compilation
 ////////////////////////////////
+typedef enum {
+	COMPILE_STAGE_IRGEN,
+	
+	// function level optimizations are run in parallel so we have a 
+	// special stage for them
+	COMPILE_STAGE_OPT,
+	
+	// codegen is always embarassingly parallel but when we do optimizations
+	// we need to finish optimizations before even starting the machine codegen
+	COMPILE_STAGE_CODEGEN
+} CompileStage;
+
 // Simple thread pool
 static thrd_t threads[TB_MAX_THREADS];
 
 static atomic_size_t tasks_reserved;
 static atomic_size_t tasks_complete;
 static atomic_bool is_running;
+static atomic_int compile_stage;
 static size_t tasks_count;
 static size_t tasks_munch_size;
+
+// did it make any changes while doing function-level opts
+static atomic_bool is_optimizer_working;
 
 // signalled when it's about to finish to notify the main
 // thread to wake up because it's about to finish with the
@@ -53,6 +69,28 @@ static mtx_t tasks_mutex;
 // whichever one is compiling
 static TranslationUnit* current_translation_unit;
 
+static void run_irgen_tasks(size_t start, size_t end) {
+	for (size_t i = start; i < end; i++) {
+		irgen_top_level_stmt(current_translation_unit, current_translation_unit->top_level_stmts[i]);
+	}
+}
+
+static void run_optimize_tasks(size_t start, size_t end) {
+	bool changes = false;
+	
+	for (size_t i = start; i < end; i++) {
+		changes |= irgen_optimize_stmt(current_translation_unit, current_translation_unit->top_level_stmts[i]);
+	}
+	
+	if (changes) is_optimizer_working = true;
+}
+
+static void run_codegen_tasks(size_t start, size_t end) {
+	for (size_t i = start; i < end; i++) {
+		irgen_codegen_stmt(current_translation_unit, current_translation_unit->top_level_stmts[i]);
+	}
+}
+
 static int task_thread(void* param) {
 	while (is_running) {
 		size_t munch = tasks_munch_size;
@@ -60,8 +98,10 @@ static int task_thread(void* param) {
 		
 		if (t+(munch-1) >= tasks_count) {
 			if (t < tasks_count) {
-				for (size_t i = t; i < tasks_count; i++) {
-					irgen_top_level_stmt(current_translation_unit, current_translation_unit->top_level_stmts[i]);
+				switch ((int) compile_stage) {
+					case COMPILE_STAGE_IRGEN: run_irgen_tasks(t, tasks_count); break;
+					case COMPILE_STAGE_OPT: run_optimize_tasks(t, tasks_count); break;
+					case COMPILE_STAGE_CODEGEN: run_codegen_tasks(t, tasks_count); break;
 				}
 				
 				tasks_complete += (tasks_count - t);
@@ -78,8 +118,10 @@ static int task_thread(void* param) {
 			continue;
 		}
 		
-		for (size_t i = 0; i < munch; i++) {
-			irgen_top_level_stmt(current_translation_unit, current_translation_unit->top_level_stmts[t+i]);
+		switch ((int) compile_stage) {
+			case COMPILE_STAGE_IRGEN: run_irgen_tasks(t, t+munch); break;
+			case COMPILE_STAGE_OPT: run_optimize_tasks(t, t+munch); break;
+			case COMPILE_STAGE_CODEGEN: run_codegen_tasks(t, t+munch); break;
 		}
 		tasks_complete += munch;
 	}
@@ -95,6 +137,7 @@ static void dispatch_tasks(size_t count) {
 	tasks_reserved = 0;
 	
 	// wait until it's completed
+	mtx_lock(&tasks_mutex);
 	cnd_wait(&tasks_condition, &tasks_mutex);
     while (tasks_complete < tasks_count) {
 		thrd_yield();
@@ -124,13 +167,56 @@ static void compile_project(const char* obj_output_path, bool is_multithreaded, 
 			}
 			
 			tasks_munch_size = 200;
-			FOR_EACH_TU(tu, &compilation_unit) {
-				current_translation_unit = tu;
+			if (settings.optimize) {
+				// compile the TBIR
+				printf("ir generation...\n");
+				compile_stage = COMPILE_STAGE_IRGEN;
+				FOR_EACH_TU(tu, &compilation_unit) {
+					current_translation_unit = tu;
+					
+					dispatch_tasks(arrlen(tu->top_level_stmts));
+					
+					current_translation_unit = NULL;
+				}
 				
-				dispatch_tasks(arrlen(tu->top_level_stmts));
+				// run function level passes to exhaustion, then try
+				// whole program, then keep doing that over and over
+				compile_stage = COMPILE_STAGE_OPT;
+				printf("optimizing...\n");
 				
-				translation_unit_deinit(tu);
-				current_translation_unit = NULL;
+				do {
+					is_optimizer_working = false;
+					
+					FOR_EACH_TU(tu, &compilation_unit) {
+						current_translation_unit = tu;
+						dispatch_tasks(arrlen(tu->top_level_stmts));
+						current_translation_unit = NULL;
+					}
+					
+					printf("WPO!\n");
+					is_optimizer_working |= tb_module_optimize(mod);
+				} while (is_optimizer_working);
+				
+				compile_stage = COMPILE_STAGE_CODEGEN;
+				printf("codegen...\n");
+				FOR_EACH_TU(tu, &compilation_unit) {
+					current_translation_unit = tu;
+					
+					dispatch_tasks(arrlen(tu->top_level_stmts));
+					
+					translation_unit_deinit(tu);
+					current_translation_unit = NULL;
+				}
+			} else {
+				compile_stage = COMPILE_STAGE_IRGEN;
+				FOR_EACH_TU(tu, &compilation_unit) {
+					current_translation_unit = tu;
+					
+					dispatch_tasks(arrlen(tu->top_level_stmts));
+					
+					translation_unit_deinit(tu);
+					current_translation_unit = NULL;
+				}
 			}
 			
 			// Just let's the threads know that 
@@ -518,7 +604,7 @@ int main(int argc, char* argv[]) {
 		} else if (strcmp(key, "emit-ir") == 0) {
 			settings.print_tb_ir = true;
 		} else if (strcmp(key, "opt") == 0) {
-			settings.optimization_level = TB_OPT_O1;
+			settings.optimize = true;
 		} else if (strcmp(key, "obj") == 0) {
 			settings.is_object_only = true;
 		} else if (strcmp(key, "time") == 0) {

@@ -308,8 +308,11 @@ InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, Sourc
 						
 						ConstValue value = const_eval(tu, node->expr);
 						
-						memset(region, 0, size);
-						memcpy(region, &value, size);
+#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+#error "Stop this immoral bullshit please... until someone fixes this at least :p"
+#else
+						memcpy(region, &value.unsigned_value, size);
+#endif
 						break;
 					}
 					// fallthrough
@@ -1286,7 +1289,8 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, StmtIndex s) {
 				char* name = tls_push(1024);
 				snprintf(name, 1024, "%s$%s@%d", function_name, sp->decl.name, s);
 				
-				TB_GlobalID g = tb_global_create(mod, init, name, TB_LINKAGE_PRIVATE);
+				TB_GlobalID g = tb_global_create(mod, name, TB_LINKAGE_PRIVATE);
+				tb_global_set_initializer(mod, g, init);
 				tls_restore(name);
 				
 				assert(sp->decl.initial == 0 && "TODO: Implement local static declaration initialization");
@@ -1622,10 +1626,6 @@ static void gen_func_body(TranslationUnit* tu, TypeIndex type, StmtIndex s) {
 		}
 	}
 	
-	if (settings.optimization_level != TB_OPT_O0) {
-		tb_function_optimize(func, settings.optimization_level);
-	}
-	
 	if (settings.print_tb_ir) {
 		if (mtx_lock(&emit_ir_mutex) != thrd_success) {
 			printf("internal compiler error: mtx_lock(...) failure!");
@@ -1641,12 +1641,11 @@ static void gen_func_body(TranslationUnit* tu, TypeIndex type, StmtIndex s) {
 			abort();
 		}
 	} else {
-		tb_module_compile_func(mod, func, TB_ISEL_FAST);
+		if (!settings.optimize) tb_module_compile_func(mod, func, /* settings.optimize ? TB_ISEL_COMPLEX : */ TB_ISEL_FAST);
 	}
 	
-	// NOTE(NeGate): Yikes... we can't delete the IR since line info requires it to
-	// stay around... this is a bad thing and we should fix TB to remove that crap.
-	tb_function_free(func);
+	// if we're optimizing, we need to keep the IR longer so we can compile later
+	if (!settings.optimize) tb_function_free(func);
 }
 
 void irgen_init() {
@@ -1685,39 +1684,118 @@ void irgen_deinit() {
 }
 
 void irgen_top_level_stmt(TranslationUnit* tu, StmtIndex s) {
-	if (tu->stmts[s].op == STMT_FUNC_DECL) {
-		TypeIndex type = tu->stmts[s].decl.type;
+	Stmt* restrict sp = &tu->stmts[s];
+	
+	if (sp->op == STMT_FUNC_DECL) {
+		TypeIndex type = sp->decl.type;
 		assert(tu->types[type].kind == KIND_FUNC);
 		
-		if (tu->stmts[s].decl.attrs.is_static ||
-			tu->stmts[s].decl.attrs.is_inline) {
-			if (!tu->stmts[s].decl.attrs.is_used) return;
+		if (sp->decl.attrs.is_static ||
+			sp->decl.attrs.is_inline) {
+			if (!sp->decl.attrs.is_used) return;
 		}
 		
-		timed_block("irgen: %s", tu->stmts[s].decl.name) {
+		timed_block("irgen: %s", sp->decl.name) {
 			gen_func_body(tu, type, s);
 		}
-	} else if (tu->stmts[s].op == STMT_GLOBAL_DECL) {
-		if (!tu->stmts[s].decl.attrs.is_used) return;
+	} else if (sp->op == STMT_DECL || sp->op == STMT_GLOBAL_DECL) {
+		if (!sp->decl.attrs.is_used) return;
+		if (sp->decl.attrs.is_typedef) return;
 		
-		Expr* restrict ep = &tu->exprs[tu->stmts[s].decl.initial];
+		TB_GlobalID global = sp->backing.g;
+		Type* type = &tu->types[sp->decl.type];
+		
+		Expr* restrict ep = &tu->exprs[sp->decl.initial];
 		if (ep->op == EXPR_INITIALIZER) {
-			mtx_lock(&static_init_mutex);
-			
 			TypeIndex t = ep->init.type;
 			if (t == TYPE_VOID) {
-				ep->init.type = t = tu->stmts[s].decl.type;
+				ep->init.type = t = sp->decl.type;
 			}
 			
 			size_t node_count = ep->init.count;
 			InitNode* nodes = ep->init.nodes;
 			
-			TB_Register addr = tb_inst_get_global_address(static_init_func, tu->stmts[s].backing.g);
+			// Walk initializer for max constant expression initializers.
+			int max_tb_objects = 0;
+			count_max_tb_init_objects(node_count, nodes, &max_tb_objects);
 			
-			// Initialize all dynamic expressions
-			eval_initializer_objects(tu, static_init_func, ep->loc, -1, addr, t, node_count, nodes, 0);
-			
-			mtx_unlock(&static_init_mutex);
+			TB_InitializerID init;
+			if (ep->op == EXPR_STR) {
+				init = tb_initializer_create(mod, type->size, type->align, 1);
+				
+				char* dst = tb_initializer_add_region(mod, init, 0, type->size);
+				Expr* restrict ep = &tu->exprs[sp->decl.initial];
+				
+				memcpy(dst, ep->str.start, ep->str.end - ep->str.start);
+				
+				if (tu->types[sp->decl.type].kind == KIND_PTR) {
+					// if it's a string pointer, then we make a dummy string array
+					// and point to that with another initializer
+					char temp[1024];
+					snprintf(temp, 1024, "%s@%d", sp->decl.name, s);
+					TB_GlobalID dummy = tb_global_create(mod, temp, TB_LINKAGE_PRIVATE);
+					tb_global_set_initializer(mod, dummy, init);
+					
+					init = tb_initializer_create(mod, 8, 8, 1);
+					tb_initializer_add_global(mod, init, 0, dummy);
+				}
+			} else if (ep->op == EXPR_INITIALIZER) {
+				Expr* restrict ep = &tu->exprs[sp->decl.initial];
+				
+				int node_count = ep->init.count;
+				InitNode* nodes = ep->init.nodes;
+				
+				// Walk initializer for max constant expression initializers.
+				int max_tb_objects = 0;
+				count_max_tb_init_objects(node_count, nodes, &max_tb_objects);
+				
+				init = tb_initializer_create(mod, type->size, type->align, max_tb_objects);
+				
+				// Initialize all const expressions
+				eval_initializer_objects(tu, NULL, sp->loc, init, TB_NULL_REG, sp->decl.type, node_count, nodes, 0);
+			} else {
+				// uninitialized, just all zeroes
+				init = tb_initializer_create(mod, type->size, type->align, 0);
+			}
+			tb_global_set_initializer(mod, global, init);
+		} else {
+			// uninitialized, just all zeroes
+			TB_InitializerID init = tb_initializer_create(mod, type->size, type->align, 0);
+			tb_global_set_initializer(mod, global, init);
+		}
+	}
+}
+
+bool irgen_optimize_stmt(TranslationUnit* tu, StmtIndex s) {
+	Stmt* restrict sp = &tu->stmts[s];
+	
+	if (sp->op == STMT_FUNC_DECL) {
+		if (sp->decl.attrs.is_static ||
+			sp->decl.attrs.is_inline) {
+			if (!sp->decl.attrs.is_used) return false;
+		}
+		
+		timed_block("opt: %s", sp->decl.name) {
+			TB_Function* func = tb_function_from_id(mod, sp->backing.f);
+			return tb_function_optimize(func);
+		}
+	}
+	
+	return false;
+}
+
+void irgen_codegen_stmt(TranslationUnit* tu, StmtIndex s) {
+	Stmt* restrict sp = &tu->stmts[s];
+	
+	if (sp->op == STMT_FUNC_DECL) {
+		if (sp->decl.attrs.is_static ||
+			sp->decl.attrs.is_inline) {
+			if (!sp->decl.attrs.is_used) return;
+		}
+		
+		timed_block("codegen: %s", sp->decl.name) {
+			TB_Function* func = tb_function_from_id(mod, sp->backing.f);
+			tb_module_compile_func(mod, func, TB_ISEL_FAST);
 		}
 	}
 }

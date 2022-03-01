@@ -170,6 +170,8 @@ extern "C" {
 	typedef enum {
 		// FastISel
 		TB_ISEL_FAST,
+		
+		// ComplexISel
 		TB_ISEL_COMPLEX
 	} TB_ISelMode;
 	
@@ -676,7 +678,8 @@ extern "C" {
 	////////////////////////////////
 	// Constant Initializers
 	////////////////////////////////
-	TB_API TB_GlobalID tb_global_create(TB_Module* m, TB_InitializerID initializer, const char* name, TB_Linkage linkage);
+	TB_API TB_GlobalID tb_global_create(TB_Module* m, const char* name, TB_Linkage linkage);
+	TB_API void tb_global_set_initializer(TB_Module* m, TB_GlobalID global, TB_InitializerID initializer);
 	
 	////////////////////////////////
 	// Function IR Generation
@@ -844,10 +847,13 @@ extern "C" {
 	// Optimizer
 	////////////////////////////////
 	// Applies single function optimizations until it runs out
-	TB_API void tb_function_optimize(TB_Function* f, TB_OptLevel opt);
+	TB_API bool tb_function_optimize(TB_Function* f);
 	
 	// Applies whole program optimizations until it runs out
-	TB_API void tb_module_optimize(TB_Function* f, TB_OptLevel opt);
+	TB_API bool tb_module_optimize(TB_Module* m);
+	
+	// analysis
+	TB_API TB_LoopInfo* tb_function_get_loop_info(TB_Function* f);
 	
 	// passes
 	TB_API bool tb_opt_mem2reg(TB_Function* f);

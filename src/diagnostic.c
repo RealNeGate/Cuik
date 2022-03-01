@@ -85,7 +85,7 @@ void report(ReportLevel level, SourceLoc* loc, const char* fmt, ...) {
 		
 		// idk man
 		size_t start_pos = loc->columns > dist_from_line_start 
-			? loc->columns - dist_from_line_start : loc->columns;
+			? loc->columns - dist_from_line_start : 0;
 		
 		// draw underline
 		size_t tkn_len = loc->length;

@@ -165,11 +165,15 @@ static bool is_assignable_expr(TranslationUnit* tu, ExprIndex e) {
 	Expr* restrict ep = &tu->exprs[e];
 	
 	switch (ep->op) {
-		case EXPR_SYMBOL:
 		case EXPR_DEREF:
 		case EXPR_SUBSCRIPT:
 		case EXPR_ARROW:
 		case EXPR_DOT:
+		return true;
+		
+		case EXPR_SYMBOL:
+		case EXPR_PARAM:
+		// TODO(NeGate): const-check
 		return true;
 		
 		default:
@@ -1035,47 +1039,12 @@ static void sema_top_level(TranslationUnit* tu, StmtIndex s) {
 					}
 				}
 				
-				assert(type->align);
-				TB_InitializerID init;
-				if (tu->exprs[sp->decl.initial].op == EXPR_STR) {
-					init = tb_initializer_create(mod, type->size, type->align, 1);
-					
-					char* dst = tb_initializer_add_region(mod, init, 0, type->size);
-					Expr* restrict ep = &tu->exprs[sp->decl.initial];
-					
-					memcpy(dst, ep->str.start, ep->str.end - ep->str.start);
-					
-					if (tu->types[sp->decl.type].kind == KIND_PTR) {
-						// if it's a string pointer, then we make a dummy string array and point to that with another initializer
-						char temp[1024];
-						snprintf(temp, 1024, "%s@%d", name, s);
-						TB_GlobalID dummy = tb_global_create(mod, init, temp, TB_LINKAGE_PRIVATE);
-						
-						init = tb_initializer_create(mod, 8, 8, 1);
-						tb_initializer_add_global(mod, init, 0, dummy);
-					}
-				} else if (tu->exprs[sp->decl.initial].op == EXPR_INITIALIZER) {
-					Expr* restrict ep = &tu->exprs[sp->decl.initial];
-					
-					int node_count = ep->init.count;
-					InitNode* nodes = ep->init.nodes;
-					
-					// Walk initializer for max constant expression initializers.
-					int max_tb_objects = 0;
-					count_max_tb_init_objects(node_count, nodes, &max_tb_objects);
-					
-					init = tb_initializer_create(mod, type->size, type->align, max_tb_objects);
-					
-					// Initialize all const expressions
-					eval_initializer_objects(tu, NULL, sp->loc, init, TB_NULL_REG, type_index, node_count, nodes, 0);
-				} else {
-					init = tb_initializer_create(mod, type->size, type->align, 0);
+				assert(type->align && "Somehow we got an incomplete type here?");
+				
+				if (!sp->decl.attrs.is_typedef) {
+					TB_Linkage linkage = sp->decl.attrs.is_static ? TB_LINKAGE_PRIVATE : TB_LINKAGE_PUBLIC;
+					sp->backing.g = tb_global_create(mod, name, linkage);
 				}
-				
-				TB_Linkage linkage = sp->decl.attrs.is_static ? TB_LINKAGE_PRIVATE : TB_LINKAGE_PUBLIC;
-				sp->backing.g = tb_global_create(mod, init, name, linkage);
-				
-				//report(REPORT_INFO, &ir_gen_tokens.line_arena[sp->loc], "Blah! %s %d", sp->decl.name, sp->backing.g);
 			}
 			break;
 		}

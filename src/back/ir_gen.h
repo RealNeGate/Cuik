@@ -78,3 +78,5 @@ TB_Register irgen_as_rvalue(TranslationUnit* tu, TB_Function* func, ExprIndex e)
 IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e);
 void irgen_stmt(TranslationUnit* tu, TB_Function* func, StmtIndex s);
 void irgen_top_level_stmt(TranslationUnit* tu, StmtIndex s);
+bool irgen_optimize_stmt(TranslationUnit* tu, StmtIndex s);
+void irgen_codegen_stmt(TranslationUnit* tu, StmtIndex s);

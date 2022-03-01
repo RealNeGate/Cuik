@@ -4,7 +4,6 @@
 
 typedef struct CompilerSettings {
 	const char* output_path;
-	TB_OptLevel optimization_level;
 	
 	// basically defines the sizeof(long)
 	// if true it's 4 bytes if not it's 8
@@ -15,6 +14,7 @@ typedef struct CompilerSettings {
 	bool print_ast        : 1;
 	bool debug_info       : 1;
 	bool pedantic         : 1;
+	bool optimize         : 1;
 	
 	atomic_bool using_winmain;
 	int num_of_worker_threads;
