@@ -8,6 +8,8 @@
 
 static void remove_weird_whitespace(size_t len, char* text);
 
+//static size_t file_io_memory_usage = 0;
+
 #ifdef _WIN32
 static char* read_entire_file(const char* filepath) {
 	HANDLE file = CreateFileA(filepath, GENERIC_READ, FILE_SHARE_READ, 0, OPEN_EXISTING, 0, 0);
@@ -36,6 +38,9 @@ static char* read_entire_file(const char* filepath) {
 	memset(&buffer[bytes_read], 0, 17);
 	
 	remove_weird_whitespace(bytes_read, buffer);
+	
+	//file_io_memory_usage += (file_size.QuadPart + 17);
+	//printf("%f MiB of files\n", (double)file_io_memory_usage / 1048576.0);
 	return buffer;
 }
 #else

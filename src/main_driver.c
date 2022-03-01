@@ -2,6 +2,7 @@
 // act as a tutorial to writing a custom driver. Currently it doesn't 
 // support multiple input files but that'll be next.
 #include "driver_utils.h"
+#include <ext/threadpool.h>
 
 typedef enum {
 	COMPILER_MODE_NONE,
@@ -35,113 +36,89 @@ static CompilationUnit compilation_unit;
 ////////////////////////////////
 // Standard compilation
 ////////////////////////////////
-typedef enum {
-	COMPILE_STAGE_IRGEN,
+typedef struct {
+	TranslationUnit* tu;
+	size_t start, end;
+} TaskInfo;
+
+static atomic_bool is_optimizer_working = false;
+
+static void irgen_task(void* arg) {
+	TaskInfo task = *((TaskInfo*)arg);
 	
-	// function level optimizations are run in parallel so we have a 
-	// special stage for them
-	COMPILE_STAGE_OPT,
-	
-	// codegen is always embarassingly parallel but when we do optimizations
-	// we need to finish optimizations before even starting the machine codegen
-	COMPILE_STAGE_CODEGEN
-} CompileStage;
-
-// Simple thread pool
-static thrd_t threads[TB_MAX_THREADS];
-
-static atomic_size_t tasks_reserved;
-static atomic_size_t tasks_complete;
-static atomic_bool is_running;
-static atomic_int compile_stage;
-static size_t tasks_count;
-static size_t tasks_munch_size;
-
-// did it make any changes while doing function-level opts
-static atomic_bool is_optimizer_working;
-
-// signalled when it's about to finish to notify the main
-// thread to wake up because it's about to finish with the
-// parallel dispatch
-static cnd_t tasks_condition;
-static mtx_t tasks_mutex;
-
-// whichever one is compiling
-static TranslationUnit* current_translation_unit;
-
-static void run_irgen_tasks(size_t start, size_t end) {
-	for (size_t i = start; i < end; i++) {
-		irgen_top_level_stmt(current_translation_unit, current_translation_unit->top_level_stmts[i]);
-	}
-}
-
-static void run_optimize_tasks(size_t start, size_t end) {
-	bool changes = false;
-	
-	for (size_t i = start; i < end; i++) {
-		changes |= irgen_optimize_stmt(current_translation_unit, current_translation_unit->top_level_stmts[i]);
-	}
-	
-	if (changes) is_optimizer_working = true;
-}
-
-static void run_codegen_tasks(size_t start, size_t end) {
-	for (size_t i = start; i < end; i++) {
-		irgen_codegen_stmt(current_translation_unit, current_translation_unit->top_level_stmts[i]);
-	}
-}
-
-static int task_thread(void* param) {
-	while (is_running) {
-		size_t munch = tasks_munch_size;
-		size_t t = atomic_fetch_add(&tasks_reserved, munch);
-		
-		if (t+(munch-1) >= tasks_count) {
-			if (t < tasks_count) {
-				switch ((int) compile_stage) {
-					case COMPILE_STAGE_IRGEN: run_irgen_tasks(t, tasks_count); break;
-					case COMPILE_STAGE_OPT: run_optimize_tasks(t, tasks_count); break;
-					case COMPILE_STAGE_CODEGEN: run_codegen_tasks(t, tasks_count); break;
-				}
-				
-				tasks_complete += (tasks_count - t);
-			}
-			
-			if (t <= tasks_count) {
-				cnd_signal(&tasks_condition);
-			}
-			
-			while (tasks_reserved >= tasks_count) { 
-				thrd_yield();
-				if (!is_running) return 0;
-			}
-			continue;
+	timed_block("irgen %zu-%zu", task.start, task.end) {
+		for (size_t i = task.start; i < task.end; i++) {
+			irgen_top_level_stmt(task.tu, task.tu->top_level_stmts[i]);
 		}
-		
-		switch ((int) compile_stage) {
-			case COMPILE_STAGE_IRGEN: run_irgen_tasks(t, t+munch); break;
-			case COMPILE_STAGE_OPT: run_optimize_tasks(t, t+munch); break;
-			case COMPILE_STAGE_CODEGEN: run_codegen_tasks(t, t+munch); break;
-		}
-		tasks_complete += munch;
 	}
-	
-	arena_free();
-	return 0;
 }
 
-// essentially a parallel_for which performs IR gen on top level statements
-static void dispatch_tasks(size_t count) {
-	tasks_count = count;
-	tasks_complete = 0;
-	tasks_reserved = 0;
+static void optimize_task(void* arg) {
+	TaskInfo task = *((TaskInfo*)arg);
 	
-	// wait until it's completed
-	mtx_lock(&tasks_mutex);
-	cnd_wait(&tasks_condition, &tasks_mutex);
-    while (tasks_complete < tasks_count) {
-		thrd_yield();
+	timed_block("optimize %zu-%zu", task.start, task.end) {
+		for (size_t i = task.start; i < task.end; i++) {
+			TB_Function* func = tb_function_from_id(mod, i);
+			
+			if (tb_function_optimize(func)) is_optimizer_working = true;
+		}
 	}
+}
+
+static void codegen_task(void* arg) {
+	TaskInfo task = *((TaskInfo*)arg);
+	
+	timed_block("codegen %zu-%zu", task.start, task.end) {
+		for (size_t i = task.start; i < task.end; i++) {
+			TB_Function* func = tb_function_from_id(mod, i);
+			tb_module_compile_func(mod, func, TB_ISEL_FAST);
+			tb_function_free(func);
+		}
+	}
+}
+
+static void dispatch_for_all_top_level_stmts(threadpool_t* thread_pool, void (*task)(void*)) {
+	tls_init();
+	
+	FOR_EACH_TU(tu, &compilation_unit) {
+		// split up the top level statement tasks into
+		// chunks to avoid spawning too many tiny tasks
+		size_t count = arrlen(tu->top_level_stmts);
+		size_t padded = (count + 4095) & ~4095;
+		
+		for (size_t i = 0; i < padded; i += 4096) {
+			size_t limit = i+4096;
+			if (limit > count) limit = count;
+			
+			TaskInfo* t = tls_push(sizeof(TaskInfo));
+			*t = (TaskInfo){ tu, i, limit };
+			
+			threadpool_submit(thread_pool, task, t);
+		}
+	}
+	
+	threadpool_wait(thread_pool);
+}
+
+static void dispatch_for_all_ir_functions(threadpool_t* thread_pool, void (*task)(void*)) {
+	tls_init();
+	
+	// split up the top level statement tasks into
+	// chunks to avoid spawning too many tiny tasks
+	size_t count = function_count;
+	size_t padded = (count + 4095) & ~4095;
+	
+	for (size_t i = 0; i < padded; i += 4096) {
+		size_t limit = i+4096;
+		if (limit > count) limit = count;
+		
+		TaskInfo* t = tls_push(sizeof(TaskInfo));
+		*t = (TaskInfo){ NULL, i, limit };
+		
+		threadpool_submit(thread_pool, task, t);
+	}
+	
+	threadpool_wait(thread_pool);
 }
 
 static void compile_project(const char* obj_output_path, bool is_multithreaded, bool is_check) {
@@ -157,80 +134,28 @@ static void compile_project(const char* obj_output_path, bool is_multithreaded, 
 	
 	if (!is_check) {
 		timed_block("ir gen & compile") {
-			is_running = true;
-			cnd_init(&tasks_condition);
-			mtx_init(&tasks_mutex, mtx_plain);
+			threadpool_t* thread_pool = threadpool_create(settings.num_of_worker_threads, 4096);
 			
-			// Divide and conquer!!!
-			for (int i = 0; i < settings.num_of_worker_threads; i++) {
-				thrd_create(&threads[i], task_thread, NULL);
+			dispatch_for_all_top_level_stmts(thread_pool, irgen_task);
+			irgen_finalize();
+			
+			FOR_EACH_TU(tu, &compilation_unit) {
+				translation_unit_deinit(tu);
 			}
 			
-			tasks_munch_size = 200;
+			// on optimizations things get fancy and we run passes over all of the IR
+			// until exhaustion with WPO passes in between
 			if (settings.optimize) {
-				// compile the TBIR
-				printf("ir generation...\n");
-				compile_stage = COMPILE_STAGE_IRGEN;
-				FOR_EACH_TU(tu, &compilation_unit) {
-					current_translation_unit = tu;
-					
-					dispatch_tasks(arrlen(tu->top_level_stmts));
-					
-					current_translation_unit = NULL;
-				}
-				
-				// run function level passes to exhaustion, then try
-				// whole program, then keep doing that over and over
-				compile_stage = COMPILE_STAGE_OPT;
-				printf("optimizing...\n");
-				
 				do {
 					is_optimizer_working = false;
 					
-					FOR_EACH_TU(tu, &compilation_unit) {
-						current_translation_unit = tu;
-						dispatch_tasks(arrlen(tu->top_level_stmts));
-						current_translation_unit = NULL;
-					}
-					
-					printf("WPO!\n");
-					is_optimizer_working |= tb_module_optimize(mod);
+					dispatch_for_all_ir_functions(thread_pool, optimize_task);
 				} while (is_optimizer_working);
 				
-				compile_stage = COMPILE_STAGE_CODEGEN;
-				printf("codegen...\n");
-				FOR_EACH_TU(tu, &compilation_unit) {
-					current_translation_unit = tu;
-					
-					dispatch_tasks(arrlen(tu->top_level_stmts));
-					
-					translation_unit_deinit(tu);
-					current_translation_unit = NULL;
-				}
-			} else {
-				compile_stage = COMPILE_STAGE_IRGEN;
-				FOR_EACH_TU(tu, &compilation_unit) {
-					current_translation_unit = tu;
-					
-					dispatch_tasks(arrlen(tu->top_level_stmts));
-					
-					translation_unit_deinit(tu);
-					current_translation_unit = NULL;
-				}
+				dispatch_for_all_ir_functions(thread_pool, codegen_task);
 			}
 			
-			// Just let's the threads know that 
-			// they might need to die now
-			tasks_count = 0;
-			tasks_complete = 0;
-			
-			is_running = false;
-			for (int i = 0; i < settings.num_of_worker_threads; i++) {
-				thrd_join(threads[i], NULL);
-			}
-			
-			mtx_destroy(&tasks_mutex);
-			cnd_destroy(&tasks_condition);
+			threadpool_free(thread_pool);
 			irgen_deinit();
 		}
 	}
@@ -364,7 +289,7 @@ static bool disassemble_object_file() {
 
 static bool live_compile() {
 	printf("No live compiler supported");
-    return false;
+	return false;
 }
 #endif
 

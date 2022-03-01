@@ -3,7 +3,6 @@
 //
 // It's inspired by nobuild but different
 #include "compile.h"
-//#define RELEASE_BUILD
 
 #if defined(_WIN32)
 #define OUTPUT_EXEC_NAME "build" SLASH "cuik.exe"
@@ -39,6 +38,7 @@ static const char* INPUT_FILES[] = {
 	"src/back/microsoft_craziness.cpp",
 	
 	"src/ext/stb_ds.c",
+	"src/ext/threadpool.c",
 #if defined(_WIN32)
 	"src/ext/threads_msvc.c",
 #else

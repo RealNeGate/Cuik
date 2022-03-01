@@ -1,83 +1,126 @@
 #include "threadpool.h"
+#include "threads.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdatomic.h>
 
 struct threadpool_t {
-    queue_t* workqueue;
-    thrd_t* workers;
-    size_t worker_count;
-    cnd_t cnd;
-    mtx_t mtx;
-    bool complete;
+	atomic_bool running;
+	atomic_uint read_pointer; // Read
+	atomic_uint write_pointer; // Write
+	
+	atomic_uint completion_goal;
+	atomic_uint completion_count;
+	
+	int thread_count;
+	unsigned int queue_size_mask;
+	
+#if _WIN32
+	HANDLE sem;
+#else
+#error "Implemented unix based semaphore"
+#endif
+	thrd_t* threads;
+	
+	work_t* work;
 };
+
+static bool do_work(threadpool_t* threadpool) {
+	uint32_t read_ptr = threadpool->read_pointer;
+	uint32_t new_read_ptr = (read_ptr + 1) & threadpool->queue_size_mask;
+	
+	if (read_ptr != threadpool->write_pointer) {
+		if (atomic_compare_exchange_strong(&threadpool->read_pointer, &read_ptr, new_read_ptr)) {
+			threadpool->work[read_ptr].fn(threadpool->work[read_ptr].arg);
+			threadpool->completion_count++;
+		}
+		
+		return false;
+	}
+	
+	return true;
+}
 
 static int threadpool_thread(void* arg) {
     threadpool_t* threadpool = arg;
-    while (true) {
-        mtx_lock(&threadpool->mtx);
-        if (!(threadpool->complete || threadpool->workqueue->size > 0)) {
-            cnd_wait(&threadpool->cnd, &threadpool->mtx);
-        }
-		
-        if (threadpool->workqueue->size > 0) {
-            work_t work;
-            queue_pop(threadpool->workqueue, &work);
-            mtx_unlock(&threadpool->mtx);
-            work.fn(work.arg);
-        } else if (threadpool->complete) {
-            mtx_unlock(&threadpool->mtx);
-            break;
-        }
-    }
+	
+	while (threadpool->running) {
+		if (do_work(threadpool)) {
+#if _WIN32
+			WaitForSingleObjectEx(threadpool->sem, -1, false); // wait for jobs
+#endif
+		}
+	}
 	
     return 0;
 }
 
-/* Creates a threadpool with the specified number of workers and queue size. 
-   Returns the threadpool created, or null if the number of workers or queue size is equal to 0. */
 threadpool_t* threadpool_create(size_t worker_count, size_t workqueue_size) {
     if (worker_count == 0 || workqueue_size == 0) return NULL;
+	if ((workqueue_size & (workqueue_size - 1)) != 0) return NULL;
 	
-    threadpool_t *threadpool = malloc(sizeof(*threadpool));
-    threadpool->workqueue = queue_create(workqueue_size, sizeof(work_t));
-    threadpool->workers = malloc(worker_count * sizeof(thrd_t));
-    threadpool->worker_count = worker_count;
-    threadpool->complete = false;
+    threadpool_t* threadpool = calloc(1, sizeof(threadpool_t));
+    threadpool->work = malloc(workqueue_size * sizeof(work_t));
+    threadpool->threads = malloc(worker_count * sizeof(thrd_t));
+    threadpool->thread_count = worker_count;
+    threadpool->running = true;
+	threadpool->queue_size_mask = workqueue_size - 1;
 	
-    cnd_init(&threadpool->cnd);
-    mtx_init(&threadpool->mtx, mtx_plain);
+#if _WIN32
+	threadpool->sem = CreateSemaphoreExA(0, worker_count, worker_count, 0, 0, SEMAPHORE_ALL_ACCESS);
+#endif
 	
     for (int i = 0; i < worker_count; i++) {
-        thrd_create(&threadpool->workers[i], threadpool_thread, threadpool);
+        thrd_create(&threadpool->threads[i], threadpool_thread, threadpool);
     }
 	
     return threadpool;
 }
 
-/* Enqueue an action to the threadpool's internal queue. */
-void threadpool_enqueue(threadpool_t* threadpool, void (*fn)(void*), void *arg) {
-    work_t work = { fn, arg };
-    mtx_lock(&threadpool->mtx);
-    queue_push(threadpool->workqueue, &work);
-    cnd_signal(&threadpool->cnd);
-    mtx_unlock(&threadpool->mtx);
-}
-
-/* Wait for all workers in the thread pool to finish, and all tasks in the internal queue to be handled. */
-void threadpool_join(threadpool_t* threadpool) {   
-    mtx_lock(&threadpool->mtx);
-    threadpool->complete = true;
-    cnd_broadcast(&threadpool->cnd);
-    mtx_unlock(&threadpool->mtx);
+void threadpool_submit(threadpool_t* threadpool, work_routine fn, void* arg) {
+	uint32_t write_ptr = threadpool->write_pointer;
+	uint32_t new_write_ptr = (write_ptr + 1) & threadpool->queue_size_mask;
+	while (new_write_ptr == threadpool->read_pointer) {
+		// TODO: Stall until the jobs are complete.
+	}
 	
-    for (int i = 0; i < threadpool->worker_count; i++) {
-        thrd_join(threadpool->workers[i], NULL);
-    }
+	threadpool->work[write_ptr] = (work_t) {
+		.fn = fn,
+		.arg = arg
+	};
+	
+	threadpool->completion_goal++;
+	threadpool->write_pointer = new_write_ptr;
+	
+#if _WIN32
+	ReleaseSemaphore(threadpool->sem, 1, 0);
+#endif
 }
 
-/* Free the threadpool back to the heap. */
+void threadpool_wait(threadpool_t* threadpool) {
+	while (threadpool->completion_goal != threadpool->completion_count) {
+		thrd_yield();
+	}
+	
+	threadpool->completion_goal = 0;
+	threadpool->completion_count = 0;
+}
+
 void threadpool_free(threadpool_t* threadpool) {
-    queue_free(threadpool->workqueue);
-    cnd_destroy(&threadpool->cnd);
-    mtx_destroy(&threadpool->mtx);
-    free(threadpool->workers);
-    free(threadpool);
+	threadpool->running = false;
+#if _WIN32
+	ReleaseSemaphore(threadpool->sem, threadpool->thread_count, 0);
+#endif
+	
+	for (int i = 0; i < threadpool->thread_count; i++) {
+		thrd_join(threadpool->threads[i], NULL);
+	}
+	
+#if _WIN32
+	CloseHandle(threadpool->sem);
+#endif
+	
+	free(threadpool->threads);
+	free(threadpool->work);
+	free(threadpool);
 }

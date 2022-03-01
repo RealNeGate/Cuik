@@ -5,14 +5,15 @@
 #include <targets/targets.h>
 
 TB_Module* mod;
+atomic_size_t function_count;
 
 // Maps param_num -> TB_Register
-static _Thread_local TB_Register* parameter_map;
-static _Thread_local TypeIndex function_type;
-static _Thread_local const char* function_name;
+static thread_local TB_Register* parameter_map;
+static thread_local TypeIndex function_type;
+static thread_local const char* function_name;
 
 // For aggregate returns
-static _Thread_local TB_Register return_value_address;
+static thread_local TB_Register return_value_address;
 
 TB_Function* static_init_func;
 static mtx_t static_init_mutex;
@@ -1646,6 +1647,7 @@ static void gen_func_body(TranslationUnit* tu, TypeIndex type, StmtIndex s) {
 	
 	// if we're optimizing, we need to keep the IR longer so we can compile later
 	if (!settings.optimize) tb_function_free(func);
+	function_count++;
 }
 
 void irgen_init() {
@@ -1662,23 +1664,20 @@ void irgen_init() {
 }
 
 void irgen_deinit() {
+}
+
+void irgen_finalize() {
 	tb_inst_ret(static_init_func, TB_NULL_REG);
 	
 	if (settings.print_tb_ir) {
-		if (mtx_lock(&emit_ir_mutex) != thrd_success) {
-			printf("internal compiler error: mtx_lock(...) failure!");
-			abort();
-		}
+		mtx_lock(&emit_ir_mutex);
 		
 		tb_function_print(static_init_func, tb_default_print_callback, stdout);
 		fprintf(stdout, "\n\n\n");
 		fflush(stdout);
 		
-		if (mtx_unlock(&emit_ir_mutex) != thrd_success) {
-			printf("internal compiler error: mtx_lock(...) failure!");
-			abort();
-		}
-	} else {
+		mtx_unlock(&emit_ir_mutex);
+	} else if (!settings.optimize) {
 		tb_module_compile_func(mod, static_init_func, TB_ISEL_FAST);
 	}
 }
@@ -1695,9 +1694,7 @@ void irgen_top_level_stmt(TranslationUnit* tu, StmtIndex s) {
 			if (!sp->decl.attrs.is_used) return;
 		}
 		
-		timed_block("irgen: %s", sp->decl.name) {
-			gen_func_body(tu, type, s);
-		}
+		gen_func_body(tu, type, s);
 	} else if (sp->op == STMT_DECL || sp->op == STMT_GLOBAL_DECL) {
 		if (!sp->decl.attrs.is_used) return;
 		if (sp->decl.attrs.is_typedef) return;
@@ -1762,40 +1759,6 @@ void irgen_top_level_stmt(TranslationUnit* tu, StmtIndex s) {
 			// uninitialized, just all zeroes
 			TB_InitializerID init = tb_initializer_create(mod, type->size, type->align, 0);
 			tb_global_set_initializer(mod, global, init);
-		}
-	}
-}
-
-bool irgen_optimize_stmt(TranslationUnit* tu, StmtIndex s) {
-	Stmt* restrict sp = &tu->stmts[s];
-	
-	if (sp->op == STMT_FUNC_DECL) {
-		if (sp->decl.attrs.is_static ||
-			sp->decl.attrs.is_inline) {
-			if (!sp->decl.attrs.is_used) return false;
-		}
-		
-		timed_block("opt: %s", sp->decl.name) {
-			TB_Function* func = tb_function_from_id(mod, sp->backing.f);
-			return tb_function_optimize(func);
-		}
-	}
-	
-	return false;
-}
-
-void irgen_codegen_stmt(TranslationUnit* tu, StmtIndex s) {
-	Stmt* restrict sp = &tu->stmts[s];
-	
-	if (sp->op == STMT_FUNC_DECL) {
-		if (sp->decl.attrs.is_static ||
-			sp->decl.attrs.is_inline) {
-			if (!sp->decl.attrs.is_used) return;
-		}
-		
-		timed_block("codegen: %s", sp->decl.name) {
-			TB_Function* func = tb_function_from_id(mod, sp->backing.f);
-			tb_module_compile_func(mod, func, TB_ISEL_FAST);
 		}
 	}
 }
