@@ -291,7 +291,7 @@ static TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e) {
 		case EXPR_SIZEOF: {
 			TypeIndex src = sema_expr(tu, ep->x_of_expr.expr);
 			
-			assert(tu->types[src].size && "Something went wrong...");
+			//assert(tu->types[src].size && "Something went wrong...");
 			*ep = (Expr) {
 				.op = EXPR_INT,
 				.type = TYPE_ULONG,
@@ -302,7 +302,7 @@ static TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e) {
 		case EXPR_ALIGNOF: {
 			TypeIndex src = sema_expr(tu, ep->x_of_expr.expr);
 			
-			assert(tu->types[src].align && "Something went wrong...");
+			//assert(tu->types[src].align && "Something went wrong...");
 			*ep = (Expr) {
 				.op = EXPR_INT,
 				.type = TYPE_ULONG,
@@ -331,6 +331,11 @@ static TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e) {
 				.int_num = { tu->types[ep->x_of_type.type].align, INT_SUFFIX_NONE }
 			};
 			return (ep->type = TYPE_ULONG);
+		}
+		case EXPR_FUNCTION: {
+			// ep->type is already set for this bad boy... maybe we
+			// shouldn't do that for consistency sake...
+			return ep->type;
 		}
 		case EXPR_INITIALIZER: {
 			try_resolve_typeof(tu, ep->init.type);
@@ -948,7 +953,7 @@ static void sema_top_level(TranslationUnit* tu, StmtIndex s) {
 				linkage = TB_LINKAGE_PRIVATE;
 				
 				char temp[1024];
-				snprintf(temp, 1024, "%s@%d", name, s);
+				snprintf(temp, 1024, "%s@%d", name ? name : "<unnamed>", s);
 				
 				func = tb_prototype_build(mod, proto, temp, linkage);
 			} else {

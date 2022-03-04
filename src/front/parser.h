@@ -10,6 +10,7 @@
 
 #include <back/tb.h>
 
+// 2 million ish
 #define MAX_LOCAL_SYMBOLS (2 << 20)
 
 // Members used by struct/union types
@@ -204,6 +205,9 @@ typedef enum ExprOp {
 	EXPR_UNKNOWN_SYMBOL,
 	EXPR_SYMBOL,
 	
+	EXPR_FUNCTION, // function literal
+	EXPR_INITIALIZER,
+	
 	EXPR_CAST,
 	EXPR_PARAM, // special case of EXPR_VAR
 	EXPR_ASSIGN,
@@ -262,8 +266,6 @@ typedef enum ExprOp {
 	
 	EXPR_ALIGNOF_T, // on type
 	EXPR_ALIGNOF, // on expr
-	
-	EXPR_INITIALIZER,
 	
 	EXPR_PRE_INC,
 	EXPR_PRE_DEC,
@@ -498,6 +500,9 @@ typedef struct Expr {
 			int count;
 			InitNode* nodes;
 		} init;
+		struct {
+			StmtIndex src;
+		} func;
 		
 		double float_num;
 		struct ExprInt {

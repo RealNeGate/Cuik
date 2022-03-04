@@ -488,6 +488,15 @@ static IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 				.reg = addr
 			};
 		}
+		case EXPR_FUNCTION: {
+			assert(tu->stmts[ep->func.src].op == STMT_FUNC_DECL);
+			
+			return (IRVal) {
+				.value_type = LVALUE_FUNC,
+				.type = ep->type,
+				.func = tb_function_from_id(mod, tu->stmts[ep->func.src].backing.f)
+			};
+		}
 		case EXPR_SYMBOL: {
 			StmtIndex stmt = ep->symbol;
 			StmtOp stmt_op = tu->stmts[stmt].op;
@@ -1598,8 +1607,9 @@ static void gen_func_body(TranslationUnit* tu, TypeIndex type, StmtIndex s) {
 	StmtIndex body = (StmtIndex)tu->stmts[s].decl.initial;
 	
 	// main needs to call the static init
-	if (strcmp((const char*)tu->stmts[s].decl.name, "main") == 0 ||
-		strcmp((const char*)tu->stmts[s].decl.name, "WinMain") == 0) {
+	if (tu->stmts[s].decl.name && 
+		(strcmp((const char*)tu->stmts[s].decl.name, "main") == 0 ||
+		 strcmp((const char*)tu->stmts[s].decl.name, "WinMain") == 0)) {
 		tb_inst_call(func, TB_TYPE_VOID, static_init_func, 0, NULL);
 	}
 	
@@ -1698,6 +1708,7 @@ void irgen_top_level_stmt(TranslationUnit* tu, StmtIndex s) {
 	} else if (sp->op == STMT_DECL || sp->op == STMT_GLOBAL_DECL) {
 		if (!sp->decl.attrs.is_used) return;
 		if (sp->decl.attrs.is_typedef) return;
+		if (sp->decl.attrs.is_extern || tu->types[sp->decl.type].kind == KIND_FUNC) return;
 		
 		TB_GlobalID global = sp->backing.g;
 		Type* type = &tu->types[sp->decl.type];

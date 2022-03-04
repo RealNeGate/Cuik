@@ -82,6 +82,7 @@ static _Alignas(64) uint8_t char_classes[256] = {
 	
 	['0' ... '9'] = CHAR_CLASS_NUMBER,
 	
+	['@'] = CHAR_CLASS_SEPARATOR,
 	['?'] = CHAR_CLASS_SEPARATOR,
 	[';'] = CHAR_CLASS_SEPARATOR,
 	[':'] = CHAR_CLASS_SEPARATOR,

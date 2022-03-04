@@ -105,6 +105,11 @@ static void dump_expr(TranslationUnit* tu, FILE* stream, ExprIndex e, int depth,
 			tls_restore(out_start);
 			break;
 		}
+		case EXPR_INITIALIZER: {
+			type_as_string(tu, sizeof(temp_string0), temp_string0, ep->type);
+			fprintf(stream, "Initializer '%s'\n", temp_string0);
+			break;
+		}
 		case EXPR_CALL: {
 			type_as_string(tu, sizeof(temp_string0), temp_string0, ep->type);
 			fprintf(stream, "FunctionCall '%s'\n", temp_string0);
@@ -390,11 +395,10 @@ static void dump_stmt(TranslationUnit* tu, FILE* stream, StmtIndex s, int depth,
 		case STMT_FOR: {
 			fprintf(stream, "For\n");
 			if (sp->for_.first) {
-				for (int i = 0; i < depth; i++) printf("  ");
-				fprintf(stream, "`-Init:\n");
+				print_barz(depth+1, false);
+				fprintf(stream, "Init:\n");
 				
 				if (tu->stmts[sp->for_.first].op == STMT_COMPOUND) {
-					// @shadow
 					Stmt* restrict sp_first = &tu->stmts[sp->for_.first];
 					
 					StmtIndex* kids = sp_first->compound.kids;
@@ -409,18 +413,18 @@ static void dump_stmt(TranslationUnit* tu, FILE* stream, StmtIndex s, int depth,
 			}
 			
 			if (sp->for_.cond) {
-				for (int i = 0; i < depth; i++) printf("  ");
-				fprintf(stream, "`-Cond:\n");
+				print_barz(depth+1, false);
+				fprintf(stream, "Cond:\n");
 				dump_expr(tu, stream, sp->for_.cond, depth + 2, true);
 			}
 			
-			for (int i = 0; i < depth; i++) printf("  ");
-			fprintf(stream, "`-Body:\n");
+			print_barz(depth+1, sp->for_.next == 0);
+			fprintf(stream, "Body:\n");
 			dump_stmt(tu, stream, sp->for_.body, depth + 2, true);
 			
 			if (sp->for_.next) {
-				for (int i = 0; i < depth; i++) printf("  ");
-				fprintf(stream, "`-Next:\n");
+				print_barz(depth+1, true);
+				fprintf(stream, "Next:\n");
 				dump_expr(tu, stream, sp->for_.next, depth + 2, true);
 			}
 			break;

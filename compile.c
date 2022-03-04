@@ -69,20 +69,22 @@ void expect_return_value(const char* path, int expected) {
 	// Compile
 	snprintf(cmd, 1024, "cuik build %s.c", path);
 	code = system(cmd);
-	if (code != 0) goto error;
+	if (code != 0) {
+		printf("Fail to compile! (code: %d)\n", code);
+		return;
+	}
 	
 	// Run
 	snprintf(cmd, 1024, "%s.exe", path);
 	code = system(cmd);
-	if (code != expected) goto error;
+	if (code != expected) {
+		printf("Fail to execute! (code: %d)\n", code);
+		return;
+	}
 	
 	// Success!
 	printf("Success!\n");
 	tests_working++;
-	return;
-	
-	error:
-	printf("Fail! (code: %d)\n", code);
 }
 
 void expect_stdout(const char* path, const char* expected) {
@@ -97,7 +99,7 @@ void expect_stdout(const char* path, const char* expected) {
 	snprintf(cmd, 1024, "cuik build %s.c", path);
 	code = system(cmd);
 	if (code != 0) {
-		printf("Fail! (code: %d)\n", code);
+		printf("Fail to compile! (code: %d)\n", code);
 		return;
 	}
 	
@@ -106,18 +108,17 @@ void expect_stdout(const char* path, const char* expected) {
 	FILE* stream = _popen(cmd, "rb");
 	
 	char data[1024];
-	assert(fread(data, sizeof(data), sizeof(char), stream) < 1024);
+	size_t length = fread(data, sizeof(data), sizeof(char), stream);
 	fclose(stream);
 	
-	if (strcmp(data, expected) != 0) {
-		printf("Fail! (string: %s)\n", data);
+	if (length == strlen(expected) && memcmp(data, expected, length) != 0) {
+		printf("Fail to execute! (string: %s)\n", data);
 		return;
 	}
 	
 	// Success!
 	printf("Success!\n");
 	tests_working++;
-	return;
 }
 
 int main(int argc, char** argv) {
@@ -184,7 +185,8 @@ int main(int argc, char** argv) {
 		
 		expect_return_value("tests"SLASH"the_increment"SLASH"iso"SLASH"program_termination", 42);
 		expect_stdout("tests"SLASH"the_increment"SLASH"iso"SLASH"printf_test", "Hello Hel Goodb 127 63 0 254 63 0 32000 32767 4 17 65532 65530 4 16 32000 32767 4 17 65532 65530 4 16 4294967295 6731943 2147483646 16 123456789 57486731943 985429 9123456 1.000000 123000.000000 0.100 0.234 3.000000");
-		expect_stdout("tests"SLASH"the_increment"SLASH"iso"SLASH"crc32", "691daa2f");
+		expect_stdout("tests"SLASH"the_increment"SLASH"iso"SLASH"crc32_test", "691daa2f");
+		expect_stdout("tests"SLASH"the_increment"SLASH"cuik"SLASH"function_literal", "-2147483648 -743 -2 0 2 4 99\n");
 		
 		printf("===============   Tests (%d succeeded out of %d)   ===============\n", tests_working, number_of_tests);
 	} else {

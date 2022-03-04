@@ -16,6 +16,7 @@ typedef enum TknType {
     TOKEN_ASSIGN = '=',
 	
     TOKEN_HASH = '#',
+    TOKEN_AT = '@',
     
     TOKEN_COLON = ':',
     TOKEN_SEMICOLON = ';',

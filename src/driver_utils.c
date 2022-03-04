@@ -187,6 +187,7 @@ TranslationUnit* cuik_compile_file(CompilationUnit* cu, const char* path) {
 	compilation_unit_append(cu, tu);
 	
 	// free any TU resources (including any cached file refs)
+	// TODO(NeGate): actually delete any cached files...
 	arrfree(tokens.tokens);
 	cpp_deinit(&cpp_ctx);
 	return tu;

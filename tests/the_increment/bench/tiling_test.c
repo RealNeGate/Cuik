@@ -32,6 +32,7 @@ int test(int a, int b) {
     int q = z & 0xF;
     return p >= 16 && q == 0;
 }
+
 size_t foo(size_t a) {
     return a % 2 != 0 ? 4 : 2;
 }

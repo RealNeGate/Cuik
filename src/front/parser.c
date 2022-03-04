@@ -5,6 +5,17 @@
 // and it can somehow resize a then make sure to split it up
 //  e = parse(...)
 //  a[i] = e
+//
+// TODO list
+//   - make sure all extensions are errors on pedantic mode
+//
+//   - enable some sort of error recovery when we encounter bad syntax within a
+//   statement, basically just find the semicolon and head out :p
+//   
+//   - ugly ass code
+//
+//   - make the expect(...) code be a little smarter, if it knows that it's expecting
+//   a token for a specific operation... tell the user
 #include "parser.h"
 
 typedef struct IncompleteType {
@@ -27,6 +38,9 @@ typedef struct LabelEntry {
 	StmtIndex value;
 } LabelEntry;
 
+// starting point is used to disable the function literals
+// from reading from their parent function
+thread_local static int local_symbol_start = 0;
 thread_local static int local_symbol_count = 0;
 thread_local static Symbol local_symbols[64 * 1024];
 
@@ -65,6 +79,8 @@ static ExprIndex parse_expr_l14(TranslationUnit* tu, TokenStream* restrict s);
 static ExprIndex parse_expr(TranslationUnit* tu, TokenStream* restrict s);
 static intmax_t parse_const_expr(TranslationUnit* tu, TokenStream* restrict s);
 static ExprIndex parse_initializer(TranslationUnit* tu, TokenStream* restrict s, TypeIndex type);
+static ExprIndex parse_function_literal(TranslationUnit* tu, TokenStream* restrict s, TypeIndex type);
+static void parse_function_definition(TranslationUnit* tu, TokenStream* restrict s, StmtIndex n);
 
 static bool is_typename(TokenStream* restrict s);
 
@@ -225,71 +241,13 @@ void translation_unit_parse(TranslationUnit* restrict tu, TokenStream* restrict 
 						settings.using_winmain = true;
 					}
 					
-					ParamIndex param_list = tu->types[decl.type].func.param_list;
-					ParamIndex param_count = tu->types[decl.type].func.param_count;
-					
+					assert(local_symbol_start == 0);
 					assert(local_symbol_count == 0);
-					if (param_count >= INT16_MAX) {
-						report(REPORT_ERROR, &s->line_arena[decl.loc], "Function parameter count cannot exceed %d (got %d)", param_count, MAX_LOCAL_SYMBOLS);
-						abort();
-					}
 					
-					for (size_t i = 0; i < param_count; i++) {
-						Param* p = &tu->params[param_list + i];
-						
-						if (p->name) {
-							local_symbols[local_symbol_count++] = (Symbol){
-								.name = p->name,
-								.type = p->type,
-								.storage_class = STORAGE_PARAM,
-								.param_num = i
-							};
-						}
-					}
-					tokens_next(s);
-					
-					ExprIndex starting_point = big_array_length(tu->exprs);
-					StmtIndex body = parse_compound_stmt(tu, s);
-					
-					tu->stmts[n].op = STMT_FUNC_DECL;
-					tu->stmts[n].decl.initial = (StmtIndex)body;
+					tu->stmts[n].decl.type = decl.type;
 					tu->stmts[n].decl.attrs = attr;
 					
-					ExprIndex symbol_list_start = 0;
-					ExprIndex symbol_list_end = 0;
-					
-					// resolve any unresolved label references
-					for (size_t i = starting_point, count = big_array_length(tu->exprs); i < count; i++) {
-						if (tu->exprs[i].op == EXPR_SYMBOL ||
-							tu->exprs[i].op == EXPR_UNKNOWN_SYMBOL) {
-							if (symbol_list_start == 0) {
-								// initialize chain
-								symbol_list_start = symbol_list_end = i;
-							} else {
-								// append
-								tu->exprs[symbol_list_end].next_symbol_in_chain = i;
-								tu->exprs[i].next_symbol_in_chain = 0;
-								symbol_list_end = i;
-							}
-						}
-						
-						if (tu->exprs[i].op == EXPR_UNKNOWN_SYMBOL) {
-							const unsigned char* name = tu->exprs[i].unknown_sym;
-							
-							ptrdiff_t search = shgeti(labels, name);
-							if (search >= 0) {
-								tu->exprs[i].op = EXPR_SYMBOL;
-								tu->exprs[i].symbol = labels[search].value;
-							}
-						}
-					}
-					
-					if (symbol_list_end) {
-						tu->exprs[symbol_list_end].next_symbol_in_chain = 0;
-					}
-					
-					tu->stmts[body].compound.first_symbol = symbol_list_start;
-					shfree(labels);
+					parse_function_definition(tu, s, n);
 				} else if (tokens_get(s)->type == ';') {
 					// Forward decl
 					tokens_next(s);
@@ -300,9 +258,12 @@ void translation_unit_parse(TranslationUnit* restrict tu, TokenStream* restrict 
 				if (!is_redefine) {
 					arrput(tu->top_level_stmts, n);
 				}
-				local_symbol_count = 0;
+				
+				local_symbol_start = local_symbol_count = 0;
 			} else {
 				// Normal decls
+				// TODO(NeGate): we should merge the global decls and local
+				// decls codepaths...
 				if (!decl.name) {
 					generic_error(s, "declaration is missing a name!");
 				}
@@ -327,7 +288,12 @@ void translation_unit_parse(TranslationUnit* restrict tu, TokenStream* restrict 
 				if (tokens_get(s)->type == '=') {
 					tokens_next(s);
 					
-					if (tokens_get(s)->type == '{') {
+					if (tokens_get(s)->type == '@') {
+						// function literals are a Cuik extension
+						// TODO(NeGate): error messages
+						tokens_next(s);
+						tu->stmts[n].decl.initial = parse_function_literal(tu, s, decl.type);
+					} else if (tokens_get(s)->type == '{') {
 						tokens_next(s);
 						
 						tu->stmts[n].decl.initial = parse_initializer(tu, s, TYPE_NONE);
@@ -464,7 +430,8 @@ static Symbol* find_local_symbol(TokenStream* restrict s) {
 	
 	// Try local variables
 	size_t i = local_symbol_count;
-	while (i--) {
+	size_t start = local_symbol_start;
+	while (i-- > start) {
 		// TODO(NeGate): Implement string interning
 		const unsigned char* sym = local_symbols[i].name;
 		size_t sym_length = strlen((const char*)sym);
@@ -494,6 +461,78 @@ static TypeIndex find_incomplete_type(char* name) {
 ////////////////////////////////
 // STATEMENTS
 ////////////////////////////////
+static void parse_function_definition(TranslationUnit* tu, TokenStream* restrict s, StmtIndex n) {
+	TypeIndex type = tu->stmts[n].decl.type;
+	
+	ParamIndex param_list = tu->types[type].func.param_list;
+	ParamIndex param_count = tu->types[type].func.param_count;
+	
+	assert(local_symbol_start == local_symbol_count);
+	if (param_count >= INT16_MAX) {
+		report(REPORT_ERROR, &s->line_arena[tu->stmts[n].loc], "Function parameter count cannot exceed %d (got %d)", param_count, MAX_LOCAL_SYMBOLS);
+		abort();
+	}
+	
+	for (size_t i = 0; i < param_count; i++) {
+		Param* p = &tu->params[param_list + i];
+		
+		if (p->name) {
+			local_symbols[local_symbol_count++] = (Symbol){
+				.name = p->name,
+				.type = p->type,
+				.storage_class = STORAGE_PARAM,
+				.param_num = i
+			};
+		}
+	}
+	tokens_next(s);
+	
+	ExprIndex starting_point = big_array_length(tu->exprs);
+	StmtIndex body = parse_compound_stmt(tu, s);
+	
+	tu->stmts[n].op = STMT_FUNC_DECL;
+	tu->stmts[n].decl.initial = (StmtIndex)body;
+	
+	ExprIndex symbol_list_start = 0;
+	ExprIndex symbol_list_end = 0;
+	
+	// resolve any unresolved label references
+	for (size_t i = starting_point, count = big_array_length(tu->exprs); i < count; i++) {
+		if (tu->exprs[i].op == EXPR_SYMBOL ||
+			tu->exprs[i].op == EXPR_UNKNOWN_SYMBOL) {
+			if (symbol_list_start == 0) {
+				// initialize chain
+				symbol_list_start = symbol_list_end = i;
+			} else {
+				// append
+				tu->exprs[symbol_list_end].next_symbol_in_chain = i;
+				tu->exprs[i].next_symbol_in_chain = 0;
+				symbol_list_end = i;
+			}
+		}
+		
+		if (tu->exprs[i].op == EXPR_UNKNOWN_SYMBOL) {
+			const unsigned char* name = tu->exprs[i].unknown_sym;
+			
+			ptrdiff_t search = shgeti(labels, name);
+			if (search >= 0) {
+				tu->exprs[i].op = EXPR_SYMBOL;
+				tu->exprs[i].symbol = labels[search].value;
+			}
+		}
+	}
+	
+	if (symbol_list_end) {
+		tu->exprs[symbol_list_end].next_symbol_in_chain = 0;
+	}
+	
+	tu->stmts[body].compound.first_symbol = symbol_list_start;
+	
+	// hmm... how tf do labels operate in this case...
+	// TODO(NeGate): redo the label look in a sec
+	shfree(labels);
+}
+
 static StmtIndex parse_compound_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 	// mark when the local scope starts
 	int saved = local_symbol_count;
@@ -891,7 +930,12 @@ static void parse_decl_or_expr(TranslationUnit* tu, TokenStream* restrict s, siz
 			if (tokens_get(s)->type == '=') {
 				tokens_next(s);
 				
-				if (tokens_get(s)->type == '{') {
+				if (tokens_get(s)->type == '@') {
+					// function literals are a Cuik extension
+					// TODO(NeGate): error messages
+					tokens_next(s);
+					initial = parse_function_literal(tu, s, decl.type);
+				} else if (tokens_get(s)->type == '{') {
 					tokens_next(s);
 					
 					initial = parse_initializer(tu, s, TYPE_NONE);
@@ -950,6 +994,66 @@ static StmtIndex parse_stmt_or_expr(TranslationUnit* tu, TokenStream* restrict s
 // https://en.cppreference.com/w/c/language/operator_precedence
 ////////////////////////////////
 static ExprIndex parse_expr_l2(TranslationUnit* tu, TokenStream* restrict s);
+
+static ExprIndex parse_function_literal(TranslationUnit* tu, TokenStream* restrict s, TypeIndex type) {
+	SourceLocIndex loc = tokens_get(s)->location;
+	
+	// if the literal doesn't have a parameter list it will inherit from the `type`
+	if (tokens_get(s)->type == '(') {
+		tokens_next(s);
+		
+		// it doesn't matter to check the base type here because it's possible
+		// that it's just not fully resolved quite yet (out of order decls amirite
+		// the price i pay for you brethren), we'll refrain from doing fancy type
+		// checks here since that's the point of the semantics pass
+		type = parse_typename(tu, s);
+		expect(s, ')');
+	} else {
+		// implicitly derefence a function pointer
+		if (tu->types[type].kind == KIND_PTR) {
+			type = tu->types[type].ptr_to;
+		}
+		
+		if (tu->types[type].kind != KIND_FUNC) {
+			generic_error(s, "Function literal base type is not a function type");
+		}
+	}
+	
+	// Because of the "not a lambda" nature of the function literals they count as
+	// "scoped top level statements" which doesn't particularly change anything for
+	// it but is interesting to think about internally
+	StmtIndex n = make_stmt(tu, s, STMT_FUNC_DECL);
+	tu->stmts[n].loc = loc;
+	tu->stmts[n].decl = (struct StmtDecl){
+		.type = type,
+		.name = NULL,
+		.attrs = {
+			.is_root = true, // to avoid it being vaporized
+			.is_inline = true
+		},
+		.initial = (StmtIndex)0
+	};
+	arrput(tu->top_level_stmts, n);
+	
+	// Don't wanna share locals between literals and their parents, by the current
+	// design of APIs with C callbacks this is aight because we already manually pass
+	// user context, we just improve "locality" of these functions to their reference
+	int old_start = local_symbol_start;
+	local_symbol_start = local_symbol_count;
+	{
+		parse_function_definition(tu, s, n);
+	}
+	local_symbol_start = old_start;
+	
+	ExprIndex e = make_expr(tu);
+	tu->exprs[e] = (Expr) {
+		.op = EXPR_FUNCTION,
+		.loc = loc,
+		.type = type,
+		.func = { n }
+	};
+	return e;
+}
 
 // NOTE(NeGate): This function will push all nodes it makes onto the temporary
 // storage where parse_initializer will move them into permanent storage.
@@ -1047,7 +1151,6 @@ static void parse_initializer_member(TranslationUnit* tu, TokenStream* restrict 
 }
 
 static ExprIndex parse_initializer(TranslationUnit* tu, TokenStream* restrict s, TypeIndex type) {
-	// TODO(NeGate): Handle compound literal
 	size_t count = 0;
 	InitNode* start = tls_save();
 	
@@ -1130,39 +1233,6 @@ static ExprIndex parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
 		}
 		
 		tokens_next(s);
-		return e;
-	} else if (tokens_get(s)->type == TOKEN_KW_sizeof ||
-			   tokens_get(s)->type == TOKEN_KW_Alignof) {
-		TknType operation_type = tokens_get(s)->type;
-		tokens_next(s);
-		
-		bool has_paren = false;
-		if (tokens_get(s)->type == '(') {
-			has_paren = true;
-			
-			tokens_next(s);
-		}
-		
-		ExprIndex e = make_expr(tu);
-		if (is_typename(s)) {
-			TypeIndex type = parse_typename(tu, s);
-			
-			tu->exprs[e] = (Expr) {
-				.op = operation_type == TOKEN_KW_sizeof ? EXPR_SIZEOF_T : EXPR_ALIGNOF_T,
-				.loc = tokens_get(s)->location,
-				.x_of_type = { type }
-			};
-		} else {
-			ExprIndex expr = parse_expr_l14(tu, s);
-			
-			tu->exprs[e] = (Expr) {
-				.op = operation_type == TOKEN_KW_sizeof ? EXPR_SIZEOF : EXPR_ALIGNOF,
-				.loc = tokens_get(s)->location,
-				.x_of_expr = { expr }
-			};
-		}
-		
-		if (has_paren) expect(s, ')');
 		return e;
 	} else if (tokens_get(s)->type == TOKEN_FLOAT) {
 		Token* t = tokens_get(s);
@@ -1417,9 +1487,10 @@ static ExprIndex parse_expr_l1(TranslationUnit* tu, TokenStream* restrict s) {
 	}
 }
 
-// deref* address& negate-
+// deref* address& negate- sizeof _Alignof cast
 static ExprIndex parse_expr_l2(TranslationUnit* tu, TokenStream* restrict s) {
 	// TODO(NeGate): Convert this code into a loop... please?
+	// TODO(NeGate): just rewrite this in general...
 	SourceLocIndex loc = tokens_get(s)->location;
 	
 	if (tokens_get(s)->type == '*') {
@@ -1501,6 +1572,39 @@ static ExprIndex parse_expr_l2(TranslationUnit* tu, TokenStream* restrict s) {
 			.loc = loc,
 			.unary_op.src = value
 		};
+		return e;
+	} else if (tokens_get(s)->type == TOKEN_KW_sizeof ||
+			   tokens_get(s)->type == TOKEN_KW_Alignof) {
+		TknType operation_type = tokens_get(s)->type;
+		tokens_next(s);
+		
+		bool has_paren = false;
+		if (tokens_get(s)->type == '(') {
+			has_paren = true;
+			
+			tokens_next(s);
+		}
+		
+		ExprIndex e = make_expr(tu);
+		if (is_typename(s)) {
+			TypeIndex type = parse_typename(tu, s);
+			
+			tu->exprs[e] = (Expr) {
+				.op = operation_type == TOKEN_KW_sizeof ? EXPR_SIZEOF_T : EXPR_ALIGNOF_T,
+				.loc = tokens_get(s)->location,
+				.x_of_type = { type }
+			};
+		} else {
+			ExprIndex expr = parse_expr_l2(tu, s);
+			
+			tu->exprs[e] = (Expr) {
+				.op = operation_type == TOKEN_KW_sizeof ? EXPR_SIZEOF : EXPR_ALIGNOF,
+				.loc = tokens_get(s)->location,
+				.x_of_expr = { expr }
+			};
+		}
+		
+		if (has_paren) expect(s, ')');
 		return e;
 	} else if (tokens_get(s)->type == '&') {
 		tokens_next(s);
