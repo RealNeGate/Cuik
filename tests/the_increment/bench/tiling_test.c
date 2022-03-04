@@ -8,12 +8,11 @@ size_t foo(size_t* a, size_t n) {
 	}
     return b;
 }
-
+#else
 static size_t bar(size_t a) {
     return a % 2 != 0 ? 4 : 2;
 }
 
-#else
 int test(int a, int b) {
     int x, y, z;
 

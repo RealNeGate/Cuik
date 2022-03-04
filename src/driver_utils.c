@@ -82,6 +82,12 @@ void cuik_set_cpp_defines(CPP_Context* cpp) {
 	cpp_define_empty(cpp, "__STDC_NO_VLA__");
 	cpp_define_empty(cpp, "__STDC_NO_THREADS__");
 	
+	if (settings.is_debug_build) {
+		cpp_define_empty(cpp, "_DEBUG");
+	} else {
+		cpp_define_empty(cpp, "NDEBUG");
+	}
+	
 	cpp_add_include_directory(cpp, cuik_include_directory);
 	
 	// platform specific stuff
@@ -120,7 +126,6 @@ void cuik_set_cpp_defines(CPP_Context* cpp) {
 			cpp_add_include_directory(cpp, "W:\\Visual Studio\\2019\\Community\\VC\\Tools\\MSVC\\14.29.30133\\include\\");
 		}
 		
-		cpp_define_empty(cpp, "_DEBUG");
 		cpp_define_empty(cpp, "_MT");
 		cpp_define_empty(cpp, "_CRT_NONSTDC_NO_WARNINGS");
 		cpp_define_empty(cpp, "_CRT_SECURE_NO_WARNINGS");

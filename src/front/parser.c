@@ -125,22 +125,15 @@ void translation_unit_parse(TranslationUnit* restrict tu, TokenStream* restrict 
 	while (tokens_get(s)->type) {
 		while (tokens_get(s)->type == ';') tokens_next(s);
 		
-		// TODO(NeGate): Correctly parse pragmas instead of
-		// ignoring them.
+		// TODO(NeGate): Correctly parse pragmas instead of ignoring them.
 		if (tokens_get(s)->type == TOKEN_KW_Pragma) {
 			tokens_next(s);
 			expect(s, '(');
 			
-			int depth = 0;
-			while (tokens_get(s)->type) {
-				if (tokens_get(s)->type == '(') depth++;
-				else if (tokens_get(s)->type == ')') {
-					if (depth == 0) break;
-					depth--;
-				}
-				
-				tokens_next(s);
+			if (tokens_get(s)->type != TOKEN_STRING_DOUBLE_QUOTE) {
+				generic_error(s, "pragma declaration expects string literal");
 			}
+			tokens_next(s);
 			
 			expect(s, ')');
 			continue;
@@ -889,7 +882,17 @@ static StmtIndex parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 }
 
 static void parse_decl_or_expr(TranslationUnit* tu, TokenStream* restrict s, size_t* body_count) {
-	if (tokens_get(s)->type == ';') {
+	if (tokens_get(s)->type == TOKEN_KW_Pragma) {
+		tokens_next(s);
+		expect(s, '(');
+		
+		if (tokens_get(s)->type != TOKEN_STRING_DOUBLE_QUOTE) {
+			generic_error(s, "pragma declaration expects string literal");
+		}
+		tokens_next(s);
+		
+		expect(s, ')');
+	} else if (tokens_get(s)->type == ';') {
 		tokens_next(s);
 	} else if (is_typename(s)) {
 		Attribs attr = { 0 };
@@ -965,7 +968,18 @@ static void parse_decl_or_expr(TranslationUnit* tu, TokenStream* restrict s, siz
 }
 
 static StmtIndex parse_stmt_or_expr(TranslationUnit* tu, TokenStream* restrict s) {
-	if (tokens_get(s)->type == ';') {
+	if (tokens_get(s)->type == TOKEN_KW_Pragma) {
+		tokens_next(s);
+		expect(s, '(');
+		
+		if (tokens_get(s)->type != TOKEN_STRING_DOUBLE_QUOTE) {
+			generic_error(s, "pragma declaration expects string literal");
+		}
+		tokens_next(s);
+		
+		expect(s, ')');
+		return 0;
+	} else if (tokens_get(s)->type == ';') {
 		tokens_next(s);
 		return 0;
 	} else {

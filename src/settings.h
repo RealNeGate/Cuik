@@ -10,9 +10,10 @@ typedef struct CompilerSettings {
 	bool is_windows_long  : 1;
 	bool is_object_only   : 1;
 	bool is_time_report   : 1;
+	bool is_debug_build   : 1;
+	bool is_debug_info    : 1;
 	bool print_tb_ir      : 1;
 	bool print_ast        : 1;
-	bool debug_info       : 1;
 	bool pedantic         : 1;
 	bool optimize         : 1;
 	

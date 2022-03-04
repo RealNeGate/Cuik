@@ -71,7 +71,7 @@ static void codegen_task(void* arg) {
 	timed_block("codegen %zu-%zu", task.start, task.end) {
 		for (size_t i = task.start; i < task.end; i++) {
 			TB_Function* func = tb_function_from_id(mod, i);
-			tb_module_compile_func(mod, func, TB_ISEL_FAST);
+			tb_module_compile_func(mod, func, TB_ISEL_COMPLEX);
 			tb_function_free(func);
 		}
 	}
@@ -170,7 +170,7 @@ static void compile_project(const char* obj_output_path, bool is_multithreaded, 
 		
 		timed_block("export") {
 			if (!settings.print_tb_ir) {
-				if (!tb_module_export(mod, obj_output_path, settings.debug_info)) abort();
+				if (!tb_module_export(mod, obj_output_path, settings.is_debug_build)) abort();
 			}
 			
 			tb_module_destroy(mod);
@@ -535,7 +535,9 @@ int main(int argc, char* argv[]) {
 		} else if (strcmp(key, "time") == 0) {
 			settings.is_time_report = true;
 		} else if (strcmp(key, "debug") == 0) {
-			settings.debug_info = true;
+			settings.is_debug_build = true;
+		} else if (strcmp(key, "debug-info") == 0) {
+			settings.is_debug_info = true;
 		} else if (strcmp(key, "thin-errors") == 0) {
 			report_using_thin_errors = true;
 		} else if (strcmp(key, "out") == 0) {

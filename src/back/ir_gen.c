@@ -1229,7 +1229,7 @@ static IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 static void irgen_stmt(TranslationUnit* tu, TB_Function* func, StmtIndex s) {
 	Stmt* restrict sp = &tu->stmts[s];
 	
-	if (settings.debug_info) {
+	if (settings.is_debug_info) {
 		// TODO(NeGate): Fix this up later!!!
 		static _Thread_local TB_FileID last_file_id = 0;
 		static _Thread_local const char* last_filepath = NULL;
@@ -1652,7 +1652,7 @@ static void gen_func_body(TranslationUnit* tu, TypeIndex type, StmtIndex s) {
 			abort();
 		}
 	} else {
-		if (!settings.optimize) tb_module_compile_func(mod, func, /* settings.optimize ? TB_ISEL_COMPLEX : */ TB_ISEL_FAST);
+		if (!settings.optimize) tb_module_compile_func(mod, func, TB_ISEL_FAST);
 	}
 	
 	// if we're optimizing, we need to keep the IR longer so we can compile later
@@ -1671,6 +1671,7 @@ void irgen_init() {
 	// start of main(), regardless i wanna get rid of this soon enough but haven't...
 	TB_FunctionPrototype* proto = tb_prototype_create(mod, TB_STDCALL, TB_TYPE_VOID, 0, false);
 	static_init_func = tb_prototype_build(mod, proto, "__static_init", TB_LINKAGE_PRIVATE);
+	function_count = 1;
 }
 
 void irgen_deinit() {
