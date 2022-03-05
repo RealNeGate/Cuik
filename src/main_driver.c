@@ -28,6 +28,20 @@ typedef enum {
 	COMPILER_MODE_RUN
 } CompilerMode;
 
+typedef struct {
+	const char* name;
+	
+	TB_Arch arch;
+	TB_System system;
+} TargetOption;
+
+static TargetOption target_options[] = {
+	{ "x64_windows", TB_ARCH_X86_64, TB_SYSTEM_WINDOWS },
+	{ "x64_macos",   TB_ARCH_X86_64, TB_SYSTEM_MACOS   },
+	{ "x64_linux",   TB_ARCH_X86_64, TB_SYSTEM_LINUX   }
+};
+enum { TARGET_OPTION_COUNT = sizeof(target_options) / sizeof(target_options[0]) };
+
 static const char* cuik_source_file;
 static char cuik_file_no_ext[MAX_PATH];
 
@@ -487,26 +501,23 @@ int main(int argc, char* argv[]) {
 			value++;
 		}
 		
-		if (strcmp(key, "arch") == 0) {
-			if (strcmp(value, "x64") == 0) {
-				target_arch = TB_ARCH_X86_64;
-			} else {
-				printf("unsupported architecture: %s\n", value);
-				printf("Supported archs:\n");
-				printf("\t-arch=x64\n");
-				printf("\n");
-				return 1;
+		if (strcmp(key, "target") == 0) {
+			bool matches = false;
+			for (size_t i = 0; i < TARGET_OPTION_COUNT; i++) {
+				if (strcmp(target_options[i].name, value) == 0) {
+					target_arch = target_options[i].arch;
+					target_system = target_options[i].system;
+					matches = true;
+					break;
+				}
 			}
-		} else if (strcmp(key, "sys") == 0) {
-			if (strcmp(value, "windows") == 0) {
-				target_system = TB_SYSTEM_WINDOWS;
-			} else if (strcmp(value, "linux") == 0) {
-				target_system = TB_SYSTEM_LINUX;
-			} else {
-				printf("unsupported architecture: %s\n", value);
-				printf("Supported archs:\n");
-				printf("\t-sys=windows\n");
-				printf("\t-sys=linux\n");
+			
+			if (!matches) {
+				printf("error: unsupported target: %s\n", value);
+				printf("Supported targets:\n");
+				for (size_t i = 0; i < TARGET_OPTION_COUNT; i++) {
+					printf("\t%s\n", target_options[i].name);
+				}
 				printf("\n");
 				return 1;
 			}

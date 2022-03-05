@@ -191,6 +191,7 @@ typedef struct Lexer {
 
 // this is used by the preprocessor to scan tokens in
 void lexer_read(Lexer* restrict l);
+
 intptr_t parse_char(size_t len, const char* str, int* output);
 uint64_t parse_int(size_t len, const char* str, IntSuffix* out_suffix);
 double parse_float(size_t len, const char* str);

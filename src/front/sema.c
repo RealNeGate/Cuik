@@ -904,10 +904,10 @@ static void sema_top_level(TranslationUnit* tu, StmtIndex s) {
 				break;
 			}
 			
-			if (sp->decl.attrs.is_static) {
+			if (sp->decl.attrs.is_static && !sp->decl.attrs.is_inline) {
 				if (!sp->decl.attrs.is_used) {
 					sema_warn(sp->loc, "Function '%s' is never used.", name);
-					return;
+					break;
 				}
 			}
 			
@@ -970,6 +970,7 @@ static void sema_top_level(TranslationUnit* tu, StmtIndex s) {
 		case STMT_DECL:
 		case STMT_GLOBAL_DECL: {
 			if (!sp->decl.attrs.is_used) break;
+			if (sp->decl.attrs.is_typedef) break;
 			
 			if (sp->decl.attrs.is_static && sp->decl.attrs.is_extern) {
 				sema_error(sp->loc, "Global declaration '%s' cannot be both static and extern.", name);
@@ -1044,12 +1045,18 @@ static void sema_top_level(TranslationUnit* tu, StmtIndex s) {
 					}
 				}
 				
-				assert(type->align && "Somehow we got an incomplete type here?");
-				
-				if (!sp->decl.attrs.is_typedef) {
-					TB_Linkage linkage = sp->decl.attrs.is_static ? TB_LINKAGE_PRIVATE : TB_LINKAGE_PUBLIC;
-					sp->backing.g = tb_global_create(mod, name, linkage);
+				if (type->is_incomplete) {
+					if (type->kind == KIND_STRUCT) {
+						sema_error(sp->loc, "Incomplete type (struct %s) in declaration", type->record.name);
+					} else if (type->kind == KIND_UNION) {
+						sema_error(sp->loc, "Incomplete type (union %s) in declaration", type->record.name);
+					} else {
+						sema_error(sp->loc, "Incomplete type in declaration");
+					}
 				}
+				
+				TB_Linkage linkage = sp->decl.attrs.is_static ? TB_LINKAGE_PRIVATE : TB_LINKAGE_PUBLIC;
+				sp->backing.g = tb_global_create(mod, name, linkage);
 			}
 			break;
 		}
