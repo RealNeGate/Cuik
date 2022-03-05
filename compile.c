@@ -187,11 +187,9 @@ int main(int argc, char** argv) {
 		expect_stdout("tests"SLASH"the_increment"SLASH"iso"SLASH"printf_test", "Hello Hel Goodb 127 63 0 254 63 0 32000 32767 4 17 65532 65530 4 16 32000 32767 4 17 65532 65530 4 16 4294967295 6731943 2147483646 16 123456789 57486731943 985429 9123456 1.000000 123000.000000 0.100 0.234 3.000000");
 		expect_stdout("tests"SLASH"the_increment"SLASH"iso"SLASH"crc32_test", "691daa2f");
 		expect_stdout("tests"SLASH"the_increment"SLASH"iso"SLASH"ternary_test", "128 16 32 64 128 128");
-		expect_stdout("tests"SLASH"the_increment"SLASH"cuik"SLASH"function_literal", "-2147483648 -743 -2 0 2 4 99\n");
+		expect_stdout("tests"SLASH"the_increment"SLASH"cuik"SLASH"function_literal", "lmao not_lmao 7331 4145 144 12 -2147483648 -743 -2 0 2 4 99\n");
 		
 		printf("===============   Tests (%d succeeded out of %d)   ===============\n", tests_working, number_of_tests);
-	} else {
-		
 	}
 	
 	return 0;

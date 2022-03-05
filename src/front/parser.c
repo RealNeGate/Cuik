@@ -70,7 +70,7 @@ static bool try_parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Att
 static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attribs* attr);
 
 static Decl parse_declarator(TranslationUnit* tu, TokenStream* restrict s, TypeIndex type);
-static TypeIndex parse_abstract_declarator(TranslationUnit* tu, TokenStream* restrict s, TypeIndex type);
+static TypeIndex parse_abstract_declarator(TranslationUnit* tu, TokenStream* restrict s, TypeIndex type, bool disabled_paren);
 static TypeIndex parse_typename(TranslationUnit* tu, TokenStream* restrict s);
 
 // It's like parse_expr but it doesn't do anything with comma operators to avoid
@@ -81,6 +81,7 @@ static intmax_t parse_const_expr(TranslationUnit* tu, TokenStream* restrict s);
 static ExprIndex parse_initializer(TranslationUnit* tu, TokenStream* restrict s, TypeIndex type);
 static ExprIndex parse_function_literal(TranslationUnit* tu, TokenStream* restrict s, TypeIndex type);
 static void parse_function_definition(TranslationUnit* tu, TokenStream* restrict s, StmtIndex n);
+static TypeIndex parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s, TypeIndex type, Atom name);
 
 static bool is_typename(TokenStream* restrict s);
 
@@ -1016,21 +1017,21 @@ static ExprIndex parse_function_literal(TranslationUnit* tu, TokenStream* restri
 	if (tokens_get(s)->type == '(') {
 		tokens_next(s);
 		
-		// it doesn't matter to check the base type here because it's possible
-		// that it's just not fully resolved quite yet (out of order decls amirite
-		// the price i pay for you brethren), we'll refrain from doing fancy type
-		// checks here since that's the point of the semantics pass
-		type = parse_typename(tu, s);
-		expect(s, ')');
-	} else {
-		// implicitly derefence a function pointer
-		if (tu->types[type].kind == KIND_PTR) {
-			type = tu->types[type].ptr_to;
-		}
+		// this might break on typeof because it's fucking weird...
+		// TODO(NeGate): error messages... no attributes here
+		Attribs attr = { 0 };
+		type = parse_declspec(tu, s, &attr);
+		type = parse_abstract_declarator(tu, s, type, true);
 		
-		if (tu->types[type].kind != KIND_FUNC) {
-			generic_error(s, "Function literal base type is not a function type");
-		}
+		expect(s, ')');
+	}
+	
+	if (tu->types[type].kind == KIND_PTR) {
+		type = tu->types[type].ptr_to;
+	}
+	
+	if (tu->types[type].kind != KIND_FUNC) {
+		generic_error(s, "Function literal base type is not a function type");
 	}
 	
 	// Because of the "not a lambda" nature of the function literals they count as
@@ -1248,6 +1249,15 @@ static ExprIndex parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
 		
 		tokens_next(s);
 		return e;
+	} else if (tokens_get(s)->type == '@') {
+		// function literals are a Cuik extension
+		// TODO(NeGate): error messages
+		if (settings.pedantic) {
+			generic_error(s, "Function literals are a cuik-extension");
+		}
+		
+		tokens_next(s);
+		return parse_function_literal(tu, s, 0);
 	} else if (tokens_get(s)->type == TOKEN_FLOAT) {
 		Token* t = tokens_get(s);
 		bool is_float32 = t->end[-1] == 'f';
@@ -2000,8 +2010,6 @@ static ExprIndex parse_expr(TranslationUnit* tu, TokenStream* restrict s) {
 ////////////////////////////////
 // TYPES
 ////////////////////////////////
-static TypeIndex parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s, TypeIndex type, Atom name);
-
 static Decl parse_declarator(TranslationUnit* tu, TokenStream* restrict s, TypeIndex type) {
 	// handle calling convention
 	// TODO(NeGate): Actually pass these to the AST
@@ -2101,7 +2109,7 @@ static Decl parse_declarator(TranslationUnit* tu, TokenStream* restrict s, TypeI
 
 // it's like a declarator with a skin fade,
 // int*        int[16]       const char* restrict
-static TypeIndex parse_abstract_declarator(TranslationUnit* tu, TokenStream* restrict s, TypeIndex type) {
+static TypeIndex parse_abstract_declarator(TranslationUnit* tu, TokenStream* restrict s, TypeIndex type, bool disabled_paren) {
 	// handle calling convention
 	// TODO(NeGate): Actually pass these to the AST
 	parse_another_qualifier2: {
@@ -2133,7 +2141,7 @@ static TypeIndex parse_abstract_declarator(TranslationUnit* tu, TokenStream* res
 		}
 	}
 	
-	if (tokens_get(s)->type == '(') {
+	if (!disabled_paren && tokens_get(s)->type == '(') {
 		// TODO(NeGate): I don't like this code...
 		// it essentially just skips over the stuff in the
 		// parenthesis to do the suffix then comes back
@@ -2144,7 +2152,7 @@ static TypeIndex parse_abstract_declarator(TranslationUnit* tu, TokenStream* res
 		tokens_next(s);
 		size_t saved = s->current;
 		
-		parse_abstract_declarator(tu, s, TYPE_NONE);
+		parse_abstract_declarator(tu, s, TYPE_NONE, false);
 		
 		expect(s, ')');
 		type = parse_type_suffix(tu, s, type, NULL);
@@ -2152,7 +2160,7 @@ static TypeIndex parse_abstract_declarator(TranslationUnit* tu, TokenStream* res
 		size_t saved_end = s->current;
 		s->current = saved;
 		
-		TypeIndex d = parse_abstract_declarator(tu, s, type);
+		TypeIndex d = parse_abstract_declarator(tu, s, type, false);
 		s->current = saved_end;
 		return d;
 	}
@@ -2173,7 +2181,7 @@ static TypeIndex parse_typename(TranslationUnit* tu, TokenStream* restrict s) {
 	// be in this context.
 	Attribs attr = { 0 };
 	TypeIndex type = parse_declspec(tu, s, &attr);
-	return parse_abstract_declarator(tu, s, type);
+	return parse_abstract_declarator(tu, s, type, false);
 }
 
 static TypeIndex parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s, TypeIndex type, Atom name) {
