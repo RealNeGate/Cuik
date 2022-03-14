@@ -131,6 +131,7 @@ void cuik_set_cpp_defines(CPP_Context* cpp) {
 		cpp_define_empty(cpp, "_CRT_SECURE_NO_WARNINGS");
 		
 		// we pretend to be a modern MSVC compiler
+		cpp_define(cpp, "_WIN32", "1");
 		cpp_define(cpp, "_MSC_VER", "1929");
 		cpp_define(cpp, "_MSC_FULL_VER", "192930133");
 		cpp_define(cpp, "_WIN32_WINNT", "0x0A00");
@@ -164,7 +165,19 @@ void cuik_set_cpp_defines(CPP_Context* cpp) {
 	target_desc.set_defines(cpp);
 }
 
-TranslationUnit* cuik_compile_file(CompilationUnit* cu, const char* path) {
+bool cuik_find_include_file(char output[MAX_PATH], const char* path) {
+	CPP_Context cpp_ctx;
+	cpp_init(&cpp_ctx);
+	cuik_set_cpp_defines(&cpp_ctx);
+	
+	bool found = cpp_find_include_include(&cpp_ctx, output, path);
+	
+	cpp_finalize(&cpp_ctx);
+	cpp_deinit(&cpp_ctx);
+	return found;
+}
+
+TranslationUnit* cuik_compile_file(CompilationUnit* cu, const char* path, bool frontend_only) {
 	TokenStream tokens;
 	CPP_Context cpp_ctx;
 	timed_block("preprocess: %s", path) {
@@ -184,7 +197,7 @@ TranslationUnit* cuik_compile_file(CompilationUnit* cu, const char* path) {
 	
 	// Semantics pass
 	timed_block("sema %s", path) {
-		sema_pass(cu, tu);
+		sema_pass(cu, tu, frontend_only);
 		crash_if_reports(REPORT_ERROR);
 	}
 	

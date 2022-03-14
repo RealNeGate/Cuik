@@ -43,6 +43,7 @@ void cpp_deinit(CPP_Context* ctx);
 // resources were freed
 void cpp_finalize(CPP_Context* ctx);
 
+bool cpp_find_include_include(CPP_Context* ctx, char output[MAX_PATH], const char* path);
 void cpp_add_include_directory(CPP_Context* ctx, const char dir[]);
 void cpp_define_empty(CPP_Context* ctx, const char key[]);
 void cpp_define(CPP_Context* ctx, const char key[], const char value[]);

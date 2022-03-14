@@ -1,5 +1,16 @@
 CUIK:
-ban redefining keywords
-fix some UCRT locale pointer initialization issues
-fix live compiler error handling
-write more crap about x86 intrinsics
+* ban redefining keywords
+* fix some UCRT locale pointer initialization issues
+* fix live compiler error handling
+* write more crap about x86 intrinsics
+* add binary literals
+
+BUGS:
+
+BUGS FIXED:
+* `int -> enum T` does not work
+
+* `cuik check crash_handler.c` crashes the compiler
+
+* assign operators are left to right, for example:
+	a=b=c is a=(b=c) not (a=b)=c

@@ -4,12 +4,6 @@
 // It's inspired by nobuild but different
 #include "compile.h"
 
-#if defined(_WIN32)
-#define OUTPUT_EXEC_NAME "build" SLASH "cuik.exe"
-#else
-#define OUTPUT_EXEC_NAME "build" SLASH "cuik"
-#endif
-
 static const char* INPUT_FILES[] = {
 	"src/main_driver.c",
 	"src/tls.c",
@@ -46,14 +40,6 @@ static const char* INPUT_FILES[] = {
 #endif
 };
 enum { INPUT_FILE_COUNT = sizeof(INPUT_FILES) / sizeof(INPUT_FILES[0]) };
-
-#if defined(__GNUC__) || defined(__clang__)
-#define UNIX_STYLE 1
-#elif defined(_MSC_VER)
-#define UNIX_STYLE 0
-#else
-#define UNIX_STYLE 1
-#endif
 
 int tests_working = 0;
 int number_of_tests = 0;
@@ -105,14 +91,40 @@ void expect_stdout(const char* path, const char* expected) {
 	
 	// Run
 	snprintf(cmd, 1024, "%s.exe", path);
-	FILE* stream = _popen(cmd, "rb");
+	FILE* stream = popen(cmd, "rb");
 	
 	char data[1024];
-	size_t length = fread(data, sizeof(data), sizeof(char), stream);
-	fclose(stream);
+	size_t length = fread(data, 1, sizeof(data), stream);
 	
-	if (length == strlen(expected) && memcmp(data, expected, length) != 0) {
-		printf("Fail to execute! (string: %s)\n", data);
+	code = pclose(stream);
+	if (code) {
+		printf("Fail to execute! (code: %d)\n", code);
+		return;
+	}
+	
+	if (length == strlen(expected) && memcmp(data, expected, length) == 0) {
+		// Success!
+		printf("Success!\n");
+		tests_working++;
+		return;
+	}
+	
+	printf("Fail to execute!\n");
+}
+
+void try_compile(const char* path) {
+	number_of_tests++;
+	
+	printf("Attempt \"%s\"...   ", path);
+	
+	int code;
+	char cmd[1024];
+	
+	// Compile
+	snprintf(cmd, 1024, "cuik build %s.c -obj", path);
+	code = system(cmd);
+	if (code != 0) {
+		printf("Fail to compile! (code: %d)\n", code);
 		return;
 	}
 	
@@ -121,75 +133,94 @@ void expect_stdout(const char* path, const char* expected) {
 	tests_working++;
 }
 
-int main(int argc, char** argv) {
-	// don't wanna buffer stdout
-	setvbuf(stdout, NULL, _IONBF, 0);
+// delete .obj and .exe
+void delete_crap_in_dir(const char* dir_path) {
+	char temp[PATH_MAX];
 	
-#if defined(_WIN32)
-	// sets environment vars for compiler
-	system("call vcvars64");
-#endif
-	
-#if defined(__GNUC__)
-	printf("Compiling on GCC %d.%d...\n", __GNUC__, __GNUC_MINOR__);
-	
-	cmd_append("gcc -march=haswell -maes -Werror -Wall -Wno-trigraphs -Wno-gnu-designator -Wno-unused-function ");
-	cmd_append("-I src -o " OUTPUT_EXEC_NAME " ");
-#elif defined(__clang__)
-	printf("Compiling on Clang %d.%d.%d...\n", __clang_major__, __clang_minor__, __clang_patchlevel__);
-	
-	cmd_append("clang -march=haswell -maes -Werror -Wall -Wno-trigraphs -Wno-gnu-designator -Wno-unused-function ");
-	cmd_append("-I src -o " OUTPUT_EXEC_NAME " ");
-#elif defined(_MSC_VER)
-	printf("Compiling on MSVC %d.%d...\n", _MSC_VER / 100, _MSC_VER % 100);
-	
-	cmd_append("cl /Fo:build\\ /MP /arch:AVX /D_CRT_SECURE_NO_WARNINGS ");
-	cmd_append("/I:src /Fe:" OUTPUT_EXEC_NAME " ");
-#endif
-	
-#if UNIX_STYLE
-#  if defined(RELEASE_BUILD)
-	cmd_append("-O2 -DNDEBUG ");
-#  else
-	cmd_append("-O0 ");
-#  endif
-	
-#  if defined(_WIN32)
-	cmd_append("-D_CRT_SECURE_NO_WARNINGS -g -gcodeview -lole32 -lAdvapi32 -lOleAut32 -lDbgHelp ");
-#else
-	cmd_append("-g");
-#  endif
-#else
-#  if defined(RELEASE_BUILD)
-	cmd_append("/GL /Ox /WX /GS- /DNDEBUG ");
-#  else
-	cmd_append("/MTd /Od /WX /Zi /D_DEBUG /RTC1 ");
-#  endif
-#endif
-	
-	cmd_append("tildebackend.lib ");
-	
-	// all the source files
-	for (size_t i = 0; i < INPUT_FILE_COUNT; i++) {
-		cmd_append(INPUT_FILES[i]);
-		cmd_append(" ");
+	const char* path;
+	FileIter it = file_iter_open(dir_path);
+	while ((path = file_iter_next(&it))) {
+		if (str_ends_with(path, ".obj") || str_ends_with(path, ".exe")) {
+			snprintf(temp, PATH_MAX, "%s%s", dir_path, path);
+			remove(temp);
+		}
 	}
+	file_iter_close(&it);
+}
+
+int main(int argc, char** argv) {
+	builder_init();
+	builder_compile(INPUT_FILE_COUNT, INPUT_FILES, "cuik");
 	
-	printf("CMD: %s\n", command_buffer);
-	cmd_run();
-	printf("Outputting cuik to: " OUTPUT_EXEC_NAME "...\n");
-	
-	if (argc > 1 && strcmp(argv[1], "test") == 0) {
-		printf("\n\n\n");
-		printf("Running tests...\n");
-		
-		expect_return_value("tests"SLASH"the_increment"SLASH"iso"SLASH"program_termination", 42);
-		expect_stdout("tests"SLASH"the_increment"SLASH"iso"SLASH"printf_test", "Hello Hel Goodb 127 63 0 254 63 0 32000 32767 4 17 65532 65530 4 16 32000 32767 4 17 65532 65530 4 16 4294967295 6731943 2147483646 16 123456789 57486731943 985429 9123456 1.000000 123000.000000 0.100 0.234 3.000000");
-		expect_stdout("tests"SLASH"the_increment"SLASH"iso"SLASH"crc32_test", "691daa2f");
-		expect_stdout("tests"SLASH"the_increment"SLASH"iso"SLASH"ternary_test", "128 16 32 64 128 128");
-		expect_stdout("tests"SLASH"the_increment"SLASH"cuik"SLASH"function_literal", "lmao not_lmao 7331 4145 144 12 -2147483648 -743 -2 0 2 4 99\n");
-		
-		printf("===============   Tests (%d succeeded out of %d)   ===============\n", tests_working, number_of_tests);
+	if (argc > 1) {
+		if (strcmp(argv[1], "test") == 0) {
+			printf("\n\n\n");
+			printf("Running tests...\n");
+			
+			expect_return_value("tests"SLASH"the_increment"SLASH"iso"SLASH"program_termination", 42);
+			expect_stdout("tests"SLASH"the_increment"SLASH"iso"SLASH"printf_test", "Hello Hel Goodb 127 63 0 254 63 0 32000 32767 4 17 65532 65530 4 16 32000 32767 4 17 65532 65530 4 16 4294967295 6731943 2147483646 16 123456789 57486731943 985429 9123456 1.000000 123000.000000 0.100 0.234 3.000000");
+			expect_stdout("tests"SLASH"the_increment"SLASH"iso"SLASH"crc32_test", "691daa2f");
+			expect_stdout("tests"SLASH"the_increment"SLASH"iso"SLASH"ternary_test", "128 16 32 64 128 128");
+			expect_stdout("tests"SLASH"the_increment"SLASH"cuik"SLASH"function_literal", "lmao not_lmao 7331 4145 144 12 -2147483648 -743 -2 0 2 4 99\n");
+			expect_stdout("tests"SLASH"the_increment"SLASH"iso"SLASH"fibonacci_test", "1 1 2 3 5 8 13 21 34 55 89 144 233 377 610 1 1 2 3 5 8 13 21 34 55 89 144 233 377 610 ");
+			expect_stdout("tests"SLASH"the_increment"SLASH"iso"SLASH"clang_17781", "1");
+			expect_stdout("tests"SLASH"the_increment"SLASH"iso"SLASH"regression_1", "0 1 1 1 1 ");
+			
+			// Inria tests
+			try_compile("tests"SLASH"the_increment"SLASH"inria"SLASH"argument_scope");
+			try_compile("tests"SLASH"the_increment"SLASH"inria"SLASH"atomic");
+			try_compile("tests"SLASH"the_increment"SLASH"inria"SLASH"c11-noreturn");
+			try_compile("tests"SLASH"the_increment"SLASH"inria"SLASH"c1x-alignas");
+			try_compile("tests"SLASH"the_increment"SLASH"inria"SLASH"char-literal-printing");
+			try_compile("tests"SLASH"the_increment"SLASH"inria"SLASH"c-namespace");
+			try_compile("tests"SLASH"the_increment"SLASH"inria"SLASH"control-scope");
+			//try_compile("tests"SLASH"the_increment"SLASH"inria"SLASH"declarators");
+			try_compile("tests"SLASH"the_increment"SLASH"inria"SLASH"designator");
+			try_compile("tests"SLASH"the_increment"SLASH"inria"SLASH"expressions");
+			try_compile("tests"SLASH"the_increment"SLASH"inria"SLASH"long-long-struct");
+			try_compile("tests"SLASH"the_increment"SLASH"inria"SLASH"function-decls");
+			try_compile("tests"SLASH"the_increment"SLASH"inria"SLASH"statements");
+			try_compile("tests"SLASH"the_increment"SLASH"inria"SLASH"struct-recursion");
+			try_compile("tests"SLASH"the_increment"SLASH"inria"SLASH"types");
+			try_compile("tests"SLASH"the_increment"SLASH"inria"SLASH"local_typedef");
+			try_compile("tests"SLASH"the_increment"SLASH"inria"SLASH"declaration_ambiguity");
+			try_compile("tests"SLASH"the_increment"SLASH"inria"SLASH"declarator_visibility");
+			try_compile("tests"SLASH"the_increment"SLASH"inria"SLASH"enum_shadows_typedef");
+			try_compile("tests"SLASH"the_increment"SLASH"inria"SLASH"enum_constant_visibility");
+			try_compile("tests"SLASH"the_increment"SLASH"inria"SLASH"namespaces");
+			try_compile("tests"SLASH"the_increment"SLASH"inria"SLASH"local_scope");
+			try_compile("tests"SLASH"the_increment"SLASH"inria"SLASH"block_scope");
+			try_compile("tests"SLASH"the_increment"SLASH"inria"SLASH"if_scopes");
+			try_compile("tests"SLASH"the_increment"SLASH"inria"SLASH"loop_scopes");
+			try_compile("tests"SLASH"the_increment"SLASH"inria"SLASH"no_local_scope");
+			//try_compile("tests"SLASH"the_increment"SLASH"inria"SLASH"function_parameter_scope");
+			try_compile("tests"SLASH"the_increment"SLASH"inria"SLASH"function_parameter_scope_extends");
+			try_compile("tests"SLASH"the_increment"SLASH"inria"SLASH"dangling_else");
+			
+			printf("===============   Tests (%d succeeded out of %d)   ===============\n", tests_working, number_of_tests);
+			
+			delete_crap_in_dir("tests"SLASH"the_increment"SLASH"iso"SLASH);
+			delete_crap_in_dir("tests"SLASH"the_increment"SLASH"cuik"SLASH);
+			delete_crap_in_dir("tests"SLASH"the_increment"SLASH"inria"SLASH);
+		} else {
+			printf("\n\n\n");
+			printf("Running phase 1 self-host tests...\n");
+			
+			int successes = 0;
+			
+			char cmd[1024];
+			for (size_t i = 0; i < INPUT_FILE_COUNT; i++) {
+				snprintf(cmd, 1024, "cuik check %s", INPUT_FILES[i]);
+				if (system(cmd) == 0) {
+					printf("`-Success with %s!\n\n", INPUT_FILES[i]);
+					successes++;
+				} else {
+					printf("`-Failure with %s!\n\n", INPUT_FILES[i]);
+				}
+			}
+			
+			printf("===============   Tests (%d succeeded out of %d)   ===============\n", successes, INPUT_FILE_COUNT);
+		}
 	}
 	
 	return 0;

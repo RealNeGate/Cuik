@@ -15,12 +15,15 @@
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wunused-variable"
 
+#define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
 #include <stdio.h>
 #include <sys/stat.h>
+
+#include <ole2.h>
 
 #include <stdint.h>
 #include <io.h>         // For _get_osfhandle

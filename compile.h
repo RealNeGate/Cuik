@@ -28,23 +28,34 @@
 #include <string.h>
 #include <assert.h>
 #include <stdbool.h>
+#include <sys/stat.h>
 
 #ifdef _WIN32
 #define WIN32_MEAN_AND_LEAN
 #include "windows.h"
 
+#define popen _popen
+#define pclose _pclose
 #define SLASH "\\"
 #define PATH_MAX MAX_PATH
 #else
 #include <sys/types.h>
 #include <sys/wait.h>
-#include <sys/stat.h>
 #include <unistd.h>
 #include <dirent.h>
 #include <errno.h>
 
 #define SLASH "/"
 #endif
+
+#if defined(_MSC_VER) && !defined(__clang__)
+#define UNIX_STYLE 0
+#else
+#define UNIX_STYLE 1
+#endif
+
+static char command_buffer[4096];
+static size_t command_length = 0;
 
 inline static bool str_ends_with(const char* cstr, const char* postfix) {
     const size_t cstr_len = strlen(cstr);
@@ -69,6 +80,21 @@ inline static const char* str_no_ext(const char* path) {
         return path;
     }
 }
+
+#ifdef _WIN32
+inline static void create_dir_if_not_exists(const char* path) {
+	if (CreateDirectory(path, NULL)) {
+		if (GetLastError() == ERROR_PATH_NOT_FOUND) {
+			printf("Could not create directory '%s'\n", path);
+			abort();
+		}
+	}
+}
+#else
+inline static void create_dir_if_not_exists(const char* path) {
+	mkdir(path, 0666);
+}
+#endif
 
 #ifdef _WIN32
 // https://bobobobo.wordpress.com/2009/02/02/getlasterror-and-getlasterrorasstring/
@@ -138,9 +164,6 @@ inline static void file_iter_close(FileIter* iter) {
 }
 #endif
 
-static char command_buffer[4096];
-static size_t command_length = 0;
-
 inline static void cmd_append(const char* str) {
 	size_t l = strlen(str);
 	assert(command_length + l + 1 < sizeof(command_buffer));
@@ -149,57 +172,173 @@ inline static void cmd_append(const char* str) {
 	command_length += l;
 }
 
-#ifdef _WIN32
-inline static void cmd_run() {
-    STARTUPINFO siStartInfo = {
-		.cb = sizeof(STARTUPINFO),
-		.hStdError = GetStdHandle(STD_ERROR_HANDLE),
-		.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE),
-		.hStdInput = GetStdHandle(STD_INPUT_HANDLE),
-		.dwFlags = STARTF_USESTDHANDLES
-	};
-	
-    PROCESS_INFORMATION piProcInfo = { 0 };
-    BOOL bSuccess = CreateProcess(NULL, command_buffer, NULL, NULL, TRUE,
-								  0, NULL, NULL, &siStartInfo, &piProcInfo);
-	
-    if (!bSuccess) {
-        printf("Could not create child process %s: %s\n", command_buffer, GetLastErrorAsString());
-		abort();
-    }
-	
-	
-    DWORD result = WaitForSingleObject(piProcInfo.hProcess, INFINITE);
-    if (result == WAIT_FAILED) {
-        printf("could not wait on child process: %s\n", GetLastErrorAsString());
-		abort();
-    }
-	
-    DWORD exit_status;
-    if (GetExitCodeProcess(piProcInfo.hProcess, &exit_status) == 0) {
-        printf("could not get process exit code: %s\n", GetLastErrorAsString());
-		abort();
-    }
-	
-	if (exit_status) {
-		exit(exit_status);
-	}
-	
-    CloseHandle(piProcInfo.hThread);
-    CloseHandle(piProcInfo.hProcess);
-	
-	command_buffer[0] = 0;
-	command_length = 0;
-}
-#else
-inline static void cmd_run() {
-	int exit_status = system(command_buffer);
-	if (exit_status != 0) {
-		printf("command exited with exit code %d\n", exit_status);
+// return the child process stdout
+inline static FILE* cmd_run() {
+	FILE* file = popen(command_buffer, "rb");
+	if (file == NULL) {
+		printf("command failed to execute! %s\n", command_buffer);
 		abort();
 	}
 	
 	command_buffer[0] = 0;
 	command_length = 0;
+	return file;
 }
+
+// Print out whatever was on that file stream
+inline static int cmd_dump(FILE* stream) {
+	char buffer[4096];
+	while (fread(buffer, sizeof(buffer), sizeof(char), stream)) {
+		printf("%s", buffer);
+	}
+	return pclose(stream);
+}
+
+inline static void builder_init() {
+	// don't wanna buffer stdout
+	setvbuf(stdout, NULL, _IONBF, 0);
+	
+#if defined(_WIN32)
+	// sets environment vars for compiler
+	system("call vcvars64");
 #endif
+	
+	create_dir_if_not_exists("build/");
+	
+#if defined(__GNUC__)
+	printf("Compiling on GCC %d.%d...\n", __GNUC__, __GNUC_MINOR__);
+#elif defined(__clang__)
+	printf("Compiling on Clang %d.%d.%d...\n", __clang_major__, __clang_minor__, __clang_patchlevel__);
+#elif defined(_MSC_VER)
+	printf("Compiling on MSVC %d.%d...\n", _MSC_VER / 100, _MSC_VER % 100);
+#endif
+}
+
+inline static void builder_compile_msvc(size_t count, const char* filepaths[], const char* output_path) {
+	cmd_append("cl /Fo:build\\ /MP /arch:AVX /D_CRT_SECURE_NO_WARNINGS ");
+	cmd_append("/I:src /Fe:");
+	cmd_append(output_path);
+	
+#   if defined(RELEASE_BUILD)
+	cmd_append("/GL /Ox /WX /GS- /DNDEBUG ");
+#   else
+	cmd_append("/MTd /Od /WX /Zi /D_DEBUG /RTC1 ");
+#   endif
+	
+	for (size_t i = 0; i < count; i++) {
+		cmd_append(filepaths[i]);
+		cmd_append(" ");
+	}
+	
+	printf("CMD: %s\n", command_buffer);
+	cmd_dump(cmd_run());
+}
+
+inline static void builder_compile_cc(size_t count, const char* filepaths[], const char* output_path) {
+#if defined(__GNUC__)
+	const char* cc_command = "gcc";
+#elif defined(__clang__)
+	const char* cc_command = "clang";
+#endif
+	
+	// compile object files
+	FILE** streams = malloc(count * sizeof(FILE*));
+	
+	for (size_t i = 0; i < count; i++) {
+		const char* input = filepaths[i];
+		
+		// Find last dot, if we can't default to end
+		const char* ext = strrchr(input, '.');
+		if (!ext) ext = input + strlen(input);
+		
+		// Find last slash, if we can't default to start
+		const char* slash = strrchr(input, '\\');
+		if (!slash) slash = strrchr(input, '/');
+		if (!slash) slash = input;
+		
+		char output[PATH_MAX];
+		snprintf(output, PATH_MAX, "%.*s", (int)(ext - slash), slash);
+		
+		cmd_append(cc_command);
+		cmd_append(" -march=haswell -maes -Werror -Wall -Wno-trigraphs -Wno-unused-function ");
+		
+#if __clang__
+		cmd_append("-Wno-gnu-designator ");
+#endif
+		
+		cmd_append("-I src ");
+		
+#if 1 // 0 if you want to emit preprocessed output for all files
+		cmd_append("-c -o build");
+		cmd_append(output);
+		
+#       if _WIN32
+		cmd_append(".obj -D_CRT_SECURE_NO_WARNINGS -g -gcodeview ");
+#       else
+		cmd_append(".o -g ");
+#       endif
+		
+		cmd_append(filepaths[i]);
+#else
+		cmd_append(" -E ");
+		cmd_append(filepaths[i]);
+		cmd_append(" > build");
+		cmd_append(output);
+		cmd_append(".c");
+#endif
+		
+		streams[i] = cmd_run();
+	}
+	
+	bool success = true;
+	for (size_t i = 0; i < count; i++) {
+		char buffer[4096];
+		if (fread(buffer, sizeof(buffer), sizeof(char), streams[i])) {
+			printf("~~~ ERRORS '%s' ~~~\n", filepaths[i]);
+			
+			do {
+				printf("%s", buffer);
+			} while (fread(buffer, 1, sizeof(buffer), streams[i]));
+			
+			int code = pclose(streams[i]);
+			printf("\n");
+			
+			if (code) {
+				printf("%s: exited with code %d\n", filepaths[i], code);
+				success = false;
+			}
+		}
+	}
+	
+	if (success) {
+		// Link everything together
+		cmd_append("lld-link ");
+#if _WIN32
+		cmd_append("tildebackend.lib build\\*.obj ");
+#else
+		cmd_append("tildebackend.a build/*.o ");
+#endif
+		
+		cmd_append("/nologo /machine:amd64 /subsystem:console /debug:full /defaultlib:libcmt ");
+		cmd_append("/out:build\\");
+		cmd_append(output_path);
+		
+#if _WIN32
+		cmd_append(".exe ");
+		cmd_append("/pdb:build\\");
+		cmd_append(output_path);
+		cmd_append(".pdb ");
+		cmd_append("ole32.lib Advapi32.lib OleAut32.lib DbgHelp.lib");
+#endif
+		
+		cmd_dump(cmd_run());
+	}
+}
+
+inline static void builder_compile(size_t count, const char* filepaths[], const char* output_path) {
+#if UNIX_STYLE
+	builder_compile_cc(count, filepaths, output_path);
+#else
+	builder_compile_msvc(count, filepaths, output_path);
+#endif
+}

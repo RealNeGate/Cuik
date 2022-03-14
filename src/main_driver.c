@@ -21,6 +21,9 @@ typedef enum {
 	// emitting any output other than errors
 	COMPILER_MODE_CHECK,
 	
+	// lmao, it allows you to query information about the compile
+	COMPILER_MODE_ANAL,
+	
 	// compiles an executable unless -c is marked
 	COMPILER_MODE_BUILD,
 	
@@ -36,14 +39,14 @@ typedef struct {
 } TargetOption;
 
 static TargetOption target_options[] = {
-	{ "x64_windows", TB_ARCH_X86_64, TB_SYSTEM_WINDOWS },
-	{ "x64_macos",   TB_ARCH_X86_64, TB_SYSTEM_MACOS   },
-	{ "x64_linux",   TB_ARCH_X86_64, TB_SYSTEM_LINUX   }
+	{ "x64_windows",  TB_ARCH_X86_64,   TB_SYSTEM_WINDOWS },
+	{ "x64_macos",    TB_ARCH_X86_64,   TB_SYSTEM_MACOS   },
+	{ "x64_linux",    TB_ARCH_X86_64,   TB_SYSTEM_LINUX   }
 };
 enum { TARGET_OPTION_COUNT = sizeof(target_options) / sizeof(target_options[0]) };
 
 static const char* cuik_source_file;
-static char cuik_file_no_ext[MAX_PATH];
+static char cuik_file_no_ext[255];
 
 static CompilationUnit compilation_unit;
 
@@ -139,11 +142,14 @@ static void compile_project(const char* obj_output_path, bool is_multithreaded, 
 	atoms_init();
 	compilation_unit_init(&compilation_unit);
 	
-	irgen_init();
+	if (!is_check) irgen_init();
 	
-	TranslationUnit* tu = cuik_compile_file(&compilation_unit, cuik_source_file);
+	TranslationUnit* tu = cuik_compile_file(&compilation_unit, cuik_source_file, is_check);
 	if (settings.print_ast) {
 		ast_dump(tu, stdout);
+		ast_dump_stats(tu, stdout);
+	} else if (settings.print_ast_stats) {
+		ast_dump_stats(tu, stdout);
 	}
 	
 	if (!is_check) {
@@ -328,7 +334,7 @@ static bool dump_tokens() {
 	printf("preprocessor took %.03f seconds\n", elapsed);
 	
 	char output_path[MAX_PATH];
-	snprintf(output_path, 260, "%s.i", cuik_file_no_ext);
+	snprintf(output_path, MAX_PATH, "%s.i", cuik_file_no_ext);
 	FILE* f = fopen(output_path, "w");
 	if (!f) {
 		printf("Could not open file a.txt\n");
@@ -401,8 +407,11 @@ static void print_version(const char* install_dir) {
 	printf("cuik version %d.%d\n",         CUIK_COMPILER_MAJOR, CUIK_COMPILER_MINOR);
 	printf("install directory: %s\n",      install_dir);
 	printf("cuik include directory: %s\n", cuik_include_directory);
+	
+#ifdef _WIN32
 	printf("windows sdk include: %S\n",    s_vswhere.windows_sdk_include);
 	printf("visual studio include: %S\n",  s_vswhere.vs_include_path);
+#endif
 }
 
 int main(int argc, char* argv[]) {
@@ -433,6 +442,7 @@ int main(int argc, char* argv[]) {
 	else if (strcmp(cmd, "version") == 0) mode = COMPILER_MODE_VERSION;
 	else if (strcmp(cmd, "preproc") == 0) mode = COMPILER_MODE_PREPROC;
 	else if (strcmp(cmd, "check") == 0) mode = COMPILER_MODE_CHECK;
+	else if (strcmp(cmd, "anal") == 0) mode = COMPILER_MODE_ANAL;
 	else if (strcmp(cmd, "build") == 0) mode = COMPILER_MODE_BUILD;
 	else if (strcmp(cmd, "run") == 0) mode = COMPILER_MODE_RUN;
 	else {
@@ -488,10 +498,8 @@ int main(int argc, char* argv[]) {
 		char* key = &argv[i][1];
 		char* value = key;
 		
-		// i'll support both : and = for
-		// the values on compiler options
+		// splits on :
 		for (; *value; value++) {
-			if (*value == '=') break;
 			if (*value == ':') break;
 		}
 		
@@ -537,8 +545,12 @@ int main(int argc, char* argv[]) {
 			settings.num_of_worker_threads = num;
 		} else if (strcmp(key, "emit-ast") == 0) {
 			settings.print_ast = true;
+		} else if (strcmp(key, "emit-ast-stats") == 0) {
+			settings.print_ast_stats = true;
 		} else if (strcmp(key, "emit-ir") == 0) {
 			settings.print_tb_ir = true;
+		} else if (strcmp(key, "find-include") == 0) {
+			settings.find_include = true;
 		} else if (strcmp(key, "opt") == 0) {
 			settings.optimize = true;
 		} else if (strcmp(key, "obj") == 0) {
@@ -575,10 +587,10 @@ int main(int argc, char* argv[]) {
 	// Get filename without extension
 	{
 		const char* ext = strrchr(cuik_source_file, '.');
-		if (!ext) ext = cuik_source_file + strlen(cuik_source_file);
+		size_t len = ext ? (ext - cuik_source_file) : strlen(cuik_source_file);
 		
-		memcpy_s(cuik_file_no_ext, 260, cuik_source_file, ext - cuik_source_file);
-		cuik_file_no_ext[ext - cuik_source_file] = '\0';
+		memcpy(cuik_file_no_ext, cuik_source_file, len);
+		cuik_file_no_ext[len] = '\0';
 	}
 	
 	switch (target_arch) {
@@ -594,6 +606,21 @@ int main(int argc, char* argv[]) {
 	switch (mode) {
 		case COMPILER_MODE_PREPROC: {
 			dump_tokens();
+			break;
+		}
+		case COMPILER_MODE_ANAL: {
+			if (settings.find_include) {
+				char output[MAX_PATH];
+				if (cuik_find_include_file(output, cuik_source_file)) {
+					printf("%s\n", output);
+				} else {
+					printf("NOTFOUND\n");
+				}
+			} else {
+				printf("Unknown cuik anal option (Supported options):\n");
+				printf("-find-include - Resolve an include file path from name\n");
+				printf("\n");
+			}
 			break;
 		}
 		case COMPILER_MODE_CHECK:

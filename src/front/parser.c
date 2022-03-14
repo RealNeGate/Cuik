@@ -18,22 +18,22 @@
 //   a token for a specific operation... tell the user
 #include "parser.h"
 
-typedef struct IncompleteType {
+typedef struct {
 	Atom key;
 	TypeIndex value;
 } IncompleteType;
 
-typedef struct SymbolEntry {
+typedef struct {
 	Atom key;
 	Symbol value;
 } SymbolEntry;
 
-typedef struct TypedefEntry {
+typedef struct {
 	Atom key;
 	TypeIndex value;
 } TypedefEntry;
 
-typedef struct LabelEntry {
+typedef struct {
 	Atom key;
 	StmtIndex value;
 } LabelEntry;
@@ -42,7 +42,10 @@ typedef struct LabelEntry {
 // from reading from their parent function
 thread_local static int local_symbol_start = 0;
 thread_local static int local_symbol_count = 0;
-thread_local static Symbol local_symbols[64 * 1024];
+thread_local static Symbol local_symbols[MAX_LOCAL_SYMBOLS];
+
+thread_local static int local_typedef_count = 0;
+thread_local static TypedefEntry local_typedefs[MAX_TYPEDEF_LOCAL_SYMBOLS];
 
 thread_local static IncompleteType* incomplete_types; // stb_ds hash map
 thread_local static SymbolEntry* global_symbols; // stb_ds hash map
@@ -82,6 +85,7 @@ static ExprIndex parse_initializer(TranslationUnit* tu, TokenStream* restrict s,
 static ExprIndex parse_function_literal(TranslationUnit* tu, TokenStream* restrict s, TypeIndex type);
 static void parse_function_definition(TranslationUnit* tu, TokenStream* restrict s, StmtIndex n);
 static TypeIndex parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s, TypeIndex type, Atom name);
+static void create_symbol_use_list(TranslationUnit* tu, StmtIndex n, ExprIndex starting_point, bool has_labels);
 
 static bool is_typename(TokenStream* restrict s);
 
@@ -138,11 +142,36 @@ void translation_unit_parse(TranslationUnit* restrict tu, TokenStream* restrict 
 			
 			expect(s, ')');
 			continue;
+		} else if (tokens_get(s)->type == TOKEN_KW_Static_assert) {
+			tokens_next(s);
+			expect(s, '(');
+			
+			intmax_t condition = parse_const_expr(tu, s);
+			if (tokens_get(s)->type == ',') {
+				tokens_next(s);
+				
+				Token* t = tokens_get(s);
+				if (t->type != TOKEN_STRING_DOUBLE_QUOTE) {
+					generic_error(s, "static assertion expects string literal");
+				}
+				tokens_next(s);
+				
+				if (condition == 0) {
+					report(REPORT_ERROR, &s->line_arena[tokens_get(s)->location], "Static assertion failed: '%.*s'", (int)(t->end - t->start), t->start);
+				}
+			} else {
+				if (condition == 0) {
+					report(REPORT_ERROR, &s->line_arena[tokens_get(s)->location], "Static assertion failed");
+				}
+			}
+			
+			expect(s, ')');
+			continue;
 		}
 		
 		Attribs attr = { 0 };
 		TypeIndex type = parse_declspec(tu, s, &attr);
-		attr.is_root = !(attr.is_extern || attr.is_static || attr.is_inline);
+		attr.is_root = !(attr.is_static || attr.is_inline);
 		
 		if (attr.is_typedef) {
 			// TODO(NeGate): Kinda ugly
@@ -205,6 +234,7 @@ void translation_unit_parse(TranslationUnit* restrict tu, TokenStream* restrict 
 						report(REPORT_INFO, &s->line_arena[tu->stmts[n].loc], "before it was '%s'", temp_string1);
 					}
 					
+					tu->stmts[n].decl.attrs.is_root = attr.is_root;
 					tu->stmts[n].loc = decl.loc;
 				} else {
 					// New symbol
@@ -282,6 +312,7 @@ void translation_unit_parse(TranslationUnit* restrict tu, TokenStream* restrict 
 				if (tokens_get(s)->type == '=') {
 					tokens_next(s);
 					
+					ExprIndex starting_point = big_array_length(tu->exprs);
 					if (tokens_get(s)->type == '@') {
 						// function literals are a Cuik extension
 						// TODO(NeGate): error messages
@@ -294,6 +325,7 @@ void translation_unit_parse(TranslationUnit* restrict tu, TokenStream* restrict 
 					} else {
 						tu->stmts[n].decl.initial = parse_expr_l14(tu, s);
 					}
+					create_symbol_use_list(tu, n, starting_point, false);
 				}
 				
 				if (tokens_get(s)->type == ',') {
@@ -323,15 +355,20 @@ void translation_unit_parse(TranslationUnit* restrict tu, TokenStream* restrict 
 						if (tokens_get(s)->type == '=') {
 							tokens_next(s);
 							
-							ExprIndex initial;
-							if (tokens_get(s)->type == '{') {
+							ExprIndex starting_point = big_array_length(tu->exprs);
+							if (tokens_get(s)->type == '@') {
+								// function literals are a Cuik extension
+								// TODO(NeGate): error messages
+								tokens_next(s);
+								tu->stmts[n].decl.initial = parse_function_literal(tu, s, decl.type);
+							} else if (tokens_get(s)->type == '{') {
 								tokens_next(s);
 								
-								initial = parse_initializer(tu, s, TYPE_NONE);
+								tu->stmts[n].decl.initial = parse_initializer(tu, s, TYPE_NONE);
 							} else {
-								initial = parse_expr_l14(tu, s);
+								tu->stmts[n].decl.initial = parse_expr_l14(tu, s);
 							}
-							tu->stmts[n].decl.initial = initial;
+							create_symbol_use_list(tu, n, starting_point, false);
 						}
 					}
 				}
@@ -417,6 +454,24 @@ static bool skip_over_declspec(TokenStream* restrict s) {
 	return false;
 }
 
+static TypeIndex find_typedef(TokenStream* restrict s) {
+	Token* t = tokens_get(s);
+	const unsigned char* name = t->start;
+	size_t length = t->end - t->start;
+	
+	size_t i = local_typedef_count;
+	while (i--) {
+		const unsigned char* sym = local_typedefs[i].key;
+		size_t sym_length = strlen((const char*)sym);
+		
+		if (sym_length == length && memcmp(name, sym, length) == 0) {
+			return local_typedefs[i].value;
+		}
+	}
+	
+	return TYPE_NONE;
+}
+
 static Symbol* find_local_symbol(TokenStream* restrict s) {
 	Token* t = tokens_get(s);
 	const unsigned char* name = t->start;
@@ -426,7 +481,6 @@ static Symbol* find_local_symbol(TokenStream* restrict s) {
 	size_t i = local_symbol_count;
 	size_t start = local_symbol_start;
 	while (i-- > start) {
-		// TODO(NeGate): Implement string interning
 		const unsigned char* sym = local_symbols[i].name;
 		size_t sym_length = strlen((const char*)sym);
 		
@@ -455,6 +509,43 @@ static TypeIndex find_incomplete_type(char* name) {
 ////////////////////////////////
 // STATEMENTS
 ////////////////////////////////
+static void create_symbol_use_list(TranslationUnit* tu, StmtIndex n, ExprIndex starting_point, bool has_labels) {
+	ExprIndex symbol_list_start = 0;
+	ExprIndex symbol_list_end = 0;
+	
+	// resolve any unresolved label references
+	for (size_t i = starting_point, count = big_array_length(tu->exprs); i < count; i++) {
+		if (tu->exprs[i].op == EXPR_SYMBOL ||
+			tu->exprs[i].op == EXPR_UNKNOWN_SYMBOL) {
+			if (symbol_list_start == 0) {
+				// initialize chain
+				symbol_list_start = symbol_list_end = i;
+			} else {
+				// append
+				tu->exprs[symbol_list_end].next_symbol_in_chain = i;
+				tu->exprs[i].next_symbol_in_chain = 0;
+				symbol_list_end = i;
+			}
+		}
+		
+		if (has_labels && tu->exprs[i].op == EXPR_UNKNOWN_SYMBOL) {
+			const unsigned char* name = tu->exprs[i].unknown_sym;
+			
+			ptrdiff_t search = shgeti(labels, name);
+			if (search >= 0) {
+				tu->exprs[i].op = EXPR_SYMBOL;
+				tu->exprs[i].symbol = labels[search].value;
+			}
+		}
+	}
+	
+	if (symbol_list_end) {
+		tu->exprs[symbol_list_end].next_symbol_in_chain = 0;
+	}
+	
+	tu->stmts[n].decl.first_symbol = symbol_list_start;
+}
+
 static void parse_function_definition(TranslationUnit* tu, TokenStream* restrict s, StmtIndex n) {
 	TypeIndex type = tu->stmts[n].decl.type;
 	
@@ -487,40 +578,7 @@ static void parse_function_definition(TranslationUnit* tu, TokenStream* restrict
 	tu->stmts[n].op = STMT_FUNC_DECL;
 	tu->stmts[n].decl.initial = (StmtIndex)body;
 	
-	ExprIndex symbol_list_start = 0;
-	ExprIndex symbol_list_end = 0;
-	
-	// resolve any unresolved label references
-	for (size_t i = starting_point, count = big_array_length(tu->exprs); i < count; i++) {
-		if (tu->exprs[i].op == EXPR_SYMBOL ||
-			tu->exprs[i].op == EXPR_UNKNOWN_SYMBOL) {
-			if (symbol_list_start == 0) {
-				// initialize chain
-				symbol_list_start = symbol_list_end = i;
-			} else {
-				// append
-				tu->exprs[symbol_list_end].next_symbol_in_chain = i;
-				tu->exprs[i].next_symbol_in_chain = 0;
-				symbol_list_end = i;
-			}
-		}
-		
-		if (tu->exprs[i].op == EXPR_UNKNOWN_SYMBOL) {
-			const unsigned char* name = tu->exprs[i].unknown_sym;
-			
-			ptrdiff_t search = shgeti(labels, name);
-			if (search >= 0) {
-				tu->exprs[i].op = EXPR_SYMBOL;
-				tu->exprs[i].symbol = labels[search].value;
-			}
-		}
-	}
-	
-	if (symbol_list_end) {
-		tu->exprs[symbol_list_end].next_symbol_in_chain = 0;
-	}
-	
-	tu->stmts[body].compound.first_symbol = symbol_list_start;
+	create_symbol_use_list(tu, n, starting_point, true);
 	
 	// hmm... how tf do labels operate in this case...
 	// TODO(NeGate): redo the label look in a sec
@@ -530,6 +588,7 @@ static void parse_function_definition(TranslationUnit* tu, TokenStream* restrict
 static StmtIndex parse_compound_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 	// mark when the local scope starts
 	int saved = local_symbol_count;
+	int saved2 = local_typedef_count;
 	
 	StmtIndex node = make_stmt(tu, s, STMT_COMPOUND);
 	
@@ -537,18 +596,21 @@ static StmtIndex parse_compound_stmt(TranslationUnit* tu, TokenStream* restrict 
 	void* body = tls_save();
 	
 	while (tokens_get(s)->type != '}') {
-		while (tokens_get(s)->type == ';') tokens_next(s);
-		
-		StmtIndex stmt = parse_stmt(tu, s);
-		if (stmt) {
-			*((StmtIndex*)tls_push(sizeof(StmtIndex))) = stmt;
-			body_count++;
+		if (tokens_get(s)->type == ';') {
+			tokens_next(s);
 		} else {
-			parse_decl_or_expr(tu, s, &body_count);
+			StmtIndex stmt = parse_stmt(tu, s);
+			if (stmt) {
+				*((StmtIndex*)tls_push(sizeof(StmtIndex))) = stmt;
+				body_count++;
+			} else {
+				parse_decl_or_expr(tu, s, &body_count);
+			}
 		}
 	}
 	expect(s, '}');
 	local_symbol_count = saved;
+	local_typedef_count = saved2;
 	
 	StmtIndex* stmt_array = arena_alloc(body_count * sizeof(StmtIndex), _Alignof(StmtIndex));
 	memcpy(stmt_array, body, body_count * sizeof(StmtIndex));
@@ -591,7 +653,6 @@ static StmtIndex parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 		expect(s, ')');
 		
 		StmtIndex body = parse_stmt_or_expr(tu, s);
-		assert(body);
 		
 		StmtIndex next = 0;
 		if (tokens_get(s)->type == TOKEN_KW_else) {
@@ -744,6 +805,8 @@ static StmtIndex parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 		StmtIndex n = make_stmt(tu, s, STMT_FOR);
 		
 		int saved = local_symbol_count;
+		int saved2 = local_typedef_count;
+		
 		expect(s, '(');
 		
 		// it's either nothing, a declaration, or an expression
@@ -804,6 +867,7 @@ static StmtIndex parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 		
 		// restore local symbol scope
 		local_symbol_count = saved;
+		local_typedef_count = saved2;
 		
 		tu->stmts[n].for_ = (struct StmtFor){
 			.first = first,
@@ -899,61 +963,95 @@ static void parse_decl_or_expr(TranslationUnit* tu, TokenStream* restrict s, siz
 		Attribs attr = { 0 };
 		TypeIndex type = parse_declspec(tu, s, &attr);
 		
-		// TODO(NeGate): Kinda ugly
-		// don't expect one the first time
-		bool expect_comma = false;
-		while (tokens_get(s)->type != ';') {
-			if (expect_comma) {
-				expect(s, ',');
-			} else expect_comma = true;
-			
-			Decl decl = parse_declarator(tu, s, type);
-			
-			StmtIndex n = make_stmt(tu, s, STMT_DECL);
-			tu->stmts[n].loc = decl.loc;
-			tu->stmts[n].decl = (struct StmtDecl){
-				.type = decl.type,
-				.name = decl.name,
-				.attrs = attr,
-				.initial = 0
-			};
-			
-			if (local_symbol_count >= MAX_LOCAL_SYMBOLS) {
-				report(REPORT_ERROR, &s->line_arena[decl.loc], "Local symbol count exceeds %d (got %d)", MAX_LOCAL_SYMBOLS, local_symbol_count);
-				abort();
+		if (attr.is_typedef) {
+			// don't expect one the first time
+			bool expect_comma = false;
+			while (tokens_get(s)->type != ';') {
+				if (expect_comma) {
+					expect(s, ',');
+				} else expect_comma = true;
+				
+				Decl decl = parse_declarator(tu, s, type);
+				assert(decl.name);
+				
+				// make typedef
+				StmtIndex n = make_stmt(tu, s, STMT_DECL);
+				tu->stmts[n].loc = decl.loc;
+				tu->stmts[n].decl = (struct StmtDecl){
+					.name = decl.name,
+					.type = decl.type,
+					.attrs = attr
+				};
+				
+				if (local_typedef_count >= MAX_TYPEDEF_LOCAL_SYMBOLS) {
+					report(REPORT_ERROR, &s->line_arena[decl.loc], "Local typedef count exceeds %d (got %d)", MAX_TYPEDEF_LOCAL_SYMBOLS, local_symbol_count);
+					abort();
+				}
+				
+				local_typedefs[local_typedef_count++] = (TypedefEntry){
+					.key = decl.name,
+					.value = decl.type
+				};
 			}
 			
-			local_symbols[local_symbol_count++] = (Symbol){
-				.name = decl.name,
-				.type = decl.type,
-				.storage_class = STORAGE_LOCAL,
-				.stmt = n
-			};
-			
-			ExprIndex initial = 0;
-			if (tokens_get(s)->type == '=') {
-				tokens_next(s);
+			expect(s, ';');
+		} else {
+			// TODO(NeGate): Kinda ugly
+			// don't expect one the first time
+			bool expect_comma = false;
+			while (tokens_get(s)->type != ';') {
+				if (expect_comma) {
+					expect(s, ',');
+				} else expect_comma = true;
 				
-				if (tokens_get(s)->type == '@') {
-					// function literals are a Cuik extension
-					// TODO(NeGate): error messages
-					tokens_next(s);
-					initial = parse_function_literal(tu, s, decl.type);
-				} else if (tokens_get(s)->type == '{') {
+				Decl decl = parse_declarator(tu, s, type);
+				
+				StmtIndex n = make_stmt(tu, s, STMT_DECL);
+				tu->stmts[n].loc = decl.loc;
+				tu->stmts[n].decl = (struct StmtDecl){
+					.type = decl.type,
+					.name = decl.name,
+					.attrs = attr,
+					.initial = 0
+				};
+				
+				if (local_symbol_count >= MAX_LOCAL_SYMBOLS) {
+					report(REPORT_ERROR, &s->line_arena[decl.loc], "Local symbol count exceeds %d (got %d)", MAX_LOCAL_SYMBOLS, local_symbol_count);
+					abort();
+				}
+				
+				local_symbols[local_symbol_count++] = (Symbol){
+					.name = decl.name,
+					.type = decl.type,
+					.storage_class = STORAGE_LOCAL,
+					.stmt = n
+				};
+				
+				ExprIndex initial = 0;
+				if (tokens_get(s)->type == '=') {
 					tokens_next(s);
 					
-					initial = parse_initializer(tu, s, TYPE_NONE);
-				} else {
-					initial = parse_expr_l14(tu, s);
+					if (tokens_get(s)->type == '@') {
+						// function literals are a Cuik extension
+						// TODO(NeGate): error messages
+						tokens_next(s);
+						initial = parse_function_literal(tu, s, decl.type);
+					} else if (tokens_get(s)->type == '{') {
+						tokens_next(s);
+						
+						initial = parse_initializer(tu, s, TYPE_NONE);
+					} else {
+						initial = parse_expr_l14(tu, s);
+					}
 				}
+				
+				tu->stmts[n].decl.initial = initial;
+				*((StmtIndex*)tls_push(sizeof(StmtIndex))) = n;
+				*body_count += 1;
 			}
 			
-			tu->stmts[n].decl.initial = initial;
-			*((StmtIndex*)tls_push(sizeof(StmtIndex))) = n;
-			*body_count += 1;
+			expect(s, ';');
 		}
-		
-		expect(s, ';');
 	} else {
 		StmtIndex n = make_stmt(tu, s, STMT_EXPR);
 		
@@ -1934,20 +2032,22 @@ static ExprIndex parse_expr_l13(TranslationUnit* tu, TokenStream* restrict s) {
 }
 
 // = += -= *= /= %= <<= >>= &= ^= |=
+//
+// NOTE(NeGate): a=b=c is a=(b=c) not (a=b)=c
 static ExprIndex parse_expr_l14(TranslationUnit* tu, TokenStream* restrict s) {
 	ExprIndex lhs = parse_expr_l13(tu, s);
 	
-	while (tokens_get(s)->type == TOKEN_ASSIGN ||
-		   tokens_get(s)->type == TOKEN_PLUS_EQUAL ||
-		   tokens_get(s)->type == TOKEN_MINUS_EQUAL ||
-		   tokens_get(s)->type == TOKEN_TIMES_EQUAL ||
-		   tokens_get(s)->type == TOKEN_SLASH_EQUAL ||
-		   tokens_get(s)->type == TOKEN_PERCENT_EQUAL ||
-		   tokens_get(s)->type == TOKEN_AND_EQUAL ||
-		   tokens_get(s)->type == TOKEN_OR_EQUAL ||
-		   tokens_get(s)->type == TOKEN_XOR_EQUAL ||
-		   tokens_get(s)->type == TOKEN_LEFT_SHIFT_EQUAL ||
-		   tokens_get(s)->type == TOKEN_RIGHT_SHIFT_EQUAL) {
+	if (tokens_get(s)->type == TOKEN_ASSIGN ||
+		tokens_get(s)->type == TOKEN_PLUS_EQUAL ||
+		tokens_get(s)->type == TOKEN_MINUS_EQUAL ||
+		tokens_get(s)->type == TOKEN_TIMES_EQUAL ||
+		tokens_get(s)->type == TOKEN_SLASH_EQUAL ||
+		tokens_get(s)->type == TOKEN_PERCENT_EQUAL ||
+		tokens_get(s)->type == TOKEN_AND_EQUAL ||
+		tokens_get(s)->type == TOKEN_OR_EQUAL ||
+		tokens_get(s)->type == TOKEN_XOR_EQUAL ||
+		tokens_get(s)->type == TOKEN_LEFT_SHIFT_EQUAL ||
+		tokens_get(s)->type == TOKEN_RIGHT_SHIFT_EQUAL) {
 		SourceLocIndex loc = tokens_get(s)->location;
 		ExprIndex e = make_expr(tu);
 		
@@ -1968,17 +2068,16 @@ static ExprIndex parse_expr_l14(TranslationUnit* tu, TokenStream* restrict s) {
 		}
 		tokens_next(s);
 		
-		ExprIndex rhs = parse_expr_l13(tu, s);
+		ExprIndex rhs = parse_expr_l14(tu, s);
 		tu->exprs[e] = (Expr) {
 			.op = op,
 			.loc = loc,
 			.bin_op = { lhs, rhs }
 		};
-		
-		lhs = e;
+		return e;
+	} else {
+		return lhs;
 	}
-	
-	return lhs;
 }
 
 static ExprIndex parse_expr_l15(TranslationUnit* tu, TokenStream* restrict s) {
@@ -2030,6 +2129,11 @@ static Decl parse_declarator(TranslationUnit* tu, TokenStream* restrict s, TypeI
 		
 		parse_another_qualifier: {
 			switch (tokens_get(s)->type) {
+				case TOKEN_KW_Atomic: {
+					tu->types[type].is_atomic = true;
+					tokens_next(s);
+					goto parse_another_qualifier;
+				}
 				case TOKEN_KW_restrict: {
 					tu->types[type].is_ptr_restrict = true;
 					tokens_next(s);
@@ -2272,6 +2376,10 @@ static TypeIndex parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s,
 			if (tokens_get(s)->type == ']') {
 				count = 0; 
 				tokens_next(s);
+			} else if (tokens_get(s)->type == '*') {
+				count = 0; 
+				tokens_next(s);
+				expect(s, ']');
 			} else {
 				count = parse_const_expr(tu, s);
 				expect(s, ']');
@@ -2347,6 +2455,7 @@ static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, At
 			case TOKEN_KW_signed: counter |= SIGNED; break;
 			
 			case TOKEN_KW_register: /* lmao */ break;
+			case TOKEN_KW_Noreturn: /* lmao */ break;
 			case TOKEN_KW_static: attr->is_static = true; break;
 			case TOKEN_KW_typedef: attr->is_typedef = true; break;
 			case TOKEN_KW_inline: attr->is_inline = true; break;
@@ -2363,7 +2472,28 @@ static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, At
 				break;
 			}
 			
-			case TOKEN_KW_Atomic: is_atomic = true; break;
+			case TOKEN_KW_Atomic: {
+				SourceLoc* loc = &s->line_arena[tokens_get(s)->location];
+				
+				tokens_next(s);
+				if (tokens_get(s)->type == '(') {
+					tokens_next(s);
+					
+					type = parse_typename(tu, s);
+					counter += OTHER;
+					is_atomic = true;
+					
+					if (tokens_get(s)->type != ')') {
+						report(REPORT_ERROR, loc, "expected closing parenthesis for _Atomic");
+						return 0;
+					}
+				} else {
+					// walk back, we didn't need to read that
+					is_atomic = true;
+					tokens_prev(s);
+				}
+				break;
+			}
 			case TOKEN_KW_const: is_const = true; break;
 			case TOKEN_KW_volatile: break;
 			case TOKEN_KW_auto: break;
@@ -2400,11 +2530,22 @@ static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, At
 				tokens_next(s);
 				expect(s, '(');
 				
-				intmax_t new_align = parse_const_expr(tu, s);
-				if (new_align >= INT16_MAX) {
-					report(REPORT_ERROR, loc, "_Alignas(%zu) exceeds max alignment of %zu", new_align, INT16_MAX);
+				if (is_typename(s)) {
+					int16_t new_align = parse_typename(tu, s);
+					if (new_align == 0) {
+						report(REPORT_ERROR, loc, "_Alignas cannot operate with incomplete");
+					} else {
+						forced_align = new_align;
+					}
 				} else {
-					forced_align = new_align;
+					intmax_t new_align = parse_const_expr(tu, s);
+					if (new_align == 0) {
+						report(REPORT_ERROR, loc, "_Alignas cannot be applied with 0 alignment", new_align);
+					} else if (new_align >= INT16_MAX) {
+						report(REPORT_ERROR, loc, "_Alignas(%zu) exceeds max alignment of %zu", new_align, INT16_MAX);
+					} else {
+						forced_align = new_align;
+					}
 				}
 				
 				if (tokens_get(s)->type != ')') {
@@ -2679,11 +2820,16 @@ static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, At
 			case TOKEN_IDENTIFIER: {
 				if (counter) goto done;
 				
+				TypeIndex new_type = find_typedef(s);
+				if (new_type) {
+					type = new_type;
+					counter += OTHER;
+					break;
+				}
+				
 				Token* t = tokens_get(s);
 				Atom name = atoms_put(t->end - t->start, t->start);
-				
 				ptrdiff_t search = shgeti(typedefs, name);
-				
 				if (search >= 0) {
 					type = typedefs[search].value;
 					counter += OTHER;
@@ -2813,6 +2959,11 @@ static bool is_typename(TokenStream* restrict s) {
 			// good question...
 			Token* t = tokens_get(s);
 			Atom name = atoms_put(t->end - t->start, t->start);
+			
+			if (find_typedef(s)) return true;
+			
+			Symbol* sym = find_local_symbol(s);
+			if (sym) return false;
 			
 			ptrdiff_t search = shgeti(typedefs, name);
 			return (search >= 0);

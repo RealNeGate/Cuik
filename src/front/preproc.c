@@ -76,6 +76,20 @@ void cpp_finalize(CPP_Context* ctx) {
 	ctx->macro_bucket_values_end = NULL;
 }
 
+bool cpp_find_include_include(CPP_Context* ctx, char output[MAX_PATH], const char* path) {
+	size_t num_system_include_dirs = arrlen(ctx->system_include_dirs);
+	
+	for (size_t i = 0; i < num_system_include_dirs; i++) {
+		sprintf_s(output, 260, "%s%s", ctx->system_include_dirs[i], path);
+		
+		if (file_exists(output)) {
+			return true;
+		}
+	}
+	
+	return false;
+}
+
 void cpp_add_include_directory(CPP_Context* ctx, const char dir[]) {
 	arrput(ctx->system_include_dirs, strdup(dir));
 }
@@ -419,6 +433,13 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 					assert(l.hit_line);
 				} else if (lexer_match(&l, 5, "endif")) {
 					lexer_read(&l);
+					
+					if (!l.hit_line) {
+						// TODO(NeGate): warning people if they add extra tokens
+						// to the endif
+						while (!l.hit_line) lexer_read(&l);
+					}
+					
 					cpp_pop_scope(c, &l);
 				} else if (lexer_match(&l, 6, "define")) {
 					lexer_read(&l);
@@ -600,6 +621,15 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 						
 						// We gotta hit a line by now
 						assert(l.hit_line);
+					}  else if (lexer_match(&l, 7, "message")) {
+						lexer_read(&l);
+						
+						printf("message %s:%d:  ", l.filepath, l.current_line);
+						while (!l.hit_line) {
+							printf("%.*s ", (int)(l.token_end - l.token_start), l.token_start);
+							lexer_read(&l);
+						}
+						printf("\n");
 					} else {
 						// convert to #pragma blah => _Pragma("blah")
 						SourceLocIndex loc = get_source_location(&l, s);
@@ -700,8 +730,16 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 						}
 					}
 				} else if (lexer_match(&l, 5, "error")) {
-					cpp_dump(c);
-					generic_error(&l, "error directive!");
+					lexer_read(&l);
+					
+					printf("error %s:%d: error directive: ", l.filepath, l.current_line);
+					
+					while (!l.hit_line) {
+						printf("%.*s ", (int)(l.token_end - l.token_start), l.token_start);
+						lexer_read(&l);
+					}
+					printf("\n");
+					exit(1);
 				} else {
 					generic_error(&l, "unknown directive!");
 				}
@@ -755,10 +793,13 @@ static void skip_directive_body(Lexer* l) {
 					}
 				} else if (lexer_match(l, 5, "endif")) {
 					if (depth == 0) {
+						l->hit_line = false;
 						lexer_read(l);
+						while (!l->hit_line) {
+							lexer_read(l);
+						}
 						return;
 					}
-					
 					depth--;
 				}
 			}
@@ -1322,7 +1363,7 @@ static intmax_t eval_l0(CPP_Context* restrict c, TokenStream* restrict s) {
 		val = eval(c, s, NULL);
 		
 		if (tokens_get(s)->type != ')') {
-			report(REPORT_ERROR, &s->line_arena[tokens_get(s)->location], "expected closing parenthesis on macro subexpression");
+			report(REPORT_ERROR, &s->line_arena[t->location], "expected closing parenthesis on macro subexpression");
 			abort();
 		}
 		tokens_next(s);
@@ -1460,14 +1501,13 @@ static intmax_t eval(CPP_Context* restrict c, TokenStream* restrict s, Lexer* l)
 		s->current = old_tokens_length;
 		
 		expand(c, s, l);
+		assert(s->current != arrlen(s->tokens) && "Expected the macro expansion to add something");
 		
 		// Insert a null token at the end
-		Token t = { 0, 0, NULL, NULL };
+		Token t = { 0, arrlen(s->line_arena) - 1, NULL, NULL };
 		arrput(s->tokens, t);
 		
 		// Evaluate
-		assert(s->current != arrlen(s->tokens) && "Expected the macro expansion to add something");
-		
 		intmax_t result = eval_l12(c, s);
 		
 		arrsetlen(s->tokens, old_tokens_length);

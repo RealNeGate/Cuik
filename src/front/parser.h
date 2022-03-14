@@ -10,8 +10,8 @@
 
 #include <back/tb.h>
 
-// 2 million ish
-#define MAX_LOCAL_SYMBOLS (2 << 20)
+#define MAX_LOCAL_SYMBOLS (1 << 20)
+#define MAX_TYPEDEF_LOCAL_SYMBOLS (1024)
 
 // Members used by struct/union types
 // NOTE(NeGate): Consider using an arena for this
@@ -31,10 +31,10 @@ typedef enum TypeKind {
     KIND_CHAR,
     KIND_SHORT,
     KIND_INT,
+    KIND_ENUM,
     KIND_LONG,
     KIND_FLOAT,
     KIND_DOUBLE,
-    KIND_ENUM,
     KIND_PTR,
     KIND_FUNC,
     KIND_ARRAY,
@@ -300,11 +300,6 @@ typedef struct Stmt {
 		struct StmtCompound {
 			StmtIndex* kids;
 			int kids_count;
-			
-			// acceleration structure for scrubbing for symbols
-			// it's a linked list and it's only relevant for the FUNC_DECL's
-			// compound node
-			ExprIndex first_symbol;
 		} compound;
 		struct StmtExpr {
 			ExprIndex expr;
@@ -349,6 +344,10 @@ typedef struct Stmt {
 			// NOTE(NeGate): This represents a stmtindex if it's a 
 			// FUNC_DECL
 			ExprIndex initial;
+			
+			// acceleration structure for scrubbing for symbols
+			// it's a linked list
+			ExprIndex first_symbol;
 			
 			Attribs attrs;
 			Atom name;

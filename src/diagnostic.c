@@ -79,7 +79,6 @@ void report(ReportLevel level, SourceLoc* loc, const char* fmt, ...) {
 		printf("      | ");
 		
 #if _WIN32
-		// TODO(NeGate): figure out how to make it green
 		SetConsoleTextAttribute(console_handle, (default_attribs & ~0xF) | FOREGROUND_GREEN);
 #endif
 		
@@ -101,7 +100,15 @@ void report(ReportLevel level, SourceLoc* loc, const char* fmt, ...) {
 	
 	tally[level] += 1;
 	if (level > REPORT_WARNING && tally[level] > 20) {
-		printf("exceeded error limit of 20\n");
+#if _WIN32
+		SetConsoleTextAttribute(console_handle, (default_attribs & ~0xF) | FOREGROUND_RED | FOREGROUND_INTENSITY);
+#endif
+		
+		printf("EXCEEDED ERROR LIMIT OF 20\n");
+		
+#if _WIN32
+		SetConsoleTextAttribute(console_handle, default_attribs);
+#endif
 		abort();
 	}
 }

@@ -6,10 +6,14 @@
 bool const_eval_try_offsetof_hack(TranslationUnit* tu, ExprIndex e, uint64_t* out) {
 	const Expr* ep = &tu->exprs[e];
 	
-	// hacky but it just needs to support &(((T*)0)->apple)
-	const Expr* arrow = &tu->exprs[ep->unary_op.src];
-	if (arrow->op == EXPR_ARROW) {
-		const Expr* restrict arrow_base = &tu->exprs[arrow->arrow.base];
+	// hacky but handles things like: 
+	//   &(((T*)0)->apple)
+	//   sizeof(((T*)0).apple)
+	if (ep->op == EXPR_DOT || ep->op == EXPR_ARROW) {
+		static_assert(offsetof(Expr, arrow.base) == offsetof(Expr, dot.base), "Expr.arrow and Expr.dot must match");
+		static_assert(offsetof(Expr, arrow.name) == offsetof(Expr, dot.name), "Expr.arrow and Expr.dot must match");
+		
+		const Expr* restrict arrow_base = &tu->exprs[ep->arrow.base];
 		const Type* restrict record_type = NULL;
 		
 		if (arrow_base->op == EXPR_CAST) {
@@ -33,7 +37,7 @@ bool const_eval_try_offsetof_hack(TranslationUnit* tu, ExprIndex e, uint64_t* ou
 			return false;
 		}
 		
-		Atom name = arrow->arrow.name;
+		Atom name = ep->arrow.name;
 		MemberIndex start = record_type->record.kids_start;
 		MemberIndex end = record_type->record.kids_end;
 		for (MemberIndex m = start; m < end; m++) {
@@ -155,6 +159,21 @@ ConstValue const_eval(TranslationUnit* tu, ExprIndex e) {
 				default: __builtin_unreachable();
 			}
 			
+			case EXPR_SIZEOF: {
+				extern TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e);
+				
+				// TODO(NeGate): this is super hacky since it calls semantic pass stuff
+				// early and thus it might not resolve correct... we wanna drop this later
+				if (tu->exprs[ep->x_of_expr.expr].op == EXPR_DOT ||
+					tu->exprs[ep->x_of_expr.expr].op == EXPR_ARROW) {
+					TypeIndex src = sema_expr(tu, ep->x_of_expr.expr);
+					
+					return unsigned_const(tu->types[src].size);
+				}
+				
+				// TODO(NeGate): error messages
+				abort();
+			}
 			case EXPR_SIZEOF_T: {
 				return unsigned_const(tu->types[ep->x_of_type.type].size);
 			}
@@ -168,7 +187,7 @@ ConstValue const_eval(TranslationUnit* tu, ExprIndex e) {
 			
 			case EXPR_ADDR: {
 				uint64_t dst;
-				if (const_eval_try_offsetof_hack(tu, e, &dst)) {
+				if (const_eval_try_offsetof_hack(tu, ep->unary_op.src, &dst)) {
 					return unsigned_const(dst); 
 				}
 				

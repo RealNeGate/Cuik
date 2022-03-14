@@ -559,7 +559,7 @@ static IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 		}
 		case EXPR_ADDR: {
 			uint64_t dst;
-			if (const_eval_try_offsetof_hack(tu, e, &dst)) {
+			if (const_eval_try_offsetof_hack(tu, ep->unary_op.src, &dst)) {
 				return (IRVal) {
 					.value_type = RVALUE,
 					.type = ep->type,
@@ -1643,8 +1643,8 @@ static void gen_func_body(TranslationUnit* tu, TypeIndex type, StmtIndex s) {
 			abort();
 		}
 		
-		tb_function_print(func, tb_default_print_callback, stdout);
-		fprintf(stdout, "\n\n\n");
+		tb_function_print_cfg(func, tb_default_print_callback, stdout);
+		fprintf(stdout, "\n\n");
 		fflush(stdout);
 		
 		if (mtx_unlock(&emit_ir_mutex) != thrd_success) {
@@ -1683,8 +1683,8 @@ void irgen_finalize() {
 	if (settings.print_tb_ir) {
 		mtx_lock(&emit_ir_mutex);
 		
-		tb_function_print(static_init_func, tb_default_print_callback, stdout);
-		fprintf(stdout, "\n\n\n");
+		tb_function_print_cfg(static_init_func, tb_default_print_callback, stdout);
+		fprintf(stdout, "\n\n");
 		fflush(stdout);
 		
 		mtx_unlock(&emit_ir_mutex);

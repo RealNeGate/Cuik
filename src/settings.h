@@ -14,7 +14,9 @@ typedef struct CompilerSettings {
 	bool is_debug_info    : 1;
 	bool print_tb_ir      : 1;
 	bool print_ast        : 1;
+	bool print_ast_stats  : 1;
 	bool pedantic         : 1;
+	bool find_include     : 1;
 	bool optimize         : 1;
 	
 	atomic_bool using_winmain;

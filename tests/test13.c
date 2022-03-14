@@ -3,6 +3,10 @@
 #include "stb_image.h"
 //#include <stdio.h>
 
+static void handle_stuff() {
+	
+}
+
 int main() {
 	printf("Hello, World! %d, %d, %d, %d, %d, %d", 16, 32, 64, 128, 256, 512);
 	putchar('\n');

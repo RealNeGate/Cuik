@@ -170,8 +170,6 @@ extern "C" {
 	typedef enum {
 		// FastISel
 		TB_ISEL_FAST,
-		
-		// ComplexISel
 		TB_ISEL_COMPLEX
 	} TB_ISelMode;
 	
@@ -692,6 +690,9 @@ extern "C" {
 	
 	TB_API TB_Function* tb_function_clone(TB_Module* m, TB_Function* f, const char* name);
 	TB_API void tb_function_print(TB_Function* f, TB_PrintCallback callback, void* user_data);
+	
+	// Prints out the IR in the GraphViz format
+	TB_API void tb_function_print_cfg(TB_Function* f, TB_PrintCallback callback, void* user_data);
 	TB_API void tb_function_free(TB_Function* f);
 	
 	TB_API TB_Label tb_inst_get_current_label(TB_Function* f);

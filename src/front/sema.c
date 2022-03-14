@@ -5,11 +5,11 @@
 #include <back/ir_gen.h>
 #include <stdarg.h>
 
-static _Atomic int sema_error_count;
-static _Thread_local StmtIndex function_stmt;
+static atomic_int sema_error_count;
+static thread_local StmtIndex function_stmt;
 
 // two simple temporary buffers to represent type_as_string results
-static _Thread_local char temp_string0[256], temp_string1[256];
+static thread_local char temp_string0[1024], temp_string1[1024];
 
 static TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e);
 
@@ -61,10 +61,8 @@ static bool type_compatible(TranslationUnit* tu, TypeIndex a, TypeIndex b, ExprI
 		} else if (src->kind >= KIND_BOOL &&
 				   src->kind <= KIND_LONG &&
 				   dst->kind == KIND_PTR) {
-			bool is_nullptr = tu->exprs[a_expr].op == EXPR_INT &&
-				tu->exprs[a_expr].int_num.num == 0;
-			
-			if (is_nullptr) {
+			if (tu->exprs[a_expr].op == EXPR_INT &&
+				tu->exprs[a_expr].int_num.num == 0) {
 				return true;
 			}
 		} else if (src->kind == KIND_FLOAT ||
@@ -72,6 +70,12 @@ static bool type_compatible(TranslationUnit* tu, TypeIndex a, TypeIndex b, ExprI
 			return true;
 		} else if (src->kind == KIND_DOUBLE ||
 				   dst->kind == KIND_FLOAT) {
+			return true;
+		} else if (src->kind == KIND_PTR &&
+				   dst->kind == KIND_BOOL) {
+			return true;
+		} else if (src->kind == KIND_FUNC &&
+				   dst->kind == KIND_BOOL) {
 			return true;
 		} else if (src->kind == KIND_FUNC &&
 				   dst->kind == KIND_PTR) {
@@ -181,7 +185,7 @@ static bool is_assignable_expr(TranslationUnit* tu, ExprIndex e) {
 	}
 }
 
-static TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e) {
+TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e) {
 	Expr* restrict ep = &tu->exprs[e];
 	
 	switch (ep->op) {
@@ -746,6 +750,7 @@ void sema_stmt(TranslationUnit* tu, StmtIndex s) {
 	Stmt* restrict sp = &tu->stmts[s];
 	
 	switch (sp->op) {
+		case STMT_NONE: break;
 		case STMT_LABEL: break;
 		case STMT_GOTO: {
 			sema_expr(tu, sp->goto_.target);
@@ -755,9 +760,28 @@ void sema_stmt(TranslationUnit* tu, StmtIndex s) {
 			StmtIndex* kids = sp->compound.kids;
 			size_t count = sp->compound.kids_count;
 			
+			StmtIndex killer = 0;
 			for (size_t i = 0; i < count; i++) {
-				sema_stmt(tu, kids[i]);
+				StmtIndex kid = kids[i];
+				sema_stmt(tu, kid);
+				
+				if (killer) {
+					if (tu->stmts[kid].op == STMT_LABEL) {
+						killer = 0;
+					} else {
+						sema_error(tu->stmts[kid].loc, "Dead code");
+						sema_info(tu->stmts[killer].loc, "After");
+						goto compound_failure;
+					}
+				} else {
+					if (tu->stmts[kid].op == STMT_RETURN ||
+						tu->stmts[kid].op == STMT_GOTO) {
+						killer = kid;
+					}
+				}
 			}
+			
+			compound_failure:
 			break;
 		}
 		case STMT_DECL: {
@@ -857,7 +881,9 @@ void sema_stmt(TranslationUnit* tu, StmtIndex s) {
 				sema_expr(tu, sp->for_.cond);
 			}
 			
-			sema_stmt(tu, sp->for_.body);
+			if (sp->for_.body) {
+				sema_stmt(tu, sp->for_.body);
+			}
 			
 			if (sp->for_.next) {
 				sema_expr(tu, sp->for_.next);
@@ -886,7 +912,7 @@ void sema_stmt(TranslationUnit* tu, StmtIndex s) {
 	}
 }
 
-static void sema_top_level(TranslationUnit* tu, StmtIndex s) {
+static void sema_top_level(TranslationUnit* tu, StmtIndex s, bool frontend_only) {
 	Stmt* restrict sp = &tu->stmts[s];
 	
 	TypeIndex type_index = sp->decl.type;
@@ -915,6 +941,16 @@ static void sema_top_level(TranslationUnit* tu, StmtIndex s) {
 			if (return_type->kind == KIND_STRUCT ||
 				return_type->kind == KIND_UNION) {
 				is_aggregate_return = true;
+			}
+			
+			if (frontend_only) {
+				sp->backing.f = 0;
+				
+				// type check function body
+				function_stmt = s;
+				sema_stmt(tu, (StmtIndex)sp->decl.initial);
+				function_stmt = 0;
+				break;
 			}
 			
 			// parameters
@@ -993,7 +1029,7 @@ static void sema_top_level(TranslationUnit* tu, StmtIndex s) {
 					}
 				}
 				
-				sp->backing.e = tb_extern_create(mod, name);
+				sp->backing.e = frontend_only ? 0 : tb_extern_create(mod, name);
 			} else {
 				Type* expr_type = NULL;
 				
@@ -1055,8 +1091,12 @@ static void sema_top_level(TranslationUnit* tu, StmtIndex s) {
 					}
 				}
 				
-				TB_Linkage linkage = sp->decl.attrs.is_static ? TB_LINKAGE_PRIVATE : TB_LINKAGE_PUBLIC;
-				sp->backing.g = tb_global_create(mod, name, linkage);
+				if (frontend_only) {
+					sp->backing.g = 0;
+				} else {
+					TB_Linkage linkage = sp->decl.attrs.is_static ? TB_LINKAGE_PRIVATE : TB_LINKAGE_PUBLIC;
+					sp->backing.g = tb_global_create(mod, name, linkage);
+				}
 			}
 			break;
 		}
@@ -1071,33 +1111,34 @@ static void sema_mark_children(TranslationUnit* tu, ExprIndex e) {
 	assert(ep->op == EXPR_SYMBOL);
 	Stmt* restrict sp = &tu->stmts[ep->symbol];
 	
-	if (!sp->decl.attrs.is_used) {
-		if (sp->op == STMT_FUNC_DECL) {
+	if (sp->op == STMT_FUNC_DECL ||
+		sp->op == STMT_DECL ||
+		sp->op == STMT_GLOBAL_DECL) {
+		if (!sp->decl.attrs.is_used) {
 			sp->decl.attrs.is_used = true;
-			ExprIndex sym = tu->stmts[(StmtIndex)sp->decl.initial].compound.first_symbol;
+			ExprIndex sym = sp->decl.first_symbol;
 			
 			while (sym) {
 				sema_mark_children(tu, sym);
 				sym = tu->exprs[sym].next_symbol_in_chain;
 			}
-		} else if (sp->op == STMT_DECL || sp->op == STMT_GLOBAL_DECL) {
-			sp->decl.attrs.is_used = true;
 		}
 	}
 }
 
-void sema_pass(CompilationUnit* cu, TranslationUnit* tu) {
+void sema_pass(CompilationUnit* cu, TranslationUnit* tu, bool frontend_only) {
 	size_t count = arrlen(tu->top_level_stmts);
 	
 	// simple mark and sweep to remove unused symbols
-	for (size_t i = 0; i < count; i++) {
-		Stmt* restrict sp = &tu->stmts[tu->top_level_stmts[i]];
-		
-		if (sp->decl.attrs.is_root) {
-			sp->decl.attrs.is_used = true;
+	timed_block("sema: collection") {
+		for (size_t i = 0; i < count; i++) {
+			Stmt* restrict sp = &tu->stmts[tu->top_level_stmts[i]];
+			assert(sp->op == STMT_FUNC_DECL || sp->op == STMT_DECL || sp->op == STMT_GLOBAL_DECL);
 			
-			if (sp->op == STMT_FUNC_DECL) {
-				ExprIndex sym = tu->stmts[(StmtIndex)sp->decl.initial].compound.first_symbol;
+			if (sp->decl.attrs.is_root) {
+				sp->decl.attrs.is_used = true;
+				
+				ExprIndex sym = sp->decl.first_symbol;
 				while (sym) {
 					sema_mark_children(tu, sym);
 					sym = tu->exprs[sym].next_symbol_in_chain;
@@ -1107,7 +1148,9 @@ void sema_pass(CompilationUnit* cu, TranslationUnit* tu) {
 	}
 	
 	// go through all top level statements and type check
-	for (size_t i = 0; i < count; i++) {
-		sema_top_level(tu, tu->top_level_stmts[i]);
+	timed_block("sema: top level") {
+		for (size_t i = 0; i < count; i++) {
+			sema_top_level(tu, tu->top_level_stmts[i], frontend_only);
+		}
 	}
 }

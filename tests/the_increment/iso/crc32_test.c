@@ -75,11 +75,11 @@ static const uint32_t crc32_table[256] = {
 
 void poof(size_t n) {
 	n--;
+	// Had a miscompilation here kinda like this:
 	// size_t tmp = n;
 	// tmp -= 1;
-	// *((size_t*)n) = tmp;
-	// 
-	// n = tmp;
+	// *((size_t*)n) = tmp; # error
+	// n = tmp;             # correct
 }
 
 uint32_t crc32(const void *buf, size_t size) {

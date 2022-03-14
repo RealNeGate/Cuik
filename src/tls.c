@@ -13,7 +13,7 @@ typedef struct TemporaryStorage {
 static _Thread_local TemporaryStorage* temp_storage;
 
 void tls_init() {
-	if (__builtin_expect(!temp_storage, 0)) {
+	if (temp_storage == NULL) {
 		temp_storage = _aligned_malloc(TEMPORARY_STORAGE_SIZE, 16);
 	}
 	

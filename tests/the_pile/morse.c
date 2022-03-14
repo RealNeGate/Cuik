@@ -4,7 +4,7 @@ extern char* gets(char* buffer);
 
 #define DIT (
 #define DAH )
-#define ++   ++
+#define __DAH   ++
 #define DITDAH  *
 #define DAHDIT  for
 #define DIT_DAH malloc

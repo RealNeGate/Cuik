@@ -11,7 +11,10 @@ static void set_defines(CPP_Context* cpp) {
 }
 
 TB_Register compile_builtin(TranslationUnit* tu, TB_Function* func, const char* name, int arg_count, ExprIndex* args) {
-	if (strcmp(name, "__debugbreak") == 0) {
+	if (strcmp(name, "__builtin_expect") == 0) {
+		printf("TODO __builtin_expect!");
+		abort();
+	} else if (strcmp(name, "__debugbreak") == 0) {
 		tb_inst_debugbreak(func);
 		return 0;
 	} else if (strcmp(name, "__va_start") == 0) {
@@ -133,6 +136,7 @@ TargetDescriptor get_x64_target_descriptor() {
 	BuiltinBinding* builtins = NULL;
 	
 	// msvc intrinsics
+	shput(builtins, "__builtin_expect", 1);
 	shput(builtins, "__debugbreak", 1);
 	shput(builtins, "__va_start", 1);
 	shput(builtins, "_umul128", 1);

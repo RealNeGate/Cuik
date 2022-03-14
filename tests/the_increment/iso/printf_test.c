@@ -2,7 +2,8 @@
 
 int main(int argc, char* argv[]) {
 	// 7.21.6.1 The fprintf function
-	printf("%s %.*s %.5s ", "Hello", 3, "Hello", "Goodbye");
+	printf("%s ", "Hello");
+	printf("%.*s %.5s ", 3, "Hello", "Goodbye");
 	printf("%hhd %hhd %hhd ", +127, 63, 0);
 	printf("%hhu %hhu %hhu ", 254, 63, 0);
 	printf("%hd %hd %hd %hd ", 32000, 32767, 4, 17);

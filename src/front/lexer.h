@@ -141,7 +141,7 @@ typedef enum IntSuffix {
 typedef int SourceLocIndex;
 
 // kinda a lot of info...
-typedef struct SourceLoc {
+typedef struct {
 	const unsigned char* file;
 	const unsigned char* line_str;
 	
@@ -150,14 +150,14 @@ typedef struct SourceLoc {
 	short length;
 } SourceLoc;
 
-typedef struct Token {
+typedef struct {
 	TknType type;
 	SourceLocIndex location;
 	const unsigned char* start;
 	const unsigned char* end;
 } Token;
 
-typedef struct TokenStream {
+typedef struct {
 	// stb_ds array
 	Token* tokens;
 	size_t current;
@@ -166,7 +166,7 @@ typedef struct TokenStream {
 	SourceLoc* line_arena;
 } TokenStream;
 
-typedef struct Lexer {
+typedef struct {
 	////////////////////////////////
 	// USER-PROVIDED
 	////////////////////////////////

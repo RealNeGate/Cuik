@@ -1,4 +1,5 @@
 #pragma once
+#define __STDC_WANT_LIB_EXT1__ 1
 
 #include <string.h>
 #include <stdio.h>
@@ -61,10 +62,4 @@ inline static size_t cstr_copy(size_t len, char* dst, const char* src) {
 typedef wchar_t* OS_String;
 #else
 typedef char* OS_String;
-#endif
-
-// NOTE(NeGate): This isn't correct just a shitty workaround
-#ifdef CUIK_NEEDS_SAFE_FUNCTIONS
-#define memcpy_s(dst, dstsz, src, count) memcpy(dst, src, count)
-#define sprintf_s(str, num, fmt, ...) sprintf(str, fmt, __VA_ARGS__)
 #endif

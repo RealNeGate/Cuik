@@ -2,7 +2,7 @@
 #include "sema.h"
 
 // two simple temporary buffers to represent type_as_string results
-static thread_local char temp_string0[256], temp_string1[256];
+static thread_local char temp_string0[1024], temp_string1[1024];
 static thread_local StmtIndex function_stmt;
 static thread_local bool barz[64];
 
@@ -39,9 +39,34 @@ static void dump_expr(TranslationUnit* tu, FILE* stream, ExprIndex e, int depth,
 	}
 	
 	switch (ep->op) {
+		case EXPR_CHAR: {
+			const char* start = (const char*)(ep->str.start + 1);
+			const char* end = (const char*)(ep->str.end - 1);
+			
+			uint32_t codepoint = 0;
+			uint32_t shift = 0;
+			while (start != end) {
+				// TODO(NeGate): Error messages
+				if (shift > 32) abort();
+				
+				codepoint |= (*start) << shift;
+				
+				shift += 8;
+				start += 1;
+			}
+			
+			type_as_string(tu, sizeof(temp_string0), temp_string0, ep->type);
+			fprintf(stream, "CharLiteral %u '%s'\n", codepoint, temp_string0);
+			break;
+		}
 		case EXPR_INT: {
 			type_as_string(tu, sizeof(temp_string0), temp_string0, ep->type);
 			fprintf(stream, "IntegerLiteral %llu '%s'\n", ep->int_num.num, temp_string0);
+			break;
+		}
+		case EXPR_ENUM: {
+			type_as_string(tu, sizeof(temp_string0), temp_string0, ep->type);
+			fprintf(stream, "EnumLiteral %lld '%s'\n", ep->enum_val.num, temp_string0);
 			break;
 		}
 		case EXPR_FLOAT32:
@@ -442,4 +467,21 @@ void ast_dump(TranslationUnit* tu, FILE* stream) {
 	for (size_t i = 0, count = arrlen(tu->top_level_stmts); i < count; i++) {
 		dump_stmt(tu, stream, tu->top_level_stmts[i], 1, i == (count-1));
 	}
+}
+
+void ast_dump_stats(TranslationUnit* tu, FILE* stream) {
+	printf("\n~~~ AST STATS ~~~\n");
+	printf("# Top level stmts: %zu\n", arrlen(tu->top_level_stmts));
+	
+	printf("# Expressions: %8zu (%zu kB)\n",
+		   big_array_length(tu->exprs),
+		   (big_array_length(tu->exprs) * sizeof(Expr)) / 1024);
+	
+	printf("# Statements:  %8zu (%zu kB)\n",
+		   big_array_length(tu->stmts),
+		   (big_array_length(tu->stmts) * sizeof(Stmt)) / 1024);
+	
+	printf("# Types:       %8zu (%zu kB)\n",
+		   big_array_length(tu->types),
+		   (big_array_length(tu->types) * sizeof(Type)) / 1024);
 }
