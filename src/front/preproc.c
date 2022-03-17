@@ -793,11 +793,7 @@ static void skip_directive_body(Lexer* l) {
 					}
 				} else if (lexer_match(l, 5, "endif")) {
 					if (depth == 0) {
-						l->hit_line = false;
-						lexer_read(l);
-						while (!l->hit_line) {
-							lexer_read(l);
-						}
+						*l = saved;
 						return;
 					}
 					depth--;
@@ -1015,6 +1011,8 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
 		unsigned char* out = gimme_the_shtuffs(c, 2);
 		out[0] = found ? '1' : '0';
 		out[1] = '\0';
+		
+		//printf("Is '%.*s' defined? %s\n", (int)(end-start), start, found?"Yes":"No");
 		
 		Token t = { 
 			TOKEN_INTEGER, 

@@ -557,6 +557,8 @@ int main(int argc, char* argv[]) {
 			settings.is_object_only = true;
 		} else if (strcmp(key, "time") == 0) {
 			settings.is_time_report = true;
+		} else if (strcmp(key, "freestanding") == 0) {
+			settings.freestanding = true;
 		} else if (strcmp(key, "debug") == 0) {
 			settings.is_debug_build = true;
 		} else if (strcmp(key, "debug-info") == 0) {
@@ -651,6 +653,11 @@ int main(int argc, char* argv[]) {
 				compile_project(obj_output_path, true, mode == COMPILER_MODE_CHECK);
 				
 				if (!settings.is_object_only && mode != COMPILER_MODE_CHECK && !settings.print_tb_ir) {
+					if (settings.freestanding) {
+						printf("error: cannot link and be freestanding... yet");
+						return 1;
+					}
+					
 					timed_block("linker") {
 						Linker l;
 						if (linker_init(&l)) {

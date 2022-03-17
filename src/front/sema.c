@@ -317,6 +317,10 @@ TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e) {
 		case EXPR_SIZEOF_T: {
 			try_resolve_typeof(tu, ep->x_of_type.type);
 			
+			if (tu->types[ep->x_of_type.type].kind == KIND_FUNC) {
+				sema_warn(ep->loc, "sizeof(function type) is undefined (Cuik will always resolve it to 1)");
+			}
+			
 			assert(tu->types[ep->x_of_type.type].size && "Something went wrong...");
 			*ep = (Expr) {
 				.op = EXPR_INT,
@@ -327,6 +331,10 @@ TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e) {
 		}
 		case EXPR_ALIGNOF_T: {
 			try_resolve_typeof(tu, ep->x_of_type.type);
+			
+			if (tu->types[ep->x_of_type.type].kind == KIND_FUNC) {
+				sema_warn(ep->loc, "alignof(function type) is undefined (Cuik will always resolve it to 1)");
+			}
 			
 			assert(tu->types[ep->x_of_type.type].align && "Something went wrong...");
 			*ep = (Expr) {

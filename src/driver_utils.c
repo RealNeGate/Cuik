@@ -53,7 +53,10 @@ void cuik_set_cpp_defines(CPP_Context* cpp) {
 	
 	// currently there's no freestanding mode but if there was this would be
 	// turned off for it
-	cpp_define(cpp, "__STDC_HOSTED__", "1");
+	cpp_define(cpp, "__STDC_HOSTED__", settings.freestanding ? "0" : "1");
+	cpp_define(cpp, "__STDC_NO_COMPLEX__", "1");
+	cpp_define(cpp, "__STDC_NO_VLA__", "1");
+	cpp_define(cpp, "__STDC_NO_THREADS__", "1");
 	
 	{
 		// The time of translation of the preprocessing translation unit
@@ -77,10 +80,6 @@ void cuik_set_cpp_defines(CPP_Context* cpp) {
 		snprintf(time_str, 20, "\"%.2d:%.2d:%.2d\"", timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
 		cpp_define(cpp, "__TIME__", time_str);
 	}
-	
-	cpp_define_empty(cpp, "__STDC_NO_COMPLEX__");
-	cpp_define_empty(cpp, "__STDC_NO_VLA__");
-	cpp_define_empty(cpp, "__STDC_NO_THREADS__");
 	
 	if (settings.is_debug_build) {
 		cpp_define_empty(cpp, "_DEBUG");

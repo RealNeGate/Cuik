@@ -47,8 +47,8 @@ TypeIndex new_enum(TranslationUnit* tu) {
 TypeIndex new_func(TranslationUnit* tu) {
 	Type t = {
 		.kind = KIND_FUNC,
-		.size = 8,
-		.align = 8
+		.size = 1,
+		.align = 1
 	};
 	
 	big_array_put(tu->types, t);

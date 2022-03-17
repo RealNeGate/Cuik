@@ -341,4 +341,17 @@ inline static void builder_compile(size_t count, const char* filepaths[], const 
 #else
 	builder_compile_msvc(count, filepaths, output_path);
 #endif
+	
+	char temp[PATH_MAX];
+	
+	const char* path;
+	FileIter it = file_iter_open("build/");
+	while ((path = file_iter_next(&it))) {
+		if (str_ends_with(path, ".o") ||
+			str_ends_with(path, ".obj")) {
+			snprintf(temp, PATH_MAX, "build/%s", path);
+			remove(temp);
+		}
+	}
+	file_iter_close(&it);
 }

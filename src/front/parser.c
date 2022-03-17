@@ -1708,6 +1708,7 @@ static ExprIndex parse_expr_l2(TranslationUnit* tu, TokenStream* restrict s) {
 		return e;
 	} else if (tokens_get(s)->type == TOKEN_KW_sizeof ||
 			   tokens_get(s)->type == TOKEN_KW_Alignof) {
+		SourceLocIndex loc = tokens_get(s)->location;
 		TknType operation_type = tokens_get(s)->type;
 		tokens_next(s);
 		
@@ -1741,7 +1742,7 @@ static ExprIndex parse_expr_l2(TranslationUnit* tu, TokenStream* restrict s) {
 				e = make_expr(tu);
 				tu->exprs[e] = (Expr) {
 					.op = operation_type == TOKEN_KW_sizeof ? EXPR_SIZEOF_T : EXPR_ALIGNOF_T,
-					.loc = tokens_get(s)->location,
+					.loc = loc,
 					.x_of_type = { type }
 				};
 			}
@@ -1751,7 +1752,7 @@ static ExprIndex parse_expr_l2(TranslationUnit* tu, TokenStream* restrict s) {
 			e = make_expr(tu);
 			tu->exprs[e] = (Expr) {
 				.op = operation_type == TOKEN_KW_sizeof ? EXPR_SIZEOF : EXPR_ALIGNOF,
-				.loc = tokens_get(s)->location,
+				.loc = loc,
 				.x_of_expr = { expr }
 			};
 			
@@ -2187,7 +2188,19 @@ static Decl parse_declarator(TranslationUnit* tu, TokenStream* restrict s, TypeI
 	
 	skip_over_declspec(s);
 	
-	if (!disabled_paren && tokens_get(s)->type == '(') {
+	// disambiguate
+	bool is_nested_declarator = tokens_get(s)->type == '(';
+	if (is_nested_declarator && is_abstract) {
+		tokens_next(s);
+		
+		if (is_typename(s)) {
+			is_nested_declarator = false;
+		}
+		
+		tokens_prev(s);
+	}
+	
+	if (is_nested_declarator) {
 		// TODO(NeGate): I don't like this code...
 		// it essentially just skips over the stuff in the
 		// parenthesis to do the suffix then comes back
