@@ -431,6 +431,12 @@ TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e) {
 				base = new_pointer(tu, tu->types[base].array_of);
 			}
 			
+			if (tu->types[base].kind != KIND_PTR) {
+				type_as_string(tu, sizeof(temp_string0), temp_string0, base);
+				sema_error(ep->loc, "Cannot perform subscript [] with base type '%s'", temp_string0);
+				return (ep->type = TYPE_NONE);
+			}
+			
 			return (ep->type = tu->types[base].ptr_to);
 		}
 		case EXPR_DEREF: {
@@ -989,7 +995,7 @@ static void sema_top_level(TranslationUnit* tu, StmtIndex s, bool frontend_only)
 				linkage = TB_LINKAGE_PRIVATE;
 				
 				char temp[1024];
-				snprintf(temp, 1024, "%s@%d", name ? name : "<unnamed>", s);
+				snprintf(temp, 1024, "_K%d_%s", s, name ? name : "<unnamed>");
 				
 				func = tb_prototype_build(mod, proto, temp, linkage);
 			} else {

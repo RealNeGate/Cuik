@@ -2,7 +2,11 @@
 // Random bug in CompCert 1.6
 int printf(const char *, ...);
 
-int baz(int* a, int* b) {
+_Bool lmao(_Bool a, _Bool b) {
+	return a + b;
+}
+
+void baz(int* a, int* b) {
 	*a = *b = 16;
 }
 
@@ -22,5 +26,7 @@ int main(void) {
 	printf("%d ", bar(54897)); // 1
 	printf("%d ", bar(128));   // 1
 	printf("%d ", bar(-2u));   // 1
+	printf("%d ", lmao(1, 0)); // 1
+	printf("%d ", lmao(1, 1)); // 1
 	return 0;
 }

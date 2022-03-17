@@ -1363,7 +1363,10 @@ static intmax_t eval_l0(CPP_Context* restrict c, TokenStream* restrict s) {
 		val = eval(c, s, NULL);
 		
 		if (tokens_get(s)->type != ')') {
-			report(REPORT_ERROR, &s->line_arena[t->location], "expected closing parenthesis on macro subexpression");
+			report_two_spots(REPORT_ERROR, &s->line_arena[t->location],
+							 &s->line_arena[tokens_get(s)->location],
+							 "expected closing parenthesis for macro subexpression",
+							 "open", "close?", NULL);
 			abort();
 		}
 		tokens_next(s);

@@ -57,6 +57,42 @@ bool const_eval_try_offsetof_hack(TranslationUnit* tu, ExprIndex e, uint64_t* ou
 	return false;
 }
 
+static ConstValue const_eval_bin_op(ExprOp op, ConstValue a, ConstValue b) {
+	bool is_signed = a.is_signed | b.is_signed;
+	
+	switch (op) {
+		case EXPR_PLUS: return (ConstValue){ is_signed, .unsigned_value = a.unsigned_value + b.unsigned_value };
+		case EXPR_MINUS: return (ConstValue){ is_signed, .unsigned_value = a.unsigned_value - b.unsigned_value };
+		case EXPR_TIMES: return (ConstValue){ is_signed, .unsigned_value = a.unsigned_value * b.unsigned_value };
+		case EXPR_AND: return (ConstValue){ is_signed, .unsigned_value = a.unsigned_value & b.unsigned_value };
+		case EXPR_OR: return (ConstValue){ is_signed, .unsigned_value = a.unsigned_value | b.unsigned_value };
+		
+		case EXPR_SHL: return (ConstValue){ is_signed, .unsigned_value = a.unsigned_value << b.unsigned_value };
+		case EXPR_SHR: return (ConstValue){ is_signed, .unsigned_value = a.unsigned_value >> b.unsigned_value };
+		
+		case EXPR_CMPEQ: return unsigned_const(a.unsigned_value == b.unsigned_value);
+		case EXPR_CMPNE: return unsigned_const(a.unsigned_value == b.unsigned_value);
+		
+		case EXPR_CMPGE: 
+		if (is_signed) return unsigned_const(a.signed_value >= b.signed_value);
+		else return unsigned_const(a.unsigned_value >= b.unsigned_value); 
+		
+		case EXPR_CMPLE: 
+		if (is_signed) return unsigned_const(a.signed_value <= b.signed_value);
+		else return unsigned_const(a.unsigned_value <= b.unsigned_value);
+		
+		case EXPR_CMPGT: 
+		if (is_signed) return unsigned_const(a.signed_value > b.signed_value);
+		else return unsigned_const(a.unsigned_value > b.unsigned_value);
+		
+		case EXPR_CMPLT: 
+		if (is_signed) return unsigned_const(a.signed_value < b.signed_value);
+		else return unsigned_const(a.unsigned_value < b.unsigned_value);
+		
+		default: __builtin_unreachable();
+	}
+}
+
 // TODO(NeGate): Type check this better
 ConstValue const_eval(TranslationUnit* tu, ExprIndex e) {
 	const Expr* ep = &tu->exprs[e];
@@ -123,123 +159,106 @@ ConstValue const_eval(TranslationUnit* tu, ExprIndex e) {
 		case EXPR_CMPLE:
 		case EXPR_CMPGT:
 		case EXPR_CMPLT: {
-			ConstValue a = const_eval(tu, ep->bin_op.left);
-			ConstValue b = const_eval(tu, ep->bin_op.right);
+			ConstValue a = const_eval(tu, ep->bin_op.right);
 			
-			bool is_signed = a.is_signed | b.is_signed;
-			switch (ep->op) {
-				case EXPR_PLUS: return (ConstValue){ is_signed, .unsigned_value = a.unsigned_value + b.unsigned_value };
-				case EXPR_MINUS: return (ConstValue){ is_signed, .unsigned_value = a.unsigned_value - b.unsigned_value };
-				case EXPR_TIMES: return (ConstValue){ is_signed, .unsigned_value = a.unsigned_value * b.unsigned_value };
-				case EXPR_AND: return (ConstValue){ is_signed, .unsigned_value = a.unsigned_value & b.unsigned_value };
-				case EXPR_OR: return (ConstValue){ is_signed, .unsigned_value = a.unsigned_value | b.unsigned_value };
+			ExprOp op = ep->op;
+			if (tu->exprs[ep->bin_op.left].op != op) {
+				ConstValue b = const_eval(tu, ep->bin_op.left);
 				
-				case EXPR_SHL: return (ConstValue){ is_signed, .unsigned_value = a.unsigned_value << b.unsigned_value };
-				case EXPR_SHR: return (ConstValue){ is_signed, .unsigned_value = a.unsigned_value >> b.unsigned_value };
-				
-				case EXPR_CMPEQ: return unsigned_const(a.unsigned_value == b.unsigned_value);
-				case EXPR_CMPNE: return unsigned_const(a.unsigned_value == b.unsigned_value);
-				
-				case EXPR_CMPGE: 
-				if (is_signed) return unsigned_const(a.signed_value >= b.signed_value);
-				else return unsigned_const(a.unsigned_value >= b.unsigned_value);
-				
-				case EXPR_CMPLE: 
-				if (is_signed) return unsigned_const(a.signed_value <= b.signed_value);
-				else return unsigned_const(a.unsigned_value <= b.unsigned_value);
-				
-				case EXPR_CMPGT: 
-				if (is_signed) return unsigned_const(a.signed_value > b.signed_value);
-				else return unsigned_const(a.unsigned_value > b.unsigned_value);
-				
-				case EXPR_CMPLT: 
-				if (is_signed) return unsigned_const(a.signed_value < b.signed_value);
-				else return unsigned_const(a.unsigned_value < b.unsigned_value);
-				
-				default: __builtin_unreachable();
-			}
-			
-			case EXPR_SIZEOF: {
-				extern TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e);
-				
-				// TODO(NeGate): this is super hacky since it calls semantic pass stuff
-				// early and thus it might not resolve correct... we wanna drop this later
-				if (tu->exprs[ep->x_of_expr.expr].op == EXPR_DOT ||
-					tu->exprs[ep->x_of_expr.expr].op == EXPR_ARROW) {
-					TypeIndex src = sema_expr(tu, ep->x_of_expr.expr);
+				return const_eval_bin_op(op, b, a);
+			} else {
+				// try tail calling
+				ExprIndex current = ep->bin_op.left;
+				do {
+					ConstValue b = const_eval(tu, tu->exprs[current].bin_op.right);
+					a = const_eval_bin_op(op, b, a);
 					
-					return unsigned_const(tu->types[src].size);
-				}
-				
-				// TODO(NeGate): error messages
-				abort();
-			}
-			case EXPR_SIZEOF_T: {
-				return unsigned_const(tu->types[ep->x_of_type.type].size);
-			}
-			case EXPR_ALIGNOF_T: {
-				return unsigned_const(tu->types[ep->x_of_type.type].align);
-			}
-			case EXPR_NEGATE: {
-				ConstValue src = const_eval(tu, ep->unary_op.src);
-				return signed_const(-src.signed_value);
+					current = tu->exprs[current].bin_op.left;
+				} while (tu->exprs[current].op == op);
 			}
 			
-			case EXPR_ADDR: {
-				uint64_t dst;
-				if (const_eval_try_offsetof_hack(tu, ep->unary_op.src, &dst)) {
-					return unsigned_const(dst); 
-				}
-				
-				// TODO(NeGate): error messages
-				abort();
-			}
-			
-			case EXPR_CAST: {
-				return const_eval(tu, ep->cast.src);
-			}
-			
-			case EXPR_UNKNOWN_SYMBOL: {
-				const unsigned char* name = ep->unknown_sym;
-				StmtIndex s = resolve_unknown_symbol(tu, e);
-				
-				if (!s) {
-					// try enum names
-					// NOTE(NeGate): this might be slow
-					for (size_t j = 1, count = big_array_length(tu->enum_entries); j < count; j++) {
-						if (cstr_equals(name, tu->enum_entries[j].name)) {
-							return signed_const(tu->enum_entries[j].value);
-						}
-					}
-					
-					// TODO(NeGate): error messages
-					printf("error: could not find symbol: %s\n", name);
-					abort();
-				}
-				
-				Type* restrict type = &tu->types[tu->stmts[s].decl.type];
-				if (!type->is_const) {
-					// TODO(NeGate): error messages
-					printf("error: not const :(\n");
-					abort();
-				}
-				
-				if (!tu->stmts[s].decl.initial) {
-					// TODO(NeGate): error messages
-					printf("error: no expression :(\n");
-					abort();
-				}
-				
-				if (type->kind >= KIND_BOOL && type->kind <= KIND_LONG) {
-					return const_eval(tu, tu->stmts[s].decl.initial);
-				} else {
-					// TODO(NeGate): error messages
-					printf("error: bad type\n");
-					abort();
-				}
-			}
+			return a;
 		}
 		
+		case EXPR_SIZEOF: {
+			extern TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e);
+			
+			// TODO(NeGate): this is super hacky since it calls semantic pass stuff
+			// early and thus it might not resolve correct... we wanna drop this later
+			if (tu->exprs[ep->x_of_expr.expr].op == EXPR_DOT ||
+				tu->exprs[ep->x_of_expr.expr].op == EXPR_ARROW) {
+				TypeIndex src = sema_expr(tu, ep->x_of_expr.expr);
+				
+				return unsigned_const(tu->types[src].size);
+			}
+			
+			// TODO(NeGate): error messages
+			abort();
+		}
+		case EXPR_SIZEOF_T: {
+			return unsigned_const(tu->types[ep->x_of_type.type].size);
+		}
+		case EXPR_ALIGNOF_T: {
+			return unsigned_const(tu->types[ep->x_of_type.type].align);
+		}
+		case EXPR_NEGATE: {
+			ConstValue src = const_eval(tu, ep->unary_op.src);
+			return signed_const(-src.signed_value);
+		}
+		
+		case EXPR_ADDR: {
+			uint64_t dst;
+			if (const_eval_try_offsetof_hack(tu, ep->unary_op.src, &dst)) {
+				return unsigned_const(dst); 
+			}
+			
+			// TODO(NeGate): error messages
+			abort();
+		}
+		
+		case EXPR_CAST: {
+			return const_eval(tu, ep->cast.src);
+		}
+		
+		case EXPR_UNKNOWN_SYMBOL: {
+			const unsigned char* name = ep->unknown_sym;
+			StmtIndex s = resolve_unknown_symbol(tu, e);
+			
+			if (!s) {
+				// try enum names
+				// NOTE(NeGate): this might be slow
+				for (size_t j = 1, count = big_array_length(tu->enum_entries); j < count; j++) {
+					if (cstr_equals(name, tu->enum_entries[j].name)) {
+						return signed_const(tu->enum_entries[j].value);
+					}
+				}
+				
+				// TODO(NeGate): error messages
+				printf("error: could not find symbol: %s\n", name);
+				abort();
+			}
+			
+			Type* restrict type = &tu->types[tu->stmts[s].decl.type];
+			if (!type->is_const) {
+				// TODO(NeGate): error messages
+				printf("error: not const :(\n");
+				abort();
+			}
+			
+			if (!tu->stmts[s].decl.initial) {
+				// TODO(NeGate): error messages
+				printf("error: no expression :(\n");
+				abort();
+			}
+			
+			if (type->kind >= KIND_BOOL && type->kind <= KIND_LONG) {
+				return const_eval(tu, tu->stmts[s].decl.initial);
+			} else {
+				// TODO(NeGate): error messages
+				printf("error: bad type\n");
+				abort();
+			}
+		}
 		default: break;
 	}
 	

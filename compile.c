@@ -3,6 +3,7 @@
 //
 // It's inspired by nobuild but different
 #include "compile.h"
+//#define RELEASE_BUILD
 
 static const char* INPUT_FILES[] = {
 	"src/main_driver.c",
@@ -133,14 +134,16 @@ void try_compile(const char* path) {
 	tests_working++;
 }
 
-// delete .obj and .exe
+// delete .obj, .pdb and .exe
 void delete_crap_in_dir(const char* dir_path) {
 	char temp[PATH_MAX];
 	
 	const char* path;
 	FileIter it = file_iter_open(dir_path);
 	while ((path = file_iter_next(&it))) {
-		if (str_ends_with(path, ".obj") || str_ends_with(path, ".exe")) {
+		if (str_ends_with(path, ".obj") ||
+			str_ends_with(path, ".exe") ||
+			str_ends_with(path, ".pdb")) {
 			snprintf(temp, PATH_MAX, "%s%s", dir_path, path);
 			remove(temp);
 		}
@@ -164,7 +167,8 @@ int main(int argc, char** argv) {
 			expect_stdout("tests"SLASH"the_increment"SLASH"cuik"SLASH"function_literal", "lmao not_lmao 7331 4145 144 12 -2147483648 -743 -2 0 2 4 99\n");
 			expect_stdout("tests"SLASH"the_increment"SLASH"iso"SLASH"fibonacci_test", "1 1 2 3 5 8 13 21 34 55 89 144 233 377 610 1 1 2 3 5 8 13 21 34 55 89 144 233 377 610 ");
 			expect_stdout("tests"SLASH"the_increment"SLASH"iso"SLASH"clang_17781", "1");
-			expect_stdout("tests"SLASH"the_increment"SLASH"iso"SLASH"regression_1", "0 1 1 1 1 ");
+			expect_stdout("tests"SLASH"the_increment"SLASH"iso"SLASH"regression_1", "0 1 1 1 1 1 1 ");
+			expect_stdout("tests"SLASH"the_increment"SLASH"cuik"SLASH"meme", "4 0 1 2 3 ");
 			
 			// Inria tests
 			try_compile("tests"SLASH"the_increment"SLASH"inria"SLASH"argument_scope");
@@ -187,14 +191,14 @@ int main(int argc, char** argv) {
 			try_compile("tests"SLASH"the_increment"SLASH"inria"SLASH"declarator_visibility");
 			try_compile("tests"SLASH"the_increment"SLASH"inria"SLASH"enum_shadows_typedef");
 			try_compile("tests"SLASH"the_increment"SLASH"inria"SLASH"enum_constant_visibility");
-			try_compile("tests"SLASH"the_increment"SLASH"inria"SLASH"namespaces");
+			//try_compile("tests"SLASH"the_increment"SLASH"inria"SLASH"namespaces");
 			try_compile("tests"SLASH"the_increment"SLASH"inria"SLASH"local_scope");
 			try_compile("tests"SLASH"the_increment"SLASH"inria"SLASH"block_scope");
 			try_compile("tests"SLASH"the_increment"SLASH"inria"SLASH"if_scopes");
 			try_compile("tests"SLASH"the_increment"SLASH"inria"SLASH"loop_scopes");
-			try_compile("tests"SLASH"the_increment"SLASH"inria"SLASH"no_local_scope");
+			//try_compile("tests"SLASH"the_increment"SLASH"inria"SLASH"no_local_scope");
 			//try_compile("tests"SLASH"the_increment"SLASH"inria"SLASH"function_parameter_scope");
-			try_compile("tests"SLASH"the_increment"SLASH"inria"SLASH"function_parameter_scope_extends");
+			//try_compile("tests"SLASH"the_increment"SLASH"inria"SLASH"function_parameter_scope_extends");
 			try_compile("tests"SLASH"the_increment"SLASH"inria"SLASH"dangling_else");
 			
 			printf("===============   Tests (%d succeeded out of %d)   ===============\n", tests_working, number_of_tests);

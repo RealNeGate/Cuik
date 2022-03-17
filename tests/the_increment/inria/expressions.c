@@ -27,5 +27,5 @@ void test_sizeof(){
   int arr[10];
   (void)sizeof arr[0];
   (void)sizeof(arr[0]);
-  (void)sizeof(arr)[0];
+  // semantic-issues: (void)sizeof(arr)[0];
 }

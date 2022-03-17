@@ -317,7 +317,7 @@ void lexer_read(Lexer* restrict l) {
 	uint8_t initial_class = char_classes[*current++];
 	
 	// Hacky but yea
-	if (start[0] == 'L' && start[1] == '\"') {
+	if (start[0] == 'L' && (start[1] == '\"' || start[1] == '\'')) {
 		initial_class = CHAR_CLASS_STRING;
 		current++;
 	}
@@ -450,7 +450,7 @@ void lexer_read(Lexer* restrict l) {
 			break;
 		}
 		case CHAR_CLASS_STRING: {
-			char quote_type = *start == '\'' ? '\'' : '\"';
+			char quote_type = current[-1] == '\'' ? '\'' : '\"';
 			__m128i pattern = _mm_set1_epi8(quote_type);
 			
 			do {

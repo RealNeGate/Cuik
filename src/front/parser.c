@@ -56,10 +56,9 @@ thread_local static StmtIndex current_switch_or_case;
 thread_local static StmtIndex current_breakable;
 thread_local static StmtIndex current_continuable;
 
-// two simple temporary buffers to represent type_as_string results
-static thread_local char temp_string0[256], temp_string1[256];
-
 static void expect(TokenStream* restrict s, char ch);
+static void expect_closing_paren(TokenStream* restrict s, SourceLoc* opening);
+static void expect_with_reason(TokenStream* restrict s, char ch, const char* reason);
 static Symbol* find_local_symbol(TokenStream* restrict s);
 static Symbol* find_global_symbol(char* name);
 
@@ -72,8 +71,7 @@ static bool skip_over_declspec(TokenStream* restrict s);
 static bool try_parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attribs* attr);
 static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attribs* attr);
 
-static Decl parse_declarator(TranslationUnit* tu, TokenStream* restrict s, TypeIndex type);
-static TypeIndex parse_abstract_declarator(TranslationUnit* tu, TokenStream* restrict s, TypeIndex type, bool disabled_paren);
+static Decl parse_declarator(TranslationUnit* tu, TokenStream* restrict s, TypeIndex type, bool is_abstract, bool disabled_paren);
 static TypeIndex parse_typename(TranslationUnit* tu, TokenStream* restrict s);
 
 // It's like parse_expr but it doesn't do anything with comma operators to avoid
@@ -182,7 +180,7 @@ void translation_unit_parse(TranslationUnit* restrict tu, TokenStream* restrict 
 					expect(s, ',');
 				} else expect_comma = true;
 				
-				Decl decl = parse_declarator(tu, s, type);
+				Decl decl = parse_declarator(tu, s, type, false, false);
 				assert(decl.name);
 				
 				// make typedef
@@ -205,7 +203,7 @@ void translation_unit_parse(TranslationUnit* restrict tu, TokenStream* restrict 
 				continue;
 			}
 			
-			Decl decl = parse_declarator(tu, s, type);
+			Decl decl = parse_declarator(tu, s, type, false, false);
 			
 			if (tu->types[decl.type].kind == KIND_FUNC) {
 				// function
@@ -227,11 +225,19 @@ void translation_unit_parse(TranslationUnit* restrict tu, TokenStream* restrict 
 					}
 					
 					if (!type_equal(tu, tu->stmts[n].decl.type, decl.type)) {
-						type_as_string(tu, sizeof(temp_string0), temp_string0, decl.type);
-						type_as_string(tu, sizeof(temp_string1), temp_string1, tu->stmts[n].decl.type);
-						
-						report(REPORT_ERROR, &s->line_arena[decl.loc], "conflicting types for '%s'; currently '%s'", decl.name, temp_string0);
-						report(REPORT_INFO, &s->line_arena[tu->stmts[n].loc], "before it was '%s'", temp_string1);
+						if (1) {
+							report(REPORT_ERROR, &s->line_arena[decl.loc], "redefinition of '%s' as different kind of symbol", decl.name);
+							report(REPORT_INFO, &s->line_arena[tu->stmts[n].loc], "previous definition is here");
+							printf("\n");
+						} else {
+							char msg[100];
+							snprintf(msg, 100, "redefinition of '%s' as different kind of symbol", decl.name);
+							
+							report_two_spots(REPORT_ERROR, 
+											 &s->line_arena[tu->stmts[n].loc],
+											 &s->line_arena[decl.loc],
+											 msg, NULL, NULL, "previous definition was:");
+						}
 					}
 					
 					tu->stmts[n].decl.attrs.is_root = attr.is_root;
@@ -332,7 +338,7 @@ void translation_unit_parse(TranslationUnit* restrict tu, TokenStream* restrict 
 					while (tokens_get(s)->type != ';') {
 						expect(s, ',');
 						
-						Decl decl = parse_declarator(tu, s, type);
+						Decl decl = parse_declarator(tu, s, type, false, false);
 						assert(decl.name);
 						
 						StmtIndex n = make_stmt(tu, s, STMT_GLOBAL_DECL);
@@ -642,16 +648,21 @@ static StmtIndex parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 			.expr = e
 		};
 		
-		expect(s, ';');
+		expect_with_reason(s, ';', "return");
 		return n;
 	} else if (tokens_get(s)->type == TOKEN_KW_if) {
 		tokens_next(s);
 		StmtIndex n = make_stmt(tu, s, STMT_IF);
 		
-		expect(s, '(');
-		ExprIndex cond = parse_expr(tu, s);
-		expect(s, ')');
-		
+		ExprIndex cond;
+		{
+			SourceLoc* opening_loc = &s->line_arena[tokens_get(s)->location];
+			expect(s, '(');
+			
+			cond = parse_expr(tu, s);
+			
+			expect_closing_paren(s, opening_loc);
+		}
 		StmtIndex body = parse_stmt_or_expr(tu, s);
 		
 		StmtIndex next = 0;
@@ -968,10 +979,10 @@ static void parse_decl_or_expr(TranslationUnit* tu, TokenStream* restrict s, siz
 			bool expect_comma = false;
 			while (tokens_get(s)->type != ';') {
 				if (expect_comma) {
-					expect(s, ',');
+					expect_with_reason(s, ',', "typedef");
 				} else expect_comma = true;
 				
-				Decl decl = parse_declarator(tu, s, type);
+				Decl decl = parse_declarator(tu, s, type, false, false);
 				assert(decl.name);
 				
 				// make typedef
@@ -1001,10 +1012,10 @@ static void parse_decl_or_expr(TranslationUnit* tu, TokenStream* restrict s, siz
 			bool expect_comma = false;
 			while (tokens_get(s)->type != ';') {
 				if (expect_comma) {
-					expect(s, ',');
+					expect_with_reason(s, ',', "declaration");
 				} else expect_comma = true;
 				
-				Decl decl = parse_declarator(tu, s, type);
+				Decl decl = parse_declarator(tu, s, type, false, false);
 				
 				StmtIndex n = make_stmt(tu, s, STMT_DECL);
 				tu->stmts[n].loc = decl.loc;
@@ -1119,7 +1130,7 @@ static ExprIndex parse_function_literal(TranslationUnit* tu, TokenStream* restri
 		// TODO(NeGate): error messages... no attributes here
 		Attribs attr = { 0 };
 		type = parse_declspec(tu, s, &attr);
-		type = parse_abstract_declarator(tu, s, type, true);
+		type = parse_declarator(tu, s, type, true, true).type;
 		
 		expect(s, ')');
 	}
@@ -1453,6 +1464,7 @@ static ExprIndex parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
 }
 
 static ExprIndex parse_expr_l1(TranslationUnit* tu, TokenStream* restrict s) {
+	ExprIndex e = 0;
 	if (tokens_get(s)->type == '(') {
 		tokens_next(s);
 		
@@ -1463,25 +1475,24 @@ static ExprIndex parse_expr_l1(TranslationUnit* tu, TokenStream* restrict s) {
 			if (tokens_get(s)->type == '{') {
 				tokens_next(s);
 				
-				return parse_initializer(tu, s, type);
+				e = parse_initializer(tu, s, type);
 			} else {
 				ExprIndex base = parse_expr_l2(tu, s);
-				ExprIndex e = make_expr(tu);
+				e = make_expr(tu);
 				
 				tu->exprs[e] = (Expr) {
 					.op = EXPR_CAST,
 					.loc = tokens_get(s)->location,
 					.cast = { type, base }
 				};
-				return e;
 			}
 		}
 		
-		tokens_prev(s);
+		if (!e) tokens_prev(s);
 	}
 	
 	SourceLocIndex loc = tokens_get(s)->location;
-	ExprIndex e = parse_expr_l0(tu, s);
+	if (!e) e = parse_expr_l0(tu, s);
 	
 	// after any of the: [] () . ->
 	// it'll restart and take a shot at matching another
@@ -1701,32 +1712,53 @@ static ExprIndex parse_expr_l2(TranslationUnit* tu, TokenStream* restrict s) {
 		tokens_next(s);
 		
 		bool has_paren = false;
+		SourceLoc* opening_loc = NULL;
 		if (tokens_get(s)->type == '(') {
 			has_paren = true;
 			
+			opening_loc = &s->line_arena[tokens_get(s)->location];
 			tokens_next(s);
 		}
 		
-		ExprIndex e = make_expr(tu);
+		ExprIndex e = 0;
 		if (is_typename(s)) {
 			TypeIndex type = parse_typename(tu, s);
 			
-			tu->exprs[e] = (Expr) {
-				.op = operation_type == TOKEN_KW_sizeof ? EXPR_SIZEOF_T : EXPR_ALIGNOF_T,
-				.loc = tokens_get(s)->location,
-				.x_of_type = { type }
-			};
+			if (has_paren) {
+				expect_closing_paren(s, opening_loc);
+			}
+			
+			if (tokens_get(s)->type == '{') {
+				tokens_next(s);
+				
+				// glorified backtracing on who own's the (
+				// sizeof (int){ 0 } is a sizeof a compound list
+				// not a sizeof(int) with a weird { 0 } laying around
+				has_paren = false;
+				
+				e = parse_initializer(tu, s, type);
+			} else {
+				e = make_expr(tu);
+				tu->exprs[e] = (Expr) {
+					.op = operation_type == TOKEN_KW_sizeof ? EXPR_SIZEOF_T : EXPR_ALIGNOF_T,
+					.loc = tokens_get(s)->location,
+					.x_of_type = { type }
+				};
+			}
 		} else {
 			ExprIndex expr = parse_expr_l2(tu, s);
 			
+			e = make_expr(tu);
 			tu->exprs[e] = (Expr) {
 				.op = operation_type == TOKEN_KW_sizeof ? EXPR_SIZEOF : EXPR_ALIGNOF,
 				.loc = tokens_get(s)->location,
 				.x_of_expr = { expr }
 			};
+			
+			if (has_paren) {
+				expect_closing_paren(s, opening_loc);
+			}
 		}
-		
-		if (has_paren) expect(s, ')');
 		return e;
 	} else if (tokens_get(s)->type == '&') {
 		tokens_next(s);
@@ -2008,7 +2040,7 @@ static ExprIndex parse_expr_l12(TranslationUnit* tu, TokenStream* restrict s) {
 static ExprIndex parse_expr_l13(TranslationUnit* tu, TokenStream* restrict s) {
 	ExprIndex lhs = parse_expr_l12(tu, s);
 	
-	while (tokens_get(s)->type == '?') {
+	if (tokens_get(s)->type == '?') {
 		SourceLocIndex loc = tokens_get(s)->location;
 		tokens_next(s);
 		
@@ -2016,7 +2048,7 @@ static ExprIndex parse_expr_l13(TranslationUnit* tu, TokenStream* restrict s) {
 		
 		expect(s, ':');
 		
-		ExprIndex rhs = parse_expr_l12(tu, s);
+		ExprIndex rhs = parse_expr_l13(tu, s);
 		
 		ExprIndex e = make_expr(tu);
 		tu->exprs[e] = (Expr) {
@@ -2025,10 +2057,10 @@ static ExprIndex parse_expr_l13(TranslationUnit* tu, TokenStream* restrict s) {
 			.ternary_op = { lhs, mhs, rhs }
 		};
 		
-		lhs = e;
+		return e;
+	} else {
+		return lhs;
 	}
-	
-	return lhs;
 }
 
 // = += -= *= /= %= <<= >>= &= ^= |=
@@ -2109,7 +2141,7 @@ static ExprIndex parse_expr(TranslationUnit* tu, TokenStream* restrict s) {
 ////////////////////////////////
 // TYPES
 ////////////////////////////////
-static Decl parse_declarator(TranslationUnit* tu, TokenStream* restrict s, TypeIndex type) {
+static Decl parse_declarator(TranslationUnit* tu, TokenStream* restrict s, TypeIndex type, bool is_abstract, bool disabled_paren) {
 	// handle calling convention
 	// TODO(NeGate): Actually pass these to the AST
 	parse_another_qualifier2: {
@@ -2124,7 +2156,7 @@ static Decl parse_declarator(TranslationUnit* tu, TokenStream* restrict s, TypeI
 	
 	// handle pointers
 	while (tokens_get(s)->type == '*') {
-		type = new_pointer(tu, type);
+		type = type ? new_pointer(tu, type) : 0;
 		tokens_next(s);
 		
 		parse_another_qualifier: {
@@ -2155,7 +2187,7 @@ static Decl parse_declarator(TranslationUnit* tu, TokenStream* restrict s, TypeI
 	
 	skip_over_declspec(s);
 	
-	if (tokens_get(s)->type == '(') {
+	if (!disabled_paren && tokens_get(s)->type == '(') {
 		// TODO(NeGate): I don't like this code...
 		// it essentially just skips over the stuff in the
 		// parenthesis to do the suffix then comes back
@@ -2163,18 +2195,20 @@ static Decl parse_declarator(TranslationUnit* tu, TokenStream* restrict s, TypeI
 		// the end of the declarator when it's done.
 		//
 		// should be right after the (
+		SourceLoc* opening_loc = &s->line_arena[tokens_get(s)->location];
+		
 		tokens_next(s);
 		size_t saved = s->current;
 		
-		parse_declarator(tu, s, TYPE_NONE);
+		parse_declarator(tu, s, TYPE_NONE, is_abstract, false);
 		
-		expect(s, ')');
+		expect_closing_paren(s, opening_loc);
 		type = parse_type_suffix(tu, s, type, NULL);
 		
 		size_t saved_end = s->current;
 		s->current = saved;
 		
-		Decl d = parse_declarator(tu, s, type);
+		Decl d = parse_declarator(tu, s, type, is_abstract, false);
 		
 		// inherit name
 		// TODO(NeGate): I'm not sure if this is correct ngl
@@ -2201,7 +2235,7 @@ static Decl parse_declarator(TranslationUnit* tu, TokenStream* restrict s, TypeI
 	Atom name = NULL;
 	Token* t = tokens_get(s);
 	SourceLocIndex loc = 0;
-	if (t->type == TOKEN_IDENTIFIER) {
+	if (!is_abstract && t->type == TOKEN_IDENTIFIER) {
 		loc = t->location;
 		name = atoms_put(t->end - t->start, t->start);
 		tokens_next(s);
@@ -2211,81 +2245,12 @@ static Decl parse_declarator(TranslationUnit* tu, TokenStream* restrict s, TypeI
 	return (Decl){ type, name, loc };
 }
 
-// it's like a declarator with a skin fade,
-// int*        int[16]       const char* restrict
-static TypeIndex parse_abstract_declarator(TranslationUnit* tu, TokenStream* restrict s, TypeIndex type, bool disabled_paren) {
-	// handle calling convention
-	// TODO(NeGate): Actually pass these to the AST
-	parse_another_qualifier2: {
-		switch (tokens_get(s)->type) {
-			case TOKEN_KW_cdecl:
-			case TOKEN_KW_stdcall:
-			tokens_next(s);
-			goto parse_another_qualifier2;
-			default: break;
-		}
-	}
-	
-	// handle pointers
-	while (tokens_get(s)->type == '*') {
-		type = new_pointer(tu, type);
-		tokens_next(s);
-		
-		// TODO(NeGate): parse qualifiers
-		parse_another_qualifier: {
-			switch (tokens_get(s)->type) {
-				case TOKEN_KW_const:
-				case TOKEN_KW_volatile:
-				case TOKEN_KW_cdecl:
-				case TOKEN_KW_stdcall:
-				tokens_next(s);
-				goto parse_another_qualifier;
-				default: break;
-			}
-		}
-	}
-	
-	if (!disabled_paren && tokens_get(s)->type == '(') {
-		// TODO(NeGate): I don't like this code...
-		// it essentially just skips over the stuff in the
-		// parenthesis to do the suffix then comes back
-		// for the parenthesis after wards, restoring back to
-		// the end of the declarator when it's done.
-		//
-		// should be right after the (
-		tokens_next(s);
-		size_t saved = s->current;
-		
-		parse_abstract_declarator(tu, s, TYPE_NONE, false);
-		
-		expect(s, ')');
-		type = parse_type_suffix(tu, s, type, NULL);
-		
-		size_t saved_end = s->current;
-		s->current = saved;
-		
-		TypeIndex d = parse_abstract_declarator(tu, s, type, false);
-		s->current = saved_end;
-		return d;
-	}
-	
-	Atom name = NULL;
-	Token* t = tokens_get(s);
-	if (t->type == TOKEN_IDENTIFIER) {
-		name = atoms_put(t->end - t->start, t->start);
-		tokens_next(s);
-	}
-	
-	type = parse_type_suffix(tu, s, type, name);
-	return type;
-}
-
 static TypeIndex parse_typename(TranslationUnit* tu, TokenStream* restrict s) {
 	// TODO(NeGate): Check if attributes are set, they shouldn't
 	// be in this context.
 	Attribs attr = { 0 };
 	TypeIndex type = parse_declspec(tu, s, &attr);
-	return parse_abstract_declarator(tu, s, type, false);
+	return parse_declarator(tu, s, type, true, false).type;
 }
 
 static TypeIndex parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s, TypeIndex type, Atom name) {
@@ -2330,7 +2295,7 @@ static TypeIndex parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s,
 			Attribs arg_attr = { 0 };
 			TypeIndex arg_base_type = parse_declspec(tu, s, &arg_attr);
 			
-			Decl param_decl = parse_declarator(tu, s, arg_base_type);
+			Decl param_decl = parse_declarator(tu, s, arg_base_type, false, false);
 			TypeIndex param_type = param_decl.type;
 			
 			if (tu->types[param_type].kind == KIND_ARRAY) {
@@ -2639,7 +2604,7 @@ static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, At
 								expect(s, ',');
 							} else expect_comma = true;
 							
-							Decl decl = parse_declarator(tu, s, member_base_type);
+							Decl decl = parse_declarator(tu, s, member_base_type, false, false);
 							TypeIndex member_type = decl.type;
 							
 							if (tu->types[member_type].kind == KIND_FUNC) {
@@ -2704,6 +2669,7 @@ static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, At
 					}
 					
 					offset = align_up(offset, align);
+					tu->types[type].is_incomplete = false;
 					tu->types[type].size = offset;
 					tu->types[type].align = align;
 					
@@ -3002,6 +2968,33 @@ static void expect(TokenStream* restrict s, char ch) {
 		SourceLoc* loc = &s->line_arena[t->location];
 		
 		report(REPORT_ERROR, loc, "expected '%c' got '%.*s'", ch, (int)(t->end - t->start), t->start);
+		abort();
+	}
+	
+	tokens_next(s);
+}
+
+static void expect_closing_paren(TokenStream* restrict s, SourceLoc* opening) {
+	if (tokens_get(s)->type != ')') {
+		Token* t = tokens_get(s);
+		SourceLoc* loc = &s->line_arena[t->location];
+		
+		report_two_spots(REPORT_ERROR, opening,
+						 loc,
+						 "expected closing parenthesis",
+						 "open", "close?", NULL);
+		abort();
+	}
+	
+	tokens_next(s);
+}
+
+static void expect_with_reason(TokenStream* restrict s, char ch, const char* reason) {
+	if (tokens_get(s)->type != ch) {
+		Token* t = tokens_get(s);
+		SourceLoc* loc = &s->line_arena[t->location];
+		
+		report(REPORT_ERROR, loc, "expected '%c' for %s", ch, reason);
 		abort();
 	}
 	

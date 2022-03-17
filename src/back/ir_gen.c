@@ -41,7 +41,7 @@ static TB_Register cast_reg(TB_Function* func, TB_Register reg, const Type* src,
 		dst->kind <= KIND_LONG) {
 		if (dst->kind > src->kind) {
 			// up-casts
-			if (dst->is_unsigned) reg = tb_inst_zxt(func, reg, ctype_to_tbtype(dst));
+			if (src->is_unsigned) reg = tb_inst_zxt(func, reg, ctype_to_tbtype(dst));
 			else reg = tb_inst_sxt(func, reg, ctype_to_tbtype(dst));
 		} else if (dst->kind < src->kind) {
 			// down-casts
@@ -402,32 +402,23 @@ static IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 	switch (ep->op) {
 		case EXPR_CHAR: {
 			// TODO(NeGate): Maybe multichar literals
-			assert(ep->str.start[0] == '\'');
+			const unsigned char* start = ep->str.start;
+			start += (*start == 'L'); // skip the L
 			
-			char ch = ep->str.start[1];
-			if (ch == '\\') {
-				switch (ep->str.start[2]) {
-					case '0': ch = '\0'; break;
-					case '\\': ch = '\\'; break;
-					case 'a': ch = '\a'; break;
-					case 'b': ch = '\b'; break;
-					case 't': ch = '\t'; break;
-					case 'n': ch = '\n'; break;
-					case 'v': ch = '\v'; break;
-					case 'f': ch = '\f'; break;
-					case 'r': ch = '\r'; break;
-					default: internal_error("Could not recognize escape char literal.");
-				}
-				
-				assert(ep->str.start[3] == '\'');
-			} else {
-				assert(ep->str.start[2] == '\'');
+			size_t len = ((const unsigned char*)ep->str.end) - start; 
+			assert(start[0] == '\'');
+			
+			int ch;
+			intptr_t distance = parse_char(len - 2, (const char*) &start[1], &ch);
+			if (distance < 0) {
+				internal_error("Could not recognize char literal.");
 			}
+			assert(start[1+distance] == '\'');
 			
 			return (IRVal) {
 				.value_type = RVALUE,
-				.type = TYPE_CHAR,
-				.reg = tb_inst_uint(func, TB_TYPE_I8, ch)
+				.type = ep->type,
+				.reg = tb_inst_uint(func, ep->type == TYPE_SHORT ? TB_TYPE_I16 : TB_TYPE_I8, ch)
 			};
 		}
 		case EXPR_INT: {
@@ -1022,6 +1013,11 @@ static IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 					case EXPR_SHR: data = type->is_unsigned ? tb_inst_shr(func, l, r) : tb_inst_sar(func, l, r); break;
 					default: abort();
 				}
+				
+				if (type->kind == KIND_BOOL) {
+					// convert into proper bool
+					data = tb_inst_cmp_ne(func, data, tb_inst_uint(func, TB_TYPE_BOOL, 0));
+				}
 			}
 			
 			return (IRVal) {
@@ -1204,6 +1200,7 @@ static IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 				tb_inst_label(func, if_true);
 				
 				true_val = irgen_as_rvalue(tu, func, ep->ternary_op.middle);
+				if_true = tb_inst_get_current_label(func);
 				tb_inst_goto(func, exit);
 			}
 			
@@ -1212,6 +1209,7 @@ static IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 				tb_inst_label(func, if_false);
 				
 				false_val = irgen_as_rvalue(tu, func, ep->ternary_op.right);
+				if_false = tb_inst_get_current_label(func);
 				// fallthrough to exit
 			}
 			tb_inst_label(func, exit);
@@ -1561,7 +1559,7 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, StmtIndex s) {
 			
 			irgen_stmt(tu, func, sp->switch_.body);
 			
-			insert_label(func);
+			tb_inst_label(func, break_label);
 			break;
 		}
 		default:
@@ -1643,7 +1641,7 @@ static void gen_func_body(TranslationUnit* tu, TypeIndex type, StmtIndex s) {
 			abort();
 		}
 		
-		tb_function_print_cfg(func, tb_default_print_callback, stdout);
+		tb_function_print(func, tb_default_print_callback, stdout);
 		fprintf(stdout, "\n\n");
 		fflush(stdout);
 		
@@ -1672,6 +1670,8 @@ void irgen_init() {
 	TB_FunctionPrototype* proto = tb_prototype_create(mod, TB_STDCALL, TB_TYPE_VOID, 0, false);
 	static_init_func = tb_prototype_build(mod, proto, "__static_init", TB_LINKAGE_PRIVATE);
 	function_count = 1;
+	
+	//fprintf(stdout, "digraph G {\n");
 }
 
 void irgen_deinit() {
@@ -1683,8 +1683,9 @@ void irgen_finalize() {
 	if (settings.print_tb_ir) {
 		mtx_lock(&emit_ir_mutex);
 		
-		tb_function_print_cfg(static_init_func, tb_default_print_callback, stdout);
+		tb_function_print(static_init_func, tb_default_print_callback, stdout);
 		fprintf(stdout, "\n\n");
+		//fprintf(stdout, "}\n");
 		fflush(stdout);
 		
 		mtx_unlock(&emit_ir_mutex);
