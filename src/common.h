@@ -8,6 +8,7 @@
 #include <limits.h>
 #include <assert.h>
 #include <stdbool.h>
+#include <stdarg.h>
 
 typedef struct { const unsigned char* data; size_t length; } string; 
 
@@ -62,4 +63,22 @@ inline static size_t cstr_copy(size_t len, char* dst, const char* src) {
 typedef wchar_t* OS_String;
 #else
 typedef char* OS_String;
+
+// non-windows platforms generally just don't have the safe functions so
+// let's provide them
+inline static int sprintf_s(char* buffer, size_t len, const char* format, ...) {
+	if (buffer == NULL || len == 0) return -1;
+	
+	va_list args;
+	va_start(args, format);
+	int result = vsnprintf(buffer, len, format, args);
+	va_end(args);
+	
+	if (result < 0 && result >= len) {
+		fprintf(stderr, "error: buffer overflow on sprintf_s!\n");
+		abort();
+	}
+	return result;
+}
+
 #endif

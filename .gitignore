@@ -2,6 +2,7 @@
 build/
 Cuik/
 
+*.out
 *.obj
 *.exe
 *.ilk

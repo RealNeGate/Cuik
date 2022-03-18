@@ -13,14 +13,6 @@ extern MicrosoftCraziness_Find_Result s_vswhere;
 // All strings you might put in should be UTF-8
 typedef struct Linker Linker;
 
-typedef enum {
-	SUBSYSTEM_CONSOLE,
-	
-	// only supported when targetting windows and it makes the entry point into
-	// WinMain instead of main
-	SUBSYSTEM_WINDOWS,
-} LinkerSubsystem;
-
 // True if success
 bool linker_init(Linker* l);
 void linker_deinit(Linker* l);
@@ -42,7 +34,7 @@ void linker_add_input_file(Linker* l, const char* filenpath);
 
 // Calls the system linker
 // return true if it succeeds
-bool linker_invoke(Linker* l, const char* filename, LinkerSubsystem subsystem, bool linked_with_crt);
+bool linker_invoke(Linker* l, const char* filename);
 
 ////////////////////////////////
 // Private definitions

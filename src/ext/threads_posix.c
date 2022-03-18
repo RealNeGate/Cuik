@@ -6,6 +6,7 @@
  * (See copy at http://www.boost.org/LICENSE_1_0.txt)
  */
 #include <stdlib.h>
+#include <stddef.h>
 #include <assert.h>
 #include <limits.h>
 #include <errno.h>
@@ -40,7 +41,7 @@ void *impl_thrd_routine(void *p)
 {
     struct impl_thrd_param pack = *((struct impl_thrd_param *)p);
     free(p);
-    return (void*)pack.func(pack.arg);
+    return (void*)((size_t) pack.func(pack.arg));
 }
 
 
@@ -119,9 +120,9 @@ int mtx_init(mtx_t *mtx, int type)
     pthread_mutexattr_t attr;
     if (!mtx) return thrd_error;
     if (type != mtx_plain && type != mtx_timed && type != mtx_try
-      && type != (mtx_plain|mtx_recursive)
-      && type != (mtx_timed|mtx_recursive)
-      && type != (mtx_try|mtx_recursive))
+		&& type != (mtx_plain|mtx_recursive)
+		&& type != (mtx_timed|mtx_recursive)
+		&& type != (mtx_try|mtx_recursive))
         return thrd_error;
     pthread_mutexattr_init(&attr);
     if ((type & mtx_recursive) != 0) {
@@ -150,25 +151,25 @@ int mtx_timedlock(mtx_t *mtx, const xtime *xt)
     if (!mtx || !xt) return thrd_error;
     {
 #ifdef EMULATED_THREADS_USE_NATIVE_TIMEDLOCK
-    struct timespec ts;
-    int rt;
-    ts.tv_sec = xt->sec;
-    ts.tv_nsec = xt->nsec;
-    rt = pthread_mutex_timedlock(mtx, &ts);
-    if (rt == 0)
-        return thrd_success;
-    return (rt == ETIMEDOUT) ? thrd_busy : thrd_error;
+		struct timespec ts;
+		int rt;
+		ts.tv_sec = xt->sec;
+		ts.tv_nsec = xt->nsec;
+		rt = pthread_mutex_timedlock(mtx, &ts);
+		if (rt == 0)
+			return thrd_success;
+		return (rt == ETIMEDOUT) ? thrd_busy : thrd_error;
 #else
-    time_t expire = time(NULL);
-    expire += xt->sec;
-    while (mtx_trylock(mtx) != thrd_success) {
-        time_t now = time(NULL);
-        if (expire < now)
-            return thrd_busy;
-        // busy loop!
-        thrd_yield();
-    }
-    return thrd_success;
+		time_t expire = time(NULL);
+		expire += xt->sec;
+		while (mtx_trylock(mtx) != thrd_success) {
+			time_t now = time(NULL);
+			if (expire < now)
+				return thrd_busy;
+			// busy loop!
+			thrd_yield();
+		}
+		return thrd_success;
 #endif
     }
 }
@@ -199,7 +200,11 @@ int thrd_create(thrd_t *thr, thrd_start_t func, void *arg)
     if (!pack) return thrd_nomem;
     pack->func = func;
     pack->arg = arg;
-    if (pthread_create(thr, NULL, impl_thrd_routine, pack) != 0) {
+	
+	pthread_attr_t attr = { 0 };
+	pthread_attr_setstacksize(&attr, 2u<<20u /* 2MiB */);
+	
+    if (pthread_create(thr, &attr, impl_thrd_routine, pack) != 0) {
         free(pack);
         return thrd_error;
     }
@@ -227,7 +232,7 @@ int thrd_equal(thrd_t thr0, thrd_t thr1)
 // 7.25.5.5
 void thrd_exit(int res)
 {
-    pthread_exit((void*)res);
+    pthread_exit((void*)((size_t)res));
 }
 
 // 7.25.5.6
@@ -237,7 +242,7 @@ int thrd_join(thrd_t thr, int *res)
     if (pthread_join(thr, &code) != 0)
         return thrd_error;
     if (res)
-        *res = (int)code;
+        *res = (int)((size_t)code);
     return thrd_success;
 }
 

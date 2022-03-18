@@ -1,4 +1,6 @@
 #pragma once
+#include <stdint.h>
+#include <stdlib.h>
 #include <stdbool.h>
 
 typedef struct threadpool_t threadpool_t;

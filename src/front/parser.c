@@ -240,7 +240,6 @@ void translation_unit_parse(TranslationUnit* restrict tu, TokenStream* restrict 
 						}
 					}
 					
-					tu->stmts[n].decl.attrs.is_root = attr.is_root;
 					tu->stmts[n].loc = decl.loc;
 				} else {
 					// New symbol
@@ -298,6 +297,10 @@ void translation_unit_parse(TranslationUnit* restrict tu, TokenStream* restrict 
 					generic_error(s, "declaration is missing a name!");
 				}
 				
+				if (attr.is_extern) {
+					attr.is_root = false;
+				}
+				
 				StmtIndex n = make_stmt(tu, s, STMT_GLOBAL_DECL);
 				tu->stmts[n].loc = decl.loc;
 				tu->stmts[n].decl = (struct StmtDecl){
@@ -319,18 +322,20 @@ void translation_unit_parse(TranslationUnit* restrict tu, TokenStream* restrict 
 					tokens_next(s);
 					
 					ExprIndex starting_point = big_array_length(tu->exprs);
+					ExprIndex e;
 					if (tokens_get(s)->type == '@') {
 						// function literals are a Cuik extension
 						// TODO(NeGate): error messages
 						tokens_next(s);
-						tu->stmts[n].decl.initial = parse_function_literal(tu, s, decl.type);
+						e = parse_function_literal(tu, s, decl.type);
 					} else if (tokens_get(s)->type == '{') {
 						tokens_next(s);
 						
-						tu->stmts[n].decl.initial = parse_initializer(tu, s, TYPE_NONE);
+						e = parse_initializer(tu, s, TYPE_NONE);
 					} else {
-						tu->stmts[n].decl.initial = parse_expr_l14(tu, s);
+						e = parse_expr_l14(tu, s);
 					}
+					tu->stmts[n].decl.initial = e;
 					create_symbol_use_list(tu, n, starting_point, false);
 				}
 				
@@ -362,18 +367,20 @@ void translation_unit_parse(TranslationUnit* restrict tu, TokenStream* restrict 
 							tokens_next(s);
 							
 							ExprIndex starting_point = big_array_length(tu->exprs);
+							ExprIndex e;
 							if (tokens_get(s)->type == '@') {
 								// function literals are a Cuik extension
 								// TODO(NeGate): error messages
 								tokens_next(s);
-								tu->stmts[n].decl.initial = parse_function_literal(tu, s, decl.type);
+								e = parse_function_literal(tu, s, decl.type);
 							} else if (tokens_get(s)->type == '{') {
 								tokens_next(s);
 								
-								tu->stmts[n].decl.initial = parse_initializer(tu, s, TYPE_NONE);
+								e = parse_initializer(tu, s, TYPE_NONE);
 							} else {
-								tu->stmts[n].decl.initial = parse_expr_l14(tu, s);
+								e = parse_expr_l14(tu, s);
 							}
+							tu->stmts[n].decl.initial = e;
 							create_symbol_use_list(tu, n, starting_point, false);
 						}
 					}
@@ -576,6 +583,8 @@ static void parse_function_definition(TranslationUnit* tu, TokenStream* restrict
 			};
 		}
 	}
+	
+	//report(REPORT_INFO, &s->line_arena[tokens_get(s)->location], "Opening brace for function");
 	tokens_next(s);
 	
 	ExprIndex starting_point = big_array_length(tu->exprs);
@@ -605,6 +614,8 @@ static StmtIndex parse_compound_stmt(TranslationUnit* tu, TokenStream* restrict 
 		if (tokens_get(s)->type == ';') {
 			tokens_next(s);
 		} else {
+			//report(REPORT_INFO, &s->line_arena[tokens_get(s)->location], "Woah!!!");
+			
 			StmtIndex stmt = parse_stmt(tu, s);
 			if (stmt) {
 				*((StmtIndex*)tls_push(sizeof(StmtIndex))) = stmt;
@@ -614,7 +625,9 @@ static StmtIndex parse_compound_stmt(TranslationUnit* tu, TokenStream* restrict 
 			}
 		}
 	}
+	//report(REPORT_INFO, &s->line_arena[tokens_get(s)->location], "Closing brace");
 	expect(s, '}');
+	
 	local_symbol_count = saved;
 	local_typedef_count = saved2;
 	
@@ -632,10 +645,14 @@ static StmtIndex parse_compound_stmt(TranslationUnit* tu, TokenStream* restrict 
 
 // TODO(NeGate): Doesn't handle declarators or expression-statements
 static StmtIndex parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
-	if (tokens_get(s)->type == '{') {
+	TknType peek = tokens_get(s)->type;
+	
+	if (peek == '{') {
+		//report(REPORT_INFO, &s->line_arena[tokens_get(s)->location], "Opening brace for local compound");
+		
 		tokens_next(s);
 		return parse_compound_stmt(tu, s);
-	} else if (tokens_get(s)->type == TOKEN_KW_return) {
+	} else if (peek == TOKEN_KW_return) {
 		tokens_next(s);
 		
 		ExprIndex e = 0;
@@ -650,7 +667,7 @@ static StmtIndex parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 		
 		expect_with_reason(s, ';', "return");
 		return n;
-	} else if (tokens_get(s)->type == TOKEN_KW_if) {
+	} else if (peek == TOKEN_KW_if) {
 		tokens_next(s);
 		StmtIndex n = make_stmt(tu, s, STMT_IF);
 		
@@ -677,7 +694,7 @@ static StmtIndex parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 			.next = next
 		};
 		return n;
-	} else if (tokens_get(s)->type == TOKEN_KW_switch) {
+	} else if (peek == TOKEN_KW_switch) {
 		tokens_next(s);
 		StmtIndex n = make_stmt(tu, s, STMT_SWITCH);
 		
@@ -703,7 +720,7 @@ static StmtIndex parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 		current_breakable = old_breakable;
 		current_switch_or_case = old_switch;
 		return n;
-	} else if (tokens_get(s)->type == TOKEN_KW_case) {
+	} else if (peek == TOKEN_KW_case) {
 		// TODO(NeGate): error messages
 		assert(current_switch_or_case);
 		
@@ -733,7 +750,7 @@ static StmtIndex parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 		StmtIndex body = parse_stmt_or_expr(tu, s);
 		tu->stmts[n].case_.body = body;
 		return n;
-	} else if (tokens_get(s)->type == TOKEN_KW_default) {
+	} else if (peek == TOKEN_KW_default) {
 		// TODO(NeGate): error messages
 		assert(current_switch_or_case);
 		
@@ -760,7 +777,7 @@ static StmtIndex parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 		StmtIndex body = parse_stmt_or_expr(tu, s);
 		tu->stmts[n].default_.body = body;
 		return n;
-	} else if (tokens_get(s)->type == TOKEN_KW_break) {
+	} else if (peek == TOKEN_KW_break) {
 		// TODO(NeGate): error messages
 		assert(current_breakable);
 		
@@ -772,7 +789,7 @@ static StmtIndex parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 			.target = current_breakable
 		};
 		return n;
-	} else if (tokens_get(s)->type == TOKEN_KW_continue) {
+	} else if (peek == TOKEN_KW_continue) {
 		// TODO(NeGate): error messages
 		assert(current_continuable);
 		
@@ -784,7 +801,7 @@ static StmtIndex parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 			.target = current_continuable
 		};
 		return n;
-	} else if (tokens_get(s)->type == TOKEN_KW_while) {
+	} else if (peek == TOKEN_KW_while) {
 		tokens_next(s);
 		StmtIndex n = make_stmt(tu, s, STMT_WHILE);
 		
@@ -811,7 +828,7 @@ static StmtIndex parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 			.body = body
 		};
 		return n;
-	} else if (tokens_get(s)->type == TOKEN_KW_for) {
+	} else if (peek == TOKEN_KW_for) {
 		tokens_next(s);
 		StmtIndex n = make_stmt(tu, s, STMT_FOR);
 		
@@ -887,7 +904,7 @@ static StmtIndex parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 			.next = next
 		};
 		return n;
-	} else if (tokens_get(s)->type == TOKEN_KW_do) {
+	} else if (peek == TOKEN_KW_do) {
 		tokens_next(s);
 		StmtIndex n = make_stmt(tu, s, STMT_DO_WHILE);
 		
@@ -926,7 +943,7 @@ static StmtIndex parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 			.body = body
 		};
 		return n;
-	} else if (tokens_get(s)->type == TOKEN_KW_goto) {
+	} else if (peek == TOKEN_KW_goto) {
 		tokens_next(s);
 		
 		StmtIndex n = make_stmt(tu, s, STMT_GOTO);
@@ -938,8 +955,10 @@ static StmtIndex parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 		
 		expect(s, ';');
 		return n;
-	} else if (tokens_get(s)->type == TOKEN_IDENTIFIER &&
+	} else if (peek == TOKEN_IDENTIFIER &&
 			   tokens_peek(s)->type == TOKEN_COLON) {
+		// label amirite
+		// IDENTIFIER COLON STMT
 		Token* t = tokens_get(s);
 		Atom name = atoms_put(t->end - t->start, t->start);
 		
@@ -1012,6 +1031,10 @@ static void parse_decl_or_expr(TranslationUnit* tu, TokenStream* restrict s, siz
 			bool expect_comma = false;
 			while (tokens_get(s)->type != ';') {
 				if (expect_comma) {
+					if (tokens_get(s)->type == '{') {
+						generic_error(s, "nested functions are not allowed... yet");
+					}
+					
 					expect_with_reason(s, ',', "declaration");
 				} else expect_comma = true;
 				
@@ -1729,13 +1752,11 @@ static ExprIndex parse_expr_l2(TranslationUnit* tu, TokenStream* restrict s) {
 				expect_closing_paren(s, opening_loc);
 			}
 			
+			// glorified backtracing on who own's the (
+			// sizeof (int){ 0 } is a sizeof a compound list
+			// not a sizeof(int) with a weird { 0 } laying around
 			if (tokens_get(s)->type == '{') {
 				tokens_next(s);
-				
-				// glorified backtracing on who own's the (
-				// sizeof (int){ 0 } is a sizeof a compound list
-				// not a sizeof(int) with a weird { 0 } laying around
-				has_paren = false;
 				
 				e = parse_initializer(tu, s, type);
 			} else {
@@ -2893,7 +2914,7 @@ static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, At
 		tokens_next(s);
 	} while (true);
 	
-	done:
+	done:;
 	SourceLoc* loc = &s->line_arena[tokens_get(s)->location];
 	if (type == 0) {
 		report(REPORT_ERROR, loc, "unknown typename");

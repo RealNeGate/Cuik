@@ -3,11 +3,11 @@
 #if _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+
+MicrosoftCraziness_Find_Result s_vswhere;
 #endif
 
 #define LINKER_STRING_BUFFER_CAP 8192
-
-MicrosoftCraziness_Find_Result s_vswhere;
 
 bool linker_init(Linker* l) {
 	// NOTE(NeGate): Windows has a max command line length of 32768 iirc,
@@ -32,8 +32,8 @@ void linker_add_default_libpaths(Linker* l) {
 		abort();
 	}
 	
-	linker_add_libpath_wide(l, s_vswhere.vs_library_path);
-	linker_add_libpath_wide(l, s_vswhere.windows_sdk_ucrt_library_path);
+	//linker_add_libpath_wide(l, s_vswhere.vs_library_path);
+	//linker_add_libpath_wide(l, s_vswhere.windows_sdk_ucrt_library_path);
 	linker_add_libpath_wide(l, s_vswhere.windows_sdk_um_library_path);
 #endif
 }
@@ -91,18 +91,13 @@ void linker_add_input_file(Linker* l, const char filepath[]) {
 // Like im pretty sure %S doesn't do the UTF-8 conversion and im being lazy about it.
 enum { CMD_LINE_MAX = 4096 };
 
-bool linker_invoke(Linker* l, const char* filename, LinkerSubsystem subsystem, bool linked_with_crt) {
+bool linker_invoke(Linker* l, const char* filename) {
 #if defined(_WIN32)
-	const char* subsystem_strings[] = {
-		[SUBSYSTEM_CONSOLE] = "console",
-		[SUBSYSTEM_WINDOWS] = "windows"
-	};
-	
 	wchar_t cmd_line[CMD_LINE_MAX];
 	int cmd_line_len = swprintf(cmd_line, CMD_LINE_MAX,
-								L"%s\\link.exe /nologo /machine:amd64 /subsystem:%S"
+								L"%s\\link.exe /nologo /machine:amd64 /subsystem:windows"
 								" /debug:full /pdb:%S.pdb /out:%S.exe /incremental:no ",
-								s_vswhere.vs_exe_path, subsystem_strings[subsystem], filename, filename);
+								s_vswhere.vs_exe_path, filename, filename);
 	
 	// Add all the libpaths
 	{
@@ -114,11 +109,7 @@ bool linker_invoke(Linker* l, const char* filename, LinkerSubsystem subsystem, b
 		}
 	}
 	
-	if (linked_with_crt) {
-		cmd_line_len += swprintf(&cmd_line[cmd_line_len], CMD_LINE_MAX - cmd_line_len, L"/defaultlib:libcmt ");
-	} else {
-		cmd_line_len += swprintf(&cmd_line[cmd_line_len], CMD_LINE_MAX - cmd_line_len, L"/nodefaultlib ");
-	}
+	cmd_line_len += swprintf(&cmd_line[cmd_line_len], CMD_LINE_MAX - cmd_line_len, L"/nodefaultlib ");
 	
 	// Add all the input files
 	{
@@ -141,7 +132,7 @@ bool linker_invoke(Linker* l, const char* filename, LinkerSubsystem subsystem, b
 	
 	//printf("Linker command:\n%S\n", cmd_line);
 	if (!CreateProcessW(NULL, cmd_line, NULL, NULL, TRUE, 0, NULL, NULL, &si, &pi)) {
-		printf("Linker command could not be executed.");
+		printf("Linker command could not be executed.\n");
 		return false;
 	}
 	

@@ -14,7 +14,11 @@ static _Thread_local TemporaryStorage* temp_storage;
 
 void tls_init() {
 	if (temp_storage == NULL) {
+#if _WIN32
 		temp_storage = _aligned_malloc(TEMPORARY_STORAGE_SIZE, 16);
+#else
+		temp_storage = aligned_alloc(16, TEMPORARY_STORAGE_SIZE);
+#endif
 	}
 	
 	temp_storage->used = 0;

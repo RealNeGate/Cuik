@@ -4,6 +4,7 @@
 // It's inspired by nobuild but different
 #include "compile.h"
 //#define RELEASE_BUILD
+//#define USE_DA_ASAN 0
 
 static const char* INPUT_FILES[] = {
 	"src/main_driver.c",
@@ -30,11 +31,12 @@ static const char* INPUT_FILES[] = {
 	
 	"src/back/ir_gen.c",
 	"src/back/linker.c",
-	"src/back/microsoft_craziness.cpp",
 	
 	"src/ext/stb_ds.c",
 	"src/ext/threadpool.c",
+	
 #if defined(_WIN32)
+	"src/back/microsoft_craziness.cpp",
 	"src/ext/threads_msvc.c",
 #else
 	"src/ext/threads_posix.c"

@@ -5,17 +5,14 @@
 #include <back/ir_gen.h>
 #include <stdarg.h>
 
-static atomic_int sema_error_count;
 static thread_local StmtIndex function_stmt;
 
 // two simple temporary buffers to represent type_as_string results
 static thread_local char temp_string0[1024], temp_string1[1024];
 
-static TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e);
-
-#define sema_info(loc, fmt, ...) report(REPORT_INFO, &tu->tokens->line_arena[loc], fmt, __VA_ARGS__)
-#define sema_warn(loc, fmt, ...) report(REPORT_WARNING, &tu->tokens->line_arena[loc], fmt, __VA_ARGS__)
-#define sema_error(loc, fmt, ...) report(REPORT_ERROR, &tu->tokens->line_arena[loc], fmt, __VA_ARGS__)
+#define sema_info(loc, ...) report(REPORT_INFO, &tu->tokens->line_arena[loc], __VA_ARGS__)
+#define sema_warn(loc, ...) report(REPORT_WARNING, &tu->tokens->line_arena[loc], __VA_ARGS__)
+#define sema_error(loc, ...) report(REPORT_ERROR, &tu->tokens->line_arena[loc], __VA_ARGS__)
 
 static bool is_scalar_type(TranslationUnit* tu, TypeIndex type_index) {
 	Type* restrict type = &tu->types[type_index];

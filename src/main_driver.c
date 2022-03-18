@@ -259,7 +259,7 @@ static void live_compiler_abort(int signo) {
 
 static bool live_compile() {
 	char obj_output_path[MAX_PATH];
-	snprintf(obj_output_path, 260, "%s.obj", cuik_file_no_ext);
+	sprintf_s(obj_output_path, 260, "%s.obj", cuik_file_no_ext);
 	
 	uint64_t original_last_write = get_last_write_time(cuik_source_file);
 	while (true) {
@@ -330,11 +330,19 @@ static bool dump_tokens() {
 		cpp_finalize(&cpp_ctx);
 	}
 	uint64_t t2 = timer_now();
+	
+#ifdef _WIN32
 	double elapsed = (t2 - t1) * timer_freq;
 	printf("preprocessor took %.03f seconds\n", elapsed);
+#else
+	// TODO(NeGate): Windows does undefined frequency thingy,
+	// the linux interface is microseconds
+	double elapsed = (t2 - t1) / 1000000.0;
+	printf("preprocessor took %.03f seconds\n", elapsed);
+#endif
 	
 	char output_path[MAX_PATH];
-	snprintf(output_path, MAX_PATH, "%s.i", cuik_file_no_ext);
+	sprintf_s(output_path, MAX_PATH, "%s.i", cuik_file_no_ext);
 	FILE* f = fopen(output_path, "w");
 	if (!f) {
 		printf("Could not open file a.txt\n");
@@ -630,9 +638,9 @@ int main(int argc, char* argv[]) {
 		case COMPILER_MODE_RUN: {
 			char obj_output_path[MAX_PATH];
 			if (target_system == TB_SYSTEM_WINDOWS) {
-				snprintf(obj_output_path, 260, "%s.obj", cuik_file_no_ext);
+				sprintf_s(obj_output_path, 260, "%s.obj", cuik_file_no_ext);
 			} else if (target_system == TB_SYSTEM_LINUX) {
-				snprintf(obj_output_path, 260, "%s.o", cuik_file_no_ext);
+				sprintf_s(obj_output_path, 260, "%s.o", cuik_file_no_ext);
 			} else if (mode != COMPILER_MODE_CHECK) {
 				printf("Unsupported object file\n");
 				abort();
@@ -643,7 +651,7 @@ int main(int argc, char* argv[]) {
 			// Open profiler file stream
 			if (settings.is_time_report) {
 				char report_filename[MAX_PATH];
-				snprintf(report_filename, 260, "%s.json", cuik_file_no_ext);
+				sprintf_s(report_filename, 260, "%s.json", cuik_file_no_ext);
 				
 				timer_open(report_filename);
 			}
@@ -663,24 +671,26 @@ int main(int argc, char* argv[]) {
 						if (linker_init(&l)) {
 							// Add system libpaths
 							linker_add_default_libpaths(&l);
+							linker_add_libpath(&l, "W:/Workspace/Cuik/crt/lib/");
 							
 							// Add input libraries
 							linker_add_input_file(&l, "kernel32.lib");
-							linker_add_input_file(&l, "user32.lib");
-							linker_add_input_file(&l, "Gdi32.lib");
-							linker_add_input_file(&l, "Onecore.lib");
-							linker_add_input_file(&l, "Onecoreuap.lib");
-							linker_add_input_file(&l, "opengl32.lib");
+							//linker_add_input_file(&l, "user32.lib");
+							//linker_add_input_file(&l, "Gdi32.lib");
+							//linker_add_input_file(&l, "Onecore.lib");
+							//linker_add_input_file(&l, "Onecoreuap.lib");
+							//linker_add_input_file(&l, "opengl32.lib");
+							linker_add_input_file(&l, "msvcrt.lib");
 							
 							// Add Cuik output
 							linker_add_input_file(&l, obj_output_path);
 							
-							linker_invoke(&l, cuik_file_no_ext, settings.using_winmain ? SUBSYSTEM_WINDOWS : SUBSYSTEM_CONSOLE, true);
+							linker_invoke(&l, cuik_file_no_ext);
 							linker_deinit(&l);
 							
 							if (mode == COMPILER_MODE_RUN) {
 								char exe_path[MAX_PATH];
-								snprintf(exe_path, 260, "%s.exe", cuik_file_no_ext);
+								sprintf_s(exe_path, 260, "%s.exe", cuik_file_no_ext);
 								
 								printf("\n\nRunning: %s...\n", exe_path);
 								int exit_code = system(exe_path);

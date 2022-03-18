@@ -66,7 +66,7 @@ static void dump_expr(TranslationUnit* tu, FILE* stream, ExprIndex e, int depth,
 		}
 		case EXPR_ENUM: {
 			type_as_string(tu, sizeof(temp_string0), temp_string0, ep->type);
-			fprintf(stream, "EnumLiteral %lld '%s'\n", ep->enum_val.num, temp_string0);
+			fprintf(stream, "EnumLiteral %lld '%s'\n", (long long)ep->enum_val.num, temp_string0);
 			break;
 		}
 		case EXPR_FLOAT32:
@@ -403,6 +403,17 @@ static void dump_stmt(TranslationUnit* tu, FILE* stream, StmtIndex s, int depth,
 					fprintf(stream, "Else\n");
 					dump_stmt(tu, stream, sp->if_.next, depth + 1, true);
 				}
+			}
+			break;
+		}
+		case STMT_DO_WHILE: { 
+			fprintf(stream, "DoWhile\n");
+			
+			if (sp->do_while.body) {
+				dump_expr(tu, stream, sp->do_while.cond, depth + 1, false);
+				dump_stmt(tu, stream, sp->do_while.body, depth + 1, true);
+			} else {
+				dump_expr(tu, stream, sp->do_while.cond, depth + 1, true);
 			}
 			break;
 		}

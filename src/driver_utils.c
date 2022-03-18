@@ -1,8 +1,12 @@
 #include "driver_utils.h"
+#ifndef _WIN32
+#include <unistd.h>
+#endif
 
 char cuik_include_directory[MAX_PATH];
 
 void cuik_detect_crt_include() {
+#ifdef _WIN32
 	char compiler_path[MAX_PATH];
 	GetModuleFileNameA(NULL, compiler_path, MAX_PATH);
 	
@@ -17,18 +21,39 @@ void cuik_detect_crt_include() {
 	}
 	
 	if (slashes_hit < 2) {
-		printf("Could not locate Cuik include directory from %s\n", compiler_path);
+		fprintf(stderr, "Could not locate Cuik include directory from %s\n", compiler_path);
 		abort();
 	}
 	
-#if _WIN32
 	snprintf(cuik_include_directory, 260, "%.*s\\crt\\include\\", (int)(end - compiler_path), compiler_path);
 #else
+	char compiler_path[PATH_MAX];
+	if (getcwd(compiler_path, PATH_MAX) == NULL) {
+		fprintf(stderr, "error: could not locate Cuik include directory\n");
+		abort();
+	}
+	
+	// cuik/build/exe
+	// cuik/
+	// cuik/crt
+	int slashes_hit = 0;
+	const char* end = compiler_path + strlen(compiler_path);
+	while (slashes_hit < 1 && end-- != compiler_path) {
+		if (*end == '/') slashes_hit++;
+		else if (*end == '\\') slashes_hit++;
+	}
+	
+	if (slashes_hit < 1) {
+		fprintf(stderr, "Could not locate Cuik include directory from %s\n", compiler_path);
+		abort();
+	}
+	
 	snprintf(cuik_include_directory, 260, "%.*s/crt/include/", (int)(end - compiler_path), compiler_path);
 #endif
 }
 
 void cuik_set_cpp_defines(CPP_Context* cpp) {
+#ifdef _WIN32
 	if (s_vswhere.windows_sdk_include == NULL) {
 		printf("warning: could not automatically find WinSDK include path\n");
 	}
@@ -36,6 +61,7 @@ void cuik_set_cpp_defines(CPP_Context* cpp) {
 	if (s_vswhere.vs_include_path == NULL) {
 		printf("warning: could not automatically find VS include path\n");
 	}
+#endif
 	
 	// CuikC specific
 	cpp_define(cpp, "__CUIKC__", STR(CUIK_COMPILER_MAJOR));
@@ -91,6 +117,7 @@ void cuik_set_cpp_defines(CPP_Context* cpp) {
 	
 	// platform specific stuff
 	if (target_system == TB_SYSTEM_WINDOWS) {
+#ifdef _WIN32
 		// WinSDK includes
 		char filepath[MAX_PATH];
 		
@@ -124,10 +151,12 @@ void cuik_set_cpp_defines(CPP_Context* cpp) {
 			// getting the VS include path so i'll be passing some not-so-reasonable-default
 			cpp_add_include_directory(cpp, "W:\\Visual Studio\\2019\\Community\\VC\\Tools\\MSVC\\14.29.30133\\include\\");
 		}
+#endif
 		
 		cpp_define_empty(cpp, "_MT");
 		cpp_define_empty(cpp, "_CRT_NONSTDC_NO_WARNINGS");
 		cpp_define_empty(cpp, "_CRT_SECURE_NO_WARNINGS");
+		cpp_define_empty(cpp, "_NO_CRT_STDIO_INLINE");
 		
 		// we pretend to be a modern MSVC compiler
 		cpp_define(cpp, "_WIN32", "1");
@@ -156,9 +185,12 @@ void cuik_set_cpp_defines(CPP_Context* cpp) {
 		cpp_define_empty(cpp, "__ptr64");
 	} else {
 		// TODO(NeGate): Automatically detect these somehow...
+#ifdef __linux__
 		cpp_add_include_directory(cpp, "/usr/lib/gcc/x86_64-linux-gnu/10/include/");
+		cpp_add_include_directory(cpp, "/usr/include/x86_64-linux-gnu/");
 		cpp_add_include_directory(cpp, "/usr/local/include/");
 		cpp_add_include_directory(cpp, "/usr/include/");
+#endif
 	}
 	
 	target_desc.set_defines(cpp);

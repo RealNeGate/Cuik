@@ -6,7 +6,12 @@
 #include <DbgHelp.h>
 #include <time.h>
 
+#include <ext/threads.h>
+
+static mtx_t crash_mutex;
+
 static LONG WINAPI unhandled_exception_handler(PEXCEPTION_POINTERS exception_ptrs) {
+	mtx_lock(&crash_mutex);
 	time_t now = time(NULL);
     
 	char path[_MAX_PATH + 1];
@@ -48,13 +53,17 @@ static LONG WINAPI unhandled_exception_handler(PEXCEPTION_POINTERS exception_ptr
 					  NULL);
 	
 	CloseHandle(crash_dump_file);
-	return EXCEPTION_EXECUTE_HANDLER;
+	ExitProcess(69420);
 }
 
 void hook_crash_handler() {
+	mtx_init(&crash_mutex, mtx_plain);
     SetUnhandledExceptionFilter(unhandled_exception_handler);
 }
 
 #else
-#error "Implement crash handler on this platform"
+// #error "Implement crash handler on this platform"
+void hook_crash_handler() {
+	
+}
 #endif

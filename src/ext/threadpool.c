@@ -1,8 +1,17 @@
 #include "threadpool.h"
 #include "threads.h"
 #include <stdio.h>
+#include <string.h>
 #include <stdlib.h>
 #include <stdatomic.h>
+
+#ifndef _WIN32
+#include <semaphore.h>
+
+#include <unistd.h>
+#include <dirent.h>
+#include <errno.h>
+#endif
 
 struct threadpool_t {
 	atomic_bool running;
@@ -15,13 +24,14 @@ struct threadpool_t {
 	int thread_count;
 	unsigned int queue_size_mask;
 	
-#if _WIN32
+#ifdef _WIN32
 	HANDLE sem;
 #else
-#error "Implemented unix based semaphore"
+	mtx_t mutex;
+	cnd_t condition;
 #endif
-	thrd_t* threads;
 	
+	thrd_t* threads;
 	work_t* work;
 };
 
@@ -46,8 +56,12 @@ static int threadpool_thread(void* arg) {
 	
 	while (threadpool->running) {
 		if (do_work(threadpool)) {
-#if _WIN32
+#ifdef _WIN32
 			WaitForSingleObjectEx(threadpool->sem, -1, false); // wait for jobs
+#else
+			mtx_lock(&threadpool->mutex);
+			cnd_wait(&threadpool->condition, &threadpool->mutex);
+			mtx_unlock(&threadpool->mutex);
 #endif
 		}
 	}
@@ -68,6 +82,9 @@ threadpool_t* threadpool_create(size_t worker_count, size_t workqueue_size) {
 	
 #if _WIN32
 	threadpool->sem = CreateSemaphoreExA(0, worker_count, worker_count, 0, 0, SEMAPHORE_ALL_ACCESS);
+#else
+	mtx_init(&threadpool->mutex, mtx_plain);
+	cnd_init(&threadpool->condition);
 #endif
 	
     for (int i = 0; i < worker_count; i++) {
@@ -94,6 +111,8 @@ void threadpool_submit(threadpool_t* threadpool, work_routine fn, void* arg) {
 	
 #if _WIN32
 	ReleaseSemaphore(threadpool->sem, 1, 0);
+#else
+	cnd_signal(&threadpool->condition);
 #endif
 }
 
@@ -108,16 +127,20 @@ void threadpool_wait(threadpool_t* threadpool) {
 
 void threadpool_free(threadpool_t* threadpool) {
 	threadpool->running = false;
-#if _WIN32
+#ifdef _WIN32
 	ReleaseSemaphore(threadpool->sem, threadpool->thread_count, 0);
+#else
+	cnd_broadcast(&threadpool->condition);
 #endif
 	
 	for (int i = 0; i < threadpool->thread_count; i++) {
 		thrd_join(threadpool->threads[i], NULL);
 	}
 	
-#if _WIN32
+#ifdef _WIN32
 	CloseHandle(threadpool->sem);
+#else
+	cnd_destroy(&threadpool->condition);
 #endif
 	
 	free(threadpool->threads);

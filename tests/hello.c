@@ -1,9 +1,8 @@
+#include <stdint.h>
 #include <stdio.h>
-#include <assert.h>
+#include <stdlib.h>
 
-int main() {
-	assert(0 && "Woah!");
-	
+void WinMainCRTStartup() {
 	printf("Hello, World!\n");
-	return 0;
+	exit(0);
 }

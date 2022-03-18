@@ -143,7 +143,6 @@ uint16_t hash_with_len(const void* data, size_t len) {
     uint8_t* p = (uint8_t*)data;
     uint16_t hash = 0;
 	
-#pragma unroll 1
 	for (size_t i = 0; i < len; i++) {
 		hash ^= (p[i] << (i % 8));
 	}

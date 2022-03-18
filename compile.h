@@ -23,6 +23,7 @@
 // 
 // This is my "build script library"-inator for C
 // It's inspired by nobuild but different
+#define _CRT_SECURE_NO_WARNINGS
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -174,9 +175,9 @@ inline static void cmd_append(const char* str) {
 
 // return the child process stdout
 inline static FILE* cmd_run() {
-	FILE* file = popen(command_buffer, "rb");
+	FILE* file = popen(command_buffer, "r");
 	if (file == NULL) {
-		printf("command failed to execute! %s\n", command_buffer);
+		printf("command failed to execute! %s (%s)\n", command_buffer, strerror(errno));
 		abort();
 	}
 	
@@ -205,10 +206,10 @@ inline static void builder_init() {
 	
 	create_dir_if_not_exists("build/");
 	
-#if defined(__GNUC__)
-	printf("Compiling on GCC %d.%d...\n", __GNUC__, __GNUC_MINOR__);
-#elif defined(__clang__)
+#if defined(__clang__)
 	printf("Compiling on Clang %d.%d.%d...\n", __clang_major__, __clang_minor__, __clang_patchlevel__);
+#elif defined(__GNUC__)
+	printf("Compiling on GCC %d.%d...\n", __GNUC__, __GNUC_MINOR__);
 #elif defined(_MSC_VER)
 	printf("Compiling on MSVC %d.%d...\n", _MSC_VER / 100, _MSC_VER % 100);
 #endif
@@ -235,10 +236,10 @@ inline static void builder_compile_msvc(size_t count, const char* filepaths[], c
 }
 
 inline static void builder_compile_cc(size_t count, const char* filepaths[], const char* output_path) {
-#if defined(__GNUC__)
-	const char* cc_command = "gcc";
-#elif defined(__clang__)
+#if defined(__clang__)
 	const char* cc_command = "clang";
+#elif defined(__GNUC__)
+	const char* cc_command = "gcc";
 #endif
 	
 	// compile object files
@@ -264,6 +265,9 @@ inline static void builder_compile_cc(size_t count, const char* filepaths[], con
 		
 #if __clang__
 		cmd_append("-Wno-gnu-designator ");
+#       if USE_DA_ASAN
+		cmd_append("-fsanitize=address,undefined ");
+#       endif
 #endif
 		
 		cmd_append("-I src ");
@@ -310,29 +314,46 @@ inline static void builder_compile_cc(size_t count, const char* filepaths[], con
 		}
 	}
 	
-	if (success) {
-		// Link everything together
-		cmd_append("lld-link ");
-#if _WIN32
-		cmd_append("tildebackend.lib build\\*.obj ");
-#else
-		cmd_append("tildebackend.a build/*.o ");
-#endif
-		
-		cmd_append("/nologo /machine:amd64 /subsystem:console /debug:full /defaultlib:libcmt ");
-		cmd_append("/out:build\\");
-		cmd_append(output_path);
-		
-#if _WIN32
-		cmd_append(".exe ");
-		cmd_append("/pdb:build\\");
-		cmd_append(output_path);
-		cmd_append(".pdb ");
-		cmd_append("ole32.lib Advapi32.lib OleAut32.lib DbgHelp.lib");
-#endif
-		
-		cmd_dump(cmd_run());
+	if (!success) {
+		fprintf(stderr, "Compilation errors... fix em\n");
+		exit(69420);
 	}
+	
+#if _WIN32
+	// Link everything together
+	cmd_append("lld-link ");
+	cmd_append("tildebackend.lib build\\*.obj ");
+	
+	cmd_append("/nologo /machine:amd64 /subsystem:console /debug:full /defaultlib:libcmt ");
+	cmd_append("/out:build\\");
+	cmd_append(output_path);
+	
+	cmd_append(".exe ");
+	cmd_append("/pdb:build\\");
+	cmd_append(output_path);
+	cmd_append(".pdb ");
+	cmd_append("ole32.lib Advapi32.lib OleAut32.lib DbgHelp.lib");
+#elif __clang__
+	// It's just significantly more convenient to just use clang as the
+	// linker, plus we can enable the address sanitizers
+	cmd_append("clang -o build/cuik ");
+	cmd_append("build/*.o ./tildebackend.a -lc -lm -lpthread ");
+#   if USE_DA_ASAN
+	cmd_append("-fsanitize=address,undefined ");
+	
+	printf("Using address sanitizer :p\n");
+#   endif
+#else
+	cmd_append("ld -o build/cuik ");
+	cmd_append("build/*.o ./tildebackend.a -lc -lm -lpthread ");
+	cmd_append("/usr/lib/x86_64-linux-gnu/crt1.o ");
+	cmd_append("/usr/lib/x86_64-linux-gnu/crti.o ");
+	cmd_append("/usr/lib/x86_64-linux-gnu/crtn.o ");
+	cmd_append("/usr/lib/x86_64-linux-gnu/libc_nonshared.a ");
+	cmd_append("--dynamic-linker /lib64/ld-linux-x86-64.so.2 ");
+#endif
+	
+	cmd_dump(cmd_run());
 }
 
 inline static void builder_compile(size_t count, const char* filepaths[], const char* output_path) {

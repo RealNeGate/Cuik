@@ -1,5 +1,6 @@
 #include "diagnostic.h"
 #include <stdarg.h>
+#include <ctype.h>
 
 #if _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -40,6 +41,7 @@ static void print_level_name(ReportLevel level) {
 }
 
 static void display_line(ReportLevel level, SourceLoc* loc) {
+#if _WIN32
 	if (console_handle == NULL) {
 		console_handle = GetStdHandle(STD_OUTPUT_HANDLE);
 		
@@ -48,6 +50,7 @@ static void display_line(ReportLevel level, SourceLoc* loc) {
 		
 		default_attribs = info.wAttributes;
 	}
+#endif
 	
 	if (report_using_thin_errors) {
 		printf("%s:%d:%d: ", loc->file, loc->line, loc->columns);

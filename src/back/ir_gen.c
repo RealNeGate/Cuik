@@ -149,7 +149,7 @@ static TB_Register cvt2rval(TranslationUnit* tu, TB_Function* func, const IRVal 
 	return src != dst ? cast_reg(func, reg, src, dst) : reg;
 }
 
-static TB_Register irgen_as_rvalue(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
+TB_Register irgen_as_rvalue(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 	return cvt2rval(tu, func, irgen_expr(tu, func, e), e);
 }
 
@@ -396,7 +396,7 @@ static void insert_label(TB_Function* func) {
 	}
 }
 
-static IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
+IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 	Expr* restrict ep = &tu->exprs[e];
 	
 	switch (ep->op) {
@@ -1224,7 +1224,7 @@ static IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 	}
 }
 
-static void irgen_stmt(TranslationUnit* tu, TB_Function* func, StmtIndex s) {
+void irgen_stmt(TranslationUnit* tu, TB_Function* func, StmtIndex s) {
 	Stmt* restrict sp = &tu->stmts[s];
 	
 	if (settings.is_debug_info) {
@@ -1240,6 +1240,8 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, StmtIndex s) {
 		
 		tb_inst_loc(func, last_file_id, l->line + 1);
 	}
+	
+	insert_label(func);
 	
 	switch (sp->op) {
 		case STMT_NONE: {
@@ -1451,6 +1453,8 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, StmtIndex s) {
 			if (sp->do_while.body) {
 				irgen_stmt(tu, func, sp->do_while.body);
 			}
+			
+			insert_label(func);
 			
 			TB_Register cond = irgen_as_rvalue(tu, func, sp->do_while.cond);
 			tb_inst_if(func, cond, body, exit);

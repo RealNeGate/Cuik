@@ -80,7 +80,7 @@ bool cpp_find_include_include(CPP_Context* ctx, char output[MAX_PATH], const cha
 	size_t num_system_include_dirs = arrlen(ctx->system_include_dirs);
 	
 	for (size_t i = 0; i < num_system_include_dirs; i++) {
-		sprintf_s(output, 260, "%s%s", ctx->system_include_dirs[i], path);
+		snprintf(output, 260, "%s%s", ctx->system_include_dirs[i], path);
 		
 		if (file_exists(output)) {
 			return true;
@@ -191,7 +191,7 @@ TokenStream cpp_process(CPP_Context* ctx, const char filepath[]) {
 #if _WIN32
 		sprintf_s(directory, 260, "%.*s\\", (int)(slash - filepath), filepath);
 #else
-		sprintf_s(directory, 260, "%.*s/", (int)(slash - filepath), filepath);
+		snprintf(directory, 260, "%.*s/", (int)(slash - filepath), filepath);
 #endif
 	} else {
 		directory[0] = '\0';
@@ -586,7 +586,9 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 						char* new_dir = strdup(new_path);
 						new_dir[filename - new_path] = '\0';
 #else
-						char* new_path = realpath(path);
+						char* new_path = arena_alloc(PATH_MAX, 1);
+						realpath(path, new_path);
+						
 						char* new_dir = strdup(new_path);
 						
 						char* slash = strrchr(new_dir, '\\');
