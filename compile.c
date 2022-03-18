@@ -145,7 +145,8 @@ void delete_crap_in_dir(const char* dir_path) {
 	while ((path = file_iter_next(&it))) {
 		if (str_ends_with(path, ".obj") ||
 			str_ends_with(path, ".exe") ||
-			str_ends_with(path, ".pdb")) {
+			str_ends_with(path, ".pdb") ||
+			str_ends_with(path, ".o")) {
 			snprintf(temp, PATH_MAX, "%s%s", dir_path, path);
 			remove(temp);
 		}
