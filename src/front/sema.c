@@ -944,8 +944,14 @@ static void sema_top_level(TranslationUnit* tu, StmtIndex s, bool frontend_only)
 			if (sp->decl.attrs.is_static && !sp->decl.attrs.is_inline) {
 				if (!sp->decl.attrs.is_used) {
 					sema_warn(sp->loc, "Function '%s' is never used.", name);
+					sp->backing.f = 0;
 					break;
 				}
+			}
+			
+			if (sp->decl.attrs.is_inline && !sp->decl.attrs.is_used) {
+				sp->backing.f = 0;
+				break;
 			}
 			
 			bool is_aggregate_return = false;

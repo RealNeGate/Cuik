@@ -261,11 +261,6 @@ static void live_compiler_abort(int signo) {
 }
 
 static bool live_compile() {
-	if (big_array_length(cuik_source_files) != 1) {
-		printf("Live compiler cannot operate on more than one source file\n");
-		abort();
-	}
-	
 	char obj_output_path[MAX_PATH];
 	sprintf_s(obj_output_path, 260, "%s.obj", cuik_file_no_ext);
 	
@@ -750,6 +745,14 @@ int main(int argc, char* argv[]) {
 				printf("Expected filename\n");
 				return 1;
 			}
+			
+#ifdef _WIN32
+			if (!settings.freestanding) {
+				char* cuik_startup_path = malloc(MAX_PATH);
+				sprintf_s(cuik_startup_path, MAX_PATH, "%swin32_startup.c", cuik_library_directory);
+				big_array_put(cuik_source_files, cuik_startup_path);
+			}
+#endif
 			
 			live_compile();
 			break;
