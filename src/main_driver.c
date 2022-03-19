@@ -45,7 +45,7 @@ static TargetOption target_options[] = {
 };
 enum { TARGET_OPTION_COUNT = sizeof(target_options) / sizeof(target_options[0]) };
 
-static const char* cuik_source_file;
+static BigArray(const char*) cuik_source_files;
 static char cuik_file_no_ext[255];
 
 static CompilationUnit compilation_unit;
@@ -144,13 +144,16 @@ static void compile_project(const char* obj_output_path, bool is_multithreaded, 
 	
 	if (!is_check) irgen_init();
 	
-	TranslationUnit* tu = cuik_compile_file(&compilation_unit, cuik_source_file, is_check);
-	if (settings.print_ast) {
-		ast_dump(tu, stdout);
-		ast_dump_stats(tu, stdout);
-	} else if (settings.print_ast_stats) {
-		ast_dump_stats(tu, stdout);
+	for (size_t i = 0, count = big_array_length(cuik_source_files); i < count; i++) {
+		printf("Compiling %s...\n", cuik_source_files[i]);
+		TranslationUnit* tu = cuik_compile_file(&compilation_unit, cuik_source_files[i], is_check);
+		
+		if (settings.emit_ast != EMIT_AST_NONE) {
+			ast_dump(tu, stdout);
+		}
 	}
+	
+	compilation_unit_internal_link(&compilation_unit);
 	
 	if (!is_check) {
 		timed_block("ir gen & compile") {
@@ -258,10 +261,15 @@ static void live_compiler_abort(int signo) {
 }
 
 static bool live_compile() {
+	if (big_array_length(cuik_source_files) != 1) {
+		printf("Live compiler cannot operate on more than one source file\n");
+		abort();
+	}
+	
 	char obj_output_path[MAX_PATH];
 	sprintf_s(obj_output_path, 260, "%s.obj", cuik_file_no_ext);
 	
-	uint64_t original_last_write = get_last_write_time(cuik_source_file);
+	uint64_t original_last_write = get_last_write_time(cuik_source_files[0]);
 	while (true) {
 		system("cls");
 		
@@ -280,14 +288,14 @@ static bool live_compile() {
 		
 		// Wait for the user to save again
 		while (true) {
-			uint64_t current_last_write = get_last_write_time(cuik_source_file);
+			uint64_t current_last_write = get_last_write_time(cuik_source_files[0]);
 			
 			if (original_last_write != current_last_write) {
 				original_last_write = current_last_write;
 				
 				// wait for it to finish writing before trying to compile
 				int ticks = 0;
-				while (GetFileAttributesA(cuik_source_file) == INVALID_FILE_ATTRIBUTES) {
+				while (GetFileAttributesA(cuik_source_files[0]) == INVALID_FILE_ATTRIBUTES) {
 					SleepEx(1, FALSE);
 					
 					if (ticks++ > 100) {
@@ -317,6 +325,11 @@ static bool live_compile() {
 // Preprocessor dump
 ////////////////////////////////
 static bool dump_tokens() {
+	if (big_array_length(cuik_source_files) != 1) {
+		printf("Standalone preprocessor cannot operate on more than one source file\n");
+		abort();
+	}
+	
 	// Preprocess file
 	uint64_t t1 = timer_now();
 	TokenStream s;
@@ -325,7 +338,7 @@ static bool dump_tokens() {
 		cpp_init(&cpp_ctx);
 		cuik_set_cpp_defines(&cpp_ctx);
 		
-		s = cpp_process(&cpp_ctx, cuik_source_file);
+		s = cpp_process(&cpp_ctx, cuik_source_files[0]);
 		
 		cpp_finalize(&cpp_ctx);
 	}
@@ -492,14 +505,10 @@ int main(int argc, char* argv[]) {
 #error "Unsupported host compiler... for now"
 #endif
 	
+	cuik_source_files = big_array_create(const char*, false);
 	for (size_t i = 2; i < argc; i++) {
 		if (argv[i][0] != '-') {
-			if (cuik_source_file) {
-				printf("main_driver does not support multiple input files... yet...\n");
-				return 1;
-			}
-			
-			cuik_source_file = argv[i];
+			big_array_put(cuik_source_files, argv[i]);
 			continue;
 		}
 		
@@ -552,9 +561,18 @@ int main(int argc, char* argv[]) {
 			
 			settings.num_of_worker_threads = num;
 		} else if (strcmp(key, "emit-ast") == 0) {
-			settings.print_ast = true;
-		} else if (strcmp(key, "emit-ast-stats") == 0) {
-			settings.print_ast_stats = true;
+			settings.emit_ast = EMIT_AST_NORMAL;
+			
+			if (value) {
+				if (strcmp(value, "minimal") == 0) {
+					settings.emit_ast = EMIT_AST_MINIMAL;
+				} else if (strcmp(value, "normal") == 0) {
+					settings.emit_ast = EMIT_AST_NORMAL;
+				} else {
+					printf("-emit-ast only supports options: 'normal', 'minimal' or nothing");
+					return 1;
+				}
+			}
 		} else if (strcmp(key, "emit-ir") == 0) {
 			settings.print_tb_ir = true;
 		} else if (strcmp(key, "find-include") == 0) {
@@ -589,17 +607,18 @@ int main(int argc, char* argv[]) {
 		}
 	}
 	
-	if (cuik_source_file == NULL) {
-		printf("Expected filename\n");
+	if (big_array_length(cuik_source_files) == 0) {
+		printf("Expected input files\n");
 		return 1;
 	}
 	
 	// Get filename without extension
 	{
-		const char* ext = strrchr(cuik_source_file, '.');
-		size_t len = ext ? (ext - cuik_source_file) : strlen(cuik_source_file);
+		const char* filename = cuik_source_files[0];
+		const char* ext = strrchr(filename, '.');
+		size_t len = ext ? (ext - filename) : strlen(filename);
 		
-		memcpy(cuik_file_no_ext, cuik_source_file, len);
+		memcpy(cuik_file_no_ext, filename, len);
 		cuik_file_no_ext[len] = '\0';
 	}
 	
@@ -621,11 +640,21 @@ int main(int argc, char* argv[]) {
 		case COMPILER_MODE_ANAL: {
 			if (settings.find_include) {
 				char output[MAX_PATH];
-				if (cuik_find_include_file(output, cuik_source_file)) {
-					printf("%s\n", output);
-				} else {
-					printf("NOTFOUND\n");
+				
+				CPP_Context cpp_ctx;
+				cpp_init(&cpp_ctx);
+				cuik_set_cpp_defines(&cpp_ctx);
+				
+				for (size_t i = 0, count = big_array_length(cuik_source_files); i < count; i++) {
+					if (cpp_find_include_include(&cpp_ctx, output, cuik_source_files[i])) {
+						printf("%s\n", output);
+					} else {
+						printf("NOTFOUND\n");
+					}
 				}
+				
+				cpp_finalize(&cpp_ctx);
+				cpp_deinit(&cpp_ctx);
 			} else {
 				printf("Unknown cuik anal option (Supported options):\n");
 				printf("-find-include - Resolve an include file path from name\n");
@@ -658,6 +687,14 @@ int main(int argc, char* argv[]) {
 			
 			// Build project
 			timed_block("total") {
+#ifdef _WIN32
+				if (!settings.freestanding) {
+					char* cuik_startup_path = malloc(MAX_PATH);
+					sprintf_s(cuik_startup_path, MAX_PATH, "%swin32_startup.c", cuik_library_directory);
+					big_array_put(cuik_source_files, cuik_startup_path);
+				}
+#endif
+				
 				compile_project(obj_output_path, true, mode == COMPILER_MODE_CHECK);
 				
 				if (!settings.is_object_only && mode != COMPILER_MODE_CHECK && !settings.print_tb_ir) {
@@ -675,7 +712,8 @@ int main(int argc, char* argv[]) {
 							
 							// Add input libraries
 							linker_add_input_file(&l, "kernel32.lib");
-							//linker_add_input_file(&l, "user32.lib");
+							linker_add_input_file(&l, "user32.lib");
+							linker_add_input_file(&l, "shell32.lib");
 							//linker_add_input_file(&l, "Gdi32.lib");
 							//linker_add_input_file(&l, "Onecore.lib");
 							//linker_add_input_file(&l, "Onecoreuap.lib");

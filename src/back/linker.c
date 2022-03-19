@@ -95,7 +95,7 @@ bool linker_invoke(Linker* l, const char* filename) {
 #if defined(_WIN32)
 	wchar_t cmd_line[CMD_LINE_MAX];
 	int cmd_line_len = swprintf(cmd_line, CMD_LINE_MAX,
-								L"%s\\link.exe /nologo /machine:amd64 /subsystem:windows"
+								L"%s\\link.exe /nologo /machine:amd64 /subsystem:console"
 								" /debug:full /pdb:%S.pdb /out:%S.exe /incremental:no ",
 								s_vswhere.vs_exe_path, filename, filename);
 	

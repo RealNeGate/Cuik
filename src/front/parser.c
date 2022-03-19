@@ -112,12 +112,12 @@ static ExprIndex make_expr(TranslationUnit* tu) {
 void translation_unit_parse(TranslationUnit* restrict tu, TokenStream* restrict s) {
 	*tu = (TranslationUnit){ 0 };
 	tu->tokens = s;
-	tu->types = big_array_create(Type);
-	tu->members = big_array_create(Member);
-	tu->params = big_array_create(Param);
-	tu->enum_entries = big_array_create(EnumEntry);
-	tu->stmts = big_array_create(Stmt);
-	tu->exprs = big_array_create(Expr);
+	tu->types = big_array_create(Type, true);
+	tu->members = big_array_create(Member, true);
+	tu->params = big_array_create(Param, true);
+	tu->enum_entries = big_array_create(EnumEntry, true);
+	tu->stmts = big_array_create(Stmt, true);
+	tu->exprs = big_array_create(Expr, true);
 	
 	init_types(tu);
 	tls_init();
@@ -418,8 +418,18 @@ void translation_unit_parse(TranslationUnit* restrict tu, TokenStream* restrict 
 		success:;
 	}
 	
+	current_switch_or_case = 0;
+	current_breakable = 0;
+	current_continuable = 0;
+	
+	local_typedef_count = 0;
+	local_symbol_start = 0;
 	local_symbol_count = 0;
+	
+	shfree(incomplete_types);
 	shfree(global_symbols);
+	shfree(typedefs);
+	shfree(labels);
 }
 
 void translation_unit_deinit(TranslationUnit* tu) {

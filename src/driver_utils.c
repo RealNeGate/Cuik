@@ -4,6 +4,7 @@
 #endif
 
 char cuik_include_directory[MAX_PATH];
+char cuik_library_directory[MAX_PATH];
 
 void cuik_detect_crt_include() {
 #ifdef _WIN32
@@ -25,7 +26,8 @@ void cuik_detect_crt_include() {
 		abort();
 	}
 	
-	snprintf(cuik_include_directory, 260, "%.*s\\crt\\include\\", (int)(end - compiler_path), compiler_path);
+	sprintf_s(cuik_include_directory, MAX_PATH, "%.*s\\crt\\include\\", (int)(end - compiler_path), compiler_path);
+	sprintf_s(cuik_library_directory, MAX_PATH, "%.*s\\crt\\src\\", (int)(end - compiler_path), compiler_path);
 #else
 	char compiler_path[PATH_MAX];
 	if (getcwd(compiler_path, PATH_MAX) == NULL) {
@@ -48,7 +50,8 @@ void cuik_detect_crt_include() {
 		abort();
 	}
 	
-	snprintf(cuik_include_directory, 260, "%.*s/crt/include/", (int)(end - compiler_path), compiler_path);
+	sprintf_s(cuik_include_directory, 260, "%.*s/crt/include/", (int)(end - compiler_path), compiler_path);
+	sprintf_s(cuik_library_directory, 260, "%.*s/crt/src/", (int)(end - compiler_path), compiler_path);
 #endif
 }
 

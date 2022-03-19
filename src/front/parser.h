@@ -568,7 +568,6 @@ typedef struct TranslationUnit {
 	
 	// TODO(NeGate): keep track of all files loaded by this TU
 	// so that we can properly free them
-	
 	BigArray(Type) types;
 	BigArray(Member) members;
 	BigArray(Param) params;

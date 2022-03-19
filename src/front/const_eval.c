@@ -162,24 +162,23 @@ ConstValue const_eval(TranslationUnit* tu, ExprIndex e) {
 			ConstValue a = const_eval(tu, ep->bin_op.right);
 			
 			ExprOp op = ep->op;
-			if (tu->exprs[ep->bin_op.left].op != op) {
-				ConstValue b = const_eval(tu, ep->bin_op.left);
-				
+			ExprIndex current = ep->bin_op.left;
+			if (tu->exprs[current].op != op) {
+				ConstValue b = const_eval(tu, current);
 				return const_eval_bin_op(op, b, a);
 			} else {
 				// try tail calling
-				ExprIndex current = ep->bin_op.left;
 				do {
 					ConstValue b = const_eval(tu, tu->exprs[current].bin_op.right);
 					a = const_eval_bin_op(op, b, a);
 					
 					current = tu->exprs[current].bin_op.left;
 				} while (tu->exprs[current].op == op);
+				
+				ConstValue b = const_eval(tu, current);
+				return const_eval_bin_op(op, b, a);
 			}
-			
-			return a;
 		}
-		
 		case EXPR_SIZEOF: {
 			extern TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e);
 			
@@ -262,6 +261,6 @@ ConstValue const_eval(TranslationUnit* tu, ExprIndex e) {
 		default: break;
 	}
 	
-	// TODO(NeGate): error messages
+	report(REPORT_ERROR, &tu->tokens->line_arena[ep->loc], "Could not resolve as constant expression");
 	abort();
 }

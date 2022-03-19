@@ -15,12 +15,12 @@ typedef struct BigArrayHeader {
     char data[];
 } BigArrayHeader;
 
-void* big_array_internal_create(size_t type_size);
+void* big_array_internal_create(size_t type_size, bool has_zero_slot);
 void  big_array_internal_destroy(void* ptr);
 void* big_array_internal_reserve(void* ptr, size_t type_size, size_t extra);
 
 #define BigArray(T) T*
-#define big_array_create(T) big_array_internal_create(sizeof(T))
+#define big_array_create(T, zero_slot) big_array_internal_create(sizeof(T), zero_slot)
 #define big_array_destroy(arr) big_array_internal_destroy(arr)
 #define big_array_put(arr, new_data) do {                             \
 arr = big_array_internal_reserve(arr, sizeof(*arr), 1);       \

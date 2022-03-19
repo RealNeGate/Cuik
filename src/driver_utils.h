@@ -25,6 +25,8 @@
 
 // %CUIK%/crt/include/
 extern char cuik_include_directory[MAX_PATH];
+// %CUIK%/crt/src/
+extern char cuik_library_directory[MAX_PATH];
 
 void cuik_detect_crt_include();
 void cuik_set_cpp_defines(CPP_Context* cpp);

@@ -17,6 +17,7 @@ typedef struct {
 void compilation_unit_init(CompilationUnit* cu);
 void compilation_unit_append(CompilationUnit* cu, TranslationUnit* tu);
 void compilation_unit_deinit(CompilationUnit* cu);
+void compilation_unit_internal_link(CompilationUnit* cu);
 
 #define FOR_EACH_TU(it, cu) \
 for (TranslationUnit* it = (cu)->head; it; it = it->next)

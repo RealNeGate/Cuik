@@ -475,8 +475,27 @@ void ast_dump(TranslationUnit* tu, FILE* stream) {
 	fprintf(stream, "TranslationUnit\n");
 	barz[0] = true;
 	
-	for (size_t i = 0, count = arrlen(tu->top_level_stmts); i < count; i++) {
-		dump_stmt(tu, stream, tu->top_level_stmts[i], 1, i == (count-1));
+	if (settings.emit_ast == EMIT_AST_MINIMAL) {
+		for (size_t i = 0, count = arrlen(tu->top_level_stmts); i < count; i++) {
+			StmtIndex stmt = tu->top_level_stmts[i];
+			if (!tu->stmts[stmt].decl.attrs.is_used || tu->stmts[stmt].decl.attrs.is_typedef) continue;
+			
+			bool is_last = (i == (count-1));
+			if (!is_last) {
+				size_t j = i+1;
+				for (; j < count; j++) {
+					if (!tu->stmts[stmt].decl.attrs.is_used || tu->stmts[stmt].decl.attrs.is_typedef) break;
+				}
+				
+				is_last = (j == (count-1));
+			}
+			
+			dump_stmt(tu, stream, stmt, 1, is_last);
+		}
+	} else {
+		for (size_t i = 0, count = arrlen(tu->top_level_stmts); i < count; i++) {
+			dump_stmt(tu, stream, tu->top_level_stmts[i], 1, i == (count-1));
+		}
 	}
 }
 

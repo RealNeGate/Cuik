@@ -31,3 +31,36 @@ void compilation_unit_deinit(CompilationUnit* cu) {
 	mtx_destroy(&cu->mutex);
 	*cu = (CompilationUnit){ 0 };
 }
+
+void compilation_unit_internal_link(CompilationUnit* cu) {
+	FOR_EACH_TU(tu, cu) {
+		for (size_t i = 0, count = arrlen(tu->top_level_stmts); i < count; i++) {
+			StmtIndex stmt = tu->top_level_stmts[i];
+			Stmt* restrict sp = &tu->stmts[stmt];
+			
+			if (sp->op == STMT_FUNC_DECL) {
+				if (!sp->decl.attrs.is_static &&
+					!sp->decl.attrs.is_inline) {
+					printf("Export! %s\n", sp->decl.name);
+					
+					ExportedSymbol sym = { tu, stmt };
+					shput(cu->export_table, sp->decl.name, sym);
+				}
+			} else if (sp->op == STMT_GLOBAL_DECL ||
+					   sp->op == STMT_DECL) {
+				bool has_def = sp->decl.initial != 0;
+				
+				if (!sp->decl.attrs.is_static &&
+					!sp->decl.attrs.is_extern &&
+					!sp->decl.attrs.is_typedef &&
+					!sp->decl.attrs.is_inline &&
+					has_def) {
+					printf("Export! %s\n", sp->decl.name);
+					
+					ExportedSymbol sym = { tu, stmt };
+					shput(cu->export_table, sp->decl.name, sym);
+				}
+			}
+		}
+	}
+}
