@@ -1026,6 +1026,10 @@ static void sema_top_level(TranslationUnit* tu, StmtIndex s, bool frontend_only)
 			}
 			
 			if (sp->decl.attrs.is_extern || tu->types[sp->decl.type].kind == KIND_FUNC) {
+				// We defer extern creation until the IR gen phase where we have a full
+				// understanding of the export symbol table
+				sp->backing.e = 0;
+				
 				// forward decls
 				// This is hacky
 				if (name[0] == '_') {
@@ -1039,8 +1043,6 @@ static void sema_top_level(TranslationUnit* tu, StmtIndex s, bool frontend_only)
 						break;
 					}
 				}
-				
-				sp->backing.e = frontend_only ? 0 : tb_extern_create(mod, name);
 			} else {
 				Type* expr_type = NULL;
 				

@@ -3,7 +3,7 @@
 #include <front/parser.h>
 #include <ext/threads.h>
 
-typedef struct {
+typedef struct CompilationUnit {
 	// anything extern might map to a different translation unit within
 	// the same compilation unit which means it's not technically external
 	ExportedSymbolEntry* export_table;

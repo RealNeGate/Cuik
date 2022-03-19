@@ -1,7 +1,7 @@
 #include "ir_gen.h"
 #include "settings.h"
-#include "../timer.h"
-#include <stdarg.h>
+#include <compilation_unit.h>
+#include <timer.h>
 #include <targets/targets.h>
 
 TB_Module* mod;
@@ -520,6 +520,54 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 						.func = tb_function_from_id(mod, tu->stmts[stmt].backing.f)
 					};
 				} else if (stmt_op == STMT_DECL) {
+					if (tu->stmts[stmt].backing.e == 0) {
+						// It's either a proper external or links to
+						// a file within the compilation unit, we don't
+						// know yet
+						CompilationUnit* restrict cu = tu->parent;
+						mtx_lock(&cu->mutex);
+						
+						const char* name = (const char*) tu->stmts[stmt].decl.name;
+						ptrdiff_t search = shgeti(cu->export_table, name);
+						
+						IRVal val = { 0 };
+						if (search >= 0) {
+							// Figure out what the symbol is and link it together
+							ExportedSymbol sym = cu->export_table[search].value;
+							Stmt* restrict real_symbol = &sym.tu->stmts[sym.stmt];
+							
+							if (real_symbol->op == STMT_FUNC_DECL) {
+								val = (IRVal) {
+									.value_type = LVALUE_FUNC,
+									.type = type_index,
+									.func = tb_function_from_id(mod, real_symbol->backing.f)
+								};
+							} else if (real_symbol->op == STMT_GLOBAL_DECL) {
+								val = (IRVal) {
+									.value_type = LVALUE,
+									.type = type_index,
+									.reg = tb_inst_get_global_address(func, real_symbol->backing.g)
+								};
+							} else {
+								abort();
+							}
+						} else {
+							tu->stmts[stmt].backing.e = tb_extern_create(mod, name);
+							
+							val = (IRVal) {
+								.value_type = LVALUE_EFUNC,
+								.type = type_index,
+								.ext = tu->stmts[stmt].backing.e
+							};
+						}
+						
+						// NOTE(NeGate): we might wanna move this mutex unlock earlier
+						// it doesn't seem like we might need it honestly...
+						mtx_unlock(&cu->mutex);
+						return val;
+					}
+					
+					// Proper external
 					return (IRVal) {
 						.value_type = LVALUE_EFUNC,
 						.type = type_index,

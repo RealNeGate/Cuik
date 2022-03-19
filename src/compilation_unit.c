@@ -9,9 +9,10 @@ void compilation_unit_append(CompilationUnit* cu, TranslationUnit* tu) {
 	assert(tu->next == NULL && "somehow the TU is attached already...");
 	mtx_lock(&cu->mutex);
 	
+	tu->parent = cu;
+	
 	if (cu->tail == NULL) cu->head = tu;
 	else cu->tail->next = tu;
-	
 	cu->tail = tu;
 	
 	mtx_unlock(&cu->mutex);
@@ -41,26 +42,26 @@ void compilation_unit_internal_link(CompilationUnit* cu) {
 			if (sp->op == STMT_FUNC_DECL) {
 				if (!sp->decl.attrs.is_static &&
 					!sp->decl.attrs.is_inline) {
-					printf("Export! %s\n", sp->decl.name);
+					//printf("Export! %s (Function: %d)\n", sp->decl.name, sp->backing.f);
 					
 					ExportedSymbol sym = { tu, stmt };
 					shput(cu->export_table, sp->decl.name, sym);
 				}
 			} else if (sp->op == STMT_GLOBAL_DECL ||
 					   sp->op == STMT_DECL) {
-				bool has_def = sp->decl.initial != 0;
-				
 				if (!sp->decl.attrs.is_static &&
 					!sp->decl.attrs.is_extern &&
 					!sp->decl.attrs.is_typedef &&
 					!sp->decl.attrs.is_inline &&
-					has_def) {
-					printf("Export! %s\n", sp->decl.name);
+					sp->decl.initial != 0) {
+					//printf("Export! %s (Global: %d)\n", sp->decl.name, sp->backing.g);
 					
 					ExportedSymbol sym = { tu, stmt };
 					shput(cu->export_table, sp->decl.name, sym);
 				}
 			}
 		}
+		
+		//printf("\n\n");
 	}
 }

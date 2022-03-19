@@ -559,6 +559,9 @@ typedef struct {
 } ExportedSymbolEntry;
 
 typedef struct TranslationUnit {
+	// circular references amirite...
+	struct CompilationUnit* parent;
+	
 	// chain of TUs for the compilation unit
 	struct TranslationUnit* next;
 	bool is_free;
