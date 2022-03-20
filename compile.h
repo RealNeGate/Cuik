@@ -263,10 +263,10 @@ inline static void builder_compile_cc(size_t count, const char* filepaths[], con
 		cmd_append(cc_command);
 		cmd_append(" -march=haswell -maes -Werror -Wall -Wno-trigraphs -Wno-unused-function ");
 		
-#if __clang__
+#if defined(__clang__)
 		cmd_append("-Wno-gnu-designator ");
 #       if USE_DA_ASAN
-		cmd_append("-fsanitize=address,undefined ");
+		cmd_append("-fsanitize=address ");
 #       endif
 #endif
 		
@@ -333,13 +333,13 @@ inline static void builder_compile_cc(size_t count, const char* filepaths[], con
 	cmd_append(output_path);
 	cmd_append(".pdb ");
 	cmd_append("ole32.lib Advapi32.lib OleAut32.lib DbgHelp.lib");
-#elif __clang__
+#elif defined(__clang__)
 	// It's just significantly more convenient to just use clang as the
 	// linker, plus we can enable the address sanitizers
 	cmd_append("clang -o build/cuik ");
 	cmd_append("build/*.o ./tildebackend.a -lc -lm -lpthread ");
 #   if USE_DA_ASAN
-	cmd_append("-fsanitize=address,undefined ");
+	cmd_append("-fsanitize=address ");
 	
 	printf("Using address sanitizer :p\n");
 #   endif

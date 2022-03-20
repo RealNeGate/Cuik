@@ -35,7 +35,9 @@ void compilation_unit_deinit(CompilationUnit* cu) {
 
 void compilation_unit_internal_link(CompilationUnit* cu) {
 	FOR_EACH_TU(tu, cu) {
-		for (size_t i = 0, count = arrlen(tu->top_level_stmts); i < count; i++) {
+		size_t count = arrlen(tu->top_level_stmts);
+		
+		for (size_t i = 0; i < count; i++) {
 			StmtIndex stmt = tu->top_level_stmts[i];
 			Stmt* restrict sp = &tu->stmts[stmt];
 			
@@ -61,7 +63,5 @@ void compilation_unit_internal_link(CompilationUnit* cu) {
 				}
 			}
 		}
-		
-		//printf("\n\n");
 	}
 }

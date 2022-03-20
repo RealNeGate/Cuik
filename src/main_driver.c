@@ -19,13 +19,13 @@ typedef enum {
 	
 	// only does preproc, lex, parse and type checking without
 	// emitting any output other than errors
-	COMPILER_MODE_CHECK,
-	
-	// lmao, it allows you to query information about the compile
 	COMPILER_MODE_ANAL,
 	
-	// compiles an executable unless -c is marked
+	// standard compilation to executable (unless -obj is used)
 	COMPILER_MODE_BUILD,
+	
+	// let's you access different details of the codebase
+	COMPILER_MODE_QUERY,
 	
 	// compile & run
 	COMPILER_MODE_RUN
@@ -49,6 +49,8 @@ static BigArray(const char*) cuik_source_files;
 static char cuik_file_no_ext[255];
 
 static CompilationUnit compilation_unit;
+
+static int parse_args(size_t arg_start, size_t arg_count, char** args);
 
 ////////////////////////////////
 // Standard compilation
@@ -145,7 +147,7 @@ static void compile_project(const char* obj_output_path, bool is_multithreaded, 
 	if (!is_check) irgen_init();
 	
 	for (size_t i = 0, count = big_array_length(cuik_source_files); i < count; i++) {
-		printf("Compiling %s...\n", cuik_source_files[i]);
+		//printf("Compiling %s...\n", cuik_source_files[i]);
 		TranslationUnit* tu = cuik_compile_file(&compilation_unit, cuik_source_files[i], is_check);
 		
 		if (settings.emit_ast != EMIT_AST_NONE) {
@@ -199,6 +201,42 @@ static void compile_project(const char* obj_output_path, bool is_multithreaded, 
 			tb_module_destroy(mod);
 		}
 	}
+}
+
+////////////////////////////////
+// Cuik query
+////////////////////////////////
+static int execute_query_operation(const char* option, size_t arg_start, size_t arg_count, char** args) {
+	if (option) {
+		if (strcmp(option, "find_include") == 0) {
+			int result = parse_args(arg_start, arg_count, args);
+			if (result) return result;
+			
+			char output[MAX_PATH];
+			
+			CPP_Context cpp_ctx;
+			cpp_init(&cpp_ctx);
+			cuik_set_cpp_defines(&cpp_ctx);
+			
+			for (size_t i = 0, count = big_array_length(cuik_source_files); i < count; i++) {
+				if (cpp_find_include_include(&cpp_ctx, output, cuik_source_files[i])) {
+					printf("%s\n", output);
+				} else {
+					printf("NOTFOUND\n");
+				}
+			}
+			
+			cpp_finalize(&cpp_ctx);
+			cpp_deinit(&cpp_ctx);
+			
+			return 0;
+		}
+	}
+	
+	printf("Unknown cuik query option (Supported options):\n");
+	printf("find_include - Resolve an include file path from name\n");
+	printf("\n");
+	return 1;
 }
 
 ////////////////////////////////
@@ -403,6 +441,7 @@ static bool dump_tokens() {
 // Entry & CLI
 ////////////////////////////////
 static void print_help(const char* executable_path) {
+	// TODO(NeGate): redocument this, it's wrong now...
 	printf("Usage:\n"
 		   "  %s [command] [filepath] [flags]\n"
 		   "  \n"
@@ -413,101 +452,19 @@ static void print_help(const char* executable_path) {
 		   "  run        Compiles & runs the input file/directory\n"
 		   "  live       Live recompilation of C into the terminal as you edit\n"
 		   "  version    Prints the installed compiler's version\n"
-		   "  bindgen    Generate API binding descriptions\n"
 		   "  help       More detailed help for the input command\n"
 		   "  \n",
 		   executable_path);
 }
 
-static void print_version(const char* install_dir) {
-	printf("cuik version %d.%d\n",         CUIK_COMPILER_MAJOR, CUIK_COMPILER_MINOR);
-	printf("install directory: %s\n",      install_dir);
-	printf("cuik include directory: %s\n", cuik_include_directory);
-	
-#ifdef _WIN32
-	printf("windows sdk include: %S\n",    s_vswhere.windows_sdk_include);
-	printf("visual studio include: %S\n",  s_vswhere.vs_include_path);
-#endif
-}
-
-int main(int argc, char* argv[]) {
-	// We hook the crash handler to create crash dumps
-	hook_crash_handler();
-	
-	if (argc == 1) {
-		printf("Expected command!\n");
-		print_help(argv[0]);
-		return 1;
-	}
-	
-	cuik_detect_crt_include();
-	
-#ifdef _WIN32
-	// This is used to detect includes for the preprocessor
-	// and library paths for the linker
-	s_vswhere = MicrosoftCraziness_find_visual_studio_and_windows_sdk();
-#endif
-	
-	// parse command
-	CompilerMode mode = COMPILER_MODE_NONE;
-	
-	const char* cmd = argv[1];
-	if (strcmp(cmd, "live") == 0) mode = COMPILER_MODE_LIVE;
-	else if (strcmp(cmd, "--version") == 0) mode = COMPILER_MODE_VERSION;
-	else if (strcmp(cmd, "-v") == 0) mode = COMPILER_MODE_VERSION;
-	else if (strcmp(cmd, "version") == 0) mode = COMPILER_MODE_VERSION;
-	else if (strcmp(cmd, "preproc") == 0) mode = COMPILER_MODE_PREPROC;
-	else if (strcmp(cmd, "check") == 0) mode = COMPILER_MODE_CHECK;
-	else if (strcmp(cmd, "anal") == 0) mode = COMPILER_MODE_ANAL;
-	else if (strcmp(cmd, "build") == 0) mode = COMPILER_MODE_BUILD;
-	else if (strcmp(cmd, "run") == 0) mode = COMPILER_MODE_RUN;
-	else {
-		printf("Unknown command: %s\n", cmd);
-		print_help(argv[0]);
-		return 1;
-	}
-	
-	if (mode == COMPILER_MODE_VERSION) {
-		print_version(argv[0]);
-		return 0;
-	}
-	
-#ifdef _WIN32
-	SYSTEM_INFO sysinfo;
-	GetSystemInfo(&sysinfo);
-	
-	// Just kinda guesses something that seems ok ish for now
-	// eventually we'll wanna use all cores but it's not honestly
-	// helpful currently since code gen is the only parallel stage.
-	settings.num_of_worker_threads = sysinfo.dwNumberOfProcessors - 4;
-	if (settings.num_of_worker_threads <= 0) settings.num_of_worker_threads = 1;
-	
-	target_system = TB_SYSTEM_WINDOWS;
-	settings.is_windows_long = true;
-#else
-	settings.num_of_worker_threads = 1;
-	
-	target_system = TB_SYSTEM_LINUX;
-	settings.is_windows_long = false;
-#endif
-	
-	// Defaults to the host arch as the target
-#if defined(_AMD64_) || defined(__amd64__)
-	target_arch = TB_ARCH_X86_64;
-#elif defined(__aarch64__)
-	target_arch = TB_ARCH_AARCH64;
-#else
-#error "Unsupported host compiler... for now"
-#endif
-	
-	cuik_source_files = big_array_create(const char*, false);
-	for (size_t i = 2; i < argc; i++) {
-		if (argv[i][0] != '-') {
-			big_array_put(cuik_source_files, argv[i]);
+static int parse_args(size_t arg_start, size_t arg_count, char** args) {
+	for (size_t i = arg_start; i < arg_count; i++) {
+		if (args[i][0] != '-') {
+			big_array_put(cuik_source_files, args[i]);
 			continue;
 		}
 		
-		char* key = &argv[i][1];
+		char* key = &args[i][1];
 		char* value = key;
 		
 		// splits on :
@@ -597,7 +554,7 @@ int main(int argc, char* argv[]) {
 			settings.pedantic = true;
 		} else {
 			printf("unsupported option: %s\n", key);
-			print_help(argv[0]);
+			print_help(args[0]);
 			return 1;
 		}
 	}
@@ -607,7 +564,7 @@ int main(int argc, char* argv[]) {
 		return 1;
 	}
 	
-	// Get filename without extension
+	// Get first filename without extension
 	{
 		const char* filename = cuik_source_files[0];
 		const char* ext = strrchr(filename, '.');
@@ -627,37 +584,111 @@ int main(int argc, char* argv[]) {
 		return 1;
 	}
 	
+	return 0;
+}
+
+static void print_version(const char* install_dir) {
+	printf("cuik version %d.%d\n",         CUIK_COMPILER_MAJOR, CUIK_COMPILER_MINOR);
+	printf("install directory: %s\n",      install_dir);
+	printf("cuik include directory: %s\n", cuik_include_directory);
+	
+#ifdef _WIN32
+	printf("windows sdk include: %S\n",    s_vswhere.windows_sdk_include);
+	printf("visual studio include: %S\n",  s_vswhere.vs_include_path);
+#endif
+}
+
+int main(int argc, char* argv[]) {
+	// We hook the crash handler to create crash dumps
+	hook_crash_handler();
+	
+	if (argc == 1) {
+		printf("Expected command!\n");
+		print_help(argv[0]);
+		return 1;
+	}
+	
+	cuik_detect_crt_include();
+	
+#ifdef _WIN32
+	// This is used to detect includes for the preprocessor
+	// and library paths for the linker
+	s_vswhere = MicrosoftCraziness_find_visual_studio_and_windows_sdk();
+#endif
+	
+	// parse command
+	CompilerMode mode = COMPILER_MODE_NONE;
+	
+	const char* cmd = argv[1];
+	if (strcmp(cmd, "live") == 0) mode = COMPILER_MODE_LIVE;
+	else if (strcmp(cmd, "-v") == 0) mode = COMPILER_MODE_VERSION;
+	else if (strcmp(cmd, "version") == 0) mode = COMPILER_MODE_VERSION;
+	else if (strcmp(cmd, "preproc") == 0) mode = COMPILER_MODE_PREPROC;
+	else if (strcmp(cmd, "anal") == 0) mode = COMPILER_MODE_ANAL;
+	else if (strcmp(cmd, "build") == 0) mode = COMPILER_MODE_BUILD;
+	else if (strcmp(cmd, "query") == 0) mode = COMPILER_MODE_QUERY;
+	else if (strcmp(cmd, "run") == 0) mode = COMPILER_MODE_RUN;
+	else {
+		printf("Unknown command: %s\n", cmd);
+		print_help(argv[0]);
+		return 1;
+	}
+	
+	if (mode == COMPILER_MODE_VERSION) {
+		print_version(argv[0]);
+		return 0;
+	}
+	
+#ifdef _WIN32
+	SYSTEM_INFO sysinfo;
+	GetSystemInfo(&sysinfo);
+	
+	// Just kinda guesses something that seems ok ish for now
+	// eventually we'll wanna use all cores but it's not honestly
+	// helpful currently since code gen is the only parallel stage.
+	settings.num_of_worker_threads = sysinfo.dwNumberOfProcessors - 4;
+	if (settings.num_of_worker_threads <= 0) settings.num_of_worker_threads = 1;
+	
+	target_system = TB_SYSTEM_WINDOWS;
+	settings.is_windows_long = true;
+#else
+	settings.num_of_worker_threads = 1;
+	
+	target_system = TB_SYSTEM_LINUX;
+	settings.is_windows_long = false;
+#endif
+	
+	// Defaults to the host arch as the target
+#if defined(_AMD64_) || defined(__amd64__)
+	target_arch = TB_ARCH_X86_64;
+#elif defined(__aarch64__)
+	target_arch = TB_ARCH_AARCH64;
+#else
+#error "Unsupported host compiler... for now"
+#endif
+	
+	cuik_source_files = big_array_create(const char*, false);
+	
+	// Query is like a magic Swiss army knife inside of Cuik
+	// so it acts differently from everyone else
+	if (mode == COMPILER_MODE_QUERY) {
+		if (argc < 3) {
+			// should give us the help screen for query
+			return execute_query_operation(NULL, 0, 0, NULL);
+		} else {
+			return execute_query_operation(argv[2], 3, argc, argv);
+		}
+	}
+	
+	int result = parse_args(2, argc, argv);
+	if (result) return result;
+	
 	switch (mode) {
 		case COMPILER_MODE_PREPROC: {
 			dump_tokens();
 			break;
 		}
-		case COMPILER_MODE_ANAL: {
-			if (settings.find_include) {
-				char output[MAX_PATH];
-				
-				CPP_Context cpp_ctx;
-				cpp_init(&cpp_ctx);
-				cuik_set_cpp_defines(&cpp_ctx);
-				
-				for (size_t i = 0, count = big_array_length(cuik_source_files); i < count; i++) {
-					if (cpp_find_include_include(&cpp_ctx, output, cuik_source_files[i])) {
-						printf("%s\n", output);
-					} else {
-						printf("NOTFOUND\n");
-					}
-				}
-				
-				cpp_finalize(&cpp_ctx);
-				cpp_deinit(&cpp_ctx);
-			} else {
-				printf("Unknown cuik anal option (Supported options):\n");
-				printf("-find-include - Resolve an include file path from name\n");
-				printf("\n");
-			}
-			break;
-		}
-		case COMPILER_MODE_CHECK:
+		case COMPILER_MODE_ANAL:
 		case COMPILER_MODE_BUILD:
 		case COMPILER_MODE_RUN: {
 			char obj_output_path[MAX_PATH];
@@ -665,7 +696,7 @@ int main(int argc, char* argv[]) {
 				sprintf_s(obj_output_path, 260, "%s.obj", cuik_file_no_ext);
 			} else if (target_system == TB_SYSTEM_LINUX) {
 				sprintf_s(obj_output_path, 260, "%s.o", cuik_file_no_ext);
-			} else if (mode != COMPILER_MODE_CHECK) {
+			} else if (mode != COMPILER_MODE_ANAL) {
 				printf("Unsupported object file\n");
 				abort();
 			}
@@ -690,9 +721,9 @@ int main(int argc, char* argv[]) {
 				}
 #endif
 				
-				compile_project(obj_output_path, true, mode == COMPILER_MODE_CHECK);
+				compile_project(obj_output_path, true, mode == COMPILER_MODE_ANAL);
 				
-				if (!settings.is_object_only && mode != COMPILER_MODE_CHECK && !settings.print_tb_ir) {
+				if (!settings.is_object_only && mode != COMPILER_MODE_ANAL && !settings.print_tb_ir) {
 					if (settings.freestanding) {
 						printf("error: cannot link and be freestanding... yet");
 						return 1;

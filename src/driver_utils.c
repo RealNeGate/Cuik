@@ -212,20 +212,20 @@ bool cuik_find_include_file(char output[MAX_PATH], const char* path) {
 }
 
 TranslationUnit* cuik_compile_file(CompilationUnit* cu, const char* path, bool frontend_only) {
-	TokenStream tokens;
+	TranslationUnit* tu = calloc(1, sizeof(TranslationUnit));
+	
 	CPP_Context cpp_ctx;
 	timed_block("preprocess: %s", path) {
 		cpp_init(&cpp_ctx);
 		cuik_set_cpp_defines(&cpp_ctx);
 		
-		tokens = cpp_process(&cpp_ctx, path);
+		tu->tokens = cpp_process(&cpp_ctx, path);
 		
 		cpp_finalize(&cpp_ctx);
 	}
 	
-	TranslationUnit* tu = malloc(sizeof(TranslationUnit));
 	timed_block("parse %s", path) {
-		translation_unit_parse(tu, &tokens);
+		translation_unit_parse(tu, path);
 		crash_if_reports(REPORT_ERROR);
 	}
 	
@@ -240,7 +240,7 @@ TranslationUnit* cuik_compile_file(CompilationUnit* cu, const char* path, bool f
 	
 	// free any TU resources (including any cached file refs)
 	// TODO(NeGate): actually delete any cached files...
-	arrfree(tokens.tokens);
+	arrfree(tu->tokens.tokens);
 	cpp_deinit(&cpp_ctx);
 	return tu;
 }

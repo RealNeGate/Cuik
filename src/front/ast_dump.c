@@ -399,8 +399,8 @@ static void dump_stmt(TranslationUnit* tu, FILE* stream, StmtIndex s, int depth,
 				dump_stmt(tu, stream, sp->if_.body, depth + 1, sp->if_.next == 0);
 				
 				if (sp->if_.next) {
-					for (int i = 0; i < depth; i++) printf("  ");
-					fprintf(stream, "Else\n");
+					print_barz(depth, false);
+					fprintf(stream, "Else:\n");
 					dump_stmt(tu, stream, sp->if_.next, depth + 1, true);
 				}
 			}

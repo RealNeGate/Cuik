@@ -562,12 +562,14 @@ typedef struct TranslationUnit {
 	// circular references amirite...
 	struct CompilationUnit* parent;
 	
+	const char* filepath;
+	
 	// chain of TUs for the compilation unit
 	struct TranslationUnit* next;
 	bool is_free;
 	
 	// token stream
-	TokenStream* tokens;
+	TokenStream tokens;
 	
 	// TODO(NeGate): keep track of all files loaded by this TU
 	// so that we can properly free them
@@ -600,5 +602,5 @@ bool const_eval_try_offsetof_hack(TranslationUnit* tu, ExprIndex e, uint64_t* ou
 
 void init_types(TranslationUnit* tu);
 
-void translation_unit_parse(TranslationUnit* restrict tu, TokenStream* restrict s);
+void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath);
 void translation_unit_deinit(TranslationUnit* tu);

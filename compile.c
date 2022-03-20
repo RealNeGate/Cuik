@@ -2,9 +2,8 @@
 // just call it with the C11 compiler of your choice
 //
 // It's inspired by nobuild but different
+#define USE_DA_ASAN 0
 #include "compile.h"
-//#define RELEASE_BUILD
-//#define USE_DA_ASAN 0
 
 static const char* INPUT_FILES[] = {
 	"src/main_driver.c",
@@ -171,7 +170,7 @@ int main(int argc, char** argv) {
 			expect_stdout("tests"SLASH"the_increment"SLASH"iso"SLASH"fibonacci_test", "1 1 2 3 5 8 13 21 34 55 89 144 233 377 610 1 1 2 3 5 8 13 21 34 55 89 144 233 377 610 ");
 			expect_stdout("tests"SLASH"the_increment"SLASH"iso"SLASH"clang_17781", "1");
 			expect_stdout("tests"SLASH"the_increment"SLASH"iso"SLASH"regression_1", "0 1 1 1 1 1 1 ");
-			expect_stdout("tests"SLASH"the_increment"SLASH"cuik"SLASH"meme", "4 0 1 2 3 ");
+			expect_stdout("tests"SLASH"the_increment"SLASH"cuik"SLASH"meme", "7 0 1 2 3 4 5 6 ");
 			
 			// Inria tests
 			try_compile("tests"SLASH"the_increment"SLASH"inria"SLASH"argument_scope");

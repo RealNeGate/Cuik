@@ -1277,16 +1277,16 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, StmtIndex s) {
 	
 	if (settings.is_debug_info) {
 		// TODO(NeGate): Fix this up later!!!
-		static _Thread_local TB_FileID last_file_id = 0;
-		static _Thread_local const char* last_filepath = NULL;
+		static thread_local TB_FileID last_file_id = 0;
+		static thread_local const char* last_filepath = NULL;
 		
-		SourceLoc* l = &tu->tokens->line_arena[sp->loc];
+		SourceLoc* l = &tu->tokens.line_arena[sp->loc];
 		if ((const char*)l->file != last_filepath) {
 			last_filepath = (const char*)l->file;
 			last_file_id = tb_file_create(mod, (const char*)l->file);
 		}
 		
-		tb_inst_loc(func, last_file_id, l->line + 1);
+		tb_inst_loc(func, last_file_id, l->line);
 	}
 	
 	insert_label(func);

@@ -109,9 +109,8 @@ static ExprIndex make_expr(TranslationUnit* tu) {
 	return big_array_length(tu->exprs) - 1;
 }
 
-void translation_unit_parse(TranslationUnit* restrict tu, TokenStream* restrict s) {
-	*tu = (TranslationUnit){ 0 };
-	tu->tokens = s;
+void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath) {
+	tu->filepath = filepath;
 	tu->types = big_array_create(Type, true);
 	tu->members = big_array_create(Member, true);
 	tu->params = big_array_create(Param, true);
@@ -125,6 +124,8 @@ void translation_unit_parse(TranslationUnit* restrict tu, TokenStream* restrict 
 	////////////////////////////////
 	// Parse translation unit
 	////////////////////////////////
+	TokenStream* restrict s = &tu->tokens;
+	
 	while (tokens_get(s)->type) {
 		while (tokens_get(s)->type == ';') tokens_next(s);
 		

@@ -10,9 +10,9 @@ static thread_local StmtIndex function_stmt;
 // two simple temporary buffers to represent type_as_string results
 static thread_local char temp_string0[1024], temp_string1[1024];
 
-#define sema_info(loc, ...) report(REPORT_INFO, &tu->tokens->line_arena[loc], __VA_ARGS__)
-#define sema_warn(loc, ...) report(REPORT_WARNING, &tu->tokens->line_arena[loc], __VA_ARGS__)
-#define sema_error(loc, ...) report(REPORT_ERROR, &tu->tokens->line_arena[loc], __VA_ARGS__)
+#define sema_info(loc, ...) report(REPORT_INFO, &tu->tokens.line_arena[loc], __VA_ARGS__)
+#define sema_warn(loc, ...) report(REPORT_WARNING, &tu->tokens.line_arena[loc], __VA_ARGS__)
+#define sema_error(loc, ...) report(REPORT_ERROR, &tu->tokens.line_arena[loc], __VA_ARGS__)
 
 static bool is_scalar_type(TranslationUnit* tu, TypeIndex type_index) {
 	Type* restrict type = &tu->types[type_index];
