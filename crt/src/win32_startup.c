@@ -7,10 +7,11 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
-extern void printf(const char* fmt, ...);
+extern int printf(const char* fmt, ...);
 extern int main(int argc, char** argv);
-extern LPWSTR GetCommandLineW();
-extern LPWSTR* CommandLineToArgvW(LPCWSTR lpCmdLine, int* pNumArgs);
+
+DECLSPEC_IMPORT LPWSTR GetCommandLineW();
+DECLSPEC_IMPORT LPWSTR* CommandLineToArgvW(LPCWSTR lpCmdLine, int* pNumArgs);
 
 static size_t count_wide_chars(const wchar_t* str) {
 	size_t len = 0;
@@ -56,12 +57,9 @@ int mainCRTStartup() {
 	for (int i = 1; i < arg_count; i++) {
 		size_t wide_len = count_wide_chars(args_wide[i]) + 1;
 		char* ansi_str = malloc(wide_len);
-		printf("Alloc: %p (%zu bytes)\n", ansi_str);
 		
 		convert_wide_chars_to_ansi(args[i], args_wide[i], wide_len);
 		args[i] = ansi_str;
-		
-		printf("%S (%zu) -> %s\n", args_wide[i], wide_len, ansi_str);
 	}
 	
 	//int arg_count = 1;

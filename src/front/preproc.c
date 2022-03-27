@@ -1111,6 +1111,7 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
 					// Parse macro function arg names
 					const unsigned char** key_ranges = tls_save();
 					int key_count = 0;
+					bool has_varargs = false;
 					
 					{
 						Lexer arg_lex = (Lexer) { l->filepath, args, args };
@@ -1122,17 +1123,21 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
 								expect(&arg_lex, ',');
 							}
 							
-							if (arg_lex.token_type != TOKEN_IDENTIFIER) {
-								generic_error(&arg_lex, "expected identifier!");
+							if (arg_lex.token_type == TOKEN_TRIPLE_DOT) {
+								has_varargs = true;
+								lexer_read(&arg_lex);
+								break;
+							} else if (arg_lex.token_type == TOKEN_IDENTIFIER) {
+								tls_push(2 * sizeof(const unsigned char*));
+								
+								int i = key_count++;
+								key_ranges[i*2 + 0] = arg_lex.token_start;
+								key_ranges[i*2 + 1] = arg_lex.token_end;
+								
+								lexer_read(&arg_lex);
+							} else {
+								generic_error(&arg_lex, "expected identifier or ...!");
 							}
-							
-							tls_push(2 * sizeof(const unsigned char*));
-							
-							int i = key_count++;
-							key_ranges[i*2 + 0] = arg_lex.token_start;
-							key_ranges[i*2 + 1] = arg_lex.token_end;
-							
-							lexer_read(&arg_lex);
 						}
 						
 						expect(&arg_lex, ')');
@@ -1179,54 +1184,88 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
 							continue;
 						}
 						
-						int index = -1;
-						for (size_t i = 0; i < key_count; i++) {
-							size_t key_length = key_ranges[i*2 + 1] - key_ranges[i*2 + 0];
-							const unsigned char* key = key_ranges[i*2 + 0];
-							
-							if (token_length == key_length &&
-								memcmp(key, token_data, token_length) == 0) {
-								index = i;
-								break;
-							}
-						}
-						
-						if (index >= 0) {
-							if (as_string) *temp_expansion++ = '\"';
-							
-							const unsigned char* end   = value_ranges[index*2 + 1];
-							const unsigned char* start = value_ranges[index*2 + 0];
-							
-							size_t count = end-start;
-							for (size_t i = 0; i < count; i++) {
-								if (start[i] == '\r' || start[i] == '\n') {
-									*temp_expansion++ = ' ';
-								} else if (start[i] == '\"' && as_string) {
-									if (i == 0 || (i > 0 && start[i - 1] != '\\')) {
-										*temp_expansion++ = '\\';
-										*temp_expansion++ = '\"';
+						if (has_varargs && 
+							token_length == sizeof("__VA_ARGS__")-1 &&
+							memcmp(token_data, "__VA_ARGS__", sizeof("__VA_ARGS__")-1) == 0) {
+							// Just slap all the arguments that are after the 'key_count'
+							for (size_t i = key_count; i < value_count; i++) {
+								const unsigned char* end   = value_ranges[i*2 + 1];
+								const unsigned char* start = value_ranges[i*2 + 0];
+								size_t count = end-start;
+								
+								if (i) {
+									*temp_expansion++ = ',';
+								}
+								
+								for (size_t j = 0; j < count; j++) {
+									if (start[j] == '\r' || start[j] == '\n') {
+										*temp_expansion++ = ' ';
+									} else {
+										*temp_expansion++ = start[j];
 									}
-								} else {
-									*temp_expansion++ = start[i];
+								}
+								*temp_expansion++ = ' ';
+							}
+						} else {
+							int index = -1;
+							for (size_t i = 0; i < key_count; i++) {
+								size_t key_length = key_ranges[i*2 + 1] - key_ranges[i*2 + 0];
+								const unsigned char* key = key_ranges[i*2 + 0];
+								
+								if (token_length == key_length &&
+									memcmp(key, token_data, token_length) == 0) {
+									index = i;
+									break;
 								}
 							}
 							
-							if (as_string) *temp_expansion++ = '\"';
-							*temp_expansion++ = ' ';
-							
-							as_string = false;
-						} else {
-							// TODO(NeGate): Error message
-							if (as_string) *temp_expansion++ = '#';
-							
-							for (size_t i = 0; i < token_length; i++) {
-								if (token_data[i] == '\r' || token_data[i] == '\n') {
+							if (index >= 0) {
+								const unsigned char* end   = value_ranges[index*2 + 1];
+								const unsigned char* start = value_ranges[index*2 + 0];
+								size_t count = end-start;
+								
+								// Removes any funky characters like " into \"
+								// when stringifying
+								if (as_string) {
+									*temp_expansion++ = '\"';
+									for (size_t i = 0; i < count; i++) {
+										if (start[i] == '\r' || start[i] == '\n') {
+											*temp_expansion++ = ' ';
+										} else if (start[i] == '\"' && as_string) {
+											if (i == 0 || (i > 0 && start[i - 1] != '\\')) {
+												*temp_expansion++ = '\\';
+												*temp_expansion++ = '\"';
+											}
+										} else {
+											*temp_expansion++ = start[i];
+										}
+									}
+									*temp_expansion++ = '\"';
 									*temp_expansion++ = ' ';
 								} else {
-									*temp_expansion++ = token_data[i];
+									for (size_t i = 0; i < count; i++) {
+										if (start[i] == '\r' || start[i] == '\n') {
+											*temp_expansion++ = ' ';
+										} else {
+											*temp_expansion++ = start[i];
+										}
+									}
 								}
+								
+								as_string = false;
+							} else {
+								// TODO(NeGate): Error message
+								if (as_string) *temp_expansion++ = '#';
+								
+								for (size_t i = 0; i < token_length; i++) {
+									if (token_data[i] == '\r' || token_data[i] == '\n') {
+										*temp_expansion++ = ' ';
+									} else {
+										*temp_expansion++ = token_data[i];
+									}
+								}
+								*temp_expansion++ = ' ';
 							}
-							*temp_expansion++ = ' ';
 						}
 						
 						lexer_read(&def_lex);

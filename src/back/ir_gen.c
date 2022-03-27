@@ -1277,102 +1277,194 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 		case EXPR_SHL_ASSIGN:
 		case EXPR_SHR_ASSIGN: {
 			Type* restrict type = &tu->types[ep->type];
-			
-			// Load inputs
-			IRVal lhs = irgen_expr(tu, func, ep->bin_op.left);
-			
-			TB_Register l = TB_NULL_REG;
-			if (ep->op != EXPR_ASSIGN) {
-				// don't do this conversion for ASSIGN, since it won't
-				// be needing it
-				l = cvt2rval(tu, func, lhs, ep->bin_op.left);
-			}
-			
-			IRVal rhs = irgen_expr(tu, func, ep->bin_op.right);
-			
-			// Try pointer arithmatic
-			if ((ep->op == EXPR_PLUS_ASSIGN || ep->op == EXPR_MINUS_ASSIGN) && type->kind == KIND_PTR) {
-				int dir = ep->op == EXPR_PLUS_ASSIGN ? 1 : -1;
-				int stride = tu->types[type->ptr_to].size;
-				
-				TB_Register r = cvt2rval(tu, func, rhs, ep->bin_op.right);
-				TB_Register arith = tb_inst_array_access(func, l, r, dir * stride);
-				
+			if (type->is_atomic) {
+				// Load inputs
+				IRVal lhs = irgen_expr(tu, func, ep->bin_op.left);
+				IRVal rhs = irgen_expr(tu, func, ep->bin_op.right);
 				assert(lhs.value_type == LVALUE);
-				tb_inst_store(func, TB_TYPE_PTR, lhs.reg, arith, type->align);
-				return lhs;
-			}
-			
-			TB_DataType dt = ctype_to_tbtype(type);
-			
-			TB_Register data;
-			if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
-				if (ep->op != EXPR_ASSIGN) abort();
 				
-				if (type->record.intrin_type.type != TB_VOID) {
-					tb_inst_store(func, type->record.intrin_type, lhs.reg, rhs.reg, type->align);
+				if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
+					// Implement big atomic copy
+					abort();
+				} else if (type->kind == KIND_FLOAT || type->kind == KIND_DOUBLE) {
+					TB_Register r = cvt2rval(tu, func, rhs, ep->bin_op.right);
+					
+					// float assignment can be done atomic by using the normal
+					// integer stuff
+					if (ep->op == EXPR_ASSIGN) {
+						tb_inst_atomic_xchg(func, lhs.reg, r, TB_MEM_ORDER_SEQ_CST);
+						
+						return (IRVal) {
+							.value_type = RVALUE,
+							.type = ep->type,
+							.reg = r
+						};
+					} else {
+						// floats don't really have any atomic operations so just
+						// emulate them all
+						/*TB_Reg l = cvt2rval(tu, func, lhs, ep->bin_op.left);
+						
+						TB_Label loop = tb_inst_new_label_id(func);
+						TB_Label success = tb_inst_new_label_id(func);
+						tb_inst_label(func, loop);
+						{
+							TB_Reg desired = TB_NULL_REG;
+							switch (ep->op) {
+								case EXPR_PLUS_ASSIGN: desired = tb_inst_fadd(func, l, r); break;
+								case EXPR_MINUS_ASSIGN: desired = tb_inst_fsub(func, l, r); break;
+								case EXPR_TIMES_ASSIGN: desired = tb_inst_fmul(func, l, r); break;
+								case EXPR_SLASH_ASSIGN: desired = tb_inst_fdiv(func, l, r); break;
+								default: assert(0);
+							}
+							
+							if (type->kind == KIND_FLOAT) {
+								desired = tb_inst_bitcast(func, desired, TB_TYPE_I32);
+							} else if (type->kind == KIND_DOUBLE) {
+								desired = tb_inst_bitcast(func, desired, TB_TYPE_I64);
+							} else assert(0);
+							
+							TB_CmpXchgResult r = tb_inst_atomic_cmpxchg(func, lhs.reg, expected, desired, TB_MEM_ORDER_SEQ_CST, TB_MEM_ORDER_SEQ_CST);
+							tb_inst_if(func, r.success, success, loop);
+						}
+						tb_inst_label(func, success);
+						
+						return (IRVal) {
+							.value_type = RVALUE,
+							.type = ep->type,
+							.reg = l
+						};*/
+						internal_error("TODO");
+					}
 				} else {
-					TB_Register size_reg = tb_inst_uint(func, TB_TYPE_I64, type->size);
-					tb_inst_memcpy(func, lhs.reg, rhs.reg, size_reg, type->align);
+					TB_Register r = cvt2rval(tu, func, rhs, ep->bin_op.right);
+					
+					if (ep->op == EXPR_ASSIGN) {
+						tb_inst_atomic_xchg(func, lhs.reg, r, TB_MEM_ORDER_SEQ_CST);
+						
+						return (IRVal) {
+							.value_type = RVALUE,
+							.type = ep->type,
+							.reg = r
+						};
+					} else if (ep->op == EXPR_PLUS_ASSIGN) {
+						TB_Register op = tb_inst_atomic_add(func, lhs.reg, r, TB_MEM_ORDER_SEQ_CST);
+						op = tb_inst_add(func, op, r, TB_CAN_WRAP);
+						
+						return (IRVal) {
+							.value_type = RVALUE,
+							.type = ep->type,
+							.reg = op
+						};
+					} else if (ep->op == EXPR_MINUS_ASSIGN) {
+						TB_Register op = tb_inst_atomic_sub(func, lhs.reg, r, TB_MEM_ORDER_SEQ_CST);
+						op = tb_inst_sub(func, op, r, TB_CAN_WRAP);
+						
+						return (IRVal) {
+							.value_type = RVALUE,
+							.type = ep->type,
+							.reg = op
+						};
+					} else {
+						internal_error("TODO: atomic operation not ready");
+					}
 				}
-			} else if (type->kind == KIND_FLOAT || type->kind == KIND_DOUBLE) {
-				TB_Register r = cvt2rval(tu, func, rhs, ep->bin_op.right);
-				
-				switch (ep->op) {
-					case EXPR_ASSIGN: data = r; break;
-					case EXPR_PLUS_ASSIGN: data = tb_inst_fadd(func, l, r); break;
-					case EXPR_MINUS_ASSIGN: data = tb_inst_fsub(func, l, r); break;
-					case EXPR_TIMES_ASSIGN: data = tb_inst_fmul(func, l, r); break;
-					case EXPR_SLASH_ASSIGN: data = tb_inst_fdiv(func, l, r); break;
-					default: abort();
-				}
-				
-				assert(lhs.value_type == LVALUE);
-				tb_inst_store(func, dt, lhs.reg, data, type->align);
 			} else {
-				TB_Register r = cvt2rval(tu, func, rhs, ep->bin_op.right);
-				TB_ArithmaticBehavior ab = type->is_unsigned ? TB_CAN_WRAP : TB_ASSUME_NSW;
+				// Load inputs
+				IRVal lhs = irgen_expr(tu, func, ep->bin_op.left);
 				
-				switch (ep->op) {
-					case EXPR_ASSIGN: data = r; break;
-					case EXPR_PLUS_ASSIGN: data = tb_inst_add(func, l, r, ab); break;
-					case EXPR_MINUS_ASSIGN: data = tb_inst_sub(func, l, r, ab); break;
-					case EXPR_TIMES_ASSIGN: data = tb_inst_mul(func, l, r, ab); break;
-					case EXPR_SLASH_ASSIGN: data = tb_inst_div(func, l, r, !type->is_unsigned); break;
-					case EXPR_AND_ASSIGN: data = tb_inst_and(func, l, r); break;
-					case EXPR_OR_ASSIGN: data = tb_inst_or(func, l, r); break;
-					case EXPR_XOR_ASSIGN: data = tb_inst_xor(func, l, r); break;
-					case EXPR_SHL_ASSIGN: data = tb_inst_shl(func, l, r, ab); break;
-					case EXPR_SHR_ASSIGN: data = type->is_unsigned ? tb_inst_shr(func, l, r) : tb_inst_sar(func, l, r); break;
-					default: abort();
+				TB_Register l = TB_NULL_REG;
+				if (ep->op != EXPR_ASSIGN) {
+					// don't do this conversion for ASSIGN, since it won't
+					// be needing it
+					l = cvt2rval(tu, func, lhs, ep->bin_op.left);
 				}
 				
-				if (lhs.value_type == LVALUE_BITS && lhs.bits.width != (type->size*8)) {
-					TB_Register old_value = tb_inst_load(func, dt, lhs.reg, type->align);
+				IRVal rhs = irgen_expr(tu, func, ep->bin_op.right);
+				
+				// Try pointer arithmatic
+				if ((ep->op == EXPR_PLUS_ASSIGN || ep->op == EXPR_MINUS_ASSIGN) && type->kind == KIND_PTR) {
+					int dir = ep->op == EXPR_PLUS_ASSIGN ? 1 : -1;
+					int stride = tu->types[type->ptr_to].size;
 					
-					// mask out the space for our bitfield member
-					uint64_t clear_mask = ~((UINT64_MAX >> (64ull - lhs.bits.width)) << lhs.bits.offset);
-					old_value = tb_inst_and(func, old_value, tb_inst_uint(func, dt, ~clear_mask));
+					TB_Register r = cvt2rval(tu, func, rhs, ep->bin_op.right);
+					TB_Register arith = tb_inst_array_access(func, l, r, dir * stride);
 					
-					// mask source value and position it correctly
-					uint64_t insert_mask = (UINT64_MAX >> (64ull - lhs.bits.width));
-					data = tb_inst_and(func, data, tb_inst_uint(func, dt, insert_mask));
+					assert(lhs.value_type == LVALUE);
+					tb_inst_store(func, TB_TYPE_PTR, lhs.reg, arith, type->align);
+					return lhs;
+				}
+				
+				TB_DataType dt = ctype_to_tbtype(type);
+				
+				TB_Register data;
+				if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
+					if (ep->op != EXPR_ASSIGN) abort();
 					
-					if (lhs.bits.offset) {
-						data = tb_inst_shl(func, data, tb_inst_uint(func, dt, lhs.bits.offset), TB_ASSUME_NUW);
+					if (type->record.intrin_type.type != TB_VOID) {
+						tb_inst_store(func, type->record.intrin_type, lhs.reg, rhs.reg, type->align);
+					} else {
+						TB_Register size_reg = tb_inst_uint(func, TB_TYPE_I64, type->size);
+						tb_inst_memcpy(func, lhs.reg, rhs.reg, size_reg, type->align);
+					}
+				} else if (type->kind == KIND_FLOAT || type->kind == KIND_DOUBLE) {
+					TB_Register r = cvt2rval(tu, func, rhs, ep->bin_op.right);
+					
+					switch (ep->op) {
+						case EXPR_ASSIGN: data = r; break;
+						case EXPR_PLUS_ASSIGN: data = tb_inst_fadd(func, l, r); break;
+						case EXPR_MINUS_ASSIGN: data = tb_inst_fsub(func, l, r); break;
+						case EXPR_TIMES_ASSIGN: data = tb_inst_fmul(func, l, r); break;
+						case EXPR_SLASH_ASSIGN: data = tb_inst_fdiv(func, l, r); break;
+						default: abort();
 					}
 					
-					// merge
-					data = tb_inst_or(func, old_value, data);
-					
-					tb_inst_store(func, dt, lhs.reg, data, type->align);
-				} else {
 					assert(lhs.value_type == LVALUE);
 					tb_inst_store(func, dt, lhs.reg, data, type->align);
+				} else {
+					TB_Register r = cvt2rval(tu, func, rhs, ep->bin_op.right);
+					TB_ArithmaticBehavior ab = type->is_unsigned ? TB_CAN_WRAP : TB_ASSUME_NSW;
+					
+					switch (ep->op) {
+						case EXPR_ASSIGN: data = r; break;
+						case EXPR_PLUS_ASSIGN: data = tb_inst_add(func, l, r, ab); break;
+						case EXPR_MINUS_ASSIGN: data = tb_inst_sub(func, l, r, ab); break;
+						case EXPR_TIMES_ASSIGN: data = tb_inst_mul(func, l, r, ab); break;
+						case EXPR_SLASH_ASSIGN: data = tb_inst_div(func, l, r, !type->is_unsigned); break;
+						case EXPR_AND_ASSIGN: data = tb_inst_and(func, l, r); break;
+						case EXPR_OR_ASSIGN: data = tb_inst_or(func, l, r); break;
+						case EXPR_XOR_ASSIGN: data = tb_inst_xor(func, l, r); break;
+						case EXPR_SHL_ASSIGN: data = tb_inst_shl(func, l, r, ab); break;
+						case EXPR_SHR_ASSIGN: data = type->is_unsigned ? tb_inst_shr(func, l, r) : tb_inst_sar(func, l, r); break;
+						default: abort();
+					}
+					
+					if (lhs.value_type == LVALUE_BITS && lhs.bits.width != (type->size*8)) {
+						TB_Register old_value = tb_inst_load(func, dt, lhs.reg, type->align);
+						
+						// mask out the space for our bitfield member
+						uint64_t clear_mask = ~((UINT64_MAX >> (64ull - lhs.bits.width)) << lhs.bits.offset);
+						old_value = tb_inst_and(func, old_value, tb_inst_uint(func, dt, ~clear_mask));
+						
+						// mask source value and position it correctly
+						uint64_t insert_mask = (UINT64_MAX >> (64ull - lhs.bits.width));
+						data = tb_inst_and(func, data, tb_inst_uint(func, dt, insert_mask));
+						
+						if (lhs.bits.offset) {
+							data = tb_inst_shl(func, data, tb_inst_uint(func, dt, lhs.bits.offset), TB_ASSUME_NUW);
+						}
+						
+						// merge
+						data = tb_inst_or(func, old_value, data);
+						
+						tb_inst_store(func, dt, lhs.reg, data, type->align);
+					} else {
+						assert(lhs.value_type == LVALUE);
+						tb_inst_store(func, dt, lhs.reg, data, type->align);
+					}
 				}
+				
+				return lhs;
 			}
-			
-			return lhs;
 		}
 		case EXPR_TERNARY: {
 			TB_Register cond = irgen_as_rvalue(tu, func, ep->ternary_op.left);

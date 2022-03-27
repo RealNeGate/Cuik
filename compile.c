@@ -285,7 +285,8 @@ int main(int argc, char** argv) {
 			
 			char cmd[1024];
 			for (size_t i = 0; i < INPUT_FILE_COUNT; i++) {
-				snprintf(cmd, 1024, "cuik anal -threads:1 -emit-ast:minimal %s", INPUT_FILES[i]);
+				snprintf(cmd, 1024, "cuik anal -threads:1 -include:src %s", INPUT_FILES[i]);
+				
 				if (system(cmd) == 0) {
 					printf("`-Success with %s!\n\n", INPUT_FILES[i]);
 					successes++;

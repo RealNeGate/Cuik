@@ -745,14 +745,6 @@ int main(int argc, char* argv[]) {
 			
 			// Build project
 			timed_block("total") {
-#ifdef _WIN32
-				if (!settings.freestanding) {
-					char* cuik_startup_path = malloc(MAX_PATH);
-					sprintf_s(cuik_startup_path, MAX_PATH, "%swin32_startup.c", cuik_library_directory);
-					big_array_put(cuik_source_files, cuik_startup_path);
-				}
-#endif
-				
 				compile_project(obj_output_path, true, mode == COMPILER_MODE_ANAL);
 				
 				if (!settings.is_object_only && mode != COMPILER_MODE_ANAL && !settings.print_tb_ir) {
@@ -769,6 +761,7 @@ int main(int argc, char* argv[]) {
 							linker_add_libpath(&l, "W:/Workspace/Cuik/crt/lib/");
 							
 							// Add input libraries
+#ifdef _WIN32
 							linker_add_input_file(&l, "kernel32.lib");
 							linker_add_input_file(&l, "user32.lib");
 							linker_add_input_file(&l, "shell32.lib");
@@ -777,6 +770,8 @@ int main(int argc, char* argv[]) {
 							//linker_add_input_file(&l, "Onecoreuap.lib");
 							//linker_add_input_file(&l, "opengl32.lib");
 							linker_add_input_file(&l, "msvcrt.lib");
+							linker_add_input_file(&l, "win32_startup.obj");
+#endif
 							
 							// Add Cuik output
 							linker_add_input_file(&l, obj_output_path);
