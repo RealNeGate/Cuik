@@ -1,4 +1,5 @@
 #define _USE_ATTRIBUTES_FOR_SAL 1
+#define SAL_NO_ATTRIBUTE_DECLARATIONS 0
 #include <sal.h>
 
 struct MyBuffer {

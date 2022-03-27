@@ -73,8 +73,8 @@ static const uint32_t crc32_table[256] = {
 	0xBE2DA0A5L, 0x4C4623A6L, 0x5F16D052L, 0xAD7D5351L
 };
 
-void poof(size_t n) {
-	n--;
+size_t poof(size_t n) {
+	return n--;
 	// Had a miscompilation here kinda like this:
 	// size_t tmp = n;
 	// tmp -= 1;

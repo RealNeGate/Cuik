@@ -2483,18 +2483,18 @@ static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, At
 			}
 			
 			case TOKEN_KW_Atomic: {
-				SourceLoc* loc = &s->line_arena[tokens_get(s)->location];
-				
 				tokens_next(s);
 				if (tokens_get(s)->type == '(') {
+					SourceLoc* opening_loc = &s->line_arena[tokens_get(s)->location];
 					tokens_next(s);
 					
 					type = parse_typename(tu, s);
 					counter += OTHER;
 					is_atomic = true;
 					
+					SourceLoc* closing_loc = &s->line_arena[tokens_get(s)->location];
 					if (tokens_get(s)->type != ')') {
-						report(REPORT_ERROR, loc, "expected closing parenthesis for _Atomic");
+						report_two_spots(REPORT_ERROR, opening_loc, closing_loc, "expected closing parenthesis for _Atomic", "open", "close?", NULL);
 						return 0;
 					}
 				} else {
@@ -2586,6 +2586,7 @@ static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, At
 			case TOKEN_KW_struct:
 			case TOKEN_KW_union: {
 				if (counter) goto done;
+				SourceLocIndex record_loc = tokens_get(s)->location;
 				tokens_next(s);
 				
 				bool is_union = tkn_type == TOKEN_KW_union;
@@ -2598,6 +2599,7 @@ static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, At
 				Token* t = tokens_get(s);
 				if (tokens_get(s)->type == TOKEN_IDENTIFIER) {
 					name = atoms_put(t->end - t->start, t->start);
+					record_loc = t->location;
 					tokens_next(s);
 				}
 				
@@ -2653,8 +2655,19 @@ static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, At
 							TypeIndex member_type = decl.type;
 							
 							if (tu->types[member_type].kind == KIND_FUNC) {
-								generic_error(s, "Naw dawg");
-							}
+								generic_error(s, "Cannot put function types into a struct, try a function pointer");
+							} 
+							/*else if (tu->types[member_type].kind == KIND_STRUCT ||
+									   tu->types[member_type].kind == KIND_UNION ||
+									   tu->types[member_type].kind == KIND_ENUM) {
+								if (tu->types[type].is_incomplete) {
+									report_two_spots(REPORT_ERROR,
+													 &s->line_arena[record_loc],
+													 &s->line_arena[decl.loc],
+													 "Cannot place incomplete type into struct",
+													 NULL, NULL, NULL);
+								}
+							}*/
 							
 							int member_align = tu->types[member_type].align;
 							int member_size = tu->types[member_type].size;
@@ -2769,6 +2782,7 @@ static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, At
 						assert(tu->types[type].enumerator.start != tu->types[type].enumerator.start);
 					} else {
 						type = new_enum(tu);
+						tu->types[type].is_incomplete = true;
 						tu->types[type].enumerator.name = name;
 						tu->types[type].enumerator.start = big_array_length(tu->enum_entries);
 						
@@ -2809,6 +2823,7 @@ static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, At
 						generic_error(s, "Unclosed enum list!");
 					}
 					
+					tu->types[type].is_incomplete = false;
 					tu->types[type].enumerator.end = big_array_length(tu->enum_entries);
 				} else {
 					type = find_incomplete_type((char*)name);

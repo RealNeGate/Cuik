@@ -10,7 +10,6 @@
 
 extern TB_Module* mod;
 extern atomic_size_t function_count;
-extern TB_Function* static_init_func;
 
 typedef enum IRValType {
 	RVALUE,
@@ -74,10 +73,6 @@ InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, Sourc
 
 void irgen_init();
 void irgen_deinit();
-
-// Done with ir generation crap, fix up the static_init function 
-// and be done with all of that
-void irgen_finalize();
 
 TB_Register irgen_as_rvalue(TranslationUnit* tu, TB_Function* func, ExprIndex e);
 IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e);

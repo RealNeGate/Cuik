@@ -507,8 +507,10 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 					const unsigned char* start = NULL;
 					const unsigned char* end = NULL;
 					
+					bool is_lib_include = false;
 					if (l.token_type == '<') {
 						// Hacky but mostly works
+						is_lib_include = true;
 						start = l.token_start + 1;
 						
 						do {
@@ -529,7 +531,14 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 					// Search for file in system libs
 					char path[260];
 					bool success = false;
-					{
+					
+					if (!is_lib_include) {
+						// Try local includes
+						sprintf_s(path, 260, "%s%.*s", directory, (int) (end - start), start);
+						if (file_exists(path)) success = true;
+					}
+					
+					if (!success) {
 						size_t num_system_include_dirs = arrlen(c->system_include_dirs);
 						
 						for (size_t i = 0; i < num_system_include_dirs; i++) {
@@ -544,7 +553,7 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 						}
 					}
 					
-					if (!success) {
+					if (!success && is_lib_include) {
 						// Try local includes
 						sprintf_s(path, 260, "%s%.*s", directory, (int) (end - start), start);
 						if (file_exists(path)) success = true;

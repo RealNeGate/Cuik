@@ -199,25 +199,20 @@ void cuik_set_cpp_defines(CPP_Context* cpp) {
 	target_desc.set_defines(cpp);
 }
 
-bool cuik_find_include_file(char output[MAX_PATH], const char* path) {
-	CPP_Context cpp_ctx;
-	cpp_init(&cpp_ctx);
-	cuik_set_cpp_defines(&cpp_ctx);
-	
-	bool found = cpp_find_include_include(&cpp_ctx, output, path);
-	
-	cpp_finalize(&cpp_ctx);
-	cpp_deinit(&cpp_ctx);
-	return found;
-}
-
-TranslationUnit* cuik_compile_file(CompilationUnit* cu, const char* path, bool frontend_only) {
+TranslationUnit* cuik_compile_file(CompilationUnit* cu, const char* path, 
+								   size_t include_count, const char** includes,
+								   bool frontend_only) {
 	TranslationUnit* tu = calloc(1, sizeof(TranslationUnit));
 	
 	CPP_Context cpp_ctx;
 	timed_block("preprocess: %s", path) {
 		cpp_init(&cpp_ctx);
 		cuik_set_cpp_defines(&cpp_ctx);
+		
+		// add extra include paths
+		for (size_t i = 0; i < include_count; i++) {
+			cpp_add_include_directory(&cpp_ctx, includes[i]);
+		}
 		
 		tu->tokens = cpp_process(&cpp_ctx, path);
 		

@@ -193,7 +193,7 @@ TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e) {
 					unsigned long long expected = (unsigned long long)ep->int_num.num;
 					
 					if (original != expected) {
-						sema_error(ep->loc, "Could not represent integer literal as int. (%ulld or %ullx)", expected, expected);
+						sema_error(ep->loc, "Could not represent integer literal as int. (%llu or %llx)", expected, expected);
 					}
 					
 					return (ep->type = TYPE_INT);
@@ -442,6 +442,8 @@ TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e) {
 				return (ep->type = TYPE_NONE);
 			}
 			
+			tu->exprs[ep->subscript.base].cast_type = base;
+			tu->exprs[ep->subscript.index].cast_type = TYPE_LONG;
 			return (ep->type = tu->types[base].ptr_to);
 		}
 		case EXPR_DEREF: {

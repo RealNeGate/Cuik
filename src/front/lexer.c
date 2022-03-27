@@ -581,10 +581,35 @@ uint64_t parse_int(size_t len, const char* str, IntSuffix* out_suffix) {
 	
 	IntSuffix suffix = INT_SUFFIX_NONE;
 	if (end != &str[len]) {
+		size_t remaining = &str[len] - end;
+		if (remaining == 4) {
+			if (memcmp(end, "ui16", 4) == 0) {
+				goto success;
+			} else if (memcmp(end, "ui32", 4) == 0) {
+				suffix = INT_SUFFIX_U;
+				goto success;
+			} else if (memcmp(end, "ui64", 4) == 0) {
+				suffix = INT_SUFFIX_ULL;
+				goto success;
+			}
+		} else if (remaining == 3) {
+			if (memcmp(end, "i16", 3) == 0) {
+				goto success;
+			} else if (memcmp(end, "i32", 3) == 0) {
+				goto success;
+			} else if (memcmp(end, "i64", 3) == 0) {
+				suffix = INT_SUFFIX_LL;
+				goto success;
+			}
+		} else if (remaining == 2 && memcmp(end, "i8", 2) == 0) {
+			goto success;
+		}
+		
 		do {
 			switch (end[0]) {
 				case 'u': case 'U': suffix |= 1; break;
 				case 'l': case 'L': suffix += 2; break;
+				default: break;
 			}
 			end++;
 		} while (end != &str[len]);
@@ -592,6 +617,7 @@ uint64_t parse_int(size_t len, const char* str, IntSuffix* out_suffix) {
 		if (suffix >= 6) abort();
 	}
 	
+	success:
 	*out_suffix = suffix;
 	return i;
 }

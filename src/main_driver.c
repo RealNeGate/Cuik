@@ -45,6 +45,7 @@ static TargetOption target_options[] = {
 };
 enum { TARGET_OPTION_COUNT = sizeof(target_options) / sizeof(target_options[0]) };
 
+static BigArray(const char*) cuik_include_dirs;
 static BigArray(const char*) cuik_source_files;
 static char cuik_file_no_ext[255];
 
@@ -76,11 +77,15 @@ static void optimize_task(void* arg) {
 	TaskInfo task = *((TaskInfo*)arg);
 	
 	timed_block("optimize %zu-%zu", task.start, task.end) {
+		bool did_da_works = false;
+		
 		for (size_t i = task.start; i < task.end; i++) {
 			TB_Function* func = tb_function_from_id(mod, i);
 			
-			if (tb_function_optimize(func)) is_optimizer_working = true;
+			if (tb_function_optimize(func)) did_da_works = true;
 		}
+		
+		if (did_da_works) is_optimizer_working = true;
 	}
 }
 
@@ -148,7 +153,10 @@ static void compile_project(const char* obj_output_path, bool is_multithreaded, 
 	
 	for (size_t i = 0, count = big_array_length(cuik_source_files); i < count; i++) {
 		//printf("Compiling %s...\n", cuik_source_files[i]);
-		TranslationUnit* tu = cuik_compile_file(&compilation_unit, cuik_source_files[i], is_check);
+		TranslationUnit* tu = cuik_compile_file(&compilation_unit, cuik_source_files[i],
+												big_array_length(cuik_include_dirs),
+												&cuik_include_dirs[0],
+												is_check);
 		
 		if (settings.emit_ast != EMIT_AST_NONE) {
 			ast_dump(tu, stdout);
@@ -162,7 +170,6 @@ static void compile_project(const char* obj_output_path, bool is_multithreaded, 
 			threadpool_t* thread_pool = threadpool_create(settings.num_of_worker_threads, 4096);
 			
 			dispatch_for_all_top_level_stmts(thread_pool, irgen_task);
-			irgen_finalize();
 			
 			FOR_EACH_TU(tu, &compilation_unit) {
 				translation_unit_deinit(tu);
@@ -195,7 +202,7 @@ static void compile_project(const char* obj_output_path, bool is_multithreaded, 
 		
 		timed_block("export") {
 			if (!settings.print_tb_ir) {
-				if (!tb_module_export(mod, obj_output_path, settings.is_debug_build)) abort();
+				if (!tb_module_export(mod, obj_output_path, settings.is_debug_info)) abort();
 			}
 			
 			tb_module_destroy(mod);
@@ -371,6 +378,10 @@ static bool dump_tokens() {
 		cpp_init(&cpp_ctx);
 		cuik_set_cpp_defines(&cpp_ctx);
 		
+		for (size_t i = 0, cc = big_array_length(cuik_include_dirs); i < cc; i++) {
+			cpp_add_include_directory(&cpp_ctx, cuik_include_dirs[i]);
+		}
+		
 		s = cpp_process(&cpp_ctx, cuik_source_files[0]);
 		
 		cpp_finalize(&cpp_ctx);
@@ -446,18 +457,21 @@ static void print_help(const char* executable_path) {
 		   "  %s [command] [filepath] [flags]\n"
 		   "  \n"
 		   "Commands:\n"
-		   "  build      Compiles the input file/directory\n"
-		   "  check      Check for errors in the input file/directory.\n"
-		   "  preproc    Runs the preprocessor on a file\n"
-		   "  run        Compiles & runs the input file/directory\n"
-		   "  live       Live recompilation of C into the terminal as you edit\n"
 		   "  version    Prints the installed compiler's version\n"
+		   "  live       Live recompilation of C into the terminal as you edit\n"
+		   "  preproc    Runs the preprocessor on a file\n"
+		   "  anal       Analyzes & Type checks the files.\n"
+		   "  build      Compiles the input files\n"
+		   "  query      Query C files or other properties\n"
+		   "  run        Compiles & runs the input files\n"
 		   "  help       More detailed help for the input command\n"
 		   "  \n",
 		   executable_path);
 }
 
 static int parse_args(size_t arg_start, size_t arg_count, char** args) {
+	const char* output_name = NULL;
+	
 	for (size_t i = arg_start; i < arg_count; i++) {
 		if (args[i][0] != '-') {
 			big_array_put(cuik_source_files, args[i]);
@@ -470,15 +484,38 @@ static int parse_args(size_t arg_start, size_t arg_count, char** args) {
 		// splits on :
 		for (; *value; value++) {
 			if (*value == ':') break;
+			if (*value == '=') break;
 		}
 		
 		// split the key and value
 		if (*value) {
+			if (*value == '=') {
+				printf("compiler flags are applied as -key:value\n");
+				return 1;
+			}
+			
 			value[0] = '\0';
 			value++;
+		} else {
+			value = NULL;
 		}
 		
-		if (strcmp(key, "target") == 0) {
+		if (strcmp(key, "include") == 0) {
+			if (!value) {
+				printf("expected file path for include directory\n");
+				return 1;
+			}
+			
+			big_array_put(cuik_include_dirs, value);
+		} else if (strcmp(key, "out") == 0 ||
+				   strcmp(key, "output") == 0) {
+			if (!value) {
+				printf("expected file path for output\n");
+				return 1;
+			}
+			
+			output_name = value;
+		} else if (strcmp(key, "target") == 0) {
 			bool matches = false;
 			for (size_t i = 0; i < TARGET_OPTION_COUNT; i++) {
 				if (strcmp(target_options[i].name, value) == 0) {
@@ -543,13 +580,6 @@ static int parse_args(size_t arg_start, size_t arg_count, char** args) {
 			settings.is_debug_info = true;
 		} else if (strcmp(key, "thin-errors") == 0) {
 			report_using_thin_errors = true;
-		} else if (strcmp(key, "out") == 0) {
-			if (*value == '\0') {
-				printf("expected path after -out option\n");
-				return 1;
-			}
-			
-			settings.output_path = value;
 		} else if (strcmp(key, "pedantic") == 0) {
 			settings.pedantic = true;
 		} else {
@@ -566,7 +596,7 @@ static int parse_args(size_t arg_start, size_t arg_count, char** args) {
 	
 	// Get first filename without extension
 	{
-		const char* filename = cuik_source_files[0];
+		const char* filename = output_name ? output_name : cuik_source_files[0];
 		const char* ext = strrchr(filename, '.');
 		size_t len = ext ? (ext - filename) : strlen(filename);
 		
@@ -667,7 +697,9 @@ int main(int argc, char* argv[]) {
 #error "Unsupported host compiler... for now"
 #endif
 	
+	// I seriously dare you to tell me that im leaking these
 	cuik_source_files = big_array_create(const char*, false);
+	cuik_include_dirs = big_array_create(const char*, false);
 	
 	// Query is like a magic Swiss army knife inside of Cuik
 	// so it acts differently from everyone else

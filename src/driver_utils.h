@@ -30,8 +30,9 @@ extern char cuik_library_directory[MAX_PATH];
 
 void cuik_detect_crt_include();
 void cuik_set_cpp_defines(CPP_Context* cpp);
-bool cuik_find_include_file(char output[MAX_PATH], const char* path);
 
 // NOTE(NeGate): this is thread-safe, just call it from any thread
 // and it should be fine :p
-TranslationUnit* cuik_compile_file(CompilationUnit* cu, const char* path, bool frontend_only);
+TranslationUnit* cuik_compile_file(CompilationUnit* cu, const char* path, 
+								   size_t include_count, const char** includes,
+								   bool frontend_only);

@@ -8,10 +8,31 @@ static void set_defines(CPP_Context* cpp) {
 	
 	cpp_define_empty(cpp, "_WIN32");
 	cpp_define_empty(cpp, "_WIN64");
+	
+	// stdatomic.h lock free
+	cpp_define(cpp, "__CUIK_ATOMIC_BOOL_LOCK_FREE", "1");
+	cpp_define(cpp, "__CUIK_ATOMIC_CHAR_LOCK_FREE", "1");
+	cpp_define(cpp, "__CUIK_ATOMIC_CHAR16_LOCK_FREE", "1");
+	cpp_define(cpp, "__CUIK_ATOMIC_CHAR32_LOCK_FREE", "1");
+	cpp_define(cpp, "__CUIK_ATOMIC_WCHAR_T_LOCK_FREE", "1");
+	cpp_define(cpp, "__CUIK_ATOMIC_SHORT_LOCK_FREE", "1");
+	cpp_define(cpp, "__CUIK_ATOMIC_INT_LOCK_FREE", "1");
+	cpp_define(cpp, "__CUIK_ATOMIC_LONG_LOCK_FREE", "1");
+	cpp_define(cpp, "__CUIK_ATOMIC_LLONG_LOCK_FREE", "1");
+	cpp_define(cpp, "__CUIK_ATOMIC_POINTER_LOCK_FREE", "1");
 }
 
 TB_Register compile_builtin(TranslationUnit* tu, TB_Function* func, const char* name, int arg_count, ExprIndex* args) {
-	if (strcmp(name, "__builtin_expect") == 0) {
+	if (strcmp(name, "__c11_atomic_init") == 0) {
+		printf("TODO __c11_atomic_init!");
+		abort();
+	} else if (strcmp(name, "__c11_atomic_thread_fence") == 0) {
+		printf("TODO __c11_atomic_thread_fence!");
+		abort();
+	} else if (strcmp(name, "__c11_atomic_signal_fence") == 0) {
+		printf("TODO __c11_atomic_signal_fence!");
+		abort();
+	} else if (strcmp(name, "__builtin_expect") == 0) {
 		printf("TODO __builtin_expect!");
 		abort();
 	} else if (strcmp(name, "__debugbreak") == 0) {

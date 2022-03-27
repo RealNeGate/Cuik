@@ -15,9 +15,6 @@ static thread_local const char* function_name;
 // For aggregate returns
 static thread_local TB_Register return_value_address;
 
-TB_Function* static_init_func;
-static mtx_t static_init_mutex;
-
 // it's a single file so we wanna lock when writing to data races
 static mtx_t emit_ir_mutex;
 
@@ -390,6 +387,105 @@ static void gen_local_initializer(TranslationUnit* tu, TB_Function* func, Source
 	eval_initializer_objects(tu, func, loc, init, addr, t, node_count, nodes, 0);
 }
 
+static TB_InitializerID gen_global_initializer(TranslationUnit* tu, SourceLocIndex loc, TypeIndex t, ExprIndex initial, const unsigned char* name) {
+	assert(t);
+	Type* restrict type = &tu->types[t];
+	
+	if (initial) {
+		Expr* restrict ep = &tu->exprs[initial];
+		if (ep->op == EXPR_STR) {
+			TB_InitializerID init = tb_initializer_create(mod, type->size, type->align, 1);
+			
+			char* dst = tb_initializer_add_region(mod, init, 0, type->size);
+			Expr* restrict ep = &tu->exprs[initial];
+			
+			// TODO(NeGate): Swap this out with 
+			memcpy(dst, ep->str.start, ep->str.end - ep->str.start);
+			
+			if (type->kind == KIND_PTR) {
+				// if it's a string pointer, then we make a dummy string array
+				// and point to that with another initializer
+				char temp[1024];
+				snprintf(temp, 1024, "%s@%d", name, initial);
+				TB_GlobalID dummy = tb_global_create(mod, temp, TB_LINKAGE_PRIVATE);
+				tb_global_set_initializer(mod, dummy, init);
+				
+				init = tb_initializer_create(mod, 8, 8, 1);
+				tb_initializer_add_global(mod, init, 0, dummy);
+			}
+			
+			return init;
+		} else if (ep->op == EXPR_INITIALIZER) {
+			if (ep->init.type == TYPE_VOID) {
+				ep->init.type = t;
+			}
+			
+			int node_count = ep->init.count;
+			InitNode* nodes = ep->init.nodes;
+			
+			// Walk initializer for max constant expression initializers.
+			int max_tb_objects = 0;
+			count_max_tb_init_objects(node_count, nodes, &max_tb_objects);
+			
+			TB_InitializerID init = tb_initializer_create(mod, type->size, type->align, max_tb_objects);
+			
+			// Initialize all const expressions
+			eval_initializer_objects(tu, NULL, loc, init, TB_NULL_REG, t, node_count, nodes, 0);
+			return init;
+		} else if (ep->op == EXPR_INT ||
+				   ep->op == EXPR_ENUM ||
+				   ep->op == EXPR_CHAR ||
+				   ep->op == EXPR_CAST ||
+				   ep->op == EXPR_NEGATE) {
+			TB_InitializerID init = tb_initializer_create(mod, type->size, type->align, 1);
+			void* region = tb_initializer_add_region(mod, init, 0, type->size);
+			
+			// NOTE(NeGate): Endian amirite
+			ConstValue value = const_eval(tu, initial);
+			memcpy(region, &value.unsigned_value, type->size);
+			
+			return init;
+		} else if (ep->op == EXPR_ADDR) {
+			TB_InitializerID init = tb_initializer_create(mod, type->size, type->align, 2);
+			void* region = tb_initializer_add_region(mod, init, 0, type->size);
+			
+			uint64_t offset = 0;
+			
+			// &some_global[a][b][c]
+			ExprIndex base = ep->unary_op.src;
+			while (tu->exprs[base].op == EXPR_SUBSCRIPT) {
+				uint64_t stride = tu->types[tu->exprs[base].type].size;
+				uint64_t index = const_eval(tu, tu->exprs[base].subscript.index).unsigned_value;
+				
+				offset += (index * stride);
+				base = tu->exprs[base].subscript.base;
+			}
+			
+			// TODO(NeGate): Assumes we're on a 64bit target...
+			memcpy(region, &offset, sizeof(uint64_t));
+			
+			if (tu->exprs[base].op == EXPR_SYMBOL) {
+				StmtIndex stmt = tu->exprs[base].symbol;
+				StmtOp stmt_op = tu->stmts[stmt].op;
+				
+				if (stmt_op == STMT_GLOBAL_DECL) {
+					tb_initializer_add_global(mod, init, 0, tu->stmts[stmt].backing.g);
+				} else {
+					internal_error("could not resolve as constant initializer");
+				}
+			} else {
+				internal_error("could not resolve as constant initializer");
+			}
+			return init;
+		} else {
+			assert(0);
+		}
+	}
+	
+	// uninitialized, just all zeroes
+	return tb_initializer_create(mod, type->size, type->align, 0);
+}
+
 static void insert_label(TB_Function* func) {
 	if (tb_inst_get_current_label(func) == 0) {
 		tb_inst_label(func, tb_inst_new_label_id(func));
@@ -590,6 +686,12 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 			TypeIndex arg_type = tu->params[param].type;
 			assert(arg_type);
 			
+			if (tu->types[arg_type].kind == KIND_STRUCT ||
+				tu->types[arg_type].kind == KIND_UNION) {
+				// TODO(NeGate): Assumes pointer size
+				reg = tb_inst_load(func, TB_TYPE_PTR, reg, 8);
+			}
+			
 			return (IRVal) {
 				.value_type = LVALUE,
 				.type = arg_type,
@@ -732,15 +834,41 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 			}
 			
 			for (size_t i = 0; i < arg_count; i++) {
-				TB_Reg arg = irgen_as_rvalue(tu, func, args[i]);
-				TB_DataType dt = tb_function_get_node(func, arg)->dt;
+				TypeIndex arg_type = tu->exprs[args[i]].type;
 				
-				// convert any float variadic arguments into integers
-				if (i >= varargs_cutoff && dt.type == TB_F64 && dt.width == 0) {
-					arg = tb_inst_bitcast(func, arg, TB_TYPE_I64);
+				if (tu->types[arg_type].kind == KIND_STRUCT || 
+					tu->types[arg_type].kind == KIND_UNION) {
+					IRVal arg = irgen_expr(tu, func, args[i]);
+					TB_Reg arg_addr = TB_NULL_REG;
+					switch (arg.value_type) {
+						case LVALUE: arg_addr = arg.reg; break;
+						case LVALUE_FUNC: arg_addr = tb_inst_get_func_address(func, arg.func); break;
+						case LVALUE_EFUNC: arg_addr = tb_inst_get_extern_address(func, arg.ext); break;
+						default: break;
+					}
+					assert(arg_addr);
+					
+					// TODO(NeGate): we might wanna define some TB instruction
+					// for killing locals since some have really limited lifetimes
+					TB_CharUnits size = tu->types[arg_type].size;
+					TB_CharUnits align = tu->types[arg_type].align;
+					
+					TB_Reg temp_slot = tb_inst_local(func, size, align);
+					TB_Register size_reg = tb_inst_uint(func, TB_TYPE_I64, size);
+					
+					tb_inst_memcpy(func, temp_slot, arg_addr, size_reg, align);
+					ir_args[is_aggregate_return+i] = temp_slot;
+				} else {
+					TB_Reg arg = irgen_as_rvalue(tu, func, args[i]);
+					TB_DataType dt = tb_function_get_node(func, arg)->dt;
+					
+					if (i >= varargs_cutoff && dt.type == TB_F64 && dt.width == 0) {
+						// convert any float variadic arguments into integers
+						arg = tb_inst_bitcast(func, arg, TB_TYPE_I64);
+					}
+					
+					ir_args[is_aggregate_return+i] = arg;
 				}
-				
-				ir_args[is_aggregate_return+i] = arg;
 			}
 			
 			// Resolve call target
@@ -891,35 +1019,47 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 			IRVal src = irgen_expr(tu, func, ep->unary_op.src);
 			assert(src.value_type == LVALUE);
 			
-			TB_Register loaded = cvt2rval(tu, func, src, ep->unary_op.src);
 			Type* type = &tu->types[ep->type];
-			if (type->kind == KIND_PTR) {
-				// pointer arithmatic
-				TB_Register stride = tb_inst_sint(func, TB_TYPE_PTR, tu->types[type->ptr_to].size);
-				TB_ArithmaticBehavior ab = TB_CAN_WRAP;
+			if (type->is_atomic) {
+				TB_Register stride;
+				if (type->kind == KIND_PTR) {
+					// pointer arithmatic
+					stride = tb_inst_sint(func, TB_TYPE_PTR, tu->types[type->ptr_to].size);
+				} else {
+					stride = tb_inst_uint(func, ctype_to_tbtype(type), 1);
+				}
+				
+				TB_Register operation;
+				if (is_inc) operation = tb_inst_atomic_add(func, src.reg, stride, TB_MEM_ORDER_SEQ_CST);
+				else operation = tb_inst_atomic_sub(func, src.reg, stride, TB_MEM_ORDER_SEQ_CST);
+				
+				return (IRVal) {
+					.value_type = RVALUE,
+					.type = ep->type,
+					.reg = operation
+				};
+			} else {
+				TB_Register loaded = cvt2rval(tu, func, src, ep->unary_op.src);
+				
+				TB_DataType dt;
+				TB_Register stride;
+				TB_ArithmaticBehavior ab;
+				if (type->kind == KIND_PTR) {
+					// pointer arithmatic
+					dt = TB_TYPE_PTR;
+					stride = tb_inst_sint(func, TB_TYPE_PTR, tu->types[type->ptr_to].size);
+					ab = TB_CAN_WRAP;
+				} else {
+					dt = ctype_to_tbtype(type);
+					stride = type->is_unsigned ? tb_inst_uint(func, dt, 1) : tb_inst_sint(func, dt, 1);
+					ab = type->is_unsigned ? TB_CAN_WRAP : TB_ASSUME_NSW;
+				}
 				
 				TB_Register operation;
 				if (is_inc) operation = tb_inst_add(func, loaded, stride, ab);
 				else operation = tb_inst_sub(func, loaded, stride, ab);
 				
 				tb_inst_store(func, TB_TYPE_PTR, src.reg, operation, type->align);
-				
-				return (IRVal) {
-					.value_type = RVALUE,
-					.type = ep->type,
-					.reg = loaded
-				};
-			} else {
-				TB_DataType dt = ctype_to_tbtype(type);
-				TB_ArithmaticBehavior ab = type->is_unsigned ? TB_CAN_WRAP : TB_ASSUME_NSW;
-				
-				TB_Register one = type->is_unsigned ? tb_inst_uint(func, dt, 1) : tb_inst_sint(func, dt, 1);
-				
-				TB_Register operation;
-				if (is_inc) operation = tb_inst_add(func, loaded, one, ab);
-				else operation = tb_inst_sub(func, loaded, one, ab);
-				
-				tb_inst_store(func, dt, src.reg, operation, type->align);
 				
 				return (IRVal) {
 					.value_type = RVALUE,
@@ -1338,25 +1478,26 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, StmtIndex s) {
 			int size = tu->types[type_index].size;
 			int align = tu->types[type_index].align;
 			
-			TB_Register addr = 0;
-			
-			// Allocate from storage
 			if (attrs.is_static) {
-				TB_InitializerID init = tb_initializer_create(mod, size, align, 0);
+				// Static initialization
+				TB_InitializerID init = gen_global_initializer(tu, sp->loc,
+															   type_index,
+															   sp->decl.initial,
+															   sp->decl.name);
 				
 				char* name = tls_push(1024);
-				snprintf(name, 1024, "%s$%s@%d", function_name, sp->decl.name, s);
+				int name_len = snprintf(name, 1024, "%s$%s@%d", function_name, sp->decl.name, s);
+				assert(name_len >= 0 && name_len < 1024);
 				
 				TB_GlobalID g = tb_global_create(mod, name, TB_LINKAGE_PRIVATE);
 				tb_global_set_initializer(mod, g, init);
 				tls_restore(name);
 				
-				assert(sp->decl.initial == 0 && "TODO: Implement local static declaration initialization");
-				addr = tb_inst_get_global_address(func, g);
-			} else {
-				addr = tb_inst_local(func, size, align);
+				sp->backing.r = tb_inst_get_global_address(func, g);
+				break;
 			}
 			
+			TB_Reg addr = tb_inst_local(func, size, align);
 			if (sp->decl.initial) {
 				Expr* restrict ep = &tu->exprs[sp->decl.initial];
 				
@@ -1541,6 +1682,7 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, StmtIndex s) {
 			irgen_stmt(tu, func, sp->for_.body);
 			
 			if (sp->for_.next) {
+				insert_label(func);
 				irgen_expr(tu, func, sp->for_.next);
 			}
 			
@@ -1656,13 +1798,6 @@ static void gen_func_body(TranslationUnit* tu, TypeIndex type, StmtIndex s) {
 	// in TB.
 	StmtIndex body = (StmtIndex)tu->stmts[s].decl.initial;
 	
-	// main needs to call the static init
-	if (tu->stmts[s].decl.name && 
-		(strcmp((const char*)tu->stmts[s].decl.name, "main") == 0 ||
-		 strcmp((const char*)tu->stmts[s].decl.name, "WinMain") == 0)) {
-		tb_inst_call(func, TB_TYPE_VOID, static_init_func, 0, NULL);
-	}
-	
 	// Body
 	function_type = type;
 	function_name = (const char*)tu->stmts[s].decl.name;
@@ -1712,38 +1847,12 @@ static void gen_func_body(TranslationUnit* tu, TypeIndex type, StmtIndex s) {
 
 void irgen_init() {
 	mtx_init(&emit_ir_mutex, mtx_plain);
-	mtx_init(&static_init_mutex, mtx_plain);
 	
 	TB_FeatureSet features = { 0 };
 	mod = tb_module_create(target_arch, target_system, &features);
-	
-	// static initialization is stuffed into a function which is called at the
-	// start of main(), regardless i wanna get rid of this soon enough but haven't...
-	TB_FunctionPrototype* proto = tb_prototype_create(mod, TB_STDCALL, TB_TYPE_VOID, 0, false);
-	static_init_func = tb_prototype_build(mod, proto, "__static_init", TB_LINKAGE_PRIVATE);
-	function_count = 1;
-	
-	//fprintf(stdout, "digraph G {\n");
 }
 
 void irgen_deinit() {
-}
-
-void irgen_finalize() {
-	tb_inst_ret(static_init_func, TB_NULL_REG);
-	
-	if (settings.print_tb_ir) {
-		mtx_lock(&emit_ir_mutex);
-		
-		tb_function_print(static_init_func, tb_default_print_callback, stdout);
-		fprintf(stdout, "\n\n");
-		//fprintf(stdout, "}\n");
-		fflush(stdout);
-		
-		mtx_unlock(&emit_ir_mutex);
-	} else if (!settings.optimize) {
-		tb_module_compile_func(mod, static_init_func, TB_ISEL_FAST);
-	}
 }
 
 void irgen_top_level_stmt(TranslationUnit* tu, StmtIndex s) {
@@ -1765,65 +1874,11 @@ void irgen_top_level_stmt(TranslationUnit* tu, StmtIndex s) {
 		if (sp->decl.attrs.is_extern || tu->types[sp->decl.type].kind == KIND_FUNC) return;
 		
 		TB_GlobalID global = sp->backing.g;
-		Type* type = &tu->types[sp->decl.type];
+		TB_InitializerID init = gen_global_initializer(tu, sp->loc,
+													   sp->decl.type,
+													   sp->decl.initial,
+													   sp->decl.name);
 		
-		Expr* restrict ep = &tu->exprs[sp->decl.initial];
-		if (ep->op == EXPR_INITIALIZER) {
-			TypeIndex t = ep->init.type;
-			if (t == TYPE_VOID) {
-				ep->init.type = t = sp->decl.type;
-			}
-			
-			size_t node_count = ep->init.count;
-			InitNode* nodes = ep->init.nodes;
-			
-			// Walk initializer for max constant expression initializers.
-			int max_tb_objects = 0;
-			count_max_tb_init_objects(node_count, nodes, &max_tb_objects);
-			
-			TB_InitializerID init;
-			if (ep->op == EXPR_STR) {
-				init = tb_initializer_create(mod, type->size, type->align, 1);
-				
-				char* dst = tb_initializer_add_region(mod, init, 0, type->size);
-				Expr* restrict ep = &tu->exprs[sp->decl.initial];
-				
-				memcpy(dst, ep->str.start, ep->str.end - ep->str.start);
-				
-				if (tu->types[sp->decl.type].kind == KIND_PTR) {
-					// if it's a string pointer, then we make a dummy string array
-					// and point to that with another initializer
-					char temp[1024];
-					snprintf(temp, 1024, "%s@%d", sp->decl.name, s);
-					TB_GlobalID dummy = tb_global_create(mod, temp, TB_LINKAGE_PRIVATE);
-					tb_global_set_initializer(mod, dummy, init);
-					
-					init = tb_initializer_create(mod, 8, 8, 1);
-					tb_initializer_add_global(mod, init, 0, dummy);
-				}
-			} else if (ep->op == EXPR_INITIALIZER) {
-				Expr* restrict ep = &tu->exprs[sp->decl.initial];
-				
-				int node_count = ep->init.count;
-				InitNode* nodes = ep->init.nodes;
-				
-				// Walk initializer for max constant expression initializers.
-				int max_tb_objects = 0;
-				count_max_tb_init_objects(node_count, nodes, &max_tb_objects);
-				
-				init = tb_initializer_create(mod, type->size, type->align, max_tb_objects);
-				
-				// Initialize all const expressions
-				eval_initializer_objects(tu, NULL, sp->loc, init, TB_NULL_REG, sp->decl.type, node_count, nodes, 0);
-			} else {
-				// uninitialized, just all zeroes
-				init = tb_initializer_create(mod, type->size, type->align, 0);
-			}
-			tb_global_set_initializer(mod, global, init);
-		} else {
-			// uninitialized, just all zeroes
-			TB_InitializerID init = tb_initializer_create(mod, type->size, type->align, 0);
-			tb_global_set_initializer(mod, global, init);
-		}
+		tb_global_set_initializer(mod, global, init);
 	}
 }

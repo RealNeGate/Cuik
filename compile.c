@@ -49,7 +49,7 @@ int number_of_tests = 0;
 void expect_return_value(const char* path, int expected) {
 	number_of_tests++;
 	
-	printf("Attempt \"%s\"...   ", path);
+	printf("Attempt %-80s", path);
 	
 	int code;
 	char cmd[1024];
@@ -78,7 +78,7 @@ void expect_return_value(const char* path, int expected) {
 void expect_stdout(const char* path, const char* expected) {
 	number_of_tests++;
 	
-	printf("Attempt \"%s\"...   ", path);
+	printf("Attempt %-80s", path);
 	
 	int code;
 	char cmd[1024];
@@ -93,7 +93,7 @@ void expect_stdout(const char* path, const char* expected) {
 	
 	// Run
 	snprintf(cmd, 1024, "%s.exe", path);
-	FILE* stream = popen(cmd, "rb");
+	FILE* stream = popen(cmd, "r");
 	
 	char data[1024];
 	size_t length = fread(data, 1, sizeof(data), stream);
@@ -111,13 +111,79 @@ void expect_stdout(const char* path, const char* expected) {
 		return;
 	}
 	
-	printf("Fail to execute!\n");
+	printf("Results don't match!\n");
+}
+
+
+void differential(const char* path) {
+	number_of_tests++;
+	
+	printf("Attempt %-80s", path);
+	
+	int code;
+	char cmd[1024];
+	
+	// Compile clang
+	snprintf(cmd, 1024, "clang %s.c -o %s_clang.exe", path, path);
+	code = system(cmd);
+	if (code != 0) {
+		printf("Fail to compile for Clang! (code: %d)\n", code);
+		return;
+	}
+	
+	// Compile cuik
+	snprintf(cmd, 1024, "cuik build %s.c", path);
+	code = system(cmd);
+	if (code != 0) {
+		printf("Fail to compile for Cuik! (code: %d)\n", code);
+		return;
+	}
+	
+	// Run
+	snprintf(cmd, 1024, "%s.exe", path);
+	FILE* stream = popen(cmd, "r");
+	
+	snprintf(cmd, 1024, "%s_clang.exe", path);
+	FILE* baseline_stream = popen(cmd, "r");
+	
+	while (true) {
+		char data[1024], data2[1024];
+		size_t length = fread(data, 1, sizeof(data), stream);
+		size_t length2 = fread(data2, 1, sizeof(data2), baseline_stream);
+		
+		// we compare lengths before checking completion in
+		// case it mismatches right at the end and one stream
+		// is just longer
+		if (length != length2) {
+			printf("Results don't match!\n");
+			return;
+		}
+		
+		// is it complete?
+		if (length == 0) break;
+		
+		if (memcmp(data, data2, length) != 0) {
+			printf("Results don't match!\nGOT:\n%.*s\nEXPECTED:\n%.*s\n", (int)length, data, (int)length, data2);
+			return;
+		}
+	}
+	
+	code = pclose(stream);
+	
+	int code2 = pclose(baseline_stream);
+	if (code || code2) {
+		printf("Fail to execute! (code: %d)\n", code);
+		return;
+	}
+	
+	printf("Success!\n");
+	tests_working++;
 }
 
 void try_compile(const char* path) {
 	number_of_tests++;
 	
-	printf("Attempt \"%s\"...   ", path);
+	printf("Attempt %-80s", path);
 	
 	int code;
 	char cmd[1024];
@@ -162,15 +228,18 @@ int main(int argc, char** argv) {
 			printf("\n\n\n");
 			printf("Running tests...\n");
 			
+			differential("tests"SLASH"the_increment"SLASH"cuik"SLASH"promotions");
+			
 			expect_return_value("tests"SLASH"the_increment"SLASH"iso"SLASH"program_termination", 42);
 			expect_stdout("tests"SLASH"the_increment"SLASH"iso"SLASH"printf_test", "Hello Hel Goodb 127 63 0 254 63 0 32000 32767 4 17 65532 65530 4 16 32000 32767 4 17 65532 65530 4 16 4294967295 6731943 2147483646 16 123456789 57486731943 985429 9123456 1.000000 123000.000000 0.100 0.234 3.000000");
 			expect_stdout("tests"SLASH"the_increment"SLASH"iso"SLASH"crc32_test", "691daa2f");
 			expect_stdout("tests"SLASH"the_increment"SLASH"iso"SLASH"ternary_test", "128 16 32 64 128 128");
 			expect_stdout("tests"SLASH"the_increment"SLASH"cuik"SLASH"function_literal", "lmao not_lmao 7331 4145 144 12 -2147483648 -743 -2 0 2 4 99\n");
 			expect_stdout("tests"SLASH"the_increment"SLASH"iso"SLASH"fibonacci_test", "1 1 2 3 5 8 13 21 34 55 89 144 233 377 610 1 1 2 3 5 8 13 21 34 55 89 144 233 377 610 ");
-			expect_stdout("tests"SLASH"the_increment"SLASH"iso"SLASH"clang_17781", "1");
+			expect_stdout("tests"SLASH"the_increment"SLASH"iso"SLASH"clang_17781", "1\n");
 			expect_stdout("tests"SLASH"the_increment"SLASH"iso"SLASH"regression_1", "0 1 1 1 1 1 1 ");
 			expect_stdout("tests"SLASH"the_increment"SLASH"cuik"SLASH"meme", "7 0 1 2 3 4 5 6 ");
+			expect_stdout("tests"SLASH"the_increment"SLASH"iso"SLASH"initializers", "Table (4 entries):\n[0] = { 1, 2, 3, 4 }\n[1] = { 0, 0, 0, 0 }\n[2] = { 0, 0, 0, 0 }\n[3] = { 5, 6, 7, 8 }\n");
 			
 			// Inria tests
 			try_compile("tests"SLASH"the_increment"SLASH"inria"SLASH"argument_scope");
@@ -216,7 +285,7 @@ int main(int argc, char** argv) {
 			
 			char cmd[1024];
 			for (size_t i = 0; i < INPUT_FILE_COUNT; i++) {
-				snprintf(cmd, 1024, "cuik check -threads:1 %s", INPUT_FILES[i]);
+				snprintf(cmd, 1024, "cuik anal -threads:1 -emit-ast:minimal %s", INPUT_FILES[i]);
 				if (system(cmd) == 0) {
 					printf("`-Success with %s!\n\n", INPUT_FILES[i]);
 					successes++;
