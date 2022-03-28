@@ -261,6 +261,7 @@ void crash_if_reports(ReportLevel min) {
 	for (int i = min; i < REPORT_MAX; i++) {
 		if (tally[i]) {
 			printf("exited with %d %s%s", tally[i], report_names[i], tally[i] > 1 ? "s" : "");
+			
 			abort();
 		}
 	}

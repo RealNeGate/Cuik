@@ -460,21 +460,18 @@ typedef struct Expr {
 			ExprIndex src;
 		} unary_op;
 		struct {
+			ExprIndex base;
 			// once the semantic pass runs over the AST
 			// we'll have proper indices to access the Member
-			MemberIndex member;
-			
-			ExprIndex base;
-			Atom name;
-		} dot;
-		struct {
-			// once the semantic pass runs over the AST
-			// we'll have proper indices to access the Member
-			MemberIndex member;
-			
-			ExprIndex base;
-			Atom name;
-		} arrow;
+			union {
+				// stinky...
+				struct {
+					MemberIndex member;
+					uint32_t offset;
+				};
+				Atom name;
+			};
+		} dot_arrow;
 		struct {
 			ExprIndex target;
 			int param_count;

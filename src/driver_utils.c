@@ -163,6 +163,7 @@ void cuik_set_cpp_defines(CPP_Context* cpp) {
 		
 		// we pretend to be a modern MSVC compiler
 		cpp_define(cpp, "_WIN32", "1");
+		cpp_define(cpp, "_MSC_EXTENSIONS", "1");
 		cpp_define(cpp, "_MSC_VER", "1929");
 		cpp_define(cpp, "_MSC_FULL_VER", "192930133");
 		cpp_define(cpp, "_WIN32_WINNT", "0x0A00");
@@ -179,6 +180,7 @@ void cuik_set_cpp_defines(CPP_Context* cpp) {
 		cpp_define(cpp, "__signed__", "signed");
 		cpp_define(cpp, "__alignof", "_Alignof");
 		cpp_define(cpp, "__CRTDECL", "__cdecl");
+		cpp_define(cpp, "static_assert", "_Static_assert");
 		
 		// things we don't handle yet so we just remove them
 		cpp_define_empty(cpp, "_Frees_ptr_");

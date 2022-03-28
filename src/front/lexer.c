@@ -79,6 +79,7 @@ static _Alignas(64) uint8_t char_classes[256] = {
 	['A' ... 'Z'] = CHAR_CLASS_IDENT,
 	['a' ... 'z'] = CHAR_CLASS_IDENT,
 	['_'] = CHAR_CLASS_IDENT,
+	['$'] = CHAR_CLASS_IDENT,
 	
 	['0' ... '9'] = CHAR_CLASS_NUMBER,
 	

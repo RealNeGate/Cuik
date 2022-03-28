@@ -566,47 +566,53 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 					}
 					
 #ifdef _WIN32
-					for (size_t i = 0; i < 260; i++) {
+					// The windows file paths are case insensitive
+					// so we canonicalize like ballers
+					for (size_t i = 0; i < MAX_PATH; i++) {
 						if (path[i] >= 'A' && path[i] <= 'Z') {
 							path[i] -= ('A' - 'a');
+						} else if (path[i] == '\0') {
+							break;
 						}
 					}
+					
+					char* new_path = malloc(MAX_PATH);
+					char* filename;
+					if (GetFullPathNameA(path, MAX_PATH, new_path, &filename) == 0) {
+						int loc = l.current_line;
+						printf("error %s:%d: Could not resolve path: %s\n", l.filepath, loc, path);
+						abort();
+					}
+					
+					if (filename == NULL) {
+						int loc = l.current_line;
+						printf("error %s:%d: Cannot include directory %s\n", l.filepath, loc, new_path);
+						abort();
+					}
+					
+					// Convert file paths into something more comfortable
+					for (char* p = new_path; *p; p++) {
+						if (*p == '\\') *p = '/';
+					}
+#else
+					char* new_path = arena_alloc(PATH_MAX, 1);
+					realpath(path, new_path);
 #endif
 					
-					CPP_IncludeOnce* e = shgetp_null(c->include_once, path);
-					if (e == NULL) {
+					ptrdiff_t search = shgeti(c->include_once, new_path);
+					if (search < 0) {
 						// TODO(NeGate): Remove these heap allocations later
 						// they're... evil!!!
 #ifdef _WIN32
-						char* new_path = malloc(MAX_PATH);
-						char* filename;
-						if (GetFullPathNameA(path, MAX_PATH, new_path, &filename) == 0) {
-							int loc = l.current_line;
-							printf("error %s:%d: Could not resolve path: %s\n", l.filepath, loc, path);
-							abort();
-						}
-						
-						if (filename == NULL) {
-							int loc = l.current_line;
-							printf("error %s:%d: Cannot include directory %s\n", l.filepath, loc, new_path);
-							abort();
-						}
-						
 						char* new_dir = strdup(new_path);
 						new_dir[filename - new_path] = '\0';
 #else
-						char* new_path = arena_alloc(PATH_MAX, 1);
-						realpath(path, new_path);
-						
 						char* new_dir = strdup(new_path);
-						
-						char* slash = strrchr(new_dir, '\\');
-						if (!slash) slash = strrchr(new_dir, '/');
-						
+						char* slash = strrchr(new_dir, '/');
 						if (slash) {
-							slash[1] = '\\';
+							slash[1] = '/';
 						} else {
-							new_dir[0] = '\\';
+							new_dir[0] = '/';
 							new_dir[1] = '\0';
 						}
 #endif
@@ -622,12 +628,7 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 					lexer_read(&l);
 					
 					if (lexer_match(&l, 4, "once")) {
-						CPP_IncludeOnce e = (CPP_IncludeOnce){ 
-							.key = (char*)filepath,
-							.value = 0
-						};
-						shputs(c->include_once, e);
-						
+						shput(c->include_once, (char*)filepath, 0);
 						lexer_read(&l);
 						
 						// We gotta hit a line by now
@@ -1037,6 +1038,10 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
 		if (find_define(c, &def_i, token_data, token_length)) {
 			lexer_read(l);
 			
+			//if (strncmp((const char*)token_data, "__DEFINE_CPP_OVERLOAD_STANDARD_FUNC_0_1_EX", token_length) == 0) {
+			//__debugbreak();
+			//}
+			
 			string def = {
 				.data = c->macro_bucket_values_start[def_i],
 				.length = c->macro_bucket_values_end[def_i] - c->macro_bucket_values_start[def_i]
@@ -1187,6 +1192,8 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
 						if (has_varargs && 
 							token_length == sizeof("__VA_ARGS__")-1 &&
 							memcmp(token_data, "__VA_ARGS__", sizeof("__VA_ARGS__")-1) == 0) {
+							*temp_expansion++ = ' ';
+							
 							// Just slap all the arguments that are after the 'key_count'
 							for (size_t i = key_count; i < value_count; i++) {
 								const unsigned char* end   = value_ranges[i*2 + 1];
@@ -1195,6 +1202,7 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
 								
 								if (i) {
 									*temp_expansion++ = ',';
+									*temp_expansion++ = ' ';
 								}
 								
 								for (size_t j = 0; j < count; j++) {
@@ -1250,6 +1258,7 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
 											*temp_expansion++ = start[i];
 										}
 									}
+									*temp_expansion++ = ' ';
 								}
 								
 								as_string = false;

@@ -3,6 +3,11 @@
 #define unsigned_const(x) (ConstValue){ false, .unsigned_value = (x) }
 #define signed_const(x) (ConstValue){ true, .signed_value = (x) }
 
+// Const eval probably needs some rework...
+TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e);
+TypeIndex sema_guess_type(TranslationUnit* tu, StmtIndex s);
+Member* sema_traverse_members(TranslationUnit* tu, Type* record_type, Atom name, uint32_t* out_offset);
+
 bool const_eval_try_offsetof_hack(TranslationUnit* tu, ExprIndex e, uint64_t* out) {
 	const Expr* ep = &tu->exprs[e];
 	
@@ -10,12 +15,18 @@ bool const_eval_try_offsetof_hack(TranslationUnit* tu, ExprIndex e, uint64_t* ou
 	//   &(((T*)0)->apple)
 	//   sizeof(((T*)0).apple)
 	if (ep->op == EXPR_DOT || ep->op == EXPR_ARROW) {
-		static_assert(offsetof(Expr, arrow.base) == offsetof(Expr, dot.base), "Expr.arrow and Expr.dot must match");
-		static_assert(offsetof(Expr, arrow.name) == offsetof(Expr, dot.name), "Expr.arrow and Expr.dot must match");
+		ExprIndex root = ep->dot_arrow.base;
+		ExprIndex base_e = ep->dot_arrow.base;
 		
-		const Expr* restrict arrow_base = &tu->exprs[ep->arrow.base];
-		const Type* restrict record_type = NULL;
+		while (tu->exprs[base_e].op == EXPR_ARROW ||
+			   tu->exprs[base_e].op == EXPR_DOT) {
+			// traverse any dot/arrow chains
+			base_e = tu->exprs[base_e].dot_arrow.base;
+		}
 		
+		uint32_t offset = 0;
+		Type* record_type = NULL;
+		Expr* arrow_base = &tu->exprs[base_e];
 		if (arrow_base->op == EXPR_CAST) {
 			record_type = &tu->types[arrow_base->cast.type];
 			
@@ -31,27 +42,26 @@ bool const_eval_try_offsetof_hack(TranslationUnit* tu, ExprIndex e, uint64_t* ou
 			}
 			
 			ConstValue pointer_value = const_eval(tu, arrow_base->cast.src);
-			assert(pointer_value.unsigned_value == 0 && "I mean i'm not honestly sure if we wanna allow for a non null pointer here");
-			((void)pointer_value);
+			assert(pointer_value.unsigned_value < UINT32_MAX);
+			offset += pointer_value.unsigned_value;
 		} else {
 			return false;
 		}
 		
-		Atom name = ep->arrow.name;
-		MemberIndex start = record_type->record.kids_start;
-		MemberIndex end = record_type->record.kids_end;
-		for (MemberIndex m = start; m < end; m++) {
-			Member* member = &tu->members[m];
+		do {
+			// traverse any dot/arrow chains
+			uint32_t relative = 0;
+			Member* member = sema_traverse_members(tu, record_type, ep->dot_arrow.name, &relative);
+			if (!member) abort();
+			if (member->is_bitfield) abort();
 			
-			// TODO(NeGate): String interning would be nice
-			if (cstr_equals(name, member->name)) {
-				// TODO(NeGate): error messages
-				if (member->is_bitfield) abort();
-				
-				*out = member->offset;
-				return true;
-			}
-		}
+			root = tu->exprs[root].dot_arrow.base;
+			record_type = &tu->types[member->type];
+			offset += relative;
+		} while (tu->exprs[root].op == EXPR_ARROW || tu->exprs[root].op == EXPR_DOT);
+		
+		*out = offset;
+		return true;
 	}
 	
 	return false;
@@ -64,6 +74,7 @@ static ConstValue const_eval_bin_op(ExprOp op, ConstValue a, ConstValue b) {
 		case EXPR_PLUS: return (ConstValue){ is_signed, .unsigned_value = a.unsigned_value + b.unsigned_value };
 		case EXPR_MINUS: return (ConstValue){ is_signed, .unsigned_value = a.unsigned_value - b.unsigned_value };
 		case EXPR_TIMES: return (ConstValue){ is_signed, .unsigned_value = a.unsigned_value * b.unsigned_value };
+		case EXPR_SLASH: return (ConstValue){ is_signed, .unsigned_value = a.unsigned_value / b.unsigned_value };
 		case EXPR_AND: return (ConstValue){ is_signed, .unsigned_value = a.unsigned_value & b.unsigned_value };
 		case EXPR_OR: return (ConstValue){ is_signed, .unsigned_value = a.unsigned_value | b.unsigned_value };
 		
@@ -149,6 +160,7 @@ ConstValue const_eval(TranslationUnit* tu, ExprIndex e) {
 		case EXPR_PLUS:
 		case EXPR_MINUS:
 		case EXPR_TIMES:
+		case EXPR_SLASH:
 		case EXPR_AND:
 		case EXPR_OR:
 		case EXPR_SHL:
@@ -180,8 +192,6 @@ ConstValue const_eval(TranslationUnit* tu, ExprIndex e) {
 			}
 		}
 		case EXPR_SIZEOF: {
-			extern TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e);
-			
 			// TODO(NeGate): this is super hacky since it calls semantic pass stuff
 			// early and thus it might not resolve correct... we wanna drop this later
 			if (tu->exprs[ep->x_of_expr.expr].op == EXPR_DOT ||
@@ -189,10 +199,43 @@ ConstValue const_eval(TranslationUnit* tu, ExprIndex e) {
 				TypeIndex src = sema_expr(tu, ep->x_of_expr.expr);
 				
 				return unsigned_const(tu->types[src].size);
+			} else if (tu->exprs[ep->x_of_expr.expr].op == EXPR_SUBSCRIPT) {
+				ExprIndex base_e = tu->exprs[ep->x_of_expr.expr].subscript.base;
+				Expr* sym = &tu->exprs[base_e];
+				
+				if (sym->op == EXPR_UNKNOWN_SYMBOL) {
+					StmtIndex s = resolve_unknown_symbol(tu, base_e);
+					
+					if (s) {
+						TypeIndex t = sema_guess_type(tu, s);
+						if (t) return unsigned_const(tu->types[t].size);
+					}
+				} else if (sym->op == EXPR_SYMBOL) {
+					return unsigned_const(tu->types[tu->stmts[sym->symbol].decl.type].size);
+				}
+			} else if (tu->exprs[ep->x_of_expr.expr].op == EXPR_SYMBOL) {
+				Expr* sym = &tu->exprs[ep->x_of_expr.expr];
+				return unsigned_const(tu->types[tu->stmts[sym->symbol].decl.type].size);
+			} else if (tu->exprs[ep->x_of_expr.expr].op == EXPR_UNKNOWN_SYMBOL) {
+				Expr* sym = &tu->exprs[ep->x_of_expr.expr];
+				
+				const unsigned char* name = sym->unknown_sym;
+				StmtIndex s = resolve_unknown_symbol(tu, ep->x_of_expr.expr);
+				if (s) {
+					TypeIndex t = sema_guess_type(tu, s);
+					if (t) return unsigned_const(tu->types[t].size);
+				} else {
+					// try enum names
+					// NOTE(NeGate): this might be slow
+					for (size_t j = 1, count = big_array_length(tu->enum_entries); j < count; j++) {
+						if (cstr_equals(name, tu->enum_entries[j].name)) {
+							return signed_const(4);
+						}
+					}
+				}
 			}
 			
-			// TODO(NeGate): error messages
-			abort();
+			break;
 		}
 		case EXPR_SIZEOF_T: {
 			return unsigned_const(tu->types[ep->x_of_type.type].size);
@@ -210,9 +253,7 @@ ConstValue const_eval(TranslationUnit* tu, ExprIndex e) {
 			if (const_eval_try_offsetof_hack(tu, ep->unary_op.src, &dst)) {
 				return unsigned_const(dst); 
 			}
-			
-			// TODO(NeGate): error messages
-			abort();
+			break;
 		}
 		
 		case EXPR_CAST: {

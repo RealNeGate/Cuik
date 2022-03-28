@@ -182,6 +182,77 @@ static bool is_assignable_expr(TranslationUnit* tu, ExprIndex e) {
 	}
 }
 
+Member* sema_traverse_members(TranslationUnit* tu, Type* record_type, Atom name, uint32_t* out_offset) {
+	MemberIndex start = record_type->record.kids_start;
+	MemberIndex end = record_type->record.kids_end;
+	for (MemberIndex m = start; m < end; m++) {
+		Member* member = &tu->members[m];
+		
+		// TODO(NeGate): String interning would be nice
+		if (member->name == NULL) {
+			// unnamed fields are traversed as well
+			Type* child = &tu->types[member->type];
+			assert(child->kind == KIND_STRUCT || child->kind == KIND_UNION);
+			
+			Member* search = sema_traverse_members(tu, child, name, out_offset);
+			if (search) {
+				*out_offset += member->offset;
+				return search;
+			}
+		} else if (cstr_equals(name, member->name)) {
+			*out_offset += member->offset;
+			return member;
+		}
+	}
+	
+	return NULL;
+}
+
+Member* sema_resolve_member_access(TranslationUnit* tu, ExprIndex e, uint32_t* out_offset) {
+	Expr* restrict ep = &tu->exprs[e];
+	bool is_arrow = (ep->op == EXPR_ARROW);
+	TypeIndex base_type = sema_expr(tu, ep->dot_arrow.base);
+	
+	Type* record_type = NULL;
+	if (is_arrow) {
+		Type* ptr_type = &tu->types[base_type];
+		
+		if (ptr_type->kind != KIND_PTR && ptr_type->kind != KIND_ARRAY) {
+			sema_error(ep->loc, "Cannot do arrow operator on non-pointer type.");
+			return NULL;
+		}
+		
+		record_type = &tu->types[ptr_type->ptr_to];
+	} else {
+		record_type = &tu->types[base_type];
+		
+		// Implicit dereference
+		if (record_type->kind == KIND_PTR) {
+			record_type = &tu->types[record_type->ptr_to];
+			
+			if (settings.pedantic) {
+				sema_error(ep->loc, "Implicit dereference is a non-standard extension (disable -P to allow it).");
+				return NULL;
+			}
+		}
+	}
+	
+	if (record_type->kind != KIND_STRUCT && record_type->kind != KIND_UNION) {
+		sema_error(ep->loc, "Cannot get the member of a non-record type.");
+		return NULL;
+	}
+	
+	uint32_t offset = 0;
+	Member* search = sema_traverse_members(tu, record_type, ep->dot_arrow.name, &offset);
+	if (search) {
+		*out_offset += offset;
+		return search;
+	}
+	
+	sema_error(ep->loc, "Could not find member called '%s'", ep->dot_arrow.name);
+	return NULL;
+}
+
 TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e) {
 	Expr* restrict ep = &tu->exprs[e];
 	
@@ -570,72 +641,16 @@ TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e) {
 			
 			return (ep->type = sema_expr(tu, ep->bin_op.right));
 		}
-		case EXPR_DOT: {
-			TypeIndex base_type = sema_expr(tu, ep->dot.base);
-			Type* restrict record_type = &tu->types[base_type];
-			
-			// Implicit dereference
-			if (record_type->kind == KIND_PTR) {
-				record_type = &tu->types[record_type->ptr_to];
-				
-				if (settings.pedantic) {
-					sema_error(ep->loc, "Implicit dereference is a non-standard extension (disable -P to allow it).");
-					return (ep->type = TYPE_VOID);
-				}
-			}
-			
-			if (record_type->kind != KIND_STRUCT && record_type->kind != KIND_UNION) {
-				sema_error(ep->loc, "Cannot get the member of a non-record type.");
-				return (ep->type = TYPE_VOID);
-			}
-			
-			Atom name = ep->dot.name;
-			
-			MemberIndex start = record_type->record.kids_start;
-			MemberIndex end = record_type->record.kids_end;
-			for (MemberIndex m = start; m < end; m++) {
-				Member* member = &tu->members[m];
-				
-				// TODO(NeGate): String interning would be nice
-				if (cstr_equals(name, member->name)) {
-					ep->dot.member = m;
-					return (ep->type = member->type);
-				}
-			}
-			
-			sema_error(ep->loc, "Could not find member under that name.");
-			return (ep->type = TYPE_VOID);
-		}
+		case EXPR_DOT:
 		case EXPR_ARROW: {
-			TypeIndex base_type = sema_expr(tu, ep->arrow.base);
-			
-			Type* restrict ptr_type = &tu->types[base_type];
-			if (ptr_type->kind != KIND_PTR && ptr_type->kind != KIND_ARRAY) {
-				sema_error(ep->loc, "Cannot do arrow operator on non-pointer type.");
-				return (ep->type = TYPE_VOID);
+			uint32_t offset;
+			Member* m = sema_resolve_member_access(tu, e, &offset);
+			if (m) {
+				ep->dot_arrow.member = m - tu->members;
+				ep->dot_arrow.offset = offset;
+				return (ep->type = m->type);
 			}
 			
-			Type* restrict record_type = &tu->types[ptr_type->ptr_to];
-			if (record_type->kind != KIND_STRUCT && record_type->kind != KIND_UNION) {
-				sema_error(ep->loc, "Cannot get the member of a non-record type.");
-				return (ep->type = TYPE_VOID);
-			}
-			
-			Atom name = ep->arrow.name;
-			
-			MemberIndex start = record_type->record.kids_start;
-			MemberIndex end = record_type->record.kids_end;
-			for (MemberIndex m = start; m < end; m++) {
-				Member* member = &tu->members[m];
-				
-				// TODO(NeGate): String interning would be nice
-				if (cstr_equals(name, member->name)) {
-					ep->dot.member = m;
-					return (ep->type = member->type);
-				}
-			}
-			
-			sema_error(ep->loc, "Could not find member under that name.");
 			return (ep->type = TYPE_VOID);
 		}
 		case EXPR_LOGICAL_AND:
@@ -925,6 +940,48 @@ void sema_stmt(TranslationUnit* tu, StmtIndex s) {
 	}
 }
 
+TypeIndex sema_guess_type(TranslationUnit* tu, StmtIndex s) {
+	Stmt* sp = &tu->stmts[s];
+	char* name = (char*) sp->decl.name;
+	
+	TypeIndex type_index = sp->decl.type;
+	Type* type = &tu->types[type_index];
+	
+	if (sp->decl.attrs.is_static && sp->decl.attrs.is_extern) {
+		sema_error(sp->loc, "Global declaration '%s' cannot be both static and extern.", name);
+		sp->backing.g = 0;
+		return TYPE_NONE;
+	}
+	
+	if (type->is_incomplete) {
+		if (type->kind == KIND_STRUCT) {
+			sema_error(sp->loc, "Incomplete type (struct %s) in declaration", type->record.name);
+		} else if (type->kind == KIND_UNION) {
+			sema_error(sp->loc, "Incomplete type (union %s) in declaration", type->record.name);
+		} else {
+			sema_error(sp->loc, "Incomplete type in declaration");
+		}
+	}
+	
+	if (sp->decl.attrs.is_extern || type->kind == KIND_FUNC) {
+		return TYPE_NONE;
+	}
+	
+	if (sp->decl.initial) {
+		Expr* ep = &tu->exprs[sp->decl.initial];
+		
+		if (type->kind == KIND_ARRAY && ep->op == EXPR_INITIALIZER) {
+			// check how many top level statements we have
+			int array_count;
+			sema_infer_initializer_array_count(tu, ep->init.count, ep->init.nodes, 0, &array_count);
+			
+			return new_array(tu, type->array_of, array_count);
+		}
+	}
+	
+	return sp->decl.type;
+}
+
 static void sema_top_level(TranslationUnit* tu, StmtIndex s, bool frontend_only) {
 	Stmt* restrict sp = &tu->stmts[s];
 	
@@ -1033,25 +1090,7 @@ static void sema_top_level(TranslationUnit* tu, StmtIndex s, bool frontend_only)
 				break;
 			}
 			
-			if (sp->decl.attrs.is_extern || tu->types[sp->decl.type].kind == KIND_FUNC) {
-				// We defer extern creation until the IR gen phase where we have a full
-				// understanding of the export symbol table
-				sp->backing.e = 0;
-				
-				// forward decls
-				// This is hacky
-				if (name[0] == '_') {
-					ptrdiff_t search = shgeti(target_desc.builtin_func_map, name);
-					
-					// NOTE(NeGate): 0 doesn't mean a null index in this context, it
-					// maps to the first external but i don't care we won't be using it
-					// later on it's just clearer.
-					if (search >= 0) {
-						sp->backing.e = 0;
-						break;
-					}
-				}
-			} else {
+			if (!sp->decl.attrs.is_extern && type->kind != KIND_FUNC) {
 				Type* expr_type = NULL;
 				
 				if (sp->decl.initial) {

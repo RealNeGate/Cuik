@@ -922,18 +922,18 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 			};
 		}
 		case EXPR_DOT: {
-			IRVal src = irgen_expr(tu, func, ep->dot.base);
+			IRVal src = irgen_expr(tu, func, ep->dot_arrow.base);
 			assert(src.value_type == LVALUE);
 			
-			assert(ep->dot.member);
-			Member* member = &tu->members[ep->dot.member];
+			assert(ep->dot_arrow.member);
+			Member* member = &tu->members[ep->dot_arrow.member];
 			
 			if (member->is_bitfield) {
 				return (IRVal) {
 					.value_type = LVALUE_BITS,
 					.type = member->type,
 					.bits = {
-						.reg = tb_inst_member_access(func, src.reg, member->offset),
+						.reg = tb_inst_member_access(func, src.reg, ep->dot_arrow.offset),
 						.offset = member->bit_offset, .width = member->bit_width
 					}
 				};
@@ -941,22 +941,22 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 				return (IRVal) {
 					.value_type = LVALUE,
 					.type = member->type,
-					.reg = tb_inst_member_access(func, src.reg, member->offset)
+					.reg = tb_inst_member_access(func, src.reg, ep->dot_arrow.offset)
 				};
 			} 
 		}
 		case EXPR_ARROW: {
-			TB_Register src = irgen_as_rvalue(tu, func, ep->arrow.base);
+			TB_Register src = irgen_as_rvalue(tu, func, ep->dot_arrow.base);
 			
-			assert(ep->arrow.member);
-			Member* member = &tu->members[ep->arrow.member];
+			assert(ep->dot_arrow.member);
+			Member* member = &tu->members[ep->dot_arrow.member];
 			
 			if (member->is_bitfield) {
 				return (IRVal) {
 					.value_type = LVALUE_BITS,
 					.type = member->type,
 					.bits = {
-						.reg = tb_inst_member_access(func, src, member->offset),
+						.reg = tb_inst_member_access(func, src, ep->dot_arrow.offset),
 						.offset = member->bit_offset, .width = member->bit_width
 					}
 				};
@@ -964,7 +964,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 				return (IRVal) {
 					.value_type = LVALUE,
 					.type = member->type,
-					.reg = tb_inst_member_access(func, src, member->offset)
+					.reg = tb_inst_member_access(func, src, ep->dot_arrow.offset)
 				};
 			}
 		}

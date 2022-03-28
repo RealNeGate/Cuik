@@ -160,16 +160,20 @@ static void dump_expr(TranslationUnit* tu, FILE* stream, ExprIndex e, int depth,
 		}
 		case EXPR_ARROW: {
 			type_as_string(tu, sizeof(temp_string0), temp_string0, ep->type);
-			fprintf(stream, "Arrow %s '%s'\n", ep->arrow.name, temp_string0);
 			
-			dump_expr(tu, stream, ep->arrow.base, depth + 1, true);
+			char* name = (char*)tu->members[ep->dot_arrow.member].name;
+			fprintf(stream, "Arrow %s '%s'\n", name ? name : "<unnamed>", temp_string0);
+			
+			dump_expr(tu, stream, ep->dot_arrow.base, depth + 1, true);
 			break;
 		}
 		case EXPR_DOT: {
 			type_as_string(tu, sizeof(temp_string0), temp_string0, ep->type);
-			fprintf(stream, "Dot %s '%s'\n", ep->dot.name, temp_string0);
 			
-			dump_expr(tu, stream, ep->dot.base, depth + 1, true);
+			char* name = (char*)tu->members[ep->dot_arrow.member].name;
+			fprintf(stream, "Dot %s '%s'\n", name ? name : "<unnamed>", temp_string0);
+			
+			dump_expr(tu, stream, ep->dot_arrow.base, depth + 1, true);
 			break;
 		}
 		case EXPR_SUBSCRIPT: {
@@ -389,6 +393,23 @@ static void dump_stmt(TranslationUnit* tu, FILE* stream, StmtIndex s, int depth,
 			if (sp->return_.expr) {
 				dump_expr(tu, stream, sp->return_.expr, depth + 1, true);
 			}
+			break;
+		}
+		case STMT_BREAK: {
+			fprintf(stream, "Break\n");
+			break;
+		}
+		case STMT_CONTINUE: {
+			fprintf(stream, "Continue\n");
+			break;
+		}
+		case STMT_LABEL: {
+			fprintf(stream, "Label %s\n", sp->label.name);
+			break;
+		}
+		case STMT_GOTO: {
+			fprintf(stream, "Goto\n");
+			dump_expr(tu, stream, sp->goto_.target, depth + 1, true);
 			break;
 		}
 		case STMT_IF: {

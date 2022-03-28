@@ -205,7 +205,6 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath) 
 			}
 			
 			Decl decl = parse_declarator(tu, s, type, false, false);
-			
 			if (tu->types[decl.type].kind == KIND_FUNC) {
 				// function
 				Symbol* sym = find_global_symbol((char*)decl.name);
@@ -391,6 +390,8 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath) 
 			}
 		}
 	}
+	
+	assert(s->current == arrlen(s->tokens) - 1);
 	
 	// NOTE(NeGate): This is a Cuik extension, it allows normal symbols
 	// like functions to declared out of order.
@@ -1563,7 +1564,7 @@ static ExprIndex parse_expr_l1(TranslationUnit* tu, TokenStream* restrict s) {
 			tu->exprs[e] = (Expr) {
 				.op = EXPR_ARROW,
 				.loc = loc,
-				.arrow = { .base = base, .name = name }
+				.dot_arrow = { .base = base, .name = name }
 			};
 			
 			tokens_next(s);
@@ -1585,7 +1586,7 @@ static ExprIndex parse_expr_l1(TranslationUnit* tu, TokenStream* restrict s) {
 			tu->exprs[e] = (Expr) {
 				.op = EXPR_DOT,
 				.loc = loc,
-				.dot = { .base = base, .name = name }
+				.dot_arrow = { .base = base, .name = name }
 			};
 			
 			tokens_next(s);
@@ -2645,43 +2646,20 @@ static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, At
 						int last_member_size = 0;
 						int current_bit_offset = 0;
 						
-						bool expect_comma = false;
-						while (tokens_get(s)->type != ';') {
-							if (expect_comma) {
-								expect(s, ',');
-							} else expect_comma = true;
-							
-							Decl decl = parse_declarator(tu, s, member_base_type, false, false);
-							TypeIndex member_type = decl.type;
-							
-							if (tu->types[member_type].kind == KIND_FUNC) {
-								generic_error(s, "Cannot put function types into a struct, try a function pointer");
-							} 
-							/*else if (tu->types[member_type].kind == KIND_STRUCT ||
-									   tu->types[member_type].kind == KIND_UNION ||
-									   tu->types[member_type].kind == KIND_ENUM) {
-								if (tu->types[type].is_incomplete) {
-									report_two_spots(REPORT_ERROR,
-													 &s->line_arena[record_loc],
-													 &s->line_arena[decl.loc],
-													 "Cannot place incomplete type into struct",
-													 NULL, NULL, NULL);
-								}
-							}*/
-							
-							int member_align = tu->types[member_type].align;
-							int member_size = tu->types[member_type].size;
+						if (tokens_get(s)->type == ';' ||
+							tokens_get(s)->type == ':') {
+							int member_align = tu->types[member_base_type].align;
+							int member_size = tu->types[member_base_type].size;
 							if (!is_union) {
 								offset = align_up(offset, member_align);
 							}
 							
-							// TODO(NeGate): Error check that no attribs are set
+							// unnamed field
 							tls_push(sizeof(Member));
-							
 							Member* member = &members[member_count++];
 							*member = (Member) {
-								.type = member_type,
-								.name = decl.name,
+								.type = member_base_type,
+								.name = NULL,
 								.offset = is_union ? 0 : offset,
 								.align = member_align
 							};
@@ -2709,14 +2687,85 @@ static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, At
 								member->bit_width = bit_width;
 							}
 							last_member_size = member_size;
-							
 							if (is_union) {
 								if (member_size > offset) offset = member_size;
 							} else {
 								offset += member_size;
 							}
-							
 							if (member_align > align) align = member_align;
+						} else {
+							bool expect_comma = false;
+							while (tokens_get(s)->type != ';') {
+								if (expect_comma) {
+									expect(s, ',');
+								} else expect_comma = true;
+								
+								Decl decl = parse_declarator(tu, s, member_base_type, false, false);
+								TypeIndex member_type = decl.type;
+								
+								if (tu->types[member_type].kind == KIND_FUNC) {
+									generic_error(s, "Cannot put function types into a struct, try a function pointer");
+								}
+								/*else if (tu->types[member_type].kind == KIND_STRUCT ||
+										   tu->types[member_type].kind == KIND_UNION ||
+										   tu->types[member_type].kind == KIND_ENUM) {
+									if (tu->types[type].is_incomplete) {
+										report_two_spots(REPORT_ERROR,
+														 &s->line_arena[record_loc],
+														 &s->line_arena[decl.loc],
+														 "Cannot place incomplete type into struct",
+														 NULL, NULL, NULL);
+									}
+								}*/
+								
+								int member_align = tu->types[member_type].align;
+								int member_size = tu->types[member_type].size;
+								if (!is_union) {
+									offset = align_up(offset, member_align);
+								}
+								
+								// TODO(NeGate): Error check that no attribs are set
+								tls_push(sizeof(Member));
+								Member* member = &members[member_count++];
+								*member = (Member) {
+									.type = member_type,
+									.name = decl.name,
+									.offset = is_union ? 0 : offset,
+									.align = member_align
+								};
+								
+								if (tokens_get(s)->type == ':') {
+									tokens_next(s);
+									
+									// if we change data type halfway we split things off
+									if (last_member_size != member_size) {
+										current_bit_offset = 0;
+									}
+									
+									int bit_width = parse_const_expr(tu, s);
+									int bits_in_region = member_size * 8;
+									if (bit_width > bits_in_region) {
+										generic_error(s, "Bitfield cannot fit in this type.");
+									}
+									
+									if (current_bit_offset + bit_width > bits_in_region) {
+										current_bit_offset = 0;
+									}
+									
+									member->is_bitfield = true;
+									member->bit_offset = current_bit_offset;
+									member->bit_width = bit_width;
+								}
+								last_member_size = member_size;
+								
+								if (is_union) {
+									if (member_size > offset) offset = member_size;
+								} else {
+									offset += member_size;
+								}
+								
+								if (member_align > align) align = member_align;
+							}
 						}
 						
 						expect(s, ';');
@@ -2779,7 +2828,10 @@ static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, At
 					if (type) {
 						// can't re-complete a enum
 						// TODO(NeGate): error messages
-						assert(tu->types[type].enumerator.start != tu->types[type].enumerator.start);
+						size_t count = tu->types[type].enumerator.end - tu->types[type].enumerator.start;
+						if (count) {
+							generic_error(s, "Cannot recomplete an enumerator");
+						}
 					} else {
 						type = new_enum(tu);
 						tu->types[type].is_incomplete = true;
