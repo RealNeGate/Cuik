@@ -235,7 +235,7 @@ void report_two_spots(ReportLevel level, SourceLoc* loc, SourceLoc* loc2, const 
 				size_t start_pos = loc2->columns > dist_from_line_start 
 					? loc2->columns - dist_from_line_start : 0;
 				
-				size_t tkn_len = loc->length;
+				size_t tkn_len = loc2->length;
 				for (size_t i = 0; i < start_pos; i++) printf(" ");
 				printf("^");
 				for (size_t i = 1; i < tkn_len; i++) printf("~");
@@ -254,6 +254,7 @@ void report_two_spots(ReportLevel level, SourceLoc* loc, SourceLoc* loc2, const 
 		}
 	}
 	
+	printf("\n");
 	tally_report_counter(level);
 }
 

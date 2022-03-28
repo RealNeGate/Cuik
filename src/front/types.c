@@ -104,9 +104,9 @@ TypeIndex new_array(TranslationUnit* tu, TypeIndex base, int count) {
 		Type t = {
 			.kind = KIND_ARRAY,
 			.size = 0,
-			.align = 0,
+			.align = tu->types[base].align,
 			.array_of = base,
-			.array_count = count
+			.array_count = 0
 		};
 		
 		big_array_put(tu->types, t);

@@ -21,8 +21,11 @@ void* big_array_internal_reserve(void* ptr, size_t type_size, size_t extra) {
     if (header->size + extra >= header->capacity) {
         header->capacity = (header->size + extra) * 2;
         BigArrayHeader* new_ptr = realloc(header, sizeof(BigArrayHeader) + (type_size * header->capacity));
-        if (!new_ptr) abort();
-        
+        if (!new_ptr) {
+			printf("out of memory!");
+			abort();
+		}
+		
         return &new_ptr->data[0];
     }
 	

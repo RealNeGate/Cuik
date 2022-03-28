@@ -643,7 +643,7 @@ TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e) {
 		}
 		case EXPR_DOT:
 		case EXPR_ARROW: {
-			uint32_t offset;
+			uint32_t offset = 0;
 			Member* m = sema_resolve_member_access(tu, e, &offset);
 			if (m) {
 				ep->dot_arrow.member = m - tu->members;

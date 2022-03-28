@@ -1137,6 +1137,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 			int dir = ep->op == EXPR_PTRADD ? 1 : -1;
 			int stride = tu->types[type->ptr_to].size;
 			
+			assert(stride);
 			return (IRVal) {
 				.value_type = RVALUE,
 				.type = ep->type,
@@ -1385,6 +1386,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 				if ((ep->op == EXPR_PLUS_ASSIGN || ep->op == EXPR_MINUS_ASSIGN) && type->kind == KIND_PTR) {
 					int dir = ep->op == EXPR_PLUS_ASSIGN ? 1 : -1;
 					int stride = tu->types[type->ptr_to].size;
+					assert(stride);
 					
 					TB_Register r = cvt2rval(tu, func, rhs, ep->bin_op.right);
 					TB_Register arith = tb_inst_array_access(func, l, r, dir * stride);
