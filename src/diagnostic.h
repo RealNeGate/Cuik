@@ -12,6 +12,7 @@ typedef enum {
 
 extern bool report_using_thin_errors;
 
+void init_report_system();
 void report(ReportLevel level, SourceLoc* loc, const char* fmt, ...);
 
 // loc_msg      | 

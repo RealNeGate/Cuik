@@ -224,7 +224,9 @@ int main(int argc, char** argv) {
 	builder_compile(INPUT_FILE_COUNT, INPUT_FILES, "cuik");
 	
 	if (argc > 1) {
-		if (strcmp(argv[1], "test") == 0) {
+		if (strcmp(argv[1], "bigboy") == 0) {
+			printf("cuik anal tests/the_pile/bigboy/*.c\n");
+		} else if (strcmp(argv[1], "test") == 0) {
 			printf("\n\n\n");
 			printf("Running tests...\n");
 			
@@ -285,7 +287,7 @@ int main(int argc, char** argv) {
 			
 			char cmd[1024];
 			for (size_t i = 0; i < INPUT_FILE_COUNT; i++) {
-				snprintf(cmd, 1024, "cuik anal -threads:1 -include:src %s", INPUT_FILES[i]);
+				snprintf(cmd, 1024, "cuik anal -threads:1 -include:src/ %s", INPUT_FILES[i]);
 				
 				if (system(cmd) == 0) {
 					printf("`-Success with %s!\n\n", INPUT_FILES[i]);
@@ -298,6 +300,5 @@ int main(int argc, char** argv) {
 			printf("===============   Tests (%d succeeded out of %d)   ===============\n", successes, INPUT_FILE_COUNT);
 		}
 	}
-	
 	return 0;
 }

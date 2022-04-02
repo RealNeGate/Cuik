@@ -116,6 +116,9 @@ void cuik_set_cpp_defines(CPP_Context* cpp) {
 		cpp_define_empty(cpp, "NDEBUG");
 	}
 	
+	cpp_define(cpp, "static_assert", "_Static_assert");
+	cpp_define(cpp, "typeof", "_Typeof");
+	
 	cpp_add_include_directory(cpp, cuik_include_directory);
 	
 	// platform specific stuff
@@ -180,7 +183,6 @@ void cuik_set_cpp_defines(CPP_Context* cpp) {
 		cpp_define(cpp, "__signed__", "signed");
 		cpp_define(cpp, "__alignof", "_Alignof");
 		cpp_define(cpp, "__CRTDECL", "__cdecl");
-		cpp_define(cpp, "static_assert", "_Static_assert");
 		
 		// things we don't handle yet so we just remove them
 		cpp_define_empty(cpp, "_Frees_ptr_");

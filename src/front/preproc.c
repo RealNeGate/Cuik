@@ -1195,24 +1195,40 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
 							*temp_expansion++ = ' ';
 							
 							// Just slap all the arguments that are after the 'key_count'
-							for (size_t i = key_count; i < value_count; i++) {
-								const unsigned char* end   = value_ranges[i*2 + 1];
-								const unsigned char* start = value_ranges[i*2 + 0];
-								size_t count = end-start;
-								
-								if (i) {
-									*temp_expansion++ = ',';
+							if (key_count != value_count) {
+								for (size_t i = key_count; i < value_count; i++) {
+									const unsigned char* end   = value_ranges[i*2 + 1];
+									const unsigned char* start = value_ranges[i*2 + 0];
+									size_t count = end-start;
+									
+									// slap a comma between var args
+									if (i != key_count) {
+										*temp_expansion++ = ',';
+										*temp_expansion++ = ' ';
+									}
+									
+									for (size_t j = 0; j < count; j++) {
+										if (start[j] == '\r' || start[j] == '\n') {
+											*temp_expansion++ = ' ';
+										} else {
+											*temp_expansion++ = start[j];
+										}
+									}
 									*temp_expansion++ = ' ';
 								}
-								
-								for (size_t j = 0; j < count; j++) {
-									if (start[j] == '\r' || start[j] == '\n') {
-										*temp_expansion++ = ' ';
-									} else {
-										*temp_expansion++ = start[j];
+							} else {
+								// walk back any spaces to find a comma
+								// if we find one, we should delete it
+								unsigned char* p = temp_expansion - 1;
+								while (p != temp_expansion_start) {
+									if (*p == ',') {
+										*p = ' ';
+										break;
 									}
+									else if (*p != ' ') break;
+									
+									p--;
 								}
-								*temp_expansion++ = ' ';
 							}
 						} else {
 							int index = -1;

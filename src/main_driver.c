@@ -4,6 +4,10 @@
 #include "driver_utils.h"
 #include <ext/threadpool.h>
 
+#if _WIN32
+#define strdup(x) _strdup(x)
+#endif
+
 typedef enum {
 	COMPILER_MODE_NONE,
 	
@@ -48,6 +52,7 @@ enum { TARGET_OPTION_COUNT = sizeof(target_options) / sizeof(target_options[0]) 
 static BigArray(const char*) cuik_include_dirs;
 static BigArray(const char*) cuik_source_files;
 static char cuik_file_no_ext[255];
+static bool is_frontend_only;
 
 static CompilationUnit compilation_unit;
 
@@ -101,6 +106,14 @@ static void codegen_task(void* arg) {
 	}
 }
 
+static void frontend_task(void* arg) {
+	const char* path = (const char*)arg;
+	
+	cuik_compile_file(&compilation_unit, path,
+					  big_array_length(cuik_include_dirs),
+					  &cuik_include_dirs[0], is_frontend_only);
+}
+
 static void dispatch_for_all_top_level_stmts(threadpool_t* thread_pool, void (*task)(void*)) {
 	tls_init();
 	
@@ -146,29 +159,37 @@ static void dispatch_for_all_ir_functions(threadpool_t* thread_pool, void (*task
 }
 
 static void compile_project(const char* obj_output_path, bool is_multithreaded, bool is_check) {
+	is_frontend_only = is_check;
+	
 	atoms_init();
+	init_report_system();
 	compilation_unit_init(&compilation_unit);
 	
 	if (!is_check) irgen_init();
+	threadpool_t* thread_pool = threadpool_create(settings.num_of_worker_threads, 4096);
 	
-	for (size_t i = 0, count = big_array_length(cuik_source_files); i < count; i++) {
-		//printf("Compiling %s...\n", cuik_source_files[i]);
-		TranslationUnit* tu = cuik_compile_file(&compilation_unit, cuik_source_files[i],
-												big_array_length(cuik_include_dirs),
-												&cuik_include_dirs[0],
-												is_check);
-		
-		if (settings.emit_ast != EMIT_AST_NONE) {
+	// dispatch multithreaded
+	if (settings.emit_ast == EMIT_AST_NONE) {
+		for (size_t i = 0, count = big_array_length(cuik_source_files); i < count; i++) {
+			threadpool_submit(thread_pool, frontend_task, (void*)cuik_source_files[i]);
+		}
+	} else {
+		// emit-ast is single threaded just to make it nicer to read
+		for (size_t i = 0, count = big_array_length(cuik_source_files); i < count; i++) {
+			TranslationUnit* tu = cuik_compile_file(&compilation_unit, cuik_source_files[i],
+													big_array_length(cuik_include_dirs),
+													&cuik_include_dirs[0],
+													is_check);
+			
 			ast_dump(tu, stdout);
 		}
 	}
+	threadpool_wait(thread_pool);
 	
 	compilation_unit_internal_link(&compilation_unit);
 	
 	if (!is_check) {
 		timed_block("ir gen & compile") {
-			threadpool_t* thread_pool = threadpool_create(settings.num_of_worker_threads, 4096);
-			
 			dispatch_for_all_top_level_stmts(thread_pool, irgen_task);
 			
 			FOR_EACH_TU(tu, &compilation_unit) {
@@ -187,11 +208,11 @@ static void compile_project(const char* obj_output_path, bool is_multithreaded, 
 				dispatch_for_all_ir_functions(thread_pool, codegen_task);
 			}
 			
-			threadpool_free(thread_pool);
 			irgen_deinit();
 		}
 	}
 	
+	threadpool_free(thread_pool);
 	compilation_unit_deinit(&compilation_unit);
 	arena_free();
 	atoms_deinit();
@@ -469,12 +490,49 @@ static void print_help(const char* executable_path) {
 		   executable_path);
 }
 
+// we can do a bit of filter such as '*.c' where it'll take all 
+// paths in the folder that end with .c
+static void append_input_path(const char* path) {
+	// avoid using the filters if we dont need to :p
+	bool needs_filter = false;
+	for (const char* p = path; *p; p++) if (*p == '*') {
+		needs_filter = true;
+		break;
+	}
+	
+	if (needs_filter) {
+#     ifdef _WIN32
+		WIN32_FIND_DATA find_data;
+		HANDLE find_handle = FindFirstFile(path, &find_data);
+		if (find_handle == INVALID_HANDLE_VALUE) {
+			printf("could not filter path: %s\n", path);
+			abort();
+		}
+		
+		while (FindNextFile(find_handle, &find_data)) {
+			big_array_put(cuik_source_files, strdup(find_data.cFileName));
+		}
+		
+		if (!FindClose(find_handle)) {
+			printf("internal error: failed to close filter\n");
+			abort();
+		}
+#     else
+		printf("filepath filters not supported on your platform yet :(\n");
+		printf("umm... i mean you can probably remind me if you want :)\n");
+		abort();
+#     endif
+	} else {
+		big_array_put(cuik_source_files, path);
+	}
+}
+
 static int parse_args(size_t arg_start, size_t arg_count, char** args) {
 	const char* output_name = NULL;
 	
 	for (size_t i = arg_start; i < arg_count; i++) {
 		if (args[i][0] != '-') {
-			big_array_put(cuik_source_files, args[i]);
+			append_input_path(args[i]);
 			continue;
 		}
 		
@@ -803,14 +861,6 @@ int main(int argc, char* argv[]) {
 				printf("Expected filename\n");
 				return 1;
 			}
-			
-#ifdef _WIN32
-			if (!settings.freestanding) {
-				char* cuik_startup_path = malloc(MAX_PATH);
-				sprintf_s(cuik_startup_path, MAX_PATH, "%swin32_startup.c", cuik_library_directory);
-				big_array_put(cuik_source_files, cuik_startup_path);
-			}
-#endif
 			
 			live_compile();
 			break;

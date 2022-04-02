@@ -1,6 +1,7 @@
 #include "diagnostic.h"
 #include <stdarg.h>
 #include <ctype.h>
+#include <ext/threads.h>
 
 #if _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -14,7 +15,8 @@ static const char* report_names[] = {
 	"error"
 };
 
-static int tally[REPORT_MAX] = {};
+static thread_local int tally[REPORT_MAX] = {};
+static mtx_t mutex;
 
 #if _WIN32
 static HANDLE console_handle;
@@ -29,6 +31,10 @@ const static int attribs[] = {
 #endif
 
 bool report_using_thin_errors = false;
+
+void init_report_system() {
+	mtx_init(&mutex, mtx_plain);
+}
 
 static void print_level_name(ReportLevel level) {
 #if _WIN32
@@ -98,6 +104,7 @@ static void draw_line_horizontal_pad() {
 }
 
 void report(ReportLevel level, SourceLoc* loc, const char* fmt, ...) {
+	mtx_lock(&mutex);
 	display_line(level, loc);
 	
 	va_list ap;
@@ -131,9 +138,11 @@ void report(ReportLevel level, SourceLoc* loc, const char* fmt, ...) {
 	}
 	
 	tally_report_counter(level);
+	mtx_unlock(&mutex);
 }
 
 void report_two_spots(ReportLevel level, SourceLoc* loc, SourceLoc* loc2, const char* msg, const char* loc_msg, const char* loc_msg2, const char* interjection) {
+	mtx_lock(&mutex);
 	if (!interjection && loc->line == loc2->line) {
 		assert(loc->columns < loc2->columns);
 		
@@ -256,10 +265,11 @@ void report_two_spots(ReportLevel level, SourceLoc* loc, SourceLoc* loc2, const 
 	
 	printf("\n");
 	tally_report_counter(level);
+	mtx_unlock(&mutex);
 }
 
-void crash_if_reports(ReportLevel min) {
-	for (int i = min; i < REPORT_MAX; i++) {
+void crash_if_reports(ReportLevel minimum) {
+	for (int i = minimum; i < REPORT_MAX; i++) {
 		if (tally[i]) {
 			printf("exited with %d %s%s", tally[i], report_names[i], tally[i] > 1 ? "s" : "");
 			

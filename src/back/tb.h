@@ -237,9 +237,9 @@ extern "C" {
 		TB_LOAD,
 		
 		/* Pointers */
-		TB_RESTRICT,   // all three of these are the only ways to 
-		TB_LOCAL,      // generate restrict pointers meaning that
-		TB_PARAM_ADDR, // they do not alias with any other pointers
+		TB_RESTRICT,
+		TB_LOCAL,
+		TB_PARAM_ADDR,
 		
 		TB_PARAM,
 		TB_FUNC_ADDRESS,
@@ -289,7 +289,7 @@ extern "C" {
 		TB_UMOD,
 		TB_SMOD,
 		
-		// Float arithmatic
+		/* Float arithmatic */
 		TB_FADD,
 		TB_FSUB,
 		TB_FMUL,
@@ -351,6 +351,7 @@ extern "C" {
 	// represents byte counts
 	typedef uint32_t TB_CharUnits;
 	
+	typedef unsigned int TB_AttributeID;
 	typedef unsigned int TB_FileID;
 	typedef unsigned int TB_FunctionID;
 	typedef unsigned int TB_ExternalID; // 0 means NULL
@@ -752,6 +753,22 @@ extern "C" {
 	TB_API void tb_global_set_initializer(TB_Module* m, TB_GlobalID global, TB_InitializerID initializer);
 	
 	////////////////////////////////
+	// Function Attributes
+	////////////////////////////////
+	// These are parts of a function that describe metadata for instructions
+	
+	// restrict is applied onto loads and store operations meaning that the pointer
+	// being accessed doesn't alias with any of the other pointers within the scope
+	TB_API TB_AttributeID tb_function_attrib_restrict(TB_Function* f, TB_AttributeID scope);
+	
+	// This defines a some scope which can have a set of restrict pointers defined in it
+	TB_API TB_AttributeID tb_function_attrib_scope(TB_Function* f, TB_AttributeID parent_scope);
+	
+	// places an attribute on a function, note that there's no limit to how many
+	// registers can share an attribute
+	TB_API void tb_function_append_attrib(TB_Function* f, TB_Reg r, TB_AttributeID a);
+	
+	////////////////////////////////
 	// Function IR Generation
 	////////////////////////////////
 	// the user_data is expected to be a valid FILE*
@@ -769,6 +786,9 @@ extern "C" {
 	
 	TB_API TB_Label tb_inst_get_current_label(TB_Function* f);
 	TB_API void tb_inst_loc(TB_Function* f, TB_FileID file, int line);
+	
+	TB_API void tb_inst_set_scope(TB_Function* f, TB_AttributeID scope);
+	TB_API TB_AttributeID tb_inst_get_scope(TB_Function* f);
 	
 	TB_API void tb_inst_debugbreak(TB_Function* f);
 	

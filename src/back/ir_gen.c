@@ -9,6 +9,7 @@ atomic_size_t function_count;
 
 // Maps param_num -> TB_Register
 static thread_local TB_Register* parameter_map;
+
 static thread_local TypeIndex function_type;
 static thread_local const char* function_name;
 
@@ -767,14 +768,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 			};
 		}
 		case EXPR_DEREF: {
-			// TODO(NeGate): Kinda messy...
-			Type* restrict type = &tu->types[tu->exprs[ep->unary_op.src].type];
 			TB_Register reg = irgen_as_rvalue(tu, func, ep->unary_op.src);
-			
-			if (type->kind == KIND_PTR && type->is_ptr_restrict) {
-				reg = tb_inst_restrict(func, reg);
-			}
-			
 			return (IRVal) {
 				.value_type = LVALUE,
 				.type = ep->type,
@@ -806,6 +800,17 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 						}
 					}
 				}
+			} else if (tu->exprs[ep->call.target].op == EXPR_UNKNOWN_SYMBOL) {
+				// We can only get to this point with UNKNOWN_SYMBOL if it's
+				// a builtin
+				const char* name = (const char*) tu->exprs[ep->call.target].unknown_sym;
+				TB_Register val = target_desc.compile_builtin(tu, func, name, arg_count, args);
+				
+				return (IRVal) {
+					.value_type = RVALUE,
+					.type = ep->type,
+					.reg = val
+				};
 			}
 			
 			// NOTE(NeGate): returning aggregates requires us
@@ -1868,6 +1873,9 @@ static void gen_func_body(TranslationUnit* tu, TypeIndex type, StmtIndex s) {
 	TB_Register* params = parameter_map = tls_push(param_count * sizeof(TB_Register));
 	Type* restrict return_type = &tu->types[tu->types[type].func.return_type];
 	
+	TB_AttributeID old_tb_scope = tb_inst_get_scope(func);
+	tb_inst_set_scope(func, tb_function_attrib_scope(func, old_tb_scope));
+	
 	// mark return value address (if it applies)
 	// and get stack slots for parameters
 	if (return_type->kind == KIND_STRUCT ||
@@ -1915,6 +1923,8 @@ static void gen_func_body(TranslationUnit* tu, TypeIndex type, StmtIndex s) {
 			tb_inst_ret(func, TB_NULL_REG);
 		}
 	}
+	
+	tb_inst_set_scope(func, old_tb_scope);
 	
 	if (settings.print_tb_ir) {
 		if (mtx_lock(&emit_ir_mutex) != thrd_success) {

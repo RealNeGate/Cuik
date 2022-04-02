@@ -32,6 +32,9 @@ TB_Register compile_builtin(TranslationUnit* tu, TB_Function* func, const char* 
 	} else if (strcmp(name, "__c11_atomic_signal_fence") == 0) {
 		printf("TODO __c11_atomic_signal_fence!");
 		abort();
+	} else if (strcmp(name, "__builtin_unreachable") == 0) {
+		printf("TODO __builtin_unreachable!");
+		abort();
 	} else if (strcmp(name, "__builtin_expect") == 0) {
 		printf("TODO __builtin_expect!");
 		abort();
@@ -156,8 +159,26 @@ TB_Register compile_builtin(TranslationUnit* tu, TB_Function* func, const char* 
 TargetDescriptor get_x64_target_descriptor() {
 	BuiltinBinding* builtins = NULL;
 	
-	// msvc intrinsics
+	// gcc/clang
 	shput(builtins, "__builtin_expect", 1);
+	shput(builtins, "__builtin_unreachable", 1);
+	shput(builtins, "__c11_atomic_compare_exchange_strong", 1);
+	shput(builtins, "__c11_atomic_thread_fence", 1);
+	shput(builtins, "__c11_atomic_signal_fence", 1);
+	shput(builtins, "__c11_atomic_is_lock_free", 1);
+	shput(builtins, "__c11_atomic_load", 1);
+	shput(builtins, "__c11_atomic_store", 1);
+	shput(builtins, "__c11_atomic_exchange", 1);
+	shput(builtins, "__c11_atomic_compare_exchange_strong", 1);
+	shput(builtins, "__c11_atomic_compare_exchange_weak", 1);
+	shput(builtins, "__c11_atomic_fetch_add", 1);
+	shput(builtins, "__c11_atomic_fetch_sub", 1);
+	shput(builtins, "__c11_atomic_fetch_or", 1);
+	shput(builtins, "__c11_atomic_fetch_xor", 1);
+	shput(builtins, "__c11_atomic_fetch_and", 1);
+	shput(builtins, "__builtin_mul_overflow", 1);
+	
+	// msvc intrinsics
 	shput(builtins, "__debugbreak", 1);
 	shput(builtins, "__va_start", 1);
 	shput(builtins, "_umul128", 1);

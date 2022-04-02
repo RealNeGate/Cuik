@@ -221,7 +221,7 @@ inline static void builder_compile_msvc(size_t count, const char* filepaths[], c
 	cmd_append(output_path);
 	
 #   if defined(RELEASE_BUILD)
-	cmd_append("/GL /Ox /WX /GS- /DNDEBUG ");
+	cmd_append("/Ox /WX /GS- /DNDEBUG ");
 #   else
 	cmd_append("/MTd /Od /WX /Zi /D_DEBUG /RTC1 ");
 #   endif
@@ -262,6 +262,10 @@ inline static void builder_compile_cc(size_t count, const char* filepaths[], con
 		
 		cmd_append(cc_command);
 		cmd_append(" -march=haswell -maes -Werror -Wall -Wno-trigraphs -Wno-unused-function ");
+		
+#   if defined(RELEASE_BUILD)
+		cmd_append("-O2 ");
+#   endif
 		
 #if defined(__clang__)
 		cmd_append("-Wno-gnu-designator ");

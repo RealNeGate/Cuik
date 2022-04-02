@@ -17,6 +17,8 @@
 //   - make the expect(...) code be a little smarter, if it knows that it's expecting
 //   a token for a specific operation... tell the user
 #include "parser.h"
+#include <targets/targets.h>
+#undef VOID // winnt.h loves including garbage
 
 typedef struct {
 	Atom key;
@@ -265,7 +267,11 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath) 
 				if (tokens_get(s)->type == '{') {
 					// TODO(NeGate): Error messages
 					if (is_redefining_body) {
-						generic_error(s, "Cannot redefine function decl");
+						report_two_spots(REPORT_ERROR, 
+										 &s->line_arena[tu->stmts[n].loc],
+										 &s->line_arena[decl.loc],
+										 "Cannot redefine function decl",
+										 NULL, NULL, "previous definition was:");
 					} else if (strcmp((const char*)decl.name, "WinMain") == 0) {
 						settings.using_winmain = true;
 					}
@@ -413,8 +419,12 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath) 
 					}
 				}
 				
-				SourceLoc* loc = &s->line_arena[tu->exprs[i].loc];
-				report(REPORT_ERROR, loc, "could not resolve symbol: %s", name);
+				// check if it's builtin
+				ptrdiff_t search = shgeti(target_desc.builtin_func_map, name);
+				if (search < 0) {
+					SourceLoc* loc = &s->line_arena[tu->exprs[i].loc];
+					report(REPORT_ERROR, loc, "could not resolve symbol: %s", name);
+				}
 			}
 		}
 		success:;
@@ -1445,6 +1455,7 @@ static ExprIndex parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
 		return e;
 	} else if (tokens_get(s)->type == TOKEN_STRING_DOUBLE_QUOTE) {
 		Token* t = tokens_get(s);
+		bool is_wide = *t->start == 'L';
 		
 		ExprIndex e = make_expr(tu);
 		tu->exprs[e] = (Expr) {
@@ -1468,7 +1479,9 @@ static ExprIndex parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
 			}
 			
 			size_t curr = 0;
-			char* buffer = arena_alloc(total_len + 2, 4);
+			char* buffer = arena_alloc(total_len + 3, 4);
+			
+			if (is_wide) buffer[curr++] = 'L';
 			buffer[curr++] = '\"';
 			
 			// Fill up the buffer
@@ -1476,12 +1489,15 @@ static ExprIndex parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
 			while (tokens_get(s)->type == TOKEN_STRING_DOUBLE_QUOTE) {
 				Token* segment = tokens_get(s);
 				
-				// TODO(NeGate): Implement concat on wide strings
-				assert(segment->start[0] != 'L');
-				
-				size_t len = segment->end - segment->start;
-				memcpy(&buffer[curr], segment->start + 1, len - 2);
-				curr += len - 2;
+				if (segment->start[0] == 'L') {
+					size_t len = segment->end - segment->start;
+					memcpy(&buffer[curr], segment->start + 2, len - 3);
+					curr += len - 3;
+				} else {
+					size_t len = segment->end - segment->start;
+					memcpy(&buffer[curr], segment->start + 1, len - 2);
+					curr += len - 2;
+				}
 				
 				tokens_next(s);
 			}
