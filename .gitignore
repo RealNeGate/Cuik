@@ -10,6 +10,7 @@ Cuik/
 *.pdb
 *.rdbg
 *.i
+*.swp
 *.tbir
 *.json
 
