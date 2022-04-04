@@ -61,8 +61,10 @@ inline static size_t cstr_copy(size_t len, char* dst, const char* src) {
 
 #if _WIN32
 typedef wchar_t* OS_String;
+typedef wchar_t OS_Char;
 #else
 typedef char* OS_String;
+typedef char OS_Char;
 
 // non-windows platforms generally just don't have the safe functions so
 // let's provide them

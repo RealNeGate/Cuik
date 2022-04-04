@@ -11,6 +11,10 @@ typedef enum {
 typedef struct CompilerSettings {
 	const char* output_path;
 	
+	// this is exclusively used for the fancy
+	// type printing CLI tool
+	const char* hack_type_printer_name;
+
 	// basically defines the sizeof(long)
 	// if true it's 4 bytes if not it's 8
 	bool is_windows_long  : 1;

@@ -1155,7 +1155,7 @@ static void sema_top_level(TranslationUnit* tu, StmtIndex s, bool frontend_only)
 					sp->backing.g = 0;
 				} else {
 					TB_Linkage linkage = sp->decl.attrs.is_static ? TB_LINKAGE_PRIVATE : TB_LINKAGE_PUBLIC;
-					sp->backing.g = tb_global_create(mod, name, linkage);
+					sp->backing.g = tb_global_create(mod, name, TB_STORAGE_DATA, linkage);
 				}
 			}
 			break;

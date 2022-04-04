@@ -430,6 +430,15 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath) 
 		success:;
 	}
 	
+	if (tu->hack.name) {
+		ptrdiff_t search = shgeti(typedefs, tu->hack.name);
+		if (search >= 0) {
+			tu->hack.type = typedefs[search].value;
+		} else {
+			tu->hack.type = TYPE_NONE;
+		}
+	}
+	
 	current_switch_or_case = 0;
 	current_breakable = 0;
 	current_continuable = 0;

@@ -30,7 +30,9 @@ static const char* INPUT_FILES[] = {
 	
 	"src/back/ir_gen.c",
 	"src/back/linker.c",
-	
+
+	"src/linker/tblink.c",
+
 	"src/ext/stb_ds.c",
 	"src/ext/threadpool.c",
 	

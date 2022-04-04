@@ -30,11 +30,15 @@ void linker_add_libpath_wide(Linker* l, const wchar_t* filepath);
 #endif
 
 // This can be a static library or object file
-void linker_add_input_file(Linker* l, const char* filenpath);
+void linker_add_input_file(Linker* l, const char* filepath);
 
 // Calls the system linker
 // return true if it succeeds
-bool linker_invoke(Linker* l, const char* filename);
+bool linker_invoke_system(Linker* l, const char* filename);
+
+// Calls the internal cuik linker
+// returns true if it succeeds
+bool linker_invoke_tb(Linker* l, const char* filename);
 
 ////////////////////////////////
 // Private definitions

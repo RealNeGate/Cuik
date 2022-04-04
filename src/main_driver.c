@@ -258,11 +258,55 @@ static int execute_query_operation(const char* option, size_t arg_start, size_t 
 			cpp_deinit(&cpp_ctx);
 			
 			return 0;
+		} else if (strcmp(option, "print_type") == 0) {
+			if (arg_count < 2) return -1;
+			
+			int result = parse_args(arg_start, arg_count - 1, args);
+			if (result) return result;
+			
+			if (big_array_length(cuik_source_files) != 1) {
+				printf("print_type expects after C source file then a typename\n");
+				abort();
+			}
+			
+			settings.hack_type_printer_name = args[arg_count - 1]; 
+
+			atoms_init();
+			init_report_system();
+			compilation_unit_init(&compilation_unit);
+			
+			TranslationUnit* tu = cuik_compile_file(&compilation_unit, cuik_source_files[0],
+													big_array_length(cuik_include_dirs),
+													&cuik_include_dirs[0],
+													true);
+			if (tu->hack.type) {
+				Type* ty = &tu->types[tu->hack.type];
+				if (ty->kind == KIND_STRUCT || ty->kind == KIND_UNION) {
+					printf("struct %s {\n", ty->record.name ? (char*)ty->record.name : "<unnamed>");
+					char temp_string0[1024];
+
+					MemberIndex start = ty->record.kids_start;
+					MemberIndex end = ty->record.kids_end;
+					for (MemberIndex m = start; m < end; m++) {
+						Member* member = &tu->members[m];
+						
+						type_as_string(tu, sizeof(temp_string0), temp_string0, member->type);
+						printf("    %-80s\t%s\n", temp_string0, member->name);
+					}					
+
+					printf("}\n");
+				} else {
+					printf("Could not represent type yet...\n");
+				}
+			} else {
+				printf("Could not find type '%s'\n", tu->hack.name);
+			}
 		}
 	}
 	
 	printf("Unknown cuik query option (Supported options):\n");
 	printf("find_include - Resolve an include file path from name\n");
+	printf("print_type   - Find a type within the translation unit\n");
 	printf("\n");
 	return 1;
 }
@@ -817,7 +861,10 @@ int main(int argc, char* argv[]) {
 							// Add system libpaths
 							linker_add_default_libpaths(&l);
 							linker_add_libpath(&l, "W:/Workspace/Cuik/crt/lib/");
-							
+
+							// Add Cuik output
+							linker_add_input_file(&l, obj_output_path);
+
 							// Add input libraries
 #ifdef _WIN32
 							linker_add_input_file(&l, "kernel32.lib");
@@ -831,10 +878,7 @@ int main(int argc, char* argv[]) {
 							linker_add_input_file(&l, "win32_startup.obj");
 #endif
 							
-							// Add Cuik output
-							linker_add_input_file(&l, obj_output_path);
-							
-							linker_invoke(&l, cuik_file_no_ext);
+							linker_invoke_tb(&l, cuik_file_no_ext);
 							linker_deinit(&l);
 							
 							if (mode == COMPILER_MODE_RUN) {

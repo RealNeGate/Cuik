@@ -207,7 +207,8 @@ TranslationUnit* cuik_compile_file(CompilationUnit* cu, const char* path,
 								   size_t include_count, const char** includes,
 								   bool frontend_only) {
 	TranslationUnit* tu = calloc(1, sizeof(TranslationUnit));
-	
+	tu->hack.name = settings.hack_type_printer_name;
+
 	CPP_Context cpp_ctx;
 	timed_block("preprocess: %s", path) {
 		cpp_init(&cpp_ctx);

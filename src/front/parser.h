@@ -580,6 +580,14 @@ typedef struct TranslationUnit {
 	// stb_ds array
 	// NOTE(NeGate): should this be an stb_ds array?
 	StmtIndex* top_level_stmts;
+
+	// this is a bit of a hack to implement the struct printing
+	// functionality, if a name is passed into hack.name then it'll
+	// try to find a type by that name and feed it into hack.type
+	struct {
+		const char* name;
+		TypeIndex   type;
+	} hack;
 } TranslationUnit;
 
 TypeIndex new_func(TranslationUnit* tu);

@@ -91,7 +91,7 @@ void linker_add_input_file(Linker* l, const char filepath[]) {
 // Like im pretty sure %S doesn't do the UTF-8 conversion and im being lazy about it.
 enum { CMD_LINE_MAX = 4096 };
 
-bool linker_invoke(Linker* l, const char* filename) {
+bool linker_invoke_system(Linker* l, const char* filename) {
 #if defined(_WIN32)
 	wchar_t cmd_line[CMD_LINE_MAX];
 	int cmd_line_len = swprintf(cmd_line, CMD_LINE_MAX,
