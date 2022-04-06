@@ -12,6 +12,7 @@ extern thread_local bool in_the_semantic_phase;
 
 void ast_dump(TranslationUnit* tu, FILE* stream);
 void ast_dump_stats(TranslationUnit* tu, FILE* stream);
+void ast_dump_type(TranslationUnit* tu, TypeIndex type, int depth, int offset);
 
 // out_offset is added onto so it needs to be initialized
 Member* sema_resolve_member_access(TranslationUnit* tu, ExprIndex e, uint32_t* out_offset);

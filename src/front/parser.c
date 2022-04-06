@@ -2638,6 +2638,7 @@ static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, At
 						//assert(!tu->types[type].is_incomplete);
 					} else {
 						type = new_record(tu, is_union);
+						tu->types[type].loc = record_loc;
 						tu->types[type].is_incomplete = false;
 						tu->types[type].record.name = name;
 						

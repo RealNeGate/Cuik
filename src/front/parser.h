@@ -91,7 +91,8 @@ typedef struct Type {
     TypeKind kind;
     int size;  // sizeof
     int align; // _Alignof
-	
+	SourceLocIndex loc;
+
 	bool is_const : 1;
     bool is_atomic : 1;
 	bool is_incomplete : 1;

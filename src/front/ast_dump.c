@@ -536,3 +536,61 @@ void ast_dump_stats(TranslationUnit* tu, FILE* stream) {
 		   big_array_length(tu->types),
 		   (big_array_length(tu->types) * sizeof(Type)) / 1024);
 }
+
+void ast_dump_type(TranslationUnit* tu, TypeIndex type, int depth, int offset) {
+	for (int i = 0; i < depth; i++) printf("  ");
+
+	Type* ty = &tu->types[type];
+
+	if (ty->kind == KIND_STRUCT || ty->kind == KIND_UNION) {
+		if (ty->loc) {
+			SourceLoc* loc = &tu->tokens.line_arena[ty->loc];
+
+			printf("%s \033]8;;file://%s\033\\%s\033]8;;\033\\",
+				ty->kind == KIND_STRUCT ? "struct" : "union",
+				loc->file,
+				ty->record.name ? (char*)ty->record.name : "<unnamed>");
+
+			printf(" { // line %d\n", loc->line);
+		} else {
+			printf("%s %s {\n",
+				ty->kind == KIND_STRUCT ? "struct" : "union",
+				ty->record.name ? (char*)ty->record.name : "<unnamed>");
+		}
+
+		char temp_string0[1024];
+
+		MemberIndex start = ty->record.kids_start;
+		MemberIndex end = ty->record.kids_end;
+		for (MemberIndex m = start; m < end; m++) {
+			Member* member = &tu->members[m];
+
+			if (member->name == NULL ||
+				tu->types[member->type].kind == KIND_STRUCT ||
+				tu->types[member->type].kind == KIND_UNION) {
+				ast_dump_type(tu, member->type, depth + 1, offset+member->offset);
+			} else {
+				for (int i = 0; i < depth; i++) printf("  ");
+				printf("  ");
+
+				type_as_string(tu, sizeof(temp_string0), temp_string0, member->type);
+				
+				int l = printf("%s %s", temp_string0, member->name);
+				l += (depth+1) * 2;
+
+				for (int i = l; i < 42; i++) printf(" ");
+				printf(" %d\n", offset+member->offset);
+			}
+		}
+
+		for (int i = 0; i < depth; i++) printf("  ");
+		printf("}\n");
+	} else {
+		printf("Could not represent type yet...\n");
+	}
+
+	if (depth == 0) {
+		printf("STATS:\n  sizeof = %d\n  alignof = %d\n", ty->size, ty->align);
+	}
+}
+

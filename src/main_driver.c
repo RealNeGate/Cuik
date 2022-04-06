@@ -279,28 +279,13 @@ static int execute_query_operation(const char* option, size_t arg_start, size_t 
 													big_array_length(cuik_include_dirs),
 													&cuik_include_dirs[0],
 													true);
+
 			if (tu->hack.type) {
-				Type* ty = &tu->types[tu->hack.type];
-				if (ty->kind == KIND_STRUCT || ty->kind == KIND_UNION) {
-					printf("struct %s {\n", ty->record.name ? (char*)ty->record.name : "<unnamed>");
-					char temp_string0[1024];
-
-					MemberIndex start = ty->record.kids_start;
-					MemberIndex end = ty->record.kids_end;
-					for (MemberIndex m = start; m < end; m++) {
-						Member* member = &tu->members[m];
-						
-						type_as_string(tu, sizeof(temp_string0), temp_string0, member->type);
-						printf("    %-80s\t%s\n", temp_string0, member->name);
-					}					
-
-					printf("}\n");
-				} else {
-					printf("Could not represent type yet...\n");
-				}
+				ast_dump_type(tu, tu->hack.type, 0, 0);
 			} else {
 				printf("Could not find type '%s'\n", tu->hack.name);
 			}
+			return 0;
 		}
 	}
 	
