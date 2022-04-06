@@ -1,6 +1,7 @@
 /* -*- mode: c; tab-width: 2; indent-tabs-mode: nil; -*-
 Copyright (c) 2012 Marcus Geelnard
 Copyright (c) 2013-2016 Evan Nemerson
+Copyright (c) 2022-2022 Yasser Arguelles
 
 This software is provided 'as-is', without any express or implied
 warranty. In no event will the authors be held liable for any damages
@@ -22,7 +23,7 @@ freely, subject to the following restrictions:
     distribution.
 */
 
-#include "tinycthread.h"
+#include "../include/threads.h"
 #include <stdlib.h>
 
 /* Platform specific includes */
@@ -52,6 +53,27 @@ freely, subject to the following restrictions:
 extern "C" {
 #endif
 
+#if defined(_TTHREAD_WIN32_)
+// kinda a hack since our CRT doesn't currently support
+// C11 shit
+int _timespec64_get(struct _timespec64 *ts, int base)
+{
+    FILETIME ft;
+    ULARGE_INTEGER s;
+    ULONGLONG t;
+
+    if (base != TIME_UTC)
+        return 0;
+
+    GetSystemTimeAsFileTime(&ft);
+    s.LowPart = ft.dwLowDateTime;
+    s.HighPart = ft.dwHighDateTime;
+    t = s.QuadPart - 116444736000000000ULL;
+    ts->tv_sec = t / 10000000;
+    ts->tv_nsec = ((int) (t % 10000000)) * 100;
+    return base;
+}
+#endif
 
 int mtx_init(mtx_t *mtx, int type)
 {

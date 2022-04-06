@@ -10,6 +10,7 @@
 
 extern TB_Module* mod;
 extern atomic_size_t function_count;
+extern atomic_flag irgen_defined_tls_index;
 
 typedef enum IRValType {
 	RVALUE,

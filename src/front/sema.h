@@ -8,6 +8,7 @@
 #include <front/parser.h>
 
 extern _Atomic int sema_error_count;
+extern thread_local bool in_the_semantic_phase;
 
 void ast_dump(TranslationUnit* tu, FILE* stream);
 void ast_dump_stats(TranslationUnit* tu, FILE* stream);

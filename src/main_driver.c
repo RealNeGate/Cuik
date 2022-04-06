@@ -875,10 +875,10 @@ int main(int argc, char* argv[]) {
 							//linker_add_input_file(&l, "Onecoreuap.lib");
 							//linker_add_input_file(&l, "opengl32.lib");
 							linker_add_input_file(&l, "msvcrt.lib");
-							linker_add_input_file(&l, "win32_startup.obj");
+							linker_add_input_file(&l, "win32_rt.lib");
 #endif
 							
-							linker_invoke_tb(&l, cuik_file_no_ext);
+							linker_invoke_system(&l, cuik_file_no_ext);
 							linker_deinit(&l);
 							
 							if (mode == COMPILER_MODE_RUN) {

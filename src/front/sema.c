@@ -5,6 +5,11 @@
 #include <back/ir_gen.h>
 #include <stdarg.h>
 
+// when you're not in the semantic phase, we don't
+// rewrite the contents of the DOT and ARROW exprs
+// because it may screw with things
+thread_local bool in_the_semantic_phase;
+
 static thread_local StmtIndex function_stmt;
 
 // two simple temporary buffers to represent type_as_string results
@@ -257,6 +262,9 @@ TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e) {
 	Expr* restrict ep = &tu->exprs[e];
 	
 	switch (ep->op) {
+		case EXPR_UNKNOWN_SYMBOL: {
+			return (ep->type = TYPE_VOID);
+		}
 		case EXPR_INT: {
 			switch (ep->int_num.suffix) {
 				case INT_SUFFIX_NONE: {
@@ -457,6 +465,18 @@ TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e) {
 			return (ep->type = src);
 		}
 		case EXPR_ADDR: {
+			uint64_t dst;
+			if (in_the_semantic_phase &&
+				const_eval_try_offsetof_hack(tu, ep->unary_op.src, &dst)) {
+
+				*ep = (Expr) {
+					.op = EXPR_INT,
+					.type = TYPE_ULONG,
+					.int_num = { dst, INT_SUFFIX_ULL }
+				};
+				return TYPE_ULONG;
+			}
+
 			TypeIndex src = sema_expr(tu, ep->unary_op.src);
 			return (ep->type = new_pointer(tu, src));
 		}
@@ -646,8 +666,10 @@ TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e) {
 			uint32_t offset = 0;
 			Member* m = sema_resolve_member_access(tu, e, &offset);
 			if (m) {
-				ep->dot_arrow.member = m - tu->members;
-				ep->dot_arrow.offset = offset;
+				if (in_the_semantic_phase) {
+					ep->dot_arrow.member = m - tu->members;
+					ep->dot_arrow.offset = offset;
+				}
 				return (ep->type = m->type);
 			}
 			
@@ -1153,9 +1175,13 @@ static void sema_top_level(TranslationUnit* tu, StmtIndex s, bool frontend_only)
 				
 				if (frontend_only) {
 					sp->backing.g = 0;
-				} else {
+				} else { 
+					if (sp->decl.attrs.is_tls && !atomic_flag_test_and_set(&irgen_defined_tls_index)) {
+						tb_module_set_tls_index(mod, tb_extern_create(mod, "_tls_index"));
+					}
+
 					TB_Linkage linkage = sp->decl.attrs.is_static ? TB_LINKAGE_PRIVATE : TB_LINKAGE_PUBLIC;
-					sp->backing.g = tb_global_create(mod, name, TB_STORAGE_DATA, linkage);
+					sp->backing.g = tb_global_create(mod, name, sp->decl.attrs.is_tls ? TB_STORAGE_TLS : TB_STORAGE_DATA, linkage);
 				}
 			}
 			break;
@@ -1167,7 +1193,8 @@ static void sema_top_level(TranslationUnit* tu, StmtIndex s, bool frontend_only)
 static void sema_mark_children(TranslationUnit* tu, ExprIndex e) {
 	Expr* restrict ep = &tu->exprs[e];
 	if (ep->op == EXPR_ENUM) return;
-	
+	if (ep->op == EXPR_UNKNOWN_SYMBOL) return;
+
 	assert(ep->op == EXPR_SYMBOL);
 	Stmt* restrict sp = &tu->stmts[ep->symbol];
 	
@@ -1188,6 +1215,7 @@ static void sema_mark_children(TranslationUnit* tu, ExprIndex e) {
 
 void sema_pass(CompilationUnit* cu, TranslationUnit* tu, bool frontend_only) {
 	size_t count = arrlen(tu->top_level_stmts);
+	in_the_semantic_phase = true;
 	
 	// simple mark and sweep to remove unused symbols
 	timed_block("sema: collection") {
@@ -1213,4 +1241,6 @@ void sema_pass(CompilationUnit* cu, TranslationUnit* tu, bool frontend_only) {
 			sema_top_level(tu, tu->top_level_stmts[i], frontend_only);
 		}
 	}
+
+	in_the_semantic_phase = false;
 }

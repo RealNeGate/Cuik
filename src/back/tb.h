@@ -739,6 +739,11 @@ TB_API void tb_module_destroy(TB_Module* m);
 // Finalizes the compilation phase
 TB_API bool tb_module_compile(TB_Module* m);
 
+// When targetting windows & thread local storage, you'll need to bind a tls index
+// which is usually just a global that the runtime support has initialized, if you
+// dont and the tls_index is used, it'll crash
+TB_API void tb_module_set_tls_index(TB_Module* m, TB_ExternalID e);
+
 // Exports an object file with all the machine code and symbols generated.
 TB_API bool tb_module_export(TB_Module* m, const char* path, bool emit_debug_info);
 

@@ -6,6 +6,7 @@
 
 TB_Module* mod;
 atomic_size_t function_count;
+atomic_flag irgen_defined_tls_index;
 
 // Maps param_num -> TB_Register
 static thread_local TB_Register* parameter_map;
@@ -1587,8 +1588,12 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, StmtIndex s) {
 				char* name = tls_push(1024);
 				int name_len = snprintf(name, 1024, "%s$%s@%d", function_name, sp->decl.name, s);
 				assert(name_len >= 0 && name_len < 1024);
-				
-				TB_GlobalID g = tb_global_create(mod, name, TB_STORAGE_DATA, TB_LINKAGE_PRIVATE);
+			
+				if (attrs.is_tls && !atomic_flag_test_and_set(&irgen_defined_tls_index)) {
+					tb_module_set_tls_index(mod, tb_extern_create(mod, "_tls_index"));
+				}
+
+				TB_GlobalID g = tb_global_create(mod, name, attrs.is_tls ? TB_STORAGE_TLS : TB_STORAGE_DATA, TB_LINKAGE_PRIVATE);
 				tb_global_set_initializer(mod, g, init);
 				tls_restore(name);
 				
