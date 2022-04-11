@@ -105,6 +105,20 @@ static TB_Register cvt2rval(TranslationUnit* tu, TB_Function* func, const IRVal 
 			reg = v.reg; 
 			break;
 		}
+		case RVALUE_PHI: {
+			TB_Label merger = tb_inst_new_label_id(func);
+
+			tb_inst_label(func, v.phi.if_true);
+			TB_Reg one = tb_inst_bool(func, true);
+			tb_inst_goto(func, merger);
+
+			tb_inst_label(func, v.phi.if_false);
+			TB_Reg zero = tb_inst_bool(func, false);
+
+			tb_inst_label(func, merger);
+			reg = tb_inst_phi2(func, v.phi.if_true, one, v.phi.if_false, zero);
+			break;
+		}
 		case LVALUE: {
 			// Implicit array to pointer
 			if (src->kind == KIND_ARRAY) {
@@ -1074,8 +1088,6 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 				};
 			}
 		}
-		// based on this:
-		// https://github.com/c3lang/c3c/blob/cf56825d26758044fe2a868e65717635864fd723/src/compiler/llvm_codegen_expr.c#L2526
 		case EXPR_LOGICAL_AND:
 		case EXPR_LOGICAL_OR: {
 			// a && b
@@ -1091,41 +1103,53 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 			bool is_and = (ep->op == EXPR_LOGICAL_AND);
 			
 			TB_Label try_rhs_lbl = tb_inst_new_label_id(func);
-			TB_Label phi_lbl = tb_inst_new_label_id(func);
 			
 			// Eval first operand
-			TB_Register lhs = irgen_as_rvalue(tu, func, ep->bin_op.left);
-			
-			TB_Label start_block = tb_inst_get_current_label(func);
-			TB_Register result_on_skip = tb_inst_uint(func, TB_TYPE_BOOL, is_and ? 0 : 1);
-			if (is_and) {
-				tb_inst_if(func, lhs, try_rhs_lbl, phi_lbl);
+			IRVal a = irgen_expr(tu, func, ep->bin_op.left);
+
+			TB_Label true_lbl, false_lbl;
+			if (a.value_type == RVALUE_PHI) {
+				// chain with previous phi.
+				// OR  chains on false,
+				// AND chains on true
+				if (is_and) {
+					tb_inst_label(func, a.phi.if_true);
+					tb_inst_goto(func,  try_rhs_lbl);
+
+					true_lbl = tb_inst_new_label_id(func);
+					false_lbl = a.phi.if_false;
+				} else {
+					tb_inst_label(func, a.phi.if_false);
+					tb_inst_goto(func, try_rhs_lbl);
+
+					true_lbl = a.phi.if_true;
+					false_lbl = tb_inst_new_label_id(func);
+				}
 			} else {
-				tb_inst_if(func, lhs, phi_lbl, try_rhs_lbl);
+				true_lbl = tb_inst_new_label_id(func);
+				false_lbl = tb_inst_new_label_id(func);
+
+				TB_Reg a_reg = cvt2rval(tu, func, a, ep->bin_op.left);
+				if (is_and) {
+					tb_inst_if(func, a_reg, try_rhs_lbl, false_lbl);
+				} else {
+					tb_inst_if(func, a_reg, true_lbl, try_rhs_lbl);
+				}
 			}
-			
+
 			// Eval second operand
 			tb_inst_label(func, try_rhs_lbl);
-			
-			TB_Register rhs = irgen_as_rvalue(tu, func, ep->bin_op.right);
-			if (tb_function_get_node(func, rhs)->dt.type != TB_BOOL) {
-				TB_DataType dt = tb_function_get_node(func, rhs)->dt;
-				
-				rhs = tb_inst_cmp_ne(func, rhs, tb_inst_uint(func, dt, 0));
-			}
-			
-			TB_Label end_block = tb_inst_get_current_label(func);
-			
-			// phi node merging block
-			tb_inst_label(func, phi_lbl);
-			TB_Register phi = tb_inst_phi2(func, start_block, result_on_skip, end_block, rhs);
-			
-			// we delay placement of the labels so that we can
-			// fold multiple shortcircuits together
+
+			TB_Reg b = irgen_as_rvalue(tu, func, ep->bin_op.right);
+			tb_inst_if(func, b, true_lbl, false_lbl);
+
+			// Just in case
+			//insert_label(func);
+
 			return (IRVal) {
-				.value_type = RVALUE,
+				.value_type = RVALUE_PHI,
 				.type = TYPE_BOOL,
-				.reg = phi
+				.phi = { true_lbl, false_lbl }
 			};
 		}
 		case EXPR_COMMA: {

@@ -1,13 +1,11 @@
 
 typedef unsigned long long size_t;
-void printf(const char* format, ...);
+int printf(const char* format, ...);
+int strncmp(const char * str1, const char * str2, size_t num);
 
-struct Foo {
-	int a, b;
-};
-
-void doodoo() {
-	struct Foo f = {};
+_Bool separated(const char* src, const char* dst, size_t dstlen)
+{
+    return (*src && dstlen-- && *dst);
 }
 
 // compares src string with dstlen characters from dst, returns 1 if they are equal, 0 if not
@@ -22,16 +20,15 @@ static int StringsAreEqual(const char* src, const char* dst, size_t dstlen)
     }
 
     return (dstlen && *src == *dst) || (!dstlen && *src == 0);
+	//return strncmp(src, dst, dstlen) == 0;
 }
 
 void test(const char* ext) {
     const char* start = ext;
     for (;;)
     {
-        for (;;)
-        {
-			if (*ext == 0) break;
-			if (*ext == ' ') break;
+        while (*ext != 0 && *ext != ' ') 
+		{
             ext++;
         }
 		

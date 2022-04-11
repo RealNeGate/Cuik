@@ -14,6 +14,7 @@ extern atomic_flag irgen_defined_tls_index;
 
 typedef enum IRValType {
 	RVALUE,
+	RVALUE_PHI,
 	
 	LVALUE,
 	LVALUE_BITS,
@@ -36,6 +37,10 @@ typedef struct IRVal {
 			short offset;
 			short width;
 		} bits;
+		struct {
+			TB_Label if_true;
+			TB_Label if_false;
+		} phi;
 		TB_Label label;
 	};
 } IRVal;

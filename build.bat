@@ -1,6 +1,6 @@
 @echo off
 
-clang compile.c -o compile.exe
+clang compile.c -DBUILD_RELEASE -o compile.exe
 if ERRORLEVEL 1 exit /b 1
 
 compile

@@ -855,10 +855,10 @@ int main(int argc, char* argv[]) {
 							linker_add_input_file(&l, "kernel32.lib");
 							linker_add_input_file(&l, "user32.lib");
 							linker_add_input_file(&l, "shell32.lib");
-							//linker_add_input_file(&l, "Gdi32.lib");
+							linker_add_input_file(&l, "Gdi32.lib");
 							//linker_add_input_file(&l, "Onecore.lib");
 							//linker_add_input_file(&l, "Onecoreuap.lib");
-							//linker_add_input_file(&l, "opengl32.lib");
+							linker_add_input_file(&l, "opengl32.lib");
 							linker_add_input_file(&l, "msvcrt.lib");
 							linker_add_input_file(&l, "win32_rt.lib");
 #endif

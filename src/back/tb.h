@@ -664,6 +664,12 @@ typedef struct {
     TB_ObjectSection sections[];
 } TB_ObjectFile;
 
+typedef struct {
+	// Name table maps to the object files directly
+	char**   object_file_names;
+	TB_Slice object_files[];
+} TB_ArchiveFile;
+
 // *******************************
 // Public macros
 // *******************************
@@ -1088,6 +1094,9 @@ TB_API TB_Reg tb_node_arith_get_right(TB_Function* f, TB_Reg r);
 ////////////////////////////////
 // Objects
 ////////////////////////////////
+TB_ArchiveFile* tb_archive_parse_lib(const TB_Slice file);
+void            tb_archive_free(TB_ArchiveFile* archive);
+
 TB_ObjectFile* tb_object_parse_coff(const TB_Slice file);
 void           tb_object_free(TB_ObjectFile* obj);
 

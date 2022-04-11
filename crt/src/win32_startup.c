@@ -7,6 +7,8 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
+DWORD _tls_index = 0;
+
 extern int printf(const char* fmt, ...);
 extern int main(int argc, char** argv);
 

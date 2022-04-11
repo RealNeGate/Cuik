@@ -9,6 +9,7 @@
 #include <assert.h>
 #include <stdbool.h>
 #include <stdarg.h>
+#include "cstrings_are_weird.h"
 
 typedef struct { const unsigned char* data; size_t length; } string; 
 
@@ -62,9 +63,15 @@ inline static size_t cstr_copy(size_t len, char* dst, const char* src) {
 #if _WIN32
 typedef wchar_t* OS_String;
 typedef wchar_t OS_Char;
+
+#define OS_STR(x) L##x
+#define OS_STR_FMT "S"
 #else
 typedef char* OS_String;
 typedef char OS_Char;
+
+#define OS_STR(x) x
+#define OS_STR_FMT "s"
 
 // non-windows platforms generally just don't have the safe functions so
 // let's provide them

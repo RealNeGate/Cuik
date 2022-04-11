@@ -58,23 +58,36 @@ static FILE* locate_file(Linker* l, OS_String path) {
 bool linker_invoke_tb(Linker* l, const char* filename) {
 	OS_String str = l->input_file_buffer;
 	for (size_t i = 0; i < l->input_file_count; i++) {
-		TB_Slice buffer = read_file_into_slice(locate_file(l, str)); 
-		TB_ObjectFile* obj = tb_object_parse_coff(buffer);
-	
-		printf("\nSUMMARY FOR %S\n", str);
-		for (size_t j = 0; j < obj->section_count; j++) {
-			printf("%-20.*s    %zu\n", 
-					(int) obj->sections[j].name.length,
-					(char*) obj->sections[j].name.data,
-					obj->sections[j].raw_data.length
-					);
-		}
+		OS_String ext = str_reverse_find_ch(str, '.');
 
-#ifdef _WIN32
-		str += wcslen(str) + 1;
-#else
-		str += strlen(str) + 1;
-#endif
+		if (ext) {
+			TB_Slice buffer = read_file_into_slice(locate_file(l, str)); 
+
+			if (str_compare(ext, OS_STR(".obj")) == 0) {
+				TB_ObjectFile* obj = tb_object_parse_coff(buffer);
+	
+				printf("\nSUMMARY FOR %"OS_STR_FMT"\n", str);
+				for (size_t j = 0; j < obj->section_count; j++) {
+					printf("%-20.*s    %zu\n", 
+							(int) obj->sections[j].name.length,
+							(char*) obj->sections[j].name.data,
+							obj->sections[j].raw_data.length
+							);
+				}
+			} else if (str_compare(ext, OS_STR(".lib")) == 0) {
+				TB_ArchiveFile* archive = tb_archive_parse_lib(buffer);
+
+				(void)archive;			
+			} else {
+				printf("tb linker: file extension sucks! %"OS_STR_FMT"\n", ext);
+				return false;
+			}
+
+			str += str_length(str) + 1;
+		} else {
+			printf("tb linker: file has no extension! %"OS_STR_FMT"\n", str);
+			return false;
+		}
 	}
 	
 	return false;

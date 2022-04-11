@@ -118,8 +118,8 @@ typedef struct atomic_flag { atomic_bool _Value; } atomic_flag;
 #define ATOMIC_FLAG_INIT { 0 }
 
 // These should be provided by the libc implementation.
-#define atomic_flag_test_and_set(object) __c11_atomic_exchange(&(object)->_Value, 1, __ATOMIC_SEQ_CST)
+#define atomic_flag_test_and_set(object) __c11_atomic_exchange(&(object)->_Value, 1, memory_order_seq_cst)
 #define atomic_flag_test_and_set_explicit(object, order) __c11_atomic_exchange(&(object)->_Value, 1, order)
 
-#define atomic_flag_clear(object) __c11_atomic_store(&(object)->_Value, 0, __ATOMIC_SEQ_CST)
+#define atomic_flag_clear(object) __c11_atomic_store(&(object)->_Value, 0, memory_order_seq_cst)
 #define atomic_flag_clear_explicit(object, order) __c11_atomic_store(&(object)->_Value, 0, order)
