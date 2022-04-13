@@ -15,10 +15,6 @@ static thread_local StmtIndex function_stmt;
 // two simple temporary buffers to represent type_as_string results
 static thread_local char temp_string0[1024], temp_string1[1024];
 
-#define sema_info(loc, ...) report(REPORT_INFO, &tu->tokens.line_arena[loc], __VA_ARGS__)
-#define sema_warn(loc, ...) report(REPORT_WARNING, &tu->tokens.line_arena[loc], __VA_ARGS__)
-#define sema_error(loc, ...) report(REPORT_ERROR, &tu->tokens.line_arena[loc], __VA_ARGS__)
-
 static bool is_scalar_type(TranslationUnit* tu, TypeIndex type_index) {
 	Type* restrict type = &tu->types[type_index];
 	return (type->kind >= KIND_BOOL && type->kind <= KIND_FUNC);
@@ -26,7 +22,7 @@ static bool is_scalar_type(TranslationUnit* tu, TypeIndex type_index) {
 
 // Also checks if expression is an integer literal because we
 // have a special case for 0 to pointer conversions.
-static bool type_compatible(TranslationUnit* tu, TypeIndex a, TypeIndex b, ExprIndex a_expr) {
+bool type_compatible(TranslationUnit* tu, TypeIndex a, TypeIndex b, ExprIndex a_expr) {
 	if (a == b) return true;
 	
 	Type* restrict src = &tu->types[a];
@@ -322,7 +318,7 @@ TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e) {
 				size_t len = ((const char*)ep->str.end - 1) - in;
 				
 				// it can't be bigger than the original
-				wchar_t* out = arena_alloc((len * 2) + 1, 1);
+				wchar_t* out = arena_alloc((len + 1) * 2, 1);
 				
 				size_t out_i = 0, in_i = 0;
 				while (in_i < len) {
@@ -551,6 +547,17 @@ TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e) {
 			}
 		}
 		case EXPR_CALL: {
+			if (tu->exprs[ep->call.target].op == EXPR_UNKNOWN_SYMBOL) {
+				// We can only get to this point with UNKNOWN_SYMBOL if it's a builtin
+				const char* name = (const char*) tu->exprs[ep->call.target].unknown_sym;
+				
+				ExprIndex* args = ep->call.param_start;
+				int arg_count = ep->call.param_count;
+	
+				TypeIndex ty = target_desc.type_check_builtin(tu, ep->loc, name, arg_count, args);
+				return (ep->type = ty);
+			}
+
 			// Call function
 			TypeIndex func_ptr = sema_expr(tu, ep->call.target);
 			

@@ -27,7 +27,9 @@ static const char* INPUT_FILES[] = {
 	"src/front/types.c",
 	"src/front/sema.c",
 	"src/front/ast_dump.c",
-	
+
+	"src/anal/analysis.c",
+
 	"src/back/ir_gen.c",
 	"src/back/linker.c",
 

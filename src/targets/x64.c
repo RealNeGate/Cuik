@@ -1,14 +1,18 @@
 #include "targets.h"
+#include <front/sema.h>
+
+// two simple temporary buffers to represent type_as_string results
+static thread_local char temp_string0[1024], temp_string1[1024];
 
 static void set_defines(CPP_Context* cpp) {
 	//cpp_define_empty(cpp, "_X86_");
 	cpp_define_empty(cpp, "_M_X64");
 	cpp_define_empty(cpp, "_AMD64_");
 	cpp_define_empty(cpp, "_M_AMD64");
-	
+
 	cpp_define_empty(cpp, "_WIN32");
 	cpp_define_empty(cpp, "_WIN64");
-	
+
 	// stdatomic.h lock free
 	cpp_define(cpp, "__CUIK_ATOMIC_BOOL_LOCK_FREE", "1");
 	cpp_define(cpp, "__CUIK_ATOMIC_CHAR_LOCK_FREE", "1");
@@ -22,7 +26,53 @@ static void set_defines(CPP_Context* cpp) {
 	cpp_define(cpp, "__CUIK_ATOMIC_POINTER_LOCK_FREE", "1");
 }
 
-TB_Register compile_builtin(TranslationUnit* tu, TB_Function* func, const char* name, int arg_count, ExprIndex* args) {
+static TypeIndex type_check_builtin(TranslationUnit* tu, SourceLocIndex loc, const char* name, int arg_count, ExprIndex* args) {
+	if (strcmp(name, "__builtin_mul_overflow") == 0) {
+		if (arg_count != 3) {
+			sema_error(loc, "%s requires 3 arguments", name);
+			return 0;
+		}
+
+		TypeIndex type = sema_expr(tu, args[0]);
+		if (tu->types[type].kind < KIND_CHAR || tu->types[type].kind > KIND_LONG) {
+			sema_error(loc, "%s can only be applied onto integers");
+			goto failure;
+		}
+		
+		for (size_t i = 1; i < arg_count; i++) {
+			TypeIndex arg_type = sema_expr(tu, args[i]);
+
+			if (i == 2) {
+				if (tu->types[arg_type].kind != KIND_PTR) {
+					type_as_string(tu, sizeof(temp_string0), temp_string0, type);
+					sema_error(tu->exprs[args[i]].loc, "Expected pointer to '%s' for the 3rd argument", temp_string0);
+					goto failure;
+				}
+
+				arg_type = tu->types[arg_type].ptr_to;
+			}
+
+			if (!type_compatible(tu, arg_type, type, args[i])) {
+				type_as_string(tu, sizeof(temp_string0), temp_string0, arg_type);
+				type_as_string(tu, sizeof(temp_string1), temp_string1, type);
+				
+				SourceLocIndex loc = tu->exprs[args[i]].loc;
+				sema_error(loc, "Could not implicitly convert type %s into %s.", temp_string0, temp_string1);
+				goto failure;
+			}
+		
+			TypeIndex cast_type = (i == 2) ? new_pointer(tu, type) : type;
+			tu->exprs[args[i]].cast_type = cast_type;
+		}
+
+		failure:
+		return TYPE_BOOL;
+	}
+
+	return 0;
+}
+
+static TB_Register compile_builtin(TranslationUnit* tu, TB_Function* func, const char* name, int arg_count, ExprIndex* args) {
 	if (strcmp(name, "__c11_atomic_init") == 0) {
 		printf("TODO __c11_atomic_init!");
 		abort();
@@ -48,7 +98,7 @@ TB_Register compile_builtin(TranslationUnit* tu, TB_Function* func, const char* 
 		TB_Register dst = irgen_as_rvalue(tu, func, args[0]);
 		IRVal src = irgen_expr(tu, func, args[1]);
 		assert(src.value_type == LVALUE);
-		
+
 		tb_inst_store(func, TB_TYPE_PTR, dst, tb_inst_va_start(func, src.reg), 8);
 		return 0;
 	} else if (strcmp(name, "_mul128") == 0) {
@@ -56,14 +106,14 @@ TB_Register compile_builtin(TranslationUnit* tu, TB_Function* func, const char* 
 	} else if (strcmp(name, "_umul128") == 0) {
 		return tb_inst_uint(func, TB_TYPE_I64, 0);
 	}
-	
+
 	if (memcmp(name, "_mm_", 4) != 0) {
 		assert(0);
 	}
-	
+
 	// x86 intrinsics are prefixed with _mm_ and suffix that represents
 	// the type:
-	// 
+	//
 	// SUFFIX     DESCRIPTION                     BACKEND TYPE
 	// =====================================================
 	// _ss        scalar single                   f32 x  1
@@ -83,7 +133,7 @@ TB_Register compile_builtin(TranslationUnit* tu, TB_Function* func, const char* 
 	const char* op_start = name + 4;
 	const char* type_start = name + 4;
 	do { type_start++; } while (*type_start && *type_start != '_');
-	
+
 	TB_DataType dt;
 	bool is_integer = false;
 	bool is_signed = false;
@@ -115,29 +165,29 @@ TB_Register compile_builtin(TranslationUnit* tu, TB_Function* func, const char* 
 		printf("Unknown intrinsic: %s\n", name);
 		abort();
 	}
-	
+
 	((void)is_signed);
-	
+
 	// unary
 	TB_Register left = irgen_as_rvalue(tu, func, args[0]);
 	TB_DataType left_dt = tb_function_get_node(func, left)->dt;
 	if (left_dt.type != dt.type || left_dt.width != dt.width) {
 		left = tb_inst_bitcast(func, left, dt);
 	}
-	
+
 	if (memcmp(op_start, "sqrt", 4) == 0) {
 		return tb_inst_x86_sqrt(func, left);
 	} else if (memcmp(op_start, "rsqrt", 5) == 0) {
 		return tb_inst_x86_rsqrt(func, left);
 	}
-	
+
 	// binary
 	TB_Register right = irgen_as_rvalue(tu, func, args[1]);
 	TB_DataType right_dt = tb_function_get_node(func, right)->dt;
 	if (right_dt.type != dt.type || right_dt.width != dt.width) {
 		right = tb_inst_bitcast(func, right, dt);
 	}
-	
+
 	TB_Register result = 0;
 	if (memcmp(op_start, "add_", 4) == 0) {
 		result = is_integer ? tb_inst_add(func, left, right, TB_ASSUME_NUW) : tb_inst_fadd(func, left, right);
@@ -151,14 +201,14 @@ TB_Register compile_builtin(TranslationUnit* tu, TB_Function* func, const char* 
 		printf("Unknown intrinsic: %s\n", name);
 		abort();
 	}
-	
+
 	assert(result != TB_NULL_REG);
 	return result;
 }
 
 TargetDescriptor get_x64_target_descriptor() {
 	BuiltinBinding* builtins = NULL;
-	
+
 	// gcc/clang
 	shput(builtins, "__builtin_expect", 1);
 	shput(builtins, "__builtin_unreachable", 1);
@@ -177,13 +227,13 @@ TargetDescriptor get_x64_target_descriptor() {
 	shput(builtins, "__c11_atomic_fetch_xor", 1);
 	shput(builtins, "__c11_atomic_fetch_and", 1);
 	shput(builtins, "__builtin_mul_overflow", 1);
-	
+
 	// msvc intrinsics
 	shput(builtins, "__debugbreak", 1);
 	shput(builtins, "__va_start", 1);
 	shput(builtins, "_umul128", 1);
 	shput(builtins, "_mul128", 1);
-	
+
 	// x86 intrinsics
 	shput(builtins, "_mm_add_ss", 1);
 	shput(builtins, "_mm_add_ps", 1);
@@ -207,7 +257,7 @@ TargetDescriptor get_x64_target_descriptor() {
 	shput(builtins, "_mm_andnot_ps", 1);
 	shput(builtins, "_mm_or_ps", 1);
 	shput(builtins, "_mm_xor_ps", 1);
-	
+
 	shput(builtins, "_mm_add_sd", 1);
 	shput(builtins, "_mm_add_pd", 1);
 	shput(builtins, "_mm_sub_sd", 1);
@@ -417,10 +467,11 @@ TargetDescriptor get_x64_target_descriptor() {
 	shput(builtins, "_mm_cvtsi64_sd", 1);
 	shput(builtins, "_mm_cvtsi64_si128", 1);
 	shput(builtins, "_mm_cvtsi128_si64", 1);
-	
+
 	return (TargetDescriptor) {
 		.builtin_func_map = builtins,
 		.set_defines = set_defines,
+		.type_check_builtin = type_check_builtin,
 		.compile_builtin = compile_builtin
 	};
 }

@@ -69,7 +69,12 @@ void cuik_set_cpp_defines(CPP_Context* cpp) {
 	// CuikC specific
 	cpp_define(cpp, "__CUIKC__", STR(CUIK_COMPILER_MAJOR));
 	cpp_define(cpp, "__CUIKC_MINOR__", STR(CUIK_COMPILER_MINOR));
-	
+
+	// GNU C
+	cpp_define(cpp, "__BYTE_ORDER__", "1");
+	cpp_define(cpp, "__ORDER_LITTLE_ENDIAN", "1");
+	cpp_define(cpp, "__ORDER_BIG_ENDIAN", "2");
+
 	// DO NOT REMOVE THESE, IF THEY'RE MISSING THE PREPROCESSOR
 	// WILL NOT DETECT THEM
 	cpp_define_empty(cpp, "__FILE__");
