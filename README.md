@@ -13,7 +13,11 @@ The plan is a modern C11 compiler which can mostly work with Clang, GCC, and MSV
 * Because I can.
 
 ## How to install?
-Just take a C compiler and compile the `compile.c` file and run it, if you want an optimized build add `RELEASE_BUILD` as a preprocessor define with `-D` or `/D`
+Mac & Linux aren't ready yet but i'll be moving forward to those platforms in the upcoming months
+
+You'll need MSVC installed on windows (i use link.exe for now... sorry, i'll write a linker soon enough)
+
+Just take a C compiler and compile the `compile.c` file and run it, if you want an optimized build add `RELEASE_BUILD` as a preprocessor define with `-D` or `/D`. Then you should have a cuik executable in your `build/` directory, you can add that directory to your path if you want.
 
 ## How am I doing?
 mostly aight, thanks for asking.
@@ -45,15 +49,19 @@ I'll be supporting all the normal extensions such as:
 - [ ] computed goto
 
 And some possibly novel extensions such as:
-- [x] Out of order declarations (doesn't work on typedef but every other global scope decl should be able to work without forward declarations 🥳🥳🥳)
+- [x] Out of order functions
 - [ ] [Tagged unions](https://gist.github.com/RealNeGate/94a3074dd4e6d29ee3170f4a70c3dad2)
 
 
 ## What's left?
 It can currently compile programs using the subset of C it currently supports but it's still missing some essential details before it compiles any basic C program such as:
+* More tests
+* Bug fixes
+* Self hosting
 * Thread local
-* Atomics
-* Extensions
+* Atomics (halfway there)
+* MSVC extensions
+* GNU extensions
 * Proper Mac/Linux support
 
 ## PS
