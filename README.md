@@ -45,15 +45,16 @@ I'll be supporting all the normal extensions such as:
 - [ ] computed goto
 
 And some possibly novel extensions such as:
-- [x] Out of order declarations (doesn't work on typedef but every other global scope decl should be able to work without forward declarations 🥳🥳🥳)
+- [x] Out of order functions
 - [ ] [Tagged unions](https://gist.github.com/RealNeGate/94a3074dd4e6d29ee3170f4a70c3dad2)
 
 
 ## What's left?
 It can currently compile programs using the subset of C it currently supports but it's still missing some essential details before it compiles any basic C program such as:
 * Thread local
-* Atomics
-* Extensions
+* Atomics (halfway there)
+* MSVC extensions
+* GNU extensions
 * Proper Mac/Linux support
 
 ## PS
