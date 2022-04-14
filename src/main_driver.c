@@ -161,7 +161,6 @@ static void dispatch_for_all_ir_functions(threadpool_t* thread_pool, void (*task
 static void compile_project(const char* obj_output_path, bool is_multithreaded, bool is_check) {
 	is_frontend_only = is_check;
 	
-	atoms_init();
 	init_report_system();
 	compilation_unit_init(&compilation_unit);
 	
@@ -215,7 +214,6 @@ static void compile_project(const char* obj_output_path, bool is_multithreaded, 
 	threadpool_free(thread_pool);
 	compilation_unit_deinit(&compilation_unit);
 	arena_free();
-	atoms_deinit();
 	
 	// Compile
 	if (!is_check) {
@@ -531,6 +529,11 @@ static void append_input_path(const char* path) {
 	
 	if (needs_filter) {
 #     ifdef _WIN32
+		const char* slash = path;
+		for (const char* p = path; *p; p++) if (*p == '/' || *p == '\\') {
+			slash = p;
+		}
+
 		WIN32_FIND_DATA find_data;
 		HANDLE find_handle = FindFirstFile(path, &find_data);
 		if (find_handle == INVALID_HANDLE_VALUE) {
@@ -538,9 +541,15 @@ static void append_input_path(const char* path) {
 			abort();
 		}
 		
-		while (FindNextFile(find_handle, &find_data)) {
-			big_array_put(cuik_source_files, strdup(find_data.cFileName));
-		}
+		do {
+			char* new_path = malloc(MAX_PATH);
+			if (slash == path) {
+				sprintf_s(new_path, MAX_PATH, "%s", find_data.cFileName);
+			} else {
+				sprintf_s(new_path, MAX_PATH, "%.*s%s", (int)(slash - path) + 1, path, find_data.cFileName);
+			}
+			big_array_put(cuik_source_files, new_path);
+		} while (FindNextFile(find_handle, &find_data));
 		
 		if (!FindClose(find_handle)) {
 			printf("internal error: failed to close filter\n");

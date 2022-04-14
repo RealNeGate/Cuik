@@ -122,6 +122,7 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath) 
 	
 	init_types(tu);
 	tls_init();
+	atoms_init();
 	
 	////////////////////////////////
 	// Parse translation unit

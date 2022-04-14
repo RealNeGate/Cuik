@@ -2,27 +2,31 @@
 
 // typedef struct Atom { char* key;  value; };
 
-static Atoms_Segment* atoms_base;
-static Atoms_Segment* atoms_top;
-static size_t atoms_count;
+thread_local static Atoms_Segment* atoms_base;
+thread_local static Atoms_Segment* atoms_top;
+thread_local static size_t atoms_count;
 
 void atoms_init() {
-	atoms_base = atoms_top = malloc(sizeof(Atoms_Segment));
-	if (!atoms_base) abort();
+	if (!atoms_base) {
+		atoms_base = atoms_top = malloc(sizeof(Atoms_Segment));
+		if (!atoms_base) abort();
 	
-	atoms_base->next = NULL;
-	atoms_base->used = 0;
+		atoms_base->next = NULL;
+		atoms_base->used = 0;
+	}
 }
 
 void atoms_deinit() {
-	Atoms_Segment* c = atoms_base;
-	while (c) {
-		Atoms_Segment* next = c->next;
-		free(c);
-		c = next;
+	if (atoms_base) {
+		Atoms_Segment* c = atoms_base;
+		while (c) {
+			Atoms_Segment* next = c->next;
+			free(c);
+			c = next;
+		}
+		
+		atoms_base = atoms_top = NULL;
 	}
-	
-	atoms_base = atoms_top = NULL;
 }
 
 Atom atoms_put(size_t len, const unsigned char* str) {
@@ -68,3 +72,4 @@ Atom atoms_put(size_t len, const unsigned char* str) {
 Atom atoms_putc(const unsigned char* str) {
 	return atoms_put(strlen((const char*)str), str);
 }
+
