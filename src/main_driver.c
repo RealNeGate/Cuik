@@ -804,6 +804,7 @@ int main(int argc, char* argv[]) {
 	
 	switch (mode) {
 		case COMPILER_MODE_PREPROC: {
+			timer_init();
 			dump_tokens();
 			break;
 		}

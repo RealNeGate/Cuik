@@ -823,7 +823,9 @@ void sema_stmt(TranslationUnit* tu, StmtIndex s) {
 				sema_stmt(tu, kid);
 				
 				if (killer) {
-					if (tu->stmts[kid].op == STMT_LABEL) {
+					if (tu->stmts[kid].op == STMT_LABEL ||
+						tu->stmts[kid].op == STMT_CASE ||
+						tu->stmts[kid].op == STMT_DEFAULT) {
 						killer = 0;
 					} else {
 						sema_error(tu->stmts[kid].loc, "Dead code");
@@ -832,7 +834,9 @@ void sema_stmt(TranslationUnit* tu, StmtIndex s) {
 					}
 				} else {
 					if (tu->stmts[kid].op == STMT_RETURN ||
-						tu->stmts[kid].op == STMT_GOTO) {
+						tu->stmts[kid].op == STMT_GOTO ||
+						tu->stmts[kid].op == STMT_BREAK ||
+						tu->stmts[kid].op == STMT_CONTINUE) {
 						killer = kid;
 					}
 				}

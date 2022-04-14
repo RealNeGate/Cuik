@@ -1805,6 +1805,8 @@ static ExprIndex parse_expr_l2(TranslationUnit* tu, TokenStream* restrict s) {
 				};
 			}
 		} else {
+			if (has_paren) tokens_prev(s);
+
 			ExprIndex expr = parse_expr_l2(tu, s);
 			
 			e = make_expr(tu);
@@ -1814,9 +1816,9 @@ static ExprIndex parse_expr_l2(TranslationUnit* tu, TokenStream* restrict s) {
 				.x_of_expr = { expr }
 			};
 			
-			if (has_paren) {
+			/*if (has_paren) {
 				expect_closing_paren(s, opening_loc);
-			}
+			}*/
 		}
 		return e;
 	} else if (tokens_get(s)->type == '&') {

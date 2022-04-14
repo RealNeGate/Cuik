@@ -1054,7 +1054,7 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
 			//   #define PEAR(X) X;
 			//   #define APPLE PEAR
 			//   APPLE(int a)
-			if (def.length && *args != '(' && l->token_type == '(') {
+			while (def.length && *args != '(' && l->token_type == '(') {
 				// expand and append
 				Lexer temp_lex = (Lexer) { l->filepath, def.data, def.data };
 				lexer_read(&temp_lex);
@@ -1062,13 +1062,13 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
 				size_t token_length = temp_lex.token_end - temp_lex.token_start;
 				const unsigned char* token_data = temp_lex.token_start;
 				
-				if (find_define(c, &def_i, token_data, token_length)) {
-					def = (string){ 
-						.data = c->macro_bucket_values_start[def_i],
-						.length = c->macro_bucket_values_end[def_i] - c->macro_bucket_values_start[def_i]
-					};
-					args = c->macro_bucket_keys[def_i] + c->macro_bucket_keys_length[def_i];
-				}
+				if (!find_define(c, &def_i, token_data, token_length)) break;
+				
+				def = (string){ 
+					.data = c->macro_bucket_values_start[def_i],
+					.length = c->macro_bucket_values_end[def_i] - c->macro_bucket_values_start[def_i]
+				};
+				args = c->macro_bucket_keys[def_i] + c->macro_bucket_keys_length[def_i];
 			}
 			
 			// function macro
