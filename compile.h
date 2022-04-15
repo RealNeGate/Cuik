@@ -240,6 +240,8 @@ inline static void builder_compile_cc(size_t count, const char* filepaths[], con
 	const char* cc_command = "clang";
 #elif defined(__GNUC__)
 	const char* cc_command = "gcc";
+#elif defined(_MSC_VER)
+	const char* cc_command = 0;
 #endif
 	
 	// compile object files
