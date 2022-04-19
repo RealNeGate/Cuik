@@ -90,8 +90,9 @@ typedef enum
 
 typedef enum
 {
-    TB_ARCH_X86_64,
+	TB_ARCH_UNKNOWN,
 
+    TB_ARCH_X86_64,
     // unsupported but planned
     TB_ARCH_AARCH64
 } TB_Arch;
@@ -595,8 +596,7 @@ typedef struct {
     } loops[];
 } TB_LoopInfo;
 
-typedef enum
-{
+typedef enum {
     TB_OBJECT_RELOC_NONE, // how?
 
     // Target independent
@@ -638,15 +638,15 @@ typedef struct {
     TB_ObjectReloc* relocations;
 } TB_ObjectSection;
 
-typedef enum
-{ TB_OBJECT_SYMBOL_SECTION, } TB_ObjectSymbolType;
+typedef enum {
+	TB_OBJECT_SYMBOL_SECTION
+} TB_ObjectSymbolType;
 
 typedef struct {
     TB_Slice name;
 } TB_ObjectSymbol;
 
-typedef enum
-{
+typedef enum {
     TB_OBJECT_FILE_UNKNOWN,
 
     TB_OBJECT_FILE_COFF,
@@ -665,6 +665,8 @@ typedef struct {
 } TB_ObjectFile;
 
 typedef struct {
+	size_t  object_file_count;
+
 	// Name table maps to the object files directly
 	char**   object_file_names;
 	TB_Slice object_files[];

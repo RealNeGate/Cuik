@@ -828,19 +828,16 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 				};
 			}
 			
-			// NOTE(NeGate): returning aggregates requires us
-			// to allocate our own space and pass it to the 
-			// callee.
-			bool is_aggregate_return = false;
-			if (tu->types[ep->type].kind == KIND_STRUCT ||
-				tu->types[ep->type].kind == KIND_UNION) {
-				is_aggregate_return = true;
+			// Resolve ABI arg count
+			bool is_aggregate_return = target_desc.pass_return(tu, ep->type);
+			size_t real_arg_count = is_aggregate_return ? 1 : 0;
+
+			for (size_t i = 0; i < arg_count; i++) {
+				TypeIndex arg_type = tu->exprs[args[i]].type;
+				real_arg_count += target_desc.deduce_parameter_usage(tu, arg_type);
 			}
-			
-			// Resolve parameters
-			size_t real_arg_count = arg_count + is_aggregate_return;
+
 			TB_Reg* ir_args = tls_push(real_arg_count * sizeof(TB_Reg));
-			
 			if (is_aggregate_return) {
 				ir_args[0] = tb_inst_local(func, tu->types[ep->type].size, tu->types[ep->type].align);
 			}
@@ -852,45 +849,17 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 			if (func_type->func.has_varargs) {
 				varargs_cutoff = func_type->func.param_count;
 			}
-			
+	
+			size_t ir_arg_count = 0;
 			for (size_t i = 0; i < arg_count; i++) {
-				TypeIndex arg_type = tu->exprs[args[i]].type;
-				
-				if (tu->types[arg_type].kind == KIND_STRUCT || 
-					tu->types[arg_type].kind == KIND_UNION) {
-					IRVal arg = irgen_expr(tu, func, args[i]);
-					TB_Reg arg_addr = TB_NULL_REG;
-					switch (arg.value_type) {
-						case LVALUE: arg_addr = arg.reg; break;
-						case LVALUE_FUNC: arg_addr = tb_inst_get_func_address(func, arg.func); break;
-						case LVALUE_EFUNC: arg_addr = tb_inst_get_extern_address(func, arg.ext); break;
-						default: break;
-					}
-					assert(arg_addr);
-					
-					// TODO(NeGate): we might wanna define some TB instruction
-					// for killing locals since some have really limited lifetimes
-					TB_CharUnits size = tu->types[arg_type].size;
-					TB_CharUnits align = tu->types[arg_type].align;
-					
-					TB_Reg temp_slot = tb_inst_local(func, size, align);
-					TB_Register size_reg = tb_inst_uint(func, TB_TYPE_I64, size);
-					
-					tb_inst_memcpy(func, temp_slot, arg_addr, size_reg, align);
-					ir_args[is_aggregate_return+i] = temp_slot;
-				} else {
-					TB_Reg arg = irgen_as_rvalue(tu, func, args[i]);
-					TB_DataType dt = tb_function_get_node(func, arg)->dt;
-					
-					if (i >= varargs_cutoff && dt.type == TB_F64 && dt.width == 0) {
-						// convert any float variadic arguments into integers
-						arg = tb_inst_bitcast(func, arg, TB_TYPE_I64);
-					}
-					
-					ir_args[is_aggregate_return+i] = arg;
-				}
+				ir_arg_count += target_desc.pass_parameter(
+						tu, func, args[i],
+						i >= varargs_cutoff,
+						&ir_args[ir_arg_count]);
 			}
-			
+
+			assert(ir_arg_count == real_arg_count);
+
 			// Resolve call target
 			//
 			// NOTE(NeGate): Could have been resized in the parameter's irgen_expr

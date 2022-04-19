@@ -1,5 +1,6 @@
 #include <back/linker.h>
 #include <back/tb.h>
+#include <string_map.h>
 
 #include <stdio.h>
 #include <sys/stat.h>
@@ -9,6 +10,8 @@
 #define fstat  _fstat
 #define stat   _stat
 #endif
+
+//static NL_StringMap import_nametable = { 0 };
 
 static TB_Slice read_file_into_slice(FILE* file) {
 	if (!file) {
@@ -55,6 +58,17 @@ static FILE* locate_file(Linker* l, OS_String path) {
 #endif
 }
 
+static void summarize_object_file(TB_ObjectFile* obj, OS_String filename) {
+	printf("\nSUMMARY FOR %"OS_STR_FMT"\n", filename);
+	
+	for (size_t j = 0; j < obj->section_count; j++) {
+		printf("%-20.*s    %zu\n", 
+				(int) obj->sections[j].name.length,
+				(char*) obj->sections[j].name.data,
+				obj->sections[j].raw_data.length);
+	}
+}
+
 bool linker_invoke_tb(Linker* l, const char* filename) {
 	OS_String str = l->input_file_buffer;
 	for (size_t i = 0; i < l->input_file_count; i++) {
@@ -65,19 +79,14 @@ bool linker_invoke_tb(Linker* l, const char* filename) {
 
 			if (str_compare(ext, OS_STR(".obj")) == 0) {
 				TB_ObjectFile* obj = tb_object_parse_coff(buffer);
-	
-				printf("\nSUMMARY FOR %"OS_STR_FMT"\n", str);
-				for (size_t j = 0; j < obj->section_count; j++) {
-					printf("%-20.*s    %zu\n", 
-							(int) obj->sections[j].name.length,
-							(char*) obj->sections[j].name.data,
-							obj->sections[j].raw_data.length
-							);
-				}
+				summarize_object_file(obj, str);	
 			} else if (str_compare(ext, OS_STR(".lib")) == 0) {
 				TB_ArchiveFile* archive = tb_archive_parse_lib(buffer);
 
-				(void)archive;			
+				for (size_t i = 0; i < archive->object_file_count; i++) {
+					TB_ObjectFile* obj = tb_object_parse_coff(archive->object_files[i]);
+					summarize_object_file(obj, str);
+				}
 			} else {
 				printf("tb linker: file extension sucks! %"OS_STR_FMT"\n", ext);
 				return false;

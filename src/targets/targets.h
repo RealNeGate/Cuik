@@ -8,14 +8,24 @@ typedef struct BuiltinBinding {
 	int value;
 } BuiltinBinding;
 
-typedef struct TargetDescriptor {
+typedef struct {
 	// stringmap that goes from builtin function names to
 	// an index used to refer to them later on
 	BuiltinBinding* builtin_func_map;
 	
 	// initializes some target specific macro defines
 	void (*set_defines)(CPP_Context* cpp);
-	
+
+	// Callee ABI handling:
+	TB_FunctionPrototype* (*create_prototype)(TranslationUnit* tu, TypeIndex type_index);
+
+	// Caller ABI handling:
+	// returns the aggregate size, if it's zero there's no aggregate
+	bool (*pass_return)(TranslationUnit* tu, TypeIndex type_index);
+	// Number of IR parameters generated from the data type
+	int (*deduce_parameter_usage)(TranslationUnit* tu, TypeIndex type_index);
+	int (*pass_parameter)(TranslationUnit* tu, TB_Function* func, ExprIndex e, bool is_vararg, TB_Reg* out_param);
+
 	// when one of the builtins is spotted in the semantics pass, we might need to resolve it's
 	// type
 	TypeIndex (*type_check_builtin)(TranslationUnit* tu, SourceLocIndex loc, const char* name,

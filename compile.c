@@ -35,7 +35,6 @@ static const char* INPUT_FILES[] = {
 
 	"src/linker/tblink.c",
 
-	"src/ext/stb_ds.c",
 	"src/ext/threadpool.c",
 	
 #if defined(_WIN32)

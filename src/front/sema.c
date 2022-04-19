@@ -1025,7 +1025,6 @@ static void sema_top_level(TranslationUnit* tu, StmtIndex s, bool frontend_only)
 	switch (sp->op) {
 		case STMT_FUNC_DECL: {
 			assert(type->kind == KIND_FUNC);
-			const Type* return_type = &tu->types[type->func.return_type];
 			
 			if (sp->decl.attrs.is_static && sp->decl.attrs.is_extern) {
 				sema_error(sp->loc, "Function '%s' cannot be both static and extern.", name);
@@ -1046,12 +1045,6 @@ static void sema_top_level(TranslationUnit* tu, StmtIndex s, bool frontend_only)
 				break;
 			}
 			
-			bool is_aggregate_return = false;
-			if (return_type->kind == KIND_STRUCT ||
-				return_type->kind == KIND_UNION) {
-				is_aggregate_return = true;
-			}
-			
 			if (frontend_only) {
 				sp->backing.f = 0;
 				
@@ -1061,32 +1054,8 @@ static void sema_top_level(TranslationUnit* tu, StmtIndex s, bool frontend_only)
 				function_stmt = 0;
 				break;
 			}
-			
-			// parameters
-			ParamIndex param_list = type->func.param_list;
-			ParamIndex param_count = type->func.param_count;
-			
-			// aggregate return values take up the first parameter slot.
-			ParamIndex real_param_count = param_count + is_aggregate_return;
-			
-			TB_DataType return_dt = ctype_to_tbtype(return_type);
-			TB_FunctionPrototype* proto = tb_prototype_create(mod, TB_STDCALL, return_dt, real_param_count, type->func.has_varargs);
-			
-			if (is_aggregate_return) {
-				tb_prototype_add_param(proto, TB_TYPE_PTR);
-			}
-			
-			for (size_t i = 0; i < param_count; i++) {
-				Param* p = &tu->params[param_list + i];
-				
-				// Decide on the data type
-				Type* param_type = &tu->types[p->type];
-				TB_DataType dt = ctype_to_tbtype(param_type);
-				
-				assert(dt.width < 8);
-				tb_prototype_add_param(proto, dt);
-			}
-			
+		
+			TB_FunctionPrototype* proto = target_desc.create_prototype(tu, type_index);
 			TB_Linkage linkage = sp->decl.attrs.is_static ? TB_LINKAGE_PRIVATE : TB_LINKAGE_PUBLIC;
 			
 			// TODO(NeGate): Fix this up because it's possibly wrong, essentially

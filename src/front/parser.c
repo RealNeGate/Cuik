@@ -119,7 +119,7 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath) 
 	tu->enum_entries = big_array_create(EnumEntry, true);
 	tu->stmts = big_array_create(Stmt, true);
 	tu->exprs = big_array_create(Expr, true);
-	
+
 	init_types(tu);
 	tls_init();
 	atoms_init();
@@ -398,7 +398,7 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath) 
 		}
 	}
 	
-	assert(s->current == arrlen(s->tokens) - 1);
+	//assert(s->current == arrlen(s->tokens) - 1);
 	
 	// NOTE(NeGate): This is a Cuik extension, it allows normal symbols
 	// like functions to declared out of order.
@@ -480,7 +480,8 @@ StmtIndex resolve_unknown_symbol(TranslationUnit* tu, StmtIndex i) {
 }
 
 static bool skip_over_declspec(TokenStream* restrict s) {
-	if (tokens_get(s)->type == TOKEN_KW_declspec) {
+	if (tokens_get(s)->type == TOKEN_KW_declspec ||
+		tokens_get(s)->type == TOKEN_KW_Pragma) {
 		tokens_next(s);
 		expect(s, '(');
 		
@@ -2645,157 +2646,121 @@ static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, At
 						tu->types[type].is_incomplete = false;
 						tu->types[type].record.name = name;
 						
-						if (name && strcmp((const char*)name, "__m128") == 0) {
-							tu->types[type].record.intrin_type = tb_vector_type(TB_F32, 4);
-						} else {
-							tu->types[type].record.intrin_type = TB_TYPE_VOID;
-						}
-						
 						// can't forward decl unnamed records so we
 						// don't track it
 						if (name) shput(incomplete_types, name, type);
 					}
 					counter += OTHER;
-					
+				
 					size_t member_count = 0;
 					Member* members = tls_save();
 					
 					// for unions this just represents the max size
 					int offset = 0;
-					
+					int last_member_size = 0;
+					int current_bit_offset = 0;
 					// struct/union are aligned to the biggest member alignment
 					int align = 0;
 					
 					while (tokens_get(s)->type != '}') {
+						if (skip_over_declspec(s)) continue;
+
 						Attribs member_attr = { 0 };
 						TypeIndex member_base_type = parse_declspec(tu, s, &member_attr);
-						
-						// TODO(NeGate): Kinda ugly
-						// don't expect one the first time
-						int last_member_size = 0;
-						int current_bit_offset = 0;
-						
-						if (tokens_get(s)->type == ';' ||
-							tokens_get(s)->type == ':') {
-							int member_align = tu->types[member_base_type].align;
-							int member_size = tu->types[member_base_type].size;
-							if (!is_union) {
-								offset = align_up(offset, member_align);
+
+						// error recovery, if we couldn't parse the typename we skip the declaration
+						if (member_base_type == 0) {
+							while (tokens_get(s)->type != ';') tokens_next(s);
+							
+							tokens_next(s);
+							continue;
+						}
+
+						// continues on commas, exists on semicolon
+						// int a,   *b,  c[3]    ;
+						//     ^    ^~   ^~~~    ^
+						//     one  two  three   DONE
+						do {
+							Decl decl = { 0 };
+							TypeIndex member_type = member_base_type;
+							
+							// not all members have declarators for example
+							// char : 3; or struct { ... };
+							if (tokens_get(s)->type != ';' &&
+								tokens_get(s)->type != ':') {
+								decl = parse_declarator(tu, s, member_base_type, false, false); 
+								member_type = decl.type;
 							}
 							
-							// unnamed field
+							if (tu->types[member_type].kind == KIND_FUNC) {
+								generic_error(s, "Cannot put function types into a struct, try a function pointer");
+							}
+
+							int member_align = tu->types[member_type].align;
+							int member_size = tu->types[member_type].size;
+							if (!is_union) {
+								int new_offset = align_up(offset, member_align);
+
+								// If we realign, reset the bit offset
+								if (offset != new_offset) {
+									current_bit_offset = last_member_size = 0;
+								}
+								offset = new_offset;
+							}
+							
+							// Append member
 							tls_push(sizeof(Member));
 							Member* member = &members[member_count++];
 							*member = (Member) {
-								.type = member_base_type,
-								.name = NULL,
+								.type = member_type,
+								.name = decl.name,
 								.offset = is_union ? 0 : offset,
 								.align = member_align
 							};
-							
+						
 							if (tokens_get(s)->type == ':') {
-								tokens_next(s);
-								
-								// if we change data type halfway we split things off
-								if (last_member_size != member_size) {
-									current_bit_offset = 0;
+								if (is_union) {
+									generic_error(s, "Bitfield... unions... TODO?!");
 								}
-								
+
+								tokens_next(s);
+							
 								int bit_width = parse_const_expr(tu, s);
-								int bits_in_region = member_size * 8;
+								int bits_in_region = tu->types[member_type].kind == KIND_BOOL ? 1 : (member_size * 8);
 								if (bit_width > bits_in_region) {
 									generic_error(s, "Bitfield cannot fit in this type.");
 								}
-								
+
 								if (current_bit_offset + bit_width > bits_in_region) {
 									current_bit_offset = 0;
+									
+									offset = align_up(offset + member_size, member_align);
+									member->offset = offset;
 								}
-								
+							
 								member->is_bitfield = true;
 								member->bit_offset = current_bit_offset;
 								member->bit_width = bit_width;
-							}
-							last_member_size = member_size;
-							if (is_union) {
-								if (member_size > offset) offset = member_size;
+
+								current_bit_offset += bit_width;
 							} else {
-								offset += member_size;
-							}
-							if (member_align > align) align = member_align;
-						} else {
-							bool expect_comma = false;
-							while (tokens_get(s)->type != ';') {
-								if (expect_comma) {
-									expect(s, ',');
-								} else expect_comma = true;
-								
-								Decl decl = parse_declarator(tu, s, member_base_type, false, false);
-								TypeIndex member_type = decl.type;
-								
-								if (tu->types[member_type].kind == KIND_FUNC) {
-									generic_error(s, "Cannot put function types into a struct, try a function pointer");
-								}
-								/*else if (tu->types[member_type].kind == KIND_STRUCT ||
-										   tu->types[member_type].kind == KIND_UNION ||
-										   tu->types[member_type].kind == KIND_ENUM) {
-									if (tu->types[type].is_incomplete) {
-										report_two_spots(REPORT_ERROR,
-														 &s->line_arena[record_loc],
-														 &s->line_arena[decl.loc],
-														 "Cannot place incomplete type into struct",
-														 NULL, NULL, NULL);
-									}
-								}*/
-								
-								int member_align = tu->types[member_type].align;
-								int member_size = tu->types[member_type].size;
-								if (!is_union) {
-									offset = align_up(offset, member_align);
-								}
-								
-								// TODO(NeGate): Error check that no attribs are set
-								tls_push(sizeof(Member));
-								Member* member = &members[member_count++];
-								*member = (Member) {
-									.type = member_type,
-									.name = decl.name,
-									.offset = is_union ? 0 : offset,
-									.align = member_align
-								};
-								
-								if (tokens_get(s)->type == ':') {
-									tokens_next(s);
-									
-									// if we change data type halfway we split things off
-									if (last_member_size != member_size) {
-										current_bit_offset = 0;
-									}
-									
-									int bit_width = parse_const_expr(tu, s);
-									int bits_in_region = member_size * 8;
-									if (bit_width > bits_in_region) {
-										generic_error(s, "Bitfield cannot fit in this type.");
-									}
-									
-									if (current_bit_offset + bit_width > bits_in_region) {
-										current_bit_offset = 0;
-									}
-									
-									member->is_bitfield = true;
-									member->bit_offset = current_bit_offset;
-									member->bit_width = bit_width;
-								}
-								last_member_size = member_size;
-								
 								if (is_union) {
 									if (member_size > offset) offset = member_size;
 								} else {
 									offset += member_size;
 								}
-								
-								if (member_align > align) align = member_align;
 							}
-						}
+
+							// the total alignment of a struct/union is based on the biggest member
+							last_member_size = member_size;
+							if (member_align > align) align = member_align;
+
+							// i just wanted to logically split this from the top stuff, this is a breather comment
+							if (tokens_get(s)->type == ',') {
+								tokens_next(s);
+								continue;
+							} else if (tokens_get(s)->type == ';') break;
+						} while (true);	
 						
 						expect(s, ';');
 					}

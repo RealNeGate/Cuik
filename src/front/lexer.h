@@ -123,6 +123,7 @@ typedef enum TknType {
 	TOKEN_KW_Static_assert,
 	TOKEN_KW_Thread_local,
 	TOKEN_KW_Typeof,
+	TOKEN_KW_Vector,
 	TOKEN_KW_cdecl,
 	TOKEN_KW_stdcall,
 	TOKEN_KW_declspec,

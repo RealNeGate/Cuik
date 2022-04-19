@@ -45,7 +45,7 @@ typedef struct IRVal {
 	};
 } IRVal;
 
-static TB_DataType ctype_to_tbtype(const Type* t) {
+inline static TB_DataType ctype_to_tbtype(const Type* t) {
 	switch (t->kind) {
 		case KIND_VOID: return TB_TYPE_VOID;
 		case KIND_BOOL: return TB_TYPE_BOOL;

@@ -1,4 +1,8 @@
 #include "driver_utils.h"
+
+#define NL_STRING_MAP_IMPL
+#include "string_map.h"
+
 #ifndef _WIN32
 #include <unistd.h>
 #endif
