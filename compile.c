@@ -245,7 +245,9 @@ int main(int argc, char** argv) {
 			expect_stdout("tests"SLASH"the_increment"SLASH"iso"SLASH"regression_1", "0 1 1 1 1 1 1 ");
 			expect_stdout("tests"SLASH"the_increment"SLASH"cuik"SLASH"meme", "7 0 1 2 3 4 5 6 ");
 			expect_stdout("tests"SLASH"the_increment"SLASH"iso"SLASH"initializers", "Table (4 entries):\n[0] = { 1, 2, 3, 4 }\n[1] = { 0, 0, 0, 0 }\n[2] = { 0, 0, 0, 0 }\n[3] = { 5, 6, 7, 8 }\n");
+			expect_stdout("tests"SLASH"the_increment"SLASH"iso"SLASH"initializers_2", "14 1\n");
 			expect_stdout("tests"SLASH"the_increment"SLASH"cuik"SLASH"cuik_00001", "1");
+			expect_stdout("tests"SLASH"the_increment"SLASH"iso"SLASH"generic", "1 2 2 3 4 OK\n");
 			
 			// Inria tests
 			try_compile("tests"SLASH"the_increment"SLASH"inria"SLASH"argument_scope");
@@ -291,13 +293,15 @@ int main(int argc, char** argv) {
 			
 			char cmd[1024];
 			for (size_t i = 0; i < INPUT_FILE_COUNT; i++) {
-				snprintf(cmd, 1024, "cuik anal -threads:1 -include:src/ %s", INPUT_FILES[i]);
-				
-				if (system(cmd) == 0) {
-					printf("`-Success with %s!\n\n", INPUT_FILES[i]);
-					successes++;
-				} else {
-					printf("`-Failure with %s!\n\n", INPUT_FILES[i]);
+				if (str_ends_with(INPUT_FILES[i], ".c")) {
+					snprintf(cmd, 1024, "cuik anal -threads:1 -include:src/ %s", INPUT_FILES[i]);
+					
+					if (system(cmd) == 0) {
+						printf("Success with %s!\n", INPUT_FILES[i]);
+						successes++;
+					} else {
+						printf("`-Failure with %s!\n\n", INPUT_FILES[i]);
+					}
 				}
 			}
 			

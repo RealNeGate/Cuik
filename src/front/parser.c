@@ -1520,6 +1520,81 @@ static ExprIndex parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
 		}
 		
 		return e;
+	} else if (t->type == TOKEN_KW_Generic) {
+		tokens_next(s);
+
+		SourceLoc* opening_loc = &s->line_arena[tokens_get(s)->location];
+		expect(s, '(');
+
+		// controlling expression followed by a comma
+		ExprIndex e = make_expr(tu);
+		ExprIndex controlling_expr = parse_expr_l14(tu, s);
+
+		tu->exprs[e] = (Expr) {
+			.op = EXPR_GENERIC,
+			.loc = loc,
+			.generic_ = {
+				.controlling_expr = controlling_expr
+			}
+		};
+		expect(s, ',');
+
+		size_t entry_count = 0;
+		C11GenericEntry* entries = tls_save();
+
+		SourceLoc* default_loc = NULL;
+		while (tokens_get(s)->type != ')') {
+			if (tokens_get(s)->type == TOKEN_KW_default) {
+				if (default_loc) {
+					report_two_spots(REPORT_ERROR, default_loc, 
+							&s->line_arena[tokens_get(s)->location], 
+							"multiple default cases on _Generic",
+							NULL, NULL, NULL);
+
+					// maybe do some error recovery
+					abort();
+				}
+
+				default_loc = &s->line_arena[tokens_get(s)->location];
+				expect(s, ':');
+				ExprIndex expr = parse_expr_l14(tu, s);
+
+				// the default case is like a normal entry but without a type :p
+				tls_push(sizeof(C11GenericEntry));
+				entries[entry_count++] = (C11GenericEntry){
+					.key   = TYPE_NONE,
+					.value = expr
+				};
+			} else {
+				TypeIndex type = parse_typename(tu, s);
+				assert(type != 0 && "TODO: error recovery");
+			
+				expect(s, ':');
+				ExprIndex expr = parse_expr_l14(tu, s);
+				
+				tls_push(sizeof(C11GenericEntry));
+				entries[entry_count++] = (C11GenericEntry){
+					.key   = type,
+					.value = expr
+				};
+			}
+
+			// exit if it's not a comma
+			if (tokens_get(s)->type != ',') break;
+			tokens_next(s);
+		}
+	
+		expect_closing_paren(s, opening_loc);
+
+		// move it to a more permanent storage
+		C11GenericEntry* dst = arena_alloc(entry_count * sizeof(C11GenericEntry), _Alignof(C11GenericEntry));
+		memcpy(dst, entries, entry_count * sizeof(C11GenericEntry));
+
+		tu->exprs[e].generic_.case_count = entry_count;
+		tu->exprs[e].generic_.cases = dst;
+
+		tls_restore(entries);
+		return e;
 	} else {
 		generic_error(s, "Could not parse expression!");
 	}

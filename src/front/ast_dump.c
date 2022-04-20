@@ -191,6 +191,15 @@ static void dump_expr(TranslationUnit* tu, FILE* stream, ExprIndex e, int depth,
 			dump_expr(tu, stream, ep->unary_op.src, depth + 1, true);
 			break;
 		}
+		case EXPR_GENERIC: {
+			assert(ep->generic_.case_count == 0);
+
+			type_as_string(tu, sizeof(temp_string0), temp_string0, ep->type);
+			fprintf(stream, "Generic '%s'\n", temp_string0);
+			
+			dump_expr(tu, stream, ep->generic_.controlling_expr, depth + 1, true);
+			break;
+		}
 		case EXPR_ADDR: {
 			type_as_string(tu, sizeof(temp_string0), temp_string0, ep->type);
 			fprintf(stream, "Addr '%s'\n", temp_string0);

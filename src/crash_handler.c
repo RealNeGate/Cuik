@@ -47,7 +47,11 @@ static LONG WINAPI unhandled_exception_handler(PEXCEPTION_POINTERS exception_ptr
 	MiniDumpWriteDump(GetCurrentProcess(),
 					  GetCurrentProcessId(),
 					  crash_dump_file,
-					  (MINIDUMP_TYPE)(MiniDumpWithHandleData),
+					  (MINIDUMP_TYPE)(MiniDumpWithHandleData |
+						  			MiniDumpWithFullMemory |
+									MiniDumpWithProcessThreadData |
+									MiniDumpWithFullMemoryInfo |
+									MiniDumpWithThreadInfo),
 					  &mini_dump_info,
 					  NULL,
 					  NULL);

@@ -20,6 +20,43 @@ static bool is_scalar_type(TranslationUnit* tu, TypeIndex type_index) {
 	return (type->kind >= KIND_BOOL && type->kind <= KIND_FUNC);
 }
 
+// doesn't do implicit casts
+bool type_very_compatible(TranslationUnit* tu, TypeIndex a, TypeIndex b) {
+	if (a == b) return true;
+	
+	Type* restrict src = &tu->types[a];
+	Type* restrict dst = &tu->types[b];
+
+	if (src->kind != dst->kind) return false;
+
+	switch (src->kind) {
+	case KIND_BOOL:
+	case KIND_CHAR:
+	case KIND_SHORT:
+	case KIND_INT:
+	case KIND_LONG:
+		return src->is_unsigned == dst->is_unsigned;
+
+	case KIND_FLOAT:
+	case KIND_DOUBLE:
+		return true;
+
+	case KIND_PTR:
+		return type_very_compatible(tu, src->ptr_to, dst->ptr_to);
+	case KIND_FUNC:
+		return type_equal(tu, a, b);
+	case KIND_ARRAY:
+		if (!type_very_compatible(tu, src->array_of, dst->array_of)) {
+			return false;
+		}
+
+		return src->array_count == dst->array_count;
+
+	default:
+		return true;
+	}
+}
+
 // Also checks if expression is an integer literal because we
 // have a special case for 0 to pointer conversions.
 bool type_compatible(TranslationUnit* tu, TypeIndex a, TypeIndex b, ExprIndex a_expr) {
@@ -499,6 +536,46 @@ TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e) {
 			Type* func_type = &tu->types[tu->stmts[function_stmt].decl.type];
 			Param* params = &tu->params[func_type->func.param_list];
 			return (ep->type = params[param_num].type);
+		}
+		case EXPR_GENERIC: {
+			TypeIndex src = sema_expr(tu, ep->generic_.controlling_expr);
+
+			// _Generic's controlling expression does rvalue conversions so
+			// an array is treated as a pointer not an array
+			if (tu->types[src].kind == KIND_ARRAY) {
+				src = new_pointer(tu, tu->types[src].array_of);
+			} else if (tu->types[src].kind == KIND_FUNC) {
+				src = new_pointer(tu, src);
+			}
+
+			ExprIndex default_case = 0;
+			ExprIndex match = 0;
+
+			for (size_t i = 0; i < ep->generic_.case_count; i++) {
+				if (ep->generic_.cases[i].key == 0) {
+					default_case = ep->generic_.cases[i].value;
+				} else if (type_very_compatible(tu, ep->generic_.cases[i].key, src)) {
+					match = ep->generic_.cases[i].value;
+				}
+			}
+
+			if (match == 0) {
+				if (default_case == 0) {
+					// if we didn't match anything and there's no default case, error out
+					sema_error(ep->loc, "Could not match _Generic against any cases");
+					return 0;
+				}
+
+				ep->generic_.controlling_expr = default_case;
+			} else {
+				ep->generic_.controlling_expr = match;
+			}
+
+			// once we set case_count to 0, we've resolved the _Generic
+			ep->generic_.cases = NULL;
+			ep->generic_.case_count = 0;
+
+			return (ep->type = sema_expr(tu, ep->generic_.controlling_expr));
 		}
 		case EXPR_CAST: {
 			try_resolve_typeof(tu, ep->cast.type);

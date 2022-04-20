@@ -8,6 +8,31 @@ TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e);
 TypeIndex sema_guess_type(TranslationUnit* tu, StmtIndex s);
 Member* sema_traverse_members(TranslationUnit* tu, Type* record_type, Atom name, uint32_t* out_offset);
 
+// I've forsaken god by doing this, im sorry... it's ugly because it has to be i swear...
+typedef struct { TypeIndex type; uint32_t offset; } WalkMemberReturn;
+
+// just returns the byte offset it traveled in these DOTs and ARROWs.
+// the type we pass in is that of whatever's at the end of the DOT and ARROW chain
+static WalkMemberReturn walk_member_accesses(TranslationUnit* tu, ExprIndex e, TypeIndex type) {
+	const Expr* ep = &tu->exprs[e];
+	const Expr* base_expr = &tu->exprs[ep->dot_arrow.base];
+
+	WalkMemberReturn base = { 0 };
+	if (base_expr->op != EXPR_ARROW && base_expr->op != EXPR_DOT) {
+		// use that base type we've been patiently keeping around
+		base = (WalkMemberReturn) { type, 0 };
+	} else {
+		base = walk_member_accesses(tu, ep->dot_arrow.base, type);
+	}
+
+	uint32_t relative = 0;
+	Member* member = sema_traverse_members(tu, &tu->types[base.type], ep->dot_arrow.name, &relative);
+	if (!member) abort();
+	if (member->is_bitfield) abort();
+	
+	return (WalkMemberReturn){ member->type, base.offset + relative };
+}
+
 bool const_eval_try_offsetof_hack(TranslationUnit* tu, ExprIndex e, uint64_t* out) {
 	const Expr* ep = &tu->exprs[e];
 	
@@ -15,7 +40,6 @@ bool const_eval_try_offsetof_hack(TranslationUnit* tu, ExprIndex e, uint64_t* ou
 	//   &(((T*)0)->apple)
 	//   sizeof(((T*)0).apple)
 	if (ep->op == EXPR_DOT || ep->op == EXPR_ARROW) {
-		ExprIndex root = ep->dot_arrow.base;
 		ExprIndex base_e = ep->dot_arrow.base;
 		
 		while (tu->exprs[base_e].op == EXPR_ARROW ||
@@ -47,19 +71,8 @@ bool const_eval_try_offsetof_hack(TranslationUnit* tu, ExprIndex e, uint64_t* ou
 		} else {
 			return false;
 		}
-		
-		do {
-			// traverse any dot/arrow chains
-			uint32_t relative = 0;
-			Member* member = sema_traverse_members(tu, record_type, ep->dot_arrow.name, &relative);
-			if (!member) abort();
-			if (member->is_bitfield) abort();
-			
-			root = tu->exprs[root].dot_arrow.base;
-			record_type = &tu->types[member->type];
-			offset += relative;
-		} while (tu->exprs[root].op == EXPR_ARROW || tu->exprs[root].op == EXPR_DOT);
-		
+
+		offset += walk_member_accesses(tu, e, record_type - tu->types).offset; 
 		*out = offset;
 		return true;
 	}

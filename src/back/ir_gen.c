@@ -714,6 +714,10 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 				.reg = reg
 			};
 		}
+		case EXPR_GENERIC: {
+			assert(ep->generic_.case_count == 0);
+			return irgen_expr(tu, func, ep->generic_.controlling_expr);
+		}
 		case EXPR_ADDR: {
 			uint64_t dst;
 			if (const_eval_try_offsetof_hack(tu, ep->unary_op.src, &dst)) {
@@ -850,7 +854,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 				varargs_cutoff = func_type->func.param_count;
 			}
 	
-			size_t ir_arg_count = 0;
+			size_t ir_arg_count = is_aggregate_return ? 1 : 0;
 			for (size_t i = 0; i < arg_count; i++) {
 				ir_arg_count += target_desc.pass_parameter(
 						tu, func, args[i],

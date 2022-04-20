@@ -87,6 +87,11 @@ typedef struct Param {
 	Atom name;
 } Param;
 
+typedef struct {
+	TypeIndex key;
+	ExprIndex value;
+} C11GenericEntry;
+
 typedef struct Type {
     TypeKind kind;
     int size;  // sizeof
@@ -205,7 +210,8 @@ typedef enum ExprOp {
 	
 	EXPR_UNKNOWN_SYMBOL,
 	EXPR_SYMBOL,
-	
+	EXPR_GENERIC, // C11's _Generic
+
 	EXPR_FUNCTION, // function literal
 	EXPR_INITIALIZER,
 	
@@ -460,6 +466,13 @@ typedef struct Expr {
 		struct {
 			ExprIndex src;
 		} unary_op;
+		struct {
+			ExprIndex controlling_expr;
+			
+			// if case_count == 0, then controlling_expr is the matched expression
+			int case_count;
+			C11GenericEntry* cases;
+		} generic_;
 		struct {
 			ExprIndex base;
 			// once the semantic pass runs over the AST

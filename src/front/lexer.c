@@ -378,6 +378,11 @@ void lexer_read(Lexer* restrict l) {
 					
 					while (char_classes[*current] == CHAR_CLASS_NUMBER) { current++; }
 				}
+
+				if (*current == 'f') {
+					l->token_type = TOKEN_FLOAT;
+					current++;
+				}
 			}
 			
 			// suffix
