@@ -134,6 +134,19 @@ TypeIndex new_array(TranslationUnit* tu, TypeIndex base, int count) {
 	return big_array_length(tu->types) - 1;
 }
 
+TypeIndex new_vector(TranslationUnit* tu, TypeIndex base, int count) {
+	Type t = {
+		.kind = KIND_VECTOR,
+		.size = 0,
+		.align = tu->types[base].align,
+		.array_of = base,
+		.array_count = 0
+	};
+	
+	big_array_put(tu->types, t);
+	return big_array_length(tu->types) - 1;
+}
+
 // https://github.com/rui314/chibicc/blob/main/type.c
 //
 // NOTE(NeGate): this function is called within the IR gen

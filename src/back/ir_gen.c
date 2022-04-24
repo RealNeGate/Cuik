@@ -1405,12 +1405,8 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 				if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
 					if (ep->op != EXPR_ASSIGN) abort();
 					
-					if (type->record.intrin_type.type != TB_VOID) {
-						tb_inst_store(func, type->record.intrin_type, lhs.reg, rhs.reg, type->align);
-					} else {
-						TB_Register size_reg = tb_inst_uint(func, TB_TYPE_I64, type->size);
-						tb_inst_memcpy(func, lhs.reg, rhs.reg, size_reg, type->align);
-					}
+					TB_Register size_reg = tb_inst_uint(func, TB_TYPE_I64, type->size);
+					tb_inst_memcpy(func, lhs.reg, rhs.reg, size_reg, type->align);
 				} else if (type->kind == KIND_FLOAT || type->kind == KIND_DOUBLE) {
 					TB_Register r = cvt2rval(tu, func, rhs, ep->bin_op.right);
 					
@@ -1611,16 +1607,10 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, StmtIndex s) {
 						
 						tb_inst_memcpy(func, addr, v.reg, size_reg, align);
 					} else if (kind == KIND_STRUCT || kind == KIND_UNION) {
-						if (tu->types[type_index].record.intrin_type.type != TB_VOID) {
-							TB_Register v = irgen_as_rvalue(tu, func, sp->decl.initial);
-							
-							tb_inst_store(func, tu->types[type_index].record.intrin_type, addr, v, align);
-						} else {
-							IRVal v = irgen_expr(tu, func, sp->decl.initial);
-							TB_Register size_reg = tb_inst_uint(func, TB_TYPE_I64, size);
-							
-							tb_inst_memcpy(func, addr, v.reg, size_reg, align);
-						}
+						IRVal v = irgen_expr(tu, func, sp->decl.initial);
+						TB_Register size_reg = tb_inst_uint(func, TB_TYPE_I64, size);
+						
+						tb_inst_memcpy(func, addr, v.reg, size_reg, align);
 					} else {
 						TB_Register v = irgen_as_rvalue(tu, func, sp->decl.initial);
 						
@@ -1646,22 +1636,18 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, StmtIndex s) {
 				
 				if (tu->types[type].kind == KIND_STRUCT ||
 					tu->types[type].kind == KIND_UNION) {
-					if (tu->types[type].record.intrin_type.type != TB_VOID) {
-						tb_inst_ret(func, irgen_as_rvalue(tu, func, e));
-					} else {
-						IRVal v = irgen_expr(tu, func, e);
+					IRVal v = irgen_expr(tu, func, e);
 						
-						// returning aggregates just copies into the first parameter
-						// which is agreed to be a caller owned buffer.
-						int size = tu->types[type].size;
-						int align = tu->types[type].align;
-						
-						TB_Register dst_address = tb_inst_load(func, TB_TYPE_PTR, return_value_address, 8);
-						TB_Register size_reg = tb_inst_uint(func, TB_TYPE_I64, size);
-						
-						tb_inst_memcpy(func, dst_address, v.reg, size_reg, align);
-						tb_inst_ret(func, TB_NULL_REG);
-					}
+					// returning aggregates just copies into the first parameter
+					// which is agreed to be a caller owned buffer.
+					int size = tu->types[type].size;
+					int align = tu->types[type].align;
+					
+					TB_Register dst_address = tb_inst_load(func, TB_TYPE_PTR, return_value_address, 8);
+					TB_Register size_reg = tb_inst_uint(func, TB_TYPE_I64, size);
+					
+					tb_inst_memcpy(func, dst_address, v.reg, size_reg, align);
+					tb_inst_ret(func, TB_NULL_REG);
 				} else {
 					tb_inst_ret(func, irgen_as_rvalue(tu, func, e));
 				}

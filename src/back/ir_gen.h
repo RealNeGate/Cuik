@@ -63,11 +63,9 @@ inline static TB_DataType ctype_to_tbtype(const Type* t) {
 		return TB_TYPE_PTR;
 		
 		case KIND_STRUCT:
-		case KIND_UNION: {
-			if (t->record.intrin_type.type != TB_VOID) return t->record.intrin_type;
-			return TB_TYPE_PTR;
-		}
-		
+		case KIND_UNION:
+		return TB_TYPE_PTR;
+
 		default: abort(); // TODO
 	}
 }

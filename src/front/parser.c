@@ -2586,7 +2586,55 @@ static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, At
 				report(REPORT_ERROR, loc, "Complex types are not supported in CuikC");
 				break;
 			}
-			
+
+			case TOKEN_KW_Vector: {
+				// _Vector '(' TYPENAME ',' CONST-EXPR ')'
+				if (counter) goto done;	
+				SourceLoc* loc = &s->line_arena[tokens_get(s)->location];
+				tokens_next(s);
+				
+				SourceLoc* opening_loc = &s->line_arena[tokens_get(s)->location];
+				expect(s, '(');
+				
+				type = parse_typename(tu, s);
+				if (!(tu->types[type].kind >= KIND_CHAR && tu->types[type].kind <= KIND_LONG) &&
+					!(tu->types[type].kind == KIND_FLOAT && tu->types[type].kind == KIND_DOUBLE)) {
+					report(REPORT_ERROR, loc, "Only integers and floats can be used for _Vector types");
+					return 0;
+				}
+
+				expect(s, ',');
+
+				intmax_t count = parse_const_expr(tu, s);
+
+				if (count <= 0) {
+					report(REPORT_ERROR, loc, "_Vector types must have a positive width");
+					return 0;
+				}
+
+				if (count == 1) {
+					report(REPORT_ERROR, loc, "It's not even a _Vector type... that's a scalar...");
+					return 0;
+				}
+
+				if (count > 64) {
+					report(REPORT_ERROR, loc, "_Vector type is too wide (%"PRIiMAX", max is 64)", count);
+					return 0;
+				}
+
+				// only allow power of two widths
+				if ((count & (count - 1)) != 0) {
+					report(REPORT_ERROR, loc, "_Vector types can only have power-of-two widths");
+					return 0;
+				}
+
+				type = new_vector(tu, type, count);
+				counter += OTHER;
+
+				expect_closing_paren(s, opening_loc);
+				tokens_prev(s);
+				break;
+			}
 			case TOKEN_KW_Atomic: {
 				tokens_next(s);
 				if (tokens_get(s)->type == '(') {

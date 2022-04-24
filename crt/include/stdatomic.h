@@ -20,7 +20,7 @@
 #define ATOMIC_POINTER_LOCK_FREE    __CUIK_ATOMIC_POINTER_LOCK_FREE
 
 // 7.17.2 Initialization
-#define atomic_init __c11_atomic_init
+#define atomic_init(obj, value) (*(obj) = (value)) 
 // this has actually been deprecated
 #define ATOMIC_VAR_INIT(value)
 

@@ -41,6 +41,7 @@ typedef enum TypeKind {
     KIND_VLA, // variable-length array
     KIND_STRUCT,
     KIND_UNION,
+	KIND_VECTOR,
 	
 	// weird typeof(expr) type that gets resolved in the semantics pass
 	// this is done to enable typeof to work with out of order decls...
@@ -131,7 +132,6 @@ typedef struct Type {
 		struct {
 			Atom name;
 			MemberIndex kids_start, kids_end;
-			TB_DataType intrin_type;
 		} record;
 		
 		// Enumerators
@@ -139,7 +139,12 @@ typedef struct Type {
 			Atom name;
 			EnumEntryIndex start, end;
 		} enumerator;
-		
+	
+		struct {
+			TypeIndex base;
+			int       count;
+		} vector_;
+
 		// Typeof
 		struct {
 			ExprIndex src;
@@ -611,6 +616,7 @@ TypeIndex copy_type(TranslationUnit* tu, TypeIndex base);
 TypeIndex new_pointer(TranslationUnit* tu, TypeIndex base);
 TypeIndex new_typeof(TranslationUnit* tu, ExprIndex src);
 TypeIndex new_array(TranslationUnit* tu, TypeIndex base, int count);
+TypeIndex new_vector(TranslationUnit* tu, TypeIndex base, int count);
 TypeIndex get_common_type(TranslationUnit* tu, TypeIndex ty1, TypeIndex ty2);
 bool type_equal(TranslationUnit* tu, TypeIndex a, TypeIndex b);
 size_t type_as_string(TranslationUnit* tu, size_t max_len, char* buffer, TypeIndex type_index);

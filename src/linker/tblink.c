@@ -54,7 +54,23 @@ static FILE* locate_file(Linker* l, OS_String path) {
 
 	return NULL;
 #else
-#error "Implement locate_file for non-windows platforms"
+	FILE* file = fopen(path, "rb");
+	if (file) return file;
+
+	char temp_str[MAX_PATH];
+	size_t i = l->libpaths_count;
+	OS_String str = l->libpaths_buffer;
+	while (i--) {
+		snprintf(temp_str, MAX_PATH, "%s\\%s", str, path);
+
+		file = fopen(temp_str, "rb");
+		if (file) {
+			return file;
+		}
+		str += strlen(str) + 1;
+	}
+
+	return NULL;
 #endif
 }
 
