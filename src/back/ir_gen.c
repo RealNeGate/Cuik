@@ -107,14 +107,14 @@ static TB_Register cvt2rval(TranslationUnit* tu, TB_Function* func, const IRVal 
 		}
 		case RVALUE_PHI: {
 			TB_Label merger = tb_inst_new_label_id(func);
-
+			
 			tb_inst_label(func, v.phi.if_true);
 			TB_Reg one = tb_inst_bool(func, true);
 			tb_inst_goto(func, merger);
-
+			
 			tb_inst_label(func, v.phi.if_false);
 			TB_Reg zero = tb_inst_bool(func, false);
-
+			
 			tb_inst_label(func, merger);
 			reg = tb_inst_phi2(func, v.phi.if_true, one, v.phi.if_false, zero);
 			break;
@@ -409,7 +409,8 @@ static TB_InitializerID gen_global_initializer(TranslationUnit* tu, SourceLocInd
 	
 	if (initial) {
 		Expr* restrict ep = &tu->exprs[initial];
-		if (ep->op == EXPR_STR) {
+		
+		if (ep->op == EXPR_STR || ep->op == EXPR_WSTR) {
 			TB_InitializerID init = tb_initializer_create(mod, type->size, type->align, 1);
 			
 			char* dst = tb_initializer_add_region(mod, init, 0, type->size);
@@ -571,7 +572,8 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 				.reg = tb_inst_float(func, ep->cast_type == TYPE_FLOAT ? TB_TYPE_F32 : TB_TYPE_F64, ep->float_num)
 			};
 		}
-		case EXPR_STR: {
+		case EXPR_STR:
+		case EXPR_WSTR: {
 			// The string is preprocessed to be a flat and nice byte buffer by the semantics pass
 			return (IRVal) {
 				.value_type = RVALUE,
@@ -835,12 +837,12 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 			// Resolve ABI arg count
 			bool is_aggregate_return = target_desc.pass_return(tu, ep->type);
 			size_t real_arg_count = is_aggregate_return ? 1 : 0;
-
+			
 			for (size_t i = 0; i < arg_count; i++) {
 				TypeIndex arg_type = tu->exprs[args[i]].type;
 				real_arg_count += target_desc.deduce_parameter_usage(tu, arg_type);
 			}
-
+			
 			TB_Reg* ir_args = tls_push(real_arg_count * sizeof(TB_Reg));
 			if (is_aggregate_return) {
 				ir_args[0] = tb_inst_local(func, tu->types[ep->type].size, tu->types[ep->type].align);
@@ -853,17 +855,17 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 			if (func_type->func.has_varargs) {
 				varargs_cutoff = func_type->func.param_count;
 			}
-	
+			
 			size_t ir_arg_count = is_aggregate_return ? 1 : 0;
 			for (size_t i = 0; i < arg_count; i++) {
 				ir_arg_count += target_desc.pass_parameter(
-						tu, func, args[i],
-						i >= varargs_cutoff,
-						&ir_args[ir_arg_count]);
+														   tu, func, args[i],
+														   i >= varargs_cutoff,
+														   &ir_args[ir_arg_count]);
 			}
-
+			
 			assert(ir_arg_count == real_arg_count);
-
+			
 			// Resolve call target
 			//
 			// NOTE(NeGate): Could have been resized in the parameter's irgen_expr
@@ -1079,7 +1081,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 			
 			// Eval first operand
 			IRVal a = irgen_expr(tu, func, ep->bin_op.left);
-
+			
 			TB_Label true_lbl, false_lbl;
 			if (a.value_type == RVALUE_PHI) {
 				// chain with previous phi.
@@ -1088,20 +1090,20 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 				if (is_and) {
 					tb_inst_label(func, a.phi.if_true);
 					tb_inst_goto(func,  try_rhs_lbl);
-
+					
 					true_lbl = tb_inst_new_label_id(func);
 					false_lbl = a.phi.if_false;
 				} else {
 					tb_inst_label(func, a.phi.if_false);
 					tb_inst_goto(func, try_rhs_lbl);
-
+					
 					true_lbl = a.phi.if_true;
 					false_lbl = tb_inst_new_label_id(func);
 				}
 			} else {
 				true_lbl = tb_inst_new_label_id(func);
 				false_lbl = tb_inst_new_label_id(func);
-
+				
 				TB_Reg a_reg = cvt2rval(tu, func, a, ep->bin_op.left);
 				if (is_and) {
 					tb_inst_if(func, a_reg, try_rhs_lbl, false_lbl);
@@ -1109,16 +1111,16 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 					tb_inst_if(func, a_reg, true_lbl, try_rhs_lbl);
 				}
 			}
-
+			
 			// Eval second operand
 			tb_inst_label(func, try_rhs_lbl);
-
+			
 			TB_Reg b = irgen_as_rvalue(tu, func, ep->bin_op.right);
 			tb_inst_if(func, b, true_lbl, false_lbl);
-
+			
 			// Just in case
 			//insert_label(func);
-
+			
 			return (IRVal) {
 				.value_type = RVALUE_PHI,
 				.type = TYPE_BOOL,
@@ -1581,11 +1583,11 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, StmtIndex s) {
 				char* name = tls_push(1024);
 				int name_len = snprintf(name, 1024, "%s$%s@%d", function_name, sp->decl.name, s);
 				assert(name_len >= 0 && name_len < 1024);
-			
+				
 				if (attrs.is_tls && !atomic_flag_test_and_set(&irgen_defined_tls_index)) {
 					tb_module_set_tls_index(mod, tb_extern_create(mod, "_tls_index"));
 				}
-
+				
 				TB_GlobalID g = tb_global_create(mod, name, attrs.is_tls ? TB_STORAGE_TLS : TB_STORAGE_DATA, TB_LINKAGE_PRIVATE);
 				tb_global_set_initializer(mod, g, init);
 				tls_restore(name);
@@ -1601,7 +1603,7 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, StmtIndex s) {
 				if (ep->op == EXPR_INITIALIZER) {
 					gen_local_initializer(tu, func, ep->loc, addr, type_index, ep->init.count, ep->init.nodes);
 				} else {
-					if (kind == KIND_ARRAY && ep->op == EXPR_STR) {
+					if (kind == KIND_ARRAY && (ep->op == EXPR_STR || ep->op == EXPR_WSTR)) {
 						IRVal v = irgen_expr(tu, func, sp->decl.initial);
 						TB_Register size_reg = tb_inst_uint(func, TB_TYPE_I64, size);
 						
@@ -1637,7 +1639,7 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, StmtIndex s) {
 				if (tu->types[type].kind == KIND_STRUCT ||
 					tu->types[type].kind == KIND_UNION) {
 					IRVal v = irgen_expr(tu, func, e);
-						
+					
 					// returning aggregates just copies into the first parameter
 					// which is agreed to be a caller owned buffer.
 					int size = tu->types[type].size;

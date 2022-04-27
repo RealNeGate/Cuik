@@ -13,6 +13,9 @@
 #include <unistd.h>
 #include <sched.h>
 
+#include <string.h>
+#include <stdio.h>
+
 /*
 Configuration macro:
 
@@ -201,8 +204,8 @@ int thrd_create(thrd_t *thr, thrd_start_t func, void *arg)
     pack->func = func;
     pack->arg = arg;
 	
-	pthread_attr_t attr = { 0 };
-	pthread_attr_setstacksize(&attr, 2u<<20u /* 2MiB */);
+	pthread_attr_t attr;
+	pthread_attr_init(&attr);
 	
     if (pthread_create(thr, &attr, impl_thrd_routine, pack) != 0) {
         free(pack);

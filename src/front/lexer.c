@@ -160,7 +160,7 @@ TknType classify_ident(const unsigned char* restrict str, size_t len) {
 	//
 	// BINARY SEARCH ARRAYS
 	const static uint16_t keys[64] = {
-
+		
 		0x00A5,0x00BA,0x0165,0x0170,0x0205,0x0211,0x0223,0x022C,
 		0x0232,0x0245,0x0259,0x02A7,0x0433,0x0495,0x04AA,0x04DF,
 		0x054A,0x05CF,0x05DD,0x080D,0x081E,0x0820,0x084F,0x0851,
@@ -378,7 +378,7 @@ void lexer_read(Lexer* restrict l) {
 					
 					while (char_classes[*current] == CHAR_CLASS_NUMBER) { current++; }
 				}
-
+				
 				if (*current == 'f') {
 					l->token_type = TOKEN_FLOAT;
 					current++;
@@ -486,6 +486,11 @@ void lexer_read(Lexer* restrict l) {
 			} while (*current);
 			
 			l->token_type = quote_type;
+			
+			if (start[0] == 'L') {
+				l->token_type += 256;
+				start += 1;
+			}
 			break;
 		}
 		case CHAR_CLASS_DOT: {
@@ -548,7 +553,7 @@ void lexer_read(Lexer* restrict l) {
 		size_t len2 = current - start;
 		
 		{
-			conjoined_buffer = arena_alloc((len + len2 + 15) & ~15, 16);
+			conjoined_buffer = arena_alloc(&thread_arena, (len + len2 + 15) & ~15, 16);
 			if (!conjoined_buffer) {
 				printf("Lexer error: out of memory!");
 				abort();

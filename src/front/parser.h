@@ -98,7 +98,7 @@ typedef struct Type {
     int size;  // sizeof
     int align; // _Alignof
 	SourceLocIndex loc;
-
+	
 	bool is_const : 1;
     bool is_atomic : 1;
 	bool is_incomplete : 1;
@@ -139,12 +139,12 @@ typedef struct Type {
 			Atom name;
 			EnumEntryIndex start, end;
 		} enumerator;
-	
+		
 		struct {
 			TypeIndex base;
 			int       count;
 		} vector_;
-
+		
 		// Typeof
 		struct {
 			ExprIndex src;
@@ -211,12 +211,13 @@ typedef enum ExprOp {
 	EXPR_FLOAT64,
 	
 	EXPR_CHAR,
+	EXPR_WSTR,
 	EXPR_STR,
 	
 	EXPR_UNKNOWN_SYMBOL,
 	EXPR_SYMBOL,
 	EXPR_GENERIC, // C11's _Generic
-
+	
 	EXPR_FUNCTION, // function literal
 	EXPR_INITIALIZER,
 	
@@ -599,7 +600,7 @@ typedef struct TranslationUnit {
 	// stb_ds array
 	// NOTE(NeGate): should this be an stb_ds array?
 	StmtIndex* top_level_stmts;
-
+	
 	// this is a bit of a hack to implement the struct printing
 	// functionality, if a name is passed into hack.name then it'll
 	// try to find a type by that name and feed it into hack.type
@@ -611,6 +612,7 @@ typedef struct TranslationUnit {
 
 TypeIndex new_func(TranslationUnit* tu);
 TypeIndex new_enum(TranslationUnit* tu);
+TypeIndex new_blank_type(TranslationUnit* tu);
 TypeIndex new_record(TranslationUnit* tu, bool is_union);
 TypeIndex copy_type(TranslationUnit* tu, TypeIndex base);
 TypeIndex new_pointer(TranslationUnit* tu, TypeIndex base);

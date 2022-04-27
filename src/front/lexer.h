@@ -35,6 +35,10 @@ typedef enum TknType {
 	
     TOKEN_STRING_SINGLE_QUOTE = '\'',
     TOKEN_STRING_DOUBLE_QUOTE = '\"',
+	
+	// L"hello"
+    TOKEN_STRING_WIDE_SINGLE_QUOTE = '\'' + 256,
+    TOKEN_STRING_WIDE_DOUBLE_QUOTE = '\"' + 256,
     
     TOKEN_IDENTIFIER = 256,
 	TOKEN_INTEGER,

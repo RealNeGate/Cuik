@@ -212,7 +212,26 @@ inline static void builder_init() {
 	printf("Compiling on GCC %d.%d...\n", __GNUC__, __GNUC_MINOR__);
 #elif defined(_MSC_VER)
 	printf("Compiling on MSVC %d.%d...\n", _MSC_VER / 100, _MSC_VER % 100);
+#elif defined(__CUIKC__)
+	printf("Compiling on Cuik %d.%d...\n", __CUIKC__, __CUIKC_MINOR__);
 #endif
+}
+
+inline static void builder_compile_cuik(size_t count, const char* filepaths[], const char* output_path) {
+	cmd_append("cuik build -include:src/ -out:");
+	cmd_append(output_path);
+	
+#   if !defined(RELEASE_BUILD)
+	cmd_append(" -debug ");
+#   endif
+	
+	for (size_t i = 0; i < count; i++) {
+		cmd_append(filepaths[i]);
+		cmd_append(" ");
+	}
+	
+	printf("CMD: %s\n", command_buffer);
+	cmd_dump(cmd_run());
 }
 
 inline static void builder_compile_msvc(size_t count, const char* filepaths[], const char* output_path) {

@@ -26,33 +26,33 @@ bool type_very_compatible(TranslationUnit* tu, TypeIndex a, TypeIndex b) {
 	
 	Type* restrict src = &tu->types[a];
 	Type* restrict dst = &tu->types[b];
-
+	
 	if (src->kind != dst->kind) return false;
-
+	
 	switch (src->kind) {
-	case KIND_BOOL:
-	case KIND_CHAR:
-	case KIND_SHORT:
-	case KIND_INT:
-	case KIND_LONG:
+		case KIND_BOOL:
+		case KIND_CHAR:
+		case KIND_SHORT:
+		case KIND_INT:
+		case KIND_LONG:
 		return src->is_unsigned == dst->is_unsigned;
-
-	case KIND_FLOAT:
-	case KIND_DOUBLE:
+		
+		case KIND_FLOAT:
+		case KIND_DOUBLE:
 		return true;
-
-	case KIND_PTR:
+		
+		case KIND_PTR:
 		return type_very_compatible(tu, src->ptr_to, dst->ptr_to);
-	case KIND_FUNC:
+		case KIND_FUNC:
 		return type_equal(tu, a, b);
-	case KIND_ARRAY:
+		case KIND_ARRAY:
 		if (!type_very_compatible(tu, src->array_of, dst->array_of)) {
 			return false;
 		}
-
+		
 		return src->array_count == dst->array_count;
-
-	default:
+		
+		default:
 		return true;
 	}
 }
@@ -349,57 +349,56 @@ TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e) {
 		case EXPR_CHAR: {
 			return (ep->type = TYPE_CHAR);
 		}
-		case EXPR_STR: {
-			if (ep->str.start[0] == 'L') {
-				const char* in = (const char*)(ep->str.start + 2);
-				size_t len = ((const char*)ep->str.end - 1) - in;
+		case EXPR_WSTR: {
+			const char* in = (const char*)(ep->str.start + 1);
+			size_t len = ((const char*)ep->str.end - 1) - in;
+			
+			// it can't be bigger than the original
+			wchar_t* out = arena_alloc(&thread_arena, (len + 1) * 2, 1);
+			
+			size_t out_i = 0, in_i = 0;
+			while (in_i < len) {
+				int ch;
+				intptr_t distance = parse_char(len - in_i, &in[in_i], &ch);
+				if (distance < 0) abort();
 				
-				// it can't be bigger than the original
-				wchar_t* out = arena_alloc((len + 1) * 2, 1);
-				
-				size_t out_i = 0, in_i = 0;
-				while (in_i < len) {
-					int ch;
-					intptr_t distance = parse_char(len - in_i, &in[in_i], &ch);
-					if (distance < 0) abort();
-					
-					assert(ch < 0x80);
-					out[out_i++] = ch;
-					in_i += distance;
-				}
-				
-				assert(out_i <= len);
-				out[out_i++] = '\0';
-				
-				ep->str.start = (unsigned char*) &out[0];
-				ep->str.end = (unsigned char*) &out[out_i];
-				
-				return (ep->type = new_array(tu, TYPE_SHORT, out_i));
-			} else {
-				const char* in = (const char*)(ep->str.start + 1);
-				size_t len = ((const char*)ep->str.end - 1) - in;
-				
-				// it can't be bigger than the original
-				char* out = arena_alloc(len + 1, 1);
-				
-				size_t out_i = 0, in_i = 0;
-				while (in_i < len) {
-					int ch;
-					intptr_t distance = parse_char(len - in_i, &in[in_i], &ch);
-					if (distance < 0) abort();
-					
-					out[out_i++] = ch;
-					in_i += distance;
-				}
-				
-				assert(out_i <= len);
-				out[out_i++] = '\0';
-				
-				ep->str.start = (unsigned char*) &out[0];
-				ep->str.end = (unsigned char*) &out[out_i];
-				
-				return (ep->type = new_array(tu, TYPE_CHAR, out_i));
+				assert(ch < 0x80);
+				out[out_i++] = ch;
+				in_i += distance;
 			}
+			
+			assert(out_i <= len);
+			out[out_i++] = '\0';
+			
+			ep->str.start = (unsigned char*) &out[0];
+			ep->str.end = (unsigned char*) &out[out_i];
+			
+			return (ep->type = new_array(tu, TYPE_SHORT, out_i));
+		}
+		case EXPR_STR: {
+			const char* in = (const char*)(ep->str.start + 1);
+			size_t len = ((const char*)ep->str.end - 1) - in;
+			
+			// it can't be bigger than the original
+			char* out = arena_alloc(&thread_arena, len + 1, 1);
+			
+			size_t out_i = 0, in_i = 0;
+			while (in_i < len) {
+				int ch;
+				intptr_t distance = parse_char(len - in_i, &in[in_i], &ch);
+				if (distance < 0) abort();
+				
+				out[out_i++] = ch;
+				in_i += distance;
+			}
+			
+			assert(out_i <= len);
+			out[out_i++] = '\0';
+			
+			ep->str.start = (unsigned char*) &out[0];
+			ep->str.end = (unsigned char*) &out[out_i];
+			
+			return (ep->type = new_array(tu, TYPE_CHAR, out_i));
 		}
 		case EXPR_SIZEOF: {
 			TypeIndex src = sema_expr(tu, ep->x_of_expr.expr);
@@ -501,7 +500,7 @@ TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e) {
 			uint64_t dst;
 			if (in_the_semantic_phase &&
 				const_eval_try_offsetof_hack(tu, ep->unary_op.src, &dst)) {
-
+				
 				*ep = (Expr) {
 					.op = EXPR_INT,
 					.type = TYPE_ULONG,
@@ -509,7 +508,7 @@ TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e) {
 				};
 				return TYPE_ULONG;
 			}
-
+			
 			TypeIndex src = sema_expr(tu, ep->unary_op.src);
 			return (ep->type = new_pointer(tu, src));
 		}
@@ -539,7 +538,7 @@ TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e) {
 		}
 		case EXPR_GENERIC: {
 			TypeIndex src = sema_expr(tu, ep->generic_.controlling_expr);
-
+			
 			// _Generic's controlling expression does rvalue conversions so
 			// an array is treated as a pointer not an array
 			if (tu->types[src].kind == KIND_ARRAY) {
@@ -547,10 +546,10 @@ TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e) {
 			} else if (tu->types[src].kind == KIND_FUNC) {
 				src = new_pointer(tu, src);
 			}
-
+			
 			ExprIndex default_case = 0;
 			ExprIndex match = 0;
-
+			
 			for (size_t i = 0; i < ep->generic_.case_count; i++) {
 				if (ep->generic_.cases[i].key == 0) {
 					default_case = ep->generic_.cases[i].value;
@@ -558,23 +557,23 @@ TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e) {
 					match = ep->generic_.cases[i].value;
 				}
 			}
-
+			
 			if (match == 0) {
 				if (default_case == 0) {
 					// if we didn't match anything and there's no default case, error out
 					sema_error(ep->loc, "Could not match _Generic against any cases");
 					return 0;
 				}
-
+				
 				ep->generic_.controlling_expr = default_case;
 			} else {
 				ep->generic_.controlling_expr = match;
 			}
-
+			
 			// once we set case_count to 0, we've resolved the _Generic
 			ep->generic_.cases = NULL;
 			ep->generic_.case_count = 0;
-
+			
 			return (ep->type = sema_expr(tu, ep->generic_.controlling_expr));
 		}
 		case EXPR_CAST: {
@@ -630,11 +629,11 @@ TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e) {
 				
 				ExprIndex* args = ep->call.param_start;
 				int arg_count = ep->call.param_count;
-	
+				
 				TypeIndex ty = target_desc.type_check_builtin(tu, ep->loc, name, arg_count, args);
 				return (ep->type = ty);
 			}
-
+			
 			// Call function
 			TypeIndex func_ptr = sema_expr(tu, ep->call.target);
 			
@@ -947,7 +946,7 @@ void sema_stmt(TranslationUnit* tu, StmtIndex s) {
 							sp->decl.type = expr_type_index;
 						}
 					}
-				} else if (ep->op == EXPR_STR) {
+				} else if (ep->op == EXPR_STR || ep->op == EXPR_WSTR) {
 					Type* restrict tp = &tu->types[sp->decl.type];
 					
 					// Auto-detect array count from string
@@ -1131,7 +1130,7 @@ static void sema_top_level(TranslationUnit* tu, StmtIndex s, bool frontend_only)
 				function_stmt = 0;
 				break;
 			}
-		
+			
 			TB_FunctionPrototype* proto = target_desc.create_prototype(tu, type_index);
 			TB_Linkage linkage = sp->decl.attrs.is_static ? TB_LINKAGE_PRIVATE : TB_LINKAGE_PUBLIC;
 			
@@ -1186,7 +1185,8 @@ static void sema_top_level(TranslationUnit* tu, StmtIndex s, bool frontend_only)
 					expr_type = &tu->types[expr_type_index];
 					
 					if (tu->exprs[sp->decl.initial].op == EXPR_INITIALIZER ||
-						tu->exprs[sp->decl.initial].op == EXPR_STR) {
+						tu->exprs[sp->decl.initial].op == EXPR_STR ||
+						tu->exprs[sp->decl.initial].op == EXPR_WSTR) {
 						if (type->kind == KIND_ARRAY && expr_type->kind == KIND_ARRAY) {
 							if (type_equal(tu, type->array_of, expr_type->array_of)) {
 								if (type->array_count != 0 && type->array_count < expr_type->array_count) {
@@ -1236,7 +1236,7 @@ static void sema_top_level(TranslationUnit* tu, StmtIndex s, bool frontend_only)
 					if (sp->decl.attrs.is_tls && !atomic_flag_test_and_set(&irgen_defined_tls_index)) {
 						tb_module_set_tls_index(mod, tb_extern_create(mod, "_tls_index"));
 					}
-
+					
 					TB_Linkage linkage = sp->decl.attrs.is_static ? TB_LINKAGE_PRIVATE : TB_LINKAGE_PUBLIC;
 					sp->backing.g = tb_global_create(mod, name, sp->decl.attrs.is_tls ? TB_STORAGE_TLS : TB_STORAGE_DATA, linkage);
 				}
@@ -1251,7 +1251,7 @@ static void sema_mark_children(TranslationUnit* tu, ExprIndex e) {
 	Expr* restrict ep = &tu->exprs[e];
 	if (ep->op == EXPR_ENUM) return;
 	if (ep->op == EXPR_UNKNOWN_SYMBOL) return;
-
+	
 	assert(ep->op == EXPR_SYMBOL);
 	Stmt* restrict sp = &tu->stmts[ep->symbol];
 	
@@ -1298,6 +1298,6 @@ void sema_pass(CompilationUnit* cu, TranslationUnit* tu, bool frontend_only) {
 			sema_top_level(tu, tu->top_level_stmts[i], frontend_only);
 		}
 	}
-
+	
 	in_the_semantic_phase = false;
 }

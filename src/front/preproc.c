@@ -324,7 +324,7 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 	uint64_t timer_start = timer_now();
 	
 	unsigned char* text = (unsigned char*)read_entire_file(filepath);
-	Lexer l = (Lexer) { filepath, text, text, 1 };
+	Lexer l = { filepath, text, text, 1 };
 	
 	lexer_read(&l);
 	do {
@@ -504,28 +504,71 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 				} else if (lexer_match(&l, 7, "include")) {
 					lexer_read(&l);
 					
-					const unsigned char* start = NULL;
-					const unsigned char* end = NULL;
+					unsigned char* filename = tls_push(MAX_PATH);
 					
 					bool is_lib_include = false;
-					if (l.token_type == '<') {
-						// Hacky but mostly works
-						is_lib_include = true;
-						start = l.token_start + 1;
+					{
+						size_t old_tokens_length = arrlen(s->tokens);
+						s->current = old_tokens_length;
 						
-						do {
-							lexer_read(&l);
-						} while (l.token_type != '>' && !l.hit_line);
+						expand(c, s, &l);
+						assert(s->current != arrlen(s->tokens) && "Expected the macro expansion to add something");
 						
-						end = l.token_end - 1;
-						expect(&l, '>');
-					} else if (l.token_type == TOKEN_STRING_DOUBLE_QUOTE) {
-						start = l.token_start + 1;
-						end = l.token_end - 1;
+						// Insert a null token at the end
+						Token t = { 0, arrlen(s->line_arena) - 1, NULL, NULL };
+						arrput(s->tokens, t);
 						
-						lexer_read(&l);
-					} else {
-						generic_error(&l, "expected file path!");
+						// Evaluate
+						if (tokens_get(s)->type == '<') {
+							tokens_next(s);
+							
+							is_lib_include = true;
+							size_t len = 0;
+							
+							// Hacky but mostly works
+							do {
+								Token* t = tokens_get(s);
+								if (len + (t->end - t->start) > MAX_PATH) {
+									report(REPORT_ERROR, &s->line_arena[t->location], "Filename too long");
+									abort();
+								}
+								
+								memcpy(&filename[len], t->start, t->end - t->start);
+								len += t->end - t->start;
+								
+								tokens_next(s);
+							} while (tokens_get(s)->type != '>');
+							
+							// slap that null terminator on it like a boss bitch
+							filename[len] = '\0';
+							
+							if (tokens_get(s)->type != '>') {
+								Token* t = tokens_get(s);
+								
+								report(REPORT_ERROR, &s->line_arena[t->location], "expected '>' for #include");
+								abort();
+							}
+							
+							tokens_next(s);
+						} else if (tokens_get(s)->type == TOKEN_STRING_DOUBLE_QUOTE) {
+							Token* t = tokens_get(s);
+							size_t len = (t->end - t->start) - 2;
+							if (len > MAX_PATH) {
+								report(REPORT_ERROR, &s->line_arena[t->location], "Filename too long");
+								abort();
+							}
+							
+							memcpy(filename, t->start + 1, len);
+							filename[len] = '\0';
+							
+							tokens_next(s);
+						} else {
+							generic_error(&l, "expected file path!");
+						}
+						
+						// reset token stream
+						arrsetlen(s->tokens, old_tokens_length);
+						s->current = 0;
 					}
 					
 					// Search for file in system libs
@@ -534,7 +577,7 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 					
 					if (!is_lib_include) {
 						// Try local includes
-						sprintf_s(path, 260, "%s%.*s", directory, (int) (end - start), start);
+						sprintf_s(path, 260, "%s%s", directory, filename);
 						if (file_exists(path)) success = true;
 					}
 					
@@ -542,9 +585,7 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 						size_t num_system_include_dirs = arrlen(c->system_include_dirs);
 						
 						for (size_t i = 0; i < num_system_include_dirs; i++) {
-							sprintf_s(path, 260, "%s%.*s",
-									  c->system_include_dirs[i],
-									  (int) (end - start), start);
+							sprintf_s(path, 260, "%s%s", c->system_include_dirs[i], filename);
 							
 							if (file_exists(path)) {
 								success = true;
@@ -555,15 +596,16 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 					
 					if (!success && is_lib_include) {
 						// Try local includes
-						sprintf_s(path, 260, "%s%.*s", directory, (int) (end - start), start);
+						sprintf_s(path, 260, "%s%s", directory, filename);
 						if (file_exists(path)) success = true;
 					}
 					
 					if (!success) {
 						int loc = l.current_line;
-						printf("error %s:%d: Could not find file! %.*s\n", l.filepath, loc, (int) (end - start), start);
+						printf("error %s:%d: Could not find file! %s\n", l.filepath, loc, filename);
 						abort();
 					}
+					tls_restore(filename);
 					
 #ifdef _WIN32
 					// The windows file paths are case insensitive
@@ -576,15 +618,15 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 						}
 					}
 					
+					char* filepart;
 					char* new_path = malloc(MAX_PATH);
-					char* filename;
-					if (GetFullPathNameA(path, MAX_PATH, new_path, &filename) == 0) {
+					if (GetFullPathNameA(path, MAX_PATH, new_path, &filepart) == 0) {
 						int loc = l.current_line;
 						printf("error %s:%d: Could not resolve path: %s\n", l.filepath, loc, path);
 						abort();
 					}
 					
-					if (filename == NULL) {
+					if (filepart == NULL) {
 						int loc = l.current_line;
 						printf("error %s:%d: Cannot include directory %s\n", l.filepath, loc, new_path);
 						abort();
@@ -605,7 +647,7 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 						// they're... evil!!!
 #ifdef _WIN32
 						char* new_dir = strdup(new_path);
-						new_dir[filename - new_path] = '\0';
+						new_dir[filepart - new_path] = '\0';
 #else
 						char* new_dir = strdup(new_path);
 						char* slash = strrchr(new_dir, '/');
@@ -617,10 +659,10 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 						}
 #endif
 						
-#if 0
-						for (int i = 0; i < depth; i++) printf("  ");
-						printf("%s\n", new_path);
-#endif
+						if (0) {
+							for (int i = 0; i < depth; i++) printf("  ");
+							printf("%s\n", new_path);
+						}
 						
 						preprocess_file(c, s, new_dir, new_path, depth + 1);
 					}
@@ -1036,11 +1078,12 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
 	} else {
 		size_t def_i;
 		if (find_define(c, &def_i, token_data, token_length)) {
+			int line_of_expansion = l->current_line;
 			lexer_read(l);
 			
-			//if (strncmp((const char*)token_data, "__DEFINE_CPP_OVERLOAD_STANDARD_FUNC_0_1_EX", token_length) == 0) {
-			//__debugbreak();
-			//}
+			/*if (strncmp((const char*)token_data, "REFIID", token_length) == 0) {
+				__debugbreak();
+			}*/
 			
 			string def = {
 				.data = c->macro_bucket_values_start[def_i],
@@ -1158,7 +1201,7 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
 					unsigned char* temp_expansion = temp_expansion_start;
 					
 					Lexer def_lex = (Lexer) { l->filepath, def.data, def.data };
-					def_lex.current_line = l->current_line;
+					def_lex.current_line = line_of_expansion;
 					lexer_read(&def_lex);
 					
 					// set when a # happens, we expect a macro parameter afterwards
@@ -1302,7 +1345,7 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
 					if (temp_expansion_start != temp_expansion) {
 						// expand and append
 						Lexer temp_lex = (Lexer){ l->filepath, temp_expansion_start, temp_expansion_start };
-						temp_lex.current_line = l->current_line;
+						temp_lex.current_line = line_of_expansion;
 						lexer_read(&temp_lex);
 						
 						*temp_expansion++ = '\0';

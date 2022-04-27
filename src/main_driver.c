@@ -213,7 +213,7 @@ static void compile_project(const char* obj_output_path, bool is_multithreaded, 
 	
 	threadpool_free(thread_pool);
 	compilation_unit_deinit(&compilation_unit);
-	arena_free();
+	arena_free(&thread_arena);
 	
 	// Compile
 	if (!is_check) {
@@ -268,7 +268,7 @@ static int execute_query_operation(const char* option, size_t arg_start, size_t 
 			}
 			
 			settings.hack_type_printer_name = args[arg_count - 1]; 
-
+			
 			atoms_init();
 			init_report_system();
 			compilation_unit_init(&compilation_unit);
@@ -277,7 +277,7 @@ static int execute_query_operation(const char* option, size_t arg_start, size_t 
 													big_array_length(cuik_include_dirs),
 													&cuik_include_dirs[0],
 													true);
-
+			
 			if (tu->hack.type) {
 				ast_dump_type(tu, tu->hack.type, 0, 0);
 			} else {
@@ -456,6 +456,7 @@ static bool dump_tokens() {
 	
 	const unsigned char* last_file = NULL;
 	int last_line = 0;
+	int current_column = 0;
 	
 	for (size_t i = 0, cc = arrlen(s.tokens); i < cc; i++) {
 		Token* t = &s.tokens[i];
@@ -482,11 +483,13 @@ static bool dump_tokens() {
 			
 			fprintf(f, "\n#line %d \"%s\"\t", loc->line, str);
 			last_file = loc->file;
+			current_column = 0;
 		}
 		
 		if (last_line != loc->line) {
 			fprintf(f, "\n/* line %3d */\t", loc->line);
 			last_line = loc->line;
+			current_column = 0;
 		}
 		
 		fprintf(f, "%.*s ", (int)(t->end - t->start), t->start);
@@ -533,7 +536,7 @@ static void append_input_path(const char* path) {
 		for (const char* p = path; *p; p++) if (*p == '/' || *p == '\\') {
 			slash = p;
 		}
-
+		
 		WIN32_FIND_DATA find_data;
 		HANDLE find_handle = FindFirstFile(path, &find_data);
 		if (find_handle == INVALID_HANDLE_VALUE) {
@@ -814,6 +817,7 @@ int main(int argc, char* argv[]) {
 	switch (mode) {
 		case COMPILER_MODE_PREPROC: {
 			timer_init();
+			init_report_system();
 			dump_tokens();
 			break;
 		}
@@ -856,10 +860,10 @@ int main(int argc, char* argv[]) {
 							// Add system libpaths
 							linker_add_default_libpaths(&l);
 							linker_add_libpath(&l, "W:/Workspace/Cuik/crt/lib/");
-
+							
 							// Add Cuik output
 							linker_add_input_file(&l, obj_output_path);
-
+							
 							// Add input libraries
 #ifdef _WIN32
 							linker_add_input_file(&l, "kernel32.lib");

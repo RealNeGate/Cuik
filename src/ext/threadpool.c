@@ -13,6 +13,8 @@
 #include <errno.h>
 #endif
 
+#include <arena.h>
+
 struct threadpool_t {
 	atomic_bool running;
 	atomic_uint read_pointer; // Read
@@ -27,8 +29,7 @@ struct threadpool_t {
 #ifdef _WIN32
 	HANDLE sem;
 #else
-	mtx_t mutex;
-	cnd_t condition;
+	sem_t  sem;
 #endif
 	
 	thrd_t* threads;
@@ -59,13 +60,12 @@ static int threadpool_thread(void* arg) {
 #ifdef _WIN32
 			WaitForSingleObjectEx(threadpool->sem, -1, false); // wait for jobs
 #else
-			mtx_lock(&threadpool->mutex);
-			cnd_wait(&threadpool->condition, &threadpool->mutex);
-			mtx_unlock(&threadpool->mutex);
+			sem_wait(&threadpool->sem);
 #endif
 		}
 	}
 	
+	arena_free(&thread_arena);
     return 0;
 }
 
@@ -83,12 +83,17 @@ threadpool_t* threadpool_create(size_t worker_count, size_t workqueue_size) {
 #if _WIN32
 	threadpool->sem = CreateSemaphoreExA(0, worker_count, worker_count, 0, 0, SEMAPHORE_ALL_ACCESS);
 #else
-	mtx_init(&threadpool->mutex, mtx_plain);
-	cnd_init(&threadpool->condition);
+	if (sem_init(&threadpool->sem, 0 /* shared between threads */, worker_count) != 0) {
+		fprintf(stderr, "error: could not create semaphore!\n");
+		abort();
+	}
 #endif
 	
     for (int i = 0; i < worker_count; i++) {
-        thrd_create(&threadpool->threads[i], threadpool_thread, threadpool);
+        if (thrd_create(&threadpool->threads[i], threadpool_thread, threadpool) != thrd_success) {
+			fprintf(stderr, "error: could not create worker threads!\n");
+			abort();
+		}
     }
 	
     return threadpool;
@@ -112,7 +117,7 @@ void threadpool_submit(threadpool_t* threadpool, work_routine fn, void* arg) {
 #if _WIN32
 	ReleaseSemaphore(threadpool->sem, 1, 0);
 #else
-	cnd_signal(&threadpool->condition);
+	sem_post(&threadpool->sem);
 #endif
 }
 
@@ -127,10 +132,14 @@ void threadpool_wait(threadpool_t* threadpool) {
 
 void threadpool_free(threadpool_t* threadpool) {
 	threadpool->running = false;
+	
 #ifdef _WIN32
 	ReleaseSemaphore(threadpool->sem, threadpool->thread_count, 0);
 #else
-	cnd_broadcast(&threadpool->condition);
+	// wake everyone
+	for (size_t i = 0; i < threadpool->thread_count; i++) {
+		sem_post(&threadpool->sem);
+	}
 #endif
 	
 	for (int i = 0; i < threadpool->thread_count; i++) {
@@ -140,7 +149,7 @@ void threadpool_free(threadpool_t* threadpool) {
 #ifdef _WIN32
 	CloseHandle(threadpool->sem);
 #else
-	cnd_destroy(&threadpool->condition);
+	sem_destroy(&threadpool->sem);
 #endif
 	
 	free(threadpool->threads);
