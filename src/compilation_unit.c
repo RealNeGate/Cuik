@@ -38,28 +38,25 @@ void compilation_unit_internal_link(CompilationUnit* cu) {
 		size_t count = arrlen(tu->top_level_stmts);
 		
 		for (size_t i = 0; i < count; i++) {
-			StmtIndex stmt = tu->top_level_stmts[i];
-			Stmt* restrict sp = &tu->stmts[stmt];
+			Stmt* s = tu->top_level_stmts[i];
 			
-			if (sp->op == STMT_FUNC_DECL) {
-				if (!sp->decl.attrs.is_static &&
-					!sp->decl.attrs.is_inline) {
-					//printf("Export! %s (Function: %d)\n", sp->decl.name, sp->backing.f);
+			if (s->op == STMT_FUNC_DECL) {
+				if (!s->decl.attrs.is_static &&
+					!s->decl.attrs.is_inline) {
+					//printf("Export! %s (Function: %d)\n", s->decl.name, s->backing.f);
 					
-					ExportedSymbol sym = { tu, stmt };
-					shput(cu->export_table, sp->decl.name, sym);
+					shput(cu->export_table, s->decl.name, s);
 				}
-			} else if (sp->op == STMT_GLOBAL_DECL ||
-					   sp->op == STMT_DECL) {
-				if (!sp->decl.attrs.is_static &&
-					!sp->decl.attrs.is_extern &&
-					!sp->decl.attrs.is_typedef &&
-					!sp->decl.attrs.is_inline &&
-					sp->decl.initial != 0) {
-					//printf("Export! %s (Global: %d)\n", sp->decl.name, sp->backing.g);
+			} else if (s->op == STMT_GLOBAL_DECL ||
+					   s->op == STMT_DECL) {
+				if (!s->decl.attrs.is_static &&
+					!s->decl.attrs.is_extern &&
+					!s->decl.attrs.is_typedef &&
+					!s->decl.attrs.is_inline &&
+					s->decl.initial != 0) {
+					//printf("Export! %s (Global: %d)\n", s->decl.name, s->backing.g);
 					
-					ExportedSymbol sym = { tu, stmt };
-					shput(cu->export_table, sp->decl.name, sym);
+					shput(cu->export_table, s->decl.name, s);
 				}
 			}
 		}

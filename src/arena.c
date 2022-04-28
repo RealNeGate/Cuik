@@ -47,3 +47,10 @@ void arena_free(Arena* arena) {
 		arena->base = arena->top = NULL;
 	}
 }
+
+size_t arena_get_memory_usage(Arena* arena) {
+	size_t c = 0;
+	for (ArenaSegment* s = arena->base; s != NULL; s = s->next) c++;
+	
+	return c * ARENA_SEGMENT_SIZE;
+}

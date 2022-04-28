@@ -65,7 +65,7 @@ inline static TB_DataType ctype_to_tbtype(const Type* t) {
 		case KIND_STRUCT:
 		case KIND_UNION:
 		return TB_TYPE_PTR;
-
+		
 		default: abort(); // TODO
 	}
 }
@@ -80,5 +80,5 @@ void irgen_deinit();
 
 TB_Register irgen_as_rvalue(TranslationUnit* tu, TB_Function* func, ExprIndex e);
 IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e);
-void irgen_stmt(TranslationUnit* tu, TB_Function* func, StmtIndex s);
-void irgen_top_level_stmt(TranslationUnit* tu, StmtIndex s);
+void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s);
+void irgen_top_level_stmt(TranslationUnit* tu, Stmt* restrict s);

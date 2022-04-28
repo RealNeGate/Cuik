@@ -293,18 +293,17 @@ InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, Sourc
 			
 			bool success = false;
 			if (!func && tu->exprs[node->expr].op == EXPR_SYMBOL) {
-				StmtIndex stmt = tu->exprs[node->expr].symbol;
-				StmtOp stmt_op = tu->stmts[stmt].op;
+				Stmt* stmt = tu->exprs[node->expr].symbol;
 				
 				// hacky just to make it possible for some symbols to appear in the 
 				// initializers
 				// TODO(NeGate): Fix it up so that more operations can be
 				// performed at compile time and baked into the initializer
-				if (stmt_op == STMT_GLOBAL_DECL) {
-					tb_initializer_add_global(mod, init, offset + relative_offset, tu->stmts[stmt].backing.g);
+				if (stmt->op == STMT_GLOBAL_DECL) {
+					tb_initializer_add_global(mod, init, offset + relative_offset, stmt->backing.g);
 					success = true;
-				} else if (stmt_op == STMT_FUNC_DECL) {
-					tb_initializer_add_function(mod, init, offset + relative_offset, tu->stmts[stmt].backing.f);
+				} else if (stmt->op == STMT_FUNC_DECL) {
+					tb_initializer_add_function(mod, init, offset + relative_offset, stmt->backing.f);
 					success = true;
 				}
 			}
@@ -482,11 +481,10 @@ static TB_InitializerID gen_global_initializer(TranslationUnit* tu, SourceLocInd
 			memcpy(region, &offset, sizeof(uint64_t));
 			
 			if (tu->exprs[base].op == EXPR_SYMBOL) {
-				StmtIndex stmt = tu->exprs[base].symbol;
-				StmtOp stmt_op = tu->stmts[stmt].op;
+				Stmt* stmt = tu->exprs[base].symbol;
 				
-				if (stmt_op == STMT_GLOBAL_DECL) {
-					tb_initializer_add_global(mod, init, 0, tu->stmts[stmt].backing.g);
+				if (stmt->op == STMT_GLOBAL_DECL) {
+					tb_initializer_add_global(mod, init, 0, stmt->backing.g);
 				} else {
 					internal_error("could not resolve as constant initializer");
 				}
@@ -594,61 +592,62 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 			};
 		}
 		case EXPR_FUNCTION: {
-			assert(tu->stmts[ep->func.src].op == STMT_FUNC_DECL);
+			assert(ep->func.src->op == STMT_FUNC_DECL);
 			
 			return (IRVal) {
 				.value_type = LVALUE_FUNC,
 				.type = ep->type,
-				.func = tb_function_from_id(mod, tu->stmts[ep->func.src].backing.f)
+				.func = tb_function_from_id(mod, ep->func.src->backing.f)
 			};
 		}
 		case EXPR_SYMBOL: {
-			StmtIndex stmt = ep->symbol;
-			StmtOp stmt_op = tu->stmts[stmt].op;
-			assert(stmt_op == STMT_DECL || stmt_op == STMT_LABEL || stmt_op == STMT_GLOBAL_DECL || stmt_op == STMT_FUNC_DECL);
+			Stmt* stmt = ep->symbol;
+			assert(stmt->op == STMT_DECL  ||
+				   stmt->op == STMT_LABEL ||
+				   stmt->op == STMT_GLOBAL_DECL ||
+				   stmt->op == STMT_FUNC_DECL);
 			
-			TypeIndex type_index = tu->stmts[stmt].decl.type;
+			TypeIndex type_index = stmt->decl.type;
 			Type* type = &tu->types[type_index];
 			
-			if (stmt_op == STMT_GLOBAL_DECL) {
+			if (stmt->op == STMT_GLOBAL_DECL) {
 				return (IRVal) {
 					.value_type = LVALUE,
 					.type = type_index,
-					.reg = tb_inst_get_global_address(func, tu->stmts[stmt].backing.g)
+					.reg = tb_inst_get_global_address(func, stmt->backing.g)
 				};
-			} else if (stmt_op == STMT_LABEL) {
-				if (tu->stmts[stmt].backing.l == 0) {
-					tu->stmts[stmt].backing.l = tb_inst_new_label_id(func);
+			} else if (stmt->op == STMT_LABEL) {
+				if (stmt->backing.l == 0) {
+					stmt->backing.l = tb_inst_new_label_id(func);
 				}
 				
 				return (IRVal) {
 					.value_type = LVALUE_LABEL,
 					.type = TYPE_NONE,
-					.label = tu->stmts[stmt].backing.l
+					.label = stmt->backing.l
 				};
 			} else if (type->kind == KIND_FUNC) {
-				if (stmt_op == STMT_FUNC_DECL) {
+				if (stmt->op == STMT_FUNC_DECL) {
 					return (IRVal) {
 						.value_type = LVALUE_FUNC,
 						.type = type_index,
-						.func = tb_function_from_id(mod, tu->stmts[stmt].backing.f)
+						.func = tb_function_from_id(mod, stmt->backing.f)
 					};
-				} else if (stmt_op == STMT_DECL) {
-					if (tu->stmts[stmt].backing.e == 0) {
+				} else if (stmt->op == STMT_DECL) {
+					if (stmt->backing.e == 0) {
 						// It's either a proper external or links to
 						// a file within the compilation unit, we don't
 						// know yet
 						CompilationUnit* restrict cu = tu->parent;
 						mtx_lock(&cu->mutex);
 						
-						const char* name = (const char*) tu->stmts[stmt].decl.name;
+						const char* name = (const char*) stmt->decl.name;
 						ptrdiff_t search = shgeti(cu->export_table, name);
 						
 						IRVal val = { 0 };
 						if (search >= 0) {
 							// Figure out what the symbol is and link it together
-							ExportedSymbol sym = cu->export_table[search].value;
-							Stmt* restrict real_symbol = &sym.tu->stmts[sym.stmt];
+							Stmt* real_symbol = cu->export_table[search].value;
 							
 							if (real_symbol->op == STMT_FUNC_DECL) {
 								val = (IRVal) {
@@ -666,12 +665,12 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 								abort();
 							}
 						} else {
-							tu->stmts[stmt].backing.e = tb_extern_create(mod, name);
+							stmt->backing.e = tb_extern_create(mod, name);
 							
 							val = (IRVal) {
 								.value_type = LVALUE_EFUNC,
 								.type = type_index,
-								.ext = tu->stmts[stmt].backing.e
+								.ext = stmt->backing.e
 							};
 						}
 						
@@ -685,7 +684,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 					return (IRVal) {
 						.value_type = LVALUE_EFUNC,
 						.type = type_index,
-						.ext = tu->stmts[stmt].backing.e
+						.ext = stmt->backing.e
 					};
 				}
 			}
@@ -693,7 +692,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 			return (IRVal) {
 				.value_type = LVALUE,
 				.type = type_index,
-				.reg = tu->stmts[stmt].backing.r
+				.reg = stmt->backing.r
 			};
 		}
 		case EXPR_PARAM: {
@@ -802,10 +801,10 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 			
 			// Try to see if it's an intrinsic
 			if (tu->exprs[ep->call.target].op == EXPR_SYMBOL) {
-				StmtIndex sym = tu->exprs[ep->call.target].symbol;
+				Stmt* sym = tu->exprs[ep->call.target].symbol;
 				
-				if (tu->stmts[sym].op == STMT_DECL) {
-					const char* name = (const char*)tu->stmts[sym].decl.name;
+				if (sym->op == STMT_DECL) {
+					const char* name = (const char*) sym->decl.name;
 					
 					// all builtins start with an underscore
 					if (*name == '_') {
@@ -1507,15 +1506,13 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 	}
 }
 
-void irgen_stmt(TranslationUnit* tu, TB_Function* func, StmtIndex s) {
-	Stmt* restrict sp = &tu->stmts[s];
-	
+void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
 	if (settings.is_debug_info) {
 		// TODO(NeGate): Fix this up later!!!
 		static thread_local TB_FileID last_file_id = 0;
 		static thread_local const char* last_filepath = NULL;
 		
-		SourceLoc* l = &tu->tokens.line_arena[sp->loc];
+		SourceLoc* l = &tu->tokens.line_arena[s->loc];
 		if ((const char*)l->file != last_filepath) {
 			last_filepath = (const char*)l->file;
 			last_file_id = tb_file_create(mod, (const char*)l->file);
@@ -1526,20 +1523,20 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, StmtIndex s) {
 	
 	insert_label(func);
 	
-	switch (sp->op) {
+	switch (s->op) {
 		case STMT_NONE: {
 			break;
 		}
 		case STMT_LABEL: {
-			if (sp->backing.l == 0) {
-				sp->backing.l = tb_inst_new_label_id(func);
+			if (s->backing.l == 0) {
+				s->backing.l = tb_inst_new_label_id(func);
 			}
 			
-			tb_inst_label(func, sp->backing.l);
+			tb_inst_label(func, s->backing.l);
 			break;
 		}
 		case STMT_GOTO: {
-			IRVal target = irgen_expr(tu, func, sp->goto_.target);
+			IRVal target = irgen_expr(tu, func, s->goto_.target);
 			
 			if (target.value_type == LVALUE_LABEL) {
 				tb_inst_goto(func, target.label);
@@ -1553,8 +1550,8 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, StmtIndex s) {
 			break;
 		}
 		case STMT_COMPOUND: {
-			StmtIndex* kids = sp->compound.kids;
-			size_t count = sp->compound.kids_count;
+			Stmt** kids = s->compound.kids;
+			size_t count = s->compound.kids_count;
 			
 			for (size_t i = 0; i < count; i++) {
 				irgen_stmt(tu, func, kids[i]);
@@ -1566,22 +1563,22 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, StmtIndex s) {
 			abort();
 		}
 		case STMT_DECL: {
-			Attribs attrs = sp->decl.attrs;
+			Attribs attrs = s->decl.attrs;
 			
-			TypeIndex type_index = sp->decl.type;
+			TypeIndex type_index = s->decl.type;
 			int kind = tu->types[type_index].kind;
 			int size = tu->types[type_index].size;
 			int align = tu->types[type_index].align;
 			
 			if (attrs.is_static) {
 				// Static initialization
-				TB_InitializerID init = gen_global_initializer(tu, sp->loc,
+				TB_InitializerID init = gen_global_initializer(tu, s->loc,
 															   type_index,
-															   sp->decl.initial,
-															   sp->decl.name);
+															   s->decl.initial,
+															   s->decl.name);
 				
 				char* name = tls_push(1024);
-				int name_len = snprintf(name, 1024, "%s$%s@%d", function_name, sp->decl.name, s);
+				int name_len = snprintf(name, 1024, "%s$%s@%p", function_name, s->decl.name, s);
 				assert(name_len >= 0 && name_len < 1024);
 				
 				if (attrs.is_tls && !atomic_flag_test_and_set(&irgen_defined_tls_index)) {
@@ -1592,29 +1589,29 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, StmtIndex s) {
 				tb_global_set_initializer(mod, g, init);
 				tls_restore(name);
 				
-				sp->backing.r = tb_inst_get_global_address(func, g);
+				s->backing.r = tb_inst_get_global_address(func, g);
 				break;
 			}
 			
 			TB_Reg addr = tb_inst_local(func, size, align);
-			if (sp->decl.initial) {
-				Expr* restrict ep = &tu->exprs[sp->decl.initial];
+			if (s->decl.initial) {
+				Expr* restrict ep = &tu->exprs[s->decl.initial];
 				
 				if (ep->op == EXPR_INITIALIZER) {
 					gen_local_initializer(tu, func, ep->loc, addr, type_index, ep->init.count, ep->init.nodes);
 				} else {
 					if (kind == KIND_ARRAY && (ep->op == EXPR_STR || ep->op == EXPR_WSTR)) {
-						IRVal v = irgen_expr(tu, func, sp->decl.initial);
+						IRVal v = irgen_expr(tu, func, s->decl.initial);
 						TB_Register size_reg = tb_inst_uint(func, TB_TYPE_I64, size);
 						
 						tb_inst_memcpy(func, addr, v.reg, size_reg, align);
 					} else if (kind == KIND_STRUCT || kind == KIND_UNION) {
-						IRVal v = irgen_expr(tu, func, sp->decl.initial);
+						IRVal v = irgen_expr(tu, func, s->decl.initial);
 						TB_Register size_reg = tb_inst_uint(func, TB_TYPE_I64, size);
 						
 						tb_inst_memcpy(func, addr, v.reg, size_reg, align);
 					} else {
-						TB_Register v = irgen_as_rvalue(tu, func, sp->decl.initial);
+						TB_Register v = irgen_as_rvalue(tu, func, s->decl.initial);
 						
 						tb_inst_store(func, ctype_to_tbtype(&tu->types[type_index]), addr, v, align);
 					}
@@ -1623,15 +1620,15 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, StmtIndex s) {
 				/* uninitialized */
 			}
 			
-			sp->backing.r = addr;
+			s->backing.r = addr;
 			break;
 		}
 		case STMT_EXPR: {
-			irgen_expr(tu, func, sp->expr.expr);
+			irgen_expr(tu, func, s->expr.expr);
 			break;
 		}
 		case STMT_RETURN: {
-			ExprIndex e = sp->return_.expr;
+			ExprIndex e = s->return_.expr;
 			
 			if (e) {
 				TypeIndex type = tu->exprs[e].cast_type;
@@ -1664,7 +1661,7 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, StmtIndex s) {
 			TB_Label entry_lbl = tb_inst_new_label_id(func);
 			tb_inst_label(func, entry_lbl);
 			
-			TB_Register cond = irgen_as_rvalue(tu, func, sp->if_.cond);
+			TB_Register cond = irgen_as_rvalue(tu, func, s->if_.cond);
 			
 			TB_Label if_true = tb_inst_new_label_id(func);
 			TB_Label if_false = tb_inst_new_label_id(func);
@@ -1673,14 +1670,14 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, StmtIndex s) {
 			tb_inst_if(func, cond, if_true, if_false);
 			
 			tb_inst_label(func, if_true);
-			irgen_stmt(tu, func, sp->if_.body);
+			irgen_stmt(tu, func, s->if_.body);
 			
-			if (sp->if_.next) {
+			if (s->if_.next) {
 				TB_Label exit = tb_inst_new_label_id(func);
 				tb_inst_goto(func, exit);
 				
 				tb_inst_label(func, if_false);
-				irgen_stmt(tu, func, sp->if_.next);
+				irgen_stmt(tu, func, s->if_.next);
 				
 				// fallthrough
 				tb_inst_label(func, exit);
@@ -1693,7 +1690,7 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, StmtIndex s) {
 			TB_Label body = tb_inst_new_label_id(func);
 			TB_Label header = tb_inst_new_label_id(func);
 			TB_Label exit = tb_inst_new_label_id(func);
-			sp->backing.l = exit;
+			s->backing.l = exit;
 			
 			// NOTE(NeGate): this is hacky but as long as it doesn't
 			// break we should be good... what am i saying im the 
@@ -1704,12 +1701,12 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, StmtIndex s) {
 			
 			tb_inst_label(func, header);
 			
-			TB_Register cond = irgen_as_rvalue(tu, func, sp->while_.cond);
+			TB_Register cond = irgen_as_rvalue(tu, func, s->while_.cond);
 			tb_inst_if(func, cond, body, exit);
 			
 			tb_inst_label(func, body);
-			if (sp->while_.body) {
-				irgen_stmt(tu, func, sp->while_.body);
+			if (s->while_.body) {
+				irgen_stmt(tu, func, s->while_.body);
 			}
 			
 			tb_inst_goto(func, header);
@@ -1724,17 +1721,17 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, StmtIndex s) {
 			// break we should be good... what am i saying im the 
 			// developer of TB :p
 			assert(body == exit - 1);
-			sp->backing.l = exit;
+			s->backing.l = exit;
 			
 			tb_inst_label(func, body);
 			
-			if (sp->do_while.body) {
-				irgen_stmt(tu, func, sp->do_while.body);
+			if (s->do_while.body) {
+				irgen_stmt(tu, func, s->do_while.body);
 			}
 			
 			insert_label(func);
 			
-			TB_Register cond = irgen_as_rvalue(tu, func, sp->do_while.cond);
+			TB_Register cond = irgen_as_rvalue(tu, func, s->do_while.cond);
 			tb_inst_if(func, cond, body, exit);
 			
 			tb_inst_label(func, exit);
@@ -1744,7 +1741,7 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, StmtIndex s) {
 			TB_Label body = tb_inst_new_label_id(func);
 			TB_Label header = tb_inst_new_label_id(func);
 			TB_Label exit = tb_inst_new_label_id(func);
-			sp->backing.l = exit;
+			s->backing.l = exit;
 			
 			// NOTE(NeGate): this is hacky but as long as it doesn't
 			// break we should be good... what am i saying im the 
@@ -1753,14 +1750,14 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, StmtIndex s) {
 			// implicitly as one if they're next to each other
 			assert(header == exit - 1);
 			
-			if (sp->for_.first) {
-				irgen_stmt(tu, func, sp->for_.first);
+			if (s->for_.first) {
+				irgen_stmt(tu, func, s->for_.first);
 			}
 			
 			tb_inst_label(func, header);
 			
-			if (sp->for_.cond) {
-				TB_Register cond = irgen_as_rvalue(tu, func, sp->for_.cond);
+			if (s->for_.cond) {
+				TB_Register cond = irgen_as_rvalue(tu, func, s->for_.cond);
 				tb_inst_if(func, cond, body, exit);
 			} else {
 				tb_inst_goto(func, body);
@@ -1768,11 +1765,11 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, StmtIndex s) {
 			
 			tb_inst_label(func, body);
 			
-			irgen_stmt(tu, func, sp->for_.body);
+			irgen_stmt(tu, func, s->for_.body);
 			
-			if (sp->for_.next) {
+			if (s->for_.next) {
 				insert_label(func);
-				irgen_expr(tu, func, sp->for_.next);
+				irgen_expr(tu, func, s->for_.next);
 			}
 			
 			tb_inst_goto(func, header);
@@ -1782,23 +1779,21 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, StmtIndex s) {
 		case STMT_CONTINUE: {
 			// this is really hacky but we always store the loop header label one
 			// behind the exit label in terms of IDs.
-			TB_Label target = tu->stmts[sp->continue_.target].backing.l - 1;
-			tb_inst_goto(func, target);
+			tb_inst_goto(func, s->continue_.target->backing.l - 1);
 			break;
 		}
 		case STMT_BREAK: {
-			TB_Label target = tu->stmts[sp->break_.target].backing.l;
-			tb_inst_goto(func, target);
+			tb_inst_goto(func, s->break_.target->backing.l);
 			break;
 		}
 		case STMT_CASE:
 		case STMT_DEFAULT: {
-			assert(sp->backing.l);
-			tb_inst_label(func, sp->backing.l);
+			assert(s->backing.l);
+			tb_inst_label(func, s->backing.l);
 			break;
 		}
 		case STMT_SWITCH: {
-			StmtIndex head = sp->switch_.next;
+			Stmt* head = s->switch_.next;
 			
 			size_t entry_count = 0;
 			TB_SwitchEntry* entries = tls_save();
@@ -1806,41 +1801,40 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, StmtIndex s) {
 			TB_Label default_label = 0;
 			while (head) {
 				// reserve label
-				assert((tu->stmts[head].op == STMT_CASE) ||
-					   (tu->stmts[head].op == STMT_DEFAULT));
+				assert(head->op == STMT_CASE || head->op == STMT_DEFAULT);
 				
 				TB_Label label = tb_inst_new_label_id(func);
-				tu->stmts[head].backing.l = label;
+				head->backing.l = label;
 				
-				if (tu->stmts[head].op == STMT_CASE) {
-					assert(tu->stmts[head].case_.key < UINT32_MAX);
+				if (head->op == STMT_CASE) {
+					assert(head->case_.key < UINT32_MAX);
 					tls_push(sizeof(TB_SwitchEntry));
-					entries[entry_count++] = (TB_SwitchEntry) { .key = tu->stmts[head].case_.key, .value = label };
+					entries[entry_count++] = (TB_SwitchEntry) { .key = head->case_.key, .value = label };
 					
-					head = tu->stmts[head].case_.next;
-				} else if (tu->stmts[head].op == STMT_DEFAULT) {
+					head = head->case_.next;
+				} else if (head->op == STMT_DEFAULT) {
 					assert(default_label == 0);
 					default_label = label;
 					
-					head = tu->stmts[head].default_.next;
+					head = head->default_.next;
 				} else assert(0);
 			}
 			
 			TB_Label break_label = tb_inst_new_label_id(func);
-			sp->backing.l = break_label;
+			s->backing.l = break_label;
 			
 			// default to fallthrough
 			if (!default_label) {
 				default_label = break_label;
 			}
 			
-			TB_Register key = irgen_as_rvalue(tu, func, sp->switch_.condition);
+			TB_Register key = irgen_as_rvalue(tu, func, s->switch_.condition);
 			TB_DataType dt = tb_function_get_node(func, key)->dt;
 			
 			tb_inst_switch(func, dt, key, default_label, entry_count, entries);
 			tb_inst_label(func, tb_inst_new_label_id(func));
 			
-			irgen_stmt(tu, func, sp->switch_.body);
+			irgen_stmt(tu, func, s->switch_.body);
 			
 			tb_inst_label(func, break_label);
 			break;
@@ -1850,12 +1844,12 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, StmtIndex s) {
 	}
 }
 
-static void gen_func_body(TranslationUnit* tu, TypeIndex type, StmtIndex s) {
+static void gen_func_body(TranslationUnit* tu, TypeIndex type, Stmt* restrict s) {
 	// Clear TLS
 	tls_init();
 	assert(type);
 	
-	TB_Function* func = tb_function_from_id(mod, tu->stmts[s].backing.f);
+	TB_Function* func = tb_function_from_id(mod, s->backing.f);
 	
 	// Parameters
 	ParamIndex param_count = tu->types[type].func.param_count;
@@ -1888,26 +1882,27 @@ static void gen_func_body(TranslationUnit* tu, TypeIndex type, StmtIndex s) {
 	// TODO(NeGate): Ok fix this up later but essentially we need to prepass
 	// over the nodes to find the label statements, then forward declare the labels
 	// in TB.
-	StmtIndex body = (StmtIndex)tu->stmts[s].decl.initial;
 	
-	// Body
-	function_type = type;
-	function_name = (const char*)tu->stmts[s].decl.name;
-	
-	irgen_stmt(tu, func, body);
-	
-	function_name = NULL;
-	function_type = 0;
+	// compile body
+	{
+		function_type = type;
+		function_name = (const char*) s->decl.name;
+		
+		irgen_stmt(tu, func, s->decl.initial_as_stmt);
+		
+		function_name = NULL;
+		function_type = 0;
+	}
 	
 	{
 		Type* restrict return_type = &tu->types[tu->types[type].func.return_type];
 		TB_Register last = tb_node_get_last_register(func);
 		if (tb_node_is_label(func, last) || !tb_node_is_terminator(func, last)) {
-			if (return_type->kind != KIND_VOID &&
+			if (return_type->kind != KIND_VOID   &&
 				return_type->kind != KIND_STRUCT &&
 				return_type->kind != KIND_UNION) {
 				// Needs return value
-				//irgen_warn(tu->stmts[s].loc, "Expected return with value.");
+				//irgen_warn(s->loc, "Expected return with value.");
 			}
 			
 			tb_inst_ret(func, TB_NULL_REG);
@@ -1949,29 +1944,27 @@ void irgen_init() {
 void irgen_deinit() {
 }
 
-void irgen_top_level_stmt(TranslationUnit* tu, StmtIndex s) {
-	Stmt* restrict sp = &tu->stmts[s];
-	
-	if (sp->op == STMT_FUNC_DECL) {
-		TypeIndex type = sp->decl.type;
+void irgen_top_level_stmt(TranslationUnit* tu, Stmt* restrict s) {
+	if (s->op == STMT_FUNC_DECL) {
+		TypeIndex type = s->decl.type;
 		assert(tu->types[type].kind == KIND_FUNC);
 		
-		if (sp->decl.attrs.is_static ||
-			sp->decl.attrs.is_inline) {
-			if (!sp->decl.attrs.is_used) return;
+		if (s->decl.attrs.is_static ||
+			s->decl.attrs.is_inline) {
+			if (!s->decl.attrs.is_used) return;
 		}
 		
 		gen_func_body(tu, type, s);
-	} else if (sp->op == STMT_DECL || sp->op == STMT_GLOBAL_DECL) {
-		if (!sp->decl.attrs.is_used) return;
-		if (sp->decl.attrs.is_typedef) return;
-		if (sp->decl.attrs.is_extern || tu->types[sp->decl.type].kind == KIND_FUNC) return;
+	} else if (s->op == STMT_DECL || s->op == STMT_GLOBAL_DECL) {
+		if (!s->decl.attrs.is_used) return;
+		if (s->decl.attrs.is_typedef) return;
+		if (s->decl.attrs.is_extern || tu->types[s->decl.type].kind == KIND_FUNC) return;
 		
-		TB_GlobalID global = sp->backing.g;
-		TB_InitializerID init = gen_global_initializer(tu, sp->loc,
-													   sp->decl.type,
-													   sp->decl.initial,
-													   sp->decl.name);
+		TB_GlobalID global = s->backing.g;
+		TB_InitializerID init = gen_global_initializer(tu, s->loc,
+													   s->decl.type,
+													   s->decl.initial,
+													   s->decl.name);
 		
 		tb_global_set_initializer(mod, global, init);
 	}

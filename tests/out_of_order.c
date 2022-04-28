@@ -1,6 +1,6 @@
 // it's top level, T must be a decl
 // T isn't defined yet, make an entry on the unresolved typenames
-T* b;
+T* da_global;
 int I = 4*3 + 2*1;
 
 // enum is a known typename, this is an

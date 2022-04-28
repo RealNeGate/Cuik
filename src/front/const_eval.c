@@ -5,7 +5,7 @@
 
 // Const eval probably needs some rework...
 TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e);
-TypeIndex sema_guess_type(TranslationUnit* tu, StmtIndex s);
+TypeIndex sema_guess_type(TranslationUnit* tu, Stmt* restrict s);
 Member* sema_traverse_members(TranslationUnit* tu, Type* record_type, Atom name, uint32_t* out_offset);
 
 // I've forsaken god by doing this, im sorry... it's ugly because it has to be i swear...
@@ -16,7 +16,7 @@ typedef struct { TypeIndex type; uint32_t offset; } WalkMemberReturn;
 static WalkMemberReturn walk_member_accesses(TranslationUnit* tu, ExprIndex e, TypeIndex type) {
 	const Expr* ep = &tu->exprs[e];
 	const Expr* base_expr = &tu->exprs[ep->dot_arrow.base];
-
+	
 	WalkMemberReturn base = { 0 };
 	if (base_expr->op != EXPR_ARROW && base_expr->op != EXPR_DOT) {
 		// use that base type we've been patiently keeping around
@@ -24,7 +24,7 @@ static WalkMemberReturn walk_member_accesses(TranslationUnit* tu, ExprIndex e, T
 	} else {
 		base = walk_member_accesses(tu, ep->dot_arrow.base, type);
 	}
-
+	
 	uint32_t relative = 0;
 	Member* member = sema_traverse_members(tu, &tu->types[base.type], ep->dot_arrow.name, &relative);
 	if (!member) abort();
@@ -71,7 +71,7 @@ bool const_eval_try_offsetof_hack(TranslationUnit* tu, ExprIndex e, uint64_t* ou
 		} else {
 			return false;
 		}
-
+		
 		offset += walk_member_accesses(tu, e, record_type - tu->types).offset; 
 		*out = offset;
 		return true;
@@ -217,24 +217,23 @@ ConstValue const_eval(TranslationUnit* tu, ExprIndex e) {
 				Expr* sym = &tu->exprs[base_e];
 				
 				if (sym->op == EXPR_UNKNOWN_SYMBOL) {
-					StmtIndex s = resolve_unknown_symbol(tu, base_e);
+					Stmt* s = resolve_unknown_symbol(tu, base_e);
 					
-					if (s) {
+					if (s != NULL) {
 						TypeIndex t = sema_guess_type(tu, s);
 						if (t) return unsigned_const(tu->types[t].size);
 					}
 				} else if (sym->op == EXPR_SYMBOL) {
-					return unsigned_const(tu->types[tu->stmts[sym->symbol].decl.type].size);
+					return unsigned_const(tu->types[sym->symbol->decl.type].size);
 				}
 			} else if (tu->exprs[ep->x_of_expr.expr].op == EXPR_SYMBOL) {
-				Expr* sym = &tu->exprs[ep->x_of_expr.expr];
-				return unsigned_const(tu->types[tu->stmts[sym->symbol].decl.type].size);
+				Stmt* stmt = tu->exprs[ep->x_of_expr.expr].symbol;
+				return unsigned_const(tu->types[stmt->decl.type].size);
 			} else if (tu->exprs[ep->x_of_expr.expr].op == EXPR_UNKNOWN_SYMBOL) {
-				Expr* sym = &tu->exprs[ep->x_of_expr.expr];
+				const unsigned char* name = tu->exprs[ep->x_of_expr.expr].unknown_sym;
+				Stmt* s = resolve_unknown_symbol(tu, ep->x_of_expr.expr);
 				
-				const unsigned char* name = sym->unknown_sym;
-				StmtIndex s = resolve_unknown_symbol(tu, ep->x_of_expr.expr);
-				if (s) {
+				if (s != NULL) {
 					TypeIndex t = sema_guess_type(tu, s);
 					if (t) return unsigned_const(tu->types[t].size);
 				} else {
@@ -275,9 +274,9 @@ ConstValue const_eval(TranslationUnit* tu, ExprIndex e) {
 		
 		case EXPR_UNKNOWN_SYMBOL: {
 			const unsigned char* name = ep->unknown_sym;
-			StmtIndex s = resolve_unknown_symbol(tu, e);
+			Stmt* s = resolve_unknown_symbol(tu, e);
 			
-			if (!s) {
+			if (s == NULL) {
 				// try enum names
 				// NOTE(NeGate): this might be slow
 				for (size_t j = 1, count = big_array_length(tu->enum_entries); j < count; j++) {
@@ -291,21 +290,21 @@ ConstValue const_eval(TranslationUnit* tu, ExprIndex e) {
 				abort();
 			}
 			
-			Type* restrict type = &tu->types[tu->stmts[s].decl.type];
+			Type* restrict type = &tu->types[s->decl.type];
 			if (!type->is_const) {
 				// TODO(NeGate): error messages
 				printf("error: not const :(\n");
 				abort();
 			}
 			
-			if (!tu->stmts[s].decl.initial) {
+			if (!s->decl.initial) {
 				// TODO(NeGate): error messages
 				printf("error: no expression :(\n");
 				abort();
 			}
 			
 			if (type->kind >= KIND_BOOL && type->kind <= KIND_LONG) {
-				return const_eval(tu, tu->stmts[s].decl.initial);
+				return const_eval(tu, s->decl.initial);
 			} else {
 				// TODO(NeGate): error messages
 				printf("error: bad type\n");

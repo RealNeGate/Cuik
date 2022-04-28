@@ -20,7 +20,7 @@ typedef int MemberIndex;
 typedef int TypeIndex;
 typedef int ParamIndex;
 typedef int EnumEntryIndex;
-typedef int StmtIndex;
+typedef int aaaaaStmtIndex;
 typedef int ExprIndex;
 
 typedef int SymbolIndex;
@@ -42,6 +42,9 @@ typedef enum TypeKind {
     KIND_STRUCT,
     KIND_UNION,
 	KIND_VECTOR,
+	
+	// these are inferred as typedefs but don't map to anything yet
+	KIND_PLACEHOLDER,
 	
 	// weird typeof(expr) type that gets resolved in the semantics pass
 	// this is done to enable typeof to work with out of order decls...
@@ -296,7 +299,8 @@ typedef struct ConstValue {
 	};
 } ConstValue;
 
-typedef struct Stmt {
+typedef struct Stmt Stmt;
+struct Stmt {
 	StmtOp op;
 	SourceLocIndex loc;
 	
@@ -311,7 +315,7 @@ typedef struct Stmt {
 	
 	union {
 		struct StmtCompound {
-			StmtIndex* kids;
+			Stmt** kids;
 			int kids_count;
 		} compound;
 		struct StmtExpr {
@@ -321,10 +325,10 @@ typedef struct Stmt {
 			ExprIndex expr;
 		} return_;
 		struct StmtContinue {
-			StmtIndex target; // loop
+			Stmt* target; // loop
 		} continue_;
 		struct StmtBreak {
-			StmtIndex target; // either a loop or switch
+			Stmt* target; // either a loop or switch
 		} break_;
 		struct StmtGoto {
 			ExprIndex target;
@@ -335,28 +339,24 @@ typedef struct Stmt {
 		struct StmtCase {
 			intmax_t key;
 			
-			StmtIndex body;
-			StmtIndex next;
+			Stmt* body;
+			Stmt* next;
 		} case_;
 		struct StmtDefault {
-			StmtIndex body;
-			StmtIndex next;
+			Stmt* body;
+			Stmt* next;
 		} default_;
 		struct StmtSwitch {
 			ExprIndex condition;
-			StmtIndex body;
+			Stmt* body;
 			
 			// points to the first case or default,
 			// and those point to next and so on,
 			// linked lists
-			StmtIndex next;
+			Stmt* next;
 		} switch_;
 		struct StmtDecl {
 			TypeIndex type;
-			
-			// NOTE(NeGate): This represents a stmtindex if it's a 
-			// FUNC_DECL
-			ExprIndex initial;
 			
 			// acceleration structure for scrubbing for symbols
 			// it's a linked list
@@ -364,28 +364,35 @@ typedef struct Stmt {
 			
 			Attribs attrs;
 			Atom name;
+			
+			// NOTE(NeGate): This represents a stmtindex if it's a 
+			// FUNC_DECL
+			union {
+				Stmt* initial_as_stmt;
+				ExprIndex initial;
+			};
 		} decl;
 		struct StmtFor {
-			StmtIndex first;
+			Stmt* first;
 			ExprIndex cond;
-			StmtIndex body;
+			Stmt* body;
 			ExprIndex next;
 		} for_;
 		struct StmtWhile {
 			ExprIndex cond;
-			StmtIndex body;
+			Stmt* body;
 		} while_;
 		struct StmtDoWhile {
 			ExprIndex cond;
-			StmtIndex body;
+			Stmt* body;
 		} do_while;
 		struct StmtIf {
 			ExprIndex cond;
-			StmtIndex body;
-			StmtIndex next;
+			Stmt* body;
+			Stmt* next;
 		} if_;
 	};
-} Stmt;
+};
 
 // designated initializer member
 // .x = 5
@@ -443,9 +450,7 @@ typedef struct Expr {
 		struct {
 			// linked list of symbols within a function used to 
 			// analyze used symbols more easily
-			StmtIndex symbol;
-			uint32_t _;
-			
+			Stmt* symbol;
 			ExprIndex next_symbol_in_chain;
 		};
 		
@@ -517,7 +522,7 @@ typedef struct Expr {
 			InitNode* nodes;
 		} init;
 		struct {
-			StmtIndex src;
+			Stmt* src;
 		} func;
 		
 		double float_num;
@@ -547,32 +552,31 @@ typedef enum StorageClass {
 	STORAGE_FUNC,
 	STORAGE_PARAM,
 	STORAGE_GLOBAL,
-	STORAGE_LOCAL
+	STORAGE_LOCAL,
+	STORAGE_TYPEDEF
 } StorageClass;
 
 typedef struct Symbol {
 	Atom name;
-	TypeIndex type : 24;
-	StorageClass storage_class : 8;
+	TypeIndex type;
+	StorageClass storage_class;
 	
 	union {
 		// used if storage_class == STORAGE_PARAM
 		int param_num;
-		StmtIndex stmt;
+		Stmt* stmt;
 	};
+	
+	// when handling global symbols and delaying their parsing
+	// we want to be able to store what the position of the symbol's
+	// "value" aka function bodies and intitial expressions
+	int current;
+	int terminator;
 } Symbol;
-
-// these represent exported symbols which may or may not point
-// to either functions internal to the compilation unit or outside
-// of it.
-typedef struct {
-	struct TranslationUnit* tu;
-	StmtIndex stmt;
-} ExportedSymbol;
 
 typedef struct {
 	Atom key;
-	ExportedSymbol value;
+	Stmt* value;
 } ExportedSymbolEntry;
 
 typedef struct TranslationUnit {
@@ -594,12 +598,13 @@ typedef struct TranslationUnit {
 	BigArray(Member) members;
 	BigArray(Param) params;
 	BigArray(EnumEntry) enum_entries;
-	BigArray(Stmt) stmts;
 	BigArray(Expr) exprs;
+	
+	Arena stmt_arena;
 	
 	// stb_ds array
 	// NOTE(NeGate): should this be an stb_ds array?
-	StmtIndex* top_level_stmts;
+	Stmt** top_level_stmts;
 	
 	// this is a bit of a hack to implement the struct printing
 	// functionality, if a name is passed into hack.name then it'll
@@ -623,11 +628,10 @@ TypeIndex get_common_type(TranslationUnit* tu, TypeIndex ty1, TypeIndex ty2);
 bool type_equal(TranslationUnit* tu, TypeIndex a, TypeIndex b);
 size_t type_as_string(TranslationUnit* tu, size_t max_len, char* buffer, TypeIndex type_index);
 
-StmtIndex resolve_unknown_symbol(TranslationUnit* tu, StmtIndex i);
+Stmt* resolve_unknown_symbol(TranslationUnit* tu, ExprIndex e);
 ConstValue const_eval(TranslationUnit* tu, ExprIndex e);
 bool const_eval_try_offsetof_hack(TranslationUnit* tu, ExprIndex e, uint64_t* out);
 
 void init_types(TranslationUnit* tu);
-
 void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath);
 void translation_unit_deinit(TranslationUnit* tu);

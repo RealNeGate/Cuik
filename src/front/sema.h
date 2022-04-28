@@ -29,7 +29,7 @@ void ast_dump_type(TranslationUnit* tu, TypeIndex type, int depth, int offset);
 Member* sema_resolve_member_access(TranslationUnit* tu, ExprIndex e, uint32_t* out_offset);
 Member* sema_traverse_members(TranslationUnit* tu, Type* record_type, Atom name, uint32_t* out_offset);
 
-TypeIndex sema_guess_type(TranslationUnit* tu, StmtIndex s);
+TypeIndex sema_guess_type(TranslationUnit* tu, Stmt* restrict s);
 
 TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e);
 void sema_pass(CompilationUnit* cu, TranslationUnit* tu, bool frontend_only);

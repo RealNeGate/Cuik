@@ -9,8 +9,7 @@
 // rewrite the contents of the DOT and ARROW exprs
 // because it may screw with things
 thread_local bool in_the_semantic_phase;
-
-static thread_local StmtIndex function_stmt;
+static thread_local Stmt* function_stmt;
 
 // two simple temporary buffers to represent type_as_string results
 static thread_local char temp_string0[1024], temp_string1[1024];
@@ -513,12 +512,12 @@ TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e) {
 			return (ep->type = new_pointer(tu, src));
 		}
 		case EXPR_SYMBOL: {
-			StmtIndex stmt = ep->symbol;
+			Stmt* restrict sym = ep->symbol;
 			
-			if (tu->stmts[stmt].op == STMT_LABEL) {
+			if (sym->op == STMT_LABEL) {
 				return (ep->type = 0);
 			} else {
-				TypeIndex type = tu->stmts[stmt].decl.type;
+				TypeIndex type = sym->decl.type;
 				
 				if (tu->types[type].kind == KIND_ARRAY) {
 					// this is the only example where something sets it's own
@@ -532,7 +531,7 @@ TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e) {
 		case EXPR_PARAM: {
 			int param_num = ep->param_num;
 			
-			Type* func_type = &tu->types[tu->stmts[function_stmt].decl.type];
+			Type* func_type = &tu->types[function_stmt->decl.type];
 			Param* params = &tu->params[func_type->func.param_list];
 			return (ep->type = params[param_num].type);
 		}
@@ -879,40 +878,38 @@ TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e) {
 	abort();
 }
 
-void sema_stmt(TranslationUnit* tu, StmtIndex s) {
-	Stmt* restrict sp = &tu->stmts[s];
-	
-	switch (sp->op) {
+void sema_stmt(TranslationUnit* tu, Stmt* restrict s) {
+	switch (s->op) {
 		case STMT_NONE: break;
 		case STMT_LABEL: break;
 		case STMT_GOTO: {
-			sema_expr(tu, sp->goto_.target);
+			sema_expr(tu, s->goto_.target);
 			break;
 		}
 		case STMT_COMPOUND: {
-			StmtIndex* kids = sp->compound.kids;
-			size_t count = sp->compound.kids_count;
+			Stmt** kids = s->compound.kids;
+			size_t count = s->compound.kids_count;
 			
-			StmtIndex killer = 0;
+			Stmt* killer = 0;
 			for (size_t i = 0; i < count; i++) {
-				StmtIndex kid = kids[i];
+				Stmt* kid = kids[i];
 				sema_stmt(tu, kid);
 				
 				if (killer) {
-					if (tu->stmts[kid].op == STMT_LABEL ||
-						tu->stmts[kid].op == STMT_CASE ||
-						tu->stmts[kid].op == STMT_DEFAULT) {
+					if (kid->op == STMT_LABEL ||
+						kid->op == STMT_CASE  ||
+						kid->op == STMT_DEFAULT) {
 						killer = 0;
 					} else {
-						sema_error(tu->stmts[kid].loc, "Dead code");
-						sema_info(tu->stmts[killer].loc, "After");
+						sema_error(kid->loc, "Dead code");
+						sema_info(killer->loc, "After");
 						goto compound_failure;
 					}
 				} else {
-					if (tu->stmts[kid].op == STMT_RETURN ||
-						tu->stmts[kid].op == STMT_GOTO ||
-						tu->stmts[kid].op == STMT_BREAK ||
-						tu->stmts[kid].op == STMT_CONTINUE) {
+					if (kid->op == STMT_RETURN ||
+						kid->op == STMT_GOTO   ||
+						kid->op == STMT_BREAK  ||
+						kid->op == STMT_CONTINUE) {
 						killer = kid;
 					}
 				}
@@ -922,122 +919,122 @@ void sema_stmt(TranslationUnit* tu, StmtIndex s) {
 			break;
 		}
 		case STMT_DECL: {
-			if (sp->decl.initial) {
-				try_resolve_typeof(tu, sp->decl.type);
+			if (s->decl.initial) {
+				try_resolve_typeof(tu, s->decl.type);
 				
-				if (tu->exprs[sp->decl.initial].op == EXPR_INITIALIZER &&
-					tu->exprs[sp->decl.initial].init.type == 0) {
+				if (tu->exprs[s->decl.initial].op == EXPR_INITIALIZER &&
+					tu->exprs[s->decl.initial].init.type == 0) {
 					// give it something to go off of
-					tu->exprs[sp->decl.initial].init.type = sp->decl.type;
+					tu->exprs[s->decl.initial].init.type = s->decl.type;
 				}
 				
-				TypeIndex expr_type_index = sema_expr(tu, sp->decl.initial);
+				TypeIndex expr_type_index = sema_expr(tu, s->decl.initial);
 				
-				Expr* restrict ep = &tu->exprs[sp->decl.initial];
+				Expr* restrict ep = &tu->exprs[s->decl.initial];
 				if (ep->op == EXPR_INITIALIZER) {
-					Type* restrict tp = &tu->types[sp->decl.type];
-					Type* restrict expr_type = &tu->types[sp->decl.type];
+					Type* restrict tp = &tu->types[s->decl.type];
+					Type* restrict expr_type = &tu->types[s->decl.type];
 					
 					// Auto-detect array count from initializer
 					if (tp->kind == KIND_ARRAY && expr_type->kind == KIND_ARRAY) {
 						if (tp->array_count != 0 && tp->array_count < expr_type->array_count) {
-							sema_error(sp->loc, "Array initializer does not fit into declaration (expected %d, got %d)", tp->array_count, expr_type->array_count);
+							sema_error(s->loc, "Array initializer does not fit into declaration (expected %d, got %d)", tp->array_count, expr_type->array_count);
 						} else {
-							sp->decl.type = expr_type_index;
+							s->decl.type = expr_type_index;
 						}
 					}
 				} else if (ep->op == EXPR_STR || ep->op == EXPR_WSTR) {
-					Type* restrict tp = &tu->types[sp->decl.type];
+					Type* restrict tp = &tu->types[s->decl.type];
 					
 					// Auto-detect array count from string
 					if (tp->kind == KIND_ARRAY && tp->array_count == 0) {
-						sp->decl.type = expr_type_index;
+						s->decl.type = expr_type_index;
 					}
 				}
 				
-				ep->cast_type = sp->decl.type;
-				if (!type_compatible(tu, expr_type_index, sp->decl.type, sp->decl.initial)) {
+				ep->cast_type = s->decl.type;
+				if (!type_compatible(tu, expr_type_index, s->decl.type, s->decl.initial)) {
 					type_as_string(tu, sizeof(temp_string0), temp_string0, expr_type_index);
-					type_as_string(tu, sizeof(temp_string1), temp_string1, sp->decl.type);
+					type_as_string(tu, sizeof(temp_string1), temp_string1, s->decl.type);
 					
-					sema_error(sp->loc, "Could not implicitly convert type %s into %s.", temp_string0, temp_string1);
+					sema_error(s->loc, "Could not implicitly convert type %s into %s.", temp_string0, temp_string1);
 				}
 			}
 			break;
 		}
 		case STMT_EXPR: {
-			sema_expr(tu, sp->expr.expr);
+			sema_expr(tu, s->expr.expr);
 			break;
 		}
 		case STMT_RETURN: {
-			if (sp->return_.expr) {
-				TypeIndex expr_type = sema_expr(tu, sp->return_.expr);
-				TypeIndex return_type = tu->types[tu->stmts[function_stmt].decl.type].func.return_type;
+			if (s->return_.expr) {
+				TypeIndex expr_type = sema_expr(tu, s->return_.expr);
+				TypeIndex return_type = tu->types[function_stmt->decl.type].func.return_type;
 				
-				if (!type_compatible(tu, expr_type, return_type, sp->return_.expr)) {
-					//sema_warn(sp->loc, "Value in return statement does not match function signature. (TODO this should be an error)");
+				if (!type_compatible(tu, expr_type, return_type, s->return_.expr)) {
+					//sema_warn(s->loc, "Value in return statement does not match function signature. (TODO this should be an error)");
 				}
 				
-				tu->exprs[sp->return_.expr].cast_type = return_type;
+				tu->exprs[s->return_.expr].cast_type = return_type;
 			}
 			break;
 		}
 		case STMT_IF: {
-			TypeIndex cond_type = sema_expr(tu, sp->if_.cond);
+			TypeIndex cond_type = sema_expr(tu, s->if_.cond);
 			if (!is_scalar_type(tu, cond_type)) {
 				type_as_string(tu, sizeof(temp_string0), temp_string0, cond_type);
 				
-				sema_error(sp->loc, "Could not convert type %s into boolean.", temp_string0);
+				sema_error(s->loc, "Could not convert type %s into boolean.", temp_string0);
 			}
-			tu->exprs[sp->if_.cond].cast_type = TYPE_BOOL;
+			tu->exprs[s->if_.cond].cast_type = TYPE_BOOL;
 			
-			sema_stmt(tu, sp->if_.body);
-			if (sp->if_.next) sema_stmt(tu, sp->if_.next);
+			sema_stmt(tu, s->if_.body);
+			if (s->if_.next) sema_stmt(tu, s->if_.next);
 			break;
 		}
 		case STMT_WHILE: {
-			sema_expr(tu, sp->while_.cond);
-			if (sp->while_.body) {
-				sema_stmt(tu, sp->while_.body);
+			sema_expr(tu, s->while_.cond);
+			if (s->while_.body) {
+				sema_stmt(tu, s->while_.body);
 			}
 			break;
 		}
 		case STMT_DO_WHILE: {
-			if (sp->do_while.body) {
-				sema_stmt(tu, sp->do_while.body);
+			if (s->do_while.body) {
+				sema_stmt(tu, s->do_while.body);
 			}
-			sema_expr(tu, sp->do_while.cond);
+			sema_expr(tu, s->do_while.cond);
 			break;
 		}
 		case STMT_FOR: {
-			if (sp->for_.first) {
-				sema_stmt(tu, sp->for_.first);
+			if (s->for_.first) {
+				sema_stmt(tu, s->for_.first);
 			}
 			
-			if (sp->for_.cond) {
-				sema_expr(tu, sp->for_.cond);
+			if (s->for_.cond) {
+				sema_expr(tu, s->for_.cond);
 			}
 			
-			if (sp->for_.body) {
-				sema_stmt(tu, sp->for_.body);
+			if (s->for_.body) {
+				sema_stmt(tu, s->for_.body);
 			}
 			
-			if (sp->for_.next) {
-				sema_expr(tu, sp->for_.next);
+			if (s->for_.next) {
+				sema_expr(tu, s->for_.next);
 			}
 			break;
 		}
 		case STMT_SWITCH: {
-			sema_expr(tu, sp->switch_.condition);
-			sema_stmt(tu, sp->switch_.body);
+			sema_expr(tu, s->switch_.condition);
+			sema_stmt(tu, s->switch_.body);
 			break;
 		}
 		case STMT_CASE: {
-			sema_stmt(tu, sp->case_.body);
+			sema_stmt(tu, s->case_.body);
 			break;
 		}
 		case STMT_DEFAULT: {
-			sema_stmt(tu, sp->default_.body);
+			sema_stmt(tu, s->default_.body);
 			break;
 		}
 		case STMT_CONTINUE: 
@@ -1049,35 +1046,34 @@ void sema_stmt(TranslationUnit* tu, StmtIndex s) {
 	}
 }
 
-TypeIndex sema_guess_type(TranslationUnit* tu, StmtIndex s) {
-	Stmt* sp = &tu->stmts[s];
-	char* name = (char*) sp->decl.name;
+TypeIndex sema_guess_type(TranslationUnit* tu, Stmt* restrict s) {
+	char* name = (char*) s->decl.name;
 	
-	TypeIndex type_index = sp->decl.type;
+	TypeIndex type_index = s->decl.type;
 	Type* type = &tu->types[type_index];
 	
-	if (sp->decl.attrs.is_static && sp->decl.attrs.is_extern) {
-		sema_error(sp->loc, "Global declaration '%s' cannot be both static and extern.", name);
-		sp->backing.g = 0;
+	if (s->decl.attrs.is_static && s->decl.attrs.is_extern) {
+		sema_error(s->loc, "Global declaration '%s' cannot be both static and extern.", name);
+		s->backing.g = 0;
 		return TYPE_NONE;
 	}
 	
 	if (type->is_incomplete) {
 		if (type->kind == KIND_STRUCT) {
-			sema_error(sp->loc, "Incomplete type (struct %s) in declaration", type->record.name);
+			sema_error(s->loc, "Incomplete type (struct %s) in declaration", type->record.name);
 		} else if (type->kind == KIND_UNION) {
-			sema_error(sp->loc, "Incomplete type (union %s) in declaration", type->record.name);
+			sema_error(s->loc, "Incomplete type (union %s) in declaration", type->record.name);
 		} else {
-			sema_error(sp->loc, "Incomplete type in declaration");
+			sema_error(s->loc, "Incomplete type in declaration");
 		}
 	}
 	
-	if (sp->decl.attrs.is_extern || type->kind == KIND_FUNC) {
+	if (s->decl.attrs.is_extern || type->kind == KIND_FUNC) {
 		return TYPE_NONE;
 	}
 	
-	if (sp->decl.initial) {
-		Expr* ep = &tu->exprs[sp->decl.initial];
+	if (s->decl.initial) {
+		Expr* ep = &tu->exprs[s->decl.initial];
 		
 		if (type->kind == KIND_ARRAY && ep->op == EXPR_INITIALIZER) {
 			// check how many top level statements we have
@@ -1088,109 +1084,107 @@ TypeIndex sema_guess_type(TranslationUnit* tu, StmtIndex s) {
 		}
 	}
 	
-	return sp->decl.type;
+	return s->decl.type;
 }
 
-static void sema_top_level(TranslationUnit* tu, StmtIndex s, bool frontend_only) {
-	Stmt* restrict sp = &tu->stmts[s];
-	
-	TypeIndex type_index = sp->decl.type;
+static void sema_top_level(TranslationUnit* tu, Stmt* restrict s, bool frontend_only) {
+	TypeIndex type_index = s->decl.type;
 	Type* type = &tu->types[type_index];
 	
-	char* name = (char*) sp->decl.name;
-	switch (sp->op) {
+	char* name = (char*) s->decl.name;
+	switch (s->op) {
 		case STMT_FUNC_DECL: {
 			assert(type->kind == KIND_FUNC);
 			
-			if (sp->decl.attrs.is_static && sp->decl.attrs.is_extern) {
-				sema_error(sp->loc, "Function '%s' cannot be both static and extern.", name);
-				sp->backing.f = 0;
+			if (s->decl.attrs.is_static && s->decl.attrs.is_extern) {
+				sema_error(s->loc, "Function '%s' cannot be both static and extern.", name);
+				s->backing.f = 0;
 				break;
 			}
 			
-			if (sp->decl.attrs.is_static && !sp->decl.attrs.is_inline) {
-				if (!sp->decl.attrs.is_used) {
-					sema_warn(sp->loc, "Function '%s' is never used.", name);
-					sp->backing.f = 0;
+			if (s->decl.attrs.is_static && !s->decl.attrs.is_inline) {
+				if (!s->decl.attrs.is_used) {
+					sema_warn(s->loc, "Function '%s' is never used.", name);
+					s->backing.f = 0;
 					break;
 				}
 			}
 			
-			if (sp->decl.attrs.is_inline && !sp->decl.attrs.is_used) {
-				sp->backing.f = 0;
+			if (s->decl.attrs.is_inline && !s->decl.attrs.is_used) {
+				s->backing.f = 0;
 				break;
 			}
 			
 			if (frontend_only) {
-				sp->backing.f = 0;
+				s->backing.f = 0;
 				
 				// type check function body
 				function_stmt = s;
-				sema_stmt(tu, (StmtIndex)sp->decl.initial);
+				sema_stmt(tu, s->decl.initial_as_stmt);
 				function_stmt = 0;
 				break;
 			}
 			
 			TB_FunctionPrototype* proto = target_desc.create_prototype(tu, type_index);
-			TB_Linkage linkage = sp->decl.attrs.is_static ? TB_LINKAGE_PRIVATE : TB_LINKAGE_PUBLIC;
+			TB_Linkage linkage = s->decl.attrs.is_static ? TB_LINKAGE_PRIVATE : TB_LINKAGE_PUBLIC;
 			
 			// TODO(NeGate): Fix this up because it's possibly wrong, essentially
 			// inline linkage means all the definitions must match which isn't
 			// necessarily the same as static where they all can share a name but
 			// are different and internal.
 			TB_Function* func;
-			if (sp->decl.attrs.is_inline) {
+			if (s->decl.attrs.is_inline) {
 				linkage = TB_LINKAGE_PRIVATE;
 				
 				char temp[1024];
-				snprintf(temp, 1024, "_K%d_%s", s, name ? name : "<unnamed>");
+				snprintf(temp, 1024, "_K%p_%s", s, name ? name : "<unnamed>");
 				
 				func = tb_prototype_build(mod, proto, temp, linkage);
 			} else {
 				func = tb_prototype_build(mod, proto, name, linkage);
 			}
-			sp->backing.f = tb_function_get_id(mod, func);
+			s->backing.f = tb_function_get_id(mod, func);
 			
 			// type check function body
 			function_stmt = s;
-			sema_stmt(tu, (StmtIndex)sp->decl.initial);
+			sema_stmt(tu, s->decl.initial_as_stmt);
 			function_stmt = 0;
 			break;
 		}
 		case STMT_DECL:
 		case STMT_GLOBAL_DECL: {
-			if (!sp->decl.attrs.is_used) break;
-			if (sp->decl.attrs.is_typedef) break;
+			if (!s->decl.attrs.is_used) break;
+			if (s->decl.attrs.is_typedef) break;
 			
-			if (sp->decl.attrs.is_static && sp->decl.attrs.is_extern) {
-				sema_error(sp->loc, "Global declaration '%s' cannot be both static and extern.", name);
-				sp->backing.g = 0;
+			if (s->decl.attrs.is_static && s->decl.attrs.is_extern) {
+				sema_error(s->loc, "Global declaration '%s' cannot be both static and extern.", name);
+				s->backing.g = 0;
 				break;
 			}
 			
-			if (!sp->decl.attrs.is_extern && type->kind != KIND_FUNC) {
+			if (!s->decl.attrs.is_extern && type->kind != KIND_FUNC) {
 				Type* expr_type = NULL;
 				
-				if (sp->decl.initial) {
-					if (tu->exprs[sp->decl.initial].op == EXPR_INITIALIZER &&
-						tu->exprs[sp->decl.initial].init.type == 0) {
+				if (s->decl.initial) {
+					if (tu->exprs[s->decl.initial].op == EXPR_INITIALIZER &&
+						tu->exprs[s->decl.initial].init.type == 0) {
 						// give it something to go off of
 						//
 						// doesn't have to be complete in terms of array count
 						// just enough to infer the rest in a sec
-						tu->exprs[sp->decl.initial].init.type = sp->decl.type;
+						tu->exprs[s->decl.initial].init.type = s->decl.type;
 					}
 					
-					TypeIndex expr_type_index = sema_expr(tu, sp->decl.initial);
+					TypeIndex expr_type_index = sema_expr(tu, s->decl.initial);
 					expr_type = &tu->types[expr_type_index];
 					
-					if (tu->exprs[sp->decl.initial].op == EXPR_INITIALIZER ||
-						tu->exprs[sp->decl.initial].op == EXPR_STR ||
-						tu->exprs[sp->decl.initial].op == EXPR_WSTR) {
+					if (tu->exprs[s->decl.initial].op == EXPR_INITIALIZER ||
+						tu->exprs[s->decl.initial].op == EXPR_STR ||
+						tu->exprs[s->decl.initial].op == EXPR_WSTR) {
 						if (type->kind == KIND_ARRAY && expr_type->kind == KIND_ARRAY) {
 							if (type_equal(tu, type->array_of, expr_type->array_of)) {
 								if (type->array_count != 0 && type->array_count < expr_type->array_count) {
-									sema_error(sp->loc, "Array initializer does not fit into declaration (expected %d, got %d)", type->array_count, expr_type->array_count);
+									sema_error(s->loc, "Array initializer does not fit into declaration (expected %d, got %d)", type->array_count, expr_type->array_count);
 								} else {
 									assert(expr_type->array_count);
 									
@@ -1201,44 +1195,44 @@ static void sema_top_level(TranslationUnit* tu, StmtIndex s, bool frontend_only)
 									type = &tu->types[type_index];
 									type->is_const = is_const;
 									
-									sp->decl.type = type_index;
+									s->decl.type = type_index;
 								}
 							} else {
 								type_as_string(tu, sizeof(temp_string0), temp_string0, expr_type->array_of);
 								type_as_string(tu, sizeof(temp_string1), temp_string1, type->array_of);
 								
-								sema_error(sp->loc, "Array initializer type mismatch (got '%s', expected '%s')", temp_string0, temp_string1);
+								sema_error(s->loc, "Array initializer type mismatch (got '%s', expected '%s')", temp_string0, temp_string1);
 							}
 						}
 					}
 					
-					if (!type_compatible(tu, expr_type_index, type_index, sp->decl.initial)) {
+					if (!type_compatible(tu, expr_type_index, type_index, s->decl.initial)) {
 						type_as_string(tu, sizeof(temp_string0), temp_string0, type_index);
 						type_as_string(tu, sizeof(temp_string1), temp_string1, expr_type_index);
 						
-						sema_error(sp->loc, "Declaration type does not match (got '%s', expected '%s')", temp_string0, temp_string1);
+						sema_error(s->loc, "Declaration type does not match (got '%s', expected '%s')", temp_string0, temp_string1);
 					}
 				}
 				
 				if (type->is_incomplete) {
 					if (type->kind == KIND_STRUCT) {
-						sema_error(sp->loc, "Incomplete type (struct %s) in declaration", type->record.name);
+						sema_error(s->loc, "Incomplete type (struct %s) in declaration", type->record.name);
 					} else if (type->kind == KIND_UNION) {
-						sema_error(sp->loc, "Incomplete type (union %s) in declaration", type->record.name);
+						sema_error(s->loc, "Incomplete type (union %s) in declaration", type->record.name);
 					} else {
-						sema_error(sp->loc, "Incomplete type in declaration");
+						sema_error(s->loc, "Incomplete type in declaration");
 					}
 				}
 				
 				if (frontend_only) {
-					sp->backing.g = 0;
+					s->backing.g = 0;
 				} else { 
-					if (sp->decl.attrs.is_tls && !atomic_flag_test_and_set(&irgen_defined_tls_index)) {
+					if (s->decl.attrs.is_tls && !atomic_flag_test_and_set(&irgen_defined_tls_index)) {
 						tb_module_set_tls_index(mod, tb_extern_create(mod, "_tls_index"));
 					}
 					
-					TB_Linkage linkage = sp->decl.attrs.is_static ? TB_LINKAGE_PRIVATE : TB_LINKAGE_PUBLIC;
-					sp->backing.g = tb_global_create(mod, name, sp->decl.attrs.is_tls ? TB_STORAGE_TLS : TB_STORAGE_DATA, linkage);
+					TB_Linkage linkage = s->decl.attrs.is_static ? TB_LINKAGE_PRIVATE : TB_LINKAGE_PUBLIC;
+					s->backing.g = tb_global_create(mod, name, s->decl.attrs.is_tls ? TB_STORAGE_TLS : TB_STORAGE_DATA, linkage);
 				}
 			}
 			break;
@@ -1253,14 +1247,14 @@ static void sema_mark_children(TranslationUnit* tu, ExprIndex e) {
 	if (ep->op == EXPR_UNKNOWN_SYMBOL) return;
 	
 	assert(ep->op == EXPR_SYMBOL);
-	Stmt* restrict sp = &tu->stmts[ep->symbol];
+	Stmt* restrict s = ep->symbol;
 	
-	if (sp->op == STMT_FUNC_DECL ||
-		sp->op == STMT_DECL ||
-		sp->op == STMT_GLOBAL_DECL) {
-		if (!sp->decl.attrs.is_used) {
-			sp->decl.attrs.is_used = true;
-			ExprIndex sym = sp->decl.first_symbol;
+	if (s->op == STMT_FUNC_DECL ||
+		s->op == STMT_DECL ||
+		s->op == STMT_GLOBAL_DECL) {
+		if (!s->decl.attrs.is_used) {
+			s->decl.attrs.is_used = true;
+			ExprIndex sym = s->decl.first_symbol;
 			
 			while (sym) {
 				sema_mark_children(tu, sym);
@@ -1277,13 +1271,13 @@ void sema_pass(CompilationUnit* cu, TranslationUnit* tu, bool frontend_only) {
 	// simple mark and sweep to remove unused symbols
 	timed_block("sema: collection") {
 		for (size_t i = 0; i < count; i++) {
-			Stmt* restrict sp = &tu->stmts[tu->top_level_stmts[i]];
-			assert(sp->op == STMT_FUNC_DECL || sp->op == STMT_DECL || sp->op == STMT_GLOBAL_DECL);
+			Stmt* restrict s = tu->top_level_stmts[i];
+			assert(s->op == STMT_FUNC_DECL || s->op == STMT_DECL || s->op == STMT_GLOBAL_DECL);
 			
-			if (sp->decl.attrs.is_root) {
-				sp->decl.attrs.is_used = true;
+			if (s->decl.attrs.is_root) {
+				s->decl.attrs.is_used = true;
 				
-				ExprIndex sym = sp->decl.first_symbol;
+				ExprIndex sym = s->decl.first_symbol;
 				while (sym) {
 					sema_mark_children(tu, sym);
 					sym = tu->exprs[sym].next_symbol_in_chain;

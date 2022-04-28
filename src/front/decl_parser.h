@@ -22,24 +22,6 @@ static bool skip_over_declspec(TokenStream* restrict s) {
 	return false;
 }
 
-static TypeIndex find_typedef(TokenStream* restrict s) {
-	Token* t = tokens_get(s);
-	const unsigned char* name = t->start;
-	size_t length = t->end - t->start;
-	
-	size_t i = local_typedef_count;
-	while (i--) {
-		const unsigned char* sym = local_typedefs[i].key;
-		size_t sym_length = strlen((const char*)sym);
-		
-		if (sym_length == length && memcmp(name, sym, length) == 0) {
-			return local_typedefs[i].value;
-		}
-	}
-	
-	return TYPE_NONE;
-}
-
 static Decl parse_declarator(TranslationUnit* tu, TokenStream* restrict s, TypeIndex type, bool is_abstract, bool disabled_paren) {
 	// handle calling convention
 	// TODO(NeGate): Actually pass these to the AST
@@ -86,10 +68,10 @@ static Decl parse_declarator(TranslationUnit* tu, TokenStream* restrict s, TypeI
 	
 	skip_over_declspec(s);
 	
-	// disambiguate
-#if OUT_OF_ORDER_CRAP
 	bool is_nested_declarator = tokens_get(s)->type == '(';
-	if (is_nested_declarator && is_abstract) {
+	
+	// disambiguate
+	if (!out_of_order_mode && is_nested_declarator && is_abstract) {
 		tokens_next(s);
 		
 		if (is_typename(s)) {
@@ -98,7 +80,6 @@ static Decl parse_declarator(TranslationUnit* tu, TokenStream* restrict s, TypeI
 		
 		tokens_prev(s);
 	}
-#endif
 	
 	if (is_nested_declarator) {
 		// TODO(NeGate): I don't like this code...
@@ -434,33 +415,33 @@ static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, At
 				}
 				tokens_next(s);
 				
-#if OUT_OF_ORDER_CRAP
-				// _Typeof ( SOMETHING )
-				TknType terminator;
-				size_t current = skip_expression_in_parens(s, &terminator);
-				
-				if (terminator || terminator == ',') {
-					report(REPORT_ERROR, loc, "expected closing parenthesis for _Typeof%s", terminator ? " (got EOF)" : "");
-					return 0;
-				}
-				
-				// Add to pending list
-				printf("PUMP: Add _Typeof to pending list %zu ending at %c\n", current, terminator);
-#else
-				if (is_typename(s)) {
-					type = parse_typename(tu, s);
+				if (out_of_order_mode) {
+					// _Typeof ( SOMETHING )
+					TknType terminator;
+					size_t current = skip_expression_in_parens(s, &terminator);
+					
+					if (terminator || terminator == ',') {
+						report(REPORT_ERROR, loc, "expected closing parenthesis for _Typeof%s", terminator ? " (got EOF)" : "");
+						return 0;
+					}
+					
+					// Add to pending list
+					printf("MSG: Add _Typeof to pending list %zu ending at %c\n", current, terminator);
 				} else {
-					// we don't particularly resolve typeof for expressions immediately.
-					// instead we just wait until all symbols are resolved properly
-					ExprIndex src = parse_expr(tu, s);
-					type = new_typeof(tu, src);
+					if (is_typename(s)) {
+						type = parse_typename(tu, s);
+					} else {
+						// we don't particularly resolve typeof for expressions immediately.
+						// instead we just wait until all symbols are resolved properly
+						ExprIndex src = parse_expr(tu, s);
+						type = new_typeof(tu, src);
+					}
+					
+					if (tokens_get(s)->type != ')') {
+						report(REPORT_ERROR, loc, "expected closing parenthesis for _Typeof");
+						return 0;
+					}
 				}
-				
-				if (tokens_get(s)->type != ')') {
-					report(REPORT_ERROR, loc, "expected closing parenthesis for _Typeof");
-					return 0;
-				}
-#endif
 				break;
 			}
 			
@@ -470,42 +451,42 @@ static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, At
 				tokens_next(s);
 				expect(s, '(');
 				
-#if OUT_OF_ORDER_CRAP
-				// _Alignas ( SOMETHING )
-				TknType terminator;
-				size_t current = skip_expression_in_parens(s, &terminator);
-				
-				if (terminator || terminator == ',') {
-					report(REPORT_ERROR, loc, "expected closing parenthesis for _Alignas%s", terminator ? " (got EOF)" : "");
-					return 0;
-				}
-				
-				// Add to pending list
-				printf("PUMP: Add _Alignas to pending list %zu ending at %c\n", current, terminator);
-#else
-				if (is_typename(s)) {
-					int16_t new_align = parse_typename(tu, s);
-					if (new_align == 0) {
-						report(REPORT_ERROR, loc, "_Alignas cannot operate with incomplete");
-					} else {
-						forced_align = new_align;
+				if (out_of_order_mode) {
+					// _Alignas ( SOMETHING )
+					TknType terminator;
+					size_t current = skip_expression_in_parens(s, &terminator);
+					
+					if (terminator || terminator == ',') {
+						report(REPORT_ERROR, loc, "expected closing parenthesis for _Alignas%s", terminator ? " (got EOF)" : "");
+						return 0;
 					}
+					
+					// Add to pending list
+					printf("MSG: Add _Alignas to pending list %zu ending at %c\n", current, terminator);
 				} else {
-					intmax_t new_align = parse_const_expr(tu, s);
-					if (new_align == 0) {
-						report(REPORT_ERROR, loc, "_Alignas cannot be applied with 0 alignment", new_align);
-					} else if (new_align >= INT16_MAX) {
-						report(REPORT_ERROR, loc, "_Alignas(%zu) exceeds max alignment of %zu", new_align, INT16_MAX);
+					if (is_typename(s)) {
+						int16_t new_align = parse_typename(tu, s);
+						if (new_align == 0) {
+							report(REPORT_ERROR, loc, "_Alignas cannot operate with incomplete");
+						} else {
+							forced_align = new_align;
+						}
 					} else {
-						forced_align = new_align;
+						intmax_t new_align = parse_const_expr(tu, s);
+						if (new_align == 0) {
+							report(REPORT_ERROR, loc, "_Alignas cannot be applied with 0 alignment", new_align);
+						} else if (new_align >= INT16_MAX) {
+							report(REPORT_ERROR, loc, "_Alignas(%zu) exceeds max alignment of %zu", new_align, INT16_MAX);
+						} else {
+							forced_align = new_align;
+						}
+					}
+					
+					if (tokens_get(s)->type != ')') {
+						report(REPORT_ERROR, loc, "expected closing parenthesis for _Alignas");
+						return 0;
 					}
 				}
-				
-				if (tokens_get(s)->type != ')') {
-					report(REPORT_ERROR, loc, "expected closing parenthesis for _Alignas");
-					return 0;
-				}
-#endif
 				break;
 			}
 			
@@ -806,37 +787,56 @@ static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, At
 			case TOKEN_IDENTIFIER: {
 				if (counter) goto done;
 				
-#if OUT_OF_ORDER_CRAP
-				Token* t = tokens_get(s);
-				Atom name = atoms_put(t->end - t->start, t->start);
-				
-				// if the typename is already defined, then reuse that type index
-				type = find_incomplete_type((const char*) name);
-				if (type == 0) {
-					printf("PUMP: Add typename to pending list '%.*s'\n", (int)(t->end - t->start), t->start);
+				if (out_of_order_mode) {
+					Token* t = tokens_get(s);
+					Atom name = atoms_put(t->end - t->start, t->start);
 					
-					type = new_blank_type(tu);
-					shput(incomplete_types, name, type);
+					// if the typename is already defined, then reuse that type index
+					Symbol* sym = find_global_symbol((const char*) name);
+					// if not, we assume this must be a typedef'd type and reserve space
+					if (sym != NULL) {
+						if (sym->storage_class != STORAGE_TYPEDEF) {
+							SourceLoc* loc = &s->line_arena[tokens_get(s)->location];
+							report(REPORT_ERROR, loc, "symbol '%s' is not a typedef", name);
+							return 0;
+						}
+						
+						type = sym->type;
+						counter += OTHER;
+					} else {
+						printf("MSG: Add typename to pending list '%s'\n", name);
+						
+						// add placeholder
+						Symbol sym = (Symbol){
+							.name = name,
+							.type = new_blank_type(tu),
+							.storage_class = STORAGE_TYPEDEF
+						};
+						type = sym.type;
+						counter += OTHER;
+						
+						shput(global_symbols, name, sym);
+					}
+					
+					tokens_next(s);
+				} else {
+					Symbol* sym = find_local_symbol(s);
+					if (sym != NULL && sym->storage_class == STORAGE_TYPEDEF) {
+						type = sym->type;
+						counter += OTHER;
+						break;
+					}
+					
+					Token* t = tokens_get(s);
+					Atom name = atoms_put(t->end - t->start, t->start);
+					
+					sym = find_global_symbol((const char*) name);
+					if (sym != NULL && sym->storage_class == STORAGE_TYPEDEF) {
+						type = sym->type;
+						counter += OTHER;
+						break;
+					}
 				}
-				
-				tokens_next(s);
-#else
-				TypeIndex new_type = find_typedef(s);
-				if (new_type) {
-					type = new_type;
-					counter += OTHER;
-					break;
-				}
-				
-				Token* t = tokens_get(s);
-				Atom name = atoms_put(t->end - t->start, t->start);
-				ptrdiff_t search = shgeti(typedefs, name);
-				if (search >= 0) {
-					type = typedefs[search].value;
-					counter += OTHER;
-					break;
-				}
-#endif
 				
 				// if not a typename, this isn't a typedecl
 				goto done;
@@ -962,13 +962,13 @@ static bool is_typename(TokenStream* restrict s) {
 			Token* t = tokens_get(s);
 			Atom name = atoms_put(t->end - t->start, t->start);
 			
-			if (find_typedef(s)) return true;
+			Symbol* loc = find_local_symbol(s);
+			if (loc != NULL && loc->storage_class == STORAGE_TYPEDEF) return true;
 			
-			Symbol* sym = find_local_symbol(s);
-			if (sym) return false;
+			Symbol* glob = find_global_symbol((const char*)name);
+			if (glob != NULL && glob->storage_class == STORAGE_TYPEDEF) return true;
 			
-			ptrdiff_t search = shgeti(typedefs, name);
-			return (search >= 0);
+			return false;
 		}
 		
 		default:

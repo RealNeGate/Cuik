@@ -3,7 +3,7 @@
 
 // two simple temporary buffers to represent type_as_string results
 static thread_local char temp_string0[1024], temp_string1[1024];
-static thread_local StmtIndex function_stmt;
+static thread_local Stmt* function_stmt;
 static thread_local bool barz[64];
 
 static void print_barz(int depth, bool last_node) {
@@ -76,20 +76,20 @@ static void dump_expr(TranslationUnit* tu, FILE* stream, ExprIndex e, int depth,
 			break;
 		}
 		case EXPR_SYMBOL: {
-			StmtIndex stmt = ep->symbol;
+			Stmt* stmt = ep->symbol;
 			
 			type_as_string(tu, sizeof(temp_string0), temp_string0, ep->type);
-			if (tu->stmts[stmt].op == STMT_LABEL) {
+			if (stmt->op == STMT_LABEL) {
 				fprintf(stream, "LabelRef\n");
 			} else {
-				fprintf(stream, "Symbol %s '%s'\n", tu->stmts[stmt].decl.name, temp_string0);
+				fprintf(stream, "Symbol %s '%s'\n", stmt->decl.name, temp_string0);
 			}
 			break;
 		}
 		case EXPR_PARAM: {
 			int param_num = ep->param_num;
 			
-			Type* func_type = &tu->types[tu->stmts[function_stmt].decl.type];
+			Type* func_type = &tu->types[function_stmt->decl.type];
 			Param* params = &tu->params[func_type->func.param_list];
 			
 			type_as_string(tu, sizeof(temp_string0), temp_string0, ep->type);
@@ -193,7 +193,7 @@ static void dump_expr(TranslationUnit* tu, FILE* stream, ExprIndex e, int depth,
 		}
 		case EXPR_GENERIC: {
 			assert(ep->generic_.case_count == 0);
-
+			
 			type_as_string(tu, sizeof(temp_string0), temp_string0, ep->type);
 			fprintf(stream, "Generic '%s'\n", temp_string0);
 			
@@ -349,43 +349,41 @@ static void dump_expr(TranslationUnit* tu, FILE* stream, ExprIndex e, int depth,
 	barz[depth-1] = false;
 }
 
-static void dump_stmt(TranslationUnit* tu, FILE* stream, StmtIndex s, int depth, bool last_node) {
+static void dump_stmt(TranslationUnit* tu, FILE* stream, Stmt* restrict s, int depth, bool last_node) {
 	print_barz(depth, last_node);
 	
-	const Stmt* restrict sp = &tu->stmts[s];
-	switch (sp->op) {
+	switch (s->op) {
 		case STMT_DECL:
 		case STMT_GLOBAL_DECL: {
-			type_as_string(tu, sizeof(temp_string0), temp_string0, sp->decl.type);
+			type_as_string(tu, sizeof(temp_string0), temp_string0, s->decl.type);
 			
-			if (sp->decl.attrs.is_typedef) {
-				fprintf(stream, "TypedefDecl %s '%s'\n", sp->decl.name, temp_string0);
+			if (s->decl.attrs.is_typedef) {
+				fprintf(stream, "TypedefDecl %s '%s'\n", s->decl.name, temp_string0);
 			} else {
-				fprintf(stream, "VarDecl %s '%s'\n", sp->decl.name, temp_string0);
+				fprintf(stream, "VarDecl %s '%s'\n", s->decl.name, temp_string0);
 				
-				if (sp->decl.initial) {
-					dump_expr(tu, stream, tu->stmts[s].decl.initial, depth + 1, true);
+				if (s->decl.initial) {
+					dump_expr(tu, stream, s->decl.initial, depth + 1, true);
 				}
 			}
 			break;
 		}
 		case STMT_FUNC_DECL: {
-			type_as_string(tu, sizeof(temp_string0), temp_string0, sp->decl.type);
-			fprintf(stream, "FunctionDecl %s '%s'\n", sp->decl.name, temp_string0);
+			type_as_string(tu, sizeof(temp_string0), temp_string0, s->decl.type);
+			fprintf(stream, "FunctionDecl %s '%s'\n", s->decl.name, temp_string0);
 			
-			StmtIndex old_function_stmt = function_stmt;
+			Stmt* old_function_stmt = function_stmt;
 			function_stmt = s;
 			
-			dump_stmt(tu, stream, (StmtIndex)sp->decl.initial, depth + 1, true);
-			
+			dump_stmt(tu, stream, s->decl.initial_as_stmt, depth + 1, true);
 			function_stmt = old_function_stmt;
 			break;
 		}
 		case STMT_COMPOUND: {
 			fprintf(stream, "Compound\n");
 			
-			StmtIndex* kids = sp->compound.kids;
-			size_t count = sp->compound.kids_count;
+			Stmt** kids = s->compound.kids;
+			size_t count = s->compound.kids_count;
 			
 			for (size_t i = 0; i < count; i++) {
 				dump_stmt(tu, stream, kids[i], depth + 1, i == (count-1));
@@ -394,13 +392,13 @@ static void dump_stmt(TranslationUnit* tu, FILE* stream, StmtIndex s, int depth,
 		}
 		case STMT_EXPR: {
 			fprintf(stream, "Expr\n");
-			dump_expr(tu, stream, sp->expr.expr, depth + 1, true);
+			dump_expr(tu, stream, s->expr.expr, depth + 1, true);
 			break;
 		}
 		case STMT_RETURN: {
 			fprintf(stream, "Return\n");
-			if (sp->return_.expr) {
-				dump_expr(tu, stream, sp->return_.expr, depth + 1, true);
+			if (s->return_.expr) {
+				dump_expr(tu, stream, s->return_.expr, depth + 1, true);
 			}
 			break;
 		}
@@ -413,25 +411,25 @@ static void dump_stmt(TranslationUnit* tu, FILE* stream, StmtIndex s, int depth,
 			break;
 		}
 		case STMT_LABEL: {
-			fprintf(stream, "Label %s\n", sp->label.name);
+			fprintf(stream, "Label %s\n", s->label.name);
 			break;
 		}
 		case STMT_GOTO: {
 			fprintf(stream, "Goto\n");
-			dump_expr(tu, stream, sp->goto_.target, depth + 1, true);
+			dump_expr(tu, stream, s->goto_.target, depth + 1, true);
 			break;
 		}
 		case STMT_IF: {
 			fprintf(stream, "If\n");
-			dump_expr(tu, stream, sp->if_.cond, depth + 1, sp->if_.body == 0);
+			dump_expr(tu, stream, s->if_.cond, depth + 1, s->if_.body == 0);
 			
-			if (sp->if_.body) {
-				dump_stmt(tu, stream, sp->if_.body, depth + 1, sp->if_.next == 0);
+			if (s->if_.body) {
+				dump_stmt(tu, stream, s->if_.body, depth + 1, s->if_.next == 0);
 				
-				if (sp->if_.next) {
+				if (s->if_.next) {
 					print_barz(depth, false);
 					fprintf(stream, "Else:\n");
-					dump_stmt(tu, stream, sp->if_.next, depth + 1, true);
+					dump_stmt(tu, stream, s->if_.next, depth + 1, true);
 				}
 			}
 			break;
@@ -439,59 +437,58 @@ static void dump_stmt(TranslationUnit* tu, FILE* stream, StmtIndex s, int depth,
 		case STMT_DO_WHILE: { 
 			fprintf(stream, "DoWhile\n");
 			
-			if (sp->do_while.body) {
-				dump_expr(tu, stream, sp->do_while.cond, depth + 1, false);
-				dump_stmt(tu, stream, sp->do_while.body, depth + 1, true);
+			if (s->do_while.body) {
+				dump_expr(tu, stream, s->do_while.cond, depth + 1, false);
+				dump_stmt(tu, stream, s->do_while.body, depth + 1, true);
 			} else {
-				dump_expr(tu, stream, sp->do_while.cond, depth + 1, true);
+				dump_expr(tu, stream, s->do_while.cond, depth + 1, true);
 			}
 			break;
 		}
 		case STMT_WHILE: { 
 			fprintf(stream, "While\n");
 			
-			if (sp->while_.body) {
-				dump_expr(tu, stream, sp->while_.cond, depth + 1, false);
-				dump_stmt(tu, stream, sp->while_.body, depth + 1, true);
+			if (s->while_.body) {
+				dump_expr(tu, stream, s->while_.cond, depth + 1, false);
+				dump_stmt(tu, stream, s->while_.body, depth + 1, true);
 			} else {
-				dump_expr(tu, stream, sp->while_.cond, depth + 1, true);
+				dump_expr(tu, stream, s->while_.cond, depth + 1, true);
 			}
 			break;
 		}
 		case STMT_FOR: {
 			fprintf(stream, "For\n");
-			if (sp->for_.first) {
+			if (s->for_.first) {
 				print_barz(depth+1, false);
 				fprintf(stream, "Init:\n");
 				
-				if (tu->stmts[sp->for_.first].op == STMT_COMPOUND) {
-					Stmt* restrict sp_first = &tu->stmts[sp->for_.first];
-					
-					StmtIndex* kids = sp_first->compound.kids;
-					size_t count = sp_first->compound.kids_count;
+				Stmt* first = s->for_.first;
+				if (first->op == STMT_COMPOUND) {
+					Stmt** kids = first->compound.kids;
+					size_t count = first->compound.kids_count;
 					
 					for (size_t i = 0; i < count; i++) {
 						dump_stmt(tu, stream, kids[i], depth + 2, i == (count-1));
 					}
 				} else {
-					dump_stmt(tu, stream, sp->for_.first, depth + 2, true);
+					dump_stmt(tu, stream, first, depth + 2, true);
 				}
 			}
 			
-			if (sp->for_.cond) {
+			if (s->for_.cond) {
 				print_barz(depth+1, false);
 				fprintf(stream, "Cond:\n");
-				dump_expr(tu, stream, sp->for_.cond, depth + 2, true);
+				dump_expr(tu, stream, s->for_.cond, depth + 2, true);
 			}
 			
-			print_barz(depth+1, sp->for_.next == 0);
+			print_barz(depth+1, s->for_.next == 0);
 			fprintf(stream, "Body:\n");
-			dump_stmt(tu, stream, sp->for_.body, depth + 2, true);
+			dump_stmt(tu, stream, s->for_.body, depth + 2, true);
 			
-			if (sp->for_.next) {
+			if (s->for_.next) {
 				print_barz(depth+1, true);
 				fprintf(stream, "Next:\n");
-				dump_expr(tu, stream, sp->for_.next, depth + 2, true);
+				dump_expr(tu, stream, s->for_.next, depth + 2, true);
 			}
 			break;
 		}
@@ -507,14 +504,14 @@ void ast_dump(TranslationUnit* tu, FILE* stream) {
 	
 	if (settings.emit_ast == EMIT_AST_MINIMAL) {
 		for (size_t i = 0, count = arrlen(tu->top_level_stmts); i < count; i++) {
-			StmtIndex stmt = tu->top_level_stmts[i];
-			if (!tu->stmts[stmt].decl.attrs.is_used || tu->stmts[stmt].decl.attrs.is_typedef) continue;
+			Stmt* stmt = tu->top_level_stmts[i];
+			if (!stmt->decl.attrs.is_used || stmt->decl.attrs.is_typedef) continue;
 			
 			bool is_last = (i == (count-1));
 			if (!is_last) {
 				size_t j = i+1;
 				for (; j < count; j++) {
-					if (!tu->stmts[stmt].decl.attrs.is_used || tu->stmts[stmt].decl.attrs.is_typedef) break;
+					if (!stmt->decl.attrs.is_used || stmt->decl.attrs.is_typedef) break;
 				}
 				
 				is_last = (j == (count-1));
@@ -537,43 +534,42 @@ void ast_dump_stats(TranslationUnit* tu, FILE* stream) {
 		   big_array_length(tu->exprs),
 		   (big_array_length(tu->exprs) * sizeof(Expr)) / 1024);
 	
-	printf("# Statements:  %8zu (%zu kB)\n",
-		   big_array_length(tu->stmts),
-		   (big_array_length(tu->stmts) * sizeof(Stmt)) / 1024);
-	
 	printf("# Types:       %8zu (%zu kB)\n",
 		   big_array_length(tu->types),
 		   (big_array_length(tu->types) * sizeof(Type)) / 1024);
+	
+	printf("# Statements:  %zu kB\n",
+		   arena_get_memory_usage(&tu->stmt_arena) / 1024);
 }
 
 void ast_dump_type(TranslationUnit* tu, TypeIndex type, int depth, int offset) {
 	for (int i = 0; i < depth; i++) printf("  ");
-
+	
 	Type* ty = &tu->types[type];
-
+	
 	if (ty->kind == KIND_STRUCT || ty->kind == KIND_UNION) {
 		if (ty->loc) {
 			SourceLoc* loc = &tu->tokens.line_arena[ty->loc];
-
+			
 			printf("%s \033]8;;file://%s\033\\%s\033]8;;\033\\",
-				ty->kind == KIND_STRUCT ? "struct" : "union",
-				loc->file,
-				ty->record.name ? (char*)ty->record.name : "<unnamed>");
-
+				   ty->kind == KIND_STRUCT ? "struct" : "union",
+				   loc->file,
+				   ty->record.name ? (char*)ty->record.name : "<unnamed>");
+			
 			printf(" { // line %d\n", loc->line);
 		} else {
 			printf("%s %s {\n",
-				ty->kind == KIND_STRUCT ? "struct" : "union",
-				ty->record.name ? (char*)ty->record.name : "<unnamed>");
+				   ty->kind == KIND_STRUCT ? "struct" : "union",
+				   ty->record.name ? (char*)ty->record.name : "<unnamed>");
 		}
-
+		
 		char temp_string0[1024];
-
+		
 		MemberIndex start = ty->record.kids_start;
 		MemberIndex end = ty->record.kids_end;
 		for (MemberIndex m = start; m < end; m++) {
 			Member* member = &tu->members[m];
-
+			
 			if (member->name == NULL ||
 				tu->types[member->type].kind == KIND_STRUCT ||
 				tu->types[member->type].kind == KIND_UNION) {
@@ -581,25 +577,24 @@ void ast_dump_type(TranslationUnit* tu, TypeIndex type, int depth, int offset) {
 			} else {
 				for (int i = 0; i < depth; i++) printf("  ");
 				printf("  ");
-
+				
 				type_as_string(tu, sizeof(temp_string0), temp_string0, member->type);
 				
 				int l = printf("%s %s", temp_string0, member->name);
 				l += (depth+1) * 2;
-
+				
 				for (int i = l; i < 42; i++) printf(" ");
 				printf(" %d\n", offset+member->offset);
 			}
 		}
-
+		
 		for (int i = 0; i < depth; i++) printf("  ");
 		printf("}\n");
 	} else {
 		printf("Could not represent type yet...\n");
 	}
-
+	
 	if (depth == 0) {
 		printf("STATS:\n  sizeof = %d\n  alignof = %d\n", ty->size, ty->align);
 	}
 }
-

@@ -37,16 +37,16 @@ static ExprIndex parse_function_literal(TranslationUnit* tu, TokenStream* restri
 	// Because of the "not a lambda" nature of the function literals they count as
 	// "scoped top level statements" which doesn't particularly change anything for
 	// it but is interesting to think about internally
-	StmtIndex n = make_stmt(tu, s, STMT_FUNC_DECL);
-	tu->stmts[n].loc = loc;
-	tu->stmts[n].decl = (struct StmtDecl){
+	Stmt* n = make_stmt(tu, s, STMT_FUNC_DECL);
+	n->loc = loc;
+	n->decl = (struct StmtDecl){
 		.type = type,
 		.name = NULL,
 		.attrs = {
 			.is_root = true, // to avoid it being vaporized
 			.is_inline = true
 		},
-		.initial = (StmtIndex)0
+		.initial_as_stmt = NULL
 	};
 	arrput(tu->top_level_stmts, n);
 	
@@ -239,11 +239,30 @@ static ExprIndex parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
 					.symbol = labels[search].value
 				};
 			} else {
+#if OUT_OF_ORDER_CRAP
+				Symbol* search = find_global_symbol((const char*) name);
+				if (search != NULL) {
+					tu->exprs[e] = (Expr) {
+						.op = EXPR_SYMBOL,
+						.loc = loc,
+						.symbol = search->stmt
+					};
+				} else {
+					report(REPORT_ERROR, &s->line_arena[loc], "could not resolve symbol: %s", name);
+					
+					tu->exprs[e] = (Expr) {
+						.op = EXPR_UNKNOWN_SYMBOL,
+						.loc = loc,
+						.unknown_sym = name
+					};
+				}
+#else
 				tu->exprs[e] = (Expr) {
 					.op = EXPR_UNKNOWN_SYMBOL,
 					.loc = loc,
 					.unknown_sym = name
 				};
+#endif
 			}
 		}
 		

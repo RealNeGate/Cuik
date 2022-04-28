@@ -148,7 +148,7 @@ TypeIndex new_vector(TranslationUnit* tu, TypeIndex base, int count) {
 }
 
 TypeIndex new_blank_type(TranslationUnit* tu) {
-	Type t = { 0 };
+	Type t = { .kind = KIND_PLACEHOLDER };
 	
 	big_array_put(tu->types, t);
 	return big_array_length(tu->types) - 1;
