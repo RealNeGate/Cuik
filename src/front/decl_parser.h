@@ -717,7 +717,7 @@ static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, At
 					if (type) {
 						// can't re-complete a enum
 						// TODO(NeGate): error messages
-						size_t count = tu->types[type].enumerator.end - tu->types[type].enumerator.start;
+						size_t count = tu->types[type].enumerator.count;
 						if (count) {
 							generic_error(s, "Cannot recomplete an enumerator");
 						}
@@ -725,7 +725,6 @@ static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, At
 						type = new_enum(tu);
 						tu->types[type].is_incomplete = true;
 						tu->types[type].enumerator.name = name;
-						tu->types[type].enumerator.start = big_array_length(tu->enum_entries);
 						
 						if (name) shput(incomplete_tags, name, type);
 					}
@@ -734,6 +733,9 @@ static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, At
 					// you can override it by using:
 					// identifier = int-const-expr
 					int cursor = 0;
+					
+					size_t count = 0;
+					EnumEntry* start = tls_save();
 					
 					while (tokens_get(s)->type != '}') {
 						// parse name
@@ -751,11 +753,11 @@ static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, At
 							cursor = parse_const_expr(tu, s);
 						}
 						
-						EnumEntry entry = {
-							.name = name,
-							.value = cursor++
-						};
-						big_array_put(tu->enum_entries, entry);
+						tls_push(sizeof(EnumEntry));
+						start[count++] = (EnumEntry){ name, cursor };
+						
+						shput(enum_entries, name, cursor);
+						cursor += 1;
 						
 						if (tokens_get(s)->type == ',') tokens_next(s);
 					}
@@ -764,8 +766,14 @@ static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, At
 						generic_error(s, "Unclosed enum list!");
 					}
 					
+					// move to more permanent storage
+					EnumEntry* permanent_store = arena_alloc(&tu->ast_arena, count * sizeof(EnumEntry), _Alignof(EnumEntry));
+					memcpy(permanent_store, start, count * sizeof(EnumEntry));
+					tls_restore(start);
+					
+					tu->types[type].enumerator.entries = permanent_store;
+					tu->types[type].enumerator.count = count;
 					tu->types[type].is_incomplete = false;
-					tu->types[type].enumerator.end = big_array_length(tu->enum_entries);
 				} else {
 					type = find_incomplete_tag((char*)name);
 					if (!type) {

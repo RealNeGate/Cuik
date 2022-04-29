@@ -77,7 +77,7 @@ typedef struct Attribs {
 } Attribs;
 
 typedef struct EnumEntry {
-	Atom name;
+	Atom key;
 	int value;
 } EnumEntry;
 
@@ -137,7 +137,9 @@ typedef struct Type {
 		// Enumerators
 		struct {
 			Atom name;
-			EnumEntryIndex start, end;
+			
+			size_t count;
+			EnumEntry* entries;
 		} enumerator;
 		
 		struct {
@@ -592,7 +594,6 @@ typedef struct TranslationUnit {
 	// so that we can properly free them
 	BigArray(Type) types;
 	BigArray(Param) params;
-	BigArray(EnumEntry) enum_entries;
 	BigArray(Expr) exprs;
 	
 	Arena ast_arena;

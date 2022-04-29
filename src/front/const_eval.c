@@ -230,21 +230,7 @@ ConstValue const_eval(TranslationUnit* tu, ExprIndex e) {
 				Stmt* stmt = tu->exprs[ep->x_of_expr.expr].symbol;
 				return unsigned_const(tu->types[stmt->decl.type].size);
 			} else if (tu->exprs[ep->x_of_expr.expr].op == EXPR_UNKNOWN_SYMBOL) {
-				const unsigned char* name = tu->exprs[ep->x_of_expr.expr].unknown_sym;
-				Stmt* s = resolve_unknown_symbol(tu, ep->x_of_expr.expr);
-				
-				if (s != NULL) {
-					TypeIndex t = sema_guess_type(tu, s);
-					if (t) return unsigned_const(tu->types[t].size);
-				} else {
-					// try enum names
-					// NOTE(NeGate): this might be slow
-					for (size_t j = 1, count = big_array_length(tu->enum_entries); j < count; j++) {
-						if (cstr_equals(name, tu->enum_entries[j].name)) {
-							return signed_const(4);
-						}
-					}
-				}
+				return unsigned_const(0);
 			}
 			
 			break;
@@ -270,46 +256,6 @@ ConstValue const_eval(TranslationUnit* tu, ExprIndex e) {
 		
 		case EXPR_CAST: {
 			return const_eval(tu, ep->cast.src);
-		}
-		
-		case EXPR_UNKNOWN_SYMBOL: {
-			const unsigned char* name = ep->unknown_sym;
-			Stmt* s = resolve_unknown_symbol(tu, e);
-			
-			if (s == NULL) {
-				// try enum names
-				// NOTE(NeGate): this might be slow
-				for (size_t j = 1, count = big_array_length(tu->enum_entries); j < count; j++) {
-					if (cstr_equals(name, tu->enum_entries[j].name)) {
-						return signed_const(tu->enum_entries[j].value);
-					}
-				}
-				
-				// TODO(NeGate): error messages
-				printf("error: could not find symbol: %s\n", name);
-				abort();
-			}
-			
-			Type* restrict type = &tu->types[s->decl.type];
-			if (!type->is_const) {
-				// TODO(NeGate): error messages
-				printf("error: not const :(\n");
-				abort();
-			}
-			
-			if (!s->decl.initial) {
-				// TODO(NeGate): error messages
-				printf("error: no expression :(\n");
-				abort();
-			}
-			
-			if (type->kind >= KIND_BOOL && type->kind <= KIND_LONG) {
-				return const_eval(tu, s->decl.initial);
-			} else {
-				// TODO(NeGate): error messages
-				printf("error: bad type\n");
-				abort();
-			}
 		}
 		default: break;
 	}

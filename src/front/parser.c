@@ -52,6 +52,7 @@ thread_local static Symbol local_symbols[MAX_LOCAL_SYMBOLS];
 // Global symbol stuff
 thread_local static IncompleteType* incomplete_tags; // stb_ds hash map
 thread_local static SymbolEntry* global_symbols; // stb_ds hash map
+thread_local static EnumEntry* enum_entries; // stb_ds hash map
 
 thread_local static LabelEntry* labels; // stb_ds hash map
 
@@ -230,7 +231,6 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
 	tu->filepath = filepath;
 	tu->types = big_array_create(Type, true);
 	tu->params = big_array_create(Param, true);
-	tu->enum_entries = big_array_create(EnumEntry, true);
 	tu->exprs = big_array_create(Expr, true);
 	
 	init_types(tu);
@@ -830,20 +830,18 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
 				// try enum names
 				const unsigned char* name = tu->exprs[i].unknown_sym;
 				
-				// NOTE(NeGate): this might be slow
-				for (size_t j = 1, count = big_array_length(tu->enum_entries); j < count; j++) {
-					if (cstr_equals(name, tu->enum_entries[j].name)) {
-						int value = tu->enum_entries[j].value;
-						ExprIndex chain = tu->exprs[i].next_symbol_in_chain;
-						
-						tu->exprs[i].op = EXPR_ENUM;
-						tu->exprs[i].enum_val = (struct ExprEnum){ value, chain };
-						goto success;
-					}
+				ptrdiff_t search = shgeti(enum_entries, name);
+				if (search >= 0) {
+					int value = enum_entries[search].value;
+					ExprIndex chain = tu->exprs[i].next_symbol_in_chain;
+					
+					tu->exprs[i].op = EXPR_ENUM;
+					tu->exprs[i].enum_val = (struct ExprEnum){ value, chain };
+					goto success;
 				}
 				
 				// check if it's builtin
-				ptrdiff_t search = shgeti(target_desc.builtin_func_map, name);
+				search = shgeti(target_desc.builtin_func_map, name);
 				if (search < 0) {
 					SourceLoc* loc = &s->line_arena[tu->exprs[i].loc];
 					report(REPORT_ERROR, loc, "could not resolve symbol: %s", name);
@@ -871,6 +869,7 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
 	local_symbol_start = 0;
 	local_symbol_count = 0;
 	
+	shfree(enum_entries);
 	shfree(incomplete_tags);
 	shfree(global_symbols);
 	shfree(labels);
@@ -881,7 +880,6 @@ void translation_unit_deinit(TranslationUnit* tu) {
 	
 	big_array_destroy(tu->types);
 	big_array_destroy(tu->params);
-	big_array_destroy(tu->enum_entries);
 	big_array_destroy(tu->exprs);
 	arrfree(tu->top_level_stmts);
 	
