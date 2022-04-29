@@ -248,13 +248,24 @@ static ExprIndex parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
 						.symbol = search->stmt
 					};
 				} else {
-					report(REPORT_ERROR, &s->line_arena[loc], "could not resolve symbol: %s", name);
-					
-					tu->exprs[e] = (Expr) {
-						.op = EXPR_UNKNOWN_SYMBOL,
-						.loc = loc,
-						.unknown_sym = name
-					};
+					ptrdiff_t search = shgeti(enum_entries, name);
+					if (search >= 0) {
+						int value = enum_entries[search].value;
+						
+						tu->exprs[e] = (Expr) {
+							.op = EXPR_ENUM,
+							.loc = loc,
+							.enum_val = { value }
+						};
+					} else {
+						report(REPORT_ERROR, &s->line_arena[loc], "could not resolve symbol: %s", name);
+						
+						tu->exprs[e] = (Expr) {
+							.op = EXPR_UNKNOWN_SYMBOL,
+							.loc = loc,
+							.unknown_sym = name
+						};
+					}
 				}
 #else
 				tu->exprs[e] = (Expr) {

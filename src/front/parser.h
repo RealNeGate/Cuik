@@ -14,8 +14,6 @@
 #define MAX_LOCAL_SYMBOLS (1 << 20)
 
 typedef int TypeIndex;
-typedef int ParamIndex;
-typedef int EnumEntryIndex;
 typedef int ExprIndex;
 
 typedef int SymbolIndex;
@@ -121,7 +119,8 @@ typedef struct Type {
 		struct {
 			Atom name;
 			TypeIndex return_type;
-			ParamIndex param_list, param_count;
+			size_t param_count;
+			Param* param_list;
 			
 			bool has_varargs : 1;
 		} func;

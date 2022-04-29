@@ -222,8 +222,8 @@ bool type_equal(TranslationUnit* tu, TypeIndex a, TypeIndex b) {
 	
 	if (ty1->kind == KIND_FUNC) {
 		// match parameters count
-		ParamIndex param_count1 = ty1->func.param_count;
-		ParamIndex param_count2 = ty2->func.param_count;
+		size_t param_count1 = ty1->func.param_count;
+		size_t param_count2 = ty2->func.param_count;
 		
 		// if there's no params on it then just pretend like it matches
 		// it helps get stuff like FARPROC to compile properly
@@ -235,10 +235,10 @@ bool type_equal(TranslationUnit* tu, TypeIndex a, TypeIndex b) {
 		if (ty1->func.has_varargs != ty2->func.has_varargs) return false;
 		
 		// match paramaeters exactly
-		ParamIndex param_list1 = ty1->func.param_list;
-		ParamIndex param_list2 = ty2->func.param_list;
-		for (ParamIndex i = 0; i < param_count1; i++) {
-			if (!type_equal(tu, tu->params[param_list1 + i].type, tu->params[param_list2 + i].type)) {
+		Param* param_list1 = ty1->func.param_list;
+		Param* param_list2 = ty2->func.param_list;
+		for (size_t i = 0; i < param_count1; i++) {
+			if (!type_equal(tu, param_list1[i].type, param_list2[i].type)) {
 				return false;
 			}
 		}
@@ -336,8 +336,8 @@ size_t type_as_string(TranslationUnit* tu, size_t max_len, char* buffer, TypeInd
 			break;
 		}
 		case KIND_FUNC: {
-			ParamIndex param_list = type->func.param_list;
-			ParamIndex param_count = type->func.param_count;
+			Param* param_list = type->func.param_list;
+			size_t param_count = type->func.param_count;
 			
 			i += type_as_string(tu, max_len - i, &buffer[i], type->func.return_type);
 			
@@ -346,9 +346,8 @@ size_t type_as_string(TranslationUnit* tu, size_t max_len, char* buffer, TypeInd
 			
 			for (size_t j = 0; j < param_count; j++) {
 				if (j) buffer[i++] = ',';
-				Param* p = &tu->params[param_list + j];
 				
-				i += type_as_string(tu, max_len - i, &buffer[i], p->type);
+				i += type_as_string(tu, max_len - i, &buffer[i], param_list[j].type);
 			}
 			
 			assert(i < max_len);

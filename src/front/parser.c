@@ -962,8 +962,8 @@ static void create_symbol_use_list(TranslationUnit* tu, Stmt* n, ExprIndex start
 static void parse_function_definition(TranslationUnit* tu, TokenStream* restrict s, Stmt* n) {
 	TypeIndex type = n->decl.type;
 	
-	ParamIndex param_list = tu->types[type].func.param_list;
-	ParamIndex param_count = tu->types[type].func.param_count;
+	Param* param_list = tu->types[type].func.param_list;
+	size_t param_count = tu->types[type].func.param_count;
 	
 	assert(local_symbol_start == local_symbol_count);
 	if (param_count >= INT16_MAX) {
@@ -972,7 +972,7 @@ static void parse_function_definition(TranslationUnit* tu, TokenStream* restrict
 	}
 	
 	for (size_t i = 0; i < param_count; i++) {
-		Param* p = &tu->params[param_list + i];
+		Param* p = &param_list[i];
 		
 		if (p->name) {
 			local_symbols[local_symbol_count++] = (Symbol){

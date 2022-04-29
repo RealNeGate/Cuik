@@ -533,8 +533,7 @@ TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e) {
 			int param_num = ep->param_num;
 			
 			Type* func_type = &tu->types[function_stmt->decl.type];
-			Param* params = &tu->params[func_type->func.param_list];
-			return (ep->type = params[param_num].type);
+			return (ep->type = func_type->func.param_list[param_num].type);
 		}
 		case EXPR_GENERIC: {
 			TypeIndex src = sema_expr(tu, ep->generic_.controlling_expr);
@@ -653,7 +652,7 @@ TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e) {
 			ExprIndex* args = ep->call.param_start;
 			int arg_count = ep->call.param_count;
 			
-			Param* params = &tu->params[func_type->func.param_list];
+			Param* params = func_type->func.param_list;
 			int param_count = func_type->func.param_count;
 			
 			if (func_type->func.has_varargs) {

@@ -214,11 +214,10 @@ static TypeIndex parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s,
 		tokens_next(s);
 		
 		// Allocate some more permanent storage
-		ParamIndex start = big_array_length(tu->params);
-		big_array_put_uninit(tu->params, param_count);
-		memcpy(&tu->params[start], params, param_count * sizeof(Param));
+		Param* permanent_store = arena_alloc(&tu->ast_arena, param_count * sizeof(Param), _Alignof(Param));
+		memcpy(permanent_store, params, param_count * sizeof(Param));
 		
-		tu->types[type].func.param_list = start;
+		tu->types[type].func.param_list = permanent_store;
 		tu->types[type].func.param_count = param_count;
 		tu->types[type].func.has_varargs = has_varargs;
 		

@@ -90,7 +90,7 @@ static void dump_expr(TranslationUnit* tu, FILE* stream, ExprIndex e, int depth,
 			int param_num = ep->param_num;
 			
 			Type* func_type = &tu->types[function_stmt->decl.type];
-			Param* params = &tu->params[func_type->func.param_list];
+			Param* params = func_type->func.param_list;
 			
 			type_as_string(tu, sizeof(temp_string0), temp_string0, ep->type);
 			fprintf(stream, "Symbol %s '%s'\n", params[param_num].name, temp_string0);

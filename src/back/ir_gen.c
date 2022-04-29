@@ -700,9 +700,8 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 			int param_num = ep->param_num;
 			TB_Register reg = parameter_map[param_num];
 			
-			ParamIndex param = tu->types[function_type].func.param_list + param_num;
-			TypeIndex arg_type = tu->params[param].type;
-			assert(arg_type);
+			TypeIndex arg_type = tu->types[function_type].func.param_list[param_num].type;
+			assert(arg_type != TYPE_NONE);
 			
 			if (tu->types[arg_type].kind == KIND_STRUCT ||
 				tu->types[arg_type].kind == KIND_UNION) {
@@ -1853,7 +1852,7 @@ static void gen_func_body(TranslationUnit* tu, TypeIndex type, Stmt* restrict s)
 	TB_Function* func = tb_function_from_id(mod, s->backing.f);
 	
 	// Parameters
-	ParamIndex param_count = tu->types[type].func.param_count;
+	size_t param_count = tu->types[type].func.param_count;
 	
 	TB_Register* params = parameter_map = tls_push(param_count * sizeof(TB_Register));
 	Type* restrict return_type = &tu->types[tu->types[type].func.return_type];
@@ -1868,14 +1867,14 @@ static void gen_func_body(TranslationUnit* tu, TypeIndex type, Stmt* restrict s)
 		return_value_address = tb_inst_param_addr(func, 0);
 		
 		// gimme stack slots
-		for (int i = 0; i < param_count; i++) {
+		for (size_t i = 0; i < param_count; i++) {
 			params[i] = tb_inst_param_addr(func, 1+i);
 		}
 	} else {
 		return_value_address = TB_NULL_REG;
 		
 		// gimme stack slots
-		for (int i = 0; i < param_count; i++) {
+		for (size_t i = 0; i < param_count; i++) {
 			params[i] = tb_inst_param_addr(func, i);
 		}
 	}
