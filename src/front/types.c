@@ -81,7 +81,7 @@ TypeIndex new_pointer(TranslationUnit* tu, TypeIndex base) {
 	return big_array_length(tu->types) - 1;
 }
 
-TypeIndex new_typeof(TranslationUnit* tu, ExprIndex src) {
+TypeIndex new_typeof(TranslationUnit* tu, Expr* src) {
 	Type t = {
 		.kind = KIND_TYPEOF,
 		

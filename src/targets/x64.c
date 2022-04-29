@@ -91,8 +91,8 @@ static int deduce_parameter_usage(TranslationUnit* tu, TypeIndex type_index) {
 	return 1;
 }
 
-static int pass_parameter(TranslationUnit* tu, TB_Function* func, ExprIndex e, bool is_vararg, TB_Reg* out_param) {
-	TypeIndex arg_type_index = tu->exprs[e].type;
+static int pass_parameter(TranslationUnit* tu, TB_Function* func, Expr* e, bool is_vararg, TB_Reg* out_param) {
+	TypeIndex arg_type_index = e->type;
 	Type* arg_type = &tu->types[arg_type_index];
 	
 	if (!win64_should_pass_via_reg(tu, arg_type_index)) {
@@ -166,7 +166,7 @@ static int pass_parameter(TranslationUnit* tu, TB_Function* func, ExprIndex e, b
 }
 
 // TODO(NeGate): Add some type checking utilities to match against a list of types since that's kinda important :p
-static TypeIndex type_check_builtin(TranslationUnit* tu, SourceLocIndex loc, const char* name, int arg_count, ExprIndex* args) {
+static TypeIndex type_check_builtin(TranslationUnit* tu, SourceLocIndex loc, const char* name, int arg_count, Expr** args) {
 	if (strcmp(name, "__c11_atomic_compare_exchange_strong") == 0) {
 		// type check arguments
 		return TYPE_BOOL;
@@ -188,7 +188,7 @@ static TypeIndex type_check_builtin(TranslationUnit* tu, SourceLocIndex loc, con
 			if (i == 2) {
 				if (tu->types[arg_type].kind != KIND_PTR) {
 					type_as_string(tu, sizeof(temp_string0), temp_string0, type);
-					sema_error(tu->exprs[args[i]].loc, "Expected pointer to '%s' for the 3rd argument", temp_string0);
+					sema_error(args[i]->loc, "Expected pointer to '%s' for the 3rd argument", temp_string0);
 					goto failure;
 				}
 				
@@ -199,13 +199,13 @@ static TypeIndex type_check_builtin(TranslationUnit* tu, SourceLocIndex loc, con
 				type_as_string(tu, sizeof(temp_string0), temp_string0, arg_type);
 				type_as_string(tu, sizeof(temp_string1), temp_string1, type);
 				
-				SourceLocIndex loc = tu->exprs[args[i]].loc;
+				SourceLocIndex loc = args[i]->loc;
 				sema_error(loc, "Could not implicitly convert type %s into %s.", temp_string0, temp_string1);
 				goto failure;
 			}
 			
 			TypeIndex cast_type = (i == 2) ? new_pointer(tu, type) : type;
-			tu->exprs[args[i]].cast_type = cast_type;
+			args[i]->cast_type = cast_type;
 		}
 		
 		failure:
@@ -215,7 +215,7 @@ static TypeIndex type_check_builtin(TranslationUnit* tu, SourceLocIndex loc, con
 	return 0;
 }
 
-static TB_Register compile_builtin(TranslationUnit* tu, TB_Function* func, const char* name, int arg_count, ExprIndex* args) {
+static TB_Register compile_builtin(TranslationUnit* tu, TB_Function* func, const char* name, int arg_count, Expr** args) {
 	if (strcmp(name, "__c11_atomic_thread_fence") == 0) {
 		printf("TODO __c11_atomic_thread_fence!");
 		abort();

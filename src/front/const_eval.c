@@ -4,7 +4,7 @@
 #define signed_const(x) (ConstValue){ true, .signed_value = (x) }
 
 // Const eval probably needs some rework...
-TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e);
+TypeIndex sema_expr(TranslationUnit* tu, Expr* e);
 TypeIndex sema_guess_type(TranslationUnit* tu, Stmt* restrict s);
 Member* sema_traverse_members(TranslationUnit* tu, Type* record_type, Atom name, uint32_t* out_offset);
 
@@ -13,44 +13,41 @@ typedef struct { TypeIndex type; uint32_t offset; } WalkMemberReturn;
 
 // just returns the byte offset it traveled in these DOTs and ARROWs.
 // the type we pass in is that of whatever's at the end of the DOT and ARROW chain
-static WalkMemberReturn walk_member_accesses(TranslationUnit* tu, ExprIndex e, TypeIndex type) {
-	const Expr* ep = &tu->exprs[e];
-	const Expr* base_expr = &tu->exprs[ep->dot_arrow.base];
+static WalkMemberReturn walk_member_accesses(TranslationUnit* tu, const Expr* e, TypeIndex type) {
+	const Expr* base_expr = e->dot_arrow.base;
 	
 	WalkMemberReturn base = { 0 };
 	if (base_expr->op != EXPR_ARROW && base_expr->op != EXPR_DOT) {
 		// use that base type we've been patiently keeping around
 		base = (WalkMemberReturn) { type, 0 };
 	} else {
-		base = walk_member_accesses(tu, ep->dot_arrow.base, type);
+		base = walk_member_accesses(tu, e->dot_arrow.base, type);
 	}
 	
 	uint32_t relative = 0;
-	Member* member = sema_traverse_members(tu, &tu->types[base.type], ep->dot_arrow.name, &relative);
+	Member* member = sema_traverse_members(tu, &tu->types[base.type], e->dot_arrow.name, &relative);
 	if (!member) abort();
 	if (member->is_bitfield) abort();
 	
 	return (WalkMemberReturn){ member->type, base.offset + relative };
 }
 
-bool const_eval_try_offsetof_hack(TranslationUnit* tu, ExprIndex e, uint64_t* out) {
-	const Expr* ep = &tu->exprs[e];
-	
+bool const_eval_try_offsetof_hack(TranslationUnit* tu, const Expr* e, uint64_t* out) {
 	// hacky but handles things like: 
 	//   &(((T*)0)->apple)
 	//   sizeof(((T*)0).apple)
-	if (ep->op == EXPR_DOT || ep->op == EXPR_ARROW) {
-		ExprIndex base_e = ep->dot_arrow.base;
+	if (e->op == EXPR_DOT || e->op == EXPR_ARROW) {
+		Expr* base_e = e->dot_arrow.base;
 		
-		while (tu->exprs[base_e].op == EXPR_ARROW ||
-			   tu->exprs[base_e].op == EXPR_DOT) {
+		while (base_e->op == EXPR_ARROW ||
+			   base_e->op == EXPR_DOT) {
 			// traverse any dot/arrow chains
-			base_e = tu->exprs[base_e].dot_arrow.base;
+			base_e = base_e->dot_arrow.base;
 		}
 		
 		uint32_t offset = 0;
 		Type* record_type = NULL;
-		Expr* arrow_base = &tu->exprs[base_e];
+		Expr* arrow_base = base_e;
 		if (arrow_base->op == EXPR_CAST) {
 			record_type = &tu->types[arrow_base->cast.type];
 			
@@ -118,33 +115,31 @@ static ConstValue const_eval_bin_op(ExprOp op, ConstValue a, ConstValue b) {
 }
 
 // TODO(NeGate): Type check this better
-ConstValue const_eval(TranslationUnit* tu, ExprIndex e) {
-	const Expr* ep = &tu->exprs[e];
-	
-	switch (ep->op) {
+ConstValue const_eval(TranslationUnit* tu, const Expr* e) {
+	switch (e->op) {
 		case EXPR_INT: {
-			switch (ep->int_num.suffix) {
+			switch (e->int_num.suffix) {
 				case INT_SUFFIX_NONE: 
 				case INT_SUFFIX_L:
 				case INT_SUFFIX_LL:
-				return signed_const(ep->int_num.num);
+				return signed_const(e->int_num.num);
 				
 				case INT_SUFFIX_U: 
 				case INT_SUFFIX_UL:
 				case INT_SUFFIX_ULL:
-				return unsigned_const(ep->int_num.num);
+				return unsigned_const(e->int_num.num);
 				
 				default: __builtin_unreachable();
 			}
 		}
 		
 		case EXPR_ENUM: {
-			return signed_const(ep->enum_val.num);
+			return signed_const(e->enum_val.num);
 		}
 		
 		case EXPR_CHAR: {
-			const char* start = (const char*)(ep->str.start + 1);
-			const char* end = (const char*)(ep->str.end - 1);
+			const char* start = (const char*)(e->str.start + 1);
+			const char* end = (const char*)(e->str.end - 1);
 			
 			uint32_t codepoint = 0;
 			uint32_t shift = 0;
@@ -162,11 +157,11 @@ ConstValue const_eval(TranslationUnit* tu, ExprIndex e) {
 		}
 		
 		case EXPR_TERNARY: {
-			ConstValue cond = const_eval(tu, ep->ternary_op.left);
+			ConstValue cond = const_eval(tu, e->ternary_op.left);
 			if (cond.unsigned_value != 0) {
-				return const_eval(tu, ep->ternary_op.middle);
+				return const_eval(tu, e->ternary_op.middle);
 			} else {
-				return const_eval(tu, ep->ternary_op.right);
+				return const_eval(tu, e->ternary_op.right);
 			}
 		}
 		
@@ -184,21 +179,21 @@ ConstValue const_eval(TranslationUnit* tu, ExprIndex e) {
 		case EXPR_CMPLE:
 		case EXPR_CMPGT:
 		case EXPR_CMPLT: {
-			ConstValue a = const_eval(tu, ep->bin_op.right);
+			ConstValue a = const_eval(tu, e->bin_op.right);
 			
-			ExprOp op = ep->op;
-			ExprIndex current = ep->bin_op.left;
-			if (tu->exprs[current].op != op) {
+			ExprOp op = e->op;
+			Expr* current = e->bin_op.left;
+			if (current->op != op) {
 				ConstValue b = const_eval(tu, current);
 				return const_eval_bin_op(op, b, a);
 			} else {
 				// try tail calling
 				do {
-					ConstValue b = const_eval(tu, tu->exprs[current].bin_op.right);
+					ConstValue b = const_eval(tu, current->bin_op.right);
 					a = const_eval_bin_op(op, b, a);
 					
-					current = tu->exprs[current].bin_op.left;
-				} while (tu->exprs[current].op == op);
+					current = current->bin_op.left;
+				} while (current->op == op);
 				
 				ConstValue b = const_eval(tu, current);
 				return const_eval_bin_op(op, b, a);
@@ -207,59 +202,58 @@ ConstValue const_eval(TranslationUnit* tu, ExprIndex e) {
 		case EXPR_SIZEOF: {
 			// TODO(NeGate): this is super hacky since it calls semantic pass stuff
 			// early and thus it might not resolve correct... we wanna drop this later
-			if (tu->exprs[ep->x_of_expr.expr].op == EXPR_DOT ||
-				tu->exprs[ep->x_of_expr.expr].op == EXPR_ARROW) {
-				TypeIndex src = sema_expr(tu, ep->x_of_expr.expr);
+			if (e->x_of_expr.expr->op == EXPR_DOT ||
+				e->x_of_expr.expr->op == EXPR_ARROW) {
+				TypeIndex src = sema_expr(tu, e->x_of_expr.expr);
 				
 				return unsigned_const(tu->types[src].size);
-			} else if (tu->exprs[ep->x_of_expr.expr].op == EXPR_SUBSCRIPT) {
-				ExprIndex base_e = tu->exprs[ep->x_of_expr.expr].subscript.base;
-				Expr* sym = &tu->exprs[base_e];
+			} else if (e->x_of_expr.expr->op == EXPR_SUBSCRIPT) {
+				Expr* base = e->x_of_expr.expr->subscript.base;
 				
-				if (sym->op == EXPR_UNKNOWN_SYMBOL) {
-					Stmt* s = resolve_unknown_symbol(tu, base_e);
+				if (base->op == EXPR_UNKNOWN_SYMBOL) {
+					Stmt* s = resolve_unknown_symbol(tu, base);
 					
 					if (s != NULL) {
 						TypeIndex t = sema_guess_type(tu, s);
 						if (t) return unsigned_const(tu->types[t].size);
 					}
-				} else if (sym->op == EXPR_SYMBOL) {
-					return unsigned_const(tu->types[sym->symbol->decl.type].size);
+				} else if (base->op == EXPR_SYMBOL) {
+					return unsigned_const(tu->types[base->symbol->decl.type].size);
 				}
-			} else if (tu->exprs[ep->x_of_expr.expr].op == EXPR_SYMBOL) {
-				Stmt* stmt = tu->exprs[ep->x_of_expr.expr].symbol;
+			} else if (e->x_of_expr.expr->op == EXPR_SYMBOL) {
+				Stmt* stmt = e->x_of_expr.expr->symbol;
 				return unsigned_const(tu->types[stmt->decl.type].size);
-			} else if (tu->exprs[ep->x_of_expr.expr].op == EXPR_UNKNOWN_SYMBOL) {
+			} else if (e->x_of_expr.expr->op == EXPR_UNKNOWN_SYMBOL) {
 				return unsigned_const(0);
 			}
 			
 			break;
 		}
 		case EXPR_SIZEOF_T: {
-			return unsigned_const(tu->types[ep->x_of_type.type].size);
+			return unsigned_const(tu->types[e->x_of_type.type].size);
 		}
 		case EXPR_ALIGNOF_T: {
-			return unsigned_const(tu->types[ep->x_of_type.type].align);
+			return unsigned_const(tu->types[e->x_of_type.type].align);
 		}
 		case EXPR_NEGATE: {
-			ConstValue src = const_eval(tu, ep->unary_op.src);
+			ConstValue src = const_eval(tu, e->unary_op.src);
 			return signed_const(-src.signed_value);
 		}
 		
 		case EXPR_ADDR: {
 			uint64_t dst;
-			if (const_eval_try_offsetof_hack(tu, ep->unary_op.src, &dst)) {
+			if (const_eval_try_offsetof_hack(tu, e->unary_op.src, &dst)) {
 				return unsigned_const(dst); 
 			}
 			break;
 		}
 		
 		case EXPR_CAST: {
-			return const_eval(tu, ep->cast.src);
+			return const_eval(tu, e->cast.src);
 		}
 		default: break;
 	}
 	
-	report(REPORT_ERROR, &tu->tokens.line_arena[ep->loc], "Could not resolve as constant expression");
+	report(REPORT_ERROR, &tu->tokens.line_arena[e->loc], "Could not resolve as constant expression");
 	abort();
 }

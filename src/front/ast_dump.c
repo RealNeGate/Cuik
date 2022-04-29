@@ -21,15 +21,14 @@ static void print_barz(int depth, bool last_node) {
 	barz[depth-1] = !last_node;
 }
 
-static void dump_expr(TranslationUnit* tu, FILE* stream, ExprIndex e, int depth, bool last_node) {
+static void dump_expr(TranslationUnit* tu, FILE* stream, Expr* restrict e, int depth, bool last_node) {
 	print_barz(depth, last_node);
 	
-	Expr* restrict ep = &tu->exprs[e];
-	if (ep->cast_type != ep->type) {
-		type_as_string(tu, sizeof(temp_string0), temp_string0, ep->type);
-		type_as_string(tu, sizeof(temp_string1), temp_string1, ep->cast_type);
+	if (e->cast_type != e->type) {
+		type_as_string(tu, sizeof(temp_string0), temp_string0, e->type);
+		type_as_string(tu, sizeof(temp_string1), temp_string1, e->cast_type);
 		
-		if (ep->op != EXPR_CAST && ep->cast_type > TYPE_VOID) {
+		if (e->op != EXPR_CAST && e->cast_type > TYPE_VOID) {
 			// we don't wanna place implicit casts to void, it's weird
 			fprintf(stream, "ImplicitCast '%s' -> '%s'\n", temp_string0, temp_string1);
 			
@@ -38,10 +37,10 @@ static void dump_expr(TranslationUnit* tu, FILE* stream, ExprIndex e, int depth,
 		}
 	}
 	
-	switch (ep->op) {
+	switch (e->op) {
 		case EXPR_CHAR: {
-			const char* start = (const char*)(ep->str.start + 1);
-			const char* end = (const char*)(ep->str.end - 1);
+			const char* start = (const char*)(e->str.start + 1);
+			const char* end = (const char*)(e->str.end - 1);
 			
 			uint32_t codepoint = 0;
 			uint32_t shift = 0;
@@ -55,30 +54,30 @@ static void dump_expr(TranslationUnit* tu, FILE* stream, ExprIndex e, int depth,
 				start += 1;
 			}
 			
-			type_as_string(tu, sizeof(temp_string0), temp_string0, ep->type);
+			type_as_string(tu, sizeof(temp_string0), temp_string0, e->type);
 			fprintf(stream, "CharLiteral %u '%s'\n", codepoint, temp_string0);
 			break;
 		}
 		case EXPR_INT: {
-			type_as_string(tu, sizeof(temp_string0), temp_string0, ep->type);
-			fprintf(stream, "IntegerLiteral %llu '%s'\n", ep->int_num.num, temp_string0);
+			type_as_string(tu, sizeof(temp_string0), temp_string0, e->type);
+			fprintf(stream, "IntegerLiteral %llu '%s'\n", e->int_num.num, temp_string0);
 			break;
 		}
 		case EXPR_ENUM: {
-			type_as_string(tu, sizeof(temp_string0), temp_string0, ep->type);
-			fprintf(stream, "EnumLiteral %lld '%s'\n", (long long)ep->enum_val.num, temp_string0);
+			type_as_string(tu, sizeof(temp_string0), temp_string0, e->type);
+			fprintf(stream, "EnumLiteral %lld '%s'\n", (long long)e->enum_val.num, temp_string0);
 			break;
 		}
 		case EXPR_FLOAT32:
 		case EXPR_FLOAT64: {
-			type_as_string(tu, sizeof(temp_string0), temp_string0, ep->type);
-			fprintf(stream, "FloatLiteral %f '%s'\n", ep->float_num, temp_string0);
+			type_as_string(tu, sizeof(temp_string0), temp_string0, e->type);
+			fprintf(stream, "FloatLiteral %f '%s'\n", e->float_num, temp_string0);
 			break;
 		}
 		case EXPR_SYMBOL: {
-			Stmt* stmt = ep->symbol;
+			Stmt* stmt = e->symbol;
 			
-			type_as_string(tu, sizeof(temp_string0), temp_string0, ep->type);
+			type_as_string(tu, sizeof(temp_string0), temp_string0, e->type);
 			if (stmt->op == STMT_LABEL) {
 				fprintf(stream, "LabelRef\n");
 			} else {
@@ -87,21 +86,21 @@ static void dump_expr(TranslationUnit* tu, FILE* stream, ExprIndex e, int depth,
 			break;
 		}
 		case EXPR_PARAM: {
-			int param_num = ep->param_num;
+			int param_num = e->param_num;
 			
 			Type* func_type = &tu->types[function_stmt->decl.type];
 			Param* params = func_type->func.param_list;
 			
-			type_as_string(tu, sizeof(temp_string0), temp_string0, ep->type);
+			type_as_string(tu, sizeof(temp_string0), temp_string0, e->type);
 			fprintf(stream, "Symbol %s '%s'\n", params[param_num].name, temp_string0);
 			break;
 		}
 		case EXPR_STR: {
 			// TODO(NeGate): Convert the string back into a C string literal so we don't cause any weird text printing
-			type_as_string(tu, sizeof(temp_string0), temp_string0, ep->type);
+			type_as_string(tu, sizeof(temp_string0), temp_string0, e->type);
 			
-			const unsigned char* start = ep->str.start;
-			const unsigned char* end = ep->str.end;
+			const unsigned char* start = e->str.start;
+			const unsigned char* end = e->str.end;
 			
 			char* out_start = tls_push(1024);
 			char* out = out_start;
@@ -131,18 +130,18 @@ static void dump_expr(TranslationUnit* tu, FILE* stream, ExprIndex e, int depth,
 			break;
 		}
 		case EXPR_INITIALIZER: {
-			type_as_string(tu, sizeof(temp_string0), temp_string0, ep->type);
+			type_as_string(tu, sizeof(temp_string0), temp_string0, e->type);
 			fprintf(stream, "Initializer '%s'\n", temp_string0);
 			break;
 		}
 		case EXPR_CALL: {
-			type_as_string(tu, sizeof(temp_string0), temp_string0, ep->type);
+			type_as_string(tu, sizeof(temp_string0), temp_string0, e->type);
 			fprintf(stream, "FunctionCall '%s'\n", temp_string0);
 			
-			ExprIndex* args = ep->call.param_start;
-			int arg_count = ep->call.param_count;
+			Expr** args = e->call.param_start;
+			int arg_count = e->call.param_count;
 			
-			dump_expr(tu, stream, ep->call.target, depth + 1, arg_count == 0);
+			dump_expr(tu, stream, e->call.target, depth + 1, arg_count == 0);
 			
 			for (size_t i = 0; i < arg_count; i++) {
 				dump_expr(tu, stream, args[i], depth + 1, i == (arg_count-1));
@@ -150,118 +149,118 @@ static void dump_expr(TranslationUnit* tu, FILE* stream, ExprIndex e, int depth,
 			break;
 		}
 		case EXPR_TERNARY: {
-			type_as_string(tu, sizeof(temp_string0), temp_string0, ep->type);
+			type_as_string(tu, sizeof(temp_string0), temp_string0, e->type);
 			fprintf(stream, "Ternary '%s'\n", temp_string0);
 			
-			dump_expr(tu, stream, ep->ternary_op.left, depth + 1, false);
-			dump_expr(tu, stream, ep->ternary_op.middle, depth + 1, false);
-			dump_expr(tu, stream, ep->ternary_op.right, depth + 1, true);
+			dump_expr(tu, stream, e->ternary_op.left, depth + 1, false);
+			dump_expr(tu, stream, e->ternary_op.middle, depth + 1, false);
+			dump_expr(tu, stream, e->ternary_op.right, depth + 1, true);
 			break;
 		}
 		case EXPR_ARROW: {
-			type_as_string(tu, sizeof(temp_string0), temp_string0, ep->type);
+			type_as_string(tu, sizeof(temp_string0), temp_string0, e->type);
 			
-			char* name = (char*) ep->dot_arrow.member->name;
+			char* name = (char*) e->dot_arrow.member->name;
 			fprintf(stream, "Arrow %s '%s'\n", name ? name : "<unnamed>", temp_string0);
 			
-			dump_expr(tu, stream, ep->dot_arrow.base, depth + 1, true);
+			dump_expr(tu, stream, e->dot_arrow.base, depth + 1, true);
 			break;
 		}
 		case EXPR_DOT: {
-			type_as_string(tu, sizeof(temp_string0), temp_string0, ep->type);
+			type_as_string(tu, sizeof(temp_string0), temp_string0, e->type);
 			
-			char* name = (char*) ep->dot_arrow.member->name;
+			char* name = (char*) e->dot_arrow.member->name;
 			fprintf(stream, "Dot %s '%s'\n", name ? name : "<unnamed>", temp_string0);
 			
-			dump_expr(tu, stream, ep->dot_arrow.base, depth + 1, true);
+			dump_expr(tu, stream, e->dot_arrow.base, depth + 1, true);
 			break;
 		}
 		case EXPR_SUBSCRIPT: {
-			type_as_string(tu, sizeof(temp_string0), temp_string0, ep->type);
+			type_as_string(tu, sizeof(temp_string0), temp_string0, e->type);
 			fprintf(stream, "Subscript '%s'\n", temp_string0);
 			
-			dump_expr(tu, stream, ep->subscript.base, depth + 1, false);
-			dump_expr(tu, stream, ep->subscript.index, depth + 1, true);
+			dump_expr(tu, stream, e->subscript.base, depth + 1, false);
+			dump_expr(tu, stream, e->subscript.index, depth + 1, true);
 			break;
 		}
 		case EXPR_DEREF: {
-			type_as_string(tu, sizeof(temp_string0), temp_string0, ep->type);
+			type_as_string(tu, sizeof(temp_string0), temp_string0, e->type);
 			fprintf(stream, "Deref '%s'\n", temp_string0);
 			
-			dump_expr(tu, stream, ep->unary_op.src, depth + 1, true);
+			dump_expr(tu, stream, e->unary_op.src, depth + 1, true);
 			break;
 		}
 		case EXPR_GENERIC: {
-			assert(ep->generic_.case_count == 0);
+			assert(e->generic_.case_count == 0);
 			
-			type_as_string(tu, sizeof(temp_string0), temp_string0, ep->type);
+			type_as_string(tu, sizeof(temp_string0), temp_string0, e->type);
 			fprintf(stream, "Generic '%s'\n", temp_string0);
 			
-			dump_expr(tu, stream, ep->generic_.controlling_expr, depth + 1, true);
+			dump_expr(tu, stream, e->generic_.controlling_expr, depth + 1, true);
 			break;
 		}
 		case EXPR_ADDR: {
-			type_as_string(tu, sizeof(temp_string0), temp_string0, ep->type);
+			type_as_string(tu, sizeof(temp_string0), temp_string0, e->type);
 			fprintf(stream, "Addr '%s'\n", temp_string0);
 			
-			dump_expr(tu, stream, ep->unary_op.src, depth + 1, true);
+			dump_expr(tu, stream, e->unary_op.src, depth + 1, true);
 			break;
 		}
 		case EXPR_POST_INC: {
-			type_as_string(tu, sizeof(temp_string0), temp_string0, ep->type);
+			type_as_string(tu, sizeof(temp_string0), temp_string0, e->type);
 			fprintf(stream, "PostIncrement '%s'\n", temp_string0);
 			
-			dump_expr(tu, stream, ep->unary_op.src, depth + 1, true);
+			dump_expr(tu, stream, e->unary_op.src, depth + 1, true);
 			break;
 		}
 		case EXPR_POST_DEC: {
-			type_as_string(tu, sizeof(temp_string0), temp_string0, ep->type);
+			type_as_string(tu, sizeof(temp_string0), temp_string0, e->type);
 			fprintf(stream, "PostDecrement '%s'\n", temp_string0);
 			
-			dump_expr(tu, stream, ep->unary_op.src, depth + 1, true);
+			dump_expr(tu, stream, e->unary_op.src, depth + 1, true);
 			break;
 		}
 		case EXPR_PRE_INC: {
-			type_as_string(tu, sizeof(temp_string0), temp_string0, ep->type);
+			type_as_string(tu, sizeof(temp_string0), temp_string0, e->type);
 			fprintf(stream, "PreIncrement '%s'\n", temp_string0);
 			
-			dump_expr(tu, stream, ep->unary_op.src, depth + 1, true);
+			dump_expr(tu, stream, e->unary_op.src, depth + 1, true);
 			break;
 		}
 		case EXPR_PRE_DEC: {
-			type_as_string(tu, sizeof(temp_string0), temp_string0, ep->type);
+			type_as_string(tu, sizeof(temp_string0), temp_string0, e->type);
 			fprintf(stream, "PreDecrement '%s'\n", temp_string0);
 			
-			dump_expr(tu, stream, ep->unary_op.src, depth + 1, true);
+			dump_expr(tu, stream, e->unary_op.src, depth + 1, true);
 			break;
 		}
 		case EXPR_LOGICAL_NOT: {
-			type_as_string(tu, sizeof(temp_string0), temp_string0, ep->type);
+			type_as_string(tu, sizeof(temp_string0), temp_string0, e->type);
 			fprintf(stream, "LogicalNot '%s'\n", temp_string0);
 			
-			dump_expr(tu, stream, ep->unary_op.src, depth + 1, true);
+			dump_expr(tu, stream, e->unary_op.src, depth + 1, true);
 			break;
 		}
 		case EXPR_NOT: {
-			type_as_string(tu, sizeof(temp_string0), temp_string0, ep->type);
+			type_as_string(tu, sizeof(temp_string0), temp_string0, e->type);
 			fprintf(stream, "BinaryNot '%s'\n", temp_string0);
 			
-			dump_expr(tu, stream, ep->unary_op.src, depth + 1, true);
+			dump_expr(tu, stream, e->unary_op.src, depth + 1, true);
 			break;
 		}
 		case EXPR_NEGATE: {
-			type_as_string(tu, sizeof(temp_string0), temp_string0, ep->type);
+			type_as_string(tu, sizeof(temp_string0), temp_string0, e->type);
 			fprintf(stream, "Negate '%s'\n", temp_string0);
 			
-			dump_expr(tu, stream, ep->unary_op.src, depth + 1, true);
+			dump_expr(tu, stream, e->unary_op.src, depth + 1, true);
 			break;
 		}
 		case EXPR_CAST: {
-			type_as_string(tu, sizeof(temp_string0), temp_string0, ep->type);
-			type_as_string(tu, sizeof(temp_string1), temp_string1, ep->cast.type);
+			type_as_string(tu, sizeof(temp_string0), temp_string0, e->type);
+			type_as_string(tu, sizeof(temp_string1), temp_string1, e->cast.type);
 			
 			fprintf(stream, "Cast '%s' -> '%s'\n", temp_string0, temp_string1);
-			dump_expr(tu, stream, ep->cast.src, depth + 1, true);
+			dump_expr(tu, stream, e->cast.src, depth + 1, true);
 			break;
 		}
 		case EXPR_COMMA:
@@ -336,11 +335,11 @@ static void dump_expr(TranslationUnit* tu, FILE* stream, ExprIndex e, int depth,
 				[EXPR_PTRDIFF] = "PointerDiff"
 			};
 			
-			type_as_string(tu, sizeof(temp_string0), temp_string0, ep->type);
-			fprintf(stream, "%s '%s'\n", names[ep->op], temp_string0);
+			type_as_string(tu, sizeof(temp_string0), temp_string0, e->type);
+			fprintf(stream, "%s '%s'\n", names[e->op], temp_string0);
 			
-			dump_expr(tu, stream, ep->bin_op.left, depth + 1, false);
-			dump_expr(tu, stream, ep->bin_op.right, depth + 1, true);
+			dump_expr(tu, stream, e->bin_op.left, depth + 1, false);
+			dump_expr(tu, stream, e->bin_op.right, depth + 1, true);
 			break;
 		}
 		default: abort();
@@ -530,15 +529,11 @@ void ast_dump_stats(TranslationUnit* tu, FILE* stream) {
 	printf("\n~~~ AST STATS ~~~\n");
 	printf("# Top level stmts: %zu\n", arrlen(tu->top_level_stmts));
 	
-	printf("# Expressions: %8zu (%zu kB)\n",
-		   big_array_length(tu->exprs),
-		   (big_array_length(tu->exprs) * sizeof(Expr)) / 1024);
-	
 	printf("# Types:       %8zu (%zu kB)\n",
 		   big_array_length(tu->types),
 		   (big_array_length(tu->types) * sizeof(Type)) / 1024);
 	
-	printf("# Statements:  %zu kB\n",
+	printf("# AST Arena:  %zu kB\n",
 		   arena_get_memory_usage(&tu->ast_arena) / 1024);
 }
 

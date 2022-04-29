@@ -14,9 +14,10 @@
 #define MAX_LOCAL_SYMBOLS (1 << 20)
 
 typedef int TypeIndex;
-typedef int ExprIndex;
+typedef int ExprIndex_;
 
-typedef int SymbolIndex;
+typedef struct Stmt Stmt;
+typedef struct Expr Expr;
 
 typedef enum TypeKind {
     KIND_VOID,
@@ -86,7 +87,7 @@ typedef struct Param {
 
 typedef struct {
 	TypeIndex key;
-	ExprIndex value;
+	Expr* value;
 } C11GenericEntry;
 
 typedef struct Type {
@@ -148,7 +149,7 @@ typedef struct Type {
 		
 		// Typeof
 		struct {
-			ExprIndex src;
+			Expr* src;
 		} typeof_;
     };
 } Type;
@@ -297,7 +298,6 @@ typedef struct ConstValue {
 	};
 } ConstValue;
 
-typedef struct Stmt Stmt;
 struct Stmt {
 	StmtOp op;
 	SourceLocIndex loc;
@@ -317,10 +317,10 @@ struct Stmt {
 			int kids_count;
 		} compound;
 		struct StmtExpr {
-			ExprIndex expr;
+			Expr* expr;
 		} expr;
 		struct StmtReturn {
-			ExprIndex expr;
+			Expr* expr;
 		} return_;
 		struct StmtContinue {
 			Stmt* target; // loop
@@ -329,7 +329,7 @@ struct Stmt {
 			Stmt* target; // either a loop or switch
 		} break_;
 		struct StmtGoto {
-			ExprIndex target;
+			Expr* target;
 		} goto_;
 		struct StmtLabel {
 			Atom name;
@@ -345,7 +345,7 @@ struct Stmt {
 			Stmt* next;
 		} default_;
 		struct StmtSwitch {
-			ExprIndex condition;
+			Expr* condition;
 			Stmt* body;
 			
 			// points to the first case or default,
@@ -358,7 +358,7 @@ struct Stmt {
 			
 			// acceleration structure for scrubbing for symbols
 			// it's a linked list
-			ExprIndex first_symbol;
+			Expr* first_symbol;
 			
 			Attribs attrs;
 			Atom name;
@@ -367,25 +367,25 @@ struct Stmt {
 			// FUNC_DECL
 			union {
 				Stmt* initial_as_stmt;
-				ExprIndex initial;
+				Expr* initial;
 			};
 		} decl;
 		struct StmtFor {
 			Stmt* first;
-			ExprIndex cond;
+			Expr* cond;
 			Stmt* body;
-			ExprIndex next;
+			Expr* next;
 		} for_;
 		struct StmtWhile {
-			ExprIndex cond;
+			Expr* cond;
 			Stmt* body;
 		} while_;
 		struct StmtDoWhile {
-			ExprIndex cond;
+			Expr* cond;
 			Stmt* body;
 		} do_while;
 		struct StmtIf {
-			ExprIndex cond;
+			Expr* cond;
 			Stmt* body;
 			Stmt* next;
 		} if_;
@@ -408,7 +408,7 @@ typedef struct InitNode {
 	// are expected to find an expression
 	// here.
 	int kids_count;
-	ExprIndex expr;
+	Expr* expr;
 	InitNodeDesignator mode;
 	union {
 		// INIT_MEMBER
@@ -421,7 +421,7 @@ typedef struct InitNode {
 	};
 } InitNode;
 
-typedef struct Expr {
+struct Expr {
 	ExprOp op;
 	SourceLocIndex loc;
 	
@@ -441,7 +441,7 @@ typedef struct Expr {
 			Atom unknown_sym;
 			
 			// aliases with next_symbol_in_chain
-			ExprIndex next_symbol_in_chain2;
+			Expr* next_symbol_in_chain2;
 		};
 		
 		// TODO(NeGate): rename this unnamed struct to 'symbol'
@@ -449,7 +449,7 @@ typedef struct Expr {
 			// linked list of symbols within a function used to 
 			// analyze used symbols more easily
 			Stmt* symbol;
-			ExprIndex next_symbol_in_chain;
+			Expr* next_symbol_in_chain;
 		};
 		
 		// EXPR_PARAM
@@ -457,33 +457,37 @@ typedef struct Expr {
 		
 		struct ExprEnum {
 			int64_t num;
-			ExprIndex next_symbol_in_chain;
+			Expr* next_symbol_in_chain;
 		} enum_val;
 		struct {
 			TypeIndex type;
-			ExprIndex src;
+			Expr* src;
 		} cast;
 		struct {
-			ExprIndex left, middle, right;
+			Expr* left;
+			Expr* middle;
+			Expr* right;
 		} ternary_op;
 		struct {
-			ExprIndex left, right;
+			Expr* left;
+			Expr* right;
 		} bin_op;
 		struct {
-			ExprIndex base, index;
+			Expr* base;
+			Expr* index;
 		} subscript;
 		struct {
-			ExprIndex src;
+			Expr* src;
 		} unary_op;
 		struct {
-			ExprIndex controlling_expr;
+			Expr* controlling_expr;
 			
 			// if case_count == 0, then controlling_expr is the matched expression
 			int case_count;
 			C11GenericEntry* cases;
 		} generic_;
 		struct {
-			ExprIndex base;
+			Expr* base;
 			uint32_t offset;
 			
 			// once the semantic pass runs over the AST
@@ -495,10 +499,10 @@ typedef struct Expr {
 			};
 		} dot_arrow;
 		struct {
-			ExprIndex target;
+			Expr* target;
 			int param_count;
 			
-			ExprIndex* param_start;
+			Expr** param_start;
 		} call;
 		// represent both quoted literals
 		struct {
@@ -511,7 +515,7 @@ typedef struct Expr {
 		} x_of_type;
 		// either sizeof(expr) or _Alignof(expr)
 		struct {
-			ExprIndex expr;
+			Expr* expr;
 		} x_of_expr;
 		struct {
 			TypeIndex type;
@@ -528,10 +532,9 @@ typedef struct Expr {
 			IntSuffix suffix;
 		} int_num;
 	};
-} Expr;
+};
 _Static_assert(offsetof(Expr, next_symbol_in_chain) == offsetof(Expr, next_symbol_in_chain2), "these should be aliasing");
 _Static_assert(offsetof(Expr, next_symbol_in_chain) == offsetof(Expr, enum_val.next_symbol_in_chain), "these should be aliasing");
-_Static_assert(sizeof(Expr) <= 32, "We shouldn't exceed 32 bytes");
 
 typedef struct Decl {
 	TypeIndex type;
@@ -592,8 +595,6 @@ typedef struct TranslationUnit {
 	// TODO(NeGate): keep track of all files loaded by this TU
 	// so that we can properly free them
 	BigArray(Type) types;
-	BigArray(Param) params;
-	BigArray(Expr) exprs;
 	
 	Arena ast_arena;
 	
@@ -616,16 +617,16 @@ TypeIndex new_blank_type(TranslationUnit* tu);
 TypeIndex new_record(TranslationUnit* tu, bool is_union);
 TypeIndex copy_type(TranslationUnit* tu, TypeIndex base);
 TypeIndex new_pointer(TranslationUnit* tu, TypeIndex base);
-TypeIndex new_typeof(TranslationUnit* tu, ExprIndex src);
+TypeIndex new_typeof(TranslationUnit* tu, Expr* src);
 TypeIndex new_array(TranslationUnit* tu, TypeIndex base, int count);
 TypeIndex new_vector(TranslationUnit* tu, TypeIndex base, int count);
 TypeIndex get_common_type(TranslationUnit* tu, TypeIndex ty1, TypeIndex ty2);
 bool type_equal(TranslationUnit* tu, TypeIndex a, TypeIndex b);
 size_t type_as_string(TranslationUnit* tu, size_t max_len, char* buffer, TypeIndex type_index);
 
-Stmt* resolve_unknown_symbol(TranslationUnit* tu, ExprIndex e);
-ConstValue const_eval(TranslationUnit* tu, ExprIndex e);
-bool const_eval_try_offsetof_hack(TranslationUnit* tu, ExprIndex e, uint64_t* out);
+Stmt* resolve_unknown_symbol(TranslationUnit* tu, Expr* e);
+ConstValue const_eval(TranslationUnit* tu, const Expr* e);
+bool const_eval_try_offsetof_hack(TranslationUnit* tu, const Expr* e, uint64_t* out);
 
 void init_types(TranslationUnit* tu);
 

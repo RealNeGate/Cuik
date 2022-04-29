@@ -6,11 +6,11 @@
 ////////////////////////////////
 // This file is included into parser.h, it's parser of the parser module and is 
 // completely static
-static ExprIndex parse_expr_l14(TranslationUnit* tu, TokenStream* restrict s);
-static ExprIndex parse_expr_l2(TranslationUnit* tu, TokenStream* restrict s);
-static ExprIndex parse_expr(TranslationUnit* tu, TokenStream* restrict s);
+static Expr* parse_expr_l14(TranslationUnit* tu, TokenStream* restrict s);
+static Expr* parse_expr_l2(TranslationUnit* tu, TokenStream* restrict s);
+static Expr* parse_expr(TranslationUnit* tu, TokenStream* restrict s);
 
-static ExprIndex parse_function_literal(TranslationUnit* tu, TokenStream* restrict s, TypeIndex type) {
+static Expr* parse_function_literal(TranslationUnit* tu, TokenStream* restrict s, TypeIndex type) {
 	SourceLocIndex loc = tokens_get(s)->location;
 	
 	// if the literal doesn't have a parameter list it will inherit from the `type`
@@ -60,8 +60,8 @@ static ExprIndex parse_function_literal(TranslationUnit* tu, TokenStream* restri
 	}
 	local_symbol_start = old_start;
 	
-	ExprIndex e = make_expr(tu);
-	tu->exprs[e] = (Expr) {
+	Expr* e = make_expr(tu);
+	*e = (Expr) {
 		.op = EXPR_FUNCTION,
 		.loc = loc,
 		.type = type,
@@ -165,7 +165,7 @@ static void parse_initializer_member(TranslationUnit* tu, TokenStream* restrict 
 	}
 }
 
-static ExprIndex parse_initializer(TranslationUnit* tu, TokenStream* restrict s, TypeIndex type) {
+static Expr* parse_initializer(TranslationUnit* tu, TokenStream* restrict s, TypeIndex type) {
 	size_t count = 0;
 	InitNode* start = tls_save();
 	
@@ -189,8 +189,8 @@ static ExprIndex parse_initializer(TranslationUnit* tu, TokenStream* restrict s,
 	memcpy(permanent_store, start, total_node_count * sizeof(InitNode));
 	tls_restore(start);
 	
-	ExprIndex e = make_expr(tu);
-	tu->exprs[e] = (Expr) {
+	Expr* e = make_expr(tu);
+	*e = (Expr) {
 		.op = EXPR_INITIALIZER,
 		.loc = tokens_get(s)->location,
 		.init = { type, count, permanent_store }
@@ -198,29 +198,29 @@ static ExprIndex parse_initializer(TranslationUnit* tu, TokenStream* restrict s,
 	return e;
 }
 
-static ExprIndex parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
+static Expr* parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
 	Token* t = tokens_get(s);
 	SourceLocIndex loc = t->location;
 	
 	if (t->type == '(') {
 		tokens_next(s);
-		ExprIndex e = parse_expr(tu, s);
+		Expr* e = parse_expr(tu, s);
 		expect(s, ')');
 		
 		return e;
 	} else if (t->type == TOKEN_IDENTIFIER) {
 		Symbol* sym = find_local_symbol(s);
 		
-		ExprIndex e = make_expr(tu);
+		Expr* e = make_expr(tu);
 		if (sym) {
 			if (sym->storage_class == STORAGE_PARAM) {
-				tu->exprs[e] = (Expr) {
+				*e = (Expr) {
 					.op = EXPR_PARAM,
 					.loc = loc,
 					.param_num = sym->param_num
 				};
 			} else {
-				tu->exprs[e] = (Expr) {
+				*e = (Expr) {
 					.op = EXPR_SYMBOL,
 					.loc = loc,
 					.symbol = sym->stmt
@@ -233,7 +233,7 @@ static ExprIndex parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
 			
 			ptrdiff_t search = shgeti(labels, name);
 			if (search >= 0) {
-				tu->exprs[e] = (Expr) {
+				*e = (Expr) {
 					.op = EXPR_SYMBOL,
 					.loc = loc,
 					.symbol = labels[search].value
@@ -242,7 +242,7 @@ static ExprIndex parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
 #if OUT_OF_ORDER_CRAP
 				Symbol* search = find_global_symbol((const char*) name);
 				if (search != NULL) {
-					tu->exprs[e] = (Expr) {
+					*e = (Expr) {
 						.op = EXPR_SYMBOL,
 						.loc = loc,
 						.symbol = search->stmt
@@ -252,7 +252,7 @@ static ExprIndex parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
 					if (search >= 0) {
 						int value = enum_entries[search].value;
 						
-						tu->exprs[e] = (Expr) {
+						*e = (Expr) {
 							.op = EXPR_ENUM,
 							.loc = loc,
 							.enum_val = { value }
@@ -260,7 +260,7 @@ static ExprIndex parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
 					} else {
 						report(REPORT_ERROR, &s->line_arena[loc], "could not resolve symbol: %s", name);
 						
-						tu->exprs[e] = (Expr) {
+						*e = (Expr) {
 							.op = EXPR_UNKNOWN_SYMBOL,
 							.loc = loc,
 							.unknown_sym = name
@@ -268,12 +268,23 @@ static ExprIndex parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
 					}
 				}
 #else
-				tu->exprs[e] = (Expr) {
+				*e = (Expr) {
 					.op = EXPR_UNKNOWN_SYMBOL,
 					.loc = loc,
 					.unknown_sym = name
 				};
 #endif
+			}
+		}
+		
+		// unknown symbols, symbols and enumerator entries participate in the
+		// symbol chain, aka... don't append non-parameters :P
+		if (e->op != EXPR_PARAM) {
+			if (symbol_chain_current != NULL) {
+				symbol_chain_current->next_symbol_in_chain = e;
+				symbol_chain_current = e;
+			} else {
+				symbol_chain_start = symbol_chain_current = e;
 			}
 		}
 		
@@ -293,8 +304,8 @@ static ExprIndex parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
 		bool is_float32 = t->end[-1] == 'f';
 		double i = parse_float(t->end - t->start, (const char*)t->start);
 		
-		ExprIndex e = make_expr(tu);
-		tu->exprs[e] = (Expr) {
+		Expr* e = make_expr(tu);
+		*e = (Expr) {
 			.op = is_float32 ? EXPR_FLOAT32 : EXPR_FLOAT64,
 			.loc = loc,
 			.float_num = i
@@ -307,8 +318,8 @@ static ExprIndex parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
 		IntSuffix suffix;
 		uint64_t i = parse_int(t->end - t->start, (const char*)t->start, &suffix);
 		
-		ExprIndex e = make_expr(tu);
-		tu->exprs[e] = (Expr) {
+		Expr* e = make_expr(tu);
+		*e = (Expr) {
 			.op = EXPR_INT,
 			.loc = loc,
 			.int_num = { i, suffix }
@@ -319,8 +330,8 @@ static ExprIndex parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
 	} else if (tokens_get(s)->type == TOKEN_STRING_SINGLE_QUOTE) {
 		Token* t = tokens_get(s);
 		
-		ExprIndex e = make_expr(tu);
-		tu->exprs[e] = (Expr) {
+		Expr* e = make_expr(tu);
+		*e = (Expr) {
 			.op = EXPR_CHAR,
 			.loc = loc,
 			.str.start = t->start,
@@ -334,8 +345,8 @@ static ExprIndex parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
 		Token* t = tokens_get(s);
 		bool is_wide = (tokens_get(s)->type == TOKEN_STRING_WIDE_DOUBLE_QUOTE);
 		
-		ExprIndex e = make_expr(tu);
-		tu->exprs[e] = (Expr) {
+		Expr* e = make_expr(tu);
+		*e = (Expr) {
 			.op = is_wide ? EXPR_WSTR : EXPR_STR,
 			.loc = loc,
 			.str.start = t->start,
@@ -377,8 +388,8 @@ static ExprIndex parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
 			
 			buffer[curr++] = '\"';
 			
-			tu->exprs[e].str.start = (const unsigned char*)buffer;
-			tu->exprs[e].str.end = (const unsigned char*)(buffer + curr);
+			e->str.start = (const unsigned char*)buffer;
+			e->str.end = (const unsigned char*)(buffer + curr);
 		}
 		
 		return e;
@@ -389,10 +400,10 @@ static ExprIndex parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
 		expect(s, '(');
 		
 		// controlling expression followed by a comma
-		ExprIndex e = make_expr(tu);
-		ExprIndex controlling_expr = parse_expr_l14(tu, s);
+		Expr* e = make_expr(tu);
+		Expr* controlling_expr = parse_expr_l14(tu, s);
 		
-		tu->exprs[e] = (Expr) {
+		*e = (Expr) {
 			.op = EXPR_GENERIC,
 			.loc = loc,
 			.generic_ = {
@@ -419,7 +430,7 @@ static ExprIndex parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
 				
 				default_loc = &s->line_arena[tokens_get(s)->location];
 				expect(s, ':');
-				ExprIndex expr = parse_expr_l14(tu, s);
+				Expr* expr = parse_expr_l14(tu, s);
 				
 				// the default case is like a normal entry but without a type :p
 				tls_push(sizeof(C11GenericEntry));
@@ -432,7 +443,7 @@ static ExprIndex parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
 				assert(type != 0 && "TODO: error recovery");
 				
 				expect(s, ':');
-				ExprIndex expr = parse_expr_l14(tu, s);
+				Expr* expr = parse_expr_l14(tu, s);
 				
 				tls_push(sizeof(C11GenericEntry));
 				entries[entry_count++] = (C11GenericEntry){
@@ -452,8 +463,8 @@ static ExprIndex parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
 		C11GenericEntry* dst = arena_alloc(&thread_arena, entry_count * sizeof(C11GenericEntry), _Alignof(C11GenericEntry));
 		memcpy(dst, entries, entry_count * sizeof(C11GenericEntry));
 		
-		tu->exprs[e].generic_.case_count = entry_count;
-		tu->exprs[e].generic_.cases = dst;
+		e->generic_.case_count = entry_count;
+		e->generic_.cases = dst;
 		
 		tls_restore(entries);
 		return e;
@@ -462,8 +473,8 @@ static ExprIndex parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
 	}
 }
 
-static ExprIndex parse_expr_l1(TranslationUnit* tu, TokenStream* restrict s) {
-	ExprIndex e = 0;
+static Expr* parse_expr_l1(TranslationUnit* tu, TokenStream* restrict s) {
+	Expr* e = 0;
 	if (tokens_get(s)->type == '(') {
 		tokens_next(s);
 		
@@ -476,10 +487,10 @@ static ExprIndex parse_expr_l1(TranslationUnit* tu, TokenStream* restrict s) {
 				
 				e = parse_initializer(tu, s, type);
 			} else {
-				ExprIndex base = parse_expr_l2(tu, s);
+				Expr* base = parse_expr_l2(tu, s);
 				e = make_expr(tu);
 				
-				tu->exprs[e] = (Expr) {
+				*e = (Expr) {
 					.op = EXPR_CAST,
 					.loc = tokens_get(s)->location,
 					.cast = { type, base }
@@ -498,14 +509,14 @@ static ExprIndex parse_expr_l1(TranslationUnit* tu, TokenStream* restrict s) {
 	// piece of the expression.
 	try_again: {
 		if (tokens_get(s)->type == '[') {
-			ExprIndex base = e;
+			Expr* base = e;
 			e = make_expr(tu);
 			
 			tokens_next(s);
-			ExprIndex index = parse_expr(tu, s);
+			Expr* index = parse_expr(tu, s);
 			expect(s, ']');
 			
-			tu->exprs[e] = (Expr) {
+			*e = (Expr) {
 				.op = EXPR_SUBSCRIPT,
 				.loc = loc,
 				.subscript = { base, index }
@@ -523,9 +534,9 @@ static ExprIndex parse_expr_l1(TranslationUnit* tu, TokenStream* restrict s) {
 			Token* t = tokens_get(s);
 			Atom name = atoms_put(t->end - t->start, t->start);
 			
-			ExprIndex base = e;
+			Expr* base = e;
 			e = make_expr(tu);
-			tu->exprs[e] = (Expr) {
+			*e = (Expr) {
 				.op = EXPR_ARROW,
 				.loc = loc,
 				.dot_arrow = { .base = base, .name = name }
@@ -545,9 +556,9 @@ static ExprIndex parse_expr_l1(TranslationUnit* tu, TokenStream* restrict s) {
 			Token* t = tokens_get(s);
 			Atom name = atoms_put(t->end - t->start, t->start);
 			
-			ExprIndex base = e;
+			Expr* base = e;
 			e = make_expr(tu);
-			tu->exprs[e] = (Expr) {
+			*e = (Expr) {
 				.op = EXPR_DOT,
 				.loc = loc,
 				.dot_arrow = { .base = base, .name = name }
@@ -561,7 +572,7 @@ static ExprIndex parse_expr_l1(TranslationUnit* tu, TokenStream* restrict s) {
 		if (tokens_get(s)->type == '(') {
 			tokens_next(s);
 			
-			ExprIndex target = e;
+			Expr* target = e;
 			e = make_expr(tu);
 			
 			size_t param_count = 0;
@@ -575,8 +586,8 @@ static ExprIndex parse_expr_l1(TranslationUnit* tu, TokenStream* restrict s) {
 				// NOTE(NeGate): This is a funny little work around because
 				// i don't wanna parse the comma operator within the expression
 				// i wanna parse it here so we just skip it.
-				ExprIndex e = parse_expr_l14(tu, s);
-				*((ExprIndex*) tls_push(sizeof(ExprIndex))) = e;
+				Expr* e = parse_expr_l14(tu, s);
+				*((Expr**) tls_push(sizeof(Expr*))) = e;
 				param_count++;
 			}
 			
@@ -586,10 +597,10 @@ static ExprIndex parse_expr_l1(TranslationUnit* tu, TokenStream* restrict s) {
 			tokens_next(s);
 			
 			// Copy parameter refs into more permanent storage
-			ExprIndex* param_start = arena_alloc(&thread_arena, param_count * sizeof(ExprIndex), _Alignof(ExprIndex));
-			memcpy(param_start, params, param_count * sizeof(ExprIndex));
+			Expr** param_start = arena_alloc(&thread_arena, param_count * sizeof(Expr*), _Alignof(Expr*));
+			memcpy(param_start, params, param_count * sizeof(Expr*));
 			
-			tu->exprs[e] = (Expr) {
+			*e = (Expr) {
 				.op = EXPR_CALL,
 				.loc = loc,
 				.call = { target, param_count, param_start }
@@ -605,10 +616,10 @@ static ExprIndex parse_expr_l1(TranslationUnit* tu, TokenStream* restrict s) {
 			bool is_inc = tokens_get(s)->type == TOKEN_INCREMENT;
 			tokens_next(s);
 			
-			ExprIndex src = e;
+			Expr* src = e;
 			
 			e = make_expr(tu);
-			tu->exprs[e] = (Expr) {
+			*e = (Expr) {
 				.op = is_inc ? EXPR_POST_INC : EXPR_POST_DEC,
 				.loc = loc,
 				.unary_op.src = src
@@ -620,17 +631,17 @@ static ExprIndex parse_expr_l1(TranslationUnit* tu, TokenStream* restrict s) {
 }
 
 // deref* address& negate- sizeof _Alignof cast
-static ExprIndex parse_expr_l2(TranslationUnit* tu, TokenStream* restrict s) {
+static Expr* parse_expr_l2(TranslationUnit* tu, TokenStream* restrict s) {
 	// TODO(NeGate): Convert this code into a loop... please?
 	// TODO(NeGate): just rewrite this in general...
 	SourceLocIndex loc = tokens_get(s)->location;
 	
 	if (tokens_get(s)->type == '*') {
 		tokens_next(s);
-		ExprIndex value = parse_expr_l2(tu, s);
+		Expr* value = parse_expr_l2(tu, s);
 		
-		ExprIndex e = make_expr(tu);
-		tu->exprs[e] = (Expr) {
+		Expr* e = make_expr(tu);
+		*e = (Expr) {
 			.op = EXPR_DEREF,
 			.loc = tokens_get(s)->location,
 			.unary_op.src = value
@@ -638,10 +649,10 @@ static ExprIndex parse_expr_l2(TranslationUnit* tu, TokenStream* restrict s) {
 		return e;
 	} else if (tokens_get(s)->type == '!') {
 		tokens_next(s);
-		ExprIndex value = parse_expr_l2(tu, s);
+		Expr* value = parse_expr_l2(tu, s);
 		
-		ExprIndex e = make_expr(tu);
-		tu->exprs[e] = (Expr) {
+		Expr* e = make_expr(tu);
+		*e = (Expr) {
 			.op = EXPR_LOGICAL_NOT,
 			.loc = loc,
 			.unary_op.src = value
@@ -649,10 +660,10 @@ static ExprIndex parse_expr_l2(TranslationUnit* tu, TokenStream* restrict s) {
 		return e;
 	} else if (tokens_get(s)->type == TOKEN_DOUBLE_EXCLAMATION) {
 		tokens_next(s);
-		ExprIndex value = parse_expr_l2(tu, s);
+		Expr* value = parse_expr_l2(tu, s);
 		
-		ExprIndex e = make_expr(tu);
-		tu->exprs[e] = (Expr) {
+		Expr* e = make_expr(tu);
+		*e = (Expr) {
 			.op = EXPR_CAST,
 			.loc = loc,
 			.cast = { TYPE_BOOL, value }
@@ -660,10 +671,10 @@ static ExprIndex parse_expr_l2(TranslationUnit* tu, TokenStream* restrict s) {
 		return e;
 	} else if (tokens_get(s)->type == '-') {
 		tokens_next(s);
-		ExprIndex value = parse_expr_l2(tu, s);
+		Expr* value = parse_expr_l2(tu, s);
 		
-		ExprIndex e = make_expr(tu);
-		tu->exprs[e] = (Expr) {
+		Expr* e = make_expr(tu);
+		*e = (Expr) {
 			.op = EXPR_NEGATE,
 			.loc = loc,
 			.unary_op.src = value
@@ -671,10 +682,10 @@ static ExprIndex parse_expr_l2(TranslationUnit* tu, TokenStream* restrict s) {
 		return e;
 	} else if (tokens_get(s)->type == '~') {
 		tokens_next(s);
-		ExprIndex value = parse_expr_l2(tu, s);
+		Expr* value = parse_expr_l2(tu, s);
 		
-		ExprIndex e = make_expr(tu);
-		tu->exprs[e] = (Expr) {
+		Expr* e = make_expr(tu);
+		*e = (Expr) {
 			.op = EXPR_NOT,
 			.loc = loc,
 			.unary_op.src = value
@@ -685,10 +696,10 @@ static ExprIndex parse_expr_l2(TranslationUnit* tu, TokenStream* restrict s) {
 		return parse_expr_l2(tu, s);
 	} else if (tokens_get(s)->type == TOKEN_INCREMENT) {
 		tokens_next(s);
-		ExprIndex value = parse_expr_l1(tu, s);
+		Expr* value = parse_expr_l1(tu, s);
 		
-		ExprIndex e = make_expr(tu);
-		tu->exprs[e] = (Expr) {
+		Expr* e = make_expr(tu);
+		*e = (Expr) {
 			.op = EXPR_PRE_INC,
 			.loc = loc,
 			.unary_op.src = value
@@ -696,10 +707,10 @@ static ExprIndex parse_expr_l2(TranslationUnit* tu, TokenStream* restrict s) {
 		return e;
 	} else if (tokens_get(s)->type == TOKEN_DECREMENT) {
 		tokens_next(s);
-		ExprIndex value = parse_expr_l1(tu, s);
+		Expr* value = parse_expr_l1(tu, s);
 		
-		ExprIndex e = make_expr(tu);
-		tu->exprs[e] = (Expr) {
+		Expr* e = make_expr(tu);
+		*e = (Expr) {
 			.op = EXPR_PRE_DEC,
 			.loc = loc,
 			.unary_op.src = value
@@ -720,7 +731,7 @@ static ExprIndex parse_expr_l2(TranslationUnit* tu, TokenStream* restrict s) {
 			tokens_next(s);
 		}
 		
-		ExprIndex e = 0;
+		Expr* e = 0;
 		if (is_typename(s)) {
 			TypeIndex type = parse_typename(tu, s);
 			
@@ -737,7 +748,7 @@ static ExprIndex parse_expr_l2(TranslationUnit* tu, TokenStream* restrict s) {
 				e = parse_initializer(tu, s, type);
 			} else {
 				e = make_expr(tu);
-				tu->exprs[e] = (Expr) {
+				*e = (Expr) {
 					.op = operation_type == TOKEN_KW_sizeof ? EXPR_SIZEOF_T : EXPR_ALIGNOF_T,
 					.loc = loc,
 					.x_of_type = { type }
@@ -746,10 +757,10 @@ static ExprIndex parse_expr_l2(TranslationUnit* tu, TokenStream* restrict s) {
 		} else {
 			if (has_paren) tokens_prev(s);
 			
-			ExprIndex expr = parse_expr_l2(tu, s);
+			Expr* expr = parse_expr_l2(tu, s);
 			
 			e = make_expr(tu);
-			tu->exprs[e] = (Expr) {
+			*e = (Expr) {
 				.op = operation_type == TOKEN_KW_sizeof ? EXPR_SIZEOF : EXPR_ALIGNOF,
 				.loc = loc,
 				.x_of_expr = { expr }
@@ -762,10 +773,10 @@ static ExprIndex parse_expr_l2(TranslationUnit* tu, TokenStream* restrict s) {
 		return e;
 	} else if (tokens_get(s)->type == '&') {
 		tokens_next(s);
-		ExprIndex value = parse_expr_l1(tu, s);
+		Expr* value = parse_expr_l1(tu, s);
 		
-		ExprIndex e = make_expr(tu);
-		tu->exprs[e] = (Expr) {
+		Expr* e = make_expr(tu);
+		*e = (Expr) {
 			.op = EXPR_ADDR,
 			.loc = loc,
 			.unary_op.src = value
@@ -777,13 +788,13 @@ static ExprIndex parse_expr_l2(TranslationUnit* tu, TokenStream* restrict s) {
 }
 
 // * / %
-static ExprIndex parse_expr_l3(TranslationUnit* tu, TokenStream* restrict s) {
-	ExprIndex lhs = parse_expr_l2(tu, s);
+static Expr* parse_expr_l3(TranslationUnit* tu, TokenStream* restrict s) {
+	Expr* lhs = parse_expr_l2(tu, s);
 	
 	while (tokens_get(s)->type == TOKEN_TIMES ||
 		   tokens_get(s)->type == TOKEN_SLASH ||
 		   tokens_get(s)->type == TOKEN_PERCENT) {
-		ExprIndex e = make_expr(tu);
+		Expr* e = make_expr(tu);
 		ExprOp op;
 		switch (tokens_get(s)->type) {
 			case TOKEN_TIMES: op = EXPR_TIMES; break;
@@ -793,8 +804,8 @@ static ExprIndex parse_expr_l3(TranslationUnit* tu, TokenStream* restrict s) {
 		}
 		tokens_next(s);
 		
-		ExprIndex rhs = parse_expr_l2(tu, s);
-		tu->exprs[e] = (Expr) {
+		Expr* rhs = parse_expr_l2(tu, s);
+		*e = (Expr) {
 			.op = op,
 			.loc = tokens_get(s)->location,
 			.bin_op = { lhs, rhs }
@@ -807,13 +818,13 @@ static ExprIndex parse_expr_l3(TranslationUnit* tu, TokenStream* restrict s) {
 }
 
 // + -
-static ExprIndex parse_expr_l4(TranslationUnit* tu, TokenStream* restrict s) {
-	ExprIndex lhs = parse_expr_l3(tu, s);
+static Expr* parse_expr_l4(TranslationUnit* tu, TokenStream* restrict s) {
+	Expr* lhs = parse_expr_l3(tu, s);
 	
 	while (tokens_get(s)->type == TOKEN_PLUS ||
 		   tokens_get(s)->type == TOKEN_MINUS) {
 		SourceLocIndex loc = tokens_get(s)->location;
-		ExprIndex e = make_expr(tu);
+		Expr* e = make_expr(tu);
 		ExprOp op;
 		switch (tokens_get(s)->type) {
 			case TOKEN_PLUS: op = EXPR_PLUS; break;
@@ -822,8 +833,8 @@ static ExprIndex parse_expr_l4(TranslationUnit* tu, TokenStream* restrict s) {
 		}
 		tokens_next(s);
 		
-		ExprIndex rhs = parse_expr_l3(tu, s);
-		tu->exprs[e] = (Expr) {
+		Expr* rhs = parse_expr_l3(tu, s);
+		*e = (Expr) {
 			.op = op,
 			.loc = loc,
 			.bin_op = { lhs, rhs }
@@ -836,13 +847,13 @@ static ExprIndex parse_expr_l4(TranslationUnit* tu, TokenStream* restrict s) {
 }
 
 // + -
-static ExprIndex parse_expr_l5(TranslationUnit* tu, TokenStream* restrict s) {
-	ExprIndex lhs = parse_expr_l4(tu, s);
+static Expr* parse_expr_l5(TranslationUnit* tu, TokenStream* restrict s) {
+	Expr* lhs = parse_expr_l4(tu, s);
 	
 	while (tokens_get(s)->type == TOKEN_LEFT_SHIFT ||
 		   tokens_get(s)->type == TOKEN_RIGHT_SHIFT) {
 		SourceLocIndex loc = tokens_get(s)->location;
-		ExprIndex e = make_expr(tu);
+		Expr* e = make_expr(tu);
 		ExprOp op;
 		switch (tokens_get(s)->type) {
 			case TOKEN_LEFT_SHIFT: op = EXPR_SHL; break;
@@ -851,8 +862,8 @@ static ExprIndex parse_expr_l5(TranslationUnit* tu, TokenStream* restrict s) {
 		}
 		tokens_next(s);
 		
-		ExprIndex rhs = parse_expr_l4(tu, s);
-		tu->exprs[e] = (Expr) {
+		Expr* rhs = parse_expr_l4(tu, s);
+		*e = (Expr) {
 			.op = op,
 			.loc = loc,
 			.bin_op = { lhs, rhs }
@@ -865,15 +876,15 @@ static ExprIndex parse_expr_l5(TranslationUnit* tu, TokenStream* restrict s) {
 }
 
 // >= > <= <
-static ExprIndex parse_expr_l6(TranslationUnit* tu, TokenStream* restrict s) {
-	ExprIndex lhs = parse_expr_l5(tu, s);
+static Expr* parse_expr_l6(TranslationUnit* tu, TokenStream* restrict s) {
+	Expr* lhs = parse_expr_l5(tu, s);
 	
 	while (tokens_get(s)->type == TOKEN_GREATER_EQUAL ||
 		   tokens_get(s)->type == TOKEN_LESS_EQUAL || 
 		   tokens_get(s)->type == TOKEN_GREATER ||
 		   tokens_get(s)->type == TOKEN_LESS) {
 		SourceLocIndex loc = tokens_get(s)->location;
-		ExprIndex e = make_expr(tu);
+		Expr* e = make_expr(tu);
 		ExprOp op;
 		switch (tokens_get(s)->type) {
 			case TOKEN_LESS:          op = EXPR_CMPLT; break;
@@ -884,8 +895,8 @@ static ExprIndex parse_expr_l6(TranslationUnit* tu, TokenStream* restrict s) {
 		}
 		tokens_next(s);
 		
-		ExprIndex rhs = parse_expr_l5(tu, s);
-		tu->exprs[e] = (Expr) {
+		Expr* rhs = parse_expr_l5(tu, s);
+		*e = (Expr) {
 			.op = op,
 			.loc = loc,
 			.bin_op = { lhs, rhs }
@@ -898,18 +909,18 @@ static ExprIndex parse_expr_l6(TranslationUnit* tu, TokenStream* restrict s) {
 }
 
 // == !=
-static ExprIndex parse_expr_l7(TranslationUnit* tu, TokenStream* restrict s) {
-	ExprIndex lhs = parse_expr_l6(tu, s);
+static Expr* parse_expr_l7(TranslationUnit* tu, TokenStream* restrict s) {
+	Expr* lhs = parse_expr_l6(tu, s);
 	
 	while (tokens_get(s)->type == TOKEN_NOT_EQUAL ||
 		   tokens_get(s)->type == TOKEN_EQUALITY) {
 		SourceLocIndex loc = tokens_get(s)->location;
-		ExprIndex e = make_expr(tu);
+		Expr* e = make_expr(tu);
 		ExprOp op = tokens_get(s)->type == TOKEN_EQUALITY ? EXPR_CMPEQ : EXPR_CMPNE;
 		tokens_next(s);
 		
-		ExprIndex rhs = parse_expr_l6(tu, s);
-		tu->exprs[e] = (Expr) {
+		Expr* rhs = parse_expr_l6(tu, s);
+		*e = (Expr) {
 			.op = op,
 			.loc = loc,
 			.bin_op = { lhs, rhs }
@@ -922,17 +933,17 @@ static ExprIndex parse_expr_l7(TranslationUnit* tu, TokenStream* restrict s) {
 }
 
 // &
-static ExprIndex parse_expr_l8(TranslationUnit* tu, TokenStream* restrict s) {
-	ExprIndex lhs = parse_expr_l7(tu, s);
+static Expr* parse_expr_l8(TranslationUnit* tu, TokenStream* restrict s) {
+	Expr* lhs = parse_expr_l7(tu, s);
 	
 	while (tokens_get(s)->type == '&') {
 		SourceLocIndex loc = tokens_get(s)->location;
-		ExprIndex e = make_expr(tu);
+		Expr* e = make_expr(tu);
 		ExprOp op = EXPR_AND;
 		tokens_next(s);
 		
-		ExprIndex rhs = parse_expr_l7(tu, s);
-		tu->exprs[e] = (Expr) {
+		Expr* rhs = parse_expr_l7(tu, s);
+		*e = (Expr) {
 			.op = op,
 			.loc = loc,
 			.bin_op = { lhs, rhs }
@@ -945,17 +956,17 @@ static ExprIndex parse_expr_l8(TranslationUnit* tu, TokenStream* restrict s) {
 }
 
 // ^
-static ExprIndex parse_expr_l9(TranslationUnit* tu, TokenStream* restrict s) {
-	ExprIndex lhs = parse_expr_l8(tu, s);
+static Expr* parse_expr_l9(TranslationUnit* tu, TokenStream* restrict s) {
+	Expr* lhs = parse_expr_l8(tu, s);
 	
 	while (tokens_get(s)->type == '^') {
 		SourceLocIndex loc = tokens_get(s)->location;
-		ExprIndex e = make_expr(tu);
+		Expr* e = make_expr(tu);
 		ExprOp op = EXPR_XOR;
 		tokens_next(s);
 		
-		ExprIndex rhs = parse_expr_l8(tu, s);
-		tu->exprs[e] = (Expr) {
+		Expr* rhs = parse_expr_l8(tu, s);
+		*e = (Expr) {
 			.op = op,
 			.loc = loc,
 			.bin_op = { lhs, rhs }
@@ -968,17 +979,17 @@ static ExprIndex parse_expr_l9(TranslationUnit* tu, TokenStream* restrict s) {
 }
 
 // |
-static ExprIndex parse_expr_l10(TranslationUnit* tu, TokenStream* restrict s) {
-	ExprIndex lhs = parse_expr_l9(tu, s);
+static Expr* parse_expr_l10(TranslationUnit* tu, TokenStream* restrict s) {
+	Expr* lhs = parse_expr_l9(tu, s);
 	
 	while (tokens_get(s)->type == '|') {
 		SourceLocIndex loc = tokens_get(s)->location;
-		ExprIndex e = make_expr(tu);
+		Expr* e = make_expr(tu);
 		ExprOp op = EXPR_OR;
 		tokens_next(s);
 		
-		ExprIndex rhs = parse_expr_l9(tu, s);
-		tu->exprs[e] = (Expr) {
+		Expr* rhs = parse_expr_l9(tu, s);
+		*e = (Expr) {
 			.op = op,
 			.loc = loc,
 			.bin_op = { lhs, rhs }
@@ -991,17 +1002,17 @@ static ExprIndex parse_expr_l10(TranslationUnit* tu, TokenStream* restrict s) {
 }
 
 // &&
-static ExprIndex parse_expr_l11(TranslationUnit* tu, TokenStream* restrict s) {
-	ExprIndex lhs = parse_expr_l10(tu, s);
+static Expr* parse_expr_l11(TranslationUnit* tu, TokenStream* restrict s) {
+	Expr* lhs = parse_expr_l10(tu, s);
 	
 	while (tokens_get(s)->type == TOKEN_DOUBLE_AND) {
 		SourceLocIndex loc = tokens_get(s)->location;
-		ExprIndex e = make_expr(tu);
+		Expr* e = make_expr(tu);
 		ExprOp op = EXPR_LOGICAL_AND;
 		tokens_next(s);
 		
-		ExprIndex rhs = parse_expr_l10(tu, s);
-		tu->exprs[e] = (Expr) {
+		Expr* rhs = parse_expr_l10(tu, s);
+		*e = (Expr) {
 			.op = op,
 			.loc = loc,
 			.bin_op = { lhs, rhs }
@@ -1014,17 +1025,17 @@ static ExprIndex parse_expr_l11(TranslationUnit* tu, TokenStream* restrict s) {
 }
 
 // ||
-static ExprIndex parse_expr_l12(TranslationUnit* tu, TokenStream* restrict s) {
-	ExprIndex lhs = parse_expr_l11(tu, s);
+static Expr* parse_expr_l12(TranslationUnit* tu, TokenStream* restrict s) {
+	Expr* lhs = parse_expr_l11(tu, s);
 	
 	while (tokens_get(s)->type == TOKEN_DOUBLE_OR) {
 		SourceLocIndex loc = tokens_get(s)->location;
-		ExprIndex e = make_expr(tu);
+		Expr* e = make_expr(tu);
 		ExprOp op = EXPR_LOGICAL_OR;
 		tokens_next(s);
 		
-		ExprIndex rhs = parse_expr_l11(tu, s);
-		tu->exprs[e] = (Expr) {
+		Expr* rhs = parse_expr_l11(tu, s);
+		*e = (Expr) {
 			.op = op,
 			.loc = loc,
 			.bin_op = { lhs, rhs }
@@ -1037,21 +1048,21 @@ static ExprIndex parse_expr_l12(TranslationUnit* tu, TokenStream* restrict s) {
 }
 
 // ternary
-static ExprIndex parse_expr_l13(TranslationUnit* tu, TokenStream* restrict s) {
-	ExprIndex lhs = parse_expr_l12(tu, s);
+static Expr* parse_expr_l13(TranslationUnit* tu, TokenStream* restrict s) {
+	Expr* lhs = parse_expr_l12(tu, s);
 	
 	if (tokens_get(s)->type == '?') {
 		SourceLocIndex loc = tokens_get(s)->location;
 		tokens_next(s);
 		
-		ExprIndex mhs = parse_expr(tu, s);
+		Expr* mhs = parse_expr(tu, s);
 		
 		expect(s, ':');
 		
-		ExprIndex rhs = parse_expr_l13(tu, s);
+		Expr* rhs = parse_expr_l13(tu, s);
 		
-		ExprIndex e = make_expr(tu);
-		tu->exprs[e] = (Expr) {
+		Expr* e = make_expr(tu);
+		*e = (Expr) {
 			.op = EXPR_TERNARY,
 			.loc = loc,
 			.ternary_op = { lhs, mhs, rhs }
@@ -1066,8 +1077,8 @@ static ExprIndex parse_expr_l13(TranslationUnit* tu, TokenStream* restrict s) {
 // = += -= *= /= %= <<= >>= &= ^= |=
 //
 // NOTE(NeGate): a=b=c is a=(b=c) not (a=b)=c
-static ExprIndex parse_expr_l14(TranslationUnit* tu, TokenStream* restrict s) {
-	ExprIndex lhs = parse_expr_l13(tu, s);
+static Expr* parse_expr_l14(TranslationUnit* tu, TokenStream* restrict s) {
+	Expr* lhs = parse_expr_l13(tu, s);
 	
 	if (tokens_get(s)->type == TOKEN_ASSIGN ||
 		tokens_get(s)->type == TOKEN_PLUS_EQUAL ||
@@ -1081,7 +1092,7 @@ static ExprIndex parse_expr_l14(TranslationUnit* tu, TokenStream* restrict s) {
 		tokens_get(s)->type == TOKEN_LEFT_SHIFT_EQUAL ||
 		tokens_get(s)->type == TOKEN_RIGHT_SHIFT_EQUAL) {
 		SourceLocIndex loc = tokens_get(s)->location;
-		ExprIndex e = make_expr(tu);
+		Expr* e = make_expr(tu);
 		
 		ExprOp op;
 		switch (tokens_get(s)->type) {
@@ -1100,8 +1111,8 @@ static ExprIndex parse_expr_l14(TranslationUnit* tu, TokenStream* restrict s) {
 		}
 		tokens_next(s);
 		
-		ExprIndex rhs = parse_expr_l14(tu, s);
-		tu->exprs[e] = (Expr) {
+		Expr* rhs = parse_expr_l14(tu, s);
+		*e = (Expr) {
 			.op = op,
 			.loc = loc,
 			.bin_op = { lhs, rhs }
@@ -1112,17 +1123,17 @@ static ExprIndex parse_expr_l14(TranslationUnit* tu, TokenStream* restrict s) {
 	}
 }
 
-static ExprIndex parse_expr_l15(TranslationUnit* tu, TokenStream* restrict s) {
-	ExprIndex lhs = parse_expr_l14(tu, s);
+static Expr* parse_expr_l15(TranslationUnit* tu, TokenStream* restrict s) {
+	Expr* lhs = parse_expr_l14(tu, s);
 	
 	while (tokens_get(s)->type == TOKEN_COMMA) {
 		SourceLocIndex loc = tokens_get(s)->location;
-		ExprIndex e = make_expr(tu);
+		Expr* e = make_expr(tu);
 		ExprOp op = EXPR_COMMA;
 		tokens_next(s);
 		
-		ExprIndex rhs = parse_expr_l14(tu, s);
-		tu->exprs[e] = (Expr) {
+		Expr* rhs = parse_expr_l14(tu, s);
+		*e = (Expr) {
 			.op = op,
 			.loc = loc,
 			.bin_op = { lhs, rhs }
@@ -1134,6 +1145,6 @@ static ExprIndex parse_expr_l15(TranslationUnit* tu, TokenStream* restrict s) {
 	return lhs;
 }
 
-static ExprIndex parse_expr(TranslationUnit* tu, TokenStream* restrict s) {
+static Expr* parse_expr(TranslationUnit* tu, TokenStream* restrict s) {
 	return parse_expr_l15(tu, s);
 }

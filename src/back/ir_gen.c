@@ -95,9 +95,8 @@ static TB_Register cast_reg(TB_Function* func, TB_Register reg, const Type* src,
 	return reg;
 }
 
-static TB_Register cvt2rval(TranslationUnit* tu, TB_Function* func, const IRVal v, ExprIndex e) {
-	const Expr* restrict ep = &tu->exprs[e];
-	const Type* src = &tu->types[ep->type];
+static TB_Register cvt2rval(TranslationUnit* tu, TB_Function* func, const IRVal v, const Expr* e) {
+	const Type* src = &tu->types[e->type];
 	
 	TB_Register reg = 0;
 	switch (v.value_type) {
@@ -123,7 +122,7 @@ static TB_Register cvt2rval(TranslationUnit* tu, TB_Function* func, const IRVal 
 			// Implicit array to pointer
 			if (src->kind == KIND_ARRAY) {
 				// just pass the address don't load
-				const Type* cast_type = &tu->types[ep->cast_type];
+				const Type* cast_type = &tu->types[e->cast_type];
 				//assert(cast_type->kind == KIND_PTR && cast_type->ptr_to == src->array_of);
 				
 				src = cast_type;
@@ -158,11 +157,11 @@ static TB_Register cvt2rval(TranslationUnit* tu, TB_Function* func, const IRVal 
 		default: abort();
 	}
 	
-	const Type* dst = &tu->types[ep->cast_type];
+	const Type* dst = &tu->types[e->cast_type];
 	return src != dst ? cast_reg(func, reg, src, dst) : reg;
 }
 
-TB_Register irgen_as_rvalue(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
+TB_Register irgen_as_rvalue(TranslationUnit* tu, TB_Function* func, Expr* e) {
 	return cvt2rval(tu, func, irgen_expr(tu, func, e), e);
 }
 
@@ -293,8 +292,8 @@ InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, Sourc
 			assert(node->expr);
 			
 			bool success = false;
-			if (!func && tu->exprs[node->expr].op == EXPR_SYMBOL) {
-				Stmt* stmt = tu->exprs[node->expr].symbol;
+			if (!func && node->expr->op == EXPR_SYMBOL) {
+				Stmt* stmt = node->expr->symbol;
 				
 				// hacky just to make it possible for some symbols to appear in the 
 				// initializers
@@ -310,7 +309,7 @@ InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, Sourc
 			}
 			
 			if (!success) {
-				switch (tu->exprs[node->expr].op) {
+				switch (node->expr->op) {
 					// TODO(NeGate): Implement constants for literals
 					// to allow for more stuff to be precomputed.
 					case EXPR_INT:
@@ -358,7 +357,7 @@ InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, Sourc
 							tb_inst_memcpy(func, effective_addr, v.reg, size_reg, align);
 						} else {
 							// hacky but we set the cast so that the rvalue returns a normal value
-							tu->exprs[node->expr].cast_type = child_type;
+							node->expr->cast_type = child_type;
 							
 							TB_Register v = irgen_as_rvalue(tu, func, node->expr);
 							
@@ -403,27 +402,22 @@ static void gen_local_initializer(TranslationUnit* tu, TB_Function* func, Source
 	eval_initializer_objects(tu, func, loc, init, addr, t, node_count, nodes, 0);
 }
 
-static TB_InitializerID gen_global_initializer(TranslationUnit* tu, SourceLocIndex loc, TypeIndex t, ExprIndex initial, const unsigned char* name) {
+static TB_InitializerID gen_global_initializer(TranslationUnit* tu, SourceLocIndex loc, TypeIndex t, Expr* initial, const unsigned char* name) {
 	assert(t);
 	Type* restrict type = &tu->types[t];
 	
-	if (initial) {
-		Expr* restrict ep = &tu->exprs[initial];
-		
-		if (ep->op == EXPR_STR || ep->op == EXPR_WSTR) {
+	if (initial != NULL) {
+		if (initial->op == EXPR_STR || initial->op == EXPR_WSTR) {
 			TB_InitializerID init = tb_initializer_create(mod, type->size, type->align, 1);
-			
 			char* dst = tb_initializer_add_region(mod, init, 0, type->size);
-			Expr* restrict ep = &tu->exprs[initial];
-			
-			// TODO(NeGate): Swap this out with 
-			memcpy(dst, ep->str.start, ep->str.end - ep->str.start);
+			memcpy(dst, initial->str.start, initial->str.end - initial->str.start);
 			
 			if (type->kind == KIND_PTR) {
 				// if it's a string pointer, then we make a dummy string array
 				// and point to that with another initializer
 				char temp[1024];
-				snprintf(temp, 1024, "%s@%d", name, initial);
+				snprintf(temp, 1024, "%s@%p", name, initial);
+				
 				TB_GlobalID dummy = tb_global_create(mod, temp, TB_STORAGE_DATA, TB_LINKAGE_PRIVATE);
 				tb_global_set_initializer(mod, dummy, init);
 				
@@ -432,13 +426,13 @@ static TB_InitializerID gen_global_initializer(TranslationUnit* tu, SourceLocInd
 			}
 			
 			return init;
-		} else if (ep->op == EXPR_INITIALIZER) {
-			if (ep->init.type == TYPE_VOID) {
-				ep->init.type = t;
+		} else if (initial->op == EXPR_INITIALIZER) {
+			if (initial->init.type == TYPE_VOID) {
+				initial->init.type = t;
 			}
 			
-			int node_count = ep->init.count;
-			InitNode* nodes = ep->init.nodes;
+			int node_count = initial->init.count;
+			InitNode* nodes = initial->init.nodes;
 			
 			// Walk initializer for max constant expression initializers.
 			int max_tb_objects = 0;
@@ -449,11 +443,11 @@ static TB_InitializerID gen_global_initializer(TranslationUnit* tu, SourceLocInd
 			// Initialize all const expressions
 			eval_initializer_objects(tu, NULL, loc, init, TB_NULL_REG, t, node_count, nodes, 0);
 			return init;
-		} else if (ep->op == EXPR_INT ||
-				   ep->op == EXPR_ENUM ||
-				   ep->op == EXPR_CHAR ||
-				   ep->op == EXPR_CAST ||
-				   ep->op == EXPR_NEGATE) {
+		} else if (initial->op == EXPR_INT ||
+				   initial->op == EXPR_ENUM ||
+				   initial->op == EXPR_CHAR ||
+				   initial->op == EXPR_CAST ||
+				   initial->op == EXPR_NEGATE) {
 			TB_InitializerID init = tb_initializer_create(mod, type->size, type->align, 1);
 			void* region = tb_initializer_add_region(mod, init, 0, type->size);
 			
@@ -462,27 +456,27 @@ static TB_InitializerID gen_global_initializer(TranslationUnit* tu, SourceLocInd
 			memcpy(region, &value.unsigned_value, type->size);
 			
 			return init;
-		} else if (ep->op == EXPR_ADDR) {
+		} else if (initial->op == EXPR_ADDR) {
 			TB_InitializerID init = tb_initializer_create(mod, type->size, type->align, 2);
 			void* region = tb_initializer_add_region(mod, init, 0, type->size);
 			
 			uint64_t offset = 0;
 			
 			// &some_global[a][b][c]
-			ExprIndex base = ep->unary_op.src;
-			while (tu->exprs[base].op == EXPR_SUBSCRIPT) {
-				uint64_t stride = tu->types[tu->exprs[base].type].size;
-				uint64_t index = const_eval(tu, tu->exprs[base].subscript.index).unsigned_value;
+			Expr* base = initial->unary_op.src;
+			while (base->op == EXPR_SUBSCRIPT) {
+				uint64_t stride = tu->types[base->type].size;
+				uint64_t index = const_eval(tu, base->subscript.index).unsigned_value;
 				
 				offset += (index * stride);
-				base = tu->exprs[base].subscript.base;
+				base = base->subscript.base;
 			}
 			
 			// TODO(NeGate): Assumes we're on a 64bit target...
 			memcpy(region, &offset, sizeof(uint64_t));
 			
-			if (tu->exprs[base].op == EXPR_SYMBOL) {
-				Stmt* stmt = tu->exprs[base].symbol;
+			if (base->op == EXPR_SYMBOL) {
+				Stmt* stmt = base->symbol;
 				
 				if (stmt->op == STMT_GLOBAL_DECL) {
 					tb_initializer_add_global(mod, init, 0, stmt->backing.g);
@@ -508,16 +502,14 @@ static void insert_label(TB_Function* func) {
 	}
 }
 
-IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
-	Expr* restrict ep = &tu->exprs[e];
-	
-	switch (ep->op) {
+IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
+	switch (e->op) {
 		case EXPR_CHAR: {
 			// TODO(NeGate): Maybe multichar literals
-			const unsigned char* start = ep->str.start;
+			const unsigned char* start = e->str.start;
 			start += (*start == 'L'); // skip the L
 			
-			size_t len = ((const unsigned char*)ep->str.end) - start; 
+			size_t len = ((const unsigned char*)e->str.end) - start; 
 			assert(start[0] == '\'');
 			
 			int ch;
@@ -529,46 +521,46 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 			
 			return (IRVal) {
 				.value_type = RVALUE,
-				.type = ep->type,
-				.reg = tb_inst_uint(func, ep->type == TYPE_SHORT ? TB_TYPE_I16 : TB_TYPE_I8, ch)
+				.type = e->type,
+				.reg = tb_inst_uint(func, e->type == TYPE_SHORT ? TB_TYPE_I16 : TB_TYPE_I8, ch)
 			};
 		}
 		case EXPR_INT: {
-			TB_DataType dt = ctype_to_tbtype(&tu->types[ep->type]);
+			TB_DataType dt = ctype_to_tbtype(&tu->types[e->type]);
 			
-			if (tu->types[ep->type].is_unsigned) {
+			if (tu->types[e->type].is_unsigned) {
 				return (IRVal) {
 					.value_type = RVALUE,
-					.type = ep->type,
-					.reg = tb_inst_uint(func, dt, ep->int_num.num)
+					.type = e->type,
+					.reg = tb_inst_uint(func, dt, e->int_num.num)
 				};
 			} else {
 				return (IRVal) {
 					.value_type = RVALUE,
-					.type = ep->type,
-					.reg = tb_inst_sint(func, dt, ep->int_num.num)
+					.type = e->type,
+					.reg = tb_inst_sint(func, dt, e->int_num.num)
 				};
 			}
 		}
 		case EXPR_ENUM: {
 			return (IRVal) {
 				.value_type = RVALUE,
-				.type = ep->type,
-				.reg = tb_inst_sint(func, TB_TYPE_I32, ep->enum_val.num)
+				.type = e->type,
+				.reg = tb_inst_sint(func, TB_TYPE_I32, e->enum_val.num)
 			};
 		}
 		case EXPR_FLOAT32: {
 			return (IRVal) {
 				.value_type = RVALUE,
-				.type = ep->cast_type,
-				.reg = tb_inst_float(func, ep->cast_type == TYPE_DOUBLE ? TB_TYPE_F64 : TB_TYPE_F32, ep->float_num)
+				.type = e->cast_type,
+				.reg = tb_inst_float(func, e->cast_type == TYPE_DOUBLE ? TB_TYPE_F64 : TB_TYPE_F32, e->float_num)
 			};
 		}
 		case EXPR_FLOAT64: {
 			return (IRVal) {
 				.value_type = RVALUE,
-				.type = ep->cast_type,
-				.reg = tb_inst_float(func, ep->cast_type == TYPE_FLOAT ? TB_TYPE_F32 : TB_TYPE_F64, ep->float_num)
+				.type = e->cast_type,
+				.reg = tb_inst_float(func, e->cast_type == TYPE_FLOAT ? TB_TYPE_F32 : TB_TYPE_F64, e->float_num)
 			};
 		}
 		case EXPR_STR:
@@ -576,33 +568,33 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 			// The string is preprocessed to be a flat and nice byte buffer by the semantics pass
 			return (IRVal) {
 				.value_type = RVALUE,
-				.type = ep->type,
-				.reg = tb_inst_string(func, ep->str.end - ep->str.start, (char*)ep->str.start)
+				.type = e->type,
+				.reg = tb_inst_string(func, e->str.end - e->str.start, (char*)e->str.start)
 			};
 		}
 		case EXPR_INITIALIZER: {
-			Type* ty = &tu->types[ep->init.type];
+			Type* ty = &tu->types[e->init.type];
 			TB_Register addr = tb_inst_local(func, ty->size, ty->align);
 			
-			gen_local_initializer(tu, func, ep->loc, addr, ep->init.type, ep->init.count, ep->init.nodes);
+			gen_local_initializer(tu, func, e->loc, addr, e->init.type, e->init.count, e->init.nodes);
 			
 			return (IRVal) {
 				.value_type = LVALUE,
-				.type = ep->init.type,
+				.type = e->init.type,
 				.reg = addr
 			};
 		}
 		case EXPR_FUNCTION: {
-			assert(ep->func.src->op == STMT_FUNC_DECL);
+			assert(e->func.src->op == STMT_FUNC_DECL);
 			
 			return (IRVal) {
 				.value_type = LVALUE_FUNC,
-				.type = ep->type,
-				.func = tb_function_from_id(mod, ep->func.src->backing.f)
+				.type = e->type,
+				.func = tb_function_from_id(mod, e->func.src->backing.f)
 			};
 		}
 		case EXPR_SYMBOL: {
-			Stmt* stmt = ep->symbol;
+			Stmt* stmt = e->symbol;
 			assert(stmt->op == STMT_DECL  ||
 				   stmt->op == STMT_LABEL ||
 				   stmt->op == STMT_GLOBAL_DECL ||
@@ -697,7 +689,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 			};
 		}
 		case EXPR_PARAM: {
-			int param_num = ep->param_num;
+			int param_num = e->param_num;
 			TB_Register reg = parameter_map[param_num];
 			
 			TypeIndex arg_type = tu->types[function_type].func.param_list[param_num].type;
@@ -716,32 +708,32 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 			};
 		}
 		case EXPR_GENERIC: {
-			assert(ep->generic_.case_count == 0);
-			return irgen_expr(tu, func, ep->generic_.controlling_expr);
+			assert(e->generic_.case_count == 0);
+			return irgen_expr(tu, func, e->generic_.controlling_expr);
 		}
 		case EXPR_ADDR: {
 			uint64_t dst;
-			if (const_eval_try_offsetof_hack(tu, ep->unary_op.src, &dst)) {
+			if (const_eval_try_offsetof_hack(tu, e->unary_op.src, &dst)) {
 				return (IRVal) {
 					.value_type = RVALUE,
-					.type = ep->type,
+					.type = e->type,
 					.reg = tb_inst_uint(func, TB_TYPE_PTR, dst)
 				};
 			}
 			
-			IRVal src = irgen_expr(tu, func, ep->unary_op.src);
+			IRVal src = irgen_expr(tu, func, e->unary_op.src);
 			
 			if (src.value_type == LVALUE) {
-				src.type = ep->type;
+				src.type = e->type;
 				src.value_type = RVALUE;
 				return src;
 			} else if (src.value_type == LVALUE_EFUNC) {
-				src.type = ep->type;
+				src.type = e->type;
 				src.value_type = RVALUE;
 				src.reg = tb_inst_get_extern_address(func, src.ext);
 				return src;
 			} else if (src.value_type == LVALUE_FUNC) {
-				src.type = ep->type;
+				src.type = e->type;
 				src.value_type = RVALUE;
 				src.reg = tb_inst_get_func_address(func, src.func);
 				return src;
@@ -750,58 +742,58 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 			}
 		}
 		case EXPR_LOGICAL_NOT: {
-			TB_Register reg = irgen_as_rvalue(tu, func, ep->unary_op.src);
+			TB_Register reg = irgen_as_rvalue(tu, func, e->unary_op.src);
 			TB_DataType dt = tb_function_get_node(func, reg)->dt;
 			
 			return (IRVal) {
 				.value_type = RVALUE,
-				.type = ep->type,
+				.type = e->type,
 				.reg = tb_inst_cmp_eq(func, reg, tb_inst_uint(func, dt, 0))
 			};
 		}
 		case EXPR_NOT: {
 			return (IRVal) {
 				.value_type = RVALUE,
-				.type = ep->type,
-				.reg = tb_inst_not(func, irgen_as_rvalue(tu, func, ep->unary_op.src))
+				.type = e->type,
+				.reg = tb_inst_not(func, irgen_as_rvalue(tu, func, e->unary_op.src))
 			};
 		}
 		case EXPR_NEGATE: {
 			return (IRVal) {
 				.value_type = RVALUE,
-				.type = ep->type,
-				.reg = tb_inst_neg(func, irgen_as_rvalue(tu, func, ep->unary_op.src))
+				.type = e->type,
+				.reg = tb_inst_neg(func, irgen_as_rvalue(tu, func, e->unary_op.src))
 			};
 		}
 		case EXPR_CAST: {
-			TB_Register src = irgen_as_rvalue(tu, func, ep->cast.src);
+			TB_Register src = irgen_as_rvalue(tu, func, e->cast.src);
 			
 			// stuff like ((void) x)
-			if (tu->types[ep->cast.type].kind == KIND_VOID) {
+			if (tu->types[e->cast.type].kind == KIND_VOID) {
 				return (IRVal) { .value_type = RVALUE, .type = TYPE_VOID, .reg = 0 };
 			}
 			
 			return (IRVal) {
 				.value_type = RVALUE,
-				.type = ep->cast.type,
+				.type = e->cast.type,
 				.reg = src
 			};
 		}
 		case EXPR_DEREF: {
-			TB_Register reg = irgen_as_rvalue(tu, func, ep->unary_op.src);
+			TB_Register reg = irgen_as_rvalue(tu, func, e->unary_op.src);
 			return (IRVal) {
 				.value_type = LVALUE,
-				.type = ep->type,
+				.type = e->type,
 				.reg = reg
 			};
 		}
 		case EXPR_CALL: {
-			ExprIndex* args = ep->call.param_start;
-			int arg_count = ep->call.param_count;
+			Expr** args = e->call.param_start;
+			int arg_count = e->call.param_count;
 			
 			// Try to see if it's an intrinsic
-			if (tu->exprs[ep->call.target].op == EXPR_SYMBOL) {
-				Stmt* sym = tu->exprs[ep->call.target].symbol;
+			if (e->call.target->op == EXPR_SYMBOL) {
+				Stmt* sym = e->call.target->symbol;
 				
 				if (sym->op == STMT_DECL) {
 					const char* name = (const char*) sym->decl.name;
@@ -814,51 +806,50 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 							
 							return (IRVal) {
 								.value_type = RVALUE,
-								.type = ep->type,
+								.type = e->type,
 								.reg = val
 							};
 						}
 					}
 				}
-			} else if (tu->exprs[ep->call.target].op == EXPR_UNKNOWN_SYMBOL) {
+			} else if (e->call.target->op == EXPR_UNKNOWN_SYMBOL) {
 				// We can only get to this point with UNKNOWN_SYMBOL if it's
 				// a builtin
-				const char* name = (const char*) tu->exprs[ep->call.target].unknown_sym;
+				const char* name = (const char*) e->call.target->unknown_sym;
 				TB_Register val = target_desc.compile_builtin(tu, func, name, arg_count, args);
 				
 				return (IRVal) {
 					.value_type = RVALUE,
-					.type = ep->type,
+					.type = e->type,
 					.reg = val
 				};
 			}
 			
 			// Resolve ABI arg count
-			bool is_aggregate_return = target_desc.pass_return(tu, ep->type);
+			bool is_aggregate_return = target_desc.pass_return(tu, e->type);
 			size_t real_arg_count = is_aggregate_return ? 1 : 0;
 			
 			for (size_t i = 0; i < arg_count; i++) {
-				TypeIndex arg_type = tu->exprs[args[i]].type;
+				TypeIndex arg_type = args[i]->type;
 				real_arg_count += target_desc.deduce_parameter_usage(tu, arg_type);
 			}
 			
 			TB_Reg* ir_args = tls_push(real_arg_count * sizeof(TB_Reg));
 			if (is_aggregate_return) {
-				ir_args[0] = tb_inst_local(func, tu->types[ep->type].size, tu->types[ep->type].align);
+				ir_args[0] = tb_inst_local(func, tu->types[e->type].size, tu->types[e->type].align);
 			}
 			
 			// point at which it stops being know which parameter types we're
 			// mapping to, if it's arg_count then there's really none
 			size_t varargs_cutoff = arg_count;
-			Type* func_type = &tu->types[tu->exprs[ep->call.target].type];
+			Type* func_type = &tu->types[e->call.target->type];
 			if (func_type->func.has_varargs) {
 				varargs_cutoff = func_type->func.param_count;
 			}
 			
 			size_t ir_arg_count = is_aggregate_return ? 1 : 0;
 			for (size_t i = 0; i < arg_count; i++) {
-				ir_arg_count += target_desc.pass_parameter(
-														   tu, func, args[i],
+				ir_arg_count += target_desc.pass_parameter(tu, func, args[i],
 														   i >= varargs_cutoff,
 														   &ir_args[ir_arg_count]);
 			}
@@ -869,9 +860,9 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 			//
 			// NOTE(NeGate): Could have been resized in the parameter's irgen_expr
 			// so we reload the pointer.
-			IRVal func_ptr = irgen_expr(tu, func, ep->call.target);
+			IRVal func_ptr = irgen_expr(tu, func, e->call.target);
 			
-			TB_DataType dt = ctype_to_tbtype(&tu->types[ep->type]);
+			TB_DataType dt = ctype_to_tbtype(&tu->types[e->type]);
 			if (is_aggregate_return) dt = TB_TYPE_VOID;
 			
 			TB_Reg r;
@@ -880,7 +871,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 			} else if (func_ptr.value_type == LVALUE_EFUNC) {
 				r = tb_inst_ecall(func, dt, func_ptr.ext, real_arg_count, ir_args);
 			} else {
-				TB_Reg target_reg = cvt2rval(tu, func, func_ptr, ep->call.target);
+				TB_Reg target_reg = cvt2rval(tu, func, func_ptr, e->call.target);
 				
 				r = tb_inst_vcall(func, dt, target_reg, real_arg_count, ir_args);
 			}
@@ -891,7 +882,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 				
 				return (IRVal) {
 					.value_type = RVALUE,
-					.type = ep->type,
+					.type = e->type,
 					.reg = result
 				};
 			} else {
@@ -899,27 +890,27 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 				
 				return (IRVal) {
 					.value_type = RVALUE,
-					.type = ep->type,
+					.type = e->type,
 					.reg = r
 				};
 			}
 		}
 		case EXPR_SUBSCRIPT: {
-			TB_Register base = irgen_as_rvalue(tu, func, ep->subscript.base);
-			TB_Register index = irgen_as_rvalue(tu, func, ep->subscript.index);
+			TB_Register base = irgen_as_rvalue(tu, func, e->subscript.base);
+			TB_Register index = irgen_as_rvalue(tu, func, e->subscript.index);
 			
-			int stride = tu->types[ep->type].size;
+			int stride = tu->types[e->type].size;
 			return (IRVal) {
 				.value_type = LVALUE,
-				.type = ep->type,
+				.type = e->type,
 				.reg = tb_inst_array_access(func, base, index, stride)
 			};
 		}
 		case EXPR_DOT: {
-			IRVal src = irgen_expr(tu, func, ep->dot_arrow.base);
+			IRVal src = irgen_expr(tu, func, e->dot_arrow.base);
 			assert(src.value_type == LVALUE);
 			
-			Member* member = ep->dot_arrow.member;
+			Member* member = e->dot_arrow.member;
 			assert(member != NULL);
 			
 			if (member->is_bitfield) {
@@ -927,7 +918,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 					.value_type = LVALUE_BITS,
 					.type = member->type,
 					.bits = {
-						.reg = tb_inst_member_access(func, src.reg, ep->dot_arrow.offset),
+						.reg = tb_inst_member_access(func, src.reg, e->dot_arrow.offset),
 						.offset = member->bit_offset, .width = member->bit_width
 					}
 				};
@@ -935,14 +926,14 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 				return (IRVal) {
 					.value_type = LVALUE,
 					.type = member->type,
-					.reg = tb_inst_member_access(func, src.reg, ep->dot_arrow.offset)
+					.reg = tb_inst_member_access(func, src.reg, e->dot_arrow.offset)
 				};
 			} 
 		}
 		case EXPR_ARROW: {
-			TB_Register src = irgen_as_rvalue(tu, func, ep->dot_arrow.base);
+			TB_Register src = irgen_as_rvalue(tu, func, e->dot_arrow.base);
 			
-			Member* member = ep->dot_arrow.member;
+			Member* member = e->dot_arrow.member;
 			assert(member != NULL);
 			
 			if (member->is_bitfield) {
@@ -950,7 +941,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 					.value_type = LVALUE_BITS,
 					.type = member->type,
 					.bits = {
-						.reg = tb_inst_member_access(func, src, ep->dot_arrow.offset),
+						.reg = tb_inst_member_access(func, src, e->dot_arrow.offset),
 						.offset = member->bit_offset, .width = member->bit_width
 					}
 				};
@@ -958,19 +949,19 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 				return (IRVal) {
 					.value_type = LVALUE,
 					.type = member->type,
-					.reg = tb_inst_member_access(func, src, ep->dot_arrow.offset)
+					.reg = tb_inst_member_access(func, src, e->dot_arrow.offset)
 				};
 			}
 		}
 		case EXPR_PRE_INC:
 		case EXPR_PRE_DEC: {
-			bool is_inc = (ep->op == EXPR_PRE_INC);
+			bool is_inc = (e->op == EXPR_PRE_INC);
 			
-			IRVal src = irgen_expr(tu, func, ep->unary_op.src);
+			IRVal src = irgen_expr(tu, func, e->unary_op.src);
 			assert(src.value_type == LVALUE);
 			
-			TB_Register loaded = cvt2rval(tu, func, src, ep->unary_op.src);
-			Type* type = &tu->types[ep->type];
+			TB_Register loaded = cvt2rval(tu, func, src, e->unary_op.src);
+			Type* type = &tu->types[e->type];
 			if (type->kind == KIND_PTR) {
 				// pointer arithmatic
 				TB_Register stride = tb_inst_sint(func, TB_TYPE_PTR, tu->types[type->ptr_to].size);
@@ -984,7 +975,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 				
 				return (IRVal) {
 					.value_type = RVALUE,
-					.type = ep->type,
+					.type = e->type,
 					.reg = operation
 				};
 			} else {
@@ -1001,19 +992,19 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 				
 				return (IRVal) {
 					.value_type = RVALUE,
-					.type = ep->type,
+					.type = e->type,
 					.reg = operation
 				};
 			}
 		}
 		case EXPR_POST_INC:
 		case EXPR_POST_DEC: {
-			bool is_inc = (ep->op == EXPR_POST_INC);
+			bool is_inc = (e->op == EXPR_POST_INC);
 			
-			IRVal src = irgen_expr(tu, func, ep->unary_op.src);
+			IRVal src = irgen_expr(tu, func, e->unary_op.src);
 			assert(src.value_type == LVALUE);
 			
-			Type* type = &tu->types[ep->type];
+			Type* type = &tu->types[e->type];
 			if (type->is_atomic) {
 				TB_Register stride;
 				if (type->kind == KIND_PTR) {
@@ -1029,11 +1020,11 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 				
 				return (IRVal) {
 					.value_type = RVALUE,
-					.type = ep->type,
+					.type = e->type,
 					.reg = operation
 				};
 			} else {
-				TB_Register loaded = cvt2rval(tu, func, src, ep->unary_op.src);
+				TB_Register loaded = cvt2rval(tu, func, src, e->unary_op.src);
 				
 				TB_DataType dt;
 				TB_Register stride;
@@ -1057,7 +1048,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 				
 				return (IRVal) {
 					.value_type = RVALUE,
-					.type = ep->type,
+					.type = e->type,
 					.reg = loaded
 				};
 			}
@@ -1074,12 +1065,12 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 			//
 			//          if (a) { goto true    } else { goto try_rhs }
 			// try_rhs: if (b) { goto true    } else { goto false }
-			bool is_and = (ep->op == EXPR_LOGICAL_AND);
+			bool is_and = (e->op == EXPR_LOGICAL_AND);
 			
 			TB_Label try_rhs_lbl = tb_inst_new_label_id(func);
 			
 			// Eval first operand
-			IRVal a = irgen_expr(tu, func, ep->bin_op.left);
+			IRVal a = irgen_expr(tu, func, e->bin_op.left);
 			
 			TB_Label true_lbl, false_lbl;
 			if (a.value_type == RVALUE_PHI) {
@@ -1103,7 +1094,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 				true_lbl = tb_inst_new_label_id(func);
 				false_lbl = tb_inst_new_label_id(func);
 				
-				TB_Reg a_reg = cvt2rval(tu, func, a, ep->bin_op.left);
+				TB_Reg a_reg = cvt2rval(tu, func, a, e->bin_op.left);
 				if (is_and) {
 					tb_inst_if(func, a_reg, try_rhs_lbl, false_lbl);
 				} else {
@@ -1114,7 +1105,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 			// Eval second operand
 			tb_inst_label(func, try_rhs_lbl);
 			
-			TB_Reg b = irgen_as_rvalue(tu, func, ep->bin_op.right);
+			TB_Reg b = irgen_as_rvalue(tu, func, e->bin_op.right);
 			tb_inst_if(func, b, true_lbl, false_lbl);
 			
 			// Just in case
@@ -1127,32 +1118,32 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 			};
 		}
 		case EXPR_COMMA: {
-			irgen_expr(tu, func, ep->bin_op.left);
-			return irgen_expr(tu, func, ep->bin_op.right);
+			irgen_expr(tu, func, e->bin_op.left);
+			return irgen_expr(tu, func, e->bin_op.right);
 		}
 		case EXPR_PTRADD:
 		case EXPR_PTRSUB: {
-			TB_Register l = irgen_as_rvalue(tu, func, ep->bin_op.left);
-			TB_Register r = irgen_as_rvalue(tu, func, ep->bin_op.right);
+			TB_Register l = irgen_as_rvalue(tu, func, e->bin_op.left);
+			TB_Register r = irgen_as_rvalue(tu, func, e->bin_op.right);
 			
-			Type* restrict type = &tu->types[ep->type];
+			Type* restrict type = &tu->types[e->type];
 			
 			// pointer arithmatic
-			int dir = ep->op == EXPR_PTRADD ? 1 : -1;
+			int dir = e->op == EXPR_PTRADD ? 1 : -1;
 			int stride = tu->types[type->ptr_to].size;
 			
 			assert(stride);
 			return (IRVal) {
 				.value_type = RVALUE,
-				.type = ep->type,
+				.type = e->type,
 				.reg = tb_inst_array_access(func, l, r, dir * stride)
 			};
 		}
 		case EXPR_PTRDIFF: {
-			TB_Register l = irgen_as_rvalue(tu, func, ep->bin_op.left);
-			TB_Register r = irgen_as_rvalue(tu, func, ep->bin_op.right);
+			TB_Register l = irgen_as_rvalue(tu, func, e->bin_op.left);
+			TB_Register r = irgen_as_rvalue(tu, func, e->bin_op.right);
 			
-			Type* restrict type = &tu->types[tu->exprs[ep->bin_op.left].cast_type];
+			Type* restrict type = &tu->types[e->bin_op.left->cast_type];
 			int stride = tu->types[type->ptr_to].size;
 			
 			l = tb_inst_ptr2int(func, l, TB_TYPE_I64);
@@ -1163,7 +1154,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 			
 			return (IRVal) {
 				.value_type = RVALUE,
-				.type = ep->type,
+				.type = e->type,
 				.reg = diff_in_elems
 			};
 		}
@@ -1177,13 +1168,13 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 		case EXPR_XOR:
 		case EXPR_SHL:
 		case EXPR_SHR: {
-			TB_Register l = irgen_as_rvalue(tu, func, ep->bin_op.left);
-			TB_Register r = irgen_as_rvalue(tu, func, ep->bin_op.right);
-			Type* restrict type = &tu->types[ep->type];
+			TB_Register l = irgen_as_rvalue(tu, func, e->bin_op.left);
+			TB_Register r = irgen_as_rvalue(tu, func, e->bin_op.right);
+			Type* restrict type = &tu->types[e->type];
 			
 			TB_Register data;
 			if (type->kind == KIND_FLOAT || type->kind == KIND_DOUBLE) {
-				switch (ep->op) {
+				switch (e->op) {
 					case EXPR_PLUS: data = tb_inst_fadd(func, l, r); break;
 					case EXPR_MINUS: data = tb_inst_fsub(func, l, r); break;
 					case EXPR_TIMES: data = tb_inst_fmul(func, l, r); break;
@@ -1193,7 +1184,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 			} else {
 				TB_ArithmaticBehavior ab = type->is_unsigned ? TB_CAN_WRAP : TB_ASSUME_NSW;
 				
-				switch (ep->op) {
+				switch (e->op) {
 					case EXPR_PLUS: data = tb_inst_add(func, l, r, ab); break;
 					case EXPR_MINUS: data = tb_inst_sub(func, l, r, ab); break;
 					case EXPR_TIMES: data = tb_inst_mul(func, l, r, ab); break;
@@ -1215,17 +1206,17 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 			
 			return (IRVal) {
 				.value_type = RVALUE,
-				.type = ep->type,
+				.type = e->type,
 				.reg = data
 			};
 		}
 		case EXPR_CMPEQ:
 		case EXPR_CMPNE: {
-			TB_Register l = irgen_as_rvalue(tu, func, ep->bin_op.left);
-			TB_Register r = irgen_as_rvalue(tu, func, ep->bin_op.right);
+			TB_Register l = irgen_as_rvalue(tu, func, e->bin_op.left);
+			TB_Register r = irgen_as_rvalue(tu, func, e->bin_op.right);
 			
 			TB_Register result;
-			if (ep->op == EXPR_CMPEQ) {
+			if (e->op == EXPR_CMPEQ) {
 				result = tb_inst_cmp_eq(func, l, r);
 			} else {
 				result = tb_inst_cmp_ne(func, l, r);
@@ -1241,14 +1232,14 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 		case EXPR_CMPGE:
 		case EXPR_CMPLT:
 		case EXPR_CMPLE: {
-			TB_Register l = irgen_as_rvalue(tu, func, ep->bin_op.left);
-			TB_Register r = irgen_as_rvalue(tu, func, ep->bin_op.right);
+			TB_Register l = irgen_as_rvalue(tu, func, e->bin_op.left);
+			TB_Register r = irgen_as_rvalue(tu, func, e->bin_op.right);
 			
-			Type* type = &tu->types[tu->exprs[ep->bin_op.left].cast_type];
+			Type* type = &tu->types[e->bin_op.left->cast_type];
 			
 			TB_Register data;
 			if (type->kind == KIND_FLOAT || type->kind == KIND_DOUBLE) {
-				switch (ep->op) {
+				switch (e->op) {
 					case EXPR_CMPGT: data = tb_inst_cmp_fgt(func, l, r); break;
 					case EXPR_CMPGE: data = tb_inst_cmp_fge(func, l, r); break;
 					case EXPR_CMPLT: data = tb_inst_cmp_flt(func, l, r); break;
@@ -1256,7 +1247,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 					default: abort();
 				}
 			} else {
-				switch (ep->op) {
+				switch (e->op) {
 					case EXPR_CMPGT: data = tb_inst_cmp_igt(func, l, r, !type->is_unsigned); break;
 					case EXPR_CMPGE: data = tb_inst_cmp_ige(func, l, r, !type->is_unsigned); break;
 					case EXPR_CMPLT: data = tb_inst_cmp_ilt(func, l, r, !type->is_unsigned); break;
@@ -1281,40 +1272,40 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 		case EXPR_XOR_ASSIGN:
 		case EXPR_SHL_ASSIGN:
 		case EXPR_SHR_ASSIGN: {
-			Type* restrict type = &tu->types[ep->type];
+			Type* restrict type = &tu->types[e->type];
 			if (type->is_atomic) {
 				// Load inputs
-				IRVal lhs = irgen_expr(tu, func, ep->bin_op.left);
-				IRVal rhs = irgen_expr(tu, func, ep->bin_op.right);
+				IRVal lhs = irgen_expr(tu, func, e->bin_op.left);
+				IRVal rhs = irgen_expr(tu, func, e->bin_op.right);
 				assert(lhs.value_type == LVALUE);
 				
 				if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
 					// Implement big atomic copy
 					abort();
 				} else if (type->kind == KIND_FLOAT || type->kind == KIND_DOUBLE) {
-					TB_Register r = cvt2rval(tu, func, rhs, ep->bin_op.right);
+					TB_Register r = cvt2rval(tu, func, rhs, e->bin_op.right);
 					
 					// float assignment can be done atomic by using the normal
 					// integer stuff
-					if (ep->op == EXPR_ASSIGN) {
+					if (e->op == EXPR_ASSIGN) {
 						tb_inst_atomic_xchg(func, lhs.reg, r, TB_MEM_ORDER_SEQ_CST);
 						
 						return (IRVal) {
 							.value_type = RVALUE,
-							.type = ep->type,
+							.type = e->type,
 							.reg = r
 						};
 					} else {
 						// floats don't really have any atomic operations so just
 						// emulate them all
-						/*TB_Reg l = cvt2rval(tu, func, lhs, ep->bin_op.left);
+						/*TB_Reg l = cvt2rval(tu, func, lhs, e->bin_op.left);
 						
 						TB_Label loop = tb_inst_new_label_id(func);
 						TB_Label success = tb_inst_new_label_id(func);
 						tb_inst_label(func, loop);
 						{
 							TB_Reg desired = TB_NULL_REG;
-							switch (ep->op) {
+							switch (e->op) {
 								case EXPR_PLUS_ASSIGN: desired = tb_inst_fadd(func, l, r); break;
 								case EXPR_MINUS_ASSIGN: desired = tb_inst_fsub(func, l, r); break;
 								case EXPR_TIMES_ASSIGN: desired = tb_inst_fmul(func, l, r); break;
@@ -1335,38 +1326,38 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 						
 						return (IRVal) {
 							.value_type = RVALUE,
-							.type = ep->type,
+							.type = e->type,
 							.reg = l
 						};*/
 						internal_error("TODO");
 					}
 				} else {
-					TB_Register r = cvt2rval(tu, func, rhs, ep->bin_op.right);
+					TB_Register r = cvt2rval(tu, func, rhs, e->bin_op.right);
 					
-					if (ep->op == EXPR_ASSIGN) {
+					if (e->op == EXPR_ASSIGN) {
 						tb_inst_atomic_xchg(func, lhs.reg, r, TB_MEM_ORDER_SEQ_CST);
 						
 						return (IRVal) {
 							.value_type = RVALUE,
-							.type = ep->type,
+							.type = e->type,
 							.reg = r
 						};
-					} else if (ep->op == EXPR_PLUS_ASSIGN) {
+					} else if (e->op == EXPR_PLUS_ASSIGN) {
 						TB_Register op = tb_inst_atomic_add(func, lhs.reg, r, TB_MEM_ORDER_SEQ_CST);
 						op = tb_inst_add(func, op, r, TB_CAN_WRAP);
 						
 						return (IRVal) {
 							.value_type = RVALUE,
-							.type = ep->type,
+							.type = e->type,
 							.reg = op
 						};
-					} else if (ep->op == EXPR_MINUS_ASSIGN) {
+					} else if (e->op == EXPR_MINUS_ASSIGN) {
 						TB_Register op = tb_inst_atomic_sub(func, lhs.reg, r, TB_MEM_ORDER_SEQ_CST);
 						op = tb_inst_sub(func, op, r, TB_CAN_WRAP);
 						
 						return (IRVal) {
 							.value_type = RVALUE,
-							.type = ep->type,
+							.type = e->type,
 							.reg = op
 						};
 					} else {
@@ -1375,24 +1366,24 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 				}
 			} else {
 				// Load inputs
-				IRVal lhs = irgen_expr(tu, func, ep->bin_op.left);
+				IRVal lhs = irgen_expr(tu, func, e->bin_op.left);
 				
 				TB_Register l = TB_NULL_REG;
-				if (ep->op != EXPR_ASSIGN) {
+				if (e->op != EXPR_ASSIGN) {
 					// don't do this conversion for ASSIGN, since it won't
 					// be needing it
-					l = cvt2rval(tu, func, lhs, ep->bin_op.left);
+					l = cvt2rval(tu, func, lhs, e->bin_op.left);
 				}
 				
-				IRVal rhs = irgen_expr(tu, func, ep->bin_op.right);
+				IRVal rhs = irgen_expr(tu, func, e->bin_op.right);
 				
 				// Try pointer arithmatic
-				if ((ep->op == EXPR_PLUS_ASSIGN || ep->op == EXPR_MINUS_ASSIGN) && type->kind == KIND_PTR) {
-					int dir = ep->op == EXPR_PLUS_ASSIGN ? 1 : -1;
+				if ((e->op == EXPR_PLUS_ASSIGN || e->op == EXPR_MINUS_ASSIGN) && type->kind == KIND_PTR) {
+					int dir = e->op == EXPR_PLUS_ASSIGN ? 1 : -1;
 					int stride = tu->types[type->ptr_to].size;
 					assert(stride);
 					
-					TB_Register r = cvt2rval(tu, func, rhs, ep->bin_op.right);
+					TB_Register r = cvt2rval(tu, func, rhs, e->bin_op.right);
 					TB_Register arith = tb_inst_array_access(func, l, r, dir * stride);
 					
 					assert(lhs.value_type == LVALUE);
@@ -1404,14 +1395,14 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 				
 				TB_Register data;
 				if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
-					if (ep->op != EXPR_ASSIGN) abort();
+					if (e->op != EXPR_ASSIGN) abort();
 					
 					TB_Register size_reg = tb_inst_uint(func, TB_TYPE_I64, type->size);
 					tb_inst_memcpy(func, lhs.reg, rhs.reg, size_reg, type->align);
 				} else if (type->kind == KIND_FLOAT || type->kind == KIND_DOUBLE) {
-					TB_Register r = cvt2rval(tu, func, rhs, ep->bin_op.right);
+					TB_Register r = cvt2rval(tu, func, rhs, e->bin_op.right);
 					
-					switch (ep->op) {
+					switch (e->op) {
 						case EXPR_ASSIGN: data = r; break;
 						case EXPR_PLUS_ASSIGN: data = tb_inst_fadd(func, l, r); break;
 						case EXPR_MINUS_ASSIGN: data = tb_inst_fsub(func, l, r); break;
@@ -1423,10 +1414,10 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 					assert(lhs.value_type == LVALUE);
 					tb_inst_store(func, dt, lhs.reg, data, type->align);
 				} else {
-					TB_Register r = cvt2rval(tu, func, rhs, ep->bin_op.right);
+					TB_Register r = cvt2rval(tu, func, rhs, e->bin_op.right);
 					TB_ArithmaticBehavior ab = type->is_unsigned ? TB_CAN_WRAP : TB_ASSUME_NSW;
 					
-					switch (ep->op) {
+					switch (e->op) {
 						case EXPR_ASSIGN: data = r; break;
 						case EXPR_PLUS_ASSIGN: data = tb_inst_add(func, l, r, ab); break;
 						case EXPR_MINUS_ASSIGN: data = tb_inst_sub(func, l, r, ab); break;
@@ -1469,7 +1460,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 			}
 		}
 		case EXPR_TERNARY: {
-			TB_Register cond = irgen_as_rvalue(tu, func, ep->ternary_op.left);
+			TB_Register cond = irgen_as_rvalue(tu, func, e->ternary_op.left);
 			
 			TB_Label if_true = tb_inst_new_label_id(func);
 			TB_Label if_false = tb_inst_new_label_id(func);
@@ -1481,7 +1472,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 			{
 				tb_inst_label(func, if_true);
 				
-				true_val = irgen_as_rvalue(tu, func, ep->ternary_op.middle);
+				true_val = irgen_as_rvalue(tu, func, e->ternary_op.middle);
 				if_true = tb_inst_get_current_label(func);
 				tb_inst_goto(func, exit);
 			}
@@ -1490,7 +1481,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 			{
 				tb_inst_label(func, if_false);
 				
-				false_val = irgen_as_rvalue(tu, func, ep->ternary_op.right);
+				false_val = irgen_as_rvalue(tu, func, e->ternary_op.right);
 				if_false = tb_inst_get_current_label(func);
 				// fallthrough to exit
 			}
@@ -1498,7 +1489,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 			
 			return (IRVal) {
 				.value_type = RVALUE,
-				.type = ep->type,
+				.type = e->type,
 				.reg = tb_inst_phi2(func, if_true, true_val, if_false, false_val)
 			};
 		}
@@ -1595,12 +1586,12 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
 			
 			TB_Reg addr = tb_inst_local(func, size, align);
 			if (s->decl.initial) {
-				Expr* restrict ep = &tu->exprs[s->decl.initial];
+				Expr* e = s->decl.initial;
 				
-				if (ep->op == EXPR_INITIALIZER) {
-					gen_local_initializer(tu, func, ep->loc, addr, type_index, ep->init.count, ep->init.nodes);
+				if (e->op == EXPR_INITIALIZER) {
+					gen_local_initializer(tu, func, e->loc, addr, type_index, e->init.count, e->init.nodes);
 				} else {
-					if (kind == KIND_ARRAY && (ep->op == EXPR_STR || ep->op == EXPR_WSTR)) {
+					if (kind == KIND_ARRAY && (e->op == EXPR_STR || e->op == EXPR_WSTR)) {
 						IRVal v = irgen_expr(tu, func, s->decl.initial);
 						TB_Register size_reg = tb_inst_uint(func, TB_TYPE_I64, size);
 						
@@ -1628,10 +1619,10 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
 			break;
 		}
 		case STMT_RETURN: {
-			ExprIndex e = s->return_.expr;
+			Expr* e = s->return_.expr;
 			
 			if (e) {
-				TypeIndex type = tu->exprs[e].cast_type;
+				TypeIndex type = e->cast_type;
 				
 				if (tu->types[type].kind == KIND_STRUCT ||
 					tu->types[type].kind == KIND_UNION) {

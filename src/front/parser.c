@@ -60,6 +60,10 @@ thread_local static Stmt* current_switch_or_case;
 thread_local static Stmt* current_breakable;
 thread_local static Stmt* current_continuable;
 
+// we build a chain in that lets us know what symbols are used by a function
+thread_local static Expr* symbol_chain_start;
+thread_local static Expr* symbol_chain_current;
+
 thread_local static bool out_of_order_mode;
 
 static void expect(TokenStream* restrict s, char ch);
@@ -82,11 +86,10 @@ static TypeIndex parse_typename(TranslationUnit* tu, TokenStream* restrict s);
 // It's like parse_expr but it doesn't do anything with comma operators to avoid
 // parsing issues.
 static intmax_t parse_const_expr(TranslationUnit* tu, TokenStream* restrict s);
-static ExprIndex parse_initializer(TranslationUnit* tu, TokenStream* restrict s, TypeIndex type);
-static ExprIndex parse_function_literal(TranslationUnit* tu, TokenStream* restrict s, TypeIndex type);
+static Expr* parse_initializer(TranslationUnit* tu, TokenStream* restrict s, TypeIndex type);
+static Expr* parse_function_literal(TranslationUnit* tu, TokenStream* restrict s, TypeIndex type);
 static void parse_function_definition(TranslationUnit* tu, TokenStream* restrict s, Stmt* n);
 static TypeIndex parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s, TypeIndex type, Atom name);
-static void create_symbol_use_list(TranslationUnit* tu, Stmt* n, ExprIndex starting_point, bool has_labels);
 
 static bool is_typename(TokenStream* restrict s);
 
@@ -107,9 +110,8 @@ static Stmt* make_stmt(TranslationUnit* tu, TokenStream* restrict s, StmtOp op) 
 	return stmt;
 }
 
-static ExprIndex make_expr(TranslationUnit* tu) {
-	big_array_put_uninit(tu->exprs, 1);
-	return big_array_length(tu->exprs) - 1;
+static Expr* make_expr(TranslationUnit* tu) {
+	return ARENA_ALLOC(&tu->ast_arena, Expr);
 }
 
 static Symbol* find_global_symbol(const char* name) {
@@ -176,11 +178,12 @@ static void parse_global_symbols(TranslationUnit* tu, size_t start, size_t end, 
 			// Spin up a mini parser here
 			tokens.current = sym->current;
 			
+			// intitialize use list
+			symbol_chain_start = symbol_chain_current = NULL;
+			
 			if (sym->storage_class == STORAGE_STATIC_VAR ||
 				sym->storage_class == STORAGE_GLOBAL) {
-				ExprIndex starting_point = big_array_length(tu->exprs);
-				
-				ExprIndex e;
+				Expr* e;
 				if (tokens_get(&tokens)->type == '@') {
 					// function literals are a Cuik extension
 					// TODO(NeGate): error messages
@@ -196,7 +199,6 @@ static void parse_global_symbols(TranslationUnit* tu, size_t start, size_t end, 
 				expect(&tokens, sym->terminator);
 				
 				sym->stmt->decl.initial = e;
-				create_symbol_use_list(tu, sym->stmt, starting_point, false);
 			} else if (sym->storage_class == STORAGE_STATIC_FUNC ||
 					   sym->storage_class == STORAGE_FUNC) {
 				// Some sanity checks in case a local symbol is leaked funny.
@@ -208,6 +210,9 @@ static void parse_global_symbols(TranslationUnit* tu, size_t start, size_t end, 
 				
 				local_symbol_start = local_symbol_count = 0;
 			}
+			
+			// finalize use list
+			sym->stmt->decl.first_symbol = symbol_chain_start;
 		}
 	}
 }
@@ -230,8 +235,6 @@ static void phase2_parse_task(void* arg) {
 void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, threadpool_t* thread_pool) {
 	tu->filepath = filepath;
 	tu->types = big_array_create(Type, true);
-	tu->params = big_array_create(Param, true);
-	tu->exprs = big_array_create(Expr, true);
 	
 	init_types(tu);
 	tls_init();
@@ -705,7 +708,13 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
 					n->decl.type  = decl.type;
 					n->decl.attrs = attr;
 					
+					// intitialize use list
+					symbol_chain_start = symbol_chain_current = NULL;
+					
 					parse_function_definition(tu, s, n);
+					
+					// finalize use list
+					sym->stmt->decl.first_symbol = symbol_chain_start;
 				} else if (tokens_get(s)->type == ';') {
 					// Forward decl
 					tokens_next(s);
@@ -750,8 +759,10 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
 				if (tokens_get(s)->type == '=') {
 					tokens_next(s);
 					
-					ExprIndex starting_point = big_array_length(tu->exprs);
-					ExprIndex e;
+					// intitialize use list
+					symbol_chain_start = symbol_chain_current = NULL;
+					
+					Expr* e;
 					if (tokens_get(s)->type == '@') {
 						// function literals are a Cuik extension
 						// TODO(NeGate): error messages
@@ -764,8 +775,11 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
 					} else {
 						e = parse_expr_l14(tu, s);
 					}
+					
 					n->decl.initial = e;
-					create_symbol_use_list(tu, n, starting_point, false);
+					
+					// finalize use list
+					n->decl.first_symbol = symbol_chain_start;
 				}
 				
 				if (tokens_get(s)->type == ',') {
@@ -795,8 +809,10 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
 						if (tokens_get(s)->type == '=') {
 							tokens_next(s);
 							
-							ExprIndex starting_point = big_array_length(tu->exprs);
-							ExprIndex e;
+							// intitialize use list
+							symbol_chain_start = symbol_chain_current = NULL;
+							
+							Expr* e;
 							if (tokens_get(s)->type == '@') {
 								// function literals are a Cuik extension
 								// TODO(NeGate): error messages
@@ -810,7 +826,9 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
 								e = parse_expr_l14(tu, s);
 							}
 							n->decl.initial = e;
-							create_symbol_use_list(tu, n, starting_point, false);
+							
+							// finalize use list
+							n->decl.first_symbol = symbol_chain_start;
 						}
 					}
 				}
@@ -824,6 +842,7 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
 	
 	// NOTE(NeGate): This is a Cuik extension, it allows normal symbols
 	// like functions to declared out of order.
+#if 0
 	for (size_t i = 1, count = big_array_length(tu->exprs); i < count; i++) {
 		if (tu->exprs[i].op == EXPR_UNKNOWN_SYMBOL) {
 			if (!resolve_unknown_symbol(tu, i)) {
@@ -833,7 +852,7 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
 				ptrdiff_t search = shgeti(enum_entries, name);
 				if (search >= 0) {
 					int value = enum_entries[search].value;
-					ExprIndex chain = tu->exprs[i].next_symbol_in_chain;
+					Expr* chain = tu->exprs[i].next_symbol_in_chain;
 					
 					tu->exprs[i].op = EXPR_ENUM;
 					tu->exprs[i].enum_val = (struct ExprEnum){ value, chain };
@@ -850,6 +869,7 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
 		}
 		success:;
 	}
+#endif
 #endif
 	
 	if (tu->hack.name) {
@@ -879,23 +899,21 @@ void translation_unit_deinit(TranslationUnit* tu) {
 	if (tu->is_free) return;
 	
 	big_array_destroy(tu->types);
-	big_array_destroy(tu->params);
-	big_array_destroy(tu->exprs);
 	arrfree(tu->top_level_stmts);
 	
 	arena_free(&tu->ast_arena);
 	tu->is_free = true;
 }
 
-Stmt* resolve_unknown_symbol(TranslationUnit* tu, ExprIndex e) {
-	Symbol* sym = find_global_symbol((char*)tu->exprs[e].unknown_sym);
+Stmt* resolve_unknown_symbol(TranslationUnit* tu, Expr* e) {
+	Symbol* sym = find_global_symbol((char*) e->unknown_sym);
 	if (!sym) return 0;
 	
 	// Parameters are local and a special case how tf
 	assert(sym->storage_class != STORAGE_PARAM);
 	
-	tu->exprs[e].op = EXPR_SYMBOL;
-	tu->exprs[e].symbol = sym->stmt;
+	e->op = EXPR_SYMBOL;
+	e->symbol = sym->stmt;
 	return sym->stmt;
 }
 
@@ -922,43 +940,6 @@ static Symbol* find_local_symbol(TokenStream* restrict s) {
 ////////////////////////////////
 // STATEMENTS
 ////////////////////////////////
-static void create_symbol_use_list(TranslationUnit* tu, Stmt* n, ExprIndex starting_point, bool has_labels) {
-	ExprIndex symbol_list_start = 0;
-	ExprIndex symbol_list_end = 0;
-	
-	// resolve any unresolved label references
-	for (size_t i = starting_point, count = big_array_length(tu->exprs); i < count; i++) {
-		if (tu->exprs[i].op == EXPR_SYMBOL ||
-			tu->exprs[i].op == EXPR_UNKNOWN_SYMBOL) {
-			if (symbol_list_start == 0) {
-				// initialize chain
-				symbol_list_start = symbol_list_end = i;
-			} else {
-				// append
-				tu->exprs[symbol_list_end].next_symbol_in_chain = i;
-				tu->exprs[i].next_symbol_in_chain = 0;
-				symbol_list_end = i;
-			}
-		}
-		
-		if (has_labels && tu->exprs[i].op == EXPR_UNKNOWN_SYMBOL) {
-			const unsigned char* name = tu->exprs[i].unknown_sym;
-			
-			ptrdiff_t search = shgeti(labels, name);
-			if (search >= 0) {
-				tu->exprs[i].op = EXPR_SYMBOL;
-				tu->exprs[i].symbol = labels[search].value;
-			}
-		}
-	}
-	
-	if (symbol_list_end) {
-		tu->exprs[symbol_list_end].next_symbol_in_chain = 0;
-	}
-	
-	n->decl.first_symbol = symbol_list_start;
-}
-
 static void parse_function_definition(TranslationUnit* tu, TokenStream* restrict s, Stmt* n) {
 	TypeIndex type = n->decl.type;
 	
@@ -984,16 +965,13 @@ static void parse_function_definition(TranslationUnit* tu, TokenStream* restrict
 		}
 	}
 	
-	//report(REPORT_INFO, &s->line_arena[tokens_get(s)->location], "Opening brace for function");
+	// skip {
 	tokens_next(s);
 	
-	ExprIndex starting_point = big_array_length(tu->exprs);
 	Stmt* body = parse_compound_stmt(tu, s);
 	
 	n->op = STMT_FUNC_DECL;
 	n->decl.initial_as_stmt = body;
-	
-	create_symbol_use_list(tu, n, starting_point, true);
 	
 	// hmm... how tf do labels operate in this case...
 	// TODO(NeGate): redo the label look in a sec
@@ -1053,7 +1031,7 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 	} else if (peek == TOKEN_KW_return) {
 		tokens_next(s);
 		
-		ExprIndex e = 0;
+		Expr* e = 0;
 		if (tokens_get(s)->type != ';') {
 			e = parse_expr(tu, s);
 		}
@@ -1069,7 +1047,7 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 		tokens_next(s);
 		Stmt* n = make_stmt(tu, s, STMT_IF);
 		
-		ExprIndex cond;
+		Expr* cond;
 		{
 			SourceLoc* opening_loc = &s->line_arena[tokens_get(s)->location];
 			expect(s, '(');
@@ -1097,7 +1075,7 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 		Stmt* n = make_stmt(tu, s, STMT_SWITCH);
 		
 		expect(s, '(');
-		ExprIndex cond = parse_expr(tu, s);
+		Expr* cond = parse_expr(tu, s);
 		expect(s, ')');
 		
 		n->switch_ = (struct StmtSwitch){
@@ -1194,7 +1172,7 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 		Stmt* n = make_stmt(tu, s, STMT_WHILE);
 		
 		expect(s, '(');
-		ExprIndex cond = parse_expr(tu, s);
+		Expr* cond = parse_expr(tu, s);
 		expect(s, ')');
 		
 		// Push this as a breakable statement
@@ -1248,7 +1226,7 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 			tls_restore(body);
 		}
 		
-		ExprIndex cond = 0;
+		Expr* cond = 0;
 		if (tokens_get(s)->type == ';') {
 			/* nothing */
 			tokens_next(s);
@@ -1257,7 +1235,7 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 			expect(s, ';');
 		}
 		
-		ExprIndex next = 0;
+		Expr* next = 0;
 		if (tokens_get(s)->type == ')') {
 			/* nothing */
 			tokens_next(s);
@@ -1319,7 +1297,7 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 		
 		expect(s, '(');
 		
-		ExprIndex cond = parse_expr(tu, s);
+		Expr* cond = parse_expr(tu, s);
 		
 		expect(s, ')');
 		expect(s, ';');
@@ -1334,7 +1312,7 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 		
 		Stmt* n = make_stmt(tu, s, STMT_GOTO);
 		
-		ExprIndex target = parse_expr(tu, s);
+		Expr* target = parse_expr(tu, s);
 		n->goto_ = (struct StmtGoto){
 			.target = target
 		};
@@ -1448,7 +1426,7 @@ static void parse_decl_or_expr(TranslationUnit* tu, TokenStream* restrict s, siz
 					.stmt = n
 				};
 				
-				ExprIndex initial = 0;
+				Expr* initial = 0;
 				if (tokens_get(s)->type == '=') {
 					tokens_next(s);
 					
@@ -1476,7 +1454,7 @@ static void parse_decl_or_expr(TranslationUnit* tu, TokenStream* restrict s, siz
 	} else {
 		Stmt* n = make_stmt(tu, s, STMT_EXPR);
 		
-		ExprIndex expr = parse_expr(tu, s);
+		Expr* expr = parse_expr(tu, s);
 		n->expr = (struct StmtExpr){
 			.expr = expr
 		};
@@ -1510,7 +1488,7 @@ static Stmt* parse_stmt_or_expr(TranslationUnit* tu, TokenStream* restrict s) {
 		} else {
 			Stmt* n = make_stmt(tu, s, STMT_EXPR);
 			
-			ExprIndex expr = parse_expr(tu, s);
+			Expr* expr = parse_expr(tu, s);
 			n->expr = (struct StmtExpr){
 				.expr = expr
 			};

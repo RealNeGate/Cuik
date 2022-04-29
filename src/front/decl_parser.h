@@ -432,7 +432,7 @@ static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, At
 					} else {
 						// we don't particularly resolve typeof for expressions immediately.
 						// instead we just wait until all symbols are resolved properly
-						ExprIndex src = parse_expr(tu, s);
+						Expr* src = parse_expr(tu, s);
 						type = new_typeof(tu, src);
 					}
 					

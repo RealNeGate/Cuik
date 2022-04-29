@@ -78,7 +78,7 @@ InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, Sourc
 void irgen_init();
 void irgen_deinit();
 
-TB_Register irgen_as_rvalue(TranslationUnit* tu, TB_Function* func, ExprIndex e);
-IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e);
+TB_Register irgen_as_rvalue(TranslationUnit* tu, TB_Function* func, Expr* e);
+IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e);
 void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s);
 void irgen_top_level_stmt(TranslationUnit* tu, Stmt* restrict s);
