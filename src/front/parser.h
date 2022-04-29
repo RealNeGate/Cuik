@@ -7,20 +7,15 @@
 #include "settings.h"
 #include "big_array.h"
 #include "diagnostic.h"
+#include <ext/threadpool.h>
 
 #include <back/tb.h>
 
 #define MAX_LOCAL_SYMBOLS (1 << 20)
-#define MAX_TYPEDEF_LOCAL_SYMBOLS (1024)
-
-// Members used by struct/union types
-// NOTE(NeGate): Consider using an arena for this
-typedef int MemberIndex;
 
 typedef int TypeIndex;
 typedef int ParamIndex;
 typedef int EnumEntryIndex;
-typedef int aaaaaStmtIndex;
 typedef int ExprIndex;
 
 typedef int SymbolIndex;
@@ -134,7 +129,9 @@ typedef struct Type {
 		// Structs/Unions
 		struct {
 			Atom name;
-			MemberIndex kids_start, kids_end;
+			
+			size_t  kid_count;
+			Member* kids;
 		} record;
 		
 		// Enumerators
@@ -486,14 +483,13 @@ typedef struct Expr {
 		} generic_;
 		struct {
 			ExprIndex base;
+			uint32_t offset;
+			
 			// once the semantic pass runs over the AST
-			// we'll have proper indices to access the Member
+			// we'll have a Member instead of name
 			union {
 				// stinky...
-				struct {
-					MemberIndex member;
-					uint32_t offset;
-				};
+				Member* member;
 				Atom name;
 			};
 		} dot_arrow;
@@ -595,12 +591,11 @@ typedef struct TranslationUnit {
 	// TODO(NeGate): keep track of all files loaded by this TU
 	// so that we can properly free them
 	BigArray(Type) types;
-	BigArray(Member) members;
 	BigArray(Param) params;
 	BigArray(EnumEntry) enum_entries;
 	BigArray(Expr) exprs;
 	
-	Arena stmt_arena;
+	Arena ast_arena;
 	
 	// stb_ds array
 	// NOTE(NeGate): should this be an stb_ds array?
@@ -633,5 +628,7 @@ ConstValue const_eval(TranslationUnit* tu, ExprIndex e);
 bool const_eval_try_offsetof_hack(TranslationUnit* tu, ExprIndex e, uint64_t* out);
 
 void init_types(TranslationUnit* tu);
-void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath);
+
+// thread_pool will eventually be NULLable which means the parsing is singlethreaded
+void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, threadpool_t* thread_pool);
 void translation_unit_deinit(TranslationUnit* tu);

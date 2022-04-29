@@ -34,6 +34,7 @@ struct threadpool_t {
 	
 	thrd_t* threads;
 	work_t* work;
+	mtx_t   mutex;
 };
 
 static bool do_work(threadpool_t* threadpool) {
@@ -96,23 +97,29 @@ threadpool_t* threadpool_create(size_t worker_count, size_t workqueue_size) {
 		}
     }
 	
+	mtx_init(&threadpool->mutex, mtx_plain);
+	
     return threadpool;
 }
 
 void threadpool_submit(threadpool_t* threadpool, work_routine fn, void* arg) {
-	uint32_t write_ptr = threadpool->write_pointer;
-	uint32_t new_write_ptr = (write_ptr + 1) & threadpool->queue_size_mask;
-	while (new_write_ptr == threadpool->read_pointer) {
-		// TODO: Stall until the jobs are complete.
+	mtx_lock(&threadpool->mutex);
+	{
+		uint32_t write_ptr = threadpool->write_pointer;
+		uint32_t new_write_ptr = (write_ptr + 1) & threadpool->queue_size_mask;
+		while (new_write_ptr == threadpool->read_pointer) {
+			// TODO: Stall until the jobs are complete.
+		}
+		
+		threadpool->work[write_ptr] = (work_t) {
+			.fn = fn,
+			.arg = arg
+		};
+		
+		threadpool->completion_goal++;
+		threadpool->write_pointer = new_write_ptr;
 	}
-	
-	threadpool->work[write_ptr] = (work_t) {
-		.fn = fn,
-		.arg = arg
-	};
-	
-	threadpool->completion_goal++;
-	threadpool->write_pointer = new_write_ptr;
+	mtx_unlock(&threadpool->mutex);
 	
 #if _WIN32
 	ReleaseSemaphore(threadpool->sem, 1, 0);
@@ -152,6 +159,7 @@ void threadpool_free(threadpool_t* threadpool) {
 	sem_destroy(&threadpool->sem);
 #endif
 	
+	mtx_destroy(&threadpool->mutex);
 	free(threadpool->threads);
 	free(threadpool->work);
 	free(threadpool);

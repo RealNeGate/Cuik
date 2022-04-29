@@ -161,7 +161,7 @@ static void dump_expr(TranslationUnit* tu, FILE* stream, ExprIndex e, int depth,
 		case EXPR_ARROW: {
 			type_as_string(tu, sizeof(temp_string0), temp_string0, ep->type);
 			
-			char* name = (char*)tu->members[ep->dot_arrow.member].name;
+			char* name = (char*) ep->dot_arrow.member->name;
 			fprintf(stream, "Arrow %s '%s'\n", name ? name : "<unnamed>", temp_string0);
 			
 			dump_expr(tu, stream, ep->dot_arrow.base, depth + 1, true);
@@ -170,7 +170,7 @@ static void dump_expr(TranslationUnit* tu, FILE* stream, ExprIndex e, int depth,
 		case EXPR_DOT: {
 			type_as_string(tu, sizeof(temp_string0), temp_string0, ep->type);
 			
-			char* name = (char*)tu->members[ep->dot_arrow.member].name;
+			char* name = (char*) ep->dot_arrow.member->name;
 			fprintf(stream, "Dot %s '%s'\n", name ? name : "<unnamed>", temp_string0);
 			
 			dump_expr(tu, stream, ep->dot_arrow.base, depth + 1, true);
@@ -539,7 +539,7 @@ void ast_dump_stats(TranslationUnit* tu, FILE* stream) {
 		   (big_array_length(tu->types) * sizeof(Type)) / 1024);
 	
 	printf("# Statements:  %zu kB\n",
-		   arena_get_memory_usage(&tu->stmt_arena) / 1024);
+		   arena_get_memory_usage(&tu->ast_arena) / 1024);
 }
 
 void ast_dump_type(TranslationUnit* tu, TypeIndex type, int depth, int offset) {
@@ -548,27 +548,25 @@ void ast_dump_type(TranslationUnit* tu, TypeIndex type, int depth, int offset) {
 	Type* ty = &tu->types[type];
 	
 	if (ty->kind == KIND_STRUCT || ty->kind == KIND_UNION) {
+		printf("%s %s {",
+			   ty->kind == KIND_STRUCT ? "struct" : "union",
+			   ty->record.name ? (char*)ty->record.name : "<unnamed>");
+		
 		if (ty->loc) {
 			SourceLoc* loc = &tu->tokens.line_arena[ty->loc];
 			
-			printf("%s \033]8;;file://%s\033\\%s\033]8;;\033\\",
-				   ty->kind == KIND_STRUCT ? "struct" : "union",
-				   loc->file,
-				   ty->record.name ? (char*)ty->record.name : "<unnamed>");
-			
-			printf(" { // line %d\n", loc->line);
+			printf("// %s:%d\n", loc->file, loc->line);
 		} else {
-			printf("%s %s {\n",
-				   ty->kind == KIND_STRUCT ? "struct" : "union",
-				   ty->record.name ? (char*)ty->record.name : "<unnamed>");
+			printf("\n");
 		}
 		
 		char temp_string0[1024];
 		
-		MemberIndex start = ty->record.kids_start;
-		MemberIndex end = ty->record.kids_end;
-		for (MemberIndex m = start; m < end; m++) {
-			Member* member = &tu->members[m];
+		Member* kids = ty->record.kids;
+		size_t kid_count = ty->record.kid_count;
+		
+		for (size_t i = 0; i < kid_count; i++) {
+			Member* member = &kids[i];;
 			
 			if (member->name == NULL ||
 				tu->types[member->type].kind == KIND_STRUCT ||

@@ -606,6 +606,7 @@ static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, At
 							// Append member
 							tls_push(sizeof(Member));
 							Member* member = &members[member_count++];
+							
 							*member = (Member) {
 								.type = member_type,
 								.name = decl.name,
@@ -669,13 +670,12 @@ static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, At
 					tu->types[type].size = offset;
 					tu->types[type].align = align;
 					
-					MemberIndex start = big_array_length(tu->members);
+					// put members into more permanent storage
+					Member* permanent_store = arena_alloc(&tu->ast_arena, member_count * sizeof(Member), _Alignof(Member));
+					memcpy(permanent_store, members, member_count * sizeof(Member));
 					
-					tu->types[type].record.kids_start = start;
-					tu->types[type].record.kids_end = start + member_count;
-					
-					big_array_put_uninit(tu->members, member_count);
-					memcpy(&tu->members[start], members, member_count * sizeof(Member));
+					tu->types[type].record.kids = permanent_store;
+					tu->types[type].record.kid_count = member_count;
 					
 					tls_restore(members);
 				} else {

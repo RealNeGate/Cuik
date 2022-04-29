@@ -98,7 +98,7 @@ static int align_up(int a, int b) {
 }
 
 static Stmt* make_stmt(TranslationUnit* tu, TokenStream* restrict s, StmtOp op) {
-	Stmt* stmt = ARENA_ALLOC(&tu->stmt_arena, Stmt);
+	Stmt* stmt = ARENA_ALLOC(&tu->ast_arena, Stmt);
 	*stmt = (Stmt){
 		.op = op,
 		.loc = tokens_get(s)->location
@@ -154,10 +154,81 @@ static size_t skip_expression_in_parens(TokenStream* restrict s, TknType* out_te
 #include "expr_parser.h"
 #include "decl_parser.h"
 
-void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath) {
+typedef struct {
+	// shared state, every run of phase2_parse_task will decrement this by one
+	atomic_size_t* tasks_remaining;
+	size_t start, end;
+	
+	TranslationUnit* tu;
+	IncompleteType* incomplete_tags; // stb_ds hash map
+	SymbolEntry* global_symbols; // stb_ds hash map
+	
+	const TokenStream* base_token_stream;
+} ParserTaskInfo;
+
+static void parse_global_symbols(TranslationUnit* tu, size_t start, size_t end, TokenStream tokens) {
+	for (size_t i = start; i < end; i++) {
+		Symbol* sym = &global_symbols[i].value;
+		//printf("SYMBOL: %s %d\n", sym->name, sym->current);
+		
+		if (sym->current != 0) {
+			// Spin up a mini parser here
+			tokens.current = sym->current;
+			
+			if (sym->storage_class == STORAGE_STATIC_VAR ||
+				sym->storage_class == STORAGE_GLOBAL) {
+				ExprIndex starting_point = big_array_length(tu->exprs);
+				
+				ExprIndex e;
+				if (tokens_get(&tokens)->type == '@') {
+					// function literals are a Cuik extension
+					// TODO(NeGate): error messages
+					tokens_next(&tokens);
+					e = parse_function_literal(tu, &tokens, sym->type);
+				} else if (tokens_get(&tokens)->type == '{') {
+					tokens_next(&tokens);
+					
+					e = parse_initializer(tu, &tokens, TYPE_NONE);
+				} else {
+					e = parse_expr_l14(tu, &tokens);
+				}
+				expect(&tokens, sym->terminator);
+				
+				sym->stmt->decl.initial = e;
+				create_symbol_use_list(tu, sym->stmt, starting_point, false);
+			} else if (sym->storage_class == STORAGE_STATIC_FUNC ||
+					   sym->storage_class == STORAGE_FUNC) {
+				// Some sanity checks in case a local symbol is leaked funny.
+				// they should be isolated
+				assert(local_symbol_start == 0);
+				assert(local_symbol_count == 0);
+				
+				parse_function_definition(tu, &tokens, sym->stmt);
+				
+				local_symbol_start = local_symbol_count = 0;
+			}
+		}
+	}
+}
+
+static void phase2_parse_task(void* arg) {
+	ParserTaskInfo task = *((ParserTaskInfo*)arg);
+	
+	// intitialize any thread local state that might not be set on this thread
+	current_switch_or_case = current_breakable = current_continuable = NULL;
+	incomplete_tags = task.incomplete_tags;
+	global_symbols  = task.global_symbols;
+	
+	tls_init();
+	atoms_init();
+	
+	parse_global_symbols(task.tu, task.start, task.end, *task.base_token_stream);
+	*task.tasks_remaining -= 1;
+}
+
+void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, threadpool_t* thread_pool) {
 	tu->filepath = filepath;
 	tu->types = big_array_create(Type, true);
-	tu->members = big_array_create(Member, true);
 	tu->params = big_array_create(Param, true);
 	tu->enum_entries = big_array_create(EnumEntry, true);
 	tu->exprs = big_array_create(Expr, true);
@@ -432,51 +503,46 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath) 
 	}
 	
 	// Phase 2: resolve all expressions or function bodies
+	// This part is parallel because im the fucking GOAT
+	out_of_order_mode = false;
+	
 	timed_block("phase 2") {
-		out_of_order_mode = false;
-		for (size_t i = 0, count = shlen(global_symbols); i < count; i++) {
-			Symbol* sym = &global_symbols[i].value;
+		if (false /*thread_pool != NULL*/) {
+			// disabled until we change the tables to arenas
+			size_t count = shlen(global_symbols);
+			size_t padded = (count + 4095) & ~4095;
 			
-			//printf("SYMBOL: %s %d\n", sym->name, sym->current);
+			// passed to the threads to identify when things are done
+			atomic_size_t tasks_remaining = (count + 4095) / 4096;
 			
-			if (sym->current != 0) {
-				// Spin up a mini parser here
-				TokenStream tmp = *s;
-				tmp.current = sym->current;
+			for (size_t i = 0; i < padded; i += 4096) {
+				size_t limit = i+4096;
+				if (limit > count) limit = count;
 				
-				if (sym->storage_class == STORAGE_STATIC_VAR ||
-					sym->storage_class == STORAGE_GLOBAL) {
-					ExprIndex starting_point = big_array_length(tu->exprs);
-					
-					ExprIndex e;
-					if (tokens_get(&tmp)->type == '@') {
-						// function literals are a Cuik extension
-						// TODO(NeGate): error messages
-						tokens_next(&tmp);
-						e = parse_function_literal(tu, &tmp, sym->type);
-					} else if (tokens_get(&tmp)->type == '{') {
-						tokens_next(&tmp);
-						
-						e = parse_initializer(tu, &tmp, TYPE_NONE);
-					} else {
-						e = parse_expr_l14(tu, &tmp);
-					}
-					expect(&tmp, sym->terminator);
-					
-					sym->stmt->decl.initial = e;
-					create_symbol_use_list(tu, sym->stmt, starting_point, false);
-				} else if (sym->storage_class == STORAGE_STATIC_FUNC ||
-						   sym->storage_class == STORAGE_FUNC) {
-					// Some sanity checks in case a local symbol is leaked funny.
-					// they should be isolated
-					assert(local_symbol_start == 0);
-					assert(local_symbol_count == 0);
-					
-					parse_function_definition(tu, &tmp, sym->stmt);
-					
-					local_symbol_start = local_symbol_count = 0;
-				}
+				ParserTaskInfo* task = tls_push(sizeof(ParserTaskInfo));
+				*task = (ParserTaskInfo){ 
+					.tasks_remaining = &tasks_remaining,
+					.start = i,
+					.end = limit
+				};
+				
+				// we transfer a bunch of our thread local state to the task
+				// and they'll use that to continue and build up parse on other
+				// threads.
+				task->tu = tu;
+				task->incomplete_tags = incomplete_tags;
+				task->global_symbols = global_symbols;
+				task->base_token_stream = s;
+				
+				threadpool_submit(thread_pool, phase2_parse_task, task);
 			}
+			
+			while (tasks_remaining != 0) {
+				thrd_yield();
+			}
+		} else {
+			// single threaded mode
+			parse_global_symbols(tu, 0, shlen(global_symbols), *s);
 		}
 	}
 #else
@@ -814,13 +880,12 @@ void translation_unit_deinit(TranslationUnit* tu) {
 	if (tu->is_free) return;
 	
 	big_array_destroy(tu->types);
-	big_array_destroy(tu->members);
 	big_array_destroy(tu->params);
 	big_array_destroy(tu->enum_entries);
 	big_array_destroy(tu->exprs);
 	arrfree(tu->top_level_stmts);
 	
-	arena_free(&tu->stmt_arena);
+	arena_free(&tu->ast_arena);
 	tu->is_free = true;
 }
 

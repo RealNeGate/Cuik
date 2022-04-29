@@ -73,12 +73,12 @@ void cuik_set_cpp_defines(CPP_Context* cpp) {
 	// CuikC specific
 	cpp_define(cpp, "__CUIKC__", STR(CUIK_COMPILER_MAJOR));
 	cpp_define(cpp, "__CUIKC_MINOR__", STR(CUIK_COMPILER_MINOR));
-
+	
 	// GNU C
 	cpp_define(cpp, "__BYTE_ORDER__", "1");
 	cpp_define(cpp, "__ORDER_LITTLE_ENDIAN", "1");
 	cpp_define(cpp, "__ORDER_BIG_ENDIAN", "2");
-
+	
 	// DO NOT REMOVE THESE, IF THEY'RE MISSING THE PREPROCESSOR
 	// WILL NOT DETECT THEM
 	cpp_define_empty(cpp, "__FILE__");
@@ -214,7 +214,7 @@ void cuik_set_cpp_defines(CPP_Context* cpp) {
 
 TranslationUnit* cuik_compile_file(CompilationUnit* cu, const char* path, 
 								   size_t include_count, const char** includes,
-								   bool frontend_only) {
+								   bool frontend_only, threadpool_t* thread_pool) {
 	TranslationUnit* tu = calloc(1, sizeof(TranslationUnit));
 	tu->hack.name = settings.hack_type_printer_name;
 	
@@ -234,7 +234,7 @@ TranslationUnit* cuik_compile_file(CompilationUnit* cu, const char* path,
 	}
 	
 	timed_block("parse %s", path) {
-		translation_unit_parse(tu, path);
+		translation_unit_parse(tu, path, thread_pool);
 		crash_if_reports(REPORT_ERROR);
 	}
 	

@@ -220,10 +220,11 @@ static bool is_assignable_expr(TranslationUnit* tu, ExprIndex e) {
 }
 
 Member* sema_traverse_members(TranslationUnit* tu, Type* record_type, Atom name, uint32_t* out_offset) {
-	MemberIndex start = record_type->record.kids_start;
-	MemberIndex end = record_type->record.kids_end;
-	for (MemberIndex m = start; m < end; m++) {
-		Member* member = &tu->members[m];
+	Member* kids = record_type->record.kids;
+	size_t count = record_type->record.kid_count;
+	
+	for (size_t i = 0; i < count; i++) {
+		Member* member = &kids[i];
 		
 		// TODO(NeGate): String interning would be nice
 		if (member->name == NULL) {
@@ -749,9 +750,10 @@ TypeIndex sema_expr(TranslationUnit* tu, ExprIndex e) {
 			Member* m = sema_resolve_member_access(tu, e, &offset);
 			if (m) {
 				if (in_the_semantic_phase) {
-					ep->dot_arrow.member = m - tu->members;
+					ep->dot_arrow.member = m;
 					ep->dot_arrow.offset = offset;
 				}
+				
 				return (ep->type = m->type);
 			}
 			

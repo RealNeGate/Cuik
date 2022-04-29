@@ -55,6 +55,7 @@ static char cuik_file_no_ext[255];
 static bool is_frontend_only;
 
 static CompilationUnit compilation_unit;
+static threadpool_t* thread_pool;
 
 static int parse_args(size_t arg_start, size_t arg_count, char** args);
 
@@ -111,10 +112,10 @@ static void frontend_task(void* arg) {
 	
 	cuik_compile_file(&compilation_unit, path,
 					  big_array_length(cuik_include_dirs),
-					  &cuik_include_dirs[0], is_frontend_only);
+					  &cuik_include_dirs[0], is_frontend_only, thread_pool);
 }
 
-static void dispatch_for_all_top_level_stmts(threadpool_t* thread_pool, void (*task)(void*)) {
+static void dispatch_for_all_top_level_stmts(void (*task)(void*)) {
 	tls_init();
 	
 	FOR_EACH_TU(tu, &compilation_unit) {
@@ -137,7 +138,7 @@ static void dispatch_for_all_top_level_stmts(threadpool_t* thread_pool, void (*t
 	threadpool_wait(thread_pool);
 }
 
-static void dispatch_for_all_ir_functions(threadpool_t* thread_pool, void (*task)(void*)) {
+static void dispatch_for_all_ir_functions(void (*task)(void*)) {
 	tls_init();
 	
 	// split up the top level statement tasks into
@@ -165,7 +166,7 @@ static void compile_project(const char* obj_output_path, bool is_multithreaded, 
 	compilation_unit_init(&compilation_unit);
 	
 	if (!is_check) irgen_init();
-	threadpool_t* thread_pool = threadpool_create(settings.num_of_worker_threads, 4096);
+	thread_pool = threadpool_create(settings.num_of_worker_threads, 4096);
 	
 	// dispatch multithreaded
 	if (settings.emit_ast == EMIT_AST_NONE) {
@@ -178,7 +179,7 @@ static void compile_project(const char* obj_output_path, bool is_multithreaded, 
 			TranslationUnit* tu = cuik_compile_file(&compilation_unit, cuik_source_files[i],
 													big_array_length(cuik_include_dirs),
 													&cuik_include_dirs[0],
-													is_check);
+													is_check, NULL);
 			
 			ast_dump(tu, stdout);
 		}
@@ -189,7 +190,7 @@ static void compile_project(const char* obj_output_path, bool is_multithreaded, 
 	
 	if (!is_check) {
 		timed_block("ir gen & compile") {
-			dispatch_for_all_top_level_stmts(thread_pool, irgen_task);
+			dispatch_for_all_top_level_stmts(irgen_task);
 			
 			FOR_EACH_TU(tu, &compilation_unit) {
 				translation_unit_deinit(tu);
@@ -201,10 +202,10 @@ static void compile_project(const char* obj_output_path, bool is_multithreaded, 
 				do {
 					is_optimizer_working = false;
 					
-					dispatch_for_all_ir_functions(thread_pool, optimize_task);
+					dispatch_for_all_ir_functions(optimize_task);
 				} while (is_optimizer_working);
 				
-				dispatch_for_all_ir_functions(thread_pool, codegen_task);
+				dispatch_for_all_ir_functions(codegen_task);
 			}
 			
 			irgen_deinit();
@@ -275,8 +276,7 @@ static int execute_query_operation(const char* option, size_t arg_start, size_t 
 			
 			TranslationUnit* tu = cuik_compile_file(&compilation_unit, cuik_source_files[0],
 													big_array_length(cuik_include_dirs),
-													&cuik_include_dirs[0],
-													true);
+													&cuik_include_dirs[0], true, thread_pool);
 			
 			if (tu->hack.type) {
 				ast_dump_type(tu, tu->hack.type, 0, 0);

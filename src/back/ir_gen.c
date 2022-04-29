@@ -196,7 +196,7 @@ InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, Sourc
 			break;
 			
 			case KIND_UNION: case KIND_STRUCT:
-			bounds = type->record.kids_end - type->record.kids_start;
+			bounds = type->record.kid_count;
 			break;
 			
 			default: 
@@ -222,14 +222,15 @@ InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, Sourc
 			
 			pos = pos_end = -1;
 			
-			MemberIndex start = type->record.kids_start;
-			MemberIndex end = type->record.kids_end;
-			for (MemberIndex m = start; m < end; m++) {
-				Member* member = &tu->members[m];
+			Member* kids = type->record.kids;
+			size_t count = type->record.kid_count;
+			
+			for (size_t i = 0; i < count; i++) {
+				Member* member = &kids[i];
 				
 				// TODO(NeGate): String interning would be nice
 				if (cstr_equals(node->member_name, member->name)) {
-					pos = (m - start);
+					pos = i;
 					pos_end = pos + 1;
 					cursor = pos_end;
 					break;
@@ -276,8 +277,8 @@ InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, Sourc
 			child_type = type->array_of;
 			relative_offset = tu->types[type->array_of].size * pos;
 		} else if (type->kind == KIND_UNION || type->kind == KIND_STRUCT) {
-			child_type = tu->members[type->record.kids_start + pos].type;
-			relative_offset = tu->members[type->record.kids_start + pos].offset;
+			child_type = type->record.kids[pos].type;
+			relative_offset = type->record.kids[pos].offset;
 		} else {
 			child_type = t;
 			relative_offset = 0;
@@ -919,8 +920,8 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 			IRVal src = irgen_expr(tu, func, ep->dot_arrow.base);
 			assert(src.value_type == LVALUE);
 			
-			assert(ep->dot_arrow.member);
-			Member* member = &tu->members[ep->dot_arrow.member];
+			Member* member = ep->dot_arrow.member;
+			assert(member != NULL);
 			
 			if (member->is_bitfield) {
 				return (IRVal) {
@@ -942,8 +943,8 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, ExprIndex e) {
 		case EXPR_ARROW: {
 			TB_Register src = irgen_as_rvalue(tu, func, ep->dot_arrow.base);
 			
-			assert(ep->dot_arrow.member);
-			Member* member = &tu->members[ep->dot_arrow.member];
+			Member* member = ep->dot_arrow.member;
+			assert(member != NULL);
 			
 			if (member->is_bitfield) {
 				return (IRVal) {
