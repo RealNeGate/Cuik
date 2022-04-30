@@ -25,7 +25,7 @@ typedef enum IRValType {
 
 typedef struct IRVal {
 	IRValType value_type;
-	TypeIndex type;
+	Type* type;
 	
 	union {
 		TB_Register reg;
@@ -73,7 +73,7 @@ inline static TB_DataType ctype_to_tbtype(const Type* t) {
 InitNode* count_max_tb_init_objects(int node_count, InitNode* node, int* out_count);
 
 // func is NULL then it's not allowed to compute any dynamic initializer expressions
-InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, SourceLocIndex loc, TB_InitializerID init, TB_Register addr, TypeIndex t, int node_count, InitNode* node, int offset);
+InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, SourceLocIndex loc, TB_InitializerID init, TB_Register addr, Type* t, int node_count, InitNode* node, int offset);
 
 void irgen_init();
 void irgen_deinit();

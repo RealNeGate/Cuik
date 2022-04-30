@@ -164,3 +164,7 @@ void threadpool_free(threadpool_t* threadpool) {
 	free(threadpool->work);
 	free(threadpool);
 }
+
+int threadpool_get_thread_count(threadpool_t* threadpool) {
+	return threadpool->thread_count;
+}

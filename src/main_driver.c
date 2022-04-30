@@ -55,6 +55,8 @@ static char cuik_file_no_ext[255];
 static bool is_frontend_only;
 
 static CompilationUnit compilation_unit;
+
+// this can be NULL which just means we operate singlethreaded
 static threadpool_t* thread_pool;
 
 static int parse_args(size_t arg_start, size_t arg_count, char** args);
@@ -116,12 +118,52 @@ static void frontend_task(void* arg) {
 }
 
 static void dispatch_for_all_top_level_stmts(void (*task)(void*)) {
-	tls_init();
-	
-	FOR_EACH_TU(tu, &compilation_unit) {
+	// split up the top level statement tasks into
+	// chunks to avoid spawning too many tiny tasks
+	if (thread_pool != NULL) {
+		tls_init();
+		
+		FOR_EACH_TU(tu, &compilation_unit) {
+			size_t count = arrlen(tu->top_level_stmts);
+			size_t padded = (count + 4095) & ~4095;
+			
+			for (size_t i = 0; i < padded; i += 4096) {
+				size_t limit = i+4096;
+				if (limit > count) limit = count;
+				
+				TaskInfo* t = tls_push(sizeof(TaskInfo));
+				*t = (TaskInfo){ tu, i, limit };
+				
+				threadpool_submit(thread_pool, task, t);
+			}
+		}
+		
+		timed_block("wait") {
+			threadpool_wait(thread_pool);
+		}
+	} else {
+		FOR_EACH_TU(tu, &compilation_unit) {
+			size_t count = arrlen(tu->top_level_stmts);
+			size_t padded = (count + 4095) & ~4095;
+			
+			for (size_t i = 0; i < padded; i += 4096) {
+				size_t limit = i+4096;
+				if (limit > count) limit = count;
+				
+				TaskInfo t = { NULL, i, limit };
+				task(&t);
+			}
+		}
+	}
+}
+
+static void dispatch_for_all_ir_functions(void (*task)(void*)) {
+	if (thread_pool != NULL) {
+		tls_init();
+		
 		// split up the top level statement tasks into
 		// chunks to avoid spawning too many tiny tasks
-		size_t count = arrlen(tu->top_level_stmts);
+		size_t count = function_count;
 		size_t padded = (count + 4095) & ~4095;
 		
 		for (size_t i = 0; i < padded; i += 4096) {
@@ -129,34 +171,28 @@ static void dispatch_for_all_top_level_stmts(void (*task)(void*)) {
 			if (limit > count) limit = count;
 			
 			TaskInfo* t = tls_push(sizeof(TaskInfo));
-			*t = (TaskInfo){ tu, i, limit };
+			*t = (TaskInfo){ NULL, i, limit };
 			
 			threadpool_submit(thread_pool, task, t);
 		}
-	}
-	
-	threadpool_wait(thread_pool);
-}
-
-static void dispatch_for_all_ir_functions(void (*task)(void*)) {
-	tls_init();
-	
-	// split up the top level statement tasks into
-	// chunks to avoid spawning too many tiny tasks
-	size_t count = function_count;
-	size_t padded = (count + 4095) & ~4095;
-	
-	for (size_t i = 0; i < padded; i += 4096) {
-		size_t limit = i+4096;
-		if (limit > count) limit = count;
 		
-		TaskInfo* t = tls_push(sizeof(TaskInfo));
-		*t = (TaskInfo){ NULL, i, limit };
+		timed_block("wait") {
+			threadpool_wait(thread_pool);
+		}
+	} else {
+		// split up the top level statement tasks into
+		// chunks to avoid spawning too many tiny tasks
+		size_t count = function_count;
+		size_t padded = (count + 4095) & ~4095;
 		
-		threadpool_submit(thread_pool, task, t);
+		for (size_t i = 0; i < padded; i += 4096) {
+			size_t limit = i+4096;
+			if (limit > count) limit = count;
+			
+			TaskInfo t = { NULL, i, limit };
+			task(&t);
+		}
 	}
-	
-	threadpool_wait(thread_pool);
 }
 
 static void compile_project(const char* obj_output_path, bool is_multithreaded, bool is_check) {
@@ -166,12 +202,21 @@ static void compile_project(const char* obj_output_path, bool is_multithreaded, 
 	compilation_unit_init(&compilation_unit);
 	
 	if (!is_check) irgen_init();
-	thread_pool = threadpool_create(settings.num_of_worker_threads, 4096);
 	
-	// dispatch multithreaded
-	if (settings.emit_ast == EMIT_AST_NONE) {
+	if (settings.num_of_worker_threads <= 1) {
+		thread_pool = NULL;
+	} else {
+		thread_pool = threadpool_create(settings.num_of_worker_threads, 4096);
+	}
+	
+	if (thread_pool != NULL && settings.emit_ast == EMIT_AST_NONE) {
+		// dispatch multithreaded
 		for (size_t i = 0, count = big_array_length(cuik_source_files); i < count; i++) {
 			threadpool_submit(thread_pool, frontend_task, (void*)cuik_source_files[i]);
+		}
+		
+		timed_block("wait") {
+			threadpool_wait(thread_pool);
 		}
 	} else {
 		// emit-ast is single threaded just to make it nicer to read
@@ -181,10 +226,9 @@ static void compile_project(const char* obj_output_path, bool is_multithreaded, 
 													&cuik_include_dirs[0],
 													is_check, NULL);
 			
-			ast_dump(tu, stdout);
+			if (settings.emit_ast != EMIT_AST_NONE) ast_dump(tu, stdout);
 		}
 	}
-	threadpool_wait(thread_pool);
 	
 	compilation_unit_internal_link(&compilation_unit);
 	
@@ -212,7 +256,10 @@ static void compile_project(const char* obj_output_path, bool is_multithreaded, 
 		}
 	}
 	
-	threadpool_free(thread_pool);
+	if (thread_pool != NULL) {
+		threadpool_free(thread_pool);
+	}
+	
 	compilation_unit_deinit(&compilation_unit);
 	arena_free(&thread_arena);
 	

@@ -23,9 +23,12 @@
 
 #define OUT_OF_ORDER_CRAP 1
 
+// how big are the phase2 parse tasks
+#define PARSE_MUNCH_SIZE (32768)
+
 typedef struct {
 	Atom key;
-	TypeIndex value;
+	Type* value;
 } IncompleteType;
 
 typedef struct {
@@ -64,6 +67,10 @@ thread_local static Stmt* current_continuable;
 thread_local static Expr* symbol_chain_start;
 thread_local static Expr* symbol_chain_current;
 
+// we allocate nodes from here but once the threaded parsing stuff is complete we'll stitch this
+// to the original AST arena so that it may be freed later
+thread_local static Arena local_ast_arena;
+
 thread_local static bool out_of_order_mode;
 
 static void expect(TokenStream* restrict s, char ch);
@@ -78,18 +85,18 @@ static void parse_decl_or_expr(TranslationUnit* tu, TokenStream* restrict s, siz
 
 static bool skip_over_declspec(TokenStream* restrict s);
 static bool try_parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attribs* attr);
-static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attribs* attr);
+static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attribs* attr);
 
-static Decl parse_declarator(TranslationUnit* tu, TokenStream* restrict s, TypeIndex type, bool is_abstract, bool disabled_paren);
-static TypeIndex parse_typename(TranslationUnit* tu, TokenStream* restrict s);
+static Decl parse_declarator(TranslationUnit* tu, TokenStream* restrict s, Type* type, bool is_abstract, bool disabled_paren);
+static Type* parse_typename(TranslationUnit* tu, TokenStream* restrict s);
 
 // It's like parse_expr but it doesn't do anything with comma operators to avoid
 // parsing issues.
 static intmax_t parse_const_expr(TranslationUnit* tu, TokenStream* restrict s);
-static Expr* parse_initializer(TranslationUnit* tu, TokenStream* restrict s, TypeIndex type);
-static Expr* parse_function_literal(TranslationUnit* tu, TokenStream* restrict s, TypeIndex type);
+static Expr* parse_initializer(TranslationUnit* tu, TokenStream* restrict s, Type* type);
+static Expr* parse_function_literal(TranslationUnit* tu, TokenStream* restrict s, Type* type);
 static void parse_function_definition(TranslationUnit* tu, TokenStream* restrict s, Stmt* n);
-static TypeIndex parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s, TypeIndex type, Atom name);
+static Type* parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s, Type* type, Atom name);
 
 static bool is_typename(TokenStream* restrict s);
 
@@ -102,7 +109,8 @@ static int align_up(int a, int b) {
 }
 
 static Stmt* make_stmt(TranslationUnit* tu, TokenStream* restrict s, StmtOp op) {
-	Stmt* stmt = ARENA_ALLOC(&tu->ast_arena, Stmt);
+	Stmt* stmt = ARENA_ALLOC(&local_ast_arena, Stmt);
+	
 	*stmt = (Stmt){
 		.op = op,
 		.loc = tokens_get(s)->location
@@ -111,16 +119,20 @@ static Stmt* make_stmt(TranslationUnit* tu, TokenStream* restrict s, StmtOp op) 
 }
 
 static Expr* make_expr(TranslationUnit* tu) {
-	return ARENA_ALLOC(&tu->ast_arena, Expr);
+	return ARENA_ALLOC(&local_ast_arena, Expr);
 }
 
 static Symbol* find_global_symbol(const char* name) {
-	ptrdiff_t search = shgeti(global_symbols, name);
+	ptrdiff_t temp;
+	ptrdiff_t search = shgeti_ts(global_symbols, name, temp);
+	
 	return (search >= 0) ? &global_symbols[search].value : NULL;
 }
 
-static TypeIndex find_incomplete_tag(const char* name) {
-	ptrdiff_t search = shgeti(incomplete_tags, name);
+static Type* find_incomplete_tag(const char* name) {
+	ptrdiff_t temp;
+	ptrdiff_t search = shgeti_ts(incomplete_tags, name, temp);
+	
 	return (search >= 0) ? incomplete_tags[search].value : 0;
 }
 
@@ -170,54 +182,58 @@ typedef struct {
 } ParserTaskInfo;
 
 static void parse_global_symbols(TranslationUnit* tu, size_t start, size_t end, TokenStream tokens) {
-	for (size_t i = start; i < end; i++) {
-		Symbol* sym = &global_symbols[i].value;
-		//printf("SYMBOL: %s %d\n", sym->name, sym->current);
+	timed_block("phase 3: %zu-%zu", start, end) {
+		out_of_order_mode = false;
 		
-		if (sym->current != 0) {
-			// Spin up a mini parser here
-			tokens.current = sym->current;
+		for (size_t i = start; i < end; i++) {
+			Symbol* sym = &global_symbols[i].value;
+			//printf("SYMBOL: %s %d\n", sym->name, sym->current);
 			
-			// intitialize use list
-			symbol_chain_start = symbol_chain_current = NULL;
-			
-			if (sym->storage_class == STORAGE_STATIC_VAR ||
-				sym->storage_class == STORAGE_GLOBAL) {
-				Expr* e;
-				if (tokens_get(&tokens)->type == '@') {
-					// function literals are a Cuik extension
-					// TODO(NeGate): error messages
-					tokens_next(&tokens);
-					e = parse_function_literal(tu, &tokens, sym->type);
-				} else if (tokens_get(&tokens)->type == '{') {
-					tokens_next(&tokens);
+			if (sym->current != 0) {
+				// Spin up a mini parser here
+				tokens.current = sym->current;
+				
+				// intitialize use list
+				symbol_chain_start = symbol_chain_current = NULL;
+				
+				if (sym->storage_class == STORAGE_STATIC_VAR ||
+					sym->storage_class == STORAGE_GLOBAL) {
+					Expr* e;
+					if (tokens_get(&tokens)->type == '@') {
+						// function literals are a Cuik extension
+						// TODO(NeGate): error messages
+						tokens_next(&tokens);
+						e = parse_function_literal(tu, &tokens, sym->type);
+					} else if (tokens_get(&tokens)->type == '{') {
+						tokens_next(&tokens);
+						
+						e = parse_initializer(tu, &tokens, NULL);
+					} else {
+						e = parse_expr_l14(tu, &tokens);
+					}
+					expect(&tokens, sym->terminator);
 					
-					e = parse_initializer(tu, &tokens, TYPE_NONE);
-				} else {
-					e = parse_expr_l14(tu, &tokens);
+					sym->stmt->decl.initial = e;
+				} else if (sym->storage_class == STORAGE_STATIC_FUNC ||
+						   sym->storage_class == STORAGE_FUNC) {
+					// Some sanity checks in case a local symbol is leaked funny.
+					// they should be isolated
+					assert(local_symbol_start == 0);
+					assert(local_symbol_count == 0);
+					
+					parse_function_definition(tu, &tokens, sym->stmt);
+					
+					local_symbol_start = local_symbol_count = 0;
 				}
-				expect(&tokens, sym->terminator);
 				
-				sym->stmt->decl.initial = e;
-			} else if (sym->storage_class == STORAGE_STATIC_FUNC ||
-					   sym->storage_class == STORAGE_FUNC) {
-				// Some sanity checks in case a local symbol is leaked funny.
-				// they should be isolated
-				assert(local_symbol_start == 0);
-				assert(local_symbol_count == 0);
-				
-				parse_function_definition(tu, &tokens, sym->stmt);
-				
-				local_symbol_start = local_symbol_count = 0;
+				// finalize use list
+				sym->stmt->decl.first_symbol = symbol_chain_start;
 			}
-			
-			// finalize use list
-			sym->stmt->decl.first_symbol = symbol_chain_start;
 		}
 	}
 }
 
-static void phase2_parse_task(void* arg) {
+static void phase3_parse_task(void* arg) {
 	ParserTaskInfo task = *((ParserTaskInfo*)arg);
 	
 	// intitialize any thread local state that might not be set on this thread
@@ -230,15 +246,24 @@ static void phase2_parse_task(void* arg) {
 	
 	parse_global_symbols(task.tu, task.start, task.end, *task.base_token_stream);
 	*task.tasks_remaining -= 1;
+	
+	// move local AST arena to TU's AST arena
+	{
+		mtx_lock(&task.tu->arena_mutex);
+		
+		arena_append(&task.tu->ast_arena, &local_ast_arena);
+		local_ast_arena = (Arena){ 0 };
+		
+		mtx_unlock(&task.tu->arena_mutex);
+	}
 }
 
 void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, threadpool_t* thread_pool) {
 	tu->filepath = filepath;
-	tu->types = big_array_create(Type, true);
 	
-	init_types(tu);
 	tls_init();
 	atoms_init();
+	mtx_init(&tu->arena_mutex, mtx_plain);
 	
 	////////////////////////////////
 	// Parse translation unit
@@ -294,7 +319,7 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
 				
 				// must be a declaration since it's a top level statement
 				Attribs attr = { 0 };
-				TypeIndex type = parse_declspec(tu, s, &attr);
+				Type* type = parse_declspec(tu, s, &attr);
 				attr.is_root = !(attr.is_static || attr.is_inline);
 				
 				if (attr.is_typedef) {
@@ -322,14 +347,14 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
 								abort();
 							}
 							
-							Type* placeholder_space = &tu->types[search->type];
+							Type* placeholder_space = search->type;
 							if (placeholder_space->kind != KIND_PLACEHOLDER) {
 								report(REPORT_ERROR, loc, "typedef '%s' overrides previous declaration.", decl.name);
 								abort();
 							}
 							
 							// replace placeholder with actual entry
-							memcpy(placeholder_space, &tu->types[decl.type], sizeof(Type));
+							memcpy(placeholder_space, decl.type, sizeof(Type));
 						} else {
 							// add new entry
 							Symbol sym = (Symbol){
@@ -388,7 +413,7 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
 						};
 						
 						Symbol* old_definition = find_global_symbol((const char*) decl.name);
-						if (tu->types[decl.type].kind == KIND_FUNC) {
+						if (decl.type->kind == KIND_FUNC) {
 							sym.storage_class = (attr.is_static ? STORAGE_STATIC_FUNC : STORAGE_FUNC);
 						} else {
 							sym.storage_class = (attr.is_static ? STORAGE_STATIC_VAR : STORAGE_GLOBAL);
@@ -440,7 +465,7 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
 							// the declaration list
 							requires_terminator = false;
 							
-							if (tu->types[decl.type].kind != KIND_FUNC) {
+							if (decl.type->kind != KIND_FUNC) {
 								report(REPORT_ERROR, &s->line_arena[decl.loc], "Declaration's expression has a weird semicolon");
 								abort();
 							}
@@ -505,21 +530,27 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
 		}
 	}
 	
-	// Phase 2: resolve all expressions or function bodies
+	// phase 2: layout any structs out of order
+	
+	// Phase 3: resolve all expressions or function bodies
 	// This part is parallel because im the fucking GOAT
 	out_of_order_mode = false;
 	
-	timed_block("phase 2") {
-		if (false /*thread_pool != NULL*/) {
+	timed_block("phase 3") {
+		// append any AST nodes we might've created in this thread
+		arena_append(&tu->ast_arena, &local_ast_arena);
+		local_ast_arena = (Arena){ 0 };
+		
+		if (thread_pool != NULL) {
 			// disabled until we change the tables to arenas
 			size_t count = shlen(global_symbols);
-			size_t padded = (count + 4095) & ~4095;
+			size_t padded = (count + (PARSE_MUNCH_SIZE-1)) & ~(PARSE_MUNCH_SIZE-1);
 			
 			// passed to the threads to identify when things are done
-			atomic_size_t tasks_remaining = (count + 4095) / 4096;
+			atomic_size_t tasks_remaining = (count + (PARSE_MUNCH_SIZE-1)) / PARSE_MUNCH_SIZE;
 			
-			for (size_t i = 0; i < padded; i += 4096) {
-				size_t limit = i+4096;
+			for (size_t i = 0; i < padded; i += PARSE_MUNCH_SIZE) {
+				size_t limit = i+PARSE_MUNCH_SIZE;
 				if (limit > count) limit = count;
 				
 				ParserTaskInfo* task = tls_push(sizeof(ParserTaskInfo));
@@ -537,7 +568,7 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
 				task->global_symbols = global_symbols;
 				task->base_token_stream = s;
 				
-				threadpool_submit(thread_pool, phase2_parse_task, task);
+				threadpool_submit(thread_pool, phase3_parse_task, task);
 			}
 			
 			while (tasks_remaining != 0) {
@@ -592,7 +623,7 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
 		}
 		
 		Attribs attr = { 0 };
-		TypeIndex type = parse_declspec(tu, s, &attr);
+		Type* type = parse_declspec(tu, s, &attr);
 		attr.is_root = !(attr.is_static || attr.is_inline);
 		
 		if (attr.is_typedef) {
@@ -633,7 +664,7 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
 			}
 			
 			Decl decl = parse_declarator(tu, s, type, false, false);
-			if (tu->types[decl.type].kind == KIND_FUNC) {
+			if (decl.type->kind == KIND_FUNC) {
 				// function
 				Symbol* sym = find_global_symbol((const char*)decl.name);
 				
@@ -771,7 +802,7 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
 					} else if (tokens_get(s)->type == '{') {
 						tokens_next(s);
 						
-						e = parse_initializer(tu, s, TYPE_NONE);
+						e = parse_initializer(tu, s, NULL);
 					} else {
 						e = parse_expr_l14(tu, s);
 					}
@@ -821,7 +852,7 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
 							} else if (tokens_get(s)->type == '{') {
 								tokens_next(s);
 								
-								e = parse_initializer(tu, s, TYPE_NONE);
+								e = parse_initializer(tu, s, NULL);
 							} else {
 								e = parse_expr_l14(tu, s);
 							}
@@ -878,7 +909,7 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
 		if (sym != NULL) {
 			tu->hack.type = sym->type;
 		} else {
-			tu->hack.type = TYPE_NONE;
+			tu->hack.type = NULL;
 		}
 	}
 	
@@ -898,10 +929,11 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
 void translation_unit_deinit(TranslationUnit* tu) {
 	if (tu->is_free) return;
 	
-	big_array_destroy(tu->types);
 	arrfree(tu->top_level_stmts);
 	
 	arena_free(&tu->ast_arena);
+	arena_free(&tu->type_arena);
+	mtx_destroy(&tu->arena_mutex);
 	tu->is_free = true;
 }
 
@@ -941,10 +973,10 @@ static Symbol* find_local_symbol(TokenStream* restrict s) {
 // STATEMENTS
 ////////////////////////////////
 static void parse_function_definition(TranslationUnit* tu, TokenStream* restrict s, Stmt* n) {
-	TypeIndex type = n->decl.type;
+	Type* type = n->decl.type;
 	
-	Param* param_list = tu->types[type].func.param_list;
-	size_t param_count = tu->types[type].func.param_count;
+	Param* param_list = type->func.param_list;
+	size_t param_count = type->func.param_count;
 	
 	assert(local_symbol_start == local_symbol_count);
 	if (param_count >= INT16_MAX) {
@@ -1355,7 +1387,7 @@ static void parse_decl_or_expr(TranslationUnit* tu, TokenStream* restrict s, siz
 		tokens_next(s);
 	} else if (is_typename(s)) {
 		Attribs attr = { 0 };
-		TypeIndex type = parse_declspec(tu, s, &attr);
+		Type* type = parse_declspec(tu, s, &attr);
 		
 		if (attr.is_typedef) {
 			// don't expect one the first time
@@ -1438,7 +1470,7 @@ static void parse_decl_or_expr(TranslationUnit* tu, TokenStream* restrict s, siz
 					} else if (tokens_get(s)->type == '{') {
 						tokens_next(s);
 						
-						initial = parse_initializer(tu, s, TYPE_NONE);
+						initial = parse_initializer(tu, s, NULL);
 					} else {
 						initial = parse_expr_l14(tu, s);
 					}

@@ -30,9 +30,7 @@ static void set_defines(CPP_Context* cpp) {
 
 // on Win64 all structs that have a size of 1,2,4,8
 // or any scalars are passed via registers
-static bool win64_should_pass_via_reg(TranslationUnit* tu, TypeIndex type_index) {
-	const Type* type = &tu->types[type_index];
-	
+static bool win64_should_pass_via_reg(TranslationUnit* tu, Type* type) {
 	if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
 		switch (type->size) {
 			case 1: case 2: case 4: case 8: return true;
@@ -43,9 +41,7 @@ static bool win64_should_pass_via_reg(TranslationUnit* tu, TypeIndex type_index)
 	}
 }
 
-static TB_FunctionPrototype* create_prototype(TranslationUnit* tu, TypeIndex type_index) {
-	Type* restrict type = &tu->types[type_index];
-	
+static TB_FunctionPrototype* create_prototype(TranslationUnit* tu, Type* type) {
 	// decide if return value is aggregate
 	bool is_aggregate_return = !win64_should_pass_via_reg(tu, type->func.return_type);
 	
@@ -57,7 +53,7 @@ static TB_FunctionPrototype* create_prototype(TranslationUnit* tu, TypeIndex typ
 	size_t real_param_count = (is_aggregate_return ? 1 : 0) + param_count;
 	
 	TB_DataType return_dt = TB_TYPE_PTR;
-	if (!is_aggregate_return) return_dt = ctype_to_tbtype(&tu->types[type->func.return_type]);
+	if (!is_aggregate_return) return_dt = ctype_to_tbtype(type->func.return_type);
 	
 	TB_FunctionPrototype* proto = tb_prototype_create(mod, TB_STDCALL, return_dt, real_param_count, type->func.has_varargs);
 	
@@ -69,8 +65,7 @@ static TB_FunctionPrototype* create_prototype(TranslationUnit* tu, TypeIndex typ
 		Param* p = &param_list[i];
 		
 		if (win64_should_pass_via_reg(tu, p->type)) {
-			Type* param_type = &tu->types[p->type];
-			TB_DataType dt = ctype_to_tbtype(param_type);
+			TB_DataType dt = ctype_to_tbtype(p->type);
 			
 			assert(dt.width < 8);
 			tb_prototype_add_param(proto, dt);
@@ -82,20 +77,18 @@ static TB_FunctionPrototype* create_prototype(TranslationUnit* tu, TypeIndex typ
 	return proto;
 }
 
-static bool pass_return(TranslationUnit* tu, TypeIndex type_index) {
-	Type* type = &tu->types[type_index];
+static bool pass_return(TranslationUnit* tu, Type* type) {
 	return (type->kind == KIND_STRUCT || type->kind == KIND_UNION);
 }
 
-static int deduce_parameter_usage(TranslationUnit* tu, TypeIndex type_index) {
+static int deduce_parameter_usage(TranslationUnit* tu, Type* type) {
 	return 1;
 }
 
 static int pass_parameter(TranslationUnit* tu, TB_Function* func, Expr* e, bool is_vararg, TB_Reg* out_param) {
-	TypeIndex arg_type_index = e->type;
-	Type* arg_type = &tu->types[arg_type_index];
+	Type* arg_type = e->type;
 	
-	if (!win64_should_pass_via_reg(tu, arg_type_index)) {
+	if (!win64_should_pass_via_reg(tu, arg_type)) {
 		// const pass-by-value is considered as a const ref
 		// since it doesn't mutate
 		IRVal arg = irgen_expr(tu, func, e);
@@ -166,33 +159,33 @@ static int pass_parameter(TranslationUnit* tu, TB_Function* func, Expr* e, bool 
 }
 
 // TODO(NeGate): Add some type checking utilities to match against a list of types since that's kinda important :p
-static TypeIndex type_check_builtin(TranslationUnit* tu, SourceLocIndex loc, const char* name, int arg_count, Expr** args) {
+static Type* type_check_builtin(TranslationUnit* tu, SourceLocIndex loc, const char* name, int arg_count, Expr** args) {
 	if (strcmp(name, "__c11_atomic_compare_exchange_strong") == 0) {
 		// type check arguments
-		return TYPE_BOOL;
+		return &builtin_types[TYPE_BOOL];
 	} else if (strcmp(name, "__builtin_mul_overflow") == 0) {
 		if (arg_count != 3) {
 			sema_error(loc, "%s requires 3 arguments", name);
 			return 0;
 		}
 		
-		TypeIndex type = sema_expr(tu, args[0]);
-		if (tu->types[type].kind < KIND_CHAR || tu->types[type].kind > KIND_LONG) {
+		Type* type = sema_expr(tu, args[0]);
+		if (type->kind < KIND_CHAR || type->kind > KIND_LONG) {
 			sema_error(loc, "%s can only be applied onto integers");
 			goto failure;
 		}
 		
 		for (size_t i = 1; i < arg_count; i++) {
-			TypeIndex arg_type = sema_expr(tu, args[i]);
+			Type* arg_type = sema_expr(tu, args[i]);
 			
 			if (i == 2) {
-				if (tu->types[arg_type].kind != KIND_PTR) {
+				if (arg_type->kind != KIND_PTR) {
 					type_as_string(tu, sizeof(temp_string0), temp_string0, type);
 					sema_error(args[i]->loc, "Expected pointer to '%s' for the 3rd argument", temp_string0);
 					goto failure;
 				}
 				
-				arg_type = tu->types[arg_type].ptr_to;
+				arg_type = arg_type->ptr_to;
 			}
 			
 			if (!type_compatible(tu, arg_type, type, args[i])) {
@@ -204,12 +197,12 @@ static TypeIndex type_check_builtin(TranslationUnit* tu, SourceLocIndex loc, con
 				goto failure;
 			}
 			
-			TypeIndex cast_type = (i == 2) ? new_pointer(tu, type) : type;
+			Type* cast_type = (i == 2) ? new_pointer(tu, type) : type;
 			args[i]->cast_type = cast_type;
 		}
 		
 		failure:
-		return TYPE_BOOL;
+		return &builtin_types[TYPE_BOOL];
 	}
 	
 	return 0;

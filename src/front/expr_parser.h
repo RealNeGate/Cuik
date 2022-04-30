@@ -10,7 +10,7 @@ static Expr* parse_expr_l14(TranslationUnit* tu, TokenStream* restrict s);
 static Expr* parse_expr_l2(TranslationUnit* tu, TokenStream* restrict s);
 static Expr* parse_expr(TranslationUnit* tu, TokenStream* restrict s);
 
-static Expr* parse_function_literal(TranslationUnit* tu, TokenStream* restrict s, TypeIndex type) {
+static Expr* parse_function_literal(TranslationUnit* tu, TokenStream* restrict s, Type* type) {
 	SourceLocIndex loc = tokens_get(s)->location;
 	
 	// if the literal doesn't have a parameter list it will inherit from the `type`
@@ -26,11 +26,11 @@ static Expr* parse_function_literal(TranslationUnit* tu, TokenStream* restrict s
 		expect(s, ')');
 	}
 	
-	if (tu->types[type].kind == KIND_PTR) {
-		type = tu->types[type].ptr_to;
+	if (type->kind == KIND_PTR) {
+		type = type->ptr_to;
 	}
 	
-	if (tu->types[type].kind != KIND_FUNC) {
+	if (type->kind != KIND_FUNC) {
 		generic_error(s, "Function literal base type is not a function type");
 	}
 	
@@ -165,7 +165,7 @@ static void parse_initializer_member(TranslationUnit* tu, TokenStream* restrict 
 	}
 }
 
-static Expr* parse_initializer(TranslationUnit* tu, TokenStream* restrict s, TypeIndex type) {
+static Expr* parse_initializer(TranslationUnit* tu, TokenStream* restrict s, Type* type) {
 	size_t count = 0;
 	InitNode* start = tls_save();
 	
@@ -240,12 +240,12 @@ static Expr* parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
 				};
 			} else {
 #if OUT_OF_ORDER_CRAP
-				Symbol* search = find_global_symbol((const char*) name);
-				if (search != NULL) {
+				Symbol* symbol_search = find_global_symbol((const char*) name);
+				if (symbol_search != NULL) {
 					*e = (Expr) {
 						.op = EXPR_SYMBOL,
 						.loc = loc,
-						.symbol = search->stmt
+						.symbol = symbol_search->stmt
 					};
 				} else {
 					ptrdiff_t search = shgeti(enum_entries, name);
@@ -435,11 +435,11 @@ static Expr* parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
 				// the default case is like a normal entry but without a type :p
 				tls_push(sizeof(C11GenericEntry));
 				entries[entry_count++] = (C11GenericEntry){
-					.key   = TYPE_NONE,
+					.key   = NULL,
 					.value = expr
 				};
 			} else {
-				TypeIndex type = parse_typename(tu, s);
+				Type* type = parse_typename(tu, s);
 				assert(type != 0 && "TODO: error recovery");
 				
 				expect(s, ':');
@@ -479,7 +479,7 @@ static Expr* parse_expr_l1(TranslationUnit* tu, TokenStream* restrict s) {
 		tokens_next(s);
 		
 		if (is_typename(s)) {
-			TypeIndex type = parse_typename(tu, s);
+			Type* type = parse_typename(tu, s);
 			expect(s, ')');
 			
 			if (tokens_get(s)->type == '{') {
@@ -666,7 +666,7 @@ static Expr* parse_expr_l2(TranslationUnit* tu, TokenStream* restrict s) {
 		*e = (Expr) {
 			.op = EXPR_CAST,
 			.loc = loc,
-			.cast = { TYPE_BOOL, value }
+			.cast = { &builtin_types[TYPE_BOOL], value }
 		};
 		return e;
 	} else if (tokens_get(s)->type == '-') {
@@ -733,7 +733,7 @@ static Expr* parse_expr_l2(TranslationUnit* tu, TokenStream* restrict s) {
 		
 		Expr* e = 0;
 		if (is_typename(s)) {
-			TypeIndex type = parse_typename(tu, s);
+			Type* type = parse_typename(tu, s);
 			
 			if (has_paren) {
 				expect_closing_paren(s, opening_loc);

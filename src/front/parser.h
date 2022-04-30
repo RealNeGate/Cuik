@@ -7,17 +7,16 @@
 #include "settings.h"
 #include "big_array.h"
 #include "diagnostic.h"
+#include <ext/threads.h>
 #include <ext/threadpool.h>
 
 #include <back/tb.h>
 
 #define MAX_LOCAL_SYMBOLS (1 << 20)
 
-typedef int TypeIndex;
-typedef int ExprIndex_;
-
 typedef struct Stmt Stmt;
 typedef struct Expr Expr;
+typedef struct Type Type;
 
 typedef enum TypeKind {
     KIND_VOID,
@@ -48,7 +47,7 @@ typedef enum TypeKind {
 
 // Used by unions and structs
 typedef struct Member {
-	TypeIndex type;
+	Type* type;
 	Atom name;
 	
 	int align;
@@ -81,16 +80,16 @@ typedef struct EnumEntry {
 } EnumEntry;
 
 typedef struct Param {
-	TypeIndex type;
+	Type* type;
 	Atom name;
 } Param;
 
 typedef struct {
-	TypeIndex key;
+	Type* key;
 	Expr* value;
 } C11GenericEntry;
 
-typedef struct Type {
+struct Type {
     TypeKind kind;
     int size;  // sizeof
     int align; // _Alignof
@@ -106,20 +105,20 @@ typedef struct Type {
         
         // Arrays
 		struct {
-			TypeIndex array_of;
+			Type* array_of;
 			size_t array_count;
 		};
 		
         // Pointers
 		struct {
-			TypeIndex ptr_to;
+			Type* ptr_to;
 			bool is_ptr_restrict : 1;
 		};
 		
 		// Function
 		struct {
 			Atom name;
-			TypeIndex return_type;
+			Type* return_type;
 			size_t param_count;
 			Param* param_list;
 			
@@ -143,7 +142,7 @@ typedef struct Type {
 		} enumerator;
 		
 		struct {
-			TypeIndex base;
+			Type* base;
 			int       count;
 		} vector_;
 		
@@ -152,25 +151,6 @@ typedef struct Type {
 			Expr* src;
 		} typeof_;
     };
-} Type;
-
-// builtin types at the start of the type table
-enum {
-	TYPE_NONE,
-	TYPE_VOID,
-	TYPE_BOOL,
-	TYPE_CHAR,
-	TYPE_SHORT,
-	TYPE_INT,
-	TYPE_LONG,
-	TYPE_UCHAR,
-	TYPE_USHORT,
-	TYPE_UINT,
-	TYPE_ULONG,
-	TYPE_FLOAT,
-	TYPE_DOUBLE,
-	TYPE_STRING,
-	TYPE_WSTRING
 };
 
 typedef enum StmtOp {
@@ -354,7 +334,7 @@ struct Stmt {
 			Stmt* next;
 		} switch_;
 		struct StmtDecl {
-			TypeIndex type;
+			Type* type;
 			
 			// acceleration structure for scrubbing for symbols
 			// it's a linked list
@@ -425,7 +405,7 @@ struct Expr {
 	ExprOp op;
 	SourceLocIndex loc;
 	
-	TypeIndex type;
+	Type* type;
 	
 	// this is the type it'll be desugared into
 	// for example:
@@ -434,7 +414,7 @@ struct Expr {
 	//
 	//   their cast_type might be int because of C's
 	//   promotion rules.
-	TypeIndex cast_type;
+	Type* cast_type;
 	
 	union {
 		struct {
@@ -460,7 +440,7 @@ struct Expr {
 			Expr* next_symbol_in_chain;
 		} enum_val;
 		struct {
-			TypeIndex type;
+			Type* type;
 			Expr* src;
 		} cast;
 		struct {
@@ -511,14 +491,14 @@ struct Expr {
 		} str;
 		// either sizeof(T) or _Alignof(T)
 		struct {
-			TypeIndex type;
+			Type* type;
 		} x_of_type;
 		// either sizeof(expr) or _Alignof(expr)
 		struct {
 			Expr* expr;
 		} x_of_expr;
 		struct {
-			TypeIndex type;
+			Type* type;
 			int count;
 			InitNode* nodes;
 		} init;
@@ -537,7 +517,7 @@ _Static_assert(offsetof(Expr, next_symbol_in_chain) == offsetof(Expr, next_symbo
 _Static_assert(offsetof(Expr, next_symbol_in_chain) == offsetof(Expr, enum_val.next_symbol_in_chain), "these should be aliasing");
 
 typedef struct Decl {
-	TypeIndex type;
+	Type* type;
 	Atom name;
 	SourceLocIndex loc;
 } Decl;
@@ -558,7 +538,7 @@ typedef enum StorageClass {
 
 typedef struct Symbol {
 	Atom name;
-	TypeIndex type;
+	Type* type;
 	StorageClass storage_class;
 	
 	union {
@@ -592,11 +572,9 @@ typedef struct TranslationUnit {
 	// token stream
 	TokenStream tokens;
 	
-	// TODO(NeGate): keep track of all files loaded by this TU
-	// so that we can properly free them
-	BigArray(Type) types;
-	
+	mtx_t arena_mutex;
 	Arena ast_arena;
+	Arena type_arena;
 	
 	// stb_ds array
 	// NOTE(NeGate): should this be an stb_ds array?
@@ -607,28 +585,46 @@ typedef struct TranslationUnit {
 	// try to find a type by that name and feed it into hack.type
 	struct {
 		const char* name;
-		TypeIndex   type;
+		Type*   type;
 	} hack;
 } TranslationUnit;
 
-TypeIndex new_func(TranslationUnit* tu);
-TypeIndex new_enum(TranslationUnit* tu);
-TypeIndex new_blank_type(TranslationUnit* tu);
-TypeIndex new_record(TranslationUnit* tu, bool is_union);
-TypeIndex copy_type(TranslationUnit* tu, TypeIndex base);
-TypeIndex new_pointer(TranslationUnit* tu, TypeIndex base);
-TypeIndex new_typeof(TranslationUnit* tu, Expr* src);
-TypeIndex new_array(TranslationUnit* tu, TypeIndex base, int count);
-TypeIndex new_vector(TranslationUnit* tu, TypeIndex base, int count);
-TypeIndex get_common_type(TranslationUnit* tu, TypeIndex ty1, TypeIndex ty2);
-bool type_equal(TranslationUnit* tu, TypeIndex a, TypeIndex b);
-size_t type_as_string(TranslationUnit* tu, size_t max_len, char* buffer, TypeIndex type_index);
+// builtin types at the start of the type table
+enum {
+	TYPE_VOID,
+	TYPE_BOOL,
+	TYPE_CHAR,
+	TYPE_SHORT,
+	TYPE_INT,
+	TYPE_LONG,
+	TYPE_UCHAR,
+	TYPE_USHORT,
+	TYPE_UINT,
+	TYPE_ULONG,
+	TYPE_FLOAT,
+	TYPE_DOUBLE,
+	TYPE_STRING,
+	TYPE_WSTRING,
+	BUILTIN_TYPE_COUNT,
+};
+extern Type builtin_types[BUILTIN_TYPE_COUNT];
+
+Type* new_func(TranslationUnit* tu);
+Type* new_enum(TranslationUnit* tu);
+Type* new_blank_type(TranslationUnit* tu);
+Type* new_record(TranslationUnit* tu, bool is_union);
+Type* copy_type(TranslationUnit* tu, Type* base);
+Type* new_pointer(TranslationUnit* tu, Type* base);
+Type* new_typeof(TranslationUnit* tu, Expr* src);
+Type* new_array(TranslationUnit* tu, Type* base, int count);
+Type* new_vector(TranslationUnit* tu, Type* base, int count);
+Type* get_common_type(TranslationUnit* tu, Type* ty1, Type* ty2);
+bool type_equal(TranslationUnit* tu, Type* a, Type* b);
+size_t type_as_string(TranslationUnit* tu, size_t max_len, char* buffer, Type* type_index);
 
 Stmt* resolve_unknown_symbol(TranslationUnit* tu, Expr* e);
 ConstValue const_eval(TranslationUnit* tu, const Expr* e);
 bool const_eval_try_offsetof_hack(TranslationUnit* tu, const Expr* e, uint64_t* out);
-
-void init_types(TranslationUnit* tu);
 
 // thread_pool will eventually be NULLable which means the parsing is singlethreaded
 void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, threadpool_t* thread_pool);

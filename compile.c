@@ -27,14 +27,14 @@ static const char* INPUT_FILES[] = {
 	"src/front/types.c",
 	"src/front/sema.c",
 	"src/front/ast_dump.c",
-
+	
 	"src/anal/analysis.c",
-
+	
 	"src/back/ir_gen.c",
 	"src/back/linker.c",
-
+	
 	"src/linker/tblink.c",
-
+	
 	"src/ext/threadpool.c",
 	
 #if defined(_WIN32)
@@ -227,9 +227,7 @@ int main(int argc, char** argv) {
 	builder_compile(INPUT_FILE_COUNT, INPUT_FILES, "cuik");
 	
 	if (argc > 1) {
-		if (strcmp(argv[1], "bigboy") == 0) {
-			printf("cuik anal tests/the_pile/bigboy/*.c\n");
-		} else if (strcmp(argv[1], "test") == 0) {
+		if (strcmp(argv[1], "test") == 0) {
 			printf("\n\n\n");
 			printf("Running tests...\n");
 			

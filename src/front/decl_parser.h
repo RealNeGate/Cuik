@@ -22,7 +22,7 @@ static bool skip_over_declspec(TokenStream* restrict s) {
 	return false;
 }
 
-static Decl parse_declarator(TranslationUnit* tu, TokenStream* restrict s, TypeIndex type, bool is_abstract, bool disabled_paren) {
+static Decl parse_declarator(TranslationUnit* tu, TokenStream* restrict s, Type* type, bool is_abstract, bool disabled_paren) {
 	// handle calling convention
 	// TODO(NeGate): Actually pass these to the AST
 	parse_another_qualifier2: {
@@ -43,12 +43,12 @@ static Decl parse_declarator(TranslationUnit* tu, TokenStream* restrict s, TypeI
 		parse_another_qualifier: {
 			switch (tokens_get(s)->type) {
 				case TOKEN_KW_Atomic: {
-					tu->types[type].is_atomic = true;
+					type->is_atomic = true;
 					tokens_next(s);
 					goto parse_another_qualifier;
 				}
 				case TOKEN_KW_restrict: {
-					tu->types[type].is_ptr_restrict = true;
+					type->is_ptr_restrict = true;
 					tokens_next(s);
 					goto parse_another_qualifier;
 				}
@@ -94,7 +94,7 @@ static Decl parse_declarator(TranslationUnit* tu, TokenStream* restrict s, TypeI
 		tokens_next(s);
 		size_t saved = s->current;
 		
-		parse_declarator(tu, s, TYPE_NONE, is_abstract, false);
+		parse_declarator(tu, s, NULL, is_abstract, false);
 		
 		expect_closing_paren(s, opening_loc);
 		type = parse_type_suffix(tu, s, type, NULL);
@@ -107,17 +107,17 @@ static Decl parse_declarator(TranslationUnit* tu, TokenStream* restrict s, TypeI
 		// inherit name
 		// TODO(NeGate): I'm not sure if this is correct ngl
 		if (!d.name) {
-			TypeIndex t = d.type;
+			Type* t = d.type;
 			
-			if (tu->types[t].kind == KIND_PTR) {
-				t = tu->types[d.type].ptr_to;
+			if (t->kind == KIND_PTR) {
+				t = d.type->ptr_to;
 				
-				if (tu->types[t].kind == KIND_FUNC) {
-					d.name = tu->types[t].func.name;
-				} else if (tu->types[t].kind == KIND_STRUCT) {
-					d.name = tu->types[t].record.name;
-				} else if (tu->types[t].kind == KIND_UNION) {
-					d.name = tu->types[t].record.name;
+				if (t->kind == KIND_FUNC) {
+					d.name = t->func.name;
+				} else if (t->kind == KIND_STRUCT) {
+					d.name = t->record.name;
+				} else if (t->kind == KIND_UNION) {
+					d.name = t->record.name;
 				}
 			}
 		}
@@ -139,15 +139,15 @@ static Decl parse_declarator(TranslationUnit* tu, TokenStream* restrict s, TypeI
 	return (Decl){ type, name, loc };
 }
 
-static TypeIndex parse_typename(TranslationUnit* tu, TokenStream* restrict s) {
+static Type* parse_typename(TranslationUnit* tu, TokenStream* restrict s) {
 	// TODO(NeGate): Check if attributes are set, they shouldn't
 	// be in this context.
 	Attribs attr = { 0 };
-	TypeIndex type = parse_declspec(tu, s, &attr);
+	Type* type = parse_declspec(tu, s, &attr);
 	return parse_declarator(tu, s, type, true, false).type;
 }
 
-static TypeIndex parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s, TypeIndex type, Atom name) {
+static Type* parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s, Type* type, Atom name) {
 	assert(s->current > 0);
 	SourceLoc* loc = &s->line_arena[s->tokens[s->current - 1].location];
 	
@@ -155,18 +155,18 @@ static TypeIndex parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s,
 	if (tokens_get(s)->type == '(') {
 		tokens_next(s);
 		
-		TypeIndex return_type = type;
+		Type* return_type = type;
 		
 		type = new_func(tu);
-		tu->types[type].func.name = name;
-		tu->types[type].func.return_type = return_type;
+		type->func.name = name;
+		type->func.return_type = return_type;
 		
 		if (tokens_get(s)->type == TOKEN_KW_void && tokens_peek(s)->type == ')') {
 			tokens_next(s);
 			tokens_next(s);
 			
-			tu->types[type].func.param_list = 0;
-			tu->types[type].func.param_count = 0;
+			type->func.param_list = 0;
+			type->func.param_count = 0;
 			return type;
 		}
 		
@@ -187,15 +187,15 @@ static TypeIndex parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s,
 			}
 			
 			Attribs arg_attr = { 0 };
-			TypeIndex arg_base_type = parse_declspec(tu, s, &arg_attr);
+			Type* arg_base_type = parse_declspec(tu, s, &arg_attr);
 			
 			Decl param_decl = parse_declarator(tu, s, arg_base_type, false, false);
-			TypeIndex param_type = param_decl.type;
+			Type* param_type = param_decl.type;
 			
-			if (tu->types[param_type].kind == KIND_ARRAY) {
+			if (param_type->kind == KIND_ARRAY) {
 				// Array parameters are desugared into pointers
-				param_type = new_pointer(tu, tu->types[param_type].array_of);
-			} else if (tu->types[param_type].kind == KIND_FUNC) {
+				param_type = new_pointer(tu, param_type->array_of);
+			} else if (param_type->kind == KIND_FUNC) {
 				// Function parameters are desugared into pointers
 				param_type = new_pointer(tu, param_type);
 			}
@@ -217,9 +217,9 @@ static TypeIndex parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s,
 		Param* permanent_store = arena_alloc(&tu->ast_arena, param_count * sizeof(Param), _Alignof(Param));
 		memcpy(permanent_store, params, param_count * sizeof(Param));
 		
-		tu->types[type].func.param_list = permanent_store;
-		tu->types[type].func.param_count = param_count;
-		tu->types[type].func.has_varargs = has_varargs;
+		type->func.param_list = permanent_store;
+		type->func.param_count = param_count;
+		type->func.has_varargs = has_varargs;
 		
 		tls_restore(params);
 	} else if (tokens_get(s)->type == '[') {
@@ -247,9 +247,9 @@ static TypeIndex parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s,
 			counts[depth++] = count;
 		} while (tokens_get(s)->type == '[');
 		
-		size_t expected_size = tu->types[type].size;
+		size_t expected_size = type->size;
 		while (depth--) {
-			assert(tu->types[type].size == expected_size);
+			assert(type->size == expected_size);
 			
 			uint64_t a = expected_size;
 			uint64_t b = counts[depth];
@@ -272,7 +272,7 @@ static TypeIndex parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s,
 }
 
 // https://github.com/rui314/chibicc/blob/90d1f7f199cc55b13c7fdb5839d1409806633fdb/parse.c#L381
-static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attribs* attr) {
+static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attribs* attr) {
 	enum {
 		VOID     = 1 << 0,
 		BOOL     = 1 << 2,
@@ -288,7 +288,7 @@ static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, At
 	};
 	
 	int counter = 0;
-	TypeIndex type = TYPE_NONE;
+	Type* type = NULL;
 	
 	bool is_atomic = false;
 	bool is_const  = false;
@@ -340,10 +340,10 @@ static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, At
 				expect(s, '(');
 				
 				type = parse_typename(tu, s);
-				if (!(tu->types[type].kind >= KIND_CHAR && tu->types[type].kind <= KIND_LONG) &&
-					!(tu->types[type].kind == KIND_FLOAT && tu->types[type].kind == KIND_DOUBLE)) {
+				if (!(type->kind >= KIND_CHAR && type->kind <= KIND_LONG) &&
+					!(type->kind == KIND_FLOAT || type->kind == KIND_DOUBLE)) {
 					report(REPORT_ERROR, loc, "Only integers and floats can be used for _Vector types");
-					return 0;
+					return NULL;
 				}
 				
 				expect(s, ',');
@@ -352,23 +352,23 @@ static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, At
 				
 				if (count <= 0) {
 					report(REPORT_ERROR, loc, "_Vector types must have a positive width");
-					return 0;
+					return NULL;
 				}
 				
 				if (count == 1) {
 					report(REPORT_ERROR, loc, "It's not even a _Vector type... that's a scalar...");
-					return 0;
+					return NULL;
 				}
 				
 				if (count > 64) {
 					report(REPORT_ERROR, loc, "_Vector type is too wide (%"PRIiMAX", max is 64)", count);
-					return 0;
+					return NULL;
 				}
 				
 				// only allow power of two widths
 				if ((count & (count - 1)) != 0) {
 					report(REPORT_ERROR, loc, "_Vector types can only have power-of-two widths");
-					return 0;
+					return NULL;
 				}
 				
 				type = new_vector(tu, type, count);
@@ -391,7 +391,7 @@ static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, At
 					SourceLoc* closing_loc = &s->line_arena[tokens_get(s)->location];
 					if (tokens_get(s)->type != ')') {
 						report_two_spots(REPORT_ERROR, opening_loc, closing_loc, "expected closing parenthesis for _Atomic", "open", "close?", NULL);
-						return 0;
+						return NULL;
 					}
 				} else {
 					// walk back, we didn't need to read that
@@ -410,7 +410,7 @@ static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, At
 				tokens_next(s);
 				if (tokens_get(s)->type != '(') {
 					report(REPORT_ERROR, loc, "expected opening parenthesis for _Typeof");
-					return 0;
+					return NULL;
 				}
 				tokens_next(s);
 				
@@ -421,7 +421,7 @@ static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, At
 					
 					if (terminator || terminator == ',') {
 						report(REPORT_ERROR, loc, "expected closing parenthesis for _Typeof%s", terminator ? " (got EOF)" : "");
-						return 0;
+						return NULL;
 					}
 					
 					// Add to pending list
@@ -438,7 +438,7 @@ static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, At
 					
 					if (tokens_get(s)->type != ')') {
 						report(REPORT_ERROR, loc, "expected closing parenthesis for _Typeof");
-						return 0;
+						return NULL;
 					}
 				}
 				break;
@@ -457,18 +457,18 @@ static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, At
 					
 					if (terminator || terminator == ',') {
 						report(REPORT_ERROR, loc, "expected closing parenthesis for _Alignas%s", terminator ? " (got EOF)" : "");
-						return 0;
+						return NULL;
 					}
 					
 					// Add to pending list
 					printf("MSG: Add _Alignas to pending list %zu ending at %c\n", current, terminator);
 				} else {
 					if (is_typename(s)) {
-						int16_t new_align = parse_typename(tu, s);
-						if (new_align == 0) {
+						Type* new_align = parse_typename(tu, s);
+						if (new_align == NULL || new_align->align) {
 							report(REPORT_ERROR, loc, "_Alignas cannot operate with incomplete");
 						} else {
-							forced_align = new_align;
+							forced_align = new_align->align;
 						}
 					} else {
 						intmax_t new_align = parse_const_expr(tu, s);
@@ -483,7 +483,7 @@ static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, At
 					
 					if (tokens_get(s)->type != ')') {
 						report(REPORT_ERROR, loc, "expected closing parenthesis for _Alignas");
-						return 0;
+						return NULL;
 					}
 				}
 				break;
@@ -533,12 +533,12 @@ static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, At
 					type = name ? find_incomplete_tag((char*)name) : 0;
 					if (type) {
 						// can't re-complete a struct
-						//assert(!tu->types[type].is_incomplete);
+						//assert(!type->is_incomplete);
 					} else {
 						type = new_record(tu, is_union);
-						tu->types[type].loc = record_loc;
-						tu->types[type].is_incomplete = false;
-						tu->types[type].record.name = name;
+						type->loc = record_loc;
+						type->is_incomplete = false;
+						type->record.name = name;
 						
 						// can't forward decl unnamed records so we
 						// don't track it
@@ -560,7 +560,7 @@ static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, At
 						if (skip_over_declspec(s)) continue;
 						
 						Attribs member_attr = { 0 };
-						TypeIndex member_base_type = parse_declspec(tu, s, &member_attr);
+						Type* member_base_type = parse_declspec(tu, s, &member_attr);
 						
 						// error recovery, if we couldn't parse the typename we skip the declaration
 						if (member_base_type == 0) {
@@ -576,7 +576,7 @@ static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, At
 						//     one  two  three   DONE
 						do {
 							Decl decl = { 0 };
-							TypeIndex member_type = member_base_type;
+							Type* member_type = member_base_type;
 							
 							// not all members have declarators for example
 							// char : 3; or struct { ... };
@@ -586,12 +586,12 @@ static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, At
 								member_type = decl.type;
 							}
 							
-							if (tu->types[member_type].kind == KIND_FUNC) {
+							if (member_type->kind == KIND_FUNC) {
 								generic_error(s, "Cannot put function types into a struct, try a function pointer");
 							}
 							
-							int member_align = tu->types[member_type].align;
-							int member_size = tu->types[member_type].size;
+							int member_align = member_type->align;
+							int member_size = member_type->size;
 							if (!is_union) {
 								int new_offset = align_up(offset, member_align);
 								
@@ -621,7 +621,7 @@ static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, At
 								tokens_next(s);
 								
 								int bit_width = parse_const_expr(tu, s);
-								int bits_in_region = tu->types[member_type].kind == KIND_BOOL ? 1 : (member_size * 8);
+								int bits_in_region = member_type->kind == KIND_BOOL ? 1 : (member_size * 8);
 								if (bit_width > bits_in_region) {
 									generic_error(s, "Bitfield cannot fit in this type.");
 								}
@@ -665,16 +665,16 @@ static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, At
 					}
 					
 					offset = align_up(offset, align);
-					tu->types[type].is_incomplete = false;
-					tu->types[type].size = offset;
-					tu->types[type].align = align;
+					type->is_incomplete = false;
+					type->size = offset;
+					type->align = align;
 					
 					// put members into more permanent storage
 					Member* permanent_store = arena_alloc(&tu->ast_arena, member_count * sizeof(Member), _Alignof(Member));
 					memcpy(permanent_store, members, member_count * sizeof(Member));
 					
-					tu->types[type].record.kids = permanent_store;
-					tu->types[type].record.kid_count = member_count;
+					type->record.kids = permanent_store;
+					type->record.kid_count = member_count;
 					
 					tls_restore(members);
 				} else {
@@ -684,8 +684,8 @@ static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, At
 					type = find_incomplete_tag((const char*)name);
 					if (!type) {
 						type = new_record(tu, is_union);
-						tu->types[type].record.name = name;
-						tu->types[type].is_incomplete = true;
+						type->record.name = name;
+						type->is_incomplete = true;
 						
 						shput(incomplete_tags, name, type);
 					}
@@ -716,14 +716,14 @@ static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, At
 					if (type) {
 						// can't re-complete a enum
 						// TODO(NeGate): error messages
-						size_t count = tu->types[type].enumerator.count;
+						size_t count = type->enumerator.count;
 						if (count) {
 							generic_error(s, "Cannot recomplete an enumerator");
 						}
 					} else {
 						type = new_enum(tu);
-						tu->types[type].is_incomplete = true;
-						tu->types[type].enumerator.name = name;
+						type->is_incomplete = true;
+						type->enumerator.name = name;
 						
 						if (name) shput(incomplete_tags, name, type);
 					}
@@ -770,15 +770,15 @@ static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, At
 					memcpy(permanent_store, start, count * sizeof(EnumEntry));
 					tls_restore(start);
 					
-					tu->types[type].enumerator.entries = permanent_store;
-					tu->types[type].enumerator.count = count;
-					tu->types[type].is_incomplete = false;
+					type->enumerator.entries = permanent_store;
+					type->enumerator.count = count;
+					type->is_incomplete = false;
 				} else {
 					type = find_incomplete_tag((char*)name);
 					if (!type) {
 						type = new_enum(tu);
-						tu->types[type].record.name = name;
-						tu->types[type].is_incomplete = true;
+						type->record.name = name;
+						type->is_incomplete = true;
 						
 						shput(incomplete_tags, name, type);
 					}
@@ -805,7 +805,7 @@ static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, At
 						if (sym->storage_class != STORAGE_TYPEDEF) {
 							SourceLoc* loc = &s->line_arena[tokens_get(s)->location];
 							report(REPORT_ERROR, loc, "symbol '%s' is not a typedef", name);
-							return 0;
+							return NULL;
 						}
 						
 						type = sym->type;
@@ -854,63 +854,63 @@ static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, At
 		switch (counter) {
 			case 0: break; // not resolved yet
 			case VOID:
-			type = TYPE_VOID;
+			type = &builtin_types[TYPE_VOID];
 			break;
 			case BOOL:
-			type = TYPE_BOOL;
+			type = &builtin_types[TYPE_BOOL];
 			break;
 			case CHAR:
 			case SIGNED + CHAR:
-			type = TYPE_CHAR;
+			type = &builtin_types[TYPE_CHAR];
 			break;
 			case UNSIGNED + CHAR:
-			type = TYPE_UCHAR;
+			type = &builtin_types[TYPE_UCHAR];
 			break;
 			case SHORT:
 			case SHORT + INT:
 			case SIGNED + SHORT:
 			case SIGNED + SHORT + INT:
-			type = TYPE_SHORT;
+			type = &builtin_types[TYPE_SHORT];
 			break;
 			case UNSIGNED + SHORT:
 			case UNSIGNED + SHORT + INT:
-			type = TYPE_USHORT;
+			type = &builtin_types[TYPE_USHORT];
 			break;
 			case INT:
 			case LONG:
 			case LONG + INT:
 			case SIGNED:
-			type = TYPE_INT;
+			type = &builtin_types[TYPE_INT];
 			break;
 			case SIGNED + INT:
 			case SIGNED + LONG:
 			case SIGNED + LONG + INT:
-			type = settings.is_windows_long ? TYPE_INT : TYPE_LONG;
+			type = &builtin_types[settings.is_windows_long ? TYPE_INT : TYPE_LONG];
 			break;
 			case UNSIGNED:
 			case UNSIGNED + INT:
-			type = TYPE_UINT;
+			type = &builtin_types[TYPE_UINT];
 			break;
 			case UNSIGNED + LONG:
 			case UNSIGNED + LONG + INT:
-			type = settings.is_windows_long ? TYPE_UINT : TYPE_ULONG;
+			type = &builtin_types[settings.is_windows_long ? TYPE_UINT : TYPE_ULONG];
 			break;
 			case LONG + LONG:
 			case LONG + LONG + INT:
 			case SIGNED + LONG + LONG:
 			case SIGNED + LONG + LONG + INT:
-			type = TYPE_LONG;
+			type = &builtin_types[TYPE_LONG];
 			break;
 			case UNSIGNED + LONG + LONG:
 			case UNSIGNED + LONG + LONG + INT:
-			type = TYPE_ULONG;
+			type = &builtin_types[TYPE_ULONG];
 			break;
 			case FLOAT:
-			type = TYPE_FLOAT;
+			type = &builtin_types[TYPE_FLOAT];
 			break;
 			case DOUBLE:
 			case LONG + DOUBLE:
-			type = TYPE_DOUBLE;
+			type = &builtin_types[TYPE_DOUBLE];
 			break;
 			case OTHER:
 			assert(type);
@@ -927,23 +927,23 @@ static TypeIndex parse_declspec(TranslationUnit* tu, TokenStream* restrict s, At
 	SourceLoc* loc = &s->line_arena[tokens_get(s)->location];
 	if (type == 0) {
 		report(REPORT_ERROR, loc, "unknown typename");
-		return 0;
+		return NULL;
 	}
 	
-	if (is_atomic || is_const || (forced_align && tu->types[type].align != forced_align)) {
-		if (forced_align && forced_align < tu->types[type].align) {
-			report(REPORT_ERROR, loc, "forced alignment %d cannot be smaller than original alignment %d", forced_align, tu->types[type].align);
-			return 0;
+	if (is_atomic || is_const || (forced_align && type->align != forced_align)) {
+		if (forced_align && forced_align < type->align) {
+			report(REPORT_ERROR, loc, "forced alignment %d cannot be smaller than original alignment %d", forced_align, type->align);
+			return NULL;
 		}
 		
 		type = copy_type(tu, type);
 		
 		if (forced_align) {
-			tu->types[type].align = forced_align;
+			type->align = forced_align;
 		}
 		
-		tu->types[type].is_atomic = is_atomic;
-		tu->types[type].is_const = is_const;
+		type->is_atomic = is_atomic;
+		type->is_const = is_const;
 	}
 	
 	return type;

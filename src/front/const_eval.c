@@ -4,16 +4,16 @@
 #define signed_const(x) (ConstValue){ true, .signed_value = (x) }
 
 // Const eval probably needs some rework...
-TypeIndex sema_expr(TranslationUnit* tu, Expr* e);
-TypeIndex sema_guess_type(TranslationUnit* tu, Stmt* restrict s);
+Type* sema_expr(TranslationUnit* tu, Expr* e);
+Type* sema_guess_type(TranslationUnit* tu, Stmt* restrict s);
 Member* sema_traverse_members(TranslationUnit* tu, Type* record_type, Atom name, uint32_t* out_offset);
 
 // I've forsaken god by doing this, im sorry... it's ugly because it has to be i swear...
-typedef struct { TypeIndex type; uint32_t offset; } WalkMemberReturn;
+typedef struct { Type* type; uint32_t offset; } WalkMemberReturn;
 
 // just returns the byte offset it traveled in these DOTs and ARROWs.
 // the type we pass in is that of whatever's at the end of the DOT and ARROW chain
-static WalkMemberReturn walk_member_accesses(TranslationUnit* tu, const Expr* e, TypeIndex type) {
+static WalkMemberReturn walk_member_accesses(TranslationUnit* tu, const Expr* e, Type* type) {
 	const Expr* base_expr = e->dot_arrow.base;
 	
 	WalkMemberReturn base = { 0 };
@@ -25,7 +25,7 @@ static WalkMemberReturn walk_member_accesses(TranslationUnit* tu, const Expr* e,
 	}
 	
 	uint32_t relative = 0;
-	Member* member = sema_traverse_members(tu, &tu->types[base.type], e->dot_arrow.name, &relative);
+	Member* member = sema_traverse_members(tu, base.type, e->dot_arrow.name, &relative);
 	if (!member) abort();
 	if (member->is_bitfield) abort();
 	
@@ -49,11 +49,11 @@ bool const_eval_try_offsetof_hack(TranslationUnit* tu, const Expr* e, uint64_t* 
 		Type* record_type = NULL;
 		Expr* arrow_base = base_e;
 		if (arrow_base->op == EXPR_CAST) {
-			record_type = &tu->types[arrow_base->cast.type];
+			record_type = arrow_base->cast.type;
 			
 			// dereference
 			if (record_type->kind == KIND_PTR) {
-				record_type = &tu->types[record_type->ptr_to];
+				record_type = record_type->ptr_to;
 			} else {
 				abort();
 			}
@@ -69,7 +69,7 @@ bool const_eval_try_offsetof_hack(TranslationUnit* tu, const Expr* e, uint64_t* 
 			return false;
 		}
 		
-		offset += walk_member_accesses(tu, e, record_type - tu->types).offset; 
+		offset += walk_member_accesses(tu, e, record_type).offset; 
 		*out = offset;
 		return true;
 	}
@@ -204,9 +204,9 @@ ConstValue const_eval(TranslationUnit* tu, const Expr* e) {
 			// early and thus it might not resolve correct... we wanna drop this later
 			if (e->x_of_expr.expr->op == EXPR_DOT ||
 				e->x_of_expr.expr->op == EXPR_ARROW) {
-				TypeIndex src = sema_expr(tu, e->x_of_expr.expr);
+				Type* src = sema_expr(tu, e->x_of_expr.expr);
 				
-				return unsigned_const(tu->types[src].size);
+				return unsigned_const(src->size);
 			} else if (e->x_of_expr.expr->op == EXPR_SUBSCRIPT) {
 				Expr* base = e->x_of_expr.expr->subscript.base;
 				
@@ -214,15 +214,17 @@ ConstValue const_eval(TranslationUnit* tu, const Expr* e) {
 					Stmt* s = resolve_unknown_symbol(tu, base);
 					
 					if (s != NULL) {
-						TypeIndex t = sema_guess_type(tu, s);
-						if (t) return unsigned_const(tu->types[t].size);
+						Type* t = sema_guess_type(tu, s);
+						if (t != NULL) {
+							return unsigned_const(t->size);
+						}
 					}
 				} else if (base->op == EXPR_SYMBOL) {
-					return unsigned_const(tu->types[base->symbol->decl.type].size);
+					return unsigned_const(base->symbol->decl.type->size);
 				}
 			} else if (e->x_of_expr.expr->op == EXPR_SYMBOL) {
 				Stmt* stmt = e->x_of_expr.expr->symbol;
-				return unsigned_const(tu->types[stmt->decl.type].size);
+				return unsigned_const(stmt->decl.type->size);
 			} else if (e->x_of_expr.expr->op == EXPR_UNKNOWN_SYMBOL) {
 				return unsigned_const(0);
 			}
@@ -230,10 +232,10 @@ ConstValue const_eval(TranslationUnit* tu, const Expr* e) {
 			break;
 		}
 		case EXPR_SIZEOF_T: {
-			return unsigned_const(tu->types[e->x_of_type.type].size);
+			return unsigned_const(e->x_of_type.type->size);
 		}
 		case EXPR_ALIGNOF_T: {
-			return unsigned_const(tu->types[e->x_of_type.type].align);
+			return unsigned_const(e->x_of_type.type->align);
 		}
 		case EXPR_NEGATE: {
 			ConstValue src = const_eval(tu, e->unary_op.src);

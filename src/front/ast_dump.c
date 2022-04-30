@@ -88,7 +88,7 @@ static void dump_expr(TranslationUnit* tu, FILE* stream, Expr* restrict e, int d
 		case EXPR_PARAM: {
 			int param_num = e->param_num;
 			
-			Type* func_type = &tu->types[function_stmt->decl.type];
+			Type* func_type = function_stmt->decl.type;
 			Param* params = func_type->func.param_list;
 			
 			type_as_string(tu, sizeof(temp_string0), temp_string0, e->type);
@@ -529,18 +529,15 @@ void ast_dump_stats(TranslationUnit* tu, FILE* stream) {
 	printf("\n~~~ AST STATS ~~~\n");
 	printf("# Top level stmts: %zu\n", arrlen(tu->top_level_stmts));
 	
-	printf("# Types:       %8zu (%zu kB)\n",
-		   big_array_length(tu->types),
-		   (big_array_length(tu->types) * sizeof(Type)) / 1024);
+	printf("# Type Arena: %zu kB\n",
+		   arena_get_memory_usage(&tu->type_arena) / 1024);
 	
 	printf("# AST Arena:  %zu kB\n",
 		   arena_get_memory_usage(&tu->ast_arena) / 1024);
 }
 
-void ast_dump_type(TranslationUnit* tu, TypeIndex type, int depth, int offset) {
+void ast_dump_type(TranslationUnit* tu, Type* ty, int depth, int offset) {
 	for (int i = 0; i < depth; i++) printf("  ");
-	
-	Type* ty = &tu->types[type];
 	
 	if (ty->kind == KIND_STRUCT || ty->kind == KIND_UNION) {
 		printf("%s %s {",
@@ -564,8 +561,8 @@ void ast_dump_type(TranslationUnit* tu, TypeIndex type, int depth, int offset) {
 			Member* member = &kids[i];;
 			
 			if (member->name == NULL ||
-				tu->types[member->type].kind == KIND_STRUCT ||
-				tu->types[member->type].kind == KIND_UNION) {
+				member->type->kind == KIND_STRUCT ||
+				member->type->kind == KIND_UNION) {
 				ast_dump_type(tu, member->type, depth + 1, offset+member->offset);
 			} else {
 				for (int i = 0; i < depth; i++) printf("  ");

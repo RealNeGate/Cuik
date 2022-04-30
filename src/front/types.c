@@ -1,120 +1,100 @@
 #include "parser.h"
 #include "../ext/threads.h"
 
-void init_types(TranslationUnit* tu) {
-	const static Type default_types[] = {
-		[TYPE_NONE] = { KIND_VOID, 0, 0 },
-		
-		[TYPE_VOID] = { KIND_VOID, 0, 0 },
-		[TYPE_BOOL] = { KIND_BOOL, 1, 1 },
-		
-		[TYPE_CHAR] = { KIND_CHAR, 1, 1 },
-		[TYPE_SHORT] = { KIND_SHORT, 2, 2 },
-		[TYPE_INT] = { KIND_INT, 4, 4 },
-		[TYPE_LONG] = { KIND_LONG, 8, 8 },
-		
-		[TYPE_UCHAR] = { KIND_CHAR, 1, 1, .is_unsigned = true },
-		[TYPE_USHORT] = { KIND_SHORT, 2, 2, .is_unsigned = true },
-		[TYPE_UINT] = { KIND_INT, 4, 4, .is_unsigned = true },
-		[TYPE_ULONG] = { KIND_LONG, 8, 8, .is_unsigned = true },
-		
-		[TYPE_FLOAT] = { KIND_FLOAT, 4, 4 },
-		[TYPE_DOUBLE] = { KIND_DOUBLE, 8, 8 },
-		
-		[TYPE_STRING] = { KIND_PTR, 8, 8, .ptr_to = TYPE_CHAR },
-		[TYPE_WSTRING] = { KIND_PTR, 8, 8, .ptr_to = TYPE_SHORT },
-	};
+Type builtin_types[] = {
+	// crap
+	[TYPE_VOID] = { KIND_VOID, 0, 0 },
+	[TYPE_BOOL] = { KIND_BOOL, 1, 1 },
+	// signed
+	[TYPE_CHAR] = { KIND_CHAR, 1, 1 },
+	[TYPE_SHORT] = { KIND_SHORT, 2, 2 },
+	[TYPE_INT] = { KIND_INT, 4, 4 },
+	[TYPE_LONG] = { KIND_LONG, 8, 8 },
+	// unsigned
+	[TYPE_UCHAR]  = { KIND_CHAR, 1, 1, .is_unsigned = true },
+	[TYPE_USHORT] = { KIND_SHORT, 2, 2, .is_unsigned = true },
+	[TYPE_UINT]   = { KIND_INT, 4, 4, .is_unsigned = true },
+	[TYPE_ULONG]  = { KIND_LONG, 8, 8, .is_unsigned = true },
+	// floats
+	[TYPE_FLOAT]  = { KIND_FLOAT, 4, 4 },
+	[TYPE_DOUBLE] = { KIND_DOUBLE, 8, 8 },
+	// strings
+	[TYPE_STRING]  = { KIND_PTR, 8, 8, .ptr_to = &builtin_types[TYPE_CHAR] },
+	[TYPE_WSTRING] = { KIND_PTR, 8, 8, .ptr_to = &builtin_types[TYPE_SHORT] }
+};
+
+static Type* alloc_type(TranslationUnit* tu, const Type* src) {
+	mtx_lock(&tu->arena_mutex);
+	Type* dst = ARENA_ALLOC(&tu->type_arena, Type);
+	mtx_unlock(&tu->arena_mutex);
 	
-	assert(big_array_length(tu->types) == 1);
-	
-	// there's already one slot for the NULL entry in a big arena
-	// which is why there's a - 1
-	big_array_put_uninit(tu->types, (sizeof(default_types) / sizeof(default_types[0])) - 1);
-	memcpy(&tu->types[0], default_types, sizeof(default_types));
+	memcpy(dst, src, sizeof(Type));
+	return dst;
 }
 
-TypeIndex new_enum(TranslationUnit* tu) {
-	Type t = {
-		.kind = KIND_ENUM,
-		.size = 4,
-		.align = 4
-	};
-	
-	big_array_put(tu->types, t);
-	return big_array_length(tu->types) - 1;
+Type* new_enum(TranslationUnit* tu) {
+	return alloc_type(tu, &(Type){
+						  .kind = KIND_ENUM,
+						  .size = 4,
+						  .align = 4
+					  });
 }
 
-TypeIndex new_func(TranslationUnit* tu) {
-	Type t = {
-		.kind = KIND_FUNC,
-		.size = 1,
-		.align = 1
-	};
-	
-	big_array_put(tu->types, t);
-	return big_array_length(tu->types) - 1;
+Type* new_func(TranslationUnit* tu) {
+	return alloc_type(tu, &(Type){
+						  .kind = KIND_FUNC,
+						  .size = 1,
+						  .align = 1
+					  });
 }
 
-TypeIndex copy_type(TranslationUnit* tu, TypeIndex base) {
-	big_array_put(tu->types, tu->types[base]);
-	return big_array_length(tu->types) - 1;
+Type* copy_type(TranslationUnit* tu, Type* base) {
+	return alloc_type(tu, base);
 }
 
-TypeIndex new_record(TranslationUnit* tu, bool is_union) {
-	Type t = {
-		.kind = is_union ? KIND_UNION : KIND_STRUCT
-	};
-	
-	big_array_put(tu->types, t);
-	return big_array_length(tu->types) - 1;
+Type* new_record(TranslationUnit* tu, bool is_union) {
+	return alloc_type(tu, &(Type){
+						  .kind = is_union ? KIND_UNION : KIND_STRUCT
+					  });
 }
 
-TypeIndex new_pointer(TranslationUnit* tu, TypeIndex base) {
-	Type t = {
-		.kind = KIND_PTR,
-		.size = 8,
-		.align = 8,
-		.ptr_to = base
-	};
-	
-	big_array_put(tu->types, t);
-	return big_array_length(tu->types) - 1;
+Type* new_pointer(TranslationUnit* tu, Type* base) {
+	return alloc_type(tu, &(Type){
+						  .kind = KIND_PTR,
+						  .size = 8,
+						  .align = 8,
+						  .ptr_to = base
+					  });
 }
 
-TypeIndex new_typeof(TranslationUnit* tu, Expr* src) {
-	Type t = {
-		.kind = KIND_TYPEOF,
-		
-		// ideally if you try using these it'll crash because things
-		// do sanity checks on align, hopefully none trigger because
-		// we resolve it properly.
-		.size = 0,
-		.align = 0,
-		
-		.typeof_.src = src
-	};
-	
-	big_array_put(tu->types, t);
-	return big_array_length(tu->types) - 1;
+Type* new_typeof(TranslationUnit* tu, Expr* src) {
+	return alloc_type(tu, &(Type){
+						  .kind = KIND_TYPEOF,
+						  
+						  // ideally if you try using these it'll crash because things
+						  // do sanity checks on align, hopefully none trigger because
+						  // we resolve it properly.
+						  .size = 0,
+						  .align = 0,
+						  
+						  .typeof_.src = src
+					  });
 }
 
-TypeIndex new_array(TranslationUnit* tu, TypeIndex base, int count) {
+Type* new_array(TranslationUnit* tu, Type* base, int count) {
 	if (count == 0) {
 		// these zero-sized arrays don't actually care about incomplete element types 
-		Type t = {
-			.kind = KIND_ARRAY,
-			.size = 0,
-			.align = tu->types[base].align,
-			.array_of = base,
-			.array_count = 0
-		};
-		
-		big_array_put(tu->types, t);
-		return big_array_length(tu->types) - 1;
+		return alloc_type(tu, &(Type){
+							  .kind = KIND_ARRAY,
+							  .size = 0,
+							  .align = base->align,
+							  .array_of = base,
+							  .array_count = 0
+						  });
 	}
 	
-	int size = tu->types[base].size;
-	int align = tu->types[base].align;
+	int size = base->size;
+	int align = base->align;
 	
 	int dst;
 	if (__builtin_mul_overflow(size, count, &dst)) {
@@ -122,36 +102,29 @@ TypeIndex new_array(TranslationUnit* tu, TypeIndex base, int count) {
 	}
 	
 	assert(align != 0);
-	Type t = {
-		.kind = KIND_ARRAY,
-		.size = dst,
-		.align = align,
-		.array_of = base,
-		.array_count = count
-	};
-	
-	big_array_put(tu->types, t);
-	return big_array_length(tu->types) - 1;
+	return alloc_type(tu, &(Type){
+						  .kind = KIND_ARRAY,
+						  .size = dst,
+						  .align = align,
+						  .array_of = base,
+						  .array_count = count
+					  });
 }
 
-TypeIndex new_vector(TranslationUnit* tu, TypeIndex base, int count) {
-	Type t = {
-		.kind = KIND_VECTOR,
-		.size = 0,
-		.align = tu->types[base].align,
-		.array_of = base,
-		.array_count = 0
-	};
-	
-	big_array_put(tu->types, t);
-	return big_array_length(tu->types) - 1;
+Type* new_vector(TranslationUnit* tu, Type* base, int count) {
+	return alloc_type(tu, &(Type){
+						  .kind = KIND_VECTOR,
+						  .size = 0,
+						  .align = base->align,
+						  .array_of = base,
+						  .array_count = 0
+					  });
 }
 
-TypeIndex new_blank_type(TranslationUnit* tu) {
-	Type t = { .kind = KIND_PLACEHOLDER };
-	
-	big_array_put(tu->types, t);
-	return big_array_length(tu->types) - 1;
+Type* new_blank_type(TranslationUnit* tu) {
+	return alloc_type(tu, &(Type){
+						  .kind = KIND_PLACEHOLDER
+					  });
 }
 
 // https://github.com/rui314/chibicc/blob/main/type.c
@@ -159,11 +132,8 @@ TypeIndex new_blank_type(TranslationUnit* tu) {
 // NOTE(NeGate): this function is called within the IR gen
 // code which is parallel so we need a mutex to avoid messing
 // up the type arena.
-TypeIndex get_common_type(TranslationUnit* tu, TypeIndex a, TypeIndex b) {
-	if (a == b) return a;
-	
-	Type* restrict ty1 = &tu->types[a];
-	Type* restrict ty2 = &tu->types[b];
+Type* get_common_type(TranslationUnit* tu, Type* ty1, Type* ty2) {
+	if (ty1 == ty2) return ty1;
 	
 	// implictly convert arrays into pointers
 	if (ty1->kind == KIND_ARRAY) {
@@ -172,48 +142,35 @@ TypeIndex get_common_type(TranslationUnit* tu, TypeIndex a, TypeIndex b) {
 	
 	// implictly convert functions into function pointers
 	if (ty1->kind == KIND_FUNC) {
-		return new_pointer(tu, a);
+		return new_pointer(tu, ty1);
 	}
 	
 	if (ty2->kind == KIND_FUNC) {
-		return new_pointer(tu, b);
+		return new_pointer(tu, ty2);
 	}
 	
 	// operations with floats promote up to floats
 	// e.g. 1 + 2.0 = 3.0
 	if (ty1->kind == KIND_DOUBLE || ty2->kind == KIND_DOUBLE)
-		return TYPE_DOUBLE;
+		return &builtin_types[TYPE_DOUBLE];
 	if (ty1->kind == KIND_FLOAT || ty2->kind == KIND_FLOAT)
-		return TYPE_FLOAT;
+		return &builtin_types[TYPE_FLOAT];
 	
 	// promote any small integral types into ints
-	if (ty1->size < 4) {
-		a = TYPE_INT;
-		ty1 = &tu->types[a];
-	}
-	
-	if (ty2->size < 4) {
-		b = TYPE_INT;
-		ty2 = &tu->types[b];
-	}
+	if (ty1->size < 4) ty1 = &builtin_types[TYPE_INT];
+	if (ty2->size < 4) ty2 = &builtin_types[TYPE_INT];
 	
 	// if the types don't match pick the bigger one
-	if (ty1->size != ty2->size)
-		return (ty1->size < ty2->size) ? b : a;
+	if (ty1->size != ty2->size) return (ty1->size < ty2->size) ? ty2 : ty1;
 	
 	// unsigned types are preferred
-	if (ty2->kind >= KIND_CHAR && ty2->kind <= KIND_LONG && ty2->is_unsigned)
-		return b;
+	if (ty2->kind >= KIND_CHAR && ty2->kind <= KIND_LONG && ty2->is_unsigned) return ty2;
 	
-	return a;
+	return ty1;
 }
 
-bool type_equal(TranslationUnit* tu, TypeIndex a, TypeIndex b) {
-	if (a == b) return true;
-	
-	Type* types = tu->types;
-	Type* restrict ty1 = &types[a];
-	Type* restrict ty2 = &types[b];
+bool type_equal(TranslationUnit* tu, Type* ty1, Type* ty2) {
+	if (ty1 == ty2) return true;
 	
 	// just because they match kind doesn't necessarily
 	// mean they're equivalent but if they don't match
@@ -253,9 +210,7 @@ bool type_equal(TranslationUnit* tu, TypeIndex a, TypeIndex b) {
 	return true;
 }
 
-size_t type_as_string(TranslationUnit* tu, size_t max_len, char* buffer, TypeIndex type_index) {
-	Type* restrict type = &tu->types[type_index];
-	
+size_t type_as_string(TranslationUnit* tu, size_t max_len, char* buffer, Type* type) {
 	size_t i = 0;
 	switch (type->kind) {
 		case KIND_VOID:  i += cstr_copy(max_len - i, &buffer[i], "void"); break;

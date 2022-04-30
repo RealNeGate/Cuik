@@ -215,6 +215,10 @@ inline static void builder_init() {
 #elif defined(__CUIKC__)
 	printf("Compiling on Cuik %d.%d...\n", __CUIKC__, __CUIKC_MINOR__);
 #endif
+	
+#   if defined(RELEASE_BUILD)
+	printf("And it's a release build!\n");
+#   endif
 }
 
 inline static void builder_compile_cuik(size_t count, const char* filepaths[], const char* output_path) {
@@ -283,7 +287,7 @@ inline static void builder_compile_cc(size_t count, const char* filepaths[], con
 		cmd_append(" -march=haswell -maes -Werror -Wall -Wno-trigraphs -Wno-unused-function ");
 		
 #   if defined(RELEASE_BUILD)
-		cmd_append("-O2 ");
+		cmd_append("-O2 -DNDEBUG ");
 #   endif
 		
 #if defined(__clang__)

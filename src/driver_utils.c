@@ -240,7 +240,7 @@ TranslationUnit* cuik_compile_file(CompilationUnit* cu, const char* path,
 	
 	// Semantics pass
 	timed_block("sema %s", path) {
-		sema_pass(cu, tu, frontend_only);
+		sema_pass(cu, tu, thread_pool, frontend_only);
 		crash_if_reports(REPORT_ERROR);
 	}
 	

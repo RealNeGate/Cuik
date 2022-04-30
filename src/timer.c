@@ -15,11 +15,16 @@ mtx_t timer_mutex;
 
 atomic_int timer_entry_count;
 
+// just to organize the JSON timing stuff a bit better
+static thread_local bool is_main_thread;
+
 // done regardless of the profiler running just to be able to query time in general
 #if _WIN32
 double timer_freq;
 
 void timer_init() {
+	is_main_thread = true;
+	
     LARGE_INTEGER freq;
     QueryPerformanceFrequency(&freq);
     timer_freq = 1.0 / (double)freq.QuadPart;
@@ -122,7 +127,7 @@ void timer_end(uint64_t start, const char* fmt, ...) {
 				i ? ',' : ' ',
 				(long long)elapsed_in_microseconds,
 				name,
-				tid,
+				is_main_thread ? 1 : tid,
 				(long long)start_in_microseconds);
 		
 		mtx_unlock(&timer_mutex);

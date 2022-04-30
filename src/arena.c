@@ -1,5 +1,8 @@
 #include "arena.h"
 
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+
 thread_local Arena thread_arena;
 
 void* arena_alloc(Arena* arena, size_t size, size_t align) {
@@ -15,9 +18,15 @@ void* arena_alloc(Arena* arena, size_t size, size_t align) {
 		arena->top->used = (arena->top->used + size + align_mask) & ~align_mask;
 	} else {
 		// Add new page
-		ArenaSegment* s = (ArenaSegment*)malloc(ARENA_SEGMENT_SIZE);
+#ifdef _WIN32
+		ArenaSegment* s = VirtualAlloc(NULL, ARENA_SEGMENT_SIZE, MEM_COMMIT|MEM_RESERVE, PAGE_READWRITE);
+#else
+		// umm... mmap dumbass
+		ArenaSegment* s = malloc(ARENA_SEGMENT_SIZE);
+#endif
+		
 		if (!s) {
-			printf("Out of memory!\n");
+			printf("error: arena is out of memory!\n");
 			abort();
 		}
 		
@@ -40,11 +49,22 @@ void arena_free(Arena* arena) {
 		ArenaSegment* c = arena->base;
 		while (c) {
 			ArenaSegment* next = c->next;
+#ifdef _WIN32
+			VirtualFree(c, ARENA_SEGMENT_SIZE, MEM_RELEASE);
+#else
 			free(c);
+#endif
 			c = next;
 		}
 		
 		arena->base = arena->top = NULL;
+	}
+}
+
+void arena_append(Arena* arena, Arena* other) {
+	if (other != NULL) {
+		arena->top->next = other->base;
+		arena->top = other->top;
 	}
 }
 
