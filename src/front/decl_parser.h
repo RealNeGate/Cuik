@@ -763,12 +763,13 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
 						type = sym->type;
 						counter += OTHER;
 					} else {
-						printf("MSG: Add typename to pending list '%s'\n", name);
+						//printf("MSG: Add typename to pending list '%s'\n", name);
 						
 						// add placeholder
-						Symbol sym = (Symbol){
+						Symbol sym = {
 							.name = name,
 							.type = new_blank_type(tu),
+							.loc  = t->location,
 							.storage_class = STORAGE_TYPEDEF
 						};
 						type = sym.type;
@@ -778,7 +779,7 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
 						shput(global_symbols, name, sym);
 					}
 					
-					tokens_next(s);
+					break;
 				} else {
 					Symbol* sym = find_local_symbol(s);
 					if (sym != NULL && sym->storage_class == STORAGE_TYPEDEF) {
@@ -796,10 +797,11 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
 						counter += OTHER;
 						break;
 					}
+					
+					// if not a typename, this isn't a typedecl
+					tokens_next(s);
+					goto done;
 				}
-				
-				// if not a typename, this isn't a typedecl
-				goto done;
 			}
 			default: goto done;
 		}

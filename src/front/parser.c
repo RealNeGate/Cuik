@@ -443,44 +443,52 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
 					// declarator (',' declarator)+ ';'
 					while (true) {
 						Decl decl = parse_declarator(tu, s, type, false, false);
-						assert(decl.name);
 						
-						// make typedef
-						Stmt* n = make_stmt(tu, s, STMT_DECL);
-						n->loc = decl.loc;
-						n->decl = (struct StmtDecl){
-							.name = decl.name,
-							.type = decl.type,
-							.attrs = attr
-						};
-						
-						arrput(tu->top_level_stmts, n);
-						
-						// check for collision
-						Symbol* search = find_global_symbol((const char*) decl.name);
-						if (search != NULL) {
-							if (search->storage_class != STORAGE_TYPEDEF) {
-								report(REPORT_ERROR, loc, "typedef '%s' overrides previous declaration.", decl.name);
-								abort();
-							}
-							
-							Type* placeholder_space = search->type;
-							if (placeholder_space->kind != KIND_PLACEHOLDER) {
-								report(REPORT_ERROR, loc, "typedef '%s' overrides previous declaration.", decl.name);
-								abort();
-							}
-							
-							// replace placeholder with actual entry
-							memcpy(placeholder_space, decl.type, sizeof(Type));
-							placeholder_space->loc = decl.loc;
-						} else {
-							// add new entry
-							Symbol sym = (Symbol){
+						if (decl.name != NULL) {
+							// make typedef
+							Stmt* n = make_stmt(tu, s, STMT_DECL);
+							n->loc = decl.loc;
+							n->decl = (struct StmtDecl){
 								.name = decl.name,
 								.type = decl.type,
-								.storage_class = STORAGE_TYPEDEF
+								.attrs = attr
 							};
-							shput(global_symbols, decl.name, sym);
+							
+							arrput(tu->top_level_stmts, n);
+							
+							// check for collision
+							Symbol* search = find_global_symbol((const char*) decl.name);
+							if (search != NULL) {
+								if (search->storage_class != STORAGE_TYPEDEF) {
+									report_two_spots(REPORT_ERROR, 
+													 &s->line_arena[decl.loc], &s->line_arena[search->loc],
+													 "typedef overrides previous declaration.",
+													 "old", "new", NULL);
+									abort();
+								}
+								
+								Type* placeholder_space = search->type;
+								if (placeholder_space->kind != KIND_PLACEHOLDER) {
+									report_two_spots(REPORT_ERROR, 
+													 &s->line_arena[decl.loc], &s->line_arena[search->loc],
+													 "typedef overrides previous declaration.",
+													 "old", "new", NULL);
+									abort();
+								}
+								
+								// replace placeholder with actual entry
+								memcpy(placeholder_space, decl.type, sizeof(Type));
+								placeholder_space->loc = decl.loc;
+							} else {
+								// add new entry
+								Symbol sym = {
+									.name = decl.name,
+									.type = decl.type,
+									.loc  = decl.loc,
+									.storage_class = STORAGE_TYPEDEF
+								};
+								shput(global_symbols, decl.name, sym);
+							}
 						}
 						
 						if (tokens_get(s)->type == 0) {
@@ -524,9 +532,10 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
 							n->decl.attrs.is_root = false;
 						}
 						
-						Symbol sym = (Symbol){
+						Symbol sym = {
 							.name = decl.name,
 							.type = decl.type,
+							.loc  = decl.loc,
 							.stmt = n
 						};
 						

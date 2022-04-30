@@ -546,6 +546,7 @@ typedef enum StorageClass {
 typedef struct Symbol {
 	Atom name;
 	Type* type;
+	SourceLocIndex loc;
 	StorageClass storage_class;
 	
 	union {

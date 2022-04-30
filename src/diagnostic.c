@@ -224,6 +224,12 @@ void report_two_spots(ReportLevel level, SourceLoc* loc, SourceLoc* loc2, const 
 				}
 			}
 			
+			if (loc->file != loc2->file) {
+				printf("  meanwhile in... %s\n", loc2->file);
+				draw_line_horizontal_pad();
+				printf("\n");
+			}
+			
 			if (interjection) {
 				printf("  %s\n", interjection);
 				draw_line_horizontal_pad();
