@@ -128,9 +128,8 @@ static Decl parse_declarator(TranslationUnit* tu, TokenStream* restrict s, Type*
 	
 	Atom name = NULL;
 	Token* t = tokens_get(s);
-	SourceLocIndex loc = 0;
+	SourceLocIndex loc = t->location;
 	if (!is_abstract && t->type == TOKEN_IDENTIFIER) {
-		loc = t->location;
 		name = atoms_put(t->end - t->start, t->start);
 		tokens_next(s);
 	}
@@ -417,7 +416,7 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
 				if (out_of_order_mode) {
 					// _Typeof ( SOMETHING )
 					TknType terminator;
-					size_t current = skip_expression_in_parens(s, &terminator);
+					/*size_t current = */skip_expression_in_parens(s, &terminator);
 					
 					if (terminator || terminator == ',') {
 						report(REPORT_ERROR, loc, "expected closing parenthesis for _Typeof%s", terminator ? " (got EOF)" : "");
@@ -425,7 +424,7 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
 					}
 					
 					// Add to pending list
-					printf("MSG: Add _Typeof to pending list %zu ending at %c\n", current, terminator);
+					//printf("MSG: Add _Typeof to pending list %zu ending at %c\n", current, terminator);
 				} else {
 					if (is_typename(s)) {
 						type = parse_typename(tu, s);
@@ -453,7 +452,7 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
 				if (out_of_order_mode) {
 					// _Alignas ( SOMETHING )
 					TknType terminator;
-					size_t current = skip_expression_in_parens(s, &terminator);
+					/*size_t current = */skip_expression_in_parens(s, &terminator);
 					
 					if (terminator || terminator == ',') {
 						report(REPORT_ERROR, loc, "expected closing parenthesis for _Alignas%s", terminator ? " (got EOF)" : "");
@@ -461,7 +460,7 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
 					}
 					
 					// Add to pending list
-					printf("MSG: Add _Alignas to pending list %zu ending at %c\n", current, terminator);
+					//printf("MSG: Add _Alignas to pending list %zu ending at %c\n", current, terminator);
 				} else {
 					if (is_typename(s)) {
 						Type* new_align = parse_typename(tu, s);
@@ -536,7 +535,6 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
 						//assert(!type->is_incomplete);
 					} else {
 						type = new_record(tu, is_union);
-						type->loc = record_loc;
 						type->is_incomplete = false;
 						type->record.name = name;
 						
@@ -544,20 +542,17 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
 						// don't track it
 						if (name) shput(incomplete_tags, name, type);
 					}
+					type->loc = record_loc;
 					counter += OTHER;
 					
 					size_t member_count = 0;
 					Member* members = tls_save();
 					
-					// for unions this just represents the max size
-					int offset = 0;
-					int last_member_size = 0;
-					int current_bit_offset = 0;
-					// struct/union are aligned to the biggest member alignment
-					int align = 0;
-					
 					while (tokens_get(s)->type != '}') {
 						if (skip_over_declspec(s)) continue;
+						
+						// in case we have unnamed declarators and we somewhere for them to point to
+						SourceLocIndex default_loc = tokens_get(s)->location;
 						
 						Attribs member_attr = { 0 };
 						Type* member_base_type = parse_declspec(tu, s, &member_attr);
@@ -584,22 +579,8 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
 								tokens_get(s)->type != ':') {
 								decl = parse_declarator(tu, s, member_base_type, false, false); 
 								member_type = decl.type;
-							}
-							
-							if (member_type->kind == KIND_FUNC) {
-								generic_error(s, "Cannot put function types into a struct, try a function pointer");
-							}
-							
-							int member_align = member_type->align;
-							int member_size = member_type->size;
-							if (!is_union) {
-								int new_offset = align_up(offset, member_align);
-								
-								// If we realign, reset the bit offset
-								if (offset != new_offset) {
-									current_bit_offset = last_member_size = 0;
-								}
-								offset = new_offset;
+							} else {
+								decl.loc = default_loc;
 							}
 							
 							// Append member
@@ -607,48 +588,20 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
 							Member* member = &members[member_count++];
 							
 							*member = (Member) {
+								.loc = decl.loc,
 								.type = member_type,
-								.name = decl.name,
-								.offset = is_union ? 0 : offset,
-								.align = member_align
+								.name = decl.name
 							};
 							
 							if (tokens_get(s)->type == ':') {
 								if (is_union) {
-									generic_error(s, "Bitfield... unions... TODO?!");
+									generic_error(s, "Bitfield... unions... huh?!");
 								}
-								
 								tokens_next(s);
 								
-								int bit_width = parse_const_expr(tu, s);
-								int bits_in_region = member_type->kind == KIND_BOOL ? 1 : (member_size * 8);
-								if (bit_width > bits_in_region) {
-									generic_error(s, "Bitfield cannot fit in this type.");
-								}
-								
-								if (current_bit_offset + bit_width > bits_in_region) {
-									current_bit_offset = 0;
-									
-									offset = align_up(offset + member_size, member_align);
-									member->offset = offset;
-								}
-								
 								member->is_bitfield = true;
-								member->bit_offset = current_bit_offset;
-								member->bit_width = bit_width;
-								
-								current_bit_offset += bit_width;
-							} else {
-								if (is_union) {
-									if (member_size > offset) offset = member_size;
-								} else {
-									offset += member_size;
-								}
+								member->bit_width = parse_const_expr(tu, s);
 							}
-							
-							// the total alignment of a struct/union is based on the biggest member
-							last_member_size = member_size;
-							if (member_align > align) align = member_align;
 							
 							// i just wanted to logically split this from the top stuff, this is a breather comment
 							if (tokens_get(s)->type == ',') {
@@ -664,14 +617,12 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
 						generic_error(s, "Unclosed member list!");
 					}
 					
-					offset = align_up(offset, align);
-					type->is_incomplete = false;
-					type->size = offset;
-					type->align = align;
-					
 					// put members into more permanent storage
 					Member* permanent_store = arena_alloc(&tu->ast_arena, member_count * sizeof(Member), _Alignof(Member));
 					memcpy(permanent_store, members, member_count * sizeof(Member));
+					
+					type->align = 0;
+					type->size  = 0;
 					
 					type->record.kids = permanent_store;
 					type->record.kid_count = member_count;
@@ -684,6 +635,7 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
 					type = find_incomplete_tag((const char*)name);
 					if (!type) {
 						type = new_record(tu, is_union);
+						type->loc = record_loc;
 						type->record.name = name;
 						type->is_incomplete = true;
 						
@@ -820,6 +772,7 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
 							.storage_class = STORAGE_TYPEDEF
 						};
 						type = sym.type;
+						type->placeholder.name = name;
 						counter += OTHER;
 						
 						shput(global_symbols, name, sym);

@@ -41,11 +41,6 @@ typedef struct {
 	Stmt* value;
 } LabelEntry;
 
-typedef struct {
-	int  current; // position in the TokenStream
-	char terminator;
-} PendingExpr;
-
 // starting point is used to disable the function literals
 // from reading from their parent function
 thread_local static int local_symbol_start = 0;
@@ -251,11 +246,134 @@ static void phase3_parse_task(void* arg) {
 	{
 		mtx_lock(&task.tu->arena_mutex);
 		
+		arena_trim(&local_ast_arena);
 		arena_append(&task.tu->ast_arena, &local_ast_arena);
 		local_ast_arena = (Arena){ 0 };
 		
 		mtx_unlock(&task.tu->arena_mutex);
 	}
+}
+
+// 0 no cycles
+// 1 cycles
+// 2 cycles and we gave an error msg
+static int type_cycles_dfs(TranslationUnit* restrict tu, Type* type, uint8_t* visited, uint8_t* finished) {
+	// non-record types are always finished :P
+	if (type->kind != KIND_STRUCT && type->kind != KIND_UNION) {
+		return 0;
+	}
+	
+	// if (finished[o]) return false
+	if (finished[type->record.ordinal / 8] & (1u << (type->record.ordinal % 8))) {
+		return 0;
+	}
+	
+	// if (visited[o]) return true
+	if (visited[type->record.ordinal / 8] & (1u << (type->record.ordinal % 8))) {
+		return 1;
+	}
+	
+	// visited[o] = true
+	visited[type->record.ordinal / 8] |= (1u << (type->record.ordinal % 8));
+	
+	// for each m in members
+	//   if (dfs(m)) return true
+	for (size_t i = 0; i < type->record.kid_count; i++) {
+		int c = type_cycles_dfs(tu, type->record.kids[i].type, visited, finished);
+		if (c) {
+			// we already gave an error message, don't be redundant
+			if (c == 2) return 2;
+			
+			const char* name = type->record.name ? (const char*)type->record.name : "<unnamed>";
+			
+			char tmp[256];
+			sprintf_s(tmp, sizeof(tmp), "type %s has cycles", name);
+			
+			report_two_spots(REPORT_ERROR, 
+							 &tu->tokens.line_arena[type->loc], 
+							 &tu->tokens.line_arena[type->record.kids[i].loc], 
+							 tmp, NULL, NULL, "on");
+			return 2;
+		}
+	}
+	
+	// finished[o] = true
+	finished[type->record.ordinal / 8] |= (1u << (type->record.ordinal % 8));
+	return 0;
+}
+
+static void type_layout_record(TranslationUnit* restrict tu, Type* type) {
+	assert(type->kind == KIND_STRUCT || type->kind == KIND_UNION);
+	bool is_union = (type->kind == KIND_UNION);
+	
+	size_t member_count = type->record.kid_count;
+	Member* members = type->record.kids;
+	
+	// for unions this just represents the max size
+	int offset = 0;
+	int last_member_size = 0;
+	int current_bit_offset = 0;
+	// struct/union are aligned to the biggest member alignment
+	int align = 0;
+	
+	for (size_t i = 0; i < member_count; i++) {
+		Member* member = &members[i];
+		
+		if (member->type->kind == KIND_STRUCT || member->type->kind == KIND_UNION) {
+			type_layout_record(tu, member->type);
+		} else if (member->type->kind == KIND_FUNC) {
+			report(REPORT_ERROR, &tu->tokens.line_arena[type->loc], "Cannot put function types into a struct, try a function pointer");
+		}
+		
+		int member_align = member->type->align;
+		int member_size = member->type->size;
+		if (!is_union) {
+			int new_offset = align_up(offset, member_align);
+			
+			// If we realign, reset the bit offset
+			if (offset != new_offset) {
+				current_bit_offset = last_member_size = 0;
+			}
+			offset = new_offset;
+		}
+		
+		member->offset = is_union ? 0 : offset;
+		member->align = member_align;
+		
+		// bitfields
+		if (member->is_bitfield) {
+			int bit_width = member->bit_width;
+			int bits_in_region = member->type->kind == KIND_BOOL ? 1 : (member_size * 8);
+			if (bit_width > bits_in_region) {
+				report(REPORT_ERROR, &tu->tokens.line_arena[type->loc], "Bitfield cannot fit in this type.");
+			}
+			
+			if (current_bit_offset + bit_width > bits_in_region) {
+				current_bit_offset = 0;
+				
+				offset = align_up(offset + member_size, member_align);
+				member->offset = offset;
+			}
+			
+			current_bit_offset += bit_width;
+		} else {
+			if (is_union) {
+				if (member_size > offset) offset = member_size;
+			} else {
+				offset += member_size;
+			}
+		}
+		
+		// the total alignment of a struct/union is based on the biggest member
+		last_member_size = member_size;
+		if (member_align > align) align = member_align;
+	}
+	
+	offset = align_up(offset, align);
+	type->align = align;
+	type->size = offset;
+	
+	type->is_incomplete = false;
 }
 
 void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, threadpool_t* thread_pool) {
@@ -271,7 +389,6 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
 	TokenStream* restrict s = &tu->tokens;
 	
 #if OUT_OF_ORDER_CRAP
-	//BigArray(PendingExpr) pending_exprs = big_array_create(PendingExpr, false);
 	out_of_order_mode = true;
 	
 	// Phase 1: resolve all top level statements
@@ -355,6 +472,7 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
 							
 							// replace placeholder with actual entry
 							memcpy(placeholder_space, decl.type, sizeof(Type));
+							placeholder_space->loc = decl.loc;
 						} else {
 							// add new entry
 							Symbol sym = (Symbol){
@@ -529,15 +647,63 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
 			}
 		}
 	}
+	out_of_order_mode = false;
 	
-	// phase 2: layout any structs out of order
+	// Phase 2: resolve top level types, layout records and anything else so that
+	// we have a complete global symbol table
+	timed_block("phase 2") {
+		////////////////////////////////
+		// first we wanna check for cycles
+		////////////////////////////////
+		size_t type_count = 0;
+		for (ArenaSegment* a = tu->type_arena.base; a != NULL; a = a->next) {
+			for (size_t used = 0; used < a->used; used += sizeof(Type)) {
+				Type* type = (Type*) &a->data[used];
+				if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
+					type->record.ordinal = type_count++;
+				} else if (type->kind == KIND_PLACEHOLDER) {
+					report(REPORT_ERROR, &s->line_arena[type->loc], "incomplete type '%s'!", type->placeholder.name);
+				}
+			}
+		}
+		
+		crash_if_reports(REPORT_ERROR);
+		
+		// bitvectors amirite
+		size_t bitvec_bytes = (type_count + 7) / 8;
+		uint8_t* visited = tls_push(bitvec_bytes);
+		uint8_t* finished = tls_push(bitvec_bytes);
+		
+		memset(visited, 0, bitvec_bytes);
+		memset(finished, 0, bitvec_bytes);
+		
+		// for each type, check for cycles
+		for (ArenaSegment* a = tu->type_arena.base; a != NULL; a = a->next) {
+			for (size_t used = 0; used < a->used; used += sizeof(Type)) {
+				Type* type = (Type*) &a->data[used];
+				
+				if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
+					// if cycles... quit lmao
+					if (type_cycles_dfs(tu, type, visited, finished)) goto fuck_outta_there;
+					
+					// do record layout
+					type_layout_record(tu, type);
+				}
+			}
+		}
+		
+		fuck_outta_there:
+		crash_if_reports(REPORT_ERROR);
+		
+		// we don't need to keep it afterwards
+		tls_restore(visited);
+	}
 	
 	// Phase 3: resolve all expressions or function bodies
 	// This part is parallel because im the fucking GOAT
-	out_of_order_mode = false;
-	
 	timed_block("phase 3") {
 		// append any AST nodes we might've created in this thread
+		arena_trim(&local_ast_arena);
 		arena_append(&tu->ast_arena, &local_ast_arena);
 		local_ast_arena = (Arena){ 0 };
 		

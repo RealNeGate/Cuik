@@ -50,7 +50,7 @@ void arena_free(Arena* arena) {
 		while (c) {
 			ArenaSegment* next = c->next;
 #ifdef _WIN32
-			VirtualFree(c, ARENA_SEGMENT_SIZE, MEM_RELEASE);
+			VirtualFree(c, 0, MEM_RELEASE);
 #else
 			free(c);
 #endif
@@ -59,6 +59,21 @@ void arena_free(Arena* arena) {
 		
 		arena->base = arena->top = NULL;
 	}
+}
+
+void arena_trim(Arena* arena) {
+#ifdef _WIN32
+	// decommit any leftover pages
+	if (arena->base) {
+		for (ArenaSegment* c = arena->base; c != NULL; c = c->next) {
+			size_t aligned_used = (sizeof(ArenaSegment) + c->used + 4095u) & ~4095u;
+			
+			if (aligned_used != ARENA_SEGMENT_SIZE) {
+				VirtualFree((char*)c + aligned_used, ARENA_SEGMENT_SIZE - aligned_used, MEM_RELEASE);
+			}
+		}
+	}
+#endif
 }
 
 void arena_append(Arena* arena, Arena* other) {

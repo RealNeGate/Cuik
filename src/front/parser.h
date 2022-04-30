@@ -50,6 +50,7 @@ typedef struct Member {
 	Type* type;
 	Atom name;
 	
+	SourceLocIndex loc;
 	int align;
 	int offset;
 	
@@ -128,8 +129,10 @@ struct Type {
 		// Structs/Unions
 		struct {
 			Atom name;
+			// used by cycle checking
+			int ordinal;
 			
-			size_t  kid_count;
+			int kid_count;
 			Member* kids;
 		} record;
 		
@@ -142,14 +145,18 @@ struct Type {
 		} enumerator;
 		
 		struct {
+			int count;
 			Type* base;
-			int       count;
 		} vector_;
 		
 		// Typeof
 		struct {
 			Expr* src;
 		} typeof_;
+		
+		struct {
+			Atom name;
+		} placeholder;
     };
 };
 

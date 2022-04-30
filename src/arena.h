@@ -21,5 +21,6 @@ extern thread_local Arena thread_arena;
 
 void*  arena_alloc(Arena* arena, size_t size, size_t align);
 void   arena_free(Arena* arena);
+void   arena_trim(Arena* arena);
 void   arena_append(Arena* arena, Arena* other);
 size_t arena_get_memory_usage(Arena* arena);
