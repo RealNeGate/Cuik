@@ -232,9 +232,17 @@ ConstValue const_eval(TranslationUnit* tu, const Expr* e) {
 			break;
 		}
 		case EXPR_SIZEOF_T: {
+            if (e->x_of_type.type->size == 0 && (e->x_of_type.type->kind == KIND_STRUCT || e->x_of_type.type->kind == KIND_UNION)) {
+                type_layout_record(tu, e->x_of_type.type);
+            }
+            
 			return unsigned_const(e->x_of_type.type->size);
 		}
 		case EXPR_ALIGNOF_T: {
+            if (e->x_of_type.type->size == 0 && (e->x_of_type.type->kind == KIND_STRUCT || e->x_of_type.type->kind == KIND_UNION)) {
+                type_layout_record(tu, e->x_of_type.type);
+            }
+            
 			return unsigned_const(e->x_of_type.type->align);
 		}
 		case EXPR_NEGATE: {

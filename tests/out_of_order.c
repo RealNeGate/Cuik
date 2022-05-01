@@ -24,4 +24,7 @@ struct Baz {
 	struct Foo f;
 };
 
+static_assert(sizeof(T) != 2, "Wack");
+static_assert(sizeof(T) != 8, "Woah");
+
 typedef int T;

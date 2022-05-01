@@ -95,7 +95,10 @@ struct Type {
     int size;  // sizeof
     int align; // _Alignof
 	SourceLocIndex loc;
-	
+    
+    // used by cycle checking
+    int ordinal;
+    
 	bool is_const : 1;
     bool is_atomic : 1;
 	bool is_incomplete : 1;
@@ -107,13 +110,17 @@ struct Type {
         // Arrays
 		struct {
 			Type* array_of;
-			size_t array_count;
+			int array_count;
+            
+            // if non-zero, then we must execute an expression
+            // parser to resolve it
+            int array_count_lexer_pos;
 		};
 		
         // Pointers
 		struct {
 			Type* ptr_to;
-			bool is_ptr_restrict : 1;
+            bool is_ptr_restrict : 1;
 		};
 		
 		// Function
@@ -129,8 +136,6 @@ struct Type {
 		// Structs/Unions
 		struct {
 			Atom name;
-			// used by cycle checking
-			int ordinal;
 			
 			int kid_count;
 			Member* kids;
@@ -139,8 +144,8 @@ struct Type {
 		// Enumerators
 		struct {
 			Atom name;
+			int count;
 			
-			size_t count;
 			EnumEntry* entries;
 		} enumerator;
 		
@@ -629,6 +634,8 @@ Type* new_vector(TranslationUnit* tu, Type* base, int count);
 Type* get_common_type(TranslationUnit* tu, Type* ty1, Type* ty2);
 bool type_equal(TranslationUnit* tu, Type* a, Type* b);
 size_t type_as_string(TranslationUnit* tu, size_t max_len, char* buffer, Type* type_index);
+void type_layout_record(TranslationUnit* restrict tu, Type* type);
+void type_layout_array(TranslationUnit* restrict tu, Type* type);
 
 Stmt* resolve_unknown_symbol(TranslationUnit* tu, Expr* e);
 ConstValue const_eval(TranslationUnit* tu, const Expr* e);

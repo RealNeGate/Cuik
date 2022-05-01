@@ -282,7 +282,7 @@ size_t type_as_string(TranslationUnit* tu, size_t max_len, char* buffer, Type* t
 			if (i+12 < max_len) {
 				buffer[i++] = '[';
 				
-				i += snprintf(&buffer[i], max_len - i, "%zu", type->array_count);
+				i += snprintf(&buffer[i], max_len - i, "%d", type->array_count);
 				
 				buffer[i++] = ']';
 			} else {

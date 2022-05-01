@@ -24,6 +24,8 @@ typedef struct { const unsigned char* data; size_t length; } string;
 #define MAX_PATH 260
 #endif
 
+#define Pair(A, B) struct { A _0; B _1; }
+
 // just because we use a threads fallback layer which can include windows
 // and such which is annoying... eventually need to modify that out or something
 #ifndef thread_local

@@ -625,7 +625,9 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
 						mtx_lock(&cu->mutex);
 						
 						const char* name = (const char*) stmt->decl.name;
-						ptrdiff_t search = shgeti(cu->export_table, name);
+						
+						ptrdiff_t temp;
+						ptrdiff_t search = shgeti_ts(cu->export_table, name, temp);
 						
 						IRVal val = { 0 };
 						if (search >= 0) {
