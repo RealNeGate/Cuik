@@ -593,13 +593,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
 			
 			Type* type = stmt->decl.type;
 			
-			if (stmt->op == STMT_GLOBAL_DECL) {
-				return (IRVal) {
-					.value_type = LVALUE,
-					.type = type,
-					.reg = tb_inst_get_global_address(func, stmt->backing.g)
-				};
-			} else if (stmt->op == STMT_LABEL) {
+			if (stmt->op == STMT_LABEL) {
 				if (stmt->backing.l == 0) {
 					stmt->backing.l = tb_inst_new_label_id(func);
 				}
@@ -609,62 +603,60 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
 					.type = NULL,
 					.label = stmt->backing.l
 				};
-			} else if (type->kind == KIND_FUNC) {
-				if (stmt->op == STMT_FUNC_DECL) {
-					return (IRVal) {
-						.value_type = LVALUE_FUNC,
-						.type = type,
-						.func = tb_function_from_id(mod, stmt->backing.f)
-					};
-				} else if (stmt->op == STMT_DECL) {
-					if (stmt->backing.e == 0) {
-						// It's either a proper external or links to
-						// a file within the compilation unit, we don't
-						// know yet
-						CompilationUnit* restrict cu = tu->parent;
-						mtx_lock(&cu->mutex);
+			} else if (stmt->op == STMT_FUNC_DECL) {
+				return (IRVal) {
+					.value_type = LVALUE_FUNC,
+					.type = type,
+					.func = tb_function_from_id(mod, stmt->backing.f)
+				};
+			} else if (stmt->op == STMT_GLOBAL_DECL) {
+				if (stmt->backing.e == 0) {
+					// It's either a proper external or links to
+					// a file within the compilation unit, we don't
+					// know yet
+					CompilationUnit* restrict cu = tu->parent;
+					mtx_lock(&cu->mutex);
+					
+					const char* name = (const char*) stmt->decl.name;
+					
+					ptrdiff_t temp;
+					ptrdiff_t search = shgeti_ts(cu->export_table, name, temp);
+					
+					IRVal val = { 0 };
+					if (search >= 0) {
+						// Figure out what the symbol is and link it together
+						Stmt* real_symbol = cu->export_table[search].value;
 						
-						const char* name = (const char*) stmt->decl.name;
-						
-						ptrdiff_t temp;
-						ptrdiff_t search = shgeti_ts(cu->export_table, name, temp);
-						
-						IRVal val = { 0 };
-						if (search >= 0) {
-							// Figure out what the symbol is and link it together
-							Stmt* real_symbol = cu->export_table[search].value;
-							
-							if (real_symbol->op == STMT_FUNC_DECL) {
-								val = (IRVal) {
-									.value_type = LVALUE_FUNC,
-									.type = type,
-									.func = tb_function_from_id(mod, real_symbol->backing.f)
-								};
-							} else if (real_symbol->op == STMT_GLOBAL_DECL) {
-								val = (IRVal) {
-									.value_type = LVALUE,
-									.type = type,
-									.reg = tb_inst_get_global_address(func, real_symbol->backing.g)
-								};
-							} else {
-								abort();
-							}
-						} else {
-							stmt->backing.e = tb_extern_create(mod, name);
-							
+						if (real_symbol->op == STMT_FUNC_DECL) {
 							val = (IRVal) {
-								.value_type = LVALUE_EFUNC,
+								.value_type = LVALUE_FUNC,
 								.type = type,
-								.ext = stmt->backing.e
+								.func = tb_function_from_id(mod, real_symbol->backing.f)
 							};
+						} else if (real_symbol->op == STMT_GLOBAL_DECL) {
+							val = (IRVal) {
+								.value_type = LVALUE,
+								.type = type,
+								.reg = tb_inst_get_global_address(func, real_symbol->backing.g)
+							};
+						} else {
+							abort();
 						}
+					} else {
+						stmt->backing.e = tb_extern_create(mod, name);
 						
-						// NOTE(NeGate): we might wanna move this mutex unlock earlier
-						// it doesn't seem like we might need it honestly...
-						mtx_unlock(&cu->mutex);
-						return val;
+						val = (IRVal) {
+							.value_type = LVALUE_EFUNC,
+							.type = type,
+							.ext = stmt->backing.e
+						};
 					}
 					
+					// NOTE(NeGate): we might wanna move this mutex unlock earlier
+					// it doesn't seem like we might need it honestly...
+					mtx_unlock(&cu->mutex);
+					return val;
+				} else {
 					// Proper external
 					return (IRVal) {
 						.value_type = LVALUE_EFUNC,
@@ -672,13 +664,13 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
 						.ext = stmt->backing.e
 					};
 				}
+			} else {
+				return (IRVal) {
+					.value_type = LVALUE,
+					.type = type,
+					.reg = stmt->backing.r
+				};
 			}
-			
-			return (IRVal) {
-				.value_type = LVALUE,
-				.type = type,
-				.reg = stmt->backing.r
-			};
 		}
 		case EXPR_PARAM: {
 			int param_num = e->param_num;

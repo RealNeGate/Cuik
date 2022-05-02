@@ -20,7 +20,7 @@ LRESULT main_wnd_proc(HWND wnd, UINT message, WPARAM wparam, LPARAM lparam);
 int main(int argc, char** argv, char** env) {
 	int a = (16 * 6) + 5;
 
-	char* name = "Hello";
+	const char* name = "Hello";
 	
 	WNDCLASSA wc = {};
 	wc.hInstance = GetModuleHandleA(NULL);

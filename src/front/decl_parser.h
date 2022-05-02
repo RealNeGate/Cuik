@@ -648,6 +648,7 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
                                 tokens_next(s);
                                 
                                 member->is_bitfield = true;
+								member->bit_offset = 0;
                                 member->bit_width = parse_const_expr(tu, s);
                             }
                             
@@ -670,7 +671,7 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
                     memcpy(permanent_store, members, member_count * sizeof(Member));
                     
                     type->align = 0;
-                    type->size  = 0;
+                    type->size = 0;
                     
                     type->record.kids = permanent_store;
                     type->record.kid_count = member_count;
@@ -759,14 +760,18 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
                         tls_push(sizeof(EnumEntry));
                         start[count++] = (EnumEntry){ name, cursor };
                         
-                        //report(REPORT_INFO, &s->line_arena[t->location], "Enum: %s = %d", name, cursor);
-                        
+                        Symbol sym = {
+                            .name = name,
+                            .type = type,
+                            .loc  = t->location,
+                            .storage_class = STORAGE_ENUM,
+							.enum_value = cursor
+                        };
+						
                         if (out_of_order_mode) {
-                            shput(enum_entries, name, cursor);
+							shput(global_symbols, name, sym);
                         } else {
-                            mtx_lock(&tu->arena_mutex);
-                            shput(enum_entries, name, cursor);
-                            mtx_unlock(&tu->arena_mutex);
+							local_symbols[local_symbol_count++] = sym;
                         }
                         cursor += 1;
                         

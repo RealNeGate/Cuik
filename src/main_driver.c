@@ -522,6 +522,7 @@ int main(int argc, char* argv[]) {
 	}
 	
 	cuik_detect_crt_include();
+	settings.stage_to_stop_at = STAGE_FINAL;
 	
 #ifdef _WIN32
 	// This is used to detect includes for the preprocessor
@@ -749,11 +750,11 @@ int main(int argc, char* argv[]) {
 	switch (mode) {
 		case COMPILER_MODE_BUILD:
 		case COMPILER_MODE_RUN: {
-            if (settings.stage_to_stop_at <= STAGE_PREPROC) {
-                // only preprocessor work
-                dump_tokens();
-                break;
-            }
+			if (settings.stage_to_stop_at <= STAGE_PREPROC) {
+				// only preprocessor work
+				dump_tokens();
+				break;
+			}
             
 			char obj_output_path[MAX_PATH];
 			if (target_system == TB_SYSTEM_WINDOWS) {

@@ -46,7 +46,7 @@ typedef enum TypeKind {
 } TypeKind;
 
 // Used by unions and structs
-typedef struct Member {
+typedef struct {
 	Type* type;
 	Atom name;
 	
@@ -60,7 +60,7 @@ typedef struct Member {
 	bool is_bitfield;
 } Member;
 
-typedef struct Attribs {
+typedef struct {
 	bool is_static  : 1;
 	bool is_typedef : 1;
 	bool is_inline  : 1;
@@ -75,12 +75,12 @@ typedef struct Attribs {
 	bool is_used    : 1;
 } Attribs;
 
-typedef struct EnumEntry {
+typedef struct {
 	Atom key;
 	int value;
 } EnumEntry;
 
-typedef struct Param {
+typedef struct {
 	Type* type;
 	Atom name;
 } Param;
@@ -545,6 +545,7 @@ typedef enum StorageClass {
 	STORAGE_PARAM,
 	STORAGE_GLOBAL,
 	STORAGE_LOCAL,
+	STORAGE_ENUM,
 	STORAGE_TYPEDEF
 } StorageClass;
 
@@ -557,6 +558,10 @@ typedef struct Symbol {
 	union {
 		// used if storage_class == STORAGE_PARAM
 		int param_num;
+		
+		// used if storage_class == STORAGE_ENUM
+		int enum_value;
+		
 		Stmt* stmt;
 	};
 	

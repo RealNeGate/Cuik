@@ -603,6 +603,7 @@ Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
 		}
 		case EXPR_DEREF: {
 			Type* base = sema_expr(tu, e->unary_op.src);
+			e->unary_op.src->cast_type = base;
 			
 			if (base->kind == KIND_PTR) {
 				return (e->type = base->ptr_to);
@@ -1274,7 +1275,6 @@ static void sema_task(void* arg) {
 
 void sema_pass(CompilationUnit* cu, TranslationUnit* tu, threadpool_t* thread_pool, bool frontend_only) {
 	tls_init();
-	
 	size_t count = arrlen(tu->top_level_stmts);
 	
 	// simple mark and sweep to remove unused symbols
@@ -1324,9 +1324,11 @@ void sema_pass(CompilationUnit* cu, TranslationUnit* tu, threadpool_t* thread_po
 				thrd_yield();
 			}
 		} else {
+			in_the_semantic_phase = true;
 			for (size_t i = 0; i < count; i++) {
 				sema_top_level(tu, tu->top_level_stmts[i], frontend_only);
 			}
+			in_the_semantic_phase = false;
 		}
 	}
 }

@@ -77,7 +77,7 @@ void arena_trim(Arena* arena) {
 }
 
 void arena_append(Arena* arena, Arena* other) {
-	if (other != NULL) {
+	if (arena->top != NULL && other != NULL) {
 		arena->top->next = other->base;
 		arena->top = other->top;
 	}

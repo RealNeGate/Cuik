@@ -242,37 +242,27 @@ static Expr* parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
 #if OUT_OF_ORDER_CRAP
 				Symbol* symbol_search = find_global_symbol((const char*) name);
 				if (symbol_search != NULL) {
-					*e = (Expr) {
-						.op = EXPR_SYMBOL,
-						.loc = loc,
-						.symbol = symbol_search->stmt
-					};
-				} else {
-					mtx_lock(&tu->arena_mutex);
-					ptrdiff_t temp;
-					ptrdiff_t search = shgeti_ts(enum_entries, name, temp);
-					mtx_unlock(&tu->arena_mutex);
-                    
-					if (search >= 0) {
-						int value = enum_entries[search].value;
-                        
+					if (symbol_search->storage_class == STORAGE_ENUM) {
 						*e = (Expr) {
 							.op = EXPR_ENUM,
 							.loc = loc,
-							.enum_val = { value }
+							.enum_val = { symbol_search->enum_value }
 						};
 					} else {
-						report(REPORT_ERROR, &s->line_arena[loc], "could not resolve symbol: %s", name);
-						for (int i = 0; i < shlen(enum_entries); i++) {
-                            printf("%s = %d\n", enum_entries[i].key, enum_entries[i].value);
-                        }
-                        
 						*e = (Expr) {
-							.op = EXPR_UNKNOWN_SYMBOL,
+							.op = EXPR_SYMBOL,
 							.loc = loc,
-							.unknown_sym = name
+							.symbol = symbol_search->stmt
 						};
 					}
+				} else {
+					report(REPORT_ERROR, &s->line_arena[loc], "could not resolve symbol: %s", name);
+					
+					*e = (Expr) {
+						.op = EXPR_UNKNOWN_SYMBOL,
+						.loc = loc,
+						.unknown_sym = name
+					};
 				}
 #else
 				*e = (Expr) {
