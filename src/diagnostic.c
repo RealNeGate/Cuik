@@ -15,7 +15,7 @@ static const char* report_names[] = {
 	"error"
 };
 
-static thread_local int tally[REPORT_MAX] = {};
+static _Atomic int tally[REPORT_MAX] = {};
 static mtx_t mutex;
 
 #if _WIN32
@@ -68,8 +68,9 @@ static void display_line(ReportLevel level, SourceLoc* loc) {
 }
 
 static void tally_report_counter(ReportLevel level) {
-	tally[level] += 1;
-	if (level > REPORT_WARNING && tally[level] > 20) {
+	int error_count = ++tally[level];
+    
+	if (level > REPORT_WARNING && error_count > 20) {
 #if _WIN32
 		SetConsoleTextAttribute(console_handle, (default_attribs & ~0xF) | FOREGROUND_RED | FOREGROUND_INTENSITY);
 #endif

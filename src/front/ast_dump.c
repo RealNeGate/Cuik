@@ -501,7 +501,7 @@ void ast_dump(TranslationUnit* tu, FILE* stream) {
 	fprintf(stream, "TranslationUnit\n");
 	barz[0] = true;
 	
-	if (settings.emit_ast == EMIT_AST_MINIMAL) {
+	if (true) {
 		for (size_t i = 0, count = arrlen(tu->top_level_stmts); i < count; i++) {
 			Stmt* stmt = tu->top_level_stmts[i];
 			if (!stmt->decl.attrs.is_used || stmt->decl.attrs.is_typedef) continue;

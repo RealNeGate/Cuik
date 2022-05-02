@@ -1900,7 +1900,7 @@ static void gen_func_body(TranslationUnit* tu, Type* type, Stmt* restrict s) {
 	
 	tb_inst_set_scope(func, old_tb_scope);
 	
-	if (settings.print_tb_ir) {
+	if (settings.stage_to_stop_at == STAGE_IR) {
 		if (mtx_lock(&emit_ir_mutex) != thrd_success) {
 			printf("internal compiler error: mtx_lock(...) failure!");
 			abort();

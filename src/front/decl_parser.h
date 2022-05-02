@@ -759,7 +759,15 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
                         tls_push(sizeof(EnumEntry));
                         start[count++] = (EnumEntry){ name, cursor };
                         
-                        shput(enum_entries, name, cursor);
+                        //report(REPORT_INFO, &s->line_arena[t->location], "Enum: %s = %d", name, cursor);
+                        
+                        if (out_of_order_mode) {
+                            shput(enum_entries, name, cursor);
+                        } else {
+                            mtx_lock(&tu->arena_mutex);
+                            shput(enum_entries, name, cursor);
+                            mtx_unlock(&tu->arena_mutex);
+                        }
                         cursor += 1;
                         
                         if (tokens_get(s)->type == ',') tokens_next(s);

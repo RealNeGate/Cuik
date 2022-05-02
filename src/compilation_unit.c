@@ -35,33 +35,31 @@ void compilation_unit_deinit(CompilationUnit* cu) {
 }
 
 void compilation_unit_internal_link(CompilationUnit* cu) {
-	timed_block("internal link") {
-		FOR_EACH_TU(tu, cu) {
-			size_t count = arrlen(tu->top_level_stmts);
-			
-			for (size_t i = 0; i < count; i++) {
-				Stmt* s = tu->top_level_stmts[i];
-				
-				if (s->op == STMT_FUNC_DECL) {
-					if (!s->decl.attrs.is_static &&
-						!s->decl.attrs.is_inline) {
-						//printf("Export! %s (Function: %d)\n", s->decl.name, s->backing.f);
-						
-						shput(cu->export_table, s->decl.name, s);
-					}
-				} else if (s->op == STMT_GLOBAL_DECL ||
-						   s->op == STMT_DECL) {
-					if (!s->decl.attrs.is_static &&
-						!s->decl.attrs.is_extern &&
-						!s->decl.attrs.is_typedef &&
-						!s->decl.attrs.is_inline &&
-						s->decl.initial != 0) {
-						//printf("Export! %s (Global: %d)\n", s->decl.name, s->backing.g);
-						
-						shput(cu->export_table, s->decl.name, s);
-					}
-				}
-			}
-		}
-	}
+    FOR_EACH_TU(tu, cu) {
+        size_t count = arrlen(tu->top_level_stmts);
+        
+        for (size_t i = 0; i < count; i++) {
+            Stmt* s = tu->top_level_stmts[i];
+            
+            if (s->op == STMT_FUNC_DECL) {
+                if (!s->decl.attrs.is_static &&
+                    !s->decl.attrs.is_inline) {
+                    //printf("Export! %s (Function: %d)\n", s->decl.name, s->backing.f);
+                    
+                    shput(cu->export_table, s->decl.name, s);
+                }
+            } else if (s->op == STMT_GLOBAL_DECL ||
+                       s->op == STMT_DECL) {
+                if (!s->decl.attrs.is_static &&
+                    !s->decl.attrs.is_extern &&
+                    !s->decl.attrs.is_typedef &&
+                    !s->decl.attrs.is_inline &&
+                    s->decl.initial != 0) {
+                    //printf("Export! %s (Global: %d)\n", s->decl.name, s->backing.g);
+                    
+                    shput(cu->export_table, s->decl.name, s);
+                }
+            }
+        }
+    }
 }
