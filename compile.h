@@ -291,7 +291,7 @@ inline static void builder_compile_cc(size_t count, const char* filepaths[], con
 #   endif
 		
 #if defined(__clang__)
-		cmd_append("-Wno-gnu-designator ");
+		cmd_append("-Wno-gnu-designator -Wno-microsoft-anon-tag ");
 #       if USE_DA_ASAN
 		cmd_append("-fsanitize=address ");
 #       endif

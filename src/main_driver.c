@@ -381,12 +381,12 @@ static bool dump_tokens() {
 		Token* t = &s.tokens[i];
 		SourceLoc* loc = &s.line_arena[t->location];
 		
-		if (last_file != loc->file) {
+		if (last_file != loc->line->file) {
 			char str[MAX_PATH];
 			
 			// TODO(NeGate): Kinda shitty but i just wanna duplicate
 			// the backslashes to avoid them being treated as an escape
-			const char* in = (const char*)loc->file;
+			const char* in = (const char*)loc->line->file;
 			char* out = str;
 			
 			while (*in) {
@@ -400,14 +400,14 @@ static bool dump_tokens() {
 			}
 			*out++ = '\0';
 			
-			fprintf(f, "\n#line %d \"%s\"\t", loc->line, str);
-			last_file = loc->file;
+			fprintf(f, "\n#line %d \"%s\"\t", loc->line->line, str);
+			last_file = loc->line->file;
 			current_column = 0;
 		}
 		
-		if (last_line != loc->line) {
-			fprintf(f, "\n/* line %3d */\t", loc->line);
-			last_line = loc->line;
+		if (last_line != loc->line->line) {
+			fprintf(f, "\n/* line %3d */\t", loc->line->line);
+			last_line = loc->line->line;
 			current_column = 0;
 		}
 		

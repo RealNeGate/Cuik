@@ -547,7 +547,7 @@ void ast_dump_type(TranslationUnit* tu, Type* ty, int depth, int offset) {
 		if (ty->loc) {
 			SourceLoc* loc = &tu->tokens.line_arena[ty->loc];
 			
-			printf("// %s:%d\n", loc->file, loc->line);
+			printf("// %s:%d\n", loc->line->file, loc->line->line);
 		} else {
 			printf("\n");
 		}

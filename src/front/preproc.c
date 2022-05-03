@@ -32,11 +32,6 @@ static void* gimme_the_shtuffs(CPP_Context* restrict c, size_t len);
 static bool find_define(CPP_Context* restrict c, size_t* out_index, const unsigned char* start, size_t length);
 static size_t insert_define(CPP_Context* restrict c, const unsigned char* start, size_t length);
 
-/*static struct Tally {
-	size_t expand_ident_tally;
-	size_t expand_ident_fails;
-} perf_tally;*/
-
 void cpp_init(CPP_Context* ctx) {
 	size_t sz = sizeof(void*) * MACRO_BUCKET_COUNT * SLOTS_PER_MACRO_BUCKET;
 	
@@ -48,6 +43,7 @@ void cpp_init(CPP_Context* ctx) {
 		
 		.the_shtuffs = malloc(THE_SHTUFFS_SIZE)
 	};
+	ctx->file_memory = big_array_create(unsigned char*, false);
 	
 	tls_init();
 }
@@ -55,6 +51,10 @@ void cpp_init(CPP_Context* ctx) {
 void cpp_deinit(CPP_Context* ctx) {
 	if (ctx->macro_bucket_keys) {
 		cpp_finalize(ctx);
+	}
+	
+	if (ctx->file_memory != NULL) {
+		cpp_free_file_memory(ctx);
 	}
 	
 	free((void*)ctx->the_shtuffs);
@@ -74,6 +74,17 @@ void cpp_finalize(CPP_Context* ctx) {
 	ctx->macro_bucket_keys_length = NULL;
 	ctx->macro_bucket_values_start = NULL;
 	ctx->macro_bucket_values_end = NULL;
+}
+
+void cpp_free_file_memory(CPP_Context* ctx) {
+	size_t count = big_array_length(ctx->file_memory);
+	
+	for (size_t i = 0; i < count; i++) {
+		free(ctx->file_memory[i]);
+	}
+	
+	big_array_destroy(ctx->file_memory);
+	ctx->file_memory = NULL;
 }
 
 bool cpp_find_include_include(CPP_Context* ctx, char output[MAX_PATH], const char* path) {
@@ -206,21 +217,52 @@ TokenStream cpp_process(CPP_Context* ctx, const char filepath[]) {
 	return s;
 }
 
-inline static SourceLocIndex get_source_location(Lexer* restrict l, TokenStream* restrict s) {
+static void* gimme_the_shtuffs(CPP_Context* restrict c, size_t len) {
+	unsigned char* allocation = c->the_shtuffs + c->the_shtuffs_size;
+	
+	c->the_shtuffs_size += len;
+	if (c->the_shtuffs_size >= THE_SHTUFFS_SIZE) {
+		printf("Preprocessor: out of memory!\n");
+		abort();
+	}
+	
+	return allocation;
+}
+
+inline static void trim_the_shtuffs(CPP_Context* restrict c, void* new_top) {
+	size_t i = ((uint8_t*)new_top) - c->the_shtuffs;
+	assert(i <= c->the_shtuffs_size);
+	c->the_shtuffs_size = i;
+}
+
+inline static SourceLocIndex get_source_location(CPP_Context* restrict c, Lexer* restrict l, TokenStream* restrict s) {
 	SourceLocIndex i = arrlen(s->line_arena);
 	if (l->line_current == NULL) {
 		l->line_current = l->start;
 	}
 	
-	intptr_t columns = l->token_start - l->line_current;
-	intptr_t length = l->token_end - l->token_start;
+	// we only make a new one if things change
+	SourceLine* source_line = NULL;
 	
-	assert(columns <= UINT16_MAX);
-	assert(length <= UINT16_MAX);
-	SourceLoc loc = { 
-		.file = (const unsigned char*)l->filepath,
-		.line_str = l->line_current,
-		.line = l->current_line,
+	if (c->current_source_line == NULL ||
+		c->current_source_line->file != (const unsigned char*)l->filepath ||
+		c->current_source_line->line != l->current_line) {
+		source_line = arena_alloc(&thread_arena, sizeof(SourceLine), _Alignof(SourceLine));
+		source_line->file = (const unsigned char*)l->filepath;
+		source_line->line_str = l->line_current;
+		source_line->line = l->current_line;
+		
+		c->current_source_line = source_line;
+	} else {
+		source_line = c->current_source_line;
+	}
+	
+	ptrdiff_t columns = l->token_start - l->line_current;
+	ptrdiff_t length = l->token_end - l->token_start;
+	assert(columns <= UINT16_MAX && length <= UINT16_MAX);
+	
+	SourceLoc loc = {
+		.line = source_line,
 		.columns = columns,
 		.length = length
 	};
@@ -242,24 +284,6 @@ inline static void cpp_pop_scope(CPP_Context* restrict ctx, Lexer* restrict l) {
 		generic_error(l, "Too many endifs\n");
 	}
 	ctx->depth--;
-}
-
-static void* gimme_the_shtuffs(CPP_Context* restrict c, size_t len) {
-	unsigned char* allocation = c->the_shtuffs + c->the_shtuffs_size;
-	
-	c->the_shtuffs_size += len;
-	if (c->the_shtuffs_size >= THE_SHTUFFS_SIZE) {
-		printf("Preprocessor: out of memory!\n");
-		abort();
-	}
-	
-	return allocation;
-}
-
-inline static void trim_the_shtuffs(CPP_Context* restrict c, void* new_top) {
-	size_t i = ((uint8_t*)new_top) - c->the_shtuffs;
-	assert(i <= c->the_shtuffs_size);
-	c->the_shtuffs_size = i;
 }
 
 // TODO(NeGate): Fix this up please...
@@ -324,6 +348,8 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 	uint64_t timer_start = timer_now();
 	
 	unsigned char* text = (unsigned char*)read_entire_file(filepath);
+	big_array_put(c->file_memory, text);
+	
 	Lexer l = { filepath, text, text, 1 };
 	
 	lexer_read(&l);
@@ -333,7 +359,7 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 		if (l.token_type == TOKEN_IDENTIFIER) {
 			if (!is_defined(c, l.token_start, l.token_end - l.token_start)) {
 				// FAST PATH
-				SourceLocIndex loc = get_source_location(&l, s);
+				SourceLocIndex loc = get_source_location(c, &l, s);
 				
 				Token t = { 
 					classify_ident(l.token_start, l.token_end - l.token_start),
@@ -619,7 +645,7 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 					}
 					
 					char* filepart;
-					char* new_path = malloc(MAX_PATH);
+					char* new_path = arena_alloc(&thread_arena, MAX_PATH, 1);
 					if (GetFullPathNameA(path, MAX_PATH, new_path, &filepart) == 0) {
 						int loc = l.current_line;
 						printf("error %s:%d: Could not resolve path: %s\n", l.filepath, loc, path);
@@ -637,7 +663,7 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 						if (*p == '\\') *p = '/';
 					}
 #else
-					char* new_path = arena_alloc(PATH_MAX, 1);
+					char* new_path = arena_alloc(&thread_arena, PATH_MAX, 1);
 					realpath(path, new_path);
 #endif
 					
@@ -686,7 +712,7 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 						printf("\n");
 					} else {
 						// convert to #pragma blah => _Pragma("blah")
-						SourceLocIndex loc = get_source_location(&l, s);
+						SourceLocIndex loc = get_source_location(c, &l, s);
 						
 						unsigned char* str = gimme_the_shtuffs(c, sizeof("_Pragma"));
 						memcpy(str, "_Pragma", sizeof("_Pragma"));
@@ -803,7 +829,7 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 		} else {
 			Token t = {
 				l.token_type,
-				get_source_location(&l, s),
+				get_source_location(c, &l, s),
 				l.token_start,
 				l.token_end
 			};
@@ -1012,7 +1038,7 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
 		
 		Token t = { 
 			TOKEN_STRING_DOUBLE_QUOTE,
-			get_source_location(l, s),
+			get_source_location(c, l, s),
 			out_start,
 			out
 		};
@@ -1026,7 +1052,7 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
 		trim_the_shtuffs(c, &out[length + 1]);
 		Token t = {
 			TOKEN_INTEGER,
-			get_source_location(l, s),
+			get_source_location(c, l, s),
 			out,
 			out + length
 		};
@@ -1070,7 +1096,7 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
 		
 		Token t = { 
 			TOKEN_INTEGER, 
-			get_source_location(l, s),
+			get_source_location(c, l, s),
 			out,
 			out + 1
 		};
@@ -1367,7 +1393,7 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
 				if (*args == '(' && l->token_type != '(') {
 					Token t = { 
 						classify_ident(token_data, token_length),
-						get_source_location(l, s),
+						get_source_location(c, l, s),
 						token_data, 
 						token_data + token_length
 					};
@@ -1394,7 +1420,7 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
 			
 			Token t = { 
 				classify_ident(token_data, token_length),
-				get_source_location(l, s),
+				get_source_location(c, l, s),
 				token_data, 
 				token_data + token_length
 			};
@@ -1414,7 +1440,7 @@ static void expand(CPP_Context* restrict c, TokenStream* restrict s, Lexer* l) {
 		}
 		
 		if (l->token_type == TOKEN_DOUBLE_HASH) {
-			SourceLocIndex loc = get_source_location(l, s);
+			SourceLocIndex loc = get_source_location(c, l, s);
 			lexer_read(l);
 			
 			assert(arrlen(s->tokens) > 0);
@@ -1424,7 +1450,7 @@ static void expand(CPP_Context* restrict c, TokenStream* restrict s, Lexer* l) {
 		} else if (l->token_type != TOKEN_IDENTIFIER) {
 			Token t = { 
 				l->token_type, 
-				get_source_location(l, s),
+				get_source_location(c, l, s),
 				l->token_start,
 				l->token_end
 			};

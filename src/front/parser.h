@@ -291,18 +291,19 @@ typedef struct ConstValue {
 } ConstValue;
 
 struct Stmt {
-	StmtOp op;
-	SourceLocIndex loc;
-	
-	// Used by the backend for backend-y things
-	union {
-		TB_Register r;
-		TB_FunctionID f;
-		TB_ExternalID e;
-		TB_GlobalID g;
-		TB_Label l;
-	} backing;
-	
+	struct StmtHeader {
+		StmtOp op;
+		SourceLocIndex loc;
+		
+		// Used by the backend for backend-y things
+		union {
+			TB_Register r;
+			TB_FunctionID f;
+			TB_ExternalID e;
+			TB_GlobalID g;
+			TB_Label l;
+		} backing;
+	};
 	union {
 		struct StmtCompound {
 			Stmt** kids;
@@ -327,8 +328,7 @@ struct Stmt {
 			Atom name;
 		} label;
 		struct StmtCase {
-			intmax_t key;
-			
+			int64_t key;
 			Stmt* body;
 			Stmt* next;
 		} case_;
@@ -347,13 +347,11 @@ struct Stmt {
 		} switch_;
 		struct StmtDecl {
 			Type* type;
+			Atom name;
 			
 			// acceleration structure for scrubbing for symbols
 			// it's a linked list
 			Expr* first_symbol;
-			
-			Attribs attrs;
-			Atom name;
 			
 			// NOTE(NeGate): This represents a stmtindex if it's a 
 			// FUNC_DECL
@@ -361,6 +359,8 @@ struct Stmt {
 				Stmt* initial_as_stmt;
 				Expr* initial;
 			};
+			
+			Attribs attrs;
 		} decl;
 		struct StmtFor {
 			Stmt* first;

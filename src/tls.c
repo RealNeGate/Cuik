@@ -1,6 +1,9 @@
 #include "common.h"
 #include <stdalign.h>
 
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+
 #define TEMPORARY_STORAGE_SIZE (1 << 20)
 
 typedef struct TemporaryStorage {
@@ -15,7 +18,7 @@ static _Thread_local TemporaryStorage* temp_storage;
 void tls_init() {
 	if (temp_storage == NULL) {
 #if _WIN32
-		temp_storage = _aligned_malloc(TEMPORARY_STORAGE_SIZE, 16);
+		temp_storage = VirtualAlloc(NULL, TEMPORARY_STORAGE_SIZE, MEM_COMMIT|MEM_RESERVE, PAGE_READWRITE);
 #else
 		temp_storage = aligned_alloc(16, TEMPORARY_STORAGE_SIZE);
 #endif

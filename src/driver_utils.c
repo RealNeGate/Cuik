@@ -238,18 +238,23 @@ TranslationUnit* cuik_compile_file(CompilationUnit* cu, const char* path,
 		crash_if_reports(REPORT_ERROR);
 	}
 	
+	// free tokens
+	arrfree(tu->tokens.tokens);
+	printf("Line arena space: %f MB\n", (arrlen(tu->tokens.line_arena)*sizeof(SourceLoc)) / (1024.0*1024.0));
+	
 	// Semantics pass
 	timed_block("sema %s", path) {
 		sema_pass(cu, tu, thread_pool, frontend_only);
 		crash_if_reports(REPORT_ERROR);
 	}
 	
+	// delete any file memory
+	cpp_free_file_memory(&cpp_ctx);
+	
 	// pass off to the compilation unit
 	compilation_unit_append(cu, tu);
 	
-	// free any TU resources (including any cached file refs)
-	// TODO(NeGate): actually delete any cached files...
-	arrfree(tu->tokens.tokens);
+	// free any remaining TU resources
 	cpp_deinit(&cpp_ctx);
 	return tu;
 }

@@ -58,12 +58,13 @@ static void display_line(ReportLevel level, SourceLoc* loc) {
 	}
 #endif
 	
+	SourceLine* line = loc->line;
 	if (report_using_thin_errors) {
-		printf("%s:%d:%d: ", loc->file, loc->line, loc->columns);
+		printf("%s:%d:%d: ", line->file, line->line, loc->columns);
 		print_level_name(level);
 	} else {
 		print_level_name(level);
-		printf("%s:%d:%d: ", loc->file, loc->line, loc->columns);
+		printf("%s:%d:%d: ", line->file, line->line, loc->columns);
 	}
 }
 
@@ -84,17 +85,17 @@ static void tally_report_counter(ReportLevel level) {
 	}
 }
 
-static size_t draw_line(SourceLoc* loc) {
+static size_t draw_line(SourceLine* line) {
 	// display line
-	const char* line = (const char*)loc->line_str;
-	while (*line && isspace(*line)) { line++; }
-	size_t dist_from_line_start = line - (const char*)loc->line_str;
+	const char* line_start = (const char*)line->line_str;
+	while (*line_start && isspace(*line_start)) { line_start++; }
+	size_t dist_from_line_start = line_start - (const char*)line->line_str;
 	
-	if (*line != '\n') {
-		const char* line_end = line;
+	if (*line_start != '\n') {
+		const char* line_end = line_start;
 		do { line_end++; } while (*line_end && *line_end != '\n');
 		
-		printf(" %5d| %.*s\n", loc->line, (int)(line_end - line), line);
+		printf(" %5d| %.*s\n", line->line, (int)(line_end - line_start), line_start);
 	}
 	printf("      | ");
 	return dist_from_line_start;
@@ -116,7 +117,7 @@ void report(ReportLevel level, SourceLoc* loc, const char* fmt, ...) {
 	printf("\n");
 	
 	if (!report_using_thin_errors) {
-		size_t dist_from_line_start = draw_line(loc);
+		size_t dist_from_line_start = draw_line(loc->line);
 		
 #if _WIN32
 		SetConsoleTextAttribute(console_handle, (default_attribs & ~0xF) | FOREGROUND_GREEN);
@@ -144,14 +145,15 @@ void report(ReportLevel level, SourceLoc* loc, const char* fmt, ...) {
 
 void report_two_spots(ReportLevel level, SourceLoc* loc, SourceLoc* loc2, const char* msg, const char* loc_msg, const char* loc_msg2, const char* interjection) {
 	mtx_lock(&mutex);
-	if (!interjection && loc->line == loc2->line) {
+	
+	if (!interjection && loc->line->line == loc2->line->line) {
 		assert(loc->columns < loc2->columns);
 		
 		display_line(level, loc);
 		printf("%s\n", msg);
 		
 		if (!report_using_thin_errors) {
-			size_t dist_from_line_start = draw_line(loc);
+			size_t dist_from_line_start = draw_line(loc->line);
 			
 #if _WIN32
 			SetConsoleTextAttribute(console_handle, (default_attribs & ~0xF) | FOREGROUND_GREEN);
@@ -198,7 +200,7 @@ void report_two_spots(ReportLevel level, SourceLoc* loc, SourceLoc* loc2, const 
 		
 		if (!report_using_thin_errors) {
 			{
-				size_t dist_from_line_start = draw_line(loc);
+				size_t dist_from_line_start = draw_line(loc->line);
 				
 #if _WIN32
 				SetConsoleTextAttribute(console_handle, (default_attribs & ~0xF) | FOREGROUND_GREEN);
@@ -225,8 +227,8 @@ void report_two_spots(ReportLevel level, SourceLoc* loc, SourceLoc* loc2, const 
 				}
 			}
 			
-			if (loc->file != loc2->file) {
-				printf("  meanwhile in... %s\n", loc2->file);
+			if (loc->line->file != loc2->line->file) {
+				printf("  meanwhile in... %s\n", loc2->line->file);
 				draw_line_horizontal_pad();
 				printf("\n");
 			}
@@ -241,7 +243,7 @@ void report_two_spots(ReportLevel level, SourceLoc* loc, SourceLoc* loc2, const 
 			}
 			
 			{
-				size_t dist_from_line_start = draw_line(loc2);
+				size_t dist_from_line_start = draw_line(loc2->line);
 				
 #if _WIN32
 				SetConsoleTextAttribute(console_handle, (default_attribs & ~0xF) | FOREGROUND_GREEN);

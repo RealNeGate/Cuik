@@ -93,13 +93,13 @@ static int align_up(int a, int b) {
 	return a + (b - (a % b)) % b;
 }
 
-static Stmt* make_stmt(TranslationUnit* tu, TokenStream* restrict s, StmtOp op) {
-	Stmt* stmt = ARENA_ALLOC(&local_ast_arena, Stmt);
+// allocated size is sizeof(struct StmtHeader) + extra_size
+static Stmt* make_stmt(TranslationUnit* tu, TokenStream* restrict s, StmtOp op, size_t extra_size) {
+	Stmt* stmt = arena_alloc(&local_ast_arena, sizeof(Stmt), _Alignof(max_align_t));
 	
-	*stmt = (Stmt){
-		.op = op,
-		.loc = tokens_get(s)->location
-	};
+	memset(stmt, 0, sizeof(struct StmtHeader));
+	stmt->op = op;
+	stmt->loc = tokens_get(s)->location;
 	return stmt;
 }
 
@@ -242,6 +242,8 @@ static void phase3_parse_task(void* arg) {
 		
 		mtx_unlock(&task.tu->arena_mutex);
 	}
+	
+	printf("Thread arena: %zu MB\n", arena_get_memory_usage(&thread_arena) / (1024*1024));
 }
 
 // 0 no cycles
@@ -476,7 +478,7 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
                         
                         if (decl.name != NULL) {
                             // make typedef
-                            Stmt* n = make_stmt(tu, s, STMT_DECL);
+                            Stmt* n = make_stmt(tu, s, STMT_DECL, sizeof(struct StmtDecl));
                             n->loc = decl.loc;
                             n->decl = (struct StmtDecl){
                                 .name = decl.name,
@@ -551,7 +553,7 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
                         Decl decl = parse_declarator(tu, s, type, false, false);
                         assert(decl.name);
                         
-                        Stmt* n = make_stmt(tu, s, STMT_GLOBAL_DECL);
+                        Stmt* n = make_stmt(tu, s, STMT_GLOBAL_DECL, sizeof(struct StmtDecl));
                         n->loc = decl.loc;
                         n->decl = (struct StmtDecl){
                             .name = decl.name,
@@ -924,7 +926,7 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
 				assert(decl.name);
 				
 				// make typedef
-				Stmt* n = make_stmt(tu, s, STMT_DECL);
+				Stmt* n = make_stmt(tu, s, STMT_DECL, sizeof(struct StmtDecl));
 				n->loc = decl.loc;
 				n->decl = (struct StmtDecl){
 					.name = decl.name,
@@ -987,7 +989,7 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
 					n->loc = decl.loc;
 				} else {
 					// New symbol
-					n = make_stmt(tu, s, STMT_DECL);
+					n = make_stmt(tu, s, STMT_DECL, sizeof(struct StmtDecl));
 					n->loc = decl.loc;
 					n->decl = (struct StmtDecl){
 						.type = decl.type,
@@ -1055,7 +1057,7 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
 					attr.is_root = false;
 				}
 				
-				Stmt* n = make_stmt(tu, s, STMT_GLOBAL_DECL);
+				Stmt* n = make_stmt(tu, s, STMT_GLOBAL_DECL, sizeof(struct StmtDecl));
 				n->loc = decl.loc;
 				n->decl = (struct StmtDecl){
 					.type = decl.type,
@@ -1105,7 +1107,7 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
 						Decl decl = parse_declarator(tu, s, type, false, false);
 						assert(decl.name);
 						
-						Stmt* n = make_stmt(tu, s, STMT_GLOBAL_DECL);
+						Stmt* n = make_stmt(tu, s, STMT_GLOBAL_DECL, sizeof(struct StmtDecl));
 						n->loc = decl.loc;
 						n->decl = (struct StmtDecl){
 							.type = decl.type,
@@ -1187,6 +1189,10 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
 	}
 #endif
 #endif
+	
+	printf("AST arena: %zu MB\n", arena_get_memory_usage(&tu->ast_arena) / (1024*1024));
+	printf("Type arena: %zu MB\n", arena_get_memory_usage(&tu->type_arena) / (1024*1024));
+	printf("Thread arena: %zu MB\n", arena_get_memory_usage(&thread_arena) / (1024*1024));
 	
 	if (tu->hack.name) {
 		Symbol* sym = find_global_symbol(tu->hack.name);
@@ -1298,7 +1304,7 @@ static Stmt* parse_compound_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 	// mark when the local scope starts
 	int saved = local_symbol_count;
 	
-	Stmt* node = make_stmt(tu, s, STMT_COMPOUND);
+	Stmt* node = make_stmt(tu, s, STMT_COMPOUND, sizeof(struct StmtCompound));
 	
 	size_t body_count = 0; // He be fuckin
 	void* body = tls_save();
@@ -1352,7 +1358,7 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 			e = parse_expr(tu, s);
 		}
 		
-		Stmt* n = make_stmt(tu, s, STMT_RETURN);
+		Stmt* n = make_stmt(tu, s, STMT_RETURN, sizeof(struct StmtReturn));
 		n->return_ = (struct StmtReturn){
 			.expr = e
 		};
@@ -1361,7 +1367,7 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 		return n;
 	} else if (peek == TOKEN_KW_if) {
 		tokens_next(s);
-		Stmt* n = make_stmt(tu, s, STMT_IF);
+		Stmt* n = make_stmt(tu, s, STMT_IF, sizeof(struct StmtIf));
 		
 		Expr* cond;
 		{
@@ -1388,7 +1394,7 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 		return n;
 	} else if (peek == TOKEN_KW_switch) {
 		tokens_next(s);
-		Stmt* n = make_stmt(tu, s, STMT_SWITCH);
+		Stmt* n = make_stmt(tu, s, STMT_SWITCH, sizeof(struct StmtSwitch));
 		
 		expect(s, '(');
 		Expr* cond = parse_expr(tu, s);
@@ -1416,7 +1422,7 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 		assert(current_switch_or_case);
 		
 		tokens_next(s);
-		Stmt* n = make_stmt(tu, s, STMT_CASE);
+		Stmt* n = make_stmt(tu, s, STMT_CASE, sizeof(struct StmtCase));
 		
 		switch (current_switch_or_case->op) {
 			case STMT_CASE:    current_switch_or_case->case_.next    = n; break;
@@ -1441,7 +1447,7 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 		assert(current_switch_or_case);
 		
 		tokens_next(s);
-		Stmt* n = make_stmt(tu, s, STMT_DEFAULT);
+		Stmt* n = make_stmt(tu, s, STMT_DEFAULT, sizeof(struct StmtDefault));
 		
 		switch (current_switch_or_case->op) {
 			case STMT_CASE:    current_switch_or_case->case_.next    = n; break;
@@ -1466,7 +1472,7 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 		tokens_next(s);
 		expect(s, ';');
 		
-		Stmt* n = make_stmt(tu, s, STMT_BREAK);
+		Stmt* n = make_stmt(tu, s, STMT_BREAK, sizeof(struct StmtBreak));
 		n->break_ = (struct StmtBreak){
 			.target = current_breakable
 		};
@@ -1478,14 +1484,14 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 		tokens_next(s);
 		expect(s, ';');
 		
-		Stmt* n = make_stmt(tu, s, STMT_CONTINUE);
+		Stmt* n = make_stmt(tu, s, STMT_CONTINUE, sizeof(struct StmtContinue));
 		n->continue_ = (struct StmtContinue){
 			.target = current_continuable
 		};
 		return n;
 	} else if (peek == TOKEN_KW_while) {
 		tokens_next(s);
-		Stmt* n = make_stmt(tu, s, STMT_WHILE);
+		Stmt* n = make_stmt(tu, s, STMT_WHILE, sizeof(struct StmtWhile));
 		
 		expect(s, '(');
 		Expr* cond = parse_expr(tu, s);
@@ -1512,7 +1518,7 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 		return n;
 	} else if (peek == TOKEN_KW_for) {
 		tokens_next(s);
-		Stmt* n = make_stmt(tu, s, STMT_FOR);
+		Stmt* n = make_stmt(tu, s, STMT_FOR, sizeof(struct StmtFor));
 		
 		int saved = local_symbol_count;
 		
@@ -1525,7 +1531,7 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 			tokens_next(s);
 		} else {
 			// NOTE(NeGate): This is just a decl list or a single expression.
-			first = make_stmt(tu, s, STMT_COMPOUND);
+			first = make_stmt(tu, s, STMT_COMPOUND, sizeof(struct StmtCompound));
 			
 			size_t body_count = 0; // He be fuckin
 			void* body = tls_save();
@@ -1586,7 +1592,7 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 		return n;
 	} else if (peek == TOKEN_KW_do) {
 		tokens_next(s);
-		Stmt* n = make_stmt(tu, s, STMT_DO_WHILE);
+		Stmt* n = make_stmt(tu, s, STMT_DO_WHILE, sizeof(struct StmtDoWhile));
 		
 		// Push this as a breakable statement
 		Stmt* body;
@@ -1606,7 +1612,7 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 			Token* t = tokens_get(s);
 			SourceLoc* loc = &s->line_arena[t->location];
 			
-			printf("%s:%d: error: expected 'while' got '%.*s'\n", loc->file, loc->line, (int)(t->end - t->start), t->start);
+			report(REPORT_ERROR, loc, "%s:%d: error: expected 'while' got '%.*s'", (int)(t->end - t->start), t->start);
 			abort();
 		}
 		tokens_next(s);
@@ -1626,7 +1632,7 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 	} else if (peek == TOKEN_KW_goto) {
 		tokens_next(s);
 		
-		Stmt* n = make_stmt(tu, s, STMT_GOTO);
+		Stmt* n = make_stmt(tu, s, STMT_GOTO, sizeof(struct StmtGoto));
 		
 		Expr* target = parse_expr(tu, s);
 		n->goto_ = (struct StmtGoto){
@@ -1642,7 +1648,7 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 		Token* t = tokens_get(s);
 		Atom name = atoms_put(t->end - t->start, t->start);
 		
-		Stmt* n = make_stmt(tu, s, STMT_LABEL);
+		Stmt* n = make_stmt(tu, s, STMT_LABEL, sizeof(struct StmtLabel));
 		n->label = (struct StmtLabel){
 			.name = name
 		};
@@ -1685,7 +1691,7 @@ static void parse_decl_or_expr(TranslationUnit* tu, TokenStream* restrict s, siz
 				assert(decl.name);
 				
 				// make typedef
-				Stmt* n = make_stmt(tu, s, STMT_DECL);
+				Stmt* n = make_stmt(tu, s, STMT_DECL, sizeof(struct StmtDecl));
 				n->loc = decl.loc;
 				n->decl = (struct StmtDecl){
 					.name = decl.name,
@@ -1721,7 +1727,7 @@ static void parse_decl_or_expr(TranslationUnit* tu, TokenStream* restrict s, siz
 				
 				Decl decl = parse_declarator(tu, s, type, false, false);
 				
-				Stmt* n = make_stmt(tu, s, STMT_DECL);
+				Stmt* n = make_stmt(tu, s, STMT_DECL, sizeof(struct StmtDecl));
 				n->loc = decl.loc;
 				n->decl = (struct StmtDecl){
 					.type = decl.type,
@@ -1768,7 +1774,7 @@ static void parse_decl_or_expr(TranslationUnit* tu, TokenStream* restrict s, siz
 			expect(s, ';');
 		}
 	} else {
-		Stmt* n = make_stmt(tu, s, STMT_EXPR);
+		Stmt* n = make_stmt(tu, s, STMT_EXPR, sizeof(struct StmtExpr));
 		
 		Expr* expr = parse_expr(tu, s);
 		n->expr = (struct StmtExpr){
@@ -1802,7 +1808,7 @@ static Stmt* parse_stmt_or_expr(TranslationUnit* tu, TokenStream* restrict s) {
 		if (stmt) {
 			return stmt;
 		} else {
-			Stmt* n = make_stmt(tu, s, STMT_EXPR);
+			Stmt* n = make_stmt(tu, s, STMT_EXPR, sizeof(struct StmtExpr));
 			
 			Expr* expr = parse_expr(tu, s);
 			n->expr = (struct StmtExpr){

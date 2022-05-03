@@ -37,7 +37,7 @@ static Expr* parse_function_literal(TranslationUnit* tu, TokenStream* restrict s
 	// Because of the "not a lambda" nature of the function literals they count as
 	// "scoped top level statements" which doesn't particularly change anything for
 	// it but is interesting to think about internally
-	Stmt* n = make_stmt(tu, s, STMT_FUNC_DECL);
+	Stmt* n = make_stmt(tu, s, STMT_FUNC_DECL, sizeof(struct StmtDecl));
 	n->loc = loc;
 	n->decl = (struct StmtDecl){
 		.type = type,

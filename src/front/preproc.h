@@ -1,11 +1,12 @@
 #pragma once
 #include <common.h>
+#include <big_array.h>
 #include "lexer.h"
 
 #define SLOTS_PER_MACRO_BUCKET 1024
 #define MACRO_BUCKET_COUNT 1024
 
-#define THE_SHTUFFS_SIZE (32 << 20)
+#define THE_SHTUFFS_SIZE (16 << 20)
 
 ////////////////////////////////
 // Simple tutorial:
@@ -43,6 +44,10 @@ void cpp_deinit(CPP_Context* ctx);
 // resources were freed
 void cpp_finalize(CPP_Context* ctx);
 
+// After you've parsed code with the token stream, you don't generally need
+// to maintain the file memory, all strings are now part of the atoms
+void cpp_free_file_memory(CPP_Context* ctx);
+
 bool cpp_find_include_include(CPP_Context* ctx, char output[MAX_PATH], const char* path);
 void cpp_add_include_directory(CPP_Context* ctx, const char dir[]);
 void cpp_define_empty(CPP_Context* ctx, const char key[]);
@@ -79,8 +84,11 @@ struct CPP_Context {
 	// system libraries
 	char** system_include_dirs;
 	
+	BigArray(unsigned char*) file_memory;
+	
 	// how deep into directive scopes (#if, #ifndef, #ifdef) is it
 	int depth;
+	SourceLine* current_source_line;
 	
 	// TODO(NeGate): Remove this and put a proper hash map or literally anything else
 	const unsigned char** macro_bucket_keys;

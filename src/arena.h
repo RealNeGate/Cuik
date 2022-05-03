@@ -7,6 +7,9 @@
 typedef struct ArenaSegment {
 	struct ArenaSegment* next;
 	size_t used;
+	size_t capacity;
+	size_t _pad;
+	
 	unsigned char data[];
 } ArenaSegment;
 

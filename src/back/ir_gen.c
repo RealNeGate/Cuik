@@ -1491,12 +1491,14 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
 		static thread_local const char* last_filepath = NULL;
 		
 		SourceLoc* l = &tu->tokens.line_arena[s->loc];
-		if ((const char*)l->file != last_filepath) {
-			last_filepath = (const char*)l->file;
-			last_file_id = tb_file_create(mod, (const char*)l->file);
+		SourceLine* line = l->line;
+		
+		if ((const char*)line->file != last_filepath) {
+			last_filepath = (const char*)line->file;
+			last_file_id = tb_file_create(mod, (const char*)line->file);
 		}
 		
-		tb_inst_loc(func, last_file_id, l->line);
+		tb_inst_loc(func, last_file_id, line->line);
 	}
 	
 	insert_label(func);
@@ -1837,8 +1839,8 @@ static void gen_func_body(TranslationUnit* tu, Type* type, Stmt* restrict s) {
 	TB_Register* params = parameter_map = tls_push(param_count * sizeof(TB_Register));
 	Type* return_type = type->func.return_type;
 	
-	TB_AttributeID old_tb_scope = tb_inst_get_scope(func);
-	tb_inst_set_scope(func, tb_function_attrib_scope(func, old_tb_scope));
+	//TB_AttributeID old_tb_scope = tb_inst_get_scope(func);
+	//tb_inst_set_scope(func, tb_function_attrib_scope(func, old_tb_scope));
 	
 	// mark return value address (if it applies)
 	// and get stack slots for parameters
@@ -1890,7 +1892,7 @@ static void gen_func_body(TranslationUnit* tu, Type* type, Stmt* restrict s) {
 		}
 	}
 	
-	tb_inst_set_scope(func, old_tb_scope);
+	//tb_inst_set_scope(func, old_tb_scope);
 	
 	if (settings.stage_to_stop_at == STAGE_IR) {
 		if (mtx_lock(&emit_ir_mutex) != thrd_success) {

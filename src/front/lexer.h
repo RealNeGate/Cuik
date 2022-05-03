@@ -145,12 +145,14 @@ typedef enum IntSuffix {
 
 typedef int SourceLocIndex;
 
-// kinda a lot of info...
 typedef struct {
 	const unsigned char* file;
 	const unsigned char* line_str;
-	
 	int line;
+} SourceLine;
+
+typedef struct {
+	SourceLine* line;
 	short columns;
 	short length;
 } SourceLoc;

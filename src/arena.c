@@ -32,6 +32,8 @@ void* arena_alloc(Arena* arena, size_t size, size_t align) {
 		
 		s->next = NULL;
 		s->used = size;
+		s->capacity = ARENA_SEGMENT_SIZE;
+		s->_pad = 0;
 		ptr = s->data;
 		
 		// Insert to top of nodes
@@ -62,14 +64,22 @@ void arena_free(Arena* arena) {
 }
 
 void arena_trim(Arena* arena) {
+	static _Atomic size_t space_saved = 0;
+	
 #ifdef _WIN32
 	// decommit any leftover pages
 	if (arena->base) {
 		for (ArenaSegment* c = arena->base; c != NULL; c = c->next) {
 			size_t aligned_used = (sizeof(ArenaSegment) + c->used + 4095u) & ~4095u;
 			
-			if (aligned_used != ARENA_SEGMENT_SIZE) {
-				VirtualFree((char*)c + aligned_used, ARENA_SEGMENT_SIZE - aligned_used, MEM_RELEASE);
+			if (aligned_used != c->capacity) {
+				size_t pages_to_release = ((c->capacity - aligned_used) + 4095) / 4096;
+				space_saved += pages_to_release;
+				
+				printf("Released %zu pages (%zu MB total)\n", pages_to_release, space_saved / 256);
+				
+				VirtualFree((char*)c + aligned_used, c->capacity - aligned_used, MEM_RELEASE);
+				c->capacity = aligned_used;
 			}
 		}
 	}
@@ -85,7 +95,7 @@ void arena_append(Arena* arena, Arena* other) {
 
 size_t arena_get_memory_usage(Arena* arena) {
 	size_t c = 0;
-	for (ArenaSegment* s = arena->base; s != NULL; s = s->next) c++;
+	for (ArenaSegment* s = arena->base; s != NULL; s = s->next) c += s->capacity;
 	
-	return c * ARENA_SEGMENT_SIZE;
+	return c;
 }
