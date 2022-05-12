@@ -242,7 +242,7 @@ int main(int argc, char** argv) {
 			expect_stdout("tests"SLASH"the_increment"SLASH"iso"SLASH"initializers", "Table (4 entries):\n[0] = { 1, 2, 3, 4 }\n[1] = { 0, 0, 0, 0 }\n[2] = { 0, 0, 0, 0 }\n[3] = { 5, 6, 7, 8 }\n");
 			expect_stdout("tests"SLASH"the_increment"SLASH"iso"SLASH"initializers_2", "14 1\n");
 			expect_stdout("tests"SLASH"the_increment"SLASH"cuik"SLASH"cuik_00001", "1");
-			expect_stdout("tests"SLASH"the_increment"SLASH"iso"SLASH"generic", "1 2 2 3 4 OK\n");
+			expect_stdout("tests"SLASH"the_increment"SLASH"iso"SLASH"generic", "Hello, World!\n1 2 2 3 4 OK\n");
 
 			// Inria tests
 			try_compile("tests"SLASH"the_increment"SLASH"inria"SLASH"argument_scope");

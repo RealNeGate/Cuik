@@ -449,7 +449,7 @@ static void print_help(const char* executable_path) {
 	O("  -T                   - report timing information into a .json file usable by chrome://tracing");
 	O("  -I        <path>     - add include directory");
 	O("  -o        <path>     - define output path for binary and intermediates");
-	O("  -freestanding        - run in freestanding mode (doesn't allow for the OS or C runtime usage, only freestanding headers)");
+	O("  --freestanding       - run in freestanding mode (doesn't allow for the OS or C runtime usage, only freestanding headers)");
 	O("  --lib     <name>     - link against a static library");
 	O("  --threads <count>    - chooses how many threads to spawn");
 	O("  --target  <name>     - choose a target platform to compile to");

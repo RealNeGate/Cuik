@@ -99,6 +99,14 @@ static bool is_typename(TokenStream* restrict s);
 
 static _Noreturn void generic_error(TokenStream* restrict s, const char* msg);
 
+// Usage:
+//  LOCAL_SCOPE {
+//      /* do parse work */
+//  }
+#define LOCAL_SCOPE \
+for (int saved = local_symbol_count, saved2 = local_tag_count, _i_ = 0; \
+_i_ == 0; _i_ += 1, local_symbol_count = saved, local_tag_count = saved2)
+
 static int align_up(int a, int b) {
 	if (b == 0) return 0;
 
@@ -1373,45 +1381,43 @@ static void parse_function_definition(TranslationUnit* tu, TokenStream* restrict
 }
 
 static Stmt* parse_compound_stmt(TranslationUnit* tu, TokenStream* restrict s) {
-	// mark when the local scope starts
-	int saved = local_symbol_count;
-	int saved2 = local_tag_count;
+	Stmt* node = NULL;
 
-	Stmt* node = make_stmt(tu, s, STMT_COMPOUND, sizeof(struct StmtCompound));
+	LOCAL_SCOPE {
+		node = make_stmt(tu, s, STMT_COMPOUND, sizeof(struct StmtCompound));
 
-	size_t body_count = 0; // He be fuckin
-	void* body = tls_save();
+		size_t body_count = 0; // He be fuckin
+		void* body = tls_save();
 
-	while (tokens_get(s)->type != '}') {
-		if (tokens_get(s)->type == ';') {
-			tokens_next(s);
-		} else {
-			//report(REPORT_INFO, &s->line_arena[tokens_get(s)->location], "Woah!!!");
-
-			Stmt* stmt = parse_stmt(tu, s);
-			if (stmt) {
-				*((Stmt**)tls_push(sizeof(Stmt*))) = stmt;
-				body_count++;
+		while (tokens_get(s)->type != '}') {
+			if (tokens_get(s)->type == ';') {
+				tokens_next(s);
 			} else {
-				parse_decl_or_expr(tu, s, &body_count);
+				//report(REPORT_INFO, &s->line_arena[tokens_get(s)->location], "Woah!!!");
+
+				Stmt* stmt = parse_stmt(tu, s);
+				if (stmt) {
+					*((Stmt**)tls_push(sizeof(Stmt*))) = stmt;
+					body_count++;
+				} else {
+					parse_decl_or_expr(tu, s, &body_count);
+				}
 			}
 		}
+		//report(REPORT_INFO, &s->line_arena[tokens_get(s)->location], "Closing brace");
+		expect(s, '}');
+
+		Stmt** stmt_array = arena_alloc(&thread_arena, body_count * sizeof(Stmt*), _Alignof(Stmt*));
+		memcpy(stmt_array, body, body_count * sizeof(Stmt*));
+
+		node->compound = (struct StmtCompound) {
+			.kids = stmt_array,
+			.kids_count = body_count
+		};
+
+		tls_restore(body);
 	}
-	//report(REPORT_INFO, &s->line_arena[tokens_get(s)->location], "Closing brace");
-	expect(s, '}');
 
-	local_symbol_count = saved;
-	local_tag_count = saved2;
-
-	Stmt** stmt_array = arena_alloc(&thread_arena, body_count * sizeof(Stmt*), _Alignof(Stmt*));
-	memcpy(stmt_array, body, body_count * sizeof(Stmt*));
-
-	node->compound = (struct StmtCompound) {
-		.kids = stmt_array,
-		.kids_count = body_count
-	};
-
-	tls_restore(body);
 	return node;
 }
 
@@ -1443,53 +1449,65 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 		tokens_next(s);
 		Stmt* n = make_stmt(tu, s, STMT_IF, sizeof(struct StmtIf));
 
-		Expr* cond;
-		{
-			SourceLoc* opening_loc = &s->line_arena[tokens_get(s)->location];
-			expect(s, '(');
+		LOCAL_SCOPE {
+			Expr* cond;
+			{
+				SourceLoc* opening_loc = &s->line_arena[tokens_get(s)->location];
+				expect(s, '(');
 
-			cond = parse_expr(tu, s);
+				cond = parse_expr(tu, s);
 
-			expect_closing_paren(s, opening_loc);
+				expect_closing_paren(s, opening_loc);
+			}
+
+			Stmt* body;
+			LOCAL_SCOPE {
+				body = parse_stmt_or_expr(tu, s);
+			}
+
+			Stmt* next = 0;
+			if (tokens_get(s)->type == TOKEN_KW_else) {
+				tokens_next(s);
+
+				LOCAL_SCOPE {
+					next = parse_stmt_or_expr(tu, s);
+				}
+			}
+
+			n->if_ = (struct StmtIf){
+				.cond = cond,
+				.body = body,
+				.next = next
+			};
 		}
-		Stmt* body = parse_stmt_or_expr(tu, s);
 
-		Stmt* next = 0;
-		if (tokens_get(s)->type == TOKEN_KW_else) {
-			tokens_next(s);
-			next = parse_stmt_or_expr(tu, s);
-		}
-
-		n->if_ = (struct StmtIf){
-			.cond = cond,
-			.body = body,
-			.next = next
-		};
 		return n;
 	} else if (peek == TOKEN_KW_switch) {
 		tokens_next(s);
 		Stmt* n = make_stmt(tu, s, STMT_SWITCH, sizeof(struct StmtSwitch));
 
-		expect(s, '(');
-		Expr* cond = parse_expr(tu, s);
-		expect(s, ')');
+		LOCAL_SCOPE {
+			expect(s, '(');
+			Expr* cond = parse_expr(tu, s);
+			expect(s, ')');
 
-		n->switch_ = (struct StmtSwitch){
-			.condition = cond
-		};
+			n->switch_ = (struct StmtSwitch){
+				.condition = cond
+			};
 
-		// begin a new chain but keep the old one
-		Stmt* old_switch = current_switch_or_case;
-		current_switch_or_case = n;
+			// begin a new chain but keep the old one
+			Stmt* old_switch = current_switch_or_case;
+			current_switch_or_case = n;
 
-		Stmt* old_breakable = current_breakable;
-		current_breakable = n;
-		{
-			Stmt* body = parse_stmt_or_expr(tu, s);
-			n->switch_.body = body;
+			Stmt* old_breakable = current_breakable;
+			current_breakable = n;
+			LOCAL_SCOPE {
+				Stmt* body = parse_stmt_or_expr(tu, s);
+				n->switch_.body = body;
+			}
+			current_breakable = old_breakable;
+			current_switch_or_case = old_switch;
 		}
-		current_breakable = old_breakable;
-		current_switch_or_case = old_switch;
 		return n;
 	} else if (peek == TOKEN_KW_case) {
 		// TODO(NeGate): error messages
@@ -1567,141 +1585,145 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 		tokens_next(s);
 		Stmt* n = make_stmt(tu, s, STMT_WHILE, sizeof(struct StmtWhile));
 
-		expect(s, '(');
-		Expr* cond = parse_expr(tu, s);
-		expect(s, ')');
+		LOCAL_SCOPE {
+			expect(s, '(');
+			Expr* cond = parse_expr(tu, s);
+			expect(s, ')');
 
-		// Push this as a breakable statement
-		Stmt* body;
-		{
-			Stmt* old_breakable = current_breakable;
-			current_breakable = n;
-			Stmt* old_continuable = current_continuable;
-			current_continuable = n;
+			// Push this as a breakable statement
+			Stmt* body;
+			LOCAL_SCOPE {
+				Stmt* old_breakable = current_breakable;
+				current_breakable = n;
+				Stmt* old_continuable = current_continuable;
+				current_continuable = n;
 
-			body = parse_stmt_or_expr(tu, s);
+				body = parse_stmt_or_expr(tu, s);
 
-			current_breakable = old_breakable;
-			current_continuable = old_continuable;
+				current_breakable = old_breakable;
+				current_continuable = old_continuable;
+			}
+
+			n->while_ = (struct StmtWhile){
+				.cond = cond,
+				.body = body
+			};
 		}
 
-		n->while_ = (struct StmtWhile){
-			.cond = cond,
-			.body = body
-		};
 		return n;
 	} else if (peek == TOKEN_KW_for) {
 		tokens_next(s);
 		Stmt* n = make_stmt(tu, s, STMT_FOR, sizeof(struct StmtFor));
 
-		int saved = local_symbol_count;
+		LOCAL_SCOPE {
+			expect(s, '(');
 
-		expect(s, '(');
+			// it's either nothing, a declaration, or an expression
+			Stmt* first = NULL;
+			if (tokens_get(s)->type == ';') {
+				/* nothing */
+				tokens_next(s);
+			} else {
+				// NOTE(NeGate): This is just a decl list or a single expression.
+				first = make_stmt(tu, s, STMT_COMPOUND, sizeof(struct StmtCompound));
 
-		// it's either nothing, a declaration, or an expression
-		Stmt* first = 0;
-		if (tokens_get(s)->type == ';') {
-			/* nothing */
-			tokens_next(s);
-		} else {
-			// NOTE(NeGate): This is just a decl list or a single expression.
-			first = make_stmt(tu, s, STMT_COMPOUND, sizeof(struct StmtCompound));
+				size_t body_count = 0; // He be fuckin
+				void* body = tls_save();
+				{
+					parse_decl_or_expr(tu, s, &body_count);
+				}
+				Stmt** stmt_array = arena_alloc(&thread_arena, body_count * sizeof(Stmt*), _Alignof(Stmt*));
+				memcpy(stmt_array, body, body_count * sizeof(Stmt*));
 
-			size_t body_count = 0; // He be fuckin
-			void* body = tls_save();
-			{
-				parse_decl_or_expr(tu, s, &body_count);
+				first->compound = (struct StmtCompound) {
+					.kids = stmt_array,
+					.kids_count = body_count
+				};
+				tls_restore(body);
 			}
-			Stmt** stmt_array = arena_alloc(&thread_arena, body_count * sizeof(Stmt*), _Alignof(Stmt*));
-			memcpy(stmt_array, body, body_count * sizeof(Stmt*));
 
-			first->compound = (struct StmtCompound) {
-				.kids = stmt_array,
-				.kids_count = body_count
+			Expr* cond = NULL;
+			if (tokens_get(s)->type == ';') {
+				/* nothing */
+				tokens_next(s);
+			} else {
+				cond = parse_expr(tu, s);
+				expect(s, ';');
+			}
+
+			Expr* next = NULL;
+			if (tokens_get(s)->type == ')') {
+				/* nothing */
+				tokens_next(s);
+			} else {
+				next = parse_expr(tu, s);
+				expect(s, ')');
+			}
+
+			// Push this as a breakable statement
+			Stmt* body;
+			LOCAL_SCOPE {
+				Stmt* old_breakable = current_breakable;
+				current_breakable = n;
+				Stmt* old_continuable = current_continuable;
+				current_continuable = n;
+
+				body = parse_stmt_or_expr(tu, s);
+
+				current_breakable = old_breakable;
+				current_continuable = old_continuable;
+			}
+
+			n->for_ = (struct StmtFor){
+				.first = first,
+				.cond = cond,
+				.body = body,
+				.next = next
 			};
-			tls_restore(body);
 		}
 
-		Expr* cond = 0;
-		if (tokens_get(s)->type == ';') {
-			/* nothing */
-			tokens_next(s);
-		} else {
-			cond = parse_expr(tu, s);
-			expect(s, ';');
-		}
-
-		Expr* next = 0;
-		if (tokens_get(s)->type == ')') {
-			/* nothing */
-			tokens_next(s);
-		} else {
-			next = parse_expr(tu, s);
-			expect(s, ')');
-		}
-
-		// Push this as a breakable statement
-		Stmt* body;
-		{
-			Stmt* old_breakable = current_breakable;
-			current_breakable = n;
-			Stmt* old_continuable = current_continuable;
-			current_continuable = n;
-
-			body = parse_stmt_or_expr(tu, s);
-
-			current_breakable = old_breakable;
-			current_continuable = old_continuable;
-		}
-
-		// restore local symbol scope
-		local_symbol_count = saved;
-
-		n->for_ = (struct StmtFor){
-			.first = first,
-			.cond = cond,
-			.body = body,
-			.next = next
-		};
 		return n;
 	} else if (peek == TOKEN_KW_do) {
 		tokens_next(s);
 		Stmt* n = make_stmt(tu, s, STMT_DO_WHILE, sizeof(struct StmtDoWhile));
 
 		// Push this as a breakable statement
-		Stmt* body;
-		{
-			Stmt* old_breakable = current_breakable;
-			current_breakable = n;
-			Stmt* old_continuable = current_continuable;
-			current_continuable = n;
+		LOCAL_SCOPE {
+			Stmt* body;
+			LOCAL_SCOPE {
+				Stmt* old_breakable = current_breakable;
+				current_breakable = n;
+				Stmt* old_continuable = current_continuable;
+				current_continuable = n;
 
-			body = parse_stmt_or_expr(tu, s);
+				body = parse_stmt_or_expr(tu, s);
 
-			current_breakable = old_breakable;
-			current_continuable = old_continuable;
+				current_breakable = old_breakable;
+				current_continuable = old_continuable;
+			}
+
+			if (tokens_get(s)->type != TOKEN_KW_while) {
+				Token* t = tokens_get(s);
+				SourceLoc* loc = &s->line_arena[t->location];
+
+				report(REPORT_ERROR, loc, "%s:%d: error: expected 'while' got '%.*s'", (int)(t->end - t->start), t->start);
+				abort();
+			}
+			tokens_next(s);
+
+			expect(s, '(');
+
+			Expr* cond = parse_expr(tu, s);
+
+			expect(s, ')');
+			expect(s, ';');
+
+			n->do_while = (struct StmtDoWhile){
+				.cond = cond,
+				.body = body
+			};
 		}
 
-		if (tokens_get(s)->type != TOKEN_KW_while) {
-			Token* t = tokens_get(s);
-			SourceLoc* loc = &s->line_arena[t->location];
-
-			report(REPORT_ERROR, loc, "%s:%d: error: expected 'while' got '%.*s'", (int)(t->end - t->start), t->start);
-			abort();
-		}
-		tokens_next(s);
-
-		expect(s, '(');
-
-		Expr* cond = parse_expr(tu, s);
-
-		expect(s, ')');
-		expect(s, ';');
-
-		n->do_while = (struct StmtDoWhile){
-			.cond = cond,
-			.body = body
-		};
 		return n;
 	} else if (peek == TOKEN_KW_goto) {
 		tokens_next(s);
@@ -1715,8 +1737,7 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 
 		expect(s, ';');
 		return n;
-	} else if (peek == TOKEN_IDENTIFIER &&
-			   tokens_peek(s)->type == TOKEN_COLON) {
+	} else if (peek == TOKEN_IDENTIFIER && tokens_peek(s)->type == TOKEN_COLON) {
 		// label amirite
 		// IDENTIFIER COLON STMT
 		Token* t = tokens_get(s);

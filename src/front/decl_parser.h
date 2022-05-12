@@ -1042,7 +1042,19 @@ static bool is_typename(TokenStream* restrict s) {
             Atom name = atoms_put(t->end - t->start, t->start);
 
             Symbol* loc = find_local_symbol(s);
-            if (loc != NULL && loc->storage_class == STORAGE_TYPEDEF) return true;
+            if (loc != NULL) {
+				// if we find a normal symbol before the typedef, then we didn't match typename
+				// and thus don't continue:
+				//
+				// typedef struct foo { int x; } foo;
+				// void test() {
+				//   foo *foo;
+				//   foo->x = 0;
+				//   ^^^
+				//  this is referring to foo the variable not the typedef
+				// }
+				return (loc->storage_class == STORAGE_TYPEDEF);
+			}
 
             Symbol* glob = find_global_symbol((const char*)name);
             if (glob != NULL && glob->storage_class == STORAGE_TYPEDEF) return true;

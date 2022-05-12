@@ -219,7 +219,14 @@ static Expr* parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
 					.loc = loc,
 					.param_num = sym->param_num
 				};
+			} else if (sym->storage_class == STORAGE_ENUM) {
+				*e = (Expr) {
+					.op = EXPR_ENUM,
+					.loc = loc,
+					.enum_val = { sym->enum_value }
+				};
 			} else {
+				assert(sym->stmt != NULL);
 				*e = (Expr) {
 					.op = EXPR_SYMBOL,
 					.loc = loc,

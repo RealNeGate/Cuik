@@ -1489,6 +1489,8 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
 }
 
 void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
+	if (s == NULL) return;
+
 	if (settings.is_debug_info) {
 		// TODO(NeGate): Fix this up later!!!
 		static thread_local TB_FileID last_file_id = 0;

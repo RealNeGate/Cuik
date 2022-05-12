@@ -743,6 +743,8 @@ Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
 			Member* m = sema_resolve_member_access(tu, e, &offset);
 			if (m) {
 				if (in_the_semantic_phase) {
+					e->dot_arrow.base->cast_type = sema_expr(tu, e->dot_arrow.base);
+
 					e->dot_arrow.member = m;
 					e->dot_arrow.offset = offset;
 				}
@@ -874,6 +876,8 @@ Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
 }
 
 void sema_stmt(TranslationUnit* tu, Stmt* restrict s) {
+	if (s == NULL) return;
+
 	switch (s->op) {
 		case STMT_NONE: break;
 		case STMT_LABEL: break;
