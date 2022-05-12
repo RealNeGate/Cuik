@@ -33,6 +33,7 @@ enum { TARGET_OPTION_COUNT = sizeof(target_options) / sizeof(target_options[0]) 
 
 static BigArray(const char*) cuik_include_dirs;
 static BigArray(const char*) cuik_source_files;
+static BigArray(const char*) cuik_libraries;
 static char cuik_file_no_ext[255];
 static bool is_frontend_only;
 
@@ -448,6 +449,8 @@ static void print_help(const char* executable_path) {
 	O("  -T                   - report timing information into a .json file usable by chrome://tracing");
 	O("  -I        <path>     - add include directory");
 	O("  -o        <path>     - define output path for binary and intermediates");
+	O("  -freestanding        - run in freestanding mode (doesn't allow for the OS or C runtime usage, only freestanding headers)");
+	O("  --lib     <name>     - link against a static library");
 	O("  --threads <count>    - chooses how many threads to spawn");
 	O("  --target  <name>     - choose a target platform to compile to");
 	O("");
@@ -559,6 +562,7 @@ int main(int argc, char* argv[]) {
 
 	// I seriously dare you to tell me that im leaking these
 	cuik_source_files = big_array_create(const char*, false);
+	cuik_libraries    = big_array_create(const char*, false);
 	cuik_include_dirs = big_array_create(const char*, false);
 
     const char* output_name = NULL;
@@ -571,7 +575,17 @@ int main(int argc, char* argv[]) {
         // --option
         if (argv[i][1] == '-') {
             const char* option = &argv[i][2];
-            if (strcmp(option, "target") == 0) {
+            if (strcmp(option, "lib") == 0) {
+                i += 1;
+                if (i >= argc) {
+                    fprintf(stderr, "error: expected \n");
+                    abort();
+                }
+
+				big_array_put(cuik_libraries, argv[i]);
+            } else if (strcmp(option, "freestanding")) {
+				settings.freestanding = true;
+			} else if (strcmp(option, "target") == 0) {
                 i += 1;
                 if (i >= argc) {
                     fprintf(stderr, "error: expected target\n");
@@ -793,14 +807,20 @@ int main(int argc, char* argv[]) {
 							linker_add_input_file(&l, obj_output_path);
 
 							// Add input libraries
-#ifdef _WIN32
-							linker_add_input_file(&l, "kernel32.lib");
+							size_t count = big_array_length(cuik_libraries);
+							for (size_t i = 0; i < count; i++) {
+								linker_add_input_file(&l, cuik_libraries[i]);
+							}
+
+							/*linker_add_input_file(&l, "kernel32.lib");
 							linker_add_input_file(&l, "user32.lib");
 							linker_add_input_file(&l, "shell32.lib");
 							linker_add_input_file(&l, "Gdi32.lib");
-							//linker_add_input_file(&l, "Onecore.lib");
-							//linker_add_input_file(&l, "Onecoreuap.lib");
-							linker_add_input_file(&l, "opengl32.lib");
+							linker_add_input_file(&l, "opengl32.lib");*/
+
+#ifdef _WIN32
+							linker_add_input_file(&l, "kernel32.lib");
+							linker_add_input_file(&l, "shell32.lib");
 							linker_add_input_file(&l, "msvcrt.lib");
 							linker_add_input_file(&l, "win32_rt.lib");
 #endif
