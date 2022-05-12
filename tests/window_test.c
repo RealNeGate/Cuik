@@ -22,7 +22,7 @@ int main(int argc, char** argv, char** env) {
 
 	const char* name = "Hello";
 	
-	WNDCLASSA wc = {};
+	WNDCLASSA wc = { 0 };
 	wc.hInstance = GetModuleHandleA(NULL);
 	wc.lpfnWndProc = main_wnd_proc;
 	wc.lpszClassName = name;

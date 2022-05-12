@@ -1,3 +1,7 @@
+IMPORTANT:
+* when i resolve a value from a symbol, i'm failing to account
+  for globals vs externals properly
+
 CUIK:
 * ban redefining keywords
 * fix some UCRT locale pointer initialization issues

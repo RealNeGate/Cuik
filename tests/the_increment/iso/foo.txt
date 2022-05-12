@@ -1,0 +1,173 @@
+main():
+L0: # r1 terminates at r2
+L1: # r2 terminates at r18
+  r3 = local 4 (4 align)
+  r4 = int i32 0
+  r5 = float float 0.000000
+  store float r3, r5 (4 align)
+  r7 = local 4 (4 align)
+  r8 = int i32 0
+  r9 = float float 0.000000
+  store float r7, r9 (4 align)
+  r11 = local 4 (4 align)
+  r12 = local 4 (4 align)
+  r13 = local 7040 (4 align)
+  r14 = local 1760 (1 align)
+  r15 = int i32 0
+  r16 = float float 0.000000
+  store float r12, r16 (4 align)
+L3: # r18 terminates at r23
+  r19 = float double 6.280000
+  r20 = load float r12 (4 align)
+  r21 = fxt double r20
+  r22 = fcmp lt double r21, r19
+  if (r22) L2 else L4
+L2: # r24 terminates at r41
+  r25 = int i32 32
+  r26 = int i32 1760
+  r27 = sxt i64 r26
+  r28 = void call memset(r14, r25, r27)
+  r29 = int i32 0
+  r30 = int i32 7040
+  r31 = sxt i64 r30
+  r32 = void call memset(r13, r29, r31)
+  r33 = string "j=%f
+"
+  r34 = load float r12 (4 align)
+  r35 = fxt double r34
+  r36 = bitcast i64 r35
+  r37 = void call printf(r33, r36)
+  r38 = int i32 0
+  r39 = float float 0.000000
+  store float r11, r39 (4 align)
+L6: # r41 terminates at r46
+  r42 = float double 6.280000
+  r43 = load float r11 (4 align)
+  r44 = fxt double r43
+  r45 = fcmp lt double r44, r42
+  if (r45) L5 else L7
+L5: # r47 terminates at r159
+  r48 = string "  i=%f
+"
+  r49 = load float r11 (4 align)
+  r50 = fxt double r49
+  r51 = bitcast i64 r50
+  r52 = void call printf(r48, r51)
+  r53 = local 4 (4 align)
+  r54 = load float r11 (4 align)
+  r55 = fxt double r54
+  r56 = double call sin(r55)
+  r57 = trunc float r56
+  store float r53, r57 (4 align)
+  r59 = local 4 (4 align)
+  r60 = load float r12 (4 align)
+  r61 = fxt double r60
+  r62 = double call cos(r61)
+  r63 = trunc float r62
+  store float r59, r63 (4 align)
+  r65 = local 4 (4 align)
+  r66 = load float r3 (4 align)
+  r67 = fxt double r66
+  r68 = double call sin(r67)
+  r69 = trunc float r68
+  store float r65, r69 (4 align)
+  r71 = local 4 (4 align)
+  r72 = load float r12 (4 align)
+  r73 = fxt double r72
+  r74 = double call sin(r73)
+  r75 = trunc float r74
+  store float r71, r75 (4 align)
+  r77 = local 4 (4 align)
+  r78 = load float r3 (4 align)
+  r79 = fxt double r78
+  r80 = double call cos(r79)
+  r81 = trunc float r80
+  store float r77, r81 (4 align)
+  r83 = local 4 (4 align)
+  r84 = load float r59 (4 align)
+  r85 = int i32 2
+  r86 = float float 2.000000
+  r87 = fadd float r84, r86
+  store float r83, r87 (4 align)
+  r89 = local 4 (4 align)
+  r90 = int i32 1
+  r91 = float float 1.000000
+  r92 = load float r53 (4 align)
+  r93 = load float r83 (4 align)
+  r94 = fmul float r92, r93
+  r95 = load float r65 (4 align)
+  r96 = fmul float r94, r95
+  r97 = load float r71 (4 align)
+  r98 = load float r77 (4 align)
+  r99 = fmul float r97, r98
+  r100 = fadd float r96, r99
+  r101 = int i32 5
+  r102 = float float 5.000000
+  r103 = fadd float r100, r102
+  r104 = fdiv float r91, r103
+  store float r89, r104 (4 align)
+  r106 = local 4 (4 align)
+  r107 = load float r11 (4 align)
+  r108 = fxt double r107
+  r109 = double call cos(r108)
+  r110 = trunc float r109
+  store float r106, r110 (4 align)
+  r112 = local 4 (4 align)
+  r113 = load float r7 (4 align)
+  r114 = fxt double r113
+  r115 = double call cos(r114)
+  r116 = trunc float r115
+  store float r112, r116 (4 align)
+  r118 = local 4 (4 align)
+  r119 = load float r7 (4 align)
+  r120 = fxt double r119
+  r121 = double call sin(r120)
+  r122 = trunc float r121
+  store float r118, r122 (4 align)
+  r124 = local 4 (4 align)
+  r125 = load float r53 (4 align)
+  r126 = load float r83 (4 align)
+  r127 = fmul float r125, r126
+  r128 = load float r77 (4 align)
+  r129 = fmul float r127, r128
+  r130 = load float r71 (4 align)
+  r131 = load float r65 (4 align)
+  r132 = fmul float r130, r131
+  r133 = fsub float r129, r132
+  store float r124, r133 (4 align)
+  r135 = local 4 (4 align)
+  r136 = int i32 40
+  r137 = float float 40.000000
+  r138 = int i32 30
+  r139 = float float 30.000000
+  r140 = load float r89 (4 align)
+  r141 = fmul float r139, r140
+  r142 = load float r106 (4 align)
+  r143 = load float r83 (4 align)
+  r144 = fmul float r142, r143
+  r145 = load float r112 (4 align)
+  r146 = fmul float r144, r145
+  r147 = load float r124 (4 align)
+  r148 = load float r118 (4 align)
+  r149 = fmul float r147, r148
+  r150 = fsub float r146, r149
+  r151 = fmul float r141, r150
+  r152 = fadd float r137, r151
+  r153 = float2int i32 r152
+  store i32 r135, r153 (4 align)
+  r155 = load float r11 (4 align)
+  r156 = float float 0.020000
+  r157 = fadd float r155, r156
+  store float r11, r157 (4 align)
+  goto L6
+L7: # r160 terminates at r165
+  r161 = load float r12 (4 align)
+  r162 = float float 0.070000
+  r163 = fadd float r161, r162
+  store float r12, r163 (4 align)
+  goto L3
+L4: # r166 terminates at r168
+  r167 = int i32 0
+  ret i32 r167
+
+

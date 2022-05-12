@@ -64,7 +64,7 @@ void arena_free(Arena* arena) {
 }
 
 void arena_trim(Arena* arena) {
-	static _Atomic size_t space_saved = 0;
+	//static _Atomic size_t space_saved = 0;
 	
 #ifdef _WIN32
 	// decommit any leftover pages
@@ -73,10 +73,9 @@ void arena_trim(Arena* arena) {
 			size_t aligned_used = (sizeof(ArenaSegment) + c->used + 4095u) & ~4095u;
 			
 			if (aligned_used != c->capacity) {
-				size_t pages_to_release = ((c->capacity - aligned_used) + 4095) / 4096;
-				space_saved += pages_to_release;
-				
-				printf("Released %zu pages (%zu MB total)\n", pages_to_release, space_saved / 256);
+				//size_t pages_to_release = ((c->capacity - aligned_used) + 4095) / 4096;
+				//space_saved += pages_to_release;
+				//printf("Released %zu pages (%zu MB total)\n", pages_to_release, space_saved / 256);
 				
 				VirtualFree((char*)c + aligned_used, c->capacity - aligned_used, MEM_RELEASE);
 				c->capacity = aligned_used;

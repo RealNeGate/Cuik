@@ -1,5 +1,21 @@
 #include <stddef.h>
+#include <stdint.h>
 
+size_t* tile1(size_t* a, size_t b) { return &a[b]; }
+size_t  tile2(size_t* a, size_t b) { return a[b]; }
+size_t* tile3(size_t* a, size_t b) { return &a[b*2]; }
+size_t* tile4(size_t* a, size_t b) { return &a[b*3]; }
+size_t* tile5(size_t* a, size_t b) { return &a[b*2 + 1]; }
+size_t* tile6(size_t* a, size_t b) { return &a[b*3 + 1]; }
+
+void fn(int16_t* A, uint16_t* B, uint16_t* C) {
+    for (int i = 0; i < 16; i++) {
+        if (A[i] > 0) A[i] = (C[i] + A[i]) * B[i] >> 16;
+        else A[i] = -((C[i] - A[i]) * B[i] >> 16);
+    }
+}
+
+#if 0
 void foo(size_t* a, size_t* b, size_t c) {
 	a[c] += 16;
 	b[c] += 16;
@@ -9,7 +25,7 @@ void bar(size_t* a, size_t b) {
 	a[b] += 16;
 }
 
-#if 0
+
 int test(int a, int b) {
     int x, y, z;
 

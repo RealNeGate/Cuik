@@ -240,7 +240,7 @@ TranslationUnit* cuik_compile_file(CompilationUnit* cu, const char* path,
 	
 	// free tokens
 	arrfree(tu->tokens.tokens);
-	printf("Line arena space: %f MB\n", (arrlen(tu->tokens.line_arena)*sizeof(SourceLoc)) / (1024.0*1024.0));
+	//printf("Line arena space: %f MB\n", (arrlen(tu->tokens.line_arena)*sizeof(SourceLoc)) / (1024.0*1024.0));
 	
 	// Semantics pass
 	timed_block("sema %s", path) {

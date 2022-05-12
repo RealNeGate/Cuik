@@ -13,6 +13,7 @@
 #include <back/tb.h>
 
 #define MAX_LOCAL_SYMBOLS (1 << 20)
+#define MAX_LOCAL_TAGS    (1 << 16)
 
 typedef struct Stmt Stmt;
 typedef struct Expr Expr;
@@ -35,10 +36,10 @@ typedef enum TypeKind {
     KIND_STRUCT,
     KIND_UNION,
 	KIND_VECTOR,
-	
+
 	// these are inferred as typedefs but don't map to anything yet
 	KIND_PLACEHOLDER,
-	
+
 	// weird typeof(expr) type that gets resolved in the semantics pass
 	// this is done to enable typeof to work with out of order decls...
 	// it's a mess but it's worth it
@@ -49,11 +50,11 @@ typedef enum TypeKind {
 typedef struct {
 	Type* type;
 	Atom name;
-	
+
 	SourceLocIndex loc;
 	int align;
 	int offset;
-	
+
 	// Bitfield
 	int bit_offset;
 	int bit_width;
@@ -66,7 +67,7 @@ typedef struct {
 	bool is_inline  : 1;
 	bool is_extern  : 1;
 	bool is_tls     : 1;
-	
+
 	// NOTE(NeGate): In all honesty, this should probably not be
 	// here since it's used in cases that aren't relevant to attribs.
 	// mainly STMT_DECL, it keeps track of if anyone's referenced it
@@ -95,70 +96,70 @@ struct Type {
     int size;  // sizeof
     int align; // _Alignof
 	SourceLocIndex loc;
-    
+
     // used by cycle checking
     int ordinal;
-    
+
 	bool is_const : 1;
     bool is_atomic : 1;
 	bool is_incomplete : 1;
-    
+
     union {
         // Integers
         bool is_unsigned;
-        
+
         // Arrays
 		struct {
 			Type* array_of;
 			int array_count;
-            
+
             // if non-zero, then we must execute an expression
             // parser to resolve it
             int array_count_lexer_pos;
 		};
-		
+
         // Pointers
 		struct {
 			Type* ptr_to;
             bool is_ptr_restrict : 1;
 		};
-		
+
 		// Function
 		struct {
 			Atom name;
 			Type* return_type;
 			size_t param_count;
 			Param* param_list;
-			
+
 			bool has_varargs : 1;
 		} func;
-		
+
 		// Structs/Unions
 		struct {
 			Atom name;
-			
+
 			int kid_count;
 			Member* kids;
 		} record;
-		
+
 		// Enumerators
 		struct {
 			Atom name;
 			int count;
-			
+
 			EnumEntry* entries;
 		} enumerator;
-		
+
 		struct {
 			int count;
 			Type* base;
 		} vector_;
-		
+
 		// Typeof
 		struct {
 			Expr* src;
 		} typeof_;
-		
+
 		struct {
 			Atom name;
 		} placeholder;
@@ -167,54 +168,56 @@ struct Type {
 
 typedef enum StmtOp {
 	STMT_NONE,
-	
+
 	STMT_COMPOUND,
 	STMT_DECL,
-	
+
 	// It's a normal decl but global
 	STMT_GLOBAL_DECL,
-	
+
 	// NOTE(NeGate): It's a decl that's followed by a compound block
 	STMT_FUNC_DECL,
-	
+
 	STMT_LABEL,
 	STMT_EXPR,
-	
+
 	STMT_IF,
 	STMT_DO_WHILE,
 	STMT_GOTO,
 	STMT_FOR,
 	STMT_WHILE,
-	
+
 	STMT_SWITCH,
 	STMT_CASE,
 	STMT_DEFAULT,
-	
+
 	STMT_BREAK,
 	STMT_CONTINUE,
-	
+
 	STMT_RETURN
 } StmtOp;
 
 typedef enum ExprOp {
 	EXPR_NONE,
-	
+
 	EXPR_INT,
 	EXPR_ENUM,
 	EXPR_FLOAT32,
 	EXPR_FLOAT64,
-	
+
+	EXPR_WCHAR,
 	EXPR_CHAR,
 	EXPR_WSTR,
 	EXPR_STR,
-	
+
+	EXPR_BUILTIN_SYMBOL,
 	EXPR_UNKNOWN_SYMBOL,
 	EXPR_SYMBOL,
 	EXPR_GENERIC, // C11's _Generic
-	
+
 	EXPR_FUNCTION, // function literal
 	EXPR_INITIALIZER,
-	
+
 	EXPR_CAST,
 	EXPR_PARAM, // special case of EXPR_VAR
 	EXPR_ASSIGN,
@@ -228,7 +231,7 @@ typedef enum ExprOp {
 	EXPR_XOR_ASSIGN,
 	EXPR_SHL_ASSIGN,
 	EXPR_SHR_ASSIGN,
-	
+
 	EXPR_PLUS,
 	EXPR_MINUS,
 	EXPR_TIMES,
@@ -239,26 +242,26 @@ typedef enum ExprOp {
 	EXPR_XOR,
 	EXPR_SHL,
 	EXPR_SHR,
-	
+
 	// these are resolved by semantics pass
 	EXPR_PTRADD,
 	EXPR_PTRSUB,
 	EXPR_PTRDIFF,
-	
+
 	EXPR_TERNARY,
 	EXPR_COMMA,
-	
+
 	EXPR_CMPEQ,
 	EXPR_CMPNE,
 	EXPR_CMPGE,
 	EXPR_CMPLE,
 	EXPR_CMPGT,
 	EXPR_CMPLT,
-	
+
 	EXPR_LOGICAL_NOT,
 	EXPR_LOGICAL_AND,
 	EXPR_LOGICAL_OR,
-	
+
 	EXPR_DEREF,
 	EXPR_ADDR,
 	EXPR_NEGATE,
@@ -267,18 +270,18 @@ typedef enum ExprOp {
 	EXPR_DOT,
 	EXPR_ARROW,
 	EXPR_CALL,
-	
+
 	EXPR_SIZEOF_T, // on type
 	EXPR_SIZEOF, // on expr
-	
+
 	EXPR_ALIGNOF_T, // on type
 	EXPR_ALIGNOF, // on expr
-	
+
 	EXPR_PRE_INC,
 	EXPR_PRE_DEC,
 	EXPR_POST_INC,
 	EXPR_POST_DEC,
-	
+
 	EXPR_MAX
 } ExprOp;
 
@@ -294,7 +297,7 @@ struct Stmt {
 	struct StmtHeader {
 		StmtOp op;
 		SourceLocIndex loc;
-		
+
 		// Used by the backend for backend-y things
 		union {
 			TB_Register r;
@@ -339,7 +342,7 @@ struct Stmt {
 		struct StmtSwitch {
 			Expr* condition;
 			Stmt* body;
-			
+
 			// points to the first case or default,
 			// and those point to next and so on,
 			// linked lists
@@ -348,18 +351,18 @@ struct Stmt {
 		struct StmtDecl {
 			Type* type;
 			Atom name;
-			
+
 			// acceleration structure for scrubbing for symbols
 			// it's a linked list
 			Expr* first_symbol;
-			
-			// NOTE(NeGate): This represents a stmtindex if it's a 
+
+			// NOTE(NeGate): This represents a stmtindex if it's a
 			// FUNC_DECL
 			union {
 				Stmt* initial_as_stmt;
 				Expr* initial;
 			};
-			
+
 			Attribs attrs;
 		} decl;
 		struct StmtFor {
@@ -405,7 +408,7 @@ typedef struct InitNode {
 	union {
 		// INIT_MEMBER
 		Atom member_name;
-		
+
 		// INIT_ARRAY
 		struct {
 			int start, count;
@@ -416,9 +419,9 @@ typedef struct InitNode {
 struct Expr {
 	ExprOp op;
 	SourceLocIndex loc;
-	
+
 	Type* type;
-	
+
 	// this is the type it'll be desugared into
 	// for example:
 	//
@@ -427,26 +430,33 @@ struct Expr {
 	//   their cast_type might be int because of C's
 	//   promotion rules.
 	Type* cast_type;
-	
+
 	union {
 		struct {
+			Atom name;
+
+			// aliases with next_symbol_in_chain
+			Expr* next_symbol_in_chain;
+		} builtin_sym;
+
+		struct {
 			Atom unknown_sym;
-			
+
 			// aliases with next_symbol_in_chain
 			Expr* next_symbol_in_chain2;
 		};
-		
+
 		// TODO(NeGate): rename this unnamed struct to 'symbol'
 		struct {
-			// linked list of symbols within a function used to 
+			// linked list of symbols within a function used to
 			// analyze used symbols more easily
 			Stmt* symbol;
 			Expr* next_symbol_in_chain;
 		};
-		
+
 		// EXPR_PARAM
 		int param_num;
-		
+
 		struct ExprEnum {
 			int64_t num;
 			Expr* next_symbol_in_chain;
@@ -473,7 +483,7 @@ struct Expr {
 		} unary_op;
 		struct {
 			Expr* controlling_expr;
-			
+
 			// if case_count == 0, then controlling_expr is the matched expression
 			int case_count;
 			C11GenericEntry* cases;
@@ -481,7 +491,7 @@ struct Expr {
 		struct {
 			Expr* base;
 			uint32_t offset;
-			
+
 			// once the semantic pass runs over the AST
 			// we'll have a Member instead of name
 			union {
@@ -493,7 +503,7 @@ struct Expr {
 		struct {
 			Expr* target;
 			int param_count;
-			
+
 			Expr** param_start;
 		} call;
 		// represent both quoted literals
@@ -517,7 +527,8 @@ struct Expr {
 		struct {
 			Stmt* src;
 		} func;
-		
+
+		int char_lit;
 		double float_num;
 		struct ExprInt {
 			unsigned long long num;
@@ -527,6 +538,7 @@ struct Expr {
 };
 _Static_assert(offsetof(Expr, next_symbol_in_chain) == offsetof(Expr, next_symbol_in_chain2), "these should be aliasing");
 _Static_assert(offsetof(Expr, next_symbol_in_chain) == offsetof(Expr, enum_val.next_symbol_in_chain), "these should be aliasing");
+_Static_assert(offsetof(Expr, next_symbol_in_chain) == offsetof(Expr, builtin_sym.next_symbol_in_chain), "these should be aliasing");
 
 typedef struct Decl {
 	Type* type;
@@ -536,11 +548,11 @@ typedef struct Decl {
 
 typedef enum StorageClass {
 	STORAGE_NONE,
-	
+
 	STORAGE_STATIC_FUNC,  // .text
 	STORAGE_STATIC_VAR,   // .data
 	STORAGE_STATIC_CONST, // .rdata
-	
+
 	STORAGE_FUNC,
 	STORAGE_PARAM,
 	STORAGE_GLOBAL,
@@ -554,17 +566,17 @@ typedef struct Symbol {
 	Type* type;
 	SourceLocIndex loc;
 	StorageClass storage_class;
-	
+
 	union {
 		// used if storage_class == STORAGE_PARAM
 		int param_num;
-		
+
 		// used if storage_class == STORAGE_ENUM
 		int enum_value;
-		
+
 		Stmt* stmt;
 	};
-	
+
 	// when handling global symbols and delaying their parsing
 	// we want to be able to store what the position of the symbol's
 	// "value" aka function bodies and intitial expressions
@@ -580,24 +592,24 @@ typedef struct {
 typedef struct TranslationUnit {
 	// circular references amirite...
 	struct CompilationUnit* parent;
-	
+
 	const char* filepath;
-	
+
 	// chain of TUs for the compilation unit
 	struct TranslationUnit* next;
 	bool is_free;
-	
+
 	// token stream
 	TokenStream tokens;
-	
+
 	mtx_t arena_mutex;
 	Arena ast_arena;
 	Arena type_arena;
-	
+
 	// stb_ds array
 	// NOTE(NeGate): should this be an stb_ds array?
 	Stmt** top_level_stmts;
-	
+
 	// this is a bit of a hack to implement the struct printing
 	// functionality, if a name is passed into hack.name then it'll
 	// try to find a type by that name and feed it into hack.type

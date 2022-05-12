@@ -70,7 +70,7 @@ void timer_close() {
 
 uint64_t timer_now() {
     struct timespec tms;
-    clock_gettime(CLOCK_MONOTONIC, &tms);
+    clock_gettime(CLOCK_MONOTONIC_RAW, &tms);
     
     uint64_t micro = tms.tv_sec * 1000000;
     micro += tms.tv_nsec / 1000;

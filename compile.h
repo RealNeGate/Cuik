@@ -39,6 +39,9 @@
 #define pclose _pclose
 #define SLASH "\\"
 #define PATH_MAX MAX_PATH
+
+#define ON_WINDOWS 1
+#define ON_POSIX   0
 #else
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -47,6 +50,17 @@
 #include <errno.h>
 
 #define SLASH "/"
+
+#define ON_POSIX   1
+#define ON_WINDOWS 0
+#endif
+
+#ifndef RELEASE_BUILD
+#define RELEASE_BUILD 0
+#endif
+
+#ifndef USE_DA_ASAN
+#define USE_DA_ASAN 0
 #endif
 
 #if defined(_MSC_VER) && !defined(__clang__)
@@ -54,6 +68,33 @@
 #else
 #define UNIX_STYLE 1
 #endif
+
+#if defined(__clang__)
+#define ON_CLANG 1
+#define ON_GCC   0
+#define ON_MSVC  0
+#define ON_CUIK  0
+#elif defined(__GNUC__)
+#define ON_CLANG 0
+#define ON_GCC   1
+#define ON_MSVC  0
+#define ON_CUIK  0
+#elif defined(_MSC_VER)
+#define ON_CLANG 0
+#define ON_GCC   0
+#define ON_MSVC  1
+#define ON_CUIK  0
+#elif defined(__CUIKC__)
+#define ON_CLANG 0
+#define ON_GCC   0
+#define ON_MSVC  0
+#define ON_CUIK  1
+#endif
+
+typedef enum {
+	BUILD_MODE_EXECUTABLE,
+	BUILD_MODE_STATIC_LIB,
+} BuildMode;
 
 static char command_buffer[4096];
 static size_t command_length = 0;
@@ -65,11 +106,28 @@ inline static bool str_ends_with(const char* cstr, const char* postfix) {
     return postfix_len <= cstr_len && strcmp(cstr + cstr_len - postfix_len, postfix) == 0;
 }
 
+inline static const char* str_filename(const char* path) {
+	const char* slash = path;
+	for (; *path; path++) {
+		if (*path == '/') slash = path;
+		else if (*path == '\\') slash = path;
+	}
+	
+	return slash;
+}
+
+inline static const char* str_ext(const char* path) {
+	const char* dot = path;
+	for (; *path; path++) {
+		if (*path == '.') dot = path;
+	}
+	
+	return dot;
+}
+
 inline static const char* str_no_ext(const char* path) {
 	size_t n = strlen(path);
-    while (n > 0 && path[n - 1] != '.') {
-        n -= 1;
-    }
+    while (n > 0 && path[n - 1] != '.') n--;
 	
     if (n > 0) {
         char* result = malloc(n);
@@ -109,7 +167,10 @@ inline static LPSTR GetLastErrorAsString(void) {
 }
 
 typedef struct FileIter {
-    HANDLE find_handle;
+	char* path;
+	
+    // private
+	HANDLE find_handle;
     WIN32_FIND_DATA find_data;
 } FileIter;
 
@@ -127,27 +188,30 @@ inline static FileIter file_iter_open(const char* directory) {
 	return iter;
 }
 
-inline static char* file_iter_next(FileIter* iter) {
-	if(!FindNextFile(iter->find_handle, &iter->find_data)) {
+inline static bool file_iter_next(FileIter* iter) {
+	if (!FindNextFile(iter->find_handle, &iter->find_data)) {
 		if (GetLastError() != ERROR_NO_MORE_FILES) {
 			printf("File iterator failed to iterate!!!\n");
 			abort();
 		}
 		
-		return NULL;
+		if (!FindClose(iter->find_handle)) {
+			printf("File iterator failed to close!!!\n");
+			abort();
+		}
+		
+		iter->path = NULL;
+		return false;
 	}
 	
-	return iter->find_data.cFileName;
-}
-
-inline static void file_iter_close(FileIter* iter) {
-    if (!FindClose(iter->find_handle)) {
-		printf("File iterator failed to close!!!\n");
-		abort();
-	}
+	iter->path = iter->find_data.cFileName;
+	return true;
 }
 #else
 typedef struct FileIter {
+	char* path;
+	
+	// private
     DIR* dir;
 } FileIter;
 
@@ -155,15 +219,21 @@ inline static FileIter file_iter_open(const char* directory) {
     return (FileIter){ opendir(directory) };
 }
 
-inline static char* file_iter_next(FileIter* iter) {
+inline static bool file_iter_next(FileIter* iter) {
 	struct dirent* dp = readdir(iter->dir);
-	return dp ? dp->d_name : NULL;
-}
-
-inline static void file_iter_close(FileIter* iter) {
-    closedir(iter->dir);
+	if (dp == NULL) {
+		closedir(iter->dir);
+		iter->path = NULL;
+		return false;
+	}
+	
+	iter->path = dp->d_name;
+	return true;
 }
 #endif
+
+#define ITERATE_FILES(_name, _path) \
+for (FileIter _name = file_iter_open(_path); file_iter_next(&_name);)
 
 inline static void cmd_append(const char* str) {
 	size_t l = strlen(str);
@@ -199,10 +269,10 @@ inline static void builder_init() {
 	// don't wanna buffer stdout
 	setvbuf(stdout, NULL, _IONBF, 0);
 	
-#if defined(_WIN32)
-	// sets environment vars for compiler
-	system("call vcvars64");
-#endif
+	if (ON_WINDOWS) {
+		// sets environment vars for compiler
+		system("call vcvars64");
+	}
 	
 	create_dir_if_not_exists("build/");
 	
@@ -216,18 +286,15 @@ inline static void builder_init() {
 	printf("Compiling on Cuik %d.%d...\n", __CUIKC__, __CUIKC_MINOR__);
 #endif
 	
-#   if defined(RELEASE_BUILD)
-	printf("And it's a release build!\n");
-#   endif
+	if (RELEASE_BUILD) {
+		printf("And it's a release build!\n");
+	}
 }
 
-inline static void builder_compile_cuik(size_t count, const char* filepaths[], const char* output_path) {
-	cmd_append("cuik build -include:src/ -out:");
+inline static void builder_compile_cuik(size_t count, const char* filepaths[], const char* output_path, const char* extra_libraries) {
+	cmd_append("cuik --include src/ -o ");
 	cmd_append(output_path);
-	
-#   if !defined(RELEASE_BUILD)
-	cmd_append(" -debug ");
-#   endif
+	cmd_append(" build ");
 	
 	for (size_t i = 0; i < count; i++) {
 		cmd_append(filepaths[i]);
@@ -238,16 +305,21 @@ inline static void builder_compile_cuik(size_t count, const char* filepaths[], c
 	cmd_dump(cmd_run());
 }
 
-inline static void builder_compile_msvc(size_t count, const char* filepaths[], const char* output_path) {
-	cmd_append("cl /Fo:build\\ /MP /arch:AVX /D_CRT_SECURE_NO_WARNINGS ");
-	cmd_append("/I:src /Fe:");
-	cmd_append(output_path);
+inline static void builder_compile_msvc(BuildMode mode, size_t count, const char* filepaths[], const char* output_path, const char* extra_libraries) {
+	cmd_append("cl /MP /arch:AVX /D_CRT_SECURE_NO_WARNINGS /I:src ");
 	
-#   if defined(RELEASE_BUILD)
-	cmd_append("/Ox /WX /GS- /DNDEBUG ");
-#   else
-	cmd_append("/MTd /Od /WX /Zi /D_DEBUG /RTC1 ");
-#   endif
+	if (mode == BUILD_MODE_EXECUTABLE) {
+		cmd_append("/Fe:");
+		cmd_append(output_path);
+	} else {
+		cmd_append("/Fo:build\\");
+	}
+	
+	if (RELEASE_BUILD) {
+		cmd_append("/Ox /WX /GS- /DNDEBUG ");
+	} else {
+		cmd_append("/MTd /Od /WX /Zi /D_DEBUG /RTC1 ");
+	}
 	
 	for (size_t i = 0; i < count; i++) {
 		cmd_append(filepaths[i]);
@@ -256,68 +328,50 @@ inline static void builder_compile_msvc(size_t count, const char* filepaths[], c
 	
 	printf("CMD: %s\n", command_buffer);
 	cmd_dump(cmd_run());
+	
+	if (mode == BUILD_MODE_STATIC_LIB) {
+		cmd_append("lib /out:");
+		cmd_append(output_path);
+		cmd_append(" build\\*.obj");
+		cmd_append(" external\\tbbmalloc.lib");
+		cmd_run();
+	}
 }
 
-inline static void builder_compile_cc(size_t count, const char* filepaths[], const char* output_path) {
-#if defined(__clang__)
-	const char* cc_command = "clang";
-#elif defined(__GNUC__)
-	const char* cc_command = "gcc";
-#endif
+inline static void builder_compile_cc(BuildMode mode, size_t count, const char* filepaths[], const char* output_path, const char* extra_libraries) {
+	const char* cc_command = ON_CLANG ? "clang" : "gcc";
 	
 	// compile object files
 	FILE** streams = malloc(count * sizeof(FILE*));
 	
 	for (size_t i = 0; i < count; i++) {
 		const char* input = filepaths[i];
-		
-		// Find last dot, if we can't default to end
-		const char* ext = strrchr(input, '.');
-		if (!ext) ext = input + strlen(input);
-		
-		// Find last slash, if we can't default to start
-		const char* slash = strrchr(input, '\\');
-		if (!slash) slash = strrchr(input, '/');
-		if (!slash) slash = input;
-		
-		char output[PATH_MAX];
-		snprintf(output, PATH_MAX, "%.*s", (int)(ext - slash), slash);
+		const char* name = str_no_ext(str_filename(input));
 		
 		cmd_append(cc_command);
 		cmd_append(" -march=haswell -maes -Werror -Wall -Wno-trigraphs -Wno-unused-function ");
 		
-#   if defined(RELEASE_BUILD)
-		cmd_append("-O2 -DNDEBUG ");
-#   endif
+		if (RELEASE_BUILD) {
+			cmd_append("-O2 -DNDEBUG ");
+		}
 		
-#if defined(__clang__)
-		cmd_append("-Wno-gnu-designator -Wno-microsoft-anon-tag ");
-#       if USE_DA_ASAN
-		cmd_append("-fsanitize=address ");
-#       endif
-#endif
+		if (ON_CLANG) {
+			cmd_append("-Wno-gnu-designator -Wno-microsoft-anon-tag ");
+			if (USE_DA_ASAN) cmd_append("-fsanitize=address ");
+		}
 		
 		cmd_append("-I src ");
 		
-#if 1 // 0 if you want to emit preprocessed output for all files
 		cmd_append("-c -o build");
-		cmd_append(output);
+		cmd_append(name);
 		
-#       if _WIN32
-		cmd_append(".obj -D_CRT_SECURE_NO_WARNINGS -g -gcodeview ");
-#       else
-		cmd_append(".o -g ");
-#       endif
+		if (ON_WINDOWS) {
+			cmd_append(".obj -D_CRT_SECURE_NO_WARNINGS -g -gcodeview ");
+		} else {
+			cmd_append(".o -g ");
+		}
 		
 		cmd_append(filepaths[i]);
-#else
-		cmd_append(" -E ");
-		cmd_append(filepaths[i]);
-		cmd_append(" > build");
-		cmd_append(output);
-		cmd_append(".c");
-#endif
-		
 		streams[i] = cmd_run();
 	}
 	
@@ -346,60 +400,83 @@ inline static void builder_compile_cc(size_t count, const char* filepaths[], con
 		exit(69420);
 	}
 	
-#if _WIN32
-	// Link everything together
-	cmd_append("lld-link ");
-	cmd_append("tildebackend.lib build\\*.obj ");
+	// Do linker work
+	if (mode == BUILD_MODE_EXECUTABLE) {
+		if (ON_CLANG) {
+			// Link with clang instead so it's easier
+			cmd_append("clang -g -fuse-ld=lld -o ");
+			cmd_append(output_path);
+			if (ON_WINDOWS) cmd_append(".exe");
+			cmd_append(" ");
+			
+			if (ON_WINDOWS) {
+				cmd_append("tildebackend.lib build/*.obj -lole32 -lAdvapi32 -lOleAut32 -lDbgHelp ");
+			} else {
+				cmd_append("./tildebackend.a build/*.o -lc -lm -lpthread ");
+			}
+			
+			cmd_append(extra_libraries);
+			cmd_append(" ");
+			
+			if (USE_DA_ASAN) {
+				cmd_append("-fsanitize=address ");
+				printf("Using address sanitizer :p\n");
+			}
+		} else if (ON_GCC) {
+			cmd_append("ld -o ");
+			cmd_append(output_path);
+			if (ON_WINDOWS) cmd_append(".exe");
+			cmd_append(" build/*.o ./tildebackend.a -lc -lm -lpthread ");
+			cmd_append("/usr/lib/x86_64-linux-gnu/crt1.o ");
+			cmd_append("/usr/lib/x86_64-linux-gnu/crti.o ");
+			cmd_append("/usr/lib/x86_64-linux-gnu/crtn.o ");
+			cmd_append("/usr/lib/x86_64-linux-gnu/libc_nonshared.a ");
+			cmd_append("--dynamic-linker /lib64/ld-linux-x86-64.so.2 ");
+			cmd_append(extra_libraries);
+		} else {
+			assert(0 && "TODO");
+		}
+	} else if (mode == BUILD_MODE_STATIC_LIB) {
+		if (ON_MSVC) {
+			cmd_append("lib /out:");
+			cmd_append(output_path);
+			cmd_append(".lib build/*.obj ");
+			cmd_append(extra_libraries);
+		} else {
+			if (ON_CLANG) cmd_append("llvm-ar rc ");
+			else cmd_append("ar -rcs ");
+			
+			cmd_append(output_path);
+			if (ON_WINDOWS) cmd_append(".lib");
+			else cmd_append(".a");
+			
+			cmd_append(" ");
+			cmd_append("build/*.obj ");
+			cmd_append(extra_libraries);
+		}
+	} else {
+		printf("unknown build mode\n");
+		abort();
+	}
 	
-	cmd_append("/nologo /machine:amd64 /subsystem:console /debug:full /defaultlib:libcmt ");
-	cmd_append("/out:build\\");
-	cmd_append(output_path);
-	
-	cmd_append(".exe ");
-	cmd_append("/pdb:build\\");
-	cmd_append(output_path);
-	cmd_append(".pdb ");
-	cmd_append("ole32.lib Advapi32.lib OleAut32.lib DbgHelp.lib");
-#elif defined(__clang__)
-	// It's just significantly more convenient to just use clang as the
-	// linker, plus we can enable the address sanitizers
-	cmd_append("clang -o build/cuik ");
-	cmd_append("build/*.o ./tildebackend.a -lc -lm -lpthread ");
-#   if USE_DA_ASAN
-	cmd_append("-fsanitize=address ");
-	
-	printf("Using address sanitizer :p\n");
-#   endif
-#else
-	cmd_append("ld -o build/cuik ");
-	cmd_append("build/*.o ./tildebackend.a -lc -lm -lpthread ");
-	cmd_append("/usr/lib/x86_64-linux-gnu/crt1.o ");
-	cmd_append("/usr/lib/x86_64-linux-gnu/crti.o ");
-	cmd_append("/usr/lib/x86_64-linux-gnu/crtn.o ");
-	cmd_append("/usr/lib/x86_64-linux-gnu/libc_nonshared.a ");
-	cmd_append("--dynamic-linker /lib64/ld-linux-x86-64.so.2 ");
-#endif
-	
+	printf("CMD: %s\n", command_buffer);
 	cmd_dump(cmd_run());
 }
 
-inline static void builder_compile(size_t count, const char* filepaths[], const char* output_path) {
-#if UNIX_STYLE
-	builder_compile_cc(count, filepaths, output_path);
-#else
-	builder_compile_msvc(count, filepaths, output_path);
-#endif
+inline static void builder_compile(BuildMode mode, size_t count, const char* filepaths[], const char* output_path, const char* extra_libraries) {
+	if (UNIX_STYLE) {
+		builder_compile_cc(mode, count, filepaths, output_path, extra_libraries);
+	} else {
+		builder_compile_msvc(mode, count, filepaths, output_path, extra_libraries);
+	}
 	
+	// delete any intermediates
 	char temp[PATH_MAX];
-	
-	const char* path;
-	FileIter it = file_iter_open("build/");
-	while ((path = file_iter_next(&it))) {
-		if (str_ends_with(path, ".o") ||
-			str_ends_with(path, ".obj")) {
-			snprintf(temp, PATH_MAX, "build/%s", path);
+	ITERATE_FILES(it, "build/") {
+		if (str_ends_with(it.path, ".obj") ||
+			str_ends_with(it.path, ".o")) {
+			snprintf(temp, PATH_MAX, "build/%s", it.path);
 			remove(temp);
 		}
 	}
-	file_iter_close(&it);
 }

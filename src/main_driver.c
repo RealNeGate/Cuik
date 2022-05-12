@@ -1,5 +1,5 @@
 // main_driver.c is the entrypoint to the compiler and should also
-// act as a tutorial to writing a custom driver. Currently it doesn't 
+// act as a tutorial to writing a custom driver. Currently it doesn't
 // support multiple input files but that'll be next.
 #include "driver_utils.h"
 #include <ext/threadpool.h>
@@ -19,7 +19,7 @@ typedef enum {
 
 typedef struct {
 	const char* name;
-	
+
 	TB_Arch arch;
 	TB_System system;
 } TargetOption;
@@ -53,7 +53,7 @@ static atomic_bool is_optimizer_working = false;
 
 static void irgen_task(void* arg) {
 	TaskInfo task = *((TaskInfo*)arg);
-	
+
 	timed_block("irgen %zu-%zu", task.start, task.end) {
 		for (size_t i = task.start; i < task.end; i++) {
 			irgen_top_level_stmt(task.tu, task.tu->top_level_stmts[i]);
@@ -63,23 +63,23 @@ static void irgen_task(void* arg) {
 
 static void optimize_task(void* arg) {
 	TaskInfo task = *((TaskInfo*)arg);
-	
+
 	timed_block("optimize %zu-%zu", task.start, task.end) {
 		bool did_da_works = false;
-		
+
 		for (size_t i = task.start; i < task.end; i++) {
 			TB_Function* func = tb_function_from_id(mod, i);
-			
+
 			if (tb_function_optimize(func)) did_da_works = true;
 		}
-		
+
 		if (did_da_works) is_optimizer_working = true;
 	}
 }
 
 static void codegen_task(void* arg) {
 	TaskInfo task = *((TaskInfo*)arg);
-	
+
 	timed_block("codegen %zu-%zu", task.start, task.end) {
 		for (size_t i = task.start; i < task.end; i++) {
 			TB_Function* func = tb_function_from_id(mod, i);
@@ -91,33 +91,33 @@ static void codegen_task(void* arg) {
 
 static void frontend_task(void* arg) {
 	const char* path = (const char*)arg;
-	
+
 	cuik_compile_file(&compilation_unit, path,
 					  big_array_length(cuik_include_dirs),
 					  &cuik_include_dirs[0], is_frontend_only, thread_pool);
 }
 
-static void dispatch_for_all_top_level_stmts(void (*task)(void*)) {
+static void dispatch_for_all_top_level_stmts(void task(void*)) {
 	// split up the top level statement tasks into
 	// chunks to avoid spawning too many tiny tasks
 	if (thread_pool != NULL) {
 		tls_init();
-		
+
 		FOR_EACH_TU(tu, &compilation_unit) {
 			size_t count = arrlen(tu->top_level_stmts);
             size_t padded = (count + (IRGEN_TASK_MUNCH-1)) & ~(IRGEN_TASK_MUNCH-1);
-            
+
             for (size_t i = 0; i < padded; i += IRGEN_TASK_MUNCH) {
                 size_t limit = i+IRGEN_TASK_MUNCH;
                 if (limit > count) limit = count;
-				
+
 				TaskInfo* t = tls_push(sizeof(TaskInfo));
 				*t = (TaskInfo){ tu, i, limit };
-				
+
 				threadpool_submit(thread_pool, task, t);
 			}
 		}
-		
+
 		timed_block("wait") {
 			threadpool_wait(thread_pool);
 		}
@@ -125,11 +125,11 @@ static void dispatch_for_all_top_level_stmts(void (*task)(void*)) {
 		FOR_EACH_TU(tu, &compilation_unit) {
 			size_t count = arrlen(tu->top_level_stmts);
             size_t padded = (count + (IRGEN_TASK_MUNCH-1)) & ~(IRGEN_TASK_MUNCH-1);
-            
+
             for (size_t i = 0; i < padded; i += IRGEN_TASK_MUNCH) {
                 size_t limit = i+IRGEN_TASK_MUNCH;
                 if (limit > count) limit = count;
-				
+
 				task(&(TaskInfo){ tu, i, limit });
 			}
 		}
@@ -139,22 +139,22 @@ static void dispatch_for_all_top_level_stmts(void (*task)(void*)) {
 static void dispatch_for_all_ir_functions(void (*task)(void*)) {
 	if (thread_pool != NULL) {
 		tls_init();
-		
+
 		// split up the top level statement tasks into
 		// chunks to avoid spawning too many tiny tasks
 		size_t count = function_count;
 		size_t padded = (count + (IRGEN_TASK_MUNCH-1)) & ~(IRGEN_TASK_MUNCH-1);
-		
+
 		for (size_t i = 0; i < padded; i += IRGEN_TASK_MUNCH) {
 			size_t limit = i+IRGEN_TASK_MUNCH;
 			if (limit > count) limit = count;
-			
+
 			TaskInfo* t = tls_push(sizeof(TaskInfo));
 			*t = (TaskInfo){ NULL, i, limit };
-			
+
 			threadpool_submit(thread_pool, task, t);
 		}
-		
+
 		timed_block("wait") {
 			threadpool_wait(thread_pool);
 		}
@@ -163,11 +163,11 @@ static void dispatch_for_all_ir_functions(void (*task)(void*)) {
 		// chunks to avoid spawning too many tiny tasks
 		size_t count = function_count;
 		size_t padded = (count + (IRGEN_TASK_MUNCH-1)) & ~(IRGEN_TASK_MUNCH-1);
-		
+
 		for (size_t i = 0; i < padded; i += IRGEN_TASK_MUNCH) {
 			size_t limit = i+IRGEN_TASK_MUNCH;
 			if (limit > count) limit = count;
-			
+
 			task(&(TaskInfo){ NULL, i, limit });
 		}
 	}
@@ -176,26 +176,26 @@ static void dispatch_for_all_ir_functions(void (*task)(void*)) {
 static void compile_project(const char* obj_output_path, bool is_multithreaded) {
     bool runs_backend = (settings.stage_to_stop_at >= STAGE_IR);
     is_frontend_only = !runs_backend;
-	
+
 	init_report_system();
 	compilation_unit_init(&compilation_unit);
-	
+
 	if (runs_backend) {
         irgen_init();
 	}
-    
+
 	if (settings.num_of_worker_threads <= 1) {
 		thread_pool = NULL;
 	} else {
 		thread_pool = threadpool_create(settings.num_of_worker_threads, 4096);
 	}
-	
+
 	if (thread_pool != NULL) {
 		// dispatch multithreaded
 		for (size_t i = 0, count = big_array_length(cuik_source_files); i < count; i++) {
 			threadpool_submit(thread_pool, frontend_task, (void*)cuik_source_files[i]);
 		}
-		
+
 		timed_block("wait") {
 			threadpool_wait(thread_pool);
 		}
@@ -208,65 +208,66 @@ static void compile_project(const char* obj_output_path, bool is_multithreaded) 
                               !runs_backend, NULL);
 		}
 	}
-    
+
     if (settings.stage_to_stop_at == STAGE_TYPES) {
         FOR_EACH_TU(tu, &compilation_unit) {
             ast_dump(tu, stdout);
         }
         return;
     }
-    
+
 	timed_block("internal link") {
         compilation_unit_internal_link(&compilation_unit);
 	}
-    
-	if (runs_backend) {
+
+    if (runs_backend) {
 		timed_block("ir gen & compile") {
 			dispatch_for_all_top_level_stmts(irgen_task);
-			
+
 			FOR_EACH_TU(tu, &compilation_unit) {
 				translation_unit_deinit(tu);
 			}
-			
+
 			// on optimizations things get fancy and we run passes over all of the IR
 			// until exhaustion with WPO passes in between
 			if (settings.optimize) {
 				do {
 					is_optimizer_working = false;
-					
+
 					dispatch_for_all_ir_functions(optimize_task);
 				} while (is_optimizer_working);
-				
-				dispatch_for_all_ir_functions(codegen_task);
+
+				if (settings.stage_to_stop_at >= STAGE_OBJ) {
+					dispatch_for_all_ir_functions(codegen_task);
+				}
 			}
-			
+
 			irgen_deinit();
 		}
 	}
-	
-	if (thread_pool != NULL) {
-		threadpool_free(thread_pool);
+
+	timed_block("freeing compilation unit") {
+		if (thread_pool != NULL) {
+			threadpool_free(thread_pool);
+		}
+
+		compilation_unit_deinit(&compilation_unit);
+		arena_free(&thread_arena);
 	}
-	
-	compilation_unit_deinit(&compilation_unit);
-	arena_free(&thread_arena);
-	
+
 	// Compile
     if (settings.stage_to_stop_at >= STAGE_OBJ) {
-		if (!tb_module_compile(mod)) abort();
-		
 		timed_block("export") {
-			if (!tb_module_export(mod, obj_output_path, settings.is_debug_info)) {
+			if (!tb_module_export(mod, obj_output_path)) {
                 fprintf(stderr, "error: tb_module_export failed!\n");
                 abort();
             }
-            
+
 			tb_module_destroy(mod);
 		}
 	} else if (settings.stage_to_stop_at >= STAGE_IR) {
-        // or don't... lmao
-		if (!tb_module_compile(mod)) abort();
-        tb_module_destroy(mod);
+        // or don't lmao
+		tb_module_destroy(mod);
     }
 }
 
@@ -277,11 +278,11 @@ static int execute_query_operation(const char* option, size_t arg_start, size_t 
 	if (option) {
 		if (strcmp(option, "find_include") == 0) {
 			char output[MAX_PATH];
-			
+
 			CPP_Context cpp_ctx;
 			cpp_init(&cpp_ctx);
 			cuik_set_cpp_defines(&cpp_ctx);
-			
+
 			for (size_t i = 0, count = big_array_length(cuik_source_files); i < count; i++) {
 				if (cpp_find_include_include(&cpp_ctx, output, cuik_source_files[i])) {
 					printf("%s\n", output);
@@ -289,29 +290,29 @@ static int execute_query_operation(const char* option, size_t arg_start, size_t 
 					printf("NOTFOUND\n");
 				}
 			}
-			
+
 			cpp_finalize(&cpp_ctx);
 			cpp_deinit(&cpp_ctx);
-			
+
 			return 0;
 		} else if (strcmp(option, "print_type") == 0) {
 			if (arg_count < 2) return -1;
-			
+
 			if (big_array_length(cuik_source_files) != 1) {
 				printf("print_type expects after C source file then a typename\n");
 				abort();
 			}
-			
-			settings.hack_type_printer_name = args[arg_count - 1]; 
-			
+
+			settings.hack_type_printer_name = args[arg_count - 1];
+
 			atoms_init();
 			init_report_system();
 			compilation_unit_init(&compilation_unit);
-			
+
 			TranslationUnit* tu = cuik_compile_file(&compilation_unit, cuik_source_files[0],
 													big_array_length(cuik_include_dirs),
 													&cuik_include_dirs[0], true, thread_pool);
-			
+
 			if (tu->hack.type) {
 				ast_dump_type(tu, tu->hack.type, 0, 0);
 			} else {
@@ -320,7 +321,7 @@ static int execute_query_operation(const char* option, size_t arg_start, size_t 
 			return 0;
 		}
 	}
-	
+
 	printf("Unknown cuik query option (Supported options):\n");
 	printf("find_include - Resolve an include file path from name\n");
 	printf("print_type   - Find a type within the translation unit\n");
@@ -336,7 +337,7 @@ static bool dump_tokens() {
 		printf("Standalone preprocessor cannot operate on more than one source file\n");
 		abort();
 	}
-	
+
 	// Preprocess file
 	uint64_t t1 = timer_now();
 	TokenStream s;
@@ -344,17 +345,17 @@ static bool dump_tokens() {
 		CPP_Context cpp_ctx;
 		cpp_init(&cpp_ctx);
 		cuik_set_cpp_defines(&cpp_ctx);
-		
+
 		for (size_t i = 0, cc = big_array_length(cuik_include_dirs); i < cc; i++) {
 			cpp_add_include_directory(&cpp_ctx, cuik_include_dirs[i]);
 		}
-		
+
 		s = cpp_process(&cpp_ctx, cuik_source_files[0]);
-		
+
 		cpp_finalize(&cpp_ctx);
 	}
 	uint64_t t2 = timer_now();
-	
+
 #ifdef _WIN32
 	double elapsed = (t2 - t1) * timer_freq;
 	printf("preprocessor took %.03f seconds\n", elapsed);
@@ -364,7 +365,7 @@ static bool dump_tokens() {
 	double elapsed = (t2 - t1) / 1000000.0;
 	printf("preprocessor took %.03f seconds\n", elapsed);
 #endif
-	
+
 	char output_path[MAX_PATH];
 	sprintf_s(output_path, MAX_PATH, "%s.i", cuik_file_no_ext);
 	FILE* f = fopen(output_path, "w");
@@ -372,23 +373,23 @@ static bool dump_tokens() {
 		printf("Could not open file a.txt\n");
 		return false;
 	}
-	
+
 	const unsigned char* last_file = NULL;
 	int last_line = 0;
 	int current_column = 0;
-	
+
 	for (size_t i = 0, cc = arrlen(s.tokens); i < cc; i++) {
 		Token* t = &s.tokens[i];
 		SourceLoc* loc = &s.line_arena[t->location];
-		
+
 		if (last_file != loc->line->file) {
 			char str[MAX_PATH];
-			
+
 			// TODO(NeGate): Kinda shitty but i just wanna duplicate
 			// the backslashes to avoid them being treated as an escape
 			const char* in = (const char*)loc->line->file;
 			char* out = str;
-			
+
 			while (*in) {
 				if (*in == '\\') {
 					*out++ = '\\';
@@ -399,21 +400,21 @@ static bool dump_tokens() {
 				}
 			}
 			*out++ = '\0';
-			
+
 			fprintf(f, "\n#line %d \"%s\"\t", loc->line->line, str);
 			last_file = loc->line->file;
 			current_column = 0;
 		}
-		
+
 		if (last_line != loc->line->line) {
 			fprintf(f, "\n/* line %3d */\t", loc->line->line);
 			last_line = loc->line->line;
 			current_column = 0;
 		}
-		
+
 		fprintf(f, "%.*s ", (int)(t->end - t->start), t->start);
 	}
-	
+
 	fclose(f);
 	return true;
 }
@@ -428,32 +429,32 @@ static void print_help(const char* executable_path) {
 	O("Commands:");
 	O("  build                - compile files into an executable");
 	O("  run                  - compile & Run");
-    O("  query                - query for compiler or source code info");
+	O("  query                - query for compiler or source code info");
 	O("");
 	O("Options:");
-	O("  -h --help            - print this help screen");
-	O("  -v -V --version      - print version");
+	O("  -h, --help           - print this help screen");
+	O("  -v, -V, --version    - print version");
 	O("");
-    O("  --thin-errors        - displays errors without the line preview");
-    O("  --pedantic           - disables CuikC extensions");
+	O("  --thin-errors        - displays errors without the line preview");
+	O("  --pedantic           - disables CuikC extensions");
 	O("  --stage <stage>      - stops at a specific stage and emits results into a file");
-    O("          preproc      - emits preprocessor output into a .i file");
-    O("          types        - emits AST after type checking into a .ast file");
-    O("          ir           - emits TBIR in text form into a .tbir file");
-    O("          obj          - emits target specific object file");
+	O("          preproc      - emits preprocessor output into a .i file");
+	O("          types        - emits AST after type checking into a .ast file");
+	O("          ir           - emits TBIR in text form into a .tbir file");
+	O("          obj          - emits target specific object file");
 	O("");
-    O("  -g                   - emit debugger information");
-    O("  -O                   - run optimizations");
-    O("  -T                   - report timing information into a .json file usable by chrome://tracing");
-    O("  -I        <path>     - add include directory");
-    O("  -o        <path>     - define output path for binary and intermediates");
-    O("  --threads <count>    - chooses how many threads to spawn");
-    O("  --target  <name>     - choose a target platform to compile to");
-    O("");
+	O("  -g                   - emit debugger information");
+	O("  -O                   - run optimizations");
+	O("  -T                   - report timing information into a .json file usable by chrome://tracing");
+	O("  -I        <path>     - add include directory");
+	O("  -o        <path>     - define output path for binary and intermediates");
+	O("  --threads <count>    - chooses how many threads to spawn");
+	O("  --target  <name>     - choose a target platform to compile to");
+	O("");
 }
 #undef O
 
-// we can do a bit of filter such as '*.c' where it'll take all 
+// we can do a bit of filter such as '*.c' where it'll take all
 // paths in the folder that end with .c
 static void append_input_path(const char* path) {
 	// avoid using the filters if we dont need to :p
@@ -462,21 +463,21 @@ static void append_input_path(const char* path) {
 		needs_filter = true;
 		break;
 	}
-	
+
 	if (needs_filter) {
 #       ifdef _WIN32
 		const char* slash = path;
 		for (const char* p = path; *p; p++) if (*p == '/' || *p == '\\') {
 			slash = p;
 		}
-		
+
 		WIN32_FIND_DATA find_data;
 		HANDLE find_handle = FindFirstFile(path, &find_data);
 		if (find_handle == INVALID_HANDLE_VALUE) {
 			fprintf(stderr, "could not filter path: %s\n", path);
 			abort();
 		}
-		
+
 		do {
 			char* new_path = malloc(MAX_PATH);
 			if (slash == path) {
@@ -486,7 +487,7 @@ static void append_input_path(const char* path) {
 			}
 			big_array_put(cuik_source_files, new_path);
 		} while (FindNextFile(find_handle, &find_data));
-		
+
 		if (!FindClose(find_handle)) {
 			fprintf(stderr, "internal error: failed to close filter\n");
 			abort();
@@ -505,7 +506,7 @@ static void print_version(const char* install_dir) {
 	printf("cuik version %d.%d\n",         CUIK_COMPILER_MAJOR, CUIK_COMPILER_MINOR);
 	printf("install directory: %s\n",      install_dir);
 	printf("cuik include directory: %s\n", cuik_include_directory);
-	
+
 #ifdef _WIN32
 	printf("windows sdk include: %S\n",    s_vswhere.windows_sdk_include);
 	printf("visual studio include: %S\n",  s_vswhere.vs_include_path);
@@ -515,38 +516,38 @@ static void print_version(const char* install_dir) {
 int main(int argc, char* argv[]) {
 	// We hook the crash handler to create crash dumps
 	hook_crash_handler();
-	
+
 	if (argc == 1) {
 		print_help(argv[0]);
 		return 1;
 	}
-	
+
 	cuik_detect_crt_include();
 	settings.stage_to_stop_at = STAGE_FINAL;
-	
+
 #ifdef _WIN32
 	// This is used to detect includes for the preprocessor
 	// and library paths for the linker
 	s_vswhere = MicrosoftCraziness_find_visual_studio_and_windows_sdk();
-    
+
 	SYSTEM_INFO sysinfo;
 	GetSystemInfo(&sysinfo);
-	
+
 	// Just kinda guesses something that seems ok ish for now
 	// eventually we'll wanna use all cores but it's not honestly
 	// helpful currently since code gen is the only parallel stage.
 	settings.num_of_worker_threads = sysinfo.dwNumberOfProcessors - 4;
 	if (settings.num_of_worker_threads <= 0) settings.num_of_worker_threads = 1;
-	
+
 	target_system = TB_SYSTEM_WINDOWS;
 	settings.is_windows_long = true;
 #else
 	settings.num_of_worker_threads = 1;
-	
+
 	target_system = TB_SYSTEM_LINUX;
 	settings.is_windows_long = false;
 #endif
-	
+
 	// Defaults to the host arch as the target
 #if defined(_AMD64_) || defined(__amd64__)
 	target_arch = TB_ARCH_X86_64;
@@ -555,18 +556,18 @@ int main(int argc, char* argv[]) {
 #else
 #error "Unsupported host compiler... for now"
 #endif
-	
+
 	// I seriously dare you to tell me that im leaking these
 	cuik_source_files = big_array_create(const char*, false);
 	cuik_include_dirs = big_array_create(const char*, false);
-    
+
     const char* output_name = NULL;
-	
+
     // parse options
     size_t i = 1;
     for (; i < argc; i++) {
         if (argv[i][0] != '-') break;
-        
+
         // --option
         if (argv[i][1] == '-') {
             const char* option = &argv[i][2];
@@ -581,9 +582,9 @@ int main(int argc, char* argv[]) {
                     fprintf(stderr, "\n");
                     abort();
                 }
-                
+
                 const char* value = argv[i];
-                
+
                 bool matches = false;
                 for (size_t i = 0; i < TARGET_OPTION_COUNT; i++) {
                     if (strcmp(target_options[i].name, value) == 0) {
@@ -593,7 +594,7 @@ int main(int argc, char* argv[]) {
                         break;
                     }
                 }
-                
+
                 if (!matches) {
                     fprintf(stderr, "error: unsupported target: %s\n", value);
                     fprintf(stderr, "Supported targets:\n");
@@ -609,19 +610,19 @@ int main(int argc, char* argv[]) {
                     fprintf(stderr, "error: expected number\n");
                     abort();
                 }
-                
+
                 int num;
                 int matches = sscanf(argv[i], "%d", &num);
                 if (matches != 1) {
                     fprintf(stderr, "error: expected integer for thread count\n");
                     abort();
                 }
-                
+
                 if (num < 1 || num > TB_MAX_THREADS) {
                     fprintf(stderr, "error: expected thread count between 1-%d\n", TB_MAX_THREADS);
                     abort();
                 }
-                
+
                 settings.num_of_worker_threads = num;
             } else if (strcmp(option, "help") == 0) {
                 print_help(argv[0]);
@@ -638,7 +639,7 @@ int main(int argc, char* argv[]) {
                     fprintf(stderr, "  obj\n");
                     abort();
                 }
-                
+
                 const char* stage = argv[i];
                 if (strcmp(stage, "preproc") == 0) settings.stage_to_stop_at = STAGE_PREPROC;
                 else if (strcmp(stage, "types") == 0) settings.stage_to_stop_at = STAGE_TYPES;
@@ -668,7 +669,7 @@ int main(int argc, char* argv[]) {
                         fprintf(stderr, "error: expected filepath\n");
                         abort();
                     }
-                    
+
                     output_name = argv[i];
                     break;
                 }
@@ -680,7 +681,7 @@ int main(int argc, char* argv[]) {
                         fprintf(stderr, "error: expected filepath\n");
                         abort();
                     }
-                    
+
                     big_array_put(cuik_include_dirs, argv[i]);
                     break;
                 }
@@ -688,20 +689,20 @@ int main(int argc, char* argv[]) {
             }
         }
     }
-	
+
     switch (target_arch) {
-        case TB_ARCH_X86_64: 
+        case TB_ARCH_X86_64:
         target_desc = get_x64_target_descriptor();
         break;
-        
+
         default:
         fprintf(stderr, "Cannot compile to your target machine");
         return 1;
     }
-    
+
 	// parse command
 	CompilerMode mode = COMPILER_MODE_NONE;
-	
+
 	const char* cmd = argv[i];
 	if (strcmp(cmd, "build") == 0) mode = COMPILER_MODE_BUILD;
 	else if (strcmp(cmd, "query") == 0) mode = COMPILER_MODE_QUERY;
@@ -711,7 +712,7 @@ int main(int argc, char* argv[]) {
 		return 1;
 	}
     i += 1;
-	
+
 	// Query is like a magic Swiss army knife inside of Cuik
 	// so it acts differently from everyone else
 	if (mode == COMPILER_MODE_QUERY) {
@@ -722,31 +723,31 @@ int main(int argc, char* argv[]) {
 			return execute_query_operation(argv[i], i + 1, argc, argv);
 		}
 	}
-	
+
     // parse source file inputs
     for (; i < argc; i++) {
         append_input_path(argv[i]);
     }
-    
+
     if (big_array_length(cuik_source_files) == 0) {
         fprintf(stderr, "error: expected input files\n");
         abort();
     }
-    
+
     // Get first filename without extension
     {
         const char* filename = output_name ? output_name : cuik_source_files[0];
         const char* ext = strrchr(filename, '.');
         size_t len = ext ? (ext - filename) : strlen(filename);
-        
+
         memcpy(cuik_file_no_ext, filename, len);
         cuik_file_no_ext[len] = '\0';
     }
-    
+
     // Initialize some subsystems that everyone uses
     timer_init();
     init_report_system();
-    
+
 	switch (mode) {
 		case COMPILER_MODE_BUILD:
 		case COMPILER_MODE_RUN: {
@@ -755,42 +756,42 @@ int main(int argc, char* argv[]) {
 				dump_tokens();
 				break;
 			}
-            
+
 			char obj_output_path[MAX_PATH];
 			if (target_system == TB_SYSTEM_WINDOWS) {
 				sprintf_s(obj_output_path, 260, "%s.obj", cuik_file_no_ext);
 			} else if (target_system == TB_SYSTEM_LINUX) {
 				sprintf_s(obj_output_path, 260, "%s.o", cuik_file_no_ext);
 			}
-			
+
 			// Open profiler file stream
 			if (settings.is_time_report) {
 				char report_filename[MAX_PATH];
 				sprintf_s(report_filename, 260, "%s.json", cuik_file_no_ext);
-				
+
 				timer_open(report_filename);
 			}
-			
+
 			// Build project
 			timed_block("total") {
 				compile_project(obj_output_path, true);
-				
-				if (!settings.is_object_only && settings.stage_to_stop_at >= STAGE_FINAL) {
+
+				if (settings.stage_to_stop_at >= STAGE_FINAL) {
 					if (settings.freestanding) {
 						fprintf(stderr, "error: cannot link and be freestanding... yet");
 						return 1;
 					}
-					
+
 					timed_block("linker") {
 						Linker l;
 						if (linker_init(&l)) {
 							// Add system libpaths
 							linker_add_default_libpaths(&l);
 							linker_add_libpath(&l, "W:/Workspace/Cuik/crt/lib/");
-							
+
 							// Add Cuik output
 							linker_add_input_file(&l, obj_output_path);
-							
+
 							// Add input libraries
 #ifdef _WIN32
 							linker_add_input_file(&l, "kernel32.lib");
@@ -803,31 +804,32 @@ int main(int argc, char* argv[]) {
 							linker_add_input_file(&l, "msvcrt.lib");
 							linker_add_input_file(&l, "win32_rt.lib");
 #endif
-							
+
 							linker_invoke_system(&l, cuik_file_no_ext);
 							linker_deinit(&l);
-							
-							if (mode == COMPILER_MODE_RUN) {
-								char exe_path[MAX_PATH];
-								sprintf_s(exe_path, 260, "%s.exe", cuik_file_no_ext);
-								
-								printf("\n\nRunning: %s...\n", exe_path);
-								int exit_code = system(exe_path);
-								printf("Exit code: %d\n", exit_code);
-								
-								return exit_code;
-							}
 						}
 					}
 				}
 			}
-			
+
 			// Close out profiler output (it doesn't include the linking)
 			timer_close();
+
+			if (settings.stage_to_stop_at >= STAGE_FINAL &&
+				mode == COMPILER_MODE_RUN) {
+				char exe_path[MAX_PATH];
+				sprintf_s(exe_path, 260, "%s.exe", cuik_file_no_ext);
+
+				printf("\n\nRunning: %s...\n", exe_path);
+				int exit_code = system(exe_path);
+				printf("Exit code: %d\n", exit_code);
+
+				return exit_code;
+			}
 			break;
 		}
 		default: return 1;
 	}
-	
+
 	return 0;
 }

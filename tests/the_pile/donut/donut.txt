@@ -1,0 +1,494 @@
+Microsoft (R) COFF/PE Dumper Version 14.29.30137.0
+Copyright (C) Microsoft Corporation.  All rights reserved.
+
+
+Dump of file donut.obj
+
+File Type: COFF OBJECT
+
+main:
+  0000000000000000: 55                 push        rbp
+  0000000000000001: 48 89 E5           mov         rbp,rsp
+  0000000000000004: 53                 push        rbx
+  0000000000000005: 56                 push        rsi
+  0000000000000006: 57                 push        rdi
+  0000000000000007: 41 54              push        r12
+  0000000000000009: 48 81 EC 70 23 00  sub         rsp,2370h
+                    00
+  0000000000000010: 0F 29 B5 90 DC FF  movaps      xmmword ptr [rbp-2370h],xmm6
+                    FF
+  0000000000000017: 0F 29 BD A0 DC FF  movaps      xmmword ptr [rbp-2360h],xmm7
+                    FF
+  000000000000001E: 44 0F 29 85 B0 DC  movaps      xmmword ptr [rbp-2350h],xmm8
+                    FF FF
+  0000000000000026: 44 0F 29 8D C0 DC  movaps      xmmword ptr [rbp-2340h],xmm9
+                    FF FF
+  000000000000002E: 44 0F 29 95 D0 DC  movaps      xmmword ptr [rbp-2330h],xmm10
+                    FF FF
+  0000000000000036: 44 0F 29 9D E0 DC  movaps      xmmword ptr [rbp-2320h],xmm11
+                    FF FF
+  000000000000003E: 44 0F 29 A5 F0 DC  movaps      xmmword ptr [rbp-2310h],xmm12
+                    FF FF
+  0000000000000046: 0F 57 C0           xorps       xmm0,xmm0
+  0000000000000049: F3 0F 11 45 FC     movss       dword ptr [rbp-4],xmm0
+  000000000000004E: 0F 57 C9           xorps       xmm1,xmm1
+  0000000000000051: F3 0F 11 4D F8     movss       dword ptr [rbp-8],xmm1
+  0000000000000056: 48 8D 05 10 00 00  lea         rax,[.rdata+10h]
+                    00
+  000000000000005D: 48 89 C1           mov         rcx,rax
+  0000000000000060: E8 00 00 00 00     call        printf
+  0000000000000065: E9 00 00 00 00     jmp         000000000000006A
+  000000000000006A: C7 C1 E0 06 00 00  mov         ecx,6E0h
+  0000000000000070: 63 C1              movsxd      eax,ecx
+  0000000000000072: 48 8D 8D 90 DD FF  lea         rcx,[rbp-2270h]
+                    FF
+  0000000000000079: C7 C2 20 00 00 00  mov         edx,20h
+  000000000000007F: 49 89 C0           mov         r8,rax
+  0000000000000082: E8 00 00 00 00     call        memset
+  0000000000000087: C7 C1 80 1B 00 00  mov         ecx,1B80h
+  000000000000008D: 63 C1              movsxd      eax,ecx
+  000000000000008F: 48 8D 8D 70 E4 FF  lea         rcx,[rbp-1B90h]
+                    FF
+  0000000000000096: C7 C2 00 00 00 00  mov         edx,0
+  000000000000009C: 49 89 C0           mov         r8,rax
+  000000000000009F: E8 00 00 00 00     call        memset
+  00000000000000A4: 0F 57 D2           xorps       xmm2,xmm2
+  00000000000000A7: F3 0F 11 55 F0     movss       dword ptr [rbp-10h],xmm2
+  00000000000000AC: F2 0F 10 1D 15 00  movsd       xmm3,mmword ptr [.rdata+15h]
+                    00 00
+  00000000000000B4: F3 0F 10 65 F0     movss       xmm4,dword ptr [rbp-10h]
+  00000000000000B9: F3 0F 5A EC        cvtss2sd    xmm5,xmm4
+  00000000000000BD: F2 0F 10 C5        movsd       xmm0,xmm5
+  00000000000000C1: 66 0F 2E C3        ucomisd     xmm0,xmm3
+  00000000000000C5: 0F 83 03 06 00 00  jae         00000000000006CE
+  00000000000000CB: 0F 57 DB           xorps       xmm3,xmm3
+  00000000000000CE: F3 0F 11 5D F4     movss       dword ptr [rbp-0Ch],xmm3
+  00000000000000D3: F2 0F 10 25 1D 00  movsd       xmm4,mmword ptr [.rdata+1Dh]
+                    00 00
+  00000000000000DB: F3 0F 10 6D F4     movss       xmm5,dword ptr [rbp-0Ch]
+  00000000000000E0: F3 0F 5A F5        cvtss2sd    xmm6,xmm5
+  00000000000000E4: F2 0F 10 C6        movsd       xmm0,xmm6
+  00000000000000E8: 66 0F 2E C4        ucomisd     xmm0,xmm4
+  00000000000000EC: 0F 83 B9 05 00 00  jae         00000000000006AB
+  00000000000000F2: F3 0F 10 65 F4     movss       xmm4,dword ptr [rbp-0Ch]
+  00000000000000F7: F3 0F 5A EC        cvtss2sd    xmm5,xmm4
+  00000000000000FB: F2 0F 10 CD        movsd       xmm1,xmm5
+  00000000000000FF: E8 00 00 00 00     call        sin
+  0000000000000104: F2 0F 5A E0        cvtsd2ss    xmm4,xmm0
+  0000000000000108: F3 0F 11 A5 8C DD  movss       dword ptr [rbp-2274h],xmm4
+                    FF FF
+  0000000000000110: F3 0F 10 45 F0     movss       xmm0,dword ptr [rbp-10h]
+  0000000000000115: F3 0F 5A E8        cvtss2sd    xmm5,xmm0
+  0000000000000119: F2 0F 10 CD        movsd       xmm1,xmm5
+  000000000000011D: E8 00 00 00 00     call        cos
+  0000000000000122: F2 0F 5A E8        cvtsd2ss    xmm5,xmm0
+  0000000000000126: F3 0F 11 AD 88 DD  movss       dword ptr [rbp-2278h],xmm5
+                    FF FF
+  000000000000012E: F3 0F 10 45 FC     movss       xmm0,dword ptr [rbp-4]
+  0000000000000133: F3 0F 5A F0        cvtss2sd    xmm6,xmm0
+  0000000000000137: F2 0F 10 CE        movsd       xmm1,xmm6
+  000000000000013B: E8 00 00 00 00     call        sin
+  0000000000000140: F2 0F 5A E8        cvtsd2ss    xmm5,xmm0
+  0000000000000144: F3 0F 11 AD 84 DD  movss       dword ptr [rbp-227Ch],xmm5
+                    FF FF
+  000000000000014C: F3 0F 10 45 F0     movss       xmm0,dword ptr [rbp-10h]
+  0000000000000151: F3 0F 5A F0        cvtss2sd    xmm6,xmm0
+  0000000000000155: F2 0F 10 CE        movsd       xmm1,xmm6
+  0000000000000159: E8 00 00 00 00     call        sin
+  000000000000015E: F2 0F 5A E8        cvtsd2ss    xmm5,xmm0
+  0000000000000162: F3 0F 11 AD 80 DD  movss       dword ptr [rbp-2280h],xmm5
+                    FF FF
+  000000000000016A: F3 0F 10 45 FC     movss       xmm0,dword ptr [rbp-4]
+  000000000000016F: F3 0F 5A F0        cvtss2sd    xmm6,xmm0
+  0000000000000173: F2 0F 10 CE        movsd       xmm1,xmm6
+  0000000000000177: E8 00 00 00 00     call        cos
+  000000000000017C: F2 0F 5A E8        cvtsd2ss    xmm5,xmm0
+  0000000000000180: F3 0F 11 AD 7C DD  movss       dword ptr [rbp-2284h],xmm5
+                    FF FF
+  0000000000000188: F3 0F 10 85 88 DD  movss       xmm0,dword ptr [rbp-2278h]
+                    FF FF
+  0000000000000190: F3 0F 10 35 25 00  movss       xmm6,dword ptr [.rdata+25h]
+                    00 00
+  0000000000000198: F3 0F 10 F8        movss       xmm7,xmm0
+  000000000000019C: F3 0F 58 FE        addss       xmm7,xmm6
+  00000000000001A0: F3 0F 11 BD 78 DD  movss       dword ptr [rbp-2288h],xmm7
+                    FF FF
+  00000000000001A8: F3 0F 10 05 29 00  movss       xmm0,dword ptr [.rdata+29h]
+                    00 00
+  00000000000001B0: F3 0F 10 B5 8C DD  movss       xmm6,dword ptr [rbp-2274h]
+                    FF FF
+  00000000000001B8: F3 44 0F 10 85 78  movss       xmm8,dword ptr [rbp-2288h]
+                    DD FF FF
+  00000000000001C1: F3 44 0F 10 CE     movss       xmm9,xmm6
+  00000000000001C6: F3 45 0F 59 C8     mulss       xmm9,xmm8
+  00000000000001CB: F3 0F 10 B5 84 DD  movss       xmm6,dword ptr [rbp-227Ch]
+                    FF FF
+  00000000000001D3: F3 45 0F 10 C1     movss       xmm8,xmm9
+  00000000000001D8: F3 44 0F 59 C6     mulss       xmm8,xmm6
+  00000000000001DD: F3 0F 10 B5 80 DD  movss       xmm6,dword ptr [rbp-2280h]
+                    FF FF
+  00000000000001E5: F3 44 0F 10 8D 7C  movss       xmm9,dword ptr [rbp-2284h]
+                    DD FF FF
+  00000000000001EE: F3 44 0F 10 D6     movss       xmm10,xmm6
+  00000000000001F3: F3 45 0F 59 D1     mulss       xmm10,xmm9
+  00000000000001F8: F3 41 0F 10 F0     movss       xmm6,xmm8
+  00000000000001FD: F3 41 0F 58 F2     addss       xmm6,xmm10
+  0000000000000202: F3 44 0F 10 05 2D  movss       xmm8,dword ptr [.rdata+2Dh]
+                    00 00 00
+  000000000000020B: F3 44 0F 10 CE     movss       xmm9,xmm6
+  0000000000000210: F3 45 0F 58 C8     addss       xmm9,xmm8
+  0000000000000215: F3 0F 10 F0        movss       xmm6,xmm0
+  0000000000000219: F3 41 0F 5E F1     divss       xmm6,xmm9
+  000000000000021E: F3 0F 11 B5 74 DD  movss       dword ptr [rbp-228Ch],xmm6
+                    FF FF
+  0000000000000226: F3 0F 10 45 F4     movss       xmm0,dword ptr [rbp-0Ch]
+  000000000000022B: F3 44 0F 5A C0     cvtss2sd    xmm8,xmm0
+  0000000000000230: F2 41 0F 10 C8     movsd       xmm1,xmm8
+  0000000000000235: E8 00 00 00 00     call        cos
+  000000000000023A: F2 0F 5A E8        cvtsd2ss    xmm5,xmm0
+  000000000000023E: F3 0F 11 AD 70 DD  movss       dword ptr [rbp-2290h],xmm5
+                    FF FF
+  0000000000000246: F3 0F 10 45 F8     movss       xmm0,dword ptr [rbp-8]
+  000000000000024B: F3 0F 5A F0        cvtss2sd    xmm6,xmm0
+  000000000000024F: F2 0F 10 CE        movsd       xmm1,xmm6
+  0000000000000253: E8 00 00 00 00     call        cos
+  0000000000000258: F2 0F 5A E8        cvtsd2ss    xmm5,xmm0
+  000000000000025C: F3 0F 11 AD 6C DD  movss       dword ptr [rbp-2294h],xmm5
+                    FF FF
+  0000000000000264: F3 0F 10 45 F8     movss       xmm0,dword ptr [rbp-8]
+  0000000000000269: F3 0F 5A F0        cvtss2sd    xmm6,xmm0
+  000000000000026D: F2 0F 10 CE        movsd       xmm1,xmm6
+  0000000000000271: E8 00 00 00 00     call        sin
+  0000000000000276: F2 0F 5A E8        cvtsd2ss    xmm5,xmm0
+  000000000000027A: F3 0F 11 AD 68 DD  movss       dword ptr [rbp-2298h],xmm5
+                    FF FF
+  0000000000000282: F3 0F 10 85 8C DD  movss       xmm0,dword ptr [rbp-2274h]
+                    FF FF
+  000000000000028A: F3 0F 10 B5 78 DD  movss       xmm6,dword ptr [rbp-2288h]
+                    FF FF
+  0000000000000292: F3 0F 10 F8        movss       xmm7,xmm0
+  0000000000000296: F3 0F 59 FE        mulss       xmm7,xmm6
+  000000000000029A: F3 0F 10 85 7C DD  movss       xmm0,dword ptr [rbp-2284h]
+                    FF FF
+  00000000000002A2: F3 0F 10 F7        movss       xmm6,xmm7
+  00000000000002A6: F3 0F 59 F0        mulss       xmm6,xmm0
+  00000000000002AA: F3 0F 10 85 80 DD  movss       xmm0,dword ptr [rbp-2280h]
+                    FF FF
+  00000000000002B2: F3 0F 10 BD 84 DD  movss       xmm7,dword ptr [rbp-227Ch]
+                    FF FF
+  00000000000002BA: F3 44 0F 10 C0     movss       xmm8,xmm0
+  00000000000002BF: F3 44 0F 59 C7     mulss       xmm8,xmm7
+  00000000000002C4: F3 0F 10 C6        movss       xmm0,xmm6
+  00000000000002C8: F3 41 0F 5C C0     subss       xmm0,xmm8
+  00000000000002CD: F3 0F 11 85 64 DD  movss       dword ptr [rbp-229Ch],xmm0
+                    FF FF
+  00000000000002D5: F3 0F 10 35 31 00  movss       xmm6,dword ptr [.rdata+31h]
+                    00 00
+  00000000000002DD: F3 0F 10 3D 35 00  movss       xmm7,dword ptr [.rdata+35h]
+                    00 00
+  00000000000002E5: F3 44 0F 10 85 74  movss       xmm8,dword ptr [rbp-228Ch]
+                    DD FF FF
+  00000000000002EE: F3 44 0F 10 CF     movss       xmm9,xmm7
+  00000000000002F3: F3 45 0F 59 C8     mulss       xmm9,xmm8
+  00000000000002F8: F3 0F 10 BD 70 DD  movss       xmm7,dword ptr [rbp-2290h]
+                    FF FF
+  0000000000000300: F3 44 0F 10 85 78  movss       xmm8,dword ptr [rbp-2288h]
+                    DD FF FF
+  0000000000000309: F3 44 0F 10 D7     movss       xmm10,xmm7
+  000000000000030E: F3 45 0F 59 D0     mulss       xmm10,xmm8
+  0000000000000313: F3 0F 10 BD 6C DD  movss       xmm7,dword ptr [rbp-2294h]
+                    FF FF
+  000000000000031B: F3 45 0F 10 C2     movss       xmm8,xmm10
+  0000000000000320: F3 44 0F 59 C7     mulss       xmm8,xmm7
+  0000000000000325: F3 0F 10 BD 64 DD  movss       xmm7,dword ptr [rbp-229Ch]
+                    FF FF
+  000000000000032D: F3 44 0F 10 95 68  movss       xmm10,dword ptr [rbp-2298h]
+                    DD FF FF
+  0000000000000336: F3 44 0F 10 DF     movss       xmm11,xmm7
+  000000000000033B: F3 45 0F 59 DA     mulss       xmm11,xmm10
+  0000000000000340: F3 41 0F 10 F8     movss       xmm7,xmm8
+  0000000000000345: F3 41 0F 5C FB     subss       xmm7,xmm11
+  000000000000034A: F3 45 0F 10 C1     movss       xmm8,xmm9
+  000000000000034F: F3 44 0F 59 C7     mulss       xmm8,xmm7
+  0000000000000354: F3 0F 10 FE        movss       xmm7,xmm6
+  0000000000000358: F3 41 0F 58 F8     addss       xmm7,xmm8
+  000000000000035D: F3 0F 10 F7        movss       xmm6,xmm7
+  0000000000000361: F3 0F 2D C6        cvtss2si    eax,xmm6
+  0000000000000365: 89 85 60 DD FF FF  mov         dword ptr [rbp-22A0h],eax
+  000000000000036B: F3 0F 10 3D 39 00  movss       xmm7,dword ptr [.rdata+39h]
+                    00 00
+  0000000000000373: F3 44 0F 10 05 3D  movss       xmm8,dword ptr [.rdata+3Dh]
+                    00 00 00
+  000000000000037C: F3 44 0F 10 8D 74  movss       xmm9,dword ptr [rbp-228Ch]
+                    DD FF FF
+  0000000000000385: F3 45 0F 10 D0     movss       xmm10,xmm8
+  000000000000038A: F3 45 0F 59 D1     mulss       xmm10,xmm9
+  000000000000038F: F3 44 0F 10 85 70  movss       xmm8,dword ptr [rbp-2290h]
+                    DD FF FF
+  0000000000000398: F3 44 0F 10 8D 78  movss       xmm9,dword ptr [rbp-2288h]
+                    DD FF FF
+  00000000000003A1: F3 45 0F 10 D8     movss       xmm11,xmm8
+  00000000000003A6: F3 45 0F 59 D9     mulss       xmm11,xmm9
+  00000000000003AB: F3 44 0F 10 85 68  movss       xmm8,dword ptr [rbp-2298h]
+                    DD FF FF
+  00000000000003B4: F3 45 0F 10 CB     movss       xmm9,xmm11
+  00000000000003B9: F3 45 0F 59 C8     mulss       xmm9,xmm8
+  00000000000003BE: F3 44 0F 10 85 64  movss       xmm8,dword ptr [rbp-229Ch]
+                    DD FF FF
+  00000000000003C7: F3 44 0F 10 9D 6C  movss       xmm11,dword ptr [rbp-2294h]
+                    DD FF FF
+  00000000000003D0: F3 45 0F 10 E0     movss       xmm12,xmm8
+  00000000000003D5: F3 45 0F 59 E3     mulss       xmm12,xmm11
+  00000000000003DA: F3 45 0F 10 C1     movss       xmm8,xmm9
+  00000000000003DF: F3 45 0F 58 C4     addss       xmm8,xmm12
+  00000000000003E4: F3 45 0F 10 CA     movss       xmm9,xmm10
+  00000000000003E9: F3 45 0F 59 C8     mulss       xmm9,xmm8
+  00000000000003EE: F3 44 0F 10 C7     movss       xmm8,xmm7
+  00000000000003F3: F3 45 0F 58 C1     addss       xmm8,xmm9
+  00000000000003F8: F3 41 0F 10 F8     movss       xmm7,xmm8
+  00000000000003FD: F3 0F 2D CF        cvtss2si    ecx,xmm7
+  0000000000000401: 89 8D 5C DD FF FF  mov         dword ptr [rbp-22A4h],ecx
+  0000000000000407: 8B 95 60 DD FF FF  mov         edx,dword ptr [rbp-22A0h]
+  000000000000040D: 44 8B 85 5C DD FF  mov         r8d,dword ptr [rbp-22A4h]
+                    FF
+  0000000000000414: 41 C7 C1 50 00 00  mov         r9d,50h
+                    00
+  000000000000041B: 45 0F AF C8        imul        r9d,r8d
+  000000000000041F: 41 89 D0           mov         r8d,edx
+  0000000000000422: 45 01 C8           add         r8d,r9d
+  0000000000000425: 44 89 85 58 DD FF  mov         dword ptr [rbp-22A8h],r8d
+                    FF
+  000000000000042C: F3 44 0F 10 05 41  movss       xmm8,dword ptr [.rdata+41h]
+                    00 00 00
+  0000000000000435: F3 44 0F 10 8D 80  movss       xmm9,dword ptr [rbp-2280h]
+                    DD FF FF
+  000000000000043E: F3 44 0F 10 95 84  movss       xmm10,dword ptr [rbp-227Ch]
+                    DD FF FF
+  0000000000000447: F3 45 0F 10 D9     movss       xmm11,xmm9
+  000000000000044C: F3 45 0F 59 DA     mulss       xmm11,xmm10
+  0000000000000451: F3 44 0F 10 8D 8C  movss       xmm9,dword ptr [rbp-2274h]
+                    DD FF FF
+  000000000000045A: F3 44 0F 10 95 88  movss       xmm10,dword ptr [rbp-2278h]
+                    DD FF FF
+  0000000000000463: F3 45 0F 10 E1     movss       xmm12,xmm9
+  0000000000000468: F3 45 0F 59 E2     mulss       xmm12,xmm10
+  000000000000046D: F3 44 0F 10 8D 7C  movss       xmm9,dword ptr [rbp-2284h]
+                    DD FF FF
+  0000000000000476: F3 45 0F 10 D4     movss       xmm10,xmm12
+  000000000000047B: F3 45 0F 59 D1     mulss       xmm10,xmm9
+  0000000000000480: F3 45 0F 10 CB     movss       xmm9,xmm11
+  0000000000000485: F3 45 0F 5C CA     subss       xmm9,xmm10
+  000000000000048A: F3 44 0F 10 95 6C  movss       xmm10,dword ptr [rbp-2294h]
+                    DD FF FF
+  0000000000000493: F3 45 0F 10 D9     movss       xmm11,xmm9
+  0000000000000498: F3 45 0F 59 DA     mulss       xmm11,xmm10
+  000000000000049D: F3 44 0F 10 8D 8C  movss       xmm9,dword ptr [rbp-2274h]
+                    DD FF FF
+  00000000000004A6: F3 44 0F 10 95 88  movss       xmm10,dword ptr [rbp-2278h]
+                    DD FF FF
+  00000000000004AF: F3 45 0F 10 E1     movss       xmm12,xmm9
+  00000000000004B4: F3 45 0F 59 E2     mulss       xmm12,xmm10
+  00000000000004B9: F3 44 0F 10 8D 84  movss       xmm9,dword ptr [rbp-227Ch]
+                    DD FF FF
+  00000000000004C2: F3 45 0F 10 D4     movss       xmm10,xmm12
+  00000000000004C7: F3 45 0F 59 D1     mulss       xmm10,xmm9
+  00000000000004CC: F3 45 0F 10 CB     movss       xmm9,xmm11
+  00000000000004D1: F3 45 0F 5C CA     subss       xmm9,xmm10
+  00000000000004D6: F3 44 0F 10 95 80  movss       xmm10,dword ptr [rbp-2280h]
+                    DD FF FF
+  00000000000004DF: F3 44 0F 10 9D 7C  movss       xmm11,dword ptr [rbp-2284h]
+                    DD FF FF
+  00000000000004E8: F3 45 0F 10 E2     movss       xmm12,xmm10
+  00000000000004ED: F3 45 0F 59 E3     mulss       xmm12,xmm11
+  00000000000004F2: F3 45 0F 10 D1     movss       xmm10,xmm9
+  00000000000004F7: F3 45 0F 5C D4     subss       xmm10,xmm12
+  00000000000004FC: F3 44 0F 10 8D 70  movss       xmm9,dword ptr [rbp-2290h]
+                    DD FF FF
+  0000000000000505: F3 44 0F 10 9D 88  movss       xmm11,dword ptr [rbp-2278h]
+                    DD FF FF
+  000000000000050E: F3 45 0F 10 E1     movss       xmm12,xmm9
+  0000000000000513: F3 45 0F 59 E3     mulss       xmm12,xmm11
+  0000000000000518: F3 44 0F 10 8D 68  movss       xmm9,dword ptr [rbp-2298h]
+                    DD FF FF
+  0000000000000521: F3 45 0F 10 DC     movss       xmm11,xmm12
+  0000000000000526: F3 45 0F 59 D9     mulss       xmm11,xmm9
+  000000000000052B: F3 45 0F 10 CA     movss       xmm9,xmm10
+  0000000000000530: F3 45 0F 5C CB     subss       xmm9,xmm11
+  0000000000000535: F3 45 0F 10 D0     movss       xmm10,xmm8
+  000000000000053A: F3 45 0F 59 D1     mulss       xmm10,xmm9
+  000000000000053F: F3 45 0F 10 C2     movss       xmm8,xmm10
+  0000000000000544: F3 41 0F 2D D0     cvtss2si    edx,xmm8
+  0000000000000549: 89 95 54 DD FF FF  mov         dword ptr [rbp-22ACh],edx
+  000000000000054F: 44 8B 8D 5C DD FF  mov         r9d,dword ptr [rbp-22A4h]
+                    FF
+  0000000000000556: 45 89 CA           mov         r10d,r9d
+  0000000000000559: 41 83 FA 16        cmp         r10d,16h
+  000000000000055D: 0F 8D 8C 00 00 00  jge         00000000000005EF
+  0000000000000563: 44 8B 8D 5C DD FF  mov         r9d,dword ptr [rbp-22A4h]
+                    FF
+  000000000000056A: 45 89 CA           mov         r10d,r9d
+  000000000000056D: 41 83 FA 00        cmp         r10d,0
+  0000000000000571: 0F 8E 78 00 00 00  jle         00000000000005EF
+  0000000000000577: E9 00 00 00 00     jmp         000000000000057C
+  000000000000057C: 44 8B 8D 60 DD FF  mov         r9d,dword ptr [rbp-22A0h]
+                    FF
+  0000000000000583: 45 89 CA           mov         r10d,r9d
+  0000000000000586: 41 83 FA 00        cmp         r10d,0
+  000000000000058A: 0F 8E 5F 00 00 00  jle         00000000000005EF
+  0000000000000590: E9 00 00 00 00     jmp         0000000000000595
+  0000000000000595: 44 8B 8D 60 DD FF  mov         r9d,dword ptr [rbp-22A0h]
+                    FF
+  000000000000059C: 45 89 CA           mov         r10d,r9d
+  000000000000059F: 41 83 FA 50        cmp         r10d,50h
+  00000000000005A3: 0F 8D 46 00 00 00  jge         00000000000005EF
+  00000000000005A9: E9 00 00 00 00     jmp         00000000000005AE
+  00000000000005AE: F3 44 0F 10 8D 74  movss       xmm9,dword ptr [rbp-228Ch]
+                    DD FF FF
+  00000000000005B7: 44 8B 8D 58 DD FF  mov         r9d,dword ptr [rbp-22A8h]
+                    FF
+  00000000000005BE: 45 63 D1           movsxd      r10d,r9d
+  00000000000005C1: 4D 89 D1           mov         r9,r10
+  00000000000005C4: 4C 8D 9D 70 E4 FF  lea         r11,[rbp-1B90h]
+                    FF
+  00000000000005CB: 4D 89 DA           mov         r10,r11
+  00000000000005CE: F3 47 0F 10 14 8A  movss       xmm10,dword ptr [r10+r9*4]
+  00000000000005D4: F3 45 0F 10 D2     movss       xmm10,xmm10
+  00000000000005D9: 45 0F 2E D1        ucomiss     xmm10,xmm9
+  00000000000005DD: 0F 83 0C 00 00 00  jae         00000000000005EF
+  00000000000005E3: C6 85 53 DD FF FF  mov         byte ptr [rbp-22ADh],1
+                    01
+  00000000000005EA: E9 07 00 00 00     jmp         00000000000005F6
+  00000000000005EF: C6 85 53 DD FF FF  mov         byte ptr [rbp-22ADh],0
+                    00
+  00000000000005F6: 80 BD 53 DD FF FF  cmp         byte ptr [rbp-22ADh],0
+                    00
+  00000000000005FD: 0F 84 84 00 00 00  je          0000000000000687
+  0000000000000603: 44 8B 95 58 DD FF  mov         r10d,dword ptr [rbp-22A8h]
+                    FF
+  000000000000060A: 45 63 DA           movsxd      r11d,r10d
+  000000000000060D: 4D 89 DA           mov         r10,r11
+  0000000000000610: 48 8D BD 70 E4 FF  lea         rdi,[rbp-1B90h]
+                    FF
+  0000000000000617: 49 89 FB           mov         r11,rdi
+  000000000000061A: 4F 8D 1C 93        lea         r11,[r11+r10*4]
+  000000000000061E: F3 44 0F 10 8D 74  movss       xmm9,dword ptr [rbp-228Ch]
+                    DD FF FF
+  0000000000000627: F3 45 0F 11 0B     movss       dword ptr [r11],xmm9
+  000000000000062C: 8B BD 58 DD FF FF  mov         edi,dword ptr [rbp-22A8h]
+  0000000000000632: 63 F7              movsxd      esi,edi
+  0000000000000634: 48 89 F7           mov         rdi,rsi
+  0000000000000637: 48 8D B5 90 DD FF  lea         rsi,[rbp-2270h]
+                    FF
+  000000000000063E: 48 01 F7           add         rdi,rsi
+  0000000000000641: 48 8D 35 50 00 00  lea         rsi,[.rdata+50h]
+                    00
+  0000000000000648: 8B 9D 54 DD FF FF  mov         ebx,dword ptr [rbp-22ACh]
+  000000000000064E: 41 89 DC           mov         r12d,ebx
+  0000000000000651: 41 83 FC 00        cmp         r12d,0
+  0000000000000655: 0F 8E 11 00 00 00  jle         000000000000066C
+  000000000000065B: 8B 9D 54 DD FF FF  mov         ebx,dword ptr [rbp-22ACh]
+  0000000000000661: 89 9D 4C DD FF FF  mov         dword ptr [rbp-22B4h],ebx
+  0000000000000667: E9 0A 00 00 00     jmp         0000000000000676
+  000000000000066C: C7 85 4C DD FF FF  mov         dword ptr [rbp-22B4h],0
+                    00 00 00 00
+  0000000000000676: 44 63 A5 4C DD FF  movsxd      r12d,dword ptr [rbp-22B4h]
+                    FF
+  000000000000067D: 4C 89 E0           mov         rax,r12
+  0000000000000680: 48 01 F0           add         rax,rsi
+  0000000000000683: 8A 30              mov         dh,byte ptr [rax]
+  0000000000000685: 88 37              mov         byte ptr [rdi],dh
+  0000000000000687: F3 44 0F 10 55 F4  movss       xmm10,dword ptr [rbp-0Ch]
+  000000000000068D: F3 44 0F 10 1D 62  movss       xmm11,dword ptr [.rdata+62h]
+                    00 00 00
+  0000000000000696: F3 45 0F 10 E2     movss       xmm12,xmm10
+  000000000000069B: F3 45 0F 58 E3     addss       xmm12,xmm11
+  00000000000006A0: F3 44 0F 11 65 F4  movss       dword ptr [rbp-0Ch],xmm12
+  00000000000006A6: E9 28 FA FF FF     jmp         00000000000000D3
+  00000000000006AB: F3 44 0F 10 55 F0  movss       xmm10,dword ptr [rbp-10h]
+  00000000000006B1: F3 44 0F 10 1D 66  movss       xmm11,dword ptr [.rdata+66h]
+                    00 00 00
+  00000000000006BA: F3 41 0F 10 C2     movss       xmm0,xmm10
+  00000000000006BF: F3 41 0F 58 C3     addss       xmm0,xmm11
+  00000000000006C4: F3 0F 11 45 F0     movss       dword ptr [rbp-10h],xmm0
+  00000000000006C9: E9 DE F9 FF FF     jmp         00000000000000AC
+  00000000000006CE: 48 8D 05 6A 00 00  lea         rax,[.rdata+6Ah]
+                    00
+  00000000000006D5: 48 89 C1           mov         rcx,rax
+  00000000000006D8: 4C 89 8D 40 DD FF  mov         qword ptr [rbp-22C0h],r9
+                    FF
+  00000000000006DF: E8 00 00 00 00     call        printf
+  00000000000006E4: C7 05 FC FF FF FF  mov         dword ptr [k+0FFFFFFFCh],0
+                    00 00 00 00
+  00000000000006EE: 8B 05 00 00 00 00  mov         eax,dword ptr [k]
+  00000000000006F4: 89 C1              mov         ecx,eax
+  00000000000006F6: 81 F9 E1 06 00 00  cmp         ecx,6E1h
+  00000000000006FC: 0F 8D 77 00 00 00  jge         0000000000000779
+  0000000000000702: 8B 05 00 00 00 00  mov         eax,dword ptr [k]
+  0000000000000708: 89 85 3C DD FF FF  mov         dword ptr [rbp-22C4h],eax
+  000000000000070E: 8B 85 3C DD FF FF  mov         eax,dword ptr [rbp-22C4h]
+  0000000000000714: 99                 cdq
+  0000000000000715: C7 C1 50 00 00 00  mov         ecx,50h
+  000000000000071B: 48 F7 F9           idiv        rax,rcx
+  000000000000071E: 89 D0              mov         eax,edx
+  0000000000000720: 83 F8 00           cmp         eax,0
+  0000000000000723: 0F 84 25 00 00 00  je          000000000000074E
+  0000000000000729: 8B 05 00 00 00 00  mov         eax,dword ptr [k]
+  000000000000072F: 63 C8              movsxd      ecx,eax
+  0000000000000731: 48 89 C8           mov         rax,rcx
+  0000000000000734: 48 8D 8D 90 DD FF  lea         rcx,[rbp-2270h]
+                    FF
+  000000000000073B: 48 01 C8           add         rax,rcx
+  000000000000073E: 8A 08              mov         cl,byte ptr [rax]
+  0000000000000740: 0F BE C1           movsx       eax,cl
+  0000000000000743: 89 85 38 DD FF FF  mov         dword ptr [rbp-22C8h],eax
+  0000000000000749: E9 0A 00 00 00     jmp         0000000000000758
+  000000000000074E: C7 85 38 DD FF FF  mov         dword ptr [rbp-22C8h],0Ah
+                    0A 00 00 00
+  0000000000000758: 8B 8D 38 DD FF FF  mov         ecx,dword ptr [rbp-22C8h]
+  000000000000075E: E8 00 00 00 00     call        putchar
+  0000000000000763: 8B 0D 00 00 00 00  mov         ecx,dword ptr [k]
+  0000000000000769: 89 CA              mov         edx,ecx
+  000000000000076B: 83 C2 01           add         edx,1
+  000000000000076E: 89 15 00 00 00 00  mov         dword ptr [k],edx
+  0000000000000774: E9 75 FF FF FF     jmp         00000000000006EE
+  0000000000000779: F3 0F 10 6D FC     movss       xmm5,dword ptr [rbp-4]
+  000000000000077E: F3 0F 10 35 6E 00  movss       xmm6,dword ptr [.rdata+6Eh]
+                    00 00
+  0000000000000786: F3 0F 10 FD        movss       xmm7,xmm5
+  000000000000078A: F3 0F 58 FE        addss       xmm7,xmm6
+  000000000000078E: F3 0F 11 7D FC     movss       dword ptr [rbp-4],xmm7
+  0000000000000793: F3 0F 10 6D F8     movss       xmm5,dword ptr [rbp-8]
+  0000000000000798: F3 0F 10 35 72 00  movss       xmm6,dword ptr [.rdata+72h]
+                    00 00
+  00000000000007A0: F3 44 0F 10 C5     movss       xmm8,xmm5
+  00000000000007A5: F3 44 0F 58 C6     addss       xmm8,xmm6
+  00000000000007AA: F3 44 0F 11 45 F8  movss       dword ptr [rbp-8],xmm8
+  00000000000007B0: E9 B0 F8 FF FF     jmp         0000000000000065
+  00000000000007B5: 0F 28 B5 90 DC FF  movaps      xmm6,xmmword ptr [rbp-2370h]
+                    FF
+  00000000000007BC: 0F 28 BD A0 DC FF  movaps      xmm7,xmmword ptr [rbp-2360h]
+                    FF
+  00000000000007C3: 44 0F 28 85 B0 DC  movaps      xmm8,xmmword ptr [rbp-2350h]
+                    FF FF
+  00000000000007CB: 44 0F 28 8D C0 DC  movaps      xmm9,xmmword ptr [rbp-2340h]
+                    FF FF
+  00000000000007D3: 44 0F 28 95 D0 DC  movaps      xmm10,xmmword ptr [rbp-2330h]
+                    FF FF
+  00000000000007DB: 44 0F 28 9D E0 DC  movaps      xmm11,xmmword ptr [rbp-2320h]
+                    FF FF
+  00000000000007E3: 44 0F 28 A5 F0 DC  movaps      xmm12,xmmword ptr [rbp-2310h]
+                    FF FF
+  00000000000007EB: 48 81 C4 70 23 00  add         rsp,2370h
+                    00
+  00000000000007F2: 41 5C              pop         r12
+  00000000000007F4: 5F                 pop         rdi
+  00000000000007F5: 5E                 pop         rsi
+  00000000000007F6: 5B                 pop         rbx
+  00000000000007F7: 5D                 pop         rbp
+  00000000000007F8: C3                 ret
+
+  Summary
+
+           8 .data
+          76 .rdata
+         7F9 .text

@@ -192,7 +192,7 @@ void try_compile(const char* path) {
 	char cmd[1024];
 	
 	// Compile
-	snprintf(cmd, 1024, "cuik build %s.c -obj", path);
+	snprintf(cmd, 1024, "cuik --stage obj build %s.c", path);
 	code = system(cmd);
 	if (code != 0) {
 		printf("Fail to compile! (code: %d)\n", code);
@@ -208,23 +208,20 @@ void try_compile(const char* path) {
 void delete_crap_in_dir(const char* dir_path) {
 	char temp[PATH_MAX];
 	
-	const char* path;
-	FileIter it = file_iter_open(dir_path);
-	while ((path = file_iter_next(&it))) {
-		if (str_ends_with(path, ".obj") ||
-			str_ends_with(path, ".exe") ||
-			str_ends_with(path, ".pdb") ||
-			str_ends_with(path, ".o")) {
-			snprintf(temp, PATH_MAX, "%s%s", dir_path, path);
+	ITERATE_FILES(it, dir_path) {
+		if (str_ends_with(it.path, ".obj") ||
+			str_ends_with(it.path, ".exe") ||
+			str_ends_with(it.path, ".pdb") ||
+			str_ends_with(it.path, ".o")) {
+			snprintf(temp, PATH_MAX, "%s%s", dir_path, it.path);
 			remove(temp);
 		}
 	}
-	file_iter_close(&it);
 }
 
 int main(int argc, char** argv) {
 	builder_init();
-	builder_compile(INPUT_FILE_COUNT, INPUT_FILES, "cuik");
+	builder_compile(BUILD_MODE_EXECUTABLE, INPUT_FILE_COUNT, INPUT_FILES, "build/cuik", "tbb/tbbmalloc.lib");
 	
 	if (argc > 1) {
 		if (strcmp(argv[1], "test") == 0) {
@@ -292,7 +289,7 @@ int main(int argc, char** argv) {
 			char cmd[1024];
 			for (size_t i = 0; i < INPUT_FILE_COUNT; i++) {
 				if (str_ends_with(INPUT_FILES[i], ".c")) {
-					snprintf(cmd, 1024, "cuik anal -threads:1 -include:src/ %s", INPUT_FILES[i]);
+					snprintf(cmd, 1024, "cuik --include src/ --threads 1 --stage types build %s", INPUT_FILES[i]);
 					
 					if (system(cmd) == 0) {
 						printf("Success with %s!\n", INPUT_FILES[i]);
