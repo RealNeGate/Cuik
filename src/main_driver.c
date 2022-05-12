@@ -583,7 +583,7 @@ int main(int argc, char* argv[]) {
                 }
 
 				big_array_put(cuik_libraries, argv[i]);
-            } else if (strcmp(option, "freestanding")) {
+            } else if (strcmp(option, "freestanding") == 0) {
 				settings.freestanding = true;
 			} else if (strcmp(option, "target") == 0) {
                 i += 1;
@@ -722,6 +722,8 @@ int main(int argc, char* argv[]) {
 	else if (strcmp(cmd, "query") == 0) mode = COMPILER_MODE_QUERY;
 	else if (strcmp(cmd, "run") == 0) mode = COMPILER_MODE_RUN;
 	else {
+		fprintf(stderr, "error: unknown command %s\n", cmd);
+
 		print_help(argv[0]);
 		return 1;
 	}

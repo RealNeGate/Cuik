@@ -12,6 +12,7 @@ Cuik/
 *.i
 *.swp
 *.tbir
+*.dmp
 *.json
 
 tests/the_fuzzer/
