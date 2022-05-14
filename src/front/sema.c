@@ -24,6 +24,8 @@ static thread_local Stmt* function_stmt;
 // two simple temporary buffers to represent type_as_string results
 static thread_local char temp_string0[1024], temp_string1[1024];
 
+void sema_stmt(TranslationUnit* tu, Stmt* restrict s);
+
 static bool is_scalar_type(TranslationUnit* tu, Type* type) {
 	return (type->kind >= KIND_BOOL && type->kind <= KIND_FUNC);
 }
@@ -389,8 +391,8 @@ Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
 			assert(out_i <= len);
 			out[out_i++] = '\0';
 
-			e->str.start = (unsigned char*) &out[0];
-			e->str.end = (unsigned char*) &out[out_i];
+			e->str.start = (unsigned char*) out;
+			e->str.end = (unsigned char*)  (out+out_i);
 
 			return (e->type = new_array(tu, &builtin_types[TYPE_CHAR], out_i));
 		}
@@ -494,9 +496,7 @@ Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
 		}
 		case EXPR_ADDR: {
 			uint64_t dst;
-			if (in_the_semantic_phase &&
-				const_eval_try_offsetof_hack(tu, e->unary_op.src, &dst)) {
-
+			if (in_the_semantic_phase && const_eval_try_offsetof_hack(tu, e->unary_op.src, &dst)) {
 				*e = (Expr) {
 					.op = EXPR_INT,
 					.type = &builtin_types[TYPE_ULONG],
@@ -517,8 +517,14 @@ Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
 				Type* type = sym->decl.type;
 
 				if (type->kind == KIND_ARRAY) {
-					// this is the only example where something sets it's own
-					// cast_type it's an exception to the rules.
+					if (type->size == 0 && sym->op == STMT_GLOBAL_DECL) {
+						// try to resolve the type since it's incomplete
+						sema_stmt(tu, sym);
+						assert(type->size != 0 && "Uhh... we fucked up");
+					}
+
+					// this is the only *current* example where something sets
+					// it's own cast_type it's an exception to the rules.
 					e->cast_type = new_pointer(tu, type->array_of);
 				}
 
@@ -917,6 +923,9 @@ void sema_stmt(TranslationUnit* tu, Stmt* restrict s) {
 			compound_failure:
 			break;
 		}
+		// global decl is only resolved here in the rare occasion where
+		// const_eval is needing to resolve a type early
+		case STMT_GLOBAL_DECL:
 		case STMT_DECL: {
 			if (s->decl.initial) {
 				try_resolve_typeof(tu, s->decl.type);

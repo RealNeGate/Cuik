@@ -1900,28 +1900,28 @@ static void gen_func_body(TranslationUnit* tu, Type* type, Stmt* restrict s) {
 
 	//tb_inst_set_scope(func, old_tb_scope);
 
-	if (settings.stage_to_stop_at == STAGE_IR) {
-		if (mtx_lock(&emit_ir_mutex) != thrd_success) {
-			printf("internal compiler error: mtx_lock(...) failure!");
-			abort();
+	if (!settings.optimize) {
+		if (settings.stage_to_stop_at == STAGE_IR) {
+			if (mtx_lock(&emit_ir_mutex) != thrd_success) {
+				printf("internal compiler error: mtx_lock(...) failure!");
+				abort();
+			}
+
+			tb_function_print(func, tb_default_print_callback, stdout);
+			fprintf(stdout, "\n\n");
+			fflush(stdout);
+
+			if (mtx_unlock(&emit_ir_mutex) != thrd_success) {
+				printf("internal compiler error: mtx_unlock(...) failure!");
+				abort();
+			}
+		} else {
+			tb_module_compile_func(mod, func, TB_ISEL_FAST);
 		}
 
-		tb_function_print(func, tb_default_print_callback, stdout);
-		fprintf(stdout, "\n\n");
-		fflush(stdout);
-
-		if (mtx_unlock(&emit_ir_mutex) != thrd_success) {
-			printf("internal compiler error: mtx_unlock(...) failure!");
-			abort();
-		}
+		// if we're optimizing, we need to keep the IR longer so we can compile later
+		tb_function_free(func);
 	} else {
-		if (!settings.optimize) tb_module_compile_func(mod, func, TB_ISEL_FAST);
-	}
-
-
-	// if we're optimizing, we need to keep the IR longer so we can compile later
-	if (!settings.optimize) tb_function_free(func);
-	else {
 		// we don't need the function_count if we aren't optimizing
 		function_count += 1;
 	}

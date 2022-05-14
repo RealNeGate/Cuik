@@ -266,7 +266,8 @@ static Type* parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s, Typ
 
                 // create placeholder array type
                 type = new_array(tu, type, 0);
-                type->array_count_lexer_pos = current;
+                type->loc = loc - s->line_arena;
+				type->array_count_lexer_pos = current;
             } while (tokens_get(s)->type == '[');
         } else {
             size_t depth = 0;
@@ -697,7 +698,7 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
                     type->record.kid_count = member_count;
 
                     if (!out_of_order_mode) {
-						type_layout_record(tu, type);
+						type_layout(tu, type);
                     }
 
                     tls_restore(members);

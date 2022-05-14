@@ -77,6 +77,7 @@ static char* read_entire_file(const char* file_path) {
 		fclose(file);
 	}
 
+	remove_weird_whitespace(len, text);
 	return text;
 }
 #endif

@@ -651,8 +651,8 @@ Type* new_vector(TranslationUnit* tu, Type* base, int count);
 Type* get_common_type(TranslationUnit* tu, Type* ty1, Type* ty2);
 bool type_equal(TranslationUnit* tu, Type* a, Type* b);
 size_t type_as_string(TranslationUnit* tu, size_t max_len, char* buffer, Type* type_index);
-void type_layout_record(TranslationUnit* restrict tu, Type* type);
-void type_layout_array(TranslationUnit* restrict tu, Type* type);
+
+void type_layout(TranslationUnit* restrict tu, Type* type);
 
 Stmt* resolve_unknown_symbol(TranslationUnit* tu, Expr* e);
 ConstValue const_eval(TranslationUnit* tu, const Expr* e);

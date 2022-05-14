@@ -370,119 +370,108 @@ static void type_resolve_pending_align(TranslationUnit* restrict tu, Type* type)
 	abort();
 }
 
-void type_layout_array(TranslationUnit* restrict tu, Type* type) {
-	assert(type->kind == KIND_ARRAY);
-    if (type->size != 0) return;
-
-    if (type->array_count_lexer_pos) {
-        // run mini parser for array count
-        TokenStream mini_lex = tu->tokens;
-        mini_lex.current = type->array_count_lexer_pos;
-        type->array_count = parse_const_expr(tu, &mini_lex);
-        expect(&mini_lex, ']');
-
-        // layout crap
-        if (type->array_count != 0) {
-            if (type->array_of->size == 0) {
-                if (type->array_of->kind == KIND_ARRAY) {
-                    type_layout_array(tu, type->array_of);
-                } else if (type->array_of->kind == KIND_STRUCT ||
-                           type->array_of->kind == KIND_UNION) {
-                    type_layout_record(tu, type->array_of);
-                }
-            }
-
-            assert(type->array_of->size > 0);
-            uint64_t result = type->array_of->size * type->array_count;
-
-            // size checks
-            if (result >= INT32_MAX) {
-                report(REPORT_ERROR, &tu->tokens.line_arena[type->loc], "cannot declare an array that exceeds 0x7FFFFFFE bytes (got 0x%zX or %zi)", result, result);
-                abort();
-            }
-
-            type->size = result;
-            type->align = type->array_of->align;
-        }
-    }
-}
-
-void type_layout_record(TranslationUnit* restrict tu, Type* type) {
-	assert(type->kind == KIND_STRUCT || type->kind == KIND_UNION);
+void type_layout(TranslationUnit* restrict tu, Type* type) {
 	if (type->size != 0) return;
 
-	bool is_union = (type->kind == KIND_UNION);
+	if (type->kind == KIND_ARRAY) {
+		if (type->array_count_lexer_pos) {
+			// run mini parser for array count
+			TokenStream mini_lex = tu->tokens;
+			mini_lex.current = type->array_count_lexer_pos;
+			type->array_count = parse_const_expr(tu, &mini_lex);
+			expect(&mini_lex, ']');
 
-	size_t member_count = type->record.kid_count;
-	Member* members = type->record.kids;
+			// layout crap
+			if (type->array_count != 0) {
+				if (type->array_of->size == 0) {
+					type_layout(tu, type->array_of);
+				}
 
-	// for unions this just represents the max size
-	int offset = 0;
-	int last_member_size = 0;
-	int current_bit_offset = 0;
-	// struct/union are aligned to the biggest member alignment
-	int align = 0;
+				assert(type->array_of->size > 0);
+				uint64_t result = type->array_of->size * type->array_count;
 
-	for (size_t i = 0; i < member_count; i++) {
-		Member* member = &members[i];
+				// size checks
+				if (result >= INT32_MAX) {
+					report(REPORT_ERROR, &tu->tokens.line_arena[type->loc], "cannot declare an array that exceeds 0x7FFFFFFE bytes (got 0x%zX or %zi)", result, result);
+					abort();
+				}
 
-		if (member->type->kind == KIND_STRUCT || member->type->kind == KIND_UNION) {
-			type_layout_record(tu, member->type);
-		} else if (member->type->kind == KIND_ARRAY) {
-			type_layout_array(tu, member->type);
-		} else if (member->type->kind == KIND_FUNC) {
-			report(REPORT_ERROR, &tu->tokens.line_arena[type->loc], "Cannot put function types into a struct, try a function pointer");
+				type->size = result;
+				type->align = type->array_of->align;
+			}
 		}
+	} else if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
+		bool is_union = (type->kind == KIND_UNION);
 
-		int member_align = member->type->align;
-		int member_size = member->type->size;
-		if (!is_union) {
-			int new_offset = align_up(offset, member_align);
+		size_t member_count = type->record.kid_count;
+		Member* members = type->record.kids;
 
-			// If we realign, reset the bit offset
-			if (offset != new_offset) {
-				current_bit_offset = last_member_size = 0;
-			}
-			offset = new_offset;
-		}
+		// for unions this just represents the max size
+		int offset = 0;
+		int last_member_size = 0;
+		int current_bit_offset = 0;
+		// struct/union are aligned to the biggest member alignment
+		int align = 0;
 
-		member->offset = is_union ? 0 : offset;
-		member->align = member_align;
+		for (size_t i = 0; i < member_count; i++) {
+			Member* member = &members[i];
 
-		// bitfields
-		if (member->is_bitfield) {
-			int bit_width = member->bit_width;
-			int bits_in_region = member->type->kind == KIND_BOOL ? 1 : (member_size * 8);
-			if (bit_width > bits_in_region) {
-				report(REPORT_ERROR, &tu->tokens.line_arena[type->loc], "Bitfield cannot fit in this type.");
-			}
-
-			if (current_bit_offset + bit_width > bits_in_region) {
-				current_bit_offset = 0;
-
-				offset = align_up(offset + member_size, member_align);
-				member->bit_offset = offset;
-			}
-
-			current_bit_offset += bit_width;
-		} else {
-			if (is_union) {
-				if (member_size > offset) offset = member_size;
+			if (member->type->kind == KIND_FUNC) {
+				report(REPORT_ERROR, &tu->tokens.line_arena[type->loc], "Cannot put function types into a struct, try a function pointer");
 			} else {
-				offset += member_size;
+				type_layout(tu, member->type);
 			}
+
+			int member_align = member->type->align;
+			int member_size = member->type->size;
+			if (!is_union) {
+				int new_offset = align_up(offset, member_align);
+
+				// If we realign, reset the bit offset
+				if (offset != new_offset) {
+					current_bit_offset = last_member_size = 0;
+				}
+				offset = new_offset;
+			}
+
+			member->offset = is_union ? 0 : offset;
+			member->align = member_align;
+
+			// bitfields
+			if (member->is_bitfield) {
+				int bit_width = member->bit_width;
+				int bits_in_region = member->type->kind == KIND_BOOL ? 1 : (member_size * 8);
+				if (bit_width > bits_in_region) {
+					report(REPORT_ERROR, &tu->tokens.line_arena[type->loc], "Bitfield cannot fit in this type.");
+				}
+
+				if (current_bit_offset + bit_width > bits_in_region) {
+					current_bit_offset = 0;
+
+					offset = align_up(offset + member_size, member_align);
+					member->bit_offset = offset;
+				}
+
+				current_bit_offset += bit_width;
+			} else {
+				if (is_union) {
+					if (member_size > offset) offset = member_size;
+				} else {
+					offset += member_size;
+				}
+			}
+
+			// the total alignment of a struct/union is based on the biggest member
+			last_member_size = member_size;
+			if (member_align > align) align = member_align;
 		}
 
-		// the total alignment of a struct/union is based on the biggest member
-		last_member_size = member_size;
-		if (member_align > align) align = member_align;
+		offset = align_up(offset, align);
+		type->align = align;
+		type->size = offset;
+
+		type->is_incomplete = false;
 	}
-
-	offset = align_up(offset, align);
-	type->align = align;
-	type->size = offset;
-
-	type->is_incomplete = false;
 }
 
 void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, threadpool_t* thread_pool) {
@@ -851,14 +840,7 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
 					type_resolve_pending_align(tu, type);
 				}
 
-				if (type->size == 0) {
-					if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
-						type_layout_record(tu, type);
-					} else if (type->kind == KIND_ARRAY) {
-						// TODO(NeGate): does this need cycle checking...
-						type_layout_array(tu, type);
-					}
-				}
+				if (type->size == 0) type_layout(tu, type);
 			}
 		}
 

@@ -240,6 +240,14 @@ static void compile_project(const char* obj_output_path, bool is_multithreaded) 
 
 				if (settings.stage_to_stop_at >= STAGE_OBJ) {
 					dispatch_for_all_ir_functions(codegen_task);
+				} else {
+					// print optimized IR
+					size_t count = function_count;
+					for (size_t i = 0; i < count; i++) {
+						tb_function_print(tb_function_from_id(mod, i), tb_default_print_callback, stdout);
+						fprintf(stdout, "\n\n");
+						fflush(stdout);
+					}
 				}
 			}
 
@@ -284,8 +292,8 @@ static int execute_query_operation(const char* option, size_t arg_start, size_t 
 			cpp_init(&cpp_ctx);
 			cuik_set_cpp_defines(&cpp_ctx);
 
-			for (size_t i = 0, count = big_array_length(cuik_source_files); i < count; i++) {
-				if (cpp_find_include_include(&cpp_ctx, output, cuik_source_files[i])) {
+			for (size_t i = arg_start; i < arg_count; i++) {
+				if (cpp_find_include_include(&cpp_ctx, output, args[i])) {
 					printf("%s\n", output);
 				} else {
 					printf("NOTFOUND\n");
@@ -321,9 +329,12 @@ static int execute_query_operation(const char* option, size_t arg_start, size_t 
 			}
 			return 0;
 		}
+
+		printf("Unknown cuik query option '%s' (Supported options):\n", option);
+	} else {
+		printf("Unknown cuik query option (Supported options):\n");
 	}
 
-	printf("Unknown cuik query option (Supported options):\n");
 	printf("find_include - Resolve an include file path from name\n");
 	printf("print_type   - Find a type within the translation unit\n");
 	printf("\n");
@@ -377,7 +388,6 @@ static bool dump_tokens() {
 
 	const unsigned char* last_file = NULL;
 	int last_line = 0;
-	int current_column = 0;
 
 	for (size_t i = 0, cc = arrlen(s.tokens); i < cc; i++) {
 		Token* t = &s.tokens[i];
@@ -404,13 +414,11 @@ static bool dump_tokens() {
 
 			fprintf(f, "\n#line %d \"%s\"\t", loc->line->line, str);
 			last_file = loc->line->file;
-			current_column = 0;
 		}
 
 		if (last_line != loc->line->line) {
 			fprintf(f, "\n/* line %3d */\t", loc->line->line);
 			last_line = loc->line->line;
-			current_column = 0;
 		}
 
 		fprintf(f, "%.*s ", (int)(t->end - t->start), t->start);
@@ -732,7 +740,7 @@ int main(int argc, char* argv[]) {
 	// Query is like a magic Swiss army knife inside of Cuik
 	// so it acts differently from everyone else
 	if (mode == COMPILER_MODE_QUERY) {
-		if (i < argc) {
+		if (i >= argc) {
 			// should give us the help screen for query
 			return execute_query_operation(NULL, 0, 0, NULL);
 		} else {
