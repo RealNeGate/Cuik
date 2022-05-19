@@ -3,10 +3,10 @@ typedef unsigned long long size_t;
 int printf(const char* format, ...);
 int strncmp(const char * str1, const char * str2, size_t num);
 
-_Bool separated(const char* src, const char* dst, size_t dstlen)
+/*_Bool separated(const char* src, const char* dst, size_t dstlen)
 {
     return (*src && dstlen-- && *dst);
-}
+}*/
 
 // compares src string with dstlen characters from dst, returns 1 if they are equal, 0 if not
 static int StringsAreEqual(const char* src, const char* dst, size_t dstlen)
@@ -19,6 +19,7 @@ static int StringsAreEqual(const char* src, const char* dst, size_t dstlen)
         }
     }
 
+	//printf("%d %d\n", (_Bool)dstlen, !dstlen);
     return (dstlen && *src == *dst) || (!dstlen && *src == 0);
 	//return strncmp(src, dst, dstlen) == 0;
 }

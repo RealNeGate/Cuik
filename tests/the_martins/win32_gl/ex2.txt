@@ -1,0 +1,107 @@
+StringsAreEqual:
+           mov         qword ptr [rbp+10h],rcx
+           mov         qword ptr [rbp+18h],rdx
+           mov         qword ptr [rbp+20h],r8
+  LABEL7:  mov         rax,qword ptr [rbp+10h]
+           mov         r9b,byte ptr [rax]
+           mov         al,r9b
+           cmp         al,0
+           je          LABEL1
+           mov         rax,qword ptr [rbp+20h]
+           mov         r9,rax
+           sub         r9,1
+           mov         qword ptr [rbp+20h],r9
+           mov         r10,rax
+           cmp         r10,0
+           je          LABEL1
+           jmp         LABEL2
+  LABEL2:  mov         rax,qword ptr [rbp+18h]
+           mov         r10b,byte ptr [rax]
+           mov         al,r10b
+           cmp         al,0
+           je          LABEL1
+           mov         byte ptr [rbp-29h],1
+           jmp         LABEL3
+  LABEL1:  mov         byte ptr [rbp-29h],0
+  LABEL3:  cmp         byte ptr [rbp-29h],0
+           je          LABEL4
+           mov         rax,qword ptr [rbp+10h]
+           mov         r10,rax
+           add         r10,1
+           mov         qword ptr [rbp+10h],r10
+           mov         r11b,byte ptr [rax]
+           movsx       eax,r11b
+           mov         r11,qword ptr [rbp+18h]
+           mov         rdi,r11
+           add         rdi,1
+           mov         qword ptr [rbp+18h],rdi
+           mov         sil,byte ptr [r11]
+           movsx       r11d,sil
+           mov         esi,eax
+           cmp         esi,r11d
+           je          LABEL5
+           mov         eax,0
+           jmp         LABEL6
+  LABEL5:  jmp         LABEL7
+  LABEL4:  lea         rax,[.rdata+10h]
+           mov         r11,qword ptr [rbp+20h]
+           xor         ebx,ebx
+           mov         rsi,r11
+           cmp         rsi,0
+           setne       bl
+           movzx       r11d,bl
+           mov         rsi,qword ptr [rbp+20h]
+           xor         r12d,r12d
+           mov         rbx,rsi
+           cmp         rbx,0
+           setne       r12b
+           xor         ebx,ebx
+           mov         sil,r12b
+           cmp         dh,0
+           sete        bl
+           movzx       esi,bl
+           mov         qword ptr [rbp-38h],rcx
+           mov         rcx,rax
+           mov         qword ptr [rbp-40h],rdx
+           mov         edx,r11d
+           mov         qword ptr [rbp-48h],r8
+           mov         r8d,esi
+           call        printf
+           mov         rcx,qword ptr [rbp+20h]
+           mov         rdx,rcx
+           cmp         rdx,0
+           je          LABEL8
+           mov         rcx,qword ptr [rbp+10h]
+           mov         dl,byte ptr [rcx]
+           movsx       ecx,dl
+           mov         rdx,qword ptr [rbp+18h]
+           mov         r8b,byte ptr [rdx]
+           movsx       edx,r8b
+           mov         r8d,ecx
+           cmp         r8d,edx
+           je          LABEL9
+  LABEL8:  jmp         LABEL10
+  LABEL10: mov         rcx,qword ptr [rbp+20h]
+           xor         r8d,r8d
+           mov         rdx,rcx
+           cmp         rdx,0
+           setne       r8b
+           mov         cl,r8b
+           cmp         cl,0
+           jne         LABEL11
+           mov         rcx,qword ptr [rbp+10h]
+           mov         dl,byte ptr [rcx]
+           movsx       ecx,dl
+           mov         edx,ecx
+           cmp         edx,0
+           jne         LABEL11
+           mov         byte ptr [rbp-some_var],1
+           jmp         LABEL12
+  LABEL11: mov         byte ptr [rbp-some_var],0
+  LABEL12: cmp         byte ptr [rbp-some_var],0
+           je          LABEL13
+  LABEL9:  mov         byte ptr [rbp-some_var2],1
+           jmp         LABEL14
+  LABEL13: mov         byte ptr [rbp-some_var2],0
+  LABEL14: movzx       eax,byte ptr [rbp-some_var2]
+  LABEL6:

@@ -189,14 +189,10 @@ static void GetWglFunctions(void)
         }
 
         size_t length = ext - start;
-	printf("Length: %zu\n", length);
-	printf("%.*s\n", (int)length, ext - start);
-	
-	if (StringsAreEqual("WGL_ARB_pixel_format", start, length))
+        if (StringsAreEqual("WGL_ARB_pixel_format", start, length))
         {
             // https://www.khronos.org/registry/OpenGL/extensions/ARB/WGL_ARB_pixel_format.txt
             wglChoosePixelFormatARB = (void*)wglGetProcAddress("wglChoosePixelFormatARB");
-            printf("A\n\n");
         }
         else if (StringsAreEqual("WGL_ARB_create_context", start, length))
         {
@@ -207,7 +203,6 @@ static void GetWglFunctions(void)
         {
             // https://www.khronos.org/registry/OpenGL/extensions/EXT/WGL_EXT_swap_control.txt
             wglSwapIntervalEXT = (void*)wglGetProcAddress("wglSwapIntervalEXT");
-            printf("C\n\n");
         }
 
         if (*ext == 0)
