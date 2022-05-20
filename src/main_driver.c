@@ -13,7 +13,6 @@
 typedef enum {
 	COMPILER_MODE_NONE,
 	COMPILER_MODE_BUILD,
-	COMPILER_MODE_QUERY,
 	COMPILER_MODE_RUN
 } CompilerMode;
 
@@ -210,7 +209,7 @@ static void compile_project(const char* obj_output_path, bool is_multithreaded) 
 		}
 	}
 
-    if (settings.stage_to_stop_at == STAGE_TYPES) {
+    if (settings.stage_to_stop_at == STAGE_TYPES && settings.emit_partial_results) {
         FOR_EACH_TU(tu, &compilation_unit) {
             ast_dump(tu, stdout);
         }
@@ -431,7 +430,7 @@ static bool dump_tokens() {
 ////////////////////////////////
 // Entry & CLI
 ////////////////////////////////
-#define O(string, ...) fprintf(stdout, string "\n", ##__VA_ARGS__)
+#define O(string, ...) fprintf(stdout, string "\n", __VA_ARGS__)
 static void print_help(const char* executable_path) {
 	O("Usage: %s [<options>] <command> [<args>]", executable_path ? executable_path : "<unknown>");
 	O("");
@@ -446,13 +445,14 @@ static void print_help(const char* executable_path) {
 	O("");
 	O("  --thin-errors        - displays errors without the line preview");
 	O("  --pedantic           - disables CuikC extensions");
-	O("  --stage <stage>      - stops at a specific stage and emits results into a file");
+	O("  --stage <stage>      - stops at a specific stage and emits into a file (if -P is used)");
 	O("          preproc      - emits preprocessor output into a .i file");
 	O("          types        - emits AST after type checking into a .ast file");
 	O("          ir           - emits TBIR in text form into a .tbir file");
 	O("          obj          - emits target specific object file");
 	O("");
-	O("  -g                   - emit debugger information");
+	O("  -O                   - run optimizations");
+	O("  -P                   - emit results when doing --stage");
 	O("  -O                   - run optimizations");
 	O("  -T                   - report timing information into a .json file usable by chrome://tracing");
 	O("  -I        <path>     - add include directory");
@@ -528,7 +528,7 @@ int main(int argc, char* argv[]) {
 	// We hook the crash handler to create crash dumps
 	hook_crash_handler();
 
-	if (argc == 1) {
+	if (argc < 2) {
 		print_help(argv[0]);
 		return 1;
 	}
@@ -575,10 +575,31 @@ int main(int argc, char* argv[]) {
 
     const char* output_name = NULL;
 
-    // parse options
-    size_t i = 1;
-    for (; i < argc; i++) {
-        if (argv[i][0] != '-') break;
+	// parse command
+	bool run_program = false;
+	if (strcmp(argv[1], "build") == 0) {
+		run_program = false;
+	} else if (strcmp(argv[1], "run") == 0)  {
+		run_program = true;
+	} else if (strcmp(argv[1], "query") == 0) {
+		// Query is like a magic Swiss army knife inside of Cuik
+		// so it acts differently from everyone else
+		return execute_query_operation(argv[2], 3, argc, argv);
+	} else if (strcmp(argv[1], "help") == 0) {
+		print_help(argv[0]);
+		return 0;
+	} else {
+		fprintf(stderr, "error: unknown command %s\n", argv[1]);
+		print_help(argv[0]);
+		return 1;
+	}
+
+	// parse options
+	for (size_t i = 2; i < argc; i++) {
+		if (argv[i][0] != '-') {
+			append_input_path(argv[i]);
+			continue;
+		}
 
         // --option
         if (argv[i][1] == '-') {
@@ -586,7 +607,7 @@ int main(int argc, char* argv[]) {
             if (strcmp(option, "lib") == 0) {
                 i += 1;
                 if (i >= argc) {
-                    fprintf(stderr, "error: expected \n");
+                    fprintf(stderr, "error: expected filepath\n");
                     abort();
                 }
 
@@ -696,7 +717,8 @@ int main(int argc, char* argv[]) {
                     break;
                 }
                 case 'T': settings.is_time_report = true; break;
-                case 'O': settings.optimize = true; break;
+				case 'P': settings.emit_partial_results = true; break;
+				case 'O': settings.optimize = true; break;
                 case 'I': {
                     i += 1;
                     if (i >= argc) {
@@ -712,6 +734,12 @@ int main(int argc, char* argv[]) {
         }
     }
 
+	if (big_array_length(cuik_source_files) == 0) {
+        fprintf(stderr, "error: expected input files\n");
+        abort();
+    }
+
+	// Get target descriptor from explicit (or default) target option
     switch (target_arch) {
         case TB_ARCH_X86_64:
         target_desc = get_x64_target_descriptor();
@@ -722,43 +750,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-	// parse command
-	CompilerMode mode = COMPILER_MODE_NONE;
-
-	const char* cmd = argv[i];
-	if (strcmp(cmd, "build") == 0) mode = COMPILER_MODE_BUILD;
-	else if (strcmp(cmd, "query") == 0) mode = COMPILER_MODE_QUERY;
-	else if (strcmp(cmd, "run") == 0) mode = COMPILER_MODE_RUN;
-	else {
-		fprintf(stderr, "error: unknown command %s\n", cmd);
-
-		print_help(argv[0]);
-		return 1;
-	}
-    i += 1;
-
-	// Query is like a magic Swiss army knife inside of Cuik
-	// so it acts differently from everyone else
-	if (mode == COMPILER_MODE_QUERY) {
-		if (i >= argc) {
-			// should give us the help screen for query
-			return execute_query_operation(NULL, 0, 0, NULL);
-		} else {
-			return execute_query_operation(argv[i], i + 1, argc, argv);
-		}
-	}
-
-    // parse source file inputs
-    for (; i < argc; i++) {
-        append_input_path(argv[i]);
-    }
-
-    if (big_array_length(cuik_source_files) == 0) {
-        fprintf(stderr, "error: expected input files\n");
-        abort();
-    }
-
-    // Get first filename without extension
+	// Get first filename without extension
     {
         const char* filename = output_name ? output_name : cuik_source_files[0];
         const char* ext = strrchr(filename, '.');
@@ -772,93 +764,85 @@ int main(int argc, char* argv[]) {
     timer_init();
     init_report_system();
 
-	switch (mode) {
-		case COMPILER_MODE_BUILD:
-		case COMPILER_MODE_RUN: {
-			if (settings.stage_to_stop_at <= STAGE_PREPROC) {
-				// only preprocessor work
-				dump_tokens();
-				break;
+	if (settings.stage_to_stop_at <= STAGE_PREPROC) {
+		// only preprocessor work
+		dump_tokens();
+		return 0;
+	}
+
+	char obj_output_path[MAX_PATH];
+	if (target_system == TB_SYSTEM_WINDOWS) {
+		sprintf_s(obj_output_path, 260, "%s.obj", cuik_file_no_ext);
+	} else if (target_system == TB_SYSTEM_LINUX) {
+		sprintf_s(obj_output_path, 260, "%s.o", cuik_file_no_ext);
+	}
+
+	// Open profiler file stream
+	if (settings.is_time_report) {
+		char report_filename[MAX_PATH];
+		sprintf_s(report_filename, 260, "%s.json", cuik_file_no_ext);
+
+		timer_open(report_filename);
+	}
+
+	// Build project
+	timed_block("total") {
+		compile_project(obj_output_path, true);
+
+		if (settings.stage_to_stop_at >= STAGE_FINAL) {
+			if (settings.freestanding) {
+				fprintf(stderr, "error: cannot link and be freestanding... yet");
+				return 1;
 			}
 
-			char obj_output_path[MAX_PATH];
-			if (target_system == TB_SYSTEM_WINDOWS) {
-				sprintf_s(obj_output_path, 260, "%s.obj", cuik_file_no_ext);
-			} else if (target_system == TB_SYSTEM_LINUX) {
-				sprintf_s(obj_output_path, 260, "%s.o", cuik_file_no_ext);
-			}
+			timed_block("linker") {
+				Linker l;
+				if (linker_init(&l)) {
+					// Add system libpaths
+					linker_add_default_libpaths(&l);
+					linker_add_libpath(&l, "W:/Workspace/Cuik/crt/lib/");
 
-			// Open profiler file stream
-			if (settings.is_time_report) {
-				char report_filename[MAX_PATH];
-				sprintf_s(report_filename, 260, "%s.json", cuik_file_no_ext);
+					// Add Cuik output
+					linker_add_input_file(&l, obj_output_path);
 
-				timer_open(report_filename);
-			}
-
-			// Build project
-			timed_block("total") {
-				compile_project(obj_output_path, true);
-
-				if (settings.stage_to_stop_at >= STAGE_FINAL) {
-					if (settings.freestanding) {
-						fprintf(stderr, "error: cannot link and be freestanding... yet");
-						return 1;
+					// Add input libraries
+					size_t count = big_array_length(cuik_libraries);
+					for (size_t i = 0; i < count; i++) {
+						linker_add_input_file(&l, cuik_libraries[i]);
 					}
 
-					timed_block("linker") {
-						Linker l;
-						if (linker_init(&l)) {
-							// Add system libpaths
-							linker_add_default_libpaths(&l);
-							linker_add_libpath(&l, "W:/Workspace/Cuik/crt/lib/");
-
-							// Add Cuik output
-							linker_add_input_file(&l, obj_output_path);
-
-							// Add input libraries
-							size_t count = big_array_length(cuik_libraries);
-							for (size_t i = 0; i < count; i++) {
-								linker_add_input_file(&l, cuik_libraries[i]);
-							}
-
-							/*linker_add_input_file(&l, "kernel32.lib");
-							linker_add_input_file(&l, "user32.lib");
-							linker_add_input_file(&l, "shell32.lib");
-							linker_add_input_file(&l, "Gdi32.lib");
-							linker_add_input_file(&l, "opengl32.lib");*/
+					/*linker_add_input_file(&l, "kernel32.lib");
+					linker_add_input_file(&l, "user32.lib");
+					linker_add_input_file(&l, "shell32.lib");
+					linker_add_input_file(&l, "Gdi32.lib");
+					linker_add_input_file(&l, "opengl32.lib");*/
 
 #ifdef _WIN32
-							linker_add_input_file(&l, "kernel32.lib");
-							linker_add_input_file(&l, "shell32.lib");
-							linker_add_input_file(&l, "msvcrt.lib");
-							linker_add_input_file(&l, "win32_rt.lib");
+					linker_add_input_file(&l, "kernel32.lib");
+					linker_add_input_file(&l, "shell32.lib");
+					linker_add_input_file(&l, "msvcrt.lib");
+					linker_add_input_file(&l, "win32_rt.lib");
 #endif
 
-							linker_invoke_system(&l, cuik_file_no_ext);
-							linker_deinit(&l);
-						}
-					}
+					linker_invoke_system(&l, cuik_file_no_ext);
+					linker_deinit(&l);
 				}
 			}
-
-			// Close out profiler output (it doesn't include the linking)
-			timer_close();
-
-			if (settings.stage_to_stop_at >= STAGE_FINAL &&
-				mode == COMPILER_MODE_RUN) {
-				char exe_path[MAX_PATH];
-				sprintf_s(exe_path, 260, "%s.exe", cuik_file_no_ext);
-
-				printf("\n\nRunning: %s...\n", exe_path);
-				int exit_code = system(exe_path);
-				printf("Exit code: %d\n", exit_code);
-
-				return exit_code;
-			}
-			break;
 		}
-		default: return 1;
+	}
+
+	// Close out profiler output (it doesn't include the linking)
+	timer_close();
+
+	if (settings.stage_to_stop_at >= STAGE_FINAL && run_program) {
+		char exe_path[MAX_PATH];
+		sprintf_s(exe_path, 260, "%s.exe", cuik_file_no_ext);
+
+		printf("\n\nRunning: %s...\n", exe_path);
+		int exit_code = system(exe_path);
+		printf("Exit code: %d\n", exit_code);
+
+		return exit_code;
 	}
 
 	return 0;

@@ -162,6 +162,15 @@ TB_Register irgen_as_rvalue(TranslationUnit* tu, TB_Function* func, Expr* e) {
 	return cvt2rval(tu, func, irgen_expr(tu, func, e), e);
 }
 
+TB_Register irgen_as_lvalue(TranslationUnit* tu, TB_Function* func, Expr* e) {
+	IRVal v = irgen_expr(tu, func, e);
+
+	if (v.value_type == LVALUE) return v.reg;
+	else if (v.value_type == LVALUE_EFUNC) return tb_inst_get_extern_address(func, v.ext);
+	else if (v.value_type == LVALUE_FUNC) return tb_inst_get_func_address(func, v.func);
+	else abort();
+}
+
 InitNode* count_max_tb_init_objects(int node_count, InitNode* node, int* out_count) {
 	for (int i = 0; i < node_count; i++) {
 		if (node->kids_count == 0) {
@@ -525,7 +534,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
 			return (IRVal) {
 				.value_type = RVALUE,
 				.type = e->type,
-				.reg = tb_inst_sint(func, TB_TYPE_I32, e->enum_val.num)
+				.reg = tb_inst_sint(func, TB_TYPE_I32, *e->enum_val.num)
 			};
 		}
 		case EXPR_FLOAT32: {
@@ -890,9 +899,8 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
 				.reg = tb_inst_array_access(func, base, index, stride)
 			};
 		}
-		case EXPR_DOT: {
-			IRVal src = irgen_expr(tu, func, e->dot_arrow.base);
-			assert(src.value_type == LVALUE);
+		case EXPR_DOT_R: {
+			TB_Register src = irgen_as_lvalue(tu, func, e->dot_arrow.base);
 
 			Member* member = e->dot_arrow.member;
 			assert(member != NULL);
@@ -902,7 +910,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
 					.value_type = LVALUE_BITS,
 					.type = member->type,
 					.bits = {
-						.reg = tb_inst_member_access(func, src.reg, e->dot_arrow.offset),
+						.reg = tb_inst_member_access(func, src, e->dot_arrow.offset),
 						.offset = member->bit_offset, .width = member->bit_width
 					}
 				};
@@ -910,11 +918,11 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
 				return (IRVal) {
 					.value_type = LVALUE,
 					.type = member->type,
-					.reg = tb_inst_member_access(func, src.reg, e->dot_arrow.offset)
+					.reg = tb_inst_member_access(func, src, e->dot_arrow.offset)
 				};
 			}
 		}
-		case EXPR_ARROW: {
+		case EXPR_ARROW_R: {
 			TB_Register src = irgen_as_rvalue(tu, func, e->dot_arrow.base);
 
 			Member* member = e->dot_arrow.member;
@@ -1774,10 +1782,16 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
 			tb_inst_goto(func, s->break_.target->backing.l);
 			break;
 		}
-		case STMT_CASE:
 		case STMT_DEFAULT: {
 			assert(s->backing.l);
 			tb_inst_label(func, s->backing.l);
+			irgen_stmt(tu, func, s->default_.body);
+			break;
+		}
+		case STMT_CASE:{
+			assert(s->backing.l);
+			tb_inst_label(func, s->backing.l);
+			irgen_stmt(tu, func, s->case_.body);
 			break;
 		}
 		case STMT_SWITCH: {

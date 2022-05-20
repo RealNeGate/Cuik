@@ -533,7 +533,35 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 					unsigned char* filename = tls_push(MAX_PATH);
 
 					bool is_lib_include = false;
-					{
+					// Evaluate
+					if (l.token_type == '<') {
+						lexer_read(&l);
+
+						is_lib_include = true;
+						size_t len = 0;
+
+						// Hacky but mostly works
+						do {
+							size_t token_len = l.token_end - l.token_start;
+							if (len + token_len > MAX_PATH) {
+								generic_error(&l, "filename too long!");
+							}
+
+							memcpy(&filename[len], l.token_start, token_len);
+							len += token_len;
+
+							lexer_read(&l);
+						} while (l.token_type != '>');
+
+						// slap that null terminator on it like a boss bitch
+						filename[len] = '\0';
+
+						if (l.token_type != '>') {
+							generic_error(&l, "expected '>' for #include");
+						}
+
+						lexer_read(&l);
+					} else {
 						size_t old_tokens_length = arrlen(s->tokens);
 						s->current = old_tokens_length;
 
@@ -544,39 +572,7 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 						Token t = { 0, arrlen(s->line_arena) - 1, NULL, NULL };
 						arrput(s->tokens, t);
 
-						// Evaluate
-						if (tokens_get(s)->type == '<') {
-							tokens_next(s);
-
-							is_lib_include = true;
-							size_t len = 0;
-
-							// Hacky but mostly works
-							do {
-								Token* t = tokens_get(s);
-								if (len + (t->end - t->start) > MAX_PATH) {
-									report(REPORT_ERROR, &s->line_arena[t->location], "Filename too long");
-									abort();
-								}
-
-								memcpy(&filename[len], t->start, t->end - t->start);
-								len += t->end - t->start;
-
-								tokens_next(s);
-							} while (tokens_get(s)->type != '>');
-
-							// slap that null terminator on it like a boss bitch
-							filename[len] = '\0';
-
-							if (tokens_get(s)->type != '>') {
-								Token* t = tokens_get(s);
-
-								report(REPORT_ERROR, &s->line_arena[t->location], "expected '>' for #include");
-								abort();
-							}
-
-							tokens_next(s);
-						} else if (tokens_get(s)->type == TOKEN_STRING_DOUBLE_QUOTE) {
+						if (tokens_get(s)->type == TOKEN_STRING_DOUBLE_QUOTE) {
 							Token* t = tokens_get(s);
 							size_t len = (t->end - t->start) - 2;
 							if (len > MAX_PATH) {
@@ -1241,7 +1237,25 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
 							continue;
 						}
 
-						if (def_lex.token_type != TOKEN_IDENTIFIER) {
+						if (def_lex.token_type == TOKEN_COMMA) {
+							// we case our idea was dumb :p
+							unsigned char* fallback = temp_expansion;
+
+							*temp_expansion++ = ',';
+							*temp_expansion++ = ' ';
+
+							lexer_read(&def_lex);
+
+							if (has_varargs &&
+								token_length == sizeof("__VA_ARGS__")-1 &&
+								memcmp(token_data, "__VA_ARGS__", sizeof("__VA_ARGS__")-1) == 0 &&
+								key_count == value_count) {
+								// we remove the comma since there's no varargs to chew
+								temp_expansion = fallback;
+							}
+
+							continue;
+						} else if (def_lex.token_type != TOKEN_IDENTIFIER) {
 							// TODO(NeGate): Error message
 							if (as_string) abort();
 

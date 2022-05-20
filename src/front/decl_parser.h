@@ -224,51 +224,52 @@ static Type* parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s, Typ
 	} else if (tokens_get(s)->type == '[') {
         if (out_of_order_mode) {
             // in the out of order case we defer expression parsing
-            do {
-                SourceLoc* open_brace = &s->line_arena[tokens_get(s)->location];
-                tokens_next(s);
+			SourceLoc* open_brace = &s->line_arena[tokens_get(s)->location];
+			tokens_next(s);
 
-                size_t current = 0;
-                if (tokens_get(s)->type == ']') {
-                    tokens_next(s);
-                } else if (tokens_get(s)->type == '*') {
-                    tokens_next(s);
-                    expect(s, ']');
-                } else {
-                    current = s->current;
+			size_t current = 0;
+			if (tokens_get(s)->type == ']') {
+				tokens_next(s);
+			} else if (tokens_get(s)->type == '*') {
+				tokens_next(s);
+				expect(s, ']');
+			} else {
+				current = s->current;
 
-                    int depth = 1;
-                    while (depth) {
-                        Token* t = tokens_get(s);
+				int depth = 1;
+				while (depth) {
+					Token* t = tokens_get(s);
 
-                        if (t->type == '\0') {
-                            report(REPORT_ERROR, &s->line_arena[t->location], "Array declaration ended in EOF");
-                            abort();
-                        } else if (t->type == '[') {
-                            depth++;
-                        } else if (t->type == ']') {
-                            if (depth == 0) {
-                                report_two_spots(REPORT_ERROR,
-                                                 open_brace, &s->line_arena[t->location],
-                                                 "Unbalanced brackets", "open", "close?", NULL);
-                                abort();
-                            }
+					if (t->type == '\0') {
+						report(REPORT_ERROR, &s->line_arena[t->location], "Array declaration ended in EOF");
+						abort();
+					} else if (t->type == '[') {
+						depth++;
+					} else if (t->type == ']') {
+						if (depth == 0) {
+							report_two_spots(REPORT_ERROR,
+											 open_brace, &s->line_arena[t->location],
+											 "Unbalanced brackets", "open", "close?", NULL);
+							abort();
+						}
 
-                            depth--;
-                        }
+						depth--;
+					}
 
-                        tokens_next(s);
-                    }
+					tokens_next(s);
+				}
 
-                    tokens_prev(s);
-                    expect(s, ']');
-                }
+				tokens_prev(s);
+				expect(s, ']');
+			}
 
-                // create placeholder array type
-                type = new_array(tu, type, 0);
-                type->loc = loc - s->line_arena;
-				type->array_count_lexer_pos = current;
-            } while (tokens_get(s)->type == '[');
+			type = parse_type_suffix(tu, s, type, name);
+
+			// create placeholder array type
+			type = new_array(tu, type, 0);
+			type->loc = loc - s->line_arena;
+			type->array_count_lexer_pos = current;
+			return type;
         } else {
             size_t depth = 0;
             size_t* counts = tls_save();
@@ -466,7 +467,7 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
                 if (out_of_order_mode) {
                     // _Typeof ( SOMETHING )
                     TknType terminator;
-                    /*size_t current = */skip_expression_in_parens(s, &terminator);
+                    size_t current = skip_expression_in_parens(s, &terminator);
 
                     if (terminator == 0 || terminator == ',') {
                         report(REPORT_ERROR, loc, "expected closing parenthesis for _Typeof%s", terminator ? " (got EOF)" : "");
@@ -474,7 +475,8 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
                     }
 
                     // Add to pending list
-                    //printf("MSG: Add _Typeof to pending list %zu ending at %c\n", current, terminator);
+                    printf("MSG: Add _Typeof to pending list %zu ending at %c\n", current, terminator);
+					__debugbreak();
                 } else {
                     if (is_typename(s)) {
                         type = parse_typename(tu, s);
@@ -792,32 +794,46 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
                         Atom name = atoms_put(t->end - t->start, t->start);
                         tokens_next(s);
 
+						int lexer_pos = 0;
                         if (tokens_get(s)->type == '=') {
                             tokens_next(s);
 
-                            cursor = parse_const_expr(tu, s);
+							if (out_of_order_mode) {
+								TknType terminator;
+								lexer_pos = skip_expression_in_enum(s, &terminator);
+
+								if (terminator == 0) {
+									SourceLoc* loc = &s->line_arena[tokens_get(s)->location];
+									report(REPORT_ERROR, loc, "expected comma or } (got EOF)");
+									abort();
+								}
+							} else {
+								cursor = parse_const_expr(tu, s);
+							}
                         }
 
-                        tls_push(sizeof(EnumEntry));
-                        start[count++] = (EnumEntry){ name, cursor };
+                        // Allocate into temporary buffer
+						tls_push(sizeof(EnumEntry));
+                        start[count] = (EnumEntry){ name, lexer_pos, cursor };
 
-                        Symbol sym = {
-                            .name = name,
-                            .type = type,
-                            .loc  = t->location,
-                            .storage_class = STORAGE_ENUM,
-							.enum_value = cursor
-                        };
+						Symbol sym = {
+							.name = name,
+							.type = type,
+							.loc  = t->location,
+							.storage_class = STORAGE_ENUM,
+							.enum_value = count
+						};
 
-                        if (out_of_order_mode) {
+						if (out_of_order_mode) {
 							shput(global_symbols, name, sym);
                         } else {
 							local_symbols[local_symbol_count++] = sym;
-                        }
-                        cursor += 1;
+							cursor += 1;
+						}
 
-                        if (tokens_get(s)->type == ',') tokens_next(s);
-                    }
+						if (tokens_get(s)->type == ',') tokens_next(s);
+						count += 1;
+					}
 
                     if (tokens_get(s)->type != '}') {
                         generic_error(s, "Unclosed enum list!");
@@ -830,7 +846,14 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
 
                     type->enumerator.entries = permanent_store;
                     type->enumerator.count = count;
-                    type->is_incomplete = false;
+
+					if (out_of_order_mode) {
+						type->is_incomplete = true;
+						type->size = 0;
+						type->align = 0;
+					} else {
+						type->is_incomplete = false;
+					}
                 } else {
                     type = find_tag((char*)name);
                     if (!type) {

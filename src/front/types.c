@@ -27,7 +27,7 @@ static Type* alloc_type(TranslationUnit* tu, const Type* src) {
 	mtx_lock(&tu->arena_mutex);
 	Type* dst = ARENA_ALLOC(&tu->type_arena, Type);
 	mtx_unlock(&tu->arena_mutex);
-	
+
 	memcpy(dst, src, sizeof(Type));
 	return dst;
 }
@@ -70,20 +70,20 @@ Type* new_pointer(TranslationUnit* tu, Type* base) {
 Type* new_typeof(TranslationUnit* tu, Expr* src) {
 	return alloc_type(tu, &(Type){
 						  .kind = KIND_TYPEOF,
-						  
+
 						  // ideally if you try using these it'll crash because things
 						  // do sanity checks on align, hopefully none trigger because
 						  // we resolve it properly.
 						  .size = 0,
 						  .align = 0,
-						  
+
 						  .typeof_.src = src
 					  });
 }
 
 Type* new_array(TranslationUnit* tu, Type* base, int count) {
 	if (count == 0) {
-		// these zero-sized arrays don't actually care about incomplete element types 
+		// these zero-sized arrays don't actually care about incomplete element types
 		return alloc_type(tu, &(Type){
 							  .kind = KIND_ARRAY,
 							  .size = 0,
@@ -92,15 +92,15 @@ Type* new_array(TranslationUnit* tu, Type* base, int count) {
 							  .array_count = 0
 						  });
 	}
-	
+
 	int size = base->size;
 	int align = base->align;
-	
+
 	int dst;
 	if (__builtin_mul_overflow(size, count, &dst)) {
 		assert(0 && "Overflow on new_array with big inputs");
 	}
-	
+
 	assert(align != 0);
 	return alloc_type(tu, &(Type){
 						  .kind = KIND_ARRAY,
@@ -134,63 +134,63 @@ Type* new_blank_type(TranslationUnit* tu) {
 // up the type arena.
 Type* get_common_type(TranslationUnit* tu, Type* ty1, Type* ty2) {
 	if (ty1 == ty2) return ty1;
-	
+
 	// implictly convert arrays into pointers
 	if (ty1->kind == KIND_ARRAY) {
 		return new_pointer(tu, ty1->array_of);
 	}
-	
+
 	// implictly convert functions into function pointers
 	if (ty1->kind == KIND_FUNC) {
 		return new_pointer(tu, ty1);
 	}
-	
+
 	if (ty2->kind == KIND_FUNC) {
 		return new_pointer(tu, ty2);
 	}
-	
+
 	// operations with floats promote up to floats
 	// e.g. 1 + 2.0 = 3.0
 	if (ty1->kind == KIND_DOUBLE || ty2->kind == KIND_DOUBLE)
 		return &builtin_types[TYPE_DOUBLE];
 	if (ty1->kind == KIND_FLOAT || ty2->kind == KIND_FLOAT)
 		return &builtin_types[TYPE_FLOAT];
-	
+
 	// promote any small integral types into ints
 	if (ty1->size < 4) ty1 = &builtin_types[TYPE_INT];
 	if (ty2->size < 4) ty2 = &builtin_types[TYPE_INT];
-	
+
 	// if the types don't match pick the bigger one
 	if (ty1->size != ty2->size) return (ty1->size < ty2->size) ? ty2 : ty1;
-	
+
 	// unsigned types are preferred
 	if (ty2->kind >= KIND_CHAR && ty2->kind <= KIND_LONG && ty2->is_unsigned) return ty2;
-	
+
 	return ty1;
 }
 
 bool type_equal(TranslationUnit* tu, Type* ty1, Type* ty2) {
 	if (ty1 == ty2) return true;
-	
+
 	// just because they match kind doesn't necessarily
 	// mean they're equivalent but if they don't match
 	// then it means they definetely aren't the same.
 	if (ty1->kind != ty2->kind) return false;
-	
+
 	if (ty1->kind == KIND_FUNC) {
 		// match parameters count
 		size_t param_count1 = ty1->func.param_count;
 		size_t param_count2 = ty2->func.param_count;
-		
+
 		// if there's no params on it then just pretend like it matches
 		// it helps get stuff like FARPROC to compile properly
 		if (param_count1 == 0 || param_count2 == 0) return true;
-		
+
 		if (param_count1 != param_count2) return false;
-		
+
 		// match var args
 		if (ty1->func.has_varargs != ty2->func.has_varargs) return false;
-		
+
 		// match paramaeters exactly
 		Param* param_list1 = ty1->func.param_list;
 		Param* param_list2 = ty2->func.param_list;
@@ -199,43 +199,49 @@ bool type_equal(TranslationUnit* tu, Type* ty1, Type* ty2) {
 				return false;
 			}
 		}
-		
+
 		return true;
 	} else if (ty1->kind == KIND_PTR) {
 		return type_equal(tu, ty1->ptr_to, ty2->ptr_to);
 	}
-	
+
 	// but by default kind matching is enough
 	// like for integers, booleans and floats
 	return true;
 }
 
 size_t type_as_string(TranslationUnit* tu, size_t max_len, char* buffer, Type* type) {
+	if (type == NULL) {
+		size_t i = cstr_copy(max_len, buffer, "(null)");
+		buffer[i] = '\0';
+		return i;
+	}
+
 	size_t i = 0;
 	switch (type->kind) {
 		case KIND_VOID:  i += cstr_copy(max_len - i, &buffer[i], "void"); break;
 		case KIND_BOOL:  i += cstr_copy(max_len - i, &buffer[i], "_Bool"); break;
 		case KIND_CHAR: {
 			if (type->is_unsigned) i += cstr_copy(max_len - i, &buffer[i], "unsigned ");
-			
-			i += cstr_copy(max_len - i, &buffer[i], "char"); 
+
+			i += cstr_copy(max_len - i, &buffer[i], "char");
 			break;
 		}
 		case KIND_SHORT: {
 			if (type->is_unsigned) i += cstr_copy(max_len - i, &buffer[i], "unsigned ");
-			
-			i += cstr_copy(max_len - i, &buffer[i], "short"); 
+
+			i += cstr_copy(max_len - i, &buffer[i], "short");
 			break;
 		}
 		case KIND_INT: {
 			if (type->is_unsigned) i += cstr_copy(max_len - i, &buffer[i], "unsigned ");
-			
-			i += cstr_copy(max_len - i, &buffer[i], "int"); 
+
+			i += cstr_copy(max_len - i, &buffer[i], "int");
 			break;
 		}
 		case KIND_LONG: {
 			if (type->is_unsigned) i += cstr_copy(max_len - i, &buffer[i], "unsigned ");
-			
+
 			i += cstr_copy(max_len - i, &buffer[i], settings.is_windows_long ? "long long" : "long");
 			break;
 		}
@@ -243,7 +249,7 @@ size_t type_as_string(TranslationUnit* tu, size_t max_len, char* buffer, Type* t
 		case KIND_DOUBLE: i += cstr_copy(max_len - i, &buffer[i], "double"); break;
 		case KIND_ENUM: {
 			i += cstr_copy(max_len - i, &buffer[i], "enum ");
-			
+
 			if (type->enumerator.name) {
 				i += cstr_copy(max_len - i, &buffer[i], (char*)type->enumerator.name);
 			} else {
@@ -253,7 +259,7 @@ size_t type_as_string(TranslationUnit* tu, size_t max_len, char* buffer, Type* t
 		}
 		case KIND_UNION: {
 			i += cstr_copy(max_len - i, &buffer[i], "union ");
-			
+
 			if (type->record.name) {
 				i += cstr_copy(max_len - i, &buffer[i], (char*)type->record.name);
 			} else {
@@ -263,7 +269,7 @@ size_t type_as_string(TranslationUnit* tu, size_t max_len, char* buffer, Type* t
 		}
 		case KIND_STRUCT: {
 			i += cstr_copy(max_len - i, &buffer[i], "struct ");
-			
+
 			if (type->record.name) {
 				i += cstr_copy(max_len - i, &buffer[i], (char*)type->record.name);
 			} else {
@@ -278,12 +284,12 @@ size_t type_as_string(TranslationUnit* tu, size_t max_len, char* buffer, Type* t
 		}
 		case KIND_ARRAY: {
 			i += type_as_string(tu, max_len - i, &buffer[i], type->array_of);
-			
+
 			if (i+12 < max_len) {
 				buffer[i++] = '[';
-				
+
 				i += snprintf(&buffer[i], max_len - i, "%d", type->array_count);
-				
+
 				buffer[i++] = ']';
 			} else {
 				abort();
@@ -293,18 +299,18 @@ size_t type_as_string(TranslationUnit* tu, size_t max_len, char* buffer, Type* t
 		case KIND_FUNC: {
 			Param* param_list = type->func.param_list;
 			size_t param_count = type->func.param_count;
-			
+
 			i += type_as_string(tu, max_len - i, &buffer[i], type->func.return_type);
-			
+
 			assert(i < max_len);
 			buffer[i++] = '(';
-			
+
 			for (size_t j = 0; j < param_count; j++) {
 				if (j) buffer[i++] = ',';
-				
+
 				i += type_as_string(tu, max_len - i, &buffer[i], param_list[j].type);
 			}
-			
+
 			assert(i < max_len);
 			buffer[i++] = ')';
 			break;
@@ -316,7 +322,7 @@ size_t type_as_string(TranslationUnit* tu, size_t max_len, char* buffer, Type* t
 		}
 		default: abort();
 	}
-	
+
 	buffer[i] = '\0';
 	return i;
 }

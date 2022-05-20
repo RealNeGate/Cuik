@@ -58,5 +58,10 @@ static inline __m128 _mm_min_ps(__m128 a, __m128 b) { return __builtin_ia32_minp
 static inline __m128 _mm_max_ss(__m128 a, __m128 b) { return __builtin_ia32_maxss(a, b); }
 static inline __m128 _mm_max_ps(__m128 a, __m128 b) { return __builtin_ia32_maxps(a, b); }
 
-static inline __m128 _mm_setr_ps(float __z, float __y, float __x, float __w) { return (__m128){ __z, __y, __x, __w }; }
+static inline __m128 _mm_setr_ps(float z, float y, float x, float w) { return (__m128){ z, y, x, w }; }
 static inline __m128 _mm_setzero_ps(void) { return (__m128){ 0 }; }
+
+// m128i generic ops
+static inline __m128i _mm_loadu_si128(const __m128i* src) { return *src; }
+static inline __m128i _mm_load_si128(const __m128i* src) { return *src; }
+static inline void _mm_store_si128(__m128i* dst, __m128i src) { *dst = src; }

@@ -394,6 +394,13 @@ inline static void builder_compile_cc(BuildMode mode, size_t count, const char* 
 				printf("%s: exited with code %d\n", filepaths[i], code);
 				success = false;
 			}
+		} else {
+			int code = pclose(streams[i]);
+
+			if (code) {
+				printf("%s: exited with code %d\n", filepaths[i], code);
+				success = false;
+			}
 		}
 	}
 

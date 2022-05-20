@@ -12,33 +12,34 @@ typedef enum {
 // it doesn't necessarily need to map to the exact number of stages
 // in the compiler
 typedef enum {
-    STAGE_PREPROC,
-    STAGE_TYPES,
-    STAGE_IR,
-    STAGE_OBJ,
-    STAGE_FINAL,
+	STAGE_PREPROC,
+	STAGE_TYPES,
+	STAGE_IR,
+	STAGE_OBJ,
+	STAGE_FINAL,
 } CompilerStage;
 
 typedef struct CompilerSettings {
 	const char* output_path;
-	
+
 	// this is exclusively used for the fancy
 	// type printing CLI tool
 	const char* hack_type_printer_name;
-    
-    CompilerStage stage_to_stop_at;
-    
-    // basically defines the sizeof(long)
-    // if true it's 4 bytes if not it's 8
-    bool is_windows_long  : 1;
-	bool is_object_only   : 1;
-	bool is_time_report   : 1;
-	bool is_debug_build   : 1;
-	bool is_debug_info    : 1;
-	bool pedantic         : 1;
-	bool optimize         : 1;
-	bool freestanding     : 1;
-	
+
+	CompilerStage stage_to_stop_at;
+
+	// basically defines the sizeof(long)
+	// if true it's 4 bytes if not it's 8
+	bool is_windows_long      : 1;
+	bool is_object_only       : 1;
+	bool is_time_report       : 1;
+	bool is_debug_build       : 1;
+	bool is_debug_info        : 1;
+	bool pedantic             : 1;
+	bool optimize             : 1;
+	bool freestanding         : 1;
+	bool emit_partial_results : 1;
+
 	atomic_bool using_winmain;
 	int num_of_worker_threads;
 } CompilerSettings;

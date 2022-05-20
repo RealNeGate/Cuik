@@ -78,6 +78,9 @@ typedef struct {
 
 typedef struct {
 	Atom key;
+
+	// lexer_pos is non-zero if the enum value has it's compilation delayed
+	int lexer_pos;
 	int value;
 } EnumEntry;
 
@@ -103,6 +106,7 @@ struct Type {
 	bool is_const : 1;
     bool is_atomic : 1;
 	bool is_incomplete : 1;
+	bool is_inprogress : 1;
 
     union {
         // Integers
@@ -269,6 +273,8 @@ typedef enum ExprOp {
 	EXPR_SUBSCRIPT,
 	EXPR_DOT,
 	EXPR_ARROW,
+	EXPR_DOT_R,
+	EXPR_ARROW_R,
 	EXPR_CALL,
 
 	EXPR_SIZEOF_T, // on type
@@ -329,6 +335,7 @@ struct Stmt {
 		} goto_;
 		struct StmtLabel {
 			Atom name;
+			bool placed;
 		} label;
 		struct StmtCase {
 			int64_t key;
@@ -458,7 +465,7 @@ struct Expr {
 		int param_num;
 
 		struct ExprEnum {
-			int64_t num;
+			int* num;
 			Expr* next_symbol_in_chain;
 		} enum_val;
 		struct {
@@ -492,10 +499,9 @@ struct Expr {
 			Expr* base;
 			uint32_t offset;
 
-			// once the semantic pass runs over the AST
-			// we'll have a Member instead of name
+			// during semantics we'll switch between DOT or ARROW to DOT_R or ARROW_R
+			// which means we use the member field
 			union {
-				// stinky...
 				Member* member;
 				Atom name;
 			};
@@ -571,7 +577,7 @@ typedef struct Symbol {
 		// used if storage_class == STORAGE_PARAM
 		int param_num;
 
-		// used if storage_class == STORAGE_ENUM
+		// used if storage_class == STORAGE_ENUM, refers to an index in the entries table
 		int enum_value;
 
 		Stmt* stmt;

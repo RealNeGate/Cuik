@@ -512,7 +512,11 @@ Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
 			Stmt* restrict sym = e->symbol;
 
 			if (sym->op == STMT_LABEL) {
-				return (e->type = 0);
+				if (!sym->label.placed) {
+					sema_error(sym->loc, "label '%s' is never defined.", sym->label.name);
+				}
+
+				return (e->type = &builtin_types[TYPE_VOID]);
 			} else {
 				Type* type = sym->decl.type;
 
@@ -520,6 +524,8 @@ Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
 					if (type->size == 0 && sym->op == STMT_GLOBAL_DECL) {
 						// try to resolve the type since it's incomplete
 						sema_stmt(tu, sym);
+
+						type = sym->decl.type;
 						assert(type->size != 0 && "Uhh... we fucked up");
 					}
 
@@ -747,10 +753,12 @@ Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
 		case EXPR_ARROW: {
 			uint32_t offset = 0;
 			Member* m = sema_resolve_member_access(tu, e, &offset);
-			if (m) {
+			if (m != NULL) {
 				if (in_the_semantic_phase) {
 					e->dot_arrow.base->cast_type = sema_expr(tu, e->dot_arrow.base);
 
+					// resolved
+					e->op = (e->op == EXPR_DOT ? EXPR_DOT_R : EXPR_ARROW_R);
 					e->dot_arrow.member = m;
 					e->dot_arrow.offset = offset;
 				}
@@ -759,6 +767,13 @@ Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
 			}
 
 			return (e->type = &builtin_types[TYPE_VOID]);
+		}
+		case EXPR_PTRADD:
+		case EXPR_PTRSUB:
+		case EXPR_PTRDIFF:
+		case EXPR_DOT_R:
+		case EXPR_ARROW_R: {
+			return e->type;
 		}
 		case EXPR_LOGICAL_AND:
 		case EXPR_LOGICAL_OR: {

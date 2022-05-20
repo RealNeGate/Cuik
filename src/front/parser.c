@@ -179,6 +179,38 @@ static size_t skip_expression_in_parens(TokenStream* restrict s, TknType* out_te
 	return saved;
 }
 
+// SOMETHING ,
+// SOMETHING }
+//
+// this code sucks btw, idk why i just think it's lowkey ugly
+static size_t skip_expression_in_enum(TokenStream* restrict s, TknType* out_terminator) {
+	size_t saved = s->current;
+
+	// our basic bitch expectations
+	*out_terminator = ',';
+
+	int depth = 1;
+	while (depth) {
+		Token* t = tokens_get(s);
+
+		if (t->type == '\0') {
+			*out_terminator = '\0';
+			break;
+		} else if (t->type == '{') {
+			depth++;
+		} else if (t->type == '}' && depth == 1) {
+			*out_terminator = '}';
+			break;
+		} else if (t->type == ',' && depth == 1) {
+			break;
+		}
+
+		tokens_next(s);
+	}
+
+	return saved;
+}
+
 #include "expr_parser.h"
 #include "decl_parser.h"
 
@@ -210,44 +242,20 @@ static void parse_global_symbols(TranslationUnit* tu, size_t start, size_t end, 
 
 		for (size_t i = start; i < end; i++) {
 			Symbol* sym = &global_symbols[i].value;
-			//printf("SYMBOL: %s %d\n", sym->name, sym->current);
 
-			if (sym->current != 0) {
+			// don't worry about normal globals, those have been taken care of...
+			if (sym->current != 0 &&
+				(sym->storage_class == STORAGE_STATIC_FUNC || sym->storage_class == STORAGE_FUNC)) {
 				// Spin up a mini parser here
 				tokens.current = sym->current;
 
 				// intitialize use list
 				symbol_chain_start = symbol_chain_current = NULL;
 
-				if (sym->storage_class == STORAGE_STATIC_VAR ||
-					sym->storage_class == STORAGE_GLOBAL) {
-					Expr* e;
-					if (tokens_get(&tokens)->type == '@') {
-						// function literals are a Cuik extension
-						// TODO(NeGate): error messages
-						tokens_next(&tokens);
-						e = parse_function_literal(tu, &tokens, sym->type);
-					} else if (tokens_get(&tokens)->type == '{') {
-						tokens_next(&tokens);
-
-						e = parse_initializer(tu, &tokens, NULL);
-					} else {
-						e = parse_expr_l14(tu, &tokens);
-						expect(&tokens, sym->terminator);
-					}
-
-					sym->stmt->decl.initial = e;
-				} else if (sym->storage_class == STORAGE_STATIC_FUNC ||
-						   sym->storage_class == STORAGE_FUNC) {
-					// Some sanity checks in case a local symbol is leaked funny.
-					// they should be isolated
-					assert(local_symbol_start == 0);
-					assert(local_symbol_count == 0);
-
-					parse_function_definition(tu, &tokens, sym->stmt);
-
-					local_symbol_start = local_symbol_count = 0;
-				}
+				// Some sanity checks in case a local symbol is leaked funny.
+				assert(local_symbol_start == 0 && local_symbol_count == 0);
+				parse_function_definition(tu, &tokens, sym->stmt);
+				local_symbol_start = local_symbol_count = 0;
 
 				// finalize use list
 				sym->stmt->decl.first_symbol = symbol_chain_start;
@@ -372,6 +380,12 @@ static void type_resolve_pending_align(TranslationUnit* restrict tu, Type* type)
 
 void type_layout(TranslationUnit* restrict tu, Type* type) {
 	if (type->size != 0) return;
+	if (type->is_inprogress) {
+		report(REPORT_ERROR, &tu->tokens.line_arena[type->loc], "Type has a circular dependency");
+		abort();
+	}
+
+	type->is_inprogress = true;
 
 	if (type->kind == KIND_ARRAY) {
 		if (type->array_count_lexer_pos) {
@@ -380,26 +394,46 @@ void type_layout(TranslationUnit* restrict tu, Type* type) {
 			mini_lex.current = type->array_count_lexer_pos;
 			type->array_count = parse_const_expr(tu, &mini_lex);
 			expect(&mini_lex, ']');
-
-			// layout crap
-			if (type->array_count != 0) {
-				if (type->array_of->size == 0) {
-					type_layout(tu, type->array_of);
-				}
-
-				assert(type->array_of->size > 0);
-				uint64_t result = type->array_of->size * type->array_count;
-
-				// size checks
-				if (result >= INT32_MAX) {
-					report(REPORT_ERROR, &tu->tokens.line_arena[type->loc], "cannot declare an array that exceeds 0x7FFFFFFE bytes (got 0x%zX or %zi)", result, result);
-					abort();
-				}
-
-				type->size = result;
-				type->align = type->array_of->align;
-			}
 		}
+
+		// layout crap
+		if (type->array_count != 0) {
+			if (type->array_of->size == 0) {
+				type_layout(tu, type->array_of);
+			}
+			assert(type->array_of->size > 0);
+		}
+
+		uint64_t result = type->array_of->size * type->array_count;
+
+		// size checks
+		if (result >= INT32_MAX) {
+			report(REPORT_ERROR, &tu->tokens.line_arena[type->loc], "cannot declare an array that exceeds 0x7FFFFFFE bytes (got 0x%zX or %zi)", result, result);
+			abort();
+		}
+
+		type->size = result;
+		type->align = type->array_of->align;
+	} else if (type->kind == KIND_ENUM) {
+		int cursor = 0;
+
+		for (int i = 0; i < type->enumerator.count; i++) {
+			// if the value is undecided, best time to figure it out is now
+			if (type->enumerator.entries[i].lexer_pos != 0) {
+				// Spin up a mini expression parser here
+				TokenStream mini_lex = tu->tokens;
+				mini_lex.current = type->enumerator.entries[i].lexer_pos;
+
+				cursor = parse_const_expr(tu, &mini_lex);
+			}
+
+			type->enumerator.entries[i].value = cursor;
+			cursor += 1;
+		}
+
+		type->size = 4;
+		type->align = 4;
+		type->is_incomplete = false;
 	} else if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
 		bool is_union = (type->kind == KIND_UNION);
 
@@ -472,6 +506,8 @@ void type_layout(TranslationUnit* restrict tu, Type* type) {
 
 		type->is_incomplete = false;
 	}
+
+	type->is_inprogress = false;
 }
 
 void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, threadpool_t* thread_pool) {
@@ -535,10 +571,9 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
                 // must be a declaration since it's a top level statement
                 Attribs attr = { 0 };
                 Type* type = parse_declspec(tu, s, &attr);
-                attr.is_root = !(attr.is_static || attr.is_inline);
 
                 if (attr.is_typedef) {
-                    // declarator (',' declarator)+ ';'
+					// declarator (',' declarator)+ ';'
                     while (true) {
                         Decl decl = parse_declarator(tu, s, type, false, false);
 
@@ -552,6 +587,8 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
                                 .attrs = attr
                             };
 
+							// typedefs can't be roots ngl
+							n->decl.attrs.is_root = false;
                             arrput(tu->top_level_stmts, n);
 
                             // check for collision
@@ -596,7 +633,7 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
                             report(REPORT_ERROR, loc, "declaration list ended with EOF instead of semicolon.");
                             abort();
                         } else if (tokens_get(s)->type == '=') {
-                            report(REPORT_ERROR, loc, "why did you just try that woofy shit wit me. You cannot assign a typedef.");
+                            report(REPORT_ERROR, loc, "why did you just try that goofy shit wit me. You cannot assign a typedef.");
 
                             // error recovery
                         } else if (tokens_get(s)->type == ';') {
@@ -608,48 +645,50 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
                         }
                     }
                 } else {
-                    if (tokens_get(s)->type == ';') {
-                        tokens_next(s);
-                        continue;
-                    }
+					if (tokens_get(s)->type == ';') {
+						tokens_next(s);
+						continue;
+					}
 
-                    // normal variable lists
-                    // declarator (',' declarator )+ ';'
-                    while (true) {
-                        Decl decl = parse_declarator(tu, s, type, false, false);
-                        assert(decl.name);
+					// normal variable lists
+					// declarator (',' declarator )+ ';'
+					while (true) {
+						SourceLoc* decl_loc = &s->line_arena[tokens_get(s)->location];
+						Decl decl = parse_declarator(tu, s, type, false, false);
+						if (decl.name == NULL) {
+							report(REPORT_ERROR, decl_loc, "Declaration has no name");
+							abort();
+						}
 
-                        Stmt* n = make_stmt(tu, s, STMT_GLOBAL_DECL, sizeof(struct StmtDecl));
-                        n->loc = decl.loc;
-                        n->decl = (struct StmtDecl){
-                            .name = decl.name,
-                            .type = decl.type,
-                            .attrs = attr
-                        };
-                        arrput(tu->top_level_stmts, n);
+						Stmt* n = make_stmt(tu, s, STMT_GLOBAL_DECL, sizeof(struct StmtDecl));
+						n->loc = decl.loc;
+						n->decl = (struct StmtDecl){
+							.name = decl.name,
+							.type = decl.type,
+							.attrs = attr
+						};
+						arrput(tu->top_level_stmts, n);
 
-                        // extern variables are forward decls
-                        if (n->decl.attrs.is_extern) {
-                            n->decl.attrs.is_root = false;
-                        }
+						Symbol sym = {
+							.name = decl.name,
+							.type = decl.type,
+							.loc  = decl.loc,
+							.stmt = n
+						};
 
-                        Symbol sym = {
-                            .name = decl.name,
-                            .type = decl.type,
-                            .loc  = decl.loc,
-                            .stmt = n
-                        };
+						Symbol* old_definition = find_global_symbol((const char*) decl.name);
+						if (decl.type->kind == KIND_FUNC) {
+							sym.storage_class = (attr.is_static ? STORAGE_STATIC_FUNC : STORAGE_FUNC);
+						} else {
+							sym.storage_class = (attr.is_static ? STORAGE_STATIC_VAR : STORAGE_GLOBAL);
+						}
 
-                        Symbol* old_definition = find_global_symbol((const char*) decl.name);
-                        if (decl.type->kind == KIND_FUNC) {
-                            sym.storage_class = (attr.is_static ? STORAGE_STATIC_FUNC : STORAGE_FUNC);
-                        } else {
-                            sym.storage_class = (attr.is_static ? STORAGE_STATIC_VAR : STORAGE_GLOBAL);
-                        }
+						bool requires_terminator = true;
+						if (tokens_get(s)->type == '=') {
+							tokens_next(s);
 
-                        bool requires_terminator = true;
-                        if (tokens_get(s)->type == '=') {
-                            tokens_next(s);
+							// variables with definitions can be roots
+							n->decl.attrs.is_root = !(attr.is_static || attr.is_inline);
 
 							if (tokens_get(s)->type == '{') {
 								sym.current = s->current;
@@ -762,8 +801,10 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
 							}
 						}
 
-						// slap that bad boy into the symbol table
-						shput(global_symbols, decl.name, sym);
+						if (decl.name != NULL) {
+							// slap that bad boy into the symbol table
+							shput(global_symbols, decl.name, sym);
+						}
 
 						if (!requires_terminator) {
 							// function bodies just end the declaration list
@@ -828,6 +869,44 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
 		}
 
 		fuck_outta_there:
+		crash_if_reports(REPORT_ERROR);
+
+		// parse all global declarations
+		for (size_t i = 0, count = shlen(global_symbols); i < count; i++) {
+			Symbol* sym = &global_symbols[i].value;
+
+			if (sym->current != 0 &&
+				(sym->storage_class == STORAGE_STATIC_VAR || sym->storage_class == STORAGE_GLOBAL)) {
+				// Spin up a mini parser here
+				TokenStream mini_lex = *s;
+				mini_lex.current = sym->current;
+
+				// intitialize use list
+				symbol_chain_start = symbol_chain_current = NULL;
+
+				Expr* e;
+				if (tokens_get(&mini_lex)->type == '@') {
+					// function literals are a Cuik extension
+					// TODO(NeGate): error messages
+					tokens_next(&mini_lex);
+
+					e = parse_function_literal(tu, &mini_lex, sym->type);
+				} else if (tokens_get(&mini_lex)->type == '{') {
+					tokens_next(&mini_lex);
+
+					e = parse_initializer(tu, &mini_lex, NULL);
+				} else {
+					e = parse_expr_l14(tu, &mini_lex);
+					expect(&mini_lex, sym->terminator);
+				}
+
+				sym->stmt->decl.initial = e;
+
+				// finalize use list
+				sym->stmt->decl.first_symbol = symbol_chain_start;
+			}
+		}
+
 		crash_if_reports(REPORT_ERROR);
 
 		// do record layouts and shi
@@ -1275,7 +1354,6 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
 
 	shfree(global_tags);
 	shfree(global_symbols);
-	shfree(labels);
 }
 
 void translation_unit_deinit(TranslationUnit* tu) {
@@ -1497,6 +1575,34 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 
 		tokens_next(s);
 		Stmt* n = make_stmt(tu, s, STMT_CASE, sizeof(struct StmtCase));
+		Stmt* top = n;
+
+		intmax_t key = parse_const_expr(tu, s);
+		if (tokens_get(s)->type == TOKEN_TRIPLE_DOT) {
+			// GNU extension, case ranges
+			tokens_next(s);
+			intmax_t key_max = parse_const_expr(tu, s);
+			expect(s, ':');
+
+			assert(key_max > key);
+			n->case_.key = key;
+
+			for (intmax_t i = key; i < key_max; i++) {
+				Stmt* curr = make_stmt(tu, s, STMT_CASE, sizeof(struct StmtCase));
+				curr->case_ = (struct StmtCase){ .key = i+1 };
+
+				// Append to list
+				n->case_.next = curr;
+				n->case_.body = curr;
+				n = curr;
+			}
+		} else {
+			expect(s, ':');
+
+			n->case_ = (struct StmtCase){
+				.key = key, .body = 0, .next = 0
+			};
+		}
 
 		switch (current_switch_or_case->op) {
 			case STMT_CASE:    current_switch_or_case->case_.next    = n; break;
@@ -1506,16 +1612,9 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 		}
 		current_switch_or_case = n;
 
-		intmax_t key = parse_const_expr(tu, s);
-		expect(s, ':');
-
-		n->case_ = (struct StmtCase){
-			.key = key, .body = 0, .next = 0
-		};
-
 		Stmt* body = parse_stmt_or_expr(tu, s);
 		n->case_.body = body;
-		return n;
+		return top;
 	} else if (peek == TOKEN_KW_default) {
 		// TODO(NeGate): error messages
 		assert(current_switch_or_case);
@@ -1709,10 +1808,44 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 		return n;
 	} else if (peek == TOKEN_KW_goto) {
 		tokens_next(s);
-
 		Stmt* n = make_stmt(tu, s, STMT_GOTO, sizeof(struct StmtGoto));
 
-		Expr* target = parse_expr(tu, s);
+		// read label name
+		Token* t = tokens_get(s);
+		SourceLocIndex loc = t->location;
+		if (t->type != TOKEN_IDENTIFIER) {
+			report(REPORT_ERROR, &s->line_arena[loc], "expected identifier for goto target name");
+			return n;
+		}
+
+		Atom name = atoms_put(t->end - t->start, t->start);
+
+		// skip to the semicolon
+		tokens_next(s);
+
+		Expr* target = make_expr(tu);
+		ptrdiff_t search = shgeti(labels, name);
+		if (search >= 0) {
+			*target = (Expr) {
+				.op = EXPR_SYMBOL,
+				.loc = loc,
+				.symbol = labels[search].value
+			};
+		} else {
+			// not defined yet, make a placeholder
+			Stmt* label_decl = make_stmt(tu, s, STMT_LABEL, sizeof(struct StmtLabel));
+			label_decl->label = (struct StmtLabel){
+				.name = name
+			};
+			shput(labels, name, label_decl);
+
+			*target = (Expr) {
+				.op = EXPR_SYMBOL,
+				.loc = loc,
+				.symbol = label_decl
+			};
+		}
+
 		n->goto_ = (struct StmtGoto){
 			.target = target
 		};
@@ -1725,11 +1858,19 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 		Token* t = tokens_get(s);
 		Atom name = atoms_put(t->end - t->start, t->start);
 
-		Stmt* n = make_stmt(tu, s, STMT_LABEL, sizeof(struct StmtLabel));
-		n->label = (struct StmtLabel){
-			.name = name
-		};
-		shput(labels, name, n);
+		Stmt* n = NULL;
+		ptrdiff_t search = shgeti(labels, name);
+		if (search >= 0) {
+			n = labels[search].value;
+		} else {
+			n = make_stmt(tu, s, STMT_LABEL, sizeof(struct StmtLabel));
+			n->label = (struct StmtLabel){
+				.name = name
+			};
+			shput(labels, name, n);
+		}
+
+		n->label.placed = true;
 
 		tokens_next(s);
 		tokens_next(s);

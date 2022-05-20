@@ -134,7 +134,11 @@ ConstValue const_eval(TranslationUnit* tu, const Expr* e) {
 		}
 
 		case EXPR_ENUM: {
-			return signed_const(e->enum_val.num);
+			/*if (e->type->size == 0) {
+				type_layout(tu, e->type);
+			}*/
+
+			return signed_const(*e->enum_val.num);
 		}
 
 		case EXPR_CHAR:

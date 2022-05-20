@@ -223,7 +223,8 @@ static Expr* parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
 				*e = (Expr) {
 					.op = EXPR_ENUM,
 					.loc = loc,
-					.enum_val = { sym->enum_value }
+					.type = sym->type,
+					.enum_val = { &sym->type->enumerator.entries[sym->enum_value].value }
 				};
 			} else {
 				assert(sym->stmt != NULL);
@@ -238,58 +239,50 @@ static Expr* parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
 			Token* t = tokens_get(s);
 			Atom name = atoms_put(t->end - t->start, t->start);
 
-			ptrdiff_t search = shgeti(labels, name);
-			if (search >= 0) {
+#if OUT_OF_ORDER_CRAP
+			// check if it's builtin
+			ptrdiff_t temp;
+			ptrdiff_t builtin_search = shgeti_ts(target_desc.builtin_func_map, name, temp);
+			if (builtin_search >= 0) {
 				*e = (Expr) {
-					.op = EXPR_SYMBOL,
+					.op = EXPR_BUILTIN_SYMBOL,
 					.loc = loc,
-					.symbol = labels[search].value
+					.builtin_sym = { name }
 				};
 			} else {
-#if OUT_OF_ORDER_CRAP
-				// check if it's builtin
-				ptrdiff_t temp;
-				ptrdiff_t builtin_search = shgeti_ts(target_desc.builtin_func_map, name, temp);
-				if (builtin_search >= 0) {
-					*e = (Expr) {
-						.op = EXPR_BUILTIN_SYMBOL,
-						.loc = loc,
-						.builtin_sym = { name }
-					};
-				} else {
-					Symbol* symbol_search = find_global_symbol((const char*) name);
-					if (symbol_search != NULL) {
-						if (symbol_search->storage_class == STORAGE_ENUM) {
-							*e = (Expr) {
-								.op = EXPR_ENUM,
-								.loc = loc,
-								.enum_val = { symbol_search->enum_value }
-							};
-						} else {
-							*e = (Expr) {
-								.op = EXPR_SYMBOL,
-								.loc = loc,
-								.symbol = symbol_search->stmt
-							};
-						}
-					} else {
-						report(REPORT_ERROR, &s->line_arena[loc], "could not resolve symbol: %s", name);
-
+				Symbol* symbol_search = find_global_symbol((const char*) name);
+				if (symbol_search != NULL) {
+					if (symbol_search->storage_class == STORAGE_ENUM) {
 						*e = (Expr) {
-							.op = EXPR_UNKNOWN_SYMBOL,
+							.op = EXPR_ENUM,
 							.loc = loc,
-							.unknown_sym = name
+							.type = symbol_search->type,
+							.enum_val = { &symbol_search->type->enumerator.entries[symbol_search->enum_value].value }
+						};
+					} else {
+						*e = (Expr) {
+							.op = EXPR_SYMBOL,
+							.loc = loc,
+							.symbol = symbol_search->stmt
 						};
 					}
+				} else {
+					report(REPORT_ERROR, &s->line_arena[loc], "could not resolve symbol: %s", name);
+
+					*e = (Expr) {
+						.op = EXPR_UNKNOWN_SYMBOL,
+						.loc = loc,
+						.unknown_sym = name
+					};
 				}
-#else
-				*e = (Expr) {
-					.op = EXPR_UNKNOWN_SYMBOL,
-					.loc = loc,
-					.unknown_sym = name
-				};
-#endif
 			}
+#else
+			*e = (Expr) {
+				.op = EXPR_UNKNOWN_SYMBOL,
+				.loc = loc,
+				.unknown_sym = name
+			};
+#endif
 		}
 
 		// unknown symbols, symbols and enumerator entries participate in the

@@ -192,7 +192,7 @@ void try_compile(const char* path) {
 	char cmd[1024];
 
 	// Compile
-	snprintf(cmd, 1024, "cuik --stage obj build %s.c", path);
+	snprintf(cmd, 1024, "cuik build --stage obj %s.c", path);
 	code = system(cmd);
 	if (code != 0) {
 		printf("Fail to compile! (code: %d)\n", code);
@@ -289,7 +289,7 @@ int main(int argc, char** argv) {
 			char cmd[1024];
 			for (size_t i = 0; i < INPUT_FILE_COUNT; i++) {
 				if (str_ends_with(INPUT_FILES[i], ".c")) {
-					snprintf(cmd, 1024, "cuik -o build/%s -I src/ --threads 1 --stage obj build %s", INPUT_FILES[i], INPUT_FILES[i]);
+					snprintf(cmd, 1024, "cuik build -o build/%s -I src/ --threads 1 --stage types %s", INPUT_FILES[i], INPUT_FILES[i]);
 
 					if (system(cmd) == 0) {
 						printf("Success with %s!\n", INPUT_FILES[i]);
