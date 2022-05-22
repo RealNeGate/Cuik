@@ -49,6 +49,10 @@
 #include <dirent.h>
 #include <errno.h>
 
+#ifdef __APPLE__
+#define PATH_MAX 1024
+#endif
+
 #define SLASH "/"
 
 #define ON_POSIX   1
@@ -151,7 +155,7 @@ inline static void create_dir_if_not_exists(const char* path) {
 }
 #else
 inline static void create_dir_if_not_exists(const char* path) {
-	mkdir(path, 0666);
+	mkdir(path, 0777);
 }
 #endif
 
@@ -349,7 +353,7 @@ inline static void builder_compile_cc(BuildMode mode, size_t count, const char* 
 		const char* name = str_no_ext(str_filename(input));
 
 		cmd_append(cc_command);
-		cmd_append(" -march=haswell -maes -Werror -Wall -Wno-trigraphs -Wno-unused-function ");
+		cmd_append(" -march=haswell -maes -Werror -Wall -Wno-trigraphs -Wno-unused-function -Wno-missing-declarations ");
 
 		if (RELEASE_BUILD) {
 			cmd_append("-O2 -DNDEBUG ");

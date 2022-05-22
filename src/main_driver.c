@@ -430,7 +430,12 @@ static bool dump_tokens() {
 ////////////////////////////////
 // Entry & CLI
 ////////////////////////////////
+#ifdef __APPLE__
+#define O(string, ...) fprintf(stdout, string "\n", ##__VA_ARGS__)
+#else
 #define O(string, ...) fprintf(stdout, string "\n", __VA_ARGS__)
+#endif
+
 static void print_help(const char* executable_path) {
 	O("Usage: %s [<options>] <command> [<args>]", executable_path ? executable_path : "<unknown>");
 	O("");

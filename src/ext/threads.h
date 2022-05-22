@@ -62,7 +62,7 @@ typedef struct once_flag_t {
 } once_flag;
 #endif
 
-#elif defined(__unix__) || defined(__unix)
+#elif defined(__unix__) || defined(__unix) || defined(__APPLE__)
 #include <pthread.h>
 
 /*---------------------------- macros ----------------------------*/
