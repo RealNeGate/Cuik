@@ -510,6 +510,10 @@ Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
 		}
 		case EXPR_SYMBOL: {
 			Stmt* restrict sym = e->symbol;
+			if (e->is_resolving_symbol) {
+				sema_error(sym->loc, "cycle in symbol", sym->decl.name);
+				return (e->type = &builtin_types[TYPE_VOID]);
+			}
 
 			if (sym->op == STMT_LABEL) {
 				if (!sym->label.placed) {
@@ -522,9 +526,12 @@ Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
 
 				if (type->kind == KIND_ARRAY) {
 					if (type->size == 0 && sym->op == STMT_GLOBAL_DECL) {
+						e->is_resolving_symbol = true;
+
 						// try to resolve the type since it's incomplete
 						sema_stmt(tu, sym);
 
+						e->is_resolving_symbol = false;
 						type = sym->decl.type;
 						assert(type->size != 0 && "Uhh... we fucked up");
 					}

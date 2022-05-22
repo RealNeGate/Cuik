@@ -82,12 +82,23 @@ static char* read_entire_file(const char* file_path) {
 }
 #endif
 
-static bool file_exists(const char *filename) {
+static bool file_exists(const char* filename) {
+#ifdef _WIN32
+	return GetFileAttributesA(filename) != INVALID_FILE_ATTRIBUTES;
+#else
 	struct stat buffer;
 	return (stat(filename, &buffer) == 0);
+#endif
 }
 
 static void remove_weird_whitespace(size_t len, char* text) {
+#if !USE_INTRIN
+	for (size_t i = 0; i < len; i++) {
+		if (text[i] == '\t') text[i] = ' ';
+		if (text[i] == '\v') text[i] = ' ';
+		if (text[i] == 12)   text[i] = ' ';
+	}
+#else
 	// NOTE(NeGate): This code requires SSE4.1, it's not impossible to make
 	// ARM variants and such but yea.
 	for (size_t i = 0; i < len; i += 16) {
@@ -101,4 +112,5 @@ static void remove_weird_whitespace(size_t len, char* text) {
 		bytes = _mm_blendv_epi8(bytes, _mm_set1_epi8(' '), test_ident);
 		_mm_store_si128((__m128i*) &text[i], bytes);
 	}
+#endif
 }

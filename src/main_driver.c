@@ -239,7 +239,7 @@ static void compile_project(const char* obj_output_path, bool is_multithreaded) 
 
 				if (settings.stage_to_stop_at >= STAGE_OBJ) {
 					dispatch_for_all_ir_functions(codegen_task);
-				} else {
+				} else if (settings.emit_partial_results) {
 					// print optimized IR
 					size_t count = function_count;
 					for (size_t i = 0; i < count; i++) {

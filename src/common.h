@@ -1,6 +1,12 @@
 #pragma once
 #define __STDC_WANT_LIB_EXT1__ 1
 
+#ifdef __CUIKC__
+#define USE_INTRIN 0
+#else
+#define USE_INTRIN 1
+#endif
+
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -11,7 +17,7 @@
 #include <stdarg.h>
 #include "cstrings_are_weird.h"
 
-typedef struct { const unsigned char* data; size_t length; } string; 
+typedef struct { const unsigned char* data; size_t length; } string;
 
 #define KILOBYTES(x) ((x) << 10ull)
 #define MEGABYTES(x) ((x) << 20ull)
@@ -55,7 +61,7 @@ inline static size_t cstr_copy(size_t len, char* dst, const char* src) {
 	size_t i = 0;
 	while (src[i]) {
 		assert(i < len);
-		
+
 		dst[i] = src[i];
 		i += 1;
 	}
@@ -79,12 +85,12 @@ typedef char OS_Char;
 // let's provide them
 inline static int sprintf_s(char* buffer, size_t len, const char* format, ...) {
 	if (buffer == NULL || len == 0) return -1;
-	
+
 	va_list args;
 	va_start(args, format);
 	int result = vsnprintf(buffer, len, format, args);
 	va_end(args);
-	
+
 	if (result < 0 && result >= len) {
 		fprintf(stderr, "error: buffer overflow on sprintf_s!\n");
 		abort();

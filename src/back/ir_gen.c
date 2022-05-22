@@ -229,11 +229,13 @@ InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, Sourc
 				Member* member = &kids[i];
 
 				// TODO(NeGate): String interning would be nice
-				if (cstr_equals(node->member_name, member->name)) {
-					pos = i;
-					pos_end = pos + 1;
-					cursor = pos_end;
-					break;
+				if (member->name != NULL) {
+					if (cstr_equals(node->member_name, member->name)) {
+						pos = i;
+						pos_end = pos + 1;
+						cursor = pos_end;
+						break;
+					}
 				}
 			}
 

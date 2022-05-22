@@ -911,6 +911,16 @@ static char unsigned default_seed[16] = {
 };
 
 static uint64_t hash_ident(const unsigned char* at, size_t length) {
+#if !USE_INTRIN
+	uint32_t hash = 0x811c9dc5;
+
+	for (size_t i = 0; i < length; i++) {
+		hash ^= (uint32_t) at[i];
+		hash *= 0x01000193; // 32bit magic shit
+	}
+
+	return hash % MACRO_BUCKET_COUNT;
+#else
 	__m128i hash = _mm_cvtsi64_si128(length);
 	hash = _mm_xor_si128(hash, _mm_loadu_si128((__m128i*)default_seed));
 
@@ -937,6 +947,7 @@ static uint64_t hash_ident(const unsigned char* at, size_t length) {
 	hash = _mm_aesdec_si128(hash, _mm_setzero_si128());
 
 	return ((size_t)_mm_extract_epi32(hash, 0)) % MACRO_BUCKET_COUNT;
+#endif
 }
 
 static bool is_defined(CPP_Context* restrict c, const unsigned char* start, size_t length) {
@@ -947,6 +958,9 @@ static bool is_defined(CPP_Context* restrict c, const unsigned char* start, size
 // 16byte based compare
 // it doesn't need to be aligned but the valid range must be (len + 15) & ~15
 static bool memory_equals16(const unsigned char* src1, const unsigned char* src2, size_t length) {
+#if !USE_INTRIN
+	return memcmp(src1, src2, length) == 0;
+#else
 	size_t i = 0;
 	size_t chunk_count = length / 16;
 	while (chunk_count--) {
@@ -967,6 +981,7 @@ static bool memory_equals16(const unsigned char* src1, const unsigned char* src2
 
 	int compare = _mm_movemask_epi8(_mm_cmpeq_epi8(in1, in2));
 	return compare == 0xFFFF;
+#endif
 }
 
 static bool find_define(CPP_Context* restrict c, size_t* out_index, const unsigned char* start, size_t length) {

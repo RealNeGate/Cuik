@@ -194,6 +194,9 @@ TknType classify_ident(const unsigned char* restrict str, size_t len) {
 	size_t v = values[i];
 
 	// VERIFY
+#if !USE_INTRIN
+	return strcmp(str, keywords[v]) == 0 ? (640 + v) : TOKEN_IDENTIFIER;
+#else
 	__m128i kw128  = _mm_loadu_si128((__m128i*) &keywords[v]);
 	__m128i str128 = _mm_loadu_si128((__m128i*) str);
 
@@ -208,6 +211,7 @@ TknType classify_ident(const unsigned char* restrict str, size_t len) {
 							  _SIDD_UNIT_MASK);
 
 	return result == 16 ? (640 + v) : TOKEN_IDENTIFIER;
+#endif
 }
 
 static int line_counter(size_t len, const unsigned char* str) {
@@ -275,12 +279,17 @@ void lexer_read(Lexer* restrict l) {
 			l->current_line += 1;
             goto redo_lex;
 		} else if (*current == ' ') {
+#if !USE_INTRIN
+			current += 1;
+			goto redo_lex;
+#else
 			// SIMD space skip
 			__m128i chars = _mm_loadu_si128((__m128i *)current);
 			int len = __builtin_ffs(~_mm_movemask_epi8(_mm_cmpeq_epi8(chars, _mm_set1_epi8(' '))));
 
 			current += len - 1;
 			goto redo_lex;
+#endif
 		} else if (*current == '/') {
 			if (current[1] == '/') {
 				do { current++; } while (*current && *current != '\n');
@@ -462,6 +471,15 @@ void lexer_read(Lexer* restrict l) {
 		}
 		case CHAR_CLASS_STRING: {
 			char quote_type = current[-1] == '\'' ? '\'' : '\"';
+
+#if !USE_INTRIN
+			do {
+				if (*current == quote_type && current[-1] == '\\') break;
+				if (*current == '\n') l->current_line += 1;
+
+				current += 1;
+			} while (*current);
+#else
 			__m128i pattern = _mm_set1_epi8(quote_type);
 
 			do {
@@ -489,6 +507,7 @@ void lexer_read(Lexer* restrict l) {
 					current += 16;
 				}
 			} while (*current);
+#endif
 
 			l->token_type = quote_type;
 

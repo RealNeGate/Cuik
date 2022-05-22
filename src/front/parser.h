@@ -459,6 +459,9 @@ struct Expr {
 			// analyze used symbols more easily
 			Stmt* symbol;
 			Expr* next_symbol_in_chain;
+
+			// are we currently iterating a symbol with is_resolving_symbol
+			bool  is_resolving_symbol;
 		};
 
 		// EXPR_PARAM
@@ -639,8 +642,6 @@ enum {
 	TYPE_ULONG,
 	TYPE_FLOAT,
 	TYPE_DOUBLE,
-	TYPE_STRING,
-	TYPE_WSTRING,
 	BUILTIN_TYPE_COUNT,
 };
 extern Type builtin_types[BUILTIN_TYPE_COUNT];

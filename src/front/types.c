@@ -17,10 +17,7 @@ Type builtin_types[] = {
 	[TYPE_ULONG]  = { KIND_LONG, 8, 8, .is_unsigned = true },
 	// floats
 	[TYPE_FLOAT]  = { KIND_FLOAT, 4, 4 },
-	[TYPE_DOUBLE] = { KIND_DOUBLE, 8, 8 },
-	// strings
-	[TYPE_STRING]  = { KIND_PTR, 8, 8, .ptr_to = &builtin_types[TYPE_CHAR] },
-	[TYPE_WSTRING] = { KIND_PTR, 8, 8, .ptr_to = &builtin_types[TYPE_SHORT] }
+	[TYPE_DOUBLE] = { KIND_DOUBLE, 8, 8 }
 };
 
 static Type* alloc_type(TranslationUnit* tu, const Type* src) {

@@ -280,7 +280,7 @@ int main(int argc, char** argv) {
 			delete_crap_in_dir("tests"SLASH"the_increment"SLASH"iso"SLASH);
 			delete_crap_in_dir("tests"SLASH"the_increment"SLASH"cuik"SLASH);
 			delete_crap_in_dir("tests"SLASH"the_increment"SLASH"inria"SLASH);
-		} else {
+		} else if (strcmp(argv[1], "self") == 0) {
 			printf("\n\n\n");
 			printf("Running phase 1 self-host tests...\n");
 
@@ -290,6 +290,27 @@ int main(int argc, char** argv) {
 			for (size_t i = 0; i < INPUT_FILE_COUNT; i++) {
 				if (str_ends_with(INPUT_FILES[i], ".c")) {
 					snprintf(cmd, 1024, "cuik build -o build/%s -I src/ --threads 1 --stage types %s", INPUT_FILES[i], INPUT_FILES[i]);
+
+					if (system(cmd) == 0) {
+						printf("Success with %s!\n", INPUT_FILES[i]);
+						successes++;
+					} else {
+						printf("`-Failure with %s!\n\n", INPUT_FILES[i]);
+					}
+				}
+			}
+
+			printf("===============   Tests (%d succeeded out of %d)   ===============\n", successes, INPUT_FILE_COUNT);
+		} else if (strcmp(argv[1], "self2") == 0) {
+			printf("\n\n\n");
+			printf("Running phase 2 self-host tests...\n");
+
+			int successes = 0;
+
+			char cmd[1024];
+			for (size_t i = 0; i < INPUT_FILE_COUNT; i++) {
+				if (str_ends_with(INPUT_FILES[i], ".c")) {
+					snprintf(cmd, 1024, "cuik build -o build/%s -I src/ --threads 1 --stage ir %s", INPUT_FILES[i], INPUT_FILES[i]);
 
 					if (system(cmd) == 0) {
 						printf("Success with %s!\n", INPUT_FILES[i]);
