@@ -149,6 +149,14 @@ static TB_Register cvt2rval(TranslationUnit* tu, TB_Function* func, const IRVal 
 		}
 		case LVALUE_EFUNC: {
 			reg = tb_inst_get_extern_address(func, v.ext);
+
+			// Implicit array to pointer
+			if (src->kind == KIND_ARRAY) {
+				// just pass the address don't load
+				src = e->cast_type;
+			} else {
+				reg = tb_inst_load(func, ctype_to_tbtype(src), reg, src->align);
+			}
 			break;
 		}
 		default: abort();
@@ -1918,18 +1926,20 @@ static void gen_func_body(TranslationUnit* tu, Type* type, Stmt* restrict s) {
 
 	if (!settings.optimize) {
 		if (settings.stage_to_stop_at == STAGE_IR) {
-			if (mtx_lock(&emit_ir_mutex) != thrd_success) {
-				printf("internal compiler error: mtx_lock(...) failure!");
-				abort();
-			}
+			if (settings.emit_partial_results) {
+				if (mtx_lock(&emit_ir_mutex) != thrd_success) {
+					printf("internal compiler error: mtx_lock(...) failure!");
+					abort();
+				}
 
-			tb_function_print(func, tb_default_print_callback, stdout);
-			fprintf(stdout, "\n\n");
-			fflush(stdout);
+				tb_function_print(func, tb_default_print_callback, stdout);
+				fprintf(stdout, "\n\n");
+				fflush(stdout);
 
-			if (mtx_unlock(&emit_ir_mutex) != thrd_success) {
-				printf("internal compiler error: mtx_unlock(...) failure!");
-				abort();
+				if (mtx_unlock(&emit_ir_mutex) != thrd_success) {
+					printf("internal compiler error: mtx_unlock(...) failure!");
+					abort();
+				}
 			}
 		} else {
 			tb_module_compile_func(mod, func, TB_ISEL_FAST);
