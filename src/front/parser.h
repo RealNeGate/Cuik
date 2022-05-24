@@ -410,6 +410,12 @@ typedef struct InitNode {
 	// are expected to find an expression
 	// here.
 	int kids_count;
+
+	// Fully resolved members with a kid_count of 0 will have
+	// a proper offset and type after the type checking
+	uint32_t offset;
+	Type* type;
+
 	Expr* expr;
 	InitNodeDesignator mode;
 	union {

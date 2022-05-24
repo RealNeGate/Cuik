@@ -297,6 +297,9 @@ int main(int argc, char** argv) {
 					} else {
 						printf("`-Failure with %s!\n\n", INPUT_FILES[i]);
 					}
+				} else {
+					printf("not a C file but sure! %s\n", INPUT_FILES[i]);
+					successes++;
 				}
 			}
 
@@ -318,11 +321,15 @@ int main(int argc, char** argv) {
 					} else {
 						printf("`-Failure with %s!\n\n", INPUT_FILES[i]);
 					}
+				} else {
+					printf("not a C file but sure! %s\n", INPUT_FILES[i]);
+					successes++;
 				}
 			}
 
 			printf("===============   Tests (%d succeeded out of %d)   ===============\n", successes, INPUT_FILE_COUNT);
 		}
 	}
+
 	return 0;
 }

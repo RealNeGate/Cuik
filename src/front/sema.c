@@ -68,6 +68,11 @@ bool type_very_compatible(TranslationUnit* tu, Type* src, Type* dst) {
 bool type_compatible(TranslationUnit* tu, Type* src, Type* dst, Expr* a_expr) {
 	if (src == dst) return true;
 
+	// zero can convert into whatever
+	if (a_expr->op == EXPR_INT && a_expr->int_num.num == 0) {
+		return true;
+	}
+
 	// implictly convert arrays into pointers
 	if (src->kind == KIND_ARRAY) {
 		src = new_pointer(tu, src->array_of);
@@ -124,6 +129,10 @@ bool type_compatible(TranslationUnit* tu, Type* src, Type* dst, Expr* a_expr) {
 	}
 
 	if (src->kind == KIND_FUNC) {
+		if (dst->kind == KIND_PTR && dst->ptr_to->kind == KIND_FUNC) {
+			dst = dst->ptr_to;
+		}
+
 		return type_equal(tu, src, dst);
 	} else if (dst->kind == KIND_PTR) {
 		// void* -> T* is fine
@@ -144,14 +153,195 @@ bool type_compatible(TranslationUnit* tu, Type* src, Type* dst, Expr* a_expr) {
 	return true;
 }
 
-static InitNode* walk_initializer_for_sema(TranslationUnit* tu, int node_count, InitNode* node) {
+typedef struct {
+	Member* member;
+	int index;
+	int offset;
+} InitSearchResult;
+
+// this figures out how many members are in one initializer's namespace
+//   struct Foo {
+//     struct {
+//       int a, b;
+//     };
+//     int c;
+//   };
+//
+// Foo would return 3 while
+//   int a[6]
+//
+// would be 6 and scalars are just 1
+static int compute_initializer_bounds(Type* type) {
+	// Identify boundaries:
+	//   Scalar types are 1
+	//   Records depend on the member count
+	//   Arrays are based on array count
+	switch (type->kind) {
+		case KIND_UNION: case KIND_STRUCT: {
+			size_t bounds = 0;
+
+			Member* kids = type->record.kids;
+			size_t count = type->record.kid_count;
+
+			// it should never be less than the original size since records
+			// can't be empty
+			bounds += count;
+
+			for (size_t i = 0; i < count; i++) {
+				Member* member = &kids[i];
+
+				// unnamed members can be used
+				if (member->name == NULL &&
+					(member->type->kind == KIND_STRUCT || member->type->kind == KIND_UNION)) {
+					bounds += compute_initializer_bounds(member->type)-1;
+				}
+			}
+
+			return bounds;
+		}
+
+		case KIND_ARRAY: return type->array_count;
+
+		default: return 1;
+	}
+}
+
+static InitSearchResult find_member_by_name(Type* type, const unsigned char* name, int* base_index, int offset) {
+	Member* kids = type->record.kids;
+	size_t count = type->record.kid_count;
+
+	for (size_t i = 0; i < count; i++) {
+		Member* member = &kids[i];
+
+		// TODO(NeGate): String interning would be nice
+		if (member->name != NULL) {
+			if (cstr_equals(name, member->name)) {
+				return (InitSearchResult){ member, *base_index + i, offset + member->offset };
+			}
+		} else if (member->type->kind == KIND_STRUCT || member->type->kind == KIND_UNION) {
+			InitSearchResult search = find_member_by_name(member->type, name, base_index, offset + member->offset);
+			if (search.member != NULL) return search;
+		}
+	}
+
+	*base_index += count;
+	return (InitSearchResult){ 0 };
+}
+
+static InitSearchResult get_next_member_in_type(Type* type, int target, int* base_index, int offset) {
+	Member* kids = type->record.kids;
+	size_t count = type->record.kid_count;
+
+	for (size_t i = 0; i < count; i++) {
+		Member* member = &kids[i];
+
+		// TODO(NeGate): String interning would be nice
+		if (member->name != NULL) {
+			int j = *base_index + i;
+
+			if (j == target) {
+				return (InitSearchResult){ member, j, offset + member->offset };
+			}
+		} else {
+			return get_next_member_in_type(type, target, base_index, offset + member->offset);
+		}
+	}
+
+	*base_index += count;
+	return (InitSearchResult){ 0 };
+}
+
+static InitNode* walk_initializer_for_sema(TranslationUnit* tu, Type* type, int node_count, InitNode* node, int base_offset) {
+	int bounds = compute_initializer_bounds(type);
+
+	// Starts at the first node and just keep traversing through any nodes with children.
+	int cursor = 0;
 	for (int i = 0; i < node_count; i++) {
+		int relative_offset = 0;
+
+		Type* child_type = NULL;
+		if (node->mode == INIT_MEMBER) {
+			if (type->kind != KIND_STRUCT && type->kind != KIND_UNION) {
+				abort();
+			}
+
+			int index = 0;
+			InitSearchResult search = find_member_by_name(type, node->member_name, &index, 0);
+			if (search.member == NULL) {
+				abort();
+			}
+
+			child_type = search.member->type;
+			assert(child_type->size != 0);
+
+			relative_offset = search.offset;
+			cursor = search.index + 1;
+		} else if (node->mode == INIT_ARRAY) {
+			if (type->kind != KIND_ARRAY) {
+				abort();
+			}
+
+			child_type = type->array_of;
+			assert(child_type->size != 0);
+
+			relative_offset = node->start * child_type->size;
+			cursor = node->start + node->count;
+		} else {
+			// if it's a record then find the next member via weird tree walking
+			// everything else is trivial
+			if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
+				if (cursor >= bounds) {
+					abort();
+				}
+
+				int index = 0;
+				InitSearchResult search = get_next_member_in_type(type, cursor, &index, 0);
+				if (search.member == NULL) {
+					abort();
+				}
+
+				child_type = search.member->type;
+				assert(child_type->size != 0);
+
+				relative_offset = search.offset;
+				cursor = search.index + 1;
+			} else if (type->kind == KIND_ARRAY) {
+				if (type->size != 0 && cursor >= bounds) {
+					abort();
+				}
+
+				child_type = type->array_of;
+				relative_offset = cursor * child_type->size;
+				cursor += 1;
+			} else {
+				if (cursor >= bounds) {
+					abort();
+				}
+
+				child_type = type;
+				relative_offset = 0;
+				cursor += 1;
+			}
+		}
+
 		if (node->kids_count == 0) {
-			sema_expr(tu, node->expr);
+			Type* expr_type = sema_expr(tu, node->expr);
+
+			if (!type_compatible(tu, expr_type, child_type, node->expr)) {
+				type_as_string(tu, sizeof(temp_string0), temp_string0, expr_type);
+				type_as_string(tu, sizeof(temp_string1), temp_string1, child_type);
+
+				sema_error(node->expr->loc, "Could not implicitly convert type %s into %s.", temp_string0, temp_string1);
+				abort();
+			}
+
+			// place fully resolved type and offset
+			node->offset = base_offset + relative_offset;
+			node->type   = child_type;
 
 			node += 1;
 		} else {
-			node = walk_initializer_for_sema(tu, node->kids_count, node + 1);
+			node = walk_initializer_for_sema(tu, child_type, node->kids_count, node + 1, base_offset + relative_offset);
 		}
 	}
 
@@ -474,7 +664,7 @@ Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
 				}
 			}
 
-			walk_initializer_for_sema(tu, e->init.count, e->init.nodes);
+			walk_initializer_for_sema(tu, type, e->init.count, e->init.nodes, 0);
 			return (e->type = e->init.type);
 		}
 		case EXPR_LOGICAL_NOT: {
@@ -644,6 +834,8 @@ Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
 				int arg_count = e->call.param_count;
 
 				Type* ty = target_desc.type_check_builtin(tu, e->loc, name, arg_count, args);
+				if (ty == NULL) ty = &builtin_types[TYPE_VOID];
+
 				return (e->type = ty);
 			}
 

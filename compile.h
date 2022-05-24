@@ -371,11 +371,19 @@ inline static void builder_compile_cc(BuildMode mode, size_t count, const char* 
 		cmd_append("-c -o build");
 		cmd_append(name);
 
+#ifdef NO_DEBUG_INFO
+		if (ON_WINDOWS) {
+			cmd_append(".obj -D_CRT_SECURE_NO_WARNINGS ");
+		} else {
+			cmd_append(".o ");
+		}
+#else
 		if (ON_WINDOWS) {
 			cmd_append(".obj -D_CRT_SECURE_NO_WARNINGS -g -gcodeview ");
 		} else {
 			cmd_append(".o -g ");
 		}
+#endif
 
 		cmd_append(filepaths[i]);
 		streams[i] = cmd_run();
@@ -417,7 +425,11 @@ inline static void builder_compile_cc(BuildMode mode, size_t count, const char* 
 	if (mode == BUILD_MODE_EXECUTABLE) {
 		if (ON_CLANG) {
 			// Link with clang instead so it's easier
-			cmd_append("clang -g -fuse-ld=lld -o ");
+			cmd_append("clang ");
+#ifndef NO_DEBUG_INFO
+			cmd_append("-g ");
+#endif
+			cmd_append("-fuse-ld=lld -o ");
 			cmd_append(output_path);
 			if (ON_WINDOWS) cmd_append(".exe");
 			cmd_append(" ");

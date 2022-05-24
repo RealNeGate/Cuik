@@ -20,7 +20,7 @@
 #define ATOMIC_POINTER_LOCK_FREE    __CUIK_ATOMIC_POINTER_LOCK_FREE
 
 // 7.17.2 Initialization
-#define atomic_init(obj, value) (*(obj) = (value)) 
+#define atomic_init(obj, value) (*(obj) = (value))
 // this has actually been deprecated
 #define ATOMIC_VAR_INIT(value)
 
@@ -117,7 +117,6 @@ typedef struct atomic_flag { atomic_bool _Value; } atomic_flag;
 
 #define ATOMIC_FLAG_INIT { 0 }
 
-// These should be provided by the libc implementation.
 #define atomic_flag_test_and_set(object) __c11_atomic_exchange(&(object)->_Value, 1, memory_order_seq_cst)
 #define atomic_flag_test_and_set_explicit(object, order) __c11_atomic_exchange(&(object)->_Value, 1, order)
 

@@ -176,7 +176,18 @@ TB_Register irgen_as_lvalue(TranslationUnit* tu, TB_Function* func, Expr* e) {
 	if (v.value_type == LVALUE) return v.reg;
 	else if (v.value_type == LVALUE_EFUNC) return tb_inst_get_extern_address(func, v.ext);
 	else if (v.value_type == LVALUE_FUNC) return tb_inst_get_func_address(func, v.func);
-	else abort();
+	else if (v.value_type == RVALUE) {
+		// spawn a lil temporary
+		TB_CharUnits size = v.type->size;
+		TB_CharUnits align = v.type->align;
+		TB_DataType dt = tb_function_get_node(func, v.reg)->dt;
+
+		TB_Reg temporary = tb_inst_local(func, size, align);
+		tb_inst_store(func, dt, temporary, v.reg, align);
+		return temporary;
+	} else {
+		abort();
+	}
 }
 
 InitNode* count_max_tb_init_objects(int node_count, InitNode* node, int* out_count) {
@@ -195,110 +206,14 @@ InitNode* count_max_tb_init_objects(int node_count, InitNode* node, int* out_cou
 // TODO(NeGate): Revisit this code as a smarter man...
 // if the addr is 0 then we only apply constant initializers.
 // func doesn't need to be non-NULL if it's addr is NULL.
-InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, SourceLocIndex loc, TB_InitializerID init, TB_Register addr, Type* type, int node_count, InitNode* node, int offset) {
-	// Identify boundaries:
-	//   Scalar types are 1
-	//   Records depend on the member count
-	//   Arrays are based on array count
-	int bounds;
-	{
-		switch (type->kind) {
-			case KIND_ARRAY:
-			bounds = type->array_count;
-			break;
-
-			case KIND_UNION: case KIND_STRUCT:
-			bounds = type->record.kid_count;
-			break;
-
-			default:
-			bounds = 1;
-			break;
-		}
-	}
-
-	// Starts at the first node and just keep traversing through any nodes with children.
-	int cursor = 0;
+InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, SourceLocIndex loc, TB_InitializerID init, TB_Register addr, int node_count, InitNode* node) {
 	for (int i = 0; i < node_count; i++) {
-		// if there's no designator then the cursor
-		// just keeps incrementing
-		int pos, pos_end;
-		if (node->mode == INIT_MEMBER) {
-			if (type->kind != KIND_STRUCT && type->kind != KIND_UNION) {
-				internal_error("Cannot get the member of a non-record type.");
-			}
-
-			pos = pos_end = -1;
-
-			Member* kids = type->record.kids;
-			size_t count = type->record.kid_count;
-
-			for (size_t i = 0; i < count; i++) {
-				Member* member = &kids[i];
-
-				// TODO(NeGate): String interning would be nice
-				if (member->name != NULL) {
-					if (cstr_equals(node->member_name, member->name)) {
-						pos = i;
-						pos_end = pos + 1;
-						cursor = pos_end;
-						break;
-					}
-				}
-			}
-
-			if (pos < 0) {
-				internal_error("Could not find member under that name.");
-			}
-		} else if (node->mode == INIT_ARRAY) {
-			if (type->kind != KIND_ARRAY) {
-				internal_error("Cannot apply array initializer to non-array type.");
-			}
-
-			pos = node->start;
-			pos_end = node->start + node->count;
-			cursor = pos_end;
-		} else {
-			//if (type->kind != KIND_STRUCT && type->kind != KIND_UNION && type->kind != KIND_ARRAY) {
-			//irgen_fatal(loc, "Compound literal with multiple elements must be a struct, union or array.");
-			//}
-
-			pos = cursor;
-			pos_end = cursor + 1;
-			cursor++;
-		}
-
-		// Validate indices
-		if (pos < 0 || pos >= bounds) {
-			internal_error("Initializer out of range, TODO error ugly");
-		} else if (pos_end <= 0 && pos_end > bounds) {
-			internal_error("Initializer out of range, TODO error ugly");
-		}
-
-		// TODO(NeGate): Implement array range initializer
-		if (pos + 1 != pos_end) {
-			internal_error("TODO");
-		}
-
-		// Identify entry type
-		Type* child_type;
-		int relative_offset;
-		if (type->kind == KIND_ARRAY) {
-			child_type = type->array_of;
-			relative_offset = type->array_of->size * pos;
-		} else if (type->kind == KIND_UNION || type->kind == KIND_STRUCT) {
-			child_type = type->record.kids[pos].type;
-			relative_offset = type->record.kids[pos].offset;
-		} else {
-			child_type = type;
-			relative_offset = 0;
-		}
-
 		if (node->kids_count > 0) {
-			node = eval_initializer_objects(tu, func, loc, init, addr,
-											child_type, node->kids_count,
-											node + 1, offset + relative_offset);
+			node = eval_initializer_objects(tu, func, loc, init, addr, node->kids_count, node + 1);
 		} else {
+			Type* child_type = node->type;
+			int offset = node->offset;
+
 			// initialize a value
 			assert(node->expr);
 
@@ -311,10 +226,10 @@ InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, Sourc
 				// TODO(NeGate): Fix it up so that more operations can be
 				// performed at compile time and baked into the initializer
 				if (stmt->op == STMT_GLOBAL_DECL) {
-					tb_initializer_add_global(mod, init, offset + relative_offset, stmt->backing.g);
+					tb_initializer_add_global(mod, init, offset, stmt->backing.g);
 					success = true;
 				} else if (stmt->op == STMT_FUNC_DECL) {
-					tb_initializer_add_function(mod, init, offset + relative_offset, stmt->backing.f);
+					tb_initializer_add_function(mod, init, offset, stmt->backing.f);
 					success = true;
 				}
 			}
@@ -328,7 +243,7 @@ InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, Sourc
 					case EXPR_NEGATE:
 					if (!func) {
 						int size = child_type->size;
-						void* region = tb_initializer_add_region(mod, init, offset + relative_offset, size);
+						void* region = tb_initializer_add_region(mod, init, offset, size);
 
 						ConstValue value = const_eval(tu, node->expr);
 
@@ -358,8 +273,8 @@ InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, Sourc
 							// placing the address calculation here might improve performance or readability
 							// of IR in the debug builds, for release builds it shouldn't matter
 							TB_Register effective_addr;
-							if (offset + relative_offset) {
-								effective_addr = tb_inst_member_access(func, addr, offset + relative_offset);
+							if (offset) {
+								effective_addr = tb_inst_member_access(func, addr, offset);
 							} else {
 								effective_addr = addr;
 							}
@@ -375,8 +290,8 @@ InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, Sourc
 							// placing the address calculation here might improve performance or readability
 							// of IR in the debug builds, for release builds it shouldn't matter
 							TB_Register effective_addr;
-							if (offset + relative_offset) {
-								effective_addr = tb_inst_member_access(func, addr, offset + relative_offset);
+							if (offset) {
+								effective_addr = tb_inst_member_access(func, addr, offset);
 							} else {
 								effective_addr = addr;
 							}
@@ -406,11 +321,11 @@ static void gen_local_initializer(TranslationUnit* tu, TB_Function* func, Source
 												  max_tb_objects);
 
 	// Initialize all const expressions
-	eval_initializer_objects(tu, func, loc, init, TB_NULL_REG, type, node_count, nodes, 0);
+	eval_initializer_objects(tu, func, loc, init, TB_NULL_REG, node_count, nodes);
 	tb_inst_initialize_mem(func, addr, init);
 
 	// Initialize all dynamic expressions
-	eval_initializer_objects(tu, func, loc, init, addr, type, node_count, nodes, 0);
+	eval_initializer_objects(tu, func, loc, init, addr, node_count, nodes);
 }
 
 static TB_InitializerID gen_global_initializer(TranslationUnit* tu, SourceLocIndex loc, Type* type, Expr* initial, const unsigned char* name) {
@@ -451,7 +366,7 @@ static TB_InitializerID gen_global_initializer(TranslationUnit* tu, SourceLocInd
 			TB_InitializerID init = tb_initializer_create(mod, type->size, type->align, max_tb_objects);
 
 			// Initialize all const expressions
-			eval_initializer_objects(tu, NULL, loc, init, TB_NULL_REG, type, node_count, nodes, 0);
+			eval_initializer_objects(tu, NULL, loc, init, TB_NULL_REG, node_count, nodes);
 			return init;
 		} else if (initial->op == EXPR_INT ||
 				   initial->op == EXPR_ENUM ||
@@ -829,7 +744,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
 			}
 
 			// Resolve ABI arg count
-			bool is_aggregate_return = target_desc.pass_return(tu, e->type);
+			bool is_aggregate_return = !target_desc.pass_return_via_reg(tu, e->type);
 			size_t real_arg_count = is_aggregate_return ? 1 : 0;
 
 			for (size_t i = 0; i < arg_count; i++) {
@@ -1871,11 +1786,8 @@ static void gen_func_body(TranslationUnit* tu, Type* type, Stmt* restrict s) {
 
 	//TB_AttributeID old_tb_scope = tb_inst_get_scope(func);
 	//tb_inst_set_scope(func, tb_function_attrib_scope(func, old_tb_scope));
-
-	// mark return value address (if it applies)
-	// and get stack slots for parameters
-	if (return_type->kind == KIND_STRUCT ||
-		return_type->kind == KIND_UNION) {
+	bool is_aggregate_return = !target_desc.pass_return_via_reg(tu, return_type);
+	if (is_aggregate_return) {
 		return_value_address = tb_inst_param_addr(func, 0);
 
 		// gimme stack slots

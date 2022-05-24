@@ -15,7 +15,7 @@ extern atomic_flag irgen_defined_tls_index;
 typedef enum IRValType {
 	RVALUE,
 	RVALUE_PHI,
-	
+
 	LVALUE,
 	LVALUE_BITS,
 	LVALUE_LABEL,
@@ -26,14 +26,14 @@ typedef enum IRValType {
 typedef struct IRVal {
 	IRValType value_type;
 	Type* type;
-	
+
 	union {
 		TB_Register reg;
 		TB_Function* func;
 		TB_ExternalID ext;
 		struct {
 			TB_Register reg;
-			
+
 			short offset;
 			short width;
 		} bits;
@@ -56,16 +56,16 @@ inline static TB_DataType ctype_to_tbtype(const Type* t) {
 		case KIND_FLOAT: return TB_TYPE_F32;
 		case KIND_DOUBLE: return TB_TYPE_F64;
 		case KIND_ENUM: return TB_TYPE_I32;
-		
-		case KIND_PTR: 
+
+		case KIND_PTR:
 		case KIND_FUNC:
-		case KIND_ARRAY: 
+		case KIND_ARRAY:
 		return TB_TYPE_PTR;
-		
+
 		case KIND_STRUCT:
 		case KIND_UNION:
 		return TB_TYPE_PTR;
-		
+
 		default: abort(); // TODO
 	}
 }
@@ -73,7 +73,7 @@ inline static TB_DataType ctype_to_tbtype(const Type* t) {
 InitNode* count_max_tb_init_objects(int node_count, InitNode* node, int* out_count);
 
 // func is NULL then it's not allowed to compute any dynamic initializer expressions
-InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, SourceLocIndex loc, TB_InitializerID init, TB_Register addr, Type* t, int node_count, InitNode* node, int offset);
+InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, SourceLocIndex loc, TB_InitializerID init, TB_Register addr, int node_count, InitNode* node);
 
 void irgen_init();
 void irgen_deinit();
