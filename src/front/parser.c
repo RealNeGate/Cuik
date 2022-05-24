@@ -232,7 +232,6 @@ static void reset_global_parser_state() {
 	labels = NULL; global_symbols = NULL; global_tags = NULL; pending_exprs = NULL;
 	local_symbol_start = local_symbol_count = 0;
 	current_switch_or_case = current_breakable = current_continuable = NULL;
-	current_switch_or_case = current_breakable = current_continuable = NULL;
 	symbol_chain_start = symbol_chain_current = NULL;
 }
 
@@ -1592,8 +1591,7 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 				curr->case_ = (struct StmtCase){ .key = i+1 };
 
 				// Append to list
-				n->case_.next = curr;
-				n->case_.body = curr;
+				n->case_.next = n->case_.body = curr;
 				n = curr;
 			}
 		} else {
@@ -1605,9 +1603,9 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 		}
 
 		switch (current_switch_or_case->op) {
-			case STMT_CASE:    current_switch_or_case->case_.next    = n; break;
-			case STMT_DEFAULT: current_switch_or_case->default_.next = n; break;
-			case STMT_SWITCH:  current_switch_or_case->switch_.next  = n; break;
+			case STMT_CASE:    current_switch_or_case->case_.next    = top; break;
+			case STMT_DEFAULT: current_switch_or_case->default_.next = top; break;
+			case STMT_SWITCH:  current_switch_or_case->switch_.next  = top; break;
 			default: abort();
 		}
 		current_switch_or_case = n;

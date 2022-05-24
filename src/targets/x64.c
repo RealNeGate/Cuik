@@ -275,15 +275,16 @@ static TB_Register compile_builtin(TranslationUnit* tu, TB_Function* func, const
 		TB_Register src = irgen_as_rvalue(tu, func, args[1]);
 
 		int order = const_eval(tu, args[2]).unsigned_value;
-		if (order < 6) {
+		if (order >= 6) {
 			sema_error(args[2]->loc, "memory order must be between 0 - 6 (check stdatomic.h for the values)");
 			return 0;
 		}
 
 		return tb_inst_atomic_xchg(func, dst, src, order);
 	} else if (strcmp(name, "__builtin_unreachable") == 0) {
-		printf("TODO __builtin_unreachable!");
-		abort();
+		// TODO(NeGate): switch this out later with a proper unreachable
+		tb_inst_debugbreak(func);
+		return 0;
 	} else if (strcmp(name, "__builtin_expect") == 0) {
 		printf("TODO __builtin_expect!");
 		abort();

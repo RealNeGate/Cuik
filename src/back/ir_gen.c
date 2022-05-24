@@ -49,7 +49,8 @@ static TB_Register cast_reg(TB_Function* func, TB_Register reg, const Type* src,
 	} else if (src->kind >= KIND_CHAR &&
 			   src->kind <= KIND_LONG &&
 			   dst->kind == KIND_BOOL) {
-		reg = tb_inst_cmp_ne(func, reg, tb_inst_uint(func, ctype_to_tbtype(src), 0));
+		TB_DataType dt = tb_function_get_node(func, reg)->dt;
+		reg = tb_inst_cmp_ne(func, reg, tb_inst_uint(func, dt, 0));
 	} else if (src->kind == KIND_BOOL &&
 			   dst->kind >= KIND_CHAR &&
 			   dst->kind <= KIND_LONG) {
@@ -265,10 +266,6 @@ InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, Sourc
 
 						if (kind == KIND_STRUCT || kind == KIND_UNION || kind == KIND_ARRAY) {
 							IRVal v = irgen_expr(tu, func, node->expr);
-
-							if (!type_equal(tu, v.type, child_type)) {
-								internal_error("TODO: error messages");
-							}
 
 							// placing the address calculation here might improve performance or readability
 							// of IR in the debug builds, for release builds it shouldn't matter

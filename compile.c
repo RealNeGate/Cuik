@@ -328,7 +328,32 @@ int main(int argc, char** argv) {
 			}
 
 			printf("===============   Tests (%d succeeded out of %d)   ===============\n", successes, INPUT_FILE_COUNT);
+		} else if (strcmp(argv[1], "self3") == 0) {
+			printf("\n\n\n");
+			printf("Running phase 3 self-host tests...\n");
+
+			int successes = 0;
+
+			char cmd[1024];
+			for (size_t i = 0; i < INPUT_FILE_COUNT; i++) {
+				if (str_ends_with(INPUT_FILES[i], ".c")) {
+					snprintf(cmd, 1024, "cuik build -o build/%s -I src/ --threads 1 --stage obj %s", INPUT_FILES[i], INPUT_FILES[i]);
+
+					if (system(cmd) == 0) {
+						printf("Success with %s!\n", INPUT_FILES[i]);
+						successes++;
+					} else {
+						printf("`-Failure with %s!\n\n", INPUT_FILES[i]);
+					}
+				} else {
+					printf("not a C file but sure! %s\n", INPUT_FILES[i]);
+					successes++;
+				}
+			}
+
+			printf("===============   Tests (%d succeeded out of %d)   ===============\n", successes, INPUT_FILE_COUNT);
 		}
+
 	}
 
 	return 0;
