@@ -613,7 +613,7 @@ static int parse_args(size_t arg_start, size_t arg_count, char** args) {
 			output_name = value;
 		} else if (strcmp(key, "target") == 0) {
 			bool matches = false;
-			for (size_t i = 0; i < TARGET_OPTION_COUNT; i++) {
+			if(value) for (size_t i = 0; i < TARGET_OPTION_COUNT; i++) {
 				if (strcmp(target_options[i].name, value) == 0) {
 					target_arch = target_options[i].arch;
 					target_system = target_options[i].system;
@@ -632,6 +632,10 @@ static int parse_args(size_t arg_start, size_t arg_count, char** args) {
 				return 1;
 			}
 		} else if (strcmp(key, "threads") == 0) {
+			if(!value) {
+				printf("thread count should be specified as an integer\n");
+				return 1;
+			}
 			int num;
 			int matches = sscanf(value, "%d", &num);
 			if (matches != 1) {
