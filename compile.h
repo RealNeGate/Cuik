@@ -337,7 +337,6 @@ inline static void builder_compile_msvc(BuildMode mode, size_t count, const char
 		cmd_append("lib /out:");
 		cmd_append(output_path);
 		cmd_append(" build\\*.obj");
-		cmd_append(" external\\tbbmalloc.lib");
 		cmd_run();
 	}
 }

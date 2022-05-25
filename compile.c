@@ -221,7 +221,7 @@ void delete_crap_in_dir(const char* dir_path) {
 
 int main(int argc, char** argv) {
 	builder_init();
-	builder_compile(BUILD_MODE_EXECUTABLE, INPUT_FILE_COUNT, INPUT_FILES, "build/cuik", "tbb/tbbmalloc.lib");
+	builder_compile(BUILD_MODE_EXECUTABLE, INPUT_FILE_COUNT, INPUT_FILES, "build/cuik", "");
 
 	if (argc > 1) {
 		if (strcmp(argv[1], "test") == 0) {
@@ -337,13 +337,15 @@ int main(int argc, char** argv) {
 			char cmd[1024];
 			for (size_t i = 0; i < INPUT_FILE_COUNT; i++) {
 				if (str_ends_with(INPUT_FILES[i], ".c")) {
-					snprintf(cmd, 1024, "cuik build -o build/%s -I src/ --threads 1 --stage obj %s", INPUT_FILES[i], INPUT_FILES[i]);
+					int r = snprintf(cmd, 1024, "cuik build -o build/%s -I src/ --threads 1 --stage obj %s", INPUT_FILES[i], INPUT_FILES[i]);
+					assert(r >= 0 && r < 1024);
 
-					if (system(cmd) == 0) {
+					int code = system(cmd);
+					if (code == 0) {
 						printf("Success with %s!\n", INPUT_FILES[i]);
 						successes++;
 					} else {
-						printf("`-Failure with %s!\n\n", INPUT_FILES[i]);
+						printf("`-Failure with %s! %d\n\n", INPUT_FILES[i], code);
 					}
 				} else {
 					printf("not a C file but sure! %s\n", INPUT_FILES[i]);

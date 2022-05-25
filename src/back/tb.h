@@ -87,7 +87,7 @@ extern "C" {
 		TB_SATURATED_SIGNED
 	} TB_ArithmaticBehavior;
 
-	typedef enum {
+	typedef enum TB_DebugFormat {
 		TB_DEBUGFMT_NONE,
 
 		TB_DEBUGFMT_DWARF,
@@ -96,7 +96,7 @@ extern "C" {
 		TB_DEBUGFMT_COLINPILLED
 	} TB_DebugFormat;
 
-	typedef enum {
+	typedef enum TB_Arch {
 		TB_ARCH_UNKNOWN,
 
 		TB_ARCH_X86_64,
@@ -104,16 +104,16 @@ extern "C" {
 		TB_ARCH_AARCH64
 	} TB_Arch;
 
-	typedef enum {
+	typedef enum TB_System {
 		TB_SYSTEM_WINDOWS,
 		TB_SYSTEM_LINUX,
-
-		// TODO(NeGate): Actually implement these lol
 		TB_SYSTEM_MACOS,
+
+		// Not supported yet
 		TB_SYSTEM_ANDROID
 	} TB_System;
 
-	typedef enum {
+	typedef enum TB_CallingConv {
 		TB_CDECL,
 		TB_STDCALL
 	} TB_CallingConv;
@@ -141,21 +141,18 @@ extern "C" {
 		} aarch64;
 	} TB_FeatureSet;
 
-	typedef enum
-	{
+	typedef enum TB_BranchHint {
 		TB_BRANCH_HINT_NONE,
 		TB_BRANCH_HINT_LIKELY,
 		TB_BRANCH_HINT_UNLIKELY
 	} TB_BranchHint;
 
-	typedef enum
-	{
+	typedef enum TB_Linkage {
 		TB_LINKAGE_PUBLIC,
 		TB_LINKAGE_PRIVATE
 	} TB_Linkage;
 
-	typedef enum
-	{
+	typedef enum TB_StorageClass {
 		// data is the default way to handle storage, this is usually
 		// passed onto the .data section
 		TB_STORAGE_DATA,
@@ -165,8 +162,7 @@ extern "C" {
 		TB_STORAGE_TLS
 	} TB_StorageClass;
 
-	typedef enum
-	{
+	typedef enum TB_MemoryOrder {
 		TB_MEM_ORDER_RELAXED,
 		TB_MEM_ORDER_CONSUME,
 		TB_MEM_ORDER_ACQUIRE,
@@ -175,32 +171,13 @@ extern "C" {
 		TB_MEM_ORDER_SEQ_CST,
 	} TB_MemoryOrder;
 
-	typedef enum
-	{
-		// no optimizer run
-		TB_OPT_O0,
-
-		// run optimizer with all optimizations
-		TB_OPT_O1,
-
-		// same as O1 but favors size, will aggresively deduplicate
-		// (at least that's the plan :P)
-		TB_OPT_SIZE,
-
-		// same as O1 but favors speed, will aggresively unroll
-		// sometimes (at least that's the plan :P)
-		TB_OPT_SPEED,
-	} TB_OptLevel;
-
-	typedef enum
-	{
+	typedef enum TB_ISelMode {
 		// FastISel
 		TB_ISEL_FAST,
 		TB_ISEL_COMPLEX
 	} TB_ISelMode;
 
-	typedef enum
-	{
+	typedef enum TB_DataTypeEnum {
 		TB_VOID,
 		// Boolean
 		TB_BOOL,
@@ -218,8 +195,7 @@ extern "C" {
 		TB_MAX_TYPES
 	} TB_DataTypeEnum;
 
-	typedef enum
-	{
+	typedef enum TB_NodeTypeEnum {
 		TB_NULL = 0,
 
 		/* metadata */

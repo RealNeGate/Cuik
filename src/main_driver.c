@@ -181,13 +181,15 @@ static void compile_project(const char* obj_output_path, bool is_multithreaded) 
 	compilation_unit_init(&compilation_unit);
 
 	if (runs_backend) {
-        irgen_init();
+		irgen_init();
 	}
 
-	if (settings.num_of_worker_threads <= 1) {
-		thread_pool = NULL;
-	} else {
-		thread_pool = threadpool_create(settings.num_of_worker_threads, 4096);
+	timed_block("initialize thread pool") {
+		if (settings.num_of_worker_threads <= 1) {
+			thread_pool = NULL;
+		} else {
+			thread_pool = threadpool_create(settings.num_of_worker_threads, 4096);
+		}
 	}
 
 	if (thread_pool != NULL) {

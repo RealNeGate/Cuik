@@ -59,6 +59,13 @@ static LONG WINAPI unhandled_exception_handler(PEXCEPTION_POINTERS exception_ptr
 void hook_crash_handler() {
 	mtx_init(&crash_mutex, mtx_plain);
     SetUnhandledExceptionFilter(unhandled_exception_handler);
+
+#if 0
+	ULONG_PTR low, high;
+	GetCurrentThreadStackLimits(&low, &high);
+
+	printf("%f MiB\n", (high-low) / 1048576.0f);
+#endif
 }
 
 #else

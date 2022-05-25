@@ -13,6 +13,7 @@
 #include <errno.h>
 #endif
 
+#include <timer.h>
 #include <arena.h>
 
 struct threadpool_t {
@@ -54,15 +55,17 @@ static bool do_work(threadpool_t* threadpool) {
 }
 
 static int threadpool_thread(void* arg) {
-    threadpool_t* threadpool = arg;
+	threadpool_t* threadpool = arg;
 
-	while (threadpool->running) {
-		if (do_work(threadpool)) {
+	timed_block("thread") {
+		while (threadpool->running) {
+			if (do_work(threadpool)) {
 #ifdef _WIN32
-			WaitForSingleObjectEx(threadpool->sem, -1, false); // wait for jobs
+				WaitForSingleObjectEx(threadpool->sem, -1, false); // wait for jobs
 #else
-			sem_wait(&threadpool->sem);
+				sem_wait(&threadpool->sem);
 #endif
+			}
 		}
 	}
 
@@ -121,7 +124,7 @@ void threadpool_submit(threadpool_t* threadpool, work_routine fn, void* arg) {
 	}
 	mtx_unlock(&threadpool->mutex);
 
-#if _WIN32
+#ifdef _WIN32
 	ReleaseSemaphore(threadpool->sem, 1, 0);
 #else
 	sem_post(&threadpool->sem);
