@@ -200,8 +200,21 @@ inline static void builder_init() {
 	setvbuf(stdout, NULL, _IONBF, 0);
 	
 #if defined(_WIN32)
-	// sets environment vars for compiler
-	system("call vcvars64");
+	// sets environment vars for compiler, if not already set
+	{
+		// NOTE(bumbread): pretty sure this environment variable is a good
+		// indicator of vcvars present.
+		char *env = getenv("VSINSTALLDIR");
+		if(env == NULL) {
+			int vcvars_ret = system("call vcvars64");
+			if(vcvars_ret != 0) {
+				fprintf(stderr, "ERROR: vcvars64.bat wasn't found. "
+					   "Please add it shell PATH or run the build script in "
+					   "Visual Studio Developer's Command Prompt\n");
+				exit(69420);
+			}
+		}
+	}
 #endif
 	
 	create_dir_if_not_exists("build/");
@@ -223,7 +236,7 @@ inline static void builder_compile_msvc(size_t count, const char* filepaths[], c
 #   if defined(RELEASE_BUILD)
 	cmd_append("/Ox /WX /GS- /DNDEBUG ");
 #   else
-	cmd_append("/MTd /Od /WX /Zi /D_DEBUG /RTC1 ");
+	cmd_append("/MTd /Od /WX /Z7 /D_DEBUG /RTC1 ");
 #   endif
 	
 	for (size_t i = 0; i < count; i++) {
