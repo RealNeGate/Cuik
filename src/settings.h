@@ -35,6 +35,7 @@ typedef struct CompilerSettings {
 	bool is_time_report       : 1;
 	bool is_debug_build       : 1;
 	bool is_debug_info        : 1;
+	bool exercise             : 1;
 	bool pedantic             : 1;
 	bool optimize             : 1;
 	bool freestanding         : 1;

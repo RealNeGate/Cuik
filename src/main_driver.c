@@ -676,6 +676,8 @@ int main(int argc, char* argv[]) {
                 settings.num_of_worker_threads = num;
             } else if (strcmp(option, "help") == 0) {
                 print_help(argv[0]);
+            } else if (strcmp(option, "exercise") == 0) {
+                settings.exercise = true;
             } else if (strcmp(option, "pedantic") == 0) {
                 settings.pedantic = true;
             } else if (strcmp(option, "stage") == 0) {
@@ -804,6 +806,32 @@ int main(int argc, char* argv[]) {
 	// Build project
 	timed_block("total") {
 		compile_project(obj_output_path, true);
+
+		if (settings.exercise) {
+			// just delays the compilation because... you're fat
+			uint64_t t1 = timer_now();
+			double elapsed = 0.0;
+
+			// 60 seconds of gamer time
+			printf("Waiting around...\n");
+
+			int old_chars = -1;
+			while (elapsed = (timer_now() - t1) * timer_freq, elapsed < 60.5) {
+				int num_chars = (int) ((elapsed / 60.0) * 30.0);
+				if (num_chars != old_chars) {
+					old_chars = num_chars;
+
+					printf("\r[");
+					for (int i = 0; i < num_chars; i++) printf("#");
+					for (int i = 0; i < 30 - num_chars; i++) printf(" ");
+					printf("]");
+				}
+
+				thrd_yield();
+			}
+			printf("\n");
+			printf("Cool!\n");
+		}
 
 		if (settings.stage_to_stop_at >= STAGE_FINAL) {
 			if (settings.freestanding) {
