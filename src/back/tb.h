@@ -194,7 +194,7 @@ extern "C" {
 		TB_FLT_32, TB_FLT_64
 	} TB_FloatFormat;
 
-	typedef union {
+	typedef union TB_DataType {
 		struct {
 			uint16_t type  : 2;
 			// 2^N where N is the width value.

@@ -222,8 +222,8 @@ static Type* parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s, Typ
 
 		tls_restore(params);
 	} else if (tokens_get(s)->type == '[') {
-        if (out_of_order_mode) {
-            // in the out of order case we defer expression parsing
+		if (out_of_order_mode) {
+			// in the out of order case we defer expression parsing
 			SourceLoc* open_brace = &s->line_arena[tokens_get(s)->location];
 			tokens_next(s);
 
@@ -270,250 +270,250 @@ static Type* parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s, Typ
 			type->loc = loc - s->line_arena;
 			type->array_count_lexer_pos = current;
 			return type;
-        } else {
-            size_t depth = 0;
-            size_t* counts = tls_save();
+		} else {
+			size_t depth = 0;
+			size_t* counts = tls_save();
 
-            // TODO(NeGate): read some array qualifiers... then throw them away
-            do {
-                tokens_next(s);
+			// TODO(NeGate): read some array qualifiers... then throw them away
+			do {
+				tokens_next(s);
 
-                long long count;
-                if (tokens_get(s)->type == ']') {
-                    count = 0;
-                    tokens_next(s);
-                } else if (tokens_get(s)->type == '*') {
-                    count = 0;
-                    tokens_next(s);
-                    expect(s, ']');
-                } else {
-                    count = parse_const_expr(tu, s);
-                    expect(s, ']');
-                }
+				long long count;
+				if (tokens_get(s)->type == ']') {
+					count = 0;
+					tokens_next(s);
+				} else if (tokens_get(s)->type == '*') {
+					count = 0;
+					tokens_next(s);
+					expect(s, ']');
+				} else {
+					count = parse_const_expr(tu, s);
+					expect(s, ']');
+				}
 
-                tls_push(sizeof(size_t));
-                counts[depth++] = count;
-            } while (tokens_get(s)->type == '[');
+				tls_push(sizeof(size_t));
+				counts[depth++] = count;
+			} while (tokens_get(s)->type == '[');
 
-            size_t expected_size = type->size;
-            while (depth--) {
-                assert(type->size == expected_size);
+			size_t expected_size = type->size;
+			while (depth--) {
+				assert(type->size == expected_size);
 
-                uint64_t a = expected_size;
-                uint64_t b = counts[depth];
-                uint64_t result = a * b;
+				uint64_t a = expected_size;
+				uint64_t b = counts[depth];
+				uint64_t result = a * b;
 
-                // size checks
-                if (result >= INT32_MAX) {
-                    report(REPORT_ERROR, loc, "cannot declare an array that exceeds 0x7FFFFFFE bytes (got 0x%zX or %zi)", result, result);
-                    abort();
-                }
+				// size checks
+				if (result >= INT32_MAX) {
+					report(REPORT_ERROR, loc, "cannot declare an array that exceeds 0x7FFFFFFE bytes (got 0x%zX or %zi)", result, result);
+					abort();
+				}
 
-                type = new_array(tu, type, counts[depth]);
-                expected_size = result;
-            }
+				type = new_array(tu, type, counts[depth]);
+				expected_size = result;
+			}
 
-            tls_restore(counts);
-        }
-    }
+			tls_restore(counts);
+		}
+	}
 
-    return type;
+	return type;
 }
 
 // https://github.com/rui314/chibicc/blob/90d1f7f199cc55b13c7fdb5839d1409806633fdb/parse.c#L381
 static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attribs* attr) {
-    enum {
-        VOID     = 1 << 0,
-        BOOL     = 1 << 2,
-        CHAR     = 1 << 4,
-        SHORT    = 1 << 6,
-        INT      = 1 << 8,
-        LONG     = 1 << 10,
-        FLOAT    = 1 << 12,
-        DOUBLE   = 1 << 14,
-        OTHER    = 1 << 16,
-        SIGNED   = 1 << 17,
-        UNSIGNED = 1 << 18,
-    };
+	enum {
+		VOID     = 1 << 0,
+		BOOL     = 1 << 2,
+		CHAR     = 1 << 4,
+		SHORT    = 1 << 6,
+		INT      = 1 << 8,
+		LONG     = 1 << 10,
+		FLOAT    = 1 << 12,
+		DOUBLE   = 1 << 14,
+		OTHER    = 1 << 16,
+		SIGNED   = 1 << 17,
+		UNSIGNED = 1 << 18,
+	};
 
-    int counter = 0;
-    Type* type = NULL;
+	int counter = 0;
+	Type* type = NULL;
 
-    bool is_atomic = false;
-    bool is_const  = false;
+	bool is_atomic = false;
+	bool is_const  = false;
 
-    // _Alignas(N) or __declspec(align(N))
-    // 0 means no forced alignment
-    int forced_align = 0;
+	// _Alignas(N) or __declspec(align(N))
+	// 0 means no forced alignment
+	int forced_align = 0;
 	PendingExpr* alignas_pending_expr = NULL;
 
-    do {
-        TknType tkn_type = tokens_get(s)->type;
-        switch (tkn_type) {
-            case TOKEN_KW_void: counter += VOID; break;
-            case TOKEN_KW_Bool: counter += BOOL; break;
-            case TOKEN_KW_char: counter += CHAR; break;
-            case TOKEN_KW_short: counter += SHORT; break;
-            case TOKEN_KW_int: counter += INT; break;
-            case TOKEN_KW_long: counter += LONG; break;
-            case TOKEN_KW_float: counter += FLOAT; break;
-            case TOKEN_KW_double: counter += DOUBLE; break;
+	do {
+		TknType tkn_type = tokens_get(s)->type;
+		switch (tkn_type) {
+			case TOKEN_KW_void: counter += VOID; break;
+			case TOKEN_KW_Bool: counter += BOOL; break;
+			case TOKEN_KW_char: counter += CHAR; break;
+			case TOKEN_KW_short: counter += SHORT; break;
+			case TOKEN_KW_int: counter += INT; break;
+			case TOKEN_KW_long: counter += LONG; break;
+			case TOKEN_KW_float: counter += FLOAT; break;
+			case TOKEN_KW_double: counter += DOUBLE; break;
 
-            case TOKEN_KW_unsigned: counter |= UNSIGNED; break;
-            case TOKEN_KW_signed: counter |= SIGNED; break;
+			case TOKEN_KW_unsigned: counter |= UNSIGNED; break;
+			case TOKEN_KW_signed: counter |= SIGNED; break;
 
-            case TOKEN_KW_register: /* lmao */ break;
-            case TOKEN_KW_Noreturn: /* lmao */ break;
-            case TOKEN_KW_static: attr->is_static = true; break;
-            case TOKEN_KW_typedef: attr->is_typedef = true; break;
-            case TOKEN_KW_inline: attr->is_inline = true; break;
-            case TOKEN_KW_extern: attr->is_extern = true; break;
-            case TOKEN_KW_Thread_local: attr->is_tls = true; break;
+			case TOKEN_KW_register: /* lmao */ break;
+			case TOKEN_KW_Noreturn: /* lmao */ break;
+			case TOKEN_KW_static: attr->is_static = true; break;
+			case TOKEN_KW_typedef: attr->is_typedef = true; break;
+			case TOKEN_KW_inline: attr->is_inline = true; break;
+			case TOKEN_KW_extern: attr->is_extern = true; break;
+			case TOKEN_KW_Thread_local: attr->is_tls = true; break;
 
-            case TOKEN_KW_cdecl: break;
-            case TOKEN_KW_stdcall: break;
+			case TOKEN_KW_cdecl: break;
+			case TOKEN_KW_stdcall: break;
 
-            case TOKEN_KW_Complex:
-            case TOKEN_KW_Imaginary: {
-                SourceLoc* loc = &s->line_arena[tokens_get(s)->location];
-                report(REPORT_ERROR, loc, "Complex types are not supported in CuikC");
-                break;
-            }
+			case TOKEN_KW_Complex:
+			case TOKEN_KW_Imaginary: {
+				SourceLoc* loc = &s->line_arena[tokens_get(s)->location];
+				report(REPORT_ERROR, loc, "Complex types are not supported in CuikC");
+				break;
+			}
 
-            case TOKEN_KW_Vector: {
-                // _Vector '(' TYPENAME ',' CONST-EXPR ')'
-                if (counter) goto done;
-                SourceLoc* loc = &s->line_arena[tokens_get(s)->location];
-                tokens_next(s);
+			case TOKEN_KW_Vector: {
+				// _Vector '(' TYPENAME ',' CONST-EXPR ')'
+				if (counter) goto done;
+				SourceLoc* loc = &s->line_arena[tokens_get(s)->location];
+				tokens_next(s);
 
-                SourceLoc* opening_loc = &s->line_arena[tokens_get(s)->location];
-                expect(s, '(');
+				SourceLoc* opening_loc = &s->line_arena[tokens_get(s)->location];
+				expect(s, '(');
 
-                type = parse_typename(tu, s);
-                if (!(type->kind >= KIND_CHAR && type->kind <= KIND_LONG) &&
-                    !(type->kind == KIND_FLOAT || type->kind == KIND_DOUBLE)) {
-                    report(REPORT_ERROR, loc, "Only integers and floats can be used for _Vector types");
-                    return NULL;
-                }
+				type = parse_typename(tu, s);
+				if (!(type->kind >= KIND_CHAR && type->kind <= KIND_LONG) &&
+					!(type->kind == KIND_FLOAT || type->kind == KIND_DOUBLE)) {
+					report(REPORT_ERROR, loc, "Only integers and floats can be used for _Vector types");
+					return NULL;
+				}
 
-                expect(s, ',');
+				expect(s, ',');
 
-                intmax_t count = parse_const_expr(tu, s);
+				intmax_t count = parse_const_expr(tu, s);
 
-                if (count <= 0) {
-                    report(REPORT_ERROR, loc, "_Vector types must have a positive width");
-                    return NULL;
-                }
+				if (count <= 0) {
+					report(REPORT_ERROR, loc, "_Vector types must have a positive width");
+					return NULL;
+				}
 
-                if (count == 1) {
-                    report(REPORT_ERROR, loc, "It's not even a _Vector type... that's a scalar...");
-                    return NULL;
-                }
+				if (count == 1) {
+					report(REPORT_ERROR, loc, "It's not even a _Vector type... that's a scalar...");
+					return NULL;
+				}
 
-                if (count > 64) {
-                    report(REPORT_ERROR, loc, "_Vector type is too wide (%"PRIiMAX", max is 64)", count);
-                    return NULL;
-                }
+				if (count > 64) {
+					report(REPORT_ERROR, loc, "_Vector type is too wide (%"PRIiMAX", max is 64)", count);
+					return NULL;
+				}
 
-                // only allow power of two widths
-                if ((count & (count - 1)) != 0) {
-                    report(REPORT_ERROR, loc, "_Vector types can only have power-of-two widths");
-                    return NULL;
-                }
+				// only allow power of two widths
+				if ((count & (count - 1)) != 0) {
+					report(REPORT_ERROR, loc, "_Vector types can only have power-of-two widths");
+					return NULL;
+				}
 
-                type = new_vector(tu, type, count);
-                counter += OTHER;
+				type = new_vector(tu, type, count);
+				counter += OTHER;
 
-                expect_closing_paren(s, opening_loc);
-                tokens_prev(s);
-                break;
-            }
-            case TOKEN_KW_Atomic: {
-                tokens_next(s);
-                if (tokens_get(s)->type == '(') {
-                    SourceLoc* opening_loc = &s->line_arena[tokens_get(s)->location];
-                    tokens_next(s);
+				expect_closing_paren(s, opening_loc);
+				tokens_prev(s);
+				break;
+			}
+			case TOKEN_KW_Atomic: {
+				tokens_next(s);
+				if (tokens_get(s)->type == '(') {
+					SourceLoc* opening_loc = &s->line_arena[tokens_get(s)->location];
+					tokens_next(s);
 
-                    type = parse_typename(tu, s);
-                    counter += OTHER;
-                    is_atomic = true;
+					type = parse_typename(tu, s);
+					counter += OTHER;
+					is_atomic = true;
 
-                    SourceLoc* closing_loc = &s->line_arena[tokens_get(s)->location];
-                    if (tokens_get(s)->type != ')') {
-                        report_two_spots(REPORT_ERROR, opening_loc, closing_loc, "expected closing parenthesis for _Atomic", "open", "close?", NULL);
-                        return NULL;
-                    }
-                } else {
-                    // walk back, we didn't need to read that
-                    is_atomic = true;
-                    tokens_prev(s);
-                }
-                break;
-            }
-            case TOKEN_KW_const: is_const = true; break;
-            case TOKEN_KW_volatile: break;
-            case TOKEN_KW_auto: break;
+					SourceLoc* closing_loc = &s->line_arena[tokens_get(s)->location];
+					if (tokens_get(s)->type != ')') {
+						report_two_spots(REPORT_ERROR, opening_loc, closing_loc, "expected closing parenthesis for _Atomic", "open", "close?", NULL);
+						return NULL;
+					}
+				} else {
+					// walk back, we didn't need to read that
+					is_atomic = true;
+					tokens_prev(s);
+				}
+				break;
+			}
+			case TOKEN_KW_const: is_const = true; break;
+			case TOKEN_KW_volatile: break;
+			case TOKEN_KW_auto: break;
 
-            case TOKEN_KW_Typeof: {
-                SourceLoc* loc = &s->line_arena[tokens_get(s)->location];
+			case TOKEN_KW_Typeof: {
+				SourceLoc* loc = &s->line_arena[tokens_get(s)->location];
 
-                tokens_next(s);
-                if (tokens_get(s)->type != '(') {
-                    report(REPORT_ERROR, loc, "expected opening parenthesis for _Typeof");
-                    return NULL;
-                }
-                tokens_next(s);
+				tokens_next(s);
+				if (tokens_get(s)->type != '(') {
+					report(REPORT_ERROR, loc, "expected opening parenthesis for _Typeof");
+					return NULL;
+				}
+				tokens_next(s);
 
-                if (out_of_order_mode) {
-                    // _Typeof ( SOMETHING )
-                    TknType terminator;
-                    size_t current = skip_expression_in_parens(s, &terminator);
+				if (out_of_order_mode) {
+					// _Typeof ( SOMETHING )
+					TknType terminator;
+					size_t current = skip_expression_in_parens(s, &terminator);
 
-                    if (terminator == 0 || terminator == ',') {
-                        report(REPORT_ERROR, loc, "expected closing parenthesis for _Typeof%s", terminator ? " (got EOF)" : "");
-                        return NULL;
-                    }
+					if (terminator == 0 || terminator == ',') {
+						report(REPORT_ERROR, loc, "expected closing parenthesis for _Typeof%s", terminator ? " (got EOF)" : "");
+						return NULL;
+					}
 
-                    // Add to pending list
-                    printf("MSG: Add _Typeof to pending list %zu ending at %c\n", current, terminator);
+					// Add to pending list
+					printf("MSG: Add _Typeof to pending list %zu ending at %c\n", current, terminator);
 					__debugbreak();
-                } else {
-                    if (is_typename(s)) {
-                        type = parse_typename(tu, s);
-                    } else {
-                        // we don't particularly resolve typeof for expressions immediately.
-                        // instead we just wait until all symbols are resolved properly
-                        Expr* src = parse_expr(tu, s);
-                        type = new_typeof(tu, src);
-                    }
+				} else {
+					if (is_typename(s)) {
+						type = parse_typename(tu, s);
+					} else {
+						// we don't particularly resolve typeof for expressions immediately.
+						// instead we just wait until all symbols are resolved properly
+						Expr* src = parse_expr(tu, s);
+						type = new_typeof(tu, src);
+					}
 
-                    if (tokens_get(s)->type != ')') {
-                        report(REPORT_ERROR, loc, "expected closing parenthesis for _Typeof");
-                        return NULL;
-                    }
-                }
-                break;
-            }
+					if (tokens_get(s)->type != ')') {
+						report(REPORT_ERROR, loc, "expected closing parenthesis for _Typeof");
+						return NULL;
+					}
+				}
+				break;
+			}
 
-            case TOKEN_KW_Alignas: {
-                SourceLoc* loc = &s->line_arena[tokens_get(s)->location];
+			case TOKEN_KW_Alignas: {
+				SourceLoc* loc = &s->line_arena[tokens_get(s)->location];
 				if (alignas_pending_expr != NULL) {
 					report(REPORT_ERROR, loc, "cannot apply two _Alignas to one type");
 					return NULL;
 				}
 
-                tokens_next(s);
-                expect(s, '(');
+				tokens_next(s);
+				expect(s, '(');
 
-                if (out_of_order_mode) {
-                    // _Alignas ( SOMETHING )
-                    TknType terminator;
-                    size_t current = skip_expression_in_parens(s, &terminator);
+				if (out_of_order_mode) {
+					// _Alignas ( SOMETHING )
+					TknType terminator;
+					size_t current = skip_expression_in_parens(s, &terminator);
 
-                    if (terminator == 0 || terminator == ',') {
-                        report(REPORT_ERROR, loc, "expected closing parenthesis for _Alignas%s", terminator ? " (got EOF)" : "");
-                        return NULL;
-                    }
+					if (terminator == 0 || terminator == ',') {
+						report(REPORT_ERROR, loc, "expected closing parenthesis for _Alignas%s", terminator ? " (got EOF)" : "");
+						return NULL;
+					}
 
 					tokens_prev(s);
 
@@ -522,85 +522,85 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
 					arrput(pending_exprs, e);
 					alignas_pending_expr = &pending_exprs[arrlen(pending_exprs)-1];
 				} else {
-                    if (is_typename(s)) {
-                        Type* new_align = parse_typename(tu, s);
-                        if (new_align == NULL || new_align->align) {
-                            report(REPORT_ERROR, loc, "_Alignas cannot operate with incomplete");
-                        } else {
-                            forced_align = new_align->align;
-                        }
-                    } else {
-                        intmax_t new_align = parse_const_expr(tu, s);
-                        if (new_align == 0) {
-                            report(REPORT_ERROR, loc, "_Alignas cannot be applied with 0 alignment", new_align);
-                        } else if (new_align >= INT16_MAX) {
-                            report(REPORT_ERROR, loc, "_Alignas(%zu) exceeds max alignment of %zu", new_align, INT16_MAX);
-                        } else {
-                            forced_align = new_align;
-                        }
-                    }
+					if (is_typename(s)) {
+						Type* new_align = parse_typename(tu, s);
+						if (new_align == NULL || new_align->align) {
+							report(REPORT_ERROR, loc, "_Alignas cannot operate with incomplete");
+						} else {
+							forced_align = new_align->align;
+						}
+					} else {
+						intmax_t new_align = parse_const_expr(tu, s);
+						if (new_align == 0) {
+							report(REPORT_ERROR, loc, "_Alignas cannot be applied with 0 alignment", new_align);
+						} else if (new_align >= INT16_MAX) {
+							report(REPORT_ERROR, loc, "_Alignas(%zu) exceeds max alignment of %zu", new_align, INT16_MAX);
+						} else {
+							forced_align = new_align;
+						}
+					}
 
-                    if (tokens_get(s)->type != ')') {
-                        report(REPORT_ERROR, loc, "expected closing parenthesis for _Alignas");
-                        return NULL;
-                    }
-                }
-                break;
-            }
+					if (tokens_get(s)->type != ')') {
+						report(REPORT_ERROR, loc, "expected closing parenthesis for _Alignas");
+						return NULL;
+					}
+				}
+				break;
+			}
 
-            case TOKEN_KW_declspec: {
-                // TODO(NeGate): Correctly parse declspec instead of
-                // ignoring them.
-                tokens_next(s);
-                expect(s, '(');
+			case TOKEN_KW_declspec: {
+				// TODO(NeGate): Correctly parse declspec instead of
+				// ignoring them.
+				tokens_next(s);
+				expect(s, '(');
 
-                int depth = 1;
-                while (depth) {
-                    if (tokens_get(s)->type == '(') depth++;
-                    else if (tokens_get(s)->type == ')') depth--;
+				int depth = 1;
+				while (depth) {
+					if (tokens_get(s)->type == '(') depth++;
+					else if (tokens_get(s)->type == ')') depth--;
 
-                    tokens_next(s);
-                }
+					tokens_next(s);
+				}
 
-                tokens_prev(s);
-                break;
-            }
+				tokens_prev(s);
+				break;
+			}
 
-            case TOKEN_KW_struct:
-            case TOKEN_KW_union: {
-                if (counter) goto done;
-                SourceLocIndex record_loc = tokens_get(s)->location;
-                tokens_next(s);
+			case TOKEN_KW_struct:
+			case TOKEN_KW_union: {
+				if (counter) goto done;
+				SourceLocIndex record_loc = tokens_get(s)->location;
+				tokens_next(s);
 
-                bool is_union = tkn_type == TOKEN_KW_union;
+				bool is_union = tkn_type == TOKEN_KW_union;
 
-                while (skip_over_declspec(s)) {
-                    // TODO(NeGate): printf("Don't forget about declspec\n");
-                }
+				while (skip_over_declspec(s)) {
+					// TODO(NeGate): printf("Don't forget about declspec\n");
+				}
 
-                Atom name = NULL;
-                Token* t = tokens_get(s);
-                if (tokens_get(s)->type == TOKEN_IDENTIFIER) {
-                    name = atoms_put(t->end - t->start, t->start);
-                    record_loc = t->location;
-                    tokens_next(s);
-                }
+				Atom name = NULL;
+				Token* t = tokens_get(s);
+				if (tokens_get(s)->type == TOKEN_IDENTIFIER) {
+					name = atoms_put(t->end - t->start, t->start);
+					record_loc = t->location;
+					tokens_next(s);
+				}
 
-                if (tokens_get(s)->type == '{') {
-                    tokens_next(s);
+				if (tokens_get(s)->type == '{') {
+					tokens_next(s);
 
-                    type = name ? find_tag((char*)name) : 0;
-                    if (type) {
-                        // can't re-complete a struct
-                        //assert(!type->is_incomplete);
-                    } else {
-                        type = new_record(tu, is_union);
-                        type->is_incomplete = false;
-                        type->record.name = name;
+					type = name ? find_tag((char*)name) : 0;
+					if (type) {
+						// can't re-complete a struct
+						//assert(!type->is_incomplete);
+					} else {
+						type = new_record(tu, is_union);
+						type->is_incomplete = false;
+						type->record.name = name;
 
-                        // can't forward decl unnamed records so we
-                        // don't track it
-                        if (name) {
+						// can't forward decl unnamed records so we
+						// don't track it
+						if (name) {
 							if (out_of_order_mode) shput(global_tags, name, type);
 							else {
 								if (local_tag_count + 1 >= MAX_LOCAL_TAGS) {
@@ -613,103 +613,103 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
 							}
 						}
 					}
-                    type->loc = record_loc;
-                    counter += OTHER;
+					type->loc = record_loc;
+					counter += OTHER;
 
-                    size_t member_count = 0;
-                    Member* members = tls_save();
+					size_t member_count = 0;
+					Member* members = tls_save();
 
-                    while (tokens_get(s)->type != '}') {
-                        if (skip_over_declspec(s)) continue;
+					while (tokens_get(s)->type != '}') {
+						if (skip_over_declspec(s)) continue;
 
-                        // in case we have unnamed declarators and we somewhere for them to point to
-                        SourceLocIndex default_loc = tokens_get(s)->location;
+						// in case we have unnamed declarators and we somewhere for them to point to
+						SourceLocIndex default_loc = tokens_get(s)->location;
 
-                        Attribs member_attr = { 0 };
-                        Type* member_base_type = parse_declspec(tu, s, &member_attr);
+						Attribs member_attr = { 0 };
+						Type* member_base_type = parse_declspec(tu, s, &member_attr);
 
-                        // error recovery, if we couldn't parse the typename we skip the declaration
-                        if (member_base_type == 0) {
-                            while (tokens_get(s)->type != ';') tokens_next(s);
+						// error recovery, if we couldn't parse the typename we skip the declaration
+						if (member_base_type == 0) {
+							while (tokens_get(s)->type != ';') tokens_next(s);
 
-                            tokens_next(s);
-                            continue;
-                        }
+							tokens_next(s);
+							continue;
+						}
 
-                        // continues on commas, exists on semicolon
-                        // int a,   *b,  c[3]    ;
-                        //     ^    ^~   ^~~~    ^
-                        //     one  two  three   DONE
-                        do {
-                            Decl decl = { 0 };
-                            Type* member_type = member_base_type;
+						// continues on commas, exists on semicolon
+						// int a,   *b,  c[3]    ;
+						//     ^    ^~   ^~~~    ^
+						//     one  two  three   DONE
+						do {
+							Decl decl = { 0 };
+							Type* member_type = member_base_type;
 
-                            // not all members have declarators for example
-                            // char : 3; or struct { ... };
-                            if (tokens_get(s)->type != ';' &&
-                                tokens_get(s)->type != ':') {
-                                decl = parse_declarator(tu, s, member_base_type, false, false);
-                                member_type = decl.type;
-                            } else {
-                                decl.loc = default_loc;
-                            }
+							// not all members have declarators for example
+							// char : 3; or struct { ... };
+							if (tokens_get(s)->type != ';' &&
+								tokens_get(s)->type != ':') {
+								decl = parse_declarator(tu, s, member_base_type, false, false);
+								member_type = decl.type;
+							} else {
+								decl.loc = default_loc;
+							}
 
-                            // Append member
-                            tls_push(sizeof(Member));
-                            Member* member = &members[member_count++];
+							// Append member
+							tls_push(sizeof(Member));
+							Member* member = &members[member_count++];
 
-                            *member = (Member) {
-                                .loc = decl.loc,
-                                .type = member_type,
-                                .name = decl.name
-                            };
+							*member = (Member) {
+								.loc = decl.loc,
+								.type = member_type,
+								.name = decl.name
+							};
 
-                            if (tokens_get(s)->type == ':') {
-                                if (is_union) {
-                                    generic_error(s, "Bitfield... unions... huh?!");
-                                }
-                                tokens_next(s);
+							if (tokens_get(s)->type == ':') {
+								if (is_union) {
+									generic_error(s, "Bitfield... unions... huh?!");
+								}
+								tokens_next(s);
 
-                                member->is_bitfield = true;
+								member->is_bitfield = true;
 								member->bit_offset = 0;
-                                member->bit_width = parse_const_expr(tu, s);
-                            }
+								member->bit_width = parse_const_expr(tu, s);
+							}
 
-                            // i just wanted to logically split this from the top stuff, this is a breather comment
-                            if (tokens_get(s)->type == ',') {
-                                tokens_next(s);
-                                continue;
-                            } else if (tokens_get(s)->type == ';') break;
-                        } while (true);
+							// i just wanted to logically split this from the top stuff, this is a breather comment
+							if (tokens_get(s)->type == ',') {
+								tokens_next(s);
+								continue;
+							} else if (tokens_get(s)->type == ';') break;
+						} while (true);
 
-                        expect(s, ';');
-                    }
+						expect(s, ';');
+					}
 
-                    if (tokens_get(s)->type != '}') {
-                        generic_error(s, "Unclosed member list!");
-                    }
+					if (tokens_get(s)->type != '}') {
+						generic_error(s, "Unclosed member list!");
+					}
 
-                    // put members into more permanent storage
-                    Member* permanent_store = arena_alloc(&tu->ast_arena, member_count * sizeof(Member), _Alignof(Member));
-                    memcpy(permanent_store, members, member_count * sizeof(Member));
+					// put members into more permanent storage
+					Member* permanent_store = arena_alloc(&tu->ast_arena, member_count * sizeof(Member), _Alignof(Member));
+					memcpy(permanent_store, members, member_count * sizeof(Member));
 
-                    type->align = 0;
-                    type->size = 0;
+					type->align = 0;
+					type->size = 0;
 
-                    type->record.kids = permanent_store;
-                    type->record.kid_count = member_count;
+					type->record.kids = permanent_store;
+					type->record.kid_count = member_count;
 
-                    if (!out_of_order_mode) {
+					if (!out_of_order_mode) {
 						type_layout(tu, type);
-                    }
+					}
 
-                    tls_restore(members);
-                } else {
-                    // TODO(NeGate): must be a forward decl, handle it
-                    if (name == NULL) generic_error(s, "Cannot have unnamed forward struct reference.");
+					tls_restore(members);
+				} else {
+					// TODO(NeGate): must be a forward decl, handle it
+					if (name == NULL) generic_error(s, "Cannot have unnamed forward struct reference.");
 
-                    type = find_tag((const char*)name);
-                    if (type == NULL) {
+					type = find_tag((const char*)name);
+					if (type == NULL) {
 						type = new_record(tu, is_union);
 						type->loc = record_loc;
 						type->record.name = name;
@@ -728,39 +728,39 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
 					}
 					counter += OTHER;
 
-                    // push back one because we push it forward one later but
-                    // shouldn't
-                    tokens_prev(s);
-                }
-                break;
-            }
+					// push back one because we push it forward one later but
+					// shouldn't
+					tokens_prev(s);
+				}
+				break;
+			}
 
-            case TOKEN_KW_enum: {
-                if (counter) goto done;
-                tokens_next(s);
+			case TOKEN_KW_enum: {
+				if (counter) goto done;
+				tokens_next(s);
 
-                Token* t = tokens_get(s);
-                Atom name = NULL;
-                if (tokens_get(s)->type == TOKEN_IDENTIFIER) {
-                    name = atoms_put(t->end - t->start, t->start);
-                    tokens_next(s);
-                }
+				Token* t = tokens_get(s);
+				Atom name = NULL;
+				if (tokens_get(s)->type == TOKEN_IDENTIFIER) {
+					name = atoms_put(t->end - t->start, t->start);
+					tokens_next(s);
+				}
 
-                if (tokens_get(s)->type == '{') {
-                    tokens_next(s);
+				if (tokens_get(s)->type == '{') {
+					tokens_next(s);
 
-                    type = name ? find_tag((char*)name) : 0;
-                    if (type) {
-                        // can't re-complete a enum
-                        // TODO(NeGate): error messages
-                        size_t count = type->enumerator.count;
-                        if (count) {
-                            generic_error(s, "Cannot recomplete an enumerator");
-                        }
-                    } else {
-                        type = new_enum(tu);
-                        type->is_incomplete = true;
-                        type->enumerator.name = name;
+					type = name ? find_tag((char*)name) : 0;
+					if (type) {
+						// can't re-complete a enum
+						// TODO(NeGate): error messages
+						size_t count = type->enumerator.count;
+						if (count) {
+							generic_error(s, "Cannot recomplete an enumerator");
+						}
+					} else {
+						type = new_enum(tu);
+						type->is_incomplete = true;
+						type->enumerator.name = name;
 
 						if (name) {
 							if (out_of_order_mode) shput(global_tags, name, type);
@@ -776,27 +776,35 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
 						}
 					}
 
-                    // starts at zero and after any entry it increments
-                    // you can override it by using:
-                    // identifier = int-const-expr
-                    int cursor = 0;
+					// starts at zero and after any entry it increments
+					// you can override it by using:
+					// identifier = int-const-expr
+					int cursor = 0;
 
-                    size_t count = 0;
-                    EnumEntry* start = tls_save();
+					size_t count = 0;
+					EnumEntry* start = tls_save();
 
-                    while (tokens_get(s)->type != '}') {
-                        // parse name
-                        Token* t = tokens_get(s);
-                        if (t->type != TOKEN_IDENTIFIER) {
-                            generic_error(s, "expected identifier for enum name entry.");
-                        }
+					// HACK HACK HACK this is probably going to create some weird issues later ngl
+					// we basically set the enumerator entries to the temporary stuff just so that
+					// the enum resolution doesn't break if we need to access stuff we're building
+					// for example:
+					//   enum { T, U = T + 1 }
+					type->enumerator.entries = start;
+					type->enumerator.count = 0;
 
-                        Atom name = atoms_put(t->end - t->start, t->start);
-                        tokens_next(s);
+					while (tokens_get(s)->type != '}') {
+						// parse name
+						Token* t = tokens_get(s);
+						if (t->type != TOKEN_IDENTIFIER) {
+							generic_error(s, "expected identifier for enum name entry.");
+						}
+
+						Atom name = atoms_put(t->end - t->start, t->start);
+						tokens_next(s);
 
 						int lexer_pos = 0;
-                        if (tokens_get(s)->type == '=') {
-                            tokens_next(s);
+						if (tokens_get(s)->type == '=') {
+							tokens_next(s);
 
 							if (out_of_order_mode) {
 								TknType terminator;
@@ -810,11 +818,11 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
 							} else {
 								cursor = parse_const_expr(tu, s);
 							}
-                        }
+						}
 
-                        // Allocate into temporary buffer
+						// Allocate into temporary buffer
 						tls_push(sizeof(EnumEntry));
-                        start[count] = (EnumEntry){ name, lexer_pos, cursor };
+						start[count] = (EnumEntry){ name, lexer_pos, cursor };
 
 						Symbol sym = {
 							.name = name,
@@ -826,7 +834,7 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
 
 						if (out_of_order_mode) {
 							shput(global_symbols, name, sym);
-                        } else {
+						} else {
 							local_symbols[local_symbol_count++] = sym;
 							cursor += 1;
 						}
@@ -835,33 +843,33 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
 						count += 1;
 					}
 
-                    if (tokens_get(s)->type != '}') {
-                        generic_error(s, "Unclosed enum list!");
-                    }
+					if (tokens_get(s)->type != '}') {
+						generic_error(s, "Unclosed enum list!");
+					}
 
-                    // move to more permanent storage
-                    EnumEntry* permanent_store = arena_alloc(&tu->ast_arena, count * sizeof(EnumEntry), _Alignof(EnumEntry));
-                    memcpy(permanent_store, start, count * sizeof(EnumEntry));
-                    tls_restore(start);
+					// move to more permanent storage
+					EnumEntry* permanent_store = arena_alloc(&tu->ast_arena, count * sizeof(EnumEntry), _Alignof(EnumEntry));
+					memcpy(permanent_store, start, count * sizeof(EnumEntry));
+					tls_restore(start);
 
-                    type->enumerator.entries = permanent_store;
-                    type->enumerator.count = count;
+					type->enumerator.entries = permanent_store;
+					type->enumerator.count = count;
 
 					if (out_of_order_mode) {
 						type->is_incomplete = true;
 						type->size = 0;
 						type->align = 0;
 					} else {
-						type->is_incomplete = false;
+						type_layout(tu, type);
 					}
-                } else {
-                    type = find_tag((char*)name);
-                    if (!type) {
-                        type = new_enum(tu);
-                        type->record.name = name;
-                        type->is_incomplete = true;
+				} else {
+					type = find_tag((char*)name);
+					if (!type) {
+						type = new_enum(tu);
+						type->record.name = name;
+						type->is_incomplete = true;
 
-                        if (out_of_order_mode) shput(global_tags, name, type);
+						if (out_of_order_mode) shput(global_tags, name, type);
 						else {
 							if (local_tag_count + 1 >= MAX_LOCAL_TAGS) {
 								SourceLoc* loc = &s->line_arena[tokens_get(s)->location];
@@ -871,202 +879,202 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
 
 							local_tags[local_tag_count] = (TagEntry){ name, type };
 						}
-                    }
+					}
 
-                    // push back one because we push it forward one later but
-                    // shouldn't
-                    tokens_prev(s);
-                }
+					// push back one because we push it forward one later but
+					// shouldn't
+					tokens_prev(s);
+				}
 
-                counter += OTHER;
-                break;
-            }
+				counter += OTHER;
+				break;
+			}
 
-            case TOKEN_IDENTIFIER: {
-                if (counter) goto done;
+			case TOKEN_IDENTIFIER: {
+				if (counter) goto done;
 
-                if (out_of_order_mode) {
-                    Token* t = tokens_get(s);
-                    Atom name = atoms_put(t->end - t->start, t->start);
+				if (out_of_order_mode) {
+					Token* t = tokens_get(s);
+					Atom name = atoms_put(t->end - t->start, t->start);
 
-                    // if the typename is already defined, then reuse that type index
-                    Symbol* sym = find_global_symbol((const char*) name);
-                    // if not, we assume this must be a typedef'd type and reserve space
-                    if (sym != NULL) {
-                        if (sym->storage_class != STORAGE_TYPEDEF) {
-                            SourceLoc* loc = &s->line_arena[tokens_get(s)->location];
-                            report(REPORT_ERROR, loc, "symbol '%s' is not a typedef", name);
-                            return NULL;
-                        }
+					// if the typename is already defined, then reuse that type index
+					Symbol* sym = find_global_symbol((const char*) name);
+					// if not, we assume this must be a typedef'd type and reserve space
+					if (sym != NULL) {
+						if (sym->storage_class != STORAGE_TYPEDEF) {
+							SourceLoc* loc = &s->line_arena[tokens_get(s)->location];
+							report(REPORT_ERROR, loc, "symbol '%s' is not a typedef", name);
+							return NULL;
+						}
 
-                        type = sym->type;
-                        counter += OTHER;
-                    } else {
-                        //printf("MSG: Add typename to pending list '%s'\n", name);
+						type = sym->type;
+						counter += OTHER;
+					} else {
+						//printf("MSG: Add typename to pending list '%s'\n", name);
 
-                        // add placeholder
-                        Symbol sym = {
-                            .name = name,
-                            .type = new_blank_type(tu),
-                            .loc  = t->location,
-                            .storage_class = STORAGE_TYPEDEF
-                        };
-                        type = sym.type;
-                        type->placeholder.name = name;
-                        counter += OTHER;
+						// add placeholder
+						Symbol sym = {
+							.name = name,
+							.type = new_blank_type(tu),
+							.loc  = t->location,
+							.storage_class = STORAGE_TYPEDEF
+						};
+						type = sym.type;
+						type->placeholder.name = name;
+						counter += OTHER;
 
-                        shput(global_symbols, name, sym);
-                    }
+						shput(global_symbols, name, sym);
+					}
 
-                    break;
-                } else {
-                    Symbol* sym = find_local_symbol(s);
-                    if (sym != NULL && sym->storage_class == STORAGE_TYPEDEF) {
-                        type = sym->type;
-                        counter += OTHER;
-                        break;
-                    }
+					break;
+				} else {
+					Symbol* sym = find_local_symbol(s);
+					if (sym != NULL && sym->storage_class == STORAGE_TYPEDEF) {
+						type = sym->type;
+						counter += OTHER;
+						break;
+					}
 
-                    Token* t = tokens_get(s);
-                    Atom name = atoms_put(t->end - t->start, t->start);
+					Token* t = tokens_get(s);
+					Atom name = atoms_put(t->end - t->start, t->start);
 
-                    sym = find_global_symbol((const char*) name);
-                    if (sym != NULL && sym->storage_class == STORAGE_TYPEDEF) {
-                        type = sym->type;
-                        counter += OTHER;
-                        break;
-                    }
+					sym = find_global_symbol((const char*) name);
+					if (sym != NULL && sym->storage_class == STORAGE_TYPEDEF) {
+						type = sym->type;
+						counter += OTHER;
+						break;
+					}
 
-                    // if not a typename, this isn't a typedecl
-                    goto done;
-                }
-            }
-            default: goto done;
-        }
+					// if not a typename, this isn't a typedecl
+					goto done;
+				}
+			}
+			default: goto done;
+		}
 
-        switch (counter) {
-            case 0: break; // not resolved yet
-            case VOID:
-            type = &builtin_types[TYPE_VOID];
-            break;
-            case BOOL:
-            type = &builtin_types[TYPE_BOOL];
-            break;
-            case CHAR:
-            case SIGNED + CHAR:
-            type = &builtin_types[TYPE_CHAR];
-            break;
-            case UNSIGNED + CHAR:
-            type = &builtin_types[TYPE_UCHAR];
-            break;
-            case SHORT:
-            case SHORT + INT:
-            case SIGNED + SHORT:
-            case SIGNED + SHORT + INT:
-            type = &builtin_types[TYPE_SHORT];
-            break;
-            case UNSIGNED + SHORT:
-            case UNSIGNED + SHORT + INT:
-            type = &builtin_types[TYPE_USHORT];
-            break;
-            case INT:
-            case LONG:
-            case LONG + INT:
-            case SIGNED:
-            type = &builtin_types[TYPE_INT];
-            break;
-            case SIGNED + INT:
-            case SIGNED + LONG:
-            case SIGNED + LONG + INT:
-            type = &builtin_types[settings.is_windows_long ? TYPE_INT : TYPE_LONG];
-            break;
-            case UNSIGNED:
-            case UNSIGNED + INT:
-            type = &builtin_types[TYPE_UINT];
-            break;
-            case UNSIGNED + LONG:
-            case UNSIGNED + LONG + INT:
-            type = &builtin_types[settings.is_windows_long ? TYPE_UINT : TYPE_ULONG];
-            break;
-            case LONG + LONG:
-            case LONG + LONG + INT:
-            case SIGNED + LONG + LONG:
-            case SIGNED + LONG + LONG + INT:
-            type = &builtin_types[TYPE_LONG];
-            break;
-            case UNSIGNED + LONG + LONG:
-            case UNSIGNED + LONG + LONG + INT:
-            type = &builtin_types[TYPE_ULONG];
-            break;
-            case FLOAT:
-            type = &builtin_types[TYPE_FLOAT];
-            break;
-            case DOUBLE:
-            case LONG + DOUBLE:
-            type = &builtin_types[TYPE_DOUBLE];
-            break;
-            case OTHER:
-            assert(type);
-            break;
-            default:
-            generic_error(s, "invalid type");
-            break;
-        }
+		switch (counter) {
+			case 0: break; // not resolved yet
+			case VOID:
+			type = &builtin_types[TYPE_VOID];
+			break;
+			case BOOL:
+			type = &builtin_types[TYPE_BOOL];
+			break;
+			case CHAR:
+			case SIGNED + CHAR:
+			type = &builtin_types[TYPE_CHAR];
+			break;
+			case UNSIGNED + CHAR:
+			type = &builtin_types[TYPE_UCHAR];
+			break;
+			case SHORT:
+			case SHORT + INT:
+			case SIGNED + SHORT:
+			case SIGNED + SHORT + INT:
+			type = &builtin_types[TYPE_SHORT];
+			break;
+			case UNSIGNED + SHORT:
+			case UNSIGNED + SHORT + INT:
+			type = &builtin_types[TYPE_USHORT];
+			break;
+			case INT:
+			case LONG:
+			case LONG + INT:
+			case SIGNED:
+			type = &builtin_types[TYPE_INT];
+			break;
+			case SIGNED + INT:
+			case SIGNED + LONG:
+			case SIGNED + LONG + INT:
+			type = &builtin_types[settings.is_windows_long ? TYPE_INT : TYPE_LONG];
+			break;
+			case UNSIGNED:
+			case UNSIGNED + INT:
+			type = &builtin_types[TYPE_UINT];
+			break;
+			case UNSIGNED + LONG:
+			case UNSIGNED + LONG + INT:
+			type = &builtin_types[settings.is_windows_long ? TYPE_UINT : TYPE_ULONG];
+			break;
+			case LONG + LONG:
+			case LONG + LONG + INT:
+			case SIGNED + LONG + LONG:
+			case SIGNED + LONG + LONG + INT:
+			type = &builtin_types[TYPE_LONG];
+			break;
+			case UNSIGNED + LONG + LONG:
+			case UNSIGNED + LONG + LONG + INT:
+			type = &builtin_types[TYPE_ULONG];
+			break;
+			case FLOAT:
+			type = &builtin_types[TYPE_FLOAT];
+			break;
+			case DOUBLE:
+			case LONG + DOUBLE:
+			type = &builtin_types[TYPE_DOUBLE];
+			break;
+			case OTHER:
+			assert(type);
+			break;
+			default:
+			generic_error(s, "invalid type");
+			break;
+		}
 
-        tokens_next(s);
-    } while (true);
+		tokens_next(s);
+	} while (true);
 
-    done:;
-    SourceLoc* loc = &s->line_arena[tokens_get(s)->location];
-    if (type == 0) {
-        report(REPORT_ERROR, loc, "unknown typename");
-        return NULL;
-    }
+	done:;
+	SourceLoc* loc = &s->line_arena[tokens_get(s)->location];
+	if (type == 0) {
+		report(REPORT_ERROR, loc, "unknown typename");
+		return NULL;
+	}
 
-    if (is_atomic || is_const || (forced_align && type->align != forced_align)) {
-        if (forced_align && forced_align < type->align) {
-            report(REPORT_ERROR, loc, "forced alignment %d cannot be smaller than original alignment %d", forced_align, type->align);
-            return NULL;
-        }
+	if (is_atomic || is_const || (forced_align && type->align != forced_align)) {
+		if (forced_align && forced_align < type->align) {
+			report(REPORT_ERROR, loc, "forced alignment %d cannot be smaller than original alignment %d", forced_align, type->align);
+			return NULL;
+		}
 
-        type = copy_type(tu, type);
+		type = copy_type(tu, type);
 
-        if (forced_align) {
-            type->align = forced_align;
-        } else if (alignas_pending_expr != NULL) {
+		if (forced_align) {
+			type->align = forced_align;
+		} else if (alignas_pending_expr != NULL) {
 			type->align = -1;
 			alignas_pending_expr->dst = &type->align;
 		}
 
-        type->is_atomic = is_atomic;
-        type->is_const = is_const;
-    }
+		type->is_atomic = is_atomic;
+		type->is_const = is_const;
+	}
 
-    return type;
+	return type;
 }
 
 static bool is_typename(TokenStream* restrict s) {
-    Token* t = tokens_get(s);
+	Token* t = tokens_get(s);
 
-    switch (t->type) {
-        case TOKEN_KW_void: case TOKEN_KW_char: case TOKEN_KW_short:
-        case TOKEN_KW_int: case TOKEN_KW_long: case TOKEN_KW_float:
-        case TOKEN_KW_double: case TOKEN_KW_Bool: case TOKEN_KW_signed:
-        case TOKEN_KW_unsigned: case TOKEN_KW_struct: case TOKEN_KW_union:
-        case TOKEN_KW_enum: case TOKEN_KW_extern: case TOKEN_KW_static:
-        case TOKEN_KW_typedef: case TOKEN_KW_inline: case TOKEN_KW_const:
-        case TOKEN_KW_volatile: case TOKEN_KW_declspec: case TOKEN_KW_Thread_local:
-        case TOKEN_KW_Alignas: case TOKEN_KW_Atomic: case TOKEN_KW_auto:
-        case TOKEN_KW_cdecl: case TOKEN_KW_stdcall: case TOKEN_KW_Typeof:
-        return true;
+	switch (t->type) {
+		case TOKEN_KW_void: case TOKEN_KW_char: case TOKEN_KW_short:
+		case TOKEN_KW_int: case TOKEN_KW_long: case TOKEN_KW_float:
+		case TOKEN_KW_double: case TOKEN_KW_Bool: case TOKEN_KW_signed:
+		case TOKEN_KW_unsigned: case TOKEN_KW_struct: case TOKEN_KW_union:
+		case TOKEN_KW_enum: case TOKEN_KW_extern: case TOKEN_KW_static:
+		case TOKEN_KW_typedef: case TOKEN_KW_inline: case TOKEN_KW_const:
+		case TOKEN_KW_volatile: case TOKEN_KW_declspec: case TOKEN_KW_Thread_local:
+		case TOKEN_KW_Alignas: case TOKEN_KW_Atomic: case TOKEN_KW_auto:
+		case TOKEN_KW_cdecl: case TOKEN_KW_stdcall: case TOKEN_KW_Typeof:
+		return true;
 
-        case TOKEN_IDENTIFIER: {
-            // good question...
-            Token* t = tokens_get(s);
-            Atom name = atoms_put(t->end - t->start, t->start);
+		case TOKEN_IDENTIFIER: {
+			// good question...
+			Token* t = tokens_get(s);
+			Atom name = atoms_put(t->end - t->start, t->start);
 
-            Symbol* loc = find_local_symbol(s);
-            if (loc != NULL) {
+			Symbol* loc = find_local_symbol(s);
+			if (loc != NULL) {
 				// if we find a normal symbol before the typedef, then we didn't match typename
 				// and thus don't continue:
 				//
@@ -1080,13 +1088,13 @@ static bool is_typename(TokenStream* restrict s) {
 				return (loc->storage_class == STORAGE_TYPEDEF);
 			}
 
-            Symbol* glob = find_global_symbol((const char*)name);
-            if (glob != NULL && glob->storage_class == STORAGE_TYPEDEF) return true;
+			Symbol* glob = find_global_symbol((const char*)name);
+			if (glob != NULL && glob->storage_class == STORAGE_TYPEDEF) return true;
 
-            return false;
-        }
+			return false;
+		}
 
-        default:
-        return false;
-    }
+		default:
+		return false;
+	}
 }

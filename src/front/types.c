@@ -32,8 +32,6 @@ static Type* alloc_type(TranslationUnit* tu, const Type* src) {
 Type* new_enum(TranslationUnit* tu) {
 	return alloc_type(tu, &(Type){
 						  .kind = KIND_ENUM,
-						  .size = 4,
-						  .align = 4
 					  });
 }
 

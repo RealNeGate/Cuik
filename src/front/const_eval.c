@@ -134,7 +134,7 @@ ConstValue const_eval(TranslationUnit* tu, const Expr* e) {
 		}
 
 		case EXPR_ENUM: {
-			/*if (e->type->size == 0) {
+			/*if (e->type->is_incomplete) {
 				type_layout(tu, e->type);
 			}*/
 
