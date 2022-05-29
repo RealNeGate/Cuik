@@ -779,7 +779,16 @@ int main(int argc, char* argv[]) {
 
 	char obj_output_path[MAX_PATH];
 	if (target_system == TB_SYSTEM_WINDOWS) {
-		sprintf_s(obj_output_path, 260, "%s.obj", cuik_file_no_ext);
+		// if we spit out an exectuable, we'll keep the object file as a temporary and delete it to avoid cluttering crap
+		if (settings.stage_to_stop_at >= STAGE_FINAL) {
+			assert(L_tmpnam <= 260);
+			if (tmpnam(obj_output_path) == NULL) {
+				fprintf(stderr, "cannot get a temporary file for the .obj... resorting to violence\n");
+				return 1;
+			}
+		} else {
+			sprintf_s(obj_output_path, 260, "%s.obj", cuik_file_no_ext);
+		}
 	} else if (target_system == TB_SYSTEM_LINUX) {
 		sprintf_s(obj_output_path, 260, "%s.o", cuik_file_no_ext);
 	}
@@ -833,6 +842,8 @@ int main(int argc, char* argv[]) {
 
 					linker_invoke_system(&l, cuik_file_no_ext);
 					linker_deinit(&l);
+
+					remove(obj_output_path);
 				}
 			}
 		}
