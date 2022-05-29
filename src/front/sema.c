@@ -228,22 +228,26 @@ static InitSearchResult find_member_by_name(Type* type, const unsigned char* nam
 	return (InitSearchResult){ 0 };
 }
 
-static InitSearchResult get_next_member_in_type(Type* type, int target, int* base_index, int offset) {
+static InitSearchResult get_next_member_in_type(Type* type, int target, int* base_index, int offset, bool stop_at_struct) {
 	Member* kids = type->record.kids;
 	size_t count = type->record.kid_count;
 
 	for (size_t i = 0; i < count; i++) {
 		Member* member = &kids[i];
 
-		// TODO(NeGate): String interning would be nice
-		if (member->name != NULL) {
-			int j = *base_index + i;
+		int j = *base_index + i;
+		bool match = (j == target);
 
-			if (j == target) {
+		// check kids
+		if (member->type->kind == KIND_STRUCT ||
+			member->type->kind == KIND_UNION) {
+			if (match && stop_at_struct) {
 				return (InitSearchResult){ member, j, offset + member->offset };
 			}
-		} else {
-			return get_next_member_in_type(type, target, base_index, offset + member->offset);
+
+			return get_next_member_in_type(member->type, target, base_index, offset + member->offset, stop_at_struct);
+		} else if (match) {
+			return (InitSearchResult){ member, j, offset + member->offset };
 		}
 	}
 
@@ -295,13 +299,13 @@ static InitNode* walk_initializer_for_sema(TranslationUnit* tu, Type* type, int 
 				}
 
 				int index = 0;
-				InitSearchResult search = get_next_member_in_type(type, cursor, &index, 0);
+				InitSearchResult search = get_next_member_in_type(type, cursor, &index, 0, node->kids_count != 0);
 				if (search.member == NULL) {
 					abort();
 				}
 
 				child_type = search.member->type;
-				assert(child_type->size != 0);
+				if (child_type->size == 0) type_layout(tu, child_type);
 
 				relative_offset = search.offset;
 				cursor = search.index + 1;

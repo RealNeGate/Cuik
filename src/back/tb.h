@@ -178,22 +178,47 @@ extern "C" {
 	} TB_ISelMode;
 
 	typedef enum TB_DataTypeEnum {
-		TB_VOID,
-		// Boolean
-		TB_BOOL,
-		// Integers
-		TB_I8,
-		TB_I16,
-		TB_I32,
-		TB_I64,
-		// IEEE 754 Floating point
-		TB_F32,
-		TB_F64,
+		// Integers, note void is an i0 and bool is an i1
+		//   i(0-2047)
+		TB_INT,
+		// Floating point numbers
+		//   f{32,64}
+		TB_FLOAT,
 		// Pointers
+		//   ptr(0-2047)
 		TB_PTR,
-
-		TB_MAX_TYPES
 	} TB_DataTypeEnum;
+
+	typedef enum TB_FloatFormat {
+		// IEEE 754 floats
+		TB_FLT_32, TB_FLT_64
+	} TB_FloatFormat;
+
+	typedef union {
+		struct {
+			uint16_t type  : 2;
+			// 2^N where N is the width value.
+			// Only integers and floats can be wide.
+			uint16_t width : 3;
+
+			// for integers it's the bitwidth
+			uint16_t data  : 11;
+		};
+		uint16_t raw;
+	} TB_DataType;
+	static_assert(sizeof(TB_DataType) == sizeof(uint16_t), "TB_DataType isn't 16bits...");
+
+	// classify data types
+#define TB_IS_VOID_TYPE(x)     ((x).type == TB_INT && (x).data == 0)
+#define TB_IS_BOOL_TYPE(x)     ((x).type == TB_INT && (x).data == 1)
+#define TB_IS_INTEGER_TYPE(x)  ((x).type == TB_INT)
+#define TB_IS_FLOAT_TYPE(x)    ((x).type == TB_FLOAT)
+#define TB_IS_POINTER_TYPE(x)  ((x).type == TB_PTR)
+
+	// accessors
+#define TB_GET_INT_BITWIDTH(x) ((x).data)
+#define TB_GET_FLOAT_FORMAT(x) ((x).data)
+#define TB_GET_PTR_ADDRSPACE(x) ((x).data)
 
 	typedef enum TB_NodeTypeEnum {
 		TB_NULL = 0,
@@ -245,7 +270,6 @@ extern "C" {
 		TB_LOAD,
 
 		/* Pointers */
-		TB_RESTRICT,
 		TB_LOCAL,
 		TB_PARAM_ADDR,
 
@@ -258,8 +282,7 @@ extern "C" {
 		TB_ARRAY_ACCESS,
 
 		/* Immediates */
-		TB_UNSIGNED_CONST,
-		TB_SIGNED_CONST,
+		TB_INTEGER_CONST,
 		TB_FLOAT_CONST,
 		TB_STRING_CONST,
 
@@ -270,6 +293,8 @@ extern "C" {
 		TB_ZERO_EXT,
 		TB_INT2PTR,
 		TB_PTR2INT,
+		TB_UINT2FLOAT,
+		TB_FLOAT2UINT,
 		TB_INT2FLOAT,
 		TB_FLOAT2INT,
 		TB_BITCAST,
@@ -337,18 +362,6 @@ extern "C" {
 #define TB_IS_NODE_SIDE_EFFECT(type) ((type) >= TB_LINE_INFO && (type) <= TB_DEBUGBREAK)
 #define TB_IS_NODE_TERMINATOR(type)  ((type) >= TB_LABEL && (type) <= TB_RET)
 
-#define TB_IS_INTEGER_TYPE(x) ((x) >= TB_I8 && (x) <= TB_I64)
-#define TB_IS_FLOAT_TYPE(x)   ((x) >= TB_F32 && (x) <= TB_F64)
-#define TB_IS_POINTER_TYPE(x) ((x) == TB_PTR)
-
-	typedef struct {
-		uint8_t type;
-
-		// 2^N where N is the width value.
-		// Only integers and floats can be wide.
-		uint8_t width;
-	} TB_DataType;
-
 	typedef int TB_Label;
 
 	typedef struct {
@@ -392,17 +405,18 @@ extern "C" {
 		TB_AttribList* first_attrib;
 
 		union {
-			struct TB_NodeUint {
-				uint64_t value;
-			} uint;
-			struct TB_NodeSint {
-				int64_t value;
-			} sint;
+			struct TB_NodeInt {
+				size_t num_words;
+				union {
+					uint64_t single_word;
+					uint64_t* words;
+				};
+			} integer;
 			struct TB_NodeFloat {
 				double value;
 			} flt;
 			struct TB_NodeString {
-				size_t      length;
+				size_t length;
 				const char* data;
 			} string;
 			struct TB_NodeFunction {
@@ -416,24 +430,24 @@ extern "C" {
 			} global;
 			struct TB_NodeLine {
 				TB_FileID file;
-				int       line;
+				int line;
 			} line_info;
 			struct TB_NodeMemberAccess {
 				TB_Reg  base;
 				int32_t offset;
 			} member_access;
 			struct TB_NodeArrayAccess {
-				TB_Reg       base;
-				TB_Reg       index;
+				TB_Reg base;
+				TB_Reg index;
 				TB_CharUnits stride;
 			} array_access;
 			struct TB_NodePtrdiff {
-				TB_Reg       a;
-				TB_Reg       b;
+				TB_Reg a;
+				TB_Reg b;
 				TB_CharUnits stride;
 			} ptrdiff;
 			struct TB_NodeParam {
-				uint32_t     id;
+				uint32_t id;
 				TB_CharUnits size;
 			} param;
 			struct TB_NodeParamAddr {
@@ -450,8 +464,8 @@ extern "C" {
 				TB_Reg src;
 			} unary;
 			struct TB_NodeIArith {
-				TB_Reg                a;
-				TB_Reg                b;
+				TB_Reg a;
+				TB_Reg b;
 				TB_ArithmaticBehavior arith_behavior;
 			} i_arith;
 			struct TB_NodeFArith {
@@ -459,8 +473,8 @@ extern "C" {
 				TB_Reg b;
 			} f_arith;
 			struct TB_NodeCompare {
-				TB_Reg      a;
-				TB_Reg      b;
+				TB_Reg a;
+				TB_Reg b;
 				TB_DataType dt;
 			} cmp;
 			struct TB_NodeSelect {
@@ -472,19 +486,19 @@ extern "C" {
 				TB_Reg address;
 				// this is only here to make load and store
 				// payloads match in data layout... just because
-				TB_Reg       _;
+				TB_Reg _;
 				TB_CharUnits alignment;
-				bool         is_volatile;
+				bool is_volatile;
 			} load;
 			struct TB_NodeStore {
-				TB_Reg       address;
-				TB_Reg       value;
+				TB_Reg address;
+				TB_Reg value;
 				TB_CharUnits alignment;
-				bool         is_volatile;
+				bool is_volatile;
 			} store;
 			struct TB_NodeAtomicRMW {
-				TB_Reg         addr;
-				TB_Reg         src;
+				TB_Reg addr;
+				TB_Reg src;
 				TB_MemoryOrder order;
 
 				// NOTE(NeGate): this is used for fail
@@ -514,7 +528,7 @@ extern "C" {
 				TB_Reg   terminator;
 			} label;
 			struct TB_NodeIf {
-				TB_Reg   cond;
+				TB_Reg cond;
 				TB_Label if_true;
 				TB_Label if_false;
 			} if_;
@@ -522,35 +536,35 @@ extern "C" {
 				TB_Label label;
 			} goto_;
 			struct TB_NodeExternCall {
-				int           param_start, param_end;
+				int param_start, param_end;
 				TB_ExternalID target;
 			} ecall;
 			struct TB_NodeDynamicCall {
-				int    param_start, param_end;
+				int param_start, param_end;
 				TB_Reg target;
 			} vcall;
 			struct TB_NodeFunctionCall {
-				int                param_start, param_end;
+				int param_start, param_end;
 				const TB_Function* target;
 			} call;
 			struct TB_NodeSwitch {
-				TB_Reg   key;
+				TB_Reg key;
 				TB_Label default_label;
-				int      entries_start, entries_end;
+				int entries_start, entries_end;
 			} switch_;
 			struct TB_NodeMemoryOp {
-				TB_Reg       dst;
-				TB_Reg       src;
-				TB_Reg       size;
+				TB_Reg dst;
+				TB_Reg src;
+				TB_Reg size;
 				TB_CharUnits align;
 			} mem_op;
 			struct TB_NodeMemoryClear {
-				TB_Reg       dst;
+				TB_Reg dst;
 				TB_CharUnits size;
 				TB_CharUnits align;
 			} clear;
 			struct TB_NodeInitialize {
-				TB_Reg           addr;
+				TB_Reg addr;
 				TB_InitializerID id;
 			} init;
 		};
@@ -662,31 +676,30 @@ extern "C" {
 	// Public macros
 	// *******************************
 #ifdef __cplusplus
-#define TB_TYPE_VOID TB_DataType{ TB_VOID }
 
-#define TB_TYPE_I8 TB_DataType{ TB_I8 }
-#define TB_TYPE_I16 TB_DataType{ TB_I16 }
-#define TB_TYPE_I32 TB_DataType{ TB_I32 }
-#define TB_TYPE_I64 TB_DataType{ TB_I64 }
-
-#define TB_TYPE_F32 TB_DataType{ TB_F32 }
-#define TB_TYPE_F64 TB_DataType{ TB_F64 }
-
-#define TB_TYPE_BOOL TB_DataType{ TB_BOOL }
-#define TB_TYPE_PTR TB_DataType{ TB_PTR }
+#define TB_TYPE_VOID    TB_DataType{ { TB_INT,   0, 0 } }
+#define TB_TYPE_I8      TB_DataType{ { TB_INT,   0, 8 } }
+#define TB_TYPE_I16     TB_DataType{ { TB_INT,   0, 16 } }
+#define TB_TYPE_I32     TB_DataType{ { TB_INT,   0, 32 } }
+#define TB_TYPE_I64     TB_DataType{ { TB_INT,   0, 64 } }
+#define TB_TYPE_F32     TB_DataType{ { TB_FLOAT, 0, TB_FLT_32 } }
+#define TB_TYPE_F64     TB_DataType{ { TB_FLOAT, 0, TB_FLT_64 } }
+#define TB_TYPE_BOOL    TB_DataType{ { TB_INT,   0, 1 } }
+#define TB_TYPE_PTR     TB_DataType{ { TB_PTR,   0, 0 } }
+#define TB_TYPE_PTRN(N) TB_DataType{ { TB_PTR,   0, (N) } }
 
 #else
 
-#define TB_TYPE_VOID (TB_DataType){ TB_VOID, 0 }
-#define TB_TYPE_I8   (TB_DataType){ TB_I8, 0 }
-#define TB_TYPE_I16  (TB_DataType){ TB_I16, 0 }
-#define TB_TYPE_I32  (TB_DataType){ TB_I32, 0 }
-#define TB_TYPE_I64  (TB_DataType){ TB_I64, 0 }
-
-#define TB_TYPE_F32  (TB_DataType){ TB_F32, 0 }
-#define TB_TYPE_F64  (TB_DataType){ TB_F64, 0 }
-#define TB_TYPE_BOOL (TB_DataType){ TB_BOOL, 0 }
-#define TB_TYPE_PTR  (TB_DataType){ TB_PTR, 0 }
+#define TB_TYPE_VOID (TB_DataType){ { TB_INT,   0, 0 } }
+#define TB_TYPE_I8   (TB_DataType){ { TB_INT,   0, 8 } }
+#define TB_TYPE_I16  (TB_DataType){ { TB_INT,   0, 16 } }
+#define TB_TYPE_I32  (TB_DataType){ { TB_INT,   0, 32 } }
+#define TB_TYPE_I64  (TB_DataType){ { TB_INT,   0, 64 } }
+#define TB_TYPE_F32  (TB_DataType){ { TB_FLOAT, 0, TB_FLT_32 } }
+#define TB_TYPE_F64  (TB_DataType){ { TB_FLOAT, 0, TB_FLT_64 } }
+#define TB_TYPE_BOOL (TB_DataType){ { TB_INT,   0, 1 } }
+#define TB_TYPE_PTR  (TB_DataType){ { TB_PTR,   0, 0 } }
+#define TB_TYPE_PTRN(N) (TB_DataType){ { TB_PTR,  0, (N) } }
 
 #endif
 
@@ -817,6 +830,7 @@ extern "C" {
 	TB_API void tb_inst_set_scope(TB_Function* f, TB_AttributeID scope);
 	TB_API TB_AttributeID tb_inst_get_scope(TB_Function* f);
 
+	TB_API void tb_inst_unreachable(TB_Function* f);
 	TB_API void tb_inst_debugbreak(TB_Function* f);
 
 	TB_API TB_Reg tb_inst_param(TB_Function* f, int param_id);
@@ -828,8 +842,8 @@ extern "C" {
 	TB_API TB_Reg tb_inst_trunc(TB_Function* f, TB_Reg src, TB_DataType dt);
 	TB_API TB_Reg tb_inst_int2ptr(TB_Function* f, TB_Reg src);
 	TB_API TB_Reg tb_inst_ptr2int(TB_Function* f, TB_Reg src, TB_DataType dt);
-	TB_API TB_Reg tb_inst_int2float(TB_Function* f, TB_Reg src, TB_DataType dt);
-	TB_API TB_Reg tb_inst_float2int(TB_Function* f, TB_Reg src, TB_DataType dt);
+	TB_API TB_Reg tb_inst_int2float(TB_Function* f, TB_Reg src, TB_DataType dt, bool is_signed);
+	TB_API TB_Reg tb_inst_float2int(TB_Function* f, TB_Reg src, TB_DataType dt, bool is_signed);
 	TB_API TB_Reg tb_inst_bitcast(TB_Function* f, TB_Reg src, TB_DataType dt);
 
 	TB_API TB_Reg tb_inst_local(TB_Function* f, uint32_t size, TB_CharUnits align);
@@ -941,8 +955,6 @@ extern "C" {
 	TB_API TB_Reg tb_inst_cmp_fgt(TB_Function* f, TB_Reg a, TB_Reg b);
 	TB_API TB_Reg tb_inst_cmp_fge(TB_Function* f, TB_Reg a, TB_Reg b);
 
-	TB_API TB_Reg tb_inst_restrict(TB_Function* f, TB_Reg value);
-
 	// General intrinsics
 	TB_API TB_Reg tb_inst_va_start(TB_Function* f, TB_Reg a);
 
@@ -1005,17 +1017,7 @@ extern "C" {
 
 	TB_API TB_Node* tb_function_get_node(TB_Function* f, TB_Reg r);
 
-	// either an unsigned or signed constant
-	TB_API bool tb_node_is_constant_int(TB_Function* f, TB_Reg r, uint64_t imm);
-
-	// returns true if it's a signed or unsigned constant
-	// in which case *imm is the raw bits and *is_signed is
-	// signedness
-	//
-	// notes:
-	//   imm cannot be NULL
-	//   is_signed can be NULL
-	TB_API bool tb_node_get_constant_int(TB_Function* f, TB_Reg r, uint64_t* imm, bool* is_signed);
+	TB_API bool tb_node_is_constant_zero(TB_Function* f, TB_Reg r);
 
 	// Returns the size and alignment of a LOCAL node, both must
 	// be valid addresses

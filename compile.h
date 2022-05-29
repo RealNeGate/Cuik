@@ -24,6 +24,7 @@
 // This is my "build script library"-inator for C
 // It's inspired by nobuild but different
 #define _CRT_SECURE_NO_WARNINGS
+#define _CRT_NONSTDC_NO_WARNINGS
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -108,6 +109,18 @@ inline static bool str_ends_with(const char* cstr, const char* postfix) {
     const size_t postfix_len = strlen(postfix);
 
     return postfix_len <= cstr_len && strcmp(cstr + cstr_len - postfix_len, postfix) == 0;
+}
+
+inline static char* str_gimme_good_slashes(const char* str) {
+	char bad_slash = ON_WINDOWS ? '/' : '\\';
+	char cool_slash = ON_WINDOWS ? '\\' : '/';
+
+	char* dst = strdup(str);
+	for (char* i = dst; *i; i++) {
+		if (*i == bad_slash) *i = cool_slash;
+	}
+
+	return dst;
 }
 
 inline static const char* str_filename(const char* path) {
@@ -422,13 +435,19 @@ inline static void builder_compile_cc(BuildMode mode, size_t count, const char* 
 
 	// Do linker work
 	if (mode == BUILD_MODE_EXECUTABLE) {
-		if (ON_CLANG) {
+		if (ON_WINDOWS) {
+			cmd_append("link /defaultlib:libcmt /debug /out:");
+			cmd_append(str_gimme_good_slashes(output_path));
+			cmd_append(".exe ");
+			cmd_append("build\\*.obj ole32.lib Advapi32.lib OleAut32.lib DbgHelp.lib ");
+			cmd_append(extra_libraries);
+		} else if (ON_CLANG) {
 			// Link with clang instead so it's easier
 			cmd_append("clang ");
 #ifndef NO_DEBUG_INFO
 			cmd_append("-g ");
 #endif
-			cmd_append("-fuse-ld=lld -o ");
+			cmd_append("-o ");
 			cmd_append(output_path);
 			if (ON_WINDOWS) cmd_append(".exe");
 			cmd_append(" ");

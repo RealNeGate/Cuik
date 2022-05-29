@@ -166,7 +166,7 @@ static int pass_parameter(TranslationUnit* tu, TB_Function* func, Expr* e, bool 
 			TB_Reg arg = irgen_as_rvalue(tu, func, e);
 			TB_DataType dt = tb_function_get_node(func, arg)->dt;
 
-			if (is_vararg && dt.type == TB_F64 && dt.width == 0) {
+			if (is_vararg && dt.type == TB_FLOAT && dt.data == TB_FLT_64 && dt.width == 0) {
 				// convert any float variadic arguments into integers
 				arg = tb_inst_bitcast(func, arg, TB_TYPE_I64);
 			}

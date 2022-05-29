@@ -70,26 +70,26 @@ static TB_Register cast_reg(TB_Function* func, TB_Register reg, const Type* src,
 			   dst->kind == KIND_DOUBLE) {
 		TB_DataType dt = tb_function_get_node(func, reg)->dt;
 
-		if (!(dt.type == TB_F64 && dt.width == 0)) {
+		if (!(dt.type == TB_FLOAT && dt.data == TB_FLT_64 && dt.width == 0)) {
 			reg = tb_inst_fpxt(func, reg, TB_TYPE_F64);
 		}
 	} else if (src->kind == KIND_DOUBLE &&
 			   dst->kind == KIND_FLOAT) {
 		TB_DataType dt = tb_function_get_node(func, reg)->dt;
 
-		if (!(dt.type == TB_F32 && dt.width == 0)) {
+		if (!(dt.type == TB_FLOAT && dt.data == TB_FLT_32 && dt.width == 0)) {
 			reg = tb_inst_trunc(func, reg, TB_TYPE_F32);
 		}
 	} else if (src->kind >= KIND_FLOAT &&
 			   src->kind <= KIND_DOUBLE &&
 			   dst->kind >= KIND_CHAR &&
 			   dst->kind <= KIND_LONG) {
-		reg = tb_inst_float2int(func, reg, ctype_to_tbtype(dst));
+		reg = tb_inst_float2int(func, reg, ctype_to_tbtype(dst), !dst->is_unsigned);
 	} else if (src->kind >= KIND_CHAR &&
 			   src->kind <= KIND_LONG &&
 			   dst->kind >= KIND_FLOAT &&
 			   dst->kind <= KIND_DOUBLE) {
-		reg = tb_inst_int2float(func, reg, ctype_to_tbtype(dst));
+		reg = tb_inst_int2float(func, reg, ctype_to_tbtype(dst), !src->is_unsigned);
 	}
 
 	assert(reg);
@@ -1158,6 +1158,14 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
 					case EXPR_CMPGE: data = tb_inst_cmp_fge(func, l, r); break;
 					case EXPR_CMPLT: data = tb_inst_cmp_flt(func, l, r); break;
 					case EXPR_CMPLE: data = tb_inst_cmp_fle(func, l, r); break;
+					default: abort();
+				}
+			} else if (type->kind == KIND_PTR) {
+				switch (e->op) {
+					case EXPR_CMPGT: data = tb_inst_cmp_igt(func, l, r, false); break;
+					case EXPR_CMPGE: data = tb_inst_cmp_ige(func, l, r, false); break;
+					case EXPR_CMPLT: data = tb_inst_cmp_ilt(func, l, r, false); break;
+					case EXPR_CMPLE: data = tb_inst_cmp_ile(func, l, r, false); break;
 					default: abort();
 				}
 			} else {
