@@ -91,12 +91,12 @@ void linker_add_input_file(Linker* l, const char filepath[]) {
 // Like im pretty sure %S doesn't do the UTF-8 conversion and im being lazy about it.
 enum { CMD_LINE_MAX = 4096 };
 
-bool linker_invoke_system(Linker* l, const char* filename) {
+bool linker_invoke_system(Linker* l, const char* filename, bool verbose) {
 #if defined(_WIN32)
 	wchar_t cmd_line[CMD_LINE_MAX];
 	int cmd_line_len = swprintf(cmd_line, CMD_LINE_MAX,
 								L"%s\\link.exe /nologo /machine:amd64 /subsystem:console"
-								" /debug:full /pdb:%S.pdb /out:%S.exe /incremental:no ",
+								" /debug:full /pdb:%S.pdb /out:%S.exe /entry:main /incremental:no ",
 								s_vswhere.vs_exe_path, filename, filename);
 
 	// Add all the libpaths
@@ -130,7 +130,10 @@ bool linker_invoke_system(Linker* l, const char* filename) {
 	};
 	PROCESS_INFORMATION pi = {};
 
-	//printf("Linker command:\n%S\n", cmd_line);
+	if (verbose) {
+		printf("Linker command:\n%S\n", cmd_line);
+	}
+
 	if (!CreateProcessW(NULL, cmd_line, NULL, NULL, TRUE, 0, NULL, NULL, &si, &pi)) {
 		printf("Linker command could not be executed.\n");
 		return false;

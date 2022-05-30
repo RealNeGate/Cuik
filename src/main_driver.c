@@ -12,8 +12,7 @@
 
 typedef enum {
 	COMPILER_MODE_NONE,
-	COMPILER_MODE_BUILD,
-	COMPILER_MODE_RUN
+	COMPILER_MODE_BUILD
 } CompilerMode;
 
 typedef struct {
@@ -22,6 +21,31 @@ typedef struct {
 	TB_Arch arch;
 	TB_System system;
 } TargetOption;
+
+typedef struct {
+	const char* name;
+	const char* desc;
+
+	int lib_count;
+	const char** libs;
+} LibcOption;
+
+static LibcOption libc_options[] = {
+	{
+		"ucrt", "C99 compatible, some C11 features",
+		3, (const char*[]) {
+			"ucrt.lib", "vcruntime.lib", "win32_rt.lib"
+		}
+	},
+
+	{
+		"msvcrt", "C89 compatible",
+		3, (const char*[]) {
+			"msvcrt.lib", "vcruntime.lib", "win32_rt.lib"
+		}
+	}
+};
+enum { LIBC_OPTION_COUNT = sizeof(libc_options) / sizeof(libc_options[0]) };
 
 static TargetOption target_options[] = {
 	{ "x64_windows",  TB_ARCH_X86_64,   TB_SYSTEM_WINDOWS },
@@ -35,6 +59,7 @@ static BigArray(const char*) cuik_source_files;
 static BigArray(const char*) cuik_libraries;
 static char cuik_file_no_ext[255];
 static bool is_frontend_only;
+static LibcOption* chosen_libc = NULL;
 
 static CompilationUnit compilation_unit;
 
@@ -432,7 +457,7 @@ static bool dump_tokens() {
 ////////////////////////////////
 // Entry & CLI
 ////////////////////////////////
-#ifdef __APPLE__
+#ifdef __GNUC__
 #define O(string, ...) fprintf(stdout, string "\n", ##__VA_ARGS__)
 #else
 #define O(string, ...) fprintf(stdout, string "\n", __VA_ARGS__)
@@ -443,7 +468,6 @@ static void print_help(const char* executable_path) {
 	O("");
 	O("Commands:");
 	O("  build                - compile files into an executable");
-	O("  run                  - compile & Run");
 	O("  query                - query for compiler or source code info");
 	O("");
 	O("Options:");
@@ -464,10 +488,13 @@ static void print_help(const char* executable_path) {
 	O("  -T                   - report timing information into a .json file usable by chrome://tracing");
 	O("  -I        <path>     - add include directory");
 	O("  -o        <path>     - define output path for binary and intermediates");
-	O("  --freestanding       - run in freestanding mode (doesn't allow for the OS or C runtime usage, only freestanding headers)");
+	O("  --freestanding       - compile in freestanding mode (doesn't allow for the OS or C runtime usage, only freestanding headers)");
+	O("  --crt     <name>     - choose the libc you wanna compile with");
 	O("  --lib     <name>     - link against a static library");
 	O("  --threads <count>    - chooses how many threads to spawn");
 	O("  --target  <name>     - choose a target platform to compile to");
+	O("  --verbose            - prints out the linker command used");
+	O("  -r                   - run the compiled result");
 	O("");
 }
 #undef O
@@ -583,26 +610,17 @@ int main(int argc, char* argv[]) {
     const char* output_name = NULL;
 
 	// parse command
-	bool run_program = false;
-	if (strcmp(argv[1], "build") == 0) {
-		run_program = false;
-	} else if (strcmp(argv[1], "run") == 0)  {
-		run_program = true;
-	} else if (strcmp(argv[1], "query") == 0) {
+	if (strcmp(argv[1], "query") == 0) {
 		// Query is like a magic Swiss army knife inside of Cuik
 		// so it acts differently from everyone else
 		return execute_query_operation(argv[2], 3, argc, argv);
 	} else if (strcmp(argv[1], "help") == 0) {
 		print_help(argv[0]);
 		return 0;
-	} else {
-		fprintf(stderr, "error: unknown command %s\n", argv[1]);
-		print_help(argv[0]);
-		return 1;
 	}
 
 	// parse options
-	for (size_t i = 2; i < argc; i++) {
+	for (size_t i = 1; i < argc; i++) {
 		if (argv[i][0] != '-') {
 			append_input_path(argv[i]);
 			continue;
@@ -673,9 +691,11 @@ int main(int argc, char* argv[]) {
                     abort();
                 }
 
-                settings.num_of_worker_threads = num;
+				settings.num_of_worker_threads = num;
             } else if (strcmp(option, "help") == 0) {
                 print_help(argv[0]);
+            } else if (strcmp(option, "verbose") == 0) {
+                settings.verbose = true;
             } else if (strcmp(option, "exercise") == 0) {
                 settings.exercise = true;
             } else if (strcmp(option, "pedantic") == 0) {
@@ -702,8 +722,33 @@ int main(int argc, char* argv[]) {
                     fprintf(stderr, "supported stages (check help page for details):\n");
                     fprintf(stderr, "  preproc\n");
                     fprintf(stderr, "  types\n");
-                    fprintf(stderr, "  ir\n");
-                    fprintf(stderr, "  obj\n");
+                    abort();
+                }
+            } else if (strcmp(option, "crt") == 0) {
+                i += 1;
+                if (i >= argc) {
+                    fprintf(stderr, "error: expected name\n");
+                    fprintf(stderr, "supported LibCs:\n");
+                    for (int i = 0; i < LIBC_OPTION_COUNT; i++) {
+						fprintf(stderr, "  %-10s (%s)\n", libc_options[i].name, libc_options[i].desc);
+					}
+                    abort();
+                }
+
+                const char* name = argv[i];
+                for (int i = 0; i < LIBC_OPTION_COUNT; i++) {
+					if (strcmp(name, libc_options[i].name) == 0) {
+						chosen_libc = &libc_options[i];
+						break;
+					}
+				}
+
+				if (chosen_libc == NULL) {
+					fprintf(stderr, "error: expected name\n");
+                    fprintf(stderr, "supported LibCs:\n");
+                    for (int i = 0; i < LIBC_OPTION_COUNT; i++) {
+						fprintf(stderr, "  %-10s (%s)\n", libc_options[i].name, libc_options[i].desc);
+					}
                     abort();
                 }
             } else {
@@ -715,7 +760,8 @@ int main(int argc, char* argv[]) {
                 case 'h': print_help(argv[0]); exit(0);
                 case 'v': case 'V': print_version(argv[0]); exit(0);
                 case 'g': settings.is_debug_info = true; break;
-                case 'o': {
+				case 'r': settings.run_output = true; break;
+				case 'o': {
                     i += 1;
                     if (i >= argc) {
                         fprintf(stderr, "error: expected filepath\n");
@@ -742,6 +788,13 @@ int main(int argc, char* argv[]) {
             }
         }
     }
+
+	// choose a CRT if we haven't gotten one already
+#if _WIN32
+	if (!settings.freestanding && chosen_libc == NULL) {
+		chosen_libc = &libc_options[0 /* UCRT */];
+	}
+#endif
 
 	if (big_array_length(cuik_source_files) == 0) {
         fprintf(stderr, "error: expected input files\n");
@@ -805,32 +858,34 @@ int main(int argc, char* argv[]) {
 
 	// Build project
 	timed_block("total") {
-		compile_project(obj_output_path, true);
+		timed_block("cuik") {
+			compile_project(obj_output_path, true);
 
-		if (settings.exercise) {
-			// just delays the compilation because... you're fat
-			uint64_t t1 = timer_now();
-			double elapsed = 0.0;
+			if (settings.exercise) {
+				// just delays the compilation because... you're fat
+				uint64_t t1 = timer_now();
+				double elapsed = 0.0;
 
-			// 60 seconds of gamer time
-			printf("Waiting around...\n");
+				// 60 seconds of gamer time
+				printf("Waiting around...\n");
 
-			int old_chars = -1;
-			while (elapsed = (timer_now() - t1) * timer_freq, elapsed < 60.5) {
-				int num_chars = (int) ((elapsed / 60.0) * 30.0);
-				if (num_chars != old_chars) {
-					old_chars = num_chars;
+				int old_chars = -1;
+				while (elapsed = (timer_now() - t1) * timer_freq, elapsed < 60.5) {
+					int num_chars = (int) ((elapsed / 60.0) * 30.0);
+					if (num_chars != old_chars) {
+						old_chars = num_chars;
 
-					printf("\r[");
-					for (int i = 0; i < num_chars; i++) printf("#");
-					for (int i = 0; i < 30 - num_chars; i++) printf(" ");
-					printf("]");
+						printf("\r[");
+						for (int i = 0; i < num_chars; i++) printf("#");
+						for (int i = 0; i < 30 - num_chars; i++) printf(" ");
+						printf("]");
+					}
+
+					thrd_yield();
 				}
-
-				thrd_yield();
+				printf("\n");
+				printf("Cool!\n");
 			}
-			printf("\n");
-			printf("Cool!\n");
 		}
 
 		if (settings.stage_to_stop_at >= STAGE_FINAL) {
@@ -861,14 +916,17 @@ int main(int argc, char* argv[]) {
 					linker_add_input_file(&l, "Gdi32.lib");
 					linker_add_input_file(&l, "opengl32.lib");*/
 
+					for (int i = 0; i < chosen_libc->lib_count; i++) {
+						linker_add_input_file(&l, chosen_libc->libs[i]);
+					}
+
 #ifdef _WIN32
+					linker_add_libpath_wide(&l, s_vswhere.windows_sdk_ucrt_library_path);
 					linker_add_input_file(&l, "kernel32.lib");
 					linker_add_input_file(&l, "shell32.lib");
-					linker_add_input_file(&l, "msvcrt.lib");
-					linker_add_input_file(&l, "win32_rt.lib");
 #endif
 
-					linker_invoke_system(&l, cuik_file_no_ext);
+					linker_invoke_system(&l, cuik_file_no_ext, settings.verbose);
 					linker_deinit(&l);
 
 					remove(obj_output_path);
@@ -880,7 +938,7 @@ int main(int argc, char* argv[]) {
 	// Close out profiler output (it doesn't include the linking)
 	timer_close();
 
-	if (settings.stage_to_stop_at >= STAGE_FINAL && run_program) {
+	if (settings.stage_to_stop_at >= STAGE_FINAL && settings.run_output) {
 		char exe_path[MAX_PATH];
 		sprintf_s(exe_path, 260, "%s.exe", cuik_file_no_ext);
 

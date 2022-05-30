@@ -476,7 +476,7 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
 
 					// Add to pending list
 					printf("MSG: Add _Typeof to pending list %zu ending at %c\n", current, terminator);
-					__debugbreak();
+					__builtin_trap();
 				} else {
 					if (is_typename(s)) {
 						type = parse_typename(tu, s);

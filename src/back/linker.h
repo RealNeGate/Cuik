@@ -34,11 +34,11 @@ void linker_add_input_file(Linker* l, const char* filepath);
 
 // Calls the system linker
 // return true if it succeeds
-bool linker_invoke_system(Linker* l, const char* filename);
+bool linker_invoke_system(Linker* l, const char* filename, bool verbose);
 
 // Calls the internal cuik linker
 // returns true if it succeeds
-bool linker_invoke_tb(Linker* l, const char* filename);
+bool linker_invoke_tb(Linker* l, const char* filename, bool verbose);
 
 ////////////////////////////////
 // Private definitions
@@ -50,7 +50,7 @@ struct Linker {
 	OS_String input_file_buffer;
 	size_t input_file_top;
 	size_t input_file_count;
-	
+
 	// system libraries
 	OS_String libpaths_buffer;
 	size_t libpaths_top;

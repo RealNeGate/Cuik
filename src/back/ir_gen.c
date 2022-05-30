@@ -575,6 +575,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
 						}
 					} else {
 						stmt->backing.e = tb_extern_create(mod, name);
+						//printf("Fallback to real external: %s\n", name);
 
 						val = (IRVal) {
 							.value_type = LVALUE_EFUNC,
