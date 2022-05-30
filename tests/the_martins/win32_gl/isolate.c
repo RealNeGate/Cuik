@@ -1,7 +1,6 @@
-
-typedef unsigned long long size_t;
-int printf(const char* format, ...);
-int strncmp(const char * str1, const char * str2, size_t num);
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
 
 /*_Bool separated(const char* src, const char* dst, size_t dstlen)
 {
