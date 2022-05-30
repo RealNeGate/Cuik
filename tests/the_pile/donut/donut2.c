@@ -1,8 +1,6 @@
-extern void printf(const char * fmt, ...);
-extern void memset(void * dst, int val, unsigned long long n);
-extern int putchar(int ch);
-extern double cos(double x);
-extern double sin(double x);
+#include <stdio.h>
+#include <string.h>
+#include <math.h>
 
 const char string[] = ".,-~:;=!*#$@";
 

@@ -5,6 +5,9 @@
 #include <ext/threadpool.h>
 
 #if _WIN32
+// Microsoft's definition of strtok_s actually matches
+// strtok_r on POSIX, not strtok_s on C11... tf
+#define strtok_r(a, b, c) strtok_s(a, b, c)
 #define strdup(x) _strdup(x)
 #endif
 
@@ -24,7 +27,9 @@ typedef struct {
 
 typedef struct {
 	const char* name;
-	const char* desc;
+
+	int version;
+	bool static_link;
 
 	int lib_count;
 	const char** libs;
@@ -32,18 +37,25 @@ typedef struct {
 
 static LibcOption libc_options[] = {
 	{
-		"ucrt", "C99 compatible, some C11 features",
+		"ucrt", 99, false,
 		3, (const char*[]) {
 			"ucrt.lib", "vcruntime.lib", "win32_rt.lib"
 		}
 	},
 
 	{
-		"msvcrt", "C89 compatible",
+		"libucrt", 99, true,
+		3, (const char*[]) {
+			"libucrt.lib", "vcruntime.lib", "win32_rt.lib"
+		}
+	},
+
+	{
+		"msvcrt", 89, false,
 		3, (const char*[]) {
 			"msvcrt.lib", "vcruntime.lib", "win32_rt.lib"
 		}
-	}
+	},
 };
 enum { LIBC_OPTION_COUNT = sizeof(libc_options) / sizeof(libc_options[0]) };
 
@@ -633,22 +645,27 @@ int main(int argc, char* argv[]) {
                 i += 1;
                 if (i >= argc) {
                     fprintf(stderr, "error: expected filepath\n");
-                    abort();
+					return 1;
                 }
 
-				big_array_put(cuik_libraries, argv[i]);
+				char* ctx;
+				char* a = strtok_r(argv[i], ",", &ctx);
+				while (a != NULL) {
+					big_array_put(cuik_libraries, a);
+					a = strtok_r(NULL, ",", &ctx);
+				}
             } else if (strcmp(option, "freestanding") == 0) {
 				settings.freestanding = true;
 			} else if (strcmp(option, "target") == 0) {
                 i += 1;
                 if (i >= argc) {
                     fprintf(stderr, "error: expected target\n");
-                    fprintf(stderr, "Supported targets:\n");
+                    fprintf(stderr, "supported targets:\n");
                     for (size_t i = 0; i < TARGET_OPTION_COUNT; i++) {
                         fprintf(stderr, "\t%s\n", target_options[i].name);
                     }
                     fprintf(stderr, "\n");
-                    abort();
+					return 1;
                 }
 
                 const char* value = argv[i];
@@ -665,30 +682,30 @@ int main(int argc, char* argv[]) {
 
                 if (!matches) {
                     fprintf(stderr, "error: unsupported target: %s\n", value);
-                    fprintf(stderr, "Supported targets:\n");
+                    fprintf(stderr, "supported targets:\n");
                     for (size_t i = 0; i < TARGET_OPTION_COUNT; i++) {
                         fprintf(stderr, "\t%s\n", target_options[i].name);
                     }
                     fprintf(stderr, "\n");
-                    abort();
-                }
+					return 1;
+				}
             } else if (strcmp(option, "threads") == 0) {
                 i += 1;
                 if (i >= argc) {
                     fprintf(stderr, "error: expected number\n");
-                    abort();
+					return 1;
                 }
 
                 int num;
                 int matches = sscanf(argv[i], "%d", &num);
                 if (matches != 1) {
                     fprintf(stderr, "error: expected integer for thread count\n");
-                    abort();
+					return 1;
                 }
 
                 if (num < 1 || num > TB_MAX_THREADS) {
                     fprintf(stderr, "error: expected thread count between 1-%d\n", TB_MAX_THREADS);
-                    abort();
+					return 1;
                 }
 
 				settings.num_of_worker_threads = num;
@@ -709,7 +726,7 @@ int main(int argc, char* argv[]) {
                     fprintf(stderr, "  types\n");
                     fprintf(stderr, "  ir\n");
                     fprintf(stderr, "  obj\n");
-                    abort();
+					return 1;
                 }
 
                 const char* stage = argv[i];
@@ -722,17 +739,17 @@ int main(int argc, char* argv[]) {
                     fprintf(stderr, "supported stages (check help page for details):\n");
                     fprintf(stderr, "  preproc\n");
                     fprintf(stderr, "  types\n");
-                    abort();
+					return 1;
                 }
             } else if (strcmp(option, "crt") == 0) {
                 i += 1;
                 if (i >= argc) {
-                    fprintf(stderr, "error: expected name\n");
-                    fprintf(stderr, "supported LibCs:\n");
+                    fprintf(stderr, "error: expected valid crt name\n");
+                    fprintf(stderr, "supported crts:\n");
                     for (int i = 0; i < LIBC_OPTION_COUNT; i++) {
-						fprintf(stderr, "  %-10s (%s)\n", libc_options[i].name, libc_options[i].desc);
+						fprintf(stderr, "  %-10s C%-5d %s\n", libc_options[i].name, libc_options[i].version, libc_options[i].static_link ? "Static" : "Shared");
 					}
-                    abort();
+					return 1;
                 }
 
                 const char* name = argv[i];
@@ -747,25 +764,31 @@ int main(int argc, char* argv[]) {
 					fprintf(stderr, "error: expected name\n");
                     fprintf(stderr, "supported LibCs:\n");
                     for (int i = 0; i < LIBC_OPTION_COUNT; i++) {
-						fprintf(stderr, "  %-10s (%s)\n", libc_options[i].name, libc_options[i].desc);
+						fprintf(stderr, "  %-10s C%-5d %s\n", libc_options[i].name, libc_options[i].version, libc_options[i].static_link ? "Static" : "Shared");
 					}
-                    abort();
+					return 1;
                 }
             } else {
 				fprintf(stderr, "error: unknown argument: %s\n", argv[i]);
-                abort();
+				return 1;
             }
         } else {
             switch (argv[i][1]) {
-                case 'h': print_help(argv[0]); exit(0);
-                case 'v': case 'V': print_version(argv[0]); exit(0);
-                case 'g': settings.is_debug_info = true; break;
+                case 'h':
+				print_help(argv[0]);
+				return 0;
+
+				case 'v': case 'V':
+				print_version(argv[0]);
+				return 0;
+
+				case 'g': settings.is_debug_info = true; break;
 				case 'r': settings.run_output = true; break;
 				case 'o': {
                     i += 1;
                     if (i >= argc) {
                         fprintf(stderr, "error: expected filepath\n");
-                        abort();
+						return 1;
                     }
 
                     output_name = argv[i];
@@ -778,13 +801,16 @@ int main(int argc, char* argv[]) {
                     i += 1;
                     if (i >= argc) {
                         fprintf(stderr, "error: expected filepath\n");
-                        abort();
+						return 1;
                     }
 
                     big_array_put(cuik_include_dirs, argv[i]);
                     break;
                 }
-                default: fprintf(stderr, "error: unknown argument: %s\n", argv[i]); abort();
+
+				default:
+				fprintf(stderr, "error: unknown argument: %s\n", argv[i]);
+				return 1;
             }
         }
     }
@@ -798,7 +824,7 @@ int main(int argc, char* argv[]) {
 
 	if (big_array_length(cuik_source_files) == 0) {
         fprintf(stderr, "error: expected input files\n");
-        abort();
+		return 1;
     }
 
 	// Get target descriptor from explicit (or default) target option
