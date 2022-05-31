@@ -1370,7 +1370,7 @@ static void sema_top_level(TranslationUnit* tu, Stmt* restrict s, bool frontend_
 				linkage = TB_LINKAGE_PRIVATE;
 
 				char temp[1024];
-				snprintf(temp, 1024, "_K%p_%s", s, name ? name : "<unnamed>");
+				snprintf(temp, 1024, "_K%d_%s", tu->id_gen++, name ? name : "<unnamed>");
 
 				func = tb_prototype_build(mod, proto, temp, linkage);
 			} else {

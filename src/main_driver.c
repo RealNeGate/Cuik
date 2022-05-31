@@ -571,6 +571,17 @@ static void print_version(const char* install_dir) {
 }
 
 int main(int argc, char* argv[]) {
+#ifdef _WIN32
+	// Enable ANSI/VT sequences on windows
+	HANDLE output_handle = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (output_handle != INVALID_HANDLE_VALUE) {
+		DWORD old_mode;
+		if (GetConsoleMode(output_handle, &old_mode)) {
+			SetConsoleMode(output_handle, old_mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+		}
+	}
+#endif
+
 	// We hook the crash handler to create crash dumps
 	hook_crash_handler();
 
@@ -946,12 +957,6 @@ int main(int argc, char* argv[]) {
 						linker_add_input_file(&l, chosen_libc->libs[i]);
 					}
 
-#ifdef _WIN32
-					linker_add_libpath_wide(&l, s_vswhere.windows_sdk_ucrt_library_path);
-					linker_add_input_file(&l, "kernel32.lib");
-					linker_add_input_file(&l, "shell32.lib");
-#endif
-
 					linker_invoke_system(&l, cuik_file_no_ext, settings.verbose);
 					linker_deinit(&l);
 
@@ -967,6 +972,12 @@ int main(int argc, char* argv[]) {
 	if (settings.stage_to_stop_at >= STAGE_FINAL && settings.run_output) {
 		char exe_path[MAX_PATH];
 		sprintf_s(exe_path, 260, "%s.exe", cuik_file_no_ext);
+
+#ifdef _WIN32
+		for (char* i = exe_path; *i; i++) {
+			if (*i == '/') *i = '\\';
+		}
+#endif
 
 		printf("\n\nRunning: %s...\n", exe_path);
 		int exit_code = system(exe_path);

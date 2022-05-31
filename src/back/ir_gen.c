@@ -1503,7 +1503,7 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
 															   s->decl.name);
 
 				char* name = tls_push(1024);
-				int name_len = snprintf(name, 1024, "%s$%s@%p", function_name, s->decl.name, s);
+				int name_len = snprintf(name, 1024, "%s$%s@%d", function_name, s->decl.name, tu->id_gen++);
 				if (name_len < 0 || name_len >= 1024) {
 					internal_error("temporary global name too long!");
 				}

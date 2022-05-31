@@ -612,6 +612,8 @@ typedef struct TranslationUnit {
 
 	// chain of TUs for the compilation unit
 	struct TranslationUnit* next;
+
+	atomic_int id_gen;
 	bool is_free;
 
 	// token stream
