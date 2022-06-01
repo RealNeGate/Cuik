@@ -70,20 +70,25 @@ void cuik_set_cpp_defines(CPP_Context* cpp) {
 	}
 #endif
 
+	// DO NOT REMOVE THESE, IF THEY'RE MISSING THE PREPROCESSOR WILL NOT DETECT THEM
+	cpp_define_empty(cpp, "__FILE__");
+	cpp_define_empty(cpp, "L__FILE__");
+	cpp_define_empty(cpp, "__LINE__");
+
 	// CuikC specific
 	cpp_define(cpp, "__CUIKC__", STR(CUIK_COMPILER_MAJOR));
 	cpp_define(cpp, "__CUIKC_MINOR__", STR(CUIK_COMPILER_MINOR));
+
+	// C23/Cuik bool being available without stdbool.h
+	cpp_define_empty(cpp, "__bool_true_false_are_defined");
+	cpp_define(cpp, "bool",  "_Bool");
+	cpp_define(cpp, "false", "0");
+	cpp_define(cpp, "true",  "1");
 
 	// GNU C
 	cpp_define(cpp, "__BYTE_ORDER__", "1");
 	cpp_define(cpp, "__ORDER_LITTLE_ENDIAN", "1");
 	cpp_define(cpp, "__ORDER_BIG_ENDIAN", "2");
-
-	// DO NOT REMOVE THESE, IF THEY'RE MISSING THE PREPROCESSOR
-	// WILL NOT DETECT THEM
-	cpp_define_empty(cpp, "__FILE__");
-	cpp_define_empty(cpp, "L__FILE__");
-	cpp_define_empty(cpp, "__LINE__");
 
 	// Standard C macros
 	cpp_define(cpp, "__STDC__", "1");
@@ -119,11 +124,11 @@ void cuik_set_cpp_defines(CPP_Context* cpp) {
 		cpp_define(cpp, "__TIME__", time_str);
 	}
 
-	if (settings.is_debug_build) {
+	/*if (settings.is_debug_build) {
 		cpp_define_empty(cpp, "_DEBUG");
 	} else {
 		cpp_define_empty(cpp, "NDEBUG");
-	}
+	}*/
 
 	cpp_define(cpp, "static_assert", "_Static_assert");
 	cpp_define(cpp, "typeof", "_Typeof");
@@ -169,12 +174,17 @@ void cuik_set_cpp_defines(CPP_Context* cpp) {
 #endif
 
 		cpp_define_empty(cpp, "_MT");
+		if (!settings.static_crt) {
+			cpp_define_empty(cpp, "_DLL");
+		}
+
+		//cpp_define_empty(cpp, "_NO_CRT_STDIO_INLINE");
 		//cpp_define_empty(cpp, "_CRT_NONSTDC_NO_WARNINGS");
 		//cpp_define_empty(cpp, "_CRT_SECURE_NO_WARNINGS");
-		//cpp_define_empty(cpp, "_NO_CRT_STDIO_INLINE");
 
 		// we support MSVC extensions
 		cpp_define(cpp, "_MSC_EXTENSIONS", "1");
+		cpp_define(cpp, "_INTEGRAL_MAX_BITS", "64");
 		//cpp_define(cpp, "_MSC_BUILD",      "0");
 
 		// wrappers over MSVC based keywords and features

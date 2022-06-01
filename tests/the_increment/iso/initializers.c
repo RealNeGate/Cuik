@@ -1,3 +1,5 @@
+#include <stddef.h>
+#include <stdio.h>
 
 typedef struct {
 	int a, b, c, d;
@@ -7,9 +9,6 @@ static SomeInfo table[] = {
 	{ 1, 2, 3, 4 },
 	[3] = { 5, 6, 7, 8 }
 };
-
-typedef unsigned long long size_t;
-extern void printf(const char* fmt, ...);
 
 int main() {
 	size_t count = sizeof(table) / sizeof(table[0]);

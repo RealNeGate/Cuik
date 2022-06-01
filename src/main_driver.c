@@ -13,11 +13,6 @@
 
 #define IRGEN_TASK_MUNCH 16384
 
-typedef enum {
-	COMPILER_MODE_NONE,
-	COMPILER_MODE_BUILD
-} CompilerMode;
-
 typedef struct {
 	const char* name;
 
@@ -36,26 +31,8 @@ typedef struct {
 } LibcOption;
 
 static LibcOption libc_options[] = {
-	{
-		"ucrt", 99, false,
-		3, (const char*[]) {
-			"ucrt.lib", "vcruntime.lib", "win32_rt.lib"
-		}
-	},
-
-	{
-		"libucrt", 99, true,
-		3, (const char*[]) {
-			"libucrt.lib", "vcruntime.lib", "win32_rt.lib"
-		}
-	},
-
-	{
-		"msvcrt", 89, false,
-		3, (const char*[]) {
-			"msvcrt.lib", "vcruntime.lib", "win32_rt.lib"
-		}
-	},
+	{ "ucrt",    99, false, 3, (const char*[]){ "ucrt.lib", "msvcrt.lib", "vcruntime.lib" } },
+	{ "libucrt", 99, true,  2, (const char*[]){ "libucrt.lib", "libcmt.lib", "libvcruntime.lib" } },
 };
 enum { LIBC_OPTION_COUNT = sizeof(libc_options) / sizeof(libc_options[0]) };
 
@@ -494,10 +471,11 @@ static void print_help(const char* executable_path) {
 	O("          ir           - emits TBIR in text form into a .tbir file");
 	O("          obj          - emits target specific object file");
 	O("");
-	O("  -O                   - run optimizations");
-	O("  -P                   - emit results when doing --stage");
-	O("  -O                   - run optimizations");
 	O("  -T                   - report timing information into a .json file usable by chrome://tracing");
+	O("  -O                   - run optimizations");
+	O("  -P                   - emit preprocessor output");
+	O("  -c                   - emit object file output");
+	O("  -r                   - run the compiled result");
 	O("  -I        <path>     - add include directory");
 	O("  -o        <path>     - define output path for binary and intermediates");
 	O("  --freestanding       - compile in freestanding mode (doesn't allow for the OS or C runtime usage, only freestanding headers)");
@@ -506,7 +484,6 @@ static void print_help(const char* executable_path) {
 	O("  --threads <count>    - chooses how many threads to spawn");
 	O("  --target  <name>     - choose a target platform to compile to");
 	O("  --verbose            - prints out the linker command used");
-	O("  -r                   - run the compiled result");
 	O("");
 }
 #undef O
@@ -728,30 +705,6 @@ int main(int argc, char* argv[]) {
                 settings.exercise = true;
             } else if (strcmp(option, "pedantic") == 0) {
                 settings.pedantic = true;
-            } else if (strcmp(option, "stage") == 0) {
-                i += 1;
-                if (i >= argc) {
-                    fprintf(stderr, "error: expected stage\n");
-                    fprintf(stderr, "supported stages (check help page for details):\n");
-                    fprintf(stderr, "  preproc\n");
-                    fprintf(stderr, "  types\n");
-                    fprintf(stderr, "  ir\n");
-                    fprintf(stderr, "  obj\n");
-					return 1;
-                }
-
-                const char* stage = argv[i];
-                if (strcmp(stage, "preproc") == 0) settings.stage_to_stop_at = STAGE_PREPROC;
-                else if (strcmp(stage, "types") == 0) settings.stage_to_stop_at = STAGE_TYPES;
-                else if (strcmp(stage, "ir") == 0) settings.stage_to_stop_at = STAGE_IR;
-                else if (strcmp(stage, "obj") == 0) settings.stage_to_stop_at = STAGE_OBJ;
-                else {
-                    fprintf(stderr, "error: unknown stage: %s\n", stage);
-                    fprintf(stderr, "supported stages (check help page for details):\n");
-                    fprintf(stderr, "  preproc\n");
-                    fprintf(stderr, "  types\n");
-					return 1;
-                }
             } else if (strcmp(option, "crt") == 0) {
                 i += 1;
                 if (i >= argc) {
@@ -793,6 +746,9 @@ int main(int argc, char* argv[]) {
 				print_version(argv[0]);
 				return 0;
 
+				case 'P': settings.stage_to_stop_at = STAGE_PREPROC; break;
+				case 'c': settings.stage_to_stop_at = STAGE_OBJ; break;
+
 				case 'g': settings.is_debug_info = true; break;
 				case 'r': settings.run_output = true; break;
 				case 'o': {
@@ -806,7 +762,6 @@ int main(int argc, char* argv[]) {
                     break;
                 }
                 case 'T': settings.is_time_report = true; break;
-				case 'P': settings.emit_partial_results = true; break;
 				case 'O': settings.optimize = true; break;
                 case 'I': {
                     i += 1;
@@ -831,7 +786,14 @@ int main(int argc, char* argv[]) {
 	if (!settings.freestanding && chosen_libc == NULL) {
 		chosen_libc = &libc_options[0 /* UCRT */];
 	}
+#else
+	{
+        fprintf(stderr, "error: TODO pick a crt manually... idk man\n");
+		return 1;
+	}
 #endif
+
+	settings.static_crt = chosen_libc->static_link;
 
 	if (big_array_length(cuik_source_files) == 0) {
         fprintf(stderr, "error: expected input files\n");
@@ -953,11 +915,15 @@ int main(int argc, char* argv[]) {
 					linker_add_input_file(&l, "Gdi32.lib");
 					linker_add_input_file(&l, "opengl32.lib");*/
 
+#ifdef _WIN32
+					linker_add_input_file(&l, "win32_rt.lib");
+#endif
+
 					for (int i = 0; i < chosen_libc->lib_count; i++) {
 						linker_add_input_file(&l, chosen_libc->libs[i]);
 					}
 
-					linker_invoke_system(&l, cuik_file_no_ext, settings.verbose);
+					linker_invoke_system(&l, cuik_file_no_ext, settings.verbose, chosen_libc->name);
 					linker_deinit(&l);
 
 					remove(obj_output_path);

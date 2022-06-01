@@ -91,12 +91,12 @@ void linker_add_input_file(Linker* l, const char filepath[]) {
 // Like im pretty sure %S doesn't do the UTF-8 conversion and im being lazy about it.
 enum { CMD_LINE_MAX = 4096 };
 
-bool linker_invoke_system(Linker* l, const char* filename, bool verbose) {
+bool linker_invoke_system(Linker* l, const char* filename, bool verbose, const char* crt_name) {
 #if defined(_WIN32)
 	wchar_t cmd_line[CMD_LINE_MAX];
 	int cmd_line_len = swprintf(cmd_line, CMD_LINE_MAX,
 								L"%s\\link.exe /nologo /machine:amd64 /subsystem:console"
-								" /debug:full /pdb:%S.pdb /out:%S.exe /entry:main /incremental:no ",
+								" /debug:full /pdb:%S.pdb /out:%S.exe /incremental:no ",
 								s_vswhere.vs_exe_path, filename, filename);
 
 	// Add all the libpaths
@@ -109,7 +109,11 @@ bool linker_invoke_system(Linker* l, const char* filename, bool verbose) {
 		}
 	}
 
-	cmd_line_len += swprintf(&cmd_line[cmd_line_len], CMD_LINE_MAX - cmd_line_len, L"/nodefaultlib ");
+	/*if (crt_name) {
+		cmd_line_len += swprintf(&cmd_line[cmd_line_len], CMD_LINE_MAX - cmd_line_len, L"/defaultlib:%S ", crt_name);
+	} else {
+		cmd_line_len += swprintf(&cmd_line[cmd_line_len], CMD_LINE_MAX - cmd_line_len, L"/nodefaultlib ");
+	}*/
 
 	// Add all the input files
 	{

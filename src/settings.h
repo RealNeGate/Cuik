@@ -42,6 +42,7 @@ typedef struct CompilerSettings {
 	bool emit_partial_results : 1;
 	bool verbose              : 1;
 	bool run_output           : 1;
+	bool static_crt           : 1;
 
 	atomic_bool using_winmain;
 	int num_of_worker_threads;

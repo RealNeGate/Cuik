@@ -5,6 +5,6 @@ struct Bar {
 };
 
 int da_func() {
-	struct Bar b = { };
+	struct Bar b = { 0 };
 	return 0;
 }

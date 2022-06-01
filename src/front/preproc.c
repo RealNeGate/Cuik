@@ -183,10 +183,9 @@ void cpp_dump(CPP_Context* ctx) {
 			size_t vallen = ctx->macro_bucket_values_end[e] - ctx->macro_bucket_values_start[e];
 			const char* val = (const char*)ctx->macro_bucket_values_start[e];
 
-			printf("\t'%.*s' -> '%.*s'\n", (int)keylen, key, (int)vallen, val);
+			printf("  #define %.*s %.*s\n", (int)keylen, key, (int)vallen, val);
 		}
 
-		//printf("\n");
 		count += ctx->macro_bucket_count[i];
 	}
 
@@ -1015,7 +1014,8 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
 		unsigned char* out_start = gimme_the_shtuffs(c, MAX_PATH+4);
 		unsigned char* out = out_start;
 
-		if (token_data[0] == 'L') *out++ = 'L';
+		bool is_wide = (token_data[0] == 'L');
+		if (is_wide) *out++ = 'L';
 
 		*out++ = '\"';
 		{
@@ -1043,7 +1043,7 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
 		trim_the_shtuffs(c, out);
 
 		Token t = {
-			TOKEN_STRING_DOUBLE_QUOTE,
+			is_wide ? TOKEN_STRING_WIDE_DOUBLE_QUOTE : TOKEN_STRING_DOUBLE_QUOTE,
 			get_source_location(c, l, s),
 			out_start,
 			out

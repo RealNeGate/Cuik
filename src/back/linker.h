@@ -34,7 +34,7 @@ void linker_add_input_file(Linker* l, const char* filepath);
 
 // Calls the system linker
 // return true if it succeeds
-bool linker_invoke_system(Linker* l, const char* filename, bool verbose);
+bool linker_invoke_system(Linker* l, const char* filename, bool verbose, const char* crt_name);
 
 // Calls the internal cuik linker
 // returns true if it succeeds

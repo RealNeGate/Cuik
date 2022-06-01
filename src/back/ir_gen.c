@@ -255,45 +255,81 @@ InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, Sourc
 #endif
 						break;
 					}
+
+					case EXPR_STR:
+					if (!func) {
+						Expr* e = node->expr;
+
+						char* dst = NULL;
+						if (child_type->kind == KIND_PTR) {
+							// if it's a string pointer, then we make a dummy string array
+							// and point to that with another initializer
+							char temp[1024];
+							snprintf(temp, 1024, "DUMMY@%d", tu->id_gen++);
+
+							TB_InitializerID dummy_init = tb_initializer_create(mod, child_type->size, 2, 1);
+							dst = tb_initializer_add_region(mod, dummy_init, 0, child_type->size);
+
+							TB_GlobalID dummy = tb_global_create(mod, temp, TB_STORAGE_DATA, TB_LINKAGE_PRIVATE);
+							tb_global_set_initializer(mod, dummy, dummy_init);
+
+							tb_initializer_add_global(mod, init, 0, dummy);
+						} else {
+							dst = tb_initializer_add_region(mod, init, 0, child_type->size);
+						}
+
+						// write out string bytes with the nice zeroes at the end
+						size_t src_size = e->str.end - e->str.start;
+
+						memcpy(dst, e->str.start, src_size);
+						if (child_type->size > src_size) {
+							size_t rem = child_type->size - src_size;
+							memset(dst + child_type->size - rem, 0, rem);
+						}
+						break;
+					}
+
 					// fallthrough
 					// dynamic expressions
-					default: if (addr) {
-						assert(func);
+					default: {
+						if (addr) {
+							assert(func != NULL);
 
-						TypeKind kind = child_type->kind;
-						int size = child_type->size;
-						int align = child_type->align;
+							TypeKind kind = child_type->kind;
+							int size = child_type->size;
+							int align = child_type->align;
 
-						if (kind == KIND_STRUCT || kind == KIND_UNION || kind == KIND_ARRAY) {
-							IRVal v = irgen_expr(tu, func, node->expr);
+							if (kind == KIND_STRUCT || kind == KIND_UNION || kind == KIND_ARRAY) {
+								IRVal v = irgen_expr(tu, func, node->expr);
 
-							// placing the address calculation here might improve performance or readability
-							// of IR in the debug builds, for release builds it shouldn't matter
-							TB_Register effective_addr;
-							if (offset) {
-								effective_addr = tb_inst_member_access(func, addr, offset);
+								// placing the address calculation here might improve performance or readability
+								// of IR in the debug builds, for release builds it shouldn't matter
+								TB_Register effective_addr;
+								if (offset) {
+									effective_addr = tb_inst_member_access(func, addr, offset);
+								} else {
+									effective_addr = addr;
+								}
+
+								TB_Register size_reg = tb_inst_uint(func, TB_TYPE_I64, size);
+								tb_inst_memcpy(func, effective_addr, v.reg, size_reg, align);
 							} else {
-								effective_addr = addr;
+								// hacky but we set the cast so that the rvalue returns a normal value
+								node->expr->cast_type = child_type;
+
+								TB_Register v = irgen_as_rvalue(tu, func, node->expr);
+
+								// placing the address calculation here might improve performance or readability
+								// of IR in the debug builds, for release builds it shouldn't matter
+								TB_Register effective_addr;
+								if (offset) {
+									effective_addr = tb_inst_member_access(func, addr, offset);
+								} else {
+									effective_addr = addr;
+								}
+
+								tb_inst_store(func, ctype_to_tbtype(child_type), effective_addr, v, align);
 							}
-
-							TB_Register size_reg = tb_inst_uint(func, TB_TYPE_I64, size);
-							tb_inst_memcpy(func, effective_addr, v.reg, size_reg, align);
-						} else {
-							// hacky but we set the cast so that the rvalue returns a normal value
-							node->expr->cast_type = child_type;
-
-							TB_Register v = irgen_as_rvalue(tu, func, node->expr);
-
-							// placing the address calculation here might improve performance or readability
-							// of IR in the debug builds, for release builds it shouldn't matter
-							TB_Register effective_addr;
-							if (offset) {
-								effective_addr = tb_inst_member_access(func, addr, offset);
-							} else {
-								effective_addr = addr;
-							}
-
-							tb_inst_store(func, ctype_to_tbtype(child_type), effective_addr, v, align);
 						}
 						break;
 					}
@@ -338,7 +374,7 @@ static TB_InitializerID gen_global_initializer(TranslationUnit* tu, SourceLocInd
 				// if it's a string pointer, then we make a dummy string array
 				// and point to that with another initializer
 				char temp[1024];
-				snprintf(temp, 1024, "%s@%p", name, initial);
+				snprintf(temp, 1024, "%s@%d", name, tu->id_gen++);
 
 				TB_GlobalID dummy = tb_global_create(mod, temp, TB_STORAGE_DATA, TB_LINKAGE_PRIVATE);
 				tb_global_set_initializer(mod, dummy, init);
@@ -1443,10 +1479,11 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
 			last_file_id = tb_file_create(mod, (const char*)line->file);
 		}
 
+		insert_label(func);
 		tb_inst_loc(func, last_file_id, line->line);
+	} else {
+		insert_label(func);
 	}
-
-	insert_label(func);
 
 	switch (s->op) {
 		case STMT_NONE: {
