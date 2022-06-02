@@ -1,8 +1,7 @@
 // Based on:
 // https://github.com/rui314/chibicc/blob/main/test/generic.c
-extern int printf(const char* format, ...);
-extern int puts(const char* str);
-extern void exit(int status);
+#include <stdio.h>
+#include <stdlib.h>
 
 int hack() { return 42; }
 

@@ -279,6 +279,8 @@ inline static int cmd_dump(FILE* stream) {
 	while (fread(buffer, sizeof(buffer), sizeof(char), stream)) {
 		printf("%s", buffer);
 	}
+
+	fflush(stdout);
 	return pclose(stream);
 }
 

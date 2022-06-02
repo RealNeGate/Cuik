@@ -1,6 +1,6 @@
 // "Finding and Understanding Bugs in C Compilers" crap
 // Random bug in CompCert 1.6
-int printf(const char *, ...);
+#include <stdio.h>
 
 _Bool lmao(_Bool a, _Bool b) {
 	return a + b;

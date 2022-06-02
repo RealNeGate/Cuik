@@ -58,7 +58,7 @@ void expect_return_value(const char* path, int expected) {
 	char cmd[1024];
 
 	// Compile
-	snprintf(cmd, 1024, "cuik build %s.c", path);
+	snprintf(cmd, 1024, "cuik %s.c", path);
 	code = system(cmd);
 	if (code != 0) {
 		printf("Fail to compile! (code: %d)\n", code);
@@ -87,7 +87,7 @@ void expect_stdout(const char* path, const char* expected) {
 	char cmd[1024];
 
 	// Compile
-	snprintf(cmd, 1024, "cuik build %s.c", path);
+	snprintf(cmd, 1024, "cuik %s.c", path);
 	code = system(cmd);
 	if (code != 0) {
 		printf("Fail to compile! (code: %d)\n", code);
@@ -135,7 +135,7 @@ void differential(const char* path) {
 	}
 
 	// Compile cuik
-	snprintf(cmd, 1024, "cuik build %s.c", path);
+	snprintf(cmd, 1024, "cuik %s.c", path);
 	code = system(cmd);
 	if (code != 0) {
 		printf("Fail to compile for Cuik! (code: %d)\n", code);
@@ -192,7 +192,7 @@ void try_compile(const char* path) {
 	char cmd[1024];
 
 	// Compile
-	snprintf(cmd, 1024, "cuik build --stage obj %s.c", path);
+	snprintf(cmd, 1024, "cuik -c %s.c", path);
 	code = system(cmd);
 	if (code != 0) {
 		printf("Fail to compile! (code: %d)\n", code);
@@ -289,7 +289,7 @@ int main(int argc, char** argv) {
 			char cmd[1024];
 			for (size_t i = 0; i < INPUT_FILE_COUNT; i++) {
 				if (str_ends_with(INPUT_FILES[i], ".c")) {
-					snprintf(cmd, 1024, "cuik build -o build/%s -I src/ --threads 1 --stage types %s", INPUT_FILES[i], INPUT_FILES[i]);
+					snprintf(cmd, 1024, "cuik -o build/%s -I src/ --threads 1 -t %s", INPUT_FILES[i], INPUT_FILES[i]);
 
 					if (system(cmd) == 0) {
 						printf("Success with %s!\n", INPUT_FILES[i]);
@@ -313,7 +313,7 @@ int main(int argc, char** argv) {
 			char cmd[1024];
 			for (size_t i = 0; i < INPUT_FILE_COUNT; i++) {
 				if (str_ends_with(INPUT_FILES[i], ".c")) {
-					snprintf(cmd, 1024, "cuik build -o build/%s -I src/ --threads 1 --stage ir %s", INPUT_FILES[i], INPUT_FILES[i]);
+					snprintf(cmd, 1024, "cuik -o build/%s -I src/ --threads 1 --emit-ir %s", INPUT_FILES[i], INPUT_FILES[i]);
 
 					if (system(cmd) == 0) {
 						printf("Success with %s!\n", INPUT_FILES[i]);
@@ -337,7 +337,7 @@ int main(int argc, char** argv) {
 			char cmd[1024];
 			for (size_t i = 0; i < INPUT_FILE_COUNT; i++) {
 				if (str_ends_with(INPUT_FILES[i], ".c")) {
-					int r = snprintf(cmd, 1024, "cuik build -o build/%s -I src/ --threads 1 --stage obj %s", INPUT_FILES[i], INPUT_FILES[i]);
+					int r = snprintf(cmd, 1024, "cuik -o build/%s -I src/ --threads 1 -c %s", INPUT_FILES[i], INPUT_FILES[i]);
 					assert(r >= 0 && r < 1024);
 
 					int code = system(cmd);

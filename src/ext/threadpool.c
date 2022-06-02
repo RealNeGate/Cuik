@@ -16,6 +16,9 @@
 #include <timer.h>
 #include <arena.h>
 
+// HACK(NeGate): i wanna call tb_free_thread_resources on thread exit...
+extern void tb_free_thread_resources(void);
+
 struct threadpool_t {
 	atomic_bool running;
 	atomic_uint read_pointer; // Read
@@ -69,6 +72,7 @@ static int threadpool_thread(void* arg) {
 		}
 	}
 
+	tb_free_thread_resources();
 	arena_free(&thread_arena);
     return 0;
 }
@@ -129,6 +133,17 @@ void threadpool_submit(threadpool_t* threadpool, work_routine fn, void* arg) {
 #else
 	sem_post(&threadpool->sem);
 #endif
+}
+
+void threadpool_work_while_wait(threadpool_t* threadpool) {
+	while (threadpool->completion_goal != threadpool->completion_count) {
+		if (do_work(threadpool)) {
+			thrd_yield();
+		}
+	}
+
+	threadpool->completion_goal = 0;
+	threadpool->completion_count = 0;
 }
 
 void threadpool_wait(threadpool_t* threadpool) {

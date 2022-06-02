@@ -133,7 +133,7 @@ static void dispatch_for_all_top_level_stmts(void task(void*)) {
 		}
 
 		timed_block("wait") {
-			threadpool_wait(thread_pool);
+			threadpool_work_while_wait(thread_pool);
 		}
 	} else {
 		FOR_EACH_TU(tu, &compilation_unit) {
@@ -170,7 +170,7 @@ static void dispatch_for_all_ir_functions(void (*task)(void*)) {
 		}
 
 		timed_block("wait") {
-			threadpool_wait(thread_pool);
+			threadpool_work_while_wait(thread_pool);
 		}
 	} else {
 		// split up the top level statement tasks into
@@ -213,7 +213,7 @@ static void compile_project(const char* obj_output_path, bool is_multithreaded) 
 		}
 
 		timed_block("wait") {
-			threadpool_wait(thread_pool);
+			threadpool_work_while_wait(thread_pool);
 		}
 	} else {
 		// emit-ast is single threaded just to make it nicer to read
@@ -293,6 +293,8 @@ static void compile_project(const char* obj_output_path, bool is_multithreaded) 
         // or don't lmao
 		tb_module_destroy(mod);
     }
+
+	tb_free_thread_resources();
 }
 
 ////////////////////////////////
@@ -475,9 +477,11 @@ static void print_help(const char* executable_path) {
 	O("  -O                   - run optimizations");
 	O("  -P                   - emit preprocessor output");
 	O("  -c                   - emit object file output");
+	O("  -t                   - type check");
 	O("  -r                   - run the compiled result");
 	O("  -I        <path>     - add include directory");
 	O("  -o        <path>     - define output path for binary and intermediates");
+	O("  --emit-ir            - print IR output");
 	O("  --freestanding       - compile in freestanding mode (doesn't allow for the OS or C runtime usage, only freestanding headers)");
 	O("  --crt     <name>     - choose the libc you wanna compile with");
 	O("  --lib     <name>     - link against a static library");
@@ -703,6 +707,9 @@ int main(int argc, char* argv[]) {
                 settings.verbose = true;
             } else if (strcmp(option, "exercise") == 0) {
                 settings.exercise = true;
+            } else if (strcmp(option, "emit-ir") == 0) {
+                settings.emit_partial_results = true;
+				settings.stage_to_stop_at = STAGE_IR;
             } else if (strcmp(option, "pedantic") == 0) {
                 settings.pedantic = true;
             } else if (strcmp(option, "crt") == 0) {
@@ -747,6 +754,7 @@ int main(int argc, char* argv[]) {
 				return 0;
 
 				case 'P': settings.stage_to_stop_at = STAGE_PREPROC; break;
+				case 't': settings.stage_to_stop_at = STAGE_IR; break;
 				case 'c': settings.stage_to_stop_at = STAGE_OBJ; break;
 
 				case 'g': settings.is_debug_info = true; break;

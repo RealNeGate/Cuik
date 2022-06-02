@@ -1,4 +1,4 @@
-int printf(const char *, ...);
+#include <stdio.h>
 
 struct S0 { int f0, f1, f2, f3, f4; } b = {0,0,1,0,0};
 
