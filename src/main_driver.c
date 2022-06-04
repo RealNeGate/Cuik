@@ -43,6 +43,10 @@ static TargetOption target_options[] = {
 };
 enum { TARGET_OPTION_COUNT = sizeof(target_options) / sizeof(target_options[0]) };
 
+Warnings warnings = {
+    .data_loss = true
+};
+
 static BigArray(const char*) cuik_include_dirs;
 static BigArray(const char*) cuik_source_files;
 static BigArray(const char*) cuik_libraries;
@@ -408,7 +412,7 @@ static bool dump_tokens() {
 
 	for (size_t i = 0, cc = arrlen(s.tokens); i < cc; i++) {
 		Token* t = &s.tokens[i];
-		SourceLoc* loc = &s.line_arena[t->location];
+		SourceLoc* loc = &s.locations[t->location];
 
 		if (last_file != loc->line->file) {
 			char str[MAX_PATH];

@@ -22,10 +22,11 @@ static const char* INPUT_FILES[] = {
 	"src/front/lexer.c",
 	"src/front/preproc.c",
 	"src/front/parser.c",
-	"src/front/atoms.c",
+    "src/front/sema.c",
+    "src/front/atoms.c",
 	"src/front/const_eval.c",
 	"src/front/types.c",
-	"src/front/sema.c",
+    "src/front/source_loc.c",
 	"src/front/ast_dump.c",
 
 	"src/anal/analysis.c",

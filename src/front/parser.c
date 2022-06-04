@@ -54,7 +54,6 @@ thread_local static TagEntry local_tags[MAX_LOCAL_TAGS];
 thread_local static PendingExpr* pending_exprs; // stb_ds array
 thread_local static TagEntry* global_tags; // stb_ds hash map
 thread_local static SymbolEntry* global_symbols; // stb_ds hash map
-
 thread_local static LabelEntry* labels; // stb_ds hash map
 
 thread_local static Stmt* current_switch_or_case;
@@ -119,7 +118,7 @@ static Stmt* make_stmt(TranslationUnit* tu, TokenStream* restrict s, StmtOp op, 
 
 	memset(stmt, 0, sizeof(struct StmtHeader));
 	stmt->op = op;
-	stmt->loc = tokens_get(s)->location;
+	stmt->loc = generate_location(tu, tokens_get_location(s));
 	return stmt;
 }
 
@@ -326,8 +325,8 @@ static int type_cycles_dfs(TranslationUnit* restrict tu, Type* type, uint8_t* vi
 			sprintf_s(tmp, sizeof(tmp), "type %s has cycles", name);
 
 			report_two_spots(REPORT_ERROR,
-							 &tu->tokens.line_arena[type->loc],
-							 &tu->tokens.line_arena[type->record.kids[i].loc],
+							 &tu->tokens.locations[type->loc],
+							 &tu->tokens.locations[type->record.kids[i].loc],
 							 tmp, NULL, NULL, "on");
 			return 2;
 		}
@@ -347,7 +346,7 @@ static void type_resolve_pending_align(TranslationUnit* restrict tu, Type* type)
 			TokenStream mini_lex = tu->tokens;
 			mini_lex.current = pending_exprs[i].expr_pos;
 
-			SourceLoc* loc = &mini_lex.line_arena[tokens_get(&mini_lex)->location];
+			SourceLoc* loc = tokens_get_location(&mini_lex);
 
 			int align = 0;
 			if (is_typename(&mini_lex)) {
@@ -380,7 +379,7 @@ static void type_resolve_pending_align(TranslationUnit* restrict tu, Type* type)
 void type_layout(TranslationUnit* restrict tu, Type* type) {
 	if (type->size != 0) return;
 	if (type->is_inprogress) {
-		report(REPORT_ERROR, &tu->tokens.line_arena[type->loc], "Type has a circular dependency");
+		report(REPORT_ERROR, &tu->tokens.locations[type->loc], "Type has a circular dependency");
 		abort();
 	}
 
@@ -407,7 +406,7 @@ void type_layout(TranslationUnit* restrict tu, Type* type) {
 
 		// size checks
 		if (result >= INT32_MAX) {
-			report(REPORT_ERROR, &tu->tokens.line_arena[type->loc], "cannot declare an array that exceeds 0x7FFFFFFE bytes (got 0x%zX or %zi)", result, result);
+			report(REPORT_ERROR, &tu->tokens.locations[type->loc], "cannot declare an array that exceeds 0x7FFFFFFE bytes (got 0x%zX or %zi)", result, result);
 			abort();
 		}
 
@@ -450,7 +449,7 @@ void type_layout(TranslationUnit* restrict tu, Type* type) {
 			Member* member = &members[i];
 
 			if (member->type->kind == KIND_FUNC) {
-				report(REPORT_ERROR, &tu->tokens.line_arena[type->loc], "Cannot put function types into a struct, try a function pointer");
+				report(REPORT_ERROR, &tu->tokens.locations[type->loc], "Cannot put function types into a struct, try a function pointer");
 			} else {
 				type_layout(tu, member->type);
 			}
@@ -475,7 +474,7 @@ void type_layout(TranslationUnit* restrict tu, Type* type) {
 				int bit_width = member->bit_width;
 				int bits_in_region = member->type->kind == KIND_BOOL ? 1 : (member_size * 8);
 				if (bit_width > bits_in_region) {
-					report(REPORT_ERROR, &tu->tokens.line_arena[type->loc], "Bitfield cannot fit in this type.");
+					report(REPORT_ERROR, &tu->tokens.locations[type->loc], "Bitfield cannot fit in this type.");
 				}
 
 				if (current_bit_offset + bit_width > bits_in_region) {
@@ -565,7 +564,7 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
 
                 expect(s, ')');
             } else {
-                SourceLoc* loc = &s->line_arena[tokens_get(s)->location];
+                SourceLoc* loc = tokens_get_location(s);
 
                 // must be a declaration since it's a top level statement
                 Attribs attr = { 0 };
@@ -595,7 +594,7 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
                             if (search != NULL) {
                                 if (search->storage_class != STORAGE_TYPEDEF) {
                                     report_two_spots(REPORT_ERROR,
-                                                     &s->line_arena[decl.loc], &s->line_arena[search->loc],
+                                                     &s->locations[decl.loc], &s->locations[search->loc],
                                                      "typedef overrides previous declaration.",
                                                      "old", "new", NULL);
                                     abort();
@@ -604,13 +603,13 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
                                 Type* placeholder_space = search->type;
                                 if (placeholder_space->kind != KIND_PLACEHOLDER && !type_equal(tu, decl.type, search->type)) {
                                     report_two_spots(REPORT_ERROR,
-                                                     &s->line_arena[decl.loc], &s->line_arena[search->loc],
+                                                     &s->locations[decl.loc], &s->locations[search->loc],
                                                      "typedef overrides previous declaration.",
                                                      "old", "new", NULL);
                                     abort();
                                 }
 
-                                //report(REPORT_INFO, &s->line_arena[decl.loc], "resolved typename '%s'", decl.name);
+                                //report(REPORT_INFO, &s->locations[decl.loc], "resolved typename '%s'", decl.name);
 
                                 // replace placeholder with actual entry
                                 memcpy(placeholder_space, decl.type, sizeof(Type));
@@ -624,7 +623,7 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
                                     .storage_class = STORAGE_TYPEDEF
                                 };
                                 shput(global_symbols, decl.name, sym);
-                                //report(REPORT_INFO, &s->line_arena[decl.loc], "created typename '%s'", decl.name);
+                                //report(REPORT_INFO, &s->locations[decl.loc], "created typename '%s'", decl.name);
                             }
                         }
 
@@ -652,7 +651,7 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
 					// normal variable lists
 					// declarator (',' declarator )+ ';'
 					while (true) {
-						SourceLoc* decl_loc = &s->line_arena[tokens_get(s)->location];
+						SourceLoc* decl_loc = tokens_get_location(s);
 						Decl decl = parse_declarator(tu, s, type, false, false);
 						if (decl.name == NULL) {
 							report(REPORT_ERROR, decl_loc, "Declaration has no name");
@@ -700,13 +699,13 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
 									Token* t = tokens_get(s);
 
 									if (t->type == '\0') {
-										report(REPORT_ERROR, &s->line_arena[decl.loc], "Declaration ended in EOF");
+										report(REPORT_ERROR, &s->locations[decl.loc], "Declaration ended in EOF");
 										abort();
 									} else if (t->type == '{') {
 										depth++;
 									} else if (t->type == '}') {
 										if (depth == 0) {
-											report(REPORT_ERROR, &s->line_arena[decl.loc], "Unbalanced brackets");
+											report(REPORT_ERROR, &s->locations[decl.loc], "Unbalanced brackets");
 											abort();
 										}
 
@@ -726,7 +725,7 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
 									Token* t = tokens_get(s);
 
 									if (t->type == '\0') {
-										report(REPORT_ERROR, &s->line_arena[decl.loc], "Declaration ended in EOF");
+										report(REPORT_ERROR, &s->locations[decl.loc], "Declaration ended in EOF");
 										abort();
 									} else if (t->type == '(') {
 										depth++;
@@ -734,12 +733,12 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
 										depth--;
 
 										if (depth == 0) {
-											report(REPORT_ERROR, &s->line_arena[decl.loc], "Unbalanced parenthesis");
+											report(REPORT_ERROR, &s->locations[decl.loc], "Unbalanced parenthesis");
 											abort();
 										}
 									} else if (t->type == ';' || t->type == ',') {
 										if (depth > 1 && t->type == ';') {
-											report(REPORT_ERROR, &s->line_arena[decl.loc], "Declaration's expression has a weird semicolon");
+											report(REPORT_ERROR, &s->locations[decl.loc], "Declaration's expression has a weird semicolon");
 											abort();
 										} else if (depth == 1) {
 											sym.terminator = t->type;
@@ -760,14 +759,14 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
 							requires_terminator = false;
 
 							if (decl.type->kind != KIND_FUNC) {
-								report(REPORT_ERROR, &s->line_arena[decl.loc], "Declaration's expression has a weird semicolon");
+								report(REPORT_ERROR, &s->locations[decl.loc], "Declaration's expression has a weird semicolon");
 								abort();
 							}
 
 							if (old_definition && old_definition->current != 0) {
 								report_two_spots(REPORT_ERROR,
-												 &s->line_arena[decl.loc],
-												 &s->line_arena[old_definition->stmt->loc],
+												 &s->locations[decl.loc],
+												 &s->locations[old_definition->stmt->loc],
 												 "Cannot redefine function declaration",
 												 NULL, NULL, "previous definition was:");
 								abort();
@@ -788,7 +787,7 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
 								Token* t = tokens_get(s);
 
 								if (t->type == '\0') {
-									report(REPORT_ERROR, &s->line_arena[t->location], "Function body ended in EOF");
+									report(REPORT_ERROR, &s->locations[t->location], "Function body ended in EOF");
 									abort();
 								} else if (t->type == '{') {
 									depth++;
@@ -840,7 +839,7 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
 				if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
 					type->ordinal = type_count++;
 				} else if (type->kind == KIND_PLACEHOLDER) {
-					report(REPORT_ERROR, &s->line_arena[type->loc], "could not find type '%s'!", type->placeholder.name);
+					report(REPORT_ERROR, &s->locations[type->loc], "could not find type '%s'!", type->placeholder.name);
 				}
 			}
 		}
@@ -946,11 +945,11 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
 				tokens_next(&mini_lex);
 
 				if (condition == 0) {
-					report(REPORT_ERROR, &mini_lex.line_arena[tokens_get(&mini_lex)->location], "Static assertion failed: %.*s", (int)(t->end - t->start), t->start);
+					report(REPORT_ERROR, &mini_lex.locations[tokens_get(&mini_lex)->location], "Static assertion failed: %.*s", (int)(t->end - t->start), t->start);
 				}
 			} else {
 				if (condition == 0) {
-					report(REPORT_ERROR, &mini_lex.line_arena[tokens_get(&mini_lex)->location], "Static assertion failed");
+					report(REPORT_ERROR, &mini_lex.locations[tokens_get(&mini_lex)->location], "Static assertion failed");
 				}
 			}
 		}
@@ -1040,11 +1039,11 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
 				tokens_next(s);
 
 				if (condition == 0) {
-					report(REPORT_ERROR, &s->line_arena[tokens_get(s)->location], "Static assertion failed: '%.*s'", (int)(t->end - t->start), t->start);
+					report(REPORT_ERROR, tokens_get_location(s), "Static assertion failed: '%.*s'", (int)(t->end - t->start), t->start);
 				}
 			} else {
 				if (condition == 0) {
-					report(REPORT_ERROR, &s->line_arena[tokens_get(s)->location], "Static assertion failed");
+					report(REPORT_ERROR, tokens_get_location(s), "Static assertion failed");
 				}
 			}
 
@@ -1115,16 +1114,16 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
 
 					if (!type_equal(tu, n->decl.type, decl.type)) {
 						if (1) {
-							report(REPORT_ERROR, &s->line_arena[decl.loc], "redefinition of '%s' as different kind of symbol", decl.name);
-							report(REPORT_INFO, &s->line_arena[n->loc], "previous definition is here");
+							report(REPORT_ERROR, &s->locations[decl.loc], "redefinition of '%s' as different kind of symbol", decl.name);
+							report(REPORT_INFO, &s->locations[n->loc], "previous definition is here");
 							printf("\n");
 						} else {
 							char msg[100];
 							snprintf(msg, 100, "redefinition of '%s' as different kind of symbol", decl.name);
 
 							report_two_spots(REPORT_ERROR,
-											 &s->line_arena[n->loc],
-											 &s->line_arena[decl.loc],
+											 &s->locations[n->loc],
+											 &s->locations[decl.loc],
 											 msg, NULL, NULL, "previous definition was:");
 						}
 					}
@@ -1155,8 +1154,8 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
 					// TODO(NeGate): Error messages
 					if (is_redefining_body) {
 						report_two_spots(REPORT_ERROR,
-										 &s->line_arena[n->loc],
-										 &s->line_arena[decl.loc],
+										 &s->locations[n->loc],
+										 &s->locations[decl.loc],
 										 "Cannot redefine function decl",
 										 NULL, NULL, "previous definition was:");
 					} else if (strcmp((const char*)decl.name, "WinMain") == 0) {
@@ -1324,7 +1323,7 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
 				ptrdiff_t temp;
 				search = shgeti_ts(target_desc.builtin_func_map, name, temp);
 				if (search < 0) {
-					SourceLoc* loc = &s->line_arena[tu->exprs[i].loc];
+					SourceLoc* loc = &s->locations[tu->exprs[i].loc];
 					report(REPORT_ERROR, loc, "could not resolve symbol: %s", name);
 				}
 			}
@@ -1409,7 +1408,7 @@ static void parse_function_definition(TranslationUnit* tu, TokenStream* restrict
 
 	assert(local_symbol_start == local_symbol_count);
 	if (param_count >= INT16_MAX) {
-		report(REPORT_ERROR, &s->line_arena[n->loc], "Function parameter count cannot exceed %d (got %d)", param_count, MAX_LOCAL_SYMBOLS);
+		report(REPORT_ERROR, &s->locations[n->loc], "Function parameter count cannot exceed %d (got %d)", param_count, MAX_LOCAL_SYMBOLS);
 		abort();
 	}
 
@@ -1452,7 +1451,7 @@ static Stmt* parse_compound_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 			if (tokens_get(s)->type == ';') {
 				tokens_next(s);
 			} else {
-				//report(REPORT_INFO, &s->line_arena[tokens_get(s)->location], "Woah!!!");
+				//report(REPORT_INFO, tokens_get_location(s), "Woah!!!");
 
 				Stmt* stmt = parse_stmt(tu, s);
 				if (stmt) {
@@ -1463,7 +1462,7 @@ static Stmt* parse_compound_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 				}
 			}
 		}
-		//report(REPORT_INFO, &s->line_arena[tokens_get(s)->location], "Closing brace");
+		//report(REPORT_INFO, tokens_get_location(s), "Closing brace");
 		expect(s, '}');
 
 		Stmt** stmt_array = arena_alloc(&thread_arena, body_count * sizeof(Stmt*), _Alignof(Stmt*));
@@ -1485,7 +1484,7 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 	TknType peek = tokens_get(s)->type;
 
 	if (peek == '{') {
-		//report(REPORT_INFO, &s->line_arena[tokens_get(s)->location], "Opening brace for local compound");
+		//report(REPORT_INFO, tokens_get_location(s), "Opening brace for local compound");
 
 		tokens_next(s);
 		return parse_compound_stmt(tu, s);
@@ -1511,7 +1510,7 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 		LOCAL_SCOPE {
 			Expr* cond;
 			{
-				SourceLoc* opening_loc = &s->line_arena[tokens_get(s)->location];
+				SourceLoc* opening_loc = tokens_get_location(s);
 				expect(s, '(');
 
 				cond = parse_expr(tu, s);
@@ -1783,7 +1782,7 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 
 			if (tokens_get(s)->type != TOKEN_KW_while) {
 				Token* t = tokens_get(s);
-				SourceLoc* loc = &s->line_arena[t->location];
+				SourceLoc* loc = &s->locations[t->location];
 
 				report(REPORT_ERROR, loc, "%s:%d: error: expected 'while' got '%.*s'", (int)(t->end - t->start), t->start);
 				abort();
@@ -1812,7 +1811,7 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 		Token* t = tokens_get(s);
 		SourceLocIndex loc = t->location;
 		if (t->type != TOKEN_IDENTIFIER) {
-			report(REPORT_ERROR, &s->line_arena[loc], "expected identifier for goto target name");
+			report(REPORT_ERROR, &s->locations[loc], "expected identifier for goto target name");
 			return n;
 		}
 
@@ -1916,7 +1915,7 @@ static void parse_decl_or_expr(TranslationUnit* tu, TokenStream* restrict s, siz
 				};
 
 				if (local_symbol_count >= MAX_LOCAL_SYMBOLS) {
-					report(REPORT_ERROR, &s->line_arena[decl.loc], "Local symbol count exceeds %d (got %d)", MAX_LOCAL_SYMBOLS, local_symbol_count);
+					report(REPORT_ERROR, &s->locations[decl.loc], "Local symbol count exceeds %d (got %d)", MAX_LOCAL_SYMBOLS, local_symbol_count);
 					abort();
 				}
 
@@ -1953,7 +1952,7 @@ static void parse_decl_or_expr(TranslationUnit* tu, TokenStream* restrict s, siz
 				};
 
 				if (local_symbol_count >= MAX_LOCAL_SYMBOLS) {
-					report(REPORT_ERROR, &s->line_arena[decl.loc], "Local symbol count exceeds %d (got %d)", MAX_LOCAL_SYMBOLS, local_symbol_count);
+					report(REPORT_ERROR, &s->locations[decl.loc], "Local symbol count exceeds %d (got %d)", MAX_LOCAL_SYMBOLS, local_symbol_count);
 					abort();
 				}
 
@@ -2053,7 +2052,7 @@ static intmax_t parse_const_expr(TranslationUnit* tu, TokenStream* restrict s) {
 ////////////////////////////////
 static _Noreturn void generic_error(TokenStream* restrict s, const char* msg) {
 	Token* t = tokens_get(s);
-	SourceLoc* loc = &s->line_arena[t->location];
+	SourceLoc* loc = &s->locations[t->location];
 
 	report(REPORT_ERROR, loc, msg);
 	abort();
@@ -2062,7 +2061,7 @@ static _Noreturn void generic_error(TokenStream* restrict s, const char* msg) {
 static void expect(TokenStream* restrict s, char ch) {
 	if (tokens_get(s)->type != ch) {
 		Token* t = tokens_get(s);
-		SourceLoc* loc = &s->line_arena[t->location];
+		SourceLoc* loc = &s->locations[t->location];
 
 		report(REPORT_ERROR, loc, "expected '%c' got '%.*s'", ch, (int)(t->end - t->start), t->start);
 		abort();
@@ -2073,8 +2072,7 @@ static void expect(TokenStream* restrict s, char ch) {
 
 static void expect_closing_paren(TokenStream* restrict s, SourceLoc* opening) {
 	if (tokens_get(s)->type != ')') {
-		Token* t = tokens_get(s);
-		SourceLoc* loc = &s->line_arena[t->location];
+        SourceLoc* loc = tokens_get_location(s);
 
 		report_two_spots(REPORT_ERROR, opening,
 						 loc,
@@ -2088,8 +2086,7 @@ static void expect_closing_paren(TokenStream* restrict s, SourceLoc* opening) {
 
 static void expect_with_reason(TokenStream* restrict s, char ch, const char* reason) {
 	if (tokens_get(s)->type != ch) {
-		Token* t = tokens_get(s);
-		SourceLoc* loc = &s->line_arena[t->location];
+		SourceLoc* loc = tokens_get_location(s);
 
 		report(REPORT_ERROR, loc, "expected '%c' for %s", ch, reason);
 		abort();

@@ -89,7 +89,7 @@ static Decl parse_declarator(TranslationUnit* tu, TokenStream* restrict s, Type*
 		// the end of the declarator when it's done.
 		//
 		// should be right after the (
-		SourceLoc* opening_loc = &s->line_arena[tokens_get(s)->location];
+		SourceLoc* opening_loc = tokens_get_location(s);
 
 		tokens_next(s);
 		size_t saved = s->current;
@@ -128,7 +128,7 @@ static Decl parse_declarator(TranslationUnit* tu, TokenStream* restrict s, Type*
 
 	Atom name = NULL;
 	Token* t = tokens_get(s);
-	SourceLocIndex loc = t->location;
+    SourceLocIndex loc = generate_location(tu, tokens_get_location(s));
 	if (!is_abstract && t->type == TOKEN_IDENTIFIER) {
 		name = atoms_put(t->end - t->start, t->start);
 		tokens_next(s);
@@ -148,7 +148,7 @@ static Type* parse_typename(TranslationUnit* tu, TokenStream* restrict s) {
 
 static Type* parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s, Type* type, Atom name) {
 	assert(s->current > 0);
-	SourceLoc* loc = &s->line_arena[s->tokens[s->current - 1].location];
+	SourceLoc* loc = tokens_get_last_location(s);
 
 	// type suffixes like array [] and function ()
 	if (tokens_get(s)->type == '(') {
@@ -224,7 +224,7 @@ static Type* parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s, Typ
 	} else if (tokens_get(s)->type == '[') {
 		if (out_of_order_mode) {
 			// in the out of order case we defer expression parsing
-			SourceLoc* open_brace = &s->line_arena[tokens_get(s)->location];
+			SourceLoc* open_brace = tokens_get_location(s);
 			tokens_next(s);
 
 			size_t current = 0;
@@ -241,14 +241,14 @@ static Type* parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s, Typ
 					Token* t = tokens_get(s);
 
 					if (t->type == '\0') {
-						report(REPORT_ERROR, &s->line_arena[t->location], "Array declaration ended in EOF");
+						report(REPORT_ERROR, &s->locations[t->location], "Array declaration ended in EOF");
 						abort();
 					} else if (t->type == '[') {
 						depth++;
 					} else if (t->type == ']') {
 						if (depth == 0) {
 							report_two_spots(REPORT_ERROR,
-											 open_brace, &s->line_arena[t->location],
+											 open_brace, &s->locations[t->location],
 											 "Unbalanced brackets", "open", "close?", NULL);
 							abort();
 						}
@@ -267,7 +267,7 @@ static Type* parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s, Typ
 
 			// create placeholder array type
 			type = new_array(tu, type, 0);
-			type->loc = loc - s->line_arena;
+            type->loc = generate_location(tu, loc);
 			type->array_count_lexer_pos = current;
 			return type;
 		} else {
@@ -375,7 +375,7 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
 
 			case TOKEN_KW_Complex:
 			case TOKEN_KW_Imaginary: {
-				SourceLoc* loc = &s->line_arena[tokens_get(s)->location];
+				SourceLoc* loc = &s->locations[tokens_get(s)->location];
 				report(REPORT_ERROR, loc, "Complex types are not supported in CuikC");
 				break;
 			}
@@ -383,10 +383,10 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
 			case TOKEN_KW_Vector: {
 				// _Vector '(' TYPENAME ',' CONST-EXPR ')'
 				if (counter) goto done;
-				SourceLoc* loc = &s->line_arena[tokens_get(s)->location];
+				SourceLoc* loc = &s->locations[tokens_get(s)->location];
 				tokens_next(s);
 
-				SourceLoc* opening_loc = &s->line_arena[tokens_get(s)->location];
+				SourceLoc* opening_loc = &s->locations[tokens_get(s)->location];
 				expect(s, '(');
 
 				type = parse_typename(tu, s);
@@ -431,14 +431,14 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
 			case TOKEN_KW_Atomic: {
 				tokens_next(s);
 				if (tokens_get(s)->type == '(') {
-					SourceLoc* opening_loc = &s->line_arena[tokens_get(s)->location];
+					SourceLoc* opening_loc = &s->locations[tokens_get(s)->location];
 					tokens_next(s);
 
 					type = parse_typename(tu, s);
 					counter += OTHER;
 					is_atomic = true;
 
-					SourceLoc* closing_loc = &s->line_arena[tokens_get(s)->location];
+					SourceLoc* closing_loc = &s->locations[tokens_get(s)->location];
 					if (tokens_get(s)->type != ')') {
 						report_two_spots(REPORT_ERROR, opening_loc, closing_loc, "expected closing parenthesis for _Atomic", "open", "close?", NULL);
 						return NULL;
@@ -455,7 +455,7 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
 			case TOKEN_KW_auto: break;
 
 			case TOKEN_KW_Typeof: {
-				SourceLoc* loc = &s->line_arena[tokens_get(s)->location];
+				SourceLoc* loc = &s->locations[tokens_get(s)->location];
 
 				tokens_next(s);
 				if (tokens_get(s)->type != '(') {
@@ -496,7 +496,7 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
 			}
 
 			case TOKEN_KW_Alignas: {
-				SourceLoc* loc = &s->line_arena[tokens_get(s)->location];
+				SourceLoc* loc = &s->locations[tokens_get(s)->location];
 				if (alignas_pending_expr != NULL) {
 					report(REPORT_ERROR, loc, "cannot apply two _Alignas to one type");
 					return NULL;
@@ -579,11 +579,13 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
 				}
 
 				Atom name = NULL;
-				Token* t = tokens_get(s);
 				if (tokens_get(s)->type == TOKEN_IDENTIFIER) {
-					name = atoms_put(t->end - t->start, t->start);
-					record_loc = t->location;
-					tokens_next(s);
+                    record_loc = generate_location(tu, tokens_get_location(s));
+
+                    Token* t = tokens_get(s);
+                    name = atoms_put(t->end - t->start, t->start);
+
+                    tokens_next(s);
 				}
 
 				if (tokens_get(s)->type == '{') {
@@ -604,7 +606,7 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
 							if (out_of_order_mode) shput(global_tags, name, type);
 							else {
 								if (local_tag_count + 1 >= MAX_LOCAL_TAGS) {
-									SourceLoc* loc = &s->line_arena[tokens_get(s)->location];
+									SourceLoc* loc = &s->locations[tokens_get(s)->location];
 									report(REPORT_ERROR, loc, "too many tags in local scopes (%d)", MAX_LOCAL_TAGS);
 									abort();
 								}
@@ -623,7 +625,7 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
 						if (skip_over_declspec(s)) continue;
 
 						// in case we have unnamed declarators and we somewhere for them to point to
-						SourceLocIndex default_loc = tokens_get(s)->location;
+						SourceLocIndex default_loc = generate_location(tu, tokens_get_location(s));
 
 						Attribs member_attr = { 0 };
 						Type* member_base_type = parse_declspec(tu, s, &member_attr);
@@ -641,7 +643,7 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
 						//     ^    ^~   ^~~~    ^
 						//     one  two  three   DONE
 						do {
-							Decl decl = { 0 };
+                            Decl decl = { 0 };
 							Type* member_type = member_base_type;
 
 							// not all members have declarators for example
@@ -675,7 +677,7 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
 								member->bit_width = parse_const_expr(tu, s);
 							}
 
-							// i just wanted to logically split this from the top stuff, this is a breather comment
+                            // i just wanted to logically split this from the top stuff, this is a breather comment
 							if (tokens_get(s)->type == ',') {
 								tokens_next(s);
 								continue;
@@ -718,7 +720,7 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
 						if (out_of_order_mode) shput(global_tags, name, type);
 						else {
 							if (local_tag_count + 1 >= MAX_LOCAL_TAGS) {
-								SourceLoc* loc = &s->line_arena[tokens_get(s)->location];
+								SourceLoc* loc = &s->locations[tokens_get(s)->location];
 								report(REPORT_ERROR, loc, "too many tags in local scopes (%d)", MAX_LOCAL_TAGS);
 								abort();
 							}
@@ -766,7 +768,7 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
 							if (out_of_order_mode) shput(global_tags, name, type);
 							else {
 								if (local_tag_count + 1 >= MAX_LOCAL_TAGS) {
-									SourceLoc* loc = &s->line_arena[tokens_get(s)->location];
+									SourceLoc* loc = &s->locations[tokens_get(s)->location];
 									report(REPORT_ERROR, loc, "too many tags in local scopes (%d)", MAX_LOCAL_TAGS);
 									abort();
 								}
@@ -811,7 +813,7 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
 								lexer_pos = skip_expression_in_enum(s, &terminator);
 
 								if (terminator == 0) {
-									SourceLoc* loc = &s->line_arena[tokens_get(s)->location];
+									SourceLoc* loc = &s->locations[tokens_get(s)->location];
 									report(REPORT_ERROR, loc, "expected comma or } (got EOF)");
 									abort();
 								}
@@ -872,7 +874,7 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
 						if (out_of_order_mode) shput(global_tags, name, type);
 						else {
 							if (local_tag_count + 1 >= MAX_LOCAL_TAGS) {
-								SourceLoc* loc = &s->line_arena[tokens_get(s)->location];
+								SourceLoc* loc = &s->locations[tokens_get(s)->location];
 								report(REPORT_ERROR, loc, "too many tags in local scopes (%d)", MAX_LOCAL_TAGS);
 								abort();
 							}
@@ -902,7 +904,7 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
 					// if not, we assume this must be a typedef'd type and reserve space
 					if (sym != NULL) {
 						if (sym->storage_class != STORAGE_TYPEDEF) {
-							SourceLoc* loc = &s->line_arena[tokens_get(s)->location];
+							SourceLoc* loc = &s->locations[tokens_get(s)->location];
 							report(REPORT_ERROR, loc, "symbol '%s' is not a typedef", name);
 							return NULL;
 						}
@@ -1025,7 +1027,7 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
 	} while (true);
 
 	done:;
-	SourceLoc* loc = &s->line_arena[tokens_get(s)->location];
+	SourceLoc* loc = &s->locations[tokens_get(s)->location];
 	if (type == 0) {
 		report(REPORT_ERROR, loc, "unknown typename");
 		return NULL;

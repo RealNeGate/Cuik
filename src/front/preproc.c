@@ -235,7 +235,7 @@ inline static void trim_the_shtuffs(CPP_Context* restrict c, void* new_top) {
 }
 
 inline static SourceLocIndex get_source_location(CPP_Context* restrict c, Lexer* restrict l, TokenStream* restrict s) {
-	SourceLocIndex i = arrlen(s->line_arena);
+	SourceLocIndex i = arrlen(s->locations);
 	if (l->line_current == NULL) {
 		l->line_current = l->start;
 	}
@@ -265,7 +265,7 @@ inline static SourceLocIndex get_source_location(CPP_Context* restrict c, Lexer*
 		.columns = columns,
 		.length = length
 	};
-	arrput(s->line_arena, loc);
+	arrput(s->locations, loc);
 
 	return i;
 }
@@ -568,14 +568,14 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 						assert(s->current != arrlen(s->tokens) && "Expected the macro expansion to add something");
 
 						// Insert a null token at the end
-						Token t = { 0, arrlen(s->line_arena) - 1, NULL, NULL };
+						Token t = { 0, arrlen(s->locations) - 1, NULL, NULL };
 						arrput(s->tokens, t);
 
 						if (tokens_get(s)->type == TOKEN_STRING_DOUBLE_QUOTE) {
 							Token* t = tokens_get(s);
 							size_t len = (t->end - t->start) - 2;
 							if (len > MAX_PATH) {
-								report(REPORT_ERROR, &s->line_arena[t->location], "Filename too long");
+								report(REPORT_ERROR, &s->locations[t->location], "Filename too long");
 								abort();
 							}
 
@@ -1518,7 +1518,7 @@ static intmax_t eval_l0(CPP_Context* restrict c, TokenStream* restrict s) {
 		int ch;
 		intptr_t distance = parse_char(t->end - t->start, (const char*)t->start, &ch);
 		if (distance < 0) {
-			report(REPORT_ERROR, &s->line_arena[t->location], "could not parse char literal");
+			report(REPORT_ERROR, &s->locations[t->location], "could not parse char literal");
 			abort();
 		}
 
@@ -1529,15 +1529,15 @@ static intmax_t eval_l0(CPP_Context* restrict c, TokenStream* restrict s) {
 		val = eval(c, s, NULL);
 
 		if (tokens_get(s)->type != ')') {
-			report_two_spots(REPORT_ERROR, &s->line_arena[t->location],
-							 &s->line_arena[tokens_get(s)->location],
+			report_two_spots(REPORT_ERROR, &s->locations[t->location],
+							 &s->locations[tokens_get(s)->location],
 							 "expected closing parenthesis for macro subexpression",
 							 "open", "close?", NULL);
 			abort();
 		}
 		tokens_next(s);
 	} else {
-		report(REPORT_ERROR, &s->line_arena[t->location], "could not parse expression");
+		report(REPORT_ERROR, &s->locations[t->location], "could not parse expression");
 		abort();
 	}
 
@@ -1673,7 +1673,7 @@ static intmax_t eval(CPP_Context* restrict c, TokenStream* restrict s, Lexer* l)
 		assert(s->current != arrlen(s->tokens) && "Expected the macro expansion to add something");
 
 		// Insert a null token at the end
-		Token t = { 0, arrlen(s->line_arena) - 1, NULL, NULL };
+		Token t = { 0, arrlen(s->locations) - 1, NULL, NULL };
 		arrput(s->tokens, t);
 
 		// Evaluate

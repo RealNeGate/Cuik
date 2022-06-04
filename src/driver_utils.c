@@ -246,8 +246,9 @@ TranslationUnit* cuik_compile_file(CompilationUnit* cu, const char* path,
 		crash_if_reports(REPORT_ERROR);
 	}
 
-	// free tokens
-	arrfree(tu->tokens.tokens);
+	// free tokens & lexer locations
+    arrfree(tu->tokens.locations);
+    arrfree(tu->tokens.tokens);
 	//printf("Line arena space: %f MB\n", (arrlen(tu->tokens.line_arena)*sizeof(SourceLoc)) / (1024.0*1024.0));
 
 	// Semantics pass

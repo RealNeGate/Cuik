@@ -19,6 +19,12 @@ typedef enum {
 	STAGE_FINAL,
 } CompilerStage;
 
+typedef struct {
+    // implicitly converting between types and losing information
+    bool data_loss : 1;
+    bool unused_decls : 1;
+} Warnings;
+
 typedef struct CompilerSettings {
 	const char* output_path;
 
@@ -48,6 +54,7 @@ typedef struct CompilerSettings {
 	int num_of_worker_threads;
 } CompilerSettings;
 
+extern Warnings warnings;
 extern TB_Arch target_arch;
 extern TB_System target_system;
 extern CompilerSettings settings;

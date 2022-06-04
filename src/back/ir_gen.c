@@ -1471,7 +1471,7 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
 		static thread_local TB_FileID last_file_id = 0;
 		static thread_local const char* last_filepath = NULL;
 
-		SourceLoc* l = &tu->tokens.line_arena[s->loc];
+		SourceLoc* l = &tu->source_locations[s->loc];
 		SourceLine* line = l->line;
 
 		if ((const char*)line->file != last_filepath) {

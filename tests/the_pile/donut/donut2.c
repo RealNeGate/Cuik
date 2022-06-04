@@ -15,7 +15,7 @@ int main() {
 		memset(z, 0, 7040);
 		for (j = 0; 6.28 > j; j += 0.07) {
 			for (i = 0; 6.28 > i; i += 0.02) {
-				//printf("i=%f\n", (double)i);
+				printf("i=%f\n", (double)i);
 				float c = sin(i);
 				float d = cos(j);
 				float e = sin(A), f = sin(j), g = cos(A);
@@ -39,7 +39,7 @@ int main() {
 		
 		printf("\x1b[H");
 		for (k = 0; 1761 > k; k++) {
-			putchar(k % 80 ? b[k] : 10);
+			putchar(k % 80 ? 'A' : 10);
 		}
 		
 		A += 0.04;

@@ -7,52 +7,56 @@
 typedef enum TknType {
     TOKEN_ACCESSOR = '.',
     TOKEN_COMMA = ',',
-    
+
     TOKEN_PLUS = '+',
     TOKEN_MINUS = '-',
     TOKEN_TIMES = '*',
     TOKEN_SLASH = '/',
     TOKEN_PERCENT = '%',
     TOKEN_ASSIGN = '=',
-	
+
+    TOKEN_AND = '&',
+    TOKEN_XOR = '^',
+    TOKEN_OR = '|',
+
     TOKEN_HASH = '#',
     TOKEN_AT = '@',
-    
+
     TOKEN_COLON = ':',
     TOKEN_SEMICOLON = ';',
-	
+
     TOKEN_LESS = '<',
     TOKEN_GREATER = '>',
-	
+
     TOKEN_BRACKET_OPEN = '[',
     TOKEN_BRACKET_CLOSE = ']',
-    
+
     TOKEN_PAREN_OPEN = '(',
     TOKEN_PAREN_CLOSE = ')',
-    
+
     TOKEN_BRACE_OPEN = '{',
     TOKEN_BRACE_CLOSE = '}',
-	
+
     TOKEN_STRING_SINGLE_QUOTE = '\'',
     TOKEN_STRING_DOUBLE_QUOTE = '\"',
-	
+
 	// L"hello"
     TOKEN_STRING_WIDE_SINGLE_QUOTE = '\'' + 256,
     TOKEN_STRING_WIDE_DOUBLE_QUOTE = '\"' + 256,
-    
+
     TOKEN_IDENTIFIER = 256,
 	TOKEN_INTEGER,
 	TOKEN_FLOAT,
 	TOKEN_TRIPLE_DOT,
-	
+
     TOKEN_INVALID,
-	
+
     TOKEN_ARROW,                      /* ->  */
     TOKEN_DOUBLE_HASH   = '#' + 256,  /* ##  */
-	
+
     TOKEN_DOUBLE_AND    = '&' + 256,  /* &=  */
     TOKEN_DOUBLE_OR     = '|' + 256,  /* |=  */
-	
+
     TOKEN_PLUS_EQUAL    = '+' + 384,  /* +=  */
     TOKEN_MINUS_EQUAL   = '-' + 384,  /* -=  */
     TOKEN_TIMES_EQUAL   = '*' + 384,  /* *=  */
@@ -63,23 +67,23 @@ typedef enum TknType {
     TOKEN_XOR_EQUAL     = '^' + 384,  /* ^=  */
     TOKEN_NOT_EQUAL     = '!' + 384,  /* !=  */
     TOKEN_EQUALITY      = '=' + 384,  /* ==  */
-	
+
     TOKEN_GREATER_EQUAL = '>' + 256,  /* >=  */
     TOKEN_LESS_EQUAL    = '<' + 256,  /* <=  */
     TOKEN_LEFT_SHIFT    = '<' + 384,  /* <<  */
     TOKEN_RIGHT_SHIFT   = '>' + 384,  /* >>  */
-	
+
 	TOKEN_LEFT_SHIFT_EQUAL ='<' + 512,/* <<= */
 	TOKEN_RIGHT_SHIFT_EQUAL='>' + 512,/* >>= */
     TOKEN_INCREMENT       = '+' + 256,/* ++  */
     TOKEN_DECREMENT       = '-' + 256,/* --  */
-	
+
 	// this is hacky because ! is a single char
 	// token (sometimes used in !=) but this way
 	// it can share more rules with the rest of the
 	// tokens (less cases in the lexer).
     TOKEN_DOUBLE_EXCLAMATION = '!' + 256,/* !!  */
-	
+
 	// Keywords
 	TOKEN_KW_auto = 640,
 	TOKEN_KW_break,
@@ -168,9 +172,9 @@ typedef struct {
 	// stb_ds array
 	Token* tokens;
 	size_t current;
-	
+
 	// stb_ds array
-	SourceLoc* line_arena;
+	SourceLoc* locations;
 } TokenStream;
 
 typedef struct {
@@ -181,7 +185,7 @@ typedef struct {
     const unsigned char* start;
     const unsigned char* current;
 	int current_line;
-	
+
 	////////////////////////////////
 	// INTERNALS
 	////////////////////////////////
@@ -189,7 +193,7 @@ typedef struct {
     const unsigned char* line_current;
 	const unsigned char* line_current2;
 	bool hit_line;
-	
+
 	// current token info
 	TknType token_type;
     const unsigned char* token_start;
@@ -206,8 +210,16 @@ TknType classify_ident(const unsigned char* restrict str, size_t len);
 
 inline static bool lexer_match(Lexer* restrict l, size_t len, const char* str) {
 	if ((l->token_end - l->token_start) != len) return false;
-	
+
 	return memcmp(l->token_start, str, len) == 0;
+}
+
+inline static SourceLoc* tokens_get_last_location(TokenStream* restrict s) {
+	return &s->locations[s->tokens[s->current - 1].location];
+}
+
+inline static SourceLoc* tokens_get_location(TokenStream* restrict s) {
+	return &s->locations[s->tokens[s->current].location];
 }
 
 // this is used by the parser to get the next token

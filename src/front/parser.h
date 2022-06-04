@@ -169,6 +169,8 @@ struct Type {
 		} placeholder;
     };
 };
+#define TYPE_IS_INTEGER(x) (((x)->kind >= KIND_CHAR) && ((x)->kind <= KIND_LONG))
+#define TYPE_IS_FLOAT(x) (((x)->kind >= KIND_FLOAT) && ((x)->kind <= KIND_DOUBLE))
 
 typedef enum StmtOp {
 	STMT_NONE,
@@ -178,8 +180,6 @@ typedef enum StmtOp {
 
 	// It's a normal decl but global
 	STMT_GLOBAL_DECL,
-
-	// NOTE(NeGate): It's a decl that's followed by a compound block
 	STMT_FUNC_DECL,
 
 	STMT_LABEL,
@@ -623,7 +623,10 @@ typedef struct TranslationUnit {
 	Arena ast_arena;
 	Arena type_arena;
 
-	// stb_ds array
+    // stb_ds array
+	SourceLoc* source_locations;
+
+    // stb_ds array
 	// NOTE(NeGate): should this be an stb_ds array?
 	Stmt** top_level_stmts;
 
@@ -632,7 +635,7 @@ typedef struct TranslationUnit {
 	// try to find a type by that name and feed it into hack.type
 	struct {
 		const char* name;
-		Type*   type;
+		Type* type;
 	} hack;
 } TranslationUnit;
 
@@ -653,6 +656,10 @@ enum {
 	BUILTIN_TYPE_COUNT,
 };
 extern Type builtin_types[BUILTIN_TYPE_COUNT];
+
+SourceLoc merge_source_locations(const SourceLoc* start, const SourceLoc* end);
+SourceLocIndex generate_location(TranslationUnit* tu, const SourceLoc* loc);
+SourceLocIndex generate_location_range(TranslationUnit* tu, const SourceLoc* start, const SourceLoc* end);
 
 Type* new_func(TranslationUnit* tu);
 Type* new_enum(TranslationUnit* tu);

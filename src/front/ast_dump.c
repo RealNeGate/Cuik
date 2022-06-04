@@ -549,7 +549,7 @@ void ast_dump_type(TranslationUnit* tu, Type* ty, int depth, int offset) {
 			   ty->record.name ? (char*)ty->record.name : "<unnamed>");
 
 		if (ty->loc) {
-			SourceLoc* loc = &tu->tokens.line_arena[ty->loc];
+			SourceLoc* loc = &tu->tokens.locations[ty->loc];
 
 			printf("// %s:%d\n", loc->line->file, loc->line->line);
 		} else {
