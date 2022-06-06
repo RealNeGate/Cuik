@@ -22,7 +22,7 @@ static void print_barz(int depth, bool last_node) {
 }
 
 static void dump_expr(TranslationUnit* tu, FILE* stream, Expr* restrict e, int depth, bool last_node) {
-	print_barz(depth, last_node);
+    print_barz(depth, last_node);
 
 	if (e->cast_type != e->type) {
 		type_as_string(tu, sizeof(temp_string0), temp_string0, e->type);

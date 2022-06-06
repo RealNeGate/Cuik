@@ -7,12 +7,8 @@
 #include <ext/stb_ds.h>
 #include <front/parser.h>
 
-extern _Atomic int sema_error_count;
+extern atomic_int sema_error_count;
 extern thread_local bool in_the_semantic_phase;
-
-#define sema_info(loc,  ...) report(REPORT_INFO,    &tu->source_locations[loc], __VA_ARGS__)
-#define sema_warn(loc,  ...) report(REPORT_WARNING, &tu->source_locations[loc], __VA_ARGS__)
-#define sema_error(loc, ...) report(REPORT_ERROR,   &tu->source_locations[loc], __VA_ARGS__)
 
 bool type_compatible(TranslationUnit* tu, Type* a, Type* b, Expr* a_expr);
 

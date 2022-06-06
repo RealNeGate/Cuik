@@ -218,6 +218,7 @@ typedef enum ExprOp {
 	EXPR_UNKNOWN_SYMBOL,
 	EXPR_SYMBOL,
 	EXPR_GENERIC, // C11's _Generic
+    EXPR_VA_ARG,
 
 	EXPR_FUNCTION, // function literal
 	EXPR_INITIALIZER,
@@ -431,7 +432,11 @@ typedef struct InitNode {
 
 struct Expr {
 	ExprOp op;
-	SourceLocIndex loc;
+    SourceLocIndex start_loc;
+    SourceLocIndex end_loc;
+
+    // some flags:
+    bool has_parens : 1;
 
 	Type* type;
 
@@ -477,7 +482,11 @@ struct Expr {
 			int* num;
 			Expr* next_symbol_in_chain;
 		} enum_val;
-		struct {
+        struct {
+			Type* type;
+            Expr* src;
+		} va_arg_;
+        struct {
 			Type* type;
 			Expr* src;
 		} cast;
@@ -619,12 +628,9 @@ typedef struct TranslationUnit {
 	// token stream
 	TokenStream tokens;
 
-	mtx_t arena_mutex;
+    mtx_t arena_mutex;
 	Arena ast_arena;
 	Arena type_arena;
-
-    // stb_ds array
-	SourceLoc* source_locations;
 
     // stb_ds array
 	// NOTE(NeGate): should this be an stb_ds array?
@@ -656,10 +662,6 @@ enum {
 	BUILTIN_TYPE_COUNT,
 };
 extern Type builtin_types[BUILTIN_TYPE_COUNT];
-
-SourceLoc merge_source_locations(const SourceLoc* start, const SourceLoc* end);
-SourceLocIndex generate_location(TranslationUnit* tu, const SourceLoc* loc);
-SourceLocIndex generate_location_range(TranslationUnit* tu, const SourceLoc* start, const SourceLoc* end);
 
 Type* new_func(TranslationUnit* tu);
 Type* new_enum(TranslationUnit* tu);

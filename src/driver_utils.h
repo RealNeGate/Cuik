@@ -35,6 +35,6 @@ void cuik_set_cpp_defines(CPP_Context* cpp);
 // and it should be fine :p
 //
 // if thread_pool is NULL, then parsing is single threaded
-TranslationUnit* cuik_compile_file(CompilationUnit* cu, const char* path, 
+TranslationUnit* cuik_compile_file(CompilationUnit* cu, const char* path,
 								   size_t include_count, const char** includes,
 								   bool frontend_only, threadpool_t* thread_pool);

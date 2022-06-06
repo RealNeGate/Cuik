@@ -128,7 +128,7 @@ static Decl parse_declarator(TranslationUnit* tu, TokenStream* restrict s, Type*
 
 	Atom name = NULL;
 	Token* t = tokens_get(s);
-    SourceLocIndex loc = generate_location(tu, tokens_get_location(s));
+    SourceLocIndex loc = tokens_get_location_index(s);
 	if (!is_abstract && t->type == TOKEN_IDENTIFIER) {
 		name = atoms_put(t->end - t->start, t->start);
 		tokens_next(s);
@@ -267,7 +267,7 @@ static Type* parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s, Typ
 
 			// create placeholder array type
 			type = new_array(tu, type, 0);
-            type->loc = generate_location(tu, loc);
+            type->loc = tokens_get_location_index(s);
 			type->array_count_lexer_pos = current;
 			return type;
 		} else {
@@ -580,7 +580,7 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
 
 				Atom name = NULL;
 				if (tokens_get(s)->type == TOKEN_IDENTIFIER) {
-                    record_loc = generate_location(tu, tokens_get_location(s));
+                    record_loc = tokens_get_location_index(s);
 
                     Token* t = tokens_get(s);
                     name = atoms_put(t->end - t->start, t->start);
@@ -625,7 +625,7 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
 						if (skip_over_declspec(s)) continue;
 
 						// in case we have unnamed declarators and we somewhere for them to point to
-						SourceLocIndex default_loc = generate_location(tu, tokens_get_location(s));
+						SourceLocIndex default_loc = tokens_get_location_index(s);
 
 						Attribs member_attr = { 0 };
 						Type* member_base_type = parse_declspec(tu, s, &member_attr);

@@ -31,7 +31,8 @@ typedef struct {
 } LibcOption;
 
 static LibcOption libc_options[] = {
-	{ "ucrt",    99, false, 3, (const char*[]){ "ucrt.lib", "msvcrt.lib", "vcruntime.lib" } },
+    { "none",    00, true,  0 },
+    { "ucrt",    99, false, 3, (const char*[]){ "ucrt.lib", "msvcrt.lib", "vcruntime.lib" } },
 	{ "libucrt", 99, true,  2, (const char*[]){ "libucrt.lib", "libcmt.lib", "libvcruntime.lib" } },
 };
 enum { LIBC_OPTION_COUNT = sizeof(libc_options) / sizeof(libc_options[0]) };
@@ -44,7 +45,8 @@ static TargetOption target_options[] = {
 enum { TARGET_OPTION_COUNT = sizeof(target_options) / sizeof(target_options[0]) };
 
 Warnings warnings = {
-    .data_loss = true
+    //.data_loss = true,
+    .unused_funcs = true,
 };
 
 static BigArray(const char*) cuik_include_dirs;
@@ -471,14 +473,7 @@ static void print_help(const char* executable_path) {
 	O("");
 	O("  --thin-errors        - displays errors without the line preview");
 	O("  --pedantic           - disables CuikC extensions");
-	O("  --stage <stage>      - stops at a specific stage and emits into a file (if -P is used)");
-	O("          preproc      - emits preprocessor output into a .i file");
-	O("          types        - emits AST after type checking into a .ast file");
-	O("          ir           - emits TBIR in text form into a .tbir file");
-	O("          obj          - emits target specific object file");
-	O("");
-	O("  -T                   - report timing information into a .json file usable by chrome://tracing");
-	O("  -O                   - run optimizations");
+    O("  -O                   - run optimizations");
 	O("  -P                   - emit preprocessor output");
 	O("  -c                   - emit object file output");
 	O("  -t                   - type check");
@@ -711,9 +706,13 @@ int main(int argc, char* argv[]) {
                 settings.verbose = true;
             } else if (strcmp(option, "exercise") == 0) {
                 settings.exercise = true;
-            } else if (strcmp(option, "emit-ir") == 0) {
-                settings.emit_partial_results = true;
+            } else if (strstr(option, "ir") == option) {
 				settings.stage_to_stop_at = STAGE_IR;
+
+                char* p = strchr(option, ':');
+                if (p != NULL && strcmp(p+1, "emit") == 0) {
+                    settings.emit_partial_results = true;
+                }
             } else if (strcmp(option, "pedantic") == 0) {
                 settings.pedantic = true;
             } else if (strcmp(option, "crt") == 0) {
@@ -758,8 +757,8 @@ int main(int argc, char* argv[]) {
 				return 0;
 
 				case 'P': settings.stage_to_stop_at = STAGE_PREPROC; break;
-				case 't': settings.stage_to_stop_at = STAGE_IR; break;
-				case 'c': settings.stage_to_stop_at = STAGE_OBJ; break;
+				case 't': settings.stage_to_stop_at = STAGE_TYPES; break;
+                case 'c': settings.stage_to_stop_at = STAGE_OBJ; break;
 
 				case 'g': settings.is_debug_info = true; break;
 				case 'r': settings.run_output = true; break;
@@ -782,7 +781,13 @@ int main(int argc, char* argv[]) {
 						return 1;
                     }
 
-                    big_array_put(cuik_include_dirs, argv[i]);
+                    size_t len = strlen(argv[i]);
+                    if (len > 0 && argv[i][len-1] != '\\' && argv[i][len-1] != '/') {
+                        char* newstr = malloc(len + 2);
+                        snprintf(newstr, len + 2, "%s/", argv[i]);
+
+                        big_array_put(cuik_include_dirs, newstr);
+                    }
                     break;
                 }
 
@@ -795,8 +800,8 @@ int main(int argc, char* argv[]) {
 
 	// choose a CRT if we haven't gotten one already
 #if _WIN32
-	if (!settings.freestanding && chosen_libc == NULL) {
-		chosen_libc = &libc_options[0 /* UCRT */];
+	if (chosen_libc == NULL) {
+		chosen_libc = &libc_options[settings.freestanding ? 0 /* None */ : 1 /* UCRT */];
 	}
 #else
 	{
@@ -805,6 +810,7 @@ int main(int argc, char* argv[]) {
 	}
 #endif
 
+    settings.nostdlib = ((chosen_libc - libc_options) == 0);
 	settings.static_crt = chosen_libc->static_link;
 
 	if (big_array_length(cuik_source_files) == 0) {
@@ -900,12 +906,7 @@ int main(int argc, char* argv[]) {
 		}
 
 		if (settings.stage_to_stop_at >= STAGE_FINAL) {
-			if (settings.freestanding) {
-				fprintf(stderr, "error: cannot link and be freestanding... yet");
-				return 1;
-			}
-
-			timed_block("linker") {
+            timed_block("linker") {
 				Linker l;
 				if (linker_init(&l)) {
 					// Add system libpaths
@@ -921,19 +922,15 @@ int main(int argc, char* argv[]) {
 						linker_add_input_file(&l, cuik_libraries[i]);
 					}
 
-					/*linker_add_input_file(&l, "kernel32.lib");
-					linker_add_input_file(&l, "user32.lib");
-					linker_add_input_file(&l, "shell32.lib");
-					linker_add_input_file(&l, "Gdi32.lib");
-					linker_add_input_file(&l, "opengl32.lib");*/
-
+                    if (settings.freestanding) {
 #ifdef _WIN32
-					linker_add_input_file(&l, "win32_rt.lib");
+                        linker_add_input_file(&l, "win32_rt.lib");
 #endif
+                    }
 
-					for (int i = 0; i < chosen_libc->lib_count; i++) {
-						linker_add_input_file(&l, chosen_libc->libs[i]);
-					}
+                    for (int i = 0; i < chosen_libc->lib_count; i++) {
+                        linker_add_input_file(&l, chosen_libc->libs[i]);
+                    }
 
 					linker_invoke_system(&l, cuik_file_no_ext, settings.verbose, chosen_libc->name);
 					linker_deinit(&l);

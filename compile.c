@@ -17,8 +17,6 @@ static const char* INPUT_FILES[] = {
 	"src/driver_utils.c",
 	"src/compilation_unit.c",
 
-	"src/targets/x64.c",
-
 	"src/front/lexer.c",
 	"src/front/preproc.c",
 	"src/front/parser.c",
@@ -26,10 +24,11 @@ static const char* INPUT_FILES[] = {
     "src/front/atoms.c",
 	"src/front/const_eval.c",
 	"src/front/types.c",
-    "src/front/source_loc.c",
 	"src/front/ast_dump.c",
 
-	"src/anal/analysis.c",
+    "src/targets/x64.c",
+
+    "src/anal/analysis.c",
 
 	"src/back/ir_gen.c",
 	"src/back/linker.c",
@@ -314,7 +313,7 @@ int main(int argc, char** argv) {
 			char cmd[1024];
 			for (size_t i = 0; i < INPUT_FILE_COUNT; i++) {
 				if (str_ends_with(INPUT_FILES[i], ".c")) {
-					snprintf(cmd, 1024, "cuik -o build/%s -I src/ --threads 1 --emit-ir %s", INPUT_FILES[i], INPUT_FILES[i]);
+					snprintf(cmd, 1024, "cuik -o build/%s -I src/ --threads 1 --ir %s", INPUT_FILES[i], INPUT_FILES[i]);
 
 					if (system(cmd) == 0) {
 						printf("Success with %s!\n", INPUT_FILES[i]);

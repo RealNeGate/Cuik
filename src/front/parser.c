@@ -118,7 +118,7 @@ static Stmt* make_stmt(TranslationUnit* tu, TokenStream* restrict s, StmtOp op, 
 
 	memset(stmt, 0, sizeof(struct StmtHeader));
 	stmt->op = op;
-	stmt->loc = generate_location(tu, tokens_get_location(s));
+	stmt->loc = tokens_get_location_index(s);
 	return stmt;
 }
 
@@ -1825,7 +1825,8 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 		if (search >= 0) {
 			*target = (Expr) {
 				.op = EXPR_SYMBOL,
-				.loc = loc,
+                .start_loc = loc,
+                .end_loc = loc,
 				.symbol = labels[search].value
 			};
 		} else {
@@ -1838,8 +1839,9 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 
 			*target = (Expr) {
 				.op = EXPR_SYMBOL,
-				.loc = loc,
-				.symbol = label_decl
+                .start_loc = loc,
+                .end_loc = loc,
+                .symbol = label_decl
 			};
 		}
 
@@ -1937,8 +1939,8 @@ static void parse_decl_or_expr(TranslationUnit* tu, TokenStream* restrict s, siz
 						generic_error(s, "nested functions are not allowed... yet");
 					}
 
-					expect_with_reason(s, ',', "declaration");
-				} else expect_comma = true;
+                    expect_with_reason(s, ',', "declaration");
+                } else expect_comma = true;
 
 				Decl decl = parse_declarator(tu, s, type, false, false);
 
@@ -1989,10 +1991,10 @@ static void parse_decl_or_expr(TranslationUnit* tu, TokenStream* restrict s, siz
 			expect(s, ';');
 		}
 	} else {
-		Stmt* n = make_stmt(tu, s, STMT_EXPR, sizeof(struct StmtExpr));
-
+        Stmt* n = make_stmt(tu, s, STMT_EXPR, sizeof(struct StmtExpr));
 		Expr* expr = parse_expr(tu, s);
-		n->expr = (struct StmtExpr){
+
+        n->expr = (struct StmtExpr){
 			.expr = expr
 		};
 

@@ -178,26 +178,33 @@ static int pass_parameter(TranslationUnit* tu, TB_Function* func, Expr* e, bool 
 }
 
 // TODO(NeGate): Add some type checking utilities to match against a list of types since that's kinda important :p
-static Type* type_check_builtin(TranslationUnit* tu, SourceLocIndex loc, const char* name, int arg_count, Expr** args) {
-	if (strcmp(name, "__c11_atomic_compare_exchange_strong") == 0) {
+static Type* type_check_builtin(TranslationUnit* tu, Expr* e, const char* name, int arg_count, Expr** args) {
+	if (strcmp(name, "__builtin_trap") == 0) {
+		if (arg_count != 0) {
+			REPORT_EXPR(ERROR, e, "%s doesn't require arguments", name);
+			return &builtin_types[TYPE_VOID];
+		}
+
+        return &builtin_types[TYPE_VOID];
+	} else if (strcmp(name, "__c11_atomic_compare_exchange_strong") == 0) {
 		// type check arguments
 		return &builtin_types[TYPE_BOOL];
 	} else if (strcmp(name, "__c11_atomic_exchange") == 0) {
 		if (arg_count != 3) {
-			sema_error(loc, "%s requires 3 arguments", name);
+			REPORT_EXPR(ERROR, e, "%s requires 3 arguments", name);
 			return &builtin_types[TYPE_INT];
 		}
 
 		Type* dst_type = sema_expr(tu, args[0]);
 		if (dst_type->kind != KIND_PTR) {
-			sema_error(loc, "argument 1 should be a pointer");
+			REPORT_EXPR(ERROR, e, "argument 1 should be a pointer");
 			return &builtin_types[TYPE_INT];
 		}
 		args[0]->cast_type = dst_type;
 
 		Type* src_type = sema_expr(tu, args[1]);
 		if (src_type->kind < KIND_CHAR || src_type->kind > KIND_LONG) {
-			sema_error(loc, "argument 2 must be an integer (for now)");
+			REPORT_EXPR(ERROR, e, "argument 2 must be an integer (for now)");
 			return &builtin_types[TYPE_INT];
 		}
 
@@ -205,14 +212,14 @@ static Type* type_check_builtin(TranslationUnit* tu, SourceLocIndex loc, const c
 			type_as_string(tu, sizeof(temp_string0), temp_string0, dst_type->ptr_to);
 			type_as_string(tu, sizeof(temp_string1), temp_string1, src_type);
 
-			sema_error(loc, "argument 1 (%s) is not a pointer type of argument 2 (%s)", temp_string0, temp_string1);
+			REPORT_EXPR(ERROR, e, "argument 1 (%s) is not a pointer type of argument 2 (%s)", temp_string0, temp_string1);
 			return &builtin_types[TYPE_INT];
 		}
 		args[1]->cast_type = dst_type->ptr_to;
 
 		Type* order_type = sema_expr(tu, args[2]);
 		if (order_type->kind < KIND_CHAR || order_type->kind > KIND_LONG) {
-			sema_error(loc, "Memory order must be an integer");
+			REPORT_EXPR(ERROR, e, "Memory order must be an integer");
 			return &builtin_types[TYPE_INT];
 		}
 		args[2]->cast_type = order_type;
@@ -220,13 +227,13 @@ static Type* type_check_builtin(TranslationUnit* tu, SourceLocIndex loc, const c
 		return src_type;
 	} else if (strcmp(name, "__builtin_mul_overflow") == 0) {
 		if (arg_count != 3) {
-			sema_error(loc, "%s requires 3 arguments", name);
+			REPORT_EXPR(ERROR, e, "%s requires 3 arguments", name);
 			return 0;
 		}
 
 		Type* type = sema_expr(tu, args[0]);
 		if (type->kind < KIND_CHAR || type->kind > KIND_LONG) {
-			sema_error(loc, "%s can only be applied onto integers");
+			REPORT_EXPR(ERROR, e, "%s can only be applied onto integers");
 			goto failure;
 		}
 
@@ -236,7 +243,7 @@ static Type* type_check_builtin(TranslationUnit* tu, SourceLocIndex loc, const c
 			if (i == 2) {
 				if (arg_type->kind != KIND_PTR) {
 					type_as_string(tu, sizeof(temp_string0), temp_string0, type);
-					sema_error(args[i]->loc, "Expected pointer to '%s' for the 3rd argument", temp_string0);
+					REPORT_EXPR(ERROR, args[i], "Expected pointer to '%s' for the 3rd argument", temp_string0);
 					goto failure;
 				}
 
@@ -247,8 +254,7 @@ static Type* type_check_builtin(TranslationUnit* tu, SourceLocIndex loc, const c
 				type_as_string(tu, sizeof(temp_string0), temp_string0, arg_type);
 				type_as_string(tu, sizeof(temp_string1), temp_string1, type);
 
-				SourceLocIndex loc = args[i]->loc;
-				sema_error(loc, "Could not implicitly convert type %s into %s.", temp_string0, temp_string1);
+				REPORT_EXPR(ERROR, args[i], "Could not implicitly convert type %s into %s.", temp_string0, temp_string1);
 				goto failure;
 			}
 
@@ -276,18 +282,21 @@ static TB_Register compile_builtin(TranslationUnit* tu, TB_Function* func, const
 
 		int order = const_eval(tu, args[2]).unsigned_value;
 		if (order >= 6) {
-			sema_error(args[2]->loc, "memory order must be between 0 - 6 (check stdatomic.h for the values)");
+			REPORT_EXPR(ERROR, args[2], "memory order must be between 0 - 6 (check stdatomic.h for the values)");
 			return 0;
 		}
 
 		return tb_inst_atomic_xchg(func, dst, src, order);
 	} else if (strcmp(name, "__builtin_unreachable") == 0) {
-		// TODO(NeGate): switch this out later with a proper unreachable
-		tb_inst_debugbreak(func);
+		tb_inst_unreachable(func);
 		return 0;
 	} else if (strcmp(name, "__builtin_expect") == 0) {
 		printf("TODO __builtin_expect!");
 		abort();
+	} else if (strcmp(name, "__builtin_trap") == 0) {
+		// switch this out for a proper trap
+        tb_inst_debugbreak(func);
+		return 0;
 	} else if (strcmp(name, "__debugbreak") == 0) {
 		tb_inst_debugbreak(func);
 		return 0;
@@ -315,7 +324,8 @@ TargetDescriptor get_x64_target_descriptor() {
 
 	// gcc/clang
 	shput(builtins, "__builtin_expect", 1);
-	shput(builtins, "__builtin_unreachable", 1);
+    shput(builtins, "__builtin_trap", 1);
+    shput(builtins, "__builtin_unreachable", 1);
 	shput(builtins, "__builtin_mul_overflow", 1);
 	shput(builtins, "__c11_atomic_compare_exchange_strong", 1);
 	shput(builtins, "__c11_atomic_thread_fence", 1);

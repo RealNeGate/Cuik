@@ -249,7 +249,8 @@ inline static SourceLocIndex get_source_location(CPP_Context* restrict c, Lexer*
 		source_line = arena_alloc(&thread_arena, sizeof(SourceLine), _Alignof(SourceLine));
 		source_line->file = (const unsigned char*)l->filepath;
 		source_line->line_str = l->line_current;
-		source_line->line = l->current_line;
+        source_line->parent = 0;
+        source_line->line = l->current_line;
 
 		c->current_source_line = source_line;
 	} else {
@@ -1110,7 +1111,9 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
 	} else {
 		size_t def_i;
 		if (find_define(c, &def_i, token_data, token_length)) {
-			int line_of_expansion = l->current_line;
+			SourceLocIndex macro_expansion_source_loc = get_source_location(c, l, s);
+
+            int line_of_expansion = l->current_line;
 			lexer_read(l);
 
 			/*if (strncmp((const char*)token_data, "REFIID", token_length) == 0) {
@@ -1400,6 +1403,9 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
 
 						*temp_expansion++ = '\0';
 
+                        SourceLocIndex saved_macro_parent_loc = c->macro_source_line;
+                        c->macro_source_line = macro_expansion_source_loc;
+
 						// NOTE(NeGate): We need to disable the current macro define
 						// so it doesn't recurse.
 						size_t saved_length = c->macro_bucket_keys_length[def_i];
@@ -1408,7 +1414,8 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
 						expand(c, s, &temp_lex);
 
 						c->macro_bucket_keys_length[def_i] = saved_length;
-					}
+                        c->macro_source_line = saved_macro_parent_loc;
+                    }
 				}
 
 				tls_restore(value_ranges);

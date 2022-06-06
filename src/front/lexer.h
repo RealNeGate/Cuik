@@ -152,7 +152,8 @@ typedef int SourceLocIndex;
 typedef struct {
 	const unsigned char* file;
 	const unsigned char* line_str;
-	int line;
+	SourceLocIndex parent;
+    int line;
 } SourceLine;
 
 typedef struct {
@@ -212,6 +213,14 @@ inline static bool lexer_match(Lexer* restrict l, size_t len, const char* str) {
 	if ((l->token_end - l->token_start) != len) return false;
 
 	return memcmp(l->token_start, str, len) == 0;
+}
+
+inline static SourceLocIndex tokens_get_last_location_index(TokenStream* restrict s) {
+	return s->tokens[s->current - 1].location;
+}
+
+inline static SourceLocIndex tokens_get_location_index(TokenStream* restrict s) {
+	return s->tokens[s->current].location;
 }
 
 inline static SourceLoc* tokens_get_last_location(TokenStream* restrict s) {

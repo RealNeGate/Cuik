@@ -92,7 +92,7 @@ static ConstValue const_eval_bin_op(ExprOp op, ConstValue a, ConstValue b) {
 		case EXPR_SHR: return (ConstValue){ is_signed, .unsigned_value = a.unsigned_value >> b.unsigned_value };
 
 		case EXPR_CMPEQ: return unsigned_const(a.unsigned_value == b.unsigned_value);
-		case EXPR_CMPNE: return unsigned_const(a.unsigned_value == b.unsigned_value);
+		case EXPR_CMPNE: return unsigned_const(a.unsigned_value != b.unsigned_value);
 
 		case EXPR_CMPGE:
 		if (is_signed) return unsigned_const(a.signed_value >= b.signed_value);
@@ -230,6 +230,6 @@ ConstValue const_eval(TranslationUnit* tu, const Expr* e) {
 		default: break;
 	}
 
-	report(REPORT_ERROR, &tu->source_locations[e->loc], "Could not resolve as constant expression");
+	report(REPORT_ERROR, &tu->tokens.locations[e->start_loc], "Could not resolve as constant expression");
 	abort();
 }

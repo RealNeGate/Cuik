@@ -26,6 +26,9 @@ typedef struct { const unsigned char* data; size_t length; } string;
 #define STR2(x) #x
 #define STR(x) STR2(x)
 
+#define _PP_CONCAT__(a, b) a ## b
+#define _PP_CONCAT(a, b) _PP_CONCAT__(a, b)
+
 #ifndef MAX_PATH
 #define MAX_PATH 260
 #endif

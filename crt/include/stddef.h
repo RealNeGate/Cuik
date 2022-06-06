@@ -1,8 +1,12 @@
 #pragma once
 
+#ifndef NULL
+#define NULL ((void*)0)
+#endif
+
 #ifdef _WIN32
 // windows does it :p
-#include <corecrt.h>
+//#include <corecrt.h>
 #endif
 
 // 7.19 Common definitions <stddef.h>

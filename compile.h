@@ -38,6 +38,8 @@
 
 #define popen _popen
 #define pclose _pclose
+
+#define strtok_r(a, b, c) strtok_s(a, b, c)
 #define SLASH "\\"
 #define PATH_MAX MAX_PATH
 
@@ -73,6 +75,8 @@
 #else
 #define UNIX_STYLE 1
 #endif
+
+#include "subprocess.h"
 
 #if defined(__clang__)
 #define ON_CLANG 1
@@ -168,12 +172,6 @@ typedef struct FileIter {
     WIN32_FIND_DATA find_data;
 } FileIter;
 
-typedef struct {
-    HANDLE handle;
-    HANDLE output_stream;
-    HANDLE error_stream;
-} Process;
-
 static void create_dir_if_not_exists(const char* path) {
 	if (CreateDirectory(path, NULL)) {
 		if (GetLastError() == ERROR_PATH_NOT_FOUND) {
@@ -216,86 +214,6 @@ static bool file_iter_next(FileIter* iter) {
 	iter->path = iter->find_data.cFileName;
 	return true;
 }
-
-static Process cmd_run() {
-    STARTUPINFO startup_info = {
-		.cb = sizeof(STARTUPINFO),
-		.hStdInput = GetStdHandle(STD_INPUT_HANDLE),
-		.dwFlags = STARTF_USESTDHANDLES
-	};
-
-    SECURITY_ATTRIBUTES security_attribs = {
-        sizeof(SECURITY_ATTRIBUTES),
-        .bInheritHandle = TRUE
-    };
-
-    HANDLE output_stream, error_stream;
-    CreatePipe(&output_stream, &startup_info.hStdOutput, &security_attribs, 0);
-    CreatePipe(&error_stream, &startup_info.hStdError, &security_attribs, 0);
-
-    SetHandleInformation(output_stream, HANDLE_FLAG_INHERIT, 0);
-    SetHandleInformation(error_stream, HANDLE_FLAG_INHERIT, 0);
-
-    PROCESS_INFORMATION process_info = { 0 };
-    BOOL bSuccess = CreateProcess(NULL, command_buffer, NULL, NULL, TRUE,
-								  0, NULL, NULL, &startup_info, &process_info);
-
-    if (!bSuccess) {
-        printf("Could not create child process: %s\n", command_buffer);
-		abort();
-    }
-
-    CloseHandle(startup_info.hStdError);
-    CloseHandle(startup_info.hStdOutput);
-
-    command_buffer[0] = 0;
-	command_length = 0;
-
-    return (Process){ process_info.hProcess, output_stream, error_stream };
-}
-
-static void dump_pipe(HANDLE pipe) {
-    while (true) {
-        DWORD read_count;
-        PeekNamedPipe(pipe, 0, 0, 0, &read_count, 0);
-        if (read_count == 0) {
-            DWORD err = GetLastError();
-
-            if (err == ERROR_BROKEN_PIPE) break;
-        } else {
-            DWORD bytes_read;
-            char* temp = malloc(read_count);
-            if (!ReadFile(pipe, temp, read_count, &bytes_read, 0)) break;
-            if (bytes_read == 0) break;
-
-            printf("%.*s", (int)read_count, temp);
-            free(temp);
-        }
-    }
-}
-
-static int cmd_dump(Process p) {
-    dump_pipe(p.output_stream);
-    CloseHandle(p.output_stream);
-
-    dump_pipe(p.error_stream);
-    CloseHandle(p.error_stream);
-
-    DWORD result = WaitForSingleObject(p.handle, INFINITE);
-    if (result == WAIT_FAILED) {
-        printf("could not wait on child process\n");
-		abort();
-    }
-
-    DWORD exit_status;
-    if (GetExitCodeProcess(p.handle, &exit_status) == 0) {
-        printf("could not get process exit code\n");
-		abort();
-    }
-
-    CloseHandle(p.handle);
-    return exit_status;
-}
 #else
 typedef struct {
 	char* path;
@@ -303,10 +221,6 @@ typedef struct {
 	// private
     DIR* dir;
 } FileIter;
-
-typedef struct {
-    FILE* handle;
-} Process;
 
 static void create_dir_if_not_exists(const char* path) {
 	mkdir(path, 0777);
@@ -327,31 +241,48 @@ static bool file_iter_next(FileIter* iter) {
 	iter->path = dp->d_name;
 	return true;
 }
+#endif
 
-// return the child process stdout
-static Process cmd_run() {
-	FILE* file = popen(command_buffer, "r");
-	if (file == NULL) {
-		printf("command failed to execute! %s (%s)\n", command_buffer, strerror(errno));
-		abort();
-	}
+static struct subprocess_s cmd_run() {
+    size_t cmd_length = 0;
+    const char** cmds = malloc(sizeof(const char*) * 1000);
 
-	command_buffer[0] = 0;
+    // Split up commands
+    char* ctx;
+    char* i = strtok_r(command_buffer, " ", &ctx);
+    while (i != NULL) {
+        assert(cmd_length < 999);
+        cmds[cmd_length++] = i;
+
+        i = strtok_r(NULL, " ", &ctx);
+    }
+    cmds[cmd_length++] = NULL;
+
+    // Spin up the process
+    struct subprocess_s process;
+    subprocess_create(cmds, subprocess_option_inherit_environment | subprocess_option_combined_stdout_stderr, &process);
+
+    command_buffer[0] = 0;
 	command_length = 0;
-	return (Process){ file };
+
+    return process;
+}
+
+static void dump_file(FILE* f) {
 }
 
 // Print out whatever was on that file stream
-static int cmd_dump(Process p) {
-	char buffer[4096];
-	while (fread(buffer, sizeof(buffer), sizeof(char), stream)) {
-		printf("%s", buffer);
+static int cmd_dump(struct subprocess_s p) {
+    char buffer[4096];
+	int length = 0;
+    while ((length = subprocess_read_stdout(&p, buffer, sizeof(buffer)))) {
+		printf("%.*s", length, buffer);
 	}
 
-	fflush(stdout);
-	return pclose(stream);
+    int code;
+    subprocess_join(&p, &code);
+    return code;
 }
-#endif
 
 #define ITERATE_FILES(_name, _path) \
 for (FileIter _name = file_iter_open(_path); file_iter_next(&_name);)
@@ -441,7 +372,7 @@ static void builder_compile_cc(BuildMode mode, size_t count, const char* filepat
 
 	// compile object files
     for (size_t i = 0; i < count; i += MAX_COMPILE_WORKERS) {
-        Process streams[MAX_COMPILE_WORKERS];
+        struct subprocess_s streams[MAX_COMPILE_WORKERS];
 
         size_t end = (i >= ((count / MAX_COMPILE_WORKERS) * MAX_COMPILE_WORKERS) ? count % MAX_COMPILE_WORKERS : MAX_COMPILE_WORKERS);
         for (size_t j = 0; j < end; j++) {
@@ -456,7 +387,7 @@ static void builder_compile_cc(BuildMode mode, size_t count, const char* filepat
             }
 
             if (ON_CLANG) {
-                cmd_append("-Wno-gnu-designator -Wno-microsoft-anon-tag ");
+                cmd_append("-Wno-gnu-designator -Wno-microsoft-anon-tag -fno-spell-checking ");
                 if (USE_DA_ASAN) cmd_append("-fsanitize=address ");
             } else if (ON_GCC) {
                 cmd_append("-fms-extensions ");
@@ -505,7 +436,7 @@ static void builder_compile_cc(BuildMode mode, size_t count, const char* filepat
     // Do linker work
     if (mode == BUILD_MODE_EXECUTABLE) {
         if (ON_WINDOWS) {
-            cmd_append("link /defaultlib:libcmt /debug /out:");
+            cmd_append("link /ltcg /defaultlib:libcmt /debug /out:");
             cmd_append(str_gimme_good_slashes(output_path));
             cmd_append(".exe ");
             cmd_append("build\\*.obj ole32.lib Advapi32.lib OleAut32.lib DbgHelp.lib ");

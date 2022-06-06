@@ -96,7 +96,7 @@ static size_t draw_line(SourceLine* line) {
 		do { line_end++; } while (*line_end && *line_end != '\n');
 
         size_t line_length = line_end - line_start;
-        if (line_length > 100) line_length = 100;
+        //if (line_length > 100) line_length = 100;
 
 		printf(" %5d| %.*s\n", line->line, (int)line_length, line_start);
 	}
@@ -106,6 +106,62 @@ static size_t draw_line(SourceLine* line) {
 
 static void draw_line_horizontal_pad() {
 	printf("      | ");
+}
+
+static SourceLoc merge_source_locations(const SourceLoc* start, const SourceLoc* end) {
+    if (start->line->file != end->line->file &&
+        start->line->line != end->line->line) {
+        return *start;
+    }
+
+    // We can only merge if it's on the same line... for now...
+    size_t start_columns = start->columns;
+    size_t end_columns = end->columns + end->length;
+    if (start_columns >= end_columns) {
+        return *start;
+    }
+
+    return (SourceLoc){ start->line, start_columns, end_columns - start_columns };
+}
+
+void report_ranged(ReportLevel level, SourceLoc* start_loc, SourceLoc* end_loc, const char* fmt, ...) {
+    SourceLoc loc = merge_source_locations(start_loc, end_loc);
+
+    mtx_lock(&mutex);
+	display_line(level, &loc);
+
+	va_list ap;
+	va_start(ap, fmt);
+	vprintf(fmt, ap);
+	va_end(ap);
+
+	printf("\n");
+
+	if (!report_using_thin_errors) {
+		size_t dist_from_line_start = draw_line(loc.line);
+
+#if _WIN32
+		SetConsoleTextAttribute(console_handle, (default_attribs & ~0xF) | FOREGROUND_GREEN);
+#endif
+
+		// idk man
+		size_t start_pos = loc.columns > dist_from_line_start
+			? loc.columns - dist_from_line_start : 0;
+
+		// draw underline
+		size_t tkn_len = loc.length;
+		for (size_t i = 0; i < start_pos; i++) printf(" ");
+		printf("^");
+		for (size_t i = 1; i < tkn_len; i++) printf("~");
+		printf("\n");
+
+#if _WIN32
+		SetConsoleTextAttribute(console_handle, default_attribs);
+#endif
+    }
+
+	tally_report_counter(level);
+	mtx_unlock(&mutex);
 }
 
 void report(ReportLevel level, SourceLoc* loc, const char* fmt, ...) {

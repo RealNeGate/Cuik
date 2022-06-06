@@ -33,7 +33,11 @@ _Noreturn void internal_error(const char* fmt, ...) {
 }
 
 static TB_Register cast_reg(TB_Function* func, TB_Register reg, const Type* src, const Type* dst) {
-	// Cast into correct type
+	if (dst->kind == KIND_VOID) {
+        return reg;
+    }
+
+    // Cast into correct type
 	if (src->kind >= KIND_CHAR &&
 		src->kind <= KIND_LONG &&
 		dst->kind >= KIND_CHAR &&
@@ -522,7 +526,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
 			Type* type = e->init.type;
 			TB_Register addr = tb_inst_local(func, type->size, type->align);
 
-			gen_local_initializer(tu, func, e->loc, addr, type, e->init.count, e->init.nodes);
+			gen_local_initializer(tu, func, e->start_loc, addr, type, e->init.count, e->init.nodes);
 
 			return (IRVal) {
 				.value_type = LVALUE,
@@ -539,7 +543,23 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
 				.func = tb_function_from_id(mod, e->func.src->backing.f)
 			};
 		}
-		case EXPR_SYMBOL: {
+		case EXPR_VA_ARG: {
+            IRVal src = irgen_expr(tu, func, e->va_arg_.src);
+            assert(src.value_type == LVALUE);
+
+            // post-increment
+            // NOTE: this assumes pointer size is 64bit
+            TB_Reg pre = tb_inst_load(func, TB_TYPE_PTR, src.reg, 8);
+            TB_Reg post = tb_inst_member_access(func, pre, 8);
+            tb_inst_store(func, TB_TYPE_PTR, src.reg, post, 8);
+
+			return (IRVal) {
+				.value_type = LVALUE_FUNC,
+				.type = e->type,
+				.reg  = pre
+            };
+        }
+        case EXPR_SYMBOL: {
 			Stmt* stmt = e->symbol;
 			assert(stmt->op == STMT_DECL  ||
 				   stmt->op == STMT_LABEL ||
@@ -1471,7 +1491,7 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
 		static thread_local TB_FileID last_file_id = 0;
 		static thread_local const char* last_filepath = NULL;
 
-		SourceLoc* l = &tu->source_locations[s->loc];
+		SourceLoc* l = &tu->tokens.locations[s->loc];
 		SourceLine* line = l->line;
 
 		if ((const char*)line->file != last_filepath) {
@@ -1562,7 +1582,7 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
 				Expr* e = s->decl.initial;
 
 				if (e->op == EXPR_INITIALIZER) {
-					gen_local_initializer(tu, func, e->loc, addr, type, e->init.count, e->init.nodes);
+					gen_local_initializer(tu, func, e->start_loc, addr, type, e->init.count, e->init.nodes);
 				} else {
 					if (kind == KIND_ARRAY && (e->op == EXPR_STR || e->op == EXPR_WSTR)) {
 						IRVal v = irgen_expr(tu, func, s->decl.initial);

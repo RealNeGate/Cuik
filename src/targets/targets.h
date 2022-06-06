@@ -28,12 +28,10 @@ typedef struct {
 
 	// when one of the builtins is spotted in the semantics pass, we might need to resolve it's
 	// type
-	Type* (*type_check_builtin)(TranslationUnit* tu, SourceLocIndex loc, const char* name,
-								int arg_count, Expr** args);
+	Type* (*type_check_builtin)(TranslationUnit* tu, Expr* e, const char* name, int arg_count, Expr** args);
 
 	// when one of the builtins are triggered we call this to generate it's code
-	TB_Register (*compile_builtin)(TranslationUnit* tu, TB_Function* func, const char* name,
-								   int arg_count, Expr** args);
+	TB_Register (*compile_builtin)(TranslationUnit* tu, TB_Function* func, const char* name, int arg_count, Expr** args);
 } TargetDescriptor;
 
 TargetDescriptor get_x64_target_descriptor();

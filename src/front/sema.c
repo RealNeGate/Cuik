@@ -163,20 +163,20 @@ static bool implicit_conversion(TranslationUnit* tu, Type* src, Type* dst, Expr*
 
             if (is_src_float == is_dst_float) {
                 if (!is_src_float && src->is_unsigned != dst->is_unsigned) {
-                    sema_warn(src_e->loc, "Implicit conversion %s signedness", src->is_unsigned ? "adds" : "drops");
+                    REPORT_EXPR(WARNING, src_e, "Implicit conversion %s signedness", src->is_unsigned ? "adds" : "drops");
                 }
 
                 if (src->kind > dst->kind) {
                     type_as_string(tu, sizeof(temp_string0), temp_string0, src);
                     type_as_string(tu, sizeof(temp_string1), temp_string1, dst);
 
-                    sema_warn(src_e->loc, "Implicit conversion from '%s' to '%s' may lose data.", temp_string0, temp_string1);
+                    REPORT_EXPR(WARNING, src_e, "Implicit conversion from '%s' to '%s' may lose data.", temp_string0, temp_string1);
                 }
             } else {
                 type_as_string(tu, sizeof(temp_string0), temp_string0, src);
                 type_as_string(tu, sizeof(temp_string1), temp_string1, dst);
 
-                sema_warn(src_e->loc, "Implicit conversion from '%s' to '%s' may lose data.", temp_string0, temp_string1);
+                REPORT_EXPR(WARNING, src_e, "Implicit conversion from '%s' to '%s' may lose data.", temp_string0, temp_string1);
             }
         }
     }
@@ -185,7 +185,7 @@ static bool implicit_conversion(TranslationUnit* tu, Type* src, Type* dst, Expr*
         type_as_string(tu, sizeof(temp_string0), temp_string0, src);
         type_as_string(tu, sizeof(temp_string1), temp_string1, dst);
 
-        sema_error(src_e->loc, "could not implicitly convert type %s into %s.", temp_string0, temp_string1);
+        REPORT_EXPR(ERROR, src_e, "could not implicitly convert type %s into %s.", temp_string0, temp_string1);
         return false;
     }
 
@@ -374,7 +374,7 @@ static InitNode* walk_initializer_for_sema(TranslationUnit* tu, Type* type, int 
                 type_as_string(tu, sizeof(temp_string0), temp_string0, expr_type);
                 type_as_string(tu, sizeof(temp_string1), temp_string1, child_type);
 
-                sema_error(node->expr->loc, "Could not implicitly convert type %s into %s.", temp_string0, temp_string1);
+                REPORT_EXPR(ERROR, node->expr, "Could not implicitly convert type %s into %s.", temp_string0, temp_string1);
                 abort();
             }
 
@@ -483,7 +483,7 @@ Member* sema_resolve_member_access(TranslationUnit* tu, Expr* restrict e, uint32
     Type* record_type = NULL;
     if (is_arrow) {
         if (base_type->kind != KIND_PTR && base_type->kind != KIND_ARRAY) {
-            sema_error(e->loc, "Cannot do arrow operator on non-pointer type.");
+            REPORT_EXPR(ERROR, e, "Cannot do arrow operator on non-pointer type.");
             return NULL;
         }
 
@@ -496,14 +496,14 @@ Member* sema_resolve_member_access(TranslationUnit* tu, Expr* restrict e, uint32
             record_type = record_type->ptr_to;
 
             if (settings.pedantic) {
-                sema_error(e->loc, "Implicit dereference is a non-standard extension (disable -P to allow it).");
+                REPORT_EXPR(ERROR, e, "Implicit dereference is a non-standard extension (disable -P to allow it).");
                 return NULL;
             }
         }
     }
 
     if (record_type->kind != KIND_STRUCT && record_type->kind != KIND_UNION) {
-        sema_error(e->loc, "Cannot get the member of a non-record type.");
+        REPORT_EXPR(ERROR, e, "Cannot get the member of a non-record type.");
         return NULL;
     }
 
@@ -514,7 +514,7 @@ Member* sema_resolve_member_access(TranslationUnit* tu, Expr* restrict e, uint32
         return search;
     }
 
-    sema_error(e->loc, "Could not find member called '%s'", e->dot_arrow.name);
+    REPORT_EXPR(ERROR, e, "Could not find member called '%s'", e->dot_arrow.name);
     return NULL;
 }
 
@@ -523,7 +523,21 @@ Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
         case EXPR_UNKNOWN_SYMBOL: {
             return (e->type = &builtin_types[TYPE_VOID]);
         }
+        case EXPR_VA_ARG: {
+            Type* va_list_type = sema_expr(tu, e->va_arg_.src);
+            if (va_list_type->kind != KIND_PTR && va_list_type->ptr_to->kind != KIND_CHAR) {
+                type_as_string(tu, sizeof(temp_string0), temp_string0, va_list_type);
+                REPORT_EXPR(ERROR, e, "va_arg must take in a va_list in the first argument (got %s)", temp_string0);
+            }
 
+            Type* type = e->va_arg_.type;
+            int size = type->size;
+            if (size < builtin_types[TYPE_INT].size) {
+                REPORT_EXPR(WARNING, e, "Warning, va_arg used on a value smaller than int");
+            }
+
+            return (e->type = type);
+        }
         case EXPR_INT: {
             switch (e->int_num.suffix) {
                 case INT_SUFFIX_NONE: {
@@ -531,7 +545,7 @@ Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
                     unsigned long long expected = (unsigned long long)e->int_num.num;
 
                     if (original != expected) {
-                        sema_error(e->loc, "Could not represent integer literal as int. (%llu or %llx)", expected, expected);
+                        REPORT_EXPR(ERROR, e, "Could not represent integer literal as int. (%llu or %llx)", expected, expected);
                     }
 
                     return (e->type = &builtin_types[TYPE_INT]);
@@ -542,7 +556,7 @@ Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
                     unsigned long long expected = (unsigned long long)e->int_num.num;
 
                     if (original != expected) {
-                        sema_error(e->loc, "Could not represent integer literal as unsigned int.");
+                        REPORT_EXPR(ERROR, e, "Could not represent integer literal as unsigned int.");
                     }
 
                     return (e->type = &builtin_types[TYPE_UINT]);
@@ -559,7 +573,7 @@ Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
                 return (e->type = &builtin_types[TYPE_ULONG]);
 
                 default:
-                sema_error(e->loc, "Could not represent integer literal.");
+                REPORT_EXPR(ERROR, e, "Could not represent integer literal.");
                 return (e->type = &builtin_types[TYPE_VOID]);
             }
         }
@@ -655,7 +669,7 @@ Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
             try_resolve_typeof(tu, e->x_of_type.type);
 
             if (e->x_of_type.type->kind == KIND_FUNC) {
-                sema_warn(e->loc, "sizeof(function type) is undefined (Cuik will always resolve it to 1)");
+                REPORT_EXPR(WARNING, e, "sizeof(function type) is undefined (Cuik will always resolve it to 1)");
             }
 
             assert(e->x_of_type.type->size && "Something went wrong...");
@@ -670,7 +684,7 @@ Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
             try_resolve_typeof(tu, e->x_of_type.type);
 
             if (e->x_of_type.type->kind == KIND_FUNC) {
-                sema_warn(e->loc, "alignof(function type) is undefined (Cuik will always resolve it to 1)");
+                REPORT_EXPR(WARNING, e, "alignof(function type) is undefined (Cuik will always resolve it to 1)");
             }
 
             assert(e->x_of_type.type->align && "Something went wrong...");
@@ -700,7 +714,7 @@ Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
                 if (old_array_count != 0) {
                     // verify that everything fits correctly
                     if (old_array_count < new_array_count) {
-                        sema_error(e->loc, "Array cannot fit into declaration (needs %d, got %d)", old_array_count, new_array_count);
+                        REPORT_EXPR(ERROR, e, "Array cannot fit into declaration (needs %d, got %d)", old_array_count, new_array_count);
                     }
                 } else {
                     e->init.type = new_array(tu, type->array_of, new_array_count);
@@ -744,13 +758,13 @@ Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
         case EXPR_SYMBOL: {
             Stmt* restrict sym = e->symbol;
             if (e->is_resolving_symbol) {
-                sema_error(sym->loc, "cycle in symbol", sym->decl.name);
+                REPORT_STMT(ERROR, sym, "cycle in symbol", sym->decl.name);
                 return (e->type = &builtin_types[TYPE_VOID]);
             }
 
             if (sym->op == STMT_LABEL) {
                 if (!sym->label.placed) {
-                    sema_error(sym->loc, "label '%s' is never defined.", sym->label.name);
+                    REPORT_STMT(ERROR, sym, "label '%s' is never defined.", sym->label.name);
                 }
 
                 return (e->type = &builtin_types[TYPE_VOID]);
@@ -808,7 +822,7 @@ Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
             if (match == 0) {
                 if (default_case == 0) {
                     // if we didn't match anything and there's no default case, error out
-                    sema_error(e->loc, "Could not match _Generic against any cases");
+                    REPORT_EXPR(ERROR, e, "Could not match _Generic against any cases");
                     return 0;
                 }
 
@@ -848,7 +862,7 @@ Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
 
             if (base->kind != KIND_PTR) {
                 type_as_string(tu, sizeof(temp_string0), temp_string0, base);
-                sema_error(e->loc, "Cannot perform subscript [] with base type '%s'", temp_string0);
+                REPORT_EXPR(ERROR, e, "Cannot perform subscript [] with base type '%s'", temp_string0);
                 return (e->type = NULL);
             }
 
@@ -865,7 +879,7 @@ Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
             } else if (base->kind == KIND_ARRAY) {
                 return (e->type = base->array_of);
             } else {
-                sema_error(e->loc, "TODO");
+                REPORT_EXPR(ERROR, e, "TODO");
                 abort();
             }
         }
@@ -876,7 +890,7 @@ Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
                 Expr** args   = e->call.param_start;
                 int arg_count = e->call.param_count;
 
-                Type* ty = target_desc.type_check_builtin(tu, e->loc, name, arg_count, args);
+                Type* ty = target_desc.type_check_builtin(tu, e, name, arg_count, args);
                 if (ty == NULL) ty = &builtin_types[TYPE_VOID];
 
                 return (e->type = ty);
@@ -893,7 +907,7 @@ Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
             e->call.target->cast_type = func_type;
 
             if (func_type->kind != KIND_FUNC) {
-                sema_error(e->loc, "function call target must be a function-type.");
+                REPORT_EXPR(ERROR, e, "function call target must be a function-type.");
                 goto failure;
             }
 
@@ -905,7 +919,7 @@ Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
 
             if (func_type->func.has_varargs) {
                 if (arg_count < param_count) {
-                    sema_error(e->loc, "Not enough arguments (expected at least %d, got %d)", param_count, arg_count);
+                    REPORT_EXPR(ERROR, e, "Not enough arguments (expected at least %d, got %d)", param_count, arg_count);
                     goto failure;
                 }
 
@@ -938,7 +952,7 @@ Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
                 }
             } else {
                 if (arg_count != param_count) {
-                    sema_error(e->loc, "Argument count mismatch (expected %d, got %d)", param_count, arg_count);
+                    REPORT_EXPR(ERROR, e, "Argument count mismatch (expected %d, got %d)", param_count, arg_count);
                     goto failure;
                 }
 
@@ -961,7 +975,7 @@ Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
             if (!is_scalar_type(tu, cond_type)) {
                 type_as_string(tu, sizeof(temp_string0), temp_string0, cond_type);
 
-                sema_error(e->loc, "Could not convert type %s into boolean.", temp_string0);
+                REPORT_EXPR(ERROR, e, "Could not convert type %s into boolean.", temp_string0);
             }
             e->ternary_op.left->cast_type = &builtin_types[TYPE_BOOL];
 
@@ -1049,7 +1063,7 @@ Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
                         e->op = EXPR_PTRDIFF;
                         return (e->type = &builtin_types[TYPE_LONG]);
                     } else {
-                        sema_error(e->loc, "Cannot do pointer addition with two pointer operands, one must be an integral type.");
+                        REPORT_EXPR(ERROR, e, "Cannot do pointer addition with two pointer operands, one must be an integral type.");
                         return (e->type = &builtin_types[TYPE_VOID]);
                     }
                 } else {
@@ -1067,7 +1081,7 @@ Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
                     type_as_string(tu, sizeof(temp_string0), temp_string0, lhs);
                     type_as_string(tu, sizeof(temp_string1), temp_string1, rhs);
 
-                    sema_error(e->loc, "Cannot apply binary operator to %s and %s.", temp_string0, temp_string1);
+                    REPORT_EXPR(ERROR, e, "Cannot apply binary operator to %s and %s.", temp_string0, temp_string1);
                     return (e->type = &builtin_types[TYPE_VOID]);
                 }
 
@@ -1109,7 +1123,7 @@ Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
         case EXPR_SHL_ASSIGN:
         case EXPR_SHR_ASSIGN: {
             if (!is_assignable_expr(tu, e->bin_op.left)) {
-                sema_error(e->bin_op.left->loc, "Left-hand side is not assignable");
+                REPORT_EXPR(WARNING, e->bin_op.left, "Left-hand side is not assignable");
 
                 e->bin_op.left->cast_type = 0;
                 e->bin_op.right->cast_type = 0;
@@ -1156,8 +1170,8 @@ void sema_stmt(TranslationUnit* tu, Stmt* restrict s) {
                         kid->op == STMT_DEFAULT) {
                         killer = 0;
                     } else {
-                        sema_error(kid->loc, "Dead code");
-                        sema_info(killer->loc, "After");
+                        REPORT_STMT(ERROR, kid, "Dead code");
+                        REPORT_STMT(INFO, killer, "After");
                         goto compound_failure;
                     }
                 } else {
@@ -1194,7 +1208,7 @@ void sema_stmt(TranslationUnit* tu, Stmt* restrict s) {
                     // Auto-detect array count from initializer
                     if (decl_type->kind == KIND_ARRAY && expr_type->kind == KIND_ARRAY) {
                         if (decl_type->array_count != 0 && decl_type->array_count < expr_type->array_count) {
-                            sema_error(s->loc, "Array initializer does not fit into declaration (expected %d, got %d)", decl_type->array_count, expr_type->array_count);
+                            REPORT_STMT(ERROR, s, "Array initializer does not fit into declaration (expected %d, got %d)", decl_type->array_count, expr_type->array_count);
                         } else {
                             s->decl.type = expr_type;
                         }
@@ -1211,7 +1225,7 @@ void sema_stmt(TranslationUnit* tu, Stmt* restrict s) {
                     type_as_string(tu, sizeof(temp_string0), temp_string0, expr_type);
                     type_as_string(tu, sizeof(temp_string1), temp_string1, s->decl.type);
 
-                    sema_error(s->loc, "Could not implicitly convert type %s into %s.", temp_string0, temp_string1);
+                    REPORT_STMT(ERROR, s, "Could not implicitly convert type %s into %s.", temp_string0, temp_string1);
                 }
             }
             break;
@@ -1226,7 +1240,7 @@ void sema_stmt(TranslationUnit* tu, Stmt* restrict s) {
                 Type* return_type = function_stmt->decl.type->func.return_type;
 
                 if (!type_compatible(tu, expr_type, return_type, s->return_.expr)) {
-                    //sema_warn(s->loc, "Value in return statement does not match function signature. (TODO this should be an error)");
+                    REPORT_EXPR(ERROR, s->return_.expr, "Value in return statement does not match function signature.");
                 }
 
                 s->return_.expr->cast_type = return_type;
@@ -1238,12 +1252,14 @@ void sema_stmt(TranslationUnit* tu, Stmt* restrict s) {
             if (!is_scalar_type(tu, cond_type)) {
                 type_as_string(tu, sizeof(temp_string0), temp_string0, cond_type);
 
-                sema_error(s->loc, "Could not convert type %s into boolean.", temp_string0);
+                REPORT_STMT(ERROR, s, "Could not convert type %s into boolean.", temp_string0);
             }
             s->if_.cond->cast_type = &builtin_types[TYPE_BOOL];
 
             sema_stmt(tu, s->if_.body);
-            if (s->if_.next) sema_stmt(tu, s->if_.next);
+            if (s->if_.next) {
+                sema_stmt(tu, s->if_.next);
+            }
             break;
         }
         case STMT_WHILE: {
@@ -1290,7 +1306,7 @@ void sema_stmt(TranslationUnit* tu, Stmt* restrict s) {
             if (!(type->kind >= KIND_CHAR && type->kind <= KIND_LONG)) {
                 type_as_string(tu, sizeof(temp_string0), temp_string0, type);
 
-                sema_error(s->loc, "Switch case type must be an integral type, got a '%s'", type);
+                REPORT_STMT(ERROR, s, "Switch case type must be an integral type, got a '%s'", type);
                 break;
             }
 
@@ -1320,17 +1336,17 @@ Type* sema_guess_type(TranslationUnit* tu, Stmt* restrict s) {
     Type* type = s->decl.type;
 
     if (s->decl.attrs.is_static && s->decl.attrs.is_extern) {
-        sema_error(s->loc, "Global declaration '%s' cannot be both static and extern.", name);
+        REPORT_STMT(ERROR, s, "Global declaration '%s' cannot be both static and extern.", name);
         return NULL;
     }
 
     if (type->is_incomplete) {
         if (type->kind == KIND_STRUCT) {
-            sema_error(s->loc, "Incomplete type (struct %s) in declaration", type->record.name);
+            REPORT_STMT(ERROR, s, "Incomplete type (struct %s) in declaration", type->record.name);
         } else if (type->kind == KIND_UNION) {
-            sema_error(s->loc, "Incomplete type (union %s) in declaration", type->record.name);
+            REPORT_STMT(ERROR, s, "Incomplete type (union %s) in declaration", type->record.name);
         } else {
-            sema_error(s->loc, "Incomplete type in declaration");
+            REPORT_STMT(ERROR, s, "Incomplete type in declaration");
         }
     }
 
@@ -1362,14 +1378,14 @@ static void sema_top_level(TranslationUnit* tu, Stmt* restrict s, bool frontend_
             assert(type->kind == KIND_FUNC);
 
             if (s->decl.attrs.is_static && s->decl.attrs.is_extern) {
-                sema_error(s->loc, "Function '%s' cannot be both static and extern.", name);
+                REPORT_STMT(ERROR, s, "Function '%s' cannot be both static and extern.", name);
                 s->backing.f = 0;
                 break;
             }
 
             if (s->decl.attrs.is_static && !s->decl.attrs.is_inline) {
-                if (!s->decl.attrs.is_used) {
-                    sema_warn(s->loc, "Function '%s' is never used.", name);
+                if (warnings.unused_funcs && !s->decl.attrs.is_used) {
+                    REPORT(WARNING, s->loc, "Function '%s' is never used.", name);
                     s->backing.f = 0;
                     break;
                 }
@@ -1422,7 +1438,7 @@ static void sema_top_level(TranslationUnit* tu, Stmt* restrict s, bool frontend_
             if (s->decl.attrs.is_typedef) break;
 
             if (s->decl.attrs.is_static && s->decl.attrs.is_extern) {
-                sema_error(s->loc, "Global declaration '%s' cannot be both static and extern.", name);
+                REPORT_STMT(ERROR, s, "Global declaration '%s' cannot be both static and extern.", name);
                 s->backing.g = 0;
                 break;
             }
@@ -1449,7 +1465,7 @@ static void sema_top_level(TranslationUnit* tu, Stmt* restrict s, bool frontend_
                         if (type->kind == KIND_ARRAY && expr_type->kind == KIND_ARRAY) {
                             if (type_equal(tu, type->array_of, expr_type->array_of)) {
                                 if (type->array_count != 0 && type->array_count < expr_type->array_count) {
-                                    sema_error(s->loc, "Array initializer does not fit into declaration (expected %d, got %d)", type->array_count, expr_type->array_count);
+                                    REPORT_STMT(ERROR, s, "Array initializer does not fit into declaration (expected %d, got %d)", type->array_count, expr_type->array_count);
                                 } else {
                                     assert(expr_type->array_count);
 
@@ -1465,7 +1481,7 @@ static void sema_top_level(TranslationUnit* tu, Stmt* restrict s, bool frontend_
                                 type_as_string(tu, sizeof(temp_string0), temp_string0, expr_type->array_of);
                                 type_as_string(tu, sizeof(temp_string1), temp_string1, type->array_of);
 
-                                sema_error(s->loc, "Array initializer type mismatch (got '%s', expected '%s')", temp_string0, temp_string1);
+                                REPORT_STMT(ERROR, s, "Array initializer type mismatch (got '%s', expected '%s')", temp_string0, temp_string1);
                             }
                         }
                     }
@@ -1474,17 +1490,17 @@ static void sema_top_level(TranslationUnit* tu, Stmt* restrict s, bool frontend_
                         type_as_string(tu, sizeof(temp_string0), temp_string0, type);
                         type_as_string(tu, sizeof(temp_string1), temp_string1, expr_type);
 
-                        sema_error(s->loc, "Declaration type does not match (got '%s', expected '%s')", temp_string0, temp_string1);
+                        REPORT_STMT(ERROR, s, "Declaration type does not match (got '%s', expected '%s')", temp_string0, temp_string1);
                     }
                 }
 
                 if (type->is_incomplete) {
                     if (type->kind == KIND_STRUCT) {
-                        sema_error(s->loc, "Incomplete type (struct %s) in declaration", type->record.name);
+                        REPORT_STMT(ERROR, s, "Incomplete type (struct %s) in declaration", type->record.name);
                     } else if (type->kind == KIND_UNION) {
-                        sema_error(s->loc, "Incomplete type (union %s) in declaration", type->record.name);
+                        REPORT_STMT(ERROR, s, "Incomplete type (union %s) in declaration", type->record.name);
                     } else {
-                        sema_error(s->loc, "Incomplete type in declaration");
+                        REPORT_STMT(ERROR, s, "Incomplete type in declaration");
                     }
                 }
 
@@ -1497,10 +1513,6 @@ static void sema_top_level(TranslationUnit* tu, Stmt* restrict s, bool frontend_
 
                     TB_Linkage linkage = s->decl.attrs.is_static ? TB_LINKAGE_PRIVATE : TB_LINKAGE_PUBLIC;
                     s->backing.g = tb_global_create(mod, name, s->decl.attrs.is_tls ? TB_STORAGE_TLS : TB_STORAGE_DATA, linkage);
-
-                    if (!s->decl.attrs.is_tls && !s->decl.type->is_atomic) {
-                        sema_info(s->loc, "GLOBAL");
-                    }
                 }
             }
             break;

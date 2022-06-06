@@ -21,8 +21,9 @@ typedef enum {
 
 typedef struct {
     // implicitly converting between types and losing information
-    bool data_loss : 1;
+    bool data_loss    : 1;
     bool unused_decls : 1;
+    bool unused_funcs : 1;
 } Warnings;
 
 typedef struct CompilerSettings {
@@ -42,7 +43,8 @@ typedef struct CompilerSettings {
 	bool is_debug_build       : 1;
 	bool is_debug_info        : 1;
 	bool exercise             : 1;
-	bool pedantic             : 1;
+    bool nostdlib             : 1;
+    bool pedantic             : 1;
 	bool optimize             : 1;
 	bool freestanding         : 1;
 	bool emit_partial_results : 1;

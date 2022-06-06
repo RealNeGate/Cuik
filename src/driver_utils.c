@@ -141,36 +141,40 @@ void cuik_set_cpp_defines(CPP_Context* cpp) {
 		// WinSDK includes
 		char filepath[MAX_PATH];
 
-		if (snprintf(filepath, 260, "%S\\ucrt\\", s_vswhere.windows_sdk_include) > MAX_PATH) {
-			printf("internal compiler error: WinSDK include directory too long!\n");
-			abort();
-		}
-		cpp_add_include_directory(cpp, filepath);
+        if (!settings.freestanding) {
+            if (snprintf(filepath, 260, "%S\\um\\", s_vswhere.windows_sdk_include) > MAX_PATH) {
+                printf("internal compiler error: WinSDK include directory too long!\n");
+                abort();
+            }
+            cpp_add_include_directory(cpp, filepath);
 
-		if (snprintf(filepath, 260, "%S\\um\\", s_vswhere.windows_sdk_include) > MAX_PATH) {
-			printf("internal compiler error: WinSDK include directory too long!\n");
-			abort();
-		}
-		cpp_add_include_directory(cpp, filepath);
+            if (snprintf(filepath, 260, "%S\\shared\\", s_vswhere.windows_sdk_include) > MAX_PATH) {
+                printf("internal compiler error: WinSDK include directory too long!\n");
+                abort();
+            }
+            cpp_add_include_directory(cpp, filepath);
 
-		if (snprintf(filepath, 260, "%S\\shared\\", s_vswhere.windows_sdk_include) > MAX_PATH) {
-			printf("internal compiler error: WinSDK include directory too long!\n");
-			abort();
-		}
-		cpp_add_include_directory(cpp, filepath);
+            // VS include
+            if (s_vswhere.vs_include_path) {
+                if (snprintf(filepath, 260, "%S\\", s_vswhere.vs_include_path) > MAX_PATH) {
+                    printf("internal compiler error: VS include directory too long!\n");
+                    abort();
+                }
+                cpp_add_include_directory(cpp, filepath);
+            } else {
+                // NOTE(NeGate): hacky but apparently the address sanitizer stops me from
+                // getting the VS include path so i'll be passing some not-so-reasonable-default
+                cpp_add_include_directory(cpp, "W:\\Visual Studio\\2019\\Community\\VC\\Tools\\MSVC\\14.29.30133\\include\\");
+            }
+        }
 
-		// VS include
-		if (s_vswhere.vs_include_path) {
-			if (snprintf(filepath, 260, "%S\\", s_vswhere.vs_include_path) > MAX_PATH) {
-				printf("internal compiler error: VS include directory too long!\n");
-				abort();
-			}
-			cpp_add_include_directory(cpp, filepath);
-		} else {
-			// NOTE(NeGate): hacky but apparently the address sanitizer stops me from
-			// getting the VS include path so i'll be passing some not-so-reasonable-default
-			cpp_add_include_directory(cpp, "W:\\Visual Studio\\2019\\Community\\VC\\Tools\\MSVC\\14.29.30133\\include\\");
-		}
+        if (!settings.nostdlib) {
+            if (snprintf(filepath, 260, "%S\\ucrt\\", s_vswhere.windows_sdk_include) > MAX_PATH) {
+                printf("internal compiler error: WinSDK include directory too long!\n");
+                abort();
+            }
+            cpp_add_include_directory(cpp, filepath);
+        }
 #endif
 
 		cpp_define_empty(cpp, "_MT");
@@ -247,7 +251,7 @@ TranslationUnit* cuik_compile_file(CompilationUnit* cu, const char* path,
 	}
 
 	// free tokens & lexer locations
-    arrfree(tu->tokens.locations);
+    //arrfree(tu->tokens.locations);
     arrfree(tu->tokens.tokens);
 	//printf("Line arena space: %f MB\n", (arrlen(tu->tokens.line_arena)*sizeof(SourceLoc)) / (1024.0*1024.0));
 
