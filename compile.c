@@ -221,7 +221,7 @@ void delete_crap_in_dir(const char* dir_path) {
 
 int main(int argc, char** argv) {
     builder_init();
-    builder_compile(BUILD_MODE_EXECUTABLE, INPUT_FILE_COUNT, INPUT_FILES, "build/cuik", ON_WINDOWS ? "tildebackend.lib" : "tildebackend.a");
+    builder_compile(BUILD_MODE_EXECUTABLE, INPUT_FILE_COUNT, INPUT_FILES, "build/cuik", ON_WINDOWS ? "tb/tildebackend.lib" : "tb/tildebackend.a");
 
     if (argc > 1) {
         if (strcmp(argv[1], "test") == 0) {
