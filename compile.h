@@ -103,8 +103,8 @@
 #define MAX_COMPILE_WORKERS 6
 
 typedef enum {
-	BUILD_MODE_EXECUTABLE,
-	BUILD_MODE_STATIC_LIB,
+    BUILD_MODE_EXECUTABLE,
+    BUILD_MODE_STATIC_LIB,
 } BuildMode;
 
 static char command_buffer[4096];
@@ -118,38 +118,38 @@ static bool str_ends_with(const char* cstr, const char* postfix) {
 }
 
 static char* str_gimme_good_slashes(const char* str) {
-	char bad_slash = ON_WINDOWS ? '/' : '\\';
-	char cool_slash = ON_WINDOWS ? '\\' : '/';
+    char bad_slash = ON_WINDOWS ? '/' : '\\';
+    char cool_slash = ON_WINDOWS ? '\\' : '/';
 
-	char* dst = strdup(str);
-	for (char* i = dst; *i; i++) {
-		if (*i == bad_slash) *i = cool_slash;
-	}
+    char* dst = strdup(str);
+    for (char* i = dst; *i; i++) {
+        if (*i == bad_slash) *i = cool_slash;
+    }
 
-	return dst;
+    return dst;
 }
 
 static const char* str_filename(const char* path) {
-	const char* slash = path;
-	for (; *path; path++) {
-		if (*path == '/') slash = path;
-		else if (*path == '\\') slash = path;
-	}
+    const char* slash = path;
+    for (; *path; path++) {
+        if (*path == '/') slash = path;
+        else if (*path == '\\') slash = path;
+    }
 
-	return slash;
+    return slash;
 }
 
 static const char* str_ext(const char* path) {
-	const char* dot = path;
-	for (; *path; path++) {
-		if (*path == '.') dot = path;
-	}
+    const char* dot = path;
+    for (; *path; path++) {
+        if (*path == '.') dot = path;
+    }
 
-	return dot;
+    return dot;
 }
 
 static const char* str_no_ext(const char* path) {
-	size_t n = strlen(path);
+    size_t n = strlen(path);
     while (n > 0 && path[n - 1] != '.') n--;
 
     if (n > 0) {
@@ -165,65 +165,65 @@ static const char* str_no_ext(const char* path) {
 
 #ifdef _WIN32
 typedef struct FileIter {
-	char* path;
+    char* path;
 
     // private
-	HANDLE find_handle;
+    HANDLE find_handle;
     WIN32_FIND_DATA find_data;
 } FileIter;
 
 static void create_dir_if_not_exists(const char* path) {
-	if (CreateDirectory(path, NULL)) {
-		if (GetLastError() == ERROR_PATH_NOT_FOUND) {
-			printf("Could not create directory '%s'\n", path);
-			abort();
-		}
-	}
+    if (CreateDirectory(path, NULL)) {
+        if (GetLastError() == ERROR_PATH_NOT_FOUND) {
+            printf("Could not create directory '%s'\n", path);
+            abort();
+        }
+    }
 }
 
 static FileIter file_iter_open(const char* directory) {
     char buffer[PATH_MAX];
     snprintf(buffer, PATH_MAX, "%s\\*", directory);
 
-	FileIter iter = { 0 };
+    FileIter iter = { 0 };
     iter.find_handle = FindFirstFile(buffer, &iter.find_data);
-	if (iter.find_handle == INVALID_HANDLE_VALUE) {
-		printf("File iterator failed to open!!!\n");
-		abort();
-	}
+    if (iter.find_handle == INVALID_HANDLE_VALUE) {
+        printf("File iterator failed to open!!!\n");
+        abort();
+    }
 
-	return iter;
+    return iter;
 }
 
 static bool file_iter_next(FileIter* iter) {
-	if (!FindNextFile(iter->find_handle, &iter->find_data)) {
-		if (GetLastError() != ERROR_NO_MORE_FILES) {
-			printf("File iterator failed to iterate!!!\n");
-			abort();
-		}
+    if (!FindNextFile(iter->find_handle, &iter->find_data)) {
+        if (GetLastError() != ERROR_NO_MORE_FILES) {
+            printf("File iterator failed to iterate!!!\n");
+            abort();
+        }
 
-		if (!FindClose(iter->find_handle)) {
-			printf("File iterator failed to close!!!\n");
-			abort();
-		}
+        if (!FindClose(iter->find_handle)) {
+            printf("File iterator failed to close!!!\n");
+            abort();
+        }
 
-		iter->path = NULL;
-		return false;
-	}
+        iter->path = NULL;
+        return false;
+    }
 
-	iter->path = iter->find_data.cFileName;
-	return true;
+    iter->path = iter->find_data.cFileName;
+    return true;
 }
 #else
 typedef struct {
-	char* path;
+    char* path;
 
-	// private
+    // private
     DIR* dir;
 } FileIter;
 
 static void create_dir_if_not_exists(const char* path) {
-	mkdir(path, 0777);
+    mkdir(path, 0777);
 }
 
 static FileIter file_iter_open(const char* directory) {
@@ -231,15 +231,15 @@ static FileIter file_iter_open(const char* directory) {
 }
 
 static bool file_iter_next(FileIter* iter) {
-	struct dirent* dp = readdir(iter->dir);
-	if (dp == NULL) {
-		closedir(iter->dir);
-		iter->path = NULL;
-		return false;
-	}
+    struct dirent* dp = readdir(iter->dir);
+    if (dp == NULL) {
+        closedir(iter->dir);
+        iter->path = NULL;
+        return false;
+    }
 
-	iter->path = dp->d_name;
-	return true;
+    iter->path = dp->d_name;
+    return true;
 }
 #endif
 
@@ -263,7 +263,7 @@ static struct subprocess_s cmd_run() {
     subprocess_create(cmds, subprocess_option_inherit_environment | subprocess_option_combined_stdout_stderr, &process);
 
     command_buffer[0] = 0;
-	command_length = 0;
+    command_length = 0;
 
     return process;
 }
@@ -274,10 +274,10 @@ static void dump_file(FILE* f) {
 // Print out whatever was on that file stream
 static int cmd_dump(struct subprocess_s p) {
     char buffer[4096];
-	int length = 0;
+    int length = 0;
     while ((length = subprocess_read_stdout(&p, buffer, sizeof(buffer)))) {
-		printf("%.*s", length, buffer);
-	}
+        printf("%.*s", length, buffer);
+    }
 
     int code;
     subprocess_join(&p, &code);
@@ -288,89 +288,88 @@ static int cmd_dump(struct subprocess_s p) {
 for (FileIter _name = file_iter_open(_path); file_iter_next(&_name);)
 
 static void cmd_append(const char* str) {
-	size_t l = strlen(str);
-	assert(command_length + l + 1 < sizeof(command_buffer));
+    size_t l = strlen(str);
+    assert(command_length + l + 1 < sizeof(command_buffer));
 
-	memcpy(&command_buffer[command_length], str, l + 1);
-	command_length += l;
+    memcpy(&command_buffer[command_length], str, l + 1);
+    command_length += l;
 }
 
 static void builder_init() {
-	// don't wanna buffer stdout
-	setvbuf(stdout, NULL, _IONBF, 0);
+    // don't wanna buffer stdout
+    setvbuf(stdout, NULL, _IONBF, 0);
 
-	if (ON_WINDOWS) {
-		// sets environment vars for compiler
-		system("call vcvars64");
-	}
+    if (ON_WINDOWS) {
+        // sets environment vars for compiler
+        system("call vcvars64");
+    }
 
-	create_dir_if_not_exists("build/");
+    create_dir_if_not_exists("build/");
 
 #if defined(__clang__)
-	printf("Compiling on Clang %d.%d.%d...\n", __clang_major__, __clang_minor__, __clang_patchlevel__);
+    printf("Compiling with Clang %d.%d.%d...\n", __clang_major__, __clang_minor__, __clang_patchlevel__);
 #elif defined(__GNUC__)
-	printf("Compiling on GCC %d.%d...\n", __GNUC__, __GNUC_MINOR__);
+    printf("Compiling with GCC %d.%d...\n", __GNUC__, __GNUC_MINOR__);
 #elif defined(_MSC_VER)
-	printf("Compiling on MSVC %d.%d...\n", _MSC_VER / 100, _MSC_VER % 100);
+    printf("Compiling with MSVC %d.%d...\n", _MSC_VER / 100, _MSC_VER % 100);
 #elif defined(__CUIKC__)
-	printf("Compiling on Cuik %d.%d...\n", __CUIKC__, __CUIKC_MINOR__);
+    printf("Compiling with Cuik %d.%d...\n", __CUIKC__, __CUIKC_MINOR__);
 #endif
 
-	if (RELEASE_BUILD) {
-		printf("And it's a release build!\n");
-	}
+    if (RELEASE_BUILD) {
+        printf("And it's a release build!\n");
+    }
 }
 
 static void builder_compile_cuik(size_t count, const char* filepaths[], const char* output_path, const char* extra_libraries) {
-	cmd_append("cuik --include src/ -o ");
-	cmd_append(output_path);
-	cmd_append(" build ");
+    cmd_append("cuik --include src/ -o ");
+    cmd_append(output_path);
+    cmd_append(" build ");
 
-	for (size_t i = 0; i < count; i++) {
-		cmd_append(filepaths[i]);
-		cmd_append(" ");
-	}
+    for (size_t i = 0; i < count; i++) {
+        cmd_append(filepaths[i]);
+        cmd_append(" ");
+    }
 
-	printf("CMD: %s\n", command_buffer);
-	cmd_dump(cmd_run());
+    printf("CMD: %s\n", command_buffer);
+    cmd_dump(cmd_run());
 }
 
 static void builder_compile_msvc(BuildMode mode, size_t count, const char* filepaths[], const char* output_path, const char* extra_libraries) {
-	cmd_append("cl /MP /arch:AVX /D_CRT_SECURE_NO_WARNINGS /I:src ");
+    cmd_append("cl /MP /arch:AVX /D_CRT_SECURE_NO_WARNINGS /I:src ");
 
-	if (mode == BUILD_MODE_EXECUTABLE) {
-		cmd_append("/Fe:");
-		cmd_append(output_path);
-	} else {
-		cmd_append("/Fo:build\\");
-	}
+    if (mode == BUILD_MODE_EXECUTABLE) {
+        cmd_append("/Fe:");
+        cmd_append(output_path);
+    } else {
+        cmd_append("/Fo:build\\");
+    }
 
-	if (RELEASE_BUILD) {
-		cmd_append("/Ox /WX /GS- /DNDEBUG ");
-	} else {
-		cmd_append("/MTd /Od /WX /Zi /D_DEBUG /RTC1 ");
-	}
+    if (RELEASE_BUILD) {
+        cmd_append("/Ox /WX /GS- /DNDEBUG ");
+    } else {
+        cmd_append("/MTd /Od /WX /Zi /D_DEBUG /RTC1 ");
+    }
 
-	for (size_t i = 0; i < count; i++) {
-		cmd_append(filepaths[i]);
-		cmd_append(" ");
-	}
+    for (size_t i = 0; i < count; i++) {
+        cmd_append(filepaths[i]);
+        cmd_append(" ");
+    }
 
-	printf("CMD: %s\n", command_buffer);
-	cmd_dump(cmd_run());
+    cmd_dump(cmd_run());
 
-	if (mode == BUILD_MODE_STATIC_LIB) {
-		cmd_append("lib /out:");
-		cmd_append(output_path);
-		cmd_append(" build\\*.obj");
-		cmd_run();
-	}
+    if (mode == BUILD_MODE_STATIC_LIB) {
+        cmd_append("lib /out:");
+        cmd_append(output_path);
+        cmd_append(" build\\*.obj");
+        cmd_run();
+    }
 }
 
 static void builder_compile_cc(BuildMode mode, size_t count, const char* filepaths[], const char* output_path, const char* extra_libraries) {
-	const char* cc_command = ON_CLANG ? "clang" : "gcc";
+    const char* cc_command = ON_CLANG ? "clang" : "gcc";
 
-	// compile object files
+    // compile object files
     for (size_t i = 0; i < count; i += MAX_COMPILE_WORKERS) {
         struct subprocess_s streams[MAX_COMPILE_WORKERS];
 
@@ -414,7 +413,7 @@ static void builder_compile_cc(BuildMode mode, size_t count, const char* filepat
             cmd_append(filepaths[i+j]);
             streams[j] = cmd_run();
 
-            printf("Compiling '%s'...\n", filepaths[i+j]);
+            //printf("Compiling '%s'...\n", filepaths[i+j]);
         }
 
         bool success = true;
@@ -432,6 +431,8 @@ static void builder_compile_cc(BuildMode mode, size_t count, const char* filepat
             exit(69420);
         }
     }
+
+    printf("Linking...\n");
 
     // Do linker work
     if (mode == BUILD_MODE_EXECUTABLE) {
@@ -480,7 +481,7 @@ static void builder_compile_cc(BuildMode mode, size_t count, const char* filepat
             assert(0 && "TODO");
         }
     } else if (mode == BUILD_MODE_STATIC_LIB) {
-        if (ON_MSVC) {
+        if (ON_WINDOWS) {
             cmd_append("lib /out:");
             cmd_append(output_path);
             cmd_append(".lib build/*.obj ");
@@ -502,7 +503,7 @@ static void builder_compile_cc(BuildMode mode, size_t count, const char* filepat
         abort();
     }
 
-    printf("CMD: %s\n", command_buffer);
+    printf("Done!\n%s\n", command_buffer);
     cmd_dump(cmd_run());
 }
 

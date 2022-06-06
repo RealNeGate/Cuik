@@ -53,11 +53,6 @@ extern "C" {
 #define TB_HOST_UNKNOWN 0
 #define TB_HOST_X86_64  1
 
-	// If on, the labels aren't marked in the object file
-	// might save on performance at the cost of some assembly
-	// readability.
-#define TB_STRIP_LABELS 1
-
 #if defined(__x86_64__) || defined(_M_X64) || defined(_M_AMD64)
 #define TB_HOST_ARCH TB_HOST_X86_64
 #else
@@ -112,6 +107,21 @@ extern "C" {
 		// Not supported yet
 		TB_SYSTEM_ANDROID
 	} TB_System;
+
+	typedef enum TB_ABI {
+        // Used on 64bit Windows platforms
+        TB_ABI_WIN64,
+
+        // Used on Mac, BSD and Linux platforms
+        TB_ABI_SYSTEMV,
+    } TB_ABI;
+
+    typedef enum TB_OutputFlavor {
+        TB_FLAVOR_OBJECT,     // .o  .obj
+        TB_FLAVOR_SHARED,     // .so .dll
+        TB_FLAVOR_STATIC,     // .a  .lib
+        TB_FLAVOR_EXECUTABLE, //     .exe
+    } TB_OutputFlavor;
 
 	typedef enum TB_CallingConv {
 		TB_CDECL,
@@ -194,7 +204,7 @@ extern "C" {
 		TB_FLT_32, TB_FLT_64
 	} TB_FloatFormat;
 
-	typedef union {
+	typedef union TB_DataType {
 		struct {
 			uint16_t type  : 2;
 			// 2^N where N is the width value.
