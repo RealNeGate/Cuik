@@ -974,12 +974,14 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
 
 			// passed to the threads to identify when things are done
 			atomic_size_t tasks_remaining = (count + (PARSE_MUNCH_SIZE-1)) / PARSE_MUNCH_SIZE;
+			ParserTaskInfo* tasks = malloc(sizeof(ParserTaskInfo) * tasks_remaining);
 
+			size_t j = 0;
 			for (size_t i = 0; i < padded; i += PARSE_MUNCH_SIZE) {
 				size_t limit = i+PARSE_MUNCH_SIZE;
 				if (limit > count) limit = count;
 
-				ParserTaskInfo* task = tls_push(sizeof(ParserTaskInfo));
+				ParserTaskInfo* task = &tasks[j];
 				*task = (ParserTaskInfo){
 					.tasks_remaining = &tasks_remaining,
 					.start = i,
@@ -998,9 +1000,11 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
 			}
 
 			while (tasks_remaining != 0) {
+				threadpool_work_one_job(thread_pool);
 				thrd_yield();
 			}
 
+			free(tasks);
 			crash_if_reports(REPORT_ERROR);
 		} else {
 			// single threaded mode

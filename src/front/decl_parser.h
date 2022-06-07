@@ -922,6 +922,7 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
 							.storage_class = STORAGE_TYPEDEF
 						};
 						type = sym.type;
+						type->loc = t->location;
 						type->placeholder.name = name;
 						counter += OTHER;
 

@@ -135,6 +135,10 @@ void threadpool_submit(threadpool_t* threadpool, work_routine fn, void* arg) {
 #endif
 }
 
+void threadpool_work_one_job(threadpool_t* threadpool) {
+	do_work(threadpool);
+}
+
 void threadpool_work_while_wait(threadpool_t* threadpool) {
 	while (threadpool->completion_goal != threadpool->completion_count) {
 		if (do_work(threadpool)) {

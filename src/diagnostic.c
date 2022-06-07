@@ -339,9 +339,11 @@ void report_two_spots(ReportLevel level, SourceLoc* loc, SourceLoc* loc2, const 
 void crash_if_reports(ReportLevel minimum) {
 	for (int i = minimum; i < REPORT_MAX; i++) {
 		if (tally[i]) {
+			mtx_lock(&mutex);
 			printf("exited with %d %s%s", tally[i], report_names[i], tally[i] > 1 ? "s" : "");
 
 			abort();
+			mtx_unlock(&mutex);
 		}
 	}
 }
