@@ -1,4 +1,5 @@
 #define NULL ((void*)0)
+#warning "Hello"
 
 T* da_global;
 int I = 16;

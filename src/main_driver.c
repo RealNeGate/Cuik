@@ -933,7 +933,8 @@ int main(int argc, char* argv[]) {
                     }
 
 					linker_invoke_system(&l, cuik_file_no_ext, settings.verbose, chosen_libc->name);
-					linker_deinit(&l);
+                    //linker_invoke_tb(&l, cuik_file_no_ext, settings.verbose);
+                    linker_deinit(&l);
 
 					remove(obj_output_path);
 				}

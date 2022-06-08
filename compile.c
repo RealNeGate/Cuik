@@ -220,8 +220,56 @@ void delete_crap_in_dir(const char* dir_path) {
 }
 
 int main(int argc, char** argv) {
-    builder_init();
-    builder_compile(BUILD_MODE_EXECUTABLE, INPUT_FILE_COUNT, INPUT_FILES, "build/cuik", ON_WINDOWS ? "tb/tildebackend.lib" : "tb/tildebackend.a");
+    nbuild_init();
+    create_dir_if_not_exists("bin"SLASH);
+
+    CC_Options options = {
+        .output_dir = "bin"SLASH,
+
+#       ifdef RELEASE_BUILD
+        .opt = CC_Ox,
+#       else
+        .opt = CC_O0,
+#       endif
+
+        // there's some SSE42 stuff in the lexer
+        .vector_ext = CC_VECTOR_SSE42,
+
+        // warning stuff
+        .warnings = {
+            .mode = CC_WARN_ALL,
+            .as_errors = true,
+            .missing_declarations = true,
+            .unused_declarations = true,
+        },
+
+        .debug_info = true
+    };
+
+    for (int i = 0; i < INPUT_FILE_COUNT; i++) {
+        cc_invoke(&options, INPUT_FILES[i], NULL);
+    }
+
+    cmd_wait_for_all();
+
+    static const char* LINKER_INPUTS[] = {
+        "bin"SLASH"*.obj", "tb"SLASH"tildebackend.lib",
+    };
+
+    static const char* EXTERNALS[] = {
+#       if ON_WINDOWS
+        "ole32.lib", "Advapi32.lib", "OleAut32.lib", "DbgHelp.lib"
+#       else
+        "c", "m", "pthread"
+#       endif
+    };
+
+    printf("Linking...\n");
+    ld_invoke("bin"SLASH"cuik",
+              COUNTOF(LINKER_INPUTS), LINKER_INPUTS,
+              COUNTOF(EXTERNALS), EXTERNALS);
+
+    clean("bin"SLASH);
 
     if (argc > 1) {
         if (strcmp(argv[1], "test") == 0) {
@@ -289,7 +337,7 @@ int main(int argc, char** argv) {
             char cmd[1024];
             for (size_t i = 0; i < INPUT_FILE_COUNT; i++) {
                 if (str_ends_with(INPUT_FILES[i], ".c")) {
-                    snprintf(cmd, 1024, "cuik -o build/%s -I src/ --threads 1 -t %s", INPUT_FILES[i], INPUT_FILES[i]);
+                    snprintf(cmd, 1024, "cuik -o bin/%s -I src/ --threads 1 -t %s", INPUT_FILES[i], INPUT_FILES[i]);
 
                     if (system(cmd) == 0) {
                         printf("Success with %s!\n", INPUT_FILES[i]);
@@ -313,7 +361,7 @@ int main(int argc, char** argv) {
             char cmd[1024];
             for (size_t i = 0; i < INPUT_FILE_COUNT; i++) {
                 if (str_ends_with(INPUT_FILES[i], ".c")) {
-                    snprintf(cmd, 1024, "cuik -o build/%s -I src/ --threads 1 --ir %s", INPUT_FILES[i], INPUT_FILES[i]);
+                    snprintf(cmd, 1024, "cuik -o bin/%s -I src/ --threads 1 --ir %s", INPUT_FILES[i], INPUT_FILES[i]);
 
                     if (system(cmd) == 0) {
                         printf("Success with %s!\n", INPUT_FILES[i]);
@@ -337,7 +385,7 @@ int main(int argc, char** argv) {
             char cmd[1024];
             for (size_t i = 0; i < INPUT_FILE_COUNT; i++) {
                 if (str_ends_with(INPUT_FILES[i], ".c")) {
-                    int r = snprintf(cmd, 1024, "cuik -o build/%s -I src/ --threads 1 -c %s", INPUT_FILES[i], INPUT_FILES[i]);
+                    int r = snprintf(cmd, 1024, "cuik -o bin/%s -I src/ --threads 1 -c %s", INPUT_FILES[i], INPUT_FILES[i]);
                     assert(r >= 0 && r < 1024);
 
                     int code = system(cmd);

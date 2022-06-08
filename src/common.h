@@ -7,6 +7,12 @@
 #define USE_INTRIN 1
 #endif
 
+#ifdef CUIK_SHARED
+#define CUIK_API __declspec(dllexport)
+#else
+#define CUIK_API
+#endif
+
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>

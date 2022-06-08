@@ -1,5 +1,7 @@
 #include <back/linker.h>
 #include <back/tb.h>
+
+#define NL_STRING_MAP_IMPL
 #include <string_map.h>
 
 #include <stdio.h>
@@ -11,7 +13,7 @@
 #define stat   _stat
 #endif
 
-//static NL_StringMap import_nametable = { 0 };
+static NL_Strmap(void*) import_nametable = { 0 };
 
 static TB_Slice read_file_into_slice(FILE* file) {
 	if (!file) {
@@ -85,27 +87,42 @@ static void summarize_object_file(TB_ObjectFile* obj, OS_String filename) {
 	}
 }
 
+static void import_symbols(TB_ObjectFile* obj) {
+	printf("Symbols:\n");
+    for (size_t j = 0; j < obj->symbol_count; j++) {
+        NL_Slice key = { obj->symbols[j].name.length, obj->symbols[j].name.data };
+        nl_strmap_put(import_nametable, key, NULL);
+
+        printf("%.*s\n",
+			   (int) obj->symbols[j].name.length,
+			   (char*) obj->symbols[j].name.data);
+    }
+}
+
 bool linker_invoke_tb(Linker* l, const char* filename, bool verbose) {
-	OS_String str = l->input_file_buffer;
+	import_nametable = nl_strmap_alloc(void*, 1024);
+
+    OS_String str = l->input_file_buffer;
 	for (size_t i = 0; i < l->input_file_count; i++) {
 		OS_String ext = str_reverse_find_ch(str, '.');
 
 		if (ext) {
 			TB_Slice buffer = read_file_into_slice(locate_file(l, str));
 
-			if (str_compare(ext, OS_STR(".obj")) == 0) {
-				TB_ObjectFile* obj = tb_object_parse_coff(buffer);
-				summarize_object_file(obj, str);
-			} else if (str_compare(ext, OS_STR(".lib")) == 0) {
+			if (str_compare(ext, OS_STR(".lib")) == 0) {
 				TB_ArchiveFile* archive = tb_archive_parse_lib(buffer);
 
 				for (size_t i = 0; i < archive->object_file_count; i++) {
 					TB_ObjectFile* obj = tb_object_parse_coff(archive->object_files[i]);
 					summarize_object_file(obj, str);
-				}
+                    import_symbols(obj);
+                }
 			} else {
-				printf("tb linker: file extension sucks! %"OS_STR_FMT"\n", ext);
-				return false;
+                //fprintf(stderr, "linker: warning: file extension sucks! %"OS_STR_FMT", assumed object file\n", ext);
+
+                TB_ObjectFile* obj = tb_object_parse_coff(buffer);
+				summarize_object_file(obj, str);
+                import_symbols(obj);
 			}
 
 			str += str_length(str) + 1;
@@ -115,6 +132,6 @@ bool linker_invoke_tb(Linker* l, const char* filename, bool verbose) {
 		}
 	}
 
-	return false;
+	return true;
 }
 
