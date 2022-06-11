@@ -409,19 +409,19 @@ static bool dump_tokens() {
 		return false;
 	}
 
-	const unsigned char* last_file = NULL;
+	const char* last_file = NULL;
 	int last_line = 0;
 
 	for (size_t i = 0, cc = arrlen(s.tokens); i < cc; i++) {
 		Token* t = &s.tokens[i];
 		SourceLoc* loc = &s.locations[t->location];
 
-		if (last_file != loc->line->file) {
+		if (last_file != loc->line->filepath) {
 			char str[MAX_PATH];
 
 			// TODO(NeGate): Kinda shitty but i just wanna duplicate
 			// the backslashes to avoid them being treated as an escape
-			const char* in = (const char*)loc->line->file;
+			const char* in = (const char*)loc->line->filepath;
 			char* out = str;
 
 			while (*in) {
@@ -436,7 +436,7 @@ static bool dump_tokens() {
 			*out++ = '\0';
 
 			fprintf(f, "\n#line %d \"%s\"\t", loc->line->line, str);
-			last_file = loc->line->file;
+			last_file = loc->line->filepath;
 		}
 
 		if (last_line != loc->line->line) {
@@ -480,7 +480,8 @@ static void print_help(const char* executable_path) {
 	O("  -r                   - run the compiled result");
 	O("  -I        <path>     - add include directory");
 	O("  -o        <path>     - define output path for binary and intermediates");
-	O("  --emit-ir            - print IR output");
+    O("  --ir                 - compile until IR generation");
+    O("  --ir:emit            - compile until IR generation and print IR output");
 	O("  --freestanding       - compile in freestanding mode (doesn't allow for the OS or C runtime usage, only freestanding headers)");
 	O("  --crt     <name>     - choose the libc you wanna compile with");
 	O("  --lib     <name>     - link against a static library");
@@ -835,8 +836,23 @@ int main(int argc, char* argv[]) {
         const char* ext = strrchr(filename, '.');
         size_t len = ext ? (ext - filename) : strlen(filename);
 
-        memcpy(cuik_file_no_ext, filename, len);
-        cuik_file_no_ext[len] = '\0';
+        if (filename[len - 1] == '/' &&
+            filename[len - 1] == '\\') {
+            // we have an output directory instead of a file
+            sprintf_s(cuik_file_no_ext, MAX_PATH, "%.*s%s", (int)len, filename, cuik_source_files[0]);
+        } else {
+            memcpy(cuik_file_no_ext, filename, len);
+            cuik_file_no_ext[len] = '\0';
+        }
+    }
+
+    if (settings.verbose) {
+        printf("Includes:\n");
+        for (size_t i = 0; i < big_array_length(cuik_include_dirs); i++) {
+            printf("  %s\n", cuik_include_dirs[i]);
+        }
+        printf("Output:\n");
+        printf("  %s\n", cuik_file_no_ext);
     }
 
     // Initialize some subsystems that everyone uses

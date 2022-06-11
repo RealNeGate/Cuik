@@ -16,14 +16,17 @@ static bool skip_over_declspec(TokenStream* restrict s) {
 
 			tokens_next(s);
 		}
-		return true;
+
+        return true;
 	}
 
 	return false;
 }
 
 static Decl parse_declarator(TranslationUnit* tu, TokenStream* restrict s, Type* type, bool is_abstract, bool disabled_paren) {
-	// handle calling convention
+	assert(type != NULL);
+
+    // handle calling convention
 	// TODO(NeGate): Actually pass these to the AST
 	parse_another_qualifier2: {
 		switch (tokens_get(s)->type) {
@@ -89,12 +92,15 @@ static Decl parse_declarator(TranslationUnit* tu, TokenStream* restrict s, Type*
 		// the end of the declarator when it's done.
 		//
 		// should be right after the (
-		SourceLoc* opening_loc = tokens_get_location(s);
+		SourceLocIndex opening_loc = tokens_get_location_index(s);
 
 		tokens_next(s);
 		size_t saved = s->current;
 
-		parse_declarator(tu, s, NULL, is_abstract, false);
+        // dummy_type just avoids problems where the type would be NULL and needs to be read
+        // it's not gonna modify and rarely really reads from it
+        Type* dummy_type = &builtin_types[TYPE_VOID];
+		parse_declarator(tu, s, dummy_type, is_abstract, false);
 
 		expect_closing_paren(s, opening_loc);
 		type = parse_type_suffix(tu, s, type, NULL);
@@ -148,7 +154,7 @@ static Type* parse_typename(TranslationUnit* tu, TokenStream* restrict s) {
 
 static Type* parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s, Type* type, Atom name) {
 	assert(s->current > 0);
-	SourceLoc* loc = tokens_get_last_location(s);
+	SourceLocIndex loc = tokens_get_last_location_index(s);
 
 	// type suffixes like array [] and function ()
 	if (tokens_get(s)->type == '(') {
@@ -224,7 +230,7 @@ static Type* parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s, Typ
 	} else if (tokens_get(s)->type == '[') {
 		if (out_of_order_mode) {
 			// in the out of order case we defer expression parsing
-			SourceLoc* open_brace = tokens_get_location(s);
+			SourceLocIndex open_brace = tokens_get_location_index(s);
 			tokens_next(s);
 
 			size_t current = 0;
@@ -241,14 +247,13 @@ static Type* parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s, Typ
 					Token* t = tokens_get(s);
 
 					if (t->type == '\0') {
-						report(REPORT_ERROR, &s->locations[t->location], "Array declaration ended in EOF");
+						REPORT(ERROR, t->location, "Array declaration ended in EOF");
 						abort();
 					} else if (t->type == '[') {
 						depth++;
 					} else if (t->type == ']') {
 						if (depth == 0) {
-							report_two_spots(REPORT_ERROR,
-											 open_brace, &s->locations[t->location],
+							report_two_spots(REPORT_ERROR, s, open_brace, t->location,
 											 "Unbalanced brackets", "open", "close?", NULL);
 							abort();
 						}
@@ -305,7 +310,7 @@ static Type* parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s, Typ
 
 				// size checks
 				if (result >= INT32_MAX) {
-					report(REPORT_ERROR, loc, "cannot declare an array that exceeds 0x7FFFFFFE bytes (got 0x%zX or %zi)", result, result);
+					REPORT(ERROR, loc, "cannot declare an array that exceeds 0x7FFFFFFE bytes (got 0x%zX or %zi)", result, result);
 					abort();
 				}
 
@@ -375,24 +380,24 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
 
 			case TOKEN_KW_Complex:
 			case TOKEN_KW_Imaginary: {
-				SourceLoc* loc = &s->locations[tokens_get(s)->location];
-				report(REPORT_ERROR, loc, "Complex types are not supported in CuikC");
+				SourceLocIndex loc = tokens_get(s)->location;
+				REPORT(ERROR, loc, "Complex types are not supported in CuikC");
 				break;
 			}
 
 			case TOKEN_KW_Vector: {
 				// _Vector '(' TYPENAME ',' CONST-EXPR ')'
 				if (counter) goto done;
-				SourceLoc* loc = &s->locations[tokens_get(s)->location];
+				SourceLocIndex loc = tokens_get_location_index(s);
 				tokens_next(s);
 
-				SourceLoc* opening_loc = &s->locations[tokens_get(s)->location];
+				SourceLocIndex opening_loc = tokens_get_location_index(s);
 				expect(s, '(');
 
 				type = parse_typename(tu, s);
 				if (!(type->kind >= KIND_CHAR && type->kind <= KIND_LONG) &&
 					!(type->kind == KIND_FLOAT || type->kind == KIND_DOUBLE)) {
-					report(REPORT_ERROR, loc, "Only integers and floats can be used for _Vector types");
+					REPORT(ERROR, loc, "Only integers and floats can be used for _Vector types");
 					return NULL;
 				}
 
@@ -401,23 +406,23 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
 				intmax_t count = parse_const_expr(tu, s);
 
 				if (count <= 0) {
-					report(REPORT_ERROR, loc, "_Vector types must have a positive width");
+					REPORT(ERROR, loc, "_Vector types must have a positive width");
 					return NULL;
 				}
 
 				if (count == 1) {
-					report(REPORT_ERROR, loc, "It's not even a _Vector type... that's a scalar...");
+					REPORT(ERROR, loc, "It's not even a _Vector type... that's a scalar...");
 					return NULL;
 				}
 
 				if (count > 64) {
-					report(REPORT_ERROR, loc, "_Vector type is too wide (%"PRIiMAX", max is 64)", count);
+					REPORT(ERROR, loc, "_Vector type is too wide (%"PRIiMAX", max is 64)", count);
 					return NULL;
 				}
 
 				// only allow power of two widths
 				if ((count & (count - 1)) != 0) {
-					report(REPORT_ERROR, loc, "_Vector types can only have power-of-two widths");
+					REPORT(ERROR, loc, "_Vector types can only have power-of-two widths");
 					return NULL;
 				}
 
@@ -431,16 +436,16 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
 			case TOKEN_KW_Atomic: {
 				tokens_next(s);
 				if (tokens_get(s)->type == '(') {
-					SourceLoc* opening_loc = &s->locations[tokens_get(s)->location];
+					SourceLocIndex opening_loc = tokens_get_location_index(s);
 					tokens_next(s);
 
 					type = parse_typename(tu, s);
 					counter += OTHER;
 					is_atomic = true;
 
-					SourceLoc* closing_loc = &s->locations[tokens_get(s)->location];
+					SourceLocIndex closing_loc = tokens_get_location_index(s);
 					if (tokens_get(s)->type != ')') {
-						report_two_spots(REPORT_ERROR, opening_loc, closing_loc, "expected closing parenthesis for _Atomic", "open", "close?", NULL);
+						report_two_spots(REPORT_ERROR, s, opening_loc, closing_loc, "expected closing parenthesis for _Atomic", "open", "close?", NULL);
 						return NULL;
 					}
 				} else {
@@ -455,11 +460,11 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
 			case TOKEN_KW_auto: break;
 
 			case TOKEN_KW_Typeof: {
-				SourceLoc* loc = &s->locations[tokens_get(s)->location];
+				SourceLocIndex loc = tokens_get_location_index(s);
 
 				tokens_next(s);
 				if (tokens_get(s)->type != '(') {
-					report(REPORT_ERROR, loc, "expected opening parenthesis for _Typeof");
+					REPORT(ERROR, loc, "expected opening parenthesis for _Typeof");
 					return NULL;
 				}
 				tokens_next(s);
@@ -470,7 +475,7 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
 					size_t current = skip_expression_in_parens(s, &terminator);
 
 					if (terminator == 0 || terminator == ',') {
-						report(REPORT_ERROR, loc, "expected closing parenthesis for _Typeof%s", terminator ? " (got EOF)" : "");
+						REPORT(ERROR, loc, "expected closing parenthesis for _Typeof%s", terminator ? " (got EOF)" : "");
 						return NULL;
 					}
 
@@ -488,7 +493,7 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
 					}
 
 					if (tokens_get(s)->type != ')') {
-						report(REPORT_ERROR, loc, "expected closing parenthesis for _Typeof");
+						REPORT(ERROR, loc, "expected closing parenthesis for _Typeof");
 						return NULL;
 					}
 				}
@@ -496,9 +501,9 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
 			}
 
 			case TOKEN_KW_Alignas: {
-				SourceLoc* loc = &s->locations[tokens_get(s)->location];
+				SourceLocIndex loc = tokens_get_location_index(s);
 				if (alignas_pending_expr != NULL) {
-					report(REPORT_ERROR, loc, "cannot apply two _Alignas to one type");
+					REPORT(ERROR, loc, "cannot apply two _Alignas to one type");
 					return NULL;
 				}
 
@@ -511,7 +516,7 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
 					size_t current = skip_expression_in_parens(s, &terminator);
 
 					if (terminator == 0 || terminator == ',') {
-						report(REPORT_ERROR, loc, "expected closing parenthesis for _Alignas%s", terminator ? " (got EOF)" : "");
+						REPORT(ERROR, loc, "expected closing parenthesis for _Alignas%s", terminator ? " (got EOF)" : "");
 						return NULL;
 					}
 
@@ -525,23 +530,23 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
 					if (is_typename(s)) {
 						Type* new_align = parse_typename(tu, s);
 						if (new_align == NULL || new_align->align) {
-							report(REPORT_ERROR, loc, "_Alignas cannot operate with incomplete");
+							REPORT(ERROR, loc, "_Alignas cannot operate with incomplete");
 						} else {
 							forced_align = new_align->align;
 						}
 					} else {
 						intmax_t new_align = parse_const_expr(tu, s);
 						if (new_align == 0) {
-							report(REPORT_ERROR, loc, "_Alignas cannot be applied with 0 alignment", new_align);
+							REPORT(ERROR, loc, "_Alignas cannot be applied with 0 alignment", new_align);
 						} else if (new_align >= INT16_MAX) {
-							report(REPORT_ERROR, loc, "_Alignas(%zu) exceeds max alignment of %zu", new_align, INT16_MAX);
+							REPORT(ERROR, loc, "_Alignas(%zu) exceeds max alignment of %zu", new_align, INT16_MAX);
 						} else {
 							forced_align = new_align;
 						}
 					}
 
 					if (tokens_get(s)->type != ')') {
-						report(REPORT_ERROR, loc, "expected closing parenthesis for _Alignas");
+						REPORT(ERROR, loc, "expected closing parenthesis for _Alignas");
 						return NULL;
 					}
 				}
@@ -569,8 +574,8 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
 			case TOKEN_KW_struct:
 			case TOKEN_KW_union: {
 				if (counter) goto done;
-				SourceLocIndex record_loc = tokens_get(s)->location;
-				tokens_next(s);
+                SourceLocIndex record_loc = tokens_get_location_index(s);
+                tokens_next(s);
 
 				bool is_union = tkn_type == TOKEN_KW_union;
 
@@ -606,8 +611,8 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
 							if (out_of_order_mode) shput(global_tags, name, type);
 							else {
 								if (local_tag_count + 1 >= MAX_LOCAL_TAGS) {
-									SourceLoc* loc = &s->locations[tokens_get(s)->location];
-									report(REPORT_ERROR, loc, "too many tags in local scopes (%d)", MAX_LOCAL_TAGS);
+									SourceLocIndex loc = tokens_get_location_index(s);
+									REPORT(ERROR, loc, "too many tags in local scopes (%d)", MAX_LOCAL_TAGS);
 									abort();
 								}
 
@@ -720,8 +725,8 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
 						if (out_of_order_mode) shput(global_tags, name, type);
 						else {
 							if (local_tag_count + 1 >= MAX_LOCAL_TAGS) {
-								SourceLoc* loc = &s->locations[tokens_get(s)->location];
-								report(REPORT_ERROR, loc, "too many tags in local scopes (%d)", MAX_LOCAL_TAGS);
+								SourceLocIndex loc = tokens_get_location_index(s);
+								REPORT(ERROR, loc, "too many tags in local scopes (%d)", MAX_LOCAL_TAGS);
 								abort();
 							}
 
@@ -768,8 +773,8 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
 							if (out_of_order_mode) shput(global_tags, name, type);
 							else {
 								if (local_tag_count + 1 >= MAX_LOCAL_TAGS) {
-									SourceLoc* loc = &s->locations[tokens_get(s)->location];
-									report(REPORT_ERROR, loc, "too many tags in local scopes (%d)", MAX_LOCAL_TAGS);
+									SourceLocIndex loc = tokens_get_location_index(s);
+									REPORT(ERROR, loc, "too many tags in local scopes (%d)", MAX_LOCAL_TAGS);
 									abort();
 								}
 
@@ -813,8 +818,8 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
 								lexer_pos = skip_expression_in_enum(s, &terminator);
 
 								if (terminator == 0) {
-									SourceLoc* loc = &s->locations[tokens_get(s)->location];
-									report(REPORT_ERROR, loc, "expected comma or } (got EOF)");
+                                    SourceLocIndex loc = tokens_get_location_index(s);
+									REPORT(ERROR, loc, "expected comma or } (got EOF)");
 									abort();
 								}
 							} else {
@@ -874,8 +879,8 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
 						if (out_of_order_mode) shput(global_tags, name, type);
 						else {
 							if (local_tag_count + 1 >= MAX_LOCAL_TAGS) {
-								SourceLoc* loc = &s->locations[tokens_get(s)->location];
-								report(REPORT_ERROR, loc, "too many tags in local scopes (%d)", MAX_LOCAL_TAGS);
+                                SourceLocIndex loc = tokens_get_location_index(s);
+								REPORT(ERROR, loc, "too many tags in local scopes (%d)", MAX_LOCAL_TAGS);
 								abort();
 							}
 
@@ -904,8 +909,8 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
 					// if not, we assume this must be a typedef'd type and reserve space
 					if (sym != NULL) {
 						if (sym->storage_class != STORAGE_TYPEDEF) {
-							SourceLoc* loc = &s->locations[tokens_get(s)->location];
-							report(REPORT_ERROR, loc, "symbol '%s' is not a typedef", name);
+                            SourceLocIndex loc = tokens_get_location_index(s);
+							REPORT(ERROR, loc, "symbol '%s' is not a typedef", name);
 							return NULL;
 						}
 
@@ -1028,15 +1033,15 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
 	} while (true);
 
 	done:;
-	SourceLoc* loc = &s->locations[tokens_get(s)->location];
+	SourceLocIndex loc = tokens_get_location_index(s);
 	if (type == 0) {
-		report(REPORT_ERROR, loc, "unknown typename");
+		REPORT(ERROR, loc, "unknown typename");
 		return NULL;
 	}
 
 	if (is_atomic || is_const || (forced_align && type->align != forced_align)) {
 		if (forced_align && forced_align < type->align) {
-			report(REPORT_ERROR, loc, "forced alignment %d cannot be smaller than original alignment %d", forced_align, type->align);
+			REPORT(ERROR, loc, "forced alignment %d cannot be smaller than original alignment %d", forced_align, type->align);
 			return NULL;
 		}
 

@@ -179,14 +179,20 @@ void cuik_set_cpp_defines(CPP_Context* cpp) {
 			cpp_define_empty(cpp, "_DLL");
 		}
 
-		//cpp_define_empty(cpp, "_NO_CRT_STDIO_INLINE");
+		cpp_define_empty(cpp, "_NO_CRT_STDIO_INLINE");
 		//cpp_define_empty(cpp, "_CRT_NONSTDC_NO_WARNINGS");
 		//cpp_define_empty(cpp, "_CRT_SECURE_NO_WARNINGS");
 
 		// we support MSVC extensions
 		cpp_define(cpp, "_MSC_EXTENSIONS", "1");
 		cpp_define(cpp, "_INTEGRAL_MAX_BITS", "64");
-		//cpp_define(cpp, "_MSC_BUILD",      "0");
+
+        // pretend to be MSVC
+        if (true) {
+            cpp_define(cpp, "_MSC_BUILD",      "1");
+            cpp_define(cpp, "_MSC_FULL_VER",      "192930137");
+            cpp_define(cpp, "_MSC_VER",      "1929");
+        }
 
 		// wrappers over MSVC based keywords and features
 		cpp_define(cpp, "__int8", "char");

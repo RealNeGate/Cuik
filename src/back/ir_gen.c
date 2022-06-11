@@ -1493,9 +1493,9 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
         SourceLoc* l = &tu->tokens.locations[s->loc];
         SourceLine* line = l->line;
 
-        if ((const char*)line->file != last_filepath) {
-            last_filepath = (const char*)line->file;
-            last_file_id = tb_file_create(mod, (const char*)line->file);
+        if ((const char*)line->filepath != last_filepath) {
+            last_filepath = line->filepath;
+            last_file_id = tb_file_create(mod, line->filepath);
         }
 
         insert_label(func);

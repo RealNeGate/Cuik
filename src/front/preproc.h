@@ -32,6 +32,14 @@
 ////////////////////////////////
 typedef struct CPP_Context CPP_Context;
 
+typedef struct CPP_FileEntry {
+    struct CPP_FileEntry* parent;
+    SourceLocIndex include_loc;
+
+    const char* filepath;
+    uint8_t* content;
+} CPP_FileEntry;
+
 // NOTE: If you're going to preprocess isolated files
 // then you should create multiple of these but if you
 // want to share defines between them (like a weird unity
@@ -44,16 +52,33 @@ void cpp_deinit(CPP_Context* ctx);
 // resources were freed
 void cpp_finalize(CPP_Context* ctx);
 
+// The file table may contain duplicates (for now...) but it stores all
+// the loaded files by this instance of the preprocessor, in theory one
+// could write a proper incremental compilation model using this for TU
+// dependency tracking but... incremental compilation is a skill issue
+size_t cpp_get_file_table_count(CPP_Context* ctx);
+CPP_FileEntry* cpp_get_file_table(CPP_Context* ctx);
+
 // After you've parsed code with the token stream, you don't generally need
 // to maintain the file memory, all strings are now part of the atoms
 void cpp_free_file_memory(CPP_Context* ctx);
 
+// Locates an include file from the `path` and copies it's fully qualified path into `output`
 bool cpp_find_include_include(CPP_Context* ctx, char output[MAX_PATH], const char* path);
+
+// Adds include directory to the search list
 void cpp_add_include_directory(CPP_Context* ctx, const char dir[]);
+
+// Basically just `#define key`
 void cpp_define_empty(CPP_Context* ctx, const char key[]);
+
+// Basically just `#define key value`
 void cpp_define(CPP_Context* ctx, const char key[], const char value[]);
+
+// Dumps all the macros defined at that time
 void cpp_dump(CPP_Context* ctx);
 
+// Invokes the preprocessor
 TokenStream cpp_process(CPP_Context* ctx, const char filepath[]);
 
 ////////////////////////////////
@@ -84,7 +109,7 @@ struct CPP_Context {
     // system libraries
     char** system_include_dirs;
 
-    BigArray(unsigned char*) file_memory;
+    BigArray(CPP_FileEntry) files;
 
     // how deep into directive scopes (#if, #ifndef, #ifdef) is it
     int depth;
@@ -98,6 +123,7 @@ struct CPP_Context {
     size_t* macro_bucket_keys_length;
     const unsigned char** macro_bucket_values_start;
     const unsigned char** macro_bucket_values_end;
+    SourceLocIndex* macro_bucket_source_locs;
     int macro_bucket_count[MACRO_BUCKET_COUNT];
 
     // tells you if the current scope has had an entry evaluated,

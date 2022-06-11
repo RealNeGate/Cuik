@@ -223,6 +223,10 @@ int main(int argc, char** argv) {
     nbuild_init();
     create_dir_if_not_exists("bin"SLASH);
 
+#ifdef RELEASE_BUILD
+    printf("Compiling a release build!\n");
+#endif
+
     CC_Options options = {
         .output_dir = "bin"SLASH,
 
@@ -385,7 +389,7 @@ int main(int argc, char** argv) {
             char cmd[1024];
             for (size_t i = 0; i < INPUT_FILE_COUNT; i++) {
                 if (str_ends_with(INPUT_FILES[i], ".c")) {
-                    int r = snprintf(cmd, 1024, "cuik -o bin/%s -I src/ --threads 1 -c %s", INPUT_FILES[i], INPUT_FILES[i]);
+                    int r = snprintf(cmd, 1024, "cuik -o bin/ -I src --threads 1 -c %s", INPUT_FILES[i]);
                     assert(r >= 0 && r < 1024);
 
                     int code = system(cmd);

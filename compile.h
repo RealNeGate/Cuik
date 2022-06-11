@@ -65,10 +65,6 @@
 #define ON_WINDOWS 0
 #endif
 
-#ifndef RELEASE_BUILD
-#define RELEASE_BUILD 0
-#endif
-
 #ifndef USE_DA_ASAN
 #define USE_DA_ASAN 0
 #endif

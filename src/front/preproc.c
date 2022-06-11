@@ -18,16 +18,16 @@
 
 #include <intrin.h>
 
-static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, const char* directory, const char* filepath, int depth);
+static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, CPP_FileEntry* parent_entry, SourceLocIndex include_loc, const char* directory, const char* filepath, int depth);
 static uint64_t hash_ident(const unsigned char* at, size_t length);
 static bool is_defined(CPP_Context* restrict c, const unsigned char* start, size_t length);
 static void expect(Lexer* l, char ch);
 static void skip_directive_body(Lexer* l);
-static intmax_t eval(CPP_Context* restrict c, TokenStream* restrict s, Lexer* l);
+static intmax_t eval(CPP_Context* restrict c, TokenStream* restrict s, Lexer* l, SourceLocIndex parent_loc);
 static _Noreturn void generic_error(Lexer* l, const char* msg);
 
-static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer* l);
-static void expand(CPP_Context* restrict c, TokenStream* restrict s, Lexer* l);
+static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer* l, SourceLocIndex parent_loc);
+static void expand(CPP_Context* restrict c, TokenStream* restrict s, Lexer* l, SourceLocIndex parent_loc);
 static void* gimme_the_shtuffs(CPP_Context* restrict c, size_t len);
 
 static bool find_define(CPP_Context* restrict c, size_t* out_index, const unsigned char* start, size_t length);
@@ -35,16 +35,18 @@ static size_t insert_define(CPP_Context* restrict c, const unsigned char* start,
 
 void cpp_init(CPP_Context* ctx) {
     size_t sz = sizeof(void*) * MACRO_BUCKET_COUNT * SLOTS_PER_MACRO_BUCKET;
+    size_t sz2 = sizeof(SourceLocIndex) * MACRO_BUCKET_COUNT * SLOTS_PER_MACRO_BUCKET;
 
     *ctx = (CPP_Context){
         .macro_bucket_keys = malloc(sz),
         .macro_bucket_keys_length = malloc(sz),
         .macro_bucket_values_start = malloc(sz),
         .macro_bucket_values_end = malloc(sz),
+        .macro_bucket_source_locs = malloc(sz2),
 
         .the_shtuffs = malloc(THE_SHTUFFS_SIZE)
     };
-    ctx->file_memory = big_array_create(unsigned char*, false);
+    ctx->files = big_array_create(CPP_FileEntry, false);
 
     tls_init();
 }
@@ -54,7 +56,7 @@ void cpp_deinit(CPP_Context* ctx) {
         cpp_finalize(ctx);
     }
 
-    if (ctx->file_memory != NULL) {
+    if (ctx->files != NULL) {
         cpp_free_file_memory(ctx);
     }
 
@@ -70,22 +72,32 @@ void cpp_finalize(CPP_Context* ctx) {
     free((void*)ctx->macro_bucket_keys_length);
     free((void*)ctx->macro_bucket_values_start);
     free((void*)ctx->macro_bucket_values_end);
+    free((void*)ctx->macro_bucket_source_locs);
 
     ctx->macro_bucket_keys = NULL;
     ctx->macro_bucket_keys_length = NULL;
     ctx->macro_bucket_values_start = NULL;
     ctx->macro_bucket_values_end = NULL;
+    ctx->macro_bucket_source_locs = NULL;
 }
 
 void cpp_free_file_memory(CPP_Context* ctx) {
-    size_t count = big_array_length(ctx->file_memory);
+    size_t count = big_array_length(ctx->files);
 
     for (size_t i = 0; i < count; i++) {
-        free(ctx->file_memory[i]);
+        free(ctx->files[i].content);
     }
 
-    big_array_destroy(ctx->file_memory);
-    ctx->file_memory = NULL;
+    big_array_destroy(ctx->files);
+    ctx->files = NULL;
+}
+
+size_t cpp_get_file_table_count(CPP_Context* ctx) {
+    return big_array_length(ctx->files);
+}
+
+CPP_FileEntry* cpp_get_file_table(CPP_Context* ctx) {
+    return &ctx->files[0];
 }
 
 bool cpp_find_include_include(CPP_Context* ctx, char output[MAX_PATH], const char* path) {
@@ -130,6 +142,7 @@ void cpp_define_empty(CPP_Context* ctx, const char* key) {
 
     ctx->macro_bucket_values_start[e] = NULL;
     ctx->macro_bucket_values_end[e] = NULL;
+    ctx->macro_bucket_source_locs[e] = SOURCE_LOC_SET_TYPE(SOURCE_LOC_UNKNOWN, 0);
 }
 
 void cpp_define(CPP_Context* ctx, const char* key, const char* value) {
@@ -168,6 +181,7 @@ void cpp_define(CPP_Context* ctx, const char* key, const char* value) {
 
         ctx->macro_bucket_values_start[e] = (const unsigned char*) newvalue;
         ctx->macro_bucket_values_end[e] = (const unsigned char*) newvalue + len;
+        ctx->macro_bucket_source_locs[e] = SOURCE_LOC_SET_TYPE(SOURCE_LOC_UNKNOWN, 0);
     }
 }
 
@@ -209,7 +223,7 @@ TokenStream cpp_process(CPP_Context* ctx, const char filepath[]) {
     }
 
     TokenStream s = { 0 };
-    preprocess_file(ctx, &s, directory, filepath, 1);
+    preprocess_file(ctx, &s, NULL, 0, directory, filepath, 1);
 
     Token t = { 0, 0, NULL, NULL };
     arrput(s.tokens, t);
@@ -229,13 +243,13 @@ static void* gimme_the_shtuffs(CPP_Context* restrict c, size_t len) {
     return allocation;
 }
 
-inline static void trim_the_shtuffs(CPP_Context* restrict c, void* new_top) {
+static void trim_the_shtuffs(CPP_Context* restrict c, void* new_top) {
     size_t i = ((uint8_t*)new_top) - c->the_shtuffs;
     assert(i <= c->the_shtuffs_size);
     c->the_shtuffs_size = i;
 }
 
-inline static SourceLocIndex get_source_location(CPP_Context* restrict c, Lexer* restrict l, TokenStream* restrict s) {
+static SourceLocIndex get_source_location(CPP_Context* restrict c, Lexer* restrict l, TokenStream* restrict s, SourceLocIndex parent_loc, SourceLocType loc_type) {
     SourceLocIndex i = arrlen(s->locations);
     if (l->line_current == NULL) {
         l->line_current = l->start;
@@ -245,12 +259,12 @@ inline static SourceLocIndex get_source_location(CPP_Context* restrict c, Lexer*
     SourceLine* source_line = NULL;
 
     if (c->current_source_line == NULL ||
-        c->current_source_line->file != (const unsigned char*)l->filepath ||
+        c->current_source_line->filepath != l->filepath ||
         c->current_source_line->line != l->current_line) {
         source_line = arena_alloc(&thread_arena, sizeof(SourceLine), _Alignof(SourceLine));
-        source_line->file = (const unsigned char*)l->filepath;
+        source_line->filepath = l->filepath;
         source_line->line_str = l->line_current;
-        source_line->parent = 0;
+        source_line->parent = parent_loc;
         source_line->line = l->current_line;
 
         c->current_source_line = source_line;
@@ -269,10 +283,10 @@ inline static SourceLocIndex get_source_location(CPP_Context* restrict c, Lexer*
     };
     arrput(s->locations, loc);
 
-    return i;
+    return SOURCE_LOC_SET_TYPE(loc_type, i);
 }
 
-inline static void cpp_push_scope(CPP_Context* restrict ctx, Lexer* restrict l, bool initial) {
+static void cpp_push_scope(CPP_Context* restrict ctx, Lexer* restrict l, bool initial) {
     if (ctx->depth >= CPP_MAX_SCOPE_DEPTH-1) {
         generic_error(l, "Exceeded max scope depth!");
     }
@@ -280,7 +294,7 @@ inline static void cpp_push_scope(CPP_Context* restrict ctx, Lexer* restrict l, 
     ctx->scope_eval[ctx->depth++] = initial;
 }
 
-inline static void cpp_pop_scope(CPP_Context* restrict ctx, Lexer* restrict l) {
+static void cpp_pop_scope(CPP_Context* restrict ctx, Lexer* restrict l) {
     if (ctx->depth == 0) {
         generic_error(l, "Too many endifs\n");
     }
@@ -324,8 +338,7 @@ static void expand_double_hash(CPP_Context* restrict c, TokenStream* restrict s,
             };
         } else {
             arrdelswap(s->tokens, arrlen(s->tokens) - 1);
-
-            expand_ident(c, s, &tmp_lex);
+            expand_ident(c, s, &tmp_lex, loc);
         }
     } else {
         *last = (Token){
@@ -344,24 +357,29 @@ static void expand_double_hash(CPP_Context* restrict c, TokenStream* restrict s,
     }
 }
 
-static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, const char* directory, const char* filepath, int depth) {
+static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, CPP_FileEntry* parent_entry, SourceLocIndex include_loc, const char* directory, const char* filepath, int depth) {
     // hacky but i don't wanna wrap it in a timed_block
     uint64_t timer_start = timer_now();
 
     unsigned char* text = (unsigned char*)read_entire_file(filepath);
-    big_array_put(c->file_memory, text);
+    CPP_FileEntry file_entry = {
+        .parent = parent_entry,
+        .include_loc = include_loc,
+        .filepath = filepath,
+        .content = text
+    };
+    big_array_put(c->files, file_entry);
 
     Lexer l = { filepath, text, text, 1 };
-
     lexer_read(&l);
     do {
         l.hit_line = false;
 
         if (l.token_type == TOKEN_IDENTIFIER) {
+            SourceLocIndex loc = get_source_location(c, &l, s, include_loc, SOURCE_LOC_NORMAL);
+
             if (!is_defined(c, l.token_start, l.token_end - l.token_start)) {
                 // FAST PATH
-                SourceLocIndex loc = get_source_location(c, &l, s);
-
                 Token t = {
                     classify_ident(l.token_start, l.token_end - l.token_start),
                     loc,
@@ -373,7 +391,7 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
             } else {
                 // SLOW PATH BECAUSE IT NEEDS TO SPAWN POSSIBLY METRIC SHIT LOADS
                 // OF TOKENS AND EXPAND WITH THE AVERAGE C PREPROCESSOR SPOOKIES
-                expand_ident(c, s, &l);
+                expand_ident(c, s, &l, loc);
             }
         } else if (l.token_type == TOKEN_DOUBLE_HASH) {
             int line = l.current_line;
@@ -388,10 +406,11 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 
             if (l.token_type == TOKEN_IDENTIFIER) {
                 if (lexer_match(&l, 2, "if")) {
+                    SourceLocIndex loc = get_source_location(c, &l, s, include_loc, SOURCE_LOC_MACRO);
                     lexer_read(&l);
 
                     assert(!l.hit_line);
-                    if (eval(c, s, &l)) {
+                    if (eval(c, s, &l, loc)) {
                         cpp_push_scope(c, &l, true);
                     } else {
                         cpp_push_scope(c, &l, false);
@@ -442,6 +461,7 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
                         skip_directive_body(&l);
                     }
                 } else if (lexer_match(&l, 4, "elif")) {
+                    SourceLocIndex loc = get_source_location(c, &l, s, include_loc, SOURCE_LOC_MACRO);
                     lexer_read(&l);
 
                     assert(!l.hit_line);
@@ -450,7 +470,7 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
                     // try to do this
                     int last_scope = c->depth - 1;
 
-                    if (!c->scope_eval[last_scope] && eval(c, s, &l)) {
+                    if (!c->scope_eval[last_scope] && eval(c, s, &l, loc)) {
                         c->scope_eval[last_scope] = true;
                     } else {
                         skip_directive_body(&l);
@@ -471,6 +491,7 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
                 } else if (lexer_match(&l, 6, "define")) {
                     lexer_read(&l);
 
+                    SourceLocIndex macro_loc = get_source_location(c, &l, s, include_loc, SOURCE_LOC_MACRO);
                     if (l.token_type != TOKEN_IDENTIFIER) {
                         generic_error(&l, "expected identifier!");
                     }
@@ -528,7 +549,9 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
 
                     c->macro_bucket_values_start[e] = start;
                     c->macro_bucket_values_end[e] = end;
+                    c->macro_bucket_source_locs[e] = macro_loc;
                 } else if (lexer_match(&l, 7, "include")) {
+                    SourceLocIndex new_include_loc = get_source_location(c, &l, s, include_loc, SOURCE_LOC_NORMAL);
                     lexer_read(&l);
 
                     unsigned char* filename = tls_push(MAX_PATH);
@@ -566,7 +589,7 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
                         size_t old_tokens_length = arrlen(s->tokens);
                         s->current = old_tokens_length;
 
-                        expand(c, s, &l);
+                        expand(c, s, &l, new_include_loc);
                         assert(s->current != arrlen(s->tokens) && "Expected the macro expansion to add something");
 
                         // Insert a null token at the end
@@ -577,7 +600,7 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
                             Token* t = tokens_get(s);
                             size_t len = (t->end - t->start) - 2;
                             if (len > MAX_PATH) {
-                                report(REPORT_ERROR, &s->locations[t->location], "Filename too long");
+                                report(REPORT_ERROR, s, t->location, "Filename too long");
                                 abort();
                             }
 
@@ -682,7 +705,7 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
                             printf("%s\n", new_path);
                         }
 
-                        preprocess_file(c, s, new_dir, new_path, depth + 1);
+                        preprocess_file(c, s, &file_entry, new_include_loc, new_dir, new_path, depth + 1);
                     }
                 } else if (lexer_match(&l, 6, "pragma")) {
                     lexer_read(&l);
@@ -704,7 +727,7 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
                         printf("\n");
                     } else {
                         // convert to #pragma blah => _Pragma("blah")
-                        SourceLocIndex loc = get_source_location(c, &l, s);
+                        SourceLocIndex loc = get_source_location(c, &l, s, include_loc, SOURCE_LOC_NORMAL);
 
                         unsigned char* str = gimme_the_shtuffs(c, sizeof("_Pragma"));
                         memcpy(str, "_Pragma", sizeof("_Pragma"));
@@ -796,6 +819,7 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
                                 c->macro_bucket_keys[e]         = c->macro_bucket_keys[last];
                                 c->macro_bucket_values_start[e] = c->macro_bucket_values_start[last];
                                 c->macro_bucket_values_end[e]   = c->macro_bucket_values_end[last];
+                                c->macro_bucket_source_locs[e]  = c->macro_bucket_source_locs[last];
                             }
                             c->macro_bucket_count[slot]--;
                             break;
@@ -804,7 +828,7 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
                 } else if (lexer_match(&l, 7, "warning")) {
                     lexer_read(&l);
 
-                    SourceLocIndex loc = get_source_location(c, &l, s);
+                    SourceLocIndex loc = get_source_location(c, &l, s, include_loc, SOURCE_LOC_NORMAL);
 
                     const unsigned char* start = l.token_start;
                     const unsigned char* end = l.token_start;
@@ -813,11 +837,11 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
                         lexer_read(&l);
                     }
 
-                    report(REPORT_WARNING, &s->locations[loc], "directive: %.*s", (int)(end - start), start);
+                    report(REPORT_WARNING, s, loc, "directive: %.*s", (int)(end - start), start);
                 } else if (lexer_match(&l, 5, "error")) {
                     lexer_read(&l);
 
-                    SourceLocIndex loc = get_source_location(c, &l, s);
+                    SourceLocIndex loc = get_source_location(c, &l, s, include_loc, SOURCE_LOC_NORMAL);
 
                     const unsigned char* start = l.token_start;
                     const unsigned char* end = l.token_start;
@@ -826,7 +850,7 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
                         lexer_read(&l);
                     }
 
-                    report(REPORT_ERROR, &s->locations[loc], "directive: %.*s", (int)(end - start), start);
+                    report(REPORT_ERROR, s, loc, "directive: %.*s", (int)(end - start), start);
                     exit(1);
                 } else {
                     generic_error(&l, "unknown directive!");
@@ -837,7 +861,7 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, co
         } else {
             Token t = {
                 l.token_type,
-                get_source_location(c, &l, s),
+                get_source_location(c, &l, s, include_loc, SOURCE_LOC_NORMAL),
                 l.token_start,
                 l.token_end
             };
@@ -1023,7 +1047,7 @@ static bool find_define(CPP_Context* restrict c, size_t* out_index, const unsign
     return false;
 }
 
-static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer* l) {
+static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer* l, SourceLocIndex parent_loc) {
     size_t token_length = l->token_end - l->token_start;
     const unsigned char* token_data = l->token_start;
 
@@ -1062,7 +1086,7 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
 
         Token t = {
             is_wide ? TOKEN_STRING_WIDE_DOUBLE_QUOTE : TOKEN_STRING_DOUBLE_QUOTE,
-            get_source_location(c, l, s),
+            get_source_location(c, l, s, parent_loc, SOURCE_LOC_NORMAL),
             out_start,
             out
         };
@@ -1076,7 +1100,7 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
         trim_the_shtuffs(c, &out[length + 1]);
         Token t = {
             TOKEN_INTEGER,
-            get_source_location(c, l, s),
+            get_source_location(c, l, s, parent_loc, SOURCE_LOC_NORMAL),
             out,
             out + length
         };
@@ -1120,7 +1144,7 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
 
         Token t = {
             TOKEN_INTEGER,
-            get_source_location(c, l, s),
+            get_source_location(c, l, s, parent_loc, SOURCE_LOC_NORMAL),
             out,
             out + 1
         };
@@ -1128,14 +1152,13 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
     } else {
         size_t def_i;
         if (find_define(c, &def_i, token_data, token_length)) {
-            SourceLocIndex macro_expansion_source_loc = get_source_location(c, l, s);
-
             int line_of_expansion = l->current_line;
-            lexer_read(l);
+            SourceLocIndex macro_expansion_loc = get_source_location(c, l, s,
+                                                                     c->macro_bucket_source_locs[def_i],
+                                                                     SOURCE_LOC_NORMAL);
 
-            /*if (strncmp((const char*)token_data, "REFIID", token_length) == 0) {
-                __debugbreak();
-            }*/
+            // Identify macro definition
+            lexer_read(l);
 
             string def = {
                 .data = c->macro_bucket_values_start[def_i],
@@ -1421,14 +1444,14 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
                         *temp_expansion++ = '\0';
 
                         SourceLocIndex saved_macro_parent_loc = c->macro_source_line;
-                        c->macro_source_line = macro_expansion_source_loc;
+                        c->macro_source_line = macro_expansion_loc;
 
                         // NOTE(NeGate): We need to disable the current macro define
                         // so it doesn't recurse.
                         size_t saved_length = c->macro_bucket_keys_length[def_i];
                         c->macro_bucket_keys_length[def_i] = 0;
 
-                        expand(c, s, &temp_lex);
+                        expand(c, s, &temp_lex, macro_expansion_loc);
 
                         c->macro_bucket_keys_length[def_i] = saved_length;
                         c->macro_source_line = saved_macro_parent_loc;
@@ -1441,7 +1464,7 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
                 if (*args == '(' && l->token_type != '(') {
                     Token t = {
                         classify_ident(token_data, token_length),
-                        get_source_location(c, l, s),
+                        macro_expansion_loc,
                         token_data,
                         token_data + token_length
                     };
@@ -1452,14 +1475,18 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
                     temp_lex.current_line = l->current_line;
                     lexer_read(&temp_lex);
 
+                    SourceLocIndex saved_macro_parent_loc = c->macro_source_line;
+                    c->macro_source_line = macro_expansion_loc;
+
                     // NOTE(NeGate): We need to disable the current macro define
                     // so it doesn't recurse.
                     size_t saved_length = c->macro_bucket_keys_length[def_i];
                     c->macro_bucket_keys_length[def_i] = 0;
 
-                    expand(c, s, &temp_lex);
+                    expand(c, s, &temp_lex, macro_expansion_loc);
 
                     c->macro_bucket_keys_length[def_i] = saved_length;
+                    c->macro_source_line = saved_macro_parent_loc;
                 }
             }
         } else {
@@ -1468,7 +1495,7 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
 
             Token t = {
                 classify_ident(token_data, token_length),
-                get_source_location(c, l, s),
+                get_source_location(c, l, s, parent_loc, SOURCE_LOC_NORMAL),
                 token_data,
                 token_data + token_length
             };
@@ -1479,7 +1506,7 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
     }
 }
 
-static void expand(CPP_Context* restrict c, TokenStream* restrict s, Lexer* l) {
+static void expand(CPP_Context* restrict c, TokenStream* restrict s, Lexer* l, SourceLocIndex parent_loc) {
     int depth = 0;
 
     while (!l->hit_line) {
@@ -1488,7 +1515,7 @@ static void expand(CPP_Context* restrict c, TokenStream* restrict s, Lexer* l) {
         }
 
         if (l->token_type == TOKEN_DOUBLE_HASH) {
-            SourceLocIndex loc = get_source_location(c, l, s);
+            SourceLocIndex loc = get_source_location(c, l, s, parent_loc, SOURCE_LOC_NORMAL);
             lexer_read(l);
 
             assert(arrlen(s->tokens) > 0);
@@ -1498,7 +1525,7 @@ static void expand(CPP_Context* restrict c, TokenStream* restrict s, Lexer* l) {
         } else if (l->token_type != TOKEN_IDENTIFIER) {
             Token t = {
                 l->token_type,
-                get_source_location(c, l, s),
+                get_source_location(c, l, s, parent_loc, SOURCE_LOC_NORMAL),
                 l->token_start,
                 l->token_end
             };
@@ -1506,7 +1533,7 @@ static void expand(CPP_Context* restrict c, TokenStream* restrict s, Lexer* l) {
             arrput(s->tokens, t);
             lexer_read(l);
         } else {
-            expand_ident(c, s, l);
+            expand_ident(c, s, l, parent_loc);
         }
 
         if (l->token_type == ')') {
@@ -1542,7 +1569,7 @@ static intmax_t eval_l0(CPP_Context* restrict c, TokenStream* restrict s) {
         int ch;
         intptr_t distance = parse_char(t->end - t->start, (const char*)t->start, &ch);
         if (distance < 0) {
-            report(REPORT_ERROR, &s->locations[t->location], "could not parse char literal");
+            report(REPORT_ERROR, s, t->location, "could not parse char literal");
             abort();
         }
 
@@ -1550,18 +1577,17 @@ static intmax_t eval_l0(CPP_Context* restrict c, TokenStream* restrict s) {
         tokens_next(s);
     } else if (t->type == '(') {
         tokens_next(s);
-        val = eval(c, s, NULL);
+        val = eval(c, s, NULL, t->location);
 
         if (tokens_get(s)->type != ')') {
-            report_two_spots(REPORT_ERROR, &s->locations[t->location],
-                             &s->locations[tokens_get(s)->location],
+            report_two_spots(REPORT_ERROR, s, t->location, tokens_get(s)->location,
                              "expected closing parenthesis for macro subexpression",
                              "open", "close?", NULL);
             abort();
         }
         tokens_next(s);
     } else {
-        report(REPORT_ERROR, &s->locations[t->location], "could not parse expression");
+        report(REPORT_ERROR, s, t->location, "could not parse expression");
         abort();
     }
 
@@ -1687,13 +1713,13 @@ static intmax_t eval_l12(CPP_Context* restrict c, TokenStream* restrict s) {
     return left;
 }
 
-static intmax_t eval(CPP_Context* restrict c, TokenStream* restrict s, Lexer* l) {
+static intmax_t eval(CPP_Context* restrict c, TokenStream* restrict s, Lexer* l, SourceLocIndex parent_loc) {
     // Expand
     if (l) {
         size_t old_tokens_length = arrlen(s->tokens);
         s->current = old_tokens_length;
 
-        expand(c, s, l);
+        expand(c, s, l, SOURCE_LOC_SET_TYPE(SOURCE_LOC_UNKNOWN, 0));
         assert(s->current != arrlen(s->tokens) && "Expected the macro expansion to add something");
 
         // Insert a null token at the end

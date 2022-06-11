@@ -6,6 +6,7 @@ static thread_local char temp_string0[1024], temp_string1[1024];
 
 static void set_defines(CPP_Context* cpp) {
     cpp_define_empty(cpp, "_CUIK_TARGET_64BIT_");
+    cpp_define(cpp, "__LITTLE_ENDIAN__", "1");
 
     cpp_define(cpp, "_M_X64",   "100");
     cpp_define(cpp, "_AMD64_",  "100");

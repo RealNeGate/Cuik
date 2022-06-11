@@ -207,7 +207,7 @@ static Expr* parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
 
         Expr* e = parse_expr(tu, s);
 
-        expect_closing_paren(s, &s->locations[start_loc]);
+        expect_closing_paren(s, start_loc);
 
         e->has_parens = true;
         e->start_loc = start_loc;
@@ -411,7 +411,7 @@ static Expr* parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
         case TOKEN_KW_Generic: {
             tokens_next(s);
 
-            SourceLoc* opening_loc = tokens_get_location(s);
+            SourceLocIndex opening_loc = tokens_get_location_index(s);
             expect(s, '(');
 
             // controlling expression followed by a comma
@@ -426,12 +426,12 @@ static Expr* parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
             size_t entry_count = 0;
             C11GenericEntry* entries = tls_save();
 
-            SourceLoc* default_loc = NULL;
+            SourceLocIndex default_loc = 0;
             while (tokens_get(s)->type != ')') {
                 if (tokens_get(s)->type == TOKEN_KW_default) {
                     if (default_loc) {
-                        report_two_spots(REPORT_ERROR, default_loc,
-                                         tokens_get_location(s),
+                        report_two_spots(REPORT_ERROR, s,
+                                         default_loc, tokens_get_location_index(s),
                                          "multiple default cases on _Generic",
                                          NULL, NULL, NULL);
 
@@ -439,7 +439,7 @@ static Expr* parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
                         abort();
                     }
 
-                    default_loc = tokens_get_location(s);
+                    default_loc = tokens_get_location_index(s);
                     expect(s, ':');
                     Expr* expr = parse_expr_l14(tu, s);
 
@@ -777,11 +777,11 @@ static Expr* parse_expr_l2(TranslationUnit* tu, TokenStream* restrict s) {
         tokens_next(s);
 
         bool has_paren = false;
-        SourceLoc* opening_loc = NULL;
+        SourceLocIndex opening_loc = 0;
         if (tokens_get(s)->type == '(') {
             has_paren = true;
 
-            opening_loc = tokens_get_location(s);
+            opening_loc = tokens_get_location_index(s);
             tokens_next(s);
         }
 

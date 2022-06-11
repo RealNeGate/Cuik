@@ -230,6 +230,6 @@ ConstValue const_eval(TranslationUnit* tu, const Expr* e) {
 		default: break;
 	}
 
-	report(REPORT_ERROR, &tu->tokens.locations[e->start_loc], "Could not resolve as constant expression");
+	REPORT(ERROR, e->start_loc, "Could not resolve as constant expression");
 	abort();
 }

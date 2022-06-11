@@ -147,22 +147,38 @@ typedef enum IntSuffix {
 	INT_SUFFIX_ULL  = 1 + 2 + 2,
 } IntSuffix;
 
-typedef int SourceLocIndex;
+#define SOURCE_LOC_GET_DATA(loc) ((loc) & ~0xC0000000u)
+#define SOURCE_LOC_GET_TYPE(loc) (((loc) & 0xC0000000u) >> 30u)
+#define SOURCE_LOC_SET_TYPE(type, raw) (((type << 30) & 0xC0000000u) | ((raw) & ~0xC0000000u))
 
-typedef struct {
-	const unsigned char* file;
+typedef enum SourceLocType {
+    SOURCE_LOC_UNKNOWN = 0,
+    SOURCE_LOC_NORMAL  = 1,
+    SOURCE_LOC_MACRO   = 2,
+    SOURCE_LOC_FILE    = 3
+} SourceLocType;
+
+// structure to get some nice type checking
+typedef uint32_t SourceLocIndex;
+
+typedef struct SourceRange {
+    SourceLocIndex start, end;
+} SourceRange;
+
+typedef struct SourceLine {
+	const char* filepath;
 	const unsigned char* line_str;
 	SourceLocIndex parent;
     int line;
 } SourceLine;
 
-typedef struct {
+typedef struct SourceLoc {
 	SourceLine* line;
 	short columns;
 	short length;
 } SourceLoc;
 
-typedef struct {
+typedef struct Token {
 	TknType type;
 	SourceLocIndex location;
 	const unsigned char* start;
@@ -190,10 +206,11 @@ typedef struct {
 	////////////////////////////////
 	// INTERNALS
 	////////////////////////////////
-    // when reading it spotted a line or EOF, it must be manually reset
     const unsigned char* line_current;
 	const unsigned char* line_current2;
-	bool hit_line;
+
+    // when reading it spotted a line or EOF, it must be manually reset
+    bool hit_line;
 
 	// current token info
 	TknType token_type;
