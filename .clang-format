@@ -4,7 +4,7 @@ IndentWidth:   4
 UseCRLF: false
 UseTab: Never
 ColumnLimit: 0
-SortIncludes: Never
+SortIncludes: false
 PointerAlignment: Left
 AllowShortEnumsOnASingleLine: true
 AllowShortLoopsOnASingleLine: true
