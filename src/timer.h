@@ -1,7 +1,7 @@
 #pragma once
 
-#include <common.h>
 #include "ext/threads.h"
+#include <common.h>
 
 extern FILE* timer_output;
 extern double timer_freq;
@@ -18,7 +18,7 @@ void timer_open(const char* path);
 // Close the profiler file
 void timer_close();
 
-// Reports a region of time in the profiler file 
+// Reports a region of time in the profiler file
 void timer_end(uint64_t start, const char* fmt, ...);
 
 // Time in "ticks"

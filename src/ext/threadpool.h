@@ -1,7 +1,7 @@
 #pragma once
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
-#include <stdbool.h>
 
 typedef struct threadpool_t threadpool_t;
 typedef void work_routine(void*);

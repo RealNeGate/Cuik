@@ -1,9 +1,9 @@
 #include "sema.h"
 #include "settings.h"
 
-#include <targets/targets.h>
 #include <back/ir_gen.h>
 #include <stdarg.h>
+#include <targets/targets.h>
 
 #define SEMA_MUNCH_SIZE (32768)
 
@@ -36,29 +36,29 @@ bool type_very_compatible(TranslationUnit* tu, Type* src, Type* dst) {
     if (src->kind != dst->kind) return false;
 
     switch (src->kind) {
-        case KIND_BOOL:
-        case KIND_CHAR:
-        case KIND_SHORT:
-        case KIND_INT:
-        case KIND_LONG:
+    case KIND_BOOL:
+    case KIND_CHAR:
+    case KIND_SHORT:
+    case KIND_INT:
+    case KIND_LONG:
         return src->is_unsigned == dst->is_unsigned;
 
-        case KIND_FLOAT:
-        case KIND_DOUBLE:
+    case KIND_FLOAT:
+    case KIND_DOUBLE:
         return true;
 
-        case KIND_PTR:
+    case KIND_PTR:
         return type_very_compatible(tu, src->ptr_to, dst->ptr_to);
-        case KIND_FUNC:
+    case KIND_FUNC:
         return type_equal(tu, src, dst);
 
-        case KIND_ARRAY:
+    case KIND_ARRAY:
         if (!type_very_compatible(tu, src->array_of, dst->array_of)) {
             return false;
         }
         return src->array_count == dst->array_count;
 
-        default:
+    default:
         return true;
     }
 }
@@ -216,32 +216,35 @@ static int compute_initializer_bounds(Type* type) {
     //   Records depend on the member count
     //   Arrays are based on array count
     switch (type->kind) {
-        case KIND_UNION: case KIND_STRUCT: {
-            size_t bounds = 0;
+    case KIND_UNION:
+    case KIND_STRUCT: {
+        size_t bounds = 0;
 
-            Member* kids = type->record.kids;
-            size_t count = type->record.kid_count;
+        Member* kids = type->record.kids;
+        size_t count = type->record.kid_count;
 
-            // it should never be less than the original size since records
-            // can't be empty
-            bounds += count;
+        // it should never be less than the original size since records
+        // can't be empty
+        bounds += count;
 
-            for (size_t i = 0; i < count; i++) {
-                Member* member = &kids[i];
+        for (size_t i = 0; i < count; i++) {
+            Member* member = &kids[i];
 
-                // unnamed members can be used
-                if (member->name == NULL &&
-                    (member->type->kind == KIND_STRUCT || member->type->kind == KIND_UNION)) {
-                    bounds += compute_initializer_bounds(member->type)-1;
-                }
+            // unnamed members can be used
+            if (member->name == NULL &&
+                (member->type->kind == KIND_STRUCT || member->type->kind == KIND_UNION)) {
+                bounds += compute_initializer_bounds(member->type) - 1;
             }
-
-            return bounds;
         }
 
-        case KIND_ARRAY: return type->array_count;
+        return bounds;
+    }
 
-        default: return 1;
+    case KIND_ARRAY:
+        return type->array_count;
+
+    default:
+        return 1;
     }
 }
 
@@ -255,7 +258,7 @@ static InitSearchResult find_member_by_name(Type* type, const unsigned char* nam
         // TODO(NeGate): String interning would be nice
         if (member->name != NULL) {
             if (cstr_equals(name, member->name)) {
-                return (InitSearchResult){ member, *base_index + i, offset + member->offset };
+                return (InitSearchResult){member, *base_index + i, offset + member->offset};
             }
         } else if (member->type->kind == KIND_STRUCT || member->type->kind == KIND_UNION) {
             InitSearchResult search = find_member_by_name(member->type, name, base_index, offset + member->offset);
@@ -264,7 +267,7 @@ static InitSearchResult find_member_by_name(Type* type, const unsigned char* nam
     }
 
     *base_index += count;
-    return (InitSearchResult){ 0 };
+    return (InitSearchResult){0};
 }
 
 static InitSearchResult get_next_member_in_type(Type* type, int target, int* base_index, int offset, bool stop_at_struct) {
@@ -281,17 +284,17 @@ static InitSearchResult get_next_member_in_type(Type* type, int target, int* bas
         if (member->type->kind == KIND_STRUCT ||
             member->type->kind == KIND_UNION) {
             if (match && stop_at_struct) {
-                return (InitSearchResult){ member, j, offset + member->offset };
+                return (InitSearchResult){member, j, offset + member->offset};
             }
 
             return get_next_member_in_type(member->type, target, base_index, offset + member->offset, stop_at_struct);
         } else if (match) {
-            return (InitSearchResult){ member, j, offset + member->offset };
+            return (InitSearchResult){member, j, offset + member->offset};
         }
     }
 
     *base_index += count;
-    return (InitSearchResult){ 0 };
+    return (InitSearchResult){0};
 }
 
 static InitNode* walk_initializer_for_sema(TranslationUnit* tu, Type* type, int node_count, InitNode* node, int base_offset) {
@@ -380,7 +383,7 @@ static InitNode* walk_initializer_for_sema(TranslationUnit* tu, Type* type, int 
 
             // place fully resolved type and offset
             node->offset = base_offset + relative_offset;
-            node->type   = child_type;
+            node->type = child_type;
 
             node += 1;
         } else {
@@ -405,12 +408,12 @@ static InitNode* sema_infer_initializer_array_count(TranslationUnit* tu, int nod
     for (int i = 0; i < node_count; i++) {
         if (depth == 0) {
             // members shouldn't be here :p
-            if (node->mode == INIT_MEMBER) return 0;
+            if (node->mode == INIT_MEMBER)
+                return 0;
             else if (node->mode == INIT_ARRAY) {
                 cursor = node->start + node->count;
                 if (cursor > max) max = cursor;
-            }
-            else if (node->mode == INIT_NONE) {
+            } else if (node->mode == INIT_NONE) {
                 cursor++;
                 if (cursor > max) max = cursor;
             }
@@ -433,18 +436,18 @@ static InitNode* sema_infer_initializer_array_count(TranslationUnit* tu, int nod
 
 static bool is_assignable_expr(TranslationUnit* tu, Expr* restrict e) {
     switch (e->op) {
-        case EXPR_DEREF:
-        case EXPR_SUBSCRIPT:
-        case EXPR_ARROW:
-        case EXPR_DOT:
+    case EXPR_DEREF:
+    case EXPR_SUBSCRIPT:
+    case EXPR_ARROW:
+    case EXPR_DOT:
         return true;
 
-        case EXPR_SYMBOL:
-        case EXPR_PARAM:
+    case EXPR_SYMBOL:
+    case EXPR_PARAM:
         // TODO(NeGate): const-check
         return true;
 
-        default:
+    default:
         return false;
     }
 }
@@ -520,625 +523,620 @@ Member* sema_resolve_member_access(TranslationUnit* tu, Expr* restrict e, uint32
 
 Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
     switch (e->op) {
-        case EXPR_UNKNOWN_SYMBOL: {
-            return (e->type = &builtin_types[TYPE_VOID]);
+    case EXPR_UNKNOWN_SYMBOL: {
+        return (e->type = &builtin_types[TYPE_VOID]);
+    }
+    case EXPR_VA_ARG: {
+        Type* va_list_type = sema_expr(tu, e->va_arg_.src);
+        if (va_list_type->kind != KIND_PTR && va_list_type->ptr_to->kind != KIND_CHAR) {
+            type_as_string(tu, sizeof(temp_string0), temp_string0, va_list_type);
+            REPORT_EXPR(ERROR, e, "va_arg must take in a va_list in the first argument (got %s)", temp_string0);
         }
-        case EXPR_VA_ARG: {
-            Type* va_list_type = sema_expr(tu, e->va_arg_.src);
-            if (va_list_type->kind != KIND_PTR && va_list_type->ptr_to->kind != KIND_CHAR) {
-                type_as_string(tu, sizeof(temp_string0), temp_string0, va_list_type);
-                REPORT_EXPR(ERROR, e, "va_arg must take in a va_list in the first argument (got %s)", temp_string0);
+
+        Type* type = e->va_arg_.type;
+        int size = type->size;
+        if (size < builtin_types[TYPE_INT].size) {
+            REPORT_EXPR(WARNING, e, "Warning, va_arg used on a value smaller than int");
+        }
+
+        return (e->type = type);
+    }
+    case EXPR_INT: {
+        switch (e->int_num.suffix) {
+        case INT_SUFFIX_NONE: {
+            unsigned int original = (unsigned int)e->int_num.num;
+            unsigned long long expected = (unsigned long long)e->int_num.num;
+
+            if (original != expected) {
+                REPORT_EXPR(ERROR, e, "Could not represent integer literal as int. (%llu or %llx)", expected, expected);
             }
 
-            Type* type = e->va_arg_.type;
-            int size = type->size;
-            if (size < builtin_types[TYPE_INT].size) {
-                REPORT_EXPR(WARNING, e, "Warning, va_arg used on a value smaller than int");
+            return (e->type = &builtin_types[TYPE_INT]);
+        }
+
+        case INT_SUFFIX_U: {
+            unsigned int original = (unsigned int)e->int_num.num;
+            unsigned long long expected = (unsigned long long)e->int_num.num;
+
+            if (original != expected) {
+                REPORT_EXPR(ERROR, e, "Could not represent integer literal as unsigned int.");
+            }
+
+            return (e->type = &builtin_types[TYPE_UINT]);
+        }
+
+        case INT_SUFFIX_L:
+            return (e->type = &builtin_types[settings.is_windows_long ? TYPE_INT : TYPE_LONG]);
+        case INT_SUFFIX_UL:
+            return (e->type = &builtin_types[settings.is_windows_long ? TYPE_UINT : TYPE_ULONG]);
+
+        case INT_SUFFIX_LL:
+            return (e->type = &builtin_types[TYPE_LONG]);
+        case INT_SUFFIX_ULL:
+            return (e->type = &builtin_types[TYPE_ULONG]);
+
+        default:
+            REPORT_EXPR(ERROR, e, "Could not represent integer literal.");
+            return (e->type = &builtin_types[TYPE_VOID]);
+        }
+    }
+    case EXPR_ENUM: {
+        return (e->type = &builtin_types[TYPE_INT]);
+    }
+    case EXPR_FLOAT32: {
+        return (e->type = &builtin_types[TYPE_FLOAT]);
+    }
+    case EXPR_FLOAT64: {
+        return (e->type = &builtin_types[TYPE_DOUBLE]);
+    }
+    case EXPR_CHAR: {
+        return (e->type = &builtin_types[TYPE_CHAR]);
+    }
+    case EXPR_WCHAR: {
+        return (e->type = &builtin_types[TYPE_SHORT]);
+    }
+    case EXPR_WSTR: {
+        const char* in = (const char*)(e->str.start + 1);
+        size_t len = ((const char*)e->str.end - 1) - in;
+
+        // it can't be bigger than the original
+        wchar_t* out = arena_alloc(&thread_arena, (len + 1) * 2, 1);
+
+        size_t out_i = 0, in_i = 0;
+        while (in_i < len) {
+            int ch;
+            intptr_t distance = parse_char(len - in_i, &in[in_i], &ch);
+            if (distance < 0) abort();
+
+            assert(ch < 0x80);
+            out[out_i++] = ch;
+            in_i += distance;
+        }
+
+        assert(out_i <= len);
+        out[out_i++] = '\0';
+
+        e->str.start = (unsigned char*)&out[0];
+        e->str.end = (unsigned char*)&out[out_i];
+
+        return (e->type = new_array(tu, &builtin_types[TYPE_SHORT], out_i));
+    }
+    case EXPR_STR: {
+        const char* in = (const char*)(e->str.start + 1);
+        size_t len = ((const char*)e->str.end - 1) - in;
+
+        // it can't be bigger than the original
+        char* out = arena_alloc(&thread_arena, len + 1, 1);
+
+        size_t out_i = 0, in_i = 0;
+        while (in_i < len) {
+            int ch;
+            intptr_t distance = parse_char(len - in_i, &in[in_i], &ch);
+            if (distance < 0) abort();
+
+            out[out_i++] = ch;
+            in_i += distance;
+        }
+
+        assert(out_i <= len);
+        out[out_i++] = '\0';
+
+        e->str.start = (unsigned char*)out;
+        e->str.end = (unsigned char*)(out + out_i);
+
+        return (e->type = new_array(tu, &builtin_types[TYPE_CHAR], out_i));
+    }
+    case EXPR_SIZEOF: {
+        Type* src = sema_expr(tu, e->x_of_expr.expr);
+
+        //assert(src->size && "Something went wrong...");
+        *e = (Expr){
+            .op = EXPR_INT,
+            .type = &builtin_types[TYPE_ULONG],
+            .int_num = {src->size, INT_SUFFIX_ULL}};
+        return (e->type = &builtin_types[TYPE_ULONG]);
+    }
+    case EXPR_ALIGNOF: {
+        Type* src = sema_expr(tu, e->x_of_expr.expr);
+
+        //assert(src->align && "Something went wrong...");
+        *e = (Expr){
+            .op = EXPR_INT,
+            .type = &builtin_types[TYPE_ULONG],
+            .int_num = {src->align, INT_SUFFIX_ULL}};
+        return (e->type = &builtin_types[TYPE_ULONG]);
+    }
+    case EXPR_SIZEOF_T: {
+        try_resolve_typeof(tu, e->x_of_type.type);
+
+        if (e->x_of_type.type->kind == KIND_FUNC) {
+            REPORT_EXPR(WARNING, e, "sizeof(function type) is undefined (Cuik will always resolve it to 1)");
+        }
+
+        assert(e->x_of_type.type->size && "Something went wrong...");
+        *e = (Expr){
+            .op = EXPR_INT,
+            .type = &builtin_types[TYPE_ULONG],
+            .int_num = {e->x_of_type.type->size, INT_SUFFIX_NONE}};
+        return (e->type = &builtin_types[TYPE_ULONG]);
+    }
+    case EXPR_ALIGNOF_T: {
+        try_resolve_typeof(tu, e->x_of_type.type);
+
+        if (e->x_of_type.type->kind == KIND_FUNC) {
+            REPORT_EXPR(WARNING, e, "alignof(function type) is undefined (Cuik will always resolve it to 1)");
+        }
+
+        assert(e->x_of_type.type->align && "Something went wrong...");
+        *e = (Expr){
+            .op = EXPR_INT,
+            .type = &builtin_types[TYPE_ULONG],
+            .int_num = {e->x_of_type.type->align, INT_SUFFIX_NONE}};
+        return (e->type = &builtin_types[TYPE_ULONG]);
+    }
+    case EXPR_FUNCTION: {
+        // e->type is already set for this bad boy... maybe we
+        // shouldn't do that for consistency sake...
+        return e->type;
+    }
+    case EXPR_INITIALIZER: {
+        try_resolve_typeof(tu, e->init.type);
+        Type* type = e->init.type;
+
+        if (type->kind == KIND_ARRAY) {
+            int old_array_count = type->array_count;
+
+            int new_array_count;
+            sema_infer_initializer_array_count(tu, e->init.count, e->init.nodes, 0, &new_array_count);
+
+            // if it's 0, then it's unsized and anything goes
+            if (old_array_count != 0) {
+                // verify that everything fits correctly
+                if (old_array_count < new_array_count) {
+                    REPORT_EXPR(ERROR, e, "Array cannot fit into declaration (needs %d, got %d)", old_array_count, new_array_count);
+                }
+            } else {
+                e->init.type = new_array(tu, type->array_of, new_array_count);
+            }
+        }
+
+        walk_initializer_for_sema(tu, type, e->init.count, e->init.nodes, 0);
+        return (e->type = e->init.type);
+    }
+    case EXPR_LOGICAL_NOT: {
+        /* Type* src = */ sema_expr(tu, e->unary_op.src);
+
+        e->unary_op.src->cast_type = &builtin_types[TYPE_BOOL];
+        return (e->type = &builtin_types[TYPE_BOOL]);
+    }
+    case EXPR_NOT:
+    case EXPR_NEGATE:
+    case EXPR_PRE_INC:
+    case EXPR_PRE_DEC:
+    case EXPR_POST_INC:
+    case EXPR_POST_DEC: {
+        Type* src = sema_expr(tu, e->unary_op.src);
+
+        e->unary_op.src->cast_type = src;
+        return (e->type = src);
+    }
+    case EXPR_ADDR: {
+        uint64_t dst;
+        if (in_the_semantic_phase && const_eval_try_offsetof_hack(tu, e->unary_op.src, &dst)) {
+            *e = (Expr){
+                .op = EXPR_INT,
+                .type = &builtin_types[TYPE_ULONG],
+                .int_num = {dst, INT_SUFFIX_ULL}};
+            return &builtin_types[TYPE_ULONG];
+        }
+
+        Type* src = sema_expr(tu, e->unary_op.src);
+        return (e->type = new_pointer(tu, src));
+    }
+    case EXPR_SYMBOL: {
+        Stmt* restrict sym = e->symbol;
+        if (e->is_resolving_symbol) {
+            REPORT_STMT(ERROR, sym, "cycle in symbol", sym->decl.name);
+            return (e->type = &builtin_types[TYPE_VOID]);
+        }
+
+        if (sym->op == STMT_LABEL) {
+            if (!sym->label.placed) {
+                REPORT_STMT(ERROR, sym, "label '%s' is never defined.", sym->label.name);
+            }
+
+            return (e->type = &builtin_types[TYPE_VOID]);
+        } else {
+            Type* type = sym->decl.type;
+
+            if (type->kind == KIND_ARRAY) {
+                if (type->size == 0 && sym->op == STMT_GLOBAL_DECL) {
+                    e->is_resolving_symbol = true;
+
+                    // try to resolve the type since it's incomplete
+                    sema_stmt(tu, sym);
+
+                    e->is_resolving_symbol = false;
+                    type = sym->decl.type;
+                    assert(type->size != 0 && "Uhh... we fucked up");
+                }
+
+                // this is the only *current* example where something sets
+                // it's own cast_type it's an exception to the rules.
+                e->cast_type = new_pointer(tu, type->array_of);
             }
 
             return (e->type = type);
         }
-        case EXPR_INT: {
-            switch (e->int_num.suffix) {
-                case INT_SUFFIX_NONE: {
-                    unsigned int original = (unsigned int)e->int_num.num;
-                    unsigned long long expected = (unsigned long long)e->int_num.num;
+    }
+    case EXPR_PARAM: {
+        int param_num = e->param_num;
 
-                    if (original != expected) {
-                        REPORT_EXPR(ERROR, e, "Could not represent integer literal as int. (%llu or %llx)", expected, expected);
-                    }
+        Param* param_list = function_stmt->decl.type->func.param_list;
+        return (e->type = param_list[param_num].type);
+    }
+    case EXPR_GENERIC: {
+        Type* src = sema_expr(tu, e->generic_.controlling_expr);
 
-                    return (e->type = &builtin_types[TYPE_INT]);
-                }
+        // _Generic's controlling expression does rvalue conversions so
+        // an array is treated as a pointer not an array
+        if (src->kind == KIND_ARRAY) {
+            src = new_pointer(tu, src->array_of);
+        } else if (src->kind == KIND_FUNC) {
+            src = new_pointer(tu, src);
+        }
 
-                case INT_SUFFIX_U: {
-                    unsigned int original = (unsigned int)e->int_num.num;
-                    unsigned long long expected = (unsigned long long)e->int_num.num;
+        Expr* default_case = 0;
+        Expr* match = 0;
 
-                    if (original != expected) {
-                        REPORT_EXPR(ERROR, e, "Could not represent integer literal as unsigned int.");
-                    }
-
-                    return (e->type = &builtin_types[TYPE_UINT]);
-                }
-
-                case INT_SUFFIX_L:
-                return (e->type = &builtin_types[settings.is_windows_long ? TYPE_INT : TYPE_LONG]);
-                case INT_SUFFIX_UL:
-                return (e->type = &builtin_types[settings.is_windows_long ? TYPE_UINT : TYPE_ULONG]);
-
-                case INT_SUFFIX_LL:
-                return (e->type = &builtin_types[TYPE_LONG]);
-                case INT_SUFFIX_ULL:
-                return (e->type = &builtin_types[TYPE_ULONG]);
-
-                default:
-                REPORT_EXPR(ERROR, e, "Could not represent integer literal.");
-                return (e->type = &builtin_types[TYPE_VOID]);
+        for (size_t i = 0; i < e->generic_.case_count; i++) {
+            if (e->generic_.cases[i].key == 0) {
+                default_case = e->generic_.cases[i].value;
+            } else if (type_very_compatible(tu, e->generic_.cases[i].key, src)) {
+                match = e->generic_.cases[i].value;
             }
         }
-        case EXPR_ENUM: {
-            return (e->type = &builtin_types[TYPE_INT]);
-        }
-        case EXPR_FLOAT32: {
-            return (e->type = &builtin_types[TYPE_FLOAT]);
-        }
-        case EXPR_FLOAT64: {
-            return (e->type = &builtin_types[TYPE_DOUBLE]);
-        }
-        case EXPR_CHAR: {
-            return (e->type = &builtin_types[TYPE_CHAR]);
-        }
-        case EXPR_WCHAR: {
-            return (e->type = &builtin_types[TYPE_SHORT]);
-        }
-        case EXPR_WSTR: {
-            const char* in = (const char*)(e->str.start + 1);
-            size_t len = ((const char*)e->str.end - 1) - in;
 
-            // it can't be bigger than the original
-            wchar_t* out = arena_alloc(&thread_arena, (len + 1) * 2, 1);
-
-            size_t out_i = 0, in_i = 0;
-            while (in_i < len) {
-                int ch;
-                intptr_t distance = parse_char(len - in_i, &in[in_i], &ch);
-                if (distance < 0) abort();
-
-                assert(ch < 0x80);
-                out[out_i++] = ch;
-                in_i += distance;
+        if (match == 0) {
+            if (default_case == 0) {
+                // if we didn't match anything and there's no default case, error out
+                REPORT_EXPR(ERROR, e, "Could not match _Generic against any cases");
+                return 0;
             }
 
-            assert(out_i <= len);
-            out[out_i++] = '\0';
-
-            e->str.start = (unsigned char*) &out[0];
-            e->str.end = (unsigned char*) &out[out_i];
-
-            return (e->type = new_array(tu, &builtin_types[TYPE_SHORT], out_i));
+            e->generic_.controlling_expr = default_case;
+        } else {
+            e->generic_.controlling_expr = match;
         }
-        case EXPR_STR: {
-            const char* in = (const char*)(e->str.start + 1);
-            size_t len = ((const char*)e->str.end - 1) - in;
 
-            // it can't be bigger than the original
-            char* out = arena_alloc(&thread_arena, len + 1, 1);
+        // once we set case_count to 0, we've resolved the _Generic
+        e->generic_.cases = NULL;
+        e->generic_.case_count = 0;
 
-            size_t out_i = 0, in_i = 0;
-            while (in_i < len) {
-                int ch;
-                intptr_t distance = parse_char(len - in_i, &in[in_i], &ch);
-                if (distance < 0) abort();
+        return (e->type = sema_expr(tu, e->generic_.controlling_expr));
+    }
+    case EXPR_CAST: {
+        try_resolve_typeof(tu, e->cast.type);
 
-                out[out_i++] = ch;
-                in_i += distance;
-            }
+        /* Type* src = */ sema_expr(tu, e->cast.src);
 
-            assert(out_i <= len);
-            out[out_i++] = '\0';
+        // set child's cast type
+        e->cast.src->cast_type = e->cast.type;
+        return (e->type = e->cast.type);
+    }
+    case EXPR_SUBSCRIPT: {
+        Type* base = sema_expr(tu, e->subscript.base);
+        Type* index = sema_expr(tu, e->subscript.index);
 
-            e->str.start = (unsigned char*) out;
-            e->str.end = (unsigned char*)  (out+out_i);
-
-            return (e->type = new_array(tu, &builtin_types[TYPE_CHAR], out_i));
+        if (index->kind == KIND_PTR ||
+            index->kind == KIND_ARRAY) {
+            swap(base, index);
+            swap(e->subscript.base, e->subscript.index);
         }
-        case EXPR_SIZEOF: {
-            Type* src = sema_expr(tu, e->x_of_expr.expr);
 
-            //assert(src->size && "Something went wrong...");
-            *e = (Expr) {
-                .op = EXPR_INT,
-                .type = &builtin_types[TYPE_ULONG],
-                .int_num = { src->size, INT_SUFFIX_ULL }
-            };
-            return (e->type = &builtin_types[TYPE_ULONG]);
+        if (base->kind == KIND_ARRAY) {
+            base = new_pointer(tu, base->array_of);
         }
-        case EXPR_ALIGNOF: {
-            Type* src = sema_expr(tu, e->x_of_expr.expr);
 
-            //assert(src->align && "Something went wrong...");
-            *e = (Expr) {
-                .op = EXPR_INT,
-                .type = &builtin_types[TYPE_ULONG],
-                .int_num = { src->align, INT_SUFFIX_ULL }
-            };
-            return (e->type = &builtin_types[TYPE_ULONG]);
+        if (base->kind != KIND_PTR) {
+            type_as_string(tu, sizeof(temp_string0), temp_string0, base);
+            REPORT_EXPR(ERROR, e, "Cannot perform subscript [] with base type '%s'", temp_string0);
+            return (e->type = NULL);
         }
-        case EXPR_SIZEOF_T: {
-            try_resolve_typeof(tu, e->x_of_type.type);
 
-            if (e->x_of_type.type->kind == KIND_FUNC) {
-                REPORT_EXPR(WARNING, e, "sizeof(function type) is undefined (Cuik will always resolve it to 1)");
-            }
+        e->subscript.base->cast_type = base;
+        e->subscript.index->cast_type = &builtin_types[TYPE_LONG];
+        return (e->type = base->ptr_to);
+    }
+    case EXPR_DEREF: {
+        Type* base = sema_expr(tu, e->unary_op.src);
+        e->unary_op.src->cast_type = base;
 
-            assert(e->x_of_type.type->size && "Something went wrong...");
-            *e = (Expr) {
-                .op = EXPR_INT,
-                .type = &builtin_types[TYPE_ULONG],
-                .int_num = { e->x_of_type.type->size, INT_SUFFIX_NONE }
-            };
-            return (e->type = &builtin_types[TYPE_ULONG]);
-        }
-        case EXPR_ALIGNOF_T: {
-            try_resolve_typeof(tu, e->x_of_type.type);
-
-            if (e->x_of_type.type->kind == KIND_FUNC) {
-                REPORT_EXPR(WARNING, e, "alignof(function type) is undefined (Cuik will always resolve it to 1)");
-            }
-
-            assert(e->x_of_type.type->align && "Something went wrong...");
-            *e = (Expr) {
-                .op = EXPR_INT,
-                .type = &builtin_types[TYPE_ULONG],
-                .int_num = { e->x_of_type.type->align, INT_SUFFIX_NONE }
-            };
-            return (e->type = &builtin_types[TYPE_ULONG]);
-        }
-        case EXPR_FUNCTION: {
-            // e->type is already set for this bad boy... maybe we
-            // shouldn't do that for consistency sake...
-            return e->type;
-        }
-        case EXPR_INITIALIZER: {
-            try_resolve_typeof(tu, e->init.type);
-            Type* type = e->init.type;
-
-            if (type->kind == KIND_ARRAY) {
-                int old_array_count = type->array_count;
-
-                int new_array_count;
-                sema_infer_initializer_array_count(tu, e->init.count, e->init.nodes, 0, &new_array_count);
-
-                // if it's 0, then it's unsized and anything goes
-                if (old_array_count != 0) {
-                    // verify that everything fits correctly
-                    if (old_array_count < new_array_count) {
-                        REPORT_EXPR(ERROR, e, "Array cannot fit into declaration (needs %d, got %d)", old_array_count, new_array_count);
-                    }
-                } else {
-                    e->init.type = new_array(tu, type->array_of, new_array_count);
-                }
-            }
-
-            walk_initializer_for_sema(tu, type, e->init.count, e->init.nodes, 0);
-            return (e->type = e->init.type);
-        }
-        case EXPR_LOGICAL_NOT: {
-            /* Type* src = */ sema_expr(tu, e->unary_op.src);
-
-            e->unary_op.src->cast_type = &builtin_types[TYPE_BOOL];
-            return (e->type = &builtin_types[TYPE_BOOL]);
-        }
-        case EXPR_NOT:
-        case EXPR_NEGATE:
-        case EXPR_PRE_INC:
-        case EXPR_PRE_DEC:
-        case EXPR_POST_INC:
-        case EXPR_POST_DEC: {
-            Type* src = sema_expr(tu, e->unary_op.src);
-
-            e->unary_op.src->cast_type = src;
-            return (e->type = src);
-        }
-        case EXPR_ADDR: {
-            uint64_t dst;
-            if (in_the_semantic_phase && const_eval_try_offsetof_hack(tu, e->unary_op.src, &dst)) {
-                *e = (Expr) {
-                    .op = EXPR_INT,
-                    .type = &builtin_types[TYPE_ULONG],
-                    .int_num = { dst, INT_SUFFIX_ULL }
-                };
-                return &builtin_types[TYPE_ULONG];
-            }
-
-            Type* src = sema_expr(tu, e->unary_op.src);
-            return (e->type = new_pointer(tu, src));
-        }
-        case EXPR_SYMBOL: {
-            Stmt* restrict sym = e->symbol;
-            if (e->is_resolving_symbol) {
-                REPORT_STMT(ERROR, sym, "cycle in symbol", sym->decl.name);
-                return (e->type = &builtin_types[TYPE_VOID]);
-            }
-
-            if (sym->op == STMT_LABEL) {
-                if (!sym->label.placed) {
-                    REPORT_STMT(ERROR, sym, "label '%s' is never defined.", sym->label.name);
-                }
-
-                return (e->type = &builtin_types[TYPE_VOID]);
-            } else {
-                Type* type = sym->decl.type;
-
-                if (type->kind == KIND_ARRAY) {
-                    if (type->size == 0 && sym->op == STMT_GLOBAL_DECL) {
-                        e->is_resolving_symbol = true;
-
-                        // try to resolve the type since it's incomplete
-                        sema_stmt(tu, sym);
-
-                        e->is_resolving_symbol = false;
-                        type = sym->decl.type;
-                        assert(type->size != 0 && "Uhh... we fucked up");
-                    }
-
-                    // this is the only *current* example where something sets
-                    // it's own cast_type it's an exception to the rules.
-                    e->cast_type = new_pointer(tu, type->array_of);
-                }
-
-                return (e->type = type);
-            }
-        }
-        case EXPR_PARAM: {
-            int param_num = e->param_num;
-
-            Param* param_list = function_stmt->decl.type->func.param_list;
-            return (e->type = param_list[param_num].type);
-        }
-        case EXPR_GENERIC: {
-            Type* src = sema_expr(tu, e->generic_.controlling_expr);
-
-            // _Generic's controlling expression does rvalue conversions so
-            // an array is treated as a pointer not an array
-            if (src->kind == KIND_ARRAY) {
-                src = new_pointer(tu, src->array_of);
-            } else if (src->kind == KIND_FUNC) {
-                src = new_pointer(tu, src);
-            }
-
-            Expr* default_case = 0;
-            Expr* match = 0;
-
-            for (size_t i = 0; i < e->generic_.case_count; i++) {
-                if (e->generic_.cases[i].key == 0) {
-                    default_case = e->generic_.cases[i].value;
-                } else if (type_very_compatible(tu, e->generic_.cases[i].key, src)) {
-                    match = e->generic_.cases[i].value;
-                }
-            }
-
-            if (match == 0) {
-                if (default_case == 0) {
-                    // if we didn't match anything and there's no default case, error out
-                    REPORT_EXPR(ERROR, e, "Could not match _Generic against any cases");
-                    return 0;
-                }
-
-                e->generic_.controlling_expr = default_case;
-            } else {
-                e->generic_.controlling_expr = match;
-            }
-
-            // once we set case_count to 0, we've resolved the _Generic
-            e->generic_.cases = NULL;
-            e->generic_.case_count = 0;
-
-            return (e->type = sema_expr(tu, e->generic_.controlling_expr));
-        }
-        case EXPR_CAST: {
-            try_resolve_typeof(tu, e->cast.type);
-
-            /* Type* src = */ sema_expr(tu, e->cast.src);
-
-            // set child's cast type
-            e->cast.src->cast_type = e->cast.type;
-            return (e->type = e->cast.type);
-        }
-        case EXPR_SUBSCRIPT: {
-            Type* base = sema_expr(tu, e->subscript.base);
-            Type* index = sema_expr(tu, e->subscript.index);
-
-            if (index->kind == KIND_PTR ||
-                index->kind == KIND_ARRAY) {
-                swap(base, index);
-                swap(e->subscript.base, e->subscript.index);
-            }
-
-            if (base->kind == KIND_ARRAY) {
-                base = new_pointer(tu, base->array_of);
-            }
-
-            if (base->kind != KIND_PTR) {
-                type_as_string(tu, sizeof(temp_string0), temp_string0, base);
-                REPORT_EXPR(ERROR, e, "Cannot perform subscript [] with base type '%s'", temp_string0);
-                return (e->type = NULL);
-            }
-
-            e->subscript.base->cast_type = base;
-            e->subscript.index->cast_type = &builtin_types[TYPE_LONG];
+        if (base->kind == KIND_PTR) {
             return (e->type = base->ptr_to);
+        } else if (base->kind == KIND_ARRAY) {
+            return (e->type = base->array_of);
+        } else {
+            REPORT_EXPR(ERROR, e, "TODO");
+            abort();
         }
-        case EXPR_DEREF: {
-            Type* base = sema_expr(tu, e->unary_op.src);
-            e->unary_op.src->cast_type = base;
-
-            if (base->kind == KIND_PTR) {
-                return (e->type = base->ptr_to);
-            } else if (base->kind == KIND_ARRAY) {
-                return (e->type = base->array_of);
-            } else {
-                REPORT_EXPR(ERROR, e, "TODO");
-                abort();
-            }
-        }
-        case EXPR_CALL: {
-            if (e->call.target->op == EXPR_BUILTIN_SYMBOL) {
-                const char* name = (const char*) e->call.target->builtin_sym.name;
-
-                Expr** args   = e->call.param_start;
-                int arg_count = e->call.param_count;
-
-                Type* ty = target_desc.type_check_builtin(tu, e, name, arg_count, args);
-                if (ty == NULL) ty = &builtin_types[TYPE_VOID];
-
-                return (e->type = ty);
-            }
-
-            // Call function
-            Type* func_type = sema_expr(tu, e->call.target);
-
-            // implicit dereference
-            if (func_type->kind == KIND_PTR) {
-                func_type = func_type->ptr_to;
-            }
-
-            e->call.target->cast_type = func_type;
-
-            if (func_type->kind != KIND_FUNC) {
-                REPORT_EXPR(ERROR, e, "function call target must be a function-type.");
-                goto failure;
-            }
+    }
+    case EXPR_CALL: {
+        if (e->call.target->op == EXPR_BUILTIN_SYMBOL) {
+            const char* name = (const char*)e->call.target->builtin_sym.name;
 
             Expr** args = e->call.param_start;
             int arg_count = e->call.param_count;
 
-            Param* params = func_type->func.param_list;
-            int param_count = func_type->func.param_count;
+            Type* ty = target_desc.type_check_builtin(tu, e, name, arg_count, args);
+            if (ty == NULL) ty = &builtin_types[TYPE_VOID];
 
-            if (func_type->func.has_varargs) {
-                if (arg_count < param_count) {
-                    REPORT_EXPR(ERROR, e, "Not enough arguments (expected at least %d, got %d)", param_count, arg_count);
-                    goto failure;
-                }
+            return (e->type = ty);
+        }
 
-                // type-check the parameters with a known type
-                for (size_t i = 0; i < param_count; i++) {
-                    Type* arg_type = sema_expr(tu, args[i]);
+        // Call function
+        Type* func_type = sema_expr(tu, e->call.target);
 
-                    if (!implicit_conversion(tu, arg_type, params[i].type, args[i])) {
-                        continue;
-                    }
+        // implicit dereference
+        if (func_type->kind == KIND_PTR) {
+            func_type = func_type->ptr_to;
+        }
 
-                    args[i]->cast_type = params[i].type;
-                }
+        e->call.target->cast_type = func_type;
 
-                // type-check the untyped arguments
-                for (size_t i = param_count; i < arg_count; i++) {
-                    Type* src = sema_expr(tu, args[i]);
+        if (func_type->kind != KIND_FUNC) {
+            REPORT_EXPR(ERROR, e, "function call target must be a function-type.");
+            goto failure;
+        }
 
-                    // all integers ranked lower than int are promoted to int
-                    if (src->kind >= KIND_BOOL && src->kind < KIND_INT) {
-                        src = &builtin_types[TYPE_INT];
-                    }
+        Expr** args = e->call.param_start;
+        int arg_count = e->call.param_count;
 
-                    // all floats ranked lower than double are promoted to double
-                    if (src->kind == KIND_FLOAT) {
-                        src = &builtin_types[TYPE_DOUBLE];
-                    }
+        Param* params = func_type->func.param_list;
+        int param_count = func_type->func.param_count;
 
-                    args[i]->cast_type = src;
-                }
-            } else {
-                if (arg_count != param_count) {
-                    REPORT_EXPR(ERROR, e, "Argument count mismatch (expected %d, got %d)", param_count, arg_count);
-                    goto failure;
-                }
-
-                for (size_t i = 0; i < arg_count; i++) {
-                    Type* arg_type = sema_expr(tu, args[i]);
-
-                    if (!implicit_conversion(tu, arg_type, params[i].type, args[i])) {
-                        continue;
-                    }
-
-                    args[i]->cast_type = params[i].type;
-                }
+        if (func_type->func.has_varargs) {
+            if (arg_count < param_count) {
+                REPORT_EXPR(ERROR, e, "Not enough arguments (expected at least %d, got %d)", param_count, arg_count);
+                goto failure;
             }
 
-            failure:
-            return (e->type = func_type->func.return_type);
-        }
-        case EXPR_TERNARY: {
-            Type* cond_type = sema_expr(tu, e->ternary_op.left);
-            if (!is_scalar_type(tu, cond_type)) {
-                type_as_string(tu, sizeof(temp_string0), temp_string0, cond_type);
+            // type-check the parameters with a known type
+            for (size_t i = 0; i < param_count; i++) {
+                Type* arg_type = sema_expr(tu, args[i]);
 
-                REPORT_EXPR(ERROR, e, "Could not convert type %s into boolean.", temp_string0);
-            }
-            e->ternary_op.left->cast_type = &builtin_types[TYPE_BOOL];
-
-            Type* type = get_common_type(tu,
-                                         sema_expr(tu, e->ternary_op.middle),
-                                         sema_expr(tu, e->ternary_op.right));
-
-            e->ternary_op.middle->cast_type = type;
-            e->ternary_op.right->cast_type = type;
-
-            return (e->type = type);
-        }
-        case EXPR_COMMA: {
-            sema_expr(tu, e->bin_op.left);
-
-            return (e->type = sema_expr(tu, e->bin_op.right));
-        }
-        case EXPR_DOT:
-        case EXPR_ARROW: {
-            uint32_t offset = 0;
-            Member* m = sema_resolve_member_access(tu, e, &offset);
-            if (m != NULL) {
-                if (in_the_semantic_phase) {
-                    e->dot_arrow.base->cast_type = sema_expr(tu, e->dot_arrow.base);
-
-                    // resolved
-                    e->op = (e->op == EXPR_DOT ? EXPR_DOT_R : EXPR_ARROW_R);
-                    e->dot_arrow.member = m;
-                    e->dot_arrow.offset = offset;
+                if (!implicit_conversion(tu, arg_type, params[i].type, args[i])) {
+                    continue;
                 }
 
-                return (e->type = m->type);
+                args[i]->cast_type = params[i].type;
             }
 
-            return (e->type = &builtin_types[TYPE_VOID]);
-        }
-        case EXPR_PTRADD:
-        case EXPR_PTRSUB:
-        case EXPR_PTRDIFF:
-        case EXPR_DOT_R:
-        case EXPR_ARROW_R: {
-            return e->type;
-        }
-        case EXPR_LOGICAL_AND:
-        case EXPR_LOGICAL_OR: {
-            sema_expr(tu, e->bin_op.left);
-            sema_expr(tu, e->bin_op.right);
+            // type-check the untyped arguments
+            for (size_t i = param_count; i < arg_count; i++) {
+                Type* src = sema_expr(tu, args[i]);
 
-            e->bin_op.left->cast_type  = &builtin_types[TYPE_BOOL];
-            e->bin_op.right->cast_type = &builtin_types[TYPE_BOOL];
-
-            return (e->type = &builtin_types[TYPE_BOOL]);
-        }
-        case EXPR_PLUS:
-        case EXPR_MINUS:
-        case EXPR_TIMES:
-        case EXPR_SLASH:
-        case EXPR_PERCENT:
-        case EXPR_AND:
-        case EXPR_OR:
-        case EXPR_XOR:
-        case EXPR_SHL:
-        case EXPR_SHR: {
-            Type* lhs = sema_expr(tu, e->bin_op.left);
-            Type* rhs = sema_expr(tu, e->bin_op.right);
-
-            if ((e->op == EXPR_PLUS ||
-                 e->op == EXPR_MINUS) &&
-                (lhs->kind == KIND_PTR ||
-                 lhs->kind == KIND_ARRAY ||
-                 rhs->kind == KIND_PTR ||
-                 rhs->kind == KIND_ARRAY)) {
-                // Pointer arithmatic
-                if (e->op == EXPR_PLUS && (rhs->kind == KIND_PTR || rhs->kind == KIND_ARRAY)) {
-                    swap(lhs, rhs);
-                    swap(e->bin_op.left, e->bin_op.right);
+                // all integers ranked lower than int are promoted to int
+                if (src->kind >= KIND_BOOL && src->kind < KIND_INT) {
+                    src = &builtin_types[TYPE_INT];
                 }
 
-                if (rhs->kind == KIND_PTR || rhs->kind == KIND_ARRAY) {
-                    if (e->op == EXPR_MINUS) {
-                        // ptr - ptr = ptrdiff_t
-                        e->bin_op.left->cast_type = lhs;
-                        e->bin_op.right->cast_type = rhs;
+                // all floats ranked lower than double are promoted to double
+                if (src->kind == KIND_FLOAT) {
+                    src = &builtin_types[TYPE_DOUBLE];
+                }
 
-                        e->op = EXPR_PTRDIFF;
-                        return (e->type = &builtin_types[TYPE_LONG]);
-                    } else {
-                        REPORT_EXPR(ERROR, e, "Cannot do pointer addition with two pointer operands, one must be an integral type.");
-                        return (e->type = &builtin_types[TYPE_VOID]);
-                    }
-                } else {
+                args[i]->cast_type = src;
+            }
+        } else {
+            if (arg_count != param_count) {
+                REPORT_EXPR(ERROR, e, "Argument count mismatch (expected %d, got %d)", param_count, arg_count);
+                goto failure;
+            }
+
+            for (size_t i = 0; i < arg_count; i++) {
+                Type* arg_type = sema_expr(tu, args[i]);
+
+                if (!implicit_conversion(tu, arg_type, params[i].type, args[i])) {
+                    continue;
+                }
+
+                args[i]->cast_type = params[i].type;
+            }
+        }
+
+    failure:
+        return (e->type = func_type->func.return_type);
+    }
+    case EXPR_TERNARY: {
+        Type* cond_type = sema_expr(tu, e->ternary_op.left);
+        if (!is_scalar_type(tu, cond_type)) {
+            type_as_string(tu, sizeof(temp_string0), temp_string0, cond_type);
+
+            REPORT_EXPR(ERROR, e, "Could not convert type %s into boolean.", temp_string0);
+        }
+        e->ternary_op.left->cast_type = &builtin_types[TYPE_BOOL];
+
+        Type* type = get_common_type(tu,
+                                     sema_expr(tu, e->ternary_op.middle),
+                                     sema_expr(tu, e->ternary_op.right));
+
+        e->ternary_op.middle->cast_type = type;
+        e->ternary_op.right->cast_type = type;
+
+        return (e->type = type);
+    }
+    case EXPR_COMMA: {
+        sema_expr(tu, e->bin_op.left);
+
+        return (e->type = sema_expr(tu, e->bin_op.right));
+    }
+    case EXPR_DOT:
+    case EXPR_ARROW: {
+        uint32_t offset = 0;
+        Member* m = sema_resolve_member_access(tu, e, &offset);
+        if (m != NULL) {
+            if (in_the_semantic_phase) {
+                e->dot_arrow.base->cast_type = sema_expr(tu, e->dot_arrow.base);
+
+                // resolved
+                e->op = (e->op == EXPR_DOT ? EXPR_DOT_R : EXPR_ARROW_R);
+                e->dot_arrow.member = m;
+                e->dot_arrow.offset = offset;
+            }
+
+            return (e->type = m->type);
+        }
+
+        return (e->type = &builtin_types[TYPE_VOID]);
+    }
+    case EXPR_PTRADD:
+    case EXPR_PTRSUB:
+    case EXPR_PTRDIFF:
+    case EXPR_DOT_R:
+    case EXPR_ARROW_R: {
+        return e->type;
+    }
+    case EXPR_LOGICAL_AND:
+    case EXPR_LOGICAL_OR: {
+        sema_expr(tu, e->bin_op.left);
+        sema_expr(tu, e->bin_op.right);
+
+        e->bin_op.left->cast_type = &builtin_types[TYPE_BOOL];
+        e->bin_op.right->cast_type = &builtin_types[TYPE_BOOL];
+
+        return (e->type = &builtin_types[TYPE_BOOL]);
+    }
+    case EXPR_PLUS:
+    case EXPR_MINUS:
+    case EXPR_TIMES:
+    case EXPR_SLASH:
+    case EXPR_PERCENT:
+    case EXPR_AND:
+    case EXPR_OR:
+    case EXPR_XOR:
+    case EXPR_SHL:
+    case EXPR_SHR: {
+        Type* lhs = sema_expr(tu, e->bin_op.left);
+        Type* rhs = sema_expr(tu, e->bin_op.right);
+
+        if ((e->op == EXPR_PLUS ||
+             e->op == EXPR_MINUS) &&
+            (lhs->kind == KIND_PTR ||
+             lhs->kind == KIND_ARRAY ||
+             rhs->kind == KIND_PTR ||
+             rhs->kind == KIND_ARRAY)) {
+            // Pointer arithmatic
+            if (e->op == EXPR_PLUS && (rhs->kind == KIND_PTR || rhs->kind == KIND_ARRAY)) {
+                swap(lhs, rhs);
+                swap(e->bin_op.left, e->bin_op.right);
+            }
+
+            if (rhs->kind == KIND_PTR || rhs->kind == KIND_ARRAY) {
+                if (e->op == EXPR_MINUS) {
+                    // ptr - ptr = ptrdiff_t
                     e->bin_op.left->cast_type = lhs;
-                    e->bin_op.right->cast_type = &builtin_types[TYPE_ULONG];
+                    e->bin_op.right->cast_type = rhs;
 
-                    e->op = (e->op == EXPR_PLUS) ? EXPR_PTRADD : EXPR_PTRSUB;
-                    return (e->type = lhs);
-                }
-            } else {
-                if (!(lhs->kind >= KIND_BOOL &&
-                      lhs->kind <= KIND_DOUBLE &&
-                      rhs->kind >= KIND_BOOL &&
-                      rhs->kind <= KIND_DOUBLE)) {
-                    type_as_string(tu, sizeof(temp_string0), temp_string0, lhs);
-                    type_as_string(tu, sizeof(temp_string1), temp_string1, rhs);
-
-                    REPORT_EXPR(ERROR, e, "Cannot apply binary operator to %s and %s.", temp_string0, temp_string1);
+                    e->op = EXPR_PTRDIFF;
+                    return (e->type = &builtin_types[TYPE_LONG]);
+                } else {
+                    REPORT_EXPR(ERROR, e, "Cannot do pointer addition with two pointer operands, one must be an integral type.");
                     return (e->type = &builtin_types[TYPE_VOID]);
                 }
+            } else {
+                e->bin_op.left->cast_type = lhs;
+                e->bin_op.right->cast_type = &builtin_types[TYPE_ULONG];
 
-                Type* type = get_common_type(tu, lhs, rhs);
-
-                // Do we actually need to check both sides?
-                implicit_conversion(tu, lhs, type, e->bin_op.left);
-                implicit_conversion(tu, rhs, type, e->bin_op.right);
-
-                e->bin_op.left->cast_type = type;
-                e->bin_op.right->cast_type = type;
-
-                return (e->type = type);
+                e->op = (e->op == EXPR_PLUS) ? EXPR_PTRADD : EXPR_PTRSUB;
+                return (e->type = lhs);
             }
-        }
-        case EXPR_CMPEQ:
-        case EXPR_CMPNE:
-        case EXPR_CMPGT:
-        case EXPR_CMPGE:
-        case EXPR_CMPLT:
-        case EXPR_CMPLE: {
-            Type* type = get_common_type(tu,
-                                         sema_expr(tu, e->bin_op.left),
-                                         sema_expr(tu, e->bin_op.right));
+        } else {
+            if (!(lhs->kind >= KIND_BOOL &&
+                  lhs->kind <= KIND_DOUBLE &&
+                  rhs->kind >= KIND_BOOL &&
+                  rhs->kind <= KIND_DOUBLE)) {
+                type_as_string(tu, sizeof(temp_string0), temp_string0, lhs);
+                type_as_string(tu, sizeof(temp_string1), temp_string1, rhs);
+
+                REPORT_EXPR(ERROR, e, "Cannot apply binary operator to %s and %s.", temp_string0, temp_string1);
+                return (e->type = &builtin_types[TYPE_VOID]);
+            }
+
+            Type* type = get_common_type(tu, lhs, rhs);
+
+            // Do we actually need to check both sides?
+            implicit_conversion(tu, lhs, type, e->bin_op.left);
+            implicit_conversion(tu, rhs, type, e->bin_op.right);
 
             e->bin_op.left->cast_type = type;
             e->bin_op.right->cast_type = type;
 
-            return (e->type = &builtin_types[TYPE_BOOL]);
+            return (e->type = type);
         }
-        case EXPR_PLUS_ASSIGN:
-        case EXPR_MINUS_ASSIGN:
-        case EXPR_ASSIGN:
-        case EXPR_TIMES_ASSIGN:
-        case EXPR_SLASH_ASSIGN:
-        case EXPR_AND_ASSIGN:
-        case EXPR_OR_ASSIGN:
-        case EXPR_XOR_ASSIGN:
-        case EXPR_SHL_ASSIGN:
-        case EXPR_SHR_ASSIGN: {
-            if (!is_assignable_expr(tu, e->bin_op.left)) {
-                REPORT_EXPR(WARNING, e->bin_op.left, "Left-hand side is not assignable");
+    }
+    case EXPR_CMPEQ:
+    case EXPR_CMPNE:
+    case EXPR_CMPGT:
+    case EXPR_CMPGE:
+    case EXPR_CMPLT:
+    case EXPR_CMPLE: {
+        Type* type = get_common_type(tu,
+                                     sema_expr(tu, e->bin_op.left),
+                                     sema_expr(tu, e->bin_op.right));
 
-                e->bin_op.left->cast_type = 0;
-                e->bin_op.right->cast_type = 0;
-                return (e->type = 0);
-            }
+        e->bin_op.left->cast_type = type;
+        e->bin_op.right->cast_type = type;
 
-            Type* lhs = sema_expr(tu, e->bin_op.left);
-            sema_expr(tu, e->bin_op.right);
+        return (e->type = &builtin_types[TYPE_BOOL]);
+    }
+    case EXPR_PLUS_ASSIGN:
+    case EXPR_MINUS_ASSIGN:
+    case EXPR_ASSIGN:
+    case EXPR_TIMES_ASSIGN:
+    case EXPR_SLASH_ASSIGN:
+    case EXPR_AND_ASSIGN:
+    case EXPR_OR_ASSIGN:
+    case EXPR_XOR_ASSIGN:
+    case EXPR_SHL_ASSIGN:
+    case EXPR_SHR_ASSIGN: {
+        if (!is_assignable_expr(tu, e->bin_op.left)) {
+            REPORT_EXPR(WARNING, e->bin_op.left, "Left-hand side is not assignable");
 
-            e->bin_op.left->cast_type = lhs;
-            e->bin_op.right->cast_type = lhs;
-
-            return (e->type = lhs);
+            e->bin_op.left->cast_type = 0;
+            e->bin_op.right->cast_type = 0;
+            return (e->type = 0);
         }
-        default:
+
+        Type* lhs = sema_expr(tu, e->bin_op.left);
+        sema_expr(tu, e->bin_op.right);
+
+        e->bin_op.left->cast_type = lhs;
+        e->bin_op.right->cast_type = lhs;
+
+        return (e->type = lhs);
+    }
+    default:
         break;
     }
 
@@ -1149,189 +1147,191 @@ void sema_stmt(TranslationUnit* tu, Stmt* restrict s) {
     if (s == NULL) return;
 
     switch (s->op) {
-        case STMT_NONE: break;
-        case STMT_LABEL: break;
-        case STMT_GOTO: {
-            s->goto_.target->cast_type = sema_expr(tu, s->goto_.target);
-            break;
-        }
-        case STMT_COMPOUND: {
-            Stmt** kids = s->compound.kids;
-            size_t count = s->compound.kids_count;
+    case STMT_NONE:
+        break;
+    case STMT_LABEL:
+        break;
+    case STMT_GOTO: {
+        s->goto_.target->cast_type = sema_expr(tu, s->goto_.target);
+        break;
+    }
+    case STMT_COMPOUND: {
+        Stmt** kids = s->compound.kids;
+        size_t count = s->compound.kids_count;
 
-            Stmt* killer = 0;
-            for (size_t i = 0; i < count; i++) {
-                Stmt* kid = kids[i];
-                sema_stmt(tu, kid);
+        Stmt* killer = 0;
+        for (size_t i = 0; i < count; i++) {
+            Stmt* kid = kids[i];
+            sema_stmt(tu, kid);
 
-                if (killer) {
-                    if (kid->op == STMT_LABEL ||
-                        kid->op == STMT_CASE  ||
-                        kid->op == STMT_DEFAULT) {
-                        killer = 0;
-                    } else {
-                        REPORT_STMT(ERROR, kid, "Dead code");
-                        REPORT_STMT(INFO, killer, "After");
-                        goto compound_failure;
-                    }
+            if (killer) {
+                if (kid->op == STMT_LABEL ||
+                    kid->op == STMT_CASE ||
+                    kid->op == STMT_DEFAULT) {
+                    killer = 0;
                 } else {
-                    if (kid->op == STMT_RETURN ||
-                        kid->op == STMT_GOTO   ||
-                        kid->op == STMT_BREAK  ||
-                        kid->op == STMT_CONTINUE) {
-                        killer = kid;
-                    }
+                    REPORT_STMT(ERROR, kid, "Dead code");
+                    REPORT_STMT(INFO, killer, "After");
+                    goto compound_failure;
+                }
+            } else {
+                if (kid->op == STMT_RETURN ||
+                    kid->op == STMT_GOTO ||
+                    kid->op == STMT_BREAK ||
+                    kid->op == STMT_CONTINUE) {
+                    killer = kid;
                 }
             }
-
-            compound_failure:
-            break;
         }
-        // global decl is only resolved here in the rare occasion where
-        // const_eval is needing to resolve a type early
-        case STMT_GLOBAL_DECL:
-        case STMT_DECL: {
-            if (s->decl.initial) {
-                try_resolve_typeof(tu, s->decl.type);
 
-                if (s->decl.initial->op == EXPR_INITIALIZER &&
-                    s->decl.initial->init.type == 0) {
-                    // give it something to go off of
-                    s->decl.initial->init.type = s->decl.type;
-                }
+    compound_failure:
+        break;
+    }
+    // global decl is only resolved here in the rare occasion where
+    // const_eval is needing to resolve a type early
+    case STMT_GLOBAL_DECL:
+    case STMT_DECL: {
+        if (s->decl.initial) {
+            try_resolve_typeof(tu, s->decl.type);
 
-                Type* decl_type = s->decl.type;
-                Type* expr_type = sema_expr(tu, s->decl.initial);
+            if (s->decl.initial->op == EXPR_INITIALIZER &&
+                s->decl.initial->init.type == 0) {
+                // give it something to go off of
+                s->decl.initial->init.type = s->decl.type;
+            }
 
-                Expr* e = s->decl.initial;
-                if (e->op == EXPR_INITIALIZER) {
-                    // Auto-detect array count from initializer
-                    if (decl_type->kind == KIND_ARRAY && expr_type->kind == KIND_ARRAY) {
-                        if (decl_type->array_count != 0 && decl_type->array_count < expr_type->array_count) {
-                            REPORT_STMT(ERROR, s, "Array initializer does not fit into declaration (expected %d, got %d)", decl_type->array_count, expr_type->array_count);
-                        } else {
-                            s->decl.type = expr_type;
-                        }
-                    }
-                } else if (e->op == EXPR_STR || e->op == EXPR_WSTR) {
-                    // Auto-detect array count from string
-                    if (decl_type->kind == KIND_ARRAY && decl_type->array_count == 0) {
+            Type* decl_type = s->decl.type;
+            Type* expr_type = sema_expr(tu, s->decl.initial);
+
+            Expr* e = s->decl.initial;
+            if (e->op == EXPR_INITIALIZER) {
+                // Auto-detect array count from initializer
+                if (decl_type->kind == KIND_ARRAY && expr_type->kind == KIND_ARRAY) {
+                    if (decl_type->array_count != 0 && decl_type->array_count < expr_type->array_count) {
+                        REPORT_STMT(ERROR, s, "Array initializer does not fit into declaration (expected %d, got %d)", decl_type->array_count, expr_type->array_count);
+                    } else {
                         s->decl.type = expr_type;
                     }
                 }
-
-                e->cast_type = s->decl.type;
-                if (!type_compatible(tu, expr_type, s->decl.type, s->decl.initial)) {
-                    type_as_string(tu, sizeof(temp_string0), temp_string0, expr_type);
-                    type_as_string(tu, sizeof(temp_string1), temp_string1, s->decl.type);
-
-                    REPORT_STMT(ERROR, s, "Could not implicitly convert type %s into %s.", temp_string0, temp_string1);
+            } else if (e->op == EXPR_STR || e->op == EXPR_WSTR) {
+                // Auto-detect array count from string
+                if (decl_type->kind == KIND_ARRAY && decl_type->array_count == 0) {
+                    s->decl.type = expr_type;
                 }
             }
-            break;
-        }
-        case STMT_EXPR: {
-            s->expr.expr->cast_type = sema_expr(tu, s->expr.expr);
-            break;
-        }
-        case STMT_RETURN: {
-            if (s->return_.expr) {
-                Type* expr_type = sema_expr(tu, s->return_.expr);
-                Type* return_type = function_stmt->decl.type->func.return_type;
 
-                if (!type_compatible(tu, expr_type, return_type, s->return_.expr)) {
-                    REPORT_EXPR(ERROR, s->return_.expr, "Value in return statement does not match function signature.");
-                }
+            e->cast_type = s->decl.type;
+            if (!type_compatible(tu, expr_type, s->decl.type, s->decl.initial)) {
+                type_as_string(tu, sizeof(temp_string0), temp_string0, expr_type);
+                type_as_string(tu, sizeof(temp_string1), temp_string1, s->decl.type);
 
-                s->return_.expr->cast_type = return_type;
+                REPORT_STMT(ERROR, s, "Could not implicitly convert type %s into %s.", temp_string0, temp_string1);
             }
-            break;
         }
-        case STMT_IF: {
-            Type* cond_type = sema_expr(tu, s->if_.cond);
-            if (!is_scalar_type(tu, cond_type)) {
-                type_as_string(tu, sizeof(temp_string0), temp_string0, cond_type);
+        break;
+    }
+    case STMT_EXPR: {
+        s->expr.expr->cast_type = sema_expr(tu, s->expr.expr);
+        break;
+    }
+    case STMT_RETURN: {
+        if (s->return_.expr) {
+            Type* expr_type = sema_expr(tu, s->return_.expr);
+            Type* return_type = function_stmt->decl.type->func.return_type;
 
-                REPORT_STMT(ERROR, s, "Could not convert type %s into boolean.", temp_string0);
-            }
-            s->if_.cond->cast_type = &builtin_types[TYPE_BOOL];
-
-            sema_stmt(tu, s->if_.body);
-            if (s->if_.next) {
-                sema_stmt(tu, s->if_.next);
-            }
-            break;
-        }
-        case STMT_WHILE: {
-            sema_expr(tu, s->while_.cond);
-            s->while_.cond->cast_type = &builtin_types[TYPE_BOOL];
-
-            if (s->while_.body) {
-                sema_stmt(tu, s->while_.body);
-            }
-            break;
-        }
-        case STMT_DO_WHILE: {
-            if (s->do_while.body) {
-                sema_stmt(tu, s->do_while.body);
+            if (!type_compatible(tu, expr_type, return_type, s->return_.expr)) {
+                REPORT_EXPR(ERROR, s->return_.expr, "Value in return statement does not match function signature.");
             }
 
-            sema_expr(tu, s->do_while.cond);
-            s->do_while.cond->cast_type = &builtin_types[TYPE_BOOL];
+            s->return_.expr->cast_type = return_type;
+        }
+        break;
+    }
+    case STMT_IF: {
+        Type* cond_type = sema_expr(tu, s->if_.cond);
+        if (!is_scalar_type(tu, cond_type)) {
+            type_as_string(tu, sizeof(temp_string0), temp_string0, cond_type);
+
+            REPORT_STMT(ERROR, s, "Could not convert type %s into boolean.", temp_string0);
+        }
+        s->if_.cond->cast_type = &builtin_types[TYPE_BOOL];
+
+        sema_stmt(tu, s->if_.body);
+        if (s->if_.next) {
+            sema_stmt(tu, s->if_.next);
+        }
+        break;
+    }
+    case STMT_WHILE: {
+        sema_expr(tu, s->while_.cond);
+        s->while_.cond->cast_type = &builtin_types[TYPE_BOOL];
+
+        if (s->while_.body) {
+            sema_stmt(tu, s->while_.body);
+        }
+        break;
+    }
+    case STMT_DO_WHILE: {
+        if (s->do_while.body) {
+            sema_stmt(tu, s->do_while.body);
+        }
+
+        sema_expr(tu, s->do_while.cond);
+        s->do_while.cond->cast_type = &builtin_types[TYPE_BOOL];
+        break;
+    }
+    case STMT_FOR: {
+        if (s->for_.first) {
+            sema_stmt(tu, s->for_.first);
+        }
+
+        if (s->for_.cond) {
+            sema_expr(tu, s->for_.cond);
+            s->for_.cond->cast_type = &builtin_types[TYPE_BOOL];
+        }
+
+        if (s->for_.body) {
+            sema_stmt(tu, s->for_.body);
+        }
+
+        if (s->for_.next) {
+            s->for_.next->cast_type = sema_expr(tu, s->for_.next);
+        }
+        break;
+    }
+    case STMT_SWITCH: {
+        Type* type = sema_expr(tu, s->switch_.condition);
+        s->switch_.condition->cast_type = type;
+
+        if (!(type->kind >= KIND_CHAR && type->kind <= KIND_LONG)) {
+            type_as_string(tu, sizeof(temp_string0), temp_string0, type);
+
+            REPORT_STMT(ERROR, s, "Switch case type must be an integral type, got a '%s'", type);
             break;
         }
-        case STMT_FOR: {
-            if (s->for_.first) {
-                sema_stmt(tu, s->for_.first);
-            }
 
-            if (s->for_.cond) {
-                sema_expr(tu, s->for_.cond);
-                s->for_.cond->cast_type = &builtin_types[TYPE_BOOL];
-            }
-
-            if (s->for_.body) {
-                sema_stmt(tu, s->for_.body);
-            }
-
-            if (s->for_.next) {
-                s->for_.next->cast_type = sema_expr(tu, s->for_.next);
-            }
-            break;
-        }
-        case STMT_SWITCH: {
-            Type* type = sema_expr(tu, s->switch_.condition);
-            s->switch_.condition->cast_type = type;
-
-            if (!(type->kind >= KIND_CHAR && type->kind <= KIND_LONG)) {
-                type_as_string(tu, sizeof(temp_string0), temp_string0, type);
-
-                REPORT_STMT(ERROR, s, "Switch case type must be an integral type, got a '%s'", type);
-                break;
-            }
-
-            sema_stmt(tu, s->switch_.body);
-            break;
-        }
-        case STMT_CASE: {
-            sema_stmt(tu, s->case_.body);
-            break;
-        }
-        case STMT_DEFAULT: {
-            sema_stmt(tu, s->default_.body);
-            break;
-        }
-        case STMT_CONTINUE:
-        case STMT_BREAK: {
-            break;
-        }
-        default:
+        sema_stmt(tu, s->switch_.body);
+        break;
+    }
+    case STMT_CASE: {
+        sema_stmt(tu, s->case_.body);
+        break;
+    }
+    case STMT_DEFAULT: {
+        sema_stmt(tu, s->default_.body);
+        break;
+    }
+    case STMT_CONTINUE:
+    case STMT_BREAK: {
+        break;
+    }
+    default:
         assert(0);
     }
 }
 
 Type* sema_guess_type(TranslationUnit* tu, Stmt* restrict s) {
-    char* name = (char*) s->decl.name;
+    char* name = (char*)s->decl.name;
 
     Type* type = s->decl.type;
 
@@ -1372,59 +1372,32 @@ Type* sema_guess_type(TranslationUnit* tu, Stmt* restrict s) {
 static void sema_top_level(TranslationUnit* tu, Stmt* restrict s, bool frontend_only) {
     Type* type = s->decl.type;
 
-    char* name = (char*) s->decl.name;
+    char* name = (char*)s->decl.name;
     switch (s->op) {
-        case STMT_FUNC_DECL: {
-            assert(type->kind == KIND_FUNC);
+    case STMT_FUNC_DECL: {
+        assert(type->kind == KIND_FUNC);
 
-            if (s->decl.attrs.is_static && s->decl.attrs.is_extern) {
-                REPORT_STMT(ERROR, s, "Function '%s' cannot be both static and extern.", name);
+        if (s->decl.attrs.is_static && s->decl.attrs.is_extern) {
+            REPORT_STMT(ERROR, s, "Function '%s' cannot be both static and extern.", name);
+            s->backing.f = 0;
+            break;
+        }
+
+        if (s->decl.attrs.is_static && !s->decl.attrs.is_inline) {
+            if (warnings.unused_funcs && !s->decl.attrs.is_used) {
+                REPORT(WARNING, s->loc, "Function '%s' is never used.", name);
                 s->backing.f = 0;
                 break;
             }
+        }
 
-            if (s->decl.attrs.is_static && !s->decl.attrs.is_inline) {
-                if (warnings.unused_funcs && !s->decl.attrs.is_used) {
-                    REPORT(WARNING, s->loc, "Function '%s' is never used.", name);
-                    s->backing.f = 0;
-                    break;
-                }
-            }
+        if (s->decl.attrs.is_inline && !s->decl.attrs.is_used) {
+            s->backing.f = 0;
+            break;
+        }
 
-            if (s->decl.attrs.is_inline && !s->decl.attrs.is_used) {
-                s->backing.f = 0;
-                break;
-            }
-
-            if (frontend_only) {
-                s->backing.f = 0;
-
-                // type check function body
-                function_stmt = s;
-                sema_stmt(tu, s->decl.initial_as_stmt);
-                function_stmt = 0;
-                break;
-            }
-
-            TB_FunctionPrototype* proto = target_desc.create_prototype(tu, type);
-            TB_Linkage linkage = s->decl.attrs.is_static ? TB_LINKAGE_PRIVATE : TB_LINKAGE_PUBLIC;
-
-            // TODO(NeGate): Fix this up because it's possibly wrong, essentially
-            // inline linkage means all the definitions must match which isn't
-            // necessarily the same as static where they all can share a name but
-            // are different and internal.
-            TB_Function* func;
-            if (s->decl.attrs.is_inline) {
-                linkage = TB_LINKAGE_PRIVATE;
-
-                char temp[1024];
-                snprintf(temp, 1024, "_K%d_%s", tu->id_gen++, name ? name : "<unnamed>");
-
-                func = tb_prototype_build(mod, proto, temp, linkage);
-            } else {
-                func = tb_prototype_build(mod, proto, name, linkage);
-            }
-            s->backing.f = tb_function_get_id(mod, func);
+        if (frontend_only) {
+            s->backing.f = 0;
 
             // type check function body
             function_stmt = s;
@@ -1432,92 +1405,120 @@ static void sema_top_level(TranslationUnit* tu, Stmt* restrict s, bool frontend_
             function_stmt = 0;
             break;
         }
-        case STMT_DECL:
-        case STMT_GLOBAL_DECL: {
-            if (!s->decl.attrs.is_used) break;
-            if (s->decl.attrs.is_typedef) break;
 
-            if (s->decl.attrs.is_static && s->decl.attrs.is_extern) {
-                REPORT_STMT(ERROR, s, "Global declaration '%s' cannot be both static and extern.", name);
-                s->backing.g = 0;
-                break;
-            }
+        TB_FunctionPrototype* proto = target_desc.create_prototype(tu, type);
+        TB_Linkage linkage = s->decl.attrs.is_static ? TB_LINKAGE_PRIVATE : TB_LINKAGE_PUBLIC;
 
-            bool is_external_sym = (type->kind == KIND_FUNC && s->decl.initial_as_stmt == NULL);
-            if (s->decl.attrs.is_extern) is_external_sym = true;
+        // TODO(NeGate): Fix this up because it's possibly wrong, essentially
+        // inline linkage means all the definitions must match which isn't
+        // necessarily the same as static where they all can share a name but
+        // are different and internal.
+        TB_Function* func;
+        if (s->decl.attrs.is_inline) {
+            linkage = TB_LINKAGE_PRIVATE;
 
-            if (!is_external_sym) {
-                if (s->decl.initial) {
-                    if (s->decl.initial->op == EXPR_INITIALIZER &&
-                        s->decl.initial->init.type == 0) {
-                        // give it something to go off of
-                        //
-                        // doesn't have to be complete in terms of array count
-                        // just enough to infer the rest in a sec
-                        s->decl.initial->init.type = s->decl.type;
-                    }
+            char temp[1024];
+            snprintf(temp, 1024, "_K%d_%s", tu->id_gen++, name ? name : "<unnamed>");
 
-                    Type* expr_type = sema_expr(tu, s->decl.initial);
+            func = tb_prototype_build(mod, proto, temp, linkage);
+        } else {
+            func = tb_prototype_build(mod, proto, name, linkage);
+        }
+        s->backing.f = tb_function_get_id(mod, func);
 
-                    if (s->decl.initial->op == EXPR_INITIALIZER ||
-                        s->decl.initial->op == EXPR_STR ||
-                        s->decl.initial->op == EXPR_WSTR) {
-                        if (type->kind == KIND_ARRAY && expr_type->kind == KIND_ARRAY) {
-                            if (type_equal(tu, type->array_of, expr_type->array_of)) {
-                                if (type->array_count != 0 && type->array_count < expr_type->array_count) {
-                                    REPORT_STMT(ERROR, s, "Array initializer does not fit into declaration (expected %d, got %d)", type->array_count, expr_type->array_count);
-                                } else {
-                                    assert(expr_type->array_count);
+        // type check function body
+        function_stmt = s;
+        sema_stmt(tu, s->decl.initial_as_stmt);
+        function_stmt = 0;
+        break;
+    }
+    case STMT_DECL:
+    case STMT_GLOBAL_DECL: {
+        if (!s->decl.attrs.is_used) break;
+        if (s->decl.attrs.is_typedef) break;
 
-                                    // preserve constness
-                                    bool is_const = type->is_const;
-
-                                    type = copy_type(tu, expr_type);
-                                    type->is_const = is_const;
-
-                                    s->decl.type = type;
-                                }
-                            } else {
-                                type_as_string(tu, sizeof(temp_string0), temp_string0, expr_type->array_of);
-                                type_as_string(tu, sizeof(temp_string1), temp_string1, type->array_of);
-
-                                REPORT_STMT(ERROR, s, "Array initializer type mismatch (got '%s', expected '%s')", temp_string0, temp_string1);
-                            }
-                        }
-                    }
-
-                    if (!type_compatible(tu, expr_type, type, s->decl.initial)) {
-                        type_as_string(tu, sizeof(temp_string0), temp_string0, type);
-                        type_as_string(tu, sizeof(temp_string1), temp_string1, expr_type);
-
-                        REPORT_STMT(ERROR, s, "Declaration type does not match (got '%s', expected '%s')", temp_string0, temp_string1);
-                    }
-                }
-
-                if (type->is_incomplete) {
-                    if (type->kind == KIND_STRUCT) {
-                        REPORT_STMT(ERROR, s, "Incomplete type (struct %s) in declaration", type->record.name);
-                    } else if (type->kind == KIND_UNION) {
-                        REPORT_STMT(ERROR, s, "Incomplete type (union %s) in declaration", type->record.name);
-                    } else {
-                        REPORT_STMT(ERROR, s, "Incomplete type in declaration");
-                    }
-                }
-
-                if (frontend_only) {
-                    s->backing.g = 0;
-                } else {
-                    if (s->decl.attrs.is_tls && !atomic_flag_test_and_set(&irgen_defined_tls_index)) {
-                        tb_module_set_tls_index(mod, tb_extern_create(mod, "_tls_index"));
-                    }
-
-                    TB_Linkage linkage = s->decl.attrs.is_static ? TB_LINKAGE_PRIVATE : TB_LINKAGE_PUBLIC;
-                    s->backing.g = tb_global_create(mod, name, s->decl.attrs.is_tls ? TB_STORAGE_TLS : TB_STORAGE_DATA, linkage);
-                }
-            }
+        if (s->decl.attrs.is_static && s->decl.attrs.is_extern) {
+            REPORT_STMT(ERROR, s, "Global declaration '%s' cannot be both static and extern.", name);
+            s->backing.g = 0;
             break;
         }
-        default: assert(0);
+
+        bool is_external_sym = (type->kind == KIND_FUNC && s->decl.initial_as_stmt == NULL);
+        if (s->decl.attrs.is_extern) is_external_sym = true;
+
+        if (!is_external_sym) {
+            if (s->decl.initial) {
+                if (s->decl.initial->op == EXPR_INITIALIZER &&
+                    s->decl.initial->init.type == 0) {
+                    // give it something to go off of
+                    //
+                    // doesn't have to be complete in terms of array count
+                    // just enough to infer the rest in a sec
+                    s->decl.initial->init.type = s->decl.type;
+                }
+
+                Type* expr_type = sema_expr(tu, s->decl.initial);
+
+                if (s->decl.initial->op == EXPR_INITIALIZER ||
+                    s->decl.initial->op == EXPR_STR ||
+                    s->decl.initial->op == EXPR_WSTR) {
+                    if (type->kind == KIND_ARRAY && expr_type->kind == KIND_ARRAY) {
+                        if (type_equal(tu, type->array_of, expr_type->array_of)) {
+                            if (type->array_count != 0 && type->array_count < expr_type->array_count) {
+                                REPORT_STMT(ERROR, s, "Array initializer does not fit into declaration (expected %d, got %d)", type->array_count, expr_type->array_count);
+                            } else {
+                                assert(expr_type->array_count);
+
+                                // preserve constness
+                                bool is_const = type->is_const;
+
+                                type = copy_type(tu, expr_type);
+                                type->is_const = is_const;
+
+                                s->decl.type = type;
+                            }
+                        } else {
+                            type_as_string(tu, sizeof(temp_string0), temp_string0, expr_type->array_of);
+                            type_as_string(tu, sizeof(temp_string1), temp_string1, type->array_of);
+
+                            REPORT_STMT(ERROR, s, "Array initializer type mismatch (got '%s', expected '%s')", temp_string0, temp_string1);
+                        }
+                    }
+                }
+
+                if (!type_compatible(tu, expr_type, type, s->decl.initial)) {
+                    type_as_string(tu, sizeof(temp_string0), temp_string0, type);
+                    type_as_string(tu, sizeof(temp_string1), temp_string1, expr_type);
+
+                    REPORT_STMT(ERROR, s, "Declaration type does not match (got '%s', expected '%s')", temp_string0, temp_string1);
+                }
+            }
+
+            if (type->is_incomplete) {
+                if (type->kind == KIND_STRUCT) {
+                    REPORT_STMT(ERROR, s, "Incomplete type (struct %s) in declaration", type->record.name);
+                } else if (type->kind == KIND_UNION) {
+                    REPORT_STMT(ERROR, s, "Incomplete type (union %s) in declaration", type->record.name);
+                } else {
+                    REPORT_STMT(ERROR, s, "Incomplete type in declaration");
+                }
+            }
+
+            if (frontend_only) {
+                s->backing.g = 0;
+            } else {
+                if (s->decl.attrs.is_tls && !atomic_flag_test_and_set(&irgen_defined_tls_index)) {
+                    tb_module_set_tls_index(mod, tb_extern_create(mod, "_tls_index"));
+                }
+
+                TB_Linkage linkage = s->decl.attrs.is_static ? TB_LINKAGE_PRIVATE : TB_LINKAGE_PUBLIC;
+                s->backing.g = tb_global_create(mod, name, s->decl.attrs.is_tls ? TB_STORAGE_TLS : TB_STORAGE_DATA, linkage);
+            }
+        }
+        break;
+    }
+    default:
+        assert(0);
     }
 }
 
@@ -1582,13 +1583,13 @@ void sema_pass(CompilationUnit* cu, TranslationUnit* tu, threadpool_t* thread_po
     timed_block("sema: type check") {
         if (thread_pool != NULL) {
             // disabled until we change the tables to arenas
-            size_t padded = (count + (SEMA_MUNCH_SIZE-1)) & ~(SEMA_MUNCH_SIZE-1);
+            size_t padded = (count + (SEMA_MUNCH_SIZE - 1)) & ~(SEMA_MUNCH_SIZE - 1);
 
             // passed to the threads to identify when things are done
-            atomic_size_t tasks_remaining = (count + (SEMA_MUNCH_SIZE-1)) / SEMA_MUNCH_SIZE;
+            atomic_size_t tasks_remaining = (count + (SEMA_MUNCH_SIZE - 1)) / SEMA_MUNCH_SIZE;
 
             for (size_t i = 0; i < padded; i += SEMA_MUNCH_SIZE) {
-                size_t limit = i+SEMA_MUNCH_SIZE;
+                size_t limit = i + SEMA_MUNCH_SIZE;
                 if (limit > count) limit = count;
 
                 SemaTaskInfo* task = tls_push(sizeof(SemaTaskInfo));
@@ -1597,8 +1598,7 @@ void sema_pass(CompilationUnit* cu, TranslationUnit* tu, threadpool_t* thread_po
                     .start = i,
                     .end = limit,
                     .tu = tu,
-                    .frontend_only = frontend_only
-                };
+                    .frontend_only = frontend_only};
 
                 threadpool_submit(thread_pool, sema_task, task);
             }

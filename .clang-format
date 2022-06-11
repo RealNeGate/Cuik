@@ -1,0 +1,22 @@
+BasedOnStyle: LLVM
+IndentWidth:   4
+
+UseCRLF: false
+UseTab: Never
+ColumnLimit: 0
+PointerAlignment: Left
+AllowShortEnumsOnASingleLine: true
+AllowShortLoopsOnASingleLine: true
+AlignAfterOpenBracket: Align
+AllowShortIfStatementsOnASingleLine: true
+IndentCaseLabels: false
+IndentCaseBlocks: false
+ForEachMacros: []
+AllowAllParametersOfDeclarationOnNextLine: false
+AllowShortBlocksOnASingleLine: Never
+AllowShortFunctionsOnASingleLine: None
+
+BreakBeforeBraces: Attach
+BraceWrapping:
+  AfterEnum: false
+  

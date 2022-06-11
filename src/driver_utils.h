@@ -1,13 +1,13 @@
 #include <common.h>
-#include <timer.h>
-#include <settings.h>
-#include <crash_handler.h>
-#include <targets/targets.h>
 #include <compilation_unit.h>
+#include <crash_handler.h>
+#include <settings.h>
+#include <targets/targets.h>
+#include <timer.h>
 
 // Frontend
-#include <front/preproc.h>
 #include <front/parser.h>
+#include <front/preproc.h>
 #include <front/sema.h>
 
 // Backend
@@ -36,5 +36,5 @@ void cuik_set_cpp_defines(CPP_Context* cpp);
 //
 // if thread_pool is NULL, then parsing is single threaded
 TranslationUnit* cuik_compile_file(CompilationUnit* cu, const char* path,
-								   size_t include_count, const char** includes,
-								   bool frontend_only, threadpool_t* thread_pool);
+                                   size_t include_count, const char** includes,
+                                   bool frontend_only, threadpool_t* thread_pool);

@@ -1,6 +1,6 @@
 #pragma once
-#include "common.h"
 #include "arena.h"
+#include "common.h"
 
 typedef unsigned char* Atom;
 

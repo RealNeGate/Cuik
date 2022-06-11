@@ -3,10 +3,10 @@
 // NOTE(NeGate): This code leaks the filename strings but it doesn't actually matter
 // because this is a compiler and momma aint raised no bitch.
 #include "preproc.h"
-#include "memory.h"
 #include "../timer.h"
-#include "file_io.h"
 #include "diagnostic.h"
+#include "file_io.h"
+#include "memory.h"
 #include <ext/stb_ds.h>
 
 #if _WIN32
@@ -44,8 +44,7 @@ void cpp_init(CPP_Context* ctx) {
         .macro_bucket_values_end = malloc(sz),
         .macro_bucket_source_locs = malloc(sz2),
 
-        .the_shtuffs = malloc(THE_SHTUFFS_SIZE)
-    };
+        .the_shtuffs = malloc(THE_SHTUFFS_SIZE)};
     ctx->files = big_array_create(CPP_FileEntry, false);
 
     tls_init();
@@ -179,8 +178,8 @@ void cpp_define(CPP_Context* ctx, const char* key, const char* value) {
         size_t rem = pad_len - len;
         memset(newvalue + len, 0, rem);
 
-        ctx->macro_bucket_values_start[e] = (const unsigned char*) newvalue;
-        ctx->macro_bucket_values_end[e] = (const unsigned char*) newvalue + len;
+        ctx->macro_bucket_values_start[e] = (const unsigned char*)newvalue;
+        ctx->macro_bucket_values_end[e] = (const unsigned char*)newvalue + len;
         ctx->macro_bucket_source_locs[e] = SOURCE_LOC_SET_TYPE(SOURCE_LOC_UNKNOWN, 0);
     }
 }
@@ -222,10 +221,10 @@ TokenStream cpp_process(CPP_Context* ctx, const char filepath[]) {
         directory[0] = '\0';
     }
 
-    TokenStream s = { 0 };
+    TokenStream s = {0};
     preprocess_file(ctx, &s, NULL, 0, directory, filepath, 1);
 
-    Token t = { 0, 0, NULL, NULL };
+    Token t = {0, 0, NULL, NULL};
     arrput(s.tokens, t);
 
     return s;
@@ -279,15 +278,14 @@ static SourceLocIndex get_source_location(CPP_Context* restrict c, Lexer* restri
     SourceLoc loc = {
         .line = source_line,
         .columns = columns,
-        .length = length
-    };
+        .length = length};
     arrput(s->locations, loc);
 
     return SOURCE_LOC_SET_TYPE(loc_type, i);
 }
 
 static void cpp_push_scope(CPP_Context* restrict ctx, Lexer* restrict l, bool initial) {
-    if (ctx->depth >= CPP_MAX_SCOPE_DEPTH-1) {
+    if (ctx->depth >= CPP_MAX_SCOPE_DEPTH - 1) {
         generic_error(l, "Exceeded max scope depth!");
     }
 
@@ -324,7 +322,7 @@ static void expand_double_hash(CPP_Context* restrict c, TokenStream* restrict s,
     }
 
     // join tokens
-    Lexer tmp_lex = (Lexer) { l->filepath, out_start, out_start };
+    Lexer tmp_lex = (Lexer){l->filepath, out_start, out_start};
     lexer_read(&tmp_lex);
 
     // make nice joined token
@@ -334,8 +332,7 @@ static void expand_double_hash(CPP_Context* restrict c, TokenStream* restrict s,
                 classify_ident(tmp_lex.token_start, tmp_lex.token_end - tmp_lex.token_start),
                 loc,
                 tmp_lex.token_start,
-                tmp_lex.token_end
-            };
+                tmp_lex.token_end};
         } else {
             arrdelswap(s->tokens, arrlen(s->tokens) - 1);
             expand_ident(c, s, &tmp_lex, loc);
@@ -345,8 +342,7 @@ static void expand_double_hash(CPP_Context* restrict c, TokenStream* restrict s,
             tmp_lex.token_type,
             loc,
             tmp_lex.token_start,
-            tmp_lex.token_end
-        };
+            tmp_lex.token_end};
     }
     lexer_read(&tmp_lex);
 
@@ -366,11 +362,10 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, CP
         .parent = parent_entry,
         .include_loc = include_loc,
         .filepath = filepath,
-        .content = text
-    };
+        .content = text};
     big_array_put(c->files, file_entry);
 
-    Lexer l = { filepath, text, text, 1 };
+    Lexer l = {filepath, text, text, 1};
     lexer_read(&l);
     do {
         l.hit_line = false;
@@ -383,8 +378,7 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, CP
                 Token t = {
                     classify_ident(l.token_start, l.token_end - l.token_start),
                     loc,
-                    l.token_start, l.token_end
-                };
+                    l.token_start, l.token_end};
                 arrput(s->tokens, t);
 
                 lexer_read(&l);
@@ -419,7 +413,7 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, CP
 
                     // we should be one a different line now
                     assert(l.hit_line);
-                }  else if (lexer_match(&l, 6, "ifndef")) {
+                } else if (lexer_match(&l, 6, "ifndef")) {
                     lexer_read(&l);
 
                     if (l.token_type != TOKEN_IDENTIFIER) {
@@ -593,7 +587,7 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, CP
                         assert(s->current != arrlen(s->tokens) && "Expected the macro expansion to add something");
 
                         // Insert a null token at the end
-                        Token t = { 0, arrlen(s->locations) - 1, NULL, NULL };
+                        Token t = {0, arrlen(s->locations) - 1, NULL, NULL};
                         arrput(s->tokens, t);
 
                         if (tokens_get(s)->type == TOKEN_STRING_DOUBLE_QUOTE) {
@@ -716,7 +710,7 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, CP
 
                         // We gotta hit a line by now
                         assert(l.hit_line);
-                    }  else if (lexer_match(&l, 7, "message")) {
+                    } else if (lexer_match(&l, 7, "message")) {
                         lexer_read(&l);
 
                         printf("message %s:%d:  ", l.filepath, l.current_line);
@@ -731,16 +725,15 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, CP
 
                         unsigned char* str = gimme_the_shtuffs(c, sizeof("_Pragma"));
                         memcpy(str, "_Pragma", sizeof("_Pragma"));
-                        Token t = (Token) {
-                            TOKEN_KW_Pragma, loc, str, str + 7
-                        };
+                        Token t = (Token){
+                            TOKEN_KW_Pragma, loc, str, str + 7};
                         arrput(s->tokens, t);
 
                         str = gimme_the_shtuffs(c, sizeof("("));
-                        str[0] = '('; str[1] = 0;
+                        str[0] = '(';
+                        str[1] = 0;
                         t = (Token){
-                            '(', loc, str, str + 1
-                        };
+                            '(', loc, str, str + 1};
                         arrput(s->tokens, t);
 
                         // Skip until we hit a newline
@@ -756,7 +749,7 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, CP
                         // convert pragma content into string
                         {
                             size_t len = end - start;
-                            str = gimme_the_shtuffs(c, (len*2)+3);
+                            str = gimme_the_shtuffs(c, (len * 2) + 3);
                             unsigned char* curr = str;
 
                             *curr++ = '\"';
@@ -774,18 +767,17 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, CP
                             t = (Token){
                                 TOKEN_STRING_DOUBLE_QUOTE,
                                 loc,
-                                str, curr-1
-                            };
+                                str, curr - 1};
                             arrput(s->tokens, t);
                         }
 
                         str = gimme_the_shtuffs(c, sizeof(")"));
-                        str[0] = ')'; str[1] = 0;
+                        str[0] = ')';
+                        str[1] = 0;
                         t = (Token){
                             ')',
                             loc,
-                            str, str + 1
-                        };
+                            str, str + 1};
                         arrput(s->tokens, t);
                     }
                 } else if (lexer_match(&l, 5, "undef")) {
@@ -815,11 +807,11 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, CP
                             uint64_t last = base + (count - 1);
 
                             if (i != last) {
-                                c->macro_bucket_keys_length[e]  = c->macro_bucket_keys_length[last];
-                                c->macro_bucket_keys[e]         = c->macro_bucket_keys[last];
+                                c->macro_bucket_keys_length[e] = c->macro_bucket_keys_length[last];
+                                c->macro_bucket_keys[e] = c->macro_bucket_keys[last];
                                 c->macro_bucket_values_start[e] = c->macro_bucket_values_start[last];
-                                c->macro_bucket_values_end[e]   = c->macro_bucket_values_end[last];
-                                c->macro_bucket_source_locs[e]  = c->macro_bucket_source_locs[last];
+                                c->macro_bucket_values_end[e] = c->macro_bucket_values_end[last];
+                                c->macro_bucket_source_locs[e] = c->macro_bucket_source_locs[last];
                             }
                             c->macro_bucket_count[slot]--;
                             break;
@@ -863,8 +855,7 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, CP
                 l.token_type,
                 get_source_location(c, &l, s, include_loc, SOURCE_LOC_NORMAL),
                 l.token_start,
-                l.token_end
-            };
+                l.token_end};
 
             arrput(s->tokens, t);
             lexer_read(&l);
@@ -895,8 +886,10 @@ static void skip_directive_body(Lexer* l) {
 
             if (l->token_type == TOKEN_IDENTIFIER) {
                 if (lexer_match(l, 2, "if")) depth++;
-                if (lexer_match(l, 5, "ifdef")) depth++;
-                else if (lexer_match(l, 6, "ifndef")) depth++;
+                if (lexer_match(l, 5, "ifdef"))
+                    depth++;
+                else if (lexer_match(l, 6, "ifndef"))
+                    depth++;
                 else if (lexer_match(l, 4, "elif") || lexer_match(l, 4, "else")) {
                     // else/elif does both entering a scope and exiting one
                     if (depth == 0) {
@@ -942,21 +935,19 @@ static void expect(Lexer* l, char ch) {
 static char unsigned overhang_mask[32] = {
     255, 255, 255, 255, 255, 255, 255, 255,
     255, 255, 255, 255, 255, 255, 255, 255,
-    0,   0,   0,   0,   0,   0,   0,   0,
-    0,   0,   0,   0,   0,   0,   0,   0
-};
+    0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0};
 
 static char unsigned default_seed[16] = {
     178, 201, 95, 240, 40, 41, 143, 216,
-    2, 209, 178, 114, 232, 4, 176, 188
-};
+    2, 209, 178, 114, 232, 4, 176, 188};
 
 static uint64_t hash_ident(const unsigned char* at, size_t length) {
 #if !USE_INTRIN
     uint32_t hash = 0x811c9dc5;
 
     for (size_t i = 0; i < length; i++) {
-        hash ^= (uint32_t) at[i];
+        hash ^= (uint32_t)at[i];
         hash *= 0x01000193; // 32bit magic shit
     }
 
@@ -966,8 +957,8 @@ static uint64_t hash_ident(const unsigned char* at, size_t length) {
     hash = _mm_xor_si128(hash, _mm_loadu_si128((__m128i*)default_seed));
 
     size_t chunk_count = length / 16;
-    while(chunk_count--) {
-        __m128i in = _mm_loadu_si128((__m128i*) at);
+    while (chunk_count--) {
+        __m128i in = _mm_loadu_si128((__m128i*)at);
         at += 16;
 
         hash = _mm_xor_si128(hash, in);
@@ -978,9 +969,9 @@ static uint64_t hash_ident(const unsigned char* at, size_t length) {
     }
 
     size_t overhang = length % 16;
-    __m128i in = _mm_loadu_si128((__m128i*) at);
+    __m128i in = _mm_loadu_si128((__m128i*)at);
 
-    in = _mm_and_si128(in, _mm_loadu_si128((__m128i*) (overhang_mask + 16 - overhang)));
+    in = _mm_and_si128(in, _mm_loadu_si128((__m128i*)(overhang_mask + 16 - overhang)));
     hash = _mm_xor_si128(hash, in);
     hash = _mm_aesdec_si128(hash, _mm_setzero_si128());
     hash = _mm_aesdec_si128(hash, _mm_setzero_si128());
@@ -1005,8 +996,8 @@ static bool memory_equals16(const unsigned char* src1, const unsigned char* src2
     size_t i = 0;
     size_t chunk_count = length / 16;
     while (chunk_count--) {
-        __m128i in1 = _mm_loadu_si128((__m128i*) &src1[i]);
-        __m128i in2 = _mm_loadu_si128((__m128i*) &src2[i]);
+        __m128i in1 = _mm_loadu_si128((__m128i*)&src1[i]);
+        __m128i in2 = _mm_loadu_si128((__m128i*)&src2[i]);
 
         int compare = _mm_movemask_epi8(_mm_cmpeq_epi8(in1, in2));
         if (compare != 0xFFFF) return false;
@@ -1015,10 +1006,10 @@ static bool memory_equals16(const unsigned char* src1, const unsigned char* src2
     }
 
     size_t overhang = length % 16;
-    __m128i mask = _mm_loadu_si128((__m128i*) (overhang_mask + 16 - overhang));
+    __m128i mask = _mm_loadu_si128((__m128i*)(overhang_mask + 16 - overhang));
 
-    __m128i in1 = _mm_and_si128(_mm_loadu_si128((__m128i*) &src1[i]), mask);
-    __m128i in2 = _mm_and_si128(_mm_loadu_si128((__m128i*) &src2[i]), mask);
+    __m128i in1 = _mm_and_si128(_mm_loadu_si128((__m128i*)&src1[i]), mask);
+    __m128i in2 = _mm_and_si128(_mm_loadu_si128((__m128i*)&src2[i]), mask);
 
     int compare = _mm_movemask_epi8(_mm_cmpeq_epi8(in1, in2));
     return compare == 0xFFFF;
@@ -1053,7 +1044,7 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
 
     if (lexer_match(l, 8, "__FILE__") || lexer_match(l, 9, "L__FILE__")) {
         // filepath as a string
-        unsigned char* out_start = gimme_the_shtuffs(c, MAX_PATH+4);
+        unsigned char* out_start = gimme_the_shtuffs(c, MAX_PATH + 4);
         unsigned char* out = out_start;
 
         bool is_wide = (token_data[0] == 'L');
@@ -1088,8 +1079,7 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
             is_wide ? TOKEN_STRING_WIDE_DOUBLE_QUOTE : TOKEN_STRING_DOUBLE_QUOTE,
             get_source_location(c, l, s, parent_loc, SOURCE_LOC_NORMAL),
             out_start,
-            out
-        };
+            out};
         arrput(s->tokens, t);
         lexer_read(l);
     } else if (lexer_match(l, 8, "__LINE__")) {
@@ -1102,8 +1092,7 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
             TOKEN_INTEGER,
             get_source_location(c, l, s, parent_loc, SOURCE_LOC_NORMAL),
             out,
-            out + length
-        };
+            out + length};
         arrput(s->tokens, t);
         lexer_read(l);
     } else if (lexer_match(l, 7, "defined")) {
@@ -1146,8 +1135,7 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
             TOKEN_INTEGER,
             get_source_location(c, l, s, parent_loc, SOURCE_LOC_NORMAL),
             out,
-            out + 1
-        };
+            out + 1};
         arrput(s->tokens, t);
     } else {
         size_t def_i;
@@ -1162,8 +1150,7 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
 
             string def = {
                 .data = c->macro_bucket_values_start[def_i],
-                .length = c->macro_bucket_values_end[def_i] - c->macro_bucket_values_start[def_i]
-            };
+                .length = c->macro_bucket_values_end[def_i] - c->macro_bucket_values_start[def_i]};
 
             const unsigned char* args = c->macro_bucket_keys[def_i] + c->macro_bucket_keys_length[def_i];
 
@@ -1174,7 +1161,7 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
             //   APPLE(int a)
             while (def.length && *args != '(' && l->token_type == '(') {
                 // expand and append
-                Lexer temp_lex = (Lexer) { l->filepath, def.data, def.data };
+                Lexer temp_lex = (Lexer){l->filepath, def.data, def.data};
                 lexer_read(&temp_lex);
 
                 size_t token_length = temp_lex.token_end - temp_lex.token_start;
@@ -1184,8 +1171,7 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
 
                 def = (string){
                     .data = c->macro_bucket_values_start[def_i],
-                    .length = c->macro_bucket_values_end[def_i] - c->macro_bucket_values_start[def_i]
-                };
+                    .length = c->macro_bucket_values_end[def_i] - c->macro_bucket_values_start[def_i]};
                 args = c->macro_bucket_keys[def_i] + c->macro_bucket_keys_length[def_i];
             }
 
@@ -1221,8 +1207,8 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
                         lexer_read(l);
                     }
 
-                    value_ranges[i*2 + 0] = start;
-                    value_ranges[i*2 + 1] = end;
+                    value_ranges[i * 2 + 0] = start;
+                    value_ranges[i * 2 + 1] = end;
 
                     if (l->token_type == ',') lexer_read(l);
                     l->hit_line = false;
@@ -1237,7 +1223,7 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
                     bool has_varargs = false;
 
                     {
-                        Lexer arg_lex = (Lexer) { l->filepath, args, args };
+                        Lexer arg_lex = (Lexer){l->filepath, args, args};
                         lexer_read(&arg_lex);
                         expect(&arg_lex, '(');
 
@@ -1254,8 +1240,8 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
                                 tls_push(2 * sizeof(const unsigned char*));
 
                                 int i = key_count++;
-                                key_ranges[i*2 + 0] = arg_lex.token_start;
-                                key_ranges[i*2 + 1] = arg_lex.token_end;
+                                key_ranges[i * 2 + 0] = arg_lex.token_start;
+                                key_ranges[i * 2 + 1] = arg_lex.token_end;
 
                                 lexer_read(&arg_lex);
                             } else {
@@ -1275,7 +1261,7 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
                     unsigned char* temp_expansion_start = gimme_the_shtuffs(c, 4096);
                     unsigned char* temp_expansion = temp_expansion_start;
 
-                    Lexer def_lex = (Lexer) { l->filepath, def.data, def.data };
+                    Lexer def_lex = (Lexer){l->filepath, def.data, def.data};
                     def_lex.current_line = line_of_expansion;
                     lexer_read(&def_lex);
 
@@ -1305,8 +1291,8 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
                             lexer_read(&def_lex);
 
                             if (has_varargs &&
-                                token_length == sizeof("__VA_ARGS__")-1 &&
-                                memcmp(token_data, "__VA_ARGS__", sizeof("__VA_ARGS__")-1) == 0 &&
+                                token_length == sizeof("__VA_ARGS__") - 1 &&
+                                memcmp(token_data, "__VA_ARGS__", sizeof("__VA_ARGS__") - 1) == 0 &&
                                 key_count == value_count) {
                                 // we remove the comma since there's no varargs to chew
                                 temp_expansion = fallback;
@@ -1326,16 +1312,16 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
                         }
 
                         if (has_varargs &&
-                            token_length == sizeof("__VA_ARGS__")-1 &&
-                            memcmp(token_data, "__VA_ARGS__", sizeof("__VA_ARGS__")-1) == 0) {
+                            token_length == sizeof("__VA_ARGS__") - 1 &&
+                            memcmp(token_data, "__VA_ARGS__", sizeof("__VA_ARGS__") - 1) == 0) {
                             *temp_expansion++ = ' ';
 
                             // Just slap all the arguments that are after the 'key_count'
                             if (key_count != value_count) {
                                 for (size_t i = key_count; i < value_count; i++) {
-                                    const unsigned char* end   = value_ranges[i*2 + 1];
-                                    const unsigned char* start = value_ranges[i*2 + 0];
-                                    size_t count = end-start;
+                                    const unsigned char* end = value_ranges[i * 2 + 1];
+                                    const unsigned char* start = value_ranges[i * 2 + 0];
+                                    size_t count = end - start;
 
                                     // slap a comma between var args
                                     if (i != key_count) {
@@ -1360,8 +1346,8 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
                                     if (*p == ',') {
                                         *p = ' ';
                                         break;
-                                    }
-                                    else if (*p != ' ') break;
+                                    } else if (*p != ' ')
+                                        break;
 
                                     p--;
                                 }
@@ -1369,8 +1355,8 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
                         } else {
                             int index = -1;
                             for (size_t i = 0; i < key_count; i++) {
-                                size_t key_length = key_ranges[i*2 + 1] - key_ranges[i*2 + 0];
-                                const unsigned char* key = key_ranges[i*2 + 0];
+                                size_t key_length = key_ranges[i * 2 + 1] - key_ranges[i * 2 + 0];
+                                const unsigned char* key = key_ranges[i * 2 + 0];
 
                                 if (token_length == key_length &&
                                     memcmp(key, token_data, token_length) == 0) {
@@ -1380,9 +1366,9 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
                             }
 
                             if (index >= 0) {
-                                const unsigned char* end   = value_ranges[index*2 + 1];
-                                const unsigned char* start = value_ranges[index*2 + 0];
-                                size_t count = end-start;
+                                const unsigned char* end = value_ranges[index * 2 + 1];
+                                const unsigned char* start = value_ranges[index * 2 + 0];
+                                size_t count = end - start;
 
                                 // Removes any funky characters like " into \"
                                 // when stringifying
@@ -1437,7 +1423,7 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
 
                     if (temp_expansion_start != temp_expansion) {
                         // expand and append
-                        Lexer temp_lex = (Lexer){ l->filepath, temp_expansion_start, temp_expansion_start };
+                        Lexer temp_lex = (Lexer){l->filepath, temp_expansion_start, temp_expansion_start};
                         temp_lex.current_line = line_of_expansion;
                         lexer_read(&temp_lex);
 
@@ -1466,12 +1452,11 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
                         classify_ident(token_data, token_length),
                         macro_expansion_loc,
                         token_data,
-                        token_data + token_length
-                    };
+                        token_data + token_length};
 
                     arrput(s->tokens, t);
                 } else {
-                    Lexer temp_lex = (Lexer){ l->filepath, def.data, def.data };
+                    Lexer temp_lex = (Lexer){l->filepath, def.data, def.data};
                     temp_lex.current_line = l->current_line;
                     lexer_read(&temp_lex);
 
@@ -1497,8 +1482,7 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
                 classify_ident(token_data, token_length),
                 get_source_location(c, l, s, parent_loc, SOURCE_LOC_NORMAL),
                 token_data,
-                token_data + token_length
-            };
+                token_data + token_length};
 
             arrput(s->tokens, t);
             lexer_read(l);
@@ -1527,8 +1511,7 @@ static void expand(CPP_Context* restrict c, TokenStream* restrict s, Lexer* l, S
                 l->token_type,
                 get_source_location(c, l, s, parent_loc, SOURCE_LOC_NORMAL),
                 l->token_start,
-                l->token_end
-            };
+                l->token_end};
 
             arrput(s->tokens, t);
             lexer_read(l);
@@ -1603,8 +1586,10 @@ static intmax_t eval_l5(CPP_Context* restrict c, TokenStream* restrict s) {
         tokens_next(s);
 
         intmax_t right = eval_l0(c, s);
-        if (t == TOKEN_LEFT_SHIFT) left = (left << right);
-        else left = (uintmax_t)((uintmax_t)left >> (uintmax_t)right);
+        if (t == TOKEN_LEFT_SHIFT)
+            left = (left << right);
+        else
+            left = (uintmax_t)((uintmax_t)left >> (uintmax_t)right);
     }
 
     return left;
@@ -1622,10 +1607,18 @@ static intmax_t eval_l6(CPP_Context* restrict c, TokenStream* restrict s) {
 
         intmax_t right = eval_l5(c, s);
         switch (t) {
-            case '>': left = left > right; break;
-            case '<': left = left < right; break;
-            case TOKEN_GREATER_EQUAL: left = left >= right; break;
-            case TOKEN_LESS_EQUAL: left = left <= right; break;
+        case '>':
+            left = left > right;
+            break;
+        case '<':
+            left = left < right;
+            break;
+        case TOKEN_GREATER_EQUAL:
+            left = left >= right;
+            break;
+        case TOKEN_LESS_EQUAL:
+            left = left <= right;
+            break;
         }
     }
 
@@ -1641,8 +1634,10 @@ static intmax_t eval_l7(CPP_Context* restrict c, TokenStream* restrict s) {
         tokens_next(s);
 
         intmax_t right = eval_l6(c, s);
-        if (t == TOKEN_EQUALITY) left = (left == right);
-        else left = (left != right);
+        if (t == TOKEN_EQUALITY)
+            left = (left == right);
+        else
+            left = (left != right);
     }
 
     return left;
@@ -1723,7 +1718,7 @@ static intmax_t eval(CPP_Context* restrict c, TokenStream* restrict s, Lexer* l,
         assert(s->current != arrlen(s->tokens) && "Expected the macro expansion to add something");
 
         // Insert a null token at the end
-        Token t = { 0, arrlen(s->locations) - 1, NULL, NULL };
+        Token t = {0, arrlen(s->locations) - 1, NULL, NULL};
         arrput(s->tokens, t);
 
         // Evaluate

@@ -1,6 +1,6 @@
 #pragma once
-#include <common.h>
 #include <arena.h>
+#include <common.h>
 #include <ext/stb_ds.h>
 
 // NOTE(NeGate): I originally called it TokenType but windows a bih on god
@@ -40,122 +40,122 @@ typedef enum TknType {
     TOKEN_STRING_SINGLE_QUOTE = '\'',
     TOKEN_STRING_DOUBLE_QUOTE = '\"',
 
-	// L"hello"
+    // L"hello"
     TOKEN_STRING_WIDE_SINGLE_QUOTE = '\'' + 256,
     TOKEN_STRING_WIDE_DOUBLE_QUOTE = '\"' + 256,
 
     TOKEN_IDENTIFIER = 256,
-	TOKEN_INTEGER,
-	TOKEN_FLOAT,
-	TOKEN_TRIPLE_DOT,
+    TOKEN_INTEGER,
+    TOKEN_FLOAT,
+    TOKEN_TRIPLE_DOT,
 
     TOKEN_INVALID,
 
-    TOKEN_ARROW,                      /* ->  */
-    TOKEN_DOUBLE_HASH   = '#' + 256,  /* ##  */
+    TOKEN_ARROW,                   /* ->  */
+    TOKEN_DOUBLE_HASH = '#' + 256, /* ##  */
 
-    TOKEN_DOUBLE_AND    = '&' + 256,  /* &=  */
-    TOKEN_DOUBLE_OR     = '|' + 256,  /* |=  */
+    TOKEN_DOUBLE_AND = '&' + 256, /* &=  */
+    TOKEN_DOUBLE_OR = '|' + 256,  /* |=  */
 
-    TOKEN_PLUS_EQUAL    = '+' + 384,  /* +=  */
-    TOKEN_MINUS_EQUAL   = '-' + 384,  /* -=  */
-    TOKEN_TIMES_EQUAL   = '*' + 384,  /* *=  */
-    TOKEN_SLASH_EQUAL   = '/' + 384,  /* /=  */
-    TOKEN_PERCENT_EQUAL = '%' + 384,  /* %=  */
-    TOKEN_OR_EQUAL      = '|' + 384,  /* |=  */
-    TOKEN_AND_EQUAL     = '&' + 384,  /* &=  */
-    TOKEN_XOR_EQUAL     = '^' + 384,  /* ^=  */
-    TOKEN_NOT_EQUAL     = '!' + 384,  /* !=  */
-    TOKEN_EQUALITY      = '=' + 384,  /* ==  */
+    TOKEN_PLUS_EQUAL = '+' + 384,    /* +=  */
+    TOKEN_MINUS_EQUAL = '-' + 384,   /* -=  */
+    TOKEN_TIMES_EQUAL = '*' + 384,   /* *=  */
+    TOKEN_SLASH_EQUAL = '/' + 384,   /* /=  */
+    TOKEN_PERCENT_EQUAL = '%' + 384, /* %=  */
+    TOKEN_OR_EQUAL = '|' + 384,      /* |=  */
+    TOKEN_AND_EQUAL = '&' + 384,     /* &=  */
+    TOKEN_XOR_EQUAL = '^' + 384,     /* ^=  */
+    TOKEN_NOT_EQUAL = '!' + 384,     /* !=  */
+    TOKEN_EQUALITY = '=' + 384,      /* ==  */
 
-    TOKEN_GREATER_EQUAL = '>' + 256,  /* >=  */
-    TOKEN_LESS_EQUAL    = '<' + 256,  /* <=  */
-    TOKEN_LEFT_SHIFT    = '<' + 384,  /* <<  */
-    TOKEN_RIGHT_SHIFT   = '>' + 384,  /* >>  */
+    TOKEN_GREATER_EQUAL = '>' + 256, /* >=  */
+    TOKEN_LESS_EQUAL = '<' + 256,    /* <=  */
+    TOKEN_LEFT_SHIFT = '<' + 384,    /* <<  */
+    TOKEN_RIGHT_SHIFT = '>' + 384,   /* >>  */
 
-	TOKEN_LEFT_SHIFT_EQUAL ='<' + 512,/* <<= */
-	TOKEN_RIGHT_SHIFT_EQUAL='>' + 512,/* >>= */
-    TOKEN_INCREMENT       = '+' + 256,/* ++  */
-    TOKEN_DECREMENT       = '-' + 256,/* --  */
+    TOKEN_LEFT_SHIFT_EQUAL = '<' + 512,  /* <<= */
+    TOKEN_RIGHT_SHIFT_EQUAL = '>' + 512, /* >>= */
+    TOKEN_INCREMENT = '+' + 256,         /* ++  */
+    TOKEN_DECREMENT = '-' + 256,         /* --  */
 
-	// this is hacky because ! is a single char
-	// token (sometimes used in !=) but this way
-	// it can share more rules with the rest of the
-	// tokens (less cases in the lexer).
-    TOKEN_DOUBLE_EXCLAMATION = '!' + 256,/* !!  */
+    // this is hacky because ! is a single char
+    // token (sometimes used in !=) but this way
+    // it can share more rules with the rest of the
+    // tokens (less cases in the lexer).
+    TOKEN_DOUBLE_EXCLAMATION = '!' + 256, /* !!  */
 
-	// Keywords
-	TOKEN_KW_auto = 640,
-	TOKEN_KW_break,
-	TOKEN_KW_case,
-	TOKEN_KW_char,
-	TOKEN_KW_const,
-	TOKEN_KW_continue,
-	TOKEN_KW_default,
-	TOKEN_KW_do,
-	TOKEN_KW_double,
-	TOKEN_KW_else,
-	TOKEN_KW_enum,
-	TOKEN_KW_extern,
-	TOKEN_KW_float,
-	TOKEN_KW_for,
-	TOKEN_KW_goto,
-	TOKEN_KW_if,
-	TOKEN_KW_inline,
-	TOKEN_KW_int,
-	TOKEN_KW_long,
-	TOKEN_KW_register,
-	TOKEN_KW_restrict,
-	TOKEN_KW_return,
-	TOKEN_KW_short,
-	TOKEN_KW_signed,
-	TOKEN_KW_sizeof,
-	TOKEN_KW_static,
-	TOKEN_KW_struct,
-	TOKEN_KW_switch,
-	TOKEN_KW_typedef,
-	TOKEN_KW_union,
-	TOKEN_KW_unsigned,
-	TOKEN_KW_void,
-	TOKEN_KW_volatile,
-	TOKEN_KW_while,
-	TOKEN_KW_Alignas,
-	TOKEN_KW_Alignof,
-	TOKEN_KW_Atomic,
-	TOKEN_KW_Bool,
-	TOKEN_KW_Complex,
-	TOKEN_KW_Generic,
-	TOKEN_KW_Imaginary,
-	TOKEN_KW_Pragma,
-	TOKEN_KW_Noreturn,
-	TOKEN_KW_Static_assert,
-	TOKEN_KW_Thread_local,
-	TOKEN_KW_Typeof,
-	TOKEN_KW_Vector,
-	TOKEN_KW_cdecl,
-	TOKEN_KW_stdcall,
-	TOKEN_KW_declspec,
+    // Keywords
+    TOKEN_KW_auto = 640,
+    TOKEN_KW_break,
+    TOKEN_KW_case,
+    TOKEN_KW_char,
+    TOKEN_KW_const,
+    TOKEN_KW_continue,
+    TOKEN_KW_default,
+    TOKEN_KW_do,
+    TOKEN_KW_double,
+    TOKEN_KW_else,
+    TOKEN_KW_enum,
+    TOKEN_KW_extern,
+    TOKEN_KW_float,
+    TOKEN_KW_for,
+    TOKEN_KW_goto,
+    TOKEN_KW_if,
+    TOKEN_KW_inline,
+    TOKEN_KW_int,
+    TOKEN_KW_long,
+    TOKEN_KW_register,
+    TOKEN_KW_restrict,
+    TOKEN_KW_return,
+    TOKEN_KW_short,
+    TOKEN_KW_signed,
+    TOKEN_KW_sizeof,
+    TOKEN_KW_static,
+    TOKEN_KW_struct,
+    TOKEN_KW_switch,
+    TOKEN_KW_typedef,
+    TOKEN_KW_union,
+    TOKEN_KW_unsigned,
+    TOKEN_KW_void,
+    TOKEN_KW_volatile,
+    TOKEN_KW_while,
+    TOKEN_KW_Alignas,
+    TOKEN_KW_Alignof,
+    TOKEN_KW_Atomic,
+    TOKEN_KW_Bool,
+    TOKEN_KW_Complex,
+    TOKEN_KW_Generic,
+    TOKEN_KW_Imaginary,
+    TOKEN_KW_Pragma,
+    TOKEN_KW_Noreturn,
+    TOKEN_KW_Static_assert,
+    TOKEN_KW_Thread_local,
+    TOKEN_KW_Typeof,
+    TOKEN_KW_Vector,
+    TOKEN_KW_cdecl,
+    TOKEN_KW_stdcall,
+    TOKEN_KW_declspec,
 } TknType;
 
 typedef enum IntSuffix {
-	//                u   l   l
-	INT_SUFFIX_NONE = 0 + 0 + 0,
-	INT_SUFFIX_U    = 1 + 0 + 0,
-	INT_SUFFIX_L    = 0 + 2 + 0,
-	INT_SUFFIX_UL   = 1 + 2 + 0,
-	INT_SUFFIX_LL   = 0 + 2 + 2,
-	INT_SUFFIX_ULL  = 1 + 2 + 2,
+    //                u   l   l
+    INT_SUFFIX_NONE = 0 + 0 + 0,
+    INT_SUFFIX_U = 1 + 0 + 0,
+    INT_SUFFIX_L = 0 + 2 + 0,
+    INT_SUFFIX_UL = 1 + 2 + 0,
+    INT_SUFFIX_LL = 0 + 2 + 2,
+    INT_SUFFIX_ULL = 1 + 2 + 2,
 } IntSuffix;
 
 #define SOURCE_LOC_GET_DATA(loc) ((loc) & ~0xC0000000u)
-#define SOURCE_LOC_GET_TYPE(loc) (((loc) & 0xC0000000u) >> 30u)
+#define SOURCE_LOC_GET_TYPE(loc) (((loc)&0xC0000000u) >> 30u)
 #define SOURCE_LOC_SET_TYPE(type, raw) (((type << 30) & 0xC0000000u) | ((raw) & ~0xC0000000u))
 
 typedef enum SourceLocType {
     SOURCE_LOC_UNKNOWN = 0,
-    SOURCE_LOC_NORMAL  = 1,
-    SOURCE_LOC_MACRO   = 2,
-    SOURCE_LOC_FILE    = 3
+    SOURCE_LOC_NORMAL = 1,
+    SOURCE_LOC_MACRO = 2,
+    SOURCE_LOC_FILE = 3
 } SourceLocType;
 
 // structure to get some nice type checking
@@ -166,54 +166,54 @@ typedef struct SourceRange {
 } SourceRange;
 
 typedef struct SourceLine {
-	const char* filepath;
-	const unsigned char* line_str;
-	SourceLocIndex parent;
+    const char* filepath;
+    const unsigned char* line_str;
+    SourceLocIndex parent;
     int line;
 } SourceLine;
 
 typedef struct SourceLoc {
-	SourceLine* line;
-	short columns;
-	short length;
+    SourceLine* line;
+    short columns;
+    short length;
 } SourceLoc;
 
 typedef struct Token {
-	TknType type;
-	SourceLocIndex location;
-	const unsigned char* start;
-	const unsigned char* end;
+    TknType type;
+    SourceLocIndex location;
+    const unsigned char* start;
+    const unsigned char* end;
 } Token;
 
 typedef struct {
-	// stb_ds array
-	Token* tokens;
-	size_t current;
+    // stb_ds array
+    Token* tokens;
+    size_t current;
 
-	// stb_ds array
-	SourceLoc* locations;
+    // stb_ds array
+    SourceLoc* locations;
 } TokenStream;
 
 typedef struct {
-	////////////////////////////////
-	// USER-PROVIDED
-	////////////////////////////////
-	const char* filepath;
+    ////////////////////////////////
+    // USER-PROVIDED
+    ////////////////////////////////
+    const char* filepath;
     const unsigned char* start;
     const unsigned char* current;
-	int current_line;
+    int current_line;
 
-	////////////////////////////////
-	// INTERNALS
-	////////////////////////////////
+    ////////////////////////////////
+    // INTERNALS
+    ////////////////////////////////
     const unsigned char* line_current;
-	const unsigned char* line_current2;
+    const unsigned char* line_current2;
 
     // when reading it spotted a line or EOF, it must be manually reset
     bool hit_line;
 
-	// current token info
-	TknType token_type;
+    // current token info
+    TknType token_type;
     const unsigned char* token_start;
     const unsigned char* token_end;
 } Lexer;
@@ -227,44 +227,44 @@ double parse_float(size_t len, const char* str);
 TknType classify_ident(const unsigned char* restrict str, size_t len);
 
 inline static bool lexer_match(Lexer* restrict l, size_t len, const char* str) {
-	if ((l->token_end - l->token_start) != len) return false;
+    if ((l->token_end - l->token_start) != len) return false;
 
-	return memcmp(l->token_start, str, len) == 0;
+    return memcmp(l->token_start, str, len) == 0;
 }
 
 inline static SourceLocIndex tokens_get_last_location_index(TokenStream* restrict s) {
-	return s->tokens[s->current - 1].location;
+    return s->tokens[s->current - 1].location;
 }
 
 inline static SourceLocIndex tokens_get_location_index(TokenStream* restrict s) {
-	return s->tokens[s->current].location;
+    return s->tokens[s->current].location;
 }
 
 inline static SourceLoc* tokens_get_last_location(TokenStream* restrict s) {
-	return &s->locations[s->tokens[s->current - 1].location];
+    return &s->locations[s->tokens[s->current - 1].location];
 }
 
 inline static SourceLoc* tokens_get_location(TokenStream* restrict s) {
-	return &s->locations[s->tokens[s->current].location];
+    return &s->locations[s->tokens[s->current].location];
 }
 
 // this is used by the parser to get the next token
 inline static Token* tokens_get(TokenStream* restrict s) {
-	return &s->tokens[s->current];
+    return &s->tokens[s->current];
 }
 
 // there should be a NULL token so as long as we can read [current]
 // we can read one ahead.
 inline static Token* tokens_peek(TokenStream* restrict s) {
-	return &s->tokens[s->current + 1];
+    return &s->tokens[s->current + 1];
 }
 
 inline static void tokens_prev(TokenStream* restrict s) {
-	assert(s->current > 0);
-	s->current -= 1;
+    assert(s->current > 0);
+    s->current -= 1;
 }
 
 inline static void tokens_next(TokenStream* restrict s) {
-	assert(s->current < arrlen(s->tokens));
-	s->current += 1;
+    assert(s->current < arrlen(s->tokens));
+    s->current += 1;
 }

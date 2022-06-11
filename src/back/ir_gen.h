@@ -1,6 +1,6 @@
 #pragma once
-#include <common.h>
 #include <arena.h>
+#include <common.h>
 
 #include <ext/stb_ds.h>
 #include <ext/threads.h>
@@ -13,61 +13,71 @@ extern atomic_size_t function_count;
 extern atomic_flag irgen_defined_tls_index;
 
 typedef enum IRValType {
-	RVALUE,
-	RVALUE_PHI,
+    RVALUE,
+    RVALUE_PHI,
 
-	LVALUE,
-	LVALUE_BITS,
-	LVALUE_LABEL,
-	LVALUE_FUNC,
-	LVALUE_EFUNC
+    LVALUE,
+    LVALUE_BITS,
+    LVALUE_LABEL,
+    LVALUE_FUNC,
+    LVALUE_EFUNC
 } IRValType;
 
 typedef struct IRVal {
-	IRValType value_type;
-	Type* type;
+    IRValType value_type;
+    Type* type;
 
-	union {
-		TB_Register reg;
-		TB_Function* func;
-		TB_ExternalID ext;
-		struct {
-			TB_Register reg;
+    union {
+        TB_Register reg;
+        TB_Function* func;
+        TB_ExternalID ext;
+        struct {
+            TB_Register reg;
 
-			short offset;
-			short width;
-		} bits;
-		struct {
-			TB_Label if_true;
-			TB_Label if_false;
-		} phi;
-		TB_Label label;
-	};
+            short offset;
+            short width;
+        } bits;
+        struct {
+            TB_Label if_true;
+            TB_Label if_false;
+        } phi;
+        TB_Label label;
+    };
 } IRVal;
 
 inline static TB_DataType ctype_to_tbtype(const Type* t) {
-	switch (t->kind) {
-		case KIND_VOID: return TB_TYPE_VOID;
-		case KIND_BOOL: return TB_TYPE_BOOL;
-		case KIND_CHAR: return TB_TYPE_I8;
-		case KIND_SHORT: return TB_TYPE_I16;
-		case KIND_INT: return TB_TYPE_I32;
-		case KIND_LONG: return TB_TYPE_I64;
-		case KIND_FLOAT: return TB_TYPE_F32;
-		case KIND_DOUBLE: return TB_TYPE_F64;
-		case KIND_ENUM: return TB_TYPE_I32;
+    switch (t->kind) {
+    case KIND_VOID:
+        return TB_TYPE_VOID;
+    case KIND_BOOL:
+        return TB_TYPE_BOOL;
+    case KIND_CHAR:
+        return TB_TYPE_I8;
+    case KIND_SHORT:
+        return TB_TYPE_I16;
+    case KIND_INT:
+        return TB_TYPE_I32;
+    case KIND_LONG:
+        return TB_TYPE_I64;
+    case KIND_FLOAT:
+        return TB_TYPE_F32;
+    case KIND_DOUBLE:
+        return TB_TYPE_F64;
+    case KIND_ENUM:
+        return TB_TYPE_I32;
 
-		case KIND_PTR:
-		case KIND_FUNC:
-		case KIND_ARRAY:
-		return TB_TYPE_PTR;
+    case KIND_PTR:
+    case KIND_FUNC:
+    case KIND_ARRAY:
+        return TB_TYPE_PTR;
 
-		case KIND_STRUCT:
-		case KIND_UNION:
-		return TB_TYPE_PTR;
+    case KIND_STRUCT:
+    case KIND_UNION:
+        return TB_TYPE_PTR;
 
-		default: abort(); // TODO
-	}
+    default:
+        abort(); // TODO
+    }
 }
 
 InitNode* count_max_tb_init_objects(int node_count, InitNode* node, int* out_count);

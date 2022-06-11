@@ -6,10 +6,10 @@
  * (See copy at http://www.boost.org/LICENSE_1_0.txt)
  */
 #include <assert.h>
-#include <limits.h>
 #include <errno.h>
+#include <limits.h>
+#include <process.h> // MSVCRT
 #include <stdlib.h>
-#include <process.h>  // MSVCRT
 
 /*
 Configuration macro:
@@ -29,13 +29,12 @@ Configuration macro:
 */
 #if _WIN32_WINNT >= 0x0600
 // Prefer native WindowsAPI on newer environment.
-#define EMULATED_THREADS_USE_NATIVE_CALL_ONCE 
+#define EMULATED_THREADS_USE_NATIVE_CALL_ONCE
 #define EMULATED_THREADS_USE_NATIVE_CV
 #endif
-#define EMULATED_THREADS_TSS_DTOR_SLOTNUM 64  // see TLS_MINIMUM_AVAILABLE
+#define EMULATED_THREADS_TSS_DTOR_SLOTNUM 64 // see TLS_MINIMUM_AVAILABLE
 
 #include "threads.h"
-
 
 /*
 Implementation limits:
@@ -43,15 +42,14 @@ Implementation limits:
     (see EMULATED_THREADS_USE_NATIVE_CALL_ONCE macro)
   - Emulated `mtx_timelock()' with mtx_trylock() + *busy loop*
 */
-static void impl_tss_dtor_invoke();  // forward decl.
+static void impl_tss_dtor_invoke(); // forward decl.
 
 struct impl_thrd_param {
     thrd_start_t func;
-    void *arg;
+    void* arg;
 };
 
-static unsigned __stdcall impl_thrd_routine(void *p)
-{
+static unsigned __stdcall impl_thrd_routine(void* p) {
     struct impl_thrd_param pack;
     int code;
     memcpy(&pack, p, sizeof(struct impl_thrd_param));
@@ -61,21 +59,22 @@ static unsigned __stdcall impl_thrd_routine(void *p)
     return (unsigned)code;
 }
 
-static DWORD impl_xtime2msec(const xtime *xt)
-{
+static DWORD impl_xtime2msec(const xtime* xt) {
     return (DWORD)((xt->sec * 1000u) + (xt->nsec / 1000000));
 }
 
 #ifdef EMULATED_THREADS_USE_NATIVE_CALL_ONCE
-struct impl_call_once_param { void (*func)(void); };
-static BOOL CALLBACK impl_call_once_callback(PINIT_ONCE InitOnce, PVOID Parameter, PVOID *Context)
-{
-    struct impl_call_once_param *param = (struct impl_call_once_param*)Parameter;
+struct impl_call_once_param {
+    void (*func)(void);
+};
+static BOOL CALLBACK impl_call_once_callback(PINIT_ONCE InitOnce, PVOID Parameter, PVOID* Context) {
+    struct impl_call_once_param* param = (struct impl_call_once_param*)Parameter;
     (param->func)();
-    ((void)InitOnce); ((void)Context);  // suppress warning
+    ((void)InitOnce);
+    ((void)Context); // suppress warning
     return TRUE;
 }
-#endif  // ifdef EMULATED_THREADS_USE_NATIVE_CALL_ONCE
+#endif // ifdef EMULATED_THREADS_USE_NATIVE_CALL_ONCE
 
 #ifndef EMULATED_THREADS_USE_NATIVE_CV
 /*
@@ -83,10 +82,9 @@ Note:
   The implementation of condition variable is ported from Boost.Interprocess
   See http://www.boost.org/boost/interprocess/sync/windows/condition.hpp
 */
-static void impl_cond_do_signal(cnd_t *cond, int broadcast)
-{
+static void impl_cond_do_signal(cnd_t* cond, int broadcast) {
     int nsignal = 0;
-	
+
     EnterCriticalSection(&cond->monitor);
     if (cond->to_unblock != 0) {
         if (cond->blocked == 0) {
@@ -116,27 +114,26 @@ static void impl_cond_do_signal(cnd_t *cond, int broadcast)
         }
     }
     LeaveCriticalSection(&cond->monitor);
-	
+
     if (0 < nsignal)
         ReleaseSemaphore(cond->sem_queue, nsignal, NULL);
 }
 
-static int impl_cond_do_wait(cnd_t *cond, mtx_t *mtx, const xtime *xt)
-{
+static int impl_cond_do_wait(cnd_t* cond, mtx_t* mtx, const xtime* xt) {
     int nleft = 0;
     int ngone = 0;
     int timeout = 0;
     DWORD w;
-	
+
     WaitForSingleObject(cond->sem_gate, INFINITE);
     cond->blocked++;
     ReleaseSemaphore(cond->sem_gate, 1, NULL);
-	
+
     mtx_unlock(mtx);
-	
+
     w = WaitForSingleObject(cond->sem_queue, xt ? impl_xtime2msec(xt) : INFINITE);
     timeout = (w == WAIT_TIMEOUT);
-	
+
     EnterCriticalSection(&cond->monitor);
     if ((nleft = cond->to_unblock) != 0) {
         if (timeout) {
@@ -150,37 +147,35 @@ static int impl_cond_do_wait(cnd_t *cond, mtx_t *mtx, const xtime *xt)
             if (cond->blocked != 0) {
                 ReleaseSemaphore(cond->sem_gate, 1, NULL);
                 nleft = 0;
-            }
-            else if ((ngone = cond->gone) != 0) {
+            } else if ((ngone = cond->gone) != 0) {
                 cond->gone = 0;
             }
         }
-    } else if (++cond->gone == INT_MAX/2) {
+    } else if (++cond->gone == INT_MAX / 2) {
         WaitForSingleObject(cond->sem_gate, INFINITE);
         cond->blocked -= cond->gone;
         ReleaseSemaphore(cond->sem_gate, 1, NULL);
         cond->gone = 0;
     }
     LeaveCriticalSection(&cond->monitor);
-	
+
     if (nleft == 1) {
         while (ngone--)
             WaitForSingleObject(cond->sem_queue, INFINITE);
         ReleaseSemaphore(cond->sem_gate, 1, NULL);
     }
-	
+
     mtx_lock(mtx);
     return timeout ? thrd_busy : thrd_success;
 }
-#endif  // ifndef EMULATED_THREADS_USE_NATIVE_CV
+#endif // ifndef EMULATED_THREADS_USE_NATIVE_CV
 
 static struct impl_tss_dtor_entry {
     tss_t key;
     tss_dtor_t dtor;
 } impl_tss_dtor_tbl[EMULATED_THREADS_TSS_DTOR_SLOTNUM];
 
-static int impl_tss_dtor_register(tss_t key, tss_dtor_t dtor)
-{
+static int impl_tss_dtor_register(tss_t key, tss_dtor_t dtor) {
     int i;
     for (i = 0; i < EMULATED_THREADS_TSS_DTOR_SLOTNUM; i++) {
         if (!impl_tss_dtor_tbl[i].dtor)
@@ -193,8 +188,7 @@ static int impl_tss_dtor_register(tss_t key, tss_dtor_t dtor)
     return 0;
 }
 
-static void impl_tss_dtor_invoke()
-{
+static void impl_tss_dtor_invoke() {
     int i;
     for (i = 0; i < EMULATED_THREADS_TSS_DTOR_SLOTNUM; i++) {
         if (impl_tss_dtor_tbl[i].dtor) {
@@ -205,17 +199,15 @@ static void impl_tss_dtor_invoke()
     }
 }
 
-
 /*--------------- 7.25.2 Initialization functions ---------------*/
 // 7.25.2.1
-void call_once(once_flag *flag, void (*func)(void))
-{
+void call_once(once_flag* flag, void (*func)(void)) {
     assert(flag && func);
 #ifdef EMULATED_THREADS_USE_NATIVE_CALL_ONCE
     {
-		struct impl_call_once_param param;
-		param.func = func;
-		InitOnceExecuteOnce(flag, impl_call_once_callback, (PVOID)&param, NULL);
+        struct impl_call_once_param param;
+        param.func = func;
+        InitOnceExecuteOnce(flag, impl_call_once_callback, (PVOID)&param, NULL);
     }
 #else
     if (InterlockedCompareExchange(&flag->status, 1, 0) == 0) {
@@ -230,11 +222,9 @@ void call_once(once_flag *flag, void (*func)(void))
 #endif
 }
 
-
 /*------------- 7.25.3 Condition variable functions -------------*/
 // 7.25.3.1
-int cnd_broadcast(cnd_t *cond)
-{
+int cnd_broadcast(cnd_t* cond) {
     if (!cond) return thrd_error;
 #ifdef EMULATED_THREADS_USE_NATIVE_CV
     WakeAllConditionVariable(&cond->condvar);
@@ -245,8 +235,7 @@ int cnd_broadcast(cnd_t *cond)
 }
 
 // 7.25.3.2
-void cnd_destroy(cnd_t *cond)
-{
+void cnd_destroy(cnd_t* cond) {
     assert(cond);
 #ifdef EMULATED_THREADS_USE_NATIVE_CV
     // do nothing
@@ -258,8 +247,7 @@ void cnd_destroy(cnd_t *cond)
 }
 
 // 7.25.3.3
-int cnd_init(cnd_t *cond)
-{
+int cnd_init(cnd_t* cond) {
     if (!cond) return thrd_error;
 #ifdef EMULATED_THREADS_USE_NATIVE_CV
     InitializeConditionVariable(&cond->condvar);
@@ -275,8 +263,7 @@ int cnd_init(cnd_t *cond)
 }
 
 // 7.25.3.4
-int cnd_signal(cnd_t *cond)
-{
+int cnd_signal(cnd_t* cond) {
     if (!cond) return thrd_error;
 #ifdef EMULATED_THREADS_USE_NATIVE_CV
     WakeConditionVariable(&cond->condvar);
@@ -287,8 +274,7 @@ int cnd_signal(cnd_t *cond)
 }
 
 // 7.25.3.5
-int cnd_timedwait(cnd_t *cond, mtx_t *mtx, const xtime *xt)
-{
+int cnd_timedwait(cnd_t* cond, mtx_t* mtx, const xtime* xt) {
     if (!cond || !mtx || !xt) return thrd_error;
 #ifdef EMULATED_THREADS_USE_NATIVE_CV
     if (SleepConditionVariableCS(&cond->condvar, &mtx->cs, impl_xtime2msec(xt)))
@@ -300,8 +286,7 @@ int cnd_timedwait(cnd_t *cond, mtx_t *mtx, const xtime *xt)
 }
 
 // 7.25.3.6
-int cnd_wait(cnd_t *cond, mtx_t *mtx)
-{
+int cnd_wait(cnd_t* cond, mtx_t* mtx) {
     if (!cond || !mtx) return thrd_error;
 #ifdef EMULATED_THREADS_USE_NATIVE_CV
     SleepConditionVariableCS(&cond->condvar, &mtx->cs, INFINITE);
@@ -311,39 +296,31 @@ int cnd_wait(cnd_t *cond, mtx_t *mtx)
     return thrd_success;
 }
 
-
 /*-------------------- 7.25.4 Mutex functions --------------------*/
 // 7.25.4.1
-void mtx_destroy(mtx_t *mtx)
-{
+void mtx_destroy(mtx_t* mtx) {
     assert(mtx);
     DeleteCriticalSection(&mtx->cs);
 }
 
 // 7.25.4.2
-int mtx_init(mtx_t *mtx, int type)
-{
+int mtx_init(mtx_t* mtx, int type) {
     if (!mtx) return thrd_error;
-    if (type != mtx_plain && type != mtx_timed && type != mtx_try
-		&& type != (mtx_plain|mtx_recursive)
-		&& type != (mtx_timed|mtx_recursive)
-		&& type != (mtx_try|mtx_recursive))
+    if (type != mtx_plain && type != mtx_timed && type != mtx_try && type != (mtx_plain | mtx_recursive) && type != (mtx_timed | mtx_recursive) && type != (mtx_try | mtx_recursive))
         return thrd_error;
     InitializeCriticalSection(&mtx->cs);
     return thrd_success;
 }
 
 // 7.25.4.3
-int mtx_lock(mtx_t *mtx)
-{
+int mtx_lock(mtx_t* mtx) {
     if (!mtx) return thrd_error;
     EnterCriticalSection(&mtx->cs);
     return thrd_success;
 }
 
 // 7.25.4.4
-int mtx_timedlock(mtx_t *mtx, const xtime *xt)
-{
+int mtx_timedlock(mtx_t* mtx, const xtime* xt) {
     time_t expire, now;
     if (!mtx || !xt) return thrd_error;
     expire = time(NULL);
@@ -359,26 +336,22 @@ int mtx_timedlock(mtx_t *mtx, const xtime *xt)
 }
 
 // 7.25.4.5
-int mtx_trylock(mtx_t *mtx)
-{
+int mtx_trylock(mtx_t* mtx) {
     if (!mtx) return thrd_error;
     return TryEnterCriticalSection(&mtx->cs) ? thrd_success : thrd_busy;
 }
 
 // 7.25.4.6
-int mtx_unlock(mtx_t *mtx)
-{
+int mtx_unlock(mtx_t* mtx) {
     if (!mtx) return thrd_error;
     LeaveCriticalSection(&mtx->cs);
     return thrd_success;
 }
 
-
 /*------------------- 7.25.5 Thread functions -------------------*/
 // 7.25.5.1
-int thrd_create(thrd_t *thr, thrd_start_t func, void *arg)
-{
-    struct impl_thrd_param *pack;
+int thrd_create(thrd_t* thr, thrd_start_t func, void* arg) {
+    struct impl_thrd_param* pack;
     uintptr_t handle;
     if (!thr) return thrd_error;
     pack = malloc(sizeof(struct impl_thrd_param));
@@ -396,34 +369,29 @@ int thrd_create(thrd_t *thr, thrd_start_t func, void *arg)
 }
 
 // 7.25.5.2
-thrd_t thrd_current(void)
-{
+thrd_t thrd_current(void) {
     return GetCurrentThread();
 }
 
 // 7.25.5.3
-int thrd_detach(thrd_t thr)
-{
+int thrd_detach(thrd_t thr) {
     CloseHandle(thr);
     return thrd_success;
 }
 
 // 7.25.5.4
-int thrd_equal(thrd_t thr0, thrd_t thr1)
-{
+int thrd_equal(thrd_t thr0, thrd_t thr1) {
     return (thr0 == thr1);
 }
 
 // 7.25.5.5
-void thrd_exit(int res)
-{
+void thrd_exit(int res) {
     impl_tss_dtor_invoke();
     _endthreadex((unsigned)res);
 }
 
 // 7.25.5.6
-int thrd_join(thrd_t thr, int *res)
-{
+int thrd_join(thrd_t thr, int* res) {
     DWORD w, code;
     w = WaitForSingleObject(thr, INFINITE);
     if (w != WAIT_OBJECT_0)
@@ -440,23 +408,19 @@ int thrd_join(thrd_t thr, int *res)
 }
 
 // 7.25.5.7
-void thrd_sleep(const xtime *xt)
-{
+void thrd_sleep(const xtime* xt) {
     assert(xt);
     Sleep(impl_xtime2msec(xt));
 }
 
 // 7.25.5.8
-void thrd_yield(void)
-{
+void thrd_yield(void) {
     SwitchToThread();
 }
 
-
 /*----------- 7.25.6 Thread-specific storage functions -----------*/
 // 7.25.6.1
-int tss_create(tss_t *key, tss_dtor_t dtor)
-{
+int tss_create(tss_t* key, tss_dtor_t dtor) {
     if (!key) return thrd_error;
     *key = TlsAlloc();
     if (dtor) {
@@ -469,28 +433,23 @@ int tss_create(tss_t *key, tss_dtor_t dtor)
 }
 
 // 7.25.6.2
-void tss_delete(tss_t key)
-{
+void tss_delete(tss_t key) {
     TlsFree(key);
 }
 
 // 7.25.6.3
-void *tss_get(tss_t key)
-{
+void* tss_get(tss_t key) {
     return TlsGetValue(key);
 }
 
 // 7.25.6.4
-int tss_set(tss_t key, void *val)
-{
+int tss_set(tss_t key, void* val) {
     return TlsSetValue(key, val) ? thrd_success : thrd_error;
 }
 
-
 /*-------------------- 7.25.7 Time functions --------------------*/
 // 7.25.6.1
-int xtime_get(xtime *xt, int base)
-{
+int xtime_get(xtime* xt, int base) {
     if (!xt) return 0;
     if (base == TIME_UTC) {
         xt->sec = time(NULL);

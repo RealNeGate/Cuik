@@ -1,7 +1,7 @@
 #pragma once
-#include <common.h>
-#include <big_array.h>
 #include "lexer.h"
+#include <big_array.h>
+#include <common.h>
 
 #define SLOTS_PER_MACRO_BUCKET 1024
 #define MACRO_BUCKET_COUNT 1024

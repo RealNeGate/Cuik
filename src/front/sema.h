@@ -1,8 +1,8 @@
 #pragma once
-#include <common.h>
 #include <arena.h>
-#include <timer.h>
+#include <common.h>
 #include <compilation_unit.h>
+#include <timer.h>
 
 #include <ext/stb_ds.h>
 #include <front/parser.h>

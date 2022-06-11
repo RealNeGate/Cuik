@@ -8,8 +8,8 @@ static void set_defines(CPP_Context* cpp) {
     cpp_define_empty(cpp, "_CUIK_TARGET_64BIT_");
     cpp_define(cpp, "__LITTLE_ENDIAN__", "1");
 
-    cpp_define(cpp, "_M_X64",   "100");
-    cpp_define(cpp, "_AMD64_",  "100");
+    cpp_define(cpp, "_M_X64", "100");
+    cpp_define(cpp, "_AMD64_", "100");
     cpp_define(cpp, "_M_AMD64", "100");
 
     cpp_define(cpp, "_WIN32", "1");
@@ -33,8 +33,13 @@ static void set_defines(CPP_Context* cpp) {
 static bool win64_should_pass_via_reg(TranslationUnit* tu, Type* type) {
     if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
         switch (type->size) {
-            case 1: case 2: case 4: case 8: return true;
-            default: return false;
+        case 1:
+        case 2:
+        case 4:
+        case 8:
+            return true;
+        default:
+            return false;
         }
     } else {
         return true;
@@ -94,20 +99,27 @@ static int pass_parameter(TranslationUnit* tu, TB_Function* func, Expr* e, bool 
         IRVal arg = irgen_expr(tu, func, e);
         TB_Reg arg_addr = TB_NULL_REG;
         switch (arg.value_type) {
-            case LVALUE: arg_addr = arg.reg; break;
-            case LVALUE_FUNC: arg_addr = tb_inst_get_func_address(func, arg.func); break;
-            case LVALUE_EFUNC: arg_addr = tb_inst_get_extern_address(func, arg.ext); break;
-            case RVALUE: {
-                // spawn a lil temporary
-                TB_CharUnits size = arg_type->size;
-                TB_CharUnits align = arg_type->align;
-                TB_DataType dt = tb_function_get_node(func, arg.reg)->dt;
+        case LVALUE:
+            arg_addr = arg.reg;
+            break;
+        case LVALUE_FUNC:
+            arg_addr = tb_inst_get_func_address(func, arg.func);
+            break;
+        case LVALUE_EFUNC:
+            arg_addr = tb_inst_get_extern_address(func, arg.ext);
+            break;
+        case RVALUE: {
+            // spawn a lil temporary
+            TB_CharUnits size = arg_type->size;
+            TB_CharUnits align = arg_type->align;
+            TB_DataType dt = tb_function_get_node(func, arg.reg)->dt;
 
-                arg_addr = tb_inst_local(func, size, align);
-                tb_inst_store(func, dt, arg_addr, arg.reg, align);
-                break;
-            }
-            default: break;
+            arg_addr = tb_inst_local(func, size, align);
+            tb_inst_store(func, dt, arg_addr, arg.reg, align);
+            break;
+        }
+        default:
+            break;
         }
         assert(arg_addr);
 
@@ -135,30 +147,46 @@ static int pass_parameter(TranslationUnit* tu, TB_Function* func, Expr* e, bool 
             IRVal arg = irgen_expr(tu, func, e);
             TB_Reg arg_addr = TB_NULL_REG;
             switch (arg.value_type) {
-                case LVALUE: arg_addr = arg.reg; break;
-                case LVALUE_FUNC: arg_addr = tb_inst_get_func_address(func, arg.func); break;
-                case LVALUE_EFUNC: arg_addr = tb_inst_get_extern_address(func, arg.ext); break;
-                case RVALUE: {
-                    // spawn a lil temporary
-                    TB_CharUnits size = arg_type->size;
-                    TB_CharUnits align = arg_type->align;
-                    TB_DataType dt = tb_function_get_node(func, arg.reg)->dt;
+            case LVALUE:
+                arg_addr = arg.reg;
+                break;
+            case LVALUE_FUNC:
+                arg_addr = tb_inst_get_func_address(func, arg.func);
+                break;
+            case LVALUE_EFUNC:
+                arg_addr = tb_inst_get_extern_address(func, arg.ext);
+                break;
+            case RVALUE: {
+                // spawn a lil temporary
+                TB_CharUnits size = arg_type->size;
+                TB_CharUnits align = arg_type->align;
+                TB_DataType dt = tb_function_get_node(func, arg.reg)->dt;
 
-                    arg_addr = tb_inst_local(func, size, align);
-                    tb_inst_store(func, dt, arg_addr, arg.reg, align);
-                    break;
-                }
-                default: break;
+                arg_addr = tb_inst_local(func, size, align);
+                tb_inst_store(func, dt, arg_addr, arg.reg, align);
+                break;
+            }
+            default:
+                break;
             }
             assert(arg_addr);
 
             TB_DataType dt = TB_TYPE_VOID;
             switch (arg_type->size) {
-                case 1: dt = TB_TYPE_I8; break;
-                case 2: dt = TB_TYPE_I16; break;
-                case 4: dt = TB_TYPE_I32; break;
-                case 8: dt = TB_TYPE_I64; break;
-                default: break;
+            case 1:
+                dt = TB_TYPE_I8;
+                break;
+            case 2:
+                dt = TB_TYPE_I16;
+                break;
+            case 4:
+                dt = TB_TYPE_I32;
+                break;
+            case 8:
+                dt = TB_TYPE_I64;
+                break;
+            default:
+                break;
             }
 
             out_param[0] = tb_inst_load(func, dt, arg_addr, arg_type->align);
@@ -263,7 +291,7 @@ static Type* type_check_builtin(TranslationUnit* tu, Expr* e, const char* name, 
             args[i]->cast_type = cast_type;
         }
 
-        failure:
+    failure:
         return &builtin_types[TYPE_BOOL];
     }
 
@@ -349,7 +377,7 @@ TargetDescriptor get_x64_target_descriptor() {
     shput(builtins, "_umul128", 1);
     shput(builtins, "_mul128", 1);
 
-    return (TargetDescriptor) {
+    return (TargetDescriptor){
         .builtin_func_map = builtins,
         .set_defines = set_defines,
         .create_prototype = create_prototype,
@@ -357,6 +385,5 @@ TargetDescriptor get_x64_target_descriptor() {
         .deduce_parameter_usage = deduce_parameter_usage,
         .pass_parameter = pass_parameter,
         .type_check_builtin = type_check_builtin,
-        .compile_builtin = compile_builtin
-    };
+        .compile_builtin = compile_builtin};
 }

@@ -9,8 +9,8 @@
 //   - make the expect(...) code be a little smarter, if it knows that it's expecting
 //   a token for a specific operation... tell the user
 #include "parser.h"
-#include <timer.h>
 #include <targets/targets.h>
+#include <timer.h>
 #undef VOID // winnt.h loves including garbage
 
 #define OUT_OF_ORDER_CRAP 1
@@ -51,10 +51,10 @@ thread_local static int local_tag_count = 0;
 thread_local static TagEntry local_tags[MAX_LOCAL_TAGS];
 
 // Global symbol stuff
-thread_local static PendingExpr* pending_exprs; // stb_ds array
-thread_local static TagEntry* global_tags; // stb_ds hash map
+thread_local static PendingExpr* pending_exprs;  // stb_ds array
+thread_local static TagEntry* global_tags;       // stb_ds hash map
 thread_local static SymbolEntry* global_symbols; // stb_ds hash map
-thread_local static LabelEntry* labels; // stb_ds hash map
+thread_local static LabelEntry* labels;          // stb_ds hash map
 
 thread_local static Stmt* current_switch_or_case;
 thread_local static Stmt* current_breakable;
@@ -102,9 +102,9 @@ static _Noreturn void generic_error(TokenStream* restrict s, const char* msg);
 //  LOCAL_SCOPE {
 //      /* do parse work */
 //  }
-#define LOCAL_SCOPE \
-for (int saved = local_symbol_count, saved2 = local_tag_count, _i_ = 0; \
-_i_ == 0; _i_ += 1, local_symbol_count = saved, local_tag_count = saved2)
+#define LOCAL_SCOPE                                                         \
+    for (int saved = local_symbol_count, saved2 = local_tag_count, _i_ = 0; \
+         _i_ == 0; _i_ += 1, local_symbol_count = saved, local_tag_count = saved2)
 
 static int align_up(int a, int b) {
     if (b == 0) return 0;
@@ -210,8 +210,8 @@ static size_t skip_expression_in_enum(TokenStream* restrict s, TknType* out_term
     return saved;
 }
 
-#include "expr_parser.h"
 #include "decl_parser.h"
+#include "expr_parser.h"
 
 typedef struct {
     // shared state, every run of phase2_parse_task will decrement this by one
@@ -219,7 +219,7 @@ typedef struct {
     size_t start, end;
 
     TranslationUnit* tu;
-    TagEntry* global_tags; // stb_ds hash map
+    TagEntry* global_tags;       // stb_ds hash map
     SymbolEntry* global_symbols; // stb_ds hash map
 
     const TokenStream* base_token_stream;
@@ -228,7 +228,10 @@ typedef struct {
 // we have a bunch of thread locals and for the sake of it, we wanna reset em before
 // a brand new parser on this thread
 static void reset_global_parser_state() {
-    labels = NULL; global_symbols = NULL; global_tags = NULL; pending_exprs = NULL;
+    labels = NULL;
+    global_symbols = NULL;
+    global_tags = NULL;
+    pending_exprs = NULL;
     local_symbol_start = local_symbol_count = 0;
     current_switch_or_case = current_breakable = current_continuable = NULL;
     symbol_chain_start = symbol_chain_current = NULL;
@@ -267,7 +270,7 @@ static void phase3_parse_task(void* arg) {
     reset_global_parser_state();
 
     // intitialize any thread local state that might not be set on this thread
-    global_tags    = task.global_tags;
+    global_tags = task.global_tags;
     global_symbols = task.global_symbols;
 
     tls_init();
@@ -282,7 +285,7 @@ static void phase3_parse_task(void* arg) {
 
         arena_trim(&local_ast_arena);
         arena_append(&task.tu->ast_arena, &local_ast_arena);
-        local_ast_arena = (Arena){ 0 };
+        local_ast_arena = (Arena){0};
 
         mtx_unlock(&task.tu->arena_mutex);
     }
@@ -566,7 +569,7 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
                 SourceLocIndex loc = tokens_get_location_index(s);
 
                 // must be a declaration since it's a top level statement
-                Attribs attr = { 0 };
+                Attribs attr = {0};
                 Type* type = parse_declspec(tu, s, &attr);
 
                 if (attr.is_typedef) {
@@ -581,15 +584,14 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
                             n->decl = (struct StmtDecl){
                                 .name = decl.name,
                                 .type = decl.type,
-                                .attrs = attr
-                            };
+                                .attrs = attr};
 
                             // typedefs can't be roots ngl
                             n->decl.attrs.is_root = false;
                             arrput(tu->top_level_stmts, n);
 
                             // check for collision
-                            Symbol* search = find_global_symbol((const char*) decl.name);
+                            Symbol* search = find_global_symbol((const char*)decl.name);
                             if (search != NULL) {
                                 if (search->storage_class != STORAGE_TYPEDEF) {
                                     report_two_spots(REPORT_ERROR, s, decl.loc, search->loc,
@@ -614,9 +616,8 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
                                 Symbol sym = {
                                     .name = decl.name,
                                     .type = decl.type,
-                                    .loc  = decl.loc,
-                                    .storage_class = STORAGE_TYPEDEF
-                                };
+                                    .loc = decl.loc,
+                                    .storage_class = STORAGE_TYPEDEF};
                                 shput(global_symbols, decl.name, sym);
                             }
                         }
@@ -657,18 +658,16 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
                         n->decl = (struct StmtDecl){
                             .name = decl.name,
                             .type = decl.type,
-                            .attrs = attr
-                        };
+                            .attrs = attr};
                         arrput(tu->top_level_stmts, n);
 
                         Symbol sym = {
                             .name = decl.name,
                             .type = decl.type,
-                            .loc  = decl.loc,
-                            .stmt = n
-                        };
+                            .loc = decl.loc,
+                            .stmt = n};
 
-                        Symbol* old_definition = find_global_symbol((const char*) decl.name);
+                        Symbol* old_definition = find_global_symbol((const char*)decl.name);
                         if (decl.type->kind == KIND_FUNC) {
                             sym.storage_class = (attr.is_static ? STORAGE_STATIC_FUNC : STORAGE_FUNC);
                         } else {
@@ -827,7 +826,7 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
         size_t type_count = 0;
         for (ArenaSegment* a = tu->type_arena.base; a != NULL; a = a->next) {
             for (size_t used = 0; used < a->used; used += sizeof(Type)) {
-                Type* type = (Type*) &a->data[used];
+                Type* type = (Type*)&a->data[used];
                 if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
                     type->ordinal = type_count++;
                 } else if (type->kind == KIND_PLACEHOLDER) {
@@ -849,7 +848,7 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
         // for each type, check for cycles
         for (ArenaSegment* a = tu->type_arena.base; a != NULL; a = a->next) {
             for (size_t used = 0; used < a->used; used += sizeof(Type)) {
-                Type* type = (Type*) &a->data[used];
+                Type* type = (Type*)&a->data[used];
 
                 if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
                     // if cycles... quit lmao
@@ -858,7 +857,7 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
             }
         }
 
-        fuck_outta_there:
+    fuck_outta_there:
         crash_if_reports(REPORT_ERROR);
 
         // parse all global declarations
@@ -902,7 +901,7 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
         // do record layouts and shi
         for (ArenaSegment* a = tu->type_arena.base; a != NULL; a = a->next) {
             for (size_t used = 0; used < a->used; used += sizeof(Type)) {
-                Type* type = (Type*) &a->data[used];
+                Type* type = (Type*)&a->data[used];
 
                 if (type->align == -1) {
                     // this means it's got a pending expression for an alignment
@@ -957,28 +956,27 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
         // append any AST nodes we might've created in this thread
         arena_trim(&local_ast_arena);
         arena_append(&tu->ast_arena, &local_ast_arena);
-        local_ast_arena = (Arena){ 0 };
+        local_ast_arena = (Arena){0};
 
         if (thread_pool != NULL) {
             // disabled until we change the tables to arenas
             size_t count = shlen(global_symbols);
-            size_t padded = (count + (PARSE_MUNCH_SIZE-1)) & ~(PARSE_MUNCH_SIZE-1);
+            size_t padded = (count + (PARSE_MUNCH_SIZE - 1)) & ~(PARSE_MUNCH_SIZE - 1);
 
             // passed to the threads to identify when things are done
-            atomic_size_t tasks_remaining = (count + (PARSE_MUNCH_SIZE-1)) / PARSE_MUNCH_SIZE;
+            atomic_size_t tasks_remaining = (count + (PARSE_MUNCH_SIZE - 1)) / PARSE_MUNCH_SIZE;
             ParserTaskInfo* tasks = malloc(sizeof(ParserTaskInfo) * tasks_remaining);
 
             size_t j = 0;
             for (size_t i = 0; i < padded; i += PARSE_MUNCH_SIZE) {
-                size_t limit = i+PARSE_MUNCH_SIZE;
+                size_t limit = i + PARSE_MUNCH_SIZE;
                 if (limit > count) limit = count;
 
                 ParserTaskInfo* task = &tasks[j];
                 *task = (ParserTaskInfo){
                     .tasks_remaining = &tasks_remaining,
                     .start = i,
-                    .end = limit
-                };
+                    .end = limit};
 
                 // we transfer a bunch of our thread local state to the task
                 // and they'll use that to continue and build up parse on other
@@ -1047,7 +1045,7 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
             continue;
         }
 
-        Attribs attr = { 0 };
+        Attribs attr = {0};
         Type* type = parse_declspec(tu, s, &attr);
         attr.is_root = !(attr.is_static || attr.is_inline);
 
@@ -1058,7 +1056,8 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
             while (tokens_get(s)->type != ';') {
                 if (expect_comma) {
                     expect(s, ',');
-                } else expect_comma = true;
+                } else
+                    expect_comma = true;
 
                 Decl decl = parse_declarator(tu, s, type, false, false);
                 assert(decl.name);
@@ -1069,15 +1068,13 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
                 n->decl = (struct StmtDecl){
                     .name = decl.name,
                     .type = decl.type,
-                    .attrs = attr
-                };
+                    .attrs = attr};
                 arrput(tu->top_level_stmts, n);
 
                 Symbol sym = (Symbol){
                     .name = decl.name,
                     .type = decl.type,
-                    .storage_class = STORAGE_TYPEDEF
-                };
+                    .storage_class = STORAGE_TYPEDEF};
                 shput(global_symbols, decl.name, sym);
             }
 
@@ -1131,16 +1128,14 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
                         .type = decl.type,
                         .name = decl.name,
                         .attrs = attr,
-                        .initial_as_stmt = NULL
-                    };
+                        .initial_as_stmt = NULL};
                     n->decl.attrs.is_root = false;
 
                     Symbol func_symbol = (Symbol){
                         .name = decl.name,
                         .type = decl.type,
                         .storage_class = attr.is_static ? STORAGE_STATIC_FUNC : STORAGE_FUNC,
-                        .stmt = n
-                    };
+                        .stmt = n};
                     shput(global_symbols, decl.name, func_symbol);
                 }
 
@@ -1157,7 +1152,7 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
                     assert(local_symbol_start == 0);
                     assert(local_symbol_count == 0);
 
-                    n->decl.type  = decl.type;
+                    n->decl.type = decl.type;
                     n->decl.attrs = attr;
 
                     // intitialize use list
@@ -1196,16 +1191,14 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
                 n->decl = (struct StmtDecl){
                     .type = decl.type,
                     .name = decl.name,
-                    .attrs = attr
-                };
+                    .attrs = attr};
                 arrput(tu->top_level_stmts, n);
 
                 Symbol sym = (Symbol){
                     .name = decl.name,
                     .type = decl.type,
                     .storage_class = attr.is_static ? STORAGE_STATIC_VAR : STORAGE_GLOBAL,
-                    .stmt = n
-                };
+                    .stmt = n};
                 shput(global_symbols, decl.name, sym);
 
                 if (tokens_get(s)->type == '=') {
@@ -1245,17 +1238,16 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
                         n->loc = decl.loc;
                         n->decl = (struct StmtDecl){
                             .type = decl.type,
-                            .name = decl.name,w
-                                .attrs = attr
-                        };
+                            .name = decl.name,
+                            w
+                                .attrs = attr};
                         arrput(tu->top_level_stmts, n);
 
                         Symbol sym = (Symbol){
                             .name = decl.name,
                             .type = decl.type,
                             .storage_class = attr.is_static ? STORAGE_STATIC_VAR : STORAGE_GLOBAL,
-                            .stmt = n
-                        };
+                            .stmt = n};
                         shput(global_symbols, decl.name, sym);
 
                         if (tokens_get(s)->type == '=') {
@@ -1357,7 +1349,7 @@ void translation_unit_deinit(TranslationUnit* tu) {
 }
 
 Stmt* resolve_unknown_symbol(TranslationUnit* tu, Expr* e) {
-    Symbol* sym = find_global_symbol((char*) e->unknown_sym);
+    Symbol* sym = find_global_symbol((char*)e->unknown_sym);
     if (sym != NULL) return 0;
 
     // Parameters are local and a special case how tf
@@ -1411,8 +1403,7 @@ static void parse_function_definition(TranslationUnit* tu, TokenStream* restrict
                 .name = p->name,
                 .type = p->type,
                 .storage_class = STORAGE_PARAM,
-                .param_num = i
-            };
+                .param_num = i};
         }
     }
 
@@ -1456,10 +1447,9 @@ static Stmt* parse_compound_stmt(TranslationUnit* tu, TokenStream* restrict s) {
         Stmt** stmt_array = arena_alloc(&thread_arena, body_count * sizeof(Stmt*), _Alignof(Stmt*));
         memcpy(stmt_array, body, body_count * sizeof(Stmt*));
 
-        node->compound = (struct StmtCompound) {
+        node->compound = (struct StmtCompound){
             .kids = stmt_array,
-            .kids_count = body_count
-        };
+            .kids_count = body_count};
 
         tls_restore(body);
     }
@@ -1484,8 +1474,7 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 
         Stmt* n = make_stmt(tu, s, STMT_RETURN, sizeof(struct StmtReturn));
         n->return_ = (struct StmtReturn){
-            .expr = e
-        };
+            .expr = e};
 
         expect_with_reason(s, ';', "return");
         return n;
@@ -1521,8 +1510,7 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
             n->if_ = (struct StmtIf){
                 .cond = cond,
                 .body = body,
-                .next = next
-            };
+                .next = next};
         }
 
         return n;
@@ -1536,8 +1524,7 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
             expect(s, ')');
 
             n->switch_ = (struct StmtSwitch){
-                .condition = cond
-            };
+                .condition = cond};
 
             // begin a new chain but keep the old one
             Stmt* old_switch = current_switch_or_case;
@@ -1573,7 +1560,7 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 
             for (intmax_t i = key; i < key_max; i++) {
                 Stmt* curr = make_stmt(tu, s, STMT_CASE, sizeof(struct StmtCase));
-                curr->case_ = (struct StmtCase){ .key = i+1 };
+                curr->case_ = (struct StmtCase){.key = i + 1};
 
                 // Append to list
                 n->case_.next = n->case_.body = curr;
@@ -1583,15 +1570,21 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
             expect(s, ':');
 
             n->case_ = (struct StmtCase){
-                .key = key, .body = 0, .next = 0
-            };
+                .key = key, .body = 0, .next = 0};
         }
 
         switch (current_switch_or_case->op) {
-            case STMT_CASE:    current_switch_or_case->case_.next    = top; break;
-            case STMT_DEFAULT: current_switch_or_case->default_.next = top; break;
-            case STMT_SWITCH:  current_switch_or_case->switch_.next  = top; break;
-            default: abort();
+        case STMT_CASE:
+            current_switch_or_case->case_.next = top;
+            break;
+        case STMT_DEFAULT:
+            current_switch_or_case->default_.next = top;
+            break;
+        case STMT_SWITCH:
+            current_switch_or_case->switch_.next = top;
+            break;
+        default:
+            abort();
         }
         current_switch_or_case = n;
 
@@ -1606,17 +1599,23 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
         Stmt* n = make_stmt(tu, s, STMT_DEFAULT, sizeof(struct StmtDefault));
 
         switch (current_switch_or_case->op) {
-            case STMT_CASE:    current_switch_or_case->case_.next    = n; break;
-            case STMT_DEFAULT: current_switch_or_case->default_.next = n; break;
-            case STMT_SWITCH:  current_switch_or_case->switch_.next  = n; break;
-            default: abort();
+        case STMT_CASE:
+            current_switch_or_case->case_.next = n;
+            break;
+        case STMT_DEFAULT:
+            current_switch_or_case->default_.next = n;
+            break;
+        case STMT_SWITCH:
+            current_switch_or_case->switch_.next = n;
+            break;
+        default:
+            abort();
         }
         current_switch_or_case = n;
         expect(s, ':');
 
         n->default_ = (struct StmtDefault){
-            .body = 0, .next = 0
-        };
+            .body = 0, .next = 0};
 
         Stmt* body = parse_stmt_or_expr(tu, s);
         n->default_.body = body;
@@ -1630,8 +1629,7 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 
         Stmt* n = make_stmt(tu, s, STMT_BREAK, sizeof(struct StmtBreak));
         n->break_ = (struct StmtBreak){
-            .target = current_breakable
-        };
+            .target = current_breakable};
         return n;
     } else if (peek == TOKEN_KW_continue) {
         // TODO(NeGate): error messages
@@ -1642,8 +1640,7 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 
         Stmt* n = make_stmt(tu, s, STMT_CONTINUE, sizeof(struct StmtContinue));
         n->continue_ = (struct StmtContinue){
-            .target = current_continuable
-        };
+            .target = current_continuable};
         return n;
     } else if (peek == TOKEN_KW_while) {
         tokens_next(s);
@@ -1670,8 +1667,7 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 
             n->while_ = (struct StmtWhile){
                 .cond = cond,
-                .body = body
-            };
+                .body = body};
         }
 
         return n;
@@ -1699,10 +1695,9 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
                 Stmt** stmt_array = arena_alloc(&thread_arena, body_count * sizeof(Stmt*), _Alignof(Stmt*));
                 memcpy(stmt_array, body, body_count * sizeof(Stmt*));
 
-                first->compound = (struct StmtCompound) {
+                first->compound = (struct StmtCompound){
                     .kids = stmt_array,
-                    .kids_count = body_count
-                };
+                    .kids_count = body_count};
                 tls_restore(body);
             }
 
@@ -1742,8 +1737,7 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
                 .first = first,
                 .cond = cond,
                 .body = body,
-                .next = next
-            };
+                .next = next};
         }
 
         return n;
@@ -1783,8 +1777,7 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 
             n->do_while = (struct StmtDoWhile){
                 .cond = cond,
-                .body = body
-            };
+                .body = body};
         }
 
         return n;
@@ -1808,31 +1801,27 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
         Expr* target = make_expr(tu);
         ptrdiff_t search = shgeti(labels, name);
         if (search >= 0) {
-            *target = (Expr) {
+            *target = (Expr){
                 .op = EXPR_SYMBOL,
                 .start_loc = loc,
                 .end_loc = loc,
-                .symbol = labels[search].value
-            };
+                .symbol = labels[search].value};
         } else {
             // not defined yet, make a placeholder
             Stmt* label_decl = make_stmt(tu, s, STMT_LABEL, sizeof(struct StmtLabel));
             label_decl->label = (struct StmtLabel){
-                .name = name
-            };
+                .name = name};
             shput(labels, name, label_decl);
 
-            *target = (Expr) {
+            *target = (Expr){
                 .op = EXPR_SYMBOL,
                 .start_loc = loc,
                 .end_loc = loc,
-                .symbol = label_decl
-            };
+                .symbol = label_decl};
         }
 
         n->goto_ = (struct StmtGoto){
-            .target = target
-        };
+            .target = target};
 
         expect(s, ';');
         return n;
@@ -1849,8 +1838,7 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
         } else {
             n = make_stmt(tu, s, STMT_LABEL, sizeof(struct StmtLabel));
             n->label = (struct StmtLabel){
-                .name = name
-            };
+                .name = name};
             shput(labels, name, n);
         }
 
@@ -1878,7 +1866,7 @@ static void parse_decl_or_expr(TranslationUnit* tu, TokenStream* restrict s, siz
     } else if (tokens_get(s)->type == ';') {
         tokens_next(s);
     } else if (is_typename(s)) {
-        Attribs attr = { 0 };
+        Attribs attr = {0};
         Type* type = parse_declspec(tu, s, &attr);
 
         if (attr.is_typedef) {
@@ -1887,7 +1875,8 @@ static void parse_decl_or_expr(TranslationUnit* tu, TokenStream* restrict s, siz
             while (tokens_get(s)->type != ';') {
                 if (expect_comma) {
                     expect_with_reason(s, ',', "typedef");
-                } else expect_comma = true;
+                } else
+                    expect_comma = true;
 
                 Decl decl = parse_declarator(tu, s, type, false, false);
                 assert(decl.name);
@@ -1898,8 +1887,7 @@ static void parse_decl_or_expr(TranslationUnit* tu, TokenStream* restrict s, siz
                 n->decl = (struct StmtDecl){
                     .name = decl.name,
                     .type = decl.type,
-                    .attrs = attr
-                };
+                    .attrs = attr};
 
                 if (local_symbol_count >= MAX_LOCAL_SYMBOLS) {
                     REPORT(ERROR, decl.loc, "Local symbol count exceeds %d (got %d)", MAX_LOCAL_SYMBOLS, local_symbol_count);
@@ -1909,8 +1897,7 @@ static void parse_decl_or_expr(TranslationUnit* tu, TokenStream* restrict s, siz
                 local_symbols[local_symbol_count++] = (Symbol){
                     .name = decl.name,
                     .type = decl.type,
-                    .storage_class = STORAGE_TYPEDEF
-                };
+                    .storage_class = STORAGE_TYPEDEF};
             }
 
             expect(s, ';');
@@ -1925,7 +1912,8 @@ static void parse_decl_or_expr(TranslationUnit* tu, TokenStream* restrict s, siz
                     }
 
                     expect_with_reason(s, ',', "declaration");
-                } else expect_comma = true;
+                } else
+                    expect_comma = true;
 
                 Decl decl = parse_declarator(tu, s, type, false, false);
 
@@ -1935,8 +1923,7 @@ static void parse_decl_or_expr(TranslationUnit* tu, TokenStream* restrict s, siz
                     .type = decl.type,
                     .name = decl.name,
                     .attrs = attr,
-                    .initial = 0
-                };
+                    .initial = 0};
 
                 if (local_symbol_count >= MAX_LOCAL_SYMBOLS) {
                     REPORT(ERROR, decl.loc, "Local symbol count exceeds %d (got %d)", MAX_LOCAL_SYMBOLS, local_symbol_count);
@@ -1947,8 +1934,7 @@ static void parse_decl_or_expr(TranslationUnit* tu, TokenStream* restrict s, siz
                     .name = decl.name,
                     .type = decl.type,
                     .storage_class = STORAGE_LOCAL,
-                    .stmt = n
-                };
+                    .stmt = n};
 
                 Expr* initial = 0;
                 if (tokens_get(s)->type == '=') {
@@ -1980,8 +1966,7 @@ static void parse_decl_or_expr(TranslationUnit* tu, TokenStream* restrict s, siz
         Expr* expr = parse_expr(tu, s);
 
         n->expr = (struct StmtExpr){
-            .expr = expr
-        };
+            .expr = expr};
 
         *((Stmt**)tls_push(sizeof(Stmt*))) = n;
         *body_count += 1;
@@ -2014,8 +1999,7 @@ static Stmt* parse_stmt_or_expr(TranslationUnit* tu, TokenStream* restrict s) {
 
             Expr* expr = parse_expr(tu, s);
             n->expr = (struct StmtExpr){
-                .expr = expr
-            };
+                .expr = expr};
 
             expect(s, ';');
             return n;
