@@ -117,7 +117,6 @@ void threadpool_submit(threadpool_t* threadpool, work_routine fn, void* arg) {
         uint32_t write_ptr = threadpool->write_pointer;
         uint32_t new_write_ptr = (write_ptr + 1) & threadpool->queue_size_mask;
         while (new_write_ptr == threadpool->read_pointer) {
-            
             // Power nap lmao
             thrd_yield();
         }

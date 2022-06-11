@@ -103,8 +103,8 @@ static _Noreturn void generic_error(TokenStream* restrict s, const char* msg);
 //      /* do parse work */
 //  }
 #define LOCAL_SCOPE                                                         \
-    for (int saved = local_symbol_count, saved2 = local_tag_count, _i_ = 0; \
-         _i_ == 0; _i_ += 1, local_symbol_count = saved, local_tag_count = saved2)
+for (int saved = local_symbol_count, saved2 = local_tag_count, _i_ = 0; \
+_i_ == 0; _i_ += 1, local_symbol_count = saved, local_tag_count = saved2)
 
 static int align_up(int a, int b) {
     if (b == 0) return 0;
@@ -210,8 +210,8 @@ static size_t skip_expression_in_enum(TokenStream* restrict s, TknType* out_term
     return saved;
 }
 
-#include "decl_parser.h"
 #include "expr_parser.h"
+#include "decl_parser.h"
 
 typedef struct {
     // shared state, every run of phase2_parse_task will decrement this by one
@@ -857,7 +857,7 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
             }
         }
 
-    fuck_outta_there:
+        fuck_outta_there:
         crash_if_reports(REPORT_ERROR);
 
         // parse all global declarations
@@ -1574,16 +1574,16 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
         }
 
         switch (current_switch_or_case->op) {
-        case STMT_CASE:
+            case STMT_CASE:
             current_switch_or_case->case_.next = top;
             break;
-        case STMT_DEFAULT:
+            case STMT_DEFAULT:
             current_switch_or_case->default_.next = top;
             break;
-        case STMT_SWITCH:
+            case STMT_SWITCH:
             current_switch_or_case->switch_.next = top;
             break;
-        default:
+            default:
             abort();
         }
         current_switch_or_case = n;
@@ -1599,16 +1599,16 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
         Stmt* n = make_stmt(tu, s, STMT_DEFAULT, sizeof(struct StmtDefault));
 
         switch (current_switch_or_case->op) {
-        case STMT_CASE:
+            case STMT_CASE:
             current_switch_or_case->case_.next = n;
             break;
-        case STMT_DEFAULT:
+            case STMT_DEFAULT:
             current_switch_or_case->default_.next = n;
             break;
-        case STMT_SWITCH:
+            case STMT_SWITCH:
             current_switch_or_case->switch_.next = n;
             break;
-        default:
+            default:
             abort();
         }
         current_switch_or_case = n;

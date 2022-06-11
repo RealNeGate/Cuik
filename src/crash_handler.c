@@ -2,9 +2,10 @@
 #include "common.h"
 
 #define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+
 #include <DbgHelp.h>
 #include <time.h>
-#include <windows.h>
 
 #include <ext/threads.h>
 
