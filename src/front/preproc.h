@@ -115,9 +115,6 @@ struct CPP_Context {
     int depth;
     SourceLine* current_source_line;
 
-    // if this is non-zero it maps to a source line for the macro being expanded
-    SourceLocIndex macro_source_line;
-
     // TODO(NeGate): Remove this and put a proper hash map or literally anything else
     const unsigned char** macro_bucket_keys;
     size_t* macro_bucket_keys_length;

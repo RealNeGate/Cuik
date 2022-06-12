@@ -33,12 +33,12 @@ static void set_defines(CPP_Context* cpp) {
 static bool win64_should_pass_via_reg(TranslationUnit* tu, Type* type) {
     if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
         switch (type->size) {
-        case 1:
-        case 2:
-        case 4:
-        case 8:
+            case 1:
+            case 2:
+            case 4:
+            case 8:
             return true;
-        default:
+            default:
             return false;
         }
     } else {
@@ -99,26 +99,26 @@ static int pass_parameter(TranslationUnit* tu, TB_Function* func, Expr* e, bool 
         IRVal arg = irgen_expr(tu, func, e);
         TB_Reg arg_addr = TB_NULL_REG;
         switch (arg.value_type) {
-        case LVALUE:
+            case LVALUE:
             arg_addr = arg.reg;
             break;
-        case LVALUE_FUNC:
+            case LVALUE_FUNC:
             arg_addr = tb_inst_get_func_address(func, arg.func);
             break;
-        case LVALUE_EFUNC:
+            case LVALUE_EFUNC:
             arg_addr = tb_inst_get_extern_address(func, arg.ext);
             break;
-        case RVALUE: {
-            // spawn a lil temporary
-            TB_CharUnits size = arg_type->size;
-            TB_CharUnits align = arg_type->align;
-            TB_DataType dt = tb_function_get_node(func, arg.reg)->dt;
+            case RVALUE: {
+                // spawn a lil temporary
+                TB_CharUnits size = arg_type->size;
+                TB_CharUnits align = arg_type->align;
+                TB_DataType dt = tb_function_get_node(func, arg.reg)->dt;
 
-            arg_addr = tb_inst_local(func, size, align);
-            tb_inst_store(func, dt, arg_addr, arg.reg, align);
-            break;
-        }
-        default:
+                arg_addr = tb_inst_local(func, size, align);
+                tb_inst_store(func, dt, arg_addr, arg.reg, align);
+                break;
+            }
+            default:
             break;
         }
         assert(arg_addr);
@@ -147,45 +147,45 @@ static int pass_parameter(TranslationUnit* tu, TB_Function* func, Expr* e, bool 
             IRVal arg = irgen_expr(tu, func, e);
             TB_Reg arg_addr = TB_NULL_REG;
             switch (arg.value_type) {
-            case LVALUE:
+                case LVALUE:
                 arg_addr = arg.reg;
                 break;
-            case LVALUE_FUNC:
+                case LVALUE_FUNC:
                 arg_addr = tb_inst_get_func_address(func, arg.func);
                 break;
-            case LVALUE_EFUNC:
+                case LVALUE_EFUNC:
                 arg_addr = tb_inst_get_extern_address(func, arg.ext);
                 break;
-            case RVALUE: {
-                // spawn a lil temporary
-                TB_CharUnits size = arg_type->size;
-                TB_CharUnits align = arg_type->align;
-                TB_DataType dt = tb_function_get_node(func, arg.reg)->dt;
+                case RVALUE: {
+                    // spawn a lil temporary
+                    TB_CharUnits size = arg_type->size;
+                    TB_CharUnits align = arg_type->align;
+                    TB_DataType dt = tb_function_get_node(func, arg.reg)->dt;
 
-                arg_addr = tb_inst_local(func, size, align);
-                tb_inst_store(func, dt, arg_addr, arg.reg, align);
-                break;
-            }
-            default:
+                    arg_addr = tb_inst_local(func, size, align);
+                    tb_inst_store(func, dt, arg_addr, arg.reg, align);
+                    break;
+                }
+                default:
                 break;
             }
             assert(arg_addr);
 
             TB_DataType dt = TB_TYPE_VOID;
             switch (arg_type->size) {
-            case 1:
+                case 1:
                 dt = TB_TYPE_I8;
                 break;
-            case 2:
+                case 2:
                 dt = TB_TYPE_I16;
                 break;
-            case 4:
+                case 4:
                 dt = TB_TYPE_I32;
                 break;
-            case 8:
+                case 8:
                 dt = TB_TYPE_I64;
                 break;
-            default:
+                default:
                 break;
             }
 
@@ -291,8 +291,32 @@ static Type* type_check_builtin(TranslationUnit* tu, Expr* e, const char* name, 
             args[i]->cast_type = cast_type;
         }
 
-    failure:
+        failure:
         return &builtin_types[TYPE_BOOL];
+    } else if (strcmp(name, "_mm_setcsr") == 0) {
+        if (arg_count != 1) {
+            REPORT_EXPR(ERROR, e, "%s requires 1 arguments", name);
+            return &builtin_types[TYPE_VOID];
+        }
+
+        Type* arg_type = sema_expr(tu, args[0]);
+        Type* int_type = &builtin_types[TYPE_UINT];
+        if (!type_compatible(tu, arg_type, int_type, args[0])) {
+            type_as_string(tu, sizeof(temp_string0), temp_string0, arg_type);
+            type_as_string(tu, sizeof(temp_string1), temp_string1, int_type);
+
+            REPORT_EXPR(ERROR, args[0], "Could not implicitly convert type %s into %s.", temp_string0, temp_string1);
+            return &builtin_types[TYPE_VOID];
+        }
+
+        return &builtin_types[TYPE_VOID];
+    } else if (strcmp(name, "_mm_getcsr") == 0) {
+        if (arg_count != 0) {
+            REPORT_EXPR(ERROR, e, "%s requires 0 arguments", name);
+            return 0;
+        }
+
+        return &builtin_types[TYPE_UINT];
     }
 
     return 0;
@@ -339,7 +363,13 @@ static TB_Register compile_builtin(TranslationUnit* tu, TB_Function* func, const
 
         tb_inst_store(func, TB_TYPE_PTR, dst, tb_inst_va_start(func, src.reg), 8);
         return 0;
-    } else if (strcmp(name, "_mul128") == 0) {
+    } else if (strcmp(name, "_mm_setcsr") == 0) {
+        TB_Register src = irgen_as_rvalue(tu, func, args[0]);
+
+        return tb_inst_x86_ldmxcsr(func, src);
+    } else if (strcmp(name, "_mm_getcsr") == 0) {
+        return tb_inst_x86_stmxcsr(func);
+    } else if (strcmp(name, "_umul128") == 0) {
         return tb_inst_uint(func, TB_TYPE_I64, 0);
     } else if (strcmp(name, "_umul128") == 0) {
         return tb_inst_uint(func, TB_TYPE_I64, 0);
@@ -372,6 +402,8 @@ TargetDescriptor get_x64_target_descriptor() {
     shput(builtins, "__c11_atomic_fetch_and", 1);
 
     // msvc intrinsics
+    shput(builtins, "_mm_getcsr", 1);
+    shput(builtins, "_mm_setcsr", 1);
     shput(builtins, "__debugbreak", 1);
     shput(builtins, "__va_start", 1);
     shput(builtins, "_umul128", 1);

@@ -176,6 +176,7 @@ typedef struct SourceLoc {
     SourceLine* line;
     short columns;
     short length;
+    int bias;
 } SourceLoc;
 
 typedef struct Token {
@@ -202,6 +203,8 @@ typedef struct {
     const unsigned char* start;
     const unsigned char* current;
     int current_line;
+
+    int column_bias; // it'll just be added to the column count when we're checking stuff
 
     ////////////////////////////////
     // INTERNALS

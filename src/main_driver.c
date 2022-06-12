@@ -374,22 +374,27 @@ static bool dump_tokens() {
     }
 
     // Preprocess file
-    uint64_t t1 = timer_now();
     TokenStream s;
+    uint64_t t1, t2;
     {
         CPP_Context cpp_ctx;
         cpp_init(&cpp_ctx);
         cuik_set_cpp_defines(&cpp_ctx);
 
+        t1 = timer_now();
         for (size_t i = 0, cc = big_array_length(cuik_include_dirs); i < cc; i++) {
             cpp_add_include_directory(&cpp_ctx, cuik_include_dirs[i]);
         }
 
         s = cpp_process(&cpp_ctx, cuik_source_files[0]);
+        t2 = timer_now();
+
+        if (settings.dump_defines) {
+            cpp_dump(&cpp_ctx);
+        }
 
         cpp_finalize(&cpp_ctx);
     }
-    uint64_t t2 = timer_now();
 
 #ifdef _WIN32
     double elapsed = (t2 - t1) * timer_freq;
@@ -414,9 +419,10 @@ static bool dump_tokens() {
 
     for (size_t i = 0, cc = arrlen(s.tokens); i < cc; i++) {
         Token* t = &s.tokens[i];
-        SourceLoc* loc = &s.locations[t->location];
+        SourceLoc* loc = &s.locations[SOURCE_LOC_GET_DATA(t->location)];
 
-        if (last_file != loc->line->filepath) {
+        if (last_file != loc->line->filepath &&
+            strcmp(loc->line->filepath, "<temp>") != 0) {
             char str[MAX_PATH];
 
             // TODO(NeGate): Kinda shitty but i just wanna duplicate
@@ -499,17 +505,17 @@ static void append_input_path(const char* path) {
     bool needs_filter = false;
     for (const char* p = path; *p; p++)
         if (*p == '*') {
-            needs_filter = true;
-            break;
-        }
+        needs_filter = true;
+        break;
+    }
 
     if (needs_filter) {
 #ifdef _WIN32
         const char* slash = path;
         for (const char* p = path; *p; p++)
             if (*p == '/' || *p == '\\') {
-                slash = p;
-            }
+            slash = p;
+        }
 
         WIN32_FIND_DATA find_data;
         HANDLE find_handle = FindFirstFile(path, &find_data);
@@ -707,6 +713,8 @@ int main(int argc, char* argv[]) {
                 print_help(argv[0]);
             } else if (strcmp(option, "verbose") == 0) {
                 settings.verbose = true;
+            } else if (strcmp(option, "thin-errors") == 0) {
+                report_using_thin_errors = true;
             } else if (strcmp(option, "exercise") == 0) {
                 settings.exercise = true;
             } else if (strstr(option, "ir") == option) {
@@ -751,65 +759,68 @@ int main(int argc, char* argv[]) {
             }
         } else {
             switch (argv[i][1]) {
-            case 'h':
+                case 'h':
                 print_help(argv[0]);
                 return 0;
 
-            case 'v':
-            case 'V':
+                case 'v':
+                case 'V':
                 print_version(argv[0]);
                 return 0;
 
-            case 'P':
+                case 'P':
+                if (argv[i][2] == 'd') {
+                    settings.dump_defines = true;
+                }
                 settings.stage_to_stop_at = STAGE_PREPROC;
                 break;
-            case 't':
+                case 't':
                 settings.stage_to_stop_at = STAGE_TYPES;
                 break;
-            case 'c':
+                case 'c':
                 settings.stage_to_stop_at = STAGE_OBJ;
                 break;
 
-            case 'g':
+                case 'g':
                 settings.is_debug_info = true;
                 break;
-            case 'r':
+                case 'r':
                 settings.run_output = true;
                 break;
-            case 'o': {
-                i += 1;
-                if (i >= argc) {
-                    fprintf(stderr, "error: expected filepath\n");
-                    return 1;
-                }
+                case 'o': {
+                    i += 1;
+                    if (i >= argc) {
+                        fprintf(stderr, "error: expected filepath\n");
+                        return 1;
+                    }
 
-                output_name = argv[i];
-                break;
-            }
-            case 'T':
+                    output_name = argv[i];
+                    break;
+                }
+                case 'T':
                 settings.is_time_report = true;
                 break;
-            case 'O':
+                case 'O':
                 settings.optimize = true;
                 break;
-            case 'I': {
-                i += 1;
-                if (i >= argc) {
-                    fprintf(stderr, "error: expected filepath\n");
-                    return 1;
+                case 'I': {
+                    i += 1;
+                    if (i >= argc) {
+                        fprintf(stderr, "error: expected filepath\n");
+                        return 1;
+                    }
+
+                    size_t len = strlen(argv[i]);
+                    if (len > 0 && argv[i][len - 1] != '\\' && argv[i][len - 1] != '/') {
+                        char* newstr = malloc(len + 2);
+                        snprintf(newstr, len + 2, "%s/", argv[i]);
+
+                        big_array_put(cuik_include_dirs, newstr);
+                    }
+                    break;
                 }
 
-                size_t len = strlen(argv[i]);
-                if (len > 0 && argv[i][len - 1] != '\\' && argv[i][len - 1] != '/') {
-                    char* newstr = malloc(len + 2);
-                    snprintf(newstr, len + 2, "%s/", argv[i]);
-
-                    big_array_put(cuik_include_dirs, newstr);
-                }
-                break;
-            }
-
-            default:
+                default:
                 fprintf(stderr, "error: unknown argument: %s\n", argv[i]);
                 return 1;
             }
@@ -838,11 +849,11 @@ int main(int argc, char* argv[]) {
 
     // Get target descriptor from explicit (or default) target option
     switch (target_arch) {
-    case TB_ARCH_X86_64:
+        case TB_ARCH_X86_64:
         target_desc = get_x64_target_descriptor();
         break;
 
-    default:
+        default:
         fprintf(stderr, "Cannot compile to your target machine");
         return 1;
     }

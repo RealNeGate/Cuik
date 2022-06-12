@@ -182,7 +182,7 @@ void cuik_set_cpp_defines(CPP_Context* cpp) {
             cpp_define_empty(cpp, "_DLL");
         }
 
-        cpp_define_empty(cpp, "_NO_CRT_STDIO_INLINE");
+        //cpp_define_empty(cpp, "_NO_CRT_STDIO_INLINE");
         //cpp_define_empty(cpp, "_CRT_NONSTDC_NO_WARNINGS");
         //cpp_define_empty(cpp, "_CRT_SECURE_NO_WARNINGS");
 

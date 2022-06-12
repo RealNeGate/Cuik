@@ -44,7 +44,8 @@ void cpp_init(CPP_Context* ctx) {
         .macro_bucket_values_end = malloc(sz),
         .macro_bucket_source_locs = malloc(sz2),
 
-        .the_shtuffs = malloc(THE_SHTUFFS_SIZE)};
+        .the_shtuffs = malloc(THE_SHTUFFS_SIZE),
+    };
     ctx->files = big_array_create(CPP_FileEntry, false);
 
     tls_init();
@@ -203,7 +204,7 @@ void cpp_dump(CPP_Context* ctx) {
         count += ctx->macro_bucket_count[i];
     }
 
-    printf("\n# Macro defines active: %d\n", count);
+    printf("\n// Macro defines active: %d\n", count);
 }
 
 TokenStream cpp_process(CPP_Context* ctx, const char filepath[]) {
@@ -259,6 +260,7 @@ static SourceLocIndex get_source_location(CPP_Context* restrict c, Lexer* restri
 
     if (c->current_source_line == NULL ||
         c->current_source_line->filepath != l->filepath ||
+        c->current_source_line->parent != parent_loc ||
         c->current_source_line->line != l->current_line) {
         source_line = arena_alloc(&thread_arena, sizeof(SourceLine), _Alignof(SourceLine));
         source_line->filepath = l->filepath;
@@ -1141,9 +1143,11 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
         size_t def_i;
         if (find_define(c, &def_i, token_data, token_length)) {
             int line_of_expansion = l->current_line;
+
             SourceLocIndex macro_expansion_loc = get_source_location(c, l, s,
-                                                                     c->macro_bucket_source_locs[def_i],
-                                                                     SOURCE_LOC_NORMAL);
+                                                                     parent_loc,
+                                                                     //c->macro_bucket_source_locs[def_i],
+                                                                     SOURCE_LOC_MACRO);
 
             // Identify macro definition
             lexer_read(l);
@@ -1267,7 +1271,18 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
 
                     // set when a # happens, we expect a macro parameter afterwards
                     bool as_string = false;
+                    int curr_line = line_of_expansion;
                     while (!def_lex.hit_line) {
+                        if (curr_line != def_lex.current_line) {
+                            for (int i = curr_line; i < def_lex.current_line; i++) {
+                                *temp_expansion++ = ' ';
+                                *temp_expansion++ = '\\';
+                                *temp_expansion++ = '\n';
+                                *temp_expansion++ = ' ';
+                            }
+                            curr_line = def_lex.current_line;
+                        }
+
                         // shadowing...
                         size_t token_length = def_lex.token_end - def_lex.token_start;
                         const unsigned char* token_data = def_lex.token_start;
@@ -1423,14 +1438,11 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
 
                     if (temp_expansion_start != temp_expansion) {
                         // expand and append
-                        Lexer temp_lex = (Lexer){l->filepath, temp_expansion_start, temp_expansion_start};
-                        temp_lex.current_line = line_of_expansion;
+                        Lexer temp_lex = (Lexer){"<temp>", temp_expansion_start, temp_expansion_start};
+                        temp_lex.current_line = 1;
                         lexer_read(&temp_lex);
 
                         *temp_expansion++ = '\0';
-
-                        SourceLocIndex saved_macro_parent_loc = c->macro_source_line;
-                        c->macro_source_line = macro_expansion_loc;
 
                         // NOTE(NeGate): We need to disable the current macro define
                         // so it doesn't recurse.
@@ -1440,7 +1452,6 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
                         expand(c, s, &temp_lex, macro_expansion_loc);
 
                         c->macro_bucket_keys_length[def_i] = saved_length;
-                        c->macro_source_line = saved_macro_parent_loc;
                     }
                 }
 
@@ -1456,12 +1467,9 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
 
                     arrput(s->tokens, t);
                 } else {
-                    Lexer temp_lex = (Lexer){l->filepath, def.data, def.data};
-                    temp_lex.current_line = l->current_line;
+                    Lexer temp_lex = (Lexer){"<temp>", def.data, def.data};
+                    temp_lex.current_line = 1;
                     lexer_read(&temp_lex);
-
-                    SourceLocIndex saved_macro_parent_loc = c->macro_source_line;
-                    c->macro_source_line = macro_expansion_loc;
 
                     // NOTE(NeGate): We need to disable the current macro define
                     // so it doesn't recurse.
@@ -1471,7 +1479,6 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
                     expand(c, s, &temp_lex, macro_expansion_loc);
 
                     c->macro_bucket_keys_length[def_i] = saved_length;
-                    c->macro_source_line = saved_macro_parent_loc;
                 }
             }
         } else {
@@ -1607,16 +1614,16 @@ static intmax_t eval_l6(CPP_Context* restrict c, TokenStream* restrict s) {
 
         intmax_t right = eval_l5(c, s);
         switch (t) {
-        case '>':
+            case '>':
             left = left > right;
             break;
-        case '<':
+            case '<':
             left = left < right;
             break;
-        case TOKEN_GREATER_EQUAL:
+            case TOKEN_GREATER_EQUAL:
             left = left >= right;
             break;
-        case TOKEN_LESS_EQUAL:
+            case TOKEN_LESS_EQUAL:
             left = left <= right;
             break;
         }
