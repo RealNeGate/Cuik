@@ -33,12 +33,12 @@ static void set_defines(CPP_Context* cpp) {
 static bool win64_should_pass_via_reg(TranslationUnit* tu, Type* type) {
     if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
         switch (type->size) {
-            case 1:
-            case 2:
-            case 4:
-            case 8:
+        case 1:
+        case 2:
+        case 4:
+        case 8:
             return true;
-            default:
+        default:
             return false;
         }
     } else {
@@ -99,26 +99,26 @@ static int pass_parameter(TranslationUnit* tu, TB_Function* func, Expr* e, bool 
         IRVal arg = irgen_expr(tu, func, e);
         TB_Reg arg_addr = TB_NULL_REG;
         switch (arg.value_type) {
-            case LVALUE:
+        case LVALUE:
             arg_addr = arg.reg;
             break;
-            case LVALUE_FUNC:
+        case LVALUE_FUNC:
             arg_addr = tb_inst_get_func_address(func, arg.func);
             break;
-            case LVALUE_EFUNC:
+        case LVALUE_EFUNC:
             arg_addr = tb_inst_get_extern_address(func, arg.ext);
             break;
-            case RVALUE: {
-                // spawn a lil temporary
-                TB_CharUnits size = arg_type->size;
-                TB_CharUnits align = arg_type->align;
-                TB_DataType dt = tb_function_get_node(func, arg.reg)->dt;
+        case RVALUE: {
+            // spawn a lil temporary
+            TB_CharUnits size = arg_type->size;
+            TB_CharUnits align = arg_type->align;
+            TB_DataType dt = tb_function_get_node(func, arg.reg)->dt;
 
-                arg_addr = tb_inst_local(func, size, align);
-                tb_inst_store(func, dt, arg_addr, arg.reg, align);
-                break;
-            }
-            default:
+            arg_addr = tb_inst_local(func, size, align);
+            tb_inst_store(func, dt, arg_addr, arg.reg, align);
+            break;
+        }
+        default:
             break;
         }
         assert(arg_addr);
@@ -147,45 +147,45 @@ static int pass_parameter(TranslationUnit* tu, TB_Function* func, Expr* e, bool 
             IRVal arg = irgen_expr(tu, func, e);
             TB_Reg arg_addr = TB_NULL_REG;
             switch (arg.value_type) {
-                case LVALUE:
+            case LVALUE:
                 arg_addr = arg.reg;
                 break;
-                case LVALUE_FUNC:
+            case LVALUE_FUNC:
                 arg_addr = tb_inst_get_func_address(func, arg.func);
                 break;
-                case LVALUE_EFUNC:
+            case LVALUE_EFUNC:
                 arg_addr = tb_inst_get_extern_address(func, arg.ext);
                 break;
-                case RVALUE: {
-                    // spawn a lil temporary
-                    TB_CharUnits size = arg_type->size;
-                    TB_CharUnits align = arg_type->align;
-                    TB_DataType dt = tb_function_get_node(func, arg.reg)->dt;
+            case RVALUE: {
+                // spawn a lil temporary
+                TB_CharUnits size = arg_type->size;
+                TB_CharUnits align = arg_type->align;
+                TB_DataType dt = tb_function_get_node(func, arg.reg)->dt;
 
-                    arg_addr = tb_inst_local(func, size, align);
-                    tb_inst_store(func, dt, arg_addr, arg.reg, align);
-                    break;
-                }
-                default:
+                arg_addr = tb_inst_local(func, size, align);
+                tb_inst_store(func, dt, arg_addr, arg.reg, align);
+                break;
+            }
+            default:
                 break;
             }
             assert(arg_addr);
 
             TB_DataType dt = TB_TYPE_VOID;
             switch (arg_type->size) {
-                case 1:
+            case 1:
                 dt = TB_TYPE_I8;
                 break;
-                case 2:
+            case 2:
                 dt = TB_TYPE_I16;
                 break;
-                case 4:
+            case 4:
                 dt = TB_TYPE_I32;
                 break;
-                case 8:
+            case 8:
                 dt = TB_TYPE_I64;
                 break;
-                default:
+            default:
                 break;
             }
 
@@ -291,7 +291,7 @@ static Type* type_check_builtin(TranslationUnit* tu, Expr* e, const char* name, 
             args[i]->cast_type = cast_type;
         }
 
-        failure:
+    failure:
         return &builtin_types[TYPE_BOOL];
     } else if (strcmp(name, "_mm_setcsr") == 0) {
         if (arg_count != 1) {

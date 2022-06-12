@@ -161,40 +161,40 @@ static int print_backtrace(TokenStream* tokens, SourceLocIndex loc_index) {
     }
 
     switch (SOURCE_LOC_GET_TYPE(loc_index)) {
-        case SOURCE_LOC_MACRO: {
-            if (line->filepath[0] == '<') {
-                printf("In macro '%.*s' at line %d:\n", (int) loc->length, line->line_str + loc->columns, line_bias + line->line);
-            } else {
-                printf("In macro '%.*s' included from %s:%d:\n", (int) loc->length, line->line_str + loc->columns, line->filepath, line->line);
-            }
-
-            if (!report_using_thin_errors) {
-                // draw macro highlight
-                size_t dist_from_line_start = draw_line_biased(tokens, loc_index, line_bias);
-                draw_line_horizontal_pad();
-
-#if _WIN32
-                SetConsoleTextAttribute(console_handle, (default_attribs & ~0xF) | FOREGROUND_GREEN);
-#endif
-
-                // idk man
-                size_t start_pos = loc->columns > dist_from_line_start ? loc->columns - dist_from_line_start : 0;
-
-                // draw underline
-                size_t tkn_len = loc->length;
-                for (size_t i = 0; i < start_pos; i++) printf(" ");
-                printf("^");
-                for (size_t i = 1; i < tkn_len; i++) printf("~");
-                printf("\n");
-
-#if _WIN32
-                SetConsoleTextAttribute(console_handle, default_attribs);
-#endif
-            }
-            return line_bias;
+    case SOURCE_LOC_MACRO: {
+        if (line->filepath[0] == '<') {
+            printf("In macro '%.*s' at line %d:\n", (int)loc->length, line->line_str + loc->columns, line_bias + line->line);
+        } else {
+            printf("In macro '%.*s' included from %s:%d:\n", (int)loc->length, line->line_str + loc->columns, line->filepath, line->line);
         }
 
-        default:
+        if (!report_using_thin_errors) {
+            // draw macro highlight
+            size_t dist_from_line_start = draw_line_biased(tokens, loc_index, line_bias);
+            draw_line_horizontal_pad();
+
+#if _WIN32
+            SetConsoleTextAttribute(console_handle, (default_attribs & ~0xF) | FOREGROUND_GREEN);
+#endif
+
+            // idk man
+            size_t start_pos = loc->columns > dist_from_line_start ? loc->columns - dist_from_line_start : 0;
+
+            // draw underline
+            size_t tkn_len = loc->length;
+            for (size_t i = 0; i < start_pos; i++) printf(" ");
+            printf("^");
+            for (size_t i = 1; i < tkn_len; i++) printf("~");
+            printf("\n");
+
+#if _WIN32
+            SetConsoleTextAttribute(console_handle, default_attribs);
+#endif
+        }
+        return line_bias;
+    }
+
+    default:
         printf("In file included from %s:%d:\n", line->filepath, line->line);
         return line->line;
     }
@@ -239,7 +239,6 @@ void report_ranged(ReportLevel level, TokenStream* tokens, SourceLocIndex start_
         SetConsoleTextAttribute(console_handle, default_attribs);
 #endif
         printf("\n");
-
     }
 
     tally_report_counter(level);
@@ -403,8 +402,8 @@ void report_two_spots(ReportLevel level, TokenStream* tokens, SourceLocIndex loc
 
                 // draw underline
                 size_t start_pos = loc2->columns > dist_from_line_start
-                    ? loc2->columns - dist_from_line_start
-                    : 0;
+                                       ? loc2->columns - dist_from_line_start
+                                       : 0;
 
                 size_t tkn_len = loc2->length;
                 for (size_t i = 0; i < start_pos; i++) printf(" ");

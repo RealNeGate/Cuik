@@ -1614,16 +1614,16 @@ static intmax_t eval_l6(CPP_Context* restrict c, TokenStream* restrict s) {
 
         intmax_t right = eval_l5(c, s);
         switch (t) {
-            case '>':
+        case '>':
             left = left > right;
             break;
-            case '<':
+        case '<':
             left = left < right;
             break;
-            case TOKEN_GREATER_EQUAL:
+        case TOKEN_GREATER_EQUAL:
             left = left >= right;
             break;
-            case TOKEN_LESS_EQUAL:
+        case TOKEN_LESS_EQUAL:
             left = left <= right;
             break;
         }
