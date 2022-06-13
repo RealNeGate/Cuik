@@ -512,6 +512,8 @@ static void cc_invoke(const CC_Options* options, const char* input_path, const c
     }
 
     if (options->debug_info) cmd_append(" -g ");
+    else cmd_append(" ");
+
     cmd_append(input_path);
     cmd_run();
 #else
@@ -520,7 +522,7 @@ static void cc_invoke(const CC_Options* options, const char* input_path, const c
 }
 
 static void ld_invoke(const char* output_path, size_t count, const char* inputs[], size_t external_count, const char* external_inputs[]) {
-    if (ON_WINDOWS) {
+    if (0 /* ON_WINDOWS */) {
         cmd_append("link /ltcg /defaultlib:libcmt /debug /out:");
         cmd_append(str_gimme_good_slashes(output_path));
         cmd_append(".exe");
@@ -536,8 +538,9 @@ static void ld_invoke(const char* output_path, size_t count, const char* inputs[
         }
     } else if (ON_CLANG) {
         // Link with clang instead so it's easier
-        cmd_append("clang -g -o ");
-        cmd_append(output_path);
+        cmd_append("clang -fuse-ld=lld -flto -O2 -g -o ");
+        cmd_append(str_gimme_good_slashes(output_path));
+        cmd_append(".exe");
 
         for (int i = 0; i < external_count; i++) {
             cmd_append(" -l");

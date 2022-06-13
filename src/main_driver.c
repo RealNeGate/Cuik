@@ -331,7 +331,7 @@ static int execute_query_operation(const char* option, size_t arg_start, size_t 
             if (arg_count < 2) return -1;
 
             if (big_array_length(cuik_source_files) != 1) {
-                printf("print_type expects after C source file then a typename\n");
+                fprintf(stderr, "print_type expects after C source file then a typename\n");
                 abort();
             }
 
@@ -348,19 +348,19 @@ static int execute_query_operation(const char* option, size_t arg_start, size_t 
             if (tu->hack.type) {
                 ast_dump_type(tu, tu->hack.type, 0, 0);
             } else {
-                printf("Could not find type '%s'\n", tu->hack.name);
+                fprintf(stderr, "Could not find type '%s'\n", tu->hack.name);
             }
             return 0;
         }
 
-        printf("Unknown cuik query option '%s' (Supported options):\n", option);
+        fprintf(stderr, "Unknown cuik query option '%s' (Supported options):\n", option);
     } else {
-        printf("Unknown cuik query option (Supported options):\n");
+        fprintf(stderr, "Unknown cuik query option (Supported options):\n");
     }
 
-    printf("find_include - Resolve an include file path from name\n");
-    printf("print_type   - Find a type within the translation unit\n");
-    printf("\n");
+    fprintf(stderr, "find_include - Resolve an include file path from name\n");
+    fprintf(stderr, "print_type   - Find a type within the translation unit\n");
+    fprintf(stderr, "\n");
     return 1;
 }
 
@@ -369,7 +369,7 @@ static int execute_query_operation(const char* option, size_t arg_start, size_t 
 ////////////////////////////////
 static bool dump_tokens() {
     if (big_array_length(cuik_source_files) != 1) {
-        printf("Standalone preprocessor cannot operate on more than one source file\n");
+        fprintf(stderr, "Standalone preprocessor cannot operate on more than one source file\n");
         abort();
     }
 
@@ -398,19 +398,19 @@ static bool dump_tokens() {
 
 #ifdef _WIN32
     double elapsed = (t2 - t1) * timer_freq;
-    printf("preprocessor took %.03f seconds\n", elapsed);
+    fprintf(stderr, "preprocessor took %.03f seconds\n", elapsed);
 #else
     // TODO(NeGate): Windows does undefined frequency thingy,
     // the linux interface is microseconds
     double elapsed = (t2 - t1) / 1000000.0;
-    printf("preprocessor took %.03f seconds\n", elapsed);
+    fprintf(stderr, "preprocessor took %.03f seconds\n", elapsed);
 #endif
 
     char output_path[MAX_PATH];
     sprintf_s(output_path, MAX_PATH, "%s.i", cuik_file_no_ext);
     FILE* f = fopen(output_path, "w");
     if (!f) {
-        printf("Could not open file a.txt\n");
+        fprintf(stderr, "Could not open file a.txt\n");
         return false;
     }
 
@@ -505,17 +505,17 @@ static void append_input_path(const char* path) {
     bool needs_filter = false;
     for (const char* p = path; *p; p++)
         if (*p == '*') {
-            needs_filter = true;
-            break;
-        }
+        needs_filter = true;
+        break;
+    }
 
     if (needs_filter) {
 #ifdef _WIN32
         const char* slash = path;
         for (const char* p = path; *p; p++)
             if (*p == '/' || *p == '\\') {
-                slash = p;
-            }
+            slash = p;
+        }
 
         WIN32_FIND_DATA find_data;
         HANDLE find_handle = FindFirstFile(path, &find_data);
@@ -759,68 +759,68 @@ int main(int argc, char* argv[]) {
             }
         } else {
             switch (argv[i][1]) {
-            case 'h':
+                case 'h':
                 print_help(argv[0]);
                 return 0;
 
-            case 'v':
-            case 'V':
+                case 'v':
+                case 'V':
                 print_version(argv[0]);
                 return 0;
 
-            case 'P':
+                case 'P':
                 if (argv[i][2] == 'd') {
                     settings.dump_defines = true;
                 }
                 settings.stage_to_stop_at = STAGE_PREPROC;
                 break;
-            case 't':
+                case 't':
                 settings.stage_to_stop_at = STAGE_TYPES;
                 break;
-            case 'c':
+                case 'c':
                 settings.stage_to_stop_at = STAGE_OBJ;
                 break;
 
-            case 'g':
+                case 'g':
                 settings.is_debug_info = true;
                 break;
-            case 'r':
+                case 'r':
                 settings.run_output = true;
                 break;
-            case 'o': {
-                i += 1;
-                if (i >= argc) {
-                    fprintf(stderr, "error: expected filepath\n");
-                    return 1;
-                }
+                case 'o': {
+                    i += 1;
+                    if (i >= argc) {
+                        fprintf(stderr, "error: expected filepath\n");
+                        return 1;
+                    }
 
-                output_name = argv[i];
-                break;
-            }
-            case 'T':
+                    output_name = argv[i];
+                    break;
+                }
+                case 'T':
                 settings.is_time_report = true;
                 break;
-            case 'O':
+                case 'O':
                 settings.optimize = true;
                 break;
-            case 'I': {
-                i += 1;
-                if (i >= argc) {
-                    fprintf(stderr, "error: expected filepath\n");
-                    return 1;
+                case 'I': {
+                    i += 1;
+                    if (i >= argc) {
+                        fprintf(stderr, "error: expected filepath\n");
+                        return 1;
+                    }
+
+                    size_t len = strlen(argv[i]);
+                    if (len > 0 && argv[i][len - 1] != '\\' && argv[i][len - 1] != '/') {
+                        char* newstr = malloc(len + 2);
+                        snprintf(newstr, len + 2, "%s/", argv[i]);
+
+                        big_array_put(cuik_include_dirs, newstr);
+                    }
+                    break;
                 }
 
-                size_t len = strlen(argv[i]);
-                if (len > 0 && argv[i][len - 1] != '\\' && argv[i][len - 1] != '/') {
-                    char* newstr = malloc(len + 2);
-                    snprintf(newstr, len + 2, "%s/", argv[i]);
-
-                    big_array_put(cuik_include_dirs, newstr);
-                }
-                break;
-            }
-
-            default:
+                default:
                 fprintf(stderr, "error: unknown argument: %s\n", argv[i]);
                 return 1;
             }
@@ -849,11 +849,11 @@ int main(int argc, char* argv[]) {
 
     // Get target descriptor from explicit (or default) target option
     switch (target_arch) {
-    case TB_ARCH_X86_64:
+        case TB_ARCH_X86_64:
         target_desc = get_x64_target_descriptor();
         break;
 
-    default:
+        default:
         fprintf(stderr, "Cannot compile to your target machine");
         return 1;
     }

@@ -45,10 +45,10 @@ typedef struct {
 // from reading from their parent function
 thread_local static int local_symbol_start = 0;
 thread_local static int local_symbol_count = 0;
-thread_local static Symbol local_symbols[MAX_LOCAL_SYMBOLS];
+thread_local static Symbol* local_symbols;
 
 thread_local static int local_tag_count = 0;
-thread_local static TagEntry local_tags[MAX_LOCAL_TAGS];
+thread_local static TagEntry* local_tags;
 
 // Global symbol stuff
 thread_local static PendingExpr* pending_exprs;  // stb_ds array
@@ -103,8 +103,8 @@ static _Noreturn void generic_error(TokenStream* restrict s, const char* msg);
 //      /* do parse work */
 //  }
 #define LOCAL_SCOPE                                                         \
-    for (int saved = local_symbol_count, saved2 = local_tag_count, _i_ = 0; \
-         _i_ == 0; _i_ += 1, local_symbol_count = saved, local_tag_count = saved2)
+for (int saved = local_symbol_count, saved2 = local_tag_count, _i_ = 0; \
+_i_ == 0; _i_ += 1, local_symbol_count = saved, local_tag_count = saved2)
 
 static int align_up(int a, int b) {
     if (b == 0) return 0;
@@ -235,6 +235,10 @@ static void reset_global_parser_state() {
     local_symbol_start = local_symbol_count = 0;
     current_switch_or_case = current_breakable = current_continuable = NULL;
     symbol_chain_start = symbol_chain_current = NULL;
+
+    // allocate sum shit
+    local_symbols = malloc(sizeof(Symbol) * MAX_LOCAL_SYMBOLS);
+    local_tags = malloc(sizeof(TagEntry) * MAX_LOCAL_TAGS);
 }
 
 static void parse_global_symbols(TranslationUnit* tu, size_t start, size_t end, TokenStream tokens) {
@@ -524,9 +528,7 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
     ////////////////////////////////
     TokenStream* restrict s = &tu->tokens;
 
-#if OUT_OF_ORDER_CRAP
     out_of_order_mode = true;
-
     BigArray(int) static_assertions = big_array_create(int, false);
 
     // Phase 1: resolve all top level statements
@@ -857,7 +859,7 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
             }
         }
 
-    fuck_outta_there:
+        fuck_outta_there:
         crash_if_reports(REPORT_ERROR);
 
         // parse all global declarations
@@ -1002,319 +1004,6 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
             crash_if_reports(REPORT_ERROR);
         }
     }
-#else
-    while (tokens_get(s)->type) {
-        while (tokens_get(s)->type == ';') tokens_next(s);
-
-        // TODO(NeGate): Correctly parse pragmas instead of ignoring them.
-        if (tokens_get(s)->type == TOKEN_KW_Pragma) {
-            tokens_next(s);
-            expect(s, '(');
-
-            if (tokens_get(s)->type != TOKEN_STRING_DOUBLE_QUOTE) {
-                generic_error(s, "pragma declaration expects string literal");
-            }
-            tokens_next(s);
-
-            expect(s, ')');
-            continue;
-        } else if (tokens_get(s)->type == TOKEN_KW_Static_assert) {
-            tokens_next(s);
-            expect(s, '(');
-
-            intmax_t condition = parse_const_expr(tu, s);
-            if (tokens_get(s)->type == ',') {
-                tokens_next(s);
-
-                Token* t = tokens_get(s);
-                if (t->type != TOKEN_STRING_DOUBLE_QUOTE) {
-                    generic_error(s, "static assertion expects string literal");
-                }
-                tokens_next(s);
-
-                if (condition == 0) {
-                    REPORT(ERROR, tokens_get_location_index(s), "Static assertion failed: '%.*s'", (int)(t->end - t->start), t->start);
-                }
-            } else {
-                if (condition == 0) {
-                    REPORT(ERROR, tokens_get_location_index(s), "Static assertion failed");
-                }
-            }
-
-            expect(s, ')');
-            continue;
-        }
-
-        Attribs attr = {0};
-        Type* type = parse_declspec(tu, s, &attr);
-        attr.is_root = !(attr.is_static || attr.is_inline);
-
-        if (attr.is_typedef) {
-            // TODO(NeGate): Kinda ugly
-            // don't expect one the first time
-            bool expect_comma = false;
-            while (tokens_get(s)->type != ';') {
-                if (expect_comma) {
-                    expect(s, ',');
-                } else
-                    expect_comma = true;
-
-                Decl decl = parse_declarator(tu, s, type, false, false);
-                assert(decl.name);
-
-                // make typedef
-                Stmt* n = make_stmt(tu, s, STMT_DECL, sizeof(struct StmtDecl));
-                n->loc = decl.loc;
-                n->decl = (struct StmtDecl){
-                    .name = decl.name,
-                    .type = decl.type,
-                    .attrs = attr};
-                arrput(tu->top_level_stmts, n);
-
-                Symbol sym = (Symbol){
-                    .name = decl.name,
-                    .type = decl.type,
-                    .storage_class = STORAGE_TYPEDEF};
-                shput(global_symbols, decl.name, sym);
-            }
-
-            expect(s, ';');
-        } else {
-            if (tokens_get(s)->type == ';') {
-                tokens_next(s);
-                continue;
-            }
-
-            Decl decl = parse_declarator(tu, s, type, false, false);
-            if (decl.type->kind == KIND_FUNC) {
-                // function
-                Symbol* sym = find_global_symbol((const char*)decl.name);
-
-                Stmt* n;
-                bool is_redefine = false;
-                bool is_redefining_body = false;
-                if (sym) {
-                    is_redefine = true;
-
-                    StorageClass sclass = attr.is_static ? STORAGE_STATIC_FUNC : STORAGE_FUNC;
-                    sym->storage_class = sclass;
-
-                    // convert forward decl into proper function
-                    n = sym->stmt;
-                    if (n->op == STMT_FUNC_DECL && !attr.is_inline) {
-                        is_redefining_body = true;
-                    }
-
-                    if (!type_equal(tu, n->decl.type, decl.type)) {
-                        if (1) {
-                            REPORT(ERROR, decl.loc, "redefinition of '%s' as different kind of symbol", decl.name);
-                            REPORT(INFO, n->loc, "previous definition is here");
-                            printf("\n");
-                        } else {
-                            char msg[100];
-                            snprintf(msg, 100, "redefinition of '%s' as different kind of symbol", decl.name);
-
-                            report_two_spots(REPORT_ERROR, s, n->loc, decl.loc,
-                                             msg, NULL, NULL, "previous definition was:");
-                        }
-                    }
-
-                    n->loc = decl.loc;
-                } else {
-                    // New symbol
-                    n = make_stmt(tu, s, STMT_DECL, sizeof(struct StmtDecl));
-                    n->loc = decl.loc;
-                    n->decl = (struct StmtDecl){
-                        .type = decl.type,
-                        .name = decl.name,
-                        .attrs = attr,
-                        .initial_as_stmt = NULL};
-                    n->decl.attrs.is_root = false;
-
-                    Symbol func_symbol = (Symbol){
-                        .name = decl.name,
-                        .type = decl.type,
-                        .storage_class = attr.is_static ? STORAGE_STATIC_FUNC : STORAGE_FUNC,
-                        .stmt = n};
-                    shput(global_symbols, decl.name, func_symbol);
-                }
-
-                if (tokens_get(s)->type == '{') {
-                    // TODO(NeGate): Error messages
-                    if (is_redefining_body) {
-                        report_two_spots(REPORT_ERROR, s, n->loc, decl.loc,
-                                         "Cannot redefine function decl",
-                                         NULL, NULL, "previous definition was:");
-                    } else if (strcmp((const char*)decl.name, "WinMain") == 0) {
-                        settings.using_winmain = true;
-                    }
-
-                    assert(local_symbol_start == 0);
-                    assert(local_symbol_count == 0);
-
-                    n->decl.type = decl.type;
-                    n->decl.attrs = attr;
-
-                    // intitialize use list
-                    symbol_chain_start = symbol_chain_current = NULL;
-
-                    parse_function_definition(tu, s, n);
-
-                    // finalize use list
-                    sym->stmt->decl.first_symbol = symbol_chain_start;
-                } else if (tokens_get(s)->type == ';') {
-                    // Forward decl
-                    tokens_next(s);
-                } else {
-                    abort();
-                }
-
-                if (!is_redefine) {
-                    arrput(tu->top_level_stmts, n);
-                }
-
-                local_symbol_start = local_symbol_count = 0;
-            } else {
-                // Normal decls
-                // TODO(NeGate): we should merge the global decls and local
-                // decls codepaths...
-                if (!decl.name) {
-                    generic_error(s, "declaration is missing a name!");
-                }
-
-                if (attr.is_extern) {
-                    attr.is_root = false;
-                }
-
-                Stmt* n = make_stmt(tu, s, STMT_GLOBAL_DECL, sizeof(struct StmtDecl));
-                n->loc = decl.loc;
-                n->decl = (struct StmtDecl){
-                    .type = decl.type,
-                    .name = decl.name,
-                    .attrs = attr};
-                arrput(tu->top_level_stmts, n);
-
-                Symbol sym = (Symbol){
-                    .name = decl.name,
-                    .type = decl.type,
-                    .storage_class = attr.is_static ? STORAGE_STATIC_VAR : STORAGE_GLOBAL,
-                    .stmt = n};
-                shput(global_symbols, decl.name, sym);
-
-                if (tokens_get(s)->type == '=') {
-                    tokens_next(s);
-
-                    // intitialize use list
-                    symbol_chain_start = symbol_chain_current = NULL;
-
-                    Expr* e;
-                    if (tokens_get(s)->type == '@') {
-                        // function literals are a Cuik extension
-                        // TODO(NeGate): error messages
-                        tokens_next(s);
-                        e = parse_function_literal(tu, s, decl.type);
-                    } else if (tokens_get(s)->type == '{') {
-                        tokens_next(s);
-
-                        e = parse_initializer(tu, s, NULL);
-                    } else {
-                        e = parse_expr_l14(tu, s);
-                    }
-
-                    n->decl.initial = e;
-
-                    // finalize use list
-                    n->decl.first_symbol = symbol_chain_start;
-                }
-
-                if (tokens_get(s)->type == ',') {
-                    while (tokens_get(s)->type != ';') {
-                        expect(s, ',');
-
-                        Decl decl = parse_declarator(tu, s, type, false, false);
-                        assert(decl.name);
-
-                        Stmt* n = make_stmt(tu, s, STMT_GLOBAL_DECL, sizeof(struct StmtDecl));
-                        n->loc = decl.loc;
-                        n->decl = (struct StmtDecl){
-                            .type = decl.type,
-                            .name = decl.name,
-                            w
-                                .attrs = attr};
-                        arrput(tu->top_level_stmts, n);
-
-                        Symbol sym = (Symbol){
-                            .name = decl.name,
-                            .type = decl.type,
-                            .storage_class = attr.is_static ? STORAGE_STATIC_VAR : STORAGE_GLOBAL,
-                            .stmt = n};
-                        shput(global_symbols, decl.name, sym);
-
-                        if (tokens_get(s)->type == '=') {
-                            tokens_next(s);
-
-                            // intitialize use list
-                            symbol_chain_start = symbol_chain_current = NULL;
-
-                            Expr* e;
-                            if (tokens_get(s)->type == '@') {
-                                // function literals are a Cuik extension
-                                // TODO(NeGate): error messages
-                                tokens_next(s);
-                                e = parse_function_literal(tu, s, decl.type);
-                            } else if (tokens_get(s)->type == '{') {
-                                tokens_next(s);
-
-                                e = parse_initializer(tu, s, NULL);
-                            } else {
-                                e = parse_expr_l14(tu, s);
-                            }
-                            n->decl.initial = e;
-
-                            // finalize use list
-                            n->decl.first_symbol = symbol_chain_start;
-                        }
-                    }
-                }
-
-                expect(s, ';');
-            }
-        }
-    }
-
-    //assert(s->current == arrlen(s->tokens) - 1);
-
-    // NOTE(NeGate): This is a Cuik extension, it allows normal symbols
-    // like functions to declared out of order.
-#if 0
-    for (size_t i = 1, count = big_array_length(tu->exprs); i < count; i++) {
-        if (tu->exprs[i].op == EXPR_UNKNOWN_SYMBOL) {
-            if (!resolve_unknown_symbol(tu, i)) {
-                // try enum names
-                const unsigned char* name = tu->exprs[i].unknown_sym;
-
-                ptrdiff_t search = shgeti(enum_entries, name);
-                if (search >= 0) {
-                    int value = enum_entries[search].value;
-                    Expr* chain = tu->exprs[i].next_symbol_in_chain;
-
-                    tu->exprs[i].op = EXPR_ENUM;
-                    tu->exprs[i].enum_val = (struct ExprEnum){ value, chain };
-                    goto success;
-                }
-
-                // check if it's builtin
-                ptrdiff_t temp;
-                search = shgeti_ts(target_desc.builtin_func_map, name, temp);
-                if (search < 0) {
-                    REPORT(ERROR, tu->exprs[i].loc, "could not resolve symbol: %s", name);
-                }
-            }
-        }
-        success:;
-    }
-#endif
-#endif
 
     //printf("AST arena: %zu MB\n", arena_get_memory_usage(&tu->ast_arena) / (1024*1024));
     //printf("Type arena: %zu MB\n", arena_get_memory_usage(&tu->type_arena) / (1024*1024));
@@ -1333,6 +1022,8 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
     current_switch_or_case = current_breakable = current_continuable = 0;
     local_symbol_start = local_symbol_count = 0;
 
+    free(local_tags);
+    free(local_symbols);
     shfree(global_tags);
     shfree(global_symbols);
 }
@@ -1426,7 +1117,7 @@ static Stmt* parse_compound_stmt(TranslationUnit* tu, TokenStream* restrict s) {
     LOCAL_SCOPE {
         node = make_stmt(tu, s, STMT_COMPOUND, sizeof(struct StmtCompound));
 
-        size_t body_count = 0; // He be fuckin
+        size_t body_count = 0;
         void* body = tls_save();
 
         while (tokens_get(s)->type != '}') {
@@ -1574,16 +1265,16 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
         }
 
         switch (current_switch_or_case->op) {
-        case STMT_CASE:
+            case STMT_CASE:
             current_switch_or_case->case_.next = top;
             break;
-        case STMT_DEFAULT:
+            case STMT_DEFAULT:
             current_switch_or_case->default_.next = top;
             break;
-        case STMT_SWITCH:
+            case STMT_SWITCH:
             current_switch_or_case->switch_.next = top;
             break;
-        default:
+            default:
             abort();
         }
         current_switch_or_case = n;
@@ -1599,16 +1290,16 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
         Stmt* n = make_stmt(tu, s, STMT_DEFAULT, sizeof(struct StmtDefault));
 
         switch (current_switch_or_case->op) {
-        case STMT_CASE:
+            case STMT_CASE:
             current_switch_or_case->case_.next = n;
             break;
-        case STMT_DEFAULT:
+            case STMT_DEFAULT:
             current_switch_or_case->default_.next = n;
             break;
-        case STMT_SWITCH:
+            case STMT_SWITCH:
             current_switch_or_case->switch_.next = n;
             break;
-        default:
+            default:
             abort();
         }
         current_switch_or_case = n;
