@@ -1271,17 +1271,17 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
 
                     // set when a # happens, we expect a macro parameter afterwards
                     bool as_string = false;
-                    int curr_line = line_of_expansion;
+                    //int curr_line = line_of_expansion;
                     while (!def_lex.hit_line) {
-                        if (curr_line != def_lex.current_line) {
-                            for (int i = curr_line; i < def_lex.current_line; i++) {
+                        /*if (curr_line != def_lex.current_line) {
+for (int i = curr_line; i < def_lex.current_line; i++) {
                                 *temp_expansion++ = ' ';
                                 *temp_expansion++ = '\\';
                                 *temp_expansion++ = '\n';
                                 *temp_expansion++ = ' ';
                             }
                             curr_line = def_lex.current_line;
-                        }
+                        }*/
 
                         // shadowing...
                         size_t token_length = def_lex.token_end - def_lex.token_start;

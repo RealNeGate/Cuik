@@ -1,6 +1,5 @@
 #include "diagnostic.h"
 #include <ctype.h>
-#include <ext/threads.h>
 #include <front/preproc.h>
 #include <stdarg.h>
 
@@ -18,7 +17,7 @@ static const char* report_names[] = {
     "error"};
 
 static _Atomic int tally[REPORT_MAX] = {};
-static mtx_t mutex;
+mtx_t report_mutex;
 
 #if _WIN32
 static HANDLE console_handle;
@@ -45,7 +44,7 @@ void init_report_system() {
     }
 #endif
 
-    mtx_init(&mutex, mtx_plain);
+    mtx_init(&report_mutex, mtx_plain);
 }
 
 static void print_level_name(ReportLevel level) {
@@ -161,40 +160,40 @@ static int print_backtrace(TokenStream* tokens, SourceLocIndex loc_index) {
     }
 
     switch (SOURCE_LOC_GET_TYPE(loc_index)) {
-    case SOURCE_LOC_MACRO: {
-        if (line->filepath[0] == '<') {
-            printf("In macro '%.*s' at line %d:\n", (int)loc->length, line->line_str + loc->columns, line_bias + line->line);
-        } else {
-            printf("In macro '%.*s' included from %s:%d:\n", (int)loc->length, line->line_str + loc->columns, line->filepath, line->line);
-        }
+        case SOURCE_LOC_MACRO: {
+            if (line->filepath[0] == '<') {
+                printf("In macro '%.*s' at line %d:\n", (int)loc->length, line->line_str + loc->columns, line_bias + line->line);
+            } else {
+                printf("In macro '%.*s' included from %s:%d:\n", (int)loc->length, line->line_str + loc->columns, line->filepath, line->line);
+            }
 
-        if (!report_using_thin_errors) {
-            // draw macro highlight
-            size_t dist_from_line_start = draw_line_biased(tokens, loc_index, line_bias);
-            draw_line_horizontal_pad();
-
-#if _WIN32
-            SetConsoleTextAttribute(console_handle, (default_attribs & ~0xF) | FOREGROUND_GREEN);
-#endif
-
-            // idk man
-            size_t start_pos = loc->columns > dist_from_line_start ? loc->columns - dist_from_line_start : 0;
-
-            // draw underline
-            size_t tkn_len = loc->length;
-            for (size_t i = 0; i < start_pos; i++) printf(" ");
-            printf("^");
-            for (size_t i = 1; i < tkn_len; i++) printf("~");
-            printf("\n");
+            if (!report_using_thin_errors) {
+                // draw macro highlight
+                size_t dist_from_line_start = draw_line_biased(tokens, loc_index, line_bias);
+                draw_line_horizontal_pad();
 
 #if _WIN32
-            SetConsoleTextAttribute(console_handle, default_attribs);
+                SetConsoleTextAttribute(console_handle, (default_attribs & ~0xF) | FOREGROUND_GREEN);
 #endif
-        }
-        return line_bias;
-    }
 
-    default:
+                // idk man
+                size_t start_pos = loc->columns > dist_from_line_start ? loc->columns - dist_from_line_start : 0;
+
+                // draw underline
+                size_t tkn_len = loc->length;
+                for (size_t i = 0; i < start_pos; i++) printf(" ");
+                printf("^");
+                for (size_t i = 1; i < tkn_len; i++) printf("~");
+                printf("\n");
+
+#if _WIN32
+                SetConsoleTextAttribute(console_handle, default_attribs);
+#endif
+            }
+            return line_bias;
+        }
+
+        default:
         printf("In file included from %s:%d:\n", line->filepath, line->line);
         return line->line;
     }
@@ -203,7 +202,7 @@ static int print_backtrace(TokenStream* tokens, SourceLocIndex loc_index) {
 void report_ranged(ReportLevel level, TokenStream* tokens, SourceLocIndex start_loc, SourceLocIndex end_loc, const char* fmt, ...) {
     SourceLoc loc = merge_source_locations(GET_SOURCE_LOC(start_loc), GET_SOURCE_LOC(end_loc));
 
-    mtx_lock(&mutex);
+    mtx_lock(&report_mutex);
     if (!report_using_thin_errors && loc.line->parent != 0) {
         print_backtrace(tokens, loc.line->parent);
     }
@@ -242,13 +241,13 @@ void report_ranged(ReportLevel level, TokenStream* tokens, SourceLocIndex start_
     }
 
     tally_report_counter(level);
-    mtx_unlock(&mutex);
+    mtx_unlock(&report_mutex);
 }
 
 void report(ReportLevel level, TokenStream* tokens, SourceLocIndex loc_index, const char* fmt, ...) {
     SourceLoc* loc = GET_SOURCE_LOC(loc_index);
 
-    mtx_lock(&mutex);
+    mtx_lock(&report_mutex);
     if (!report_using_thin_errors && loc->line->parent != 0) {
         print_backtrace(tokens, loc->line->parent);
     }
@@ -288,14 +287,14 @@ void report(ReportLevel level, TokenStream* tokens, SourceLocIndex loc_index, co
     }
 
     tally_report_counter(level);
-    mtx_unlock(&mutex);
+    mtx_unlock(&report_mutex);
 }
 
 void report_two_spots(ReportLevel level, TokenStream* tokens, SourceLocIndex loc_index, SourceLocIndex loc2_index, const char* msg, const char* loc_msg, const char* loc_msg2, const char* interjection) {
     SourceLoc* loc = GET_SOURCE_LOC(loc_index);
     SourceLoc* loc2 = GET_SOURCE_LOC(loc2_index);
 
-    mtx_lock(&mutex);
+    mtx_lock(&report_mutex);
 
     if (!interjection && loc->line->line == loc2->line->line) {
         assert(loc->columns < loc2->columns);
@@ -402,8 +401,8 @@ void report_two_spots(ReportLevel level, TokenStream* tokens, SourceLocIndex loc
 
                 // draw underline
                 size_t start_pos = loc2->columns > dist_from_line_start
-                                       ? loc2->columns - dist_from_line_start
-                                       : 0;
+                    ? loc2->columns - dist_from_line_start
+                    : 0;
 
                 size_t tkn_len = loc2->length;
                 for (size_t i = 0; i < start_pos; i++) printf(" ");
@@ -426,17 +425,17 @@ void report_two_spots(ReportLevel level, TokenStream* tokens, SourceLocIndex loc
 
     printf("\n");
     tally_report_counter(level);
-    mtx_unlock(&mutex);
+    mtx_unlock(&report_mutex);
 }
 
 void crash_if_reports(ReportLevel minimum) {
     for (int i = minimum; i < REPORT_MAX; i++) {
         if (tally[i]) {
-            mtx_lock(&mutex);
+            mtx_lock(&report_mutex);
             printf("exited with %d %s%s", tally[i], report_names[i], tally[i] > 1 ? "s" : "");
 
             abort();
-            mtx_unlock(&mutex);
+            mtx_unlock(&report_mutex);
         }
     }
 }

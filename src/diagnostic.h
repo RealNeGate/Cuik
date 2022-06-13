@@ -1,6 +1,7 @@
 #pragma once
 #include "common.h"
 #include "front/lexer.h"
+#include <ext/threads.h>
 #undef ERROR
 
 typedef enum {
@@ -16,6 +17,7 @@ typedef enum {
 #define REPORT_EXPR(lvl, e, ...) report_ranged(REPORT_##lvl, &tu->tokens, (e)->start_loc, (e)->end_loc, __VA_ARGS__)
 #define REPORT_STMT(lvl, s, ...) report(REPORT_##lvl, &tu->tokens, (s)->loc, __VA_ARGS__)
 
+extern mtx_t report_mutex;
 extern bool report_using_thin_errors;
 
 void init_report_system();

@@ -1117,8 +1117,8 @@ static Stmt* parse_compound_stmt(TranslationUnit* tu, TokenStream* restrict s) {
     LOCAL_SCOPE {
         node = make_stmt(tu, s, STMT_COMPOUND, sizeof(struct StmtCompound));
 
-        size_t body_count = 0;
-        void* body = tls_save();
+        size_t kid_count = 0;
+        Stmt** kids = tls_save();
 
         while (tokens_get(s)->type != '}') {
             if (tokens_get(s)->type == ';') {
@@ -1126,23 +1126,25 @@ static Stmt* parse_compound_stmt(TranslationUnit* tu, TokenStream* restrict s) {
             } else {
                 Stmt* stmt = parse_stmt(tu, s);
                 if (stmt) {
-                    *((Stmt**)tls_push(sizeof(Stmt*))) = stmt;
-                    body_count++;
+                    tls_push(sizeof(Stmt*));
+                    kids[kid_count++] = stmt;
                 } else {
-                    parse_decl_or_expr(tu, s, &body_count);
+                    // this will push the decl or expression if it catches one
+                    parse_decl_or_expr(tu, s, &kid_count);
                 }
             }
         }
         expect(s, '}');
 
-        Stmt** stmt_array = arena_alloc(&thread_arena, body_count * sizeof(Stmt*), _Alignof(Stmt*));
-        memcpy(stmt_array, body, body_count * sizeof(Stmt*));
+        Stmt** permanent_storage = arena_alloc(&thread_arena, kid_count * sizeof(Stmt*), _Alignof(Stmt*));
+        memcpy(permanent_storage, kids, kid_count * sizeof(Stmt*));
 
         node->compound = (struct StmtCompound){
-            .kids = stmt_array,
-            .kids_count = body_count};
+            .kids = permanent_storage,
+            .kids_count = kid_count,
+        };
 
-        tls_restore(body);
+        tls_restore(kids);
     }
 
     return node;
@@ -1378,18 +1380,19 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
                 // NOTE(NeGate): This is just a decl list or a single expression.
                 first = make_stmt(tu, s, STMT_COMPOUND, sizeof(struct StmtCompound));
 
-                size_t body_count = 0; // He be fuckin
-                void* body = tls_save();
+                size_t kid_count = 0;
+                Stmt** kids = tls_save();
                 {
-                    parse_decl_or_expr(tu, s, &body_count);
+                    parse_decl_or_expr(tu, s, &kid_count);
                 }
-                Stmt** stmt_array = arena_alloc(&thread_arena, body_count * sizeof(Stmt*), _Alignof(Stmt*));
-                memcpy(stmt_array, body, body_count * sizeof(Stmt*));
+                Stmt** permanent_storage = arena_alloc(&thread_arena, kid_count * sizeof(Stmt*), _Alignof(Stmt*));
+                memcpy(permanent_storage, kids, kid_count * sizeof(Stmt*));
 
                 first->compound = (struct StmtCompound){
-                    .kids = stmt_array,
-                    .kids_count = body_count};
-                tls_restore(body);
+                    .kids = permanent_storage,
+                    .kids_count = kid_count,
+                };
+                tls_restore(kids);
             }
 
             Expr* cond = NULL;

@@ -190,6 +190,8 @@ void cuik_set_cpp_defines(CPP_Context* cpp) {
         cpp_define(cpp, "_MSC_EXTENSIONS", "1");
         cpp_define(cpp, "_INTEGRAL_MAX_BITS", "64");
 
+        cpp_define(cpp, "_USE_ATTRIBUTES_FOR_SAL", "0");
+
         // pretend to be MSVC
         if (true) {
             cpp_define(cpp, "_MSC_BUILD", "1");
@@ -247,6 +249,19 @@ TranslationUnit* cuik_compile_file(CompilationUnit* cu, const char* path,
         }
 
         tu->tokens = cpp_process(&cpp_ctx, path);
+
+        if (settings.verbose) {
+            mtx_lock(&report_mutex);
+
+            printf("Include Deps: %s\n", path);
+
+            size_t count = cpp_get_file_table_count(&cpp_ctx);
+            CPP_FileEntry* entries = cpp_get_file_table(&cpp_ctx);
+            for (size_t i = 1; i < count; i++) {
+                printf("  %s\n", entries[i].filepath);
+            }
+            printf("\n");
+        }
 
         cpp_finalize(&cpp_ctx);
     }
