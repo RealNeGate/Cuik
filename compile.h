@@ -135,8 +135,8 @@ static char* str_gimme_good_slashes(const char* str) {
 static const char* str_filename(const char* path) {
     const char* slash = path;
     for (; *path; path++) {
-        if (*path == '/') slash = path;
-        else if (*path == '\\') slash = path;
+        if (*path == '/') slash = path+1;
+        else if (*path == '\\') slash = path+1;
     }
 
     return slash;
