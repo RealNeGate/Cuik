@@ -16,9 +16,13 @@ static const char* INPUT_FILES[] = {
     "src/settings.c",
     "src/driver_utils.c",
     "src/compilation_unit.c",
+    "src/ext/threadpool.c",
 
-    "src/front/lexer.c",
-    "src/front/preproc.c",
+    // C preprocessor
+    "src/preproc/lexer.c",
+    "src/preproc/preproc.c",
+
+    // C frontend
     "src/front/parser.c",
     "src/front/sema.c",
     "src/front/atoms.c",
@@ -26,16 +30,16 @@ static const char* INPUT_FILES[] = {
     "src/front/types.c",
     "src/front/ast_dump.c",
 
+    // Target specific stuff
     "src/targets/x64.c",
 
+    // Optional analysis
     "src/anal/analysis.c",
 
+    // Backend
     "src/back/ir_gen.c",
     "src/back/linker.c",
-
     "src/linker/tblink.c",
-
-    "src/ext/threadpool.c",
 
 #if defined(_WIN32)
     "src/back/microsoft_craziness.cpp",

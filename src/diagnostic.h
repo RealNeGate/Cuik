@@ -1,6 +1,6 @@
 #pragma once
 #include "common.h"
-#include "front/lexer.h"
+#include <preproc/lexer.h>
 #include <ext/threads.h>
 #undef ERROR
 

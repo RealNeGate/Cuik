@@ -5,9 +5,10 @@
 #include <targets/targets.h>
 #include <timer.h>
 
+#include <preproc/preproc.h>
+
 // Frontend
 #include <front/parser.h>
-#include <front/preproc.h>
 #include <front/sema.h>
 
 // Backend

@@ -4,9 +4,9 @@
 #include "big_array.h"
 #include "common.h"
 #include "diagnostic.h"
-#include "lexer.h"
 #include "memory.h"
 #include "settings.h"
+#include <preproc/lexer.h>
 #include <ext/threadpool.h>
 #include <ext/threads.h>
 

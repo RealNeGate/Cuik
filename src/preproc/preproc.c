@@ -1,12 +1,15 @@
 // TODO(NeGate): Refactor this code...
-
+//
 // NOTE(NeGate): This code leaks the filename strings but it doesn't actually matter
 // because this is a compiler and momma aint raised no bitch.
+//
+// NOTE(NeGate): the_shtuffs is the simple linear allocator in this preprocessor, just avoids
+// wasting time on the heap allocator
 #include "preproc.h"
-#include "../timer.h"
 #include "diagnostic.h"
-#include "file_io.h"
-#include "memory.h"
+#include <memory.h>
+#include <timer.h>
+#include <front/file_io.h>
 #include <ext/stb_ds.h>
 
 #if _WIN32
