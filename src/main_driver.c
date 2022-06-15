@@ -360,6 +360,26 @@ static bool dump_tokens() {
         abort();
     }
 
+#if 1
+    unsigned char* text = (unsigned char*)read_entire_file(cuik_source_files[0]);
+    if (text == NULL) {
+        fprintf(stderr, "could not open: %s\n", cuik_source_files[0]);
+        return false;
+    }
+
+    Lexer l = {cuik_source_files[0], text, text, 1};
+
+    uint64_t t1 = timer_now();
+    do {
+        lexer_read(&l);
+    } while (l.token_type);
+    uint64_t t2 = timer_now();
+
+    double elapsed = (t2 - t1) * timer_freq;
+    size_t text_len = strlen((char*)text);
+    fprintf(stderr, "preprocessor took %.03f seconds (over %zu bytes)\n", elapsed, text_len);
+    return true;
+#else
     // Preprocess file
     TokenStream s;
     uint64_t t1, t2;
@@ -383,15 +403,8 @@ static bool dump_tokens() {
         cpp_finalize(&cpp_ctx);
     }
 
-#ifdef _WIN32
     double elapsed = (t2 - t1) * timer_freq;
     fprintf(stderr, "preprocessor took %.03f seconds\n", elapsed);
-#else
-    // TODO(NeGate): Windows does undefined frequency thingy,
-    // the linux interface is microseconds
-    double elapsed = (t2 - t1) / 1000000.0;
-    fprintf(stderr, "preprocessor took %.03f seconds\n", elapsed);
-#endif
 
     char output_path[MAX_PATH];
     sprintf_s(output_path, MAX_PATH, "%s.i", cuik_file_no_ext);
@@ -441,6 +454,7 @@ static bool dump_tokens() {
     }
 
     fclose(f);
+#endif
     return true;
 }
 

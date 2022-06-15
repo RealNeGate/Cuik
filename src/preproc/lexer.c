@@ -63,6 +63,8 @@ enum {
     CHAR_CLASS_NULL,
     // A-Z a-z 0-9 _
     CHAR_CLASS_IDENT,
+    // backslash
+    CHAR_CLASS_ESCAPE,
     // 0-9
     CHAR_CLASS_NUMBER,
     // ;{}()
@@ -78,14 +80,16 @@ enum {
     // . ...
     CHAR_CLASS_DOT,
     // # ##
-    CHAR_CLASS_HASH
+    CHAR_CLASS_HASH,
 };
 
 static _Alignas(64) uint8_t char_classes[256] = {
     ['A' ... 'Z'] = CHAR_CLASS_IDENT,
     ['a' ... 'z'] = CHAR_CLASS_IDENT,
-    ['_'] = CHAR_CLASS_IDENT,
-    ['$'] = CHAR_CLASS_IDENT,
+    ['_']  = CHAR_CLASS_IDENT,
+    ['\\'] = CHAR_CLASS_ESCAPE,
+    ['$']  = CHAR_CLASS_IDENT,
+    [0x80 ... 0xFF] = CHAR_CLASS_IDENT,
 
     ['0' ... '9'] = CHAR_CLASS_NUMBER,
 
@@ -122,7 +126,8 @@ static _Alignas(64) uint8_t char_classes[256] = {
 
     ['.'] = CHAR_CLASS_DOT,
 
-    ['#'] = CHAR_CLASS_HASH};
+    ['#'] = CHAR_CLASS_HASH,
+};
 
 // AUTO-GENERATED
 // \t \n \r *space*
@@ -333,9 +338,9 @@ TknType classify_ident(const unsigned char* restrict str, size_t len) {
     int result = _mm_cmpestri(kw128, kw_len,
                               str128, len,
                               _SIDD_UBYTE_OPS |
-                                  _SIDD_CMP_EQUAL_EACH |
-                                  _SIDD_NEGATIVE_POLARITY |
-                                  _SIDD_UNIT_MASK);
+                              _SIDD_CMP_EQUAL_EACH |
+                              _SIDD_NEGATIVE_POLARITY |
+                              _SIDD_UNIT_MASK);
 
     return result == 16 ? (640 + v) : TOKEN_IDENTIFIER;
 #endif
@@ -389,71 +394,71 @@ void lexer_read(Lexer* restrict l) {
     // branchless space skip
     current += (*current == ' ');
 
-// NOTE(NeGate): We canonicalized spaces \t \v
-// in the preprocessor so we don't need to handle them
-redo_lex : {
-    if (*current == '\0') {
-        // quit, we're done
-        l->hit_line = true;
-        l->token_type = '\0';
-        return;
-    } else if (*current == '\r' || *current == '\n') {
-        current += (current[0] + current[1] == '\r' + '\n') ? 2 : 1;
+    // NOTE(NeGate): We canonicalized spaces \t \v
+    // in the preprocessor so we don't need to handle them
+    redo_lex : {
+        if (*current == '\0') {
+            // quit, we're done
+            l->hit_line = true;
+            l->token_type = '\0';
+            return;
+        } else if (*current == '\r' || *current == '\n') {
+            current += (current[0] + current[1] == '\r' + '\n') ? 2 : 1;
 
-        l->line_current = current;
-        l->hit_line = true;
-        l->current_line += 1;
-        goto redo_lex;
-    } else if (*current == ' ') {
-#if !USE_INTRIN
-        current += 1;
-        goto redo_lex;
-#else
-        // SIMD space skip
-        __m128i chars = _mm_loadu_si128((__m128i*)current);
-        int len = __builtin_ffs(~_mm_movemask_epi8(_mm_cmpeq_epi8(chars, _mm_set1_epi8(' '))));
-
-        current += len - 1;
-        goto redo_lex;
-#endif
-    } else if (*current == '/') {
-        if (current[1] == '/') {
-            do {
-                current++;
-            } while (*current && *current != '\n');
-
-            current += 1;
             l->line_current = current;
             l->hit_line = true;
             l->current_line += 1;
             goto redo_lex;
-        } else if (current[1] == '*') {
-            current++;
+        } else if (*current == ' ') {
+#if !USE_INTRIN
+            current += 1;
+            goto redo_lex;
+#else
+            // SIMD space skip
+            __m128i chars = _mm_loadu_si128((__m128i*)current);
+            int len = __builtin_ffs(~_mm_movemask_epi8(_mm_cmpeq_epi8(chars, _mm_set1_epi8(' '))));
 
-            const unsigned char* start = current;
-            do {
+            current += len - 1;
+            goto redo_lex;
+#endif
+        } else if (*current == '/') {
+            if (current[1] == '/') {
+                do {
+                    current++;
+                } while (*current && *current != '\n');
+
+                current += 1;
+                l->line_current = current;
+                l->hit_line = true;
+                l->current_line += 1;
+                goto redo_lex;
+            } else if (current[1] == '*') {
                 current++;
-            } while (*current && !(current[0] == '/' && current[-1] == '*'));
-            current++;
 
-            int lines_elapsed = line_counter(current - start, start);
+                const unsigned char* start = current;
+                do {
+                    current++;
+                } while (*current && !(current[0] == '/' && current[-1] == '*'));
+                current++;
+
+                int lines_elapsed = line_counter(current - start, start);
+
+                l->line_current = current;
+                l->current_line += lines_elapsed;
+                l->hit_line = (lines_elapsed > 0);
+                goto redo_lex;
+            }
+        } else if (current[0] == '\\' && (current[1] == '\r' || current[1] == '\n')) {
+            // this happens when there's a backslash-newline that doesn't
+            // necessarily need to join tokens but just joins the lines
+            current += 1;
+            current += (current[0] + current[1] == '\r' + '\n') ? 2 : 1;
 
             l->line_current = current;
-            l->current_line += lines_elapsed;
-            l->hit_line = (lines_elapsed > 0);
+            l->current_line += 1;
             goto redo_lex;
         }
-    } else if (current[0] == '\\' && (current[1] == '\r' || current[1] == '\n')) {
-        // this happens when there's a backslash-newline that doesn't
-        // necessarily need to join tokens but just joins the lines
-        current += 1;
-        current += (current[0] + current[1] == '\r' + '\n') ? 2 : 1;
-
-        l->line_current = current;
-        l->current_line += 1;
-        goto redo_lex;
     }
-}
 
     ////////////////////////////////
     // Try to actually parse a token
@@ -468,38 +473,145 @@ redo_lex : {
     }
 
     switch (initial_class) {
-    case CHAR_CLASS_NULL:
+        case CHAR_CLASS_NULL:
         break;
-    case CHAR_CLASS_IDENT: {
-        while (char_classes[*current] == CHAR_CLASS_IDENT ||
-               char_classes[*current] == CHAR_CLASS_NUMBER) {
-            current++;
-        }
 
-        l->token_type = TOKEN_IDENTIFIER;
-        break;
-    }
-    case CHAR_CLASS_NUMBER: {
-        if (current[-1] == '0' && current[0] == 'x') {
-            current++;
+        case CHAR_CLASS_ESCAPE:
+        case CHAR_CLASS_IDENT: {
+            l->token_type = TOKEN_IDENTIFIER;
 
-            while ((*current >= '0' && *current <= '9') ||
-                   (*current >= 'A' && *current <= 'F') ||
-                   (*current >= 'a' && *current <= 'f')) {
+            bool slow_identifier_lexing = false;
+            while (char_classes[*current] == CHAR_CLASS_IDENT ||
+                   char_classes[*current] == CHAR_CLASS_ESCAPE ||
+                   char_classes[*current] == CHAR_CLASS_NUMBER) {
+                if (current[-1] == '\\') {
+                    if (current[0] == 'U' || current[0] == 'u') {
+                        slow_identifier_lexing = true;
+                    } else {
+                        // exit... it's a wonky identifier
+                        break;
+                    }
+                }
+
                 current++;
             }
 
-            l->token_type = TOKEN_INTEGER;
-            if (*current == '.') {
-                // floats
-                l->token_type = TOKEN_FLOAT;
+            if (!slow_identifier_lexing) break;
+
+            // you don't wanna be here... basically if we spot \U in the identifier
+            // we reparse it but this time with the correct handling of those details.
+            // we also generate a new string in the arena to hold this stuff
+            // at best it's as big as the raw identifier
+            size_t oldstr_len = current - start;
+            char* newstr = arena_alloc(&thread_arena, (oldstr_len + 15) & ~15u, 1);
+
+            size_t i = 0, j = 0;
+            while (i < oldstr_len) {
+                if (start[i] == '\\' && (start[i+1] == 'U' || start[i+1] == 'u')) {
+                    // parse codepoint
+                    i += 2;
+
+                    uint32_t code = 0;
+                    while (i < oldstr_len) {
+                        char ch = start[i];
+
+                        if (ch >= 'A' && ch <= 'F') {
+                            code <<= 4;
+                            code |= (ch - 'A') + 0xA;
+                        } else if (ch >= 'a' && ch <= 'f') {
+                            code <<= 4;
+                            code |= (ch - 'a') + 0xA;
+                        } else if (ch >= '0' && ch <= '9') {
+                            code <<= 4;
+                            code |= (ch - '0');
+                        } else break;
+
+                        i += 1;
+                    }
+
+                    // convert into proper bytes
+                    // https://gist.github.com/Miouyouyou/864130e8734afe3f806512b14022226f
+                    if (code < 0x80) {
+                        newstr[j++] = code;
+                    } else if (code < 0x800) {   // 00000yyy yyxxxxxx
+                        newstr[j++] = (0b11000000 | (code >> 6));
+                        newstr[j++] = (0b10000000 | (code & 0x3f));
+                    } else if (code < 0x10000) {  // zzzzyyyy yyxxxxxx
+                        newstr[j++] = (0b11100000 | (code >> 12));         // 1110zzz
+                        newstr[j++] = (0b10000000 | ((code >> 6) & 0x3f)); // 10yyyyy
+                        newstr[j++] = (0b10000000 | (code & 0x3f));        // 10xxxxx
+                    } else if (code < 0x200000) { // 000uuuuu zzzzyyyy yyxxxxxx
+                        newstr[j++] = (0b11110000 | (code >> 18));          // 11110uuu
+                        newstr[j++] = (0b10000000 | ((code >> 12) & 0x3f)); // 10uuzzzz
+                        newstr[j++] = (0b10000000 | ((code >> 6)  & 0x3f)); // 10yyyyyy
+                        newstr[j++] = (0b10000000 | (code & 0x3f));         // 10xxxxxx
+                    } else {
+                        assert(0);
+                    }
+                } else {
+                    newstr[j++] = start[i++];
+                }
+            }
+
+            l->token_start = (unsigned char*)newstr;
+            l->token_end = (unsigned char*) &newstr[j];
+            l->current = current;
+
+            // place a temporary 'line_current' such that it doesn't break when doing
+            // column calculations
+            l->line_current = l->token_start;
+            l->line_current2 = current;
+            return;
+        }
+        case CHAR_CLASS_NUMBER: {
+            if (current[-1] == '0' && current[0] == 'x') {
                 current++;
 
-                while (char_classes[*current] == CHAR_CLASS_NUMBER) {
+                while ((*current >= '0' && *current <= '9') ||
+                       (*current >= 'A' && *current <= 'F') ||
+                       (*current >= 'a' && *current <= 'f')) {
                     current++;
                 }
 
-                if (*current == 'p') {
+                l->token_type = TOKEN_INTEGER;
+                if (*current == '.') {
+                    // floats
+                    l->token_type = TOKEN_FLOAT;
+                    current++;
+
+                    while (char_classes[*current] == CHAR_CLASS_NUMBER) {
+                        current++;
+                    }
+
+                    if (*current == 'p') {
+                        current++;
+                        if (*current == '+' || *current == '-') current++;
+
+                        while (char_classes[*current] == CHAR_CLASS_NUMBER) {
+                            current++;
+                        }
+                    }
+                }
+            } else {
+                while (char_classes[*current] == CHAR_CLASS_NUMBER) {
+                    current++;
+                }
+                l->token_type = TOKEN_INTEGER;
+
+                if (*current == '.') {
+                    // floats
+                    l->token_type = TOKEN_FLOAT;
+                    current++;
+
+                    while (char_classes[*current] == CHAR_CLASS_NUMBER) {
+                        current++;
+                    }
+                }
+
+                if (*current == 'e') {
+                    // floats but cooler
+                    l->token_type = TOKEN_FLOAT;
+
                     current++;
                     if (*current == '+' || *current == '-') current++;
 
@@ -507,181 +619,153 @@ redo_lex : {
                         current++;
                     }
                 }
-            }
-        } else {
-            while (char_classes[*current] == CHAR_CLASS_NUMBER) {
-                current++;
-            }
-            l->token_type = TOKEN_INTEGER;
 
-            if (*current == '.') {
-                // floats
-                l->token_type = TOKEN_FLOAT;
-                current++;
-
-                while (char_classes[*current] == CHAR_CLASS_NUMBER) {
+                if (*current == 'f') {
+                    l->token_type = TOKEN_FLOAT;
                     current++;
                 }
             }
 
-            if (*current == 'e') {
-                // floats but cooler
-                l->token_type = TOKEN_FLOAT;
-
+            // suffix
+            if (*current == 'i') {
                 current++;
-                if (*current == '+' || *current == '-') current++;
 
-                while (char_classes[*current] == CHAR_CLASS_NUMBER) {
+                // at most it's two numbers
+                current += (char_classes[*current] == CHAR_CLASS_NUMBER);
+                current += (char_classes[*current] == CHAR_CLASS_NUMBER);
+            } else if (*current == 'u') {
+                current++;
+
+                while (char_classes[*current] == CHAR_CLASS_IDENT) {
+                    current++;
+                }
+
+                // at most it's two numbers
+                current += (char_classes[*current] == CHAR_CLASS_NUMBER);
+                current += (char_classes[*current] == CHAR_CLASS_NUMBER);
+            } else {
+                while (char_classes[*current] == CHAR_CLASS_IDENT) {
                     current++;
                 }
             }
-
-            if (*current == 'f') {
-                l->token_type = TOKEN_FLOAT;
-                current++;
-            }
+            break;
         }
-
-        // suffix
-        if (*current == 'i') {
-            current++;
-
-            // at most it's two numbers
-            current += (char_classes[*current] == CHAR_CLASS_NUMBER);
-            current += (char_classes[*current] == CHAR_CLASS_NUMBER);
-        } else if (*current == 'u') {
-            current++;
-
-            while (char_classes[*current] == CHAR_CLASS_IDENT) {
-                current++;
-            }
-
-            // at most it's two numbers
-            current += (char_classes[*current] == CHAR_CLASS_NUMBER);
-            current += (char_classes[*current] == CHAR_CLASS_NUMBER);
-        } else {
-            while (char_classes[*current] == CHAR_CLASS_IDENT) {
-                current++;
-            }
+        case CHAR_CLASS_SEPARATOR: {
+            l->token_type = *start;
+            break;
         }
-        break;
-    }
-    case CHAR_CLASS_SEPARATOR: {
-        l->token_type = *start;
-        break;
-    }
-    case CHAR_CLASS_MULTICHAR1: {
-        l->token_type = *start;
-        if (*current == '=') {
-            l->token_type += 384;
-            current++;
-        } else if (*current == *start && *current != '*') {
-            l->token_type += 256;
-            current++;
-        }
-        break;
-    }
-    case CHAR_CLASS_MULTICHAR2: {
-        l->token_type = *start;
-        if (*current == '=') {
-            l->token_type += 256;
-            current++;
-        } else if (*current == *start) {
-            l->token_type += 384;
-            current++;
-
+        case CHAR_CLASS_MULTICHAR1: {
+            l->token_type = *start;
             if (*current == '=') {
-                l->token_type += 128;
+                l->token_type += 384;
+                current++;
+            } else if (*current == *start && *current != '*') {
+                l->token_type += 256;
                 current++;
             }
+            break;
         }
-        break;
-    }
-    case CHAR_CLASS_MULTICHAR3: {
-        l->token_type = *start;
+        case CHAR_CLASS_MULTICHAR2: {
+            l->token_type = *start;
+            if (*current == '=') {
+                l->token_type += 256;
+                current++;
+            } else if (*current == *start) {
+                l->token_type += 384;
+                current++;
 
-        if (*current == '-') {
-            l->token_type = TOKEN_DECREMENT;
-            current++;
-        } else if (*current == '=') {
-            l->token_type = TOKEN_MINUS_EQUAL;
-            current++;
-        } else if (*current == '>') {
-            l->token_type = TOKEN_ARROW;
-            current++;
+                if (*current == '=') {
+                    l->token_type += 128;
+                    current++;
+                }
+            }
+            break;
         }
-        break;
-    }
-    case CHAR_CLASS_STRING: {
-        char quote_type = current[-1] == '\'' ? '\'' : '\"';
+        case CHAR_CLASS_MULTICHAR3: {
+            l->token_type = *start;
+
+            if (*current == '-') {
+                l->token_type = TOKEN_DECREMENT;
+                current++;
+            } else if (*current == '=') {
+                l->token_type = TOKEN_MINUS_EQUAL;
+                current++;
+            } else if (*current == '>') {
+                l->token_type = TOKEN_ARROW;
+                current++;
+            }
+            break;
+        }
+        case CHAR_CLASS_STRING: {
+            char quote_type = current[-1] == '\'' ? '\'' : '\"';
 
 #if !USE_INTRIN
-        do {
-            if (*current == quote_type && current[-1] == '\\') break;
-            if (*current == '\n') l->current_line += 1;
+            do {
+                if (*current == quote_type && current[-1] == '\\') break;
+                if (*current == '\n') l->current_line += 1;
 
-            current += 1;
-        } while (*current);
+                current += 1;
+            } while (*current);
 #else
-        __m128i pattern = _mm_set1_epi8(quote_type);
+            __m128i pattern = _mm_set1_epi8(quote_type);
 
-        do {
-            __m128i bytes = _mm_loadu_si128((__m128i*)current);
+            do {
+                __m128i bytes = _mm_loadu_si128((__m128i*)current);
 
-            // strings either end at the quote or are cut off early via a
-            // newline unless you put a backslash-newline joiner.
-            __m128i test_quote = _mm_cmpeq_epi8(bytes, pattern);
-            __m128i test_newline = _mm_cmpeq_epi8(bytes, _mm_set1_epi8('\n'));
-            __m128i test = _mm_or_si128(test_quote, test_newline);
-            int len = __builtin_ffs(_mm_movemask_epi8(test));
+                // strings either end at the quote or are cut off early via a
+                // newline unless you put a backslash-newline joiner.
+                __m128i test_quote = _mm_cmpeq_epi8(bytes, pattern);
+                __m128i test_newline = _mm_cmpeq_epi8(bytes, _mm_set1_epi8('\n'));
+                __m128i test = _mm_or_si128(test_quote, test_newline);
+                int len = __builtin_ffs(_mm_movemask_epi8(test));
 
-            if (len) {
-                current += len;
-                l->current_line += (current[-1] == '\n');
+                if (len) {
+                    current += len;
+                    l->current_line += (current[-1] == '\n');
 
-                // backslash join
-                if (current[-1] == '\n' && current[-2] == '\\') continue;
+                    // backslash join
+                    if (current[-1] == '\n' && current[-2] == '\\') continue;
 
-                // escape + quote like \"
-                if (current[-1] == quote_type && current[-2] == '\\' && current[-3] != '\\') continue;
+                    // escape + quote like \"
+                    if (current[-1] == quote_type && current[-2] == '\\' && current[-3] != '\\') continue;
 
-                break;
-            } else {
-                current += 16;
-            }
-        } while (*current);
+                    break;
+                } else {
+                    current += 16;
+                }
+            } while (*current);
 #endif
 
-        l->token_type = quote_type;
+            l->token_type = quote_type;
 
-        if (start[0] == 'L') {
-            l->token_type += 256;
-            start += 1;
-        }
-        break;
-    }
-    case CHAR_CLASS_DOT: {
-        if (current[0] == '.' && current[1] == '.') {
-            current += 2;
-
-            l->token_type = TOKEN_TRIPLE_DOT;
+            if (start[0] == 'L') {
+                l->token_type += 256;
+                start += 1;
+            }
             break;
         }
+        case CHAR_CLASS_DOT: {
+            if (current[0] == '.' && current[1] == '.') {
+                current += 2;
 
-        l->token_type = '.';
-        break;
-    }
-    case CHAR_CLASS_HASH: {
-        if (*current == '#') {
-            current++;
-            l->token_type = TOKEN_DOUBLE_HASH;
+                l->token_type = TOKEN_TRIPLE_DOT;
+                break;
+            }
+
+            l->token_type = '.';
             break;
         }
+        case CHAR_CLASS_HASH: {
+            if (*current == '#') {
+                current++;
+                l->token_type = TOKEN_DOUBLE_HASH;
+                break;
+            }
 
-        l->token_type = TOKEN_HASH;
-        break;
-    }
-    default:
+            l->token_type = TOKEN_HASH;
+            break;
+        }
+        default:
         abort();
     }
 
@@ -707,10 +791,8 @@ redo_lex : {
         while (*current && *current != '\n' && *current != ' ') {
             char c0 = current[0], c1 = current[1];
 
-            if (c0 == '\\' && c1 == '\n')
-                current += 2;
-            else
-                current += 1;
+            if (c0 == '\\' && c1 == '\n') current += 2;
+            else current += 1;
         }
 
         // tally up lines
@@ -788,15 +870,15 @@ uint64_t parse_int(size_t len, const char* str, IntSuffix* out_suffix) {
 
         do {
             switch (end[0]) {
-            case 'u':
-            case 'U':
+                case 'u':
+                case 'U':
                 suffix |= 1;
                 break;
-            case 'l':
-            case 'L':
+                case 'l':
+                case 'L':
                 suffix += 2;
                 break;
-            default:
+                default:
                 break;
             }
             end++;
@@ -805,7 +887,7 @@ uint64_t parse_int(size_t len, const char* str, IntSuffix* out_suffix) {
         if (suffix >= 6) abort();
     }
 
-success:
+    success:
     *out_suffix = suffix;
     return i;
 }
@@ -832,79 +914,78 @@ intptr_t parse_char(size_t len, const char* str, int* output) {
     int ch = 0;
     size_t i = 2;
     switch (str[1]) {
-    // TODO(NeGate): Implement the rest of the C char variants
-    // \U0001f34c
-    case '0' ... '9': {
-        unsigned int num = 0;
+        // TODO(NeGate): Implement the rest of the C char variants
+        // \U0001f34c
+        case '0' ... '9': {
+            unsigned int num = 0;
 
-        while (i < len) {
-            char ch = str[i];
-            if (!(ch >= '0' && ch <= '9')) break;
+            while (i < len) {
+                char ch = str[i];
+                if (!(ch >= '0' && ch <= '9')) break;
 
-            num *= 10;
-            num += (ch - '0');
-            i += 1;
+                num *= 10;
+                num += (ch - '0');
+                i += 1;
+            }
+
+            ch = num;
+            break;
         }
+        case 'x':
+        case 'X': {
+            unsigned int num = 0;
 
-        ch = num;
-        break;
-    }
-    case 'x':
-    case 'X': {
-        unsigned int num = 0;
+            while (i < len) {
+                char ch = str[i];
 
-        while (i < len) {
-            char ch = str[i];
+                if (ch >= 'A' && ch <= 'F') {
+                    num <<= 4;
+                    num |= (ch - 'A') + 0xA;
+                } else if (ch >= 'a' && ch <= 'f') {
+                    num <<= 4;
+                    num |= (ch - 'a') + 0xA;
+                } else if (ch >= '0' && ch <= '9') {
+                    num <<= 4;
+                    num |= (ch - '0');
+                } else break;
 
-            if (ch >= 'A' && ch <= 'F') {
-                num <<= 4;
-                num |= (ch - 'A') + 0xA;
-            } else if (ch >= 'a' && ch <= 'f') {
-                num <<= 4;
-                num |= (ch - 'a') + 0xA;
-            } else if (ch >= '0' && ch <= '9') {
-                num <<= 4;
-                num |= (ch - '0');
-            } else
-                break;
+                i += 1;
+            }
 
-            i += 1;
+            ch = num;
+            break;
         }
-
-        ch = num;
-        break;
-    }
-    case '\\':
+        case '\\':
         ch = '\\';
         break;
-    case 'a':
+        case 'a':
         ch = '\a';
         break;
-    case 'b':
+        case 'b':
         ch = '\b';
         break;
-    case 't':
+        case 't':
         ch = '\t';
         break;
-    case 'n':
+        case 'n':
         ch = '\n';
         break;
-    case 'v':
+        case 'v':
         ch = '\v';
         break;
-    case 'f':
+        case 'f':
         ch = '\f';
         break;
-    case 'r':
+        case 'r':
         ch = '\r';
         break;
-    case '\'':
+        case '\'':
         ch = '\'';
         break;
-    case '\"':
+        case '\"':
         ch = '\"';
         break;
-    default:
+        default:
         return -1;
     }
 

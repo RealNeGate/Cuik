@@ -978,7 +978,8 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
                 *task = (ParserTaskInfo){
                     .tasks_remaining = &tasks_remaining,
                     .start = i,
-                    .end = limit};
+                    .end = limit
+                };
 
                 // we transfer a bunch of our thread local state to the task
                 // and they'll use that to continue and build up parse on other

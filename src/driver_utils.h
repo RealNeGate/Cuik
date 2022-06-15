@@ -5,6 +5,7 @@
 #include <targets/targets.h>
 #include <timer.h>
 
+#include <preproc/nopp.h>
 #include <preproc/cpp.h>
 
 // Frontend
