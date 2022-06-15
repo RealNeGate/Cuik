@@ -5,7 +5,7 @@
 //
 // NOTE(NeGate): the_shtuffs is the simple linear allocator in this preprocessor, just avoids
 // wasting time on the heap allocator
-#include "preproc.h"
+#include "cpp.h"
 #include "diagnostic.h"
 #include <memory.h>
 #include <timer.h>

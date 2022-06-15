@@ -1009,16 +1009,6 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
     //printf("Type arena: %zu MB\n", arena_get_memory_usage(&tu->type_arena) / (1024*1024));
     //printf("Thread arena: %zu MB\n", arena_get_memory_usage(&thread_arena) / (1024*1024));
 
-    if (tu->hack.name) {
-        Symbol* sym = find_global_symbol(tu->hack.name);
-
-        if (sym != NULL) {
-            tu->hack.type = sym->type;
-        } else {
-            tu->hack.type = NULL;
-        }
-    }
-
     current_switch_or_case = current_breakable = current_continuable = 0;
     local_symbol_start = local_symbol_count = 0;
 

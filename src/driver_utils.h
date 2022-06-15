@@ -5,7 +5,7 @@
 #include <targets/targets.h>
 #include <timer.h>
 
-#include <preproc/preproc.h>
+#include <preproc/cpp.h>
 
 // Frontend
 #include <front/parser.h>
@@ -28,6 +28,8 @@
 extern char cuik_include_directory[MAX_PATH];
 // %CUIK%/crt/src/
 extern char cuik_library_directory[MAX_PATH];
+
+char* read_entire_file(const char* file_path);
 
 void cuik_detect_crt_include();
 void cuik_set_cpp_defines(CPP_Context* cpp);

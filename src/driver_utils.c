@@ -1,4 +1,5 @@
 #include "driver_utils.h"
+#include <preproc/nopp.h>
 
 #ifndef _WIN32
 #include <unistd.h>
@@ -236,34 +237,40 @@ TranslationUnit* cuik_compile_file(CompilationUnit* cu, const char* path,
                                    size_t include_count, const char** includes,
                                    bool frontend_only, threadpool_t* thread_pool) {
     TranslationUnit* tu = calloc(1, sizeof(TranslationUnit));
-    tu->hack.name = settings.hack_type_printer_name;
 
     CPP_Context cpp_ctx;
-    timed_block("preprocess: %s", path) {
-        cpp_init(&cpp_ctx);
-        cuik_set_cpp_defines(&cpp_ctx);
+    if (settings.nopp) {
+        unsigned char* text = (unsigned char*)read_entire_file(path);
 
-        // add extra include paths
-        for (size_t i = 0; i < include_count; i++) {
-            cpp_add_include_directory(&cpp_ctx, includes[i]);
-        }
+        Lexer l = {path, text, text, 1};
+        tu->tokens = nopp_invoke(&l);
+    } else {
+        timed_block("preprocess: %s", path) {
+            cpp_init(&cpp_ctx);
+            cuik_set_cpp_defines(&cpp_ctx);
 
-        tu->tokens = cpp_process(&cpp_ctx, path);
-
-        if (settings.verbose) {
-            mtx_lock(&report_mutex);
-
-            printf("Include Deps: %s\n", path);
-
-            size_t count = cpp_get_file_table_count(&cpp_ctx);
-            CPP_FileEntry* entries = cpp_get_file_table(&cpp_ctx);
-            for (size_t i = 1; i < count; i++) {
-                printf("  %s\n", entries[i].filepath);
+            // add extra include paths
+            for (size_t i = 0; i < include_count; i++) {
+                cpp_add_include_directory(&cpp_ctx, includes[i]);
             }
-            printf("\n");
-        }
 
-        cpp_finalize(&cpp_ctx);
+            tu->tokens = cpp_process(&cpp_ctx, path);
+
+            if (settings.verbose) {
+                mtx_lock(&report_mutex);
+
+                printf("Include Deps: %s\n", path);
+
+                size_t count = cpp_get_file_table_count(&cpp_ctx);
+                CPP_FileEntry* entries = cpp_get_file_table(&cpp_ctx);
+                for (size_t i = 1; i < count; i++) {
+                    printf("  %s\n", entries[i].filepath);
+                }
+                printf("\n");
+            }
+
+            cpp_finalize(&cpp_ctx);
+        }
     }
 
     timed_block("parse %s", path) {
@@ -283,12 +290,16 @@ TranslationUnit* cuik_compile_file(CompilationUnit* cu, const char* path,
     }
 
     // delete any file memory
-    cpp_free_file_memory(&cpp_ctx);
+    if (!settings.nopp) {
+        cpp_free_file_memory(&cpp_ctx);
+    }
 
     // pass off to the compilation unit
     compilation_unit_append(cu, tu);
 
     // free any remaining TU resources
-    cpp_deinit(&cpp_ctx);
+    if (!settings.nopp) {
+        cpp_deinit(&cpp_ctx);
+    }
     return tu;
 }

@@ -1,6 +1,6 @@
 #include "diagnostic.h"
 #include <ctype.h>
-#include <preproc/preproc.h>
+#include <preproc/cpp.h>
 #include <stdarg.h>
 
 #if _WIN32

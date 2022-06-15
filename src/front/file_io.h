@@ -11,7 +11,7 @@ static void remove_weird_whitespace(size_t len, char* text);
 //static size_t file_io_memory_usage = 0;
 
 #ifdef _WIN32
-static char* read_entire_file(const char* filepath) {
+char* read_entire_file(const char* filepath) {
     HANDLE file = CreateFileA(filepath, GENERIC_READ, FILE_SHARE_READ, 0, OPEN_EXISTING, 0, 0);
     if (file == INVALID_HANDLE_VALUE) {
         panic("error: could not open file '%s'!", filepath);
@@ -44,7 +44,7 @@ static char* read_entire_file(const char* filepath) {
     return buffer;
 }
 #else
-static char* read_entire_file(const char* file_path) {
+char* read_entire_file(const char* file_path) {
     ////////////////////////////////
     // Read file
     ////////////////////////////////

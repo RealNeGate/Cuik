@@ -14,20 +14,14 @@ FILE* timer_output;
 mtx_t timer_mutex;
 
 atomic_int timer_entry_count;
+double timer_freq = 1.0 / 1000000000.0;
 
 // just to organize the JSON timing stuff a bit better
 static thread_local bool is_main_thread;
 
 // done regardless of the profiler running just to be able to query time in general
-#if _WIN32
-double timer_freq;
-
 void timer_init() {
     is_main_thread = true;
-
-    LARGE_INTEGER freq;
-    QueryPerformanceFrequency(&freq);
-    timer_freq = 1.0 / (double)freq.QuadPart;
 }
 
 void timer_open(const char* path) {
@@ -46,40 +40,10 @@ void timer_close() {
 }
 
 uint64_t timer_now() {
-    LARGE_INTEGER t;
-    QueryPerformanceCounter(&t);
-    return t.QuadPart;
+    struct timespec ts;
+    timespec_get(&ts, TIME_UTC);
+    return ((long long)ts.tv_sec * 1000000000LL) + ts.tv_nsec;
 }
-#else
-double timer_freq = 1.0 / 1000000.0;
-
-void timer_init() {
-}
-
-void timer_open(const char* path) {
-    assert(timer_output == NULL);
-
-    mtx_init(&timer_mutex, mtx_plain);
-    timer_output = fopen(path, "wb");
-    fprintf(timer_output, "{\"otherData\": {},\"traceEvents\":[");
-}
-
-void timer_close() {
-    if (timer_output == NULL) return;
-
-    fprintf(timer_output, "]}");
-    fclose(timer_output);
-}
-
-uint64_t timer_now() {
-    struct timespec tms;
-    clock_gettime(CLOCK_MONOTONIC_RAW, &tms);
-
-    uint64_t micro = tms.tv_sec * 1000000;
-    micro += tms.tv_nsec / 1000;
-    return micro;
-}
-#endif
 
 void timer_end(uint64_t start, const char* fmt, ...) {
     if (timer_output == NULL) return;

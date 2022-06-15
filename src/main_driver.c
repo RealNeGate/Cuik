@@ -327,29 +327,16 @@ static int execute_query_operation(const char* option, size_t arg_start, size_t 
             cpp_deinit(&cpp_ctx);
 
             return 0;
-        } else if (strcmp(option, "print_type") == 0) {
-            if (arg_count < 2) return -1;
-
-            if (big_array_length(cuik_source_files) != 1) {
-                fprintf(stderr, "print_type expects after C source file then a typename\n");
-                abort();
-            }
-
-            settings.hack_type_printer_name = args[arg_count - 1];
-
-            atoms_init();
+        } else if (strcmp(option, "print_types") == 0) {
+            /*atoms_init();
             init_report_system();
             compilation_unit_init(&compilation_unit);
 
             TranslationUnit* tu = cuik_compile_file(&compilation_unit, cuik_source_files[0],
                                                     big_array_length(cuik_include_dirs),
                                                     &cuik_include_dirs[0], true, thread_pool);
-
-            if (tu->hack.type) {
-                ast_dump_type(tu, tu->hack.type, 0, 0);
-            } else {
-                fprintf(stderr, "Could not find type '%s'\n", tu->hack.name);
-            }
+*/
+            fprintf(stderr, "TODO\n");
             return 0;
         }
 
@@ -359,7 +346,7 @@ static int execute_query_operation(const char* option, size_t arg_start, size_t 
     }
 
     fprintf(stderr, "find_include - Resolve an include file path from name\n");
-    fprintf(stderr, "print_type   - Find a type within the translation unit\n");
+    fprintf(stderr, "print_types  - Prints all types in the TU\n");
     fprintf(stderr, "\n");
     return 1;
 }
@@ -470,7 +457,6 @@ static void print_help(const char* executable_path) {
     O("Usage: %s [<options>] <command> [<args>]", executable_path ? executable_path : "<unknown>");
     O("");
     O("Commands:");
-    O("  build                - compile files into an executable");
     O("  query                - query for compiler or source code info");
     O("");
     O("Options:");
@@ -493,6 +479,7 @@ static void print_help(const char* executable_path) {
     O("  --lib     <name>     - link against a static library");
     O("  --threads <count>    - chooses how many threads to spawn");
     O("  --target  <name>     - choose a target platform to compile to");
+    O("  --nopp               - No preprocessor lmao");
     O("  --verbose            - prints out the linker command used");
     O("");
 }
@@ -711,6 +698,8 @@ int main(int argc, char* argv[]) {
                 settings.num_of_worker_threads = num;
             } else if (strcmp(option, "help") == 0) {
                 print_help(argv[0]);
+            } else if (strcmp(option, "nopp") == 0) {
+                settings.nopp = true;
             } else if (strcmp(option, "verbose") == 0) {
                 settings.verbose = true;
             } else if (strcmp(option, "thin-errors") == 0) {

@@ -29,10 +29,6 @@ typedef struct {
 typedef struct CompilerSettings {
     const char* output_path;
 
-    // this is exclusively used for the fancy
-    // type printing CLI tool
-    const char* hack_type_printer_name;
-
     CompilerStage stage_to_stop_at;
 
     // basically defines the sizeof(long)
@@ -50,6 +46,7 @@ typedef struct CompilerSettings {
     bool freestanding : 1;
     bool emit_partial_results : 1;
     bool verbose : 1;
+    bool nopp : 1;
     bool run_output : 1;
     bool static_crt : 1;
 

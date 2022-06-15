@@ -20,7 +20,8 @@ static const char* INPUT_FILES[] = {
 
     // C preprocessor
     "src/preproc/lexer.c",
-    "src/preproc/preproc.c",
+    "src/preproc/nopp.c",
+    "src/preproc/cpp.c",
 
     // C frontend
     "src/front/parser.c",

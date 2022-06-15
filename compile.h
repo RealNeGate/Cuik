@@ -37,7 +37,7 @@
 
 #ifdef _WIN32
 #define WIN32_MEAN_AND_LEAN
-#include "windows.h"
+#include <windows.h>
 
 #define popen _popen
 #define pclose _pclose
