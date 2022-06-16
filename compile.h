@@ -301,7 +301,7 @@ static int cmd_dump(struct subprocess_s* p) {
 }
 
 static struct subprocess_s* cmd_run() {
-    printf("CMD: %s\n", command_buffer);
+    //printf("CMD: %s\n", command_buffer);
 
     size_t cmd_length = 0;
     const char** cmds = malloc(sizeof(const char*) * 1000);

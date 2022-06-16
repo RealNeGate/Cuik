@@ -57,14 +57,13 @@ static const char keywords[][16] = {
     "_Vector",
     "__cdecl",
     "__stdcall",
-    "__declspec"};
+    "__declspec"
+};
 
 enum {
     CHAR_CLASS_NULL,
     // A-Z a-z 0-9 _
     CHAR_CLASS_IDENT,
-    // backslash
-    CHAR_CLASS_ESCAPE,
     // 0-9
     CHAR_CLASS_NUMBER,
     // ;{}()
@@ -87,7 +86,6 @@ static _Alignas(64) uint8_t char_classes[256] = {
     ['A' ... 'Z'] = CHAR_CLASS_IDENT,
     ['a' ... 'z'] = CHAR_CLASS_IDENT,
     ['_']  = CHAR_CLASS_IDENT,
-    ['\\'] = CHAR_CLASS_ESCAPE,
     ['$']  = CHAR_CLASS_IDENT,
     [0x80 ... 0xFF] = CHAR_CLASS_IDENT,
 
@@ -396,7 +394,7 @@ void lexer_read(Lexer* restrict l) {
 
     // NOTE(NeGate): We canonicalized spaces \t \v
     // in the preprocessor so we don't need to handle them
-    redo_lex : {
+    redo_lex: {
         if (*current == '\0') {
             // quit, we're done
             l->hit_line = true;
@@ -412,15 +410,15 @@ void lexer_read(Lexer* restrict l) {
         } else if (*current == ' ') {
 #if !USE_INTRIN
             current += 1;
-            goto redo_lex;
 #else
             // SIMD space skip
             __m128i chars = _mm_loadu_si128((__m128i*)current);
             int len = __builtin_ffs(~_mm_movemask_epi8(_mm_cmpeq_epi8(chars, _mm_set1_epi8(' '))));
 
             current += len - 1;
-            goto redo_lex;
 #endif
+
+            goto redo_lex;
         } else if (*current == '/') {
             if (current[1] == '/') {
                 do {
@@ -467,24 +465,28 @@ void lexer_read(Lexer* restrict l) {
     uint8_t initial_class = char_classes[*current++];
 
     // Hacky but yea
+    bool slow_identifier_lexing = false;
     if (start[0] == 'L' && (start[1] == '\"' || start[1] == '\'')) {
         initial_class = CHAR_CLASS_STRING;
         current++;
+    } else if (start[0] == '\\') {
+        if (start[1] == 'U' || start[1] == 'u') {
+            slow_identifier_lexing = true;
+            initial_class = CHAR_CLASS_IDENT;
+        }
     }
 
     switch (initial_class) {
         case CHAR_CLASS_NULL:
         break;
 
-        case CHAR_CLASS_ESCAPE:
         case CHAR_CLASS_IDENT: {
             l->token_type = TOKEN_IDENTIFIER;
 
-            bool slow_identifier_lexing = false;
             while (char_classes[*current] == CHAR_CLASS_IDENT ||
-                   char_classes[*current] == CHAR_CLASS_ESCAPE ||
-                   char_classes[*current] == CHAR_CLASS_NUMBER) {
-                if (current[-1] == '\\') {
+                   char_classes[*current] == CHAR_CLASS_NUMBER ||
+                   *current == '\\') {
+                if (current[0] == '\\') {
                     if (current[0] == 'U' || current[0] == 'u') {
                         slow_identifier_lexing = true;
                     } else {
