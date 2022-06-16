@@ -6,7 +6,6 @@
 #include "compile.h"
 
 static const char* INPUT_FILES[] = {
-    "src/main_driver.c",
     "src/tls.c",
     "src/timer.c",
     "src/diagnostic.c",
@@ -261,24 +260,40 @@ int main(int argc, char** argv) {
 
     cmd_wait_for_all();
 
+    printf("Converting to a library...\n");
+    ar_invoke("bin"SLASH"cuik", 1, (const char*[]) { "bin"SLASH"*.obj" });
+    cmd_wait_for_all();
+
+#ifndef ONLY_LIBRARY
     static const char* LINKER_INPUTS[] = {
-        "bin"SLASH"*.obj", "tb"SLASH"tildebackend.lib",
+        "bin"SLASH"main_driver.obj",
+#       if ON_WINDOWS
+        "bin"SLASH"cuik.lib", "tb"SLASH"tildebackend.lib",
+#       else
+        "bin"SLASH"cuik.a", "tb"SLASH"tildebackend.a"
+#       endif
     };
 
     static const char* EXTERNALS[] = {
 #       if ON_WINDOWS
-        "ole32.lib", "Advapi32.lib", "OleAut32.lib", "DbgHelp.lib"
+        "ole32", "Advapi32", "OleAut32", "DbgHelp"
 #       else
         "c", "m", "pthread"
 #       endif
     };
 
     printf("Linking...\n");
+
+    // compile main driver
+    cc_invoke(&options, "src/main_driver.c", NULL);
+    cmd_wait_for_all();
+
     ld_invoke("bin"SLASH"cuik",
               COUNTOF(LINKER_INPUTS), LINKER_INPUTS,
               COUNTOF(EXTERNALS), EXTERNALS);
 
     clean("bin"SLASH);
+#endif
 
     if (argc > 1) {
         if (strcmp(argv[1], "test") == 0) {

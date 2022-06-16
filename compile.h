@@ -301,7 +301,7 @@ static int cmd_dump(struct subprocess_s* p) {
 }
 
 static struct subprocess_s* cmd_run() {
-    //printf("CMD: %s\n", command_buffer);
+    printf("CMD: %s\n", command_buffer);
 
     size_t cmd_length = 0;
     const char** cmds = malloc(sizeof(const char*) * 1000);
@@ -519,6 +519,32 @@ static void cc_invoke(const CC_Options* options, const char* input_path, const c
 #else
 #error "TODO"
 #endif
+}
+
+static void ar_invoke(const char* output_path, size_t count, const char* inputs[]) {
+    if (ON_WINDOWS) {
+        cmd_append("lib /out:");
+        cmd_append(output_path);
+        cmd_append(".lib ");
+    } else {
+        if (ON_CLANG) cmd_append("llvm-ar rc ");
+        else cmd_append("ar -rcs ");
+
+        cmd_append(output_path);
+        if (ON_WINDOWS) cmd_append(".lib ");
+        else cmd_append(".a ");
+    }
+
+    for (int i = 0; i < count; i++) {
+        cmd_append(inputs[i]);
+        cmd_append(" ");
+    }
+
+    int ar_exit = cmd_dump(cmd_run());
+    if (ar_exit != 0) {
+        fprintf(stderr, "archiver exited with code %d\n", ar_exit);
+        exit(ar_exit);
+    }
 }
 
 static void ld_invoke(const char* output_path, size_t count, const char* inputs[], size_t external_count, const char* external_inputs[]) {
