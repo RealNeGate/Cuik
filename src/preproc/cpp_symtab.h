@@ -69,11 +69,13 @@ static char unsigned overhang_mask[32] = {
     255, 255, 255, 255, 255, 255, 255, 255,
     255, 255, 255, 255, 255, 255, 255, 255,
     0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0};
+    0, 0, 0, 0, 0, 0, 0, 0,
+};
 
 static char unsigned default_seed[16] = {
     178, 201, 95, 240, 40, 41, 143, 216,
-    2, 209, 178, 114, 232, 4, 176, 188};
+    2, 209, 178, 114, 232, 4, 176, 188,
+};
 
 static uint64_t hash_ident(const unsigned char* at, size_t length) {
 #if !USE_INTRIN
@@ -171,3 +173,12 @@ static bool is_defined(CPP_Context* restrict c, const unsigned char* start, size
     return find_define(c, &garbage, start, length);
 }
 
+static size_t hide_macro(CPP_Context* restrict c, size_t def_index) {
+    size_t saved = c->macro_bucket_keys_length[def_index];
+    c->macro_bucket_keys_length[def_index] = 0;
+    return saved;
+}
+
+static void unhide_macro(CPP_Context* restrict c, size_t def_index, size_t saved) {
+    c->macro_bucket_keys_length[def_index] = saved;
+}

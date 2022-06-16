@@ -6,6 +6,7 @@
 #include "compile.h"
 
 static const char* INPUT_FILES[] = {
+    "src/str.c",
     "src/tls.c",
     "src/timer.c",
     "src/diagnostic.c",

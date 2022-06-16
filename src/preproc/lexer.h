@@ -1,6 +1,7 @@
 #pragma once
-#include <arena.h>
 #include <common.h>
+#include <str.h>
+#include <arena.h>
 #include <ext/stb_ds.h>
 
 // NOTE(NeGate): I originally called it TokenType but windows a bih on god
@@ -140,11 +141,11 @@ typedef enum TknType {
 typedef enum IntSuffix {
     //                u   l   l
     INT_SUFFIX_NONE = 0 + 0 + 0,
-    INT_SUFFIX_U = 1 + 0 + 0,
-    INT_SUFFIX_L = 0 + 2 + 0,
-    INT_SUFFIX_UL = 1 + 2 + 0,
-    INT_SUFFIX_LL = 0 + 2 + 2,
-    INT_SUFFIX_ULL = 1 + 2 + 2,
+    INT_SUFFIX_U    = 1 + 0 + 0,
+    INT_SUFFIX_L    = 0 + 2 + 0,
+    INT_SUFFIX_UL   = 1 + 2 + 0,
+    INT_SUFFIX_LL   = 0 + 2 + 2,
+    INT_SUFFIX_ULL  = 1 + 2 + 2,
 } IntSuffix;
 
 #define SOURCE_LOC_GET_DATA(loc) ((loc) & ~0xC0000000u)
@@ -228,6 +229,10 @@ intptr_t parse_char(size_t len, const char* str, int* output);
 uint64_t parse_int(size_t len, const char* str, IntSuffix* out_suffix);
 double parse_float(size_t len, const char* str);
 TknType classify_ident(const unsigned char* restrict str, size_t len);
+
+inline static String lexer_get_string(Lexer* restrict l) {
+    return string_from_range(l->token_start, l->token_end);
+}
 
 inline static bool lexer_match(Lexer* restrict l, size_t len, const char* str) {
     if ((l->token_end - l->token_start) != len) return false;

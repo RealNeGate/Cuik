@@ -1,16 +1,9 @@
 #pragma once
-#define __STDC_WANT_LIB_EXT1__ 1
 
 #ifdef __CUIKC__
 #define USE_INTRIN 0
 #else
 #define USE_INTRIN 1
-#endif
-
-#ifdef CUIK_SHARED
-#define CUIK_API __declspec(dllexport)
-#else
-#define CUIK_API
 #endif
 
 #include "cstrings_are_weird.h"
@@ -22,11 +15,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-typedef struct {
-    const unsigned char* data;
-    size_t length;
-} string;
 
 #define KILOBYTES(x) ((x) << 10ull)
 #define MEGABYTES(x) ((x) << 20ull)
@@ -43,10 +31,10 @@ typedef struct {
 #endif
 
 #define Pair(A, B) \
-    struct {       \
-        A _0;      \
-        B _1;      \
-    }
+struct {       \
+A _0;      \
+B _1;      \
+}
 
 // just because we use a threads fallback layer which can include windows
 // and such which is annoying... eventually need to modify that out or something
@@ -55,17 +43,17 @@ typedef struct {
 #endif
 
 #define panic(...)           \
-    do {                     \
-        printf(__VA_ARGS__); \
-        abort();             \
-    } while (0)
+do {                     \
+printf(__VA_ARGS__); \
+abort();             \
+} while (0)
 
 #define swap(a, b)          \
-    do {                    \
-        typeof(a) temp = a; \
-        a = b;              \
-        b = temp;           \
-    } while (0)
+do {                    \
+typeof(a) temp = a; \
+a = b;              \
+b = temp;           \
+} while (0)
 
 void tls_init();
 void* tls_push(size_t size);

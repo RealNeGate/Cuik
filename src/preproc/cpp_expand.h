@@ -1,3 +1,12 @@
+static Lexer make_temporary_lexer(const unsigned char* start) {
+    return (Lexer){"<temp>", start, start, 1};
+}
+
+static Token* get_last_token(TokenStream* restrict s) {
+    assert(arrlen(s->tokens) > 0);
+    return &s->tokens[arrlen(s->tokens) - 1];
+}
+
 static void expand_double_hash(CPP_Context* restrict c, TokenStream* restrict s, Token* last, Lexer* restrict l, SourceLocIndex loc) {
     unsigned char* out_start = gimme_the_shtuffs(c, 256);
     unsigned char* out = out_start;
@@ -30,7 +39,8 @@ static void expand_double_hash(CPP_Context* restrict c, TokenStream* restrict s,
                 classify_ident(tmp_lex.token_start, tmp_lex.token_end - tmp_lex.token_start),
                 loc,
                 tmp_lex.token_start,
-                tmp_lex.token_end};
+                tmp_lex.token_end,
+            };
         } else {
             arrdelswap(s->tokens, arrlen(s->tokens) - 1);
             expand_ident(c, s, &tmp_lex, loc);
@@ -40,7 +50,8 @@ static void expand_double_hash(CPP_Context* restrict c, TokenStream* restrict s,
             tmp_lex.token_type,
             loc,
             tmp_lex.token_start,
-            tmp_lex.token_end};
+            tmp_lex.token_end,
+        };
     }
     lexer_read(&tmp_lex);
 
@@ -155,17 +166,15 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
         if (find_define(c, &def_i, token_data, token_length)) {
             int line_of_expansion = l->current_line;
 
-            SourceLocIndex macro_expansion_loc = get_source_location(c, l, s,
-                                                                     parent_loc,
-                                                                     //c->macro_bucket_source_locs[def_i],
-                                                                     SOURCE_LOC_MACRO);
+            SourceLocIndex expanded_loc = get_source_location(c, l, s,
+                                                              parent_loc,
+                                                              SOURCE_LOC_MACRO);
 
             // Identify macro definition
             lexer_read(l);
 
-            string def = {
-                .data = c->macro_bucket_values_start[def_i],
-                .length = c->macro_bucket_values_end[def_i] - c->macro_bucket_values_start[def_i]};
+            String def = string_from_range(c->macro_bucket_values_start[def_i],
+                                           c->macro_bucket_values_end[def_i]);
 
             const unsigned char* args = c->macro_bucket_keys[def_i] + c->macro_bucket_keys_length[def_i];
 
@@ -184,9 +193,9 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
 
                 if (!find_define(c, &def_i, token_data, token_length)) break;
 
-                def = (string){
-                    .data = c->macro_bucket_values_start[def_i],
-                    .length = c->macro_bucket_values_end[def_i] - c->macro_bucket_values_start[def_i]};
+                def = string_from_range(c->macro_bucket_values_start[def_i],
+                                        c->macro_bucket_values_end[def_i]);
+
                 args = c->macro_bucket_keys[def_i] + c->macro_bucket_keys_length[def_i];
             }
 
@@ -270,30 +279,18 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
                     ////////////////////////////////
                     // Stream over the text hoping
                     // to replace some identifiers
-                    // then expand the result one more
-                    // time
+                    // then expand the result one
+                    // more time
                     ////////////////////////////////
                     unsigned char* temp_expansion_start = gimme_the_shtuffs(c, 4096);
                     unsigned char* temp_expansion = temp_expansion_start;
 
-                    Lexer def_lex = (Lexer){l->filepath, def.data, def.data};
-                    def_lex.current_line = line_of_expansion;
+                    Lexer def_lex = (Lexer){l->filepath, def.data, def.data, line_of_expansion};
                     lexer_read(&def_lex);
 
                     // set when a # happens, we expect a macro parameter afterwards
                     bool as_string = false;
-                    //int curr_line = line_of_expansion;
                     while (!def_lex.hit_line) {
-                        /*if (curr_line != def_lex.current_line) {
-for (int i = curr_line; i < def_lex.current_line; i++) {
-                                *temp_expansion++ = ' ';
-                                *temp_expansion++ = '\\';
-                                *temp_expansion++ = '\n';
-                                *temp_expansion++ = ' ';
-                            }
-                            curr_line = def_lex.current_line;
-                        }*/
-
                         // shadowing...
                         size_t token_length = def_lex.token_end - def_lex.token_start;
                         const unsigned char* token_data = def_lex.token_start;
@@ -449,20 +446,15 @@ for (int i = curr_line; i < def_lex.current_line; i++) {
 
                     if (temp_expansion_start != temp_expansion) {
                         // expand and append
-                        Lexer temp_lex = (Lexer){"<temp>", temp_expansion_start, temp_expansion_start};
-                        temp_lex.current_line = 1;
+                        Lexer temp_lex = make_temporary_lexer(temp_expansion_start);
                         lexer_read(&temp_lex);
 
                         *temp_expansion++ = '\0';
 
-                        // NOTE(NeGate): We need to disable the current macro define
-                        // so it doesn't recurse.
-                        size_t saved_length = c->macro_bucket_keys_length[def_i];
-                        c->macro_bucket_keys_length[def_i] = 0;
-
-                        expand(c, s, &temp_lex, macro_expansion_loc);
-
-                        c->macro_bucket_keys_length[def_i] = saved_length;
+                        // macro hide set
+                        size_t hidden = hide_macro(c, def_i);
+                        expand(c, s, &temp_lex, expanded_loc);
+                        unhide_macro(c, def_i, hidden);
                     }
                 }
 
@@ -472,24 +464,18 @@ for (int i = curr_line; i < def_lex.current_line; i++) {
                 if (*args == '(' && l->token_type != '(') {
                     Token t = {
                         classify_ident(token_data, token_length),
-                        macro_expansion_loc,
+                        expanded_loc,
                         token_data,
-                        token_data + token_length};
+                        token_data + token_length,
+                    };
 
                     arrput(s->tokens, t);
                 } else {
-                    Lexer temp_lex = (Lexer){"<temp>", def.data, def.data};
-                    temp_lex.current_line = 1;
-                    lexer_read(&temp_lex);
+                    Lexer temp_lex = make_temporary_lexer(def.data);
 
-                    // NOTE(NeGate): We need to disable the current macro define
-                    // so it doesn't recurse.
-                    size_t saved_length = c->macro_bucket_keys_length[def_i];
-                    c->macro_bucket_keys_length[def_i] = 0;
-
-                    expand(c, s, &temp_lex, macro_expansion_loc);
-
-                    c->macro_bucket_keys_length[def_i] = saved_length;
+                    size_t hidden = hide_macro(c, def_i);
+                    expand(c, s, &temp_lex, expanded_loc);
+                    unhide_macro(c, def_i, hidden);
                 }
             }
         } else {
@@ -500,7 +486,8 @@ for (int i = curr_line; i < def_lex.current_line; i++) {
                 classify_ident(token_data, token_length),
                 get_source_location(c, l, s, parent_loc, SOURCE_LOC_NORMAL),
                 token_data,
-                token_data + token_length};
+                token_data + token_length,
+            };
 
             arrput(s->tokens, t);
             lexer_read(l);
@@ -520,16 +507,15 @@ static void expand(CPP_Context* restrict c, TokenStream* restrict s, Lexer* l, S
             SourceLocIndex loc = get_source_location(c, l, s, parent_loc, SOURCE_LOC_NORMAL);
             lexer_read(l);
 
-            assert(arrlen(s->tokens) > 0);
-            Token* last = &s->tokens[arrlen(s->tokens) - 1];
-
+            Token* last = get_last_token(s);
             expand_double_hash(c, s, last, l, loc);
         } else if (l->token_type != TOKEN_IDENTIFIER) {
             Token t = {
                 l->token_type,
                 get_source_location(c, l, s, parent_loc, SOURCE_LOC_NORMAL),
                 l->token_start,
-                l->token_end};
+                l->token_end,
+            };
 
             arrput(s->tokens, t);
             lexer_read(l);
@@ -543,4 +529,3 @@ static void expand(CPP_Context* restrict c, TokenStream* restrict s, Lexer* l, S
         }
     }
 }
-
