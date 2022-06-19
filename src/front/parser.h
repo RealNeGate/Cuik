@@ -6,6 +6,7 @@
 #include "diagnostic.h"
 #include "memory.h"
 #include "settings.h"
+#include <cuik.h>
 #include <preproc/lexer.h>
 #include <ext/threadpool.h>
 #include <ext/threads.h>
@@ -613,10 +614,11 @@ typedef struct {
     Stmt* value;
 } ExportedSymbolEntry;
 
-typedef struct TranslationUnit {
+struct TranslationUnit {
     // circular references amirite...
     struct CompilationUnit* parent;
 
+    TB_Module* ir_mod;
     const char* filepath;
 
     // chain of TUs for the compilation unit
@@ -635,7 +637,7 @@ typedef struct TranslationUnit {
     // stb_ds array
     // NOTE(NeGate): should this be an stb_ds array?
     Stmt** top_level_stmts;
-} TranslationUnit;
+};
 
 // builtin types at the start of the type table
 enum {
@@ -674,6 +676,5 @@ Stmt* resolve_unknown_symbol(TranslationUnit* tu, Expr* e);
 ConstValue const_eval(TranslationUnit* tu, const Expr* e);
 bool const_eval_try_offsetof_hack(TranslationUnit* tu, const Expr* e, uint64_t* out);
 
-// thread_pool will eventually be NULLable which means the parsing is singlethreaded
-void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, threadpool_t* thread_pool);
-void translation_unit_deinit(TranslationUnit* tu);
+// if thread_pool is NULL, the semantics are done single threaded
+void sema_pass(TranslationUnit* tu, threadpool_t* thread_pool);

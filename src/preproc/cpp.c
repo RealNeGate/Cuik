@@ -22,32 +22,32 @@
 
 #include <intrin.h>
 
-static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, CPP_FileEntry* parent_entry, SourceLocIndex include_loc, const char* directory, const char* filepath, int depth);
+static void preprocess_file(Cuik_CPP* restrict c, TokenStream* restrict s, size_t parent_entry, SourceLocIndex include_loc, const char* directory, const char* filepath, int depth);
 static uint64_t hash_ident(const unsigned char* at, size_t length);
-static bool is_defined(CPP_Context* restrict c, const unsigned char* start, size_t length);
+static bool is_defined(Cuik_CPP* restrict c, const unsigned char* start, size_t length);
 static void expect(Lexer* l, char ch);
 static void skip_directive_body(Lexer* l);
-static intmax_t eval(CPP_Context* restrict c, TokenStream* restrict s, Lexer* l, SourceLocIndex parent_loc);
+static intmax_t eval(Cuik_CPP* restrict c, TokenStream* restrict s, Lexer* l, SourceLocIndex parent_loc);
 static _Noreturn void generic_error(Lexer* l, const char* msg);
 
-static void* gimme_the_shtuffs(CPP_Context* restrict c, size_t len);
-static void trim_the_shtuffs(CPP_Context* restrict c, void* new_top);
-static SourceLocIndex get_source_location(CPP_Context* restrict c, Lexer* restrict l, TokenStream* restrict s, SourceLocIndex parent_loc, SourceLocType loc_type);
+static void* gimme_the_shtuffs(Cuik_CPP* restrict c, size_t len);
+static void trim_the_shtuffs(Cuik_CPP* restrict c, void* new_top);
+static SourceLocIndex get_source_location(Cuik_CPP* restrict c, Lexer* restrict l, TokenStream* restrict s, SourceLocIndex parent_loc, SourceLocType loc_type);
 
-static void expand(CPP_Context* restrict c, TokenStream* restrict s, Lexer* l, SourceLocIndex parent_loc);
-static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer* l, SourceLocIndex parent_loc);
-//static void expand_double_hash(CPP_Context* restrict c, TokenStream* restrict s, Token* last, Lexer* restrict l, SourceLocIndex loc);
+static void expand(Cuik_CPP* restrict c, TokenStream* restrict s, Lexer* l, SourceLocIndex parent_loc);
+static void expand_ident(Cuik_CPP* restrict c, TokenStream* restrict s, Lexer* l, SourceLocIndex parent_loc);
+//static void expand_double_hash(Cuik_CPP* restrict c, TokenStream* restrict s, Token* last, Lexer* restrict l, SourceLocIndex loc);
 
 // Basically a mini-unity build that takes up just the CPP module
 #include "cpp_symtab.h"
 #include "cpp_expand.h"
 #include "cpp_expr.h"
 
-void cpp_init(CPP_Context* ctx) {
+CUIK_API void cuikpp_init(Cuik_CPP* ctx) {
     size_t sz = sizeof(void*) * MACRO_BUCKET_COUNT * SLOTS_PER_MACRO_BUCKET;
     size_t sz2 = sizeof(SourceLocIndex) * MACRO_BUCKET_COUNT * SLOTS_PER_MACRO_BUCKET;
 
-    *ctx = (CPP_Context){
+    *ctx = (Cuik_CPP){
         .macro_bucket_keys = malloc(sz),
         .macro_bucket_keys_length = malloc(sz),
         .macro_bucket_values_start = malloc(sz),
@@ -56,28 +56,32 @@ void cpp_init(CPP_Context* ctx) {
 
         .the_shtuffs = malloc(THE_SHTUFFS_SIZE),
     };
-    ctx->files = big_array_create(CPP_FileEntry, false);
+    ctx->files = big_array_create(Cuik_FileEntry, false);
 
     tls_init();
 }
 
-void cpp_deinit(CPP_Context* ctx) {
+CUIK_API void cuikpp_deinit(Cuik_CPP* ctx) {
     if (ctx->macro_bucket_keys) {
-        cpp_finalize(ctx);
+        cuikpp_finalize(ctx);
     }
 
     if (ctx->files != NULL) {
-        cpp_free_file_memory(ctx);
+        size_t count = big_array_length(ctx->files);
+
+        for (size_t i = 0; i < count; i++) {
+            free(ctx->files[i].content);
+        }
+
+        big_array_destroy(ctx->files);
+        ctx->files = NULL;
     }
 
     free((void*)ctx->the_shtuffs);
     ctx->the_shtuffs = NULL;
 }
 
-void cpp_finalize(CPP_Context* ctx) {
-    //__builtin_dump_struct(&perf_tally, &printf);
-    //cpp_dump(ctx);
-
+CUIK_API void cuikpp_finalize(Cuik_CPP* ctx) {
     free((void*)ctx->macro_bucket_keys);
     free((void*)ctx->macro_bucket_keys_length);
     free((void*)ctx->macro_bucket_values_start);
@@ -91,30 +95,19 @@ void cpp_finalize(CPP_Context* ctx) {
     ctx->macro_bucket_source_locs = NULL;
 }
 
-void cpp_free_file_memory(CPP_Context* ctx) {
-    size_t count = big_array_length(ctx->files);
-
-    for (size_t i = 0; i < count; i++) {
-        free(ctx->files[i].content);
-    }
-
-    big_array_destroy(ctx->files);
-    ctx->files = NULL;
-}
-
-size_t cpp_get_file_table_count(CPP_Context* ctx) {
+CUIK_API size_t cuikpp_get_file_table_count(Cuik_CPP* ctx) {
     return big_array_length(ctx->files);
 }
 
-CPP_FileEntry* cpp_get_file_table(CPP_Context* ctx) {
+CUIK_API Cuik_FileEntry* cuikpp_get_file_table(Cuik_CPP* ctx) {
     return &ctx->files[0];
 }
 
-bool cpp_find_include_include(CPP_Context* ctx, char output[MAX_PATH], const char* path) {
+CUIK_API bool cuikpp_find_include_include(Cuik_CPP* ctx, char output[MAX_PATH], const char* path) {
     size_t num_system_include_dirs = arrlen(ctx->system_include_dirs);
 
     for (size_t i = 0; i < num_system_include_dirs; i++) {
-        snprintf(output, 260, "%s%s", ctx->system_include_dirs[i], path);
+        sprintf_s(output, FILENAME_MAX, "%s%s", ctx->system_include_dirs[i], path);
 
         if (file_exists(output)) {
             return true;
@@ -124,11 +117,11 @@ bool cpp_find_include_include(CPP_Context* ctx, char output[MAX_PATH], const cha
     return false;
 }
 
-void cpp_add_include_directory(CPP_Context* ctx, const char dir[]) {
+CUIK_API void cuikpp_add_include_directory(Cuik_CPP* ctx, const char dir[]) {
     arrput(ctx->system_include_dirs, strdup(dir));
 }
 
-void cpp_dump(CPP_Context* ctx) {
+CUIK_API void cuikpp_dump(Cuik_CPP* ctx) {
     int count = 0;
 
     for (int i = 0; i < MACRO_BUCKET_COUNT; i++) {
@@ -150,23 +143,24 @@ void cpp_dump(CPP_Context* ctx) {
     printf("\n// Macro defines active: %d\n", count);
 }
 
-TokenStream cpp_process(CPP_Context* ctx, const char filepath[]) {
+CUIK_API TokenStream cuikpp_run(Cuik_CPP* ctx, const char filepath[]) {
     char* slash = strrchr(filepath, '\\');
     if (!slash) slash = strrchr(filepath, '/');
 
-    char directory[260];
+    char directory[FILENAME_MAX];
     if (slash) {
 #if _WIN32
-        sprintf_s(directory, 260, "%.*s\\", (int)(slash - filepath), filepath);
+        sprintf_s(directory, FILENAME_MAX, "%.*s\\", (int)(slash - filepath), filepath);
 #else
-        snprintf(directory, 260, "%.*s/", (int)(slash - filepath), filepath);
+        snprintf(directory, FILENAME_MAX, "%.*s/", (int)(slash - filepath), filepath);
 #endif
     } else {
         directory[0] = '\0';
     }
 
     TokenStream s = {0};
-    preprocess_file(ctx, &s, NULL, 0, directory, filepath, 1);
+    s.filepath = filepath;
+    preprocess_file(ctx, &s, 0, 0, directory, filepath, 1);
 
     Token t = {0, 0, NULL, NULL};
     arrput(s.tokens, t);
@@ -174,7 +168,7 @@ TokenStream cpp_process(CPP_Context* ctx, const char filepath[]) {
     return s;
 }
 
-static void* gimme_the_shtuffs(CPP_Context* restrict c, size_t len) {
+static void* gimme_the_shtuffs(Cuik_CPP* restrict c, size_t len) {
     unsigned char* allocation = c->the_shtuffs + c->the_shtuffs_size;
 
     c->the_shtuffs_size += len;
@@ -186,13 +180,13 @@ static void* gimme_the_shtuffs(CPP_Context* restrict c, size_t len) {
     return allocation;
 }
 
-static void trim_the_shtuffs(CPP_Context* restrict c, void* new_top) {
+static void trim_the_shtuffs(Cuik_CPP* restrict c, void* new_top) {
     size_t i = ((uint8_t*)new_top) - c->the_shtuffs;
     assert(i <= c->the_shtuffs_size);
     c->the_shtuffs_size = i;
 }
 
-static SourceLocIndex get_source_location(CPP_Context* restrict c, Lexer* restrict l, TokenStream* restrict s, SourceLocIndex parent_loc, SourceLocType loc_type) {
+static SourceLocIndex get_source_location(Cuik_CPP* restrict c, Lexer* restrict l, TokenStream* restrict s, SourceLocIndex parent_loc, SourceLocType loc_type) {
     SourceLocIndex i = arrlen(s->locations);
     if (l->line_current == NULL) {
         l->line_current = l->start;
@@ -218,7 +212,8 @@ static SourceLocIndex get_source_location(CPP_Context* restrict c, Lexer* restri
 
     ptrdiff_t columns = l->token_start - l->line_current;
     ptrdiff_t length = l->token_end - l->token_start;
-    assert(columns <= UINT16_MAX && length <= UINT16_MAX);
+    assert(columns >= 0 && columns <= UINT16_MAX &&
+           length >= 0 && length <= UINT16_MAX);
 
     SourceLoc loc = {
         .line = source_line,
@@ -229,7 +224,7 @@ static SourceLocIndex get_source_location(CPP_Context* restrict c, Lexer* restri
     return SOURCE_LOC_SET_TYPE(loc_type, i);
 }
 
-static void cpp_push_scope(CPP_Context* restrict ctx, Lexer* restrict l, bool initial) {
+static void push_scope(Cuik_CPP* restrict ctx, Lexer* restrict l, bool initial) {
     if (ctx->depth >= CPP_MAX_SCOPE_DEPTH - 1) {
         generic_error(l, "Exceeded max scope depth!");
     }
@@ -237,23 +232,26 @@ static void cpp_push_scope(CPP_Context* restrict ctx, Lexer* restrict l, bool in
     ctx->scope_eval[ctx->depth++] = initial;
 }
 
-static void cpp_pop_scope(CPP_Context* restrict ctx, Lexer* restrict l) {
+static void pop_scope(Cuik_CPP* restrict ctx, Lexer* restrict l) {
     if (ctx->depth == 0) {
         generic_error(l, "Too many endifs\n");
     }
     ctx->depth--;
 }
 
-static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, CPP_FileEntry* parent_entry, SourceLocIndex include_loc, const char* directory, const char* filepath, int depth) {
+static void preprocess_file(Cuik_CPP* restrict c, TokenStream* restrict s, size_t parent_entry, SourceLocIndex include_loc, const char* directory, const char* filepath, int depth) {
     // hacky but i don't wanna wrap it in a timed_block
     uint64_t timer_start = timer_now();
 
     unsigned char* text = (unsigned char*)read_entire_file(filepath);
-    CPP_FileEntry file_entry = {
-        .parent = parent_entry,
+    size_t file_entry_id = big_array_length(c->files);
+    Cuik_FileEntry file_entry = {
+        .parent_id = parent_entry,
+        .depth = depth,
         .include_loc = include_loc,
         .filepath = filepath,
-        .content = text};
+        .content = text
+    };
     big_array_put(c->files, file_entry);
 
     Lexer l = {filepath, text, text, 1};
@@ -296,9 +294,9 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, CP
 
                     assert(!l.hit_line);
                     if (eval(c, s, &l, loc)) {
-                        cpp_push_scope(c, &l, true);
+                        push_scope(c, &l, true);
                     } else {
-                        cpp_push_scope(c, &l, false);
+                        push_scope(c, &l, false);
                         skip_directive_body(&l);
                     }
 
@@ -312,10 +310,10 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, CP
                     }
 
                     if (!is_defined(c, l.token_start, l.token_end - l.token_start)) {
-                        cpp_push_scope(c, &l, true);
+                        push_scope(c, &l, true);
                         lexer_read(&l);
                     } else {
-                        cpp_push_scope(c, &l, false);
+                        push_scope(c, &l, false);
                         skip_directive_body(&l);
                     }
                 } else if (lexer_match(&l, 5, "ifdef")) {
@@ -326,10 +324,10 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, CP
                     }
 
                     if (is_defined(c, l.token_start, l.token_end - l.token_start)) {
-                        cpp_push_scope(c, &l, true);
+                        push_scope(c, &l, true);
                         lexer_read(&l);
                     } else {
-                        cpp_push_scope(c, &l, false);
+                        push_scope(c, &l, false);
                         skip_directive_body(&l);
                     }
                 } else if (lexer_match(&l, 4, "else")) {
@@ -372,7 +370,7 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, CP
                         while (!l.hit_line) lexer_read(&l);
                     }
 
-                    cpp_pop_scope(c, &l);
+                    pop_scope(c, &l);
                 } else if (lexer_match(&l, 6, "define")) {
                     lexer_read(&l);
 
@@ -503,12 +501,12 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, CP
                     }
 
                     // Search for file in system libs
-                    char path[260];
+                    char path[FILENAME_MAX];
                     bool success = false;
 
                     if (!is_lib_include) {
                         // Try local includes
-                        sprintf_s(path, 260, "%s%s", directory, filename);
+                        sprintf_s(path, FILENAME_MAX, "%s%s", directory, filename);
                         if (file_exists(path)) success = true;
                     }
 
@@ -516,7 +514,7 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, CP
                         size_t num_system_include_dirs = arrlen(c->system_include_dirs);
 
                         for (size_t i = 0; i < num_system_include_dirs; i++) {
-                            sprintf_s(path, 260, "%s%s", c->system_include_dirs[i], filename);
+                            sprintf_s(path, FILENAME_MAX, "%s%s", c->system_include_dirs[i], filename);
 
                             if (file_exists(path)) {
                                 success = true;
@@ -527,7 +525,7 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, CP
 
                     if (!success && is_lib_include) {
                         // Try local includes
-                        sprintf_s(path, 260, "%s%s", directory, filename);
+                        sprintf_s(path, FILENAME_MAX, "%s%s", directory, filename);
                         if (file_exists(path)) success = true;
                     }
 
@@ -540,8 +538,8 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, CP
 
 #ifdef _WIN32
                     char* filepart;
-                    char* new_path = arena_alloc(&thread_arena, MAX_PATH, 1);
-                    if (GetFullPathNameA(path, MAX_PATH, new_path, &filepart) == 0) {
+                    char* new_path = arena_alloc(&thread_arena, FILENAME_MAX, 1);
+                    if (GetFullPathNameA(path, FILENAME_MAX, new_path, &filepart) == 0) {
                         int loc = l.current_line;
                         printf("error %s:%d: Could not resolve path: %s\n", l.filepath, loc, path);
                         abort();
@@ -563,7 +561,7 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, CP
                         }
                     }
 #else
-                    char* new_path = arena_alloc(&thread_arena, PATH_MAX, 1);
+                    char* new_path = arena_alloc(&thread_arena, FILENAME_MAX, 1);
                     realpath(path, new_path);
 #endif
 
@@ -590,7 +588,7 @@ static void preprocess_file(CPP_Context* restrict c, TokenStream* restrict s, CP
                             printf("%s\n", new_path);
                         }
 
-                        preprocess_file(c, s, &file_entry, new_include_loc, new_dir, new_path, depth + 1);
+                        preprocess_file(c, s, file_entry_id, new_include_loc, new_dir, new_path, depth + 1);
                     }
                 } else if (lexer_match(&l, 6, "pragma")) {
                     lexer_read(&l);

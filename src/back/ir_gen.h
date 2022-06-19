@@ -8,8 +8,6 @@
 
 #include "tb.h"
 
-extern TB_Module* mod;
-extern atomic_size_t function_count;
 extern atomic_flag irgen_defined_tls_index;
 
 typedef enum IRValType {
@@ -47,35 +45,35 @@ typedef struct IRVal {
 
 inline static TB_DataType ctype_to_tbtype(const Type* t) {
     switch (t->kind) {
-    case KIND_VOID:
+        case KIND_VOID:
         return TB_TYPE_VOID;
-    case KIND_BOOL:
+        case KIND_BOOL:
         return TB_TYPE_BOOL;
-    case KIND_CHAR:
+        case KIND_CHAR:
         return TB_TYPE_I8;
-    case KIND_SHORT:
+        case KIND_SHORT:
         return TB_TYPE_I16;
-    case KIND_INT:
+        case KIND_INT:
         return TB_TYPE_I32;
-    case KIND_LONG:
+        case KIND_LONG:
         return TB_TYPE_I64;
-    case KIND_FLOAT:
+        case KIND_FLOAT:
         return TB_TYPE_F32;
-    case KIND_DOUBLE:
+        case KIND_DOUBLE:
         return TB_TYPE_F64;
-    case KIND_ENUM:
+        case KIND_ENUM:
         return TB_TYPE_I32;
 
-    case KIND_PTR:
-    case KIND_FUNC:
-    case KIND_ARRAY:
+        case KIND_PTR:
+        case KIND_FUNC:
+        case KIND_ARRAY:
         return TB_TYPE_PTR;
 
-    case KIND_STRUCT:
-    case KIND_UNION:
+        case KIND_STRUCT:
+        case KIND_UNION:
         return TB_TYPE_PTR;
 
-    default:
+        default:
         abort(); // TODO
     }
 }
@@ -91,4 +89,3 @@ void irgen_deinit();
 TB_Register irgen_as_rvalue(TranslationUnit* tu, TB_Function* func, Expr* e);
 IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e);
 void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s);
-void irgen_top_level_stmt(TranslationUnit* tu, Stmt* restrict s);

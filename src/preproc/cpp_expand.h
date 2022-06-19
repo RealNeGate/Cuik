@@ -7,7 +7,7 @@ static Token* get_last_token(TokenStream* restrict s) {
     return &s->tokens[arrlen(s->tokens) - 1];
 }
 
-static void expand_double_hash(CPP_Context* restrict c, TokenStream* restrict s, Token* last, Lexer* restrict l, SourceLocIndex loc) {
+static void expand_double_hash(Cuik_CPP* restrict c, TokenStream* restrict s, Token* last, Lexer* restrict l, SourceLocIndex loc) {
     unsigned char* out_start = gimme_the_shtuffs(c, 256);
     unsigned char* out = out_start;
 
@@ -62,7 +62,7 @@ static void expand_double_hash(CPP_Context* restrict c, TokenStream* restrict s,
     }
 }
 
-static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer* l, SourceLocIndex parent_loc) {
+static void expand_ident(Cuik_CPP* restrict c, TokenStream* restrict s, Lexer* l, SourceLocIndex parent_loc) {
     size_t token_length = l->token_end - l->token_start;
     const unsigned char* token_data = l->token_start;
 
@@ -472,6 +472,7 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
                     arrput(s->tokens, t);
                 } else {
                     Lexer temp_lex = make_temporary_lexer(def.data);
+                    lexer_read(&temp_lex);
 
                     size_t hidden = hide_macro(c, def_i);
                     expand(c, s, &temp_lex, expanded_loc);
@@ -495,10 +496,10 @@ static void expand_ident(CPP_Context* restrict c, TokenStream* restrict s, Lexer
     }
 }
 
-static void expand(CPP_Context* restrict c, TokenStream* restrict s, Lexer* l, SourceLocIndex parent_loc) {
+static void expand(Cuik_CPP* restrict c, TokenStream* restrict s, Lexer* l, SourceLocIndex parent_loc) {
     int depth = 0;
 
-    while (!l->hit_line) {
+    while (l->token_type && !l->hit_line) {
         if (l->token_type == '(') {
             depth++;
         }

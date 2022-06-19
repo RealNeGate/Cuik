@@ -1,34 +1,30 @@
 #include "compilation_unit.h"
 #include <timer.h>
 
-void compilation_unit_init(CompilationUnit* cu) {
+CUIK_API void cuik_create_compilation_unit(CompilationUnit* restrict cu) {
     *cu = (CompilationUnit){0};
     mtx_init(&cu->mutex, mtx_plain);
 }
 
-void compilation_unit_append(CompilationUnit* cu, TranslationUnit* tu) {
-    assert(tu->next == NULL && "somehow the TU is attached already...");
+CUIK_API void cuik_add_to_compilation_unit(CompilationUnit* restrict cu, TranslationUnit* restrict tu) {
+    assert(tu->next == NULL && "somehow the TU is already attached to something...");
     mtx_lock(&cu->mutex);
 
     tu->parent = cu;
 
-    if (cu->tail == NULL)
-        cu->head = tu;
-    else
-        cu->tail->next = tu;
+    if (cu->tail == NULL) cu->head = tu;
+    else cu->tail->next = tu;
     cu->tail = tu;
 
     mtx_unlock(&cu->mutex);
 }
 
-void compilation_unit_deinit(CompilationUnit* cu) {
+CUIK_API void cuik_destroy_compilation_unit(CompilationUnit* restrict cu) {
     // walk all the TUs and free them (if they're not freed already)
     TranslationUnit* tu = cu->head;
-    while (tu) {
+    while (tu != NULL) {
         TranslationUnit* next = tu->next;
-        translation_unit_deinit(tu);
-        free(tu);
-
+        cuik_destroy_translation_unit(tu);
         tu = next;
     }
 
@@ -36,7 +32,7 @@ void compilation_unit_deinit(CompilationUnit* cu) {
     *cu = (CompilationUnit){0};
 }
 
-void compilation_unit_internal_link(CompilationUnit* cu) {
+CUIK_API void cuik_internal_link_compilation_unit(CompilationUnit* restrict cu) {
     FOR_EACH_TU(tu, cu) {
         size_t count = arrlen(tu->top_level_stmts);
 

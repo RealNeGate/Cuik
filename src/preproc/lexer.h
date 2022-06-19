@@ -2,6 +2,7 @@
 #include <common.h>
 #include <str.h>
 #include <arena.h>
+#include <cuik.h>
 #include <ext/stb_ds.h>
 
 // NOTE(NeGate): I originally called it TokenType but windows a bih on god
@@ -186,15 +187,6 @@ typedef struct Token {
     const unsigned char* start;
     const unsigned char* end;
 } Token;
-
-typedef struct {
-    // stb_ds array
-    Token* tokens;
-    size_t current;
-
-    // stb_ds array
-    SourceLoc* locations;
-} TokenStream;
 
 typedef struct {
     ////////////////////////////////

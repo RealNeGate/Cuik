@@ -514,8 +514,10 @@ void type_layout(TranslationUnit* restrict tu, Type* type) {
     type->is_inprogress = false;
 }
 
-void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, threadpool_t* thread_pool) {
-    tu->filepath = filepath;
+CUIK_API TranslationUnit* cuik_parse_translation_unit(TB_Module* restrict ir_module, TokenStream* restrict s, threadpool_t* restrict thread_pool) {
+    TranslationUnit* tu = calloc(1, sizeof(TranslationUnit));
+    tu->filepath = s->filepath;
+    tu->ir_mod = ir_module;
 
     tls_init();
     atoms_init();
@@ -526,8 +528,6 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
     ////////////////////////////////
     // Parse translation unit
     ////////////////////////////////
-    TokenStream* restrict s = &tu->tokens;
-
     out_of_order_mode = true;
     BigArray(int) static_assertions = big_array_create(int, false);
 
@@ -641,6 +641,16 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
                     }
                 } else {
                     if (tokens_get(s)->type == ';') {
+                        Stmt* n = make_stmt(tu, s, STMT_GLOBAL_DECL, sizeof(struct StmtDecl));
+                        n->loc = loc;
+                        n->decl = (struct StmtDecl){
+                            .name = NULL,
+                            .type = type,
+                            .attrs = attr
+                        };
+                        n->decl.attrs.is_root = true;
+                        arrput(tu->top_level_stmts, n);
+
                         tokens_next(s);
                         continue;
                     }
@@ -660,7 +670,8 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
                         n->decl = (struct StmtDecl){
                             .name = decl.name,
                             .type = decl.type,
-                            .attrs = attr};
+                            .attrs = attr
+                        };
                         arrput(tu->top_level_stmts, n);
 
                         Symbol sym = {
@@ -998,12 +1009,12 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
             }
 
             free(tasks);
-            crash_if_reports(REPORT_ERROR);
         } else {
             // single threaded mode
             parse_global_symbols(tu, 0, shlen(global_symbols), *s);
-            crash_if_reports(REPORT_ERROR);
         }
+
+        crash_if_reports(REPORT_ERROR);
     }
 
     //printf("AST arena: %zu MB\n", arena_get_memory_usage(&tu->ast_arena) / (1024*1024));
@@ -1013,21 +1024,31 @@ void translation_unit_parse(TranslationUnit* restrict tu, const char* filepath, 
     current_switch_or_case = current_breakable = current_continuable = 0;
     local_symbol_start = local_symbol_count = 0;
 
+    // free parser crap
     free(local_tags);
     free(local_symbols);
     shfree(global_tags);
     shfree(global_symbols);
+
+    // free tokens
+    arrfree(tu->tokens.tokens);
+
+    // run type checker
+    timed_block("phase 4") {
+        sema_pass(tu, thread_pool);
+        crash_if_reports(REPORT_ERROR);
+    }
+
+    return tu;
 }
 
-void translation_unit_deinit(TranslationUnit* tu) {
-    if (tu->is_free) return;
-
+CUIK_API void cuik_destroy_translation_unit(TranslationUnit* restrict tu) {
     arrfree(tu->top_level_stmts);
 
     arena_free(&tu->ast_arena);
     arena_free(&tu->type_arena);
     mtx_destroy(&tu->arena_mutex);
-    tu->is_free = true;
+    free(tu);
 }
 
 Stmt* resolve_unknown_symbol(TranslationUnit* tu, Expr* e) {

@@ -1,4 +1,5 @@
-void cpp_define_empty(CPP_Context* ctx, const char* key) {
+
+CUIK_API void cuikpp_define_empty(Cuik_CPP* ctx, const char* key) {
     size_t len = strlen(key);
 
     // TODO(NeGate): Work around to get any of the macro bucket
@@ -25,7 +26,7 @@ void cpp_define_empty(CPP_Context* ctx, const char* key) {
     ctx->macro_bucket_source_locs[e] = SOURCE_LOC_SET_TYPE(SOURCE_LOC_UNKNOWN, 0);
 }
 
-void cpp_define(CPP_Context* ctx, const char* key, const char* value) {
+CUIK_API void cuikpp_define(Cuik_CPP* ctx, const char* key, const char* value) {
     // TODO(NeGate): Fix up this code a bit because i really dislike how the
     // parenthesis are detected
     size_t len = strlen(key);
@@ -146,7 +147,7 @@ static bool memory_equals16(const unsigned char* src1, const unsigned char* src2
 #endif
 }
 
-static bool find_define(CPP_Context* restrict c, size_t* out_index, const unsigned char* start, size_t length) {
+static bool find_define(Cuik_CPP* restrict c, size_t* out_index, const unsigned char* start, size_t length) {
     uint64_t slot = hash_ident(start, length);
     size_t count = c->macro_bucket_count[slot];
     size_t base = (slot * SLOTS_PER_MACRO_BUCKET);
@@ -168,17 +169,17 @@ static bool find_define(CPP_Context* restrict c, size_t* out_index, const unsign
     return false;
 }
 
-static bool is_defined(CPP_Context* restrict c, const unsigned char* start, size_t length) {
+static bool is_defined(Cuik_CPP* restrict c, const unsigned char* start, size_t length) {
     size_t garbage;
     return find_define(c, &garbage, start, length);
 }
 
-static size_t hide_macro(CPP_Context* restrict c, size_t def_index) {
+static size_t hide_macro(Cuik_CPP* restrict c, size_t def_index) {
     size_t saved = c->macro_bucket_keys_length[def_index];
     c->macro_bucket_keys_length[def_index] = 0;
     return saved;
 }
 
-static void unhide_macro(CPP_Context* restrict c, size_t def_index, size_t saved) {
+static void unhide_macro(Cuik_CPP* restrict c, size_t def_index, size_t saved) {
     c->macro_bucket_keys_length[def_index] = saved;
 }

@@ -14,7 +14,7 @@ typedef struct {
     BuiltinBinding* builtin_func_map;
 
     // initializes some target specific macro defines
-    void (*set_defines)(CPP_Context* cpp);
+    void (*set_defines)(Cuik_CPP* cpp);
 
     // Callee ABI handling:
     TB_FunctionPrototype* (*create_prototype)(TranslationUnit* tu, Type* type_index);

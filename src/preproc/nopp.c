@@ -6,6 +6,8 @@ TokenStream nopp_invoke(Lexer* restrict l) {
     }
 
     TokenStream s = { 0 };
+    s.filepath = l->filepath;
+
     lexer_read(l);
 
     int current_line_num = 0;

@@ -19,9 +19,11 @@ char* read_entire_file(const char* filepath) {
 
     LARGE_INTEGER file_size;
     if (!GetFileSizeEx(file, &file_size)) {
+        // must be a file stream
         panic("Internal preprocessor error: could not check file size of '%s'!", filepath);
     }
 
+    // normal file with a normal length
     if (file_size.HighPart) {
         panic("Internal preprocessor error: file '%s' is too big!", filepath);
     }
@@ -35,9 +37,8 @@ char* read_entire_file(const char* filepath) {
     CloseHandle(file);
 
     // fat null terminator
-    memset(&buffer[bytes_read], 0, 17);
-
-    remove_weird_whitespace(bytes_read, buffer);
+    memset(&buffer[file_size.QuadPart], 0, 17);
+    remove_weird_whitespace(file_size.QuadPart, buffer);
 
     //file_io_memory_usage += (file_size.QuadPart + 17);
     //printf("%f MiB of files\n", (double)file_io_memory_usage / 1048576.0);

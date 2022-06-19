@@ -1,6 +1,6 @@
-static intmax_t eval_l12(CPP_Context* restrict c, TokenStream* restrict s);
+static intmax_t eval_l12(Cuik_CPP* restrict c, TokenStream* restrict s);
 
-static intmax_t eval(CPP_Context* restrict c, TokenStream* restrict s, Lexer* l, SourceLocIndex parent_loc) {
+static intmax_t eval(Cuik_CPP* restrict c, TokenStream* restrict s, Lexer* l, SourceLocIndex parent_loc) {
     // Expand
     if (l) {
         size_t old_tokens_length = arrlen(s->tokens);
@@ -24,7 +24,7 @@ static intmax_t eval(CPP_Context* restrict c, TokenStream* restrict s, Lexer* l,
     }
 }
 
-static intmax_t eval_l0(CPP_Context* restrict c, TokenStream* restrict s) {
+static intmax_t eval_l0(Cuik_CPP* restrict c, TokenStream* restrict s) {
     bool flip = false;
     while (tokens_get(s)->type == '!') {
         flip = !flip;
@@ -72,7 +72,7 @@ static intmax_t eval_l0(CPP_Context* restrict c, TokenStream* restrict s) {
     return flip ? !val : val;
 }
 
-static intmax_t eval_l5(CPP_Context* restrict c, TokenStream* restrict s) {
+static intmax_t eval_l5(Cuik_CPP* restrict c, TokenStream* restrict s) {
     intmax_t left = eval_l0(c, s);
 
     while (tokens_get(s)->type == TOKEN_LEFT_SHIFT ||
@@ -90,7 +90,7 @@ static intmax_t eval_l5(CPP_Context* restrict c, TokenStream* restrict s) {
     return left;
 }
 
-static intmax_t eval_l6(CPP_Context* restrict c, TokenStream* restrict s) {
+static intmax_t eval_l6(Cuik_CPP* restrict c, TokenStream* restrict s) {
     intmax_t left = eval_l5(c, s);
 
     while (tokens_get(s)->type == '>' ||
@@ -120,7 +120,7 @@ static intmax_t eval_l6(CPP_Context* restrict c, TokenStream* restrict s) {
     return left;
 }
 
-static intmax_t eval_l7(CPP_Context* restrict c, TokenStream* restrict s) {
+static intmax_t eval_l7(Cuik_CPP* restrict c, TokenStream* restrict s) {
     intmax_t left = eval_l6(c, s);
 
     while (tokens_get(s)->type == TOKEN_NOT_EQUAL ||
@@ -138,7 +138,7 @@ static intmax_t eval_l7(CPP_Context* restrict c, TokenStream* restrict s) {
     return left;
 }
 
-static intmax_t eval_l8(CPP_Context* restrict c, TokenStream* restrict s) {
+static intmax_t eval_l8(Cuik_CPP* restrict c, TokenStream* restrict s) {
     intmax_t left = eval_l7(c, s);
 
     while (tokens_get(s)->type == '&') {
@@ -151,7 +151,7 @@ static intmax_t eval_l8(CPP_Context* restrict c, TokenStream* restrict s) {
     return left;
 }
 
-static intmax_t eval_l9(CPP_Context* restrict c, TokenStream* restrict s) {
+static intmax_t eval_l9(Cuik_CPP* restrict c, TokenStream* restrict s) {
     intmax_t left = eval_l8(c, s);
 
     while (tokens_get(s)->type == '^') {
@@ -164,7 +164,7 @@ static intmax_t eval_l9(CPP_Context* restrict c, TokenStream* restrict s) {
     return left;
 }
 
-static intmax_t eval_l10(CPP_Context* restrict c, TokenStream* restrict s) {
+static intmax_t eval_l10(Cuik_CPP* restrict c, TokenStream* restrict s) {
     intmax_t left = eval_l9(c, s);
 
     while (tokens_get(s)->type == '|') {
@@ -177,7 +177,7 @@ static intmax_t eval_l10(CPP_Context* restrict c, TokenStream* restrict s) {
     return left;
 }
 
-static intmax_t eval_l11(CPP_Context* restrict c, TokenStream* restrict s) {
+static intmax_t eval_l11(Cuik_CPP* restrict c, TokenStream* restrict s) {
     intmax_t left = eval_l10(c, s);
 
     while (tokens_get(s)->type == TOKEN_DOUBLE_AND) {
@@ -190,7 +190,7 @@ static intmax_t eval_l11(CPP_Context* restrict c, TokenStream* restrict s) {
     return left;
 }
 
-static intmax_t eval_l12(CPP_Context* restrict c, TokenStream* restrict s) {
+static intmax_t eval_l12(Cuik_CPP* restrict c, TokenStream* restrict s) {
     intmax_t left = eval_l11(c, s);
 
     while (tokens_get(s)->type == TOKEN_DOUBLE_OR) {

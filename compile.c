@@ -6,6 +6,7 @@
 #include "compile.h"
 
 static const char* INPUT_FILES[] = {
+    "src/cuik.c",
     "src/str.c",
     "src/tls.c",
     "src/timer.c",
@@ -14,7 +15,6 @@ static const char* INPUT_FILES[] = {
     "src/big_array.c",
     "src/arena.c",
     "src/settings.c",
-    "src/driver_utils.c",
     "src/compilation_unit.c",
     "src/ext/threadpool.c",
 
@@ -286,7 +286,7 @@ int main(int argc, char** argv) {
     printf("Linking...\n");
 
     // compile main driver
-    cc_invoke(&options, "src/main_driver.c", NULL);
+    cc_invoke(&options, "drivers/main_driver.c", NULL);
     cmd_wait_for_all();
 
     ld_invoke("bin"SLASH"cuik",

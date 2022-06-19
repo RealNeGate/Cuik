@@ -31,16 +31,16 @@ typedef struct {
 } LibcOption;
 
 static LibcOption libc_options[] = {
-    {"none", 00, true, 0},
-    {"ucrt", 99, false, 3, (const char*[]){"ucrt.lib", "msvcrt.lib", "vcruntime.lib"}},
-    {"libucrt", 99, true, 2, (const char*[]){"libucrt.lib", "libcmt.lib", "libvcruntime.lib"}},
+    {"none",    00, true,  0},
+    {"ucrt",    99, false, 3, (const char*[]){"ucrt.lib", "msvcrt.lib", "vcruntime.lib"}},
+    {"libucrt", 99, true,  3, (const char*[]){"libucrt.lib", "libcmt.lib", "libvcruntime.lib"}},
 };
 enum { LIBC_OPTION_COUNT = sizeof(libc_options) / sizeof(libc_options[0]) };
 
 static TargetOption target_options[] = {
     {"x64_windows", TB_ARCH_X86_64, TB_SYSTEM_WINDOWS},
-    {"x64_macos", TB_ARCH_X86_64, TB_SYSTEM_MACOS},
-    {"x64_linux", TB_ARCH_X86_64, TB_SYSTEM_LINUX},
+    {"x64_macos",   TB_ARCH_X86_64, TB_SYSTEM_MACOS},
+    {"x64_linux",   TB_ARCH_X86_64, TB_SYSTEM_LINUX},
 };
 enum { TARGET_OPTION_COUNT = sizeof(target_options) / sizeof(target_options[0]) };
 
@@ -360,7 +360,7 @@ static bool dump_tokens() {
         abort();
     }
 
-#if 1
+#if 0
     unsigned char* text = (unsigned char*)read_entire_file(cuik_source_files[0]);
     if (text == NULL) {
         fprintf(stderr, "could not open: %s\n", cuik_source_files[0]);
@@ -406,14 +406,6 @@ static bool dump_tokens() {
     double elapsed = (t2 - t1) * timer_freq;
     fprintf(stderr, "preprocessor took %.03f seconds\n", elapsed);
 
-    char output_path[MAX_PATH];
-    sprintf_s(output_path, MAX_PATH, "%s.i", cuik_file_no_ext);
-    FILE* f = fopen(output_path, "w");
-    if (!f) {
-        fprintf(stderr, "Could not open file a.txt\n");
-        return false;
-    }
-
     const char* last_file = NULL;
     int last_line = 0;
 
@@ -421,8 +413,7 @@ static bool dump_tokens() {
         Token* t = &s.tokens[i];
         SourceLoc* loc = &s.locations[SOURCE_LOC_GET_DATA(t->location)];
 
-        if (last_file != loc->line->filepath &&
-            strcmp(loc->line->filepath, "<temp>") != 0) {
+        if (last_file != loc->line->filepath && strcmp(loc->line->filepath, "<temp>") != 0) {
             char str[MAX_PATH];
 
             // TODO(NeGate): Kinda shitty but i just wanna duplicate
@@ -441,19 +432,17 @@ static bool dump_tokens() {
             }
             *out++ = '\0';
 
-            fprintf(f, "\n#line %d \"%s\"\t", loc->line->line, str);
+            printf("\n#line %d \"%s\"\t", loc->line->line, str);
             last_file = loc->line->filepath;
         }
 
         if (last_line != loc->line->line) {
-            fprintf(f, "\n/* line %3d */\t", loc->line->line);
+            printf("\n/* line %3d */\t", loc->line->line);
             last_line = loc->line->line;
         }
 
-        fprintf(f, "%.*s ", (int)(t->end - t->start), t->start);
+        printf("%.*s ", (int)(t->end - t->start), t->start);
     }
-
-    fclose(f);
 #endif
     return true;
 }
@@ -562,12 +551,14 @@ static void print_version(const char* install_dir) {
 
 int main(int argc, char* argv[]) {
 #ifdef _WIN32
-    // Enable ANSI/VT sequences on windows
-    HANDLE output_handle = GetStdHandle(STD_OUTPUT_HANDLE);
-    if (output_handle != INVALID_HANDLE_VALUE) {
-        DWORD old_mode;
-        if (GetConsoleMode(output_handle, &old_mode)) {
-            SetConsoleMode(output_handle, old_mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+    {
+        // Enable ANSI/VT sequences on windows
+        HANDLE output_handle = GetStdHandle(STD_OUTPUT_HANDLE);
+        if (output_handle != INVALID_HANDLE_VALUE) {
+            DWORD old_mode;
+            if (GetConsoleMode(output_handle, &old_mode)) {
+                SetConsoleMode(output_handle, old_mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+            }
         }
     }
 #endif

@@ -1,10 +1,13 @@
 #include "big_array.h"
+#include <string.h>
+#include <stdio.h>
 
 void* big_array_internal_create(size_t type_size, bool has_zero_slot) {
     BigArrayHeader* header = malloc(sizeof(BigArrayHeader) + (type_size * INITIAL_CAP));
     *header = (BigArrayHeader){
         .size = has_zero_slot ? 1 : 0,
-        .capacity = INITIAL_CAP};
+        .capacity = INITIAL_CAP
+    };
     if (has_zero_slot) memset(header->data, 0, type_size);
     return &header->data[0];
 }

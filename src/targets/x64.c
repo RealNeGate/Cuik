@@ -4,28 +4,28 @@
 // two simple temporary buffers to represent type_as_string results
 static thread_local char temp_string0[1024], temp_string1[1024];
 
-static void set_defines(CPP_Context* cpp) {
-    cpp_define_empty(cpp, "_CUIK_TARGET_64BIT_");
-    cpp_define(cpp, "__LITTLE_ENDIAN__", "1");
+static void set_defines(Cuik_CPP* cpp) {
+    cuikpp_define_empty(cpp, "_CUIK_TARGET_64BIT_");
+    cuikpp_define(cpp, "__LITTLE_ENDIAN__", "1");
 
-    cpp_define(cpp, "_M_X64", "100");
-    cpp_define(cpp, "_AMD64_", "100");
-    cpp_define(cpp, "_M_AMD64", "100");
+    cuikpp_define(cpp, "_M_X64", "100");
+    cuikpp_define(cpp, "_AMD64_", "100");
+    cuikpp_define(cpp, "_M_AMD64", "100");
 
-    cpp_define(cpp, "_WIN32", "1");
-    cpp_define(cpp, "_WIN64", "1");
+    cuikpp_define(cpp, "_WIN32", "1");
+    cuikpp_define(cpp, "_WIN64", "1");
 
     // stdatomic.h lock free
-    cpp_define(cpp, "__CUIK_ATOMIC_BOOL_LOCK_FREE", "1");
-    cpp_define(cpp, "__CUIK_ATOMIC_CHAR_LOCK_FREE", "1");
-    cpp_define(cpp, "__CUIK_ATOMIC_CHAR16_LOCK_FREE", "1");
-    cpp_define(cpp, "__CUIK_ATOMIC_CHAR32_LOCK_FREE", "1");
-    cpp_define(cpp, "__CUIK_ATOMIC_WCHAR_T_LOCK_FREE", "1");
-    cpp_define(cpp, "__CUIK_ATOMIC_SHORT_LOCK_FREE", "1");
-    cpp_define(cpp, "__CUIK_ATOMIC_INT_LOCK_FREE", "1");
-    cpp_define(cpp, "__CUIK_ATOMIC_LONG_LOCK_FREE", "1");
-    cpp_define(cpp, "__CUIK_ATOMIC_LLONG_LOCK_FREE", "1");
-    cpp_define(cpp, "__CUIK_ATOMIC_POINTER_LOCK_FREE", "1");
+    cuikpp_define(cpp, "__CUIK_ATOMIC_BOOL_LOCK_FREE", "1");
+    cuikpp_define(cpp, "__CUIK_ATOMIC_CHAR_LOCK_FREE", "1");
+    cuikpp_define(cpp, "__CUIK_ATOMIC_CHAR16_LOCK_FREE", "1");
+    cuikpp_define(cpp, "__CUIK_ATOMIC_CHAR32_LOCK_FREE", "1");
+    cuikpp_define(cpp, "__CUIK_ATOMIC_WCHAR_T_LOCK_FREE", "1");
+    cuikpp_define(cpp, "__CUIK_ATOMIC_SHORT_LOCK_FREE", "1");
+    cuikpp_define(cpp, "__CUIK_ATOMIC_INT_LOCK_FREE", "1");
+    cuikpp_define(cpp, "__CUIK_ATOMIC_LONG_LOCK_FREE", "1");
+    cuikpp_define(cpp, "__CUIK_ATOMIC_LLONG_LOCK_FREE", "1");
+    cuikpp_define(cpp, "__CUIK_ATOMIC_POINTER_LOCK_FREE", "1");
 }
 
 // on Win64 all structs that have a size of 1,2,4,8
@@ -60,7 +60,7 @@ static TB_FunctionPrototype* create_prototype(TranslationUnit* tu, Type* type) {
     TB_DataType return_dt = TB_TYPE_PTR;
     if (!is_aggregate_return) return_dt = ctype_to_tbtype(type->func.return_type);
 
-    TB_FunctionPrototype* proto = tb_prototype_create(mod, TB_STDCALL, return_dt, real_param_count, type->func.has_varargs);
+    TB_FunctionPrototype* proto = tb_prototype_create(tu->ir_mod, TB_STDCALL, return_dt, real_param_count, type->func.has_varargs);
 
     if (is_aggregate_return) {
         tb_prototype_add_param(proto, TB_TYPE_PTR);
