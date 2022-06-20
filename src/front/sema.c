@@ -25,12 +25,12 @@ static thread_local char temp_string0[1024], temp_string1[1024];
 
 void sema_stmt(TranslationUnit* tu, Stmt* restrict s);
 
-static bool is_scalar_type(TranslationUnit* tu, Type* type) {
+static bool is_scalar_type(TranslationUnit* tu, Cuik_Type* type) {
     return (type->kind >= KIND_BOOL && type->kind <= KIND_FUNC);
 }
 
 // doesn't do implicit casts
-bool type_very_compatible(TranslationUnit* tu, Type* src, Type* dst) {
+bool type_very_compatible(TranslationUnit* tu, Cuik_Type* src, Cuik_Type* dst) {
     if (src == dst) return true;
     if (src->kind != dst->kind) return false;
 
@@ -64,7 +64,7 @@ bool type_very_compatible(TranslationUnit* tu, Type* src, Type* dst) {
 
 // Also checks if expression is an integer literal because we
 // have a special case for 0 to pointer conversions.
-bool type_compatible(TranslationUnit* tu, Type* src, Type* dst, Expr* a_expr) {
+bool type_compatible(TranslationUnit* tu, Cuik_Type* src, Cuik_Type* dst, Expr* a_expr) {
     if (src == dst) return true;
 
     // zero can convert into whatever
@@ -152,7 +152,7 @@ bool type_compatible(TranslationUnit* tu, Type* src, Type* dst, Expr* a_expr) {
     return true;
 }
 
-static bool implicit_conversion(TranslationUnit* tu, Type* src, Type* dst, Expr* src_e) {
+static bool implicit_conversion(TranslationUnit* tu, Cuik_Type* src, Cuik_Type* dst, Expr* src_e) {
     if (warnings.data_loss) {
         // data loss warning applies to int and float conversions
         if (src->kind >= KIND_CHAR && src->kind <= KIND_DOUBLE &&
@@ -209,7 +209,7 @@ typedef struct {
 //   int a[6]
 //
 // would be 6 and scalars are just 1
-static int compute_initializer_bounds(Type* type) {
+static int compute_initializer_bounds(Cuik_Type* type) {
     // Identify boundaries:
     //   Scalar types are 1
     //   Records depend on the member count
@@ -247,7 +247,7 @@ static int compute_initializer_bounds(Type* type) {
     }
 }
 
-static InitSearchResult find_member_by_name(Type* type, const unsigned char* name, int* base_index, int offset) {
+static InitSearchResult find_member_by_name(Cuik_Type* type, const unsigned char* name, int* base_index, int offset) {
     Member* kids = type->record.kids;
     size_t count = type->record.kid_count;
 
@@ -269,7 +269,7 @@ static InitSearchResult find_member_by_name(Type* type, const unsigned char* nam
     return (InitSearchResult){0};
 }
 
-static InitSearchResult get_next_member_in_type(Type* type, int target, int* base_index, int offset, bool stop_at_struct) {
+static InitSearchResult get_next_member_in_type(Cuik_Type* type, int target, int* base_index, int offset, bool stop_at_struct) {
     Member* kids = type->record.kids;
     size_t count = type->record.kid_count;
 
@@ -296,7 +296,7 @@ static InitSearchResult get_next_member_in_type(Type* type, int target, int* bas
     return (InitSearchResult){0};
 }
 
-static InitNode* walk_initializer_for_sema(TranslationUnit* tu, Type* type, int node_count, InitNode* node, int base_offset) {
+static InitNode* walk_initializer_for_sema(TranslationUnit* tu, Cuik_Type* type, int node_count, InitNode* node, int base_offset) {
     int bounds = compute_initializer_bounds(type);
 
     // Starts at the first node and just keep traversing through any nodes with children.
@@ -304,7 +304,7 @@ static InitNode* walk_initializer_for_sema(TranslationUnit* tu, Type* type, int 
     for (int i = 0; i < node_count; i++) {
         int relative_offset = 0;
 
-        Type* child_type = NULL;
+        Cuik_Type* child_type = NULL;
         if (node->mode == INIT_MEMBER) {
             if (type->kind != KIND_STRUCT && type->kind != KIND_UNION) {
                 abort();
@@ -370,7 +370,7 @@ static InitNode* walk_initializer_for_sema(TranslationUnit* tu, Type* type, int 
         }
 
         if (node->kids_count == 0) {
-            Type* expr_type = sema_expr(tu, node->expr);
+            Cuik_Type* expr_type = sema_expr(tu, node->expr);
 
             if (!implicit_conversion(tu, expr_type, child_type, node->expr)) {
                 type_as_string(tu, sizeof(temp_string0), temp_string0, expr_type);
@@ -393,7 +393,7 @@ static InitNode* walk_initializer_for_sema(TranslationUnit* tu, Type* type, int 
     return node;
 }
 
-static void try_resolve_typeof(TranslationUnit* tu, Type* ty) {
+static void try_resolve_typeof(TranslationUnit* tu, Cuik_Type* ty) {
     if (ty->kind == KIND_TYPEOF) {
         // spoopy...
         *ty = *sema_expr(tu, ty->typeof_.src);
@@ -451,7 +451,7 @@ static bool is_assignable_expr(TranslationUnit* tu, Expr* restrict e) {
     }
 }
 
-Member* sema_traverse_members(TranslationUnit* tu, Type* record_type, Atom name, uint32_t* out_offset) {
+Member* sema_traverse_members(TranslationUnit* tu, Cuik_Type* record_type, Atom name, uint32_t* out_offset) {
     Member* kids = record_type->record.kids;
     size_t count = record_type->record.kid_count;
 
@@ -461,7 +461,7 @@ Member* sema_traverse_members(TranslationUnit* tu, Type* record_type, Atom name,
         // TODO(NeGate): String interning would be nice
         if (member->name == NULL) {
             // unnamed fields are traversed as well
-            Type* child = member->type;
+            Cuik_Type* child = member->type;
             assert(child->kind == KIND_STRUCT || child->kind == KIND_UNION);
 
             Member* search = sema_traverse_members(tu, child, name, out_offset);
@@ -480,9 +480,9 @@ Member* sema_traverse_members(TranslationUnit* tu, Type* record_type, Atom name,
 
 Member* sema_resolve_member_access(TranslationUnit* tu, Expr* restrict e, uint32_t* out_offset) {
     bool is_arrow = (e->op == EXPR_ARROW);
-    Type* base_type = sema_expr(tu, e->dot_arrow.base);
+    Cuik_Type* base_type = sema_expr(tu, e->dot_arrow.base);
 
-    Type* record_type = NULL;
+    Cuik_Type* record_type = NULL;
     if (is_arrow) {
         if (base_type->kind != KIND_PTR && base_type->kind != KIND_ARRAY) {
             REPORT_EXPR(ERROR, e, "Cannot do arrow operator on non-pointer type.");
@@ -520,19 +520,19 @@ Member* sema_resolve_member_access(TranslationUnit* tu, Expr* restrict e, uint32
     return NULL;
 }
 
-Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
+Cuik_Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
     switch (e->op) {
         case EXPR_UNKNOWN_SYMBOL: {
             return (e->type = &builtin_types[TYPE_VOID]);
         }
         case EXPR_VA_ARG: {
-            Type* va_list_type = sema_expr(tu, e->va_arg_.src);
+            Cuik_Type* va_list_type = sema_expr(tu, e->va_arg_.src);
             if (va_list_type->kind != KIND_PTR && va_list_type->ptr_to->kind != KIND_CHAR) {
                 type_as_string(tu, sizeof(temp_string0), temp_string0, va_list_type);
                 REPORT_EXPR(ERROR, e, "va_arg must take in a va_list in the first argument (got %s)", temp_string0);
             }
 
-            Type* type = e->va_arg_.type;
+            Cuik_Type* type = e->va_arg_.type;
             int size = type->size;
             if (size < builtin_types[TYPE_INT].size) {
                 REPORT_EXPR(WARNING, e, "Warning, va_arg used on a value smaller than int");
@@ -646,7 +646,7 @@ Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
             return (e->type = new_array(tu, &builtin_types[TYPE_CHAR], out_i));
         }
         case EXPR_SIZEOF: {
-            Type* src = sema_expr(tu, e->x_of_expr.expr);
+            Cuik_Type* src = sema_expr(tu, e->x_of_expr.expr);
 
             //assert(src->size && "Something went wrong...");
             *e = (Expr){
@@ -656,7 +656,7 @@ Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
             return (e->type = &builtin_types[TYPE_ULONG]);
         }
         case EXPR_ALIGNOF: {
-            Type* src = sema_expr(tu, e->x_of_expr.expr);
+            Cuik_Type* src = sema_expr(tu, e->x_of_expr.expr);
 
             //assert(src->align && "Something went wrong...");
             *e = (Expr){
@@ -700,7 +700,7 @@ Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
         }
         case EXPR_INITIALIZER: {
             try_resolve_typeof(tu, e->init.type);
-            Type* type = e->init.type;
+            Cuik_Type* type = e->init.type;
 
             if (type->kind == KIND_ARRAY) {
                 int old_array_count = type->array_count;
@@ -723,7 +723,7 @@ Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
             return (e->type = e->init.type);
         }
         case EXPR_LOGICAL_NOT: {
-            /* Type* src = */ sema_expr(tu, e->unary_op.src);
+            /* Cuik_Type* src = */ sema_expr(tu, e->unary_op.src);
 
             e->unary_op.src->cast_type = &builtin_types[TYPE_BOOL];
             return (e->type = &builtin_types[TYPE_BOOL]);
@@ -734,7 +734,7 @@ Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
         case EXPR_PRE_DEC:
         case EXPR_POST_INC:
         case EXPR_POST_DEC: {
-            Type* src = sema_expr(tu, e->unary_op.src);
+            Cuik_Type* src = sema_expr(tu, e->unary_op.src);
 
             e->unary_op.src->cast_type = src;
             return (e->type = src);
@@ -749,7 +749,7 @@ Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
                 return &builtin_types[TYPE_ULONG];
             }
 
-            Type* src = sema_expr(tu, e->unary_op.src);
+            Cuik_Type* src = sema_expr(tu, e->unary_op.src);
             return (e->type = new_pointer(tu, src));
         }
         case EXPR_SYMBOL: {
@@ -766,7 +766,7 @@ Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
 
                 return (e->type = &builtin_types[TYPE_VOID]);
             } else {
-                Type* type = sym->decl.type;
+                Cuik_Type* type = sym->decl.type;
 
                 if (type->kind == KIND_ARRAY) {
                     if (type->size == 0 && sym->op == STMT_GLOBAL_DECL) {
@@ -795,7 +795,7 @@ Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
             return (e->type = param_list[param_num].type);
         }
         case EXPR_GENERIC: {
-            Type* src = sema_expr(tu, e->generic_.controlling_expr);
+            Cuik_Type* src = sema_expr(tu, e->generic_.controlling_expr);
 
             // _Generic's controlling expression does rvalue conversions so
             // an array is treated as a pointer not an array
@@ -837,15 +837,15 @@ Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
         case EXPR_CAST: {
             try_resolve_typeof(tu, e->cast.type);
 
-            /* Type* src = */ sema_expr(tu, e->cast.src);
+            /* Cuik_Type* src = */ sema_expr(tu, e->cast.src);
 
             // set child's cast type
             e->cast.src->cast_type = e->cast.type;
             return (e->type = e->cast.type);
         }
         case EXPR_SUBSCRIPT: {
-            Type* base = sema_expr(tu, e->subscript.base);
-            Type* index = sema_expr(tu, e->subscript.index);
+            Cuik_Type* base = sema_expr(tu, e->subscript.base);
+            Cuik_Type* index = sema_expr(tu, e->subscript.index);
 
             if (index->kind == KIND_PTR ||
                 index->kind == KIND_ARRAY) {
@@ -868,7 +868,7 @@ Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
             return (e->type = base->ptr_to);
         }
         case EXPR_DEREF: {
-            Type* base = sema_expr(tu, e->unary_op.src);
+            Cuik_Type* base = sema_expr(tu, e->unary_op.src);
             e->unary_op.src->cast_type = base;
 
             if (base->kind == KIND_PTR) {
@@ -887,14 +887,14 @@ Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
                 Expr** args = e->call.param_start;
                 int arg_count = e->call.param_count;
 
-                Type* ty = target_desc.type_check_builtin(tu, e, name, arg_count, args);
+                Cuik_Type* ty = target_desc.type_check_builtin(tu, e, name, arg_count, args);
                 if (ty == NULL) ty = &builtin_types[TYPE_VOID];
 
                 return (e->type = ty);
             }
 
             // Call function
-            Type* func_type = sema_expr(tu, e->call.target);
+            Cuik_Type* func_type = sema_expr(tu, e->call.target);
 
             // implicit dereference
             if (func_type->kind == KIND_PTR) {
@@ -924,7 +924,7 @@ Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
 
                 // type-check the parameters with a known type
                 for (size_t i = 0; i < param_count; i++) {
-                    Type* arg_type = sema_expr(tu, args[i]);
+                    Cuik_Type* arg_type = sema_expr(tu, args[i]);
 
                     if (!implicit_conversion(tu, arg_type, params[i].type, args[i])) {
                         continue;
@@ -935,7 +935,7 @@ Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
 
                 // type-check the untyped arguments
                 for (size_t i = param_count; i < arg_count; i++) {
-                    Type* src = sema_expr(tu, args[i]);
+                    Cuik_Type* src = sema_expr(tu, args[i]);
 
                     // all integers ranked lower than int are promoted to int
                     if (src->kind >= KIND_BOOL && src->kind < KIND_INT) {
@@ -956,7 +956,7 @@ Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
                 }
 
                 for (size_t i = 0; i < arg_count; i++) {
-                    Type* arg_type = sema_expr(tu, args[i]);
+                    Cuik_Type* arg_type = sema_expr(tu, args[i]);
 
                     if (!implicit_conversion(tu, arg_type, params[i].type, args[i])) {
                         continue;
@@ -970,7 +970,7 @@ Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
             return (e->type = func_type->func.return_type);
         }
         case EXPR_TERNARY: {
-            Type* cond_type = sema_expr(tu, e->ternary_op.left);
+            Cuik_Type* cond_type = sema_expr(tu, e->ternary_op.left);
             if (!is_scalar_type(tu, cond_type)) {
                 type_as_string(tu, sizeof(temp_string0), temp_string0, cond_type);
 
@@ -978,9 +978,9 @@ Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
             }
             e->ternary_op.left->cast_type = &builtin_types[TYPE_BOOL];
 
-            Type* type = get_common_type(tu,
-                                         sema_expr(tu, e->ternary_op.middle),
-                                         sema_expr(tu, e->ternary_op.right));
+            Cuik_Type* type = get_common_type(tu,
+                                              sema_expr(tu, e->ternary_op.middle),
+                                              sema_expr(tu, e->ternary_op.right));
 
             e->ternary_op.middle->cast_type = type;
             e->ternary_op.right->cast_type = type;
@@ -1038,8 +1038,8 @@ Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
         case EXPR_XOR:
         case EXPR_SHL:
         case EXPR_SHR: {
-            Type* lhs = sema_expr(tu, e->bin_op.left);
-            Type* rhs = sema_expr(tu, e->bin_op.right);
+            Cuik_Type* lhs = sema_expr(tu, e->bin_op.left);
+            Cuik_Type* rhs = sema_expr(tu, e->bin_op.right);
 
             if ((e->op == EXPR_PLUS ||
                  e->op == EXPR_MINUS) &&
@@ -1084,7 +1084,7 @@ Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
                     return (e->type = &builtin_types[TYPE_VOID]);
                 }
 
-                Type* type = get_common_type(tu, lhs, rhs);
+                Cuik_Type* type = get_common_type(tu, lhs, rhs);
 
                 // Do we actually need to check both sides?
                 implicit_conversion(tu, lhs, type, e->bin_op.left);
@@ -1102,9 +1102,9 @@ Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
         case EXPR_CMPGE:
         case EXPR_CMPLT:
         case EXPR_CMPLE: {
-            Type* type = get_common_type(tu,
-                                         sema_expr(tu, e->bin_op.left),
-                                         sema_expr(tu, e->bin_op.right));
+            Cuik_Type* type = get_common_type(tu,
+                                              sema_expr(tu, e->bin_op.left),
+                                              sema_expr(tu, e->bin_op.right));
 
             e->bin_op.left->cast_type = type;
             e->bin_op.right->cast_type = type;
@@ -1129,7 +1129,7 @@ Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
                 return (e->type = 0);
             }
 
-            Type* lhs = sema_expr(tu, e->bin_op.left);
+            Cuik_Type* lhs = sema_expr(tu, e->bin_op.left);
             sema_expr(tu, e->bin_op.right);
 
             e->bin_op.left->cast_type = lhs;
@@ -1201,8 +1201,8 @@ void sema_stmt(TranslationUnit* tu, Stmt* restrict s) {
                     s->decl.initial->init.type = s->decl.type;
                 }
 
-                Type* decl_type = s->decl.type;
-                Type* expr_type = sema_expr(tu, s->decl.initial);
+                Cuik_Type* decl_type = s->decl.type;
+                Cuik_Type* expr_type = sema_expr(tu, s->decl.initial);
 
                 Expr* e = s->decl.initial;
                 if (e->op == EXPR_INITIALIZER) {
@@ -1237,8 +1237,8 @@ void sema_stmt(TranslationUnit* tu, Stmt* restrict s) {
         }
         case STMT_RETURN: {
             if (s->return_.expr) {
-                Type* expr_type = sema_expr(tu, s->return_.expr);
-                Type* return_type = function_stmt->decl.type->func.return_type;
+                Cuik_Type* expr_type = sema_expr(tu, s->return_.expr);
+                Cuik_Type* return_type = function_stmt->decl.type->func.return_type;
 
                 if (!type_compatible(tu, expr_type, return_type, s->return_.expr)) {
                     REPORT_EXPR(ERROR, s->return_.expr, "Value in return statement does not match function signature.");
@@ -1249,7 +1249,7 @@ void sema_stmt(TranslationUnit* tu, Stmt* restrict s) {
             break;
         }
         case STMT_IF: {
-            Type* cond_type = sema_expr(tu, s->if_.cond);
+            Cuik_Type* cond_type = sema_expr(tu, s->if_.cond);
             if (!is_scalar_type(tu, cond_type)) {
                 type_as_string(tu, sizeof(temp_string0), temp_string0, cond_type);
 
@@ -1301,7 +1301,7 @@ void sema_stmt(TranslationUnit* tu, Stmt* restrict s) {
             break;
         }
         case STMT_SWITCH: {
-            Type* type = sema_expr(tu, s->switch_.condition);
+            Cuik_Type* type = sema_expr(tu, s->switch_.condition);
             s->switch_.condition->cast_type = type;
 
             if (!(type->kind >= KIND_CHAR && type->kind <= KIND_LONG)) {
@@ -1331,10 +1331,10 @@ void sema_stmt(TranslationUnit* tu, Stmt* restrict s) {
     }
 }
 
-Type* sema_guess_type(TranslationUnit* tu, Stmt* restrict s) {
+Cuik_Type* sema_guess_type(TranslationUnit* tu, Stmt* restrict s) {
     char* name = (char*)s->decl.name;
 
-    Type* type = s->decl.type;
+    Cuik_Type* type = s->decl.type;
 
     if (s->decl.attrs.is_static && s->decl.attrs.is_extern) {
         REPORT_STMT(ERROR, s, "Global declaration '%s' cannot be both static and extern.", name);
@@ -1371,7 +1371,7 @@ Type* sema_guess_type(TranslationUnit* tu, Stmt* restrict s) {
 }
 
 static void sema_top_level(TranslationUnit* tu, Stmt* restrict s) {
-    Type* type = s->decl.type;
+    Cuik_Type* type = s->decl.type;
 
     char* name = (char*)s->decl.name;
     switch (s->op) {
@@ -1459,7 +1459,7 @@ static void sema_top_level(TranslationUnit* tu, Stmt* restrict s) {
                         s->decl.initial->init.type = s->decl.type;
                     }
 
-                    Type* expr_type = sema_expr(tu, s->decl.initial);
+                    Cuik_Type* expr_type = sema_expr(tu, s->decl.initial);
 
                     if (s->decl.initial->op == EXPR_INITIALIZER ||
                         s->decl.initial->op == EXPR_STR ||

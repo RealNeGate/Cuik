@@ -1,10 +1,7 @@
 #include <cuik.h>
+#include <cuik_ast.h>
 #include <stdio.h>
 #include "helper.h"
-
-static void irgen_visitor(TranslationUnit* tu, Stmt* restrict s, void* user_data) {
-
-}
 
 static void dump_tokens(FILE* out_file, TokenStream* s) {
     const char* last_file = NULL;
@@ -49,6 +46,16 @@ static void dump_tokens(FILE* out_file, TokenStream* s) {
     }
 }
 
+static void da_visitor(TranslationUnit* tu, Stmt* restrict s, void* user_data) {
+    if (!cuik_is_in_main_file(tu, s->loc)) return;
+
+    char* name = (char*)s->decl.name;
+    if (s->op == STMT_FUNC_DECL || s->op == STMT_GLOBAL_DECL || s->op == STMT_DECL) {
+        printf("func %s(", name);
+        printf(");\n");
+    }
+}
+
 int main(int argc, char** argv) {
     if (argc <= 1) {
         fprintf(stderr, "no input file!\n");
@@ -90,12 +97,12 @@ int main(int argc, char** argv) {
                                                     "src/"
                                                 });
 
-    /*FILE* out = fopen("./a.i", "wb");
+#if 0
+    FILE* out = fopen("./a.i", "wb");
     assert(out != NULL);
     dump_tokens(out, &tokens);
-    fclose(out);*/
-
-#if 1
+    fclose(out);
+#else
     // parse
     TranslationUnit* tu = cuik_parse_translation_unit(mod, &tokens, NULL);
 
@@ -111,7 +118,7 @@ int main(int argc, char** argv) {
 
     cuikpp_finalize(&cpp);
 
-    cuik_visit_top_level(tu, NULL, irgen_visitor);
+    cuik_visit_top_level(tu, NULL, da_visitor);
     cuik_destroy_translation_unit(tu);
 #endif
 

@@ -100,6 +100,19 @@ CUIK_API Cuik_SystemLibs* cuik_get_system_includes(const char* cuik_crt_director
 ////////////////////////////////////////////
 // C parsing
 ////////////////////////////////////////////
+typedef enum IntSuffix {
+    //                u   l   l
+    INT_SUFFIX_NONE = 0 + 0 + 0,
+    INT_SUFFIX_U    = 1 + 0 + 0,
+    INT_SUFFIX_L    = 0 + 2 + 0,
+    INT_SUFFIX_UL   = 1 + 2 + 0,
+    INT_SUFFIX_LL   = 0 + 2 + 2,
+    INT_SUFFIX_ULL  = 1 + 2 + 2,
+} IntSuffix;
+
+typedef unsigned char* Atom;
+typedef struct Cuik_Type Cuik_Type;
+
 // if thread_pool is NULL, parsing is single threaded
 //
 // if ir_module is NULL then translation unit will not be used for IR generation,

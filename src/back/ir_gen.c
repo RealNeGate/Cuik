@@ -9,7 +9,7 @@ atomic_flag irgen_defined_tls_index;
 // Maps param_num -> TB_Register
 static thread_local TB_Register* parameter_map;
 
-static thread_local Type* function_type;
+static thread_local Cuik_Type* function_type;
 static thread_local const char* function_name;
 
 // For aggregate returns
@@ -27,7 +27,7 @@ _Noreturn void internal_error(const char* fmt, ...) {
     abort();
 }
 
-static TB_Register cast_reg(TB_Function* func, TB_Register reg, const Type* src, const Type* dst) {
+static TB_Register cast_reg(TB_Function* func, TB_Register reg, const Cuik_Type* src, const Cuik_Type* dst) {
     if (dst->kind == KIND_VOID) {
         return reg;
     }
@@ -97,7 +97,7 @@ static TB_Register cast_reg(TB_Function* func, TB_Register reg, const Type* src,
 }
 
 static TB_Register cvt2rval(TranslationUnit* tu, TB_Function* func, const IRVal v, const Expr* e) {
-    const Type* src = e->type;
+    const Cuik_Type* src = e->type;
 
     TB_Register reg = 0;
     switch (v.value_type) {
@@ -164,7 +164,7 @@ static TB_Register cvt2rval(TranslationUnit* tu, TB_Function* func, const IRVal 
         abort();
     }
 
-    const Type* dst = e->cast_type;
+    const Cuik_Type* dst = e->cast_type;
     return src != dst ? cast_reg(func, reg, src, dst) : reg;
 }
 
@@ -216,7 +216,7 @@ InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, Sourc
         if (node->kids_count > 0) {
             node = eval_initializer_objects(tu, func, loc, init, addr, node->kids_count, node + 1);
         } else {
-            Type* child_type = node->type;
+            Cuik_Type* child_type = node->type;
             int offset = node->offset;
 
             // initialize a value
@@ -299,7 +299,7 @@ InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, Sourc
                         if (addr) {
                             assert(func != NULL);
 
-                            TypeKind kind = child_type->kind;
+                            Cuik_TypeKind kind = child_type->kind;
                             int size = child_type->size;
                             int align = child_type->align;
 
@@ -347,7 +347,7 @@ InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, Sourc
     return node;
 }
 
-static void gen_local_initializer(TranslationUnit* tu, TB_Function* func, SourceLocIndex loc, TB_Register addr, Type* type, int node_count, InitNode* nodes) {
+static void gen_local_initializer(TranslationUnit* tu, TB_Function* func, SourceLocIndex loc, TB_Register addr, Cuik_Type* type, int node_count, InitNode* nodes) {
     // Walk initializer for max constant expression initializers.
     int max_tb_objects = 0;
     count_max_tb_init_objects(node_count, nodes, &max_tb_objects);
@@ -365,7 +365,7 @@ static void gen_local_initializer(TranslationUnit* tu, TB_Function* func, Source
     eval_initializer_objects(tu, func, loc, init, addr, node_count, nodes);
 }
 
-static TB_InitializerID gen_global_initializer(TranslationUnit* tu, SourceLocIndex loc, Type* type, Expr* initial, const unsigned char* name) {
+static TB_InitializerID gen_global_initializer(TranslationUnit* tu, SourceLocIndex loc, Cuik_Type* type, Expr* initial, const unsigned char* name) {
     assert(type != NULL);
 
     if (initial != NULL) {
@@ -516,7 +516,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
                 .reg = tb_inst_string(func, e->str.end - e->str.start, (char*)e->str.start)};
         }
         case EXPR_INITIALIZER: {
-            Type* type = e->init.type;
+            Cuik_Type* type = e->init.type;
             TB_Register addr = tb_inst_local(func, type->size, type->align);
 
             gen_local_initializer(tu, func, e->start_loc, addr, type, e->init.count, e->init.nodes);
@@ -556,7 +556,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
                    stmt->op == STMT_GLOBAL_DECL ||
                    stmt->op == STMT_FUNC_DECL);
 
-            Type* type = stmt->decl.type;
+            Cuik_Type* type = stmt->decl.type;
 
             if (stmt->op == STMT_LABEL) {
                 if (stmt->backing.l == 0) {
@@ -666,7 +666,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
             int param_num = e->param_num;
             TB_Register reg = parameter_map[param_num];
 
-            Type* arg_type = function_type->func.param_list[param_num].type;
+            Cuik_Type* arg_type = function_type->func.param_list[param_num].type;
             assert(arg_type != NULL);
 
             if (arg_type->kind == KIND_STRUCT ||
@@ -795,7 +795,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
             size_t real_arg_count = is_aggregate_return ? 1 : 0;
 
             for (size_t i = 0; i < arg_count; i++) {
-                Type* arg_type = args[i]->type;
+                Cuik_Type* arg_type = args[i]->type;
                 real_arg_count += target_desc.deduce_parameter_usage(tu, arg_type);
             }
 
@@ -807,7 +807,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
             // point at which it stops being know which parameter types we're
             // mapping to, if it's arg_count then there's really none
             size_t varargs_cutoff = arg_count;
-            Type* func_type = e->call.target->type;
+            Cuik_Type* func_type = e->call.target->type;
             if (func_type->func.has_varargs) {
                 varargs_cutoff = func_type->func.param_count;
             }
@@ -918,7 +918,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
             assert(src.value_type == LVALUE);
 
             TB_Register loaded = cvt2rval(tu, func, src, e->unary_op.src);
-            Type* type = e->type;
+            Cuik_Type* type = e->type;
             if (type->kind == KIND_PTR) {
                 // pointer arithmatic
                 TB_Register stride = tb_inst_sint(func, TB_TYPE_PTR, type->ptr_to->size);
@@ -963,7 +963,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
             IRVal src = irgen_expr(tu, func, e->unary_op.src);
             assert(src.value_type == LVALUE);
 
-            Type* type = e->type;
+            Cuik_Type* type = e->type;
             if (type->is_atomic) {
                 TB_Register stride;
                 if (type->kind == KIND_PTR) {
@@ -1086,7 +1086,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
             TB_Register l = irgen_as_rvalue(tu, func, e->bin_op.left);
             TB_Register r = irgen_as_rvalue(tu, func, e->bin_op.right);
 
-            Type* restrict type = e->type;
+            Cuik_Type* restrict type = e->type;
 
             // pointer arithmatic
             int dir = e->op == EXPR_PTRADD ? 1 : -1;
@@ -1102,7 +1102,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
             TB_Register l = irgen_as_rvalue(tu, func, e->bin_op.left);
             TB_Register r = irgen_as_rvalue(tu, func, e->bin_op.right);
 
-            Type* type = e->bin_op.left->cast_type;
+            Cuik_Type* type = e->bin_op.left->cast_type;
             int stride = type->ptr_to->size;
 
             l = tb_inst_ptr2int(func, l, TB_TYPE_I64);
@@ -1128,7 +1128,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
         case EXPR_SHR: {
             TB_Register l = irgen_as_rvalue(tu, func, e->bin_op.left);
             TB_Register r = irgen_as_rvalue(tu, func, e->bin_op.right);
-            Type* restrict type = e->type;
+            Cuik_Type* restrict type = e->type;
 
             TB_Register data;
             if (type->kind == KIND_FLOAT || type->kind == KIND_DOUBLE) {
@@ -1221,7 +1221,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
             TB_Register l = irgen_as_rvalue(tu, func, e->bin_op.left);
             TB_Register r = irgen_as_rvalue(tu, func, e->bin_op.right);
 
-            Type* type = e->bin_op.left->cast_type;
+            Cuik_Type* type = e->bin_op.left->cast_type;
 
             TB_Register data;
             if (type->kind == KIND_FLOAT || type->kind == KIND_DOUBLE) {
@@ -1292,7 +1292,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
         case EXPR_XOR_ASSIGN:
         case EXPR_SHL_ASSIGN:
         case EXPR_SHR_ASSIGN: {
-            Type* type = e->type;
+            Cuik_Type* type = e->type;
 
             if (type->is_atomic) {
                 // Load inputs
@@ -1616,7 +1616,7 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
         case STMT_DECL: {
             Attribs attrs = s->decl.attrs;
 
-            Type* type = s->decl.type;
+            Cuik_Type* type = s->decl.type;
             int kind = type->kind;
             int size = type->size;
             int align = type->align;
@@ -1684,7 +1684,7 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
             Expr* e = s->return_.expr;
 
             if (e) {
-                Type* type = e->cast_type;
+                Cuik_Type* type = e->cast_type;
 
                 if (type->kind == KIND_STRUCT ||
                     type->kind == KIND_UNION) {
@@ -1904,7 +1904,7 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
     }
 }
 
-static void gen_func_body(TranslationUnit* tu, Type* type, Stmt* restrict s) {
+static void gen_func_body(TranslationUnit* tu, Cuik_Type* type, Stmt* restrict s) {
     // Clear TLS
     tls_init();
     assert(type);
@@ -1915,7 +1915,7 @@ static void gen_func_body(TranslationUnit* tu, Type* type, Stmt* restrict s) {
     size_t param_count = type->func.param_count;
 
     TB_Register* params = parameter_map = tls_push(param_count * sizeof(TB_Register));
-    Type* return_type = type->func.return_type;
+    Cuik_Type* return_type = type->func.return_type;
 
     //TB_AttributeID old_tb_scope = tb_inst_get_scope(func);
     //tb_inst_set_scope(func, tb_function_attrib_scope(func, old_tb_scope));
@@ -1948,7 +1948,7 @@ static void gen_func_body(TranslationUnit* tu, Type* type, Stmt* restrict s) {
     }
 
     {
-        Type* return_type = type->func.return_type;
+        Cuik_Type* return_type = type->func.return_type;
         TB_Register last = tb_node_get_last_register(func);
 
         if (tb_node_is_label(func, last) || !tb_node_is_terminator(func, last)) {
@@ -1975,7 +1975,7 @@ static void gen_func_body(TranslationUnit* tu, Type* type, Stmt* restrict s) {
 
 CUIK_API void cuik_generate_ir(TranslationUnit* restrict tu, Stmt* restrict s) {
     if (s->op == STMT_FUNC_DECL) {
-        Type* type = s->decl.type;
+        Cuik_Type* type = s->decl.type;
         assert(type->kind == KIND_FUNC);
 
         if (s->decl.attrs.is_static || s->decl.attrs.is_inline) {

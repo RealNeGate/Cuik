@@ -25,7 +25,7 @@ static bool skip_over_declspec(TokenStream* restrict s) {
     return false;
 }
 
-static Decl parse_declarator(TranslationUnit* tu, TokenStream* restrict s, Type* type, bool is_abstract, bool disabled_paren) {
+static Decl parse_declarator(TranslationUnit* tu, TokenStream* restrict s, Cuik_Type* type, bool is_abstract, bool disabled_paren) {
     assert(type != NULL);
 
     // handle calling convention
@@ -103,7 +103,7 @@ static Decl parse_declarator(TranslationUnit* tu, TokenStream* restrict s, Type*
 
         // dummy_type just avoids problems where the type would be NULL and needs to be read
         // it's not gonna modify and rarely really reads from it
-        Type* dummy_type = &builtin_types[TYPE_VOID];
+        Cuik_Type* dummy_type = &builtin_types[TYPE_VOID];
         parse_declarator(tu, s, dummy_type, is_abstract, false);
 
         expect_closing_paren(s, opening_loc);
@@ -117,7 +117,7 @@ static Decl parse_declarator(TranslationUnit* tu, TokenStream* restrict s, Type*
         // inherit name
         // TODO(NeGate): I'm not sure if this is correct ngl
         if (!d.name) {
-            Type* t = d.type;
+            Cuik_Type* t = d.type;
 
             if (t->kind == KIND_PTR) {
                 t = d.type->ptr_to;
@@ -148,15 +148,15 @@ static Decl parse_declarator(TranslationUnit* tu, TokenStream* restrict s, Type*
     return (Decl){type, name, loc};
 }
 
-static Type* parse_typename(TranslationUnit* tu, TokenStream* restrict s) {
+static Cuik_Type* parse_typename(TranslationUnit* tu, TokenStream* restrict s) {
     // TODO(NeGate): Check if attributes are set, they shouldn't
     // be in this context.
     Attribs attr = {0};
-    Type* type = parse_declspec(tu, s, &attr);
+    Cuik_Type* type = parse_declspec(tu, s, &attr);
     return parse_declarator(tu, s, type, true, false).type;
 }
 
-static Type* parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s, Type* type, Atom name) {
+static Cuik_Type* parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s, Cuik_Type* type, Atom name) {
     assert(s->current > 0);
     SourceLocIndex loc = tokens_get_last_location_index(s);
 
@@ -164,7 +164,7 @@ static Type* parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s, Typ
     if (tokens_get(s)->type == '(') {
         tokens_next(s);
 
-        Type* return_type = type;
+        Cuik_Type* return_type = type;
 
         type = new_func(tu);
         type->func.name = name;
@@ -204,10 +204,10 @@ static Type* parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s, Typ
             }
 
             Attribs arg_attr = {0};
-            Type* arg_base_type = parse_declspec(tu, s, &arg_attr);
+            Cuik_Type* arg_base_type = parse_declspec(tu, s, &arg_attr);
 
             Decl param_decl = parse_declarator(tu, s, arg_base_type, false, false);
-            Type* param_type = param_decl.type;
+            Cuik_Type* param_type = param_decl.type;
 
             if (param_type->kind == KIND_ARRAY) {
                 // Array parameters are desugared into pointers
@@ -337,7 +337,7 @@ static Type* parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s, Typ
 }
 
 // https://github.com/rui314/chibicc/blob/90d1f7f199cc55b13c7fdb5839d1409806633fdb/parse.c#L381
-static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attribs* attr) {
+static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attribs* attr) {
     enum {
         VOID = 1 << 0,
         BOOL = 1 << 2,
@@ -353,7 +353,7 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
     };
 
     int counter = 0;
-    Type* type = NULL;
+    Cuik_Type* type = NULL;
 
     bool is_atomic = false;
     bool is_const = false;
@@ -577,7 +577,7 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
                     alignas_pending_expr = &pending_exprs[arrlen(pending_exprs) - 1];
                 } else {
                     if (is_typename(s)) {
-                        Type* new_align = parse_typename(tu, s);
+                        Cuik_Type* new_align = parse_typename(tu, s);
                         if (new_align == NULL || new_align->align) {
                             REPORT(ERROR, loc, "_Alignas cannot operate with incomplete");
                         } else {
@@ -685,7 +685,7 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
                         SourceLocIndex default_loc = tokens_get_location_index(s);
 
                         Attribs member_attr = {0};
-                        Type* member_base_type = parse_declspec(tu, s, &member_attr);
+                        Cuik_Type* member_base_type = parse_declspec(tu, s, &member_attr);
 
                         // error recovery, if we couldn't parse the typename we skip the declaration
                         if (member_base_type == 0) {
@@ -701,7 +701,7 @@ static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attrib
                         //     one  two  three   DONE
                         do {
                             Decl decl = {0};
-                            Type* member_type = member_base_type;
+                            Cuik_Type* member_type = member_base_type;
 
                             // not all members have declarators for example
                             // char : 3; or struct { ... };

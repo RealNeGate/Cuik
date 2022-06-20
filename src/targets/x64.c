@@ -30,7 +30,7 @@ static void set_defines(Cuik_CPP* cpp) {
 
 // on Win64 all structs that have a size of 1,2,4,8
 // or any scalars are passed via registers
-static bool win64_should_pass_via_reg(TranslationUnit* tu, Type* type) {
+static bool win64_should_pass_via_reg(TranslationUnit* tu, Cuik_Type* type) {
     if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
         switch (type->size) {
             case 1:
@@ -46,7 +46,7 @@ static bool win64_should_pass_via_reg(TranslationUnit* tu, Type* type) {
     }
 }
 
-static TB_FunctionPrototype* create_prototype(TranslationUnit* tu, Type* type) {
+static TB_FunctionPrototype* create_prototype(TranslationUnit* tu, Cuik_Type* type) {
     // decide if return value is aggregate
     bool is_aggregate_return = !win64_should_pass_via_reg(tu, type->func.return_type);
 
@@ -82,16 +82,16 @@ static TB_FunctionPrototype* create_prototype(TranslationUnit* tu, Type* type) {
     return proto;
 }
 
-static bool pass_return_via_reg(TranslationUnit* tu, Type* type) {
+static bool pass_return_via_reg(TranslationUnit* tu, Cuik_Type* type) {
     return win64_should_pass_via_reg(tu, type);
 }
 
-static int deduce_parameter_usage(TranslationUnit* tu, Type* type) {
+static int deduce_parameter_usage(TranslationUnit* tu, Cuik_Type* type) {
     return 1;
 }
 
 static int pass_parameter(TranslationUnit* tu, TB_Function* func, Expr* e, bool is_vararg, TB_Reg* out_param) {
-    Type* arg_type = e->type;
+    Cuik_Type* arg_type = e->type;
 
     if (!win64_should_pass_via_reg(tu, arg_type)) {
         // const pass-by-value is considered as a const ref
@@ -207,7 +207,7 @@ static int pass_parameter(TranslationUnit* tu, TB_Function* func, Expr* e, bool 
 }
 
 // TODO(NeGate): Add some type checking utilities to match against a list of types since that's kinda important :p
-static Type* type_check_builtin(TranslationUnit* tu, Expr* e, const char* name, int arg_count, Expr** args) {
+static Cuik_Type* type_check_builtin(TranslationUnit* tu, Expr* e, const char* name, int arg_count, Expr** args) {
     if (strcmp(name, "__builtin_trap") == 0) {
         if (arg_count != 0) {
             REPORT_EXPR(ERROR, e, "%s doesn't require arguments", name);
@@ -224,14 +224,14 @@ static Type* type_check_builtin(TranslationUnit* tu, Expr* e, const char* name, 
             return &builtin_types[TYPE_INT];
         }
 
-        Type* dst_type = sema_expr(tu, args[0]);
+        Cuik_Type* dst_type = sema_expr(tu, args[0]);
         if (dst_type->kind != KIND_PTR) {
             REPORT_EXPR(ERROR, e, "argument 1 should be a pointer");
             return &builtin_types[TYPE_INT];
         }
         args[0]->cast_type = dst_type;
 
-        Type* src_type = sema_expr(tu, args[1]);
+        Cuik_Type* src_type = sema_expr(tu, args[1]);
         if (src_type->kind < KIND_CHAR || src_type->kind > KIND_LONG) {
             REPORT_EXPR(ERROR, e, "argument 2 must be an integer (for now)");
             return &builtin_types[TYPE_INT];
@@ -246,7 +246,7 @@ static Type* type_check_builtin(TranslationUnit* tu, Expr* e, const char* name, 
         }
         args[1]->cast_type = dst_type->ptr_to;
 
-        Type* order_type = sema_expr(tu, args[2]);
+        Cuik_Type* order_type = sema_expr(tu, args[2]);
         if (order_type->kind < KIND_CHAR || order_type->kind > KIND_LONG) {
             REPORT_EXPR(ERROR, e, "Memory order must be an integer");
             return &builtin_types[TYPE_INT];
@@ -260,14 +260,14 @@ static Type* type_check_builtin(TranslationUnit* tu, Expr* e, const char* name, 
             return 0;
         }
 
-        Type* type = sema_expr(tu, args[0]);
+        Cuik_Type* type = sema_expr(tu, args[0]);
         if (type->kind < KIND_CHAR || type->kind > KIND_LONG) {
             REPORT_EXPR(ERROR, e, "%s can only be applied onto integers");
             goto failure;
         }
 
         for (size_t i = 1; i < arg_count; i++) {
-            Type* arg_type = sema_expr(tu, args[i]);
+            Cuik_Type* arg_type = sema_expr(tu, args[i]);
 
             if (i == 2) {
                 if (arg_type->kind != KIND_PTR) {
@@ -287,7 +287,7 @@ static Type* type_check_builtin(TranslationUnit* tu, Expr* e, const char* name, 
                 goto failure;
             }
 
-            Type* cast_type = (i == 2) ? new_pointer(tu, type) : type;
+            Cuik_Type* cast_type = (i == 2) ? new_pointer(tu, type) : type;
             args[i]->cast_type = cast_type;
         }
 
@@ -299,8 +299,8 @@ static Type* type_check_builtin(TranslationUnit* tu, Expr* e, const char* name, 
             return &builtin_types[TYPE_VOID];
         }
 
-        Type* arg_type = sema_expr(tu, args[0]);
-        Type* int_type = &builtin_types[TYPE_UINT];
+        Cuik_Type* arg_type = sema_expr(tu, args[0]);
+        Cuik_Type* int_type = &builtin_types[TYPE_UINT];
         if (!type_compatible(tu, arg_type, int_type, args[0])) {
             type_as_string(tu, sizeof(temp_string0), temp_string0, arg_type);
             type_as_string(tu, sizeof(temp_string1), temp_string1, int_type);

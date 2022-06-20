@@ -28,7 +28,7 @@ typedef struct ConstValue {
 } ConstValue;
 
 typedef struct Decl {
-    Type* type;
+    Cuik_Type* type;
     Atom name;
     SourceLocIndex loc;
 } Decl;
@@ -50,7 +50,7 @@ typedef enum StorageClass {
 
 typedef struct Symbol {
     Atom name;
-    Type* type;
+    Cuik_Type* type;
     SourceLocIndex loc;
     StorageClass storage_class;
 
@@ -117,22 +117,22 @@ enum {
     TYPE_DOUBLE,
     BUILTIN_TYPE_COUNT,
 };
-extern Type builtin_types[BUILTIN_TYPE_COUNT];
+extern Cuik_Type builtin_types[BUILTIN_TYPE_COUNT];
 
-Type* new_func(TranslationUnit* tu);
-Type* new_enum(TranslationUnit* tu);
-Type* new_blank_type(TranslationUnit* tu);
-Type* new_record(TranslationUnit* tu, bool is_union);
-Type* copy_type(TranslationUnit* tu, Type* base);
-Type* new_pointer(TranslationUnit* tu, Type* base);
-Type* new_typeof(TranslationUnit* tu, Expr* src);
-Type* new_array(TranslationUnit* tu, Type* base, int count);
-Type* new_vector(TranslationUnit* tu, Type* base, int count);
-Type* get_common_type(TranslationUnit* tu, Type* ty1, Type* ty2);
-bool type_equal(TranslationUnit* tu, Type* a, Type* b);
-size_t type_as_string(TranslationUnit* tu, size_t max_len, char* buffer, Type* type_index);
+Cuik_Type* new_func(TranslationUnit* tu);
+Cuik_Type* new_enum(TranslationUnit* tu);
+Cuik_Type* new_blank_type(TranslationUnit* tu);
+Cuik_Type* new_record(TranslationUnit* tu, bool is_union);
+Cuik_Type* copy_type(TranslationUnit* tu, Cuik_Type* base);
+Cuik_Type* new_pointer(TranslationUnit* tu, Cuik_Type* base);
+Cuik_Type* new_typeof(TranslationUnit* tu, Expr* src);
+Cuik_Type* new_array(TranslationUnit* tu, Cuik_Type* base, int count);
+Cuik_Type* new_vector(TranslationUnit* tu, Cuik_Type* base, int count);
+Cuik_Type* get_common_type(TranslationUnit* tu, Cuik_Type* ty1, Cuik_Type* ty2);
+bool type_equal(TranslationUnit* tu, Cuik_Type* a, Cuik_Type* b);
+size_t type_as_string(TranslationUnit* tu, size_t max_len, char* buffer, Cuik_Type* type_index);
 
-void type_layout(TranslationUnit* restrict tu, Type* type);
+void type_layout(TranslationUnit* restrict tu, Cuik_Type* type);
 
 Stmt* resolve_unknown_symbol(TranslationUnit* tu, Expr* e);
 ConstValue const_eval(TranslationUnit* tu, const Expr* e);

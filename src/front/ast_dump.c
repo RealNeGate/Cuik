@@ -79,7 +79,7 @@ static void dump_expr(TranslationUnit* tu, FILE* stream, Expr* restrict e, int d
         case EXPR_PARAM: {
             int param_num = e->param_num;
 
-            Type* func_type = function_stmt->decl.type;
+            Cuik_Type* func_type = function_stmt->decl.type;
             Param* params = func_type->func.param_list;
 
             type_as_string(tu, sizeof(temp_string0), temp_string0, e->type);
@@ -349,7 +349,7 @@ static void dump_stmt(TranslationUnit* tu, FILE* stream, Stmt* restrict s, int d
             type_as_string(tu, sizeof(temp_string0), temp_string0, s->decl.type);
 
             if (s->decl.attrs.is_typedef) {
-                fprintf(stream, "TypedefDecl %s '%s'\n", s->decl.name, temp_string0);
+                fprintf(stream, "Cuik_TypedefDecl %s '%s'\n", s->decl.name, temp_string0);
             } else {
                 if (s->decl.name != NULL) {
                     fprintf(stream, "VarDecl %s '%s'\n", s->decl.name, temp_string0);
@@ -551,7 +551,7 @@ void ast_dump_stats(TranslationUnit* tu, FILE* stream) {
            arena_get_memory_usage(&tu->ast_arena) / 1024);
 }
 
-void ast_dump_type(TranslationUnit* tu, Type* ty, int depth, int offset) {
+void ast_dump_type(TranslationUnit* tu, Cuik_Type* ty, int depth, int offset) {
     for (int i = 0; i < depth; i++) printf("  ");
 
     if (ty->kind == KIND_STRUCT || ty->kind == KIND_UNION) {

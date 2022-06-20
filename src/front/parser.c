@@ -20,7 +20,7 @@
 
 typedef struct {
     Atom key;
-    Type* value;
+    Cuik_Type* value;
 } TagEntry;
 
 typedef struct {
@@ -81,18 +81,18 @@ static void parse_decl_or_expr(TranslationUnit* tu, TokenStream* restrict s, siz
 
 static bool skip_over_declspec(TokenStream* restrict s);
 static bool try_parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attribs* attr);
-static Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attribs* attr);
+static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attribs* attr);
 
-static Decl parse_declarator(TranslationUnit* tu, TokenStream* restrict s, Type* type, bool is_abstract, bool disabled_paren);
-static Type* parse_typename(TranslationUnit* tu, TokenStream* restrict s);
+static Decl parse_declarator(TranslationUnit* tu, TokenStream* restrict s, Cuik_Type* type, bool is_abstract, bool disabled_paren);
+static Cuik_Type* parse_typename(TranslationUnit* tu, TokenStream* restrict s);
 
 // It's like parse_expr but it doesn't do anything with comma operators to avoid
 // parsing issues.
 static intmax_t parse_const_expr(TranslationUnit* tu, TokenStream* restrict s);
-static Expr* parse_initializer(TranslationUnit* tu, TokenStream* restrict s, Type* type);
-static Expr* parse_function_literal(TranslationUnit* tu, TokenStream* restrict s, Type* type);
+static Expr* parse_initializer(TranslationUnit* tu, TokenStream* restrict s, Cuik_Type* type);
+static Expr* parse_function_literal(TranslationUnit* tu, TokenStream* restrict s, Cuik_Type* type);
 static void parse_function_definition(TranslationUnit* tu, TokenStream* restrict s, Stmt* n);
-static Type* parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s, Type* type, Atom name);
+static Cuik_Type* parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s, Cuik_Type* type, Atom name);
 
 static bool is_typename(TokenStream* restrict s);
 
@@ -133,7 +133,7 @@ static Symbol* find_global_symbol(const char* name) {
     return (search >= 0) ? &global_symbols[search].value : NULL;
 }
 
-static Type* find_tag(const char* name) {
+static Cuik_Type* find_tag(const char* name) {
     // try locals
     size_t i = local_tag_count;
     while (i--) {
@@ -298,7 +298,7 @@ static void phase3_parse_task(void* arg) {
 // 0 no cycles
 // 1 cycles
 // 2 cycles and we gave an error msg
-static int type_cycles_dfs(TranslationUnit* restrict tu, Type* type, uint8_t* visited, uint8_t* finished) {
+static int type_cycles_dfs(TranslationUnit* restrict tu, Cuik_Type* type, uint8_t* visited, uint8_t* finished) {
     // non-record types are always finished :P
     if (type->kind != KIND_STRUCT && type->kind != KIND_UNION) {
         return 0;
@@ -343,7 +343,7 @@ static int type_cycles_dfs(TranslationUnit* restrict tu, Type* type, uint8_t* vi
     return 0;
 }
 
-static void type_resolve_pending_align(TranslationUnit* restrict tu, Type* type) {
+static void type_resolve_pending_align(TranslationUnit* restrict tu, Cuik_Type* type) {
     size_t pending_count = arrlen(pending_exprs);
     for (size_t i = 0; i < pending_count; i++) {
         if (pending_exprs[i].dst == &type->align) {
@@ -356,7 +356,7 @@ static void type_resolve_pending_align(TranslationUnit* restrict tu, Type* type)
 
             int align = 0;
             if (is_typename(&mini_lex)) {
-                Type* new_align = parse_typename(tu, &mini_lex);
+                Cuik_Type* new_align = parse_typename(tu, &mini_lex);
                 if (new_align == NULL || new_align->align) {
                     REPORT(ERROR, loc, "_Alignas cannot operate with incomplete");
                 } else {
@@ -382,7 +382,7 @@ static void type_resolve_pending_align(TranslationUnit* restrict tu, Type* type)
     abort();
 }
 
-void type_layout(TranslationUnit* restrict tu, Type* type) {
+void type_layout(TranslationUnit* restrict tu, Cuik_Type* type) {
     if (type->size != 0) return;
     if (type->is_inprogress) {
         REPORT(ERROR, type->loc, "Type has a circular dependency");
@@ -573,7 +573,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(TB_Module* restrict ir_mod
 
                 // must be a declaration since it's a top level statement
                 Attribs attr = {0};
-                Type* type = parse_declspec(tu, s, &attr);
+                Cuik_Type* type = parse_declspec(tu, s, &attr);
 
                 if (attr.is_typedef) {
                     // declarator (',' declarator)+ ';'
@@ -604,7 +604,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(TB_Module* restrict ir_mod
                                     abort();
                                 }
 
-                                Type* placeholder_space = search->type;
+                                Cuik_Type* placeholder_space = search->type;
                                 if (placeholder_space->kind != KIND_PLACEHOLDER && !type_equal(tu, decl.type, search->type)) {
                                     report_two_spots(REPORT_ERROR, s, decl.loc, search->loc,
                                                      "typedef overrides previous declaration.",
@@ -613,7 +613,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(TB_Module* restrict ir_mod
                                 }
 
                                 // replace placeholder with actual entry
-                                memcpy(placeholder_space, decl.type, sizeof(Type));
+                                memcpy(placeholder_space, decl.type, sizeof(Cuik_Type));
                                 placeholder_space->loc = decl.loc;
                             } else {
                                 // add new entry
@@ -842,8 +842,8 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(TB_Module* restrict ir_mod
         ////////////////////////////////
         size_t type_count = 0;
         for (ArenaSegment* a = tu->type_arena.base; a != NULL; a = a->next) {
-            for (size_t used = 0; used < a->used; used += sizeof(Type)) {
-                Type* type = (Type*)&a->data[used];
+            for (size_t used = 0; used < a->used; used += sizeof(Cuik_Type)) {
+                Cuik_Type* type = (Cuik_Type*)&a->data[used];
                 if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
                     type->ordinal = type_count++;
                 } else if (type->kind == KIND_PLACEHOLDER) {
@@ -864,8 +864,8 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(TB_Module* restrict ir_mod
 
         // for each type, check for cycles
         for (ArenaSegment* a = tu->type_arena.base; a != NULL; a = a->next) {
-            for (size_t used = 0; used < a->used; used += sizeof(Type)) {
-                Type* type = (Type*)&a->data[used];
+            for (size_t used = 0; used < a->used; used += sizeof(Cuik_Type)) {
+                Cuik_Type* type = (Cuik_Type*)&a->data[used];
 
                 if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
                     // if cycles... quit lmao
@@ -917,8 +917,8 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(TB_Module* restrict ir_mod
 
         // do record layouts and shi
         for (ArenaSegment* a = tu->type_arena.base; a != NULL; a = a->next) {
-            for (size_t used = 0; used < a->used; used += sizeof(Type)) {
-                Type* type = (Type*)&a->data[used];
+            for (size_t used = 0; used < a->used; used += sizeof(Cuik_Type)) {
+                Cuik_Type* type = (Cuik_Type*)&a->data[used];
 
                 if (type->align == -1) {
                     // this means it's got a pending expression for an alignment
@@ -1100,7 +1100,7 @@ static Symbol* find_local_symbol(TokenStream* restrict s) {
 // STATEMENTS
 ////////////////////////////////
 static void parse_function_definition(TranslationUnit* tu, TokenStream* restrict s, Stmt* n) {
-    Type* type = n->decl.type;
+    Cuik_Type* type = n->decl.type;
 
     Param* param_list = type->func.param_list;
     size_t param_count = type->func.param_count;
@@ -1586,7 +1586,7 @@ static void parse_decl_or_expr(TranslationUnit* tu, TokenStream* restrict s, siz
         tokens_next(s);
     } else if (is_typename(s)) {
         Attribs attr = {0};
-        Type* type = parse_declspec(tu, s, &attr);
+        Cuik_Type* type = parse_declspec(tu, s, &attr);
 
         if (attr.is_typedef) {
             // don't expect one the first time

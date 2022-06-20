@@ -2,10 +2,8 @@
 
 typedef struct Stmt Stmt;
 typedef struct Expr Expr;
-typedef struct Type Type;
 
-
-typedef enum TypeKind {
+typedef enum Cuik_TypeKind {
     KIND_VOID,
     KIND_BOOL,
     KIND_CHAR,
@@ -30,11 +28,11 @@ typedef enum TypeKind {
     // this is done to enable typeof to work with out of order decls...
     // it's a mess but it's worth it
     KIND_TYPEOF
-} TypeKind;
+} Cuik_TypeKind;
 
 // Used by unions and structs
 typedef struct {
-    Type* type;
+    Cuik_Type* type;
     Atom name;
 
     SourceLocIndex loc;
@@ -71,17 +69,17 @@ typedef struct {
 } EnumEntry;
 
 typedef struct {
-    Type* type;
+    Cuik_Type* type;
     Atom name;
 } Param;
 
 typedef struct {
-    Type* key;
+    Cuik_Type* key;
     Expr* value;
 } C11GenericEntry;
 
-struct Type {
-    TypeKind kind;
+struct Cuik_Type {
+    Cuik_TypeKind kind;
     int size;  // sizeof
     int align; // _Alignof
     SourceLocIndex loc;
@@ -100,7 +98,7 @@ struct Type {
 
         // Arrays
         struct {
-            Type* array_of;
+            Cuik_Type* array_of;
             int array_count;
 
             // if non-zero, then we must execute an expression
@@ -110,14 +108,14 @@ struct Type {
 
         // Pointers
         struct {
-            Type* ptr_to;
+            Cuik_Type* ptr_to;
             bool is_ptr_restrict : 1;
         };
 
         // Function
         struct {
             Atom name;
-            Type* return_type;
+            Cuik_Type* return_type;
             size_t param_count;
             Param* param_list;
 
@@ -142,10 +140,10 @@ struct Type {
 
         struct {
             int count;
-            Type* base;
+            Cuik_Type* base;
         } vector_;
 
-        // Typeof
+        // Cuik_Typeof
         struct {
             Expr* src;
         } typeof_;
@@ -178,7 +176,7 @@ typedef struct InitNode {
     // Fully resolved members with a kid_count of 0 will have
     // a proper offset and type after the type checking
     uint32_t offset;
-    Type* type;
+    Cuik_Type* type;
 
     Expr* expr;
     InitNodeDesignator mode;
@@ -370,7 +368,7 @@ struct Stmt {
             Stmt* next;
         } switch_;
         struct StmtDecl {
-            Type* type;
+            Cuik_Type* type;
             Atom name;
 
             // acceleration structure for scrubbing for symbols
@@ -416,7 +414,7 @@ struct Expr {
     // some flags:
     bool has_parens : 1;
 
-    Type* type;
+    Cuik_Type* type;
 
     // this is the type it'll be desugared into
     // for example:
@@ -425,7 +423,7 @@ struct Expr {
     //
     //   their cast_type might be int because of C's
     //   promotion rules.
-    Type* cast_type;
+    Cuik_Type* cast_type;
 
     union {
         struct {
@@ -461,11 +459,11 @@ struct Expr {
             Expr* next_symbol_in_chain;
         } enum_val;
         struct {
-            Type* type;
+            Cuik_Type* type;
             Expr* src;
         } va_arg_;
         struct {
-            Type* type;
+            Cuik_Type* type;
             Expr* src;
         } cast;
         struct {
@@ -515,14 +513,14 @@ struct Expr {
         } str;
         // either sizeof(T) or _Alignof(T)
         struct {
-            Type* type;
+            Cuik_Type* type;
         } x_of_type;
         // either sizeof(expr) or _Alignof(expr)
         struct {
             Expr* expr;
         } x_of_expr;
         struct {
-            Type* type;
+            Cuik_Type* type;
             int count;
             InitNode* nodes;
         } init;
@@ -541,4 +539,3 @@ struct Expr {
 _Static_assert(offsetof(Expr, next_symbol_in_chain) == offsetof(Expr, next_symbol_in_chain2), "these should be aliasing");
 _Static_assert(offsetof(Expr, next_symbol_in_chain) == offsetof(Expr, enum_val.next_symbol_in_chain), "these should be aliasing");
 _Static_assert(offsetof(Expr, next_symbol_in_chain) == offsetof(Expr, builtin_sym.next_symbol_in_chain), "these should be aliasing");
-

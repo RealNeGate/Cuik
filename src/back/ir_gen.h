@@ -23,7 +23,7 @@ typedef enum IRValType {
 
 typedef struct IRVal {
     IRValType value_type;
-    Type* type;
+    Cuik_Type* type;
 
     union {
         TB_Register reg;
@@ -43,7 +43,7 @@ typedef struct IRVal {
     };
 } IRVal;
 
-inline static TB_DataType ctype_to_tbtype(const Type* t) {
+inline static TB_DataType ctype_to_tbtype(const Cuik_Type* t) {
     switch (t->kind) {
         case KIND_VOID:
         return TB_TYPE_VOID;

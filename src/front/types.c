@@ -1,7 +1,7 @@
 #include "../ext/threads.h"
 #include "parser.h"
 
-Type builtin_types[] = {
+Cuik_Type builtin_types[] = {
     // crap
     [TYPE_VOID] = {KIND_VOID, 0, 0},
     [TYPE_BOOL] = {KIND_BOOL, 1, 1},
@@ -19,40 +19,40 @@ Type builtin_types[] = {
     [TYPE_FLOAT] = {KIND_FLOAT, 4, 4},
     [TYPE_DOUBLE] = {KIND_DOUBLE, 8, 8}};
 
-static Type* alloc_type(TranslationUnit* tu, const Type* src) {
+static Cuik_Type* alloc_type(TranslationUnit* tu, const Cuik_Type* src) {
     mtx_lock(&tu->arena_mutex);
-    Type* dst = ARENA_ALLOC(&tu->type_arena, Type);
+    Cuik_Type* dst = ARENA_ALLOC(&tu->type_arena, Cuik_Type);
     mtx_unlock(&tu->arena_mutex);
 
-    memcpy(dst, src, sizeof(Type));
+    memcpy(dst, src, sizeof(Cuik_Type));
     return dst;
 }
 
-Type* new_enum(TranslationUnit* tu) {
-    return alloc_type(tu, &(Type){
+Cuik_Type* new_enum(TranslationUnit* tu) {
+    return alloc_type(tu, &(Cuik_Type){
                           .kind = KIND_ENUM,
                       });
 }
 
-Type* new_func(TranslationUnit* tu) {
-    return alloc_type(tu, &(Type){
+Cuik_Type* new_func(TranslationUnit* tu) {
+    return alloc_type(tu, &(Cuik_Type){
                           .kind = KIND_FUNC,
                           .size = 1,
                           .align = 1});
 }
 
-Type* copy_type(TranslationUnit* tu, Type* base) {
+Cuik_Type* copy_type(TranslationUnit* tu, Cuik_Type* base) {
     return alloc_type(tu, base);
 }
 
-Type* new_record(TranslationUnit* tu, bool is_union) {
-    return alloc_type(tu, &(Type){
+Cuik_Type* new_record(TranslationUnit* tu, bool is_union) {
+    return alloc_type(tu, &(Cuik_Type){
                           .kind = is_union ? KIND_UNION : KIND_STRUCT,
                       });
 }
 
-Type* new_pointer(TranslationUnit* tu, Type* base) {
-    return alloc_type(tu, &(Type){
+Cuik_Type* new_pointer(TranslationUnit* tu, Cuik_Type* base) {
+    return alloc_type(tu, &(Cuik_Type){
                           .kind = KIND_PTR,
                           .size = 8,
                           .align = 8,
@@ -60,8 +60,8 @@ Type* new_pointer(TranslationUnit* tu, Type* base) {
                       });
 }
 
-Type* new_typeof(TranslationUnit* tu, Expr* src) {
-    return alloc_type(tu, &(Type){
+Cuik_Type* new_typeof(TranslationUnit* tu, Expr* src) {
+    return alloc_type(tu, &(Cuik_Type){
                           .kind = KIND_TYPEOF,
 
                           // ideally if you try using these it'll crash because things
@@ -74,10 +74,10 @@ Type* new_typeof(TranslationUnit* tu, Expr* src) {
                       });
 }
 
-Type* new_array(TranslationUnit* tu, Type* base, int count) {
+Cuik_Type* new_array(TranslationUnit* tu, Cuik_Type* base, int count) {
     if (count == 0) {
         // these zero-sized arrays don't actually care about incomplete element types
-        return alloc_type(tu, &(Type){
+        return alloc_type(tu, &(Cuik_Type){
                               .kind = KIND_ARRAY,
                               .size = 0,
                               .align = base->align,
@@ -95,7 +95,7 @@ Type* new_array(TranslationUnit* tu, Type* base, int count) {
     }
 
     assert(align != 0);
-    return alloc_type(tu, &(Type){
+    return alloc_type(tu, &(Cuik_Type){
                           .kind = KIND_ARRAY,
                           .size = dst,
                           .align = align,
@@ -104,8 +104,8 @@ Type* new_array(TranslationUnit* tu, Type* base, int count) {
                       });
 }
 
-Type* new_vector(TranslationUnit* tu, Type* base, int count) {
-    return alloc_type(tu, &(Type){
+Cuik_Type* new_vector(TranslationUnit* tu, Cuik_Type* base, int count) {
+    return alloc_type(tu, &(Cuik_Type){
                           .kind = KIND_VECTOR,
                           .size = 0,
                           .align = base->align,
@@ -114,8 +114,8 @@ Type* new_vector(TranslationUnit* tu, Type* base, int count) {
                       });
 }
 
-Type* new_blank_type(TranslationUnit* tu) {
-    return alloc_type(tu, &(Type){
+Cuik_Type* new_blank_type(TranslationUnit* tu) {
+    return alloc_type(tu, &(Cuik_Type){
                           .kind = KIND_PLACEHOLDER});
 }
 
@@ -124,7 +124,7 @@ Type* new_blank_type(TranslationUnit* tu) {
 // NOTE(NeGate): this function is called within the IR gen
 // code which is parallel so we need a mutex to avoid messing
 // up the type arena.
-Type* get_common_type(TranslationUnit* tu, Type* ty1, Type* ty2) {
+Cuik_Type* get_common_type(TranslationUnit* tu, Cuik_Type* ty1, Cuik_Type* ty2) {
     // implictly convert arrays into pointers
     if (ty1->kind == KIND_ARRAY) {
         return new_pointer(tu, ty1->array_of);
@@ -159,7 +159,7 @@ Type* get_common_type(TranslationUnit* tu, Type* ty1, Type* ty2) {
     return ty1;
 }
 
-bool type_equal(TranslationUnit* tu, Type* ty1, Type* ty2) {
+bool type_equal(TranslationUnit* tu, Cuik_Type* ty1, Cuik_Type* ty2) {
     if (ty1 == ty2) return true;
 
     // just because they match kind doesn't necessarily
@@ -200,7 +200,7 @@ bool type_equal(TranslationUnit* tu, Type* ty1, Type* ty2) {
     return true;
 }
 
-size_t type_as_string(TranslationUnit* tu, size_t max_len, char* buffer, Type* type) {
+size_t type_as_string(TranslationUnit* tu, size_t max_len, char* buffer, Cuik_Type* type) {
     if (type == NULL) {
         size_t i = cstr_copy(max_len, buffer, "(null)");
         buffer[i] = '\0';

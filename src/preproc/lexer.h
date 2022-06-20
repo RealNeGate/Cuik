@@ -139,16 +139,6 @@ enum TknType {
     TOKEN_KW_declspec,
 };
 
-typedef enum IntSuffix {
-    //                u   l   l
-    INT_SUFFIX_NONE = 0 + 0 + 0,
-    INT_SUFFIX_U    = 1 + 0 + 0,
-    INT_SUFFIX_L    = 0 + 2 + 0,
-    INT_SUFFIX_UL   = 1 + 2 + 0,
-    INT_SUFFIX_LL   = 0 + 2 + 2,
-    INT_SUFFIX_ULL  = 1 + 2 + 2,
-} IntSuffix;
-
 typedef struct {
     ////////////////////////////////
     // USER-PROVIDED
