@@ -2,7 +2,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdlib.h>
-#include <back/tb.h>
+#include <tb.h>
 
 #define CUIK_API
 
@@ -10,6 +10,7 @@
 typedef struct threadpool_t threadpool_t;
 typedef struct TokenStream TokenStream;
 typedef struct Stmt Stmt;
+typedef struct Token Token;
 typedef struct TranslationUnit TranslationUnit;
 typedef struct CompilationUnit CompilationUnit;
 typedef struct Cuik_SystemLibs Cuik_SystemLibs;
@@ -28,6 +29,26 @@ typedef struct Cuik_FileEntry {
     const char* filepath;
     uint8_t* content;
 } Cuik_FileEntry;
+
+typedef struct Cuik_DefineRef {
+    uint32_t bucket, id;
+} Cuik_DefineRef;
+
+typedef struct Cuik_Define {
+    SourceLocIndex loc;
+
+    struct {
+        size_t len;
+        const char* data;
+    } key;
+
+    struct {
+        size_t len;
+        const char* data;
+    } value;
+} Cuik_Define;
+
+CUIK_API void cuik_init(void);
 
 CUIK_API void cuikpp_init(Cuik_CPP* ctx);
 CUIK_API void cuikpp_deinit(Cuik_CPP* ctx);
@@ -58,8 +79,19 @@ CUIK_API void cuikpp_define(Cuik_CPP* ctx, const char key[], const char value[])
 // Convert C preprocessor state and an input file into a final preprocessed stream
 CUIK_API TokenStream cuikpp_run(Cuik_CPP* ctx, const char filepath[FILENAME_MAX]);
 
+// Used to make iterators for the define list, for example:
+//
+// Cuik_DefineRef it, curr = cuikpp_first_define(cpp);
+// while (it = curr, cuikpp_next_define(cpp, &curr)) { }
+CUIK_API Cuik_DefineRef cuikpp_first_define(Cuik_CPP* ctx);
+CUIK_API bool cuikpp_next_define(Cuik_CPP* ctx, Cuik_DefineRef* src);
+
+// Get the information from a define reference
+CUIK_API Cuik_Define cuikpp_get_define(Cuik_CPP* ctx, Cuik_DefineRef src);
+
 // this will return a Cuik_CPP through out_cpp that you have to free once you're
-// done with it (after all frontend work is done)
+// done with it (after all frontend work is done), the out_cpp can also be finalized if
+// you dont need the defines table.
 CUIK_API TokenStream cuik_preprocess_simple(Cuik_CPP* restrict out_cpp, const char* filepath, Cuik_SystemLibs* libs, size_t include_count, const char* includes[]);
 
 // Locates all system libraries
@@ -77,8 +109,15 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(TB_Module* restrict ir_mod
 CUIK_API void cuik_destroy_translation_unit(TranslationUnit* restrict tu);
 
 ////////////////////////////////////////////
+// Token stream
+////////////////////////////////////////////
+CUIK_API Token* cuik_get_tokens(TokenStream* restrict s);
+CUIK_API size_t cuik_get_token_count(TokenStream* restrict s);
+
+////////////////////////////////////////////
 // IR generation
 ////////////////////////////////////////////
+// Generates TBIR for a specific top-level statement
 CUIK_API void cuik_generate_ir(TranslationUnit* restrict tu, Stmt* restrict s);
 
 ////////////////////////////////////////////
@@ -88,6 +127,8 @@ typedef void Cuik_TopLevelVisitor(TranslationUnit* restrict tu, Stmt* restrict s
 
 CUIK_API void cuik_visit_top_level(TranslationUnit* restrict tu, void* user_data, Cuik_TopLevelVisitor* visitor);
 CUIK_API void cuik_dump_translation_unit(FILE* stream, TranslationUnit* tu, bool minimalist);
+
+CUIK_API bool cuik_is_in_main_file(TranslationUnit* restrict tu, SourceLocIndex loc);
 
 ////////////////////////////////////////////
 // Compilation unit management

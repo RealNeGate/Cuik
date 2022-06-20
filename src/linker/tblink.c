@@ -1,5 +1,5 @@
 #include <back/linker.h>
-#include <back/tb.h>
+#include <tb.h>
 
 #define NL_STRING_MAP_IMPL
 #include <string_map.h>

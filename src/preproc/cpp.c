@@ -121,6 +121,51 @@ CUIK_API void cuikpp_add_include_directory(Cuik_CPP* ctx, const char dir[]) {
     arrput(ctx->system_include_dirs, strdup(dir));
 }
 
+CUIK_API Cuik_DefineRef cuikpp_first_define(Cuik_CPP* ctx) {
+    for (int i = 0; i < MACRO_BUCKET_COUNT; i++) {
+        if (ctx->macro_bucket_count[i] != 0) {
+            // first slot in that non-empty bucket
+            return (Cuik_DefineRef){ i, 0 };
+        }
+    }
+
+    return (Cuik_DefineRef){ MACRO_BUCKET_COUNT, 0 };
+}
+
+CUIK_API bool cuikpp_next_define(Cuik_CPP* ctx, Cuik_DefineRef* src) {
+    // we outta bounds
+    if (src->bucket >= MACRO_BUCKET_COUNT) return false;
+
+    // find next bucket
+    src->id += 1;
+    while (src->id >= ctx->macro_bucket_count[src->bucket]) {
+        src->id = 0;
+        src->bucket += 1;
+
+        if (src->bucket >= MACRO_BUCKET_COUNT) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+CUIK_API Cuik_Define cuikpp_get_define(Cuik_CPP* ctx, Cuik_DefineRef src) {
+    size_t e = (src.bucket * SLOTS_PER_MACRO_BUCKET) + src.id;
+
+    size_t keylen = ctx->macro_bucket_keys_length[e];
+    const char* key = (const char*)ctx->macro_bucket_keys[e];
+
+    size_t vallen = ctx->macro_bucket_values_end[e] - ctx->macro_bucket_values_start[e];
+    const char* val = (const char*)ctx->macro_bucket_values_start[e];
+
+    return (Cuik_Define){
+        .loc = ctx->macro_bucket_source_locs[e],
+        .key = { keylen, key },
+        .value = { vallen, val },
+    };
+}
+
 CUIK_API void cuikpp_dump(Cuik_CPP* ctx) {
     int count = 0;
 

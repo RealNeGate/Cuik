@@ -20,7 +20,7 @@ typedef enum {
 extern mtx_t report_mutex;
 extern bool report_using_thin_errors;
 
-void init_report_system();
+void init_report_system(void);
 
 // loc_msg      |
 // loc_msg2     |> are all nullable
@@ -30,4 +30,4 @@ void report(ReportLevel level, TokenStream* tokens, SourceLocIndex loc, const ch
 void report_ranged(ReportLevel level, TokenStream* tokens, SourceLocIndex start_loc, SourceLocIndex end_loc, const char* fmt, ...);
 
 void crash_if_reports(ReportLevel min);
-void clear_any_reports();
+void clear_any_reports(void);

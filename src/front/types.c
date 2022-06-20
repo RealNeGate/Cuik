@@ -30,15 +30,15 @@ static Type* alloc_type(TranslationUnit* tu, const Type* src) {
 
 Type* new_enum(TranslationUnit* tu) {
     return alloc_type(tu, &(Type){
-                              .kind = KIND_ENUM,
-                          });
+                          .kind = KIND_ENUM,
+                      });
 }
 
 Type* new_func(TranslationUnit* tu) {
     return alloc_type(tu, &(Type){
-                              .kind = KIND_FUNC,
-                              .size = 1,
-                              .align = 1});
+                          .kind = KIND_FUNC,
+                          .size = 1,
+                          .align = 1});
 }
 
 Type* copy_type(TranslationUnit* tu, Type* base) {
@@ -47,39 +47,43 @@ Type* copy_type(TranslationUnit* tu, Type* base) {
 
 Type* new_record(TranslationUnit* tu, bool is_union) {
     return alloc_type(tu, &(Type){
-                              .kind = is_union ? KIND_UNION : KIND_STRUCT});
+                          .kind = is_union ? KIND_UNION : KIND_STRUCT,
+                      });
 }
 
 Type* new_pointer(TranslationUnit* tu, Type* base) {
     return alloc_type(tu, &(Type){
-                              .kind = KIND_PTR,
-                              .size = 8,
-                              .align = 8,
-                              .ptr_to = base});
+                          .kind = KIND_PTR,
+                          .size = 8,
+                          .align = 8,
+                          .ptr_to = base,
+                      });
 }
 
 Type* new_typeof(TranslationUnit* tu, Expr* src) {
     return alloc_type(tu, &(Type){
-                              .kind = KIND_TYPEOF,
+                          .kind = KIND_TYPEOF,
 
-                              // ideally if you try using these it'll crash because things
-                              // do sanity checks on align, hopefully none trigger because
-                              // we resolve it properly.
-                              .size = 0,
-                              .align = 0,
+                          // ideally if you try using these it'll crash because things
+                          // do sanity checks on align, hopefully none trigger because
+                          // we resolve it properly.
+                          .size = 0,
+                          .align = 0,
 
-                              .typeof_.src = src});
+                          .typeof_.src = src,
+                      });
 }
 
 Type* new_array(TranslationUnit* tu, Type* base, int count) {
     if (count == 0) {
         // these zero-sized arrays don't actually care about incomplete element types
         return alloc_type(tu, &(Type){
-                                  .kind = KIND_ARRAY,
-                                  .size = 0,
-                                  .align = base->align,
-                                  .array_of = base,
-                                  .array_count = 0});
+                              .kind = KIND_ARRAY,
+                              .size = 0,
+                              .align = base->align,
+                              .array_of = base,
+                              .array_count = 0,
+                          });
     }
 
     int size = base->size;
@@ -92,25 +96,27 @@ Type* new_array(TranslationUnit* tu, Type* base, int count) {
 
     assert(align != 0);
     return alloc_type(tu, &(Type){
-                              .kind = KIND_ARRAY,
-                              .size = dst,
-                              .align = align,
-                              .array_of = base,
-                              .array_count = count});
+                          .kind = KIND_ARRAY,
+                          .size = dst,
+                          .align = align,
+                          .array_of = base,
+                          .array_count = count,
+                      });
 }
 
 Type* new_vector(TranslationUnit* tu, Type* base, int count) {
     return alloc_type(tu, &(Type){
-                              .kind = KIND_VECTOR,
-                              .size = 0,
-                              .align = base->align,
-                              .array_of = base,
-                              .array_count = 0});
+                          .kind = KIND_VECTOR,
+                          .size = 0,
+                          .align = base->align,
+                          .array_of = base,
+                          .array_count = 0,
+                      });
 }
 
 Type* new_blank_type(TranslationUnit* tu) {
     return alloc_type(tu, &(Type){
-                              .kind = KIND_PLACEHOLDER});
+                          .kind = KIND_PLACEHOLDER});
 }
 
 // https://github.com/rui314/chibicc/blob/main/type.c
@@ -203,116 +209,116 @@ size_t type_as_string(TranslationUnit* tu, size_t max_len, char* buffer, Type* t
 
     size_t i = 0;
     switch (type->kind) {
-    case KIND_VOID:
+        case KIND_VOID:
         i += cstr_copy(max_len - i, &buffer[i], "void");
         break;
-    case KIND_BOOL:
+        case KIND_BOOL:
         i += cstr_copy(max_len - i, &buffer[i], "_Bool");
         break;
-    case KIND_CHAR: {
-        if (type->is_unsigned) i += cstr_copy(max_len - i, &buffer[i], "unsigned ");
+        case KIND_CHAR: {
+            if (type->is_unsigned) i += cstr_copy(max_len - i, &buffer[i], "unsigned ");
 
-        i += cstr_copy(max_len - i, &buffer[i], "char");
-        break;
-    }
-    case KIND_SHORT: {
-        if (type->is_unsigned) i += cstr_copy(max_len - i, &buffer[i], "unsigned ");
+            i += cstr_copy(max_len - i, &buffer[i], "char");
+            break;
+        }
+        case KIND_SHORT: {
+            if (type->is_unsigned) i += cstr_copy(max_len - i, &buffer[i], "unsigned ");
 
-        i += cstr_copy(max_len - i, &buffer[i], "short");
-        break;
-    }
-    case KIND_INT: {
-        if (type->is_unsigned) i += cstr_copy(max_len - i, &buffer[i], "unsigned ");
+            i += cstr_copy(max_len - i, &buffer[i], "short");
+            break;
+        }
+        case KIND_INT: {
+            if (type->is_unsigned) i += cstr_copy(max_len - i, &buffer[i], "unsigned ");
 
-        i += cstr_copy(max_len - i, &buffer[i], "int");
-        break;
-    }
-    case KIND_LONG: {
-        if (type->is_unsigned) i += cstr_copy(max_len - i, &buffer[i], "unsigned ");
+            i += cstr_copy(max_len - i, &buffer[i], "int");
+            break;
+        }
+        case KIND_LONG: {
+            if (type->is_unsigned) i += cstr_copy(max_len - i, &buffer[i], "unsigned ");
 
-        i += cstr_copy(max_len - i, &buffer[i], settings.is_windows_long ? "long long" : "long");
-        break;
-    }
-    case KIND_FLOAT:
+            i += cstr_copy(max_len - i, &buffer[i], "long long");
+            break;
+        }
+        case KIND_FLOAT:
         i += cstr_copy(max_len - i, &buffer[i], "float");
         break;
-    case KIND_DOUBLE:
+        case KIND_DOUBLE:
         i += cstr_copy(max_len - i, &buffer[i], "double");
         break;
-    case KIND_ENUM: {
-        i += cstr_copy(max_len - i, &buffer[i], "enum ");
+        case KIND_ENUM: {
+            i += cstr_copy(max_len - i, &buffer[i], "enum ");
 
-        if (type->enumerator.name) {
-            i += cstr_copy(max_len - i, &buffer[i], (char*)type->enumerator.name);
-        } else {
-            i += cstr_copy(max_len - i, &buffer[i], "unnamed");
+            if (type->enumerator.name) {
+                i += cstr_copy(max_len - i, &buffer[i], (char*)type->enumerator.name);
+            } else {
+                i += cstr_copy(max_len - i, &buffer[i], "unnamed");
+            }
+            break;
         }
-        break;
-    }
-    case KIND_UNION: {
-        i += cstr_copy(max_len - i, &buffer[i], "union ");
+        case KIND_UNION: {
+            i += cstr_copy(max_len - i, &buffer[i], "union ");
 
-        if (type->record.name) {
-            i += cstr_copy(max_len - i, &buffer[i], (char*)type->record.name);
-        } else {
-            i += cstr_copy(max_len - i, &buffer[i], "unnamed");
+            if (type->record.name) {
+                i += cstr_copy(max_len - i, &buffer[i], (char*)type->record.name);
+            } else {
+                i += cstr_copy(max_len - i, &buffer[i], "unnamed");
+            }
+            break;
         }
-        break;
-    }
-    case KIND_STRUCT: {
-        i += cstr_copy(max_len - i, &buffer[i], "struct ");
+        case KIND_STRUCT: {
+            i += cstr_copy(max_len - i, &buffer[i], "struct ");
 
-        if (type->record.name) {
-            i += cstr_copy(max_len - i, &buffer[i], (char*)type->record.name);
-        } else {
-            i += cstr_copy(max_len - i, &buffer[i], "unnamed");
+            if (type->record.name) {
+                i += cstr_copy(max_len - i, &buffer[i], (char*)type->record.name);
+            } else {
+                i += cstr_copy(max_len - i, &buffer[i], "unnamed");
+            }
+            break;
         }
-        break;
-    }
-    case KIND_PTR: {
-        i += type_as_string(tu, max_len - i, &buffer[i], type->ptr_to);
-        buffer[i++] = '*';
-        break;
-    }
-    case KIND_ARRAY: {
-        i += type_as_string(tu, max_len - i, &buffer[i], type->array_of);
-
-        if (i + 12 < max_len) {
-            buffer[i++] = '[';
-
-            i += snprintf(&buffer[i], max_len - i, "%d", type->array_count);
-
-            buffer[i++] = ']';
-        } else {
-            abort();
+        case KIND_PTR: {
+            i += type_as_string(tu, max_len - i, &buffer[i], type->ptr_to);
+            buffer[i++] = '*';
+            break;
         }
-        break;
-    }
-    case KIND_FUNC: {
-        Param* param_list = type->func.param_list;
-        size_t param_count = type->func.param_count;
+        case KIND_ARRAY: {
+            i += type_as_string(tu, max_len - i, &buffer[i], type->array_of);
 
-        i += type_as_string(tu, max_len - i, &buffer[i], type->func.return_type);
+            if (i + 12 < max_len) {
+                buffer[i++] = '[';
 
-        assert(i < max_len);
-        buffer[i++] = '(';
+                i += snprintf(&buffer[i], max_len - i, "%d", type->array_count);
 
-        for (size_t j = 0; j < param_count; j++) {
-            if (j) buffer[i++] = ',';
-
-            i += type_as_string(tu, max_len - i, &buffer[i], param_list[j].type);
+                buffer[i++] = ']';
+            } else {
+                abort();
+            }
+            break;
         }
+        case KIND_FUNC: {
+            Param* param_list = type->func.param_list;
+            size_t param_count = type->func.param_count;
 
-        assert(i < max_len);
-        buffer[i++] = ')';
-        break;
-    }
-    case KIND_TYPEOF: {
-        // TODO(NeGate): give some nicer look to this crap
-        i += cstr_copy(max_len - i, &buffer[i], "typeof(???)");
-        break;
-    }
-    default:
+            i += type_as_string(tu, max_len - i, &buffer[i], type->func.return_type);
+
+            assert(i < max_len);
+            buffer[i++] = '(';
+
+            for (size_t j = 0; j < param_count; j++) {
+                if (j) buffer[i++] = ',';
+
+                i += type_as_string(tu, max_len - i, &buffer[i], param_list[j].type);
+            }
+
+            assert(i < max_len);
+            buffer[i++] = ')';
+            break;
+        }
+        case KIND_TYPEOF: {
+            // TODO(NeGate): give some nicer look to this crap
+            i += cstr_copy(max_len - i, &buffer[i], "typeof(???)");
+            break;
+        }
+        default:
         abort();
     }
 

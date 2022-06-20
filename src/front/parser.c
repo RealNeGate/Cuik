@@ -518,6 +518,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(TB_Module* restrict ir_mod
     TranslationUnit* tu = calloc(1, sizeof(TranslationUnit));
     tu->filepath = s->filepath;
     tu->ir_mod = ir_module;
+    tu->tokens = *s;
 
     tls_init();
     atoms_init();
@@ -586,7 +587,8 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(TB_Module* restrict ir_mod
                             n->decl = (struct StmtDecl){
                                 .name = decl.name,
                                 .type = decl.type,
-                                .attrs = attr};
+                                .attrs = attr,
+                            };
 
                             // typedefs can't be roots ngl
                             n->decl.attrs.is_root = false;
@@ -619,7 +621,8 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(TB_Module* restrict ir_mod
                                     .name = decl.name,
                                     .type = decl.type,
                                     .loc = decl.loc,
-                                    .storage_class = STORAGE_TYPEDEF};
+                                    .storage_class = STORAGE_TYPEDEF,
+                                };
                                 shput(global_symbols, decl.name, sym);
                             }
                         }
@@ -646,7 +649,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(TB_Module* restrict ir_mod
                         n->decl = (struct StmtDecl){
                             .name = NULL,
                             .type = type,
-                            .attrs = attr
+                            .attrs = attr,
                         };
                         n->decl.attrs.is_root = true;
                         arrput(tu->top_level_stmts, n);
@@ -670,7 +673,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(TB_Module* restrict ir_mod
                         n->decl = (struct StmtDecl){
                             .name = decl.name,
                             .type = decl.type,
-                            .attrs = attr
+                            .attrs = attr,
                         };
                         arrput(tu->top_level_stmts, n);
 
@@ -678,7 +681,8 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(TB_Module* restrict ir_mod
                             .name = decl.name,
                             .type = decl.type,
                             .loc = decl.loc,
-                            .stmt = n};
+                            .stmt = n,
+                        };
 
                         Symbol* old_definition = find_global_symbol((const char*)decl.name);
                         if (decl.type->kind == KIND_FUNC) {
@@ -1049,6 +1053,15 @@ CUIK_API void cuik_destroy_translation_unit(TranslationUnit* restrict tu) {
     arena_free(&tu->type_arena);
     mtx_destroy(&tu->arena_mutex);
     free(tu);
+}
+
+CUIK_API bool cuik_is_in_main_file(TranslationUnit* restrict tu, SourceLocIndex loc) {
+    if (SOURCE_LOC_GET_TYPE(loc) == SOURCE_LOC_UNKNOWN) {
+        return false;
+    }
+
+    SourceLoc* l = &tu->tokens.locations[SOURCE_LOC_GET_DATA(loc)];
+    return l->line->filepath == tu->filepath;
 }
 
 Stmt* resolve_unknown_symbol(TranslationUnit* tu, Expr* e) {

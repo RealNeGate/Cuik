@@ -68,6 +68,7 @@ int main(int argc, char** argv) {
     // preproc
     Cuik_CPP cpp;
     TokenStream tokens = cuik_preprocess_simple(&cpp, argv[1], system_libs, 0, NULL);
+    cuikpp_finalize(&cpp);
 
     int count = cuikpp_get_file_table_count(&cpp);
     Cuik_FileEntry* entries = cuikpp_get_file_table(&cpp);

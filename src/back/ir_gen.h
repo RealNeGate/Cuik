@@ -6,7 +6,7 @@
 #include <ext/threads.h>
 #include <front/parser.h>
 
-#include "tb.h"
+#include <tb.h>
 
 extern atomic_flag irgen_defined_tls_index;
 
@@ -82,9 +82,6 @@ InitNode* count_max_tb_init_objects(int node_count, InitNode* node, int* out_cou
 
 // func is NULL then it's not allowed to compute any dynamic initializer expressions
 InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, SourceLocIndex loc, TB_InitializerID init, TB_Register addr, int node_count, InitNode* node);
-
-void irgen_init();
-void irgen_deinit();
 
 TB_Register irgen_as_rvalue(TranslationUnit* tu, TB_Function* func, Expr* e);
 IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e);

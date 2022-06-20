@@ -7,6 +7,15 @@
 
 #define THE_SHTUFFS_SIZE (16 << 20)
 
+typedef enum TknType TknType;
+
+typedef struct Token {
+    TknType type;
+    SourceLocIndex location;
+    const unsigned char* start;
+    const unsigned char* end;
+} Token;
+
 typedef struct PragmaOnceEntry {
     char* key;
     int value;
@@ -59,3 +68,33 @@ struct TokenStream {
     // stb_ds array
     struct SourceLoc* locations;
 };
+
+#define SOURCE_LOC_GET_DATA(loc) ((loc) & ~0xC0000000u)
+#define SOURCE_LOC_GET_TYPE(loc) (((loc)&0xC0000000u) >> 30u)
+#define SOURCE_LOC_SET_TYPE(type, raw) (((type << 30) & 0xC0000000u) | ((raw) & ~0xC0000000u))
+
+typedef enum SourceLocType {
+    SOURCE_LOC_UNKNOWN = 0,
+    SOURCE_LOC_NORMAL = 1,
+    SOURCE_LOC_MACRO = 2,
+    SOURCE_LOC_FILE = 3
+} SourceLocType;
+
+typedef struct SourceRange {
+    SourceLocIndex start, end;
+} SourceRange;
+
+typedef struct SourceLine {
+    const char* filepath;
+    const unsigned char* line_str;
+    SourceLocIndex parent;
+    int line;
+} SourceLine;
+
+typedef struct SourceLoc {
+    SourceLine* line;
+    short columns;
+    short length;
+    int bias;
+} SourceLoc;
+

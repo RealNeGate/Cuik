@@ -14,7 +14,8 @@ static const char* report_names[] = {
     "verbose",
     "info",
     "warning",
-    "error"};
+    "error",
+};
 
 static _Atomic int tally[REPORT_MAX] = {};
 mtx_t report_mutex;
@@ -32,7 +33,7 @@ const static int attribs[] = {
 
 bool report_using_thin_errors = false;
 
-void init_report_system() {
+void init_report_system(void) {
 #if _WIN32
     if (console_handle == NULL) {
         console_handle = GetStdHandle(STD_OUTPUT_HANDLE);
@@ -440,6 +441,6 @@ void crash_if_reports(ReportLevel minimum) {
     }
 }
 
-void clear_any_reports() {
+void clear_any_reports(void) {
     memset(tally, 0, sizeof(tally));
 }

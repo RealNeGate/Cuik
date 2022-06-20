@@ -494,10 +494,10 @@ static void cc_invoke(const CC_Options* options, const char* input_path, const c
         case CC_Ox: cmd_append(" -O2 -DNDEBUG"); break;
     }
 
-    if (ON_CLANG) cmd_append(" -Wno-microsoft-anon-tag -Wno-gnu-designator");
+    if (ON_CLANG) cmd_append(" -Wno-microsoft-enum-forward-reference -Wno-microsoft-anon-tag -Wno-gnu-designator");
     if (options->use_asan) cmd_append(" -fsanitize=address ");
 
-    cmd_append(" -I src");
+    cmd_append(" -I src -I include");
     cmd_append(" -c -o ");
     cmd_append(options->output_dir);
 

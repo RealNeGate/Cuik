@@ -25,6 +25,10 @@ Warnings warnings = {
 
 TargetDescriptor target_desc;
 
+CUIK_API void cuik_init(void) {
+    init_report_system();
+}
+
 static void set_defines(Cuik_CPP* cpp, Cuik_SystemLibs* libs) {
     // find target descriptor
     target_desc = get_x64_target_descriptor();
@@ -199,10 +203,7 @@ CUIK_API TokenStream cuik_preprocess_simple(Cuik_CPP* restrict out_cpp, const ch
         cuikpp_add_include_directory(out_cpp, includes[i]);
     }
 
-    TokenStream tokens = cuikpp_run(out_cpp, filepath);
-    cuikpp_finalize(out_cpp);
-
-    return tokens;
+    return cuikpp_run(out_cpp, filepath);
 }
 
 CUIK_API Cuik_SystemLibs* cuik_get_system_includes(const char* cuik_crt_directory) {
@@ -220,4 +221,12 @@ CUIK_API void cuik_visit_top_level(TranslationUnit* restrict tu, void* user_data
     for (size_t i = 0, count = arrlen(tu->top_level_stmts); i < count; i++) {
         visitor(tu, tu->top_level_stmts[i], user_data);
     }
+}
+
+CUIK_API Token* cuik_get_tokens(TokenStream* restrict s) {
+    return &s->tokens[0];
+}
+
+CUIK_API size_t cuik_get_token_count(TokenStream* restrict s) {
+    return arrlen(s->tokens);
 }

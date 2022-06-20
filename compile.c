@@ -2,6 +2,7 @@
 // just call it with the C11 compiler of your choice
 //
 // It's inspired by nobuild but different
+#define DRIVER_NAME "headergen_driver"
 #define USE_DA_ASAN 0
 #include "compile.h"
 
@@ -267,7 +268,7 @@ int main(int argc, char** argv) {
 
 #ifndef ONLY_LIBRARY
     static const char* LINKER_INPUTS[] = {
-        "bin"SLASH"main_driver.obj",
+        "bin"SLASH DRIVER_NAME".obj",
 #       if ON_WINDOWS
         "bin"SLASH"cuik.lib", "tb"SLASH"tildebackend.lib",
 #       else
@@ -286,7 +287,7 @@ int main(int argc, char** argv) {
     printf("Linking...\n");
 
     // compile main driver
-    cc_invoke(&options, "drivers/main_driver.c", NULL);
+    cc_invoke(&options, "drivers/"DRIVER_NAME".c", NULL);
     cmd_wait_for_all();
 
     ld_invoke("bin"SLASH"cuik",
