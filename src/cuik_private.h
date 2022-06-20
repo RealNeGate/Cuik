@@ -70,7 +70,7 @@ struct TokenStream {
 };
 
 #define SOURCE_LOC_GET_DATA(loc) ((loc) & ~0xC0000000u)
-#define SOURCE_LOC_GET_TYPE(loc) (((loc)&0xC0000000u) >> 30u)
+#define SOURCE_LOC_GET_TYPE(loc) (((loc) & 0xC0000000u) >> 30u)
 #define SOURCE_LOC_SET_TYPE(type, raw) (((type << 30) & 0xC0000000u) | ((raw) & ~0xC0000000u))
 
 typedef enum SourceLocType {
@@ -97,4 +97,3 @@ typedef struct SourceLoc {
     short length;
     int bias;
 } SourceLoc;
-

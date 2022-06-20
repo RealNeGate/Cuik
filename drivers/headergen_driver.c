@@ -1,35 +1,6 @@
-
 #include <cuik.h>
 #include <stdio.h>
-
-#ifdef _WIN32
-#  define WIN32_MEAN_AND_LEAN
-#  include <windows.h>
-#else
-#  include <unistd.h>
-#endif
-
-static bool get_exe_path(char path[FILENAME_MAX]) {
-#ifdef _WIN32
-    return (GetModuleFileNameA(NULL, path, FILENAME_MAX) > 0);
-#else
-    return (readlink("/proc/self/exe", path, FILENAME_MAX) > 0);
-#endif
-}
-
-// tries to walk about `steps` slashes in the filepath and return the pointer to said
-// slash, if it can't reach then it'll return NULL
-static const char* step_out_dir(const char path[FILENAME_MAX], int steps) {
-    int slashes_hit = 0;
-    const char* end = path + strlen(path);
-
-    while (slashes_hit != steps && end-- != path) {
-        if (*end == '/') slashes_hit++;
-        else if (*end == '\\') slashes_hit++;
-    }
-
-    return (slashes_hit == steps) ? end : NULL;
-}
+#include "helper.h"
 
 static void irgen_visitor(TranslationUnit* tu, Stmt* restrict s, void* user_data) {
 
@@ -141,7 +112,6 @@ int main(int argc, char** argv) {
     cuikpp_finalize(&cpp);
 
     cuik_visit_top_level(tu, NULL, irgen_visitor);
-
     cuik_destroy_translation_unit(tu);
 #endif
 

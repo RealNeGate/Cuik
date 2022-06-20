@@ -1984,6 +1984,7 @@ CUIK_API void cuik_generate_ir(TranslationUnit* restrict tu, Stmt* restrict s) {
 
         gen_func_body(tu, type, s);
     } else if (s->op == STMT_DECL || s->op == STMT_GLOBAL_DECL) {
+        if (!s->decl.name) return;
         if (!s->decl.attrs.is_used) return;
         if (s->decl.attrs.is_typedef) return;
         if (s->decl.attrs.is_extern || s->decl.type->kind == KIND_FUNC) return;

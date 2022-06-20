@@ -1435,6 +1435,7 @@ static void sema_top_level(TranslationUnit* tu, Stmt* restrict s) {
         }
         case STMT_DECL:
         case STMT_GLOBAL_DECL: {
+            if (name == NULL) break;
             if (!s->decl.attrs.is_used) break;
             if (s->decl.attrs.is_typedef) break;
 

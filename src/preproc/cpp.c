@@ -263,7 +263,8 @@ static SourceLocIndex get_source_location(Cuik_CPP* restrict c, Lexer* restrict 
     SourceLoc loc = {
         .line = source_line,
         .columns = columns,
-        .length = length};
+        .length = length,
+    };
     arrput(s->locations, loc);
 
     return SOURCE_LOC_SET_TYPE(loc_type, i);
@@ -312,7 +313,8 @@ static void preprocess_file(Cuik_CPP* restrict c, TokenStream* restrict s, size_
                 Token t = {
                     classify_ident(l.token_start, l.token_end - l.token_start),
                     loc,
-                    l.token_start, l.token_end};
+                    l.token_start, l.token_end,
+                };
                 arrput(s->tokens, t);
 
                 lexer_read(&l);
@@ -659,15 +661,13 @@ static void preprocess_file(Cuik_CPP* restrict c, TokenStream* restrict s, size_
 
                         unsigned char* str = gimme_the_shtuffs(c, sizeof("_Pragma"));
                         memcpy(str, "_Pragma", sizeof("_Pragma"));
-                        Token t = (Token){
-                            TOKEN_KW_Pragma, loc, str, str + 7};
+                        Token t = (Token){TOKEN_KW_Pragma, loc, str, str + 7};
                         arrput(s->tokens, t);
 
                         str = gimme_the_shtuffs(c, sizeof("("));
                         str[0] = '(';
                         str[1] = 0;
-                        t = (Token){
-                            '(', loc, str, str + 1};
+                        t = (Token){'(', loc, str, str + 1};
                         arrput(s->tokens, t);
 
                         // Skip until we hit a newline
@@ -701,7 +701,8 @@ static void preprocess_file(Cuik_CPP* restrict c, TokenStream* restrict s, size_
                             t = (Token){
                                 TOKEN_STRING_DOUBLE_QUOTE,
                                 loc,
-                                str, curr - 1};
+                                str, curr - 1,
+                            };
                             arrput(s->tokens, t);
                         }
 
@@ -711,7 +712,8 @@ static void preprocess_file(Cuik_CPP* restrict c, TokenStream* restrict s, size_
                         t = (Token){
                             ')',
                             loc,
-                            str, str + 1};
+                            str, str + 1,
+                        };
                         arrput(s->tokens, t);
                     }
                 } else if (lexer_match(&l, 5, "undef")) {
@@ -789,7 +791,8 @@ static void preprocess_file(Cuik_CPP* restrict c, TokenStream* restrict s, size_
                 l.token_type,
                 get_source_location(c, &l, s, include_loc, SOURCE_LOC_NORMAL),
                 l.token_start,
-                l.token_end};
+                l.token_end,
+            };
 
             arrput(s->tokens, t);
             lexer_read(&l);

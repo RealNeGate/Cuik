@@ -443,7 +443,7 @@ void lexer_read(Lexer* restrict l) {
 
                 l->line_current = current;
                 l->current_line += lines_elapsed;
-                l->hit_line = (lines_elapsed > 0);
+                if (lines_elapsed > 0) l->hit_line = true;
                 goto redo_lex;
             }
         } else if (current[0] == '\\' && (current[1] == '\r' || current[1] == '\n')) {
