@@ -56,7 +56,7 @@ CUIK_API void cuikpp_init(Cuik_CPP* ctx) {
 
         .the_shtuffs = malloc(THE_SHTUFFS_SIZE),
     };
-    ctx->files = big_array_create(Cuik_FileEntry, false);
+    ctx->files = dyn_array_create(Cuik_FileEntry, false);
 
     tls_init();
 }
@@ -67,13 +67,13 @@ CUIK_API void cuikpp_deinit(Cuik_CPP* ctx) {
     }
 
     if (ctx->files != NULL) {
-        size_t count = big_array_length(ctx->files);
+        size_t count = dyn_array_length(ctx->files);
 
         for (size_t i = 0; i < count; i++) {
             free(ctx->files[i].content);
         }
 
-        big_array_destroy(ctx->files);
+        dyn_array_destroy(ctx->files);
         ctx->files = NULL;
     }
 
@@ -96,7 +96,7 @@ CUIK_API void cuikpp_finalize(Cuik_CPP* ctx) {
 }
 
 CUIK_API size_t cuikpp_get_file_table_count(Cuik_CPP* ctx) {
-    return big_array_length(ctx->files);
+    return dyn_array_length(ctx->files);
 }
 
 CUIK_API Cuik_FileEntry* cuikpp_get_file_table(Cuik_CPP* ctx) {
@@ -290,7 +290,7 @@ static void preprocess_file(Cuik_CPP* restrict c, TokenStream* restrict s, size_
     uint64_t timer_start = timer_now();
 
     unsigned char* text = (unsigned char*)read_entire_file(filepath);
-    size_t file_entry_id = big_array_length(c->files);
+    size_t file_entry_id = dyn_array_length(c->files);
     Cuik_FileEntry file_entry = {
         .parent_id = parent_entry,
         .depth = depth,
@@ -298,7 +298,7 @@ static void preprocess_file(Cuik_CPP* restrict c, TokenStream* restrict s, size_
         .filepath = filepath,
         .content = text
     };
-    big_array_put(c->files, file_entry);
+    dyn_array_put(c->files, file_entry);
 
     Lexer l = {filepath, text, text, 1};
     lexer_read(&l);

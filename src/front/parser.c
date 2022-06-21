@@ -530,7 +530,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(TB_Module* restrict ir_mod
     // Parse translation unit
     ////////////////////////////////
     out_of_order_mode = true;
-    BigArray(int) static_assertions = big_array_create(int, false);
+    DynArray(int) static_assertions = dyn_array_create(int, false);
 
     // Phase 1: resolve all top level statements
     timed_block("phase 1") {
@@ -554,7 +554,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(TB_Module* restrict ir_mod
 
                 TknType terminator;
                 size_t current = skip_expression_in_parens(s, &terminator);
-                big_array_put(static_assertions, current);
+                dyn_array_put(static_assertions, current);
 
                 tokens_prev(s);
                 if (tokens_get(s)->type == ',') {
@@ -935,7 +935,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(TB_Module* restrict ir_mod
         ////////////////////////////////
         // Resolve any static assertions
         ////////////////////////////////
-        for (size_t i = 0, count = big_array_length(static_assertions); i < count; i++) {
+        for (size_t i = 0, count = dyn_array_length(static_assertions); i < count; i++) {
             // Spin up a mini expression parser here
             size_t current_lex_pos = static_assertions[i];
 
@@ -965,7 +965,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(TB_Module* restrict ir_mod
         // we don't need to keep it afterwards
         tls_restore(visited);
     }
-    big_array_destroy(static_assertions);
+    dyn_array_destroy(static_assertions);
 
     // Phase 3: resolve all expressions or function bodies
     // This part is parallel because im the fucking GOAT

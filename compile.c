@@ -13,7 +13,6 @@ static const char* INPUT_FILES[] = {
     "src/timer.c",
     "src/diagnostic.c",
     "src/crash_handler.c",
-    "src/big_array.c",
     "src/arena.c",
     "src/settings.c",
     "src/compilation_unit.c",

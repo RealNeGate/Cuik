@@ -39,7 +39,7 @@ struct Cuik_CPP {
     // system libraries
     char** system_include_dirs;
 
-    BigArray(Cuik_FileEntry) files;
+    DynArray(Cuik_FileEntry) files;
 
     // how deep into directive scopes (#if, #ifndef, #ifdef) is it
     int depth;
