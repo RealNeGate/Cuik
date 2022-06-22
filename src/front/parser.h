@@ -83,14 +83,14 @@ struct TranslationUnit {
     TB_Module* ir_mod;
     const char* filepath;
 
-    // chain of TUs for the compilation unit
-    struct TranslationUnit* next;
-
-    atomic_int id_gen;
-    bool is_free;
-
     // token stream
     TokenStream tokens;
+
+    // chain of TUs for the compilation unit
+    struct TranslationUnit* next;
+    atomic_int id_gen;
+
+    const Cuik_TargetDesc* target_desc;
 
     mtx_t arena_mutex;
     Arena ast_arena;

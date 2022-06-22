@@ -887,7 +887,7 @@ Cuik_Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
                 Expr** args = e->call.param_start;
                 int arg_count = e->call.param_count;
 
-                Cuik_Type* ty = target_desc.type_check_builtin(tu, e, name, arg_count, args);
+                Cuik_Type* ty = tu->target_desc->type_check_builtin(tu, e, name, arg_count, args);
                 if (ty == NULL) ty = &builtin_types[TYPE_VOID];
 
                 return (e->type = ty);
@@ -1406,7 +1406,7 @@ static void sema_top_level(TranslationUnit* tu, Stmt* restrict s) {
                 function_stmt = 0;
                 break;
             } else {
-                TB_FunctionPrototype* proto = target_desc.create_prototype(tu, type);
+                TB_FunctionPrototype* proto = tu->target_desc->create_prototype(tu, type);
                 TB_Linkage linkage = s->decl.attrs.is_static ? TB_LINKAGE_PRIVATE : TB_LINKAGE_PUBLIC;
 
                 // TODO(NeGate): Fix this up because it's possibly wrong, essentially

@@ -56,47 +56,47 @@ typedef struct {
 // You don't have to allocate the string map before use, this is just to have an explicit
 // initial size
 #define nl_strmap_alloc(T, initial_size) \
-    (T*)(nl_strmap__alloc(initial_size, sizeof(T)) + 1)
+(T*)(nl_strmap__alloc(initial_size, sizeof(T)) + 1)
 
 #define nl_strmap_put(map, key, value)                                             \
-    do {                                                                           \
-        NL_Strmap__Insert ins__ = nl_strmap__insert((map), key, sizeof(*(value))); \
-        (map) = ins__.new_map;                                                     \
-        (map)[ins__.index] = (value);                                              \
-    } while (0)
+do {                                                                           \
+NL_Strmap__Insert ins__ = nl_strmap__insert((map), key, sizeof(*(value))); \
+(map) = ins__.new_map;                                                     \
+(map)[ins__.index] = (value);                                              \
+} while (0)
 
 #define nl_strmap_put_cstr(map, key, value)                                            \
-    do {                                                                               \
-        NL_Slice slice__ = nl_slice__cstr(key);                                        \
-        NL_Strmap__Insert ins__ = nl_strmap__insert((map), slice__, sizeof(*(value))); \
-        (map) = ins__.new_map;                                                         \
-        (map)[ins__.index] = (value);                                                  \
-    } while (0)
+do {                                                                               \
+NL_Slice slice__ = nl_slice__cstr(key);                                        \
+NL_Strmap__Insert ins__ = nl_strmap__insert((map), slice__, sizeof(*(map)));   \
+(map) = ins__.new_map;                                                         \
+(map)[ins__.index] = (value);                                                  \
+} while (0)
 
 #define nl_strmap_get(map, key) \
-    ((map) != NULL ? nl_strmap__get(((NL_StrmapHeader*)(map)) - 1, (key)) : -1)
+((map) != NULL ? nl_strmap__get(((NL_StrmapHeader*)(map)) - 1, (key)) : -1)
 
 #define nl_strmap_get_cstr(map, key) \
-    ((map) != NULL ? nl_strmap__get(((NL_StrmapHeader*)(map)) - 1, nl_slice__cstr(key)) : -1)
+((map) != NULL ? nl_strmap__get(((NL_StrmapHeader*)(map)) - 1, nl_slice__cstr(key)) : -1)
 
 #define nl_strmap_remove(map, key) \
-    ((map) != NULL ? nl_strmap__remove(((NL_StrmapHeader*)(map)) - 1, (key)) : false)
+((map) != NULL ? nl_strmap__remove(((NL_StrmapHeader*)(map)) - 1, (key)) : false)
 
 #define nl_strmap_remove_cstr(map, key) \
-    ((map) != NULL ? nl_strmap__remove(((NL_StrmapHeader*)(map)) - 1, nl_slice__cstr(key)) : false)
+((map) != NULL ? nl_strmap__remove(((NL_StrmapHeader*)(map)) - 1, nl_slice__cstr(key)) : false)
 
 #define nl_strmap_free(map, key, value)                     \
-    do {                                                    \
-        if ((map) != NULL) {                                \
-            nl_strmap__free(((NL_StrmapHeader*)(map)) - 1); \
-            (map) = NULL;                                   \
-        }                                                   \
-    } while (0)
+do {                                                    \
+if ((map) != NULL) {                                \
+nl_strmap__free(((NL_StrmapHeader*)(map)) - 1); \
+(map) = NULL;                                   \
+}                                                   \
+} while (0)
 
 // Iterator
 #define nl_strmap_for(it, map)                                                     \
-    for (size_t i = 0, size__ = nl_strmap__get_header(map)->size; i < size__; i++) \
-        if (nl_strmap__get_header(map)->keys[i].length == 0)
+for (size_t i = 0, size__ = nl_strmap__get_header(map)->size; i < size__; i++) \
+if (nl_strmap__get_header(map)->keys[i].length == 0)
 
 /////////////////////////////////////////////////
 // internals
@@ -199,8 +199,8 @@ NL_API NL_Strmap__Insert nl_strmap__insert(void* map, NL_Slice key, size_t value
         map = table + 1;
     }
 
-// insert
-success:
+    // insert
+    success:
     table->keys[index] = key;
     return (NL_Strmap__Insert){map, index};
 }

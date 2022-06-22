@@ -9,5 +9,8 @@ OPTION(INCLUDE, I, include,     1, "add include directory")
 OPTION(PREPROC, P, preprocess,  0, "preprocess file and output to stdout")
 OPTION(RUN,     r, run,         1, "execute compiled program")
 OPTION(LIB,     l, lib,         1, "add library to compilation unit")
+OPTION(OBJ,     c, obj,         0, "dont link, only emit the object file")
+OPTION(OPT,     O, optimize,    0, "optimize the generated IR")
+OPTION(IR,      _, ir,          1, "compile up until the IR generation")
 
 #undef OPTION

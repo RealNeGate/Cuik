@@ -260,11 +260,12 @@ static Expr* parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
 
                 // check if it's builtin
                 ptrdiff_t temp;
-                ptrdiff_t builtin_search = shgeti_ts(target_desc.builtin_func_map, name, temp);
+                ptrdiff_t builtin_search = shgeti_ts(tu->target_desc->builtin_func_map, name, temp);
                 if (builtin_search >= 0) {
                     *e = (Expr){
                         .op = EXPR_BUILTIN_SYMBOL,
-                        .builtin_sym = {name}};
+                        .builtin_sym = {name},
+                    };
                 } else {
                     Symbol* symbol_search = find_global_symbol((const char*)name);
                     if (symbol_search != NULL) {
@@ -272,18 +273,21 @@ static Expr* parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
                             *e = (Expr){
                                 .op = EXPR_ENUM,
                                 .type = symbol_search->type,
-                                .enum_val = {&symbol_search->type->enumerator.entries[symbol_search->enum_value].value}};
+                                .enum_val = {&symbol_search->type->enumerator.entries[symbol_search->enum_value].value},
+                            };
                         } else {
                             *e = (Expr){
                                 .op = EXPR_SYMBOL,
-                                .symbol = symbol_search->stmt};
+                                .symbol = symbol_search->stmt,
+                            };
                         }
                     } else {
                         REPORT(ERROR, start_loc, "could not resolve symbol: %s", name);
 
                         *e = (Expr){
                             .op = EXPR_UNKNOWN_SYMBOL,
-                            .unknown_sym = name};
+                            .unknown_sym = name,
+                        };
                     }
                 }
             }

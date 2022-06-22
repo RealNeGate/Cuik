@@ -8,7 +8,7 @@ typedef struct BuiltinBinding {
     int value;
 } BuiltinBinding;
 
-typedef struct {
+struct Cuik_TargetDesc {
     // stringmap that goes from builtin function names to
     // an index used to refer to them later on
     BuiltinBinding* builtin_func_map;
@@ -32,9 +32,4 @@ typedef struct {
 
     // when one of the builtins are triggered we call this to generate it's code
     TB_Register (*compile_builtin)(TranslationUnit* tu, TB_Function* func, const char* name, int arg_count, Expr** args);
-} TargetDescriptor;
-
-TargetDescriptor get_x64_target_descriptor();
-// put any other options here...
-
-extern TargetDescriptor target_desc;
+};

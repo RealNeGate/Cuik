@@ -450,12 +450,6 @@ static bool dump_tokens() {
 ////////////////////////////////
 // Entry & CLI
 ////////////////////////////////
-#ifdef __GNUC__
-#define O(string, ...) fprintf(stdout, string "\n", ##__VA_ARGS__)
-#else
-#define O(string, ...) fprintf(stdout, string "\n", __VA_ARGS__)
-#endif
-
 static void print_help(const char* executable_path) {
     O("Usage: %s [<options>] <command> [<args>]", executable_path ? executable_path : "<unknown>");
     O("");
@@ -486,7 +480,6 @@ static void print_help(const char* executable_path) {
     O("  --verbose            - prints out the linker command used");
     O("");
 }
-#undef O
 
 // we can do a bit of filter such as '*.c' where it'll take all
 // paths in the folder that end with .c

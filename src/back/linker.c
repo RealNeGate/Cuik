@@ -1,18 +1,24 @@
-#include "linker.h"
+#include <cuik.h>
+#include "../common.h"
 
-#if _WIN32
+#ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
-
-MicrosoftCraziness_Find_Result s_vswhere;
+#include "back/microsoft_craziness.h"
+#define SLASH "\\"
+#else
+#define SLASH "/"
 #endif
 
+#define CMD_LINE_MAX 4096
 #define LINKER_STRING_BUFFER_CAP 8192
 
-bool linker_init(Linker* l) {
+extern MicrosoftCraziness_Find_Result cuik__vswhere;
+
+bool cuiklink_init(Cuik_Linker* l) {
     // NOTE(NeGate): Windows has a max command line length of 32768 iirc,
     // so this seems reasonable
-    *l = (Linker){
+    *l = (Cuik_Linker){
         .input_file_buffer = malloc(LINKER_STRING_BUFFER_CAP),
         .libpaths_buffer = malloc(LINKER_STRING_BUFFER_CAP),
     };
@@ -20,26 +26,26 @@ bool linker_init(Linker* l) {
     return true;
 }
 
-void linker_deinit(Linker* l) {
+void cuiklink_deinit(Cuik_Linker* l) {
     free(l->input_file_buffer);
     free(l->libpaths_buffer);
 }
 
-void linker_add_default_libpaths(Linker* l) {
+void cuiklink_add_default_libpaths(Cuik_Linker* l) {
 #if _WIN32
-    if (s_vswhere.vs_exe_path == NULL) {
+    if (cuik__vswhere.vs_exe_path == NULL) {
         printf("internal compiler error: Could not locate VS and Windows SDK to link with. You'll need Visual Studio to link with cuik.\n");
         abort();
     }
 
-    //linker_add_libpath_wide(l, s_vswhere.vs_library_path);
-    //linker_add_libpath_wide(l, s_vswhere.windows_sdk_ucrt_library_path);
-    linker_add_libpath_wide(l, s_vswhere.windows_sdk_um_library_path);
+    //cuiklink_add_libpath_wide(l, libs->vswhere.vs_library_path);
+    //cuiklink_add_libpath_wide(l, libs->vswhere.windows_sdk_ucrt_library_path);
+    cuiklink_add_libpath_wide(l, cuik__vswhere.windows_sdk_um_library_path);
 #endif
 }
 
 #if _WIN32
-void linker_add_libpath_wide(Linker* l, const wchar_t* filepath) {
+void cuiklink_add_libpath_wide(Cuik_Linker* l, const wchar_t* filepath) {
     assert(filepath);
 
     size_t filepath_len = wcslen(filepath) + 1;
@@ -51,7 +57,7 @@ void linker_add_libpath_wide(Linker* l, const wchar_t* filepath) {
 }
 #endif
 
-void linker_add_libpath(Linker* l, const char filepath[]) {
+void cuiklink_add_libpath(Cuik_Linker* l, const char filepath[]) {
 #if _WIN32
     size_t remaining = LINKER_STRING_BUFFER_CAP - l->libpaths_top;
     OS_String output = &l->libpaths_buffer[l->libpaths_top];
@@ -69,7 +75,7 @@ void linker_add_libpath(Linker* l, const char filepath[]) {
 #endif
 }
 
-void linker_add_input_file(Linker* l, const char filepath[]) {
+void cuiklink_add_input_file(Cuik_Linker* l, const char filepath[]) {
 #if _WIN32
     size_t remaining = LINKER_STRING_BUFFER_CAP - l->input_file_top;
     OS_String output = &l->input_file_buffer[l->input_file_top];
@@ -87,17 +93,13 @@ void linker_add_input_file(Linker* l, const char filepath[]) {
 #endif
 }
 
-// TODO(NeGate): Do some testing to make sure this works with unicode input.
-// Like im pretty sure %S doesn't do the UTF-8 conversion and im being lazy about it.
-enum { CMD_LINE_MAX = 4096 };
-
-bool linker_invoke_system(Linker* l, const char* filename, bool verbose, const char* crt_name) {
+bool cuiklink_invoke_system(Cuik_Linker* l, const char* filename, const char* crt_name) {
 #if defined(_WIN32)
     wchar_t cmd_line[CMD_LINE_MAX];
     int cmd_line_len = swprintf(cmd_line, CMD_LINE_MAX,
                                 L"%s\\link.exe /nologo /machine:amd64 /subsystem:console"
                                 " /debug:full /pdb:%S.pdb /out:%S.exe /incremental:no ",
-                                s_vswhere.vs_exe_path, filename, filename);
+                                cuik__vswhere.vs_exe_path, filename, filename);
 
     // Add all the libpaths
     {
@@ -130,13 +132,11 @@ bool linker_invoke_system(Linker* l, const char* filename, bool verbose, const c
         .dwFlags = STARTF_USESTDHANDLES,
         .hStdInput = GetStdHandle(STD_INPUT_HANDLE),
         .hStdError = GetStdHandle(STD_ERROR_HANDLE),
-        .hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE)};
+        .hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE),
+    };
     PROCESS_INFORMATION pi = {};
 
-    if (verbose) {
-        printf("Linker command:\n%S\n", cmd_line);
-    }
-
+    //printf("Linker command:\n%S\n", cmd_line);
     if (!CreateProcessW(NULL, cmd_line, NULL, NULL, TRUE, 0, NULL, NULL, &si, &pi)) {
         printf("Linker command could not be executed.\n");
         return false;

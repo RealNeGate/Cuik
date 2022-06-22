@@ -514,10 +514,11 @@ void type_layout(TranslationUnit* restrict tu, Cuik_Type* type) {
     type->is_inprogress = false;
 }
 
-CUIK_API TranslationUnit* cuik_parse_translation_unit(TB_Module* restrict ir_module, TokenStream* restrict s, threadpool_t* restrict thread_pool) {
+CUIK_API TranslationUnit* cuik_parse_translation_unit(TB_Module* restrict ir_module, TokenStream* restrict s, const Cuik_TargetDesc* target_desc, threadpool_t* restrict thread_pool) {
     TranslationUnit* tu = calloc(1, sizeof(TranslationUnit));
     tu->filepath = s->filepath;
     tu->ir_mod = ir_module;
+    tu->target_desc = target_desc;
     tu->tokens = *s;
 
     tls_init();

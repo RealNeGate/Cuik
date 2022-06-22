@@ -40,7 +40,7 @@ static const char* INPUT_FILES[] = {
     // Backend
     "src/back/ir_gen.c",
     "src/back/linker.c",
-    "src/linker/tblink.c",
+    //"src/linker/tblink.c",
 
 #if defined(_WIN32)
     "src/back/microsoft_craziness.cpp",

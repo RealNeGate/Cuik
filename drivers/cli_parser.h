@@ -83,8 +83,14 @@ static void print_help(void) {
     int l = 0;
 
 #define OPTION(type, short_name, long_name, n, desc) \
-l = printf("  -" #short_name " | --" #long_name " "); \
+if (#short_name[0] == '_') { \
+l = printf("  --" #long_name " "); \
 for (int i = l; i < 20; i++) printf(" "); \
-printf(desc "\n");
+printf(desc "\n"); \
+} else { \
+l = printf("  -" #short_name " --" #long_name " "); \
+for (int i = l; i < 20; i++) printf(" "); \
+printf(desc "\n"); \
+}
 #include "cli_options.h"
 }

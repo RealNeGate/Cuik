@@ -6,6 +6,13 @@
 
 #define CUIK_API
 
+#ifdef _WIN32
+// Microsoft's definition of strtok_s actually matches
+// strtok_r on POSIX, not strtok_s on C11... tf
+#define strtok_r(a, b, c) strtok_s(a, b, c)
+#define strdup _strdup
+#endif
+
 // opaque structs
 typedef struct threadpool_t threadpool_t;
 typedef struct TokenStream TokenStream;
@@ -13,13 +20,49 @@ typedef struct Stmt Stmt;
 typedef struct Token Token;
 typedef struct TranslationUnit TranslationUnit;
 typedef struct CompilationUnit CompilationUnit;
-typedef struct Cuik_SystemLibs Cuik_SystemLibs;
+
+////////////////////////////////////////////
+// Target descriptor
+////////////////////////////////////////////
+typedef struct Cuik_TargetDesc Cuik_TargetDesc;
+
+// these can be fed into the preprocessor and parser to define
+// the correct builtins and predefined macros
+const Cuik_TargetDesc* cuik_get_x64_target_desc(void);
 
 ////////////////////////////////////////////
 // C preprocessor
 ////////////////////////////////////////////
 typedef unsigned int SourceLocIndex;
 typedef struct Cuik_CPP Cuik_CPP;
+
+#define SOURCE_LOC_GET_DATA(loc) ((loc) & ~0xC0000000u)
+#define SOURCE_LOC_GET_TYPE(loc) (((loc) & 0xC0000000u) >> 30u)
+#define SOURCE_LOC_SET_TYPE(type, raw) (((type << 30) & 0xC0000000u) | ((raw) & ~0xC0000000u))
+
+typedef enum SourceLocType {
+    SOURCE_LOC_UNKNOWN = 0,
+    SOURCE_LOC_NORMAL = 1,
+    SOURCE_LOC_MACRO = 2,
+    SOURCE_LOC_FILE = 3
+} SourceLocType;
+
+typedef struct SourceRange {
+    SourceLocIndex start, end;
+} SourceRange;
+
+typedef struct SourceLine {
+    const char* filepath;
+    const unsigned char* line_str;
+    SourceLocIndex parent;
+    int line;
+} SourceLine;
+
+typedef struct SourceLoc {
+    SourceLine* line;
+    short columns;
+    short length;
+} SourceLoc;
 
 typedef struct Cuik_FileEntry {
     size_t parent_id;
@@ -49,6 +92,12 @@ typedef struct Cuik_Define {
 } Cuik_Define;
 
 CUIK_API void cuik_init(void);
+
+// locates the system includes, libraries and other tools. this is a global
+// operation meaning that once it's only done once for the process.
+CUIK_API void cuik_find_system_deps(const char* cuik_crt_directory);
+
+CUIK_API bool cuik_lex_is_keyword(size_t length, const char* str);
 
 CUIK_API void cuikpp_init(Cuik_CPP* ctx);
 CUIK_API void cuikpp_deinit(Cuik_CPP* ctx);
@@ -92,10 +141,8 @@ CUIK_API Cuik_Define cuikpp_get_define(Cuik_CPP* ctx, Cuik_DefineRef src);
 // this will return a Cuik_CPP through out_cpp that you have to free once you're
 // done with it (after all frontend work is done), the out_cpp can also be finalized if
 // you dont need the defines table.
-CUIK_API TokenStream cuik_preprocess_simple(Cuik_CPP* restrict out_cpp, const char* filepath, Cuik_SystemLibs* libs, size_t include_count, const char* includes[]);
-
-// Locates all system libraries
-CUIK_API Cuik_SystemLibs* cuik_get_system_includes(const char* cuik_crt_directory);
+CUIK_API TokenStream cuik_preprocess_simple(Cuik_CPP* restrict out_cpp, const char* filepath, const Cuik_TargetDesc* target_desc,
+                                            bool system_includes, size_t include_count, const char* includes[]);
 
 ////////////////////////////////////////////
 // C parsing
@@ -118,12 +165,15 @@ typedef struct Cuik_Type Cuik_Type;
 // if ir_module is NULL then translation unit will not be used for IR generation,
 // multiple translation units can be created for the same module you just have to
 // attach them to each other with a compilation unit and internally link them.
-CUIK_API TranslationUnit* cuik_parse_translation_unit(TB_Module* restrict ir_module, TokenStream* restrict s, threadpool_t* restrict thread_pool);
+CUIK_API TranslationUnit* cuik_parse_translation_unit(TB_Module* restrict ir_module, TokenStream* restrict s, const Cuik_TargetDesc* target_desc, threadpool_t* restrict thread_pool);
 CUIK_API void cuik_destroy_translation_unit(TranslationUnit* restrict tu);
 
 ////////////////////////////////////////////
 // Token stream
 ////////////////////////////////////////////
+CUIK_API const char* cuik_get_location_file(TokenStream* restrict s, SourceLocIndex loc);
+CUIK_API int cuik_get_location_line(TokenStream* restrict s, SourceLocIndex loc);
+
 CUIK_API Token* cuik_get_tokens(TokenStream* restrict s);
 CUIK_API size_t cuik_get_token_count(TokenStream* restrict s);
 
@@ -142,6 +192,7 @@ CUIK_API void cuik_visit_top_level(TranslationUnit* restrict tu, void* user_data
 CUIK_API void cuik_dump_translation_unit(FILE* stream, TranslationUnit* tu, bool minimalist);
 
 CUIK_API bool cuik_is_in_main_file(TranslationUnit* restrict tu, SourceLocIndex loc);
+CUIK_API TokenStream* cuik_get_token_stream_from_tu(TranslationUnit* restrict tu);
 
 ////////////////////////////////////////////
 // Compilation unit management
@@ -150,5 +201,32 @@ CUIK_API void cuik_create_compilation_unit(CompilationUnit* restrict cu);
 CUIK_API void cuik_add_to_compilation_unit(CompilationUnit* restrict cu, TranslationUnit* restrict tu);
 CUIK_API void cuik_destroy_compilation_unit(CompilationUnit* restrict cu);
 CUIK_API void cuik_internal_link_compilation_unit(CompilationUnit* restrict cu);
+
+////////////////////////////////////////////
+// Linker
+////////////////////////////////////////////
+typedef struct Cuik_Linker Cuik_Linker;
+
+// True if success
+bool cuiklink_init(Cuik_Linker* l);
+void cuiklink_deinit(Cuik_Linker* l);
+
+// uses the system library paths located by cuik_find_system_deps
+void cuiklink_add_default_libpaths(Cuik_Linker* l);
+
+// Adds a directory to the library searches
+void cuiklink_add_libpath(Cuik_Linker* l, const char* filepath);
+
+#if _WIN32
+// Windows native strings are UTF-16 so i provide an option for that if you want
+void cuiklink_add_libpath_wide(Cuik_Linker* l, const wchar_t* filepath);
+#endif
+
+// This can be a static library or object file
+void cuiklink_add_input_file(Cuik_Linker* l, const char* filepath);
+
+// Calls the system linker
+// return true if it succeeds
+bool cuiklink_invoke_system(Cuik_Linker* l, const char* filename, const char* crt_name);
 
 #include "cuik_private.h"

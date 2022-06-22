@@ -378,44 +378,51 @@ static TB_Register compile_builtin(TranslationUnit* tu, TB_Function* func, const
     }
 }
 
-TargetDescriptor get_x64_target_descriptor() {
-    BuiltinBinding* builtins = NULL;
+const Cuik_TargetDesc* cuik_get_x64_target_desc(void) {
+    static Cuik_TargetDesc t = { 0 };
+    if (t.builtin_func_map == NULL) {
+        // TODO(NeGate): make this thread safe
+        BuiltinBinding* builtins = NULL;
 
-    // gcc/clang
-    shput(builtins, "__builtin_expect", 1);
-    shput(builtins, "__builtin_trap", 1);
-    shput(builtins, "__builtin_unreachable", 1);
-    shput(builtins, "__builtin_mul_overflow", 1);
-    shput(builtins, "__c11_atomic_compare_exchange_strong", 1);
-    shput(builtins, "__c11_atomic_thread_fence", 1);
-    shput(builtins, "__c11_atomic_signal_fence", 1);
-    shput(builtins, "__c11_atomic_is_lock_free", 1);
-    shput(builtins, "__c11_atomic_load", 1);
-    shput(builtins, "__c11_atomic_store", 1);
-    shput(builtins, "__c11_atomic_exchange", 1);
-    shput(builtins, "__c11_atomic_compare_exchange_strong", 1);
-    shput(builtins, "__c11_atomic_compare_exchange_weak", 1);
-    shput(builtins, "__c11_atomic_fetch_add", 1);
-    shput(builtins, "__c11_atomic_fetch_sub", 1);
-    shput(builtins, "__c11_atomic_fetch_or", 1);
-    shput(builtins, "__c11_atomic_fetch_xor", 1);
-    shput(builtins, "__c11_atomic_fetch_and", 1);
+        // gcc/clang
+        shput(builtins, "__builtin_expect", 1);
+        shput(builtins, "__builtin_trap", 1);
+        shput(builtins, "__builtin_unreachable", 1);
+        shput(builtins, "__builtin_mul_overflow", 1);
+        shput(builtins, "__c11_atomic_compare_exchange_strong", 1);
+        shput(builtins, "__c11_atomic_thread_fence", 1);
+        shput(builtins, "__c11_atomic_signal_fence", 1);
+        shput(builtins, "__c11_atomic_is_lock_free", 1);
+        shput(builtins, "__c11_atomic_load", 1);
+        shput(builtins, "__c11_atomic_store", 1);
+        shput(builtins, "__c11_atomic_exchange", 1);
+        shput(builtins, "__c11_atomic_compare_exchange_strong", 1);
+        shput(builtins, "__c11_atomic_compare_exchange_weak", 1);
+        shput(builtins, "__c11_atomic_fetch_add", 1);
+        shput(builtins, "__c11_atomic_fetch_sub", 1);
+        shput(builtins, "__c11_atomic_fetch_or", 1);
+        shput(builtins, "__c11_atomic_fetch_xor", 1);
+        shput(builtins, "__c11_atomic_fetch_and", 1);
 
-    // msvc intrinsics
-    shput(builtins, "_mm_getcsr", 1);
-    shput(builtins, "_mm_setcsr", 1);
-    shput(builtins, "__debugbreak", 1);
-    shput(builtins, "__va_start", 1);
-    shput(builtins, "_umul128", 1);
-    shput(builtins, "_mul128", 1);
+        // msvc intrinsics
+        shput(builtins, "_mm_getcsr", 1);
+        shput(builtins, "_mm_setcsr", 1);
+        shput(builtins, "__debugbreak", 1);
+        shput(builtins, "__va_start", 1);
+        shput(builtins, "_umul128", 1);
+        shput(builtins, "_mul128", 1);
 
-    return (TargetDescriptor){
-        .builtin_func_map = builtins,
-        .set_defines = set_defines,
-        .create_prototype = create_prototype,
-        .pass_return_via_reg = pass_return_via_reg,
-        .deduce_parameter_usage = deduce_parameter_usage,
-        .pass_parameter = pass_parameter,
-        .type_check_builtin = type_check_builtin,
-        .compile_builtin = compile_builtin};
+        t = (Cuik_TargetDesc){
+            .builtin_func_map = builtins,
+            .set_defines = set_defines,
+            .create_prototype = create_prototype,
+            .pass_return_via_reg = pass_return_via_reg,
+            .deduce_parameter_usage = deduce_parameter_usage,
+            .pass_parameter = pass_parameter,
+            .type_check_builtin = type_check_builtin,
+            .compile_builtin = compile_builtin,
+        };
+    }
+
+    return &t;
 }

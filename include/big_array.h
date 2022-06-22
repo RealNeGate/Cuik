@@ -52,7 +52,6 @@ arr = dyn_array_internal_reserve(arr, sizeof(*arr), 1); \
 DynArrayHeader* header = ((DynArrayHeader*)arr) - 1;    \
 arr[header->size++] = new_data;                         \
 } while (0)
-#define dyn_array_length(arr) ((((DynArrayHeader*)(arr)) - 1)->size)
 
 #define dyn_array_put_uninit(arr, extra)                             \
 do {                                                             \
@@ -61,3 +60,6 @@ arr = dyn_array_internal_reserve(arr, sizeof(*arr), extra_); \
 DynArrayHeader* header = ((DynArrayHeader*)arr) - 1;         \
 header->size += extra_;                                      \
 } while (0)
+
+#define dyn_array_length(arr) ((((DynArrayHeader*)(arr)) - 1)->size)
+#define dyn_array_for(it, arr) for (ptrdiff_t i = 0, count = dyn_array_length(arr); i < count; i++)

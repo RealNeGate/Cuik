@@ -1,4 +1,5 @@
-#include "cuik.h"
+#include <cuik.h>
+
 #include "settings.h"
 #include "targets/targets.h"
 #include "timer.h"
@@ -10,35 +11,37 @@
 #define SLASH "/"
 #endif
 
-struct Cuik_SystemLibs {
-#ifdef _WIN32
-    MicrosoftCraziness_Find_Result vswhere;
-#endif
-
-    char include_dir[FILENAME_MAX];
-};
-
 Warnings warnings = {
-    //.data_loss = true,
     .unused_funcs = true,
 };
 
-TargetDescriptor target_desc;
+// internal globals to Cuik
+char cuik__include_dir[FILENAME_MAX];
+MicrosoftCraziness_Find_Result cuik__vswhere;
 
 CUIK_API void cuik_init(void) {
     init_report_system();
 }
 
-static void set_defines(Cuik_CPP* cpp, Cuik_SystemLibs* libs) {
-    // find target descriptor
-    target_desc = get_x64_target_descriptor();
-
+CUIK_API void cuik_find_system_deps(const char* cuik_crt_directory) {
 #ifdef _WIN32
-    if (libs != NULL && libs->vswhere.windows_sdk_include == NULL) {
+    cuik__vswhere = MicrosoftCraziness_find_visual_studio_and_windows_sdk();
+#endif
+
+    sprintf_s(cuik__include_dir, FILENAME_MAX, "%s"SLASH"crt"SLASH"include"SLASH, cuik_crt_directory);
+}
+
+CUIK_API bool cuik_lex_is_keyword(size_t length, const char* str) {
+    return classify_ident((const unsigned char*)str, length) != TOKEN_IDENTIFIER;
+}
+
+static void set_defines(Cuik_CPP* cpp, const Cuik_TargetDesc* target_desc, bool system_libs) {
+#ifdef _WIN32
+    if (cuik__vswhere.windows_sdk_include == NULL) {
         printf("warning: could not automatically find WinSDK include path\n");
     }
 
-    if (libs != NULL && libs->vswhere.vs_include_path == NULL) {
+    if (cuik__vswhere.vs_include_path == NULL) {
         printf("warning: could not automatically find VS include path\n");
     }
 #endif
@@ -80,7 +83,8 @@ static void set_defines(Cuik_CPP* cpp, Cuik_SystemLibs* libs) {
         // The time of translation of the preprocessing translation unit
         static const char mon_name[][4] = {
             "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-            "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+            "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+        };
 
         time_t rawtime;
         time(&rawtime);
@@ -101,7 +105,7 @@ static void set_defines(Cuik_CPP* cpp, Cuik_SystemLibs* libs) {
     cuikpp_define(cpp, "static_assert", "_Static_assert");
     cuikpp_define(cpp, "typeof", "_Typeof");
 
-    cuikpp_add_include_directory(cpp, libs->include_dir);
+    cuikpp_add_include_directory(cpp, cuik__include_dir);
 
     // platform specific stuff
     if (target_system == TB_SYSTEM_WINDOWS) {
@@ -109,21 +113,21 @@ static void set_defines(Cuik_CPP* cpp, Cuik_SystemLibs* libs) {
         // WinSDK includes
         char filepath[FILENAME_MAX];
 
-        if (!settings.freestanding && libs != NULL) {
-            if (snprintf(filepath, FILENAME_MAX, "%S\\um\\", libs->vswhere.windows_sdk_include) > FILENAME_MAX) {
+        if (!settings.freestanding) {
+            if (snprintf(filepath, FILENAME_MAX, "%S\\um\\", cuik__vswhere.windows_sdk_include) > FILENAME_MAX) {
                 printf("internal compiler error: WinSDK include directory too long!\n");
                 abort();
             }
             cuikpp_add_include_directory(cpp, filepath);
 
-            if (snprintf(filepath, FILENAME_MAX, "%S\\shared\\", libs->vswhere.windows_sdk_include) > FILENAME_MAX) {
+            if (snprintf(filepath, FILENAME_MAX, "%S\\shared\\", cuik__vswhere.windows_sdk_include) > FILENAME_MAX) {
                 printf("internal compiler error: WinSDK include directory too long!\n");
                 abort();
             }
             cuikpp_add_include_directory(cpp, filepath);
 
             // VS include
-            if (snprintf(filepath, FILENAME_MAX, "%S\\", libs->vswhere.vs_include_path) > FILENAME_MAX) {
+            if (snprintf(filepath, FILENAME_MAX, "%S\\", cuik__vswhere.vs_include_path) > FILENAME_MAX) {
                 printf("internal compiler error: VS include directory too long!\n");
                 abort();
             }
@@ -131,7 +135,7 @@ static void set_defines(Cuik_CPP* cpp, Cuik_SystemLibs* libs) {
         }
 
         if (!settings.nostdlib) {
-            if (snprintf(filepath, FILENAME_MAX, "%S\\ucrt\\", libs->vswhere.windows_sdk_include) > FILENAME_MAX) {
+            if (snprintf(filepath, FILENAME_MAX, "%S\\ucrt\\", cuik__vswhere.windows_sdk_include) > FILENAME_MAX) {
                 printf("internal compiler error: WinSDK include directory too long!\n");
                 abort();
             }
@@ -189,14 +193,14 @@ static void set_defines(Cuik_CPP* cpp, Cuik_SystemLibs* libs) {
 #endif
     }
 
-    if (target_desc.set_defines != NULL) {
-        target_desc.set_defines(cpp);
+    if (target_desc != NULL) {
+        target_desc->set_defines(cpp);
     }
 }
 
-CUIK_API TokenStream cuik_preprocess_simple(Cuik_CPP* restrict out_cpp, const char* filepath, Cuik_SystemLibs* libs, size_t include_count, const char* includes[]) {
+CUIK_API TokenStream cuik_preprocess_simple(Cuik_CPP* restrict out_cpp, const char* filepath, const Cuik_TargetDesc* target_desc, bool system_libs, size_t include_count, const char* includes[]) {
     cuikpp_init(out_cpp);
-    set_defines(out_cpp, libs);
+    set_defines(out_cpp, target_desc, system_libs);
 
     // add extra include paths
     for (size_t i = 0; i < include_count; i++) {
@@ -206,21 +210,24 @@ CUIK_API TokenStream cuik_preprocess_simple(Cuik_CPP* restrict out_cpp, const ch
     return cuikpp_run(out_cpp, filepath);
 }
 
-CUIK_API Cuik_SystemLibs* cuik_get_system_includes(const char* cuik_crt_directory) {
-    Cuik_SystemLibs* libs = malloc(sizeof(Cuik_SystemLibs));
-
-#ifdef _WIN32
-    libs->vswhere = MicrosoftCraziness_find_visual_studio_and_windows_sdk();
-#endif
-
-    sprintf_s(libs->include_dir, FILENAME_MAX, "%s"SLASH"crt"SLASH"include"SLASH, cuik_crt_directory);
-    return libs;
-}
-
 CUIK_API void cuik_visit_top_level(TranslationUnit* restrict tu, void* user_data, Cuik_TopLevelVisitor* visitor) {
     for (size_t i = 0, count = arrlen(tu->top_level_stmts); i < count; i++) {
         visitor(tu, tu->top_level_stmts[i], user_data);
     }
+}
+
+CUIK_API const char* cuik_get_location_file(TokenStream* restrict s, SourceLocIndex loc) {
+    SourceLoc* l = &s->locations[SOURCE_LOC_GET_DATA(loc)];
+    return l->line->filepath;
+}
+
+CUIK_API int cuik_get_location_line(TokenStream* restrict s, SourceLocIndex loc) {
+    SourceLoc* l = &s->locations[SOURCE_LOC_GET_DATA(loc)];
+    return l->line->line;
+}
+
+CUIK_API TokenStream* cuik_get_token_stream_from_tu(TranslationUnit* restrict tu) {
+    return &tu->tokens;
 }
 
 CUIK_API Token* cuik_get_tokens(TokenStream* restrict s) {

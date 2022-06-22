@@ -69,31 +69,23 @@ struct TokenStream {
     struct SourceLoc* locations;
 };
 
-#define SOURCE_LOC_GET_DATA(loc) ((loc) & ~0xC0000000u)
-#define SOURCE_LOC_GET_TYPE(loc) (((loc) & 0xC0000000u) >> 30u)
-#define SOURCE_LOC_SET_TYPE(type, raw) (((type << 30) & 0xC0000000u) | ((raw) & ~0xC0000000u))
+struct Cuik_Linker {
+    // translation units
+#ifdef _WIN32
+    wchar_t* input_file_buffer;
+#else
+    char* input_file_buffer;
+#endif
 
-typedef enum SourceLocType {
-    SOURCE_LOC_UNKNOWN = 0,
-    SOURCE_LOC_NORMAL = 1,
-    SOURCE_LOC_MACRO = 2,
-    SOURCE_LOC_FILE = 3
-} SourceLocType;
+    size_t input_file_top;
+    size_t input_file_count;
 
-typedef struct SourceRange {
-    SourceLocIndex start, end;
-} SourceRange;
-
-typedef struct SourceLine {
-    const char* filepath;
-    const unsigned char* line_str;
-    SourceLocIndex parent;
-    int line;
-} SourceLine;
-
-typedef struct SourceLoc {
-    SourceLine* line;
-    short columns;
-    short length;
-    int bias;
-} SourceLoc;
+    // system libraries
+#ifdef _WIN32
+    wchar_t* libpaths_buffer;
+#else
+    char* libpaths_buffer;
+#endif
+    size_t libpaths_top;
+    size_t libpaths_count;
+};

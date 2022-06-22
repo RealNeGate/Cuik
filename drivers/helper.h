@@ -36,7 +36,7 @@ static bool resolve_filepath(char output[FILENAME_MAX], const char* path) {
 #endif
 }
 
-static Cuik_SystemLibs* find_system_libs(void) {
+static void find_system_deps(void) {
     char crt_dir[FILENAME_MAX];
     if (!get_exe_path(crt_dir)) {
         fprintf(stderr, "error: could not locate executable path");
@@ -50,5 +50,5 @@ static Cuik_SystemLibs* find_system_libs(void) {
     }
 
     *slash = '\0';
-    return cuik_get_system_includes(crt_dir);
+    cuik_find_system_deps(crt_dir);
 }

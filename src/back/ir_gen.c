@@ -768,10 +768,10 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
                     // all builtins start with an underscore
                     if (*name == '_') {
                         ptrdiff_t temp;
-                        ptrdiff_t search = shgeti_ts(target_desc.builtin_func_map, name, temp);
+                        ptrdiff_t search = shgeti_ts(tu->target_desc->builtin_func_map, name, temp);
 
                         if (search >= 0) {
-                            TB_Register val = target_desc.compile_builtin(tu, func, name, arg_count, args);
+                            TB_Register val = tu->target_desc->compile_builtin(tu, func, name, arg_count, args);
 
                             return (IRVal){
                                 .value_type = RVALUE,
@@ -782,7 +782,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
                 }
             } else if (e->call.target->op == EXPR_BUILTIN_SYMBOL) {
                 const char* name = (const char*)e->call.target->builtin_sym.name;
-                TB_Register val = target_desc.compile_builtin(tu, func, name, arg_count, args);
+                TB_Register val = tu->target_desc->compile_builtin(tu, func, name, arg_count, args);
 
                 return (IRVal){
                     .value_type = RVALUE,
@@ -791,12 +791,12 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
             }
 
             // Resolve ABI arg count
-            bool is_aggregate_return = !target_desc.pass_return_via_reg(tu, e->type);
+            bool is_aggregate_return = !tu->target_desc->pass_return_via_reg(tu, e->type);
             size_t real_arg_count = is_aggregate_return ? 1 : 0;
 
             for (size_t i = 0; i < arg_count; i++) {
                 Cuik_Type* arg_type = args[i]->type;
-                real_arg_count += target_desc.deduce_parameter_usage(tu, arg_type);
+                real_arg_count += tu->target_desc->deduce_parameter_usage(tu, arg_type);
             }
 
             TB_Reg* ir_args = tls_push(real_arg_count * sizeof(TB_Reg));
@@ -814,9 +814,9 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
 
             size_t ir_arg_count = is_aggregate_return ? 1 : 0;
             for (size_t i = 0; i < arg_count; i++) {
-                ir_arg_count += target_desc.pass_parameter(tu, func, args[i],
-                                                           i >= varargs_cutoff,
-                                                           &ir_args[ir_arg_count]);
+                ir_arg_count += tu->target_desc->pass_parameter(tu, func, args[i],
+                                                                i >= varargs_cutoff,
+                                                                &ir_args[ir_arg_count]);
             }
 
             assert(ir_arg_count == real_arg_count);
@@ -1919,7 +1919,7 @@ static void gen_func_body(TranslationUnit* tu, Cuik_Type* type, Stmt* restrict s
 
     //TB_AttributeID old_tb_scope = tb_inst_get_scope(func);
     //tb_inst_set_scope(func, tb_function_attrib_scope(func, old_tb_scope));
-    bool is_aggregate_return = !target_desc.pass_return_via_reg(tu, return_type);
+    bool is_aggregate_return = !tu->target_desc->pass_return_via_reg(tu, return_type);
     if (is_aggregate_return) {
         return_value_address = tb_inst_param_addr(func, 0);
 

@@ -198,11 +198,11 @@ static void input_cursor(int x, int y) {
 
 }
 
-#define O(string, ...) fprintf(stdout, string "\n", ##__VA_ARGS__)
+#define PR(string, ...) fprintf(stdout, string "\n", ##__VA_ARGS__)
 static void print_help(const char* executable_path) {
-	O("Usage: %s [<options>] <file> [<args>]", executable_path ? executable_path : "live-cuik");
+	PR("Usage: %s [<options>] <file> [<args>]", executable_path ? executable_path : "live-cuik");
 }
-#undef O
+#undef PR
 
 int main(int argc, char** argv) {
 	if (argc < 2) {
