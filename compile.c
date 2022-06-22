@@ -2,7 +2,7 @@
 // just call it with the C11 compiler of your choice
 //
 // It's inspired by nobuild but different
-#define RELEASE_BUILD 1
+//#define RELEASE_BUILD 1
 #define DRIVER_NAME "main_driver"
 #define USE_DA_ASAN 0
 #include "compile.h"
