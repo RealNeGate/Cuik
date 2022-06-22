@@ -23,10 +23,18 @@ CUIK_API void cuik_init(void) {
     init_report_system();
 }
 
+CUIK_API void cuik_start_global_profiler(const char* filepath) {
+    timer_open(filepath);
+}
+
+CUIK_API void cuik_stop_global_profiler(void) {
+    timer_close();
+}
+
 CUIK_API void cuik_find_system_deps(const char* cuik_crt_directory) {
-#ifdef _WIN32
+    #ifdef _WIN32
     cuik__vswhere = MicrosoftCraziness_find_visual_studio_and_windows_sdk();
-#endif
+    #endif
 
     sprintf_s(cuik__include_dir, FILENAME_MAX, "%s"SLASH"crt"SLASH"include"SLASH, cuik_crt_directory);
 }
@@ -36,7 +44,7 @@ CUIK_API bool cuik_lex_is_keyword(size_t length, const char* str) {
 }
 
 static void set_defines(Cuik_CPP* cpp, const Cuik_TargetDesc* target_desc, bool system_libs) {
-#ifdef _WIN32
+    #ifdef _WIN32
     if (cuik__vswhere.windows_sdk_include == NULL) {
         printf("warning: could not automatically find WinSDK include path\n");
     }
@@ -44,7 +52,7 @@ static void set_defines(Cuik_CPP* cpp, const Cuik_TargetDesc* target_desc, bool 
     if (cuik__vswhere.vs_include_path == NULL) {
         printf("warning: could not automatically find VS include path\n");
     }
-#endif
+    #endif
 
     // DO NOT REMOVE THESE, IF THEY'RE MISSING THE PREPROCESSOR WILL NOT DETECT THEM
     cuikpp_define_empty(cpp, "__FILE__");
@@ -109,7 +117,7 @@ static void set_defines(Cuik_CPP* cpp, const Cuik_TargetDesc* target_desc, bool 
 
     // platform specific stuff
     if (target_system == TB_SYSTEM_WINDOWS) {
-#ifdef _WIN32
+        #ifdef _WIN32
         // WinSDK includes
         char filepath[FILENAME_MAX];
 
@@ -141,7 +149,7 @@ static void set_defines(Cuik_CPP* cpp, const Cuik_TargetDesc* target_desc, bool 
             }
             cuikpp_add_include_directory(cpp, filepath);
         }
-#endif
+        #endif
 
         cuikpp_define_empty(cpp, "_MT");
         if (!settings.static_crt) {
@@ -185,12 +193,12 @@ static void set_defines(Cuik_CPP* cpp, const Cuik_TargetDesc* target_desc, bool 
         cuikpp_define_empty(cpp, "__ptr64");
     } else {
         // TODO(NeGate): Automatically detect these somehow...
-#ifdef __linux__
+        #ifdef __linux__
         cuikpp_add_include_directory(cpp, "/usr/lib/gcc/x86_64-linux-gnu/10/include/");
         cuikpp_add_include_directory(cpp, "/usr/include/x86_64-linux-gnu/");
         cuikpp_add_include_directory(cpp, "/usr/local/include/");
         cuikpp_add_include_directory(cpp, "/usr/include/");
-#endif
+        #endif
     }
 
     if (target_desc != NULL) {
@@ -211,8 +219,11 @@ CUIK_API TokenStream cuik_preprocess_simple(Cuik_CPP* restrict out_cpp, const ch
 }
 
 CUIK_API void cuik_visit_top_level(TranslationUnit* restrict tu, void* user_data, Cuik_TopLevelVisitor* visitor) {
-    for (size_t i = 0, count = arrlen(tu->top_level_stmts); i < count; i++) {
-        visitor(tu, tu->top_level_stmts[i], user_data);
+    size_t count = arrlen(tu->top_level_stmts);
+    timed_block("top level visitor (%zu statements)", count) {
+        for (size_t i = 0; i < count; i++) {
+            visitor(tu, tu->top_level_stmts[i], user_data);
+        }
     }
 }
 

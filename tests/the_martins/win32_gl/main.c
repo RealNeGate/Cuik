@@ -1,4 +1,4 @@
-// Cuik: cuik main.c --lib user32.lib,opengl32.lib,gdi32.lib
+// Cuik: cuik main.c --lib=user32.lib,opengl32.lib,gdi32.lib
 //
 // example how to set up OpenGL core context on Windows
 // and use basic functionality of OpenGL 4.5 version

@@ -10,6 +10,8 @@ static const char* output_name;
 static char output_path_no_ext[FILENAME_MAX];
 
 static bool args_ir;
+static bool args_run;
+static bool args_time;
 static bool args_preprocess;
 static bool args_optimize;
 static bool args_object_only;
@@ -124,8 +126,10 @@ int main(int argc, char** argv) {
             }
             case ARG_OUT: output_name = arg.value; break;
             case ARG_OBJ: args_object_only = true; break;
+            case ARG_RUN: args_run = true; break;
             case ARG_PREPROC: args_preprocess = true; break;
             case ARG_OPT: args_optimize = true; break;
+            case ARG_TIME: args_time = true; break;
             case ARG_IR: args_ir = true; break;
             case ARG_HELP: {
                 print_help();
@@ -155,6 +159,12 @@ int main(int argc, char** argv) {
         }
     }
 
+    if (args_time) {
+        char perf_output_path[FILENAME_MAX];
+        sprintf_s(perf_output_path, FILENAME_MAX, "%s.json", output_path_no_ext);
+        cuik_start_global_profiler(perf_output_path);
+    }
+
     // get target
     const Cuik_TargetDesc* target = cuik_get_x64_target_desc();
 
@@ -168,8 +178,8 @@ int main(int argc, char** argv) {
     // preproc
     Cuik_CPP cpp;
     TokenStream tokens = cuik_preprocess_simple(&cpp, argv[1], target, true,
-                                                dyn_array_length(include_directories),
-                                                &include_directories[0]);
+        dyn_array_length(include_directories),
+        &include_directories[0]);
 
     cuikpp_finalize(&cpp);
 
@@ -207,7 +217,7 @@ int main(int argc, char** argv) {
         tb_module_destroy(mod);
 
         // linker
-        if (!args_object_only) {
+        if (!args_object_only || args_run) {
             Cuik_Linker l;
             if (cuiklink_init(&l)) {
                 // Add system libpaths
@@ -222,19 +232,43 @@ int main(int argc, char** argv) {
                     cuiklink_add_input_file(&l, input_libraries[i]);
                 }
 
-#ifdef _WIN32
+                #ifdef _WIN32
                 cuiklink_add_input_file(&l, "ucrt.lib");
                 cuiklink_add_input_file(&l, "msvcrt.lib");
                 cuiklink_add_input_file(&l, "vcruntime.lib");
                 cuiklink_add_input_file(&l, "win32_rt.lib");
-#endif
+                #endif
 
                 cuiklink_invoke_system(&l, output_path_no_ext, "ucrt");
                 cuiklink_deinit(&l);
 
                 remove(obj_output_path);
+
+                if (args_run) {
+                    char exe_path[FILENAME_MAX];
+                    sprintf_s(exe_path, 260, "%s.exe", output_path_no_ext);
+
+                    #ifdef _WIN32
+                    for (char* i = exe_path; *i; i++) {
+                        if (*i == '/') *i = '\\';
+                    }
+                    #endif
+
+                    printf("\n\nRunning: %s...\n", exe_path);
+                    int exit_code = system(exe_path);
+                    printf("Exit code: %d\n", exit_code);
+
+                    return exit_code;
+                }
+            } else if (args_run) {
+                fprintf(stderr, "error: could not run due to linker errors.\n");
+                return EXIT_FAILURE;
             }
         }
+    }
+
+    if (args_time) {
+        cuik_stop_global_profiler();
     }
 
     cuik_destroy_translation_unit(tu);

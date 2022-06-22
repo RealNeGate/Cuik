@@ -31,7 +31,7 @@ static Arg get_cli_arg(int* index, int argc, char** argv) {
             const char* opt = &argv[i][2];
 
             #define OPTION(type, short_name, long_name, n, desc)                              \
-            if (strncmp(opt, #long_name "=", sizeof(#long_name)) == 0) {                      \
+            if (strncmp(opt, #long_name, sizeof(#long_name)-1) == 0) {                        \
                 if (n == 0) {                                                                 \
                     return (Arg){ ARG_ ## type, arg_is_set };                                 \
                 } else {                                                                      \

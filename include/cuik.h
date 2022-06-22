@@ -93,6 +93,11 @@ typedef struct Cuik_Define {
 
 CUIK_API void cuik_init(void);
 
+// opens a starts writing a file about the timing info
+CUIK_API void cuik_start_global_profiler(const char* filepath);
+// will emit a JSON file of the profiled output you can feed into chrome://tracing or speedscopes
+CUIK_API void cuik_stop_global_profiler(void);
+
 // locates the system includes, libraries and other tools. this is a global
 // operation meaning that once it's only done once for the process.
 CUIK_API void cuik_find_system_deps(const char* cuik_crt_directory);
@@ -142,7 +147,7 @@ CUIK_API Cuik_Define cuikpp_get_define(Cuik_CPP* ctx, Cuik_DefineRef src);
 // done with it (after all frontend work is done), the out_cpp can also be finalized if
 // you dont need the defines table.
 CUIK_API TokenStream cuik_preprocess_simple(Cuik_CPP* restrict out_cpp, const char* filepath, const Cuik_TargetDesc* target_desc,
-                                            bool system_includes, size_t include_count, const char* includes[]);
+    bool system_includes, size_t include_count, const char* includes[]);
 
 ////////////////////////////////////////////
 // C parsing

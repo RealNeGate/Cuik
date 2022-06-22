@@ -4,6 +4,8 @@
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#else
+#include <sys/mman.h>
 #endif
 
 #define TEMPORARY_STORAGE_SIZE (1 << 20)
@@ -17,13 +19,29 @@ typedef struct TemporaryStorage {
 
 static _Thread_local TemporaryStorage* temp_storage;
 
+void* cuik__valloc(size_t size) {
+    #ifdef _WIN32
+    return VirtualAlloc(NULL, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+    #else
+    return mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    #endif
+}
+
+void cuik__vfree(void* ptr, size_t size) {
+    #ifdef _WIN32
+    VirtualFree(ptr, size, MEM_RELEASE);
+    #else
+    munmap(ptr, size);
+    #endif
+}
+
 void tls_init() {
     if (temp_storage == NULL) {
-#ifdef _WIN32
+        #ifdef _WIN32
         temp_storage = VirtualAlloc(NULL, TEMPORARY_STORAGE_SIZE, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-#else
+        #else
         temp_storage = aligned_alloc(16, TEMPORARY_STORAGE_SIZE);
-#endif
+        #endif
     }
 
     temp_storage->used = 0;

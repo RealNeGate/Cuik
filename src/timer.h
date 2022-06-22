@@ -9,14 +9,14 @@ extern mtx_t timer_mutex;
 
 // regardless of if you want to profile code or not, you'll need to initialize
 // the timer be able to use timer_now()
-void timer_init();
+void timer_init(void);
 
 // Opens up a file and emits the profiler output to it, it's a JSON format compatible
 // with chrome://tracing and speedscope
 void timer_open(const char* path);
 
 // Close the profiler file
-void timer_close();
+void timer_close(void);
 
 // Reports a region of time in the profiler file
 void timer_end(uint64_t start, const char* fmt, ...);

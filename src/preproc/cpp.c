@@ -46,13 +46,13 @@ CUIK_API void cuikpp_init(Cuik_CPP* ctx) {
     size_t sz2 = sizeof(SourceLocIndex) * MACRO_BUCKET_COUNT * SLOTS_PER_MACRO_BUCKET;
 
     *ctx = (Cuik_CPP){
-        .macro_bucket_keys = malloc(sz),
-        .macro_bucket_keys_length = malloc(sz),
-        .macro_bucket_values_start = malloc(sz),
-        .macro_bucket_values_end = malloc(sz),
-        .macro_bucket_source_locs = malloc(sz2),
+        .macro_bucket_keys         = cuik__valloc(sz),
+        .macro_bucket_keys_length  = cuik__valloc(sz),
+        .macro_bucket_values_start = cuik__valloc(sz),
+        .macro_bucket_values_end   = cuik__valloc(sz),
+        .macro_bucket_source_locs  = cuik__valloc(sz2),
 
-        .the_shtuffs = malloc(THE_SHTUFFS_SIZE),
+        .the_shtuffs = cuik__valloc(THE_SHTUFFS_SIZE),
     };
     ctx->files = dyn_array_create(Cuik_FileEntry, false);
 
@@ -75,22 +75,27 @@ CUIK_API void cuikpp_deinit(Cuik_CPP* ctx) {
         ctx->files = NULL;
     }
 
-    free((void*)ctx->the_shtuffs);
+    cuik__vfree((void*)ctx->the_shtuffs, THE_SHTUFFS_SIZE);
     ctx->the_shtuffs = NULL;
 }
 
 CUIK_API void cuikpp_finalize(Cuik_CPP* ctx) {
-    free((void*)ctx->macro_bucket_keys);
-    free((void*)ctx->macro_bucket_keys_length);
-    free((void*)ctx->macro_bucket_values_start);
-    free((void*)ctx->macro_bucket_values_end);
-    free((void*)ctx->macro_bucket_source_locs);
+    timed_block("cuikpp_finalize") {
+        size_t sz = sizeof(void*) * MACRO_BUCKET_COUNT * SLOTS_PER_MACRO_BUCKET;
+        size_t sz2 = sizeof(SourceLocIndex) * MACRO_BUCKET_COUNT * SLOTS_PER_MACRO_BUCKET;
 
-    ctx->macro_bucket_keys = NULL;
-    ctx->macro_bucket_keys_length = NULL;
-    ctx->macro_bucket_values_start = NULL;
-    ctx->macro_bucket_values_end = NULL;
-    ctx->macro_bucket_source_locs = NULL;
+        cuik__vfree((void*)ctx->macro_bucket_keys, sz);
+        cuik__vfree((void*)ctx->macro_bucket_keys_length, sz);
+        cuik__vfree((void*)ctx->macro_bucket_values_start, sz);
+        cuik__vfree((void*)ctx->macro_bucket_values_end, sz);
+        cuik__vfree((void*)ctx->macro_bucket_source_locs, sz2);
+
+        ctx->macro_bucket_keys = NULL;
+        ctx->macro_bucket_keys_length = NULL;
+        ctx->macro_bucket_values_start = NULL;
+        ctx->macro_bucket_values_end = NULL;
+        ctx->macro_bucket_source_locs = NULL;
+    }
 }
 
 CUIK_API size_t cuikpp_get_file_table_count(Cuik_CPP* ctx) {
@@ -192,11 +197,11 @@ CUIK_API TokenStream cuikpp_run(Cuik_CPP* ctx, const char filepath[]) {
 
     char directory[FILENAME_MAX];
     if (slash) {
-#if _WIN32
+        #if _WIN32
         sprintf_s(directory, FILENAME_MAX, "%.*s\\", (int)(slash - filepath), filepath);
-#else
+        #else
         snprintf(directory, FILENAME_MAX, "%.*s/", (int)(slash - filepath), filepath);
-#endif
+        #endif
     } else {
         directory[0] = '\0';
     }
@@ -256,7 +261,7 @@ static SourceLocIndex get_source_location(Cuik_CPP* restrict c, Lexer* restrict 
     ptrdiff_t columns = l->token_start - l->line_current;
     ptrdiff_t length = l->token_end - l->token_start;
     assert(columns >= 0 && columns <= UINT16_MAX &&
-           length >= 0 && length <= UINT16_MAX);
+        length >= 0 && length <= UINT16_MAX);
 
     SourceLoc loc = {
         .line = source_line,
@@ -581,7 +586,7 @@ static void preprocess_file(Cuik_CPP* restrict c, TokenStream* restrict s, size_
                     }
                     tls_restore(filename);
 
-#ifdef _WIN32
+                    #ifdef _WIN32
                     char* filepart;
                     char* new_path = arena_alloc(&thread_arena, FILENAME_MAX, 1);
                     if (GetFullPathNameA(path, FILENAME_MAX, new_path, &filepart) == 0) {
@@ -605,19 +610,19 @@ static void preprocess_file(Cuik_CPP* restrict c, TokenStream* restrict s, size_
                             *p -= ('A' - 'a');
                         }
                     }
-#else
+                    #else
                     char* new_path = arena_alloc(&thread_arena, FILENAME_MAX, 1);
                     realpath(path, new_path);
-#endif
+                    #endif
 
                     ptrdiff_t search = shgeti(c->include_once, new_path);
                     if (search < 0) {
                         // TODO(NeGate): Remove these heap allocations later
                         // they're... evil!!!
-#ifdef _WIN32
+                        #ifdef _WIN32
                         char* new_dir = strdup(new_path);
                         new_dir[filepart - new_path] = '\0';
-#else
+                        #else
                         char* new_dir = strdup(new_path);
                         char* slash = strrchr(new_dir, '/');
                         if (slash) {
@@ -626,7 +631,7 @@ static void preprocess_file(Cuik_CPP* restrict c, TokenStream* restrict s, size_
                             new_dir[0] = '/';
                             new_dir[1] = '\0';
                         }
-#endif
+                        #endif
 
                         if (0) {
                             for (int i = 0; i < depth; i++) printf("  ");
@@ -798,8 +803,8 @@ static void preprocess_file(Cuik_CPP* restrict c, TokenStream* restrict s, size_
     } while (l.token_type);
 
     {
-        char temp[256];
-        sprintf_s(temp, 256, "preprocess: %s", filepath);
+        char temp[FILENAME_MAX];
+        sprintf_s(temp, sizeof(temp), "preprocess: %s", filepath);
 
         char* p = temp;
         for (; *p; p++) {

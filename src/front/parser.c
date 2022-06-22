@@ -104,7 +104,7 @@ static _Noreturn void generic_error(TokenStream* restrict s, const char* msg);
 //  }
 #define LOCAL_SCOPE                                                         \
 for (int saved = local_symbol_count, saved2 = local_tag_count, _i_ = 0; \
-_i_ == 0; _i_ += 1, local_symbol_count = saved, local_tag_count = saved2)
+    _i_ == 0; _i_ += 1, local_symbol_count = saved, local_tag_count = saved2)
 
 static int align_up(int a, int b) {
     if (b == 0) return 0;
@@ -332,8 +332,8 @@ static int type_cycles_dfs(TranslationUnit* restrict tu, Cuik_Type* type, uint8_
             sprintf_s(tmp, sizeof(tmp), "type %s has cycles", name);
 
             report_two_spots(REPORT_ERROR, &tu->tokens,
-                             type->loc, type->record.kids[i].loc,
-                             tmp, NULL, NULL, "on");
+                type->loc, type->record.kids[i].loc,
+                tmp, NULL, NULL, "on");
             return 2;
         }
     }
@@ -515,6 +515,9 @@ void type_layout(TranslationUnit* restrict tu, Cuik_Type* type) {
 }
 
 CUIK_API TranslationUnit* cuik_parse_translation_unit(TB_Module* restrict ir_module, TokenStream* restrict s, const Cuik_TargetDesc* target_desc, threadpool_t* restrict thread_pool) {
+    // hacky but i don't wanna wrap it in a timed_block
+    uint64_t timer_start = timer_now();
+
     TranslationUnit* tu = calloc(1, sizeof(TranslationUnit));
     tu->filepath = s->filepath;
     tu->ir_mod = ir_module;
@@ -600,16 +603,16 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(TB_Module* restrict ir_mod
                             if (search != NULL) {
                                 if (search->storage_class != STORAGE_TYPEDEF) {
                                     report_two_spots(REPORT_ERROR, s, decl.loc, search->loc,
-                                                     "typedef overrides previous declaration.",
-                                                     "old", "new", NULL);
+                                        "typedef overrides previous declaration.",
+                                        "old", "new", NULL);
                                     abort();
                                 }
 
                                 Cuik_Type* placeholder_space = search->type;
                                 if (placeholder_space->kind != KIND_PLACEHOLDER && !type_equal(tu, decl.type, search->type)) {
                                     report_two_spots(REPORT_ERROR, s, decl.loc, search->loc,
-                                                     "typedef overrides previous declaration.",
-                                                     "old", "new", NULL);
+                                        "typedef overrides previous declaration.",
+                                        "old", "new", NULL);
                                     abort();
                                 }
 
@@ -776,8 +779,8 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(TB_Module* restrict ir_mod
 
                             if (old_definition && old_definition->current != 0) {
                                 report_two_spots(REPORT_ERROR, s, decl.loc, old_definition->stmt->loc,
-                                                 "Cannot redefine function declaration",
-                                                 NULL, NULL, "previous definition was:");
+                                    "Cannot redefine function declaration",
+                                    NULL, NULL, "previous definition was:");
                                 abort();
                             }
 
@@ -1026,22 +1029,36 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(TB_Module* restrict ir_mod
     //printf("Type arena: %zu MB\n", arena_get_memory_usage(&tu->type_arena) / (1024*1024));
     //printf("Thread arena: %zu MB\n", arena_get_memory_usage(&thread_arena) / (1024*1024));
 
-    current_switch_or_case = current_breakable = current_continuable = 0;
-    local_symbol_start = local_symbol_count = 0;
+    timed_block("freeing parser internals") {
+        current_switch_or_case = current_breakable = current_continuable = 0;
+        local_symbol_start = local_symbol_count = 0;
 
-    // free parser crap
-    free(local_tags);
-    free(local_symbols);
-    shfree(global_tags);
-    shfree(global_symbols);
+        // free parser crap
+        free(local_tags);
+        free(local_symbols);
+        shfree(global_tags);
+        shfree(global_symbols);
 
-    // free tokens
-    arrfree(tu->tokens.tokens);
+        // free tokens
+        arrfree(tu->tokens.tokens);
+    }
 
     // run type checker
     timed_block("phase 4") {
         sema_pass(tu, thread_pool);
         crash_if_reports(REPORT_ERROR);
+    }
+
+    {
+        char temp[FILENAME_MAX];
+        sprintf_s(temp, sizeof(temp), "parse: %s", tu->filepath);
+
+        char* p = temp;
+        for (; *p; p++) {
+            if (*p == '\\') *p = '/';
+        }
+
+        timer_end(timer_start, temp);
     }
 
     return tu;
@@ -1765,8 +1782,8 @@ static void expect_closing_paren(TokenStream* restrict s, SourceLocIndex opening
         SourceLocIndex loc = tokens_get_location_index(s);
 
         report_two_spots(REPORT_ERROR, s, opening, loc,
-                         "expected closing parenthesis",
-                         "open", "close?", NULL);
+            "expected closing parenthesis",
+            "open", "close?", NULL);
         abort();
     }
 

@@ -32,8 +32,8 @@
 
 #define Pair(A, B) \
 struct {       \
-A _0;      \
-B _1;      \
+    A _0;      \
+    B _1;      \
 }
 
 // just because we use a threads fallback layer which can include windows
@@ -44,15 +44,15 @@ B _1;      \
 
 #define panic(...)           \
 do {                     \
-printf(__VA_ARGS__); \
-abort();             \
+    printf(__VA_ARGS__); \
+    abort();             \
 } while (0)
 
 #define swap(a, b)          \
 do {                    \
-typeof(a) temp = a; \
-a = b;              \
-b = temp;           \
+    typeof(a) temp = a; \
+    a = b;              \
+    b = temp;           \
 } while (0)
 
 void tls_init();
@@ -60,6 +60,9 @@ void* tls_push(size_t size);
 void* tls_pop(size_t size);
 void* tls_save();
 void tls_restore(void* p);
+
+void* cuik__valloc(size_t sz);
+void cuik__vfree(void* p, size_t sz);
 
 inline static bool cstr_equals(const unsigned char* str1, const unsigned char* str2) {
     return strcmp((const char*)str1, (const char*)str2) == 0;

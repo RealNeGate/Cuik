@@ -20,7 +20,7 @@ double timer_freq = 1.0 / 1000000000.0;
 static thread_local bool is_main_thread;
 
 // done regardless of the profiler running just to be able to query time in general
-void timer_init() {
+void timer_init(void) {
     is_main_thread = true;
 }
 
@@ -32,7 +32,7 @@ void timer_open(const char* path) {
     fprintf(timer_output, "{\"otherData\": {},\"traceEvents\":[");
 }
 
-void timer_close() {
+void timer_close(void) {
     if (timer_output != NULL) {
         fprintf(timer_output, "]}");
         fclose(timer_output);
@@ -48,24 +48,24 @@ uint64_t timer_now() {
 void timer_end(uint64_t start, const char* fmt, ...) {
     if (timer_output == NULL) return;
 
-#if _WIN32
+    #if _WIN32
     uint64_t end = timer_now();
     int64_t elapsed_in_microseconds = (int64_t)(((end - start) * timer_freq) * 1000000.0);
     int64_t start_in_microseconds = (int64_t)((start * timer_freq) * 1000000.0);
-#else
+    #else
     int64_t elapsed_in_microseconds = timer_now() - start;
     int64_t start_in_microseconds = start;
-#endif
+    #endif
 
     if (elapsed_in_microseconds > 1) {
         mtx_lock(&timer_mutex);
         int i = timer_entry_count++;
 
-#if _WIN32
+        #if _WIN32
         uint32_t tid = GetCurrentThreadId();
-#else
+        #else
         uint32_t tid = pthread_self();
-#endif
+        #endif
 
         char name[256];
 
@@ -81,21 +81,21 @@ void timer_end(uint64_t start, const char* fmt, ...) {
         }
 
         fprintf(timer_output,
-                "%c{\n"
-                "\"cat\":\"function\",\n"
-                "\"dur\":%lld,\n"
-                "\"name\":\"%s\",\n"
-                "\"ph\":\"X\",\n"
-                "\"pid\":0,\n"
-                "\"tid\": %u,\n"
-                "\"ts\": %lld\n"
-                "}",
+            "%c{\n"
+            "\"cat\":\"function\",\n"
+            "\"dur\":%lld,\n"
+            "\"name\":\"%s\",\n"
+            "\"ph\":\"X\",\n"
+            "\"pid\":0,\n"
+            "\"tid\": %u,\n"
+            "\"ts\": %lld\n"
+            "}",
 
-                i ? ',' : ' ',
-                (long long)elapsed_in_microseconds,
-                name,
-                is_main_thread ? 1 : tid,
-                (long long)start_in_microseconds);
+            i ? ',' : ' ',
+            (long long)elapsed_in_microseconds,
+            name,
+            is_main_thread ? 1 : tid,
+            (long long)start_in_microseconds);
 
         mtx_unlock(&timer_mutex);
     }
