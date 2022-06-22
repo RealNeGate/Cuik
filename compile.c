@@ -42,12 +42,12 @@ static const char* INPUT_FILES[] = {
     "src/back/linker.c",
     //"src/linker/tblink.c",
 
-#if defined(_WIN32)
+    #if defined(_WIN32)
     "src/back/microsoft_craziness.cpp",
     "src/ext/threads_msvc.c",
-#else
-    "src/ext/threads_posix.c"
-#endif
+    #else
+    "src/ext/threads_posix.c",
+    #endif
 };
 enum { INPUT_FILE_COUNT = sizeof(INPUT_FILES) / sizeof(INPUT_FILES[0]) };
 
@@ -228,18 +228,18 @@ int main(int argc, char** argv) {
     nbuild_init();
     create_dir_if_not_exists("bin"SLASH);
 
-#ifdef RELEASE_BUILD
+    #ifdef RELEASE_BUILD
     printf("Compiling a release build!\n");
-#endif
+    #endif
 
     CC_Options options = {
         .output_dir = "bin"SLASH,
 
-#       ifdef RELEASE_BUILD
+        #ifdef RELEASE_BUILD
         .opt = CC_Ox,
-#       else
+        #else
         .opt = CC_O0,
-#       endif
+        #endif
 
         // there's some SSE42 stuff in the lexer
         .vector_ext = CC_VECTOR_SSE42,
@@ -265,22 +265,22 @@ int main(int argc, char** argv) {
     ar_invoke("bin"SLASH"cuik", 1, (const char*[]) { "bin"SLASH"*.obj" });
     cmd_wait_for_all();
 
-#ifndef ONLY_LIBRARY
+    #ifndef ONLY_LIBRARY
     static const char* LINKER_INPUTS[] = {
         "bin"SLASH DRIVER_NAME".obj",
-#       if ON_WINDOWS
+        #if ON_WINDOWS
         "bin"SLASH"cuik.lib", "tb"SLASH"tildebackend.lib",
-#       else
-        "bin"SLASH"cuik.a", "tb"SLASH"tildebackend.a"
-#       endif
+        #else
+        "bin"SLASH"cuik.a", "tb"SLASH"tildebackend.a",
+        #endif
     };
 
     static const char* EXTERNALS[] = {
-#       if ON_WINDOWS
+        #if ON_WINDOWS
         "ole32", "Advapi32", "OleAut32", "DbgHelp"
-#       else
-        "c", "m", "pthread"
-#       endif
+            #else
+        "c", "m", "pthread",
+        #endif
     };
 
     printf("Linking...\n");
@@ -290,11 +290,12 @@ int main(int argc, char** argv) {
     cmd_wait_for_all();
 
     ld_invoke("bin"SLASH"cuik",
-              COUNTOF(LINKER_INPUTS), LINKER_INPUTS,
-              COUNTOF(EXTERNALS), EXTERNALS);
+        COUNTOF(LINKER_INPUTS), LINKER_INPUTS,
+        COUNTOF(EXTERNALS), EXTERNALS
+    );
 
     clean("bin"SLASH);
-#endif
+    #endif
 
     if (argc > 1) {
         if (strcmp(argv[1], "test") == 0) {
