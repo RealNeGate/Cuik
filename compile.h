@@ -254,19 +254,30 @@ static void nbuild_init() {
     setvbuf(stdout, NULL, _IONBF, 0);
 
     if (ON_WINDOWS) {
-        // sets environment vars for compiler
-        system("call vcvars64");
+        // sets environment vars for compiler, if not already set
+        // NOTE(bumbread): pretty sure this environment variable is a good
+        // indicator of vcvars present.
+        char *env = getenv("VSINSTALLDIR");
+        if(env == NULL) {
+            int vcvars_ret = system("call vcvars64");
+            if(vcvars_ret != 0) {
+                fprintf(stderr, "ERROR: vcvars64.bat wasn't found. "
+                    "Please add it shell PATH or run the build script in "
+                    "Visual Studio Developer's Command Prompt\n");
+                exit(69420);
+            }
+        }
     }
 
-#if defined(__clang__)
+    #if defined(__clang__)
     printf("Compiling with Clang %d.%d.%d...\n", __clang_major__, __clang_minor__, __clang_patchlevel__);
-#elif defined(__GNUC__)
+    #elif defined(__GNUC__)
     printf("Compiling with GCC %d.%d...\n", __GNUC__, __GNUC_MINOR__);
-#elif defined(_MSC_VER)
+    #elif defined(_MSC_VER)
     printf("Compiling with MSVC %d.%d...\n", _MSC_VER / 100, _MSC_VER % 100);
-#elif defined(__CUIKC__)
+    #elif defined(__CUIKC__)
     printf("Compiling with Cuik %d.%d...\n", __CUIKC__, __CUIKC_MINOR__);
-#endif
+    #endif
 }
 
 ////////////////////////////////
@@ -445,7 +456,7 @@ typedef struct {
 
 // if output_name is NULL it'll use the same name as input_path
 static void cc_invoke(const CC_Options* options, const char* input_path, const char* output_name) {
-#if UNIX_STYLE
+    #if UNIX_STYLE
     const char* cc_command;
     if (ON_CLANG) cc_command = "clang";
     else if (ON_GCC) cc_command = "gcc";
@@ -516,9 +527,9 @@ static void cc_invoke(const CC_Options* options, const char* input_path, const c
 
     cmd_append(input_path);
     cmd_run();
-#else
-#error "TODO"
-#endif
+    #else
+    #error "TODO"
+    #endif
 }
 
 static void ar_invoke(const char* output_path, size_t count, const char* inputs[]) {
