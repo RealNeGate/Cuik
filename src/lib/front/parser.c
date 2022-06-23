@@ -514,7 +514,10 @@ void type_layout(TranslationUnit* restrict tu, Cuik_Type* type) {
     type->is_inprogress = false;
 }
 
-CUIK_API TranslationUnit* cuik_parse_translation_unit(TB_Module* restrict ir_module, TokenStream* restrict s, const Cuik_TargetDesc* target_desc, threadpool_t* restrict thread_pool) {
+CUIK_API TranslationUnit* cuik_parse_translation_unit(
+    TB_Module* restrict ir_module, TokenStream* restrict s,
+    const Cuik_TargetDesc* target_desc, Cuik_IThreadpool* restrict thread_pool
+) {
     // hacky but i don't wanna wrap it in a timed_block
     uint64_t timer_start = timer_now();
 
@@ -1008,11 +1011,11 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(TB_Module* restrict ir_mod
                 task->global_symbols = global_symbols;
                 task->base_token_stream = s;
 
-                threadpool_submit(thread_pool, phase3_parse_task, task);
+                thread_pool->submit(thread_pool->user_data, phase3_parse_task, task);
             }
 
             while (tasks_remaining != 0) {
-                threadpool_work_one_job(thread_pool);
+                thread_pool->work_one_job(thread_pool->user_data);
                 thrd_yield();
             }
 

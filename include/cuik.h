@@ -14,12 +14,27 @@
 #endif
 
 // opaque structs
-typedef struct threadpool_t threadpool_t;
 typedef struct TokenStream TokenStream;
 typedef struct Stmt Stmt;
 typedef struct Token Token;
 typedef struct TranslationUnit TranslationUnit;
 typedef struct CompilationUnit CompilationUnit;
+
+////////////////////////////////////////////
+// OOP enjoyers
+////////////////////////////////////////////
+// this is an interface for a threadpool that Cuik may use if you
+// wish to ask it to multithread different internal components
+typedef struct Cuik_IThreadpool {
+    // fed into the member functions here
+    void* user_data;
+
+    // runs the function fn with arg as the parameter on a thread
+    void (*submit)(void* user_data, void fn(void*), void* arg);
+
+    // tries to work one job before returning (can also not work at all)
+    void (*work_one_job)(void* user_data);
+} Cuik_IThreadpool;
 
 ////////////////////////////////////////////
 // Target descriptor
@@ -146,8 +161,10 @@ CUIK_API Cuik_Define cuikpp_get_define(Cuik_CPP* ctx, Cuik_DefineRef src);
 // this will return a Cuik_CPP through out_cpp that you have to free once you're
 // done with it (after all frontend work is done), the out_cpp can also be finalized if
 // you dont need the defines table.
-CUIK_API TokenStream cuik_preprocess_simple(Cuik_CPP* restrict out_cpp, const char* filepath, const Cuik_TargetDesc* target_desc,
-    bool system_includes, size_t include_count, const char* includes[]);
+CUIK_API TokenStream cuik_preprocess_simple(
+    Cuik_CPP* restrict out_cpp, const char* filepath, const Cuik_TargetDesc* target_desc,
+    bool system_includes, size_t include_count, const char* includes[]
+);
 
 ////////////////////////////////////////////
 // C parsing
@@ -170,7 +187,11 @@ typedef struct Cuik_Type Cuik_Type;
 // if ir_module is NULL then translation unit will not be used for IR generation,
 // multiple translation units can be created for the same module you just have to
 // attach them to each other with a compilation unit and internally link them.
-CUIK_API TranslationUnit* cuik_parse_translation_unit(TB_Module* restrict ir_module, TokenStream* restrict s, const Cuik_TargetDesc* target_desc, threadpool_t* restrict thread_pool);
+CUIK_API TranslationUnit* cuik_parse_translation_unit(
+    TB_Module* restrict ir_module, TokenStream* restrict s,
+    const Cuik_TargetDesc* target_desc, Cuik_IThreadpool* restrict thread_pool
+);
+
 CUIK_API void cuik_destroy_translation_unit(TranslationUnit* restrict tu);
 
 ////////////////////////////////////////////

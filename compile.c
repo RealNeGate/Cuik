@@ -8,46 +8,46 @@
 #include "compile.h"
 
 static const char* INPUT_FILES[] = {
-    "src/cuik.c",
-    "src/str.c",
-    "src/tls.c",
-    "src/timer.c",
-    "src/diagnostic.c",
-    "src/crash_handler.c",
-    "src/arena.c",
-    "src/settings.c",
-    "src/compilation_unit.c",
-    "src/ext/threadpool.c",
+    "src/lib/cuik.c",
+    "src/lib/str.c",
+    "src/lib/tls.c",
+    "src/lib/timer.c",
+    "src/lib/diagnostic.c",
+    "src/lib/crash_handler.c",
+    "src/lib/arena.c",
+    "src/lib/settings.c",
+    "src/lib/compilation_unit.c",
+    "src/lib/ext/threadpool.c",
 
     // C preprocessor
-    "src/preproc/lexer.c",
-    "src/preproc/nopp.c",
-    "src/preproc/cpp.c",
+    "src/lib/preproc/lexer.c",
+    "src/lib/preproc/nopp.c",
+    "src/lib/preproc/cpp.c",
 
     // C frontend
-    "src/front/parser.c",
-    "src/front/sema.c",
-    "src/front/atoms.c",
-    "src/front/const_eval.c",
-    "src/front/types.c",
-    "src/front/ast_dump.c",
+    "src/lib/front/parser.c",
+    "src/lib/front/sema.c",
+    "src/lib/front/atoms.c",
+    "src/lib/front/const_eval.c",
+    "src/lib/front/types.c",
+    "src/lib/front/ast_dump.c",
 
     // Target specific stuff
-    "src/targets/x64.c",
+    "src/lib/targets/x64.c",
 
     // Optional analysis
-    "src/anal/analysis.c",
+    "src/lib/anal/analysis.c",
 
     // Backend
-    "src/back/ir_gen.c",
-    "src/back/linker.c",
-    //"src/linker/tblink.c",
+    "src/lib/back/ir_gen.c",
+    "src/lib/back/linker.c",
+    //"src/lib/linker/tblink.c",
 
     #if defined(_WIN32)
-    "src/back/microsoft_craziness.cpp",
-    "src/ext/threads_msvc.c",
+    "src/lib/back/microsoft_craziness.cpp",
+    "src/lib/ext/threads_msvc.c",
     #else
-    "src/ext/threads_posix.c",
+    "src/lib/ext/threads_posix.c",
     #endif
 };
 enum { INPUT_FILE_COUNT = sizeof(INPUT_FILES) / sizeof(INPUT_FILES[0]) };
@@ -287,7 +287,7 @@ int main(int argc, char** argv) {
     printf("Linking...\n");
 
     // compile main driver
-    cc_invoke(&options, "drivers/"DRIVER_NAME".c", NULL);
+    cc_invoke(&options, "src"SLASH"drivers"SLASH DRIVER_NAME".c", NULL);
     cmd_wait_for_all();
 
     ld_invoke("bin"SLASH"cuik",

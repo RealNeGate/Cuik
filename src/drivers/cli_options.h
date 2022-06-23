@@ -12,6 +12,6 @@ OPTION(LIB,     l, lib,         1, "add library to compilation unit")
 OPTION(TIME,    T, time,        0, "profile the compile times")
 OPTION(OBJ,     c, obj,         0, "dont link, only emit the object file")
 OPTION(OPT,     O, optimize,    0, "optimize the generated IR")
-OPTION(IR,      _, ir,          1, "compile up until the IR generation")
+OPTION(IR,      _, ir,          0, "compile up until the IR generation")
 
 #undef OPTION

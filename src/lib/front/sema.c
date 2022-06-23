@@ -86,7 +86,7 @@ bool type_compatible(TranslationUnit* tu, Cuik_Type* src, Cuik_Type* dst, Expr* 
             src->kind <= KIND_LONG &&
             dst->kind >= KIND_BOOL &&
             dst->kind <= KIND_LONG) {
-#if 0
+            #if 0
             // we allow for implicit up-casts (char -> long)
             if (dst->kind >= src->kind) return true;
             else if (dst->kind == KIND_BOOL) return true;
@@ -94,31 +94,31 @@ bool type_compatible(TranslationUnit* tu, Cuik_Type* src, Cuik_Type* dst, Expr* 
                 // allow integer literals to represent any integer
                 return true;
             }
-#else
+            #else
             // just all integer casts are good
             return true;
-#endif
+            #endif
         } else if (src->kind >= KIND_BOOL &&
-                   src->kind <= KIND_LONG &&
-                   dst->kind == KIND_PTR) {
+            src->kind <= KIND_LONG &&
+            dst->kind == KIND_PTR) {
             if (a_expr->op == EXPR_INT &&
                 a_expr->int_num.num == 0) {
                 return true;
             }
         } else if (src->kind == KIND_FLOAT ||
-                   dst->kind == KIND_DOUBLE) {
+            dst->kind == KIND_DOUBLE) {
             return true;
         } else if (src->kind == KIND_DOUBLE ||
-                   dst->kind == KIND_FLOAT) {
+            dst->kind == KIND_FLOAT) {
             return true;
         } else if (src->kind == KIND_PTR &&
-                   dst->kind == KIND_BOOL) {
+            dst->kind == KIND_BOOL) {
             return true;
         } else if (src->kind == KIND_FUNC &&
-                   dst->kind == KIND_BOOL) {
+            dst->kind == KIND_BOOL) {
             return true;
         } else if (src->kind == KIND_FUNC &&
-                   dst->kind == KIND_PTR) {
+            dst->kind == KIND_PTR) {
             if (dst->ptr_to->kind == KIND_FUNC) {
                 return type_equal(tu, src, dst->ptr_to);
             }
@@ -979,8 +979,8 @@ Cuik_Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
             e->ternary_op.left->cast_type = &builtin_types[TYPE_BOOL];
 
             Cuik_Type* type = get_common_type(tu,
-                                              sema_expr(tu, e->ternary_op.middle),
-                                              sema_expr(tu, e->ternary_op.right));
+                sema_expr(tu, e->ternary_op.middle),
+                sema_expr(tu, e->ternary_op.right));
 
             e->ternary_op.middle->cast_type = type;
             e->ternary_op.right->cast_type = type;
@@ -1042,11 +1042,11 @@ Cuik_Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
             Cuik_Type* rhs = sema_expr(tu, e->bin_op.right);
 
             if ((e->op == EXPR_PLUS ||
-                 e->op == EXPR_MINUS) &&
+                    e->op == EXPR_MINUS) &&
                 (lhs->kind == KIND_PTR ||
-                 lhs->kind == KIND_ARRAY ||
-                 rhs->kind == KIND_PTR ||
-                 rhs->kind == KIND_ARRAY)) {
+                    lhs->kind == KIND_ARRAY ||
+                    rhs->kind == KIND_PTR ||
+                    rhs->kind == KIND_ARRAY)) {
                 // Pointer arithmatic
                 if (e->op == EXPR_PLUS && (rhs->kind == KIND_PTR || rhs->kind == KIND_ARRAY)) {
                     swap(lhs, rhs);
@@ -1074,9 +1074,9 @@ Cuik_Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
                 }
             } else {
                 if (!(lhs->kind >= KIND_BOOL &&
-                      lhs->kind <= KIND_DOUBLE &&
-                      rhs->kind >= KIND_BOOL &&
-                      rhs->kind <= KIND_DOUBLE)) {
+                        lhs->kind <= KIND_DOUBLE &&
+                        rhs->kind >= KIND_BOOL &&
+                        rhs->kind <= KIND_DOUBLE)) {
                     type_as_string(tu, sizeof(temp_string0), temp_string0, lhs);
                     type_as_string(tu, sizeof(temp_string1), temp_string1, rhs);
 
@@ -1103,8 +1103,8 @@ Cuik_Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
         case EXPR_CMPLT:
         case EXPR_CMPLE: {
             Cuik_Type* type = get_common_type(tu,
-                                              sema_expr(tu, e->bin_op.left),
-                                              sema_expr(tu, e->bin_op.right));
+                sema_expr(tu, e->bin_op.left),
+                sema_expr(tu, e->bin_op.right));
 
             e->bin_op.left->cast_type = type;
             e->bin_op.right->cast_type = type;
@@ -1537,7 +1537,7 @@ static void sema_mark_children(TranslationUnit* tu, Expr* restrict e) {
             s->decl.attrs.is_used = true;
             Expr* sym = s->decl.first_symbol;
 
-            while (sym) {
+            while (sym != NULL) {
                 sema_mark_children(tu, sym);
                 sym = sym->next_symbol_in_chain;
             }
@@ -1560,7 +1560,7 @@ static void sema_task(void* arg) {
     }
 }
 
-void sema_pass(TranslationUnit* tu, threadpool_t* thread_pool) {
+void sema_pass(TranslationUnit* restrict tu, Cuik_IThreadpool* restrict thread_pool) {
     tls_init();
     size_t count = arrlen(tu->top_level_stmts);
 
@@ -1574,7 +1574,7 @@ void sema_pass(TranslationUnit* tu, threadpool_t* thread_pool) {
                 s->decl.attrs.is_used = true;
 
                 Expr* sym = s->decl.first_symbol;
-                while (sym) {
+                while (sym != NULL) {
                     sema_mark_children(tu, sym);
                     sym = sym->next_symbol_in_chain;
                 }
@@ -1603,12 +1603,10 @@ void sema_pass(TranslationUnit* tu, threadpool_t* thread_pool) {
                     .tu = tu
                 };
 
-                threadpool_submit(thread_pool, sema_task, task);
+                thread_pool->submit(thread_pool->user_data, sema_task, task);
             }
 
-            while (tasks_remaining != 0) {
-                thrd_yield();
-            }
+            while (tasks_remaining != 0) { thrd_yield(); }
         } else {
             in_the_semantic_phase = true;
             for (size_t i = 0; i < count; i++) {

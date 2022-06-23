@@ -1,7 +1,7 @@
 #pragma once
 #include "common.h"
-#include <preproc/lexer.h>
-#include <ext/threads.h>
+#include "preproc/lexer.h"
+#include "ext/threads.h"
 #undef ERROR
 
 typedef enum {
