@@ -34,7 +34,7 @@ static intmax_t eval_l0(Cuik_CPP* restrict c, TokenStream* restrict s) {
     intmax_t val;
     Token* t = tokens_get(s);
     if (t->type == TOKEN_INTEGER) {
-        IntSuffix suffix;
+        Cuik_IntSuffix suffix;
         val = parse_int(t->end - t->start, (const char*)t->start, &suffix);
 
         tokens_next(s);
@@ -59,8 +59,8 @@ static intmax_t eval_l0(Cuik_CPP* restrict c, TokenStream* restrict s) {
 
         if (tokens_get(s)->type != ')') {
             report_two_spots(REPORT_ERROR, s, t->location, tokens_get(s)->location,
-                             "expected closing parenthesis for macro subexpression",
-                             "open", "close?", NULL);
+                "expected closing parenthesis for macro subexpression",
+                "open", "close?", NULL);
             abort();
         }
         tokens_next(s);
@@ -76,7 +76,7 @@ static intmax_t eval_l5(Cuik_CPP* restrict c, TokenStream* restrict s) {
     intmax_t left = eval_l0(c, s);
 
     while (tokens_get(s)->type == TOKEN_LEFT_SHIFT ||
-           tokens_get(s)->type == TOKEN_RIGHT_SHIFT) {
+        tokens_get(s)->type == TOKEN_RIGHT_SHIFT) {
         int t = tokens_get(s)->type;
         tokens_next(s);
 
@@ -94,9 +94,9 @@ static intmax_t eval_l6(Cuik_CPP* restrict c, TokenStream* restrict s) {
     intmax_t left = eval_l5(c, s);
 
     while (tokens_get(s)->type == '>' ||
-           tokens_get(s)->type == '<' ||
-           tokens_get(s)->type == TOKEN_GREATER_EQUAL ||
-           tokens_get(s)->type == TOKEN_LESS_EQUAL) {
+        tokens_get(s)->type == '<' ||
+        tokens_get(s)->type == TOKEN_GREATER_EQUAL ||
+        tokens_get(s)->type == TOKEN_LESS_EQUAL) {
         int t = tokens_get(s)->type;
         tokens_next(s);
 
@@ -124,7 +124,7 @@ static intmax_t eval_l7(Cuik_CPP* restrict c, TokenStream* restrict s) {
     intmax_t left = eval_l6(c, s);
 
     while (tokens_get(s)->type == TOKEN_NOT_EQUAL ||
-           tokens_get(s)->type == TOKEN_EQUALITY) {
+        tokens_get(s)->type == TOKEN_EQUALITY) {
         int t = tokens_get(s)->type;
         tokens_next(s);
 

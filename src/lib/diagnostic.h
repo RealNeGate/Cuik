@@ -28,6 +28,7 @@ void init_report_system(void);
 void report_two_spots(ReportLevel level, TokenStream* tokens, SourceLocIndex loc, SourceLocIndex loc2, const char* msg, const char* loc_msg, const char* loc_msg2, const char* interjection);
 void report(ReportLevel level, TokenStream* tokens, SourceLocIndex loc, const char* fmt, ...);
 void report_ranged(ReportLevel level, TokenStream* tokens, SourceLocIndex start_loc, SourceLocIndex end_loc, const char* fmt, ...);
+void report_fix(ReportLevel level, TokenStream* tokens, SourceLocIndex loc, const char* tip, const char* fmt, ...);
 
 void crash_if_reports(ReportLevel min);
 void clear_any_reports(void);

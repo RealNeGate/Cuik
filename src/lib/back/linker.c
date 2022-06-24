@@ -39,7 +39,7 @@ void cuiklink_add_default_libpaths(Cuik_Linker* l) {
         abort();
     }
 
-    //cuiklink_add_libpath_wide(l, libs->vswhere.vs_library_path);
+    cuiklink_add_libpath_wide(l, cuik__vswhere.vs_library_path);
     //cuiklink_add_libpath_wide(l, libs->vswhere.windows_sdk_ucrt_library_path);
     cuiklink_add_libpath_wide(l, cuik__vswhere.windows_sdk_um_library_path);
     #endif
@@ -94,7 +94,7 @@ void cuiklink_add_input_file(Cuik_Linker* l, const char filepath[]) {
     #endif
 }
 
-bool cuiklink_invoke_system(Cuik_Linker* l, const char* filename, const char* crt_name) {
+bool cuiklink_invoke(Cuik_Linker* l, const char* filename, const char* crt_name) {
     bool result = true;
 
     #if defined(_WIN32)

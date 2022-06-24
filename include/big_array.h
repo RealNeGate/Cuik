@@ -11,13 +11,11 @@ typedef struct DynArrayHeader {
     char data[];
 } DynArrayHeader;
 
-inline void* dyn_array_internal_create(size_t type_size, bool has_zero_slot) {
+inline void* dyn_array_internal_create(size_t type_size) {
     DynArrayHeader* header = malloc(sizeof(DynArrayHeader) + (type_size * INITIAL_CAP));
     *header = (DynArrayHeader){
-        .size = has_zero_slot ? 1 : 0,
         .capacity = INITIAL_CAP
     };
-    if (has_zero_slot) memset(header->data, 0, type_size);
     return &header->data[0];
 }
 
@@ -44,21 +42,22 @@ inline void* dyn_array_internal_reserve(void* ptr, size_t type_size, size_t extr
 }
 
 #define DynArray(T) T*
-#define dyn_array_create(T, zero_slot) dyn_array_internal_create(sizeof(T), zero_slot)
+#define dyn_array_create(T) dyn_array_internal_create(sizeof(T))
 #define dyn_array_destroy(arr) dyn_array_internal_destroy(arr)
-#define dyn_array_put(arr, new_data)                            \
+
+#define dyn_array_put(arr, new_data)                        \
 do {                                                        \
-arr = dyn_array_internal_reserve(arr, sizeof(*arr), 1); \
-DynArrayHeader* header = ((DynArrayHeader*)arr) - 1;    \
-arr[header->size++] = new_data;                         \
+    arr = dyn_array_internal_reserve(arr, sizeof(*arr), 1); \
+    DynArrayHeader* header = ((DynArrayHeader*)arr) - 1;    \
+    arr[header->size++] = new_data;                         \
 } while (0)
 
-#define dyn_array_put_uninit(arr, extra)                             \
+#define dyn_array_put_uninit(arr, extra)                         \
 do {                                                             \
-size_t extra_ = (extra);                                     \
-arr = dyn_array_internal_reserve(arr, sizeof(*arr), extra_); \
-DynArrayHeader* header = ((DynArrayHeader*)arr) - 1;         \
-header->size += extra_;                                      \
+    size_t extra_ = (extra);                                     \
+    arr = dyn_array_internal_reserve(arr, sizeof(*arr), extra_); \
+    DynArrayHeader* header = ((DynArrayHeader*)arr) - 1;         \
+    header->size += extra_;                                      \
 } while (0)
 
 #define dyn_array_length(arr) ((((DynArrayHeader*)(arr)) - 1)->size)

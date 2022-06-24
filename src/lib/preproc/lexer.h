@@ -169,7 +169,7 @@ typedef struct {
 void lexer_read(Lexer* restrict l);
 
 intptr_t parse_char(size_t len, const char* str, int* output);
-uint64_t parse_int(size_t len, const char* str, IntSuffix* out_suffix);
+uint64_t parse_int(size_t len, const char* str, Cuik_IntSuffix* out_suffix);
 double parse_float(size_t len, const char* str);
 TknType classify_ident(const unsigned char* restrict str, size_t len);
 

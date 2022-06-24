@@ -324,9 +324,9 @@ TknType classify_ident(const unsigned char* restrict str, size_t len) {
     size_t v = values[i];
 
     // VERIFY
-#if !USE_INTRIN
+    #if !USE_INTRIN
     return strcmp(str, keywords[v]) == 0 ? (640 + v) : TOKEN_IDENTIFIER;
-#else
+    #else
     __m128i kw128 = _mm_loadu_si128((__m128i*)&keywords[v]);
     __m128i str128 = _mm_loadu_si128((__m128i*)str);
 
@@ -334,29 +334,30 @@ TknType classify_ident(const unsigned char* restrict str, size_t len) {
 
     // NOTE(NeGate): Fancy x86 strcmp crap :)
     int result = _mm_cmpestri(kw128, kw_len,
-                              str128, len,
-                              _SIDD_UBYTE_OPS |
-                              _SIDD_CMP_EQUAL_EACH |
-                              _SIDD_NEGATIVE_POLARITY |
-                              _SIDD_UNIT_MASK);
+        str128, len,
+        _SIDD_UBYTE_OPS |
+        _SIDD_CMP_EQUAL_EACH |
+        _SIDD_NEGATIVE_POLARITY |
+        _SIDD_UNIT_MASK);
 
     return result == 16 ? (640 + v) : TOKEN_IDENTIFIER;
-#endif
+    #endif
 }
 
 static int line_counter(size_t len, const unsigned char* str) {
-#if 1
+    #if 1
     int line_count = 0;
     for (size_t i = 0; i < len; i++) {
         line_count += (str[i] == '\n');
     }
 
     return line_count;
-#else
+    #else
     // TODO(NeGate): Test this out a bit before using it
     static unsigned char overhang_mask[32] = {
         255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    };
 
     size_t line_count = 0;
     size_t chunk_count = len / 16;
@@ -374,7 +375,7 @@ static int line_counter(size_t len, const unsigned char* str) {
     line_count += __builtin_popcount(lf_mask);
 
     return line_count;
-#endif
+    #endif
 }
 
 // NOTE(NeGate): The input string has a fat null terminator of 16bytes to allow
@@ -408,15 +409,15 @@ void lexer_read(Lexer* restrict l) {
             l->current_line += 1;
             goto redo_lex;
         } else if (*current == ' ') {
-#if !USE_INTRIN
+            #if !USE_INTRIN
             current += 1;
-#else
+            #else
             // SIMD space skip
             __m128i chars = _mm_loadu_si128((__m128i*)current);
             int len = __builtin_ffs(~_mm_movemask_epi8(_mm_cmpeq_epi8(chars, _mm_set1_epi8(' '))));
 
             current += len - 1;
-#endif
+            #endif
 
             goto redo_lex;
         } else if (*current == '/') {
@@ -484,8 +485,8 @@ void lexer_read(Lexer* restrict l) {
             l->token_type = TOKEN_IDENTIFIER;
 
             while (char_classes[*current] == CHAR_CLASS_IDENT ||
-                   char_classes[*current] == CHAR_CLASS_NUMBER ||
-                   *current == '\\') {
+                char_classes[*current] == CHAR_CLASS_NUMBER ||
+                *current == '\\') {
                 if (current[0] == '\\') {
                     if (current[0] == 'U' || current[0] == 'u') {
                         slow_identifier_lexing = true;
@@ -566,12 +567,20 @@ void lexer_read(Lexer* restrict l) {
             return;
         }
         case CHAR_CLASS_NUMBER: {
-            if (current[-1] == '0' && current[0] == 'x') {
+            if (current[-1] == '0' && current[0] == 'b') {
+                current++;
+
+                while (*current == '0' || *current == '1') {
+                    current++;
+                }
+
+                l->token_type = TOKEN_INTEGER;
+            } else if (current[-1] == '0' && current[0] == 'x') {
                 current++;
 
                 while ((*current >= '0' && *current <= '9') ||
-                       (*current >= 'A' && *current <= 'F') ||
-                       (*current >= 'a' && *current <= 'f')) {
+                    (*current >= 'A' && *current <= 'F')    ||
+                    (*current >= 'a' && *current <= 'f')) {
                     current++;
                 }
 
@@ -701,14 +710,14 @@ void lexer_read(Lexer* restrict l) {
         case CHAR_CLASS_STRING: {
             char quote_type = current[-1] == '\'' ? '\'' : '\"';
 
-#if !USE_INTRIN
+            #if !USE_INTRIN
             do {
                 if (*current == quote_type && current[-1] == '\\') break;
                 if (*current == '\n') l->current_line += 1;
 
                 current += 1;
             } while (*current);
-#else
+            #else
             __m128i pattern = _mm_set1_epi8(quote_type);
 
             do {
@@ -736,7 +745,7 @@ void lexer_read(Lexer* restrict l) {
                     current += 16;
                 }
             } while (*current);
-#endif
+            #endif
 
             l->token_type = quote_type;
 
@@ -840,11 +849,11 @@ void lexer_read(Lexer* restrict l) {
     }
 }
 
-uint64_t parse_int(size_t len, const char* str, IntSuffix* out_suffix) {
+uint64_t parse_int(size_t len, const char* str, Cuik_IntSuffix* out_suffix) {
     char* end;
     uint64_t i = strtoull(str, &end, 0);
 
-    IntSuffix suffix = INT_SUFFIX_NONE;
+    Cuik_IntSuffix suffix = INT_SUFFIX_NONE;
     if (end != &str[len]) {
         size_t remaining = &str[len] - end;
         if (remaining == 4) {

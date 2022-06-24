@@ -139,4 +139,5 @@ ConstValue const_eval(TranslationUnit* tu, const Expr* e);
 bool const_eval_try_offsetof_hack(TranslationUnit* tu, const Expr* e, uint64_t* out);
 
 // if thread_pool is NULL, the semantics are done single threaded
-void sema_pass(TranslationUnit* restrict tu, Cuik_IThreadpool* restrict thread_pool);
+void cuik__sema_pass(TranslationUnit* restrict tu, Cuik_IThreadpool* restrict thread_pool);
+void cuik__function_analysis(TranslationUnit* restrict tu, Stmt* restrict s);

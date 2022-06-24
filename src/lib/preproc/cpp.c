@@ -54,7 +54,7 @@ CUIK_API void cuikpp_init(Cuik_CPP* ctx) {
 
         .the_shtuffs = cuik__valloc(THE_SHTUFFS_SIZE),
     };
-    ctx->files = dyn_array_create(Cuik_FileEntry, false);
+    ctx->files = dyn_array_create(Cuik_FileEntry);
 
     tls_init();
 }

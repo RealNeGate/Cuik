@@ -532,7 +532,7 @@ struct Expr {
         double float_num;
         struct ExprInt {
             unsigned long long num;
-            IntSuffix suffix;
+            Cuik_IntSuffix suffix;
         } int_num;
     };
 };

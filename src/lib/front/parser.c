@@ -537,7 +537,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(
     // Parse translation unit
     ////////////////////////////////
     out_of_order_mode = true;
-    DynArray(int) static_assertions = dyn_array_create(int, false);
+    DynArray(int) static_assertions = dyn_array_create(int);
 
     // Phase 1: resolve all top level statements
     timed_block("phase 1") {
@@ -802,7 +802,8 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(
                                 Token* t = tokens_get(s);
 
                                 if (t->type == '\0') {
-                                    REPORT(ERROR, t->location, "Function body ended in EOF");
+                                    SourceLocIndex l = tokens_get_last_location_index(s);
+                                    report_fix(REPORT_ERROR, s, l, "}", "Function body ended in EOF");
                                     abort();
                                 } else if (t->type == '{') {
                                     depth++;
@@ -1048,7 +1049,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(
 
     // run type checker
     timed_block("phase 4") {
-        sema_pass(tu, thread_pool);
+        cuik__sema_pass(tu, thread_pool);
         crash_if_reports(REPORT_ERROR);
     }
 
@@ -1649,11 +1650,16 @@ static void parse_decl_or_expr(TranslationUnit* tu, TokenStream* restrict s, siz
                 if (expect_comma) {
                     if (tokens_get(s)->type == '{') {
                         generic_error(s, "nested functions are not allowed... yet");
+                    } else if (tokens_get(s)->type != ',') {
+				        SourceLocIndex loc = tokens_get_last_location_index(s);
+
+				        report_fix(REPORT_ERROR, s, loc, ";", "expected semicolon at the end of declaration");
                     }
 
-                    expect_with_reason(s, ',', "declaration");
-                } else
+                    tokens_next(s);
+                } else {
                     expect_comma = true;
+                }
 
                 Decl decl = parse_declarator(tu, s, type, false, false);
 
@@ -1663,7 +1669,8 @@ static void parse_decl_or_expr(TranslationUnit* tu, TokenStream* restrict s, siz
                     .type = decl.type,
                     .name = decl.name,
                     .attrs = attr,
-                    .initial = 0};
+                    .initial = 0,
+                };
 
                 if (local_symbol_count >= MAX_LOCAL_SYMBOLS) {
                     REPORT(ERROR, decl.loc, "Local symbol count exceeds %d (got %d)", MAX_LOCAL_SYMBOLS, local_symbol_count);
@@ -1674,7 +1681,8 @@ static void parse_decl_or_expr(TranslationUnit* tu, TokenStream* restrict s, siz
                     .name = decl.name,
                     .type = decl.type,
                     .storage_class = STORAGE_LOCAL,
-                    .stmt = n};
+                    .stmt = n,
+                };
 
                 Expr* initial = 0;
                 if (tokens_get(s)->type == '=') {
@@ -1705,8 +1713,7 @@ static void parse_decl_or_expr(TranslationUnit* tu, TokenStream* restrict s, siz
         Stmt* n = make_stmt(tu, s, STMT_EXPR, sizeof(struct StmtExpr));
         Expr* expr = parse_expr(tu, s);
 
-        n->expr = (struct StmtExpr){
-            .expr = expr};
+        n->expr = (struct StmtExpr){ .expr = expr };
 
         *((Stmt**)tls_push(sizeof(Stmt*))) = n;
         *body_count += 1;
@@ -1738,8 +1745,7 @@ static Stmt* parse_stmt_or_expr(TranslationUnit* tu, TokenStream* restrict s) {
             Stmt* n = make_stmt(tu, s, STMT_EXPR, sizeof(struct StmtExpr));
 
             Expr* expr = parse_expr(tu, s);
-            n->expr = (struct StmtExpr){
-                .expr = expr};
+            n->expr = (struct StmtExpr){ .expr = expr };
 
             expect(s, ';');
             return n;
@@ -1786,8 +1792,9 @@ static void expect_closing_paren(TokenStream* restrict s, SourceLocIndex opening
 
         report_two_spots(REPORT_ERROR, s, opening, loc,
             "expected closing parenthesis",
-            "open", "close?", NULL);
-        abort();
+            "open", "close?", NULL
+        );
+        return;
     }
 
     tokens_next(s);
@@ -1795,10 +1802,11 @@ static void expect_closing_paren(TokenStream* restrict s, SourceLocIndex opening
 
 static void expect_with_reason(TokenStream* restrict s, char ch, const char* reason) {
     if (tokens_get(s)->type != ch) {
-        SourceLocIndex loc = tokens_get_location_index(s);
+        SourceLocIndex loc = tokens_get_last_location_index(s);
 
-        report(REPORT_ERROR, s, loc, "expected '%c' for %s", ch, reason);
-        abort();
+        char fix[2] = { ch, '\0' };
+        report_fix(REPORT_ERROR, s, loc, fix, "expected '%c' for %s", ch, reason);
+        return;
     }
 
     tokens_next(s);

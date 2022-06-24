@@ -169,7 +169,7 @@ CUIK_API TokenStream cuik_preprocess_simple(
 ////////////////////////////////////////////
 // C parsing
 ////////////////////////////////////////////
-typedef enum IntSuffix {
+typedef enum Cuik_IntSuffix {
     //                u   l   l
     INT_SUFFIX_NONE = 0 + 0 + 0,
     INT_SUFFIX_U    = 1 + 0 + 0,
@@ -177,7 +177,7 @@ typedef enum IntSuffix {
     INT_SUFFIX_UL   = 1 + 2 + 0,
     INT_SUFFIX_LL   = 0 + 2 + 2,
     INT_SUFFIX_ULL  = 1 + 2 + 2,
-} IntSuffix;
+} Cuik_IntSuffix;
 
 typedef unsigned char* Atom;
 typedef struct Cuik_Type Cuik_Type;
@@ -206,8 +206,10 @@ CUIK_API size_t cuik_get_token_count(TokenStream* restrict s);
 ////////////////////////////////////////////
 // IR generation
 ////////////////////////////////////////////
-// Generates TBIR for a specific top-level statement
-CUIK_API void cuik_generate_ir(TranslationUnit* restrict tu, Stmt* restrict s);
+// Generates TBIR for a specific top-level statement, returns a pointer to the TB_Function
+// it just generated such that a user could do TB related operations on it
+CUIK_API TB_Module* cuik_get_tb_module(TranslationUnit* restrict tu);
+CUIK_API TB_Function* cuik_stmt_gen_ir(TranslationUnit* restrict tu, Stmt* restrict s);
 
 ////////////////////////////////////////////
 // Translation unit management
@@ -253,6 +255,7 @@ void cuiklink_add_input_file(Cuik_Linker* l, const char* filepath);
 
 // Calls the system linker
 // return true if it succeeds
-bool cuiklink_invoke_system(Cuik_Linker* l, const char* filename, const char* crt_name);
+bool cuiklink_invoke(Cuik_Linker* l, const char* filename, const char* crt_name);
+bool cuiklink_invoke_tb(Cuik_Linker* l, const char* filename);
 
 #include "cuik_private.h"

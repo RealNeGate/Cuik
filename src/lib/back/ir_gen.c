@@ -48,47 +48,47 @@ static TB_Register cast_reg(TB_Function* func, TB_Register reg, const Cuik_Type*
             reg = tb_inst_trunc(func, reg, ctype_to_tbtype(dst));
         }
     } else if (src->kind != KIND_BOOL &&
-               dst->kind == KIND_BOOL) {
+        dst->kind == KIND_BOOL) {
         TB_DataType dt = tb_function_get_node(func, reg)->dt;
         reg = tb_inst_cmp_ne(func, reg, tb_inst_uint(func, dt, 0));
     } else if (src->kind == KIND_BOOL &&
-               dst->kind >= KIND_CHAR &&
-               dst->kind <= KIND_LONG) {
+        dst->kind >= KIND_CHAR &&
+        dst->kind <= KIND_LONG) {
         reg = tb_inst_zxt(func, reg, ctype_to_tbtype(dst));
     } else if (src->kind >= KIND_CHAR &&
-               src->kind <= KIND_LONG &&
-               dst->kind == KIND_PTR) {
+        src->kind <= KIND_LONG &&
+        dst->kind == KIND_PTR) {
         reg = tb_inst_int2ptr(func, reg);
     } else if (src->kind == KIND_PTR &&
-               dst->kind >= KIND_CHAR &&
-               dst->kind <= KIND_LONG) {
+        dst->kind >= KIND_CHAR &&
+        dst->kind <= KIND_LONG) {
         reg = tb_inst_ptr2int(func, reg, ctype_to_tbtype(dst));
     } else if (src->kind == KIND_PTR &&
-               dst->kind == KIND_PTR) {
+        dst->kind == KIND_PTR) {
         /* TB has opaque pointers, nothing needs to be done. */
     } else if (src->kind == KIND_FLOAT &&
-               dst->kind == KIND_DOUBLE) {
+        dst->kind == KIND_DOUBLE) {
         TB_DataType dt = tb_function_get_node(func, reg)->dt;
 
         if (!(dt.type == TB_FLOAT && dt.data == TB_FLT_64 && dt.width == 0)) {
             reg = tb_inst_fpxt(func, reg, TB_TYPE_F64);
         }
     } else if (src->kind == KIND_DOUBLE &&
-               dst->kind == KIND_FLOAT) {
+        dst->kind == KIND_FLOAT) {
         TB_DataType dt = tb_function_get_node(func, reg)->dt;
 
         if (!(dt.type == TB_FLOAT && dt.data == TB_FLT_32 && dt.width == 0)) {
             reg = tb_inst_trunc(func, reg, TB_TYPE_F32);
         }
     } else if (src->kind >= KIND_FLOAT &&
-               src->kind <= KIND_DOUBLE &&
-               dst->kind >= KIND_CHAR &&
-               dst->kind <= KIND_LONG) {
+        src->kind <= KIND_DOUBLE &&
+        dst->kind >= KIND_CHAR &&
+        dst->kind <= KIND_LONG) {
         reg = tb_inst_float2int(func, reg, ctype_to_tbtype(dst), !dst->is_unsigned);
     } else if (src->kind >= KIND_CHAR &&
-               src->kind <= KIND_LONG &&
-               dst->kind >= KIND_FLOAT &&
-               dst->kind <= KIND_DOUBLE) {
+        src->kind <= KIND_LONG &&
+        dst->kind >= KIND_FLOAT &&
+        dst->kind <= KIND_DOUBLE) {
         reg = tb_inst_int2float(func, reg, ctype_to_tbtype(dst), !src->is_unsigned);
     }
 
@@ -252,11 +252,11 @@ InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, Sourc
 
                         ConstValue value = const_eval(tu, node->expr);
 
-#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-#error "Stop this immoral bullshit please... until someone fixes this at least :p"
-#else
+                        #if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+                        #error "Stop this immoral bullshit please... until someone fixes this at least :p"
+                        #else
                         memcpy(region, &value.unsigned_value, size);
-#endif
+                        #endif
                         break;
                     }
 
@@ -353,9 +353,9 @@ static void gen_local_initializer(TranslationUnit* tu, TB_Function* func, Source
     count_max_tb_init_objects(node_count, nodes, &max_tb_objects);
 
     TB_InitializerID init = tb_initializer_create(tu->ir_mod,
-                                                  type->size,
-                                                  type->align,
-                                                  max_tb_objects);
+        type->size,
+        type->align,
+        max_tb_objects);
 
     // Initialize all const expressions
     eval_initializer_objects(tu, func, loc, init, TB_NULL_REG, node_count, nodes);
@@ -406,11 +406,11 @@ static TB_InitializerID gen_global_initializer(TranslationUnit* tu, SourceLocInd
             eval_initializer_objects(tu, NULL, loc, init, TB_NULL_REG, node_count, nodes);
             return init;
         } else if (initial->op == EXPR_INT ||
-                   initial->op == EXPR_ENUM ||
-                   initial->op == EXPR_CHAR ||
-                   initial->op == EXPR_WCHAR ||
-                   initial->op == EXPR_CAST ||
-                   initial->op == EXPR_NEGATE) {
+            initial->op == EXPR_ENUM ||
+            initial->op == EXPR_CHAR ||
+            initial->op == EXPR_WCHAR ||
+            initial->op == EXPR_CAST ||
+            initial->op == EXPR_NEGATE) {
             TB_InitializerID init = tb_initializer_create(tu->ir_mod, type->size, type->align, 1);
             void* region = tb_initializer_add_region(tu->ir_mod, init, 0, type->size);
 
@@ -552,9 +552,9 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
         case EXPR_SYMBOL: {
             Stmt* stmt = e->symbol;
             assert(stmt->op == STMT_DECL ||
-                   stmt->op == STMT_LABEL ||
-                   stmt->op == STMT_GLOBAL_DECL ||
-                   stmt->op == STMT_FUNC_DECL);
+                stmt->op == STMT_LABEL ||
+                stmt->op == STMT_GLOBAL_DECL ||
+                stmt->op == STMT_FUNC_DECL);
 
             Cuik_Type* type = stmt->decl.type;
 
@@ -815,8 +815,8 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
             size_t ir_arg_count = is_aggregate_return ? 1 : 0;
             for (size_t i = 0; i < arg_count; i++) {
                 ir_arg_count += tu->target_desc->pass_parameter(tu, func, args[i],
-                                                                i >= varargs_cutoff,
-                                                                &ir_args[ir_arg_count]);
+                    i >= varargs_cutoff,
+                    &ir_args[ir_arg_count]);
             }
 
             assert(ir_arg_count == real_arg_count);
@@ -1624,9 +1624,9 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
             if (attrs.is_static) {
                 // Static initialization
                 TB_InitializerID init = gen_global_initializer(tu, s->loc,
-                                                               type,
-                                                               s->decl.initial,
-                                                               s->decl.name);
+                    type,
+                    s->decl.initial,
+                    s->decl.name);
 
                 char* name = tls_push(1024);
                 int name_len = snprintf(name, 1024, "%s$%s@%d", function_name, s->decl.name, tu->id_gen++);
@@ -1904,7 +1904,7 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
     }
 }
 
-static void gen_func_body(TranslationUnit* tu, Cuik_Type* type, Stmt* restrict s) {
+static TB_Function* gen_func_body(TranslationUnit* tu, Cuik_Type* type, Stmt* restrict s) {
     // Clear TLS
     tls_init();
     assert(type);
@@ -1964,37 +1964,40 @@ static void gen_func_body(TranslationUnit* tu, Cuik_Type* type, Stmt* restrict s
     }
 
     //tb_inst_set_scope(func, old_tb_scope);
-
-    if (!settings.optimize) {
-        tb_module_compile_func(tu->ir_mod, func, TB_ISEL_FAST);
-
-        // if we're optimizing, we need to keep the IR longer so we can compile later
-        tb_function_free(func);
-    }
+    return func;
 }
 
-CUIK_API void cuik_generate_ir(TranslationUnit* restrict tu, Stmt* restrict s) {
+CUIK_API TB_Function* cuik_stmt_gen_ir(TranslationUnit* restrict tu, Stmt* restrict s) {
     if (s->op == STMT_FUNC_DECL) {
         Cuik_Type* type = s->decl.type;
         assert(type->kind == KIND_FUNC);
 
         if (s->decl.attrs.is_static || s->decl.attrs.is_inline) {
-            if (!s->decl.attrs.is_used) return;
+            if (!s->decl.attrs.is_used) return NULL;
         }
 
-        gen_func_body(tu, type, s);
+        return gen_func_body(tu, type, s);
     } else if (s->op == STMT_DECL || s->op == STMT_GLOBAL_DECL) {
-        if (!s->decl.name) return;
-        if (!s->decl.attrs.is_used) return;
-        if (s->decl.attrs.is_typedef) return;
-        if (s->decl.attrs.is_extern || s->decl.type->kind == KIND_FUNC) return;
+        if (s->decl.name == NULL     ||
+            !s->decl.attrs.is_used   ||
+            s->decl.attrs.is_typedef ||
+            s->decl.attrs.is_extern  ||
+            s->decl.type->kind == KIND_FUNC) {
+            return NULL;
+        }
 
         TB_GlobalID global = s->backing.g;
         TB_InitializerID init = gen_global_initializer(tu, s->loc,
-                                                       s->decl.type,
-                                                       s->decl.initial,
-                                                       s->decl.name);
+            s->decl.type,
+            s->decl.initial,
+            s->decl.name);
 
         tb_global_set_initializer(tu->ir_mod, global, init);
     }
+
+    return NULL;
+}
+
+CUIK_API TB_Module* cuik_get_tb_module(TranslationUnit* restrict tu) {
+    return tu->ir_mod;
 }

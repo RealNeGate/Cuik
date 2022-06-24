@@ -34,28 +34,37 @@ const static int attribs[] = {
 bool report_using_thin_errors = false;
 
 void init_report_system(void) {
-#if _WIN32
+    #if _WIN32
     if (console_handle == NULL) {
         console_handle = GetStdHandle(STD_OUTPUT_HANDLE);
+
+        // Enable ANSI/VT sequences on windows
+        HANDLE output_handle = GetStdHandle(STD_OUTPUT_HANDLE);
+        if (output_handle != INVALID_HANDLE_VALUE) {
+            DWORD old_mode;
+            if (GetConsoleMode(output_handle, &old_mode)) {
+                SetConsoleMode(output_handle, old_mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+            }
+        }
 
         CONSOLE_SCREEN_BUFFER_INFO info;
         GetConsoleScreenBufferInfo(console_handle, &info);
 
         default_attribs = info.wAttributes;
     }
-#endif
+    #endif
 
     mtx_init(&report_mutex, mtx_plain);
 }
 
 static void print_level_name(ReportLevel level) {
-#if _WIN32
+    #if _WIN32
     SetConsoleTextAttribute(console_handle, (default_attribs & ~0xF) | attribs[level]);
     printf("%s: ", report_names[level]);
     SetConsoleTextAttribute(console_handle, default_attribs);
-#else
+    #else
     printf("%s: ", report_names[level]);
-#endif
+    #endif
 }
 
 static void display_line(ReportLevel level, TokenStream* tokens, SourceLoc* loc) {
@@ -79,8 +88,17 @@ static void display_line(ReportLevel level, TokenStream* tokens, SourceLoc* loc)
         print_level_name(level);
     } else {
         print_level_name(level);
-        if (line->filepath[0] != '<') {
-            printf("%s:%d:%d: ", line->filepath, line->line, loc->columns);
+
+        // identify a real filepath by talking to it's parents
+        for (;;) {
+            SourceLoc* next = GET_SOURCE_LOC(loc->line->parent);
+            if (next->line->filepath[0] != '<') {
+                line = next->line;
+
+                printf("%s:%d:%d: ", line->filepath, line->line, next->columns);
+                break;
+            }
+            loc = next;
         }
     }
 }
@@ -89,21 +107,20 @@ static void tally_report_counter(ReportLevel level) {
     int error_count = ++tally[level];
 
     if (level > REPORT_WARNING && error_count > 20) {
-#if _WIN32
+        #if _WIN32
         SetConsoleTextAttribute(console_handle, (default_attribs & ~0xF) | FOREGROUND_RED | FOREGROUND_INTENSITY);
-#endif
+        #endif
 
         printf("EXCEEDED ERROR LIMIT OF 20\n");
 
-#if _WIN32
+        #if _WIN32
         SetConsoleTextAttribute(console_handle, default_attribs);
-#endif
+        #endif
         abort();
     }
 }
 
-#define draw_line(tokens, loc_index) draw_line_biased(tokens, loc_index, 0)
-static size_t draw_line_biased(TokenStream* tokens, SourceLocIndex loc_index, int line_bias) {
+static size_t draw_line(TokenStream* tokens, SourceLocIndex loc_index) {
     SourceLine* line = GET_SOURCE_LOC(loc_index)->line;
 
     // display line
@@ -121,18 +138,14 @@ static size_t draw_line_biased(TokenStream* tokens, SourceLocIndex loc_index, in
         } while (*line_end && *line_end != '\n');
 
         size_t line_length = line_end - line_start;
-        if (line_bias > 0) {
-            printf(" %5d| %.*s\n", line_bias + line->line, (int)line_length, line_start);
-        } else {
-            printf("      | %.*s\n", (int)line_length, line_start);
-        }
+        printf("    %.*s\n", (int)line_length, line_start);
     }
 
     return dist_from_line_start;
 }
 
 static void draw_line_horizontal_pad() {
-    printf("      | ");
+    printf("    ");
 }
 
 static SourceLoc merge_source_locations(const SourceLoc* start, const SourceLoc* end) {
@@ -151,31 +164,31 @@ static SourceLoc merge_source_locations(const SourceLoc* start, const SourceLoc*
     return (SourceLoc){start->line, start_columns, end_columns - start_columns};
 }
 
-static int print_backtrace(TokenStream* tokens, SourceLocIndex loc_index) {
+static int print_backtrace(TokenStream* tokens, SourceLocIndex loc_index, SourceLine* kid) {
     SourceLoc* loc = GET_SOURCE_LOC(loc_index);
     SourceLine* line = loc->line;
 
     int line_bias = 0;
     if (line->parent != 0) {
-        line_bias = print_backtrace(tokens, line->parent);
+        line_bias = print_backtrace(tokens, line->parent, line);
     }
 
     switch (SOURCE_LOC_GET_TYPE(loc_index)) {
         case SOURCE_LOC_MACRO: {
             if (line->filepath[0] == '<') {
-                printf("In macro '%.*s' at line %d:\n", (int)loc->length, line->line_str + loc->columns, line_bias + line->line);
+                printf("In macro '%.*s' expanded at line %d:\n", (int)loc->length, line->line_str + loc->columns, line_bias + line->line);
             } else {
-                printf("In macro '%.*s' included from %s:%d:\n", (int)loc->length, line->line_str + loc->columns, line->filepath, line->line);
+                printf("In macro '%.*s' expanded at %s:%d:%d:\n", (int)loc->length, line->line_str + loc->columns, line->filepath, line->line, loc->columns);
             }
 
             if (!report_using_thin_errors) {
                 // draw macro highlight
-                size_t dist_from_line_start = draw_line_biased(tokens, loc_index, line_bias);
+                size_t dist_from_line_start = draw_line(tokens, loc_index);
                 draw_line_horizontal_pad();
 
-#if _WIN32
+                #if _WIN32
                 SetConsoleTextAttribute(console_handle, (default_attribs & ~0xF) | FOREGROUND_GREEN);
-#endif
+                #endif
 
                 // idk man
                 size_t start_pos = loc->columns > dist_from_line_start ? loc->columns - dist_from_line_start : 0;
@@ -187,16 +200,19 @@ static int print_backtrace(TokenStream* tokens, SourceLocIndex loc_index) {
                 for (size_t i = 1; i < tkn_len; i++) printf("~");
                 printf("\n");
 
-#if _WIN32
+                #if _WIN32
                 SetConsoleTextAttribute(console_handle, default_attribs);
-#endif
+                #endif
             }
             return line_bias;
         }
 
         default:
-        printf("In file included from %s:%d:\n", line->filepath, line->line);
-        return line->line;
+        if (line->parent != 0) {
+            printf("In file included from %s:%d:\n", line->filepath, line->line);
+            return line->line;
+        }
+        return 0;
     }
 }
 
@@ -205,7 +221,7 @@ void report_ranged(ReportLevel level, TokenStream* tokens, SourceLocIndex start_
 
     mtx_lock(&report_mutex);
     if (!report_using_thin_errors && loc.line->parent != 0) {
-        print_backtrace(tokens, loc.line->parent);
+        print_backtrace(tokens, loc.line->parent, loc.line);
     }
 
     display_line(level, tokens, &loc);
@@ -221,9 +237,9 @@ void report_ranged(ReportLevel level, TokenStream* tokens, SourceLocIndex start_
         size_t dist_from_line_start = draw_line(tokens, start_loc);
         draw_line_horizontal_pad();
 
-#if _WIN32
+        #if _WIN32
         SetConsoleTextAttribute(console_handle, (default_attribs & ~0xF) | FOREGROUND_GREEN);
-#endif
+        #endif
 
         // idk man
         size_t start_pos = loc.columns > dist_from_line_start ? loc.columns - dist_from_line_start : 0;
@@ -235,9 +251,9 @@ void report_ranged(ReportLevel level, TokenStream* tokens, SourceLocIndex start_
         for (size_t i = 1; i < tkn_len; i++) printf("~");
         printf("\n");
 
-#if _WIN32
+        #if _WIN32
         SetConsoleTextAttribute(console_handle, default_attribs);
-#endif
+        #endif
         printf("\n");
     }
 
@@ -250,7 +266,7 @@ void report(ReportLevel level, TokenStream* tokens, SourceLocIndex loc_index, co
 
     mtx_lock(&report_mutex);
     if (!report_using_thin_errors && loc->line->parent != 0) {
-        print_backtrace(tokens, loc->line->parent);
+        print_backtrace(tokens, loc->line->parent, loc->line);
     }
 
     display_line(level, tokens, loc);
@@ -266,9 +282,9 @@ void report(ReportLevel level, TokenStream* tokens, SourceLocIndex loc_index, co
         size_t dist_from_line_start = draw_line(tokens, loc_index);
         draw_line_horizontal_pad();
 
-#if _WIN32
+        #if _WIN32
         SetConsoleTextAttribute(console_handle, (default_attribs & ~0xF) | FOREGROUND_GREEN);
-#endif
+        #endif
 
         // idk man
         size_t start_pos = loc->columns > dist_from_line_start ? loc->columns - dist_from_line_start : 0;
@@ -280,9 +296,60 @@ void report(ReportLevel level, TokenStream* tokens, SourceLocIndex loc_index, co
         for (size_t i = 1; i < tkn_len; i++) printf("~");
         printf("\n");
 
-#if _WIN32
+        #if _WIN32
         SetConsoleTextAttribute(console_handle, default_attribs);
-#endif
+        #endif
+
+        printf("\n");
+    }
+
+    tally_report_counter(level);
+    mtx_unlock(&report_mutex);
+}
+
+void report_fix(ReportLevel level, TokenStream* tokens, SourceLocIndex loc_index, const char* tip, const char* fmt, ...) {
+    SourceLoc* loc = GET_SOURCE_LOC(loc_index);
+
+    mtx_lock(&report_mutex);
+    if (!report_using_thin_errors && loc->line->parent != 0) {
+        print_backtrace(tokens, loc->line->parent, loc->line);
+    }
+
+    display_line(level, tokens, loc);
+
+    va_list ap;
+    va_start(ap, fmt);
+    vprintf(fmt, ap);
+    va_end(ap);
+
+    printf("\n");
+
+    if (!report_using_thin_errors) {
+        size_t dist_from_line_start = draw_line(tokens, loc_index);
+        draw_line_horizontal_pad();
+
+        #if _WIN32
+        SetConsoleTextAttribute(console_handle, (default_attribs & ~0xF) | FOREGROUND_GREEN);
+        #endif
+
+        // idk man
+        size_t start_pos = loc->columns > dist_from_line_start ? loc->columns - dist_from_line_start : 0;
+
+        // one after the token
+        start_pos += loc->length;
+
+        // draw underline
+        for (size_t i = 0; i < start_pos; i++) printf(" ");
+        printf("^");
+        printf("\n");
+
+        draw_line_horizontal_pad();
+        for (size_t i = 0; i < start_pos; i++) printf(" ");
+        printf("%s\n", tip);
+
+        #if _WIN32
+        SetConsoleTextAttribute(console_handle, default_attribs);
+        #endif
 
         printf("\n");
     }
@@ -307,9 +374,9 @@ void report_two_spots(ReportLevel level, TokenStream* tokens, SourceLocIndex loc
             size_t dist_from_line_start = draw_line(tokens, loc_index);
             draw_line_horizontal_pad();
 
-#if _WIN32
+            #if _WIN32
             SetConsoleTextAttribute(console_handle, (default_attribs & ~0xF) | FOREGROUND_GREEN);
-#endif
+            #endif
 
             // draw underline
             size_t first_start_pos = loc->columns > dist_from_line_start ? loc->columns - dist_from_line_start : 0;
@@ -329,9 +396,9 @@ void report_two_spots(ReportLevel level, TokenStream* tokens, SourceLocIndex loc
             for (size_t i = second_start_pos + 1; i < second_end_pos; i++) printf("~");
             printf("\n");
 
-#if _WIN32
+            #if _WIN32
             SetConsoleTextAttribute(console_handle, default_attribs);
-#endif
+            #endif
 
             draw_line_horizontal_pad();
 
@@ -353,9 +420,9 @@ void report_two_spots(ReportLevel level, TokenStream* tokens, SourceLocIndex loc
                 size_t dist_from_line_start = draw_line(tokens, loc_index);
                 draw_line_horizontal_pad();
 
-#if _WIN32
+                #if _WIN32
                 SetConsoleTextAttribute(console_handle, (default_attribs & ~0xF) | FOREGROUND_GREEN);
-#endif
+                #endif
 
                 // draw underline
                 size_t start_pos = loc->columns > dist_from_line_start ? loc->columns - dist_from_line_start : 0;
@@ -366,9 +433,9 @@ void report_two_spots(ReportLevel level, TokenStream* tokens, SourceLocIndex loc
                 for (size_t i = 1; i < tkn_len; i++) printf("~");
                 printf("\n");
 
-#if _WIN32
+                #if _WIN32
                 SetConsoleTextAttribute(console_handle, default_attribs);
-#endif
+                #endif
 
                 if (loc_msg) {
                     draw_line_horizontal_pad();
@@ -396,9 +463,9 @@ void report_two_spots(ReportLevel level, TokenStream* tokens, SourceLocIndex loc
                 size_t dist_from_line_start = draw_line(tokens, loc2_index);
                 draw_line_horizontal_pad();
 
-#if _WIN32
+                #if _WIN32
                 SetConsoleTextAttribute(console_handle, (default_attribs & ~0xF) | FOREGROUND_GREEN);
-#endif
+                #endif
 
                 // draw underline
                 size_t start_pos = loc2->columns > dist_from_line_start
@@ -411,9 +478,9 @@ void report_two_spots(ReportLevel level, TokenStream* tokens, SourceLocIndex loc
                 for (size_t i = 1; i < tkn_len; i++) printf("~");
                 printf("\n");
 
-#if _WIN32
+                #if _WIN32
                 SetConsoleTextAttribute(console_handle, default_attribs);
-#endif
+                #endif
 
                 if (loc_msg2) {
                     draw_line_horizontal_pad();
@@ -424,7 +491,7 @@ void report_two_spots(ReportLevel level, TokenStream* tokens, SourceLocIndex loc
         }
     }
 
-    printf("\n");
+    printf("\n\n");
     tally_report_counter(level);
     mtx_unlock(&report_mutex);
 }

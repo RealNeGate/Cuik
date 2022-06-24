@@ -318,7 +318,7 @@ static Expr* parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
 
         case TOKEN_INTEGER: {
             Token* t = tokens_get(s);
-            IntSuffix suffix;
+            Cuik_IntSuffix suffix;
             uint64_t i = parse_int(t->end - t->start, (const char*)t->start, &suffix);
 
             *e = (Expr){
@@ -360,7 +360,7 @@ static Expr* parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
                 s->current = saved_lexer_pos;
                 size_t total_len = (t->end - t->start);
                 while (tokens_get(s)->type == TOKEN_STRING_DOUBLE_QUOTE ||
-                       tokens_get(s)->type == TOKEN_STRING_WIDE_DOUBLE_QUOTE) {
+                    tokens_get(s)->type == TOKEN_STRING_WIDE_DOUBLE_QUOTE) {
                     Token* segment = tokens_get(s);
                     total_len += (segment->end - segment->start) - 2;
                     tokens_next(s);
@@ -374,7 +374,7 @@ static Expr* parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
                 // Fill up the buffer
                 s->current = saved_lexer_pos;
                 while (tokens_get(s)->type == TOKEN_STRING_DOUBLE_QUOTE ||
-                       tokens_get(s)->type == TOKEN_STRING_WIDE_DOUBLE_QUOTE) {
+                    tokens_get(s)->type == TOKEN_STRING_WIDE_DOUBLE_QUOTE) {
                     Token* segment = tokens_get(s);
 
                     size_t len = segment->end - segment->start;
@@ -416,9 +416,9 @@ static Expr* parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
                 if (tokens_get(s)->type == TOKEN_KW_default) {
                     if (default_loc) {
                         report_two_spots(REPORT_ERROR, s,
-                                         default_loc, tokens_get_location_index(s),
-                                         "multiple default cases on _Generic",
-                                         NULL, NULL, NULL);
+                            default_loc, tokens_get_location_index(s),
+                            "multiple default cases on _Generic",
+                            NULL, NULL, NULL);
 
                         // maybe do some error recovery
                         abort();
@@ -743,7 +743,7 @@ static Expr* parse_expr_l2(TranslationUnit* tu, TokenStream* restrict s) {
             .unary_op.src = value};
         return e;
     } else if (tokens_get(s)->type == TOKEN_KW_sizeof ||
-               tokens_get(s)->type == TOKEN_KW_Alignof) {
+        tokens_get(s)->type == TOKEN_KW_Alignof) {
         TknType operation_type = tokens_get(s)->type;
         tokens_next(s);
 
@@ -874,8 +874,8 @@ static Expr* parse_expr_NEW(TranslationUnit* tu, TokenStream* restrict s, int mi
 
     // It's kinda weird but you don't have to read it because you're a bitch anyways
     while (binop = tokens_get(s)->type,
-           prec = get_precendence(binop),
-           prec != 0 && prec >= min_prec) {
+        prec = get_precendence(binop),
+        prec != 0 && prec >= min_prec) {
         tokens_next(s);
 
         Expr* e = make_expr(tu);

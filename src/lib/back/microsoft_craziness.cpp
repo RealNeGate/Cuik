@@ -84,14 +84,14 @@ struct ExitScope {
         lambda();
     }
     //ExitScope(const ExitScope&);
-  private:
+    private:
     //ExitScope& operator=(const ExitScope&);
 };
 
 class ExitScopeHelp {
-  public:
+    public:
     template <typename T>
-    ExitScope<T> operator+(T t) {
+        ExitScope<T> operator+(T t) {
         return t;
     }
 };
@@ -331,7 +331,7 @@ void find_windows_kit_root(MicrosoftCraziness_Find_Result* result) {
     HKEY main_key;
 
     auto rc = RegOpenKeyExA(HKEY_LOCAL_MACHINE, "SOFTWARE\\Microsoft\\Windows Kits\\Installed Roots",
-                            0, KEY_QUERY_VALUE | KEY_WOW64_32KEY | KEY_ENUMERATE_SUB_KEYS, &main_key);
+        0, KEY_QUERY_VALUE | KEY_WOW64_32KEY | KEY_ENUMERATE_SUB_KEYS, &main_key);
     if (rc != S_OK) return;
     defer {
         RegCloseKey(main_key);
@@ -357,10 +357,10 @@ void find_windows_kit_root(MicrosoftCraziness_Find_Result* result) {
 
             wchar_t* include_path = (wchar_t*)malloc(MAX_PATH);
             auto success = swprintf_s(include_path, MAX_PATH,
-                                      L"%sInclude\\%d.%d.%d.%d",
-                                      windows10_root,
-                                      data.best_version[0], data.best_version[1],
-                                      data.best_version[2], data.best_version[3]);
+                L"%sInclude\\%d.%d.%d.%d",
+                windows10_root,
+                data.best_version[0], data.best_version[1],
+                data.best_version[2], data.best_version[3]);
 
             if (success < MAX_PATH) {
                 result->windows_sdk_include = include_path;
@@ -390,10 +390,10 @@ void find_windows_kit_root(MicrosoftCraziness_Find_Result* result) {
 
             wchar_t* include_path = (wchar_t*)malloc(MAX_PATH);
             auto success = swprintf_s(include_path, MAX_PATH,
-                                      L"%sInclude\\%d.%d.%d.%d",
-                                      windows10_root,
-                                      data.best_version[0], data.best_version[1],
-                                      data.best_version[2], data.best_version[3]);
+                L"%sInclude\\%d.%d.%d.%d",
+                windows10_root,
+                data.best_version[0], data.best_version[1],
+                data.best_version[2], data.best_version[3]);
 
             if (success < MAX_PATH) {
                 result->windows_sdk_include = include_path;
@@ -565,7 +565,7 @@ void find_visual_studio_by_fighting_through_microsoft_craziness(MicrosoftCrazine
     // If we get here, we failed to find anything.
 }
 
-MicrosoftCraziness_Find_Result MicrosoftCraziness_find_visual_studio_and_windows_sdk() {
+MicrosoftCraziness_Find_Result cuik__find_visual_studio_and_windows_sdk() {
     MicrosoftCraziness_Find_Result result = {};
 
     find_windows_kit_root(&result);

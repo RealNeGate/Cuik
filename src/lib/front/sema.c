@@ -1560,7 +1560,7 @@ static void sema_task(void* arg) {
     }
 }
 
-void sema_pass(TranslationUnit* restrict tu, Cuik_IThreadpool* restrict thread_pool) {
+void cuik__sema_pass(TranslationUnit* restrict tu, Cuik_IThreadpool* restrict thread_pool) {
     tls_init();
     size_t count = arrlen(tu->top_level_stmts);
 

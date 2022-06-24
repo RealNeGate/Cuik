@@ -11,6 +11,7 @@ static char output_path_no_ext[FILENAME_MAX];
 
 static bool args_ir;
 static bool args_run;
+static bool args_assembly;
 static bool args_time;
 static bool args_preprocess;
 static bool args_optimize;
@@ -59,8 +60,24 @@ static void dump_tokens(FILE* out_file, TokenStream* s) {
     }
 }
 
-static void irgen_visitor(TranslationUnit* tu, Stmt* restrict s, void* user_data) {
-    cuik_generate_ir(tu, s);
+static void irgen_visitor(TranslationUnit* restrict tu, Stmt* restrict s, void* user_data) {
+    TB_Module* mod = cuik_get_tb_module(tu);
+    TB_Function* func = cuik_stmt_gen_ir(tu, s);
+
+    if (func != NULL) {
+        if (args_optimize) {
+            tb_function_optimize(func);
+        }
+
+        if (args_ir) {
+            tb_function_print(func, tb_default_print_callback, stdout);
+            printf("\n\n");
+        } else {
+	        tb_module_compile_func(mod, func, TB_ISEL_FAST);
+        }
+
+        tb_function_free(func);
+    }
 }
 
 int main(int argc, char** argv) {
@@ -68,9 +85,9 @@ int main(int argc, char** argv) {
     find_system_deps();
 
     program_name = argv[0];
-    include_directories = dyn_array_create(const char*, false);
-    input_libraries = dyn_array_create(const char*, false);
-    input_files = dyn_array_create(const char*, false);
+    include_directories = dyn_array_create(const char*);
+    input_libraries = dyn_array_create(const char*);
+    input_files = dyn_array_create(const char*);
 
     // parse arguments
     int i = 1;
@@ -130,6 +147,7 @@ int main(int argc, char** argv) {
             case ARG_PREPROC: args_preprocess = true; break;
             case ARG_OPT: args_optimize = true; break;
             case ARG_TIME: args_time = true; break;
+            case ARG_ASM: args_assembly = true; break;
             case ARG_IR: args_ir = true; break;
             case ARG_HELP: {
                 print_help();
@@ -142,6 +160,11 @@ int main(int argc, char** argv) {
     done_wit_args:
     if (dyn_array_length(input_files) == 0) {
         fprintf(stderr, "error: no input files!\n");
+        return EXIT_FAILURE;
+    }
+
+    if (args_assembly) {
+        fprintf(stderr, "error: emitting assembly doesn't work yet\n");
         return EXIT_FAILURE;
     }
 
@@ -199,72 +222,78 @@ int main(int argc, char** argv) {
     } else {
         cuik_visit_top_level(tu, NULL, irgen_visitor);
 
-        // place into a temporary directory if we don't need the obj file
-        char obj_output_path[FILENAME_MAX];
-        if (args_object_only) {
-            sprintf_s(obj_output_path, FILENAME_MAX, "%s.obj", output_path_no_ext);
-        } else {
-            if (tmpnam(obj_output_path) == NULL) {
-                fprintf(stderr, "cannot get a temporary file for the .obj... resorting to violence\n");
-                return EXIT_FAILURE;
-            }
-        }
-
-        if (!tb_module_export(mod, obj_output_path)) {
-            fprintf(stderr, "error: tb_module_export failed!\n");
-            abort();
-        }
-
-        tb_free_thread_resources();
-        tb_module_destroy(mod);
-
-        // linker
-        if (!args_object_only || args_run) {
-            Cuik_Linker l;
-            if (cuiklink_init(&l)) {
-                // Add system libpaths
-                cuiklink_add_default_libpaths(&l);
-                cuiklink_add_libpath(&l, "W:/Workspace/Cuik/crt/lib/");
-
-                // Add Cuik output
-                cuiklink_add_input_file(&l, obj_output_path);
-
-                // Add input libraries
-                dyn_array_for(i, input_libraries) {
-                    cuiklink_add_input_file(&l, input_libraries[i]);
+        if (!args_ir) {
+            // place into a temporary directory if we don't need the obj file
+            char obj_output_path[FILENAME_MAX];
+            if (args_object_only) {
+                sprintf_s(obj_output_path, FILENAME_MAX, "%s.obj", output_path_no_ext);
+            } else {
+                if (tmpnam(obj_output_path) == NULL) {
+                    fprintf(stderr, "cannot get a temporary file for the .obj... resorting to violence\n");
+                    return EXIT_FAILURE;
                 }
+            }
 
-                #ifdef _WIN32
-                cuiklink_add_input_file(&l, "ucrt.lib");
-                cuiklink_add_input_file(&l, "msvcrt.lib");
-                cuiklink_add_input_file(&l, "vcruntime.lib");
-                cuiklink_add_input_file(&l, "win32_rt.lib");
-                #endif
+            if (!tb_module_export(mod, obj_output_path)) {
+                fprintf(stderr, "error: tb_module_export failed!\n");
+                abort();
+            }
 
-                cuiklink_invoke_system(&l, output_path_no_ext, "ucrt");
-                cuiklink_deinit(&l);
+            tb_free_thread_resources();
+            tb_module_destroy(mod);
 
-                remove(obj_output_path);
+            // linker
+            if (!args_object_only || args_run) {
+                Cuik_Linker l;
+                if (cuiklink_init(&l)) {
+                    // Add system libpaths
+                    cuiklink_add_default_libpaths(&l);
 
-                if (args_run) {
-                    char exe_path[FILENAME_MAX];
-                    sprintf_s(exe_path, 260, "%s.exe", output_path_no_ext);
+                    char lib_dir[FILENAME_MAX];
+                    sprintf_s(lib_dir, FILENAME_MAX, "%s/lib/", crt_dirpath);
+                    cuiklink_add_libpath(&l, "W:/Workspace/Cuik/crt/lib/");
+
+                    // Add Cuik output
+                    cuiklink_add_input_file(&l, obj_output_path);
+
+                    // Add input libraries
+                    dyn_array_for(i, input_libraries) {
+                        cuiklink_add_input_file(&l, input_libraries[i]);
+                    }
 
                     #ifdef _WIN32
-                    for (char* i = exe_path; *i; i++) {
-                        if (*i == '/') *i = '\\';
-                    }
+                    cuiklink_add_input_file(&l, "ucrt.lib");
+                    cuiklink_add_input_file(&l, "msvcrt.lib");
+                    cuiklink_add_input_file(&l, "vcruntime.lib");
+                    cuiklink_add_input_file(&l, "win32_rt.lib");
                     #endif
 
-                    printf("\n\nRunning: %s...\n", exe_path);
-                    int exit_code = system(exe_path);
-                    printf("Exit code: %d\n", exit_code);
+                    //cuiklink_invoke(&l, output_path_no_ext, "ucrt");
+                    cuiklink_invoke_tb(&l, output_path_no_ext);
+                    cuiklink_deinit(&l);
 
-                    return exit_code;
+                    remove(obj_output_path);
+
+                    if (args_run) {
+                        char exe_path[FILENAME_MAX];
+                        sprintf_s(exe_path, 260, "%s.exe", output_path_no_ext);
+
+                        #ifdef _WIN32
+                        for (char* i = exe_path; *i; i++) {
+                            if (*i == '/') *i = '\\';
+                        }
+                        #endif
+
+                        printf("\n\nRunning: %s...\n", exe_path);
+                        int exit_code = system(exe_path);
+                        printf("Exit code: %d\n", exit_code);
+
+                        return exit_code;
+                    }
+                } else if (args_run) {
+                    fprintf(stderr, "error: could not run due to linker errors.\n");
+                    return EXIT_FAILURE;
                 }
-            } else if (args_run) {
-                fprintf(stderr, "error: could not run due to linker errors.\n");
-                return EXIT_FAILURE;
             }
         }
     }

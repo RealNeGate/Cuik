@@ -5,12 +5,14 @@
 #  include <unistd.h>
 #endif
 
+static char crt_dirpath[FILENAME_MAX];
+
 static bool get_exe_path(char path[FILENAME_MAX]) {
-#ifdef _WIN32
+    #ifdef _WIN32
     return (GetModuleFileNameA(NULL, path, FILENAME_MAX) > 0);
-#else
+    #else
     return (readlink("/proc/self/exe", path, FILENAME_MAX) > 0);
-#endif
+    #endif
 }
 
 // tries to walk about `steps` slashes in the filepath and return the pointer to said
@@ -28,27 +30,26 @@ static const char* step_out_dir(const char path[FILENAME_MAX], int steps) {
 }
 
 static bool resolve_filepath(char output[FILENAME_MAX], const char* path) {
-#ifdef _WIN32
+    #ifdef _WIN32
     char* filepart;
     return GetFullPathNameA(path, FILENAME_MAX, output, &filepart) != 0;
-#else
+    #else
     return realpath(path, output) != NULL;
-#endif
+    #endif
 }
 
 static void find_system_deps(void) {
-    char crt_dir[FILENAME_MAX];
-    if (!get_exe_path(crt_dir)) {
+    if (!get_exe_path(crt_dirpath)) {
         fprintf(stderr, "error: could not locate executable path");
         abort();
     }
 
-    char* slash = (char*)step_out_dir(crt_dir, 2);
+    char* slash = (char*)step_out_dir(crt_dirpath, 2);
     if (slash == NULL) {
         fprintf(stderr, "error: could not locate executable path");
         abort();
     }
 
     *slash = '\0';
-    cuik_find_system_deps(crt_dir);
+    cuik_find_system_deps(crt_dirpath);
 }

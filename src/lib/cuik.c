@@ -33,7 +33,7 @@ CUIK_API void cuik_stop_global_profiler(void) {
 
 CUIK_API void cuik_find_system_deps(const char* cuik_crt_directory) {
     #ifdef _WIN32
-    cuik__vswhere = MicrosoftCraziness_find_visual_studio_and_windows_sdk();
+    cuik__vswhere = cuik__find_visual_studio_and_windows_sdk();
     #endif
 
     sprintf_s(cuik__include_dir, FILENAME_MAX, "%s"SLASH"crt"SLASH"include"SLASH, cuik_crt_directory);

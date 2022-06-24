@@ -17,7 +17,7 @@ static const char* INPUT_FILES[] = {
     "src/lib/arena.c",
     "src/lib/settings.c",
     "src/lib/compilation_unit.c",
-    "src/lib/ext/threadpool.c",
+    //"src/lib/ext/threadpool.c",
 
     // C preprocessor
     "src/lib/preproc/lexer.c",
@@ -41,7 +41,7 @@ static const char* INPUT_FILES[] = {
     // Backend
     "src/lib/back/ir_gen.c",
     "src/lib/back/linker.c",
-    //"src/lib/linker/tblink.c",
+    "src/lib/linker/tblink.c",
 
     #if defined(_WIN32)
     "src/lib/back/microsoft_craziness.cpp",
@@ -388,7 +388,7 @@ int main(int argc, char** argv) {
             char cmd[1024];
             for (size_t i = 0; i < INPUT_FILE_COUNT; i++) {
                 if (str_ends_with(INPUT_FILES[i], ".c")) {
-                    snprintf(cmd, 1024, "cuik -o bin/%s -I src/ --threads 1 --ir %s", INPUT_FILES[i], INPUT_FILES[i]);
+                    snprintf(cmd, 1024, "cuik -o bin/%s -I src --ir %s", INPUT_FILES[i], INPUT_FILES[i]);
 
                     if (system(cmd) == 0) {
                         printf("Success with %s!\n", INPUT_FILES[i]);
@@ -412,7 +412,7 @@ int main(int argc, char** argv) {
             char cmd[1024];
             for (size_t i = 0; i < INPUT_FILE_COUNT; i++) {
                 if (str_ends_with(INPUT_FILES[i], ".c")) {
-                    int r = snprintf(cmd, 1024, "cuik -o bin/ -I src --threads 1 -c %s", INPUT_FILES[i]);
+                    int r = snprintf(cmd, 1024, "cuik %s -c -o bin/ -I src/lib -I include", INPUT_FILES[i]);
                     assert(r >= 0 && r < 1024);
 
                     int code = system(cmd);
@@ -430,7 +430,6 @@ int main(int argc, char** argv) {
 
             printf("===============   Tests (%d succeeded out of %d)   ===============\n", successes, INPUT_FILE_COUNT);
         }
-
     }
 
     return 0;
