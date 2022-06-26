@@ -387,34 +387,25 @@ static InitNode* walk_initializer_for_sema(TranslationUnit* tu, Cuik_Type* type,
         } else {
             // scalars can be wrapped in brackets, just cuz
             if (node->kids_count == 1 && node[1].mode == INIT_NONE && node[1].kids_count == 0) {
-                node += 1;
-
-                Expr* e = node->expr;
-                Cuik_Type* expr_type = sema_expr(tu, e);
-
+                Expr* e = node[1].expr;
                 // NOTE(NeGate): we can write { "hello" } for a char[8] and it should work fine
-                if (e->op == EXPR_STR || e->op == EXPR_WSTR) {
-                    if (type->kind != KIND_ARRAY) {
-                        type_as_string(tu, sizeof(temp_string0), temp_string0, type);
-                        REPORT_EXPR(ERROR, e, "Could not use initializer-string as value for type %s", temp_string0);
+                if ((e->op == EXPR_STR || e->op == EXPR_WSTR) && type->kind == KIND_ARRAY) {
+                    Cuik_Type* expr_type = sema_expr(tu, e);
+                    assert(expr_type->kind == KIND_ARRAY);
+
+                    if (!type_equal(tu, expr_type->array_of, child_type)) {
+                        type_as_string(tu, sizeof(temp_string0), temp_string0, child_type->array_of);
+                        REPORT_EXPR(ERROR, e, "Could not use %s initializer-string on array of %s", (node->expr->op == EXPR_WSTR) ? "wide" : "", temp_string0);
                     } else {
-                        assert(expr_type->kind == KIND_ARRAY);
-
-                        if (!type_equal(tu, expr_type->array_of, child_type)) {
-                            type_as_string(tu, sizeof(temp_string1), temp_string1, child_type->array_of);
-
-                            REPORT_EXPR(ERROR, e, "Could not use %s initializer-string on array of %s", (node->expr->op == EXPR_WSTR) ? "wide" : "", temp_string0, temp_string1);
-                        } else {
-                            if (expr_type->array_count > type->array_count) {
-                                REPORT_EXPR(ERROR, node->expr, "initializer-string too big for the initializer (%d elements out of %d)", expr_type->array_count, type->array_count);
-                            }
+                        if (expr_type->array_count > type->array_count) {
+                            REPORT_EXPR(ERROR, node->expr, "initializer-string too big for the initializer (%d elements out of %d)", expr_type->array_count, type->array_count);
                         }
                     }
 
                     // place fully resolved type and offset
-                    node->offset = base_offset + relative_offset;
-                    node->type = type;
-                    node += 1;
+                    node[1].offset = base_offset + relative_offset;
+                    node[1].type = type;
+                    node += 2;
                     continue;
                 }
             }
