@@ -265,7 +265,7 @@ static Cuik_Type* parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s
                     } else if (t->type == ']') {
                         if (depth == 0) {
                             report_two_spots(REPORT_ERROR, s, open_brace, t->location,
-                                             "Unbalanced brackets", "open", "close?", NULL);
+                                "Unbalanced brackets", "open", "close?", NULL);
                             abort();
                         }
 
@@ -659,9 +659,9 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
                         // can't forward decl unnamed records so we
                         // don't track it
                         if (name) {
-                            if (out_of_order_mode)
+                            if (out_of_order_mode) {
                                 shput(global_tags, name, type);
-                            else {
+                            } else {
                                 if (local_tag_count + 1 >= MAX_LOCAL_TAGS) {
                                     SourceLocIndex loc = tokens_get_location_index(s);
                                     REPORT(ERROR, loc, "too many tags in local scopes (%d)", MAX_LOCAL_TAGS);
@@ -737,8 +737,7 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
                             if (tokens_get(s)->type == ',') {
                                 tokens_next(s);
                                 continue;
-                            } else if (tokens_get(s)->type == ';')
-                                break;
+                            } else if (tokens_get(s)->type == ';') break;
                         } while (true);
 
                         expect(s, ';');
@@ -774,9 +773,9 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
                         type->record.name = name;
                         type->is_incomplete = true;
 
-                        if (out_of_order_mode)
+                        if (out_of_order_mode) {
                             shput(global_tags, name, type);
-                        else {
+                        } else {
                             if (local_tag_count + 1 >= MAX_LOCAL_TAGS) {
                                 SourceLocIndex loc = tokens_get_location_index(s);
                                 REPORT(ERROR, loc, "too many tags in local scopes (%d)", MAX_LOCAL_TAGS);
@@ -1100,17 +1099,15 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
             return NULL;
         }
 
-        type = copy_type(tu, type);
-
+        int align = -1;
         if (forced_align) {
-            type->align = forced_align;
+            align = forced_align;
         } else if (alignas_pending_expr != NULL) {
-            type->align = -1;
             alignas_pending_expr->dst = &type->align;
         }
 
-        type->is_atomic = is_atomic;
-        type->is_const = is_const;
+        type = new_qualified_type(tu, type, align, is_atomic, is_const);
+        type->loc = loc;
     }
 
     return type;

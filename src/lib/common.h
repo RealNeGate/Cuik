@@ -48,7 +48,7 @@ do {                     \
     abort();             \
 } while (0)
 
-#define swap(a, b)          \
+#define SWAP(a, b)      \
 do {                    \
     typeof(a) temp = a; \
     a = b;              \

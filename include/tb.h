@@ -616,6 +616,9 @@ extern "C" {
         TB_OBJECT_RELOC_SECREL,
         TB_OBJECT_RELOC_SECTION,
 
+        // COFF only
+        TB_OBJECT_RELOC_ADDR32NB, // Relative virtual address
+
         // x64 only
         TB_OBJECT_RELOC_REL32,   // relative 32bit displacement
         TB_OBJECT_RELOC_REL32_1, //   plus 1
@@ -635,6 +638,7 @@ extern "C" {
         TB_ObjectRelocType type;
         uint32_t symbol_index;
         size_t virtual_address;
+        size_t addend;
     } TB_ObjectReloc;
 
     typedef struct {
@@ -656,7 +660,11 @@ extern "C" {
     } TB_ObjectSymbolType;
 
     typedef struct {
+        TB_ObjectSymbolType type;
         TB_Slice name;
+
+        // this is zeroed out by the loader and left for the user to do crap with
+        void* user_data;
     } TB_ObjectSymbol;
 
     typedef enum {

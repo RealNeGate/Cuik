@@ -30,60 +30,72 @@ static Cuik_Type* alloc_type(TranslationUnit* tu, const Cuik_Type* src) {
 
 Cuik_Type* new_enum(TranslationUnit* tu) {
     return alloc_type(tu, &(Cuik_Type){
-                          .kind = KIND_ENUM,
-                      });
+            .kind = KIND_ENUM,
+        });
 }
 
 Cuik_Type* new_func(TranslationUnit* tu) {
     return alloc_type(tu, &(Cuik_Type){
-                          .kind = KIND_FUNC,
-                          .size = 1,
-                          .align = 1});
+            .kind = KIND_FUNC,
+            .size = 1,
+            .align = 1});
 }
 
 Cuik_Type* copy_type(TranslationUnit* tu, Cuik_Type* base) {
     return alloc_type(tu, base);
 }
 
+Cuik_Type* new_qualified_type(TranslationUnit* tu, Cuik_Type* base, int align, bool is_atomic, bool is_const) {
+    assert(base != NULL);
+    return alloc_type(tu, &(Cuik_Type){
+            .kind = KIND_QUALIFIED_TYPE,
+            .size = base->size,
+            .align = base->align,
+            .qualified_ty = base,
+            .is_atomic = is_atomic,
+            .is_const = is_const
+        });
+}
+
 Cuik_Type* new_record(TranslationUnit* tu, bool is_union) {
     return alloc_type(tu, &(Cuik_Type){
-                          .kind = is_union ? KIND_UNION : KIND_STRUCT,
-                      });
+            .kind = is_union ? KIND_UNION : KIND_STRUCT,
+        });
 }
 
 Cuik_Type* new_pointer(TranslationUnit* tu, Cuik_Type* base) {
     return alloc_type(tu, &(Cuik_Type){
-                          .kind = KIND_PTR,
-                          .size = 8,
-                          .align = 8,
-                          .ptr_to = base,
-                      });
+            .kind = KIND_PTR,
+            .size = 8,
+            .align = 8,
+            .ptr_to = base,
+        });
 }
 
 Cuik_Type* new_typeof(TranslationUnit* tu, Expr* src) {
     return alloc_type(tu, &(Cuik_Type){
-                          .kind = KIND_TYPEOF,
+            .kind = KIND_TYPEOF,
 
-                          // ideally if you try using these it'll crash because things
-                          // do sanity checks on align, hopefully none trigger because
-                          // we resolve it properly.
-                          .size = 0,
-                          .align = 0,
+            // ideally if you try using these it'll crash because things
+            // do sanity checks on align, hopefully none trigger because
+            // we resolve it properly.
+            .size = 0,
+            .align = 0,
 
-                          .typeof_.src = src,
-                      });
+            .typeof_.src = src,
+        });
 }
 
 Cuik_Type* new_array(TranslationUnit* tu, Cuik_Type* base, int count) {
     if (count == 0) {
         // these zero-sized arrays don't actually care about incomplete element types
         return alloc_type(tu, &(Cuik_Type){
-                              .kind = KIND_ARRAY,
-                              .size = 0,
-                              .align = base->align,
-                              .array_of = base,
-                              .array_count = 0,
-                          });
+                .kind = KIND_ARRAY,
+                .size = 0,
+                .align = base->align,
+                .array_of = base,
+                .array_count = 0,
+            });
     }
 
     int size = base->size;
@@ -96,27 +108,27 @@ Cuik_Type* new_array(TranslationUnit* tu, Cuik_Type* base, int count) {
 
     assert(align != 0);
     return alloc_type(tu, &(Cuik_Type){
-                          .kind = KIND_ARRAY,
-                          .size = dst,
-                          .align = align,
-                          .array_of = base,
-                          .array_count = count,
-                      });
+            .kind = KIND_ARRAY,
+            .size = dst,
+            .align = align,
+            .array_of = base,
+            .array_count = count,
+        });
 }
 
 Cuik_Type* new_vector(TranslationUnit* tu, Cuik_Type* base, int count) {
     return alloc_type(tu, &(Cuik_Type){
-                          .kind = KIND_VECTOR,
-                          .size = 0,
-                          .align = base->align,
-                          .array_of = base,
-                          .array_count = 0,
-                      });
+            .kind = KIND_VECTOR,
+            .size = 0,
+            .align = base->align,
+            .array_of = base,
+            .array_count = 0,
+        });
 }
 
 Cuik_Type* new_blank_type(TranslationUnit* tu) {
     return alloc_type(tu, &(Cuik_Type){
-                          .kind = KIND_PLACEHOLDER});
+            .kind = KIND_PLACEHOLDER});
 }
 
 // https://github.com/rui314/chibicc/blob/main/type.c
@@ -208,6 +220,11 @@ size_t type_as_string(TranslationUnit* tu, size_t max_len, char* buffer, Cuik_Ty
     }
 
     size_t i = 0;
+    if (type->also_known_as != NULL) {
+        i += cstr_copy(max_len - i, &buffer[i], (char*)type->also_known_as);
+        i += cstr_copy(max_len - i, &buffer[i], " (aka ");
+    }
+
     switch (type->kind) {
         case KIND_VOID:
         i += cstr_copy(max_len - i, &buffer[i], "void");
@@ -322,6 +339,9 @@ size_t type_as_string(TranslationUnit* tu, size_t max_len, char* buffer, Cuik_Ty
         abort();
     }
 
+    if (type->also_known_as != NULL) {
+        i += cstr_copy(max_len - i, &buffer[i], ")");
+    }
     buffer[i] = '\0';
     return i;
 }

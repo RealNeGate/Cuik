@@ -10,6 +10,8 @@ static const char* output_name;
 static char output_path_no_ext[FILENAME_MAX];
 
 static bool args_ir;
+static bool args_ast;
+static bool args_types;
 static bool args_run;
 static bool args_assembly;
 static bool args_time;
@@ -73,7 +75,7 @@ static void irgen_visitor(TranslationUnit* restrict tu, Stmt* restrict s, void* 
             tb_function_print(func, tb_default_print_callback, stdout);
             printf("\n\n");
         } else {
-	        tb_module_compile_func(mod, func, TB_ISEL_FAST);
+            tb_module_compile_func(mod, func, TB_ISEL_FAST);
         }
 
         tb_function_free(func);
@@ -148,6 +150,8 @@ int main(int argc, char** argv) {
             case ARG_OPT: args_optimize = true; break;
             case ARG_TIME: args_time = true; break;
             case ARG_ASM: args_assembly = true; break;
+            case ARG_AST: args_ast = true; break;
+            case ARG_TYPES: args_types = true; break;
             case ARG_IR: args_ir = true; break;
             case ARG_HELP: {
                 print_help();
@@ -191,9 +195,8 @@ int main(int argc, char** argv) {
     // get target
     const Cuik_TargetDesc* target = cuik_get_x64_target_desc();
 
-    bool dump_ast = false;
     TB_Module* mod = NULL;
-    if (!dump_ast) {
+    if (!args_ast && !args_types) {
         TB_FeatureSet features = {0};
         mod = tb_module_create(TB_ARCH_X86_64, TB_SYSTEM_WINDOWS, TB_DEBUGFMT_NONE, &features);
     }
@@ -217,7 +220,9 @@ int main(int argc, char** argv) {
     TranslationUnit* tu = cuik_parse_translation_unit(mod, &tokens, target, NULL);
 
     // codegen
-    if (dump_ast) {
+    if (args_types) {
+        /* don't do shit */
+    } else if (args_ast) {
         cuik_dump_translation_unit(stdout, tu, true);
     } else {
         cuik_visit_top_level(tu, NULL, irgen_visitor);
@@ -268,8 +273,8 @@ int main(int argc, char** argv) {
                     cuiklink_add_input_file(&l, "win32_rt.lib");
                     #endif
 
-                    //cuiklink_invoke(&l, output_path_no_ext, "ucrt");
-                    cuiklink_invoke_tb(&l, output_path_no_ext);
+                    cuiklink_invoke(&l, output_path_no_ext, "ucrt");
+                    //cuiklink_invoke_tb(&l, output_path_no_ext);
                     cuiklink_deinit(&l);
 
                     remove(obj_output_path);

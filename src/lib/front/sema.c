@@ -509,6 +509,11 @@ Member* sema_resolve_member_access(TranslationUnit* tu, Expr* restrict e, uint32
         return NULL;
     }
 
+    if (record_type->size == 0) {
+        REPORT_EXPR(ERROR, e, "Cannot access members in incomplete type");
+        return NULL;
+    }
+
     uint32_t offset = 0;
     Member* search = sema_traverse_members(tu, record_type, e->dot_arrow.name, &offset);
     if (search) {
@@ -516,7 +521,8 @@ Member* sema_resolve_member_access(TranslationUnit* tu, Expr* restrict e, uint32
         return search;
     }
 
-    REPORT_EXPR(ERROR, e, "Could not find member called '%s'", e->dot_arrow.name);
+    type_as_string(tu, sizeof(temp_string0), temp_string0, record_type);
+    REPORT_EXPR(ERROR, e->dot_arrow.base, "Could not find member called '%s' for type '%s'", e->dot_arrow.name, temp_string0);
     return NULL;
 }
 
@@ -849,8 +855,8 @@ Cuik_Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
 
             if (index->kind == KIND_PTR ||
                 index->kind == KIND_ARRAY) {
-                swap(base, index);
-                swap(e->subscript.base, e->subscript.index);
+                SWAP(base, index);
+                SWAP(e->subscript.base, e->subscript.index);
             }
 
             if (base->kind == KIND_ARRAY) {
@@ -876,7 +882,8 @@ Cuik_Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
             } else if (base->kind == KIND_ARRAY) {
                 return (e->type = base->array_of);
             } else {
-                REPORT_EXPR(ERROR, e, "TODO");
+                type_as_string(tu, sizeof(temp_string0), temp_string0, base);
+                REPORT_EXPR(ERROR, e, "Cannot dereference from non-pointer and non-array type (%s)", temp_string0);
                 abort();
             }
         }
@@ -1049,8 +1056,8 @@ Cuik_Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
                     rhs->kind == KIND_ARRAY)) {
                 // Pointer arithmatic
                 if (e->op == EXPR_PLUS && (rhs->kind == KIND_PTR || rhs->kind == KIND_ARRAY)) {
-                    swap(lhs, rhs);
-                    swap(e->bin_op.left, e->bin_op.right);
+                    SWAP(lhs, rhs);
+                    SWAP(e->bin_op.left, e->bin_op.right);
                 }
 
                 if (rhs->kind == KIND_PTR || rhs->kind == KIND_ARRAY) {

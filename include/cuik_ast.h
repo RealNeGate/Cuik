@@ -21,6 +21,10 @@ typedef enum Cuik_TypeKind {
     KIND_UNION,
     KIND_VECTOR,
 
+    // after parsing these types are removed, they exist to avoid cloning a
+    // type before it's fully resolved
+    KIND_QUALIFIED_TYPE,
+
     // these are inferred as typedefs but don't map to anything yet
     KIND_PLACEHOLDER,
 
@@ -86,6 +90,7 @@ struct Cuik_Type {
 
     // used by cycle checking
     int ordinal;
+    Atom also_known_as;
 
     bool is_const : 1;
     bool is_atomic : 1;
@@ -93,6 +98,8 @@ struct Cuik_Type {
     bool is_inprogress : 1;
 
     union {
+        Cuik_Type* qualified_ty;
+
         // Integers
         bool is_unsigned;
 

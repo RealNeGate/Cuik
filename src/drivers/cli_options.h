@@ -13,6 +13,8 @@ OPTION(TIME,    T, time,        0, "profile the compile times")
 OPTION(OBJ,     c, obj,         0, "dont link, only emit the object file")
 OPTION(OPT,     O, optimize,    0, "optimize the generated IR")
 OPTION(ASM,     S, assembly,    0, "emit assembly in stdout")
+OPTION(AST,     _, ast,         0, "emit AST into stdout")
+OPTION(TYPES,   t, typecheck,   0, "type check only")
 OPTION(IR,      _, ir,          0, "compile up until the IR generation")
 
 #undef OPTION

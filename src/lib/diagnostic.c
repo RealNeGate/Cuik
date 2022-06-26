@@ -67,39 +67,30 @@ static void print_level_name(ReportLevel level) {
     #endif
 }
 
-static void display_line(ReportLevel level, TokenStream* tokens, SourceLoc* loc) {
-    SourceLine* line = loc->line;
-    if (report_using_thin_errors) {
-        if (line->filepath[0] != '<') {
-            printf("%s:%d:%d: ", line->filepath, line->line, loc->columns);
-        } else {
-            // identify a real filepath by talking to it's parents
-            for (;;) {
-                SourceLoc* next = GET_SOURCE_LOC(loc->line->parent);
-                if (next->line->filepath[0] != '<') {
-                    line = next->line;
+static SourceLocIndex try_for_nicer_loc(TokenStream* tokens, SourceLocIndex loci) {
+    const SourceLoc* loc = GET_SOURCE_LOC(loci);
 
-                    printf("%s:%d:%d: ", line->filepath, line->line, next->columns);
-                    break;
-                }
-                loc = next;
-            }
-        }
+    while (loc->line->filepath[0] == '<' && loc->line->parent != 0) {
+        loci = loc->line->parent;
+        loc = GET_SOURCE_LOC(loci);
+    }
+
+    return loci;
+}
+
+static void display_line(ReportLevel level, TokenStream* tokens, SourceLoc* loc) {
+    SourceLocIndex loci = 0;
+    while (loc->line->filepath[0] == '<' && loc->line->parent != 0) {
+        loci = loc->line->parent;
+        loc = GET_SOURCE_LOC(loci);
+    }
+
+    if (report_using_thin_errors) {
+        printf("%s:%d:%d: ", loc->line->filepath, loc->line->line, loc->columns);
         print_level_name(level);
     } else {
         print_level_name(level);
-
-        // identify a real filepath by talking to it's parents
-        for (;;) {
-            SourceLoc* next = GET_SOURCE_LOC(loc->line->parent);
-            if (next->line->filepath[0] != '<') {
-                line = next->line;
-
-                printf("%s:%d:%d: ", line->filepath, line->line, next->columns);
-                break;
-            }
-            loc = next;
-        }
+        printf("%s:%d:%d: ", loc->line->filepath, loc->line->line, loc->columns);
     }
 }
 
@@ -133,12 +124,12 @@ static size_t draw_line(TokenStream* tokens, SourceLocIndex loc_index) {
     // Draw line preview
     if (*line_start != '\n') {
         const char* line_end = line_start;
+        printf("    ");
         do {
+            putchar(*line_end != '\t' ? *line_end : ' ');
             line_end++;
         } while (*line_end && *line_end != '\n');
-
-        size_t line_length = line_end - line_start;
-        printf("    %.*s\n", (int)line_length, line_start);
+        printf("\n");
     }
 
     return dist_from_line_start;
@@ -148,7 +139,15 @@ static void draw_line_horizontal_pad() {
     printf("    ");
 }
 
-static SourceLoc merge_source_locations(const SourceLoc* start, const SourceLoc* end) {
+static SourceLoc merge_source_locations(TokenStream* tokens, SourceLocIndex starti, SourceLocIndex endi) {
+    SourceLine* line = GET_SOURCE_LOC(starti)->line;
+
+    starti = try_for_nicer_loc(tokens, starti);
+    endi = try_for_nicer_loc(tokens, endi);
+
+    const SourceLoc* start = GET_SOURCE_LOC(starti);
+    const SourceLoc* end = GET_SOURCE_LOC(endi);
+
     if (start->line->filepath != end->line->filepath &&
         start->line->line != end->line->line) {
         return *start;
@@ -161,7 +160,7 @@ static SourceLoc merge_source_locations(const SourceLoc* start, const SourceLoc*
         return *start;
     }
 
-    return (SourceLoc){start->line, start_columns, end_columns - start_columns};
+    return (SourceLoc){line, start_columns, end_columns - start_columns};
 }
 
 static int print_backtrace(TokenStream* tokens, SourceLocIndex loc_index, SourceLine* kid) {
@@ -217,7 +216,7 @@ static int print_backtrace(TokenStream* tokens, SourceLocIndex loc_index, Source
 }
 
 void report_ranged(ReportLevel level, TokenStream* tokens, SourceLocIndex start_loc, SourceLocIndex end_loc, const char* fmt, ...) {
-    SourceLoc loc = merge_source_locations(GET_SOURCE_LOC(start_loc), GET_SOURCE_LOC(end_loc));
+    SourceLoc loc = merge_source_locations(tokens, start_loc, end_loc);
 
     mtx_lock(&report_mutex);
     if (!report_using_thin_errors && loc.line->parent != 0) {

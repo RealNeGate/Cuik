@@ -116,7 +116,27 @@ const static uint8_t dos_stub[] = {
     0x6d,0x6f,0x64,0x65,0x2e,0x24,0x00,0x00
 };
 
+typedef struct {
+    size_t cap, size;
+    uint8_t data[];
+} LinkerSection;
+
+typedef struct {
+    LinkerSection* text;
+} LinkerCtx;
+
 static NL_Strmap(void*) import_nametable = {0};
+
+static LinkerSection* reserve_section_cap(LinkerSection* sec, size_t extra_space) {
+    if (sec->size + extra_space >= sec->cap) {
+        sec->cap = (sec->size + extra_space) * 2;
+        LinkerSection* new_sec = realloc(sec, sec->cap);
+        if (!new_sec) abort();
+        return new_sec;
+    }
+
+    return sec;
+}
 
 static void zero_pad_file(FILE* file, size_t align) {
     size_t align_mask = align - 1;
@@ -214,8 +234,73 @@ static void import_symbols(TB_ObjectFile* obj) {
     }
 }
 
+static int compare_sections(void* ctx, const void* a, const void* b) {
+    const TB_ObjectSection* sections = ctx;
+
+    const TB_ObjectSection* aa = &sections[*((uint32_t*)a)];
+    const TB_ObjectSection* bb = &sections[*((uint32_t*)b)];
+
+    if (aa->name.length < bb->name.length) return -1;
+    if (aa->name.length > bb->name.length) return 1;
+    return memcmp(aa->name.data, bb->name.data, aa->name.length);
+}
+
+static void apply_relocations(LinkerCtx* ctx, TB_ObjectFile* obj, TB_ObjectSection* sec, uint8_t* section_memory) {
+    /*for (size_t i = 0; i < sec->relocation_count; i++) {
+        TB_ObjectReloc* rel = sec->relocations[i];
+        TB_ObjectSymbol* sym = obj->symbols[rel->symbol_index];
+
+        char* patch_addr = section_memory + rel->virtual_address;
+
+        void* target = sym->user_data;
+        switch (rel->type) {
+            case TB_OBJECT_RELOC_REL32: {
+                *((uint32_t*) base) += rel->addend;
+                break;
+            }
+            default: assert(0);
+        }
+    }*/
+}
+
+static void place_object_file_sections(LinkerCtx* ctx, TB_ObjectFile* obj) {
+    // identify section order
+    uint32_t* section_order = tls_push(sizeof(uint32_t) * obj->section_count);
+    for (size_t i = 0; i < obj->section_count; i++) section_order[i] = i;
+    qsort_s(section_order, obj->section_count, sizeof(uint32_t), compare_sections, obj->sections);
+
+    // load into global buffer
+    size_t text_size = 0;
+    for (size_t i = 0; i < obj->section_count; i++) {
+        TB_ObjectSection* sec = &obj->sections[section_order[i]];
+        if (sec->relocation_count != 0) {
+            printf("%zu relocations found for %.*s\n", sec->relocation_count, (int)sec->name.length, sec->name.data);
+        }
+
+        if (sec->name.length >= sizeof(".text")-1 && memcmp(sec->name.data, ".text", sizeof(".text")-1) == 0) {
+            // copy into global text section
+            ctx->text = reserve_section_cap(ctx->text, text_size);
+
+            uint8_t* section_mem = &ctx->text->data[ctx->text->size];
+            memcpy(section_mem, sec->raw_data.data, sec->raw_data.length);
+
+            // apply all internal relocations
+            apply_relocations(ctx, obj, sec, section_mem);
+
+            ctx->text->size += sec->raw_data.length;
+        }
+    }
+
+    tls_restore(section_order);
+}
+
 bool cuiklink_invoke_tb(Cuik_Linker* l, const char* filename) {
+    tls_init();
     import_nametable = nl_strmap_alloc(void*, 1024);
+
+    LinkerCtx ctx = { 0 };
+    ctx.text = malloc(sizeof(LinkerSection) + (2 << 20));
+    ctx.text->cap = (2 << 20), ctx.text->size = 0;
 
     OS_String str = l->input_file_buffer;
     for (size_t i = 0; i < l->input_file_count; i++) {
@@ -238,6 +323,7 @@ bool cuiklink_invoke_tb(Cuik_Linker* l, const char* filename) {
                 TB_ObjectFile* obj = tb_object_parse_coff(buffer);
                 summarize_object_file(obj, str);
                 import_symbols(obj);
+                place_object_file_sections(&ctx, obj);
             }
 
             str += str_length(str) + 1;
@@ -274,7 +360,7 @@ bool cuiklink_invoke_tb(Cuik_Linker* l, const char* filename) {
     PE_OptionalHeader64 opt_header = {
         .magic = 0x20b,
 
-        .size_of_code = 4096,
+        .size_of_code = (ctx.text->size + 0xFFF) & ~0xFFF,
         .size_of_initialized_data = 0,
         .size_of_uninitialized_data = 0,
 
@@ -315,9 +401,9 @@ bool cuiklink_invoke_tb(Cuik_Linker* l, const char* filename) {
 
         PE_SectionHeader sec = {
             .name = { ".text" },
-            .virtual_size = 3,
+            .virtual_size = ctx.text->size,
             .virtual_address = 0x1000,
-            .size_of_raw_data = 0x200,
+            .size_of_raw_data = (ctx.text->size + 0x1FF) & ~0x1FF,
             .pointer_to_raw_data = data_pos,
             .characteristics = 0x60000020,
         };
@@ -325,8 +411,7 @@ bool cuiklink_invoke_tb(Cuik_Linker* l, const char* filename) {
 
         zero_pad_file(outf, 0x200);
 
-        uint8_t data[3] = { 0x31, 0xC0, 0xC3 };
-        fwrite(&data, sizeof(data), 1, outf);
+        fwrite(ctx.text->data, ctx.text->size, 1, outf);
 
         char* f = malloc(0x200 - 3);
         memset(f, 0xCC, 0x200 - 3);

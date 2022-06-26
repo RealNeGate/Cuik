@@ -455,7 +455,7 @@ void type_layout(TranslationUnit* restrict tu, Cuik_Type* type) {
             Member* member = &members[i];
 
             if (member->type->kind == KIND_FUNC) {
-                REPORT(ERROR, type->loc, "Cannot put function types into a structreport, try a function pointer");
+                REPORT(ERROR, type->loc, "Cannot put function types into a struct, try a function pointer");
             } else {
                 type_layout(tu, member->type);
             }
@@ -507,6 +507,11 @@ void type_layout(TranslationUnit* restrict tu, Cuik_Type* type) {
         offset = align_up(offset, align);
         type->align = align;
         type->size = offset;
+        if (type->size == 0) {
+            if (type->record.name && !strncmp((char*) type->record.name, "Cuik_", 5)) {
+                REPORT(WARNING, type->loc, "Incomplete record type: %s (%p)", type->record.name, type);
+            }
+        }
 
         type->is_incomplete = false;
     }
@@ -620,7 +625,10 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(
                                 }
 
                                 // replace placeholder with actual entry
+                                Atom old_name = decl.name;
+
                                 memcpy(placeholder_space, decl.type, sizeof(Cuik_Type));
+                                placeholder_space->also_known_as = old_name;
                                 placeholder_space->loc = decl.loc;
                             } else {
                                 // add new entry
@@ -1027,6 +1035,25 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(
         }
 
         crash_if_reports(REPORT_ERROR);
+
+        // check for any qualified types and resolve them correctly
+        for (ArenaSegment* a = tu->type_arena.base; a != NULL; a = a->next) {
+            for (size_t used = 0; used < a->used; used += sizeof(Cuik_Type)) {
+                Cuik_Type* type = (Cuik_Type*)&a->data[used];
+
+                if (type->kind == KIND_QUALIFIED_TYPE) {
+                    bool is_atomic = type->is_atomic;
+                    bool is_const = type->is_const;
+                    int align = type->align;
+
+                    // copy and replace the qualifier slots
+                    memcpy(type, type->qualified_ty, sizeof(Cuik_Type));
+                    type->align = align;
+                    type->is_const = is_const;
+                    type->is_atomic = is_atomic;
+                }
+            }
+        }
     }
 
     //printf("AST arena: %zu MB\n", arena_get_memory_usage(&tu->ast_arena) / (1024*1024));
