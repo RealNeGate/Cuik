@@ -19,15 +19,19 @@ Warnings warnings = {
 char cuik__include_dir[FILENAME_MAX];
 MicrosoftCraziness_Find_Result cuik__vswhere;
 
+static uint64_t global_profiler_start;
+
 CUIK_API void cuik_init(void) {
     init_report_system();
 }
 
 CUIK_API void cuik_start_global_profiler(const char* filepath) {
     timer_open(filepath);
+    global_profiler_start = timer_now();
 }
 
 CUIK_API void cuik_stop_global_profiler(void) {
+    timer_end(global_profiler_start, "Cuik");
     timer_close();
 }
 

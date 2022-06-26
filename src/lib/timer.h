@@ -3,10 +3,6 @@
 #include "ext/threads.h"
 #include <common.h>
 
-extern FILE* timer_output;
-extern double timer_freq;
-extern mtx_t timer_mutex;
-
 // regardless of if you want to profile code or not, you'll need to initialize
 // the timer be able to use timer_now()
 void timer_init(void);
