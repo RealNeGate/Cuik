@@ -71,7 +71,7 @@ static void parse_initializer_member(TranslationUnit* tu, TokenStream* restrict 
     // [const-expr]
     // .identifier
     InitNode* current = NULL;
-    try_again : {
+    try_again: {
         if (tokens_get(s)->type == '[') {
             tokens_next(s);
 
@@ -99,7 +99,8 @@ static void parse_initializer_member(TranslationUnit* tu, TokenStream* restrict 
                 .mode = INIT_ARRAY,
                 .kids_count = 1,
                 .start = start,
-                .count = count};
+                .count = count,
+            };
             goto try_again;
         }
 
@@ -114,20 +115,19 @@ static void parse_initializer_member(TranslationUnit* tu, TokenStream* restrict 
             *current = (InitNode){
                 .mode = INIT_MEMBER,
                 .kids_count = 1,
-                .member_name = name};
+                .member_name = name,
+            };
             goto try_again;
         }
     }
 
     // if it has no designator make a dummy one.
-    if (!current) {
-        current = (InitNode*)tls_push(sizeof(InitNode));
-        *current = (InitNode){
-            .kids_count = 1,
-            .member_name = NULL};
-    } else {
+    if (current != NULL) {
         expect(s, '=');
     }
+
+    current = (InitNode*)tls_push(sizeof(InitNode));
+    *current = (InitNode){ 0 };
 
     // it can either be a normal expression
     // or a nested designated initializer
@@ -141,8 +141,7 @@ static void parse_initializer_member(TranslationUnit* tu, TokenStream* restrict 
         while (tokens_get(s)->type != '}') {
             if (expect_comma) {
                 expect(s, ',');
-            } else
-                expect_comma = true;
+            } else expect_comma = true;
 
             parse_initializer_member(tu, s);
             local_count += 1;

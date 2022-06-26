@@ -207,11 +207,8 @@ static int print_backtrace(TokenStream* tokens, SourceLocIndex loc_index, Source
         }
 
         default:
-        if (line->parent != 0) {
-            printf("In file included from %s:%d:\n", line->filepath, line->line);
-            return line->line;
-        }
-        return 0;
+        printf("In file %s:%d:\n", line->filepath, line->line);
+        return line->line;
     }
 }
 

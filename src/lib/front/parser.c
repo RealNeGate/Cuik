@@ -507,12 +507,6 @@ void type_layout(TranslationUnit* restrict tu, Cuik_Type* type) {
         offset = align_up(offset, align);
         type->align = align;
         type->size = offset;
-        if (type->size == 0) {
-            if (type->record.name && !strncmp((char*) type->record.name, "Cuik_", 5)) {
-                REPORT(WARNING, type->loc, "Incomplete record type: %s (%p)", type->record.name, type);
-            }
-        }
-
         type->is_incomplete = false;
     }
 

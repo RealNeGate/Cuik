@@ -581,7 +581,7 @@ static void preprocess_file(Cuik_CPP* restrict c, TokenStream* restrict s, size_
 
                     if (!success) {
                         int loc = l.current_line;
-                        printf("error %s:%d: Could not find file! %s\n", l.filepath, loc, filename);
+                        fprintf(stderr, "error %s:%d: Could not find file! %s\n", l.filepath, loc, filename);
                         abort();
                     }
                     tls_restore(filename);
@@ -591,13 +591,13 @@ static void preprocess_file(Cuik_CPP* restrict c, TokenStream* restrict s, size_
                     char* new_path = arena_alloc(&thread_arena, FILENAME_MAX, 1);
                     if (GetFullPathNameA(path, FILENAME_MAX, new_path, &filepart) == 0) {
                         int loc = l.current_line;
-                        printf("error %s:%d: Could not resolve path: %s\n", l.filepath, loc, path);
+                        fprintf(stderr, "error %s:%d: Could not resolve path: %s\n", l.filepath, loc, path);
                         abort();
                     }
 
                     if (filepart == NULL) {
                         int loc = l.current_line;
-                        printf("error %s:%d: Cannot include directory %s\n", l.filepath, loc, new_path);
+                        fprintf(stderr, "error %s:%d: Cannot include directory %s\n", l.filepath, loc, new_path);
                         abort();
                     }
 
@@ -854,14 +854,14 @@ static void skip_directive_body(Lexer* l) {
 
 static _Noreturn void generic_error(Lexer* l, const char* msg) {
     int loc = l->current_line;
-    printf("error %s:%d: %s\n", l->filepath, loc, msg);
+    fprintf(stderr, "error %s:%d: %s\n", l->filepath, loc, msg);
     abort();
 }
 
 static void expect(Lexer* l, char ch) {
     if (l->token_type != ch) {
         int loc = l->current_line;
-        printf("error %s:%d: expected '%c' got '%.*s'", l->filepath, loc, ch, (int)(l->token_end - l->token_start), l->token_start);
+        fprintf(stderr, "error %s:%d: expected '%c' got '%.*s'", l->filepath, loc, ch, (int)(l->token_end - l->token_start), l->token_start);
         abort();
     }
 

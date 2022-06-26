@@ -372,20 +372,53 @@ static InitNode* walk_initializer_for_sema(TranslationUnit* tu, Cuik_Type* type,
         if (node->kids_count == 0) {
             Cuik_Type* expr_type = sema_expr(tu, node->expr);
 
-            if (!implicit_conversion(tu, expr_type, child_type, node->expr)) {
+            if (!type_compatible(tu, expr_type, child_type, node->expr)) {
                 type_as_string(tu, sizeof(temp_string0), temp_string0, expr_type);
                 type_as_string(tu, sizeof(temp_string1), temp_string1, child_type);
 
                 REPORT_EXPR(ERROR, node->expr, "Could not implicitly convert type %s into %s.", temp_string0, temp_string1);
                 abort();
+            } else {
+                // place fully resolved type and offset
+                node->offset = base_offset + relative_offset;
+                node->type = child_type;
+                node += 1;
+            }
+        } else {
+            // scalars can be wrapped in brackets, just cuz
+            if (node->kids_count == 1 && node[1].mode == INIT_NONE && node[1].kids_count == 0) {
+                node += 1;
+
+                Expr* e = node->expr;
+                Cuik_Type* expr_type = sema_expr(tu, e);
+
+                // NOTE(NeGate): we can write { "hello" } for a char[8] and it should work fine
+                if (e->op == EXPR_STR || e->op == EXPR_WSTR) {
+                    if (type->kind != KIND_ARRAY) {
+                        type_as_string(tu, sizeof(temp_string0), temp_string0, type);
+                        REPORT_EXPR(ERROR, e, "Could not use initializer-string as value for type %s", temp_string0);
+                    } else {
+                        assert(expr_type->kind == KIND_ARRAY);
+
+                        if (!type_equal(tu, expr_type->array_of, child_type)) {
+                            type_as_string(tu, sizeof(temp_string1), temp_string1, child_type->array_of);
+
+                            REPORT_EXPR(ERROR, e, "Could not use %s initializer-string on array of %s", (node->expr->op == EXPR_WSTR) ? "wide" : "", temp_string0, temp_string1);
+                        } else {
+                            if (expr_type->array_count > type->array_count) {
+                                REPORT_EXPR(ERROR, node->expr, "initializer-string too big for the initializer (%d elements out of %d)", expr_type->array_count, type->array_count);
+                            }
+                        }
+                    }
+
+                    // place fully resolved type and offset
+                    node->offset = base_offset + relative_offset;
+                    node->type = type;
+                    node += 1;
+                    continue;
+                }
             }
 
-            // place fully resolved type and offset
-            node->offset = base_offset + relative_offset;
-            node->type = child_type;
-
-            node += 1;
-        } else {
             node = walk_initializer_for_sema(tu, child_type, node->kids_count, node + 1, base_offset + relative_offset);
         }
     }
@@ -985,9 +1018,22 @@ Cuik_Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
             }
             e->ternary_op.left->cast_type = &builtin_types[TYPE_BOOL];
 
-            Cuik_Type* type = get_common_type(tu,
-                sema_expr(tu, e->ternary_op.middle),
-                sema_expr(tu, e->ternary_op.right));
+            Cuik_Type* ty1 = sema_expr(tu, e->ternary_op.middle);
+            Cuik_Type* ty2 = sema_expr(tu, e->ternary_op.right);
+
+            Cuik_Type* type = NULL;
+            if (ty1->kind == KIND_STRUCT || ty1->kind == KIND_UNION) {
+                if (!type_compatible(tu, ty1, ty2, e->ternary_op.middle)) {
+                    type_as_string(tu, sizeof(temp_string0), temp_string0, ty1);
+                    type_as_string(tu, sizeof(temp_string1), temp_string1, ty2);
+
+                    REPORT_EXPR(ERROR, e, "Conflict in ternary types, true is a %s, while false is a %s", temp_string0, temp_string1);
+                }
+
+                type = ty1;
+            } else {
+                type = get_common_type(tu, ty1, ty2);
+            }
 
             e->ternary_op.middle->cast_type = type;
             e->ternary_op.right->cast_type = type;
