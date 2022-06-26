@@ -19,20 +19,8 @@ Warnings warnings = {
 char cuik__include_dir[FILENAME_MAX];
 MicrosoftCraziness_Find_Result cuik__vswhere;
 
-static uint64_t global_profiler_start;
-
 CUIK_API void cuik_init(void) {
     init_report_system();
-}
-
-CUIK_API void cuik_start_global_profiler(const char* filepath) {
-    timer_open(filepath);
-    global_profiler_start = timer_now();
-}
-
-CUIK_API void cuik_stop_global_profiler(void) {
-    timer_end(global_profiler_start, "Cuik");
-    timer_close();
 }
 
 CUIK_API void cuik_find_system_deps(const char* cuik_crt_directory) {
@@ -224,7 +212,7 @@ CUIK_API TokenStream cuik_preprocess_simple(Cuik_CPP* restrict out_cpp, const ch
 
 CUIK_API void cuik_visit_top_level(TranslationUnit* restrict tu, void* user_data, Cuik_TopLevelVisitor* visitor) {
     size_t count = arrlen(tu->top_level_stmts);
-    timed_block("top level visitor (%zu statements)", count) {
+    CUIK_TIMED_BLOCK("top level visitor (%zu statements)", count) {
         for (size_t i = 0; i < count; i++) {
             visitor(tu, tu->top_level_stmts[i], user_data);
         }

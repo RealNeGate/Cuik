@@ -1592,7 +1592,7 @@ static void sema_mark_children(TranslationUnit* tu, Expr* restrict e) {
 static void sema_task(void* arg) {
     SemaTaskInfo task = *((SemaTaskInfo*)arg);
 
-    timed_block("sema: %zu-%zu", task.start, task.end) {
+    CUIK_TIMED_BLOCK("sema: %zu-%zu", task.start, task.end) {
         in_the_semantic_phase = true;
 
         for (size_t i = task.start; i < task.end; i++) {
@@ -1609,7 +1609,7 @@ void cuik__sema_pass(TranslationUnit* restrict tu, Cuik_IThreadpool* restrict th
     size_t count = arrlen(tu->top_level_stmts);
 
     // simple mark and sweep to remove unused symbols
-    timed_block("sema: collection") {
+    CUIK_TIMED_BLOCK("sema: collection") {
         for (size_t i = 0; i < count; i++) {
             Stmt* restrict s = tu->top_level_stmts[i];
             assert(s->op == STMT_FUNC_DECL || s->op == STMT_DECL || s->op == STMT_GLOBAL_DECL);
@@ -1627,7 +1627,7 @@ void cuik__sema_pass(TranslationUnit* restrict tu, Cuik_IThreadpool* restrict th
     }
 
     // go through all top level statements and type check
-    timed_block("sema: type check") {
+    CUIK_TIMED_BLOCK("sema: type check") {
         if (thread_pool != NULL) {
             // disabled until we change the tables to arenas
             size_t padded = (count + (SEMA_MUNCH_SIZE - 1)) & ~(SEMA_MUNCH_SIZE - 1);

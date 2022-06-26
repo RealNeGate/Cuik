@@ -1,6 +1,8 @@
-#include "timer.h"
+#include <common.h>
+#include <cuik.h>
 #include <stdarg.h>
 #include <stdatomic.h>
+#include <ext/threads.h>
 
 #if _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -13,40 +15,38 @@
 static FILE* timer_output;
 static mtx_t timer_mutex;
 static atomic_int timer_entry_count;
+static uint64_t global_profiler_start;
 
 // just to organize the JSON timing stuff a bit better
 static thread_local bool is_main_thread;
 
-// done regardless of the profiler running just to be able to query time in general
-void timer_init(void) {
-    is_main_thread = true;
-}
-
-void timer_open(const char* path) {
+CUIK_API void cuik_start_global_profiler(const char* filepath) {
     assert(timer_output == NULL);
 
     mtx_init(&timer_mutex, mtx_plain);
-    timer_output = fopen(path, "wb");
+    timer_output = fopen(filepath, "wb");
     fprintf(timer_output, "{\"otherData\": {},\"traceEvents\":[");
+    global_profiler_start = cuik_time_in_nanos();
 }
 
-void timer_close(void) {
+CUIK_API void cuik_stop_global_profiler(void) {
+    cuik_profile_region(global_profiler_start, "Cuik");
     if (timer_output != NULL) {
         fprintf(timer_output, "]}");
         fclose(timer_output);
     }
 }
 
-uint64_t timer_now() {
+CUIK_API uint64_t cuik_time_in_nanos(void) {
     struct timespec ts;
     timespec_get(&ts, TIME_UTC);
     return ((long long)ts.tv_sec * 1000000000LL) + ts.tv_nsec;
 }
 
-void timer_end(uint64_t start, const char* fmt, ...) {
+CUIK_API void cuik_profile_region(uint64_t start, const char* fmt, ...) {
     if (timer_output == NULL) return;
 
-    int64_t elapsed_in_microseconds = (timer_now() - start) / 1000;
+    int64_t elapsed_in_microseconds = (cuik_time_in_nanos() - start) / 1000;
     int64_t start_in_microseconds = start / 1000;
 
     if (elapsed_in_microseconds > 1) {
@@ -63,14 +63,9 @@ void timer_end(uint64_t start, const char* fmt, ...) {
 
         va_list ap;
         va_start(ap, fmt);
-        int formatted_len = vsnprintf(name, sizeof(name), fmt, ap);
+        vsnprintf(name, sizeof(name), fmt, ap);
         name[sizeof(name) - 1] = '\0';
         va_end(ap);
-
-        if (formatted_len < 0 || formatted_len >= sizeof(name)) {
-            fprintf(stderr, "error: buffer overflow on sprintf_s!\n");
-            abort();
-        }
 
         fprintf(timer_output,
             "%c{"

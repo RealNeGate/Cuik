@@ -242,7 +242,7 @@ static void reset_global_parser_state() {
 }
 
 static void parse_global_symbols(TranslationUnit* tu, size_t start, size_t end, TokenStream tokens) {
-    timed_block("phase 3: %zu-%zu", start, end) {
+    CUIK_TIMED_BLOCK("phase 3: %zu-%zu", start, end) {
         out_of_order_mode = false;
 
         for (size_t i = start; i < end; i++) {
@@ -517,8 +517,8 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(
     TB_Module* restrict ir_module, TokenStream* restrict s,
     const Cuik_TargetDesc* target_desc, Cuik_IThreadpool* restrict thread_pool
 ) {
-    // hacky but i don't wanna wrap it in a timed_block
-    uint64_t timer_start = timer_now();
+    // hacky but i don't wanna wrap it in a CUIK_TIMED_BLOCK
+    uint64_t timer_start = cuik_time_in_nanos();
 
     TranslationUnit* tu = calloc(1, sizeof(TranslationUnit));
     tu->filepath = s->filepath;
@@ -539,7 +539,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(
     DynArray(int) static_assertions = dyn_array_create(int);
 
     // Phase 1: resolve all top level statements
-    timed_block("phase 1") {
+    CUIK_TIMED_BLOCK("phase 1") {
         while (tokens_get(s)->type) {
             while (tokens_get(s)->type == ';') tokens_next(s);
 
@@ -846,7 +846,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(
 
     // Phase 2: resolve top level types, layout records and anything else so that
     // we have a complete global symbol table
-    timed_block("phase 2") {
+    CUIK_TIMED_BLOCK("phase 2") {
         ////////////////////////////////
         // first we wanna check for cycles
         ////////////////////////////////
@@ -979,7 +979,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(
 
     // Phase 3: resolve all expressions or function bodies
     // This part is parallel because im the fucking GOAT
-    timed_block("phase 3") {
+    CUIK_TIMED_BLOCK("phase 3") {
         // append any AST nodes we might've created in this thread
         arena_trim(&local_ast_arena);
         arena_append(&tu->ast_arena, &local_ast_arena);
@@ -1054,7 +1054,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(
     //printf("Type arena: %zu MB\n", arena_get_memory_usage(&tu->type_arena) / (1024*1024));
     //printf("Thread arena: %zu MB\n", arena_get_memory_usage(&thread_arena) / (1024*1024));
 
-    timed_block("freeing parser internals") {
+    CUIK_TIMED_BLOCK("freeing parser internals") {
         current_switch_or_case = current_breakable = current_continuable = 0;
         local_symbol_start = local_symbol_count = 0;
 
@@ -1069,21 +1069,22 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(
     }
 
     // run type checker
-    timed_block("phase 4") {
+    CUIK_TIMED_BLOCK("phase 4") {
         cuik__sema_pass(tu, thread_pool);
         crash_if_reports(REPORT_ERROR);
     }
 
     {
-        char temp[FILENAME_MAX];
-        sprintf_s(temp, sizeof(temp), "parse: %s", tu->filepath);
+        char temp[256];
+        snprintf(temp, sizeof(temp), "parse: %s", tu->filepath);
+        temp[sizeof(temp) - 1] = 0;
 
         char* p = temp;
         for (; *p; p++) {
             if (*p == '\\') *p = '/';
         }
 
-        timer_end(timer_start, temp);
+        cuik_profile_region(timer_start, temp);
     }
 
     return tu;

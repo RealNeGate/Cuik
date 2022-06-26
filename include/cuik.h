@@ -46,6 +46,27 @@ typedef struct Cuik_TargetDesc Cuik_TargetDesc;
 const Cuik_TargetDesc* cuik_get_x64_target_desc(void);
 
 ////////////////////////////////////////////
+// Profiler
+////////////////////////////////////////////
+// opens a starts writing a file about the timing info
+CUIK_API void cuik_start_global_profiler(const char* filepath);
+// will emit a JSON file of the profiled output you can feed into chrome://tracing or speedscopes
+CUIK_API void cuik_stop_global_profiler(void);
+
+// the absolute values here don't have to mean anything, it's just about being able
+// to measure between two points.
+CUIK_API uint64_t cuik_time_in_nanos(void);
+
+// Reports a region of time in the profiler file
+CUIK_API void cuik_profile_region(uint64_t start, const char* fmt, ...);
+
+// Usage:
+// CUIK_TIMED_BLOCK("Beans %d", 5) {
+//   ...
+// }
+#define CUIK_TIMED_BLOCK(...) for (uint64_t __t1 = cuik_time_in_nanos(), __i = 0; __i < 1; __i++, cuik_profile_region(__t1, __VA_ARGS__))
+
+////////////////////////////////////////////
 // C preprocessor
 ////////////////////////////////////////////
 typedef unsigned int SourceLocIndex;
@@ -107,11 +128,6 @@ typedef struct Cuik_Define {
 } Cuik_Define;
 
 CUIK_API void cuik_init(void);
-
-// opens a starts writing a file about the timing info
-CUIK_API void cuik_start_global_profiler(const char* filepath);
-// will emit a JSON file of the profiled output you can feed into chrome://tracing or speedscopes
-CUIK_API void cuik_stop_global_profiler(void);
 
 // locates the system includes, libraries and other tools. this is a global
 // operation meaning that once it's only done once for the process.

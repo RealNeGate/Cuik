@@ -98,7 +98,7 @@ bool cuiklink_invoke(Cuik_Linker* l, const char* filename, const char* crt_name)
     bool result = true;
 
     #if defined(_WIN32)
-    timed_block("linker") {
+    CUIK_TIMED_BLOCK("linker") {
         wchar_t cmd_line[CMD_LINE_MAX];
         int cmd_line_len = swprintf(cmd_line, CMD_LINE_MAX,
             L"%s\\link.exe /nologo /machine:amd64 /subsystem:console"

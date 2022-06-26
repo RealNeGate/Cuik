@@ -14,7 +14,7 @@
 #endif
 
 #include <arena.h>
-#include <timer.h>
+#include <cuik.h>
 
 // HACK(NeGate): i wanna call tb_free_thread_resources on thread exit...
 extern void tb_free_thread_resources(void);
@@ -30,11 +30,11 @@ struct threadpool_t {
     int thread_count;
     unsigned int queue_size_mask;
 
-#ifdef _WIN32
+    #ifdef _WIN32
     HANDLE sem;
-#else
+    #else
     sem_t sem;
-#endif
+    #endif
 
     thrd_t* threads;
     work_t* work;
@@ -60,14 +60,14 @@ static bool do_work(threadpool_t* threadpool) {
 static int threadpool_thread(void* arg) {
     threadpool_t* threadpool = arg;
 
-    timed_block("thread") {
+    CUIK_TIMED_BLOCK("thread") {
         while (threadpool->running) {
             if (do_work(threadpool)) {
-#ifdef _WIN32
+                #ifdef _WIN32
                 WaitForSingleObjectEx(threadpool->sem, -1, false); // wait for jobs
-#else
+                #else
                 sem_wait(&threadpool->sem);
-#endif
+                #endif
             }
         }
     }
@@ -90,14 +90,14 @@ threadpool_t* threadpool_create(size_t worker_count, size_t workqueue_size) {
     threadpool->running = true;
     threadpool->queue_size_mask = workqueue_size - 1;
 
-#if _WIN32
+    #if _WIN32
     threadpool->sem = CreateSemaphoreExA(0, worker_count, worker_count, 0, 0, SEMAPHORE_ALL_ACCESS);
-#else
+    #else
     if (sem_init(&threadpool->sem, 0 /* shared between threads */, worker_count) != 0) {
         fprintf(stderr, "error: could not create semaphore!\n");
         abort();
     }
-#endif
+    #endif
 
     for (int i = 0; i < worker_count; i++) {
         if (thrd_create(&threadpool->threads[i], threadpool_thread, threadpool) != thrd_success) {
@@ -128,11 +128,11 @@ void threadpool_submit(threadpool_t* threadpool, work_routine fn, void* arg) {
     }
     mtx_unlock(&threadpool->mutex);
 
-#ifdef _WIN32
+    #ifdef _WIN32
     ReleaseSemaphore(threadpool->sem, 1, 0);
-#else
+    #else
     sem_post(&threadpool->sem);
-#endif
+    #endif
 }
 
 void threadpool_work_one_job(threadpool_t* threadpool) {
@@ -162,26 +162,26 @@ void threadpool_wait(threadpool_t* threadpool) {
 void threadpool_free(threadpool_t* threadpool) {
     threadpool->running = false;
 
-#ifdef _WIN32
+    #ifdef _WIN32
     ReleaseSemaphore(threadpool->sem, threadpool->thread_count, 0);
-#else
+    #else
     // wake everyone
     for (size_t i = 0; i < threadpool->thread_count; i++) {
         sem_post(&threadpool->sem);
     }
-#endif
+    #endif
 
-#ifdef _WIN32
+    #ifdef _WIN32
     WaitForMultipleObjects(threadpool->thread_count, threadpool->threads, TRUE, INFINITE);
 
     for (int i = 0; i < threadpool->thread_count; i++) CloseHandle(threadpool->threads[i]);
     CloseHandle(threadpool->sem);
-#else
+    #else
     for (int i = 0; i < threadpool->thread_count; i++) {
         thrd_join(threadpool->threads[i], NULL);
     }
     sem_destroy(&threadpool->sem);
-#endif
+    #endif
 
     mtx_destroy(&threadpool->mutex);
     free(threadpool->threads);

@@ -80,7 +80,7 @@ CUIK_API void cuikpp_deinit(Cuik_CPP* ctx) {
 }
 
 CUIK_API void cuikpp_finalize(Cuik_CPP* ctx) {
-    timed_block("cuikpp_finalize") {
+    CUIK_TIMED_BLOCK("cuikpp_finalize") {
         size_t sz = sizeof(void*) * MACRO_BUCKET_COUNT * SLOTS_PER_MACRO_BUCKET;
         size_t sz2 = sizeof(SourceLocIndex) * MACRO_BUCKET_COUNT * SLOTS_PER_MACRO_BUCKET;
 
@@ -290,7 +290,7 @@ static void pop_scope(Cuik_CPP* restrict ctx, Lexer* restrict l) {
 
 static void preprocess_file(Cuik_CPP* restrict c, TokenStream* restrict s, size_t parent_entry, SourceLocIndex include_loc, const char* directory, const char* filepath, int depth) {
     // hacky but i don't wanna wrap it in a timed_block
-    uint64_t timer_start = timer_now();
+    uint64_t timer_start = cuik_time_in_nanos();
 
     unsigned char* text = (unsigned char*)read_entire_file(filepath);
     size_t file_entry_id = dyn_array_length(c->files);
@@ -803,15 +803,16 @@ static void preprocess_file(Cuik_CPP* restrict c, TokenStream* restrict s, size_
     } while (l.token_type);
 
     {
-        char temp[FILENAME_MAX];
-        sprintf_s(temp, sizeof(temp), "preprocess: %s", filepath);
+        char temp[256];
+        snprintf(temp, sizeof(temp), "preprocess: %s", filepath);
+        temp[sizeof(temp) - 1] = 0;
 
         char* p = temp;
         for (; *p; p++) {
             if (*p == '\\') *p = '/';
         }
 
-        timer_end(timer_start, temp);
+        cuik_profile_region(timer_start, "%s", temp);
     }
 }
 
