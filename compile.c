@@ -8,46 +8,45 @@
 #include "compile.h"
 
 static const char* INPUT_FILES[] = {
-    "src/lib/cuik.c",
-    "src/lib/str.c",
-    "src/lib/tls.c",
-    "src/lib/timer.c",
-    "src/lib/diagnostic.c",
-    "src/lib/crash_handler.c",
-    "src/lib/arena.c",
-    "src/lib/settings.c",
-    "src/lib/compilation_unit.c",
-    //"src/lib/ext/threadpool.c",
+    "lib/cuik.c",
+    "lib/str.c",
+    "lib/tls.c",
+    "lib/timer.c",
+    "lib/diagnostic.c",
+    "lib/crash_handler.c",
+    "lib/arena.c",
+    "lib/settings.c",
+    "lib/compilation_unit.c",
 
     // C preprocessor
-    "src/lib/preproc/lexer.c",
-    "src/lib/preproc/nopp.c",
-    "src/lib/preproc/cpp.c",
+    "lib/preproc/lexer.c",
+    "lib/preproc/nopp.c",
+    "lib/preproc/cpp.c",
 
     // C frontend
-    "src/lib/front/parser.c",
-    "src/lib/front/sema.c",
-    "src/lib/front/atoms.c",
-    "src/lib/front/const_eval.c",
-    "src/lib/front/types.c",
-    "src/lib/front/ast_dump.c",
+    "lib/front/parser.c",
+    "lib/front/sema.c",
+    "lib/front/atoms.c",
+    "lib/front/const_eval.c",
+    "lib/front/types.c",
+    "lib/front/ast_dump.c",
 
     // Target specific stuff
-    "src/lib/targets/x64.c",
+    "lib/targets/x64.c",
 
     // Optional analysis
-    "src/lib/anal/analysis.c",
+    "lib/anal/analysis.c",
 
     // Backend
-    "src/lib/back/ir_gen.c",
-    "src/lib/back/linker.c",
-    "src/lib/linker/tblink.c",
+    "lib/back/ir_gen.c",
+    "lib/back/linker.c",
+    "lib/linker/tblink.c",
 
     #if defined(_WIN32)
-    "src/lib/back/microsoft_craziness.cpp",
-    "src/lib/ext/threads_msvc.c",
+    "lib/back/microsoft_craziness.cpp",
+    "deps/threads_msvc.c",
     #else
-    "src/lib/ext/threads_posix.c",
+    "deps/threads_posix.c",
     #endif
 };
 enum { INPUT_FILE_COUNT = sizeof(INPUT_FILES) / sizeof(INPUT_FILES[0]) };
@@ -122,7 +121,6 @@ void expect_stdout(const char* path, const char* expected) {
 
     printf("Results don't match!\n");
 }
-
 
 void differential(const char* path) {
     number_of_tests++;
@@ -256,6 +254,7 @@ int main(int argc, char** argv) {
         .debug_info = true
     };
 
+    #ifndef DOING_TB_CRAP
     for (int i = 0; i < INPUT_FILE_COUNT; i++) {
         cc_invoke(&options, INPUT_FILES[i], NULL);
     }
@@ -265,21 +264,21 @@ int main(int argc, char** argv) {
     printf("Converting to a library...\n");
     ar_invoke("bin"SLASH"cuik", 1, (const char*[]) { "bin"SLASH"*.obj" });
     cmd_wait_for_all();
+    #endif /* DOING_TB_CRAP */
 
     #ifndef ONLY_LIBRARY
     static const char* LINKER_INPUTS[] = {
-        "bin"SLASH DRIVER_NAME".obj",
         #if ON_WINDOWS
-        "bin"SLASH"cuik.lib", "tb"SLASH"tildebackend.lib",
+        "bin"SLASH DRIVER_NAME".obj", "bin"SLASH"cuik.lib", "deps"SLASH"tb"SLASH"tildebackend.lib",
         #else
-        "bin"SLASH"cuik.a", "tb"SLASH"tildebackend.a",
+        "bin"SLASH DRIVER_NAME".o", "bin"SLASH"cuik.a", "deps"SLASH"tb"SLASH"tildebackend.a",
         #endif
     };
 
     static const char* EXTERNALS[] = {
         #if ON_WINDOWS
-        "ole32", "Advapi32", "OleAut32", "DbgHelp"
-            #else
+        "ole32", "Advapi32", "OleAut32", "DbgHelp",
+        #else
         "c", "m", "pthread",
         #endif
     };
@@ -287,7 +286,7 @@ int main(int argc, char** argv) {
     printf("Linking...\n");
 
     // compile main driver
-    cc_invoke(&options, "src"SLASH"drivers"SLASH DRIVER_NAME".c", NULL);
+    cc_invoke(&options, "drivers"SLASH DRIVER_NAME".c", NULL);
     cmd_wait_for_all();
 
     ld_invoke("bin"SLASH"cuik",
@@ -364,7 +363,7 @@ int main(int argc, char** argv) {
             char cmd[1024];
             for (size_t i = 0; i < INPUT_FILE_COUNT; i++) {
                 if (str_ends_with(INPUT_FILES[i], ".c")) {
-                    snprintf(cmd, 1024, "cuik %s -t -o bin/%s -I include/ -I src/lib/", INPUT_FILES[i], INPUT_FILES[i]);
+                    snprintf(cmd, 1024, "cuik %s -t -o bin/%s -I include/ -I lib/", INPUT_FILES[i], INPUT_FILES[i]);
 
                     if (system(cmd) == 0) {
                         printf("Success with %s!\n", INPUT_FILES[i]);
@@ -412,7 +411,7 @@ int main(int argc, char** argv) {
             char cmd[1024];
             for (size_t i = 0; i < INPUT_FILE_COUNT; i++) {
                 if (str_ends_with(INPUT_FILES[i], ".c")) {
-                    int r = snprintf(cmd, 1024, "cuik %s -c -o bin/ -I src/lib -I include", INPUT_FILES[i]);
+                    int r = snprintf(cmd, 1024, "cuik %s -c -o bin/ -I lib -I include", INPUT_FILES[i]);
                     assert(r >= 0 && r < 1024);
 
                     int code = system(cmd);

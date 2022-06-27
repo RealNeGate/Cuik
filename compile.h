@@ -75,8 +75,6 @@
 #define UNIX_STYLE 1
 #endif
 
-#include "subprocess.h"
-
 #if defined(__clang__)
 #define ON_CLANG 1
 #define ON_GCC   0
@@ -287,8 +285,8 @@ static void nbuild_init() {
 #define PROCESS_POOL_SIZE 6
 #endif
 
-static uint64_t process_live_bitset[(PROCESS_POOL_SIZE + 63) / 64];
-static struct subprocess_s process_pool[PROCESS_POOL_SIZE];
+static FILE* process_pool[PROCESS_POOL_SIZE];
+static int some_slot = 0;
 
 static void cmd_append(const char* str) {
     size_t l = strlen(str);
@@ -299,52 +297,27 @@ static void cmd_append(const char* str) {
 }
 
 // Print out whatever was on that file stream
-static int cmd_dump(struct subprocess_s* p) {
+static int cmd_dump(FILE** p) {
+    FILE* f = *p;
+    *p = NULL;
+
     char buffer[4096];
-    int length = 0;
-    while ((length = subprocess_read_stdout(p, buffer, sizeof(buffer)))) {
-        printf("%.*s", length, buffer);
+    while (fread(buffer, sizeof(buffer), 1, f)) {
+        printf("%s", buffer);
     }
 
-    int code;
-    subprocess_join(p, &code);
-    return code;
+    return pclose(f);
 }
 
-static struct subprocess_s* cmd_run() {
+static FILE** cmd_run() {
     //printf("CMD: %s\n", command_buffer);
-
-    size_t cmd_length = 0;
-    const char** cmds = malloc(sizeof(const char*) * 1000);
-
-    // Split up commands
-    char* ctx;
-    char* i = strtok_r(command_buffer, " ", &ctx);
-    while (i != NULL) {
-        assert(cmd_length < 999);
-        cmds[cmd_length++] = i;
-
-        i = strtok_r(NULL, " ", &ctx);
-    }
-    cmds[cmd_length++] = NULL;
+    //cmd_append(" 2>&1");
 
     // Find available slots
     int slot = -1;
     for (int i = 0; i < PROCESS_POOL_SIZE; i++) {
-        bool live = (process_live_bitset[i / 64] & (1u << (i % 64)));
-
-        if (live && !subprocess_alive(&process_pool[i])) {
-            int exit_code = cmd_dump(&process_pool[i]);
-            if (exit_code != 0) {
-                fprintf(stderr, "subprocess exited with code %d\n", exit_code);
-                exit(exit_code);
-            }
-
-            // it completed so we can steal that slot
-            process_live_bitset[i / 64] &= ~(1u << (i % 64));
-            slot = i;
-            break;
-        } else if (!live) {
+        if (process_pool[i] == NULL) {
+            //printf("Used empty slot! %d\n", i);
             slot = i;
             break;
         }
@@ -352,53 +325,46 @@ static struct subprocess_s* cmd_run() {
 
     if (slot < 0) {
         // if they're used up... wait
-        for (int i = 0; i < PROCESS_POOL_SIZE; i++) {
-            bool live = (process_live_bitset[i / 64] & (1u << (i % 64)));
-
-            if (live) {
+        int end = some_slot + 1 % PROCESS_POOL_SIZE;
+        for (int i = some_slot; i != end; i = (i + 1) % PROCESS_POOL_SIZE) {
+            if (process_pool[i] != NULL) {
                 // wait for it to finish
+                //printf("Wait for an empty slot! %d\n", i);
                 int exit_code = cmd_dump(&process_pool[i]);
                 if (exit_code != 0) {
-                    fprintf(stderr, "subprocess exited with code %d\n", exit_code);
+                    fprintf(stderr, "process exited with code %d\n", exit_code);
                     exit(exit_code);
                 }
 
                 // it completed so we can steal that slot
-                process_live_bitset[i / 64] &= ~(1u << (i % 64));
+                process_pool[i] = NULL;
                 slot = i;
                 break;
             }
         }
+
+        some_slot = (some_slot + 1) % PROCESS_POOL_SIZE;
     }
 
     assert(slot >= 0);
-
-    struct subprocess_s* p = &process_pool[slot];
-    int res = subprocess_create(cmds, subprocess_option_inherit_environment | subprocess_option_combined_stdout_stderr, p);
-    assert(res == 0);
-
-    process_live_bitset[slot / 64] |= (1u << (slot % 64));
+    process_pool[slot] = popen(command_buffer, "r");
 
     command_buffer[0] = 0;
     command_length = 0;
-    return p;
+    return &process_pool[slot];
 }
 
 void cmd_wait_for_all() {
     for (int i = 0; i < PROCESS_POOL_SIZE; i++) {
-        bool live = (process_live_bitset[i / 64] & (1u << (i % 64)));
-
-        if (live) {
+        if (process_pool[i] != NULL) {
             // wait for it to finish
             int exit_code = cmd_dump(&process_pool[i]);
             if (exit_code != 0) {
-                fprintf(stderr, "subprocess exited with code %d\n", exit_code);
+                fprintf(stderr, "process exited with code %d\n", exit_code);
                 exit(exit_code);
             }
         }
     }
-
-    memset(process_live_bitset, 0, sizeof(process_live_bitset));
 }
 
 ////////////////////////////////
@@ -508,7 +474,7 @@ static void cc_invoke(const CC_Options* options, const char* input_path, const c
     if (ON_CLANG) cmd_append(" -Wno-microsoft-enum-forward-reference -Wno-microsoft-anon-tag -Wno-gnu-designator");
     if (options->use_asan) cmd_append(" -fsanitize=address ");
 
-    cmd_append(" -I src/lib -I include");
+    cmd_append(" -I deps -I lib -I include");
     cmd_append(" -c -o ");
     cmd_append(options->output_dir);
 
@@ -534,7 +500,7 @@ static void cc_invoke(const CC_Options* options, const char* input_path, const c
 
 static void ar_invoke(const char* output_path, size_t count, const char* inputs[]) {
     if (ON_WINDOWS) {
-        cmd_append("lib /out:");
+        cmd_append("lib /nologo /out:");
         cmd_append(output_path);
         cmd_append(".lib ");
     } else {

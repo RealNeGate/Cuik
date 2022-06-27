@@ -179,6 +179,7 @@ typedef struct InitNode {
     // are expected to find an expression
     // here.
     int kids_count;
+    SourceLocIndex loc;
 
     // Fully resolved members with a kid_count of 0 will have
     // a proper offset and type after the type checking
@@ -319,7 +320,7 @@ typedef enum ExprOp {
 } ExprOp;
 
 struct Stmt {
-    struct StmtHeader {
+    struct {
         StmtOp op;
         SourceLocIndex loc;
 
@@ -515,6 +516,7 @@ struct Expr {
         } call;
         // represent both quoted literals
         struct {
+            bool resolved;
             const unsigned char* start;
             const unsigned char* end;
         } str;

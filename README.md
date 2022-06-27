@@ -2,7 +2,7 @@
 
 <img src="logo/cuik.png" width="256px"/>
 
-**warning: unfinished... also it doesn't compile on Linux or OSX currently, i'll get around to it**
+**warning: unfinished and buggy... also it doesn't compile on Linux or OSX currently, i'll get around to it**
 
 The plan is a modern C11 compiler which can mostly work with Clang, GCC, and MSVC while also introducing some new ideas.
 
@@ -63,6 +63,27 @@ It can currently compile programs using the subset of C it currently supports bu
 * MSVC extensions
 * GNU extensions
 * Proper Mac/Linux support
+
+## File structure
+In case you care to look around here's what the folders mean:
+```
+# libCuik itself
+lib/
+include/
+
+# and it's dependencies
+deps/
+
+# these are the programs that actually call into libCuik
+drivers/
+
+# not ciabatta but the freestanding includes like stddef.h along with some helpers
+crt/
+
+# random crap
+logo/
+tests/
+```
 
 ## PS
 If you're wondering about the tinybackend static library, it's essentially a project of mine that's not ready for everyone's precious eyes so i've been sharing it just enough to actually let people play with the compiler but not play with the backend (it'll be open source eventually).
