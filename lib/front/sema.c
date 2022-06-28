@@ -651,7 +651,7 @@ Cuik_Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
             return (e->type = &builtin_types[TYPE_DOUBLE]);
         }
         case EXPR_CHAR: {
-            return (e->type = &builtin_types[TYPE_CHAR]);
+            return (e->type = &builtin_types[TYPE_INT]);
         }
         case EXPR_WCHAR: {
             return (e->type = &builtin_types[TYPE_SHORT]);

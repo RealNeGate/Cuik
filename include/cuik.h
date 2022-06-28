@@ -133,6 +133,10 @@ CUIK_API void cuik_init(void);
 // operation meaning that once it's only done once for the process.
 CUIK_API void cuik_find_system_deps(const char* cuik_crt_directory);
 
+// can only be called after cuik_find_system_deps
+CUIK_API size_t cuik_get_system_search_path_count(void);
+CUIK_API void cuik_get_system_search_paths(const char** out, size_t n);
+
 CUIK_API bool cuik_lex_is_keyword(size_t length, const char* str);
 
 CUIK_API void cuikpp_init(Cuik_CPP* ctx);
@@ -272,6 +276,5 @@ void cuiklink_add_input_file(Cuik_Linker* l, const char* filepath);
 // Calls the system linker
 // return true if it succeeds
 bool cuiklink_invoke(Cuik_Linker* l, const char* filename, const char* crt_name);
-bool cuiklink_invoke_tb(Cuik_Linker* l, const char* filename);
 
 #include "cuik_private.h"

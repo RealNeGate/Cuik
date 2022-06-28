@@ -1,2 +1,2 @@
 @echo off
-clang a.c && ./a
+clang compile.c && ./a

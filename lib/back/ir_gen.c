@@ -473,7 +473,8 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
             return (IRVal){
                 .value_type = RVALUE,
                 .type = e->type,
-                .reg = tb_inst_uint(func, e->type->kind == KIND_SHORT ? TB_TYPE_I16 : TB_TYPE_I8, e->char_lit)};
+                .reg = tb_inst_uint(func, e->type->kind == KIND_SHORT ? TB_TYPE_I16 : TB_TYPE_I32, e->char_lit)
+            };
         }
         case EXPR_INT: {
             TB_DataType dt = ctype_to_tbtype(e->type);

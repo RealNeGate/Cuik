@@ -232,74 +232,119 @@ int main(int argc, char** argv) {
             char obj_output_path[FILENAME_MAX];
             if (args_object_only) {
                 sprintf_s(obj_output_path, FILENAME_MAX, "%s.obj", output_path_no_ext);
-            } else {
-                if (tmpnam(obj_output_path) == NULL) {
-                    fprintf(stderr, "cannot get a temporary file for the .obj... resorting to violence\n");
-                    return EXIT_FAILURE;
-                }
-            }
 
-            if (!tb_module_export(mod, obj_output_path)) {
-                fprintf(stderr, "error: tb_module_export failed!\n");
-                abort();
+                if (!tb_module_export(mod, obj_output_path)) {
+                    fprintf(stderr, "error: tb_module_export failed!\n");
+                    abort();
+                }
+            } else {
+                char exe_path[FILENAME_MAX], lib_dir[FILENAME_MAX];
+                sprintf_s(exe_path, FILENAME_MAX, "%s.exe", output_path_no_ext);
+                sprintf_s(lib_dir, FILENAME_MAX, "%s/crt/lib/", crt_dirpath);
+
+                if (0 /* use TB as the linker */) {
+                    size_t system_libpath_count = cuik_get_system_search_path_count();
+
+                    TB_LinkerInput link = { 0 };
+                    {
+                        link.search_dir_count = system_libpath_count + 1;
+                        link.search_dirs = malloc(link.search_dir_count * sizeof(const char*));
+
+                        // fill search paths
+                        cuik_get_system_search_paths(link.search_dirs, system_libpath_count);
+                        link.search_dirs[system_libpath_count] = lib_dir;
+                    }
+
+                    // fill input files
+                    {
+                        #ifdef _WIN32
+                        link.input_count = dyn_array_length(input_libraries) + 4;
+                        #else
+                        link.input_count = dyn_array_length(input_libraries);
+                        #endif
+
+                        link.inputs = malloc(link.input_count);
+
+                        // Add input libraries
+                        const char** inputs = link.inputs;
+                        dyn_array_for(i, input_libraries) {
+                            *inputs++ = input_libraries[i];
+                        }
+
+                        #ifdef _WIN32
+                        *inputs++ = "ucrt.lib";
+                        *inputs++ = "msvcrt.lib";
+                        *inputs++ = "vcruntime.lib";
+                        *inputs++ = "win32_rt.lib";
+                        #endif
+                    }
+
+                    if (!tb_module_export_exec(mod, exe_path, &link)) {
+                        fprintf(stderr, "error: tb_module_export failed!\n");
+                        abort();
+                    }
+                } else {
+                    // generate a temporary file for it
+                    if (tmpnam(obj_output_path) == NULL) {
+                        fprintf(stderr, "cannot get a temporary file for the .obj... resorting to violence\n");
+                        return EXIT_FAILURE;
+                    }
+
+                    if (!tb_module_export(mod, obj_output_path)) {
+                        fprintf(stderr, "error: tb_module_export failed!\n");
+                        abort();
+                    }
+
+                    // Invoke system linker
+                    Cuik_Linker l;
+                    if (cuiklink_init(&l)) {
+                        // Add system libpaths
+                        cuiklink_add_default_libpaths(&l);
+                        cuiklink_add_libpath(&l, lib_dir);
+
+                        // Add Cuik output
+                        cuiklink_add_input_file(&l, obj_output_path);
+
+                        // Add input libraries
+                        dyn_array_for(i, input_libraries) {
+                            cuiklink_add_input_file(&l, input_libraries[i]);
+                        }
+
+                        #ifdef _WIN32
+                        cuiklink_add_input_file(&l, "ucrt.lib");
+                        cuiklink_add_input_file(&l, "msvcrt.lib");
+                        cuiklink_add_input_file(&l, "vcruntime.lib");
+                        cuiklink_add_input_file(&l, "win32_rt.lib");
+                        #endif
+
+                        cuiklink_invoke(&l, output_path_no_ext, "ucrt");
+                        //cuiklink_invoke_tb(&l, output_path_no_ext);
+                        cuiklink_deinit(&l);
+
+                        remove(obj_output_path);
+                    }
+                }
+
+                if (args_run) {
+                    #ifdef _WIN32
+                    for (char* i = exe_path; *i; i++) {
+                        if (*i == '/') *i = '\\';
+                    }
+                    #endif
+
+                    printf("\n\nRunning: %s...\n", exe_path);
+                    int exit_code = system(exe_path);
+                    printf("Exit code: %d\n", exit_code);
+
+                    return exit_code;
+                }
             }
 
             tb_free_thread_resources();
             tb_module_destroy(mod);
 
             // linker
-            if (!args_object_only || args_run) {
-                Cuik_Linker l;
-                if (cuiklink_init(&l)) {
-                    // Add system libpaths
-                    cuiklink_add_default_libpaths(&l);
-
-                    char lib_dir[FILENAME_MAX];
-                    sprintf_s(lib_dir, FILENAME_MAX, "%s/lib/", crt_dirpath);
-                    cuiklink_add_libpath(&l, "W:/Workspace/Cuik/crt/lib/");
-
-                    // Add Cuik output
-                    cuiklink_add_input_file(&l, obj_output_path);
-
-                    // Add input libraries
-                    dyn_array_for(i, input_libraries) {
-                        cuiklink_add_input_file(&l, input_libraries[i]);
-                    }
-
-                    #ifdef _WIN32
-                    cuiklink_add_input_file(&l, "ucrt.lib");
-                    cuiklink_add_input_file(&l, "msvcrt.lib");
-                    cuiklink_add_input_file(&l, "vcruntime.lib");
-                    cuiklink_add_input_file(&l, "win32_rt.lib");
-                    #endif
-
-                    cuiklink_invoke(&l, output_path_no_ext, "ucrt");
-                    //cuiklink_invoke_tb(&l, output_path_no_ext);
-                    cuiklink_deinit(&l);
-
-                    remove(obj_output_path);
-
-                    if (args_run) {
-                        char exe_path[FILENAME_MAX];
-                        sprintf_s(exe_path, 260, "%s.exe", output_path_no_ext);
-
-                        #ifdef _WIN32
-                        for (char* i = exe_path; *i; i++) {
-                            if (*i == '/') *i = '\\';
-                        }
-                        #endif
-
-                        printf("\n\nRunning: %s...\n", exe_path);
-                        int exit_code = system(exe_path);
-                        printf("Exit code: %d\n", exit_code);
-
-                        return exit_code;
-                    }
-                } else if (args_run) {
-                    fprintf(stderr, "error: could not run due to linker errors.\n");
-                    return EXIT_FAILURE;
-                }
-            }
+            /**/
         }
     }
 

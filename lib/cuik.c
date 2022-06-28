@@ -17,9 +17,21 @@ Warnings warnings = {
 
 // internal globals to Cuik
 char cuik__include_dir[FILENAME_MAX];
+
 #ifdef _WIN32
 MicrosoftCraziness_Find_Result cuik__vswhere;
 #endif
+
+static char* utf16_to_utf8_on_heap(const wchar_t* input) {
+    int bytes = WideCharToMultiByte(65001 /* UTF8 */, 0, input, -1, NULL, 0, NULL, NULL);
+    if (bytes <= 0) return NULL;
+
+	char* output = malloc(bytes + 1);
+    WideCharToMultiByte(65001 /* UTF8 */, 0, input, -1, output, bytes, NULL, NULL);
+    output[bytes] = 0;
+
+    return output;
+}
 
 CUIK_API void cuik_init(void) {
     init_report_system();
@@ -31,6 +43,22 @@ CUIK_API void cuik_find_system_deps(const char* cuik_crt_directory) {
     #endif
 
     sprintf_s(cuik__include_dir, FILENAME_MAX, "%s"SLASH"crt"SLASH"include"SLASH, cuik_crt_directory);
+}
+
+CUIK_API size_t cuik_get_system_search_path_count(void) {
+    #ifdef _WIN32
+    return 3;
+    #else
+    return 0;
+    #endif
+}
+
+CUIK_API void cuik_get_system_search_paths(const char** out, size_t n) {
+    #ifdef _WIN32
+    if (n >= 1) out[0] = utf16_to_utf8_on_heap(cuik__vswhere.vs_library_path);
+    if (n >= 2) out[1] = utf16_to_utf8_on_heap(cuik__vswhere.windows_sdk_um_library_path);
+    if (n >= 3) out[2] = utf16_to_utf8_on_heap(cuik__vswhere.windows_sdk_ucrt_library_path);
+    #endif
 }
 
 CUIK_API bool cuik_lex_is_keyword(size_t length, const char* str) {
