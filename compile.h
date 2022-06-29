@@ -558,22 +558,24 @@ static void ld_invoke(const char* output_path, size_t count, const char* inputs[
         // TODO(NeGate): Fix this garbage up...
         cmd_append("ld -o ");
         cmd_append(str_gimme_good_slashes(output_path));
-        cmd_append(" build/*.o ./tildebackend.a -lc -lm -lpthread ");
+        cmd_append(" ");
+
+        for (int i = 0; i < count; i++) {
+            cmd_append(inputs[i]);
+            cmd_append(" ");
+        }
+
+        for (int i = 0; i < external_count; i++) {
+            cmd_append("-l");
+            cmd_append(external_inputs[i]);
+            cmd_append(" ");
+        }
+
         cmd_append("/usr/lib/x86_64-linux-gnu/crt1.o ");
         cmd_append("/usr/lib/x86_64-linux-gnu/crti.o ");
         cmd_append("/usr/lib/x86_64-linux-gnu/crtn.o ");
         cmd_append("/usr/lib/x86_64-linux-gnu/libc_nonshared.a ");
         cmd_append("--dynamic-linker /lib64/ld-linux-x86-64.so.2 ");
-
-        for (int i = 0; i < external_count; i++) {
-            cmd_append(" -l");
-            cmd_append(external_inputs[i]);
-        }
-
-        for (int i = 0; i < count; i++) {
-            cmd_append(" ");
-            cmd_append(inputs[i]);
-        }
     } else {
         assert(0 && "TODO");
     }

@@ -31,7 +31,7 @@ static void dump_tokens(FILE* out_file, TokenStream* s) {
         SourceLoc* loc = &s->locations[SOURCE_LOC_GET_DATA(t->location)];
 
         if (last_file != loc->line->filepath && strcmp(loc->line->filepath, "<temp>") != 0) {
-            char str[MAX_PATH];
+            char str[FILENAME_MAX];
 
             // TODO(NeGate): Kinda shitty but i just wanna duplicate
             // the backslashes to avoid them being treated as an escape
@@ -179,7 +179,7 @@ int main(int argc, char** argv) {
 
         if (filename[len - 1] == '/' && filename[len - 1] == '\\') {
             // we have an output directory instead of a file
-            sprintf_s(output_path_no_ext, MAX_PATH, "%.*s%s", (int)len, filename, input_files[0]);
+            sprintf_s(output_path_no_ext, FILENAME_MAX, "%.*s%s", (int)len, filename, input_files[0]);
         } else {
             memcpy(output_path_no_ext, filename, len);
             output_path_no_ext[len] = '\0';

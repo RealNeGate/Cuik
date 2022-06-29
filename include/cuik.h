@@ -11,6 +11,8 @@
 // strtok_r on POSIX, not strtok_s on C11... tf
 #define strtok_r(a, b, c) strtok_s(a, b, c)
 #define strdup _strdup
+#else
+int sprintf_s(char* buffer, size_t len, const char* format, ...);
 #endif
 
 // opaque structs

@@ -20,7 +20,6 @@ char cuik__include_dir[FILENAME_MAX];
 
 #ifdef _WIN32
 MicrosoftCraziness_Find_Result cuik__vswhere;
-#endif
 
 static char* utf16_to_utf8_on_heap(const wchar_t* input) {
     int bytes = WideCharToMultiByte(65001 /* UTF8 */, 0, input, -1, NULL, 0, NULL, NULL);
@@ -32,6 +31,7 @@ static char* utf16_to_utf8_on_heap(const wchar_t* input) {
 
     return output;
 }
+#endif
 
 CUIK_API void cuik_init(void) {
     init_report_system();
@@ -270,3 +270,22 @@ CUIK_API Token* cuik_get_tokens(TokenStream* restrict s) {
 CUIK_API size_t cuik_get_token_count(TokenStream* restrict s) {
     return arrlen(s->tokens);
 }
+
+#ifndef _WIN32
+// non-windows platforms generally just don't have the safe functions so
+// let's provide them
+int sprintf_s(char* buffer, size_t len, const char* format, ...) {
+    if (buffer == NULL || len == 0) return -1;
+
+    va_list args;
+    va_start(args, format);
+    int result = vsnprintf(buffer, len, format, args);
+    va_end(args);
+
+    if (result < 0 && result >= len) {
+        fprintf(stderr, "error: buffer overflow on sprintf_s!\n");
+        abort();
+    }
+    return result;
+}
+#endif

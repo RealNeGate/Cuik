@@ -80,7 +80,7 @@ inline static size_t cstr_copy(size_t len, char* dst, const char* src) {
     return i;
 }
 
-#if _WIN32
+#ifdef _WIN32
 typedef wchar_t* OS_String;
 typedef wchar_t OS_Char;
 
@@ -93,21 +93,5 @@ typedef char OS_Char;
 #define OS_STR(x) x
 #define OS_STR_FMT "s"
 
-// non-windows platforms generally just don't have the safe functions so
-// let's provide them
-inline static int sprintf_s(char* buffer, size_t len, const char* format, ...) {
-    if (buffer == NULL || len == 0) return -1;
-
-    va_list args;
-    va_start(args, format);
-    int result = vsnprintf(buffer, len, format, args);
-    va_end(args);
-
-    if (result < 0 && result >= len) {
-        fprintf(stderr, "error: buffer overflow on sprintf_s!\n");
-        abort();
-    }
-    return result;
-}
-
+int sprintf_s(char* buffer, size_t len, const char* format, ...);
 #endif

@@ -1,6 +1,7 @@
 #pragma once
 #include <stdbool.h>
 #include <stdlib.h>
+#include <stddef.h>
 #include <stdio.h>
 
 #define INITIAL_CAP 4096
@@ -11,7 +12,7 @@ typedef struct DynArrayHeader {
     char data[];
 } DynArrayHeader;
 
-inline void* dyn_array_internal_create(size_t type_size) {
+inline static void* dyn_array_internal_create(size_t type_size) {
     DynArrayHeader* header = malloc(sizeof(DynArrayHeader) + (type_size * INITIAL_CAP));
     *header = (DynArrayHeader){
         .capacity = INITIAL_CAP
@@ -19,12 +20,12 @@ inline void* dyn_array_internal_create(size_t type_size) {
     return &header->data[0];
 }
 
-inline void dyn_array_internal_destroy(void* ptr) {
+inline static void dyn_array_internal_destroy(void* ptr) {
     DynArrayHeader* header = ((DynArrayHeader*)ptr) - 1;
     free(header);
 }
 
-inline void* dyn_array_internal_reserve(void* ptr, size_t type_size, size_t extra) {
+inline static void* dyn_array_internal_reserve(void* ptr, size_t type_size, size_t extra) {
     DynArrayHeader* header = ((DynArrayHeader*)ptr) - 1;
 
     if (header->size + extra >= header->capacity) {

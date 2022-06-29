@@ -261,16 +261,23 @@ int main(int argc, char** argv) {
     cmd_wait_for_all();
 
     printf("Converting to a library...\n");
-    ar_invoke("bin"SLASH"cuik", 1, (const char*[]) { "bin"SLASH"*.obj" });
+    ar_invoke("bin"SLASH"libcuik", 1, (const char*[]) {
+            #if ON_WINDOWS
+            "bin"SLASH"*.obj",
+            #else
+            "bin"SLASH"*.o",
+            #endif
+        });
+
     cmd_wait_for_all();
     #endif /* DOING_TB_CRAP */
 
     #ifndef ONLY_LIBRARY
     static const char* LINKER_INPUTS[] = {
         #if ON_WINDOWS
-        "bin"SLASH DRIVER_NAME".obj", "bin"SLASH"cuik.lib", "deps"SLASH"tb"SLASH"tildebackend.lib",
+        "bin"SLASH DRIVER_NAME".obj", "bin"SLASH"libcuik.lib", "deps"SLASH"tb"SLASH"tildebackend.lib",
         #else
-        "bin"SLASH DRIVER_NAME".o", "bin"SLASH"cuik.a", "deps"SLASH"tb"SLASH"tildebackend.a",
+        "bin"SLASH DRIVER_NAME".o", "bin"SLASH"libcuik.a", "deps"SLASH"tb"SLASH"tildebackend.a",
         #endif
     };
 
