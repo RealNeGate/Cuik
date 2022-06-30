@@ -1,24 +1,92 @@
+//static size_t file_io_memory_usage = 0;
 
-Cuik_File cpp__get_file(void* user_data, bool is_query, const char* path, size_t* out_length) {
+static Cuik_File get_file(void* user_data, bool is_query, const char* path) {
+    #ifdef _WIN32
     if (is_query) {
-
+        return (Cuik_File){ .found = (GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES) };
     }
+
+    // actual file reading
+    HANDLE file = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, 0, OPEN_EXISTING, 0, 0);
+    if (file == INVALID_HANDLE_VALUE) {
+        fprintf(stderr, "error: could not open file '%s'!\n", path);
+        return (Cuik_File){ .found = false };
+    }
+
+    LARGE_INTEGER file_size;
+    if (!GetFileSizeEx(file, &file_size)) {
+        // must be a file stream
+        fprintf(stderr, "error: could not check file size of '%s'!\n", path);
+        return (Cuik_File){ .found = false };
+    }
+
+    // normal file with a normal length
+    if (file_size.HighPart) {
+        fprintf(stderr, "error: file '%s' is too big!\n", path);
+        return (Cuik_File){ .found = false };
+    }
+
+    char* buffer = malloc(file_size.QuadPart + 16);
+    DWORD bytes_read;
+    if (!ReadFile(file, buffer, file_size.LowPart, &bytes_read, NULL)) {
+        fprintf(stderr, "error: could not read file '%s'!\n", path);
+        return (Cuik_File){ .found = false };
+    }
+
+    CloseHandle(file);
+
+    // fat null terminator
+    memset(&buffer[file_size.QuadPart], 0, 16);
+    remove_weird_whitespace(file_size.QuadPart, buffer);
+
+    //file_io_memory_usage += (file_size.QuadPart + 16);
+    //printf("%f MiB of files\n", (double)file_io_memory_usage / 1048576.0);
+    return (Cuik_File){ .found = true, .length = file_size.QuadPart, buffer };
+    #else
+    struct stat buffer;
+    if (is_query) {
+        return (Cuik_File){ .found = (stat(filename, &buffer) == 0) };
+    }
+
+    // actual file reading
+    FILE* file = fopen(file_path, "rb");
+    if (!file) {
+        fprintf(stderr, "Could not read file: %s\n", file_path);
+        return (Cuik_File){ .found = false };
+    }
+
+    int descriptor = fileno(file);
+
+    struct stat file_stats;
+    if (fstat(descriptor, &file_stats) == -1) {
+        fprintf(stderr, "Could not figure out file size: %s\n", file_path);
+        return (Cuik_File){ .found = false };
+    }
+
+    len = file_stats.st_size;
+    text = malloc(len + 16);
+
+    fseek(file, 0, SEEK_SET);
+    size_t length_read = fread(text, 1, len, file);
+
+    // fat null terminator
+    length_read = len;
+    memset(&text[length_read], 0, 16);
+    fclose(file);
+
+    return (Cuik_File){ .found = true, .length = length_read, .data = text };
+    #endif
 }
 
-bool cpp__canonicalize(void* user_data, char output[FILENAME_MAX], const char* input) {
+static bool canonicalize(void* user_data, char output[FILENAME_MAX], const char* input) {
     #ifdef _WIN32
     char* filepart;
-    char* new_path = arena_alloc(&thread_arena, FILENAME_MAX, 1);
-    if (GetFullPathNameA(path, FILENAME_MAX, new_path, &filepart) == 0) {
-        int loc = l.current_line;
-        fprintf(stderr, "error %s:%d: Could not resolve path: %s\n", l.filepath, loc, path);
-        abort();
+    if (GetFullPathNameA(input, FILENAME_MAX, output, &filepart) == 0) {
+        return false;
     }
 
     if (filepart == NULL) {
-        int loc = l.current_line;
-        fprintf(stderr, "error %s:%d: Cannot include directory %s\n", l.filepath, loc, new_path);
-        abort();
+        return false;
     }
 
     // Convert file paths into something more comfortable
@@ -30,14 +98,14 @@ bool cpp__canonicalize(void* user_data, char output[FILENAME_MAX], const char* i
             *p -= ('A' - 'a');
         }
     }
-    #else
-    realpath(input, output);
+
     return true;
+    #else
+    return realpath(input, output) != NULL;
     #endif
 }
 
 Cuik_IFileSystem cuik_default_fs = {
-    .get_file = cpp__get_file,
-    .canonicalize = cpp_canonicalize
+    .get_file = get_file,
+    .canonicalize = canonicalize
 };
-

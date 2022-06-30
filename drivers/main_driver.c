@@ -204,7 +204,7 @@ int main(int argc, char** argv) {
     // preproc
     Cuik_CPP cpp;
     TokenStream tokens = cuik_preprocess_simple(
-        &cpp, argv[1], target, true,
+        &cpp, argv[1], &cuik_default_fs, target, true,
         dyn_array_length(include_directories),
         &include_directories[0]
     );

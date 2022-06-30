@@ -228,8 +228,8 @@ static void set_defines(Cuik_CPP* cpp, const Cuik_TargetDesc* target_desc, bool 
     }
 }
 
-CUIK_API TokenStream cuik_preprocess_simple(Cuik_CPP* restrict out_cpp, const char* filepath, const Cuik_TargetDesc* target_desc, bool system_libs, size_t include_count, const char* includes[]) {
-    cuikpp_init(out_cpp);
+CUIK_API TokenStream cuik_preprocess_simple(Cuik_CPP* restrict out_cpp, const char* filepath, const Cuik_IFileSystem* fs, const Cuik_TargetDesc* target_desc, bool system_libs, size_t include_count, const char* includes[]) {
+    cuikpp_init(out_cpp, fs);
     set_defines(out_cpp, target_desc, system_libs);
 
     // add extra include paths

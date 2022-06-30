@@ -114,7 +114,7 @@ CUIK_API bool cuikpp_find_include_include(Cuik_CPP* ctx, char output[MAX_PATH], 
     for (size_t i = 0; i < num_system_include_dirs; i++) {
         sprintf_s(output, FILENAME_MAX, "%s%s", ctx->system_include_dirs[i], path);
 
-        if (file_exists(output)) {
+        if (CUIK_CALL(ctx->file_system, get_file, true, output).found) {
             return true;
         }
     }
@@ -294,7 +294,15 @@ static void preprocess_file(Cuik_CPP* restrict c, TokenStream* restrict s, size_
     // hacky but i don't wanna wrap it in a timed_block
     uint64_t timer_start = cuik_time_in_nanos();
 
-    unsigned char* text = (unsigned char*)read_entire_file(filepath);
+    Cuik_File file = CUIK_CALL(c->file_system, get_file, false, filepath);
+    if (!file.found) {
+        panic("preprocessor error: could not read file! %s\n", filepath);
+    }
+
+    // convert all the weird whitespace into something normal
+    remove_weird_whitespace(file.length, file.data);
+    unsigned char* text = (unsigned char*)file.data;
+
     size_t file_entry_id = dyn_array_length(c->files);
     Cuik_FileEntry file_entry = {
         .parent_id = parent_entry,
@@ -559,7 +567,7 @@ static void preprocess_file(Cuik_CPP* restrict c, TokenStream* restrict s, size_
                     if (!is_lib_include) {
                         // Try local includes
                         sprintf_s(path, FILENAME_MAX, "%s%s", directory, filename);
-                        if (file_exists(path)) success = true;
+                        if (CUIK_CALL(c->file_system, get_file, true, path).found) success = true;
                     }
 
                     if (!success) {
@@ -568,8 +576,7 @@ static void preprocess_file(Cuik_CPP* restrict c, TokenStream* restrict s, size_
                         for (size_t i = 0; i < num_system_include_dirs; i++) {
                             sprintf_s(path, FILENAME_MAX, "%s%s", c->system_include_dirs[i], filename);
 
-                            if (file_exists(path)) {
-                                success = true;
+                            if (CUIK_CALL(c->file_system, get_file, true, path).found) {                                success = true;
                                 break;
                             }
                         }
@@ -578,7 +585,7 @@ static void preprocess_file(Cuik_CPP* restrict c, TokenStream* restrict s, size_
                     if (!success && is_lib_include) {
                         // Try local includes
                         sprintf_s(path, FILENAME_MAX, "%s%s", directory, filename);
-                        if (file_exists(path)) success = true;
+                        if (CUIK_CALL(c->file_system, get_file, true, path).found) success = true;
                     }
 
                     if (!success) {
@@ -590,7 +597,7 @@ static void preprocess_file(Cuik_CPP* restrict c, TokenStream* restrict s, size_
 
                     // get me an absolute path
                     char* new_path = arena_alloc(&thread_arena, FILENAME_MAX, 1);
-                    c->file_system->canonicalize(c->file_system->user_data, new_path, path);
+                    CUIK_CALL(c->file_system, canonicalize, new_path, path);
 
                     ptrdiff_t search = shgeti(c->include_once, new_path);
                     if (search < 0) {
@@ -598,10 +605,11 @@ static void preprocess_file(Cuik_CPP* restrict c, TokenStream* restrict s, size_
                         // they're... evil!!!
                         char* new_dir = strdup(new_path);
                         char* slash = strrchr(new_dir, '/');
-                        if (!slash) slash = strrchr(new_dir, '/');
+                        if (!slash) slash = strrchr(new_dir, '\\');
 
                         if (slash) {
-                            slash[1] = '/';
+                            slash[0] = '/';
+                            slash[1] = '\0';
                         } else {
                             new_dir[0] = '/';
                             new_dir[1] = '\0';
@@ -609,7 +617,7 @@ static void preprocess_file(Cuik_CPP* restrict c, TokenStream* restrict s, size_
 
                         if (0) {
                             for (int i = 0; i < depth; i++) printf("  ");
-                            printf("%s\n", new_path);
+                            printf("%s : %s\n", new_dir, new_path);
                         }
 
                         preprocess_file(c, s, file_entry_id, new_include_loc, new_dir, new_path, depth + 1);

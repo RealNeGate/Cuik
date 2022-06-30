@@ -39,6 +39,7 @@
 #define WIN32_MEAN_AND_LEAN
 #include <windows.h>
 
+#define strdup _strdup
 #define popen _popen
 #define pclose _pclose
 
