@@ -316,7 +316,7 @@ static FILE** cmd_run() {
 
     // Find available slots
     int slot = -1;
-    for (int i = 0; i < PROCESS_POOL_SIZE; i++) {
+    for (size_t i = 0; i < PROCESS_POOL_SIZE; i++) {
         if (process_pool[i] == NULL) {
             //printf("Used empty slot! %d\n", i);
             slot = i;
@@ -327,7 +327,7 @@ static FILE** cmd_run() {
     if (slot < 0) {
         // if they're used up... wait
         int end = some_slot + 1 % PROCESS_POOL_SIZE;
-        for (int i = some_slot; i != end; i = (i + 1) % PROCESS_POOL_SIZE) {
+        for (size_t i = some_slot; i != end; i = (i + 1) % PROCESS_POOL_SIZE) {
             if (process_pool[i] != NULL) {
                 // wait for it to finish
                 //printf("Wait for an empty slot! %d\n", i);
@@ -356,7 +356,7 @@ static FILE** cmd_run() {
 }
 
 void cmd_wait_for_all() {
-    for (int i = 0; i < PROCESS_POOL_SIZE; i++) {
+    for (size_t i = 0; i < PROCESS_POOL_SIZE; i++) {
         if (process_pool[i] != NULL) {
             // wait for it to finish
             int exit_code = cmd_dump(&process_pool[i]);
@@ -513,7 +513,7 @@ static void ar_invoke(const char* output_path, size_t count, const char* inputs[
         else cmd_append(".a ");
     }
 
-    for (int i = 0; i < count; i++) {
+    for (size_t i = 0; i < count; i++) {
         cmd_append(inputs[i]);
         cmd_append(" ");
     }
@@ -531,12 +531,12 @@ static void ld_invoke(const char* output_path, size_t count, const char* inputs[
         cmd_append(str_gimme_good_slashes(output_path));
         cmd_append(".exe");
 
-        for (int i = 0; i < external_count; i++) {
+        for (size_t i = 0; i < external_count; i++) {
             cmd_append(" ");
             cmd_append(external_inputs[i]);
         }
 
-        for (int i = 0; i < count; i++) {
+        for (size_t i = 0; i < count; i++) {
             cmd_append(" ");
             cmd_append(inputs[i]);
         }
@@ -546,12 +546,12 @@ static void ld_invoke(const char* output_path, size_t count, const char* inputs[
         cmd_append(str_gimme_good_slashes(output_path));
         cmd_append(".exe");
 
-        for (int i = 0; i < external_count; i++) {
+        for (size_t i = 0; i < external_count; i++) {
             cmd_append(" -l");
             cmd_append(external_inputs[i]);
         }
 
-        for (int i = 0; i < count; i++) {
+        for (size_t i = 0; i < count; i++) {
             cmd_append(" ");
             cmd_append(inputs[i]);
         }
@@ -561,12 +561,12 @@ static void ld_invoke(const char* output_path, size_t count, const char* inputs[
         cmd_append(str_gimme_good_slashes(output_path));
         cmd_append(" ");
 
-        for (int i = 0; i < count; i++) {
+        for (size_t i = 0; i < count; i++) {
             cmd_append(inputs[i]);
             cmd_append(" ");
         }
 
-        for (int i = 0; i < external_count; i++) {
+        for (size_t i = 0; i < external_count; i++) {
             cmd_append("-l");
             cmd_append(external_inputs[i]);
             cmd_append(" ");
