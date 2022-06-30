@@ -45,13 +45,13 @@ static Cuik_File get_file(void* user_data, bool is_query, const char* path) {
     #else
     struct stat buffer;
     if (is_query) {
-        return (Cuik_File){ .found = (stat(filename, &buffer) == 0) };
+        return (Cuik_File){ .found = (stat(path, &buffer) == 0) };
     }
 
     // actual file reading
-    FILE* file = fopen(file_path, "rb");
+    FILE* file = fopen(path, "rb");
     if (!file) {
-        fprintf(stderr, "Could not read file: %s\n", file_path);
+        fprintf(stderr, "Could not read file: %s\n", path);
         return (Cuik_File){ .found = false };
     }
 
@@ -59,12 +59,12 @@ static Cuik_File get_file(void* user_data, bool is_query, const char* path) {
 
     struct stat file_stats;
     if (fstat(descriptor, &file_stats) == -1) {
-        fprintf(stderr, "Could not figure out file size: %s\n", file_path);
+        fprintf(stderr, "Could not figure out file size: %s\n", path);
         return (Cuik_File){ .found = false };
     }
 
-    len = file_stats.st_size;
-    text = malloc(len + 16);
+    size_t len = file_stats.st_size;
+    char* text = malloc(len + 16);
 
     fseek(file, 0, SEEK_SET);
     size_t length_read = fread(text, 1, len, file);

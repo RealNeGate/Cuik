@@ -1,5 +1,4 @@
 #include <stdio.h>
-#include <sys/stat.h>
 #include <x86intrin.h>
 
 static void remove_weird_whitespace(size_t len, char* text) {

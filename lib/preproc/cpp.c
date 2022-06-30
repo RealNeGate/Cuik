@@ -11,6 +11,7 @@
 #include <memory.h>
 #include <timer.h>
 #include <front/file_io.h>
+#include <sys/stat.h>
 #include <stb_ds.h>
 
 #if _WIN32
