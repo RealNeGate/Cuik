@@ -39,9 +39,10 @@ static void expand_ident(Cuik_CPP* restrict c, TokenStream* restrict s, Lexer* l
 // Basically a mini-unity build that takes up just the CPP module
 #include "cpp_symtab.h"
 #include "cpp_expand.h"
+#include "cpp_fs.h"
 #include "cpp_expr.h"
 
-CUIK_API void cuikpp_init(Cuik_CPP* ctx) {
+CUIK_API void cuikpp_init(Cuik_CPP* ctx, const Cuik_IFileSystem* fs) {
     size_t sz = sizeof(void*) * MACRO_BUCKET_COUNT * SLOTS_PER_MACRO_BUCKET;
     size_t sz2 = sizeof(SourceLocIndex) * MACRO_BUCKET_COUNT * SLOTS_PER_MACRO_BUCKET;
 
@@ -54,6 +55,7 @@ CUIK_API void cuikpp_init(Cuik_CPP* ctx) {
 
         .the_shtuffs = cuik__valloc(THE_SHTUFFS_SIZE),
     };
+    ctx->file_system = fs;
     ctx->files = dyn_array_create(Cuik_FileEntry);
 
     tls_init();
@@ -586,52 +588,24 @@ static void preprocess_file(Cuik_CPP* restrict c, TokenStream* restrict s, size_
                     }
                     tls_restore(filename);
 
-                    #ifdef _WIN32
-                    char* filepart;
+                    // get me an absolute path
                     char* new_path = arena_alloc(&thread_arena, FILENAME_MAX, 1);
-                    if (GetFullPathNameA(path, FILENAME_MAX, new_path, &filepart) == 0) {
-                        int loc = l.current_line;
-                        fprintf(stderr, "error %s:%d: Could not resolve path: %s\n", l.filepath, loc, path);
-                        abort();
-                    }
-
-                    if (filepart == NULL) {
-                        int loc = l.current_line;
-                        fprintf(stderr, "error %s:%d: Cannot include directory %s\n", l.filepath, loc, new_path);
-                        abort();
-                    }
-
-                    // Convert file paths into something more comfortable
-                    // The windows file paths are case insensitive
-                    for (char* p = new_path; *p; p++) {
-                        if (*p == '\\') {
-                            *p = '/';
-                        } else if (*p >= 'A' && *p <= 'Z') {
-                            *p -= ('A' - 'a');
-                        }
-                    }
-                    #else
-                    char* new_path = arena_alloc(&thread_arena, FILENAME_MAX, 1);
-                    realpath(path, new_path);
-                    #endif
+                    c->file_system->canonicalize(c->file_system->user_data, new_path, path);
 
                     ptrdiff_t search = shgeti(c->include_once, new_path);
                     if (search < 0) {
                         // TODO(NeGate): Remove these heap allocations later
                         // they're... evil!!!
-                        #ifdef _WIN32
-                        char* new_dir = strdup(new_path);
-                        new_dir[filepart - new_path] = '\0';
-                        #else
                         char* new_dir = strdup(new_path);
                         char* slash = strrchr(new_dir, '/');
+                        if (!slash) slash = strrchr(new_dir, '/');
+
                         if (slash) {
                             slash[1] = '/';
                         } else {
                             new_dir[0] = '/';
                             new_dir[1] = '\0';
                         }
-                        #endif
 
                         if (0) {
                             for (int i = 0; i < depth; i++) printf("  ");

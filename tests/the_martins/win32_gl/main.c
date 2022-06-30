@@ -33,27 +33,27 @@
 
 // make sure you use functions that are valid for selected GL version (specified when context is created)
 #define GL_FUNCTIONS(X) \
-    X(PFNGLCREATEBUFFERSPROC,            glCreateBuffers            ) \
-    X(PFNGLNAMEDBUFFERSTORAGEPROC,       glNamedBufferStorage       ) \
-    X(PFNGLBINDVERTEXARRAYPROC,          glBindVertexArray          ) \
-    X(PFNGLCREATEVERTEXARRAYSPROC,       glCreateVertexArrays       ) \
-    X(PFNGLVERTEXARRAYATTRIBBINDINGPROC, glVertexArrayAttribBinding ) \
-    X(PFNGLVERTEXARRAYVERTEXBUFFERPROC,  glVertexArrayVertexBuffer  ) \
-    X(PFNGLVERTEXARRAYATTRIBFORMATPROC,  glVertexArrayAttribFormat  ) \
-    X(PFNGLENABLEVERTEXARRAYATTRIBPROC,  glEnableVertexArrayAttrib  ) \
-    X(PFNGLCREATESHADERPROGRAMVPROC,     glCreateShaderProgramv     ) \
-    X(PFNGLGETPROGRAMIVPROC,             glGetProgramiv             ) \
-    X(PFNGLGETPROGRAMINFOLOGPROC,        glGetProgramInfoLog        ) \
-    X(PFNGLGENPROGRAMPIPELINESPROC,      glGenProgramPipelines      ) \
-    X(PFNGLUSEPROGRAMSTAGESPROC,         glUseProgramStages         ) \
-    X(PFNGLBINDPROGRAMPIPELINEPROC,      glBindProgramPipeline      ) \
-    X(PFNGLPROGRAMUNIFORMMATRIX2FVPROC,  glProgramUniformMatrix2fv  ) \
-    X(PFNGLBINDTEXTUREUNITPROC,          glBindTextureUnit          ) \
-    X(PFNGLCREATETEXTURESPROC,           glCreateTextures           ) \
-    X(PFNGLTEXTUREPARAMETERIPROC,        glTextureParameteri        ) \
-    X(PFNGLTEXTURESTORAGE2DPROC,         glTextureStorage2D         ) \
-    X(PFNGLTEXTURESUBIMAGE2DPROC,        glTextureSubImage2D        ) \
-    X(PFNGLDEBUGMESSAGECALLBACKPROC,     glDebugMessageCallback     )
+X(PFNGLCREATEBUFFERSPROC,            glCreateBuffers            ) \
+X(PFNGLNAMEDBUFFERSTORAGEPROC,       glNamedBufferStorage       ) \
+X(PFNGLBINDVERTEXARRAYPROC,          glBindVertexArray          ) \
+X(PFNGLCREATEVERTEXARRAYSPROC,       glCreateVertexArrays       ) \
+X(PFNGLVERTEXARRAYATTRIBBINDINGPROC, glVertexArrayAttribBinding ) \
+X(PFNGLVERTEXARRAYVERTEXBUFFERPROC,  glVertexArrayVertexBuffer  ) \
+X(PFNGLVERTEXARRAYATTRIBFORMATPROC,  glVertexArrayAttribFormat  ) \
+X(PFNGLENABLEVERTEXARRAYATTRIBPROC,  glEnableVertexArrayAttrib  ) \
+X(PFNGLCREATESHADERPROGRAMVPROC,     glCreateShaderProgramv     ) \
+X(PFNGLGETPROGRAMIVPROC,             glGetProgramiv             ) \
+X(PFNGLGETPROGRAMINFOLOGPROC,        glGetProgramInfoLog        ) \
+X(PFNGLGENPROGRAMPIPELINESPROC,      glGenProgramPipelines      ) \
+X(PFNGLUSEPROGRAMSTAGESPROC,         glUseProgramStages         ) \
+X(PFNGLBINDPROGRAMPIPELINEPROC,      glBindProgramPipeline      ) \
+X(PFNGLPROGRAMUNIFORMMATRIX2FVPROC,  glProgramUniformMatrix2fv  ) \
+X(PFNGLBINDTEXTUREUNITPROC,          glBindTextureUnit          ) \
+X(PFNGLCREATETEXTURESPROC,           glCreateTextures           ) \
+X(PFNGLTEXTUREPARAMETERIPROC,        glTextureParameteri        ) \
+X(PFNGLTEXTURESTORAGE2DPROC,         glTextureStorage2D         ) \
+X(PFNGLTEXTURESUBIMAGE2DPROC,        glTextureSubImage2D        ) \
+X(PFNGLDEBUGMESSAGECALLBACKPROC,     glDebugMessageCallback     )
 
 #define X(type, name) static type name;
 GL_FUNCTIONS(X)
@@ -101,11 +101,11 @@ LRESULT CALLBACK WindowProc(HWND wnd, UINT msg, WPARAM wparam, LPARAM lparam)
 {
     switch (msg)
     {
-    case WM_DESTROY:
+        case WM_DESTROY:
         PostQuitMessage(0);
         return 0;
     }
-	
+
     return DefWindowProcW(wnd, msg, wparam, lparam);
 }
 
@@ -129,6 +129,8 @@ static PFNWGLSWAPINTERVALEXTPROC wglSwapIntervalEXT = NULL;
 
 static void GetWglFunctions(void)
 {
+    if (IsDebuggerPresent()) __debugbreak();
+
     // to get WGL functions we need valid GL context, so create dummy window for dummy GL contetx
     HWND dummy = CreateWindowExW(
         0, L"STATIC", L"DummyWindow", WS_OVERLAPPED,
@@ -171,7 +173,7 @@ static void GetWglFunctions(void)
 
     // https://www.khronos.org/registry/OpenGL/extensions/ARB/WGL_ARB_extensions_string.txt
     PFNWGLGETEXTENSIONSSTRINGARBPROC wglGetExtensionsStringARB =
-        (void*)wglGetProcAddress("wglGetExtensionsStringARB");
+    (void*)wglGetProcAddress("wglGetExtensionsStringARB");
     if (!wglGetExtensionsStringARB)
     {
         FatalError("OpenGL does not support WGL_ARB_extensions_string extension!");
@@ -215,7 +217,7 @@ static void GetWglFunctions(void)
         ext++;
         start = ext;
     }
-	
+
     if (!wglChoosePixelFormatARB || !wglCreateContextAttribsARB || !wglSwapIntervalEXT)
     {
         FatalError("OpenGL does not support required WGL extensions for modern context!");
@@ -230,7 +232,7 @@ static void GetWglFunctions(void)
 int main()
 {
     HINSTANCE instance = GetModuleHandle(NULL);
-	
+
     // get WGL functions to be able to create modern GL context
     GetWglFunctions();
 
@@ -318,11 +320,11 @@ int main()
             WGL_CONTEXT_MAJOR_VERSION_ARB, 4,
             WGL_CONTEXT_MINOR_VERSION_ARB, 5,
             WGL_CONTEXT_PROFILE_MASK_ARB,  WGL_CONTEXT_CORE_PROFILE_BIT_ARB,
-#ifndef NDEBUG
+            #ifndef NDEBUG
             // ask for debug context for non "Release" builds
             // this is so we can enable debug callback
             WGL_CONTEXT_FLAGS_ARB, WGL_CONTEXT_DEBUG_BIT_ARB,
-#endif
+            #endif
             0,
         };
 
@@ -336,15 +338,15 @@ int main()
         Assert(ok && "Failed to make current OpenGL context");
 
         // load OpenGL functions
-#define X(type, name) name = (type)wglGetProcAddress(#name); Assert(name);
+        #define X(type, name) name = (type)wglGetProcAddress(#name); Assert(name);
         GL_FUNCTIONS(X)
-#undef X
+            #undef X
 
-#ifndef NDEBUG
+        #ifndef NDEBUG
         // enable debug callback
         glDebugMessageCallback(&DebugCallback, NULL);
         glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
-#endif
+        #endif
     }
 
     struct Vertex
@@ -437,7 +439,7 @@ int main()
             "    uv = a_uv;                                \n"
             "    color = vec4(a_color, 1);                 \n"
             "}                                             \n"
-        ;
+            ;
 
         const char* glsl_fshader =
             "#version 450 core                             \n"
@@ -456,7 +458,7 @@ int main()
             "{                                             \n"
             "    o_color = color * texture(s_texture, uv); \n"
             "}                                             \n"
-        ;
+            ;
 
         vshader = glCreateShaderProgramv(GL_VERTEX_SHADER, 1, &glsl_vshader);
         fshader = glCreateShaderProgramv(GL_FRAGMENT_SHADER, 1, &glsl_fshader);

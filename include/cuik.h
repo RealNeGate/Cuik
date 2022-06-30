@@ -38,6 +38,27 @@ typedef struct Cuik_IThreadpool {
     void (*work_one_job)(void* user_data);
 } Cuik_IThreadpool;
 
+typedef struct Cuik_File {
+    bool found;
+
+    size_t length;
+    char* data;
+} Cuik_File;
+
+typedef struct Cuik_IFileSystem {
+    void* user_data;
+
+    // is_query will only set .found if it finds a file, if it's not is_query then it attempts to
+    // read the file and return a valid memory buffer (with at least 16 extra bytes on the end zeroed)
+    Cuik_File (*get_file)(void* user_data, bool is_query, const char* path, size_t* out_length);
+
+    // converts into an absolute path (powers the #pragma once subsystem)
+    bool (*canonicalize)(void* user_data, char output[FILENAME_MAX], const char* input);
+} Cuik_IFileSystem;
+
+// default file system (just OS crap)
+CUIK_API Cuik_IFileSystem cuik_default_fs;
+
 ////////////////////////////////////////////
 // Target descriptor
 ////////////////////////////////////////////
@@ -67,6 +88,21 @@ CUIK_API void cuik_profile_region(uint64_t start, const char* fmt, ...);
 //   ...
 // }
 #define CUIK_TIMED_BLOCK(...) for (uint64_t __t1 = cuik_time_in_nanos(), __i = 0; __i < 1; __i++, cuik_profile_region(__t1, __VA_ARGS__))
+
+////////////////////////////////////////////
+// General Cuik stuff
+////////////////////////////////////////////
+CUIK_API void cuik_init(void);
+
+// locates the system includes, libraries and other tools. this is a global
+// operation meaning that once it's only done once for the process.
+CUIK_API void cuik_find_system_deps(const char* cuik_crt_directory);
+
+// can only be called after cuik_find_system_deps
+CUIK_API size_t cuik_get_system_search_path_count(void);
+CUIK_API void cuik_get_system_search_paths(const char** out, size_t n);
+
+CUIK_API bool cuik_lex_is_keyword(size_t length, const char* str);
 
 ////////////////////////////////////////////
 // C preprocessor
@@ -129,19 +165,7 @@ typedef struct Cuik_Define {
     } value;
 } Cuik_Define;
 
-CUIK_API void cuik_init(void);
-
-// locates the system includes, libraries and other tools. this is a global
-// operation meaning that once it's only done once for the process.
-CUIK_API void cuik_find_system_deps(const char* cuik_crt_directory);
-
-// can only be called after cuik_find_system_deps
-CUIK_API size_t cuik_get_system_search_path_count(void);
-CUIK_API void cuik_get_system_search_paths(const char** out, size_t n);
-
-CUIK_API bool cuik_lex_is_keyword(size_t length, const char* str);
-
-CUIK_API void cuikpp_init(Cuik_CPP* ctx);
+CUIK_API void cuikpp_init(Cuik_CPP* ctx, const Cuik_IFileSystem* fs);
 CUIK_API void cuikpp_deinit(Cuik_CPP* ctx);
 CUIK_API void cuikpp_dump(Cuik_CPP* ctx);
 
@@ -184,7 +208,8 @@ CUIK_API Cuik_Define cuikpp_get_define(Cuik_CPP* ctx, Cuik_DefineRef src);
 // done with it (after all frontend work is done), the out_cpp can also be finalized if
 // you dont need the defines table.
 CUIK_API TokenStream cuik_preprocess_simple(
-    Cuik_CPP* restrict out_cpp, const char* filepath, const Cuik_TargetDesc* target_desc,
+    Cuik_CPP* restrict out_cpp, const char* filepath,
+    const Cuik_IFileSystem* fs, const Cuik_TargetDesc* target_desc,
     bool system_includes, size_t include_count, const char* includes[]
 );
 

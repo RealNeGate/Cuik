@@ -49,7 +49,6 @@ bin/
 *.rdbg
 *.i
 *.swp
-*.tbir
 *.dmp
 *.json
 

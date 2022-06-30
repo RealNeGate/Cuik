@@ -32,6 +32,8 @@ struct Cuik_CPP {
     size_t the_shtuffs_size;
     unsigned char* the_shtuffs;
 
+    const Cuik_IFileSystem* file_system;
+
     // hashmap
     IncludeOnceEntry* include_once;
 
