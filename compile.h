@@ -141,15 +141,6 @@ static const char* str_filename(const char* path) {
     return slash;
 }
 
-static const char* str_ext(const char* path) {
-    const char* dot = path;
-    for (; *path; path++) {
-        if (*path == '.') dot = path;
-    }
-
-    return dot;
-}
-
 static char* str_no_ext(const char* path) {
     size_t n = strlen(path);
     while (n > 0 && path[n - 1] != '.') n--;
