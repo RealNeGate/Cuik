@@ -557,7 +557,7 @@ static void ld_invoke(const char* output_path, size_t count, const char* inputs[
         }
     } else if (ON_GCC) {
         // TODO(NeGate): Fix this garbage up...
-        cmd_append("ld -o ");
+        cmd_append("gcc -o ");
         cmd_append(str_gimme_good_slashes(output_path));
         cmd_append(" ");
 
@@ -571,12 +571,6 @@ static void ld_invoke(const char* output_path, size_t count, const char* inputs[
             cmd_append(external_inputs[i]);
             cmd_append(" ");
         }
-
-        cmd_append("/usr/lib/x86_64-linux-gnu/crt1.o ");
-        cmd_append("/usr/lib/x86_64-linux-gnu/crti.o ");
-        cmd_append("/usr/lib/x86_64-linux-gnu/crtn.o ");
-        cmd_append("/usr/lib/x86_64-linux-gnu/libc_nonshared.a ");
-        cmd_append("--dynamic-linker /lib64/ld-linux-x86-64.so.2 ");
     } else {
         assert(0 && "TODO");
     }
