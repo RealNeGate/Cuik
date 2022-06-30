@@ -195,7 +195,7 @@ void try_compile(const char* path) {
     char cmd[1024];
 
     // Compile
-    snprintf(cmd, 1024, "cuik -c %s.c", path);
+    snprintf(cmd, 1024, "cuik %s.c -c", path);
     code = system(cmd);
     if (code != 0) {
         printf("Fail to compile! (code: %d)\n", code);

@@ -342,9 +342,6 @@ int main(int argc, char** argv) {
 
             tb_free_thread_resources();
             tb_module_destroy(mod);
-
-            // linker
-            /**/
         }
     }
 

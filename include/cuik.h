@@ -22,11 +22,16 @@ typedef struct Token Token;
 typedef struct TranslationUnit TranslationUnit;
 typedef struct CompilationUnit CompilationUnit;
 
+typedef struct Cuik_File {
+    bool found;
+
+    size_t length;
+    char* data;
+} Cuik_File;
+
 ////////////////////////////////////////////
-// OOP enjoyers
+// Interfaces
 ////////////////////////////////////////////
-// this is an interface for a threadpool that Cuik may use if you
-// wish to ask it to multithread different internal components
 typedef struct Cuik_IThreadpool {
     // fed into the member functions here
     void* user_data;
@@ -37,13 +42,6 @@ typedef struct Cuik_IThreadpool {
     // tries to work one job before returning (can also not work at all)
     void (*work_one_job)(void* user_data);
 } Cuik_IThreadpool;
-
-typedef struct Cuik_File {
-    bool found;
-
-    size_t length;
-    char* data;
-} Cuik_File;
 
 typedef struct Cuik_IFileSystem {
     void* user_data;
