@@ -192,13 +192,20 @@ int main(int argc, char** argv) {
         cuik_start_global_profiler(perf_output_path);
     }
 
+    // get default system
+    #ifdef _WIN32
+    TB_System sys = TB_SYSTEM_WINDOWS;
+    #else
+    TB_System sys = TB_SYSTEM_LINUX;
+    #endif
+
     // get target
     const Cuik_TargetDesc* target = cuik_get_x64_target_desc();
 
     TB_Module* mod = NULL;
     if (!args_ast && !args_types) {
         TB_FeatureSet features = {0};
-        mod = tb_module_create(TB_ARCH_X86_64, TB_SYSTEM_WINDOWS, TB_DEBUGFMT_NONE, &features);
+        mod = tb_module_create(TB_ARCH_X86_64, sys, TB_DEBUGFMT_NONE, &features);
     }
 
     // preproc
