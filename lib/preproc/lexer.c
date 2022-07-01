@@ -532,6 +532,11 @@ void lexer_read(Lexer* restrict l) {
 
                 l->token_type = TOKEN_INTEGER;
             } else if (current[-1] == '0' && current[0] == 'x') {
+                int hex = 0;
+                if(current[0] == 'x') {
+                    hex = 1;
+                }
+
                 current++;
 
                 while ((*current >= '0' && *current <= '9') ||
@@ -546,8 +551,16 @@ void lexer_read(Lexer* restrict l) {
                     l->token_type = TOKEN_FLOAT;
                     current++;
 
-                    while (char_classes[*current] == CHAR_CLASS_NUMBER) {
-                        current++;
+                    if (!hex) {
+                        while (char_classes[*current] == CHAR_CLASS_NUMBER) {
+                            current++;
+                        }
+                    } else {
+                        while ((*current >= '0' && *current <= '9') ||
+                            (*current >= 'A' && *current <= 'F')    ||
+                            (*current >= 'a' && *current <= 'f')) {
+                            current++;
+                        }
                     }
 
                     if (*current == 'p') {
