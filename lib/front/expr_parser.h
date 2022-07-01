@@ -1081,7 +1081,8 @@ static Expr* parse_expr_l15(TranslationUnit* tu, TokenStream* restrict s) {
             .op = op,
             .start_loc = start_loc,
             .end_loc = end_loc,
-            .bin_op = {lhs, rhs}};
+            .bin_op = {lhs, rhs},
+        };
 
         lhs = e;
     }
@@ -1090,5 +1091,17 @@ static Expr* parse_expr_l15(TranslationUnit* tu, TokenStream* restrict s) {
 }
 
 static Expr* parse_expr(TranslationUnit* tu, TokenStream* restrict s) {
+    if (tokens_get(s)->type == TOKEN_KW_Pragma) {
+        tokens_next(s);
+        expect(s, '(');
+
+        if (tokens_get(s)->type != TOKEN_STRING_DOUBLE_QUOTE) {
+            generic_error(s, "pragma declaration expects string literal");
+        }
+        tokens_next(s);
+
+        expect(s, ')');
+    }
+
     return parse_expr_l15(tu, s);
 }
