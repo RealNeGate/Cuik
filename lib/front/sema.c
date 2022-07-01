@@ -134,17 +134,21 @@ bool type_compatible(TranslationUnit* tu, Cuik_Type* src, Cuik_Type* dst, Expr* 
 
         return type_equal(tu, src, dst);
     } else if (dst->kind == KIND_PTR) {
-        // void* -> T* is fine
-        if (src->ptr_to->kind == KIND_VOID) {
+        // get base types
+        while (src->kind == KIND_PTR) src = src->ptr_to;
+        while (dst->kind == KIND_PTR) dst = dst->ptr_to;
+
+        // void -> T is fine
+        if (src->kind == KIND_VOID) {
             return true;
         }
 
-        // T* -> void* is fine
-        if (dst->ptr_to->kind == KIND_VOID) {
+        // T -> void is fine
+        if (dst->kind == KIND_VOID) {
             return true;
         }
 
-        return type_equal(tu, src->ptr_to, dst->ptr_to);
+        return type_equal(tu, src, dst);
     }
 
     // but by default kind matching is enough
@@ -1689,7 +1693,7 @@ void cuik__sema_pass(TranslationUnit* restrict tu, Cuik_IThreadpool* restrict th
                     .tu = tu
                 };
 
-                thread_pool->submit(thread_pool->user_data, sema_task, task);
+                CUIK_CALL(thread_pool, submit, sema_task, task);
             }
 
             while (tasks_remaining != 0) { thrd_yield(); }

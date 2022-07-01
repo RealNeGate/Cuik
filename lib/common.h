@@ -55,7 +55,8 @@ do {                    \
     b = temp;           \
 } while (0)
 
-void tls_init();
+void tls_init(void);
+void tls_reset(void);
 void* tls_push(size_t size);
 void* tls_pop(size_t size);
 void* tls_save();

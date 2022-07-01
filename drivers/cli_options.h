@@ -16,5 +16,6 @@ OPTION(ASM,     S, assembly,    0, "emit assembly in stdout")
 OPTION(AST,     _, ast,         0, "emit AST into stdout")
 OPTION(TYPES,   t, typecheck,   0, "type check only")
 OPTION(IR,      _, ir,          0, "compile up until the IR generation")
+OPTION(VERBOSE, _, verbose,     0, "verbose")
 
 #undef OPTION

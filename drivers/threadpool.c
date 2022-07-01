@@ -126,13 +126,14 @@ void threadpool_submit(threadpool_t* threadpool, work_routine fn, void* arg) {
         threadpool->completion_goal++;
         threadpool->write_pointer = new_write_ptr;
     }
-    mtx_unlock(&threadpool->mutex);
 
     #ifdef _WIN32
     ReleaseSemaphore(threadpool->sem, 1, 0);
     #else
     sem_post(&threadpool->sem);
     #endif
+
+    mtx_unlock(&threadpool->mutex);
 }
 
 void threadpool_work_one_job(threadpool_t* threadpool) {

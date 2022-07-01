@@ -217,6 +217,15 @@ CUIK_API TokenStream cuik_preprocess_simple(
 ////////////////////////////////////////////
 // C parsing
 ////////////////////////////////////////////
+typedef enum Cuik_Entrypoint {
+    CUIK_ENTRYPOINT_NONE,
+
+    CUIK_ENTRYPOINT_MAIN,
+    CUIK_ENTRYPOINT_WINMAIN,
+
+    CUIK_ENTRYPOINT_CUSTOM
+} Cuik_Entrypoint;
+
 typedef enum Cuik_IntSuffix {
     //                u   l   l
     INT_SUFFIX_NONE = 0 + 0 + 0,
@@ -265,7 +274,16 @@ CUIK_API TB_Function* cuik_stmt_gen_ir(TranslationUnit* restrict tu, Stmt* restr
 typedef void Cuik_TopLevelVisitor(TranslationUnit* restrict tu, Stmt* restrict s, void* user_data);
 
 CUIK_API void cuik_visit_top_level(TranslationUnit* restrict tu, void* user_data, Cuik_TopLevelVisitor* visitor);
+CUIK_API void cuik_visit_top_level_threaded(TranslationUnit* restrict tu, const Cuik_IThreadpool* thread_pool, int batch_size, void* user_data, Cuik_TopLevelVisitor* visitor);
+
 CUIK_API void cuik_dump_translation_unit(FILE* stream, TranslationUnit* tu, bool minimalist);
+
+// if the translation units are in a compilation unit you can walk this chain of pointers
+// to read them
+CUIK_API TranslationUnit* cuik_next_translation_unit(TranslationUnit* restrict tu);
+
+// does this translation unit have a main? what type?
+CUIK_API Cuik_Entrypoint cuik_get_entrypoint_status(TranslationUnit* restrict tu);
 
 CUIK_API bool cuik_is_in_main_file(TranslationUnit* restrict tu, SourceLocIndex loc);
 CUIK_API TokenStream* cuik_get_token_stream_from_tu(TranslationUnit* restrict tu);
@@ -273,7 +291,11 @@ CUIK_API TokenStream* cuik_get_token_stream_from_tu(TranslationUnit* restrict tu
 ////////////////////////////////////////////
 // Compilation unit management
 ////////////////////////////////////////////
+#define FOR_EACH_TU(it, cu) for (TranslationUnit* it = (cu)->head; it; it = cuik_next_translation_unit(it))
+
 CUIK_API void cuik_create_compilation_unit(CompilationUnit* restrict cu);
+CUIK_API void cuik_lock_compilation_unit(CompilationUnit* restrict cu);
+CUIK_API void cuik_unlock_compilation_unit(CompilationUnit* restrict cu);
 CUIK_API void cuik_add_to_compilation_unit(CompilationUnit* restrict cu, TranslationUnit* restrict tu);
 CUIK_API void cuik_destroy_compilation_unit(CompilationUnit* restrict cu);
 CUIK_API void cuik_internal_link_compilation_unit(CompilationUnit* restrict cu);
@@ -300,6 +322,8 @@ void cuiklink_add_libpath_wide(Cuik_Linker* l, const wchar_t* filepath);
 
 // This can be a static library or object file
 void cuiklink_add_input_file(Cuik_Linker* l, const char* filepath);
+
+void cuiklink_subsystem_windows(Cuik_Linker* l);
 
 // Calls the system linker
 // return true if it succeeds

@@ -249,8 +249,7 @@ static void parse_global_symbols(TranslationUnit* tu, size_t start, size_t end, 
             Symbol* sym = &global_symbols[i].value;
 
             // don't worry about normal globals, those have been taken care of...
-            if (sym->current != 0 &&
-                (sym->storage_class == STORAGE_STATIC_FUNC || sym->storage_class == STORAGE_FUNC)) {
+            if (sym->current != 0 && (sym->storage_class == STORAGE_STATIC_FUNC || sym->storage_class == STORAGE_FUNC)) {
                 // Spin up a mini parser here
                 tokens.current = sym->current;
 
@@ -700,6 +699,12 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(
                             sym.storage_class = (attr.is_static ? STORAGE_STATIC_VAR : STORAGE_GLOBAL);
                         }
 
+                        if (sym.name[0] == 'm' && strcmp((char*) sym.name, "main") == 0) {
+                            tu->entrypoint_status = CUIK_ENTRYPOINT_MAIN;
+                        } else if (sym.name[0] == 'W' && strcmp((char*) sym.name, "WinMain") == 0) {
+                            tu->entrypoint_status = CUIK_ENTRYPOINT_WINMAIN;
+                        }
+
                         bool requires_terminator = true;
                         if (tokens_get(s)->type == '=') {
                             tokens_next(s);
@@ -999,7 +1004,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(
                 size_t limit = i + PARSE_MUNCH_SIZE;
                 if (limit > count) limit = count;
 
-                ParserTaskInfo* task = &tasks[j];
+                ParserTaskInfo* task = &tasks[j++];
                 *task = (ParserTaskInfo){
                     .tasks_remaining = &tasks_remaining,
                     .start = i,
@@ -1014,11 +1019,11 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(
                 task->global_symbols = global_symbols;
                 task->base_token_stream = s;
 
-                thread_pool->submit(thread_pool->user_data, phase3_parse_task, task);
+                CUIK_CALL(thread_pool, submit, phase3_parse_task, task);
             }
 
             while (tasks_remaining != 0) {
-                thread_pool->work_one_job(thread_pool->user_data);
+                CUIK_CALL(thread_pool, work_one_job);
                 thrd_yield();
             }
 
@@ -1099,6 +1104,10 @@ CUIK_API void cuik_destroy_translation_unit(TranslationUnit* restrict tu) {
     free(tu);
 }
 
+CUIK_API TranslationUnit* cuik_next_translation_unit(TranslationUnit* restrict tu) {
+    return tu->next;
+}
+
 CUIK_API bool cuik_is_in_main_file(TranslationUnit* restrict tu, SourceLocIndex loc) {
     if (SOURCE_LOC_GET_TYPE(loc) == SOURCE_LOC_UNKNOWN) {
         return false;
@@ -1171,6 +1180,7 @@ static void parse_function_definition(TranslationUnit* tu, TokenStream* restrict
     tokens_next(s);
 
     Stmt* body = parse_compound_stmt(tu, s);
+    assert(body != NULL);
 
     n->op = STMT_FUNC_DECL;
     n->decl.initial_as_stmt = body;

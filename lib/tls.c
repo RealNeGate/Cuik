@@ -35,7 +35,7 @@ void cuik__vfree(void* ptr, size_t size) {
     #endif
 }
 
-void tls_init() {
+void tls_init(void) {
     if (temp_storage == NULL) {
         #ifdef _WIN32
         temp_storage = VirtualAlloc(NULL, TEMPORARY_STORAGE_SIZE, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
@@ -44,6 +44,10 @@ void tls_init() {
         #endif
     }
 
+    temp_storage->used = 0;
+}
+
+void tls_reset(void) {
     temp_storage->used = 0;
 }
 

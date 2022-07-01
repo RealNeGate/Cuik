@@ -113,8 +113,8 @@ static void frontend_task(void* arg) {
     const char* path = (const char*)arg;
 
     cuik_compile_file(&compilation_unit, path,
-                      big_array_length(cuik_include_dirs),
-                      &cuik_include_dirs[0], is_frontend_only, thread_pool);
+        big_array_length(cuik_include_dirs),
+        &cuik_include_dirs[0], is_frontend_only, thread_pool);
 }
 
 static void dispatch_for_all_top_level_stmts(void task(void*)) {
@@ -225,9 +225,9 @@ static void compile_project(const char* obj_output_path, bool is_multithreaded) 
         // emit-ast is single threaded just to make it nicer to read
         for (size_t i = 0, count = big_array_length(cuik_source_files); i < count; i++) {
             cuik_compile_file(&compilation_unit, cuik_source_files[i],
-                              big_array_length(cuik_include_dirs),
-                              &cuik_include_dirs[0],
-                              !runs_backend, NULL);
+                big_array_length(cuik_include_dirs),
+                &cuik_include_dirs[0],
+                !runs_backend, NULL);
         }
     }
 
@@ -238,12 +238,12 @@ static void compile_project(const char* obj_output_path, bool is_multithreaded) 
         return;
     }
 
-    timed_block("internal link") {
+    CUIK_TIMED_BLOCK("internal link") {
         compilation_unit_internal_link(&compilation_unit);
     }
 
     if (runs_backend) {
-        timed_block("ir gen & compile") {
+        CUIK_TIMED_BLOCK("ir gen & compile") {
             dispatch_for_all_top_level_stmts(irgen_task);
 
             FOR_EACH_TU(tu, &compilation_unit) {
@@ -276,7 +276,7 @@ static void compile_project(const char* obj_output_path, bool is_multithreaded) 
         }
     }
 
-    timed_block("freeing compilation unit") {
+    CUIK_TIMED_BLOCK("freeing compilation unit") {
         if (thread_pool != NULL) {
             threadpool_free(thread_pool);
         }
@@ -287,7 +287,7 @@ static void compile_project(const char* obj_output_path, bool is_multithreaded) 
 
     // Compile
     if (settings.stage_to_stop_at >= STAGE_OBJ) {
-        timed_block("export") {
+        CUIK_TIMED_BLOCK("export") {
             if (!tb_module_export(mod, obj_output_path)) {
                 fprintf(stderr, "error: tb_module_export failed!\n");
                 abort();
@@ -360,7 +360,7 @@ static bool dump_tokens() {
         abort();
     }
 
-#if 0
+    #if 0
     unsigned char* text = (unsigned char*)read_entire_file(cuik_source_files[0]);
     if (text == NULL) {
         fprintf(stderr, "could not open: %s\n", cuik_source_files[0]);
@@ -379,7 +379,7 @@ static bool dump_tokens() {
     size_t text_len = strlen((char*)text);
     fprintf(stderr, "preprocessor took %.03f seconds (over %zu bytes)\n", elapsed, text_len);
     return true;
-#else
+    #else
     // Preprocess file
     TokenStream s;
     uint64_t t1, t2;
@@ -443,7 +443,7 @@ static bool dump_tokens() {
 
         printf("%.*s ", (int)(t->end - t->start), t->start);
     }
-#endif
+    #endif
     return true;
 }
 
@@ -486,18 +486,20 @@ static void print_help(const char* executable_path) {
 static void append_input_path(const char* path) {
     // avoid using the filters if we dont need to :p
     bool needs_filter = false;
-    for (const char* p = path; *p; p++)
+    for (const char* p = path; *p; p++) {
         if (*p == '*') {
-        needs_filter = true;
-        break;
+            needs_filter = true;
+            break;
+        }
     }
 
     if (needs_filter) {
-#ifdef _WIN32
+        #ifdef _WIN32
         const char* slash = path;
-        for (const char* p = path; *p; p++)
+        for (const char* p = path; *p; p++) {
             if (*p == '/' || *p == '\\') {
-            slash = p;
+                slash = p;
+            }
         }
 
         WIN32_FIND_DATA find_data;
@@ -521,11 +523,11 @@ static void append_input_path(const char* path) {
             fprintf(stderr, "internal error: failed to close filter\n");
             abort();
         }
-#else
+        #else
         fprintf(stderr, "filepath filters not supported on your platform yet :(\n");
         fprintf(stderr, "umm... i mean you can probably remind me if you want :)\n");
         abort();
-#endif
+        #endif
     } else {
         big_array_put(cuik_source_files, path);
     }
@@ -536,14 +538,14 @@ static void print_version(const char* install_dir) {
     printf("install directory: %s\n", install_dir);
     printf("cuik include directory: %s\n", cuik_include_directory);
 
-#ifdef _WIN32
+    #ifdef _WIN32
     printf("windows sdk include: %S\n", s_vswhere.windows_sdk_include);
     printf("visual studio include: %S\n", s_vswhere.vs_include_path);
-#endif
+    #endif
 }
 
 int main(int argc, char* argv[]) {
-#ifdef _WIN32
+    #ifdef _WIN32
     {
         // Enable ANSI/VT sequences on windows
         HANDLE output_handle = GetStdHandle(STD_OUTPUT_HANDLE);
@@ -554,7 +556,7 @@ int main(int argc, char* argv[]) {
             }
         }
     }
-#endif
+    #endif
 
     // We hook the crash handler to create crash dumps
     hook_crash_handler();
@@ -567,7 +569,7 @@ int main(int argc, char* argv[]) {
     cuik_detect_crt_include();
     settings.stage_to_stop_at = STAGE_FINAL;
 
-#ifdef _WIN32
+    #ifdef _WIN32
     // This is used to detect includes for the preprocessor
     // and library paths for the linker
     s_vswhere = MicrosoftCraziness_find_visual_studio_and_windows_sdk();
@@ -583,21 +585,21 @@ int main(int argc, char* argv[]) {
 
     target_system = TB_SYSTEM_WINDOWS;
     settings.is_windows_long = true;
-#else
+    #else
     settings.num_of_worker_threads = 1;
 
     target_system = TB_SYSTEM_LINUX;
     settings.is_windows_long = false;
-#endif
+    #endif
 
     // Defaults to the host arch as the target
-#if defined(_AMD64_) || defined(__amd64__)
+    #if defined(_AMD64_) || defined(__amd64__)
     target_arch = TB_ARCH_X86_64;
-#elif defined(__aarch64__)
+    #elif defined(__aarch64__)
     target_arch = TB_ARCH_AARCH64;
-#else
-#error "Unsupported host compiler... for now"
-#endif
+    #else
+    #error "Unsupported host compiler... for now"
+    #endif
 
     // I seriously dare you to tell me that im leaking these
     cuik_source_files = big_array_create(const char*, false);
@@ -815,16 +817,16 @@ int main(int argc, char* argv[]) {
     }
 
     // choose a CRT if we haven't gotten one already
-#if _WIN32
+    #if _WIN32
     if (chosen_libc == NULL) {
         chosen_libc = &libc_options[settings.freestanding ? 0 /* None */ : 1 /* UCRT */];
     }
-#else
+    #else
     {
         fprintf(stderr, "error: TODO pick a crt manually... idk man\n");
         return 1;
     }
-#endif
+    #endif
 
     settings.nostdlib = ((chosen_libc - libc_options) == 0);
     settings.static_crt = chosen_libc->static_link;
@@ -954,9 +956,9 @@ int main(int argc, char* argv[]) {
                     }
 
                     if (settings.freestanding) {
-#ifdef _WIN32
+                        #ifdef _WIN32
                         linker_add_input_file(&l, "win32_rt.lib");
-#endif
+                        #endif
                     }
 
                     for (int i = 0; i < chosen_libc->lib_count; i++) {
@@ -980,11 +982,11 @@ int main(int argc, char* argv[]) {
         char exe_path[MAX_PATH];
         sprintf_s(exe_path, 260, "%s.exe", cuik_file_no_ext);
 
-#ifdef _WIN32
+        #ifdef _WIN32
         for (char* i = exe_path; *i; i++) {
             if (*i == '/') *i = '\\';
         }
-#endif
+        #endif
 
         printf("\n\nRunning: %s...\n", exe_path);
         int exit_code = system(exe_path);

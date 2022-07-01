@@ -595,7 +595,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
                             // a file within the compilation unit, we don't
                             // know yet
                             CompilationUnit* restrict cu = tu->parent;
-                            mtx_lock(&cu->mutex);
+                            cuik_lock_compilation_unit(cu);
 
                             ptrdiff_t temp;
                             ptrdiff_t search = shgeti_ts(cu->export_table, name, temp);
@@ -632,7 +632,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
 
                             // NOTE(NeGate): we might wanna move this mutex unlock earlier
                             // it doesn't seem like we might need it honestly...
-                            mtx_unlock(&cu->mutex);
+                            cuik_unlock_compilation_unit(cu);
                         }
                     } else {
                         mtx_lock(&tu->arena_mutex);

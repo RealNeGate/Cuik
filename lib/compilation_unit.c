@@ -3,12 +3,21 @@
 
 CUIK_API void cuik_create_compilation_unit(CompilationUnit* restrict cu) {
     *cu = (CompilationUnit){0};
-    mtx_init(&cu->mutex, mtx_plain);
+    cu->lock = malloc(sizeof(mtx_t));
+    mtx_init(cu->lock, mtx_plain);
+}
+
+CUIK_API void cuik_lock_compilation_unit(CompilationUnit* restrict cu) {
+    mtx_lock(cu->lock);
+}
+
+CUIK_API void cuik_unlock_compilation_unit(CompilationUnit* restrict cu) {
+    mtx_unlock(cu->lock);
 }
 
 CUIK_API void cuik_add_to_compilation_unit(CompilationUnit* restrict cu, TranslationUnit* restrict tu) {
     assert(tu->next == NULL && "somehow the TU is already attached to something...");
-    mtx_lock(&cu->mutex);
+    cuik_lock_compilation_unit(cu);
 
     tu->parent = cu;
 
@@ -16,7 +25,7 @@ CUIK_API void cuik_add_to_compilation_unit(CompilationUnit* restrict cu, Transla
     else cu->tail->next = tu;
     cu->tail = tu;
 
-    mtx_unlock(&cu->mutex);
+    cuik_unlock_compilation_unit(cu);
 }
 
 CUIK_API void cuik_destroy_compilation_unit(CompilationUnit* restrict cu) {
@@ -28,7 +37,8 @@ CUIK_API void cuik_destroy_compilation_unit(CompilationUnit* restrict cu) {
         tu = next;
     }
 
-    mtx_destroy(&cu->mutex);
+    mtx_destroy(cu->lock);
+    free(cu->lock);
     *cu = (CompilationUnit){0};
 }
 
@@ -47,7 +57,7 @@ CUIK_API void cuik_internal_link_compilation_unit(CompilationUnit* restrict cu) 
                     shput(cu->export_table, s->decl.name, s);
                 }
             } else if (s->op == STMT_GLOBAL_DECL ||
-                       s->op == STMT_DECL) {
+                s->op == STMT_DECL) {
                 if (!s->decl.attrs.is_static &&
                     !s->decl.attrs.is_extern &&
                     !s->decl.attrs.is_typedef &&

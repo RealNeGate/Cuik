@@ -50,7 +50,6 @@ typedef struct CompilerSettings {
     bool run_output : 1;
     bool static_crt : 1;
 
-    atomic_bool using_winmain;
     int num_of_worker_threads;
 } CompilerSettings;
 

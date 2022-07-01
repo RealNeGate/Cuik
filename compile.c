@@ -275,9 +275,9 @@ int main(int argc, char** argv) {
     #ifndef ONLY_LIBRARY
     static const char* LINKER_INPUTS[] = {
         #if ON_WINDOWS
-        "bin"SLASH DRIVER_NAME".obj", "bin"SLASH"libcuik.lib", "deps"SLASH"tb"SLASH"tildebackend.lib",
+        "bin"SLASH DRIVER_NAME".obj", "bin"SLASH"threadpool.obj", "bin"SLASH"libcuik.lib", "deps"SLASH"tb"SLASH"tildebackend.lib",
         #else
-        "bin"SLASH DRIVER_NAME".o", "bin"SLASH"libcuik.a", "deps"SLASH"tb"SLASH"tildebackend.a",
+        "bin"SLASH DRIVER_NAME".o", "bin"SLASH"threadpool.o", "bin"SLASH"libcuik.a", "deps"SLASH"tb"SLASH"tildebackend.a",
         #endif
     };
 
@@ -293,6 +293,7 @@ int main(int argc, char** argv) {
 
     // compile main driver
     cc_invoke(&options, "drivers"SLASH DRIVER_NAME".c", NULL);
+    cc_invoke(&options, "drivers"SLASH"threadpool.c", NULL);
     cmd_wait_for_all();
 
     ld_invoke("bin"SLASH"cuik",

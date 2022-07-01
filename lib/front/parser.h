@@ -70,11 +70,6 @@ typedef struct Symbol {
     int terminator;
 } Symbol;
 
-typedef struct {
-    Atom key;
-    Stmt* value;
-} ExportedSymbolEntry;
-
 struct TranslationUnit {
     // circular references amirite...
     struct CompilationUnit* parent;
@@ -89,6 +84,7 @@ struct TranslationUnit {
     struct TranslationUnit* next;
     atomic_int id_gen;
 
+    Cuik_Entrypoint entrypoint_status;
     const Cuik_TargetDesc* target_desc;
 
     mtx_t arena_mutex;

@@ -71,6 +71,8 @@ struct TokenStream {
 };
 
 struct Cuik_Linker {
+    bool subsystem_windows;
+
     // translation units
     #ifdef _WIN32
     wchar_t* input_file_buffer;
@@ -89,4 +91,22 @@ struct Cuik_Linker {
     #endif
     size_t libpaths_top;
     size_t libpaths_count;
+};
+
+typedef struct {
+    Atom key;
+    Stmt* value;
+} ExportedSymbolEntry;
+
+struct CompilationUnit {
+    // avoid exposing the mtx_t since it's messy
+    struct mtx_t* lock;
+
+    // anything extern might map to a different translation unit within
+    // the same compilation unit which means it's not technically external
+    ExportedSymbolEntry* export_table;
+
+    // linked list of all TUs referenced
+    TranslationUnit* head;
+    TranslationUnit* tail;
 };
