@@ -1,6 +1,7 @@
 #include <cuik.h>
 #include "helper.h"
 #include "cli_parser.h"
+#include "json_perf.h"
 #include "threadpool.h"
 
 // compiler arguments
@@ -114,7 +115,6 @@ static void irgen_visitor(TranslationUnit* restrict tu, Stmt* restrict s, void* 
         tb_function_free(func);
     }
 }
-
 
 static void compile_file(void* arg) {
     const char* input = (const char*)arg;
@@ -292,9 +292,11 @@ int main(int argc, char** argv) {
     }
 
     if (args_time) {
-        char perf_output_path[FILENAME_MAX];
+        char* perf_output_path = malloc(FILENAME_MAX);
         sprintf_s(perf_output_path, FILENAME_MAX, "%s.json", output_path_no_ext);
-        cuik_start_global_profiler(perf_output_path);
+
+        jsonperf_profiler.user_data = perf_output_path;
+        cuik_start_global_profiler(&jsonperf_profiler, true);
     }
 
     // spin up worker threads

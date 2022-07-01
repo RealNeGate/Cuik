@@ -54,6 +54,14 @@ typedef struct Cuik_IFileSystem {
     bool (*canonicalize)(void* user_data, char output[FILENAME_MAX], const char* input);
 } Cuik_IFileSystem;
 
+typedef struct Cuik_IProfiler {
+    void* user_data;
+
+    void (*start)(void* user_data);
+    void (*stop)(void* user_data);
+    void (*plot)(void* user_data, uint64_t start_ns, uint64_t end_ns, const char* label);
+} Cuik_IProfiler;
+
 // for doing calls on the interfaces
 #define CUIK_CALL(object, action, ...) ((object)->action((object)->user_data, __VA_ARGS__))
 
@@ -72,16 +80,16 @@ const Cuik_TargetDesc* cuik_get_x64_target_desc(void);
 ////////////////////////////////////////////
 // Profiler
 ////////////////////////////////////////////
-// opens a starts writing a file about the timing info
-CUIK_API void cuik_start_global_profiler(const char* filepath);
-// will emit a JSON file of the profiled output you can feed into chrome://tracing or speedscopes
+// lock_on_plot is true if the profiler->plot function cannot be called on multiple threads at
+// the same time.
+CUIK_API void cuik_start_global_profiler(const Cuik_IProfiler* profiler, bool lock_on_plot);
 CUIK_API void cuik_stop_global_profiler(void);
 
 // the absolute values here don't have to mean anything, it's just about being able
 // to measure between two points.
 CUIK_API uint64_t cuik_time_in_nanos(void);
 
-// Reports a region of time in the profiler file
+// Reports a region of time to the profiler callback
 CUIK_API void cuik_profile_region(uint64_t start, const char* fmt, ...);
 
 // Usage:

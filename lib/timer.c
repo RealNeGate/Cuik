@@ -12,29 +12,38 @@
 #include <unistd.h>
 #endif
 
-static FILE* timer_output;
 static mtx_t timer_mutex;
-static atomic_int timer_entry_count;
+
 static uint64_t global_profiler_start;
 
-// just to organize the JSON timing stuff a bit better
-static thread_local bool is_main_thread;
+static bool should_lock_profiler;
+static const Cuik_IProfiler* profiler;
 
-CUIK_API void cuik_start_global_profiler(const char* filepath) {
-    assert(timer_output == NULL);
+CUIK_API void cuik_start_global_profiler(const Cuik_IProfiler* p, bool lock_on_plot) {
+    assert(p != NULL);
+    assert(profiler != NULL);
 
-    mtx_init(&timer_mutex, mtx_plain);
-    timer_output = fopen(filepath, "wb");
-    fprintf(timer_output, "{\"otherData\": {},\"traceEvents\":[");
+    profiler = p;
+    should_lock_profiler = lock_on_plot;
+
+    if (lock_on_plot) {
+        mtx_init(&timer_mutex, mtx_plain);
+    }
+
+    CUIK_CALL(profiler, start);
     global_profiler_start = cuik_time_in_nanos();
 }
 
 CUIK_API void cuik_stop_global_profiler(void) {
-    cuik_profile_region(global_profiler_start, "Cuik");
-    if (timer_output != NULL) {
-        fprintf(timer_output, "]}");
-        fclose(timer_output);
+    assert(profiler != NULL);
+
+    CUIK_CALL(profiler, plot, global_profiler_start, cuik_time_in_nanos(), "libCuik");
+    CUIK_CALL(profiler, stop);
+
+    if (should_lock_profiler) {
+        mtx_destroy(&timer_mutex);
     }
+    profiler = NULL;
 }
 
 CUIK_API uint64_t cuik_time_in_nanos(void) {
@@ -44,45 +53,20 @@ CUIK_API uint64_t cuik_time_in_nanos(void) {
 }
 
 CUIK_API void cuik_profile_region(uint64_t start, const char* fmt, ...) {
-    if (timer_output == NULL) return;
+    if (profiler == NULL) return;
+    uint64_t end = cuik_time_in_nanos();
 
-    int64_t elapsed_in_microseconds = (cuik_time_in_nanos() - start) / 1000;
-    int64_t start_in_microseconds = start / 1000;
+    // lock if necessary
+    if (should_lock_profiler) mtx_lock(&timer_mutex);
 
-    if (elapsed_in_microseconds > 1) {
-        mtx_lock(&timer_mutex);
-        int i = timer_entry_count++;
+    char label[256];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(label, sizeof(label), fmt, ap);
+    label[sizeof(label) - 1] = '\0';
+    va_end(ap);
 
-        #if _WIN32
-        uint32_t tid = GetCurrentThreadId();
-        #else
-        uint32_t tid = pthread_self();
-        #endif
+    CUIK_CALL(profiler, plot, start, end, label);
 
-        char name[256];
-
-        va_list ap;
-        va_start(ap, fmt);
-        vsnprintf(name, sizeof(name), fmt, ap);
-        name[sizeof(name) - 1] = '\0';
-        va_end(ap);
-
-        fprintf(timer_output,
-            "%c{"
-            "\"cat\":\"function\", "
-            "\"dur\":%lld, "
-            "\"name\":\"%s\", "
-            "\"ph\":\"X\", "
-            "\"pid\":0, "
-            "\"tid\": %u, "
-            "\"ts\": %lld }\n",
-
-            i ? ',' : ' ',
-            (long long)elapsed_in_microseconds,
-            name,
-            is_main_thread ? 1 : tid,
-            (long long)start_in_microseconds);
-
-        mtx_unlock(&timer_mutex);
-    }
+    if (should_lock_profiler) mtx_unlock(&timer_mutex);
 }
