@@ -8,12 +8,17 @@ static void set_defines(Cuik_CPP* cpp) {
     cuikpp_define_empty(cpp, "_CUIK_TARGET_64BIT_");
     cuikpp_define(cpp, "__LITTLE_ENDIAN__", "1");
 
+    #ifdef _WIN32
     cuikpp_define(cpp, "_M_X64", "100");
     cuikpp_define(cpp, "_AMD64_", "100");
     cuikpp_define(cpp, "_M_AMD64", "100");
 
     cuikpp_define(cpp, "_WIN32", "1");
     cuikpp_define(cpp, "_WIN64", "1");
+    #else
+    cuikpp_define(cpp, "__linux", "1");
+    cuikpp_define(cpp, "linux", "1");
+    #endif
 
     // stdatomic.h lock free
     cuikpp_define(cpp, "__CUIK_ATOMIC_BOOL_LOCK_FREE", "1");

@@ -215,12 +215,7 @@ static void set_defines(Cuik_CPP* cpp, const Cuik_TargetDesc* target_desc, bool 
         cuikpp_define_empty(cpp, "__ptr64");
     } else {
         // TODO(NeGate): Automatically detect these somehow...
-        #ifdef __linux__
-        cuikpp_add_include_directory(cpp, "/usr/lib/gcc/x86_64-linux-gnu/10/include/");
-        cuikpp_add_include_directory(cpp, "/usr/include/x86_64-linux-gnu/");
-        cuikpp_add_include_directory(cpp, "/usr/local/include/");
         cuikpp_add_include_directory(cpp, "/usr/include/");
-        #endif
     }
 
     if (target_desc != NULL) {

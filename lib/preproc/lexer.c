@@ -587,7 +587,7 @@ void lexer_read(Lexer* restrict l) {
                     }
                 }
 
-                if (*current == 'f') {
+                if (*current == 'f' || *current == 'd') {
                     l->token_type = TOKEN_FLOAT;
                     current++;
                 }

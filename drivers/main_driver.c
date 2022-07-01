@@ -193,10 +193,12 @@ int main(int argc, char** argv) {
     }
 
     // get default system
-    #ifdef _WIN32
+    #if defined(_WIN32)
     TB_System sys = TB_SYSTEM_WINDOWS;
-    #else
+    #elif defined(__linux) || defined(linux)
     TB_System sys = TB_SYSTEM_LINUX;
+    #elif defined(__APPLE__) || defined(__MACH__) || defined(macintosh)
+    TB_System sys = TB_SYSTEM_MACOS;
     #endif
 
     // get target
