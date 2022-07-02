@@ -73,19 +73,21 @@ typedef struct Symbol {
 struct TranslationUnit {
     // circular references amirite...
     struct CompilationUnit* parent;
+    // chain of TUs for the compilation unit
+    struct TranslationUnit* next;
 
     TB_Module* ir_mod;
     const char* filepath;
 
     // token stream
     TokenStream tokens;
-
-    // chain of TUs for the compilation unit
-    struct TranslationUnit* next;
     atomic_int id_gen;
 
+    // common settings
+    bool is_windows_long;
+
     Cuik_Entrypoint entrypoint_status;
-    const Cuik_TargetDesc* target_desc;
+    Cuik_Target target;
 
     mtx_t arena_mutex;
     Arena ast_arena;

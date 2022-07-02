@@ -73,7 +73,7 @@ CUIK_API bool cuik_lex_is_keyword(size_t length, const char* str) {
     return classify_ident((const unsigned char*)str, length) != TOKEN_IDENTIFIER;
 }
 
-static void set_defines(Cuik_CPP* cpp, const Cuik_TargetDesc* target_desc, bool system_libs) {
+static void set_defines(Cuik_CPP* cpp, const Cuik_Target* target, bool system_libs) {
     #ifdef _WIN32
     if (cuik__vswhere.windows_sdk_include == NULL) {
         printf("warning: could not automatically find WinSDK include path\n");
@@ -146,7 +146,7 @@ static void set_defines(Cuik_CPP* cpp, const Cuik_TargetDesc* target_desc, bool 
     cuikpp_add_include_directory(cpp, cuik__include_dir);
 
     // platform specific stuff
-    if (target_system == TB_SYSTEM_WINDOWS) {
+    if (target->sys == TB_SYSTEM_WINDOWS) {
         #ifdef _WIN32
         // WinSDK includes
         char filepath[FILENAME_MAX];
@@ -221,19 +221,32 @@ static void set_defines(Cuik_CPP* cpp, const Cuik_TargetDesc* target_desc, bool 
         cuikpp_define_empty(cpp, "__analysis_noreturn");
         cuikpp_define_empty(cpp, "__ptr32");
         cuikpp_define_empty(cpp, "__ptr64");
-    } else {
+    } else if (target->sys == TB_SYSTEM_LINUX) {
         // TODO(NeGate): Automatically detect these somehow...
+        cuikpp_add_include_directory(cpp, "/usr/lib/gcc/x86_64-linux-gnu/9/include/");
+        cuikpp_add_include_directory(cpp, "/usr/include/x86_64-linux-gnu/");
+        cuikpp_add_include_directory(cpp, "/usr/local/include/");
         cuikpp_add_include_directory(cpp, "/usr/include/");
+
+        cuikpp_define(cpp, "__GNUC__", "9");
+        cuikpp_define_empty(cpp, "_GNU_SOURCE");
     }
 
-    if (target_desc != NULL) {
-        target_desc->set_defines(cpp);
+    if (target != NULL && target->arch != NULL) {
+        target->arch->set_defines(cpp, target->sys);
     }
 }
 
-CUIK_API TokenStream cuik_preprocess_simple(Cuik_CPP* restrict out_cpp, const char* filepath, const Cuik_IFileSystem* fs, const Cuik_TargetDesc* target_desc, bool system_libs, size_t include_count, const char* includes[]) {
+CUIK_API TokenStream cuik_preprocess_simple(
+    Cuik_CPP* restrict out_cpp, const char* filepath,
+    const Cuik_IFileSystem* fs, const Cuik_Target* target,
+    bool system_includes, size_t include_count, const char* includes[]
+) {
+    // defaults
+    if (fs == NULL) fs = &cuik_default_fs;
+
     cuikpp_init(out_cpp, fs);
-    set_defines(out_cpp, target_desc, system_libs);
+    set_defines(out_cpp, target, system_includes);
 
     // add extra include paths
     for (size_t i = 0; i < include_count; i++) {

@@ -43,8 +43,8 @@ static Cuik_File get_file(void* user_data, bool is_query, const char* path) {
     //printf("%f MiB of files\n", (double)file_io_memory_usage / 1048576.0);
     return (Cuik_File){ .found = true, .length = file_size.QuadPart, buffer };
     #else
-    struct stat buffer;
     if (is_query) {
+        struct stat buffer;
         return (Cuik_File){ .found = (stat(path, &buffer) == 0) };
     }
 

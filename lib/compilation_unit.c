@@ -4,15 +4,15 @@
 CUIK_API void cuik_create_compilation_unit(CompilationUnit* restrict cu) {
     *cu = (CompilationUnit){0};
     cu->lock = malloc(sizeof(mtx_t));
-    mtx_init(cu->lock, mtx_plain);
+    mtx_init((mtx_t*) cu->lock, mtx_plain);
 }
 
 CUIK_API void cuik_lock_compilation_unit(CompilationUnit* restrict cu) {
-    mtx_lock(cu->lock);
+    mtx_lock((mtx_t*) cu->lock);
 }
 
 CUIK_API void cuik_unlock_compilation_unit(CompilationUnit* restrict cu) {
-    mtx_unlock(cu->lock);
+    mtx_unlock((mtx_t*) cu->lock);
 }
 
 CUIK_API void cuik_add_to_compilation_unit(CompilationUnit* restrict cu, TranslationUnit* restrict tu) {
@@ -37,7 +37,7 @@ CUIK_API void cuik_destroy_compilation_unit(CompilationUnit* restrict cu) {
         tu = next;
     }
 
-    mtx_destroy(cu->lock);
+    mtx_destroy((mtx_t*) cu->lock);
     free(cu->lock);
     *cu = (CompilationUnit){0};
 }

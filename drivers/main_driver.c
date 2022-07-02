@@ -25,7 +25,7 @@ static bool args_object_only;
 static TB_Module* mod;
 static threadpool_t* thread_pool;
 static Cuik_IThreadpool ithread_pool;
-static const Cuik_TargetDesc* target_desc;
+static Cuik_Target target_desc;
 static CompilationUnit compilation_unit;
 
 static int calculate_worker_thread_count(void) {
@@ -122,15 +122,14 @@ static void compile_file(void* arg) {
     // preproc
     Cuik_CPP cpp;
     TokenStream tokens = cuik_preprocess_simple(
-        &cpp, input, &cuik_default_fs, target_desc, true,
-        dyn_array_length(include_directories),
-        &include_directories[0]
+        &cpp, input, &cuik_default_fs, &target_desc,
+        true, dyn_array_length(include_directories), &include_directories[0]
     );
 
     cuikpp_finalize(&cpp);
 
     // parse
-    TranslationUnit* tu = cuik_parse_translation_unit(mod, &tokens, target_desc, &ithread_pool);
+    TranslationUnit* tu = cuik_parse_translation_unit(mod, &tokens, &target_desc, &ithread_pool);
     cuik_add_to_compilation_unit(&compilation_unit, tu);
 }
 
@@ -208,32 +207,26 @@ int main(int argc, char** argv) {
                 break;
             }
             case ARG_INCLUDE: {
-                size_t len = strlen(arg.value);
-
-                bool on_da_heap = false;
-                const char* path = arg.value;
-                if (path[len - 1] != '\\' && path[len - 1] != '/') {
-                    // convert into a directory path
-                    char* newstr = malloc(len + 2);
-                    memcpy(newstr, arg.value, len);
-                    newstr[len] = '/';
-                    newstr[len + 1] = 0;
-
-                    on_da_heap = true;
-                    path = newstr;
-                }
-
                 // resolve a fullpath
                 char* newstr = malloc(FILENAME_MAX);
-                if (resolve_filepath(newstr, path)) {
+                if (resolve_filepath(newstr, arg.value)) {
+                    size_t end = strlen(newstr);
+
+                    if (newstr[end - 1] != '\\' && newstr[end - 1] != '/') {
+                        assert(end+2 < FILENAME_MAX);
+                        #ifdef _WIN32
+                        newstr[end] = '\\';
+                        #else
+                        newstr[end] = '/';
+                        #endif
+                        newstr[end+1] = '\0';
+                    }
+
                     dyn_array_put(include_directories, newstr);
                 } else {
-                    fprintf(stderr, "error: could not resolve include: %s\n", path);
+                    fprintf(stderr, "error: could not resolve include: %s\n", arg.value);
                     return EXIT_FAILURE;
                 }
-
-                // free if it was actually on the heap
-                if (on_da_heap) free((void*)path);
                 break;
             }
             case ARG_LIB: {
@@ -311,28 +304,27 @@ int main(int argc, char** argv) {
 
     // get default system
     #if defined(_WIN32)
-    TB_System sys = TB_SYSTEM_WINDOWS;
+    target_desc.sys = TB_SYSTEM_WINDOWS;
     #elif defined(__linux) || defined(linux)
-    TB_System sys = TB_SYSTEM_LINUX;
+    target_desc.sys = TB_SYSTEM_LINUX;
     #elif defined(__APPLE__) || defined(__MACH__) || defined(macintosh)
-    TB_System sys = TB_SYSTEM_MACOS;
+    target_desc.sys = TB_SYSTEM_MACOS;
     #endif
 
     // get target
-    target_desc = cuik_get_x64_target_desc();
+    target_desc.arch = cuik_get_x64_target_desc();
 
     if (!args_ast && !args_types) {
         TB_FeatureSet features = {0};
-        mod = tb_module_create(TB_ARCH_X86_64, sys, TB_DEBUGFMT_NONE, &features);
+        mod = tb_module_create(TB_ARCH_X86_64, target_desc.sys, TB_DEBUGFMT_NONE, &features);
     }
 
     if (args_preprocess) {
         // preproc only
         Cuik_CPP cpp;
         TokenStream tokens = cuik_preprocess_simple(
-            &cpp, input_files[0], &cuik_default_fs, target_desc, true,
-            dyn_array_length(include_directories),
-            &include_directories[0]
+            &cpp, input_files[0], &cuik_default_fs, &target_desc,
+            true, dyn_array_length(include_directories), &include_directories[0]
         );
 
         cuikpp_finalize(&cpp);

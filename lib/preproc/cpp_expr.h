@@ -1,4 +1,4 @@
-static intmax_t eval_l12(Cuik_CPP* restrict c, TokenStream* restrict s);
+static intmax_t eval_l13(Cuik_CPP* restrict c, TokenStream* restrict s);
 
 static intmax_t eval(Cuik_CPP* restrict c, TokenStream* restrict s, Lexer* l, SourceLocIndex parent_loc) {
     // Expand
@@ -9,18 +9,23 @@ static intmax_t eval(Cuik_CPP* restrict c, TokenStream* restrict s, Lexer* l, So
         expand(c, s, l, SOURCE_LOC_SET_TYPE(SOURCE_LOC_UNKNOWN, 0));
         assert(s->current != arrlen(s->tokens) && "Expected the macro expansion to add something");
 
+        /*for (size_t k = old_tokens_length; k < arrlen(s->tokens); k++) {
+            printf("%.*s ", (int)(s->tokens[k].end - s->tokens[k].start), s->tokens[k].start);
+        }
+        printf("\n\n");*/
+
         // Insert a null token at the end
         Token t = {0, arrlen(s->locations) - 1, NULL, NULL};
         arrput(s->tokens, t);
 
         // Evaluate
-        intmax_t result = eval_l12(c, s);
+        intmax_t result = eval_l13(c, s);
 
         arrsetlen(s->tokens, old_tokens_length);
         s->current = 0;
         return result;
     } else {
-        return eval_l12(c, s);
+        return eval_l13(c, s);
     }
 }
 
@@ -72,15 +77,33 @@ static intmax_t eval_l0(Cuik_CPP* restrict c, TokenStream* restrict s) {
     return flip ? !val : val;
 }
 
-static intmax_t eval_l5(Cuik_CPP* restrict c, TokenStream* restrict s) {
+static intmax_t eval_l4(Cuik_CPP* restrict c, TokenStream* restrict s) {
     intmax_t left = eval_l0(c, s);
+
+    while (tokens_get(s)->type == '+' ||
+        tokens_get(s)->type == '-') {
+        int t = tokens_get(s)->type;
+        tokens_next(s);
+
+        intmax_t right = eval_l0(c, s);
+        if (t == '+')
+            left = (left + right);
+        else
+            left = (left - right);
+    }
+
+    return left;
+}
+
+static intmax_t eval_l5(Cuik_CPP* restrict c, TokenStream* restrict s) {
+    intmax_t left = eval_l4(c, s);
 
     while (tokens_get(s)->type == TOKEN_LEFT_SHIFT ||
         tokens_get(s)->type == TOKEN_RIGHT_SHIFT) {
         int t = tokens_get(s)->type;
         tokens_next(s);
 
-        intmax_t right = eval_l0(c, s);
+        intmax_t right = eval_l4(c, s);
         if (t == TOKEN_LEFT_SHIFT)
             left = (left << right);
         else
@@ -201,4 +224,24 @@ static intmax_t eval_l12(Cuik_CPP* restrict c, TokenStream* restrict s) {
     }
 
     return left;
+}
+
+static intmax_t eval_l13(Cuik_CPP* restrict c, TokenStream* restrict s) {
+    intmax_t lhs = eval_l12(c, s);
+
+    if (tokens_get(s)->type == '?') {
+        tokens_next(s);
+
+        intmax_t mhs = eval_l13(c, s);
+        if (tokens_get(s)->type != ':') {
+            report(REPORT_ERROR, s, tokens_get_location_index(s), "expected : for ternary");
+            abort();
+        }
+        tokens_next(s);
+
+        intmax_t rhs = eval_l13(c, s);
+        return lhs ? mhs : rhs;
+    }
+
+    return lhs;
 }

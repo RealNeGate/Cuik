@@ -33,7 +33,6 @@ typedef struct CompilerSettings {
 
     // basically defines the sizeof(long)
     // if true it's 4 bytes if not it's 8
-    bool is_windows_long : 1;
     bool is_object_only : 1;
     bool is_time_report : 1;
     bool is_debug_build : 1;
@@ -54,6 +53,4 @@ typedef struct CompilerSettings {
 } CompilerSettings;
 
 extern Warnings warnings;
-extern TB_Arch target_arch;
-extern TB_System target_system;
 extern CompilerSettings settings;

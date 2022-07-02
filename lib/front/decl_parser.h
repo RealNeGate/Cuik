@@ -1048,7 +1048,7 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
             case SIGNED + INT:
             case SIGNED + LONG:
             case SIGNED + LONG + INT:
-            type = &builtin_types[settings.is_windows_long ? TYPE_INT : TYPE_LONG];
+            type = &builtin_types[tu->is_windows_long ? TYPE_INT : TYPE_LONG];
             break;
             case UNSIGNED:
             case UNSIGNED + INT:
@@ -1056,7 +1056,7 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
             break;
             case UNSIGNED + LONG:
             case UNSIGNED + LONG + INT:
-            type = &builtin_types[settings.is_windows_long ? TYPE_UINT : TYPE_ULONG];
+            type = &builtin_types[tu->is_windows_long ? TYPE_UINT : TYPE_ULONG];
             break;
             case LONG + LONG:
             case LONG + LONG + INT:

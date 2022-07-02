@@ -100,7 +100,7 @@ typedef struct {
 
 struct CompilationUnit {
     // avoid exposing the mtx_t since it's messy
-    struct mtx_t* lock;
+    void* lock;
 
     // anything extern might map to a different translation unit within
     // the same compilation unit which means it's not technically external

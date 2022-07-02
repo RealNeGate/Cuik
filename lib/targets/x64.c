@@ -4,23 +4,26 @@
 // two simple temporary buffers to represent type_as_string results
 static thread_local char temp_string0[1024], temp_string1[1024];
 
-static void set_defines(Cuik_CPP* cpp) {
+static void set_defines(Cuik_CPP* cpp, TB_System sys) {
     cuikpp_define_empty(cpp, "_CUIK_TARGET_64BIT_");
     cuikpp_define(cpp, "__LITTLE_ENDIAN__", "1");
 
-    #ifdef _WIN32
-    cuikpp_define(cpp, "_M_X64", "100");
-    cuikpp_define(cpp, "_AMD64_", "100");
-    cuikpp_define(cpp, "_M_AMD64", "100");
+    if (sys == TB_SYSTEM_WINDOWS) {
+        cuikpp_define(cpp, "_M_X64", "100");
+        cuikpp_define(cpp, "_AMD64_", "100");
+        cuikpp_define(cpp, "_M_AMD64", "100");
 
-    cuikpp_define(cpp, "_WIN32", "1");
-    cuikpp_define(cpp, "_WIN64", "1");
-    #else
-    cuikpp_define(cpp, "__linux", "1");
-    cuikpp_define(cpp, "linux", "1");
-    #endif
+        cuikpp_define(cpp, "_WIN32", "1");
+        cuikpp_define(cpp, "_WIN64", "1");
+    } else if (sys == TB_SYSTEM_LINUX) {
+        cuikpp_define(cpp, "__x86_64__", "1");
+        cuikpp_define(cpp, "__LP64__", "1");
 
-    // stdatomic.h lock free
+        cuikpp_define(cpp, "__linux", "1");
+        cuikpp_define(cpp, "linux", "1");
+    }
+
+    // stdatomic.h lock free stuff
     cuikpp_define(cpp, "__CUIK_ATOMIC_BOOL_LOCK_FREE", "1");
     cuikpp_define(cpp, "__CUIK_ATOMIC_CHAR_LOCK_FREE", "1");
     cuikpp_define(cpp, "__CUIK_ATOMIC_CHAR16_LOCK_FREE", "1");
@@ -396,8 +399,8 @@ static TB_Register compile_builtin(TranslationUnit* tu, TB_Function* func, const
     }
 }
 
-const Cuik_TargetDesc* cuik_get_x64_target_desc(void) {
-    static Cuik_TargetDesc t = { 0 };
+const Cuik_ArchDesc* cuik_get_x64_target_desc(void) {
+    static Cuik_ArchDesc t = { 0 };
     if (t.builtin_func_map == NULL) {
         // TODO(NeGate): make this thread safe
         BuiltinBinding* builtins = NULL;
@@ -430,7 +433,9 @@ const Cuik_TargetDesc* cuik_get_x64_target_desc(void) {
         shput(builtins, "_umul128", 1);
         shput(builtins, "_mul128", 1);
 
-        t = (Cuik_TargetDesc){
+        t = (Cuik_ArchDesc){
+            .arch = TB_ARCH_X86_64,
+
             .builtin_func_map = builtins,
             .set_defines = set_defines,
             .create_prototype = create_prototype,

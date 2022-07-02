@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <threads.h>
 
 static FILE* jsonperf__file;
 
@@ -22,7 +23,6 @@ static void jsonperf__plot(void* user_data, uint64_t start_ns, uint64_t end_ns, 
         #else
         uint32_t tid = pthread_self();
         #endif
-
 
         fprintf(jsonperf__file,
             "{\"cat\":\"function\", "

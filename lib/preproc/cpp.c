@@ -586,7 +586,9 @@ static void preprocess_file(Cuik_CPP* restrict c, TokenStream* restrict s, size_
                     if (!success && is_lib_include) {
                         // Try local includes
                         sprintf_s(path, FILENAME_MAX, "%s%s", directory, filename);
-                        if (CUIK_CALL(c->file_system, get_file, true, path).found) success = true;
+                        if (CUIK_CALL(c->file_system, get_file, true, path).found) {
+                            success = true;
+                        }
                     }
 
                     if (!success) {

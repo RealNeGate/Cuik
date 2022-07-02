@@ -514,7 +514,7 @@ void type_layout(TranslationUnit* restrict tu, Cuik_Type* type) {
 
 CUIK_API TranslationUnit* cuik_parse_translation_unit(
     TB_Module* restrict ir_module, TokenStream* restrict s,
-    const Cuik_TargetDesc* target_desc, Cuik_IThreadpool* restrict thread_pool
+    const Cuik_Target* target, Cuik_IThreadpool* restrict thread_pool
 ) {
     // hacky but i don't wanna wrap it in a CUIK_TIMED_BLOCK
     uint64_t timer_start = cuik_time_in_nanos();
@@ -522,7 +522,8 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(
     TranslationUnit* tu = calloc(1, sizeof(TranslationUnit));
     tu->filepath = s->filepath;
     tu->ir_mod = ir_module;
-    tu->target_desc = target_desc;
+    tu->is_windows_long = target->sys == TB_SYSTEM_WINDOWS;
+    tu->target = *target;
     tu->tokens = *s;
 
     tls_init();
@@ -1387,7 +1388,8 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
         expect(s, ':');
 
         n->default_ = (struct StmtDefault){
-            .body = 0, .next = 0};
+            .body = 0, .next = 0,
+        };
 
         Stmt* body = parse_stmt_or_expr(tu, s);
         n->default_.body = body;
@@ -1401,7 +1403,8 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 
         Stmt* n = make_stmt(tu, s, STMT_BREAK, sizeof(struct StmtBreak));
         n->break_ = (struct StmtBreak){
-            .target = current_breakable};
+            .target = current_breakable,
+        };
         return n;
     } else if (peek == TOKEN_KW_continue) {
         // TODO(NeGate): error messages
@@ -1412,7 +1415,8 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 
         Stmt* n = make_stmt(tu, s, STMT_CONTINUE, sizeof(struct StmtContinue));
         n->continue_ = (struct StmtContinue){
-            .target = current_continuable};
+            .target = current_continuable,
+        };
         return n;
     } else if (peek == TOKEN_KW_while) {
         tokens_next(s);
@@ -1439,7 +1443,8 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 
             n->while_ = (struct StmtWhile){
                 .cond = cond,
-                .body = body};
+                .body = body,
+            };
         }
 
         return n;
@@ -1510,7 +1515,8 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
                 .first = first,
                 .cond = cond,
                 .body = body,
-                .next = next};
+                .next = next,
+            };
         }
 
         return n;
@@ -1550,7 +1556,8 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 
             n->do_while = (struct StmtDoWhile){
                 .cond = cond,
-                .body = body};
+                .body = body,
+            };
         }
 
         return n;
@@ -1578,7 +1585,8 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
                 .op = EXPR_SYMBOL,
                 .start_loc = loc,
                 .end_loc = loc,
-                .symbol = labels[search].value};
+                .symbol = labels[search].value,
+            };
         } else {
             // not defined yet, make a placeholder
             Stmt* label_decl = make_stmt(tu, s, STMT_LABEL, sizeof(struct StmtLabel));
@@ -1590,11 +1598,13 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
                 .op = EXPR_SYMBOL,
                 .start_loc = loc,
                 .end_loc = loc,
-                .symbol = label_decl};
+                .symbol = label_decl,
+            };
         }
 
         n->goto_ = (struct StmtGoto){
-            .target = target};
+            .target = target,
+        };
 
         expect(s, ';');
         return n;
@@ -1611,7 +1621,8 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
         } else {
             n = make_stmt(tu, s, STMT_LABEL, sizeof(struct StmtLabel));
             n->label = (struct StmtLabel){
-                .name = name};
+                .name = name,
+            };
             shput(labels, name, n);
         }
 
@@ -1660,7 +1671,8 @@ static void parse_decl_or_expr(TranslationUnit* tu, TokenStream* restrict s, siz
                 n->decl = (struct StmtDecl){
                     .name = decl.name,
                     .type = decl.type,
-                    .attrs = attr};
+                    .attrs = attr,
+                };
 
                 if (local_symbol_count >= MAX_LOCAL_SYMBOLS) {
                     REPORT(ERROR, decl.loc, "Local symbol count exceeds %d (got %d)", MAX_LOCAL_SYMBOLS, local_symbol_count);
@@ -1670,7 +1682,8 @@ static void parse_decl_or_expr(TranslationUnit* tu, TokenStream* restrict s, siz
                 local_symbols[local_symbol_count++] = (Symbol){
                     .name = decl.name,
                     .type = decl.type,
-                    .storage_class = STORAGE_TYPEDEF};
+                    .storage_class = STORAGE_TYPEDEF,
+                };
             }
 
             expect(s, ';');

@@ -8,13 +8,15 @@ typedef struct BuiltinBinding {
     int value;
 } BuiltinBinding;
 
-struct Cuik_TargetDesc {
+struct Cuik_ArchDesc {
+    TB_Arch arch;
+
     // stringmap that goes from builtin function names to
     // an index used to refer to them later on
     BuiltinBinding* builtin_func_map;
 
     // initializes some target specific macro defines
-    void (*set_defines)(Cuik_CPP* cpp);
+    void (*set_defines)(Cuik_CPP* cpp, TB_System sys);
 
     // Callee ABI handling:
     TB_FunctionPrototype* (*create_prototype)(TranslationUnit* tu, Cuik_Type* type_index);

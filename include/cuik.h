@@ -63,7 +63,7 @@ typedef struct Cuik_IProfiler {
 } Cuik_IProfiler;
 
 // for doing calls on the interfaces
-#define CUIK_CALL(object, action, ...) ((object)->action((object)->user_data, __VA_ARGS__))
+#define CUIK_CALL(object, action, ...) ((object)->action((object)->user_data, ##__VA_ARGS__))
 
 // default file system (just OS crap)
 CUIK_API Cuik_IFileSystem cuik_default_fs;
@@ -71,11 +71,11 @@ CUIK_API Cuik_IFileSystem cuik_default_fs;
 ////////////////////////////////////////////
 // Target descriptor
 ////////////////////////////////////////////
-typedef struct Cuik_TargetDesc Cuik_TargetDesc;
+typedef struct Cuik_ArchDesc Cuik_ArchDesc;
 
 // these can be fed into the preprocessor and parser to define
 // the correct builtins and predefined macros
-const Cuik_TargetDesc* cuik_get_x64_target_desc(void);
+const Cuik_ArchDesc* cuik_get_x64_target_desc(void);
 
 ////////////////////////////////////////////
 // Profiler
@@ -101,6 +101,11 @@ CUIK_API void cuik_profile_region(uint64_t start, const char* fmt, ...);
 ////////////////////////////////////////////
 // General Cuik stuff
 ////////////////////////////////////////////
+typedef struct {
+    TB_System sys;
+    const Cuik_ArchDesc* arch;
+} Cuik_Target;
+
 CUIK_API void cuik_init(void);
 
 // locates the system includes, libraries and other tools. this is a global
@@ -216,9 +221,12 @@ CUIK_API Cuik_Define cuikpp_get_define(Cuik_CPP* ctx, Cuik_DefineRef src);
 // this will return a Cuik_CPP through out_cpp that you have to free once you're
 // done with it (after all frontend work is done), the out_cpp can also be finalized if
 // you dont need the defines table.
+//
+// if fs is NULL, it'll default to cuik_default_fs.
+// if target is non-NULL it'll add predefined macros based on the target.
 CUIK_API TokenStream cuik_preprocess_simple(
     Cuik_CPP* restrict out_cpp, const char* filepath,
-    const Cuik_IFileSystem* fs, const Cuik_TargetDesc* target_desc,
+    const Cuik_IFileSystem* fs, const Cuik_Target* target,
     bool system_includes, size_t include_count, const char* includes[]
 );
 
@@ -254,7 +262,7 @@ typedef struct Cuik_Type Cuik_Type;
 // attach them to each other with a compilation unit and internally link them.
 CUIK_API TranslationUnit* cuik_parse_translation_unit(
     TB_Module* restrict ir_module, TokenStream* restrict s,
-    const Cuik_TargetDesc* target_desc, Cuik_IThreadpool* restrict thread_pool
+    const Cuik_Target* target, Cuik_IThreadpool* restrict thread_pool
 );
 
 CUIK_API void cuik_destroy_translation_unit(TranslationUnit* restrict tu);

@@ -267,7 +267,7 @@ static Expr* parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
 
                 // check if it's builtin
                 ptrdiff_t temp;
-                ptrdiff_t builtin_search = shgeti_ts(tu->target_desc->builtin_func_map, name, temp);
+                ptrdiff_t builtin_search = shgeti_ts(tu->target.arch->builtin_func_map, name, temp);
                 if (builtin_search >= 0) {
                     *e = (Expr){
                         .op = EXPR_BUILTIN_SYMBOL,
