@@ -748,7 +748,7 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
 
                             if (tokens_get(s)->type == ':') {
                                 if (is_union) {
-                                    generic_error(s, "Bitfield... unions... huh?!");
+                                    REPORT(WARNING, tokens_get_location_index(s), "Bitfield... unions... huh?!");
                                 }
                                 tokens_next(s);
 

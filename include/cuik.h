@@ -148,8 +148,8 @@ typedef struct SourceLine {
 
 typedef struct SourceLoc {
     SourceLine* line;
-    short columns;
-    short length;
+    unsigned int columns;
+    unsigned int length;
 } SourceLoc;
 
 typedef struct Cuik_FileEntry {

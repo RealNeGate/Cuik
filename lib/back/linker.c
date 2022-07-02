@@ -174,7 +174,7 @@ bool cuiklink_invoke(Cuik_Linker* l, const char* filename, const char* crt_name)
 
         cmd_line_len += snprintf(&cmd_line[cmd_line_len], CMD_LINE_MAX - cmd_line_len, "-o %s ", filename);
 
-        printf("Linker command: %s\n", cmd_line);
+        //printf("Linker command: %s\n", cmd_line);
         if (system(cmd_line) != 0) {
             result = true;
             continue;

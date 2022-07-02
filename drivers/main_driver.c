@@ -407,8 +407,12 @@ int main(int argc, char** argv) {
             }
         } else {
             char exe_path[FILENAME_MAX], lib_dir[FILENAME_MAX];
-            sprintf_s(exe_path, FILENAME_MAX, "%s.exe", output_path_no_ext);
             sprintf_s(lib_dir, FILENAME_MAX, "%s/crt/lib/", crt_dirpath);
+            if (target_desc.sys == TB_SYSTEM_WINDOWS){
+                sprintf_s(exe_path, FILENAME_MAX, "%s.exe", output_path_no_ext);
+            } else {
+                sprintf_s(exe_path, FILENAME_MAX, "%s", output_path_no_ext);
+            }
 
             if (0 /* use TB as the linker */) {
                 size_t system_libpath_count = cuik_get_system_search_path_count();
