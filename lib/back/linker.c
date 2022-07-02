@@ -33,7 +33,7 @@ void cuiklink_deinit(Cuik_Linker* l) {
 }
 
 void cuiklink_add_default_libpaths(Cuik_Linker* l) {
-    #if _WIN32
+    #ifdef _WIN32
     if (cuik__vswhere.vs_exe_path == NULL) {
         printf("internal compiler error: Could not locate VS and Windows SDK to link with. You'll need Visual Studio to link with cuik.\n");
         abort();
@@ -45,7 +45,7 @@ void cuiklink_add_default_libpaths(Cuik_Linker* l) {
     #endif
 }
 
-#if _WIN32
+#ifdef _WIN32
 void cuiklink_add_libpath_wide(Cuik_Linker* l, const wchar_t* filepath) {
     assert(filepath);
 
@@ -59,7 +59,7 @@ void cuiklink_add_libpath_wide(Cuik_Linker* l, const wchar_t* filepath) {
 #endif
 
 void cuiklink_add_libpath(Cuik_Linker* l, const char filepath[]) {
-    #if _WIN32
+    #ifdef _WIN32
     size_t remaining = LINKER_STRING_BUFFER_CAP - l->libpaths_top;
     OS_String output = &l->libpaths_buffer[l->libpaths_top];
 
@@ -70,14 +70,14 @@ void cuiklink_add_libpath(Cuik_Linker* l, const char filepath[]) {
     size_t filepath_len = strlen(filepath) + 1;
     if (l->libpaths_top + filepath_len >= LINKER_STRING_BUFFER_CAP) abort();
 
-    memcpy(&l->libpaths_buffer[l->libpaths_top], filepath, filepath_len * sizeof(char));
+    memcpy(&l->libpaths_buffer[l->libpaths_top], filepath, filepath_len);
     l->libpaths_top += filepath_len;
     l->libpaths_count++;
     #endif
 }
 
 void cuiklink_add_input_file(Cuik_Linker* l, const char filepath[]) {
-    #if _WIN32
+    #ifdef _WIN32
     size_t remaining = LINKER_STRING_BUFFER_CAP - l->input_file_top;
     OS_String output = &l->input_file_buffer[l->input_file_top];
 
@@ -88,7 +88,7 @@ void cuiklink_add_input_file(Cuik_Linker* l, const char filepath[]) {
     size_t filepath_len = strlen(filepath) + 1;
     if (l->input_file_top + filepath_len >= LINKER_STRING_BUFFER_CAP) abort();
 
-    memcpy(&l->libpaths_buffer[l->input_file_top], filepath, filepath_len * sizeof(char));
+    memcpy(&l->input_file_buffer[l->input_file_top], filepath, filepath_len);
     l->input_file_top += filepath_len;
     l->input_file_count++;
     #endif
@@ -110,13 +110,10 @@ bool cuiklink_invoke(Cuik_Linker* l, const char* filename, const char* crt_name)
             cuik__vswhere.vs_exe_path, l->subsystem_windows ? L"windows" : L"console", filename, filename);
 
         // Add all the libpaths
-        {
-            size_t i = l->libpaths_count;
-            OS_String str = l->libpaths_buffer;
-            while (i--) {
-                cmd_line_len += swprintf(&cmd_line[cmd_line_len], CMD_LINE_MAX - cmd_line_len, L"/libpath:\"%s\" ", str);
-                str += wcslen(str) + 1;
-            }
+        OS_String str = l->libpaths_buffer;
+        for (size_t i = l->libpaths_count; i--;) {
+            cmd_line_len += swprintf(&cmd_line[cmd_line_len], CMD_LINE_MAX - cmd_line_len, L"/libpath:\"%s\" ", str);
+            str += wcslen(str) + 1;
         }
 
         /*if (crt_name) {
@@ -126,13 +123,10 @@ bool cuiklink_invoke(Cuik_Linker* l, const char* filename, const char* crt_name)
         }*/
 
         // Add all the input files
-        {
-            size_t i = l->input_file_count;
-            OS_String str = l->input_file_buffer;
-            while (i--) {
-                cmd_line_len += swprintf(&cmd_line[cmd_line_len], CMD_LINE_MAX - cmd_line_len, L"%s ", str);
-                str += wcslen(str) + 1;
-            }
+        str = l->input_file_buffer;
+        for (size_t i = l->input_file_count; i--;) {
+            cmd_line_len += swprintf(&cmd_line[cmd_line_len], CMD_LINE_MAX - cmd_line_len, L"%s ", str);
+            str += wcslen(str) + 1;
         }
 
         STARTUPINFOW si = {
@@ -159,10 +153,36 @@ bool cuiklink_invoke(Cuik_Linker* l, const char* filename, const char* crt_name)
         CloseHandle(pi.hThread);
     }
 
-    return result;
     #elif defined(__unix__) || defined(__APPLE__)
-    return result;
+    CUIK_TIMED_BLOCK("linker") {
+        char cmd_line[CMD_LINE_MAX];
+        int cmd_line_len = snprintf(cmd_line, CMD_LINE_MAX, "gcc ");
+
+        // Add all the libpaths
+        OS_String str = l->libpaths_buffer;
+        for (size_t i = l->libpaths_count; i--;) {
+            cmd_line_len += snprintf(&cmd_line[cmd_line_len], CMD_LINE_MAX - cmd_line_len, "-L%s ", str);
+            str += strlen(str) + 1;
+        }
+
+        // Add all the input files
+        str = l->input_file_buffer;
+        for (size_t i = l->input_file_count; i--;) {
+            cmd_line_len += snprintf(&cmd_line[cmd_line_len], CMD_LINE_MAX - cmd_line_len, "%s ", str);
+            str += strlen(str) + 1;
+        }
+
+        cmd_line_len += snprintf(&cmd_line[cmd_line_len], CMD_LINE_MAX - cmd_line_len, "-o %s ", filename);
+
+        printf("Linker command: %s\n", cmd_line);
+        if (system(cmd_line) != 0) {
+            result = true;
+            continue;
+        }
+    }
     #else
     #error "Implement system linker on other platforms"
     #endif
+
+    return result;
 }

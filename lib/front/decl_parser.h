@@ -1,6 +1,30 @@
 ////////////////////////////////
 // TYPES
 ////////////////////////////////
+static bool parse_attributes(TranslationUnit* restrict tu, TokenStream* restrict s, Stmt* restrict n) {
+    if (tokens_get(s)->type == TOKEN_KW_attribute ||
+        tokens_get(s)->type == TOKEN_KW_asm) {
+        tokens_next(s);
+        expect(s, '(');
+
+        // TODO(NeGate): Correctly parse attributes instead of
+        // ignoring them.
+        int depth = 1;
+        while (depth) {
+            if (tokens_get(s)->type == '(')
+                depth++;
+            else if (tokens_get(s)->type == ')')
+                depth--;
+
+            tokens_next(s);
+        }
+
+        return true;
+    }
+
+    return false;
+}
+
 static bool skip_over_declspec(TokenStream* restrict s) {
     if (tokens_get(s)->type == TOKEN_KW_declspec ||
         tokens_get(s)->type == TOKEN_KW_Pragma) {

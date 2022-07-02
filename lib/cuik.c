@@ -228,6 +228,11 @@ static void set_defines(Cuik_CPP* cpp, const Cuik_Target* target, bool system_li
         cuikpp_add_include_directory(cpp, "/usr/local/include/");
         cuikpp_add_include_directory(cpp, "/usr/include/");
 
+        // things we don't handle yet so we just remove them
+        cuikpp_define_empty(cpp, "__THROWNL");
+
+        // pretend to be GCC
+        cuikpp_define(cpp, "__gnuc_va_list", "char*");
         cuikpp_define(cpp, "__GNUC__", "9");
         cuikpp_define_empty(cpp, "_GNU_SOURCE");
     }

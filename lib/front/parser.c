@@ -706,6 +706,9 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(
                             tu->entrypoint_status = CUIK_ENTRYPOINT_WINMAIN;
                         }
 
+                        // parse attributes... currently it doesn't but one day...
+                        while (parse_attributes(tu, s, n)) {}
+
                         bool requires_terminator = true;
                         if (tokens_get(s)->type == '=') {
                             tokens_next(s);
@@ -784,7 +787,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(
                             requires_terminator = false;
 
                             if (decl.type->kind != KIND_FUNC) {
-                                REPORT(ERROR, decl.loc, "Declaration's expression has a weird semicolon");
+                                REPORT(ERROR, decl.loc, "Somehow parsing a function body... on a non-function type?");
                                 abort();
                             }
 

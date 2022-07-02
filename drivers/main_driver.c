@@ -390,12 +390,16 @@ int main(int argc, char** argv) {
 
         // place into a temporary directory if we don't need the obj file
         char obj_output_path[FILENAME_MAX];
+        if (target_desc.sys == TB_SYSTEM_WINDOWS){
+            sprintf_s(obj_output_path, FILENAME_MAX, "%s.obj", output_path_no_ext);
+        } else {
+            sprintf_s(obj_output_path, FILENAME_MAX, "%s.o", output_path_no_ext);
+        }
+
         if (args_object_only) {
             if (args_verbose) printf("Exporting object file...\n");
 
             CUIK_TIMED_BLOCK("export") {
-                sprintf_s(obj_output_path, FILENAME_MAX, "%s.obj", output_path_no_ext);
-
                 if (!tb_module_export(mod, obj_output_path)) {
                     fprintf(stderr, "error: tb_module_export failed!\n");
                     abort();
@@ -448,12 +452,6 @@ int main(int argc, char** argv) {
                     abort();
                 }
             } else {
-                // generate a temporary file for it
-                if (tmpnam(obj_output_path) == NULL) {
-                    fprintf(stderr, "cannot get a temporary file for the .obj... resorting to violence\n");
-                    return EXIT_FAILURE;
-                }
-
                 if (args_verbose) printf("Exporting object file...\n");
 
                 if (!tb_module_export(mod, obj_output_path)) {
