@@ -543,7 +543,7 @@ static void preprocess_file(Cuik_CPP* restrict c, TokenStream* restrict s, size_
                             Token* t = tokens_get(s);
                             size_t len = (t->end - t->start) - 2;
                             if (len > MAX_PATH) {
-                                report(REPORT_ERROR, s, t->location, "Filename too long");
+                                report(REPORT_ERROR, NULL, s, t->location, "Filename too long");
                                 abort();
                             }
 
@@ -752,7 +752,7 @@ static void preprocess_file(Cuik_CPP* restrict c, TokenStream* restrict s, size_
                         lexer_read(&l);
                     }
 
-                    report(REPORT_WARNING, s, loc, "directive: %.*s", (int)(end - start), start);
+                    report(REPORT_WARNING, NULL, s, loc, "directive: %.*s", (int)(end - start), start);
                 } else if (lexer_match(&l, 5, "error")) {
                     lexer_read(&l);
 
@@ -765,7 +765,7 @@ static void preprocess_file(Cuik_CPP* restrict c, TokenStream* restrict s, size_
                         lexer_read(&l);
                     }
 
-                    report(REPORT_ERROR, s, loc, "directive: %.*s", (int)(end - start), start);
+                    report(REPORT_ERROR, NULL, s, loc, "directive: %.*s", (int)(end - start), start);
                     exit(1);
                 } else {
                     generic_error(&l, "unknown directive!");

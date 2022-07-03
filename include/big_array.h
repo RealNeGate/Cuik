@@ -62,4 +62,4 @@ do {                                                             \
 } while (0)
 
 #define dyn_array_length(arr) ((((DynArrayHeader*)(arr)) - 1)->size)
-#define dyn_array_for(it, arr) for (ptrdiff_t i = 0, count = dyn_array_length(arr); i < count; i++)
+#define dyn_array_for(it, arr) for (ptrdiff_t it = 0, count = dyn_array_length(arr); it < count; it++)

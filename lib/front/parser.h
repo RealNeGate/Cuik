@@ -78,6 +78,7 @@ struct TranslationUnit {
 
     TB_Module* ir_mod;
     const char* filepath;
+    Cuik_ErrorStatus* errors;
 
     // token stream
     TokenStream tokens;

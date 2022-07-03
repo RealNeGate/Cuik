@@ -209,7 +209,7 @@ static Expr* parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
 
         Expr* e = parse_expr(tu, s);
 
-        expect_closing_paren(s, start_loc);
+        expect_closing_paren(tu, s, start_loc);
 
         e->has_parens = true;
         e->start_loc = start_loc;
@@ -413,7 +413,8 @@ static Expr* parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
 
             *e = (Expr){
                 .op = EXPR_GENERIC,
-                .generic_ = {.controlling_expr = controlling_expr}};
+                .generic_ = {.controlling_expr = controlling_expr},
+            };
             expect(s, ',');
 
             size_t entry_count = 0;
@@ -423,7 +424,7 @@ static Expr* parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
             while (tokens_get(s)->type != ')') {
                 if (tokens_get(s)->type == TOKEN_KW_default) {
                     if (default_loc) {
-                        report_two_spots(REPORT_ERROR, s,
+                        report_two_spots(REPORT_ERROR, tu->errors, s,
                             default_loc, tokens_get_location_index(s),
                             "multiple default cases on _Generic",
                             NULL, NULL, NULL);
@@ -440,7 +441,8 @@ static Expr* parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
                     tls_push(sizeof(C11GenericEntry));
                     entries[entry_count++] = (C11GenericEntry){
                         .key = NULL,
-                        .value = expr};
+                        .value = expr,
+                    };
                 } else {
                     Cuik_Type* type = parse_typename(tu, s);
                     assert(type != 0 && "TODO: error recovery");
@@ -451,7 +453,8 @@ static Expr* parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
                     tls_push(sizeof(C11GenericEntry));
                     entries[entry_count++] = (C11GenericEntry){
                         .key = type,
-                        .value = expr};
+                        .value = expr,
+                    };
                 }
 
                 // exit if it's not a comma
@@ -459,7 +462,7 @@ static Expr* parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
                 tokens_next(s);
             }
 
-            expect_closing_paren(s, opening_loc);
+            expect_closing_paren(tu, s, opening_loc);
 
             // move it to a more permanent storage
             C11GenericEntry* dst = arena_alloc(&thread_arena, entry_count * sizeof(C11GenericEntry), _Alignof(C11GenericEntry));
@@ -533,7 +536,8 @@ static Expr* parse_expr_l1(TranslationUnit* tu, TokenStream* restrict s) {
                 .op = EXPR_SUBSCRIPT,
                 .start_loc = start_loc,
                 .end_loc = end_loc,
-                .subscript = {base, index}};
+                .subscript = {base, index},
+            };
             goto try_again;
         }
 
@@ -769,7 +773,7 @@ static Expr* parse_expr_l2(TranslationUnit* tu, TokenStream* restrict s) {
             Cuik_Type* type = parse_typename(tu, s);
 
             if (has_paren) {
-                expect_closing_paren(s, opening_loc);
+                expect_closing_paren(tu, s, opening_loc);
             }
 
             // glorified backtracing on who own's the (
@@ -787,7 +791,8 @@ static Expr* parse_expr_l2(TranslationUnit* tu, TokenStream* restrict s) {
                     .op = operation_type == TOKEN_KW_sizeof ? EXPR_SIZEOF_T : EXPR_ALIGNOF_T,
                     .start_loc = start_loc,
                     .end_loc = end_loc,
-                    .x_of_type = {type}};
+                    .x_of_type = {type},
+                };
             }
         } else {
             if (has_paren) tokens_prev(s);
@@ -800,11 +805,8 @@ static Expr* parse_expr_l2(TranslationUnit* tu, TokenStream* restrict s) {
                 .op = operation_type == TOKEN_KW_sizeof ? EXPR_SIZEOF : EXPR_ALIGNOF,
                 .start_loc = start_loc,
                 .end_loc = end_loc,
-                .x_of_expr = {expr}};
-
-            /*if (has_paren) {
-                expect_closing_paren(s, opening_loc);
-            }*/
+                .x_of_expr = {expr},
+            };
         }
 
         return e;
@@ -819,7 +821,8 @@ static Expr* parse_expr_l2(TranslationUnit* tu, TokenStream* restrict s) {
             .op = EXPR_ADDR,
             .start_loc = start_loc,
             .end_loc = end_loc,
-            .unary_op.src = value};
+            .unary_op.src = value,
+        };
         return e;
     } else {
         return parse_expr_l1(tu, s);

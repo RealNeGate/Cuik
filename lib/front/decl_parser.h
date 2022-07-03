@@ -130,7 +130,7 @@ static Decl parse_declarator(TranslationUnit* tu, TokenStream* restrict s, Cuik_
         Cuik_Type* dummy_type = &builtin_types[TYPE_VOID];
         parse_declarator(tu, s, dummy_type, is_abstract, false);
 
-        expect_closing_paren(s, opening_loc);
+        expect_closing_paren(tu, s, opening_loc);
         type = parse_type_suffix(tu, s, type, NULL);
 
         size_t saved_end = s->current;
@@ -288,7 +288,7 @@ static Cuik_Type* parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s
                         depth++;
                     } else if (t->type == ']') {
                         if (depth == 0) {
-                            report_two_spots(REPORT_ERROR, s, open_brace, t->location,
+                            report_two_spots(REPORT_ERROR, tu->errors, s, open_brace, t->location,
                                 "Unbalanced brackets", "open", "close?", NULL);
                             abort();
                         }
@@ -498,7 +498,7 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
                 type = new_vector(tu, type, count);
                 counter += OTHER;
 
-                expect_closing_paren(s, opening_loc);
+                expect_closing_paren(tu, s, opening_loc);
                 tokens_prev(s);
                 break;
             }
@@ -514,7 +514,7 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
 
                     SourceLocIndex closing_loc = tokens_get_location_index(s);
                     if (tokens_get(s)->type != ')') {
-                        report_two_spots(REPORT_ERROR, s, opening_loc, closing_loc, "expected closing parenthesis for _Atomic", "open", "close?", NULL);
+                        report_two_spots(REPORT_ERROR, tu->errors, s, opening_loc, closing_loc, "expected closing parenthesis for _Atomic", "open", "close?", NULL);
                         return NULL;
                     }
                 } else {

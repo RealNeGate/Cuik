@@ -44,13 +44,11 @@ static int calculate_worker_thread_count(void) {
 }
 
 static void tp_submit(void* user_data, void fn(void*), void* arg) {
-    threadpool_t* tp = user_data;
-    threadpool_submit(tp, fn, arg);
+    threadpool_submit((threadpool_t*) user_data, fn, arg);
 }
 
 static void tp_work_one_job(void* user_data) {
-    threadpool_t* tp = user_data;
-    threadpool_work_one_job(tp);
+    threadpool_work_one_job((threadpool_t*) user_data);
 }
 
 static void dump_tokens(FILE* out_file, TokenStream* s) {
@@ -129,7 +127,20 @@ static void compile_file(void* arg) {
     cuikpp_finalize(&cpp);
 
     // parse
-    TranslationUnit* tu = cuik_parse_translation_unit(mod, &tokens, &target_desc, &ithread_pool);
+    Cuik_ErrorStatus errors;
+    TranslationUnit* tu = cuik_parse_translation_unit(&(Cuik_TranslationUnitDesc){
+            .tokens      = &tokens,
+            .errors      = &errors,
+            .ir_module   = mod,
+            .target      = &target_desc,
+            .thread_pool = &ithread_pool,
+        });
+
+    if (tu == NULL) {
+        printf("Failed to parse with errors...");
+        exit(1);
+    }
+
     cuik_add_to_compilation_unit(&compilation_unit, tu);
 }
 
@@ -271,7 +282,11 @@ int main(int argc, char** argv) {
     }
 
     {
-        const char* filename = output_name ? output_name : input_files[0];
+        if (output_name == NULL) {
+            output_name = input_files[0];
+        }
+
+        const char* filename = output_name;
         const char* ext = strrchr(filename, '.');
         size_t len = ext ? (ext - filename) : strlen(filename);
 
@@ -406,13 +421,8 @@ int main(int argc, char** argv) {
                 }
             }
         } else {
-            char exe_path[FILENAME_MAX], lib_dir[FILENAME_MAX];
+            char lib_dir[FILENAME_MAX];
             sprintf_s(lib_dir, FILENAME_MAX, "%s/crt/lib/", crt_dirpath);
-            if (target_desc.sys == TB_SYSTEM_WINDOWS){
-                sprintf_s(exe_path, FILENAME_MAX, "%s.exe", output_path_no_ext);
-            } else {
-                sprintf_s(exe_path, FILENAME_MAX, "%s", output_path_no_ext);
-            }
 
             if (0 /* use TB as the linker */) {
                 size_t system_libpath_count = cuik_get_system_search_path_count();
@@ -451,7 +461,7 @@ int main(int argc, char** argv) {
                     #endif
                 }
 
-                if (!tb_module_export_exec(mod, exe_path, &link)) {
+                if (!tb_module_export_exec(mod, output_name, &link)) {
                     fprintf(stderr, "error: tb_module_export failed!\n");
                     abort();
                 }
@@ -507,14 +517,8 @@ int main(int argc, char** argv) {
             }
 
             if (args_run) {
-                #ifdef _WIN32
-                for (char* i = exe_path; *i; i++) {
-                    if (*i == '/') *i = '\\';
-                }
-                #endif
-
-                printf("\n\nRunning: %s...\n", exe_path);
-                int exit_code = system(exe_path);
+                printf("\n\nRunning: %s...\n", output_name);
+                int exit_code = system(output_name);
                 printf("Exit code: %d\n", exit_code);
 
                 return exit_code;

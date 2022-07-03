@@ -70,7 +70,7 @@ thread_local static Arena local_ast_arena;
 thread_local static bool out_of_order_mode;
 
 static void expect(TokenStream* restrict s, char ch);
-static void expect_closing_paren(TokenStream* restrict s, SourceLocIndex opening);
+static void expect_closing_paren(TranslationUnit* tu, TokenStream* restrict s, SourceLocIndex opening);
 static void expect_with_reason(TokenStream* restrict s, char ch, const char* reason);
 static Symbol* find_local_symbol(TokenStream* restrict s);
 
@@ -237,8 +237,8 @@ static void reset_global_parser_state() {
     symbol_chain_start = symbol_chain_current = NULL;
 
     // allocate sum shit
-    local_symbols = malloc(sizeof(Symbol) * MAX_LOCAL_SYMBOLS);
-    local_tags = malloc(sizeof(TagEntry) * MAX_LOCAL_TAGS);
+    local_symbols = realloc(local_symbols, sizeof(Symbol) * MAX_LOCAL_SYMBOLS);
+    local_tags = realloc(local_tags, sizeof(TagEntry) * MAX_LOCAL_TAGS);
 }
 
 static void parse_global_symbols(TranslationUnit* tu, size_t start, size_t end, TokenStream tokens) {
@@ -323,16 +323,17 @@ static int type_cycles_dfs(TranslationUnit* restrict tu, Cuik_Type* type, uint8_
         int c = type_cycles_dfs(tu, type->record.kids[i].type, visited, finished);
         if (c) {
             // we already gave an error message, don't be redundant
-            if (c == 2) return 2;
+            if (c != 2) {
+                const char* name = type->record.name ? (const char*)type->record.name : "<unnamed>";
 
-            const char* name = type->record.name ? (const char*)type->record.name : "<unnamed>";
+                char tmp[256];
+                sprintf_s(tmp, sizeof(tmp), "type %s has cycles", name);
 
-            char tmp[256];
-            sprintf_s(tmp, sizeof(tmp), "type %s has cycles", name);
+                report_two_spots(REPORT_ERROR, tu->errors,
+                    &tu->tokens, type->loc, type->record.kids[i].loc,
+                    tmp, NULL, NULL, "on");
+            }
 
-            report_two_spots(REPORT_ERROR, &tu->tokens,
-                type->loc, type->record.kids[i].loc,
-                tmp, NULL, NULL, "on");
             return 2;
         }
     }
@@ -512,19 +513,21 @@ void type_layout(TranslationUnit* restrict tu, Cuik_Type* type) {
     type->is_inprogress = false;
 }
 
-CUIK_API TranslationUnit* cuik_parse_translation_unit(
-    TB_Module* restrict ir_module, TokenStream* restrict s,
-    const Cuik_Target* target, Cuik_IThreadpool* restrict thread_pool
-) {
+CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* restrict desc) {
+    assert(desc->tokens != NULL);
+    assert(desc->errors != NULL);
+    memset(desc->errors, 0, sizeof(*desc->errors));
+
     // hacky but i don't wanna wrap it in a CUIK_TIMED_BLOCK
     uint64_t timer_start = cuik_time_in_nanos();
 
     TranslationUnit* tu = calloc(1, sizeof(TranslationUnit));
-    tu->filepath = s->filepath;
-    tu->ir_mod = ir_module;
-    tu->is_windows_long = target->sys == TB_SYSTEM_WINDOWS;
-    tu->target = *target;
-    tu->tokens = *s;
+    tu->filepath = desc->tokens->filepath;
+    tu->ir_mod = desc->ir_module;
+    tu->is_windows_long = desc->target->sys == TB_SYSTEM_WINDOWS;
+    tu->target = *desc->target;
+    tu->tokens = *desc->tokens;
+    tu->errors = desc->errors;
 
     tls_init();
     atoms_init();
@@ -537,6 +540,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(
     ////////////////////////////////
     out_of_order_mode = true;
     DynArray(int) static_assertions = dyn_array_create(int);
+    TokenStream* restrict s = desc->tokens;
 
     // Phase 1: resolve all top level statements
     CUIK_TIMED_BLOCK("phase 1") {
@@ -604,7 +608,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(
                             Symbol* search = find_global_symbol((const char*)decl.name);
                             if (search != NULL) {
                                 if (search->storage_class != STORAGE_TYPEDEF) {
-                                    report_two_spots(REPORT_ERROR, s, decl.loc, search->loc,
+                                    report_two_spots(REPORT_ERROR, tu->errors, s, decl.loc, search->loc,
                                         "typedef overrides previous declaration.",
                                         "old", "new", NULL);
                                     abort();
@@ -612,7 +616,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(
 
                                 Cuik_Type* placeholder_space = search->type;
                                 if (placeholder_space->kind != KIND_PLACEHOLDER && !type_equal(tu, decl.type, search->type)) {
-                                    report_two_spots(REPORT_ERROR, s, decl.loc, search->loc,
+                                    report_two_spots(REPORT_ERROR, tu->errors, s, decl.loc, search->loc,
                                         "typedef overrides previous declaration.",
                                         "old", "new", NULL);
                                     abort();
@@ -792,7 +796,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(
                             }
 
                             if (old_definition && old_definition->current != 0) {
-                                report_two_spots(REPORT_ERROR, s, decl.loc, old_definition->stmt->loc,
+                                report_two_spots(REPORT_ERROR, tu->errors, s, decl.loc, old_definition->stmt->loc,
                                     "Cannot redefine function declaration",
                                     NULL, NULL, "previous definition was:");
                                 abort();
@@ -814,7 +818,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(
 
                                 if (t->type == '\0') {
                                     SourceLocIndex l = tokens_get_last_location_index(s);
-                                    report_fix(REPORT_ERROR, s, l, "}", "Function body ended in EOF");
+                                    report_fix(REPORT_ERROR, tu->errors, s, l, "}", "Function body ended in EOF");
                                     abort();
                                 } else if (t->type == '{') {
                                     depth++;
@@ -871,7 +875,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(
             }
         }
 
-        crash_if_reports(REPORT_ERROR);
+        if (has_reports(REPORT_ERROR, tu->errors)) goto parse_error;
 
         // bitvectors amirite
         size_t bitvec_bytes = (type_count + 7) / 8;
@@ -894,7 +898,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(
         }
 
         fuck_outta_there:
-        crash_if_reports(REPORT_ERROR);
+        if (has_reports(REPORT_ERROR, tu->errors)) goto parse_error;
 
         // parse all global declarations
         for (size_t i = 0, count = shlen(global_symbols); i < count; i++) {
@@ -932,7 +936,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(
             }
         }
 
-        crash_if_reports(REPORT_ERROR);
+        if (has_reports(REPORT_ERROR, tu->errors)) goto parse_error;
 
         // do record layouts and shi
         for (ArenaSegment* a = tu->type_arena.base; a != NULL; a = a->next) {
@@ -948,7 +952,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(
             }
         }
 
-        crash_if_reports(REPORT_ERROR);
+        if (has_reports(REPORT_ERROR, tu->errors)) goto parse_error;
         arrfree(pending_exprs);
 
         ////////////////////////////////
@@ -994,7 +998,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(
         arena_append(&tu->ast_arena, &local_ast_arena);
         local_ast_arena = (Arena){0};
 
-        if (thread_pool != NULL) {
+        if (desc->thread_pool != NULL) {
             // disabled until we change the tables to arenas
             size_t count = shlen(global_symbols);
             size_t padded = (count + (PARSE_MUNCH_SIZE - 1)) & ~(PARSE_MUNCH_SIZE - 1);
@@ -1023,11 +1027,11 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(
                 task->global_symbols = global_symbols;
                 task->base_token_stream = s;
 
-                CUIK_CALL(thread_pool, submit, phase3_parse_task, task);
+                CUIK_CALL(desc->thread_pool, submit, phase3_parse_task, task);
             }
 
             while (tasks_remaining != 0) {
-                CUIK_CALL(thread_pool, work_one_job);
+                CUIK_CALL(desc->thread_pool, work_one_job);
                 thrd_yield();
             }
 
@@ -1037,7 +1041,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(
             parse_global_symbols(tu, 0, shlen(global_symbols), *s);
         }
 
-        crash_if_reports(REPORT_ERROR);
+        if (has_reports(REPORT_ERROR, tu->errors)) goto parse_error;
 
         // check for any qualified types and resolve them correctly
         for (ArenaSegment* a = tu->type_arena.base; a != NULL; a = a->next) {
@@ -1079,8 +1083,8 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(
 
     // run type checker
     CUIK_TIMED_BLOCK("phase 4") {
-        cuik__sema_pass(tu, thread_pool);
-        crash_if_reports(REPORT_ERROR);
+        cuik__sema_pass(tu, desc->thread_pool);
+        if (has_reports(REPORT_ERROR, tu->errors)) goto parse_error;
     }
 
     {
@@ -1097,6 +1101,10 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(
     }
 
     return tu;
+
+    parse_error:
+    // TODO(NeGate): free all translation unit resources because we failed :(
+    return NULL;
 }
 
 CUIK_API void cuik_destroy_translation_unit(TranslationUnit* restrict tu) {
@@ -1266,7 +1274,7 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 
                 cond = parse_expr(tu, s);
 
-                expect_closing_paren(s, opening_loc);
+                expect_closing_paren(tu, s, opening_loc);
             }
 
             Stmt* body;
@@ -1701,7 +1709,7 @@ static void parse_decl_or_expr(TranslationUnit* tu, TokenStream* restrict s, siz
                     } else if (tokens_get(s)->type != ',') {
 				        SourceLocIndex loc = tokens_get_last_location_index(s);
 
-				        report_fix(REPORT_ERROR, s, loc, ";", "expected semicolon at the end of declaration");
+				        report_fix(REPORT_ERROR, tu->errors, s, loc, ";", "expected semicolon at the end of declaration");
                     }
 
                     tokens_next(s);
@@ -1818,7 +1826,7 @@ static intmax_t parse_const_expr(TranslationUnit* tu, TokenStream* restrict s) {
 static _Noreturn void generic_error(TokenStream* restrict s, const char* msg) {
     SourceLocIndex loc = tokens_get_location_index(s);
 
-    report(REPORT_ERROR, s, loc, msg);
+    report(REPORT_ERROR, NULL, s, loc, msg);
     abort();
 }
 
@@ -1827,18 +1835,18 @@ static void expect(TokenStream* restrict s, char ch) {
         Token* t = tokens_get(s);
         SourceLocIndex loc = tokens_get_location_index(s);
 
-        report(REPORT_ERROR, s, loc, "expected '%c' got '%.*s'", ch, (int)(t->end - t->start), t->start);
+        report(REPORT_ERROR, NULL, s, loc, "expected '%c' got '%.*s'", ch, (int)(t->end - t->start), t->start);
         abort();
     }
 
     tokens_next(s);
 }
 
-static void expect_closing_paren(TokenStream* restrict s, SourceLocIndex opening) {
+static void expect_closing_paren(TranslationUnit* tu, TokenStream* restrict s, SourceLocIndex opening) {
     if (tokens_get(s)->type != ')') {
         SourceLocIndex loc = tokens_get_location_index(s);
 
-        report_two_spots(REPORT_ERROR, s, opening, loc,
+        report_two_spots(REPORT_ERROR, tu->errors, s, opening, loc,
             "expected closing parenthesis",
             "open", "close?", NULL
         );
@@ -1853,7 +1861,7 @@ static void expect_with_reason(TokenStream* restrict s, char ch, const char* rea
         SourceLocIndex loc = tokens_get_last_location_index(s);
 
         char fix[2] = { ch, '\0' };
-        report_fix(REPORT_ERROR, s, loc, fix, "expected '%c' for %s", ch, reason);
+        report_fix(REPORT_ERROR, NULL, s, loc, fix, "expected '%c' for %s", ch, reason);
         return;
     }
 

@@ -52,7 +52,7 @@ static intmax_t eval_l0(Cuik_CPP* restrict c, TokenStream* restrict s) {
         int ch;
         intptr_t distance = parse_char(t->end - t->start, (const char*)t->start, &ch);
         if (distance < 0) {
-            report(REPORT_ERROR, s, t->location, "could not parse char literal");
+            report(REPORT_ERROR, NULL, s, t->location, "could not parse char literal");
             abort();
         }
 
@@ -63,14 +63,14 @@ static intmax_t eval_l0(Cuik_CPP* restrict c, TokenStream* restrict s) {
         val = eval(c, s, NULL, t->location);
 
         if (tokens_get(s)->type != ')') {
-            report_two_spots(REPORT_ERROR, s, t->location, tokens_get(s)->location,
+            report_two_spots(REPORT_ERROR, NULL, s, t->location, tokens_get(s)->location,
                 "expected closing parenthesis for macro subexpression",
                 "open", "close?", NULL);
             abort();
         }
         tokens_next(s);
     } else {
-        report(REPORT_ERROR, s, t->location, "could not parse expression");
+        report(REPORT_ERROR, NULL, s, t->location, "could not parse expression");
         abort();
     }
 
@@ -234,7 +234,7 @@ static intmax_t eval_l13(Cuik_CPP* restrict c, TokenStream* restrict s) {
 
         intmax_t mhs = eval_l13(c, s);
         if (tokens_get(s)->type != ':') {
-            report(REPORT_ERROR, s, tokens_get_location_index(s), "expected : for ternary");
+            report(REPORT_ERROR, NULL, s, tokens_get_location_index(s), "expected : for ternary");
             abort();
         }
         tokens_next(s);

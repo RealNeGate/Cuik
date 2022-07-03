@@ -252,19 +252,44 @@ typedef enum Cuik_IntSuffix {
     INT_SUFFIX_ULL  = 1 + 2 + 2,
 } Cuik_IntSuffix;
 
+typedef enum Cuik_ReportLevel {
+    REPORT_VERBOSE,
+    REPORT_INFO,
+    REPORT_WARNING,
+    REPORT_ERROR,
+    REPORT_MAX
+} Cuik_ReportLevel;
+
+typedef struct Cuik_ErrorStatus {
+    int tally[REPORT_MAX];
+} Cuik_ErrorStatus;
+
 typedef unsigned char* Atom;
 typedef struct Cuik_Type Cuik_Type;
 
-// if thread_pool is NULL, parsing is single threaded
-//
-// if ir_module is NULL then translation unit will not be used for IR generation,
-// multiple translation units can be created for the same module you just have to
-// attach them to each other with a compilation unit and internally link them.
-CUIK_API TranslationUnit* cuik_parse_translation_unit(
-    TB_Module* restrict ir_module, TokenStream* restrict s,
-    const Cuik_Target* target, Cuik_IThreadpool* restrict thread_pool
-);
+// used to initialize translation units with cuik_parse_translation_unit
+typedef struct Cuik_TranslationUnitDesc {
+    // tokens CANNOT be NULL
+    TokenStream* tokens;
 
+    // errors CANNOT be NULL
+    Cuik_ErrorStatus* errors;
+
+    // if ir_module is non-NULL then translation unit will be used for
+    // IR generation and function and global signatures will be filled
+    // in accordingly, multiple translation units can be created for the
+    // same module you just have to attach them to each other with a
+    // compilation unit and internally link them.
+    TB_Module* ir_module;
+
+    // if target is non-NULL, builtins will be used based on said target.
+    const Cuik_Target* target;
+
+    // if thread_pool is NULL, parsing is single threaded
+    Cuik_IThreadpool* thread_pool;
+} Cuik_TranslationUnitDesc;
+
+CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* restrict desc);
 CUIK_API void cuik_destroy_translation_unit(TranslationUnit* restrict tu);
 
 ////////////////////////////////////////////

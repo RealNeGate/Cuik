@@ -2,6 +2,7 @@
 #include <ctype.h>
 #include <preproc/cpp.h>
 #include <stdarg.h>
+#include <stdatomic.h>
 
 #if _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -17,7 +18,6 @@ static const char* report_names[] = {
     "error",
 };
 
-static _Atomic int tally[REPORT_MAX] = {};
 mtx_t report_mutex;
 
 #if _WIN32
@@ -28,7 +28,8 @@ const static int attribs[] = {
     FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE | FOREGROUND_INTENSITY,
     FOREGROUND_GREEN | FOREGROUND_INTENSITY,
     FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_INTENSITY,
-    FOREGROUND_RED | FOREGROUND_INTENSITY};
+    FOREGROUND_RED | FOREGROUND_INTENSITY,
+};
 #endif
 
 bool report_using_thin_errors = false;
@@ -57,7 +58,7 @@ void init_report_system(void) {
     mtx_init(&report_mutex, mtx_plain);
 }
 
-static void print_level_name(ReportLevel level) {
+static void print_level_name(Cuik_ReportLevel level) {
     #if _WIN32
     SetConsoleTextAttribute(console_handle, (default_attribs & ~0xF) | attribs[level]);
     printf("%s: ", report_names[level]);
@@ -78,7 +79,7 @@ static SourceLocIndex try_for_nicer_loc(TokenStream* tokens, SourceLocIndex loci
     return loci;
 }
 
-static void display_line(ReportLevel level, TokenStream* tokens, SourceLoc* loc) {
+static void display_line(Cuik_ReportLevel level, TokenStream* tokens, SourceLoc* loc) {
     SourceLocIndex loci = 0;
     while (loc->line->filepath[0] == '<' && loc->line->parent != 0) {
         loci = loc->line->parent;
@@ -94,20 +95,32 @@ static void display_line(ReportLevel level, TokenStream* tokens, SourceLoc* loc)
     }
 }
 
-static void tally_report_counter(ReportLevel level) {
-    int error_count = ++tally[level];
-
-    if (level > REPORT_WARNING && error_count > 20) {
+static void tally_report_counter(Cuik_ReportLevel level, Cuik_ErrorStatus* err) {
+    if (err == NULL) {
         #if _WIN32
         SetConsoleTextAttribute(console_handle, (default_attribs & ~0xF) | FOREGROUND_RED | FOREGROUND_INTENSITY);
         #endif
 
-        printf("EXCEEDED ERROR LIMIT OF 20\n");
+        printf("ABORTING!!!\n");
 
         #if _WIN32
         SetConsoleTextAttribute(console_handle, default_attribs);
         #endif
         abort();
+    } else {
+        int error_count = atomic_fetch_add((atomic_int*) &err->tally[level], 1);
+        if (level > REPORT_WARNING && error_count > 20) {
+            #if _WIN32
+            SetConsoleTextAttribute(console_handle, (default_attribs & ~0xF) | FOREGROUND_RED | FOREGROUND_INTENSITY);
+            #endif
+
+            printf("EXCEEDED ERROR LIMIT OF 20\n");
+
+            #if _WIN32
+            SetConsoleTextAttribute(console_handle, default_attribs);
+            #endif
+            abort();
+        }
     }
 }
 
@@ -212,7 +225,7 @@ static int print_backtrace(TokenStream* tokens, SourceLocIndex loc_index, Source
     }
 }
 
-void report_ranged(ReportLevel level, TokenStream* tokens, SourceLocIndex start_loc, SourceLocIndex end_loc, const char* fmt, ...) {
+void report_ranged(Cuik_ReportLevel level, Cuik_ErrorStatus* err, TokenStream* tokens, SourceLocIndex start_loc, SourceLocIndex end_loc, const char* fmt, ...) {
     SourceLoc loc = merge_source_locations(tokens, start_loc, end_loc);
 
     mtx_lock(&report_mutex);
@@ -253,11 +266,11 @@ void report_ranged(ReportLevel level, TokenStream* tokens, SourceLocIndex start_
         printf("\n");
     }
 
-    tally_report_counter(level);
+    tally_report_counter(level, err);
     mtx_unlock(&report_mutex);
 }
 
-void report(ReportLevel level, TokenStream* tokens, SourceLocIndex loc_index, const char* fmt, ...) {
+void report(Cuik_ReportLevel level, Cuik_ErrorStatus* err, TokenStream* tokens, SourceLocIndex loc_index, const char* fmt, ...) {
     SourceLoc* loc = GET_SOURCE_LOC(loc_index);
 
     mtx_lock(&report_mutex);
@@ -299,11 +312,11 @@ void report(ReportLevel level, TokenStream* tokens, SourceLocIndex loc_index, co
         printf("\n");
     }
 
-    tally_report_counter(level);
+    tally_report_counter(level, err);
     mtx_unlock(&report_mutex);
 }
 
-void report_fix(ReportLevel level, TokenStream* tokens, SourceLocIndex loc_index, const char* tip, const char* fmt, ...) {
+void report_fix(Cuik_ReportLevel level, Cuik_ErrorStatus* err, TokenStream* tokens, SourceLocIndex loc_index, const char* tip, const char* fmt, ...) {
     SourceLoc* loc = GET_SOURCE_LOC(loc_index);
 
     mtx_lock(&report_mutex);
@@ -350,11 +363,11 @@ void report_fix(ReportLevel level, TokenStream* tokens, SourceLocIndex loc_index
         printf("\n");
     }
 
-    tally_report_counter(level);
+    tally_report_counter(level, err);
     mtx_unlock(&report_mutex);
 }
 
-void report_two_spots(ReportLevel level, TokenStream* tokens, SourceLocIndex loc_index, SourceLocIndex loc2_index, const char* msg, const char* loc_msg, const char* loc_msg2, const char* interjection) {
+void report_two_spots(Cuik_ReportLevel level, Cuik_ErrorStatus* err, TokenStream* tokens, SourceLocIndex loc_index, SourceLocIndex loc2_index, const char* msg, const char* loc_msg, const char* loc_msg2, const char* interjection) {
     SourceLoc* loc = GET_SOURCE_LOC(loc_index);
     SourceLoc* loc2 = GET_SOURCE_LOC(loc2_index);
 
@@ -465,8 +478,7 @@ void report_two_spots(ReportLevel level, TokenStream* tokens, SourceLocIndex loc
 
                 // draw underline
                 size_t start_pos = loc2->columns > dist_from_line_start
-                    ? loc2->columns - dist_from_line_start
-                    : 0;
+                    ? loc2->columns - dist_from_line_start : 0;
 
                 size_t tkn_len = loc2->length;
                 for (size_t i = 0; i < start_pos; i++) printf(" ");
@@ -488,22 +500,17 @@ void report_two_spots(ReportLevel level, TokenStream* tokens, SourceLocIndex loc
     }
 
     printf("\n\n");
-    tally_report_counter(level);
+    tally_report_counter(level, err);
     mtx_unlock(&report_mutex);
 }
 
-void crash_if_reports(ReportLevel minimum) {
+bool has_reports(Cuik_ReportLevel minimum, Cuik_ErrorStatus* err) {
     for (int i = minimum; i < REPORT_MAX; i++) {
-        if (tally[i]) {
-            mtx_lock(&report_mutex);
-            printf("exited with %d %s%s", tally[i], report_names[i], tally[i] > 1 ? "s" : "");
-
-            abort();
-            mtx_unlock(&report_mutex);
+        if (atomic_load((atomic_int*) &err->tally[i]) > 0) {
+            //printf("exited with %d %s%s", tally[i], report_names[i], tally[i] > 1 ? "s" : "");
+            return true;
         }
     }
-}
 
-void clear_any_reports(void) {
-    memset(tally, 0, sizeof(tally));
+    return false;
 }
