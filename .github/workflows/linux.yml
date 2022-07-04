@@ -1,0 +1,22 @@
+name: Linux
+
+on: push
+
+jobs:
+  build:
+    name: Linux ${{ matrix.cc }}
+    runs-on: ubuntu-latest
+    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    strategy:
+      matrix:
+        cc: [gcc, clang]
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v2
+
+    - name: Build
+      run: ${{ matrix.cc }} -Wall -Wextra compile.c
+
+    - name: Test
+      run: PATH="bin:$PATH" ./a.out test
