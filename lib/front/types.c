@@ -17,7 +17,8 @@ Cuik_Type builtin_types[] = {
     [TYPE_ULONG] = {KIND_LONG, 8, 8, .is_unsigned = true},
     // floats
     [TYPE_FLOAT] = {KIND_FLOAT, 4, 4},
-    [TYPE_DOUBLE] = {KIND_DOUBLE, 8, 8}};
+    [TYPE_DOUBLE] = {KIND_DOUBLE, 8, 8},
+};
 
 static Cuik_Type* alloc_type(TranslationUnit* tu, const Cuik_Type* src) {
     mtx_lock(&tu->arena_mutex);
@@ -38,7 +39,8 @@ Cuik_Type* new_func(TranslationUnit* tu) {
     return alloc_type(tu, &(Cuik_Type){
             .kind = KIND_FUNC,
             .size = 1,
-            .align = 1});
+            .align = 1,
+        });
 }
 
 Cuik_Type* copy_type(TranslationUnit* tu, Cuik_Type* base) {
@@ -173,6 +175,9 @@ Cuik_Type* get_common_type(TranslationUnit* tu, Cuik_Type* ty1, Cuik_Type* ty2) 
 
 bool type_equal(TranslationUnit* tu, Cuik_Type* ty1, Cuik_Type* ty2) {
     if (ty1 == ty2) return true;
+
+    while (ty1->kind == KIND_QUALIFIED_TYPE) ty1 = ty1->qualified_ty;
+    while (ty2->kind == KIND_QUALIFIED_TYPE) ty2 = ty2->qualified_ty;
 
     // just because they match kind doesn't necessarily
     // mean they're equivalent but if they don't match

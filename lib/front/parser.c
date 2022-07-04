@@ -69,9 +69,9 @@ thread_local static Expr* symbol_chain_current;
 thread_local static Arena local_ast_arena;
 thread_local static bool out_of_order_mode;
 
-static void expect(TokenStream* restrict s, char ch);
+static void expect(TranslationUnit* tu, TokenStream* restrict s, char ch);
 static void expect_closing_paren(TranslationUnit* tu, TokenStream* restrict s, SourceLocIndex opening);
-static void expect_with_reason(TokenStream* restrict s, char ch, const char* reason);
+static void expect_with_reason(TranslationUnit* tu, TokenStream* restrict s, char ch, const char* reason);
 static Symbol* find_local_symbol(TokenStream* restrict s);
 
 static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s);
@@ -79,7 +79,7 @@ static Stmt* parse_stmt_or_expr(TranslationUnit* tu, TokenStream* restrict s);
 static Stmt* parse_compound_stmt(TranslationUnit* tu, TokenStream* restrict s);
 static void parse_decl_or_expr(TranslationUnit* tu, TokenStream* restrict s, size_t* body_count);
 
-static bool skip_over_declspec(TokenStream* restrict s);
+static bool skip_over_declspec(TranslationUnit* tu, TokenStream* restrict s);
 static bool try_parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attribs* attr);
 static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attribs* attr);
 
@@ -96,7 +96,7 @@ static Cuik_Type* parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s
 
 static bool is_typename(TokenStream* restrict s);
 
-static _Noreturn void generic_error(TokenStream* restrict s, const char* msg);
+static _Noreturn void generic_error(TranslationUnit* tu, TokenStream* restrict s, const char* msg);
 
 // Usage:
 //  LOCAL_SCOPE {
@@ -397,7 +397,7 @@ void type_layout(TranslationUnit* restrict tu, Cuik_Type* type) {
             TokenStream mini_lex = tu->tokens;
             mini_lex.current = type->array_count_lexer_pos;
             type->array_count = parse_const_expr(tu, &mini_lex);
-            expect(&mini_lex, ']');
+            expect(tu, &mini_lex, ']');
         }
 
         // layout crap
@@ -550,17 +550,17 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
             // TODO(NeGate): Correctly parse pragmas instead of ignoring them.
             if (tokens_get(s)->type == TOKEN_KW_Pragma) {
                 tokens_next(s);
-                expect(s, '(');
+                expect(tu, s, '(');
 
                 if (tokens_get(s)->type != TOKEN_STRING_DOUBLE_QUOTE) {
-                    generic_error(s, "pragma declaration expects string literal");
+                    generic_error(tu, s, "pragma declaration expects string literal");
                 }
                 tokens_next(s);
 
-                expect(s, ')');
+                expect(tu, s, ')');
             } else if (tokens_get(s)->type == TOKEN_KW_Static_assert) {
                 tokens_next(s);
-                expect(s, '(');
+                expect(tu, s, '(');
 
                 TknType terminator;
                 size_t current = skip_expression_in_parens(s, &terminator);
@@ -572,12 +572,12 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
 
                     Token* t = tokens_get(s);
                     if (t->type != TOKEN_STRING_DOUBLE_QUOTE) {
-                        generic_error(s, "static assertion expects string literal");
+                        generic_error(tu, s, "static assertion expects string literal");
                     }
                     tokens_next(s);
                 }
 
-                expect(s, ')');
+                expect(tu, s, ')');
             } else {
                 SourceLocIndex loc = tokens_get_location_index(s);
 
@@ -857,6 +857,8 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
     }
     out_of_order_mode = false;
 
+    if (has_reports(REPORT_ERROR, tu->errors)) goto parse_error;
+
     // Phase 2: resolve top level types, layout records and anything else so that
     // we have a complete global symbol table
     CUIK_TIMED_BLOCK("phase 2") {
@@ -926,7 +928,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                     e = parse_initializer(tu, &mini_lex, NULL);
                 } else {
                     e = parse_expr_l14(tu, &mini_lex);
-                    expect(&mini_lex, sym->terminator);
+                    expect(tu, &mini_lex, sym->terminator);
                 }
 
                 sym->stmt->decl.initial = e;
@@ -971,7 +973,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
 
                 Token* t = tokens_get(&mini_lex);
                 if (t->type != TOKEN_STRING_DOUBLE_QUOTE) {
-                    generic_error(&mini_lex, "static assertion expects string literal");
+                    generic_error(tu, &mini_lex, "static assertion expects string literal");
                 }
                 tokens_next(&mini_lex);
 
@@ -1072,8 +1074,8 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
         local_symbol_start = local_symbol_count = 0;
 
         // free parser crap
-        free(local_tags);
-        free(local_symbols);
+        free(local_tags), local_tags = NULL;
+        free(local_symbols), local_symbols = NULL;
         shfree(global_tags);
         shfree(global_symbols);
 
@@ -1102,9 +1104,23 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
 
     return tu;
 
-    parse_error:
-    // TODO(NeGate): free all translation unit resources because we failed :(
-    return NULL;
+    parse_error: {
+        // free all translation unit resources because we failed :(
+        arrfree(pending_exprs);
+        dyn_array_destroy(static_assertions);
+
+        // free parser crap
+        free(local_tags);
+        free(local_symbols);
+        shfree(global_tags);
+        shfree(global_symbols);
+
+        // free tokens
+        arrfree(tu->tokens.tokens);
+
+        cuik_destroy_translation_unit(tu);
+        return NULL;
+    }
 }
 
 CUIK_API void cuik_destroy_translation_unit(TranslationUnit* restrict tu) {
@@ -1225,7 +1241,7 @@ static Stmt* parse_compound_stmt(TranslationUnit* tu, TokenStream* restrict s) {
                 }
             }
         }
-        expect(s, '}');
+        expect(tu, s, '}');
 
         Stmt** permanent_storage = arena_alloc(&thread_arena, kid_count * sizeof(Stmt*), _Alignof(Stmt*));
         memcpy(permanent_storage, kids, kid_count * sizeof(Stmt*));
@@ -1260,7 +1276,7 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
         n->return_ = (struct StmtReturn){
             .expr = e};
 
-        expect_with_reason(s, ';', "return");
+        expect_with_reason(tu, s, ';', "return");
         return n;
     } else if (peek == TOKEN_KW_if) {
         tokens_next(s);
@@ -1270,7 +1286,7 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
             Expr* cond;
             {
                 SourceLocIndex opening_loc = tokens_get_location_index(s);
-                expect(s, '(');
+                expect(tu, s, '(');
 
                 cond = parse_expr(tu, s);
 
@@ -1303,9 +1319,9 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
         Stmt* n = make_stmt(tu, s, STMT_SWITCH, sizeof(struct StmtSwitch));
 
         LOCAL_SCOPE {
-            expect(s, '(');
+            expect(tu, s, '(');
             Expr* cond = parse_expr(tu, s);
-            expect(s, ')');
+            expect(tu, s, ')');
 
             n->switch_ = (struct StmtSwitch){
                 .condition = cond};
@@ -1337,7 +1353,7 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
             // GNU extension, case ranges
             tokens_next(s);
             intmax_t key_max = parse_const_expr(tu, s);
-            expect(s, ':');
+            expect(tu, s, ':');
 
             assert(key_max > key);
             n->case_.key = key;
@@ -1351,7 +1367,7 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
                 n = curr;
             }
         } else {
-            expect(s, ':');
+            expect(tu, s, ':');
 
             n->case_ = (struct StmtCase){
                 .key = key, .body = 0, .next = 0};
@@ -1396,7 +1412,7 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
             abort();
         }
         current_switch_or_case = n;
-        expect(s, ':');
+        expect(tu, s, ':');
 
         n->default_ = (struct StmtDefault){
             .body = 0, .next = 0,
@@ -1410,7 +1426,7 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
         assert(current_breakable);
 
         tokens_next(s);
-        expect(s, ';');
+        expect(tu, s, ';');
 
         Stmt* n = make_stmt(tu, s, STMT_BREAK, sizeof(struct StmtBreak));
         n->break_ = (struct StmtBreak){
@@ -1422,7 +1438,7 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
         assert(current_continuable);
 
         tokens_next(s);
-        expect(s, ';');
+        expect(tu, s, ';');
 
         Stmt* n = make_stmt(tu, s, STMT_CONTINUE, sizeof(struct StmtContinue));
         n->continue_ = (struct StmtContinue){
@@ -1434,9 +1450,9 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
         Stmt* n = make_stmt(tu, s, STMT_WHILE, sizeof(struct StmtWhile));
 
         LOCAL_SCOPE {
-            expect(s, '(');
+            expect(tu, s, '(');
             Expr* cond = parse_expr(tu, s);
-            expect(s, ')');
+            expect(tu, s, ')');
 
             // Push this as a breakable statement
             Stmt* body;
@@ -1464,7 +1480,7 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
         Stmt* n = make_stmt(tu, s, STMT_FOR, sizeof(struct StmtFor));
 
         LOCAL_SCOPE {
-            expect(s, '(');
+            expect(tu, s, '(');
 
             // it's either nothing, a declaration, or an expression
             Stmt* first = NULL;
@@ -1496,7 +1512,7 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
                 tokens_next(s);
             } else {
                 cond = parse_expr(tu, s);
-                expect(s, ';');
+                expect(tu, s, ';');
             }
 
             Expr* next = NULL;
@@ -1505,7 +1521,7 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
                 tokens_next(s);
             } else {
                 next = parse_expr(tu, s);
-                expect(s, ')');
+                expect(tu, s, ')');
             }
 
             // Push this as a breakable statement
@@ -1558,12 +1574,12 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
             }
             tokens_next(s);
 
-            expect(s, '(');
+            expect(tu, s, '(');
 
             Expr* cond = parse_expr(tu, s);
 
-            expect(s, ')');
-            expect(s, ';');
+            expect(tu, s, ')');
+            expect(tu, s, ';');
 
             n->do_while = (struct StmtDoWhile){
                 .cond = cond,
@@ -1617,7 +1633,7 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
             .target = target,
         };
 
-        expect(s, ';');
+        expect(tu, s, ';');
         return n;
     } else if (peek == TOKEN_IDENTIFIER && tokens_peek(s)->type == TOKEN_COLON) {
         // label amirite
@@ -1650,14 +1666,14 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 static void parse_decl_or_expr(TranslationUnit* tu, TokenStream* restrict s, size_t* body_count) {
     if (tokens_get(s)->type == TOKEN_KW_Pragma) {
         tokens_next(s);
-        expect(s, '(');
+        expect(tu, s, '(');
 
         if (tokens_get(s)->type != TOKEN_STRING_DOUBLE_QUOTE) {
-            generic_error(s, "pragma declaration expects string literal");
+            generic_error(tu, s, "pragma declaration expects string literal");
         }
         tokens_next(s);
 
-        expect(s, ')');
+        expect(tu, s, ')');
     } else if (tokens_get(s)->type == ';') {
         tokens_next(s);
     } else if (is_typename(s)) {
@@ -1669,9 +1685,8 @@ static void parse_decl_or_expr(TranslationUnit* tu, TokenStream* restrict s, siz
             bool expect_comma = false;
             while (tokens_get(s)->type != ';') {
                 if (expect_comma) {
-                    expect_with_reason(s, ',', "typedef");
-                } else
-                    expect_comma = true;
+                    expect_with_reason(tu, s, ',', "typedef");
+                } else expect_comma = true;
 
                 Decl decl = parse_declarator(tu, s, type, false, false);
                 assert(decl.name);
@@ -1697,7 +1712,7 @@ static void parse_decl_or_expr(TranslationUnit* tu, TokenStream* restrict s, siz
                 };
             }
 
-            expect(s, ';');
+            expect(tu, s, ';');
         } else {
             // TODO(NeGate): Kinda ugly
             // don't expect one the first time
@@ -1705,7 +1720,7 @@ static void parse_decl_or_expr(TranslationUnit* tu, TokenStream* restrict s, siz
             while (tokens_get(s)->type != ';') {
                 if (expect_comma) {
                     if (tokens_get(s)->type == '{') {
-                        generic_error(s, "nested functions are not allowed... yet");
+                        generic_error(tu, s, "nested functions are not allowed... yet");
                     } else if (tokens_get(s)->type != ',') {
 				        SourceLocIndex loc = tokens_get_last_location_index(s);
 
@@ -1763,7 +1778,7 @@ static void parse_decl_or_expr(TranslationUnit* tu, TokenStream* restrict s, siz
                 *body_count += 1;
             }
 
-            expect(s, ';');
+            expect(tu, s, ';');
         }
     } else {
         Stmt* n = make_stmt(tu, s, STMT_EXPR, sizeof(struct StmtExpr));
@@ -1773,21 +1788,21 @@ static void parse_decl_or_expr(TranslationUnit* tu, TokenStream* restrict s, siz
 
         *((Stmt**)tls_push(sizeof(Stmt*))) = n;
         *body_count += 1;
-        expect(s, ';');
+        expect(tu, s, ';');
     }
 }
 
 static Stmt* parse_stmt_or_expr(TranslationUnit* tu, TokenStream* restrict s) {
     if (tokens_get(s)->type == TOKEN_KW_Pragma) {
         tokens_next(s);
-        expect(s, '(');
+        expect(tu, s, '(');
 
         if (tokens_get(s)->type != TOKEN_STRING_DOUBLE_QUOTE) {
-            generic_error(s, "pragma declaration expects string literal");
+            generic_error(tu, s, "pragma declaration expects string literal");
         }
         tokens_next(s);
 
-        expect(s, ')');
+        expect(tu, s, ')');
         return 0;
     } else if (tokens_get(s)->type == ';') {
         tokens_next(s);
@@ -1803,7 +1818,7 @@ static Stmt* parse_stmt_or_expr(TranslationUnit* tu, TokenStream* restrict s) {
             Expr* expr = parse_expr(tu, s);
             n->expr = (struct StmtExpr){ .expr = expr };
 
-            expect(s, ';');
+            expect(tu, s, ';');
             return n;
         }
     }
@@ -1814,7 +1829,7 @@ static intmax_t parse_const_expr(TranslationUnit* tu, TokenStream* restrict s) {
     intmax_t vi = v.signed_value;
 
     if (!v.is_signed && vi != v.unsigned_value) {
-        generic_error(s, "Constant integer cannot be represented as signed integer.");
+        generic_error(tu, s, "Constant integer cannot be represented as signed integer.");
     }
 
     return vi;
@@ -1823,14 +1838,14 @@ static intmax_t parse_const_expr(TranslationUnit* tu, TokenStream* restrict s) {
 ////////////////////////////////
 // ERRORS
 ////////////////////////////////
-static _Noreturn void generic_error(TokenStream* restrict s, const char* msg) {
+static _Noreturn void generic_error(TranslationUnit* tu, TokenStream* restrict s, const char* msg) {
     SourceLocIndex loc = tokens_get_location_index(s);
 
     report(REPORT_ERROR, NULL, s, loc, msg);
     abort();
 }
 
-static void expect(TokenStream* restrict s, char ch) {
+static void expect(TranslationUnit* tu, TokenStream* restrict s, char ch) {
     if (tokens_get(s)->type != ch) {
         Token* t = tokens_get(s);
         SourceLocIndex loc = tokens_get_location_index(s);
@@ -1856,7 +1871,7 @@ static void expect_closing_paren(TranslationUnit* tu, TokenStream* restrict s, S
     tokens_next(s);
 }
 
-static void expect_with_reason(TokenStream* restrict s, char ch, const char* reason) {
+static void expect_with_reason(TranslationUnit* tu, TokenStream* restrict s, char ch, const char* reason) {
     if (tokens_get(s)->type != ch) {
         SourceLocIndex loc = tokens_get_last_location_index(s);
 

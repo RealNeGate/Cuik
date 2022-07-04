@@ -21,8 +21,10 @@ inline static void* dyn_array_internal_create(size_t type_size) {
 }
 
 inline static void dyn_array_internal_destroy(void* ptr) {
-    DynArrayHeader* header = ((DynArrayHeader*)ptr) - 1;
-    free(header);
+    if (ptr != NULL) {
+        DynArrayHeader* header = ((DynArrayHeader*)ptr) - 1;
+        free(header);
+    }
 }
 
 inline static void* dyn_array_internal_reserve(void* ptr, size_t type_size, size_t extra) {
@@ -44,7 +46,7 @@ inline static void* dyn_array_internal_reserve(void* ptr, size_t type_size, size
 
 #define DynArray(T) T*
 #define dyn_array_create(T) dyn_array_internal_create(sizeof(T))
-#define dyn_array_destroy(arr) dyn_array_internal_destroy(arr)
+#define dyn_array_destroy(arr) (dyn_array_internal_destroy(arr), (arr) = NULL)
 
 #define dyn_array_put(arr, new_data)                        \
 do {                                                        \

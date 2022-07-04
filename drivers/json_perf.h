@@ -2,14 +2,16 @@
 #include <threads.h>
 
 static FILE* jsonperf__file;
+static bool jsonperf__first_plot;
 
 static void jsonperf__start(void* user_data) {
     jsonperf__file = fopen((char*) user_data, "wb");
+    jsonperf__first_plot = true;
     fprintf(jsonperf__file, "{\"otherData\": {},\"traceEvents\":[");
 }
 
 static void jsonperf__stop(void* user_data) {
-    fprintf(jsonperf__file, "]}");
+    fprintf(jsonperf__file, "\n]}");
     fclose(jsonperf__file);
 }
 
@@ -25,16 +27,18 @@ static void jsonperf__plot(void* user_data, uint64_t start_ns, uint64_t end_ns, 
         #endif
 
         fprintf(jsonperf__file,
-            "{\"cat\":\"function\", "
+            "%s{\"cat\":\"function\", "
             "\"dur\":%lld, "
             "\"name\":\"%s\", "
             "\"ph\":\"X\", "
             "\"pid\":0, "
             "\"tid\": %u, "
-            "\"ts\": %lld},\n",
-
+            "\"ts\": %lld}",
+            jsonperf__first_plot ? "\n" : ",\n",
             (long long)elapsed_in_microseconds, label, tid,
             (long long)start_in_microseconds);
+
+        jsonperf__first_plot = false;
     }
 }
 

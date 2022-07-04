@@ -5,7 +5,7 @@ static bool parse_attributes(TranslationUnit* restrict tu, TokenStream* restrict
     if (tokens_get(s)->type == TOKEN_KW_attribute ||
         tokens_get(s)->type == TOKEN_KW_asm) {
         tokens_next(s);
-        expect(s, '(');
+        expect(tu, s, '(');
 
         // TODO(NeGate): Correctly parse attributes instead of
         // ignoring them.
@@ -25,11 +25,11 @@ static bool parse_attributes(TranslationUnit* restrict tu, TokenStream* restrict
     return false;
 }
 
-static bool skip_over_declspec(TokenStream* restrict s) {
+static bool skip_over_declspec(TranslationUnit* tu, TokenStream* restrict s) {
     if (tokens_get(s)->type == TOKEN_KW_declspec ||
         tokens_get(s)->type == TOKEN_KW_Pragma) {
         tokens_next(s);
-        expect(s, '(');
+        expect(tu, s, '(');
 
         // TODO(NeGate): Correctly parse declspec instead of
         // ignoring them.
@@ -97,7 +97,7 @@ static Decl parse_declarator(TranslationUnit* tu, TokenStream* restrict s, Cuik_
         }
     }
 
-    skip_over_declspec(s);
+    skip_over_declspec(tu, s);
 
     bool is_nested_declarator = tokens_get(s)->type == '(';
 
@@ -249,7 +249,7 @@ static Cuik_Type* parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s
         }
 
         if (tokens_get(s)->type != ')') {
-            generic_error(s, "Unclosed parameter list!");
+            generic_error(tu, s, "Unclosed parameter list!");
         }
         tokens_next(s);
 
@@ -273,7 +273,7 @@ static Cuik_Type* parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s
                 tokens_next(s);
             } else if (tokens_get(s)->type == '*') {
                 tokens_next(s);
-                expect(s, ']');
+                expect(tu, s, ']');
             } else {
                 current = s->current;
 
@@ -300,7 +300,7 @@ static Cuik_Type* parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s
                 }
 
                 tokens_prev(s);
-                expect(s, ']');
+                expect(tu, s, ']');
             }
 
             type = parse_type_suffix(tu, s, type, name);
@@ -325,10 +325,10 @@ static Cuik_Type* parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s
                 } else if (tokens_get(s)->type == '*') {
                     count = 0;
                     tokens_next(s);
-                    expect(s, ']');
+                    expect(tu, s, ']');
                 } else {
                     count = parse_const_expr(tu, s);
-                    expect(s, ']');
+                    expect(tu, s, ']');
                 }
 
                 tls_push(sizeof(size_t));
@@ -461,7 +461,7 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
                 tokens_next(s);
 
                 SourceLocIndex opening_loc = tokens_get_location_index(s);
-                expect(s, '(');
+                expect(tu, s, '(');
 
                 type = parse_typename(tu, s);
                 if (!(type->kind >= KIND_CHAR && type->kind <= KIND_LONG) &&
@@ -470,7 +470,7 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
                     return NULL;
                 }
 
-                expect(s, ',');
+                expect(tu, s, ',');
 
                 intmax_t count = parse_const_expr(tu, s);
 
@@ -581,7 +581,7 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
                 }
 
                 tokens_next(s);
-                expect(s, '(');
+                expect(tu, s, '(');
 
                 if (out_of_order_mode) {
                     // _Alignas ( SOMETHING )
@@ -630,7 +630,7 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
                 // TODO(NeGate): Correctly parse declspec instead of
                 // ignoring them.
                 tokens_next(s);
-                expect(s, '(');
+                expect(tu, s, '(');
 
                 int depth = 1;
                 while (depth) {
@@ -654,7 +654,7 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
 
                 bool is_union = tkn_type == TOKEN_KW_union;
 
-                while (skip_over_declspec(s)) {
+                while (skip_over_declspec(tu, s)) {
                     // TODO(NeGate): printf("Don't forget about declspec\n");
                 }
 
@@ -703,7 +703,7 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
                     Member* members = tls_save();
 
                     while (tokens_get(s)->type != '}') {
-                        if (skip_over_declspec(s)) continue;
+                        if (skip_over_declspec(tu, s)) continue;
 
                         // in case we have unnamed declarators and we somewhere for them to point to
                         SourceLocIndex default_loc = tokens_get_location_index(s);
@@ -764,11 +764,11 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
                             } else if (tokens_get(s)->type == ';') break;
                         } while (true);
 
-                        expect(s, ';');
+                        expect(tu, s, ';');
                     }
 
                     if (tokens_get(s)->type != '}') {
-                        generic_error(s, "Unclosed member list!");
+                        generic_error(tu, s, "Unclosed member list!");
                     }
 
                     // put members into more permanent storage
@@ -788,7 +788,7 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
                     tls_restore(members);
                 } else {
                     // TODO(NeGate): must be a forward decl, handle it
-                    if (name == NULL) generic_error(s, "Cannot have unnamed forward struct reference.");
+                    if (name == NULL) generic_error(tu, s, "Cannot have unnamed forward struct reference.");
 
                     type = find_tag((const char*)name);
                     if (type == NULL) {
@@ -838,7 +838,7 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
                         // TODO(NeGate): error messages
                         size_t count = type->enumerator.count;
                         if (count) {
-                            generic_error(s, "Cannot recomplete an enumerator");
+                            generic_error(tu, s, "Cannot recomplete an enumerator");
                         }
                     } else {
                         type = new_enum(tu);
@@ -880,7 +880,7 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
                         // parse name
                         Token* t = tokens_get(s);
                         if (t->type != TOKEN_IDENTIFIER) {
-                            generic_error(s, "expected identifier for enum name entry.");
+                            generic_error(tu, s, "expected identifier for enum name entry.");
                         }
 
                         Atom name = atoms_put(t->end - t->start, t->start);
@@ -927,7 +927,7 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
                     }
 
                     if (tokens_get(s)->type != '}') {
-                        generic_error(s, "Unclosed enum list!");
+                        generic_error(tu, s, "Unclosed enum list!");
                     }
 
                     // move to more permanent storage
@@ -1103,7 +1103,7 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
             assert(type);
             break;
             default:
-            generic_error(s, "invalid type");
+            generic_error(tu, s, "invalid type");
             break;
         }
 

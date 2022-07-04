@@ -21,7 +21,7 @@ static Expr* parse_function_literal(TranslationUnit* tu, TokenStream* restrict s
         type = parse_declspec(tu, s, &attr);
         type = parse_declarator(tu, s, type, true, true).type;
 
-        expect(s, ')');
+        expect(tu, s, ')');
     }
 
     if (type->kind == KIND_PTR) {
@@ -29,7 +29,7 @@ static Expr* parse_function_literal(TranslationUnit* tu, TokenStream* restrict s
     }
 
     if (type->kind != KIND_FUNC) {
-        generic_error(s, "Function literal base type is not a function type");
+        generic_error(tu, s, "Function literal base type is not a function type");
     }
 
     // Because of the "not a lambda" nature of the function literals they count as
@@ -81,7 +81,7 @@ static void parse_initializer_member(TranslationUnit* tu, TokenStream* restrict 
             int start = parse_const_expr(tu, s);
             if (start < 0) {
                 // TODO(NeGate): Error messages
-                generic_error(s, "Array initializer range is broken.");
+                generic_error(tu, s, "Array initializer range is broken.");
             }
 
             // GNU-extension: array range initializer
@@ -92,10 +92,10 @@ static void parse_initializer_member(TranslationUnit* tu, TokenStream* restrict 
                 count = parse_const_expr(tu, s) - start;
                 if (count <= 1) {
                     // TODO(NeGate): Error messages
-                    generic_error(s, "Array initializer range is broken.");
+                    generic_error(tu, s, "Array initializer range is broken.");
                 }
             }
-            expect(s, ']');
+            expect(tu, s, ']');
 
             current = (InitNode*)tls_push(sizeof(InitNode));
             *current = (InitNode){
@@ -128,7 +128,7 @@ static void parse_initializer_member(TranslationUnit* tu, TokenStream* restrict 
     }
 
     if (current != NULL) {
-        expect(s, '=');
+        expect(tu, s, '=');
     } else {
         current = (InitNode*)tls_push(sizeof(InitNode));
         *current = (InitNode){ 0 };
@@ -145,7 +145,7 @@ static void parse_initializer_member(TranslationUnit* tu, TokenStream* restrict 
         bool expect_comma = false;
         while (tokens_get(s)->type != '}') {
             if (expect_comma) {
-                expect(s, ',');
+                expect(tu, s, ',');
 
                 // we allow for trailing commas like ballers do
                 if (tokens_get(s)->type == '}') break;
@@ -156,7 +156,7 @@ static void parse_initializer_member(TranslationUnit* tu, TokenStream* restrict 
         }
 
         current->kids_count = local_count;
-        expect(s, '}');
+        expect(tu, s, '}');
     } else {
         // parse without comma operator
         current->kids_count = 0;
@@ -174,7 +174,7 @@ static Expr* parse_initializer(TranslationUnit* tu, TokenStream* restrict s, Cui
     bool expect_comma = false;
     while (tokens_get(s)->type != '}') {
         if (expect_comma) {
-            expect(s, ',');
+            expect(tu, s, ',');
 
             if (tokens_get(s)->type == '}') break;
         } else
@@ -185,7 +185,7 @@ static Expr* parse_initializer(TranslationUnit* tu, TokenStream* restrict s, Cui
     }
 
     size_t total_node_count = ((InitNode*)tls_save()) - start;
-    expect(s, '}');
+    expect(tu, s, '}');
 
     InitNode* permanent_store = arena_alloc(&thread_arena, total_node_count * sizeof(InitNode), _Alignof(InitNode));
     memcpy(permanent_store, start, total_node_count * sizeof(InitNode));
@@ -228,11 +228,11 @@ static Expr* parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
             if (length == sizeof("__va_arg") - 1 && memcmp(name, "__va_arg", length) == 0) {
                 tokens_next(s);
 
-                expect(s, '(');
+                expect(tu, s, '(');
                 Expr* src = parse_expr_l14(tu, s);
-                expect(s, ',');
+                expect(tu, s, ',');
                 Cuik_Type* type = parse_typename(tu, s);
-                expect(s, ')');
+                expect(tu, s, ')');
 
                 tokens_prev(s);
 
@@ -406,7 +406,7 @@ static Expr* parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
             tokens_next(s);
 
             SourceLocIndex opening_loc = tokens_get_location_index(s);
-            expect(s, '(');
+            expect(tu, s, '(');
 
             // controlling expression followed by a comma
             Expr* controlling_expr = parse_expr_l14(tu, s);
@@ -415,7 +415,7 @@ static Expr* parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
                 .op = EXPR_GENERIC,
                 .generic_ = {.controlling_expr = controlling_expr},
             };
-            expect(s, ',');
+            expect(tu, s, ',');
 
             size_t entry_count = 0;
             C11GenericEntry* entries = tls_save();
@@ -434,7 +434,7 @@ static Expr* parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
                     }
 
                     default_loc = tokens_get_location_index(s);
-                    expect(s, ':');
+                    expect(tu, s, ':');
                     Expr* expr = parse_expr_l14(tu, s);
 
                     // the default case is like a normal entry but without a type :p
@@ -447,7 +447,7 @@ static Expr* parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
                     Cuik_Type* type = parse_typename(tu, s);
                     assert(type != 0 && "TODO: error recovery");
 
-                    expect(s, ':');
+                    expect(tu, s, ':');
                     Expr* expr = parse_expr_l14(tu, s);
 
                     tls_push(sizeof(C11GenericEntry));
@@ -477,7 +477,7 @@ static Expr* parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
         }
 
         default:
-        generic_error(s, "could not parse expression");
+        generic_error(tu, s, "could not parse expression");
     }
 
     e->start_loc = start_loc;
@@ -495,7 +495,7 @@ static Expr* parse_expr_l1(TranslationUnit* tu, TokenStream* restrict s) {
 
         if (is_typename(s)) {
             Cuik_Type* type = parse_typename(tu, s);
-            expect(s, ')');
+            expect(tu, s, ')');
 
             if (tokens_get(s)->type == '{') {
                 tokens_next(s);
@@ -528,7 +528,7 @@ static Expr* parse_expr_l1(TranslationUnit* tu, TokenStream* restrict s) {
 
             tokens_next(s);
             Expr* index = parse_expr(tu, s);
-            expect(s, ']');
+            expect(tu, s, ']');
 
             SourceLocIndex end_loc = tokens_get_last_location_index(s);
 
@@ -545,7 +545,7 @@ static Expr* parse_expr_l1(TranslationUnit* tu, TokenStream* restrict s) {
         if (tokens_get(s)->type == TOKEN_ARROW) {
             tokens_next(s);
             if (tokens_get(s)->type != TOKEN_IDENTIFIER) {
-                generic_error(s, "Expected identifier after member access a.b");
+                generic_error(tu, s, "Expected identifier after member access a.b");
             }
 
             SourceLocIndex end_loc = tokens_get_location_index(s);
@@ -569,7 +569,7 @@ static Expr* parse_expr_l1(TranslationUnit* tu, TokenStream* restrict s) {
         if (tokens_get(s)->type == '.') {
             tokens_next(s);
             if (tokens_get(s)->type != TOKEN_IDENTIFIER) {
-                generic_error(s, "Expected identifier after member access a.b");
+                generic_error(tu, s, "Expected identifier after member access a.b");
             }
 
             SourceLocIndex end_loc = tokens_get_location_index(s);
@@ -601,7 +601,7 @@ static Expr* parse_expr_l1(TranslationUnit* tu, TokenStream* restrict s) {
 
             while (tokens_get(s)->type != ')') {
                 if (param_count) {
-                    expect(s, ',');
+                    expect(tu, s, ',');
                 }
 
                 // NOTE(NeGate): This is a funny little work around because
@@ -613,7 +613,7 @@ static Expr* parse_expr_l1(TranslationUnit* tu, TokenStream* restrict s) {
             }
 
             if (tokens_get(s)->type != ')') {
-                generic_error(s, "Unclosed parameter list!");
+                generic_error(tu, s, "Unclosed parameter list!");
             }
             tokens_next(s);
 
@@ -976,7 +976,7 @@ static Expr* parse_expr_l13(TranslationUnit* tu, TokenStream* restrict s) {
 
         Expr* mhs = parse_expr(tu, s);
 
-        expect(s, ':');
+        expect(tu, s, ':');
 
         Expr* rhs = parse_expr_l13(tu, s);
 
@@ -1096,14 +1096,14 @@ static Expr* parse_expr_l15(TranslationUnit* tu, TokenStream* restrict s) {
 static Expr* parse_expr(TranslationUnit* tu, TokenStream* restrict s) {
     if (tokens_get(s)->type == TOKEN_KW_Pragma) {
         tokens_next(s);
-        expect(s, '(');
+        expect(tu, s, '(');
 
         if (tokens_get(s)->type != TOKEN_STRING_DOUBLE_QUOTE) {
-            generic_error(s, "pragma declaration expects string literal");
+            generic_error(tu, s, "pragma declaration expects string literal");
         }
         tokens_next(s);
 
-        expect(s, ')');
+        expect(tu, s, ')');
     }
 
     return parse_expr_l15(tu, s);

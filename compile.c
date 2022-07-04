@@ -70,7 +70,12 @@ void expect_return_value(const char* path, int expected) {
     }
 
     // Run
+    #ifdef _WIN32
     snprintf(cmd, 1024, "%s.exe", path);
+    #else
+    snprintf(cmd, 1024, "%s", path);
+    #endif
+
     code = system(cmd);
     if (code != expected) {
         printf("Fail to execute! (code: %d)\n", code);
@@ -99,7 +104,12 @@ void expect_stdout(const char* path, const char* expected) {
     }
 
     // Run
+    #ifdef _WIN32
     snprintf(cmd, 1024, "%s.exe", path);
+    #else
+    snprintf(cmd, 1024, "%s", path);
+    #endif
+
     FILE* stream = popen(cmd, "r");
 
     char data[1024];
@@ -146,11 +156,19 @@ void differential(const char* path) {
     }
 
     // Run
+    #ifdef _WIN32
     snprintf(cmd, 1024, "%s.exe", path);
     FILE* stream = popen(cmd, "r");
 
     snprintf(cmd, 1024, "%s_clang.exe", path);
     FILE* baseline_stream = popen(cmd, "r");
+    #else
+    snprintf(cmd, 1024, "%s", path);
+    FILE* stream = popen(cmd, "r");
+
+    snprintf(cmd, 1024, "%s_clang", path);
+    FILE* baseline_stream = popen(cmd, "r");
+    #endif
 
     while (true) {
         char data[1024], data2[1024];

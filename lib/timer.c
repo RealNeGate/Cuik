@@ -21,7 +21,7 @@ static const Cuik_IProfiler* profiler;
 
 CUIK_API void cuik_start_global_profiler(const Cuik_IProfiler* p, bool lock_on_plot) {
     assert(p != NULL);
-    assert(profiler != NULL);
+    assert(profiler == NULL);
 
     profiler = p;
     should_lock_profiler = lock_on_plot;
@@ -37,7 +37,7 @@ CUIK_API void cuik_start_global_profiler(const Cuik_IProfiler* p, bool lock_on_p
 CUIK_API void cuik_stop_global_profiler(void) {
     assert(profiler != NULL);
 
-    CUIK_CALL(profiler, plot, global_profiler_start, cuik_time_in_nanos(), "libCuik");
+    CUIK_CALL(profiler, plot, 0, cuik_time_in_nanos() - global_profiler_start, "libCuik");
     CUIK_CALL(profiler, stop);
 
     if (should_lock_profiler) {
@@ -66,7 +66,7 @@ CUIK_API void cuik_profile_region(uint64_t start, const char* fmt, ...) {
     label[sizeof(label) - 1] = '\0';
     va_end(ap);
 
-    CUIK_CALL(profiler, plot, start, end, label);
+    CUIK_CALL(profiler, plot, start - global_profiler_start, end - global_profiler_start, label);
 
     if (should_lock_profiler) mtx_unlock(&timer_mutex);
 }
