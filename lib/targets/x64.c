@@ -254,7 +254,13 @@ static Cuik_Type* type_check_builtin(TranslationUnit* tu, Expr* e, const char* n
         }
         args[1]->cast_type = dst_type->ptr_to;
 
-        Cuik_Type* order_type = sema_expr(tu, args[2]);
+        Expr* order_expr = cuik__optimize_ast(tu, args[2]);
+        if (order_expr->op != EXPR_INT) {
+            REPORT_EXPR(ERROR, e, "Memory order must be a constant expression");
+            return &builtin_types[TYPE_INT];
+        }
+
+        Cuik_Type* order_type = sema_expr(tu, order_expr);
         if (order_type->kind < KIND_CHAR || order_type->kind > KIND_LONG) {
             REPORT_EXPR(ERROR, e, "Memory order must be an integer");
             return &builtin_types[TYPE_INT];
@@ -342,12 +348,8 @@ static TB_Register compile_builtin(TranslationUnit* tu, TB_Function* func, const
         TB_Register dst = irgen_as_rvalue(tu, func, args[0]);
         TB_Register src = irgen_as_rvalue(tu, func, args[1]);
 
-        int order = const_eval(tu, args[2]).unsigned_value;
-        if (order >= 6) {
-            REPORT_EXPR(ERROR, args[2], "memory order must be between 0 - 6 (check stdatomic.h for the values)");
-            return 0;
-        }
-
+        assert(args[2]->op == EXPR_INT && args[2]->int_num.num < 6);
+        int order = args[2]->int_num.num;
         return tb_inst_atomic_xchg(func, dst, src, order);
     } else if (strcmp(name, "__builtin_mul_overflow") == 0) {
         Cuik_Type* type = args[0]->cast_type;

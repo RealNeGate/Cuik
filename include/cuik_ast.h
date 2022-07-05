@@ -464,7 +464,6 @@ struct Expr {
 
         struct ExprEnum {
             int* num;
-            Expr* next_symbol_in_chain;
         } enum_val;
         struct {
             Cuik_Type* type;
@@ -546,5 +545,4 @@ struct Expr {
     };
 };
 _Static_assert(offsetof(Expr, next_symbol_in_chain) == offsetof(Expr, next_symbol_in_chain2), "these should be aliasing");
-_Static_assert(offsetof(Expr, next_symbol_in_chain) == offsetof(Expr, enum_val.next_symbol_in_chain), "these should be aliasing");
 _Static_assert(offsetof(Expr, next_symbol_in_chain) == offsetof(Expr, builtin_sym.next_symbol_in_chain), "these should be aliasing");

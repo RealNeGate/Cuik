@@ -1825,14 +1825,13 @@ static Stmt* parse_stmt_or_expr(TranslationUnit* tu, TokenStream* restrict s) {
 }
 
 static intmax_t parse_const_expr(TranslationUnit* tu, TokenStream* restrict s) {
-    ConstValue v = const_eval(tu, parse_expr_l14(tu, s));
-    intmax_t vi = v.signed_value;
-
-    if (!v.is_signed && vi != v.unsigned_value) {
-        generic_error(tu, s, "Constant integer cannot be represented as signed integer.");
+    Expr* folded = cuik__optimize_ast(tu, parse_expr_l14(tu, s));
+    if (folded->op != EXPR_INT) {
+        REPORT_EXPR(ERROR, folded, "Could not parse expression as constant.");
+        return 1;
     }
 
-    return vi;
+    return (intmax_t) folded->int_num.num;
 }
 
 ////////////////////////////////

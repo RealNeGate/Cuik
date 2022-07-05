@@ -10,8 +10,6 @@
 #include <emmintrin.h>
 #endif
 
-#define NUM_ITERS 1000
-
 //typedef char _ArchTest[sizeof(size_t) == 8 ? 1 : -1];
 _Static_assert(sizeof(size_t) == 8, "64bit compiler expected");
 
@@ -68,36 +66,25 @@ size_t count_newlines_simd(size_t n, const char* data) {
 
 typedef size_t LineCounterFunc(size_t n, const char* data);
 
-void simple_bench(size_t len, const char* data, LineCounterFunc func, size_t expected, const char* name) {
+static void simple_bench(size_t len, const char* data, LineCounterFunc func, size_t expected, const char* name) {
 	int64_t avg = 0;
 	
-	// Keeps running until the variance gets really small
-	int times_been_ehh = 0;
-	while (times_been_ehh < 20) {
+	for (int i = 0; i < 10000; i++) {
 		uint64_t t1 = get_timer_counter();
 		if (func(len, data) != expected) {
 			printf("Fatal error: bench received incorrect results\n");
 			abort();
 		}
 		uint64_t t2 = get_timer_counter();
-		
-		// check the variance
-		int64_t new_avg = (uint64_t) (((t2-t1) + ((uint64_t)avg) + 1ull) >> 1ull);
-		int64_t diff = new_avg - avg;
-		if (diff < -10 || diff > 10) {
-			times_been_ehh = 0;
-		} else {
-			times_been_ehh++;
-		}
+        avg += (t2 - t1);
 	}
 	
-    double average = avg * get_timer_frequency();
+    double average = (avg / 10000) * get_timer_frequency();
     double bandwidth = (double)len / average;
 	
 	printf("Test '%s':\n", name);
-    printf("Total Ticks: %zu over %d iterations\n", total_ticks, NUM_ITERS);
+    printf("Average time: %f\n",average / 1000000000.0);
     printf("Input length: %d\n", len);
-    printf("Bandwidth: %f GB/s\n", bandwidth / 1000000000.0);
 }
 
 int main(int argc, char** argv) {

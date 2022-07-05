@@ -821,7 +821,8 @@ Cuik_Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
                 *e = (Expr){
                     .op = EXPR_INT,
                     .type = &builtin_types[TYPE_ULONG],
-                    .int_num = {dst, INT_SUFFIX_ULL}};
+                    .int_num = {dst, INT_SUFFIX_ULL},
+                };
                 return &builtin_types[TYPE_ULONG];
             }
 
@@ -1616,7 +1617,6 @@ static void sema_top_level(TranslationUnit* tu, Stmt* restrict s) {
 }
 
 static void sema_mark_children(TranslationUnit* tu, Expr* restrict e) {
-    if (e->op == EXPR_ENUM) return;
     if (e->op == EXPR_BUILTIN_SYMBOL) return;
 
     assert(e->op == EXPR_SYMBOL);

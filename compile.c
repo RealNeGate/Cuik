@@ -27,7 +27,7 @@ static const char* INPUT_FILES[] = {
     "lib/front/parser.c",
     "lib/front/sema.c",
     "lib/front/atoms.c",
-    "lib/front/const_eval.c",
+    "lib/front/ast_optimizer.c",
     "lib/front/types.c",
     "lib/front/ast_dump.c",
 

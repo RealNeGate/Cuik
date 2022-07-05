@@ -221,10 +221,11 @@ InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, Sourc
 
             // initialize a value
             assert(node->expr);
+            Expr* e = cuik__optimize_ast(tu, node->expr);
 
             bool success = false;
-            if (!func && node->expr->op == EXPR_SYMBOL) {
-                Stmt* stmt = node->expr->symbol;
+            if (!func && e->op == EXPR_SYMBOL) {
+                Stmt* stmt = e->symbol;
 
                 // hacky just to make it possible for some symbols to appear in the
                 // initializers
@@ -240,22 +241,19 @@ InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, Sourc
             }
 
             if (!success) {
-                switch (node->expr->op) {
+                switch (e->op) {
                     // TODO(NeGate): Implement constants for literals
                     // to allow for more stuff to be precomputed.
                     case EXPR_INT:
-                    case EXPR_ENUM:
-                    case EXPR_NEGATE:
                     if (!func) {
                         int size = child_type->size;
                         void* region = tb_initializer_add_region(tu->ir_mod, init, offset, size);
 
-                        ConstValue value = const_eval(tu, node->expr);
-
                         #if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
                         #error "Stop this immoral bullshit please... until someone fixes this at least :p"
                         #else
-                        memcpy(region, &value.unsigned_value, size);
+                        uint64_t value = e->int_num.num;
+                        memcpy(region, &value, size);
                         #endif
                         break;
                     }
@@ -263,8 +261,6 @@ InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, Sourc
                     case EXPR_STR:
                     case EXPR_WSTR:
                     if (!func) {
-                        Expr* e = node->expr;
-
                         char* dst = NULL;
                         if (child_type->kind == KIND_PTR) {
                             // if it's a string pointer, then we make a dummy string array
@@ -305,7 +301,7 @@ InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, Sourc
                             int align = child_type->align;
 
                             if (kind == KIND_STRUCT || kind == KIND_UNION || kind == KIND_ARRAY) {
-                                IRVal v = irgen_expr(tu, func, node->expr);
+                                IRVal v = irgen_expr(tu, func, e);
 
                                 // placing the address calculation here might improve performance or readability
                                 // of IR in the debug builds, for release builds it shouldn't matter
@@ -320,9 +316,9 @@ InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, Sourc
                                 tb_inst_memcpy(func, effective_addr, v.reg, size_reg, align);
                             } else {
                                 // hacky but we set the cast so that the rvalue returns a normal value
-                                node->expr->cast_type = child_type;
+                                e->cast_type = child_type;
 
-                                TB_Register v = irgen_as_rvalue(tu, func, node->expr);
+                                TB_Register v = irgen_as_rvalue(tu, func, e);
 
                                 // placing the address calculation here might improve performance or readability
                                 // of IR in the debug builds, for release builds it shouldn't matter
@@ -407,17 +403,25 @@ static TB_InitializerID gen_global_initializer(TranslationUnit* tu, SourceLocInd
             eval_initializer_objects(tu, NULL, loc, init, TB_NULL_REG, node_count, nodes);
             return init;
         } else if (initial->op == EXPR_INT ||
-            initial->op == EXPR_ENUM ||
-            initial->op == EXPR_CHAR ||
-            initial->op == EXPR_WCHAR ||
-            initial->op == EXPR_CAST ||
-            initial->op == EXPR_NEGATE) {
+            initial->op == EXPR_FLOAT32 ||
+            initial->op == EXPR_FLOAT64) {
             TB_InitializerID init = tb_initializer_create(tu->ir_mod, type->size, type->align, 1);
             void* region = tb_initializer_add_region(tu->ir_mod, init, 0, type->size);
 
-            // NOTE(NeGate): Endian amirite
-            ConstValue value = const_eval(tu, initial);
-            memcpy(region, &value.unsigned_value, type->size);
+            if (initial->op == EXPR_INT) {
+                uint64_t value = initial->int_num.num;
+                memcpy(region, &value, type->size);
+            } else if (initial->op == EXPR_FLOAT32) {
+                float value = initial->float_num;
+
+                _Static_assert(sizeof(float) == sizeof(uint32_t), "Wtf is your float?");
+                memcpy(region, &value, sizeof(value));
+            } else if (initial->op == EXPR_FLOAT64) {
+                double value = initial->float_num;
+
+                _Static_assert(sizeof(double) == sizeof(uint64_t), "Wtf is your double?");
+                memcpy(region, &value, sizeof(value));
+            }
 
             return init;
         } else if (initial->op == EXPR_ADDR) {
@@ -430,8 +434,13 @@ static TB_InitializerID gen_global_initializer(TranslationUnit* tu, SourceLocInd
             Expr* base = initial->unary_op.src;
             while (base->op == EXPR_SUBSCRIPT) {
                 uint64_t stride = base->type->size;
-                uint64_t index = const_eval(tu, base->subscript.index).unsigned_value;
 
+                Expr* index_expr = cuik__optimize_ast(tu, base->subscript.index);
+                if (index_expr->op != EXPR_INT) {
+                    internal_error("could not resolve as constant initializer");
+                }
+
+                uint64_t index = index_expr->int_num.num;
                 offset += (index * stride);
                 base = base->subscript.base;
             }

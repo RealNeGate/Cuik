@@ -301,7 +301,7 @@ static Expr* parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
 
             // unknown symbols, symbols and enumerator entries participate in the
             // symbol chain, aka... don't append non-parameters :P
-            if (e->op != EXPR_PARAM) {
+            if (e->op != EXPR_PARAM && e->op != EXPR_ENUM) {
                 if (symbol_chain_current != NULL) {
                     symbol_chain_current->next_symbol_in_chain = e;
                     symbol_chain_current = e;
@@ -319,7 +319,8 @@ static Expr* parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
 
             *e = (Expr){
                 .op = is_float32 ? EXPR_FLOAT32 : EXPR_FLOAT64,
-                .float_num = i};
+                .float_num = i,
+            };
             break;
         }
 
@@ -330,7 +331,8 @@ static Expr* parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
 
             *e = (Expr){
                 .op = EXPR_INT,
-                .int_num = {i, suffix}};
+                .int_num = {i, suffix},
+            };
             break;
         }
 
@@ -357,7 +359,8 @@ static Expr* parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
             *e = (Expr){
                 .op = is_wide ? EXPR_WSTR : EXPR_STR,
                 .str.start = t->start,
-                .str.end = t->end};
+                .str.end = t->end,
+            };
 
             size_t saved_lexer_pos = s->current;
             tokens_next(s);
