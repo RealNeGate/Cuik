@@ -222,45 +222,59 @@ Expr* cuik__optimize_ast(TranslationUnit* tu, Expr* e) {
         case EXPR_CMPLT: {
             Expr* a = cuik__optimize_ast(tu, e->bin_op.right);
 
-            // we couldn't resolve it
-            if (a->op != EXPR_INT) break;
+            if (a->op == EXPR_FLOAT32 || a->op == EXPR_FLOAT64) {
+                Expr* b = cuik__optimize_ast(tu, e->bin_op.left);
 
-            ExprOp op = e->op;
-            Expr* current = e->bin_op.left;
-            if (current->op != op) {
-                Expr* b = cuik__optimize_ast(tu, current);
+                if (b->op == EXPR_FLOAT32 || b->op == EXPR_FLOAT64) {
+                    switch (e->op) {
+                        case EXPR_SLASH: {
+                            float af = a->float_num, bf = b->float_num;
 
-                if (b->op == EXPR_INT) {
-                    ConstValue c = const_eval_bin_op(op, gimme(b), gimme(a));
-
-                    e->op = EXPR_INT;
-                    e->int_num.suffix = c.is_signed ? INT_SUFFIX_LL : INT_SUFFIX_ULL;
-                    e->int_num.num = c.unsigned_value;
-                    return e;
+                            e->op = EXPR_FLOAT32;
+                            e->float_num = bf / af;
+                            break;
+                        }
+                        default: break;
+                    }
                 }
-            } else {
-                // try tail calling
-                ConstValue av = gimme(a);
+            } else if (a->op == EXPR_INT) {
+                ExprOp op = e->op;
+                Expr* current = e->bin_op.left;
+                if (current->op != op) {
+                    Expr* b = cuik__optimize_ast(tu, current);
 
-                do {
-                    Expr* b = cuik__optimize_ast(tu, current->bin_op.right);
-                    // we couldn't resolve it
-                    if (b->op != EXPR_INT) break;
+                    if (b->op == EXPR_INT) {
+                        ConstValue c = const_eval_bin_op(op, gimme(b), gimme(a));
 
-                    av = const_eval_bin_op(op, gimme(b), av);
-                    current = current->bin_op.left;
-                } while (current->op == op);
+                        e->op = EXPR_INT;
+                        e->int_num.suffix = c.is_signed ? INT_SUFFIX_LL : INT_SUFFIX_ULL;
+                        e->int_num.num = c.unsigned_value;
+                    }
+                } else {
+                    // try tail calling
+                    ConstValue av = gimme(a);
 
-                Expr* b = cuik__optimize_ast(tu, current);
-                if (b->op == EXPR_INT) {
-                    ConstValue c = const_eval_bin_op(op, gimme(b), av);
+                    do {
+                        Expr* b = cuik__optimize_ast(tu, current->bin_op.right);
+                        // we couldn't resolve it
+                        if (b->op != EXPR_INT) break;
 
-                    e->op = EXPR_INT;
-                    e->int_num.suffix = c.is_signed ? INT_SUFFIX_LL : INT_SUFFIX_ULL;
-                    e->int_num.num = c.unsigned_value;
-                    return e;
+                        av = const_eval_bin_op(op, gimme(b), av);
+                        current = current->bin_op.left;
+                    } while (current->op == op);
+
+                    Expr* b = cuik__optimize_ast(tu, current);
+                    if (b->op == EXPR_INT) {
+                        ConstValue c = const_eval_bin_op(op, gimme(b), av);
+
+                        e->op = EXPR_INT;
+                        e->int_num.suffix = c.is_signed ? INT_SUFFIX_LL : INT_SUFFIX_ULL;
+                        e->int_num.num = c.unsigned_value;
+                    }
                 }
             }
+
+            break;
         }
 
         // these don't get optimized

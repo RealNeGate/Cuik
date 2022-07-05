@@ -1541,6 +1541,10 @@ static void sema_top_level(TranslationUnit* tu, Stmt* restrict s) {
 
             if (!is_external_sym) {
                 if (s->decl.initial) {
+                    // constant fold the global expression such that it's easier to spot constant
+                    // expressions.
+                    s->decl.initial = cuik__optimize_ast(tu, s->decl.initial);
+
                     if (s->decl.initial->op == EXPR_INITIALIZER &&
                         s->decl.initial->init.type == 0) {
                         // give it something to go off of
