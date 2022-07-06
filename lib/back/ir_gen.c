@@ -857,16 +857,34 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
                 tls_restore(ir_args);
 
                 return (IRVal){
-                    .value_type = RVALUE,
+                    .value_type = LVALUE,
                     .type = e->type,
-                    .reg = result};
+                    .reg = result,
+                };
             } else {
                 tls_restore(ir_args);
+
+                if (e->type->kind == KIND_STRUCT || e->type->kind == KIND_UNION) {
+                    // spawn a lil temporary
+                    TB_CharUnits size = e->type->size;
+                    TB_CharUnits align = e->type->align;
+                    TB_DataType dt = tb_function_get_node(func, r)->dt;
+
+                    TB_Reg addr = tb_inst_local(func, size, align);
+                    tb_inst_store(func, dt, addr, r, align);
+
+                    return (IRVal){
+                        .value_type = LVALUE,
+                        .type = e->type,
+                        .reg = addr,
+                    };
+                }
 
                 return (IRVal){
                     .value_type = RVALUE,
                     .type = e->type,
-                    .reg = r};
+                    .reg = r,
+                };
             }
         }
         case EXPR_SUBSCRIPT: {
@@ -1699,9 +1717,9 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
 
             if (e) {
                 Cuik_Type* type = e->cast_type;
+                bool is_aggregate_return = !tu->target.arch->pass_return_via_reg(tu, type);
 
-                if (type->kind == KIND_STRUCT ||
-                    type->kind == KIND_UNION) {
+                if (is_aggregate_return) {
                     IRVal v = irgen_expr(tu, func, e);
 
                     // returning aggregates just copies into the first parameter
@@ -1715,7 +1733,23 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
                     tb_inst_memcpy(func, dst_address, v.reg, size_reg, align);
                     tb_inst_ret(func, TB_NULL_REG);
                 } else {
-                    tb_inst_ret(func, irgen_as_rvalue(tu, func, e));
+                    IRVal v = irgen_expr(tu, func, e);
+                    TB_Reg r = TB_NULL_REG;
+                    if (v.value_type == LVALUE) {
+                        // Implicit array to pointer
+                        if (type->kind == KIND_ARRAY) {
+                            r = v.reg;
+                        } else if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
+                            assert(type->size <= 8);
+                            TB_DataType dt = { { TB_INT, 0, type->size * 8 } };
+
+                            r = tb_inst_load(func, dt, v.reg, type->align);
+                        }
+                    }
+
+                    // if it wasn't set before, resolve it now
+                    if (r == TB_NULL_REG) r = cvt2rval(tu, func, v, e);
+                    tb_inst_ret(func, r);
                 }
             } else {
                 tb_inst_ret(func, TB_NULL_REG);

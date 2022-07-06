@@ -282,11 +282,7 @@ int main(int argc, char** argv) {
     }
 
     {
-        if (output_name == NULL) {
-            output_name = input_files[0];
-        }
-
-        const char* filename = output_name;
+        const char* filename = output_name ? output_name : input_files[0];
         const char* ext = strrchr(filename, '.');
         size_t len = ext ? (ext - filename) : strlen(filename);
 
@@ -296,6 +292,10 @@ int main(int argc, char** argv) {
         } else {
             memcpy(output_path_no_ext, filename, len);
             output_path_no_ext[len] = '\0';
+        }
+
+        if (output_name == NULL) {
+            output_name = output_path_no_ext;
         }
     }
 
@@ -420,7 +420,7 @@ int main(int argc, char** argv) {
                     abort();
                 }
             }
-        } else {
+        } else if (!args_ir) {
             char lib_dir[FILENAME_MAX];
             sprintf_s(lib_dir, FILENAME_MAX, "%s/crt/lib/", crt_dirpath);
 
@@ -517,8 +517,16 @@ int main(int argc, char** argv) {
             }
 
             if (args_run) {
-                printf("\n\nRunning: %s...\n", output_name);
-                int exit_code = system(output_name);
+                char* exe = strdup(output_name);
+
+                #ifdef _WIN32
+                for (char* s = exe; *s; s++) {
+                    if (*s == '/') *s = '\\';
+                }
+                #endif
+
+                printf("\n\nRunning: %s...\n", exe);
+                int exit_code = system(exe);
                 printf("Exit code: %d\n", exit_code);
 
                 return exit_code;

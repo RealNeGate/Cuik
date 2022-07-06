@@ -25,26 +25,6 @@
 /* __VA_ARGS__ and __func__ support */
 #define C99_MACROS
 
-/* test various include syntaxes */
-
-#define TCCLIB_INC <tcclib.h>
-#define TCCLIB_INC1 <tcclib
-#define TCCLIB_INC2 h>
-#define TCCLIB_INC3 "tcclib"
-
-#include TCCLIB_INC
-
-#include TCCLIB_INC1.TCCLIB_INC2
-
-#include TCCLIB_INC1.h>
-
-/* gcc 3.2 does not accept that (bug ?) */
-//#include TCCLIB_INC3 ".h"
-
-#include <tcclib.h>
-
-#include "tcclib.h"
-
 void string_test();
 void expr_test();
 void macro_test();
@@ -110,7 +90,7 @@ int isid(int c);
 #endif
 
 /* gcc vararg macros */
-#define dprintf1(level, fmt, args...) printf(fmt, ## args)
+#define dprintf1(level, fmt, ...) printf(fmt, ## __VA_ARGS__)
 
 #define MACRO_NOARGS()
 
