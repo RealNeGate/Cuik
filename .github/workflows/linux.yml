@@ -9,14 +9,23 @@ jobs:
     if: "!contains(github.event.head_commit.message, '[skip ci]')"
     strategy:
       matrix:
-        cc: [gcc, clang]
+        cc: [gcc, clang-15]
 
     steps:
+
     - name: Checkout
       uses: actions/checkout@v2
 
+    - name: Dependencies
+      if: "${{ matrix.cc == 'clang-15' }}"
+      run: |
+        wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
+        sudo add-apt-repository "deb http://apt.llvm.org/focal/ llvm-toolchain-focal main"
+        sudo apt-get update
+        sudo apt-get install -y clang-15 llvm-15 llvm-15-dev lld-15 liblld-15-dev
+        cp /usr/bin/llvm-ar-15 bin
     - name: Build
-      run: ${{ matrix.cc }} -Wall -Wextra compile.c
+      run: ${{ matrix.cc }} -Wall compile.c
 
     - name: Test
       run: PATH="bin:$PATH" ./a.out test

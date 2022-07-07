@@ -12,6 +12,11 @@ jobs:
         cc: [gcc, clang]
 
     steps:
+
+    - name: Dependencies
+      if: "${{ matrix.cc == 'clang' }}"
+      run: brew install llvm
+
     - name: Checkout
       uses: actions/checkout@v2
 
