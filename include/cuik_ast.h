@@ -1,8 +1,5 @@
 #include "cuik.h"
 
-typedef struct Stmt Stmt;
-typedef struct Expr Expr;
-
 typedef enum Cuik_TypeKind {
     KIND_VOID,
     KIND_BOOL,
@@ -323,6 +320,7 @@ struct Stmt {
     struct {
         StmtOp op;
         SourceLocIndex loc;
+        SourceLocIndex end_loc;
 
         // Used by the backend for backend-y things
         union {

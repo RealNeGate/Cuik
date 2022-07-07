@@ -12,9 +12,6 @@ extern thread_local bool in_the_semantic_phase;
 
 bool type_compatible(TranslationUnit* tu, Cuik_Type* a, Cuik_Type* b, Expr* a_expr);
 
-// Analysis pass
-void analysis_pass(TranslationUnit* tu);
-
 // Semantics pass
 // out_offset is added onto so it needs to be initialized
 Member* sema_resolve_member_access(TranslationUnit* tu, Expr* e, uint32_t* out_offset);

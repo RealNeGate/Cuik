@@ -209,7 +209,7 @@ typedef struct {
 //     int c;
 //   };
 //
-// Foo would return 3 while
+// struct Foo would return 3 while
 //   int a[6]
 //
 // would be 6 and scalars are just 1
@@ -1417,6 +1417,7 @@ void sema_stmt(TranslationUnit* tu, Stmt* restrict s) {
         case STMT_BREAK: {
             break;
         }
+
         default:
         assert(0);
     }

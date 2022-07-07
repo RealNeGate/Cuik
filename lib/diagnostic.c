@@ -1,4 +1,5 @@
 #include "diagnostic.h"
+#include <locale.h>
 #include <ctype.h>
 #include <preproc/cpp.h>
 #include <stdarg.h>
@@ -53,8 +54,11 @@ void init_report_system(void) {
 
         default_attribs = info.wAttributes;
     }
+
+    SetConsoleOutputCP(CP_UTF8);
     #endif
 
+    //setlocale(LC_ALL, ".utf8");
     mtx_init(&report_mutex, mtx_plain);
 }
 

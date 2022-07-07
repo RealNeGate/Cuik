@@ -11,14 +11,6 @@
 #define SLASH "/"
 #endif
 
-// used by cuik_visit_top_level_threaded
-typedef struct {
-    TranslationUnit* tu;
-    Cuik_TopLevelVisitor* visitor;
-    void* user_data;
-    size_t start, end;
-} TaskInfo;
-
 Warnings warnings = {
     .unused_funcs = true,
 };
@@ -259,45 +251,6 @@ CUIK_API TokenStream cuik_preprocess_simple(
     }
 
     return cuikpp_run(out_cpp, filepath);
-}
-
-CUIK_API void cuik_visit_top_level(TranslationUnit* restrict tu, void* user_data, Cuik_TopLevelVisitor* visitor) {
-    size_t count = arrlen(tu->top_level_stmts);
-    CUIK_TIMED_BLOCK("top level visitor (%zu statements)", count) {
-        for (size_t i = 0; i < count; i++) {
-            visitor(tu, tu->top_level_stmts[i], user_data);
-        }
-    }
-}
-
-static void task_caller(void* arg) {
-    TaskInfo task = *((TaskInfo*)arg);
-    free(arg);
-
-    CUIK_TIMED_BLOCK("top level visitor (%zu - %zu)", task.start, task.end) {
-        for (size_t i = task.start; i < task.end; i++) {
-            task.visitor(task.tu, task.tu->top_level_stmts[i], task.user_data);
-        }
-    }
-}
-
-CUIK_API void cuik_visit_top_level_threaded(TranslationUnit* restrict tu, const Cuik_IThreadpool* thread_pool, int batch_size, void* user_data, Cuik_TopLevelVisitor* visitor) {
-    assert(thread_pool != NULL);
-    assert((batch_size & (batch_size-1)) == 0);
-
-    // split up the top level statement tasks into
-    // chunks to avoid spawning too many tiny tasks
-    size_t count = arrlen(tu->top_level_stmts);
-    size_t padded = (count + (batch_size - 1)) & ~(batch_size - 1);
-
-    for (size_t i = 0; i < padded; i += batch_size) {
-        size_t limit = i + batch_size;
-        if (limit > count) limit = count;
-
-        TaskInfo* t = malloc(sizeof(TaskInfo));
-        *t = (TaskInfo){tu, visitor, user_data, i, limit};
-        CUIK_CALL(thread_pool, submit, task_caller, t);
-    }
 }
 
 CUIK_API Cuik_Entrypoint cuik_get_entrypoint_status(TranslationUnit* restrict tu) {

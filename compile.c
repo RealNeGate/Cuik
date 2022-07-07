@@ -29,13 +29,11 @@ static const char* INPUT_FILES[] = {
     "lib/front/atoms.c",
     "lib/front/ast_optimizer.c",
     "lib/front/types.c",
+    "lib/front/visitors.c",
     "lib/front/ast_dump.c",
 
     // Target specific stuff
     "lib/targets/x64.c",
-
-    // Optional analysis
-    "lib/anal/analysis.c",
 
     // Backend
     "lib/back/ir_gen.c",

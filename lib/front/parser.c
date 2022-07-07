@@ -757,7 +757,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                                     Token* t = tokens_get(s);
 
                                     if (t->type == '\0') {
-                                        REPORT(ERROR, decl.loc, "Declaration ended in EOF");
+                                        REPORT(ERROR, decl.loc, "Declaration was never closed");
                                         abort();
                                     } else if (t->type == '(') {
                                         depth++;
@@ -1241,6 +1241,8 @@ static Stmt* parse_compound_stmt(TranslationUnit* tu, TokenStream* restrict s) {
                 }
             }
         }
+
+        node->end_loc = tokens_get_location_index(s);
         expect(tu, s, '}');
 
         Stmt** permanent_storage = arena_alloc(&thread_arena, kid_count * sizeof(Stmt*), _Alignof(Stmt*));

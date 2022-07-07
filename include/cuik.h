@@ -17,6 +17,7 @@ int sprintf_s(char* buffer, size_t len, const char* format, ...);
 
 // opaque structs
 typedef struct TokenStream TokenStream;
+typedef struct Expr Expr;
 typedef struct Stmt Stmt;
 typedef struct Token Token;
 typedef struct TranslationUnit TranslationUnit;
@@ -312,10 +313,15 @@ CUIK_API TB_Function* cuik_stmt_gen_ir(TranslationUnit* restrict tu, Stmt* restr
 ////////////////////////////////////////////
 // Translation unit management
 ////////////////////////////////////////////
-typedef void Cuik_TopLevelVisitor(TranslationUnit* restrict tu, Stmt* restrict s, void* user_data);
+typedef void Cuik_ExprVisitor(TranslationUnit* restrict tu, Expr* restrict e, void* user_data);
+typedef void Cuik_StmtVisitor(TranslationUnit* restrict tu, Stmt* restrict s, void* user_data);
 
-CUIK_API void cuik_visit_top_level(TranslationUnit* restrict tu, void* user_data, Cuik_TopLevelVisitor* visitor);
-CUIK_API void cuik_visit_top_level_threaded(TranslationUnit* restrict tu, const Cuik_IThreadpool* thread_pool, int batch_size, void* user_data, Cuik_TopLevelVisitor* visitor);
+// invokes the visitor on all the children of expr (not recursive)
+CUIK_API void cuik_visit_expr(TranslationUnit* restrict tu, Expr* restrict e, void* user_data, Cuik_ExprVisitor* visitor);
+CUIK_API void cuik_visit_stmt(TranslationUnit* restrict tu, Stmt* restrict s, void* user_data, Cuik_StmtVisitor* visitor);
+
+CUIK_API void cuik_visit_top_level(TranslationUnit* restrict tu, void* user_data, Cuik_StmtVisitor* visitor);
+CUIK_API void cuik_visit_top_level_threaded(TranslationUnit* restrict tu, const Cuik_IThreadpool* thread_pool, int batch_size, void* user_data, Cuik_StmtVisitor* visitor);
 
 CUIK_API void cuik_dump_translation_unit(FILE* stream, TranslationUnit* tu, bool minimalist);
 
