@@ -63,7 +63,7 @@ void expect_return_value(const char* path, int expected) {
     char cmd[1024];
 
     // Compile
-    snprintf(cmd, 1024, "cuik %s.c", path);
+    snprintf(cmd, 1024, "./bin/cuik %s.c", path);
     code = system(cmd);
     if (code != 0) {
         printf("Fail to compile! (code: %d)\n", code);
@@ -97,7 +97,7 @@ void expect_stdout(const char* path, const char* expected) {
     char cmd[1024];
 
     // Compile
-    snprintf(cmd, 1024, "cuik %s.c", path);
+    snprintf(cmd, 1024, "./bin/cuik %s.c", path);
     code = system(cmd);
     if (code != 0) {
         printf("Fail to compile! (code: %d)\n", code);
@@ -149,7 +149,7 @@ void differential(const char* path) {
     }
 
     // Compile cuik
-    snprintf(cmd, 1024, "cuik %s.c", path);
+    snprintf(cmd, 1024, "./bin/cuik %s.c", path);
     code = system(cmd);
     if (code != 0) {
         printf("Fail to compile for Cuik! (code: %d)\n", code);
@@ -214,7 +214,7 @@ void try_compile(const char* path) {
     char cmd[1024];
 
     // Compile
-    snprintf(cmd, 1024, "cuik %s.c -c", path);
+    snprintf(cmd, 1024, "./bin/cuik %s.c -c", path);
     code = system(cmd);
     if (code != 0) {
         printf("Fail to compile! (code: %d)\n", code);
@@ -403,7 +403,7 @@ int main(int argc, char** argv) {
             char cmd[1024];
             for (size_t i = 0; i < INPUT_FILE_COUNT; i++) {
                 if (str_ends_with(INPUT_FILES[i], ".c")) {
-                    snprintf(cmd, 1024, "cuik %s -t -o bin/%s -I deps/ -I include/ -I lib/", INPUT_FILES[i], INPUT_FILES[i]);
+                    snprintf(cmd, 1024, "./bin/cuik %s -t -o bin/%s -I deps/ -I include/ -I lib/", INPUT_FILES[i], INPUT_FILES[i]);
 
                     if (system(cmd) == 0) {
                         printf("Success with %s!\n", INPUT_FILES[i]);
@@ -427,7 +427,7 @@ int main(int argc, char** argv) {
             char cmd[1024];
             for (size_t i = 0; i < INPUT_FILE_COUNT; i++) {
                 if (str_ends_with(INPUT_FILES[i], ".c")) {
-                    snprintf(cmd, 1024, "cuik --t -o bin/%s %s -I deps/ -I include/ -I lib/", INPUT_FILES[i], INPUT_FILES[i]);
+                    snprintf(cmd, 1024, "./bin/cuik --t -o bin/%s %s -I deps/ -I include/ -I lib/", INPUT_FILES[i], INPUT_FILES[i]);
 
                     if (system(cmd) == 0) {
                         printf("Success with %s!\n", INPUT_FILES[i]);
@@ -451,7 +451,7 @@ int main(int argc, char** argv) {
             char cmd[1024];
             for (size_t i = 0; i < INPUT_FILE_COUNT; i++) {
                 if (str_ends_with(INPUT_FILES[i], ".c")) {
-                    int r = snprintf(cmd, 1024, "cuik -c %s -o bin/ -I deps/ -I include/ -I lib/", INPUT_FILES[i]);
+                    int r = snprintf(cmd, 1024, "./bin/cuik -c %s -o bin/ -I deps/ -I include/ -I lib/", INPUT_FILES[i]);
                     assert(r >= 0 && r < 1024);
 
                     int code = system(cmd);
