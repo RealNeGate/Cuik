@@ -54,6 +54,12 @@ enum { INPUT_FILE_COUNT = sizeof(INPUT_FILES) / sizeof(INPUT_FILES[0]) };
 int tests_working = 0;
 int number_of_tests = 0;
 
+#ifdef _WIN32
+#define CUIK_LOCATION "bin\\cuik"
+#else
+#define CUIK_LOCATION "./bin/cuik"
+#endif
+
 void expect_return_value(const char* path, int expected) {
     number_of_tests++;
 
@@ -63,7 +69,7 @@ void expect_return_value(const char* path, int expected) {
     char cmd[1024];
 
     // Compile
-    snprintf(cmd, 1024, "./bin/cuik %s.c", path);
+    snprintf(cmd, 1024, CUIK_LOCATION " %s.c", path);
     code = system(cmd);
     if (code != 0) {
         printf("Fail to compile! (code: %d)\n", code);
@@ -97,7 +103,7 @@ void expect_stdout(const char* path, const char* expected) {
     char cmd[1024];
 
     // Compile
-    snprintf(cmd, 1024, "./bin/cuik %s.c", path);
+    snprintf(cmd, 1024, CUIK_LOCATION " %s.c", path);
     code = system(cmd);
     if (code != 0) {
         printf("Fail to compile! (code: %d)\n", code);
@@ -149,7 +155,7 @@ void differential(const char* path) {
     }
 
     // Compile cuik
-    snprintf(cmd, 1024, "./bin/cuik %s.c", path);
+    snprintf(cmd, 1024, CUIK_LOCATION " %s.c", path);
     code = system(cmd);
     if (code != 0) {
         printf("Fail to compile for Cuik! (code: %d)\n", code);
@@ -214,7 +220,7 @@ void try_compile(const char* path) {
     char cmd[1024];
 
     // Compile
-    snprintf(cmd, 1024, "./bin/cuik %s.c -c", path);
+    snprintf(cmd, 1024, CUIK_LOCATION " %s.c -c", path);
     code = system(cmd);
     if (code != 0) {
         printf("Fail to compile! (code: %d)\n", code);
@@ -311,7 +317,7 @@ int main(int argc, char** argv) {
         #if ON_WINDOWS
         "bin"SLASH DRIVER_NAME".obj", "bin"SLASH"threadpool.obj", "bin"SLASH"libcuik.lib", "deps"SLASH"tb"SLASH"tildebackend.lib",
         #else
-        "bin"SLASH DRIVER_NAME".o", "bin"SLASH"threadpool.o", "bin"SLASH"libcuik.a", "deps"SLASH"tb"SLASH"tildebackend.a",
+        "bin"SLASH DRIVER_NAME".o", "bin"SLASH"threadpool.o", "bin"SLASH"libcuik.a", "deps"SLASH"tb"SLASH"tildebackend.a", "/usr/local/lib/libluajit-5.1.a",
         #endif
     };
 
@@ -319,7 +325,7 @@ int main(int argc, char** argv) {
         #if ON_WINDOWS
         "ole32", "Advapi32", "OleAut32", "DbgHelp",
         #else
-        "c", "m", "pthread",
+        "c", "m", "pthread", "dl",
         #endif
     };
 
@@ -403,7 +409,7 @@ int main(int argc, char** argv) {
             char cmd[1024];
             for (size_t i = 0; i < INPUT_FILE_COUNT; i++) {
                 if (str_ends_with(INPUT_FILES[i], ".c")) {
-                    snprintf(cmd, 1024, "./bin/cuik %s -t -o bin/%s -I deps/ -I include/ -I lib/", INPUT_FILES[i], INPUT_FILES[i]);
+                    snprintf(cmd, 1024, CUIK_LOCATION " %s -t -o bin/%s -I deps/ -I include/ -I lib/", INPUT_FILES[i], INPUT_FILES[i]);
 
                     if (system(cmd) == 0) {
                         printf("Success with %s!\n", INPUT_FILES[i]);
@@ -427,7 +433,7 @@ int main(int argc, char** argv) {
             char cmd[1024];
             for (size_t i = 0; i < INPUT_FILE_COUNT; i++) {
                 if (str_ends_with(INPUT_FILES[i], ".c")) {
-                    snprintf(cmd, 1024, "./bin/cuik --t -o bin/%s %s -I deps/ -I include/ -I lib/", INPUT_FILES[i], INPUT_FILES[i]);
+                    snprintf(cmd, 1024, CUIK_LOCATION " --t -o bin/%s %s -I deps/ -I include/ -I lib/", INPUT_FILES[i], INPUT_FILES[i]);
 
                     if (system(cmd) == 0) {
                         printf("Success with %s!\n", INPUT_FILES[i]);
@@ -451,7 +457,7 @@ int main(int argc, char** argv) {
             char cmd[1024];
             for (size_t i = 0; i < INPUT_FILE_COUNT; i++) {
                 if (str_ends_with(INPUT_FILES[i], ".c")) {
-                    int r = snprintf(cmd, 1024, "./bin/cuik -c %s -o bin/ -I deps/ -I include/ -I lib/", INPUT_FILES[i]);
+                    int r = snprintf(cmd, 1024, CUIK_LOCATION " -c %s -o bin/ -I deps/ -I include/ -I lib/", INPUT_FILES[i]);
                     assert(r >= 0 && r < 1024);
 
                     int code = system(cmd);

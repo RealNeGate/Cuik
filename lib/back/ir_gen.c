@@ -668,7 +668,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
                     return (IRVal){
                         .value_type = LVALUE,
                         .type = type,
-                        .ext = stmt->backing.e,
+                        .reg = tb_inst_get_global_address(func, stmt->backing.g),
                     };
                 }
             } else {

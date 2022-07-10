@@ -1014,14 +1014,20 @@ extern "C" {
     ////////////////////////////////
     typedef struct {
         const char* name;
+
+        // if execute is NULL, we try to load a LUA file for the pass
         bool (*execute)(TB_Function* f);
+        void* l_state;
     } TB_FunctionPass;
 
     // Applies single function optimizations until it runs out
-    TB_API bool tb_function_optimize(TB_Function* f);
+    TB_API bool tb_function_optimize(TB_Function* f, size_t pass_count, const TB_FunctionPass* passes);
 
     // Applies whole program optimizations until it runs out
     TB_API bool tb_module_optimize(TB_Module* m);
+
+    TB_API TB_FunctionPass tb_opt_load_lua_pass(const char* path);
+    TB_API void tb_opt_unload_lua_pass(TB_FunctionPass* p);
 
     // analysis
     TB_API TB_LoopInfo* tb_function_get_loop_info(TB_Function* f);

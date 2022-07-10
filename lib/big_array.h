@@ -48,11 +48,11 @@ inline static void* dyn_array_internal_reserve(void* ptr, size_t type_size, size
 #define dyn_array_create(T) dyn_array_internal_create(sizeof(T))
 #define dyn_array_destroy(arr) (dyn_array_internal_destroy(arr), (arr) = NULL)
 
-#define dyn_array_put(arr, new_data)                        \
+#define dyn_array_put(arr, ...)                             \
 do {                                                        \
     arr = dyn_array_internal_reserve(arr, sizeof(*arr), 1); \
     DynArrayHeader* header = ((DynArrayHeader*)arr) - 1;    \
-    arr[header->size++] = new_data;                         \
+    arr[header->size++] = __VA_ARGS__;                      \
 } while (0)
 
 #define dyn_array_put_uninit(arr, extra)                         \

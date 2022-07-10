@@ -550,6 +550,7 @@ static void ld_invoke(const char* output_path, size_t count, const char* inputs[
 		#endif
         cmd_append(str_gimme_good_slashes(output_path));
         if (ON_WINDOWS) cmd_append(".exe");
+        else cmd_append(" -Wl,--export-dynamic");
 
         for (size_t i = 0; i < external_count; i++) {
             cmd_append(" -l");
@@ -562,9 +563,9 @@ static void ld_invoke(const char* output_path, size_t count, const char* inputs[
         }
     } else if (ON_GCC) {
         // TODO(NeGate): Fix this garbage up...
-        cmd_append("gcc -o ");
+        cmd_append("gcc -rdynamic -o ");
         cmd_append(str_gimme_good_slashes(output_path));
-        cmd_append(" ");
+        cmd_append(" -Wl,--export-dynamic ");
 
         for (size_t i = 0; i < count; i++) {
             cmd_append(inputs[i]);

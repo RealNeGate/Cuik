@@ -528,7 +528,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
 
     TranslationUnit* tu = calloc(1, sizeof(TranslationUnit));
     tu->filepath = desc->tokens->filepath;
-    tu->is_windows_long = desc->target->sys == TB_SYSTEM_WINDOWS;
+    tu->is_windows_long = desc->target->sys == CUIK_SYSTEM_WINDOWS;
     tu->target = *desc->target;
     tu->tokens = *desc->tokens;
     tu->errors = desc->errors;

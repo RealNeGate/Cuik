@@ -9,6 +9,7 @@
 static DynArray(const char*) include_directories;
 static DynArray(const char*) input_libraries;
 static DynArray(const char*) input_files;
+static DynArray(TB_FunctionPass) da_passes;
 static const char* output_name;
 static char output_path_no_ext[FILENAME_MAX];
 
@@ -22,6 +23,7 @@ static bool args_verbose;
 static bool args_preprocess;
 static bool args_optimize;
 static bool args_object_only;
+static bool args_experiment;
 static int args_threads = -1;
 
 static TB_Module* mod;
@@ -29,6 +31,32 @@ static threadpool_t* thread_pool;
 static Cuik_IThreadpool ithread_pool;
 static Cuik_Target target_desc;
 static CompilationUnit compilation_unit;
+
+#define OPT(name) (TB_FunctionPass){ #name, tb_opt_ ## name }
+static void initialize_opt_passes(void) {
+    da_passes = dyn_array_create(TB_FunctionPass);
+
+    dyn_array_put(da_passes, OPT(hoist_locals));
+    dyn_array_put(da_passes, OPT(merge_rets));
+    dyn_array_put(da_passes, OPT(hoist_invariants));
+    dyn_array_put(da_passes, OPT(canonicalize));
+    dyn_array_put(da_passes, OPT(mem2reg));
+    dyn_array_put(da_passes, OPT(remove_pass_node));
+    dyn_array_put(da_passes, OPT(canonicalize));
+
+    if (args_experiment) {
+        char custom_luapath[FILENAME_MAX];
+        sprintf_s(custom_luapath, FILENAME_MAX, "%s/custom.lua", crt_dirpath);
+
+        // silly lua shit
+        TB_FunctionPass p = tb_opt_load_lua_pass(custom_luapath);
+        dyn_array_put(da_passes, p);
+    }
+
+    dyn_array_put(da_passes, OPT(dead_expr_elim));
+    dyn_array_put(da_passes, OPT(dead_block_elim));
+    dyn_array_put(da_passes, OPT(compact_dead_regs));
+}
 
 static int calculate_worker_thread_count(void) {
     #ifdef _WIN32
@@ -102,7 +130,7 @@ static void irgen_visitor(TranslationUnit* restrict tu, Stmt* restrict s, void* 
 
     if (func != NULL) {
         if (args_optimize) {
-            tb_function_optimize(func);
+            tb_function_optimize(func, dyn_array_length(da_passes), da_passes);
         }
 
         if (args_ir) {
@@ -264,6 +292,7 @@ int main(int argc, char** argv) {
             case ARG_TYPES: args_types = true; break;
             case ARG_IR: args_ir = true; break;
             case ARG_VERBOSE: args_verbose = true; break;
+            case ARG_EXPERIMENT: args_experiment = true; break;
             case ARG_THREADS: args_threads = atoi(arg.value); break;
             case ARG_HELP: {
                 print_help();
@@ -321,6 +350,7 @@ int main(int argc, char** argv) {
         };
     }
 
+    initialize_opt_passes();
     cuik_create_compilation_unit(&compilation_unit);
 
     // get default system
@@ -411,7 +441,7 @@ int main(int argc, char** argv) {
 
         // place into a temporary directory if we don't need the obj file
         char obj_output_path[FILENAME_MAX];
-        if (target_desc.sys == TB_SYSTEM_WINDOWS){
+        if (target_desc.sys == CUIK_SYSTEM_WINDOWS){
             sprintf_s(obj_output_path, FILENAME_MAX, "%s.obj", output_path_no_ext);
         } else {
             sprintf_s(obj_output_path, FILENAME_MAX, "%s.o", output_path_no_ext);
