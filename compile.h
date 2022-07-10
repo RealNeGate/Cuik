@@ -364,6 +364,7 @@ void cmd_wait_for_all() {
 ////////////////////////////////
 typedef struct {
     const char* output_dir;
+    const char* extra_options;
 
     enum {
         CC_O0, // no optimizations
@@ -464,7 +465,12 @@ static void cc_invoke(const CC_Options* options, const char* input_path, const c
     }
 
     if (ON_CLANG) cmd_append(" -Wno-microsoft-enum-forward-reference -Wno-microsoft-anon-tag -Wno-gnu-designator");
-    if (options->use_asan) cmd_append(" -fsanitize=address ");
+    if (options->use_asan) cmd_append(" -fsanitize=address");
+
+    if (options->extra_options) {
+        cmd_append(" ");
+        cmd_append(options->extra_options);
+    }
 
     cmd_append(" -I deps -I lib -I include");
     cmd_append(" -c -o ");
@@ -496,8 +502,12 @@ static void ar_invoke(const char* output_path, size_t count, const char* inputs[
         cmd_append(output_path);
         cmd_append(".lib ");
     } else {
+		#ifndef NO_LLVMAR
         if (ON_CLANG) cmd_append("llvm-ar rc ");
         else cmd_append("ar -rcs ");
+		#else
+		cmd_append("ar -rcs ");
+		#endif
 
         cmd_append(output_path);
         if (ON_WINDOWS) cmd_append(".lib ");
@@ -533,9 +543,13 @@ static void ld_invoke(const char* output_path, size_t count, const char* inputs[
         }
     } else if (ON_CLANG) {
         // Link with clang instead so it's easier
+		#ifndef NO_LLVMAR
         cmd_append("clang -fuse-ld=lld -flto -O2 -g -o ");
+		#else
+        cmd_append("clang -O2 -g -o ");
+		#endif
         cmd_append(str_gimme_good_slashes(output_path));
-        cmd_append(".exe");
+        if (ON_WINDOWS) cmd_append(".exe");
 
         for (size_t i = 0; i < external_count; i++) {
             cmd_append(" -l");

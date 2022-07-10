@@ -1,34 +1,17 @@
-//
-//  _______ _ _     _      ____  ______
-// |__   __(_) |   | |    |  _ \|  ____|
-//    | |   _| | __| | ___| |_) | |__
-//    | |  | | |/ _` |/ _ \  _ <|  __|
-//    | |  | | | (_| |  __/ |_) | |____
-//    |_|  |_|_|\__,_|\___|____/|______|
-//
-//    It's a relatively small compiler backend all
-//    behind a simple C API!
-//
-#ifndef _TILDEBACKEND_H_
-#define _TILDEBACKEND_H_
+#ifndef TB_CORE_H
+#define TB_CORE_H
+
+#include <assert.h>
+#include <inttypes.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 #ifdef __cplusplus
 extern "C" {
     #endif
-
-    // Windows likes it's secure functions, i kinda do too
-    // but only sometimes and this isn't one of them
-    #if defined(_WIN32) && !defined(_CRT_SECURE_NO_WARNINGS)
-    #define _CRT_SECURE_NO_WARNINGS
-    #endif
-
-    #include <assert.h>
-    #include <inttypes.h>
-    #include <stdbool.h>
-    #include <stdint.h>
-    #include <stdio.h>
-    #include <stdlib.h>
-    #include <string.h>
 
     // https://semver.org/
     #define TB_VERSION_MAJOR 0
@@ -393,11 +376,11 @@ extern "C" {
     typedef unsigned int TB_AttributeID;
     typedef unsigned int TB_FileID;
     typedef unsigned int TB_FunctionID;
-    typedef unsigned int TB_ExternalID; // 0 means NULL
-    typedef unsigned int TB_GlobalID;
-    typedef unsigned int TB_InitializerID;
 
     typedef struct TB_Module            TB_Module;
+    typedef struct TB_External          TB_External;
+    typedef struct TB_Global            TB_Global;
+    typedef struct TB_Initializer       TB_Initializer;
     typedef struct TB_Function          TB_Function;
     typedef struct TB_AttribList        TB_AttribList;
     typedef struct TB_FunctionPrototype TB_FunctionPrototype;
@@ -439,10 +422,10 @@ extern "C" {
                 const TB_Function* value;
             } func;
             struct TB_NodeExtern {
-                TB_ExternalID value;
+                const TB_External* value;
             } external;
             struct TB_NodeGlobal {
-                TB_GlobalID value;
+                const TB_Global* value;
             } global;
             struct TB_NodeLine {
                 TB_FileID file;
@@ -550,7 +533,7 @@ extern "C" {
             } goto_;
             struct TB_NodeExternCall {
                 int param_start, param_end;
-                TB_ExternalID target;
+                const TB_External* target;
             } ecall;
             struct TB_NodeDynamicCall {
                 int param_start, param_end;
@@ -578,7 +561,7 @@ extern "C" {
             } clear;
             struct TB_NodeInitialize {
                 TB_Reg addr;
-                TB_InitializerID id;
+                TB_Initializer* src;
             } init;
         };
     } TB_Node;
@@ -686,7 +669,16 @@ extern "C" {
     } TB_ObjectFile;
 
     typedef struct {
+        const char* libname;
+        const char* name;
+    } TB_ArchiveImport;
+
+    typedef struct {
         size_t  object_file_count;
+
+        // import table
+        size_t import_count;
+        TB_ArchiveImport* imports;
 
         // Name table maps to the object files directly
         char**   object_file_names;
@@ -756,7 +748,7 @@ extern "C" {
     // When targetting windows & thread local storage, you'll need to bind a tls index
     // which is usually just a global that the runtime support has initialized, if you
     // dont and the tls_index is used, it'll crash
-    TB_API void tb_module_set_tls_index(TB_Module* m, TB_ExternalID e);
+    TB_API void tb_module_set_tls_index(TB_Module* m, TB_External* e);
 
     // Exports an relocatable object file
     TB_API bool tb_module_export(TB_Module* m, const char* path);
@@ -775,8 +767,8 @@ extern "C" {
     // Binds an external to an address
     TB_API bool tb_jit_import(TB_Module* m, const char* name, void* address);
 
-    TB_API TB_ExternalID tb_extern_create(TB_Module* m, const char* name);
-    TB_API TB_FileID     tb_file_create(TB_Module* m, const char* path);
+    TB_API TB_External* tb_extern_create(TB_Module* m, const char* name);
+    TB_API TB_FileID tb_file_create(TB_Module* m, const char* path);
 
     // Called once you're done with TB operations on a thread (or i guess when it's
     // about to be killed :p), not calling it can only result in leaks on that thread
@@ -814,23 +806,23 @@ extern "C" {
     ////////////////////////////////
     // NOTE: the max objects is a cap and thus it can be bigger than the actual
     // number used.
-    TB_API TB_InitializerID tb_initializer_create(TB_Module* m, size_t size, size_t align, size_t max_objects);
+    TB_API TB_Initializer* tb_initializer_create(TB_Module* m, size_t size, size_t align, size_t max_objects);
 
     // returns a buffer which the user can fill to then have represented in the
     // initializer
-    TB_API void* tb_initializer_add_region(TB_Module* m, TB_InitializerID id, size_t offset, size_t size);
+    TB_API void* tb_initializer_add_region(TB_Module* m, TB_Initializer* id, size_t offset, size_t size);
 
     // places a relocation for a global at offset, the size of the relocation
     // depends on the pointer size
-    TB_API void tb_initializer_add_global(TB_Module* m, TB_InitializerID id, size_t offset, TB_GlobalID global);
-    TB_API void tb_initializer_add_function(TB_Module* m, TB_InitializerID id, size_t offset, TB_FunctionID func);
-    TB_API void tb_initializer_add_extern(TB_Module* m, TB_InitializerID id, size_t offset, TB_ExternalID external);
+    TB_API void tb_initializer_add_global(TB_Module* m, TB_Initializer* id, size_t offset, const TB_Global* global);
+    TB_API void tb_initializer_add_function(TB_Module* m, TB_Initializer* id, size_t offset, const TB_Function* func);
+    TB_API void tb_initializer_add_extern(TB_Module* m, TB_Initializer* id, size_t offset, const TB_External* external);
 
     ////////////////////////////////
     // Constant Initializers
     ////////////////////////////////
-    TB_API TB_GlobalID tb_global_create(TB_Module* m, const char* name, TB_StorageClass storage, TB_Linkage linkage);
-    TB_API void tb_global_set_initializer(TB_Module* m, TB_GlobalID global, TB_InitializerID initializer);
+    TB_API TB_Global* tb_global_create(TB_Module* m, const char* name, TB_StorageClass storage, TB_Linkage linkage);
+    TB_API void tb_global_set_initializer(TB_Module* m, TB_Global* global, TB_Initializer* initializer);
 
     ////////////////////////////////
     // Function Attributes
@@ -858,7 +850,6 @@ extern "C" {
     // this only allows for power of two vector types
     TB_API TB_DataType tb_vector_type(TB_DataTypeEnum type, int width);
 
-    TB_API TB_Function* tb_function_clone(TB_Module* m, TB_Function* f, const char* name);
     TB_API void tb_function_print(TB_Function* f, TB_PrintCallback callback, void* user_data);
 
     // Prints out the IR in the GraphViz format
@@ -903,7 +894,7 @@ extern "C" {
     TB_API TB_Reg tb_inst_string(TB_Function* f, size_t len, const char* str);
 
     // Applies an initializer to a memory region
-    TB_API void tb_inst_initialize_mem(TB_Function* f, TB_Reg addr, TB_InitializerID src);
+    TB_API void tb_inst_initialize_mem(TB_Function* f, TB_Reg addr, TB_Initializer* src);
 
     // Broadcasts 'val' across 'count' elements starting 'dst'
     TB_API void tb_inst_memset(TB_Function* f, TB_Reg dst, TB_Reg val, TB_Reg count, TB_CharUnits align);
@@ -923,8 +914,8 @@ extern "C" {
     TB_API TB_Reg tb_inst_member_access(TB_Function* f, TB_Reg base, int32_t offset);
 
     TB_API TB_Reg tb_inst_get_func_address(TB_Function* f, const TB_Function* target);
-    TB_API TB_Reg tb_inst_get_extern_address(TB_Function* f, TB_ExternalID target);
-    TB_API TB_Reg tb_inst_get_global_address(TB_Function* f, TB_GlobalID target);
+    TB_API TB_Reg tb_inst_get_extern_address(TB_Function* f, const TB_External* target);
+    TB_API TB_Reg tb_inst_get_global_address(TB_Function* f, const TB_Global* target);
 
     // Performs a conditional select between two values, if the operation is
     // performed wide then the cond is expected to be the same type as a and b where
@@ -1008,7 +999,7 @@ extern "C" {
     // Control flow
     TB_API TB_Reg tb_inst_call(TB_Function* f, TB_DataType dt, const TB_Function* target, size_t param_count, const TB_Reg* params);
     TB_API TB_Reg tb_inst_vcall(TB_Function* f, TB_DataType dt, TB_Reg target, size_t param_count, const TB_Reg* params);
-    TB_API TB_Reg tb_inst_ecall(TB_Function* f, TB_DataType dt, const TB_ExternalID target, size_t param_count, const TB_Reg* params);
+    TB_API TB_Reg tb_inst_ecall(TB_Function* f, TB_DataType dt, const TB_External* target, size_t param_count, const TB_Reg* params);
 
     TB_API TB_Label tb_inst_new_label_id(TB_Function* f);
     TB_API TB_Reg tb_inst_phi2(TB_Function* f, TB_Label a_label, TB_Reg a, TB_Label b_label, TB_Reg b);
@@ -1103,4 +1094,4 @@ extern "C" {
     #ifdef __cplusplus
 }
 #endif
-#endif /* _TINYBACKEND_H_ */
+#endif /* TB_CORE_H */

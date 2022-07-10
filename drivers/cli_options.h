@@ -17,5 +17,6 @@ OPTION(AST,     _, ast,         0, "emit AST into stdout")
 OPTION(TYPES,   t, typecheck,   0, "type check only")
 OPTION(IR,      _, ir,          0, "compile up until the IR generation")
 OPTION(VERBOSE, _, verbose,     0, "verbose")
+OPTION(THREADS, _, threads,     1, "number of extra threads spawned")
 
 #undef OPTION

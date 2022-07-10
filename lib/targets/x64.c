@@ -4,18 +4,18 @@
 // two simple temporary buffers to represent type_as_string results
 static thread_local char temp_string0[1024], temp_string1[1024];
 
-static void set_defines(Cuik_CPP* cpp, TB_System sys) {
+static void set_defines(Cuik_CPP* cpp, Cuik_System sys) {
     cuikpp_define_empty(cpp, "_CUIK_TARGET_64BIT_");
     cuikpp_define(cpp, "__LITTLE_ENDIAN__", "1");
 
-    if (sys == TB_SYSTEM_WINDOWS) {
+    if (sys == CUIK_SYSTEM_WINDOWS) {
         cuikpp_define(cpp, "_M_X64", "100");
         cuikpp_define(cpp, "_AMD64_", "100");
         cuikpp_define(cpp, "_M_AMD64", "100");
 
         cuikpp_define(cpp, "_WIN32", "1");
         cuikpp_define(cpp, "_WIN64", "1");
-    } else if (sys == TB_SYSTEM_LINUX) {
+    } else if (sys == CUIK_SYSTEM_LINUX) {
         cuikpp_define(cpp, "__x86_64__", "1");
         cuikpp_define(cpp, "__LP64__", "1");
 
@@ -34,184 +34,6 @@ static void set_defines(Cuik_CPP* cpp, TB_System sys) {
     cuikpp_define(cpp, "__CUIK_ATOMIC_LONG_LOCK_FREE", "1");
     cuikpp_define(cpp, "__CUIK_ATOMIC_LLONG_LOCK_FREE", "1");
     cuikpp_define(cpp, "__CUIK_ATOMIC_POINTER_LOCK_FREE", "1");
-}
-
-// on Win64 all structs that have a size of 1,2,4,8
-// or any scalars are passed via registers
-static bool win64_should_pass_via_reg(TranslationUnit* tu, Cuik_Type* type) {
-    if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
-        switch (type->size) {
-            case 1:
-            case 2:
-            case 4:
-            case 8:
-            return true;
-            default:
-            return false;
-        }
-    } else {
-        return true;
-    }
-}
-
-static TB_FunctionPrototype* create_prototype(TranslationUnit* tu, Cuik_Type* type) {
-    // decide if return value is aggregate
-    bool is_aggregate_return = !win64_should_pass_via_reg(tu, type->func.return_type);
-
-    // parameters
-    Param* param_list = type->func.param_list;
-    size_t param_count = type->func.param_count;
-
-    // estimate parameter count
-    size_t real_param_count = (is_aggregate_return ? 1 : 0) + param_count;
-
-    TB_DataType return_dt = TB_TYPE_PTR;
-    if (!is_aggregate_return) return_dt = ctype_to_tbtype(type->func.return_type);
-
-    TB_FunctionPrototype* proto = tb_prototype_create(tu->ir_mod, TB_STDCALL, return_dt, real_param_count, type->func.has_varargs);
-
-    if (is_aggregate_return) {
-        tb_prototype_add_param(proto, TB_TYPE_PTR);
-    }
-
-    for (size_t i = 0; i < param_count; i++) {
-        Param* p = &param_list[i];
-
-        if (win64_should_pass_via_reg(tu, p->type)) {
-            TB_DataType dt = ctype_to_tbtype(p->type);
-
-            assert(dt.width < 8);
-            tb_prototype_add_param(proto, dt);
-        } else {
-            tb_prototype_add_param(proto, TB_TYPE_PTR);
-        }
-    }
-
-    return proto;
-}
-
-static bool pass_return_via_reg(TranslationUnit* tu, Cuik_Type* type) {
-    return win64_should_pass_via_reg(tu, type);
-}
-
-static int deduce_parameter_usage(TranslationUnit* tu, Cuik_Type* type) {
-    return 1;
-}
-
-static int pass_parameter(TranslationUnit* tu, TB_Function* func, Expr* e, bool is_vararg, TB_Reg* out_param) {
-    Cuik_Type* arg_type = e->type;
-
-    if (!win64_should_pass_via_reg(tu, arg_type)) {
-        // const pass-by-value is considered as a const ref
-        // since it doesn't mutate
-        IRVal arg = irgen_expr(tu, func, e);
-        TB_Reg arg_addr = TB_NULL_REG;
-        switch (arg.value_type) {
-            case LVALUE:
-            arg_addr = arg.reg;
-            break;
-            case LVALUE_FUNC:
-            arg_addr = tb_inst_get_func_address(func, arg.func);
-            break;
-            case LVALUE_EFUNC:
-            arg_addr = tb_inst_get_extern_address(func, arg.ext);
-            break;
-            case RVALUE: {
-                // spawn a lil temporary
-                TB_CharUnits size = arg_type->size;
-                TB_CharUnits align = arg_type->align;
-                TB_DataType dt = tb_function_get_node(func, arg.reg)->dt;
-
-                arg_addr = tb_inst_local(func, size, align);
-                tb_inst_store(func, dt, arg_addr, arg.reg, align);
-                break;
-            }
-            default:
-            break;
-        }
-        assert(arg_addr);
-
-        // TODO(NeGate): we might wanna define some TB instruction
-        // for killing locals since some have really limited lifetimes
-        TB_CharUnits size = arg_type->size;
-        TB_CharUnits align = arg_type->align;
-
-        if (arg_type->is_const) {
-            out_param[0] = arg_addr;
-        } else {
-            TB_Reg temp_slot = tb_inst_local(func, size, align);
-            TB_Register size_reg = tb_inst_uint(func, TB_TYPE_I64, size);
-
-            tb_inst_memcpy(func, temp_slot, arg_addr, size_reg, align);
-
-            out_param[0] = temp_slot;
-        }
-
-        return 1;
-    } else {
-        if (arg_type->kind == KIND_STRUCT ||
-            arg_type->kind == KIND_UNION) {
-            // Convert aggregate into TB scalar
-            IRVal arg = irgen_expr(tu, func, e);
-            TB_Reg arg_addr = TB_NULL_REG;
-            switch (arg.value_type) {
-                case LVALUE:
-                arg_addr = arg.reg;
-                break;
-                case LVALUE_FUNC:
-                arg_addr = tb_inst_get_func_address(func, arg.func);
-                break;
-                case LVALUE_EFUNC:
-                arg_addr = tb_inst_get_extern_address(func, arg.ext);
-                break;
-                case RVALUE: {
-                    // spawn a lil temporary
-                    TB_CharUnits size = arg_type->size;
-                    TB_CharUnits align = arg_type->align;
-                    TB_DataType dt = tb_function_get_node(func, arg.reg)->dt;
-
-                    arg_addr = tb_inst_local(func, size, align);
-                    tb_inst_store(func, dt, arg_addr, arg.reg, align);
-                    break;
-                }
-                default:
-                break;
-            }
-            assert(arg_addr);
-
-            TB_DataType dt = TB_TYPE_VOID;
-            switch (arg_type->size) {
-                case 1:
-                dt = TB_TYPE_I8;
-                break;
-                case 2:
-                dt = TB_TYPE_I16;
-                break;
-                case 4:
-                dt = TB_TYPE_I32;
-                break;
-                case 8:
-                dt = TB_TYPE_I64;
-                break;
-                default:
-                break;
-            }
-
-            out_param[0] = tb_inst_load(func, dt, arg_addr, arg_type->align);
-            return 1;
-        } else {
-            TB_Reg arg = irgen_as_rvalue(tu, func, e);
-            TB_DataType dt = tb_function_get_node(func, arg)->dt;
-
-            if (is_vararg && dt.type == TB_FLOAT && dt.data == TB_FLT_64 && dt.width == 0) {
-                // convert any float variadic arguments into integers
-                arg = tb_inst_bitcast(func, arg, TB_TYPE_I64);
-            }
-
-            out_param[0] = arg;
-            return 1;
-        }
-    }
 }
 
 // TODO(NeGate): Add some type checking utilities to match against a list of types since that's kinda important :p
@@ -337,7 +159,186 @@ static Cuik_Type* type_check_builtin(TranslationUnit* tu, Expr* e, const char* n
     return 0;
 }
 
-static TB_Register compile_builtin(TranslationUnit* tu, TB_Function* func, const char* name, int arg_count, Expr** args) {
+#ifdef CUIK_USE_TB
+// on Win64 all structs that have a size of 1,2,4,8
+// or any scalars are passed via registers
+static bool win64_should_pass_via_reg(TranslationUnit* tu, Cuik_Type* type) {
+    if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
+        switch (type->size) {
+            case 1:
+            case 2:
+            case 4:
+            case 8:
+            return true;
+            default:
+            return false;
+        }
+    } else {
+        return true;
+    }
+}
+
+static TB_FunctionPrototype* create_prototype(TranslationUnit* tu, Cuik_Type* type) {
+    // decide if return value is aggregate
+    bool is_aggregate_return = !win64_should_pass_via_reg(tu, type->func.return_type);
+
+    // parameters
+    Param* param_list = type->func.param_list;
+    size_t param_count = type->func.param_count;
+
+    // estimate parameter count
+    size_t real_param_count = (is_aggregate_return ? 1 : 0) + param_count;
+
+    TB_DataType return_dt = TB_TYPE_PTR;
+    if (!is_aggregate_return) return_dt = ctype_to_tbtype(type->func.return_type);
+
+    TB_FunctionPrototype* proto = tb_prototype_create(tu->ir_mod, TB_STDCALL, return_dt, real_param_count, type->func.has_varargs);
+
+    if (is_aggregate_return) {
+        tb_prototype_add_param(proto, TB_TYPE_PTR);
+    }
+
+    for (size_t i = 0; i < param_count; i++) {
+        Param* p = &param_list[i];
+
+        if (win64_should_pass_via_reg(tu, p->type)) {
+            TB_DataType dt = ctype_to_tbtype(p->type);
+
+            assert(dt.width < 8);
+            tb_prototype_add_param(proto, dt);
+        } else {
+            tb_prototype_add_param(proto, TB_TYPE_PTR);
+        }
+    }
+
+    return proto;
+}
+
+static bool pass_return_via_reg(TranslationUnit* tu, Cuik_Type* type) {
+    return win64_should_pass_via_reg(tu, type);
+}
+
+static int deduce_parameter_usage(TranslationUnit* tu, Cuik_Type* type) {
+    return 1;
+}
+
+static int pass_parameter(TranslationUnit* tu, TB_Function* func, Expr* e, bool is_vararg, TB_Reg* out_param) {
+    Cuik_Type* arg_type = e->type;
+
+    if (!win64_should_pass_via_reg(tu, arg_type)) {
+        // const pass-by-value is considered as a const ref
+        // since it doesn't mutate
+        IRVal arg = irgen_expr(tu, func, e);
+        TB_Reg arg_addr = TB_NULL_REG;
+        switch (arg.value_type) {
+            case LVALUE:
+            arg_addr = arg.reg;
+            break;
+            case LVALUE_FUNC:
+            arg_addr = tb_inst_get_func_address(func, arg.func);
+            break;
+            case LVALUE_EFUNC:
+            arg_addr = tb_inst_get_extern_address(func, arg.ext);
+            break;
+            case RVALUE: {
+                // spawn a lil temporary
+                TB_CharUnits size = arg_type->size;
+                TB_CharUnits align = arg_type->align;
+                TB_DataType dt = tb_function_get_node(func, arg.reg)->dt;
+
+                arg_addr = tb_inst_local(func, size, align);
+                tb_inst_store(func, dt, arg_addr, arg.reg, align);
+                break;
+            }
+            default:
+            break;
+        }
+        assert(arg_addr);
+
+        // TODO(NeGate): we might wanna define some TB instruction
+        // for killing locals since some have really limited lifetimes
+        TB_CharUnits size = arg_type->size;
+        TB_CharUnits align = arg_type->align;
+
+        if (arg_type->is_const) {
+            out_param[0] = arg_addr;
+        } else {
+            TB_Reg temp_slot = tb_inst_local(func, size, align);
+            TB_Reg size_reg = tb_inst_uint(func, TB_TYPE_I64, size);
+
+            tb_inst_memcpy(func, temp_slot, arg_addr, size_reg, align);
+
+            out_param[0] = temp_slot;
+        }
+
+        return 1;
+    } else {
+        if (arg_type->kind == KIND_STRUCT ||
+            arg_type->kind == KIND_UNION) {
+            // Convert aggregate into TB scalar
+            IRVal arg = irgen_expr(tu, func, e);
+            TB_Reg arg_addr = TB_NULL_REG;
+            switch (arg.value_type) {
+                case LVALUE:
+                arg_addr = arg.reg;
+                break;
+                case LVALUE_FUNC:
+                arg_addr = tb_inst_get_func_address(func, arg.func);
+                break;
+                case LVALUE_EFUNC:
+                arg_addr = tb_inst_get_extern_address(func, arg.ext);
+                break;
+                case RVALUE: {
+                    // spawn a lil temporary
+                    TB_CharUnits size = arg_type->size;
+                    TB_CharUnits align = arg_type->align;
+                    TB_DataType dt = tb_function_get_node(func, arg.reg)->dt;
+
+                    arg_addr = tb_inst_local(func, size, align);
+                    tb_inst_store(func, dt, arg_addr, arg.reg, align);
+                    break;
+                }
+                default:
+                break;
+            }
+            assert(arg_addr);
+
+            TB_DataType dt = TB_TYPE_VOID;
+            switch (arg_type->size) {
+                case 1:
+                dt = TB_TYPE_I8;
+                break;
+                case 2:
+                dt = TB_TYPE_I16;
+                break;
+                case 4:
+                dt = TB_TYPE_I32;
+                break;
+                case 8:
+                dt = TB_TYPE_I64;
+                break;
+                default:
+                break;
+            }
+
+            out_param[0] = tb_inst_load(func, dt, arg_addr, arg_type->align);
+            return 1;
+        } else {
+            TB_Reg arg = irgen_as_rvalue(tu, func, e);
+            TB_DataType dt = tb_function_get_node(func, arg)->dt;
+
+            if (is_vararg && dt.type == TB_FLOAT && dt.data == TB_FLT_64 && dt.width == 0) {
+                // convert any float variadic arguments into integers
+                arg = tb_inst_bitcast(func, arg, TB_TYPE_I64);
+            }
+
+            out_param[0] = arg;
+            return 1;
+        }
+    }
+}
+
+static TB_Reg compile_builtin(TranslationUnit* tu, TB_Function* func, const char* name, int arg_count, Expr** args) {
     if (strcmp(name, "__c11_atomic_thread_fence") == 0) {
         printf("TODO __c11_atomic_thread_fence!");
         abort();
@@ -345,8 +346,8 @@ static TB_Register compile_builtin(TranslationUnit* tu, TB_Function* func, const
         printf("TODO __c11_atomic_signal_fence!");
         abort();
     } else if (strcmp(name, "__c11_atomic_exchange") == 0) {
-        TB_Register dst = irgen_as_rvalue(tu, func, args[0]);
-        TB_Register src = irgen_as_rvalue(tu, func, args[1]);
+        TB_Reg dst = irgen_as_rvalue(tu, func, args[0]);
+        TB_Reg src = irgen_as_rvalue(tu, func, args[1]);
 
         assert(args[2]->op == EXPR_INT && args[2]->int_num.num < 6);
         int order = args[2]->int_num.num;
@@ -355,11 +356,11 @@ static TB_Register compile_builtin(TranslationUnit* tu, TB_Function* func, const
         Cuik_Type* type = args[0]->cast_type;
         TB_DataType dt = ctype_to_tbtype(type);
 
-        TB_Register a = irgen_as_rvalue(tu, func, args[0]);
-        TB_Register b = irgen_as_rvalue(tu, func, args[1]);
-        TB_Register c = irgen_as_rvalue(tu, func, args[2]);
+        TB_Reg a = irgen_as_rvalue(tu, func, args[0]);
+        TB_Reg b = irgen_as_rvalue(tu, func, args[1]);
+        TB_Reg c = irgen_as_rvalue(tu, func, args[2]);
 
-        TB_Register result = tb_inst_mul(func, a, b, TB_CAN_WRAP);
+        TB_Reg result = tb_inst_mul(func, a, b, TB_CAN_WRAP);
         tb_inst_store(func, dt, c, result, type->align);
 
         return tb_inst_cmp_ilt(func, result, a, false);
@@ -380,14 +381,14 @@ static TB_Register compile_builtin(TranslationUnit* tu, TB_Function* func, const
         // TODO(NeGate): Remove this later because it will emotionally damage our optimizer.
         // the issue is that it blatantly accesses out of bounds and we should probably just
         // have a node for va_start in the backend instead.
-        TB_Register dst = irgen_as_rvalue(tu, func, args[0]);
+        TB_Reg dst = irgen_as_rvalue(tu, func, args[0]);
         IRVal src = irgen_expr(tu, func, args[1]);
         assert(src.value_type == LVALUE);
 
         tb_inst_store(func, TB_TYPE_PTR, dst, tb_inst_va_start(func, src.reg), 8);
         return 0;
     } else if (strcmp(name, "_mm_setcsr") == 0) {
-        TB_Register src = irgen_as_rvalue(tu, func, args[0]);
+        TB_Reg src = irgen_as_rvalue(tu, func, args[0]);
 
         return tb_inst_x86_ldmxcsr(func, src);
     } else if (strcmp(name, "_mm_getcsr") == 0) {
@@ -400,6 +401,7 @@ static TB_Register compile_builtin(TranslationUnit* tu, TB_Function* func, const
         return 0;
     }
 }
+#endif /* CUIK_USE_TB */
 
 const Cuik_ArchDesc* cuik_get_x64_target_desc(void) {
     static Cuik_ArchDesc t = { 0 };
@@ -440,12 +442,14 @@ const Cuik_ArchDesc* cuik_get_x64_target_desc(void) {
 
             .builtin_func_map = builtins,
             .set_defines = set_defines,
+            #ifdef CUIK_USE_TB
             .create_prototype = create_prototype,
             .pass_return_via_reg = pass_return_via_reg,
             .deduce_parameter_usage = deduce_parameter_usage,
             .pass_parameter = pass_parameter,
-            .type_check_builtin = type_check_builtin,
             .compile_builtin = compile_builtin,
+            #endif /* CUIK_USE_TB */
+            .type_check_builtin = type_check_builtin,
         };
     }
 

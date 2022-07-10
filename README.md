@@ -17,7 +17,19 @@ Mac & Linux aren't ready yet but i'll be moving forward to those platforms in th
 
 You'll need MSVC installed on windows (i use link.exe for now... sorry, i'll write a linker soon enough)
 
-Just take a C compiler and compile the `compile.c` file and run it, if you want an optimized build add `RELEASE_BUILD` as a preprocessor define with `-D` or `/D`. Then you should have a cuik executable in your `build/` directory, you can add that directory to your path if you want.
+Just take a C compiler and compile the `compile.c` file and run it
+
+### Options (define these using -D or /D depending on the compiler):
+* `RELEASE_BUILD` for optimized builds.
+* `ONLY_LIBRARY` will not compile the active driver, just the libCuik library
+* `NO_TB` when compiling libCuik and don't wanna use TB.
+
+### Compile script CLI
+* passing a filepath into the compile executable will redirect libCuik's output location
+* -test will run the tests
+* -self1 will do type checking for all of Cuik
+* -self2 will do IR generation for all of Cuik
+* -self3 will do object files for all of Cuik
 
 ## How am I doing?
 mostly aight, thanks for asking.

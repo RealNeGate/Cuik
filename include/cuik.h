@@ -1,8 +1,12 @@
 #pragma once
 #include <stdint.h>
 #include <stdbool.h>
+#include <stdio.h>
 #include <stdlib.h>
+
+#ifdef CUIK_USE_TB
 #include <tb.h>
+#endif
 
 #define CUIK_API extern
 
@@ -102,10 +106,24 @@ CUIK_API void cuik_profile_region(uint64_t start, const char* fmt, ...);
 ////////////////////////////////////////////
 // General Cuik stuff
 ////////////////////////////////////////////
+// identical to the TB_System enum
+typedef enum Cuik_System {
+    CUIK_SYSTEM_WINDOWS,
+    CUIK_SYSTEM_LINUX,
+    CUIK_SYSTEM_MACOS,
+
+    // Not supported yet
+    CUIK_SYSTEM_ANDROID
+} Cuik_System;
+
 typedef struct {
-    TB_System sys;
+    Cuik_System sys;
     const Cuik_ArchDesc* arch;
 } Cuik_Target;
+
+#ifdef CUIK_USE_TB
+inline static TB_System cuik_system_to_tb(Cuik_System s) { return (TB_System) s; }
+#endif
 
 CUIK_API void cuik_init(void);
 
@@ -276,12 +294,14 @@ typedef struct Cuik_TranslationUnitDesc {
     // errors CANNOT be NULL
     Cuik_ErrorStatus* errors;
 
+    #ifdef CUIK_USE_TB
     // if ir_module is non-NULL then translation unit will be used for
     // IR generation and function and global signatures will be filled
     // in accordingly, multiple translation units can be created for the
     // same module you just have to attach them to each other with a
     // compilation unit and internally link them.
     TB_Module* ir_module;
+    #endif
 
     // if target is non-NULL, builtins will be used based on said target.
     const Cuik_Target* target;
@@ -305,10 +325,12 @@ CUIK_API size_t cuik_get_token_count(TokenStream* restrict s);
 ////////////////////////////////////////////
 // IR generation
 ////////////////////////////////////////////
+#ifdef CUIK_USE_TB
 // Generates TBIR for a specific top-level statement, returns a pointer to the TB_Function
 // it just generated such that a user could do TB related operations on it
 CUIK_API TB_Module* cuik_get_tb_module(TranslationUnit* restrict tu);
 CUIK_API TB_Function* cuik_stmt_gen_ir(TranslationUnit* restrict tu, Stmt* restrict s);
+#endif
 
 ////////////////////////////////////////////
 // Translation unit management

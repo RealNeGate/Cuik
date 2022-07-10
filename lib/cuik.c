@@ -33,8 +33,11 @@ static char* utf16_to_utf8_on_heap(const wchar_t* input) {
 }
 #endif
 
+void hook_crash_handler(void);
+
 CUIK_API void cuik_init(void) {
     init_report_system();
+    hook_crash_handler();
 }
 
 CUIK_API void cuik_find_system_deps(const char* cuik_crt_directory) {
@@ -138,7 +141,7 @@ static void set_defines(Cuik_CPP* cpp, const Cuik_Target* target, bool system_li
     cuikpp_add_include_directory(cpp, cuik__include_dir);
 
     // platform specific stuff
-    if (target->sys == TB_SYSTEM_WINDOWS) {
+    if (target->sys == CUIK_SYSTEM_WINDOWS) {
         #ifdef _WIN32
         // WinSDK includes
         char filepath[FILENAME_MAX];
@@ -213,7 +216,7 @@ static void set_defines(Cuik_CPP* cpp, const Cuik_Target* target, bool system_li
         cuikpp_define_empty(cpp, "__analysis_noreturn");
         cuikpp_define_empty(cpp, "__ptr32");
         cuikpp_define_empty(cpp, "__ptr64");
-    } else if (target->sys == TB_SYSTEM_LINUX) {
+    } else if (target->sys == CUIK_SYSTEM_LINUX) {
         // TODO(NeGate): Automatically detect these somehow...
         cuikpp_add_include_directory(cpp, "/usr/lib/gcc/x86_64-linux-gnu/9/include/");
         cuikpp_add_include_directory(cpp, "/usr/include/x86_64-linux-gnu/");

@@ -1,5 +1,6 @@
 #include <cuik.h>
 #include "helper.h"
+#include "big_array.h"
 #include "cli_parser.h"
 #include "json_perf.h"
 #include "threadpool.h"
@@ -21,6 +22,7 @@ static bool args_verbose;
 static bool args_preprocess;
 static bool args_optimize;
 static bool args_object_only;
+static int args_threads = -1;
 
 static TB_Module* mod;
 static threadpool_t* thread_pool;
@@ -133,7 +135,7 @@ static void compile_file(void* arg) {
             .errors      = &errors,
             .ir_module   = mod,
             .target      = &target_desc,
-            .thread_pool = &ithread_pool,
+            .thread_pool = thread_pool ? &ithread_pool : NULL,
         });
 
     if (tu == NULL) {
@@ -262,6 +264,7 @@ int main(int argc, char** argv) {
             case ARG_TYPES: args_types = true; break;
             case ARG_IR: args_ir = true; break;
             case ARG_VERBOSE: args_verbose = true; break;
+            case ARG_THREADS: args_threads = atoi(arg.value); break;
             case ARG_HELP: {
                 print_help();
                 return EXIT_SUCCESS;
@@ -308,22 +311,25 @@ int main(int argc, char** argv) {
     }
 
     // spin up worker threads
-    thread_pool = threadpool_create(calculate_worker_thread_count(), 4096);
-    ithread_pool = (Cuik_IThreadpool){
-        .user_data = thread_pool,
-        .submit = tp_submit,
-        .work_one_job = tp_work_one_job
-    };
+    int thread_count = args_threads >= 0 ? args_threads : calculate_worker_thread_count();
+    if (thread_count >= 2) {
+        thread_pool = threadpool_create(thread_count - 1, 4096);
+        ithread_pool = (Cuik_IThreadpool){
+            .user_data = thread_pool,
+            .submit = tp_submit,
+            .work_one_job = tp_work_one_job
+        };
+    }
 
     cuik_create_compilation_unit(&compilation_unit);
 
     // get default system
     #if defined(_WIN32)
-    target_desc.sys = TB_SYSTEM_WINDOWS;
+    target_desc.sys = CUIK_SYSTEM_WINDOWS;
     #elif defined(__linux) || defined(linux)
-    target_desc.sys = TB_SYSTEM_LINUX;
+    target_desc.sys = CUIK_SYSTEM_LINUX;
     #elif defined(__APPLE__) || defined(__MACH__) || defined(macintosh)
-    target_desc.sys = TB_SYSTEM_MACOS;
+    target_desc.sys = CUIK_SYSTEM_MACOS;
     #endif
 
     // get target
@@ -331,7 +337,7 @@ int main(int argc, char** argv) {
 
     if (!args_ast && !args_types) {
         TB_FeatureSet features = {0};
-        mod = tb_module_create(TB_ARCH_X86_64, target_desc.sys, TB_DEBUGFMT_NONE, &features);
+        mod = tb_module_create(TB_ARCH_X86_64, cuik_system_to_tb(target_desc.sys), TB_DEBUGFMT_NONE, &features);
     }
 
     if (args_preprocess) {

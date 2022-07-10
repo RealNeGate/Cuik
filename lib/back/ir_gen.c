@@ -1,3 +1,4 @@
+#ifdef CUIK_USE_TB
 #include "ir_gen.h"
 #include "settings.h"
 #include <compilation_unit.h>
@@ -211,7 +212,7 @@ InitNode* count_max_tb_init_objects(int node_count, InitNode* node, int* out_cou
 // TODO(NeGate): Revisit this code as a smarter man...
 // if the addr is 0 then we only apply constant initializers.
 // func doesn't need to be non-NULL if it's addr is NULL.
-InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, SourceLocIndex loc, TB_InitializerID init, TB_Register addr, int node_count, InitNode* node) {
+InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, SourceLocIndex loc, TB_Initializer* init, TB_Reg addr, int node_count, InitNode* node) {
     for (int i = 0; i < node_count; i++) {
         if (node->kids_count > 0) {
             node = eval_initializer_objects(tu, func, loc, init, addr, node->kids_count, node + 1);
@@ -268,10 +269,10 @@ InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, Sourc
                             char temp[1024];
                             snprintf(temp, 1024, "DUMMY@%d", tu->id_gen++);
 
-                            TB_InitializerID dummy_init = tb_initializer_create(tu->ir_mod, child_type->size, 2, 1);
+                            TB_Initializer* dummy_init = tb_initializer_create(tu->ir_mod, child_type->size, 2, 1);
                             dst = tb_initializer_add_region(tu->ir_mod, dummy_init, 0, child_type->size);
 
-                            TB_GlobalID dummy = tb_global_create(tu->ir_mod, temp, TB_STORAGE_DATA, TB_LINKAGE_PRIVATE);
+                            TB_Global* dummy = tb_global_create(tu->ir_mod, temp, TB_STORAGE_DATA, TB_LINKAGE_PRIVATE);
                             tb_global_set_initializer(tu->ir_mod, dummy, dummy_init);
 
                             tb_initializer_add_global(tu->ir_mod, init, 0, dummy);
@@ -349,7 +350,7 @@ static void gen_local_initializer(TranslationUnit* tu, TB_Function* func, Source
     int max_tb_objects = 0;
     count_max_tb_init_objects(node_count, nodes, &max_tb_objects);
 
-    TB_InitializerID init = tb_initializer_create(tu->ir_mod,
+    TB_Initializer* init = tb_initializer_create(tu->ir_mod,
         type->size,
         type->align,
         max_tb_objects);
@@ -362,12 +363,12 @@ static void gen_local_initializer(TranslationUnit* tu, TB_Function* func, Source
     eval_initializer_objects(tu, func, loc, init, addr, node_count, nodes);
 }
 
-static TB_InitializerID gen_global_initializer(TranslationUnit* tu, SourceLocIndex loc, Cuik_Type* type, Expr* initial, const unsigned char* name) {
+static TB_Initializer* gen_global_initializer(TranslationUnit* tu, SourceLocIndex loc, Cuik_Type* type, Expr* initial, const unsigned char* name) {
     assert(type != NULL);
 
     if (initial != NULL) {
         if (initial->op == EXPR_STR || initial->op == EXPR_WSTR) {
-            TB_InitializerID init = tb_initializer_create(tu->ir_mod, type->size, type->align, 1);
+            TB_Initializer* init = tb_initializer_create(tu->ir_mod, type->size, type->align, 1);
             char* dst = tb_initializer_add_region(tu->ir_mod, init, 0, type->size);
             memcpy(dst, initial->str.start, initial->str.end - initial->str.start);
 
@@ -377,7 +378,7 @@ static TB_InitializerID gen_global_initializer(TranslationUnit* tu, SourceLocInd
                 char temp[1024];
                 snprintf(temp, 1024, "%s@%d", name, tu->id_gen++);
 
-                TB_GlobalID dummy = tb_global_create(tu->ir_mod, temp, TB_STORAGE_DATA, TB_LINKAGE_PRIVATE);
+                TB_Global* dummy = tb_global_create(tu->ir_mod, temp, TB_STORAGE_DATA, TB_LINKAGE_PRIVATE);
                 tb_global_set_initializer(tu->ir_mod, dummy, init);
 
                 init = tb_initializer_create(tu->ir_mod, 8, 8, 1);
@@ -397,7 +398,7 @@ static TB_InitializerID gen_global_initializer(TranslationUnit* tu, SourceLocInd
             int max_tb_objects = 0;
             count_max_tb_init_objects(node_count, nodes, &max_tb_objects);
 
-            TB_InitializerID init = tb_initializer_create(tu->ir_mod, type->size, type->align, max_tb_objects);
+            TB_Initializer* init = tb_initializer_create(tu->ir_mod, type->size, type->align, max_tb_objects);
 
             // Initialize all const expressions
             eval_initializer_objects(tu, NULL, loc, init, TB_NULL_REG, node_count, nodes);
@@ -405,7 +406,7 @@ static TB_InitializerID gen_global_initializer(TranslationUnit* tu, SourceLocInd
         } else if (initial->op == EXPR_INT ||
             initial->op == EXPR_FLOAT32 ||
             initial->op == EXPR_FLOAT64) {
-            TB_InitializerID init = tb_initializer_create(tu->ir_mod, type->size, type->align, 1);
+            TB_Initializer* init = tb_initializer_create(tu->ir_mod, type->size, type->align, 1);
             void* region = tb_initializer_add_region(tu->ir_mod, init, 0, type->size);
 
             if (initial->op == EXPR_INT) {
@@ -425,7 +426,7 @@ static TB_InitializerID gen_global_initializer(TranslationUnit* tu, SourceLocInd
 
             return init;
         } else if (initial->op == EXPR_ADDR) {
-            TB_InitializerID init = tb_initializer_create(tu->ir_mod, type->size, type->align, 2);
+            TB_Initializer* init = tb_initializer_create(tu->ir_mod, type->size, type->align, 2);
             void* region = tb_initializer_add_region(tu->ir_mod, init, 0, type->size);
 
             uint64_t offset = 0;
@@ -535,7 +536,8 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
             return (IRVal){
                 .value_type = LVALUE,
                 .type = type,
-                .reg = addr};
+                .reg = addr
+            };
         }
         case EXPR_FUNCTION: {
             assert(e->func.src->op == STMT_FUNC_DECL);
@@ -543,7 +545,8 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
             return (IRVal){
                 .value_type = LVALUE_FUNC,
                 .type = e->type,
-                .func = tb_function_from_id(tu->ir_mod, e->func.src->backing.f)};
+                .func = e->func.src->backing.f
+            };
         }
         case EXPR_VA_ARG: {
             IRVal src = irgen_expr(tu, func, e->va_arg_.src);
@@ -558,7 +561,8 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
             return (IRVal){
                 .value_type = LVALUE_FUNC,
                 .type = e->type,
-                .reg = pre};
+                .reg = pre
+            };
         }
         case EXPR_SYMBOL: {
             Stmt* stmt = e->symbol;
@@ -577,12 +581,14 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
                 return (IRVal){
                     .value_type = LVALUE_LABEL,
                     .type = NULL,
-                    .label = stmt->backing.l};
+                    .label = stmt->backing.l,
+                };
             } else if (stmt->op == STMT_FUNC_DECL) {
                 return (IRVal){
                     .value_type = LVALUE_FUNC,
                     .type = type,
-                    .func = tb_function_from_id(tu->ir_mod, stmt->backing.f)};
+                    .func = stmt->backing.f,
+                };
             } else if (stmt->op == STMT_GLOBAL_DECL) {
                 // functions are external by default
                 const char* name = (const char*)stmt->decl.name;
@@ -597,7 +603,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
                             val = (IRVal){
                                 .value_type = LVALUE_EFUNC,
                                 .type = type,
-                                .ext = stmt->backing.e
+                                .ext = stmt->backing.e,
                             };
                         } else {
                             // It's either a proper external or links to
@@ -617,7 +623,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
                                     val = (IRVal){
                                         .value_type = LVALUE_FUNC,
                                         .type = type,
-                                        .func = tb_function_from_id(tu->ir_mod, real_symbol->backing.f),
+                                        .func = real_symbol->backing.f,
                                     };
                                 } else if (real_symbol->op == STMT_GLOBAL_DECL) {
                                     val = (IRVal){
@@ -662,14 +668,14 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
                     return (IRVal){
                         .value_type = LVALUE,
                         .type = type,
-                        .ext = tb_inst_get_global_address(func, stmt->backing.g)
+                        .ext = stmt->backing.e,
                     };
                 }
             } else {
                 return (IRVal){
                     .value_type = LVALUE,
                     .type = type,
-                    .reg = stmt->backing.r
+                    .reg = stmt->backing.r,
                 };
             }
         }
@@ -1655,7 +1661,7 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
 
             if (attrs.is_static) {
                 // Static initialization
-                TB_InitializerID init = gen_global_initializer(tu, s->loc,
+                TB_Initializer* init = gen_global_initializer(tu, s->loc,
                     type,
                     s->decl.initial,
                     s->decl.name);
@@ -1670,7 +1676,7 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
                     tb_module_set_tls_index(tu->ir_mod, tb_extern_create(tu->ir_mod, "_tls_index"));
                 }
 
-                TB_GlobalID g = tb_global_create(tu->ir_mod, name, attrs.is_tls ? TB_STORAGE_TLS : TB_STORAGE_DATA, TB_LINKAGE_PRIVATE);
+                TB_Global* g = tb_global_create(tu->ir_mod, name, attrs.is_tls ? TB_STORAGE_TLS : TB_STORAGE_DATA, TB_LINKAGE_PRIVATE);
                 tb_global_set_initializer(tu->ir_mod, g, init);
                 tls_restore(name);
 
@@ -1957,7 +1963,7 @@ static TB_Function* gen_func_body(TranslationUnit* tu, Cuik_Type* type, Stmt* re
     tls_init();
     assert(type);
 
-    TB_Function* func = tb_function_from_id(tu->ir_mod, s->backing.f);
+    TB_Function* func = s->backing.f;
 
     // Parameters
     size_t param_count = type->func.param_count;
@@ -2034,13 +2040,12 @@ CUIK_API TB_Function* cuik_stmt_gen_ir(TranslationUnit* restrict tu, Stmt* restr
             return NULL;
         }
 
-        TB_GlobalID global = s->backing.g;
-        TB_InitializerID init = gen_global_initializer(tu, s->loc,
+        TB_Initializer* init = gen_global_initializer(tu, s->loc,
             s->decl.type,
             s->decl.initial,
             s->decl.name);
 
-        tb_global_set_initializer(tu->ir_mod, global, init);
+        tb_global_set_initializer(tu->ir_mod, s->backing.g, init);
     }
 
     return NULL;
@@ -2049,3 +2054,4 @@ CUIK_API TB_Function* cuik_stmt_gen_ir(TranslationUnit* restrict tu, Stmt* restr
 CUIK_API TB_Module* cuik_get_tb_module(TranslationUnit* restrict tu) {
     return tu->ir_mod;
 }
+#endif /* CUIK_USE_TB */

@@ -116,7 +116,12 @@ static int align_up(int a, int b) {
 static Stmt* make_stmt(TranslationUnit* tu, TokenStream* restrict s, StmtOp op, size_t extra_size) {
     Stmt* stmt = arena_alloc(&local_ast_arena, sizeof(Stmt), _Alignof(max_align_t));
 
+    #ifdef CUIK_USE_TB
     memset(stmt, 0, offsetof(Stmt, backing) + sizeof(((Stmt*)0)->backing));
+    #else
+    memset(stmt, 0, offsetof(Stmt, end_loc) + sizeof(((Stmt*)0)->end_loc));
+    #endif
+
     stmt->op = op;
     stmt->loc = tokens_get_location_index(s);
     return stmt;
@@ -523,11 +528,14 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
 
     TranslationUnit* tu = calloc(1, sizeof(TranslationUnit));
     tu->filepath = desc->tokens->filepath;
-    tu->ir_mod = desc->ir_module;
     tu->is_windows_long = desc->target->sys == TB_SYSTEM_WINDOWS;
     tu->target = *desc->target;
     tu->tokens = *desc->tokens;
     tu->errors = desc->errors;
+
+    #ifdef CUIK_USE_TB
+    tu->ir_mod = desc->ir_module;
+    #endif
 
     tls_init();
     atoms_init();
@@ -678,7 +686,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                         Decl decl = parse_declarator(tu, s, type, false, false);
                         if (decl.name == NULL) {
                             REPORT(ERROR, decl_loc, "Declaration has no name");
-                            abort();
+                            break;
                         }
 
                         Stmt* n = make_stmt(tu, s, STMT_GLOBAL_DECL, sizeof(struct StmtDecl));
@@ -732,13 +740,16 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
 
                                     if (t->type == '\0') {
                                         REPORT(ERROR, decl.loc, "Declaration ended in EOF");
-                                        abort();
+
+                                        // restore the token stream
+                                        s->current = sym.current + 1;
+                                        goto skip_declaration;
                                     } else if (t->type == '{') {
                                         depth++;
                                     } else if (t->type == '}') {
                                         if (depth == 0) {
                                             REPORT(ERROR, decl.loc, "Unbalanced brackets");
-                                            abort();
+                                            goto skip_declaration;
                                         }
 
                                         depth--;
@@ -758,7 +769,10 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
 
                                     if (t->type == '\0') {
                                         REPORT(ERROR, decl.loc, "Declaration was never closed");
-                                        abort();
+
+                                        // restore the token stream
+                                        s->current = sym.current + 1;
+                                        goto skip_declaration;
                                     } else if (t->type == '(') {
                                         depth++;
                                     } else if (t->type == ')') {
@@ -766,12 +780,14 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
 
                                         if (depth == 0) {
                                             REPORT(ERROR, decl.loc, "Unbalanced parenthesis");
-                                            abort();
+
+                                            s->current = sym.current + 1;
+                                            goto skip_declaration;
                                         }
                                     } else if (t->type == ';' || t->type == ',') {
                                         if (depth > 1 && t->type == ';') {
                                             REPORT(ERROR, decl.loc, "Declaration's expression has a weird semicolon");
-                                            abort();
+                                            goto skip_declaration;
                                         } else if (depth == 1) {
                                             sym.terminator = t->type;
                                             depth--;
@@ -792,14 +808,12 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
 
                             if (decl.type->kind != KIND_FUNC) {
                                 REPORT(ERROR, decl.loc, "Somehow parsing a function body... on a non-function type?");
-                                abort();
                             }
 
                             if (old_definition && old_definition->current != 0) {
                                 report_two_spots(REPORT_ERROR, tu->errors, s, decl.loc, old_definition->stmt->loc,
                                     "Cannot redefine function declaration",
                                     NULL, NULL, "previous definition was:");
-                                abort();
                             }
 
                             //n->decl.type = decl.type;
@@ -819,7 +833,9 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                                 if (t->type == '\0') {
                                     SourceLocIndex l = tokens_get_last_location_index(s);
                                     report_fix(REPORT_ERROR, tu->errors, s, l, "}", "Function body ended in EOF");
-                                    abort();
+
+                                    s->current = sym.current + 1;
+                                    goto skip_declaration;
                                 } else if (t->type == '{') {
                                     depth++;
                                 } else if (t->type == '}') {
@@ -842,7 +858,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
 
                         if (tokens_get(s)->type == 0) {
                             REPORT(ERROR, loc, "declaration list ended with EOF instead of semicolon.");
-                            abort();
+                            break;
                         } else if (tokens_get(s)->type == ';') {
                             tokens_next(s);
                             break;
@@ -851,6 +867,8 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                             continue;
                         }
                     }
+
+                    skip_declaration:;
                 }
             }
         }

@@ -1,13 +1,10 @@
 // I'd recommend not messing with the internals
 // here...
-#include "big_array.h"
-
 #define SLOTS_PER_MACRO_BUCKET 1024
 #define MACRO_BUCKET_COUNT 1024
 
 #define THE_SHTUFFS_SIZE (16 << 20)
 
-typedef enum TknType TknType;
 typedef struct Token {
     int type /* TknType but GCC doesn't like incomplete enums */;
     SourceLocIndex location;
@@ -34,13 +31,14 @@ struct Cuik_CPP {
 
     const Cuik_IFileSystem* file_system;
 
-    // hashmap
+    // stb_ds hashmap
     IncludeOnceEntry* include_once;
 
     // system libraries
     char** system_include_dirs;
 
-    DynArray(Cuik_FileEntry) files;
+    // DynArray(Cuik_FileEntry)
+    Cuik_FileEntry* files;
 
     // how deep into directive scopes (#if, #ifndef, #ifdef) is it
     int depth;

@@ -1470,25 +1470,27 @@ static void sema_top_level(TranslationUnit* tu, Stmt* restrict s) {
         case STMT_FUNC_DECL: {
             assert(type->kind == KIND_FUNC);
 
+            #ifdef CUIK_USE_TB
+            s->backing.f = 0;
+            #endif
+
             if (s->decl.attrs.is_static && s->decl.attrs.is_extern) {
                 REPORT_STMT(ERROR, s, "Function '%s' cannot be both static and extern.", name);
-                s->backing.f = 0;
                 break;
             }
 
             if (s->decl.attrs.is_static && !s->decl.attrs.is_inline) {
                 if (warnings.unused_funcs && !s->decl.attrs.is_used) {
                     REPORT(WARNING, s->loc, "Function '%s' is never used.", name);
-                    s->backing.f = 0;
                     break;
                 }
             }
 
             if (s->decl.attrs.is_inline && !s->decl.attrs.is_used) {
-                s->backing.f = 0;
                 break;
             }
 
+            #ifdef CUIK_USE_TB
             if (tu->ir_mod == NULL) {
                 s->backing.f = 0;
 
@@ -1516,13 +1518,19 @@ static void sema_top_level(TranslationUnit* tu, Stmt* restrict s) {
                 } else {
                     func = tb_prototype_build(tu->ir_mod, proto, name, linkage);
                 }
-                s->backing.f = tb_function_get_id(tu->ir_mod, func);
+                s->backing.f = func;
 
                 // type check function body
                 function_stmt = s;
                 sema_stmt(tu, s->decl.initial_as_stmt);
                 function_stmt = 0;
             }
+            #else
+            // type check function body
+            function_stmt = s;
+            sema_stmt(tu, s->decl.initial_as_stmt);
+            function_stmt = 0;
+            #endif /* CUIK_USE_TB */
             break;
         }
         case STMT_DECL:
@@ -1531,9 +1539,12 @@ static void sema_top_level(TranslationUnit* tu, Stmt* restrict s) {
             if (!s->decl.attrs.is_used) break;
             if (s->decl.attrs.is_typedef) break;
 
+            #ifdef CUIK_USE_TB
+            s->backing.g = 0;
+            #endif
+
             if (s->decl.attrs.is_static && s->decl.attrs.is_extern) {
                 REPORT_STMT(ERROR, s, "Global declaration '%s' cannot be both static and extern.", name);
-                s->backing.g = 0;
                 break;
             }
 
@@ -1602,9 +1613,8 @@ static void sema_top_level(TranslationUnit* tu, Stmt* restrict s) {
                     }
                 }
 
-                if (tu->ir_mod == NULL) {
-                    s->backing.g = 0;
-                } else {
+                #ifdef CUIK_USE_TB
+                if (tu->ir_mod != NULL) {
                     // if we have a TB module, fill it up with declarations
                     if (s->decl.attrs.is_tls && !atomic_flag_test_and_set(&irgen_defined_tls_index)) {
                         tb_module_set_tls_index(tu->ir_mod, tb_extern_create(tu->ir_mod, "_tls_index"));
@@ -1613,6 +1623,7 @@ static void sema_top_level(TranslationUnit* tu, Stmt* restrict s) {
                     TB_Linkage linkage = s->decl.attrs.is_static ? TB_LINKAGE_PRIVATE : TB_LINKAGE_PUBLIC;
                     s->backing.g = tb_global_create(tu->ir_mod, name, s->decl.attrs.is_tls ? TB_STORAGE_TLS : TB_STORAGE_DATA, linkage);
                 }
+                #endif
             }
             break;
         }

@@ -3,7 +3,10 @@
 //
 // It's inspired by nobuild but different
 //#define RELEASE_BUILD 1
+#ifndef DRIVER_NAME
 #define DRIVER_NAME "main_driver"
+#endif /* DRIVER_NAME */
+
 #define USE_DA_ASAN 0
 #include "compile.h"
 
@@ -239,6 +242,11 @@ void delete_crap_in_dir(const char* dir_path) {
 }
 
 int main(int argc, char** argv) {
+    const char* cuik_libpath = "bin"SLASH"libcuik";
+    if (argc > 1 && argv[1][0] != '-') {
+        cuik_libpath = argv[1];
+    }
+
     nbuild_init();
     create_dir_if_not_exists("bin"SLASH);
 
@@ -248,6 +256,10 @@ int main(int argc, char** argv) {
 
     CC_Options options = {
         .output_dir = "bin"SLASH,
+
+        #ifndef NO_TB
+        .extra_options = "-DCUIK_USE_TB",
+        #endif
 
         #ifdef RELEASE_BUILD
         .opt = CC_Ox,
@@ -274,10 +286,16 @@ int main(int argc, char** argv) {
         cc_invoke(&options, INPUT_FILES[i], NULL);
     }
 
+    // usually TB will compile a copy of stb_ds (eventually we'll drop stb_ds from there)
+    // but if we're not compiling with stb_ds then we provide our own
+    options.extra_options = "-xc -DSTB_DS_IMPLEMENTATION";
+    cc_invoke(&options, "deps/stb_ds.h", NULL);
+    options.extra_options = "-DCUIK_USE_TB";
+
     cmd_wait_for_all();
 
-    printf("Converting to a library...\n");
-    ar_invoke("bin"SLASH"libcuik", 1, (const char*[]) {
+    printf("Converting to a library... %s\n", cuik_libpath);
+    ar_invoke(cuik_libpath, 1, (const char*[]) {
             #if ON_WINDOWS
             "bin"SLASH"*.obj",
             #else
@@ -318,10 +336,9 @@ int main(int argc, char** argv) {
     );
 
     clean("bin"SLASH);
-    #endif
 
     if (argc > 1) {
-        if (strcmp(argv[1], "test") == 0) {
+        if (strcmp(argv[1], "-test") == 0) {
             printf("\n\n\n");
             printf("Running tests...\n");
 
@@ -377,7 +394,7 @@ int main(int argc, char** argv) {
             delete_crap_in_dir("tests"SLASH"the_increment"SLASH"iso"SLASH);
             delete_crap_in_dir("tests"SLASH"the_increment"SLASH"cuik"SLASH);
             delete_crap_in_dir("tests"SLASH"the_increment"SLASH"inria"SLASH);
-        } else if (strcmp(argv[1], "self") == 0) {
+        } else if (strcmp(argv[1], "-self") == 0) {
             printf("\n\n\n");
             printf("Running phase 1 self-host tests...\n");
 
@@ -401,7 +418,7 @@ int main(int argc, char** argv) {
             }
 
             printf("===============   Tests (%d succeeded out of %d)   ===============\n", successes, INPUT_FILE_COUNT);
-        } else if (strcmp(argv[1], "self2") == 0) {
+        } else if (strcmp(argv[1], "-self2") == 0) {
             printf("\n\n\n");
             printf("Running phase 2 self-host tests...\n");
 
@@ -425,7 +442,7 @@ int main(int argc, char** argv) {
             }
 
             printf("===============   Tests (%d succeeded out of %d)   ===============\n", successes, INPUT_FILE_COUNT);
-        } else if (strcmp(argv[1], "self3") == 0) {
+        } else if (strcmp(argv[1], "-self3") == 0) {
             printf("\n\n\n");
             printf("Running phase 3 self-host tests...\n");
 
@@ -455,6 +472,7 @@ int main(int argc, char** argv) {
             printf("What's '%s' supposed to mean?\n", argv[1]);
         }
     }
+    #endif
 
     return 0;
 }

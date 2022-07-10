@@ -6,7 +6,7 @@
 #include <stb_ds.h>
 
 // NOTE(NeGate): I originally called it TokenType but windows a bih on god
-enum TknType {
+typedef enum TknType {
     TOKEN_ACCESSOR = '.',
     TOKEN_COMMA = ',',
 
@@ -139,7 +139,7 @@ enum TknType {
     TOKEN_KW_cdecl,
     TOKEN_KW_stdcall,
     TOKEN_KW_declspec,
-};
+} TknType;
 
 typedef struct {
     ////////////////////////////////

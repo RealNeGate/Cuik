@@ -35,7 +35,7 @@ static Arg get_cli_arg(int* index, int argc, char** argv) {
                 if (n == 0) {                                                                 \
                     return (Arg){ ARG_ ## type, arg_is_set };                                 \
                 } else {                                                                      \
-                    if (argv[i][sizeof("--" #long_name "=")] == '\0') {                       \
+                    if (opt[sizeof(#long_name "=") - 1] == '\0') {                            \
                         fprintf(stderr, "error: expected argument after --" #long_name "\n"); \
                         exit(1);                                                              \
                     }                                                                         \

@@ -4,16 +4,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
  
-// hacky
-#ifdef __CUIKC__
-void* __readgsqword(LONG offset) { return NULL; }
-void __stosb(char* ptr, char src, size_t count) {}
-void _chvalidator_l() {}
-LONG InterlockedExchangeAdd(LONG volatile *Addend, LONG Value) { return 0; }
-long long InterlockedExchangeAdd64(long long volatile *Addend, long long Value) { return 0; }
-unsigned long long __shiftright128 ( unsigned long long _LowPart , unsigned long long _HighPart , unsigned char _Shift ) { return 0; }
-LPUWSTR __stdcall uaw_CharUpperW(LPUWSTR String) { return NULL; }
-#else
+#ifndef __CUIKC__
 LRESULT main_wnd_proc(HWND wnd, UINT message, WPARAM wparam, LPARAM lparam);
 #endif
 

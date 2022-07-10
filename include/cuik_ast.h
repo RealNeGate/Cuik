@@ -323,13 +323,15 @@ struct Stmt {
         SourceLocIndex end_loc;
 
         // Used by the backend for backend-y things
+        #ifdef CUIK_USE_TB
         union {
-            TB_Register r;
-            TB_FunctionID f;
-            TB_ExternalID e;
-            TB_GlobalID g;
+            TB_Reg r;
             TB_Label l;
+            TB_Function* f;
+            TB_External* e;
+            TB_Global* g;
         } backing;
+        #endif /* CUIK_USE_TB */
     };
     union {
         struct StmtCompound {
