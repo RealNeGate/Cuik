@@ -315,9 +315,9 @@ int main(int argc, char** argv) {
     #ifndef ONLY_LIBRARY
     static const char* LINKER_INPUTS[] = {
         #if ON_WINDOWS
-        "bin"SLASH DRIVER_NAME".obj", "bin"SLASH"threadpool.obj", "bin"SLASH"libcuik.lib", "deps"SLASH"tb"SLASH"tildebackend.lib",
+        "bin"SLASH DRIVER_NAME".obj", "bin"SLASH"threadpool.obj", "bin"SLASH"libcuik.lib", "deps"SLASH"tildebackend.lib",
         #else
-        "bin"SLASH DRIVER_NAME".o", "bin"SLASH"threadpool.o", "bin"SLASH"libcuik.a", "deps"SLASH"tb"SLASH"tildebackend.a", "/usr/local/lib/libluajit-5.1.a",
+        "bin"SLASH DRIVER_NAME".o", "bin"SLASH"threadpool.o", "bin"SLASH"libcuik.a", "deps"SLASH"tildebackend.a",
         #endif
     };
 
