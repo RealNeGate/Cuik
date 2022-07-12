@@ -484,7 +484,7 @@ int main(int argc, char** argv) {
 
             int successes = 0;
 
-            cmd_append(CUIK_LOCATION " -T -c -o bin2/libcuik.obj -I deps/ -I include/ -I lib/ --lib bin/libcuik.lib ");
+            cmd_append(CUIK_LOCATION " -T -c -o bin2/libcuik.obj -I deps/ -I include/ -I lib/ ");
 
             char cmd[1024];
             for (size_t i = 0; i < INPUT_FILE_COUNT; i++) {
