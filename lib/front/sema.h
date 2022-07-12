@@ -17,5 +17,7 @@ bool type_compatible(TranslationUnit* tu, Cuik_Type* a, Cuik_Type* b, Expr* a_ex
 Member* sema_resolve_member_access(TranslationUnit* tu, Expr* e, uint32_t* out_offset);
 Member* sema_traverse_members(TranslationUnit* tu, Cuik_Type* record_type, Atom name, uint32_t* out_offset);
 
+// check that each type matches the cast type
+bool cuik__type_check_args(TranslationUnit* tu, Expr* e, int arg_count, Expr** args);
 Cuik_Type* sema_guess_type(TranslationUnit* tu, Stmt* restrict s);
 Cuik_Type* sema_expr(TranslationUnit* tu, Expr* e);

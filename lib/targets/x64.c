@@ -38,7 +38,25 @@ static void set_defines(Cuik_CPP* cpp, Cuik_System sys) {
 
 // TODO(NeGate): Add some type checking utilities to match against a list of types since that's kinda important :p
 static Cuik_Type* type_check_builtin(TranslationUnit* tu, Expr* e, const char* name, int arg_count, Expr** args) {
-    if (strcmp(name, "__builtin_trap") == 0) {
+    if (strcmp(name, "__va_start") == 0) {
+        if (arg_count != 2) {
+            REPORT_EXPR(ERROR, e, "%s requires 2 arguments", name);
+            return &builtin_types[TYPE_INT];
+        }
+
+        // only type check the first param
+        args[0]->cast_type = new_pointer(tu, &builtin_types[TYPE_CHAR]);
+        cuik__type_check_args(tu, e, 1, args);
+
+        // second is completely generic so long as it's a parameter
+        if (args[1]->op != EXPR_PARAM) {
+            REPORT_EXPR(ERROR, e, "va_start's second parameter must be a parameter name", name);
+            return &builtin_types[TYPE_INT];
+        }
+
+        args[1]->cast_type = sema_expr(tu, args[1]);
+        return &builtin_types[TYPE_VOID];
+    } else if (strcmp(name, "__builtin_trap") == 0) {
         if (arg_count != 0) {
             REPORT_EXPR(ERROR, e, "%s doesn't require arguments", name);
             return &builtin_types[TYPE_VOID];
@@ -48,7 +66,36 @@ static Cuik_Type* type_check_builtin(TranslationUnit* tu, Expr* e, const char* n
     } else if (strcmp(name, "__c11_atomic_compare_exchange_strong") == 0) {
         // type check arguments
         return &builtin_types[TYPE_BOOL];
-    } else if (strcmp(name, "__c11_atomic_exchange") == 0) {
+    } else if (strcmp(name, "__c11_atomic_load") == 0) {
+        if (arg_count != 2) {
+            REPORT_EXPR(ERROR, e, "%s requires 1 argument", name);
+            return &builtin_types[TYPE_INT];
+        }
+
+        Cuik_Type* dst_type = sema_expr(tu, args[0]);
+        if (dst_type->kind != KIND_PTR) {
+            REPORT_EXPR(ERROR, e, "argument 1 should be a pointer");
+            return &builtin_types[TYPE_INT];
+        }
+        args[0]->cast_type = dst_type;
+
+        // memory order is a constant int
+        Expr* order_expr = cuik__optimize_ast(tu, args[1]);
+        if (order_expr->op != EXPR_INT) {
+            REPORT_EXPR(ERROR, args[1], "Memory order must be a constant expression");
+            return &builtin_types[TYPE_INT];
+        }
+
+        args[1]->cast_type = &builtin_types[TYPE_INT];
+        cuik__type_check_args(tu, e, 1, &order_expr);
+
+        return dst_type->ptr_to;
+    } else if (strcmp(name, "__c11_atomic_exchange") == 0 ||
+        strcmp(name, "__c11_atomic_fetch_add") == 0 ||
+        strcmp(name, "__c11_atomic_fetch_sub") == 0 ||
+        strcmp(name, "__c11_atomic_fetch_or") == 0 ||
+        strcmp(name, "__c11_atomic_fetch_xor") == 0 ||
+        strcmp(name, "__c11_atomic_fetch_and") == 0) {
         if (arg_count != 3) {
             REPORT_EXPR(ERROR, e, "%s requires 3 arguments", name);
             return &builtin_types[TYPE_INT];
@@ -154,9 +201,16 @@ static Cuik_Type* type_check_builtin(TranslationUnit* tu, Expr* e, const char* n
         }
 
         return &builtin_types[TYPE_UINT];
-    }
+    } else if (strcmp(name, "__builtin_unreachable") == 0) {
+        if (arg_count != 0) {
+            REPORT_EXPR(ERROR, e, "%s requires 0 arguments", name);
+        }
 
-    return 0;
+        return &builtin_types[TYPE_VOID];
+    } else {
+        REPORT_EXPR(ERROR, e->call.target, "unimplemented builtin '%s'", name);
+        return &builtin_types[TYPE_VOID];
+    }
 }
 
 #ifdef CUIK_USE_TB
@@ -352,6 +406,22 @@ static TB_Reg compile_builtin(TranslationUnit* tu, TB_Function* func, const char
         assert(args[2]->op == EXPR_INT && args[2]->int_num.num < 6);
         int order = args[2]->int_num.num;
         return tb_inst_atomic_xchg(func, dst, src, order);
+    } else if (strcmp(name, "__c11_atomic_load") == 0) {
+        TB_Reg addr = irgen_as_rvalue(tu, func, args[0]);
+
+        assert(args[0]->cast_type->kind == KIND_PTR);
+        TB_DataType dt = ctype_to_tbtype(args[0]->cast_type->ptr_to);
+
+        assert(args[1]->op == EXPR_INT && args[1]->int_num.num < 6);
+        int order = args[1]->int_num.num;
+        return tb_inst_atomic_load(func, addr, dt, order);
+    } else if (strcmp(name, "__c11_atomic_fetch_add") == 0) {
+        TB_Reg dst = irgen_as_rvalue(tu, func, args[0]);
+        TB_Reg src = irgen_as_rvalue(tu, func, args[1]);
+
+        assert(args[2]->op == EXPR_INT && args[2]->int_num.num < 6);
+        int order = args[2]->int_num.num;
+        return tb_inst_atomic_add(func, dst, src, order);
     } else if (strcmp(name, "__builtin_mul_overflow") == 0) {
         Cuik_Type* type = args[0]->cast_type;
         TB_DataType dt = ctype_to_tbtype(type);
@@ -366,6 +436,7 @@ static TB_Reg compile_builtin(TranslationUnit* tu, TB_Function* func, const char
         return tb_inst_cmp_ilt(func, result, a, false);
     } else if (strcmp(name, "__builtin_unreachable") == 0) {
         tb_inst_unreachable(func);
+        tb_inst_label(func, tb_inst_new_label_id(func));
         return 0;
     } else if (strcmp(name, "__builtin_expect") == 0) {
         printf("TODO __builtin_expect!");
@@ -398,6 +469,7 @@ static TB_Reg compile_builtin(TranslationUnit* tu, TB_Function* func, const char
     } else if (strcmp(name, "_umul128") == 0) {
         return tb_inst_uint(func, TB_TYPE_I64, 0);
     } else {
+        internal_error("unimplemented builtin! %s", name);
         return 0;
     }
 }

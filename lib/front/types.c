@@ -139,6 +139,10 @@ Cuik_Type* new_blank_type(TranslationUnit* tu) {
 // code which is parallel so we need a mutex to avoid messing
 // up the type arena.
 Cuik_Type* get_common_type(TranslationUnit* tu, Cuik_Type* ty1, Cuik_Type* ty2) {
+    if (ty1->kind == KIND_VOID && ty2->kind == KIND_VOID) {
+        return ty1;
+    }
+
     // implictly convert arrays into pointers
     if (ty1->kind == KIND_ARRAY) {
         return new_pointer(tu, ty1->array_of);

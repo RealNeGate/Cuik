@@ -433,7 +433,7 @@ int main(int argc, char** argv) {
             char cmd[1024];
             for (size_t i = 0; i < INPUT_FILE_COUNT; i++) {
                 if (str_ends_with(INPUT_FILES[i], ".c")) {
-                    snprintf(cmd, 1024, CUIK_LOCATION " --t -o bin/%s %s -I deps/ -I include/ -I lib/", INPUT_FILES[i], INPUT_FILES[i]);
+                    snprintf(cmd, 1024, CUIK_LOCATION " --ir %s -I deps/ -I include/ -I lib/", INPUT_FILES[i]);
 
                     if (system(cmd) == 0) {
                         printf("Success with %s!\n", INPUT_FILES[i]);
@@ -452,12 +452,14 @@ int main(int argc, char** argv) {
             printf("\n\n\n");
             printf("Running phase 3 self-host tests...\n");
 
+            create_dir_if_not_exists("bin2/");
+
             int successes = 0;
 
             char cmd[1024];
             for (size_t i = 0; i < INPUT_FILE_COUNT; i++) {
                 if (str_ends_with(INPUT_FILES[i], ".c")) {
-                    int r = snprintf(cmd, 1024, CUIK_LOCATION " -c %s -o bin/ -I deps/ -I include/ -I lib/", INPUT_FILES[i]);
+                    int r = snprintf(cmd, 1024, CUIK_LOCATION " -c %s -o bin2/ -I deps/ -I include/ -I lib/", INPUT_FILES[i]);
                     assert(r >= 0 && r < 1024);
 
                     int code = system(cmd);
@@ -474,6 +476,31 @@ int main(int argc, char** argv) {
             }
 
             printf("===============   Tests (%d succeeded out of %d)   ===============\n", successes, INPUT_FILE_COUNT);
+        } else if (strcmp(argv[1], "-self4") == 0) {
+            printf("\n\n\n");
+            printf("Running phase 4 self-host tests...\n");
+
+            create_dir_if_not_exists("bin2/");
+
+            int successes = 0;
+
+            cmd_append(CUIK_LOCATION " -T -c -o bin2/libcuik.obj -I deps/ -I include/ -I lib/ --lib bin/libcuik.lib ");
+
+            char cmd[1024];
+            for (size_t i = 0; i < INPUT_FILE_COUNT; i++) {
+                if (str_ends_with(INPUT_FILES[i], ".c")) {
+                    cmd_append(INPUT_FILES[i]);
+                    cmd_append(" ");
+                } else {
+                    printf("not a C file but sure! %s\n", INPUT_FILES[i]);
+                    successes++;
+                }
+            }
+
+            cmd_run();
+            cmd_wait_for_all();
+
+            printf("Self hosted!!!\n");
         } else {
             printf("What's '%s' supposed to mean?\n", argv[1]);
         }

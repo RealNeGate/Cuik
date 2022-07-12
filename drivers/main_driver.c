@@ -34,23 +34,22 @@ static CompilationUnit compilation_unit;
 
 #define OPT(name) (TB_FunctionPass){ #name, tb_opt_ ## name }
 static void initialize_opt_passes(void) {
+    char custom_luapath[FILENAME_MAX];
     da_passes = dyn_array_create(TB_FunctionPass);
 
     dyn_array_put(da_passes, OPT(hoist_locals));
     dyn_array_put(da_passes, OPT(merge_rets));
+    dyn_array_put(da_passes, OPT(mem2reg));
+
+    // local cse
     dyn_array_put(da_passes, OPT(hoist_invariants));
     dyn_array_put(da_passes, OPT(canonicalize));
-    dyn_array_put(da_passes, OPT(mem2reg));
     dyn_array_put(da_passes, OPT(remove_pass_node));
     dyn_array_put(da_passes, OPT(canonicalize));
 
     if (args_experiment) {
-        char custom_luapath[FILENAME_MAX];
         sprintf_s(custom_luapath, FILENAME_MAX, "%s/custom.lua", crt_dirpath);
-
-        // silly lua shit
-        TB_FunctionPass p = tb_opt_load_lua_pass(custom_luapath);
-        dyn_array_put(da_passes, p);
+        dyn_array_put(da_passes, tb_opt_load_lua_pass(custom_luapath));
     }
 
     dyn_array_put(da_passes, OPT(dead_expr_elim));
@@ -318,9 +317,15 @@ int main(int argc, char** argv) {
         const char* ext = strrchr(filename, '.');
         size_t len = ext ? (ext - filename) : strlen(filename);
 
-        if (filename[len - 1] == '/' && filename[len - 1] == '\\') {
+        if (filename[len - 1] == '/' || filename[len - 1] == '\\') {
+            const char* slash = strrchr(input_files[0], '/');
+            if (!slash) slash = strrchr(input_files[0], '\\');
+
+            if (!slash) slash = input_files[0];
+            else slash += 1; // skip the slash
+
             // we have an output directory instead of a file
-            sprintf_s(output_path_no_ext, FILENAME_MAX, "%.*s%s", (int)len, filename, input_files[0]);
+            sprintf_s(output_path_no_ext, FILENAME_MAX, "%.*s%s", (int)len, filename, slash);
         } else {
             memcpy(output_path_no_ext, filename, len);
             output_path_no_ext[len] = '\0';

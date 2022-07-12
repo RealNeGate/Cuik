@@ -158,8 +158,8 @@ static void expand_ident(Cuik_CPP* restrict c, TokenStream* restrict s, Lexer* l
         Token t = {
             TOKEN_INTEGER,
             get_source_location(c, l, s, parent_loc, SOURCE_LOC_NORMAL),
-            out,
-            out + 1};
+            out, out + 1,
+        };
         arrput(s->tokens, t);
     } else {
         size_t def_i;
@@ -167,14 +167,14 @@ static void expand_ident(Cuik_CPP* restrict c, TokenStream* restrict s, Lexer* l
             int line_of_expansion = l->current_line;
 
             SourceLocIndex expanded_loc = get_source_location(c, l, s,
-                                                              parent_loc,
-                                                              SOURCE_LOC_MACRO);
+                parent_loc,
+                SOURCE_LOC_MACRO);
 
             // Identify macro definition
             lexer_read(l);
 
             String def = string_from_range(c->macro_bucket_values_start[def_i],
-                                           c->macro_bucket_values_end[def_i]);
+                c->macro_bucket_values_end[def_i]);
 
             const unsigned char* args = c->macro_bucket_keys[def_i] + c->macro_bucket_keys_length[def_i];
 
@@ -194,7 +194,7 @@ static void expand_ident(Cuik_CPP* restrict c, TokenStream* restrict s, Lexer* l
                 if (!find_define(c, &def_i, token_data, token_length)) break;
 
                 def = string_from_range(c->macro_bucket_values_start[def_i],
-                                        c->macro_bucket_values_end[def_i]);
+                    c->macro_bucket_values_end[def_i]);
 
                 args = c->macro_bucket_keys[def_i] + c->macro_bucket_keys_length[def_i];
             }
@@ -313,12 +313,23 @@ static void expand_ident(Cuik_CPP* restrict c, TokenStream* restrict s, Lexer* l
 
                             lexer_read(&def_lex);
 
-                            if (has_varargs &&
-                                token_length == sizeof("__VA_ARGS__") - 1 &&
-                                memcmp(token_data, "__VA_ARGS__", sizeof("__VA_ARGS__") - 1) == 0 &&
-                                key_count == value_count) {
-                                // we remove the comma since there's no varargs to chew
-                                temp_expansion = fallback;
+                            if (has_varargs && key_count == value_count) {
+                                Lexer old = def_lex;
+
+                                if (def_lex.token_type == TOKEN_DOUBLE_HASH) {
+                                    lexer_read(&def_lex);
+
+                                    if (lexer_match(&def_lex, sizeof("__VA_ARGS__")-1, "__VA_ARGS__")) {
+                                        // we remove the comma since there's no varargs to chew
+                                        temp_expansion = fallback;
+                                    } else {
+                                        // sad boy hours... revert
+                                        def_lex = old;
+                                    }
+                                } else if (lexer_match(&def_lex, sizeof("__VA_ARGS__")-1, "__VA_ARGS__")) {
+                                    // we remove the comma since there's no varargs to chew
+                                    temp_expansion = fallback;
+                                }
                             }
 
                             continue;

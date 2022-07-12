@@ -1,33 +1,23 @@
 return function (f)
+	local changes = 0
+
     for n in tb.all_nodes_iter(f) do
         if tb.is_int_binop(n) then
-            print("r"..n.reg.." : "..tostring(n))
+			local a, b = tb.get_binops(n)
+
+			if tb.is_izero(b) then
+            	if tb.is_imul(n) then
+					tb.set_pass(n, b) changes = 1
+				elseif tb.is_iadd(n) then
+					tb.set_pass(n, a) changes = 1
+				elseif tb.is_idiv(n) then
+					tb.set_poison(n) changes = 1
+				end
+			end
         end
     end
 
-    tb.print_func(f)
-    return 0
+    -- tb.print_func(f)
+    return changes
 end
-
--- example strength reduction
---[[
-for n in f:all_nodes_iter(f) do
-    if n:is_int_binop() then
-        local t = n:type()
-        local a, b = n:getbinops()
-
-        if b:is_izero() then
-            if n:is_imul() then
-                f:set_pass(n, b)
-            else if n:is_iadd() then
-                -- we're taking an existing node and replacing it
-                f:set_pass(n, a)
-            else if n:is_idiv() then
-                -- this works for both types of idiv
-                f:set_undef(n)
-            end
-        end
-    end
-end
---]]
 

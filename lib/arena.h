@@ -1,7 +1,7 @@
 #pragma once
 #include "common.h"
 
-#define ARENA_SEGMENT_SIZE (4 * 1024 * 1024)
+#define ARENA_SEGMENT_SIZE (16 * 1024 * 1024)
 
 // It's a linked list :)
 typedef struct ArenaSegment {

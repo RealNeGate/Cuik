@@ -239,6 +239,7 @@ extern "C" {
         TB_ATOMIC_TEST_AND_SET,
         TB_ATOMIC_CLEAR,
 
+        TB_ATOMIC_LOAD,
         TB_ATOMIC_XCHG,
         TB_ATOMIC_ADD,
         TB_ATOMIC_SUB,
@@ -851,9 +852,7 @@ extern "C" {
     TB_API TB_DataType tb_vector_type(TB_DataTypeEnum type, int width);
 
     TB_API void tb_function_print(TB_Function* f, TB_PrintCallback callback, void* user_data);
-
-    // Prints out the IR in the GraphViz format
-    TB_API void tb_function_print_cfg(TB_Function* f, TB_PrintCallback callback, void* user_data);
+    TB_API void tb_function_print2(TB_Function* f, TB_PrintCallback callback, void* user_data, bool display_nops);
     TB_API void tb_function_free(TB_Function* f);
 
     TB_API TB_Label tb_inst_get_current_label(TB_Function* f);
@@ -949,6 +948,9 @@ extern "C" {
     TB_API TB_Reg tb_inst_atomic_test_and_set(TB_Function* f, TB_Reg addr, TB_MemoryOrder order);
     TB_API TB_Reg tb_inst_atomic_clear(TB_Function* f, TB_Reg addr, TB_MemoryOrder order);
 
+    // Must be aligned to the natural alignment of dt
+    TB_API TB_Reg tb_inst_atomic_load(TB_Function* f, TB_Reg addr, TB_DataType dt, TB_MemoryOrder order);
+
     // All atomic operations here return the old value and the operations are
     // performed in the same data type as 'src' with alignment of 'addr' being
     // the natural alignment of 'src'
@@ -1019,6 +1021,17 @@ extern "C" {
         bool (*execute)(TB_Function* f);
         void* l_state;
     } TB_FunctionPass;
+
+    typedef struct {
+        // invoked once before any passes are run in tb_function_optimize
+        void (*start)(void* user_data, TB_Function* f, const TB_FunctionPass* pass);
+
+        // invoked after any pass which is run
+        void (*pass)(void* user_data, TB_Function* f, const TB_FunctionPass* pass, bool success);
+
+        // invoked after all passes are completed in tb_function_optimize
+        void (*stop)(void* user_data, TB_Function* f, const TB_FunctionPass* pass);
+    } TB_OptimizerCallback;
 
     // Applies single function optimizations until it runs out
     TB_API bool tb_function_optimize(TB_Function* f, size_t pass_count, const TB_FunctionPass* passes);

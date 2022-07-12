@@ -12,7 +12,10 @@ void* arena_alloc(Arena* arena, size_t size, size_t align) {
     size_t align_mask = align - 1;
 
     // If this ever happens... literally how...
-    assert(size < ARENA_SEGMENT_SIZE);
+    if (size >= ARENA_SEGMENT_SIZE) {
+        fprintf(stderr, "error: arena cannot allocate contigous region that big! %zu (limit is %d)\n", size, ARENA_SEGMENT_SIZE);
+        exit(2);
+    }
 
     void* ptr;
     if (arena->top && arena->top->used + size + align < ARENA_SEGMENT_SIZE - sizeof(ArenaSegment)) {
@@ -20,16 +23,16 @@ void* arena_alloc(Arena* arena, size_t size, size_t align) {
         arena->top->used = (arena->top->used + size + align_mask) & ~align_mask;
     } else {
         // Add new page
-#ifdef _WIN32
+        #ifdef _WIN32
         ArenaSegment* s = VirtualAlloc(NULL, ARENA_SEGMENT_SIZE, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-#else
+        #else
         // umm... mmap dumbass
         ArenaSegment* s = malloc(ARENA_SEGMENT_SIZE);
-#endif
+        #endif
 
         if (!s) {
-            printf("error: arena is out of memory!\n");
-            abort();
+            fprintf(stderr, "error: arena is out of memory!\n");
+            exit(2);
         }
 
         s->next = NULL;
@@ -55,11 +58,11 @@ void arena_free(Arena* arena) {
         ArenaSegment* c = arena->base;
         while (c) {
             ArenaSegment* next = c->next;
-#ifdef _WIN32
+            #ifdef _WIN32
             VirtualFree(c, 0, MEM_RELEASE);
-#else
+            #else
             free(c);
-#endif
+            #endif
             c = next;
         }
 
@@ -70,7 +73,7 @@ void arena_free(Arena* arena) {
 void arena_trim(Arena* arena) {
     //static _Atomic size_t space_saved = 0;
 
-#ifdef _WIN32
+    #ifdef _WIN32
     // decommit any leftover pages
     if (arena->base) {
         for (ArenaSegment* c = arena->base; c != NULL; c = c->next) {
@@ -86,7 +89,7 @@ void arena_trim(Arena* arena) {
             }
         }
     }
-#endif
+    #endif
 }
 
 void arena_append(Arena* arena, Arena* other) {

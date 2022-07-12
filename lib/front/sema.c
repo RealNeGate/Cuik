@@ -29,6 +29,10 @@ static bool is_scalar_type(TranslationUnit* tu, Cuik_Type* type) {
     return (type->kind >= KIND_BOOL && type->kind <= KIND_FUNC);
 }
 
+static bool is_constant_zero(TranslationUnit* tu, const Expr* e) {
+    return e->op == EXPR_INT && e->int_num.num == 0;
+}
+
 // doesn't do implicit casts
 bool type_very_compatible(TranslationUnit* tu, Cuik_Type* src, Cuik_Type* dst) {
     if (src == dst) return true;
@@ -193,6 +197,19 @@ static bool implicit_conversion(TranslationUnit* tu, Cuik_Type* src, Cuik_Type* 
     }
 
     return true;
+}
+
+bool cuik__type_check_args(TranslationUnit* tu, Expr* e, int arg_count, Expr** args) {
+    bool failed = false;
+
+    for (size_t i = 0; i < arg_count; i++) {
+        Cuik_Type* arg_type = sema_expr(tu, args[i]);
+        if (!implicit_conversion(tu, arg_type, args[i]->cast_type, args[i])) {
+            failed = true;
+        }
+    }
+
+    return !failed;
 }
 
 typedef struct {
@@ -1059,15 +1076,14 @@ Cuik_Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
             Cuik_Type* ty1 = sema_expr(tu, e->ternary_op.middle);
             Cuik_Type* ty2 = sema_expr(tu, e->ternary_op.right);
 
+            // if either side is a zero then it's malleable
+            if (!is_constant_zero(tu, e->ternary_op.middle) &&
+                !is_constant_zero(tu, e->ternary_op.right)) {
+                implicit_conversion(tu, ty1, ty2, e->ternary_op.middle);
+            }
+
             Cuik_Type* type = NULL;
             if (ty1->kind == KIND_STRUCT || ty1->kind == KIND_UNION) {
-                if (!type_compatible(tu, ty1, ty2, e->ternary_op.middle)) {
-                    type_as_string(tu, sizeof(temp_string0), temp_string0, ty1);
-                    type_as_string(tu, sizeof(temp_string1), temp_string1, ty2);
-
-                    REPORT_EXPR(ERROR, e, "Conflict in ternary types, true is a %s, while false is a %s", temp_string0, temp_string1);
-                }
-
                 type = ty1;
             } else {
                 type = get_common_type(tu, ty1, ty2);

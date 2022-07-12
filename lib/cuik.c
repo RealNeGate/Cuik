@@ -33,11 +33,15 @@ static char* utf16_to_utf8_on_heap(const wchar_t* input) {
 }
 #endif
 
+// hacky
 void hook_crash_handler(void);
+LONG WINAPI temp_storage_fault_handler(struct _EXCEPTION_POINTERS* info);
 
 CUIK_API void cuik_init(void) {
     init_report_system();
     hook_crash_handler();
+
+    AddVectoredExceptionHandler(1, temp_storage_fault_handler);
 }
 
 CUIK_API void cuik_find_system_deps(const char* cuik_crt_directory) {

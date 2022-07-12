@@ -157,10 +157,8 @@ static void draw_line_horizontal_pad() {
 }
 
 static SourceLoc merge_source_locations(TokenStream* tokens, SourceLocIndex starti, SourceLocIndex endi) {
-    SourceLine* line = GET_SOURCE_LOC(starti)->line;
-
-    starti = try_for_nicer_loc(tokens, starti);
-    endi = try_for_nicer_loc(tokens, endi);
+    //starti = try_for_nicer_loc(tokens, starti);
+    //endi = try_for_nicer_loc(tokens, endi);
 
     const SourceLoc* start = GET_SOURCE_LOC(starti);
     const SourceLoc* end = GET_SOURCE_LOC(endi);
@@ -177,7 +175,7 @@ static SourceLoc merge_source_locations(TokenStream* tokens, SourceLocIndex star
         return *start;
     }
 
-    return (SourceLoc){line, start_columns, end_columns - start_columns};
+    return (SourceLoc){start->line, start_columns, end_columns - start_columns};
 }
 
 static int print_backtrace(TokenStream* tokens, SourceLocIndex loc_index, SourceLine* kid) {

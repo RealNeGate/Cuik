@@ -67,6 +67,10 @@ typedef struct Cuik_IProfiler {
     void (*plot)(void* user_data, uint64_t start_ns, uint64_t end_ns, const char* label);
 } Cuik_IProfiler;
 
+typedef struct Cuik_IDiagnostic {
+    void* user_data;
+} Cuik_IDiagnostic;
+
 // for doing calls on the interfaces
 #define CUIK_CALL(object, action, ...) ((object)->action((object)->user_data, ##__VA_ARGS__))
 

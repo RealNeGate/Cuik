@@ -196,7 +196,8 @@ static Expr* parse_initializer(TranslationUnit* tu, TokenStream* restrict s, Cui
         .op = EXPR_INITIALIZER,
         .start_loc = loc,
         .end_loc = tokens_get_last_location_index(s),
-        .init = {type, count, permanent_store}};
+        .init = {type, count, permanent_store},
+    };
     return e;
 }
 
