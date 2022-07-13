@@ -334,7 +334,6 @@ void find_windows_kit_root(MicrosoftCraziness_Find_Result* result) {
         0, KEY_QUERY_VALUE | KEY_WOW64_32KEY | KEY_ENUMERATE_SUB_KEYS, &main_key);
     if (rc != S_OK) return;
     defer {
-        RegCloseKey(main_key);
     };
 
     // Look for a Windows 10 entry.
@@ -356,7 +355,7 @@ void find_windows_kit_root(MicrosoftCraziness_Find_Result* result) {
             result->windows_sdk_root = data.best_name;
 
             wchar_t* include_path = (wchar_t*)malloc(MAX_PATH);
-            auto success = swprintf_s(include_path, MAX_PATH,
+            int success = swprintf_s(include_path, MAX_PATH,
                 L"%sInclude\\%d.%d.%d.%d",
                 windows10_root,
                 data.best_version[0], data.best_version[1],
@@ -370,28 +369,24 @@ void find_windows_kit_root(MicrosoftCraziness_Find_Result* result) {
     }
 
     // Look for a Windows 8 entry.
-    auto windows8_root = read_from_the_registry(main_key, L"KitsRoot81");
+    wchar_t* windows8_root = read_from_the_registry(main_key, L"KitsRoot81");
 
     if (windows8_root) {
-        defer {
-            free(windows8_root);
-        };
-
-        auto windows8_lib = concat(windows8_root, L"Lib");
-        defer {
-            free(windows8_lib);
-        };
+        wchar_t* windows8_lib = concat(windows8_root, L"Lib");
+        free(windows8_root);
 
         Version_Data data = {};
         visit_files_w(windows8_lib, &data, win8_best);
+        free(windows8_lib);
+
         if (data.best_name) {
             result->windows_sdk_version = 8;
             result->windows_sdk_root = data.best_name;
 
-            wchar_t* include_path = (wchar_t*)malloc(MAX_PATH);
-            auto success = swprintf_s(include_path, MAX_PATH,
+            wchar_t* include_path = malloc(MAX_PATH);
+            int success = swprintf_s(include_path, MAX_PATH,
                 L"%sInclude\\%d.%d.%d.%d",
-                windows10_root,
+                windows8_root,
                 data.best_version[0], data.best_version[1],
                 data.best_version[2], data.best_version[3]);
 
@@ -403,6 +398,7 @@ void find_windows_kit_root(MicrosoftCraziness_Find_Result* result) {
     }
 
     // If we get here, we failed to find anything.
+    RegCloseKey(main_key);
 }
 
 bool find_visual_studio_2017_by_fighting_through_microsoft_craziness(MicrosoftCraziness_Find_Result* result) {
@@ -479,37 +475,32 @@ bool find_visual_studio_2017_by_fighting_through_microsoft_craziness(MicrosoftCr
         if (!success) continue;
 
         auto version_bytes = (tools_file_size.QuadPart + 1) * 2; // Warning: This multiplication by 2 presumes there is no variable-length encoding in the wchars (wacky characters in the file could betray this expectation).
-        wchar_t* version = (wchar_t*)malloc(version_bytes);
-        defer {
+        wchar_t* version = malloc(version_bytes);
+        wchar_t* read_result = fgetws(version, version_bytes, f);
+        if (!read_result) {
             free(version);
-        };
+            continue;
+        }
 
-        auto read_result = fgetws(version, version_bytes, f);
-        if (!read_result) continue;
-
-        auto version_tail = wcschr(version, '\n');
+        wchar_t* version_tail = wcschr(version, '\n');
         if (version_tail) *version_tail = 0; // Stomp the data, because nobody cares about it.
 
-        auto include_path = concat(bstr_inst_path, L"\\VC\\Tools\\MSVC\\", version, L"\\include");
-        auto library_path = concat(bstr_inst_path, L"\\VC\\Tools\\MSVC\\", version, L"\\lib\\x64");
-        auto library_file = concat(library_path, L"\\vcruntime.lib"); // @Speed: Could have library_path point to this string, with a smaller count, to save on memory flailing!
+        wchar_t* include_path = concat(bstr_inst_path, L"\\VC\\Tools\\MSVC\\", version, L"\\include");
+        wchar_t* library_path = concat(bstr_inst_path, L"\\VC\\Tools\\MSVC\\", version, L"\\lib\\x64");
+        wchar_t* library_file = concat(library_path, L"\\vcruntime.lib"); // @Speed: Could have library_path point to this string, with a smaller count, to save on memory flailing!
 
         if (os_file_exists(library_file)) {
-            auto link_exe_path = concat(bstr_inst_path, L"\\VC\\Tools\\MSVC\\", version, L"\\bin\\Hostx64\\x64");
+            wchar_t* link_exe_path = concat(bstr_inst_path, L"\\VC\\Tools\\MSVC\\", version, L"\\bin\\Hostx64\\x64");
 
             result->vs_exe_path = link_exe_path;
             result->vs_include_path = include_path;
             result->vs_library_path = library_path;
+
+            free(version);
             return true;
         }
 
-        /*
-           Ryan Saunderson said:
-           "Clang uses the 'SetupInstance->GetInstallationVersion' / ISetupHelper->ParseVersion to find the newest version
-           and then reads the tools file to define the tools path - which is definitely better than what i did."
-
-           So... @Incomplete: Should probably pick the newest version...
-        */
+        free(version);
     }
 
     // If we get here, we didn't find Visual Studio 2017. Try earlier versions.
@@ -522,47 +513,40 @@ void find_visual_studio_by_fighting_through_microsoft_craziness(MicrosoftCrazine
 
     HKEY vs7_key;
     auto rc = RegOpenKeyExA(HKEY_LOCAL_MACHINE, "SOFTWARE\\Microsoft\\VisualStudio\\SxS\\VS7", 0, KEY_QUERY_VALUE | KEY_WOW64_32KEY, &vs7_key);
-
     if (rc != S_OK) return;
-    defer {
-        RegCloseKey(vs7_key);
-    };
 
     // Hardcoded search for 4 prior Visual Studio versions. Is there something better to do here?
     const wchar_t* versions[] = {L"14.0", L"12.0", L"11.0", L"10.0"};
     const int NUM_VERSIONS = sizeof(versions) / sizeof(versions[0]);
 
     for (int i = 0; i < NUM_VERSIONS; i++) {
-        auto v = versions[i];
+        wchar_t* v = versions[i];
+        wchar_t* buffer = read_from_the_registry(vs7_key, v);
+        if (buffer == NULL) continue;
 
-        auto buffer = read_from_the_registry(vs7_key, v);
-        if (!buffer) continue;
-
-        defer {
-            free(buffer);
-        };
-
-        auto lib_path = concat(buffer, L"VC\\Lib\\amd64");
-        auto include_path = concat(buffer, L"VC\\Include");
+        wchar_t* lib_path = concat(buffer, L"VC\\Lib\\amd64");
+        wchar_t* include_path = concat(buffer, L"VC\\Include");
 
         // Check to see whether a vcruntime.lib actually exists here.
-        auto vcruntime_filename = concat(lib_path, L"\\vcruntime.lib");
-        defer {
-            free(vcruntime_filename);
-        };
+        wchar_t* vcruntime_filename = concat(lib_path, L"\\vcruntime.lib");
 
         if (os_file_exists(vcruntime_filename)) {
             result->vs_exe_path = concat(buffer, L"VC\\bin\\amd64");
             result->vs_include_path = include_path;
             result->vs_library_path = lib_path;
+
+            RegCloseKey(vs7_key);
             return;
         }
 
         free(include_path);
         free(lib_path);
+        free(buffer);
+        free(vcruntime_filename);
     }
 
     // If we get here, we failed to find anything.
+    RegCloseKey(vs7_key);
 }
 
 MicrosoftCraziness_Find_Result cuik__find_visual_studio_and_windows_sdk() {

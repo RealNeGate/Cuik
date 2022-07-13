@@ -43,7 +43,7 @@ static const char* INPUT_FILES[] = {
     "lib/back/linker.c",
 
     #if defined(_WIN32)
-    "lib/back/microsoft_craziness.cpp",
+    "lib/back/microsoft_craziness.c",
     "deps/threads_msvc.c",
     #else
     "deps/threads_posix.c",
@@ -481,21 +481,15 @@ int main(int argc, char** argv) {
             printf("Running phase 4 self-host tests...\n");
 
             create_dir_if_not_exists("bin2/");
-
-            int successes = 0;
-
-            cmd_append(CUIK_LOCATION " -T -c -o bin2/libcuik.obj -I deps/ -I include/ -I lib/ ");
+            cmd_append(CUIK_LOCATION " -c -o bin2/libcuik.obj -I deps/ -I include/ -I lib/ ");
 
             char cmd[1024];
             for (size_t i = 0; i < INPUT_FILE_COUNT; i++) {
-                if (str_ends_with(INPUT_FILES[i], ".c")) {
-                    cmd_append(INPUT_FILES[i]);
-                    cmd_append(" ");
-                } else {
-                    printf("not a C file but sure! %s\n", INPUT_FILES[i]);
-                    successes++;
-                }
+                cmd_append(INPUT_FILES[i]);
+                cmd_append(" ");
             }
+
+            printf("CMD: %s\n", command_buffer);
 
             cmd_run();
             cmd_wait_for_all();

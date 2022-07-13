@@ -170,6 +170,10 @@ static void compile_file(void* arg) {
         exit(1);
     }
 
+    cuik_lock_compilation_unit(&compilation_unit);
+    printf("Compiled '%s'...\n", input);
+    cuik_unlock_compilation_unit(&compilation_unit);
+
     cuik_add_to_compilation_unit(&compilation_unit, tu);
 }
 

@@ -72,7 +72,7 @@ static void print_level_name(Cuik_ReportLevel level) {
     #endif
 }
 
-static SourceLocIndex try_for_nicer_loc(TokenStream* tokens, SourceLocIndex loci) {
+/*static SourceLocIndex try_for_nicer_loc(TokenStream* tokens, SourceLocIndex loci) {
     const SourceLoc* loc = GET_SOURCE_LOC(loci);
 
     while (loc->line->filepath[0] == '<' && loc->line->parent != 0) {
@@ -81,7 +81,7 @@ static SourceLocIndex try_for_nicer_loc(TokenStream* tokens, SourceLocIndex loci
     }
 
     return loci;
-}
+}*/
 
 static void display_line(Cuik_ReportLevel level, TokenStream* tokens, SourceLoc* loc) {
     SourceLocIndex loci = 0;

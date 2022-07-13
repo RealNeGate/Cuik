@@ -217,6 +217,12 @@ static void expand_ident(Cuik_CPP* restrict c, TokenStream* restrict s, Lexer* l
                     int paren_depth = 0;
                     const unsigned char* start = l->token_start;
                     const unsigned char* end = l->token_start;
+
+                    if (l->token_type == TOKEN_STRING_WIDE_SINGLE_QUOTE ||
+                        l->token_type == TOKEN_STRING_WIDE_DOUBLE_QUOTE) {
+                        start -= 1, end -= 1;
+                    }
+
                     while (true) {
                         if (l->token_type == '(') {
                             paren_depth++;
