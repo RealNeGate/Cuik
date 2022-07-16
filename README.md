@@ -30,6 +30,7 @@ Just take a C compiler and compile the `compile.c` file and run it
 * -self1 will do type checking for all of Cuik
 * -self2 will do IR generation for all of Cuik
 * -self3 will do object files for all of Cuik
+* -self4 just compiles Cuik with Cuik
 
 ## How am I doing?
 mostly aight, thanks for asking.
