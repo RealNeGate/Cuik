@@ -11,6 +11,10 @@
 #include "parser.h"
 #include <targets/targets.h>
 #include <timer.h>
+
+#define NL_STRING_MAP_IMPL
+#include <string_map.h>
+
 #undef VOID // winnt.h loves including garbage
 
 #define OUT_OF_ORDER_CRAP 1
@@ -22,16 +26,6 @@ typedef struct {
     Atom key;
     Cuik_Type* value;
 } TagEntry;
-
-typedef struct {
-    Atom key;
-    Symbol value;
-} SymbolEntry;
-
-typedef struct {
-    Atom key;
-    Stmt* value;
-} LabelEntry;
 
 typedef struct {
     enum {
@@ -51,10 +45,8 @@ thread_local static int local_tag_count = 0;
 thread_local static TagEntry* local_tags;
 
 // Global symbol stuff
-thread_local static PendingExpr* pending_exprs;  // stb_ds array
-thread_local static TagEntry* global_tags;       // stb_ds hash map
-thread_local static SymbolEntry* global_symbols; // stb_ds hash map
-thread_local static LabelEntry* labels;          // stb_ds hash map
+thread_local static PendingExpr* pending_exprs; // stb_ds array
+thread_local static NL_Strmap(Stmt*) labels;
 
 thread_local static Stmt* current_switch_or_case;
 thread_local static Stmt* current_breakable;
@@ -94,17 +86,24 @@ static Expr* parse_function_literal(TranslationUnit* tu, TokenStream* restrict s
 static void parse_function_definition(TranslationUnit* tu, TokenStream* restrict s, Stmt* n);
 static Cuik_Type* parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s, Cuik_Type* type, Atom name);
 
-static bool is_typename(TokenStream* restrict s);
+static bool is_typename(TranslationUnit* tu, TokenStream* restrict s);
 
 static _Noreturn void generic_error(TranslationUnit* tu, TokenStream* restrict s, const char* msg);
 
+// saves the local_symbol_count and local_tag_count before entering
+// and restores them when exiting since that'll allow us to open and
+// close local scopes in the perspective of variable lookup...
+//
+// TODO(NeGate): add a field to keep track of "last local symbol count"
+// such that we can give proper errors on shadowing
+//
 // Usage:
 //  LOCAL_SCOPE {
 //      /* do parse work */
 //  }
-#define LOCAL_SCOPE                                                         \
-for (int saved = local_symbol_count, saved2 = local_tag_count, _i_ = 0; \
-    _i_ == 0; _i_ += 1, local_symbol_count = saved, local_tag_count = saved2)
+#define LOCAL_SCOPE \
+for (int saved = local_symbol_count, saved2 = local_tag_count, _i_ = 0; _i_ == 0; \
+    _i_ += 1, local_symbol_count = saved, local_tag_count = saved2)
 
 static int align_up(int a, int b) {
     if (b == 0) return 0;
@@ -131,14 +130,12 @@ static Expr* make_expr(TranslationUnit* tu) {
     return ARENA_ALLOC(&local_ast_arena, Expr);
 }
 
-static Symbol* find_global_symbol(const char* name) {
-    ptrdiff_t temp;
-    ptrdiff_t search = shgeti_ts(global_symbols, name, temp);
-
-    return (search >= 0) ? &global_symbols[search].value : NULL;
+static Symbol* find_global_symbol(TranslationUnit* tu, const char* name) {
+    ptrdiff_t search = nl_strmap_get_cstr(tu->global_symbols, name);
+    return (search >= 0) ? &tu->global_symbols[search] : NULL;
 }
 
-static Cuik_Type* find_tag(const char* name) {
+static Cuik_Type* find_tag(TranslationUnit* tu, const char* name) {
     // try locals
     size_t i = local_tag_count;
     while (i--) {
@@ -148,9 +145,8 @@ static Cuik_Type* find_tag(const char* name) {
     }
 
     // try globals
-    ptrdiff_t temp;
-    ptrdiff_t search = shgeti_ts(global_tags, name, temp);
-    return (search >= 0) ? global_tags[search].value : NULL;
+    ptrdiff_t search = nl_strmap_get_cstr(tu->global_tags, name);
+    return (search >= 0) ? tu->global_tags[search] : NULL;
 }
 
 // ( SOMETHING )
@@ -224,9 +220,6 @@ typedef struct {
     size_t start, end;
 
     TranslationUnit* tu;
-    TagEntry* global_tags;       // stb_ds hash map
-    SymbolEntry* global_symbols; // stb_ds hash map
-
     const TokenStream* base_token_stream;
 } ParserTaskInfo;
 
@@ -234,16 +227,10 @@ typedef struct {
 // a brand new parser on this thread
 static void reset_global_parser_state() {
     labels = NULL;
-    global_symbols = NULL;
-    global_tags = NULL;
     pending_exprs = NULL;
     local_symbol_start = local_symbol_count = 0;
     current_switch_or_case = current_breakable = current_continuable = NULL;
     symbol_chain_start = symbol_chain_current = NULL;
-
-    // allocate sum shit
-    local_symbols = realloc(local_symbols, sizeof(Symbol) * MAX_LOCAL_SYMBOLS);
-    local_tags = realloc(local_tags, sizeof(TagEntry) * MAX_LOCAL_TAGS);
 }
 
 static void parse_global_symbols(TranslationUnit* tu, size_t start, size_t end, TokenStream tokens) {
@@ -251,7 +238,7 @@ static void parse_global_symbols(TranslationUnit* tu, size_t start, size_t end, 
         out_of_order_mode = false;
 
         for (size_t i = start; i < end; i++) {
-            Symbol* sym = &global_symbols[i].value;
+            Symbol* sym = &tu->global_symbols[i];
 
             // don't worry about normal globals, those have been taken care of...
             if (sym->current != 0 && (sym->storage_class == STORAGE_STATIC_FUNC || sym->storage_class == STORAGE_FUNC)) {
@@ -277,12 +264,14 @@ static void phase3_parse_task(void* arg) {
     ParserTaskInfo task = *((ParserTaskInfo*)arg);
     reset_global_parser_state();
 
-    // intitialize any thread local state that might not be set on this thread
-    global_tags = task.global_tags;
-    global_symbols = task.global_symbols;
-
     tls_init();
     atoms_init();
+
+    // allocate the local symbol tables
+    if (local_symbols == NULL) {
+        local_symbols = realloc(local_symbols, sizeof(Symbol) * MAX_LOCAL_SYMBOLS);
+        local_tags = realloc(local_tags, sizeof(TagEntry) * MAX_LOCAL_TAGS);
+    }
 
     parse_global_symbols(task.tu, task.start, task.end, *task.base_token_stream);
     *task.tasks_remaining -= 1;
@@ -360,7 +349,7 @@ static void type_resolve_pending_align(TranslationUnit* restrict tu, Cuik_Type* 
             SourceLocIndex loc = tokens_get_location_index(&mini_lex);
 
             int align = 0;
-            if (is_typename(&mini_lex)) {
+            if (is_typename(tu, &mini_lex)) {
                 Cuik_Type* new_align = parse_typename(tu, &mini_lex);
                 if (new_align == NULL || new_align->align) {
                     REPORT(ERROR, loc, "_Alignas cannot operate with incomplete");
@@ -519,6 +508,10 @@ void type_layout(TranslationUnit* restrict tu, Cuik_Type* type) {
 }
 
 CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* restrict desc) {
+    // we can preserve this across multiple uses
+    thread_local static NL_Strmap(Cuik_Type*) s_global_tags;
+    thread_local static NL_Strmap(Symbol) s_global_symbols;
+
     assert(desc->tokens != NULL);
     assert(desc->errors != NULL);
     memset(desc->errors, 0, sizeof(*desc->errors));
@@ -527,6 +520,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
     uint64_t timer_start = cuik_time_in_nanos();
 
     TranslationUnit* tu = calloc(1, sizeof(TranslationUnit));
+    tu->ref_count = 1;
     tu->filepath = desc->tokens->filepath;
     tu->is_windows_long = desc->target->sys == CUIK_SYSTEM_WINDOWS;
     tu->target = *desc->target;
@@ -542,6 +536,15 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
     mtx_init(&tu->arena_mutex, mtx_plain);
 
     reset_global_parser_state();
+
+    // use the thread local ones (we'll set our resulting hash map back in
+    // such that if it resized the first time we don't need to resize again
+    // if used on that same thread, just avoiding allocations and such)
+    tu->global_symbols = s_global_symbols;
+    tu->global_tags = s_global_tags;
+
+    nl_strmap_clear(tu->global_symbols);
+    nl_strmap_clear(tu->global_tags);
 
     ////////////////////////////////
     // Parse translation unit
@@ -613,7 +616,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                             arrput(tu->top_level_stmts, n);
 
                             // check for collision
-                            Symbol* search = find_global_symbol((const char*)decl.name);
+                            Symbol* search = find_global_symbol(tu, decl.name);
                             if (search != NULL) {
                                 if (search->storage_class != STORAGE_TYPEDEF) {
                                     report_two_spots(REPORT_ERROR, tu->errors, s, decl.loc, search->loc,
@@ -633,7 +636,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                                 // replace placeholder with actual entry
                                 Atom old_name = decl.name;
 
-                                memcpy(placeholder_space, decl.type, sizeof(Cuik_Type));
+                                *placeholder_space = *decl.type;
                                 placeholder_space->also_known_as = old_name;
                                 placeholder_space->loc = decl.loc;
                             } else {
@@ -644,7 +647,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                                     .loc = decl.loc,
                                     .storage_class = STORAGE_TYPEDEF,
                                 };
-                                shput(global_symbols, decl.name, sym);
+                                nl_strmap_put_cstr(tu->global_symbols, decl.name, sym);
                             }
                         }
 
@@ -698,24 +701,25 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                         };
                         arrput(tu->top_level_stmts, n);
 
-                        Symbol sym = {
+                        Symbol* sym = find_global_symbol(tu, decl.name);
+                        Symbol* old_definition = sym;
+                        if (sym == NULL) {
+                            // slap that bad boy into the symbol table
+                            ptrdiff_t sym_index = nl_strmap_puti_cstr(tu->global_symbols, decl.name);
+                            sym = &tu->global_symbols[sym_index];
+                        }
+
+                        *sym = (Symbol){
                             .name = decl.name,
                             .type = decl.type,
                             .loc = decl.loc,
                             .stmt = n,
                         };
 
-                        Symbol* old_definition = find_global_symbol((const char*)decl.name);
                         if (decl.type->kind == KIND_FUNC) {
-                            sym.storage_class = (attr.is_static ? STORAGE_STATIC_FUNC : STORAGE_FUNC);
+                            sym->storage_class = (attr.is_static ? STORAGE_STATIC_FUNC : STORAGE_FUNC);
                         } else {
-                            sym.storage_class = (attr.is_static ? STORAGE_STATIC_VAR : STORAGE_GLOBAL);
-                        }
-
-                        if (sym.name[0] == 'm' && strcmp((char*) sym.name, "main") == 0) {
-                            tu->entrypoint_status = CUIK_ENTRYPOINT_MAIN;
-                        } else if (sym.name[0] == 'W' && strcmp((char*) sym.name, "WinMain") == 0) {
-                            tu->entrypoint_status = CUIK_ENTRYPOINT_WINMAIN;
+                            sym->storage_class = (attr.is_static ? STORAGE_STATIC_VAR : STORAGE_GLOBAL);
                         }
 
                         // parse attributes... currently it doesn't but one day...
@@ -725,12 +729,21 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                         if (tokens_get(s)->type == '=') {
                             tokens_next(s);
 
-                            // variables with definitions can be roots
-                            n->decl.attrs.is_root = !(attr.is_static || attr.is_inline);
+                            if (old_definition && old_definition->current != 0) {
+                                report_two_spots(REPORT_ERROR, tu->errors, s, decl.loc, old_definition->stmt->loc,
+                                    "Cannot redefine global declaration",
+                                    NULL, NULL, "previous definition was:");
+                            }
+
+                            if (n->decl.attrs.is_inline) {
+                                REPORT(ERROR, decl.loc, "Declaration cannot be inline");
+                            }
+
+                            n->decl.attrs.is_root = !attr.is_extern && !attr.is_static;
 
                             if (tokens_get(s)->type == '{') {
-                                sym.current = s->current;
-                                sym.terminator = '}';
+                                sym->current = s->current;
+                                sym->terminator = '}';
 
                                 tokens_next(s);
 
@@ -742,7 +755,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                                         REPORT(ERROR, decl.loc, "Declaration ended in EOF");
 
                                         // restore the token stream
-                                        s->current = sym.current + 1;
+                                        s->current = sym->current + 1;
                                         goto skip_declaration;
                                     } else if (t->type == '{') {
                                         depth++;
@@ -760,8 +773,8 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                             } else {
                                 // '=' EXPRESSION ','
                                 // '=' EXPRESSION ';'
-                                sym.current = s->current;
-                                sym.terminator = ';';
+                                sym->current = s->current;
+                                sym->terminator = ';';
 
                                 int depth = 1;
                                 while (depth) {
@@ -771,7 +784,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                                         REPORT(ERROR, decl.loc, "Declaration was never closed");
 
                                         // restore the token stream
-                                        s->current = sym.current + 1;
+                                        s->current = sym->current + 1;
                                         goto skip_declaration;
                                     } else if (t->type == '(') {
                                         depth++;
@@ -781,7 +794,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                                         if (depth == 0) {
                                             REPORT(ERROR, decl.loc, "Unbalanced parenthesis");
 
-                                            s->current = sym.current + 1;
+                                            s->current = sym->current + 1;
                                             goto skip_declaration;
                                         }
                                     } else if (t->type == ';' || t->type == ',') {
@@ -789,7 +802,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                                             REPORT(ERROR, decl.loc, "Declaration's expression has a weird semicolon");
                                             goto skip_declaration;
                                         } else if (depth == 1) {
-                                            sym.terminator = t->type;
+                                            sym->terminator = t->type;
                                             depth--;
                                         }
                                     }
@@ -816,12 +829,18 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                                     NULL, NULL, "previous definition was:");
                             }
 
+                            if (sym->name[0] == 'm' && strcmp(sym->name, "main") == 0) {
+                                tu->entrypoint_status = CUIK_ENTRYPOINT_MAIN;
+                            } else if (sym->name[0] == 'W' && strcmp(sym->name, "WinMain") == 0) {
+                                tu->entrypoint_status = CUIK_ENTRYPOINT_WINMAIN;
+                            }
+
                             //n->decl.type = decl.type;
                             //n->decl.attrs = attr;
-                            n->decl.attrs.is_root = !(attr.is_static || attr.is_inline);
+                            n->decl.attrs.is_root = attr.is_tls || !(attr.is_static || attr.is_inline);
 
-                            sym.terminator = '}';
-                            sym.current = s->current;
+                            sym->terminator = '}';
+                            sym->current = s->current;
                             tokens_next(s);
 
                             // we postpone parsing the function bodies
@@ -834,7 +853,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                                     SourceLocIndex l = tokens_get_last_location_index(s);
                                     report_fix(REPORT_ERROR, tu->errors, s, l, "}", "Function body ended in EOF");
 
-                                    s->current = sym.current + 1;
+                                    s->current = sym->current + 1;
                                     goto skip_declaration;
                                 } else if (t->type == '{') {
                                     depth++;
@@ -844,11 +863,14 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
 
                                 tokens_next(s);
                             }
-                        }
+                        } else {
+                            if (decl.type->kind != KIND_FUNC) {
+                                if (n->decl.attrs.is_inline) {
+                                    REPORT(ERROR, decl.loc, "Declaration cannot be inline");
+                                }
 
-                        if (decl.name != NULL) {
-                            // slap that bad boy into the symbol table
-                            shput(global_symbols, decl.name, sym);
+                                n->decl.attrs.is_root = !attr.is_extern && !attr.is_static;
+                            }
                         }
 
                         if (!requires_terminator) {
@@ -874,6 +896,10 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
         }
     }
     out_of_order_mode = false;
+
+    // synchronize the thread symbol tables
+    s_global_symbols = tu->global_symbols;
+    s_global_tags = tu->global_tags;
 
     if (has_reports(REPORT_ERROR, tu->errors)) goto parse_error;
 
@@ -912,17 +938,16 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
 
                 if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
                     // if cycles... quit lmao
-                    if (type_cycles_dfs(tu, type, visited, finished)) goto fuck_outta_there;
+                    if (type_cycles_dfs(tu, type, visited, finished)) goto parse_error;
                 }
             }
         }
 
-        fuck_outta_there:
         if (has_reports(REPORT_ERROR, tu->errors)) goto parse_error;
 
         // parse all global declarations
-        for (size_t i = 0, count = shlen(global_symbols); i < count; i++) {
-            Symbol* sym = &global_symbols[i].value;
+        nl_strmap_for(i, tu->global_symbols) {
+            Symbol* sym = &tu->global_symbols[i];
 
             if (sym->current != 0 &&
                 (sym->storage_class == STORAGE_STATIC_VAR || sym->storage_class == STORAGE_GLOBAL)) {
@@ -1018,14 +1043,20 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
         arena_append(&tu->ast_arena, &local_ast_arena);
         local_ast_arena = (Arena){0};
 
+        // allocate the local symbol tables
+        if (local_symbols == NULL) {
+            local_symbols = realloc(local_symbols, sizeof(Symbol) * MAX_LOCAL_SYMBOLS);
+            local_tags = realloc(local_tags, sizeof(TagEntry) * MAX_LOCAL_TAGS);
+        }
+
         if (desc->thread_pool != NULL) {
             // disabled until we change the tables to arenas
-            size_t count = shlen(global_symbols);
+            size_t count = nl_strmap__get_header(tu->global_symbols)->load;
             size_t padded = (count + (PARSE_MUNCH_SIZE - 1)) & ~(PARSE_MUNCH_SIZE - 1);
 
             // passed to the threads to identify when things are done
             atomic_size_t tasks_remaining = (count + (PARSE_MUNCH_SIZE - 1)) / PARSE_MUNCH_SIZE;
-            ParserTaskInfo* tasks = malloc(sizeof(ParserTaskInfo) * tasks_remaining);
+            ParserTaskInfo* tasks = HEAP_ALLOC(sizeof(ParserTaskInfo) * tasks_remaining);
 
             size_t j = 0;
             for (size_t i = 0; i < padded; i += PARSE_MUNCH_SIZE) {
@@ -1039,27 +1070,34 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                     .end = limit
                 };
 
-                // we transfer a bunch of our thread local state to the task
-                // and they'll use that to continue and build up parse on other
-                // threads.
+                // share these bad boys with the other threads, we manage them still they
+                // just get limited access
                 task->tu = tu;
-                task->global_tags = global_tags;
-                task->global_symbols = global_symbols;
                 task->base_token_stream = s;
 
                 CUIK_CALL(desc->thread_pool, submit, phase3_parse_task, task);
             }
 
+            // since we can run more tasks on this thread (potentially those from other parser jobs)
+            // until the thread pool we should dettach our copies of the global symbol table
+            s_global_symbols = NULL;
+            s_global_tags = NULL;
+
+            // "highway robbery on steve jobs" job stealing amirite...
             while (tasks_remaining != 0) {
                 CUIK_CALL(desc->thread_pool, work_one_job);
-                thrd_yield();
+                //thrd_yield();
             }
 
-            free(tasks);
+            HEAP_FREE(tasks);
         } else {
             // single threaded mode
-            parse_global_symbols(tu, 0, shlen(global_symbols), *s);
+            parse_global_symbols(tu, 0, nl_strmap__get_header(tu->global_symbols)->load, *s);
         }
+
+        // detach it because we're cool people
+        tu->global_symbols = NULL;
+        tu->global_tags = NULL;
 
         if (has_reports(REPORT_ERROR, tu->errors)) goto parse_error;
 
@@ -1081,25 +1119,13 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                 }
             }
         }
+
+        arrfree(tu->tokens.tokens);
     }
 
     //printf("AST arena: %zu MB\n", arena_get_memory_usage(&tu->ast_arena) / (1024*1024));
     //printf("Type arena: %zu MB\n", arena_get_memory_usage(&tu->type_arena) / (1024*1024));
     //printf("Thread arena: %zu MB\n", arena_get_memory_usage(&thread_arena) / (1024*1024));
-
-    CUIK_TIMED_BLOCK("freeing parser internals") {
-        current_switch_or_case = current_breakable = current_continuable = 0;
-        local_symbol_start = local_symbol_count = 0;
-
-        // free parser crap
-        free(local_tags), local_tags = NULL;
-        free(local_symbols), local_symbols = NULL;
-        shfree(global_tags);
-        shfree(global_symbols);
-
-        // free tokens
-        arrfree(tu->tokens.tokens);
-    }
 
     // run type checker
     CUIK_TIMED_BLOCK("phase 4") {
@@ -1127,17 +1153,32 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
         arrfree(pending_exprs);
         dyn_array_destroy(static_assertions);
 
-        // free parser crap
-        free(local_tags);
-        free(local_symbols);
-        shfree(global_tags);
-        shfree(global_symbols);
-
         // free tokens
         arrfree(tu->tokens.tokens);
 
         cuik_destroy_translation_unit(tu);
         return NULL;
+    }
+}
+
+CUIK_API void* cuik_set_translation_unit_user_data(TranslationUnit* restrict tu, void* ud) {
+    void* old = tu->user_data;
+    tu->user_data = ud;
+    return old;
+}
+
+CUIK_API void* cuik_get_translation_unit_user_data(TranslationUnit* restrict tu) {
+    return tu->user_data;
+}
+
+CUIK_API int cuik_acquire_translation_unit(TranslationUnit* restrict tu) {
+    return atomic_fetch_add(&tu->ref_count, 1);
+}
+
+CUIK_API void cuik_release_translation_unit(TranslationUnit* restrict tu) {
+    int r = --tu->ref_count;
+    if (r == 0) {
+        cuik_destroy_translation_unit(tu);
     }
 }
 
@@ -1164,7 +1205,7 @@ CUIK_API bool cuik_is_in_main_file(TranslationUnit* restrict tu, SourceLocIndex 
 }
 
 Stmt* resolve_unknown_symbol(TranslationUnit* tu, Expr* e) {
-    Symbol* sym = find_global_symbol((char*)e->unknown_sym);
+    Symbol* sym = find_global_symbol(tu, (char*)e->unknown_sym);
     if (sym != NULL) return 0;
 
     // Parameters are local and a special case how tf
@@ -1184,8 +1225,8 @@ static Symbol* find_local_symbol(TokenStream* restrict s) {
     size_t i = local_symbol_count;
     size_t start = local_symbol_start;
     while (i-- > start) {
-        const unsigned char* sym = local_symbols[i].name;
-        size_t sym_length = strlen((const char*)sym);
+        const char* sym = local_symbols[i].name;
+        size_t sym_length = strlen(sym);
 
         if (sym_length == length && memcmp(name, sym, length) == 0) {
             return &local_symbols[i];
@@ -1231,9 +1272,8 @@ static void parse_function_definition(TranslationUnit* tu, TokenStream* restrict
     n->op = STMT_FUNC_DECL;
     n->decl.initial_as_stmt = body;
 
-    // hmm... how tf do labels operate in this case...
     // TODO(NeGate): redo the label look in a sec
-    shfree(labels);
+    nl_strmap_free(labels);
 }
 
 static Stmt* parse_compound_stmt(TranslationUnit* tu, TokenStream* restrict s) {
@@ -1284,6 +1324,37 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
     if (peek == '{') {
         tokens_next(s);
         return parse_compound_stmt(tu, s);
+    } else if (peek == TOKEN_KW_Static_assert) {
+        tokens_next(s);
+        expect(tu, s, '(');
+
+        SourceLocIndex start = tokens_get_location_index(s);
+        intmax_t condition = parse_const_expr(tu, s);
+        SourceLocIndex end = tokens_get_last_location_index(s);
+
+        if (tokens_get(s)->type == ',') {
+            tokens_next(s);
+
+            Token* t = tokens_get(s);
+            if (t->type != TOKEN_STRING_DOUBLE_QUOTE) {
+                generic_error(tu, s, "static assertion expects string literal");
+            }
+            tokens_next(s);
+
+            if (condition == 0) {
+                REPORT_RANGED(ERROR, start, end, "Static assertion failed! %.*s", (int) (t->end - t->start), t->start);
+            }
+        } else {
+            if (condition == 0) {
+                REPORT_RANGED(ERROR, start, end, "Static assertion failed!");
+            }
+        }
+
+        expect(tu, s, ')');
+        expect(tu, s, ';');
+
+        // TAIL CALL
+        return parse_stmt(tu, s);
     } else if (peek == TOKEN_KW_return) {
         tokens_next(s);
 
@@ -1330,7 +1401,8 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
             n->if_ = (struct StmtIf){
                 .cond = cond,
                 .body = body,
-                .next = next};
+                .next = next,
+            };
         }
 
         return n;
@@ -1626,20 +1698,19 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
         tokens_next(s);
 
         Expr* target = make_expr(tu);
-        ptrdiff_t search = shgeti(labels, name);
+        ptrdiff_t search = nl_strmap_get_cstr(labels, name);
         if (search >= 0) {
             *target = (Expr){
                 .op = EXPR_SYMBOL,
                 .start_loc = loc,
                 .end_loc = loc,
-                .symbol = labels[search].value,
+                .symbol = labels[search],
             };
         } else {
             // not defined yet, make a placeholder
             Stmt* label_decl = make_stmt(tu, s, STMT_LABEL, sizeof(struct StmtLabel));
-            label_decl->label = (struct StmtLabel){
-                .name = name};
-            shput(labels, name, label_decl);
+            label_decl->label = (struct StmtLabel){ .name = name };
+            nl_strmap_put_cstr(labels, name, label_decl);
 
             *target = (Expr){
                 .op = EXPR_SYMBOL,
@@ -1662,15 +1733,13 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
         Atom name = atoms_put(t->end - t->start, t->start);
 
         Stmt* n = NULL;
-        ptrdiff_t search = shgeti(labels, name);
+        ptrdiff_t search = nl_strmap_get_cstr(labels, name);
         if (search >= 0) {
-            n = labels[search].value;
+            n = labels[search];
         } else {
             n = make_stmt(tu, s, STMT_LABEL, sizeof(struct StmtLabel));
-            n->label = (struct StmtLabel){
-                .name = name,
-            };
-            shput(labels, name, n);
+            n->label = (struct StmtLabel){ .name = name };
+            nl_strmap_put_cstr(labels, name, n);
         }
 
         n->label.placed = true;
@@ -1696,7 +1765,7 @@ static void parse_decl_or_expr(TranslationUnit* tu, TokenStream* restrict s, siz
         expect(tu, s, ')');
     } else if (tokens_get(s)->type == ';') {
         tokens_next(s);
-    } else if (is_typename(s)) {
+    } else if (is_typename(tu, s)) {
         Attribs attr = {0};
         Cuik_Type* type = parse_declspec(tu, s, &attr);
 
@@ -1867,9 +1936,10 @@ static _Noreturn void generic_error(TranslationUnit* tu, TokenStream* restrict s
 static void expect(TranslationUnit* tu, TokenStream* restrict s, char ch) {
     if (tokens_get(s)->type != ch) {
         Token* t = tokens_get(s);
-        SourceLocIndex loc = tokens_get_location_index(s);
+        SourceLocIndex loc = tokens_get_last_location_index(s);
 
-        report(REPORT_ERROR, NULL, s, loc, "expected '%c' got '%.*s'", ch, (int)(t->end - t->start), t->start);
+        char tmp[2] = { ch };
+        report_fix(REPORT_ERROR, NULL, s, loc, tmp, "expected '%c' got '%.*s'", ch, (int)(t->end - t->start), t->start);
         abort();
     }
 

@@ -13,7 +13,9 @@
 #include <tb.h>
 
 // the Cuik AST types are all exposed to the public interface
+#define NL_STRING_MAP_INLINE
 #include <cuik_ast.h>
+#include <string_map.h>
 
 #define MAX_LOCAL_SYMBOLS (1 << 20)
 #define MAX_LOCAL_TAGS (1 << 16)
@@ -76,6 +78,9 @@ struct TranslationUnit {
     // chain of TUs for the compilation unit
     struct TranslationUnit* next;
 
+    void* user_data;
+    atomic_int ref_count;
+
     TB_Module* ir_mod;
     const char* filepath;
     Cuik_ErrorStatus* errors;
@@ -97,6 +102,10 @@ struct TranslationUnit {
     // stb_ds array
     // NOTE(NeGate): should this be an stb_ds array?
     Stmt** top_level_stmts;
+
+    // parser state
+    NL_Strmap(Cuik_Type*) global_tags;
+    NL_Strmap(Symbol) global_symbols;
 };
 
 // builtin types at the start of the type table

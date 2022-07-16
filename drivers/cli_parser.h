@@ -5,6 +5,11 @@ static const char* arg_is_set = "set";
 typedef enum ArgType {
     ARG_NONE = 0,
 
+    // this one's a hack:
+    //   -Dname
+    //   -Dname=value
+    ARG_DEFINE = 1,
+
     #define OPTION(type, short_name, long_name, n, desc) \
     ARG_ ## type,
     #include "cli_options.h"
@@ -26,22 +31,32 @@ static Arg get_cli_arg(int* index, int argc, char** argv) {
     }
 
     if (argv[i][0] == '-') {
-        if (argv[i][1] == '-') {
+        if (argv[i][1] == 'D') {
+            return (Arg){ ARG_DEFINE, argv[i] + 2 };
+        } else if (argv[i][1] == '-') {
             // long names
             const char* opt = &argv[i][2];
 
-            #define OPTION(type, short_name, long_name, n, desc)                              \
-            if (strncmp(opt, #long_name, sizeof(#long_name)-1) == 0) {                        \
-                if (n == 0) {                                                                 \
-                    return (Arg){ ARG_ ## type, arg_is_set };                                 \
-                } else {                                                                      \
-                    if (opt[sizeof(#long_name "=") - 1] == '\0') {                            \
-                        fprintf(stderr, "error: expected argument after --" #long_name "\n"); \
-                        exit(1);                                                              \
-                    }                                                                         \
-                    *index += 1;                                                              \
-                    return (Arg){ ARG_ ## type, argv[i] + sizeof("--" #long_name) };          \
-                }                                                                             \
+            #define OPTION(type, short_name, long_name, n, desc)                           \
+            if (strncmp(opt, #long_name, sizeof(#long_name) - 1) == 0) {                   \
+                if (n == 0) {                                                              \
+                    return (Arg){ ARG_ ## type, arg_is_set };                              \
+                } else {                                                                   \
+                    if (opt[sizeof(#long_name) - 1] == 0) {                                \
+                        if ((i + 1) >= argc) {                                             \
+                            fprintf(stderr, "error: no argument after -" #long_name "\n"); \
+                            exit(1);                                                       \
+                        }                                                                  \
+                        *index += 1;                                                       \
+                        return (Arg){ ARG_ ## type, argv[i + 1] };                         \
+                    } else {                                                               \
+                        if (argv[i][sizeof("--" #long_name)] == 0) {                       \
+                            fprintf(stderr, "error: argument for --" #long_name " is empty\n");\
+                            exit(1);                                                       \
+                        }                                                                  \
+                        return (Arg){ ARG_ ## type, argv[i] + sizeof("--" #long_name) };   \
+                    }                                                                      \
+                }                                                                          \
             }
             #include "cli_options.h"
 
@@ -52,18 +67,18 @@ static Arg get_cli_arg(int* index, int argc, char** argv) {
             // short names
             const char* opt = &argv[i][1];
 
-            #define OPTION(type, short_name, long_name, n, desc)                              \
-            if (strcmp(opt, #short_name) == 0) {                                              \
-                if (n == 0) {                                                                 \
-                    return (Arg){ ARG_ ## type, arg_is_set };                                 \
-                } else {                                                                      \
-                    if ((i + 1) >= argc) {                                                    \
-                        fprintf(stderr, "error: expected argument after -" #short_name "\n"); \
-                        exit(1);                                                              \
-                    }                                                                         \
-                    *index += 1;                                                              \
-                    return (Arg){ ARG_ ## type, argv[i + 1] };                                \
-                }                                                                             \
+            #define OPTION(type, short_name, long_name, n, desc)                        \
+            if (strcmp(opt, #short_name) == 0) {                                        \
+                if (n == 0) {                                                           \
+                    return (Arg){ ARG_ ## type, arg_is_set };                           \
+                } else {                                                                \
+                    if ((i + 1) >= argc) {                                              \
+                        fprintf(stderr, "error: no argument after -" #short_name "\n"); \
+                        exit(1);                                                        \
+                    }                                                                   \
+                    *index += 1;                                                        \
+                    return (Arg){ ARG_ ## type, argv[i + 1] };                          \
+                }                                                                       \
             }
             #include "cli_options.h"
 

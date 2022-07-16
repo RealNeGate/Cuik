@@ -116,12 +116,6 @@ bool cuiklink_invoke(Cuik_Linker* l, const char* filename, const char* crt_name)
             str += wcslen(str) + 1;
         }
 
-        /*if (crt_name) {
-            cmd_line_len += swprintf(&cmd_line[cmd_line_len], CMD_LINE_MAX - cmd_line_len, L"/defaultlib:%S ", crt_name);
-        } else {
-            cmd_line_len += swprintf(&cmd_line[cmd_line_len], CMD_LINE_MAX - cmd_line_len, L"/nodefaultlib ");
-        }*/
-
         // Add all the input files
         str = l->input_file_buffer;
         for (size_t i = l->input_file_count; i--;) {
@@ -138,7 +132,7 @@ bool cuiklink_invoke(Cuik_Linker* l, const char* filename, const char* crt_name)
         };
         PROCESS_INFORMATION pi = {};
 
-        //printf("Linker command:\n%S\n", cmd_line);
+        printf("Linker command:\n%S\n", cmd_line);
         if (!CreateProcessW(NULL, cmd_line, NULL, NULL, TRUE, 0, NULL, NULL, &si, &pi)) {
             printf("Linker command could not be executed.\n");
             result = false;
@@ -176,7 +170,7 @@ bool cuiklink_invoke(Cuik_Linker* l, const char* filename, const char* crt_name)
 
         //printf("Linker command: %s\n", cmd_line);
         if (system(cmd_line) != 0) {
-            result = true;
+            result = false;
             continue;
         }
     }

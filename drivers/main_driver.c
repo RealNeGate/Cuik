@@ -3,12 +3,24 @@
 #include "big_array.h"
 #include "cli_parser.h"
 #include "json_perf.h"
+
+#ifndef __CUIKC__
+#define CUIK_ALLOW_THREADS 1
+#else
+#define CUIK_ALLOW_THREADS 0
+#endif
+
+#if CUIK_ALLOW_THREADS
 #include "threadpool.h"
+#endif
+
+#define HEAP_ALLOC(s) malloc(s)
 
 // compiler arguments
 static DynArray(const char*) include_directories;
 static DynArray(const char*) input_libraries;
 static DynArray(const char*) input_files;
+static DynArray(const char*) input_defines;
 static DynArray(TB_FunctionPass) da_passes;
 static const char* output_name;
 static char output_path_no_ext[FILENAME_MAX];
@@ -27,8 +39,8 @@ static bool args_experiment;
 static int args_threads = -1;
 
 static TB_Module* mod;
-static threadpool_t* thread_pool;
-static Cuik_IThreadpool ithread_pool;
+
+static Cuik_IThreadpool* ithread_pool;
 static Cuik_Target target_desc;
 static CompilationUnit compilation_unit;
 
@@ -41,7 +53,6 @@ static void initialize_opt_passes(void) {
     dyn_array_put(da_passes, OPT(merge_rets));
     dyn_array_put(da_passes, OPT(mem2reg));
 
-    // local cse
     dyn_array_put(da_passes, OPT(hoist_invariants));
     dyn_array_put(da_passes, OPT(canonicalize));
     dyn_array_put(da_passes, OPT(remove_pass_node));
@@ -57,6 +68,7 @@ static void initialize_opt_passes(void) {
     dyn_array_put(da_passes, OPT(compact_dead_regs));
 }
 
+#if CUIK_ALLOW_THREADS
 static int calculate_worker_thread_count(void) {
     #ifdef _WIN32
     SYSTEM_INFO sysinfo;
@@ -79,6 +91,7 @@ static void tp_submit(void* user_data, void fn(void*), void* arg) {
 static void tp_work_one_job(void* user_data) {
     threadpool_work_one_job((threadpool_t*) user_data);
 }
+#endif
 
 static void dump_tokens(FILE* out_file, TokenStream* s) {
     const char* last_file = NULL;
@@ -133,8 +146,10 @@ static void irgen_visitor(TranslationUnit* restrict tu, Stmt* restrict s, void* 
         }
 
         if (args_ir) {
+            cuik_lock_compilation_unit(&compilation_unit);
             tb_function_print(func, tb_default_print_callback, stdout);
             printf("\n\n");
+            cuik_unlock_compilation_unit(&compilation_unit);
         } else {
             tb_module_compile_func(mod, func, args_optimize ? TB_ISEL_COMPLEX : TB_ISEL_FAST);
         }
@@ -143,17 +158,42 @@ static void irgen_visitor(TranslationUnit* restrict tu, Stmt* restrict s, void* 
     }
 }
 
+// it'll use the normal CLI crap to do so
+static Cuik_CPP* make_preprocessor(void) {
+    Cuik_CPP* cpp = HEAP_ALLOC(sizeof(Cuik_CPP));
+    cuikpp_init(cpp, NULL);
+    cuikpp_set_common_defines(cpp, &target_desc, true);
+
+    dyn_array_for(i, include_directories) {
+        cuikpp_add_include_directory(cpp, include_directories[i]);
+    }
+
+    dyn_array_for(i, input_defines) {
+        const char* equal = strchr(input_defines[i], '=');
+
+        if (equal == NULL) {
+            cuikpp_define_empty(cpp, input_defines[i]);
+        } else {
+            cuikpp_define_slice(
+                cpp,
+                // before equals
+                equal - input_defines[i], input_defines[i],
+                // after equals
+                strlen(equal + 1), equal + 1
+            );
+        }
+    }
+
+    return cpp;
+}
+
 static void compile_file(void* arg) {
     const char* input = (const char*)arg;
 
     // preproc
-    Cuik_CPP cpp;
-    TokenStream tokens = cuik_preprocess_simple(
-        &cpp, input, &cuik_default_fs, &target_desc,
-        true, dyn_array_length(include_directories), &include_directories[0]
-    );
-
-    cuikpp_finalize(&cpp);
+    Cuik_CPP* cpp = make_preprocessor();
+    TokenStream tokens = cuikpp_run(cpp, input);
+    cuikpp_finalize(cpp);
 
     // parse
     Cuik_ErrorStatus errors;
@@ -162,7 +202,9 @@ static void compile_file(void* arg) {
             .errors      = &errors,
             .ir_module   = mod,
             .target      = &target_desc,
-            .thread_pool = thread_pool ? &ithread_pool : NULL,
+            #if CUIK_ALLOW_THREADS
+            .thread_pool = ithread_pool ? ithread_pool : NULL,
+            #endif
         });
 
     if (tu == NULL) {
@@ -170,10 +212,7 @@ static void compile_file(void* arg) {
         exit(1);
     }
 
-    cuik_lock_compilation_unit(&compilation_unit);
-    printf("Compiled '%s'...\n", input);
-    cuik_unlock_compilation_unit(&compilation_unit);
-
+    cuik_set_translation_unit_user_data(tu, cpp);
     cuik_add_to_compilation_unit(&compilation_unit, tu);
 }
 
@@ -206,7 +245,7 @@ static void append_input_path(const char* path) {
         }
 
         do {
-            char* new_path = malloc(MAX_PATH);
+            char* new_path = HEAP_ALLOC(MAX_PATH);
             if (slash == path) {
                 sprintf_s(new_path, MAX_PATH, "%s", find_data.cFileName);
             } else {
@@ -230,6 +269,9 @@ static void append_input_path(const char* path) {
 }
 
 int main(int argc, char** argv) {
+    //_CrtSetDbgFlag(_CRTDBG_ALLOC_MEM_DF);
+    //_CrtSetReportMode(_CRT_ERROR, _CRTDBG_MODE_DEBUG);
+
     cuik_init();
     find_system_deps();
 
@@ -237,6 +279,7 @@ int main(int argc, char** argv) {
     include_directories = dyn_array_create(const char*);
     input_libraries = dyn_array_create(const char*);
     input_files = dyn_array_create(const char*);
+    input_defines = dyn_array_create(const char*);
 
     // parse arguments
     int i = 1;
@@ -250,9 +293,13 @@ int main(int argc, char** argv) {
                 append_input_path(arg.value);
                 break;
             }
+            case ARG_DEFINE: {
+                dyn_array_put(input_defines, arg.value);
+                break;
+            }
             case ARG_INCLUDE: {
                 // resolve a fullpath
-                char* newstr = malloc(FILENAME_MAX);
+                char* newstr = HEAP_ALLOC(FILENAME_MAX);
                 if (resolve_filepath(newstr, arg.value)) {
                     size_t end = strlen(newstr);
 
@@ -341,7 +388,7 @@ int main(int argc, char** argv) {
     }
 
     if (args_time) {
-        char* perf_output_path = malloc(FILENAME_MAX);
+        char* perf_output_path = HEAP_ALLOC(FILENAME_MAX);
         sprintf_s(perf_output_path, FILENAME_MAX, "%s.json", output_path_no_ext);
 
         jsonperf_profiler.user_data = perf_output_path;
@@ -349,15 +396,19 @@ int main(int argc, char** argv) {
     }
 
     // spin up worker threads
+    #if CUIK_ALLOW_THREADS
+    threadpool_t* thread_pool = NULL;
     int thread_count = args_threads >= 0 ? args_threads : calculate_worker_thread_count();
     if (thread_count >= 2) {
         thread_pool = threadpool_create(thread_count - 1, 4096);
-        ithread_pool = (Cuik_IThreadpool){
+        ithread_pool = HEAP_ALLOC(sizeof(Cuik_IThreadpool));
+        *ithread_pool = (Cuik_IThreadpool){
             .user_data = thread_pool,
             .submit = tp_submit,
             .work_one_job = tp_work_one_job
         };
     }
+    #endif
 
     initialize_opt_passes();
     cuik_create_compilation_unit(&compilation_unit);
@@ -376,20 +427,17 @@ int main(int argc, char** argv) {
 
     if (!args_ast && !args_types) {
         TB_FeatureSet features = {0};
-        mod = tb_module_create(TB_ARCH_X86_64, cuik_system_to_tb(target_desc.sys), TB_DEBUGFMT_NONE, &features);
+        mod = tb_module_create(TB_ARCH_X86_64, cuik_system_to_tb(target_desc.sys), TB_DEBUGFMT_CODEVIEW, &features);
     }
 
     if (args_preprocess) {
         // preproc only
-        Cuik_CPP cpp;
-        TokenStream tokens = cuik_preprocess_simple(
-            &cpp, input_files[0], &cuik_default_fs, &target_desc,
-            true, dyn_array_length(include_directories), &include_directories[0]
-        );
-
-        cuikpp_finalize(&cpp);
+        Cuik_CPP* cpp = make_preprocessor();
+        TokenStream tokens = cuikpp_run(cpp, input_files[0]);
+        cuikpp_finalize(cpp);
 
         dump_tokens(stdout, &tokens);
+        cuikpp_deinit(cpp);
         return EXIT_SUCCESS;
     }
 
@@ -398,7 +446,8 @@ int main(int argc, char** argv) {
     ////////////////////////////////
     if (args_verbose) printf("Frontend...\n");
 
-    if (thread_pool != NULL) {
+    if (CUIK_ALLOW_THREADS && ithread_pool != NULL) {
+        #if CUIK_ALLOW_THREADS
         // dispatch multithreaded
         dyn_array_for(i, input_files) {
             threadpool_submit(thread_pool, compile_file, (void*) input_files[i]);
@@ -407,11 +456,9 @@ int main(int argc, char** argv) {
         CUIK_TIMED_BLOCK("wait") {
             threadpool_work_while_wait(thread_pool);
         }
+        #endif
     } else {
-        // emit-ast is single threaded just to make it nicer to read
-        dyn_array_for(i, input_files) {
-            compile_file((void*) input_files[i]);
-        }
+        dyn_array_for(i, input_files) compile_file((void*) input_files[i]);
     }
 
     if (args_verbose) printf("Internal link...\n");
@@ -430,21 +477,25 @@ int main(int argc, char** argv) {
         ////////////////////////////////
         if (args_verbose) printf("Backend...\n");
 
-        if (thread_pool != NULL) {
+        if (ithread_pool != NULL) {
             FOR_EACH_TU(tu, &compilation_unit) {
                 if (!args_ast && !args_types) {
-                    cuik_visit_top_level_threaded(tu, &ithread_pool, 16384, NULL, irgen_visitor);
+                    cuik_visit_top_level_threaded(tu, ithread_pool, 8192, NULL, irgen_visitor);
                 }
-            }
 
-            threadpool_work_while_wait(thread_pool);
-            threadpool_free(thread_pool);
-            thread_pool = NULL;
+                Cuik_CPP* cpp = cuik_get_translation_unit_user_data(tu);
+                cuikpp_deinit(cpp);
+                free(cpp);
+            }
         } else {
             FOR_EACH_TU(tu, &compilation_unit) {
                 if (!args_ast && !args_types) {
                     cuik_visit_top_level(tu, NULL, irgen_visitor);
                 }
+
+                Cuik_CPP* cpp = cuik_get_translation_unit_user_data(tu);
+                cuikpp_deinit(cpp);
+                free(cpp);
             }
         }
 
@@ -475,7 +526,7 @@ int main(int argc, char** argv) {
                 TB_LinkerInput link = { 0 };
                 {
                     link.search_dir_count = system_libpath_count + 1;
-                    link.search_dirs = malloc(link.search_dir_count * sizeof(const char*));
+                    link.search_dirs = HEAP_ALLOC(link.search_dir_count * sizeof(const char*));
 
                     // fill search paths
                     cuik_get_system_search_paths(link.search_dirs, system_libpath_count);
@@ -490,7 +541,7 @@ int main(int argc, char** argv) {
                     link.input_count = dyn_array_length(input_libraries);
                     #endif
 
-                    link.inputs = malloc(link.input_count);
+                    link.inputs = HEAP_ALLOC(link.input_count * sizeof(const char*));
 
                     // Add input libraries
                     const char** inputs = link.inputs;
@@ -553,11 +604,12 @@ int main(int argc, char** argv) {
                     cuiklink_add_input_file(&l, "win32_rt.lib");
                     #endif
 
-                    cuiklink_invoke(&l, output_path_no_ext, "ucrt");
+                    if (!cuiklink_invoke(&l, output_path_no_ext, "ucrt")) {
+                        fprintf(stderr, "Linker failure!\n");
+                        exit(1);
+                    }
                     //cuiklink_invoke_tb(&l, output_path_no_ext);
                     cuiklink_deinit(&l);
-
-                    remove(obj_output_path);
                 }
             }
 
@@ -582,15 +634,18 @@ int main(int argc, char** argv) {
         tb_module_destroy(mod);
     }
 
+    #if CUIK_ALLOW_THREADS
     if (thread_pool != NULL) {
         threadpool_free(thread_pool);
         thread_pool = NULL;
     }
+    #endif
 
-    //cuik_destroy_translation_unit(tu);
     //cuikpp_deinit(&cpp);
 
-    //cuik_destroy_compilation_unit(&compilation_unit);
+    cuik_destroy_compilation_unit(&compilation_unit);
     if (args_time) cuik_stop_global_profiler();
+
+    // _CrtDumpMemoryLeaks();
     return 0;
 }

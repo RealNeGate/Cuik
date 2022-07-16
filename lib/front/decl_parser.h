@@ -105,7 +105,7 @@ static Decl parse_declarator(TranslationUnit* tu, TokenStream* restrict s, Cuik_
     if (!out_of_order_mode && is_nested_declarator && is_abstract) {
         tokens_next(s);
 
-        if (is_typename(s)) {
+        if (is_typename(tu, s)) {
             is_nested_declarator = false;
         }
 
@@ -556,7 +556,7 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
                     printf("MSG: Add _Typeof to pending list %zu ending at %c\n", current, terminator);
                     __builtin_trap();
                 } else {
-                    if (is_typename(s)) {
+                    if (is_typename(tu, s)) {
                         type = parse_typename(tu, s);
                     } else {
                         // we don't particularly resolve typeof for expressions immediately.
@@ -600,7 +600,7 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
                     arrput(pending_exprs, e);
                     alignas_pending_expr = &pending_exprs[arrlen(pending_exprs) - 1];
                 } else {
-                    if (is_typename(s)) {
+                    if (is_typename(tu, s)) {
                         Cuik_Type* new_align = parse_typename(tu, s);
                         if (new_align == NULL || new_align->align) {
                             REPORT(ERROR, loc, "_Alignas cannot operate with incomplete");
@@ -671,7 +671,7 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
                 if (tokens_get(s)->type == '{') {
                     tokens_next(s);
 
-                    type = name ? find_tag((char*)name) : 0;
+                    type = name ? find_tag(tu, (char*)name) : 0;
                     if (type) {
                         // can't re-complete a struct
                         //assert(!type->is_incomplete);
@@ -684,7 +684,7 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
                         // don't track it
                         if (name) {
                             if (out_of_order_mode) {
-                                shput(global_tags, name, type);
+                                nl_strmap_put_cstr(tu->global_tags, name, type);
                             } else {
                                 if (local_tag_count + 1 >= MAX_LOCAL_TAGS) {
                                     SourceLocIndex loc = tokens_get_location_index(s);
@@ -790,7 +790,7 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
                     // TODO(NeGate): must be a forward decl, handle it
                     if (name == NULL) generic_error(tu, s, "Cannot have unnamed forward struct reference.");
 
-                    type = find_tag((const char*)name);
+                    type = find_tag(tu, (const char*)name);
                     if (type == NULL) {
                         type = new_record(tu, is_union);
                         type->loc = record_loc;
@@ -798,7 +798,7 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
                         type->is_incomplete = true;
 
                         if (out_of_order_mode) {
-                            shput(global_tags, name, type);
+                            nl_strmap_put_cstr(tu->global_tags, name, type);
                         } else {
                             if (local_tag_count + 1 >= MAX_LOCAL_TAGS) {
                                 SourceLocIndex loc = tokens_get_location_index(s);
@@ -832,7 +832,7 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
                 if (tokens_get(s)->type == '{') {
                     tokens_next(s);
 
-                    type = name ? find_tag((char*)name) : 0;
+                    type = name ? find_tag(tu, (char*)name) : 0;
                     if (type) {
                         // can't re-complete a enum
                         // TODO(NeGate): error messages
@@ -847,7 +847,7 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
 
                         if (name) {
                             if (out_of_order_mode)
-                                shput(global_tags, name, type);
+                                nl_strmap_put_cstr(tu->global_tags, name, type);
                             else {
                                 if (local_tag_count + 1 >= MAX_LOCAL_TAGS) {
                                     SourceLocIndex loc = tokens_get_location_index(s);
@@ -916,7 +916,7 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
                             .enum_value = count};
 
                         if (out_of_order_mode) {
-                            shput(global_symbols, name, sym);
+                            nl_strmap_put_cstr(tu->global_symbols, name, sym);
                         } else {
                             local_symbols[local_symbol_count++] = sym;
                             cursor += 1;
@@ -946,15 +946,15 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
                         type_layout(tu, type);
                     }
                 } else {
-                    type = find_tag((char*)name);
+                    type = find_tag(tu, (char*)name);
                     if (!type) {
                         type = new_enum(tu);
                         type->record.name = name;
                         type->is_incomplete = true;
 
-                        if (out_of_order_mode)
-                            shput(global_tags, name, type);
-                        else {
+                        if (out_of_order_mode) {
+                            nl_strmap_put_cstr(tu->global_tags, name, type);
+                        } else {
                             if (local_tag_count + 1 >= MAX_LOCAL_TAGS) {
                                 SourceLocIndex loc = tokens_get_location_index(s);
                                 REPORT(ERROR, loc, "too many tags in local scopes (%d)", MAX_LOCAL_TAGS);
@@ -982,7 +982,7 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
                     Atom name = atoms_put(t->end - t->start, t->start);
 
                     // if the typename is already defined, then reuse that type index
-                    Symbol* sym = find_global_symbol((const char*)name);
+                    Symbol* sym = find_global_symbol(tu, (const char*)name);
                     // if not, we assume this must be a typedef'd type and reserve space
                     if (sym != NULL) {
                         if (sym->storage_class != STORAGE_TYPEDEF) {
@@ -1001,13 +1001,14 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
                             .name = name,
                             .type = new_blank_type(tu),
                             .loc = t->location,
-                            .storage_class = STORAGE_TYPEDEF};
+                            .storage_class = STORAGE_TYPEDEF,
+                        };
                         type = sym.type;
                         type->loc = t->location;
                         type->placeholder.name = name;
                         counter += OTHER;
 
-                        shput(global_symbols, name, sym);
+                        nl_strmap_put_cstr(tu->global_symbols, name, sym);
                     }
 
                     break;
@@ -1022,7 +1023,7 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
                     Token* t = tokens_get(s);
                     Atom name = atoms_put(t->end - t->start, t->start);
 
-                    sym = find_global_symbol((const char*)name);
+                    sym = find_global_symbol(tu, (const char*)name);
                     if (sym != NULL && sym->storage_class == STORAGE_TYPEDEF) {
                         type = sym->type;
                         counter += OTHER;
@@ -1137,7 +1138,7 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
     return type;
 }
 
-static bool is_typename(TokenStream* restrict s) {
+static bool is_typename(TranslationUnit* tu, TokenStream* restrict s) {
     Token* t = tokens_get(s);
 
     switch (t->type) {
@@ -1190,7 +1191,7 @@ static bool is_typename(TokenStream* restrict s) {
                 return (loc->storage_class == STORAGE_TYPEDEF);
             }
 
-            Symbol* glob = find_global_symbol((const char*)name);
+            Symbol* glob = find_global_symbol(tu, (const char*)name);
             if (glob != NULL && glob->storage_class == STORAGE_TYPEDEF) return true;
 
             return false;

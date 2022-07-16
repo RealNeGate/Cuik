@@ -4,6 +4,7 @@
 #define MACRO_BUCKET_COUNT 1024
 
 #define THE_SHTUFFS_SIZE (16 << 20)
+#define CUIK__CPP_STATS 0
 
 typedef struct Token {
     int type /* TknType but GCC doesn't like incomplete enums */;
@@ -30,6 +31,14 @@ struct Cuik_CPP {
     unsigned char* the_shtuffs;
 
     const Cuik_IFileSystem* file_system;
+
+    // stats
+    #if CUIK__CPP_STATS
+    uint64_t total_fstats;
+    uint64_t total_include_time;
+    uint64_t total_files_read;
+    uint64_t total_io_time;
+    #endif
 
     // stb_ds hashmap
     IncludeOnceEntry* include_once;

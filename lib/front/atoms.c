@@ -1,9 +1,11 @@
+#include "cuik.h"
 #include "atoms.h"
 
 thread_local static Arena atoms_arena;
 
 void atoms_init() {
 }
+
 void atoms_deinit() {
     arena_free(&atoms_arena);
 }

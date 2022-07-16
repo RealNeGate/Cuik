@@ -1,4 +1,4 @@
-//static size_t file_io_memory_usage = 0;
+static size_t file_io_memory_usage = 0;
 
 static Cuik_File get_file(void* user_data, bool is_query, const char* path) {
     #ifdef _WIN32
@@ -26,7 +26,7 @@ static Cuik_File get_file(void* user_data, bool is_query, const char* path) {
         return (Cuik_File){ .found = false };
     }
 
-    char* buffer = malloc(file_size.QuadPart + 16);
+    char* buffer = cuik__valloc((file_size.QuadPart + 16 + 4095) & ~4095);
     DWORD bytes_read;
     if (!ReadFile(file, buffer, file_size.LowPart, &bytes_read, NULL)) {
         fprintf(stderr, "error: could not read file '%s'!\n", path);
@@ -64,7 +64,7 @@ static Cuik_File get_file(void* user_data, bool is_query, const char* path) {
     }
 
     size_t len = file_stats.st_size;
-    char* text = malloc(len + 16);
+    char* text = cuik__valloc((len + 16 + 4095) & ~4095);
 
     fseek(file, 0, SEEK_SET);
     size_t length_read = fread(text, 1, len, file);
@@ -76,6 +76,10 @@ static Cuik_File get_file(void* user_data, bool is_query, const char* path) {
 
     return (Cuik_File){ .found = true, .length = length_read, .data = text };
     #endif
+}
+
+static void free_file(void* user_data, const Cuik_FileEntry* file) {
+    cuik__vfree(file->content, (file->content_len + 16 + 4095) & ~4095);
 }
 
 static bool canonicalize(void* user_data, char output[FILENAME_MAX], const char* input) {
@@ -107,5 +111,6 @@ static bool canonicalize(void* user_data, char output[FILENAME_MAX], const char*
 
 Cuik_IFileSystem cuik_default_fs = {
     .get_file = get_file,
+    .free_file = free_file,
     .canonicalize = canonicalize
 };

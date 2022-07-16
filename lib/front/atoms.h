@@ -2,7 +2,7 @@
 #include "arena.h"
 #include "common.h"
 
-typedef unsigned char* Atom;
+typedef char* Atom;
 
 void atoms_init();
 void atoms_deinit();

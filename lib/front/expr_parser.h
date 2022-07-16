@@ -62,7 +62,8 @@ static Expr* parse_function_literal(TranslationUnit* tu, TokenStream* restrict s
     *e = (Expr){
         .op = EXPR_FUNCTION,
         .type = type,
-        .func = {n}};
+        .func = {n},
+    };
     return e;
 }
 
@@ -239,8 +240,8 @@ static Expr* parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
 
                 *e = (Expr){
                     .op = EXPR_VA_ARG,
-                    .va_arg_ = {
-                        type, src}};
+                    .va_arg_ = {type, src},
+                };
                 break;
             }
 
@@ -254,12 +255,14 @@ static Expr* parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
                     *e = (Expr){
                         .op = EXPR_ENUM,
                         .type = sym->type,
-                        .enum_val = {&sym->type->enumerator.entries[sym->enum_value].value}};
+                        .enum_val = {&sym->type->enumerator.entries[sym->enum_value].value},
+                    };
                 } else {
                     assert(sym->stmt != NULL);
                     *e = (Expr){
                         .op = EXPR_SYMBOL,
-                        .symbol = sym->stmt};
+                        .symbol = sym->stmt,
+                    };
                 }
             } else {
                 // We'll defer any global identifier resolution
@@ -275,7 +278,7 @@ static Expr* parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
                         .builtin_sym = {name},
                     };
                 } else {
-                    Symbol* symbol_search = find_global_symbol((const char*)name);
+                    Symbol* symbol_search = find_global_symbol(tu, (const char*)name);
                     if (symbol_search != NULL) {
                         if (symbol_search->storage_class == STORAGE_ENUM) {
                             *e = (Expr){
@@ -497,7 +500,7 @@ static Expr* parse_expr_l1(TranslationUnit* tu, TokenStream* restrict s) {
     if (tokens_get(s)->type == '(') {
         tokens_next(s);
 
-        if (is_typename(s)) {
+        if (is_typename(tu, s)) {
             Cuik_Type* type = parse_typename(tu, s);
             expect(tu, s, ')');
 
@@ -513,7 +516,8 @@ static Expr* parse_expr_l1(TranslationUnit* tu, TokenStream* restrict s) {
                     .op = EXPR_CAST,
                     .start_loc = start_loc,
                     .end_loc = start_loc,
-                    .cast = {type, base}};
+                    .cast = {type, base},
+                };
             }
         }
 
@@ -563,7 +567,8 @@ static Expr* parse_expr_l1(TranslationUnit* tu, TokenStream* restrict s) {
                 .op = EXPR_ARROW,
                 .start_loc = start_loc,
                 .end_loc = end_loc,
-                .dot_arrow = {.base = base, .name = name}};
+                .dot_arrow = {.base = base, .name = name},
+            };
 
             tokens_next(s);
             goto try_again;
@@ -587,7 +592,8 @@ static Expr* parse_expr_l1(TranslationUnit* tu, TokenStream* restrict s) {
                 .op = EXPR_DOT,
                 .start_loc = start_loc,
                 .end_loc = end_loc,
-                .dot_arrow = {.base = base, .name = name}};
+                .dot_arrow = {.base = base, .name = name},
+            };
 
             tokens_next(s);
             goto try_again;
@@ -631,7 +637,8 @@ static Expr* parse_expr_l1(TranslationUnit* tu, TokenStream* restrict s) {
                 .op = EXPR_CALL,
                 .start_loc = start_loc,
                 .end_loc = end_loc,
-                .call = {target, param_count, param_start}};
+                .call = {target, param_count, param_start},
+            };
 
             tls_restore(params);
             goto try_again;
@@ -651,7 +658,8 @@ static Expr* parse_expr_l1(TranslationUnit* tu, TokenStream* restrict s) {
                 .op = is_inc ? EXPR_POST_INC : EXPR_POST_DEC,
                 .start_loc = start_loc,
                 .end_loc = end_loc,
-                .unary_op.src = src};
+                .unary_op.src = src,
+            };
         }
 
         return e;
@@ -701,7 +709,8 @@ static Expr* parse_expr_l2(TranslationUnit* tu, TokenStream* restrict s) {
             .op = EXPR_CAST,
             .start_loc = start_loc,
             .end_loc = end_loc,
-            .cast = {&builtin_types[TYPE_BOOL], value}};
+            .cast = {&builtin_types[TYPE_BOOL], value},
+        };
         return e;
     } else if (tokens_get(s)->type == '-') {
         tokens_next(s);
@@ -773,7 +782,7 @@ static Expr* parse_expr_l2(TranslationUnit* tu, TokenStream* restrict s) {
         }
 
         Expr* e = 0;
-        if (is_typename(s)) {
+        if (is_typename(tu, s)) {
             Cuik_Type* type = parse_typename(tu, s);
 
             if (has_paren) {
@@ -903,7 +912,8 @@ static Expr* parse_expr_NEW(TranslationUnit* tu, TokenStream* restrict s, int mi
             .op = EXPR_NONE,
             .start_loc = start_loc,
             .end_loc = end_loc,
-            .bin_op = {result, rhs}};
+            .bin_op = {result, rhs},
+        };
 
         switch (binop) {
             case TOKEN_TIMES:
@@ -990,7 +1000,8 @@ static Expr* parse_expr_l13(TranslationUnit* tu, TokenStream* restrict s) {
             .op = EXPR_TERNARY,
             .start_loc = start_loc,
             .end_loc = end_loc,
-            .ternary_op = {lhs, mhs, rhs}};
+            .ternary_op = {lhs, mhs, rhs},
+        };
 
         return e;
     } else {
@@ -1065,7 +1076,8 @@ static Expr* parse_expr_l14(TranslationUnit* tu, TokenStream* restrict s) {
             .op = op,
             .start_loc = start_loc,
             .end_loc = end_loc,
-            .bin_op = {lhs, rhs}};
+            .bin_op = {lhs, rhs},
+        };
         return e;
     } else {
         return lhs;

@@ -2,7 +2,12 @@
 // just call it with the C11 compiler of your choice
 //
 // It's inspired by nobuild but different
-//#define RELEASE_BUILD 1
+#define USE_DEBUG_HEAP 0
+
+#ifndef RELEASE_BUILD
+#define RELEASE_BUILD 0
+#endif
+
 #ifndef DRIVER_NAME
 #define DRIVER_NAME "main_driver"
 #endif /* DRIVER_NAME */
@@ -18,7 +23,6 @@ static const char* INPUT_FILES[] = {
     "lib/diagnostic.c",
     "lib/crash_handler.c",
     "lib/arena.c",
-    "lib/settings.c",
     "lib/compilation_unit.c",
 
     // C preprocessor
@@ -256,18 +260,19 @@ int main(int argc, char** argv) {
     nbuild_init();
     create_dir_if_not_exists("bin"SLASH);
 
-    #ifdef RELEASE_BUILD
+    #if RELEASE_BUILD
     printf("Compiling a release build!\n");
     #endif
 
     CC_Options options = {
         .output_dir = "bin"SLASH,
+        .debug_heap = USE_DEBUG_HEAP,
 
         #ifndef NO_TB
         .extra_options = "-DCUIK_USE_TB",
         #endif
 
-        #ifdef RELEASE_BUILD
+        #if RELEASE_BUILD
         .opt = CC_Ox,
         #else
         .opt = CC_O0,
@@ -292,21 +297,11 @@ int main(int argc, char** argv) {
         cc_invoke(&options, INPUT_FILES[i], NULL);
     }
 
-    // usually TB will compile a copy of stb_ds (eventually we'll drop stb_ds from there)
-    // but if we're not compiling with stb_ds then we provide our own
-    options.extra_options = "-xc -DSTB_DS_IMPLEMENTATION";
-    cc_invoke(&options, "deps/stb_ds.h", NULL);
-    options.extra_options = "-DCUIK_USE_TB";
-
     cmd_wait_for_all();
 
     printf("Converting to a library... %s\n", cuik_libpath);
     ar_invoke(cuik_libpath, 1, (const char*[]) {
-            #if ON_WINDOWS
-            "bin"SLASH"*.obj",
-            #else
-            "bin"SLASH"*.o",
-            #endif
+            ON_WINDOWS ? "bin"SLASH"*.obj" : "bin"SLASH"*.o",
         });
 
     cmd_wait_for_all();
@@ -338,7 +333,7 @@ int main(int argc, char** argv) {
 
     ld_invoke("bin"SLASH"cuik",
         COUNTOF(LINKER_INPUTS), LINKER_INPUTS,
-        COUNTOF(EXTERNALS), EXTERNALS
+        COUNTOF(EXTERNALS), EXTERNALS, USE_DEBUG_HEAP
     );
 
     clean("bin"SLASH);
@@ -481,13 +476,16 @@ int main(int argc, char** argv) {
             printf("Running phase 4 self-host tests...\n");
 
             create_dir_if_not_exists("bin2/");
-            cmd_append(CUIK_LOCATION " -c -o bin2/libcuik.obj -I deps/ -I include/ -I lib/ ");
+            cmd_append(CUIK_LOCATION " -o bin2/cuik.exe -DCUIK_USE_TB -I deps/ -I include/ -I lib/ ");
+            cmd_append("--lib deps/tildebackend.lib,DbgHelp.lib,OleAut32.lib,Advapi32.lib,ole32.lib ");
 
             char cmd[1024];
             for (size_t i = 0; i < INPUT_FILE_COUNT; i++) {
                 cmd_append(INPUT_FILES[i]);
                 cmd_append(" ");
             }
+
+            cmd_append("drivers"SLASH DRIVER_NAME".c ");
 
             printf("CMD: %s\n", command_buffer);
 

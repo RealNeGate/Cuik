@@ -44,6 +44,9 @@ static void expand_ident(Cuik_CPP* restrict c, TokenStream* restrict s, Lexer* l
 #include "cpp_expr.h"
 
 CUIK_API void cuikpp_init(Cuik_CPP* ctx, const Cuik_IFileSystem* fs) {
+    // default amirite
+    if (fs == NULL) fs = &cuik_default_fs;
+
     size_t sz = sizeof(void*) * MACRO_BUCKET_COUNT * SLOTS_PER_MACRO_BUCKET;
     size_t sz2 = sizeof(SourceLocIndex) * MACRO_BUCKET_COUNT * SLOTS_PER_MACRO_BUCKET;
 
@@ -63,6 +66,13 @@ CUIK_API void cuikpp_init(Cuik_CPP* ctx, const Cuik_IFileSystem* fs) {
 }
 
 CUIK_API void cuikpp_deinit(Cuik_CPP* ctx) {
+    #if CUIK__CPP_STATS
+    printf("%40s | %f us / %zu file read (%f ms / %zu fstats)\n",
+        ctx->files[0].filepath,
+        ctx->total_io_time / 1000.0, ctx->total_files_read,
+        ctx->total_include_time / 10000000.0, ctx->total_fstats);
+    #endif
+
     if (ctx->macro_bucket_keys) {
         cuikpp_finalize(ctx);
     }
@@ -71,7 +81,7 @@ CUIK_API void cuikpp_deinit(Cuik_CPP* ctx) {
         size_t count = dyn_array_length(ctx->files);
 
         for (size_t i = 0; i < count; i++) {
-            free(ctx->files[i].content);
+            CUIK_CALL(ctx->file_system, free_file, &ctx->files[i]);
         }
 
         dyn_array_destroy(ctx->files);
@@ -309,9 +319,16 @@ static void preprocess_file(Cuik_CPP* restrict c, TokenStream* restrict s, size_
         .depth = depth,
         .include_loc = include_loc,
         .filepath = filepath,
-        .content = text
+        .content = text,
+        .content_len = file.length,
     };
     dyn_array_put(c->files, file_entry);
+
+    #if CUIK__CPP_STATS
+    uint64_t io_time_done = cuik_time_in_nanos();
+    c->total_files_read += 1;
+    c->total_io_time = (io_time_done - timer_start);
+    #endif
 
     Lexer l = {filepath, text, text, 1};
     lexer_read(&l);
@@ -497,6 +514,10 @@ static void preprocess_file(Cuik_CPP* restrict c, TokenStream* restrict s, size_
                     SourceLocIndex new_include_loc = get_source_location(c, &l, s, include_loc, SOURCE_LOC_NORMAL);
                     lexer_read(&l);
 
+                    #if CUIK__CPP_STATS
+                    uint64_t include_start_time = cuik_time_in_nanos();
+                    #endif
+
                     unsigned char* filename = tls_push(MAX_PATH);
 
                     bool is_lib_include = false;
@@ -567,6 +588,11 @@ static void preprocess_file(Cuik_CPP* restrict c, TokenStream* restrict s, size_
                     if (!is_lib_include) {
                         // Try local includes
                         sprintf_s(path, FILENAME_MAX, "%s%s", directory, filename);
+
+                        #if CUIK__CPP_STATS
+                        c->total_fstats += 1;
+                        #endif
+
                         if (CUIK_CALL(c->file_system, get_file, true, path).found) success = true;
                     }
 
@@ -575,6 +601,10 @@ static void preprocess_file(Cuik_CPP* restrict c, TokenStream* restrict s, size_
 
                         for (size_t i = 0; i < num_system_include_dirs; i++) {
                             sprintf_s(path, FILENAME_MAX, "%s%s", c->system_include_dirs[i], filename);
+
+                            #if CUIK__CPP_STATS
+                            c->total_fstats += 1;
+                            #endif
 
                             if (CUIK_CALL(c->file_system, get_file, true, path).found) {                                success = true;
                                 break;
@@ -585,6 +615,11 @@ static void preprocess_file(Cuik_CPP* restrict c, TokenStream* restrict s, size_
                     if (!success && is_lib_include) {
                         // Try local includes
                         sprintf_s(path, FILENAME_MAX, "%s%s", directory, filename);
+
+                        #if CUIK__CPP_STATS
+                        c->total_fstats += 1;
+                        #endif
+
                         if (CUIK_CALL(c->file_system, get_file, true, path).found) {
                             success = true;
                         }
@@ -602,19 +637,28 @@ static void preprocess_file(Cuik_CPP* restrict c, TokenStream* restrict s, size_
                     CUIK_CALL(c->file_system, canonicalize, new_path, path);
 
                     ptrdiff_t search = shgeti(c->include_once, new_path);
-                    if (search < 0) {
-                        // TODO(NeGate): Remove these heap allocations later
-                        // they're... evil!!!
-                        char* new_dir = strdup(new_path);
-                        char* slash = strrchr(new_dir, '/');
-                        if (!slash) slash = strrchr(new_dir, '\\');
 
+                    #if CUIK__CPP_STATS
+                    uint64_t include_end_time = cuik_time_in_nanos();
+                    c->total_include_time += (include_end_time - include_start_time);
+                    #endif
+
+                    if (search < 0) {
+                        char* slash = strrchr(new_path, '/');
+                        if (!slash) slash = strrchr(new_path, '\\');
+
+                        char* new_dir;
                         if (slash) {
-                            slash[0] = '/';
-                            slash[1] = '\0';
+                            size_t slash_pos = slash - new_path;
+
+                            new_dir = arena_alloc(&thread_arena, slash_pos + 2, 1);
+                            memcpy(new_dir, new_path, slash_pos);
+                            new_dir[slash_pos] = '/';
+                            new_dir[slash_pos + 1] = 0;
                         } else {
+                            new_dir = arena_alloc(&thread_arena, 2, 1);
                             new_dir[0] = '/';
-                            new_dir[1] = '\0';
+                            new_dir[1] = 0;
                         }
 
                         if (0) {

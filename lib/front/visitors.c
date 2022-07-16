@@ -3,6 +3,7 @@
 // used by cuik_visit_top_level_threaded
 typedef struct {
     TranslationUnit* tu;
+    atomic_size_t* tasks_remaining;
     Cuik_StmtVisitor* visitor;
     void* user_data;
     size_t start, end;
@@ -202,31 +203,44 @@ CUIK_API void cuik_visit_top_level(TranslationUnit* restrict tu, void* user_data
 
 static void task_caller(void* arg) {
     TaskInfo task = *((TaskInfo*)arg);
-    free(arg);
 
     CUIK_TIMED_BLOCK("top level visitor (%zu - %zu)", task.start, task.end) {
         for (size_t i = task.start; i < task.end; i++) {
             task.visitor(task.tu, task.tu->top_level_stmts[i], task.user_data);
         }
     }
+
+    *task.tasks_remaining -= 1;
 }
 
 CUIK_API void cuik_visit_top_level_threaded(TranslationUnit* restrict tu, const Cuik_IThreadpool* thread_pool, int batch_size, void* user_data, Cuik_StmtVisitor* visitor) {
     assert(thread_pool != NULL);
     assert((batch_size & (batch_size-1)) == 0);
+    tls_init();
 
     // split up the top level statement tasks into
     // chunks to avoid spawning too many tiny tasks
     size_t count = arrlen(tu->top_level_stmts);
     size_t padded = (count + (batch_size - 1)) & ~(batch_size - 1);
 
+    atomic_size_t tasks_remaining = (count + (batch_size - 1)) / batch_size;
+    TaskInfo* tasks = tls_push(sizeof(TaskInfo) * tasks_remaining);
+
+    size_t j = 0;
     for (size_t i = 0; i < padded; i += batch_size) {
         size_t limit = i + batch_size;
         if (limit > count) limit = count;
 
-        TaskInfo* t = malloc(sizeof(TaskInfo));
-        *t = (TaskInfo){tu, visitor, user_data, i, limit};
-        CUIK_CALL(thread_pool, submit, task_caller, t);
-    }
-}
+        tasks[j] = (TaskInfo){tu, &tasks_remaining, visitor, user_data, i, limit};
+        CUIK_CALL(thread_pool, submit, task_caller, &tasks[j]);
 
+        j += 1;
+    }
+
+    // "highway robbery on steve jobs" job stealing amirite...
+    while (tasks_remaining != 0) {
+        CUIK_CALL(thread_pool, work_one_job);
+    }
+
+    tls_restore(tasks);
+}

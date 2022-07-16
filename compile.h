@@ -365,6 +365,7 @@ void cmd_wait_for_all() {
 typedef struct {
     const char* output_dir;
     const char* extra_options;
+    bool debug_heap;
 
     enum {
         CC_O0, // no optimizations
@@ -464,8 +465,12 @@ static void cc_invoke(const CC_Options* options, const char* input_path, const c
         case CC_Ox: cmd_append(" -O2 -DNDEBUG"); break;
     }
 
+    if (options->debug_heap) {
+        cmd_append(" -fsanitize=address");
+        //cmd_append(" -D_DEBUG");
+    }
+
     if (ON_CLANG) cmd_append(" -Wno-microsoft-enum-forward-reference -Wno-microsoft-anon-tag -Wno-gnu-designator");
-    if (options->use_asan) cmd_append(" -fsanitize=address");
 
     if (options->extra_options) {
         cmd_append(" ");
@@ -502,13 +507,7 @@ static void ar_invoke(const char* output_path, size_t count, const char* inputs[
         cmd_append(output_path);
         cmd_append(".lib ");
     } else {
-		#ifndef NO_LLVMAR
-        if (ON_CLANG) cmd_append("llvm-ar rc ");
-        else cmd_append("ar -rcs ");
-		#else
 		cmd_append("ar -rcs ");
-		#endif
-
         cmd_append(output_path);
         if (ON_WINDOWS) cmd_append(".lib ");
         else cmd_append(".a ");
@@ -526,7 +525,7 @@ static void ar_invoke(const char* output_path, size_t count, const char* inputs[
     }
 }
 
-static void ld_invoke(const char* output_path, size_t count, const char* inputs[], size_t external_count, const char* external_inputs[]) {
+static void ld_invoke(const char* output_path, size_t count, const char* inputs[], size_t external_count, const char* external_inputs[], bool debug_crt) {
     if (0 /* ON_WINDOWS */) {
         cmd_append("link /ltcg /defaultlib:libcmt /debug /out:");
         cmd_append(str_gimme_good_slashes(output_path));
@@ -541,16 +540,21 @@ static void ld_invoke(const char* output_path, size_t count, const char* inputs[
             cmd_append(" ");
             cmd_append(inputs[i]);
         }
-    } else if (ON_CLANG) {
-        // Link with clang instead so it's easier
-		#ifndef NO_LLVMAR
-        cmd_append("clang -fuse-ld=lld -flto -O2 -g -o ");
-		#else
-        cmd_append("clang -O2 -g -o ");
-		#endif
-        cmd_append(str_gimme_good_slashes(output_path));
-        if (ON_WINDOWS) cmd_append(".exe");
+    } else if (ON_GCC || ON_CLANG) {
+        if (ON_CLANG) {
+            cmd_append("clang -g -o ");
+            cmd_append(str_gimme_good_slashes(output_path));
+        } else {
+            cmd_append("gcc -rdynamic -g -o ");
+            cmd_append(str_gimme_good_slashes(output_path));
+        }
+        if (ON_WINDOWS) cmd_append(".exe -Xlinker /INCREMENTAL:NO");
         else cmd_append(" -Wl,--export-dynamic");
+
+        if (debug_crt) {
+            cmd_append(" -fsanitize=address");
+            // if (ON_WINDOWS && ON_CLANG) cmd_append(" -Xlinker /NODEFAULTLIB -lkernel32 -luser32 -lmsvcrtd -lucrtd -lmsvcprt -lvcruntimed");
+        }
 
         for (size_t i = 0; i < external_count; i++) {
             cmd_append(" -l");
@@ -560,22 +564,6 @@ static void ld_invoke(const char* output_path, size_t count, const char* inputs[
         for (size_t i = 0; i < count; i++) {
             cmd_append(" ");
             cmd_append(inputs[i]);
-        }
-    } else if (ON_GCC) {
-        // TODO(NeGate): Fix this garbage up...
-        cmd_append("gcc -rdynamic -o ");
-        cmd_append(str_gimme_good_slashes(output_path));
-        cmd_append(" -Wl,--export-dynamic ");
-
-        for (size_t i = 0; i < count; i++) {
-            cmd_append(inputs[i]);
-            cmd_append(" ");
-        }
-
-        for (size_t i = 0; i < external_count; i++) {
-            cmd_append("-l");
-            cmd_append(external_inputs[i]);
-            cmd_append(" ");
         }
     } else {
         assert(0 && "TODO");

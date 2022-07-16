@@ -1,46 +1,49 @@
 
-CUIK_API void cuikpp_define_empty(Cuik_CPP* ctx, const char* key) {
-    size_t len = strlen(key);
 
+CUIK_API void cuikpp_define_empty(Cuik_CPP* ctx, const char* key) {
+    cuikpp_define_empty_slice(ctx, strlen(key), key);
+}
+
+CUIK_API void cuikpp_define(Cuik_CPP* ctx, const char* key, const char* val) {
+    cuikpp_define_slice(ctx, strlen(key), key, strlen(val), val);
+}
+
+CUIK_API void cuikpp_define_empty_slice(Cuik_CPP* ctx, size_t keylen, const char* key) {
     // TODO(NeGate): Work around to get any of the macro bucket
     // keys to be at 16bytes aligned
-    size_t pad_len = (len + 15) & ~15;
+    size_t pad_len = (keylen + 15) & ~15;
     char* newkey = gimme_the_shtuffs(ctx, pad_len);
-    memcpy(newkey, key, len);
+    memcpy(newkey, key, keylen);
 
     // Hash name, name doesn't include parenthesis part btw
     const char* paren = newkey;
-    while ((paren - newkey) < len && *paren != '(') paren++;
-    len = *paren == '(' ? paren - newkey : len;
+    while ((paren - newkey) < keylen && *paren != '(') paren++;
+    keylen = *paren == '(' ? paren - newkey : keylen;
 
-    uint64_t slot = hash_ident((const unsigned char*)newkey, len);
+    uint64_t slot = hash_ident((const unsigned char*)newkey, keylen);
     uint64_t e = ctx->macro_bucket_count[slot] + (slot * SLOTS_PER_MACRO_BUCKET);
 
     // Insert into buckets
     ctx->macro_bucket_count[slot] += 1;
     ctx->macro_bucket_keys[e] = (const unsigned char*)newkey;
-    ctx->macro_bucket_keys_length[e] = len;
+    ctx->macro_bucket_keys_length[e] = keylen;
 
     ctx->macro_bucket_values_start[e] = NULL;
     ctx->macro_bucket_values_end[e] = NULL;
     ctx->macro_bucket_source_locs[e] = SOURCE_LOC_SET_TYPE(SOURCE_LOC_UNKNOWN, 0);
 }
 
-CUIK_API void cuikpp_define(Cuik_CPP* ctx, const char* key, const char* value) {
-    // TODO(NeGate): Fix up this code a bit because i really dislike how the
-    // parenthesis are detected
-    size_t len = strlen(key);
-
+CUIK_API void cuikpp_define_slice(Cuik_CPP* ctx, size_t keylen, const char* key, size_t vallen, const char* value) {
     // TODO(NeGate): Work around to get any of the macro bucket
     // keys to be at 16bytes aligned
-    size_t pad_len = (len + 15) & ~15;
+    size_t pad_len = (keylen + 15) & ~15;
     char* newkey = gimme_the_shtuffs(ctx, pad_len);
-    memcpy(newkey, key, len);
+    memcpy(newkey, key, keylen);
 
     // Hash name, name doesn't include parenthesis part btw
     const char* paren = newkey;
-    while ((paren - newkey) < len && *paren != '(') paren++;
-    len = *paren == '(' ? paren - newkey : len;
+    while ((paren - newkey) < keylen && *paren != '(') paren++;
+    size_t len = *paren == '(' ? paren - newkey : keylen;
 
     uint64_t slot = hash_ident((const unsigned char*)newkey, len);
     uint64_t e = ctx->macro_bucket_count[slot] + (slot * SLOTS_PER_MACRO_BUCKET);
@@ -51,17 +54,15 @@ CUIK_API void cuikpp_define(Cuik_CPP* ctx, const char* key, const char* value) {
     ctx->macro_bucket_keys_length[e] = len;
 
     {
-        len = strlen(value);
-
-        size_t pad_len = (len + 15) & ~15;
+        size_t pad_len = (vallen + 15) & ~15;
         char* newvalue = gimme_the_shtuffs(ctx, pad_len);
-        memcpy(newvalue, value, len);
+        memcpy(newvalue, value, vallen);
 
-        size_t rem = pad_len - len;
-        memset(newvalue + len, 0, rem);
+        size_t rem = pad_len - vallen;
+        memset(newvalue + vallen, 0, rem);
 
         ctx->macro_bucket_values_start[e] = (const unsigned char*)newvalue;
-        ctx->macro_bucket_values_end[e] = (const unsigned char*)newvalue + len;
+        ctx->macro_bucket_values_end[e] = (const unsigned char*)newvalue + vallen;
         ctx->macro_bucket_source_locs[e] = SOURCE_LOC_SET_TYPE(SOURCE_LOC_UNKNOWN, 0);
     }
 }
@@ -79,7 +80,7 @@ static char unsigned default_seed[16] = {
 };
 
 static uint64_t hash_ident(const unsigned char* at, size_t length) {
-#if !USE_INTRIN
+    #if !USE_INTRIN
     uint32_t hash = 0x811c9dc5;
 
     for (size_t i = 0; i < length; i++) {
@@ -88,7 +89,7 @@ static uint64_t hash_ident(const unsigned char* at, size_t length) {
     }
 
     return hash % MACRO_BUCKET_COUNT;
-#else
+    #else
     __m128i hash = _mm_cvtsi64_si128(length);
     hash = _mm_xor_si128(hash, _mm_loadu_si128((__m128i*)default_seed));
 
@@ -115,15 +116,15 @@ static uint64_t hash_ident(const unsigned char* at, size_t length) {
     hash = _mm_aesdec_si128(hash, _mm_setzero_si128());
 
     return ((size_t)_mm_extract_epi32(hash, 0)) % MACRO_BUCKET_COUNT;
-#endif
+    #endif
 }
 
 // 16byte based compare
 // it doesn't need to be aligned but the valid range must be (len + 15) & ~15
 static bool memory_equals16(const unsigned char* src1, const unsigned char* src2, size_t length) {
-#if !USE_INTRIN
+    #if !USE_INTRIN
     return memcmp(src1, src2, length) == 0;
-#else
+    #else
     size_t i = 0;
     size_t chunk_count = length / 16;
     while (chunk_count--) {
@@ -144,7 +145,7 @@ static bool memory_equals16(const unsigned char* src1, const unsigned char* src2
 
     int compare = _mm_movemask_epi8(_mm_cmpeq_epi8(in1, in2));
     return compare == 0xFFFF;
-#endif
+    #endif
 }
 
 static bool find_define(Cuik_CPP* restrict c, size_t* out_index, const unsigned char* start, size_t length) {

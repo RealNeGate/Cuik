@@ -268,7 +268,7 @@ static int compute_initializer_bounds(Cuik_Type* type) {
     }
 }
 
-static InitSearchResult find_member_by_name(Cuik_Type* type, const unsigned char* name, int* base_index, int offset) {
+static InitSearchResult find_member_by_name(Cuik_Type* type, const char* name, int* base_index, int offset) {
     Member* kids = type->record.kids;
     size_t count = type->record.kid_count;
 
@@ -394,6 +394,7 @@ static InitNode* walk_initializer_for_sema(TranslationUnit* tu, Cuik_Type* type,
         }
 
         if (node->kids_count == 0) {
+            node->expr = cuik__optimize_ast(tu, node->expr);
             Cuik_Type* expr_type = sema_expr(tu, node->expr);
 
             if (!type_compatible(tu, expr_type, child_type, node->expr)) {
@@ -570,7 +571,7 @@ Member* sema_resolve_member_access(TranslationUnit* tu, Expr* restrict e, uint32
         if (record_type->kind == KIND_PTR) {
             record_type = record_type->ptr_to;
 
-            if (settings.pedantic) {
+            if (0 /* pedantic */) {
                 REPORT_EXPR(ERROR, e, "Implicit dereference is a non-standard extension (disable -P to allow it).");
                 return NULL;
             }
@@ -1300,6 +1301,10 @@ void sema_stmt(TranslationUnit* tu, Stmt* restrict s) {
         case STMT_GLOBAL_DECL:
         case STMT_DECL: {
             if (s->decl.initial) {
+                // constant fold the global expression such that it's easier to spot constant
+                // expressions.
+                s->decl.initial = cuik__optimize_ast(tu, s->decl.initial);
+
                 try_resolve_typeof(tu, s->decl.type);
 
                 if (s->decl.initial->op == EXPR_INITIALIZER &&
@@ -1567,12 +1572,14 @@ static void sema_top_level(TranslationUnit* tu, Stmt* restrict s) {
             bool is_external_sym = (type->kind == KIND_FUNC && s->decl.initial_as_stmt == NULL);
             if (s->decl.attrs.is_extern) is_external_sym = true;
 
+            if (type->kind != KIND_FUNC && s->decl.initial) {
+                // constant fold the global expression such that it's easier to spot constant
+                // expressions.
+                s->decl.initial = cuik__optimize_ast(tu, s->decl.initial);
+            }
+
             if (!is_external_sym) {
                 if (s->decl.initial) {
-                    // constant fold the global expression such that it's easier to spot constant
-                    // expressions.
-                    s->decl.initial = cuik__optimize_ast(tu, s->decl.initial);
-
                     if (s->decl.initial->op == EXPR_INITIALIZER &&
                         s->decl.initial->init.type == 0) {
                         // give it something to go off of

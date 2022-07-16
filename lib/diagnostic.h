@@ -6,7 +6,7 @@
 #undef ERROR
 
 #define REPORT(lvl, loc, ...) report(REPORT_##lvl, tu->errors, &tu->tokens, loc, __VA_ARGS__)
-#define REPORT_RANGED(lvl, a, b, ...) report_ranged(REPORT_##lvl, tu->errors, &tu->tokens a, b, __VA_ARGS__)
+#define REPORT_RANGED(lvl, a, b, ...) report_ranged(REPORT_##lvl, tu->errors, &tu->tokens, a, b, __VA_ARGS__)
 #define REPORT_EXPR(lvl, e, ...) report_ranged(REPORT_##lvl, tu->errors, &tu->tokens, (e)->start_loc, (e)->end_loc, __VA_ARGS__)
 #define REPORT_STMT(lvl, s, ...) report(REPORT_##lvl, tu->errors, &tu->tokens, (s)->loc, __VA_ARGS__)
 

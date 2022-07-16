@@ -105,7 +105,7 @@ static void tally_report_counter(Cuik_ReportLevel level, Cuik_ErrorStatus* err) 
         SetConsoleTextAttribute(console_handle, (default_attribs & ~0xF) | FOREGROUND_RED | FOREGROUND_INTENSITY);
         #endif
 
-        printf("ABORTING!!!\n");
+        printf("ABORTING!!! (no diagnostics callback)\n");
 
         #if _WIN32
         SetConsoleTextAttribute(console_handle, default_attribs);
@@ -123,7 +123,6 @@ static void tally_report_counter(Cuik_ReportLevel level, Cuik_ErrorStatus* err) 
             #if _WIN32
             SetConsoleTextAttribute(console_handle, default_attribs);
             #endif
-            abort();
         }
     }
 }

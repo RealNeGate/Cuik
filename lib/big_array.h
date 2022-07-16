@@ -13,7 +13,12 @@ typedef struct DynArrayHeader {
 } DynArrayHeader;
 
 inline static void* dyn_array_internal_create(size_t type_size) {
+    #if defined(_WIN32) && defined(_DEBUG)
+    DynArrayHeader* header = _malloc_dbg(sizeof(DynArrayHeader) + (type_size * INITIAL_CAP), _NORMAL_BLOCK, __FILE__, __LINE__);
+    #else
     DynArrayHeader* header = malloc(sizeof(DynArrayHeader) + (type_size * INITIAL_CAP));
+    #endif
+
     *header = (DynArrayHeader){
         .capacity = INITIAL_CAP
     };
@@ -32,7 +37,12 @@ inline static void* dyn_array_internal_reserve(void* ptr, size_t type_size, size
 
     if (header->size + extra >= header->capacity) {
         header->capacity = (header->size + extra) * 2;
+        #if defined(_WIN32) && defined(_DEBUG)
+        DynArrayHeader* new_ptr = _realloc_dbg(header, sizeof(DynArrayHeader) + (type_size * header->capacity), _NORMAL_BLOCK, __FILE__, __LINE__);
+        #else
         DynArrayHeader* new_ptr = realloc(header, sizeof(DynArrayHeader) + (type_size * header->capacity));
+        #endif
+
         if (!new_ptr) {
             fprintf(stderr, "error: out of memory!");
             abort();

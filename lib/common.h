@@ -42,11 +42,14 @@ struct {       \
 #define thread_local _Thread_local
 #endif
 
-#define panic(...)           \
+#define panic(...)       \
 do {                     \
     printf(__VA_ARGS__); \
     abort();             \
 } while (0)
+
+#define HEAP_ALLOC(s) malloc(s)
+#define HEAP_FREE(p) (free(p), (p) = NULL)
 
 #define SWAP(a, b)      \
 do {                    \
@@ -65,8 +68,8 @@ void tls_restore(void* p);
 void* cuik__valloc(size_t sz);
 void cuik__vfree(void* p, size_t sz);
 
-inline static bool cstr_equals(const unsigned char* str1, const unsigned char* str2) {
-    return strcmp((const char*)str1, (const char*)str2) == 0;
+inline static bool cstr_equals(const char* str1, const char* str2) {
+    return strcmp(str1, str2) == 0;
 }
 
 // returns the number of bytes written

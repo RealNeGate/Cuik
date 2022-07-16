@@ -25,7 +25,7 @@ static char* utf16_to_utf8_on_heap(const wchar_t* input) {
     int bytes = WideCharToMultiByte(65001 /* UTF8 */, 0, input, -1, NULL, 0, NULL, NULL);
     if (bytes <= 0) return NULL;
 
-	char* output = malloc(bytes + 1);
+	char* output = HEAP_ALLOC(bytes + 1);
     WideCharToMultiByte(65001 /* UTF8 */, 0, input, -1, output, bytes, NULL, NULL);
     output[bytes] = 0;
 
@@ -35,13 +35,10 @@ static char* utf16_to_utf8_on_heap(const wchar_t* input) {
 
 // hacky
 void hook_crash_handler(void);
-LONG WINAPI temp_storage_fault_handler(struct _EXCEPTION_POINTERS* info);
 
 CUIK_API void cuik_init(void) {
     init_report_system();
     hook_crash_handler();
-
-    AddVectoredExceptionHandler(1, temp_storage_fault_handler);
 }
 
 CUIK_API void cuik_find_system_deps(const char* cuik_crt_directory) {
@@ -74,12 +71,14 @@ CUIK_API bool cuik_lex_is_keyword(size_t length, const char* str) {
 
 static void set_defines(Cuik_CPP* cpp, const Cuik_Target* target, bool system_libs) {
     #ifdef _WIN32
-    if (cuik__vswhere.windows_sdk_include == NULL) {
-        printf("warning: could not automatically find WinSDK include path\n");
-    }
+    if (system_libs) {
+        if (cuik__vswhere.windows_sdk_include == NULL) {
+            printf("warning: could not automatically find WinSDK include path\n");
+        }
 
-    if (cuik__vswhere.vs_include_path == NULL) {
-        printf("warning: could not automatically find VS include path\n");
+        if (cuik__vswhere.vs_include_path == NULL) {
+            printf("warning: could not automatically find VS include path\n");
+        }
     }
     #endif
 
@@ -150,7 +149,7 @@ static void set_defines(Cuik_CPP* cpp, const Cuik_Target* target, bool system_li
         // WinSDK includes
         char filepath[FILENAME_MAX];
 
-        if (!settings.freestanding) {
+        if (system_libs) {
             if (snprintf(filepath, FILENAME_MAX, "%S\\um\\", cuik__vswhere.windows_sdk_include) > FILENAME_MAX) {
                 printf("internal compiler error: WinSDK include directory too long!\n");
                 abort();
@@ -169,9 +168,7 @@ static void set_defines(Cuik_CPP* cpp, const Cuik_Target* target, bool system_li
                 abort();
             }
             cuikpp_add_include_directory(cpp, filepath);
-        }
 
-        if (!settings.nostdlib) {
             if (snprintf(filepath, FILENAME_MAX, "%S\\ucrt\\", cuik__vswhere.windows_sdk_include) > FILENAME_MAX) {
                 printf("internal compiler error: WinSDK include directory too long!\n");
                 abort();
@@ -181,7 +178,7 @@ static void set_defines(Cuik_CPP* cpp, const Cuik_Target* target, bool system_li
         #endif
 
         cuikpp_define_empty(cpp, "_MT");
-        if (!settings.static_crt) {
+        if (true) {
             cuikpp_define_empty(cpp, "_DLL");
         }
 
@@ -241,14 +238,15 @@ static void set_defines(Cuik_CPP* cpp, const Cuik_Target* target, bool system_li
     }
 }
 
+CUIK_API void cuikpp_set_common_defines(Cuik_CPP* restrict out_cpp, const Cuik_Target* target, bool use_system_includes) {
+    set_defines(out_cpp, target, use_system_includes);
+}
+
 CUIK_API TokenStream cuik_preprocess_simple(
     Cuik_CPP* restrict out_cpp, const char* filepath,
     const Cuik_IFileSystem* fs, const Cuik_Target* target,
     bool system_includes, size_t include_count, const char* includes[]
 ) {
-    // defaults
-    if (fs == NULL) fs = &cuik_default_fs;
-
     cuikpp_init(out_cpp, fs);
     set_defines(out_cpp, target, system_includes);
 

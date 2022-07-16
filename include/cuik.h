@@ -48,17 +48,6 @@ typedef struct Cuik_IThreadpool {
     void (*work_one_job)(void* user_data);
 } Cuik_IThreadpool;
 
-typedef struct Cuik_IFileSystem {
-    void* user_data;
-
-    // is_query will only set .found if it finds a file, if it's not is_query then it attempts to
-    // read the file and return a valid memory buffer (with at least 16 extra bytes on the end zeroed)
-    Cuik_File (*get_file)(void* user_data, bool is_query, const char* path);
-
-    // converts into an absolute path (powers the #pragma once subsystem)
-    bool (*canonicalize)(void* user_data, char output[FILENAME_MAX], const char* input);
-} Cuik_IFileSystem;
-
 typedef struct Cuik_IProfiler {
     void* user_data;
 
@@ -73,9 +62,6 @@ typedef struct Cuik_IDiagnostic {
 
 // for doing calls on the interfaces
 #define CUIK_CALL(object, action, ...) ((object)->action((object)->user_data, ##__VA_ARGS__))
-
-// default file system (just OS crap)
-CUIK_API Cuik_IFileSystem cuik_default_fs;
 
 ////////////////////////////////////////////
 // Target descriptor
@@ -182,6 +168,7 @@ typedef struct Cuik_FileEntry {
 
     const char* filepath;
     uint8_t* content;
+    size_t content_len;
 } Cuik_FileEntry;
 
 typedef struct Cuik_DefineRef {
@@ -202,6 +189,23 @@ typedef struct Cuik_Define {
     } value;
 } Cuik_Define;
 
+typedef struct Cuik_IFileSystem {
+    void* user_data;
+
+    // is_query will only set .found if it finds a file, if it's not is_query then it attempts to
+    // read the file and return a valid memory buffer (with at least 16 extra bytes on the end zeroed)
+    Cuik_File (*get_file)(void* user_data, bool is_query, const char* path);
+
+    void (*free_file)(void* user_data, const Cuik_FileEntry* file);
+
+    // converts into an absolute path (powers the #pragma once subsystem)
+    bool (*canonicalize)(void* user_data, char output[FILENAME_MAX], const char* input);
+} Cuik_IFileSystem;
+
+// default file system (just OS crap)
+CUIK_API Cuik_IFileSystem cuik_default_fs;
+
+// if fs is NULL it defaults to cuik_default_fs
 CUIK_API void cuikpp_init(Cuik_CPP* ctx, const Cuik_IFileSystem* fs);
 CUIK_API void cuikpp_deinit(Cuik_CPP* ctx);
 CUIK_API void cuikpp_dump(Cuik_CPP* ctx);
@@ -228,6 +232,12 @@ CUIK_API void cuikpp_define_empty(Cuik_CPP* ctx, const char key[]);
 // Basically just `#define key value`
 CUIK_API void cuikpp_define(Cuik_CPP* ctx, const char key[], const char value[]);
 
+// same as cuikpp_define_empty but with a slice instead of a C string
+CUIK_API void cuikpp_define_empty_slice(Cuik_CPP* ctx, size_t keylen, const char key[]);
+
+// same as cuikpp_define but with a slice instead of a C string
+CUIK_API void cuikpp_define_slice(Cuik_CPP* ctx, size_t keylen, const char key[], size_t vallen, const char value[]);
+
 // Convert C preprocessor state and an input file into a final preprocessed stream
 CUIK_API TokenStream cuikpp_run(Cuik_CPP* ctx, const char filepath[FILENAME_MAX]);
 
@@ -240,6 +250,9 @@ CUIK_API bool cuikpp_next_define(Cuik_CPP* ctx, Cuik_DefineRef* src);
 
 // Get the information from a define reference
 CUIK_API Cuik_Define cuikpp_get_define(Cuik_CPP* ctx, Cuik_DefineRef src);
+
+// if target is non-NULL it'll add predefined macros based on the target.
+CUIK_API void cuikpp_set_common_defines(Cuik_CPP* restrict out_cpp, const Cuik_Target* target, bool use_system_includes);
 
 // this will return a Cuik_CPP through out_cpp that you have to free once you're
 // done with it (after all frontend work is done), the out_cpp can also be finalized if
@@ -287,7 +300,7 @@ typedef struct Cuik_ErrorStatus {
     int tally[REPORT_MAX];
 } Cuik_ErrorStatus;
 
-typedef unsigned char* Atom;
+typedef char* Atom;
 typedef struct Cuik_Type Cuik_Type;
 
 // used to initialize translation units with cuik_parse_translation_unit
@@ -315,6 +328,20 @@ typedef struct Cuik_TranslationUnitDesc {
 } Cuik_TranslationUnitDesc;
 
 CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* restrict desc);
+
+// sets the user data field, returns the old value
+CUIK_API void* cuik_set_translation_unit_user_data(TranslationUnit* restrict tu, void* ud);
+
+// returns user data field
+CUIK_API void* cuik_get_translation_unit_user_data(TranslationUnit* restrict tu);
+
+// add a new reference to the TU, returns the old ref count
+CUIK_API int cuik_acquire_translation_unit(TranslationUnit* restrict tu);
+
+// remove a reference from the TU, if it reaches 0 it'll destroy the TU
+CUIK_API void cuik_release_translation_unit(TranslationUnit* restrict tu);
+
+// force delete the translation unit regardless of references held
 CUIK_API void cuik_destroy_translation_unit(TranslationUnit* restrict tu);
 
 ////////////////////////////////////////////

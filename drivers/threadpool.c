@@ -83,9 +83,11 @@ threadpool_t* threadpool_create(size_t worker_count, size_t workqueue_size) {
     if ((workqueue_size & (workqueue_size - 1)) != 0)
         return NULL;
 
-    threadpool_t* threadpool = calloc(1, sizeof(threadpool_t));
-    threadpool->work = malloc(workqueue_size * sizeof(work_t));
-    threadpool->threads = malloc(worker_count * sizeof(thrd_t));
+    threadpool_t* threadpool = HEAP_ALLOC(sizeof(threadpool_t));
+    *threadpool = (threadpool_t){ 0 };
+
+    threadpool->work = HEAP_ALLOC(workqueue_size * sizeof(work_t));
+    threadpool->threads = HEAP_ALLOC(worker_count * sizeof(thrd_t));
     threadpool->thread_count = worker_count;
     threadpool->running = true;
     threadpool->queue_size_mask = workqueue_size - 1;
@@ -186,9 +188,9 @@ void threadpool_free(threadpool_t* threadpool) {
     #endif
 
     mtx_destroy(&threadpool->mutex);
-    free(threadpool->threads);
-    free(threadpool->work);
-    free(threadpool);
+    HEAP_FREE(threadpool->threads);
+    HEAP_FREE(threadpool->work);
+    HEAP_FREE(threadpool);
 }
 
 int threadpool_get_thread_count(threadpool_t* threadpool) {

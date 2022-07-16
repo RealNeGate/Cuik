@@ -20,12 +20,12 @@ static LONG WINAPI unhandled_exception_handler(PEXCEPTION_POINTERS exception_ptr
 
     char* new_path = malloc(MAX_PATH);
     if (GetFullPathNameA(path, MAX_PATH, new_path, NULL) == 0) {
-        printf("GetFullPathNameA broke while in the middle of a crash... yikes?");
+        fprintf(stderr, "GetFullPathNameA broke while in the middle of a crash... yikes?");
         return EXCEPTION_EXECUTE_HANDLER;
     }
 
-    printf("A crash happened, please make a Github Issue or something i dont control you :p\n");
-    printf("%s\n\n", new_path);
+    fprintf(stderr, "A crash happened, please make a Github Issue or something i dont control you :p\n");
+    fprintf(stderr, "%s\n\n", new_path);
 
     // This writes a dump file to the current dir.
     // To view this file open it up in Visual Studio

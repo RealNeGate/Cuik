@@ -9,7 +9,7 @@ typedef struct {
     char name[8];
 } Bar;
 
-int foo() {
+int foo(void) {
     Foo f = {
         .a.b = 16
     };
@@ -17,4 +17,8 @@ int foo() {
     Bar b = {
         { "hello" }
     };
+}
+
+int main(void) {
+	return 0;
 }

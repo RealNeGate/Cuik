@@ -26,31 +26,4 @@ typedef struct {
     bool unused_funcs : 1;
 } Warnings;
 
-typedef struct CompilerSettings {
-    const char* output_path;
-
-    CompilerStage stage_to_stop_at;
-
-    // basically defines the sizeof(long)
-    // if true it's 4 bytes if not it's 8
-    bool is_object_only : 1;
-    bool is_time_report : 1;
-    bool is_debug_build : 1;
-    bool is_debug_info : 1;
-    bool dump_defines : 1;
-    bool exercise : 1;
-    bool nostdlib : 1;
-    bool pedantic : 1;
-    bool optimize : 1;
-    bool freestanding : 1;
-    bool emit_partial_results : 1;
-    bool verbose : 1;
-    bool nopp : 1;
-    bool run_output : 1;
-    bool static_crt : 1;
-
-    int num_of_worker_threads;
-} CompilerSettings;
-
 extern Warnings warnings;
-extern CompilerSettings settings;

@@ -60,6 +60,9 @@
 #include <stdbool.h>
 #include <io.h>         // For _get_osfhandle
 
+#ifdef _WIN32
+#define strdup(x) _strdup(x)
+#endif
 
 void free_resources(MicrosoftCraziness_Find_Result *result) {
     free(result->windows_sdk_root);
@@ -232,7 +235,7 @@ wchar_t *find_windows_kit_root_with_key(HKEY key, wchar_t *version) {
     if (rc != 0)  return NULL;
 
     DWORD length = required_length + 2;  // The +2 is for the maybe optional zero later on. Probably we are over-allocating.
-    wchar_t *value = (wchar_t *)malloc(length);
+    wchar_t *value = (wchar_t *)malloc(length * sizeof(wchar_t));
     if (!value) return NULL;
 
     rc = RegQueryValueExW(key, version, NULL, NULL, (LPBYTE)value, &length);  // We know that version is zero-terminated...
@@ -319,7 +322,6 @@ void find_windows_kit_root(MicrosoftCraziness_Find_Result *result) {
 
     if (windows10_root) {
         wchar_t *windows10_lib = concat2(windows10_root, L"Lib");
-        free(windows10_root);
 
         Version_Data data = {0};
         visit_files_w(windows10_lib, &data, win10_best);
@@ -328,7 +330,7 @@ void find_windows_kit_root(MicrosoftCraziness_Find_Result *result) {
         if (data.best_name) {
             result->windows_sdk_version = 10;
             result->windows_sdk_root = data.best_name;
-            wchar_t* include_path = (wchar_t*)malloc(MAX_PATH);
+            wchar_t* include_path = malloc(MAX_PATH * sizeof(wchar_t));
 
             int success = swprintf_s(include_path, MAX_PATH,
                 L"%sInclude\\%d.%d.%d.%d",
@@ -340,9 +342,11 @@ void find_windows_kit_root(MicrosoftCraziness_Find_Result *result) {
                 result->windows_sdk_include = include_path;
             }
 
+            free(windows10_root);
             RegCloseKey(main_key);
             return;
         }
+
     }
 
     // Look for a Windows 8 entry.
@@ -350,7 +354,6 @@ void find_windows_kit_root(MicrosoftCraziness_Find_Result *result) {
 
     if (windows8_root) {
         wchar_t *windows8_lib = concat2(windows8_root, L"Lib");
-        free(windows8_root);
 
         Version_Data data = {0};
         visit_files_w(windows8_lib, &data, win8_best);
@@ -359,7 +362,7 @@ void find_windows_kit_root(MicrosoftCraziness_Find_Result *result) {
         if (data.best_name) {
             result->windows_sdk_version = 8;
             result->windows_sdk_root = data.best_name;
-            wchar_t* include_path = malloc(MAX_PATH);
+            wchar_t* include_path = malloc(MAX_PATH * sizeof(wchar_t));
 
             int success = swprintf_s(include_path, MAX_PATH,
                 L"%sInclude\\%d.%d.%d.%d",
@@ -371,12 +374,16 @@ void find_windows_kit_root(MicrosoftCraziness_Find_Result *result) {
                 result->windows_sdk_include = include_path;
             }
 
+            free(windows10_root);
+            free(windows8_root);
             RegCloseKey(main_key);
             return;
         }
     }
 
     // If we get here, we failed to find anything.
+    free(windows10_root);
+    free(windows8_root);
     RegCloseKey(main_key);
 }
 
@@ -434,7 +441,8 @@ bool find_visual_studio_2017_by_fighting_through_microsoft_craziness(MicrosoftCr
             continue;
         }
 
-        uint64_t version_bytes = (tools_file_size.QuadPart + 1) * 2;  // Warning: This multiplication by 2 presumes there is no variable-length encoding in the wchars (wacky characters in the file could betray this expectation).
+        // Warning: This multiplication by 2 presumes there is no variable-length encoding in the wchars (wacky characters in the file could betray this expectation).
+        uint64_t version_bytes = (tools_file_size.QuadPart + 1) * 2;
         wchar_t *version = (wchar_t *)malloc(version_bytes);
 
         wchar_t *read_result = fgetws(version, version_bytes, f);
@@ -560,6 +568,16 @@ MicrosoftCraziness_Find_Result cuik__find_visual_studio_and_windows_sdk() {
     }
 
     find_visual_studio_by_fighting_through_microsoft_craziness(&result);
+
+    if (result.vs_exe_path == NULL || result.vs_include_path == NULL || result.vs_library_path == NULL) {
+        wchar_t* vc_tools_install = _wgetenv(L"VCToolsInstallDir");
+
+        if (vc_tools_install != NULL) {
+            result.vs_exe_path     = concat2(vc_tools_install, L"bin\\Hostx64\\x64");
+            result.vs_include_path = concat2(vc_tools_install, L"include");
+            result.vs_library_path = concat2(vc_tools_install, L"lib");
+        }
+    }
 
     return result;
 }

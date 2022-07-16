@@ -3,7 +3,7 @@
 
 CUIK_API void cuik_create_compilation_unit(CompilationUnit* restrict cu) {
     *cu = (CompilationUnit){0};
-    cu->lock = malloc(sizeof(mtx_t));
+    cu->lock = HEAP_ALLOC(sizeof(mtx_t));
     mtx_init((mtx_t*) cu->lock, mtx_plain);
 }
 
@@ -38,7 +38,7 @@ CUIK_API void cuik_destroy_compilation_unit(CompilationUnit* restrict cu) {
     }
 
     mtx_destroy((mtx_t*) cu->lock);
-    free(cu->lock);
+    HEAP_FREE(cu->lock);
     *cu = (CompilationUnit){0};
 }
 
@@ -52,19 +52,18 @@ CUIK_API void cuik_internal_link_compilation_unit(CompilationUnit* restrict cu) 
             if (s->op == STMT_FUNC_DECL) {
                 if (!s->decl.attrs.is_static &&
                     !s->decl.attrs.is_inline) {
-                    //printf("Export! %s (Function: %d)\n", s->decl.name, s->backing.f);
+                    //printf("Export! %s\n", s->decl.name, s->backing.f);
 
                     shput(cu->export_table, s->decl.name, s);
                 }
-            } else if (s->op == STMT_GLOBAL_DECL ||
-                s->op == STMT_DECL) {
+            } else if (s->op == STMT_GLOBAL_DECL || s->op == STMT_DECL) {
                 if (!s->decl.attrs.is_static &&
                     !s->decl.attrs.is_extern &&
                     !s->decl.attrs.is_typedef &&
                     !s->decl.attrs.is_inline &&
-                    s->decl.initial != 0) {
-                    //printf("Export! %s (Global: %d)\n", s->decl.name, s->backing.g);
-
+                    s->decl.type->kind != KIND_FUNC &&
+                    s->decl.name != NULL) {
+                    //printf("Export! %s\n", s->decl.name);
                     shput(cu->export_table, s->decl.name, s);
                 }
             }

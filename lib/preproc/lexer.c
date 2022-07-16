@@ -267,7 +267,6 @@ void lexer_read(Lexer* restrict l) {
             // SIMD space skip
             __m128i chars = _mm_loadu_si128((__m128i*)current);
             int len = __builtin_ffs(~_mm_movemask_epi8(_mm_cmpeq_epi8(chars, _mm_set1_epi8(' '))));
-
             current += len - 1;
             #endif
 
@@ -634,7 +633,7 @@ void lexer_read(Lexer* restrict l) {
         abort();
     }
 
-    if (current[0] == '\\' && (current[1] == '\r' || current[1] == '\n')) {
+    if (__builtin_expect(current[0] == '\\' && (current[1] == '\r' || current[1] == '\n'), 0)) {
         // TODO(NeGate): This code could use emotional help... if you're smart
         // and/or cool please consider providing it.
 
