@@ -36,7 +36,7 @@ static Expr* parse_function_literal(TranslationUnit* tu, TokenStream* restrict s
     // "scoped top level statements" which doesn't particularly change anything for
     // it but is interesting to think about internally
     Stmt* n = make_stmt(tu, s, STMT_FUNC_DECL, sizeof(struct StmtDecl));
-    n->loc = 0;
+    n->loc = type->loc;
     n->decl = (struct StmtDecl){
         .type = type,
         .name = NULL,
@@ -275,7 +275,7 @@ static Expr* parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
                 if (builtin_search >= 0) {
                     *e = (Expr){
                         .op = EXPR_BUILTIN_SYMBOL,
-                        .builtin_sym = {name},
+                        .builtin_sym = { name },
                     };
                 } else {
                     Symbol* symbol_search = find_global_symbol(tu, (const char*)name);

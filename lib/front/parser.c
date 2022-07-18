@@ -1086,7 +1086,6 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
             // "highway robbery on steve jobs" job stealing amirite...
             while (tasks_remaining != 0) {
                 CUIK_CALL(desc->thread_pool, work_one_job);
-                //thrd_yield();
             }
 
             HEAP_FREE(tasks);

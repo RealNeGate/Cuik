@@ -72,15 +72,12 @@ static void print_level_name(Cuik_ReportLevel level) {
     #endif
 }
 
-/*static SourceLocIndex try_for_nicer_loc(TokenStream* tokens, SourceLocIndex loci) {
-    const SourceLoc* loc = GET_SOURCE_LOC(loci);
-
+/*static SourceLoc* try_for_nicer_loc(TokenStream* tokens, SourceLoc* loc) {
     while (loc->line->filepath[0] == '<' && loc->line->parent != 0) {
-        loci = loc->line->parent;
-        loc = GET_SOURCE_LOC(loci);
+        loc = GET_SOURCE_LOC(loc->line->parent);
     }
 
-    return loci;
+    return loc;
 }*/
 
 static void display_line(Cuik_ReportLevel level, TokenStream* tokens, SourceLoc* loc) {
@@ -128,6 +125,78 @@ static void tally_report_counter(Cuik_ReportLevel level, Cuik_ErrorStatus* err) 
 }
 
 static size_t draw_line(TokenStream* tokens, SourceLocIndex loc_index) {
+    #if 0
+    SourceLoc* first_loc = &tokens->locations[0];
+    SourceLoc* final_loc = &tokens->locations[arrlen(tokens->locations) - 1];
+
+    SourceLoc* loc = GET_SOURCE_LOC(loc_index);
+    SourceLine* line = loc->line;
+
+    // find the first source loc in the line
+    for (; loc != first_loc; loc--) {
+        if (loc->line->line != line->line) {
+            loc++;
+            break;
+        }
+    }
+
+    // find out how many source locs are in this line
+    size_t len = 0;
+    size_t last_column = 0;
+    SourceLoc* end_loc = loc;
+
+    printf("    ");
+    for (; end_loc != final_loc; end_loc++) {
+        bool is_macro = false;
+
+        // sometimes we have duplicates, assume they're macros
+        while (&end_loc[1] != final_loc &&
+            end_loc[1].line->filepath == end_loc[0].line->filepath &&
+            end_loc[1].line->line == end_loc[0].line->line &&
+            end_loc[1].columns == end_loc[0].columns) {
+            is_macro = true;
+            end_loc += 1;
+        }
+
+        SourceLoc* nicer_loc = end_loc;
+        if (nicer_loc->line->filepath[0] == '<' && nicer_loc->line->parent != 0) {
+            nicer_loc = GET_SOURCE_LOC(nicer_loc->line->parent);
+            is_macro = true;
+        }
+
+        if (nicer_loc->line->line != loc->line->line) {
+            break;
+        } else if (nicer_loc->line->filepath[0] == '<') {
+            continue;
+        }
+
+        // account for spaces
+        if (nicer_loc->columns >= last_column) {
+            if (len != 0) {
+                int spaces = nicer_loc->columns - last_column;
+
+                printf("%*s", -spaces, "");
+                len += spaces;
+            }
+
+            last_column = nicer_loc->columns + nicer_loc->length;
+
+            if (is_macro) {
+                // we hit a macro, color it in
+                len += printf(
+                    "\x1b[31m%.*s\x1b[0m", (int)nicer_loc->length,
+                    nicer_loc->line->line_str + nicer_loc->columns
+                );
+            } else {
+                len += printf(
+                    "%.*s", (int)nicer_loc->length,
+                    nicer_loc->line->line_str + nicer_loc->columns
+                );
+            }
+        }
+    }
+    printf("\n");
+    #else
     SourceLine* line = GET_SOURCE_LOC(loc_index)->line;
 
     // display line
@@ -138,7 +207,7 @@ static size_t draw_line(TokenStream* tokens, SourceLocIndex loc_index) {
     size_t dist_from_line_start = line_start - (const char*)line->line_str;
 
     // Draw line preview
-    if (*line_start != '\n') {
+    if (*line_start != '\r' && *line_start != '\n') {
         const char* line_end = line_start;
         printf("    ");
         do {
@@ -146,7 +215,12 @@ static size_t draw_line(TokenStream* tokens, SourceLocIndex loc_index) {
             line_end++;
         } while (*line_end && *line_end != '\n');
         printf("\n");
+
+        #if _WIN32
+        SetConsoleTextAttribute(console_handle, default_attribs);
+        #endif
     }
+    #endif
 
     return dist_from_line_start;
 }

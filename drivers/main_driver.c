@@ -68,6 +68,20 @@ static void initialize_opt_passes(void) {
     dyn_array_put(da_passes, OPT(compact_dead_regs));
 }
 
+static void mark_timestamp(const char* label) {
+    static uint64_t last_mark = 0;
+    static const char* last_label = NULL;
+
+    uint64_t time = cuik_time_in_nanos();
+
+    if (last_mark != 0 && last_label != NULL) {
+        printf("%s: %f ms\n", last_label, (time - last_mark) / 1000000.0);
+    }
+
+    last_mark = time;
+    last_label = label;
+}
+
 #if CUIK_ALLOW_THREADS
 static int calculate_worker_thread_count(void) {
     #ifdef _WIN32
@@ -275,6 +289,8 @@ int main(int argc, char** argv) {
     cuik_init();
     find_system_deps();
 
+    mark_timestamp(NULL);
+
     program_name = argv[0];
     include_directories = dyn_array_create(const char*);
     input_libraries = dyn_array_create(const char*);
@@ -444,7 +460,7 @@ int main(int argc, char** argv) {
     ////////////////////////////////
     // frontend work
     ////////////////////////////////
-    if (args_verbose) printf("Frontend...\n");
+    if (args_verbose) mark_timestamp("Frontend");
 
     if (CUIK_ALLOW_THREADS && ithread_pool != NULL) {
         #if CUIK_ALLOW_THREADS
@@ -461,7 +477,7 @@ int main(int argc, char** argv) {
         dyn_array_for(i, input_files) compile_file((void*) input_files[i]);
     }
 
-    if (args_verbose) printf("Internal link...\n");
+    if (args_verbose) mark_timestamp("Internal link");
 
     CUIK_TIMED_BLOCK("internal link") {
         cuik_internal_link_compilation_unit(&compilation_unit);
@@ -475,7 +491,7 @@ int main(int argc, char** argv) {
         ////////////////////////////////
         // codegen
         ////////////////////////////////
-        if (args_verbose) printf("Backend...\n");
+        if (args_verbose) mark_timestamp("Backend");
 
         if (ithread_pool != NULL) {
             FOR_EACH_TU(tu, &compilation_unit) {
@@ -508,7 +524,7 @@ int main(int argc, char** argv) {
         }
 
         if (args_object_only) {
-            if (args_verbose) printf("Exporting object file...\n");
+            if (args_verbose) mark_timestamp("Export object");
 
             CUIK_TIMED_BLOCK("export") {
                 if (!tb_module_export(mod, obj_output_path)) {
@@ -562,14 +578,14 @@ int main(int argc, char** argv) {
                     abort();
                 }
             } else {
-                if (args_verbose) printf("Exporting object file...\n");
+                if (args_verbose) mark_timestamp("Export object");
 
                 if (!tb_module_export(mod, obj_output_path)) {
                     fprintf(stderr, "error: tb_module_export failed!\n");
                     abort();
                 }
 
-                if (args_verbose) printf("Linking...\n");
+                if (args_verbose) mark_timestamp("Linker");
 
                 // Invoke system linker
                 Cuik_Linker l;
@@ -611,6 +627,8 @@ int main(int argc, char** argv) {
                     //cuiklink_invoke_tb(&l, output_path_no_ext);
                     cuiklink_deinit(&l);
                 }
+
+                if (args_verbose) mark_timestamp("Total");
             }
 
             if (args_run) {

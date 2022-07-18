@@ -534,6 +534,8 @@ const Cuik_ArchDesc* cuik_get_x64_target_desc(void) {
         shput(builtins, "__builtin_trap", 1);
         shput(builtins, "__builtin_unreachable", 1);
         shput(builtins, "__builtin_mul_overflow", 1);
+
+        // cuik internal
         shput(builtins, "__c11_atomic_compare_exchange_strong", 1);
         shput(builtins, "__c11_atomic_thread_fence", 1);
         shput(builtins, "__c11_atomic_signal_fence", 1);
