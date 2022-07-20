@@ -10,17 +10,17 @@ size_t* tile5(size_t* a, size_t b) { return &a[b*2 + 1]; }
 size_t* tile6(size_t* a, size_t b) { return &a[b*3 + 1]; }
 #endif
 
-void fn(int16_t* A, uint16_t* B, uint16_t* C) {
-    for (int i = 0; i < 16; i++) {
-        if (A[i] > 0) A[i] = (C[i] + A[i]) * B[i] >> 16;
-        else A[i] = -((C[i] - A[i]) * B[i] >> 16);
+void test_fun(int* b, int** c) {
+    for (unsigned i = 0; i < 100; i++) {
+        c[i] = &b[i];
     }
 }
 
 #if 0
-void test_fun(int* b, int** c) {
-    for (unsigned i = 0; i < 100; i++) {
-        c[i] = &b[i];
+void fn(int16_t* A, uint16_t* B, uint16_t* C) {
+    for (int i = 0; i < 16; i++) {
+        if (A[i] > 0) A[i] = (C[i] + A[i]) * B[i] >> 16;
+        else A[i] = -((C[i] - A[i]) * B[i] >> 16);
     }
 }
 

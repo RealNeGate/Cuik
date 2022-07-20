@@ -183,6 +183,18 @@ Expr* cuik__optimize_ast(TranslationUnit* tu, Expr* e) {
             e->int_num.num = x;
             break;
         }
+        case EXPR_NOT: {
+            Expr* src = cuik__optimize_ast(tu, e->unary_op.src);
+
+            // ~(N - 1) => -N
+            if (src->op == EXPR_INT && e->type != NULL && TYPE_IS_INTEGER(e->type)) {
+                e->op = EXPR_NEGATE;
+                src->int_num.num += 1;
+                return e;
+            }
+
+            break;
+        }
         case EXPR_NEGATE: {
             Expr* src = cuik__optimize_ast(tu, e->unary_op.src);
             if (src->op == EXPR_INT) {
@@ -274,6 +286,21 @@ Expr* cuik__optimize_ast(TranslationUnit* tu, Expr* e) {
                 }
             }
 
+            break;
+        }
+
+        case EXPR_PLUS_ASSIGN:
+        case EXPR_MINUS_ASSIGN:
+        case EXPR_ASSIGN:
+        case EXPR_TIMES_ASSIGN:
+        case EXPR_SLASH_ASSIGN:
+        case EXPR_AND_ASSIGN:
+        case EXPR_OR_ASSIGN:
+        case EXPR_XOR_ASSIGN:
+        case EXPR_SHL_ASSIGN:
+        case EXPR_SHR_ASSIGN: {
+            e->bin_op.left = cuik__optimize_ast(tu, e->bin_op.left);
+            e->bin_op.right = cuik__optimize_ast(tu, e->bin_op.right);
             break;
         }
 

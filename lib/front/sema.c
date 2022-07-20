@@ -477,8 +477,8 @@ static InitNode* walk_initializer_layer(
             }
 
             // normal ass scalar
-            e = node->expr = cuik__optimize_ast(tu, node->expr);
             Cuik_Type* expr_type = sema_expr(tu, e);
+            e = node->expr = cuik__optimize_ast(tu, e);
 
             // zero is allowed for everything, so don't do the normal checks in that case
             if (!(e->op == EXPR_INT && e->int_num.num == 0)) {
@@ -1392,10 +1392,6 @@ void sema_stmt(TranslationUnit* tu, Stmt* restrict s) {
         case STMT_GLOBAL_DECL:
         case STMT_DECL: {
             if (s->decl.initial) {
-                // constant fold the global expression such that it's easier to spot constant
-                // expressions.
-                s->decl.initial = cuik__optimize_ast(tu, s->decl.initial);
-
                 try_resolve_typeof(tu, s->decl.type);
 
                 if (s->decl.initial->op == EXPR_INITIALIZER &&
@@ -1431,11 +1427,16 @@ void sema_stmt(TranslationUnit* tu, Stmt* restrict s) {
 
                     REPORT_STMT(ERROR, s, "Could not implicitly convert type %s into %s.", temp_string0, temp_string1);
                 }
+
+                // constant fold the global expression such that it's easier to spot constant
+                // expressions.
+                s->decl.initial = cuik__optimize_ast(tu, s->decl.initial);
             }
             break;
         }
         case STMT_EXPR: {
             s->expr.expr->cast_type = sema_expr(tu, s->expr.expr);
+            s->expr.expr = cuik__optimize_ast(tu, s->expr.expr);
             break;
         }
         case STMT_RETURN: {

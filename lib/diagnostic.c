@@ -55,10 +55,8 @@ void init_report_system(void) {
         default_attribs = info.wAttributes;
     }
 
-    SetConsoleOutputCP(CP_UTF8);
     #endif
 
-    //setlocale(LC_ALL, ".utf8");
     mtx_init(&report_mutex, mtx_plain);
 }
 
@@ -273,23 +271,16 @@ static int print_backtrace(TokenStream* tokens, SourceLocIndex loc_index, Source
                 size_t dist_from_line_start = draw_line(tokens, loc_index);
                 draw_line_horizontal_pad();
 
-                #if _WIN32
-                SetConsoleTextAttribute(console_handle, (default_attribs & ~0xF) | FOREGROUND_GREEN);
-                #endif
-
                 // idk man
                 size_t start_pos = loc->columns > dist_from_line_start ? loc->columns - dist_from_line_start : 0;
 
                 // draw underline
+                printf("\x1b[32m");
                 size_t tkn_len = loc->length;
                 for (size_t i = 0; i < start_pos; i++) printf(" ");
                 printf("^");
                 for (size_t i = 1; i < tkn_len; i++) printf("~");
-                printf("\n");
-
-                #if _WIN32
-                SetConsoleTextAttribute(console_handle, default_attribs);
-                #endif
+                printf("\x1b[0m\n");
             }
             return line_bias;
         }

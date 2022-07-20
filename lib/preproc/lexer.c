@@ -129,7 +129,34 @@ static _Alignas(64) uint8_t char_classes[256] = {
     ['#'] = CHAR_CLASS_HASH,
 };
 
-uint16_t hash_with_len(const void* data, size_t len) {
+// https://gist.github.com/RealNeGate/6236ce425f7a1bd06ea87f6572d8d6f6
+static _Alignas(64) uint8_t ident_table[256] = {
+    0x00,0x00,0x00,0x00,
+    0x10,0x00,0xff,0x03,
+    0xfe,0xff,0xff,0x87,
+    0xfe,0xff,0xff,0x07,
+    0xff,0xff,0xff,0xff,
+    0xff,0xff,0xff,0xff,
+    0xff,0xff,0xff,0xff,
+    0xff,0xff,0xff,0xff,
+};
+
+inline static bool is_ident(unsigned char ch) {
+    #if 1
+    size_t i = ch;
+    size_t index = i / 8;
+    size_t shift = i & 7;
+    return ch >= 0x80 || ((ident_table[index] >> shift) & 1);
+    #else
+    return ch >= 0x80 || ch == '\\'
+        ||  ch == '_' || ch == '$'
+        || (ch >= 'A' && ch <= 'Z')
+        || (ch >= 'a' && ch <= 'z')
+        || (ch >= '0' && ch <= '9');
+    #endif
+}
+
+static uint16_t hash_with_len(const void* data, size_t len) {
     uint8_t* p = (uint8_t*)data;
     uint16_t hash = 0;
 
@@ -230,6 +257,79 @@ static int line_counter(size_t len, const unsigned char* str) {
     #endif
 }
 
+static void slow_identifier_lexing(Lexer* restrict l, const unsigned char* current, const unsigned char* start) {
+    // you don't wanna be here... basically if we spot \U in the identifier
+    // we reparse it but this time with the correct handling of those details.
+    // we also generate a new string in the arena to hold this stuff
+    // at best it's as big as the raw identifier
+    size_t oldstr_len = current - start;
+    char* newstr = arena_alloc(&thread_arena, (oldstr_len + 15) & ~15u, 1);
+
+    size_t i = 0, j = 0;
+    while (i < oldstr_len) {
+        if (start[i] == '\\' && (start[i+1] == 'U' || start[i+1] == 'u')) {
+            // parse codepoint
+            i += 2;
+
+            uint32_t code = 0;
+            while (i < oldstr_len) {
+                char ch = start[i];
+
+                if (ch >= 'A' && ch <= 'F') {
+                    code <<= 4;
+                    code |= (ch - 'A') + 0xA;
+                } else if (ch >= 'a' && ch <= 'f') {
+                    code <<= 4;
+                    code |= (ch - 'a') + 0xA;
+                } else if (ch >= '0' && ch <= '9') {
+                    code <<= 4;
+                    code |= (ch - '0');
+                } else break;
+
+                i += 1;
+            }
+
+            // convert into proper bytes
+            // https://gist.github.com/Miouyouyou/864130e8734afe3f806512b14022226f
+            if (code < 0x80) {
+                newstr[j++] = code;
+            } else if (code < 0x800) {   // 00000yyy yyxxxxxx
+                newstr[j++] = (0b11000000 | (code >> 6));
+                newstr[j++] = (0b10000000 | (code & 0x3f));
+            } else if (code < 0x10000) {  // zzzzyyyy yyxxxxxx
+                newstr[j++] = (0b11100000 | (code >> 12));         // 1110zzz
+                newstr[j++] = (0b10000000 | ((code >> 6) & 0x3f)); // 10yyyyy
+                newstr[j++] = (0b10000000 | (code & 0x3f));        // 10xxxxx
+            } else if (code < 0x200000) { // 000uuuuu zzzzyyyy yyxxxxxx
+                newstr[j++] = (0b11110000 | (code >> 18));          // 11110uuu
+                newstr[j++] = (0b10000000 | ((code >> 12) & 0x3f)); // 10uuzzzz
+                newstr[j++] = (0b10000000 | ((code >> 6)  & 0x3f)); // 10yyyyyy
+                newstr[j++] = (0b10000000 | (code & 0x3f));         // 10xxxxxx
+            } else {
+                assert(0);
+            }
+        } else {
+            newstr[j++] = start[i++];
+        }
+    }
+
+    l->token_start = (unsigned char*)newstr;
+    l->token_end = (unsigned char*) &newstr[j];
+    l->current = current;
+
+    // place a temporary 'line_current' such that it doesn't break when doing
+    // column calculations
+    l->line_current = l->token_start;
+    l->line_current2 = current;
+}
+
+// the intrinsics don't actually support this lmao
+#if USE_INTRIN
+static inline __m128i _mm_cmple_epu8(__m128i x, __m128i y) {
+    return _mm_cmpeq_epi8(_mm_min_epu8(x, y), x);
+}
+#endif
+
 // NOTE(NeGate): The input string has a fat null terminator of 16bytes to allow
 // for some optimizations overall, one of the important ones is being able to read
 // a whole 16byte SIMD register at once for any SIMD optimizations.
@@ -317,13 +417,13 @@ void lexer_read(Lexer* restrict l) {
     uint8_t initial_class = char_classes[*current++];
 
     // Hacky but yea
-    bool slow_identifier_lexing = false;
+    bool slow_path = false;
     if (start[0] == 'L' && (start[1] == '\"' || start[1] == '\'')) {
         initial_class = CHAR_CLASS_STRING;
         current++;
     } else if (start[0] == '\\') {
         if (start[1] == 'U' || start[1] == 'u') {
-            slow_identifier_lexing = true;
+            slow_path = true;
             initial_class = CHAR_CLASS_IDENT;
         }
     }
@@ -335,12 +435,11 @@ void lexer_read(Lexer* restrict l) {
         case CHAR_CLASS_IDENT: {
             l->token_type = TOKEN_IDENTIFIER;
 
-            while (char_classes[*current] == CHAR_CLASS_IDENT ||
-                char_classes[*current] == CHAR_CLASS_NUMBER ||
-                *current == '\\') {
+            #if 0 //!USE_INTRIN
+            while (is_ident(*current)) {
                 if (current[0] == '\\') {
-                    if (current[0] == 'U' || current[0] == 'u') {
-                        slow_identifier_lexing = true;
+                    if (current[1] == 'U' || current[1] == 'u') {
+                        slow_path = true;
                     } else {
                         // exit... it's a wonky identifier
                         break;
@@ -349,73 +448,64 @@ void lexer_read(Lexer* restrict l) {
 
                 current++;
             }
-
-            if (!slow_identifier_lexing) break;
-
-            // you don't wanna be here... basically if we spot \U in the identifier
-            // we reparse it but this time with the correct handling of those details.
-            // we also generate a new string in the arena to hold this stuff
-            // at best it's as big as the raw identifier
-            size_t oldstr_len = current - start;
-            char* newstr = arena_alloc(&thread_arena, (oldstr_len + 15) & ~15u, 1);
-
-            size_t i = 0, j = 0;
-            while (i < oldstr_len) {
-                if (start[i] == '\\' && (start[i+1] == 'U' || start[i+1] == 'u')) {
-                    // parse codepoint
-                    i += 2;
-
-                    uint32_t code = 0;
-                    while (i < oldstr_len) {
-                        char ch = start[i];
-
-                        if (ch >= 'A' && ch <= 'F') {
-                            code <<= 4;
-                            code |= (ch - 'A') + 0xA;
-                        } else if (ch >= 'a' && ch <= 'f') {
-                            code <<= 4;
-                            code |= (ch - 'a') + 0xA;
-                        } else if (ch >= '0' && ch <= '9') {
-                            code <<= 4;
-                            code |= (ch - '0');
-                        } else break;
-
-                        i += 1;
-                    }
-
-                    // convert into proper bytes
-                    // https://gist.github.com/Miouyouyou/864130e8734afe3f806512b14022226f
-                    if (code < 0x80) {
-                        newstr[j++] = code;
-                    } else if (code < 0x800) {   // 00000yyy yyxxxxxx
-                        newstr[j++] = (0b11000000 | (code >> 6));
-                        newstr[j++] = (0b10000000 | (code & 0x3f));
-                    } else if (code < 0x10000) {  // zzzzyyyy yyxxxxxx
-                        newstr[j++] = (0b11100000 | (code >> 12));         // 1110zzz
-                        newstr[j++] = (0b10000000 | ((code >> 6) & 0x3f)); // 10yyyyy
-                        newstr[j++] = (0b10000000 | (code & 0x3f));        // 10xxxxx
-                    } else if (code < 0x200000) { // 000uuuuu zzzzyyyy yyxxxxxx
-                        newstr[j++] = (0b11110000 | (code >> 18));          // 11110uuu
-                        newstr[j++] = (0b10000000 | ((code >> 12) & 0x3f)); // 10uuzzzz
-                        newstr[j++] = (0b10000000 | ((code >> 6)  & 0x3f)); // 10yyyyyy
-                        newstr[j++] = (0b10000000 | (code & 0x3f));         // 10xxxxxx
+            #elif 1
+            while (char_classes[*current] == CHAR_CLASS_IDENT ||
+                char_classes[*current] == CHAR_CLASS_NUMBER ||
+                *current == '\\') {
+                if (current[0] == '\\') {
+                    if (current[1] == 'U' || current[1] == 'u') {
+                        slow_path = true;
                     } else {
-                        assert(0);
+                        // exit... it's a wonky identifier
+                        break;
                     }
+                }
+
+                current++;
+            }
+            #else
+            for (;;) {
+                __m128i bytes = _mm_loadu_si128((__m128i*) current);
+
+                unsigned int escape_mask = _mm_movemask_epi8(_mm_cmpeq_epi8(bytes, _mm_set1_epi8('\\')));
+                unsigned int escape_pos = __builtin_ffs(escape_mask);
+
+                // a-z A-Z
+                __m128i alpha = _mm_and_si128(bytes, _mm_set1_epi8(~0x20));
+                alpha = _mm_add_epi8(alpha, _mm_set1_epi8(~0x40));
+                alpha = _mm_cmple_epu8(alpha, _mm_set1_epi8(25));
+                // 0x80+ $ _
+                alpha = _mm_or_si128(alpha, _mm_cmplt_epi8(bytes, _mm_set1_epi8(0)));
+                alpha = _mm_or_si128(alpha, _mm_cmpeq_epi8(bytes, _mm_set1_epi8('_')));
+                alpha = _mm_or_si128(alpha, _mm_cmpeq_epi8(bytes, _mm_set1_epi8('$')));
+                alpha = _mm_and_si128(alpha, _mm_xor_si128(_mm_cmpeq_epi8(bytes, _mm_set1_epi8(0)), _mm_set1_epi8(0xFF)));
+                // 0-9
+                __m128i num = _mm_sub_epi8(bytes, _mm_set1_epi8('0'));
+                num = _mm_cmple_epu8(num, _mm_set1_epi8(9));
+
+                __m128i cmp = _mm_or_si128(alpha, num);
+                unsigned int mask = _mm_movemask_epi8(cmp);
+
+                unsigned int len = __builtin_ffs(~mask);
+                if (escape_pos > 0 && escape_pos <= len) {
+                    slow_path = true;
+                }
+
+                if (len < 16) {
+                    // last chunk
+                    current += len - 1;
+                    break;
                 } else {
-                    newstr[j++] = start[i++];
+                    current += 16;
                 }
             }
+            #endif
 
-            l->token_start = (unsigned char*)newstr;
-            l->token_end = (unsigned char*) &newstr[j];
-            l->current = current;
-
-            // place a temporary 'line_current' such that it doesn't break when doing
-            // column calculations
-            l->line_current = l->token_start;
-            l->line_current2 = current;
-            return;
+            if (__builtin_expect(slow_path, 0)) {
+                slow_identifier_lexing(l, current, start);
+                return;
+            }
+            break;
         }
         case CHAR_CLASS_NUMBER: {
             if (current[-1] == '0' && current[0] == 'b') {

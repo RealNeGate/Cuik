@@ -62,11 +62,21 @@ static void expand_double_hash(Cuik_CPP* restrict c, TokenStream* restrict s, To
     }
 }
 
+static SourceLoc* try_for_nicer_loc(TokenStream* s, SourceLoc* loc) {
+    while (loc->line->filepath[0] == '<' && loc->line->parent != 0) {
+        loc = &s->locations[SOURCE_LOC_GET_DATA(loc->line->parent)];
+    }
+
+    return loc;
+}
+
 static void expand_ident(Cuik_CPP* restrict c, TokenStream* restrict s, Lexer* l, SourceLocIndex parent_loc) {
     size_t token_length = l->token_end - l->token_start;
     const unsigned char* token_data = l->token_start;
 
     if (lexer_match(l, 8, "__FILE__") || lexer_match(l, 9, "L__FILE__")) {
+        SourceLoc* loc = try_for_nicer_loc(s, &s->locations[SOURCE_LOC_GET_DATA(parent_loc)]);
+
         // filepath as a string
         unsigned char* out_start = gimme_the_shtuffs(c, MAX_PATH + 4);
         unsigned char* out = out_start;
@@ -78,7 +88,7 @@ static void expand_ident(Cuik_CPP* restrict c, TokenStream* restrict s, Lexer* l
         {
             // TODO(NeGate): Kinda shitty but i just wanna duplicate
             // the backslashes to avoid them being treated as an escape
-            const char* in = (const char*)l->filepath;
+            const char* in = (const char*) loc->line->filepath;
             if (strlen(in) >= MAX_PATH) {
                 generic_error(l, "preprocessor error: __FILE__ generated a file path that was too long\n");
                 abort();
@@ -103,13 +113,16 @@ static void expand_ident(Cuik_CPP* restrict c, TokenStream* restrict s, Lexer* l
             is_wide ? TOKEN_STRING_WIDE_DOUBLE_QUOTE : TOKEN_STRING_DOUBLE_QUOTE,
             get_source_location(c, l, s, parent_loc, SOURCE_LOC_NORMAL),
             out_start,
-            out};
+            out
+        };
         arrput(s->tokens, t);
         lexer_read(l);
     } else if (lexer_match(l, 8, "__LINE__")) {
+        SourceLoc* loc = try_for_nicer_loc(s, &s->locations[SOURCE_LOC_GET_DATA(parent_loc)]);
+
         // line number as a string
         unsigned char* out = gimme_the_shtuffs(c, 10);
-        size_t length = sprintf_s((char*)out, 10, "%d", l->current_line);
+        size_t length = sprintf_s((char*)out, 10, "%d", loc->line->line);
 
         trim_the_shtuffs(c, &out[length + 1]);
         Token t = {

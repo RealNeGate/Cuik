@@ -190,7 +190,7 @@ TB_Register irgen_as_lvalue(TranslationUnit* tu, TB_Function* func, Expr* e) {
         TB_CharUnits align = v.type->align;
         TB_DataType dt = tb_function_get_node(func, v.reg)->dt;
 
-        TB_Reg temporary = tb_inst_local(func, size, align);
+        TB_Reg temporary = tb_inst_local(func, size, align, NULL);
         tb_inst_store(func, dt, temporary, v.reg, align);
         return temporary;
     } else {
@@ -304,19 +304,34 @@ InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, Sourc
                             int align = child_type->align;
 
                             if (kind == KIND_STRUCT || kind == KIND_UNION || kind == KIND_ARRAY) {
-                                IRVal v = irgen_expr(tu, func, e);
+                                if (e->op == EXPR_INT && e->int_num.num == 0) {
+                                    // placing the address calculation here might improve performance or readability
+                                    // of IR in the debug builds, for release builds it shouldn't matter
+                                    TB_Register effective_addr;
+                                    if (offset) {
+                                        effective_addr = tb_inst_member_access(func, addr, offset);
+                                    } else {
+                                        effective_addr = addr;
+                                    }
 
-                                // placing the address calculation here might improve performance or readability
-                                // of IR in the debug builds, for release builds it shouldn't matter
-                                TB_Register effective_addr;
-                                if (offset) {
-                                    effective_addr = tb_inst_member_access(func, addr, offset);
+                                    TB_Register size_reg = tb_inst_uint(func, TB_TYPE_I64, size);
+                                    TB_Register val_reg = tb_inst_uint(func, TB_TYPE_I8, 0);
+                                    tb_inst_memset(func, effective_addr, val_reg, size_reg, align);
                                 } else {
-                                    effective_addr = addr;
-                                }
+                                    IRVal v = irgen_expr(tu, func, e);
 
-                                TB_Register size_reg = tb_inst_uint(func, TB_TYPE_I64, size);
-                                tb_inst_memcpy(func, effective_addr, v.reg, size_reg, align);
+                                    // placing the address calculation here might improve performance or readability
+                                    // of IR in the debug builds, for release builds it shouldn't matter
+                                    TB_Register effective_addr;
+                                    if (offset) {
+                                        effective_addr = tb_inst_member_access(func, addr, offset);
+                                    } else {
+                                        effective_addr = addr;
+                                    }
+
+                                    TB_Register size_reg = tb_inst_uint(func, TB_TYPE_I64, size);
+                                    tb_inst_memcpy(func, effective_addr, v.reg, size_reg, align);
+                                }
                             } else {
                                 // hacky but we set the cast so that the rvalue returns a normal value
                                 e->cast_type = child_type;
@@ -531,7 +546,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
         }
         case EXPR_INITIALIZER: {
             Cuik_Type* type = e->init.type;
-            TB_Register addr = tb_inst_local(func, type->size, type->align);
+            TB_Register addr = tb_inst_local(func, type->size, type->align, NULL);
 
             gen_local_initializer(tu, func, e->start_loc, addr, type, e->init.count, e->init.nodes);
 
@@ -826,7 +841,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
 
             TB_Reg* ir_args = tls_push(real_arg_count * sizeof(TB_Reg));
             if (is_aggregate_return) {
-                ir_args[0] = tb_inst_local(func, e->type->size, e->type->align);
+                ir_args[0] = tb_inst_local(func, e->type->size, e->type->align, NULL);
             }
 
             // point at which it stops being know which parameter types we're
@@ -884,7 +899,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
                     TB_CharUnits align = e->type->align;
                     TB_DataType dt = tb_function_get_node(func, r)->dt;
 
-                    TB_Reg addr = tb_inst_local(func, size, align);
+                    TB_Reg addr = tb_inst_local(func, size, align, NULL);
                     tb_inst_store(func, dt, addr, r, align);
 
                     return (IRVal){
@@ -1706,7 +1721,7 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
                 break;
             }
 
-            TB_Reg addr = tb_inst_local(func, size, align);
+            TB_Reg addr = tb_inst_local(func, size, align, s->decl.name);
             if (s->decl.initial) {
                 Expr* e = s->decl.initial;
 

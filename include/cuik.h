@@ -26,6 +26,7 @@ typedef struct Stmt Stmt;
 typedef struct Token Token;
 typedef struct TranslationUnit TranslationUnit;
 typedef struct CompilationUnit CompilationUnit;
+typedef struct Cuik_Type Cuik_Type;
 
 typedef struct Cuik_File {
     bool found;
@@ -33,6 +34,16 @@ typedef struct Cuik_File {
     size_t length;
     char* data;
 } Cuik_File;
+
+/*typedef struct Cuik_Report {
+    Cuik_ReportFormat format;
+
+    // NULL for not applicable
+    Expr* exprs[2];
+    Stmt* stmts[2];
+    Cuik_Type* types[2];
+    SourceLoc* locations[2];
+} Cuik_Report;*/
 
 ////////////////////////////////////////////
 // Interfaces
@@ -58,6 +69,8 @@ typedef struct Cuik_IProfiler {
 
 typedef struct Cuik_IDiagnostic {
     void* user_data;
+
+    //void(*report)(void* user_data, const Cuik_Report* r);
 } Cuik_IDiagnostic;
 
 // for doing calls on the interfaces
@@ -205,6 +218,10 @@ typedef struct Cuik_IFileSystem {
 // default file system (just OS crap)
 CUIK_API Cuik_IFileSystem cuik_default_fs;
 
+#define CUIKPP_FOR_DEFINES(it, ctx)                       \
+for (Cuik_DefineRef it, curr_ = cuikpp_first_define(ctx); \
+    it = curr_, cuikpp_next_define(ctx, &curr_);)
+
 // if fs is NULL it defaults to cuik_default_fs
 CUIK_API void cuikpp_init(Cuik_CPP* ctx, const Cuik_IFileSystem* fs);
 CUIK_API void cuikpp_deinit(Cuik_CPP* ctx);
@@ -240,6 +257,9 @@ CUIK_API void cuikpp_define_slice(Cuik_CPP* ctx, size_t keylen, const char key[]
 
 // Convert C preprocessor state and an input file into a final preprocessed stream
 CUIK_API TokenStream cuikpp_run(Cuik_CPP* ctx, const char filepath[FILENAME_MAX]);
+
+// Converts a file into tokens without preprocessing
+CUIK_API TokenStream cuik_raw_tokens(const Cuik_IFileSystem* fs, const char filepath[FILENAME_MAX]);
 
 // Used to make iterators for the define list, for example:
 //

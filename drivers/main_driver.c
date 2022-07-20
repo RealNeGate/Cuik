@@ -49,23 +49,36 @@ static void initialize_opt_passes(void) {
     char custom_luapath[FILENAME_MAX];
     da_passes = dyn_array_create(TB_FunctionPass);
 
-    dyn_array_put(da_passes, OPT(hoist_locals));
-    dyn_array_put(da_passes, OPT(merge_rets));
-    dyn_array_put(da_passes, OPT(mem2reg));
+    if (args_optimize) {
+        dyn_array_put(da_passes, OPT(hoist_locals));
+        dyn_array_put(da_passes, OPT(merge_rets));
+        dyn_array_put(da_passes, OPT(mem2reg));
 
-    dyn_array_put(da_passes, OPT(hoist_invariants));
-    dyn_array_put(da_passes, OPT(canonicalize));
-    dyn_array_put(da_passes, OPT(remove_pass_node));
-    dyn_array_put(da_passes, OPT(canonicalize));
+        dyn_array_put(da_passes, OPT(hoist_invariants));
+        dyn_array_put(da_passes, OPT(canonicalize));
+        dyn_array_put(da_passes, OPT(remove_pass_node));
+        dyn_array_put(da_passes, OPT(canonicalize));
 
-    if (args_experiment) {
-        sprintf_s(custom_luapath, FILENAME_MAX, "%s/custom.lua", crt_dirpath);
-        dyn_array_put(da_passes, tb_opt_load_lua_pass(custom_luapath));
+        if (args_experiment) {
+            sprintf_s(custom_luapath, FILENAME_MAX, "%s/custom.lua", crt_dirpath);
+            dyn_array_put(da_passes, tb_opt_load_lua_pass(custom_luapath));
+        }
+
+        dyn_array_put(da_passes, OPT(dead_expr_elim));
+        dyn_array_put(da_passes, OPT(dead_block_elim));
+
+        // complex analysis
+        dyn_array_put(da_passes, OPT(refinement));
+
+        // aggresive optimizations
+        // TODO(NeGate): loop optimizations, data structure reordering
+        // switch optimizations
+
+        dyn_array_put(da_passes, OPT(compact_dead_regs));
+    } else {
+        dyn_array_put(da_passes, OPT(canonicalize));
+        dyn_array_put(da_passes, OPT(compact_dead_regs));
     }
-
-    dyn_array_put(da_passes, OPT(dead_expr_elim));
-    dyn_array_put(da_passes, OPT(dead_block_elim));
-    dyn_array_put(da_passes, OPT(compact_dead_regs));
 }
 
 static void mark_timestamp(const char* label) {
@@ -155,7 +168,7 @@ static void irgen_visitor(TranslationUnit* restrict tu, Stmt* restrict s, void* 
     TB_Function* func = cuik_stmt_gen_ir(tu, s);
 
     if (func != NULL) {
-        if (args_optimize) {
+        if (dyn_array_length(da_passes)) {
             tb_function_optimize(func, dyn_array_length(da_passes), da_passes);
         }
 
@@ -448,12 +461,16 @@ int main(int argc, char** argv) {
 
     if (args_preprocess) {
         // preproc only
+        #if 0
+        cuik_raw_tokens(NULL, input_files[0]);
+        #else
         Cuik_CPP* cpp = make_preprocessor();
         TokenStream tokens = cuikpp_run(cpp, input_files[0]);
         cuikpp_finalize(cpp);
 
         dump_tokens(stdout, &tokens);
         cuikpp_deinit(cpp);
+        #endif
         return EXIT_SUCCESS;
     }
 

@@ -86,6 +86,40 @@ static void dump_expr(TranslationUnit* tu, FILE* stream, Expr* restrict e, int d
             fprintf(stream, "Symbol %s '%s'\n", params[param_num].name, temp_string0);
             break;
         }
+        case EXPR_WSTR: {
+            // TODO(NeGate): Convert the string back into a C string literal so we don't cause any weird text printing
+            type_as_string(tu, sizeof(temp_string0), temp_string0, e->type);
+
+            const wchar_t* start = (const wchar_t*)e->str.start;
+            const wchar_t* end = (const wchar_t*)e->str.end;
+
+            char* out_start = tls_push(1024);
+            char* out = out_start;
+
+            while (start != end) {
+                // it's either printed as normal or \x00
+                unsigned int ch = *start;
+                bool is_normal = (*start >= 0x20 && *start < 0x7F);
+
+                ptrdiff_t len = (out - out_start) + (is_normal ? 1 : 4);
+                if (len >= 1024) break;
+
+                if (is_normal) {
+                    *out++ = ch;
+                } else {
+                    *out++ = '\\';
+                    *out++ = 'x';
+                    *out++ = "0123456789ABCDEF"[(ch >> 8) & 0xF];
+                    *out++ = "0123456789ABCDEF"[ch & 0xF];
+                }
+
+                start++;
+            }
+
+            fprintf(stream, "StringLiteral \"%.*s\" '%s'\n", (int)(out - out_start), out_start, temp_string0);
+            tls_restore(out_start);
+            break;
+        }
         case EXPR_STR: {
             // TODO(NeGate): Convert the string back into a C string literal so we don't cause any weird text printing
             type_as_string(tu, sizeof(temp_string0), temp_string0, e->type);

@@ -877,7 +877,7 @@ extern "C" {
     TB_API TB_Reg tb_inst_float2int(TB_Function* f, TB_Reg src, TB_DataType dt, bool is_signed);
     TB_API TB_Reg tb_inst_bitcast(TB_Function* f, TB_Reg src, TB_DataType dt);
 
-    TB_API TB_Reg tb_inst_local(TB_Function* f, uint32_t size, TB_CharUnits align);
+    TB_API TB_Reg tb_inst_local(TB_Function* f, uint32_t size, TB_CharUnits align, const char* name);
     TB_API TB_Reg tb_inst_load(TB_Function* f, TB_DataType dt, TB_Reg addr, TB_CharUnits align);
     TB_API void tb_inst_store(TB_Function* f, TB_DataType dt, TB_Reg addr, TB_Reg val, TB_CharUnits align);
 
@@ -1053,9 +1053,9 @@ extern "C" {
     TB_API bool tb_opt_dead_expr_elim(TB_Function* f);
     TB_API bool tb_opt_dead_block_elim(TB_Function* f);
     TB_API bool tb_opt_fold(TB_Function* f);
+    TB_API bool tb_opt_refinement(TB_Function* f);
     TB_API bool tb_opt_load_elim(TB_Function* f);
     TB_API bool tb_opt_hoist_invariants(TB_Function* f);
-    TB_API bool tb_opt_inline(TB_Function* f);
     TB_API bool tb_opt_hoist_locals(TB_Function* f);
     TB_API bool tb_opt_canonicalize(TB_Function* f);
     TB_API bool tb_opt_deshort_circuit(TB_Function* f);

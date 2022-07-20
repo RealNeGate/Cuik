@@ -42,6 +42,7 @@ static void expand_ident(Cuik_CPP* restrict c, TokenStream* restrict s, Lexer* l
 #include "cpp_expand.h"
 #include "cpp_fs.h"
 #include "cpp_expr.h"
+#include "cpp_raw.h"
 
 CUIK_API void cuikpp_init(Cuik_CPP* ctx, const Cuik_IFileSystem* fs) {
     // default amirite
