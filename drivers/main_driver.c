@@ -412,7 +412,13 @@ int main(int argc, char** argv) {
         }
 
         if (output_name == NULL) {
+            #if _WIN32
+            char* str = malloc(FILENAME_MAX);
+            sprintf_s(str, FILENAME_MAX, "%s.exe", output_path_no_ext);
+            output_name = str;
+            #else
             output_name = output_path_no_ext;
+            #endif
         }
     }
 
@@ -647,22 +653,6 @@ int main(int argc, char** argv) {
 
                 if (args_verbose) mark_timestamp("Total");
             }
-
-            if (args_run) {
-                char* exe = strdup(output_name);
-
-                #ifdef _WIN32
-                for (char* s = exe; *s; s++) {
-                    if (*s == '/') *s = '\\';
-                }
-                #endif
-
-                printf("\n\nRunning: %s...\n", exe);
-                int exit_code = system(exe);
-                printf("Exit code: %d\n", exit_code);
-
-                return exit_code;
-            }
         }
 
         tb_free_thread_resources();
@@ -676,10 +666,27 @@ int main(int argc, char** argv) {
     }
     #endif
 
-    //cuikpp_deinit(&cpp);
-
     cuik_destroy_compilation_unit(&compilation_unit);
     if (args_time) cuik_stop_global_profiler();
+
+    ////////////////////////////////
+    // Running executable
+    ////////////////////////////////
+    if (args_run) {
+        char* exe = strdup(output_name);
+
+        #ifdef _WIN32
+        for (char* s = exe; *s; s++) {
+            if (*s == '/') *s = '\\';
+        }
+        #endif
+
+        printf("\n\nRunning: %s...\n", exe);
+        int exit_code = system(exe);
+        printf("Exit code: %d\n", exit_code);
+
+        return exit_code;
+    }
 
     // _CrtDumpMemoryLeaks();
     return 0;

@@ -302,8 +302,8 @@ static int cmd_dump(FILE** p) {
 }
 
 static FILE** cmd_run() {
-    //printf("CMD: %s\n", command_buffer);
-    //cmd_append(" 2>&1");
+    // printf("CMD: %s\n", command_buffer);
+    // cmd_append(" 2>&1");
 
     // Find available slots
     int slot = -1;
