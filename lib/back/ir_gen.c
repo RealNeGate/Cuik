@@ -1628,15 +1628,23 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
     }
 }
 
+static SourceLoc* try_for_nicer_loc(TokenStream* s, SourceLoc* loc) {
+    while (loc->line->filepath[0] == '<' && loc->line->parent != 0) {
+        loc = &s->locations[SOURCE_LOC_GET_DATA(loc->line->parent)];
+    }
+
+    return loc;
+}
+
 void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
     if (s == NULL) return;
 
-    if (0 /* settings.is_debug_info */) {
+    if (1 /* settings.is_debug_info */) {
         // TODO(NeGate): Fix this up later!!!
         static thread_local TB_FileID last_file_id;
         static thread_local const char* last_filepath;
 
-        SourceLoc* l = &tu->tokens.locations[s->loc];
+        SourceLoc* l = try_for_nicer_loc(&tu->tokens, &tu->tokens.locations[SOURCE_LOC_GET_DATA(s->loc)]);
         SourceLine* line = l->line;
 
         if ((const char*)line->filepath != last_filepath) {

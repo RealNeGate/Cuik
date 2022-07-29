@@ -377,7 +377,7 @@ static void type_resolve_pending_align(TranslationUnit* restrict tu, Cuik_Type* 
 }
 
 void type_layout(TranslationUnit* restrict tu, Cuik_Type* type) {
-    if (type->size != 0) return;
+    if (type->kind == KIND_VOID || type->size != 0) return;
     if (type->is_inprogress) {
         REPORT(ERROR, type->loc, "Type has a circular dependency");
         abort();
@@ -412,6 +412,13 @@ void type_layout(TranslationUnit* restrict tu, Cuik_Type* type) {
 
         type->size = result;
         type->align = type->array_of->align;
+    } else if (type->kind == KIND_QUALIFIED_TYPE) {
+        if (type->qualified_ty->size == 0) {
+            type_layout(tu, type->qualified_ty);
+        }
+
+        type->size = type->qualified_ty->size;
+        type->align = type->qualified_ty->align;
     } else if (type->kind == KIND_ENUM) {
         int cursor = 0;
 
