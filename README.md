@@ -84,7 +84,7 @@ In case you care to look around here's what the folders mean:
 lib/
 include/
 
-# and it's dependencies
+# and it's dependencies (TB binaries go here)
 deps/
 
 # these are the programs that actually call into libCuik
@@ -99,4 +99,5 @@ tests/
 ```
 
 ## PS
-If you're wondering about the tinybackend static library, it's essentially a project of mine that's not ready for everyone's precious eyes so i've been sharing it just enough to actually let people play with the compiler but not play with the backend (it'll be open source eventually).
+If you're wondering about the tinybackend static library, you can recompile and place the binaries there, here's the project (i'll fix up the build process soon :P)
+https://github.com/RealNeGate/tilde-backend
