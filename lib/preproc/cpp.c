@@ -222,11 +222,14 @@ CUIK_API TokenStream cuikpp_run(Cuik_CPP* ctx, const char filepath[]) {
 
     TokenStream s = {0};
     s.filepath = filepath;
+    arrsetcap(s.tokens, 0x25000);
+
     preprocess_file(ctx, &s, 0, 0, directory, filepath, 1);
 
     Token t = {0, 0, NULL, NULL};
     arrput(s.tokens, t);
 
+    // printf("%zu\n", arrlen(s.tokens));
     return s;
 }
 

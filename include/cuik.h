@@ -386,6 +386,11 @@ CUIK_API TB_Function* cuik_stmt_gen_ir(TranslationUnit* restrict tu, Stmt* restr
 ////////////////////////////////////////////
 // Translation unit management
 ////////////////////////////////////////////
+typedef struct {
+    void* opaque;
+    size_t remaining;
+} ThreadedWaiter;
+
 typedef void Cuik_ExprVisitor(TranslationUnit* restrict tu, Expr* restrict e, void* user_data);
 typedef void Cuik_StmtVisitor(TranslationUnit* restrict tu, Stmt* restrict s, void* user_data);
 
@@ -394,7 +399,9 @@ CUIK_API void cuik_visit_expr(TranslationUnit* restrict tu, Expr* restrict e, vo
 CUIK_API void cuik_visit_stmt(TranslationUnit* restrict tu, Stmt* restrict s, void* user_data, Cuik_StmtVisitor* visitor);
 
 CUIK_API void cuik_visit_top_level(TranslationUnit* restrict tu, void* user_data, Cuik_StmtVisitor* visitor);
-CUIK_API void cuik_visit_top_level_threaded(TranslationUnit* restrict tu, const Cuik_IThreadpool* thread_pool, int batch_size, void* user_data, Cuik_StmtVisitor* visitor);
+CUIK_API void cuik_visit_top_level_threaded(TranslationUnit* restrict tu, const Cuik_IThreadpool* restrict thread_pool, int batch_size, ThreadedWaiter* restrict waiter, void* user_data, Cuik_StmtVisitor* visitor);
+
+CUIK_API void cuik_wait_on_waiter(const Cuik_IThreadpool* restrict thread_pool, ThreadedWaiter* restrict waiter);
 
 CUIK_API void cuik_dump_translation_unit(FILE* stream, TranslationUnit* tu, bool minimalist);
 
@@ -419,6 +426,7 @@ CUIK_API void cuik_unlock_compilation_unit(CompilationUnit* restrict cu);
 CUIK_API void cuik_add_to_compilation_unit(CompilationUnit* restrict cu, TranslationUnit* restrict tu);
 CUIK_API void cuik_destroy_compilation_unit(CompilationUnit* restrict cu);
 CUIK_API void cuik_internal_link_compilation_unit(CompilationUnit* restrict cu);
+CUIK_API size_t cuik_num_of_translation_units_in_compilation_unit(CompilationUnit* restrict cu);
 
 ////////////////////////////////////////////
 // Linker

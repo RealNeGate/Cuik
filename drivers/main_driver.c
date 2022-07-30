@@ -214,23 +214,48 @@ static Cuik_CPP* make_preprocessor(void) {
     return cpp;
 }
 
-static void compile_file(void* arg) {
+typedef struct {
+    Cuik_CPP* cpp;
+    TokenStream tokens;
+} PreprocResult;
+
+static void compile_file(void* arg);
+
+static void preproc_file(void* arg) {
     const char* input = (const char*)arg;
 
     // preproc
     Cuik_CPP* cpp = make_preprocessor();
-    TokenStream tokens = cuikpp_run(cpp, input);
-    cuikpp_finalize(cpp);
+
+    if (ithread_pool != NULL) {
+        PreprocResult* r = malloc(sizeof(PreprocResult));
+        r->cpp = cpp;
+        r->tokens = cuikpp_run(cpp, input);
+        cuikpp_finalize(cpp);
+
+        CUIK_CALL(ithread_pool, submit, compile_file, r);
+    } else {
+        PreprocResult r = {
+            .cpp = cpp,
+            .tokens = cuikpp_run(cpp, input),
+        };
+        cuikpp_finalize(r.cpp);
+        compile_file(&r);
+    }
+}
+
+static void compile_file(void* arg) {
+    PreprocResult* r = arg;
 
     // parse
     Cuik_ErrorStatus errors;
     TranslationUnit* tu = cuik_parse_translation_unit(&(Cuik_TranslationUnitDesc){
-            .tokens      = &tokens,
+            .tokens      = &r->tokens,
             .errors      = &errors,
             .ir_module   = mod,
             .target      = &target_desc,
             #if CUIK_ALLOW_THREADS
-            .thread_pool = ithread_pool ? ithread_pool : NULL,
+            .thread_pool = NULL /* ithread_pool ? ithread_pool : NULL */,
             #endif
         });
 
@@ -239,7 +264,7 @@ static void compile_file(void* arg) {
         exit(1);
     }
 
-    cuik_set_translation_unit_user_data(tu, cpp);
+    cuik_set_translation_unit_user_data(tu, r->cpp);
     cuik_add_to_compilation_unit(&compilation_unit, tu);
 }
 
@@ -489,7 +514,7 @@ int main(int argc, char** argv) {
         #if CUIK_ALLOW_THREADS
         // dispatch multithreaded
         dyn_array_for(i, input_files) {
-            threadpool_submit(thread_pool, compile_file, (void*) input_files[i]);
+            threadpool_submit(thread_pool, preproc_file, (void*) input_files[i]);
         }
 
         CUIK_TIMED_BLOCK("wait") {
@@ -497,7 +522,7 @@ int main(int argc, char** argv) {
         }
         #endif
     } else {
-        dyn_array_for(i, input_files) compile_file((void*) input_files[i]);
+        dyn_array_for(i, input_files) preproc_file((void*) input_files[i]);
     }
 
     if (args_verbose) mark_timestamp("Internal link");
@@ -517,14 +542,25 @@ int main(int argc, char** argv) {
         if (args_verbose) mark_timestamp("Backend");
 
         if (ithread_pool != NULL) {
-            FOR_EACH_TU(tu, &compilation_unit) {
-                if (!args_ast && !args_types) {
-                    cuik_visit_top_level_threaded(tu, ithread_pool, 8192, NULL, irgen_visitor);
-                }
+            size_t waiter_count = cuik_num_of_translation_units_in_compilation_unit(&compilation_unit);
+            ThreadedWaiter* waiters = malloc(waiter_count * sizeof(ThreadedWaiter));
 
+            size_t i = 0;
+            FOR_EACH_TU(tu, &compilation_unit) {
+                cuik_visit_top_level_threaded(
+                    tu, ithread_pool, 8192, &waiters[i], NULL, irgen_visitor
+                );
+
+                // dispose the preprocessor crap now
                 Cuik_CPP* cpp = cuik_get_translation_unit_user_data(tu);
                 cuikpp_deinit(cpp);
                 free(cpp);
+
+                i += 1;
+            }
+
+            for (size_t j = 0; j < waiter_count; j++) {
+                cuik_wait_on_waiter(ithread_pool, &waiters[j]);
             }
         } else {
             FOR_EACH_TU(tu, &compilation_unit) {

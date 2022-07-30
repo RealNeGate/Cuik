@@ -213,8 +213,11 @@ static void task_caller(void* arg) {
     *task.tasks_remaining -= 1;
 }
 
-CUIK_API void cuik_visit_top_level_threaded(TranslationUnit* restrict tu, const Cuik_IThreadpool* thread_pool, int batch_size, void* user_data, Cuik_StmtVisitor* visitor) {
+CUIK_API void cuik_visit_top_level_threaded(TranslationUnit* restrict tu, const Cuik_IThreadpool* restrict thread_pool, int batch_size, ThreadedWaiter* restrict waiter, void* user_data, Cuik_StmtVisitor* visitor) {
+    static_assert(sizeof(atomic_size_t) == sizeof(size_t), "size_t isn't lock free?");
+
     assert(thread_pool != NULL);
+    assert(waiter != NULL);
     assert((batch_size & (batch_size-1)) == 0);
     tls_init();
 
@@ -222,25 +225,34 @@ CUIK_API void cuik_visit_top_level_threaded(TranslationUnit* restrict tu, const 
     // chunks to avoid spawning too many tiny tasks
     size_t count = arrlen(tu->top_level_stmts);
     size_t padded = (count + (batch_size - 1)) & ~(batch_size - 1);
+    size_t da_crumbs = padded - batch_size;
 
-    atomic_size_t tasks_remaining = (count + (batch_size - 1)) / batch_size;
-    TaskInfo* tasks = tls_push(sizeof(TaskInfo) * tasks_remaining);
+    size_t task_count = (count + (batch_size - 1)) / batch_size;
+    TaskInfo* tasks = malloc(sizeof(TaskInfo) * task_count);
+
+    waiter->opaque = tasks;
+    waiter->remaining = task_count;
 
     size_t j = 0;
     for (size_t i = 0; i < padded; i += batch_size) {
         size_t limit = i + batch_size;
-        if (limit > count) limit = count;
+        if (limit > da_crumbs) limit = count;
 
-        tasks[j] = (TaskInfo){tu, &tasks_remaining, visitor, user_data, i, limit};
+        tasks[j] = (TaskInfo){tu, (atomic_size_t*) &waiter->remaining, visitor, user_data, i, limit};
         CUIK_CALL(thread_pool, submit, task_caller, &tasks[j]);
+        // printf("Group: %zu - %zu\n", i, limit);
 
         j += 1;
     }
+}
+
+CUIK_API void cuik_wait_on_waiter(const Cuik_IThreadpool* restrict thread_pool, ThreadedWaiter* restrict waiter) {
+    static_assert(sizeof(atomic_size_t) == sizeof(size_t), "size_t isn't lock free?");
 
     // "highway robbery on steve jobs" job stealing amirite...
-    while (tasks_remaining != 0) {
+    while (atomic_load((atomic_size_t*) &waiter->remaining) != 0) {
         CUIK_CALL(thread_pool, work_one_job);
     }
 
-    tls_restore(tasks);
+    free(waiter->opaque);
 }

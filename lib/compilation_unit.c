@@ -24,6 +24,7 @@ CUIK_API void cuik_add_to_compilation_unit(CompilationUnit* restrict cu, Transla
     if (cu->tail == NULL) cu->head = tu;
     else cu->tail->next = tu;
     cu->tail = tu;
+    cu->count += 1;
 
     cuik_unlock_compilation_unit(cu);
 }
@@ -40,6 +41,10 @@ CUIK_API void cuik_destroy_compilation_unit(CompilationUnit* restrict cu) {
     mtx_destroy((mtx_t*) cu->lock);
     HEAP_FREE(cu->lock);
     *cu = (CompilationUnit){0};
+}
+
+CUIK_API size_t cuik_num_of_translation_units_in_compilation_unit(CompilationUnit* restrict cu) {
+    return cu->count;
 }
 
 CUIK_API void cuik_internal_link_compilation_unit(CompilationUnit* restrict cu) {

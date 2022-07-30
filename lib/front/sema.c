@@ -5,7 +5,7 @@
 #include <stdarg.h>
 #include <targets/targets.h>
 
-#define SEMA_MUNCH_SIZE (32768)
+#define SEMA_MUNCH_SIZE (131072)
 
 typedef struct {
     // shared state, every run of sema_task will decrement this by one
@@ -1519,6 +1519,10 @@ void sema_stmt(TranslationUnit* tu, Stmt* restrict s) {
             break;
         }
         case STMT_CASE: {
+            while (s->case_.body->op == STMT_CASE) {
+                s = s->case_.body;
+            }
+
             sema_stmt(tu, s->case_.body);
             break;
         }

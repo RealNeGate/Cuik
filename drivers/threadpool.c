@@ -42,6 +42,15 @@ struct threadpool_t {
 };
 
 static bool do_work(threadpool_t* threadpool) {
+    #if 0
+    // maybe we can savage this in a sec...
+    uint32_t read_ptr = atomic_fetch_add(&threadpool->read_pointer, 1) & threadpool->queue_size_mask;
+    if (read_ptr != (threadpool->write_pointer & threadpool->queue_size_mask)) {
+        threadpool->work[read_ptr].fn(threadpool->work[read_ptr].arg);
+        threadpool->completion_count++;
+        return false;
+    }
+    #else
     uint32_t read_ptr = threadpool->read_pointer;
     uint32_t new_read_ptr = (read_ptr + 1) & threadpool->queue_size_mask;
 
@@ -53,6 +62,7 @@ static bool do_work(threadpool_t* threadpool) {
 
         return false;
     }
+    #endif
 
     return true;
 }
@@ -63,11 +73,13 @@ static int threadpool_thread(void* arg) {
     CUIK_TIMED_BLOCK("thread") {
         while (threadpool->running) {
             if (do_work(threadpool)) {
-                #ifdef _WIN32
-                WaitForSingleObjectEx(threadpool->sem, -1, false); // wait for jobs
-                #else
-                sem_wait(&threadpool->sem);
-                #endif
+                CUIK_TIMED_BLOCK("wait on semaphore") {
+                    #ifdef _WIN32
+                    WaitForSingleObjectEx(threadpool->sem, -1, false); // wait for jobs
+                    #else
+                    sem_wait(&threadpool->sem);
+                    #endif
+                }
             }
         }
     }
@@ -108,35 +120,26 @@ threadpool_t* threadpool_create(size_t worker_count, size_t workqueue_size) {
         }
     }
 
-    mtx_init(&threadpool->mutex, mtx_plain);
-
     return threadpool;
 }
 
 void threadpool_submit(threadpool_t* threadpool, work_routine fn, void* arg) {
-    mtx_lock(&threadpool->mutex);
-    {
-        uint32_t write_ptr = threadpool->write_pointer;
-        uint32_t new_write_ptr = (write_ptr + 1) & threadpool->queue_size_mask;
+    uint32_t write_ptr = atomic_fetch_add(&threadpool->write_pointer, 1);
+    uint32_t new_write_ptr = (write_ptr + 1) & threadpool->queue_size_mask;
 
-        while (new_write_ptr == threadpool->read_pointer) {
-            // Power nap lmao
-            thrd_yield();
-        }
-
-        threadpool->work[write_ptr] = (work_t){.fn = fn, .arg = arg};
-
-        threadpool->completion_goal++;
-        threadpool->write_pointer = new_write_ptr;
+    while (new_write_ptr == (threadpool->read_pointer & threadpool->queue_size_mask)) {
+        // Power nap lmao
+        thrd_yield();
     }
+
+    threadpool->work[write_ptr] = (work_t){.fn = fn, .arg = arg};
+    threadpool->completion_goal++;
 
     #ifdef _WIN32
     ReleaseSemaphore(threadpool->sem, 1, 0);
     #else
     sem_post(&threadpool->sem);
     #endif
-
-    mtx_unlock(&threadpool->mutex);
 }
 
 void threadpool_work_one_job(threadpool_t* threadpool) {
@@ -187,7 +190,6 @@ void threadpool_free(threadpool_t* threadpool) {
     sem_destroy(&threadpool->sem);
     #endif
 
-    mtx_destroy(&threadpool->mutex);
     HEAP_FREE(threadpool->threads);
     HEAP_FREE(threadpool->work);
     HEAP_FREE(threadpool);

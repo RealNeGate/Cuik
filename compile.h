@@ -479,12 +479,14 @@ static void cc_invoke(const CC_Options* options, const char* input_path, const c
 
     cmd_append(" -I deps -I lib -I include");
     cmd_append(" -c -o ");
+    // cmd_append(" -S -mllvm --x86-asm-syntax=intel -o ");
     cmd_append(options->output_dir);
 
     char* output = str_no_ext(output_name ? output_name : str_filename(input_path));
     cmd_append(output);
     free(output);
 
+    //cmd_append(".s -D_CRT_SECURE_NO_WARNINGS");
     if (ON_WINDOWS) {
         cmd_append(".obj -D_CRT_SECURE_NO_WARNINGS");
     } else {

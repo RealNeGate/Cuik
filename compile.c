@@ -12,7 +12,6 @@
 #define DRIVER_NAME "main_driver"
 #endif /* DRIVER_NAME */
 
-#define USE_DA_ASAN 0
 #include "compile.h"
 
 static const char* INPUT_FILES[] = {

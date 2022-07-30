@@ -264,6 +264,8 @@ InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, Sourc
                     case EXPR_STR:
                     case EXPR_WSTR:
                     if (!func) {
+                        size_t str_bytes = e->type->size;
+
                         char* dst = NULL;
                         if (child_type->kind == KIND_PTR) {
                             // if it's a string pointer, then we make a dummy string array
@@ -271,23 +273,22 @@ InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, Sourc
                             char temp[1024];
                             snprintf(temp, 1024, "DUMMY@%d", tu->id_gen++);
 
-                            TB_Initializer* dummy_init = tb_initializer_create(tu->ir_mod, child_type->size, 2, 1);
-                            dst = tb_initializer_add_region(tu->ir_mod, dummy_init, 0, child_type->size);
+                            TB_Initializer* dummy_init = tb_initializer_create(tu->ir_mod, str_bytes, 2, 1);
+                            dst = tb_initializer_add_region(tu->ir_mod, dummy_init, 0, str_bytes);
 
                             TB_Global* dummy = tb_global_create(tu->ir_mod, temp, TB_STORAGE_DATA, TB_LINKAGE_PRIVATE);
                             tb_global_set_initializer(tu->ir_mod, dummy, dummy_init);
 
                             tb_initializer_add_global(tu->ir_mod, init, 0, dummy);
                         } else {
-                            dst = tb_initializer_add_region(tu->ir_mod, init, 0, child_type->size);
+                            dst = tb_initializer_add_region(tu->ir_mod, init, 0, str_bytes);
                         }
 
                         // write out string bytes with the nice zeroes at the end
-                        size_t src_size = e->str.end - e->str.start;
+                        memcpy(dst, e->str.start, str_bytes);
 
-                        memcpy(dst, e->str.start, src_size);
-                        if (child_type->size > src_size) {
-                            size_t rem = child_type->size - src_size;
+                        if (child_type->kind == KIND_ARRAY && child_type->size > str_bytes) {
+                            size_t rem = child_type->size - str_bytes;
                             memset(dst + child_type->size - rem, 0, rem);
                         }
                         break;
@@ -1946,7 +1947,11 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
         }
         case STMT_CASE: {
             assert(s->backing.l);
-            tb_inst_label(func, s->backing.l);
+            while (s->case_.body->op == STMT_CASE) {
+                tb_inst_label(func, s->backing.l);
+                s = s->case_.body;
+            }
+
             irgen_stmt(tu, func, s->case_.body);
             break;
         }
@@ -1975,8 +1980,7 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
                     default_label = label;
 
                     head = head->default_.next;
-                } else
-                    assert(0);
+                } else assert(0);
             }
 
             TB_Label break_label = tb_inst_new_label_id(func);

@@ -20,7 +20,7 @@
 #define OUT_OF_ORDER_CRAP 1
 
 // how big are the phase2 parse tasks
-#define PARSE_MUNCH_SIZE (32768)
+#define PARSE_MUNCH_SIZE (131072)
 
 typedef struct {
     Atom key;
@@ -1135,7 +1135,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
 
     // run type checker
     CUIK_TIMED_BLOCK("phase 4") {
-        cuik__sema_pass(tu, desc->thread_pool);
+        cuik__sema_pass(tu, NULL /* desc->thread_pool */);
         if (has_reports(REPORT_ERROR, tu->errors)) goto parse_error;
     }
 
