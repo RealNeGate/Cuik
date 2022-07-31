@@ -391,8 +391,22 @@ typedef struct {
     size_t remaining;
 } ThreadedWaiter;
 
+typedef struct {
+    // public
+    Expr* e;
+
+    // internal
+    size_t index;
+    Expr* parent;
+} Cuik_ExprIter;
+
+#define CUIK_FOR_KID_IN_EXPR(it, parent_) \
+for (Cuik_ExprIter it = { .parent = (parent_) }; cuik_next_expr_kid(&it);)
+
 typedef void Cuik_ExprVisitor(TranslationUnit* restrict tu, Expr* restrict e, void* user_data);
 typedef void Cuik_StmtVisitor(TranslationUnit* restrict tu, Stmt* restrict s, void* user_data);
+
+CUIK_API bool cuik_next_expr_kid(Cuik_ExprIter* it);
 
 // invokes the visitor on all the children of expr (not recursive)
 CUIK_API void cuik_visit_expr(TranslationUnit* restrict tu, Expr* restrict e, void* user_data, Cuik_ExprVisitor* visitor);

@@ -35,6 +35,7 @@ static bool args_verbose;
 static bool args_preprocess;
 static bool args_optimize;
 static bool args_object_only;
+static bool args_exercise;
 static bool args_experiment;
 static int args_threads = -1;
 
@@ -396,6 +397,7 @@ int main(int argc, char** argv) {
             case ARG_TYPES: args_types = true; break;
             case ARG_IR: args_ir = true; break;
             case ARG_VERBOSE: args_verbose = true; break;
+            case ARG_EXERCISE: args_exercise = true; break;
             case ARG_EXPERIMENT: args_experiment = true; break;
             case ARG_THREADS: args_threads = atoi(arg.value); break;
             case ARG_HELP: {
@@ -415,6 +417,14 @@ int main(int argc, char** argv) {
     if (args_assembly) {
         fprintf(stderr, "error: emitting assembly doesn't work yet\n");
         return EXIT_FAILURE;
+    }
+
+    if (args_time) {
+        char* perf_output_path = HEAP_ALLOC(FILENAME_MAX);
+        sprintf_s(perf_output_path, FILENAME_MAX, "%s.json", output_path_no_ext);
+
+        jsonperf_profiler.user_data = perf_output_path;
+        cuik_start_global_profiler(&jsonperf_profiler, true);
     }
 
     {
@@ -445,14 +455,6 @@ int main(int argc, char** argv) {
             output_name = output_path_no_ext;
             #endif
         }
-    }
-
-    if (args_time) {
-        char* perf_output_path = HEAP_ALLOC(FILENAME_MAX);
-        sprintf_s(perf_output_path, FILENAME_MAX, "%s.json", output_path_no_ext);
-
-        jsonperf_profiler.user_data = perf_output_path;
-        cuik_start_global_profiler(&jsonperf_profiler, true);
     }
 
     // spin up worker threads
@@ -700,6 +702,35 @@ int main(int argc, char** argv) {
         thread_pool = NULL;
     }
     #endif
+
+    if (args_exercise) {
+        // just delays the compilation because... you're fat
+        uint64_t t1 = cuik_time_in_nanos();
+        double elapsed = 0.0;
+
+        // 60 seconds of gamer time
+        printf("Waiting around...\n\n");
+        printf(
+            "So people have told me that 1 minute compiles aren't really that bad\n"
+            "so i figured that we should give them the freedom to waste their time\n"
+        );
+
+        int old_chars = -1;
+        while (elapsed = (cuik_time_in_nanos() - t1) / 1000000000.0, elapsed < 60.5) {
+            int num_chars = (int)((elapsed / 60.0) * 30.0);
+            if (num_chars != old_chars) {
+                old_chars = num_chars;
+
+                printf("\r[");
+                for (int i = 0; i < num_chars; i++) printf("#");
+                for (int i = 0; i < 30 - num_chars; i++) printf(" ");
+                printf("]");
+            }
+
+            thrd_yield();
+        }
+        printf("\n");
+    }
 
     cuik_destroy_compilation_unit(&compilation_unit);
     if (args_time) cuik_stop_global_profiler();

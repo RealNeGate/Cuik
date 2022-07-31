@@ -466,12 +466,12 @@ struct Expr {
             int* num;
         } enum_val;
         struct {
-            Cuik_Type* type;
             Expr* src;
+            Cuik_Type* type;
         } va_arg_;
         struct {
-            Cuik_Type* type;
             Expr* src;
+            Cuik_Type* type;
         } cast;
         struct {
             Expr* left;

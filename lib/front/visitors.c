@@ -76,7 +76,8 @@ CUIK_API void cuik_visit_stmt(TranslationUnit* restrict tu, Stmt* restrict s, vo
     }
 }
 
-CUIK_API void cuik_visit_expr(TranslationUnit* restrict tu, Expr* restrict e, void* user_data, Cuik_ExprVisitor* visitor) {
+CUIK_API bool cuik_next_expr_kid(Cuik_ExprIter* it) {
+    Expr* restrict e = it->parent;
     switch (e->op) {
         case EXPR_UNKNOWN_SYMBOL:
         case EXPR_VA_ARG:
@@ -95,11 +96,11 @@ CUIK_API void cuik_visit_expr(TranslationUnit* restrict tu, Expr* restrict e, vo
         case EXPR_FUNCTION:
         case EXPR_SYMBOL:
         case EXPR_PARAM:
-        break;
+        return false;
 
         case EXPR_INITIALIZER:
         assert(0);
-        break;
+        return false;
 
         case EXPR_NOT:
         case EXPR_ADDR:
@@ -110,52 +111,73 @@ CUIK_API void cuik_visit_expr(TranslationUnit* restrict tu, Expr* restrict e, vo
         case EXPR_POST_INC:
         case EXPR_POST_DEC:
         case EXPR_LOGICAL_NOT:
-        visitor(tu, e->unary_op.src, user_data);
-        break;
+        case EXPR_CAST: {
+            _Static_assert(offsetof(Expr, cast.src) == offsetof(Expr, unary_op.src), "these should be aliasing");
+            _Static_assert(offsetof(Expr, va_arg_.src) == offsetof(Expr, unary_op.src), "these should be aliasing");
 
-        case EXPR_CAST:
-        visitor(tu, e->cast.src, user_data);
-        break;
-
-        case EXPR_GENERIC:
-        assert(e->generic_.case_count == 0);
-        visitor(tu, e->generic_.controlling_expr, user_data);
-        break;
-
-        case EXPR_SUBSCRIPT:
-        visitor(tu, e->subscript.base, user_data);
-        visitor(tu, e->subscript.index, user_data);
-        break;
-
-        case EXPR_CALL: {
-            visitor(tu, e->call.target, user_data);
-
-            Expr** args = e->call.param_start;
-            int arg_count = e->call.param_count;
-
-            for (size_t i = 0; i < arg_count; i++) {
-                visitor(tu, args[i], user_data);
+            switch (it->index++) {
+                case 0: it->e = e->unary_op.src; return true;
+                case 1: return false;
+                default: __builtin_unreachable();
             }
             break;
         }
 
+        case EXPR_GENERIC: {
+            assert(e->generic_.case_count == 0);
+            switch (it->index++) {
+                case 0: it->e = e->generic_.controlling_expr; return true;
+                case 1: return false;
+                default: __builtin_unreachable();
+            }
+            break;
+        }
+
+        case EXPR_SUBSCRIPT:
+        switch (it->index++) {
+            case 0: it->e = e->subscript.base; return true;
+            case 1: it->e = e->subscript.index; return true;
+            case 2: return false;
+            default: __builtin_unreachable();
+        }
+
+        case EXPR_CALL: {
+            int i = it->index++;
+
+            if (i == 0) {
+                it->e = e->call.target;
+                return true;
+            } else if ((i - 1) < e->call.param_count) {
+                it->e = e->call.param_start[i - 1];
+                return true;
+            } else {
+                return false;
+            }
+        }
+
         case EXPR_TERNARY:
-        visitor(tu, e->ternary_op.left, user_data);
-        visitor(tu, e->ternary_op.middle, user_data);
-        visitor(tu, e->ternary_op.right, user_data);
-        break;
+        switch (it->index++) {
+            case 0: it->e = e->ternary_op.left; return true;
+            case 1: it->e = e->ternary_op.middle; return true;
+            case 2: it->e = e->ternary_op.middle; return true;
+            case 3: return false;
+            default: __builtin_unreachable();
+        }
 
         case EXPR_DOT:
         case EXPR_ARROW:
-        visitor(tu, e->dot_arrow.base, user_data);
-        break;
+        case EXPR_DOT_R:
+        case EXPR_ARROW_R:
+        switch (it->index++) {
+            case 0: it->e = e->dot_arrow.base; return true;
+            case 1: return false;
+            default: __builtin_unreachable();
+        }
 
         case EXPR_COMMA:
         case EXPR_PTRADD:
         case EXPR_PTRSUB:
         case EXPR_PTRDIFF:
-        case EXPR_DOT_R:
-        case EXPR_ARROW_R:
         case EXPR_LOGICAL_AND:
         case EXPR_LOGICAL_OR:
         case EXPR_PLUS:
@@ -184,11 +206,14 @@ CUIK_API void cuik_visit_expr(TranslationUnit* restrict tu, Expr* restrict e, vo
         case EXPR_XOR_ASSIGN:
         case EXPR_SHL_ASSIGN:
         case EXPR_SHR_ASSIGN:
-        visitor(tu, e->bin_op.left, user_data);
-        visitor(tu, e->bin_op.right, user_data);
-        break;
+        switch (it->index++) {
+            case 0: it->e = e->bin_op.left; return true;
+            case 1: it->e = e->bin_op.right; return true;
+            case 2: return false;
+            default: __builtin_unreachable();
+        }
 
-        default: assert(0);
+        default: assert(0); __builtin_unreachable();
     }
 }
 

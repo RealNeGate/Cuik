@@ -18,6 +18,7 @@ OPTION(TYPES,      t, typecheck,   0, "type check only")
 OPTION(IR,         _, ir,          0, "compile up until the IR generation")
 OPTION(VERBOSE,    _, verbose,     0, "verbose")
 OPTION(THREADS,    _, threads,     1, "number of extra threads spawned")
+OPTION(EXERCISE,   _, exercise,    0, "motion sickness from using a decent compiler")
 OPTION(EXPERIMENT, _, experiment,  0, "experimental crap")
 
 #undef OPTION

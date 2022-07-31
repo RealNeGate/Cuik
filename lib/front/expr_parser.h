@@ -240,7 +240,7 @@ static Expr* parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
 
                 *e = (Expr){
                     .op = EXPR_VA_ARG,
-                    .va_arg_ = {type, src},
+                    .va_arg_ = {src, type},
                 };
                 break;
             }
@@ -516,7 +516,7 @@ static Expr* parse_expr_l1(TranslationUnit* tu, TokenStream* restrict s) {
                     .op = EXPR_CAST,
                     .start_loc = start_loc,
                     .end_loc = start_loc,
-                    .cast = {type, base},
+                    .cast = {base, type},
                 };
             }
         }
@@ -709,7 +709,7 @@ static Expr* parse_expr_l2(TranslationUnit* tu, TokenStream* restrict s) {
             .op = EXPR_CAST,
             .start_loc = start_loc,
             .end_loc = end_loc,
-            .cast = {&builtin_types[TYPE_BOOL], value},
+            .cast = {value, &builtin_types[TYPE_BOOL]},
         };
         return e;
     } else if (tokens_get(s)->type == '-') {

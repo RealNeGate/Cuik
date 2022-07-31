@@ -1,3 +1,4 @@
+// https://github.com/skeeto/scratch/blob/master/misc/queue.c
 #include "threadpool.h"
 #include "threads.h"
 #include <stdatomic.h>
@@ -19,16 +20,13 @@
 // HACK(NeGate): i wanna call tb_free_thread_resources on thread exit...
 extern void tb_free_thread_resources(void);
 
+typedef _Atomic uint32_t atomic_uint32_t;
+
+// 1 << QEXP is the size of the queue per thread
+#define QEXP 6
+
 struct threadpool_t {
     atomic_bool running;
-    atomic_uint read_pointer;  // Read
-    atomic_uint write_pointer; // Write
-
-    atomic_uint completion_goal;
-    atomic_uint completion_count;
-
-    int thread_count;
-    unsigned int queue_size_mask;
 
     #ifdef _WIN32
     HANDLE sem;
@@ -36,35 +34,41 @@ struct threadpool_t {
     sem_t sem;
     #endif
 
+    // this skeeto guy is kinda sick wit it
+    atomic_uint32_t queue;
+    atomic_uint32_t jobs_done;
+
+    int thread_count;
     thrd_t* threads;
     work_t* work;
-    mtx_t mutex;
 };
 
-static bool do_work(threadpool_t* threadpool) {
-    #if 0
-    // maybe we can savage this in a sec...
-    uint32_t read_ptr = atomic_fetch_add(&threadpool->read_pointer, 1) & threadpool->queue_size_mask;
-    if (read_ptr != (threadpool->write_pointer & threadpool->queue_size_mask)) {
-        threadpool->work[read_ptr].fn(threadpool->work[read_ptr].arg);
-        threadpool->completion_count++;
-        return false;
-    }
-    #else
-    uint32_t read_ptr = threadpool->read_pointer;
-    uint32_t new_read_ptr = (read_ptr + 1) & threadpool->queue_size_mask;
+static work_t* ask_for_work(threadpool_t* threadpool, uint32_t* save) {
+    uint32_t r = *save = threadpool->queue;
+    uint32_t mask = (1u << QEXP) - 1;
+    uint32_t head = r & mask;
+    uint32_t tail = (r >> 16) & mask;
 
-    if (read_ptr != threadpool->write_pointer) {
-        if (atomic_compare_exchange_strong(&threadpool->read_pointer, &read_ptr, new_read_ptr)) {
-            threadpool->work[read_ptr].fn(threadpool->work[read_ptr].arg);
-            threadpool->completion_count++;
+    return head != tail ? &threadpool->work[tail] : NULL;
+}
+
+static bool do_work(threadpool_t* threadpool) {
+    uint32_t save;
+    work_t* job = NULL;
+
+    do {
+        job = ask_for_work(threadpool, &save);
+        if (job == NULL) {
+            // take a nap if we ain't find shit
+            return true;
         }
 
-        return false;
-    }
-    #endif
+        // don't continue until we successfully commited the queue pop
+    } while (!atomic_compare_exchange_strong(&threadpool->queue, &save, save + 0x10000));
 
-    return true;
+    job->fn(job->arg);
+    threadpool->jobs_done -= 1;
+    return false;
 }
 
 static int threadpool_thread(void* arg) {
@@ -102,7 +106,6 @@ threadpool_t* threadpool_create(size_t worker_count, size_t workqueue_size) {
     threadpool->threads = HEAP_ALLOC(worker_count * sizeof(thrd_t));
     threadpool->thread_count = worker_count;
     threadpool->running = true;
-    threadpool->queue_size_mask = workqueue_size - 1;
 
     #if _WIN32
     threadpool->sem = CreateSemaphoreExA(0, worker_count, worker_count, 0, 0, SEMAPHORE_ALL_ACCESS);
@@ -124,16 +127,29 @@ threadpool_t* threadpool_create(size_t worker_count, size_t workqueue_size) {
 }
 
 void threadpool_submit(threadpool_t* threadpool, work_routine fn, void* arg) {
-    uint32_t write_ptr = atomic_fetch_add(&threadpool->write_pointer, 1);
-    uint32_t new_write_ptr = (write_ptr + 1) & threadpool->queue_size_mask;
+    ptrdiff_t i = 0;
+    for (;;) {
+        // might wanna change the memory order on this atomic op
+        uint32_t r = threadpool->queue;
 
-    while (new_write_ptr == (threadpool->read_pointer & threadpool->queue_size_mask)) {
-        // Power nap lmao
-        thrd_yield();
+        uint32_t mask = (1u << QEXP) - 1;
+        uint32_t head = r & mask;
+        uint32_t tail = (r >> 16) & mask;
+        uint32_t next = (head + 1u) & mask;
+        if (r & 0x8000) { // avoid overflow on commit
+            threadpool->queue &= ~0x8000;
+        }
+
+        // it don't fit...
+        if (next != tail) {
+            i = head;
+            break;
+        }
     }
 
-    threadpool->work[write_ptr] = (work_t){.fn = fn, .arg = arg};
-    threadpool->completion_goal++;
+    threadpool->work[i] = (work_t){ fn, arg };
+    threadpool->jobs_done += 1;
+    threadpool->queue += 1;
 
     #ifdef _WIN32
     ReleaseSemaphore(threadpool->sem, 1, 0);
@@ -147,23 +163,17 @@ void threadpool_work_one_job(threadpool_t* threadpool) {
 }
 
 void threadpool_work_while_wait(threadpool_t* threadpool) {
-    while (threadpool->completion_goal != threadpool->completion_count) {
+    while (threadpool->jobs_done > 0) {
         if (do_work(threadpool)) {
             thrd_yield();
         }
     }
-
-    threadpool->completion_goal = 0;
-    threadpool->completion_count = 0;
 }
 
 void threadpool_wait(threadpool_t* threadpool) {
-    while (threadpool->completion_goal != threadpool->completion_count) {
+    while (threadpool->jobs_done > 0) {
         thrd_yield();
     }
-
-    threadpool->completion_goal = 0;
-    threadpool->completion_count = 0;
 }
 
 void threadpool_free(threadpool_t* threadpool) {
