@@ -277,7 +277,7 @@ static SourceLocIndex get_source_location(Cuik_CPP* restrict c, Lexer* restrict 
 
     ptrdiff_t columns = l->token_start - l->line_current;
     ptrdiff_t length = l->token_end - l->token_start;
-    assert(columns >= 0 && columns < UINT_MAX && length >= 0 && length < UINT_MAX);
+    assert(columns >= 0 && columns < UINT32_MAX && length >= 0 && length < UINT32_MAX);
 
     SourceLoc loc = {
         .line = source_line,

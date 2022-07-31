@@ -224,7 +224,7 @@ InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, Sourc
 
             // initialize a value
             assert(node->expr);
-            Expr* e = cuik__optimize_ast(tu, node->expr);
+            Expr* e = node->expr;
 
             bool success = false;
             if (!func && e->op == EXPR_SYMBOL) {
@@ -240,6 +240,33 @@ InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, Sourc
                 } else if (stmt->op == STMT_FUNC_DECL) {
                     tb_initializer_add_function(tu->ir_mod, init, offset, stmt->backing.f);
                     success = true;
+                }
+            }
+
+            if (!success) {
+                if (node->mode == INIT_ARRAY && node->count > 1) {
+                    // GNU array initializer extensions...
+                    if (e->op == EXPR_INT) {
+                        if (!func) {
+                            ptrdiff_t size = child_type->size;
+                            ptrdiff_t count = node->count;
+                            char* region = tb_initializer_add_region(tu->ir_mod, init, offset, count * size);
+
+                            #if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+                            #error "Stop this immoral bullshit please... until someone fixes this at least :p"
+                            #else
+                            for (ptrdiff_t i = 0; i < count; i++) {
+                                uint64_t value = e->int_num.num;
+                                memcpy(region + (i * size), &value, size);
+                            }
+                            #endif
+
+                            success = true;
+                        }
+                    } else {
+                        // i'll just neglect this until someone brings it up again
+                        assert(0 && "TODO");
+                    }
                 }
             }
 
@@ -511,31 +538,37 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
                 return (IRVal){
                     .value_type = RVALUE,
                     .type = e->type,
-                    .reg = tb_inst_uint(func, dt, e->int_num.num)};
+                    .reg = tb_inst_uint(func, dt, e->int_num.num),
+                };
             } else {
+                // TODO(NeGate): maybe this should use tb_inst_sint?
                 return (IRVal){
                     .value_type = RVALUE,
                     .type = e->type,
-                    .reg = tb_inst_sint(func, dt, e->int_num.num)};
+                    .reg = tb_inst_uint(func, dt, e->int_num.num),
+                };
             }
         }
         case EXPR_ENUM: {
             return (IRVal){
                 .value_type = RVALUE,
                 .type = e->type,
-                .reg = tb_inst_sint(func, TB_TYPE_I32, *e->enum_val.num)};
+                .reg = tb_inst_sint(func, TB_TYPE_I32, *e->enum_val.num),
+            };
         }
         case EXPR_FLOAT32: {
             return (IRVal){
                 .value_type = RVALUE,
                 .type = e->cast_type,
-                .reg = tb_inst_float(func, e->cast_type->kind == KIND_DOUBLE ? TB_TYPE_F64 : TB_TYPE_F32, e->float_num)};
+                .reg = tb_inst_float(func, e->cast_type->kind == KIND_DOUBLE ? TB_TYPE_F64 : TB_TYPE_F32, e->float_num),
+            };
         }
         case EXPR_FLOAT64: {
             return (IRVal){
                 .value_type = RVALUE,
                 .type = e->cast_type,
-                .reg = tb_inst_float(func, e->cast_type->kind == KIND_FLOAT ? TB_TYPE_F32 : TB_TYPE_F64, e->float_num)};
+                .reg = tb_inst_float(func, e->cast_type->kind == KIND_FLOAT ? TB_TYPE_F32 : TB_TYPE_F64, e->float_num),
+            };
         }
         case EXPR_STR:
         case EXPR_WSTR: {
@@ -543,7 +576,8 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
             return (IRVal){
                 .value_type = RVALUE,
                 .type = e->type,
-                .reg = tb_inst_string(func, e->str.end - e->str.start, (char*)e->str.start)};
+                .reg = tb_inst_string(func, e->str.end - e->str.start, (char*)e->str.start),
+            };
         }
         case EXPR_INITIALIZER: {
             Cuik_Type* type = e->init.type;
@@ -1492,7 +1526,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
 
                 TB_DataType dt = ctype_to_tbtype(type);
 
-                TB_Register data;
+                TB_Register data = TB_NULL_REG;
                 if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
                     if (e->op != EXPR_ASSIGN) abort();
 
@@ -1585,6 +1619,14 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
                         assert(lhs.value_type == LVALUE);
                         tb_inst_store(func, dt, lhs.reg, data, type->align);
                     }
+                }
+
+                if (e->op == EXPR_ASSIGN) {
+                    return (IRVal){
+                        .value_type = RVALUE,
+                        .type = lhs.type,
+                        .reg = data
+                    };
                 }
 
                 return lhs;
@@ -1952,6 +1994,7 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
                 s = s->case_.body;
             }
 
+            tb_inst_label(func, s->backing.l);
             irgen_stmt(tu, func, s->case_.body);
             break;
         }

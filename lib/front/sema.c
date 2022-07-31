@@ -1268,6 +1268,10 @@ Cuik_Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
                     e->bin_op.left->cast_type = lhs;
                     e->bin_op.right->cast_type = &builtin_types[TYPE_ULONG];
 
+                    if (lhs->ptr_to->size == 0) {
+                        REPORT_EXPR(ERROR, e, "Cannot do pointer arithmatic on incomplete type");
+                    }
+
                     e->op = (e->op == EXPR_PLUS) ? EXPR_PTRADD : EXPR_PTRSUB;
                     return (e->type = lhs);
                 }

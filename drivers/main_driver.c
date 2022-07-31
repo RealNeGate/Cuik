@@ -562,11 +562,10 @@ int main(int argc, char** argv) {
             for (size_t j = 0; j < waiter_count; j++) {
                 cuik_wait_on_waiter(ithread_pool, &waiters[j]);
             }
+            // free(waiters); doesn't really matter
         } else {
             FOR_EACH_TU(tu, &compilation_unit) {
-                if (!args_ast && !args_types) {
-                    cuik_visit_top_level(tu, NULL, irgen_visitor);
-                }
+                cuik_visit_top_level(tu, NULL, irgen_visitor);
 
                 Cuik_CPP* cpp = cuik_get_translation_unit_user_data(tu);
                 cuikpp_deinit(cpp);
