@@ -29,6 +29,7 @@ static bool args_ir;
 static bool args_ast;
 static bool args_types;
 static bool args_run;
+static bool args_nocrt;
 static bool args_assembly;
 static bool args_time;
 static bool args_verbose;
@@ -101,12 +102,7 @@ static int calculate_worker_thread_count(void) {
     #ifdef _WIN32
     SYSTEM_INFO sysinfo;
     GetSystemInfo(&sysinfo);
-
-    // Just kinda guesses something that seems ok ish for now
-    // eventually we'll wanna use all cores but it's not honestly
-    // helpful currently since code gen is the only parallel stage.
-    int r = sysinfo.dwNumberOfProcessors - 4;
-    return (r <= 0) ? 1 : r;
+    return sysinfo.dwNumberOfProcessors;
     #else
     return 1;
     #endif
@@ -190,7 +186,7 @@ static void irgen_visitor(TranslationUnit* restrict tu, Stmt* restrict s, void* 
 static Cuik_CPP* make_preprocessor(void) {
     Cuik_CPP* cpp = HEAP_ALLOC(sizeof(Cuik_CPP));
     cuikpp_init(cpp, NULL);
-    cuikpp_set_common_defines(cpp, &target_desc, true);
+    cuikpp_set_common_defines(cpp, &target_desc, !args_nocrt);
 
     dyn_array_for(i, include_directories) {
         cuikpp_add_include_directory(cpp, include_directories[i]);
@@ -396,6 +392,7 @@ int main(int argc, char** argv) {
             case ARG_AST: args_ast = true; break;
             case ARG_TYPES: args_types = true; break;
             case ARG_IR: args_ir = true; break;
+            case ARG_NOCRT: args_nocrt = true; break;
             case ARG_VERBOSE: args_verbose = true; break;
             case ARG_EXERCISE: args_exercise = true; break;
             case ARG_EXPERIMENT: args_experiment = true; break;
@@ -417,14 +414,6 @@ int main(int argc, char** argv) {
     if (args_assembly) {
         fprintf(stderr, "error: emitting assembly doesn't work yet\n");
         return EXIT_FAILURE;
-    }
-
-    if (args_time) {
-        char* perf_output_path = HEAP_ALLOC(FILENAME_MAX);
-        sprintf_s(perf_output_path, FILENAME_MAX, "%s.json", output_path_no_ext);
-
-        jsonperf_profiler.user_data = perf_output_path;
-        cuik_start_global_profiler(&jsonperf_profiler, true);
     }
 
     {
@@ -457,11 +446,21 @@ int main(int argc, char** argv) {
         }
     }
 
+    if (args_time) {
+        char* perf_output_path = HEAP_ALLOC(FILENAME_MAX);
+        sprintf_s(perf_output_path, FILENAME_MAX, "%s.json", output_path_no_ext);
+
+        jsonperf_profiler.user_data = perf_output_path;
+        cuik_start_global_profiler(&jsonperf_profiler, true);
+    }
+
     // spin up worker threads
     #if CUIK_ALLOW_THREADS
     threadpool_t* thread_pool = NULL;
     int thread_count = args_threads >= 0 ? args_threads : calculate_worker_thread_count();
-    if (thread_count >= 2) {
+    if (thread_count > 1) {
+        printf("Starting with %d threads...\n", thread_count);
+
         thread_pool = threadpool_create(thread_count - 1, 4096);
         ithread_pool = HEAP_ALLOC(sizeof(Cuik_IThreadpool));
         *ithread_pool = (Cuik_IThreadpool){
@@ -512,7 +511,7 @@ int main(int argc, char** argv) {
     ////////////////////////////////
     if (args_verbose) mark_timestamp("Frontend");
 
-    if (CUIK_ALLOW_THREADS && ithread_pool != NULL) {
+    if (ithread_pool != NULL) {
         #if CUIK_ALLOW_THREADS
         // dispatch multithreaded
         dyn_array_for(i, input_files) {
@@ -625,24 +624,30 @@ int main(int argc, char** argv) {
                         *inputs++ = input_libraries[i];
                     }
 
-                    #ifdef _WIN32
-                    *inputs++ = "ucrt.lib";
-                    *inputs++ = "msvcrt.lib";
-                    *inputs++ = "vcruntime.lib";
-                    *inputs++ = "win32_rt.lib";
-                    #endif
+                    if (!args_nocrt) {
+                        #ifdef _WIN32
+                        *inputs++ = "ucrt.lib";
+                        *inputs++ = "msvcrt.lib";
+                        *inputs++ = "vcruntime.lib";
+                        *inputs++ = "win32_rt.lib";
+                        #endif
+                    }
                 }
 
-                if (!tb_module_export_exec(mod, output_name, &link)) {
-                    fprintf(stderr, "error: tb_module_export failed!\n");
-                    abort();
+                CUIK_TIMED_BLOCK("export") {
+                    if (!tb_module_export_exec(mod, output_name, &link)) {
+                        fprintf(stderr, "error: tb_module_export failed!\n");
+                        abort();
+                    }
                 }
             } else {
                 if (args_verbose) mark_timestamp("Export object");
 
-                if (!tb_module_export(mod, obj_output_path)) {
-                    fprintf(stderr, "error: tb_module_export failed!\n");
-                    abort();
+                CUIK_TIMED_BLOCK("export") {
+                    if (!tb_module_export(mod, obj_output_path)) {
+                        fprintf(stderr, "error: tb_module_export failed!\n");
+                        abort();
+                    }
                 }
 
                 if (args_verbose) mark_timestamp("Linker");
@@ -673,12 +678,14 @@ int main(int argc, char** argv) {
                         cuiklink_add_input_file(&l, input_libraries[i]);
                     }
 
-                    #ifdef _WIN32
-                    cuiklink_add_input_file(&l, "ucrt.lib");
-                    cuiklink_add_input_file(&l, "msvcrt.lib");
-                    cuiklink_add_input_file(&l, "vcruntime.lib");
-                    cuiklink_add_input_file(&l, "win32_rt.lib");
-                    #endif
+                    if (!args_nocrt) {
+                        #ifdef _WIN32
+                        cuiklink_add_input_file(&l, "ucrt.lib");
+                        cuiklink_add_input_file(&l, "msvcrt.lib");
+                        cuiklink_add_input_file(&l, "vcruntime.lib");
+                        cuiklink_add_input_file(&l, "win32_rt.lib");
+                        #endif
+                    }
 
                     if (!cuiklink_invoke(&l, output_path_no_ext, "ucrt")) {
                         fprintf(stderr, "Linker failure!\n");

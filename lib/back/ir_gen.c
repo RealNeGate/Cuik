@@ -313,11 +313,6 @@ InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, Sourc
 
                         // write out string bytes with the nice zeroes at the end
                         memcpy(dst, e->str.start, str_bytes);
-
-                        if (child_type->kind == KIND_ARRAY && child_type->size > str_bytes) {
-                            size_t rem = child_type->size - str_bytes;
-                            memset(dst + child_type->size - rem, 0, rem);
-                        }
                         break;
                     }
 

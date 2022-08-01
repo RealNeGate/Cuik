@@ -130,10 +130,12 @@ bool cuiklink_invoke(Cuik_Linker* l, const char* filename, const char* crt_name)
             .hStdError = GetStdHandle(STD_ERROR_HANDLE),
             .hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE),
         };
-        PROCESS_INFORMATION pi = {};
+        PROCESS_INFORMATION pi = { 0 };
 
         //printf("Linker command:\n%S\n", cmd_line);
-        if (!CreateProcessW(NULL, cmd_line, NULL, NULL, TRUE, 0, NULL, NULL, &si, &pi)) {
+        if (!CreateProcessW(NULL, cmd_line, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
+            WaitForSingleObject(pi.hProcess, INFINITE);
+
             printf("Linker command could not be executed.\n");
             result = false;
             continue; // timed block is a loop and we wanna hit the iterator correctly to report exit
