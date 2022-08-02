@@ -522,9 +522,10 @@ int main(int argc, char** argv) {
             }
         }
 
-        //TokenStream tokens = cuikpp_run(cpp, input_files[0]);
-        //cuikpp_finalize(cpp);
-        //dump_tokens(stdout, &tokens);
+        TokenStream tokens = cuikpp_get_token_stream(cpp);
+        cuikpp_finalize(cpp);
+
+        dump_tokens(stdout, &tokens);
 
         cuikpp_deinit(cpp);
         #endif

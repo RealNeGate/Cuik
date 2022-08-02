@@ -258,6 +258,10 @@ CUIK_API void cuikpp_dump(Cuik_CPP* ctx);
 // You can't preprocess any more files after this
 CUIK_API void cuikpp_finalize(Cuik_CPP* ctx);
 
+// returns the final token stream (should not be called if you haven't finished
+// iterating through cuikpp_next)
+CUIK_API TokenStream cuikpp_get_token_stream(Cuik_CPP* ctx);
+
 // The file table may contain duplicates (for now...) but it stores all
 // the loaded files by this instance of the preprocessor, in theory one
 // could write a proper incremental compilation model using this for TU
