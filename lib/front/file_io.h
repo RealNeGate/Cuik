@@ -1,7 +1,9 @@
-#include <stdio.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <stdlib.h>
 #include <x86intrin.h>
 
-static void remove_weird_whitespace(size_t len, char* text) {
+static void remove_weird_whitespace(size_t len, uint8_t* text) {
     #if !USE_INTRIN
     for (size_t i = 0; i < len; i++) {
         if (text[i] == '\t') text[i] = ' ';

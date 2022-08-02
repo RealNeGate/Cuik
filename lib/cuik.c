@@ -247,7 +247,7 @@ CUIK_API TokenStream cuik_preprocess_simple(
     const Cuik_IFileSystem* fs, const Cuik_Target* target,
     bool system_includes, size_t include_count, const char* includes[]
 ) {
-    cuikpp_init(out_cpp, fs);
+    cuikpp_init(out_cpp, fs, filepath);
     set_defines(out_cpp, target, system_includes);
 
     // add extra include paths

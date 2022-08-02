@@ -183,9 +183,9 @@ static void irgen_visitor(TranslationUnit* restrict tu, Stmt* restrict s, void* 
 }
 
 // it'll use the normal CLI crap to do so
-static Cuik_CPP* make_preprocessor(void) {
+static Cuik_CPP* make_preprocessor(const char* filepath) {
     Cuik_CPP* cpp = HEAP_ALLOC(sizeof(Cuik_CPP));
-    cuikpp_init(cpp, NULL);
+    cuikpp_init(cpp, NULL, filepath);
     cuikpp_set_common_defines(cpp, &target_desc, !args_nocrt);
 
     dyn_array_for(i, include_directories) {
@@ -222,7 +222,7 @@ static void preproc_file(void* arg) {
     const char* input = (const char*)arg;
 
     // preproc
-    Cuik_CPP* cpp = make_preprocessor();
+    Cuik_CPP* cpp = make_preprocessor(input);
 
     if (ithread_pool != NULL) {
         PreprocResult* r = malloc(sizeof(PreprocResult));
@@ -496,11 +496,36 @@ int main(int argc, char** argv) {
         #if 0
         cuik_raw_tokens(NULL, input_files[0]);
         #else
-        Cuik_CPP* cpp = make_preprocessor();
-        TokenStream tokens = cuikpp_run(cpp, input_files[0]);
-        cuikpp_finalize(cpp);
+        Cuik_CPP* cpp = make_preprocessor(input_files[0]);
 
-        dump_tokens(stdout, &tokens);
+        Cuikpp_Packet packet;
+        while (cuikpp_next(cpp, &packet)) {
+            if (packet.tag == CUIKPP_PACKET_GET_FILE ||
+                packet.tag == CUIKPP_PACKET_QUERY_FILE) {
+                Cuik_File file = CUIK_CALL(
+                    &cuik_default_fs, get_file,
+                    packet.tag == CUIKPP_PACKET_QUERY_FILE,
+                    packet.get_file.input_path
+                );
+
+                packet.get_file.found = file.found;
+                packet.get_file.content_length = file.length;
+                packet.get_file.content = (uint8_t*) file.data;
+            } else if (packet.tag == CUIKPP_PACKET_CANONICALIZE) {
+                CUIK_CALL(
+                    &cuik_default_fs, canonicalize,
+                    packet.canonicalize.output_path,
+                    packet.canonicalize.input_path
+                );
+            } else {
+                assert(0);
+            }
+        }
+
+        //TokenStream tokens = cuikpp_run(cpp, input_files[0]);
+        //cuikpp_finalize(cpp);
+        //dump_tokens(stdout, &tokens);
+
         cuikpp_deinit(cpp);
         #endif
         return EXIT_SUCCESS;
@@ -595,7 +620,7 @@ int main(int argc, char** argv) {
             char lib_dir[FILENAME_MAX];
             sprintf_s(lib_dir, FILENAME_MAX, "%s/crt/lib/", crt_dirpath);
 
-            if (0 /* use TB as the linker */) {
+            if (1 /* use TB as the linker */) {
                 size_t system_libpath_count = cuik_get_system_search_path_count();
 
                 TB_LinkerInput link = { 0 };
@@ -626,6 +651,9 @@ int main(int argc, char** argv) {
 
                     if (!args_nocrt) {
                         #ifdef _WIN32
+                        *inputs++ = "kernel32.lib";
+                        *inputs++ = "user32.lib";
+
                         *inputs++ = "ucrt.lib";
                         *inputs++ = "msvcrt.lib";
                         *inputs++ = "vcruntime.lib";

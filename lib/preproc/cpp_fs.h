@@ -37,7 +37,6 @@ static Cuik_File get_file(void* user_data, bool is_query, const char* path) {
 
     // fat null terminator
     memset(&buffer[file_size.QuadPart], 0, 16);
-    remove_weird_whitespace(file_size.QuadPart, buffer);
 
     //file_io_memory_usage += (file_size.QuadPart + 16);
     //printf("%f MiB of files\n", (double)file_io_memory_usage / 1048576.0);

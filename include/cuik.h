@@ -184,6 +184,34 @@ typedef struct Cuik_FileEntry {
     size_t content_len;
 } Cuik_FileEntry;
 
+typedef struct Cuikpp_Packet {
+    enum {
+        CUIKPP_PACKET_NONE,
+        CUIKPP_PACKET_GET_FILE,
+        CUIKPP_PACKET_QUERY_FILE,
+        CUIKPP_PACKET_CANONICALIZE,
+    } tag;
+    union {
+        struct {
+            // input
+            const char* input_path;
+
+            // output
+            bool found;
+            size_t content_length;
+            uint8_t* content;
+        } get_file;
+        struct {
+            // input
+            const char* input_path;
+
+            // output
+            // i provide the path for you
+            char* output_path;
+        } canonicalize;
+    };
+} Cuikpp_Packet;
+
 typedef struct Cuik_DefineRef {
     uint32_t bucket, id;
 } Cuik_DefineRef;
@@ -223,7 +251,7 @@ for (Cuik_DefineRef it, curr_ = cuikpp_first_define(ctx); \
     it = curr_, cuikpp_next_define(ctx, &curr_);)
 
 // if fs is NULL it defaults to cuik_default_fs
-CUIK_API void cuikpp_init(Cuik_CPP* ctx, const Cuik_IFileSystem* fs);
+CUIK_API void cuikpp_init(Cuik_CPP* ctx, const Cuik_IFileSystem* fs, const char filepath[FILENAME_MAX]);
 CUIK_API void cuikpp_deinit(Cuik_CPP* ctx);
 CUIK_API void cuikpp_dump(Cuik_CPP* ctx);
 
@@ -257,6 +285,9 @@ CUIK_API void cuikpp_define_slice(Cuik_CPP* ctx, size_t keylen, const char key[]
 
 // Convert C preprocessor state and an input file into a final preprocessed stream
 CUIK_API TokenStream cuikpp_run(Cuik_CPP* ctx, const char filepath[FILENAME_MAX]);
+
+// Keep iterating through this and filling in the packets accordingly to preprocess a file.
+CUIK_API bool cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet);
 
 // Converts a file into tokens without preprocessing
 CUIK_API TokenStream cuik_raw_tokens(const Cuik_IFileSystem* fs, const char filepath[FILENAME_MAX]);

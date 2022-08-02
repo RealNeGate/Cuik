@@ -10,8 +10,8 @@ CUIK_API TokenStream cuik_raw_tokens(const Cuik_IFileSystem* fs, const char file
     }
 
     // convert all the weird whitespace into something normal
-    remove_weird_whitespace(file.length, file.data);
     unsigned char* text = (unsigned char*)file.data;
+    remove_weird_whitespace(file.length, text);
 
     Lexer l = {filepath, text, text, 1};
 

@@ -25,12 +25,40 @@ typedef struct IncludeOnceEntry {
 
 enum { CPP_MAX_SCOPE_DEPTH = 4096 };
 
+struct TokenStream {
+    const char* filepath;
+
+    // stb_ds array
+    struct Token* tokens;
+    size_t current;
+
+    // stb_ds array
+    struct SourceLoc* locations;
+};
+
 struct Cuik_CPP {
     // used to store macro expansion results
     size_t the_shtuffs_size;
     unsigned char* the_shtuffs;
 
     const Cuik_IFileSystem* file_system;
+    TokenStream tokens;
+
+    // we got a little state machine design
+    // to emulate some bootleg coroutines :P
+    enum {
+        CUIK__CPP_NONE,
+        CUIK__CPP_FIRST_FILE,
+        CUIK__CPP_LIB_INCLUDE, // <foo.h>
+        CUIK__CPP_USR_INCLUDE, // "bar.h"
+        CUIK__CPP_CANONICALIZE,
+        CUIK__CPP_GET_FILE,
+    } state1;
+    int state2;
+
+    // preprocessor stack
+    int stack_ptr;
+    struct CPPStackSlot* stack;
 
     // stats
     #if CUIK__CPP_STATS
@@ -64,17 +92,6 @@ struct Cuik_CPP {
     // tells you if the current scope has had an entry evaluated,
     // this is important for choosing when to check #elif and #endif
     bool scope_eval[CPP_MAX_SCOPE_DEPTH];
-};
-
-struct TokenStream {
-    const char* filepath;
-
-    // stb_ds array
-    struct Token* tokens;
-    size_t current;
-
-    // stb_ds array
-    struct SourceLoc* locations;
 };
 
 struct Cuik_Linker {
