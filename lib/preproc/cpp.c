@@ -47,6 +47,7 @@ typedef struct CPPStackSlot {
     const char* directory;
 
     size_t file_id;
+    uint64_t start_time;
     SourceLocIndex include_loc;
 
     Lexer l;
@@ -57,57 +58,7 @@ typedef struct CPPStackSlot {
 #include "cpp_expand.h"
 #include "cpp_fs.h"
 #include "cpp_expr.h"
-#include "cpp_raw.h"
-
-/*static CPPStackSlot* push_file(Cuik_CPP* ctx, const char* filepath, size_t parent_entry, SourceLocIndex include_loc, int depth) {
-    #if CUIK__CPP_STATS
-    uint64_t start = cuik_time_in_nanos();
-    #endif
-
-    Cuik_File file = CUIK_CALL(ctx->file_system, get_file, false, filepath);
-    if (!file.found) {
-        panic("preprocessor error: could not read file! %s\n", filepath);
-    }
-
-    // convert all the weird whitespace into something normal
-    remove_weird_whitespace(file.length, file.data);
-    unsigned char* text = (unsigned char*)file.data;
-
-    // record the file entry
-    size_t file_entry_id = dyn_array_length(ctx->files);
-    Cuik_FileEntry file_entry = {
-        .parent_id = parent_entry,
-        .depth = depth,
-        .include_loc = include_loc,
-        .filepath = filepath,
-        .content = text,
-        .content_len = file.length,
-    };
-    dyn_array_put(ctx->files, file_entry);
-
-    CPPStackSlot* slot = &ctx->stack[ctx->stack_ptr++];
-    *slot = (CPPStackSlot){
-        .filepath = filepath,
-        .file_id = file_entry_id,
-        .l = { filepath, text, text, 1 },
-    };
-    lexer_read(&slot->l);
-
-    #if CUIK__CPP_STATS
-    uint64_t end = cuik_time_in_nanos();
-    c->total_files_read += 1;
-    c->total_io_time = (io_time_done - timer_start);
-    #endif
-
-    return slot;
-}
-
-static CPPStackSlot* pop_file(Cuik_CPP* ctx) {
-    assert(ctx->stack_ptr > 0);
-    ctx->stack_ptr -= 1;
-
-    return ctx->stack_ptr != 0 ? &ctx->stack[ctx->stack_ptr - 1] : NULL;
-}*/
+#include "cpp_iters.h"
 
 static String get_pp_tokens_until_newline(Lexer* restrict l) {
     const unsigned char* start = l->token_start;
@@ -124,15 +75,11 @@ static String get_token_as_string(Lexer* l) {
     return (String){ .length = l->token_end - l->token_start, .data = l->token_start };
 }
 
-CUIK_API void cuikpp_init(Cuik_CPP* ctx, const Cuik_IFileSystem* fs, const char filepath[FILENAME_MAX]) {
-    // default amirite
-    if (fs == NULL) fs = &cuik_default_fs;
-
+CUIK_API void cuikpp_init(Cuik_CPP* ctx, const char filepath[FILENAME_MAX]) {
     size_t sz = sizeof(void*) * MACRO_BUCKET_COUNT * SLOTS_PER_MACRO_BUCKET;
     size_t sz2 = sizeof(SourceLocIndex) * MACRO_BUCKET_COUNT * SLOTS_PER_MACRO_BUCKET;
 
     *ctx = (Cuik_CPP){
-        .file_system = fs,
         .files = dyn_array_create(Cuik_FileEntry),
 
         .stack = cuik__valloc(MAX_CPP_STACK_DEPTH * sizeof(CPPStackSlot)),
@@ -163,7 +110,11 @@ CUIK_API void cuikpp_init(Cuik_CPP* ctx, const Cuik_IFileSystem* fs, const char 
 
     ctx->tokens.filepath = filepath;
 
-    ctx->stack[0] = (CPPStackSlot){ .filepath = filepath, .directory = directory };
+    ctx->stack[0] = (CPPStackSlot){
+        .filepath = filepath,
+        .directory = directory,
+        .start_time = cuik_time_in_nanos()
+    };
     ctx->state1 = CUIK__CPP_FIRST_FILE;
 
     tls_init();
@@ -186,23 +137,23 @@ CUIK_API bool cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
             // ask to get file
             case 0: {
                 packet->tag = CUIKPP_PACKET_GET_FILE;
-                packet->get_file.input_path = slot->filepath;
-                packet->get_file.found = false;
-                packet->get_file.content_length = 0;
-                packet->get_file.content = NULL;
+                packet->file.input_path = slot->filepath;
+                packet->file.found = false;
+                packet->file.content_length = 0;
+                packet->file.content = NULL;
                 return true;
             }
 
             // get back a file
             case 1: {
-                if (!packet->get_file.found && packet->get_file.content_length == 0) {
+                if (!packet->file.found && packet->file.content_length == 0) {
                     fprintf(stderr, "preprocessor error: could not read file! %s\n", slot->filepath);
                     return false;
                 }
 
-                const char* filepath = packet->get_file.input_path;
-                size_t file_length = packet->get_file.content_length;
-                uint8_t* file_data = packet->get_file.content;
+                const char* filepath = packet->file.input_path;
+                size_t file_length = packet->file.content_length;
+                uint8_t* file_data = packet->file.content;
 
                 // convert all the weird whitespace into something normal
                 remove_weird_whitespace(file_length, file_data);
@@ -241,7 +192,7 @@ CUIK_API bool cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
         //  1+i is search path include
         //  n   is local include (only run for LIB_INCLUDE)
         ////////////////////////////////
-        if (!packet->get_file.found && packet->get_file.content_length == 0) {
+        if (!packet->file.found && packet->file.content_length == 0) {
             #if CUIK__CPP_STATS
             ctx->total_fstats += 1;
             #endif
@@ -262,16 +213,16 @@ CUIK_API bool cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
 
             // ask for the next filepath
             // it's ok this const removal is based
-            char* path = (char*) packet->get_file.input_path;
+            char* path = (char*) packet->file.input_path;
             sprintf_s(path, FILENAME_MAX, "%s%s", ctx->system_include_dirs[index], slot->filepath);
 
-            packet->get_file.found = false;
-            packet->get_file.content_length = 0;
-            packet->get_file.content = NULL;
+            packet->file.found = false;
+            packet->file.content_length = 0;
+            packet->file.content = NULL;
             return true;
         }
 
-        const char* filepath = packet->get_file.input_path;
+        const char* filepath = packet->file.input_path;
 
         packet->tag = CUIKPP_PACKET_CANONICALIZE;
         packet->canonicalize.input_path = filepath;
@@ -312,10 +263,10 @@ CUIK_API bool cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
             ctx->state1 = CUIK__CPP_GET_FILE;
 
             packet->tag = CUIKPP_PACKET_GET_FILE;
-            packet->get_file.input_path = filepath;
-            packet->get_file.found = false;
-            packet->get_file.content_length = 0;
-            packet->get_file.content = NULL;
+            packet->file.input_path = filepath;
+            packet->file.found = false;
+            packet->file.content_length = 0;
+            packet->file.content = NULL;
             return true;
         }
 
@@ -324,9 +275,9 @@ CUIK_API bool cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
         ctx->stack_ptr -= 1;
         slot = &ctx->stack[ctx->stack_ptr - 1];
     } else if (ctx->state1 == CUIK__CPP_GET_FILE) {
-        const char* filepath = packet->get_file.input_path;
-        size_t file_length = packet->get_file.content_length;
-        uint8_t* file_data = packet->get_file.content;
+        const char* filepath = packet->file.input_path;
+        size_t file_length = packet->file.content_length;
+        uint8_t* file_data = packet->file.content;
 
         // convert all the weird whitespace into something normal
         remove_weird_whitespace(file_length, file_data);
@@ -338,6 +289,7 @@ CUIK_API bool cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
 
         // record the file entry
         Cuik_FileEntry file_entry = {
+            .include_loc = slot->include_loc,
             .filepath = filepath,
             .content = file_data,
             .content_len = file_length,
@@ -363,7 +315,24 @@ CUIK_API bool cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
 
             // if this is the last file, just exit
             if (ctx->stack_ptr == 0) {
+                // place last token
+                Token t = {0, 0, NULL, NULL};
+                arrput(s->tokens, t);
                 return false;
+            }
+
+            // write out profile entry
+            if (cuik_is_profiling()) {
+                char temp[256];
+                snprintf(temp, sizeof(temp), "preprocess: %s", slot->filepath);
+                temp[sizeof(temp) - 1] = 0;
+
+                char* p = temp;
+                for (; *p; p++) {
+                    if (*p == '\\') *p = '/';
+                }
+
+                cuik_profile_region(slot->start_time, "%s", temp);
             }
 
             // step out of this file into the previous one
@@ -751,7 +720,11 @@ CUIK_API bool cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
                     }
 
                     // insert incomplete new stack slot
-                    ctx->stack[ctx->stack_ptr++] = (CPPStackSlot){ .filepath = filename };
+                    ctx->stack[ctx->stack_ptr++] = (CPPStackSlot){
+                        .filepath = filename,
+                        .include_loc = new_include_loc,
+                        .start_time = cuik_time_in_nanos()
+                    };
 
                     // reset the state machine
                     ctx->state1 = is_lib_include ? CUIK__CPP_LIB_INCLUDE : CUIK__CPP_USR_INCLUDE;
@@ -780,10 +753,10 @@ CUIK_API bool cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
                     }
 
                     packet->tag = CUIKPP_PACKET_QUERY_FILE;
-                    packet->get_file.input_path = path;
-                    packet->get_file.found = false;
-                    packet->get_file.content_length = 0;
-                    packet->get_file.content = NULL;
+                    packet->file.input_path = path;
+                    packet->file.found = false;
+                    packet->file.content_length = 0;
+                    packet->file.content = NULL;
                     return true;
                 } else if (memcmp(directive.data, "warning", 7) == 0) {
                     success = true;
@@ -815,8 +788,7 @@ CUIK_API bool cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
                 // FAST PATH
                 Token t = {
                     classify_ident(l->token_start, l->token_end - l->token_start),
-                    loc,
-                    l->token_start, l->token_end,
+                    loc, l->token_start, l->token_end,
                 };
                 arrput(s->tokens, t);
 
@@ -859,19 +831,18 @@ CUIK_API void cuikpp_deinit(Cuik_CPP* ctx) {
         cuikpp_finalize(ctx);
     }
 
-    if (ctx->files != NULL) {
+    /*if (ctx->files != NULL) {
         size_t count = dyn_array_length(ctx->files);
 
         for (size_t i = 0; i < count; i++) {
             CUIK_CALL(ctx->file_system, free_file, &ctx->files[i]);
         }
-
-        dyn_array_destroy(ctx->files);
-        ctx->files = NULL;
-    }
+    }*/
 
     cuik__vfree((void*)ctx->the_shtuffs, THE_SHTUFFS_SIZE);
+    dyn_array_destroy(ctx->files);
     ctx->the_shtuffs = NULL;
+    ctx->files = NULL;
 }
 
 CUIK_API void cuikpp_finalize(Cuik_CPP* ctx) {
@@ -907,69 +878,6 @@ CUIK_API Cuik_FileEntry* cuikpp_get_file_table(Cuik_CPP* ctx) {
     return &ctx->files[0];
 }
 
-CUIK_API bool cuikpp_find_include_include(Cuik_CPP* ctx, char output[MAX_PATH], const char* path) {
-    size_t num_system_include_dirs = arrlen(ctx->system_include_dirs);
-
-    for (size_t i = 0; i < num_system_include_dirs; i++) {
-        sprintf_s(output, FILENAME_MAX, "%s%s", ctx->system_include_dirs[i], path);
-
-        if (CUIK_CALL(ctx->file_system, get_file, true, output).found) {
-            return true;
-        }
-    }
-
-    return false;
-}
-
-CUIK_API void cuikpp_add_include_directory(Cuik_CPP* ctx, const char dir[]) {
-    arrput(ctx->system_include_dirs, strdup(dir));
-}
-
-CUIK_API Cuik_DefineRef cuikpp_first_define(Cuik_CPP* ctx) {
-    for (int i = 0; i < MACRO_BUCKET_COUNT; i++) {
-        if (ctx->macro_bucket_count[i] != 0) {
-            // first slot in that non-empty bucket
-            return (Cuik_DefineRef){ i, 0 };
-        }
-    }
-
-    return (Cuik_DefineRef){ MACRO_BUCKET_COUNT, 0 };
-}
-
-CUIK_API bool cuikpp_next_define(Cuik_CPP* ctx, Cuik_DefineRef* src) {
-    // we outta bounds
-    if (src->bucket >= MACRO_BUCKET_COUNT) return false;
-
-    // find next bucket
-    src->id += 1;
-    while (src->id >= ctx->macro_bucket_count[src->bucket]) {
-        src->id = 0;
-        src->bucket += 1;
-
-        if (src->bucket >= MACRO_BUCKET_COUNT) {
-            return false;
-        }
-    }
-
-    return true;
-}
-
-CUIK_API Cuik_Define cuikpp_get_define(Cuik_CPP* ctx, Cuik_DefineRef src) {
-    size_t e = (src.bucket * SLOTS_PER_MACRO_BUCKET) + src.id;
-
-    size_t keylen = ctx->macro_bucket_keys_length[e];
-    const char* key = (const char*)ctx->macro_bucket_keys[e];
-
-    size_t vallen = ctx->macro_bucket_values_end[e] - ctx->macro_bucket_values_start[e];
-    const char* val = (const char*)ctx->macro_bucket_values_start[e];
-
-    return (Cuik_Define){
-        .loc = ctx->macro_bucket_source_locs[e],
-        .key = { keylen, key },
-        .value = { vallen, val },
-    };
-}
-
 CUIK_API void cuikpp_dump(Cuik_CPP* ctx) {
     int count = 0;
 
@@ -990,34 +898,6 @@ CUIK_API void cuikpp_dump(Cuik_CPP* ctx) {
     }
 
     printf("\n// Macro defines active: %d\n", count);
-}
-
-CUIK_API TokenStream cuikpp_run(Cuik_CPP* ctx, const char filepath[]) {
-    char* slash = strrchr(filepath, '\\');
-    if (!slash) slash = strrchr(filepath, '/');
-
-    char directory[FILENAME_MAX];
-    if (slash) {
-        #if _WIN32
-        sprintf_s(directory, FILENAME_MAX, "%.*s\\", (int)(slash - filepath), filepath);
-        #else
-        snprintf(directory, FILENAME_MAX, "%.*s/", (int)(slash - filepath), filepath);
-        #endif
-    } else {
-        directory[0] = '\0';
-    }
-
-    TokenStream s = { .filepath = filepath };
-    s.filepath = filepath;
-    arrsetcap(s.tokens, 0x25000);
-
-    preprocess_file(ctx, &s, 0, 0, directory, filepath, 1);
-
-    Token t = {0, 0, NULL, NULL};
-    arrput(s.tokens, t);
-
-    // printf("%zu\n", arrlen(s.tokens));
-    return s;
 }
 
 static void* gimme_the_shtuffs(Cuik_CPP* restrict c, size_t len) {
@@ -1089,549 +969,6 @@ static void pop_scope(Cuik_CPP* restrict ctx, Lexer* restrict l) {
         generic_error(l, "Too many endifs\n");
     }
     ctx->depth--;
-}
-
-static void preprocess_file(Cuik_CPP* restrict c, TokenStream* restrict s, size_t parent_entry, SourceLocIndex include_loc, const char* directory, const char* filepath, int depth) {
-    // hacky but i don't wanna wrap it in a timed_block
-    uint64_t timer_start = cuik_time_in_nanos();
-
-    Cuik_File file = CUIK_CALL(c->file_system, get_file, false, filepath);
-    if (!file.found) {
-        panic("preprocessor error: could not read file! %s\n", filepath);
-    }
-
-    // convert all the weird whitespace into something normal
-    unsigned char* text = (unsigned char*)file.data;
-    remove_weird_whitespace(file.length, text);
-
-    size_t file_entry_id = dyn_array_length(c->files);
-    Cuik_FileEntry file_entry = {
-        .parent_id = parent_entry,
-        .depth = depth,
-        .include_loc = include_loc,
-        .filepath = filepath,
-        .content = text,
-        .content_len = file.length,
-    };
-    dyn_array_put(c->files, file_entry);
-
-    #if CUIK__CPP_STATS
-    uint64_t io_time_done = cuik_time_in_nanos();
-    c->total_files_read += 1;
-    c->total_io_time = (io_time_done - timer_start);
-    #endif
-
-    Lexer l = { filepath, text, text, 1 };
-    lexer_read(&l);
-    do {
-        l.hit_line = false;
-
-        if (l.token_type == TOKEN_IDENTIFIER) {
-            SourceLocIndex loc = get_source_location(c, &l, s, include_loc, SOURCE_LOC_NORMAL);
-
-            if (!is_defined(c, l.token_start, l.token_end - l.token_start)) {
-                // FAST PATH
-                Token t = {
-                    classify_ident(l.token_start, l.token_end - l.token_start),
-                    loc,
-                    l.token_start, l.token_end,
-                };
-                arrput(s->tokens, t);
-
-                lexer_read(&l);
-            } else {
-                // SLOW PATH BECAUSE IT NEEDS TO SPAWN POSSIBLY METRIC SHIT LOADS
-                // OF TOKENS AND EXPAND WITH THE AVERAGE C PREPROCESSOR SPOOKIES
-                expand_ident(c, s, &l, loc);
-            }
-        } else if (l.token_type == TOKEN_DOUBLE_HASH) {
-            int line = l.current_line;
-            lexer_read(&l);
-
-            assert(arrlen(s->tokens) > 0);
-            Token* last = &s->tokens[arrlen(s->tokens) - 1];
-
-            expand_double_hash(c, s, last, &l, line);
-        } else if (l.token_type == '#') {
-            lexer_read(&l);
-
-            if (l.token_type == TOKEN_IDENTIFIER) {
-                if (lexer_match(&l, 2, "if")) {
-                    SourceLocIndex loc = get_source_location(c, &l, s, include_loc, SOURCE_LOC_MACRO);
-                    lexer_read(&l);
-
-                    assert(!l.hit_line);
-                    if (eval(c, s, &l, loc)) {
-                        push_scope(c, &l, true);
-                    } else {
-                        push_scope(c, &l, false);
-                        skip_directive_body(&l);
-                    }
-
-                    // we should be one a different line now
-                    assert(l.hit_line);
-                } else if (lexer_match(&l, 6, "ifndef")) {
-                    lexer_read(&l);
-
-                    if (l.token_type != TOKEN_IDENTIFIER) {
-                        generic_error(&l, "expected identifier!");
-                    }
-
-                    if (!is_defined(c, l.token_start, l.token_end - l.token_start)) {
-                        push_scope(c, &l, true);
-                        lexer_read(&l);
-                    } else {
-                        push_scope(c, &l, false);
-                        skip_directive_body(&l);
-                    }
-                } else if (lexer_match(&l, 5, "ifdef")) {
-                    lexer_read(&l);
-
-                    if (l.token_type != TOKEN_IDENTIFIER) {
-                        generic_error(&l, "expected identifier!");
-                    }
-
-                    if (is_defined(c, l.token_start, l.token_end - l.token_start)) {
-                        push_scope(c, &l, true);
-                        lexer_read(&l);
-                    } else {
-                        push_scope(c, &l, false);
-                        skip_directive_body(&l);
-                    }
-                } else if (lexer_match(&l, 4, "else")) {
-                    lexer_read(&l);
-
-                    // if it didn't evaluate any of the other options
-                    // do this
-                    int last_scope = c->depth - 1;
-
-                    if (!c->scope_eval[last_scope]) {
-                        c->scope_eval[last_scope] = true;
-                    } else {
-                        skip_directive_body(&l);
-                    }
-                } else if (lexer_match(&l, 4, "elif")) {
-                    SourceLocIndex loc = get_source_location(c, &l, s, include_loc, SOURCE_LOC_MACRO);
-                    lexer_read(&l);
-
-                    assert(!l.hit_line);
-
-                    // if it didn't evaluate any of the other options
-                    // try to do this
-                    int last_scope = c->depth - 1;
-
-                    if (!c->scope_eval[last_scope] && eval(c, s, &l, loc)) {
-                        c->scope_eval[last_scope] = true;
-                    } else {
-                        skip_directive_body(&l);
-                    }
-
-                    // we should be one a different line now
-                    assert(l.hit_line);
-                } else if (lexer_match(&l, 5, "endif")) {
-                    lexer_read(&l);
-
-                    if (!l.hit_line) {
-                        // TODO(NeGate): warning people if they add extra tokens
-                        // to the endif
-                        while (!l.hit_line) lexer_read(&l);
-                    }
-
-                    pop_scope(c, &l);
-                } else if (lexer_match(&l, 6, "define")) {
-                    lexer_read(&l);
-
-                    SourceLocIndex macro_loc = get_source_location(c, &l, s, include_loc, SOURCE_LOC_MACRO);
-                    if (l.token_type != TOKEN_IDENTIFIER) {
-                        generic_error(&l, "expected identifier!");
-                    }
-
-                    // Hash name
-                    uint64_t slot = hash_ident(l.token_start, l.token_end - l.token_start);
-                    uint64_t e = c->macro_bucket_count[slot] + (slot * SLOTS_PER_MACRO_BUCKET);
-
-                    // Insert into buckets
-                    if (c->macro_bucket_count[slot] >= SLOTS_PER_MACRO_BUCKET) {
-                        generic_error(&l, "cannot store macro, out of memory!");
-                    }
-
-                    c->macro_bucket_count[slot] += 1;
-                    c->macro_bucket_keys[e] = l.token_start;
-
-                    size_t token_length = l.token_end - l.token_start;
-                    c->macro_bucket_keys_length[e] = token_length;
-
-                    // if there's a parenthesis directly after the identifier
-                    // it's a macro function
-                    if (*l.token_end == '(') {
-                        lexer_read(&l);
-                        expect(&l, '(');
-
-                        int arg_count = 0;
-                        while (l.token_type != ')') {
-                            if (arg_count) {
-                                expect(&l, ',');
-                            }
-
-                            if (l.token_type != TOKEN_TRIPLE_DOT &&
-                                l.token_type != TOKEN_IDENTIFIER) {
-                                generic_error(&l, "expected identifier!");
-                            }
-
-                            lexer_read(&l);
-                            arg_count++;
-                        }
-
-                        assert(!l.hit_line);
-                        expect(&l, ')');
-                    } else {
-                        // Skip until we hit a newline
-                        assert(!l.hit_line);
-                        lexer_read(&l);
-                    }
-
-                    const unsigned char* start = l.token_start;
-                    const unsigned char* end = l.token_start;
-                    while (!l.hit_line) {
-                        end = l.token_end;
-                        lexer_read(&l);
-                    }
-
-                    c->macro_bucket_values_start[e] = start;
-                    c->macro_bucket_values_end[e] = end;
-                    c->macro_bucket_source_locs[e] = macro_loc;
-                } else if (lexer_match(&l, 7, "include")) {
-                    SourceLocIndex new_include_loc = get_source_location(c, &l, s, include_loc, SOURCE_LOC_NORMAL);
-                    lexer_read(&l);
-
-                    #if CUIK__CPP_STATS
-                    uint64_t include_start_time = cuik_time_in_nanos();
-                    #endif
-
-                    unsigned char* filename = tls_push(MAX_PATH);
-
-                    bool is_lib_include = false;
-                    // Evaluate
-                    if (l.token_type == '<') {
-                        lexer_read(&l);
-
-                        is_lib_include = true;
-                        size_t len = 0;
-
-                        // Hacky but mostly works
-                        do {
-                            size_t token_len = l.token_end - l.token_start;
-                            if (len + token_len > MAX_PATH) {
-                                generic_error(&l, "filename too long!");
-                            }
-
-                            memcpy(&filename[len], l.token_start, token_len);
-                            len += token_len;
-
-                            lexer_read(&l);
-                        } while (l.token_type != '>');
-
-                        // slap that null terminator on it like a boss bitch
-                        filename[len] = '\0';
-
-                        if (l.token_type != '>') {
-                            generic_error(&l, "expected '>' for #include");
-                        }
-
-                        lexer_read(&l);
-                    } else {
-                        size_t old_tokens_length = arrlen(s->tokens);
-                        s->current = old_tokens_length;
-
-                        expand(c, s, &l, new_include_loc);
-                        assert(s->current != arrlen(s->tokens) && "Expected the macro expansion to add something");
-
-                        // Insert a null token at the end
-                        Token t = {0, arrlen(s->locations) - 1, NULL, NULL};
-                        arrput(s->tokens, t);
-
-                        if (tokens_get(s)->type == TOKEN_STRING_DOUBLE_QUOTE) {
-                            Token* t = tokens_get(s);
-                            size_t len = (t->end - t->start) - 2;
-                            if (len > MAX_PATH) {
-                                report(REPORT_ERROR, NULL, s, t->location, "Filename too long");
-                                abort();
-                            }
-
-                            memcpy(filename, t->start + 1, len);
-                            filename[len] = '\0';
-
-                            tokens_next(s);
-                        } else {
-                            generic_error(&l, "expected file path!");
-                        }
-
-                        // reset token stream
-                        arrsetlen(s->tokens, old_tokens_length);
-                        s->current = 0;
-                    }
-
-                    // Search for file in system libs
-                    char path[FILENAME_MAX];
-                    bool success = false;
-
-                    if (!is_lib_include) {
-                        // Try local includes
-                        sprintf_s(path, FILENAME_MAX, "%s%s", directory, filename);
-
-                        #if CUIK__CPP_STATS
-                        c->total_fstats += 1;
-                        #endif
-
-                        if (CUIK_CALL(c->file_system, get_file, true, path).found) success = true;
-                    }
-
-                    if (!success) {
-                        size_t num_system_include_dirs = arrlen(c->system_include_dirs);
-
-                        for (size_t i = 0; i < num_system_include_dirs; i++) {
-                            sprintf_s(path, FILENAME_MAX, "%s%s", c->system_include_dirs[i], filename);
-
-                            #if CUIK__CPP_STATS
-                            c->total_fstats += 1;
-                            #endif
-
-                            if (CUIK_CALL(c->file_system, get_file, true, path).found) {                                success = true;
-                                break;
-                            }
-                        }
-                    }
-
-                    if (!success && is_lib_include) {
-                        // Try local includes
-                        sprintf_s(path, FILENAME_MAX, "%s%s", directory, filename);
-
-                        #if CUIK__CPP_STATS
-                        c->total_fstats += 1;
-                        #endif
-
-                        if (CUIK_CALL(c->file_system, get_file, true, path).found) {
-                            success = true;
-                        }
-                    }
-
-                    if (!success) {
-                        int loc = l.current_line;
-                        fprintf(stderr, "error %s:%d: Could not find file! %s\n", l.filepath, loc, filename);
-                        abort();
-                    }
-                    tls_restore(filename);
-
-                    // get me an absolute path
-                    char* new_path = arena_alloc(&thread_arena, FILENAME_MAX, 1);
-                    CUIK_CALL(c->file_system, canonicalize, new_path, path);
-
-                    ptrdiff_t search = shgeti(c->include_once, new_path);
-
-                    #if CUIK__CPP_STATS
-                    uint64_t include_end_time = cuik_time_in_nanos();
-                    c->total_include_time += (include_end_time - include_start_time);
-                    #endif
-
-                    if (search < 0) {
-                        char* slash = strrchr(new_path, '/');
-                        if (!slash) slash = strrchr(new_path, '\\');
-
-                        char* new_dir;
-                        if (slash) {
-                            size_t slash_pos = slash - new_path;
-
-                            new_dir = arena_alloc(&thread_arena, slash_pos + 2, 1);
-                            memcpy(new_dir, new_path, slash_pos);
-                            new_dir[slash_pos] = '/';
-                            new_dir[slash_pos + 1] = 0;
-                        } else {
-                            new_dir = arena_alloc(&thread_arena, 2, 1);
-                            new_dir[0] = '/';
-                            new_dir[1] = 0;
-                        }
-
-                        if (0) {
-                            for (int i = 0; i < depth; i++) printf("  ");
-                            printf("%s : %s\n", new_dir, new_path);
-                        }
-
-                        preprocess_file(c, s, file_entry_id, new_include_loc, new_dir, new_path, depth + 1);
-                    }
-                } else if (lexer_match(&l, 6, "pragma")) {
-                    lexer_read(&l);
-
-                    if (lexer_match(&l, 4, "once")) {
-                        shput(c->include_once, (char*)filepath, 0);
-                        lexer_read(&l);
-
-                        // We gotta hit a line by now
-                        assert(l.hit_line);
-                    } else if (lexer_match(&l, 7, "message")) {
-                        lexer_read(&l);
-
-                        printf("message %s:%d:  ", l.filepath, l.current_line);
-                        while (!l.hit_line) {
-                            printf("%.*s ", (int)(l.token_end - l.token_start), l.token_start);
-                            lexer_read(&l);
-                        }
-                        printf("\n");
-                    } else {
-                        // convert to #pragma blah => _Pragma("blah")
-                        SourceLocIndex loc = get_source_location(c, &l, s, include_loc, SOURCE_LOC_NORMAL);
-
-                        unsigned char* str = gimme_the_shtuffs(c, sizeof("_Pragma"));
-                        memcpy(str, "_Pragma", sizeof("_Pragma"));
-                        Token t = (Token){TOKEN_KW_Pragma, loc, str, str + 7};
-                        arrput(s->tokens, t);
-
-                        str = gimme_the_shtuffs(c, sizeof("("));
-                        str[0] = '(';
-                        str[1] = 0;
-                        t = (Token){'(', loc, str, str + 1};
-                        arrput(s->tokens, t);
-
-                        // Skip until we hit a newline
-                        assert(!l.hit_line);
-
-                        const unsigned char* start = l.token_start;
-                        const unsigned char* end = l.token_start;
-                        while (!l.hit_line) {
-                            end = l.token_end;
-                            lexer_read(&l);
-                        }
-
-                        // convert pragma content into string
-                        {
-                            size_t len = end - start;
-                            str = gimme_the_shtuffs(c, (len * 2) + 3);
-                            unsigned char* curr = str;
-
-                            *curr++ = '\"';
-                            for (size_t i = 0; i < len; i++) {
-                                if (start[i] == '\"') {
-                                    *curr++ = '\\';
-                                    *curr++ = '\"';
-                                } else {
-                                    *curr++ = start[i];
-                                }
-                            }
-                            *curr++ = '\"';
-                            *curr++ = '\0';
-
-                            t = (Token){
-                                TOKEN_STRING_DOUBLE_QUOTE,
-                                loc,
-                                str, curr - 1,
-                            };
-                            arrput(s->tokens, t);
-                        }
-
-                        str = gimme_the_shtuffs(c, sizeof(")"));
-                        str[0] = ')';
-                        str[1] = 0;
-                        t = (Token){
-                            ')',
-                            loc,
-                            str, str + 1,
-                        };
-                        arrput(s->tokens, t);
-                    }
-                } else if (lexer_match(&l, 5, "undef")) {
-                    lexer_read(&l);
-
-                    if (l.token_type != TOKEN_IDENTIFIER) {
-                        generic_error(&l, "expected identifier!");
-                    }
-
-                    const unsigned char* start = l.token_start;
-                    size_t length = l.token_end - l.token_start;
-
-                    lexer_read(&l);
-
-                    // Hash name
-                    uint64_t slot = hash_ident(start, length);
-                    uint64_t base = slot * SLOTS_PER_MACRO_BUCKET;
-                    uint64_t count = c->macro_bucket_count[slot];
-
-                    // TODO(NeGate): We might wanna invest into a faster data structure.
-                    for (size_t i = 0; i < count; i++) {
-                        uint64_t e = base + i;
-
-                        if (c->macro_bucket_keys_length[e] == length &&
-                            memcmp(c->macro_bucket_keys[e], start, length) == 0) {
-                            // remove swap
-                            uint64_t last = base + (count - 1);
-
-                            if (i != last) {
-                                c->macro_bucket_keys_length[e] = c->macro_bucket_keys_length[last];
-                                c->macro_bucket_keys[e] = c->macro_bucket_keys[last];
-                                c->macro_bucket_values_start[e] = c->macro_bucket_values_start[last];
-                                c->macro_bucket_values_end[e] = c->macro_bucket_values_end[last];
-                                c->macro_bucket_source_locs[e] = c->macro_bucket_source_locs[last];
-                            }
-                            c->macro_bucket_count[slot]--;
-                            break;
-                        }
-                    }
-                } else if (lexer_match(&l, 7, "warning")) {
-                    lexer_read(&l);
-
-                    SourceLocIndex loc = get_source_location(c, &l, s, include_loc, SOURCE_LOC_NORMAL);
-
-                    const unsigned char* start = l.token_start;
-                    const unsigned char* end = l.token_start;
-                    while (!l.hit_line) {
-                        end = l.token_end;
-                        lexer_read(&l);
-                    }
-
-                    report(REPORT_WARNING, NULL, s, loc, "directive: %.*s", (int)(end - start), start);
-                } else if (lexer_match(&l, 5, "error")) {
-                    lexer_read(&l);
-
-                    SourceLocIndex loc = get_source_location(c, &l, s, include_loc, SOURCE_LOC_NORMAL);
-
-                    const unsigned char* start = l.token_start;
-                    const unsigned char* end = l.token_start;
-                    while (!l.hit_line) {
-                        end = l.token_end;
-                        lexer_read(&l);
-                    }
-
-                    report(REPORT_ERROR, NULL, s, loc, "directive: %.*s", (int)(end - start), start);
-                    exit(1);
-                } else {
-                    generic_error(&l, "unknown directive!");
-                }
-            } else {
-                generic_error(&l, "unknown directive!");
-            }
-        } else {
-            Token t = {
-                l.token_type,
-                get_source_location(c, &l, s, include_loc, SOURCE_LOC_NORMAL),
-                l.token_start,
-                l.token_end,
-            };
-
-            arrput(s->tokens, t);
-            lexer_read(&l);
-        }
-    } while (l.token_type);
-
-    {
-        char temp[256];
-        snprintf(temp, sizeof(temp), "preprocess: %s", filepath);
-        temp[sizeof(temp) - 1] = 0;
-
-        char* p = temp;
-        for (; *p; p++) {
-            if (*p == '\\') *p = '/';
-        }
-
-        cuik_profile_region(timer_start, "%s", temp);
-    }
 }
 
 static void skip_directive_body(Lexer* l) {

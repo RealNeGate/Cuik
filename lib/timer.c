@@ -46,6 +46,10 @@ CUIK_API void cuik_stop_global_profiler(void) {
     profiler = NULL;
 }
 
+CUIK_API bool cuik_is_profiling(void) {
+    return (profiler != NULL);
+}
+
 CUIK_API uint64_t cuik_time_in_nanos(void) {
     struct timespec ts;
     timespec_get(&ts, TIME_UTC);

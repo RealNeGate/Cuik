@@ -41,7 +41,6 @@ struct Cuik_CPP {
     size_t the_shtuffs_size;
     unsigned char* the_shtuffs;
 
-    const Cuik_IFileSystem* file_system;
     TokenStream tokens;
 
     // we got a little state machine design

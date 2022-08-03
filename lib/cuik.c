@@ -242,22 +242,6 @@ CUIK_API void cuikpp_set_common_defines(Cuik_CPP* restrict out_cpp, const Cuik_T
     set_defines(out_cpp, target, use_system_includes);
 }
 
-CUIK_API TokenStream cuik_preprocess_simple(
-    Cuik_CPP* restrict out_cpp, const char* filepath,
-    const Cuik_IFileSystem* fs, const Cuik_Target* target,
-    bool system_includes, size_t include_count, const char* includes[]
-) {
-    cuikpp_init(out_cpp, fs, filepath);
-    set_defines(out_cpp, target, system_includes);
-
-    // add extra include paths
-    for (size_t i = 0; i < include_count; i++) {
-        cuikpp_add_include_directory(out_cpp, includes[i]);
-    }
-
-    return cuikpp_run(out_cpp, filepath);
-}
-
 CUIK_API Cuik_Entrypoint cuik_get_entrypoint_status(TranslationUnit* restrict tu) {
     return tu->entrypoint_status;
 }

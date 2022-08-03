@@ -14,8 +14,6 @@
 #include "threadpool.h"
 #endif
 
-#define HEAP_ALLOC(s) malloc(s)
-
 // compiler arguments
 static DynArray(const char*) include_directories;
 static DynArray(const char*) input_libraries;
@@ -184,8 +182,8 @@ static void irgen_visitor(TranslationUnit* restrict tu, Stmt* restrict s, void* 
 
 // it'll use the normal CLI crap to do so
 static Cuik_CPP* make_preprocessor(const char* filepath) {
-    Cuik_CPP* cpp = HEAP_ALLOC(sizeof(Cuik_CPP));
-    cuikpp_init(cpp, NULL, filepath);
+    Cuik_CPP* cpp = malloc(sizeof(Cuik_CPP));
+    cuikpp_init(cpp, filepath);
     cuikpp_set_common_defines(cpp, &target_desc, !args_nocrt);
 
     dyn_array_for(i, include_directories) {
@@ -208,46 +206,31 @@ static Cuik_CPP* make_preprocessor(const char* filepath) {
         }
     }
 
+    for (Cuikpp_Packet packet; cuikpp_next(cpp, &packet);) {
+        cuikpp_default_packet_handler(cpp, &packet);
+    }
+
+    cuikpp_finalize(cpp);
     return cpp;
 }
 
-typedef struct {
-    Cuik_CPP* cpp;
-    TokenStream tokens;
-} PreprocResult;
-
-static void compile_file(void* arg);
-
-static void preproc_file(void* arg) {
-    const char* input = (const char*)arg;
-
-    // preproc
-    Cuik_CPP* cpp = make_preprocessor(input);
-
-    if (ithread_pool != NULL) {
-        PreprocResult* r = malloc(sizeof(PreprocResult));
-        r->cpp = cpp;
-        r->tokens = cuikpp_run(cpp, input);
-        cuikpp_finalize(cpp);
-
-        CUIK_CALL(ithread_pool, submit, compile_file, r);
-    } else {
-        PreprocResult r = {
-            .cpp = cpp,
-            .tokens = cuikpp_run(cpp, input),
-        };
-        cuikpp_finalize(r.cpp);
-        compile_file(&r);
+static void free_preprocessor(Cuik_CPP* cpp) {
+    CUIKPP_FOR_FILES(it, cpp) {
+        cuikpp_free_default_loaded_file(it.file);
     }
+
+    cuikpp_deinit(cpp);
+    free(cpp);
 }
 
 static void compile_file(void* arg) {
-    PreprocResult* r = arg;
+    Cuik_CPP* cpp = arg;
+    TokenStream tokens = cuikpp_get_token_stream(cpp);
 
     // parse
     Cuik_ErrorStatus errors;
     TranslationUnit* tu = cuik_parse_translation_unit(&(Cuik_TranslationUnitDesc){
-            .tokens      = &r->tokens,
+            .tokens      = &tokens,
             .errors      = &errors,
             .ir_module   = mod,
             .target      = &target_desc,
@@ -261,8 +244,21 @@ static void compile_file(void* arg) {
         exit(1);
     }
 
-    cuik_set_translation_unit_user_data(tu, r->cpp);
+    cuik_set_translation_unit_user_data(tu, cpp);
     cuik_add_to_compilation_unit(&compilation_unit, tu);
+}
+
+static void preproc_file(void* arg) {
+    const char* input = (const char*)arg;
+
+    // preproc
+    Cuik_CPP* cpp = make_preprocessor(input);
+
+    if (ithread_pool != NULL) {
+        CUIK_CALL(ithread_pool, submit, compile_file, cpp);
+    } else {
+        compile_file(cpp);
+    }
 }
 
 // we can do a bit of filter such as '*.c' where it'll take all
@@ -294,7 +290,7 @@ static void append_input_path(const char* path) {
         }
 
         do {
-            char* new_path = HEAP_ALLOC(MAX_PATH);
+            char* new_path = malloc(MAX_PATH);
             if (slash == path) {
                 sprintf_s(new_path, MAX_PATH, "%s", find_data.cFileName);
             } else {
@@ -350,7 +346,7 @@ int main(int argc, char** argv) {
             }
             case ARG_INCLUDE: {
                 // resolve a fullpath
-                char* newstr = HEAP_ALLOC(FILENAME_MAX);
+                char* newstr = malloc(FILENAME_MAX);
                 if (resolve_filepath(newstr, arg.value)) {
                     size_t end = strlen(newstr);
 
@@ -447,7 +443,7 @@ int main(int argc, char** argv) {
     }
 
     if (args_time) {
-        char* perf_output_path = HEAP_ALLOC(FILENAME_MAX);
+        char* perf_output_path = malloc(FILENAME_MAX);
         sprintf_s(perf_output_path, FILENAME_MAX, "%s.json", output_path_no_ext);
 
         jsonperf_profiler.user_data = perf_output_path;
@@ -462,7 +458,7 @@ int main(int argc, char** argv) {
         printf("Starting with %d threads...\n", thread_count);
 
         thread_pool = threadpool_create(thread_count - 1, 4096);
-        ithread_pool = HEAP_ALLOC(sizeof(Cuik_IThreadpool));
+        ithread_pool = malloc(sizeof(Cuik_IThreadpool));
         *ithread_pool = (Cuik_IThreadpool){
             .user_data = thread_pool,
             .submit = tp_submit,
@@ -498,36 +494,9 @@ int main(int argc, char** argv) {
         #else
         Cuik_CPP* cpp = make_preprocessor(input_files[0]);
 
-        Cuikpp_Packet packet;
-        while (cuikpp_next(cpp, &packet)) {
-            if (packet.tag == CUIKPP_PACKET_GET_FILE ||
-                packet.tag == CUIKPP_PACKET_QUERY_FILE) {
-                Cuik_File file = CUIK_CALL(
-                    &cuik_default_fs, get_file,
-                    packet.tag == CUIKPP_PACKET_QUERY_FILE,
-                    packet.get_file.input_path
-                );
-
-                packet.get_file.found = file.found;
-                packet.get_file.content_length = file.length;
-                packet.get_file.content = (uint8_t*) file.data;
-            } else if (packet.tag == CUIKPP_PACKET_CANONICALIZE) {
-                CUIK_CALL(
-                    &cuik_default_fs, canonicalize,
-                    packet.canonicalize.output_path,
-                    packet.canonicalize.input_path
-                );
-            } else {
-                assert(0);
-            }
-        }
-
         TokenStream tokens = cuikpp_get_token_stream(cpp);
-        cuikpp_finalize(cpp);
-
         dump_tokens(stdout, &tokens);
-
-        cuikpp_deinit(cpp);
+        free_preprocessor(cpp);
         #endif
         return EXIT_SUCCESS;
     }
@@ -579,9 +548,7 @@ int main(int argc, char** argv) {
                 );
 
                 // dispose the preprocessor crap now
-                Cuik_CPP* cpp = cuik_get_translation_unit_user_data(tu);
-                cuikpp_deinit(cpp);
-                free(cpp);
+                free_preprocessor((Cuik_CPP*) cuik_get_translation_unit_user_data(tu));
 
                 i += 1;
             }
@@ -621,13 +588,13 @@ int main(int argc, char** argv) {
             char lib_dir[FILENAME_MAX];
             sprintf_s(lib_dir, FILENAME_MAX, "%s/crt/lib/", crt_dirpath);
 
-            if (1 /* use TB as the linker */) {
+            if (0 /* use TB as the linker */) {
                 size_t system_libpath_count = cuik_get_system_search_path_count();
 
                 TB_LinkerInput link = { 0 };
                 {
                     link.search_dir_count = system_libpath_count + 1;
-                    link.search_dirs = HEAP_ALLOC(link.search_dir_count * sizeof(const char*));
+                    link.search_dirs = malloc(link.search_dir_count * sizeof(const char*));
 
                     // fill search paths
                     cuik_get_system_search_paths(link.search_dirs, system_libpath_count);
@@ -642,7 +609,7 @@ int main(int argc, char** argv) {
                     link.input_count = dyn_array_length(input_libraries);
                     #endif
 
-                    link.inputs = HEAP_ALLOC(link.input_count * sizeof(const char*));
+                    link.inputs = malloc(link.input_count * sizeof(const char*));
 
                     // Add input libraries
                     const char** inputs = link.inputs;

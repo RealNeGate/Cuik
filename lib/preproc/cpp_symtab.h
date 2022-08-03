@@ -1,5 +1,4 @@
 
-
 CUIK_API void cuikpp_define_empty(Cuik_CPP* ctx, const char* key) {
     cuikpp_define_empty_slice(ctx, strlen(key), key);
 }
