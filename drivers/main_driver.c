@@ -65,7 +65,7 @@ static void initialize_opt_passes(void) {
         }
 
         dyn_array_put(da_passes, OPT(dead_expr_elim));
-        dyn_array_put(da_passes, OPT(dead_block_elim));
+        // dyn_array_put(da_passes, OPT(dead_block_elim));
 
         // complex analysis
         dyn_array_put(da_passes, OPT(refinement));

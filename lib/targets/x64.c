@@ -478,7 +478,7 @@ static TB_Reg compile_builtin(TranslationUnit* tu, TB_Function* func, const char
         TB_Reg b = irgen_as_rvalue(tu, func, args[1]);
         TB_Reg c = irgen_as_rvalue(tu, func, args[2]);
 
-        TB_Reg result = tb_inst_mul(func, a, b, TB_CAN_WRAP);
+        TB_Reg result = tb_inst_mul(func, a, b, 0);
         tb_inst_store(func, dt, c, result, type->align);
 
         return tb_inst_cmp_ilt(func, result, a, false);

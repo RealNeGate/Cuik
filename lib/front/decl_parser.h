@@ -744,11 +744,14 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
                             *member = (Member){
                                 .loc = decl.loc,
                                 .type = member_type,
-                                .name = decl.name};
+                                .name = decl.name
+                            };
 
                             if (tokens_get(s)->type == ':') {
                                 if (is_union) {
-                                    REPORT(WARNING, tokens_get_location_index(s), "Bitfield... unions... huh?!");
+                                    REPORT(WARNING, decl.loc, "Bitfield... unions... huh?!");
+                                } else if (member_type->is_atomic) {
+                                    REPORT(ERROR, decl.loc, "Cannot make bitfields using atomics");
                                 }
                                 tokens_next(s);
 

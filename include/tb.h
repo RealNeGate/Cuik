@@ -6,6 +6,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -18,19 +19,6 @@ extern "C" {
     #define TB_VERSION_MINOR 2
     #define TB_VERSION_PATCH 0
 
-    #ifndef TB_MAX_THREADS
-    #define TB_MAX_THREADS 16
-    #endif
-
-    // Per-thread
-    #ifndef TB_TEMPORARY_STORAGE_SIZE
-    #define TB_TEMPORARY_STORAGE_SIZE (1 << 20)
-    #endif
-
-    #ifndef TB_MAX_FUNCTIONS
-    #define TB_MAX_FUNCTIONS (1 << 22)
-    #endif
-
     #define TB_API extern
 
     #define TB_HOST_UNKNOWN 0
@@ -42,27 +30,10 @@ extern "C" {
     #define TB_HOST_ARCH TB_HOST_UNKNOWN
     #endif
 
-    typedef enum {
-        // No overflow will assume the value does not
-        // overflow and if it does this can be considered
-        // undefined behavior with unknown consequences.
-        // no signed wrap
-        TB_ASSUME_NSW,
-        // no unsigned wrap
-        TB_ASSUME_NUW,
-
-        // Wrapping will allow the integer to safely wrap.
-        TB_CAN_WRAP,
-
-        // Overflow check will throw an error if the result
-        // cannot be represented in the resulting type.
-        TB_SIGNED_TRAP_ON_WRAP,
-        TB_UNSIGNED_TRAP_ON_WRAP,
-
-        // Saturated arithmatic will clamp the results in the
-        // event of overflow/underflow.
-        TB_SATURATED_UNSIGNED,
-        TB_SATURATED_SIGNED
+    // These are flags
+    typedef enum TB_ArithmaticBehavior {
+        TB_ARITHMATIC_NSW = 1,
+        TB_ARITHMATIC_NUW = 2,
     } TB_ArithmaticBehavior;
 
     typedef enum TB_DebugFormat {
@@ -381,6 +352,7 @@ extern "C" {
     typedef struct TB_Module            TB_Module;
     typedef struct TB_External          TB_External;
     typedef struct TB_Global            TB_Global;
+    typedef struct TB_DebugType         TB_DebugType;
     typedef struct TB_Initializer       TB_Initializer;
     typedef struct TB_Function          TB_Function;
     typedef struct TB_AttribList        TB_AttribList;
@@ -459,6 +431,7 @@ extern "C" {
             struct TB_NodeLocal {
                 TB_CharUnits size;
                 TB_CharUnits alignment;
+                const char* name;
             } local;
             struct TB_NodeUnary {
                 TB_Reg src;
@@ -574,22 +547,26 @@ extern "C" {
         TB_Reg old_value;
     } TB_CmpXchgResult;
 
-    typedef struct {
+    typedef struct TB_Loop {
+        // refers to another entry in TB_LoopInfo... unless it's -1
+        ptrdiff_t parent_loop;
+
+        TB_Label header;
+        TB_Label backedge;
+
+        size_t body_count;
+        TB_Label* body;
+    } TB_Loop;
+
+    typedef struct TB_LoopInfo {
         size_t count;
-        struct TB_Loop {
-            int parent_loop;
-
-            // the terminator of the header will exit
-            TB_Register header;
-
-            // this is where the contents of the loop begin
-            TB_Register body;
-
-            // this is not part of the loop but instead where
-            // the loop goes on exit
-            TB_Register exit;
-        } loops[];
+        TB_Loop* loops;
     } TB_LoopInfo;
+
+    typedef struct TB_Predeccesors {
+        int* count;
+        TB_Label** preds;
+    } TB_Predeccesors;
 
     typedef enum {
         TB_OBJECT_RELOC_NONE, // how?
@@ -845,11 +822,24 @@ extern "C" {
     ////////////////////////////////
     // Function IR Generation
     ////////////////////////////////
+    TB_API const TB_DebugType* tb_debug_get_void(TB_Module* m);
+    TB_API const TB_DebugType* tb_debug_get_integer(TB_Module* m, bool is_signed, int bits);
+    TB_API const TB_DebugType* tb_debug_get_float(TB_Module* m, TB_FloatFormat fmt);
+    TB_API const TB_DebugType* tb_debug_create_ptr(TB_Module* m, const TB_DebugType* base);
+    TB_API const TB_DebugType* tb_debug_create_array(TB_Module* m, const TB_DebugType* base, size_t count);
+
+    ////////////////////////////////
+    // Function IR Generation
+    ////////////////////////////////
     // the user_data is expected to be a valid FILE*
     TB_API void tb_default_print_callback(void* user_data, const char* fmt, ...);
 
     // this only allows for power of two vector types
     TB_API TB_DataType tb_vector_type(TB_DataTypeEnum type, int width);
+
+    TB_API TB_Reg tb_function_insert(TB_Function* f, TB_Reg r, const TB_Node n);
+    TB_API TB_Reg tb_function_set(TB_Function* f, TB_Reg r, const TB_Node n);
+    TB_API TB_Reg tb_function_append(TB_Function* f, const TB_Node n);
 
     TB_API void tb_function_print(TB_Function* f, TB_PrintCallback callback, void* user_data);
     TB_API void tb_function_print2(TB_Function* f, TB_PrintCallback callback, void* user_data, bool display_nops);
@@ -1043,7 +1033,14 @@ extern "C" {
     TB_API void tb_opt_unload_lua_pass(TB_FunctionPass* p);
 
     // analysis
-    TB_API TB_LoopInfo* tb_function_get_loop_info(TB_Function* f);
+    TB_API TB_Predeccesors tb_get_predeccesors(TB_Function* f);
+
+    // if out_doms is NULL it'll only return the dominator array length (it's just the label count really)
+    TB_API size_t tb_get_dominators(TB_Function* f, TB_Predeccesors p, TB_Label* out_doms);
+    TB_API bool tb_is_dominated_by(TB_Label* doms, TB_Label expected_dom, TB_Label bb);
+
+    TB_API TB_LoopInfo tb_get_loop_info(TB_Function* f, TB_Predeccesors preds, TB_Label* doms);
+    TB_API void tb_free_loop_info(TB_LoopInfo loops);
 
     // passes
     TB_API bool tb_opt_merge_rets(TB_Function* f);
