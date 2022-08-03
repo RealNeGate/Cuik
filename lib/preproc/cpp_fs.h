@@ -45,6 +45,8 @@ static LoadResult get_file(bool is_query, const char* path) {
     // fat null terminator
     memset(&buffer[file_size.QuadPart], 0, 16);
 
+    cuikpp_canonicalize_text(file_size.QuadPart, buffer);
+
     //file_io_memory_usage += (file_size.QuadPart + 16);
     //printf("%f MiB of files\n", (double)file_io_memory_usage / 1048576.0);
     return (LoadResult){ .found = true, .length = file_size.QuadPart, buffer };
@@ -73,14 +75,14 @@ static LoadResult get_file(bool is_query, const char* path) {
     char* text = cuik__valloc((len + 16 + 4095) & ~4095);
 
     fseek(file, 0, SEEK_SET);
-    size_t length_read = fread(text, 1, len, file);
-
-    // fat null terminator
-    length_read = len;
-    memset(&text[length_read], 0, 16);
+    len = fread(text, 1, len, file);
     fclose(file);
 
-    return (LoadResult){ .found = true, .length = length_read, .data = text };
+    // fat null terminator
+    memset(&text[len], 0, 16);
+    cuikpp_canonicalize_text(length_read, text);
+
+    return (LoadResult){ .found = true, .length = len, .data = text };
     #endif
 }
 
@@ -121,4 +123,32 @@ CUIK_API bool cuikpp_default_packet_handler(Cuik_CPP* ctx, Cuikpp_Packet* packet
 
 CUIK_API void cuikpp_free_default_loaded_file(Cuik_FileEntry* file) {
     cuik__vfree(file->content, (file->content_len + 16 + 4095) & ~4095);
+}
+
+CUIK_API void cuikpp_canonicalize_text(size_t length, char* data) {
+    uint8_t* text = (uint8_t*) data;
+
+    #if !USE_INTRIN
+    for (size_t i = 0; i < length; i++) {
+        if (text[i] == '\t') text[i] = ' ';
+        if (text[i] == '\v') text[i] = ' ';
+        if (text[i] == 12) text[i] = ' ';
+    }
+    #else
+    length = (length + 15ull) & ~15ull;
+
+    // NOTE(NeGate): This code requires SSE4.1, it's not impossible to make
+    // ARM variants and such but yea.
+    for (size_t i = 0; i < length; i += 16) {
+        __m128i bytes = _mm_load_si128((__m128i*)&text[i]);
+
+        // Replace all \t and \v with spaces
+        __m128i test_ident = _mm_cmpeq_epi8(bytes, _mm_set1_epi8('\t'));
+        test_ident = _mm_or_si128(test_ident, _mm_cmpeq_epi8(bytes, _mm_set1_epi8('\v')));
+        test_ident = _mm_or_si128(test_ident, _mm_cmpeq_epi8(bytes, _mm_set1_epi8(12)));
+
+        bytes = _mm_blendv_epi8(bytes, _mm_set1_epi8(' '), test_ident);
+        _mm_store_si128((__m128i*)&text[i], bytes);
+    }
+    #endif
 }

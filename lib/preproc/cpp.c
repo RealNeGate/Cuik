@@ -10,7 +10,6 @@
 #include <diagnostic.h>
 #include <memory.h>
 #include <timer.h>
-#include <front/file_io.h>
 #include <sys/stat.h>
 #include <stb_ds.h>
 
@@ -19,7 +18,9 @@
 #include <windows.h>
 #endif
 
+#if USE_INTRIN
 #include <x86intrin.h>
+#endif
 
 static void preprocess_file(Cuik_CPP* restrict c, TokenStream* restrict s, size_t parent_entry, SourceLocIndex include_loc, const char* directory, const char* filepath, int depth);
 static uint64_t hash_ident(const unsigned char* at, size_t length);
@@ -155,9 +156,6 @@ CUIK_API bool cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
                 size_t file_length = packet->file.content_length;
                 uint8_t* file_data = packet->file.content;
 
-                // convert all the weird whitespace into something normal
-                remove_weird_whitespace(file_length, file_data);
-
                 // initialize the file & lexer in the stack slot
                 slot->file_id = dyn_array_length(ctx->files);
                 slot->l = (Lexer){ filepath, file_data, file_data, 1 };
@@ -278,9 +276,6 @@ CUIK_API bool cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
         const char* filepath = packet->file.input_path;
         size_t file_length = packet->file.content_length;
         uint8_t* file_data = packet->file.content;
-
-        // convert all the weird whitespace into something normal
-        remove_weird_whitespace(file_length, file_data);
 
         // initialize the file & lexer in the stack slot
         slot->file_id = dyn_array_length(ctx->files);
