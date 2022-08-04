@@ -1,5 +1,7 @@
 .vs/
 bin/
+# *.lib
+# *.a
 
 # Prerequisites
 *.d
@@ -20,8 +22,6 @@ bin/
 *.pch
 
 # Libraries
-*.lib
-*.a
 *.la
 *.lo
 
