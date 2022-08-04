@@ -1204,13 +1204,32 @@ CUIK_API TranslationUnit* cuik_next_translation_unit(TranslationUnit* restrict t
     return tu->next;
 }
 
-CUIK_API bool cuik_is_in_main_file(TranslationUnit* restrict tu, SourceLocIndex loc) {
-    if (SOURCE_LOC_GET_TYPE(loc) == SOURCE_LOC_UNKNOWN) {
+CUIK_API Cuik_TopLevelIter cuik_first_top_level_stmt(TranslationUnit* restrict tu) {
+    return (Cuik_TopLevelIter){
+        .limit_ = arrlen(tu->top_level_stmts),
+        .stmts_ = tu->top_level_stmts
+    };
+}
+
+CUIK_API bool cuik_next_top_level_stmt(Cuik_TopLevelIter* it, int step) {
+    size_t i = it->index_, limit = it->limit_;
+    if (i >= limit) {
         return false;
     }
 
-    SourceLoc* l = &tu->tokens.locations[SOURCE_LOC_GET_DATA(loc)];
-    return l->line->filepath == tu->filepath;
+    if (i + step >= limit) {
+        it->count = step - ((i + step) - limit);
+    } else {
+        it->count = step;
+    }
+
+    it->start = &it->stmts_[i];
+    it->index_ = i + step;
+    return true;
+}
+
+CUIK_API size_t cuik_num_of_top_level_stmts(TranslationUnit* restrict tu) {
+    return arrlen(tu->top_level_stmts);
 }
 
 Stmt* resolve_unknown_symbol(TranslationUnit* tu, Expr* e) {

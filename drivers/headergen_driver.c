@@ -93,26 +93,26 @@ int main(int argc, char** argv) {
     // preproc
     Cuik_CPP cpp;
     TokenStream tokens = cuik_preprocess_simple(&cpp, argv[1], system_libs, 2, (const char*[]) {
-                                                    "include/",
-                                                    "src/"
-                                                });
+            "include/",
+            "src/"
+        });
 
-#if 0
+    #if 0
     FILE* out = fopen("./a.i", "wb");
     assert(out != NULL);
     dump_tokens(out, &tokens);
     fclose(out);
-#else
+    #else
     // parse
     TranslationUnit* tu = cuik_parse_translation_unit(mod, &tokens, NULL);
 
     // print defines
-    Cuik_DefineRef it, curr = cuikpp_first_define(&cpp);
-    while (it = curr, cuikpp_next_define(&cpp, &curr)) {
-        Cuik_Define def = cuikpp_get_define(&cpp, it);
-
-        if (cuik_is_in_main_file(tu, def.loc)) {
-            printf("#define %.*s %.*s\n", (int)def.key.len, def.key.data, (int)def.value.len, def.value.data);
+    CUIKPP_FOR_DEFINES(it, &cpp) {
+        if (cuik_is_in_main_file(tu, it.loc)) {
+            printf("#define %.*s %.*s\n",
+                (int)it.key.len, it.key.data,
+                (int)it.value.len, it.value.data
+            );
         }
     }
 
@@ -120,7 +120,7 @@ int main(int argc, char** argv) {
 
     cuik_visit_top_level(tu, NULL, da_visitor);
     cuik_destroy_translation_unit(tu);
-#endif
+    #endif
 
     cuikpp_deinit(&cpp);
     return 0;

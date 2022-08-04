@@ -193,7 +193,7 @@ CUIK_API void cuikpp_finalize(Cuik_CPP* ctx);
 
 // returns the final token stream (should not be called if you haven't finished
 // iterating through cuikpp_next)
-CUIK_API TokenStream cuikpp_get_token_stream(Cuik_CPP* ctx);
+CUIK_API TokenStream* cuikpp_get_token_stream(Cuik_CPP* ctx);
 
 // The file table may contain duplicates (for now...) but it stores all
 // the loaded files by this instance of the preprocessor, in theory one
@@ -277,6 +277,9 @@ CUIK_API void cuikpp_free_default_loaded_file(Cuik_FileEntry* file);
 // if target is non-NULL it'll add predefined macros based on the target.
 CUIK_API void cuikpp_set_common_defines(Cuik_CPP* restrict out_cpp, const Cuik_Target* target, bool use_system_includes);
 
+// is the source location in the source file (none of the includes)
+CUIK_API bool cuikpp_is_in_main_file(TokenStream* tokens, SourceLocIndex loc);
+
 // This is an iterator for include search list in the preprocessor:
 //
 // Cuik_FileIter it = cuikpp_first_file(cpp);
@@ -334,7 +337,7 @@ typedef struct Cuik_Define {
 } Cuik_DefineIter;
 
 #define CUIKPP_FOR_DEFINES(it, ctx) \
-for (Cuik_DefineIter it = cuikpp_first_define(ctx); cuikpp_next_define(ctx, &curr_);)
+for (Cuik_DefineIter it = cuikpp_first_define(ctx); cuikpp_next_define(ctx, &it);)
 
 CUIK_API Cuik_DefineIter cuikpp_first_define(Cuik_CPP* ctx);
 CUIK_API bool cuikpp_next_define(Cuik_CPP* ctx, Cuik_DefineIter* src);
@@ -446,29 +449,48 @@ typedef struct {
 
 typedef struct {
     // public
-    Expr* e;
+    Expr* expr;
 
     // internal
-    size_t index;
-    Expr* parent;
+    size_t index_;
+    Expr* parent_;
 } Cuik_ExprIter;
+
+typedef struct {
+    // public
+    Stmt* stmt;
+
+    // internal
+    size_t index_;
+    Stmt* parent_;
+} Cuik_StmtIter;
+
+typedef struct {
+    // public
+    Stmt** start;
+    size_t count;
+
+    // internal
+    size_t index_;
+    size_t limit_;
+    Stmt** stmts_;
+} Cuik_TopLevelIter;
+
+#define CUIK_FOR_KID_IN_STMT(it, parent_) \
+for (Cuik_StmtIter it = { .parent = (parent_) }; cuik_next_stmt_kid(&it);)
 
 #define CUIK_FOR_KID_IN_EXPR(it, parent_) \
 for (Cuik_ExprIter it = { .parent = (parent_) }; cuik_next_expr_kid(&it);)
 
-typedef void Cuik_ExprVisitor(TranslationUnit* restrict tu, Expr* restrict e, void* user_data);
-typedef void Cuik_StmtVisitor(TranslationUnit* restrict tu, Stmt* restrict s, void* user_data);
+#define CUIK_FOR_TOP_LEVEL_STMT(it, tu_, step_) \
+for (Cuik_TopLevelIter it = cuik_first_top_level_stmt(tu_); cuik_next_top_level_stmt(&it, step_);)
 
 CUIK_API bool cuik_next_expr_kid(Cuik_ExprIter* it);
+CUIK_API bool cuik_next_stmt_kid(Cuik_StmtIter* it);
 
-// invokes the visitor on all the children of expr (not recursive)
-CUIK_API void cuik_visit_expr(TranslationUnit* restrict tu, Expr* restrict e, void* user_data, Cuik_ExprVisitor* visitor);
-CUIK_API void cuik_visit_stmt(TranslationUnit* restrict tu, Stmt* restrict s, void* user_data, Cuik_StmtVisitor* visitor);
-
-CUIK_API void cuik_visit_top_level(TranslationUnit* restrict tu, void* user_data, Cuik_StmtVisitor* visitor);
-CUIK_API void cuik_visit_top_level_threaded(TranslationUnit* restrict tu, const Cuik_IThreadpool* restrict thread_pool, int batch_size, ThreadedWaiter* restrict waiter, void* user_data, Cuik_StmtVisitor* visitor);
-
-CUIK_API void cuik_wait_on_waiter(const Cuik_IThreadpool* restrict thread_pool, ThreadedWaiter* restrict waiter);
+CUIK_API Cuik_TopLevelIter cuik_first_top_level_stmt(TranslationUnit* restrict tu);
+CUIK_API bool cuik_next_top_level_stmt(Cuik_TopLevelIter* iter, int step);
+CUIK_API size_t cuik_num_of_top_level_stmts(TranslationUnit* restrict tu);
 
 CUIK_API void cuik_dump_translation_unit(FILE* stream, TranslationUnit* tu, bool minimalist);
 
@@ -479,7 +501,6 @@ CUIK_API TranslationUnit* cuik_next_translation_unit(TranslationUnit* restrict t
 // does this translation unit have a main? what type?
 CUIK_API Cuik_Entrypoint cuik_get_entrypoint_status(TranslationUnit* restrict tu);
 
-CUIK_API bool cuik_is_in_main_file(TranslationUnit* restrict tu, SourceLocIndex loc);
 CUIK_API TokenStream* cuik_get_token_stream_from_tu(TranslationUnit* restrict tu);
 
 ////////////////////////////////////////////

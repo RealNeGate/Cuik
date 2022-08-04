@@ -22,6 +22,22 @@ typedef struct Arg {
 
 // returns argument, *out_param is the name of the parameter
 static Arg get_cli_arg(int* index, int argc, char** argv) {
+    static const char* names[] = {
+        #define OPTION(type, short_name, long_name, n, desc) #short_name, #long_name,
+        #include "cli_options.h"
+    };
+
+    static int types[] = {
+        #define OPTION(type, short_name, long_name, n, desc) ARG_ ## type,
+        #include "cli_options.h"
+    };
+
+    static bool has_args[] = {
+        #define OPTION(type, short_name, long_name, n, desc) n,
+        #include "cli_options.h"
+    };
+
+    size_t count = sizeof(names) / (sizeof(names[0]) * 2);
     int i = *index;
     *index += 1;
 
@@ -37,28 +53,33 @@ static Arg get_cli_arg(int* index, int argc, char** argv) {
             // long names
             const char* opt = &argv[i][2];
 
-            #define OPTION(type, short_name, long_name, n, desc)                           \
-            if (strncmp(opt, #long_name, sizeof(#long_name) - 1) == 0) {                   \
-                if (n == 0) {                                                              \
-                    return (Arg){ ARG_ ## type, arg_is_set };                              \
-                } else {                                                                   \
-                    if (opt[sizeof(#long_name) - 1] == 0) {                                \
-                        if ((i + 1) >= argc) {                                             \
-                            fprintf(stderr, "error: no argument after -" #long_name "\n"); \
-                            exit(1);                                                       \
-                        }                                                                  \
-                        *index += 1;                                                       \
-                        return (Arg){ ARG_ ## type, argv[i + 1] };                         \
-                    } else {                                                               \
-                        if (argv[i][sizeof("--" #long_name)] == 0) {                       \
-                            fprintf(stderr, "error: argument for --" #long_name " is empty\n");\
-                            exit(1);                                                       \
-                        }                                                                  \
-                        return (Arg){ ARG_ ## type, argv[i] + sizeof("--" #long_name) };   \
-                    }                                                                      \
-                }                                                                          \
+            for (size_t j = 0; j < count; j++) {
+                const char* long_name  = names[j*2 + 1];
+                size_t long_name_len = strlen(long_name);
+
+                if (strncmp(opt, long_name, long_name_len) == 0) {
+                    if (!has_args[j]) {
+                        return (Arg){ types[j], arg_is_set };
+                    } else {
+                        if (opt[long_name_len] == 0) {
+                            if ((i + 1) >= argc) {
+                                fprintf(stderr, "error: no argument after -%s\n", long_name);
+                                exit(1);
+                            }
+
+                            *index += 1;
+                            return (Arg){ types[j], argv[i + 1] };
+                        } else {
+                            if (argv[i][long_name_len + 3] == 0) {
+                                fprintf(stderr, "error: argument for --%s is empty\n", long_name);
+                                exit(1);
+                            }
+
+                            return (Arg){ types[j], argv[i] + long_name_len + 3 };
+                        }
+                    }
+                }
             }
-            #include "cli_options.h"
 
             // could not find an option
             fprintf(stderr, "error: could not find option --%s\n", opt);
@@ -67,21 +88,23 @@ static Arg get_cli_arg(int* index, int argc, char** argv) {
             // short names
             const char* opt = &argv[i][1];
 
-            #define OPTION(type, short_name, long_name, n, desc)                        \
-            if (strcmp(opt, #short_name) == 0) {                                        \
-                if (n == 0) {                                                           \
-                    return (Arg){ ARG_ ## type, arg_is_set };                           \
-                } else {                                                                \
-                    if ((i + 1) >= argc) {                                              \
-                        fprintf(stderr, "error: no argument after -" #short_name "\n"); \
-                        exit(1);                                                        \
-                    }                                                                   \
-                    *index += 1;                                                        \
-                    return (Arg){ ARG_ ## type, argv[i + 1] };                          \
-                }                                                                       \
-            }
-            #include "cli_options.h"
+            for (size_t j = 0; j < count; j++) {
+                const char* short_name = names[j*2 + 0];
 
+                if (strcmp(opt, short_name) == 0) {
+                    if (!has_args[j]) {
+                        return (Arg){ types[j], arg_is_set };
+                    } else {
+                        if ((i + 1) >= argc) {
+                            fprintf(stderr, "error: no argument after -%s\n", short_name);
+                            exit(1);
+                        }
+
+                        *index += 1;
+                        return (Arg){ types[j], argv[i + 1] };
+                    }
+                }
+            }
             // could not find an option
             fprintf(stderr, "error: could not find option -%s\n", opt);
             exit(1);

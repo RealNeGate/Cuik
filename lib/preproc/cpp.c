@@ -76,6 +76,15 @@ static String get_token_as_string(Lexer* l) {
     return (String){ .length = l->token_end - l->token_start, .data = l->token_start };
 }
 
+CUIK_API bool cuikpp_is_in_main_file(TokenStream* tokens, SourceLocIndex loc) {
+    if (SOURCE_LOC_GET_TYPE(loc) == SOURCE_LOC_UNKNOWN) {
+        return false;
+    }
+
+    SourceLoc* l = &tokens->locations[SOURCE_LOC_GET_DATA(loc)];
+    return l->line->filepath == tokens->filepath;
+}
+
 CUIK_API void cuikpp_init(Cuik_CPP* ctx, const char filepath[FILENAME_MAX]) {
     size_t sz = sizeof(void*) * MACRO_BUCKET_COUNT * SLOTS_PER_MACRO_BUCKET;
     size_t sz2 = sizeof(SourceLocIndex) * MACRO_BUCKET_COUNT * SLOTS_PER_MACRO_BUCKET;
@@ -861,8 +870,8 @@ CUIK_API void cuikpp_finalize(Cuik_CPP* ctx) {
     }
 }
 
-CUIK_API TokenStream cuikpp_get_token_stream(Cuik_CPP* ctx) {
-    return ctx->tokens;
+CUIK_API TokenStream* cuikpp_get_token_stream(Cuik_CPP* ctx) {
+    return &ctx->tokens;
 }
 
 CUIK_API size_t cuikpp_get_file_table_count(Cuik_CPP* ctx) {

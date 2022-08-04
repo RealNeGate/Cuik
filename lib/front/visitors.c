@@ -1,15 +1,14 @@
 #include <front/sema.h>
 
-// used by cuik_visit_top_level_threaded
-typedef struct {
-    TranslationUnit* tu;
-    atomic_size_t* tasks_remaining;
-    Cuik_StmtVisitor* visitor;
-    void* user_data;
-    size_t start, end;
-} TaskInfo;
+#define SWITCH_ITER switch (it->index_++)
+#define CASE_YIELD(k, v) case k: return (it->stmt = (v), true);
+#define CASE_END(k) case k: return false;
 
-CUIK_API void cuik_visit_stmt(TranslationUnit* restrict tu, Stmt* restrict s, void* user_data, Cuik_StmtVisitor* visitor) {
+#define SWITCH1(a)    SWITCH_ITER { CASE_YIELD(0, a); CASE_END(1); }
+#define SWITCH2(a, b) SWITCH_ITER { CASE_YIELD(0, a); CASE_YIELD(1, b); CASE_END(2); }
+
+CUIK_API bool cuik_next_stmt_kid(Cuik_StmtIter* it) {
+    Stmt* restrict s = it->parent_;
     switch (s->op) {
         case STMT_NONE:
         case STMT_LABEL:
@@ -19,65 +18,65 @@ CUIK_API void cuik_visit_stmt(TranslationUnit* restrict tu, Stmt* restrict s, vo
         case STMT_CONTINUE:
         case STMT_BREAK:
         case STMT_DECL:
-        break;
+        case STMT_FUNC_DECL:
+        case STMT_GLOBAL_DECL:
+        return false;
 
         case STMT_COMPOUND: {
-            Stmt** kids = s->compound.kids;
-            size_t count = s->compound.kids_count;
+            int i = it->index_++;
 
-            for (size_t i = 0; i < count; i++) {
-                visitor(tu, kids[i], user_data);
+            Stmt** kids = s->compound.kids;
+            if (i < s->compound.kids_count) {
+                it->stmt = kids[i];
+                return true;
+            } else {
+                return false;
             }
             break;
         }
 
         case STMT_IF:
-        visitor(tu, s->if_.body, user_data);
-        if (s->if_.next) {
-            visitor(tu, s->if_.next, user_data);
-        }
+        it->index_ += (it->index_ == 1 && s->if_.next == NULL);
+
+        SWITCH2(s->if_.body, s->if_.next);
         break;
 
         case STMT_WHILE:
-        if (s->while_.body) {
-            visitor(tu, s->while_.body, user_data);
-        }
+        // skip empty slots
+        it->index_ += (it->index_ == 0 && s->while_.body == NULL);
+
+        SWITCH1(s->while_.body);
         break;
 
         case STMT_DO_WHILE:
-        if (s->do_while.body) {
-            visitor(tu, s->do_while.body, user_data);
-        }
+        // skip empty slots
+        it->index_ += (it->index_ == 0 && s->do_while.body == NULL);
+
+        SWITCH1(s->do_while.body);
         break;
 
         case STMT_FOR:
-        if (s->for_.first) {
-            visitor(tu, s->for_.first, user_data);
-        }
+        // skip empty slots
+        it->index_ += (it->index_ == 0 && s->for_.first == NULL);
+        it->index_ += (it->index_ == 1 && s->for_.body == NULL);
 
-        if (s->for_.body) {
-            visitor(tu, s->for_.body, user_data);
-        }
+        SWITCH2(s->for_.first, s->for_.body);
         break;
 
-        case STMT_SWITCH:
-        visitor(tu, s->switch_.body, user_data);
-        break;
-
-        case STMT_CASE:
-        visitor(tu, s->case_.body, user_data);
-        break;
-
-        case STMT_DEFAULT:
-        visitor(tu, s->default_.body, user_data);
-        break;
-
-        default: assert(0);
+        case STMT_SWITCH: SWITCH1(s->switch_.body); break;
+        case STMT_CASE: SWITCH1(s->case_.body); break;
+        case STMT_DEFAULT: SWITCH1(s->default_.body); break;
     }
+
+    #ifdef _DEBUG
+    assert(0 && "StmtIter found unknown node");
+    #else
+    __builtin_unreachable();
+    #endif
 }
 
 CUIK_API bool cuik_next_expr_kid(Cuik_ExprIter* it) {
-    Expr* restrict e = it->parent;
+    Expr* restrict e = it->parent_;
     switch (e->op) {
         case EXPR_UNKNOWN_SYMBOL:
         case EXPR_VA_ARG:
@@ -115,8 +114,8 @@ CUIK_API bool cuik_next_expr_kid(Cuik_ExprIter* it) {
             _Static_assert(offsetof(Expr, cast.src) == offsetof(Expr, unary_op.src), "these should be aliasing");
             _Static_assert(offsetof(Expr, va_arg_.src) == offsetof(Expr, unary_op.src), "these should be aliasing");
 
-            switch (it->index++) {
-                case 0: it->e = e->unary_op.src; return true;
+            switch (it->index_++) {
+                case 0: it->expr = e->unary_op.src; return true;
                 case 1: return false;
                 default: __builtin_unreachable();
             }
@@ -125,8 +124,8 @@ CUIK_API bool cuik_next_expr_kid(Cuik_ExprIter* it) {
 
         case EXPR_GENERIC: {
             assert(e->generic_.case_count == 0);
-            switch (it->index++) {
-                case 0: it->e = e->generic_.controlling_expr; return true;
+            switch (it->index_++) {
+                case 0: it->expr = e->generic_.controlling_expr; return true;
                 case 1: return false;
                 default: __builtin_unreachable();
             }
@@ -134,21 +133,21 @@ CUIK_API bool cuik_next_expr_kid(Cuik_ExprIter* it) {
         }
 
         case EXPR_SUBSCRIPT:
-        switch (it->index++) {
-            case 0: it->e = e->subscript.base; return true;
-            case 1: it->e = e->subscript.index; return true;
+        switch (it->index_++) {
+            case 0: it->expr = e->subscript.base; return true;
+            case 1: it->expr = e->subscript.index; return true;
             case 2: return false;
             default: __builtin_unreachable();
         }
 
         case EXPR_CALL: {
-            int i = it->index++;
+            int i = it->index_++;
 
             if (i == 0) {
-                it->e = e->call.target;
+                it->expr = e->call.target;
                 return true;
             } else if ((i - 1) < e->call.param_count) {
-                it->e = e->call.param_start[i - 1];
+                it->expr = e->call.param_start[i - 1];
                 return true;
             } else {
                 return false;
@@ -156,10 +155,10 @@ CUIK_API bool cuik_next_expr_kid(Cuik_ExprIter* it) {
         }
 
         case EXPR_TERNARY:
-        switch (it->index++) {
-            case 0: it->e = e->ternary_op.left; return true;
-            case 1: it->e = e->ternary_op.middle; return true;
-            case 2: it->e = e->ternary_op.middle; return true;
+        switch (it->index_++) {
+            case 0: it->expr = e->ternary_op.left; return true;
+            case 1: it->expr = e->ternary_op.middle; return true;
+            case 2: it->expr = e->ternary_op.middle; return true;
             case 3: return false;
             default: __builtin_unreachable();
         }
@@ -168,8 +167,8 @@ CUIK_API bool cuik_next_expr_kid(Cuik_ExprIter* it) {
         case EXPR_ARROW:
         case EXPR_DOT_R:
         case EXPR_ARROW_R:
-        switch (it->index++) {
-            case 0: it->e = e->dot_arrow.base; return true;
+        switch (it->index_++) {
+            case 0: it->expr = e->dot_arrow.base; return true;
             case 1: return false;
             default: __builtin_unreachable();
         }
@@ -206,9 +205,9 @@ CUIK_API bool cuik_next_expr_kid(Cuik_ExprIter* it) {
         case EXPR_XOR_ASSIGN:
         case EXPR_SHL_ASSIGN:
         case EXPR_SHR_ASSIGN:
-        switch (it->index++) {
-            case 0: it->e = e->bin_op.left; return true;
-            case 1: it->e = e->bin_op.right; return true;
+        switch (it->index_++) {
+            case 0: it->expr = e->bin_op.left; return true;
+            case 1: it->expr = e->bin_op.right; return true;
             case 2: return false;
             default: __builtin_unreachable();
         }
@@ -217,6 +216,7 @@ CUIK_API bool cuik_next_expr_kid(Cuik_ExprIter* it) {
     }
 }
 
+#if 0
 CUIK_API void cuik_visit_top_level(TranslationUnit* restrict tu, void* user_data, Cuik_StmtVisitor* visitor) {
     size_t count = arrlen(tu->top_level_stmts);
     CUIK_TIMED_BLOCK("top level visitor (%zu statements)", count) {
@@ -263,7 +263,7 @@ CUIK_API void cuik_visit_top_level_threaded(TranslationUnit* restrict tu, const 
         size_t limit = i + batch_size;
         if (limit > da_crumbs) limit = count;
 
-        tasks[j] = (TaskInfo){tu, (atomic_size_t*) &waiter->remaining, visitor, user_data, i, limit};
+        tasks[j] = (TaskInfo){ tu, (atomic_size_t*) &waiter->remaining, visitor, user_data, i, limit };
         CUIK_CALL(thread_pool, submit, task_caller, &tasks[j]);
         // printf("Group: %zu - %zu\n", i, limit);
 
@@ -281,3 +281,4 @@ CUIK_API void cuik_wait_on_waiter(const Cuik_IThreadpool* restrict thread_pool, 
 
     free(waiter->opaque);
 }
+#endif

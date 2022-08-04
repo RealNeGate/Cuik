@@ -11,8 +11,13 @@
 #endif
 
 #if CUIK_ALLOW_THREADS
+#include <stdatomic.h>
 #include "threadpool.h"
 #endif
+
+enum {
+    IRGEN_TASK_BATCH_SIZE = 8192
+};
 
 // compiler arguments
 static DynArray(const char*) include_directories;
@@ -33,6 +38,7 @@ static bool args_time;
 static bool args_verbose;
 static bool args_preprocess;
 static bool args_optimize;
+static bool args_bindgen;
 static bool args_object_only;
 static bool args_exercise;
 static bool args_experiment;
@@ -158,26 +164,47 @@ static void dump_tokens(FILE* out_file, TokenStream* s) {
     }
 }
 
-static void irgen_visitor(TranslationUnit* restrict tu, Stmt* restrict s, void* user_data) {
-    TB_Module* mod = cuik_get_tb_module(tu);
-    TB_Function* func = cuik_stmt_gen_ir(tu, s);
+typedef struct {
+    TranslationUnit* tu;
 
-    if (func != NULL) {
-        if (dyn_array_length(da_passes)) {
-            tb_function_optimize(func, dyn_array_length(da_passes), da_passes);
+    Stmt** stmts;
+    size_t count;
+
+    #if CUIK_ALLOW_THREADS
+    atomic_size_t* remaining;
+    #endif
+} IRGenTask;
+
+static void irgen_job(void* arg) {
+    IRGenTask task = *((IRGenTask*) arg);
+    TB_Module* mod = cuik_get_tb_module(task.tu);
+
+    CUIK_TIMED_BLOCK("IR generation: %zu", task.count) {
+        for (size_t i = 0; i < task.count; i++) {
+            TB_Function* func = cuik_stmt_gen_ir(task.tu, task.stmts[i]);
+
+            if (func != NULL) {
+                if (dyn_array_length(da_passes)) {
+                    tb_function_optimize(func, dyn_array_length(da_passes), da_passes);
+                }
+
+                if (args_ir) {
+                    cuik_lock_compilation_unit(&compilation_unit);
+                    tb_function_print(func, tb_default_print_callback, stdout);
+                    printf("\n\n");
+                    cuik_unlock_compilation_unit(&compilation_unit);
+                } else {
+                    tb_module_compile_func(mod, func, args_optimize ? TB_ISEL_COMPLEX : TB_ISEL_FAST);
+                }
+
+                tb_function_free(func);
+            }
         }
-
-        if (args_ir) {
-            cuik_lock_compilation_unit(&compilation_unit);
-            tb_function_print(func, tb_default_print_callback, stdout);
-            printf("\n\n");
-            cuik_unlock_compilation_unit(&compilation_unit);
-        } else {
-            tb_module_compile_func(mod, func, args_optimize ? TB_ISEL_COMPLEX : TB_ISEL_FAST);
-        }
-
-        tb_function_free(func);
     }
+
+    #if CUIK_ALLOW_THREADS
+    if (task.remaining != NULL) *task.remaining -= 1;
+    #endif
 }
 
 // it'll use the normal CLI crap to do so
@@ -210,6 +237,22 @@ static Cuik_CPP* make_preprocessor(const char* filepath) {
         cuikpp_default_packet_handler(cpp, &packet);
     }
 
+    if (args_bindgen) {
+        cuik_lock_compilation_unit(&compilation_unit);
+
+        TokenStream* tokens = cuikpp_get_token_stream(cpp);
+        CUIKPP_FOR_DEFINES(it, cpp) {
+            if (cuikpp_is_in_main_file(tokens, it.loc)) {
+                printf("#define %.*s %.*s\n",
+                    (int)it.key.len, it.key.data,
+                    (int)it.value.len, it.value.data
+                );
+            }
+        }
+
+        cuik_unlock_compilation_unit(&compilation_unit);
+    }
+
     cuikpp_finalize(cpp);
     return cpp;
 }
@@ -225,12 +268,11 @@ static void free_preprocessor(Cuik_CPP* cpp) {
 
 static void compile_file(void* arg) {
     Cuik_CPP* cpp = arg;
-    TokenStream tokens = cuikpp_get_token_stream(cpp);
 
     // parse
     Cuik_ErrorStatus errors;
     TranslationUnit* tu = cuik_parse_translation_unit(&(Cuik_TranslationUnitDesc){
-            .tokens      = &tokens,
+            .tokens      = cuikpp_get_token_stream(cpp),
             .errors      = &errors,
             .ir_module   = mod,
             .target      = &target_desc,
@@ -242,6 +284,12 @@ static void compile_file(void* arg) {
     if (tu == NULL) {
         printf("Failed to parse with errors...");
         exit(1);
+    }
+
+    if (args_bindgen) {
+        cuik_lock_compilation_unit(&compilation_unit);
+
+        cuik_unlock_compilation_unit(&compilation_unit);
     }
 
     cuik_set_translation_unit_user_data(tu, cpp);
@@ -314,8 +362,6 @@ static void append_input_path(const char* path) {
 }
 
 int main(int argc, char** argv) {
-    //_CrtSetDbgFlag(_CRTDBG_ALLOC_MEM_DF);
-    //_CrtSetReportMode(_CRT_ERROR, _CRTDBG_MODE_DEBUG);
     cuik_init();
     find_system_deps();
 
@@ -381,6 +427,7 @@ int main(int argc, char** argv) {
             case ARG_OBJ: args_object_only = true; break;
             case ARG_RUN: args_run = true; break;
             case ARG_PREPROC: args_preprocess = true; break;
+            case ARG_BINDGEN: args_bindgen = true; break;
             case ARG_OPT: args_optimize = true; break;
             case ARG_TIME: args_time = true; break;
             case ARG_ASM: args_assembly = true; break;
@@ -493,8 +540,7 @@ int main(int argc, char** argv) {
         #else
         Cuik_CPP* cpp = make_preprocessor(input_files[0]);
 
-        TokenStream tokens = cuikpp_get_token_stream(cpp);
-        dump_tokens(stdout, &tokens);
+        dump_tokens(stdout, cuikpp_get_token_stream(cpp));
         free_preprocessor(cpp);
         #endif
         return EXIT_SUCCESS;
@@ -537,32 +583,58 @@ int main(int argc, char** argv) {
         if (args_verbose) mark_timestamp("Backend");
 
         if (ithread_pool != NULL) {
-            size_t waiter_count = cuik_num_of_translation_units_in_compilation_unit(&compilation_unit);
-            ThreadedWaiter* waiters = malloc(waiter_count * sizeof(ThreadedWaiter));
-
-            size_t i = 0;
+            #if CUIK_ALLOW_THREADS
+            size_t task_capacity = 0;
             FOR_EACH_TU(tu, &compilation_unit) {
-                cuik_visit_top_level_threaded(
-                    tu, ithread_pool, 8192, &waiters[i], NULL, irgen_visitor
-                );
+                size_t c = cuik_num_of_top_level_stmts(tu);
+                task_capacity += (c + (IRGEN_TASK_BATCH_SIZE - 1)) / IRGEN_TASK_BATCH_SIZE;
+            }
 
+            IRGenTask* tasks = malloc(task_capacity * sizeof(IRGenTask));
+            atomic_size_t tasks_remaining = task_capacity;
+
+            size_t task_count = 0;
+            FOR_EACH_TU(tu, &compilation_unit) {
                 // dispose the preprocessor crap now
                 free_preprocessor((Cuik_CPP*) cuik_get_translation_unit_user_data(tu));
 
-                i += 1;
+                CUIK_FOR_TOP_LEVEL_STMT(it, tu, 8192) {
+                    assert(task_count < task_capacity);
+                    IRGenTask* task = &tasks[task_count++];
+                    *task = (IRGenTask){
+                        .tu = tu,
+                        .stmts = it.start,
+                        .count = it.count,
+                        .remaining = &tasks_remaining
+                    };
+
+                    CUIK_CALL(ithread_pool, submit, irgen_job, task);
+                }
             }
 
-            for (size_t j = 0; j < waiter_count; j++) {
-                cuik_wait_on_waiter(ithread_pool, &waiters[j]);
+            // "highway robbery on steve jobs" job stealing amirite...
+            while (atomic_load(&tasks_remaining) != 0) {
+                CUIK_CALL(ithread_pool, work_one_job);
             }
-            // free(waiters); doesn't really matter
+            #else
+            fprintf("Please compile with -DCUIK_ALLOW_THREADS if you wanna spin up threads");
+            abort();
+            #endif
+            // free(tasks);
         } else {
             FOR_EACH_TU(tu, &compilation_unit) {
-                cuik_visit_top_level(tu, NULL, irgen_visitor);
-
                 Cuik_CPP* cpp = cuik_get_translation_unit_user_data(tu);
                 cuikpp_deinit(cpp);
                 free(cpp);
+
+                size_t c = cuik_num_of_top_level_stmts(tu);
+                IRGenTask task = {
+                    .tu = tu,
+                    .stmts = 0,
+                    .count = c
+                };
+
+                irgen_job(&task);
             }
         }
 
@@ -756,6 +828,5 @@ int main(int argc, char** argv) {
         return exit_code;
     }
 
-    // _CrtDumpMemoryLeaks();
     return 0;
 }
