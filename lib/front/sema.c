@@ -583,7 +583,7 @@ static InitNode* walk_initializer_for_sema(TranslationUnit* tu, Cuik_Type* type,
             node = walk_initializer_layer(tu, type, 0, bounds, node, &cursor, &max_cursor, &slots_left);
         }
     } else {
-        for (int i = 0; slots_left; i++) {
+        while (slots_left > 0) {
             node = walk_initializer_layer(tu, type, 0, bounds, node, &cursor, &max_cursor, &slots_left);
         }
 

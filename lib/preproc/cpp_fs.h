@@ -80,7 +80,7 @@ static LoadResult get_file(bool is_query, const char* path) {
 
     // fat null terminator
     memset(&text[len], 0, 16);
-    cuikpp_canonicalize_text(length_read, text);
+    cuikpp_canonicalize_text(len, text);
 
     return (LoadResult){ .found = true, .length = len, .data = text };
     #endif
