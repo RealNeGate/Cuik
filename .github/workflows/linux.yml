@@ -9,7 +9,7 @@ jobs:
     if: "!contains(github.event.head_commit.message, '[skip ci]')"
     strategy:
       matrix:
-        cc: [gcc, clang-14]
+        cc: [gcc, clang]
 
     steps:
 
@@ -17,13 +17,12 @@ jobs:
       uses: actions/checkout@v2
 
     - name: Dependencies
-      if: "${{ matrix.cc == 'clang-14' }}"
+      if: "${{ matrix.cc == 'clang' }}"
       run: |
         wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
         sudo add-apt-repository "deb http://apt.llvm.org/focal/ llvm-toolchain-focal main"
         sudo apt-get update
-        sudo apt-get install -y clang-14 llvm-14 llvm-14-dev lld-14 liblld-14-dev
-        cp /usr/bin/llvm-ar-14 bin
+        sudo apt-get install -y llvm clang
     - name: Build
       run: ${{ matrix.cc }} -Wall compile.c
 

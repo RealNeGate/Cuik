@@ -316,7 +316,6 @@ static void append_input_path(const char* path) {
 int main(int argc, char** argv) {
     //_CrtSetDbgFlag(_CRTDBG_ALLOC_MEM_DF);
     //_CrtSetReportMode(_CRT_ERROR, _CRTDBG_MODE_DEBUG);
-
     cuik_init();
     find_system_deps();
 
