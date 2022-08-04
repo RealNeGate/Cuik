@@ -455,7 +455,7 @@ int main(int argc, char** argv) {
     threadpool_t* thread_pool = NULL;
     int thread_count = args_threads >= 0 ? args_threads : calculate_worker_thread_count();
     if (thread_count > 1) {
-        printf("Starting with %d threads...\n", thread_count);
+        if (args_verbose) printf("Starting with %d threads...\n", thread_count);
 
         thread_pool = threadpool_create(thread_count - 1, 4096);
         ithread_pool = malloc(sizeof(Cuik_IThreadpool));

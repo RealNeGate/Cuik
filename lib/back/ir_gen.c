@@ -198,7 +198,7 @@ TB_Reg irgen_as_lvalue(TranslationUnit* tu, TB_Function* func, Expr* e) {
     }
 }
 
-static TB_Reg inc_or_dec(TranslationUnit* tu, TB_Function* func, IRVal address, Expr* e, Cuik_Type* type, bool post, bool is_inc) {
+static TB_Reg inc_or_dec(TranslationUnit* tu, TB_Function* func, IRVal address, Expr* e, Cuik_Type* type, bool postfix, bool is_inc) {
     TB_DataType dt = ctype_to_tbtype(type);
     bool is_atomic = type->is_atomic;
 
@@ -220,7 +220,7 @@ static TB_Reg inc_or_dec(TranslationUnit* tu, TB_Function* func, IRVal address, 
         //
         // for post-increment we need to redo the arithmatic on the loaded value (it's
         // already been done to the value in memory so we don't writeback)
-        if (!post) {
+        if (!postfix) {
             return loaded;
         }
     } else {
@@ -249,7 +249,7 @@ static TB_Reg inc_or_dec(TranslationUnit* tu, TB_Function* func, IRVal address, 
         tb_inst_store(func, dt, address.reg, operation, type->align);
     }
 
-    return post ? operation : loaded;
+    return postfix ? loaded : operation;
 }
 
 InitNode* count_max_tb_init_objects(int node_count, InitNode* node, int* out_count) {
@@ -1961,13 +1961,15 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
         }
         case STMT_CASE: {
             assert(s->backing.l);
-            while (s->case_.body->op == STMT_CASE) {
-                tb_inst_label(func, s->backing.l);
-                s = s->case_.body;
-            }
+            if (s->case_.body != NULL) {
+                while (s->case_.body->op == STMT_CASE) {
+                    tb_inst_label(func, s->backing.l);
+                    s = s->case_.body;
+                }
 
-            tb_inst_label(func, s->backing.l);
-            irgen_stmt(tu, func, s->case_.body);
+                tb_inst_label(func, s->backing.l);
+                irgen_stmt(tu, func, s->case_.body);
+            }
             break;
         }
         case STMT_SWITCH: {

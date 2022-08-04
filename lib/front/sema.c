@@ -390,6 +390,8 @@ static InitNode* walk_initializer_layer(
         } else if (parent->kind == KIND_ARRAY) {
             type = parent->array_of;
             relative_offset = (*cursor - 1) * type->size;
+        } else {
+            type = parent;
         }
     }
 
@@ -1523,11 +1525,13 @@ void sema_stmt(TranslationUnit* tu, Stmt* restrict s) {
             break;
         }
         case STMT_CASE: {
-            while (s->case_.body->op == STMT_CASE) {
-                s = s->case_.body;
-            }
+            if (s->case_.body != NULL) {
+                while (s->case_.body->op == STMT_CASE) {
+                    s = s->case_.body;
+                }
 
-            sema_stmt(tu, s->case_.body);
+                sema_stmt(tu, s->case_.body);
+            }
             break;
         }
         case STMT_DEFAULT: {

@@ -602,6 +602,9 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                 // must be a declaration since it's a top level statement
                 Attribs attr = {0};
                 Cuik_Type* type = parse_declspec(tu, s, &attr);
+                if (type == NULL) {
+                    REPORT(ERROR, loc, "why did you just try that goofy shit wit me. You cannot assign a typedef.");
+                }
 
                 if (attr.is_typedef) {
                     // declarator (',' declarator)+ ';'

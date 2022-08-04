@@ -1,5 +1,9 @@
 #include <stdio.h>
 
+int foo(int i) {
+	return i--;
+}
+
 int fast_fib(int n) {
     int a = 0;
 	int b = 1;
@@ -24,7 +28,7 @@ int main(void) {
 	for (int i = 1; i <= 15; i++) {
 		printf("%d ", fast_fib(i));
 	}
-	
+	printf("\n");
 	for (int i = 1; i <= 15; i++) {
 		printf("%d ", slow_fib(i));
 	}

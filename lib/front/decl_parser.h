@@ -54,7 +54,7 @@ static Decl parse_declarator(TranslationUnit* tu, TokenStream* restrict s, Cuik_
 
     // handle calling convention
     // TODO(NeGate): Actually pass these to the AST
-    parse_another_qualifier2 : {
+    parse_another_qualifier2: {
         switch (tokens_get(s)->type) {
             case TOKEN_KW_cdecl:
             case TOKEN_KW_stdcall:
@@ -207,7 +207,7 @@ static Cuik_Type* parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s
         void* params = tls_save();
         bool has_varargs = false;
 
-        while (tokens_get(s)->type != ')') {
+        while (tokens_get(s)->type && tokens_get(s)->type != ')') {
             if (param_count) {
                 if (tokens_get(s)->type != ',') {
                     tokens_prev(s);
@@ -229,6 +229,13 @@ static Cuik_Type* parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s
 
             Attribs arg_attr = {0};
             Cuik_Type* arg_base_type = parse_declspec(tu, s, &arg_attr);
+            if (arg_base_type == NULL) {
+                while (tokens_get(s)->type && tokens_get(s)->type != ')') {
+                    tokens_next(s);
+                }
+
+                break;
+            }
 
             Decl param_decl = parse_declarator(tu, s, arg_base_type, false, false);
             Cuik_Type* param_type = param_decl.type;
@@ -387,6 +394,7 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
     int forced_align = 0;
     PendingExpr* alignas_pending_expr = NULL;
 
+    SourceLocIndex loc = tokens_get_location_index(s);
     do {
         TknType tkn_type = tokens_get(s)->type;
         switch (tkn_type) {
@@ -449,7 +457,6 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
 
             case TOKEN_KW_Complex:
             case TOKEN_KW_Imaginary: {
-                SourceLocIndex loc = tokens_get(s)->location;
                 REPORT(ERROR, loc, "Complex types are not supported in CuikC");
                 break;
             }
@@ -457,7 +464,6 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
             case TOKEN_KW_Vector: {
                 // _Vector '(' TYPENAME ',' CONST-EXPR ')'
                 if (counter) goto done;
-                SourceLocIndex loc = tokens_get_location_index(s);
                 tokens_next(s);
 
                 SourceLocIndex opening_loc = tokens_get_location_index(s);
@@ -533,8 +539,6 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
             break;
 
             case TOKEN_KW_Typeof: {
-                SourceLocIndex loc = tokens_get_location_index(s);
-
                 tokens_next(s);
                 if (tokens_get(s)->type != '(') {
                     REPORT(ERROR, loc, "expected opening parenthesis for _Typeof");
@@ -574,7 +578,6 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
             }
 
             case TOKEN_KW_Alignas: {
-                SourceLocIndex loc = tokens_get_location_index(s);
                 if (alignas_pending_expr != NULL) {
                     REPORT(ERROR, loc, "cannot apply two _Alignas to one type");
                     return NULL;
@@ -687,8 +690,8 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
                                 nl_strmap_put_cstr(tu->global_tags, name, type);
                             } else {
                                 if (local_tag_count + 1 >= MAX_LOCAL_TAGS) {
-                                    SourceLocIndex loc = tokens_get_location_index(s);
-                                    REPORT(ERROR, loc, "too many tags in local scopes (%d)", MAX_LOCAL_TAGS);
+                                    SourceLocIndex loc2 = tokens_get_location_index(s);
+                                    REPORT(ERROR, loc2, "too many tags in local scopes (%d)", MAX_LOCAL_TAGS);
                                     abort();
                                 }
 
@@ -804,8 +807,8 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
                             nl_strmap_put_cstr(tu->global_tags, name, type);
                         } else {
                             if (local_tag_count + 1 >= MAX_LOCAL_TAGS) {
-                                SourceLocIndex loc = tokens_get_location_index(s);
-                                REPORT(ERROR, loc, "too many tags in local scopes (%d)", MAX_LOCAL_TAGS);
+                                SourceLocIndex loc2 = tokens_get_location_index(s);
+                                REPORT(ERROR, loc2, "too many tags in local scopes (%d)", MAX_LOCAL_TAGS);
                                 abort();
                             }
 
@@ -853,8 +856,8 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
                                 nl_strmap_put_cstr(tu->global_tags, name, type);
                             else {
                                 if (local_tag_count + 1 >= MAX_LOCAL_TAGS) {
-                                    SourceLocIndex loc = tokens_get_location_index(s);
-                                    REPORT(ERROR, loc, "too many tags in local scopes (%d)", MAX_LOCAL_TAGS);
+                                    SourceLocIndex loc2 = tokens_get_location_index(s);
+                                    REPORT(ERROR, loc2, "too many tags in local scopes (%d)", MAX_LOCAL_TAGS);
                                     abort();
                                 }
 
@@ -898,8 +901,8 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
                                 lexer_pos = skip_expression_in_enum(s, &terminator);
 
                                 if (terminator == 0) {
-                                    SourceLocIndex loc = tokens_get_location_index(s);
-                                    REPORT(ERROR, loc, "expected comma or } (got EOF)");
+                                    SourceLocIndex loc2 = tokens_get_location_index(s);
+                                    REPORT(ERROR, loc2, "expected comma or } (got EOF)");
                                     abort();
                                 }
                             } else {
@@ -959,8 +962,8 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
                             nl_strmap_put_cstr(tu->global_tags, name, type);
                         } else {
                             if (local_tag_count + 1 >= MAX_LOCAL_TAGS) {
-                                SourceLocIndex loc = tokens_get_location_index(s);
-                                REPORT(ERROR, loc, "too many tags in local scopes (%d)", MAX_LOCAL_TAGS);
+                                SourceLocIndex loc2 = tokens_get_location_index(s);
+                                REPORT(ERROR, loc2, "too many tags in local scopes (%d)", MAX_LOCAL_TAGS);
                                 abort();
                             }
 
@@ -989,8 +992,8 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
                     // if not, we assume this must be a typedef'd type and reserve space
                     if (sym != NULL) {
                         if (sym->storage_class != STORAGE_TYPEDEF) {
-                            SourceLocIndex loc = tokens_get_location_index(s);
-                            REPORT(ERROR, loc, "symbol '%s' is not a typedef", name);
+                            SourceLocIndex loc2 = tokens_get_location_index(s);
+                            REPORT(ERROR, loc2, "symbol '%s' is not a typedef", name);
                             return NULL;
                         }
 
@@ -1115,7 +1118,6 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
     } while (true);
 
     done:;
-    SourceLocIndex loc = tokens_get_location_index(s);
     if (type == 0) {
         REPORT(ERROR, loc, "unknown typename");
         return NULL;
