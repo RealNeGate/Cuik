@@ -24,4 +24,4 @@ jobs:
       run: ${{ matrix.cc }} -Wall compile.c
 
     - name: Test
-      run: PATH="bin:$PATH" ./a.out test
+      run: PATH="bin:$PATH" ./a.out -test
