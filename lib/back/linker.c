@@ -105,8 +105,8 @@ bool cuiklink_invoke(Cuik_Linker* l, const char* filename, const char* crt_name)
     CUIK_TIMED_BLOCK("linker") {
         wchar_t cmd_line[CMD_LINE_MAX];
         int cmd_line_len = swprintf(cmd_line, CMD_LINE_MAX,
-            L"%s\\link.exe /nologo /machine:amd64 /subsystem:%s"
-            " /debug:full /pdb:%S.pdb /out:%S.exe /incremental:no ",
+            L"%s\\link.exe /nologo /machine:amd64 /subsystem:%s "
+            "/debug:full /pdb:%S.pdb /out:%S.exe /incremental:no ",
             cuik__vswhere.vs_exe_path, l->subsystem_windows ? L"windows" : L"console", filename, filename);
 
         // Add all the libpaths

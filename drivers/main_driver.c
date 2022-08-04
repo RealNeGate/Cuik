@@ -235,7 +235,7 @@ static void compile_file(void* arg) {
             .ir_module   = mod,
             .target      = &target_desc,
             #if CUIK_ALLOW_THREADS
-            .thread_pool = NULL /* ithread_pool ? ithread_pool : NULL */,
+            .thread_pool = ithread_pool ? ithread_pool : NULL,
             #endif
         });
 
