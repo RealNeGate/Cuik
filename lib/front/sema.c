@@ -696,7 +696,7 @@ Member* sema_resolve_member_access(TranslationUnit* tu, Expr* restrict e, uint32
     }
 
     type_as_string(tu, sizeof(temp_string0), temp_string0, record_type);
-    REPORT_EXPR(ERROR, e->dot_arrow.base, "Could not find member called '%s' for type '%s'", e->dot_arrow.name, temp_string0);
+    REPORT_EXPR(ERROR, e, "Could not find member called '%s' for type '%s'", e->dot_arrow.name, temp_string0);
     return NULL;
 }
 
@@ -1438,6 +1438,13 @@ void sema_stmt(TranslationUnit* tu, Stmt* restrict s) {
                 // expressions.
                 s->decl.initial = cuik__optimize_ast(tu, s->decl.initial);
             }
+
+            if (s->decl.type->size == 0 || s->decl.type->is_incomplete) {
+                report_two_spots(
+                    REPORT_ERROR, tu->errors, &tu->tokens, s->loc, s->decl.type->loc,
+                    "Incomplete type in declaration", "decl", "type", NULL
+                );
+            }
             break;
         }
         case STMT_EXPR: {
@@ -1459,6 +1466,12 @@ void sema_stmt(TranslationUnit* tu, Stmt* restrict s) {
             break;
         }
         case STMT_IF: {
+            if (s->if_.cond->op >= EXPR_ASSIGN &&
+                s->if_.cond->op <= EXPR_SHR_ASSIGN &&
+                !s->if_.cond->has_parens) {
+                REPORT_EXPR(WARNING, s->if_.cond, "using assignment as condition without parenthesis");
+            }
+
             Cuik_Type* cond_type = sema_expr(tu, s->if_.cond);
             if (!is_scalar_type(tu, cond_type)) {
                 type_as_string(tu, sizeof(temp_string0), temp_string0, cond_type);
@@ -1474,6 +1487,12 @@ void sema_stmt(TranslationUnit* tu, Stmt* restrict s) {
             break;
         }
         case STMT_WHILE: {
+            if (s->while_.cond->op >= EXPR_ASSIGN &&
+                s->while_.cond->op <= EXPR_SHR_ASSIGN &&
+                !s->while_.cond->has_parens) {
+                REPORT_EXPR(WARNING, s->while_.cond, "using assignment as condition without parenthesis");
+            }
+
             sema_expr(tu, s->while_.cond);
             s->while_.cond->cast_type = &builtin_types[TYPE_BOOL];
 
@@ -1497,6 +1516,12 @@ void sema_stmt(TranslationUnit* tu, Stmt* restrict s) {
             }
 
             if (s->for_.cond) {
+                if (s->for_.cond->op >= EXPR_ASSIGN &&
+                    s->for_.cond->op <= EXPR_SHR_ASSIGN &&
+                    !s->for_.cond->has_parens) {
+                    REPORT_EXPR(WARNING, s->for_.cond, "using assignment as condition without parenthesis");
+                }
+
                 sema_expr(tu, s->for_.cond);
                 s->for_.cond->cast_type = &builtin_types[TYPE_BOOL];
             }
@@ -1730,14 +1755,11 @@ static void sema_top_level(TranslationUnit* tu, Stmt* restrict s) {
                     }
                 }
 
-                if (type->is_incomplete) {
-                    if (type->kind == KIND_STRUCT) {
-                        REPORT_STMT(ERROR, s, "Incomplete type (struct %s) in declaration", type->record.name);
-                    } else if (type->kind == KIND_UNION) {
-                        REPORT_STMT(ERROR, s, "Incomplete type (union %s) in declaration", type->record.name);
-                    } else {
-                        REPORT_STMT(ERROR, s, "Incomplete type in declaration");
-                    }
+                if (type->size == 0 || type->is_incomplete) {
+                    report_two_spots(
+                        REPORT_ERROR, tu->errors, &tu->tokens, s->loc, type->loc,
+                        "Incomplete type in declaration", "decl", "type", NULL
+                    );
                 }
 
                 #ifdef CUIK_USE_TB

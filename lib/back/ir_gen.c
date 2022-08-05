@@ -583,7 +583,13 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
         case EXPR_INT: {
             TB_DataType dt = ctype_to_tbtype(e->type);
 
-            if (e->type->is_unsigned) {
+            if (TYPE_IS_FLOAT(e->type)) {
+                return (IRVal){
+                    .value_type = RVALUE,
+                    .type = e->type,
+                    .reg = tb_inst_float(func, dt, e->int_num.num),
+                };
+            } else if (e->type->is_unsigned) {
                 return (IRVal){
                     .value_type = RVALUE,
                     .type = e->type,
@@ -660,7 +666,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
             tb_inst_store(func, TB_TYPE_PTR, src.reg, post, 8);
 
             return (IRVal){
-                .value_type = LVALUE_FUNC,
+                .value_type = LVALUE,
                 .type = e->type,
                 .reg = pre
             };

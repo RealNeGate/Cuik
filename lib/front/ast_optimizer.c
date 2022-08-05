@@ -237,10 +237,14 @@ Expr* cuik__optimize_ast(TranslationUnit* tu, Expr* e) {
             if (a->op == EXPR_FLOAT32 || a->op == EXPR_FLOAT64) {
                 Expr* b = cuik__optimize_ast(tu, e->bin_op.left);
 
-                if (b->op == EXPR_FLOAT32 || b->op == EXPR_FLOAT64) {
+                if (b->op == EXPR_INT || b->op == EXPR_FLOAT32 || b->op == EXPR_FLOAT64) {
                     switch (e->op) {
                         case EXPR_SLASH: {
-                            float af = a->float_num, bf = b->float_num;
+                            // inaccurate, we'll fix later
+                            double af = a->float_num, bf = 0.0;
+
+                            if (b->op) bf = b->int_num.num;
+                            else bf = b->float_num;
 
                             e->op = EXPR_FLOAT32;
                             e->float_num = bf / af;

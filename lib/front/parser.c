@@ -407,7 +407,6 @@ void type_layout(TranslationUnit* restrict tu, Cuik_Type* type) {
         // size checks
         if (result >= INT32_MAX) {
             REPORT(ERROR, type->loc, "cannot declare an array that exceeds 0x7FFFFFFE bytes (got 0x%zX or %zi)", result, result);
-            abort();
         }
 
         type->size = result;
@@ -603,13 +602,18 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                 Attribs attr = {0};
                 Cuik_Type* type = parse_declspec(tu, s, &attr);
                 if (type == NULL) {
-                    REPORT(ERROR, loc, "why did you just try that goofy shit wit me. You cannot assign a typedef.");
+                    REPORT(ERROR, loc, "Could not parse base type.");
                 }
 
                 if (attr.is_typedef) {
                     // declarator (',' declarator)+ ';'
                     while (true) {
+                        size_t start_decl_token = s->current;
                         Decl decl = parse_declarator(tu, s, type, false, false);
+
+                        // we wanna avoid getting stuck in infinite loops so if we dont
+                        // do anything in an iteration then we want to exit with an error
+                        bool possibly_bad_decl = (s->current == start_decl_token);
 
                         if (decl.name != NULL) {
                             // make typedef
@@ -632,7 +636,6 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                                     report_two_spots(REPORT_ERROR, tu->errors, s, decl.loc, search->loc,
                                         "typedef overrides previous declaration.",
                                         "old", "new", NULL);
-                                    abort();
                                 }
 
                                 Cuik_Type* placeholder_space = search->type;
@@ -640,7 +643,6 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                                     report_two_spots(REPORT_ERROR, tu->errors, s, decl.loc, search->loc,
                                         "typedef overrides previous declaration.",
                                         "old", "new", NULL);
-                                    abort();
                                 }
 
                                 // replace placeholder with actual entry
@@ -674,6 +676,9 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                         } else if (tokens_get(s)->type == ',') {
                             tokens_next(s);
                             continue;
+                        } else if (possibly_bad_decl) {
+                            REPORT(ERROR, loc, "Bad declaration");
+                            break;
                         }
                     }
                 } else {
@@ -695,12 +700,18 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                     // normal variable lists
                     // declarator (',' declarator )+ ';'
                     while (true) {
+                        size_t start_decl_token = s->current;
+
                         SourceLocIndex decl_loc = tokens_get_location_index(s);
                         Decl decl = parse_declarator(tu, s, type, false, false);
                         if (decl.name == NULL) {
                             REPORT(ERROR, decl_loc, "Declaration has no name");
                             break;
                         }
+
+                        // we wanna avoid getting stuck in infinite loops so if we dont
+                        // do anything in an iteration then we want to exit with an error
+                        bool possibly_bad_decl = (s->current == start_decl_token);
 
                         Stmt* n = make_stmt(tu, s, STMT_GLOBAL_DECL, sizeof(struct StmtDecl));
                         n->loc = decl.loc;
@@ -897,6 +908,9 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                         } else if (tokens_get(s)->type == ',') {
                             tokens_next(s);
                             continue;
+                        } else if (possibly_bad_decl) {
+                            REPORT(ERROR, loc, "Bad declaration");
+                            break;
                         }
                     }
 
@@ -1392,8 +1406,7 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
         }
 
         Stmt* n = make_stmt(tu, s, STMT_RETURN, sizeof(struct StmtReturn));
-        n->return_ = (struct StmtReturn){
-            .expr = e};
+        n->return_ = (struct StmtReturn){ .expr = e };
 
         expect_with_reason(tu, s, ';', "return");
         return n;

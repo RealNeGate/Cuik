@@ -537,13 +537,15 @@ void lexer_read(Lexer* restrict l) {
                         current++;
                     }
 
-                    if (*current == 'p') {
-                        current++;
-                        if (*current == '+' || *current == '-') current++;
+                }
 
-                        while (char_classes[*current] == CHAR_CLASS_NUMBER) {
-                            current++;
-                        }
+                if (*current == 'p') {
+                    l->token_type = TOKEN_FLOAT;
+                    current++;
+                    if (*current == '+' || *current == '-') current++;
+
+                    while (char_classes[*current] == CHAR_CLASS_NUMBER) {
+                        current++;
                     }
                 }
             } else {

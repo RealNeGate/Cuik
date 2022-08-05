@@ -243,6 +243,9 @@ CUIK_API bool cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
 
         ptrdiff_t search = shgeti(ctx->include_once, filepath);
         if (search < 0) {
+            // for (int i = 0; i < ctx->stack_ptr; i++) printf("  ");
+            // printf("%s\n", filepath);
+
             // identify directory path
             char* slash = strrchr(filepath, '/');
             if (!slash) slash = strrchr(filepath, '\\');

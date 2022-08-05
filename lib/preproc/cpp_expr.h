@@ -50,7 +50,7 @@ static intmax_t eval_l0(Cuik_CPP* restrict c, TokenStream* restrict s) {
         tokens_next(s);
     } else if (t->type == TOKEN_STRING_SINGLE_QUOTE) {
         int ch;
-        intptr_t distance = parse_char(t->end - t->start, (const char*)t->start, &ch);
+        ptrdiff_t distance = parse_char(t->end - t->start, (const char*)t->start, &ch);
         if (distance < 0) {
             report(REPORT_ERROR, NULL, s, t->location, "could not parse char literal");
             abort();
@@ -77,15 +77,26 @@ static intmax_t eval_l0(Cuik_CPP* restrict c, TokenStream* restrict s) {
     return flip ? !val : val;
 }
 
+static intmax_t eval_l2(Cuik_CPP* restrict c, TokenStream* restrict s) {
+    if (tokens_get(s)->type == '-') {
+        return -eval_l0(c, s);
+    } else if (tokens_get(s)->type == '+') {
+        tokens_next(s);
+        return eval_l0(c, s);
+    } else {
+        return eval_l0(c, s);
+    }
+}
+
 static intmax_t eval_l4(Cuik_CPP* restrict c, TokenStream* restrict s) {
-    intmax_t left = eval_l0(c, s);
+    intmax_t left = eval_l2(c, s);
 
     while (tokens_get(s)->type == '+' ||
         tokens_get(s)->type == '-') {
         int t = tokens_get(s)->type;
         tokens_next(s);
 
-        intmax_t right = eval_l0(c, s);
+        intmax_t right = eval_l2(c, s);
         if (t == '+')
             left = (left + right);
         else

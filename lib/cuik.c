@@ -149,26 +149,26 @@ static void set_defines(Cuik_CPP* cpp, const Cuik_Target* target, bool system_li
         // WinSDK includes
         char filepath[FILENAME_MAX];
 
+        if (snprintf(filepath, FILENAME_MAX, "%S\\um\\", cuik__vswhere.windows_sdk_include) > FILENAME_MAX) {
+            printf("internal compiler error: WinSDK include directory too long!\n");
+            abort();
+        }
+        cuikpp_add_include_directory(cpp, filepath);
+
+        if (snprintf(filepath, FILENAME_MAX, "%S\\shared\\", cuik__vswhere.windows_sdk_include) > FILENAME_MAX) {
+            printf("internal compiler error: WinSDK include directory too long!\n");
+            abort();
+        }
+        cuikpp_add_include_directory(cpp, filepath);
+
+        // VS include
+        if (snprintf(filepath, FILENAME_MAX, "%S\\", cuik__vswhere.vs_include_path) > FILENAME_MAX) {
+            printf("internal compiler error: VS include directory too long!\n");
+            abort();
+        }
+        cuikpp_add_include_directory(cpp, filepath);
+
         if (system_libs) {
-            if (snprintf(filepath, FILENAME_MAX, "%S\\um\\", cuik__vswhere.windows_sdk_include) > FILENAME_MAX) {
-                printf("internal compiler error: WinSDK include directory too long!\n");
-                abort();
-            }
-            cuikpp_add_include_directory(cpp, filepath);
-
-            if (snprintf(filepath, FILENAME_MAX, "%S\\shared\\", cuik__vswhere.windows_sdk_include) > FILENAME_MAX) {
-                printf("internal compiler error: WinSDK include directory too long!\n");
-                abort();
-            }
-            cuikpp_add_include_directory(cpp, filepath);
-
-            // VS include
-            if (snprintf(filepath, FILENAME_MAX, "%S\\", cuik__vswhere.vs_include_path) > FILENAME_MAX) {
-                printf("internal compiler error: VS include directory too long!\n");
-                abort();
-            }
-            cuikpp_add_include_directory(cpp, filepath);
-
             if (snprintf(filepath, FILENAME_MAX, "%S\\ucrt\\", cuik__vswhere.windows_sdk_include) > FILENAME_MAX) {
                 printf("internal compiler error: WinSDK include directory too long!\n");
                 abort();
@@ -276,6 +276,12 @@ CUIK_API Token* cuik_get_tokens(TokenStream* restrict s) {
 
 CUIK_API size_t cuik_get_token_count(TokenStream* restrict s) {
     return arrlen(s->tokens);
+}
+
+CUIK_API void cuik_print_type(TranslationUnit* restrict tu, Cuik_Type* restrict type) {
+    char str[1024];
+    type_as_string(tu, 1024, str, type);
+    printf("%s", str);
 }
 
 #ifndef _WIN32

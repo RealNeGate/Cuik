@@ -434,6 +434,19 @@ static TB_Reg compile_builtin(TranslationUnit* tu, TB_Function* func, const char
         TB_Reg src = irgen_as_rvalue(tu, func, args[1]);
 
         return tb_inst_atomic_xchg(func, dst, src, TB_MEM_ORDER_SEQ_CST);
+    } else if (strcmp(name, "__c11_atomic_compare_exchange_strong") == 0) {
+        TB_Reg addr = irgen_as_rvalue(tu, func, args[0]);
+        TB_Reg comparand = irgen_as_rvalue(tu, func, args[1]);
+        TB_Reg exchange = irgen_as_rvalue(tu, func, args[2]);
+
+        assert(args[1]->cast_type->kind == KIND_PTR);
+        Cuik_Type* ty = args[1]->cast_type->ptr_to;
+
+        // for odd reasons C11 compare exchange uses a pointer for the comparand
+        comparand = tb_inst_load(func, ctype_to_tbtype(ty), comparand, ty->align);
+
+        TB_CmpXchgResult r = tb_inst_atomic_cmpxchg(func, addr, comparand, exchange, TB_MEM_ORDER_SEQ_CST, TB_MEM_ORDER_SEQ_CST);
+        return r.old_value;
     } else if (strcmp(name, "_InterlockedCompareExchange") == 0) {
         TB_Reg addr = irgen_as_rvalue(tu, func, args[0]);
         TB_Reg exchange = irgen_as_rvalue(tu, func, args[1]);
@@ -470,6 +483,13 @@ static TB_Reg compile_builtin(TranslationUnit* tu, TB_Function* func, const char
         assert(args[2]->op == EXPR_INT && args[2]->int_num.num < 6);
         int order = args[2]->int_num.num;
         return tb_inst_atomic_add(func, dst, src, order);
+    } else if (strcmp(name, "__c11_atomic_fetch_sub") == 0) {
+        TB_Reg dst = irgen_as_rvalue(tu, func, args[0]);
+        TB_Reg src = irgen_as_rvalue(tu, func, args[1]);
+
+        assert(args[2]->op == EXPR_INT && args[2]->int_num.num < 6);
+        int order = args[2]->int_num.num;
+        return tb_inst_atomic_sub(func, dst, src, order);
     } else if (strcmp(name, "__builtin_mul_overflow") == 0) {
         Cuik_Type* type = args[0]->cast_type;
         TB_DataType dt = ctype_to_tbtype(type);
@@ -508,7 +528,6 @@ static TB_Reg compile_builtin(TranslationUnit* tu, TB_Function* func, const char
         return 0;
     } else if (strcmp(name, "_mm_setcsr") == 0) {
         TB_Reg src = irgen_as_rvalue(tu, func, args[0]);
-
         return tb_inst_x86_ldmxcsr(func, src);
     } else if (strcmp(name, "_mm_getcsr") == 0) {
         return tb_inst_x86_stmxcsr(func);

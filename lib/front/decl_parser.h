@@ -1,6 +1,8 @@
 ////////////////////////////////
 // TYPES
 ////////////////////////////////
+static thread_local char temp_string0[1024];
+
 static bool parse_attributes(TranslationUnit* restrict tu, TokenStream* restrict s, Stmt* restrict n) {
     if (tokens_get(s)->type == TOKEN_KW_attribute ||
         tokens_get(s)->type == TOKEN_KW_asm) {
@@ -992,8 +994,13 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
                     // if not, we assume this must be a typedef'd type and reserve space
                     if (sym != NULL) {
                         if (sym->storage_class != STORAGE_TYPEDEF) {
+                            sprintf_s(temp_string0, sizeof(temp_string0), "symbol '%s' is not a typedef", name);
+
                             SourceLocIndex loc2 = tokens_get_location_index(s);
-                            REPORT(ERROR, loc2, "symbol '%s' is not a typedef", name);
+                            report_two_spots(
+                                REPORT_ERROR, tu->errors, s, loc2, sym->loc,
+                                temp_string0, "use", "def", NULL
+                            );
                             return NULL;
                         }
 

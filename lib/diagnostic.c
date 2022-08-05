@@ -35,7 +35,21 @@ const static int attribs[] = {
 
 bool report_using_thin_errors = false;
 
+#if _WIN32
+#define RESET_COLOR     SetConsoleTextAttribute(console_handle, default_attribs);
+#define SET_COLOR_RED   SetConsoleTextAttribute(console_handle, (default_attribs & ~0xF) | FOREGROUND_RED);
+#define SET_COLOR_GREEN SetConsoleTextAttribute(console_handle, (default_attribs & ~0xF) | FOREGROUND_GREEN);
+#define SET_COLOR_WHITE SetConsoleTextAttribute(console_handle, (default_attribs & ~0xF) | FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE | FOREGROUND_INTENSITY);
+#else
+#define RESET_COLOR
+#define SET_COLOR_RED
+#define SET_COLOR_GREEN
+#endif
+
 void init_report_system(void) {
+    setvbuf(stdout, NULL, _IONBF, 0);
+    setvbuf(stderr, NULL, _IONBF, 0);
+
     #if _WIN32
     if (console_handle == NULL) {
         console_handle = GetStdHandle(STD_OUTPUT_HANDLE);
@@ -85,13 +99,9 @@ static void display_line(Cuik_ReportLevel level, TokenStream* tokens, SourceLoc*
         loc = GET_SOURCE_LOC(loci);
     }
 
-    if (report_using_thin_errors) {
-        printf("%s:%d:%d: ", loc->line->filepath, loc->line->line, loc->columns);
-        print_level_name(level);
-    } else {
-        print_level_name(level);
-        printf("%s:%d:%d: ", loc->line->filepath, loc->line->line, loc->columns);
-    }
+    SET_COLOR_WHITE;
+    printf("%s:%d:%d: ", loc->line->filepath, loc->line->line, loc->columns);
+    print_level_name(level);
 }
 
 static void tally_report_counter(Cuik_ReportLevel level, Cuik_ErrorStatus* err) {
@@ -123,78 +133,6 @@ static void tally_report_counter(Cuik_ReportLevel level, Cuik_ErrorStatus* err) 
 }
 
 static size_t draw_line(TokenStream* tokens, SourceLocIndex loc_index) {
-    #if 0
-    SourceLoc* first_loc = &tokens->locations[0];
-    SourceLoc* final_loc = &tokens->locations[arrlen(tokens->locations) - 1];
-
-    SourceLoc* loc = GET_SOURCE_LOC(loc_index);
-    SourceLine* line = loc->line;
-
-    // find the first source loc in the line
-    for (; loc != first_loc; loc--) {
-        if (loc->line->line != line->line) {
-            loc++;
-            break;
-        }
-    }
-
-    // find out how many source locs are in this line
-    size_t len = 0;
-    size_t last_column = 0;
-    SourceLoc* end_loc = loc;
-
-    printf("    ");
-    for (; end_loc != final_loc; end_loc++) {
-        bool is_macro = false;
-
-        // sometimes we have duplicates, assume they're macros
-        while (&end_loc[1] != final_loc &&
-            end_loc[1].line->filepath == end_loc[0].line->filepath &&
-            end_loc[1].line->line == end_loc[0].line->line &&
-            end_loc[1].columns == end_loc[0].columns) {
-            is_macro = true;
-            end_loc += 1;
-        }
-
-        SourceLoc* nicer_loc = end_loc;
-        if (nicer_loc->line->filepath[0] == '<' && nicer_loc->line->parent != 0) {
-            nicer_loc = GET_SOURCE_LOC(nicer_loc->line->parent);
-            is_macro = true;
-        }
-
-        if (nicer_loc->line->line != loc->line->line) {
-            break;
-        } else if (nicer_loc->line->filepath[0] == '<') {
-            continue;
-        }
-
-        // account for spaces
-        if (nicer_loc->columns >= last_column) {
-            if (len != 0) {
-                int spaces = nicer_loc->columns - last_column;
-
-                printf("%*s", -spaces, "");
-                len += spaces;
-            }
-
-            last_column = nicer_loc->columns + nicer_loc->length;
-
-            if (is_macro) {
-                // we hit a macro, color it in
-                len += printf(
-                    "\x1b[31m%.*s\x1b[0m", (int)nicer_loc->length,
-                    nicer_loc->line->line_str + nicer_loc->columns
-                );
-            } else {
-                len += printf(
-                    "%.*s", (int)nicer_loc->length,
-                    nicer_loc->line->line_str + nicer_loc->columns
-                );
-            }
-        }
-    }
-    printf("\n");
-    #else
     SourceLine* line = GET_SOURCE_LOC(loc_index)->line;
 
     // display line
@@ -207,7 +145,8 @@ static size_t draw_line(TokenStream* tokens, SourceLocIndex loc_index) {
     // Draw line preview
     if (*line_start != '\r' && *line_start != '\n') {
         const char* line_end = line_start;
-        printf("    ");
+        // printf("    ");
+        printf("%4d| ", line->line);
         do {
             putchar(*line_end != '\t' ? *line_end : ' ');
             line_end++;
@@ -218,13 +157,12 @@ static size_t draw_line(TokenStream* tokens, SourceLocIndex loc_index) {
         SetConsoleTextAttribute(console_handle, default_attribs);
         #endif
     }
-    #endif
 
     return dist_from_line_start;
 }
 
 static void draw_line_horizontal_pad() {
-    printf("    ");
+    printf("      ");
 }
 
 static SourceLoc merge_source_locations(TokenStream* tokens, SourceLocIndex starti, SourceLocIndex endi) {
@@ -275,12 +213,17 @@ static int print_backtrace(TokenStream* tokens, SourceLocIndex loc_index, Source
                 size_t start_pos = loc->columns > dist_from_line_start ? loc->columns - dist_from_line_start : 0;
 
                 // draw underline
-                printf("\x1b[32m");
+                SET_COLOR_GREEN;
+                // printf("\x1b[32m");
+
                 size_t tkn_len = loc->length;
                 for (size_t i = 0; i < start_pos; i++) printf(" ");
                 printf("^");
                 for (size_t i = 1; i < tkn_len; i++) printf("~");
-                printf("\x1b[0m\n");
+
+                // printf("\x1b[0m");
+                printf("\n");
+                RESET_COLOR;
             }
             return line_bias;
         }
@@ -307,6 +250,7 @@ void report_ranged(Cuik_ReportLevel level, Cuik_ErrorStatus* err, TokenStream* t
     va_end(ap);
 
     printf("\n");
+    RESET_COLOR;
 
     if (!report_using_thin_errors) {
         size_t dist_from_line_start = draw_line(tokens, start_loc);
@@ -352,6 +296,7 @@ void report(Cuik_ReportLevel level, Cuik_ErrorStatus* err, TokenStream* tokens, 
     va_end(ap);
 
     printf("\n");
+    RESET_COLOR;
 
     if (!report_using_thin_errors) {
         size_t dist_from_line_start = draw_line(tokens, loc_index);
@@ -398,6 +343,7 @@ void report_fix(Cuik_ReportLevel level, Cuik_ErrorStatus* err, TokenStream* toke
     va_end(ap);
 
     printf("\n");
+    RESET_COLOR;
 
     if (!report_using_thin_errors) {
         size_t dist_from_line_start = draw_line(tokens, loc_index);
@@ -444,6 +390,7 @@ void report_two_spots(Cuik_ReportLevel level, Cuik_ErrorStatus* err, TokenStream
 
         display_line(level, tokens, loc);
         printf("%s\n", msg);
+        RESET_COLOR;
 
         if (!report_using_thin_errors) {
             size_t dist_from_line_start = draw_line(tokens, loc_index);

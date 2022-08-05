@@ -1,4 +1,5 @@
 #include <cuik.h>
+#include <cuik_ast.h>
 #include "helper.h"
 #include "big_array.h"
 #include "cli_parser.h"
@@ -33,6 +34,7 @@ static bool args_ast;
 static bool args_types;
 static bool args_run;
 static bool args_nocrt;
+static bool args_pploc;
 static bool args_assembly;
 static bool args_time;
 static bool args_verbose;
@@ -120,6 +122,32 @@ static void tp_work_one_job(void* user_data) {
     threadpool_work_one_job((threadpool_t*) user_data);
 }
 #endif
+
+static int count_pp_lines(TokenStream* s) {
+    const char* last_file = NULL;
+    int last_line = 0;
+
+    Token* tokens = cuik_get_tokens(s);
+    size_t count = cuik_get_token_count(s);
+
+    int line_count = 0;
+    for (size_t i = 0; i < count; i++) {
+        Token* t = &tokens[i];
+        SourceLoc* loc = &s->locations[SOURCE_LOC_GET_DATA(t->location)];
+
+        if (last_file != loc->line->filepath && strcmp(loc->line->filepath, "<temp>") != 0) {
+            line_count += 1;
+            last_file = loc->line->filepath;
+        }
+
+        if (last_line != loc->line->line) {
+            line_count += 1;
+            last_line = loc->line->line;
+        }
+    }
+
+    return line_count;
+}
 
 static void dump_tokens(FILE* out_file, TokenStream* s) {
     const char* last_file = NULL;
@@ -361,7 +389,15 @@ static void append_input_path(const char* path) {
     }
 }
 
+/*static uint64_t program_start;
+static void timer_end_exit_fn(void) {
+    printf("Done after %f ms\n", (cuik_time_in_nanos() - program_start) / 1000000.0);
+}*/
+
 int main(int argc, char** argv) {
+    // program_start = cuik_time_in_nanos();
+    // atexit(timer_end_exit_fn);
+
     cuik_init();
     find_system_deps();
 
@@ -429,6 +465,7 @@ int main(int argc, char** argv) {
             case ARG_PREPROC: args_preprocess = true; break;
             case ARG_BINDGEN: args_bindgen = true; break;
             case ARG_OPT: args_optimize = true; break;
+            case ARG_PPLOC: args_pploc = true; break;
             case ARG_TIME: args_time = true; break;
             case ARG_ASM: args_assembly = true; break;
             case ARG_AST: args_ast = true; break;
@@ -533,16 +570,26 @@ int main(int argc, char** argv) {
         mod = tb_module_create(TB_ARCH_X86_64, cuik_system_to_tb(target_desc.sys), TB_DEBUGFMT_CODEVIEW, &features);
     }
 
-    if (args_preprocess) {
+    if (args_pploc) {
+        int total = 0;
+        dyn_array_for(i, input_files) {
+            Cuik_CPP* cpp = make_preprocessor(input_files[i]);
+
+            int c = count_pp_lines(cuikpp_get_token_stream(cpp));
+            printf("%s : %d\n", input_files[i], c);
+            total += c;
+
+            free_preprocessor(cpp);
+        }
+        printf("Total PPLoc: %d\n", total);
+        return EXIT_SUCCESS;
+    } else if (args_preprocess) {
         // preproc only
-        #if 0
-        cuik_raw_tokens(NULL, input_files[0]);
-        #else
         Cuik_CPP* cpp = make_preprocessor(input_files[0]);
 
         dump_tokens(stdout, cuikpp_get_token_stream(cpp));
         free_preprocessor(cpp);
-        #endif
+
         return EXIT_SUCCESS;
     }
 
@@ -572,7 +619,24 @@ int main(int argc, char** argv) {
         cuik_internal_link_compilation_unit(&compilation_unit);
     }
 
-    if (args_ast) {
+    if (args_bindgen) {
+        printf("\n");
+
+        FOR_EACH_TU(tu, &compilation_unit) {
+            TokenStream* tokens = cuik_get_token_stream_from_tu(tu);
+
+            CUIK_FOR_TOP_LEVEL_STMT(it, tu, 1) {
+                Stmt* s = *it.start;
+                if (!cuikpp_is_in_main_file(tokens, s->loc)) continue;
+
+                char* name = (char*)s->decl.name;
+                if (s->op == STMT_FUNC_DECL) {
+                    printf("func %s(", name);
+                    printf(");\n");
+                }
+            }
+        }
+    } else if (args_ast) {
         FOR_EACH_TU(tu, &compilation_unit) {
             cuik_dump_translation_unit(stdout, tu, true);
         }
@@ -617,7 +681,7 @@ int main(int argc, char** argv) {
                 CUIK_CALL(ithread_pool, work_one_job);
             }
             #else
-            fprintf("Please compile with -DCUIK_ALLOW_THREADS if you wanna spin up threads");
+            fprintf(stderr, "Please compile with -DCUIK_ALLOW_THREADS if you wanna spin up threads");
             abort();
             #endif
             // free(tasks);
@@ -762,7 +826,7 @@ int main(int argc, char** argv) {
                     cuiklink_deinit(&l);
                 }
 
-                if (args_verbose) mark_timestamp("Total");
+                if (args_verbose) mark_timestamp("Done");
             }
         }
 

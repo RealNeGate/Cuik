@@ -503,6 +503,9 @@ CUIK_API Cuik_Entrypoint cuik_get_entrypoint_status(TranslationUnit* restrict tu
 
 CUIK_API TokenStream* cuik_get_token_stream_from_tu(TranslationUnit* restrict tu);
 
+// Printing C types
+CUIK_API void cuik_print_type(TranslationUnit* restrict tu, Cuik_Type* restrict type);
+
 ////////////////////////////////////////////
 // Compilation unit management
 ////////////////////////////////////////////
