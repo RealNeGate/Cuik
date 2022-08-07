@@ -1242,6 +1242,10 @@ CUIK_API bool cuik_next_top_level_stmt(Cuik_TopLevelIter* it, int step) {
     return true;
 }
 
+CUIK_API Stmt** cuik_get_top_level_stmts(TranslationUnit* restrict tu) {
+    return tu->top_level_stmts;
+}
+
 CUIK_API size_t cuik_num_of_top_level_stmts(TranslationUnit* restrict tu) {
     return arrlen(tu->top_level_stmts);
 }

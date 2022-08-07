@@ -1,4 +1,5 @@
 #pragma once
+#include <stdatomic.h>
 #include "arena.h"
 #include "atoms.h"
 #include "big_array.h"

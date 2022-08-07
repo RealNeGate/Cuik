@@ -44,6 +44,7 @@ bool report_using_thin_errors = false;
 #define RESET_COLOR
 #define SET_COLOR_RED
 #define SET_COLOR_GREEN
+#define SET_COLOR_WHITE
 #endif
 
 void init_report_system(void) {

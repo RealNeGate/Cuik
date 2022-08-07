@@ -49,8 +49,20 @@ static int args_threads = -1;
 static TB_Module* mod;
 
 static Cuik_IThreadpool* ithread_pool;
-static Cuik_Target target_desc;
 static CompilationUnit compilation_unit;
+static Cuik_Target target_desc;
+
+static struct {
+    const char* key;
+
+    const Cuik_ArchDesc* (*arch_fn)(void);
+    Cuik_System system;
+} target_options[] = {
+    { "x64_windows", cuik_get_x64_target_desc, CUIK_SYSTEM_WINDOWS },
+    { "x64_macos",   cuik_get_x64_target_desc, CUIK_SYSTEM_MACOS   },
+    { "x64_linux",   cuik_get_x64_target_desc, CUIK_SYSTEM_LINUX   },
+};
+enum { TARGET_OPTION_COUNT = sizeof(target_options) / sizeof(target_options[0]) };
 
 #define OPT(name) (TB_FunctionPass){ #name, tb_opt_ ## name }
 static void initialize_opt_passes(void) {
@@ -261,8 +273,14 @@ static Cuik_CPP* make_preprocessor(const char* filepath) {
         }
     }
 
-    for (Cuikpp_Packet packet; cuikpp_next(cpp, &packet);) {
+    Cuikpp_Status status;
+    for (Cuikpp_Packet packet; (status = cuikpp_next(cpp, &packet)) != CUIKPP_ERROR;) {
         cuikpp_default_packet_handler(cpp, &packet);
+    }
+
+    if (status == CUIKPP_ERROR) {
+        fprintf(stderr, "error in preprocessor for %s\n", filepath);
+        abort();
     }
 
     if (args_bindgen) {
@@ -389,15 +407,7 @@ static void append_input_path(const char* path) {
     }
 }
 
-/*static uint64_t program_start;
-static void timer_end_exit_fn(void) {
-    printf("Done after %f ms\n", (cuik_time_in_nanos() - program_start) / 1000000.0);
-}*/
-
 int main(int argc, char** argv) {
-    // program_start = cuik_time_in_nanos();
-    // atexit(timer_end_exit_fn);
-
     cuik_init();
     find_system_deps();
 
@@ -408,6 +418,18 @@ int main(int argc, char** argv) {
     input_libraries = dyn_array_create(const char*);
     input_files = dyn_array_create(const char*);
     input_defines = dyn_array_create(const char*);
+
+    // get default system
+    #if defined(_WIN32)
+    target_desc.sys = CUIK_SYSTEM_WINDOWS;
+    #elif defined(__linux) || defined(linux)
+    target_desc.sys = CUIK_SYSTEM_LINUX;
+    #elif defined(__APPLE__) || defined(__MACH__) || defined(macintosh)
+    target_desc.sys = CUIK_SYSTEM_MACOS;
+    #endif
+
+    // get target
+    target_desc.arch = cuik_get_x64_target_desc();
 
     // parse arguments
     int i = 1;
@@ -456,6 +478,35 @@ int main(int argc, char** argv) {
                 while (a != NULL) {
                     dyn_array_put(input_libraries, a);
                     a = strtok_r(NULL, ",", &ctx);
+                }
+                break;
+            }
+            case ARG_TARGET: {
+                bool success = false;
+                for (int i = 0; i < TARGET_OPTION_COUNT; i++) {
+                    if (strcmp(arg.value, target_options[i].key) == 0) {
+                        target_desc.arch = target_options[i].arch_fn();
+                        target_desc.sys = target_options[i].system;
+                        success = true;
+                        break;
+                    }
+                }
+
+                if (!success) {
+                    fprintf(stderr, "unknown target: %s (try --list targets)\n", arg.value);
+                }
+                break;
+            }
+            case ARG_LIST: {
+                if (strcmp(arg.value, "targets") == 0) {
+                    printf("Supported targets:\n");
+                    for (int i = 0; i < TARGET_OPTION_COUNT; i++) {
+                        printf("  %s\n", target_options[i].key);
+                    }
+                    printf("\n");
+                    return EXIT_SUCCESS;
+                } else {
+                    fprintf(stderr, "unknown list name, options are: targets\n");
                 }
                 break;
             }
@@ -552,18 +603,6 @@ int main(int argc, char** argv) {
 
     initialize_opt_passes();
     cuik_create_compilation_unit(&compilation_unit);
-
-    // get default system
-    #if defined(_WIN32)
-    target_desc.sys = CUIK_SYSTEM_WINDOWS;
-    #elif defined(__linux) || defined(linux)
-    target_desc.sys = CUIK_SYSTEM_LINUX;
-    #elif defined(__APPLE__) || defined(__MACH__) || defined(macintosh)
-    target_desc.sys = CUIK_SYSTEM_MACOS;
-    #endif
-
-    // get target
-    target_desc.arch = cuik_get_x64_target_desc();
 
     if (!args_ast && !args_types) {
         TB_FeatureSet features = {0};
@@ -694,7 +733,7 @@ int main(int argc, char** argv) {
                 size_t c = cuik_num_of_top_level_stmts(tu);
                 IRGenTask task = {
                     .tu = tu,
-                    .stmts = 0,
+                    .stmts = cuik_get_top_level_stmts(tu),
                     .count = c
                 };
 
@@ -704,7 +743,7 @@ int main(int argc, char** argv) {
 
         // place into a temporary directory if we don't need the obj file
         char obj_output_path[FILENAME_MAX];
-        if (target_desc.sys == CUIK_SYSTEM_WINDOWS){
+        if (target_desc.sys == CUIK_SYSTEM_WINDOWS) {
             sprintf_s(obj_output_path, FILENAME_MAX, "%s.obj", output_path_no_ext);
         } else {
             sprintf_s(obj_output_path, FILENAME_MAX, "%s.o", output_path_no_ext);

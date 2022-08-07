@@ -263,9 +263,15 @@ typedef struct Cuikpp_Packet {
     };
 } Cuikpp_Packet;
 
+typedef enum {
+    CUIKPP_CONTINUE,
+    CUIKPP_DONE,
+    CUIKPP_ERROR,
+} Cuikpp_Status;
+
 // Keep iterating through this and filling in the packets accordingly to preprocess a file.
 // returns false when it's done iterating
-CUIK_API bool cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet);
+CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet);
 
 // Handles the default behavior of the packet written by cuikpp_next
 // returns true if it succeeded in whatever packet handling (loading the file correctly)
@@ -490,6 +496,8 @@ CUIK_API bool cuik_next_stmt_kid(Cuik_StmtIter* it);
 
 CUIK_API Cuik_TopLevelIter cuik_first_top_level_stmt(TranslationUnit* restrict tu);
 CUIK_API bool cuik_next_top_level_stmt(Cuik_TopLevelIter* iter, int step);
+
+CUIK_API Stmt** cuik_get_top_level_stmts(TranslationUnit* restrict tu);
 CUIK_API size_t cuik_num_of_top_level_stmts(TranslationUnit* restrict tu);
 
 CUIK_API void cuik_dump_translation_unit(FILE* stream, TranslationUnit* tu, bool minimalist);

@@ -130,7 +130,7 @@ CUIK_API void cuikpp_init(Cuik_CPP* ctx, const char filepath[FILENAME_MAX]) {
     tls_init();
 }
 
-CUIK_API bool cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
+CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
     assert(ctx->stack_ptr > 0);
     CPPStackSlot* restrict slot = &ctx->stack[ctx->stack_ptr - 1];
 
@@ -151,14 +151,14 @@ CUIK_API bool cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
                 packet->file.found = false;
                 packet->file.content_length = 0;
                 packet->file.content = NULL;
-                return true;
+                return CUIKPP_CONTINUE;
             }
 
             // get back a file
             case 1: {
                 if (!packet->file.found && packet->file.content_length == 0) {
                     fprintf(stderr, "preprocessor error: could not read file! %s\n", slot->filepath);
-                    return false;
+                    return CUIKPP_ERROR;
                 }
 
                 const char* filepath = packet->file.input_path;
@@ -215,7 +215,7 @@ CUIK_API bool cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
 
                 int loc = prev_slot->l.current_line;
                 fprintf(stderr, "error %s:%d: Could not find file! %s\n", prev_slot->l.filepath, loc, slot->filepath);
-                return false;
+                return CUIKPP_ERROR;
             }
 
             // ask for the next filepath
@@ -226,7 +226,7 @@ CUIK_API bool cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
             packet->file.found = false;
             packet->file.content_length = 0;
             packet->file.content = NULL;
-            return true;
+            return CUIKPP_CONTINUE;
         }
 
         const char* filepath = packet->file.input_path;
@@ -237,7 +237,7 @@ CUIK_API bool cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
 
         // we finished resolving
         ctx->state1 = CUIK__CPP_CANONICALIZE;
-        return true;
+        return CUIKPP_CONTINUE;
     } else if (ctx->state1 == CUIK__CPP_CANONICALIZE) {
         const char* filepath = packet->canonicalize.output_path;
 
@@ -277,7 +277,7 @@ CUIK_API bool cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
             packet->file.found = false;
             packet->file.content_length = 0;
             packet->file.content = NULL;
-            return true;
+            return CUIKPP_CONTINUE;
         }
 
         // revert since it's only allowed to include once and we already did it
@@ -325,7 +325,7 @@ CUIK_API bool cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
                 // place last token
                 Token t = {0, 0, NULL, NULL};
                 arrput(s->tokens, t);
-                return false;
+                return CUIKPP_DONE;
             }
 
             // write out profile entry
@@ -764,7 +764,7 @@ CUIK_API bool cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
                     packet->file.found = false;
                     packet->file.content_length = 0;
                     packet->file.content = NULL;
-                    return true;
+                    return CUIKPP_CONTINUE;
                 } else if (memcmp(directive.data, "warning", 7) == 0) {
                     success = true;
                     SourceLocIndex loc = get_source_location(
@@ -776,7 +776,7 @@ CUIK_API bool cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
                         REPORT_ERROR, NULL, s, loc,
                         "directive: %.*s", (int)msg.length, msg.data
                     );
-                    return false;
+                    return CUIKPP_ERROR;
                 }
                 break;
 
@@ -785,7 +785,7 @@ CUIK_API bool cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
 
             if (!success) {
                 generic_error(l, "unknown directive!");
-                return false;
+                return CUIKPP_ERROR;
             }
         } else if (l->token_type == TOKEN_IDENTIFIER) {
             // check if it's actually a macro, if not categorize it if it's a keyword
