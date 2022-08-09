@@ -3,28 +3,56 @@
 ////////////////////////////////
 static thread_local char temp_string0[1024];
 
-static bool parse_attributes(TranslationUnit* restrict tu, TokenStream* restrict s, Stmt* restrict n) {
-    if (tokens_get(s)->type == TOKEN_KW_attribute ||
-        tokens_get(s)->type == TOKEN_KW_asm) {
-        tokens_next(s);
-        expect(tu, s, '(');
+static Cuik_Attribute* parse_attributes(TranslationUnit* restrict tu, TokenStream* restrict s, Cuik_Attribute* last) {
+    for (;;) {
+        switch (tokens_get(s)->type) {
+            // C23 attribute:
+            //
+            //   [[foo]]  [[foo::bar]]  [[foo(1, 3)]]
+            case TOKEN_DOUBLE_LBRACE: {
+                Cuik_Attribute* a = ARENA_ALLOC(&local_ast_arena, Cuik_Attribute);
+                a->prev = last;
+                a->start_loc = tokens_get_location_index(s);
 
-        // TODO(NeGate): Correctly parse attributes instead of
-        // ignoring them.
-        int depth = 1;
-        while (depth) {
-            if (tokens_get(s)->type == '(')
-                depth++;
-            else if (tokens_get(s)->type == ')')
-                depth--;
+                // TODO(NeGate): we'll only handle the identifier case with no :: for now
+                tokens_next(s);
+                if (tokens_get(s)->type != TOKEN_IDENTIFIER) {
+                    REPORT(ERROR, tokens_get_location_index(s), "Expected an identifier");
+                } else {
+                    Token* t = tokens_get(s);
+                    a->name = atoms_put(t->end - t->start, t->start);
+                }
 
-            tokens_next(s);
+                a->end_loc = tokens_get_location_index(s);
+                REPORT_RANGED(ERROR, a->start_loc, a->end_loc, "Attribute");
+                break;
+            }
+
+            // TODO(NeGate): Correctly parse attributes instead of
+            // ignoring them.
+            case TOKEN_KW_attribute:
+            case TOKEN_KW_asm: {
+                tokens_next(s);
+                expect(tu, s, '(');
+
+                int depth = 1;
+                while (depth) {
+                    if (tokens_get(s)->type == '(')
+                        depth++;
+                    else if (tokens_get(s)->type == ')')
+                        depth--;
+
+                    tokens_next(s);
+                }
+
+                break;
+            }
+
+            // done
+            default:
+            return last;
         }
-
-        return true;
     }
-
-    return false;
 }
 
 static bool skip_over_declspec(TranslationUnit* tu, TokenStream* restrict s) {
@@ -1136,14 +1164,15 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
             return NULL;
         }
 
-        int align = -1;
+        type = new_qualified_type(tu, type, is_atomic, is_const);
+
         if (forced_align) {
-            align = forced_align;
+            type->align = forced_align;
         } else if (alignas_pending_expr != NULL) {
+            type->align = -1;
             alignas_pending_expr->dst = &type->align;
         }
 
-        type = new_qualified_type(tu, type, align, is_atomic, is_const);
         type->loc = loc;
     }
 

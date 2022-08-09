@@ -5,6 +5,8 @@
 #include "cli_parser.h"
 #include "json_perf.h"
 
+#include <stb_ds.h>
+
 #ifndef __CUIKC__
 #define CUIK_ALLOW_THREADS 1
 #else
@@ -20,14 +22,24 @@ enum {
     IRGEN_TASK_BATCH_SIZE = 8192
 };
 
+typedef enum OutputFlavor {
+    FLAVOR_OBJECT,
+    FLAVOR_SHARED,
+    FLAVOR_STATIC,
+    FLAVOR_EXECUTABLE,
+} OutputFlavor;
+
 // compiler arguments
 static DynArray(const char*) include_directories;
 static DynArray(const char*) input_libraries;
+static DynArray(const char*) input_objects;
 static DynArray(const char*) input_files;
 static DynArray(const char*) input_defines;
 static DynArray(TB_FunctionPass) da_passes;
 static const char* output_name;
 static char output_path_no_ext[FILENAME_MAX];
+
+static OutputFlavor flavor = FLAVOR_EXECUTABLE;
 
 static bool args_ir;
 static bool args_ast;
@@ -41,7 +53,6 @@ static bool args_verbose;
 static bool args_preprocess;
 static bool args_optimize;
 static bool args_bindgen;
-static bool args_object_only;
 static bool args_exercise;
 static bool args_experiment;
 static int args_threads = -1;
@@ -274,7 +285,7 @@ static Cuik_CPP* make_preprocessor(const char* filepath) {
     }
 
     Cuikpp_Status status;
-    for (Cuikpp_Packet packet; (status = cuikpp_next(cpp, &packet)) != CUIKPP_ERROR;) {
+    for (Cuikpp_Packet packet; (status = cuikpp_next(cpp, &packet)) == CUIKPP_CONTINUE;) {
         cuikpp_default_packet_handler(cpp, &packet);
     }
 
@@ -285,6 +296,15 @@ static Cuik_CPP* make_preprocessor(const char* filepath) {
 
     if (args_bindgen) {
         cuik_lock_compilation_unit(&compilation_unit);
+
+        // include any of the files that are directly included by the original file
+        CUIKPP_FOR_FILES(it, cpp) {
+            if (it.file->depth == 2) {
+                printf("#include <%s>\n", it.file->filepath);
+            }
+        }
+
+        printf("\n\n\n");
 
         TokenStream* tokens = cuikpp_get_token_stream(cpp);
         CUIKPP_FOR_DEFINES(it, cpp) {
@@ -312,6 +332,181 @@ static void free_preprocessor(Cuik_CPP* cpp) {
     free(cpp);
 }
 
+typedef struct {
+    Cuik_Type* key;
+    int value;
+} DefinedTypeEntry;
+
+static void print_type(TranslationUnit* tu, DefinedTypeEntry** defined, Cuik_Type* type, const char* name, int indent) {
+    // a based type in a cringe system can make all the difference in the world
+    while (type->based) {
+        if (type->also_known_as) {
+            printf("%s", type->also_known_as);
+
+            if (name) {
+                printf(" %s", name);
+            }
+            return;
+        }
+
+        type = type->based;
+    }
+
+    if (type->kind > KIND_DOUBLE) {
+        // non-trivial types might require weird ordering or extra parenthesis
+        switch (type->kind) {
+            case KIND_PTR: {
+                int level = 0;
+                while (type->kind == KIND_PTR) {
+                    type = type->ptr_to;
+                    level += 1;
+                }
+
+                // type is now the base type and we have the number of stars in levels
+                if (type->kind == KIND_FUNC) {
+                    // function pointer amirite
+                    //
+                    //   void foo()
+                    //      VVV
+                    //     PTRIFY
+                    //      VVV
+                    //  void (*foo)()
+                    print_type(tu, defined, type->func.return_type, NULL, indent);
+                    printf(" (");
+                    while (level--) printf("*");
+
+                    if (name) {
+                        printf("%s", name);
+                    }
+                    printf(")(");
+
+                    // print suffix
+                    for (size_t i = 0; i < type->func.param_count; i++) {
+                        if (i) printf(", ");
+                        print_type(tu, defined, type->func.param_list[i].type, type->func.param_list[i].name, indent);
+                    }
+                    printf(")");
+                } else {
+                    print_type(tu, defined, type, NULL, indent);
+                    while (level--) printf("*");
+
+                    if (name) {
+                        printf(" %s", name);
+                    }
+                }
+                break;
+            }
+
+            case KIND_ARRAY: {
+                print_type(tu, defined, type->array_of, name, indent);
+
+                // suffix
+                while (type->kind == KIND_ARRAY) {
+                    if (type->array_count) {
+                        printf("[%d]", type->array_count);
+                    } else {
+                        printf("[]");
+                    }
+
+                    type = type->array_of;
+                }
+                break;
+            }
+
+            case KIND_STRUCT:
+            case KIND_UNION: {
+                printf(type->kind == KIND_STRUCT ? "struct" : "union");
+
+                bool defined_body = (type->record.kid_count > 0) && (hmgeti(*defined, type) < 0);
+                if (type->record.name) {
+                    // TODO(NeGate): we only define the body the first time around
+                    printf(" %s", type->record.name);
+                }
+
+                if (defined_body) {
+                    hmput(*defined, type, 1);
+                    printf(" {\n");
+
+                    for (size_t i = 0; i < type->record.kid_count; i++) {
+                        for (size_t j = 0; j < indent+1; j++) printf("    ");
+
+                        print_type(tu, defined, type->record.kids[i].type, type->record.kids[i].name, indent + 1);
+                        printf(";\n");
+                    }
+
+                    for (size_t j = 0; j < indent; j++) printf("    ");
+                    printf("}");
+                }
+
+                if (name) {
+                    printf(" %s", name);
+                }
+                break;
+            }
+
+            case KIND_FUNC: {
+                print_type(tu, defined, type->func.return_type, NULL, indent);
+
+                if (name) {
+                    printf(" %s", name);
+                }
+
+                printf("(");
+                for (size_t i = 0; i < type->func.param_count; i++) {
+                    if (i) printf(", ");
+                    print_type(tu, defined, type->func.param_list[i].type, type->func.param_list[i].name, indent);
+                }
+                printf(")");
+                break;
+            }
+
+            default: assert(0);
+        }
+    } else {
+        // trivial types have trivial printing
+        //
+        //   TYPENAME NAME
+        //
+        switch (type->kind) {
+            case KIND_VOID:   printf("void");      break;
+            case KIND_BOOL:   printf("_Bool");     break;
+            case KIND_CHAR:   printf("char");      break;
+            case KIND_SHORT:  printf("short");     break;
+            case KIND_INT:    printf("int");       break;
+            case KIND_LONG:   printf("long long"); break;
+            case KIND_FLOAT:  printf("float");     break;
+            case KIND_DOUBLE: printf("double");    break;
+            case KIND_ENUM: {
+                bool defined_body = (type->enumerator.count > 0) && (hmgeti(*defined, type) < 0);
+
+                printf("enum");
+                if (type->enumerator.name) {
+                    printf(" %s", type->enumerator.name);
+                }
+
+                if (defined_body) {
+                    hmput(*defined, type, 1);
+                    printf(" {\n");
+
+                    for (size_t i = 0; i < type->enumerator.count; i++) {
+                        for (size_t j = 0; j < indent+1; j++) printf("    ");
+
+                        printf("%s = %d,\n", type->enumerator.entries[i].key, type->enumerator.entries[i].value);
+                    }
+
+                    for (size_t j = 0; j < indent; j++) printf("    ");
+                    printf("}");
+                }
+                break;
+            }
+
+            default: assert(0);
+        }
+
+        if (name) printf(" %s", name);
+    }
+}
+
 static void compile_file(void* arg) {
     Cuik_CPP* cpp = arg;
 
@@ -334,6 +529,23 @@ static void compile_file(void* arg) {
 
     if (args_bindgen) {
         cuik_lock_compilation_unit(&compilation_unit);
+        TokenStream* tokens = cuikpp_get_token_stream(cpp);
+
+        printf("\n\n\n// %s\n", cuikpp_get_main_file(tokens));
+
+        DefinedTypeEntry* defined = NULL;
+        CUIK_FOR_TOP_LEVEL_STMT(it, tu, 1) {
+            Stmt* s = *it.start;
+            if (cuikpp_is_in_main_file(tokens, s->loc)) {
+                if (s->decl.attrs.is_typedef) printf("typedef ");
+                if (s->decl.attrs.is_static) printf("static ");
+                if (s->decl.attrs.is_extern) printf("extern ");
+                if (s->decl.attrs.is_inline) printf("inline ");
+
+                print_type(tu, &defined, s->decl.type, s->decl.name, 0);
+                printf(";\n");
+            }
+        }
 
         cuik_unlock_compilation_unit(&compilation_unit);
     }
@@ -353,6 +565,13 @@ static void preproc_file(void* arg) {
     } else {
         compile_file(cpp);
     }
+}
+
+static bool str_ends_with(const char* cstr, const char* postfix) {
+    const size_t cstr_len = strlen(cstr);
+    const size_t postfix_len = strlen(postfix);
+
+    return postfix_len <= cstr_len && strcmp(cstr + cstr_len - postfix_len, postfix) == 0;
 }
 
 // we can do a bit of filter such as '*.c' where it'll take all
@@ -390,7 +609,12 @@ static void append_input_path(const char* path) {
             } else {
                 sprintf_s(new_path, MAX_PATH, "%.*s%s", (int)(slash - path) + 1, path, find_data.cFileName);
             }
-            dyn_array_put(input_files, new_path);
+
+            if (str_ends_with(new_path, ".o") || str_ends_with(new_path, ".obj")) {
+                dyn_array_put(input_objects, new_path);
+            } else {
+                dyn_array_put(input_files, new_path);
+            }
         } while (FindNextFile(find_handle, &find_data));
 
         if (!FindClose(find_handle)) {
@@ -403,7 +627,31 @@ static void append_input_path(const char* path) {
         abort();
         #endif
     } else {
-        dyn_array_put(input_files, path);
+        if (str_ends_with(path, ".o") || str_ends_with(path, ".obj")) {
+            dyn_array_put(input_objects, path);
+        } else {
+            dyn_array_put(input_files, path);
+        }
+    }
+}
+
+static void export_obj(const char* output_path) {
+    CUIK_TIMED_BLOCK("export") {
+        FILE* file = fopen(output_path, "wb");
+        if (file == NULL) {
+            fprintf(stderr, "error: could not open object file for writing. %s\n", output_path);
+            return;
+        }
+
+        TB_ModuleExporter* exporter = tb_module_make_exporter(mod);
+
+        TB_ModuleExportPacket packet;
+        while (tb_module_exporter_next(mod, exporter, &packet)) {
+            assert(packet.type == TB_EXPORT_PACKET_WRITE);
+            fwrite(packet.write.data, packet.write.length, 1, file);
+        }
+
+        fclose(file);
     }
 }
 
@@ -416,6 +664,7 @@ int main(int argc, char** argv) {
     program_name = argv[0];
     include_directories = dyn_array_create(const char*);
     input_libraries = dyn_array_create(const char*);
+    input_objects = dyn_array_create(const char*);
     input_files = dyn_array_create(const char*);
     input_defines = dyn_array_create(const char*);
 
@@ -505,13 +754,34 @@ int main(int argc, char** argv) {
                     }
                     printf("\n");
                     return EXIT_SUCCESS;
+                } else if (strcmp(arg.value, "flavors") == 0) {
+                    printf("Supported flavors:\n");
+                    printf("  object\n");
+                    printf("  shared\n");
+                    printf("  static\n");
+                    printf("  exec\n");
+                    return EXIT_SUCCESS;
+                } else {
+                    fprintf(stderr, "unknown list name, options are: targets, flavors\n");
+                }
+                break;
+            }
+            case ARG_FLAVOR: {
+                if (strcmp(arg.value, "object") == 0) {
+                    flavor = FLAVOR_OBJECT;
+                } else if (strcmp(arg.value, "shared") == 0) {
+                    flavor = FLAVOR_SHARED;
+                } else if (strcmp(arg.value, "static") == 0) {
+                    flavor = FLAVOR_STATIC;
+                } else if (strcmp(arg.value, "exec") == 0) {
+                    flavor = FLAVOR_EXECUTABLE;
                 } else {
                     fprintf(stderr, "unknown list name, options are: targets\n");
                 }
                 break;
             }
             case ARG_OUT: output_name = arg.value; break;
-            case ARG_OBJ: args_object_only = true; break;
+            case ARG_OBJ: flavor = FLAVOR_OBJECT; break;
             case ARG_RUN: args_run = true; break;
             case ARG_PREPROC: args_preprocess = true; break;
             case ARG_BINDGEN: args_bindgen = true; break;
@@ -749,124 +1019,69 @@ int main(int argc, char** argv) {
             sprintf_s(obj_output_path, FILENAME_MAX, "%s.o", output_path_no_ext);
         }
 
-        if (args_object_only) {
-            if (args_verbose) mark_timestamp("Export object");
+        if (args_verbose) mark_timestamp("Export object");
 
-            CUIK_TIMED_BLOCK("export") {
-                if (!tb_module_export(mod, obj_output_path)) {
-                    fprintf(stderr, "error: tb_module_export failed!\n");
-                    abort();
-                }
-            }
-        } else if (!args_ir) {
+        export_obj(obj_output_path);
+
+
+        if (flavor == FLAVOR_OBJECT) {
+            /* work has already been done */
+        } else if (flavor == FLAVOR_EXECUTABLE) {
+            if (args_verbose) mark_timestamp("Linker");
+
             char lib_dir[FILENAME_MAX];
             sprintf_s(lib_dir, FILENAME_MAX, "%s/crt/lib/", crt_dirpath);
 
-            if (0 /* use TB as the linker */) {
-                size_t system_libpath_count = cuik_get_system_search_path_count();
-
-                TB_LinkerInput link = { 0 };
-                {
-                    link.search_dir_count = system_libpath_count + 1;
-                    link.search_dirs = malloc(link.search_dir_count * sizeof(const char*));
-
-                    // fill search paths
-                    cuik_get_system_search_paths(link.search_dirs, system_libpath_count);
-                    link.search_dirs[system_libpath_count] = lib_dir;
+            // Invoke system linker
+            Cuik_Linker l;
+            if (cuiklink_init(&l)) {
+                bool subsystem_windows = false;
+                FOR_EACH_TU(tu, &compilation_unit) {
+                    if (cuik_get_entrypoint_status(tu) == CUIK_ENTRYPOINT_WINMAIN) {
+                        subsystem_windows = true;
+                    }
                 }
 
-                // fill input files
-                {
+                if (subsystem_windows) {
+                    cuiklink_subsystem_windows(&l);
+                }
+
+                // Add system libpaths
+                cuiklink_add_default_libpaths(&l);
+                cuiklink_add_libpath(&l, lib_dir);
+
+                // Add Cuik output
+                cuiklink_add_input_file(&l, obj_output_path);
+
+                // Add input libraries
+                dyn_array_for(i, input_libraries) {
+                    cuiklink_add_input_file(&l, input_libraries[i]);
+                }
+
+                dyn_array_for(i, input_objects) {
+                    cuiklink_add_input_file(&l, input_objects[i]);
+                }
+
+                if (!args_nocrt) {
                     #ifdef _WIN32
-                    link.input_count = dyn_array_length(input_libraries) + 4;
-                    #else
-                    link.input_count = dyn_array_length(input_libraries);
+                    cuiklink_add_input_file(&l, "ucrt.lib");
+                    cuiklink_add_input_file(&l, "msvcrt.lib");
+                    cuiklink_add_input_file(&l, "vcruntime.lib");
+                    cuiklink_add_input_file(&l, "win32_rt.lib");
                     #endif
-
-                    link.inputs = malloc(link.input_count * sizeof(const char*));
-
-                    // Add input libraries
-                    const char** inputs = link.inputs;
-                    dyn_array_for(i, input_libraries) {
-                        *inputs++ = input_libraries[i];
-                    }
-
-                    if (!args_nocrt) {
-                        #ifdef _WIN32
-                        *inputs++ = "kernel32.lib";
-                        *inputs++ = "user32.lib";
-
-                        *inputs++ = "ucrt.lib";
-                        *inputs++ = "msvcrt.lib";
-                        *inputs++ = "vcruntime.lib";
-                        *inputs++ = "win32_rt.lib";
-                        #endif
-                    }
                 }
 
-                CUIK_TIMED_BLOCK("export") {
-                    if (!tb_module_export_exec(mod, output_name, &link)) {
-                        fprintf(stderr, "error: tb_module_export failed!\n");
-                        abort();
-                    }
+                if (!cuiklink_invoke(&l, output_path_no_ext, "ucrt")) {
+                    fprintf(stderr, "Linker failure!\n");
+                    exit(1);
                 }
-            } else {
-                if (args_verbose) mark_timestamp("Export object");
-
-                CUIK_TIMED_BLOCK("export") {
-                    if (!tb_module_export(mod, obj_output_path)) {
-                        fprintf(stderr, "error: tb_module_export failed!\n");
-                        abort();
-                    }
-                }
-
-                if (args_verbose) mark_timestamp("Linker");
-
-                // Invoke system linker
-                Cuik_Linker l;
-                if (cuiklink_init(&l)) {
-                    bool subsystem_windows = false;
-                    FOR_EACH_TU(tu, &compilation_unit) {
-                        if (cuik_get_entrypoint_status(tu) == CUIK_ENTRYPOINT_WINMAIN) {
-                            subsystem_windows = true;
-                        }
-                    }
-
-                    if (subsystem_windows) {
-                        cuiklink_subsystem_windows(&l);
-                    }
-
-                    // Add system libpaths
-                    cuiklink_add_default_libpaths(&l);
-                    cuiklink_add_libpath(&l, lib_dir);
-
-                    // Add Cuik output
-                    cuiklink_add_input_file(&l, obj_output_path);
-
-                    // Add input libraries
-                    dyn_array_for(i, input_libraries) {
-                        cuiklink_add_input_file(&l, input_libraries[i]);
-                    }
-
-                    if (!args_nocrt) {
-                        #ifdef _WIN32
-                        cuiklink_add_input_file(&l, "ucrt.lib");
-                        cuiklink_add_input_file(&l, "msvcrt.lib");
-                        cuiklink_add_input_file(&l, "vcruntime.lib");
-                        cuiklink_add_input_file(&l, "win32_rt.lib");
-                        #endif
-                    }
-
-                    if (!cuiklink_invoke(&l, output_path_no_ext, "ucrt")) {
-                        fprintf(stderr, "Linker failure!\n");
-                        exit(1);
-                    }
-                    //cuiklink_invoke_tb(&l, output_path_no_ext);
-                    cuiklink_deinit(&l);
-                }
-
-                if (args_verbose) mark_timestamp("Done");
+                cuiklink_deinit(&l);
             }
+
+            if (args_verbose) mark_timestamp("Done");
+        } else {
+            fprintf(stderr, "TODO: implement this flavor!\n");
+            return 1;
         }
 
         tb_free_thread_resources();

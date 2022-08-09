@@ -270,7 +270,7 @@ typedef enum {
 } Cuikpp_Status;
 
 // Keep iterating through this and filling in the packets accordingly to preprocess a file.
-// returns false when it's done iterating
+// returns CUIKPP_CONTINUE if it needs to keep running
 CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet);
 
 // Handles the default behavior of the packet written by cuikpp_next
@@ -285,6 +285,8 @@ CUIK_API void cuikpp_set_common_defines(Cuik_CPP* restrict out_cpp, const Cuik_T
 
 // is the source location in the source file (none of the includes)
 CUIK_API bool cuikpp_is_in_main_file(TokenStream* tokens, SourceLocIndex loc);
+
+CUIK_API const char* cuikpp_get_main_file(TokenStream* tokens);
 
 // This is an iterator for include search list in the preprocessor:
 //
@@ -385,6 +387,14 @@ typedef struct Cuik_ErrorStatus {
 typedef char* Atom;
 typedef struct Cuik_Type Cuik_Type;
 
+typedef struct Cuik_Attribute {
+    struct Cuik_Attribute* prev;
+    SourceLocIndex start_loc, end_loc;
+
+    Atom name;
+    // TODO(NeGate): implement parameter list
+} Cuik_Attribute;
+
 // used to initialize translation units with cuik_parse_translation_unit
 typedef struct Cuik_TranslationUnitDesc {
     // tokens CANNOT be NULL
@@ -449,11 +459,6 @@ CUIK_API TB_Function* cuik_stmt_gen_ir(TranslationUnit* restrict tu, Stmt* restr
 // Translation unit management
 ////////////////////////////////////////////
 typedef struct {
-    void* opaque;
-    size_t remaining;
-} ThreadedWaiter;
-
-typedef struct {
     // public
     Expr* expr;
 
@@ -510,9 +515,6 @@ CUIK_API TranslationUnit* cuik_next_translation_unit(TranslationUnit* restrict t
 CUIK_API Cuik_Entrypoint cuik_get_entrypoint_status(TranslationUnit* restrict tu);
 
 CUIK_API TokenStream* cuik_get_token_stream_from_tu(TranslationUnit* restrict tu);
-
-// Printing C types
-CUIK_API void cuik_print_type(TranslationUnit* restrict tu, Cuik_Type* restrict type);
 
 ////////////////////////////////////////////
 // Compilation unit management

@@ -81,7 +81,7 @@ enum {
     // . ...
     CHAR_CLASS_DOT,
     // # ##
-    CHAR_CLASS_HASH,
+    CHAR_CLASS_DOUBLE,
 };
 
 static _Alignas(64) uint8_t char_classes[256] = {
@@ -98,8 +98,8 @@ static _Alignas(64) uint8_t char_classes[256] = {
     [';'] = CHAR_CLASS_SEPARATOR,
     [':'] = CHAR_CLASS_SEPARATOR,
     [','] = CHAR_CLASS_SEPARATOR,
-    ['['] = CHAR_CLASS_SEPARATOR,
-    [']'] = CHAR_CLASS_SEPARATOR,
+    ['['] = CHAR_CLASS_DOUBLE,
+    [']'] = CHAR_CLASS_DOUBLE,
     ['('] = CHAR_CLASS_SEPARATOR,
     [')'] = CHAR_CLASS_SEPARATOR,
     ['{'] = CHAR_CLASS_SEPARATOR,
@@ -126,7 +126,7 @@ static _Alignas(64) uint8_t char_classes[256] = {
 
     ['.'] = CHAR_CLASS_DOT,
 
-    ['#'] = CHAR_CLASS_HASH,
+    ['#'] = CHAR_CLASS_DOUBLE,
 };
 
 // https://gist.github.com/RealNeGate/6236ce425f7a1bd06ea87f6572d8d6f6
@@ -711,14 +711,14 @@ void lexer_read(Lexer* restrict l) {
             l->token_type = '.';
             break;
         }
-        case CHAR_CLASS_HASH: {
-            if (*current == '#') {
+        case CHAR_CLASS_DOUBLE: {
+            if (*current == *start) {
                 current++;
-                l->token_type = TOKEN_DOUBLE_HASH;
+                l->token_type = *start + 256;
                 break;
             }
 
-            l->token_type = TOKEN_HASH;
+            l->token_type = *start;
             break;
         }
         default:

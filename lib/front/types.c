@@ -47,7 +47,7 @@ Cuik_Type* copy_type(TranslationUnit* tu, Cuik_Type* base) {
     return alloc_type(tu, base);
 }
 
-Cuik_Type* new_qualified_type(TranslationUnit* tu, Cuik_Type* base, int align, bool is_atomic, bool is_const) {
+Cuik_Type* new_qualified_type(TranslationUnit* tu, Cuik_Type* base, bool is_atomic, bool is_const) {
     assert(base != NULL);
     return alloc_type(tu, &(Cuik_Type){
             .kind = KIND_QUALIFIED_TYPE,
@@ -341,7 +341,7 @@ size_t type_as_string(TranslationUnit* tu, size_t max_len, char* buffer, Cuik_Ty
         }
         case KIND_TYPEOF: {
             // TODO(NeGate): give some nicer look to this crap
-            i += cstr_copy(max_len - i, &buffer[i], "typeof(???)");
+            i += cstr_copy(max_len - i, &buffer[i], "typeof(?)");
             break;
         }
         default:

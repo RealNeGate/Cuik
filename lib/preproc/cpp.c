@@ -76,6 +76,10 @@ static String get_token_as_string(Lexer* l) {
     return (String){ .length = l->token_end - l->token_start, .data = l->token_start };
 }
 
+CUIK_API const char* cuikpp_get_main_file(TokenStream* tokens) {
+    return tokens->filepath;
+}
+
 CUIK_API bool cuikpp_is_in_main_file(TokenStream* tokens, SourceLocIndex loc) {
     if (SOURCE_LOC_GET_TYPE(loc) == SOURCE_LOC_UNKNOWN) {
         return false;
@@ -172,6 +176,7 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
 
                 // record the file entry
                 Cuik_FileEntry file_entry = {
+                    .depth = ctx->stack_ptr,
                     .filepath = filepath,
                     .content = file_data,
                     .content_len = file_length,
@@ -296,6 +301,7 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
 
         // record the file entry
         Cuik_FileEntry file_entry = {
+            .depth = ctx->stack_ptr,
             .include_loc = slot->include_loc,
             .filepath = filepath,
             .content = file_data,

@@ -53,8 +53,10 @@ typedef enum TknType {
 
     TOKEN_INVALID,
 
-    TOKEN_ARROW,                   /* ->  */
-    TOKEN_DOUBLE_HASH = '#' + 256, /* ##  */
+    TOKEN_ARROW,                     /* ->  */
+    TOKEN_DOUBLE_LBRACE = '[' + 256, /* [[  */
+    TOKEN_DOUBLE_RBRACE = ']' + 256, /* ]]  */
+    TOKEN_DOUBLE_HASH   = '#' + 256, /* ##  */
 
     TOKEN_DOUBLE_AND = '&' + 256, /* &=  */
     TOKEN_DOUBLE_OR = '|' + 256,  /* |=  */

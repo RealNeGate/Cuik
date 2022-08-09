@@ -130,7 +130,7 @@ extern Cuik_Type builtin_types[BUILTIN_TYPE_COUNT];
 Cuik_Type* new_func(TranslationUnit* tu);
 Cuik_Type* new_enum(TranslationUnit* tu);
 Cuik_Type* new_blank_type(TranslationUnit* tu);
-Cuik_Type* new_qualified_type(TranslationUnit* tu, Cuik_Type* base, int align, bool is_atomic, bool is_const);
+Cuik_Type* new_qualified_type(TranslationUnit* tu, Cuik_Type* base, bool is_atomic, bool is_const);
 Cuik_Type* new_record(TranslationUnit* tu, bool is_union);
 Cuik_Type* copy_type(TranslationUnit* tu, Cuik_Type* base);
 Cuik_Type* new_pointer(TranslationUnit* tu, Cuik_Type* base);

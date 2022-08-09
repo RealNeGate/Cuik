@@ -85,9 +85,10 @@ struct Cuik_Type {
     int align; // _Alignof
     SourceLocIndex loc;
 
+    Cuik_Type* based;
     // used by cycle checking
-    int ordinal;
     Atom also_known_as;
+    int ordinal;
 
     bool is_const : 1;
     bool is_atomic : 1;
@@ -321,6 +322,7 @@ struct Stmt {
         StmtOp op;
         SourceLocIndex loc;
         SourceLocIndex end_loc;
+        Cuik_Attribute* attr_list;
 
         // Used by the backend for backend-y things
         #ifdef CUIK_USE_TB

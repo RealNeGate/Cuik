@@ -357,6 +357,7 @@ extern "C" {
     typedef struct TB_Function          TB_Function;
     typedef struct TB_AttribList        TB_AttribList;
     typedef struct TB_FunctionPrototype TB_FunctionPrototype;
+    typedef struct TB_ModuleExporter    TB_ModuleExporter;
 
     // references to a node within a TB_Function
     // these are virtual registers so they don't necessarily
@@ -673,6 +674,21 @@ extern "C" {
         const char** search_dirs;
     } TB_LinkerInput;
 
+    typedef struct {
+        enum {
+            TB_EXPORT_PACKET_NONE,
+
+            TB_EXPORT_PACKET_WRITE,
+        } type;
+        union {
+            struct {
+                // input
+                size_t length;
+                const uint8_t* data;
+            } write;
+        };
+    } TB_ModuleExportPacket;
+
     // *******************************
     // Public macros
     // *******************************
@@ -729,7 +745,8 @@ extern "C" {
     TB_API void tb_module_set_tls_index(TB_Module* m, TB_External* e);
 
     // Exports an relocatable object file
-    TB_API bool tb_module_export(TB_Module* m, const char* path);
+    TB_API TB_ModuleExporter* tb_module_make_exporter(TB_Module* m);
+    TB_API bool tb_module_exporter_next(TB_Module* m, TB_ModuleExporter* exporter, TB_ModuleExportPacket* packet);
 
     // Exports an fully linked executable file
     TB_API bool tb_module_export_exec(TB_Module* m, const char* path, const TB_LinkerInput* input);
@@ -820,13 +837,30 @@ extern "C" {
     TB_API void tb_function_append_attrib(TB_Function* f, TB_Reg r, TB_AttributeID a);
 
     ////////////////////////////////
-    // Function IR Generation
+    // Debug info Generation
     ////////////////////////////////
     TB_API const TB_DebugType* tb_debug_get_void(TB_Module* m);
     TB_API const TB_DebugType* tb_debug_get_integer(TB_Module* m, bool is_signed, int bits);
     TB_API const TB_DebugType* tb_debug_get_float(TB_Module* m, TB_FloatFormat fmt);
     TB_API const TB_DebugType* tb_debug_create_ptr(TB_Module* m, const TB_DebugType* base);
     TB_API const TB_DebugType* tb_debug_create_array(TB_Module* m, const TB_DebugType* base, size_t count);
+
+    ////////////////////////////////
+    // IR access
+    ////////////////////////////////
+    typedef struct TB_NodeInputIter {
+        TB_Reg r;
+
+        // private
+        int index_;
+        TB_Reg parent_;
+    } TB_NodeInputIter;
+
+    #define TB_FOR_INPUT_IN_REG(it, f, parent) for (TB_NodeInputIter it = { .parent_ = (n) }; tb_next_node_input(f, &it);)
+    #define TB_FOR_INPUT_IN_NODE(it, f, parent) for (TB_NodeInputIter it = { .parent_ = (n) - f->nodes }; tb_next_node_input(f, &it);)
+
+    TB_API TB_NodeInputIter tb_node_input_iter(TB_Reg r);
+    TB_API bool tb_next_node_input(const TB_Function* f, TB_NodeInputIter* iter);
 
     ////////////////////////////////
     // Function IR Generation
@@ -1004,7 +1038,7 @@ extern "C" {
     ////////////////////////////////
     // Optimizer
     ////////////////////////////////
-    typedef struct {
+    typedef struct TB_FunctionPass {
         const char* name;
 
         // if execute is NULL, we try to load a LUA file for the pass
@@ -1012,7 +1046,7 @@ extern "C" {
         void* l_state;
     } TB_FunctionPass;
 
-    typedef struct {
+    typedef struct TB_OptimizerCallback {
         // invoked once before any passes are run in tb_function_optimize
         void (*start)(void* user_data, TB_Function* f, const TB_FunctionPass* pass);
 
@@ -1043,6 +1077,7 @@ extern "C" {
     TB_API void tb_free_loop_info(TB_LoopInfo loops);
 
     // passes
+    TB_API bool tb_opt_canonicalize(TB_Function* f);
     TB_API bool tb_opt_merge_rets(TB_Function* f);
     TB_API bool tb_opt_mem2reg(TB_Function* f);
     TB_API bool tb_opt_branchless(TB_Function* f);
@@ -1054,7 +1089,6 @@ extern "C" {
     TB_API bool tb_opt_load_elim(TB_Function* f);
     TB_API bool tb_opt_hoist_invariants(TB_Function* f);
     TB_API bool tb_opt_hoist_locals(TB_Function* f);
-    TB_API bool tb_opt_canonicalize(TB_Function* f);
     TB_API bool tb_opt_deshort_circuit(TB_Function* f);
     TB_API bool tb_opt_remove_pass_node(TB_Function* f);
     TB_API bool tb_opt_strength_reduction(TB_Function* f);

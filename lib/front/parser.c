@@ -596,6 +596,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
 
                 expect(tu, s, ')');
             } else {
+                Cuik_Attribute* attribute_list = parse_attributes(tu, s, NULL);
                 SourceLocIndex loc = tokens_get_location_index(s);
 
                 // must be a declaration since it's a top level statement
@@ -619,6 +620,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                             // make typedef
                             Stmt* n = make_stmt(tu, s, STMT_DECL, sizeof(struct StmtDecl));
                             n->loc = decl.loc;
+                            n->attr_list = attribute_list;
                             n->decl = (struct StmtDecl){
                                 .name = decl.name,
                                 .type = decl.type,
@@ -652,10 +654,13 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                                 placeholder_space->also_known_as = old_name;
                                 placeholder_space->loc = decl.loc;
                             } else {
+                                Cuik_Type* clone = new_qualified_type(tu, decl.type, decl.type->is_atomic, decl.type->is_const);
+                                clone->also_known_as = decl.name;
+
                                 // add new entry
                                 Symbol sym = {
                                     .name = decl.name,
-                                    .type = decl.type,
+                                    .type = clone,
                                     .loc = decl.loc,
                                     .storage_class = STORAGE_TYPEDEF,
                                 };
@@ -685,6 +690,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                     if (tokens_get(s)->type == ';') {
                         Stmt* n = make_stmt(tu, s, STMT_GLOBAL_DECL, sizeof(struct StmtDecl));
                         n->loc = loc;
+                        n->attr_list = attribute_list;
                         n->decl = (struct StmtDecl){
                             .name = NULL,
                             .type = type,
@@ -715,6 +721,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
 
                         Stmt* n = make_stmt(tu, s, STMT_GLOBAL_DECL, sizeof(struct StmtDecl));
                         n->loc = decl.loc;
+                        n->attr_list = attribute_list;
                         n->decl = (struct StmtDecl){
                             .name = decl.name,
                             .type = decl.type,
@@ -743,8 +750,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                             sym->storage_class = (attr.is_static ? STORAGE_STATIC_VAR : STORAGE_GLOBAL);
                         }
 
-                        // parse attributes... currently it doesn't but one day...
-                        while (parse_attributes(tu, s, n)) {}
+                        n->attr_list = parse_attributes(tu, s, n->attr_list);
 
                         bool requires_terminator = true;
                         if (tokens_get(s)->type == '=') {
@@ -1133,9 +1139,14 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                     bool is_atomic = type->is_atomic;
                     bool is_const = type->is_const;
                     int align = type->align;
+                    Atom aka = type->also_known_as;
+
+                    Cuik_Type* based = type->qualified_ty;
 
                     // copy and replace the qualifier slots
-                    memcpy(type, type->qualified_ty, sizeof(Cuik_Type));
+                    memcpy(type, based, sizeof(Cuik_Type));
+                    type->also_known_as = aka;
+                    type->based = based;
                     type->align = align;
                     type->is_const = is_const;
                     type->is_atomic = is_atomic;
