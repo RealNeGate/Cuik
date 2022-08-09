@@ -21,10 +21,16 @@ static Cuik_Attribute* parse_attributes(TranslationUnit* restrict tu, TokenStrea
                 } else {
                     Token* t = tokens_get(s);
                     a->name = atoms_put(t->end - t->start, t->start);
+                    tokens_next(s);
                 }
-
                 a->end_loc = tokens_get_location_index(s);
-                REPORT_RANGED(ERROR, a->start_loc, a->end_loc, "Attribute");
+
+                if (tokens_get(s)->type != TOKEN_DOUBLE_RBRACE) {
+                    REPORT(ERROR, tokens_get_location_index(s), "Expected closing ']]' for attribute");
+                }
+                tokens_next(s);
+
+                last = a;
                 break;
             }
 

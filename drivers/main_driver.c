@@ -107,8 +107,8 @@ static void initialize_opt_passes(void) {
 
         dyn_array_put(da_passes, OPT(compact_dead_regs));
     } else {
-        // dyn_array_put(da_passes, OPT(canonicalize));
-        // dyn_array_put(da_passes, OPT(compact_dead_regs));
+        dyn_array_put(da_passes, OPT(canonicalize));
+        dyn_array_put(da_passes, OPT(compact_dead_regs));
     }
 }
 
@@ -945,24 +945,7 @@ int main(int argc, char** argv) {
         cuik_internal_link_compilation_unit(&compilation_unit);
     }
 
-    if (args_bindgen) {
-        printf("\n");
-
-        FOR_EACH_TU(tu, &compilation_unit) {
-            TokenStream* tokens = cuik_get_token_stream_from_tu(tu);
-
-            CUIK_FOR_TOP_LEVEL_STMT(it, tu, 1) {
-                Stmt* s = *it.start;
-                if (!cuikpp_is_in_main_file(tokens, s->loc)) continue;
-
-                char* name = (char*)s->decl.name;
-                if (s->op == STMT_FUNC_DECL) {
-                    printf("func %s(", name);
-                    printf(");\n");
-                }
-            }
-        }
-    } else if (args_ast) {
+    if (args_ast) {
         FOR_EACH_TU(tu, &compilation_unit) {
             cuik_dump_translation_unit(stdout, tu, true);
         }
