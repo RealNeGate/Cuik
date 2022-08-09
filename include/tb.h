@@ -748,6 +748,8 @@ extern "C" {
     TB_API TB_ModuleExporter* tb_module_make_exporter(TB_Module* m);
     TB_API bool tb_module_exporter_next(TB_Module* m, TB_ModuleExporter* exporter, TB_ModuleExportPacket* packet);
 
+    TB_API void tb_module_export(TB_Module* m, const char* path);
+
     // Exports an fully linked executable file
     TB_API bool tb_module_export_exec(TB_Module* m, const char* path, const TB_LinkerInput* input);
 

@@ -107,8 +107,8 @@ static void initialize_opt_passes(void) {
 
         dyn_array_put(da_passes, OPT(compact_dead_regs));
     } else {
-        dyn_array_put(da_passes, OPT(canonicalize));
-        dyn_array_put(da_passes, OPT(compact_dead_regs));
+        // dyn_array_put(da_passes, OPT(canonicalize));
+        // dyn_array_put(da_passes, OPT(compact_dead_regs));
     }
 }
 
@@ -537,13 +537,26 @@ static void compile_file(void* arg) {
         CUIK_FOR_TOP_LEVEL_STMT(it, tu, 1) {
             Stmt* s = *it.start;
             if (cuikpp_is_in_main_file(tokens, s->loc)) {
-                if (s->decl.attrs.is_typedef) printf("typedef ");
-                if (s->decl.attrs.is_static) printf("static ");
-                if (s->decl.attrs.is_extern) printf("extern ");
-                if (s->decl.attrs.is_inline) printf("inline ");
+                bool is_export = false;
+                Cuik_Attribute* a = s->attr_list;
+                while (a != NULL) {
+                    if (strcmp(a->name, "export") == 0) {
+                        is_export = true;
+                        break;
+                    }
 
-                print_type(tu, &defined, s->decl.type, s->decl.name, 0);
-                printf(";\n");
+                    a = a->prev;
+                }
+
+                if (s->decl.attrs.is_typedef || (is_export && s->op == STMT_FUNC_DECL)) {
+                    if (s->decl.attrs.is_typedef) printf("typedef ");
+                    if (s->decl.attrs.is_static) printf("static ");
+                    if (s->decl.attrs.is_extern) printf("extern ");
+                    if (s->decl.attrs.is_inline) printf("inline ");
+
+                    print_type(tu, &defined, s->decl.type, s->decl.name, 0);
+                    printf(";\n");
+                }
             }
         }
 
@@ -637,6 +650,7 @@ static void append_input_path(const char* path) {
 
 static void export_obj(const char* output_path) {
     CUIK_TIMED_BLOCK("export") {
+        #if 0
         FILE* file = fopen(output_path, "wb");
         if (file == NULL) {
             fprintf(stderr, "error: could not open object file for writing. %s\n", output_path);
@@ -652,6 +666,9 @@ static void export_obj(const char* output_path) {
         }
 
         fclose(file);
+        #else
+        tb_module_export(mod, output_path);
+        #endif
     }
 }
 

@@ -102,8 +102,8 @@ bool cuiklink_invoke(Cuik_Linker* l, const char* filename, const char* crt_name)
     bool result = true;
 
     #if defined(_WIN32)
+    wchar_t cmd_line[CMD_LINE_MAX];
     CUIK_TIMED_BLOCK("linker") {
-        wchar_t cmd_line[CMD_LINE_MAX];
         int cmd_line_len = swprintf(cmd_line, CMD_LINE_MAX,
             L"%s\\link.exe /nologo /machine:amd64 /subsystem:%s "
             "/debug:full /pdb:%S.pdb /out:%S.exe /incremental:no ",
@@ -142,13 +142,33 @@ bool cuiklink_invoke(Cuik_Linker* l, const char* filename, const char* crt_name)
         }
 
         // Wait until child process exits.
-        WaitForSingleObject(pi.hProcess, INFINITE);
+        if (WaitForSingleObject(pi.hProcess, INFINITE) != WAIT_OBJECT_0) {
+            printf("Failed to wait on linker.\n");
+            result = false;
+            continue;
+        }
+
+        DWORD exit_code = 0;
+        if (!GetExitCodeProcess(pi.hProcess, &exit_code)) {
+            printf("Failed to retrieve linker exit code.\n");
+            result = false;
+            continue;
+        }
+
+        if (exit_code != 0) {
+            printf("Linker exited with code %lu\n", exit_code);
+            result = false;
+            continue;
+        }
 
         // Close process and thread handles.
         CloseHandle(pi.hProcess);
         CloseHandle(pi.hThread);
     }
 
+    if (!result) {
+        printf("Linker command:\n%S\n", cmd_line);
+    }
     #elif defined(__unix__) || defined(__APPLE__)
     CUIK_TIMED_BLOCK("linker") {
         char cmd_line[CMD_LINE_MAX];
