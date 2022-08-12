@@ -294,6 +294,11 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
         size_t file_length = packet->file.content_length;
         uint8_t* file_data = packet->file.content;
 
+        #if CUIK__CPP_STATS
+        ctx->total_io_time += (cuik_time_in_nanos() - slot->start_time);
+        ctx->total_files_read += 1;
+        #endif
+
         // initialize the file & lexer in the stack slot
         slot->file_id = dyn_array_length(ctx->files);
         slot->l = (Lexer){ filepath, file_data, file_data, 1 };
@@ -665,10 +670,6 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
                     );
                     lexer_read(l);
 
-                    #if CUIK__CPP_STATS
-                    uint64_t include_start_time = cuik_time_in_nanos();
-                    #endif
-
                     char* filename = gimme_the_shtuffs(ctx, MAX_PATH);
 
                     bool is_lib_include = false;
@@ -834,10 +835,12 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
 
 CUIK_API void cuikpp_deinit(Cuik_CPP* ctx) {
     #if CUIK__CPP_STATS
-    printf("%40s | %f us / %zu file read (%f ms / %zu fstats)\n",
+    printf("%40s | %zu file read | %zu fstats\n",
+        ctx->files[0].filepath, ctx->total_files_read, ctx->total_fstats);
+    /*printf("%40s | %f us / %zu file read (%f ms / %zu fstats)\n",
         ctx->files[0].filepath,
         ctx->total_io_time / 1000.0, ctx->total_files_read,
-        ctx->total_include_time / 10000000.0, ctx->total_fstats);
+        ctx->total_include_time / 10000000.0, ctx->total_fstats);*/
     #endif
 
     if (ctx->macro_bucket_keys) {

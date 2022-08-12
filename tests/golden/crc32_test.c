@@ -96,10 +96,10 @@ uint32_t crc32(const void *buf, size_t size) {
 }
 
 int main(void) {
-	/*for (size_t i = 0; i < 64; i++) {
+	for (size_t i = 0; i < 64; i++) {
 		size_t j = i * 4;
 		printf("%08x %08x %08x %08x\n", crc32_table[j+0], crc32_table[j+1], crc32_table[j+2], crc32_table[j+3]);
-	}*/
+	}
 	
 	printf("%x", crc32("Hello World", sizeof("Hello World")-1));
 	return 0;

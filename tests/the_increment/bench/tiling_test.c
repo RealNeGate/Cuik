@@ -8,6 +8,9 @@ size_t* tile4(size_t* a, size_t b) { return &a[b*3]; }
 size_t* tile5(size_t* a, size_t b) { return &a[b*2 + 1]; }
 size_t* tile6(size_t* a, size_t b) { return &a[b*3 + 1]; }
 
+void tile7(size_t* a, size_t b) { a[b*3] = b; }
+
+#if 0
 void test_fun(int* b, int** c) {
     for (unsigned i = 0; i < 100; i++) {
         c[i] = &b[i];
@@ -65,3 +68,4 @@ static size_t bar2(size_t a) {
 size_t foo3(size_t a) {
     return a % 2 != 0 ? 4 : 2;
 }
+#endif

@@ -583,11 +583,17 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
         case EXPR_INT: {
             TB_DataType dt = ctype_to_tbtype(e->type);
 
-            if (TYPE_IS_FLOAT(e->type)) {
+            if (e->type->kind == KIND_FLOAT) {
                 return (IRVal){
                     .value_type = RVALUE,
                     .type = e->type,
-                    .reg = tb_inst_float(func, dt, e->int_num.num),
+                    .reg = tb_inst_float32(func, e->int_num.num),
+                };
+            } else if (e->type->kind == KIND_DOUBLE) {
+                return (IRVal){
+                    .value_type = RVALUE,
+                    .type = e->type,
+                    .reg = tb_inst_float64(func, e->int_num.num),
                 };
             } else if (e->type->is_unsigned) {
                 return (IRVal){
@@ -611,18 +617,16 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
                 .reg = tb_inst_sint(func, TB_TYPE_I32, *e->enum_val.num),
             };
         }
-        case EXPR_FLOAT32: {
-            return (IRVal){
-                .value_type = RVALUE,
-                .type = e->cast_type,
-                .reg = tb_inst_float(func, e->cast_type->kind == KIND_DOUBLE ? TB_TYPE_F64 : TB_TYPE_F32, e->float_num),
-            };
-        }
+        case EXPR_FLOAT32:
         case EXPR_FLOAT64: {
+            bool is_float32 = e->cast_type->kind == KIND_FLOAT;
+
             return (IRVal){
                 .value_type = RVALUE,
                 .type = e->cast_type,
-                .reg = tb_inst_float(func, e->cast_type->kind == KIND_FLOAT ? TB_TYPE_F32 : TB_TYPE_F64, e->float_num),
+                .reg = is_float32
+                    ? tb_inst_float32(func, e->float_num)
+                    : tb_inst_float64(func, e->float_num),
             };
         }
         case EXPR_STR:

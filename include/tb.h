@@ -248,7 +248,8 @@ extern "C" {
 
         /* Immediates */
         TB_INTEGER_CONST,
-        TB_FLOAT_CONST,
+        TB_FLOAT32_CONST,
+        TB_FLOAT64_CONST,
         TB_STRING_CONST,
 
         /* Conversions */
@@ -385,9 +386,12 @@ extern "C" {
                     uint64_t* words;
                 };
             } integer;
-            struct TB_NodeFloat {
+            struct TB_NodeFloat32 {
+                float value;
+            } flt32;
+            struct TB_NodeFloat64 {
                 double value;
-            } flt;
+            } flt64;
             struct TB_NodeString {
                 size_t length;
                 const char* data;
@@ -678,9 +682,20 @@ extern "C" {
         enum {
             TB_EXPORT_PACKET_NONE,
 
+            // allocates a region of memory
+            //
+            TB_EXPORT_PACKET_ALLOC,
+
             TB_EXPORT_PACKET_WRITE,
         } type;
         union {
+            struct {
+                // input
+                size_t request_size;
+
+                // output
+                void* memory;
+            } alloc;
             struct {
                 // input
                 size_t length;
@@ -744,11 +759,8 @@ extern "C" {
     // dont and the tls_index is used, it'll crash
     TB_API void tb_module_set_tls_index(TB_Module* m, TB_External* e);
 
-    // Exports an relocatable object file
-    TB_API TB_ModuleExporter* tb_module_make_exporter(TB_Module* m);
-    TB_API bool tb_module_exporter_next(TB_Module* m, TB_ModuleExporter* exporter, TB_ModuleExportPacket* packet);
-
-    TB_API void tb_module_export(TB_Module* m, const char* path);
+    TB_API TB_ModuleExporter* tb_make_exporter(TB_Module* m);
+    TB_API bool tb_exporter_next(TB_Module* m, TB_ModuleExporter* exporter, TB_ModuleExportPacket* packet);
 
     // Exports an fully linked executable file
     TB_API bool tb_module_export_exec(TB_Module* m, const char* path, const TB_LinkerInput* input);
@@ -858,8 +870,8 @@ extern "C" {
         TB_Reg parent_;
     } TB_NodeInputIter;
 
-    #define TB_FOR_INPUT_IN_REG(it, f, parent) for (TB_NodeInputIter it = { .parent_ = (n) }; tb_next_node_input(f, &it);)
-    #define TB_FOR_INPUT_IN_NODE(it, f, parent) for (TB_NodeInputIter it = { .parent_ = (n) - f->nodes }; tb_next_node_input(f, &it);)
+    #define TB_FOR_INPUT_IN_REG(it, f, parent) for (TB_NodeInputIter it = { .parent_ = (parent) }; tb_next_node_input(f, &it);)
+    #define TB_FOR_INPUT_IN_NODE(it, f, parent) for (TB_NodeInputIter it = { .parent_ = (parent) - f->nodes }; tb_next_node_input(f, &it);)
 
     TB_API TB_NodeInputIter tb_node_input_iter(TB_Reg r);
     TB_API bool tb_next_node_input(const TB_Function* f, TB_NodeInputIter* iter);
@@ -914,7 +926,8 @@ extern "C" {
     TB_API TB_Reg tb_inst_ptr(TB_Function* f, uint64_t imm);
     TB_API TB_Reg tb_inst_sint(TB_Function* f, TB_DataType dt, int64_t imm);
     TB_API TB_Reg tb_inst_uint(TB_Function* f, TB_DataType dt, uint64_t imm);
-    TB_API TB_Reg tb_inst_float(TB_Function* f, TB_DataType dt, double imm);
+    TB_API TB_Reg tb_inst_float32(TB_Function* f, float imm);
+    TB_API TB_Reg tb_inst_float64(TB_Function* f, double imm);
     TB_API TB_Reg tb_inst_cstring(TB_Function* f, const char* str);
     TB_API TB_Reg tb_inst_string(TB_Function* f, size_t len, const char* str);
 
