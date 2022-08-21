@@ -10,7 +10,6 @@ size_t* tile6(size_t* a, size_t b) { return &a[b*3 + 1]; }
 
 void tile7(size_t* a, size_t b) { a[b*3] = b; }
 
-#if 0
 void test_fun(int* b, int** c) {
     for (unsigned i = 0; i < 100; i++) {
         c[i] = &b[i];
@@ -24,6 +23,7 @@ void fn(int16_t* A, uint16_t* B, uint16_t* C) {
     }
 }
 
+#if 0
 void foo(size_t* a, size_t* b, size_t c) {
 	a[c] += 16;
 	b[c] += 16;

@@ -328,7 +328,7 @@ CUIK_API bool cuikpp_next_include_search(Cuik_CPP* ctx, Cuik_IncludeIter* it);
 //
 // Cuik_DefineIter it = cuikpp_first_define(cpp);
 // while (cuikpp_next_define(cpp, &it)) { ... }
-typedef struct Cuik_Define {
+typedef struct Cuik_DefineIter {
     // public
     SourceLocIndex loc;
     struct Cuik_DefineKey {

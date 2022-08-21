@@ -769,9 +769,34 @@ extern "C" {
     // TB_ISEL_COMPLEX will compile slower but better codegen
     TB_API void tb_module_export_jit(TB_Module* m, TB_ISelMode isel_mode);
 
-    TB_API void* tb_module_get_jit_func_by_name(TB_Module* m, const char* name);
-    TB_API void* tb_module_get_jit_func_by_id(TB_Module* m, size_t i);
-    TB_API void* tb_module_get_jit_func(TB_Module* m, TB_Function* f);
+    typedef struct TB_FunctionIter {
+        // public
+        TB_Function* f;
+
+        // internal
+        TB_Module* module_;
+        size_t index_;
+    } TB_FunctionIter;
+
+    #define TB_FOR_FUNCTIONS(it, module) for (TB_FunctionIter it = { .module_ = (module) }; tb_next_function(&it);)
+    TB_API TB_FunctionIter tb_function_iter(TB_Module* m);
+    TB_API bool tb_next_function(TB_FunctionIter* it);
+
+    typedef struct TB_ExternalIter {
+        // public
+        TB_External* e;
+
+        // internal
+        TB_Module* module_;
+        void* p_;
+        size_t a_, b_, c_;
+    } TB_ExternalIter;
+
+    #define TB_FOR_EXTERNALS(it, module) for (TB_ExternalIter it = tb_external_iter(module); tb_next_external(&it);)
+    TB_API TB_ExternalIter tb_external_iter(TB_Module* m);
+    TB_API bool tb_next_external(TB_ExternalIter* it);
+
+    TB_API const char* tb_extern_get_name(TB_External* e);
 
     // Binds an external to an address
     TB_API bool tb_jit_import(TB_Module* m, const char* name, void* address);
@@ -804,11 +829,6 @@ extern "C" {
 
     // same as tb_prototype_add_param(...) but takes an array
     TB_API void tb_prototype_add_params(TB_FunctionPrototype* p, size_t count, const TB_DataType* dt);
-
-    // adds a parameter to the function prototype, TB doesn't support struct
-    // parameters so the frontend must lower them to pointers or any other type
-    // depending on their preferred ABI.
-    TB_API TB_Function* tb_prototype_build(TB_Module* m, TB_FunctionPrototype* p, const char* name, TB_Linkage linkage);
 
     ////////////////////////////////
     // Constant Initializers
@@ -884,6 +904,13 @@ extern "C" {
 
     // this only allows for power of two vector types
     TB_API TB_DataType tb_vector_type(TB_DataTypeEnum type, int width);
+
+    TB_API TB_Function* tb_function_create(TB_Module* m, const char* name, TB_Linkage linkage);
+    TB_API void tb_function_set_name(TB_Function* f, const char* name);
+    TB_API const char* tb_function_get_name(TB_Function* f);
+
+    TB_API void tb_function_set_prototype(TB_Function* f, const TB_FunctionPrototype* p);
+    TB_API const TB_FunctionPrototype* tb_function_get_prototype(TB_Function* f);
 
     TB_API TB_Reg tb_function_insert(TB_Function* f, TB_Reg r, const TB_Node n);
     TB_API TB_Reg tb_function_set(TB_Function* f, TB_Reg r, const TB_Node n);
@@ -1119,6 +1146,7 @@ extern "C" {
     TB_API TB_Reg tb_node_get_last_register(TB_Function* f);
 
     TB_API TB_Node* tb_function_get_node(TB_Function* f, TB_Reg r);
+    TB_API int tb_function_get_label_count(TB_Function* f);
 
     TB_API bool tb_node_is_constant_zero(TB_Function* f, TB_Reg r);
 

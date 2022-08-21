@@ -42,6 +42,7 @@ bool const_eval_try_offsetof_hack(TranslationUnit* tu, const Expr* e, uint64_t* 
     //   &(((T*)0)->apple)
     //   sizeof(((T*)0).apple)
     if (e->op == EXPR_DOT || e->op == EXPR_ARROW) {
+        bool is_arrow = e->op == EXPR_ARROW;
         Expr* base_e = e->dot_arrow.base;
 
         while (base_e->op == EXPR_ARROW ||
@@ -56,14 +57,27 @@ bool const_eval_try_offsetof_hack(TranslationUnit* tu, const Expr* e, uint64_t* 
         if (arrow_base->op == EXPR_CAST) {
             record_type = arrow_base->cast.type;
 
-            // dereference
-            if (record_type->kind == KIND_PTR) {
-                record_type = record_type->ptr_to;
-            } else {
-                abort();
+            bool did_deref = false;
+            for (;;) {
+                if (!did_deref && record_type->kind == KIND_PTR) {
+                    record_type = record_type->ptr_to;
+                    did_deref = true;
+                    continue;
+                } else if (record_type->kind == KIND_QUALIFIED_TYPE) {
+                    record_type = record_type->qualified_ty;
+                    continue;
+                }
+
+                break;
+            }
+
+            if (is_arrow && !did_deref) {
+                REPORT_EXPR(ERROR, arrow_base, "Arrow cannot be applied to non-pointer type.");
+                return false;
             }
 
             if (record_type->kind != KIND_STRUCT && record_type->kind != KIND_UNION) {
+                REPORT_EXPR(ERROR, arrow_base, "Cannot do member access with non-aggregate type.");
                 return false;
             }
 

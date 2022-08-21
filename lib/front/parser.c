@@ -399,7 +399,11 @@ void type_layout(TranslationUnit* restrict tu, Cuik_Type* type) {
             if (type->array_of->size == 0) {
                 type_layout(tu, type->array_of);
             }
-            assert(type->array_of->size > 0);
+
+            if (type->array_of->size == 0) {
+                REPORT(ERROR, type->loc, "could not resolve type (ICE)");
+                abort();
+            }
         }
 
         uint64_t result = type->array_of->size * type->array_count;
@@ -650,9 +654,14 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                                 // replace placeholder with actual entry
                                 Atom old_name = decl.name;
 
-                                *placeholder_space = *decl.type;
-                                placeholder_space->also_known_as = old_name;
-                                placeholder_space->loc = decl.loc;
+                                *placeholder_space = (Cuik_Type){
+                                    .kind = KIND_QUALIFIED_TYPE,
+                                    .size = decl.type->size,
+                                    .align = decl.type->align,
+                                    .loc = decl.loc,
+                                    .also_known_as = old_name,
+                                    .qualified_ty = decl.type,
+                                };
                             } else {
                                 Cuik_Type* clone = new_qualified_type(tu, decl.type, decl.type->is_atomic, decl.type->is_const);
                                 clone->also_known_as = decl.name;
@@ -1970,8 +1979,10 @@ static Stmt* parse_stmt_or_expr(TranslationUnit* tu, TokenStream* restrict s) {
 }
 
 static intmax_t parse_const_expr(TranslationUnit* tu, TokenStream* restrict s) {
+    SourceLocIndex foo = tokens_get_location_index(s);
     Expr* folded = cuik__optimize_ast(tu, parse_expr_l14(tu, s));
     if (folded->op != EXPR_INT) {
+        ((void) foo);
         REPORT_EXPR(ERROR, folded, "Could not parse expression as constant.");
         return 1;
     }

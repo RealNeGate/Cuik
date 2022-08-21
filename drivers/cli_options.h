@@ -17,7 +17,7 @@ OPTION(PPLOC,      _, pploc,       0, "count number of preprocessor lines of cod
 OPTION(OPT,        O, optimize,    0, "optimize the generated IR")
 OPTION(ASM,        S, assembly,    0, "emit assembly in stdout")
 OPTION(AST,        _, ast,         0, "emit AST into stdout")
-OPTION(BINDGEN,    _, bindgen,     0, "generates header into stdout")
+OPTION(BINDGEN,    _, bindgen,     1, "generates header into stdout")
 OPTION(TYPES,      t, typecheck,   0, "type check only")
 OPTION(IR,         _, ir,          0, "compile up until the IR generation")
 OPTION(TARGET,     _, target,      1, "change the target system and arch (`--list targets` to see the options)")

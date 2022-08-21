@@ -1664,10 +1664,11 @@ static void sema_top_level(TranslationUnit* tu, Stmt* restrict s) {
                     char temp[1024];
                     snprintf(temp, 1024, "_K%d_%s", tu->id_gen++, name ? name : "<unnamed>");
 
-                    func = tb_prototype_build(tu->ir_mod, proto, temp, linkage);
+                    func = tb_function_create(tu->ir_mod, temp, linkage);
                 } else {
-                    func = tb_prototype_build(tu->ir_mod, proto, name, linkage);
+                    func = tb_function_create(tu->ir_mod, name, linkage);
                 }
+                tb_function_set_prototype(func, proto);
                 s->backing.f = func;
 
                 // type check function body

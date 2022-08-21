@@ -99,106 +99,100 @@ void cuiklink_subsystem_windows(Cuik_Linker* l) {
 }
 
 bool cuiklink_invoke(Cuik_Linker* l, const char* filename, const char* crt_name) {
-    bool result = true;
-
     #if defined(_WIN32)
     wchar_t cmd_line[CMD_LINE_MAX];
-    CUIK_TIMED_BLOCK("linker") {
-        int cmd_line_len = swprintf(cmd_line, CMD_LINE_MAX,
-            L"%s\\link.exe /nologo /machine:amd64 /subsystem:%s "
-            "/debug:full /pdb:%S.pdb /out:%S.exe /incremental:no ",
-            cuik__vswhere.vs_exe_path, l->subsystem_windows ? L"windows" : L"console", filename, filename);
+    int cmd_line_len = swprintf(cmd_line, CMD_LINE_MAX,
+        L"%s\\link.exe /nologo /machine:amd64 /subsystem:%s "
+        "/debug:full /pdb:%S.pdb /out:%S.exe /incremental:no ",
+        cuik__vswhere.vs_exe_path, l->subsystem_windows ? L"windows" : L"console", filename, filename);
 
-        // Add all the libpaths
-        OS_String str = l->libpaths_buffer;
-        for (size_t i = l->libpaths_count; i--;) {
-            cmd_line_len += swprintf(&cmd_line[cmd_line_len], CMD_LINE_MAX - cmd_line_len, L"/libpath:\"%s\" ", str);
-            str += wcslen(str) + 1;
-        }
+    // Add all the libpaths
+    OS_String str = l->libpaths_buffer;
+    for (size_t i = l->libpaths_count; i--;) {
+        cmd_line_len += swprintf(&cmd_line[cmd_line_len], CMD_LINE_MAX - cmd_line_len, L"/libpath:\"%s\" ", str);
+        str += wcslen(str) + 1;
+    }
 
-        // Add all the input files
-        str = l->input_file_buffer;
-        for (size_t i = l->input_file_count; i--;) {
-            cmd_line_len += swprintf(&cmd_line[cmd_line_len], CMD_LINE_MAX - cmd_line_len, L"%s ", str);
-            str += wcslen(str) + 1;
-        }
+    // Add all the input files
+    str = l->input_file_buffer;
+    for (size_t i = l->input_file_count; i--;) {
+        cmd_line_len += swprintf(&cmd_line[cmd_line_len], CMD_LINE_MAX - cmd_line_len, L"%s ", str);
+        str += wcslen(str) + 1;
+    }
 
-        STARTUPINFOW si = {
-            .cb = sizeof(STARTUPINFOW),
-            .dwFlags = STARTF_USESTDHANDLES,
-            .hStdInput = GetStdHandle(STD_INPUT_HANDLE),
-            .hStdError = GetStdHandle(STD_ERROR_HANDLE),
-            .hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE),
-        };
-        PROCESS_INFORMATION pi = { 0 };
+    STARTUPINFOW si = {
+        .cb = sizeof(STARTUPINFOW),
+        .dwFlags = STARTF_USESTDHANDLES,
+        .hStdInput = GetStdHandle(STD_INPUT_HANDLE),
+        .hStdError = GetStdHandle(STD_ERROR_HANDLE),
+        .hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE),
+    };
+    PROCESS_INFORMATION pi = { 0 };
 
-        //printf("Linker command:\n%S\n", cmd_line);
-        if (!CreateProcessW(NULL, cmd_line, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
-            WaitForSingleObject(pi.hProcess, INFINITE);
-
-            printf("Linker command could not be executed.\n");
-            result = false;
-            continue; // timed block is a loop and we wanna hit the iterator correctly to report exit
-        }
-
-        // Wait until child process exits.
-        if (WaitForSingleObject(pi.hProcess, INFINITE) != WAIT_OBJECT_0) {
-            printf("Failed to wait on linker.\n");
-            result = false;
-            continue;
-        }
-
-        DWORD exit_code = 0;
-        if (!GetExitCodeProcess(pi.hProcess, &exit_code)) {
-            printf("Failed to retrieve linker exit code.\n");
-            result = false;
-            continue;
-        }
-
-        if (exit_code != 0) {
-            printf("Linker exited with code %lu\n", exit_code);
-            result = false;
-            continue;
-        }
-
-        // Close process and thread handles.
+    //printf("Linker command:\n%S\n", cmd_line);
+    if (!CreateProcessW(NULL, cmd_line, NULL, NULL, TRUE, 0, NULL, NULL, &si, &pi)) {
+        WaitForSingleObject(pi.hProcess, INFINITE);
         CloseHandle(pi.hProcess);
         CloseHandle(pi.hThread);
+
+        fprintf(stderr, "Linker command could not be executed.\n");
+        return false;
     }
 
-    if (!result) {
-        printf("Linker command:\n%S\n", cmd_line);
+    // Wait until child process exits.
+    WaitForSingleObject(pi.hProcess, INFINITE);
+
+    DWORD exit_code = 0;
+    if (!GetExitCodeProcess(pi.hProcess, &exit_code)) {
+        fprintf(stderr, "Failed to retrieve linker exit code.\n");
+        goto error;
     }
+
+    if (exit_code != 0) {
+        fprintf(stderr, "Linker exited with code %lu\n", exit_code);
+        goto error;
+    }
+
+    // Close process and thread handles.
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+    return true;
+
+    error:
+    fprintf(stderr, "Linker command:\n%S\n", cmd_line);
+
+    if (pi.hProcess && pi.hProcess != INVALID_HANDLE_VALUE) CloseHandle(pi.hProcess);
+    if (pi.hThread && pi.hThread != INVALID_HANDLE_VALUE) CloseHandle(pi.hThread);
+    return false;
     #elif defined(__unix__) || defined(__APPLE__)
-    CUIK_TIMED_BLOCK("linker") {
-        char cmd_line[CMD_LINE_MAX];
-        int cmd_line_len = snprintf(cmd_line, CMD_LINE_MAX, "gcc ");
+    char cmd_line[CMD_LINE_MAX];
+    int cmd_line_len = snprintf(cmd_line, CMD_LINE_MAX, "gcc ");
 
-        // Add all the libpaths
-        OS_String str = l->libpaths_buffer;
-        for (size_t i = l->libpaths_count; i--;) {
-            cmd_line_len += snprintf(&cmd_line[cmd_line_len], CMD_LINE_MAX - cmd_line_len, "-L%s ", str);
-            str += strlen(str) + 1;
-        }
-
-        // Add all the input files
-        str = l->input_file_buffer;
-        for (size_t i = l->input_file_count; i--;) {
-            cmd_line_len += snprintf(&cmd_line[cmd_line_len], CMD_LINE_MAX - cmd_line_len, "%s ", str);
-            str += strlen(str) + 1;
-        }
-
-        cmd_line_len += snprintf(&cmd_line[cmd_line_len], CMD_LINE_MAX - cmd_line_len, "-o %s ", filename);
-
-        //printf("Linker command: %s\n", cmd_line);
-        if (system(cmd_line) != 0) {
-            result = false;
-            continue;
-        }
+    // Add all the libpaths
+    OS_String str = l->libpaths_buffer;
+    for (size_t i = l->libpaths_count; i--;) {
+        cmd_line_len += snprintf(&cmd_line[cmd_line_len], CMD_LINE_MAX - cmd_line_len, "-L%s ", str);
+        str += strlen(str) + 1;
     }
+
+    // Add all the input files
+    str = l->input_file_buffer;
+    for (size_t i = l->input_file_count; i--;) {
+        cmd_line_len += snprintf(&cmd_line[cmd_line_len], CMD_LINE_MAX - cmd_line_len, "%s ", str);
+        str += strlen(str) + 1;
+    }
+
+    cmd_line_len += snprintf(&cmd_line[cmd_line_len], CMD_LINE_MAX - cmd_line_len, "-o %s ", filename);
+
+    int exit_code = system(cmd_line);
+    if (exit_code != 0) {
+        fprintf(stderr, "Linker exited with code %lu\n", exit_code);
+        fprintf(stderr, "Linker command: %s\n", cmd_line);
+        return false;
+    }
+
+    return true;
     #else
     #error "Implement system linker on other platforms"
     #endif
-
-    return result;
 }
