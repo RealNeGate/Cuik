@@ -15,22 +15,14 @@ The plan is a modern C11 compiler which can mostly work with Clang, GCC, and MSV
 ## How to install?
 Mac & Linux aren't ready yet but i'll be moving forward to those platforms in the upcoming months
 
-You'll need MSVC installed on windows (i use link.exe for now... sorry, i'll write a linker soon enough)
+You will need [Tup](https://gittup.org/tup/index.html) and if you're on windows also MSVC (i use link.exe for now... sorry, i'll remove the linker dependency soon)
 
-Just take a C compiler and compile the `compile.c` file and run it
-
-### Options (define these using -D or /D depending on the compiler):
-* `RELEASE_BUILD` for optimized builds.
-* `ONLY_LIBRARY` will not compile the active driver, just the libCuik library
-* `NO_TB` when compiling libCuik and don't wanna use TB.
-
-### Compile script CLI
-* passing a filepath into the compile executable will redirect libCuik's output location
-* -test will run the tests
-* -self1 will do type checking for all of Cuik
-* -self2 will do IR generation for all of Cuik
-* -self3 will do object files for all of Cuik
-* -self4 just compiles Cuik with Cuik
+```
+git clone https://github.com/RealNeGate/Cuik
+cd Cuik
+tup init
+tup
+```
 
 ## How am I doing?
 mostly aight, thanks for asking.
