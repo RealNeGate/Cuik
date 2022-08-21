@@ -1,3 +1,4 @@
+#include "bindgen.h"
 
 static void cprint__type(TranslationUnit* tu, DefinedTypeEntry** defined_types, Cuik_Type* type, const char* name, int indent) {
     // a based type in a cringe system can make all the difference in the world
@@ -207,7 +208,7 @@ static void cprint__define(Cuik_DefineIter def) {
     );
 }
 
-static Printer cprint = {
+static Bindgen bindgen__c99 = {
     cprint__file,
     cprint__decl,
     cprint__include,

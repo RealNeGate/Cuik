@@ -1,3 +1,4 @@
+#include "bindgen.h"
 
 static void odinprint__type(TranslationUnit* tu, DefinedTypeEntry** defined_types, Cuik_Type* type, int indent) {
     // a based type in a cringe system can make all the difference in the world
@@ -163,7 +164,7 @@ static void odinprint__define(Cuik_DefineIter def) {
     );
 }
 
-static Printer odinprint = {
+static Bindgen bindgen__odin = {
     odinprint__file,
     odinprint__decl,
     odinprint__include,

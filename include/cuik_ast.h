@@ -1,3 +1,4 @@
+#pragma once
 #include "cuik.h"
 
 typedef enum Cuik_TypeKind {

@@ -35,7 +35,7 @@ endif
 # compile driver
 CFLAGS += -lole32 -lAdvapi32 -lOleAut32 -lDbgHelp
 
-DRIVER_FILES = drivers/main_driver.c drivers/threadpool.c
+DRIVER_FILES = drivers/main_driver.c drivers/threadpool.c drivers/bindgen_c99.c drivers/bindgen_odin.c
 DRIVER_LIBS  = bin/libcuik.lib deps/tildebackend.lib
 
 : $(DRIVER_FILES) $(DRIVER_LIBS) |> $(CC) $(CFLAGS) %f -g -o %o |> bin/cuik.exe | bin/cuik.lib bin/cuik.exp bin/cuik.pdb bin/cuik.ilk
