@@ -87,10 +87,6 @@ static void initialize_opt_passes(void) {
         dyn_array_put(da_passes, OPT(merge_rets));
         dyn_array_put(da_passes, OPT(canonicalize));
         dyn_array_put(da_passes, OPT(mem2reg));
-
-        dyn_array_put(da_passes, OPT(hoist_invariants));
-        dyn_array_put(da_passes, OPT(canonicalize));
-        dyn_array_put(da_passes, OPT(remove_pass_node));
         dyn_array_put(da_passes, OPT(canonicalize));
 
         if (args_experiment) {
@@ -335,16 +331,17 @@ static void compile_file(void* arg) {
 
     // parse
     Cuik_ErrorStatus errors;
-    TranslationUnit* tu = cuik_parse_translation_unit(&(Cuik_TranslationUnitDesc){
-            .tokens      = cuikpp_get_token_stream(cpp),
-            .errors      = &errors,
-            .ir_module   = mod,
-            .target      = &target_desc,
-            #if CUIK_ALLOW_THREADS
-            .thread_pool = ithread_pool ? ithread_pool : NULL,
-            #endif
-        });
+    Cuik_TranslationUnitDesc desc = {
+        .tokens      = cuikpp_get_token_stream(cpp),
+        .errors      = &errors,
+        .ir_module   = mod,
+        .target      = &target_desc,
+        #if CUIK_ALLOW_THREADS
+        .thread_pool = ithread_pool ? ithread_pool : NULL,
+        #endif
+    };
 
+    TranslationUnit* tu = cuik_parse_translation_unit(&desc);
     if (tu == NULL) {
         printf("Failed to parse with errors...");
         exit(1);

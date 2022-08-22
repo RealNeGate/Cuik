@@ -1129,7 +1129,6 @@ extern "C" {
     TB_API bool tb_opt_fold(TB_Function* f);
     TB_API bool tb_opt_refinement(TB_Function* f);
     TB_API bool tb_opt_load_elim(TB_Function* f);
-    TB_API bool tb_opt_hoist_invariants(TB_Function* f);
     TB_API bool tb_opt_hoist_locals(TB_Function* f);
     TB_API bool tb_opt_deshort_circuit(TB_Function* f);
     TB_API bool tb_opt_remove_pass_node(TB_Function* f);
