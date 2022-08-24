@@ -36,7 +36,7 @@ static DynArray(const char*) input_libraries;
 static DynArray(const char*) input_objects;
 static DynArray(const char*) input_files;
 static DynArray(const char*) input_defines;
-static DynArray(TB_FunctionPass) da_passes;
+static DynArray(TB_Pass) da_passes;
 static const char* output_name;
 static char output_path_no_ext[FILENAME_MAX];
 
@@ -77,37 +77,40 @@ static struct {
 };
 enum { TARGET_OPTION_COUNT = sizeof(target_options) / sizeof(target_options[0]) };
 
-#define OPT(name) (TB_FunctionPass){ #name, tb_opt_ ## name }
 static void initialize_opt_passes(void) {
     char custom_luapath[FILENAME_MAX];
-    da_passes = dyn_array_create(TB_FunctionPass);
+    da_passes = dyn_array_create(TB_Pass);
 
     if (args_opt_level) {
-        dyn_array_put(da_passes, OPT(hoist_locals));
-        dyn_array_put(da_passes, OPT(merge_rets));
-        dyn_array_put(da_passes, OPT(canonicalize));
-        dyn_array_put(da_passes, OPT(mem2reg));
-        dyn_array_put(da_passes, OPT(canonicalize));
+        dyn_array_put(da_passes, tb_opt_hoist_locals());
+        dyn_array_put(da_passes, tb_opt_merge_rets());
+
+        dyn_array_put(da_passes, tb_opt_instcombine());
+        dyn_array_put(da_passes, tb_opt_dead_expr_elim());
+        dyn_array_put(da_passes, tb_opt_subexpr_elim());
+
+        dyn_array_put(da_passes, tb_opt_mem2reg());
+
+        dyn_array_put(da_passes, tb_opt_instcombine());
+        dyn_array_put(da_passes, tb_opt_dead_expr_elim());
+        dyn_array_put(da_passes, tb_opt_subexpr_elim());
+        dyn_array_put(da_passes, tb_opt_remove_pass_nodes());
 
         if (args_experiment) {
             sprintf_s(custom_luapath, FILENAME_MAX, "%s/custom.lua", crt_dirpath);
-            dyn_array_put(da_passes, tb_opt_load_lua_pass(custom_luapath));
+            dyn_array_put(da_passes, tb_opt_load_lua_pass(custom_luapath, TB_FUNCTION_PASS));
         }
 
-        dyn_array_put(da_passes, OPT(dead_expr_elim));
-        // dyn_array_put(da_passes, OPT(dead_block_elim));
-
-        // complex analysis
-        // dyn_array_put(da_passes, OPT(refinement));
+        // dyn_array_put(da_passes, tb_opt_inline());
 
         // aggresive optimizations
         // TODO(NeGate): loop optimizations, data structure reordering
         // switch optimizations
 
-        dyn_array_put(da_passes, OPT(compact_dead_regs));
+        dyn_array_put(da_passes, tb_opt_compact_dead_regs());
     } else {
-        dyn_array_put(da_passes, OPT(canonicalize));
-        dyn_array_put(da_passes, OPT(compact_dead_regs));
+        dyn_array_put(da_passes, tb_opt_instcombine());
+        dyn_array_put(da_passes, tb_opt_compact_dead_regs());
     }
 }
 
@@ -227,28 +230,10 @@ typedef struct {
 
 static void irgen_job(void* arg) {
     IRGenTask task = *((IRGenTask*) arg);
-    TB_Module* mod = cuik_get_tb_module(task.tu);
 
     CUIK_TIMED_BLOCK("IR generation: %zu", task.count) {
         for (size_t i = 0; i < task.count; i++) {
-            TB_Function* func = cuik_stmt_gen_ir(task.tu, task.stmts[i]);
-
-            if (func != NULL) {
-                if (dyn_array_length(da_passes)) {
-                    tb_function_optimize(func, dyn_array_length(da_passes), da_passes);
-                }
-
-                if (args_ir) {
-                    cuik_lock_compilation_unit(&compilation_unit);
-                    tb_function_print(func, tb_default_print_callback, stdout);
-                    printf("\n\n");
-                    cuik_unlock_compilation_unit(&compilation_unit);
-                } else {
-                    tb_module_compile_func(mod, func, /* args_opt_level ? TB_ISEL_COMPLEX : */ TB_ISEL_FAST);
-                }
-
-                tb_function_free(func);
-            }
+            cuik_stmt_gen_ir(task.tu, task.stmts[i]);
         }
     }
 
@@ -847,6 +832,22 @@ int main(int argc, char** argv) {
                 };
 
                 irgen_job(&task);
+            }
+        }
+
+        // TODO: we probably want to do the fancy threading soon
+        if (dyn_array_length(da_passes)) {
+            tb_module_optimize(mod, dyn_array_length(da_passes), da_passes);
+        }
+
+        if (args_ir) {
+            TB_FOR_FUNCTIONS(it, mod) {
+                tb_function_print(it.f, tb_default_print_callback, stdout);
+                printf("\n\n");
+            }
+        } else {
+            TB_FOR_FUNCTIONS(it, mod) {
+                tb_module_compile_func(mod, it.f, /* args_opt_level ? TB_ISEL_COMPLEX : */ TB_ISEL_FAST);
             }
         }
 

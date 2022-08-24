@@ -8,7 +8,8 @@ int foo(int x, int y) {
     int g = 0;
     if (x > y) {
         g = bar(x * y);
+        return c + g;
     }
 
-    return c + g;
+    return 16 + c + g + 1;
 }
