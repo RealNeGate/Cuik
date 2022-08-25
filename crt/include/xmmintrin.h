@@ -1,6 +1,6 @@
 #pragma once
 
-typedef _Vector(float,         4)  __m128;
+typedef _Vector(float, 4) __m128;
 typedef _Vector(unsigned char, 16) __m128i;
 
 // actual builtins

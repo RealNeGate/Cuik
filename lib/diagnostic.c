@@ -72,7 +72,7 @@ void init_report_system(void) {
 
     #endif
 
-    mtx_init(&report_mutex, mtx_plain);
+    mtx_init(&report_mutex, mtx_plain | mtx_recursive);
 }
 
 static void print_level_name(Cuik_ReportLevel level) {
@@ -118,18 +118,7 @@ static void tally_report_counter(Cuik_ReportLevel level, Cuik_ErrorStatus* err) 
         #endif
         abort();
     } else {
-        int error_count = atomic_fetch_add((atomic_int*) &err->tally[level], 1);
-        if (level > REPORT_WARNING && error_count > 20) {
-            #if _WIN32
-            SetConsoleTextAttribute(console_handle, (default_attribs & ~0xF) | FOREGROUND_RED | FOREGROUND_INTENSITY);
-            #endif
-
-            printf("EXCEEDED ERROR LIMIT OF 20\n");
-
-            #if _WIN32
-            SetConsoleTextAttribute(console_handle, default_attribs);
-            #endif
-        }
+        atomic_fetch_add((atomic_int*) &err->tally[level], 1);
     }
 }
 
@@ -235,6 +224,46 @@ static int print_backtrace(TokenStream* tokens, SourceLocIndex loc_index, Source
     }
 }
 
+static void preview_line(TokenStream* tokens, SourceLocIndex loc_index, SourceLoc* loc) {
+    if (!report_using_thin_errors) {
+        size_t dist_from_line_start = draw_line(tokens, loc_index);
+        draw_line_horizontal_pad();
+
+        #if _WIN32
+        SetConsoleTextAttribute(console_handle, (default_attribs & ~0xF) | FOREGROUND_GREEN);
+        #endif
+
+        // idk man
+        size_t start_pos = loc->columns > dist_from_line_start ? loc->columns - dist_from_line_start : 0;
+
+        // draw underline
+        size_t tkn_len = loc->length;
+        for (size_t i = 0; i < start_pos; i++) printf(" ");
+        printf("^");
+        for (size_t i = 1; i < tkn_len; i++) printf("~");
+        printf("\n");
+
+        #if _WIN32
+        SetConsoleTextAttribute(console_handle, default_attribs);
+        #endif
+    }
+}
+
+static void preview_expansion(TokenStream* tokens, SourceLoc* loc) {
+    if (loc->line->parent != 0) {
+        SourceLoc* parent = GET_SOURCE_LOC(loc->line->parent);
+
+        if (parent->expansion != 0) {
+            SourceLoc* expansion = GET_SOURCE_LOC(parent->expansion);
+
+            display_line(REPORT_INFO, tokens, expansion);
+            printf("macro '%.*s' defined at\n", (int)expansion->length, expansion->line->line_str + expansion->columns);
+            preview_line(tokens, parent->expansion, expansion);
+        }
+    }
+    printf("\n");
+}
+
 void report_ranged(Cuik_ReportLevel level, Cuik_ErrorStatus* err, TokenStream* tokens, SourceLocIndex start_loc, SourceLocIndex end_loc, const char* fmt, ...) {
     SourceLoc loc = merge_source_locations(tokens, start_loc, end_loc);
 
@@ -253,29 +282,8 @@ void report_ranged(Cuik_ReportLevel level, Cuik_ErrorStatus* err, TokenStream* t
     printf("\n");
     RESET_COLOR;
 
-    if (!report_using_thin_errors) {
-        size_t dist_from_line_start = draw_line(tokens, start_loc);
-        draw_line_horizontal_pad();
-
-        #if _WIN32
-        SetConsoleTextAttribute(console_handle, (default_attribs & ~0xF) | FOREGROUND_GREEN);
-        #endif
-
-        // idk man
-        size_t start_pos = loc.columns > dist_from_line_start ? loc.columns - dist_from_line_start : 0;
-
-        // draw underline
-        size_t tkn_len = loc.length;
-        for (size_t i = 0; i < start_pos; i++) printf(" ");
-        printf("^");
-        for (size_t i = 1; i < tkn_len; i++) printf("~");
-        printf("\n");
-
-        #if _WIN32
-        SetConsoleTextAttribute(console_handle, default_attribs);
-        #endif
-        printf("\n");
-    }
+    preview_line(tokens, start_loc, &loc);
+    preview_expansion(tokens, &loc);
 
     tally_report_counter(level, err);
     mtx_unlock(&report_mutex);
@@ -299,30 +307,8 @@ void report(Cuik_ReportLevel level, Cuik_ErrorStatus* err, TokenStream* tokens, 
     printf("\n");
     RESET_COLOR;
 
-    if (!report_using_thin_errors) {
-        size_t dist_from_line_start = draw_line(tokens, loc_index);
-        draw_line_horizontal_pad();
-
-        #if _WIN32
-        SetConsoleTextAttribute(console_handle, (default_attribs & ~0xF) | FOREGROUND_GREEN);
-        #endif
-
-        // idk man
-        size_t start_pos = loc->columns > dist_from_line_start ? loc->columns - dist_from_line_start : 0;
-
-        // draw underline
-        size_t tkn_len = loc->length;
-        for (size_t i = 0; i < start_pos; i++) printf(" ");
-        printf("^");
-        for (size_t i = 1; i < tkn_len; i++) printf("~");
-        printf("\n");
-
-        #if _WIN32
-        SetConsoleTextAttribute(console_handle, default_attribs);
-        #endif
-
-        printf("\n");
-    }
+    preview_line(tokens, loc_index, loc);
+    preview_expansion(tokens, loc);
 
     tally_report_counter(level, err);
     mtx_unlock(&report_mutex);
@@ -346,34 +332,14 @@ void report_fix(Cuik_ReportLevel level, Cuik_ErrorStatus* err, TokenStream* toke
     printf("\n");
     RESET_COLOR;
 
-    if (!report_using_thin_errors) {
-        size_t dist_from_line_start = draw_line(tokens, loc_index);
-        draw_line_horizontal_pad();
+    preview_line(tokens, loc_index, loc);
+    preview_expansion(tokens, loc);
 
-        #if _WIN32
-        SetConsoleTextAttribute(console_handle, (default_attribs & ~0xF) | FOREGROUND_GREEN);
-        #endif
-
-        // idk man
-        size_t start_pos = loc->columns > dist_from_line_start ? loc->columns - dist_from_line_start : 0;
-
-        // one after the token
-        start_pos += loc->length;
-
-        // draw underline
-        for (size_t i = 0; i < start_pos; i++) printf(" ");
-        printf("^");
-        printf("\n");
-
-        draw_line_horizontal_pad();
-        for (size_t i = 0; i < start_pos; i++) printf(" ");
-        printf("%s\n", tip);
-
-        #if _WIN32
-        SetConsoleTextAttribute(console_handle, default_attribs);
-        #endif
-
-        printf("\n");
+    if (loc->line->parent != 0) {
+        SourceLoc* parent = GET_SOURCE_LOC(loc->line->parent);
+        if (parent->expansion != 0) {
+            report(level, err, tokens, parent->expansion, "Expanded from");
+        }
     }
 
     tally_report_counter(level, err);

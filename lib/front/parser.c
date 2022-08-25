@@ -517,6 +517,8 @@ void type_layout(TranslationUnit* restrict tu, Cuik_Type* type) {
     type->is_inprogress = false;
 }
 
+static const Cuik_Warnings DEFAULT_WARNINGS = { 0 };
+
 CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* restrict desc) {
     // we can preserve this across multiple uses
     thread_local static NL_Strmap(Cuik_Type*) s_global_tags;
@@ -536,6 +538,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
     tu->target = *desc->target;
     tu->tokens = *desc->tokens;
     tu->errors = desc->errors;
+    tu->warnings = desc->warnings ? desc->warnings : &DEFAULT_WARNINGS;
 
     #ifdef CUIK_USE_TB
     tu->ir_mod = desc->ir_module;

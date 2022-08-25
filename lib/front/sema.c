@@ -1,5 +1,4 @@
 #include "sema.h"
-#include "settings.h"
 
 #include <back/ir_gen.h>
 #include <stdarg.h>
@@ -162,7 +161,7 @@ static bool implicit_conversion(TranslationUnit* tu, Cuik_Type* src, Cuik_Type* 
         dst = new_pointer(tu, dst->array_of);
     }
 
-    if (warnings.data_loss) {
+    if (tu->warnings->data_loss) {
         // data loss warning applies to int and float conversions
         if (src->kind >= KIND_CHAR && src->kind <= KIND_DOUBLE &&
             dst->kind >= KIND_CHAR && dst->kind <= KIND_DOUBLE) {
@@ -1630,14 +1629,13 @@ static void sema_top_level(TranslationUnit* tu, Stmt* restrict s) {
             }
 
             if (s->decl.attrs.is_static && !s->decl.attrs.is_inline) {
-                if (warnings.unused_funcs && !s->decl.attrs.is_used) {
+                if (tu->warnings->unused_funcs && !s->decl.attrs.is_used) {
                     REPORT(WARNING, s->loc, "Function '%s' is never used.", name);
-                    break;
                 }
             }
 
-            if (s->decl.attrs.is_inline && !s->decl.attrs.is_used) {
-                break;
+            if (s->decl.attrs.is_static || s->decl.attrs.is_inline) {
+                if (!s->decl.attrs.is_used) break;
             }
 
             #ifdef CUIK_USE_TB

@@ -108,8 +108,10 @@ static void initialize_opt_passes(void) {
         // switch optimizations
 
         dyn_array_put(da_passes, tb_opt_compact_dead_regs());
+        dyn_array_put(da_passes, tb_opt_remove_pass_nodes());
     } else {
         dyn_array_put(da_passes, tb_opt_instcombine());
+        dyn_array_put(da_passes, tb_opt_remove_pass_nodes());
         dyn_array_put(da_passes, tb_opt_compact_dead_regs());
     }
 }

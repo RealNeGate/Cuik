@@ -6,7 +6,6 @@
 #include "common.h"
 #include "diagnostic.h"
 #include "memory.h"
-#include "settings.h"
 #include <cuik.h>
 #include <preproc/lexer.h>
 #include <threads.h>
@@ -85,6 +84,7 @@ struct TranslationUnit {
     TB_Module* ir_mod;
     const char* filepath;
     Cuik_ErrorStatus* errors;
+    const Cuik_Warnings* warnings;
 
     // token stream
     TokenStream tokens;

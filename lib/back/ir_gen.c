@@ -1,6 +1,5 @@
 #ifdef CUIK_USE_TB
 #include "ir_gen.h"
-#include "settings.h"
 #include <compilation_unit.h>
 #include <targets/targets.h>
 #include <timer.h>

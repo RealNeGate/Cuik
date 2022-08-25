@@ -1,6 +1,5 @@
 #include <cuik.h>
 
-#include "settings.h"
 #include "targets/targets.h"
 #include "timer.h"
 
@@ -10,10 +9,6 @@
 #else
 #define SLASH "/"
 #endif
-
-Warnings warnings = {
-    .unused_funcs = true,
-};
 
 // internal globals to Cuik
 char cuik__include_dir[FILENAME_MAX];
@@ -88,8 +83,8 @@ static void set_defines(Cuik_CPP* cpp, const Cuik_Target* target, bool system_li
     cuikpp_define_empty(cpp, "__LINE__");
 
     // CuikC specific
-    cuikpp_define(cpp, "__CUIKC__", STR(CUIK_COMPILER_MAJOR));
-    cuikpp_define(cpp, "__CUIKC_MINOR__", STR(CUIK_COMPILER_MINOR));
+    cuikpp_define(cpp, "__CUIK__", STR(CUIK_COMPILER_MAJOR));
+    cuikpp_define(cpp, "__CUIK_MINOR__", STR(CUIK_COMPILER_MINOR));
 
     // C23/Cuik bool being available without stdbool.h
     cuikpp_define_empty(cpp, "__bool_true_false_are_defined");

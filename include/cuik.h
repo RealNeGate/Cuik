@@ -164,6 +164,7 @@ typedef struct SourceLine {
 
 typedef struct SourceLoc {
     SourceLine* line;
+    SourceLocIndex expansion;
     unsigned int columns;
     unsigned int length;
 } SourceLoc;
@@ -380,6 +381,13 @@ typedef enum Cuik_ReportLevel {
     REPORT_MAX
 } Cuik_ReportLevel;
 
+typedef struct Cuik_Warnings {
+    // implicitly converting between types and losing information
+    bool data_loss : 1;
+    bool unused_decls : 1;
+    bool unused_funcs : 1;
+} Cuik_Warnings;
+
 typedef struct Cuik_ErrorStatus {
     int tally[REPORT_MAX];
 } Cuik_ErrorStatus;
@@ -402,6 +410,9 @@ typedef struct Cuik_TranslationUnitDesc {
 
     // errors CANNOT be NULL
     Cuik_ErrorStatus* errors;
+
+    // warnings CANNOT be NULL
+    const Cuik_Warnings* warnings;
 
     #ifdef CUIK_USE_TB
     // if ir_module is non-NULL then translation unit will be used for

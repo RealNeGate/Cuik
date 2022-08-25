@@ -911,6 +911,7 @@ extern "C" {
     TB_API TB_DataType tb_vector_type(TB_DataTypeEnum type, int width);
 
     TB_API TB_Function* tb_function_create(TB_Module* m, const char* name, TB_Linkage linkage);
+
     TB_API void tb_function_set_name(TB_Function* f, const char* name);
     TB_API const char* tb_function_get_name(TB_Function* f);
 
@@ -933,6 +934,9 @@ extern "C" {
 
     TB_API void tb_inst_unreachable(TB_Function* f);
     TB_API void tb_inst_debugbreak(TB_Function* f);
+    TB_API void tb_inst_trap(TB_Function* f);
+    TB_API void tb_inst_keep_alive(TB_Function* f, TB_Reg src);
+    TB_API TB_Reg tb_inst_poison(TB_Function* f);
 
     TB_API TB_Reg tb_inst_param(TB_Function* f, int param_id);
     TB_API TB_Reg tb_inst_param_addr(TB_Function* f, int param_id);

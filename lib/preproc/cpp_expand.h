@@ -179,9 +179,10 @@ static void expand_ident(Cuik_CPP* restrict c, TokenStream* restrict s, Lexer* l
         if (find_define(c, &def_i, token_data, token_length)) {
             int line_of_expansion = l->current_line;
 
-            SourceLocIndex expanded_loc = get_source_location(c, l, s,
-                parent_loc,
-                SOURCE_LOC_MACRO);
+            SourceLocIndex expanded_loc = get_source_location(
+                c, l, s, parent_loc, SOURCE_LOC_MACRO
+            );
+            s->locations[SOURCE_LOC_GET_DATA(expanded_loc)].expansion = c->macro_bucket_source_locs[def_i];
 
             // Identify macro definition
             lexer_read(l);
