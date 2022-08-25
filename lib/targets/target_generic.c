@@ -86,6 +86,21 @@ Cuik_Type* target_generic_type_check_builtin(TranslationUnit* tu, Expr* e, const
         args[0]->cast_type = ty;
         args[1]->cast_type = ty;
         return args[0]->cast_type;
+    } else if (strcmp(name, "__builtin_syscall") == 0) {
+        if (arg_count < 1) {
+            REPORT_EXPR(ERROR, e, "%s requires at least one argument (the syscall number)", name);
+            return &builtin_types[TYPE_VOID];
+        }
+
+        // fn(syscall number, ...)
+        args[0]->cast_type = &builtin_types[TYPE_INT];
+        cuik__type_check_args(tu, e, 1, args);
+
+        for (size_t i = 1; i < arg_count; i++) {
+            args[i]->cast_type = sema_expr(tu, args[i]);
+        }
+
+        return &builtin_types[TYPE_LONG];
     } else if (strcmp(name, "__builtin_trap") == 0) {
         if (arg_count != 0) {
             REPORT_EXPR(ERROR, e, "%s doesn't require arguments", name);
@@ -303,6 +318,17 @@ BuiltinResult target_generic_compile_builtin(TranslationUnit* tu, TB_Function* f
     } else if (strcmp(name, "__builtin_trap") == 0) {
         tb_inst_trap(func);
         return ZZZ(TB_NULL_REG);
+    } else if (strcmp(name, "__builtin_syscall") == 0) {
+        TB_Reg num = irgen_as_rvalue(tu, func, args[0]);
+        TB_Reg* arg_regs = tls_push((arg_count - 1) * sizeof(TB_Reg));
+        for (size_t i = 1; i < arg_count; i++) {
+            arg_regs[i - 1] = irgen_as_rvalue(tu, func, args[i]);
+        }
+
+        TB_Reg result = tb_inst_syscall(func, TB_TYPE_I64, num, arg_count - 1, arg_regs);
+        tls_restore(arg_regs);
+
+        return ZZZ(result);
     } else if (strcmp(name, "__debugbreak") == 0) {
         tb_inst_debugbreak(func);
         return ZZZ(TB_NULL_REG);
@@ -328,6 +354,7 @@ void target_generic_fill_builtin_table(BuiltinBinding** builtins) {
     // gcc/clang
     shput(*builtins, "__builtin_expect", 1);
     shput(*builtins, "__builtin_trap", 1);
+    shput(*builtins, "__builtin_syscall", 1);
     shput(*builtins, "__builtin_unreachable", 1);
     shput(*builtins, "__builtin_mul_overflow", 1);
 
