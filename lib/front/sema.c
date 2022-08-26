@@ -37,6 +37,9 @@ bool type_very_compatible(TranslationUnit* tu, Cuik_Type* src, Cuik_Type* dst) {
     if (src == dst) return true;
     if (src->kind != dst->kind) return false;
 
+    while (src->kind == KIND_QUALIFIED_TYPE) src = src->qualified_ty;
+    while (dst->kind == KIND_QUALIFIED_TYPE) dst = dst->qualified_ty;
+
     switch (src->kind) {
         case KIND_BOOL:
         case KIND_CHAR:
@@ -69,6 +72,9 @@ bool type_very_compatible(TranslationUnit* tu, Cuik_Type* src, Cuik_Type* dst) {
 // have a special case for 0 to pointer conversions.
 bool type_compatible(TranslationUnit* tu, Cuik_Type* src, Cuik_Type* dst, Expr* a_expr) {
     if (src == dst) return true;
+
+    while (src->kind == KIND_QUALIFIED_TYPE) src = src->qualified_ty;
+    while (dst->kind == KIND_QUALIFIED_TYPE) dst = dst->qualified_ty;
 
     // zero can convert into whatever
     if (a_expr->op == EXPR_INT && a_expr->int_num.num == 0 && is_scalar_type(tu, dst)) {
@@ -156,8 +162,10 @@ bool type_compatible(TranslationUnit* tu, Cuik_Type* src, Cuik_Type* dst, Expr* 
 }
 
 static bool implicit_conversion(TranslationUnit* tu, Cuik_Type* src, Cuik_Type* dst, Expr* src_e) {
-    // implictly convert arrays into pointers
-    if (dst->kind == KIND_ARRAY) {
+    // implictly convert functions & arrays into pointers
+    if (dst->kind == KIND_FUNC) {
+        dst = new_pointer(tu, dst);
+    } else if (dst->kind == KIND_ARRAY) {
         dst = new_pointer(tu, dst->array_of);
     }
 
@@ -650,6 +658,9 @@ Member* sema_traverse_members(TranslationUnit* tu, Cuik_Type* record_type, Atom 
 Member* sema_resolve_member_access(TranslationUnit* tu, Expr* restrict e, uint32_t* out_offset) {
     bool is_arrow = (e->op == EXPR_ARROW);
     Cuik_Type* base_type = sema_expr(tu, e->dot_arrow.base);
+    while (base_type->kind == KIND_QUALIFIED_TYPE) {
+        base_type = base_type->qualified_ty;
+    }
 
     Cuik_Type* record_type = NULL;
     if (is_arrow) {

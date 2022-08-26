@@ -164,7 +164,7 @@ static void odinprint__define(Cuik_DefineIter def) {
     );
 }
 
-static Bindgen bindgen__odin = {
+Bindgen bindgen__odin = {
     odinprint__file,
     odinprint__decl,
     odinprint__include,

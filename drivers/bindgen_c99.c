@@ -208,7 +208,7 @@ static void cprint__define(Cuik_DefineIter def) {
     );
 }
 
-static Bindgen bindgen__c99 = {
+Bindgen bindgen__c99 = {
     cprint__file,
     cprint__decl,
     cprint__include,

@@ -21,15 +21,6 @@ extern "C" {
 
     #define TB_API extern
 
-    #define TB_HOST_UNKNOWN 0
-    #define TB_HOST_X86_64  1
-
-    #if defined(__x86_64__) || defined(_M_X64) || defined(_M_AMD64)
-    #define TB_HOST_ARCH TB_HOST_X86_64
-    #else
-    #define TB_HOST_ARCH TB_HOST_UNKNOWN
-    #endif
-
     // These are flags
     typedef enum TB_ArithmaticBehavior {
         TB_ARITHMATIC_NSW = 1,
@@ -59,7 +50,9 @@ extern "C" {
         TB_SYSTEM_MACOS,
 
         // Not supported yet
-        TB_SYSTEM_ANDROID
+        TB_SYSTEM_ANDROID,
+
+        TB_SYSTEM_MAX,
     } TB_System;
 
     typedef enum TB_ABI {
@@ -359,7 +352,6 @@ extern "C" {
     typedef struct TB_Function          TB_Function;
     typedef struct TB_AttribList        TB_AttribList;
     typedef struct TB_FunctionPrototype TB_FunctionPrototype;
-    typedef struct TB_ModuleExporter    TB_ModuleExporter;
 
     // references to a node within a TB_Function
     // these are virtual registers so they don't necessarily
@@ -709,6 +701,13 @@ extern "C" {
         };
     } TB_ModuleExportPacket;
 
+    typedef struct TB_ModuleExporter {
+        // top secret stuff
+        void* state;
+
+        bool (*next)(TB_Module* m, void* exporter, TB_ModuleExportPacket* packet);
+    } TB_ModuleExporter;
+
     // *******************************
     // Public macros
     // *******************************
@@ -748,12 +747,16 @@ extern "C" {
     // Creates a module with the correct target and settings
     TB_API TB_Module* tb_module_create(TB_Arch target_arch, TB_System target_system, TB_DebugFormat debug_fmt, const TB_FeatureSet* features);
 
+    // Creates a module but defaults on the architecture and system based on the host machine
+    TB_API TB_Module* tb_module_create_for_host(TB_DebugFormat debug_fmt, const TB_FeatureSet* features);
+
     // Validates IR & compiles the function into machine code.
     // For isel_mode, TB_ISEL_FAST will compile faster but worse codegen
     // TB_ISEL_COMPLEX will compile slower but better codegen
     //
     // returns false if it fails.
-    TB_API bool tb_module_compile_func(TB_Module* m, TB_Function* f, TB_ISelMode isel_mode);
+    TB_API bool tb_module_compile_function(TB_Module* m, TB_Function* f, TB_ISelMode isel_mode);
+    TB_API bool tb_module_compile_functions(TB_Module* m, size_t count, TB_Function* funcs, TB_ISelMode isel_mode);
 
     // Frees all resources for the TB_Module and it's functions, globals and
     // compiled code.
@@ -764,11 +767,11 @@ extern "C" {
     // dont and the tls_index is used, it'll crash
     TB_API void tb_module_set_tls_index(TB_Module* m, TB_External* e);
 
-    TB_API TB_ModuleExporter* tb_make_exporter(TB_Module* m);
-    TB_API bool tb_exporter_next(TB_Module* m, TB_ModuleExporter* exporter, TB_ModuleExportPacket* packet);
+    TB_API TB_ModuleExporter tb_make_exporter(TB_Module* m, TB_OutputFlavor flavor);
+    #define tb_exporter_next(m, exporter, packet) ((exporter).next(m, (exporter).state, packet))
 
-    // Exports an fully linked executable file
-    TB_API bool tb_module_export_exec(TB_Module* m, const char* path, const TB_LinkerInput* input);
+    TB_API bool tb_exporter_to_file(TB_Module* m, TB_ModuleExporter exporter, const char* filepath);
+    TB_API uint8_t* tb_exporter_to_buffer(TB_Module* m, TB_ModuleExporter exporter, size_t* length);
 
     // For isel_mode, TB_ISEL_FAST will compile faster but worse codegen
     // TB_ISEL_COMPLEX will compile slower but better codegen
@@ -786,6 +789,21 @@ extern "C" {
     #define TB_FOR_FUNCTIONS(it, module) for (TB_FunctionIter it = { .module_ = (module) }; tb_next_function(&it);)
     TB_API TB_FunctionIter tb_function_iter(TB_Module* m);
     TB_API bool tb_next_function(TB_FunctionIter* it);
+
+    typedef struct TB_FunctionBatchIter {
+        // public
+        TB_Function* start;
+        size_t count;
+
+        // internal
+        TB_Module* module_;
+        size_t index_;
+    } TB_FunctionBatchIter;
+
+    #define TB_FOR_FUNCTION_BATCH(it, module) for (TB_FunctionBatchIter it = { .module_ = (module) }; tb_next_function_batch(&it);)
+    TB_API size_t tb_estimate_function_batch_count(TB_Module* m);
+    TB_API TB_FunctionBatchIter tb_function_batch_iter(TB_Module* m);
+    TB_API bool tb_next_function_batch(TB_FunctionBatchIter* it);
 
     typedef struct TB_ExternalIter {
         // public

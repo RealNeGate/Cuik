@@ -1,5 +1,5 @@
 import CC=clang
-import OPT
+import OPT=no
 
 ifeq ($(CC),cl)
 	error CL is not supported with Cuik's Tup builds
@@ -9,11 +9,11 @@ CFLAGS += -DCUIK_USE_TB
 CFLAGS += -I include
 CFLAGS += -I lib
 CFLAGS += -I deps
-CFLAGS += -Wall -Werror -Wno-unused-function
+CFLAGS += -Wall -Werror -Wno-unused-function -Wno-unused-variable
 CFLAGS += -msse4.2 -maes
 CFLAGS += -D_CRT_SECURE_NO_WARNINGS
 
-ifdef OPT
+ifeq ($(OPT),yes)
 	CFLAGS += -O2 -DNDEBUG
 endif
 
@@ -33,9 +33,9 @@ endif
 : bin/*.o |> lib /nologo /out:%o %f |> bin/libcuik.lib
 
 # compile driver
-CFLAGS += -lole32 -lAdvapi32 -lOleAut32 -lDbgHelp
+CFLAGS += -Xlinker /incremental:no -lole32 -lAdvapi32 -lOleAut32 -lDbgHelp
 
 DRIVER_FILES = drivers/main_driver.c drivers/threadpool.c drivers/bindgen_c99.c drivers/bindgen_odin.c
 DRIVER_LIBS  = bin/libcuik.lib deps/tildebackend.lib
 
-: $(DRIVER_FILES) $(DRIVER_LIBS) |> $(CC) $(CFLAGS) %f -g -o %o |> bin/cuik.exe | bin/cuik.lib bin/cuik.exp bin/cuik.pdb bin/cuik.ilk
+: $(DRIVER_FILES) $(DRIVER_LIBS) |> $(CC) $(CFLAGS) %f -g -o %o |> bin/cuik.exe | bin/cuik.lib bin/cuik.exp bin/cuik.pdb

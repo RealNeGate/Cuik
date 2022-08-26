@@ -50,6 +50,7 @@ CUIK_API size_t cuik_num_of_translation_units_in_compilation_unit(CompilationUni
 CUIK_API void cuik_internal_link_compilation_unit(CompilationUnit* restrict cu) {
     FOR_EACH_TU(tu, cu) {
         size_t count = arrlen(tu->top_level_stmts);
+        // printf("%s:\n", cuikpp_get_main_file(&tu->tokens));
 
         for (size_t i = 0; i < count; i++) {
             Stmt* s = tu->top_level_stmts[i];
@@ -57,8 +58,7 @@ CUIK_API void cuik_internal_link_compilation_unit(CompilationUnit* restrict cu) 
             if (s->op == STMT_FUNC_DECL) {
                 if (!s->decl.attrs.is_static &&
                     !s->decl.attrs.is_inline) {
-                    //printf("Export! %s\n", s->decl.name, s->backing.f);
-
+                    // printf("  Func Export! %s\n", s->decl.name);
                     shput(cu->export_table, s->decl.name, s);
                 }
             } else if (s->op == STMT_GLOBAL_DECL || s->op == STMT_DECL) {
@@ -68,7 +68,7 @@ CUIK_API void cuik_internal_link_compilation_unit(CompilationUnit* restrict cu) 
                     !s->decl.attrs.is_inline &&
                     s->decl.type->kind != KIND_FUNC &&
                     s->decl.name != NULL) {
-                    //printf("Export! %s\n", s->decl.name);
+                    // printf("  Global Export! %s\n", s->decl.name);
                     shput(cu->export_table, s->decl.name, s);
                 }
             }

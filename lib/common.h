@@ -1,6 +1,6 @@
 #pragma once
 
-#ifdef __CUIKC__
+#ifdef __CUIK__
 #define USE_INTRIN 0
 #else
 #define USE_INTRIN 1

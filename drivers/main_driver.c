@@ -8,7 +8,7 @@
 
 #include <stb_ds.h>
 
-#ifndef __CUIKC__
+#ifndef __CUIK__
 #define CUIK_ALLOW_THREADS 1
 #else
 #define CUIK_ALLOW_THREADS 0
@@ -29,6 +29,8 @@ typedef enum OutputFlavor {
     FLAVOR_STATIC,
     FLAVOR_EXECUTABLE,
 } OutputFlavor;
+
+#define TIMESTAMP(x) if (args_verbose) mark_timestamp(x)
 
 // compiler arguments
 static DynArray(const char*) include_directories;
@@ -51,9 +53,11 @@ static bool args_pploc;
 static bool args_assembly;
 static bool args_time;
 static bool args_verbose;
+static bool args_debug_info;
 static bool args_preprocess;
 static bool args_exercise;
 static bool args_experiment;
+static bool args_use_syslinker;
 static int args_threads = -1;
 
 static Bindgen* args_bindgen;
@@ -109,10 +113,6 @@ static void initialize_opt_passes(void) {
 
         dyn_array_put(da_passes, tb_opt_compact_dead_regs());
         dyn_array_put(da_passes, tb_opt_remove_pass_nodes());
-    } else {
-        dyn_array_put(da_passes, tb_opt_instcombine());
-        dyn_array_put(da_passes, tb_opt_remove_pass_nodes());
-        dyn_array_put(da_passes, tb_opt_compact_dead_regs());
     }
 }
 
@@ -233,10 +233,46 @@ typedef struct {
 static void irgen_job(void* arg) {
     IRGenTask task = *((IRGenTask*) arg);
 
+    // simple function level passes
+    TB_Pass passes[] = {
+        tb_opt_instcombine(),
+        tb_opt_remove_pass_nodes(),
+        tb_opt_dead_expr_elim(),
+        tb_opt_compact_dead_regs()
+    };
+    enum { PASS_COUNT = sizeof(passes) / sizeof(passes[0]) };
+
     CUIK_TIMED_BLOCK("IR generation: %zu", task.count) {
         for (size_t i = 0; i < task.count; i++) {
-            cuik_stmt_gen_ir(task.tu, task.stmts[i]);
+            TB_Function* func = cuik_stmt_gen_ir(task.tu, task.stmts[i]);
+
+            if (func != NULL) {
+                for (size_t i = 0; i < PASS_COUNT; i++) {
+                    passes[i].func_run(func);
+                }
+            }
         }
+    }
+
+    #if CUIK_ALLOW_THREADS
+    if (task.remaining != NULL) *task.remaining -= 1;
+    #endif
+}
+
+typedef struct {
+    TB_Function* start;
+    size_t count;
+
+    #if CUIK_ALLOW_THREADS
+    atomic_size_t* remaining;
+    #endif
+} CodegenTask;
+
+static void codegen_job(void* arg) {
+    CodegenTask task = *((CodegenTask*) arg);
+
+    CUIK_TIMED_BLOCK("Codegen: %zu", task.count) {
+        tb_module_compile_functions(mod, task.count, task.start, /* args_opt_level ? TB_ISEL_COMPLEX : */ TB_ISEL_FAST);
     }
 
     #if CUIK_ALLOW_THREADS
@@ -436,49 +472,300 @@ static void append_input_path(const char* path) {
     }
 }
 
-static inline uint64_t next_power_of_two(uint64_t x) {
-    return 1 << (64 - __builtin_clzll(x - 1));
-}
+static void irgen(void) {
+    TIMESTAMP("IR generation");
 
-static void export_obj(const char* output_path) {
-    CUIK_TIMED_BLOCK("export") {
-        FILE* file = fopen(output_path, "wb");
-        if (file == NULL) {
-            fprintf(stderr, "error: could not open object file for writing. %s\n", output_path);
-            return;
-        }
+    CUIK_TIMED_BLOCK("IR generation") {
+        if (ithread_pool != NULL) {
+            #if CUIK_ALLOW_THREADS
+            size_t task_capacity = 0;
+            FOR_EACH_TU(tu, &compilation_unit) {
+                size_t c = cuik_num_of_top_level_stmts(tu);
+                task_capacity += (c + (IRGEN_TASK_BATCH_SIZE - 1)) / IRGEN_TASK_BATCH_SIZE;
+            }
 
-        TB_ModuleExporter* exporter = tb_make_exporter(mod);
+            IRGenTask* tasks = malloc(task_capacity * sizeof(IRGenTask));
+            atomic_size_t tasks_remaining = task_capacity;
 
-        size_t tmp_capacity = 4 * 1024 * 1024;
-        char* tmp_memory = malloc(tmp_capacity);
+            size_t task_count = 0;
+            FOR_EACH_TU(tu, &compilation_unit) {
+                // dispose the preprocessor crap now
+                free_preprocessor((Cuik_CPP*) cuik_get_translation_unit_user_data(tu));
 
-        for (TB_ModuleExportPacket packet; tb_exporter_next(mod, exporter, &packet);) {
-            if (packet.type == TB_EXPORT_PACKET_ALLOC) {
-                if (packet.alloc.request_size > tmp_capacity) {
-                    tmp_capacity = next_power_of_two(packet.alloc.request_size);
-                    tmp_memory = realloc(tmp_memory, tmp_capacity);
+                CUIK_FOR_TOP_LEVEL_STMT(it, tu, 8192) {
+                    assert(task_count < task_capacity);
+                    IRGenTask* task = &tasks[task_count++];
+                    *task = (IRGenTask){
+                        .tu = tu,
+                        .stmts = it.start,
+                        .count = it.count,
+                        .remaining = &tasks_remaining
+                    };
 
-                    printf("object file exporting: resized to %zu\n", tmp_capacity);
-                    if (tmp_memory == NULL) {
-                        fprintf(stderr, "object file exporting: out of memory!\n");
-                        abort();
-                    }
+                    CUIK_CALL(ithread_pool, submit, irgen_job, task);
                 }
+            }
 
-                packet.alloc.memory = tmp_memory;
-            } else if (packet.type == TB_EXPORT_PACKET_WRITE) {
-                fwrite(packet.write.data, packet.write.length, 1, file);
-            } else {
-                assert(0 && "TODO");
+            // "highway robbery on steve jobs" job stealing amirite...
+            while (atomic_load(&tasks_remaining) != 0) {
+                CUIK_CALL(ithread_pool, work_one_job);
+            }
+            #else
+            fprintf(stderr, "Please compile with -DCUIK_ALLOW_THREADS if you wanna spin up threads");
+            abort();
+            #endif
+            // free(tasks);
+        } else {
+            FOR_EACH_TU(tu, &compilation_unit) {
+                Cuik_CPP* cpp = cuik_get_translation_unit_user_data(tu);
+                cuikpp_deinit(cpp);
+                free(cpp);
+
+                size_t c = cuik_num_of_top_level_stmts(tu);
+                IRGenTask task = {
+                    .tu = tu,
+                    .stmts = cuik_get_top_level_stmts(tu),
+                    .count = c
+                };
+
+                irgen_job(&task);
             }
         }
-
-        free(tmp_memory);
-        fclose(file);
     }
 }
 
+static void codegen(void) {
+    if (ithread_pool != NULL) {
+        #if CUIK_ALLOW_THREADS
+        size_t count = 0, capacity = tb_estimate_function_batch_count(mod);
+        atomic_size_t tasks_remaining = capacity;
+
+        CodegenTask* tasks = malloc(capacity * sizeof(CodegenTask));
+        TB_FOR_FUNCTION_BATCH(it, mod) {
+            tasks[count] = (CodegenTask){
+                .start = it.start,
+                .count = it.count,
+                .remaining = &tasks_remaining
+            };
+
+            CUIK_CALL(ithread_pool, submit, codegen_job, &tasks[count]);
+            count += 1;
+        }
+
+        // "highway robbery on steve jobs" job stealing amirite...
+        while (atomic_load(&tasks_remaining) != 0) {
+            CUIK_CALL(ithread_pool, work_one_job);
+        }
+
+        free(tasks);
+        #else
+        fprintf(stderr, "Please compile with -DCUIK_ALLOW_THREADS if you wanna spin up threads");
+        abort();
+        #endif /* CUIK_ALLOW_THREADS */
+    } else {
+        TB_FOR_FUNCTIONS(it, mod) {
+            tb_module_compile_function(mod, it.f, /* args_opt_level ? TB_ISEL_COMPLEX : */ TB_ISEL_FAST);
+        }
+    }
+}
+
+static bool export_output(void) {
+    // place into a temporary directory if we don't need the obj file
+    char obj_output_path[FILENAME_MAX];
+    if (target_desc.sys == CUIK_SYSTEM_WINDOWS) {
+        sprintf_s(obj_output_path, FILENAME_MAX, "%s.obj", output_path_no_ext);
+    } else {
+        sprintf_s(obj_output_path, FILENAME_MAX, "%s.o", output_path_no_ext);
+    }
+
+    TIMESTAMP("Export object");
+    CUIK_TIMED_BLOCK("Export object") {
+        TB_ModuleExporter exporter = tb_make_exporter(mod, TB_FLAVOR_OBJECT);
+        if (!tb_exporter_to_file(mod, exporter, obj_output_path)) {
+            fprintf(stderr, "error: could not open object file for writing. %s\n", obj_output_path);
+            return false;
+        }
+    }
+
+    if (flavor == FLAVOR_OBJECT) {
+        return true;
+    }
+
+    TIMESTAMP("Linker");
+    CUIK_TIMED_BLOCK("linker") {
+        Cuik_Linker l;
+        if (cuiklink_init(&l)) {
+            // we'll use subsystem windows if they defined WinMain in any of the TUs
+            bool subsystem_windows = false;
+            FOR_EACH_TU(tu, &compilation_unit) {
+                if (cuik_get_entrypoint_status(tu) == CUIK_ENTRYPOINT_WINMAIN) {
+                    subsystem_windows = true;
+                }
+            }
+
+            if (subsystem_windows) {
+                cuiklink_subsystem_windows(&l);
+            }
+
+            // Add system libpaths
+            cuiklink_add_default_libpaths(&l);
+
+            char lib_dir[FILENAME_MAX];
+            sprintf_s(lib_dir, FILENAME_MAX, "%s/crt/lib/", crt_dirpath);
+            cuiklink_add_libpath(&l, lib_dir);
+
+            // Add Cuik output
+            cuiklink_add_input_file(&l, obj_output_path);
+
+            // Add input libraries
+            dyn_array_for(i, input_libraries) {
+                cuiklink_add_input_file(&l, input_libraries[i]);
+            }
+
+            dyn_array_for(i, input_objects) {
+                cuiklink_add_input_file(&l, input_objects[i]);
+            }
+
+            if (!args_nocrt) {
+                #ifdef _WIN32
+                cuiklink_add_input_file(&l, "ucrt.lib");
+                cuiklink_add_input_file(&l, "msvcrt.lib");
+                cuiklink_add_input_file(&l, "vcruntime.lib");
+                cuiklink_add_input_file(&l, "win32_rt.lib");
+                #endif
+            }
+
+            cuiklink_invoke(&l, output_path_no_ext, "ucrt");
+            cuiklink_deinit(&l);
+        }
+    }
+
+    return true;
+}
+
+#if 0
+static uint64_t table[256];
+
+static void emit_range(uint64_t min, uint64_t max, uint64_t old, uint64_t next) {
+    old *= 4;
+
+    for (size_t i = min; i < max; i++) {
+        table[i] |= (next & 15) << old;
+    }
+}
+
+static void emit_chars(const char* str, uint64_t old, uint64_t next) {
+    old *= 4;
+
+    for (; *str; str++) {
+        table[(ptrdiff_t) *str] |= (next & 15) << old;
+    }
+}
+
+static void emit_all_chars(const char* str, uint64_t old, uint64_t next) {
+    old *= 4;
+
+    for (size_t i = 0; i < 256; i++) {
+        table[i] |= (next & 15) << old;
+    }
+}
+
+static void test(const char* str) {
+    const char* end = str + strlen(str);
+
+    for (;;) {
+        // Skip any whitespace and comments
+        // branchless space skip
+        str += (*str == ' ');
+        if (*str == '\0') {
+            // quit, we're done
+            return;
+        }
+
+        const char* token_start = str;
+        uint64_t state = 0;
+        for (;;) {
+            // table[state][*str]
+            uint64_t row = table[(ptrdiff_t) *str];
+            uint64_t next_state = (row >> (state * 4)) & 63;
+            if (next_state == 0) {
+                break;
+            }
+
+            // move along
+            state = next_state;
+            str += 1;
+        }
+
+        if (state == 0) {
+            break;
+        } else if (state == 7) {
+            char end = *token_start;
+            for (; *str != end; str++) {}
+            str++;
+        }
+
+        state &= 15;
+        printf("'%.*s' %llu\n", (int)(str - token_start), token_start, state);
+    }
+}
+
+int main(int argc, char** argv) {
+    // [A-Za-z]
+    emit_range('a', 'z', 0, 1);
+    emit_range('A', 'Z', 0, 1);
+
+    // [0-9]+
+    emit_range('0', '9', 0, 2);
+    emit_range('0', '9', 2, 2);
+    emit_chars("bB",     2, 2);
+    emit_chars("xX",     2, 13);
+    emit_chars(".",      2, 14);
+    emit_chars("uilfd",  2, 15);
+
+    // hex
+    emit_chars("0123456789ABCDEFabcdef", 13, 13);
+
+    // floats
+    emit_chars("0123456789e+-", 14, 14);
+    emit_chars("uilfd", 14, 15);
+
+    // suffix
+    emit_chars("0123456789", 15, 0);
+
+    // identifier body
+    {
+        emit_range('a', 'z', 1, 1);
+        emit_range('A', 'Z', 1, 1);
+        emit_range('0', '9', 1, 1);
+    }
+
+    // separators
+    emit_chars("@?;:,(){}", 0, 3);
+
+    // char or char-assign
+    emit_chars("+*/%!=&^|~", 0, 4);
+    emit_chars("=", 4, 5);
+
+    // >= <<=
+    emit_chars("><", 0, 6);
+    emit_chars("><", 6, 4);
+
+    emit_chars("\'\"", 0, 7);
+
+    emit_chars("-", 0, 8);
+    emit_chars("=>", 8, 9);
+
+    emit_chars("#", 0, 10);
+    emit_chars("#", 10, 11);
+
+    emit_chars(".", 0, 12);
+    emit_chars(".", 12, 12);
+
+    test("hello wOrld b01; 12a(16, 6, 0x1535); 1.f; 16.83573f; 3.4028234e38f; 1.18e-4932l; a += b, a <<= 16, a &= b; a->foo(bar, \"baz\", ...);");
+    return 0;
+}
+#else
 int main(int argc, char** argv) {
     cuik_init();
     find_system_deps();
@@ -638,8 +925,10 @@ int main(int argc, char** argv) {
             case ARG_NOCRT: args_nocrt = true; break;
             case ARG_VERBOSE: args_verbose = true; break;
             case ARG_EXERCISE: args_exercise = true; break;
+            case ARG_BASED: args_use_syslinker = true; break;
             case ARG_EXPERIMENT: args_experiment = true; break;
             case ARG_THREADS: args_threads = atoi(arg.value); break;
+            case ARG_DEBUG: args_debug_info = true; break;
             case ARG_HELP: {
                 print_help();
                 return EXIT_SUCCESS;
@@ -719,7 +1008,11 @@ int main(int argc, char** argv) {
 
     if (!args_ast && !args_types) {
         TB_FeatureSet features = {0};
-        mod = tb_module_create(TB_ARCH_X86_64, cuik_system_to_tb(target_desc.sys), TB_DEBUGFMT_CODEVIEW, &features);
+        mod = tb_module_create(
+            TB_ARCH_X86_64, cuik_system_to_tb(target_desc.sys),
+            args_debug_info ? TB_DEBUGFMT_CODEVIEW : TB_DEBUGFMT_NONE,
+            &features
+        );
     }
 
     if (args_pploc) {
@@ -748,25 +1041,22 @@ int main(int argc, char** argv) {
     ////////////////////////////////
     // frontend work
     ////////////////////////////////
-    if (args_verbose) mark_timestamp("Frontend");
-
+    TIMESTAMP("Frontend");
     if (ithread_pool != NULL) {
         #if CUIK_ALLOW_THREADS
-        // dispatch multithreaded
         dyn_array_for(i, input_files) {
-            threadpool_submit(thread_pool, preproc_file, (void*) input_files[i]);
+            tp_submit(thread_pool, preproc_file, (void*) input_files[i]);
         }
 
-        CUIK_TIMED_BLOCK("wait") {
-            threadpool_work_while_wait(thread_pool);
-        }
+        threadpool_wait(thread_pool);
         #endif
     } else {
-        dyn_array_for(i, input_files) preproc_file((void*) input_files[i]);
+        dyn_array_for(i, input_files) {
+            preproc_file((void*) input_files[i]);
+        }
     }
 
-    if (args_verbose) mark_timestamp("Internal link");
-
+    TIMESTAMP("Internal link");
     CUIK_TIMED_BLOCK("internal link") {
         cuik_internal_link_compilation_unit(&compilation_unit);
     }
@@ -775,168 +1065,43 @@ int main(int argc, char** argv) {
         FOR_EACH_TU(tu, &compilation_unit) {
             cuik_dump_translation_unit(stdout, tu, true);
         }
-    } else if (!args_types) {
-        ////////////////////////////////
-        // codegen
-        ////////////////////////////////
-        if (args_verbose) mark_timestamp("Backend");
-
-        if (ithread_pool != NULL) {
-            #if CUIK_ALLOW_THREADS
-            size_t task_capacity = 0;
-            FOR_EACH_TU(tu, &compilation_unit) {
-                size_t c = cuik_num_of_top_level_stmts(tu);
-                task_capacity += (c + (IRGEN_TASK_BATCH_SIZE - 1)) / IRGEN_TASK_BATCH_SIZE;
-            }
-
-            IRGenTask* tasks = malloc(task_capacity * sizeof(IRGenTask));
-            atomic_size_t tasks_remaining = task_capacity;
-
-            size_t task_count = 0;
-            FOR_EACH_TU(tu, &compilation_unit) {
-                // dispose the preprocessor crap now
-                free_preprocessor((Cuik_CPP*) cuik_get_translation_unit_user_data(tu));
-
-                CUIK_FOR_TOP_LEVEL_STMT(it, tu, 8192) {
-                    assert(task_count < task_capacity);
-                    IRGenTask* task = &tasks[task_count++];
-                    *task = (IRGenTask){
-                        .tu = tu,
-                        .stmts = it.start,
-                        .count = it.count,
-                        .remaining = &tasks_remaining
-                    };
-
-                    CUIK_CALL(ithread_pool, submit, irgen_job, task);
-                }
-            }
-
-            // "highway robbery on steve jobs" job stealing amirite...
-            while (atomic_load(&tasks_remaining) != 0) {
-                CUIK_CALL(ithread_pool, work_one_job);
-            }
-            #else
-            fprintf(stderr, "Please compile with -DCUIK_ALLOW_THREADS if you wanna spin up threads");
-            abort();
-            #endif
-            // free(tasks);
-        } else {
-            FOR_EACH_TU(tu, &compilation_unit) {
-                Cuik_CPP* cpp = cuik_get_translation_unit_user_data(tu);
-                cuikpp_deinit(cpp);
-                free(cpp);
-
-                size_t c = cuik_num_of_top_level_stmts(tu);
-                IRGenTask task = {
-                    .tu = tu,
-                    .stmts = cuik_get_top_level_stmts(tu),
-                    .count = c
-                };
-
-                irgen_job(&task);
-            }
-        }
-
-        // TODO: we probably want to do the fancy threading soon
-        if (dyn_array_length(da_passes)) {
-            tb_module_optimize(mod, dyn_array_length(da_passes), da_passes);
-        }
-
-        if (args_ir) {
-            TB_FOR_FUNCTIONS(it, mod) {
-                tb_function_print(it.f, tb_default_print_callback, stdout);
-                printf("\n\n");
-            }
-        } else {
-            TB_FOR_FUNCTIONS(it, mod) {
-                tb_module_compile_func(mod, it.f, /* args_opt_level ? TB_ISEL_COMPLEX : */ TB_ISEL_FAST);
-            }
-        }
-
-        if (!args_ir) {
-            // place into a temporary directory if we don't need the obj file
-            char obj_output_path[FILENAME_MAX];
-            if (target_desc.sys == CUIK_SYSTEM_WINDOWS) {
-                sprintf_s(obj_output_path, FILENAME_MAX, "%s.obj", output_path_no_ext);
-            } else {
-                sprintf_s(obj_output_path, FILENAME_MAX, "%s.o", output_path_no_ext);
-            }
-
-            if (args_verbose) mark_timestamp("Export object");
-
-            export_obj(obj_output_path);
-
-            if (flavor == FLAVOR_OBJECT) {
-                /* work has already been done */
-            } else if (flavor == FLAVOR_EXECUTABLE) {
-                if (args_verbose) mark_timestamp("Linker");
-
-                char lib_dir[FILENAME_MAX];
-                sprintf_s(lib_dir, FILENAME_MAX, "%s/crt/lib/", crt_dirpath);
-
-                // Invoke system linker
-                bool linker_success = true;
-                CUIK_TIMED_BLOCK("linker") {
-                    Cuik_Linker l;
-                    if (cuiklink_init(&l)) {
-                        bool subsystem_windows = false;
-                        FOR_EACH_TU(tu, &compilation_unit) {
-                            if (cuik_get_entrypoint_status(tu) == CUIK_ENTRYPOINT_WINMAIN) {
-                                subsystem_windows = true;
-                            }
-                        }
-
-                        if (subsystem_windows) {
-                            cuiklink_subsystem_windows(&l);
-                        }
-
-                        // Add system libpaths
-                        cuiklink_add_default_libpaths(&l);
-                        cuiklink_add_libpath(&l, lib_dir);
-
-                        // Add Cuik output
-                        cuiklink_add_input_file(&l, obj_output_path);
-
-                        // Add input libraries
-                        dyn_array_for(i, input_libraries) {
-                            cuiklink_add_input_file(&l, input_libraries[i]);
-                        }
-
-                        dyn_array_for(i, input_objects) {
-                            cuiklink_add_input_file(&l, input_objects[i]);
-                        }
-
-                        if (!args_nocrt) {
-                            #ifdef _WIN32
-                            cuiklink_add_input_file(&l, "ucrt.lib");
-                            cuiklink_add_input_file(&l, "msvcrt.lib");
-                            cuiklink_add_input_file(&l, "vcruntime.lib");
-                            cuiklink_add_input_file(&l, "win32_rt.lib");
-                            #endif
-                        }
-
-                        if (!cuiklink_invoke(&l, output_path_no_ext, "ucrt")) {
-                            linker_success = false;
-                        }
-                        cuiklink_deinit(&l);
-                    }
-                }
-
-                if (args_verbose) mark_timestamp("Done");
-
-                if (!linker_success) {
-                    return 1;
-                }
-            } else {
-                fprintf(stderr, "TODO: implement this flavor!\n");
-                return 1;
-            }
-        }
-
-        tb_free_thread_resources();
-        tb_module_destroy(mod);
+        return 0;
     }
 
+    ////////////////////////////////
+    // backend work
+    ////////////////////////////////
+    if (dyn_array_length(da_passes) != 0) {
+        // TODO: we probably want to do the fancy threading soon
+        TIMESTAMP("Optimizer");
+        CUIK_TIMED_BLOCK("Optimizer") {
+            tb_module_optimize(mod, dyn_array_length(da_passes), da_passes);
+        }
+    }
+
+    irgen();
+
+    if (args_ir) {
+        TIMESTAMP("IR Printer");
+        TB_FOR_FUNCTIONS(it, mod) {
+            tb_function_print(it.f, tb_default_print_callback, stdout);
+            printf("\n\n");
+        }
+        return 0;
+    }
+
+    CUIK_TIMED_BLOCK("CodeGen") {
+        codegen();
+    }
+
+    if (!export_output()) {
+        return 1;
+    }
+
+    tb_free_thread_resources();
+    tb_module_destroy(mod);
+
+    TIMESTAMP("Done");
     #if CUIK_ALLOW_THREADS
     if (thread_pool != NULL) {
         threadpool_free(thread_pool);
@@ -997,3 +1162,4 @@ int main(int argc, char** argv) {
 
     return 0;
 }
+#endif

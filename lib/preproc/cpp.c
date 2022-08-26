@@ -331,14 +331,6 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
         if (l->token_type == 0) {
             ctx->stack_ptr -= 1;
 
-            // if this is the last file, just exit
-            if (ctx->stack_ptr == 0) {
-                // place last token
-                Token t = {0, 0, NULL, NULL};
-                arrput(s->tokens, t);
-                return CUIKPP_DONE;
-            }
-
             // write out profile entry
             if (cuik_is_profiling()) {
                 char temp[256];
@@ -351,6 +343,14 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
                 }
 
                 cuik_profile_region(slot->start_time, "%s", temp);
+            }
+
+            // if this is the last file, just exit
+            if (ctx->stack_ptr == 0) {
+                // place last token
+                Token t = {0, 0, NULL, NULL};
+                arrput(s->tokens, t);
+                return CUIKPP_DONE;
             }
 
             // step out of this file into the previous one
@@ -478,7 +478,7 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
                         REPORT_ERROR, NULL, s, loc,
                         "directive: %.*s", (int)msg.length, msg.data
                     );
-                    return false;
+                    return CUIKPP_DONE;
                 } else if (memcmp(directive.data, "ifdef", 5) == 0) {
                     success = true;
                     lexer_read(l);

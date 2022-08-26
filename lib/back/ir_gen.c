@@ -288,7 +288,59 @@ InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, Sourc
                 // TODO(NeGate): Fix it up so that more operations can be
                 // performed at compile time and baked into the initializer
                 if (stmt->op == STMT_GLOBAL_DECL) {
-                    tb_initializer_add_global(tu->ir_mod, init, offset, stmt->backing.g);
+                    const char* name = (const char*)stmt->decl.name;
+                    bool is_external_sym = (e->type->kind == KIND_FUNC && stmt->decl.initial_as_stmt == NULL);
+                    if (stmt->decl.attrs.is_extern) is_external_sym = true;
+
+                    if (is_external_sym) {
+                        IRVal val = {0};
+
+                        mtx_lock(&tu->arena_mutex);
+                        if (tu->parent != NULL) {
+                            if (stmt->backing.e != 0) {
+                                tb_initializer_add_extern(tu->ir_mod, init, offset, stmt->backing.e);
+                            } else {
+                                // It's either a proper external or links to
+                                // a file within the compilation unit, we don't
+                                // know yet
+                                CompilationUnit* restrict cu = tu->parent;
+                                cuik_lock_compilation_unit(cu);
+
+                                ptrdiff_t temp;
+                                ptrdiff_t search = shgeti_ts(cu->export_table, name, temp);
+
+                                if (search >= 0) {
+                                    // Figure out what the symbol is and link it together
+                                    Stmt* real_symbol = cu->export_table[search].value;
+
+                                    if (real_symbol->op == STMT_FUNC_DECL) {
+                                        tb_initializer_add_function(tu->ir_mod, init, offset, real_symbol->backing.f);
+                                    } else if (real_symbol->op == STMT_GLOBAL_DECL) {
+                                        tb_initializer_add_global(tu->ir_mod, init, offset, real_symbol->backing.g);
+                                    } else {
+                                        abort();
+                                    }
+                                } else {
+                                    // Always creates a real external in this case
+                                    stmt->backing.e = tb_extern_create(tu->ir_mod, name);
+                                    tb_initializer_add_extern(tu->ir_mod, init, offset, stmt->backing.e);
+                                }
+
+                                // NOTE(NeGate): we might wanna move this mutex unlock earlier
+                                // it doesn't seem like we might need it honestly...
+                                cuik_unlock_compilation_unit(cu);
+                            }
+                        } else {
+                            stmt->backing.e = tb_extern_create(tu->ir_mod, name);
+                            tb_initializer_add_extern(tu->ir_mod, init, offset, stmt->backing.e);
+                        }
+
+                        mtx_unlock(&tu->arena_mutex);
+                    } else {
+                        // Global defined within the TU
+                        tb_initializer_add_global(tu->ir_mod, init, offset, stmt->backing.g);
+                    }
+
                     success = true;
                 } else if (stmt->op == STMT_FUNC_DECL) {
                     tb_initializer_add_function(tu->ir_mod, init, offset, stmt->backing.f);
@@ -1407,35 +1459,35 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
                         // emulate them all
                         /*TB_Reg l = cvt2rval(tu, func, lhs, e->bin_op.left);
 
-                            TB_Label loop = tb_inst_new_label_id(func);
-                            TB_Label success = tb_inst_new_label_id(func);
-                            tb_inst_label(func, loop);
-                            {
-                                TB_Reg desired = TB_NULL_REG;
-                                switch (e->op) {
-                                    case EXPR_PLUS_ASSIGN: desired = tb_inst_fadd(func, l, r); break;
-                                    case EXPR_MINUS_ASSIGN: desired = tb_inst_fsub(func, l, r); break;
-                                    case EXPR_TIMES_ASSIGN: desired = tb_inst_fmul(func, l, r); break;
-                                    case EXPR_SLASH_ASSIGN: desired = tb_inst_fdiv(func, l, r); break;
-                                    default: assert(0);
-                                }
-
-                                if (type->kind == KIND_FLOAT) {
-                                    desired = tb_inst_bitcast(func, desired, TB_TYPE_I32);
-                                } else if (type->kind == KIND_DOUBLE) {
-                                    desired = tb_inst_bitcast(func, desired, TB_TYPE_I64);
-                                } else assert(0);
-
-                                TB_CmpXchgResult r = tb_inst_atomic_cmpxchg(func, lhs.reg, expected, desired, TB_MEM_ORDER_SEQ_CST, TB_MEM_ORDER_SEQ_CST);
-                                tb_inst_if(func, r.success, success, loop);
+                        TB_Label loop = tb_inst_new_label_id(func);
+                        TB_Label success = tb_inst_new_label_id(func);
+                        tb_inst_label(func, loop);
+                        {
+                            TB_Reg desired = TB_NULL_REG;
+                            switch (e->op) {
+                                case EXPR_PLUS_ASSIGN: desired = tb_inst_fadd(func, l, r); break;
+                                case EXPR_MINUS_ASSIGN: desired = tb_inst_fsub(func, l, r); break;
+                                case EXPR_TIMES_ASSIGN: desired = tb_inst_fmul(func, l, r); break;
+                                case EXPR_SLASH_ASSIGN: desired = tb_inst_fdiv(func, l, r); break;
+                                default: assert(0);
                             }
-                            tb_inst_label(func, success);
 
-                            return (IRVal) {
-                                .value_type = RVALUE,
-                                .type = e->type,
-                                .reg = l
-                            };*/
+                            if (type->kind == KIND_FLOAT) {
+                                desired = tb_inst_bitcast(func, desired, TB_TYPE_I32);
+                            } else if (type->kind == KIND_DOUBLE) {
+                                desired = tb_inst_bitcast(func, desired, TB_TYPE_I64);
+                            } else assert(0);
+
+                            TB_CmpXchgResult r = tb_inst_atomic_cmpxchg(func, lhs.reg, expected, desired, TB_MEM_ORDER_SEQ_CST, TB_MEM_ORDER_SEQ_CST);
+                            tb_inst_if(func, r.success, success, loop);
+                        }
+                        tb_inst_label(func, success);
+
+                        return (IRVal) {
+                            .value_type = RVALUE,
+                            .type = e->type,
+                            .reg = l
+                        };*/
                         internal_error("TODO");
                     }
                 } else {

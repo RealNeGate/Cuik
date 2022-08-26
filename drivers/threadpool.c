@@ -74,19 +74,17 @@ static bool do_work(threadpool_t* threadpool) {
 static int threadpool_thread(void* arg) {
     threadpool_t* threadpool = arg;
 
-    CUIK_TIMED_BLOCK("thread") {
-        while (threadpool->running) {
-            if (do_work(threadpool)) {
-                CUIK_TIMED_BLOCK("wait on semaphore") {
-                    #ifdef _WIN32
-                    WaitForSingleObjectEx(threadpool->sem, -1, false); // wait for jobs
-                    #else
-                    sem_wait(&threadpool->sem);
-                    #endif
-                }
-            }
+    // CUIK_TIMED_BLOCK("thread") {
+    while (threadpool->running) {
+        if (do_work(threadpool)) {
+            #ifdef _WIN32
+            WaitForSingleObjectEx(threadpool->sem, -1, false); // wait for jobs
+            #else
+            sem_wait(&threadpool->sem);
+            #endif
         }
     }
+    // }
 
     tb_free_thread_resources();
     arena_free(&thread_arena);

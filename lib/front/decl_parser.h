@@ -276,18 +276,22 @@ static Cuik_Type* parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s
             Decl param_decl = parse_declarator(tu, s, arg_base_type, false, false);
             Cuik_Type* param_type = param_decl.type;
 
-            if (param_type->kind == KIND_ARRAY) {
+            Cuik_Type* param_real_type = param_type;
+            while (param_real_type->kind == KIND_QUALIFIED_TYPE) param_real_type = param_real_type->qualified_ty;
+
+            if (param_real_type->kind == KIND_ARRAY) {
                 // Array parameters are desugared into pointers
-                param_type = new_pointer(tu, param_type->array_of);
+                param_type = new_pointer(tu, param_real_type->array_of);
             } else if (param_type->kind == KIND_FUNC) {
                 // Function parameters are desugared into pointers
-                param_type = new_pointer(tu, param_type);
+                param_type = new_pointer(tu, param_real_type);
             }
 
             // TODO(NeGate): Error check that no attribs are set
             *((Param*)tls_push(sizeof(Param))) = (Param){
                 .type = param_type,
-                .name = param_decl.name};
+                .name = param_decl.name
+            };
             param_count++;
         }
 

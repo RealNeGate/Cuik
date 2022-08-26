@@ -3,7 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#ifndef __CUIKC__
+#ifndef __CUIK__
 #error "Cuik runtime support headers cannot be run outside of Cuik"
 #endif
 
