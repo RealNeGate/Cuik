@@ -411,9 +411,9 @@ InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, Sourc
                             TB_Global* dummy = tb_global_create(tu->ir_mod, temp, TB_STORAGE_DATA, TB_LINKAGE_PRIVATE);
                             tb_global_set_initializer(tu->ir_mod, dummy, dummy_init);
 
-                            tb_initializer_add_global(tu->ir_mod, init, 0, dummy);
+                            tb_initializer_add_global(tu->ir_mod, init, offset, dummy);
                         } else {
-                            dst = tb_initializer_add_region(tu->ir_mod, init, 0, str_bytes);
+                            dst = tb_initializer_add_region(tu->ir_mod, init, offset, str_bytes);
                         }
 
                         // write out string bytes with the nice zeroes at the end
@@ -514,20 +514,26 @@ static TB_Initializer* gen_global_initializer(TranslationUnit* tu, SourceLocInde
     if (initial != NULL) {
         if (initial->op == EXPR_STR || initial->op == EXPR_WSTR) {
             TB_Initializer* init = tb_initializer_create(tu->ir_mod, type->size, type->align, 1);
-            char* dst = tb_initializer_add_region(tu->ir_mod, init, 0, type->size);
-            memcpy(dst, initial->str.start, initial->str.end - initial->str.start);
 
             if (type->kind == KIND_PTR) {
+                size_t len = initial->str.end - initial->str.start;
                 // if it's a string pointer, then we make a dummy string array
                 // and point to that with another initializer
                 char temp[1024];
                 snprintf(temp, 1024, "%s@%d", name, tu->id_gen++);
 
                 TB_Global* dummy = tb_global_create(tu->ir_mod, temp, TB_STORAGE_DATA, TB_LINKAGE_PRIVATE);
+
+                char* dst = tb_initializer_add_region(tu->ir_mod, init, 0, len);
+                memcpy(dst, initial->str.start, len);
                 tb_global_set_initializer(tu->ir_mod, dummy, init);
 
+                // assumes pointer width is 8 bytes
                 init = tb_initializer_create(tu->ir_mod, 8, 8, 1);
                 tb_initializer_add_global(tu->ir_mod, init, 0, dummy);
+            } else {
+                char* dst = tb_initializer_add_region(tu->ir_mod, init, 0, type->size);
+                memcpy(dst, initial->str.start, initial->str.end - initial->str.start);
             }
 
             return init;

@@ -308,13 +308,8 @@ static Cuik_CPP* make_preprocessor(const char* filepath) {
         }
     }
 
-    Cuikpp_Status status;
-    for (Cuikpp_Packet packet; (status = cuikpp_next(cpp, &packet)) == CUIKPP_CONTINUE;) {
-        cuikpp_default_packet_handler(cpp, &packet);
-    }
-
-    if (status == CUIKPP_ERROR) {
-        fprintf(stderr, "error in preprocessor for %s\n", filepath);
+    // run the preprocessor
+    if (cuikpp_default_run(cpp) == CUIKPP_ERROR) {
         abort();
     }
 

@@ -822,8 +822,8 @@ extern "C" {
 
     TB_API const char* tb_extern_get_name(TB_External* e);
 
-    // Binds an external to an address
-    TB_API bool tb_jit_import(TB_Module* m, const char* name, void* address);
+    // this is used JIT scenarios to tell the compiler what externals map to
+    TB_API void tb_extern_bind_ptr(TB_External* e, void* ptr);
 
     TB_API TB_External* tb_extern_create(TB_Module* m, const char* name);
     TB_API TB_FileID tb_file_create(TB_Module* m, const char* path);
@@ -930,6 +930,8 @@ extern "C" {
     TB_API TB_DataType tb_vector_type(TB_DataTypeEnum type, int width);
 
     TB_API TB_Function* tb_function_create(TB_Module* m, const char* name, TB_Linkage linkage);
+
+    TB_API void* tb_function_get_jit_pos(TB_Function* f);
 
     TB_API void tb_function_set_name(TB_Function* f, const char* name);
     TB_API const char* tb_function_get_name(TB_Function* f);

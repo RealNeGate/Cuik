@@ -204,7 +204,9 @@ TknType classify_ident(const unsigned char* restrict str, size_t len) {
 
     // VERIFY
     #if !USE_INTRIN
-    return strcmp(str, keywords[v]) == 0 ? (640 + v) : TOKEN_IDENTIFIER;
+    if (strlen(keywords[v]) != len) return TOKEN_IDENTIFIER;
+
+    return memcmp((const char*) str, keywords[v], len) == 0 ? (640 + v) : TOKEN_IDENTIFIER;
     #else
     __m128i kw128 = _mm_loadu_si128((__m128i*)&keywords[v]);
     __m128i str128 = _mm_loadu_si128((__m128i*)str);
@@ -435,20 +437,7 @@ void lexer_read(Lexer* restrict l) {
         case CHAR_CLASS_IDENT: {
             l->token_type = TOKEN_IDENTIFIER;
 
-            #if 0 //!USE_INTRIN
-            while (is_ident(*current)) {
-                if (current[0] == '\\') {
-                    if (current[1] == 'U' || current[1] == 'u') {
-                        slow_path = true;
-                    } else {
-                        // exit... it's a wonky identifier
-                        break;
-                    }
-                }
-
-                current++;
-            }
-            #elif 1
+            #if 1
             while (char_classes[*current] == CHAR_CLASS_IDENT ||
                 char_classes[*current] == CHAR_CLASS_NUMBER ||
                 *current == '\\') {
@@ -656,12 +645,21 @@ void lexer_read(Lexer* restrict l) {
             char quote_type = current[-1] == '\'' ? '\'' : '\"';
 
             #if !USE_INTRIN
-            do {
-                if (*current == quote_type && current[-1] == '\\') break;
+            for (; *current && *current != quote_type; current++) {
                 if (*current == '\n') l->current_line += 1;
 
-                current += 1;
-            } while (*current);
+                // skip escape codes
+                if (*current == '\\') {
+                    // this will skip twice because of the for loop's next
+                    //  \  "  . . .
+                    //  ^     ^
+                    //  old   new
+                    current += 1;
+                }
+            }
+
+            current += 1;
+            // printf("%.*s\n", (int)(current - start), start);
             #else
             __m128i pattern = _mm_set1_epi8(quote_type);
 

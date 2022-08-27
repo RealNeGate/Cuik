@@ -327,6 +327,7 @@ BuiltinResult target_generic_compile_builtin(TranslationUnit* tu, TB_Function* f
         return ZZZ(dst);
     } else if (strcmp(name, "__builtin_trap") == 0) {
         tb_inst_trap(func);
+        tb_inst_label(func, tb_inst_new_label_id(func));
         return ZZZ(TB_NULL_REG);
     } else if (strcmp(name, "__builtin_syscall") == 0) {
         TB_Reg num = irgen_as_rvalue(tu, func, args[0]);

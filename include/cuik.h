@@ -270,6 +270,10 @@ typedef enum {
     CUIKPP_ERROR,
 } Cuikpp_Status;
 
+// Iterates through all the cuikpp_next calls using cuikpp_default_packet_handler
+// and returns the final status
+CUIK_API Cuikpp_Status cuikpp_default_run(Cuik_CPP* ctx);
+
 // Keep iterating through this and filling in the packets accordingly to preprocess a file.
 // returns CUIKPP_CONTINUE if it needs to keep running
 CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet);

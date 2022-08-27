@@ -819,6 +819,7 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
 
             expand_double_hash(ctx, s, last, l, last->location);
         } else {
+            // printf("NORMAL: '%.*s'\n", (int)(l->token_end - l->token_start), l->token_start);
             Token t = {
                 l->token_type,
                 get_source_location(ctx, l, s, include_loc, SOURCE_LOC_NORMAL),
@@ -858,6 +859,15 @@ CUIK_API void cuikpp_deinit(Cuik_CPP* ctx) {
     dyn_array_destroy(ctx->files);
     ctx->the_shtuffs = NULL;
     ctx->files = NULL;
+}
+
+CUIK_API Cuikpp_Status cuikpp_default_run(Cuik_CPP* ctx) {
+    for (Cuikpp_Packet packet;;) {
+        Cuikpp_Status status = cuikpp_next(ctx, &packet);
+        if (status != CUIKPP_CONTINUE) return status;
+
+        cuikpp_default_packet_handler(ctx, &packet);
+    }
 }
 
 CUIK_API void cuikpp_finalize(Cuik_CPP* ctx) {
