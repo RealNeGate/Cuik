@@ -1,7 +1,6 @@
 #pragma once
 
 typedef _Vector(float, 4) __m128;
-typedef _Vector(unsigned char, 16) __m128i;
 
 // actual builtins
 float  __builtin_ia32_sqrtss(__m128 a);
@@ -16,23 +15,23 @@ __m128 __builtin_ia32_maxss(__m128 a, __m128 b);
 __m128 __builtin_ia32_maxps(__m128 a, __m128 b);
 
 static inline __m128 _mm_add_ss(__m128 a, __m128 b) {
-	a[0] += b[0];
-	return a;
+    a[0] += b[0];
+    return a;
 }
 
 static inline __m128 _mm_sub_ss(__m128 a, __m128 b) {
-	a[0] -= b[0];
-	return a;
+    a[0] -= b[0];
+    return a;
 }
 
 static inline __m128 _mm_mul_ss(__m128 a, __m128 b) {
-	a[0] *= b[0];
-	return a;
+    a[0] *= b[0];
+    return a;
 }
 
 static inline __m128 _mm_div_ss(__m128 a, __m128 b) {
-	a[0] /= b[0];
-	return a;
+    a[0] /= b[0];
+    return a;
 }
 
 static inline __m128 _mm_add_ps(__m128 a, __m128 b) { return a + b; }
@@ -60,8 +59,3 @@ static inline __m128 _mm_max_ps(__m128 a, __m128 b) { return __builtin_ia32_maxp
 
 static inline __m128 _mm_setr_ps(float z, float y, float x, float w) { return (__m128){ z, y, x, w }; }
 static inline __m128 _mm_setzero_ps(void) { return (__m128){ 0 }; }
-
-// m128i generic ops
-static inline __m128i _mm_loadu_si128(const __m128i* src) { return *src; }
-static inline __m128i _mm_load_si128(const __m128i* src) { return *src; }
-static inline void _mm_store_si128(__m128i* dst, __m128i src) { *dst = src; }

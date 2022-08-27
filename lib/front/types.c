@@ -181,10 +181,10 @@ Cuik_Type* get_common_type(TranslationUnit* tu, Cuik_Type* ty1, Cuik_Type* ty2) 
 }
 
 bool type_equal(TranslationUnit* tu, Cuik_Type* ty1, Cuik_Type* ty2) {
-    if (ty1 == ty2) return true;
-
     while (ty1->kind == KIND_QUALIFIED_TYPE) ty1 = ty1->qualified_ty;
     while (ty2->kind == KIND_QUALIFIED_TYPE) ty2 = ty2->qualified_ty;
+
+    if (ty1 == ty2) return true;
 
     // just because they match kind doesn't necessarily
     // mean they're equivalent but if they don't match
@@ -215,6 +215,11 @@ bool type_equal(TranslationUnit* tu, Cuik_Type* ty1, Cuik_Type* ty2) {
         }
 
         return true;
+    } else if (ty1->kind == KIND_STRUCT || ty2->kind == KIND_UNION) {
+        while (ty1->based != NULL) ty1 = ty1->based;
+        while (ty2->based != NULL) ty2 = ty2->based;
+
+        return (ty1 == ty2);
     } else if (ty1->kind == KIND_PTR) {
         return type_equal(tu, ty1->ptr_to, ty2->ptr_to);
     }

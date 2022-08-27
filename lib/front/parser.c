@@ -376,7 +376,7 @@ static void type_resolve_pending_align(TranslationUnit* restrict tu, Cuik_Type* 
     abort();
 }
 
-void type_layout(TranslationUnit* restrict tu, Cuik_Type* type) {
+void type_layout(TranslationUnit* restrict tu, Cuik_Type* type, bool needs_complete) {
     if (type->kind == KIND_VOID || type->size != 0) return;
     if (type->is_inprogress) {
         REPORT(ERROR, type->loc, "Type has a circular dependency");
@@ -397,7 +397,7 @@ void type_layout(TranslationUnit* restrict tu, Cuik_Type* type) {
         // layout crap
         if (type->array_count != 0) {
             if (type->array_of->size == 0) {
-                type_layout(tu, type->array_of);
+                type_layout(tu, type->array_of, true);
             }
 
             if (type->array_of->size == 0) {
@@ -417,7 +417,7 @@ void type_layout(TranslationUnit* restrict tu, Cuik_Type* type) {
         type->align = type->array_of->align;
     } else if (type->kind == KIND_QUALIFIED_TYPE) {
         if (type->qualified_ty->size == 0) {
-            type_layout(tu, type->qualified_ty);
+            type_layout(tu, type->qualified_ty, needs_complete);
         }
 
         type->size = type->qualified_ty->size;
@@ -461,7 +461,7 @@ void type_layout(TranslationUnit* restrict tu, Cuik_Type* type) {
             if (member->type->kind == KIND_FUNC) {
                 REPORT(ERROR, type->loc, "Cannot put function types into a struct, try a function pointer");
             } else {
-                type_layout(tu, member->type);
+                type_layout(tu, member->type, true);
             }
 
             int member_align = member->type->align;
@@ -1035,7 +1035,9 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                     type_resolve_pending_align(tu, type);
                 }
 
-                if (type->size == 0) type_layout(tu, type);
+                if (type->size == 0) {
+                    type_layout(tu, type, true);
+                }
             }
         }
 

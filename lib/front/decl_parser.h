@@ -828,7 +828,7 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
                     type->record.kid_count = member_count;
 
                     if (!out_of_order_mode) {
-                        type_layout(tu, type);
+                        type_layout(tu, type, true);
                     }
 
                     tls_restore(members);
@@ -989,7 +989,7 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
                         type->size = 0;
                         type->align = 0;
                     } else {
-                        type_layout(tu, type);
+                        type_layout(tu, type, true);
                     }
                 } else {
                     type = find_tag(tu, (char*)name);

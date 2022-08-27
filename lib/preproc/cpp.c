@@ -780,10 +780,9 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
 
                     String msg = get_pp_tokens_until_newline(l);
                     report(
-                        REPORT_ERROR, NULL, s, loc,
+                        REPORT_WARNING, NULL, s, loc,
                         "directive: %.*s", (int)msg.length, msg.data
                     );
-                    return CUIKPP_ERROR;
                 }
                 break;
 

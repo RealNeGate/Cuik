@@ -407,7 +407,9 @@ static InitNode* walk_initializer_layer(
     }
 
     // sometimes this is just not resolved yet?
-    if (type->size == 0) type_layout(tu, type);
+    if (type->size == 0) {
+        type_layout(tu, type, true);
+    }
 
     uint32_t pos = base_offset + relative_offset;
 
@@ -596,7 +598,7 @@ static InitNode* walk_initializer_for_sema(TranslationUnit* tu, Cuik_Type* type,
 
         if (type->array_count == 0) {
             type->array_count = max_cursor;
-            type_layout(tu, type);
+            type_layout(tu, type, true);
         }
     }
 
@@ -690,7 +692,7 @@ Member* sema_resolve_member_access(TranslationUnit* tu, Expr* restrict e, uint32
     }
 
     if (record_type->size == 0) {
-        type_layout(tu, record_type);
+        type_layout(tu, record_type, true);
 
         if (record_type->size == 0) {
             REPORT_EXPR(ERROR, e, "Cannot access members in incomplete type");
@@ -967,7 +969,7 @@ Cuik_Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
                 Cuik_Type* type = sym->decl.type;
 
                 if (type->kind == KIND_ARRAY) {
-                    if (type->size == 0 && sym->op == STMT_GLOBAL_DECL) {
+                    if (type->size == 0 && (sym->op == STMT_GLOBAL_DECL || sym->op == STMT_DECL)) {
                         e->is_resolving_symbol = true;
 
                         // try to resolve the type since it's incomplete

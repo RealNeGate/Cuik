@@ -107,16 +107,12 @@ static void display_line(Cuik_ReportLevel level, TokenStream* tokens, SourceLoc*
 
 static void tally_report_counter(Cuik_ReportLevel level, Cuik_ErrorStatus* err) {
     if (err == NULL) {
-        #if _WIN32
-        SetConsoleTextAttribute(console_handle, (default_attribs & ~0xF) | FOREGROUND_RED | FOREGROUND_INTENSITY);
-        #endif
-
-        printf("ABORTING!!! (no diagnostics callback)\n");
-
-        #if _WIN32
-        SetConsoleTextAttribute(console_handle, default_attribs);
-        #endif
-        abort();
+        if (level >= REPORT_ERROR) {
+            SET_COLOR_RED;
+            printf("ABORTING!!! (no diagnostics callback)\n");
+            RESET_COLOR;
+            abort();
+        }
     } else {
         atomic_fetch_add((atomic_int*) &err->tally[level], 1);
     }
@@ -174,7 +170,7 @@ static SourceLoc merge_source_locations(TokenStream* tokens, SourceLocIndex star
         return *start;
     }
 
-    return (SourceLoc){start->line, start_columns, end_columns - start_columns};
+    return (SourceLoc){ .line = start->line, .columns = start_columns, .length = end_columns - start_columns};
 }
 
 static int print_backtrace(TokenStream* tokens, SourceLocIndex loc_index, SourceLine* kid) {
@@ -224,7 +220,7 @@ static int print_backtrace(TokenStream* tokens, SourceLocIndex loc_index, Source
     }
 }
 
-static void preview_line(TokenStream* tokens, SourceLocIndex loc_index, SourceLoc* loc) {
+static void preview_line(TokenStream* tokens, SourceLocIndex loc_index, SourceLoc* loc, const char* tip) {
     if (!report_using_thin_errors) {
         size_t dist_from_line_start = draw_line(tokens, loc_index);
         draw_line_horizontal_pad();
@@ -235,13 +231,23 @@ static void preview_line(TokenStream* tokens, SourceLocIndex loc_index, SourceLo
 
         // idk man
         size_t start_pos = loc->columns > dist_from_line_start ? loc->columns - dist_from_line_start : 0;
+        size_t tkn_len = loc->length;
+        if (tip) {
+            start_pos += loc->length;
+            tkn_len = strlen(tip);
+        }
 
         // draw underline
-        size_t tkn_len = loc->length;
         for (size_t i = 0; i < start_pos; i++) printf(" ");
         printf("^");
         for (size_t i = 1; i < tkn_len; i++) printf("~");
         printf("\n");
+
+        if (tip) {
+            draw_line_horizontal_pad();
+            for (size_t i = 0; i < start_pos; i++) printf(" ");
+            printf("%s\n", tip);
+        }
 
         #if _WIN32
         SetConsoleTextAttribute(console_handle, default_attribs);
@@ -258,7 +264,7 @@ static void preview_expansion(TokenStream* tokens, SourceLoc* loc) {
 
             display_line(REPORT_INFO, tokens, expansion);
             printf("macro '%.*s' defined at\n", (int)expansion->length, expansion->line->line_str + expansion->columns);
-            preview_line(tokens, parent->expansion, expansion);
+            preview_line(tokens, parent->expansion, expansion, NULL);
         }
     }
     printf("\n");
@@ -282,7 +288,7 @@ void report_ranged(Cuik_ReportLevel level, Cuik_ErrorStatus* err, TokenStream* t
     printf("\n");
     RESET_COLOR;
 
-    preview_line(tokens, start_loc, &loc);
+    preview_line(tokens, start_loc, &loc, NULL);
     preview_expansion(tokens, &loc);
 
     tally_report_counter(level, err);
@@ -307,7 +313,7 @@ void report(Cuik_ReportLevel level, Cuik_ErrorStatus* err, TokenStream* tokens, 
     printf("\n");
     RESET_COLOR;
 
-    preview_line(tokens, loc_index, loc);
+    preview_line(tokens, loc_index, loc, NULL);
     preview_expansion(tokens, loc);
 
     tally_report_counter(level, err);
@@ -332,7 +338,7 @@ void report_fix(Cuik_ReportLevel level, Cuik_ErrorStatus* err, TokenStream* toke
     printf("\n");
     RESET_COLOR;
 
-    preview_line(tokens, loc_index, loc);
+    preview_line(tokens, loc_index, loc, tip);
     preview_expansion(tokens, loc);
 
     if (loc->line->parent != 0) {

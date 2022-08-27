@@ -166,10 +166,13 @@ Expr* cuik__optimize_ast(TranslationUnit* tu, Expr* e) {
         case EXPR_SIZEOF: {
             Cuik_Type* src = sema_expr(tu, e->x_of_expr.expr);
             if (src->size == 0) {
-                type_layout(tu, src);
+                type_layout(tu, src, true);
+
+                if (src->size == 0) {
+                    REPORT_EXPR(ERROR, e, "Could not resolve type of expression");
+                }
             }
 
-            assert(src->size && "Something went wrong...");
             e->op = EXPR_INT;
             e->int_num.suffix = INT_SUFFIX_ULL;
             e->int_num.num = src->size;
@@ -177,7 +180,11 @@ Expr* cuik__optimize_ast(TranslationUnit* tu, Expr* e) {
         }
         case EXPR_SIZEOF_T: {
             if (e->x_of_type.type->size == 0) {
-                type_layout(tu, e->x_of_type.type);
+                type_layout(tu, e->x_of_type.type, true);
+
+                if (e->x_of_type.type->size == 0) {
+                    REPORT_EXPR(ERROR, e, "Could not resolve type");
+                }
             }
 
             size_t x = e->x_of_type.type->size;
@@ -188,7 +195,11 @@ Expr* cuik__optimize_ast(TranslationUnit* tu, Expr* e) {
         }
         case EXPR_ALIGNOF_T: {
             if (e->x_of_type.type->size == 0) {
-                type_layout(tu, e->x_of_type.type);
+                type_layout(tu, e->x_of_type.type, true);
+
+                if (e->x_of_type.type->size == 0) {
+                    REPORT_EXPR(ERROR, e, "Could not resolve type");
+                }
             }
 
             size_t x = e->x_of_type.type->align;

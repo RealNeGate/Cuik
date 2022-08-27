@@ -91,12 +91,14 @@ static void initialize_opt_passes(void) {
 
         dyn_array_put(da_passes, tb_opt_instcombine());
         dyn_array_put(da_passes, tb_opt_dead_expr_elim());
+        dyn_array_put(da_passes, tb_opt_dead_block_elim());
         dyn_array_put(da_passes, tb_opt_subexpr_elim());
 
         dyn_array_put(da_passes, tb_opt_mem2reg());
 
         dyn_array_put(da_passes, tb_opt_instcombine());
         dyn_array_put(da_passes, tb_opt_dead_expr_elim());
+        dyn_array_put(da_passes, tb_opt_dead_block_elim());
         dyn_array_put(da_passes, tb_opt_subexpr_elim());
         dyn_array_put(da_passes, tb_opt_remove_pass_nodes());
 
@@ -1071,6 +1073,8 @@ int main(int argc, char** argv) {
     ////////////////////////////////
     // backend work
     ////////////////////////////////
+    irgen();
+
     if (dyn_array_length(da_passes) != 0) {
         // TODO: we probably want to do the fancy threading soon
         TIMESTAMP("Optimizer");
@@ -1078,8 +1082,6 @@ int main(int argc, char** argv) {
             tb_module_optimize(mod, dyn_array_length(da_passes), da_passes);
         }
     }
-
-    irgen();
 
     if (args_ir) {
         TIMESTAMP("IR Printer");

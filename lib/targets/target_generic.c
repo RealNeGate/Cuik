@@ -199,6 +199,16 @@ Cuik_Type* target_generic_type_check_builtin(TranslationUnit* tu, Expr* e, const
 
         failure:
         return &builtin_types[TYPE_BOOL];
+    } else if (strcmp(name, "__assume") == 0) {
+        if (arg_count != 1) {
+            REPORT_EXPR(ERROR, e, "%s requires 1 argument", name);
+        }
+
+        // fn(int)
+        args[0]->cast_type = &builtin_types[TYPE_INT];
+
+        cuik__type_check_args(tu, e, arg_count, args);
+        return &builtin_types[TYPE_VOID];
     } else if (strcmp(name, "__builtin_unreachable") == 0 || strcmp(name, "__debugbreak") == 0) {
         if (arg_count != 0) {
             REPORT_EXPR(ERROR, e, "%s requires 0 arguments", name);
@@ -329,6 +339,17 @@ BuiltinResult target_generic_compile_builtin(TranslationUnit* tu, TB_Function* f
         tls_restore(arg_regs);
 
         return ZZZ(result);
+    } else if (strcmp(name, "__assume") == 0) {
+        TB_Reg cond = irgen_as_rvalue(tu, func, args[0]);
+        TB_Label no_reach = tb_inst_new_label_id(func);
+        TB_Label skip = tb_inst_new_label_id(func);
+
+        tb_inst_if(func, cond, skip, no_reach);
+        tb_inst_label(func, no_reach);
+        tb_inst_unreachable(func);
+        tb_inst_label(func, skip);
+
+        return ZZZ(TB_NULL_REG);
     } else if (strcmp(name, "__debugbreak") == 0) {
         tb_inst_debugbreak(func);
         return ZZZ(TB_NULL_REG);
@@ -375,6 +396,7 @@ void target_generic_fill_builtin_table(BuiltinBinding** builtins) {
     shput(*builtins, "__c11_atomic_fetch_and", 1);
 
     // msvc intrinsics
+    shput(*builtins, "__assume", 1);
     shput(*builtins, "__debugbreak", 1);
     shput(*builtins, "__va_start", 1);
     shput(*builtins, "_umul128", 1);

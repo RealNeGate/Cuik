@@ -1,5 +1,5 @@
 import CC=clang
-import OPT=no
+import OPT=yes
 
 ifeq ($(CC),cl)
 	error CL is not supported with Cuik's Tup builds

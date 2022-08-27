@@ -222,8 +222,8 @@ extern "C" {
         TB_SWITCH,
         TB_IF,
         TB_RET,
-        TB_TRAP,
         TB_UNREACHABLE,
+        TB_TRAP,
 
         /* Load */
         TB_LOAD,
@@ -322,7 +322,7 @@ extern "C" {
     typedef uint8_t TB_NodeType;
 
     #define TB_IS_NODE_SIDE_EFFECT(type) ((type) >= TB_LINE_INFO && (type) <= TB_DEBUGBREAK)
-    #define TB_IS_NODE_TERMINATOR(type)  ((type) >= TB_LABEL && (type) <= TB_RET)
+    #define TB_IS_NODE_TERMINATOR(type)  ((type) >= TB_LABEL && (type) <= TB_TRAP)
 
     typedef int TB_Label;
 
@@ -372,6 +372,7 @@ extern "C" {
         TB_AttribList* first_attrib;
 
         union {
+            uint8_t raw_operands[16];
             struct TB_NodeInt {
                 size_t num_words;
                 union {
@@ -1148,6 +1149,24 @@ extern "C" {
     // analysis
     TB_API TB_Predeccesors tb_get_predeccesors(TB_Function* f);
 
+    typedef struct {
+        size_t count;
+
+        // max size is label_count
+        TB_Reg* traversal;
+
+        // NOTE: you can free visited once the postorder calculation is complete
+        // max size is label_count
+        bool* visited;
+    } TB_PostorderWalk;
+
+    // Allocates from the heap and requires freeing with tb_function_free_postorder
+    TB_API TB_PostorderWalk tb_function_get_postorder(TB_Function* f);
+    TB_API void tb_function_free_postorder(TB_PostorderWalk* walk);
+
+    // Doesn't allocate memory for you
+    TB_API void tb_function_get_postorder_explicit(TB_Function* f, TB_PostorderWalk* walk);
+
     // if out_doms is NULL it'll only return the dominator array length (it's just the label count really)
     TB_API size_t tb_get_dominators(TB_Function* f, TB_Predeccesors p, TB_Label* out_doms);
     TB_API bool tb_is_dominated_by(TB_Label* doms, TB_Label expected_dom, TB_Label bb);
@@ -1166,6 +1185,7 @@ extern "C" {
     TB_API TB_Pass tb_opt_remove_pass_nodes(void);
     TB_API TB_Pass tb_opt_mem2reg(void);
     TB_API TB_Pass tb_opt_compact_dead_regs(void);
+    TB_API TB_Pass tb_opt_dead_block_elim(void);
     TB_API TB_Pass tb_opt_dead_expr_elim(void);
     TB_API TB_Pass tb_opt_load_store_elim(void);
 

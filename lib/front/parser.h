@@ -141,7 +141,8 @@ Cuik_Type* get_common_type(TranslationUnit* tu, Cuik_Type* ty1, Cuik_Type* ty2);
 bool type_equal(TranslationUnit* tu, Cuik_Type* a, Cuik_Type* b);
 size_t type_as_string(TranslationUnit* tu, size_t max_len, char* buffer, Cuik_Type* type_index);
 
-void type_layout(TranslationUnit* restrict tu, Cuik_Type* type);
+// is needs_complete is false then the size and alignment don't need to be non-zero
+void type_layout(TranslationUnit* restrict tu, Cuik_Type* type, bool needs_complete);
 
 Stmt* resolve_unknown_symbol(TranslationUnit* tu, Expr* e);
 bool const_eval_try_offsetof_hack(TranslationUnit* tu, const Expr* e, uint64_t* out);
