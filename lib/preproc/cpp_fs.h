@@ -88,6 +88,9 @@ static LoadResult get_file(bool is_query, const char* path) {
 
 CUIK_API bool cuikpp_default_packet_handler(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
     if (packet->tag == CUIKPP_PACKET_GET_FILE || packet->tag == CUIKPP_PACKET_QUERY_FILE) {
+        // if (packet->tag == CUIKPP_PACKET_QUERY_FILE) printf("Query file: %s\n", packet->file.input_path);
+        // else printf("Get file: %s\n", packet->file.input_path);
+
         bool is_query = packet->tag == CUIKPP_PACKET_QUERY_FILE;
         LoadResult file = get_file(is_query, packet->file.input_path);
 
