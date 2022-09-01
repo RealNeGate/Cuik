@@ -23,13 +23,6 @@ enum {
     IRGEN_TASK_BATCH_SIZE = 8192
 };
 
-typedef enum OutputFlavor {
-    FLAVOR_OBJECT,
-    FLAVOR_SHARED,
-    FLAVOR_STATIC,
-    FLAVOR_EXECUTABLE,
-} OutputFlavor;
-
 #define TIMESTAMP(x) if (args_verbose) mark_timestamp(x)
 
 // compiler arguments
@@ -42,7 +35,7 @@ static DynArray(TB_Pass) da_passes;
 static const char* output_name;
 static char output_path_no_ext[FILENAME_MAX];
 
-static OutputFlavor flavor = FLAVOR_EXECUTABLE;
+static TB_OutputFlavor flavor = TB_FLAVOR_EXECUTABLE;
 
 static bool args_ir;
 static bool args_ast;
@@ -57,7 +50,7 @@ static bool args_debug_info;
 static bool args_preprocess;
 static bool args_exercise;
 static bool args_experiment;
-static bool args_use_syslinker;
+static bool args_use_syslinker = true;
 static int args_threads = -1;
 
 static Bindgen* args_bindgen;
@@ -247,7 +240,6 @@ static void irgen_job(void* arg) {
     CUIK_TIMED_BLOCK("IR generation: %zu", task.count) {
         for (size_t i = 0; i < task.count; i++) {
             TB_Function* func = cuik_stmt_gen_ir(task.tu, task.stmts[i]);
-
             if (func != NULL) {
                 for (size_t i = 0; i < PASS_COUNT; i++) {
                     passes[i].func_run(func);
@@ -567,77 +559,108 @@ static void codegen(void) {
 }
 
 static bool export_output(void) {
-    // place into a temporary directory if we don't need the obj file
-    char obj_output_path[FILENAME_MAX];
-    if (target_desc.sys == CUIK_SYSTEM_WINDOWS) {
-        sprintf_s(obj_output_path, FILENAME_MAX, "%s.obj", output_path_no_ext);
-    } else {
-        sprintf_s(obj_output_path, FILENAME_MAX, "%s.o", output_path_no_ext);
-    }
+    // TODO(NeGate): do a smarter system (just default to whatever the different platforms like)
+    TB_DebugFormat debug_fmt = args_debug_info ? TB_DEBUGFMT_CODEVIEW : TB_DEBUGFMT_NONE;
 
-    TIMESTAMP("Export object");
-    CUIK_TIMED_BLOCK("Export object") {
-        TB_ModuleExporter exporter = tb_make_exporter(mod, TB_FLAVOR_OBJECT);
-        if (!tb_exporter_to_file(mod, exporter, obj_output_path)) {
-            fprintf(stderr, "error: could not open object file for writing. %s\n", obj_output_path);
-            return false;
+    if (!args_use_syslinker) {
+        bool is_windows = (target_desc.sys == CUIK_SYSTEM_WINDOWS);
+        const char* extension = NULL;
+        switch (flavor) {
+            case TB_FLAVOR_OBJECT:     extension = (is_windows?".obj":".o");  break;
+            case TB_FLAVOR_STATIC:     extension = (is_windows?".lib":".a");  break;
+            case TB_FLAVOR_SHARED:     extension = (is_windows?".dll":".so"); break;
+            case TB_FLAVOR_EXECUTABLE: extension = (is_windows?".exe":"");    break;
+            default: assert(0);
         }
-    }
 
-    if (flavor == FLAVOR_OBJECT) {
+        char path[FILENAME_MAX];
+        sprintf_s(path, FILENAME_MAX, "%s%s", output_path_no_ext, extension);
+
+        TIMESTAMP("Export");
+        CUIK_TIMED_BLOCK("Export") {
+            TB_ModuleExporter exporter = tb_make_exporter(mod, debug_fmt, flavor);
+            if (!tb_exporter_to_file(mod, exporter, path)) {
+                // just delete the file to free up the partially made file
+                remove(path);
+                fprintf(stderr, "error: could not write output. %s\n", path);
+
+                return false;
+            }
+        }
+
+        return true;
+    } else {
+        char obj_output_path[FILENAME_MAX];
+        sprintf_s(
+            obj_output_path, FILENAME_MAX, "%s%s", output_path_no_ext,
+            target_desc.sys == CUIK_SYSTEM_WINDOWS ? ".obj" : ".o"
+        );
+
+        TIMESTAMP("Export object");
+        CUIK_TIMED_BLOCK("Export object") {
+            TB_ModuleExporter exporter = tb_make_exporter(mod, debug_fmt, TB_FLAVOR_OBJECT);
+            if (!tb_exporter_to_file(mod, exporter, obj_output_path)) {
+                remove(obj_output_path);
+                fprintf(stderr, "error: could not write object file output. %s\n", obj_output_path);
+                return false;
+            }
+        }
+
+        if (flavor == TB_FLAVOR_OBJECT) {
+            return true;
+        }
+
+        TIMESTAMP("Linker");
+        CUIK_TIMED_BLOCK("linker") {
+            Cuik_Linker l;
+            if (cuiklink_init(&l)) {
+                // we'll use subsystem windows if they defined WinMain in any of the TUs
+                bool subsystem_windows = false;
+                FOR_EACH_TU(tu, &compilation_unit) {
+                    if (cuik_get_entrypoint_status(tu) == CUIK_ENTRYPOINT_WINMAIN) {
+                        subsystem_windows = true;
+                    }
+                }
+
+                if (subsystem_windows) {
+                    cuiklink_subsystem_windows(&l);
+                }
+
+                // Add system libpaths
+                cuiklink_add_default_libpaths(&l);
+
+                char lib_dir[FILENAME_MAX];
+                sprintf_s(lib_dir, FILENAME_MAX, "%s/crt/lib/", crt_dirpath);
+                cuiklink_add_libpath(&l, lib_dir);
+
+                // Add Cuik output
+                cuiklink_add_input_file(&l, obj_output_path);
+
+                // Add input libraries
+                dyn_array_for(i, input_libraries) {
+                    cuiklink_add_input_file(&l, input_libraries[i]);
+                }
+
+                dyn_array_for(i, input_objects) {
+                    cuiklink_add_input_file(&l, input_objects[i]);
+                }
+
+                if (!args_nocrt) {
+                    #ifdef _WIN32
+                    cuiklink_add_input_file(&l, "ucrt.lib");
+                    cuiklink_add_input_file(&l, "msvcrt.lib");
+                    cuiklink_add_input_file(&l, "vcruntime.lib");
+                    cuiklink_add_input_file(&l, "win32_rt.lib");
+                    #endif
+                }
+
+                cuiklink_invoke(&l, output_path_no_ext, "ucrt");
+                cuiklink_deinit(&l);
+            }
+        }
+
         return true;
     }
-
-    TIMESTAMP("Linker");
-    CUIK_TIMED_BLOCK("linker") {
-        Cuik_Linker l;
-        if (cuiklink_init(&l)) {
-            // we'll use subsystem windows if they defined WinMain in any of the TUs
-            bool subsystem_windows = false;
-            FOR_EACH_TU(tu, &compilation_unit) {
-                if (cuik_get_entrypoint_status(tu) == CUIK_ENTRYPOINT_WINMAIN) {
-                    subsystem_windows = true;
-                }
-            }
-
-            if (subsystem_windows) {
-                cuiklink_subsystem_windows(&l);
-            }
-
-            // Add system libpaths
-            cuiklink_add_default_libpaths(&l);
-
-            char lib_dir[FILENAME_MAX];
-            sprintf_s(lib_dir, FILENAME_MAX, "%s/crt/lib/", crt_dirpath);
-            cuiklink_add_libpath(&l, lib_dir);
-
-            // Add Cuik output
-            cuiklink_add_input_file(&l, obj_output_path);
-
-            // Add input libraries
-            dyn_array_for(i, input_libraries) {
-                cuiklink_add_input_file(&l, input_libraries[i]);
-            }
-
-            dyn_array_for(i, input_objects) {
-                cuiklink_add_input_file(&l, input_objects[i]);
-            }
-
-            if (!args_nocrt) {
-                #ifdef _WIN32
-                cuiklink_add_input_file(&l, "ucrt.lib");
-                cuiklink_add_input_file(&l, "msvcrt.lib");
-                cuiklink_add_input_file(&l, "vcruntime.lib");
-                cuiklink_add_input_file(&l, "win32_rt.lib");
-                #endif
-            }
-
-            cuiklink_invoke(&l, output_path_no_ext, "ucrt");
-            cuiklink_deinit(&l);
-        }
-    }
-
-    return true;
 }
 
 #if 0
@@ -887,13 +910,13 @@ int main(int argc, char** argv) {
             }
             case ARG_FLAVOR: {
                 if (strcmp(arg.value, "object") == 0) {
-                    flavor = FLAVOR_OBJECT;
+                    flavor = TB_FLAVOR_OBJECT;
                 } else if (strcmp(arg.value, "shared") == 0) {
-                    flavor = FLAVOR_SHARED;
+                    flavor = TB_FLAVOR_SHARED;
                 } else if (strcmp(arg.value, "static") == 0) {
-                    flavor = FLAVOR_STATIC;
+                    flavor = TB_FLAVOR_STATIC;
                 } else if (strcmp(arg.value, "exec") == 0) {
-                    flavor = FLAVOR_EXECUTABLE;
+                    flavor = TB_FLAVOR_EXECUTABLE;
                 } else {
                     fprintf(stderr, "unknown list name, options are: targets\n");
                 }
@@ -910,7 +933,7 @@ int main(int argc, char** argv) {
                 break;
             }
             case ARG_OUT: output_name = arg.value; break;
-            case ARG_OBJ: flavor = FLAVOR_OBJECT; break;
+            case ARG_OBJ: flavor = TB_FLAVOR_OBJECT; break;
             case ARG_RUN: args_run = true; break;
             case ARG_PREPROC: args_preprocess = true; break;
             case ARG_PPLOC: args_pploc = true; break;
@@ -922,7 +945,7 @@ int main(int argc, char** argv) {
             case ARG_NOCRT: args_nocrt = true; break;
             case ARG_VERBOSE: args_verbose = true; break;
             case ARG_EXERCISE: args_exercise = true; break;
-            case ARG_BASED: args_use_syslinker = true; break;
+            case ARG_BASED: args_use_syslinker = false; break;
             case ARG_EXPERIMENT: args_experiment = true; break;
             case ARG_THREADS: args_threads = atoi(arg.value); break;
             case ARG_DEBUG: args_debug_info = true; break;
@@ -1006,9 +1029,7 @@ int main(int argc, char** argv) {
     if (!args_ast && !args_types) {
         TB_FeatureSet features = {0};
         mod = tb_module_create(
-            TB_ARCH_X86_64, cuik_system_to_tb(target_desc.sys),
-            args_debug_info ? TB_DEBUGFMT_CODEVIEW : TB_DEBUGFMT_NONE,
-            &features
+            TB_ARCH_X86_64, cuik_system_to_tb(target_desc.sys), &features, false
         );
     }
 

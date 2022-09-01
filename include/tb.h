@@ -342,7 +342,6 @@ extern "C" {
 
     typedef unsigned int TB_AttributeID;
     typedef unsigned int TB_FileID;
-    typedef unsigned int TB_FunctionID;
 
     typedef struct TB_Module            TB_Module;
     typedef struct TB_External          TB_External;
@@ -746,17 +745,19 @@ extern "C" {
     // Module management
     ////////////////////////////////
     // Creates a module with the correct target and settings
-    TB_API TB_Module* tb_module_create(TB_Arch target_arch, TB_System target_system, TB_DebugFormat debug_fmt, const TB_FeatureSet* features);
+    TB_API TB_Module* tb_module_create(TB_Arch arch, TB_System sys, const TB_FeatureSet* features, bool is_jit);
 
     // Creates a module but defaults on the architecture and system based on the host machine
-    TB_API TB_Module* tb_module_create_for_host(TB_DebugFormat debug_fmt, const TB_FeatureSet* features);
+    TB_API TB_Module* tb_module_create_for_host(const TB_FeatureSet* features, bool is_jit);
 
-    // Validates IR & compiles the function into machine code.
-    // For isel_mode, TB_ISEL_FAST will compile faster but worse codegen
+    // compiles the function into machine code. For isel_mode, TB_ISEL_FAST
+    // will compile faster but worse codegen
     // TB_ISEL_COMPLEX will compile slower but better codegen
     //
     // returns false if it fails.
     TB_API bool tb_module_compile_function(TB_Module* m, TB_Function* f, TB_ISelMode isel_mode);
+
+    // Used with TB_FunctionBatchIter, same as tb_module_compile_function but multiple
     TB_API bool tb_module_compile_functions(TB_Module* m, size_t count, TB_Function* funcs, TB_ISelMode isel_mode);
 
     // Frees all resources for the TB_Module and it's functions, globals and
@@ -768,15 +769,13 @@ extern "C" {
     // dont and the tls_index is used, it'll crash
     TB_API void tb_module_set_tls_index(TB_Module* m, TB_External* e);
 
-    TB_API TB_ModuleExporter tb_make_exporter(TB_Module* m, TB_OutputFlavor flavor);
+    TB_API TB_ModuleExporter tb_make_exporter(TB_Module* m, TB_DebugFormat debug_fmt, TB_OutputFlavor flavor);
     #define tb_exporter_next(m, exporter, packet) ((exporter).next(m, (exporter).state, packet))
 
     TB_API bool tb_exporter_to_file(TB_Module* m, TB_ModuleExporter exporter, const char* filepath);
     TB_API uint8_t* tb_exporter_to_buffer(TB_Module* m, TB_ModuleExporter exporter, size_t* length);
 
-    // For isel_mode, TB_ISEL_FAST will compile faster but worse codegen
-    // TB_ISEL_COMPLEX will compile slower but better codegen
-    TB_API void tb_module_export_jit(TB_Module* m, TB_ISelMode isel_mode);
+    TB_API void tb_module_export_jit(TB_Module* m);
 
     typedef struct TB_FunctionIter {
         // public
@@ -1197,9 +1196,6 @@ extern "C" {
     ////////////////////////////////
     // IR access
     ////////////////////////////////
-    TB_API TB_FunctionID tb_function_get_id(TB_Module* m, TB_Function* f);
-    TB_API TB_Function* tb_function_from_id(TB_Module* m, TB_FunctionID id);
-
     TB_API TB_Reg tb_node_get_last_register(TB_Function* f);
     TB_API TB_Reg tb_node_get_previous(TB_Function* f, TB_Reg at);
 

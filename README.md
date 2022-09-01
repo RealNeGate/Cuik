@@ -1,6 +1,6 @@
 # Cuik (pronounced 'Quick')
 
-<img src="logo/cuik.png" width="256px"/>
+<img src="logo/cuik.svg" width="256px"/>
 
 **warning: unfinished and buggy... also it doesn't compile on Linux or OSX currently, i'll get around to it**
 
