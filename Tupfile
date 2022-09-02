@@ -1,11 +1,6 @@
+import CC=clang
 import OPT=n
 import COMPILE_DRIVER=y
-
-ifdef CC
-	CC=@(CC)
-else
-    CC=clang
-endif
 
 ifeq ($(CC),cl)
 	error CL is not supported with Cuik's Tup builds
@@ -25,8 +20,7 @@ endif
 
 # libc on linux
 ifneq (@(TUP_PLATFORM),win32)
-	CFLAGS += -lm
-	CFLAGS += -lpthread
+	CFLAGS += -lm -lpthread
 endif
 
 !cc = |> $(CC) $(CFLAGS) %f -g -c -o %o |> bin/%B.o
@@ -34,7 +28,7 @@ endif
 # library source
 srcs = lib/*.c lib/preproc/*.c lib/front/*.c lib/back/*.c lib/targets/*.c
 
-ifeq ($(TUP_PLATFORM),win32)
+ifeq (@(TUP_PLATFORM),win32)
 	: foreach $(srcs) deps/threads_msvc.c |> !cc |>
 	: bin/*.o |> lib /nologo /out:%o %f |> bin/libcuik.lib
 else
@@ -43,11 +37,16 @@ else
 endif
 
 # compile driver
-ifeq (@(COMPILE_DRIVER),y)
+ifeq ($(COMPILE_DRIVER),y)
 	CFLAGS += -Xlinker /defaultlib:msvcrt -Xlinker /incremental:no -lole32 -lAdvapi32 -lOleAut32 -lDbgHelp
 
 	DRIVER_FILES = drivers/main_driver.c drivers/threadpool.c drivers/bindgen_c99.c drivers/bindgen_odin.c
-	DRIVER_LIBS  = bin/libcuik.lib deps/tildebackend.lib
 
-	: $(DRIVER_FILES) $(DRIVER_LIBS) |> $(CC) $(CFLAGS) %f -g -o %o |> bin/cuik.exe | bin/cuik.lib bin/cuik.exp bin/cuik.pdb
+	ifeq (@(TUP_PLATFORM),win32)
+		DRIVER_LIBS = bin/libcuik.lib tilde-backend/tildebackend.lib
+        : $(DRIVER_FILES) $(DRIVER_LIBS) |> $(CC) $(CFLAGS) %f -g -o %o |> bin/cuik.exe | bin/cuik.lib bin/cuik.exp bin/cuik.pdb
+	else
+    	DRIVER_LIBS = bin/libcuik.a tilde-backend/tildebackend.a
+        : $(DRIVER_FILES) $(DRIVER_LIBS) |> $(CC) $(CFLAGS) %f -g -o %o |> bin/cuik
+	endif
 endif

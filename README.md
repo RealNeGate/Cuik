@@ -89,7 +89,3 @@ crt/
 logo/
 tests/
 ```
-
-## PS
-If you're wondering about the tinybackend static library, you can recompile and place the binaries there, here's the project (i'll fix up the build process soon :P)
-https://github.com/RealNeGate/tilde-backend
