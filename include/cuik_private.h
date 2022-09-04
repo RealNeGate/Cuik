@@ -21,11 +21,6 @@ typedef struct PragmaOnceEntry {
     int value;
 } PragmaOnceEntry;
 
-typedef struct IncludeOnceEntry {
-    char* key;
-    int value;
-} IncludeOnceEntry;
-
 enum { CPP_MAX_SCOPE_DEPTH = 4096 };
 
 struct Cuik_CPP {
@@ -63,10 +58,11 @@ struct Cuik_CPP {
     uint64_t total_io_time;
     #endif
 
-    // stb_ds hashmap
-    IncludeOnceEntry* include_once;
+    // NL_Strmap(int)
+    int* include_once;
 
     // system libraries
+    // DynArray(char*)
     char** system_include_dirs;
 
     // DynArray(Cuik_FileEntry)
@@ -112,19 +108,13 @@ struct Cuik_Linker {
     size_t libpaths_count;
 };
 
-typedef struct {
-    Atom key;
-    Stmt* value;
-} ExportedSymbolEntry;
-
 struct CompilationUnit {
     // avoid exposing the mtx_t since it's messy
     void* lock;
     size_t count;
 
-    // anything extern might map to a different translation unit within
-    // the same compilation unit which means it's not technically external
-    ExportedSymbolEntry* export_table;
+    // NL_Strmap but like without the macro wrapping
+    Stmt** export_table;
 
     // linked list of all TUs referenced
     TranslationUnit* head;

@@ -4,7 +4,6 @@
 #include <compilation_unit.h>
 #include <timer.h>
 
-#include <stb_ds.h>
 #include <front/parser.h>
 
 extern atomic_int sema_error_count;

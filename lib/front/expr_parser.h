@@ -46,17 +46,11 @@ static Expr* parse_function_literal(TranslationUnit* tu, TokenStream* restrict s
         },
         .initial_as_stmt = NULL,
     };
-    arrput(tu->top_level_stmts, n);
+    dyn_array_put(tu->top_level_stmts, n);
 
-    // Don't wanna share locals between literals and their parents, by the current
-    // design of APIs with C callbacks this is aight because we already manually pass
-    // user context, we just improve "locality" of these functions to their reference
-    int old_start = local_symbol_start;
-    local_symbol_start = local_symbol_count;
-    {
+    LOCAL_SCOPE {
         parse_function_definition(tu, s, n);
     }
-    local_symbol_start = old_start;
 
     Expr* e = make_expr(tu);
     *e = (Expr){
@@ -270,8 +264,7 @@ static Expr* parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
                 Atom name = atoms_put(t->end - t->start, t->start);
 
                 // check if it's builtin
-                ptrdiff_t temp;
-                ptrdiff_t builtin_search = shgeti_ts(tu->target.arch->builtin_func_map, name, temp);
+                ptrdiff_t builtin_search = nl_strmap_get_cstr(tu->target.arch->builtin_func_map, name);
                 if (builtin_search >= 0) {
                     *e = (Expr){
                         .op = EXPR_BUILTIN_SYMBOL,

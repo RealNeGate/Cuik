@@ -4,6 +4,15 @@
 #include <stddef.h>
 #include <stdio.h>
 
+#define DYN_ARRAY_USE_MIMALLOC 1
+
+#if DYN_ARRAY_USE_MIMALLOC
+// use mimalloc
+extern void* mi_malloc(size_t s);
+extern void* mi_realloc(void* p, size_t s);
+extern void mi_free(void* p);
+#endif
+
 #define INITIAL_CAP 4096
 
 typedef struct DynArrayHeader {
@@ -13,7 +22,9 @@ typedef struct DynArrayHeader {
 } DynArrayHeader;
 
 inline static void* dyn_array_internal_create(size_t type_size) {
-    #if defined(_WIN32) && defined(_DEBUG)
+    #if DYN_ARRAY_USE_MIMALLOC
+    DynArrayHeader* header = mi_malloc(sizeof(DynArrayHeader) + (type_size * INITIAL_CAP));
+    #elif defined(_WIN32) && defined(_DEBUG)
     DynArrayHeader* header = _malloc_dbg(sizeof(DynArrayHeader) + (type_size * INITIAL_CAP), _NORMAL_BLOCK, __FILE__, __LINE__);
     #else
     DynArrayHeader* header = malloc(sizeof(DynArrayHeader) + (type_size * INITIAL_CAP));
@@ -28,7 +39,11 @@ inline static void* dyn_array_internal_create(size_t type_size) {
 inline static void dyn_array_internal_destroy(void* ptr) {
     if (ptr != NULL) {
         DynArrayHeader* header = ((DynArrayHeader*)ptr) - 1;
+        #if DYN_ARRAY_USE_MIMALLOC
+        mi_free(header);
+        #else
         free(header);
+        #endif
     }
 }
 
@@ -37,7 +52,9 @@ inline static void* dyn_array_internal_reserve(void* ptr, size_t type_size, size
 
     if (header->size + extra >= header->capacity) {
         header->capacity = (header->size + extra) * 2;
-        #if defined(_WIN32) && defined(_DEBUG)
+        #if DYN_ARRAY_USE_MIMALLOC
+        DynArrayHeader* new_ptr = mi_realloc(header, sizeof(DynArrayHeader) + (type_size * header->capacity));
+        #elif defined(_WIN32) && defined(_DEBUG)
         DynArrayHeader* new_ptr = _realloc_dbg(header, sizeof(DynArrayHeader) + (type_size * header->capacity), _NORMAL_BLOCK, __FILE__, __LINE__);
         #else
         DynArrayHeader* new_ptr = realloc(header, sizeof(DynArrayHeader) + (type_size * header->capacity));
@@ -73,5 +90,7 @@ do {                                                             \
     header->size += extra_;                                      \
 } while (0)
 
+#define dyn_array_clear(arr) (((((DynArrayHeader*)(arr)) - 1)->size) = 0)
+#define dyn_array_set_length(arr, newlen) (((((DynArrayHeader*)(arr)) - 1)->size) = (newlen))
 #define dyn_array_length(arr) ((((DynArrayHeader*)(arr)) - 1)->size)
 #define dyn_array_for(it, arr) for (ptrdiff_t it = 0, count = dyn_array_length(arr); it < count; it++)

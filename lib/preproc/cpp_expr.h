@@ -4,22 +4,22 @@ static intmax_t eval(Cuik_CPP* restrict c, TokenStream* restrict s, TokenStream*
     // Expand
     if (in) {
         // This type of expansion is temporary
-        size_t old_tokens_length = arrlen(s->tokens);
+        size_t old_tokens_length = dyn_array_length(s->tokens);
         s->current = old_tokens_length;
 
-        expand(c, s, in, arrlen(in->tokens), true, parent_loc);
-        assert(s->current != arrlen(s->tokens) && "Expected the macro expansion to add something");
+        expand(c, s, in, dyn_array_length(in->tokens), true, parent_loc);
+        assert(s->current != dyn_array_length(s->tokens) && "Expected the macro expansion to add something");
 
         // Insert a null token at the end
-        Token t = {0, true, arrlen(s->locations) - 1, NULL, NULL};
-        arrput(s->tokens, t);
+        Token t = {0, true, dyn_array_length(s->locations) - 1, NULL, NULL};
+        dyn_array_put(s->tokens, t);
 
         // Evaluate
         s->current = old_tokens_length;
         intmax_t result = eval_l13(c, s);
 
         // Restore stuff
-        arrsetlen(s->tokens, old_tokens_length);
+        dyn_array_set_length(s->tokens, old_tokens_length);
         s->current = old_tokens_length;
         return result;
     } else {

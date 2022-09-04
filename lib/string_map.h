@@ -42,6 +42,24 @@ typedef struct {
     const uint8_t* data;
 } NL_Slice;
 
+#if 1
+// use mimalloc
+extern void* mi_malloc(size_t s);
+extern void* mi_calloc(size_t c, size_t s);
+extern void* mi_realloc(void* p, size_t s);
+extern void mi_free(void* p);
+
+#define NL_MALLOC(s)    mi_malloc(s)
+#define NL_CALLOC(c, s) mi_calloc(c, s)
+#define NL_REALLOC(p, s)mi_realloc(p, s)
+#define NL_FREE(p)      mi_free(p)
+#else
+#define NL_MALLOC(s)    malloc(s)
+#define NL_CALLOC(c, s) calloc(c, s)
+#define NL_REALLOC(p, s)realloc(p, s)
+#define NL_FREE(p)      free(p)
+#endif
+
 #ifdef NL_STRING_MAP_INLINE
 #define NL_API inline static
 #else
@@ -164,17 +182,17 @@ inline static uint32_t fnv1a(size_t length, const uint8_t* data) {
 }*/
 
 NL_API void nl_strmap__free(NL_StrmapHeader* restrict table) {
-    free(table->indices);
-    free(table->keys);
-    free(table);
+    NL_FREE(table->indices);
+    NL_FREE(table->keys);
+    NL_FREE(table);
 }
 
 NL_API NL_StrmapHeader* nl_strmap__alloc(size_t size, size_t value_type_size) {
-    NL_StrmapHeader* table = malloc(sizeof(NL_StrmapHeader) + (size * value_type_size));
+    NL_StrmapHeader* table = NL_MALLOC(sizeof(NL_StrmapHeader) + (size * value_type_size));
     table->size = size;
     table->load = 0;
-    table->keys = calloc(size, sizeof(NL_Slice));
-    table->indices = malloc(size * sizeof(ptrdiff_t));
+    table->keys = NL_CALLOC(size, sizeof(NL_Slice));
+    table->indices = NL_MALLOC(size * sizeof(ptrdiff_t));
     return table;
 }
 
@@ -187,7 +205,7 @@ static NL_StrmapHeader* nl_strmap__resize(NL_StrmapHeader* table, size_t value_t
     ptrdiff_t* restrict old_indices = table->indices;
 
     //printf("Resize %zu -> %zu...\n", old_size, new_size);
-    table = realloc(table, sizeof(NL_StrmapHeader) + (new_size * value_type_size));
+    table = NL_REALLOC(table, sizeof(NL_StrmapHeader) + (new_size * value_type_size));
     if (table == NULL) {
         fprintf(stderr, "error: string map out of memory!\n");
         exit(1);
@@ -195,8 +213,8 @@ static NL_StrmapHeader* nl_strmap__resize(NL_StrmapHeader* table, size_t value_t
 
     table->size = new_size;
     table->load = 0;
-    table->keys = calloc(new_size, sizeof(NL_Slice));
-    table->indices = malloc(new_size * sizeof(ptrdiff_t));
+    table->keys = NL_CALLOC(new_size, sizeof(NL_Slice));
+    table->indices = NL_MALLOC(new_size * sizeof(ptrdiff_t));
 
     for (size_t i = 0; i < old_size; i++) {
         NL_Slice key = old_keys[i];
@@ -226,8 +244,8 @@ static NL_StrmapHeader* nl_strmap__resize(NL_StrmapHeader* table, size_t value_t
         }
     }
 
-    free(old_keys);
-    free(old_indices);
+    NL_FREE(old_keys);
+    NL_FREE(old_indices);
 
     return table;
 }

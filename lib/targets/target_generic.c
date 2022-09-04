@@ -1,6 +1,9 @@
 #include "targets.h"
 #include <front/sema.h>
 
+#define NL_STRING_MAP_IMPL
+#include <string_map.h>
+
 // two simple temporary buffers to represent type_as_string results
 static thread_local char temp_string0[1024], temp_string1[1024];
 
@@ -372,36 +375,36 @@ BuiltinResult target_generic_compile_builtin(TranslationUnit* tu, TB_Function* f
     }
 }
 
-void target_generic_fill_builtin_table(BuiltinBinding** builtins) {
+void target_generic_fill_builtin_table(NL_Strmap(bool)* builtins) {
     // gcc/clang
-    shput(*builtins, "__builtin_expect", 1);
-    shput(*builtins, "__builtin_trap", 1);
-    shput(*builtins, "__builtin_syscall", 1);
-    shput(*builtins, "__builtin_unreachable", 1);
-    shput(*builtins, "__builtin_mul_overflow", 1);
+    nl_strmap_put_cstr(*builtins, "__builtin_expect", 1);
+    nl_strmap_put_cstr(*builtins, "__builtin_trap", 1);
+    nl_strmap_put_cstr(*builtins, "__builtin_syscall", 1);
+    nl_strmap_put_cstr(*builtins, "__builtin_unreachable", 1);
+    nl_strmap_put_cstr(*builtins, "__builtin_mul_overflow", 1);
 
     // cuik internal
-    shput(*builtins, "__c11_atomic_compare_exchange_strong", 1);
-    shput(*builtins, "__c11_atomic_thread_fence", 1);
-    shput(*builtins, "__c11_atomic_signal_fence", 1);
-    shput(*builtins, "__c11_atomic_is_lock_free", 1);
-    shput(*builtins, "__c11_atomic_load", 1);
-    shput(*builtins, "__c11_atomic_store", 1);
-    shput(*builtins, "__c11_atomic_exchange", 1);
-    shput(*builtins, "__c11_atomic_compare_exchange_strong", 1);
-    shput(*builtins, "__c11_atomic_compare_exchange_weak", 1);
-    shput(*builtins, "__c11_atomic_fetch_add", 1);
-    shput(*builtins, "__c11_atomic_fetch_sub", 1);
-    shput(*builtins, "__c11_atomic_fetch_or", 1);
-    shput(*builtins, "__c11_atomic_fetch_xor", 1);
-    shput(*builtins, "__c11_atomic_fetch_and", 1);
+    nl_strmap_put_cstr(*builtins, "__c11_atomic_compare_exchange_strong", 1);
+    nl_strmap_put_cstr(*builtins, "__c11_atomic_thread_fence", 1);
+    nl_strmap_put_cstr(*builtins, "__c11_atomic_signal_fence", 1);
+    nl_strmap_put_cstr(*builtins, "__c11_atomic_is_lock_free", 1);
+    nl_strmap_put_cstr(*builtins, "__c11_atomic_load", 1);
+    nl_strmap_put_cstr(*builtins, "__c11_atomic_store", 1);
+    nl_strmap_put_cstr(*builtins, "__c11_atomic_exchange", 1);
+    nl_strmap_put_cstr(*builtins, "__c11_atomic_compare_exchange_strong", 1);
+    nl_strmap_put_cstr(*builtins, "__c11_atomic_compare_exchange_weak", 1);
+    nl_strmap_put_cstr(*builtins, "__c11_atomic_fetch_add", 1);
+    nl_strmap_put_cstr(*builtins, "__c11_atomic_fetch_sub", 1);
+    nl_strmap_put_cstr(*builtins, "__c11_atomic_fetch_or", 1);
+    nl_strmap_put_cstr(*builtins, "__c11_atomic_fetch_xor", 1);
+    nl_strmap_put_cstr(*builtins, "__c11_atomic_fetch_and", 1);
 
     // msvc intrinsics
-    shput(*builtins, "__assume", 1);
-    shput(*builtins, "__debugbreak", 1);
-    shput(*builtins, "__va_start", 1);
-    shput(*builtins, "_umul128", 1);
-    shput(*builtins, "_mul128", 1);
-    shput(*builtins, "_InterlockedExchange", 1);
-    shput(*builtins, "_InterlockedCompareExchange", 1);
+    nl_strmap_put_cstr(*builtins, "__assume", 1);
+    nl_strmap_put_cstr(*builtins, "__debugbreak", 1);
+    nl_strmap_put_cstr(*builtins, "__va_start", 1);
+    nl_strmap_put_cstr(*builtins, "_umul128", 1);
+    nl_strmap_put_cstr(*builtins, "_mul128", 1);
+    nl_strmap_put_cstr(*builtins, "_InterlockedExchange", 1);
+    nl_strmap_put_cstr(*builtins, "_InterlockedCompareExchange", 1);
 }

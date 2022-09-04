@@ -1,6 +1,9 @@
 #include "compilation_unit.h"
 #include <timer.h>
 
+#define NL_STRING_MAP_IMPL
+#include <string_map.h>
+
 CUIK_API void cuik_create_compilation_unit(CompilationUnit* restrict cu) {
     *cu = (CompilationUnit){0};
     cu->lock = HEAP_ALLOC(sizeof(mtx_t));
@@ -49,7 +52,7 @@ CUIK_API size_t cuik_num_of_translation_units_in_compilation_unit(CompilationUni
 
 CUIK_API void cuik_internal_link_compilation_unit(CompilationUnit* restrict cu) {
     FOR_EACH_TU(tu, cu) {
-        size_t count = arrlen(tu->top_level_stmts);
+        size_t count = dyn_array_length(tu->top_level_stmts);
         // printf("%s:\n", cuikpp_get_main_file(&tu->tokens));
 
         for (size_t i = 0; i < count; i++) {
@@ -59,7 +62,7 @@ CUIK_API void cuik_internal_link_compilation_unit(CompilationUnit* restrict cu) 
                 if (!s->decl.attrs.is_static &&
                     !s->decl.attrs.is_inline) {
                     // printf("  Func Export! %s\n", s->decl.name);
-                    shput(cu->export_table, s->decl.name, s);
+                    nl_strmap_put_cstr(cu->export_table, s->decl.name, s);
                 }
             } else if (s->op == STMT_GLOBAL_DECL || s->op == STMT_DECL) {
                 if (!s->decl.attrs.is_static &&
@@ -69,7 +72,7 @@ CUIK_API void cuik_internal_link_compilation_unit(CompilationUnit* restrict cu) 
                     s->decl.type->kind != KIND_FUNC &&
                     s->decl.name != NULL) {
                     // printf("  Global Export! %s\n", s->decl.name);
-                    shput(cu->export_table, s->decl.name, s);
+                    nl_strmap_put_cstr(cu->export_table, s->decl.name, s);
                 }
             }
         }

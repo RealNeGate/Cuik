@@ -3,17 +3,11 @@
 #include <back/ir_gen.h>
 #include <preproc/lexer.h>
 
-typedef struct BuiltinBinding {
-    char* key;
-    int value;
-} BuiltinBinding;
-
 struct Cuik_ArchDesc {
     TB_Arch arch;
 
-    // stringmap that goes from builtin function names to
-    // an index used to refer to them later on
-    BuiltinBinding* builtin_func_map;
+    // tells us if a name is maps to a builtin
+    NL_Strmap(bool) builtin_func_map;
 
     // initializes some target specific macro defines
     void (*set_defines)(Cuik_CPP* cpp, Cuik_System sys);
@@ -49,4 +43,4 @@ void target_generic_set_defines(Cuik_CPP* cpp, Cuik_System sys, bool is_64bit, b
 Cuik_Type* target_generic_type_check_builtin(TranslationUnit* tu, Expr* e, const char* name, int arg_count, Expr** args);
 BuiltinResult target_generic_compile_builtin(TranslationUnit* tu, TB_Function* func, const char* name, int arg_count, Expr** args);
 
-void target_generic_fill_builtin_table(BuiltinBinding** builtins);
+void target_generic_fill_builtin_table(NL_Strmap(bool)* builtins);

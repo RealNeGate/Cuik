@@ -172,11 +172,11 @@ typedef struct SourceLoc {
 typedef struct TokenStream {
     const char* filepath;
 
-    // stb_ds array
+    // DynArray(Token)
     struct Token* tokens;
     size_t current;
 
-    // stb_ds array
+    // DynArray(SourceLoc)
     struct SourceLoc* locations;
 } TokenStream;
 

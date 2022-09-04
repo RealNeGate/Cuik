@@ -100,8 +100,7 @@ struct TranslationUnit {
     Arena ast_arena;
     Arena type_arena;
 
-    // stb_ds array
-    // NOTE(NeGate): should this be an stb_ds array?
+    // DynArray(Stmt*)
     Stmt** top_level_stmts;
 
     // parser state

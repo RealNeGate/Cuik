@@ -1,6 +1,6 @@
 
 CUIK_API void cuikpp_add_include_directory(Cuik_CPP* ctx, const char dir[]) {
-    arrput(ctx->system_include_dirs, strdup(dir));
+    dyn_array_put(ctx->system_include_dirs, strdup(dir));
 }
 
 CUIK_API Cuik_FileIter cuikpp_first_file(Cuik_CPP* ctx) {
@@ -22,7 +22,7 @@ CUIK_API Cuik_IncludeIter cuikpp_first_include_search(Cuik_CPP* ctx) {
 }
 
 CUIK_API bool cuikpp_next_include_search(Cuik_CPP* ctx, Cuik_IncludeIter* it) {
-    if (it->i >= arrlen(ctx->system_include_dirs)) {
+    if (it->i >= dyn_array_length(ctx->system_include_dirs)) {
         return false;
     }
 

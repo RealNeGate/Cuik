@@ -13,7 +13,6 @@
 #include <memory.h>
 #include <timer.h>
 #include <sys/stat.h>
-#include <stb_ds.h>
 
 #if _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -23,6 +22,9 @@
 #if USE_INTRIN
 #include <x86intrin.h>
 #endif
+
+#define NL_STRING_MAP_IMPL
+#include <string_map.h>
 
 static void preprocess_file(Cuik_CPP* restrict c, TokenStream* restrict s, size_t parent_entry, SourceLocIndex include_loc, const char* directory, const char* filepath, int depth);
 static uint64_t hash_ident(const unsigned char* at, size_t length);
@@ -138,6 +140,10 @@ CUIK_API void cuikpp_init(Cuik_CPP* ctx, const char filepath[FILENAME_MAX]) {
         .the_shtuffs = cuik__valloc(THE_SHTUFFS_SIZE),
     };
 
+    // initialize dynamic arrays
+    ctx->system_include_dirs = dyn_array_create(char*);
+    ctx->files = dyn_array_create(Cuik_FileEntry);
+
     ctx->stack_ptr = 1;
     char* slash = strrchr(filepath, '\\');
     if (!slash) slash = strrchr(filepath, '/');
@@ -154,6 +160,8 @@ CUIK_API void cuikpp_init(Cuik_CPP* ctx, const char filepath[FILENAME_MAX]) {
     }
 
     ctx->tokens.filepath = filepath;
+    ctx->tokens.locations = dyn_array_create(SourceLoc);
+    ctx->tokens.tokens = dyn_array_create(Token);
 
     ctx->stack[0] = (CPPStackSlot){
         .filepath = filepath,
@@ -186,8 +194,8 @@ static void print_token_stream(TokenStream* s, size_t start, size_t end) {
 static void free_token_stream(TokenStream* s) {
     // TODO(NeGate): we wanna free the source locations but that's weird currently
     // so we might invest into smarter allocation schemes here
-    arrfree(s->locations);
-    arrfree(s->tokens);
+    dyn_array_destroy(s->locations);
+    dyn_array_destroy(s->tokens);
 }
 
 static TokenStream get_all_tokens_in_buffer(const char* filepath, const uint8_t* data, const uint8_t* end) {
@@ -200,6 +208,8 @@ static TokenStream get_all_tokens_in_buffer(const char* filepath, const uint8_t*
     }
 
     TokenStream s = { filepath };
+    s.locations = dyn_array_create(SourceLoc);
+    s.tokens = dyn_array_create(Token);
 
     Lexer l = { filepath, data, data, 1 };
     lexer_read(&l);
@@ -230,7 +240,8 @@ static TokenStream get_all_tokens_in_buffer(const char* filepath, const uint8_t*
         }
 
         assert(current_line != NULL);
-        SourceLocIndex loc_index = arraddnindex(s.locations, 1);
+        dyn_array_put_uninit(s.locations, 1);
+        SourceLocIndex loc_index = dyn_array_length(s.locations) - 1;
         s.locations[loc_index] = (SourceLoc) {
             .line = current_line,
             .columns = columns,
@@ -239,7 +250,7 @@ static TokenStream get_all_tokens_in_buffer(const char* filepath, const uint8_t*
 
         // insert token
         Token t = { l.token_type, l.hit_line, loc_index, l.token_start, l.token_end };
-        arrput(s.tokens, t);
+        dyn_array_put(s.tokens, t);
         l.hit_line = false;
 
         lexer_read(&l);
@@ -247,7 +258,7 @@ static TokenStream get_all_tokens_in_buffer(const char* filepath, const uint8_t*
 
     // Add EOF token
     Token t = {0, true, 0, NULL, NULL};
-    arrput(s.tokens, t);
+    dyn_array_put(s.tokens, t);
     return s;
 }
 
@@ -341,7 +352,7 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
             ctx->state2 += 1;
             int index = ctx->state2 - 1;
 
-            int endpoint = arrlen(ctx->system_include_dirs);
+            int endpoint = dyn_array_length(ctx->system_include_dirs);
             if (index == endpoint) {
                 assert(ctx->stack_ptr > 1);
                 CPPStackSlot* restrict prev_slot = &ctx->stack[ctx->stack_ptr - 2];
@@ -374,7 +385,7 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
     } else if (ctx->state1 == CUIK__CPP_CANONICALIZE) {
         const char* filepath = packet->canonicalize.output_path;
 
-        ptrdiff_t search = shgeti(ctx->include_once, filepath);
+        ptrdiff_t search = nl_strmap_get_cstr(ctx->include_once, filepath);
         if (search < 0) {
             // for (int i = 0; i < ctx->stack_ptr; i++) printf("  ");
             // printf("%s\n", filepath);
@@ -482,7 +493,7 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
             if (ctx->stack_ptr == 0) {
                 // place last token
                 Token t = {0, true, 0, NULL, NULL};
-                arrput(s->tokens, t);
+                dyn_array_put(s->tokens, t);
 
                 s->current = 0;
                 return CUIKPP_DONE;
@@ -713,7 +724,7 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
                     );
 
                     if (tokens_match(in, 4, "once")) {
-                        shput(ctx->include_once, (const char*) slot->filepath, 0);
+                        nl_strmap_put_cstr(ctx->include_once, (const char*) slot->filepath, 0);
                         tokens_next(in);
 
                         // We gotta hit a line by now
@@ -732,13 +743,13 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
                         unsigned char* str = gimme_the_shtuffs(ctx, sizeof("_Pragma"));
                         memcpy(str, "_Pragma", sizeof("_Pragma"));
                         Token t = { TOKEN_KW_Pragma, false, loc, str, str + 7 };
-                        arrput(s->tokens, t);
+                        dyn_array_put(s->tokens, t);
 
                         str = gimme_the_shtuffs(ctx, sizeof("("));
                         str[0] = '(';
                         str[1] = 0;
                         t = (Token){ '(', false, loc, str, str + 1 };
-                        arrput(s->tokens, t);
+                        dyn_array_put(s->tokens, t);
 
                         // Skip until we hit a newline
                         expect_no_newline(in, start_line_for_pp_stmt);
@@ -763,14 +774,14 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
                             *curr++ = '\0';
 
                             t = (Token){ TOKEN_STRING_DOUBLE_QUOTE, false, loc, str, curr - 1 };
-                            arrput(s->tokens, t);
+                            dyn_array_put(s->tokens, t);
                         }
 
                         str = gimme_the_shtuffs(ctx, sizeof(")"));
                         str[0] = ')';
                         str[1] = 0;
                         t = (Token){ ')', false, loc, str, str + 1 };
-                        arrput(s->tokens, t);
+                        dyn_array_put(s->tokens, t);
                     }
                 } else if (memcmp(directive.data, "ifndef", 6) == 0) {
                     success = true;
@@ -836,15 +847,15 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
 
                         tokens_next(in);
                     } else {
-                        size_t old_tokens_length = arrlen(s->tokens);
+                        size_t old_tokens_length = dyn_array_length(s->tokens);
                         s->current = old_tokens_length;
 
-                        expand(ctx, s, in, arrlen(in->tokens), true, new_include_loc);
-                        assert(s->current != arrlen(s->tokens) && "Expected the macro expansion to add something");
+                        expand(ctx, s, in, dyn_array_length(in->tokens), true, new_include_loc);
+                        assert(s->current != dyn_array_length(s->tokens) && "Expected the macro expansion to add something");
 
                         // Insert a null token at the end
-                        Token t = {0, true, arrlen(s->locations) - 1, NULL, NULL};
-                        arrput(s->tokens, t);
+                        Token t = {0, true, dyn_array_length(s->locations) - 1, NULL, NULL};
+                        dyn_array_put(s->tokens, t);
 
                         if (tokens_is(s, TOKEN_STRING_DOUBLE_QUOTE)) {
                             Token* t2 = tokens_get(s);
@@ -863,7 +874,7 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
                         }
 
                         // reset token stream
-                        arrsetlen(s->tokens, old_tokens_length);
+                        dyn_array_set_length(s->tokens, old_tokens_length);
                         s->current = 0;
                     }
 
@@ -879,7 +890,7 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
 
                     // we'll trim_the_shtuffs once we've resolved a name
                     char* path = gimme_the_shtuffs(ctx, FILENAME_MAX);
-                    size_t num_system_include_dirs = arrlen(ctx->system_include_dirs);
+                    size_t num_system_include_dirs = dyn_array_length(ctx->system_include_dirs);
 
                     // quote includes will prioritize the local directory over the search paths
                     // if we don't have any search paths then we'll also run this first since it's
@@ -941,7 +952,7 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
                     classify_ident(t->start, t->end - t->start),
                     t->hit_line, loc, t->start, t->end,
                 };
-                arrput(s->tokens, final_token);
+                dyn_array_put(s->tokens, final_token);
 
                 tokens_next(in);
             } else {
@@ -952,8 +963,8 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
         } else if (first_token == TOKEN_DOUBLE_HASH) {
             tokens_next(in);
 
-            assert(arrlen(s->tokens) > 0);
-            Token* last = &s->tokens[arrlen(s->tokens) - 1];
+            assert(dyn_array_length(s->tokens) > 0);
+            Token* last = &s->tokens[dyn_array_length(s->tokens) - 1];
 
             expand_double_hash(ctx, s, last, in, last->location);
         } else {
@@ -961,7 +972,7 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
             Token t = *tokens_get(in);
             t.location = get_source_location(ctx, in, s, include_loc, SOURCE_LOC_NORMAL);
 
-            arrput(s->tokens, t);
+            dyn_array_put(s->tokens, t);
             tokens_next(in);
         }
     }
@@ -1082,7 +1093,8 @@ static SourceLocIndex get_source_location(Cuik_CPP* restrict c, TokenStream* res
     SourceLoc* old = &in->locations[in->tokens[in->current].location];
 
     // generate the output source locs (we don't wanna keep the old streams)
-    SourceLocIndex loc_index = arraddnindex(s->locations, 1);
+    dyn_array_put_uninit(s->locations, 1);
+    SourceLocIndex loc_index = dyn_array_length(s->locations) - 1;
     s->locations[loc_index] = *old;
     s->locations[loc_index].type = loc_type;
 

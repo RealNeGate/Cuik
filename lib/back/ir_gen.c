@@ -4,6 +4,9 @@
 #include <targets/targets.h>
 #include <timer.h>
 
+#define NL_STRING_MAP_IMPL
+#include <string_map.h>
+
 atomic_flag irgen_defined_tls_index;
 
 // Maps param_num -> TB_Reg
@@ -306,12 +309,10 @@ InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, Sourc
                                 CompilationUnit* restrict cu = tu->parent;
                                 cuik_lock_compilation_unit(cu);
 
-                                ptrdiff_t temp;
-                                ptrdiff_t search = shgeti_ts(cu->export_table, name, temp);
-
+                                ptrdiff_t search = nl_strmap_get_cstr(cu->export_table, name);
                                 if (search >= 0) {
                                     // Figure out what the symbol is and link it together
-                                    Stmt* real_symbol = cu->export_table[search].value;
+                                    Stmt* real_symbol = cu->export_table[search];
 
                                     if (real_symbol->op == STMT_FUNC_DECL) {
                                         tb_initializer_add_function(tu->ir_mod, init, offset, real_symbol->backing.f);
@@ -780,12 +781,10 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
                             CompilationUnit* restrict cu = tu->parent;
                             cuik_lock_compilation_unit(cu);
 
-                            ptrdiff_t temp;
-                            ptrdiff_t search = shgeti_ts(cu->export_table, name, temp);
-
+                            ptrdiff_t search = nl_strmap_get_cstr(cu->export_table, name);
                             if (search >= 0) {
                                 // Figure out what the symbol is and link it together
-                                Stmt* real_symbol = cu->export_table[search].value;
+                                Stmt* real_symbol = cu->export_table[search];
 
                                 if (real_symbol->op == STMT_FUNC_DECL) {
                                     val = (IRVal){
@@ -956,9 +955,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
 
                     // all builtins start with an underscore
                     if (*name == '_') {
-                        ptrdiff_t temp;
-                        ptrdiff_t search = shgeti_ts(tu->target.arch->builtin_func_map, name, temp);
-
+                        ptrdiff_t search = nl_strmap_get_cstr(tu->target.arch->builtin_func_map, name);
                         if (search >= 0) {
                             TB_Reg val = tu->target.arch->compile_builtin(tu, func, name, arg_count, args);
 

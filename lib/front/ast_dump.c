@@ -551,7 +551,7 @@ CUIK_API void cuik_dump_translation_unit(FILE* stream, TranslationUnit* tu, bool
     barz[0] = true;
 
     if (minimalist) {
-        for (size_t i = 0, count = arrlen(tu->top_level_stmts); i < count; i++) {
+        for (size_t i = 0, count = dyn_array_length(tu->top_level_stmts); i < count; i++) {
             Stmt* stmt = tu->top_level_stmts[i];
             if (!stmt->decl.attrs.is_used || stmt->decl.attrs.is_typedef) continue;
 
@@ -568,7 +568,7 @@ CUIK_API void cuik_dump_translation_unit(FILE* stream, TranslationUnit* tu, bool
             dump_stmt(tu, stream, stmt, 1, is_last);
         }
     } else {
-        for (size_t i = 0, count = arrlen(tu->top_level_stmts); i < count; i++) {
+        for (size_t i = 0, count = dyn_array_length(tu->top_level_stmts); i < count; i++) {
             dump_stmt(tu, stream, tu->top_level_stmts[i], 1, i == (count - 1));
         }
     }
@@ -576,13 +576,11 @@ CUIK_API void cuik_dump_translation_unit(FILE* stream, TranslationUnit* tu, bool
 
 void ast_dump_stats(TranslationUnit* tu, FILE* stream) {
     printf("\n~~~ AST STATS ~~~\n");
-    printf("# Top level stmts: %zu\n", arrlen(tu->top_level_stmts));
+    printf("# Top level stmts: %zu\n", dyn_array_length(tu->top_level_stmts));
 
-    printf("# Type Arena: %zu kB\n",
-        arena_get_memory_usage(&tu->type_arena) / 1024);
+    printf("# Type Arena: %zu kB\n", arena_get_memory_usage(&tu->type_arena) / 1024);
 
-    printf("# AST Arena:  %zu kB\n",
-        arena_get_memory_usage(&tu->ast_arena) / 1024);
+    printf("# AST Arena:  %zu kB\n", arena_get_memory_usage(&tu->ast_arena) / 1024);
 }
 
 void ast_dump_type(TranslationUnit* tu, Cuik_Type* ty, int depth, int offset) {
@@ -608,7 +606,6 @@ void ast_dump_type(TranslationUnit* tu, Cuik_Type* ty, int depth, int offset) {
 
         for (size_t i = 0; i < kid_count; i++) {
             Member* member = &kids[i];
-            ;
 
             if (member->name == NULL ||
                 member->type->kind == KIND_STRUCT ||

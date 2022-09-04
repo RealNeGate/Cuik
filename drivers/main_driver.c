@@ -6,8 +6,6 @@
 #include "json_perf.h"
 #include "bindgen.h"
 
-#include <stb_ds.h>
-
 #ifndef __CUIK__
 #define CUIK_ALLOW_THREADS 1
 #else
@@ -46,6 +44,7 @@ static bool args_pploc;
 static bool args_assembly;
 static bool args_time;
 static bool args_verbose;
+static bool args_syntax_only;
 static bool args_debug_info;
 static bool args_preprocess;
 static bool args_exercise;
@@ -947,6 +946,7 @@ int main(int argc, char** argv) {
             case ARG_PPLOC: args_pploc = true; break;
             case ARG_TIME: args_time = true; break;
             case ARG_ASM: args_assembly = true; break;
+            case ARG_SYNTAX_ONLY: args_syntax_only = true; break;
             case ARG_AST: args_ast = true; break;
             case ARG_TYPES: args_types = true; break;
             case ARG_IR: args_ir = true; break;
@@ -1087,13 +1087,15 @@ int main(int argc, char** argv) {
         CUIK_TIMED_BLOCK("internal link") {
             cuik_internal_link_compilation_unit(&compilation_unit);
         }
+
+        if (args_syntax_only) goto done;
     }
 
     if (args_ast) {
         FOR_EACH_TU(tu, &compilation_unit) {
             cuik_dump_translation_unit(stdout, tu, true);
         }
-        return 0;
+        goto done;
     }
 
     ////////////////////////////////
@@ -1115,7 +1117,7 @@ int main(int argc, char** argv) {
             tb_function_print(it.f, tb_default_print_callback, stdout);
             printf("\n\n");
         }
-        return 0;
+        goto done;
     }
 
     CUIK_TIMED_BLOCK("CodeGen") {
@@ -1129,6 +1131,7 @@ int main(int argc, char** argv) {
     tb_free_thread_resources();
     tb_module_destroy(mod);
 
+    done:
     TIMESTAMP("Done");
     #if CUIK_ALLOW_THREADS
     if (thread_pool != NULL) {

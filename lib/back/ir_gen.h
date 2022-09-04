@@ -1,8 +1,6 @@
 #pragma once
 #include <arena.h>
 #include <common.h>
-
-#include <stb_ds.h>
 #include <threads.h>
 #include <front/parser.h>
 

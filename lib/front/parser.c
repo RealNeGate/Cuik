@@ -45,7 +45,7 @@ thread_local static int local_tag_count = 0;
 thread_local static TagEntry* local_tags;
 
 // Global symbol stuff
-thread_local static PendingExpr* pending_exprs; // stb_ds array
+thread_local static DynArray(PendingExpr) pending_exprs;
 thread_local static NL_Strmap(Stmt*) labels;
 
 thread_local static Stmt* current_switch_or_case;
@@ -227,7 +227,6 @@ typedef struct {
 // a brand new parser on this thread
 static void reset_global_parser_state() {
     labels = NULL;
-    pending_exprs = NULL;
     local_symbol_start = local_symbol_count = 0;
     current_switch_or_case = current_breakable = current_continuable = NULL;
     symbol_chain_start = symbol_chain_current = NULL;
@@ -271,6 +270,12 @@ static void phase3_parse_task(void* arg) {
     if (local_symbols == NULL) {
         local_symbols = realloc(local_symbols, sizeof(Symbol) * MAX_LOCAL_SYMBOLS);
         local_tags = realloc(local_tags, sizeof(TagEntry) * MAX_LOCAL_TAGS);
+    }
+
+    if (pending_exprs) {
+        dyn_array_clear(pending_exprs);
+    } else {
+        pending_exprs = dyn_array_create(PendingExpr);
     }
 
     parse_global_symbols(task.tu, task.start, task.end, *task.base_token_stream);
@@ -338,7 +343,7 @@ static int type_cycles_dfs(TranslationUnit* restrict tu, Cuik_Type* type, uint8_
 }
 
 static void type_resolve_pending_align(TranslationUnit* restrict tu, Cuik_Type* type) {
-    size_t pending_count = arrlen(pending_exprs);
+    size_t pending_count = dyn_array_length(pending_exprs);
     for (size_t i = 0; i < pending_count; i++) {
         if (pending_exprs[i].dst == &type->align) {
             assert(pending_exprs[i].mode == PENDING_ALIGNAS);
@@ -566,6 +571,14 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
     DynArray(int) static_assertions = dyn_array_create(int);
     TokenStream* restrict s = desc->tokens;
 
+    tu->top_level_stmts = dyn_array_create(Stmt*);
+
+    if (pending_exprs) {
+        dyn_array_clear(pending_exprs);
+    } else {
+        pending_exprs = dyn_array_create(PendingExpr);
+    }
+
     // Phase 1: resolve all top level statements
     CUIK_TIMED_BLOCK("phase 1") {
         while (tokens_get(s)->type) {
@@ -636,7 +649,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
 
                             // typedefs can't be roots ngl
                             n->decl.attrs.is_root = false;
-                            arrput(tu->top_level_stmts, n);
+                            dyn_array_put(tu->top_level_stmts, n);
 
                             // check for collision
                             Symbol* search = find_global_symbol(tu, decl.name);
@@ -709,7 +722,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                             .attrs = attr,
                         };
                         n->decl.attrs.is_root = true;
-                        arrput(tu->top_level_stmts, n);
+                        dyn_array_put(tu->top_level_stmts, n);
 
                         tokens_next(s);
                         continue;
@@ -739,7 +752,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                             .type = decl.type,
                             .attrs = attr,
                         };
-                        arrput(tu->top_level_stmts, n);
+                        dyn_array_put(tu->top_level_stmts, n);
 
                         Symbol* sym = find_global_symbol(tu, decl.name);
                         Symbol* old_definition = sym;
@@ -1042,7 +1055,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
         }
 
         if (has_reports(REPORT_ERROR, tu->errors)) goto parse_error;
-        arrfree(pending_exprs);
+        dyn_array_destroy(pending_exprs);
 
         ////////////////////////////////
         // Resolve any static assertions
@@ -1168,7 +1181,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
             }
         }
 
-        arrfree(tu->tokens.tokens);
+        dyn_array_destroy(tu->tokens.tokens);
     }
 
     //printf("AST arena: %zu MB\n", arena_get_memory_usage(&tu->ast_arena) / (1024*1024));
@@ -1198,11 +1211,11 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
 
     parse_error: {
         // free all translation unit resources because we failed :(
-        arrfree(pending_exprs);
+        dyn_array_destroy(pending_exprs);
         dyn_array_destroy(static_assertions);
 
         // free tokens
-        arrfree(tu->tokens.tokens);
+        dyn_array_destroy(tu->tokens.tokens);
 
         cuik_destroy_translation_unit(tu);
         return NULL;
@@ -1231,7 +1244,7 @@ CUIK_API void cuik_release_translation_unit(TranslationUnit* restrict tu) {
 }
 
 CUIK_API void cuik_destroy_translation_unit(TranslationUnit* restrict tu) {
-    arrfree(tu->top_level_stmts);
+    dyn_array_destroy(tu->top_level_stmts);
 
     arena_free(&tu->ast_arena);
     arena_free(&tu->type_arena);
@@ -1245,7 +1258,7 @@ CUIK_API TranslationUnit* cuik_next_translation_unit(TranslationUnit* restrict t
 
 CUIK_API Cuik_TopLevelIter cuik_first_top_level_stmt(TranslationUnit* restrict tu) {
     return (Cuik_TopLevelIter){
-        .limit_ = arrlen(tu->top_level_stmts),
+        .limit_ = dyn_array_length(tu->top_level_stmts),
         .stmts_ = tu->top_level_stmts
     };
 }
@@ -1272,7 +1285,7 @@ CUIK_API Stmt** cuik_get_top_level_stmts(TranslationUnit* restrict tu) {
 }
 
 CUIK_API size_t cuik_num_of_top_level_stmts(TranslationUnit* restrict tu) {
-    return arrlen(tu->top_level_stmts);
+    return dyn_array_length(tu->top_level_stmts);
 }
 
 Stmt* resolve_unknown_symbol(TranslationUnit* tu, Expr* e) {

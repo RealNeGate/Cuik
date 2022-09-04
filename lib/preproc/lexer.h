@@ -2,8 +2,8 @@
 #include "../common.h"
 #include "../str.h"
 #include "../arena.h"
+#include "../big_array.h"
 #include <cuik.h>
-#include <stb_ds.h>
 
 // NOTE(NeGate): I originally called it TokenType but windows a bih on god
 typedef enum TknType {
@@ -239,6 +239,6 @@ inline static void tokens_prev(TokenStream* restrict s) {
 }
 
 inline static void tokens_next(TokenStream* restrict s) {
-    assert(s->current < arrlen(s->tokens));
+    assert(s->current < dyn_array_length(s->tokens));
     s->current += 1;
 }

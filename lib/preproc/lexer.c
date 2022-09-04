@@ -437,58 +437,66 @@ void lexer_read(Lexer* restrict l) {
         case CHAR_CLASS_IDENT: {
             l->token_type = TOKEN_IDENTIFIER;
 
-            #if 1
-            while (char_classes[*current] == CHAR_CLASS_IDENT ||
-                char_classes[*current] == CHAR_CLASS_NUMBER ||
-                *current == '\\') {
-                if (current[0] == '\\') {
-                    if (current[1] == 'U' || current[1] == 'u') {
-                        slow_path = true;
+            // simple DFA
+            static uint8_t dfa[256] = {
+                0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+                0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+                0x00,0x00,0x00,0x00,0x05,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+                0x04,0x04,0x04,0x04,0x04,0x04,0x04,0x04,0x04,0x04,0x00,0x00,0x00,0x00,0x00,0x00,
+                0x00,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,
+                0x05,0x05,0x05,0x05,0x05,0x35,0x05,0x05,0x05,0x05,0x05,0x00,0x0a,0x00,0x00,0x05,
+                0x00,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,
+                0x05,0x05,0x05,0x05,0x05,0x35,0x05,0x05,0x05,0x05,0x05,0x00,0x00,0x00,0x00,0x00,
+                0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,
+                0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,
+                0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,
+                0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,
+                0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,
+                0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,
+                0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,
+                0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,
+            };
+
+            //bool test_slow_path = slow_path;
+            //const unsigned char* test = current;
+
+            // simple DFA
+            unsigned int state = 1;
+            for (;;) {
+                uint64_t row = dfa[(uint64_t) *current];
+                uint64_t next = (row >> (state * 2)) & 3;
+
+                if (next == 0) {
+                    if (__builtin_expect(state == 2, 0)) current -= 1;
+                    break;
+                } else if (next == 3) {
+                    // probably not ideal but if we hit state 3 then it's a
+                    // complex identifier as in it's got universal characters
+                    slow_path = true;
+                    next = 1;
+                }
+
+                state = next;
+                current += 1;
+            }
+
+            /*while (char_classes[*test] == CHAR_CLASS_IDENT ||
+                char_classes[*test] == CHAR_CLASS_NUMBER ||
+                *test == '\\') {
+                if (test[0] == '\\') {
+                    if (test[1] == 'U' || test[1] == 'u') {
+                        test_slow_path = true;
                     } else {
                         // exit... it's a wonky identifier
                         break;
                     }
                 }
 
-                current++;
+                test++;
             }
-            #else
-            for (;;) {
-                __m128i bytes = _mm_loadu_si128((__m128i*) current);
 
-                unsigned int escape_mask = _mm_movemask_epi8(_mm_cmpeq_epi8(bytes, _mm_set1_epi8('\\')));
-                unsigned int escape_pos = __builtin_ffs(escape_mask);
-
-                // a-z A-Z
-                __m128i alpha = _mm_and_si128(bytes, _mm_set1_epi8(~0x20));
-                alpha = _mm_add_epi8(alpha, _mm_set1_epi8(~0x40));
-                alpha = _mm_cmple_epu8(alpha, _mm_set1_epi8(25));
-                // 0x80+ $ _
-                alpha = _mm_or_si128(alpha, _mm_cmplt_epi8(bytes, _mm_set1_epi8(0)));
-                alpha = _mm_or_si128(alpha, _mm_cmpeq_epi8(bytes, _mm_set1_epi8('_')));
-                alpha = _mm_or_si128(alpha, _mm_cmpeq_epi8(bytes, _mm_set1_epi8('$')));
-                alpha = _mm_and_si128(alpha, _mm_xor_si128(_mm_cmpeq_epi8(bytes, _mm_set1_epi8(0)), _mm_set1_epi8(0xFF)));
-                // 0-9
-                __m128i num = _mm_sub_epi8(bytes, _mm_set1_epi8('0'));
-                num = _mm_cmple_epu8(num, _mm_set1_epi8(9));
-
-                __m128i cmp = _mm_or_si128(alpha, num);
-                unsigned int mask = _mm_movemask_epi8(cmp);
-
-                unsigned int len = __builtin_ffs(~mask);
-                if (escape_pos > 0 && escape_pos <= len) {
-                    slow_path = true;
-                }
-
-                if (len < 16) {
-                    // last chunk
-                    current += len - 1;
-                    break;
-                } else {
-                    current += 16;
-                }
-            }
-            #endif
+            assert(test_slow_path == slow_path);
+            assert(current == test);*/
 
             if (__builtin_expect(slow_path, 0)) {
                 slow_identifier_lexing(l, current, start);

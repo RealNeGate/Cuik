@@ -3,8 +3,8 @@ static Lexer make_temporary_lexer(const unsigned char* start) {
 }
 
 static Token* get_last_token(TokenStream* restrict s) {
-    assert(arrlen(s->tokens) > 0);
-    return &s->tokens[arrlen(s->tokens) - 1];
+    assert(dyn_array_length(s->tokens) > 0);
+    return &s->tokens[dyn_array_length(s->tokens) - 1];
 }
 
 static bool concat_token(TokenStream* restrict in, Token* last, unsigned char* out, size_t capacity, Token* out_token) {
@@ -55,7 +55,8 @@ static void expand_double_hash(Cuik_CPP* restrict c, TokenStream* restrict s, To
             } else {
                 TokenStream temp_tokens = get_all_tokens_in_buffer("<temp>", concat_buffer, NULL);
 
-                arrdelswap(s->tokens, arrlen(s->tokens) - 1);
+                // remove top
+                dyn_array_set_length(s->tokens, dyn_array_length(s->tokens) - 1);
                 expand_ident(c, s, &temp_tokens, loc);
 
                 free_token_stream(&temp_tokens);
@@ -217,7 +218,7 @@ static void expand_ident(Cuik_CPP* restrict c, TokenStream* restrict s, TokenStr
             get_source_location(c, in, s, parent_loc, SOURCE_LOC_NORMAL), hit_line,
             output_path_start, output_path - 1
         };
-        arrput(s->tokens, t);
+        dyn_array_put(s->tokens, t);
         tokens_next(in);
     } else if (tokens_match(in, 11, "__COUNTER__")) {
         SourceLoc* loc = try_for_nicer_loc(s, &s->locations[parent_loc]);
@@ -232,7 +233,7 @@ static void expand_ident(Cuik_CPP* restrict c, TokenStream* restrict s, TokenStr
             get_source_location(c, in, s, parent_loc, SOURCE_LOC_NORMAL),
             out, out + length
         };
-        arrput(s->tokens, t);
+        dyn_array_put(s->tokens, t);
         tokens_next(in);
     } else if (tokens_match(in, 8, "__LINE__")) {
         SourceLoc* loc = try_for_nicer_loc(s, &s->locations[parent_loc]);
@@ -247,7 +248,7 @@ static void expand_ident(Cuik_CPP* restrict c, TokenStream* restrict s, TokenStr
             get_source_location(c, in, s, parent_loc, SOURCE_LOC_NORMAL),
             out, out + length
         };
-        arrput(s->tokens, t);
+        dyn_array_put(s->tokens, t);
         tokens_next(in);
     } else if (tokens_match(in, 7, "defined")) {
         tokens_next(in);
@@ -291,7 +292,7 @@ static void expand_ident(Cuik_CPP* restrict c, TokenStream* restrict s, TokenStr
             get_source_location(c, in, s, parent_loc, SOURCE_LOC_NORMAL),
             out, out + 1,
         };
-        arrput(s->tokens, t);
+        dyn_array_put(s->tokens, t);
     } else {
         size_t def_i;
         if (find_define(c, &def_i, token_data, token_length)) {
@@ -353,7 +354,7 @@ static void expand_ident(Cuik_CPP* restrict c, TokenStream* restrict s, TokenStr
                     size_t paren_end = match_parenthesis(c, in);
 
                     // This expansion is temporary
-                    size_t old_tokens_length = arrlen(s->tokens);
+                    size_t old_tokens_length = dyn_array_length(s->tokens);
                     s->current = old_tokens_length;
 
                     // hide macro then expand
@@ -362,8 +363,8 @@ static void expand_ident(Cuik_CPP* restrict c, TokenStream* restrict s, TokenStr
                     unhide_macro(c, def_i, hidden);
 
                     // Insert a null token at the end
-                    Token t = {0, true, arrlen(s->locations) - 1, NULL, NULL};
-                    arrput(s->tokens, t);
+                    Token t = {0, true, dyn_array_length(s->locations) - 1, NULL, NULL};
+                    dyn_array_put(s->tokens, t);
 
                     s->current = old_tokens_length;
                     values = convert_tokens_to_value_list_in_tls(c, s, &value_count);
@@ -591,11 +592,11 @@ static void expand_ident(Cuik_CPP* restrict c, TokenStream* restrict s, TokenStr
                         // expand and append
                         *temp_expansion++ = '\0';
                         TokenStream temp_tokens = get_all_tokens_in_buffer("<temp>", temp_expansion_start, NULL);
-                        size_t old = arrlen(s->tokens);
+                        size_t old = dyn_array_length(s->tokens);
 
                         // macro hide set
                         size_t hidden = hide_macro(c, def_i);
-                        expand(c, s, &temp_tokens, arrlen(temp_tokens.tokens), true, expanded_loc);
+                        expand(c, s, &temp_tokens, dyn_array_length(temp_tokens.tokens), true, expanded_loc);
                         unhide_macro(c, def_i, hidden);
 
                         free_token_stream(&temp_tokens);
@@ -613,12 +614,12 @@ static void expand_ident(Cuik_CPP* restrict c, TokenStream* restrict s, TokenStr
                         expanded_loc, token_data, token_data + token_length,
                     };
 
-                    arrput(s->tokens, t);
+                    dyn_array_put(s->tokens, t);
                 } else {
                     TokenStream temp_tokens = get_all_tokens_in_buffer("<temp>", def.data, &def.data[def.length]);
 
                     size_t hidden = hide_macro(c, def_i);
-                    expand(c, s, &temp_tokens, arrlen(temp_tokens.tokens), true, expanded_loc);
+                    expand(c, s, &temp_tokens, dyn_array_length(temp_tokens.tokens), true, expanded_loc);
                     unhide_macro(c, def_i, hidden);
 
                     free_token_stream(&temp_tokens);
@@ -634,7 +635,7 @@ static void expand_ident(Cuik_CPP* restrict c, TokenStream* restrict s, TokenStr
                 token_data, token_data + token_length,
             };
 
-            arrput(s->tokens, t);
+            dyn_array_put(s->tokens, t);
             tokens_next(in);
         }
     }
@@ -662,7 +663,7 @@ static void expand(Cuik_CPP* restrict c, TokenStream* restrict s, TokenStream* r
             Token t = *tokens_get(in);
             t.location = get_source_location(c, in, s, parent_loc, SOURCE_LOC_NORMAL);
 
-            arrput(s->tokens, t);
+            dyn_array_put(s->tokens, t);
             tokens_next(in);
         } else {
             expand_ident(c, s, in, parent_loc);

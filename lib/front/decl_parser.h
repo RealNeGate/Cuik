@@ -640,8 +640,8 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
 
                     // Add to pending list
                     PendingExpr e = {PENDING_ALIGNAS, current, NULL};
-                    arrput(pending_exprs, e);
-                    alignas_pending_expr = &pending_exprs[arrlen(pending_exprs) - 1];
+                    dyn_array_put(pending_exprs, e);
+                    alignas_pending_expr = &pending_exprs[dyn_array_length(pending_exprs) - 1];
                 } else {
                     if (is_typename(tu, s)) {
                         Cuik_Type* new_align = parse_typename(tu, s);

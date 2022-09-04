@@ -1,6 +1,9 @@
 #include "targets.h"
 #include <front/sema.h>
 
+#define NL_STRING_MAP_IMPL
+#include <string_map.h>
+
 // two simple temporary buffers to represent type_as_string results
 static thread_local char temp_string0[1024], temp_string1[1024];
 
@@ -254,11 +257,11 @@ const Cuik_ArchDesc* cuik_get_x64_target_desc(void) {
     static Cuik_ArchDesc t = { 0 };
     if (t.builtin_func_map == NULL) {
         // TODO(NeGate): make this thread safe
-        BuiltinBinding* builtins = NULL;
+        NL_Strmap(bool) builtins = NULL;
 
         target_generic_fill_builtin_table(&builtins);
-        shput(builtins, "_mm_getcsr", 1);
-        shput(builtins, "_mm_setcsr", 1);
+        nl_strmap_put_cstr(builtins, "_mm_getcsr", 1);
+        nl_strmap_put_cstr(builtins, "_mm_setcsr", 1);
 
         t = (Cuik_ArchDesc){
             .arch = TB_ARCH_X86_64,
