@@ -20,7 +20,6 @@ int sprintf_s(char* buffer, size_t len, const char* format, ...);
 #endif
 
 // opaque structs
-typedef struct TokenStream TokenStream;
 typedef struct Expr Expr;
 typedef struct Stmt Stmt;
 typedef struct Token Token;
@@ -140,9 +139,12 @@ CUIK_API bool cuik_lex_is_keyword(size_t length, const char* str);
 typedef unsigned int SourceLocIndex;
 typedef struct Cuik_CPP Cuik_CPP;
 
-#define SOURCE_LOC_GET_DATA(loc) ((loc) & ~0xC0000000u)
-#define SOURCE_LOC_GET_TYPE(loc) (((loc) & 0xC0000000u) >> 30u)
-#define SOURCE_LOC_SET_TYPE(type, raw) (((type << 30) & 0xC0000000u) | ((raw) & ~0xC0000000u))
+// first token in a line
+// #define SOURCE_LOC_HIT_LINE(loc) (((loc) & 0x80000000u) ? 1 : 0)
+
+// #define SOURCE_LOC_GET_DATA(loc) ((loc) & ~0xE0000000u)
+// #define SOURCE_LOC_GET_TYPE(loc) (((loc) & 0xE0000000u) >> 30u)
+// #define SOURCE_LOC_SET_TYPE(type, raw) (((type << 30) & 0xE0000000u) | ((raw) & ~0xE0000000u))
 
 typedef enum SourceLocType {
     SOURCE_LOC_UNKNOWN = 0,
@@ -150,10 +152,6 @@ typedef enum SourceLocType {
     SOURCE_LOC_MACRO = 2,
     SOURCE_LOC_FILE = 3
 } SourceLocType;
-
-typedef struct SourceRange {
-    SourceLocIndex start, end;
-} SourceRange;
 
 typedef struct SourceLine {
     const char* filepath;
@@ -166,8 +164,21 @@ typedef struct SourceLoc {
     SourceLine* line;
     SourceLocIndex expansion;
     unsigned int columns;
-    unsigned int length;
+
+    unsigned int length : 30;
+    SourceLocType type  : 2;
 } SourceLoc;
+
+typedef struct TokenStream {
+    const char* filepath;
+
+    // stb_ds array
+    struct Token* tokens;
+    size_t current;
+
+    // stb_ds array
+    struct SourceLoc* locations;
+} TokenStream;
 
 typedef struct Cuik_FileEntry {
     size_t parent_id;

@@ -81,6 +81,7 @@ static void set_defines(Cuik_CPP* cpp, const Cuik_Target* target, bool system_li
     cuikpp_define_empty(cpp, "__FILE__");
     cuikpp_define_empty(cpp, "L__FILE__");
     cuikpp_define_empty(cpp, "__LINE__");
+    cuikpp_define_empty(cpp, "__COUNTER__");
 
     // CuikC specific
     cuikpp_define(cpp, "__CUIK__", STR(CUIK_COMPILER_MAJOR));
@@ -252,13 +253,11 @@ CUIK_API Cuik_Entrypoint cuik_get_entrypoint_status(TranslationUnit* restrict tu
 }
 
 CUIK_API const char* cuik_get_location_file(TokenStream* restrict s, SourceLocIndex loc) {
-    SourceLoc* l = &s->locations[SOURCE_LOC_GET_DATA(loc)];
-    return l->line->filepath;
+    return s->locations[loc].line->filepath;
 }
 
 CUIK_API int cuik_get_location_line(TokenStream* restrict s, SourceLocIndex loc) {
-    SourceLoc* l = &s->locations[SOURCE_LOC_GET_DATA(loc)];
-    return l->line->line;
+    return s->locations[loc].line->line;
 }
 
 CUIK_API TokenStream* cuik_get_token_stream_from_tu(TranslationUnit* restrict tu) {

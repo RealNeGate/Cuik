@@ -195,8 +195,27 @@ inline static SourceLocIndex tokens_get_location_index(TokenStream* restrict s) 
     return s->tokens[s->current].location;
 }
 
-inline static SourceLoc* tokens_get_last_location(TokenStream* restrict s) {
-    return &s->locations[s->tokens[s->current - 1].location];
+inline static bool tokens_hit_line(TokenStream* restrict s) {
+    return s->tokens[s->current].hit_line;
+}
+
+inline static int tokens_get_location_line(TokenStream* restrict s) {
+    return s->locations[s->tokens[s->current].location].line->line;
+}
+
+inline static bool tokens_eof(TokenStream* restrict s) {
+    return s->tokens[s->current].type == 0;
+}
+
+inline static bool tokens_is(TokenStream* restrict s, TknType type) {
+    return s->tokens[s->current].type == type;
+}
+
+inline static bool tokens_match(TokenStream* restrict s, size_t len, const char* str) {
+    Token* t = &s->tokens[s->current];
+    if ((t->end - t->start) != len) return false;
+
+    return memcmp(t->start, str, len) == 0;
 }
 
 inline static SourceLoc* tokens_get_location(TokenStream* restrict s) {

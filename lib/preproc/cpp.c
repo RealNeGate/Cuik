@@ -5,7 +5,9 @@
 //
 // NOTE(NeGate): the_shtuffs is the simple linear allocator in this preprocessor, just avoids
 // wasting time on the heap allocator
-#include "cpp.h"
+#include <cuik.h>
+#include "big_array.h"
+#include "lexer.h"
 #include <str.h>
 #include <diagnostic.h>
 #include <memory.h>
@@ -25,19 +27,24 @@
 static void preprocess_file(Cuik_CPP* restrict c, TokenStream* restrict s, size_t parent_entry, SourceLocIndex include_loc, const char* directory, const char* filepath, int depth);
 static uint64_t hash_ident(const unsigned char* at, size_t length);
 static bool is_defined(Cuik_CPP* restrict c, const unsigned char* start, size_t length);
-static void expect(Lexer* l, char ch);
-static void skip_directive_body(Lexer* l);
-static intmax_t eval(Cuik_CPP* restrict c, TokenStream* restrict s, Lexer* l, SourceLocIndex parent_loc);
-static _Noreturn void generic_error(Lexer* l, const char* msg);
+static void expect(TokenStream* restrict in, char ch);
+static void skip_directive_body(TokenStream* s);
+static intmax_t eval(Cuik_CPP* restrict c, TokenStream* restrict s, TokenStream* restrict in, SourceLocIndex parent_loc);
+static _Noreturn void generic_error(TokenStream* restrict in, const char* msg);
 
 static void* gimme_the_shtuffs(Cuik_CPP* restrict c, size_t len);
 static void trim_the_shtuffs(Cuik_CPP* restrict c, void* new_top);
-static SourceLocIndex get_source_location(Cuik_CPP* restrict c, Lexer* restrict l, TokenStream* restrict s, SourceLocIndex parent_loc, SourceLocType loc_type);
+static SourceLocIndex get_source_location(Cuik_CPP* restrict c, TokenStream* restrict in, TokenStream* restrict s, SourceLocIndex parent_loc, SourceLocType loc_type);
 
-static void expand(Cuik_CPP* restrict c, TokenStream* restrict s, Lexer* l, SourceLocIndex parent_loc);
-static void expand_ident(Cuik_CPP* restrict c, TokenStream* restrict s, Lexer* l, SourceLocIndex parent_loc);
-static void push_scope(Cuik_CPP* restrict ctx, Lexer* restrict l, bool initial);
-static void pop_scope(Cuik_CPP* restrict ctx, Lexer* restrict l);
+static void expand(Cuik_CPP* restrict c, TokenStream* restrict s, TokenStream* restrict in, size_t in_stream_end, bool exit_on_hit_line, SourceLocIndex parent_loc);
+static void expand_ident(Cuik_CPP* restrict c, TokenStream* restrict s, TokenStream* restrict in, SourceLocIndex parent_loc);
+static void push_scope(Cuik_CPP* restrict ctx, TokenStream* restrict in, bool initial, SourceLocIndex loc);
+static void pop_scope(Cuik_CPP* restrict ctx, TokenStream* restrict in, SourceLocIndex loc);
+
+// if end is NULL, it'll just be null terminated
+static TokenStream get_all_tokens_in_buffer(const char* filepath, const uint8_t* data, const uint8_t* end);
+static void free_token_stream(TokenStream* s);
+static void print_token_stream(TokenStream* s, size_t start, size_t end);
 
 //static void expand_double_hash(Cuik_CPP* restrict c, TokenStream* restrict s, Token* last, Lexer* restrict l, SourceLocIndex loc);
 
@@ -51,8 +58,18 @@ typedef struct CPPStackSlot {
     uint64_t start_time;
     SourceLocIndex include_loc;
 
-    Lexer l;
+    TokenStream tokens;
 } CPPStackSlot;
+
+static void expect_from_lexer(Lexer* l, char ch) {
+    if (l->token_type != ch) {
+        int loc = l->current_line;
+        fprintf(stderr, "error %s:%d: expected '%c' got '%.*s'", l->filepath, loc, ch, (int)(l->token_end - l->token_start), l->token_start);
+        abort();
+    }
+
+    lexer_read(l);
+}
 
 // Basically a mini-unity build that takes up just the CPP module
 #include "cpp_symtab.h"
@@ -61,19 +78,33 @@ typedef struct CPPStackSlot {
 #include "cpp_expr.h"
 #include "cpp_iters.h"
 
-static String get_pp_tokens_until_newline(Lexer* restrict l) {
-    const unsigned char* start = l->token_start;
-    const unsigned char* end = l->token_start;
-    while (!l->hit_line) {
-        end = l->token_end;
-        lexer_read(l);
+static void warn_if_newline(TokenStream* s) {
+    while (!tokens_eof(s) && !tokens_hit_line(s)) {
+        tokens_next(s);
+    }
+}
+
+static void expect_no_newline(TokenStream* s, int start_line) {
+    // preprocessor usually expects it's statement to be on the same line
+    // TODO(NeGate): make this a real error message
+    assert(!tokens_hit_line(s));
+}
+
+static String get_pp_tokens_until_newline(TokenStream* s) {
+    const unsigned char* start = s->tokens[s->current].start;
+    const unsigned char* end = start;
+
+    while (!tokens_eof(s) && !tokens_hit_line(s)) {
+        end = s->tokens[s->current].end;
+        tokens_next(s);
     }
 
     return (String){ .length = end - start, .data = start };
 }
 
-static String get_token_as_string(Lexer* l) {
-    return (String){ .length = l->token_end - l->token_start, .data = l->token_start };
+static String get_token_as_string(TokenStream* restrict in) {
+    Token* t = tokens_get(in);
+    return (String){ .length = t->end - t->start, .data = t->start };
 }
 
 CUIK_API const char* cuikpp_get_main_file(TokenStream* tokens) {
@@ -81,11 +112,11 @@ CUIK_API const char* cuikpp_get_main_file(TokenStream* tokens) {
 }
 
 CUIK_API bool cuikpp_is_in_main_file(TokenStream* tokens, SourceLocIndex loc) {
-    if (SOURCE_LOC_GET_TYPE(loc) == SOURCE_LOC_UNKNOWN) {
+    if (loc != 0) {
         return false;
     }
 
-    SourceLoc* l = &tokens->locations[SOURCE_LOC_GET_DATA(loc)];
+    SourceLoc* l = &tokens->locations[loc];
     return l->line->filepath == tokens->filepath;
 }
 
@@ -134,6 +165,92 @@ CUIK_API void cuikpp_init(Cuik_CPP* ctx, const char filepath[FILENAME_MAX]) {
     tls_init();
 }
 
+static void print_token_stream(TokenStream* s, size_t start, size_t end) {
+    int last_line = 0;
+
+    printf("Tokens:\n");
+    for (size_t i = start; i < end; i++) {
+        Token* t = &s->tokens[i];
+        SourceLoc* loc = &s->locations[t->location];
+
+        if (loc->line != NULL && last_line != loc->line->line) {
+            printf("\n  # line %3d\n", loc->line->line);
+            last_line = loc->line->line;
+        }
+
+        printf("%.*s ", (int) (t->end - t->start), t->start);
+    }
+    printf("\n\n\n");
+}
+
+static void free_token_stream(TokenStream* s) {
+    // TODO(NeGate): we wanna free the source locations but that's weird currently
+    // so we might invest into smarter allocation schemes here
+    arrfree(s->locations);
+    arrfree(s->tokens);
+}
+
+static TokenStream get_all_tokens_in_buffer(const char* filepath, const uint8_t* data, const uint8_t* end) {
+    if (end != NULL) {
+        // mark end as the place where that the token_start lands on
+        Lexer end_lexer = { filepath, end, end, 1 };
+        lexer_read(&end_lexer);
+
+        end = end_lexer.token_start;
+    }
+
+    TokenStream s = { filepath };
+
+    Lexer l = { filepath, data, data, 1 };
+    lexer_read(&l);
+
+    int current_line_num = 0;
+    SourceLine* current_line = NULL;
+
+    while (l.token_type && end != l.token_start) {
+        if (l.line_current == NULL) {
+            l.line_current = l.start;
+        }
+
+        // slap a source location
+        ptrdiff_t columns = l.token_start - l.line_current;
+        ptrdiff_t length = l.token_end - l.token_start;
+        assert(columns <= UINT16_MAX && length <= UINT16_MAX);
+
+        if (current_line_num != l.current_line) {
+            // make a new source line... we'll miss our fallen brother, he's not
+            // dead but for when he dies...
+            current_line = arena_alloc(&thread_arena, sizeof(SourceLine), _Alignof(SourceLine));
+            current_line->filepath = l.filepath;
+            current_line->line_str = l.line_current;
+            current_line->parent = 0;
+            current_line->line = l.current_line;
+
+            current_line_num = l.current_line;
+        }
+
+        assert(current_line != NULL);
+        SourceLocIndex loc_index = arraddnindex(s.locations, 1);
+        s.locations[loc_index] = (SourceLoc) {
+            .line = current_line,
+            .columns = columns,
+            .length = length,
+        };
+
+        // insert token
+        Token t = { l.token_type, l.hit_line, loc_index, l.token_start, l.token_end };
+        arrput(s.tokens, t);
+        l.hit_line = false;
+
+        lexer_read(&l);
+    }
+
+    // Add EOF token
+    Token t = {0, true, 0, NULL, NULL};
+    arrput(s.tokens, t);
+    return s;
+}
+
 CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
     assert(ctx->stack_ptr > 0);
     CPPStackSlot* restrict slot = &ctx->stack[ctx->stack_ptr - 1];
@@ -165,14 +282,25 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
                     return CUIKPP_ERROR;
                 }
 
+                #if CUIK__CPP_STATS
+                ctx->total_io_time += (cuik_time_in_nanos() - slot->start_time);
+                ctx->total_files_read += 1;
+                #endif
+
                 const char* filepath = packet->file.input_path;
                 size_t file_length = packet->file.content_length;
                 uint8_t* file_data = packet->file.content;
 
                 // initialize the file & lexer in the stack slot
                 slot->file_id = dyn_array_length(ctx->files);
-                slot->l = (Lexer){ filepath, file_data, file_data, 1 };
-                lexer_read(&slot->l);
+
+                #if CUIK__CPP_STATS
+                uint64_t start_time = cuik_time_in_nanos();
+                slot->tokens = get_all_tokens_in_buffer(filepath, file_data, file_data + file_length);
+                ctx->total_lex_time += (cuik_time_in_nanos() - start_time);
+                #else
+                slot->tokens = get_all_tokens_in_buffer(filepath, file_data, file_data + file_length);
+                #endif
 
                 // record the file entry
                 Cuik_FileEntry file_entry = {
@@ -218,8 +346,8 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
                 assert(ctx->stack_ptr > 1);
                 CPPStackSlot* restrict prev_slot = &ctx->stack[ctx->stack_ptr - 2];
 
-                int loc = prev_slot->l.current_line;
-                fprintf(stderr, "error %s:%d: Could not find file! %s\n", prev_slot->l.filepath, loc, slot->filepath);
+                int loc = tokens_get_location_line(&prev_slot->tokens);
+                fprintf(stderr, "error %s:%d: Could not find file! %s\n", prev_slot->tokens.filepath, loc, slot->filepath);
                 return CUIKPP_ERROR;
             }
 
@@ -301,8 +429,13 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
 
         // initialize the file & lexer in the stack slot
         slot->file_id = dyn_array_length(ctx->files);
-        slot->l = (Lexer){ filepath, file_data, file_data, 1 };
-        lexer_read(&slot->l);
+        #if CUIK__CPP_STATS
+        uint64_t start_time = cuik_time_in_nanos();
+        slot->tokens = get_all_tokens_in_buffer(filepath, file_data, file_data + file_length);
+        ctx->total_lex_time += (cuik_time_in_nanos() - start_time);
+        #else
+        slot->tokens = get_all_tokens_in_buffer(filepath, file_data, file_data + file_length);
+        #endif
 
         // record the file entry
         Cuik_FileEntry file_entry = {
@@ -320,15 +453,15 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
         // continue along to the actual preprocessing now
     }
 
-    Lexer* restrict l = &slot->l;
+    TokenStream* restrict in = &slot->tokens;
     TokenStream* restrict s = &ctx->tokens;
     SourceLocIndex include_loc = slot->include_loc;
 
     for (;;) {
-        // this is set to true whenever a line is hit, we
-        // reset it before running preproc stuff
-        l->hit_line = false;
-        if (l->token_type == 0) {
+        int start_line_for_pp_stmt = tokens_get_location_line(in);
+
+        TknType first_token = tokens_get(in)->type;
+        if (first_token == 0) {
             ctx->stack_ptr -= 1;
 
             // write out profile entry
@@ -348,43 +481,48 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
             // if this is the last file, just exit
             if (ctx->stack_ptr == 0) {
                 // place last token
-                Token t = {0, 0, NULL, NULL};
+                Token t = {0, true, 0, NULL, NULL};
                 arrput(s->tokens, t);
+
+                s->current = 0;
                 return CUIKPP_DONE;
             }
+
+            // free token stream
+            free_token_stream(&slot->tokens);
 
             // step out of this file into the previous one
             slot = &ctx->stack[ctx->stack_ptr - 1];
 
-            l = &slot->l;
-            s = &ctx->tokens;
+            in = &slot->tokens;
             include_loc = slot->include_loc;
             continue;
-        } else if (l->token_type == TOKEN_HASH) {
+        } else if (first_token == TOKEN_HASH) {
             // all the directives go here
             bool success = false;
 
-            lexer_read(l); // skip the hash
-            String directive = get_token_as_string(l);
+            SourceLocIndex directive_loc = tokens_get_location_index(in);
+            tokens_next(in); // skip the hash
+            String directive = get_token_as_string(in);
 
             switch (directive.length) {
                 // 'if' EXPR NEWLINE
                 case 2:
                 if (memcmp(directive.data, "if", 2) == 0) {
                     success = true;
-                    SourceLocIndex loc = get_source_location(ctx, l, s, include_loc, SOURCE_LOC_NORMAL);
-                    lexer_read(l);
+                    SourceLocIndex loc = get_source_location(ctx, in, s, include_loc, SOURCE_LOC_NORMAL);
+                    tokens_next(in);
 
-                    assert(!l->hit_line);
-                    if (eval(ctx, s, l, loc)) {
-                        push_scope(ctx, l, true);
+                    expect_no_newline(in, start_line_for_pp_stmt);
+                    if (eval(ctx, s, in, loc)) {
+                        push_scope(ctx, in, true, directive_loc);
                     } else {
-                        push_scope(ctx, l, false);
-                        skip_directive_body(l);
+                        push_scope(ctx, in, false, directive_loc);
+                        skip_directive_body(in);
                     }
 
                     // we should be one a different line now
-                    assert(l->hit_line);
+                    warn_if_newline(in);
                 }
                 break;
 
@@ -392,26 +530,26 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
                 case 4:
                 if (memcmp(directive.data, "elif", 4) == 0) {
                     success = true;
-                    SourceLocIndex loc = get_source_location(ctx, l, s, include_loc, SOURCE_LOC_NORMAL);
-                    lexer_read(l);
+                    SourceLocIndex loc = get_source_location(ctx, in, s, include_loc, SOURCE_LOC_NORMAL);
+                    tokens_next(in);
 
-                    assert(!l->hit_line);
+                    expect_no_newline(in, start_line_for_pp_stmt);
 
                     // if it didn't evaluate any of the other options
                     // try to do this
                     int last_scope = ctx->depth - 1;
 
-                    if (!ctx->scope_eval[last_scope] && eval(ctx, s, l, loc)) {
+                    if (!ctx->scope_eval[last_scope] && eval(ctx, s, in, loc)) {
                         ctx->scope_eval[last_scope] = true;
                     } else {
-                        skip_directive_body(l);
+                        skip_directive_body(in);
                     }
 
                     // we should be one a different line now
-                    assert(l->hit_line);
+                    warn_if_newline(in);
                 } else if (memcmp(directive.data, "else", 4) == 0) {
                     success = true;
-                    lexer_read(l);
+                    tokens_next(in);
 
                     // if it didn't evaluate any of the other options
                     // do this
@@ -420,7 +558,7 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
                     if (!ctx->scope_eval[last_scope]) {
                         ctx->scope_eval[last_scope] = true;
                     } else {
-                        skip_directive_body(l);
+                        skip_directive_body(in);
                     }
                 }
                 break;
@@ -431,14 +569,14 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
                 case 5:
                 if (memcmp(directive.data, "undef", 5) == 0) {
                     success = true;
-                    lexer_read(l);
+                    tokens_next(in);
 
-                    if (l->token_type != TOKEN_IDENTIFIER) {
-                        generic_error(l, "expected identifier!");
+                    if (!tokens_is(in, TOKEN_IDENTIFIER)) {
+                        generic_error(in, "expected identifier!");
                     }
 
-                    String key = get_token_as_string(l);
-                    lexer_read(l);
+                    String key = get_token_as_string(in);
+                    tokens_next(in);
 
                     // Hash name
                     uint64_t slot = hash_ident(key.data, key.length);
@@ -468,11 +606,11 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
                 } else if (memcmp(directive.data, "error", 5) == 0) {
                     success = true;
                     SourceLocIndex loc = get_source_location(
-                        ctx, l, s, include_loc, SOURCE_LOC_NORMAL
+                        ctx, in, s, include_loc, SOURCE_LOC_NORMAL
                     );
 
-                    lexer_read(l);
-                    String msg = get_pp_tokens_until_newline(l);
+                    tokens_next(in);
+                    String msg = get_pp_tokens_until_newline(in);
 
                     report(
                         REPORT_ERROR, NULL, s, loc,
@@ -481,30 +619,26 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
                     return CUIKPP_DONE;
                 } else if (memcmp(directive.data, "ifdef", 5) == 0) {
                     success = true;
-                    lexer_read(l);
+                    tokens_next(in);
 
-                    if (l->token_type != TOKEN_IDENTIFIER) {
-                        generic_error(l, "expected identifier!");
+                    if (!tokens_is(in, TOKEN_IDENTIFIER)) {
+                        generic_error(in, "expected identifier!");
                     }
 
-                    if (is_defined(ctx, l->token_start, l->token_end - l->token_start)) {
-                        push_scope(ctx, l, true);
-                        lexer_read(l);
+                    Token* t = tokens_get(in);
+                    if (is_defined(ctx, t->start, t->end - t->start)) {
+                        push_scope(ctx, in, true, directive_loc);
+                        tokens_next(in);
                     } else {
-                        push_scope(ctx, l, false);
-                        skip_directive_body(l);
+                        push_scope(ctx, in, false, directive_loc);
+                        skip_directive_body(in);
                     }
                 } else if (memcmp(directive.data, "endif", 5) == 0) {
                     success = true;
-                    lexer_read(l);
+                    tokens_next(in);
 
-                    if (!l->hit_line) {
-                        // TODO(NeGate): warning people if they add extra tokens
-                        // to the endif
-                        while (!l->hit_line) lexer_read(l);
-                    }
-
-                    pop_scope(ctx, l);
+                    warn_if_newline(in);
+                    pop_scope(ctx, in, directive_loc);
                 }
                 break;
 
@@ -514,83 +648,81 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
                 case 6:
                 if (memcmp(directive.data, "define", 6) == 0) {
                     success = true;
-                    lexer_read(l);
+                    tokens_next(in);
 
                     SourceLocIndex macro_loc = get_source_location(
-                        ctx, l, s, include_loc, SOURCE_LOC_MACRO
+                        ctx, in, s, include_loc, SOURCE_LOC_MACRO
                     );
-                    if (l->token_type != TOKEN_IDENTIFIER) {
-                        generic_error(l, "expected identifier!");
+                    if (!tokens_is(in, TOKEN_IDENTIFIER)) {
+                        generic_error(in, "expected identifier!");
                     }
 
                     // Hash name
-                    uint64_t slot = hash_ident(l->token_start, l->token_end - l->token_start);
+                    String key = get_token_as_string(in);
+                    uint64_t slot = hash_ident(key.data, key.length);
                     uint64_t e = ctx->macro_bucket_count[slot] + (slot * SLOTS_PER_MACRO_BUCKET);
 
                     // Insert into buckets
                     if (ctx->macro_bucket_count[slot] >= SLOTS_PER_MACRO_BUCKET) {
-                        generic_error(l, "cannot store macro, out of memory!");
+                        generic_error(in, "cannot store macro, out of memory!");
                     }
 
                     ctx->macro_bucket_count[slot] += 1;
-                    ctx->macro_bucket_keys[e] = l->token_start;
-
-                    size_t token_length = l->token_end - l->token_start;
-                    ctx->macro_bucket_keys_length[e] = token_length;
+                    ctx->macro_bucket_keys[e] = key.data;
+                    ctx->macro_bucket_keys_length[e] = key.length;
 
                     // if there's a parenthesis directly after the identifier
-                    // it's a macro function
-                    if (*l->token_end == '(') {
-                        lexer_read(l);
-                        expect(l, '(');
+                    // it's a macro function... yes this is an purposeful off-by-one
+                    // it's mostly ok tho
+                    if (key.data[key.length] == '(') {
+                        tokens_next(in);
+                        expect(in, '(');
 
                         int arg_count = 0;
-                        while (l->token_type != ')') {
+                        while (!tokens_is(in, ')')) {
                             if (arg_count) {
-                                expect(l, ',');
+                                expect(in, ',');
                             }
 
-                            if (l->token_type != TOKEN_TRIPLE_DOT &&
-                                l->token_type != TOKEN_IDENTIFIER) {
-                                generic_error(l, "expected identifier!");
+                            if (!tokens_is(in, TOKEN_TRIPLE_DOT) && !tokens_is(in, TOKEN_IDENTIFIER)) {
+                                generic_error(in, "expected identifier!");
                             }
 
-                            lexer_read(l);
+                            tokens_next(in);
                             arg_count++;
                         }
 
-                        assert(!l->hit_line);
-                        expect(l, ')');
+                        expect_no_newline(in, start_line_for_pp_stmt);
+                        expect(in, ')');
                     } else {
-                        // Skip until we hit a newline
-                        assert(!l->hit_line);
-                        lexer_read(l);
+                        expect_no_newline(in, start_line_for_pp_stmt);
+                        tokens_next(in);
                     }
 
-                    String value = get_pp_tokens_until_newline(l);
+                    String value = get_pp_tokens_until_newline(in);
 
                     ctx->macro_bucket_values_start[e] = value.data;
                     ctx->macro_bucket_values_end[e] = value.data + value.length;
                     ctx->macro_bucket_source_locs[e] = macro_loc;
                 } else if (memcmp(directive.data, "pragma", 6) == 0) {
                     success = true;
-                    lexer_read(l);
+                    tokens_next(in);
 
                     SourceLocIndex loc = get_source_location(
-                        ctx, l, s, include_loc, SOURCE_LOC_NORMAL
+                        ctx, in, s, include_loc, SOURCE_LOC_NORMAL
                     );
 
-                    if (lexer_match(l, 4, "once")) {
+                    if (tokens_match(in, 4, "once")) {
                         shput(ctx->include_once, (const char*) slot->filepath, 0);
-                        lexer_read(l);
+                        tokens_next(in);
 
                         // We gotta hit a line by now
-                        assert(l->hit_line);
-                    } else if (lexer_match(l, 7, "message")) {
+                        warn_if_newline(in);
+                    } else if (tokens_match(in, 7, "message")) {
                         success = true;
-                        lexer_read(l);
+                        tokens_next(in);
 
-                        String msg = get_pp_tokens_until_newline(l);
+                        String msg = get_pp_tokens_until_newline(in);
                         report(
                             REPORT_INFO, NULL, s, loc,
                             "directive: %.*s", (int)msg.length, msg.data
@@ -599,19 +731,19 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
                         // convert to #pragma blah => _Pragma("blah")
                         unsigned char* str = gimme_the_shtuffs(ctx, sizeof("_Pragma"));
                         memcpy(str, "_Pragma", sizeof("_Pragma"));
-                        Token t = (Token){ TOKEN_KW_Pragma, loc, str, str + 7 };
+                        Token t = { TOKEN_KW_Pragma, false, loc, str, str + 7 };
                         arrput(s->tokens, t);
 
                         str = gimme_the_shtuffs(ctx, sizeof("("));
                         str[0] = '(';
                         str[1] = 0;
-                        t = (Token){ '(', loc, str, str + 1 };
+                        t = (Token){ '(', false, loc, str, str + 1 };
                         arrput(s->tokens, t);
 
                         // Skip until we hit a newline
-                        assert(!l->hit_line);
+                        expect_no_newline(in, start_line_for_pp_stmt);
 
-                        String payload = get_pp_tokens_until_newline(l);
+                        String payload = get_pp_tokens_until_newline(in);
 
                         // convert pragma content into string
                         {
@@ -630,30 +762,31 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
                             *curr++ = '\"';
                             *curr++ = '\0';
 
-                            t = (Token){ TOKEN_STRING_DOUBLE_QUOTE, loc, str, curr - 1 };
+                            t = (Token){ TOKEN_STRING_DOUBLE_QUOTE, false, loc, str, curr - 1 };
                             arrput(s->tokens, t);
                         }
 
                         str = gimme_the_shtuffs(ctx, sizeof(")"));
                         str[0] = ')';
                         str[1] = 0;
-                        t = (Token){ ')', loc, str, str + 1 };
+                        t = (Token){ ')', false, loc, str, str + 1 };
                         arrput(s->tokens, t);
                     }
                 } else if (memcmp(directive.data, "ifndef", 6) == 0) {
                     success = true;
-                    lexer_read(l);
+                    tokens_next(in);
 
-                    if (l->token_type != TOKEN_IDENTIFIER) {
-                        generic_error(l, "expected identifier!");
+                    if (!tokens_is(in, TOKEN_IDENTIFIER)) {
+                        generic_error(in, "expected identifier!");
                     }
 
-                    if (!is_defined(ctx, l->token_start, l->token_end - l->token_start)) {
-                        push_scope(ctx, l, true);
-                        lexer_read(l);
+                    Token* t = tokens_get(in);
+                    if (!is_defined(ctx, t->start, t->end - t->start)) {
+                        push_scope(ctx, in, true, directive_loc);
+                        tokens_next(in);
                     } else {
-                        push_scope(ctx, l, false);
-                        skip_directive_body(l);
+                        push_scope(ctx, in, false, directive_loc);
+                        skip_directive_body(in);
                     }
                 }
                 break;
@@ -666,66 +799,67 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
                 if (memcmp(directive.data, "include", 7) == 0) {
                     success = true;
                     SourceLocIndex new_include_loc = get_source_location(
-                        ctx, l, s, include_loc, SOURCE_LOC_NORMAL
+                        ctx, in, s, include_loc, SOURCE_LOC_NORMAL
                     );
-                    lexer_read(l);
+                    tokens_next(in);
 
                     char* filename = gimme_the_shtuffs(ctx, MAX_PATH);
 
                     bool is_lib_include = false;
                     // Evaluate
-                    if (l->token_type == '<') {
-                        lexer_read(l);
+                    if (tokens_is(in, '<')) {
+                        tokens_next(in);
 
                         is_lib_include = true;
                         size_t len = 0;
 
                         // Hacky but mostly works
                         do {
-                            size_t token_len = l->token_end - l->token_start;
+                            Token* t = tokens_get(in);
+                            size_t token_len = t->end - t->start;
                             if (len + token_len > MAX_PATH) {
-                                generic_error(l, "filename too long!");
+                                generic_error(in, "filename too long!");
                             }
 
-                            memcpy(&filename[len], l->token_start, token_len);
+                            memcpy(&filename[len], t->start, token_len);
                             len += token_len;
 
-                            lexer_read(l);
-                        } while (l->token_type != '>');
+                            tokens_next(in);
+                        } while (!tokens_is(in, '>'));
 
                         // slap that null terminator on it like a boss bitch
                         filename[len] = '\0';
 
-                        if (l->token_type != '>') {
-                            generic_error(l, "expected '>' for #include");
+                        if (!tokens_is(in, '>')) {
+                            generic_error(in, "expected '>' for #include");
                         }
 
-                        lexer_read(l);
+                        tokens_next(in);
                     } else {
                         size_t old_tokens_length = arrlen(s->tokens);
                         s->current = old_tokens_length;
 
-                        expand(ctx, s, l, new_include_loc);
+                        expand(ctx, s, in, arrlen(in->tokens), true, new_include_loc);
                         assert(s->current != arrlen(s->tokens) && "Expected the macro expansion to add something");
 
                         // Insert a null token at the end
-                        Token t = {0, arrlen(s->locations) - 1, NULL, NULL};
+                        Token t = {0, true, arrlen(s->locations) - 1, NULL, NULL};
                         arrput(s->tokens, t);
 
-                        if (tokens_get(s)->type == TOKEN_STRING_DOUBLE_QUOTE) {
-                            Token* t = tokens_get(s);
-                            size_t len = (t->end - t->start) - 2;
+                        if (tokens_is(s, TOKEN_STRING_DOUBLE_QUOTE)) {
+                            Token* t2 = tokens_get(s);
+                            size_t len = (t2->end - t2->start) - 2;
                             if (len > MAX_PATH) {
-                                report(REPORT_ERROR, NULL, s, t->location, "Filename too long");
+                                report(REPORT_ERROR, NULL, s, t2->location, "Filename too long");
                                 abort();
                             }
 
-                            memcpy(filename, t->start + 1, len);
+                            memcpy(filename, t2->start + 1, len);
                             filename[len] = '\0';
 
                             tokens_next(s);
                         } else {
-                            generic_error(l, "expected file path!");
+                            generic_error(in, "expected file path!");
                         }
 
                         // reset token stream
@@ -775,10 +909,10 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
                 } else if (memcmp(directive.data, "warning", 7) == 0) {
                     success = true;
                     SourceLocIndex loc = get_source_location(
-                        ctx, l, s, include_loc, SOURCE_LOC_NORMAL
+                        ctx, in, s, include_loc, SOURCE_LOC_NORMAL
                     );
 
-                    String msg = get_pp_tokens_until_newline(l);
+                    String msg = get_pp_tokens_until_newline(in);
                     report(
                         REPORT_WARNING, NULL, s, loc,
                         "directive: %.*s", (int)msg.length, msg.data
@@ -790,57 +924,57 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
             }
 
             if (!success) {
-                generic_error(l, "unknown directive!");
+                report(
+                    REPORT_ERROR, NULL, in, directive_loc,
+                    "unknown directive: %.*s", (int)directive.length, directive.data
+                );
                 return CUIKPP_ERROR;
             }
-        } else if (l->token_type == TOKEN_IDENTIFIER) {
+        } else if (first_token == TOKEN_IDENTIFIER) {
             // check if it's actually a macro, if not categorize it if it's a keyword
-            SourceLocIndex loc = get_source_location(ctx, l, s, include_loc, SOURCE_LOC_NORMAL);
+            SourceLocIndex loc = get_source_location(ctx, in, s, include_loc, SOURCE_LOC_NORMAL);
 
-            if (!is_defined(ctx, l->token_start, l->token_end - l->token_start)) {
+            Token* t = tokens_get(in);
+            if (!is_defined(ctx, t->start, t->end - t->start)) {
                 // FAST PATH
-                Token t = {
-                    classify_ident(l->token_start, l->token_end - l->token_start),
-                    loc, l->token_start, l->token_end,
+                Token final_token = {
+                    classify_ident(t->start, t->end - t->start),
+                    t->hit_line, loc, t->start, t->end,
                 };
-                arrput(s->tokens, t);
+                arrput(s->tokens, final_token);
 
-                lexer_read(l);
+                tokens_next(in);
             } else {
                 // SLOW PATH BECAUSE IT NEEDS TO SPAWN POSSIBLY METRIC SHIT LOADS
                 // OF TOKENS AND EXPAND WITH THE AVERAGE C PREPROCESSOR SPOOKIES
-                expand_ident(ctx, s, l, loc);
+                expand_ident(ctx, s, in, loc);
             }
-        } else if (l->token_type == TOKEN_DOUBLE_HASH) {
-            lexer_read(l);
+        } else if (first_token == TOKEN_DOUBLE_HASH) {
+            tokens_next(in);
 
             assert(arrlen(s->tokens) > 0);
             Token* last = &s->tokens[arrlen(s->tokens) - 1];
 
-            expand_double_hash(ctx, s, last, l, last->location);
+            expand_double_hash(ctx, s, last, in, last->location);
         } else {
             // printf("NORMAL: '%.*s'\n", (int)(l->token_end - l->token_start), l->token_start);
-            Token t = {
-                l->token_type,
-                get_source_location(ctx, l, s, include_loc, SOURCE_LOC_NORMAL),
-                l->token_start,
-                l->token_end,
-            };
+            Token t = *tokens_get(in);
+            t.location = get_source_location(ctx, in, s, include_loc, SOURCE_LOC_NORMAL);
 
             arrput(s->tokens, t);
-            lexer_read(l);
+            tokens_next(in);
         }
     }
 }
 
 CUIK_API void cuikpp_deinit(Cuik_CPP* ctx) {
     #if CUIK__CPP_STATS
-    printf("%40s | %zu file read | %zu fstats\n",
-        ctx->files[0].filepath, ctx->total_files_read, ctx->total_fstats);
-    /*printf("%40s | %f us / %zu file read (%f ms / %zu fstats)\n",
+    //printf("%40s | %zu file read | %zu fstats\n", ctx->files[0].filepath, ctx->total_files_read, ctx->total_fstats);
+    printf("%40s | %f ms lex | %f us read | %zu file read | %zu fstats\n",
         ctx->files[0].filepath,
+        ctx->total_lex_time / 1000000.0,
         ctx->total_io_time / 1000.0, ctx->total_files_read,
-        ctx->total_include_time / 10000000.0, ctx->total_fstats);*/
+        ctx->total_fstats);
     #endif
 
     if (ctx->macro_bucket_keys) {
@@ -943,83 +1077,58 @@ static void trim_the_shtuffs(Cuik_CPP* restrict c, void* new_top) {
     c->the_shtuffs_size = i;
 }
 
-static SourceLocIndex get_source_location(Cuik_CPP* restrict c, Lexer* restrict l, TokenStream* restrict s, SourceLocIndex parent_loc, SourceLocType loc_type) {
-    SourceLocIndex i = arrlen(s->locations);
-    if (l->line_current == NULL) {
-        l->line_current = l->start;
-    }
+static SourceLocIndex get_source_location(Cuik_CPP* restrict c, TokenStream* restrict in, TokenStream* restrict s, SourceLocIndex parent_loc, SourceLocType loc_type) {
+    // just extract the one that's attached to the input token and chop it's heading
+    SourceLoc* old = &in->locations[in->tokens[in->current].location];
 
-    // we only make a new one if things change
-    SourceLine* source_line = NULL;
+    // generate the output source locs (we don't wanna keep the old streams)
+    SourceLocIndex loc_index = arraddnindex(s->locations, 1);
+    s->locations[loc_index] = *old;
+    s->locations[loc_index].type = loc_type;
 
-    if (c->current_source_line == NULL ||
-        c->current_source_line->filepath != l->filepath ||
-        c->current_source_line->parent != parent_loc ||
-        c->current_source_line->line != l->current_line) {
-        source_line = arena_alloc(&thread_arena, sizeof(SourceLine), _Alignof(SourceLine));
-        source_line->filepath = l->filepath;
-        source_line->line_str = l->line_current;
-        source_line->parent = parent_loc;
-        source_line->line = l->current_line;
-
-        c->current_source_line = source_line;
-    } else {
-        source_line = c->current_source_line;
-    }
-
-    ptrdiff_t columns = l->token_start - l->line_current;
-    ptrdiff_t length = l->token_end - l->token_start;
-    assert(columns >= 0 && columns < UINT32_MAX && length >= 0 && length < UINT32_MAX);
-
-    SourceLoc loc = {
-        .line = source_line,
-        .columns = columns,
-        .length = length,
-    };
-    arrput(s->locations, loc);
-
-    return SOURCE_LOC_SET_TYPE(loc_type, i);
+    return loc_index;
 }
 
-static void push_scope(Cuik_CPP* restrict ctx, Lexer* restrict l, bool initial) {
+static void push_scope(Cuik_CPP* restrict ctx, TokenStream* restrict in, bool initial, SourceLocIndex loc) {
     if (ctx->depth >= CPP_MAX_SCOPE_DEPTH - 1) {
-        generic_error(l, "Exceeded max scope depth!");
+        generic_error(in, "Exceeded max scope depth!");
     }
 
+    // report(REPORT_INFO, NULL, in, loc, "PUSH");
     ctx->scope_eval[ctx->depth++] = initial;
 }
 
-static void pop_scope(Cuik_CPP* restrict ctx, Lexer* restrict l) {
+static void pop_scope(Cuik_CPP* restrict ctx, TokenStream* restrict in, SourceLocIndex loc) {
+    // report(REPORT_INFO, NULL, in, loc, "POP");
     if (ctx->depth == 0) {
-        generic_error(l, "Too many endifs\n");
+        generic_error(in, "Too many endifs\n");
     }
     ctx->depth--;
 }
 
-static void skip_directive_body(Lexer* l) {
+static void skip_directive_body(TokenStream* restrict in) {
+    // report(REPORT_INFO, NULL, in, tokens_get_last_location_index(in), "SKIP START");
     int depth = 0;
 
-    do {
-        if (l->token_type == '#') {
-            // TODO(NeGate): Future me... fix it
-            Lexer saved = *l;
-            lexer_read(l);
+    while (!tokens_eof(in)) {
+        if (tokens_is(in, '#')) {
+            tokens_next(in);
 
-            if (l->token_type == TOKEN_IDENTIFIER) {
-                if (lexer_match(l, 2, "if")) depth++;
-                if (lexer_match(l, 5, "ifdef"))
+            if (tokens_is(in, TOKEN_IDENTIFIER)) {
+                if (tokens_match(in, 2, "if") || tokens_match(in, 5, "ifdef") || tokens_match(in, 6, "ifndef")) {
                     depth++;
-                else if (lexer_match(l, 6, "ifndef"))
-                    depth++;
-                else if (lexer_match(l, 4, "elif") || lexer_match(l, 4, "else")) {
+                } else if (tokens_match(in, 4, "elif") || tokens_match(in, 4, "else")) {
                     // else/elif does both entering a scope and exiting one
                     if (depth == 0) {
-                        *l = saved;
+                        in->current -= 1;
+                        // report(REPORT_INFO, NULL, in, tokens_get_location_index(in), "SKIP END");
                         return;
                     }
-                } else if (lexer_match(l, 5, "endif")) {
+                } else if (tokens_match(in, 5, "endif")) {
                     if (depth == 0) {
-                        *l = saved;
+                        // revert both the identifier and hash
+                        in->current -= 1;
+                        // report(REPORT_INFO, NULL, in, tokens_get_location_index(in), "SKIP END");
                         return;
                     }
                     depth--;
@@ -1027,24 +1136,23 @@ static void skip_directive_body(Lexer* l) {
             }
         }
 
-        lexer_read(l);
-    } while (l->token_type);
+        tokens_next(in);
+    }
 
-    generic_error(l, "Unclosed macro conditional");
+    generic_error(in, "Unclosed macro conditional");
 }
 
-static _Noreturn void generic_error(Lexer* l, const char* msg) {
-    int loc = l->current_line;
-    fprintf(stderr, "error %s:%d: %s\n", l->filepath, loc, msg);
+static _Noreturn void generic_error(TokenStream* restrict in, const char* msg) {
+    fprintf(stderr, "error %s:%d: %s\n", in->filepath, tokens_get_location_line(in), msg);
     abort();
 }
 
-static void expect(Lexer* l, char ch) {
-    if (l->token_type != ch) {
-        int loc = l->current_line;
-        fprintf(stderr, "error %s:%d: expected '%c' got '%.*s'", l->filepath, loc, ch, (int)(l->token_end - l->token_start), l->token_start);
+static void expect(TokenStream* restrict in, char ch) {
+    if (!tokens_is(in, ch)) {
+        Token* t = tokens_get(in);
+        report(REPORT_ERROR, NULL, in, tokens_get_location_index(in), "expected '%c' got '%.*s'", ch, (int)(t->end - t->start), t->start);
         abort();
     }
 
-    lexer_read(l);
+    tokens_next(in);
 }

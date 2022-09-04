@@ -29,7 +29,7 @@ CUIK_API void cuikpp_define_empty_slice(Cuik_CPP* ctx, size_t keylen, const char
 
     ctx->macro_bucket_values_start[e] = NULL;
     ctx->macro_bucket_values_end[e] = NULL;
-    ctx->macro_bucket_source_locs[e] = SOURCE_LOC_SET_TYPE(SOURCE_LOC_UNKNOWN, 0);
+    ctx->macro_bucket_source_locs[e] = 0;
 }
 
 CUIK_API void cuikpp_define_slice(Cuik_CPP* ctx, size_t keylen, const char* key, size_t vallen, const char* value) {
@@ -62,7 +62,7 @@ CUIK_API void cuikpp_define_slice(Cuik_CPP* ctx, size_t keylen, const char* key,
 
         ctx->macro_bucket_values_start[e] = (const unsigned char*)newvalue;
         ctx->macro_bucket_values_end[e] = (const unsigned char*)newvalue + vallen;
-        ctx->macro_bucket_source_locs[e] = SOURCE_LOC_SET_TYPE(SOURCE_LOC_UNKNOWN, 0);
+        ctx->macro_bucket_source_locs[e] = 0;
     }
 }
 

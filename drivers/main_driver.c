@@ -155,7 +155,7 @@ static int count_pp_lines(TokenStream* s) {
     int line_count = 0;
     for (size_t i = 0; i < count; i++) {
         Token* t = &tokens[i];
-        SourceLoc* loc = &s->locations[SOURCE_LOC_GET_DATA(t->location)];
+        SourceLoc* loc = &s->locations[t->location];
 
         if (last_file != loc->line->filepath && strcmp(loc->line->filepath, "<temp>") != 0) {
             line_count += 1;
@@ -171,6 +171,14 @@ static int count_pp_lines(TokenStream* s) {
     return line_count;
 }
 
+static SourceLoc* try_for_nicer_loc(TokenStream* s, SourceLoc* loc) {
+    while (loc->line->filepath[0] == '<' && loc->line->parent != 0) {
+        loc = &s->locations[loc->line->parent];
+    }
+
+    return loc;
+}
+
 static void dump_tokens(FILE* out_file, TokenStream* s) {
     const char* last_file = NULL;
     int last_line = 0;
@@ -180,7 +188,7 @@ static void dump_tokens(FILE* out_file, TokenStream* s) {
 
     for (size_t i = 0; i < count; i++) {
         Token* t = &tokens[i];
-        SourceLoc* loc = &s->locations[SOURCE_LOC_GET_DATA(t->location)];
+        SourceLoc* loc = try_for_nicer_loc(s, &s->locations[t->location]);
 
         if (last_file != loc->line->filepath && strcmp(loc->line->filepath, "<temp>") != 0) {
             char str[FILENAME_MAX];
@@ -1060,23 +1068,25 @@ int main(int argc, char** argv) {
     // frontend work
     ////////////////////////////////
     TIMESTAMP("Frontend");
-    if (ithread_pool != NULL) {
-        #if CUIK_ALLOW_THREADS
-        dyn_array_for(i, input_files) {
-            tp_submit(thread_pool, preproc_file, (void*) input_files[i]);
+    CUIK_TIMED_BLOCK("Frontend") {
+        if (ithread_pool != NULL) {
+            #if CUIK_ALLOW_THREADS
+            dyn_array_for(i, input_files) {
+                tp_submit(thread_pool, preproc_file, (void*) input_files[i]);
+            }
+
+            threadpool_wait(thread_pool);
+            #endif
+        } else {
+            dyn_array_for(i, input_files) {
+                preproc_file((void*) input_files[i]);
+            }
         }
 
-        threadpool_wait(thread_pool);
-        #endif
-    } else {
-        dyn_array_for(i, input_files) {
-            preproc_file((void*) input_files[i]);
+        TIMESTAMP("Internal link");
+        CUIK_TIMED_BLOCK("internal link") {
+            cuik_internal_link_compilation_unit(&compilation_unit);
         }
-    }
-
-    TIMESTAMP("Internal link");
-    CUIK_TIMED_BLOCK("internal link") {
-        cuik_internal_link_compilation_unit(&compilation_unit);
     }
 
     if (args_ast) {

@@ -7,7 +7,10 @@
 #define CUIK__CPP_STATS 0
 
 typedef struct Token {
-    int type /* TknType but GCC doesn't like incomplete enums */;
+    // TknType but GCC doesn't like incomplete enums
+    int type     : 31;
+    int hit_line : 1;
+
     SourceLocIndex location;
     const unsigned char* start;
     const unsigned char* end;
@@ -25,23 +28,15 @@ typedef struct IncludeOnceEntry {
 
 enum { CPP_MAX_SCOPE_DEPTH = 4096 };
 
-struct TokenStream {
-    const char* filepath;
-
-    // stb_ds array
-    struct Token* tokens;
-    size_t current;
-
-    // stb_ds array
-    struct SourceLoc* locations;
-};
-
 struct Cuik_CPP {
     // used to store macro expansion results
     size_t the_shtuffs_size;
     unsigned char* the_shtuffs;
 
     TokenStream tokens;
+
+    // powers __COUNTER__
+    int unique_counter;
 
     // we got a little state machine design
     // to emulate some bootleg coroutines :P
@@ -61,6 +56,7 @@ struct Cuik_CPP {
 
     // stats
     #if CUIK__CPP_STATS
+    uint64_t total_lex_time;
     uint64_t total_fstats;
     uint64_t total_include_time;
     uint64_t total_files_read;

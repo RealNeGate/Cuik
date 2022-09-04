@@ -1,28 +1,26 @@
 static intmax_t eval_l13(Cuik_CPP* restrict c, TokenStream* restrict s);
 
-static intmax_t eval(Cuik_CPP* restrict c, TokenStream* restrict s, Lexer* l, SourceLocIndex parent_loc) {
+static intmax_t eval(Cuik_CPP* restrict c, TokenStream* restrict s, TokenStream* restrict in, SourceLocIndex parent_loc) {
     // Expand
-    if (l) {
+    if (in) {
+        // This type of expansion is temporary
         size_t old_tokens_length = arrlen(s->tokens);
         s->current = old_tokens_length;
 
-        expand(c, s, l, SOURCE_LOC_SET_TYPE(SOURCE_LOC_UNKNOWN, 0));
+        expand(c, s, in, arrlen(in->tokens), true, parent_loc);
         assert(s->current != arrlen(s->tokens) && "Expected the macro expansion to add something");
 
-        /*for (size_t k = old_tokens_length; k < arrlen(s->tokens); k++) {
-            printf("%.*s ", (int)(s->tokens[k].end - s->tokens[k].start), s->tokens[k].start);
-        }
-        printf("\n\n");*/
-
         // Insert a null token at the end
-        Token t = {0, arrlen(s->locations) - 1, NULL, NULL};
+        Token t = {0, true, arrlen(s->locations) - 1, NULL, NULL};
         arrput(s->tokens, t);
 
         // Evaluate
+        s->current = old_tokens_length;
         intmax_t result = eval_l13(c, s);
 
+        // Restore stuff
         arrsetlen(s->tokens, old_tokens_length);
-        s->current = 0;
+        s->current = old_tokens_length;
         return result;
     } else {
         return eval_l13(c, s);

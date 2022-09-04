@@ -1,16 +1,16 @@
 #include "diagnostic.h"
 #include <locale.h>
 #include <ctype.h>
-#include <preproc/cpp.h>
 #include <stdarg.h>
 #include <stdatomic.h>
+#include "preproc/lexer.h"
 
 #if _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #endif
 
-#define GET_SOURCE_LOC(loc) (&tokens->locations[SOURCE_LOC_GET_DATA(loc)])
+#define GET_SOURCE_LOC(loc) (&tokens->locations[loc])
 
 static const char* report_names[] = {
     "verbose",
@@ -84,14 +84,6 @@ static void print_level_name(Cuik_ReportLevel level) {
     printf("%s: ", report_names[level]);
     #endif
 }
-
-/*static SourceLoc* try_for_nicer_loc(TokenStream* tokens, SourceLoc* loc) {
-    while (loc->line->filepath[0] == '<' && loc->line->parent != 0) {
-        loc = GET_SOURCE_LOC(loc->line->parent);
-    }
-
-    return loc;
-}*/
 
 static void display_line(Cuik_ReportLevel level, TokenStream* tokens, SourceLoc* loc) {
     SourceLocIndex loci = 0;
@@ -182,7 +174,7 @@ static int print_backtrace(TokenStream* tokens, SourceLocIndex loc_index, Source
         line_bias = print_backtrace(tokens, line->parent, line);
     }
 
-    switch (SOURCE_LOC_GET_TYPE(loc_index)) {
+    switch (loc->type) {
         case SOURCE_LOC_MACRO: {
             if (line->filepath[0] == '<') {
                 printf("In macro '%.*s' expanded at line %d:\n", (int)loc->length, line->line_str + loc->columns, line_bias + line->line);

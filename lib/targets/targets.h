@@ -1,7 +1,7 @@
 #pragma once
 #include "../common.h"
 #include <back/ir_gen.h>
-#include <preproc/cpp.h>
+#include <preproc/lexer.h>
 
 typedef struct BuiltinBinding {
     char* key;
