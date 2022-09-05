@@ -320,16 +320,11 @@ void lexer_read(Lexer* restrict l) {
     ////////////////////////////////
     const unsigned char* start = current;
     uint64_t state = 0;
-    for (;;) {
-        // table[state][*str]
-        uint64_t next = dfa[*current][state];
-        if (next == 0) {
-            break;
-        }
 
-        // move along
-        state = next;
-        current += 1;
+    for (;;) {
+        uint8_t next = dfa[*current][state];
+        if (next == 0) break;
+        state = next, current += 1;
     }
 
     // generate valid token types
@@ -338,8 +333,8 @@ void lexer_read(Lexer* restrict l) {
             fprintf(stderr, "illegal lexer char: %c\n", *start);
             abort();
         }
-        case 15:
-        case 1: {
+        case DFA_IDENTIFIER_L:
+        case DFA_IDENTIFIER: {
             l->token_type = TOKEN_IDENTIFIER;
             if (current[-1] == '\\') {
                 current -= 1;
@@ -376,9 +371,9 @@ void lexer_read(Lexer* restrict l) {
             #endif
             break;
         }
-        case 2:
-        case 13:
-        case 14: {
+        case DFA_NUMBER0:
+        case DFA_NUMBER1:
+        case DFA_NUMBER2: {
             l->token_type = TOKEN_INTEGER;
 
             #if !USE_INTRIN
@@ -408,7 +403,7 @@ void lexer_read(Lexer* restrict l) {
             #endif
             break;
         }
-        case 7: {
+        case DFA_STRING: {
             char quote_type = current[-1];
 
             #if !USE_INTRIN

@@ -51,7 +51,10 @@ inline static void* dyn_array_internal_reserve(void* ptr, size_t type_size, size
     DynArrayHeader* header = ((DynArrayHeader*)ptr) - 1;
 
     if (header->size + extra >= header->capacity) {
+        size_t old = header->capacity;
         header->capacity = (header->size + extra) * 2;
+        // fprintf(stderr, "info: resize! %zu -> %zu\n", old, header->capacity);
+
         #if DYN_ARRAY_USE_MIMALLOC
         DynArrayHeader* new_ptr = mi_realloc(header, sizeof(DynArrayHeader) + (type_size * header->capacity));
         #elif defined(_WIN32) && defined(_DEBUG)

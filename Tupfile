@@ -25,14 +25,17 @@ endif
 
 !cc = |> $(CC) $(CFLAGS) %f -g -c -o %o |> bin/%B.o
 
+# lexer generator
+: |> $(CC) -g lib/generator/lexgen.c && a %o |> lib/preproc/dfa.h | a.exe a.pdb a.ilk ^.*\.cache
+
 # library source
 srcs = lib/*.c lib/preproc/*.c lib/front/*.c lib/back/*.c lib/targets/*.c
 
 ifeq (@(TUP_PLATFORM),win32)
-	: foreach $(srcs) deps/threads_msvc.c |> !cc |>
+	: foreach $(srcs) deps/threads_msvc.c | lib/preproc/dfa.h |> !cc |>
 	: bin/*.o |> lib /nologo /out:%o %f |> bin/libcuik.lib
 else
-	: foreach $(srcs) |> !cc |>
+	: foreach $(srcs) | lib/preproc/dfa.h |> !cc |>
 	: bin/*.o |> ar -rcs %o %f |> bin/libcuik.a
 endif
 
