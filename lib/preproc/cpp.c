@@ -6,25 +6,21 @@
 // NOTE(NeGate): the_shtuffs is the simple linear allocator in this preprocessor, just avoids
 // wasting time on the heap allocator
 #include <cuik.h>
-#include "big_array.h"
-#include "lexer.h"
-#include <str.h>
-#include <diagnostic.h>
-#include <memory.h>
-#include <timer.h>
-#include <sys/stat.h>
+#include "../timer.h"
+#include "../str.h"
+#include "../big_array.h"
+#include "../diagnostic.h"
 
-#if _WIN32
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-#endif
+#include "lexer.h"
+#include <sys/stat.h>
 
 #if USE_INTRIN
 #include <x86intrin.h>
 #endif
 
 #define NL_STRING_MAP_IMPL
-#include <string_map.h>
+#define NL_STRING_MAP_INLINE
+#include "../string_map.h"
 
 static void preprocess_file(Cuik_CPP* restrict c, TokenStream* restrict s, size_t parent_entry, SourceLocIndex include_loc, const char* directory, const char* filepath, int depth);
 static uint64_t hash_ident(const unsigned char* at, size_t length);
@@ -163,14 +159,17 @@ CUIK_API void cuikpp_init(Cuik_CPP* ctx, const char filepath[FILENAME_MAX]) {
     ctx->tokens.locations = dyn_array_create(SourceLoc);
     ctx->tokens.tokens = dyn_array_create(Token);
 
+    tls_init();
+
+    ctx->state1 = CUIK__CPP_FIRST_FILE;
     ctx->stack[0] = (CPPStackSlot){
         .filepath = filepath,
         .directory = directory,
-        .start_time = cuik_time_in_nanos()
     };
-    ctx->state1 = CUIK__CPP_FIRST_FILE;
+}
 
-    tls_init();
+CUIK_API TokenStream cuiklex_buffer(const char* filepath, const char* contents) {
+    return get_all_tokens_in_buffer(filepath, (const uint8_t*) contents, NULL);
 }
 
 static void print_token_stream(TokenStream* s, size_t start, size_t end) {
@@ -282,48 +281,36 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
         switch (ctx->state2++) {
             // ask to get file
             case 0: {
+                slot->start_time = cuik_time_in_nanos();
+
                 packet->tag = CUIKPP_PACKET_GET_FILE;
                 packet->file.input_path = slot->filepath;
-                packet->file.found = false;
-                packet->file.content_length = 0;
-                packet->file.content = NULL;
+                packet->file.tokens = (TokenStream){ 0 };
                 return CUIKPP_CONTINUE;
             }
 
             // get back a file
             case 1: {
-                if (!packet->file.found && packet->file.content_length == 0) {
+                if (packet->file.tokens.tokens == NULL) {
                     fprintf(stderr, "preprocessor error: could not read file! %s\n", slot->filepath);
                     return CUIKPP_ERROR;
                 }
 
                 #if CUIK__CPP_STATS
                 ctx->total_io_time += (cuik_time_in_nanos() - slot->start_time);
-                ctx->total_io_space += packet->file.content_length + 16;
                 ctx->total_files_read += 1;
                 #endif
 
-                const char* filepath = packet->file.input_path;
-                size_t file_length = packet->file.content_length;
-                uint8_t* file_data = packet->file.content;
-
                 // initialize the file & lexer in the stack slot
                 slot->file_id = dyn_array_length(ctx->files);
-
-                #if CUIK__CPP_STATS
-                uint64_t start_time = cuik_time_in_nanos();
-                slot->tokens = get_all_tokens_in_buffer(filepath, file_data, file_data + file_length);
-                ctx->total_lex_time += (cuik_time_in_nanos() - start_time);
-                #else
-                slot->tokens = get_all_tokens_in_buffer(filepath, file_data, file_data + file_length);
-                #endif
+                slot->tokens = packet->file.tokens;
+                slot->tokens.current = 0;
 
                 // record the file entry
                 Cuik_FileEntry file_entry = {
                     .depth = ctx->stack_ptr,
-                    .filepath = filepath,
-                    .content = file_data,
-                    .content_len = file_length,
+                    .filepath = packet->file.input_path,
+                    .tokens = packet->file.tokens,
                 };
                 dyn_array_put(ctx->files, file_entry);
 
@@ -348,7 +335,8 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
         //  1+i is search path include
         //  n   is local include (only run for LIB_INCLUDE)
         ////////////////////////////////
-        if (!packet->file.found && packet->file.content_length == 0) {
+        assert(packet->tag == CUIKPP_PACKET_QUERY_FILE);
+        if (!packet->query.found) {
             #if CUIK__CPP_STATS
             ctx->total_fstats += 1;
             #endif
@@ -369,12 +357,10 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
 
             // ask for the next filepath
             // it's ok this const removal is based
-            char* path = (char*) packet->file.input_path;
+            char* path = (char*) packet->query.input_path;
             sprintf_s(path, FILENAME_MAX, "%s%s", ctx->system_include_dirs[index], slot->filepath);
 
-            packet->file.found = false;
-            packet->file.content_length = 0;
-            packet->file.content = NULL;
+            packet->query.found = false;
             return CUIKPP_CONTINUE;
         }
 
@@ -423,9 +409,7 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
 
             packet->tag = CUIKPP_PACKET_GET_FILE;
             packet->file.input_path = filepath;
-            packet->file.found = false;
-            packet->file.content_length = 0;
-            packet->file.content = NULL;
+            packet->file.tokens = (TokenStream){ 0 };
             return CUIKPP_CONTINUE;
         }
 
@@ -435,32 +419,23 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
         slot = &ctx->stack[ctx->stack_ptr - 1];
     } else if (ctx->state1 == CUIK__CPP_GET_FILE) {
         const char* filepath = packet->file.input_path;
-        size_t file_length = packet->file.content_length;
-        uint8_t* file_data = packet->file.content;
 
         #if CUIK__CPP_STATS
         ctx->total_io_time += (cuik_time_in_nanos() - slot->start_time);
-        ctx->total_io_space += file_length + 16;
         ctx->total_files_read += 1;
         #endif
 
         // initialize the file & lexer in the stack slot
         slot->file_id = dyn_array_length(ctx->files);
-        #if CUIK__CPP_STATS
-        uint64_t start_time = cuik_time_in_nanos();
-        slot->tokens = get_all_tokens_in_buffer(filepath, file_data, file_data + file_length);
-        ctx->total_lex_time += (cuik_time_in_nanos() - start_time);
-        #else
-        slot->tokens = get_all_tokens_in_buffer(filepath, file_data, file_data + file_length);
-        #endif
+        slot->tokens = packet->file.tokens;
+        slot->tokens.current = 0;
 
         // record the file entry
         Cuik_FileEntry file_entry = {
             .depth = ctx->stack_ptr,
             .include_loc = slot->include_loc,
             .filepath = filepath,
-            .content = file_data,
-            .content_len = file_length,
+            .tokens = packet->file.tokens,
         };
         dyn_array_put(ctx->files, file_entry);
 
@@ -504,9 +479,6 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
                 s->current = 0;
                 return CUIKPP_DONE;
             }
-
-            // free token stream
-            free_token_stream(&slot->tokens);
 
             // step out of this file into the previous one
             slot = &ctx->stack[ctx->stack_ptr - 1];
@@ -919,9 +891,7 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
 
                     packet->tag = CUIKPP_PACKET_QUERY_FILE;
                     packet->file.input_path = path;
-                    packet->file.found = false;
-                    packet->file.content_length = 0;
-                    packet->file.content = NULL;
+                    packet->file.tokens = (TokenStream){ 0 };
                     return CUIKPP_CONTINUE;
                 } else if (memcmp(directive.data, "warning", 7) == 0) {
                     success = true;
@@ -987,13 +957,11 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
 CUIK_API void cuikpp_deinit(Cuik_CPP* ctx) {
     #if CUIK__CPP_STATS
     //printf("%40s | %zu file read | %zu fstats\n", ctx->files[0].filepath, ctx->total_files_read, ctx->total_fstats);
-    #if 0
-    printf("%40s | %.06f ms lex\t| %.06f ms read\t| %4zu file read\t| %.06f MB\t| %zu fstats\n",
+    #if 1
+    printf(" %40s | %.06f ms read+lex\t| %4zu files read\t| %zu fstats\n",
         ctx->files[0].filepath,
-        ctx->total_lex_time / 1000000.0,
         ctx->total_io_time / 1000000.0,
         ctx->total_files_read,
-        ctx->total_io_space / 1000000.0,
         ctx->total_fstats);
     #else
     dyn_array_for(i, ctx->files) {
@@ -1027,12 +995,13 @@ CUIK_API void cuikpp_deinit(Cuik_CPP* ctx) {
     ctx->files = NULL;
 }
 
-CUIK_API Cuikpp_Status cuikpp_default_run(Cuik_CPP* ctx) {
-    for (Cuikpp_Packet packet;;) {
+CUIK_API Cuikpp_Status cuikpp_default_run(Cuik_CPP* ctx, Cuik_FileCache* cache) {
+    Cuikpp_Packet packet;
+    for (;;) {
         Cuikpp_Status status = cuikpp_next(ctx, &packet);
         if (status != CUIKPP_CONTINUE) return status;
 
-        cuikpp_default_packet_handler(ctx, &packet);
+        cuikpp_default_packet_handler(ctx, &packet, cache);
     }
 }
 

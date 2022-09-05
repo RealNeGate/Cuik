@@ -138,6 +138,7 @@ CUIK_API bool cuik_lex_is_keyword(size_t length, const char* str);
 ////////////////////////////////////////////
 typedef unsigned int SourceLocIndex;
 typedef struct Cuik_CPP Cuik_CPP;
+typedef struct Cuik_FileCache Cuik_FileCache;
 
 // first token in a line
 // #define SOURCE_LOC_HIT_LINE(loc) (((loc) & 0x80000000u) ? 1 : 0)
@@ -186,9 +187,22 @@ typedef struct Cuik_FileEntry {
     SourceLocIndex include_loc;
 
     const char* filepath;
-    uint8_t* content;
-    size_t content_len;
+    TokenStream tokens;
 } Cuik_FileEntry;
+
+CUIK_API Cuik_FileCache* cuik_fscache_create(void);
+CUIK_API void cuik_fscache_destroy(Cuik_FileCache* restrict c);
+CUIK_API void cuik_fscache_put(Cuik_FileCache* restrict c, const char* filepath, const TokenStream* tokens);
+CUIK_API bool cuik_fscache_lookup(Cuik_FileCache* restrict c, const char* filepath, TokenStream* out_tokens);
+
+// simplifies whitespace for the lexer
+CUIK_API void cuiklex_canonicalize(size_t length, char* data);
+
+// filepath is just annotated in the token stream and does not access the file system.
+// the contents string is a Cstring with a "fat" null terminator (16 bytes long of zeroes).
+// NOTE: contents must have been canonicalized using cuiklex_canonicalize before being fed
+// into here
+CUIK_API TokenStream cuiklex_buffer(const char* filepath, const char* contents);
 
 CUIK_API void cuikpp_init(Cuik_CPP* ctx, const char filepath[FILENAME_MAX]);
 
@@ -228,8 +242,6 @@ CUIK_API void cuikpp_define_empty_slice(Cuik_CPP* ctx, size_t keylen, const char
 CUIK_API void cuikpp_define(Cuik_CPP* ctx, const char key[], const char value[]);
 CUIK_API void cuikpp_define_slice(Cuik_CPP* ctx, size_t keylen, const char key[], size_t vallen, const char value[]);
 
-CUIK_API void cuikpp_canonicalize_text(size_t length, char* data);
-
 // This is written out by cuikpp_next
 typedef struct Cuikpp_Packet {
     enum {
@@ -240,15 +252,14 @@ typedef struct Cuikpp_Packet {
     } tag;
     union {
         // in case of GET_FILE:
-        //   you must read the entire file at 'input_path', if you can't found
-        //   should be set to false and you can continue.
-        //
-        //   if not, found is set to true and the 'content_length' denotes the
-        //   file size. the allocated memory region for 'content' must be at
-        //   least 16 bytes longer with the extra bytes being a zeroed out, the
-        //   memory must've been canonicalized using 'cuikpp_canonicalize_text'
-        //   before being passed back via 'content'
-        //
+        //   lex the file at input_path using cuiklex_buffer(...)
+        struct {
+            // input
+            const char* input_path;
+
+            // output
+            TokenStream tokens;
+        } file;
         // in case of QUERY_FILE:
         //   found is set true if you found a file at 'input_path'
         //
@@ -258,9 +269,7 @@ typedef struct Cuikpp_Packet {
 
             // output
             bool found;
-            size_t content_length;
-            uint8_t* content;
-        } file;
+        } query;
         // in case of CANONICALIZE:
         //   convert the filepath 'input_path' into a new filepath which is
         //   absolute, note that 'output_path' has the memory provided for you
@@ -282,19 +291,18 @@ typedef enum {
 } Cuikpp_Status;
 
 // Iterates through all the cuikpp_next calls using cuikpp_default_packet_handler
-// and returns the final status
-CUIK_API Cuikpp_Status cuikpp_default_run(Cuik_CPP* ctx);
+// and returns the final status. if cache is NULL then it's unused.
+CUIK_API Cuikpp_Status cuikpp_default_run(Cuik_CPP* ctx, Cuik_FileCache* cache);
 
 // Keep iterating through this and filling in the packets accordingly to preprocess a file.
 // returns CUIKPP_CONTINUE if it needs to keep running
 CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet);
 
-// Handles the default behavior of the packet written by cuikpp_next
+// Handles the default behavior of the packet written by cuikpp_next, if cache is NULL then
+// it's unused.
+//
 // returns true if it succeeded in whatever packet handling (loading the file correctly)
-CUIK_API bool cuikpp_default_packet_handler(Cuik_CPP* ctx, Cuikpp_Packet* packet);
-
-// If the file was created using cuikpp_default_packet_handler then this is used to free it
-CUIK_API void cuikpp_free_default_loaded_file(Cuik_FileEntry* file);
+CUIK_API bool cuikpp_default_packet_handler(Cuik_CPP* ctx, Cuikpp_Packet* packet, Cuik_FileCache* cache);
 
 // if target is non-NULL it'll add predefined macros based on the target.
 CUIK_API void cuikpp_set_common_defines(Cuik_CPP* restrict out_cpp, const Cuik_Target* target, bool use_system_includes);

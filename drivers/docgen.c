@@ -3,17 +3,11 @@
 #include <stdio.h>
 #include "helper.h"
 
-#define NL_STRING_MAP_IMPL
-#define NL_STRING_MAP_INLINE
-#include <string_map.h>
-
 typedef struct {
     enum {
         SYM_EXTERN_FUNC,
         SYM_FUNC,
-
         SYM_TYPEDEF,
-
         SYM_GLOBAL,
     } type;
 
@@ -76,9 +70,9 @@ int main(int argc, char** argv) {
     // preproc
     Cuik_CPP cpp;
     TokenStream tokens = cuik_preprocess_simple(&cpp, argv[1], system_libs, 2, (const char*[]) {
-                                                    "include/",
-                                                    "src/"
-                                                });
+            "include/",
+            "src/"
+        });
 
     symbol_table = nl_strmap_alloc(Symbol, 1024);
 
@@ -112,12 +106,12 @@ int main(int argc, char** argv) {
         Cuik_FileEntry* main_file = &cuikpp_get_file_table(&cpp)[0];
 
         fprintf(outfile,
-                "<html>\n"
-                "  <head>\n"
-                "    <meta charset=\"utf-8\">\n"
-                "    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n"
-                "    <link rel=\"stylesheet\" type=\"text/css\" href=\"style.css\">\n"
-                "  </head>\n");
+            "<html>\n"
+            "  <head>\n"
+            "    <meta charset=\"utf-8\">\n"
+            "    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n"
+            "    <link rel=\"stylesheet\" type=\"text/css\" href=\"style.css\">\n"
+            "  </head>\n");
         fprintf(outfile, "  <body><pre>\n");
         const char* line_start = (const char*)main_file->content;
         int line_num = 0;
@@ -152,13 +146,13 @@ int main(int argc, char** argv) {
                             if (sym->filepath == main_file->filepath && sym->line == line_num) {
                                 // found original definition
                                 fprintf(outfile, "<a name=\"%.*s\"><span>%.*s</span></a>",
-                                        (int)(i - token_start), line_start + token_start,
-                                        (int)(i - token_start), line_start + token_start);
+                                    (int)(i - token_start), line_start + token_start,
+                                    (int)(i - token_start), line_start + token_start);
                             } else {
                                 // found match, make a <a> block
                                 fprintf(outfile, "<a href=\"#%.*s\">%.*s</a>",
-                                        (int)(i - token_start), line_start + token_start,
-                                        (int)(i - token_start), line_start + token_start);
+                                    (int)(i - token_start), line_start + token_start,
+                                    (int)(i - token_start), line_start + token_start);
                             }
 
                             last_printed = i;
@@ -168,7 +162,7 @@ int main(int argc, char** argv) {
                             }
 
                             fprintf(outfile, "<span class=\"kw\">%.*s</span>",
-                                    (int)(i - token_start), line_start + token_start);
+                                (int)(i - token_start), line_start + token_start);
 
                             last_printed = i;
                         }

@@ -1,4 +1,3 @@
-// static size_t file_io_memory_usage = 0;
 
 typedef struct LoadResult {
     bool found;
@@ -7,12 +6,8 @@ typedef struct LoadResult {
     char* data;
 } LoadResult;
 
-static LoadResult get_file(bool is_query, const char* path) {
+static LoadResult get_file(const char* path) {
     #ifdef _WIN32
-    if (is_query) {
-        return (LoadResult){ .found = (GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES) };
-    }
-
     // actual file reading
     HANDLE file = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, 0, OPEN_EXISTING, 0, 0);
     if (file == INVALID_HANDLE_VALUE) {
@@ -44,18 +39,10 @@ static LoadResult get_file(bool is_query, const char* path) {
 
     // fat null terminator
     memset(&buffer[file_size.QuadPart], 0, 16);
+    cuiklex_canonicalize(file_size.QuadPart, buffer);
 
-    cuikpp_canonicalize_text(file_size.QuadPart, buffer);
-
-    //file_io_memory_usage += (file_size.QuadPart + 16);
-    //printf("%f MiB of files\n", (double)file_io_memory_usage / 1048576.0);
     return (LoadResult){ .found = true, .length = file_size.QuadPart, buffer };
     #else
-    if (is_query) {
-        struct stat buffer;
-        return (LoadResult){ .found = (stat(path, &buffer) == 0) };
-    }
-
     // actual file reading
     FILE* file = fopen(path, "rb");
     if (!file) {
@@ -80,23 +67,38 @@ static LoadResult get_file(bool is_query, const char* path) {
 
     // fat null terminator
     memset(&text[len], 0, 16);
-    cuikpp_canonicalize_text(len, text);
+    cuiklex_canonicalize(len, text);
 
     return (LoadResult){ .found = true, .length = len, .data = text };
     #endif
 }
 
-CUIK_API bool cuikpp_default_packet_handler(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
-    if (packet->tag == CUIKPP_PACKET_GET_FILE || packet->tag == CUIKPP_PACKET_QUERY_FILE) {
-        // if (packet->tag == CUIKPP_PACKET_QUERY_FILE) printf("Query file: %s\n", packet->file.input_path);
-        // else printf("Get file: %s\n", packet->file.input_path);
+// cache is NULLable and if so it won't use it
+CUIK_API bool cuikpp_default_packet_handler(Cuik_CPP* ctx, Cuikpp_Packet* packet, Cuik_FileCache* cache) {
+    if (packet->tag == CUIKPP_PACKET_GET_FILE) {
+        TokenStream tokens;
+        if (cache && cuik_fscache_lookup(cache, packet->file.input_path, &tokens)) {
+            packet->file.tokens = tokens;
+            return true;
+        } else {
+            LoadResult file = get_file(packet->file.input_path);
+            if (file.found) {
+                packet->file.tokens = cuiklex_buffer(packet->file.input_path, file.data);
 
-        bool is_query = packet->tag == CUIKPP_PACKET_QUERY_FILE;
-        LoadResult file = get_file(is_query, packet->file.input_path);
+                if (cache) cuik_fscache_put(cache, packet->file.input_path, &packet->file.tokens);
+                return true;
+            }
+        }
 
-        packet->file.found = file.found;
-        packet->file.content_length = file.length;
-        packet->file.content = (uint8_t*) file.data;
+        return false;
+    } else if (packet->tag == CUIKPP_PACKET_QUERY_FILE) {
+        #ifdef _WIN32
+        packet->query.found = (GetFileAttributesA(packet->query.input_path) != INVALID_FILE_ATTRIBUTES);
+        #else
+        struct stat buffer;
+        packet->query.found = (stat(packet->query.input_path, &buffer) == 0);
+        #endif
+
         return true;
     } else if (packet->tag == CUIKPP_PACKET_CANONICALIZE) {
         #ifdef _WIN32
@@ -124,18 +126,14 @@ CUIK_API bool cuikpp_default_packet_handler(Cuik_CPP* ctx, Cuikpp_Packet* packet
     }
 }
 
-CUIK_API void cuikpp_free_default_loaded_file(Cuik_FileEntry* file) {
-    cuik__vfree(file->content, (file->content_len + 16 + 4095) & ~4095);
-}
-
-CUIK_API void cuikpp_canonicalize_text(size_t length, char* data) {
+CUIK_API void cuiklex_canonicalize(size_t length, char* data) {
     uint8_t* text = (uint8_t*) data;
 
     #if !USE_INTRIN
     for (size_t i = 0; i < length; i++) {
         if (text[i] == '\t') text[i] = ' ';
         if (text[i] == '\v') text[i] = ' ';
-        if (text[i] == 12) text[i] = ' ';
+        if (text[i] == 12)   text[i] = ' ';
     }
     #else
     length = (length + 15ull) & ~15ull;

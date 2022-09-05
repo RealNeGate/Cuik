@@ -4,9 +4,6 @@
 #include <targets/targets.h>
 #include <timer.h>
 
-#define NL_STRING_MAP_IMPL
-#include <string_map.h>
-
 atomic_flag irgen_defined_tls_index;
 
 // Maps param_num -> TB_Reg

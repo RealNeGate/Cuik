@@ -1,9 +1,6 @@
 #include "compilation_unit.h"
 #include <timer.h>
 
-#define NL_STRING_MAP_IMPL
-#include <string_map.h>
-
 CUIK_API void cuik_create_compilation_unit(CompilationUnit* restrict cu) {
     *cu = (CompilationUnit){0};
     cu->lock = HEAP_ALLOC(sizeof(mtx_t));

@@ -1,9 +1,6 @@
 #include "targets.h"
 #include <front/sema.h>
 
-#define NL_STRING_MAP_IMPL
-#include <string_map.h>
-
 // two simple temporary buffers to represent type_as_string results
 static thread_local char temp_string0[1024], temp_string1[1024];
 

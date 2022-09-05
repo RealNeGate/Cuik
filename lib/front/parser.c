@@ -12,9 +12,6 @@
 #include <targets/targets.h>
 #include <timer.h>
 
-#define NL_STRING_MAP_IMPL
-#include <string_map.h>
-
 #undef VOID // winnt.h loves including garbage
 
 #define OUT_OF_ORDER_CRAP 1

@@ -56,6 +56,7 @@ static Bindgen* args_bindgen;
 static int args_opt_level;
 
 static TB_Module* mod;
+static Cuik_FileCache* fscache;
 
 static Cuik_IThreadpool* ithread_pool;
 static CompilationUnit compilation_unit;
@@ -308,7 +309,7 @@ static Cuik_CPP* make_preprocessor(const char* filepath) {
     }
 
     // run the preprocessor
-    if (cuikpp_default_run(cpp) == CUIKPP_ERROR) {
+    if (cuikpp_default_run(cpp, fscache) == CUIKPP_ERROR) {
         abort();
     }
 
@@ -337,10 +338,6 @@ static Cuik_CPP* make_preprocessor(const char* filepath) {
 }
 
 static void free_preprocessor(Cuik_CPP* cpp) {
-    CUIKPP_FOR_FILES(it, cpp) {
-        cuikpp_free_default_loaded_file(it.file);
-    }
-
     cuikpp_deinit(cpp);
     free(cpp);
 }
@@ -1040,6 +1037,8 @@ int main(int argc, char** argv) {
             TB_ARCH_X86_64, cuik_system_to_tb(target_desc.sys), &features, false
         );
     }
+
+    fscache = cuik_fscache_create();
 
     if (args_pploc) {
         int total = 0;

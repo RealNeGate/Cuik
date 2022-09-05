@@ -1,21 +1,20 @@
 #pragma once
-#include <stdatomic.h>
-#include "arena.h"
-#include "atoms.h"
-#include "big_array.h"
-#include "common.h"
-#include "diagnostic.h"
-#include "memory.h"
 #include <cuik.h>
-#include <preproc/lexer.h>
+#include <cuik_ast.h>
 #include <threads.h>
-
+#include <stdatomic.h>
 #include <tb.h>
 
-// the Cuik AST types are all exposed to the public interface
+#include "atoms.h"
+#include "../common.h"
+#include "../arena.h"
+#include "../big_array.h"
+#include "../diagnostic.h"
+#include "../preproc/lexer.h"
+
+#define NL_STRING_MAP_IMPL
 #define NL_STRING_MAP_INLINE
-#include <cuik_ast.h>
-#include <string_map.h>
+#include "../string_map.h"
 
 #define MAX_LOCAL_SYMBOLS (1 << 20)
 #define MAX_LOCAL_TAGS (1 << 16)
