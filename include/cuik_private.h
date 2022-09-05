@@ -56,6 +56,7 @@ struct Cuik_CPP {
     uint64_t total_include_time;
     uint64_t total_files_read;
     uint64_t total_io_time;
+    uint64_t total_io_space;
     #endif
 
     // NL_Strmap(int)

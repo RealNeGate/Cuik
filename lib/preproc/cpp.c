@@ -212,12 +212,14 @@ static TokenStream get_all_tokens_in_buffer(const char* filepath, const uint8_t*
     s.tokens = dyn_array_create(Token);
 
     Lexer l = { filepath, data, data, 1 };
-    lexer_read(&l);
 
     int current_line_num = 0;
     SourceLine* current_line = NULL;
 
-    while (l.token_type && end != l.token_start) {
+    for (;;) {
+        lexer_read(&l);
+        if (l.token_type == 0 || end == l.token_start) break;
+
         if (l.line_current == NULL) {
             l.line_current = l.start;
         }
@@ -252,13 +254,15 @@ static TokenStream get_all_tokens_in_buffer(const char* filepath, const uint8_t*
         Token t = { l.token_type, l.hit_line, loc_index, l.token_start, l.token_end };
         dyn_array_put(s.tokens, t);
         l.hit_line = false;
-
-        lexer_read(&l);
     }
 
     // Add EOF token
     Token t = {0, true, 0, NULL, NULL};
     dyn_array_put(s.tokens, t);
+
+    // trim up the memory
+    // dyn_array_trim(s.locations);
+    // dyn_array_trim(s.tokens);
     return s;
 }
 
@@ -295,6 +299,7 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
 
                 #if CUIK__CPP_STATS
                 ctx->total_io_time += (cuik_time_in_nanos() - slot->start_time);
+                ctx->total_io_space += packet->file.content_length + 16;
                 ctx->total_files_read += 1;
                 #endif
 
@@ -435,6 +440,7 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
 
         #if CUIK__CPP_STATS
         ctx->total_io_time += (cuik_time_in_nanos() - slot->start_time);
+        ctx->total_io_space += file_length + 16;
         ctx->total_files_read += 1;
         #endif
 
@@ -981,11 +987,26 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
 CUIK_API void cuikpp_deinit(Cuik_CPP* ctx) {
     #if CUIK__CPP_STATS
     //printf("%40s | %zu file read | %zu fstats\n", ctx->files[0].filepath, ctx->total_files_read, ctx->total_fstats);
-    printf("%40s | %f ms lex | %f us read | %zu file read | %zu fstats\n",
+    #if 0
+    printf("%40s | %.06f ms lex\t| %.06f ms read\t| %4zu file read\t| %.06f MB\t| %zu fstats\n",
         ctx->files[0].filepath,
         ctx->total_lex_time / 1000000.0,
-        ctx->total_io_time / 1000.0, ctx->total_files_read,
+        ctx->total_io_time / 1000000.0,
+        ctx->total_files_read,
+        ctx->total_io_space / 1000000.0,
         ctx->total_fstats);
+    #else
+    dyn_array_for(i, ctx->files) {
+        printf("%s,%zu\n", ctx->files[i].filepath, ctx->files[i].content_len);
+    }
+    /*printf("%s,%.06f,%.06f,%4zu,%.06f,%zu,\n",
+        ctx->files[0].filepath,
+        ctx->total_lex_time / 1000000.0,
+        ctx->total_io_time / 1000000.0,
+        ctx->total_files_read,
+        ctx->total_io_space / 1000000.0,
+        ctx->total_fstats);*/
+    #endif
     #endif
 
     if (ctx->macro_bucket_keys) {

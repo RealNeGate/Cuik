@@ -21,17 +21,17 @@ typedef struct DynArrayHeader {
     char data[];
 } DynArrayHeader;
 
-inline static void* dyn_array_internal_create(size_t type_size) {
+inline static void* dyn_array_internal_create(size_t type_size, size_t cap) {
     #if DYN_ARRAY_USE_MIMALLOC
-    DynArrayHeader* header = mi_malloc(sizeof(DynArrayHeader) + (type_size * INITIAL_CAP));
+    DynArrayHeader* header = mi_malloc(sizeof(DynArrayHeader) + (type_size * cap));
     #elif defined(_WIN32) && defined(_DEBUG)
-    DynArrayHeader* header = _malloc_dbg(sizeof(DynArrayHeader) + (type_size * INITIAL_CAP), _NORMAL_BLOCK, __FILE__, __LINE__);
+    DynArrayHeader* header = _malloc_dbg(sizeof(DynArrayHeader) + (type_size * cap), _NORMAL_BLOCK, __FILE__, __LINE__);
     #else
-    DynArrayHeader* header = malloc(sizeof(DynArrayHeader) + (type_size * INITIAL_CAP));
+    DynArrayHeader* header = malloc(sizeof(DynArrayHeader) + (type_size * cap));
     #endif
 
     *header = (DynArrayHeader){
-        .capacity = INITIAL_CAP
+        .capacity = cap
     };
     return &header->data[0];
 }
@@ -74,8 +74,25 @@ inline static void* dyn_array_internal_reserve(void* ptr, size_t type_size, size
     return ptr;
 }
 
+inline static void* dyn_array_internal_trim(void* ptr, size_t type_size) {
+    DynArrayHeader* header = ((DynArrayHeader*)ptr) - 1;
+    header->capacity = header->size;
+
+    #if DYN_ARRAY_USE_MIMALLOC
+    DynArrayHeader* new_ptr = mi_realloc(header, sizeof(DynArrayHeader) + (type_size * header->capacity));
+    #elif defined(_WIN32) && defined(_DEBUG)
+    DynArrayHeader* new_ptr = _realloc_dbg(header, sizeof(DynArrayHeader) + (type_size * header->capacity), _NORMAL_BLOCK, __FILE__, __LINE__);
+    #else
+    DynArrayHeader* new_ptr = realloc(header, sizeof(DynArrayHeader) + (type_size * header->capacity));
+    #endif
+
+    assert(new_ptr != NULL);
+    return &new_ptr->data[0];
+}
+
 #define DynArray(T) T*
-#define dyn_array_create(T) dyn_array_internal_create(sizeof(T))
+#define dyn_array_create(T) dyn_array_internal_create(sizeof(T), INITIAL_CAP)
+#define dyn_array_create_with_initial_cap(T, cap) dyn_array_internal_create(sizeof(T), cap)
 #define dyn_array_destroy(arr) (dyn_array_internal_destroy(arr), (arr) = NULL)
 
 #define dyn_array_put(arr, ...)                             \
@@ -93,6 +110,7 @@ do {                                                             \
     header->size += extra_;                                      \
 } while (0)
 
+#define dyn_array_trim(arr) (arr = dyn_array_internal_trim(arr, sizeof(*arr)))
 #define dyn_array_clear(arr) (((((DynArrayHeader*)(arr)) - 1)->size) = 0)
 #define dyn_array_set_length(arr, newlen) (((((DynArrayHeader*)(arr)) - 1)->size) = (newlen))
 #define dyn_array_length(arr) ((((DynArrayHeader*)(arr)) - 1)->size)
