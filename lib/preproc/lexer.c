@@ -7,6 +7,10 @@
 #define ALWAYS_INLINE __attribute__((always_inline))
 #endif
 
+// Just a big table called 'dfa'
+// https://gist.github.com/RealNeGate/9fd2886c56fa01049c5e85fc8f0fd9b7
+#include "dfa.h"
+
 static const char keywords[][16] = {
     "auto",
     "break",
@@ -62,100 +66,6 @@ static const char keywords[][16] = {
     "__declspec"
 };
 
-enum {
-    CHAR_CLASS_NULL,
-    // A-Z a-z 0-9 _
-    CHAR_CLASS_IDENT,
-    // 0-9
-    CHAR_CLASS_NUMBER,
-    // ;{}()
-    CHAR_CLASS_SEPARATOR,
-    // + ++ +=
-    CHAR_CLASS_MULTICHAR1,
-    // > >= >> >>= < <= << <<=
-    CHAR_CLASS_MULTICHAR2,
-    // - -> -- -=
-    CHAR_CLASS_MULTICHAR3,
-    // 'foo' "bar"
-    CHAR_CLASS_STRING,
-    // . ...
-    CHAR_CLASS_DOT,
-    // # ##
-    CHAR_CLASS_DOUBLE,
-};
-
-static _Alignas(64) uint8_t char_classes[256] = {
-    ['A' ... 'Z'] = CHAR_CLASS_IDENT,
-    ['a' ... 'z'] = CHAR_CLASS_IDENT,
-    ['_']  = CHAR_CLASS_IDENT,
-    ['$']  = CHAR_CLASS_IDENT,
-    [0x80 ... 0xFF] = CHAR_CLASS_IDENT,
-
-    ['0' ... '9'] = CHAR_CLASS_NUMBER,
-
-    ['@'] = CHAR_CLASS_SEPARATOR,
-    ['?'] = CHAR_CLASS_SEPARATOR,
-    [';'] = CHAR_CLASS_SEPARATOR,
-    [':'] = CHAR_CLASS_SEPARATOR,
-    [','] = CHAR_CLASS_SEPARATOR,
-    ['['] = CHAR_CLASS_DOUBLE,
-    [']'] = CHAR_CLASS_DOUBLE,
-    ['('] = CHAR_CLASS_SEPARATOR,
-    [')'] = CHAR_CLASS_SEPARATOR,
-    ['{'] = CHAR_CLASS_SEPARATOR,
-    ['}'] = CHAR_CLASS_SEPARATOR,
-
-    ['+'] = CHAR_CLASS_MULTICHAR1,
-    ['*'] = CHAR_CLASS_MULTICHAR1,
-    ['/'] = CHAR_CLASS_MULTICHAR1,
-    ['%'] = CHAR_CLASS_MULTICHAR1,
-    ['!'] = CHAR_CLASS_MULTICHAR1,
-    ['='] = CHAR_CLASS_MULTICHAR1,
-    ['&'] = CHAR_CLASS_MULTICHAR1,
-    ['^'] = CHAR_CLASS_MULTICHAR1,
-    ['|'] = CHAR_CLASS_MULTICHAR1,
-    ['~'] = CHAR_CLASS_MULTICHAR1,
-
-    ['>'] = CHAR_CLASS_MULTICHAR2,
-    ['<'] = CHAR_CLASS_MULTICHAR2,
-
-    ['-'] = CHAR_CLASS_MULTICHAR3,
-
-    ['\"'] = CHAR_CLASS_STRING,
-    ['\''] = CHAR_CLASS_STRING,
-
-    ['.'] = CHAR_CLASS_DOT,
-
-    ['#'] = CHAR_CLASS_DOUBLE,
-};
-
-// https://gist.github.com/RealNeGate/6236ce425f7a1bd06ea87f6572d8d6f6
-static _Alignas(64) uint8_t ident_table[256] = {
-    0x00,0x00,0x00,0x00,
-    0x10,0x00,0xff,0x03,
-    0xfe,0xff,0xff,0x87,
-    0xfe,0xff,0xff,0x07,
-    0xff,0xff,0xff,0xff,
-    0xff,0xff,0xff,0xff,
-    0xff,0xff,0xff,0xff,
-    0xff,0xff,0xff,0xff,
-};
-
-inline static bool is_ident(unsigned char ch) {
-    #if 1
-    size_t i = ch;
-    size_t index = i / 8;
-    size_t shift = i & 7;
-    return ch >= 0x80 || ((ident_table[index] >> shift) & 1);
-    #else
-    return ch >= 0x80 || ch == '\\'
-        ||  ch == '_' || ch == '$'
-        || (ch >= 'A' && ch <= 'Z')
-        || (ch >= 'a' && ch <= 'z')
-        || (ch >= '0' && ch <= '9');
-    #endif
-}
-
 static uint16_t hash_with_len(const void* data, size_t len) {
     uint8_t* p = (uint8_t*)data;
     uint16_t hash = 0;
@@ -206,7 +116,7 @@ TknType classify_ident(const unsigned char* restrict str, size_t len) {
     #if !USE_INTRIN
     if (strlen(keywords[v]) != len) return TOKEN_IDENTIFIER;
 
-    return memcmp((const char*) str, keywords[v], len) == 0 ? (640 + v) : TOKEN_IDENTIFIER;
+    return memcmp((const char*) str, keywords[v], len) == 0 ? (0x10000000 + v) : TOKEN_IDENTIFIER;
     #else
     __m128i kw128 = _mm_loadu_si128((__m128i*)&keywords[v]);
     __m128i str128 = _mm_loadu_si128((__m128i*)str);
@@ -221,7 +131,7 @@ TknType classify_ident(const unsigned char* restrict str, size_t len) {
         _SIDD_NEGATIVE_POLARITY |
         _SIDD_UNIT_MASK);
 
-    return result == 16 ? (640 + v) : TOKEN_IDENTIFIER;
+    return result == 16 ? (0x10000000 + v) : TOKEN_IDENTIFIER;
     #endif
 }
 
@@ -325,13 +235,6 @@ static void slow_identifier_lexing(Lexer* restrict l, const unsigned char* curre
     l->line_current2 = current;
 }
 
-// the intrinsics don't actually support this lmao
-#if USE_INTRIN
-static inline __m128i _mm_cmple_epu8(__m128i x, __m128i y) {
-    return _mm_cmpeq_epi8(_mm_min_epu8(x, y), x);
-}
-#endif
-
 // NOTE(NeGate): The input string has a fat null terminator of 16bytes to allow
 // for some optimizations overall, one of the important ones is being able to read
 // a whole 16byte SIMD register at once for any SIMD optimizations.
@@ -416,241 +319,97 @@ void lexer_read(Lexer* restrict l) {
     // Try to actually parse a token
     ////////////////////////////////
     const unsigned char* start = current;
-    uint8_t initial_class = char_classes[*current++];
-
-    // Hacky but yea
-    bool slow_path = false;
-    if (start[0] == 'L' && (start[1] == '\"' || start[1] == '\'')) {
-        initial_class = CHAR_CLASS_STRING;
-        current++;
-    } else if (start[0] == '\\') {
-        if (start[1] == 'U' || start[1] == 'u') {
-            slow_path = true;
-            initial_class = CHAR_CLASS_IDENT;
+    uint64_t state = 0;
+    for (;;) {
+        // table[state][*str]
+        uint64_t next = dfa[*current][state];
+        if (next == 0) {
+            break;
         }
+
+        // move along
+        state = next;
+        current += 1;
     }
 
-    switch (initial_class) {
-        case CHAR_CLASS_NULL:
-        break;
-
-        case CHAR_CLASS_IDENT: {
+    // generate valid token types
+    switch (state) {
+        case 0: {
+            fprintf(stderr, "illegal lexer char: %c\n", *start);
+            abort();
+        }
+        case 15:
+        case 1: {
             l->token_type = TOKEN_IDENTIFIER;
+            if (current[-1] == '\\') {
+                current -= 1;
+            }
 
-            // simple DFA
-            static uint8_t dfa[256] = {
-                0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
-                0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
-                0x00,0x00,0x00,0x00,0x05,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
-                0x04,0x04,0x04,0x04,0x04,0x04,0x04,0x04,0x04,0x04,0x00,0x00,0x00,0x00,0x00,0x00,
-                0x00,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,
-                0x05,0x05,0x05,0x05,0x05,0x35,0x05,0x05,0x05,0x05,0x05,0x00,0x0a,0x00,0x00,0x05,
-                0x00,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,
-                0x05,0x05,0x05,0x05,0x05,0x35,0x05,0x05,0x05,0x05,0x05,0x00,0x00,0x00,0x00,0x00,
-                0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,
-                0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,
-                0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,
-                0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,
-                0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,
-                0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,
-                0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,
-                0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,0x05,
-            };
+            #if !USE_INTRIN
+            for (const char* s = start; s != current; s++) {
+                if (*s == '\\') {
+                    slow_identifier_lexing(l, s, start);
+                    return;
+                }
+            }
+            #else
+            // check for escapes
+            __m128i pattern = _mm_set1_epi8('\\');
+            size_t length = current - start;
 
-            //bool test_slow_path = slow_path;
-            //const unsigned char* test = current;
+            for (size_t i = 0; i < length; i += 16) {
+                __m128i bytes = _mm_loadu_si128((__m128i*) &start[i]);
+                __m128i test = _mm_cmpeq_epi8(bytes, pattern);
+                unsigned int mask = _mm_movemask_epi8(test);
 
-            // simple DFA
-            unsigned int state = 1;
-            for (;;) {
-                uint64_t row = dfa[(uint64_t) *current];
-                uint64_t next = (row >> (state * 2)) & 3;
+                if (__builtin_expect(mask, 0)) {
+                    // slow identifier lexing since we might have a universal character
+                    int endpoint = length - i;
+                    int last_escape = __builtin_ctz(mask);
 
-                if (next == 0) {
-                    if (__builtin_expect(state == 2, 0)) current -= 1;
+                    if (last_escape < endpoint) {
+                        slow_identifier_lexing(l, current, start);
+                        return;
+                    }
+                }
+            }
+            #endif
+            break;
+        }
+        case 2:
+        case 13:
+        case 14: {
+            l->token_type = TOKEN_INTEGER;
+
+            #if !USE_INTRIN
+            for (const char* s = start; s != current; s++) {
+                if (*s == '.') l->token_type = TOKEN_FLOAT;
+            }
+            #else
+            // check for dot (it means it's a float)
+            __m128i pattern = _mm_set1_epi8('.');
+            size_t length = current - start;
+
+            for (size_t i = 0; i < length; i += 16) {
+                __m128i bytes = _mm_loadu_si128((__m128i*) &start[i]);
+                __m128i test = _mm_cmpeq_epi8(bytes, pattern);
+                unsigned int mask = _mm_movemask_epi8(test);
+
+                if (__builtin_expect(mask, 0)) {
+                    int endpoint = length - i;
+                    int last_dot = __builtin_ctz(mask);
+
+                    if (last_dot < endpoint) {
+                        l->token_type = TOKEN_FLOAT;
+                    }
                     break;
-                } else if (next == 3) {
-                    // probably not ideal but if we hit state 3 then it's a
-                    // complex identifier as in it's got universal characters
-                    slow_path = true;
-                    next = 1;
                 }
-
-                state = next;
-                current += 1;
             }
-
-            /*while (char_classes[*test] == CHAR_CLASS_IDENT ||
-                char_classes[*test] == CHAR_CLASS_NUMBER ||
-                *test == '\\') {
-                if (test[0] == '\\') {
-                    if (test[1] == 'U' || test[1] == 'u') {
-                        test_slow_path = true;
-                    } else {
-                        // exit... it's a wonky identifier
-                        break;
-                    }
-                }
-
-                test++;
-            }
-
-            assert(test_slow_path == slow_path);
-            assert(current == test);*/
-
-            if (__builtin_expect(slow_path, 0)) {
-                slow_identifier_lexing(l, current, start);
-                return;
-            }
+            #endif
             break;
         }
-        case CHAR_CLASS_NUMBER: {
-            if (current[-1] == '0' && current[0] == 'b') {
-                current++;
-
-                while (*current == '0' || *current == '1') {
-                    current++;
-                }
-
-                l->token_type = TOKEN_INTEGER;
-            } else if (current[-1] == '0' && current[0] == 'x') {
-                current++;
-
-                while ((*current >= '0' && *current <= '9') ||
-                    (*current >= 'A' && *current <= 'F')    ||
-                    (*current >= 'a' && *current <= 'f')) {
-                    current++;
-                }
-
-                l->token_type = TOKEN_INTEGER;
-                if (*current == '.') {
-                    // floats
-                    l->token_type = TOKEN_FLOAT;
-                    current++;
-
-                    while ((*current >= '0' && *current <= '9') ||
-                        (*current >= 'A' && *current <= 'F')    ||
-                        (*current >= 'a' && *current <= 'f')) {
-                        current++;
-                    }
-
-                }
-
-                if (*current == 'p') {
-                    l->token_type = TOKEN_FLOAT;
-                    current++;
-                    if (*current == '+' || *current == '-') current++;
-
-                    while (char_classes[*current] == CHAR_CLASS_NUMBER) {
-                        current++;
-                    }
-                }
-            } else {
-                while (char_classes[*current] == CHAR_CLASS_NUMBER) {
-                    current++;
-                }
-                l->token_type = TOKEN_INTEGER;
-
-                if (*current == '.') {
-                    // floats
-                    l->token_type = TOKEN_FLOAT;
-                    current++;
-
-                    while (char_classes[*current] == CHAR_CLASS_NUMBER) {
-                        current++;
-                    }
-                }
-
-                if (*current == 'e') {
-                    // floats but cooler
-                    l->token_type = TOKEN_FLOAT;
-
-                    current++;
-                    if (*current == '+' || *current == '-') current++;
-
-                    while (char_classes[*current] == CHAR_CLASS_NUMBER) {
-                        current++;
-                    }
-                }
-
-                if (*current == 'f' || *current == 'd') {
-                    l->token_type = TOKEN_FLOAT;
-                    current++;
-                }
-            }
-
-            // suffix
-            if (*current == 'i') {
-                current++;
-
-                // at most it's two numbers
-                current += (char_classes[*current] == CHAR_CLASS_NUMBER);
-                current += (char_classes[*current] == CHAR_CLASS_NUMBER);
-            } else if (*current == 'u') {
-                current++;
-
-                while (char_classes[*current] == CHAR_CLASS_IDENT) {
-                    current++;
-                }
-
-                // at most it's two numbers
-                current += (char_classes[*current] == CHAR_CLASS_NUMBER);
-                current += (char_classes[*current] == CHAR_CLASS_NUMBER);
-            } else {
-                while (char_classes[*current] == CHAR_CLASS_IDENT) {
-                    current++;
-                }
-            }
-            break;
-        }
-        case CHAR_CLASS_SEPARATOR: {
-            l->token_type = *start;
-            break;
-        }
-        case CHAR_CLASS_MULTICHAR1: {
-            l->token_type = *start;
-            if (*current == '=') {
-                l->token_type += 384;
-                current++;
-            } else if (*current == *start && *current != '*') {
-                l->token_type += 256;
-                current++;
-            }
-            break;
-        }
-        case CHAR_CLASS_MULTICHAR2: {
-            l->token_type = *start;
-            if (*current == '=') {
-                l->token_type += 256;
-                current++;
-            } else if (*current == *start) {
-                l->token_type += 384;
-                current++;
-
-                if (*current == '=') {
-                    l->token_type += 128;
-                    current++;
-                }
-            }
-            break;
-        }
-        case CHAR_CLASS_MULTICHAR3: {
-            l->token_type = *start;
-
-            if (*current == '-') {
-                l->token_type = TOKEN_DECREMENT;
-                current++;
-            } else if (*current == '=') {
-                l->token_type = TOKEN_MINUS_EQUAL;
-                current++;
-            } else if (*current == '>') {
-                l->token_type = TOKEN_ARROW;
-                current++;
-            }
-            break;
-        }
-        case CHAR_CLASS_STRING: {
-            char quote_type = current[-1] == '\'' ? '\'' : '\"';
+        case 7: {
+            char quote_type = current[-1];
 
             #if !USE_INTRIN
             for (; *current && *current != quote_type; current++) {
@@ -667,7 +426,6 @@ void lexer_read(Lexer* restrict l) {
             }
 
             current += 1;
-            // printf("%.*s\n", (int)(current - start), start);
             #else
             __m128i pattern = _mm_set1_epi8(quote_type);
 
@@ -706,29 +464,20 @@ void lexer_read(Lexer* restrict l) {
             }
             break;
         }
-        case CHAR_CLASS_DOT: {
-            if (current[0] == '.' && current[1] == '.') {
-                current += 2;
+        default: {
+            // add chars together (max of 3)
+            int length = current - start;
+            if (length > 3) length = 3;
 
-                l->token_type = TOKEN_TRIPLE_DOT;
-                break;
-            }
+            uint32_t mask = UINT32_MAX >> ((4 - length) * 8);
 
-            l->token_type = '.';
+            // potentially unaligned access :P
+            uint32_t chars;
+            memcpy(&chars, start, sizeof(uint32_t));
+
+            l->token_type = chars & mask;
             break;
         }
-        case CHAR_CLASS_DOUBLE: {
-            if (*current == *start) {
-                current++;
-                l->token_type = *start + 256;
-                break;
-            }
-
-            l->token_type = *start;
-            break;
-        }
-        default:
-        abort();
     }
 
     if (__builtin_expect(current[0] == '\\' && (current[1] == '\r' || current[1] == '\n'), 0)) {

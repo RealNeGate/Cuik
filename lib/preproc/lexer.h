@@ -5,6 +5,9 @@
 #include "../big_array.h"
 #include <cuik.h>
 
+#define TKN2(x, y)                  (((y) << 8) | (x))
+#define TKN3(x, y, z) (((z) << 16) | ((y) << 8) | (x))
+
 // NOTE(NeGate): I originally called it TokenType but windows a bih on god
 typedef enum TknType {
     TOKEN_ACCESSOR = '.',
@@ -49,47 +52,46 @@ typedef enum TknType {
     TOKEN_IDENTIFIER = 256,
     TOKEN_INTEGER,
     TOKEN_FLOAT,
-    TOKEN_TRIPLE_DOT,
+    TOKEN_TRIPLE_DOT = TKN3('.', '.', '.'),
 
     TOKEN_INVALID,
 
-    TOKEN_ARROW,                     /* ->  */
-    TOKEN_DOUBLE_LBRACE = '[' + 256, /* [[  */
-    TOKEN_DOUBLE_RBRACE = ']' + 256, /* ]]  */
-    TOKEN_DOUBLE_HASH   = '#' + 256, /* ##  */
+    TOKEN_ARROW         = TKN2('-', '>'),
+    TOKEN_DOUBLE_HASH   = TKN2('#', '#'),
+    TOKEN_DOUBLE_LBRACE = TKN2('[', '['),
+    TOKEN_DOUBLE_RBRACE = TKN2(']', ']'),
 
-    TOKEN_DOUBLE_AND = '&' + 256, /* &=  */
-    TOKEN_DOUBLE_OR = '|' + 256,  /* |=  */
+    TOKEN_DOUBLE_AND    = TKN2('&', '&'),
+    TOKEN_DOUBLE_OR     = TKN2('|', '|'),
 
-    TOKEN_PLUS_EQUAL = '+' + 384,    /* +=  */
-    TOKEN_MINUS_EQUAL = '-' + 384,   /* -=  */
-    TOKEN_TIMES_EQUAL = '*' + 384,   /* *=  */
-    TOKEN_SLASH_EQUAL = '/' + 384,   /* /=  */
-    TOKEN_PERCENT_EQUAL = '%' + 384, /* %=  */
-    TOKEN_OR_EQUAL = '|' + 384,      /* |=  */
-    TOKEN_AND_EQUAL = '&' + 384,     /* &=  */
-    TOKEN_XOR_EQUAL = '^' + 384,     /* ^=  */
-    TOKEN_NOT_EQUAL = '!' + 384,     /* !=  */
-    TOKEN_EQUALITY = '=' + 384,      /* ==  */
+    TOKEN_PLUS_EQUAL    = TKN2('+', '='),
+    TOKEN_MINUS_EQUAL   = TKN2('-', '='),
+    TOKEN_TIMES_EQUAL   = TKN2('*', '='),
+    TOKEN_SLASH_EQUAL   = TKN2('/', '='),
+    TOKEN_PERCENT_EQUAL = TKN2('%', '='),
+    TOKEN_OR_EQUAL      = TKN2('|', '='),
+    TOKEN_AND_EQUAL     = TKN2('&', '='),
+    TOKEN_XOR_EQUAL     = TKN2('^', '='),
+    TOKEN_NOT_EQUAL     = TKN2('!', '='),
+    TOKEN_EQUALITY      = TKN2('=', '='),
+    TOKEN_GREATER_EQUAL = TKN2('>', '='),
+    TOKEN_LESS_EQUAL    = TKN2('<', '='),
+    TOKEN_LEFT_SHIFT    = TKN2('<', '<'),
+    TOKEN_RIGHT_SHIFT   = TKN2('>', '>'),
 
-    TOKEN_GREATER_EQUAL = '>' + 256, /* >=  */
-    TOKEN_LESS_EQUAL = '<' + 256,    /* <=  */
-    TOKEN_LEFT_SHIFT = '<' + 384,    /* <<  */
-    TOKEN_RIGHT_SHIFT = '>' + 384,   /* >>  */
-
-    TOKEN_LEFT_SHIFT_EQUAL = '<' + 512,  /* <<= */
-    TOKEN_RIGHT_SHIFT_EQUAL = '>' + 512, /* >>= */
-    TOKEN_INCREMENT = '+' + 256,         /* ++  */
-    TOKEN_DECREMENT = '-' + 256,         /* --  */
+    TOKEN_LEFT_SHIFT_EQUAL  = TKN3('<', '<', '='),
+    TOKEN_RIGHT_SHIFT_EQUAL = TKN3('>', '>', '='),
+    TOKEN_INCREMENT         = TKN2('+', '+'),
+    TOKEN_DECREMENT         = TKN2('-', '-'),
 
     // this is hacky because ! is a single char
     // token (sometimes used in !=) but this way
     // it can share more rules with the rest of the
     // tokens (less cases in the lexer).
-    TOKEN_DOUBLE_EXCLAMATION = '!' + 256, /* !!  */
+    TOKEN_DOUBLE_EXCLAMATION = TKN2('!', '!'),
 
-    // Keywords
-    TOKEN_KW_auto = 640,
+    // Keywords (they start far higher up to avoid problems)
+    TOKEN_KW_auto = 0x10000000,
     TOKEN_KW_break,
     TOKEN_KW_case,
     TOKEN_KW_char,
@@ -142,6 +144,9 @@ typedef enum TknType {
     TOKEN_KW_stdcall,
     TOKEN_KW_declspec,
 } TknType;
+
+#undef TKN2
+#undef TKN3
 
 typedef struct {
     ////////////////////////////////
