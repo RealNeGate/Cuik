@@ -477,6 +477,10 @@ static void expand_ident(Cuik_CPP* restrict c, TokenStream* restrict s, TokenStr
                             // TODO(NeGate): Error message
                             if (as_string) abort();
 
+                            if (def_lex.token_type == TOKEN_STRING_WIDE_DOUBLE_QUOTE || def_lex.token_type == TOKEN_STRING_WIDE_SINGLE_QUOTE) {
+                                *temp_expansion++ = 'L';
+                            }
+
                             memcpy(temp_expansion, token_data, token_length);
                             temp_expansion += token_length;
                             *temp_expansion++ = ' ';

@@ -355,6 +355,7 @@ static InitNode* walk_initializer_layer(
         int index = 0;
         InitSearchResult search = find_member_by_name(parent, node->member_name, &index, 0);
         if (search.member == NULL) {
+            REPORT(ERROR, node->loc, "could not find member '%s' in record", node->member_name);
             return NULL;
         }
 

@@ -404,34 +404,21 @@ static bool str_ends_with(const char* cstr, const char* postfix) {
     return postfix_len <= cstr_len && strcmp(cstr + cstr_len - postfix_len, postfix) == 0;
 }
 
-// we can do a bit of filter such as '*.c' where it'll take all
-// paths in the folder that end with .c
-static void append_input_path(const char* path) {
-    // avoid using the filters if we dont need to :p
-    bool needs_filter = false;
+// handles the **.c *.c type stuff
+static void filtered_append(const char* path, bool recursive) {
+    const char* slash = path;
     for (const char* p = path; *p; p++) {
-        if (*p == '*') {
-            needs_filter = true;
-            break;
+        if (*p == '/' || *p == '\\') {
+            slash = p;
         }
     }
 
-    if (needs_filter) {
-        #ifdef _WIN32
-        const char* slash = path;
-        for (const char* p = path; *p; p++) {
-            if (*p == '/' || *p == '\\') {
-                slash = p;
-            }
-        }
+    #ifdef _WIN32
+    WIN32_FIND_DATA find_data;
+    HANDLE find_handle = FindFirstFile(path, &find_data);
 
-        WIN32_FIND_DATA find_data;
-        HANDLE find_handle = FindFirstFile(path, &find_data);
-        if (find_handle == INVALID_HANDLE_VALUE) {
-            fprintf(stderr, "could not filter path: %s\n", path);
-            abort();
-        }
-
+    // loops through normal files
+    if (find_handle != INVALID_HANDLE_VALUE) {
         do {
             char* new_path = malloc(MAX_PATH);
             if (slash == path) {
@@ -446,16 +433,50 @@ static void append_input_path(const char* path) {
                 dyn_array_put(input_files, new_path);
             }
         } while (FindNextFile(find_handle, &find_data));
+    }
+    FindClose(find_handle);
 
-        if (!FindClose(find_handle)) {
-            fprintf(stderr, "internal error: failed to close filter\n");
-            abort();
+    if (recursive) {
+        char dir_path[MAX_PATH];
+        sprintf_s(dir_path, sizeof(dir_path), "%.*s*", (int)(slash - path) + 1, path);
+        HANDLE dir = FindFirstFile(dir_path, &find_data);
+
+        if (dir != INVALID_HANDLE_VALUE) {
+            do {
+                if ((find_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) && find_data.cFileName[0] != '.') {
+                    char new_pattern[FILENAME_MAX];
+                    sprintf_s(new_pattern, sizeof(new_pattern), "%.*s%s%s", (int)(slash - path) + 1, path, find_data.cFileName, slash);
+
+                    filtered_append(new_pattern, true);
+                }
+            } while (FindNextFile(dir, &find_data));
         }
-        #else
-        fprintf(stderr, "filepath filters not supported on your platform yet :(\n");
-        fprintf(stderr, "umm... i mean you can probably remind me if you want :)\n");
-        abort();
-        #endif
+        FindClose(dir);
+    }
+
+    #else
+    fprintf(stderr, "filepath filters not supported on your platform yet :(\n");
+    fprintf(stderr, "umm... i mean you can probably remind me if you want :)\n");
+    abort();
+    #endif
+}
+
+// we can do a bit of filter such as '*.c' where it'll take all
+// paths in the folder that end with .c
+static void append_input_path(const char* path) {
+    // we don't check this very well because we're based
+    const char* star = NULL;
+    for (const char* p = path; *p; p++) {
+        if (*p == '*') {
+            star = p;
+            break;
+        }
+    }
+
+    if (star != NULL) {
+        // this is a really hacky way to handle recursive directories
+        // but im a baller so i dont care
+        filtered_append(path, star[1] == '*');
     } else {
         if (str_ends_with(path, ".o") || str_ends_with(path, ".obj")) {
             dyn_array_put(input_objects, path);

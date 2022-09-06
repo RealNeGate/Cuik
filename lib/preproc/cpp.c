@@ -92,11 +92,15 @@ static String get_pp_tokens_until_newline(TokenStream* s) {
     const unsigned char* start = s->tokens[s->current].start;
     const unsigned char* end = start;
 
+    bool is_str = tokens_is(s, TOKEN_STRING_WIDE_SINGLE_QUOTE) || tokens_is(s, TOKEN_STRING_WIDE_DOUBLE_QUOTE);
     while (!tokens_eof(s) && !tokens_hit_line(s)) {
         end = s->tokens[s->current].end;
         tokens_next(s);
     }
 
+    if (is_str) {
+        start -= 1;
+    }
     return (String){ .length = end - start, .data = start };
 }
 

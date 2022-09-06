@@ -374,6 +374,8 @@ InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, Sourc
             }
 
             if (!success) {
+                e = cuik__optimize_ast(tu, e);
+
                 switch (e->op) {
                     // TODO(NeGate): Implement constants for literals
                     // to allow for more stuff to be precomputed.

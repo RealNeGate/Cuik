@@ -1,5 +1,5 @@
 import CC=clang
-import OPT=y
+import OPT=n
 import COMPILE_DRIVER=y
 
 ifeq ($(CC),cl)
