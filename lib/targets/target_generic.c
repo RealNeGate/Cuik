@@ -320,14 +320,14 @@ BuiltinResult target_generic_compile_builtin(TranslationUnit* tu, TB_Function* f
         return ZZZ(tb_inst_cmp_ilt(func, result, a, false));
     } else if (strcmp(name, "__builtin_unreachable") == 0) {
         tb_inst_unreachable(func);
-        tb_inst_label(func, tb_inst_new_label_id(func));
+        tb_inst_set_label(func, tb_basic_block_create(func));
         return ZZZ(TB_NULL_REG);
     } else if (strcmp(name, "__builtin_expect") == 0) {
         TB_Reg dst = irgen_as_rvalue(tu, func, args[0]);
         return ZZZ(dst);
     } else if (strcmp(name, "__builtin_trap") == 0) {
         tb_inst_trap(func);
-        tb_inst_label(func, tb_inst_new_label_id(func));
+        tb_inst_set_label(func, tb_basic_block_create(func));
         return ZZZ(TB_NULL_REG);
     } else if (strcmp(name, "__builtin_syscall") == 0) {
         TB_Reg num = irgen_as_rvalue(tu, func, args[0]);
@@ -342,13 +342,13 @@ BuiltinResult target_generic_compile_builtin(TranslationUnit* tu, TB_Function* f
         return ZZZ(result);
     } else if (strcmp(name, "__assume") == 0) {
         TB_Reg cond = irgen_as_rvalue(tu, func, args[0]);
-        TB_Label no_reach = tb_inst_new_label_id(func);
-        TB_Label skip = tb_inst_new_label_id(func);
+        TB_Label no_reach = tb_basic_block_create(func);
+        TB_Label skip = tb_basic_block_create(func);
 
         tb_inst_if(func, cond, skip, no_reach);
-        tb_inst_label(func, no_reach);
+        tb_inst_set_label(func, no_reach);
         tb_inst_unreachable(func);
-        tb_inst_label(func, skip);
+        tb_inst_set_label(func, skip);
 
         return ZZZ(TB_NULL_REG);
     } else if (strcmp(name, "__debugbreak") == 0) {

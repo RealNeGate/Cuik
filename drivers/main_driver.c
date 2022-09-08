@@ -251,6 +251,14 @@ static void irgen_job(void* arg) {
             if (func != NULL) {
                 for (size_t i = 0; i < PASS_COUNT; i++) {
                     passes[i].func_run(func);
+
+                    #ifndef NDEBUG
+                    int error_count = tb_function_validate(func);
+                    if (error_count > 0) {
+                        fprintf(stderr, "TB validator failed with %d error%s!\n", error_count, error_count ? "s" : "");
+                        abort();
+                    }
+                    #endif
                 }
             }
         }
@@ -1134,7 +1142,7 @@ int main(int argc, char** argv) {
     if (args_ir) {
         TIMESTAMP("IR Printer");
         TB_FOR_FUNCTIONS(it, mod) {
-            tb_function_print(it.f, tb_default_print_callback, stdout);
+            tb_function_print(it.f, tb_default_print_callback, stdout, false);
             printf("\n\n");
         }
         goto done;

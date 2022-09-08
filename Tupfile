@@ -10,7 +10,7 @@ ifeq ($(COMPILE_DRIVER),y)
 	CFLAGS += -DCUIK_USE_TB
 endif
 
-CFLAGS += -I include -I lib -I deps
+CFLAGS += -I include -I lib -I deps -I tilde-backend/include
 CFLAGS += -Wall -Werror -Wno-unused-function -Wno-unused-variable
 CFLAGS += -msse4.2 -maes
 CFLAGS += -D_CRT_SECURE_NO_WARNINGS
@@ -26,7 +26,7 @@ endif
 !cc = |> $(CC) $(CFLAGS) %f -g -c -o %o |> bin/%B.o
 
 # lexer generator
-: |> $(CC) -g lib/generator/lexgen.c && a %o |> lib/preproc/dfa.h | a.exe a.pdb a.ilk ^.*\.cache
+: |> $(CC) -g lexgen.c && a %o |> lib/preproc/dfa.h | a.exe a.pdb a.ilk ^.*\.cache
 
 # library source
 srcs = lib/*.c lib/preproc/*.c lib/front/*.c lib/back/*.c lib/targets/*.c

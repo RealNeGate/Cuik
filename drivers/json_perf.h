@@ -16,8 +16,8 @@ static void jsonperf__stop(void* user_data) {
 }
 
 static void jsonperf__plot(void* user_data, uint64_t start_ns, uint64_t end_ns, const char* label) {
-    int64_t elapsed_in_microseconds = (end_ns - start_ns) / 1000;
-    int64_t start_in_microseconds = start_ns / 1000;
+    double elapsed_in_microseconds = (end_ns - start_ns) / 1000.0;
+    double start_in_microseconds = start_ns / 1000.0;
 
     if (elapsed_in_microseconds > 1) {
         #if _WIN32
@@ -28,15 +28,15 @@ static void jsonperf__plot(void* user_data, uint64_t start_ns, uint64_t end_ns, 
 
         fprintf(jsonperf__file,
             "%s{\"cat\":\"function\", "
-            "\"dur\":%lld, "
+            "\"dur\":%f, "
             "\"name\":\"%s\", "
             "\"ph\":\"X\", "
             "\"pid\":0, "
             "\"tid\": %u, "
-            "\"ts\": %lld}",
+            "\"ts\": %f}",
             jsonperf__first_plot ? "\n" : ",\n",
-            (long long)elapsed_in_microseconds, label, tid,
-            (long long)start_in_microseconds);
+            elapsed_in_microseconds, label, tid,
+            start_in_microseconds);
 
         jsonperf__first_plot = false;
     }
