@@ -4,6 +4,7 @@
 #include "big_array.h"
 #include "cli_parser.h"
 #include "json_perf.h"
+#include "flint_perf.h"
 #include "bindgen.h"
 
 #ifndef __CUIK__
@@ -245,20 +246,30 @@ static void irgen_job(void* arg) {
     };
     enum { PASS_COUNT = sizeof(passes) / sizeof(passes[0]) };
 
-    CUIK_TIMED_BLOCK("IR generation: %zu", task.count) {
+    CUIK_TIMED_BLOCK("IrGen: %zu", task.count) {
         for (size_t i = 0; i < task.count; i++) {
-            TB_Function* func = cuik_stmt_gen_ir(task.tu, task.stmts[i]);
-            if (func != NULL) {
-                for (size_t i = 0; i < PASS_COUNT; i++) {
-                    passes[i].func_run(func);
+            TB_Function* func = NULL;
+            const char* name = task.stmts[i]->decl.name;
 
-                    #ifndef NDEBUG
+            CUIK_TIMED_BLOCK("IrGen: %s", name) {
+                func = cuik_stmt_gen_ir(task.tu, task.stmts[i]);
+            }
+
+            if (func != NULL) {
+                CUIK_TIMED_BLOCK("Canonicalize: %s", name) {
+                    for (size_t j = 0; j < PASS_COUNT; j++) {
+                        CUIK_TIMED_BLOCK("Opt%s: %s", passes[j].name, name) {
+                            passes[j].func_run(func);
+                        }
+                    }
+
+                    /*#ifndef NDEBUG
                     int error_count = tb_function_validate(func);
                     if (error_count > 0) {
                         fprintf(stderr, "TB validator failed with %d error%s!\n", error_count, error_count ? "s" : "");
                         abort();
                     }
-                    #endif
+                    #endif*/
                 }
             }
         }
@@ -1034,10 +1045,18 @@ int main(int argc, char** argv) {
 
     if (args_time) {
         char* perf_output_path = malloc(FILENAME_MAX);
+
+        #if 0
         sprintf_s(perf_output_path, FILENAME_MAX, "%s.json", output_path_no_ext);
 
         jsonperf_profiler.user_data = perf_output_path;
-        cuik_start_global_profiler(&jsonperf_profiler, true);
+        cuik_start_global_profiler(&jsonperf_profiler, false);
+        #else
+        sprintf_s(perf_output_path, FILENAME_MAX, "%s.flint", output_path_no_ext);
+
+        flintperf_profiler.user_data = perf_output_path;
+        cuik_start_global_profiler(&flintperf_profiler, false);
+        #endif
     }
 
     // spin up worker threads

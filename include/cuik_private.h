@@ -29,6 +29,7 @@ struct Cuik_CPP {
     unsigned char* the_shtuffs;
 
     TokenStream tokens;
+    struct SourceLine* last_source_line;
 
     // powers __COUNTER__
     int unique_counter;
@@ -70,7 +71,6 @@ struct Cuik_CPP {
 
     // how deep into directive scopes (#if, #ifndef, #ifdef) is it
     int depth;
-    struct SourceLine* current_source_line;
 
     // TODO(NeGate): Remove this and put a proper hash map or literally anything else
     const unsigned char** macro_bucket_keys;

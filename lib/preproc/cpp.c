@@ -1086,11 +1086,24 @@ static SourceLocIndex get_source_location(Cuik_CPP* restrict c, TokenStream* res
     // just extract the one that's attached to the input token and chop it's heading
     SourceLoc* old = &in->locations[in->tokens[in->current].location];
 
+    if (c->last_source_line == NULL || c->last_source_line->line != old->line->line) {
+        // make a new source line... we'll miss our fallen brother, he's not
+        // dead but for when he dies...
+        SourceLine* l = arena_alloc(&thread_arena, sizeof(SourceLine), _Alignof(SourceLine));
+        l->filepath = old->line->filepath;
+        l->line_str = old->line->line_str;
+        l->parent = parent_loc;
+        l->line = old->line->line;
+
+        c->last_source_line = l;
+    }
+
     // generate the output source locs (we don't wanna keep the old streams)
     dyn_array_put_uninit(s->locations, 1);
     SourceLocIndex loc_index = dyn_array_length(s->locations) - 1;
     s->locations[loc_index] = *old;
     s->locations[loc_index].type = loc_type;
+    s->locations[loc_index].line = c->last_source_line;
 
     return loc_index;
 }

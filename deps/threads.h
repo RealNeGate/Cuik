@@ -28,22 +28,26 @@
 #define ONCE_FLAG_INIT INIT_ONCE_STATIC_INIT
 #else
 #define ONCE_FLAG_INIT \
-    { 0 }
+{ 0 }
 #endif
 #define TSS_DTOR_ITERATIONS 1
 
+#ifndef thread_local
+#define thread_local _Thread_local
+#endif
+
 /*---------------------------- types ----------------------------*/
 typedef struct cnd_t {
-#ifdef EMULATED_THREADS_USE_NATIVE_CV
+    #ifdef EMULATED_THREADS_USE_NATIVE_CV
     CONDITION_VARIABLE condvar;
-#else
+    #else
     int blocked;
     int gone;
     int to_unblock;
     HANDLE sem_queue;
     HANDLE sem_gate;
     CRITICAL_SECTION monitor;
-#endif
+    #endif
 } cnd_t;
 
 typedef HANDLE thrd_t;
