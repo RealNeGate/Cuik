@@ -34,6 +34,51 @@ static void fallthrough_label(TB_Function* func, TB_Label target) {
     tb_inst_set_label(func, target);
 }
 
+static const TB_DebugType* as_tb_debug_type(TB_Module* mod, Cuik_Type* t) {
+    if (t->debug_type != NULL) {
+        return t->debug_type;
+    }
+
+    switch (t->kind) {
+        case KIND_VOID:
+        return tb_debug_get_void(mod);
+
+        case KIND_BOOL:
+        return tb_debug_get_bool(mod);
+
+        case KIND_CHAR: case KIND_SHORT: case KIND_INT: case KIND_LONG:
+        return tb_debug_get_integer(mod, t->is_unsigned, t->size * 8);
+
+        case KIND_FLOAT:
+        return tb_debug_get_float(mod, TB_FLT_32);
+
+        case KIND_DOUBLE:
+        return tb_debug_get_float(mod, TB_FLT_64);
+
+        case KIND_ENUM:
+        return tb_debug_get_integer(mod, true, 32);
+
+        case KIND_PTR:
+        return tb_debug_create_ptr(mod, as_tb_debug_type(mod, t->ptr_to));
+
+        case KIND_FUNC:
+        return tb_debug_create_ptr(mod, tb_debug_get_void(mod));
+
+        case KIND_ARRAY:
+        return tb_debug_create_array(mod, as_tb_debug_type(mod, t->array_of), t->array_count);
+
+        case KIND_STRUCT:
+        case KIND_UNION:
+        return tb_debug_get_integer(mod, true, 32);
+
+        case KIND_QUALIFIED_TYPE:
+        return as_tb_debug_type(mod, t->qualified_ty);
+
+        default:
+        abort(); // TODO
+    }
+}
+
 static TB_Reg cast_reg(TB_Function* func, TB_Reg reg, const Cuik_Type* src, const Cuik_Type* dst) {
     if (dst->kind == KIND_VOID) {
         return reg;
@@ -197,7 +242,7 @@ TB_Reg irgen_as_lvalue(TranslationUnit* tu, TB_Function* func, Expr* e) {
         TB_CharUnits align = v.type->align;
         TB_DataType dt = tb_function_get_node(func, v.reg)->dt;
 
-        TB_Reg temporary = tb_inst_local(func, size, align, NULL);
+        TB_Reg temporary = tb_inst_local(func, size, align);
         tb_inst_store(func, dt, temporary, v.reg, align);
         return temporary;
     } else {
@@ -706,7 +751,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
         }
         case EXPR_INITIALIZER: {
             Cuik_Type* type = e->init.type;
-            TB_Reg addr = tb_inst_local(func, type->size, type->align, NULL);
+            TB_Reg addr = tb_inst_local(func, type->size, type->align);
 
             gen_local_initializer(tu, func, e->start_loc, addr, type, e->init.count, e->init.nodes);
 
@@ -997,7 +1042,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
 
             TB_Reg* ir_args = tls_push(real_arg_count * sizeof(TB_Reg));
             if (is_aggregate_return) {
-                ir_args[0] = tb_inst_local(func, e->type->size, e->type->align, NULL);
+                ir_args[0] = tb_inst_local(func, e->type->size, e->type->align);
             }
 
             // point at which it stops being know which parameter types we're
@@ -1055,7 +1100,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
                     TB_CharUnits align = e->type->align;
                     TB_DataType dt = tb_function_get_node(func, r)->dt;
 
-                    TB_Reg addr = tb_inst_local(func, size, align, NULL);
+                    TB_Reg addr = tb_inst_local(func, size, align);
                     tb_inst_store(func, dt, addr, r, align);
 
                     return (IRVal){
@@ -1813,7 +1858,9 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
                 break;
             }
 
-            TB_Reg addr = tb_inst_local(func, size, align, s->decl.name);
+            TB_Reg addr = tb_inst_local(func, size, align);
+            tb_function_attrib_variable(func, addr, s->decl.name, as_tb_debug_type(tu->ir_mod, type));
+
             if (s->decl.initial) {
                 Expr* e = s->decl.initial;
 

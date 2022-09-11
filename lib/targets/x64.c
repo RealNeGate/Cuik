@@ -140,7 +140,7 @@ static int pass_parameter(TranslationUnit* tu, TB_Function* func, Expr* e, bool 
                 TB_CharUnits align = arg_type->align;
                 TB_DataType dt = tb_function_get_node(func, arg.reg)->dt;
 
-                arg_addr = tb_inst_local(func, size, align, NULL);
+                arg_addr = tb_inst_local(func, size, align);
                 tb_inst_store(func, dt, arg_addr, arg.reg, align);
                 break;
             }
@@ -157,7 +157,7 @@ static int pass_parameter(TranslationUnit* tu, TB_Function* func, Expr* e, bool 
         if (arg_type->is_const) {
             out_param[0] = arg_addr;
         } else {
-            TB_Reg temp_slot = tb_inst_local(func, size, align, NULL);
+            TB_Reg temp_slot = tb_inst_local(func, size, align);
             TB_Reg size_reg = tb_inst_uint(func, TB_TYPE_I64, size);
 
             tb_inst_memcpy(func, temp_slot, arg_addr, size_reg, align);
@@ -188,7 +188,7 @@ static int pass_parameter(TranslationUnit* tu, TB_Function* func, Expr* e, bool 
                     TB_CharUnits align = arg_type->align;
                     TB_DataType dt = tb_function_get_node(func, arg.reg)->dt;
 
-                    arg_addr = tb_inst_local(func, size, align, NULL);
+                    arg_addr = tb_inst_local(func, size, align);
                     tb_inst_store(func, dt, arg_addr, arg.reg, align);
                     break;
                 }

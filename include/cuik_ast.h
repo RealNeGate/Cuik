@@ -89,6 +89,13 @@ struct Cuik_Type {
     Cuik_Type* based;
     // used by cycle checking
     Atom also_known_as;
+
+    #ifdef CUIK_USE_TB
+    const TB_DebugType* debug_type;
+    #else
+    void* user_data;
+    #endif
+
     int ordinal;
 
     bool is_const : 1;
