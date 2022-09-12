@@ -31,16 +31,14 @@ void* arena_alloc(Arena* arena, size_t size, size_t align) {
         }
 
         s->next = NULL;
-        s->used = size;
+        s->used = (size + align_mask) & ~align_mask;
         s->capacity = ARENA_SEGMENT_SIZE;
         s->_pad = 0;
         ptr = s->data;
 
         // Insert to top of nodes
-        if (arena->top)
-            arena->top->next = s;
-        else
-            arena->base = s;
+        if (arena->top) arena->top->next = s;
+        else arena->base = s;
 
         arena->top = s;
     }
