@@ -101,29 +101,33 @@ CUIK_API bool cuikpp_default_packet_handler(Cuik_CPP* ctx, Cuikpp_Packet* packet
 
         return true;
     } else if (packet->tag == CUIKPP_PACKET_CANONICALIZE) {
-        #ifdef _WIN32
-        char* filepart;
-        if (GetFullPathNameA(packet->canonicalize.input_path, FILENAME_MAX, packet->canonicalize.output_path, &filepart) == 0) {
-            return false;
-        }
-
-        // Convert file paths into something more comfortable
-        // The windows file paths are case insensitive
-        for (char* p = packet->canonicalize.output_path; *p; p++) {
-            if (*p == '\\') {
-                *p = '/';
-            } else if (*p >= 'A' && *p <= 'Z') {
-                *p -= ('A' - 'a');
-            }
-        }
-
-        return true;
-        #else
-        return realpath(packet->canonicalize.input_path, packet->canonicalize.output_path) != NULL;
-        #endif
+        return cuik_canonicalize_path(packet->canonicalize.output_path, packet->canonicalize.input_path);
     } else {
         return false;
     }
+}
+
+CUIK_API bool cuik_canonicalize_path(char output[FILENAME_MAX], const char* input) {
+    #ifdef _WIN32
+    char* filepart;
+    if (GetFullPathNameA(input, FILENAME_MAX, output, &filepart) == 0) {
+        return false;
+    }
+
+    // Convert file paths into something more comfortable
+    // The windows file paths are case insensitive
+    for (char* p = output; *p; p++) {
+        if (*p == '\\') {
+            *p = '/';
+        } else if (*p >= 'A' && *p <= 'Z') {
+            *p -= ('A' - 'a');
+        }
+    }
+
+    return true;
+    #else
+    return realpath(input, output) != NULL;
+    #endif
 }
 
 CUIK_API void cuiklex_canonicalize(size_t length, char* data) {

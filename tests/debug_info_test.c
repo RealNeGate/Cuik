@@ -1,5 +1,9 @@
 #include <stdio.h>
 
+typedef struct Foo {
+    int x, y, z;
+} Bar;
+
 int slow_fib(int n) {
     if (n < 2) return n;
     else return slow_fib(n - 1) + slow_fib(n - 2);
@@ -14,6 +18,8 @@ int foo(int n) {
 }
 
 int main(void) {
+    Bar b = { 2, 3, 1 };
+    
     long long x = 16;
     printf("Hello, World! %lld\n", x);
 

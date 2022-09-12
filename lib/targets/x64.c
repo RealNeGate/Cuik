@@ -74,6 +74,7 @@ static bool win64_should_pass_via_reg(TranslationUnit* tu, Cuik_Type* type) {
 
 static TB_FunctionPrototype* create_prototype(TranslationUnit* tu, Cuik_Type* type) {
     // decide if return value is aggregate
+    TB_Module* m = tu->ir_mod;
     bool is_aggregate_return = !win64_should_pass_via_reg(tu, type->func.return_type);
 
     // parameters
@@ -89,7 +90,13 @@ static TB_FunctionPrototype* create_prototype(TranslationUnit* tu, Cuik_Type* ty
     TB_FunctionPrototype* proto = tb_prototype_create(tu->ir_mod, TB_STDCALL, return_dt, real_param_count, type->func.has_varargs);
 
     if (is_aggregate_return) {
-        tb_prototype_add_param(proto, TB_TYPE_PTR);
+        if (tu->has_tb_debug_info) {
+            // it's a pointer to the debug type here
+            TB_DebugType* dbg_type = cuik__as_tb_debug_type(m, type->func.return_type);
+            tb_prototype_add_param_named(proto, TB_TYPE_PTR, "$retval", tb_debug_create_ptr(m, dbg_type));
+        } else {
+            tb_prototype_add_param(proto, TB_TYPE_PTR);
+        }
     }
 
     for (size_t i = 0; i < param_count; i++) {
@@ -99,9 +106,18 @@ static TB_FunctionPrototype* create_prototype(TranslationUnit* tu, Cuik_Type* ty
             TB_DataType dt = ctype_to_tbtype(p->type);
 
             assert(dt.width < 8);
-            tb_prototype_add_param(proto, dt);
+            if (tu->has_tb_debug_info) {
+                tb_prototype_add_param_named(proto, dt, p->name, cuik__as_tb_debug_type(tu->ir_mod, p->type));
+            } else {
+                tb_prototype_add_param(proto, dt);
+            }
         } else {
-            tb_prototype_add_param(proto, TB_TYPE_PTR);
+            if (tu->has_tb_debug_info) {
+                TB_DebugType* dbg_type = cuik__as_tb_debug_type(tu->ir_mod, p->type);
+                tb_prototype_add_param_named(proto, TB_TYPE_PTR, p->name, tb_debug_create_ptr(m, dbg_type));
+            } else {
+                tb_prototype_add_param(proto, TB_TYPE_PTR);
+            }
         }
     }
 

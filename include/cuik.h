@@ -290,6 +290,12 @@ typedef enum {
     CUIKPP_ERROR,
 } Cuikpp_Status;
 
+// Used by cuikpp_default_packet_handler, it canonicalizes paths according to the OS
+// NOTE: it doesn't guarentee the paths map to existing files.
+//
+// returns true on success
+CUIK_API bool cuik_canonicalize_path(char output[FILENAME_MAX], const char* input);
+
 // Iterates through all the cuikpp_next calls using cuikpp_default_packet_handler
 // and returns the final status. if cache is NULL then it's unused.
 CUIK_API Cuikpp_Status cuikpp_default_run(Cuik_CPP* ctx, Cuik_FileCache* cache);
@@ -444,6 +450,7 @@ typedef struct Cuik_TranslationUnitDesc {
     // same module you just have to attach them to each other with a
     // compilation unit and internally link them.
     TB_Module* ir_module;
+    bool has_debug_info;
     #endif
 
     // if target is non-NULL, builtins will be used based on said target.

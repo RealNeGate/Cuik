@@ -247,10 +247,16 @@ static void irgen_job(void* arg) {
     enum { PASS_COUNT = sizeof(passes) / sizeof(passes[0]) };
 
     CUIK_TIMED_BLOCK("IrGen: %zu", task.count) {
-        for (size_t i = 0; i < task.count; i++) {
+        size_t i = 0;
+        while (i < task.count) {
+            // skip all the typedefs
+            if (task.stmts[i]->decl.attrs.is_typedef || !task.stmts[i]->decl.attrs.is_used) {
+                i += 1;
+                continue;
+            }
+
             TB_Function* func = NULL;
             const char* name = task.stmts[i]->decl.name;
-
             CUIK_TIMED_BLOCK("IrGen: %s", name) {
                 func = cuik_stmt_gen_ir(task.tu, task.stmts[i]);
             }
@@ -272,6 +278,7 @@ static void irgen_job(void* arg) {
                     #endif*/
                 }
             }
+            i += 1;
         }
     }
 
@@ -367,12 +374,13 @@ static void compile_file(void* arg) {
     // parse
     Cuik_ErrorStatus errors;
     Cuik_TranslationUnitDesc desc = {
-        .tokens      = cuikpp_get_token_stream(cpp),
-        .errors      = &errors,
-        .ir_module   = mod,
-        .target      = &target_desc,
+        .tokens         = cuikpp_get_token_stream(cpp),
+        .errors         = &errors,
+        .ir_module      = mod,
+        .has_debug_info = args_debug_info,
+        .target         = &target_desc,
         #if CUIK_ALLOW_THREADS
-        .thread_pool = ithread_pool ? ithread_pool : NULL,
+        .thread_pool    = ithread_pool ? ithread_pool : NULL,
         #endif
     };
 
@@ -439,11 +447,16 @@ static void filtered_append(const char* path, bool recursive) {
     // loops through normal files
     if (find_handle != INVALID_HANDLE_VALUE) {
         do {
-            char* new_path = malloc(MAX_PATH);
+            char tmp[FILENAME_MAX];
             if (slash == path) {
-                sprintf_s(new_path, MAX_PATH, "%s", find_data.cFileName);
+                sprintf_s(tmp, MAX_PATH, "%s", find_data.cFileName);
             } else {
-                sprintf_s(new_path, MAX_PATH, "%.*s%s", (int)(slash - path) + 1, path, find_data.cFileName);
+                sprintf_s(tmp, MAX_PATH, "%.*s%s", (int)(slash - path) + 1, path, find_data.cFileName);
+            }
+
+            char* new_path = malloc(MAX_PATH);
+            if (!cuik_canonicalize_path(new_path, tmp)) {
+                fprintf(stderr, "Invalid filepath! %s\n", tmp);
             }
 
             if (str_ends_with(new_path, ".o") || str_ends_with(new_path, ".obj")) {
@@ -497,10 +510,15 @@ static void append_input_path(const char* path) {
         // but im a baller so i dont care
         filtered_append(path, star[1] == '*');
     } else {
-        if (str_ends_with(path, ".o") || str_ends_with(path, ".obj")) {
-            dyn_array_put(input_objects, path);
+        char* newstr = malloc(FILENAME_MAX);
+        if (!cuik_canonicalize_path(newstr, path)) {
+            fprintf(stderr, "Invalid filepath! %s\n", path);
+        }
+
+        if (str_ends_with(newstr, ".o") || str_ends_with(newstr, ".obj")) {
+            dyn_array_put(input_objects, newstr);
         } else {
-            dyn_array_put(input_files, path);
+            dyn_array_put(input_files, newstr);
         }
     }
 }
@@ -880,7 +898,7 @@ int main(int argc, char** argv) {
             case ARG_INCLUDE: {
                 // resolve a fullpath
                 char* newstr = malloc(FILENAME_MAX);
-                if (resolve_filepath(newstr, arg.value)) {
+                if (cuik_canonicalize_path(newstr, arg.value)) {
                     size_t end = strlen(newstr);
 
                     if (newstr[end - 1] != '\\' && newstr[end - 1] != '/') {

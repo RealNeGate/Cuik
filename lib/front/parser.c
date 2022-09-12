@@ -238,19 +238,21 @@ static void parse_global_symbols(TranslationUnit* tu, size_t start, size_t end, 
 
             // don't worry about normal globals, those have been taken care of...
             if (sym->current != 0 && (sym->storage_class == STORAGE_STATIC_FUNC || sym->storage_class == STORAGE_FUNC)) {
-                // Spin up a mini parser here
-                tokens.current = sym->current;
+                CUIK_TIMED_BLOCK("parse body of %s", sym->name) {
+                    // Spin up a mini parser here
+                    tokens.current = sym->current;
 
-                // intitialize use list
-                symbol_chain_start = symbol_chain_current = NULL;
+                    // intitialize use list
+                    symbol_chain_start = symbol_chain_current = NULL;
 
-                // Some sanity checks in case a local symbol is leaked funny.
-                assert(local_symbol_start == 0 && local_symbol_count == 0);
-                parse_function_definition(tu, &tokens, sym->stmt);
-                local_symbol_start = local_symbol_count = 0;
+                    // Some sanity checks in case a local symbol is leaked funny.
+                    assert(local_symbol_start == 0 && local_symbol_count == 0);
+                    parse_function_definition(tu, &tokens, sym->stmt);
+                    local_symbol_start = local_symbol_count = 0;
 
-                // finalize use list
-                sym->stmt->decl.first_symbol = symbol_chain_start;
+                    // finalize use list
+                    sym->stmt->decl.first_symbol = symbol_chain_start;
+                }
             }
         }
     }
@@ -544,6 +546,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
 
     #ifdef CUIK_USE_TB
     tu->ir_mod = desc->ir_module;
+    tu->has_tb_debug_info = desc->has_debug_info;
     #endif
 
     tls_init();
@@ -578,7 +581,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
 
     // Phase 1: resolve all top level statements
     CUIK_TIMED_BLOCK("phase 1") {
-        while (tokens_get(s)->type) {
+        while (tokens_get(s)->type) CUIK_TIMED_BLOCK("top level stmt") {
             while (tokens_get(s)->type == ';') tokens_next(s);
 
             // TODO(NeGate): Correctly parse pragmas instead of ignoring them.
@@ -990,7 +993,9 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
 
                 if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
                     // if cycles... quit lmao
-                    if (type_cycles_dfs(tu, type, visited, finished)) goto parse_error;
+                    CUIK_TIMED_BLOCK("type_cycles_dfs") {
+                        if (type_cycles_dfs(tu, type, visited, finished)) goto parse_error;
+                    }
                 }
             }
         }
@@ -1042,11 +1047,15 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
 
                 if (type->align == -1) {
                     // this means it's got a pending expression for an alignment
-                    type_resolve_pending_align(tu, type);
+                    CUIK_TIMED_BLOCK("type_resolve_pending_align") {
+                        type_resolve_pending_align(tu, type);
+                    }
                 }
 
                 if (type->size == 0) {
-                    type_layout(tu, type, true);
+                    CUIK_TIMED_BLOCK("type_layout") {
+                        type_layout(tu, type, true);
+                    }
                 }
             }
         }
@@ -1058,28 +1067,30 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
         // Resolve any static assertions
         ////////////////////////////////
         for (size_t i = 0, count = dyn_array_length(static_assertions); i < count; i++) {
-            // Spin up a mini expression parser here
-            size_t current_lex_pos = static_assertions[i];
+            CUIK_TIMED_BLOCK("parse static assert") {
+                // Spin up a mini expression parser here
+                size_t current_lex_pos = static_assertions[i];
 
-            TokenStream mini_lex = *s;
-            mini_lex.current = current_lex_pos;
+                TokenStream mini_lex = *s;
+                mini_lex.current = current_lex_pos;
 
-            intmax_t condition = parse_const_expr(tu, &mini_lex);
-            if (tokens_get(&mini_lex)->type == ',') {
-                tokens_next(&mini_lex);
+                intmax_t condition = parse_const_expr(tu, &mini_lex);
+                if (tokens_get(&mini_lex)->type == ',') {
+                    tokens_next(&mini_lex);
 
-                Token* t = tokens_get(&mini_lex);
-                if (t->type != TOKEN_STRING_DOUBLE_QUOTE) {
-                    generic_error(tu, &mini_lex, "static assertion expects string literal");
-                }
-                tokens_next(&mini_lex);
+                    Token* t = tokens_get(&mini_lex);
+                    if (t->type != TOKEN_STRING_DOUBLE_QUOTE) {
+                        generic_error(tu, &mini_lex, "static assertion expects string literal");
+                    }
+                    tokens_next(&mini_lex);
 
-                if (condition == 0) {
-                    REPORT(ERROR, tokens_get_location_index(&mini_lex), "Static assertion failed: %.*s", (int)(t->end - t->start), t->start);
-                }
-            } else {
-                if (condition == 0) {
-                    REPORT(ERROR, tokens_get_location_index(&mini_lex), "Static assertion failed");
+                    if (condition == 0) {
+                        REPORT(ERROR, tokens_get_location_index(&mini_lex), "Static assertion failed: %.*s", (int)(t->end - t->start), t->start);
+                    }
+                } else {
+                    if (condition == 0) {
+                        REPORT(ERROR, tokens_get_location_index(&mini_lex), "Static assertion failed");
+                    }
                 }
             }
         }
@@ -1137,12 +1148,14 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
             s_global_symbols = NULL;
             s_global_tags = NULL;
 
-            // "highway robbery on steve jobs" job stealing amirite...
-            while (tasks_remaining != 0) {
-                CUIK_CALL(desc->thread_pool, work_one_job);
-            }
+            CUIK_TIMED_BLOCK("waiting for work") {
+                // "highway robbery on steve jobs" job stealing amirite...
+                while (tasks_remaining != 0) {
+                    CUIK_CALL(desc->thread_pool, work_one_job);
+                }
 
-            HEAP_FREE(tasks);
+                HEAP_FREE(tasks);
+            }
         } else {
             // single threaded mode
             parse_global_symbols(tu, 0, nl_strmap__get_header(tu->global_symbols)->load, *s);
@@ -1891,9 +1904,9 @@ static void parse_decl_or_expr(TranslationUnit* tu, TokenStream* restrict s, siz
                     if (tokens_get(s)->type == '{') {
                         generic_error(tu, s, "nested functions are not allowed... yet");
                     } else if (tokens_get(s)->type != ',') {
-				        SourceLocIndex loc = tokens_get_last_location_index(s);
+                        SourceLocIndex loc = tokens_get_last_location_index(s);
 
-				        report_fix(REPORT_ERROR, tu->errors, s, loc, ";", "expected semicolon at the end of declaration");
+                        report_fix(REPORT_ERROR, tu->errors, s, loc, ";", "expected semicolon at the end of declaration");
                     }
 
                     tokens_next(s);

@@ -29,15 +29,6 @@ static const char* step_out_dir(const char path[FILENAME_MAX], int steps) {
     return (slashes_hit == steps) ? end : NULL;
 }
 
-static bool resolve_filepath(char output[FILENAME_MAX], const char* path) {
-    #ifdef _WIN32
-    char* filepart;
-    return GetFullPathNameA(path, FILENAME_MAX, output, &filepart) != 0;
-    #else
-    return realpath(path, output) != NULL;
-    #endif
-}
-
 static void find_system_deps(void) {
     if (!get_exe_path(crt_dirpath)) {
         fprintf(stderr, "error: could not locate executable path");

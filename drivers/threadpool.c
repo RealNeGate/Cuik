@@ -19,6 +19,8 @@
 
 // HACK(NeGate): i wanna call tb_free_thread_resources on thread exit...
 extern void tb_free_thread_resources(void);
+extern void flintperf__start_thread(void);
+extern void flintperf__stop_thread(void);
 
 typedef _Atomic uint32_t atomic_uint32_t;
 
@@ -73,19 +75,21 @@ static bool do_work(threadpool_t* threadpool) {
 
 static int threadpool_thread(void* arg) {
     threadpool_t* threadpool = arg;
+    flintperf__start_thread();
 
-    // CUIK_TIMED_BLOCK("thread") {
-    while (threadpool->running) {
-        if (do_work(threadpool)) {
-            #ifdef _WIN32
-            WaitForSingleObjectEx(threadpool->sem, -1, false); // wait for jobs
-            #else
-            sem_wait(&threadpool->sem);
-            #endif
+    CUIK_TIMED_BLOCK("thread") {
+        while (threadpool->running) {
+            if (do_work(threadpool)) {
+                #ifdef _WIN32
+                WaitForSingleObjectEx(threadpool->sem, -1, false); // wait for jobs
+                #else
+                sem_wait(&threadpool->sem);
+                #endif
+            }
         }
     }
-    // }
 
+    flintperf__stop_thread();
     tb_free_thread_resources();
     arena_free(&thread_arena);
     return 0;

@@ -34,45 +34,74 @@ static void fallthrough_label(TB_Function* func, TB_Label target) {
     tb_inst_set_label(func, target);
 }
 
-static const TB_DebugType* as_tb_debug_type(TB_Module* mod, Cuik_Type* t) {
+TB_DebugType* cuik__as_tb_debug_type(TB_Module* mod, Cuik_Type* t) {
     if (t->debug_type != NULL) {
         return t->debug_type;
     }
 
+    TB_DebugType* result = NULL;
     switch (t->kind) {
         case KIND_VOID:
-        return tb_debug_get_void(mod);
+        return (t->debug_type = tb_debug_get_void(mod));
 
         case KIND_BOOL:
-        return tb_debug_get_bool(mod);
+        return (t->debug_type = tb_debug_get_bool(mod));
 
         case KIND_CHAR: case KIND_SHORT: case KIND_INT: case KIND_LONG:
-        return tb_debug_get_integer(mod, t->is_unsigned, t->size * 8);
+        return (t->debug_type = tb_debug_get_integer(mod, !t->is_unsigned, t->size * 8));
 
         case KIND_FLOAT:
-        return tb_debug_get_float(mod, TB_FLT_32);
+        return (t->debug_type = tb_debug_get_float(mod, TB_FLT_32));
 
         case KIND_DOUBLE:
-        return tb_debug_get_float(mod, TB_FLT_64);
+        return (t->debug_type = tb_debug_get_float(mod, TB_FLT_64));
 
         case KIND_ENUM:
-        return tb_debug_get_integer(mod, true, 32);
+        return (t->debug_type = tb_debug_get_integer(mod, true, 32));
 
         case KIND_PTR:
-        return tb_debug_create_ptr(mod, as_tb_debug_type(mod, t->ptr_to));
+        return (t->debug_type = tb_debug_create_ptr(mod, cuik__as_tb_debug_type(mod, t->ptr_to)));
 
         case KIND_FUNC:
-        return tb_debug_create_ptr(mod, tb_debug_get_void(mod));
+        return (t->debug_type = tb_debug_create_ptr(mod, tb_debug_get_void(mod)));
 
         case KIND_ARRAY:
-        return tb_debug_create_array(mod, as_tb_debug_type(mod, t->array_of), t->array_count);
+        return (t->debug_type = tb_debug_create_array(mod, cuik__as_tb_debug_type(mod, t->array_of), t->array_count));
 
         case KIND_STRUCT:
-        case KIND_UNION:
-        return tb_debug_get_integer(mod, true, 32);
+        case KIND_UNION: {
+            Member* kids = t->record.kids;
+            size_t count = t->record.kid_count;
+
+            TB_DebugType** list = malloc(count * sizeof(TB_DebugType*));
+            TB_DebugType* rec = t->kind == KIND_STRUCT ? tb_debug_create_struct(mod) : tb_debug_create_union(mod);
+            t->debug_type = rec;
+
+            int unnamed_count = 0;
+            for (size_t i = 0; i < count; i++) {
+                Member* member = &kids[i];
+
+                TB_DebugType* base = cuik__as_tb_debug_type(mod, member->type);
+                TB_DebugType* field = NULL;
+                if (member->name == NULL) {
+                    // if we have unnamed members we just do _N where N is just ticked by the counter
+                    char buf[8];
+                    snprintf(buf, 8, "_%d", unnamed_count++);
+
+                    field = tb_debug_create_field(mod, base, buf, member->offset);
+                } else {
+                    field = tb_debug_create_field(mod, base, member->name, member->offset );
+                }
+
+                list[i] = field;
+            }
+
+            tb_debug_complete_record(rec, list, count, t->size, t->align);
+            return rec;
+        }
 
         case KIND_QUALIFIED_TYPE:
-        return as_tb_debug_type(mod, t->qualified_ty);
+        return (t->debug_type = cuik__as_tb_debug_type(mod, t->qualified_ty));
 
         default:
         abort(); // TODO
@@ -1859,7 +1888,9 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
             }
 
             TB_Reg addr = tb_inst_local(func, size, align);
-            tb_function_attrib_variable(func, addr, s->decl.name, as_tb_debug_type(tu->ir_mod, type));
+            if (tu->has_tb_debug_info) {
+                tb_function_attrib_variable(func, addr, s->decl.name, cuik__as_tb_debug_type(tu->ir_mod, type));
+            }
 
             if (s->decl.initial) {
                 Expr* e = s->decl.initial;

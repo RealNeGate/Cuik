@@ -1103,17 +1103,22 @@ static Expr* parse_expr_l15(TranslationUnit* tu, TokenStream* restrict s) {
 }
 
 static Expr* parse_expr(TranslationUnit* tu, TokenStream* restrict s) {
-    if (tokens_get(s)->type == TOKEN_KW_Pragma) {
-        tokens_next(s);
-        expect(tu, s, '(');
+    Expr* e = NULL;
+    CUIK_TIMED_BLOCK("parse expr") {
+        if (tokens_get(s)->type == TOKEN_KW_Pragma) {
+            tokens_next(s);
+            expect(tu, s, '(');
 
-        if (tokens_get(s)->type != TOKEN_STRING_DOUBLE_QUOTE) {
-            generic_error(tu, s, "pragma declaration expects string literal");
+            if (tokens_get(s)->type != TOKEN_STRING_DOUBLE_QUOTE) {
+                generic_error(tu, s, "pragma declaration expects string literal");
+            }
+            tokens_next(s);
+
+            expect(tu, s, ')');
         }
-        tokens_next(s);
 
-        expect(tu, s, ')');
+        e = parse_expr_l15(tu, s);
     }
 
-    return parse_expr_l15(tu, s);
+    return e;
 }

@@ -1,6 +1,0 @@
-Comparing files tmp.txt and REGRESSION_1.C.GOLD
-***** tmp.txt
-***** REGRESSION_1.C.GOLD
-0 1 1 1 1 1 1 
-*****
-

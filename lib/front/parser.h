@@ -91,6 +91,7 @@ struct TranslationUnit {
 
     // common settings
     bool is_windows_long;
+    bool has_tb_debug_info;
 
     Cuik_Entrypoint entrypoint_status;
     Cuik_Target target;
