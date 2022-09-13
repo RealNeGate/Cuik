@@ -642,12 +642,8 @@ static bool export_output(void) {
 
         TIMESTAMP("Export");
         CUIK_TIMED_BLOCK("Export") {
-            TB_ModuleExporter exporter = tb_make_exporter(mod, debug_fmt, flavor);
-            if (!tb_exporter_to_file(mod, exporter, path)) {
-                // just delete the file to free up the partially made file
-                remove(path);
+            if (!tb_exporter_write_files(mod, flavor, debug_fmt, 1, (const char*[]) { path })) {
                 fprintf(stderr, "error: could not write output. %s\n", path);
-
                 return false;
             }
         }
@@ -662,8 +658,7 @@ static bool export_output(void) {
 
         TIMESTAMP("Export object");
         CUIK_TIMED_BLOCK("Export object") {
-            TB_ModuleExporter exporter = tb_make_exporter(mod, debug_fmt, TB_FLAVOR_OBJECT);
-            if (!tb_exporter_to_file(mod, exporter, obj_output_path)) {
+            if (!tb_exporter_write_files(mod, flavor, debug_fmt, 1, (const char*[]) { obj_output_path })) {
                 remove(obj_output_path);
                 fprintf(stderr, "error: could not write object file output. %s\n", obj_output_path);
                 return false;

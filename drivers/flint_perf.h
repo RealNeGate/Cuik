@@ -6,13 +6,13 @@
 #define FLINT_IMPLEMENTATION
 #include "flint.h"
 
-static FlintContext ctx;
-static thread_local FlintWriteBuffer muh_buffer;
+static FlintProfile ctx;
+static thread_local FlintBuffer muh_buffer;
 
 void flintperf__start_thread(void) {
     size_t size = 4 * 1024 * 1024;
-    muh_buffer = (FlintWriteBuffer){ malloc(size), size };
-    FlintBufferInit(&muh_buffer);
+    muh_buffer = (FlintBuffer){ malloc(size), size };
+    FlintBufferInit(&ctx, &muh_buffer);
 }
 
 void flintperf__stop_thread(void) {
