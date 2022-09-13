@@ -22,6 +22,9 @@ options = options.."-I lib "
 options = options.."-I include "
 options = options.."-I deps "
 options = options.."-I tilde-backend/include "
+if build.opt then
+    options = options.."-O2 -DNDEBUG "
+end
 
 if build.os ~= "Windows" then
 	-- libc & threads on *nix

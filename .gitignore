@@ -66,3 +66,4 @@ project.4coder
 ##### Do not edit.
 .tup
 /bin
+*.cache
