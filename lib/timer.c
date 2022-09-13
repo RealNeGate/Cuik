@@ -7,16 +7,26 @@
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+
+static LARGE_INTEGER timer_frequency;
+static LARGE_INTEGER timer_start;
 #else
 #include <time.h>
 #include <unistd.h>
 #endif
 
 static mtx_t timer_mutex;
-static uint64_t global_profiler_start;
 
 static bool should_lock_profiler;
 static const Cuik_IProfiler* profiler;
+static uint64_t global_profiler_start;
+
+CUIK_API void init_timer_system(void) {
+    #ifdef _WIN32
+    QueryPerformanceFrequency(&timer_frequency);
+    QueryPerformanceCounter(&timer_start);
+    #endif
+}
 
 CUIK_API void cuik_start_global_profiler(const Cuik_IProfiler* p, bool lock_on_plot) {
     assert(p != NULL);
@@ -50,9 +60,17 @@ CUIK_API bool cuik_is_profiling(void) {
 }
 
 CUIK_API uint64_t cuik_time_in_nanos(void) {
+    #ifdef _WIN32
+    LARGE_INTEGER l;
+    QueryPerformanceCounter(&l);
+    l.QuadPart -= timer_start.QuadPart;
+
+    return (l.QuadPart * 1000000000LL) / timer_frequency.QuadPart;
+    #else
     struct timespec ts;
-    timespec_get(&ts, TIME_UTC);
+    timespec_get(&ts, TIME_MONOTONIC);
     return ((long long)ts.tv_sec * 1000000000LL) + ts.tv_nsec;
+    #endif
 }
 
 CUIK_API void cuik_profile_region(uint64_t start, const char* fmt, ...) {

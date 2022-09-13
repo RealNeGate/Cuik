@@ -254,14 +254,19 @@ static void irgen_job(void* arg) {
 
             TB_Function* func = NULL;
             const char* name = task.stmts[i]->decl.name;
-            CUIK_TIMED_BLOCK("IrGen: %s", name) {
+            if (name == NULL) {
+                // these are untracked in the gen ir because they don't map to named IR stuff
                 func = cuik_stmt_gen_ir(task.tu, task.stmts[i]);
+            } else {
+                CUIK_TIMED_BLOCK("IrGen: %s", name) {
+                    func = cuik_stmt_gen_ir(task.tu, task.stmts[i]);
+                }
             }
 
             if (func != NULL) {
                 CUIK_TIMED_BLOCK("Canonicalize: %s", name) {
                     for (size_t j = 0; j < PASS_COUNT; j++) {
-                        CUIK_TIMED_BLOCK("Opt%s: %s", passes[j].name, name) {
+                        CUIK_TIMED_BLOCK("Opt%s", passes[j].name, name) {
                             passes[j].func_run(func);
                         }
                     }

@@ -579,7 +579,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
 
     // Phase 1: resolve all top level statements
     CUIK_TIMED_BLOCK("phase 1") {
-        while (tokens_get(s)->type) CUIK_TIMED_BLOCK("top level stmt") {
+        while (tokens_get(s)->type) {
             while (tokens_get(s)->type == ';') tokens_next(s);
 
             // TODO(NeGate): Correctly parse pragmas instead of ignoring them.

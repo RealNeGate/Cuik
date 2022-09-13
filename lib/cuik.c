@@ -31,8 +31,10 @@ static char* utf16_to_utf8_on_heap(const wchar_t* input) {
 
 // hacky
 void hook_crash_handler(void);
+void init_timer_system(void);
 
 CUIK_API void cuik_init(void) {
+    init_timer_system();
     init_report_system();
     hook_crash_handler();
 }
