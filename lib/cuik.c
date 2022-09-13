@@ -3,15 +3,16 @@
 #include "targets/targets.h"
 #include "timer.h"
 
+
+// internal globals to Cuik
+char cuik__include_dir[FILENAME_MAX];
+
 #ifdef _WIN32
 #include "back/microsoft_craziness.h"
 #define SLASH "\\"
 #else
 #define SLASH "/"
 #endif
-
-// internal globals to Cuik
-char cuik__include_dir[FILENAME_MAX];
 
 #ifdef _WIN32
 MicrosoftCraziness_Find_Result cuik__vswhere;

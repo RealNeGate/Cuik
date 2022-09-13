@@ -18,10 +18,7 @@
 #include "threadpool.h"
 #endif
 
-enum {
-    IRGEN_TASK_BATCH_SIZE = 8192
-};
-
+enum { IRGEN_TASK_BATCH_SIZE = 8192 };
 #define TIMESTAMP(x) if (args_verbose) mark_timestamp(x)
 
 // compiler arguments
