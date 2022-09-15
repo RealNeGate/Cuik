@@ -68,7 +68,7 @@ CUIK_API uint64_t cuik_time_in_nanos(void) {
     return (l.QuadPart * 1000000000LL) / timer_frequency.QuadPart;
     #else
     struct timespec ts;
-    timespec_get(&ts, TIME_MONOTONIC);
+    clock_gettime(CLOCK_MONOTONIC, &ts);
     return ((long long)ts.tv_sec * 1000000000LL) + ts.tv_nsec;
     #endif
 }

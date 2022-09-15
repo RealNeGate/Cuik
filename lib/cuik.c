@@ -3,7 +3,6 @@
 #include "targets/targets.h"
 #include "timer.h"
 
-
 // internal globals to Cuik
 char cuik__include_dir[FILENAME_MAX];
 

@@ -149,6 +149,9 @@ typedef enum TknType {
 #undef TKN3
 
 typedef struct {
+} SourceLineManager;
+
+typedef struct {
     ////////////////////////////////
     // USER-PROVIDED
     ////////////////////////////////

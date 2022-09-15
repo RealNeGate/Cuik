@@ -1163,6 +1163,7 @@ int main(int argc, char** argv) {
     ////////////////////////////////
     // backend work
     ////////////////////////////////
+    cuik_fscache_destroy(fscache);
     irgen();
 
     if (dyn_array_length(da_passes) != 0) {

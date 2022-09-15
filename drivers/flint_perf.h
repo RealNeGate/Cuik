@@ -7,7 +7,7 @@
 #include "flint.h"
 
 static FlintProfile ctx;
-static thread_local FlintBuffer muh_buffer;
+static _Thread_local FlintBuffer muh_buffer;
 
 void flintperf__start_thread(void) {
     size_t size = 4 * 1024 * 1024;

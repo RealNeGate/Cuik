@@ -186,7 +186,7 @@ bool cuiklink_invoke(Cuik_Linker* l, const char* filename, const char* crt_name)
 
     int exit_code = system(cmd_line);
     if (exit_code != 0) {
-        fprintf(stderr, "Linker exited with code %lu\n", exit_code);
+        fprintf(stderr, "Linker exited with code %d\n", exit_code);
         fprintf(stderr, "Linker command: %s\n", cmd_line);
         return false;
     }
