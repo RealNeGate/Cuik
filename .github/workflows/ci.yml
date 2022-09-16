@@ -16,13 +16,3 @@ jobs:
       - name: Run tests
         run: ./run_tests.sh
         timeout-minutes: 10
-  test_windows:
-    runs-on: windows-2019
-    steps:
-      - uses: actions/checkout@v2
-      - name: Do the Windows Things
-  test_osx:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v2
-      - name: Do the OSX Things
