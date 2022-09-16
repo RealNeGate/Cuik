@@ -9,6 +9,8 @@ struct Cuik_FileCache {
 CUIK_API Cuik_FileCache* cuik_fscache_create(void) {
     Cuik_FileCache* c = HEAP_ALLOC(sizeof(Cuik_FileCache));
     memset(c, 0, sizeof(Cuik_FileCache));
+
+    c->table = nl_strmap_alloc(TokenStream, 1024);
     mtx_init(&c->lock, mtx_plain);
     return c;
 }

@@ -1,3 +1,6 @@
 [submodule "tilde-backend"]
 	path = tilde-backend
 	url = https://github.com/RealNeGate/tilde-backend
+[submodule "deps/mimalloc"]
+	path = deps/mimalloc
+	url = https://github.com/microsoft/mimalloc

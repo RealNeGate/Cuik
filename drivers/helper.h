@@ -1,8 +1,9 @@
 #ifdef _WIN32
-#  define WIN32_MEAN_AND_LEAN
-#  include <windows.h>
+#define WIN32_MEAN_AND_LEAN
+#include <windows.h>
+#include <psapi.h>
 #else
-#  include <unistd.h>
+#include <unistd.h>
 #endif
 
 static char crt_dirpath[FILENAME_MAX];

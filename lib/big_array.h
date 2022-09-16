@@ -4,15 +4,6 @@
 #include <stddef.h>
 #include <stdio.h>
 
-#define DYN_ARRAY_USE_MIMALLOC 1
-
-#if DYN_ARRAY_USE_MIMALLOC
-// use mimalloc
-extern void* mi_malloc(size_t s);
-extern void* mi_realloc(void* p, size_t s);
-extern void mi_free(void* p);
-#endif
-
 #define INITIAL_CAP 4096
 
 typedef struct DynArrayHeader {
@@ -22,13 +13,7 @@ typedef struct DynArrayHeader {
 } DynArrayHeader;
 
 inline static void* dyn_array_internal_create(size_t type_size, size_t cap) {
-    #if DYN_ARRAY_USE_MIMALLOC
-    DynArrayHeader* header = mi_malloc(sizeof(DynArrayHeader) + (type_size * cap));
-    #elif defined(_WIN32) && defined(_DEBUG)
-    DynArrayHeader* header = _malloc_dbg(sizeof(DynArrayHeader) + (type_size * cap), _NORMAL_BLOCK, __FILE__, __LINE__);
-    #else
     DynArrayHeader* header = malloc(sizeof(DynArrayHeader) + (type_size * cap));
-    #endif
 
     *header = (DynArrayHeader){
         .capacity = cap
@@ -55,14 +40,7 @@ inline static void* dyn_array_internal_reserve(void* ptr, size_t type_size, size
         header->capacity = (header->size + extra) * 2;
         // fprintf(stderr, "info: resize! %zu -> %zu\n", old, header->capacity);
 
-        #if DYN_ARRAY_USE_MIMALLOC
-        DynArrayHeader* new_ptr = mi_realloc(header, sizeof(DynArrayHeader) + (type_size * header->capacity));
-        #elif defined(_WIN32) && defined(_DEBUG)
-        DynArrayHeader* new_ptr = _realloc_dbg(header, sizeof(DynArrayHeader) + (type_size * header->capacity), _NORMAL_BLOCK, __FILE__, __LINE__);
-        #else
         DynArrayHeader* new_ptr = realloc(header, sizeof(DynArrayHeader) + (type_size * header->capacity));
-        #endif
-
         if (!new_ptr) {
             fprintf(stderr, "error: out of memory!");
             abort();
@@ -78,14 +56,7 @@ inline static void* dyn_array_internal_trim(void* ptr, size_t type_size) {
     DynArrayHeader* header = ((DynArrayHeader*)ptr) - 1;
     header->capacity = header->size;
 
-    #if DYN_ARRAY_USE_MIMALLOC
-    DynArrayHeader* new_ptr = mi_realloc(header, sizeof(DynArrayHeader) + (type_size * header->capacity));
-    #elif defined(_WIN32) && defined(_DEBUG)
-    DynArrayHeader* new_ptr = _realloc_dbg(header, sizeof(DynArrayHeader) + (type_size * header->capacity), _NORMAL_BLOCK, __FILE__, __LINE__);
-    #else
     DynArrayHeader* new_ptr = realloc(header, sizeof(DynArrayHeader) + (type_size * header->capacity));
-    #endif
-
     assert(new_ptr != NULL);
     return &new_ptr->data[0];
 }

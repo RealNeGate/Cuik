@@ -1,9 +1,23 @@
+config.use_mimalloc = true
+
+if config.use_mimalloc then
+    -- Call into Cmake for a shared lib
+    if config.os == "Windows" then
+        build.command("cd deps/mimalloc && mkdir out")
+        build.command("cd deps/mimalloc/out && cmake ../ -DMI_BUILD_STATIC=OFF -DMI_BUILD_OBJECT=OFF -DMI_BUILD_TESTS=OFF | msbuild libmimalloc.sln -p:Configuration=Release")
+        build.command("copy deps\\mimalloc\\out\\Release\\mimalloc.dll bin\\")
+        build.command("copy deps\\mimalloc\\out\\Release\\mimalloc-redirect.dll bin\\")
+    else
+        print("TODO: mimalloc")
+        os.exit(1)
+    end
+end
 
 -- dofile will return a boolean to tell us if the TB compile made changes
 local changes = build.build_lua("tilde-backend")
 local files = {
     "lib/", "lib/preproc/", "lib/front/", "lib/targets/",
-    "lib/back/ir_gen.c", "lib/back/linker.c",
+    "lib/back/ir_gen.c", "lib/back/linker.c"
 }
 
 local exe_extension = ""
@@ -49,7 +63,11 @@ changes = changes or driver_changes
 if changes then
     local ld_flags = "-g bin/libcuik"..lib_extension.." tilde-backend/tildebackend"..lib_extension
     if config.os == "Windows" then
-        ld_flags = ld_flags.." -Xlinker /defaultlib:msvcrt -Xlinker /incremental:no -lole32 -lAdvapi32 -lOleAut32 -lDbgHelp"
+        if config.use_mimalloc then
+            ld_flags = ld_flags.." deps/mimalloc/out/Release/mimalloc.lib -Xlinker /include:mi_version "
+        end
+        
+        ld_flags = ld_flags.." -Xlinker /incremental:no -lole32 -lAdvapi32 -lOleAut32 -lDbgHelp"
     else
         -- libc & threads on *nix
         ld_flags = ld_flags.." -lm -ldl -lpthread "

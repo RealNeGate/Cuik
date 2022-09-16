@@ -1,5 +1,3 @@
-extern void exit(int status);
-
 void _start() {
-    exit(1);
+	__builtin_syscall(1, 1 /* stdout */, "Hello\n", 6);
 }

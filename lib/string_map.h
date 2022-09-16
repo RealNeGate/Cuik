@@ -42,23 +42,10 @@ typedef struct {
     const uint8_t* data;
 } NL_Slice;
 
-#if 1
-// use mimalloc
-extern void* mi_malloc(size_t s);
-extern void* mi_calloc(size_t c, size_t s);
-extern void* mi_realloc(void* p, size_t s);
-extern void mi_free(void* p);
-
-#define NL_MALLOC(s)    mi_malloc(s)
-#define NL_CALLOC(c, s) mi_calloc(c, s)
-#define NL_REALLOC(p, s)mi_realloc(p, s)
-#define NL_FREE(p)      mi_free(p)
-#else
-#define NL_MALLOC(s)    malloc(s)
-#define NL_CALLOC(c, s) calloc(c, s)
-#define NL_REALLOC(p, s)realloc(p, s)
-#define NL_FREE(p)      free(p)
-#endif
+#define NL_MALLOC(s)     malloc(s)
+#define NL_CALLOC(c, s)  calloc(c, s)
+#define NL_REALLOC(p, s) realloc(p, s)
+#define NL_FREE(p)       free(p)
 
 #ifdef NL_STRING_MAP_INLINE
 #define NL_API inline static
