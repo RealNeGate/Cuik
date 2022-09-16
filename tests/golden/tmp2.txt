@@ -1,0 +1,3 @@
+Comparing files tmp.txt and FLOAT_TEST.C.GOLD
+FC: no differences encountered
+

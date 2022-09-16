@@ -8,8 +8,9 @@ if config.use_mimalloc then
         build.command("copy deps\\mimalloc\\out\\Release\\mimalloc.dll bin\\")
         build.command("copy deps\\mimalloc\\out\\Release\\mimalloc-redirect.dll bin\\")
     else
-        print("TODO: mimalloc")
-        os.exit(1)
+        build.command("cd deps/mimalloc && mkdir out")
+        build.command("cd deps/mimalloc/out && cmake ../")
+        build.command("cd deps/mimalloc/out && make ")
     end
 end
 
@@ -30,16 +31,26 @@ if config.os == "Windows" then
     table.insert(files, "deps/threads_msvc.c")
 else
     lib_extension = ".a"
+
+	-- add our precious mimalloc
+    table.insert(files, "deps/mimalloc/src/static.c")
 end
 
 local options = "-g -Wall -Werror -Wno-unused-function -Wno-unused-variable "
 options = options.."-DCUIK_USE_TB "
-options = options.."-D_CRT_SECURE_NO_WARNINGS "
+options = options.."-DTB_COMPILE_TESTS "
+options = options.."-DMI_MALLOC_OVERRIDE "
 options = options.."-msse4.2 -maes "
 options = options.."-I lib "
 options = options.."-I include "
 options = options.."-I deps "
+options = options.."-I deps/mimalloc/include "
 options = options.."-I tilde-backend/include "
+
+if config.os == "Windows" then
+    options = options.."-D_CRT_SECURE_NO_WARNINGS "
+end
+
 if config.opt then
     options = options.."-O2 -DNDEBUG "
 end
@@ -66,7 +77,7 @@ if changes then
         if config.use_mimalloc then
             ld_flags = ld_flags.." deps/mimalloc/out/Release/mimalloc.lib -Xlinker /include:mi_version "
         end
-        
+
         ld_flags = ld_flags.." -Xlinker /incremental:no -lole32 -lAdvapi32 -lOleAut32 -lDbgHelp"
     else
         -- libc & threads on *nix

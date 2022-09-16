@@ -658,7 +658,7 @@ static bool export_output(void) {
 
         TIMESTAMP("Export object");
         CUIK_TIMED_BLOCK("Export object") {
-            if (!tb_exporter_write_files(mod, flavor, debug_fmt, 1, (const char*[]) { obj_output_path })) {
+            if (!tb_exporter_write_files(mod, TB_FLAVOR_OBJECT, debug_fmt, 1, (const char*[]) { obj_output_path })) {
                 remove(obj_output_path);
                 fprintf(stderr, "error: could not write object file output. %s\n", obj_output_path);
                 return false;
@@ -1009,6 +1009,16 @@ int main(int argc, char** argv) {
             case ARG_EXPERIMENT: args_experiment = true; break;
             case ARG_THREADS: args_threads = atoi(arg.value); break;
             case ARG_DEBUG: args_debug_info = true; break;
+            case ARG_TBTESTS: {
+                int passed = 1, total = 1;
+                if (tb_x64_test_suite()) {
+                    printf("Failure! tb_x64_test_suite\n");
+                    passed -= 1;
+                }
+
+                printf("Passed %d of %d!\n", passed, total);
+                return EXIT_SUCCESS;
+            }
             case ARG_HELP: {
                 print_help();
                 return EXIT_SUCCESS;

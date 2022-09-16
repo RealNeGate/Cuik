@@ -1,0 +1,28 @@
+name: Run Tests
+on: [push, pull_request, workflow_dispatch]
+
+jobs:
+  test_linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Download Clang
+        run: sudo apt-get install clang
+
+      - name: Build Cuik
+        run: ./build_cuik.sh
+        timeout-minutes: 10
+
+      - name: Run tests
+        run: ./run_tests.sh
+        timeout-minutes: 10
+  test_windows:
+    runs-on: windows-2019
+    steps:
+      - uses: actions/checkout@v2
+      - name: Do the Windows Things
+  test_osx:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Do the OSX Things

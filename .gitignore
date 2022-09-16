@@ -2,6 +2,7 @@
 .tup/
 bin/
 bin2/
+Truct/
 # *.lib
 # *.a
 

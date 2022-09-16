@@ -13,7 +13,8 @@ int main(int argc, char* argv[]) {
 	printf("%lu %lu %ld %ld ", 4294967295u, 6731943u, 2147483646, 16);
 	printf("%llu %llu %lld %lld ", 123456789ull, 57486731943ull, 985429ll, 9123456ll);
 	
-	printf("%f %f %.03f %.3f %f", 1.0, 123e+3f, 1e-1, 0.234f, 3.0f);
+	//printf("%f %f %.03f %.3f %f", 1.0, 123e+3f, 1e-1, 0.234f, 3.0f);
+	printf("%f%.03f %.3f", 1.0, 0.234f, 3.0f);
 	
 	return 0;
 }
