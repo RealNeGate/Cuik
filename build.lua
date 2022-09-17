@@ -25,7 +25,8 @@ function compile_libcuik()
         table.insert(files, "deps/mimalloc/src/static.c")
     end
 
-    return { build.ar_chain(build.foreach_chain(files, "clang %f "..flags.." -c -o bin/%F.o", "bin/%F.o"), "bin/libcuik"..config.lib_ext) }
+    local objs = build.foreach_chain(files, "clang %f "..flags.." -c -o bin/%F.o", "bin/%F.o")
+    return build.ar_chain(objs, "bin/libcuik"..config.lib_ext)
 end
 
 function compile_driver(driver_source)
@@ -67,11 +68,12 @@ if config.os ~= "Windows" then
     ))
 end
 
-build.append(objs, compile_libcuik())
-build.append(objs, compile_driver("drivers/main_driver.c"))
-
 -- some of our libs
 table.insert(objs, "tilde-backend/tildebackend"..config.lib_ext)
+table.insert(objs, compile_libcuik())
+build.append(objs, compile_driver("drivers/main_driver.c"))
+
+-- for k,v in pairs(objs) do print("["..k.."] = "..v) end
 
 -- Slap everything together
 local ld_flags = "-g "
