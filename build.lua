@@ -9,10 +9,6 @@ if config.use_mimalloc then
         build.command("cd deps/mimalloc/out && msbuild libmimalloc.sln -p:Configuration=Release")
         build.command("copy deps\\mimalloc\\out\\Release\\mimalloc.dll bin\\")
         build.command("copy deps\\mimalloc\\out\\Release\\mimalloc-redirect.dll bin\\")
-    else
-        build.command("cd deps/mimalloc && mkdir out")
-        build.command("cd deps/mimalloc/out && cmake ../")
-        build.command("cd deps/mimalloc/out && make ")
     end
 end
 
