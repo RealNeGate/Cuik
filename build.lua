@@ -1,10 +1,12 @@
+build.mkdir("bin")
 config.use_mimalloc = true
 
 if config.use_mimalloc then
     -- Call into Cmake for a shared lib
     if config.os == "Windows" then
         build.command("cd deps/mimalloc && mkdir out")
-        build.command("cd deps/mimalloc/out && cmake ../ -DMI_BUILD_STATIC=OFF -DMI_BUILD_OBJECT=OFF -DMI_BUILD_TESTS=OFF | msbuild libmimalloc.sln -p:Configuration=Release")
+        build.command("cd deps/mimalloc/out && cmake ../ -DMI_BUILD_STATIC=OFF -DMI_BUILD_OBJECT=OFF -DMI_BUILD_TESTS=OFF")
+        build.command("cd deps/mimalloc/out && msbuild libmimalloc.sln -p:Configuration=Release")
         build.command("copy deps\\mimalloc\\out\\Release\\mimalloc.dll bin\\")
         build.command("copy deps\\mimalloc\\out\\Release\\mimalloc-redirect.dll bin\\")
     else
@@ -14,80 +16,77 @@ if config.use_mimalloc then
     end
 end
 
--- dofile will return a boolean to tell us if the TB compile made changes
-local changes = build.build_lua("tilde-backend")
-local files = {
-    "lib/", "lib/preproc/", "lib/front/", "lib/targets/",
-    "lib/back/ir_gen.c", "lib/back/linker.c"
-}
+function compile_libcuik()
+    local files = {
+        "lib/*.c", "lib/preproc/*.c", "lib/front/*.c", "lib/targets/*.c",
+        "lib/back/ir_gen.c", "lib/back/linker.c"
+    }
 
-local exe_extension = ""
-local lib_extension = ""
-if config.os == "Windows" then
-    exe_extension = ".exe"
-    lib_extension = ".lib"
-
-    table.insert(files, "lib/back/microsoft_craziness.c")
-    table.insert(files, "deps/threads_msvc.c")
-else
-    lib_extension = ".a"
-
-	-- add our precious mimalloc
-    table.insert(files, "deps/mimalloc/src/static.c")
-end
-
-local options = "-g -Wall -Werror -Wno-unused-function -Wno-unused-variable "
-options = options.."-DCUIK_USE_TB "
-options = options.."-DTB_COMPILE_TESTS "
-options = options.."-DMI_MALLOC_OVERRIDE "
-options = options.."-msse4.2 -maes "
-options = options.."-I lib "
-options = options.."-I include "
-options = options.."-I deps "
-options = options.."-I deps/mimalloc/include "
-options = options.."-I tilde-backend/include "
-
-if config.os == "Windows" then
-    options = options.."-D_CRT_SECURE_NO_WARNINGS "
-end
-
-if config.opt then
-    options = options.."-O2 -DNDEBUG "
-end
-
-local outputs, libcuik_changes = build.compile("libCuik.cache", files, options)
-changes = changes or libcuik_changes
-
-if changes then
-    build.lib("bin/libcuik"..lib_extension, "", outputs)
-end
-
--- compile the driver now
-local driver, driver_changes = build.compile("Cuik.cache", {
-    "drivers/main_driver.c",
-    "drivers/threadpool.c",
-    "drivers/bindgen_c99.c",
-    "drivers/bindgen_odin.c"
-}, options)
-changes = changes or driver_changes
-
-if changes then
-    local ld_flags = "-g bin/libcuik"..lib_extension.." tilde-backend/tildebackend"..lib_extension
     if config.os == "Windows" then
-        if config.use_mimalloc then
-            ld_flags = ld_flags.." deps/mimalloc/out/Release/mimalloc.lib -Xlinker /include:mi_version "
-        end
-
-        ld_flags = ld_flags.." -Xlinker /incremental:no -lole32 -lAdvapi32 -lOleAut32 -lDbgHelp"
+        table.insert(files, "lib/back/microsoft_craziness.c")
+        table.insert(files, "deps/threads_msvc.c")
     else
-        -- libc & threads on *nix
-        ld_flags = ld_flags.." -lm -ldl -lpthread "
+        table.insert(files, "deps/mimalloc/src/static.c")
     end
 
-    -- Link everything together
-    if changes then
-        build.link("bin/cuik"..exe_extension, ld_flags, driver)
-    end
+    return { build.ar_chain(build.foreach_chain(files, "clang %f "..flags.." -c -o bin/%F.o", "bin/%F.o"), "bin/libcuik"..config.lib_ext) }
 end
 
-return changes
+function compile_driver(driver_source)
+    return build.foreach_chain({
+        driver_source,
+        "drivers/threadpool.c",
+        "drivers/bindgen_c99.c",
+        "drivers/bindgen_odin.c"
+    }, "clang %f "..flags.." -c -o bin/%F.o", "bin/%F.o")
+end
+
+-- compile TB
+os.execute("cd tilde-backend && truct")
+
+-- C compiler flags
+flags = "-g -msse4.2 -maes "
+flags = flags.."-Wall -Werror -Wno-unused-function -Wno-unused-variable "
+flags = flags.."-I lib -I include -I deps -I tilde-backend/include "
+flags = flags.."-DCUIK_USE_TB -DTB_COMPILE_TESTS "
+
+if config.os == "Windows" then flags = flags.."-D_CRT_SECURE_NO_WARNINGS " end
+if config.opt then flags = flags.."-O2 -DNDEBUG " end
+
+-- compile object files for Cuik
+local objs = {}
+
+-- on linux and mac the mimalloc override is an object file.
+-- we also insert it first because non-windows platforms have
+-- order dependent linking.
+if config.os ~= "Windows" then
+    build.append(objs, build.foreach_chain(
+        { "deps/mimalloc/src/static.c" },
+        "clang %f -DMI_MALLOC_OVERRIDE -I deps/mimalloc/include -c -o bin/%F.o",
+        "bin/%F.o"..config.lib_ext
+    ))
+end
+
+build.append(objs, compile_libcuik())
+build.append(objs, compile_driver("drivers/main_driver.c"))
+
+-- some of our libs
+table.insert(objs, "bin/libcuik"..config.lib_ext)
+table.insert(objs, "tilde-backend/tildebackend"..config.lib_ext)
+
+-- Slap everything together
+local ld_flags = "-g "
+if config.os == "Windows" then
+    -- mimalloc requires we link at least one symbol explicitly to force the dll to load
+    if config.use_mimalloc then
+        ld_flags = ld_flags.." -Xlinker /include:mi_version "
+    end
+
+    ld_flags = " -Xlinker /incremental:no -lole32 -lAdvapi32 -lOleAut32 -lDbgHelp"
+else
+    -- libc, math, dynamic loader & threads on *nix
+    ld_flags = ld_flags.." -lm -ldl -lpthread "
+end
+
+build.ld_chain(objs, ld_flags, "bin/cuik"..config.exe_ext)
+build.done()

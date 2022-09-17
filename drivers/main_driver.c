@@ -1010,6 +1010,7 @@ int main(int argc, char** argv) {
             case ARG_THREADS: args_threads = atoi(arg.value); break;
             case ARG_DEBUG: args_debug_info = true; break;
             case ARG_TBTESTS: {
+                #ifdef TB_COMPILE_TESTS
                 int passed = 1, total = 1;
                 if (tb_x64_test_suite()) {
                     printf("Failure! tb_x64_test_suite\n");
@@ -1017,6 +1018,9 @@ int main(int argc, char** argv) {
                 }
 
                 printf("Passed %d of %d!\n", passed, total);
+                #else
+                printf("Didn't compile TB tests!\n");
+                #endif
                 return EXIT_SUCCESS;
             }
             case ARG_HELP: {
