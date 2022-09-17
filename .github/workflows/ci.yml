@@ -12,7 +12,3 @@ jobs:
       - name: Build Cuik
         run: ./build_cuik.sh
         timeout-minutes: 10
-
-      - name: Run tests
-        run: ./run_tests.sh
-        timeout-minutes: 10
