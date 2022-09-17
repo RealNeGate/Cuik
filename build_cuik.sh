@@ -1,3 +1,5 @@
+git submodule update --init
+
 # build truct first
 git clone https://github.com/RealNeGate/Truct
 cd Truct
