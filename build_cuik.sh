@@ -10,4 +10,4 @@ cd ..
 
 # actually build Cuik
 mkdir -p bin
-env PATH=$(PATH):~$(pwd)/Truct/bin truct
+env PATH=$(PATH):$(pwd)/Truct/bin truct
