@@ -1,6 +1,6 @@
 #pragma once
 
-#ifdef __CUIK__
+#if defined(__CUIK__) || !defined(__x86_64__)
 #define USE_INTRIN 0
 #else
 #define USE_INTRIN 1

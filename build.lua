@@ -41,8 +41,12 @@ end
 os.execute("cd tilde-backend && truct")
 
 -- C compiler flags
-flags = "-g -msse4.2 -maes "
-flags = flags.."-Wall -Werror -Wno-unused-function -Wno-unused-variable "
+flags = "-Wall -Werror -Wno-unused-function -Wno-unused-variable "
+
+if config.arch == "x64" then
+    flags = "-g -msse4.2 -maes "
+end
+
 flags = flags.."-I lib -I include -I deps -I tilde-backend/include "
 flags = flags.."-DCUIK_USE_TB -DTB_COMPILE_TESTS "
 
@@ -59,7 +63,7 @@ if config.os ~= "Windows" then
     build.append(objs, build.foreach_chain(
         { "deps/mimalloc/src/static.c" },
         "clang %f -DMI_MALLOC_OVERRIDE -I deps/mimalloc/include -c -o bin/%F.o",
-        "bin/%F.o"..config.lib_ext
+        "bin/%F"..config.lib_ext
     ))
 end
 
@@ -67,7 +71,6 @@ build.append(objs, compile_libcuik())
 build.append(objs, compile_driver("drivers/main_driver.c"))
 
 -- some of our libs
-table.insert(objs, "bin/libcuik"..config.lib_ext)
 table.insert(objs, "tilde-backend/tildebackend"..config.lib_ext)
 
 -- Slap everything together
