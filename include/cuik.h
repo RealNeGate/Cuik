@@ -169,6 +169,10 @@ typedef struct SourceLine {
 typedef struct TokenStream {
     const char* filepath;
 
+    // if true, the preprocessor is allowed to delete after completion.
+    // this shouldn't enabled when caching files
+    bool is_owned;
+
     // DynArray(Token)
     struct Token* tokens;
     size_t current;
@@ -252,6 +256,7 @@ typedef struct Cuikpp_Packet {
         struct {
             // input
             const char* input_path;
+            bool is_primary;
 
             // output
             TokenStream tokens;

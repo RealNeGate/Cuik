@@ -290,6 +290,7 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
                 packet->tag = CUIKPP_PACKET_GET_FILE;
                 packet->file.input_path = slot->filepath;
                 packet->file.tokens = (TokenStream){ 0 };
+                packet->file.is_primary = true;
                 return CUIKPP_CONTINUE;
             }
 
@@ -414,6 +415,7 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
             packet->tag = CUIKPP_PACKET_GET_FILE;
             packet->file.input_path = filepath;
             packet->file.tokens = (TokenStream){ 0 };
+            packet->file.is_primary = false;
             return CUIKPP_CONTINUE;
         }
 
@@ -472,6 +474,12 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
                 }
 
                 cuik_profile_region(slot->start_time, "%s", temp);
+            }
+
+            // free the token stream if we have ownership
+            if (in->is_owned) {
+                dyn_array_destroy(in->tokens);
+                dyn_array_destroy(in->locations);
             }
 
             // if this is the last file, just exit
