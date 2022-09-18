@@ -3,6 +3,7 @@
 bin/
 bin2/
 Truct/
+lib/preproc/dfa.h
 # *.lib
 # *.a
 
