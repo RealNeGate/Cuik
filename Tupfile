@@ -1,55 +1,64 @@
-import CC=clang
-import OPT=n
-import COMPILE_DRIVER=y
+CC=clang
+OPT=n
+COMPILE_DRIVER=y
 
 ifeq ($(CC),cl)
-	error CL is not supported with Cuik's Tup builds
-endif
-
-ifeq ($(COMPILE_DRIVER),y)
-	CFLAGS += -DCUIK_USE_TB
-endif
-
-CFLAGS += -I include -I lib -I deps -I tilde-backend/include
-CFLAGS += -Wall -Werror -Wno-unused-function -Wno-unused-variable
-CFLAGS += -msse4.2 -maes
-CFLAGS += -D_CRT_SECURE_NO_WARNINGS
-ifeq ($(OPT),y)
-	CFLAGS += -O2 -DNDEBUG
-endif
-
-# libc on linux
-ifneq (@(TUP_PLATFORM),win32)
-	CFLAGS += -lm -lpthread
+    error MSVC is not supported with Cuik's Tup builds
 endif
 
 !cc = |> $(CC) $(CFLAGS) %f -g -c -o %o |> bin/%B.o
 
-# lexer generator
-: |> $(CC) -g lexgen.c && a %o |> lib/preproc/dfa.h | a.exe a.pdb a.ilk ^.*\.cache
+ifeq ($(COMPILE_DRIVER),y)
+    CFLAGS += -DCUIK_USE_TB
+endif
 
-# library source
-srcs = lib/*.c lib/preproc/*.c lib/front/*.c lib/back/*.c lib/targets/*.c
+CFLAGS += -I include -I lib -I deps -I tilde-backend/include
+CFLAGS += -Wall -Werror -Wno-unused-function -Wno-unused-variable
+CFLAGS += -DCUIK_USE_TB -DTB_COMPILE_TESTS
+
+ifeq ($(OPT),y)
+    CFLAGS += -O2 -DNDEBUG
+endif
+
+# configure architecture-specific targeting
+ifeq (@(TUP_ARCH),x86_64)
+    CFLAGS += -msse4.2 -maes
+endif
 
 ifeq (@(TUP_PLATFORM),win32)
-	: foreach $(srcs) deps/threads_msvc.c | lib/preproc/dfa.h |> !cc |>
-	: bin/*.o |> lib /nologo /out:%o %f |> bin/libcuik.lib
+    CFLAGS += -D_CRT_SECURE_NO_WARNINGS
+endif
+
+# library source
+srcs = lib/*.c lib/preproc/*.c lib/front/*.c lib/targets/*.c lib/back/ir_gen.c lib/back/linker.c
+
+ifeq (@(TUP_PLATFORM),win32)
+    # lexer generator
+    : |> $(CC) lexgen.c -o bin/a.exe && a %o |> lib/preproc/dfa.h | bin/a.exe
+
+    # compile all the normal source files
+    : foreach $(srcs) lib/back/microsoft_craziness.c deps/threads_msvc.c | lib/preproc/dfa.h |> !cc |>
+    : bin/*.o |> lib /nologo /out:%o %f |> bin/libcuik.lib
 else
-	: foreach $(srcs) | lib/preproc/dfa.h |> !cc |>
-	: bin/*.o |> ar -rcs %o %f |> bin/libcuik.a
+    # lexer generator
+    : |> $(CC) lexgen.c -o bin/a.out && bin/a.out %o |> lib/preproc/dfa.h | bin/a.out
+
+	CFLAGS += -DMI_MALLOC_OVERRIDE -I deps/mimalloc/include
+
+    # compile all the normal source files
+    : foreach $(srcs) deps/mimalloc/src/static.c | lib/preproc/dfa.h |> !cc |>
+    : bin/*.o |> ar -rcs %o %f |> bin/libcuik.a
 endif
 
 # compile driver
 ifeq ($(COMPILE_DRIVER),y)
-	CFLAGS += -Xlinker /defaultlib:msvcrt -Xlinker /incremental:no -lole32 -lAdvapi32 -lOleAut32 -lDbgHelp
+    DRIVER_FILES = drivers/main_driver.c drivers/threadpool.c drivers/bindgen_c99.c drivers/bindgen_odin.c
 
-	DRIVER_FILES = drivers/main_driver.c drivers/threadpool.c drivers/bindgen_c99.c drivers/bindgen_odin.c
+    ifeq (@(TUP_PLATFORM),win32)
+        CFLAGS += -Xlinker /incremental:no -lole32 -lAdvapi32 -lOleAut32 -lDbgHelp
 
-	ifeq (@(TUP_PLATFORM),win32)
-		DRIVER_LIBS = bin/libcuik.lib tilde-backend/tildebackend.lib
-        : $(DRIVER_FILES) $(DRIVER_LIBS) |> $(CC) $(CFLAGS) %f -g -o %o |> bin/cuik.exe | bin/cuik.lib bin/cuik.exp bin/cuik.pdb
-	else
-    	DRIVER_LIBS = bin/libcuik.a tilde-backend/tildebackend.a
-        : $(DRIVER_FILES) $(DRIVER_LIBS) |> $(CC) $(CFLAGS) %f -g -o %o |> bin/cuik
-	endif
+        : $(DRIVER_FILES) bin/libcuik.lib tilde-backend/tildebackend.lib |> $(CC) $(CFLAGS) %f -g -o %o |> bin/cuik.exe | bin/cuik.lib bin/cuik.exp bin/cuik.pdb
+    else
+        : $(DRIVER_FILES) bin/libcuik.a tilde-backend/tildebackend.a |> $(CC) $(CFLAGS) %f -lm -ldl -lpthread -g -o %o |> bin/cuik
+    endif
 endif

@@ -348,6 +348,7 @@ void lexer_read(Lexer* restrict l) {
                 }
             }
             #else
+
             // check for escapes
             __m128i pattern = _mm_set1_epi8('\\');
             size_t length = current - start;
