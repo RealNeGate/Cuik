@@ -10,5 +10,5 @@ jobs:
         run: sudo apt-get install clang
 
       - name: Build Cuik
-        run: sh ./build_cuik.sh
+        run: sh ./build.sh
         timeout-minutes: 10
