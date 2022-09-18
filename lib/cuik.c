@@ -225,6 +225,7 @@ static void set_defines(Cuik_CPP* cpp, const Cuik_Target* target, bool system_li
         // things we don't handle yet so we just remove them
         cuikpp_define_empty(cpp, "__THROWNL");
 
+        #if 0
         cuikpp_define(cpp, "__uint8_t", "unsigned char");
         cuikpp_define(cpp, "__uint16_t", "unsigned short");
         cuikpp_define(cpp, "__uint32_t", "unsigned int");
@@ -234,8 +235,10 @@ static void set_defines(Cuik_CPP* cpp, const Cuik_Target* target, bool system_li
         cuikpp_define(cpp, "__int16_t", "short");
         cuikpp_define(cpp, "__int32_t", "int");
         cuikpp_define(cpp, "__int64_t", "long long");
+        #endif
 
         // pretend to be GCC
+        cuikpp_define(cpp, "__inline", "inline");
         cuikpp_define(cpp, "__gnuc_va_list", "char*");
         cuikpp_define(cpp, "__GNUC__", "9");
         cuikpp_define_empty(cpp, "_GNU_SOURCE");

@@ -98,8 +98,8 @@ int main(int argc, char** argv) {
 
     CHARS(CHARS(0, ns(), "+"), ns(), "+");
     CHARS(CHARS(0, ns(), "#"), ns(), "#");
-    CHARS(CHARS(0, ns(), "["), ns(), "[");
-    CHARS(CHARS(0, ns(), "]"), ns(), "]");
+    CHARS(0, ns(), "[");
+    CHARS(0, ns(), "]");
 
     int plus = CHARS(0, ns(), "+"), plus_end = ns();
     CHARS(plus, plus_end, "+");

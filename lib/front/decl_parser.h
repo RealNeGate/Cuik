@@ -5,57 +5,48 @@ static thread_local char temp_string0[1024];
 
 static Cuik_Attribute* parse_attributes(TranslationUnit* restrict tu, TokenStream* restrict s, Cuik_Attribute* last) {
     for (;;) {
-        switch (tokens_get(s)->type) {
+        if (tokens_peek_double_token(s, '[')) {
             // C23 attribute:
             //
             //   [[foo]]  [[foo::bar]]  [[foo(1, 3)]]
-            case TOKEN_DOUBLE_LBRACE: {
-                Cuik_Attribute* a = ARENA_ALLOC(&local_ast_arena, Cuik_Attribute);
-                a->prev = last;
-                a->start_loc = tokens_get_location_index(s);
+            Cuik_Attribute* a = ARENA_ALLOC(&local_ast_arena, Cuik_Attribute);
+            a->prev = last;
+            a->start_loc = tokens_get_location_index(s);
 
-                // TODO(NeGate): we'll only handle the identifier case with no :: for now
+            // TODO(NeGate): we'll only handle the identifier case with no :: for now
+            tokens_next(s), tokens_next(s);
+            if (tokens_get(s)->type != TOKEN_IDENTIFIER) {
+                REPORT(ERROR, tokens_get_location_index(s), "Expected an identifier");
+            } else {
+                Token* t = tokens_get(s);
+                a->name = atoms_put(t->end - t->start, t->start);
                 tokens_next(s);
-                if (tokens_get(s)->type != TOKEN_IDENTIFIER) {
-                    REPORT(ERROR, tokens_get_location_index(s), "Expected an identifier");
-                } else {
-                    Token* t = tokens_get(s);
-                    a->name = atoms_put(t->end - t->start, t->start);
-                    tokens_next(s);
-                }
-                a->end_loc = tokens_get_location_index(s);
-
-                if (tokens_get(s)->type != TOKEN_DOUBLE_RBRACE) {
-                    REPORT(ERROR, tokens_get_location_index(s), "Expected closing ']]' for attribute");
-                }
-                tokens_next(s);
-
-                last = a;
-                break;
             }
+            a->end_loc = tokens_get_location_index(s);
 
+            if (!tokens_peek_double_token(s, ']')) {
+                REPORT(ERROR, tokens_get_location_index(s), "Expected closing ']]' for attribute");
+            }
+            tokens_next(s), tokens_next(s);
+
+            last = a;
+        } else if (tokens_get(s)->type == TOKEN_KW_attribute) {
             // TODO(NeGate): Correctly parse attributes instead of
             // ignoring them.
-            case TOKEN_KW_attribute:
-            case TOKEN_KW_asm: {
-                tokens_next(s);
-                expect(tu, s, '(');
+            tokens_next(s);
+            expect(tu, s, '(');
 
-                int depth = 1;
-                while (depth) {
-                    if (tokens_get(s)->type == '(')
-                        depth++;
-                    else if (tokens_get(s)->type == ')')
-                        depth--;
-
-                    tokens_next(s);
+            int depth = 1;
+            while (depth) {
+                if (tokens_get(s)->type == '(') {
+                    depth++;
+                } else if (tokens_get(s)->type == ')') {
+                    depth--;
                 }
 
-                break;
+                tokens_next(s);
             }
-
-            // done
-            default:
+        } else {
             return last;
         }
     }

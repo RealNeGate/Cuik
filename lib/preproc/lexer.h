@@ -58,8 +58,6 @@ typedef enum TknType {
 
     TOKEN_ARROW         = TKN2('-', '>'),
     TOKEN_DOUBLE_HASH   = TKN2('#', '#'),
-    TOKEN_DOUBLE_LBRACE = TKN2('[', '['),
-    TOKEN_DOUBLE_RBRACE = TKN2(']', ']'),
 
     TOKEN_DOUBLE_AND    = TKN2('&', '&'),
     TOKEN_DOUBLE_OR     = TKN2('|', '|'),
@@ -193,6 +191,10 @@ inline static bool lexer_match(Lexer* restrict l, size_t len, const char* str) {
     if ((l->token_end - l->token_start) != len) return false;
 
     return memcmp(l->token_start, str, len) == 0;
+}
+
+inline static bool tokens_peek_double_token(TokenStream* restrict s, TknType tkn) {
+    return s->tokens[s->current].type == tkn && s->tokens[s->current + 1].type == tkn;
 }
 
 inline static SourceLocIndex tokens_get_last_location_index(TokenStream* restrict s) {
