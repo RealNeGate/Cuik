@@ -1,22 +1,22 @@
 #include <stdio.h>
 #include <threads.h>
 
-#define FLINT_BUFFER_PROFILING
-#define FLINT_BUFFER_PROFILING_GET_TIME() cuik_time_in_nanos()
-#define FLINT_IMPLEMENTATION
+#define SPALL_BUFFER_PROFILING
+#define SPALL_BUFFER_PROFILING_GET_TIME() cuik_time_in_nanos()
+#define SPALL_IMPLEMENTATION
 #include "flint.h"
 
-static FlintProfile ctx;
-static _Thread_local FlintBuffer muh_buffer;
+static SpallProfile ctx;
+static _Thread_local SpallBuffer muh_buffer;
 
 void flintperf__start_thread(void) {
     size_t size = 4 * 1024 * 1024;
-    muh_buffer = (FlintBuffer){ malloc(size), size };
-    FlintBufferInit(&ctx, &muh_buffer);
+    muh_buffer = (SpallBuffer){ malloc(size), size };
+    SpallBufferInit(&ctx, &muh_buffer);
 }
 
 void flintperf__stop_thread(void) {
-    FlintBufferQuit(&ctx, &muh_buffer);
+    SpallBufferQuit(&ctx, &muh_buffer);
 }
 
 #define USE_MEMWATCH 0
@@ -45,7 +45,7 @@ static int memwatcher(void* arg) {
 #endif
 
 static void flintperf__start(void* user_data) {
-    ctx = FlintInit((char*) user_data, 1.0 / 1000.0);
+    ctx = SpallInit((char*) user_data, 1.0 / 1000.0);
     flintperf__start_thread();
 
     #if USE_MEMWATCH
@@ -64,21 +64,32 @@ static void flintperf__stop(void* user_data) {
     #endif
 
     flintperf__stop_thread();
-    FlintQuit(&ctx);
+    SpallQuit(&ctx);
 }
 
-static void flintperf__plot(void* user_data, uint64_t start_ns, uint64_t end_ns, const char* label) {
+static void flintperf__begin_plot(void* user_data, uint64_t nanos, const char* label) {
     #if _WIN32
     uint32_t tid = GetCurrentThreadId();
     #else
     uint32_t tid = pthread_self();
     #endif
 
-    FlintTraceCompleteTid(&ctx, &muh_buffer, start_ns, end_ns - start_ns, label, tid);
+    SpallTraceBeginTid(&ctx, &muh_buffer, nanos, label, tid);
+}
+
+static void flintperf__end_plot(void* user_data, uint64_t nanos) {
+    #if _WIN32
+    uint32_t tid = GetCurrentThreadId();
+    #else
+    uint32_t tid = pthread_self();
+    #endif
+
+    SpallTraceEndTid(&ctx, &muh_buffer, nanos, tid);
 }
 
 static Cuik_IProfiler flintperf_profiler = {
-    .start = flintperf__start,
-    .stop  = flintperf__stop,
-    .plot  = flintperf__plot
+    .start      = flintperf__start,
+    .stop       = flintperf__stop,
+    .begin_plot = flintperf__begin_plot,
+    .end_plot   = flintperf__end_plot,
 };

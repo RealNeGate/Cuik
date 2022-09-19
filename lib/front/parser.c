@@ -112,11 +112,7 @@ static int align_up(int a, int b) {
 static Stmt* make_stmt(TranslationUnit* tu, TokenStream* restrict s, StmtOp op, size_t extra_size) {
     Stmt* stmt = arena_alloc(&local_ast_arena, sizeof(Stmt), _Alignof(max_align_t));
 
-    #ifdef CUIK_USE_TB
-    memset(stmt, 0, offsetof(Stmt, backing) + sizeof(((Stmt*)0)->backing));
-    #else
-    memset(stmt, 0, offsetof(Stmt, end_loc) + sizeof(((Stmt*)0)->end_loc));
-    #endif
+    memset(stmt, 0, offsetof(Stmt, backing.user_data) + sizeof(((Stmt*)0)->backing.user_data));
 
     stmt->op = op;
     stmt->loc = tokens_get_location_index(s);
@@ -525,6 +521,10 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
     // we can preserve this across multiple uses
     thread_local static NL_Strmap(Cuik_Type*) s_global_tags;
     thread_local static NL_Strmap(Symbol) s_global_symbols;
+
+    if (cuik_is_profiling()) {
+        cuik_profile_region_start("parse: %s", desc->tokens->filepath);
+    }
 
     assert(desc->tokens != NULL);
     assert(desc->errors != NULL);
@@ -1182,9 +1182,12 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
         dyn_array_destroy(tu->tokens.tokens);
     }
 
-    //printf("AST arena: %zu MB\n", arena_get_memory_usage(&tu->ast_arena) / (1024*1024));
-    //printf("Type arena: %zu MB\n", arena_get_memory_usage(&tu->type_arena) / (1024*1024));
-    //printf("Thread arena: %zu MB\n", arena_get_memory_usage(&thread_arena) / (1024*1024));
+    #if 0
+    printf("AST arena: %zu MB\n", arena_get_memory_usage(&tu->ast_arena) / (1024*1024));
+    printf("Type arena: %zu MB\n", arena_get_memory_usage(&tu->type_arena) / (1024*1024));
+    printf("Thread arena: %zu MB\n", arena_get_memory_usage(&thread_arena) / (1024*1024));
+    atoms_dump_stats();
+    #endif
 
     // run type checker
     CUIK_TIMED_BLOCK("phase 4") {
@@ -1192,19 +1195,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
         if (has_reports(REPORT_ERROR, tu->errors)) goto parse_error;
     }
 
-    {
-        char temp[256];
-        snprintf(temp, sizeof(temp), "parse: %s", tu->filepath);
-        temp[sizeof(temp) - 1] = 0;
-
-        char* p = temp;
-        for (; *p; p++) {
-            if (*p == '\\') *p = '/';
-        }
-
-        cuik_profile_region(timer_start, temp);
-    }
-
+    if (cuik_is_profiling()) cuik_profile_region_end();
     return tu;
 
     parse_error: {
@@ -1216,6 +1207,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
         dyn_array_destroy(tu->tokens.tokens);
 
         cuik_destroy_translation_unit(tu);
+        if (cuik_is_profiling()) cuik_profile_region_end();
         return NULL;
     }
 }

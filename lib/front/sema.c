@@ -714,6 +714,11 @@ Member* sema_resolve_member_access(TranslationUnit* tu, Expr* restrict e, uint32
 }
 
 Cuik_Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
+    if (e->has_visited) {
+        return e->type;
+    }
+
+    e->has_visited = true;
     switch (e->op) {
         case EXPR_UNKNOWN_SYMBOL: {
             return (e->type = &builtin_types[TYPE_VOID]);
@@ -788,10 +793,6 @@ Cuik_Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
             return (e->type = &builtin_types[TYPE_SHORT]);
         }
         case EXPR_WSTR: {
-            if (e->str.resolved) {
-                return e->type;
-            }
-
             const char* in = (const char*)(e->str.start + 1);
             size_t len = ((const char*)e->str.end - 1) - in;
 
@@ -814,15 +815,10 @@ Cuik_Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
 
             e->str.start = (unsigned char*)&out[0];
             e->str.end = (unsigned char*)&out[out_i];
-            e->str.resolved = true;
 
             return (e->type = new_array(tu, &builtin_types[TYPE_SHORT], out_i));
         }
         case EXPR_STR: {
-            if (e->str.resolved) {
-                return e->type;
-            }
-
             const char* in = (const char*)(e->str.start + 1);
             size_t len = ((const char*)e->str.end - 1) - in;
 
@@ -844,7 +840,6 @@ Cuik_Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
 
             e->str.start = (unsigned char*)out;
             e->str.end = (unsigned char*)(out + out_i);
-            e->str.resolved = true;
 
             return (e->type = new_array(tu, &builtin_types[TYPE_CHAR], out_i));
         }
@@ -855,7 +850,9 @@ Cuik_Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
             *e = (Expr){
                 .op = EXPR_INT,
                 .type = &builtin_types[TYPE_ULONG],
-                .int_num = {src->size, INT_SUFFIX_ULL}};
+                .int_num = { src->size, INT_SUFFIX_ULL }
+            };
+
             return (e->type = &builtin_types[TYPE_ULONG]);
         }
         case EXPR_ALIGNOF: {
@@ -893,7 +890,8 @@ Cuik_Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
             *e = (Expr){
                 .op = EXPR_INT,
                 .type = &builtin_types[TYPE_ULONG],
-                .int_num = {e->x_of_type.type->align, INT_SUFFIX_NONE}};
+                .int_num = {e->x_of_type.type->align, INT_SUFFIX_NONE}
+            };
             return (e->type = &builtin_types[TYPE_ULONG]);
         }
         case EXPR_FUNCTION: {
@@ -1225,13 +1223,6 @@ Cuik_Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
 
             return (e->type = &builtin_types[TYPE_VOID]);
         }
-        case EXPR_PTRADD:
-        case EXPR_PTRSUB:
-        case EXPR_PTRDIFF:
-        case EXPR_DOT_R:
-        case EXPR_ARROW_R: {
-            return e->type;
-        }
         case EXPR_LOGICAL_AND:
         case EXPR_LOGICAL_OR: {
             sema_expr(tu, e->bin_op.left);
@@ -1355,6 +1346,7 @@ Cuik_Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
 
             return (e->type = lhs);
         }
+
         default:
         break;
     }

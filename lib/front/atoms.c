@@ -8,12 +8,16 @@
 thread_local static Arena atoms_arena;
 thread_local static NL_Strmap(Atom) interner;
 
-void atoms_init() {
+void atoms_init(void) {
     interner = nl_strmap_alloc(Atom, 65536);
 }
 
-void atoms_deinit() {
+void atoms_deinit(void) {
     arena_free(&atoms_arena);
+}
+
+void atoms_dump_stats(void) {
+    printf("Atoms arena: %zu MB\n", arena_get_memory_usage(&atoms_arena) / (1024*1024));
 }
 
 Atom atoms_put(size_t len, const unsigned char* str) {

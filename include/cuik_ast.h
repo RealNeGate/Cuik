@@ -340,7 +340,11 @@ struct Stmt {
             TB_Function* f;
             TB_External* e;
             TB_Global* g;
+
+            void* user_data;
         } backing;
+        #else
+        void* user_data;
         #endif /* CUIK_USE_TB */
     };
     union {
@@ -425,12 +429,14 @@ struct Stmt {
 };
 
 struct Expr {
-    ExprOp op;
-    SourceLocIndex start_loc;
-    SourceLocIndex end_loc;
+    ExprOp op : 8;
 
     // some flags:
-    bool has_parens : 1;
+    int has_parens : 1;
+    int has_visited : 1;
+
+    SourceLocIndex start_loc;
+    SourceLocIndex end_loc;
 
     Cuik_Type* type;
 
@@ -525,7 +531,6 @@ struct Expr {
         } call;
         // represent both quoted literals
         struct {
-            bool resolved;
             const unsigned char* start;
             const unsigned char* end;
         } str;
@@ -554,5 +559,45 @@ struct Expr {
         } int_num;
     };
 };
-_Static_assert(offsetof(Expr, next_symbol_in_chain) == offsetof(Expr, next_symbol_in_chain2), "these should be aliasing");
-_Static_assert(offsetof(Expr, next_symbol_in_chain) == offsetof(Expr, builtin_sym.next_symbol_in_chain), "these should be aliasing");
+//_Static_assert(offsetof(Expr, next_symbol_in_chain) == offsetof(Expr, next_symbol_in_chain2), "these should be aliasing");
+//_Static_assert(offsetof(Expr, next_symbol_in_chain) == offsetof(Expr, builtin_sym.next_symbol_in_chain), "these should be aliasing");
+
+#if 0
+// Potential refactor
+typedef struct {
+    uint8_t op; // ExprOp
+
+    // some flags:
+    bool has_parens  : 1;
+    bool has_visited : 1;
+
+    // This technically limits us to 65536 parameters for any single node...
+    // which is fine consider that the only node that could go that high is a function
+    // call and the spec says:
+    //
+    // Translation limits:
+    //    127 arguments in one function call
+    //
+    uint16_t arity;
+
+    SourceLocIndex start_loc;
+    SourceLocIndex end_loc;
+
+    Cuik_Type* type;
+
+    // this is the type it'll be desugared into
+    // for example:
+    //
+    //   a + b where a and b are 16bit
+    //
+    //   their cast_type might be int because of C's
+    //   promotion rules.
+    Cuik_Type* cast_type;
+
+    // ExprOp dependent
+    struct ExprPayload {
+        uint64_t number;
+    } payload;
+} Expr;
+_Static_assert(sizeof(struct ExprPayload) <= sizeof(uintmax_t), "Should only fit uintmax_t sized data");
+#endif

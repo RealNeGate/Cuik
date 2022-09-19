@@ -1,3 +1,4 @@
+#if 0
 #include <stdio.h>
 #include <threads.h>
 
@@ -41,3 +42,4 @@ static Cuik_IProfiler jsonperf_profiler = {
     .stop = jsonperf__stop,
     .plot = jsonperf__plot
 };
+#endif

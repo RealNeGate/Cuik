@@ -286,6 +286,9 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
             // ask to get file
             case 0: {
                 slot->start_time = cuik_time_in_nanos();
+                if (cuik_is_profiling()) {
+                    cuik_profile_region_start("preprocess: %s", slot->filepath);
+                }
 
                 packet->tag = CUIKPP_PACKET_GET_FILE;
                 packet->file.input_path = slot->filepath;
@@ -464,16 +467,7 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
 
             // write out profile entry
             if (cuik_is_profiling()) {
-                char temp[256];
-                snprintf(temp, sizeof(temp), "preprocess: %s", slot->filepath);
-                temp[sizeof(temp) - 1] = 0;
-
-                char* p = temp;
-                for (; *p; p++) {
-                    if (*p == '\\') *p = '/';
-                }
-
-                cuik_profile_region(slot->start_time, "%s", temp);
+                cuik_profile_region_end();
             }
 
             // free the token stream if we have ownership
@@ -869,6 +863,10 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
                     }
 
                     // insert incomplete new stack slot
+                    if (cuik_is_profiling()) {
+                        cuik_profile_region_start("preprocess: %s", filename);
+                    }
+
                     ctx->stack[ctx->stack_ptr++] = (CPPStackSlot){
                         .filepath = filename,
                         .include_loc = new_include_loc,
