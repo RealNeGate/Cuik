@@ -297,7 +297,10 @@ static Cuik_Type* parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s
 
         type->func.param_list = permanent_store;
         type->func.param_count = param_count;
-        type->func.has_varargs = has_varargs;
+
+        // Before C23 empty parameter lists mean undefined set of parameters
+        // we're gonna stick with that for now...
+        type->func.has_varargs = param_count == 0 ? true : has_varargs;
 
         tls_restore(params);
     } else if (tokens_get(s)->type == '[') {

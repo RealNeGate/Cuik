@@ -138,6 +138,16 @@ static TB_Reg cast_reg(TB_Function* func, TB_Reg reg, const Cuik_Type* src, cons
         reg = tb_inst_zxt(func, reg, ctype_to_tbtype(dst));
     } else if (src->kind >= KIND_CHAR &&
         src->kind <= KIND_LONG &&
+        dst->kind == KIND_FUNC) {
+        // integer -> function
+        reg = tb_inst_int2ptr(func, reg);
+    } else if (src->kind == KIND_FUNC &&
+        dst->kind >= KIND_CHAR &&
+        dst->kind <= KIND_LONG) {
+        // function -> integer
+        reg = tb_inst_ptr2int(func, reg, ctype_to_tbtype(dst));
+    } else if (src->kind >= KIND_CHAR &&
+        src->kind <= KIND_LONG &&
         dst->kind == KIND_PTR) {
         reg = tb_inst_int2ptr(func, reg);
     } else if (src->kind == KIND_PTR &&
@@ -402,7 +412,7 @@ InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, Sourc
                                     }
                                 } else {
                                     // Always creates a real external in this case
-                                    stmt->backing.e = tb_extern_create(tu->ir_mod, name);
+                                    stmt->backing.e = tb_extern_create(tu->ir_mod, name, TB_EXTERNAL_SO_LOCAL);
                                     tb_initializer_add_extern(tu->ir_mod, init, offset, stmt->backing.e);
                                 }
 
@@ -411,7 +421,7 @@ InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, Sourc
                                 cuik_unlock_compilation_unit(cu);
                             }
                         } else {
-                            stmt->backing.e = tb_extern_create(tu->ir_mod, name);
+                            stmt->backing.e = tb_extern_create(tu->ir_mod, name, TB_EXTERNAL_SO_LOCAL);
                             tb_initializer_add_extern(tu->ir_mod, init, offset, stmt->backing.e);
                         }
 
@@ -885,7 +895,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
                                 }
                             } else {
                                 // Always creates a real external in this case
-                                stmt->backing.e = tb_extern_create(tu->ir_mod, name);
+                                stmt->backing.e = tb_extern_create(tu->ir_mod, name, TB_EXTERNAL_SO_LOCAL);
 
                                 val = (IRVal){
                                     .value_type = LVALUE_EFUNC,
@@ -900,7 +910,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
                         }
                     } else {
                         mtx_lock(&tu->arena_mutex);
-                        stmt->backing.e = tb_extern_create(tu->ir_mod, name);
+                        stmt->backing.e = tb_extern_create(tu->ir_mod, name, TB_EXTERNAL_SO_LOCAL);
 
                         val = (IRVal){
                             .value_type = LVALUE_EFUNC,
@@ -1509,6 +1519,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
         case EXPR_ASSIGN:
         case EXPR_TIMES_ASSIGN:
         case EXPR_SLASH_ASSIGN:
+        case EXPR_PERCENT_ASSIGN:
         case EXPR_AND_ASSIGN:
         case EXPR_OR_ASSIGN:
         case EXPR_XOR_ASSIGN:
@@ -1693,6 +1704,9 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
                         case EXPR_SLASH_ASSIGN:
                         data = tb_inst_div(func, l, r, !type->is_unsigned);
                         break;
+                        case EXPR_PERCENT_ASSIGN:
+                        data = tb_inst_mod(func, l, r, !type->is_unsigned);
+                        break;
                         case EXPR_AND_ASSIGN:
                         data = tb_inst_and(func, l, r);
                         break;
@@ -1876,7 +1890,7 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
                 }
 
                 if (attrs.is_tls && !atomic_flag_test_and_set(&irgen_defined_tls_index)) {
-                    tb_module_set_tls_index(tu->ir_mod, tb_extern_create(tu->ir_mod, "_tls_index"));
+                    tb_module_set_tls_index(tu->ir_mod, tb_extern_create(tu->ir_mod, "_tls_index", TB_EXTERNAL_SO_LOCAL));
                 }
 
                 TB_Global* g = tb_global_create(tu->ir_mod, name, attrs.is_tls ? TB_STORAGE_TLS : TB_STORAGE_DATA, TB_LINKAGE_PRIVATE);

@@ -182,7 +182,7 @@ bool cuiklink_invoke(Cuik_Linker* l, const char* filename, const char* crt_name)
         str += strlen(str) + 1;
     }
 
-    cmd_line_len += snprintf(&cmd_line[cmd_line_len], CMD_LINE_MAX - cmd_line_len, "-o %s ", filename);
+    cmd_line_len += snprintf(&cmd_line[cmd_line_len], CMD_LINE_MAX - cmd_line_len, "-ldl -o %s ", filename);
 
     int exit_code = system(cmd_line);
     if (exit_code != 0) {

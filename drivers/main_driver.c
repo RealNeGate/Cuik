@@ -313,7 +313,10 @@ static void codegen_job(void* arg) {
 // it'll use the normal CLI crap to do so
 static Cuik_CPP* make_preprocessor(const char* filepath) {
     Cuik_CPP* cpp = malloc(sizeof(Cuik_CPP));
-    cuikpp_init(cpp, filepath);
+    CUIK_TIMED_BLOCK("cuikpp_init") {
+        cuikpp_init(cpp, filepath);
+    }
+
     cuikpp_set_common_defines(cpp, &target_desc, !args_nocrt);
 
     dyn_array_for(i, include_directories) {
@@ -620,6 +623,73 @@ static void codegen(void) {
             tb_module_compile_function(mod, it.f, /* args_opt_level ? TB_ISEL_COMPLEX : */ TB_ISEL_FAST);
         }
     }
+}
+
+static void run_as_jit(void) {
+    #ifdef _WIN32
+    dyn_array_put(input_libraries, "kernel32.lib");
+
+    HMODULE* modules = malloc(sizeof(HMODULE) * dyn_array_length(input_libraries));
+    dyn_array_for(i, input_libraries) {
+        char tmp[FILENAME_MAX];
+        strncpy(tmp, input_libraries[i], FILENAME_MAX);
+
+        // HACK: replace extension
+        const size_t cstr_len = strlen(tmp);
+        const size_t postfix_len = strlen(".lib");
+        if (postfix_len <= cstr_len && strcmp(tmp + cstr_len - postfix_len, ".lib") == 0) {
+            strcpy(tmp + cstr_len - postfix_len, ".dll");
+        }
+
+        modules[i] = LoadLibraryA(tmp);
+        if (modules[i] == NULL) {
+            fprintf(stderr, "error: Could not load: %s\n", input_libraries[i]);
+            abort();
+        }
+    }
+
+    TB_FOR_EXTERNALS(it, mod) {
+        const char* name = tb_extern_get_name(it.e);
+        printf("  %s\n", name);
+
+        void* p = NULL;
+        dyn_array_for(i, input_libraries) {
+            p = GetProcAddress(modules[i], name);
+            if (p != NULL) {
+                printf("    Loaded from %s (%p)\n", input_libraries[i], p);
+                break;
+            }
+        }
+
+        if (p == NULL) {
+            fprintf(stderr, "error: Could not load symbol: %s\n", name);
+            abort();
+        }
+        tb_extern_bind_ptr(it.e, p);
+    }
+
+    tb_module_export_jit(mod);
+
+    // run the main function
+    TB_Function* func = NULL;
+    TB_FOR_FUNCTIONS(it, mod) {
+        if (strcmp(tb_function_get_name(it.f), "main") == 0) {
+            func = it.f;
+            break;
+        }
+    }
+
+    if (func == NULL) {
+        fprintf(stderr, "error: Could not find entrypoint 'main'\n");
+        abort();
+    }
+
+    void(*jit_entry)(void) = tb_function_get_jit_pos(func);
+    jit_entry();
+    #else
+    fprintf(stderr, "error: JIT not supported yet!\n");
+    abort();
+    #endif
 }
 
 static bool export_output(void) {
@@ -1201,8 +1271,15 @@ int main(int argc, char** argv) {
         codegen();
     }
 
-    if (!export_output()) {
-        return 1;
+    if (args_run) {
+        // printf("JIT compiling...\n");
+        fprintf(stderr, "error: JIT not supported yet!\n");
+        abort();
+        // run_as_jit();
+    } else {
+        if (!export_output()) {
+            return 1;
+        }
     }
 
     tb_free_thread_resources();
@@ -1252,7 +1329,7 @@ int main(int argc, char** argv) {
     ////////////////////////////////
     // Running executable
     ////////////////////////////////
-    if (args_run) {
+    /*if (args_run) {
         char* exe = strdup(output_name);
 
         #ifdef _WIN32
@@ -1266,7 +1343,7 @@ int main(int argc, char** argv) {
         printf("Exit code: %d\n", exit_code);
 
         return exit_code;
-    }
+    }*/
 
     return 0;
 }

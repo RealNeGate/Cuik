@@ -71,7 +71,7 @@ static void flintperf__begin_plot(void* user_data, uint64_t nanos, const char* l
     #if _WIN32
     uint32_t tid = GetCurrentThreadId();
     #else
-    uint32_t tid = pthread_self();
+    uint32_t tid = getpid();
     #endif
 
     SpallTraceBeginTid(&ctx, &muh_buffer, nanos, label, tid);
@@ -81,7 +81,7 @@ static void flintperf__end_plot(void* user_data, uint64_t nanos) {
     #if _WIN32
     uint32_t tid = GetCurrentThreadId();
     #else
-    uint32_t tid = pthread_self();
+    uint32_t tid = getpid();
     #endif
 
     SpallTraceEndTid(&ctx, &muh_buffer, nanos, tid);

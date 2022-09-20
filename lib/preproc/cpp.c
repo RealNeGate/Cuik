@@ -57,6 +57,20 @@ typedef struct CPPStackSlot {
     SourceLocIndex include_loc;
 
     TokenStream tokens;
+
+    // https://gcc.gnu.org/onlinedocs/cppinternals/Guard-Macros.html
+    struct CPPIncludeGuard {
+        enum {
+            INCLUDE_GUARD_INVALID = -1,
+
+            INCLUDE_GUARD_LOOKING_FOR_IFNDEF,
+            INCLUDE_GUARD_LOOKING_FOR_DEFINE,
+            INCLUDE_GUARD_LOOKING_FOR_ENDIF,
+            INCLUDE_GUARD_EXPECTING_NOTHING,
+        } status;
+        int if_depth; // the depth value we expect the include guard to be at
+        String define;
+    } include_guard;
 } CPPStackSlot;
 
 static void expect_from_lexer(Lexer* l, char ch) {
@@ -286,6 +300,8 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
             // ask to get file
             case 0: {
                 slot->start_time = cuik_time_in_nanos();
+                slot->include_guard = (struct CPPIncludeGuard){ 0 };
+
                 if (cuik_is_profiling()) {
                     cuik_profile_region_start("preprocess: %s", slot->filepath);
                 }
@@ -419,11 +435,19 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
             packet->file.input_path = filepath;
             packet->file.tokens = (TokenStream){ 0 };
             packet->file.is_primary = false;
+
+            fprintf(stderr, "PRAGMA ONCE DONT GOT IT %s\n", filepath);
             return CUIKPP_CONTINUE;
+        } else {
+            fprintf(stderr, "PRAGMA ONCE GOT IT %s\n", filepath);
         }
 
         // revert since it's only allowed to include once and we already did it
         // then just continue
+        if (cuik_is_profiling()) {
+            cuik_profile_region_end();
+        }
+
         ctx->stack_ptr -= 1;
         slot = &ctx->stack[ctx->stack_ptr - 1];
     } else if (ctx->state1 == CUIK__CPP_GET_FILE) {
@@ -435,6 +459,7 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
         #endif
 
         // initialize the file & lexer in the stack slot
+        slot->include_guard = (struct CPPIncludeGuard){ 0 };
         slot->file_id = dyn_array_length(ctx->files);
         slot->tokens = packet->file.tokens;
         slot->tokens.current = 0;
@@ -462,8 +487,21 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
         int start_line_for_pp_stmt = tokens_get_location_line(in);
 
         TknType first_token = tokens_get(in)->type;
+        if (first_token != 0 && slot->include_guard.status == INCLUDE_GUARD_EXPECTING_NOTHING) {
+            report(REPORT_INFO, NULL, s, tokens_get_location_index(s), "found something outside of the space where shit don't go");
+            slot->include_guard.status = INCLUDE_GUARD_INVALID;
+        }
+
         if (first_token == 0) {
             ctx->stack_ptr -= 1;
+
+            if (slot->include_guard.status == INCLUDE_GUARD_EXPECTING_NOTHING) {
+                // the file is practically pragma once
+                fprintf(stderr, "%s: this file has an include guard around it called '%.*s'\n", slot->filepath, (int)slot->include_guard.define.length, (const char*)slot->include_guard.define.data);
+                nl_strmap_put_cstr(ctx->include_once, (const char*) slot->filepath, 0);
+            } else {
+                fprintf(stderr, "%s: could not detect include guard\n", slot->filepath);
+            }
 
             // write out profile entry
             if (cuik_is_profiling()) {
@@ -566,6 +604,10 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
                     success = true;
                     tokens_next(in);
 
+                    if (slot->include_guard.status == INCLUDE_GUARD_EXPECTING_NOTHING) {
+                        slot->include_guard.status = INCLUDE_GUARD_INVALID;
+                    }
+
                     if (!tokens_is(in, TOKEN_IDENTIFIER)) {
                         generic_error(in, "expected identifier!");
                     }
@@ -634,6 +676,17 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
 
                     warn_if_newline(in);
                     pop_scope(ctx, in, directive_loc);
+
+                    if (slot->include_guard.status == INCLUDE_GUARD_LOOKING_FOR_ENDIF && slot->include_guard.if_depth == ctx->depth) {
+                        slot->include_guard.status = INCLUDE_GUARD_EXPECTING_NOTHING;
+                        report(REPORT_INFO, NULL, s, tokens_get_location_index(s), "EXPECTING_NOTHING");
+
+                        // the ifndef's macro needs to stay defined or else the include guard doesn't make sense
+                        if (!is_defined(ctx, slot->include_guard.define.data, slot->include_guard.define.length)) {
+                            slot->include_guard.status = INCLUDE_GUARD_INVALID;
+                            report(REPORT_INFO, NULL, s, tokens_get_location_index(s), "INVALID");
+                        }
+                    }
                 }
                 break;
 
@@ -654,6 +707,17 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
 
                     // Hash name
                     String key = get_token_as_string(in);
+                    if (slot->include_guard.status == INCLUDE_GUARD_LOOKING_FOR_DEFINE) {
+                        // as long as the define matches the include guard we're good
+                        if (string_equals(&slot->include_guard.define, &key)) {
+                            slot->include_guard.status = INCLUDE_GUARD_LOOKING_FOR_ENDIF;
+                            report(REPORT_INFO, NULL, s, tokens_get_location_index(s), "LOOKING_FOR_ENDIF");
+                        } else {
+                            slot->include_guard.status = INCLUDE_GUARD_INVALID;
+                            report(REPORT_INFO, NULL, s, tokens_get_location_index(s), "INVALID");
+                        }
+                    }
+
                     uint64_t slot = hash_ident(key.data, key.length);
                     uint64_t e = ctx->macro_bucket_count[slot] + (slot * SLOTS_PER_MACRO_BUCKET);
 
@@ -779,6 +843,14 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
                     if (!is_defined(ctx, t->start, t->end - t->start)) {
                         push_scope(ctx, in, true, directive_loc);
                         tokens_next(in);
+
+                        // if we don't skip the body then maybe just maybe it's a guard macro
+                        if (slot->include_guard.status == INCLUDE_GUARD_LOOKING_FOR_IFNDEF) {
+                            slot->include_guard.status = INCLUDE_GUARD_LOOKING_FOR_DEFINE;
+                            slot->include_guard.define = string_from_range(t->start, t->end);
+                            slot->include_guard.if_depth = ctx->depth;
+                            report(REPORT_INFO, NULL, s, tokens_get_location_index(s), "LOOKING_FOR_DEFINE");
+                        }
                     } else {
                         push_scope(ctx, in, false, directive_loc);
                         skip_directive_body(in);

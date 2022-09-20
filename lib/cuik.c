@@ -240,8 +240,8 @@ static void set_defines(Cuik_CPP* cpp, const Cuik_Target* target, bool system_li
         // pretend to be GCC
         cuikpp_define(cpp, "__inline", "inline");
         cuikpp_define(cpp, "__gnuc_va_list", "char*");
-        cuikpp_define(cpp, "__GNUC__", "9");
-        cuikpp_define_empty(cpp, "_GNU_SOURCE");
+        // cuikpp_define(cpp, "__GNUC__", "9");
+        // cuikpp_define_empty(cpp, "_GNU_SOURCE");
     }
 
     if (target != NULL && target->arch != NULL) {
