@@ -75,9 +75,8 @@ CUIK_API uint64_t cuik_time_in_nanos(void) {
     #endif
 }
 
-CUIK_API void cuik_profile_region_start(const char* fmt, ...) {
+CUIK_API void cuik_profile_region_start(uint64_t nanos, const char* fmt, ...) {
     if (profiler == NULL) return;
-    uint64_t nanos = cuik_time_in_nanos();
 
     // lock if necessary
     if (should_lock_profiler) mtx_lock(&timer_mutex);

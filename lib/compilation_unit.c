@@ -1,5 +1,4 @@
 #include "compilation_unit.h"
-#include <timer.h>
 
 CUIK_API void cuik_create_compilation_unit(CompilationUnit* restrict cu) {
     *cu = (CompilationUnit){0};

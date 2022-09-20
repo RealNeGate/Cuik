@@ -1,7 +1,5 @@
 #include <cuik.h>
-
 #include "targets/targets.h"
-#include "timer.h"
 
 // internal globals to Cuik
 char cuik__include_dir[FILENAME_MAX];
@@ -239,7 +237,19 @@ static void set_defines(Cuik_CPP* cpp, const Cuik_Target* target, bool system_li
 
         // pretend to be GCC
         cuikpp_define(cpp, "__inline", "inline");
+        cuikpp_define(cpp, "__restrict", "restrict");
         cuikpp_define(cpp, "__gnuc_va_list", "char*");
+        cuikpp_define_empty(cpp, "__extension__");
+        cuikpp_define_empty(cpp, "__asm__()");
+        // cuikpp_define(cpp, "_ISOC11_SOURCE", "1");
+        // cuikpp_define(cpp, "__USE_ISOC11", "1");
+
+        cuikpp_define(cpp, "__GNUC_MINOR__", "2");
+        cuikpp_define(cpp, "__GNUC_PATCHLEVEL__", "1");
+        cuikpp_define(cpp, "__GNUC_STDC_INLINE__", "1");
+        cuikpp_define(cpp, "__GNUC__", "4");
+        cuikpp_define(cpp, "__GXX_ABI_VERSION", "1002");
+
         // cuikpp_define(cpp, "__GNUC__", "9");
         // cuikpp_define_empty(cpp, "_GNU_SOURCE");
     }

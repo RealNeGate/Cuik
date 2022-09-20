@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <stddef.h>
 #include <stdio.h>
+#include <cuik.h>
 
 #define INITIAL_CAP 4096
 
@@ -36,10 +37,10 @@ inline static void* dyn_array_internal_reserve(void* ptr, size_t type_size, size
     DynArrayHeader* header = ((DynArrayHeader*)ptr) - 1;
 
     if (header->size + extra >= header->capacity) {
-        size_t old = header->capacity;
+        size_t old = sizeof(DynArrayHeader) + (type_size * header->capacity);
         header->capacity = (header->size + extra) * 2;
-        // fprintf(stderr, "info: resize! %zu -> %zu\n", old, header->capacity);
 
+        size_t new_ = sizeof(DynArrayHeader) + (type_size * header->capacity);
         DynArrayHeader* new_ptr = realloc(header, sizeof(DynArrayHeader) + (type_size * header->capacity));
         if (!new_ptr) {
             fprintf(stderr, "error: out of memory!");

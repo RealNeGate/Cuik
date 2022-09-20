@@ -2,7 +2,6 @@
 #include <arena.h>
 #include <common.h>
 #include <compilation_unit.h>
-#include <timer.h>
 
 #include <front/parser.h>
 

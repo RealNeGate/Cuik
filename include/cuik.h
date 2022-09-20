@@ -93,14 +93,14 @@ CUIK_API bool cuik_is_profiling(void);
 CUIK_API uint64_t cuik_time_in_nanos(void);
 
 // Reports a region of time to the profiler callback
-CUIK_API void cuik_profile_region_start(const char* fmt, ...);
+CUIK_API void cuik_profile_region_start(uint64_t now, const char* fmt, ...);
 CUIK_API void cuik_profile_region_end(void);
 
 // Usage:
 // CUIK_TIMED_BLOCK("Beans %d", 5) {
 //   ...
 // }
-#define CUIK_TIMED_BLOCK(...) for (uint64_t __i = (cuik_profile_region_start(__VA_ARGS__), 0); __i < 1; __i++, cuik_profile_region_end())
+#define CUIK_TIMED_BLOCK(...) for (uint64_t __i = (cuik_profile_region_start(cuik_time_in_nanos(), __VA_ARGS__), 0); __i < 1; __i++, cuik_profile_region_end())
 
 ////////////////////////////////////////////
 // General Cuik stuff
@@ -197,6 +197,7 @@ CUIK_API Cuik_FileCache* cuik_fscache_create(void);
 CUIK_API void cuik_fscache_destroy(Cuik_FileCache* restrict c);
 CUIK_API void cuik_fscache_put(Cuik_FileCache* restrict c, const char* filepath, const TokenStream* tokens);
 CUIK_API bool cuik_fscache_lookup(Cuik_FileCache* restrict c, const char* filepath, TokenStream* out_tokens);
+CUIK_API bool cuik_fscache_query(Cuik_FileCache* restrict c, const char* filepath);
 
 // simplifies whitespace for the lexer
 CUIK_API void cuiklex_canonicalize(size_t length, char* data);

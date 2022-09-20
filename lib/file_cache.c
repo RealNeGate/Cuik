@@ -31,6 +31,10 @@ CUIK_API void cuik_fscache_put(Cuik_FileCache* restrict c, const char* filepath,
     mtx_unlock(&c->lock);
 }
 
+CUIK_API bool cuik_fscache_query(Cuik_FileCache* restrict c, const char* filepath) {
+    return nl_strmap_get_cstr(c->table, filepath) >= 0;
+}
+
 CUIK_API bool cuik_fscache_lookup(Cuik_FileCache* restrict c, const char* filepath, TokenStream* out_tokens) {
     mtx_lock(&c->lock);
     ptrdiff_t search = nl_strmap_get_cstr(c->table, filepath);

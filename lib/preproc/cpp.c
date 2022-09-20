@@ -6,7 +6,6 @@
 // NOTE(NeGate): the_shtuffs is the simple linear allocator in this preprocessor, just avoids
 // wasting time on the heap allocator
 #include <cuik.h>
-#include "../timer.h"
 #include "../str.h"
 #include "../big_array.h"
 #include "../diagnostic.h"
@@ -225,8 +224,8 @@ static TokenStream get_all_tokens_in_buffer(const char* filepath, const uint8_t*
     }
 
     TokenStream s = { filepath };
-    s.locations = dyn_array_create(SourceLoc);
-    s.tokens = dyn_array_create(Token);
+    s.locations = dyn_array_create_with_initial_cap(SourceLoc, 8192);
+    s.tokens = dyn_array_create_with_initial_cap(Token, 8192);
 
     Lexer l = { filepath, data, data, 1 };
 
@@ -303,7 +302,7 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
                 slot->include_guard = (struct CPPIncludeGuard){ 0 };
 
                 if (cuik_is_profiling()) {
-                    cuik_profile_region_start("preprocess: %s", slot->filepath);
+                    cuik_profile_region_start(cuik_time_in_nanos(), "preprocess: %s", slot->filepath);
                 }
 
                 packet->tag = CUIKPP_PACKET_GET_FILE;
@@ -436,22 +435,21 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
             packet->file.tokens = (TokenStream){ 0 };
             packet->file.is_primary = false;
 
-            fprintf(stderr, "PRAGMA ONCE DONT GOT IT %s\n", filepath);
+            // fprintf(stderr, "PRAGMA ONCE DONT GOT IT %s\n", filepath);
             return CUIKPP_CONTINUE;
         } else {
-            fprintf(stderr, "PRAGMA ONCE GOT IT %s\n", filepath);
+            // fprintf(stderr, "\x1b[36mPRAGMA ONCE GOT IT %s\x1b[0m\n", filepath);
         }
 
         // revert since it's only allowed to include once and we already did it
         // then just continue
-        if (cuik_is_profiling()) {
-            cuik_profile_region_end();
-        }
-
         ctx->stack_ptr -= 1;
         slot = &ctx->stack[ctx->stack_ptr - 1];
     } else if (ctx->state1 == CUIK__CPP_GET_FILE) {
         const char* filepath = packet->file.input_path;
+        if (cuik_is_profiling()) {
+            cuik_profile_region_start(cuik_time_in_nanos(), "preprocess: %s", filepath);
+        }
 
         #if CUIK__CPP_STATS
         ctx->total_io_time += (cuik_time_in_nanos() - slot->start_time);
@@ -488,7 +486,7 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
 
         TknType first_token = tokens_get(in)->type;
         if (first_token != 0 && slot->include_guard.status == INCLUDE_GUARD_EXPECTING_NOTHING) {
-            report(REPORT_INFO, NULL, s, tokens_get_location_index(s), "found something outside of the space where shit don't go");
+            // report(REPORT_INFO, NULL, in, tokens_get_location_index(in), "placed stuff outside of the include guard (FAILURE!)");
             slot->include_guard.status = INCLUDE_GUARD_INVALID;
         }
 
@@ -497,10 +495,10 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
 
             if (slot->include_guard.status == INCLUDE_GUARD_EXPECTING_NOTHING) {
                 // the file is practically pragma once
-                fprintf(stderr, "%s: this file has an include guard around it called '%.*s'\n", slot->filepath, (int)slot->include_guard.define.length, (const char*)slot->include_guard.define.data);
+                // fprintf(stderr, "%s: this file has an include guard around it called '%.*s'\n", slot->filepath, (int)slot->include_guard.define.length, (const char*)slot->include_guard.define.data);
                 nl_strmap_put_cstr(ctx->include_once, (const char*) slot->filepath, 0);
             } else {
-                fprintf(stderr, "%s: could not detect include guard\n", slot->filepath);
+                // fprintf(stderr, "%s: could not detect include guard\n", slot->filepath);
             }
 
             // write out profile entry
@@ -604,10 +602,6 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
                     success = true;
                     tokens_next(in);
 
-                    if (slot->include_guard.status == INCLUDE_GUARD_EXPECTING_NOTHING) {
-                        slot->include_guard.status = INCLUDE_GUARD_INVALID;
-                    }
-
                     if (!tokens_is(in, TOKEN_IDENTIFIER)) {
                         generic_error(in, "expected identifier!");
                     }
@@ -674,19 +668,19 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
                     success = true;
                     tokens_next(in);
 
-                    warn_if_newline(in);
-                    pop_scope(ctx, in, directive_loc);
-
                     if (slot->include_guard.status == INCLUDE_GUARD_LOOKING_FOR_ENDIF && slot->include_guard.if_depth == ctx->depth) {
-                        slot->include_guard.status = INCLUDE_GUARD_EXPECTING_NOTHING;
-                        report(REPORT_INFO, NULL, s, tokens_get_location_index(s), "EXPECTING_NOTHING");
-
-                        // the ifndef's macro needs to stay defined or else the include guard doesn't make sense
                         if (!is_defined(ctx, slot->include_guard.define.data, slot->include_guard.define.length)) {
+                            // the ifndef's macro needs to stay defined or else the include guard doesn't make sense
                             slot->include_guard.status = INCLUDE_GUARD_INVALID;
-                            report(REPORT_INFO, NULL, s, tokens_get_location_index(s), "INVALID");
+                            // report(REPORT_INFO, NULL, in, tokens_get_location_index(in), "INVALID");
+                        } else {
+                            slot->include_guard.status = INCLUDE_GUARD_EXPECTING_NOTHING;
+                            // report(REPORT_INFO, NULL, in, tokens_get_location_index(in), "EXPECTING_NOTHING");
                         }
                     }
+
+                    warn_if_newline(in);
+                    pop_scope(ctx, in, directive_loc);
                 }
                 break;
 
@@ -711,10 +705,10 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
                         // as long as the define matches the include guard we're good
                         if (string_equals(&slot->include_guard.define, &key)) {
                             slot->include_guard.status = INCLUDE_GUARD_LOOKING_FOR_ENDIF;
-                            report(REPORT_INFO, NULL, s, tokens_get_location_index(s), "LOOKING_FOR_ENDIF");
+                            // report(REPORT_INFO, NULL, in, tokens_get_location_index(in), "LOOKING_FOR_ENDIF");
                         } else {
                             slot->include_guard.status = INCLUDE_GUARD_INVALID;
-                            report(REPORT_INFO, NULL, s, tokens_get_location_index(s), "INVALID");
+                            // report(REPORT_INFO, NULL, in, tokens_get_location_index(in), "INVALID");
                         }
                     }
 
@@ -849,7 +843,7 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
                             slot->include_guard.status = INCLUDE_GUARD_LOOKING_FOR_DEFINE;
                             slot->include_guard.define = string_from_range(t->start, t->end);
                             slot->include_guard.if_depth = ctx->depth;
-                            report(REPORT_INFO, NULL, s, tokens_get_location_index(s), "LOOKING_FOR_DEFINE");
+                            // report(REPORT_INFO, NULL, in, tokens_get_location_index(in), "LOOKING_FOR_DEFINE");
                         }
                     } else {
                         push_scope(ctx, in, false, directive_loc);
@@ -935,10 +929,6 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
                     }
 
                     // insert incomplete new stack slot
-                    if (cuik_is_profiling()) {
-                        cuik_profile_region_start("preprocess: %s", filename);
-                    }
-
                     ctx->stack[ctx->stack_ptr++] = (CPPStackSlot){
                         .filepath = filename,
                         .include_loc = new_include_loc,

@@ -10,7 +10,6 @@
 //   a token for a specific operation... tell the user
 #include "parser.h"
 #include <targets/targets.h>
-#include <timer.h>
 
 #undef VOID // winnt.h loves including garbage
 
@@ -523,7 +522,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
     thread_local static NL_Strmap(Symbol) s_global_symbols;
 
     if (cuik_is_profiling()) {
-        cuik_profile_region_start("parse: %s", desc->tokens->filepath);
+        cuik_profile_region_start(cuik_time_in_nanos(), "parse: %s", desc->tokens->filepath);
     }
 
     assert(desc->tokens != NULL);
@@ -638,7 +637,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                             // make typedef
                             Stmt* n = make_stmt(tu, s, STMT_DECL, sizeof(struct StmtDecl));
                             n->loc = decl.loc;
-                            n->attr_list = attribute_list;
+                            n->attr_list = parse_attributes(tu, s, attribute_list);
                             n->decl = (struct StmtDecl){
                                 .name = decl.name,
                                 .type = decl.type,

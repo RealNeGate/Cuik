@@ -104,6 +104,11 @@ CUIK_API bool cuikpp_default_packet_handler(Cuik_CPP* ctx, Cuikpp_Packet* packet
 
         return false;
     } else if (packet->tag == CUIKPP_PACKET_QUERY_FILE) {
+        if (cache && cuik_fscache_query(cache, packet->file.input_path)) {
+            packet->query.found = true;
+            return true;
+        }
+
         #ifdef _WIN32
         packet->query.found = (GetFileAttributesA(packet->query.input_path) != INVALID_FILE_ATTRIBUTES);
         #else

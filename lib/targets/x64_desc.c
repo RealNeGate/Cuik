@@ -13,6 +13,8 @@ static void set_defines(Cuik_CPP* cpp, Cuik_System sys) {
         cuikpp_define(cpp, "_M_AMD64", "100");
     } else if (sys == CUIK_SYSTEM_LINUX) {
         cuikpp_define(cpp, "__x86_64__", "1");
+        cuikpp_define(cpp, "__amd64",    "1");
+        cuikpp_define(cpp, "__amd64__",  "1");
     }
 }
 

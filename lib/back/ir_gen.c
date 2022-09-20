@@ -2,7 +2,6 @@
 #include "ir_gen.h"
 #include <compilation_unit.h>
 #include <targets/targets.h>
-#include <timer.h>
 
 atomic_flag irgen_defined_tls_index;
 
