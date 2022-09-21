@@ -66,18 +66,6 @@ CUIK_API void cuikpp_define_slice(Cuik_CPP* ctx, size_t keylen, const char* key,
     }
 }
 
-static char unsigned overhang_mask[32] = {
-    255, 255, 255, 255, 255, 255, 255, 255,
-    255, 255, 255, 255, 255, 255, 255, 255,
-    0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0,
-};
-
-static char unsigned default_seed[16] = {
-    178, 201, 95, 240, 40, 41, 143, 216,
-    2, 209, 178, 114, 232, 4, 176, 188,
-};
-
 // murmur3 32-bit without UB unaligned accesses
 // https://github.com/demetri/scribbles/blob/master/hashing/ub_aware_hash_functions.c
 static uint64_t hash_ident(const void* key, size_t len) {
@@ -111,6 +99,13 @@ static uint64_t hash_ident(const void* key, size_t len) {
     return (h ^ (h >> 16)) % MACRO_BUCKET_COUNT;
 }
 
+static char unsigned overhang_mask[32] = {
+    255, 255, 255, 255, 255, 255, 255, 255,
+    255, 255, 255, 255, 255, 255, 255, 255,
+    0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0,
+};
+
 // 16byte based compare
 // it doesn't need to be aligned but the valid range must be (len + 15) & ~15
 static bool memory_equals16(const unsigned char* src1, const unsigned char* src2, size_t length) {
@@ -141,25 +136,36 @@ static bool memory_equals16(const unsigned char* src1, const unsigned char* src2
 }
 
 static bool find_define(Cuik_CPP* restrict c, size_t* out_index, const unsigned char* start, size_t length) {
+    #if CUIK__CPP_STATS
+    uint64_t start_ns = cuik_time_in_nanos();
+    #endif
+
     uint64_t slot = hash_ident(start, length);
     size_t count = c->macro_bucket_count[slot];
     size_t base = (slot * SLOTS_PER_MACRO_BUCKET);
 
     size_t i = 0;
+    bool found = false;
     while (i < count) {
         size_t e = base + i;
 
         if (c->macro_bucket_keys_length[e] == length) {
             if (memory_equals16(c->macro_bucket_keys[e], start, length)) {
                 *out_index = e;
-                return true;
+                found = true;
+                break;
             }
         }
 
         i++;
     }
 
-    return false;
+    #if CUIK__CPP_STATS
+    uint64_t end_ns = cuik_time_in_nanos();
+    c->total_define_access_time += (end_ns - start_ns);
+    c->total_define_accesses += 1;
+    #endif
+    return found;
 }
 
 static bool is_defined(Cuik_CPP* restrict c, const unsigned char* start, size_t length) {

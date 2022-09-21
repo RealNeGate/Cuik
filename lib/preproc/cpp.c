@@ -1030,11 +1030,13 @@ CUIK_API void cuikpp_deinit(Cuik_CPP* ctx) {
     #if CUIK__CPP_STATS
     //printf("%40s | %zu file read | %zu fstats\n", ctx->files[0].filepath, ctx->total_files_read, ctx->total_fstats);
     #if 1
-    printf(" %40s | %.06f ms read+lex\t| %4zu files read\t| %zu fstats\n",
+    printf(" %40s | %.06f ms read+lex\t| %4zu files read\t| %zu fstats\t| %f ms (%zu defines)\n",
         ctx->files[0].filepath,
         ctx->total_io_time / 1000000.0,
         ctx->total_files_read,
-        ctx->total_fstats);
+        ctx->total_fstats,
+        ctx->total_define_access_time / 1000000.0,
+        ctx->total_define_accesses);
     #else
     dyn_array_for(i, ctx->files) {
         printf("%s,%zu\n", ctx->files[i].filepath, ctx->files[i].content_len);
