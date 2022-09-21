@@ -6,7 +6,7 @@ export tup_vardict="$(cd $(dirname $0) && pwd)/tup-generate.vardict"
 mkdir -p "bin"
 mkdir -p "tilde-backend/bin"
 cd "tilde-backend"
-./build_luajit.sh
+sh ./build_luajit.sh
 (clang -I include -I deps/luajit/src -Wall -Werror -Wno-unused-function -DTB_COMPILE_TESTS src/tb/debug_builder.c -g -c -o bin/debug_builder.o)
 (clang -I include -I deps/luajit/src -Wall -Werror -Wno-unused-function -DTB_COMPILE_TESTS src/tb/exporter.c -g -c -o bin/exporter.o)
 (clang -I include -I deps/luajit/src -Wall -Werror -Wno-unused-function -DTB_COMPILE_TESTS src/tb/hash.c -g -c -o bin/hash.o)
