@@ -57,6 +57,10 @@ struct Cuik_CPP {
     uint64_t total_include_time;
     uint64_t total_files_read;
     uint64_t total_io_time;
+
+    // define table
+    uint64_t total_define_access_time;
+    uint64_t total_define_accesses;
     #endif
 
     // NL_Strmap(int)

@@ -281,6 +281,13 @@ typedef enum ExprOp {
     EXPR_SHL,
     EXPR_SHR,
 
+    EXPR_CMPEQ,
+    EXPR_CMPNE,
+    EXPR_CMPGE,
+    EXPR_CMPLE,
+    EXPR_CMPGT,
+    EXPR_CMPLT,
+
     // these are resolved by semantics pass
     EXPR_PTRADD,
     EXPR_PTRSUB,
@@ -288,13 +295,6 @@ typedef enum ExprOp {
 
     EXPR_TERNARY,
     EXPR_COMMA,
-
-    EXPR_CMPEQ,
-    EXPR_CMPNE,
-    EXPR_CMPGE,
-    EXPR_CMPLE,
-    EXPR_CMPGT,
-    EXPR_CMPLT,
 
     EXPR_LOGICAL_NOT,
     EXPR_LOGICAL_AND,

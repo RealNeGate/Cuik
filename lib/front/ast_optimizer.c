@@ -280,39 +280,18 @@ Expr* cuik__optimize_ast(TranslationUnit* tu, Expr* e) {
                 }
             } else if (a->op == EXPR_INT) {
                 ExprOp op = e->op;
-                Expr* current = e->bin_op.left;
-                if (current->op != op) {
-                    Expr* b = cuik__optimize_ast(tu, current);
 
-                    if (b->op == EXPR_INT) {
-                        ConstValue c = const_eval_bin_op(op, gimme(b), gimme(a));
-
-                        e->op = EXPR_INT;
-                        e->int_num.suffix = c.is_signed ? INT_SUFFIX_LL : INT_SUFFIX_ULL;
-                        e->int_num.num = c.unsigned_value;
-                    }
-                } else {
-                    // try tail calling
-                    ConstValue av = gimme(a);
-
-                    do {
-                        Expr* b = cuik__optimize_ast(tu, current->bin_op.right);
-                        // we couldn't resolve it
-                        if (b->op != EXPR_INT) break;
-
-                        av = const_eval_bin_op(op, gimme(b), av);
-                        current = current->bin_op.left;
-                    } while (current->op == op);
-
-                    Expr* b = cuik__optimize_ast(tu, current);
-                    if (b->op == EXPR_INT) {
-                        ConstValue c = const_eval_bin_op(op, gimme(b), av);
-
-                        e->op = EXPR_INT;
-                        e->int_num.suffix = c.is_signed ? INT_SUFFIX_LL : INT_SUFFIX_ULL;
-                        e->int_num.num = c.unsigned_value;
-                    }
+                // TODO(NeGate): we can pull off a fancy tail recursion trick when we chain binary operators together
+                Expr* b = cuik__optimize_ast(tu, e->bin_op.left);
+                if (b->op != EXPR_INT) {
+                    break;
                 }
+
+                ConstValue c = const_eval_bin_op(op, gimme(b), gimme(a));
+
+                e->op = EXPR_INT;
+                e->int_num.suffix = c.is_signed ? INT_SUFFIX_LL : INT_SUFFIX_ULL;
+                e->int_num.num = c.unsigned_value;
             }
 
             break;

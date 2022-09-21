@@ -243,7 +243,9 @@ static TB_Reg cvt2rval(TranslationUnit* tu, TB_Function* func, const IRVal v, co
             reg = tb_inst_get_extern_address(func, v.ext);
 
             // Implicit array to pointer
-            if (src->kind == KIND_ARRAY) {
+            if (src->kind == KIND_FUNC) {
+                // do nothing
+            } else if (src->kind == KIND_ARRAY) {
                 // just pass the address don't load
                 src = e->cast_type;
             } else {

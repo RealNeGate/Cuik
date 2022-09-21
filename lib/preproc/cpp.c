@@ -22,7 +22,7 @@
 #include "../string_map.h"
 
 static void preprocess_file(Cuik_CPP* restrict c, TokenStream* restrict s, size_t parent_entry, SourceLocIndex include_loc, const char* directory, const char* filepath, int depth);
-static uint64_t hash_ident(const unsigned char* at, size_t length);
+static uint64_t hash_ident(const void* key, size_t len);
 static bool is_defined(Cuik_CPP* restrict c, const unsigned char* start, size_t length);
 static void expect(TokenStream* restrict in, char ch);
 static void skip_directive_body(TokenStream* s);

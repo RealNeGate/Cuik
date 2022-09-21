@@ -11,7 +11,6 @@ static LoadResult get_file(const char* path) {
     // actual file reading
     HANDLE file = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, 0, OPEN_EXISTING, 0, 0);
     if (file == INVALID_HANDLE_VALUE) {
-        fprintf(stderr, "error: could not open file '%s'!\n", path);
         return (LoadResult){ .found = false };
     }
 
@@ -46,7 +45,6 @@ static LoadResult get_file(const char* path) {
     // actual file reading
     FILE* file = fopen(path, "rb");
     if (!file) {
-        fprintf(stderr, "Could not read file: %s\n", path);
         return (LoadResult){ .found = false };
     }
 

@@ -78,44 +78,37 @@ static char unsigned default_seed[16] = {
     2, 209, 178, 114, 232, 4, 176, 188,
 };
 
-static uint64_t hash_ident(const unsigned char* at, size_t length) {
-    #if !USE_INTRIN
-    uint32_t hash = 0x811c9dc5;
+// murmur3 32-bit without UB unaligned accesses
+// https://github.com/demetri/scribbles/blob/master/hashing/ub_aware_hash_functions.c
+static uint64_t hash_ident(const void* key, size_t len) {
+    uint32_t h = 0;
 
-    for (size_t i = 0; i < length; i++) {
-        hash ^= (uint32_t)at[i];
-        hash *= 0x01000193; // 32bit magic shit
+    // main body, work on 32-bit blocks at a time
+    for (size_t i=0;i<len/4;i++) {
+        uint32_t k;
+        memcpy(&k, &key[i * 4], sizeof(k));
+
+        k *= 0xcc9e2d51;
+        k = ((k << 15) | (k >> 17))*0x1b873593;
+        h = (((h^k) << 13) | ((h^k) >> 19))*5 + 0xe6546b64;
     }
 
-    return hash % MACRO_BUCKET_COUNT;
-    #else
-    __m128i hash = _mm_cvtsi64_si128(length);
-    hash = _mm_xor_si128(hash, _mm_loadu_si128((__m128i*)default_seed));
-
-    size_t chunk_count = length / 16;
-    while (chunk_count--) {
-        __m128i in = _mm_loadu_si128((__m128i*)at);
-        at += 16;
-
-        hash = _mm_xor_si128(hash, in);
-        hash = _mm_aesdec_si128(hash, _mm_setzero_si128());
-        hash = _mm_aesdec_si128(hash, _mm_setzero_si128());
-        hash = _mm_aesdec_si128(hash, _mm_setzero_si128());
-        hash = _mm_aesdec_si128(hash, _mm_setzero_si128());
+    // load/mix up to 3 remaining tail bytes into a tail block
+    uint32_t t = 0;
+    uint8_t *tail = ((uint8_t*) key) + 4*(len/4);
+    switch(len & 3) {
+        case 3: t ^= tail[2] << 16;
+        case 2: t ^= tail[1] <<  8;
+        case 1: {
+            t ^= tail[0] <<  0;
+            h ^= ((0xcc9e2d51*t << 15) | (0xcc9e2d51*t >> 17))*0x1b873593;
+        }
     }
 
-    size_t overhang = length % 16;
-    __m128i in = _mm_loadu_si128((__m128i*)at);
-
-    in = _mm_and_si128(in, _mm_loadu_si128((__m128i*)(overhang_mask + 16 - overhang)));
-    hash = _mm_xor_si128(hash, in);
-    hash = _mm_aesdec_si128(hash, _mm_setzero_si128());
-    hash = _mm_aesdec_si128(hash, _mm_setzero_si128());
-    hash = _mm_aesdec_si128(hash, _mm_setzero_si128());
-    hash = _mm_aesdec_si128(hash, _mm_setzero_si128());
-
-    return ((size_t)_mm_extract_epi32(hash, 0)) % MACRO_BUCKET_COUNT;
-    #endif
+    // finalization mix, including key length
+    h = ((h^len) ^ ((h^len) >> 16))*0x85ebca6b;
+    h = (h ^ (h >> 13))*0xc2b2ae35;
+    return (h ^ (h >> 16)) % MACRO_BUCKET_COUNT;
 }
 
 // 16byte based compare

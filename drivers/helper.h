@@ -1,7 +1,7 @@
 #ifdef _WIN32
 #define WIN32_MEAN_AND_LEAN
 #include <windows.h>
-#include <psapi.h>
+#include <io.h>
 #else
 #include <unistd.h>
 #endif

@@ -60,6 +60,7 @@ lib/preproc/dfa.h
 tests/the_fuzzer/
 tests/stb_image.c
 tests/test5.c
+tests/test5_2.c
 preprocessed.c
 
 project.4coder

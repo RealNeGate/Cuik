@@ -31,20 +31,27 @@ const static int attribs[] = {
     FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_INTENSITY,
     FOREGROUND_RED | FOREGROUND_INTENSITY,
 };
+#else
+static const char* const attribs[] = {
+    "\x1b[0m",
+    "\x1b[32m",
+    "\x1b[31m",
+    "\x1b[31m",
+};
 #endif
 
 bool report_using_thin_errors = false;
 
 #if _WIN32
-#define RESET_COLOR     SetConsoleTextAttribute(console_handle, default_attribs);
-#define SET_COLOR_RED   SetConsoleTextAttribute(console_handle, (default_attribs & ~0xF) | FOREGROUND_RED);
-#define SET_COLOR_GREEN SetConsoleTextAttribute(console_handle, (default_attribs & ~0xF) | FOREGROUND_GREEN);
-#define SET_COLOR_WHITE SetConsoleTextAttribute(console_handle, (default_attribs & ~0xF) | FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE | FOREGROUND_INTENSITY);
+#define RESET_COLOR     SetConsoleTextAttribute(console_handle, default_attribs)
+#define SET_COLOR_RED   SetConsoleTextAttribute(console_handle, (default_attribs & ~0xF) | FOREGROUND_RED)
+#define SET_COLOR_GREEN SetConsoleTextAttribute(console_handle, (default_attribs & ~0xF) | FOREGROUND_GREEN)
+#define SET_COLOR_WHITE SetConsoleTextAttribute(console_handle, (default_attribs & ~0xF) | FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE | FOREGROUND_INTENSITY)
 #else
-#define RESET_COLOR
-#define SET_COLOR_RED
-#define SET_COLOR_GREEN
-#define SET_COLOR_WHITE
+#define RESET_COLOR     printf("\x1b[0m")
+#define SET_COLOR_RED   printf("\x1b[31m")
+#define SET_COLOR_GREEN printf("\x1b[32m")
+#define SET_COLOR_WHITE printf("\x1b[37m")
 #endif
 
 void init_report_system(void) {
@@ -81,7 +88,7 @@ static void print_level_name(Cuik_ReportLevel level) {
     printf("%s: ", report_names[level]);
     SetConsoleTextAttribute(console_handle, default_attribs);
     #else
-    printf("%s: ", report_names[level]);
+    printf("%s%s:\x1b[0m ", attribs[level], report_names[level]);
     #endif
 }
 
@@ -131,9 +138,7 @@ static size_t draw_line(TokenStream* tokens, SourceLocIndex loc_index) {
         } while (*line_end && *line_end != '\n');
         printf("\n");
 
-        #if _WIN32
-        SetConsoleTextAttribute(console_handle, default_attribs);
-        #endif
+        RESET_COLOR;
     }
 
     return dist_from_line_start;
@@ -217,9 +222,7 @@ static void preview_line(TokenStream* tokens, SourceLocIndex loc_index, SourceLo
         size_t dist_from_line_start = draw_line(tokens, loc_index);
         draw_line_horizontal_pad();
 
-        #if _WIN32
-        SetConsoleTextAttribute(console_handle, (default_attribs & ~0xF) | FOREGROUND_GREEN);
-        #endif
+        SET_COLOR_GREEN;
 
         // idk man
         size_t start_pos = loc->columns > dist_from_line_start ? loc->columns - dist_from_line_start : 0;
@@ -241,9 +244,7 @@ static void preview_line(TokenStream* tokens, SourceLocIndex loc_index, SourceLo
             printf("%s\n", tip);
         }
 
-        #if _WIN32
-        SetConsoleTextAttribute(console_handle, default_attribs);
-        #endif
+        RESET_COLOR;
     }
 }
 
