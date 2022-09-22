@@ -286,6 +286,7 @@ static Expr* parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
                             };
                         }
                     } else {
+                        //diag_unresolved_symbol(tu, name, start_loc);
                         REPORT(ERROR, start_loc, "could not resolve symbol: %s", name);
 
                         *e = (Expr){
@@ -312,11 +313,21 @@ static Expr* parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
         case TOKEN_FLOAT: {
             Token* t = tokens_get(s);
             bool is_float32 = t->end[-1] == 'f';
-            double i = parse_float(t->end - t->start, (const char*)t->start);
+
+            size_t length = t->end - t->start;
+            const char* str = (const char*) t->start;
+
+            char* end;
+            double f = strtod(str, &end);
+            if (end != &str[length]) {
+                if (*end != 'f' && *end != 'd' && *end != 'F' && *end != 'D') {
+                    REPORT(ERROR, t->location, "invalid float literal");
+                }
+            }
 
             *e = (Expr){
                 .op = is_float32 ? EXPR_FLOAT32 : EXPR_FLOAT64,
-                .float_num = i,
+                .float_num = f,
             };
             break;
         }
@@ -339,7 +350,9 @@ static Expr* parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
 
             int ch = 0;
             intptr_t distance = parse_char((t->end - t->start) - 2, (const char*)&t->start[1], &ch);
-            if (distance < 0) abort();
+            if (distance < 0) {
+                REPORT(ERROR, t->location, "invalid character literal");
+            }
 
             *e = (Expr){
                 .op = t->type == TOKEN_STRING_SINGLE_QUOTE ? EXPR_CHAR : EXPR_WCHAR,

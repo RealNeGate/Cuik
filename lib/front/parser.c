@@ -203,6 +203,26 @@ static size_t skip_expression_in_enum(TokenStream* restrict s, TknType* out_term
     return saved;
 }
 
+static void diag_unresolved_symbol(TranslationUnit* tu, Atom name, SourceLocIndex loc) {
+    Diag_UnresolvedSymbol* d = ARENA_ALLOC(&thread_arena, Diag_UnresolvedSymbol);
+    d->next = NULL;
+    d->name = name;
+    d->loc = loc;
+
+    mtx_lock(&tu->diag_mutex);
+    ptrdiff_t search = nl_strmap_get_cstr(tu->unresolved_symbols, name);
+    if (search < 0) {
+        search = nl_strmap_puti_cstr(tu->unresolved_symbols, name);
+        tu->unresolved_symbols[search] = d;
+    } else {
+        Diag_UnresolvedSymbol* old = tu->unresolved_symbols[search];
+        while (old->next != NULL) old = old->next;
+
+        old->next = d;
+    }
+    mtx_unlock(&tu->diag_mutex);
+}
+
 #include "expr_parser.h"
 #include "decl_parser.h"
 
@@ -549,6 +569,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
     tls_init();
     atoms_init();
     mtx_init(&tu->arena_mutex, mtx_plain);
+    mtx_init(&tu->diag_mutex, mtx_plain);
 
     reset_global_parser_state();
 
@@ -1187,6 +1208,30 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
     printf("Thread arena: %zu MB\n", arena_get_memory_usage(&thread_arena) / (1024*1024));
     atoms_dump_stats();
     #endif
+
+    // output accumulated diagnostics
+    nl_strmap_for(i, tu->unresolved_symbols) {
+        Diag_UnresolvedSymbol* loc = tu->unresolved_symbols[i];
+        /*report_header(REPORT_ERROR, "could not resolve symbol: %s", loc->name);
+
+        DiagWriter d = diag_writer(&tu->tokens);
+        for (; loc != NULL; loc = loc->next) {
+            if (!diag_writer_is_compatible(&d, loc->loc)) {
+                // end line
+                diag_writer_done(&d);
+                d = diag_writer(&tu->tokens);
+            }
+
+            diag_writer_highlight(&d, loc->loc);
+        }
+        diag_writer_done(&d);
+        printf("\n");*/
+    }
+
+    // if we have unresolved symbols we can't type check
+    if (nl_strmap__get_header(tu->unresolved_symbols)->load > 0) {
+        goto parse_error;
+    }
 
     // run type checker
     CUIK_TIMED_BLOCK("phase 4") {

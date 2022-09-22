@@ -372,36 +372,23 @@ void lexer_read(Lexer* restrict l) {
             #endif
             break;
         }
-        case DFA_NUMBER0:
-        case DFA_NUMBER1:
-        case DFA_NUMBER2: {
+        case DFA_NUMBER: {
             l->token_type = TOKEN_INTEGER;
+            current = start;
 
-            #if !USE_INTRIN
-            for (const char* s = start; s != current; s++) {
-                if (*s == '.') l->token_type = TOKEN_FLOAT;
-            }
-            #else
-            // check for dot (it means it's a float)
-            __m128i pattern = _mm_set1_epi8('.');
-            size_t length = current - start;
-
-            for (size_t i = 0; i < length; i += 16) {
-                __m128i bytes = _mm_loadu_si128((__m128i*) &start[i]);
-                __m128i test = _mm_cmpeq_epi8(bytes, pattern);
-                unsigned int mask = _mm_movemask_epi8(test);
-
-                if (__builtin_expect(mask, 0)) {
-                    int endpoint = length - i;
-                    int last_dot = __builtin_ctz(mask);
-
-                    if (last_dot < endpoint) {
-                        l->token_type = TOKEN_FLOAT;
-                    }
+            for (;;) {
+                char a = *current;
+                if (a == '.') {
+                    current += 1;
+                    l->token_type = TOKEN_FLOAT;
+                } else if ((a == 'e' || a == 'E' || a == 'p' || a == 'P') && (current[1] == '+' || current[1] == '-')) {
+                    current += 2;
+                } else if ((a >= '0' && a <= '9') || (a >= 'a' && a <= 'z') || (a >= 'A' && a <= 'Z')) {
+                    current += 1;
+                } else {
                     break;
                 }
             }
-            #endif
             break;
         }
         case DFA_STRING: {
@@ -598,16 +585,6 @@ uint64_t parse_int(size_t len, const char* str, Cuik_IntSuffix* out_suffix) {
 
     success:
     *out_suffix = suffix;
-    return i;
-}
-
-double parse_float(size_t len, const char* str) {
-    char* end;
-    double i = strtod(str, &end);
-    if (end != &str[len]) {
-        if (*end != 'f' && *end != 'd' && *end != 'F' && *end != 'D') abort();
-    }
-
     return i;
 }
 

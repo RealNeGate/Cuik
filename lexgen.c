@@ -63,18 +63,11 @@ int main(int argc, char** argv) {
     RANGE(0, ident, "AZ", "az", "_", "$", "\x80\xFF", "\\");
     RANGE(ident, ident, "AZ", "az", "_", "$", "09", "\x80\xFF", "\\");
 
-    int num = ns(), floats = ns(), suffix = ns();
+    int num = ns();
     {
-        RANGE(0,   num, "09");
-        RANGE(num, num, "09");
-
-        CHARS(num,    suffix, "bBxXuUiIlLfFdD");
-        RANGE(suffix, suffix, "AZ", "az", "09");
-        CHARS(suffix, floats, ".");
-
-        CHARS(num,    floats, ".");
-        CHARS(floats, floats, "0123456789e+-");
-        CHARS(floats, suffix, "UILFDuilfd");
+        // we handle the real number parsing in the lexer code
+        CHARS(0, num, "0123456789");
+        CHARS(CHARS(0, ns(), "."), num, "0123456789");
     }
 
     CHARS(0, ns(), "@?;:,(){}");
@@ -129,13 +122,12 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    printf("%d\n", table_id_counter);
     FILE* file = fopen(argv[1], "wb");
     fprintf(file, "enum {\n");
     fprintf(file, "    DFA_IDENTIFIER   = %d,\n", ident);
-    fprintf(file, "    DFA_NUMBER0      = %d,\n", num);
+    fprintf(file, "    DFA_NUMBER       = %d,\n", num);
     fprintf(file, "    DFA_STRING       = %d,\n", str);
-    fprintf(file, "    DFA_NUMBER1      = %d,\n", floats);
-    fprintf(file, "    DFA_NUMBER2      = %d,\n", suffix);
     fprintf(file, "    DFA_IDENTIFIER_L = %d,\n", wide_str);
     fprintf(file, "};\n");
     fprintf(file, "static uint8_t dfa[256][32] = {\n");

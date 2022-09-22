@@ -71,6 +71,19 @@ typedef struct Symbol {
     int terminator;
 } Symbol;
 
+// Variety of parser specific errors which are accumulated to
+// make for a cleaner output
+enum {
+    DIAG_UNRESOLVED_SYMBOL,
+};
+
+typedef struct Diag_UnresolvedSymbol {
+    struct Diag_UnresolvedSymbol* next;
+
+    Atom name;
+    SourceLocIndex loc;
+} Diag_UnresolvedSymbol;
+
 struct TranslationUnit {
     // circular references amirite...
     struct CompilationUnit* parent;
@@ -102,6 +115,9 @@ struct TranslationUnit {
 
     // DynArray(Stmt*)
     Stmt** top_level_stmts;
+
+    mtx_t diag_mutex;
+    NL_Strmap(Diag_UnresolvedSymbol*) unresolved_symbols;
 
     // parser state
     NL_Strmap(Cuik_Type*) global_tags;

@@ -217,6 +217,104 @@ static int print_backtrace(TokenStream* tokens, SourceLocIndex loc_index, Source
     }
 }
 
+DiagWriter diag_writer(TokenStream* tokens) {
+    return (DiagWriter){ .tokens = tokens, .base = UINT32_MAX };
+}
+
+static void diag_writer_write_upto(DiagWriter* writer, size_t pos) {
+    if (writer->cursor < pos) {
+        int l = pos - writer->cursor;
+        for (int i = 0; i < l; i++) printf(" ");
+        //printf("%.*s", (int)(pos - writer->cursor), writer->line_start + writer->cursor);
+        writer->cursor = pos;
+    }
+}
+
+void diag_writer_highlight(DiagWriter* writer, SourceLocIndex loc_index) {
+    SourceLoc* loc = &writer->tokens->locations[loc_index];
+    if (writer->base == UINT32_MAX) {
+        SourceLine* line = loc->line;
+        const char* line_start = (const char*)line->line_str;
+        while (*line_start && isspace(*line_start)) {
+            line_start++;
+        }
+
+        const char* line_end = line_start;
+        do {
+            line_end++;
+        } while (*line_end && *line_end != '\n');
+
+        writer->base = loc_index;
+        writer->line_start = line_start;
+        writer->line_end = line_end;
+        writer->dist_from_line_start = line_start - (const char*)line->line_str;
+
+        printf("%s:%d\n", line->filepath, line->line);
+        draw_line_horizontal_pad();
+        printf("%.*s\n", (int) (line_end - line_start), line_start);
+        draw_line_horizontal_pad();
+    }
+
+    size_t start_pos = loc->columns > writer->dist_from_line_start ? loc->columns - writer->dist_from_line_start : 0;
+    size_t tkn_len = loc->length;
+
+    diag_writer_write_upto(writer, start_pos);
+    //printf("\x1b[7m");
+    //diag_writer_write_upto(writer, start_pos + tkn_len);
+    printf("\x1b[32m^");
+    for (int i = 1; i < tkn_len; i++) printf("~");
+    writer->cursor = start_pos + tkn_len;
+    printf("\x1b[0m");
+}
+
+bool diag_writer_is_compatible(DiagWriter* writer, SourceLocIndex loc) {
+    if (writer->base == UINT32_MAX) {
+        return true;
+    }
+
+    SourceLine* line1 = writer->tokens->locations[writer->base].line;
+    SourceLine* line2 = writer->tokens->locations[loc].line;
+    return line1 == line2;
+}
+
+void diag_writer_done(DiagWriter* writer) {
+    if (writer->base != UINT32_MAX) {
+        diag_writer_write_upto(writer, writer->line_end - writer->line_start);
+        printf("\n");
+    }
+}
+
+static void highlight_line(TokenStream* tokens, SourceLocIndex loc_index, SourceLoc* loc) {
+    SourceLine* line = GET_SOURCE_LOC(loc_index)->line;
+
+    // display line
+    const char* line_start = (const char*)line->line_str;
+    while (*line_start && isspace(*line_start)) {
+        line_start++;
+    }
+    size_t dist_from_line_start = line_start - (const char*)line->line_str;
+
+    // Layout token
+    size_t start_pos = loc->columns > dist_from_line_start ? loc->columns - dist_from_line_start : 0;
+    size_t tkn_len = loc->length;
+
+    // Draw line preview
+    if (*line_start != '\r' && *line_start != '\n') {
+        const char* line_end = line_start;
+        do {
+            line_end++;
+        } while (*line_end && *line_end != '\n');
+        size_t line_len = line_end - line_start;
+
+        printf("%4d| ", line->line);
+        printf("%.*s", (int) start_pos, line_start);
+        printf("%.*s", (int) tkn_len, line_start + start_pos);
+        RESET_COLOR;
+        printf("%.*s", (int) (line_len - (start_pos + tkn_len)), line_start + start_pos + tkn_len);
+        printf("\n");
+    }
+}
+
 static void preview_line(TokenStream* tokens, SourceLocIndex loc_index, SourceLoc* loc, const char* tip) {
     if (!report_using_thin_errors) {
         size_t dist_from_line_start = draw_line(tokens, loc_index);
@@ -261,6 +359,31 @@ static void preview_expansion(TokenStream* tokens, SourceLoc* loc) {
         }
     }
     printf("\n");
+}
+
+void report_header(Cuik_ReportLevel level, const char* fmt, ...) {
+    print_level_name(level);
+
+    SET_COLOR_WHITE;
+    va_list ap;
+    va_start(ap, fmt);
+    vprintf(fmt, ap);
+    va_end(ap);
+
+    printf("\n");
+    RESET_COLOR;
+}
+
+void report_line(TokenStream* tokens, SourceLocIndex loci, int indent) {
+    SourceLoc* loc = GET_SOURCE_LOC(loci);
+    while (loc->line->filepath[0] == '<' && loc->line->parent != 0) {
+        loci = loc->line->parent;
+        loc = GET_SOURCE_LOC(loci);
+    }
+
+    for (int i = 0; i < indent; i++) printf(" ");
+    printf("%s:%d:%d\n", loc->line->filepath, loc->line->line, loc->columns);
+    highlight_line(tokens, loci, loc);
 }
 
 void report_ranged(Cuik_ReportLevel level, Cuik_ErrorStatus* err, TokenStream* tokens, SourceLocIndex start_loc, SourceLocIndex end_loc, const char* fmt, ...) {

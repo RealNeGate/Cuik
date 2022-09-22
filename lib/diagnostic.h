@@ -13,6 +13,22 @@
 extern mtx_t report_mutex;
 extern bool report_using_thin_errors;
 
+typedef struct {
+    TokenStream* tokens;
+    SourceLocIndex base;
+
+    const char* line_start;
+    const char* line_end;
+
+    size_t dist_from_line_start;
+    size_t cursor;
+} DiagWriter;
+
+DiagWriter diag_writer(TokenStream* tokens);
+void diag_writer_highlight(DiagWriter* writer, SourceLocIndex loc);
+bool diag_writer_is_compatible(DiagWriter* writer, SourceLocIndex loc);
+void diag_writer_done(DiagWriter* writer);
+
 void init_report_system(void);
 
 // loc_msg      |
@@ -22,5 +38,9 @@ void report_two_spots(Cuik_ReportLevel level, Cuik_ErrorStatus* err, TokenStream
 void report(Cuik_ReportLevel level, Cuik_ErrorStatus* err, TokenStream* tokens, SourceLocIndex loc, const char* fmt, ...);
 void report_ranged(Cuik_ReportLevel level, Cuik_ErrorStatus* err, TokenStream* tokens, SourceLocIndex start_loc, SourceLocIndex end_loc, const char* fmt, ...);
 void report_fix(Cuik_ReportLevel level, Cuik_ErrorStatus* err, TokenStream* tokens, SourceLocIndex loc, const char* tip, const char* fmt, ...);
+
+// Report primitives
+void report_header(Cuik_ReportLevel level, const char* fmt, ...);
+void report_line(TokenStream* tokens, SourceLocIndex loci, int indent);
 
 bool has_reports(Cuik_ReportLevel min, Cuik_ErrorStatus* err);

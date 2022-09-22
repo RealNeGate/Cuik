@@ -14,6 +14,9 @@ typedef long long          ptrdiff_t;
 typedef unsigned long long size_t;
 typedef long double        max_align_t;
 
+typedef long long          intptr_t;
+typedef unsigned long long uintptr_t;
+
 #ifdef _WIN32
 typedef short wchar_t;
 #else
