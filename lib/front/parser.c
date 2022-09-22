@@ -1212,7 +1212,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
     // output accumulated diagnostics
     nl_strmap_for(i, tu->unresolved_symbols) {
         Diag_UnresolvedSymbol* loc = tu->unresolved_symbols[i];
-        /*report_header(REPORT_ERROR, "could not resolve symbol: %s", loc->name);
+        report_header(REPORT_ERROR, "could not resolve symbol: %s", loc->name);
 
         DiagWriter d = diag_writer(&tu->tokens);
         for (; loc != NULL; loc = loc->next) {
@@ -1225,7 +1225,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
             diag_writer_highlight(&d, loc->loc);
         }
         diag_writer_done(&d);
-        printf("\n");*/
+        printf("\n");
     }
 
     // if we have unresolved symbols we can't type check

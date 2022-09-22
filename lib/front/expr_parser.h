@@ -286,8 +286,8 @@ static Expr* parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
                             };
                         }
                     } else {
-                        //diag_unresolved_symbol(tu, name, start_loc);
-                        REPORT(ERROR, start_loc, "could not resolve symbol: %s", name);
+                        diag_unresolved_symbol(tu, name, start_loc);
+                        // REPORT(ERROR, start_loc, "could not resolve symbol: %s", name);
 
                         *e = (Expr){
                             .op = EXPR_UNKNOWN_SYMBOL,
