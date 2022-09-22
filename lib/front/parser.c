@@ -713,7 +713,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
 
                         if (tokens_get(s)->type == 0) {
                             REPORT(ERROR, loc, "declaration list ended with EOF instead of semicolon.");
-                            abort();
+                            break;
                         } else if (tokens_get(s)->type == '=') {
                             REPORT(ERROR, loc, "why did you just try that goofy shit wit me. You cannot assign a typedef.");
 
@@ -726,6 +726,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                             continue;
                         } else if (possibly_bad_decl) {
                             REPORT(ERROR, loc, "Bad declaration");
+                            tokens_next(s);
                             break;
                         }
                     }
@@ -1126,7 +1127,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
 
         if (desc->thread_pool != NULL) {
             // disabled until we change the tables to arenas
-            size_t count = nl_strmap__get_header(tu->global_symbols)->load;
+            size_t count = nl_strmap_get_load(tu->global_symbols);
             size_t padded = (count + (PARSE_MUNCH_SIZE - 1)) & ~(PARSE_MUNCH_SIZE - 1);
 
             // passed to the threads to identify when things are done
@@ -1229,7 +1230,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
     }
 
     // if we have unresolved symbols we can't type check
-    if (nl_strmap__get_header(tu->unresolved_symbols)->load > 0) {
+    if (nl_strmap_get_load(tu->unresolved_symbols) > 0) {
         goto parse_error;
     }
 

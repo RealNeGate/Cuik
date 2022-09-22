@@ -43,7 +43,7 @@ else
     # lexer generator
     : |> $(CC) lexgen.c -o bin/a.out && bin/a.out %o |> lib/preproc/dfa.h | bin/a.out
 
-	CFLAGS += -DMI_MALLOC_OVERRIDE -I deps/mimalloc/include
+	CFLAGS += -DMI_MALLOC_OVERRIDE -I mimalloc/include
 
     # compile all the normal source files
     : foreach $(srcs) deps/mimalloc/src/static.c | lib/preproc/dfa.h |> !cc |>
@@ -55,7 +55,7 @@ ifeq ($(COMPILE_DRIVER),y)
     DRIVER_FILES = drivers/main_driver.c drivers/threadpool.c drivers/bindgen_c99.c drivers/bindgen_odin.c
 
     ifeq (@(TUP_PLATFORM),win32)
-        CFLAGS += deps/mimalloc/out/Release/mimalloc.lib -Xlinker /include:mi_version -Xlinker /incremental:no -lole32 -lAdvapi32 -lOleAut32 -lDbgHelp
+        CFLAGS += mimalloc/out/Release/mimalloc.lib -Xlinker /include:mi_version -Xlinker /incremental:no -lole32 -lAdvapi32 -lOleAut32 -lDbgHelp
 
         : $(DRIVER_FILES) bin/libcuik.lib tilde-backend/tildebackend.lib |> $(CC) $(CFLAGS) %f -g -o %o |> bin/cuik.exe | bin/cuik.lib bin/cuik.exp bin/cuik.pdb
     else

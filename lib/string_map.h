@@ -103,9 +103,11 @@ do {                                                    \
 #define nl_strmap_clear(map) \
 (((map) != NULL) ? nl_strmap__clear(((NL_StrmapHeader*)(map)) - 1) : (void)0)
 
+#define nl_strmap_get_load(map) ((map) ? nl_strmap__get_header(map)->load : 0)
+
 // Iterator
 #define nl_strmap_for(it, map) \
-for (size_t it = 0, size__ = nl_strmap__get_header(map)->load; it < size__; it++)
+for (size_t it = 0, size__ = nl_strmap_get_load(map); it < size__; it++)
 
 /////////////////////////////////////////////////
 // internals
