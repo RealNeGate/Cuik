@@ -82,6 +82,8 @@ void arena_append(Arena* arena, Arena* other) {
 
 size_t arena_get_memory_usage(Arena* arena) {
     size_t c = 0;
-    for (ArenaSegment* s = arena->base; s != NULL; s = s->next) c += s->capacity;
+    for (ArenaSegment* s = arena->base; s != NULL; s = s->next) {
+        c += s->capacity;
+    }
     return c;
 }

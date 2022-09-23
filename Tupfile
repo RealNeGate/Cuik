@@ -26,7 +26,7 @@ ifeq (@(TUP_ARCH),x86_64)
 endif
 
 ifeq (@(TUP_PLATFORM),win32)
-    CFLAGS += -D_CRT_SECURE_NO_WARNINGS
+    CFLAGS += -D_DLL -D_CRT_SECURE_NO_WARNINGS
 endif
 
 # library source
@@ -37,8 +37,8 @@ ifeq (@(TUP_PLATFORM),win32)
     : |> $(CC) lexgen.c -o bin/a.exe && a %o |> lib/preproc/dfa.h | bin/a.exe
 
     # compile all the normal source files
-    : foreach $(srcs) lib/back/microsoft_craziness.c deps/threads_msvc.c | lib/preproc/dfa.h |> !cc |>
-    : bin/*.o |> lib /nologo /out:%o %f |> bin/libcuik.lib
+    : foreach $(srcs) lib/back/microsoft_craziness.c deps/threads_msvc.c | lib/preproc/dfa.h |> !cc |> {objs}
+    : {objs} |> lib /nologo /out:%o %f |> bin/libcuik.lib
 else
     # lexer generator
     : |> $(CC) lexgen.c -o bin/a.out && bin/a.out %o |> lib/preproc/dfa.h | bin/a.out
@@ -46,8 +46,8 @@ else
 	CFLAGS += -DMI_MALLOC_OVERRIDE -I mimalloc/include
 
     # compile all the normal source files
-    : foreach $(srcs) deps/mimalloc/src/static.c | lib/preproc/dfa.h |> !cc |>
-    : bin/*.o |> ar -rcs %o %f |> bin/libcuik.a
+    : foreach $(srcs) deps/mimalloc/src/static.c | lib/preproc/dfa.h |> !cc |> {objs}
+    : {objs} |> ar -rcs %o %f |> bin/libcuik.a
 endif
 
 # compile driver
@@ -55,7 +55,8 @@ ifeq ($(COMPILE_DRIVER),y)
     DRIVER_FILES = drivers/main_driver.c drivers/threadpool.c drivers/bindgen_c99.c drivers/bindgen_odin.c
 
     ifeq (@(TUP_PLATFORM),win32)
-        CFLAGS += mimalloc/out/Release/mimalloc.lib -Xlinker /include:mi_version -Xlinker /incremental:no -lole32 -lAdvapi32 -lOleAut32 -lDbgHelp
+        CFLAGS += mimalloc/out/Release/mimalloc.lib -Xlinker /include:mi_version -Xlinker /incremental:no -lDbgHelp
+        CFLAGS += -nodefaultlibs -lmsvcrt -lvcruntime -lucrt
 
         : $(DRIVER_FILES) bin/libcuik.lib tilde-backend/tildebackend.lib |> $(CC) $(CFLAGS) %f -g -o %o |> bin/cuik.exe | bin/cuik.lib bin/cuik.exp bin/cuik.pdb
     else

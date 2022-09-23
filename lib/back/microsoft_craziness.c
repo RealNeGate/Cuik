@@ -64,6 +64,10 @@
 #define strdup(x) _strdup(x)
 #endif
 
+#pragma comment(lib, "Advapi32.lib")
+#pragma comment(lib, "Ole32.lib")
+#pragma comment(lib, "OleAut32.lib")
+
 void free_resources(MicrosoftCraziness_Find_Result *result) {
     free(result->windows_sdk_root);
     free(result->windows_sdk_um_library_path);

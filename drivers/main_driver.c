@@ -546,7 +546,7 @@ static void irgen(void) {
             size_t task_count = 0;
             FOR_EACH_TU(tu, &compilation_unit) {
                 // dispose the preprocessor crap now
-                free_preprocessor((Cuik_CPP*) cuik_get_translation_unit_user_data(tu));
+                free_preprocessor((Cuik_CPP*) cuik_set_translation_unit_user_data(tu, NULL));
 
                 CUIK_FOR_TOP_LEVEL_STMT(it, tu, 8192) {
                     assert(task_count < task_capacity);
@@ -574,8 +574,7 @@ static void irgen(void) {
         } else {
             FOR_EACH_TU(tu, &compilation_unit) {
                 Cuik_CPP* cpp = cuik_get_translation_unit_user_data(tu);
-                cuikpp_deinit(cpp);
-                free(cpp);
+                free_preprocessor(cpp);
 
                 size_t c = cuik_num_of_top_level_stmts(tu);
                 IRGenTask task = {
@@ -1249,6 +1248,7 @@ int main(int argc, char** argv) {
     ////////////////////////////////
     cuik_fscache_destroy(fscache);
     irgen();
+    cuik_destroy_compilation_unit(&compilation_unit);
 
     if (dyn_array_length(da_passes) != 0) {
         // TODO: we probably want to do the fancy threading soon
@@ -1323,7 +1323,6 @@ int main(int argc, char** argv) {
         printf("\n");
     }
 
-    cuik_destroy_compilation_unit(&compilation_unit);
     if (args_time) cuik_stop_global_profiler();
 
     ////////////////////////////////

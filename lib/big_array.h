@@ -25,11 +25,7 @@ inline static void* dyn_array_internal_create(size_t type_size, size_t cap) {
 inline static void dyn_array_internal_destroy(void* ptr) {
     if (ptr != NULL) {
         DynArrayHeader* header = ((DynArrayHeader*)ptr) - 1;
-        #if DYN_ARRAY_USE_MIMALLOC
-        mi_free(header);
-        #else
         free(header);
-        #endif
     }
 }
 
