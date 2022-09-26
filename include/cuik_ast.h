@@ -333,19 +333,20 @@ struct Stmt {
         Cuik_Attribute* attr_list;
 
         // Used by the backend for backend-y things
-        #ifdef CUIK_USE_TB
         union {
+            #ifdef CUIK_USE_TB
             TB_Reg r;
             TB_Label l;
             TB_Function* f;
-            TB_External* e;
+            TB_Symbol* s;
             TB_Global* g;
+            TB_External* e;
 
             void* user_data;
+            #else
+            void* user_data;
+            #endif /* CUIK_USE_TB */
         } backing;
-        #else
-        void* user_data;
-        #endif /* CUIK_USE_TB */
     };
     union {
         struct StmtCompound {

@@ -1,5 +1,9 @@
+include_rules
+
 CC=clang
 OPT=n
+USE_MIMALLOC=n
+USE_ASAN=y
 COMPILE_DRIVER=y
 
 ifeq ($(CC),cl)
@@ -20,13 +24,21 @@ ifeq ($(OPT),y)
     CFLAGS += -O2 -DNDEBUG
 endif
 
+ifeq ($(USE_ASAN),y)
+    CFLAGS += -fsanitize=address
+endif
+
 # configure architecture-specific targeting
 ifeq (@(TUP_ARCH),x86_64)
     CFLAGS += -msse4.2 -maes
 endif
 
 ifeq (@(TUP_PLATFORM),win32)
-    CFLAGS += -D_DLL -D_CRT_SECURE_NO_WARNINGS
+    CFLAGS += -D_CRT_SECURE_NO_WARNINGS
+
+    ifneq ($(USE_ASAN),y)
+        CFLAGS += -D_DLL
+    endif
 endif
 
 # library source
@@ -43,7 +55,7 @@ else
     # lexer generator
     : |> $(CC) lexgen.c -o bin/a.out && bin/a.out %o |> lib/preproc/dfa.h | bin/a.out
 
-	CFLAGS += -DMI_MALLOC_OVERRIDE -I mimalloc/include
+    CFLAGS += -DMI_MALLOC_OVERRIDE -I mimalloc/include
 
     # compile all the normal source files
     : foreach $(srcs) deps/mimalloc/src/static.c | lib/preproc/dfa.h |> !cc |> {objs}
@@ -55,9 +67,12 @@ ifeq ($(COMPILE_DRIVER),y)
     DRIVER_FILES = drivers/main_driver.c drivers/threadpool.c drivers/bindgen_c99.c drivers/bindgen_odin.c
 
     ifeq (@(TUP_PLATFORM),win32)
-        CFLAGS += mimalloc/out/Release/mimalloc.lib -Xlinker /include:mi_version -Xlinker /incremental:no -lDbgHelp
-        CFLAGS += -nodefaultlibs -lmsvcrt -lvcruntime -lucrt
+        ifeq ($(USE_MIMALLOC),y)
+            CFLAGS += mimalloc/out/Release/mimalloc.lib -Xlinker /include:mi_version
+            CFLAGS += -nodefaultlibs -lmsvcrt -lvcruntime -lucrt
+        endif
 
+        CFLAGS += -Xlinker /incremental:no -lDbgHelp
         : $(DRIVER_FILES) bin/libcuik.lib tilde-backend/tildebackend.lib |> $(CC) $(CFLAGS) %f -g -o %o |> bin/cuik.exe | bin/cuik.lib bin/cuik.exp bin/cuik.pdb
     else
         : $(DRIVER_FILES) bin/libcuik.a tilde-backend/tildebackend.a |> $(CC) $(CFLAGS) %f -lm -ldl -lpthread -g -o %o |> bin/cuik

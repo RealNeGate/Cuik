@@ -15,8 +15,7 @@ typedef enum IRValType {
     LVALUE,
     LVALUE_BITS,
     LVALUE_LABEL,
-    LVALUE_FUNC,
-    LVALUE_EFUNC
+    LVALUE_SYMBOL,
 } IRValType;
 
 typedef struct IRVal {
@@ -25,8 +24,7 @@ typedef struct IRVal {
 
     union {
         TB_Reg reg;
-        const TB_Function* func;
-        const TB_External* ext;
+        const TB_Symbol* sym;
         struct {
             TB_Reg reg;
 

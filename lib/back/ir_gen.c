@@ -235,12 +235,8 @@ static TB_Reg cvt2rval(TranslationUnit* tu, TB_Function* func, const IRVal v, co
             }
             break;
         }
-        case LVALUE_FUNC: {
-            reg = tb_inst_get_func_address(func, v.func);
-            break;
-        }
-        case LVALUE_EFUNC: {
-            reg = tb_inst_get_extern_address(func, v.ext);
+        case LVALUE_SYMBOL: {
+            reg = tb_inst_get_symbol_address(func, v.sym);
 
             // Implicit array to pointer
             if (src->kind == KIND_FUNC) {
@@ -270,13 +266,11 @@ TB_Reg irgen_as_rvalue(TranslationUnit* tu, TB_Function* func, Expr* e) {
 TB_Reg irgen_as_lvalue(TranslationUnit* tu, TB_Function* func, Expr* e) {
     IRVal v = irgen_expr(tu, func, e);
 
-    if (v.value_type == LVALUE)
+    if (v.value_type == LVALUE) {
         return v.reg;
-    else if (v.value_type == LVALUE_EFUNC)
-        return tb_inst_get_extern_address(func, v.ext);
-    else if (v.value_type == LVALUE_FUNC)
-        return tb_inst_get_func_address(func, v.func);
-    else if (v.value_type == RVALUE) {
+    } else if (v.value_type == LVALUE_SYMBOL) {
+        return tb_inst_get_symbol_address(func, v.sym);
+    } else if (v.value_type == RVALUE) {
         // spawn a lil temporary
         TB_CharUnits size = v.type->size;
         TB_CharUnits align = v.type->align;
@@ -805,9 +799,9 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
             assert(e->func.src->op == STMT_FUNC_DECL);
 
             return (IRVal){
-                .value_type = LVALUE_FUNC,
+                .value_type = LVALUE_SYMBOL,
                 .type = e->type,
-                .func = e->func.src->backing.f
+                .sym = e->func.src->backing.s
             };
         }
         case EXPR_VA_ARG: {
@@ -847,27 +841,22 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
                 };
             } else if (stmt->op == STMT_FUNC_DECL) {
                 return (IRVal){
-                    .value_type = LVALUE_FUNC,
+                    .value_type = LVALUE_SYMBOL,
                     .type = type,
-                    .func = stmt->backing.f,
+                    .sym = stmt->backing.s,
                 };
             } else if (stmt->op == STMT_GLOBAL_DECL) {
-                // functions are external by default
-                const char* name = (const char*)stmt->decl.name;
-                bool is_external_sym = (type->kind == KIND_FUNC && stmt->decl.initial_as_stmt == NULL);
-                if (stmt->decl.attrs.is_extern) is_external_sym = true;
+                if (stmt->backing.s == NULL) {
+                    // check if it's defined by another TU
+                    // functions are external by default
+                    const char* name = (const char*)stmt->decl.name;
+                    bool is_external_sym = (type->kind == KIND_FUNC && stmt->decl.initial_as_stmt == NULL);
+                    if (stmt->decl.attrs.is_extern) is_external_sym = true;
 
-                if (is_external_sym) {
-                    IRVal val = {0};
+                    if (is_external_sym) {
+                        IRVal val = { 0 };
 
-                    if (tu->parent != NULL) {
-                        if (stmt->backing.e != 0) {
-                            val = (IRVal){
-                                .value_type = LVALUE_EFUNC,
-                                .type = type,
-                                .ext = stmt->backing.e,
-                            };
-                        } else {
+                        if (tu->parent != NULL) {
                             // It's either a proper external or links to
                             // a file within the compilation unit, we don't
                             // know yet
@@ -880,57 +869,34 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
                                 Stmt* real_symbol = cu->export_table[search];
 
                                 if (real_symbol->op == STMT_FUNC_DECL) {
-                                    val = (IRVal){
-                                        .value_type = LVALUE_FUNC,
-                                        .type = type,
-                                        .func = real_symbol->backing.f,
-                                    };
+                                    stmt->backing.f = real_symbol->backing.f;
                                 } else if (real_symbol->op == STMT_GLOBAL_DECL) {
-                                    val = (IRVal){
-                                        .value_type = LVALUE,
-                                        .type = type,
-                                        .reg = tb_inst_get_global_address(func, real_symbol->backing.g),
-                                    };
+                                    stmt->backing.g = real_symbol->backing.g;
                                 } else {
                                     abort();
                                 }
                             } else {
                                 // Always creates a real external in this case
                                 stmt->backing.e = tb_extern_create(tu->ir_mod, name, TB_EXTERNAL_SO_LOCAL);
-
-                                val = (IRVal){
-                                    .value_type = LVALUE_EFUNC,
-                                    .type = type,
-                                    .ext = stmt->backing.e
-                                };
                             }
 
                             // NOTE(NeGate): we might wanna move this mutex unlock earlier
                             // it doesn't seem like we might need it honestly...
                             cuik_unlock_compilation_unit(cu);
+                        } else {
+                            mtx_lock(&tu->arena_mutex);
+                            stmt->backing.e = tb_extern_create(tu->ir_mod, name, TB_EXTERNAL_SO_LOCAL);
+                            mtx_unlock(&tu->arena_mutex);
                         }
-                    } else {
-                        mtx_lock(&tu->arena_mutex);
-                        stmt->backing.e = tb_extern_create(tu->ir_mod, name, TB_EXTERNAL_SO_LOCAL);
-
-                        val = (IRVal){
-                            .value_type = LVALUE_EFUNC,
-                            .type = type,
-                            .ext = stmt->backing.e
-                        };
-
-                        mtx_unlock(&tu->arena_mutex);
                     }
-
-                    return val;
-                } else {
-                    // Global defined within the TU
-                    return (IRVal){
-                        .value_type = LVALUE,
-                        .type = type,
-                        .reg = tb_inst_get_global_address(func, stmt->backing.g),
-                    };
                 }
+
+                assert(stmt->backing.s != NULL);
+                return (IRVal){
+                    .value_type = LVALUE_SYMBOL,
+                    .type = type,
+                    .sym = stmt->backing.s,
+                };
             } else {
                 return (IRVal){
                     .value_type = LVALUE,
@@ -955,7 +921,8 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
             return (IRVal){
                 .value_type = LVALUE,
                 .type = arg_type,
-                .reg = reg};
+                .reg = reg
+            };
         }
         case EXPR_GENERIC: {
             assert(e->generic_.case_count == 0);
@@ -967,24 +934,19 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
                 return (IRVal){
                     .value_type = RVALUE,
                     .type = e->type,
-                    .reg = tb_inst_uint(func, TB_TYPE_PTR, dst)};
+                    .reg = tb_inst_uint(func, TB_TYPE_PTR, dst)
+                };
             }
 
             IRVal src = irgen_expr(tu, func, e->unary_op.src);
-
             if (src.value_type == LVALUE) {
                 src.type = e->type;
                 src.value_type = RVALUE;
                 return src;
-            } else if (src.value_type == LVALUE_EFUNC) {
+            } else if (src.value_type == LVALUE_SYMBOL) {
                 src.type = e->type;
                 src.value_type = RVALUE;
-                src.reg = tb_inst_get_extern_address(func, src.ext);
-                return src;
-            } else if (src.value_type == LVALUE_FUNC) {
-                src.type = e->type;
-                src.value_type = RVALUE;
-                src.reg = tb_inst_get_func_address(func, src.func);
+                src.reg = tb_inst_get_symbol_address(func, src.sym);
                 return src;
             } else {
                 abort();
@@ -1112,10 +1074,8 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
             if (is_aggregate_return) dt = TB_TYPE_VOID;
 
             TB_Reg r;
-            if (func_ptr.value_type == LVALUE_FUNC) {
-                r = tb_inst_call(func, dt, func_ptr.func, real_arg_count, ir_args);
-            } else if (func_ptr.value_type == LVALUE_EFUNC) {
-                r = tb_inst_ecall(func, dt, func_ptr.ext, real_arg_count, ir_args);
+            if (func_ptr.value_type == LVALUE_SYMBOL) {
+                r = tb_inst_call(func, dt, func_ptr.sym, real_arg_count, ir_args);
             } else {
                 TB_Reg target_reg = cvt2rval(tu, func, func_ptr, e->call.target);
 
@@ -1220,8 +1180,11 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
         case EXPR_PRE_DEC: {
             bool is_inc = (e->op == EXPR_PRE_INC);
 
-            IRVal src = irgen_expr(tu, func, e->unary_op.src);
-            assert(src.value_type == LVALUE);
+            IRVal src = {
+                .value_type = LVALUE,
+                .type = e->unary_op.src->type,
+                .reg = irgen_as_lvalue(tu, func, e->unary_op.src)
+            };
 
             return (IRVal){
                 .value_type = RVALUE,
@@ -1233,8 +1196,11 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
         case EXPR_POST_DEC: {
             bool is_inc = (e->op == EXPR_POST_INC);
 
-            IRVal src = irgen_expr(tu, func, e->unary_op.src);
-            assert(src.value_type == LVALUE);
+            IRVal src = {
+                .value_type = LVALUE,
+                .type = e->unary_op.src->type,
+                .reg = irgen_as_lvalue(tu, func, e->unary_op.src)
+            };
 
             return (IRVal){
                 .value_type = RVALUE,
@@ -1622,11 +1588,11 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
             } else {
                 // Load inputs
                 IRVal lhs = irgen_expr(tu, func, e->bin_op.left);
-                if (lhs.value_type == LVALUE_EFUNC) {
+                if (lhs.value_type == LVALUE_SYMBOL) {
                     // we want a TB reg not just an extern's id
                     lhs.type = e->bin_op.left->type;
                     lhs.value_type = LVALUE;
-                    lhs.reg = tb_inst_get_extern_address(func, lhs.ext);
+                    lhs.reg = tb_inst_get_symbol_address(func, lhs.sym);
                 }
 
                 TB_Reg l = TB_NULL_REG;
@@ -1891,14 +1857,14 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
                 }
 
                 if (attrs.is_tls && !atomic_flag_test_and_set(&irgen_defined_tls_index)) {
-                    tb_module_set_tls_index(tu->ir_mod, tb_extern_create(tu->ir_mod, "_tls_index", TB_EXTERNAL_SO_LOCAL));
+                    tb_module_set_tls_index(tu->ir_mod, (TB_Symbol*) tb_extern_create(tu->ir_mod, "_tls_index", TB_EXTERNAL_SO_LOCAL));
                 }
 
                 TB_Global* g = tb_global_create(tu->ir_mod, name, attrs.is_tls ? TB_STORAGE_TLS : TB_STORAGE_DATA, TB_LINKAGE_PRIVATE);
                 tb_global_set_initializer(tu->ir_mod, g, init);
                 tls_restore(name);
 
-                s->backing.r = tb_inst_get_global_address(func, g);
+                s->backing.r = tb_inst_get_symbol_address(func, (TB_Symbol*) g);
                 break;
             }
 
@@ -2260,7 +2226,7 @@ CUIK_API TB_Function* cuik_stmt_gen_ir(TranslationUnit* restrict tu, Stmt* restr
             s->decl.initial,
             s->decl.name);
 
-        tb_global_set_initializer(tu->ir_mod, s->backing.g, init);
+        tb_global_set_initializer(tu->ir_mod, (TB_Global*) s->backing.s, init);
     }
 
     return NULL;

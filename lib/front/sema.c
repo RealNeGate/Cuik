@@ -1696,7 +1696,7 @@ static void sema_top_level(TranslationUnit* tu, Stmt* restrict s) {
             if (s->decl.attrs.is_typedef) break;
 
             #ifdef CUIK_USE_TB
-            s->backing.g = 0;
+            s->backing.s = NULL;
             #endif
 
             if (s->decl.attrs.is_static && s->decl.attrs.is_extern) {
@@ -1772,7 +1772,7 @@ static void sema_top_level(TranslationUnit* tu, Stmt* restrict s) {
                 if (tu->ir_mod != NULL) {
                     // if we have a TB module, fill it up with declarations
                     if (s->decl.attrs.is_tls && !atomic_flag_test_and_set(&irgen_defined_tls_index)) {
-                        tb_module_set_tls_index(tu->ir_mod, tb_extern_create(tu->ir_mod, "_tls_index", TB_EXTERNAL_SO_LOCAL));
+                        tb_module_set_tls_index(tu->ir_mod, (TB_Symbol*) tb_extern_create(tu->ir_mod, "_tls_index", TB_EXTERNAL_SO_LOCAL));
                     }
 
                     TB_Linkage linkage = s->decl.attrs.is_static ? TB_LINKAGE_PRIVATE : TB_LINKAGE_PUBLIC;

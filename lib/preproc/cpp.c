@@ -6,6 +6,7 @@
 // NOTE(NeGate): the_shtuffs is the simple linear allocator in this preprocessor, just avoids
 // wasting time on the heap allocator
 #include <cuik.h>
+#include <assert.h>
 #include "../str.h"
 #include "../big_array.h"
 #include "../diagnostic.h"

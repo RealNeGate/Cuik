@@ -146,11 +146,8 @@ static int pass_parameter(TranslationUnit* tu, TB_Function* func, Expr* e, bool 
             case LVALUE:
             arg_addr = arg.reg;
             break;
-            case LVALUE_FUNC:
-            arg_addr = tb_inst_get_func_address(func, arg.func);
-            break;
-            case LVALUE_EFUNC:
-            arg_addr = tb_inst_get_extern_address(func, arg.ext);
+            case LVALUE_SYMBOL:
+            arg_addr = tb_inst_get_symbol_address(func, arg.sym);
             break;
             case RVALUE: {
                 // spawn a lil temporary
@@ -194,11 +191,8 @@ static int pass_parameter(TranslationUnit* tu, TB_Function* func, Expr* e, bool 
                 case LVALUE:
                 arg_addr = arg.reg;
                 break;
-                case LVALUE_FUNC:
-                arg_addr = tb_inst_get_func_address(func, arg.func);
-                break;
-                case LVALUE_EFUNC:
-                arg_addr = tb_inst_get_extern_address(func, arg.ext);
+                case LVALUE_SYMBOL:
+                arg_addr = tb_inst_get_symbol_address(func, arg.sym);
                 break;
                 case RVALUE: {
                     // spawn a lil temporary

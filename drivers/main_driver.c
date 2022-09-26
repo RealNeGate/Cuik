@@ -18,7 +18,10 @@
 #include "threadpool.h"
 #endif
 
-enum { IRGEN_TASK_BATCH_SIZE = 8192 };
+enum {
+    IRGEN_TASK_BATCH_SIZE = 8192,
+    TB_TASK_BATCH_SIZE = 8192,
+};
 #define TIMESTAMP(x) if (args_verbose) mark_timestamp(x)
 
 // compiler arguments
@@ -291,7 +294,6 @@ static void irgen_job(void* arg) {
 
 typedef struct {
     TB_Function* start;
-    size_t count;
 
     #if CUIK_ALLOW_THREADS
     atomic_size_t* remaining;
@@ -301,8 +303,13 @@ typedef struct {
 static void codegen_job(void* arg) {
     CodegenTask task = *((CodegenTask*) arg);
 
-    CUIK_TIMED_BLOCK("Codegen: %zu", task.count) {
-        tb_module_compile_functions(mod, task.count, task.start, /* args_opt_level ? TB_ISEL_COMPLEX : */ TB_ISEL_FAST);
+    CUIK_TIMED_BLOCK("Codegen") {
+        TB_Function* f = task.start;
+
+        for (size_t i = 0; i < TB_TASK_BATCH_SIZE && f != NULL; i++) {
+            tb_module_compile_function(mod, f, TB_ISEL_FAST);
+            f = tb_next_function(f);
+        }
     }
 
     #if CUIK_ALLOW_THREADS
@@ -592,19 +599,21 @@ static void irgen(void) {
 static void codegen(void) {
     if (ithread_pool != NULL) {
         #if CUIK_ALLOW_THREADS
-        size_t count = 0, capacity = tb_estimate_function_batch_count(mod);
+        size_t count = 0, capacity = (tb_module_get_function_count(mod) + TB_TASK_BATCH_SIZE - 1) / TB_TASK_BATCH_SIZE;
         atomic_size_t tasks_remaining = capacity;
 
         CodegenTask* tasks = malloc(capacity * sizeof(CodegenTask));
-        TB_FOR_FUNCTION_BATCH(it, mod) {
-            tasks[count] = (CodegenTask){
-                .start = it.start,
-                .count = it.count,
-                .remaining = &tasks_remaining
-            };
+        size_t i = 0;
+        TB_FOR_FUNCTIONS(f, mod) {
+            if ((i % TB_TASK_BATCH_SIZE) == 0) {
+                assert(count < capacity);
 
-            CUIK_CALL(ithread_pool, submit, codegen_job, &tasks[count]);
-            count += 1;
+                tasks[count] = (CodegenTask){ .start = f, .remaining = &tasks_remaining };
+                CUIK_CALL(ithread_pool, submit, codegen_job, &tasks[count]);
+                count += 1;
+            }
+
+            i += 1;
         }
 
         // "highway robbery on steve jobs" job stealing amirite...
@@ -618,8 +627,8 @@ static void codegen(void) {
         abort();
         #endif /* CUIK_ALLOW_THREADS */
     } else {
-        TB_FOR_FUNCTIONS(it, mod) {
-            tb_module_compile_function(mod, it.f, /* args_opt_level ? TB_ISEL_COMPLEX : */ TB_ISEL_FAST);
+        TB_FOR_FUNCTIONS(f, mod) {
+            tb_module_compile_function(mod, f, TB_ISEL_FAST);
         }
     }
 }
@@ -647,8 +656,8 @@ static void run_as_jit(void) {
         }
     }
 
-    TB_FOR_EXTERNALS(it, mod) {
-        const char* name = tb_extern_get_name(it.e);
+    TB_FOR_EXTERNALS(e, mod) {
+        const char* name = tb_symbol_get_name((TB_Symbol*) e);
         printf("  %s\n", name);
 
         void* p = NULL;
@@ -664,16 +673,16 @@ static void run_as_jit(void) {
             fprintf(stderr, "error: Could not load symbol: %s\n", name);
             abort();
         }
-        tb_extern_bind_ptr(it.e, p);
+        tb_symbol_bind_ptr((TB_Symbol*) e, p);
     }
 
     tb_module_export_jit(mod);
 
     // run the main function
     TB_Function* func = NULL;
-    TB_FOR_FUNCTIONS(it, mod) {
-        if (strcmp(tb_function_get_name(it.f), "main") == 0) {
-            func = it.f;
+    TB_FOR_FUNCTIONS(f, mod) {
+        if (strcmp(tb_symbol_get_name((TB_Symbol*) f), "main") == 0) {
+            func = f;
             break;
         }
     }
@@ -1260,8 +1269,8 @@ int main(int argc, char** argv) {
 
     if (args_ir) {
         TIMESTAMP("IR Printer");
-        TB_FOR_FUNCTIONS(it, mod) {
-            tb_function_print(it.f, tb_default_print_callback, stdout, false);
+        TB_FOR_FUNCTIONS(f, mod) {
+            tb_function_print(f, tb_default_print_callback, stdout, false);
             printf("\n\n");
         }
         goto done;
