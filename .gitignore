@@ -76,3 +76,5 @@ project.4coder
 .tup
 /bin
 *.cache
+tests/golden/tmp.txt
+tests/golden/tmp2.txt
