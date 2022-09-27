@@ -19,9 +19,8 @@ You will need [Tup](https://gittup.org/tup/index.html) and if you're on windows 
 
 ```
 git clone https://github.com/RealNeGate/Cuik
-cd Cuik
-tup init
-tup
+cd Cuik/main
+python build.py
 ```
 
 ## How am I doing?

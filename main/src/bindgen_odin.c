@@ -1,3 +1,4 @@
+#define STB_DS_IMPLEMENTATION
 #include "bindgen.h"
 
 static void odinprint__type(TranslationUnit* tu, DefinedTypeEntry** defined_types, Cuik_Type* type, int indent) {

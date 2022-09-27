@@ -1,7 +1,7 @@
 #include <cuik.h>
 #include <cuik_ast.h>
-#include <stb_ds.h>
-#include "big_array.h"
+#include "stb_ds.h"
+#include "dyn_array.h"
 
 typedef struct {
     Cuik_Type* key;

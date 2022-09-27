@@ -2,7 +2,7 @@
 #include "../common.h"
 #include "../str.h"
 #include "../arena.h"
-#include "../big_array.h"
+#include <dyn_array.h>
 #include <cuik.h>
 
 #define TKN2(x, y)                  (((y) << 8) | (x))

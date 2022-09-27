@@ -8,7 +8,6 @@
 #include <cuik.h>
 #include <assert.h>
 #include "../str.h"
-#include "../big_array.h"
 #include "../diagnostic.h"
 
 #include "lexer.h"

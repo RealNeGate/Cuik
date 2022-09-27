@@ -1,0 +1,18 @@
+
+cflags = -g -Wall -Werror -Wno-unused-function -I ../libCuik/include -I ../tilde-backend/include -DCUIK_USE_TB -D_CRT_SECURE_NO_WARNINGS -I ../c11threads
+
+rule cc
+  depfile = $out.d
+  command = clang $in $cflags -MD -MF $out.d -c -o $out
+  description = CC $in $out
+
+rule link
+  command = clang $in -g -o $out
+  description = LINK $out
+
+build bin/bindgen_c99.o: cc src\bindgen_c99.c
+build bin/bindgen_odin.o: cc src\bindgen_odin.c
+build bin/main_driver.o: cc src\main_driver.c
+build bin/threadpool.o: cc src\threadpool.c
+build bin/threads_msvc.o: cc ../c11threads/threads_msvc.c
+build cuik.exe: link bin/bindgen_c99.o bin/bindgen_odin.o bin/main_driver.o bin/threadpool.o bin/threads_msvc.o ../libCuik/libcuik.lib ../tilde-backend/tildebackend.lib

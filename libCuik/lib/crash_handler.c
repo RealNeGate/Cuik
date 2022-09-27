@@ -6,6 +6,7 @@
 
 #include <minidumpapiset.h>
 #include <time.h>
+#pragma comment(lib, "Dbghelp.lib")
 
 #include <threads.h>
 

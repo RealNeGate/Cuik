@@ -1,10 +1,10 @@
 // https://github.com/skeeto/scratch/blob/master/misc/queue.c
 #include "threadpool.h"
-#include "threads.h"
 #include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <threads.h>
 
 #ifndef _WIN32
 #include <semaphore.h>
@@ -14,7 +14,6 @@
 #include <unistd.h>
 #endif
 
-#include <arena.h>
 #include <cuik.h>
 
 // HACK(NeGate): i wanna call tb_free_thread_resources on thread exit...
@@ -30,19 +29,19 @@ typedef _Atomic uint32_t atomic_uint32_t;
 struct threadpool_t {
     atomic_bool running;
 
-    #ifdef _WIN32
-    HANDLE sem;
-    #else
-    sem_t sem;
-    #endif
-
     // this skeeto guy is kinda sick wit it
     atomic_uint32_t queue;
     atomic_uint32_t jobs_done;
 
     int thread_count;
-    thrd_t* threads;
     work_t* work;
+    thrd_t* threads;
+
+    #ifdef _WIN32
+    HANDLE sem;
+    #else
+    sem_t sem;
+    #endif
 };
 
 static work_t* ask_for_work(threadpool_t* threadpool, uint32_t* save) {
@@ -93,7 +92,7 @@ static int threadpool_thread(void* arg) {
 
     flintperf__stop_thread();
     tb_free_thread_resources();
-    arena_free(&thread_arena);
+    cuik_free_thread_resources();
     return 0;
 }
 
@@ -103,11 +102,11 @@ threadpool_t* threadpool_create(size_t worker_count, size_t workqueue_size) {
     if ((workqueue_size & (workqueue_size - 1)) != 0)
         return NULL;
 
-    threadpool_t* threadpool = HEAP_ALLOC(sizeof(threadpool_t));
+    threadpool_t* threadpool = malloc(sizeof(threadpool_t));
     *threadpool = (threadpool_t){ 0 };
 
-    threadpool->work = HEAP_ALLOC(workqueue_size * sizeof(work_t));
-    threadpool->threads = HEAP_ALLOC(worker_count * sizeof(thrd_t));
+    threadpool->work = malloc(workqueue_size * sizeof(work_t));
+    threadpool->threads = malloc(worker_count * sizeof(thrd_t));
     threadpool->thread_count = worker_count;
     threadpool->running = true;
 
@@ -185,28 +184,27 @@ void threadpool_free(threadpool_t* threadpool) {
 
     #ifdef _WIN32
     ReleaseSemaphore(threadpool->sem, threadpool->thread_count, 0);
-    #else
-    // wake everyone
-    for (size_t i = 0; i < threadpool->thread_count; i++) {
-        sem_post(&threadpool->sem);
-    }
-    #endif
-
-    #ifdef _WIN32
     WaitForMultipleObjects(threadpool->thread_count, threadpool->threads, TRUE, INFINITE);
 
-    for (int i = 0; i < threadpool->thread_count; i++) CloseHandle(threadpool->threads[i]);
+    for (int i = 0; i < threadpool->thread_count; i++) {
+        thrd_join(threadpool->threads[i], NULL);
+    }
     CloseHandle(threadpool->sem);
     #else
     for (int i = 0; i < threadpool->thread_count; i++) {
         thrd_join(threadpool->threads[i], NULL);
     }
+
+    // wake everyone
+    for (size_t i = 0; i < threadpool->thread_count; i++) {
+        sem_post(&threadpool->sem);
+    }
     sem_destroy(&threadpool->sem);
     #endif
 
-    HEAP_FREE(threadpool->threads);
-    HEAP_FREE(threadpool->work);
-    HEAP_FREE(threadpool);
+    free(threadpool->threads);
+    free(threadpool->work);
+    free(threadpool);
 }
 
 int threadpool_get_thread_count(threadpool_t* threadpool) {

@@ -4,11 +4,11 @@
 #include <threads.h>
 #include <stdatomic.h>
 #include <tb.h>
+#include <dyn_array.h>
 
 #include "atoms.h"
 #include "../common.h"
 #include "../arena.h"
-#include "../big_array.h"
 #include "../diagnostic.h"
 #include "../preproc/lexer.h"
 

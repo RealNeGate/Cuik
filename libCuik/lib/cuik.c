@@ -36,6 +36,10 @@ CUIK_API void cuik_init(void) {
     hook_crash_handler();
 }
 
+CUIK_API void cuik_free_thread_resources(void) {
+    arena_free(&thread_arena);
+}
+
 CUIK_API void cuik_find_system_deps(const char* cuik_crt_directory) {
     #ifdef _WIN32
     cuik__vswhere = cuik__find_visual_studio_and_windows_sdk();

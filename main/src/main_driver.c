@@ -1,11 +1,11 @@
 #include <cuik.h>
 #include <cuik_ast.h>
 #include "helper.h"
-#include "big_array.h"
 #include "cli_parser.h"
 #include "json_perf.h"
 #include "flint_perf.h"
 #include "bindgen.h"
+#include <dyn_array.h>
 
 #ifndef __CUIK__
 #define CUIK_ALLOW_THREADS 1
@@ -14,6 +14,7 @@
 #endif
 
 #if CUIK_ALLOW_THREADS
+#include <threads.h>
 #include <stdatomic.h>
 #include "threadpool.h"
 #endif
@@ -49,7 +50,6 @@ static bool args_syntax_only;
 static bool args_debug_info;
 static bool args_preprocess;
 static bool args_exercise;
-static bool args_experiment;
 static bool args_use_syslinker = true;
 static int args_threads = -1;
 
@@ -76,7 +76,6 @@ static struct {
 enum { TARGET_OPTION_COUNT = sizeof(target_options) / sizeof(target_options[0]) };
 
 static void initialize_opt_passes(void) {
-    char custom_luapath[FILENAME_MAX];
     da_passes = dyn_array_create(TB_Pass);
 
     if (args_opt_level) {
@@ -95,11 +94,6 @@ static void initialize_opt_passes(void) {
         dyn_array_put(da_passes, tb_opt_dead_block_elim());
         dyn_array_put(da_passes, tb_opt_subexpr_elim());
         dyn_array_put(da_passes, tb_opt_remove_pass_nodes());
-
-        if (args_experiment) {
-            sprintf_s(custom_luapath, FILENAME_MAX, "%s/custom.lua", crt_dirpath);
-            dyn_array_put(da_passes, tb_opt_load_lua_pass(custom_luapath, TB_FUNCTION_PASS));
-        }
 
         // dyn_array_put(da_passes, tb_opt_inline());
 
@@ -1084,7 +1078,6 @@ int main(int argc, char** argv) {
             case ARG_VERBOSE: args_verbose = true; break;
             case ARG_EXERCISE: args_exercise = true; break;
             case ARG_BASED: args_use_syslinker = false; break;
-            case ARG_EXPERIMENT: args_experiment = true; break;
             case ARG_THREADS: args_threads = atoi(arg.value); break;
             case ARG_DEBUG: args_debug_info = true; break;
             case ARG_TBTESTS: {

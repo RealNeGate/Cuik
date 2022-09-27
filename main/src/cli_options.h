@@ -28,7 +28,6 @@ OPTION(VERBOSE,    _, verbose,     0, "verbose")
 OPTION(THREADS,    _, threads,     1, "number of extra threads spawned")
 OPTION(SYNTAX_ONLY,_, syntax,      0, "type check only")
 OPTION(EXERCISE,   _, exercise,    0, "motion sickness from using a decent compiler")
-OPTION(EXPERIMENT, _, experiment,  0, "experimental crap")
 
 OPTION(TBTESTS,    _, tbtests,     0, "runs the TB test suite")
 
