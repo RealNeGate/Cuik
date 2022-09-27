@@ -9,6 +9,12 @@ jobs:
       - name: Download Clang
         run: sudo apt-get install clang
 
+      - name: Download Ninja
+        run: sudo apt-get install ninja-build
+
+      - name: Download Submodules
+        run: git submodule update --init --recursive
+
       - name: Build Cuik
-        run: git submodule update --init --recursive && sh ./build.sh
+        run: sh ./build.sh
         timeout-minutes: 10
