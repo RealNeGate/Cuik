@@ -76,7 +76,9 @@ CUIK_API bool cuikpp_default_packet_handler(Cuik_CPP* ctx, Cuikpp_Packet* packet
     if (packet->tag == CUIKPP_PACKET_GET_FILE) {
         if (packet->file.is_primary) {
             // we don't cache the main file
-            LoadResult file = get_file(packet->file.input_path);
+            LoadResult file = { 0 };
+            CUIK_TIMED_BLOCK("read: %s", packet->file.input_path) file = get_file(packet->file.input_path);
+
             if (file.found) {
                 packet->file.tokens = cuiklex_buffer(packet->file.input_path, file.data);
 
@@ -90,7 +92,9 @@ CUIK_API bool cuikpp_default_packet_handler(Cuik_CPP* ctx, Cuikpp_Packet* packet
                 packet->file.tokens = tokens;
                 return true;
             } else {
-                LoadResult file = get_file(packet->file.input_path);
+                LoadResult file = { 0 };
+                CUIK_TIMED_BLOCK("read: %s", packet->file.input_path) file = get_file(packet->file.input_path);
+
                 if (file.found) {
                     packet->file.tokens = cuiklex_buffer(packet->file.input_path, file.data);
 

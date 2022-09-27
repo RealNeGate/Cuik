@@ -215,70 +215,72 @@ static void free_token_stream(TokenStream* s) {
 }
 
 static TokenStream get_all_tokens_in_buffer(const char* filepath, const uint8_t* data, const uint8_t* end) {
-    if (end != NULL) {
-        // mark end as the place where that the token_start lands on
-        Lexer end_lexer = { filepath, end, end, 1 };
-        lexer_read(&end_lexer);
-
-        end = end_lexer.token_start;
-    }
-
     TokenStream s = { filepath };
-    s.locations = dyn_array_create_with_initial_cap(SourceLoc, 8192);
-    s.tokens = dyn_array_create_with_initial_cap(Token, 8192);
+    CUIK_TIMED_BLOCK("lex: %s", filepath) {
+        if (end != NULL) {
+            // mark end as the place where that the token_start lands on
+            Lexer end_lexer = { filepath, end, end, 1 };
+            lexer_read(&end_lexer);
 
-    Lexer l = { filepath, data, data, 1 };
-
-    int current_line_num = 0;
-    SourceLine* current_line = NULL;
-
-    for (;;) {
-        lexer_read(&l);
-        if (l.token_type == 0 || end == l.token_start) break;
-
-        if (l.line_current == NULL) {
-            l.line_current = l.start;
+            end = end_lexer.token_start;
         }
 
-        // slap a source location
-        ptrdiff_t columns = l.token_start - l.line_current;
-        ptrdiff_t length = l.token_end - l.token_start;
-        assert(columns <= UINT16_MAX && length <= UINT16_MAX);
+        s.locations = dyn_array_create_with_initial_cap(SourceLoc, 8192);
+        s.tokens = dyn_array_create_with_initial_cap(Token, 8192);
 
-        if (current_line_num != l.current_line) {
-            // make a new source line... we'll miss our fallen brother, he's not
-            // dead but for when he dies...
-            current_line = arena_alloc(&thread_arena, sizeof(SourceLine), _Alignof(SourceLine));
-            current_line->filepath = l.filepath;
-            current_line->line_str = l.line_current;
-            current_line->parent = 0;
-            current_line->line = l.current_line;
+        Lexer l = { filepath, data, data, 1 };
 
-            current_line_num = l.current_line;
+        int current_line_num = 0;
+        SourceLine* current_line = NULL;
+
+        for (;;) {
+            lexer_read(&l);
+            if (l.token_type == 0 || end == l.token_start) break;
+
+            if (l.line_current == NULL) {
+                l.line_current = l.start;
+            }
+
+            // slap a source location
+            ptrdiff_t columns = l.token_start - l.line_current;
+            ptrdiff_t length = l.token_end - l.token_start;
+            assert(columns <= UINT16_MAX && length <= UINT16_MAX);
+
+            if (current_line_num != l.current_line) {
+                // make a new source line... we'll miss our fallen brother, he's not
+                // dead but for when he dies...
+                current_line = arena_alloc(&thread_arena, sizeof(SourceLine), _Alignof(SourceLine));
+                current_line->filepath = l.filepath;
+                current_line->line_str = l.line_current;
+                current_line->parent = 0;
+                current_line->line = l.current_line;
+
+                current_line_num = l.current_line;
+            }
+
+            assert(current_line != NULL);
+            dyn_array_put_uninit(s.locations, 1);
+            SourceLocIndex loc_index = dyn_array_length(s.locations) - 1;
+            s.locations[loc_index] = (SourceLoc) {
+                .line = current_line,
+                .columns = columns,
+                .length = length,
+            };
+
+            // insert token
+            Token t = { l.token_type, l.hit_line, loc_index, l.token_start, l.token_end };
+            dyn_array_put(s.tokens, t);
+            l.hit_line = false;
         }
 
-        assert(current_line != NULL);
-        dyn_array_put_uninit(s.locations, 1);
-        SourceLocIndex loc_index = dyn_array_length(s.locations) - 1;
-        s.locations[loc_index] = (SourceLoc) {
-            .line = current_line,
-            .columns = columns,
-            .length = length,
-        };
-
-        // insert token
-        Token t = { l.token_type, l.hit_line, loc_index, l.token_start, l.token_end };
+        // Add EOF token
+        Token t = {0, true, 0, NULL, NULL};
         dyn_array_put(s.tokens, t);
-        l.hit_line = false;
+
+        // trim up the memory
+        // dyn_array_trim(s.locations);
+        // dyn_array_trim(s.tokens);
     }
-
-    // Add EOF token
-    Token t = {0, true, 0, NULL, NULL};
-    dyn_array_put(s.tokens, t);
-
-    // trim up the memory
-    // dyn_array_trim(s.locations);
-    // dyn_array_trim(s.tokens);
     return s;
 }
 
@@ -483,6 +485,23 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
 
     for (;;) {
         int start_line_for_pp_stmt = tokens_get_location_line(in);
+
+        // FAST PATH: raw tokens
+        for (;;) {
+            Token t = *tokens_get(in);
+            if (t.type == 0 || t.type == TOKEN_HASH || t.type == TOKEN_DOUBLE_HASH) {
+                // Fallback to slow path
+                break;
+            } else if (t.type == TOKEN_IDENTIFIER) {
+                if (is_defined(ctx, t.start, t.end - t.start)) break;
+
+                t.type = classify_ident(t.start, t.end - t.start);
+            }
+
+            t.location = get_source_location(ctx, in, s, include_loc, SOURCE_LOC_NORMAL);
+            dyn_array_put(s->tokens, t);
+            tokens_next(in);
+        }
 
         TknType first_token = tokens_get(in)->type;
         if (first_token != 0 && slot->include_guard.status == INCLUDE_GUARD_EXPECTING_NOTHING) {
@@ -989,6 +1008,13 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
                 );
                 return CUIKPP_ERROR;
             }
+        } else if (first_token == TOKEN_DOUBLE_HASH) {
+            tokens_next(in);
+
+            assert(dyn_array_length(s->tokens) > 0);
+            Token* last = &s->tokens[dyn_array_length(s->tokens) - 1];
+
+            expand_double_hash(ctx, s, last, in, last->location);
         } else if (first_token == TOKEN_IDENTIFIER) {
             // check if it's actually a macro, if not categorize it if it's a keyword
             SourceLocIndex loc = get_source_location(ctx, in, s, include_loc, SOURCE_LOC_NORMAL);
@@ -1008,20 +1034,6 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
                 // OF TOKENS AND EXPAND WITH THE AVERAGE C PREPROCESSOR SPOOKIES
                 expand_ident(ctx, s, in, loc);
             }
-        } else if (first_token == TOKEN_DOUBLE_HASH) {
-            tokens_next(in);
-
-            assert(dyn_array_length(s->tokens) > 0);
-            Token* last = &s->tokens[dyn_array_length(s->tokens) - 1];
-
-            expand_double_hash(ctx, s, last, in, last->location);
-        } else {
-            // printf("NORMAL: '%.*s'\n", (int)(l->token_end - l->token_start), l->token_start);
-            Token t = *tokens_get(in);
-            t.location = get_source_location(ctx, in, s, include_loc, SOURCE_LOC_NORMAL);
-
-            dyn_array_put(s->tokens, t);
-            tokens_next(in);
         }
     }
 }

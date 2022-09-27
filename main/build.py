@@ -17,21 +17,29 @@ else:
 
 # link everything together
 ninja = open('build.ninja', 'w')
+ldflags = ""
 
 cflags = "-g -Wall -Werror -Wno-unused-function"
 cflags += " -I ../libCuik/include -I ../tilde-backend/include"
 cflags += " -DCUIK_USE_TB -D_CRT_SECURE_NO_WARNINGS"
 
+if args.opt:
+	cflags += " -O2 -DNDEBUG"
+
 # windows' CRT doesn't support c11 threads so we provide a fallback
 if platform.system() == "Windows":
 	exe_ext = ".exe"
-	cflags += " -I ../c11threads"
+	cflags += " -D_DLL -I ../c11threads"
+	ldflags += " ../mimalloc/out/Release/mimalloc.lib -Xlinker /include:mi_version"
+	ldflags += " -nodefaultlibs -lmsvcrt -lvcruntime -lucrt"
+	subprocess.call(['build_mimalloc.bat'], cwd="..\\", shell=True)
 else:
 	exe_ext = ""
 
 # write some rules
 ninja.write(f"""
 cflags = {cflags}
+ldflags = {ldflags}
 
 rule cc
   depfile = $out.d
@@ -39,7 +47,7 @@ rule cc
   description = CC $in $out
 
 rule link
-  command = clang $in -g -o $out
+  command = clang $in $ldflags -g -o $out
   description = LINK $out
 
 """)

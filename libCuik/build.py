@@ -10,7 +10,6 @@ parser.add_argument('--opt', action='store_true', help='runs optimize on compile
 
 args = parser.parse_args()
 
-use_mimalloc = True
 source_patterns = [
 	"lib/*.c",
 	"lib/preproc/*.c",

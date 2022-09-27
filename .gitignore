@@ -78,3 +78,5 @@ project.4coder
 *.cache
 tests/golden/tmp.txt
 tests/golden/tmp2.txt
+build.ninja
+*.lib
