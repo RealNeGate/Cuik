@@ -101,20 +101,34 @@ static void expect_no_newline(TokenStream* s, int start_line) {
     assert(!tokens_hit_line(s));
 }
 
-static String get_pp_tokens_until_newline(TokenStream* s) {
-    const unsigned char* start = s->tokens[s->current].start;
-    const unsigned char* end = start;
+static String get_pp_tokens_until_newline(Cuik_CPP* ctx, TokenStream* s) {
+    size_t len = 0;
+    unsigned char* str = gimme_the_shtuffs(ctx, 65536);
 
-    bool is_str = tokens_is(s, TOKEN_STRING_WIDE_SINGLE_QUOTE) || tokens_is(s, TOKEN_STRING_WIDE_DOUBLE_QUOTE);
     while (!tokens_eof(s) && !tokens_hit_line(s)) {
-        end = s->tokens[s->current].end;
+        const unsigned char* token_start = s->tokens[s->current].start;
+        const size_t token_len = s->tokens[s->current].end - token_start;
+
+        if (s->tokens[s->current].type == TOKEN_STRING_WIDE_DOUBLE_QUOTE ||
+            s->tokens[s->current].type == TOKEN_STRING_WIDE_SINGLE_QUOTE) {
+            token_start -= 1;
+        }
+
+        if (len + token_len >= 65536) {
+            printf("Preprocess define content is too big!\n");
+            abort();
+        }
+
+        memcpy(&str[len], token_start, token_len);
+        len += token_len;
+        str[len++] = ' ';
+
         tokens_next(s);
     }
 
-    if (is_str) {
-        start -= 1;
-    }
-    return (String){ .length = end - start, .data = start };
+    str[len] = 0;
+    trim_the_shtuffs(ctx, &str[len + 1]);
+    return (String){ .length = len, .data = str };
 }
 
 static String get_token_as_string(TokenStream* restrict in) {
@@ -216,6 +230,7 @@ static void free_token_stream(TokenStream* s) {
 
 static TokenStream get_all_tokens_in_buffer(const char* filepath, const uint8_t* data, const uint8_t* end) {
     TokenStream s = { filepath };
+
     CUIK_TIMED_BLOCK("lex: %s", filepath) {
         if (end != NULL) {
             // mark end as the place where that the token_start lands on
@@ -281,6 +296,7 @@ static TokenStream get_all_tokens_in_buffer(const char* filepath, const uint8_t*
         // dyn_array_trim(s.locations);
         // dyn_array_trim(s.tokens);
     }
+
     return s;
 }
 
@@ -660,7 +676,7 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
                     );
 
                     tokens_next(in);
-                    String msg = get_pp_tokens_until_newline(in);
+                    String msg = get_pp_tokens_until_newline(ctx, in);
 
                     report(
                         REPORT_ERROR, NULL, s, loc,
@@ -771,7 +787,7 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
                         tokens_next(in);
                     }
 
-                    String value = get_pp_tokens_until_newline(in);
+                    String value = get_pp_tokens_until_newline(ctx, in);
 
                     ctx->macro_bucket_values_start[e] = value.data;
                     ctx->macro_bucket_values_end[e] = value.data + value.length;
@@ -794,7 +810,7 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
                         success = true;
                         tokens_next(in);
 
-                        String msg = get_pp_tokens_until_newline(in);
+                        String msg = get_pp_tokens_until_newline(ctx, in);
                         report(
                             REPORT_INFO, NULL, s, loc,
                             "directive: %.*s", (int)msg.length, msg.data
@@ -815,7 +831,7 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
                         // Skip until we hit a newline
                         expect_no_newline(in, start_line_for_pp_stmt);
 
-                        String payload = get_pp_tokens_until_newline(in);
+                        String payload = get_pp_tokens_until_newline(ctx, in);
 
                         // convert pragma content into string
                         {
@@ -990,7 +1006,7 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
                         ctx, in, s, include_loc, SOURCE_LOC_NORMAL
                     );
 
-                    String msg = get_pp_tokens_until_newline(in);
+                    String msg = get_pp_tokens_until_newline(ctx, in);
                     report(
                         REPORT_WARNING, NULL, s, loc,
                         "directive: %.*s", (int)msg.length, msg.data
@@ -1183,9 +1199,10 @@ static SourceLocIndex get_source_location(Cuik_CPP* restrict c, TokenStream* res
     // generate the output source locs (we don't wanna keep the old streams)
     dyn_array_put_uninit(s->locations, 1);
     SourceLocIndex loc_index = dyn_array_length(s->locations) - 1;
-    s->locations[loc_index] = *old;
     s->locations[loc_index].type = loc_type;
     s->locations[loc_index].line = c->last_source_line;
+    s->locations[loc_index].columns = old->columns;
+    s->locations[loc_index].length = old->length;
 
     return loc_index;
 }

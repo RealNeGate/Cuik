@@ -1,3 +1,4 @@
+#ifdef CUIK_USE_TB
 #include "targets.h"
 #include <front/sema.h>
 
@@ -405,3 +406,4 @@ void target_generic_fill_builtin_table(NL_Strmap(bool)* builtins) {
     nl_strmap_put_cstr(*builtins, "_InterlockedExchange", 1);
     nl_strmap_put_cstr(*builtins, "_InterlockedCompareExchange", 1);
 }
+#endif

@@ -7,6 +7,7 @@ import argparse
 parser = argparse.ArgumentParser(description='Compiles TB')
 parser.add_argument('--usetb', action='store_true', help='compiles with the TB integration code')
 parser.add_argument('--opt', action='store_true', help='runs optimize on compiled source')
+parser.add_argument('--asan', action='store_true', help='compile with ASAN')
 
 args = parser.parse_args()
 
@@ -24,6 +25,9 @@ cflags = "-g -I include -I lib -I deps -Wall -Werror -Wno-unused-function -Wno-u
 
 if args.opt:
 	cflags += " -O2 -DNDEBUG"
+
+if args.asan:
+	cflags += " -fsanitize=address"
 
 if args.usetb:
 	cflags += " -I ../tilde-backend/include -DCUIK_USE_TB"

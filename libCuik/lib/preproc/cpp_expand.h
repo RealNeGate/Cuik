@@ -311,7 +311,9 @@ static void expand_ident(Cuik_CPP* restrict c, TokenStream* restrict s, TokenStr
 
             // Some macros immediately alias others so this is supposed to avoid the
             // heavier costs... but it's broken rn
-            while (def.length && *args != '(' && tokens_is(in, '(')) {
+            size_t tail_call_hidden = SIZE_MAX;
+            size_t tail_call_defi = SIZE_MAX;
+            if (def.length && *args != '(' && tokens_is(in, '(')) {
                 // expand and append
                 Lexer temp_lex = (Lexer){in->filepath, def.data, def.data};
                 lexer_read(&temp_lex);
@@ -319,16 +321,17 @@ static void expand_ident(Cuik_CPP* restrict c, TokenStream* restrict s, TokenStr
                 size_t token_length = temp_lex.token_end - temp_lex.token_start;
                 const unsigned char* token_data = temp_lex.token_start;
 
-                if (def.length == token_length && !find_define(c, &def_i, token_data, token_length)) {
-                    break;
+                if (def.length != token_length || find_define(c, &def_i, token_data, token_length)) {
+                    def = string_from_range(
+                        c->macro_bucket_values_start[def_i],
+                        c->macro_bucket_values_end[def_i]
+                    );
+
+                    tail_call_hidden = hide_macro(c, def_i);
+                    tail_call_defi = def_i;
+
+                    args = c->macro_bucket_keys[def_i] + c->macro_bucket_keys_length[def_i];
                 }
-
-                def = string_from_range(
-                    c->macro_bucket_values_start[def_i],
-                    c->macro_bucket_values_end[def_i]
-                );
-
-                args = c->macro_bucket_keys[def_i] + c->macro_bucket_keys_length[def_i];
             }
 
             // function macro
@@ -628,6 +631,10 @@ static void expand_ident(Cuik_CPP* restrict c, TokenStream* restrict s, TokenStr
 
                     free_token_stream(&temp_tokens);
                 }
+            }
+
+            if (tail_call_hidden != SIZE_MAX) {
+                unhide_macro(c, tail_call_defi, tail_call_hidden);
             }
         } else {
             // Normal identifier

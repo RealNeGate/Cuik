@@ -273,7 +273,9 @@ const Cuik_ArchDesc* cuik_get_x64_target_desc(void) {
         nl_strmap_put_cstr(builtins, "_mm_setcsr", 1);
 
         t = (Cuik_ArchDesc){
+            #ifdef CUIK_USE_TB
             .arch = TB_ARCH_X86_64,
+            #endif
 
             .builtin_func_map = builtins,
             .set_defines = set_defines,

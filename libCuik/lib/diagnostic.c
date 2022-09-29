@@ -232,6 +232,10 @@ static void diag_writer_write_upto(DiagWriter* writer, size_t pos) {
 
 void diag_writer_highlight(DiagWriter* writer, SourceLocIndex loc_index) {
     SourceLoc* loc = &writer->tokens->locations[loc_index];
+    while (loc->line->filepath[0] == '<' && loc->line->parent != 0) {
+        loc = &writer->tokens->locations[loc->line->parent];
+    }
+
     if (writer->base == UINT32_MAX) {
         SourceLine* line = loc->line;
         const char* line_start = (const char*)line->line_str;

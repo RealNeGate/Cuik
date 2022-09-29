@@ -3,8 +3,11 @@
 #include <cuik_ast.h>
 #include <threads.h>
 #include <stdatomic.h>
-#include <tb.h>
 #include <dyn_array.h>
+
+#ifdef CUIK_USE_TB
+#include <tb.h>
+#endif
 
 #include "atoms.h"
 #include "../common.h"
@@ -93,10 +96,14 @@ struct TranslationUnit {
     void* user_data;
     atomic_int ref_count;
 
+    #ifdef CUIK_USE_TB
     TB_Module* ir_mod;
+    #endif
+
     const char* filepath;
     Cuik_ErrorStatus* errors;
     const Cuik_Warnings* warnings;
+    Cuik_ImportRequest* import_libs;
 
     // token stream
     TokenStream tokens;

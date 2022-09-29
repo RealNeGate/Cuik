@@ -27,6 +27,13 @@ typedef struct TranslationUnit TranslationUnit;
 typedef struct CompilationUnit CompilationUnit;
 typedef struct Cuik_Type Cuik_Type;
 
+// This is generated from
+//    #pragma comment(lib, "somelib.lib")
+typedef struct Cuik_ImportRequest {
+    struct Cuik_ImportRequest* next;
+    const char* lib_name;
+} Cuik_ImportRequest;
+
 /*typedef struct Cuik_Report {
     Cuik_ReportFormat format;
 
@@ -154,9 +161,6 @@ typedef enum SourceLocType {
 } SourceLocType;
 
 typedef struct SourceLoc {
-    // SourceLine is located relative_loc_index SourceLocs before this entry
-    uint16_t relative_loc_index;
-
     struct SourceLine* line;
     SourceLocIndex expansion;
 
@@ -484,6 +488,8 @@ CUIK_API void cuik_release_translation_unit(TranslationUnit* restrict tu);
 
 // force delete the translation unit regardless of references held
 CUIK_API void cuik_destroy_translation_unit(TranslationUnit* restrict tu);
+
+CUIK_API Cuik_ImportRequest* cuik_translation_unit_import_requests(TranslationUnit* restrict tu);
 
 ////////////////////////////////////////////
 // Token stream

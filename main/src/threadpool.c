@@ -79,13 +79,13 @@ static int threadpool_thread(void* arg) {
     CUIK_TIMED_BLOCK("thread") {
         while (threadpool->running) {
             if (do_work(threadpool)) {
-                CUIK_TIMED_BLOCK("semaphore wait") {
-                    #ifdef _WIN32
-                    WaitForSingleObjectEx(threadpool->sem, -1, false); // wait for jobs
-                    #else
-                    sem_wait(&threadpool->sem);
-                    #endif
-                }
+                // CUIK_TIMED_BLOCK("semaphore wait") {
+                #ifdef _WIN32
+                WaitForSingleObjectEx(threadpool->sem, -1, false); // wait for jobs
+                #else
+                sem_wait(&threadpool->sem);
+                #endif
+                // }
             }
         }
     }

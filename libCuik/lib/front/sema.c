@@ -17,7 +17,7 @@ typedef struct {
 // rewrite the contents of the DOT and ARROW exprs
 // because it may screw with things
 thread_local bool in_the_semantic_phase;
-static thread_local Stmt* function_stmt;
+thread_local Stmt* cuik__sema_function_stmt;
 
 // two simple temporary buffers to represent type_as_string results
 static thread_local char temp_string0[1024], temp_string1[1024];
@@ -802,7 +802,7 @@ Cuik_Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
             size_t out_i = 0, in_i = 0;
             while (in_i < len) {
                 int ch;
-                intptr_t distance = parse_char(len - in_i, &in[in_i], &ch);
+                ptrdiff_t distance = parse_char(len - in_i, &in[in_i], &ch);
                 if (distance < 0) abort();
 
                 assert(ch < 0x80);
@@ -828,7 +828,7 @@ Cuik_Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
             size_t out_i = 0, in_i = 0;
             while (in_i < len) {
                 int ch;
-                intptr_t distance = parse_char(len - in_i, &in[in_i], &ch);
+                ptrdiff_t distance = parse_char(len - in_i, &in[in_i], &ch);
                 if (distance < 0) abort();
 
                 out[out_i++] = ch;
@@ -990,7 +990,7 @@ Cuik_Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
         case EXPR_PARAM: {
             int param_num = e->param_num;
 
-            Param* param_list = function_stmt->decl.type->func.param_list;
+            Param* param_list = cuik__sema_function_stmt->decl.type->func.param_list;
             return (e->type = param_list[param_num].type);
         }
         case EXPR_GENERIC: {
@@ -1461,7 +1461,7 @@ void sema_stmt(TranslationUnit* tu, Stmt* restrict s) {
         case STMT_RETURN: {
             if (s->return_.expr) {
                 Cuik_Type* expr_type = sema_expr(tu, s->return_.expr);
-                Cuik_Type* return_type = function_stmt->decl.type->func.return_type;
+                Cuik_Type* return_type = cuik__sema_function_stmt->decl.type->func.return_type;
 
                 if (!type_compatible(tu, expr_type, return_type, s->return_.expr)) {
                     REPORT_EXPR(ERROR, s->return_.expr, "Value in return statement does not match function signature.");
@@ -1650,9 +1650,9 @@ static void sema_top_level(TranslationUnit* tu, Stmt* restrict s) {
                 s->backing.f = 0;
 
                 // type check function body
-                function_stmt = s;
+                cuik__sema_function_stmt = s;
                 sema_stmt(tu, s->decl.initial_as_stmt);
-                function_stmt = 0;
+                cuik__sema_function_stmt = 0;
                 break;
             } else {
                 TB_FunctionPrototype* proto = tu->target.arch->create_prototype(tu, type);
@@ -1677,15 +1677,15 @@ static void sema_top_level(TranslationUnit* tu, Stmt* restrict s) {
                 s->backing.f = func;
 
                 // type check function body
-                function_stmt = s;
+                cuik__sema_function_stmt = s;
                 sema_stmt(tu, s->decl.initial_as_stmt);
-                function_stmt = 0;
+                cuik__sema_function_stmt = 0;
             }
             #else
             // type check function body
-            function_stmt = s;
+            cuik__sema_function_stmt = s;
             sema_stmt(tu, s->decl.initial_as_stmt);
-            function_stmt = 0;
+            cuik__sema_function_stmt = 0;
             #endif /* CUIK_USE_TB */
             break;
         }

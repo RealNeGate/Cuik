@@ -7,3 +7,7 @@ String string_from_range(const unsigned char* start, const unsigned char* end) {
 bool string_equals(const String* a, const String* b) {
     return a->length == b->length && memcmp(a->data, b->data, a->length) == 0;
 }
+
+bool string_equals_cstr(const String* a, const char* b) {
+    return a->length == strlen(b) && memcmp(a->data, b, a->length) == 0;
+}

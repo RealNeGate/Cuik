@@ -10,3 +10,4 @@ typedef struct String {
 
 String string_from_range(const unsigned char* start, const unsigned char* end);
 bool string_equals(const String* a, const String* b);
+bool string_equals_cstr(const String* a, const char* b);

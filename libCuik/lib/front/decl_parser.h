@@ -1158,7 +1158,8 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
 
     done:;
     if (type == 0) {
-        REPORT(ERROR, loc, "unknown typename");
+        Token* last = &s->tokens[s->current];
+        REPORT(ERROR, loc, "unknown typename: %.*s", (int) (last->end - last->start), last->start);
         return NULL;
     }
 
@@ -1206,13 +1207,12 @@ static bool is_typename(TranslationUnit* tu, TokenStream* restrict s) {
         case TOKEN_KW_inline:
         case TOKEN_KW_const:
         case TOKEN_KW_volatile:
+        case TOKEN_KW_register:
         case TOKEN_KW_declspec:
         case TOKEN_KW_Thread_local:
         case TOKEN_KW_Alignas:
         case TOKEN_KW_Atomic:
         case TOKEN_KW_auto:
-        case TOKEN_KW_cdecl:
-        case TOKEN_KW_stdcall:
         case TOKEN_KW_Typeof:
         return true;
 

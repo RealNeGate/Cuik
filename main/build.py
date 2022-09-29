@@ -23,15 +23,19 @@ cflags = "-g -Wall -Werror -Wno-unused-function"
 cflags += " -I ../libCuik/include -I ../tilde-backend/include"
 cflags += " -DCUIK_USE_TB -D_CRT_SECURE_NO_WARNINGS"
 
+if False:
+	cflags += " -fsanitize=address"
+
 if args.opt:
 	cflags += " -O2 -DNDEBUG"
 
 # windows' CRT doesn't support c11 threads so we provide a fallback
 if platform.system() == "Windows":
 	exe_ext = ".exe"
-	cflags += " -D_DLL -I ../c11threads"
-	ldflags += " ../mimalloc/out/Release/mimalloc.lib -Xlinker /include:mi_version"
-	ldflags += " -nodefaultlibs -lmsvcrt -lvcruntime -lucrt"
+	cflags += " -I ../c11threads"
+	# cflags += " -D_DLL"
+	# ldflags += " ../mimalloc/out/Release/mimalloc.lib -Xlinker /include:mi_version"
+	# ldflags += " -nodefaultlibs -lmsvcrt -lvcruntime -lucrt"
 	subprocess.call(['build_mimalloc.bat'], cwd="..\\", shell=True)
 else:
 	exe_ext = ""

@@ -508,7 +508,7 @@ static Expr* parse_expr_l1(TranslationUnit* tu, TokenStream* restrict s) {
 
         if (is_typename(tu, s)) {
             Cuik_Type* type = parse_typename(tu, s);
-            expect(tu, s, ')');
+            expect_closing_paren(tu, s, start_loc);
 
             if (tokens_get(s)->type == '{') {
                 tokens_next(s);

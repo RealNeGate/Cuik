@@ -15,6 +15,10 @@
 
 #define OUT_OF_ORDER_CRAP 1
 
+// HACK: this is defined in sema.c but because we sometimes call semantics stuff in the
+// parser we need access to it to avoid some problems
+extern thread_local Stmt* cuik__sema_function_stmt;
+
 // how big are the phase2 parse tasks
 #define PARSE_MUNCH_SIZE (131072)
 
@@ -105,6 +109,10 @@ static int align_up(int a, int b) {
     if (b == 0) return 0;
 
     return a + (b - (a % b)) % b;
+}
+
+static String get_token_as_string(Lexer* l) {
+    return (String){ .length = l->token_end - l->token_start, .data = l->token_start };
 }
 
 // allocated size is sizeof(struct StmtHeader) + extra_size
@@ -610,8 +618,80 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                 if (tokens_get(s)->type != TOKEN_STRING_DOUBLE_QUOTE) {
                     generic_error(tu, s, "pragma declaration expects string literal");
                 }
+
+                // Slap it into a proper C string so we don't accidentally
+                // walk off the end and go random places
+                size_t len = (tokens_get(s)->end - tokens_get(s)->start) - 1;
+                unsigned char* out = tls_push(len);
+                {
+                    const char* in = (const char*) tokens_get(s)->start;
+
+                    size_t out_i = 0, in_i = 1;
+                    while (in_i < len) {
+                        int ch;
+                        ptrdiff_t distance = parse_char(len - in_i, &in[in_i], &ch);
+                        if (distance < 0) {
+                            generic_error(tu, s, "failed to handle string literal");
+                            abort();
+                        }
+
+                        out[out_i++] = ch;
+                        in_i += distance;
+                    }
+
+                    assert(out_i <= len);
+                    out[out_i++] = '\0';
+                }
+
+                Lexer pragma_lex = { "<temp>", out, out, 1 };
+                lexer_read(&pragma_lex);
+
+                String pragma_name = get_token_as_string(&pragma_lex);
+                if (string_equals_cstr(&pragma_name, "comment")) {
+                    // https://learn.microsoft.com/en-us/cpp/preprocessor/comment-c-cpp?view=msvc-170
+                    //   'comment' '(' comment-type [ ',' "comment-string" ] ')'
+                    // supported comment types:
+                    //   lib - links library against final output
+                    lexer_read(&pragma_lex);
+
+                    if (pragma_lex.token_type != '(') {
+                        generic_error(tu, s, "expected (");
+                    }
+
+                    lexer_read(&pragma_lex);
+                    String comment_type = get_token_as_string(&pragma_lex);
+                    lexer_read(&pragma_lex);
+
+                    String comment_string;
+                    if (pragma_lex.token_type == ',') {
+                        lexer_read(&pragma_lex);
+                        comment_string = get_token_as_string(&pragma_lex);
+                        comment_string.length -= 2;
+                        comment_string.data += 1;
+
+                        lexer_read(&pragma_lex);
+                    }
+
+                    if (pragma_lex.token_type != ')') {
+                        generic_error(tu, s, "expected )");
+                    }
+
+                    if (string_equals_cstr(&comment_type, "lib")) {
+                        if (comment_string.length == 0) {
+                            generic_error(tu, s, "pragma comment lib expected lib name");
+                        }
+
+                        Cuik_ImportRequest* import = ARENA_ALLOC(&thread_arena, Cuik_ImportRequest);
+                        import->next = tu->import_libs;
+                        import->lib_name = atoms_put(comment_string.length, comment_string.data);
+                        tu->import_libs = import;
+                    } else {
+                        generic_error(tu, s, "unknown pragma comment option");
+                    }
+                }
                 tokens_next(s);
 
+                tls_restore(out);
                 expect(tu, s, ')');
             } else if (tokens_get(s)->type == TOKEN_KW_Static_assert) {
                 tokens_next(s);
@@ -830,6 +910,9 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                                         goto skip_declaration;
                                     } else if (t->type == '{') {
                                         depth++;
+                                    } else if (t->type == ';' && depth == 1) {
+                                        REPORT(ERROR, tokens_get_location_index(s), "Spurious semicolon");
+                                        goto skip_declaration;
                                     } else if (t->type == '}') {
                                         if (depth == 0) {
                                             REPORT(ERROR, decl.loc, "Unbalanced brackets");
@@ -1287,6 +1370,10 @@ CUIK_API void cuik_destroy_translation_unit(TranslationUnit* restrict tu) {
     free(tu);
 }
 
+CUIK_API Cuik_ImportRequest* cuik_translation_unit_import_requests(TranslationUnit* restrict tu) {
+    return tu->import_libs;
+}
+
 CUIK_API TranslationUnit* cuik_next_translation_unit(TranslationUnit* restrict tu) {
     return tu->next;
 }
@@ -1378,15 +1465,18 @@ static void parse_function_definition(TranslationUnit* tu, TokenStream* restrict
                 .name = p->name,
                 .type = p->type,
                 .storage_class = STORAGE_PARAM,
-                .param_num = i};
+                .param_num = i
+            };
         }
     }
 
     // skip {
     tokens_next(s);
 
+    cuik__sema_function_stmt = n;
     Stmt* body = parse_compound_stmt(tu, s);
     assert(body != NULL);
+    cuik__sema_function_stmt = NULL;
 
     n->op = STMT_FUNC_DECL;
     n->decl.initial_as_stmt = body;

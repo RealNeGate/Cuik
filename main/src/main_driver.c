@@ -49,7 +49,7 @@ static bool args_verbose;
 static bool args_syntax_only;
 static bool args_debug_info;
 static bool args_preprocess;
-static bool args_exercise;
+static bool args_think;
 static bool args_use_syslinker = true;
 static int args_threads = -1;
 
@@ -125,7 +125,7 @@ static int calculate_worker_thread_count(void) {
     #ifdef _WIN32
     SYSTEM_INFO sysinfo;
     GetSystemInfo(&sysinfo);
-    return sysinfo.dwNumberOfProcessors;
+    return sysinfo.dwNumberOfProcessors - 4;
     #else
     return 1;
     #endif
@@ -394,6 +394,15 @@ static void compile_file(void* arg) {
     if (tu == NULL) {
         printf("Failed to parse with errors...");
         exit(1);
+    }
+
+    Cuik_ImportRequest* imports = cuik_translation_unit_import_requests(tu);
+    if (imports != NULL) {
+        cuik_lock_compilation_unit(&compilation_unit);
+        for (; imports != NULL; imports = imports->next) {
+            dyn_array_put(input_libraries, imports->lib_name);
+        }
+        cuik_unlock_compilation_unit(&compilation_unit);
     }
 
     if (args_bindgen != NULL) {
@@ -714,7 +723,7 @@ static bool export_output(void) {
 
         TIMESTAMP("Export");
         CUIK_TIMED_BLOCK("Export") {
-            if (!tb_exporter_write_files(mod, flavor, debug_fmt, 1, (const char*[]) { path })) {
+            if (!tb_exporter_write_files(mod, flavor, debug_fmt, 1, &(const char*){ path })) {
                 fprintf(stderr, "error: could not write output. %s\n", path);
                 return false;
             }
@@ -794,129 +803,6 @@ static bool export_output(void) {
     }
 }
 
-#if 0
-static uint64_t table[256];
-
-static void emit_range(uint64_t min, uint64_t max, uint64_t old, uint64_t next) {
-    old *= 4;
-
-    for (size_t i = min; i < max; i++) {
-        table[i] |= (next & 15) << old;
-    }
-}
-
-static void emit_chars(const char* str, uint64_t old, uint64_t next) {
-    old *= 4;
-
-    for (; *str; str++) {
-        table[(ptrdiff_t) *str] |= (next & 15) << old;
-    }
-}
-
-static void emit_all_chars(const char* str, uint64_t old, uint64_t next) {
-    old *= 4;
-
-    for (size_t i = 0; i < 256; i++) {
-        table[i] |= (next & 15) << old;
-    }
-}
-
-static void test(const char* str) {
-    const char* end = str + strlen(str);
-
-    for (;;) {
-        // Skip any whitespace and comments
-        // branchless space skip
-        str += (*str == ' ');
-        if (*str == '\0') {
-            // quit, we're done
-            return;
-        }
-
-        const char* token_start = str;
-        uint64_t state = 0;
-        for (;;) {
-            // table[state][*str]
-            uint64_t row = table[(ptrdiff_t) *str];
-            uint64_t next_state = (row >> (state * 4)) & 63;
-            if (next_state == 0) {
-                break;
-            }
-
-            // move along
-            state = next_state;
-            str += 1;
-        }
-
-        if (state == 0) {
-            break;
-        } else if (state == 7) {
-            char end = *token_start;
-            for (; *str != end; str++) {}
-            str++;
-        }
-
-        state &= 15;
-        printf("'%.*s' %llu\n", (int)(str - token_start), token_start, state);
-    }
-}
-
-int main(int argc, char** argv) {
-    // [A-Za-z]
-    emit_range('a', 'z', 0, 1);
-    emit_range('A', 'Z', 0, 1);
-
-    // [0-9]+
-    emit_range('0', '9', 0, 2);
-    emit_range('0', '9', 2, 2);
-    emit_chars("bB",     2, 2);
-    emit_chars("xX",     2, 13);
-    emit_chars(".",      2, 14);
-    emit_chars("uilfd",  2, 15);
-
-    // hex
-    emit_chars("0123456789ABCDEFabcdef", 13, 13);
-
-    // floats
-    emit_chars("0123456789e+-", 14, 14);
-    emit_chars("uilfd", 14, 15);
-
-    // suffix
-    emit_chars("0123456789", 15, 0);
-
-    // identifier body
-    {
-        emit_range('a', 'z', 1, 1);
-        emit_range('A', 'Z', 1, 1);
-        emit_range('0', '9', 1, 1);
-    }
-
-    // separators
-    emit_chars("@?;:,(){}", 0, 3);
-
-    // char or char-assign
-    emit_chars("+*/%!=&^|~", 0, 4);
-    emit_chars("=", 4, 5);
-
-    // >= <<=
-    emit_chars("><", 0, 6);
-    emit_chars("><", 6, 4);
-
-    emit_chars("\'\"", 0, 7);
-
-    emit_chars("-", 0, 8);
-    emit_chars("=>", 8, 9);
-
-    emit_chars("#", 0, 10);
-    emit_chars("#", 10, 11);
-
-    emit_chars(".", 0, 12);
-    emit_chars(".", 12, 12);
-
-    test("hello wOrld b01; 12a(16, 6, 0x1535); 1.f; 16.83573f; 3.4028234e38f; 1.18e-4932l; a += b, a <<= 16, a &= b; a->foo(bar, \"baz\", ...);");
-    return 0;
-}
-#else
 int main(int argc, char** argv) {
     cuik_init();
     find_system_deps();
@@ -941,6 +827,8 @@ int main(int argc, char** argv) {
 
     // get target
     target_desc.arch = cuik_get_x64_target_desc();
+
+    // print_help(argv[0]);
 
     // parse arguments
     int i = 1;
@@ -1010,92 +898,32 @@ int main(int argc, char** argv) {
                 }
 
                 if (!success) {
-                    fprintf(stderr, "unknown target: %s (try --list targets)\n", arg.value);
-                }
-                break;
-            }
-            case ARG_LIST: {
-                if (strcmp(arg.value, "targets") == 0) {
-                    printf("Supported targets:\n");
+                    fprintf(stderr, "unknown target: %s\n", arg.value);
+                    fprintf(stderr, "Supported targets:\n");
                     for (int i = 0; i < TARGET_OPTION_COUNT; i++) {
-                        printf("  %s\n", target_options[i].key);
+                        fprintf(stderr, "    %s\n", target_options[i].key);
                     }
-                    printf("\n");
-                    return EXIT_SUCCESS;
-                } else if (strcmp(arg.value, "bindgen") == 0) {
-                    printf("Supported bindgen:\n");
-                    printf("  c99\n");
-                    printf("  odin\n");
-                    return EXIT_SUCCESS;
-                } else if (strcmp(arg.value, "flavors") == 0) {
-                    printf("Supported flavors:\n");
-                    printf("  object\n");
-                    printf("  shared\n");
-                    printf("  static\n");
-                    printf("  exec\n");
-                    return EXIT_SUCCESS;
-                } else {
-                    fprintf(stderr, "unknown list name, options are: targets, flavors, bindgen\n");
+                    fprintf(stderr, "\n");
                 }
                 break;
             }
-            case ARG_FLAVOR: {
-                if (strcmp(arg.value, "object") == 0) {
-                    flavor = TB_FLAVOR_OBJECT;
-                } else if (strcmp(arg.value, "shared") == 0) {
-                    flavor = TB_FLAVOR_SHARED;
-                } else if (strcmp(arg.value, "static") == 0) {
-                    flavor = TB_FLAVOR_STATIC;
-                } else if (strcmp(arg.value, "exec") == 0) {
-                    flavor = TB_FLAVOR_EXECUTABLE;
-                } else {
-                    fprintf(stderr, "unknown list name, options are: targets\n");
-                }
-                break;
-            }
-            case ARG_BINDGEN: {
-                if (strcmp(arg.value, "c99") == 0) {
-                    args_bindgen = &bindgen__c99;
-                } else if (strcmp(arg.value, "odin") == 0) {
-                    args_bindgen = &bindgen__odin;
-                } else {
-                    fprintf(stderr, "unknown list name, options are: bindgen\n");
-                }
-                break;
-            }
-            case ARG_OUT: output_name = arg.value; break;
-            case ARG_OBJ: flavor = TB_FLAVOR_OBJECT; break;
-            case ARG_RUN: args_run = true; break;
+            case ARG_OUTPUT: output_name = arg.value; break;
+            case ARG_OBJECT: flavor = TB_FLAVOR_OBJECT; break;
             case ARG_PREPROC: args_preprocess = true; break;
+            case ARG_RUN: args_run = true; break;
             case ARG_PPLOC: args_pploc = true; break;
-            case ARG_TIME: args_time = true; break;
-            case ARG_ASM: args_assembly = true; break;
-            case ARG_SYNTAX_ONLY: args_syntax_only = true; break;
             case ARG_AST: args_ast = true; break;
-            case ARG_TYPES: args_types = true; break;
-            case ARG_IR: args_ir = true; break;
-            case ARG_NOCRT: args_nocrt = true; break;
+            case ARG_SYNTAX: args_syntax_only = true; break;
             case ARG_VERBOSE: args_verbose = true; break;
-            case ARG_EXERCISE: args_exercise = true; break;
+            case ARG_THINK: args_think = true; break;
             case ARG_BASED: args_use_syslinker = false; break;
-            case ARG_THREADS: args_threads = atoi(arg.value); break;
+            case ARG_TIME: args_time = true; break;
+            case ARG_THREADS: args_threads = calculate_worker_thread_count(); break;
             case ARG_DEBUG: args_debug_info = true; break;
-            case ARG_TBTESTS: {
-                #ifdef TB_COMPILE_TESTS
-                int passed = 1, total = 1;
-                if (tb_x64_test_suite()) {
-                    printf("Failure! tb_x64_test_suite\n");
-                    passed -= 1;
-                }
-
-                printf("Passed %d of %d!\n", passed, total);
-                #else
-                printf("Didn't compile TB tests!\n");
-                #endif
-                return EXIT_SUCCESS;
-            }
+            case ARG_EMITIR: args_ir = true; break;
+            case ARG_NOLIBC: args_nocrt = true; break;
             case ARG_HELP: {
-                print_help();
+                print_help(argv[0]);
                 return EXIT_SUCCESS;
             }
             default: break;
@@ -1162,11 +990,10 @@ int main(int argc, char** argv) {
     // spin up worker threads
     #if CUIK_ALLOW_THREADS
     threadpool_t* thread_pool = NULL;
-    int thread_count = args_threads >= 0 ? args_threads : calculate_worker_thread_count();
-    if (thread_count > 1) {
-        if (args_verbose) printf("Starting with %d threads...\n", thread_count);
+    if (args_threads > 1) {
+        if (args_verbose) printf("Starting with %d threads...\n", args_threads);
 
-        thread_pool = threadpool_create(thread_count - 1, 4096);
+        thread_pool = threadpool_create(args_threads - 1, 4096);
         ithread_pool = malloc(sizeof(Cuik_IThreadpool));
         *ithread_pool = (Cuik_IThreadpool){
             .user_data = thread_pool,
@@ -1296,21 +1123,20 @@ int main(int argc, char** argv) {
     }
     #endif
 
-    if (args_exercise) {
-        // just delays the compilation because... you're fat
+    if (args_think) {
         uint64_t t1 = cuik_time_in_nanos();
         double elapsed = 0.0;
 
-        // 60 seconds of gamer time
+        // 120 seconds of gamer time
         printf("Waiting around...\n\n");
         printf(
-            "So people have told me that 1 minute compiles aren't really that bad\n"
+            "So people have told me that 2 minute compiles aren't really that bad\n"
             "so i figured that we should give them the freedom to waste their time\n"
         );
 
         int old_chars = -1;
-        while (elapsed = (cuik_time_in_nanos() - t1) / 1000000000.0, elapsed < 60.5) {
-            int num_chars = (int)((elapsed / 60.0) * 30.0);
+        while (elapsed = (cuik_time_in_nanos() - t1) / 1000000000.0, elapsed < 120.0) {
+            int num_chars = (int)((elapsed / 120.0) * 30.0);
             if (num_chars != old_chars) {
                 old_chars = num_chars;
 
@@ -1348,4 +1174,3 @@ int main(int argc, char** argv) {
 
     return 0;
 }
-#endif

@@ -15,6 +15,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <inttypes.h>
 
 #define KILOBYTES(x) ((x) << 10ull)
 #define MEGABYTES(x) ((x) << 20ull)

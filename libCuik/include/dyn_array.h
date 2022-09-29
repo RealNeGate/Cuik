@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <stddef.h>
 #include <stdio.h>
+#include <assert.h>
 #include <cuik.h>
 
 #define INITIAL_CAP 4096

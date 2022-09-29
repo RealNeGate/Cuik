@@ -1,4 +1,6 @@
 #pragma once
+#ifdef CUIK_USE_TB
+
 #include <arena.h>
 #include <common.h>
 #include <threads.h>
@@ -87,3 +89,5 @@ InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, Sourc
 TB_Register irgen_as_rvalue(TranslationUnit* tu, TB_Function* func, Expr* e);
 IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e);
 void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s);
+
+#endif
