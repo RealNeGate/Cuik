@@ -690,7 +690,6 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
                 tokens_next(s);
 
                 bool is_union = tkn_type == TOKEN_KW_union;
-
                 while (skip_over_declspec(tu, s)) {
                     // TODO(NeGate): printf("Don't forget about declspec\n");
                 }

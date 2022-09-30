@@ -88,8 +88,9 @@ static void initialize_opt_passes(void) {
         dyn_array_put(da_passes, tb_opt_subexpr_elim());
 
         dyn_array_put(da_passes, tb_opt_mem2reg());
-
+        dyn_array_put(da_passes, tb_opt_remove_pass_nodes());
         dyn_array_put(da_passes, tb_opt_instcombine());
+        dyn_array_put(da_passes, tb_opt_remove_pass_nodes());
         dyn_array_put(da_passes, tb_opt_dead_expr_elim());
         dyn_array_put(da_passes, tb_opt_dead_block_elim());
         dyn_array_put(da_passes, tb_opt_subexpr_elim());
@@ -101,8 +102,8 @@ static void initialize_opt_passes(void) {
         // TODO(NeGate): loop optimizations, data structure reordering
         // switch optimizations
 
-        dyn_array_put(da_passes, tb_opt_compact_dead_regs());
-        dyn_array_put(da_passes, tb_opt_remove_pass_nodes());
+        // dyn_array_put(da_passes, tb_opt_remove_pass_nodes());
+        // dyn_array_put(da_passes, tb_opt_compact_dead_regs());
     }
 }
 
@@ -907,6 +908,8 @@ int main(int argc, char** argv) {
                 }
                 break;
             }
+            case ARG_O0: args_opt_level = 0; break;
+            case ARG_O1: args_opt_level = 1; break;
             case ARG_OUTPUT: output_name = arg.value; break;
             case ARG_OBJECT: flavor = TB_FLAVOR_OBJECT; break;
             case ARG_PREPROC: args_preprocess = true; break;

@@ -403,6 +403,10 @@ static InitNode* walk_initializer_layer(
         }
     }
 
+    while (type->kind == KIND_QUALIFIED_TYPE) {
+        type = type->qualified_ty;
+    }
+
     if (*cursor > *max_cursor) {
         *max_cursor = *cursor;
     }
@@ -687,8 +691,14 @@ Member* sema_resolve_member_access(TranslationUnit* tu, Expr* restrict e, uint32
         }
     }
 
+    while (record_type->kind == KIND_QUALIFIED_TYPE) {
+        record_type = record_type->qualified_ty;
+    }
+
     if (record_type->kind != KIND_STRUCT && record_type->kind != KIND_UNION) {
-        REPORT_EXPR(ERROR, e, "Cannot get the member of a non-record type.");
+        type_as_string(tu, sizeof(temp_string0), temp_string0, record_type);
+        REPORT_EXPR(ERROR, e, "Cannot get the member of a non-record type (%s)", temp_string0);
+        REPORT(INFO, record_type->loc, "Record found here:");
         return NULL;
     }
 
@@ -745,7 +755,8 @@ Cuik_Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
                     unsigned long long expected = (unsigned long long)e->int_num.num;
 
                     if (original != expected) {
-                        REPORT_EXPR(ERROR, e, "Could not represent integer literal as int. (%llu or %llx)", expected, expected);
+                        // REPORT_EXPR(ERROR, e, "Could not represent integer literal as int. (%llu or %llx)", expected, expected);
+                        return (e->type = &builtin_types[TYPE_LONG]);
                     }
 
                     return (e->type = &builtin_types[TYPE_INT]);
@@ -756,7 +767,8 @@ Cuik_Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
                     unsigned long long expected = (unsigned long long)e->int_num.num;
 
                     if (original != expected) {
-                        REPORT_EXPR(ERROR, e, "Could not represent integer literal as unsigned int.");
+                        // REPORT_EXPR(ERROR, e, "Could not represent integer literal as unsigned int.");
+                        return (e->type = &builtin_types[TYPE_ULONG]);
                     }
 
                     return (e->type = &builtin_types[TYPE_UINT]);
@@ -939,7 +951,7 @@ Cuik_Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
         }
         case EXPR_ADDR: {
             uint64_t dst;
-            if (in_the_semantic_phase && const_eval_try_offsetof_hack(tu, e->unary_op.src, &dst)) {
+            if (0/* in_the_semantic_phase */ && const_eval_try_offsetof_hack(tu, e->unary_op.src, &dst)) {
                 *e = (Expr){
                     .op = EXPR_INT,
                     .type = &builtin_types[TYPE_ULONG],
@@ -1209,18 +1221,16 @@ Cuik_Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
             uint32_t offset = 0;
             Member* m = sema_resolve_member_access(tu, e, &offset);
             if (m != NULL) {
-                if (in_the_semantic_phase) {
-                    e->dot_arrow.base->cast_type = sema_expr(tu, e->dot_arrow.base);
+                e->dot_arrow.base->cast_type = sema_expr(tu, e->dot_arrow.base);
 
-                    // resolved
-                    e->op = (e->op == EXPR_DOT ? EXPR_DOT_R : EXPR_ARROW_R);
-                    e->dot_arrow.member = m;
-                    e->dot_arrow.offset = offset;
-                }
-
+                // resolved
+                e->op = (e->op == EXPR_DOT ? EXPR_DOT_R : EXPR_ARROW_R);
+                e->dot_arrow.member = m;
+                e->dot_arrow.offset = offset;
                 return (e->type = m->type);
             }
 
+            e->has_visited = false;
             return (e->type = &builtin_types[TYPE_VOID]);
         }
         case EXPR_LOGICAL_AND:
@@ -1371,7 +1381,7 @@ void sema_stmt(TranslationUnit* tu, Stmt* restrict s) {
             Stmt** kids = s->compound.kids;
             size_t count = s->compound.kids_count;
 
-            Stmt* killer = 0;
+            Stmt* killer = NULL;
             for (size_t i = 0; i < count; i++) {
                 Stmt* kid = kids[i];
                 sema_stmt(tu, kid);
@@ -1382,8 +1392,12 @@ void sema_stmt(TranslationUnit* tu, Stmt* restrict s) {
                         kid->op == STMT_DEFAULT) {
                         killer = 0;
                     } else {
-                        REPORT_STMT(ERROR, kid, "Dead code");
+                        REPORT_STMT(WARNING, kid, "Dead code");
                         REPORT_STMT(INFO, killer, "After");
+
+                        // trim the compound block
+                        // TODO(NeGate): decide if you wanna keep this
+                        s->compound.kids_count = i;
                         goto compound_failure;
                     }
                 } else {
@@ -1406,16 +1420,14 @@ void sema_stmt(TranslationUnit* tu, Stmt* restrict s) {
             if (s->decl.initial) {
                 try_resolve_typeof(tu, s->decl.type);
 
-                if (s->decl.initial->op == EXPR_INITIALIZER &&
-                    s->decl.initial->init.type == 0) {
+                Expr* e = s->decl.initial = cuik__optimize_ast(tu, s->decl.initial);
+                if (e->op == EXPR_INITIALIZER && e->init.type == 0) {
                     // give it something to go off of
-                    s->decl.initial->init.type = s->decl.type;
+                    e->init.type = s->decl.type;
                 }
 
                 Cuik_Type* decl_type = s->decl.type;
-                Cuik_Type* expr_type = sema_expr(tu, s->decl.initial);
-
-                Expr* e = s->decl.initial;
+                Cuik_Type* expr_type = sema_expr(tu, e);
                 if (e->op == EXPR_INITIALIZER) {
                     // Auto-detect array count from initializer
                     if (decl_type->kind == KIND_ARRAY && expr_type->kind == KIND_ARRAY) {
@@ -1433,16 +1445,12 @@ void sema_stmt(TranslationUnit* tu, Stmt* restrict s) {
                 }
 
                 e->cast_type = s->decl.type;
-                if (!type_compatible(tu, expr_type, s->decl.type, s->decl.initial)) {
+                if (!type_compatible(tu, expr_type, s->decl.type, e)) {
                     type_as_string(tu, sizeof(temp_string0), temp_string0, expr_type);
                     type_as_string(tu, sizeof(temp_string1), temp_string1, s->decl.type);
 
                     REPORT_STMT(ERROR, s, "Could not implicitly convert type %s into %s.", temp_string0, temp_string1);
                 }
-
-                // constant fold the global expression such that it's easier to spot constant
-                // expressions.
-                s->decl.initial = cuik__optimize_ast(tu, s->decl.initial);
             }
 
             if (s->decl.type->size == 0 || s->decl.type->is_incomplete) {
@@ -1455,7 +1463,6 @@ void sema_stmt(TranslationUnit* tu, Stmt* restrict s) {
         }
         case STMT_EXPR: {
             s->expr.expr->cast_type = sema_expr(tu, s->expr.expr);
-            s->expr.expr = cuik__optimize_ast(tu, s->expr.expr);
             break;
         }
         case STMT_RETURN: {
@@ -1556,13 +1563,12 @@ void sema_stmt(TranslationUnit* tu, Stmt* restrict s) {
             break;
         }
         case STMT_CASE: {
-            if (s->case_.body != NULL) {
-                while (s->case_.body->op == STMT_CASE) {
-                    s = s->case_.body;
-                }
-
+            while (s->case_.body && s->case_.body->op == STMT_CASE) {
                 sema_stmt(tu, s->case_.body);
+                s = s->case_.body;
             }
+
+            sema_stmt(tu, s->case_.body);
             break;
         }
         case STMT_DEFAULT: {

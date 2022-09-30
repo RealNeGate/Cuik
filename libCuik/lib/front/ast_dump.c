@@ -288,6 +288,13 @@ static void dump_expr(TranslationUnit* tu, FILE* stream, Expr* restrict e, int d
             dump_expr(tu, stream, e->cast.src, depth + 1, true);
             break;
         }
+        case EXPR_VA_ARG: {
+            type_as_string(tu, sizeof(temp_string0), temp_string0, e->va_arg_.type);
+
+            fprintf(stream, "VaArg '%s'\n", temp_string0);
+            dump_expr(tu, stream, e->va_arg_.src, depth + 1, true);
+            break;
+        }
         case EXPR_COMMA:
         case EXPR_PLUS:
         case EXPR_MINUS:
@@ -303,6 +310,7 @@ static void dump_expr(TranslationUnit* tu, FILE* stream, Expr* restrict e, int d
         case EXPR_MINUS_ASSIGN:
         case EXPR_ASSIGN:
         case EXPR_TIMES_ASSIGN:
+        case EXPR_PERCENT_ASSIGN:
         case EXPR_SLASH_ASSIGN:
         case EXPR_AND_ASSIGN:
         case EXPR_OR_ASSIGN:
@@ -338,6 +346,7 @@ static void dump_expr(TranslationUnit* tu, FILE* stream, Expr* restrict e, int d
                 [EXPR_MINUS_ASSIGN] = "MinusAssign",
                 [EXPR_ASSIGN] = "Assign",
                 [EXPR_TIMES_ASSIGN] = "TimesAssign",
+                [EXPR_PERCENT_ASSIGN] = "PercentAssign",
                 [EXPR_SLASH_ASSIGN] = "SlashAssign",
                 [EXPR_AND_ASSIGN] = "AndAssign",
                 [EXPR_OR_ASSIGN] = "OrAssign",
@@ -375,6 +384,7 @@ static void dump_expr(TranslationUnit* tu, FILE* stream, Expr* restrict e, int d
 }
 
 static void dump_stmt(TranslationUnit* tu, FILE* stream, Stmt* restrict s, int depth, bool last_node) {
+    if (s == NULL) return;
     print_barz(depth, last_node);
 
     switch (s->op) {
@@ -383,7 +393,7 @@ static void dump_stmt(TranslationUnit* tu, FILE* stream, Stmt* restrict s, int d
             type_as_string(tu, sizeof(temp_string0), temp_string0, s->decl.type);
 
             if (s->decl.attrs.is_typedef) {
-                fprintf(stream, "Cuik_TypedefDecl %s '%s'\n", s->decl.name, temp_string0);
+                fprintf(stream, "TypedefDecl %s '%s'\n", s->decl.name, temp_string0);
             } else {
                 if (s->decl.name != NULL) {
                     fprintf(stream, "VarDecl %s '%s'\n", s->decl.name, temp_string0);
@@ -508,15 +518,17 @@ static void dump_stmt(TranslationUnit* tu, FILE* stream, Stmt* restrict s, int d
                 fprintf(stream, "Init:\n");
 
                 Stmt* first = s->for_.first;
-                if (first->op == STMT_COMPOUND) {
-                    Stmt** kids = first->compound.kids;
-                    size_t count = first->compound.kids_count;
+                if (first != NULL) {
+                    if (first->op == STMT_COMPOUND) {
+                        Stmt** kids = first->compound.kids;
+                        size_t count = first->compound.kids_count;
 
-                    for (size_t i = 0; i < count; i++) {
-                        dump_stmt(tu, stream, kids[i], depth + 2, i == (count - 1));
+                        for (size_t i = 0; i < count; i++) {
+                            dump_stmt(tu, stream, kids[i], depth + 2, i == (count - 1));
+                        }
+                    } else {
+                        dump_stmt(tu, stream, first, depth + 2, true);
                     }
-                } else {
-                    dump_stmt(tu, stream, first, depth + 2, true);
                 }
             }
 
@@ -528,7 +540,9 @@ static void dump_stmt(TranslationUnit* tu, FILE* stream, Stmt* restrict s, int d
 
             print_barz(depth + 1, s->for_.next == 0);
             fprintf(stream, "Body:\n");
-            dump_stmt(tu, stream, s->for_.body, depth + 2, true);
+            if (s->for_.body) {
+                dump_stmt(tu, stream, s->for_.body, depth + 2, true);
+            }
 
             if (s->for_.next) {
                 print_barz(depth + 1, true);
@@ -577,9 +591,7 @@ CUIK_API void cuik_dump_translation_unit(FILE* stream, TranslationUnit* tu, bool
 void ast_dump_stats(TranslationUnit* tu, FILE* stream) {
     printf("\n~~~ AST STATS ~~~\n");
     printf("# Top level stmts: %zu\n", dyn_array_length(tu->top_level_stmts));
-
     printf("# Type Arena: %zu kB\n", arena_get_memory_usage(&tu->type_arena) / 1024);
-
     printf("# AST Arena:  %zu kB\n", arena_get_memory_usage(&tu->ast_arena) / 1024);
 }
 

@@ -320,7 +320,7 @@ static Expr* parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
             char* end;
             double f = strtod(str, &end);
             if (end != &str[length]) {
-                if (*end != 'f' && *end != 'd' && *end != 'F' && *end != 'D') {
+                if (*end != 'l' && *end != 'L' && *end != 'f' && *end != 'd' && *end != 'F' && *end != 'D') {
                     REPORT(ERROR, t->location, "invalid float literal");
                 }
             }
@@ -749,7 +749,7 @@ static Expr* parse_expr_l2(TranslationUnit* tu, TokenStream* restrict s) {
         return parse_expr_l2(tu, s);
     } else if (tokens_get(s)->type == TOKEN_INCREMENT) {
         tokens_next(s);
-        Expr* value = parse_expr_l1(tu, s);
+        Expr* value = parse_expr_l2(tu, s);
 
         SourceLocIndex end_loc = tokens_get_last_location_index(s);
 
@@ -758,11 +758,12 @@ static Expr* parse_expr_l2(TranslationUnit* tu, TokenStream* restrict s) {
             .op = EXPR_PRE_INC,
             .start_loc = start_loc,
             .end_loc = end_loc,
-            .unary_op.src = value};
+            .unary_op.src = value
+        };
         return e;
     } else if (tokens_get(s)->type == TOKEN_DECREMENT) {
         tokens_next(s);
-        Expr* value = parse_expr_l1(tu, s);
+        Expr* value = parse_expr_l2(tu, s);
 
         SourceLocIndex end_loc = tokens_get_last_location_index(s);
 
@@ -771,7 +772,8 @@ static Expr* parse_expr_l2(TranslationUnit* tu, TokenStream* restrict s) {
             .op = EXPR_PRE_DEC,
             .start_loc = start_loc,
             .end_loc = end_loc,
-            .unary_op.src = value};
+            .unary_op.src = value
+        };
         return e;
     } else if (tokens_get(s)->type == TOKEN_KW_sizeof ||
         tokens_get(s)->type == TOKEN_KW_Alignof) {

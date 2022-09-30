@@ -1999,7 +1999,8 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
                 irgen_stmt(tu, func, s->while_.body);
             }
 
-            tb_inst_goto(func, header);
+            fallthrough_label(func, header);
+            // tb_inst_goto(func, header);
             tb_inst_set_label(func, exit);
             break;
         }
@@ -2083,15 +2084,15 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
         }
         case STMT_CASE: {
             assert(s->backing.l);
-            if (s->case_.body != NULL) {
-                while (s->case_.body->op == STMT_CASE) {
-                    fallthrough_label(func, s->backing.l);
-                    s = s->case_.body;
-                }
-
+            while (s->case_.body && s->case_.body->op == STMT_CASE) {
                 fallthrough_label(func, s->backing.l);
                 irgen_stmt(tu, func, s->case_.body);
+
+                s = s->case_.body;
             }
+
+            fallthrough_label(func, s->backing.l);
+            irgen_stmt(tu, func, s->case_.body);
             break;
         }
         case STMT_SWITCH: {

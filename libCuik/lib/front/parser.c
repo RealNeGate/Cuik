@@ -796,7 +796,6 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                             break;
                         } else if (tokens_get(s)->type == '=') {
                             REPORT(ERROR, loc, "why did you just try that goofy shit wit me. You cannot assign a typedef.");
-
                             // error recovery
                         } else if (tokens_get(s)->type == ';') {
                             tokens_next(s);
@@ -1265,6 +1264,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                 Cuik_Type* type = (Cuik_Type*)&a->data[used];
 
                 if (type->kind == KIND_QUALIFIED_TYPE) {
+                    SourceLocIndex loc = type->loc;
                     bool is_atomic = type->is_atomic;
                     bool is_const = type->is_const;
                     int align = type->align;
@@ -1274,6 +1274,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
 
                     // copy and replace the qualifier slots
                     memcpy(type, based, sizeof(Cuik_Type));
+                    type->loc = loc;
                     type->also_known_as = aka;
                     type->based = based;
                     type->align = align;

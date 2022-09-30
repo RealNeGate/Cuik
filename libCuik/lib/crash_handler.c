@@ -4,7 +4,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
-#include <minidumpapiset.h>
+#include <DbgHelp.h>
 #include <time.h>
 #pragma comment(lib, "Dbghelp.lib")
 
@@ -14,47 +14,28 @@ static mtx_t crash_mutex;
 
 static LONG WINAPI unhandled_exception_handler(PEXCEPTION_POINTERS exception_ptrs) {
     mtx_lock(&crash_mutex);
-    time_t now = time(NULL);
 
-    char path[_MAX_PATH + 1];
-    sprintf_s(path, _MAX_PATH + 1, "./crash_dump_%lld.dmp", now);
+	HANDLE process = GetCurrentProcess();
+	SymInitialize(process, NULL, TRUE);
 
-    char* new_path = malloc(MAX_PATH);
-    if (GetFullPathNameA(path, MAX_PATH, new_path, NULL) == 0) {
-        fprintf(stderr, "GetFullPathNameA broke while in the middle of a crash... yikes?");
-        return EXCEPTION_EXECUTE_HANDLER;
-    }
+	void* stack[100];
+	uint16_t frames = CaptureStackBackTrace(0, 100, stack, NULL);
+	SYMBOL_INFO* symbol = (SYMBOL_INFO*) calloc(sizeof(SYMBOL_INFO) + 256 * sizeof(char), 1);
 
-    fprintf(stderr, "A crash happened, please make a Github Issue or something i dont control you :p\n");
-    fprintf(stderr, "%s\n\n", new_path);
+	symbol->MaxNameLen   = 255;
+	symbol->SizeOfStruct = sizeof(SYMBOL_INFO);
 
-    // This writes a dump file to the current dir.
-    // To view this file open it up in Visual Studio
-    // If source and symbols are available you should
-    // along with the crash point.
-    HANDLE crash_dump_file = CreateFileA(path,
-        GENERIC_WRITE,
-        0,
-        NULL,
-        CREATE_ALWAYS,
-        FILE_ATTRIBUTE_NORMAL,
-        NULL);
+	printf("\nCrash dump:\n");
+	for (size_t i = 0; i < frames; i++) {
+		SymFromAddr(process, (DWORD64)stack[i], 0, symbol);
 
-    MINIDUMP_EXCEPTION_INFORMATION mini_dump_info = {
-        .ThreadId = GetCurrentThreadId(),
-        .ExceptionPointers = exception_ptrs,
-        .ClientPointers = TRUE};
+		printf("    %-40s - 0x%llX\n", symbol->Name, symbol->Address);
+	}
 
-    MiniDumpWriteDump(GetCurrentProcess(),
-        GetCurrentProcessId(),
-        crash_dump_file,
-        (MINIDUMP_TYPE)(MiniDumpWithProcessThreadData | MiniDumpWithThreadInfo),
-        &mini_dump_info,
-        NULL,
-        NULL);
+	free(symbol);
+    exit(1);
 
-    CloseHandle(crash_dump_file);
-    ExitProcess(69420);
+	return EXCEPTION_CONTINUE_SEARCH;
 }
 
 void hook_crash_handler() {

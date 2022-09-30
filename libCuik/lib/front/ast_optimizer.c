@@ -239,7 +239,6 @@ Expr* cuik__optimize_ast(TranslationUnit* tu, Expr* e) {
                 e->int_num.suffix = INT_SUFFIX_ULL;
                 e->int_num.num = dst;
             }
-
             break;
         }
 
@@ -294,21 +293,6 @@ Expr* cuik__optimize_ast(TranslationUnit* tu, Expr* e) {
                 e->int_num.num = c.unsigned_value;
             }
 
-            break;
-        }
-
-        case EXPR_PLUS_ASSIGN:
-        case EXPR_MINUS_ASSIGN:
-        case EXPR_ASSIGN:
-        case EXPR_TIMES_ASSIGN:
-        case EXPR_SLASH_ASSIGN:
-        case EXPR_AND_ASSIGN:
-        case EXPR_OR_ASSIGN:
-        case EXPR_XOR_ASSIGN:
-        case EXPR_SHL_ASSIGN:
-        case EXPR_SHR_ASSIGN: {
-            e->bin_op.left = cuik__optimize_ast(tu, e->bin_op.left);
-            e->bin_op.right = cuik__optimize_ast(tu, e->bin_op.right);
             break;
         }
 

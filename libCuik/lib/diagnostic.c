@@ -131,7 +131,7 @@ static size_t draw_line(TokenStream* tokens, SourceLocIndex loc_index) {
     if (*line_start != '\r' && *line_start != '\n') {
         const char* line_end = line_start;
         // printf("    ");
-        printf("%4d| ", line->line);
+        printf("%6d| ", line->line);
         do {
             putchar(*line_end != '\t' ? *line_end : ' ');
             line_end++;
@@ -144,8 +144,8 @@ static size_t draw_line(TokenStream* tokens, SourceLocIndex loc_index) {
     return dist_from_line_start;
 }
 
-static void draw_line_horizontal_pad() {
-    printf("      ");
+static void draw_line_horizontal_pad(void) {
+    printf("        ");
 }
 
 static SourceLoc merge_source_locations(TokenStream* tokens, SourceLocIndex starti, SourceLocIndex endi) {

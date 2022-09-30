@@ -15,6 +15,8 @@ typedef enum ArgType {
     ARG_AST,
     ARG_SYNTAX,
     ARG_EMITIR,
+    ARG_O0,
+    ARG_O1,
     ARG_OUTPUT,
     ARG_OBJECT,
     ARG_DEBUG,
@@ -54,6 +56,8 @@ static const ArgDesc arg_descs[] = {
     { ARG_AST,     "ast",      NULL,      false, "" },
     { ARG_SYNTAX,  "xe",       NULL,      false, "type check only" },
     // optimizer
+    { ARG_O0,      "O0",       NULL,      false, "no optimizations" },
+    { ARG_O1,      "O1",       NULL,      false, "non-aggresive optimizations" },
     // backend
     { ARG_EMITIR,  "emit-ir",  NULL,      false, "print IR into stdout" },
     { ARG_OUTPUT,  "o",        NULL,      true,  "set the output filepath" },
@@ -90,8 +94,9 @@ static Arg get_cli_arg(int* index, int argc, char** argv) {
 
             for (size_t j = 0; j < ARG_DESC_COUNT; j++) {
                 const char* long_name  = arg_descs[j].name;
-                size_t long_name_len = strlen(long_name);
+                if (long_name == NULL) continue;
 
+                size_t long_name_len = long_name ? strlen(long_name) : 0;
                 if (strncmp(opt, long_name, long_name_len) == 0) {
                     if (!arg_descs[j].has_arg) {
                         return (Arg){ arg_descs[j].type, arg_is_set };
@@ -125,8 +130,9 @@ static Arg get_cli_arg(int* index, int argc, char** argv) {
 
             for (size_t j = 0; j < ARG_DESC_COUNT; j++) {
                 const char* short_name = arg_descs[j].alias;
-                size_t short_name_len = strlen(short_name) + 1;
+                if (short_name == NULL) continue;
 
+                size_t short_name_len = strlen(short_name) + 1;
                 if (strcmp(opt, short_name) == 0) {
                     if (!arg_descs[j].has_arg) {
                         return (Arg){ arg_descs[j].type, arg_is_set };

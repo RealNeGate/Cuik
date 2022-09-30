@@ -51,6 +51,7 @@ Cuik_Type* new_qualified_type(TranslationUnit* tu, Cuik_Type* base, bool is_atom
     assert(base != NULL);
     return alloc_type(tu, &(Cuik_Type){
             .kind = KIND_QUALIFIED_TYPE,
+            .loc = base->loc,
             .size = base->size,
             .align = base->align,
             .qualified_ty = base,
