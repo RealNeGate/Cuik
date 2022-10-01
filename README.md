@@ -71,17 +71,13 @@ It can currently compile programs using the subset of C it currently supports bu
 ## File structure
 In case you care to look around here's what the folders mean:
 ```
-# libCuik itself
-lib/
-include/
+# this is where the main driver goes (it does "mostly" normal CC command line interactions)
+main/
 
-# and it's dependencies (TB binaries go here)
-deps/
+# Actual library (can be used separate of the main driver)
+libCuik/
 
-# these are the programs that actually call into libCuik
-drivers/
-
-# not ciabatta but the freestanding includes like stddef.h along with some helpers
+# not [ciabatta](https://github.com/flysand7/ciabatta) but the freestanding includes like stddef.h along with some helpers
 crt/
 
 # random crap
