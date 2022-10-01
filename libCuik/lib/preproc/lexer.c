@@ -180,11 +180,16 @@ static unsigned char* slow_identifier_lexing(Lexer* restrict l, unsigned char* c
     size_t i = 0, j = 0;
     while (i < oldstr_len) {
         if (start[i] == '\\' && (start[i+1] == 'U' || start[i+1] == 'u')) {
+            // lowercase is \unnnn and uppercase is \Unnnnnnnn
+            size_t uchar_len = start[i+1] == 'U' ? 8 : 4;
             // parse codepoint
             i += 2;
 
             uint32_t code = 0;
-            while (i < oldstr_len) {
+            size_t endpoint = i + uchar_len;
+            if (endpoint > oldstr_len) endpoint = oldstr_len;
+
+            while (i < endpoint) {
                 char ch = start[i];
 
                 if (ch >= 'A' && ch <= 'F') {

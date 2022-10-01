@@ -2,8 +2,8 @@
 i\
 n\
 t main(void) {
-    int apple\U0001f43apple = 16;
-    return apple\U0001f43apple;
+    int apple\U0001f431apple = 16;
+    return apple\U0001f431apple;
 }
 
 #if 0

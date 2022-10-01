@@ -116,10 +116,10 @@ static String* convert_tokens_to_value_list_in_tls(Cuik_CPP* restrict c, TokenSt
         int paren_depth = 0;
         const unsigned char* start = tokens_get(in)->start;
         const unsigned char* end = start;
+        if (tokens_get(in)->type == TOKEN_STRING_WIDE_DOUBLE_QUOTE || tokens_get(in)->type == TOKEN_STRING_WIDE_SINGLE_QUOTE) {
+            start -= 1;
+        }
 
-        // we're incrementally building up the string in the "the shtuffs"
-        size_t len = 0;
-        unsigned char* str = gimme_the_shtuffs(c, 0);
         while (in->current != end_token_index) {
             TknType t = tokens_get(in)->type;
             if (t == 0) {
@@ -137,31 +137,15 @@ static String* convert_tokens_to_value_list_in_tls(Cuik_CPP* restrict c, TokenSt
                 if (paren_depth == 0) {
                     break;
                 }
-            } else if (t == TOKEN_STRING_WIDE_DOUBLE_QUOTE || t == TOKEN_STRING_WIDE_SINGLE_QUOTE) {
-                gimme_the_shtuffs(c, 1);
-                str[len++] = 'L';
             }
 
-            // append to string
-            String src = string_from_range(tokens_get(in)->start, tokens_get(in)->end);
-            gimme_the_shtuffs(c, src.length + 1);
-
-            memcpy(&str[len], src.data, src.length);
-            str[len + src.length] = ' ';
-            len += src.length + 1;
-
             // advance
+            end = tokens_get(in)->end;
             tokens_next(in);
         }
 
-        // null terminator
-        if (len > 0) {
-            str[len - 1] = 0;
-            len--;
-        }
-
-        values[i].data = str;
-        values[i].length = len;
+        values[i].data = start;
+        values[i].length = end - start;
 
         if (tokens_is(in, ',')) {
             tokens_next(in);
