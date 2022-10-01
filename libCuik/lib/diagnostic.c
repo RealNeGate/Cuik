@@ -57,6 +57,7 @@ bool report_using_thin_errors = false;
 void init_report_system(void) {
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stderr, NULL, _IONBF, 0);
+    setlocale(LC_ALL, ".UTF8");
 
     #if _WIN32
     if (console_handle == NULL) {

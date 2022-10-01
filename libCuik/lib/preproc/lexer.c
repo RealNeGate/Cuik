@@ -169,15 +169,13 @@ static int line_counter(size_t len, const unsigned char* str) {
     #endif
 }
 
-static void slow_identifier_lexing(Lexer* restrict l, unsigned char* current, unsigned char* start) {
-    __debugbreak();
-
+static unsigned char* slow_identifier_lexing(Lexer* restrict l, unsigned char* current, unsigned char* start) {
     // you don't wanna be here... basically if we spot \U in the identifier
     // we reparse it but this time with the correct handling of those details.
     // we also generate a new string in the arena to hold this stuff
     // at best it's as big as the raw identifier
     size_t oldstr_len = current - start;
-    char* newstr = arena_alloc(&thread_arena, (oldstr_len + 15) & ~15u, 1);
+    unsigned char* newstr = start;
 
     size_t i = 0, j = 0;
     while (i < oldstr_len) {
@@ -227,25 +225,14 @@ static void slow_identifier_lexing(Lexer* restrict l, unsigned char* current, un
         }
     }
 
-    l->token_start = (unsigned char*)newstr;
-    l->token_end = (unsigned char*) &newstr[j];
-    l->current = current;
-
-    // place a temporary 'line_current' such that it doesn't break when doing
-    // column calculations
-    l->line_current = l->token_start;
-    l->line_current2 = current;
+    memset(&newstr[j], ' ', oldstr_len - j);
+    return (unsigned char*) &newstr[j];
 }
 
 // NOTE(NeGate): The input string has a fat null terminator of 16bytes to allow
 // for some optimizations overall, one of the important ones is being able to read
 // a whole 16byte SIMD register at once for any SIMD optimizations.
 void lexer_read(Lexer* restrict l) {
-    if (l->line_current2) {
-        l->line_current = l->line_current2;
-        l->line_current2 = NULL;
-    }
-
     unsigned char* current = l->current;
 
     // Skip any whitespace and comments
@@ -345,12 +332,11 @@ void lexer_read(Lexer* restrict l) {
             #if !USE_INTRIN
             for (char* s = start; s != current; s++) {
                 if (*s == '\\') {
-                    slow_identifier_lexing(l, s, start);
-                    return;
+                    current = slow_identifier_lexing(l, current, start);
+                    break;
                 }
             }
             #else
-
             // check for escapes
             __m128i pattern = _mm_set1_epi8('\\');
             size_t length = current - start;
@@ -366,8 +352,8 @@ void lexer_read(Lexer* restrict l) {
                     int last_escape = __builtin_ctz(mask);
 
                     if (last_escape < endpoint) {
-                        slow_identifier_lexing(l, current, start);
-                        return;
+                        current = slow_identifier_lexing(l, current, start);
+                        break;
                     }
                 }
             }

@@ -147,9 +147,6 @@ typedef enum TknType {
 #undef TKN3
 
 typedef struct {
-} SourceLineManager;
-
-typedef struct {
     ////////////////////////////////
     // USER-PROVIDED
     ////////////////////////////////
@@ -164,8 +161,6 @@ typedef struct {
     // INTERNALS
     ////////////////////////////////
     unsigned char* line_current;
-    unsigned char* line_current2;
-
     // when reading it spotted a line or EOF, it must be manually reset
     bool hit_line;
 
