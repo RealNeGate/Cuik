@@ -154,8 +154,8 @@ typedef struct {
     // USER-PROVIDED
     ////////////////////////////////
     const char* filepath;
-    const unsigned char* start;
-    const unsigned char* current;
+    unsigned char* start;
+    unsigned char* current;
     int current_line;
 
     int column_bias; // it'll just be added to the column count when we're checking stuff
@@ -163,16 +163,16 @@ typedef struct {
     ////////////////////////////////
     // INTERNALS
     ////////////////////////////////
-    const unsigned char* line_current;
-    const unsigned char* line_current2;
+    unsigned char* line_current;
+    unsigned char* line_current2;
 
     // when reading it spotted a line or EOF, it must be manually reset
     bool hit_line;
 
     // current token info
     TknType token_type;
-    const unsigned char* token_start;
-    const unsigned char* token_end;
+    unsigned char* token_start;
+    unsigned char* token_end;
 } Lexer;
 
 // this is used by the preprocessor to scan tokens in

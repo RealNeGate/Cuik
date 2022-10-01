@@ -169,7 +169,9 @@ static int line_counter(size_t len, const unsigned char* str) {
     #endif
 }
 
-static void slow_identifier_lexing(Lexer* restrict l, const unsigned char* current, const unsigned char* start) {
+static void slow_identifier_lexing(Lexer* restrict l, unsigned char* current, unsigned char* start) {
+    __debugbreak();
+
     // you don't wanna be here... basically if we spot \U in the identifier
     // we reparse it but this time with the correct handling of those details.
     // we also generate a new string in the arena to hold this stuff
@@ -244,7 +246,7 @@ void lexer_read(Lexer* restrict l) {
         l->line_current2 = NULL;
     }
 
-    const unsigned char* current = l->current;
+    unsigned char* current = l->current;
 
     // Skip any whitespace and comments
     // branchless space skip
@@ -290,7 +292,7 @@ void lexer_read(Lexer* restrict l) {
             } else if (current[1] == '*') {
                 current++;
 
-                const unsigned char* start = current;
+                unsigned char* start = current;
                 do {
                     current++;
                 } while (*current && !(current[0] == '/' && current[-1] == '*'));
@@ -318,7 +320,7 @@ void lexer_read(Lexer* restrict l) {
     ////////////////////////////////
     // Try to actually parse a token
     ////////////////////////////////
-    const unsigned char* start = current;
+    unsigned char* start = current;
     uint64_t state = 0;
 
     for (;;) {
@@ -341,7 +343,7 @@ void lexer_read(Lexer* restrict l) {
             }
 
             #if !USE_INTRIN
-            for (const char* s = start; s != current; s++) {
+            for (char* s = start; s != current; s++) {
                 if (*s == '\\') {
                     slow_identifier_lexing(l, s, start);
                     return;
@@ -473,65 +475,43 @@ void lexer_read(Lexer* restrict l) {
 
         // save out the original token position
         l->token_start = start;
-        l->token_end = current;
 
         // skip backslash and newline
         current += 1;
         current += (current[0] + current[1] == '\r' + '\n') ? 2 : 1;
 
-        l->line_current2 = current;
-
-        start = current;
-        while (*current && *current != '\n' && *current != ' ') {
-            char c0 = current[0], c1 = current[1];
-
-            if (c0 == '\\' && c1 == '\n') current += 2;
-            else current += 1;
+        // find token boundary to shift things correctly
+        unsigned char* next_token_bound = current;
+        for (unsigned char* s = current;; s++) {
+            if (s[0] == '\0' || s[0] == ' ' || s[0] == '\n') {
+                next_token_bound = s;
+                break;
+            } else if (s[0] == '\\' && s[1] == '\n') {
+                s += 1;
+            }
         }
 
         // tally up lines
-        l->current_line += line_counter(current - start, start);
+        size_t length = (next_token_bound - start);
+        l->current_line += line_counter(length, start);
 
-        // generate buffer with conjoined string
-        unsigned char* conjoined_buffer;
-        size_t len = l->token_end - l->token_start;
-        size_t len2 = current - start;
-
-        {
-            // len + len2 + 1 padded to 16bytes since all lexer strings have to be for
-            // the SIMD related things
-            conjoined_buffer = arena_alloc(&thread_arena, (len + len2 + 16) & ~15, 16);
-            if (!conjoined_buffer) {
-                printf("Lexer error: out of memory!");
-                abort();
+        // join backslash-newlines
+        for (size_t i = 0; i < length; i++) {
+            if (start[i] == '\\' && start[i + 1] == '\n') {
+                memmove(start + i, start + i + 2, length - (i + 2));
+                length -= 2, i -= 1;
             }
-
-            l->line_current = conjoined_buffer;
-
-            memcpy(conjoined_buffer, l->token_start, len);
-            memcpy(conjoined_buffer + len, start, len2);
-
-            // null terminator to top it off
-            conjoined_buffer[len + len2] = '\0';
         }
 
-        // Relex the joined string:
-        // Kinda recursive in a way but... shut up?
-        Lexer joined_string_lexer = (Lexer){"", conjoined_buffer, conjoined_buffer, 1};
-        lexer_read(&joined_string_lexer);
-
-        l->token_start = joined_string_lexer.token_start;
-        l->token_end = joined_string_lexer.token_end;
-
-        // NOTE(NeGate): Basically take the remaining token stuff we didn't parse
-        // and just pass that but the issue is that these are two separate buffers
-        // so we do a little "magic?".
-        l->current = start + ((l->token_end - l->token_start) - len);
-    } else {
-        l->token_start = start;
-        l->token_end = current;
-        l->current = current;
+        // fill excess with spaces
+        size_t space_count = (next_token_bound - start) - length;
+        memset(start + length, ' ', space_count);
+        current = start + length;
     }
+
+    l->token_start = start;
+    l->token_end = current;
+    l->current = current;
 }
 
 uint64_t parse_int(size_t len, const char* str, Cuik_IntSuffix* out_suffix) {

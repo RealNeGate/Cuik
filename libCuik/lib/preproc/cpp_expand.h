@@ -1,4 +1,4 @@
-static Lexer make_temporary_lexer(const unsigned char* start) {
+static Lexer make_temporary_lexer(unsigned char* start) {
     return (Lexer){"<temp>", start, start, 1};
 }
 
@@ -315,7 +315,7 @@ static void expand_ident(Cuik_CPP* restrict c, TokenStream* restrict s, TokenStr
             size_t tail_call_defi = SIZE_MAX;
             if (def.length && *args != '(' && tokens_is(in, '(')) {
                 // expand and append
-                Lexer temp_lex = (Lexer){in->filepath, def.data, def.data};
+                Lexer temp_lex = (Lexer){in->filepath, (unsigned char*) def.data, (unsigned char*) def.data};
                 lexer_read(&temp_lex);
 
                 size_t token_length = temp_lex.token_end - temp_lex.token_start;
@@ -389,7 +389,7 @@ static void expand_ident(Cuik_CPP* restrict c, TokenStream* restrict s, TokenStr
                     bool has_varargs = false;
 
                     {
-                        Lexer arg_lex = (Lexer){in->filepath, args, args};
+                        Lexer arg_lex = (Lexer){in->filepath, (unsigned char*) args, (unsigned char*) args};
                         lexer_read(&arg_lex);
                         expect_from_lexer(&arg_lex, '(');
 
@@ -428,7 +428,7 @@ static void expand_ident(Cuik_CPP* restrict c, TokenStream* restrict s, TokenStr
                     unsigned char* temp_expansion_start = gimme_the_shtuffs(c, 4096);
                     unsigned char* temp_expansion = temp_expansion_start;
 
-                    Lexer def_lex = (Lexer){in->filepath, def.data, def.data, line_of_expansion};
+                    Lexer def_lex = (Lexer){in->filepath, (unsigned char*) def.data, (unsigned char*) def.data, line_of_expansion};
                     lexer_read(&def_lex);
 
                     // set when a # happens, we expect a macro parameter afterwards
@@ -623,7 +623,7 @@ static void expand_ident(Cuik_CPP* restrict c, TokenStream* restrict s, TokenStr
 
                     dyn_array_put(s->tokens, t);
                 } else {
-                    TokenStream temp_tokens = get_all_tokens_in_buffer("<temp>", def.data, &def.data[def.length]);
+                    TokenStream temp_tokens = get_all_tokens_in_buffer("<temp>", (uint8_t*) def.data, (uint8_t*) &def.data[def.length]);
 
                     size_t hidden = hide_macro(c, def_i);
                     expand(c, s, &temp_tokens, dyn_array_length(temp_tokens.tokens), true, expanded_loc);

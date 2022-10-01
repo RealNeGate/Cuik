@@ -213,7 +213,7 @@ CUIK_API void cuiklex_canonicalize(size_t length, char* data);
 // the contents string is a Cstring with a "fat" null terminator (16 bytes long of zeroes).
 // NOTE: contents must have been canonicalized using cuiklex_canonicalize before being fed
 // into here
-CUIK_API TokenStream cuiklex_buffer(const char* filepath, const char* contents);
+CUIK_API TokenStream cuiklex_buffer(const char* filepath, char* contents);
 
 CUIK_API void cuikpp_init(Cuik_CPP* ctx, const char filepath[FILENAME_MAX]);
 

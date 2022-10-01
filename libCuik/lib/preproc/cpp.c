@@ -39,7 +39,7 @@ static void push_scope(Cuik_CPP* restrict ctx, TokenStream* restrict in, bool in
 static void pop_scope(Cuik_CPP* restrict ctx, TokenStream* restrict in, SourceLocIndex loc);
 
 // if end is NULL, it'll just be null terminated
-static TokenStream get_all_tokens_in_buffer(const char* filepath, const uint8_t* data, const uint8_t* end);
+static TokenStream get_all_tokens_in_buffer(const char* filepath, uint8_t* data, uint8_t* end);
 static void free_token_stream(TokenStream* s);
 static void print_token_stream(TokenStream* s, size_t start, size_t end);
 
@@ -102,33 +102,19 @@ static void expect_no_newline(TokenStream* s, int start_line) {
 }
 
 static String get_pp_tokens_until_newline(Cuik_CPP* ctx, TokenStream* s) {
-    size_t len = 0;
-    unsigned char* str = gimme_the_shtuffs(ctx, 65536);
+    const unsigned char* start = s->tokens[s->current].start;
+    const unsigned char* end = start;
 
+    bool is_str = tokens_is(s, TOKEN_STRING_WIDE_SINGLE_QUOTE) || tokens_is(s, TOKEN_STRING_WIDE_DOUBLE_QUOTE);
     while (!tokens_eof(s) && !tokens_hit_line(s)) {
-        const unsigned char* token_start = s->tokens[s->current].start;
-        const size_t token_len = s->tokens[s->current].end - token_start;
-
-        if (s->tokens[s->current].type == TOKEN_STRING_WIDE_DOUBLE_QUOTE ||
-            s->tokens[s->current].type == TOKEN_STRING_WIDE_SINGLE_QUOTE) {
-            token_start -= 1;
-        }
-
-        if (len + token_len >= 65536) {
-            printf("Preprocess define content is too big!\n");
-            abort();
-        }
-
-        memcpy(&str[len], token_start, token_len);
-        len += token_len;
-        str[len++] = ' ';
-
+        end = s->tokens[s->current].end;
         tokens_next(s);
     }
 
-    str[len] = 0;
-    trim_the_shtuffs(ctx, &str[len + 1]);
-    return (String){ .length = len, .data = str };
+    if (is_str) {
+        start -= 1;
+    }
+    return (String){ .length = end - start, .data = start };
 }
 
 static String get_token_as_string(TokenStream* restrict in) {
@@ -199,8 +185,8 @@ CUIK_API void cuikpp_init(Cuik_CPP* ctx, const char filepath[FILENAME_MAX]) {
     };
 }
 
-CUIK_API TokenStream cuiklex_buffer(const char* filepath, const char* contents) {
-    return get_all_tokens_in_buffer(filepath, (const uint8_t*) contents, NULL);
+CUIK_API TokenStream cuiklex_buffer(const char* filepath, char* contents) {
+    return get_all_tokens_in_buffer(filepath, (uint8_t*) contents, NULL);
 }
 
 static void print_token_stream(TokenStream* s, size_t start, size_t end) {
@@ -228,7 +214,7 @@ static void free_token_stream(TokenStream* s) {
     dyn_array_destroy(s->tokens);
 }
 
-static TokenStream get_all_tokens_in_buffer(const char* filepath, const uint8_t* data, const uint8_t* end) {
+static TokenStream get_all_tokens_in_buffer(const char* filepath, uint8_t* data, uint8_t* end) {
     TokenStream s = { filepath };
 
     CUIK_TIMED_BLOCK("lex: %s", filepath) {
