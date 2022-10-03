@@ -15,6 +15,8 @@ char cuik__include_dir[FILENAME_MAX];
 MicrosoftCraziness_Find_Result cuik__vswhere;
 
 static char* utf16_to_utf8_on_heap(const wchar_t* input) {
+    if (input == NULL) return NULL;
+
     int bytes = WideCharToMultiByte(65001 /* UTF8 */, 0, input, -1, NULL, 0, NULL, NULL);
     if (bytes <= 0) return NULL;
 
