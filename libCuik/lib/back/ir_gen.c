@@ -2027,8 +2027,8 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
             break;
         }
         case STMT_FOR: {
-            TB_Label body = tb_basic_block_create(func);
             TB_Label header = tb_basic_block_create(func);
+            TB_Label body = tb_basic_block_create(func);
             TB_Label exit = tb_basic_block_create(func);
             s->backing.l = exit;
 
@@ -2037,7 +2037,7 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
             // developer of TB :p
             // essentially we can store both the header and exit labels
             // implicitly as one if they're next to each other
-            assert(header == exit - 1);
+            assert(header == exit - 2);
 
             if (s->for_.first) {
                 irgen_stmt(tu, func, s->for_.first);
@@ -2069,7 +2069,7 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
         case STMT_CONTINUE: {
             // this is really hacky but we always store the loop header label one
             // behind the exit label in terms of IDs.
-            tb_inst_goto(func, s->continue_.target->backing.l - 1);
+            tb_inst_goto(func, s->continue_.target->backing.l - 2);
             break;
         }
         case STMT_BREAK: {
