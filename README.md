@@ -15,7 +15,7 @@ The plan is a modern C11 compiler which can mostly work with Clang, GCC, and MSV
 ## How to install?
 Mac & Linux aren't ready yet but i'll be moving forward to those platforms in the upcoming months
 
-You will need [Tup](https://gittup.org/tup/index.html) and if you're on windows also MSVC (i use link.exe for now... sorry, i'll remove the linker dependency soon)
+You will need Git, Python, a C compiler (not msvc but gcc and clang should work fine) and on windows you'll need MSVC (i use link.exe for now... sorry, i'll remove the linker dependency soon)
 
 ```
 git clone https://github.com/RealNeGate/Cuik
