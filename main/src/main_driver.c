@@ -25,6 +25,12 @@ enum {
 };
 #define TIMESTAMP(x) if (args_verbose) mark_timestamp(x)
 
+#ifdef _WIN32
+#define NULL_FILEPATH "NUL"
+#else
+#define NULL_FILEPATH "/dev/null"
+#endif
+
 // compiler arguments
 static DynArray(const char*) include_directories;
 static DynArray(const char*) input_libraries;
@@ -34,6 +40,7 @@ static DynArray(const char*) input_defines;
 static DynArray(TB_Pass) da_passes;
 static const char* output_name;
 static char output_path_no_ext[FILENAME_MAX];
+static bool output_path_null;
 
 static TB_OutputFlavor flavor = TB_FLAVOR_EXECUTABLE;
 
@@ -43,7 +50,6 @@ static bool args_types;
 static bool args_run;
 static bool args_nocrt;
 static bool args_pploc;
-static bool args_assembly;
 static bool args_time;
 static bool args_verbose;
 static bool args_syntax_only;
@@ -95,6 +101,7 @@ static void initialize_opt_passes(void) {
         dyn_array_put(da_passes, tb_opt_dead_block_elim());
         dyn_array_put(da_passes, tb_opt_subexpr_elim());
         dyn_array_put(da_passes, tb_opt_remove_pass_nodes());
+        dyn_array_put(da_passes, tb_opt_compact_dead_regs());
 
         // dyn_array_put(da_passes, tb_opt_inline());
 
@@ -720,23 +727,30 @@ static bool export_output(void) {
         }
 
         char path[FILENAME_MAX];
-        sprintf_s(path, FILENAME_MAX, "%s%s", output_path_no_ext, extension);
+        if (output_path_null) {
+            strcpy(path, NULL_FILEPATH);
+        } else {
+            sprintf_s(path, FILENAME_MAX, "%s%s", output_path_no_ext, extension);
+        }
 
         TIMESTAMP("Export");
         CUIK_TIMED_BLOCK("Export") {
             if (!tb_exporter_write_files(mod, flavor, debug_fmt, 1, &(const char*){ path })) {
                 fprintf(stderr, "error: could not write output. %s\n", path);
-                return false;
-            }
+                return false; }
         }
 
         return true;
     } else {
         char obj_output_path[FILENAME_MAX];
-        sprintf_s(
-            obj_output_path, FILENAME_MAX, "%s%s", output_path_no_ext,
-            target_desc.sys == CUIK_SYSTEM_WINDOWS ? ".obj" : ".o"
-        );
+        if (output_path_null) {
+            strcpy(obj_output_path, NULL_FILEPATH);
+        } else {
+            sprintf_s(
+                obj_output_path, FILENAME_MAX, "%s%s", output_path_no_ext,
+                target_desc.sys == CUIK_SYSTEM_WINDOWS ? ".obj" : ".o"
+            );
+        }
 
         TIMESTAMP("Export object");
         CUIK_TIMED_BLOCK("Export object") {
@@ -747,7 +761,13 @@ static bool export_output(void) {
             }
         }
 
-        if (flavor == TB_FLAVOR_OBJECT) {
+        if (flavor == TB_FLAVOR_ASSEMBLY) {
+            char cmd[2048];
+            snprintf(cmd, 2048, "dumpbin %s /disasm", obj_output_path);
+            return system(cmd) == 0;
+        }
+
+        if (output_path_null || flavor == TB_FLAVOR_OBJECT) {
             return true;
         }
 
@@ -916,6 +936,7 @@ int main(int argc, char** argv) {
             case ARG_RUN: args_run = true; break;
             case ARG_PPLOC: args_pploc = true; break;
             case ARG_AST: args_ast = true; break;
+            case ARG_ASSEMBLY: flavor = TB_FLAVOR_ASSEMBLY; break;
             case ARG_SYNTAX: args_syntax_only = true; break;
             case ARG_VERBOSE: args_verbose = true; break;
             case ARG_THINK: args_think = true; break;
@@ -939,12 +960,9 @@ int main(int argc, char** argv) {
         return EXIT_FAILURE;
     }
 
-    if (args_assembly) {
-        fprintf(stderr, "error: emitting assembly doesn't work yet\n");
-        return EXIT_FAILURE;
-    }
-
-    {
+    if (output_name != NULL && strcmp(output_name, "$nul") == 0) {
+        output_path_null = true;
+    } else {
         const char* filename = output_name ? output_name : input_files[0];
         const char* ext = strrchr(filename, '.');
         size_t len = ext ? (ext - filename) : strlen(filename);

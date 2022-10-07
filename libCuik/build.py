@@ -75,15 +75,13 @@ rule lib
 
 # compile libCuik
 objs = []
+
 for pattern in source_patterns:
 	list = glob.glob(pattern)
 	for f in list:
 		obj = os.path.basename(f).replace('.c', '.o')
 		ninja.write(f"build bin/{obj}: cc {f}\n")
 		objs.append("bin/"+obj)
-
-if os_name == "Windows":
-	list.append("../c11threads/threads_msvc.c")
 
 ninja.write(f"build libcuik{lib_ext}: lib {' '.join(objs)}\n")
 ninja.close()

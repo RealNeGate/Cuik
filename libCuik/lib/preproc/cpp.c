@@ -34,12 +34,13 @@ static void trim_the_shtuffs(Cuik_CPP* restrict c, void* new_top);
 static SourceLocIndex get_source_location(Cuik_CPP* restrict c, TokenStream* restrict in, TokenStream* restrict s, SourceLocIndex parent_loc, SourceLocType loc_type);
 
 static void expand(Cuik_CPP* restrict c, TokenStream* restrict s, TokenStream* restrict in, size_t in_stream_end, bool exit_on_hit_line, SourceLocIndex parent_loc);
-static void expand_ident(Cuik_CPP* restrict c, TokenStream* restrict s, TokenStream* restrict in, SourceLocIndex parent_loc);
+static void expand_ident(Cuik_CPP* restrict c, TokenStream* restrict s, TokenStream* restrict in, SourceLocIndex parent_loc, int depth);
 static void push_scope(Cuik_CPP* restrict ctx, TokenStream* restrict in, bool initial, SourceLocIndex loc);
 static void pop_scope(Cuik_CPP* restrict ctx, TokenStream* restrict in, SourceLocIndex loc);
 
 // if end is NULL, it'll just be null terminated
 static TokenStream get_all_tokens_in_buffer(const char* filepath, uint8_t* data, uint8_t* end);
+static TokenStream lex_line(const char* filepath, uint8_t* data);
 static void free_token_stream(TokenStream* s);
 static void print_token_stream(TokenStream* s, size_t start, size_t end);
 
@@ -82,6 +83,11 @@ static void expect_from_lexer(Lexer* l, char ch) {
     lexer_read(l);
 }
 
+static String get_token_as_string(TokenStream* restrict in) {
+    Token* t = tokens_get(in);
+    return (String){ .length = t->end - t->start, .data = t->start };
+}
+
 // Basically a mini-unity build that takes up just the CPP module
 #include "cpp_symtab.h"
 #include "cpp_expand.h"
@@ -115,11 +121,6 @@ static String get_pp_tokens_until_newline(Cuik_CPP* ctx, TokenStream* s) {
         start -= 1;
     }
     return (String){ .length = end - start, .data = start };
-}
-
-static String get_token_as_string(TokenStream* restrict in) {
-    Token* t = tokens_get(in);
-    return (String){ .length = t->end - t->start, .data = t->start };
 }
 
 CUIK_API const char* cuikpp_get_main_file(TokenStream* tokens) {
@@ -272,6 +273,55 @@ static TokenStream get_all_tokens_in_buffer(const char* filepath, uint8_t* data,
             Token t = { l.token_type, l.hit_line, loc_index, l.token_start, l.token_end };
             dyn_array_put(s.tokens, t);
             l.hit_line = false;
+        }
+
+        // Add EOF token
+        Token t = {0, true, 0, NULL, NULL};
+        dyn_array_put(s.tokens, t);
+
+        // trim up the memory
+        // dyn_array_trim(s.locations);
+        // dyn_array_trim(s.tokens);
+    }
+
+    return s;
+}
+
+static TokenStream lex_line(const char* filepath, uint8_t* data) {
+    TokenStream s = { filepath };
+
+    CUIK_TIMED_BLOCK("lex: %s", filepath) {
+        s.locations = dyn_array_create_with_initial_cap(SourceLoc, 32);
+        s.tokens = dyn_array_create_with_initial_cap(Token, 32);
+
+        Lexer l = { filepath, data, data, 1 };
+        l.line_current = l.start;
+
+        SourceLine* line = arena_alloc(&thread_arena, sizeof(SourceLine), _Alignof(SourceLine));
+        line->filepath = l.filepath;
+        line->line_str = l.line_current;
+        line->parent = 0;
+        line->line = l.current_line;
+
+        for (;;) {
+            lexer_read(&l);
+            if (l.token_type == 0 || l.hit_line) break;
+
+            ptrdiff_t columns = l.token_start - l.line_current;
+            ptrdiff_t length = l.token_end - l.token_start;
+            assert(columns <= UINT16_MAX && length <= UINT16_MAX);
+
+            dyn_array_put_uninit(s.locations, 1);
+            SourceLocIndex loc_index = dyn_array_length(s.locations) - 1;
+            s.locations[loc_index] = (SourceLoc) {
+                .line = line,
+                .columns = columns,
+                .length = length,
+            };
+
+            // insert token
+            Token t = { l.token_type, l.hit_line, loc_index, l.token_start, l.token_end };
+            dyn_array_put(s.tokens, t);
         }
 
         // Add EOF token
@@ -1010,13 +1060,6 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
                 );
                 return CUIKPP_ERROR;
             }
-        } else if (first_token == TOKEN_DOUBLE_HASH) {
-            tokens_next(in);
-
-            assert(dyn_array_length(s->tokens) > 0);
-            Token* last = &s->tokens[dyn_array_length(s->tokens) - 1];
-
-            expand_double_hash(ctx, s, last, in, last->location);
         } else if (first_token == TOKEN_IDENTIFIER) {
             // check if it's actually a macro, if not categorize it if it's a keyword
             SourceLocIndex loc = get_source_location(ctx, in, s, include_loc, SOURCE_LOC_NORMAL);
@@ -1034,7 +1077,7 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
             } else {
                 // SLOW PATH BECAUSE IT NEEDS TO SPAWN POSSIBLY METRIC SHIT LOADS
                 // OF TOKENS AND EXPAND WITH THE AVERAGE C PREPROCESSOR SPOOKIES
-                expand_ident(ctx, s, in, loc);
+                expand_ident(ctx, s, in, loc, 0);
             }
         }
     }

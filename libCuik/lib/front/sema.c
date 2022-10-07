@@ -1564,7 +1564,6 @@ void sema_stmt(TranslationUnit* tu, Stmt* restrict s) {
         }
         case STMT_CASE: {
             while (s->case_.body && s->case_.body->op == STMT_CASE) {
-                sema_stmt(tu, s->case_.body);
                 s = s->case_.body;
             }
 

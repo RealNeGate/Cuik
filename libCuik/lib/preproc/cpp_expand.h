@@ -7,27 +7,18 @@ static Token* get_last_token(TokenStream* restrict s) {
     return &s->tokens[dyn_array_length(s->tokens) - 1];
 }
 
-static bool concat_token(TokenStream* restrict in, Token* last, unsigned char* out, size_t capacity, Token* out_token) {
-    // double hash is in the middle
-    Token* other = &in->tokens[in->current];
-
-    size_t len1 = last->end - last->start;
-    size_t len2 = other->end - other->start;
-    if (len1 + len2 + 1 >= capacity) {
-        fprintf(stderr, "Internal preprocessor error: couldn't concat tokens (too large %zu, limit: %zu)", len1 + len2, capacity - 1);
-        abort();
-    }
-
-    memcpy(out, last->start, len1);
-    memcpy(out + len1, other->start, len2);
-    out[len1 + len2] = '\0';
+static bool concat_token(Cuik_CPP* restrict c, String a, String b, Token* out_token) {
+    unsigned char* out = gimme_the_shtuffs(c, a.length + b.length + 1);
+    memcpy(out, a.data, a.length);
+    memcpy(out + a.length, b.data, b.length);
+    out[a.length + b.length] = '\0';
 
     // generate a new token and see what happens
     Lexer l = { "", out, out, 1 };
     lexer_read(&l);
 
     *out_token = (Token){
-        l.token_type, last->hit_line | other->hit_line, 0, l.token_start, l.token_end
+        l.token_type, false, 0, l.token_start, l.token_end
     };
 
     // check if there's any more tokens
@@ -38,35 +29,6 @@ static bool concat_token(TokenStream* restrict in, Token* last, unsigned char* o
     }
 
     return true;
-}
-
-static void expand_double_hash(Cuik_CPP* restrict c, TokenStream* restrict s, Token* last, TokenStream* restrict in, SourceLocIndex loc) {
-    unsigned char* concat_buffer = gimme_the_shtuffs(c, 256);
-    // report(REPORT_INFO, NULL, s, loc, "CONCAT");
-
-    Token t;
-    if (concat_token(in, last, concat_buffer, 256, &t)) {
-        if (t.type == TOKEN_IDENTIFIER) {
-            if (!is_defined(c, t.start, t.end - t.start)) {
-                *last = (Token){
-                    classify_ident(t.start, t.end - t.start),
-                    t.hit_line, loc, t.start, t.end,
-                };
-            } else {
-                TokenStream temp_tokens = get_all_tokens_in_buffer("<temp>", concat_buffer, NULL);
-
-                // remove top
-                dyn_array_set_length(s->tokens, dyn_array_length(s->tokens) - 1);
-                expand_ident(c, s, &temp_tokens, loc);
-
-                free_token_stream(&temp_tokens);
-            }
-        } else {
-            *last = t;
-        }
-
-        in->current += 1;
-    }
 }
 
 static SourceLoc* try_for_nicer_loc(TokenStream* s, SourceLoc* loc) {
@@ -103,6 +65,7 @@ static size_t match_parenthesis(Cuik_CPP* restrict c, TokenStream* restrict in) 
     return result;
 }
 
+
 // allocates a list of comma separated values (the rules for macro arguments)
 // in the temporary storage
 static String* convert_tokens_to_value_list_in_tls(Cuik_CPP* restrict c, TokenStream* restrict in, size_t end_token_index, int* out_value_count) {
@@ -116,10 +79,10 @@ static String* convert_tokens_to_value_list_in_tls(Cuik_CPP* restrict c, TokenSt
         int paren_depth = 0;
         const unsigned char* start = tokens_get(in)->start;
         const unsigned char* end = start;
-        if (tokens_get(in)->type == TOKEN_STRING_WIDE_DOUBLE_QUOTE || tokens_get(in)->type == TOKEN_STRING_WIDE_SINGLE_QUOTE) {
-            start -= 1;
-        }
 
+        // we're incrementally building up the string in the "the shtuffs"
+        size_t len = 0;
+        unsigned char* str = gimme_the_shtuffs(c, 0);
         while (in->current != end_token_index) {
             TknType t = tokens_get(in)->type;
             if (t == 0) {
@@ -137,15 +100,31 @@ static String* convert_tokens_to_value_list_in_tls(Cuik_CPP* restrict c, TokenSt
                 if (paren_depth == 0) {
                     break;
                 }
+            } else if (t == TOKEN_STRING_WIDE_DOUBLE_QUOTE || t == TOKEN_STRING_WIDE_SINGLE_QUOTE) {
+                gimme_the_shtuffs(c, 1);
+                str[len++] = 'L';
             }
 
+            // append to string
+            String src = string_from_range(tokens_get(in)->start, tokens_get(in)->end);
+            gimme_the_shtuffs(c, src.length + 1);
+
+            memcpy(&str[len], src.data, src.length);
+            str[len + src.length] = ' ';
+            len += src.length + 1;
+
             // advance
-            end = tokens_get(in)->end;
             tokens_next(in);
         }
 
-        values[i].data = start;
-        values[i].length = end - start;
+        // null terminator
+        if (len > 0) {
+            str[len - 1] = 0;
+            len--;
+        }
+
+        values[i].data = str;
+        values[i].length = len;
 
         if (tokens_is(in, ',')) {
             tokens_next(in);
@@ -156,12 +135,207 @@ static String* convert_tokens_to_value_list_in_tls(Cuik_CPP* restrict c, TokenSt
     return values;
 }
 
-static void expand_ident(Cuik_CPP* restrict c, TokenStream* restrict s, TokenStream* restrict in, SourceLocIndex parent_loc) {
+typedef struct {
+    int key_count;
+    String* keys;
+
+    int value_count;
+    String* values;
+
+    bool has_varargs;
+} MacroArgs;
+
+static void parse_params(Cuik_CPP* restrict c, MacroArgs* args, Lexer* restrict param_lex) {
+    args->key_count = 0;
+    args->keys = tls_save();
+
+    lexer_read(param_lex);
+    expect_from_lexer(param_lex, '(');
+
+    while (param_lex->token_type != ')') {
+        if (args->key_count) {
+            expect_from_lexer(param_lex, ',');
+        }
+
+        if (param_lex->token_type == TOKEN_TRIPLE_DOT) {
+            args->has_varargs = true;
+            lexer_read(param_lex);
+            break;
+        } else if (param_lex->token_type == TOKEN_IDENTIFIER) {
+            tls_push(sizeof(String));
+
+            args->keys[args->key_count++] = string_from_range(
+                param_lex->token_start, param_lex->token_end
+            );
+            lexer_read(param_lex);
+        } else {
+            fprintf(stderr, "error %s:%d: expected identifier or triple-dot\n", param_lex->filepath, param_lex->current_line);
+            abort();
+        }
+    }
+
+    expect_from_lexer(param_lex, ')');
+}
+
+static void parse_args(Cuik_CPP* restrict c, MacroArgs* args, TokenStream* restrict in) {
+    size_t paren_end = match_parenthesis(c, in);
+
+    args->values = convert_tokens_to_value_list_in_tls(c, in, paren_end, &args->value_count);
+
+    in->current = paren_end;
+    tokens_next(in);
+}
+
+static ptrdiff_t find_arg(MacroArgs* restrict args, String name) {
+    for (size_t i = 0; i < args->key_count; i++) {
+        if (string_equals(&args->keys[i], &name)) {
+            return i;
+        }
+    }
+
+    return -1;
+}
+
+// parse function macros where def_lex is the lexer for the macro definition
+// TODO(NeGate): redo the error messages here
+static void subst(Cuik_CPP* restrict c, TokenStream* restrict s, String def_str, MacroArgs* restrict args, SourceLocIndex parent_loc, int depth) {
+    TokenStream in = lex_line("<temp>", (unsigned char*) def_str.data);
+
+    while (!tokens_eof(&in)) {
+        if (tokens_is(&in, TOKEN_HASH)) {
+            tokens_next(&in);
+
+            if (!tokens_is(&in, TOKEN_IDENTIFIER)) {
+                generic_error(&in, "expected identifier");
+                abort();
+            }
+
+            // stringify arg
+            ptrdiff_t arg_i = find_arg(args, get_token_as_string(&in));
+            if (arg_i < 0) {
+                generic_error(&in, "cannot stringify unknown argument");
+                abort();
+            }
+
+            // at best we might double the string length from backslashes
+            unsigned char* stringfied = gimme_the_shtuffs(c, (args->values[arg_i].length * 2) + 3);
+            size_t len = 0;
+
+            stringfied[len++] = '"';
+            String str = args->values[arg_i];
+            for (size_t i = 0; i < str.length; i++) {
+                if (str.data[i] == '\\' || str.data[i] == '"' || str.data[i] == '\'') {
+                    stringfied[len++] = '\\';
+                }
+
+                stringfied[len++] = str.data[i];
+            }
+            stringfied[len++] = '"';
+            stringfied[len] = 0;
+
+            Token t = {
+                .type = TOKEN_STRING_WIDE_DOUBLE_QUOTE,
+                .location = get_source_location(c, &in, s, parent_loc, SOURCE_LOC_NORMAL),
+                .start = stringfied,
+                .end = &stringfied[len],
+            };
+            dyn_array_put(s->tokens, t);
+            tokens_next(&in);
+        } else if (tokens_is(&in, TOKEN_DOUBLE_HASH)) {
+            tokens_next(&in);
+
+            Token* last = get_last_token(s);
+            String a = string_from_range(last->start, last->end);
+            String b = get_token_as_string(&in);
+            tokens_next(&in);
+
+            ptrdiff_t b_i = find_arg(args, b);
+            if (b_i >= 0) {
+                b = args->values[b_i];
+            }
+
+            Token t;
+            if (concat_token(c, a, b, &t)) {
+                if (t.type == TOKEN_IDENTIFIER) {
+                    if (!is_defined(c, t.start, t.end - t.start)) {
+                        *last = (Token){
+                            classify_ident(t.start, t.end - t.start),
+                            t.hit_line, last->location, t.start, t.end,
+                        };
+                    } else {
+                        // remove top
+                        dyn_array_set_length(s->tokens, dyn_array_length(s->tokens) - 1);
+                        expand_ident(c, s, &in, parent_loc, depth + 1);
+                    }
+                } else {
+                    *last = t;
+                }
+            }
+        } else if (tokens_is(&in, TOKEN_IDENTIFIER)) {
+            String str = get_token_as_string(&in);
+            SourceLocIndex loc = get_source_location(c, &in, s, parent_loc, SOURCE_LOC_MACRO);
+            size_t old = in.current;
+            (void)old;
+
+            if (str.data[0] == '_' && string_equals_cstr(&str, "__VA_ARGS__")) {
+                size_t key_count = args->key_count, value_count = args->value_count;
+                assert(key_count == value_count && "TODO");
+
+                for (size_t i = key_count; i < value_count; i++) {
+                    // slap a comma between var args
+                    if (i != key_count) {
+                        const unsigned char* str = (const unsigned char*) ",";
+                        Token t = {
+                            .type = TOKEN_STRING_WIDE_DOUBLE_QUOTE,
+                            .location = loc,
+                            .start = str,
+                            .end = str + 1,
+                        };
+                        dyn_array_put(s->tokens, t);
+                    }
+
+                    String def = args->values[i];
+                    TokenStream temp_tokens = get_all_tokens_in_buffer("<temp>", (uint8_t*) def.data, (uint8_t*) &def.data[def.length]);
+                    expand(c, s, &temp_tokens, dyn_array_length(temp_tokens.tokens), false, loc);
+                    free_token_stream(&temp_tokens);
+                }
+            } else {
+                ptrdiff_t arg_i = find_arg(args, str);
+                if (arg_i >= 0) {
+                    // macro arguments must be expanded before they're placed
+                    String def = args->values[arg_i];
+                    TokenStream temp_tokens = get_all_tokens_in_buffer("<temp>", (uint8_t*) def.data, (uint8_t*) &def.data[def.length]);
+                    expand(c, s, &temp_tokens, dyn_array_length(temp_tokens.tokens), false, loc);
+                    free_token_stream(&temp_tokens);
+                } else {
+                    // Normal identifier
+                    Token t = {
+                        classify_ident(str.data, str.length), false, loc,
+                        str.data, &str.data[str.length],
+                    };
+                    dyn_array_put(s->tokens, t);
+                }
+            }
+
+            tokens_next(&in);
+        } else {
+            Token t = *tokens_get(&in);
+            t.location = get_source_location(c, &in, s, parent_loc, SOURCE_LOC_NORMAL);
+            dyn_array_put(s->tokens, t);
+            tokens_next(&in);
+        }
+    }
+
+    free_token_stream(&in);
+}
+
+static void expand_ident(Cuik_CPP* restrict c, TokenStream* restrict s, TokenStream* restrict in, SourceLocIndex parent_loc, int depth) {
     Token* t = tokens_get(in);
     bool hit_line = t->hit_line;
     size_t token_length = t->end - t->start;
     const unsigned char* token_data = t->start;
 
+    assert(tokens_is(in, TOKEN_IDENTIFIER));
     if (tokens_match(in, 8, "__FILE__") || tokens_match(in, 9, "L__FILE__")) {
         SourceLoc* loc = try_for_nicer_loc(s, &s->locations[parent_loc]);
 
@@ -234,49 +408,6 @@ static void expand_ident(Cuik_CPP* restrict c, TokenStream* restrict s, TokenStr
         };
         dyn_array_put(s->tokens, t);
         tokens_next(in);
-    } else if (tokens_match(in, 7, "defined")) {
-        tokens_next(in);
-
-        const unsigned char* start = NULL;
-        const unsigned char* end = NULL;
-
-        // optional parenthesis
-        if (tokens_is(in, '(')) {
-            tokens_next(in);
-
-            if (!tokens_is(in, TOKEN_IDENTIFIER)) {
-                generic_error(in, "expected identifier!");
-            }
-
-            Token* t = tokens_get(in);
-            start = t->start;
-            end = t->end;
-
-            tokens_next(in);
-            expect(in, ')');
-        } else if (tokens_is(in, TOKEN_IDENTIFIER)) {
-            Token* t = tokens_get(in);
-            start = t->start;
-            end = t->end;
-            tokens_next(in);
-        } else {
-            generic_error(in, "expected identifier!");
-        }
-
-        bool found = is_defined(c, start, end - start);
-
-        // we really just allocated a single byte just to store this lmao
-        unsigned char* out = gimme_the_shtuffs(c, 2);
-        out[0] = found ? '1' : '0';
-        out[1] = '\0';
-
-        //printf("Is '%.*s' defined? %s\n", (int)(end-start), start, found?"Yes":"No");
-        Token t = {
-            TOKEN_INTEGER, hit_line,
-            get_source_location(c, in, s, parent_loc, SOURCE_LOC_NORMAL),
-            out, out + 1,
-        };
-        dyn_array_put(s->tokens, t);
     } else {
         size_t def_i;
         if (find_define(c, &def_i, token_data, token_length)) {
@@ -293,31 +424,6 @@ static void expand_ident(Cuik_CPP* restrict c, TokenStream* restrict s, TokenStr
             String def = string_from_range(c->macro_bucket_values_start[def_i], c->macro_bucket_values_end[def_i]);
             const unsigned char* args = c->macro_bucket_keys[def_i] + c->macro_bucket_keys_length[def_i];
 
-            // Some macros immediately alias others so this is supposed to avoid the
-            // heavier costs... but it's broken rn
-            size_t tail_call_hidden = SIZE_MAX;
-            size_t tail_call_defi = SIZE_MAX;
-            if (def.length && *args != '(' && tokens_is(in, '(')) {
-                // expand and append
-                Lexer temp_lex = (Lexer){in->filepath, (unsigned char*) def.data, (unsigned char*) def.data};
-                lexer_read(&temp_lex);
-
-                size_t token_length = temp_lex.token_end - temp_lex.token_start;
-                const unsigned char* token_data = temp_lex.token_start;
-
-                if (def.length != token_length || find_define(c, &def_i, token_data, token_length)) {
-                    def = string_from_range(
-                        c->macro_bucket_values_start[def_i],
-                        c->macro_bucket_values_end[def_i]
-                    );
-
-                    tail_call_hidden = hide_macro(c, def_i);
-                    tail_call_defi = def_i;
-
-                    args = c->macro_bucket_keys[def_i] + c->macro_bucket_keys_length[def_i];
-                }
-            }
-
             // function macro
             if (*args == '(' && tokens_is(in, '(')) {
                 tokens_next(in);
@@ -325,279 +431,44 @@ static void expand_ident(Cuik_CPP* restrict c, TokenStream* restrict s, TokenStr
                 ////////////////////////////////
                 // Parse the arguments
                 ////////////////////////////////
-                int value_count;
-                String* values;
-                #if 1
-                {
-                    size_t paren_end = match_parenthesis(c, in);
-
-                    values = convert_tokens_to_value_list_in_tls(c, in, paren_end, &value_count);
-
-                    in->current = paren_end;
-                    tokens_next(in);
-                }
-                #else
-                {
-                    size_t paren_end = match_parenthesis(c, in);
-
-                    // This expansion is temporary
-                    size_t old_tokens_length = dyn_array_length(s->tokens);
-                    s->current = old_tokens_length;
-
-                    // hide macro then expand
-                    size_t hidden = hide_macro(c, def_i);
-                    expand(c, s, in, paren_end, false, expanded_loc);
-                    unhide_macro(c, def_i, hidden);
-
-                    // Insert a null token at the end
-                    Token t = {0, true, dyn_array_length(s->locations) - 1, NULL, NULL};
-                    dyn_array_put(s->tokens, t);
-
-                    s->current = old_tokens_length;
-                    values = convert_tokens_to_value_list_in_tls(c, s, &value_count);
-
-                    // Restore stuff, note that token streams don't own the tokens
-                    // so the values list is still alive
-                    arrsetlen(s->tokens, old_tokens_length);
-
-                    in->current = paren_end;
-                    tokens_next(in);
-                }
-                #endif
+                MacroArgs arglist = { 0 };
+                parse_args(c, &arglist, in);
 
                 // We dont need to parse this part if it expands into nothing
                 if (def.length) {
-                    // Parse macro function arg names
-                    int key_count = 0;
-                    String* keys = tls_save();
-                    bool has_varargs = false;
+                    Lexer args_lexer = (Lexer){in->filepath, (unsigned char*) args, (unsigned char*) args};
+                    parse_params(c, &arglist, &args_lexer);
 
-                    {
-                        Lexer arg_lex = (Lexer){in->filepath, (unsigned char*) args, (unsigned char*) args};
-                        lexer_read(&arg_lex);
-                        expect_from_lexer(&arg_lex, '(');
-
-                        while (arg_lex.token_type != ')') {
-                            if (key_count) {
-                                expect_from_lexer(&arg_lex, ',');
-                            }
-
-                            if (arg_lex.token_type == TOKEN_TRIPLE_DOT) {
-                                has_varargs = true;
-                                lexer_read(&arg_lex);
-                                break;
-                            } else if (arg_lex.token_type == TOKEN_IDENTIFIER) {
-                                tls_push(sizeof(String));
-
-                                int i = key_count++;
-                                keys[i].data = arg_lex.token_start;
-                                keys[i].length = arg_lex.token_end - arg_lex.token_start;
-
-                                lexer_read(&arg_lex);
-                            } else {
-                                fprintf(stderr, "error %s:%d: expected identifier or triple-dot\n", arg_lex.filepath, arg_lex.current_line);
-                                abort();
-                            }
-                        }
-
-                        expect_from_lexer(&arg_lex, ')');
+                    /*printf("FUNCTION MACRO: %.*s    %.*s\n", (int)token_length, token_data, (int)def.length, def.data);
+                    for (size_t i = 0; i < arglist.value_count; i++) {
+                        printf("  ['%.*s'] = '%.*s'\n", (int) arglist.keys[i].length, arglist.keys[i].data, (int) arglist.values[i].length, arglist.values[i].data);
                     }
+                    printf("\n");*/
 
-                    ////////////////////////////////
-                    // Stream over the text hoping
-                    // to replace some identifiers
-                    // then expand the result one
-                    // more time
-                    ////////////////////////////////
-                    unsigned char* temp_expansion_start = gimme_the_shtuffs(c, 4096);
-                    unsigned char* temp_expansion = temp_expansion_start;
+                    // macro hide set
+                    size_t hidden = hide_macro(c, def_i);
+                    // at the bottom layer we create a temporary token stream and then expand from
+                    // there to the final token stream
+                    TokenStream scratch = { 0 };
+                    scratch.locations = dyn_array_create_with_initial_cap(SourceLoc, 32);
+                    scratch.tokens = dyn_array_create_with_initial_cap(Token, 32);
 
-                    Lexer def_lex = (Lexer){in->filepath, (unsigned char*) def.data, (unsigned char*) def.data, line_of_expansion};
-                    lexer_read(&def_lex);
+                    subst(c, &scratch, def, &arglist, parent_loc, depth + 1);
 
-                    // set when a # happens, we expect a macro parameter afterwards
-                    bool as_string = false;
-                    while (!def_lex.hit_line) {
-                        // shadowing...
-                        size_t token_length = def_lex.token_end - def_lex.token_start;
-                        const unsigned char* token_data = def_lex.token_start;
+                    Token t = {0, true, dyn_array_length(s->locations) - 1, NULL, NULL};
+                    dyn_array_put(scratch.tokens, t);
 
-                        if (def_lex.token_type == TOKEN_HASH) {
-                            // TODO(NeGate): Error message
-                            if (as_string) abort();
+                    expand(c, s, &scratch, dyn_array_length(scratch.tokens), false, parent_loc);
 
-                            as_string = true;
-                            lexer_read(&def_lex);
-                            continue;
-                        }
-
-                        if (def_lex.token_type == TOKEN_COMMA) {
-                            // we case our idea was dumb :p
-                            unsigned char* fallback = temp_expansion;
-
-                            *temp_expansion++ = ',';
-                            *temp_expansion++ = ' ';
-
-                            lexer_read(&def_lex);
-
-                            if (has_varargs && key_count == value_count) {
-                                Lexer old = def_lex;
-
-                                if (def_lex.token_type == TOKEN_DOUBLE_HASH) {
-                                    lexer_read(&def_lex);
-
-                                    if (lexer_match(&def_lex, sizeof("__VA_ARGS__")-1, "__VA_ARGS__")) {
-                                        // we remove the comma since there's no varargs to chew
-                                        temp_expansion = fallback;
-                                    } else {
-                                        // sad boy hours... revert
-                                        def_lex = old;
-                                    }
-                                } else if (lexer_match(&def_lex, sizeof("__VA_ARGS__")-1, "__VA_ARGS__")) {
-                                    // we remove the comma since there's no varargs to chew
-                                    temp_expansion = fallback;
-                                }
-                            }
-
-                            continue;
-                        } else if (def_lex.token_type != TOKEN_IDENTIFIER) {
-                            // TODO(NeGate): Error message
-                            if (as_string) abort();
-
-                            if (def_lex.token_type == TOKEN_STRING_WIDE_DOUBLE_QUOTE || def_lex.token_type == TOKEN_STRING_WIDE_SINGLE_QUOTE) {
-                                *temp_expansion++ = 'L';
-                            }
-
-                            memcpy(temp_expansion, token_data, token_length);
-                            temp_expansion += token_length;
-                            *temp_expansion++ = ' ';
-
-                            lexer_read(&def_lex);
-                            continue;
-                        }
-
-                        if (has_varargs &&
-                            token_length == sizeof("__VA_ARGS__") - 1 &&
-                            memcmp(token_data, "__VA_ARGS__", sizeof("__VA_ARGS__") - 1) == 0) {
-                            *temp_expansion++ = ' ';
-
-                            // Just slap all the arguments that are after the 'key_count'
-                            if (key_count != value_count) {
-                                for (size_t i = key_count; i < value_count; i++) {
-                                    // slap a comma between var args
-                                    if (i != key_count) {
-                                        *temp_expansion++ = ',';
-                                        *temp_expansion++ = ' ';
-                                    }
-
-                                    String v = values[i];
-                                    for (size_t j = 0; j < v.length; j++) {
-                                        if (v.data[j] == '\r' || v.data[j] == '\n') {
-                                            *temp_expansion++ = ' ';
-                                        } else {
-                                            *temp_expansion++ = v.data[j];
-                                        }
-                                    }
-                                    *temp_expansion++ = ' ';
-                                }
-                            } else {
-                                // walk back any spaces to find a comma
-                                // if we find one, we should delete it
-                                unsigned char* p = temp_expansion - 1;
-                                while (p != temp_expansion_start) {
-                                    if (*p == ',') {
-                                        *p = ' ';
-                                        break;
-                                    } else if (*p != ' ')
-                                        break;
-
-                                    p--;
-                                }
-                            }
-                        } else {
-                            int index = -1;
-                            for (size_t i = 0; i < key_count; i++) {
-                                if (token_length == keys[i].length &&
-                                    memcmp(keys[i].data, token_data, token_length) == 0) {
-                                    index = i;
-                                    break;
-                                }
-                            }
-
-                            if (index >= 0) {
-                                const unsigned char* start = values[index].data;
-                                size_t count = values[index].length;
-
-                                // Removes any funky characters like " into \"
-                                // when stringifying
-                                if (as_string) {
-                                    *temp_expansion++ = '\"';
-                                    for (size_t i = 0; i < count; i++) {
-                                        if (start[i] == '\r' || start[i] == '\n') {
-                                            *temp_expansion++ = ' ';
-                                        } else if (start[i] == '\"' && as_string) {
-                                            if (i == 0 || (i > 0 && start[i - 1] != '\\')) {
-                                                *temp_expansion++ = '\\';
-                                                *temp_expansion++ = '\"';
-                                            }
-                                        } else {
-                                            *temp_expansion++ = start[i];
-                                        }
-                                    }
-                                    *temp_expansion++ = '\"';
-                                    *temp_expansion++ = ' ';
-                                } else {
-                                    for (size_t i = 0; i < count; i++) {
-                                        if (start[i] == '\r' || start[i] == '\n') {
-                                            *temp_expansion++ = ' ';
-                                        } else {
-                                            *temp_expansion++ = start[i];
-                                        }
-                                    }
-                                    *temp_expansion++ = ' ';
-                                }
-
-                                as_string = false;
-                            } else {
-                                // TODO(NeGate): Error message
-                                if (as_string) *temp_expansion++ = '#';
-
-                                for (size_t i = 0; i < token_length; i++) {
-                                    if (token_data[i] == '\r' || token_data[i] == '\n') {
-                                        *temp_expansion++ = ' ';
-                                    } else {
-                                        *temp_expansion++ = token_data[i];
-                                    }
-                                }
-                                *temp_expansion++ = ' ';
-                            }
-                        }
-
-                        lexer_read(&def_lex);
-                    }
-
-                    *temp_expansion++ = '\0';
-                    trim_the_shtuffs(c, temp_expansion);
-
-                    if (temp_expansion_start != temp_expansion) {
-                        // expand and append
-                        *temp_expansion++ = '\0';
-                        TokenStream temp_tokens = get_all_tokens_in_buffer("<temp>", temp_expansion_start, NULL);
-                        size_t old = dyn_array_length(s->tokens);
-
-                        // macro hide set
-                        size_t hidden = hide_macro(c, def_i);
-                        expand(c, s, &temp_tokens, dyn_array_length(temp_tokens.tokens), true, expanded_loc);
-                        unhide_macro(c, def_i, hidden);
-
-                        free_token_stream(&temp_tokens);
-                    }
+                    free_token_stream(&scratch);
+                    unhide_macro(c, def_i, hidden);
                 }
 
                 // it's a stack and keys is after values so it'll get popped too
                 // tls_restore(keys);
-                tls_restore(values);
-            } else if (def.length) {
+                tls_restore(arglist.values);
+                return;
+            } else if (def.length > 0) {
                 // expand and append
                 if (*args == '(' && !tokens_is(in, '(')) {
                     Token t = {
@@ -607,7 +478,7 @@ static void expand_ident(Cuik_CPP* restrict c, TokenStream* restrict s, TokenStr
 
                     dyn_array_put(s->tokens, t);
                 } else {
-                    TokenStream temp_tokens = get_all_tokens_in_buffer("<temp>", (uint8_t*) def.data, (uint8_t*) &def.data[def.length]);
+                    TokenStream temp_tokens = get_all_tokens_in_buffer("<temp>", (unsigned char*) def.data, (unsigned char*) &def.data[def.length]);
 
                     size_t hidden = hide_macro(c, def_i);
                     expand(c, s, &temp_tokens, dyn_array_length(temp_tokens.tokens), true, expanded_loc);
@@ -616,14 +487,8 @@ static void expand_ident(Cuik_CPP* restrict c, TokenStream* restrict s, TokenStr
                     free_token_stream(&temp_tokens);
                 }
             }
-
-            if (tail_call_hidden != SIZE_MAX) {
-                unhide_macro(c, tail_call_defi, tail_call_hidden);
-            }
         } else {
             // Normal identifier
-            assert(tokens_is(in, TOKEN_IDENTIFIER));
-
             Token t = {
                 classify_ident(token_data, token_length), hit_line,
                 get_source_location(c, in, s, parent_loc, SOURCE_LOC_NORMAL),
@@ -648,20 +513,14 @@ static void expand(Cuik_CPP* restrict c, TokenStream* restrict s, TokenStream* r
             depth++;
         }
 
-        if (tokens_is(in, TOKEN_DOUBLE_HASH)) {
-            SourceLocIndex loc = get_source_location(c, in, s, parent_loc, SOURCE_LOC_NORMAL);
-            tokens_next(in);
-
-            Token* last = get_last_token(s);
-            expand_double_hash(c, s, last, in, loc);
-        } else if (!tokens_is(in, TOKEN_IDENTIFIER)) {
+        if (!tokens_is(in, TOKEN_IDENTIFIER)) {
             Token t = *tokens_get(in);
             t.location = get_source_location(c, in, s, parent_loc, SOURCE_LOC_NORMAL);
 
             dyn_array_put(s->tokens, t);
             tokens_next(in);
         } else {
-            expand_ident(c, s, in, parent_loc);
+            expand_ident(c, s, in, parent_loc, 1);
         }
 
         if (tokens_is(in, ')')) {

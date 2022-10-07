@@ -69,6 +69,10 @@ void tls_restore(void* p);
 void* cuik__valloc(size_t sz);
 void cuik__vfree(void* p, size_t sz);
 
+inline static bool memeq(const void* a, size_t al, const void* b, size_t bl) {
+    return al == bl && memcmp(a, b, al) == 0;
+}
+
 inline static bool cstr_equals(const char* str1, const char* str2) {
     return strcmp(str1, str2) == 0;
 }

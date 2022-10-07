@@ -18,6 +18,7 @@ typedef enum ArgType {
     ARG_O0,
     ARG_O1,
     ARG_OUTPUT,
+    ARG_ASSEMBLY,
     ARG_OBJECT,
     ARG_DEBUG,
     ARG_NOLIBC,
@@ -62,6 +63,7 @@ static const ArgDesc arg_descs[] = {
     { ARG_EMITIR,  "emit-ir",  NULL,      false, "print IR into stdout" },
     { ARG_OUTPUT,  "o",        NULL,      true,  "set the output filepath" },
     { ARG_OBJECT,  "c",        NULL,      false, "output object file" },
+    { ARG_ASSEMBLY,"S",        NULL,      false, "output assembly to stdout (not ready)" },
     { ARG_DEBUG,   "g",        NULL,      false, "compile with debug information" },
     // linker
     { ARG_NOLIBC,  "nostdlib", NULL,      false, "don't include and link against the default CRT" },
@@ -132,13 +134,13 @@ static Arg get_cli_arg(int* index, int argc, char** argv) {
                 const char* short_name = arg_descs[j].alias;
                 if (short_name == NULL) continue;
 
-                size_t short_name_len = strlen(short_name) + 1;
+                size_t short_name_len = strlen(short_name);
                 if (strcmp(opt, short_name) == 0) {
                     if (!arg_descs[j].has_arg) {
                         return (Arg){ arg_descs[j].type, arg_is_set };
                     } else {
-                        if (argv[i][short_name_len] == 0) {
-                            return (Arg){ arg_descs[j].type, &argv[i][short_name_len + 1] };
+                        if (opt[short_name_len] != 0) {
+                            return (Arg){ arg_descs[j].type, &opt[short_name_len] };
                         } else if ((i + 1) >= argc) {
                             fprintf(stderr, "error: no argument after -%s\n", short_name);
                             exit(1);

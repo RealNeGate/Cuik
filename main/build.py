@@ -4,7 +4,7 @@ import platform
 import subprocess
 import argparse
 
-parser = argparse.ArgumentParser(description='Compiles TB')
+parser = argparse.ArgumentParser(description='Compiles libCuik')
 parser.add_argument('--opt', action='store_true', help='runs optimize on compiled source')
 
 args = parser.parse_args()

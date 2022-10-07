@@ -42,10 +42,38 @@ static intmax_t eval_l0(Cuik_CPP* restrict c, TokenStream* restrict s) {
 
         tokens_next(s);
     } else if (t->type == TOKEN_IDENTIFIER) {
-        assert(!is_defined(c, t->start, t->end - t->start));
+        if (strncmp((const char*) t->start, "defined", t->end - t->start) == 0) {
+            tokens_next(s);
 
-        val = 0;
-        tokens_next(s);
+            String str = { 0 };
+            if (tokens_is(s, '(')) {
+                tokens_next(s);
+
+                if (!tokens_is(s, TOKEN_IDENTIFIER)) {
+                    generic_error(s, "expected identifier!");
+                }
+
+                Token* t = tokens_get(s);
+                str = string_from_range(t->start, t->end);
+
+                tokens_next(s);
+                expect(s, ')');
+            } else if (tokens_is(s, TOKEN_IDENTIFIER)) {
+                Token* t = tokens_get(s);
+                str = string_from_range(t->start, t->end);
+                tokens_next(s);
+            } else {
+                generic_error(s, "expected identifier for 'defined'!");
+            }
+
+            val = is_defined(c, str.data, str.length) ? 1 : 0;
+        } else {
+            // generic_error(s, "unexpected identifier");
+
+            assert(!is_defined(c, t->start, t->end - t->start));
+            val = 0;
+            tokens_next(s);
+        }
     } else if (t->type == TOKEN_STRING_SINGLE_QUOTE) {
         int ch;
         ptrdiff_t distance = parse_char(t->end - t->start, (const char*)t->start, &ch);

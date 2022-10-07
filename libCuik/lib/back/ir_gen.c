@@ -2086,8 +2086,6 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
             assert(s->backing.l);
             while (s->case_.body && s->case_.body->op == STMT_CASE) {
                 fallthrough_label(func, s->backing.l);
-                irgen_stmt(tu, func, s->case_.body);
-
                 s = s->case_.body;
             }
 
