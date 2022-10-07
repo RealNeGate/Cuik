@@ -1,13 +1,77 @@
 static intmax_t eval_l13(Cuik_CPP* restrict c, TokenStream* restrict s);
 
+// same as expand(...) except that it converts 'defined(MACRO)' and 'defined MACRO' into 0 or 1
+static void expand_with_defined(Cuik_CPP* restrict c, TokenStream* restrict s, TokenStream* restrict in, SourceLocIndex parent_loc) {
+    int depth = 0;
+
+    while (!tokens_is(in, 0) && !tokens_hit_line(in)) {
+        if (tokens_is(in, TOKEN_IDENTIFIER)) {
+            Token* t = tokens_get(in);
+            if (strncmp((const char*) t->start, "defined", t->end - t->start) == 0) {
+                tokens_next(in);
+
+                String str = { 0 };
+                if (tokens_is(in, '(')) {
+                    tokens_next(in);
+
+                    if (!tokens_is(in, TOKEN_IDENTIFIER)) {
+                        generic_error(in, "expected identifier!");
+                    }
+
+                    Token* t = tokens_get(in);
+                    str = string_from_range(t->start, t->end);
+
+                    tokens_next(in);
+                    expect(in, ')');
+                } else if (tokens_is(in, TOKEN_IDENTIFIER)) {
+                    Token* t = tokens_get(in);
+                    str = string_from_range(t->start, t->end);
+                    tokens_next(in);
+                } else {
+                    generic_error(in, "expected identifier for 'defined'!");
+                }
+
+                bool found = is_defined(c, str.data, str.length);
+
+                // we really just allocated like two bytes just to store this lmao
+                unsigned char* out = gimme_the_shtuffs(c, 2);
+                out[0] = found ? '1' : '0';
+                out[1] = '\0';
+
+                Token t = {
+                    TOKEN_INTEGER, false,
+                    get_source_location(c, in, s, parent_loc, SOURCE_LOC_NORMAL),
+                    out, out + 1,
+                };
+                dyn_array_put(s->tokens, t);
+                continue;
+            }
+        }
+
+        Token t = *tokens_get(in);
+        t.location = get_source_location(c, in, s, parent_loc, SOURCE_LOC_NORMAL);
+        dyn_array_put(s->tokens, t);
+        tokens_next(in);
+    }
+}
+
 static intmax_t eval(Cuik_CPP* restrict c, TokenStream* restrict s, TokenStream* restrict in, SourceLocIndex parent_loc) {
     // Expand
     if (in) {
-        // This type of expansion is temporary
         size_t old_tokens_length = dyn_array_length(s->tokens);
         s->current = old_tokens_length;
+        {
+            TokenStream scratch = { 0 };
+            scratch.locations = dyn_array_create_with_initial_cap(SourceLoc, 32);
+            scratch.tokens = dyn_array_create_with_initial_cap(Token, 32);
 
-        expand(c, s, in, dyn_array_length(in->tokens), true, parent_loc);
+            // We need to get rid of the defined(MACRO) and defined MACRO before we
+            // do real expansion or else it'll give us incorrect results
+            expand_with_defined(c, &scratch, in, parent_loc);
+            // This type of expansion is temporary
+            expand(c, s, &scratch, dyn_array_length(scratch.tokens), true, parent_loc);
+            free_token_stream(&scratch);
+        }
         assert(s->current != dyn_array_length(s->tokens) && "Expected the macro expansion to add something");
 
         // Insert a null token at the end
@@ -42,38 +106,9 @@ static intmax_t eval_l0(Cuik_CPP* restrict c, TokenStream* restrict s) {
 
         tokens_next(s);
     } else if (t->type == TOKEN_IDENTIFIER) {
-        if (strncmp((const char*) t->start, "defined", t->end - t->start) == 0) {
-            tokens_next(s);
-
-            String str = { 0 };
-            if (tokens_is(s, '(')) {
-                tokens_next(s);
-
-                if (!tokens_is(s, TOKEN_IDENTIFIER)) {
-                    generic_error(s, "expected identifier!");
-                }
-
-                Token* t = tokens_get(s);
-                str = string_from_range(t->start, t->end);
-
-                tokens_next(s);
-                expect(s, ')');
-            } else if (tokens_is(s, TOKEN_IDENTIFIER)) {
-                Token* t = tokens_get(s);
-                str = string_from_range(t->start, t->end);
-                tokens_next(s);
-            } else {
-                generic_error(s, "expected identifier for 'defined'!");
-            }
-
-            val = is_defined(c, str.data, str.length) ? 1 : 0;
-        } else {
-            // generic_error(s, "unexpected identifier");
-
-            assert(!is_defined(c, t->start, t->end - t->start));
-            val = 0;
-            tokens_next(s);
-        }
+        assert(!is_defined(c, t->start, t->end - t->start));
+        val = 0;
+        tokens_next(s);
     } else if (t->type == TOKEN_STRING_SINGLE_QUOTE) {
         int ch;
         ptrdiff_t distance = parse_char(t->end - t->start, (const char*)t->start, &ch);
@@ -153,27 +188,16 @@ static intmax_t eval_l5(Cuik_CPP* restrict c, TokenStream* restrict s) {
 static intmax_t eval_l6(Cuik_CPP* restrict c, TokenStream* restrict s) {
     intmax_t left = eval_l5(c, s);
 
-    while (tokens_get(s)->type == '>' ||
-        tokens_get(s)->type == '<' ||
-        tokens_get(s)->type == TOKEN_GREATER_EQUAL ||
-        tokens_get(s)->type == TOKEN_LESS_EQUAL) {
+    while (tokens_get(s)->type == '>' || tokens_get(s)->type == '<' || tokens_get(s)->type == TOKEN_GREATER_EQUAL || tokens_get(s)->type == TOKEN_LESS_EQUAL) {
         int t = tokens_get(s)->type;
         tokens_next(s);
 
         intmax_t right = eval_l5(c, s);
         switch (t) {
-            case '>':
-            left = left > right;
-            break;
-            case '<':
-            left = left < right;
-            break;
-            case TOKEN_GREATER_EQUAL:
-            left = left >= right;
-            break;
-            case TOKEN_LESS_EQUAL:
-            left = left <= right;
-            break;
+            case '>': left = left > right; break;
+            case '<': left = left < right; break;
+            case TOKEN_GREATER_EQUAL: left = left >= right; break;
+            case TOKEN_LESS_EQUAL: left = left <= right; break;
         }
     }
 

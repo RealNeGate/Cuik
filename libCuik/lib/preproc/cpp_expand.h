@@ -210,34 +210,34 @@ static void subst(Cuik_CPP* restrict c, TokenStream* restrict s, String def_str,
                 abort();
             }
 
-            // stringify arg
+            // stringize arg
             ptrdiff_t arg_i = find_arg(args, get_token_as_string(&in));
             if (arg_i < 0) {
-                generic_error(&in, "cannot stringify unknown argument");
+                generic_error(&in, "cannot stringize unknown argument");
                 abort();
             }
 
             // at best we might double the string length from backslashes
-            unsigned char* stringfied = gimme_the_shtuffs(c, (args->values[arg_i].length * 2) + 3);
+            unsigned char* stringized = gimme_the_shtuffs(c, (args->values[arg_i].length * 2) + 3);
             size_t len = 0;
 
-            stringfied[len++] = '"';
+            stringized[len++] = '"';
             String str = args->values[arg_i];
             for (size_t i = 0; i < str.length; i++) {
                 if (str.data[i] == '\\' || str.data[i] == '"' || str.data[i] == '\'') {
-                    stringfied[len++] = '\\';
+                    stringized[len++] = '\\';
                 }
 
-                stringfied[len++] = str.data[i];
+                stringized[len++] = str.data[i];
             }
-            stringfied[len++] = '"';
-            stringfied[len] = 0;
+            stringized[len++] = '"';
+            stringized[len] = 0;
 
             Token t = {
-                .type = TOKEN_STRING_WIDE_DOUBLE_QUOTE,
+                .type = TOKEN_STRING_DOUBLE_QUOTE,
                 .location = get_source_location(c, &in, s, parent_loc, SOURCE_LOC_NORMAL),
-                .start = stringfied,
-                .end = &stringfied[len],
+                .start = stringized,
+                .end = &stringized[len],
             };
             dyn_array_put(s->tokens, t);
             tokens_next(&in);
@@ -257,14 +257,21 @@ static void subst(Cuik_CPP* restrict c, TokenStream* restrict s, String def_str,
             Token t;
             if (concat_token(c, a, b, &t)) {
                 if (t.type == TOKEN_IDENTIFIER) {
+                    t.type = classify_ident(t.start, t.end - t.start);
+                    t.location = last->location;
+
                     if (!is_defined(c, t.start, t.end - t.start)) {
-                        *last = (Token){
-                            classify_ident(t.start, t.end - t.start),
-                            t.hit_line, last->location, t.start, t.end,
-                        };
+                        *last = t;
                     } else {
                         // remove top
                         dyn_array_set_length(s->tokens, dyn_array_length(s->tokens) - 1);
+
+                        // just gonna replace the old tokens with the concat token
+                        // at a point where it looks weird if you stare in a debugger
+                        // but the code itself doesn't care.
+                        in.current -= 1;
+                        in.tokens[in.current] = t;
+
                         expand_ident(c, s, &in, parent_loc, depth + 1);
                     }
                 } else {
