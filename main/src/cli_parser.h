@@ -135,7 +135,7 @@ static Arg get_cli_arg(int* index, int argc, char** argv) {
                 if (short_name == NULL) continue;
 
                 size_t short_name_len = strlen(short_name);
-                if (strcmp(opt, short_name) == 0) {
+                if (strncmp(opt, short_name, short_name_len) == 0) {
                     if (!arg_descs[j].has_arg) {
                         return (Arg){ arg_descs[j].type, arg_is_set };
                     } else {

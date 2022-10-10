@@ -37,7 +37,7 @@ typedef struct {
     Cuik_Type* type;
     Atom name;
 
-    SourceLocIndex loc;
+    SourceLoc loc;
     int align;
     int offset;
 
@@ -84,7 +84,7 @@ struct Cuik_Type {
     Cuik_TypeKind kind;
     int size;  // sizeof
     int align; // _Alignof
-    SourceLocIndex loc;
+    SourceLoc loc;
 
     Cuik_Type* based;
     // used by cycle checking
@@ -185,7 +185,7 @@ typedef struct InitNode {
     // are expected to find an expression
     // here.
     int kids_count;
-    SourceLocIndex loc;
+    SourceLoc loc;
 
     // Fully resolved members with a kid_count of 0 will have
     // a proper offset and type after the type checking
@@ -328,8 +328,7 @@ typedef enum ExprOp {
 struct Stmt {
     struct {
         StmtOp op;
-        SourceLocIndex loc;
-        SourceLocIndex end_loc;
+        SourceLoc loc;
         Cuik_Attribute* attr_list;
 
         // Used by the backend for backend-y things
@@ -436,9 +435,7 @@ struct Expr {
     int has_parens : 1;
     int has_visited : 1;
 
-    SourceLocIndex start_loc;
-    SourceLocIndex end_loc;
-
+    SourceRange loc;
     Cuik_Type* type;
 
     // this is the type it'll be desugared into

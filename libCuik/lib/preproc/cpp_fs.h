@@ -74,39 +74,18 @@ static LoadResult get_file(const char* path) {
 // cache is NULLable and if so it won't use it
 CUIK_API bool cuikpp_default_packet_handler(Cuik_CPP* ctx, Cuikpp_Packet* packet, Cuik_FileCache* cache) {
     if (packet->tag == CUIKPP_PACKET_GET_FILE) {
-        if (packet->file.is_primary) {
-            // we don't cache the main file
-            LoadResult file = get_file(packet->file.input_path);
+        // we don't cache the main file
+        LoadResult file = get_file(packet->file.input_path);
+        cuiklex_canonicalize(file.length, file.data);
 
-            if (file.found) {
-                packet->file.tokens = cuiklex_buffer(packet->file.input_path, file.data);
-
-                // the preprocessor is allowed to kill it once it's done
-                packet->file.tokens.is_owned = true;
-                return true;
-            }
-        } else {
-            TokenStream tokens;
-            if (cache && cuik_fscache_lookup(cache, packet->file.input_path, &tokens)) {
-                packet->file.tokens = tokens;
-                return true;
-            } else {
-                LoadResult file = get_file(packet->file.input_path);
-                if (file.found) {
-                    packet->file.tokens = cuiklex_buffer(packet->file.input_path, file.data);
-
-                    if (cache) cuik_fscache_put(cache, packet->file.input_path, &packet->file.tokens);
-                    return true;
-                }
-            }
-        }
-
-        return false;
+        packet->file.length = file.length;
+        packet->file.data = file.data;
+        return true;
     } else if (packet->tag == CUIKPP_PACKET_QUERY_FILE) {
-        if (cache && cuik_fscache_query(cache, packet->file.input_path)) {
+        /*if (cache && cuik_fscache_query(cache, packet->file.input_path)) {
             packet->query.found = true;
             return true;
-        }
+        }*/
 
         #ifdef _WIN32
         packet->query.found = (GetFileAttributesA(packet->query.input_path) != INVALID_FILE_ATTRIBUTES);

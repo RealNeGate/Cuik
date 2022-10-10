@@ -1,13 +1,13 @@
 
-CUIK_API void cuikpp_define_empty(Cuik_CPP* ctx, const char* key) {
-    cuikpp_define_empty_slice(ctx, strlen(key), key);
+CUIK_API void cuikpp_define_empty_cstr(Cuik_CPP* ctx, const char* key) {
+    cuikpp_define_empty(ctx, strlen(key), key);
 }
 
-CUIK_API void cuikpp_define(Cuik_CPP* ctx, const char* key, const char* val) {
-    cuikpp_define_slice(ctx, strlen(key), key, strlen(val), val);
+CUIK_API void cuikpp_define_cstr(Cuik_CPP* ctx, const char* key, const char* val) {
+    cuikpp_define(ctx, strlen(key), key, strlen(val), val);
 }
 
-CUIK_API void cuikpp_define_empty_slice(Cuik_CPP* ctx, size_t keylen, const char* key) {
+CUIK_API void cuikpp_define_empty(Cuik_CPP* ctx, size_t keylen, const char* key) {
     // TODO(NeGate): Work around to get any of the macro bucket
     // keys to be at 16bytes aligned
     size_t pad_len = (keylen + 15) & ~15;
@@ -29,10 +29,10 @@ CUIK_API void cuikpp_define_empty_slice(Cuik_CPP* ctx, size_t keylen, const char
 
     ctx->macro_bucket_values_start[e] = NULL;
     ctx->macro_bucket_values_end[e] = NULL;
-    ctx->macro_bucket_source_locs[e] = 0;
+    ctx->macro_bucket_source_locs[e] = (SourceLoc){ 0 };
 }
 
-CUIK_API void cuikpp_define_slice(Cuik_CPP* ctx, size_t keylen, const char* key, size_t vallen, const char* value) {
+CUIK_API void cuikpp_define(Cuik_CPP* ctx, size_t keylen, const char* key, size_t vallen, const char* value) {
     // TODO(NeGate): Work around to get any of the macro bucket
     // keys to be at 16bytes aligned
     size_t pad_len = (keylen + 15) & ~15;
@@ -62,8 +62,42 @@ CUIK_API void cuikpp_define_slice(Cuik_CPP* ctx, size_t keylen, const char* key,
 
         ctx->macro_bucket_values_start[e] = (const unsigned char*)newvalue;
         ctx->macro_bucket_values_end[e] = (const unsigned char*)newvalue + vallen;
-        ctx->macro_bucket_source_locs[e] = 0;
+        ctx->macro_bucket_source_locs[e] = (SourceLoc){ 0 };
     }
+}
+
+CUIK_API bool cuikpp_undef_cstr(Cuik_CPP* ctx, const char* key) {
+    return cuikpp_undef(ctx, strlen(key), key);
+}
+
+CUIK_API bool cuikpp_undef(Cuik_CPP* ctx, size_t keylen, const char* key) {
+    // Hash name
+    uint64_t slot = hash_ident(key, keylen);
+    size_t base = slot * SLOTS_PER_MACRO_BUCKET;
+    size_t count = ctx->macro_bucket_count[slot];
+
+    // TODO(NeGate): We might wanna invest into a faster data structure.
+    for (size_t i = 0; i < count; i++) {
+        size_t e = base + i;
+
+        if (ctx->macro_bucket_keys_length[e] == keylen && memcmp(ctx->macro_bucket_keys[e], key, keylen) == 0) {
+            // remove swap
+            size_t last = base + (count - 1);
+
+            if (i != last) {
+                ctx->macro_bucket_keys_length[e] = ctx->macro_bucket_keys_length[last];
+                ctx->macro_bucket_keys[e] = ctx->macro_bucket_keys[last];
+                ctx->macro_bucket_values_start[e] = ctx->macro_bucket_values_start[last];
+                ctx->macro_bucket_values_end[e] = ctx->macro_bucket_values_end[last];
+                ctx->macro_bucket_source_locs[e] = ctx->macro_bucket_source_locs[last];
+            }
+
+            ctx->macro_bucket_count[slot] -= 1;
+            return true;
+        }
+    }
+
+    return false;
 }
 
 // murmur3 32-bit without UB unaligned accesses

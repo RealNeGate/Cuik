@@ -135,40 +135,6 @@ TknType classify_ident(const unsigned char* restrict str, size_t len) {
     #endif
 }
 
-static int line_counter(size_t len, const unsigned char* str) {
-    #if 1
-    int line_count = 0;
-    for (size_t i = 0; i < len; i++) {
-        line_count += (str[i] == '\n');
-    }
-
-    return line_count;
-    #else
-    // TODO(NeGate): Test this out a bit before using it
-    static unsigned char overhang_mask[32] = {
-        255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
-    };
-
-    size_t line_count = 0;
-    size_t chunk_count = len / 16;
-    while (chunk_count) {
-        __m128i str128 = _mm_loadu_si128((__m128i*)str);
-        str += 16;
-
-        unsigned int lf_mask = _mm_movemask_epi8(_mm_cmpeq_epi8(str128, _mm_set1_epi8('\n')));
-        line_count += __builtin_popcount(lf_mask);
-    }
-
-    size_t overhang = len % 16;
-    __m128 str128 = _mm_and_si128(str, _mm_loadu_si128((__m128i*)&overhang_mask[16 - overhang]));
-    unsigned int lf_mask = _mm_movemask_epi8(_mm_cmpeq_epi8(str128, _mm_set1_epi8('\n')));
-    line_count += __builtin_popcount(lf_mask);
-
-    return line_count;
-    #endif
-}
-
 static unsigned char* slow_identifier_lexing(Lexer* restrict l, unsigned char* current, unsigned char* start) {
     // you don't wanna be here... basically if we spot \U in the identifier
     // we reparse it but this time with the correct handling of those details.
@@ -237,8 +203,9 @@ static unsigned char* slow_identifier_lexing(Lexer* restrict l, unsigned char* c
 // NOTE(NeGate): The input string has a fat null terminator of 16bytes to allow
 // for some optimizations overall, one of the important ones is being able to read
 // a whole 16byte SIMD register at once for any SIMD optimizations.
-void lexer_read(Lexer* restrict l) {
+Token lexer_read(Lexer* restrict l) {
     unsigned char* current = l->current;
+    Token t = { 0 };
 
     // Skip any whitespace and comments
     // branchless space skip
@@ -249,15 +216,13 @@ void lexer_read(Lexer* restrict l) {
     redo_lex: {
         if (*current == '\0') {
             // quit, we're done
-            l->hit_line = true;
-            l->token_type = '\0';
-            return;
+            t.hit_line = true;
+            t.type = '\0';
+            return (Token){ 0 };
         } else if (*current == '\r' || *current == '\n') {
             current += (current[0] + current[1] == '\r' + '\n') ? 2 : 1;
 
-            l->line_current = current;
-            l->hit_line = true;
-            l->current_line += 1;
+            t.hit_line = true;
             goto redo_lex;
         } else if (*current == ' ') {
             #if !USE_INTRIN
@@ -277,24 +242,18 @@ void lexer_read(Lexer* restrict l) {
                 } while (*current && *current != '\n');
 
                 current += 1;
-                l->line_current = current;
-                l->hit_line = true;
-                l->current_line += 1;
+                t.hit_line = true;
                 goto redo_lex;
             } else if (current[1] == '*') {
                 current++;
 
                 unsigned char* start = current;
                 do {
+                    if (*current == '\n') t.hit_line = true;
+
                     current++;
                 } while (*current && !(current[0] == '/' && current[-1] == '*'));
                 current++;
-
-                int lines_elapsed = line_counter(current - start, start);
-
-                l->line_current = current;
-                l->current_line += lines_elapsed;
-                if (lines_elapsed > 0) l->hit_line = true;
                 goto redo_lex;
             }
         } else if (current[0] == '\\' && (current[1] == '\r' || current[1] == '\n')) {
@@ -302,9 +261,6 @@ void lexer_read(Lexer* restrict l) {
             // necessarily need to join tokens but just joins the lines
             current += 1;
             current += (current[0] + current[1] == '\r' + '\n') ? 2 : 1;
-
-            l->line_current = current;
-            l->current_line += 1;
             goto redo_lex;
         }
     }
@@ -329,7 +285,7 @@ void lexer_read(Lexer* restrict l) {
         }
         case DFA_IDENTIFIER_L:
         case DFA_IDENTIFIER: {
-            l->token_type = TOKEN_IDENTIFIER;
+            t.type = TOKEN_IDENTIFIER;
             if (current[-1] == '\\') {
                 current -= 1;
             }
@@ -366,14 +322,14 @@ void lexer_read(Lexer* restrict l) {
             break;
         }
         case DFA_NUMBER: {
-            l->token_type = TOKEN_INTEGER;
+            t.type = TOKEN_INTEGER;
             current = start;
 
             for (;;) {
                 char a = *current;
                 if (a == '.') {
                     current += 1;
-                    l->token_type = TOKEN_FLOAT;
+                    t.type = TOKEN_FLOAT;
                 } else if ((a == 'e' || a == 'E' || a == 'p' || a == 'P') && (current[1] == '+' || current[1] == '-')) {
                     current += 2;
                 } else if ((a >= '0' && a <= '9') || (a >= 'a' && a <= 'z') || (a >= 'A' && a <= 'Z')) {
@@ -389,8 +345,6 @@ void lexer_read(Lexer* restrict l) {
 
             #if !USE_INTRIN
             for (; *current && *current != quote_type; current++) {
-                if (*current == '\n') l->current_line += 1;
-
                 // skip escape codes
                 if (*current == '\\') {
                     // this will skip twice because of the for loop's next
@@ -417,7 +371,6 @@ void lexer_read(Lexer* restrict l) {
 
                 if (len) {
                     current += len;
-                    l->current_line += (current[-1] == '\n');
 
                     // backslash join
                     if (current[-1] == '\n' && current[-2] == '\\') continue;
@@ -432,10 +385,10 @@ void lexer_read(Lexer* restrict l) {
             } while (*current);
             #endif
 
-            l->token_type = quote_type;
+            t.type = quote_type;
 
             if (start[0] == 'L') {
-                l->token_type += 256;
+                t.type += 256;
                 start += 1;
             }
             break;
@@ -451,22 +404,14 @@ void lexer_read(Lexer* restrict l) {
             uint32_t chars;
             memcpy(&chars, start, sizeof(uint32_t));
 
-            l->token_type = chars & mask;
+            t.type = chars & mask;
             break;
         }
     }
 
+    // NOTE(NeGate): the lexer will modify code to allow for certain patterns
+    // if we wanna get rid of this we should make virtual code regions
     if (__builtin_expect(current[0] == '\\' && (current[1] == '\r' || current[1] == '\n'), 0)) {
-        // TODO(NeGate): This code could use emotional help... if you're smart
-        // and/or cool please consider providing it.
-
-        // it increments the line counter but it doesn't mark a hit_line
-        // because the line terminator technically is removed.
-        l->current_line += 1;
-
-        // save out the original token position
-        l->token_start = start;
-
         // skip backslash and newline
         current += 1;
         current += (current[0] + current[1] == '\r' + '\n') ? 2 : 1;
@@ -482,11 +427,8 @@ void lexer_read(Lexer* restrict l) {
             }
         }
 
-        // tally up lines
-        size_t length = (next_token_bound - start);
-        l->current_line += line_counter(length, start);
-
         // join backslash-newlines
+        size_t length = (next_token_bound - start);
         for (size_t i = 0; i < length; i++) {
             if (start[i] == '\\' && start[i + 1] == '\n') {
                 memmove(start + i, start + i + 2, length - (i + 2));
@@ -500,9 +442,12 @@ void lexer_read(Lexer* restrict l) {
         current = start + length;
     }
 
-    l->token_start = start;
-    l->token_end = current;
     l->current = current;
+
+    // encode token
+    t.content = (String){ current - start, start };
+    t.location = encode_file_loc(l->file_id, start - l->start);
+    return t;
 }
 
 uint64_t parse_int(size_t len, const char* str, Cuik_IntSuffix* out_suffix) {
@@ -559,7 +504,7 @@ uint64_t parse_int(size_t len, const char* str, Cuik_IntSuffix* out_suffix) {
     return i;
 }
 
-intptr_t parse_char(size_t len, const char* str, int* output) {
+ptrdiff_t parse_char(size_t len, const char* str, int* output) {
     if (str[0] != '\\') {
         *output = str[0];
         return 1;
@@ -572,7 +517,6 @@ intptr_t parse_char(size_t len, const char* str, int* output) {
     size_t i = 2;
     switch (str[1]) {
         // TODO(NeGate): Implement the rest of the C char variants
-        // \U0001f34c
         case '0' ... '9': {
             unsigned int num = 0;
 
@@ -612,36 +556,16 @@ intptr_t parse_char(size_t len, const char* str, int* output) {
             ch = num;
             break;
         }
-        case '\\':
-        ch = '\\';
-        break;
-        case 'a':
-        ch = '\a';
-        break;
-        case 'b':
-        ch = '\b';
-        break;
-        case 't':
-        ch = '\t';
-        break;
-        case 'n':
-        ch = '\n';
-        break;
-        case 'v':
-        ch = '\v';
-        break;
-        case 'f':
-        ch = '\f';
-        break;
-        case 'r':
-        ch = '\r';
-        break;
-        case '\'':
-        ch = '\'';
-        break;
-        case '\"':
-        ch = '\"';
-        break;
+        case 'a': ch = '\a'; break;
+        case 'b': ch = '\b'; break;
+        case 't': ch = '\t'; break;
+        case 'n': ch = '\n'; break;
+        case 'v': ch = '\v'; break;
+        case 'f': ch = '\f'; break;
+        case 'r': ch = '\r'; break;
+        case '\'': ch = '\''; break;
+        case '\"': ch = '\"'; break;
+        case '\\': ch = '\\'; break;
         default:
         return -1;
     }

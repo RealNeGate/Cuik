@@ -354,10 +354,10 @@ InitNode* count_max_tb_init_objects(int node_count, InitNode* node, int* out_cou
 // TODO(NeGate): Revisit this code as a smarter man...
 // if the addr is 0 then we only apply constant initializers.
 // func doesn't need to be non-NULL if it's addr is NULL.
-InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, SourceLocIndex loc, TB_Initializer* init, TB_Reg addr, int node_count, InitNode* node) {
+InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, TB_Initializer* init, TB_Reg addr, int node_count, InitNode* node) {
     for (int i = 0; i < node_count; i++) {
         if (node->kids_count > 0) {
-            node = eval_initializer_objects(tu, func, loc, init, addr, node->kids_count, node + 1);
+            node = eval_initializer_objects(tu, func, init, addr, node->kids_count, node + 1);
         } else {
             Cuik_Type* child_type = node->type;
             int offset = node->offset;
@@ -577,25 +577,22 @@ InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, Sourc
     return node;
 }
 
-static void gen_local_initializer(TranslationUnit* tu, TB_Function* func, SourceLocIndex loc, TB_Reg addr, Cuik_Type* type, int node_count, InitNode* nodes) {
+static void gen_local_initializer(TranslationUnit* tu, TB_Function* func, TB_Reg addr, Cuik_Type* type, int node_count, InitNode* nodes) {
     // Walk initializer for max constant expression initializers.
     int max_tb_objects = 0;
     count_max_tb_init_objects(node_count, nodes, &max_tb_objects);
 
-    TB_Initializer* init = tb_initializer_create(tu->ir_mod,
-        type->size,
-        type->align,
-        max_tb_objects);
+    TB_Initializer* init = tb_initializer_create(tu->ir_mod, type->size, type->align, max_tb_objects);
 
     // Initialize all const expressions
-    eval_initializer_objects(tu, func, loc, init, TB_NULL_REG, node_count, nodes);
+    eval_initializer_objects(tu, func, init, TB_NULL_REG, node_count, nodes);
     tb_inst_initialize_mem(func, addr, init);
 
     // Initialize all dynamic expressions
-    eval_initializer_objects(tu, func, loc, init, addr, node_count, nodes);
+    eval_initializer_objects(tu, func, init, addr, node_count, nodes);
 }
 
-static TB_Initializer* gen_global_initializer(TranslationUnit* tu, SourceLocIndex loc, Cuik_Type* type, Expr* initial, const char* name) {
+static TB_Initializer* gen_global_initializer(TranslationUnit* tu, Cuik_Type* type, Expr* initial, const char* name) {
     assert(type != NULL);
 
     if (initial != NULL) {
@@ -639,7 +636,7 @@ static TB_Initializer* gen_global_initializer(TranslationUnit* tu, SourceLocInde
             TB_Initializer* init = tb_initializer_create(tu->ir_mod, type->size, type->align, max_tb_objects);
 
             // Initialize all const expressions
-            eval_initializer_objects(tu, NULL, loc, init, TB_NULL_REG, node_count, nodes);
+            eval_initializer_objects(tu, NULL, init, TB_NULL_REG, node_count, nodes);
             return init;
         } else if (initial->op == EXPR_INT ||
             initial->op == EXPR_FLOAT32 ||
@@ -787,7 +784,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
             Cuik_Type* type = e->init.type;
             TB_Reg addr = tb_inst_local(func, type->size, type->align);
 
-            gen_local_initializer(tu, func, e->start_loc, addr, type, e->init.count, e->init.nodes);
+            gen_local_initializer(tu, func, addr, type, e->init.count, e->init.nodes);
 
             return (IRVal){
                 .value_type = LVALUE,
@@ -1769,14 +1766,6 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
     }
 }
 
-static SourceLoc* try_for_nicer_loc(TokenStream* s, SourceLoc* loc) {
-    while (loc->line->filepath[0] == '<' && loc->line->parent != 0) {
-        loc = &s->locations[loc->line->parent];
-    }
-
-    return loc;
-}
-
 void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
     if (s == NULL) return;
 
@@ -1785,16 +1774,18 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
         static thread_local TB_FileID last_file_id;
         static thread_local const char* last_filepath;
 
-        SourceLoc* l = try_for_nicer_loc(&tu->tokens, &tu->tokens.locations[s->loc]);
-        SourceLine* line = l->line;
+        ResolvedSourceLoc a;
+        if (!cuikpp_find_location(&tu->tokens, s->loc, &a)) {
+            assert(0 && "cuikpp_find_location failed?");
+        }
 
-        if ((const char*) line->filepath != last_filepath) {
-            last_filepath = line->filepath;
-            last_file_id = tb_file_create(tu->ir_mod, line->filepath);
+        if (a.filename != last_filepath) {
+            last_filepath = a.filename;
+            last_file_id = tb_file_create(tu->ir_mod, a.filename);
         }
 
         insert_label(func);
-        tb_inst_loc(func, last_file_id, line->line);
+        tb_inst_loc(func, last_file_id, a.line);
     } else {
         insert_label(func);
     }
@@ -1847,7 +1838,7 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
             if (attrs.is_static) {
                 // Static initialization
                 TB_Initializer* init = gen_global_initializer(
-                    tu, s->loc, type, s->decl.initial, s->decl.name
+                    tu, type, s->decl.initial, s->decl.name
                 );
 
                 char* name = tls_push(1024);
@@ -1877,7 +1868,7 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
                 Expr* e = s->decl.initial;
 
                 if (e->op == EXPR_INITIALIZER) {
-                    gen_local_initializer(tu, func, e->start_loc, addr, type, e->init.count, e->init.nodes);
+                    gen_local_initializer(tu, func, addr, type, e->init.count, e->init.nodes);
                 } else {
                     if (kind == KIND_ARRAY && (e->op == EXPR_STR || e->op == EXPR_WSTR)) {
                         IRVal v = irgen_expr(tu, func, s->decl.initial);
@@ -2220,11 +2211,7 @@ CUIK_API TB_Function* cuik_stmt_gen_ir(TranslationUnit* restrict tu, Stmt* restr
             return NULL;
         }
 
-        TB_Initializer* init = gen_global_initializer(tu, s->loc,
-            s->decl.type,
-            s->decl.initial,
-            s->decl.name);
-
+        TB_Initializer* init = gen_global_initializer(tu, s->decl.type, s->decl.initial, s->decl.name);
         tb_global_set_initializer(tu->ir_mod, (TB_Global*) s->backing.s, init);
     }
 

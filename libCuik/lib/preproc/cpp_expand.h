@@ -1,138 +1,10 @@
-static Lexer make_temporary_lexer(unsigned char* start) {
-    return (Lexer){"<temp>", start, start, 1};
-}
-
 static Token* get_last_token(TokenStream* restrict s) {
     assert(dyn_array_length(s->tokens) > 0);
     return &s->tokens[dyn_array_length(s->tokens) - 1];
 }
 
 static bool concat_token(Cuik_CPP* restrict c, String a, String b, Token* out_token) {
-    unsigned char* out = gimme_the_shtuffs(c, a.length + b.length + 1);
-    memcpy(out, a.data, a.length);
-    memcpy(out + a.length, b.data, b.length);
-    out[a.length + b.length] = '\0';
-
-    // generate a new token and see what happens
-    Lexer l = { "", out, out, 1 };
-    lexer_read(&l);
-
-    *out_token = (Token){
-        l.token_type, false, 0, l.token_start, l.token_end
-    };
-
-    // check if there's any more tokens
-    lexer_read(&l);
-    if (l.token_type != 0) {
-        // they don't concat
-        return false;
-    }
-
     return true;
-}
-
-static SourceLoc* try_for_nicer_loc(TokenStream* s, SourceLoc* loc) {
-    while (loc->line->filepath[0] == '<' && loc->line->parent != 0) {
-        loc = &s->locations[loc->line->parent];
-    }
-
-    return loc;
-}
-
-static size_t match_parenthesis(Cuik_CPP* restrict c, TokenStream* restrict in) {
-    int depth = 0;
-    size_t old = in->current;
-
-    for (;;) {
-        TknType t = tokens_get(in)->type;
-
-        if (t == 0) {
-            break;
-        } else if (t == '(') {
-            depth++;
-        } else if (t == ')') {
-            if (depth == 0) {
-                break;
-            }
-            depth--;
-        }
-        tokens_next(in);
-    }
-    expect(in, ')');
-
-    size_t result = in->current - 1;
-    in->current = old;
-    return result;
-}
-
-
-// allocates a list of comma separated values (the rules for macro arguments)
-// in the temporary storage
-static String* convert_tokens_to_value_list_in_tls(Cuik_CPP* restrict c, TokenStream* restrict in, size_t end_token_index, int* out_value_count) {
-    String* values = tls_save();
-    int value_count = 0;
-
-    while (!tokens_eof(in) && in->current != end_token_index) {
-        tls_push(sizeof(String));
-        int i = value_count++;
-
-        int paren_depth = 0;
-        const unsigned char* start = tokens_get(in)->start;
-        const unsigned char* end = start;
-
-        // we're incrementally building up the string in the "the shtuffs"
-        size_t len = 0;
-        unsigned char* str = gimme_the_shtuffs(c, 0);
-        while (in->current != end_token_index) {
-            TknType t = tokens_get(in)->type;
-            if (t == 0) {
-                break;
-            } else if (t == '(') {
-                paren_depth++;
-            } else if (t == ')') {
-                if (paren_depth == 0) {
-                    tokens_next(in);
-                    break;
-                }
-
-                paren_depth--;
-            } else if (t == ',') {
-                if (paren_depth == 0) {
-                    break;
-                }
-            } else if (t == TOKEN_STRING_WIDE_DOUBLE_QUOTE || t == TOKEN_STRING_WIDE_SINGLE_QUOTE) {
-                gimme_the_shtuffs(c, 1);
-                str[len++] = 'L';
-            }
-
-            // append to string
-            String src = string_from_range(tokens_get(in)->start, tokens_get(in)->end);
-            gimme_the_shtuffs(c, src.length + 1);
-
-            memcpy(&str[len], src.data, src.length);
-            str[len + src.length] = ' ';
-            len += src.length + 1;
-
-            // advance
-            tokens_next(in);
-        }
-
-        // null terminator
-        if (len > 0) {
-            str[len - 1] = 0;
-            len--;
-        }
-
-        values[i].data = str;
-        values[i].length = len;
-
-        if (tokens_is(in, ',')) {
-            tokens_next(in);
-        }
-    }
-
-    *out_value_count = value_count;
-    return values;
 }
 
 typedef struct {
@@ -145,45 +17,133 @@ typedef struct {
     bool has_varargs;
 } MacroArgs;
 
-static void parse_params(Cuik_CPP* restrict c, MacroArgs* args, Lexer* restrict param_lex) {
+// [https://www.sigbus.info/n1570#6.10p1] This just handles parsing the # define param list
+//
+// After '# define identifier':
+//   lparen identifier-list opt )
+//   lparen ... )
+//   lparen identifier-list , ... )
+//
+// identifier-list:
+//   identifier
+//   identifier-list , identifier
+static void parse_params(Cuik_CPP* restrict c, MacroArgs* args, Lexer* restrict in) {
     args->key_count = 0;
     args->keys = tls_save();
 
-    lexer_read(param_lex);
-    expect_from_lexer(param_lex, '(');
+    Token t = lexer_read(in);
+    if (t.type != '(') {
+        fprintf(stderr, "error: expected '('\n");
+        goto error;
+    }
 
-    while (param_lex->token_type != ')') {
+    for (;;) {
+        t = lexer_read(in);
+        if (t.type == 0) goto error;
+        if (t.type == ')') break;
+
         if (args->key_count) {
-            expect_from_lexer(param_lex, ',');
+            if (t.type != ',') {
+                fprintf(stderr, "error: expected comma\n");
+                goto error;
+            }
+
+            t = lexer_read(in);
         }
 
-        if (param_lex->token_type == TOKEN_TRIPLE_DOT) {
+        if (t.type == TOKEN_TRIPLE_DOT) {
             args->has_varargs = true;
-            lexer_read(param_lex);
             break;
-        } else if (param_lex->token_type == TOKEN_IDENTIFIER) {
+        } else if (t.type == TOKEN_IDENTIFIER) {
             tls_push(sizeof(String));
 
-            args->keys[args->key_count++] = string_from_range(
-                param_lex->token_start, param_lex->token_end
-            );
-            lexer_read(param_lex);
+            args->keys[args->key_count++] = t.content;
         } else {
-            fprintf(stderr, "error %s:%d: expected identifier or triple-dot\n", param_lex->filepath, param_lex->current_line);
-            abort();
+            fprintf(stderr, "error: expected identifier or triple-dot\n");
+            goto error;
+        }
+    }
+    return;
+
+    // TODO(NeGate): improve this
+    error:
+    abort();
+}
+
+static void parse_args(Cuik_CPP* restrict c, MacroArgs* restrict args, TokenList* restrict in) {
+    size_t value_count = 0;
+    String* values = tls_save();
+
+    int paren_depth = 0;
+    for (;;) {
+        Token t = peek(in);
+        if (t.type == 0) goto error;
+
+        if (value_count) {
+            if (t.type != ',') {
+                fprintf(stderr, "error: expected comma\n");
+                goto error;
+            }
+
+            t = consume(in);
+        }
+
+        // we're incrementally building up the string in the "the shtuffs"
+        size_t len = 0;
+        unsigned char* str = gimme_the_shtuffs(c, 0);
+        while (!at_token_list_end(in)) {
+            t = consume(in);
+
+            if (t.type == 0) {
+                break;
+            } else if (t.type == '(') {
+                paren_depth++;
+            } else if (t.type == ',') {
+                if (paren_depth == 0) {
+                    in->current -= 1;
+                    break;
+                }
+            } else if (t.type == ')') {
+                if (paren_depth == 0) {
+                    break;
+                }
+
+                paren_depth--;
+            } else if (t.type == TOKEN_STRING_WIDE_DOUBLE_QUOTE || t.type == TOKEN_STRING_WIDE_SINGLE_QUOTE) {
+                gimme_the_shtuffs(c, 1);
+                str[len++] = 'L';
+            }
+
+            // append to string
+            String src = t.content;
+            gimme_the_shtuffs(c, src.length + 1);
+
+            memcpy(&str[len], src.data, src.length);
+            str[len + src.length] = ' ';
+            len += src.length + 1;
+        }
+
+        // null terminator
+        if (len > 0) {
+            str[len - 1] = 0;
+            len--;
+        }
+
+        tls_push(sizeof(String));
+        values[value_count++] = (String){ len, str };
+
+        if (t.type == ')' && paren_depth == 0) {
+            break;
         }
     }
 
-    expect_from_lexer(param_lex, ')');
-}
+    args->values = values;
+    args->value_count = value_count;
+    return;
 
-static void parse_args(Cuik_CPP* restrict c, MacroArgs* args, TokenStream* restrict in) {
-    size_t paren_end = match_parenthesis(c, in);
-
-    args->values = convert_tokens_to_value_list_in_tls(c, in, paren_end, &args->value_count);
-
-    in->current = paren_end;
-    tokens_next(in);
+    // TODO(NeGate): improve this
+    error:
+    abort();
 }
 
 static ptrdiff_t find_arg(MacroArgs* restrict args, String name) {
@@ -196,24 +156,58 @@ static ptrdiff_t find_arg(MacroArgs* restrict args, String name) {
     return -1;
 }
 
+static TokenList convert_line_to_token_list(Cuik_CPP* restrict c, uint32_t macro_id, unsigned char* data) {
+    Lexer l = {
+        .start = data, .current = data,
+    };
+
+    TokenList list = { 0 };
+    list.tokens = dyn_array_create_with_initial_cap(Token, 32);
+    for (;;) {
+        Token t = lexer_read(&l);
+        if (t.type == 0 || t.hit_line) break;
+
+        t.location = encode_macro_loc(macro_id, t.content.data - l.start);
+        dyn_array_put(list.tokens, t);
+    }
+
+    dyn_array_put(list.tokens, (Token){ 0 });
+    return list;
+}
+
+static void copy_tokens(Cuik_CPP* restrict c, TokenList* restrict out_tokens, Lexer* restrict in) {
+    for (;;) {
+        Token t = lexer_read(in);
+        if (t.type == 0) break;
+
+        dyn_array_put(out_tokens->tokens, t);
+    }
+}
+
 // parse function macros where def_lex is the lexer for the macro definition
 // TODO(NeGate): redo the error messages here
-static void subst(Cuik_CPP* restrict c, TokenStream* restrict s, String def_str, MacroArgs* restrict args, SourceLocIndex parent_loc, int depth) {
-    TokenStream in = lex_line("<temp>", (unsigned char*) def_str.data);
+static bool subst(Cuik_CPP* restrict c, TokenList* out_tokens, uint8_t* def_str, MacroArgs* restrict args, uint32_t macro_id) {
+    Lexer in = { 0, def_str, def_str };
 
-    while (!tokens_eof(&in)) {
-        if (tokens_is(&in, TOKEN_HASH)) {
-            tokens_next(&in);
+    for (;;) {
+        Token t = lexer_read(&in);
 
-            if (!tokens_is(&in, TOKEN_IDENTIFIER)) {
-                generic_error(&in, "expected identifier");
+        // convert token location into macro relative
+        t.location = encode_macro_loc(macro_id, t.content.data - in.start);
+
+        if (t.type == 0 || t.hit_line) {
+            return false;
+        } else if (t.type == TOKEN_HASH) {
+            t = lexer_read(&in);
+            if (t.type != TOKEN_IDENTIFIER) {
+                // generic_error(&in, "expected identifier");
                 abort();
             }
 
             // stringize arg
-            ptrdiff_t arg_i = find_arg(args, get_token_as_string(&in));
+            ptrdiff_t arg_i = find_arg(args, t.content);
             if (arg_i < 0) {
-                generic_error(&in, "cannot stringize unknown argument");
+                // generic_error(&in, "cannot stringize unknown argument");
                 abort();
             }
 
@@ -233,118 +227,126 @@ static void subst(Cuik_CPP* restrict c, TokenStream* restrict s, String def_str,
             stringized[len++] = '"';
             stringized[len] = 0;
 
-            Token t = {
-                .type = TOKEN_STRING_DOUBLE_QUOTE,
-                .location = get_source_location(c, &in, s, parent_loc, SOURCE_LOC_NORMAL),
-                .start = stringized,
-                .end = &stringized[len],
-            };
-            dyn_array_put(s->tokens, t);
-            tokens_next(&in);
-        } else if (tokens_is(&in, TOKEN_DOUBLE_HASH)) {
-            tokens_next(&in);
+            dyn_array_put(out_tokens->tokens, (Token){
+                    .type = TOKEN_STRING_DOUBLE_QUOTE,
+                    .location = t.location,
+                    .content = { len, stringized },
+                });
+        } else if (t.type == TOKEN_DOUBLE_HASH) {
+            Token* last = &out_tokens->tokens[dyn_array_length(out_tokens->tokens) - 1];
+            String a = last->content;
 
-            Token* last = get_last_token(s);
-            String a = string_from_range(last->start, last->end);
-            String b = get_token_as_string(&in);
-            tokens_next(&in);
-
+            String b = lexer_read(&in).content;
             ptrdiff_t b_i = find_arg(args, b);
-            if (b_i >= 0) {
-                b = args->values[b_i];
-            }
+            if (b_i >= 0) b = args->values[b_i];
 
-            Token t;
-            if (concat_token(c, a, b, &t)) {
-                if (t.type == TOKEN_IDENTIFIER) {
-                    t.type = classify_ident(t.start, t.end - t.start);
-                    t.location = last->location;
+            // Literally join the data
+            unsigned char* out = gimme_the_shtuffs(c, a.length + b.length + 16);
+            memcpy(out, a.data, a.length);
+            memcpy(out + a.length, b.data, b.length);
+            memset(&out[a.length + b.length], 0, 16);
 
-                    if (!is_defined(c, t.start, t.end - t.start)) {
-                        *last = t;
+            // generate a new token and see what happens
+            Lexer scratch = { .start = out, .current = out };
+            Token joined = lexer_read(&scratch);
+
+            // if they only form one token then process it
+            if (lexer_read(&scratch).type == 0) {
+                if (joined.type == TOKEN_IDENTIFIER) {
+                    joined.type = classify_ident(joined.content.data, joined.content.length);
+                    joined.location = t.location;
+
+                    if (!is_defined(c, joined.content.data, joined.content.length)) {
+                        *last = joined;
                     } else {
                         // remove top
-                        dyn_array_set_length(s->tokens, dyn_array_length(s->tokens) - 1);
+                        dyn_array_pop(out_tokens);
 
-                        // just gonna replace the old tokens with the concat token
-                        // at a point where it looks weird if you stare in a debugger
-                        // but the code itself doesn't care.
-                        in.current -= 1;
-                        in.tokens[in.current] = t;
+                        // replace with expanded identifier
+                        TokenList scratch = {
+                            .tokens = dyn_array_create_with_initial_cap(Token, 2)
+                        };
+                        dyn_array_put(scratch.tokens, joined);
+                        dyn_array_put(scratch.tokens, (Token){ 0 });
 
-                        expand_ident(c, s, &in, parent_loc, depth + 1);
+                        if (!expand_ident(c, out_tokens, &scratch, macro_id)) {
+                            return false;
+                        }
+
+                        dyn_array_destroy(scratch.tokens);
                     }
                 } else {
-                    *last = t;
+                    *last = joined;
                 }
             }
-        } else if (tokens_is(&in, TOKEN_IDENTIFIER)) {
-            String str = get_token_as_string(&in);
-            SourceLocIndex loc = get_source_location(c, &in, s, parent_loc, SOURCE_LOC_MACRO);
-            size_t old = in.current;
-            (void)old;
-
-            if (str.data[0] == '_' && string_equals_cstr(&str, "__VA_ARGS__")) {
+        } else if (t.type == TOKEN_IDENTIFIER) {
+            if (t.content.data[0] == '_' && string_equals_cstr(&t.content, "__VA_ARGS__")) {
                 size_t key_count = args->key_count, value_count = args->value_count;
                 assert(key_count == value_count && "TODO");
 
                 for (size_t i = key_count; i < value_count; i++) {
                     // slap a comma between var args
                     if (i != key_count) {
-                        const unsigned char* str = (const unsigned char*) ",";
-                        Token t = {
-                            .type = TOKEN_STRING_WIDE_DOUBLE_QUOTE,
-                            .location = loc,
-                            .start = str,
-                            .end = str + 1,
-                        };
-                        dyn_array_put(s->tokens, t);
+                        dyn_array_put(out_tokens->tokens, (Token){
+                                .type = ',',
+                                .location = t.location,
+                                .content = string_cstr(","),
+                            });
                     }
 
-                    String def = args->values[i];
-                    TokenStream temp_tokens = get_all_tokens_in_buffer("<temp>", (uint8_t*) def.data, (uint8_t*) &def.data[def.length]);
-                    expand(c, s, &temp_tokens, dyn_array_length(temp_tokens.tokens), false, loc);
-                    free_token_stream(&temp_tokens);
+                    TokenList scratch = convert_line_to_token_list(c, macro_id, (uint8_t*) args->values[i].data);
+                    if (!expand(c, out_tokens, &scratch, macro_id)) {
+                        return false;
+                    }
+                    dyn_array_destroy(scratch.tokens);
                 }
             } else {
-                ptrdiff_t arg_i = find_arg(args, str);
+                ptrdiff_t arg_i = find_arg(args, t.content);
                 if (arg_i >= 0) {
                     // macro arguments must be expanded before they're placed
-                    String def = args->values[arg_i];
-                    TokenStream temp_tokens = get_all_tokens_in_buffer("<temp>", (uint8_t*) def.data, (uint8_t*) &def.data[def.length]);
-                    expand(c, s, &temp_tokens, dyn_array_length(temp_tokens.tokens), false, loc);
-                    free_token_stream(&temp_tokens);
+                    TokenList scratch = convert_line_to_token_list(c, macro_id, (uint8_t*) args->values[arg_i].data);
+                    if (!expand(c, out_tokens, &scratch, macro_id)) {
+                        return false;
+                    }
+                    dyn_array_destroy(scratch.tokens);
                 } else {
                     // Normal identifier
-                    Token t = {
-                        classify_ident(str.data, str.length), false, loc,
-                        str.data, &str.data[str.length],
-                    };
-                    dyn_array_put(s->tokens, t);
+                    t.type = classify_ident(t.content.data, t.content.length);
+                    dyn_array_put(out_tokens->tokens, t);
                 }
             }
-
-            tokens_next(&in);
         } else {
-            Token t = *tokens_get(&in);
-            t.location = get_source_location(c, &in, s, parent_loc, SOURCE_LOC_NORMAL);
-            dyn_array_put(s->tokens, t);
-            tokens_next(&in);
+            dyn_array_put(out_tokens->tokens, t);
         }
     }
 
-    free_token_stream(&in);
+    return true;
 }
 
-static void expand_ident(Cuik_CPP* restrict c, TokenStream* restrict s, TokenStream* restrict in, SourceLocIndex parent_loc, int depth) {
-    Token* t = tokens_get(in);
-    bool hit_line = t->hit_line;
-    size_t token_length = t->end - t->start;
-    const unsigned char* token_data = t->start;
+static bool expand_ident(Cuik_CPP* restrict c, TokenList* restrict out_tokens, TokenList* restrict in, uint32_t parent_macro) {
+    Token t = consume(in);
 
-    assert(tokens_is(in, TOKEN_IDENTIFIER));
-    if (tokens_match(in, 8, "__FILE__") || tokens_match(in, 9, "L__FILE__")) {
-        SourceLoc* loc = try_for_nicer_loc(s, &s->locations[parent_loc]);
+    // can a loc come up in yo crib?
+    SourceLoc og_loc = t.location;
+
+    if (parent_macro != 0) {
+        // convert token location into macro relative
+        uint32_t macro_pos = c->tokens.invokes[parent_macro].call_site.raw;
+
+        if ((t.location.raw & SourceLoc_IsMacro) == 0) {
+            uint32_t pos = t.location.raw & ((1u << SourceLoc_FilePosBits) - 1);
+            t.location = encode_macro_loc(parent_macro, pos - macro_pos);
+        }
+    }
+
+    size_t token_length = t.content.length;
+    const unsigned char* token_data = t.content.data;
+    if (memeq(token_data, token_length, "__FILE__", 8) ||
+        memeq(token_data, token_length, "L__FILE__", 9)) {
+        Cuik_File* f = cuikpp_find_file(&c->tokens, t.location);
+        if (f == NULL) {
+            assert(0 && "cuikpp_find_file failed?");
+        }
 
         // filepath as a string
         unsigned char* output_path_start = gimme_the_shtuffs(c, MAX_PATH + 4);
@@ -357,9 +359,9 @@ static void expand_ident(Cuik_CPP* restrict c, TokenStream* restrict s, TokenStr
         {
             // TODO(NeGate): Kinda shitty but i just wanna duplicate
             // the backslashes to avoid them being treated as an escape
-            const char* input_path = (const char*) loc->line->filepath;
+            const char* input_path = (const char*) f->filename;
             if (strlen(input_path) >= MAX_PATH) {
-                generic_error(in, "preprocessor error: __FILE__ generated a file path that was too long\n");
+                // generic_error(in, "preprocessor error: __FILE__ generated a file path that was too long\n");
                 abort();
             }
 
@@ -378,63 +380,54 @@ static void expand_ident(Cuik_CPP* restrict c, TokenStream* restrict s, TokenStr
         *output_path++ = '\0';
         trim_the_shtuffs(c, output_path);
 
-        Token t = {
-            is_wide ? TOKEN_STRING_WIDE_DOUBLE_QUOTE : TOKEN_STRING_DOUBLE_QUOTE,
-            get_source_location(c, in, s, parent_loc, SOURCE_LOC_NORMAL), hit_line,
-            output_path_start, output_path - 1
-        };
-        dyn_array_put(s->tokens, t);
-        tokens_next(in);
-    } else if (tokens_match(in, 11, "__COUNTER__")) {
-        SourceLoc* loc = try_for_nicer_loc(s, &s->locations[parent_loc]);
-
+        t.type = is_wide ? TOKEN_STRING_WIDE_DOUBLE_QUOTE : TOKEN_STRING_DOUBLE_QUOTE;
+        t.content = string_from_range(output_path_start, output_path - 1);
+        dyn_array_put(out_tokens->tokens, t);
+    } else if (memeq(token_data, token_length, "__COUNTER__", 11)) {
         // line number as a string
         unsigned char* out = gimme_the_shtuffs(c, 10);
         size_t length = sprintf_s((char*)out, 10, "%d", c->unique_counter);
-
         trim_the_shtuffs(c, &out[length + 1]);
-        Token t = {
-            TOKEN_INTEGER, hit_line,
-            get_source_location(c, in, s, parent_loc, SOURCE_LOC_NORMAL),
-            out, out + length
-        };
-        dyn_array_put(s->tokens, t);
-        tokens_next(in);
-    } else if (tokens_match(in, 8, "__LINE__")) {
-        SourceLoc* loc = try_for_nicer_loc(s, &s->locations[parent_loc]);
+
+        t.type = TOKEN_INTEGER;
+        t.content = (String){ length, out };
+        dyn_array_put(out_tokens->tokens, t);
+    } else if (memeq(token_data, token_length, "__LINE__", 8)) {
+        ResolvedSourceLoc r;
+        if (!cuikpp_find_location(&c->tokens, t.location, &r)) {
+            assert(0 && "__LINE__ failed?");
+        }
 
         // line number as a string
         unsigned char* out = gimme_the_shtuffs(c, 10);
-        size_t length = sprintf_s((char*)out, 10, "%d", loc->line->line);
-
+        size_t length = sprintf_s((char*)out, 10, "%d", r.line);
         trim_the_shtuffs(c, &out[length + 1]);
-        Token t = {
-            TOKEN_INTEGER, hit_line,
-            get_source_location(c, in, s, parent_loc, SOURCE_LOC_NORMAL),
-            out, out + length
-        };
-        dyn_array_put(s->tokens, t);
-        tokens_next(in);
+
+        t.type = TOKEN_INTEGER;
+        t.content = (String){ length, out };
+        dyn_array_put(out_tokens->tokens, t);
     } else {
         size_t def_i;
         if (find_define(c, &def_i, token_data, token_length)) {
-            int line_of_expansion = tokens_get_location_line(in);
-
-            SourceLocIndex expanded_loc = get_source_location(
-                c, in, s, parent_loc, SOURCE_LOC_MACRO
-            );
-            s->locations[expanded_loc].expansion = c->macro_bucket_source_locs[def_i];
-
-            // Identify macro definition
-            tokens_next(in);
-
             String def = string_from_range(c->macro_bucket_values_start[def_i], c->macro_bucket_values_end[def_i]);
+
+            // create macro invoke site
+            uint32_t macro_id = dyn_array_length(c->tokens.invokes);
+            dyn_array_put(c->tokens.invokes, (MacroInvoke){
+                    .name        = t.content,
+                    .parent      = parent_macro,
+                    .def_site    = c->macro_bucket_source_locs[def_i],
+                    .call_site   = og_loc,
+                    .def_length  = def.length,
+                });
+
             const unsigned char* args = c->macro_bucket_keys[def_i] + c->macro_bucket_keys_length[def_i];
 
             // function macro
-            if (*args == '(' && tokens_is(in, '(')) {
-                tokens_next(in);
+            size_t savepoint = in->current;
+            Token paren_peek = consume(in);
 
+            if (*args == '(' && paren_peek.type == '(') {
                 ////////////////////////////////
                 // Parse the arguments
                 ////////////////////////////////
@@ -443,96 +436,103 @@ static void expand_ident(Cuik_CPP* restrict c, TokenStream* restrict s, TokenStr
 
                 // We dont need to parse this part if it expands into nothing
                 if (def.length) {
-                    Lexer args_lexer = (Lexer){in->filepath, (unsigned char*) args, (unsigned char*) args};
+                    Lexer args_lexer = { 0, (unsigned char*) args, (unsigned char*) args };
                     parse_params(c, &arglist, &args_lexer);
 
-                    /*printf("FUNCTION MACRO: %.*s    %.*s\n", (int)token_length, token_data, (int)def.length, def.data);
+                    printf("FUNCTION MACRO: %.*s    %.*s\n", (int)token_length, token_data, (int)def.length, def.data);
                     for (size_t i = 0; i < arglist.value_count; i++) {
                         printf("  ['%.*s'] = '%.*s'\n", (int) arglist.keys[i].length, arglist.keys[i].data, (int) arglist.values[i].length, arglist.values[i].data);
                     }
-                    printf("\n");*/
+                    printf("\n");
 
                     // macro hide set
                     size_t hidden = hide_macro(c, def_i);
-                    // at the bottom layer we create a temporary token stream and then expand from
-                    // there to the final token stream
-                    TokenStream scratch = { 0 };
-                    scratch.locations = dyn_array_create_with_initial_cap(SourceLoc, 32);
-                    scratch.tokens = dyn_array_create_with_initial_cap(Token, 32);
+                    size_t old = dyn_array_length(c->scratch_list.tokens);
 
-                    subst(c, &scratch, def, &arglist, parent_loc, depth + 1);
+                    TokenList scratch = {
+                        .tokens = dyn_array_create_with_initial_cap(Token, 2)
+                    };
 
-                    Token t = {0, true, dyn_array_length(s->locations) - 1, NULL, NULL};
-                    dyn_array_put(scratch.tokens, t);
+                    // before expanding the child macros we need to substitute all
+                    // the arguments in, handle stringizing and ## concaternation.
+                    // subst(c, &c->scratch_list, (uint8_t*) def.data, &arglist, macro_id);
+                    // dyn_array_put(c->scratch_list.tokens, (Token){ 0 });
+                    subst(c, &scratch, (uint8_t*) def.data, &arglist, macro_id);
+                    dyn_array_put(scratch.tokens, (Token){ 0 });
 
-                    expand(c, s, &scratch, dyn_array_length(scratch.tokens), false, parent_loc);
+                    // c->scratch_list.current = old;
+                    // expand(c, out_tokens, &c->scratch_list, macro_id);
+                    expand(c, out_tokens, &scratch, macro_id);
 
-                    free_token_stream(&scratch);
+                    // dyn_array_set_length(c->scratch_list.tokens, old);
+                    dyn_array_destroy(scratch.tokens);
                     unhide_macro(c, def_i, hidden);
                 }
 
                 // it's a stack and keys is after values so it'll get popped too
                 // tls_restore(keys);
                 tls_restore(arglist.values);
-                return;
             } else if (def.length > 0) {
+                in->current = savepoint;
+
                 // expand and append
-                if (*args == '(' && !tokens_is(in, '(')) {
-                    Token t = {
-                        classify_ident(token_data, token_length), hit_line,
-                        expanded_loc, token_data, token_data + token_length,
-                    };
-
-                    dyn_array_put(s->tokens, t);
+                if (*args == '(' && paren_peek.type != '(') {
+                    t.type = classify_ident(t.content.data, t.content.length);
+                    dyn_array_put(out_tokens->tokens, t);
                 } else {
-                    TokenStream temp_tokens = get_all_tokens_in_buffer("<temp>", (unsigned char*) def.data, (unsigned char*) &def.data[def.length]);
-
                     size_t hidden = hide_macro(c, def_i);
-                    expand(c, s, &temp_tokens, dyn_array_length(temp_tokens.tokens), true, expanded_loc);
+
+                    TokenList list = convert_line_to_token_list(c, macro_id, (unsigned char*) def.data);
+                    expand(c, out_tokens, &list, macro_id);
                     unhide_macro(c, def_i, hidden);
 
-                    free_token_stream(&temp_tokens);
+                    dyn_array_destroy(list.tokens);
                 }
             }
         } else {
             // Normal identifier
-            Token t = {
-                classify_ident(token_data, token_length), hit_line,
-                get_source_location(c, in, s, parent_loc, SOURCE_LOC_NORMAL),
-                token_data, token_data + token_length,
-            };
-
-            dyn_array_put(s->tokens, t);
-            tokens_next(in);
+            t.type = classify_ident(t.content.data, t.content.length);
+            dyn_array_put(out_tokens->tokens, t);
         }
     }
+
+    return true;
 }
 
-static void expand(Cuik_CPP* restrict c, TokenStream* restrict s, TokenStream* restrict in, size_t in_stream_end, bool exit_on_hit_line, SourceLocIndex parent_loc) {
+static bool expand(Cuik_CPP* restrict c, TokenList* out_tokens, TokenList* restrict in, uint32_t parent_macro) {
     int depth = 0;
 
-    while (!tokens_is(in, 0) && in->current < in_stream_end) {
-        if (exit_on_hit_line && tokens_hit_line(in)) {
-            break;
-        }
+    while (!at_token_list_end(in)) {
+        size_t savepoint = in->current;
+        Token t = consume(in);
+        if (t.type == 0 || t.hit_line) break;
 
-        if (tokens_is(in, '(')) {
-            depth++;
-        }
+        depth += (t.type == '(');
 
-        if (!tokens_is(in, TOKEN_IDENTIFIER)) {
-            Token t = *tokens_get(in);
-            t.location = get_source_location(c, in, s, parent_loc, SOURCE_LOC_NORMAL);
+        if (t.type != TOKEN_IDENTIFIER) {
+            if (parent_macro != 0) {
+                // convert token location into macro relative
+                uint32_t macro_pos = c->tokens.invokes[parent_macro].call_site.raw;
 
-            dyn_array_put(s->tokens, t);
-            tokens_next(in);
+                if ((t.location.raw & SourceLoc_IsMacro) == 0) {
+                    uint32_t pos = t.location.raw & ((1u << SourceLoc_FilePosBits) - 1);
+                    t.location = encode_macro_loc(parent_macro, pos);
+                }
+            }
+
+            dyn_array_put(out_tokens->tokens, t);
         } else {
-            expand_ident(c, s, in, parent_loc, 1);
+            in->current = savepoint;
+            if (!expand_ident(c, out_tokens, in, parent_macro)) {
+                return false;
+            }
         }
 
-        if (tokens_is(in, ')')) {
+        if (t.type == ')') {
             if (depth == 0) break;
             depth--;
         }
     }
+
+    return (depth == 0);
 }

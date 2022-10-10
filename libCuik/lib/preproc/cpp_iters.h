@@ -3,18 +3,20 @@ CUIK_API void cuikpp_add_include_directory(Cuik_CPP* ctx, const char dir[]) {
     dyn_array_put(ctx->system_include_dirs, strdup(dir));
 }
 
-CUIK_API Cuik_FileIter cuikpp_first_file(Cuik_CPP* ctx) {
-    return (Cuik_FileIter){ .file = &ctx->files[0] };
-}
+CUIK_API Cuik_File* cuikpp_next_file(Cuik_CPP* ctx, Cuik_File* f) {
+    // first element
+    if (f == NULL) return &ctx->tokens.files[0];
 
-CUIK_API bool cuikpp_next_file(Cuik_CPP* ctx, Cuik_FileIter* it) {
-    if (it->i >= dyn_array_length(ctx->files)) {
-        return false;
+    size_t len = dyn_array_length(ctx->tokens.files);
+    size_t i = f - ctx->tokens.files;
+    const char* filename = f->filename;
+
+    // skip any sequential file chunks from the same file
+    while (i < len && ctx->tokens.files[i].filename == filename) {
+        i += 1;
     }
 
-    it->file = &ctx->files[it->i];
-    it->i += 1;
-    return true;
+    return &ctx->tokens.files[i];
 }
 
 CUIK_API Cuik_IncludeIter cuikpp_first_include_search(Cuik_CPP* ctx) {

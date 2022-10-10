@@ -3,7 +3,7 @@
 #include "../str.h"
 #include "../arena.h"
 #include <dyn_array.h>
-#include <cuik.h>
+#include <cuik_lex.h>
 
 #define TKN2(x, y)                  (((y) << 8) | (x))
 #define TKN3(x, y, z) (((z) << 16) | ((y) << 8) | (x))
@@ -147,64 +147,49 @@ typedef enum TknType {
 #undef TKN3
 
 typedef struct {
-    ////////////////////////////////
-    // USER-PROVIDED
-    ////////////////////////////////
-    const char* filepath;
+    uint32_t file_id;
     unsigned char* start;
     unsigned char* current;
-    int current_line;
-
-    int column_bias; // it'll just be added to the column count when we're checking stuff
-
-    ////////////////////////////////
-    // INTERNALS
-    ////////////////////////////////
-    unsigned char* line_current;
-    // when reading it spotted a line or EOF, it must be manually reset
-    bool hit_line;
-
-    // current token info
-    TknType token_type;
-    unsigned char* token_start;
-    unsigned char* token_end;
 } Lexer;
 
 // this is used by the preprocessor to scan tokens in
-void lexer_read(Lexer* restrict l);
+Token lexer_read(Lexer* restrict l);
 
-intptr_t parse_char(size_t len, const char* str, int* output);
+ptrdiff_t parse_char(size_t len, const char* str, int* output);
 uint64_t parse_int(size_t len, const char* str, Cuik_IntSuffix* out_suffix);
 TknType classify_ident(const unsigned char* restrict str, size_t len);
 
-inline static String lexer_get_string(Lexer* restrict l) {
-    return string_from_range(l->token_start, l->token_end);
+static SourceLoc encode_file_loc(uint32_t file_id, uint32_t file_offset) {
+    // Big files take up several file IDs
+    uint32_t real_file_id = file_id + (file_offset >> SourceLoc_FilePosBits);
+    uint32_t real_file_offset = file_offset & ((1u << SourceLoc_FilePosBits) - 1);
+    assert(real_file_id < (1u << SourceLoc_FileIDBits) && "Too many files!");
+
+    return (SourceLoc){ (real_file_id << SourceLoc_FilePosBits) | real_file_offset };
 }
 
-inline static bool lexer_match(Lexer* restrict l, size_t len, const char* str) {
-    if ((l->token_end - l->token_start) != len) return false;
+static SourceLoc encode_macro_loc(uint32_t macro_id, uint32_t macro_offset) {
+    assert(macro_id < (1u << SourceLoc_MacroIDBits) && "Too many macros!");
+    assert(macro_offset < (1u << SourceLoc_MacroOffsetBits) && "Macro too long!");
 
-    return memcmp(l->token_start, str, len) == 0;
+    return (SourceLoc){ SourceLoc_IsMacro | (macro_id << SourceLoc_MacroOffsetBits) | macro_offset };
 }
 
 inline static bool tokens_peek_double_token(TokenStream* restrict s, TknType tkn) {
     return s->tokens[s->current].type == tkn && s->tokens[s->current + 1].type == tkn;
 }
 
-inline static SourceLocIndex tokens_get_last_location_index(TokenStream* restrict s) {
-    return s->tokens[s->current - 1].location;
+inline static SourceLoc tokens_get_last_location(TokenStream* restrict s) {
+    Token* t = &s->tokens[s->current - 1];
+    return (SourceLoc){ t->location.raw + t->content.length };
 }
 
-inline static SourceLocIndex tokens_get_location_index(TokenStream* restrict s) {
+inline static SourceLoc tokens_get_location(TokenStream* restrict s) {
     return s->tokens[s->current].location;
 }
 
 inline static bool tokens_hit_line(TokenStream* restrict s) {
     return s->tokens[s->current].hit_line;
-}
-
-inline static int tokens_get_location_line(TokenStream* restrict s) {
-    return s->locations[s->tokens[s->current].location].line->line;
 }
 
 inline static bool tokens_eof(TokenStream* restrict s) {
@@ -216,14 +201,7 @@ inline static bool tokens_is(TokenStream* restrict s, TknType type) {
 }
 
 inline static bool tokens_match(TokenStream* restrict s, size_t len, const char* str) {
-    Token* t = &s->tokens[s->current];
-    if ((t->end - t->start) != len) return false;
-
-    return memcmp(t->start, str, len) == 0;
-}
-
-inline static SourceLoc* tokens_get_location(TokenStream* restrict s) {
-    return &s->locations[s->tokens[s->current].location];
+    return string_equals(&s->tokens[s->current].content, &(String){ len, (const unsigned char*) str });
 }
 
 // this is used by the parser to get the next token

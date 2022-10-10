@@ -6,22 +6,14 @@
 #define THE_SHTUFFS_SIZE (32 << 20)
 #define CUIK__CPP_STATS 0
 
-typedef struct Token {
-    // TknType but GCC doesn't like incomplete enums
-    int type     : 31;
-    int hit_line : 1;
-
-    SourceLocIndex location;
-    const unsigned char* start;
-    const unsigned char* end;
-} Token;
-
 typedef struct PragmaOnceEntry {
     char* key;
     int value;
 } PragmaOnceEntry;
 
-enum { CPP_MAX_SCOPE_DEPTH = 4096 };
+enum {
+    CPP_MAX_SCOPE_DEPTH = 4096,
+};
 
 struct Cuik_CPP {
     // used to store macro expansion results
@@ -29,7 +21,7 @@ struct Cuik_CPP {
     unsigned char* the_shtuffs;
 
     TokenStream tokens;
-    struct SourceLine* last_source_line;
+    TokenList scratch_list;
 
     // powers __COUNTER__
     int unique_counter;
@@ -70,18 +62,15 @@ struct Cuik_CPP {
     // DynArray(char*)
     char** system_include_dirs;
 
-    // DynArray(Cuik_FileEntry)
-    Cuik_FileEntry* files;
-
     // how deep into directive scopes (#if, #ifndef, #ifdef) is it
     int depth;
 
-    // TODO(NeGate): Remove this and put a proper hash map or literally anything else
+    // TODO(NeGate): Remove this and put a proper hash map or literally anything else PLEASE
     const unsigned char** macro_bucket_keys;
     size_t* macro_bucket_keys_length;
     const unsigned char** macro_bucket_values_start;
     const unsigned char** macro_bucket_values_end;
-    SourceLocIndex* macro_bucket_source_locs;
+    SourceLoc* macro_bucket_source_locs;
     int macro_bucket_count[MACRO_BUCKET_COUNT];
 
     // tells you if the current scope has had an entry evaluated,

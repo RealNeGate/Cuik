@@ -601,18 +601,17 @@ void ast_dump_type(TranslationUnit* tu, Cuik_Type* ty, int depth, int offset) {
     if (ty->kind == KIND_STRUCT || ty->kind == KIND_UNION) {
         printf("%s %s {",
             ty->kind == KIND_STRUCT ? "struct" : "union",
-            ty->record.name ? (char*)ty->record.name : "<unnamed>");
+            ty->record.name ? (char*)ty->record.name : "<unnamed>"
+        );
 
-        if (ty->loc) {
-            SourceLoc* loc = &tu->tokens.locations[ty->loc];
-
-            printf("// %s:%d\n", loc->line->filepath, loc->line->line);
+        ResolvedSourceLoc r;
+        if (cuikpp_find_location(&tu->tokens, ty->loc, &r)) {
+            printf("// %s:%d\n", r.filename, r.line);
         } else {
             printf("\n");
         }
 
         char temp_string0[1024];
-
         Member* kids = ty->record.kids;
         size_t kid_count = ty->record.kid_count;
 

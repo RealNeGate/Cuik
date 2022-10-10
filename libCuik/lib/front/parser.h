@@ -33,7 +33,7 @@ typedef struct ConstValue {
 typedef struct Decl {
     Cuik_Type* type;
     Atom name;
-    SourceLocIndex loc;
+    SourceLoc loc;
 } Decl;
 
 typedef enum StorageClass {
@@ -54,7 +54,7 @@ typedef enum StorageClass {
 typedef struct Symbol {
     Atom name;
     Cuik_Type* type;
-    SourceLocIndex loc;
+    SourceLoc loc;
     StorageClass storage_class;
 
     union {
@@ -84,7 +84,7 @@ typedef struct Diag_UnresolvedSymbol {
     struct Diag_UnresolvedSymbol* next;
 
     Atom name;
-    SourceLocIndex loc;
+    SourceRange loc;
 } Diag_UnresolvedSymbol;
 
 struct TranslationUnit {

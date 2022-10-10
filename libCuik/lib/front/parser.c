@@ -62,7 +62,7 @@ thread_local static Arena local_ast_arena;
 thread_local static bool out_of_order_mode;
 
 static void expect(TranslationUnit* tu, TokenStream* restrict s, char ch);
-static void expect_closing_paren(TranslationUnit* tu, TokenStream* restrict s, SourceLocIndex opening);
+static void expect_closing_paren(TranslationUnit* tu, TokenStream* restrict s, SourceLoc opening);
 static void expect_with_reason(TranslationUnit* tu, TokenStream* restrict s, char ch, const char* reason);
 static Symbol* find_local_symbol(TokenStream* restrict s);
 
@@ -111,10 +111,6 @@ static int align_up(int a, int b) {
     return a + (b - (a % b)) % b;
 }
 
-static String get_token_as_string(Lexer* l) {
-    return (String){ .length = l->token_end - l->token_start, .data = l->token_start };
-}
-
 // allocated size is sizeof(struct StmtHeader) + extra_size
 static Stmt* make_stmt(TranslationUnit* tu, TokenStream* restrict s, StmtOp op, size_t extra_size) {
     Stmt* stmt = arena_alloc(&local_ast_arena, sizeof(Stmt), _Alignof(max_align_t));
@@ -122,7 +118,7 @@ static Stmt* make_stmt(TranslationUnit* tu, TokenStream* restrict s, StmtOp op, 
     memset(stmt, 0, offsetof(Stmt, backing.user_data) + sizeof(((Stmt*)0)->backing.user_data));
 
     stmt->op = op;
-    stmt->loc = tokens_get_location_index(s);
+    stmt->loc = tokens_get_location(s);
     return stmt;
 }
 
@@ -211,11 +207,11 @@ static size_t skip_expression_in_enum(TokenStream* restrict s, TknType* out_term
     return saved;
 }
 
-static void diag_unresolved_symbol(TranslationUnit* tu, Atom name, SourceLocIndex loc) {
+static void diag_unresolved_symbol(TranslationUnit* tu, Atom name, SourceLoc loc) {
     Diag_UnresolvedSymbol* d = ARENA_ALLOC(&thread_arena, Diag_UnresolvedSymbol);
     d->next = NULL;
     d->name = name;
-    d->loc = loc;
+    d->loc = (SourceRange){ loc, { loc.raw + strlen(name) } };
 
     mtx_lock(&tu->diag_mutex);
     ptrdiff_t search = nl_strmap_get_cstr(tu->unresolved_symbols, name);
@@ -371,7 +367,7 @@ static void type_resolve_pending_align(TranslationUnit* restrict tu, Cuik_Type* 
             TokenStream mini_lex = tu->tokens;
             mini_lex.current = pending_exprs[i].expr_pos;
 
-            SourceLocIndex loc = tokens_get_location_index(&mini_lex);
+            SourceLoc loc = tokens_get_location(&mini_lex);
 
             int align = 0;
             if (is_typename(tu, &mini_lex)) {
@@ -621,10 +617,10 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
 
                 // Slap it into a proper C string so we don't accidentally
                 // walk off the end and go random places
-                size_t len = (tokens_get(s)->end - tokens_get(s)->start) - 1;
+                size_t len = (tokens_get(s)->content.length) - 1;
                 unsigned char* out = tls_push(len);
                 {
-                    const char* in = (const char*) tokens_get(s)->start;
+                    const char* in = (const char*) tokens_get(s)->content.data;
 
                     size_t out_i = 0, in_i = 1;
                     while (in_i < len) {
@@ -643,36 +639,36 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                     out[out_i++] = '\0';
                 }
 
-                Lexer pragma_lex = { "<temp>", out, out, 1 };
-                lexer_read(&pragma_lex);
-
-                String pragma_name = get_token_as_string(&pragma_lex);
+                Lexer pragma_lex = { 0, out, out };
+                String pragma_name = lexer_read(&pragma_lex).content;
                 if (string_equals_cstr(&pragma_name, "comment")) {
                     // https://learn.microsoft.com/en-us/cpp/preprocessor/comment-c-cpp?view=msvc-170
                     //   'comment' '(' comment-type [ ',' "comment-string" ] ')'
                     // supported comment types:
                     //   lib - links library against final output
-                    lexer_read(&pragma_lex);
-
-                    if (pragma_lex.token_type != '(') {
+                    Token t = lexer_read(&pragma_lex);
+                    if (t.type != '(') {
                         generic_error(tu, s, "expected (");
                     }
 
-                    lexer_read(&pragma_lex);
-                    String comment_type = get_token_as_string(&pragma_lex);
-                    lexer_read(&pragma_lex);
+                    String comment_string = { 0 };
+                    String comment_type = lexer_read(&pragma_lex).content;
 
-                    String comment_string;
-                    if (pragma_lex.token_type == ',') {
-                        lexer_read(&pragma_lex);
-                        comment_string = get_token_as_string(&pragma_lex);
+                    t = lexer_read(&pragma_lex);
+                    if (t.type == ',') {
+                        t = lexer_read(&pragma_lex);
+                        if (t.type != TOKEN_STRING_DOUBLE_QUOTE) {
+                            generic_error(tu, s, "expected string literal");
+                        }
+
+                        comment_string = t.content;
                         comment_string.length -= 2;
                         comment_string.data += 1;
 
-                        lexer_read(&pragma_lex);
+                        t = lexer_read(&pragma_lex);
                     }
 
-                    if (pragma_lex.token_type != ')') {
+                    if (t.type != ')') {
                         generic_error(tu, s, "expected )");
                     }
 
@@ -715,7 +711,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                 expect(tu, s, ')');
             } else {
                 Cuik_Attribute* attribute_list = parse_attributes(tu, s, NULL);
-                SourceLocIndex loc = tokens_get_location_index(s);
+                SourceLoc loc = tokens_get_location(s);
 
                 // must be a declaration since it's a top level statement
                 Attribs attr = {0};
@@ -831,7 +827,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                     while (true) {
                         size_t start_decl_token = s->current;
 
-                        SourceLocIndex decl_loc = tokens_get_location_index(s);
+                        SourceLoc decl_loc = tokens_get_location(s);
                         Decl decl = parse_declarator(tu, s, type, false, false);
                         if (decl.name == NULL) {
                             REPORT(ERROR, decl_loc, "Declaration has no name");
@@ -910,7 +906,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                                     } else if (t->type == '{') {
                                         depth++;
                                     } else if (t->type == ';' && depth == 1) {
-                                        REPORT(ERROR, tokens_get_location_index(s), "Spurious semicolon");
+                                        REPORT(ERROR, tokens_get_location(s), "Spurious semicolon");
                                         goto skip_declaration;
                                     } else if (t->type == '}') {
                                         if (depth == 0) {
@@ -1003,7 +999,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                                 Token* t = tokens_get(s);
 
                                 if (t->type == '\0') {
-                                    SourceLocIndex l = tokens_get_last_location_index(s);
+                                    SourceLoc l = tokens_get_last_location(s);
                                     report_fix(REPORT_ERROR, tu->errors, s, l, "}", "Function body ended in EOF");
 
                                     s->current = sym->current + 1;
@@ -1179,11 +1175,11 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                 tokens_next(&mini_lex);
 
                 if (condition == 0) {
-                    REPORT(ERROR, tokens_get_location_index(&mini_lex), "Static assertion failed: %.*s", (int)(t->end - t->start), t->start);
+                    REPORT(ERROR, tokens_get_location(&mini_lex), "Static assertion failed: %.*s", (int) t->content.length, t->content.data);
                 }
             } else {
                 if (condition == 0) {
-                    REPORT(ERROR, tokens_get_location_index(&mini_lex), "Static assertion failed");
+                    REPORT(ERROR, tokens_get_location(&mini_lex), "Static assertion failed");
                 }
             }
         }
@@ -1264,7 +1260,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                 Cuik_Type* type = (Cuik_Type*)&a->data[used];
 
                 if (type->kind == KIND_QUALIFIED_TYPE) {
-                    SourceLocIndex loc = type->loc;
+                    SourceLoc loc = type->loc;
                     bool is_atomic = type->is_atomic;
                     bool is_const = type->is_const;
                     int align = type->align;
@@ -1425,8 +1421,6 @@ Stmt* resolve_unknown_symbol(TranslationUnit* tu, Expr* e) {
 
 static Symbol* find_local_symbol(TokenStream* restrict s) {
     Token* t = tokens_get(s);
-    const unsigned char* name = t->start;
-    size_t length = t->end - t->start;
 
     // Try local variables
     size_t i = local_symbol_count;
@@ -1435,7 +1429,7 @@ static Symbol* find_local_symbol(TokenStream* restrict s) {
         const char* sym = local_symbols[i].name;
         size_t sym_length = strlen(sym);
 
-        if (sym_length == length && memcmp(name, sym, length) == 0) {
+        if (memeq(t->content.data, t->content.length, sym, sym_length)) {
             return &local_symbols[i];
         }
     }
@@ -1510,7 +1504,6 @@ static Stmt* parse_compound_stmt(TranslationUnit* tu, TokenStream* restrict s) {
             }
         }
 
-        node->end_loc = tokens_get_location_index(s);
         expect(tu, s, '}');
 
         Stmt** permanent_storage = arena_alloc(&thread_arena, kid_count * sizeof(Stmt*), _Alignof(Stmt*));
@@ -1538,9 +1531,9 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
         tokens_next(s);
         expect(tu, s, '(');
 
-        SourceLocIndex start = tokens_get_location_index(s);
+        SourceLoc start = tokens_get_location(s);
         intmax_t condition = parse_const_expr(tu, s);
-        SourceLocIndex end = tokens_get_last_location_index(s);
+        SourceLoc end = tokens_get_last_location(s);
 
         if (tokens_get(s)->type == ',') {
             tokens_next(s);
@@ -1552,7 +1545,7 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
             tokens_next(s);
 
             if (condition == 0) {
-                REPORT_RANGED(ERROR, start, end, "Static assertion failed! %.*s", (int) (t->end - t->start), t->start);
+                REPORT_RANGED(ERROR, start, end, "Static assertion failed! %.*s", (int) t->content.length, t->content.data);
             }
         } else {
             if (condition == 0) {
@@ -1585,7 +1578,7 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
         LOCAL_SCOPE {
             Expr* cond;
             {
-                SourceLocIndex opening_loc = tokens_get_location_index(s);
+                SourceLoc opening_loc = tokens_get_location(s);
                 expect(tu, s, '(');
 
                 cond = parse_expr(tu, s);
@@ -1870,7 +1863,7 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
             if (tokens_get(s)->type != TOKEN_KW_while) {
                 Token* t = tokens_get(s);
 
-                REPORT(ERROR, t->location, "%s:%d: error: expected 'while' got '%.*s'", (int)(t->end - t->start), t->start);
+                REPORT(ERROR, t->location, "%s:%d: error: expected 'while' got '%.*s'", (int)t->content.length, t->content.data);
                 abort();
             }
             tokens_next(s);
@@ -1895,13 +1888,13 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 
         // read label name
         Token* t = tokens_get(s);
-        SourceLocIndex loc = t->location;
+        SourceLoc loc = t->location;
         if (t->type != TOKEN_IDENTIFIER) {
             REPORT(ERROR, loc, "expected identifier for goto target name");
             return n;
         }
 
-        Atom name = atoms_put(t->end - t->start, t->start);
+        Atom name = atoms_put(t->content.length, t->content.data);
 
         // skip to the semicolon
         tokens_next(s);
@@ -1911,8 +1904,7 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
         if (search >= 0) {
             *target = (Expr){
                 .op = EXPR_SYMBOL,
-                .start_loc = loc,
-                .end_loc = loc,
+                .loc = { loc, loc },
                 .symbol = labels[search],
             };
         } else {
@@ -1923,8 +1915,7 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 
             *target = (Expr){
                 .op = EXPR_SYMBOL,
-                .start_loc = loc,
-                .end_loc = loc,
+                .loc = { loc, loc },
                 .symbol = label_decl,
             };
         }
@@ -1939,7 +1930,7 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
         // label amirite
         // IDENTIFIER COLON STMT
         Token* t = tokens_get(s);
-        Atom name = atoms_put(t->end - t->start, t->start);
+        Atom name = atoms_put(t->content.length, t->content.data);
 
         Stmt* n = NULL;
         ptrdiff_t search = nl_strmap_get_cstr(labels, name);
@@ -2020,7 +2011,7 @@ static void parse_decl_or_expr(TranslationUnit* tu, TokenStream* restrict s, siz
                     if (tokens_get(s)->type == '{') {
                         generic_error(tu, s, "nested functions are not allowed... yet");
                     } else if (tokens_get(s)->type != ',') {
-                        SourceLocIndex loc = tokens_get_last_location_index(s);
+                        SourceLoc loc = tokens_get_last_location(s);
 
                         report_fix(REPORT_ERROR, tu->errors, s, loc, ";", "expected semicolon at the end of declaration");
                     }
@@ -2123,7 +2114,7 @@ static Stmt* parse_stmt_or_expr(TranslationUnit* tu, TokenStream* restrict s) {
 }
 
 static intmax_t parse_const_expr(TranslationUnit* tu, TokenStream* restrict s) {
-    SourceLocIndex foo = tokens_get_location_index(s);
+    SourceLoc foo = tokens_get_location(s);
     Expr* folded = cuik__optimize_ast(tu, parse_expr_l14(tu, s));
     if (folded->op != EXPR_INT) {
         ((void) foo);
@@ -2138,7 +2129,7 @@ static intmax_t parse_const_expr(TranslationUnit* tu, TokenStream* restrict s) {
 // ERRORS
 ////////////////////////////////
 static _Noreturn void generic_error(TranslationUnit* tu, TokenStream* restrict s, const char* msg) {
-    SourceLocIndex loc = tokens_get_location_index(s);
+    SourceLoc loc = tokens_get_location(s);
 
     report(REPORT_ERROR, NULL, s, loc, msg);
     abort();
@@ -2147,19 +2138,19 @@ static _Noreturn void generic_error(TranslationUnit* tu, TokenStream* restrict s
 static void expect(TranslationUnit* tu, TokenStream* restrict s, char ch) {
     if (tokens_get(s)->type != ch) {
         Token* t = tokens_get(s);
-        SourceLocIndex loc = tokens_get_last_location_index(s);
+        SourceLoc loc = tokens_get_last_location(s);
 
         char tmp[2] = { ch };
-        report_fix(REPORT_ERROR, NULL, s, loc, tmp, "expected '%c' got '%.*s'", ch, (int)(t->end - t->start), t->start);
+        report_fix(REPORT_ERROR, NULL, s, loc, tmp, "expected '%c' got '%.*s'", ch, (int)t->content.length, t->content.data);
         abort();
     }
 
     tokens_next(s);
 }
 
-static void expect_closing_paren(TranslationUnit* tu, TokenStream* restrict s, SourceLocIndex opening) {
+static void expect_closing_paren(TranslationUnit* tu, TokenStream* restrict s, SourceLoc opening) {
     if (tokens_get(s)->type != ')') {
-        SourceLocIndex loc = tokens_get_location_index(s);
+        SourceLoc loc = tokens_get_location(s);
 
         report_two_spots(REPORT_ERROR, tu->errors, s, opening, loc,
             "expected closing parenthesis",
@@ -2173,7 +2164,7 @@ static void expect_closing_paren(TranslationUnit* tu, TokenStream* restrict s, S
 
 static void expect_with_reason(TranslationUnit* tu, TokenStream* restrict s, char ch, const char* reason) {
     if (tokens_get(s)->type != ch) {
-        SourceLocIndex loc = tokens_get_last_location_index(s);
+        SourceLoc loc = tokens_get_last_location(s);
 
         char fix[2] = { ch, '\0' };
         report_fix(REPORT_ERROR, NULL, s, loc, fix, "expected '%c' for %s", ch, reason);

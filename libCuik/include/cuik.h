@@ -3,12 +3,15 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include "cuik_lex.h"
 
 #ifdef CUIK_USE_TB
 #include <tb.h>
 #endif
 
+#ifndef CUIK_API
 #define CUIK_API extern
+#endif
 
 #ifdef _WIN32
 // Microsoft's definition of strtok_s actually matches
@@ -149,56 +152,7 @@ CUIK_API bool cuik_lex_is_keyword(size_t length, const char* str);
 ////////////////////////////////////////////
 // C preprocessor
 ////////////////////////////////////////////
-typedef unsigned int SourceLocIndex;
-typedef struct Cuik_CPP Cuik_CPP;
 typedef struct Cuik_FileCache Cuik_FileCache;
-
-typedef enum SourceLocType {
-    SOURCE_LOC_UNKNOWN = 0,
-    SOURCE_LOC_NORMAL = 1,
-    SOURCE_LOC_MACRO = 2,
-    SOURCE_LOC_FILE = 3
-} SourceLocType;
-
-typedef struct SourceLoc {
-    struct SourceLine* line;
-    SourceLocIndex expansion;
-
-    uint16_t columns;
-    uint16_t length    : 14;
-    SourceLocType type : 2;
-} SourceLoc;
-
-typedef struct SourceLine {
-    const char* filepath;
-    const unsigned char* line_str;
-    SourceLocIndex parent;
-    int line;
-} SourceLine;
-
-typedef struct TokenStream {
-    const char* filepath;
-
-    // if true, the preprocessor is allowed to delete after completion.
-    // this shouldn't enabled when caching files
-    bool is_owned;
-
-    // DynArray(Token)
-    struct Token* tokens;
-    size_t current;
-
-    // DynArray(SourceLoc)
-    struct SourceLoc* locations;
-} TokenStream;
-
-typedef struct Cuik_FileEntry {
-    size_t parent_id;
-    int depth;
-    SourceLocIndex include_loc;
-
-    const char* filepath;
-    TokenStream tokens;
-} Cuik_FileEntry;
 
 CUIK_API Cuik_FileCache* cuik_fscache_create(void);
 CUIK_API void cuik_fscache_destroy(Cuik_FileCache* restrict c);
@@ -215,92 +169,6 @@ CUIK_API void cuiklex_canonicalize(size_t length, char* data);
 // into here
 CUIK_API TokenStream cuiklex_buffer(const char* filepath, char* contents);
 
-CUIK_API void cuikpp_init(Cuik_CPP* ctx, const char filepath[FILENAME_MAX]);
-
-// this will delete all the contents of the preprocessor
-//
-// NOTES: it doesn't own the memory for the files it may have used
-// and thus you must free them, this can be done by iterating over
-// them using CUIKPP_FOR_FILES
-CUIK_API void cuikpp_deinit(Cuik_CPP* ctx);
-CUIK_API void cuikpp_dump(Cuik_CPP* ctx);
-
-// You can't preprocess any more files after this
-CUIK_API void cuikpp_finalize(Cuik_CPP* ctx);
-
-// returns the final token stream (should not be called if you haven't finished
-// iterating through cuikpp_next)
-CUIK_API TokenStream* cuikpp_get_token_stream(Cuik_CPP* ctx);
-
-// The file table may contain duplicates (for now...) but it stores all
-// the loaded files by this instance of the preprocessor, in theory one
-// could write a proper incremental compilation model using this for TU
-// dependency tracking but... incremental compilation is a skill issue
-CUIK_API size_t cuikpp_get_file_table_count(Cuik_CPP* ctx);
-CUIK_API Cuik_FileEntry* cuikpp_get_file_table(Cuik_CPP* ctx);
-
-// Locates an include file from the `path` and copies it's fully qualified path into `output`
-CUIK_API bool cuikpp_find_include_include(Cuik_CPP* ctx, char output[FILENAME_MAX], const char* path);
-
-// Adds include directory to the search list
-CUIK_API void cuikpp_add_include_directory(Cuik_CPP* ctx, const char dir[]);
-
-// Basically just `#define key`
-CUIK_API void cuikpp_define_empty(Cuik_CPP* ctx, const char key[]);
-CUIK_API void cuikpp_define_empty_slice(Cuik_CPP* ctx, size_t keylen, const char key[]);
-
-// Basically just `#define key value`
-CUIK_API void cuikpp_define(Cuik_CPP* ctx, const char key[], const char value[]);
-CUIK_API void cuikpp_define_slice(Cuik_CPP* ctx, size_t keylen, const char key[], size_t vallen, const char value[]);
-
-// This is written out by cuikpp_next
-typedef struct Cuikpp_Packet {
-    enum {
-        CUIKPP_PACKET_NONE,
-        CUIKPP_PACKET_GET_FILE,
-        CUIKPP_PACKET_QUERY_FILE,
-        CUIKPP_PACKET_CANONICALIZE,
-    } tag;
-    union {
-        // in case of GET_FILE:
-        //   lex the file at input_path using cuiklex_buffer(...)
-        struct {
-            // input
-            const char* input_path;
-            bool is_primary;
-
-            // output
-            TokenStream tokens;
-        } file;
-        // in case of QUERY_FILE:
-        //   found is set true if you found a file at 'input_path'
-        //
-        struct {
-            // input
-            const char* input_path;
-
-            // output
-            bool found;
-        } query;
-        // in case of CANONICALIZE:
-        //   convert the filepath 'input_path' into a new filepath which is
-        //   absolute, note that 'output_path' has the memory provided for you
-        //   and is FILENAME_MAX chars long.
-        struct {
-            // input
-            const char* input_path;
-
-            // output
-            char* output_path;
-        } canonicalize;
-    };
-} Cuikpp_Packet;
-
-typedef enum {
-    CUIKPP_CONTINUE,
-    CUIKPP_DONE,
-    CUIKPP_ERROR,
-} Cuikpp_Status;
 
 // Used by cuikpp_default_packet_handler, it canonicalizes paths according to the OS
 // NOTE: it doesn't guarentee the paths map to existing files.
@@ -326,27 +194,9 @@ CUIK_API bool cuikpp_default_packet_handler(Cuik_CPP* ctx, Cuikpp_Packet* packet
 CUIK_API void cuikpp_set_common_defines(Cuik_CPP* restrict out_cpp, const Cuik_Target* target, bool use_system_includes);
 
 // is the source location in the source file (none of the includes)
-CUIK_API bool cuikpp_is_in_main_file(TokenStream* tokens, SourceLocIndex loc);
+CUIK_API bool cuikpp_is_in_main_file(TokenStream* tokens, SourceLoc loc);
 
 CUIK_API const char* cuikpp_get_main_file(TokenStream* tokens);
-
-// This is an iterator for include search list in the preprocessor:
-//
-// Cuik_FileIter it = cuikpp_first_file(cpp);
-// while (cuikpp_next_file(cpp, &it)) { ... }
-typedef struct Cuik_FileIter {
-    // public
-    Cuik_FileEntry* file;
-
-    // internal
-    size_t i;
-} Cuik_FileIter;
-
-#define CUIKPP_FOR_FILES(it, ctx) \
-for (Cuik_FileIter it = cuikpp_first_file(ctx); cuikpp_next_file(ctx, &it);)
-
-CUIK_API Cuik_FileIter cuikpp_first_file(Cuik_CPP* ctx);
-CUIK_API bool cuikpp_next_file(Cuik_CPP* ctx, Cuik_FileIter* it);
 
 // This is an iterator for include search list in the preprocessor:
 //
@@ -365,32 +215,6 @@ for (Cuik_IncludeIter it = cuikpp_first_include_search(ctx); cuikpp_next_include
 
 CUIK_API Cuik_IncludeIter cuikpp_first_include_search(Cuik_CPP* ctx);
 CUIK_API bool cuikpp_next_include_search(Cuik_CPP* ctx, Cuik_IncludeIter* it);
-
-// Used to make iterators for the define list, for example:
-//
-// Cuik_DefineIter it = cuikpp_first_define(cpp);
-// while (cuikpp_next_define(cpp, &it)) { ... }
-typedef struct Cuik_DefineIter {
-    // public
-    SourceLocIndex loc;
-    struct Cuik_DefineKey {
-        size_t len;
-        const char* data;
-    } key;
-    struct Cuik_DefineVal {
-        size_t len;
-        const char* data;
-    } value;
-
-    // internal
-    uint32_t bucket, id;
-} Cuik_DefineIter;
-
-#define CUIKPP_FOR_DEFINES(it, ctx) \
-for (Cuik_DefineIter it = cuikpp_first_define(ctx); cuikpp_next_define(ctx, &it);)
-
-CUIK_API Cuik_DefineIter cuikpp_first_define(Cuik_CPP* ctx);
-CUIK_API bool cuikpp_next_define(Cuik_CPP* ctx, Cuik_DefineIter* src);
 
 ////////////////////////////////////////////
 // C parsing
@@ -438,7 +262,7 @@ typedef struct Cuik_Type Cuik_Type;
 
 typedef struct Cuik_Attribute {
     struct Cuik_Attribute* prev;
-    SourceLocIndex start_loc, end_loc;
+    SourceRange loc;
 
     Atom name;
     // TODO(NeGate): implement parameter list
@@ -494,9 +318,6 @@ CUIK_API Cuik_ImportRequest* cuik_translation_unit_import_requests(TranslationUn
 ////////////////////////////////////////////
 // Token stream
 ////////////////////////////////////////////
-CUIK_API const char* cuik_get_location_file(TokenStream* restrict s, SourceLocIndex loc);
-CUIK_API int cuik_get_location_line(TokenStream* restrict s, SourceLocIndex loc);
-
 CUIK_API Token* cuik_get_tokens(TokenStream* restrict s);
 CUIK_API size_t cuik_get_token_count(TokenStream* restrict s);
 

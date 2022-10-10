@@ -11,21 +11,21 @@ static Cuik_Attribute* parse_attributes(TranslationUnit* restrict tu, TokenStrea
             //   [[foo]]  [[foo::bar]]  [[foo(1, 3)]]
             Cuik_Attribute* a = ARENA_ALLOC(&local_ast_arena, Cuik_Attribute);
             a->prev = last;
-            a->start_loc = tokens_get_location_index(s);
+            a->loc.start = tokens_get_location(s);
 
             // TODO(NeGate): we'll only handle the identifier case with no :: for now
             tokens_next(s), tokens_next(s);
             if (tokens_get(s)->type != TOKEN_IDENTIFIER) {
-                REPORT(ERROR, tokens_get_location_index(s), "Expected an identifier");
+                REPORT(ERROR, tokens_get_location(s), "Expected an identifier");
             } else {
                 Token* t = tokens_get(s);
-                a->name = atoms_put(t->end - t->start, t->start);
+                a->name = atoms_put(t->content.length, t->content.data);
                 tokens_next(s);
             }
-            a->end_loc = tokens_get_location_index(s);
+            a->loc.end = tokens_get_location(s);
 
             if (!tokens_peek_double_token(s, ']')) {
-                REPORT(ERROR, tokens_get_location_index(s), "Expected closing ']]' for attribute");
+                REPORT(ERROR, tokens_get_location(s), "Expected closing ']]' for attribute");
             }
             tokens_next(s), tokens_next(s);
 
@@ -147,7 +147,7 @@ static Decl parse_declarator(TranslationUnit* tu, TokenStream* restrict s, Cuik_
         // the end of the declarator when it's done.
         //
         // should be right after the (
-        SourceLocIndex opening_loc = tokens_get_location_index(s);
+        SourceLoc opening_loc = tokens_get_location(s);
 
         tokens_next(s);
         size_t saved = s->current;
@@ -189,14 +189,14 @@ static Decl parse_declarator(TranslationUnit* tu, TokenStream* restrict s, Cuik_
 
     Atom name = NULL;
     Token* t = tokens_get(s);
-    SourceLocIndex loc = tokens_get_location_index(s);
+    SourceLoc loc = tokens_get_location(s);
     if (!is_abstract && t->type == TOKEN_IDENTIFIER) {
-        name = atoms_put(t->end - t->start, t->start);
+        name = atoms_put(t->content.length, t->content.data);
         tokens_next(s);
     }
 
     type = parse_type_suffix(tu, s, type, name);
-    return (Decl){type, name, loc};
+    return (Decl){ type, name, loc };
 }
 
 static Cuik_Type* parse_typename(TranslationUnit* tu, TokenStream* restrict s) {
@@ -209,7 +209,7 @@ static Cuik_Type* parse_typename(TranslationUnit* tu, TokenStream* restrict s) {
 
 static Cuik_Type* parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s, Cuik_Type* type, Atom name) {
     assert(s->current > 0);
-    SourceLocIndex loc = tokens_get_last_location_index(s);
+    SourceLoc loc = tokens_get_last_location(s);
 
     // type suffixes like array [] and function ()
     if (tokens_get(s)->type == '(') {
@@ -238,7 +238,7 @@ static Cuik_Type* parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s
             if (param_count) {
                 if (tokens_get(s)->type != ',') {
                     tokens_prev(s);
-                    SourceLocIndex loc = tokens_get_last_location_index(s);
+                    SourceLoc loc = tokens_get_last_location(s);
 
                     REPORT(ERROR, loc, "Expected a comma after this declaration name");
                     abort();
@@ -306,7 +306,7 @@ static Cuik_Type* parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s
     } else if (tokens_get(s)->type == '[') {
         if (out_of_order_mode) {
             // in the out of order case we defer expression parsing
-            SourceLocIndex open_brace = tokens_get_location_index(s);
+            SourceLoc open_brace = tokens_get_location(s);
             tokens_next(s);
 
             size_t current = 0;
@@ -348,7 +348,7 @@ static Cuik_Type* parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s
 
             // create placeholder array type
             type = new_array(tu, type, 0);
-            type->loc = tokens_get_location_index(s);
+            type->loc = tokens_get_location(s);
             type->array_count_lexer_pos = current;
             return type;
         } else {
@@ -428,7 +428,7 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
     int forced_align = 0;
     PendingExpr* alignas_pending_expr = NULL;
 
-    SourceLocIndex loc = tokens_get_location_index(s);
+    SourceLoc loc = tokens_get_location(s);
     do {
         TknType tkn_type = tokens_get(s)->type;
         switch (tkn_type) {
@@ -500,7 +500,7 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
                 if (counter) goto done;
                 tokens_next(s);
 
-                SourceLocIndex opening_loc = tokens_get_location_index(s);
+                SourceLoc opening_loc = tokens_get_location(s);
                 expect(tu, s, '(');
 
                 type = parse_typename(tu, s);
@@ -545,14 +545,14 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
             case TOKEN_KW_Atomic: {
                 tokens_next(s);
                 if (tokens_get(s)->type == '(') {
-                    SourceLocIndex opening_loc = tokens_get_location_index(s);
+                    SourceLoc opening_loc = tokens_get_location(s);
                     tokens_next(s);
 
                     type = parse_typename(tu, s);
                     counter += OTHER;
                     is_atomic = true;
 
-                    SourceLocIndex closing_loc = tokens_get_location_index(s);
+                    SourceLoc closing_loc = tokens_get_location(s);
                     if (tokens_get(s)->type != ')') {
                         report_two_spots(REPORT_ERROR, tu->errors, s, opening_loc, closing_loc, "expected closing parenthesis for _Atomic", "open", "close?", NULL);
                         return NULL;
@@ -686,7 +686,7 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
             case TOKEN_KW_struct:
             case TOKEN_KW_union: {
                 if (counter) goto done;
-                SourceLocIndex record_loc = tokens_get_location_index(s);
+                SourceLoc record_loc = tokens_get_location(s);
                 tokens_next(s);
 
                 bool is_union = tkn_type == TOKEN_KW_union;
@@ -696,10 +696,10 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
 
                 Atom name = NULL;
                 if (tokens_get(s)->type == TOKEN_IDENTIFIER) {
-                    record_loc = tokens_get_location_index(s);
+                    record_loc = tokens_get_location(s);
 
                     Token* t = tokens_get(s);
-                    name = atoms_put(t->end - t->start, t->start);
+                    name = atoms_put(t->content.length, t->content.data);
 
                     tokens_next(s);
                 }
@@ -723,7 +723,7 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
                                 nl_strmap_put_cstr(tu->global_tags, name, type);
                             } else {
                                 if (local_tag_count + 1 >= MAX_LOCAL_TAGS) {
-                                    SourceLocIndex loc2 = tokens_get_location_index(s);
+                                    SourceLoc loc2 = tokens_get_location(s);
                                     REPORT(ERROR, loc2, "too many tags in local scopes (%d)", MAX_LOCAL_TAGS);
                                     abort();
                                 }
@@ -742,7 +742,7 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
                         if (skip_over_declspec(tu, s)) continue;
 
                         // in case we have unnamed declarators and we somewhere for them to point to
-                        SourceLocIndex default_loc = tokens_get_location_index(s);
+                        SourceLoc default_loc = tokens_get_location(s);
 
                         Attribs member_attr = {0};
                         Cuik_Type* member_base_type = parse_declspec(tu, s, &member_attr);
@@ -840,7 +840,7 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
                             nl_strmap_put_cstr(tu->global_tags, name, type);
                         } else {
                             if (local_tag_count + 1 >= MAX_LOCAL_TAGS) {
-                                SourceLocIndex loc2 = tokens_get_location_index(s);
+                                SourceLoc loc2 = tokens_get_location(s);
                                 REPORT(ERROR, loc2, "too many tags in local scopes (%d)", MAX_LOCAL_TAGS);
                                 abort();
                             }
@@ -864,7 +864,7 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
                 Token* t = tokens_get(s);
                 Atom name = NULL;
                 if (tokens_get(s)->type == TOKEN_IDENTIFIER) {
-                    name = atoms_put(t->end - t->start, t->start);
+                    name = atoms_put(t->content.length, t->content.data);
                     tokens_next(s);
                 }
 
@@ -889,7 +889,7 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
                                 nl_strmap_put_cstr(tu->global_tags, name, type);
                             else {
                                 if (local_tag_count + 1 >= MAX_LOCAL_TAGS) {
-                                    SourceLocIndex loc2 = tokens_get_location_index(s);
+                                    SourceLoc loc2 = tokens_get_location(s);
                                     REPORT(ERROR, loc2, "too many tags in local scopes (%d)", MAX_LOCAL_TAGS);
                                     abort();
                                 }
@@ -922,7 +922,7 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
                             generic_error(tu, s, "expected identifier for enum name entry.");
                         }
 
-                        Atom name = atoms_put(t->end - t->start, t->start);
+                        Atom name = atoms_put(t->content.length, t->content.data);
                         tokens_next(s);
 
                         int lexer_pos = 0;
@@ -934,7 +934,7 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
                                 lexer_pos = skip_expression_in_enum(s, &terminator);
 
                                 if (terminator == 0) {
-                                    SourceLocIndex loc2 = tokens_get_location_index(s);
+                                    SourceLoc loc2 = tokens_get_location(s);
                                     REPORT(ERROR, loc2, "expected comma or } (got EOF)");
                                     abort();
                                 }
@@ -995,7 +995,7 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
                             nl_strmap_put_cstr(tu->global_tags, name, type);
                         } else {
                             if (local_tag_count + 1 >= MAX_LOCAL_TAGS) {
-                                SourceLocIndex loc2 = tokens_get_location_index(s);
+                                SourceLoc loc2 = tokens_get_location(s);
                                 REPORT(ERROR, loc2, "too many tags in local scopes (%d)", MAX_LOCAL_TAGS);
                                 abort();
                             }
@@ -1018,7 +1018,7 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
 
                 if (out_of_order_mode) {
                     Token* t = tokens_get(s);
-                    Atom name = atoms_put(t->end - t->start, t->start);
+                    Atom name = atoms_put(t->content.length, t->content.data);
 
                     // if the typename is already defined, then reuse that type index
                     Symbol* sym = find_global_symbol(tu, (const char*)name);
@@ -1027,7 +1027,7 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
                         if (sym->storage_class != STORAGE_TYPEDEF) {
                             sprintf_s(temp_string0, sizeof(temp_string0), "symbol '%s' is not a typedef", name);
 
-                            SourceLocIndex loc2 = tokens_get_location_index(s);
+                            SourceLoc loc2 = tokens_get_location(s);
                             report_two_spots(
                                 REPORT_ERROR, tu->errors, s, loc2, sym->loc,
                                 temp_string0, "use", "def", NULL
@@ -1065,7 +1065,7 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
                     }
 
                     Token* t = tokens_get(s);
-                    Atom name = atoms_put(t->end - t->start, t->start);
+                    Atom name = atoms_put(t->content.length, t->content.data);
 
                     sym = find_global_symbol(tu, (const char*)name);
                     if (sym != NULL && sym->storage_class == STORAGE_TYPEDEF) {
@@ -1158,7 +1158,7 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
     done:;
     if (type == 0) {
         Token* last = &s->tokens[s->current];
-        REPORT(ERROR, loc, "unknown typename: %.*s", (int) (last->end - last->start), last->start);
+        REPORT(ERROR, loc, "unknown typename: %.*s", (int) last->content.length, last->content.data);
         return NULL;
     }
 
@@ -1218,7 +1218,7 @@ static bool is_typename(TranslationUnit* tu, TokenStream* restrict s) {
         case TOKEN_IDENTIFIER: {
             // good question...
             Token* t = tokens_get(s);
-            Atom name = atoms_put(t->end - t->start, t->start);
+            Atom name = atoms_put(t->content.length, t->content.data);
 
             Symbol* loc = find_local_symbol(s);
             if (loc != NULL) {

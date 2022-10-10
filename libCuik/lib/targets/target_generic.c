@@ -6,30 +6,30 @@
 static thread_local char temp_string0[1024], temp_string1[1024];
 
 void target_generic_set_defines(Cuik_CPP* cpp, Cuik_System sys, bool is_64bit, bool is_little_endian) {
-    cuikpp_define_empty(cpp, is_64bit ? "_CUIK_TARGET_64BIT_" : "_CUIK_TARGET_32BIT_");
-    cuikpp_define(cpp, is_little_endian ? "__LITTLE_ENDIAN__" : "__BIG_ENDIAN__", "1");
-    cuikpp_define(cpp, is_little_endian ? "__BIG_ENDIAN__" : "__LITTLE_ENDIAN__", "0");
+    cuikpp_define_empty_cstr(cpp, is_64bit ? "_CUIK_TARGET_64BIT_" : "_CUIK_TARGET_32BIT_");
+    cuikpp_define_cstr(cpp, is_little_endian ? "__LITTLE_ENDIAN__" : "__BIG_ENDIAN__", "1");
+    cuikpp_define_cstr(cpp, is_little_endian ? "__BIG_ENDIAN__" : "__LITTLE_ENDIAN__", "0");
 
     if (sys == CUIK_SYSTEM_WINDOWS) {
-        cuikpp_define(cpp, "_WIN32", "1");
-        cuikpp_define(cpp, "_WIN64", "1");
+        cuikpp_define_cstr(cpp, "_WIN32", "1");
+        cuikpp_define_cstr(cpp, "_WIN64", "1");
     } else if (sys == CUIK_SYSTEM_LINUX) {
-        cuikpp_define(cpp, "__LP64__", "1");
-        cuikpp_define(cpp, "__linux", "1");
-        cuikpp_define(cpp, "linux", "1");
+        cuikpp_define_cstr(cpp, "__LP64__", "1");
+        cuikpp_define_cstr(cpp, "__linux", "1");
+        cuikpp_define_cstr(cpp, "linux", "1");
     }
 
     // stdatomic.h lock free stuff
-    cuikpp_define(cpp, "__CUIK_ATOMIC_BOOL_LOCK_FREE", "1");
-    cuikpp_define(cpp, "__CUIK_ATOMIC_CHAR_LOCK_FREE", "1");
-    cuikpp_define(cpp, "__CUIK_ATOMIC_CHAR16_LOCK_FREE", "1");
-    cuikpp_define(cpp, "__CUIK_ATOMIC_CHAR32_LOCK_FREE", "1");
-    cuikpp_define(cpp, "__CUIK_ATOMIC_WCHAR_T_LOCK_FREE", "1");
-    cuikpp_define(cpp, "__CUIK_ATOMIC_SHORT_LOCK_FREE", "1");
-    cuikpp_define(cpp, "__CUIK_ATOMIC_INT_LOCK_FREE", "1");
-    cuikpp_define(cpp, "__CUIK_ATOMIC_LONG_LOCK_FREE", "1");
-    cuikpp_define(cpp, "__CUIK_ATOMIC_LLONG_LOCK_FREE", "1");
-    cuikpp_define(cpp, "__CUIK_ATOMIC_POINTER_LOCK_FREE", "1");
+    cuikpp_define_cstr(cpp, "__CUIK_ATOMIC_BOOL_LOCK_FREE", "1");
+    cuikpp_define_cstr(cpp, "__CUIK_ATOMIC_CHAR_LOCK_FREE", "1");
+    cuikpp_define_cstr(cpp, "__CUIK_ATOMIC_CHAR16_LOCK_FREE", "1");
+    cuikpp_define_cstr(cpp, "__CUIK_ATOMIC_CHAR32_LOCK_FREE", "1");
+    cuikpp_define_cstr(cpp, "__CUIK_ATOMIC_WCHAR_T_LOCK_FREE", "1");
+    cuikpp_define_cstr(cpp, "__CUIK_ATOMIC_SHORT_LOCK_FREE", "1");
+    cuikpp_define_cstr(cpp, "__CUIK_ATOMIC_INT_LOCK_FREE", "1");
+    cuikpp_define_cstr(cpp, "__CUIK_ATOMIC_LONG_LOCK_FREE", "1");
+    cuikpp_define_cstr(cpp, "__CUIK_ATOMIC_LLONG_LOCK_FREE", "1");
+    cuikpp_define_cstr(cpp, "__CUIK_ATOMIC_POINTER_LOCK_FREE", "1");
 }
 
 // returns the pointer's base type for whatever expression was resolved

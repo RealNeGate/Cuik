@@ -158,28 +158,22 @@ static int count_pp_lines(TokenStream* s) {
     int line_count = 0;
     for (size_t i = 0; i < count; i++) {
         Token* t = &tokens[i];
-        SourceLoc* loc = &s->locations[t->location];
 
-        if (last_file != loc->line->filepath && strcmp(loc->line->filepath, "<temp>") != 0) {
-            line_count += 1;
-            last_file = loc->line->filepath;
-        }
+        ResolvedSourceLoc r;
+        if (cuikpp_find_location(s, t->location, &r)) {
+            if (last_file != r.filename && strcmp(r.filename, "<temp>") != 0) {
+                line_count += 1;
+                last_file = r.filename;
+            }
 
-        if (last_line != loc->line->line) {
-            line_count += 1;
-            last_line = loc->line->line;
+            if (last_line != r.line) {
+                line_count += 1;
+                last_line = r.line;
+            }
         }
     }
 
     return line_count;
-}
-
-static SourceLoc* try_for_nicer_loc(TokenStream* s, SourceLoc* loc) {
-    while (loc->line->filepath[0] == '<' && loc->line->parent != 0) {
-        loc = &s->locations[loc->line->parent];
-    }
-
-    return loc;
 }
 
 static void dump_tokens(FILE* out_file, TokenStream* s) {
@@ -191,15 +185,17 @@ static void dump_tokens(FILE* out_file, TokenStream* s) {
 
     for (size_t i = 0; i < count; i++) {
         Token* t = &tokens[i];
-        SourceLoc* loc = try_for_nicer_loc(s, &s->locations[t->location]);
 
-        if (last_file != loc->line->filepath && strcmp(loc->line->filepath, "<temp>") != 0) {
-            char str[FILENAME_MAX];
+        ResolvedSourceLoc r;
+        if (!cuikpp_find_location(s, t->location, &r)) {
+            assert(0 && "cuikpp_find_location failed?");
+        }
 
+        if (last_file != r.filename && strcmp(r.filename, "<temp>") != 0) {
             // TODO(NeGate): Kinda shitty but i just wanna duplicate
             // the backslashes to avoid them being treated as an escape
-            const char* in = (const char*)loc->line->filepath;
-            char* out = str;
+            const char* in = (const char*) r.filename;
+            char str[FILENAME_MAX], *out = str;
 
             while (*in) {
                 if (*in == '\\') {
@@ -212,16 +208,16 @@ static void dump_tokens(FILE* out_file, TokenStream* s) {
             }
             *out++ = '\0';
 
-            fprintf(out_file, "\n#line %d \"%s\"\t", loc->line->line, str);
-            last_file = loc->line->filepath;
+            fprintf(out_file, "\n#line %d \"%s\"\t", r.line, str);
+            last_file = r.filename;
         }
 
-        if (last_line != loc->line->line) {
-            fprintf(out_file, "\n/* line %3d */\t", loc->line->line);
-            last_line = loc->line->line;
+        if (last_line != r.line) {
+            fprintf(out_file, "\n/* line %3d */\t", r.line);
+            last_line = r.line;
         }
 
-        fprintf(out_file, "%.*s ", (int)(t->end - t->start), t->start);
+        fprintf(out_file, "%.*s ", (int) t->content.length, t->content.data);
     }
 }
 
@@ -336,9 +332,9 @@ static Cuik_CPP* make_preprocessor(const char* filepath) {
         const char* equal = strchr(input_defines[i], '=');
 
         if (equal == NULL) {
-            cuikpp_define_empty(cpp, input_defines[i]);
+            cuikpp_define_empty_cstr(cpp, input_defines[i]);
         } else {
-            cuikpp_define_slice(
+            cuikpp_define(
                 cpp,
                 // before equals
                 equal - input_defines[i], input_defines[i],
@@ -357,7 +353,7 @@ static Cuik_CPP* make_preprocessor(const char* filepath) {
         cuik_lock_compilation_unit(&compilation_unit);
 
         // include any of the files that are directly included by the original file
-        CUIKPP_FOR_FILES(it, cpp) {
+        /*CUIKPP_FOR_FILES(it, cpp) {
             if (it.file->depth == 2) {
                 args_bindgen->include(it.file->filepath);
             }
@@ -365,10 +361,10 @@ static Cuik_CPP* make_preprocessor(const char* filepath) {
 
         TokenStream* tokens = cuikpp_get_token_stream(cpp);
         CUIKPP_FOR_DEFINES(it, cpp) {
-            if (cuikpp_is_in_main_file(tokens, it.loc)) {
+            if (cuikpp_is_in_main_file(tokens, it.loc.start)) {
                 args_bindgen->define(it);
             }
-        }
+        }*/
 
         cuik_unlock_compilation_unit(&compilation_unit);
     }
@@ -413,6 +409,7 @@ static void compile_file(void* arg) {
         cuik_unlock_compilation_unit(&compilation_unit);
     }
 
+    /*
     if (args_bindgen != NULL) {
         cuik_lock_compilation_unit(&compilation_unit);
         TokenStream* tokens = cuikpp_get_token_stream(cpp);
@@ -422,14 +419,14 @@ static void compile_file(void* arg) {
         DefinedTypeEntry* defined_types = NULL;
         CUIK_FOR_TOP_LEVEL_STMT(it, tu, 1) {
             Stmt* s = *it.start;
-            if (cuikpp_is_in_main_file(tokens, s->loc)) {
+            if (cuikpp_is_in_main_file(tokens, s->loc.start)) {
                 args_bindgen->decl(tu, &defined_types, s);
             }
         }
 
         cuik_unlock_compilation_unit(&compilation_unit);
     }
-
+*/
     cuik_set_translation_unit_user_data(tu, cpp);
     cuik_add_to_compilation_unit(&compilation_unit, tu);
 }

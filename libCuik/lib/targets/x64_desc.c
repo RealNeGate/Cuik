@@ -8,13 +8,13 @@ static void set_defines(Cuik_CPP* cpp, Cuik_System sys) {
     target_generic_set_defines(cpp, sys, true, true);
 
     if (sys == CUIK_SYSTEM_WINDOWS) {
-        cuikpp_define(cpp, "_M_X64", "100");
-        cuikpp_define(cpp, "_AMD64_", "100");
-        cuikpp_define(cpp, "_M_AMD64", "100");
+        cuikpp_define_cstr(cpp, "_M_X64", "100");
+        cuikpp_define_cstr(cpp, "_AMD64_", "100");
+        cuikpp_define_cstr(cpp, "_M_AMD64", "100");
     } else if (sys == CUIK_SYSTEM_LINUX) {
-        cuikpp_define(cpp, "__x86_64__", "1");
-        cuikpp_define(cpp, "__amd64",    "1");
-        cuikpp_define(cpp, "__amd64__",  "1");
+        cuikpp_define_cstr(cpp, "__x86_64__", "1");
+        cuikpp_define_cstr(cpp, "__amd64",    "1");
+        cuikpp_define_cstr(cpp, "__amd64__",  "1");
     }
 }
 
@@ -27,7 +27,7 @@ static Cuik_Type* type_check_builtin(TranslationUnit* tu, Expr* e, const char* n
 
     if (strcmp(name, "_mm_setcsr") == 0) {
         if (arg_count != 1) {
-            REPORT_EXPR(ERROR, e, "%s requires 1 arguments", name);
+            diag(&tu->tokens, e->loc, &cuikdg_param_mismatch, name, 1);
             return &builtin_types[TYPE_VOID];
         }
 

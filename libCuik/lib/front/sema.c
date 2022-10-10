@@ -698,7 +698,7 @@ Member* sema_resolve_member_access(TranslationUnit* tu, Expr* restrict e, uint32
     if (record_type->kind != KIND_STRUCT && record_type->kind != KIND_UNION) {
         type_as_string(tu, sizeof(temp_string0), temp_string0, record_type);
         REPORT_EXPR(ERROR, e, "Cannot get the member of a non-record type (%s)", temp_string0);
-        REPORT(INFO, record_type->loc, "Record found here:");
+        REPORT(INFO, record_type->loc.start, "Record found here:");
         return NULL;
     }
 
@@ -1642,7 +1642,7 @@ static void sema_top_level(TranslationUnit* tu, Stmt* restrict s) {
 
             if (s->decl.attrs.is_static && !s->decl.attrs.is_inline) {
                 if (tu->warnings->unused_funcs && !s->decl.attrs.is_used) {
-                    REPORT(WARNING, s->loc, "Function '%s' is never used.", name);
+                    REPORT_STMT(WARNING, s, "Function '%s' is never used.", name);
                 }
             }
 

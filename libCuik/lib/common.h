@@ -27,6 +27,10 @@
 #define _PP_CONCAT__(a, b) a##b
 #define _PP_CONCAT(a, b) _PP_CONCAT__(a, b)
 
+#ifndef COUNTOF
+#define COUNTOF(...) (sizeof(__VA_ARGS__) / sizeof(__VA_ARGS__[0]))
+#endif
+
 #ifndef MAX_PATH
 #define MAX_PATH 260
 #endif

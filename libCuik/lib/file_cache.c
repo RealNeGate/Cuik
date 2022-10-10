@@ -18,7 +18,7 @@ CUIK_API Cuik_FileCache* cuik_fscache_create(void) {
 CUIK_API void cuik_fscache_destroy(Cuik_FileCache* restrict c) {
     nl_strmap_for(i, c->table) {
         dyn_array_destroy(c->table[i].tokens);
-        dyn_array_destroy(c->table[i].locations);
+        dyn_array_destroy(c->table[i].files);
     }
 
     mtx_destroy(&c->lock);
