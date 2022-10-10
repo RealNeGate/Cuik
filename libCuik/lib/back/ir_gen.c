@@ -12,19 +12,7 @@ static thread_local Cuik_Type* function_type;
 static thread_local const char* function_name;
 
 // For aggregate returns
-static thread_local TB_Reg return_value_address;
-
-_Noreturn void internal_error(const char* fmt, ...) {
-    printf("internal compiler error: ");
-
-    va_list ap;
-    va_start(ap, fmt);
-    vprintf(fmt, ap);
-    va_end(ap);
-
-    printf("\n");
-    abort();
-}
+static _Thread_local TB_Reg return_value_address;
 
 static void fallthrough_label(TB_Function* func, TB_Label target) {
     if (!tb_basic_block_is_complete(func, tb_inst_get_label(func))) {
@@ -672,9 +660,7 @@ static TB_Initializer* gen_global_initializer(TranslationUnit* tu, Cuik_Type* ty
                 uint64_t stride = base->type->size;
 
                 Expr* index_expr = cuik__optimize_ast(tu, base->subscript.index);
-                if (index_expr->op != EXPR_INT) {
-                    internal_error("could not resolve as constant initializer");
-                }
+                assert(index_expr->op == EXPR_INT && "could not resolve as constant initializer");
 
                 uint64_t index = index_expr->int_num.num;
                 offset += (index * stride);
@@ -684,17 +670,11 @@ static TB_Initializer* gen_global_initializer(TranslationUnit* tu, Cuik_Type* ty
             // TODO(NeGate): Assumes we're on a 64bit target...
             memcpy(region, &offset, sizeof(uint64_t));
 
-            if (base->op == EXPR_SYMBOL) {
-                Stmt* stmt = base->symbol;
+            assert(base->op == EXPR_SYMBOL && "could not resolve as constant initializer");
+            Stmt* stmt = base->symbol;
+            assert(stmt->op == STMT_GLOBAL_DECL && "could not resolve as constant initializer");
 
-                if (stmt->op == STMT_GLOBAL_DECL) {
-                    tb_initializer_add_global(tu->ir_mod, init, 0, stmt->backing.g);
-                } else {
-                    internal_error("could not resolve as constant initializer");
-                }
-            } else {
-                internal_error("could not resolve as constant initializer");
-            }
+            tb_initializer_add_global(tu->ir_mod, init, 0, stmt->backing.g);
             return init;
         } else {
             assert(0);
@@ -1547,7 +1527,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
                             .type = e->type,
                             .reg = l
                         };*/
-                        internal_error("TODO");
+                        assert(0 && "TODO");
                     }
                 } else {
                     TB_Reg r = cvt2rval(tu, func, rhs, e->bin_op.right);
@@ -1579,7 +1559,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
                             .reg = op,
                         };
                     } else {
-                        internal_error("TODO: atomic operation not ready");
+                        assert(0 && "TODO atomic operation not ready");
                     }
                 }
             } else {
@@ -1844,7 +1824,7 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
                 char* name = tls_push(1024);
                 int name_len = snprintf(name, 1024, "%s$%s@%d", function_name, s->decl.name, tu->id_gen++);
                 if (name_len < 0 || name_len >= 1024) {
-                    internal_error("temporary global name too long!");
+                    assert(0 && "temporary global name too long!");
                 }
 
                 if (attrs.is_tls && !atomic_flag_test_and_set(&irgen_defined_tls_index)) {
@@ -2137,71 +2117,67 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
     }
 }
 
-static TB_Function* gen_func_body(TranslationUnit* tu, Cuik_Type* type, Stmt* restrict s) {
-    // Clear TLS
-    tls_init();
-    assert(type);
-
-    TB_Function* func = s->backing.f;
-
-    // Parameters
-    size_t param_count = type->func.param_count;
-
-    TB_Reg* params = parameter_map = tls_push(param_count * sizeof(TB_Reg));
-    Cuik_Type* return_type = type->func.return_type;
-
-    bool is_aggregate_return = !tu->target.arch->pass_return_via_reg(tu, return_type);
-    if (is_aggregate_return) {
-        return_value_address = tb_inst_param_addr(func, 0);
-
-        // gimme stack slots
-        for (size_t i = 0; i < param_count; i++) {
-            params[i] = tb_inst_param_addr(func, 1 + i);
-        }
-    } else {
-        return_value_address = TB_NULL_REG;
-
-        // gimme stack slots
-        for (size_t i = 0; i < param_count; i++) {
-            params[i] = tb_inst_param_addr(func, i);
-        }
-    }
-
-    // compile body
-    {
-        function_type = type;
-        function_name = s->decl.name;
-
-        irgen_stmt(tu, func, s->decl.initial_as_stmt);
-
-        function_name = NULL;
-        function_type = 0;
-    }
-
-    // append return if none exists
-    TB_Label last = tb_inst_get_label(func);
-    if (!tb_basic_block_is_complete(func, last)) {
-        if (cstr_equals(s->decl.name, "main")) {
-            tb_inst_ret(func, tb_inst_uint(func, TB_TYPE_I32, 0));
-        } else {
-            tb_inst_ret(func, TB_NULL_REG);
-        }
-    }
-
-    //tb_inst_set_scope(func, old_tb_scope);
-    return func;
-}
-
-CUIK_API TB_Function* cuik_stmt_gen_ir(TranslationUnit* restrict tu, Stmt* restrict s) {
+TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, Stmt* restrict s) {
     if (s->op == STMT_FUNC_DECL) {
+        if ((s->decl.attrs.is_static || s->decl.attrs.is_inline) && !s->decl.attrs.is_used) {
+            return NULL;
+        }
+
         Cuik_Type* type = s->decl.type;
         assert(type->kind == KIND_FUNC);
 
-        if (s->decl.attrs.is_static || s->decl.attrs.is_inline) {
-            if (!s->decl.attrs.is_used) return NULL;
+        // Clear temporary storage
+        tls_init();
+        assert(type);
+
+        TB_Function* func = s->backing.f;
+
+        // Parameters
+        size_t param_count = type->func.param_count;
+
+        TB_Reg* params = parameter_map = tls_push(param_count * sizeof(TB_Reg));
+        Cuik_Type* return_type = type->func.return_type;
+
+        bool is_aggregate_return = !tu->target.arch->pass_return_via_reg(tu, return_type);
+        if (is_aggregate_return) {
+            return_value_address = tb_inst_param_addr(func, 0);
+
+            // gimme stack slots
+            for (size_t i = 0; i < param_count; i++) {
+                params[i] = tb_inst_param_addr(func, 1 + i);
+            }
+        } else {
+            return_value_address = TB_NULL_REG;
+
+            // gimme stack slots
+            for (size_t i = 0; i < param_count; i++) {
+                params[i] = tb_inst_param_addr(func, i);
+            }
         }
 
-        return gen_func_body(tu, type, s);
+        // compile body
+        {
+            function_type = type;
+            function_name = s->decl.name;
+
+            irgen_stmt(tu, func, s->decl.initial_as_stmt);
+
+            function_name = NULL;
+            function_type = 0;
+        }
+
+        // append return if none exists
+        TB_Label last = tb_inst_get_label(func);
+        if (!tb_basic_block_is_complete(func, last)) {
+            if (cstr_equals(s->decl.name, "main")) {
+                tb_inst_ret(func, tb_inst_uint(func, TB_TYPE_I32, 0));
+            } else {
+                tb_inst_ret(func, TB_NULL_REG);
+            }
+        }
+
+        //tb_inst_set_scope(func, old_tb_scope);
+        return (TB_Symbol*) func;
     } else if (s->op == STMT_DECL || s->op == STMT_GLOBAL_DECL) {
         if (s->decl.name == NULL     ||
             !s->decl.attrs.is_used   ||
@@ -2213,12 +2189,13 @@ CUIK_API TB_Function* cuik_stmt_gen_ir(TranslationUnit* restrict tu, Stmt* restr
 
         TB_Initializer* init = gen_global_initializer(tu, s->decl.type, s->decl.initial, s->decl.name);
         tb_global_set_initializer(tu->ir_mod, (TB_Global*) s->backing.s, init);
+        return s->backing.s;
+    } else {
+        return NULL;
     }
-
-    return NULL;
 }
 
-CUIK_API TB_Module* cuik_get_tb_module(TranslationUnit* restrict tu) {
+TB_Module* cuik_get_tb_module(TranslationUnit* restrict tu) {
     return tu->ir_mod;
 }
 #endif /* CUIK_USE_TB */

@@ -255,10 +255,10 @@ static TB_Reg compile_builtin(TranslationUnit* tu, TB_Function* func, const char
         return tb_inst_x86_ldmxcsr(func, irgen_as_rvalue(tu, func, args[0]));
     } else if (strcmp(name, "_mm_getcsr") == 0) {
         return tb_inst_x86_stmxcsr(func);
+    } else {
+        assert(0 && "unimplemented builtin!");
+        return 0;
     }
-
-    internal_error("unimplemented builtin! %s", name);
-    return 0;
 }
 #endif /* CUIK_USE_TB */
 

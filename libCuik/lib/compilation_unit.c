@@ -1,20 +1,20 @@
 #include "compilation_unit.h"
 
-CUIK_API void cuik_create_compilation_unit(CompilationUnit* restrict cu) {
+void cuik_create_compilation_unit(CompilationUnit* restrict cu) {
     *cu = (CompilationUnit){0};
     cu->lock = HEAP_ALLOC(sizeof(mtx_t));
     mtx_init((mtx_t*) cu->lock, mtx_plain);
 }
 
-CUIK_API void cuik_lock_compilation_unit(CompilationUnit* restrict cu) {
+void cuik_lock_compilation_unit(CompilationUnit* restrict cu) {
     mtx_lock((mtx_t*) cu->lock);
 }
 
-CUIK_API void cuik_unlock_compilation_unit(CompilationUnit* restrict cu) {
+void cuik_unlock_compilation_unit(CompilationUnit* restrict cu) {
     mtx_unlock((mtx_t*) cu->lock);
 }
 
-CUIK_API void cuik_add_to_compilation_unit(CompilationUnit* restrict cu, TranslationUnit* restrict tu) {
+void cuik_add_to_compilation_unit(CompilationUnit* restrict cu, TranslationUnit* restrict tu) {
     assert(tu->next == NULL && "somehow the TU is already attached to something...");
     cuik_lock_compilation_unit(cu);
 
@@ -28,7 +28,7 @@ CUIK_API void cuik_add_to_compilation_unit(CompilationUnit* restrict cu, Transla
     cuik_unlock_compilation_unit(cu);
 }
 
-CUIK_API void cuik_destroy_compilation_unit(CompilationUnit* restrict cu) {
+void cuik_destroy_compilation_unit(CompilationUnit* restrict cu) {
     // walk all the TUs and free them (if they're not freed already)
     TranslationUnit* tu = cu->head;
     while (tu != NULL) {
@@ -42,11 +42,11 @@ CUIK_API void cuik_destroy_compilation_unit(CompilationUnit* restrict cu) {
     *cu = (CompilationUnit){0};
 }
 
-CUIK_API size_t cuik_num_of_translation_units_in_compilation_unit(CompilationUnit* restrict cu) {
+size_t cuik_num_of_translation_units_in_compilation_unit(CompilationUnit* restrict cu) {
     return cu->count;
 }
 
-CUIK_API void cuik_internal_link_compilation_unit(CompilationUnit* restrict cu) {
+void cuik_internal_link_compilation_unit(CompilationUnit* restrict cu) {
     FOR_EACH_TU(tu, cu) {
         size_t count = dyn_array_length(tu->top_level_stmts);
         // printf("%s:\n", cuikpp_get_main_file(&tu->tokens));

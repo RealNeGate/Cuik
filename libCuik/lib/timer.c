@@ -21,14 +21,14 @@ static bool should_lock_profiler;
 static const Cuik_IProfiler* profiler;
 static uint64_t global_profiler_start;
 
-CUIK_API void init_timer_system(void) {
+void init_timer_system(void) {
     #ifdef _WIN32
     QueryPerformanceFrequency(&timer_frequency);
     QueryPerformanceCounter(&timer_start);
     #endif
 }
 
-CUIK_API void cuik_start_global_profiler(const Cuik_IProfiler* p, bool lock_on_plot) {
+void cuik_start_global_profiler(const Cuik_IProfiler* p, bool lock_on_plot) {
     assert(p != NULL);
     assert(profiler == NULL);
 
@@ -45,7 +45,7 @@ CUIK_API void cuik_start_global_profiler(const Cuik_IProfiler* p, bool lock_on_p
     CUIK_CALL(profiler, begin_plot, global_profiler_start, "libCuik");
 }
 
-CUIK_API void cuik_stop_global_profiler(void) {
+void cuik_stop_global_profiler(void) {
     assert(profiler != NULL);
 
     CUIK_CALL(profiler, end_plot, cuik_time_in_nanos());
@@ -57,11 +57,11 @@ CUIK_API void cuik_stop_global_profiler(void) {
     profiler = NULL;
 }
 
-CUIK_API bool cuik_is_profiling(void) {
+bool cuik_is_profiling(void) {
     return (profiler != NULL);
 }
 
-CUIK_API uint64_t cuik_time_in_nanos(void) {
+uint64_t cuik_time_in_nanos(void) {
     #ifdef _WIN32
     LARGE_INTEGER l;
     QueryPerformanceCounter(&l);
@@ -75,7 +75,7 @@ CUIK_API uint64_t cuik_time_in_nanos(void) {
     #endif
 }
 
-CUIK_API void cuik_profile_region_start(uint64_t nanos, const char* fmt, ...) {
+void cuik_profile_region_start(uint64_t nanos, const char* fmt, ...) {
     if (profiler == NULL) return;
 
     // lock if necessary
@@ -92,7 +92,7 @@ CUIK_API void cuik_profile_region_start(uint64_t nanos, const char* fmt, ...) {
     if (should_lock_profiler) mtx_unlock(&timer_mutex);
 }
 
-CUIK_API void cuik_profile_region_end(void) {
+void cuik_profile_region_end(void) {
     if (profiler == NULL) return;
     uint64_t nanos = cuik_time_in_nanos();
 

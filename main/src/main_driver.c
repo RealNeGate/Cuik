@@ -253,17 +253,18 @@ static void irgen_job(void* arg) {
                 continue;
             }
 
-            TB_Function* func = NULL;
+            TB_Symbol* sym = NULL;
             const char* name = task.stmts[i]->decl.name;
             if (name == NULL) {
                 // these are untracked in the gen ir because they don't map to named IR stuff
-                func = cuik_stmt_gen_ir(task.tu, task.stmts[i]);
+                sym = cuikcg_top_level(task.tu, mod, task.stmts[i]);
             } else {
                 CUIK_TIMED_BLOCK("IrGen: %s", name) {
-                    func = cuik_stmt_gen_ir(task.tu, task.stmts[i]);
+                    sym = cuikcg_top_level(task.tu, mod, task.stmts[i]);
                 }
             }
 
+            TB_Function* func = tb_symbol_as_function(sym);
             if (func != NULL) {
                 CUIK_TIMED_BLOCK("Canonicalize: %s", name) {
                     for (size_t j = 0; j < PASS_COUNT; j++) {

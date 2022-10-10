@@ -146,11 +146,11 @@ static void pop_expansion(TokenList* out_tokens, size_t save) {
 #include "cpp_directive.h"
 #include "cpp_iters.h"
 
-CUIK_API const char* cuikpp_get_main_file(TokenStream* tokens) {
+const char* cuikpp_get_main_file(TokenStream* tokens) {
     return tokens->filepath;
 }
 
-CUIK_API bool cuikpp_is_in_main_file(TokenStream* tokens, SourceLoc loc) {
+bool cuikpp_is_in_main_file(TokenStream* tokens, SourceLoc loc) {
     // TODO(NeGate): macros can be in the main file, we should be walking the macro
     // trace to check for that
     assert((loc.raw & SourceLoc_IsMacro) == 0 && "TODO: support macro in cuikpp_is_in_main_file");
@@ -159,7 +159,7 @@ CUIK_API bool cuikpp_is_in_main_file(TokenStream* tokens, SourceLoc loc) {
     return f->filename == tokens->filepath;
 }
 
-CUIK_API void cuikpp_init(Cuik_CPP* ctx, const char filepath[FILENAME_MAX]) {
+void cuikpp_init(Cuik_CPP* ctx, const char filepath[FILENAME_MAX]) {
     size_t sz = sizeof(void*) * MACRO_BUCKET_COUNT * SLOTS_PER_MACRO_BUCKET;
     size_t sz2 = sizeof(SourceRange) * MACRO_BUCKET_COUNT * SLOTS_PER_MACRO_BUCKET;
 
@@ -237,12 +237,12 @@ static bool find_location(Cuik_File* file, uint32_t file_pos, ResolvedSourceLoc*
     return true;
 }
 
-CUIK_API Cuik_File* cuikpp_find_file(TokenStream* tokens, SourceLoc loc) {
+Cuik_File* cuikpp_find_file(TokenStream* tokens, SourceLoc loc) {
     assert((loc.raw & SourceLoc_IsMacro) == 0 && "TODO: support macro find_location");
     return &tokens->files[loc.raw >> SourceLoc_FilePosBits];
 }
 
-CUIK_API bool cuikpp_find_location_in_bytes(TokenStream* tokens, SourceLoc loc, Cuik_FileLoc* out_result) {
+bool cuikpp_find_location_in_bytes(TokenStream* tokens, SourceLoc loc, Cuik_FileLoc* out_result) {
     if ((loc.raw & SourceLoc_IsMacro) == 0) {
         Cuik_File* f = &tokens->files[loc.raw >> SourceLoc_FilePosBits];
         uint32_t pos = loc.raw & ((1u << SourceLoc_FilePosBits) - 1);
@@ -263,7 +263,7 @@ CUIK_API bool cuikpp_find_location_in_bytes(TokenStream* tokens, SourceLoc loc, 
     }
 }
 
-CUIK_API bool cuikpp_find_location(TokenStream* tokens, SourceLoc loc, ResolvedSourceLoc* out_result) {
+bool cuikpp_find_location(TokenStream* tokens, SourceLoc loc, ResolvedSourceLoc* out_result) {
     Cuik_FileLoc fl;
     if (!cuikpp_find_location_in_bytes(tokens, loc, &fl)) {
         return false;
@@ -313,7 +313,7 @@ static void compute_line_map(TokenStream* s, const char* filename, char* data, s
     } while (i + single_file_limit < length);
 }
 
-CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
+Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
     assert(ctx->stack_ptr > 0);
     CPPStackSlot* restrict slot = &ctx->stack[ctx->stack_ptr - 1];
 
@@ -617,7 +617,7 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
     }
 }
 
-CUIK_API void cuikpp_deinit(Cuik_CPP* ctx) {
+void cuikpp_deinit(Cuik_CPP* ctx) {
     #if CUIK__CPP_STATS
     //printf("%40s | %zu file read | %zu fstats\n", ctx->files[0].filepath, ctx->total_files_read, ctx->total_fstats);
     #if 1
@@ -660,7 +660,7 @@ CUIK_API void cuikpp_deinit(Cuik_CPP* ctx) {
     ctx->the_shtuffs = NULL;
 }
 
-CUIK_API Cuikpp_Status cuikpp_default_run(Cuik_CPP* ctx, Cuik_FileCache* cache) {
+Cuikpp_Status cuikpp_default_run(Cuik_CPP* ctx, Cuik_FileCache* cache) {
     Cuikpp_Packet packet;
     for (;;) {
         Cuikpp_Status status = cuikpp_next(ctx, &packet);
@@ -670,7 +670,7 @@ CUIK_API Cuikpp_Status cuikpp_default_run(Cuik_CPP* ctx, Cuik_FileCache* cache) 
     }
 }
 
-CUIK_API void cuikpp_finalize(Cuik_CPP* ctx) {
+void cuikpp_finalize(Cuik_CPP* ctx) {
     CUIK_TIMED_BLOCK("cuikpp_finalize") {
         size_t sz = sizeof(void*) * MACRO_BUCKET_COUNT * SLOTS_PER_MACRO_BUCKET;
         size_t sz2 = sizeof(SourceRange) * MACRO_BUCKET_COUNT * SLOTS_PER_MACRO_BUCKET;
@@ -691,21 +691,21 @@ CUIK_API void cuikpp_finalize(Cuik_CPP* ctx) {
     }
 }
 
-CUIK_API TokenStream* cuikpp_get_token_stream(Cuik_CPP* ctx) {
+TokenStream* cuikpp_get_token_stream(Cuik_CPP* ctx) {
     return &ctx->tokens;
 }
 
 /*
-CUIK_API size_t cuikpp_get_file_table_count(Cuik_CPP* ctx) {
+size_t cuikpp_get_file_table_count(Cuik_CPP* ctx) {
     return dyn_array_length(ctx->files);
 }
 
-CUIK_API Cuik_FileEntry* cuikpp_get_file_table(Cuik_CPP* ctx) {
+Cuik_FileEntry* cuikpp_get_file_table(Cuik_CPP* ctx) {
     return &ctx->files[0];
 }
 */
 
-CUIK_API void cuikpp_dump_defines(Cuik_CPP* ctx) {
+void cuikpp_dump_defines(Cuik_CPP* ctx) {
     int count = 0;
 
     for (int i = 0; i < MACRO_BUCKET_COUNT; i++) {

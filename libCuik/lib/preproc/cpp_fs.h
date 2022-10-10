@@ -72,7 +72,7 @@ static LoadResult get_file(const char* path) {
 }
 
 // cache is NULLable and if so it won't use it
-CUIK_API bool cuikpp_default_packet_handler(Cuik_CPP* ctx, Cuikpp_Packet* packet, Cuik_FileCache* cache) {
+bool cuikpp_default_packet_handler(Cuik_CPP* ctx, Cuikpp_Packet* packet, Cuik_FileCache* cache) {
     if (packet->tag == CUIKPP_PACKET_GET_FILE) {
         // we don't cache the main file
         LoadResult file = get_file(packet->file.input_path);
@@ -102,7 +102,7 @@ CUIK_API bool cuikpp_default_packet_handler(Cuik_CPP* ctx, Cuikpp_Packet* packet
     }
 }
 
-CUIK_API bool cuik_canonicalize_path(char output[FILENAME_MAX], const char* input) {
+bool cuik_canonicalize_path(char output[FILENAME_MAX], const char* input) {
     #ifdef _WIN32
     char* filepart;
     if (GetFullPathNameA(input, FILENAME_MAX, output, &filepart) == 0) {
@@ -125,7 +125,7 @@ CUIK_API bool cuik_canonicalize_path(char output[FILENAME_MAX], const char* inpu
     #endif
 }
 
-CUIK_API void cuiklex_canonicalize(size_t length, char* data) {
+void cuiklex_canonicalize(size_t length, char* data) {
     uint8_t* text = (uint8_t*) data;
 
     #if !USE_INTRIN

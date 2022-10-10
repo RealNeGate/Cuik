@@ -558,7 +558,7 @@ static void dump_stmt(TranslationUnit* tu, FILE* stream, Stmt* restrict s, int d
     barz[depth - 1] = false;
 }
 
-CUIK_API void cuik_dump_translation_unit(FILE* stream, TranslationUnit* tu, bool minimalist) {
+void cuik_dump_translation_unit(FILE* stream, TranslationUnit* tu, bool minimalist) {
     tls_init();
 
     fprintf(stream, "TranslationUnit\n");

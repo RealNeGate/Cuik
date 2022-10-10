@@ -32,17 +32,17 @@ static char* utf16_to_utf8_on_heap(const wchar_t* input) {
 void hook_crash_handler(void);
 void init_timer_system(void);
 
-CUIK_API void cuik_init(void) {
+void cuik_init(void) {
     init_timer_system();
     init_report_system();
     hook_crash_handler();
 }
 
-CUIK_API void cuik_free_thread_resources(void) {
+void cuik_free_thread_resources(void) {
     arena_free(&thread_arena);
 }
 
-CUIK_API void cuik_find_system_deps(const char* cuik_crt_directory) {
+void cuik_find_system_deps(const char* cuik_crt_directory) {
     #ifdef _WIN32
     cuik__vswhere = cuik__find_visual_studio_and_windows_sdk();
     #endif
@@ -50,7 +50,7 @@ CUIK_API void cuik_find_system_deps(const char* cuik_crt_directory) {
     sprintf_s(cuik__include_dir, FILENAME_MAX, "%s"SLASH"crt"SLASH"include"SLASH, cuik_crt_directory);
 }
 
-CUIK_API size_t cuik_get_system_search_path_count(void) {
+size_t cuik_get_system_search_path_count(void) {
     #ifdef _WIN32
     return 3;
     #else
@@ -58,7 +58,7 @@ CUIK_API size_t cuik_get_system_search_path_count(void) {
     #endif
 }
 
-CUIK_API void cuik_get_system_search_paths(const char** out, size_t n) {
+void cuik_get_system_search_paths(const char** out, size_t n) {
     #ifdef _WIN32
     if (n >= 1) out[0] = utf16_to_utf8_on_heap(cuik__vswhere.vs_library_path);
     if (n >= 2) out[1] = utf16_to_utf8_on_heap(cuik__vswhere.windows_sdk_um_library_path);
@@ -66,7 +66,7 @@ CUIK_API void cuik_get_system_search_paths(const char** out, size_t n) {
     #endif
 }
 
-CUIK_API bool cuik_lex_is_keyword(size_t length, const char* str) {
+bool cuik_lex_is_keyword(size_t length, const char* str) {
     return classify_ident((const unsigned char*)str, length) != TOKEN_IDENTIFIER;
 }
 
@@ -268,28 +268,28 @@ static void set_defines(Cuik_CPP* cpp, const Cuik_Target* target, bool system_li
     }
 }
 
-CUIK_API void cuikpp_set_common_defines(Cuik_CPP* restrict out_cpp, const Cuik_Target* target, bool use_system_includes) {
+void cuikpp_set_common_defines(Cuik_CPP* restrict out_cpp, const Cuik_Target* target, bool use_system_includes) {
     set_defines(out_cpp, target, use_system_includes);
 }
 
-CUIK_API Cuik_Entrypoint cuik_get_entrypoint_status(TranslationUnit* restrict tu) {
+Cuik_Entrypoint cuik_get_entrypoint_status(TranslationUnit* restrict tu) {
     return tu->entrypoint_status;
 }
 
-CUIK_API TokenStream* cuik_get_token_stream_from_tu(TranslationUnit* restrict tu) {
+TokenStream* cuik_get_token_stream_from_tu(TranslationUnit* restrict tu) {
     return &tu->tokens;
 }
 
-CUIK_API Token* cuik_get_tokens(TokenStream* restrict s) {
+Token* cuik_get_tokens(TokenStream* restrict s) {
     return &s->list.tokens[0];
 }
 
-CUIK_API size_t cuik_get_token_count(TokenStream* restrict s) {
+size_t cuik_get_token_count(TokenStream* restrict s) {
     // don't tell them about the EOF token :P
     return dyn_array_length(s->list.tokens) - 1;
 }
 
-CUIK_API void cuik_print_type(TranslationUnit* restrict tu, Cuik_Type* restrict type) {
+void cuik_print_type(TranslationUnit* restrict tu, Cuik_Type* restrict type) {
     char str[1024];
     type_as_string(tu, 1024, str, type);
     printf("%s", str);

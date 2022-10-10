@@ -1,13 +1,13 @@
 
-CUIK_API void cuikpp_define_empty_cstr(Cuik_CPP* ctx, const char* key) {
+void cuikpp_define_empty_cstr(Cuik_CPP* ctx, const char* key) {
     cuikpp_define_empty(ctx, strlen(key), key);
 }
 
-CUIK_API void cuikpp_define_cstr(Cuik_CPP* ctx, const char* key, const char* val) {
+void cuikpp_define_cstr(Cuik_CPP* ctx, const char* key, const char* val) {
     cuikpp_define(ctx, strlen(key), key, strlen(val), val);
 }
 
-CUIK_API void cuikpp_define_empty(Cuik_CPP* ctx, size_t keylen, const char* key) {
+void cuikpp_define_empty(Cuik_CPP* ctx, size_t keylen, const char* key) {
     // TODO(NeGate): Work around to get any of the macro bucket
     // keys to be at 16bytes aligned
     size_t pad_len = (keylen + 15) & ~15;
@@ -32,7 +32,7 @@ CUIK_API void cuikpp_define_empty(Cuik_CPP* ctx, size_t keylen, const char* key)
     ctx->macro_bucket_source_locs[e] = (SourceLoc){ 0 };
 }
 
-CUIK_API void cuikpp_define(Cuik_CPP* ctx, size_t keylen, const char* key, size_t vallen, const char* value) {
+void cuikpp_define(Cuik_CPP* ctx, size_t keylen, const char* key, size_t vallen, const char* value) {
     // TODO(NeGate): Work around to get any of the macro bucket
     // keys to be at 16bytes aligned
     size_t pad_len = (keylen + 15) & ~15;
@@ -66,11 +66,11 @@ CUIK_API void cuikpp_define(Cuik_CPP* ctx, size_t keylen, const char* key, size_
     }
 }
 
-CUIK_API bool cuikpp_undef_cstr(Cuik_CPP* ctx, const char* key) {
+bool cuikpp_undef_cstr(Cuik_CPP* ctx, const char* key) {
     return cuikpp_undef(ctx, strlen(key), key);
 }
 
-CUIK_API bool cuikpp_undef(Cuik_CPP* ctx, size_t keylen, const char* key) {
+bool cuikpp_undef(Cuik_CPP* ctx, size_t keylen, const char* key) {
     // Hash name
     uint64_t slot = hash_ident(key, keylen);
     size_t base = slot * SLOTS_PER_MACRO_BUCKET;

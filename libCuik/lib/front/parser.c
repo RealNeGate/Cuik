@@ -540,7 +540,7 @@ void type_layout(TranslationUnit* restrict tu, Cuik_Type* type, bool needs_compl
 
 static const Cuik_Warnings DEFAULT_WARNINGS = { 0 };
 
-CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* restrict desc) {
+TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* restrict desc) {
     // we can preserve this across multiple uses
     thread_local static NL_Strmap(Cuik_Type*) s_global_tags;
     thread_local static NL_Strmap(Symbol) s_global_symbols;
@@ -1336,28 +1336,28 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
     }
 }
 
-CUIK_API void* cuik_set_translation_unit_user_data(TranslationUnit* restrict tu, void* ud) {
+void* cuik_set_translation_unit_user_data(TranslationUnit* restrict tu, void* ud) {
     void* old = tu->user_data;
     tu->user_data = ud;
     return old;
 }
 
-CUIK_API void* cuik_get_translation_unit_user_data(TranslationUnit* restrict tu) {
+void* cuik_get_translation_unit_user_data(TranslationUnit* restrict tu) {
     return tu->user_data;
 }
 
-CUIK_API int cuik_acquire_translation_unit(TranslationUnit* restrict tu) {
+int cuik_acquire_translation_unit(TranslationUnit* restrict tu) {
     return atomic_fetch_add(&tu->ref_count, 1);
 }
 
-CUIK_API void cuik_release_translation_unit(TranslationUnit* restrict tu) {
+void cuik_release_translation_unit(TranslationUnit* restrict tu) {
     int r = --tu->ref_count;
     if (r == 0) {
         cuik_destroy_translation_unit(tu);
     }
 }
 
-CUIK_API void cuik_destroy_translation_unit(TranslationUnit* restrict tu) {
+void cuik_destroy_translation_unit(TranslationUnit* restrict tu) {
     dyn_array_destroy(tu->top_level_stmts);
 
     arena_free(&tu->ast_arena);
@@ -1366,22 +1366,22 @@ CUIK_API void cuik_destroy_translation_unit(TranslationUnit* restrict tu) {
     free(tu);
 }
 
-CUIK_API Cuik_ImportRequest* cuik_translation_unit_import_requests(TranslationUnit* restrict tu) {
+Cuik_ImportRequest* cuik_translation_unit_import_requests(TranslationUnit* restrict tu) {
     return tu->import_libs;
 }
 
-CUIK_API TranslationUnit* cuik_next_translation_unit(TranslationUnit* restrict tu) {
+TranslationUnit* cuik_next_translation_unit(TranslationUnit* restrict tu) {
     return tu->next;
 }
 
-CUIK_API Cuik_TopLevelIter cuik_first_top_level_stmt(TranslationUnit* restrict tu) {
+Cuik_TopLevelIter cuik_first_top_level_stmt(TranslationUnit* restrict tu) {
     return (Cuik_TopLevelIter){
         .limit_ = dyn_array_length(tu->top_level_stmts),
         .stmts_ = tu->top_level_stmts
     };
 }
 
-CUIK_API bool cuik_next_top_level_stmt(Cuik_TopLevelIter* it, int step) {
+bool cuik_next_top_level_stmt(Cuik_TopLevelIter* it, int step) {
     size_t i = it->index_, limit = it->limit_;
     if (i >= limit) {
         return false;
@@ -1398,11 +1398,11 @@ CUIK_API bool cuik_next_top_level_stmt(Cuik_TopLevelIter* it, int step) {
     return true;
 }
 
-CUIK_API Stmt** cuik_get_top_level_stmts(TranslationUnit* restrict tu) {
+Stmt** cuik_get_top_level_stmts(TranslationUnit* restrict tu) {
     return tu->top_level_stmts;
 }
 
-CUIK_API size_t cuik_num_of_top_level_stmts(TranslationUnit* restrict tu) {
+size_t cuik_num_of_top_level_stmts(TranslationUnit* restrict tu) {
     return dyn_array_length(tu->top_level_stmts);
 }
 

@@ -5,14 +5,6 @@
 #include <stdlib.h>
 #include "cuik_lex.h"
 
-#ifdef CUIK_USE_TB
-#include <tb.h>
-#endif
-
-#ifndef CUIK_API
-#define CUIK_API extern
-#endif
-
 #ifdef _WIN32
 // Microsoft's definition of strtok_s actually matches
 // strtok_r on POSIX, not strtok_s on C11... tf
@@ -29,6 +21,10 @@ typedef struct Token Token;
 typedef struct TranslationUnit TranslationUnit;
 typedef struct CompilationUnit CompilationUnit;
 typedef struct Cuik_Type Cuik_Type;
+
+#ifdef CUIK_USE_TB
+#include "cuik_irgen.h"
+#endif
 
 // This is generated from
 //    #pragma comment(lib, "somelib.lib")
@@ -94,17 +90,17 @@ const Cuik_ArchDesc* cuik_get_x64_target_desc(void);
 ////////////////////////////////////////////
 // lock_on_plot is true if the profiler->plot function cannot be called on multiple threads at
 // the same time.
-CUIK_API void cuik_start_global_profiler(const Cuik_IProfiler* profiler, bool lock_on_plot);
-CUIK_API void cuik_stop_global_profiler(void);
-CUIK_API bool cuik_is_profiling(void);
+void cuik_start_global_profiler(const Cuik_IProfiler* profiler, bool lock_on_plot);
+void cuik_stop_global_profiler(void);
+bool cuik_is_profiling(void);
 
 // the absolute values here don't have to mean anything, it's just about being able
 // to measure between two points.
-CUIK_API uint64_t cuik_time_in_nanos(void);
+uint64_t cuik_time_in_nanos(void);
 
 // Reports a region of time to the profiler callback
-CUIK_API void cuik_profile_region_start(uint64_t now, const char* fmt, ...);
-CUIK_API void cuik_profile_region_end(void);
+void cuik_profile_region_start(uint64_t now, const char* fmt, ...);
+void cuik_profile_region_end(void);
 
 // Usage:
 // CUIK_TIMED_BLOCK("Beans %d", 5) {
@@ -134,69 +130,69 @@ typedef struct {
 inline static TB_System cuik_system_to_tb(Cuik_System s) { return (TB_System) s; }
 #endif
 
-CUIK_API void cuik_init(void);
+void cuik_init(void);
 
 // This should be called before exiting
-CUIK_API void cuik_free_thread_resources(void);
+void cuik_free_thread_resources(void);
 
 // locates the system includes, libraries and other tools. this is a global
 // operation meaning that once it's only done once for the process.
-CUIK_API void cuik_find_system_deps(const char* cuik_crt_directory);
+void cuik_find_system_deps(const char* cuik_crt_directory);
 
 // can only be called after cuik_find_system_deps
-CUIK_API size_t cuik_get_system_search_path_count(void);
-CUIK_API void cuik_get_system_search_paths(const char** out, size_t n);
+size_t cuik_get_system_search_path_count(void);
+void cuik_get_system_search_paths(const char** out, size_t n);
 
-CUIK_API bool cuik_lex_is_keyword(size_t length, const char* str);
+bool cuik_lex_is_keyword(size_t length, const char* str);
 
 ////////////////////////////////////////////
 // C preprocessor
 ////////////////////////////////////////////
 typedef struct Cuik_FileCache Cuik_FileCache;
 
-CUIK_API Cuik_FileCache* cuik_fscache_create(void);
-CUIK_API void cuik_fscache_destroy(Cuik_FileCache* restrict c);
-CUIK_API void cuik_fscache_put(Cuik_FileCache* restrict c, const char* filepath, const TokenStream* tokens);
-CUIK_API bool cuik_fscache_lookup(Cuik_FileCache* restrict c, const char* filepath, TokenStream* out_tokens);
-CUIK_API bool cuik_fscache_query(Cuik_FileCache* restrict c, const char* filepath);
+Cuik_FileCache* cuik_fscache_create(void);
+void cuik_fscache_destroy(Cuik_FileCache* restrict c);
+void cuik_fscache_put(Cuik_FileCache* restrict c, const char* filepath, const TokenStream* tokens);
+bool cuik_fscache_lookup(Cuik_FileCache* restrict c, const char* filepath, TokenStream* out_tokens);
+bool cuik_fscache_query(Cuik_FileCache* restrict c, const char* filepath);
 
 // simplifies whitespace for the lexer
-CUIK_API void cuiklex_canonicalize(size_t length, char* data);
+void cuiklex_canonicalize(size_t length, char* data);
 
 // filepath is just annotated in the token stream and does not access the file system.
 // the contents string is a Cstring with a "fat" null terminator (16 bytes long of zeroes).
 // NOTE: contents must have been canonicalized using cuiklex_canonicalize before being fed
 // into here
-CUIK_API TokenStream cuiklex_buffer(const char* filepath, char* contents);
+TokenStream cuiklex_buffer(const char* filepath, char* contents);
 
 
 // Used by cuikpp_default_packet_handler, it canonicalizes paths according to the OS
 // NOTE: it doesn't guarentee the paths map to existing files.
 //
 // returns true on success
-CUIK_API bool cuik_canonicalize_path(char output[FILENAME_MAX], const char* input);
+bool cuik_canonicalize_path(char output[FILENAME_MAX], const char* input);
 
 // Iterates through all the cuikpp_next calls using cuikpp_default_packet_handler
 // and returns the final status. if cache is NULL then it's unused.
-CUIK_API Cuikpp_Status cuikpp_default_run(Cuik_CPP* ctx, Cuik_FileCache* cache);
+Cuikpp_Status cuikpp_default_run(Cuik_CPP* ctx, Cuik_FileCache* cache);
 
 // Keep iterating through this and filling in the packets accordingly to preprocess a file.
 // returns CUIKPP_CONTINUE if it needs to keep running
-CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet);
+Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet);
 
 // Handles the default behavior of the packet written by cuikpp_next, if cache is NULL then
 // it's unused.
 //
 // returns true if it succeeded in whatever packet handling (loading the file correctly)
-CUIK_API bool cuikpp_default_packet_handler(Cuik_CPP* ctx, Cuikpp_Packet* packet, Cuik_FileCache* cache);
+bool cuikpp_default_packet_handler(Cuik_CPP* ctx, Cuikpp_Packet* packet, Cuik_FileCache* cache);
 
 // if target is non-NULL it'll add predefined macros based on the target.
-CUIK_API void cuikpp_set_common_defines(Cuik_CPP* restrict out_cpp, const Cuik_Target* target, bool use_system_includes);
+void cuikpp_set_common_defines(Cuik_CPP* restrict out_cpp, const Cuik_Target* target, bool use_system_includes);
 
 // is the source location in the source file (none of the includes)
-CUIK_API bool cuikpp_is_in_main_file(TokenStream* tokens, SourceLoc loc);
+bool cuikpp_is_in_main_file(TokenStream* tokens, SourceLoc loc);
 
-CUIK_API const char* cuikpp_get_main_file(TokenStream* tokens);
+const char* cuikpp_get_main_file(TokenStream* tokens);
 
 // This is an iterator for include search list in the preprocessor:
 //
@@ -213,8 +209,8 @@ typedef struct Cuik_IncludeIter {
 #define CUIKPP_FOR_INCLUDE_SEARCHES(it, ctx) \
 for (Cuik_IncludeIter it = cuikpp_first_include_search(ctx); cuikpp_next_include_search(ctx, &it);)
 
-CUIK_API Cuik_IncludeIter cuikpp_first_include_search(Cuik_CPP* ctx);
-CUIK_API bool cuikpp_next_include_search(Cuik_CPP* ctx, Cuik_IncludeIter* it);
+Cuik_IncludeIter cuikpp_first_include_search(Cuik_CPP* ctx);
+bool cuikpp_next_include_search(Cuik_CPP* ctx, Cuik_IncludeIter* it);
 
 ////////////////////////////////////////////
 // C parsing
@@ -296,40 +292,30 @@ typedef struct Cuik_TranslationUnitDesc {
     Cuik_IThreadpool* thread_pool;
 } Cuik_TranslationUnitDesc;
 
-CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* restrict desc);
+TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* restrict desc);
 
 // sets the user data field, returns the old value
-CUIK_API void* cuik_set_translation_unit_user_data(TranslationUnit* restrict tu, void* ud);
+void* cuik_set_translation_unit_user_data(TranslationUnit* restrict tu, void* ud);
 
 // returns user data field
-CUIK_API void* cuik_get_translation_unit_user_data(TranslationUnit* restrict tu);
+void* cuik_get_translation_unit_user_data(TranslationUnit* restrict tu);
 
 // add a new reference to the TU, returns the old ref count
-CUIK_API int cuik_acquire_translation_unit(TranslationUnit* restrict tu);
+int cuik_acquire_translation_unit(TranslationUnit* restrict tu);
 
 // remove a reference from the TU, if it reaches 0 it'll destroy the TU
-CUIK_API void cuik_release_translation_unit(TranslationUnit* restrict tu);
+void cuik_release_translation_unit(TranslationUnit* restrict tu);
 
 // force delete the translation unit regardless of references held
-CUIK_API void cuik_destroy_translation_unit(TranslationUnit* restrict tu);
+void cuik_destroy_translation_unit(TranslationUnit* restrict tu);
 
-CUIK_API Cuik_ImportRequest* cuik_translation_unit_import_requests(TranslationUnit* restrict tu);
+Cuik_ImportRequest* cuik_translation_unit_import_requests(TranslationUnit* restrict tu);
 
 ////////////////////////////////////////////
 // Token stream
 ////////////////////////////////////////////
-CUIK_API Token* cuik_get_tokens(TokenStream* restrict s);
-CUIK_API size_t cuik_get_token_count(TokenStream* restrict s);
-
-////////////////////////////////////////////
-// IR generation
-////////////////////////////////////////////
-#ifdef CUIK_USE_TB
-// Generates TBIR for a specific top-level statement, returns a pointer to the TB_Function
-// it just generated such that a user could do TB related operations on it
-CUIK_API TB_Module* cuik_get_tb_module(TranslationUnit* restrict tu);
-CUIK_API TB_Function* cuik_stmt_gen_ir(TranslationUnit* restrict tu, Stmt* restrict s);
-#endif
+Token* cuik_get_tokens(TokenStream* restrict s);
+size_t cuik_get_token_count(TokenStream* restrict s);
 
 ////////////////////////////////////////////
 // Translation unit management
@@ -372,38 +358,38 @@ for (Cuik_ExprIter it = { .parent = (parent_) }; cuik_next_expr_kid(&it);)
 #define CUIK_FOR_TOP_LEVEL_STMT(it, tu_, step_) \
 for (Cuik_TopLevelIter it = cuik_first_top_level_stmt(tu_); cuik_next_top_level_stmt(&it, step_);)
 
-CUIK_API bool cuik_next_expr_kid(Cuik_ExprIter* it);
-CUIK_API bool cuik_next_stmt_kid(Cuik_StmtIter* it);
+bool cuik_next_expr_kid(Cuik_ExprIter* it);
+bool cuik_next_stmt_kid(Cuik_StmtIter* it);
 
-CUIK_API Cuik_TopLevelIter cuik_first_top_level_stmt(TranslationUnit* restrict tu);
-CUIK_API bool cuik_next_top_level_stmt(Cuik_TopLevelIter* iter, int step);
+Cuik_TopLevelIter cuik_first_top_level_stmt(TranslationUnit* restrict tu);
+bool cuik_next_top_level_stmt(Cuik_TopLevelIter* iter, int step);
 
-CUIK_API Stmt** cuik_get_top_level_stmts(TranslationUnit* restrict tu);
-CUIK_API size_t cuik_num_of_top_level_stmts(TranslationUnit* restrict tu);
+Stmt** cuik_get_top_level_stmts(TranslationUnit* restrict tu);
+size_t cuik_num_of_top_level_stmts(TranslationUnit* restrict tu);
 
-CUIK_API void cuik_dump_translation_unit(FILE* stream, TranslationUnit* tu, bool minimalist);
+void cuik_dump_translation_unit(FILE* stream, TranslationUnit* tu, bool minimalist);
 
 // if the translation units are in a compilation unit you can walk this chain of pointers
 // to read them
-CUIK_API TranslationUnit* cuik_next_translation_unit(TranslationUnit* restrict tu);
+TranslationUnit* cuik_next_translation_unit(TranslationUnit* restrict tu);
 
 // does this translation unit have a main? what type?
-CUIK_API Cuik_Entrypoint cuik_get_entrypoint_status(TranslationUnit* restrict tu);
+Cuik_Entrypoint cuik_get_entrypoint_status(TranslationUnit* restrict tu);
 
-CUIK_API TokenStream* cuik_get_token_stream_from_tu(TranslationUnit* restrict tu);
+TokenStream* cuik_get_token_stream_from_tu(TranslationUnit* restrict tu);
 
 ////////////////////////////////////////////
 // Compilation unit management
 ////////////////////////////////////////////
 #define FOR_EACH_TU(it, cu) for (TranslationUnit* it = (cu)->head; it; it = cuik_next_translation_unit(it))
 
-CUIK_API void cuik_create_compilation_unit(CompilationUnit* restrict cu);
-CUIK_API void cuik_lock_compilation_unit(CompilationUnit* restrict cu);
-CUIK_API void cuik_unlock_compilation_unit(CompilationUnit* restrict cu);
-CUIK_API void cuik_add_to_compilation_unit(CompilationUnit* restrict cu, TranslationUnit* restrict tu);
-CUIK_API void cuik_destroy_compilation_unit(CompilationUnit* restrict cu);
-CUIK_API void cuik_internal_link_compilation_unit(CompilationUnit* restrict cu);
-CUIK_API size_t cuik_num_of_translation_units_in_compilation_unit(CompilationUnit* restrict cu);
+void cuik_create_compilation_unit(CompilationUnit* restrict cu);
+void cuik_lock_compilation_unit(CompilationUnit* restrict cu);
+void cuik_unlock_compilation_unit(CompilationUnit* restrict cu);
+void cuik_add_to_compilation_unit(CompilationUnit* restrict cu, TranslationUnit* restrict tu);
+void cuik_destroy_compilation_unit(CompilationUnit* restrict cu);
+void cuik_internal_link_compilation_unit(CompilationUnit* restrict cu);
+size_t cuik_num_of_translation_units_in_compilation_unit(CompilationUnit* restrict cu);
 
 ////////////////////////////////////////////
 // Linker

@@ -1,9 +1,9 @@
 
-CUIK_API void cuikpp_add_include_directory(Cuik_CPP* ctx, const char dir[]) {
+void cuikpp_add_include_directory(Cuik_CPP* ctx, const char dir[]) {
     dyn_array_put(ctx->system_include_dirs, strdup(dir));
 }
 
-CUIK_API Cuik_File* cuikpp_next_file(Cuik_CPP* ctx, Cuik_File* f) {
+Cuik_File* cuikpp_next_file(Cuik_CPP* ctx, Cuik_File* f) {
     // first element
     if (f == NULL) return &ctx->tokens.files[0];
 
@@ -19,11 +19,11 @@ CUIK_API Cuik_File* cuikpp_next_file(Cuik_CPP* ctx, Cuik_File* f) {
     return &ctx->tokens.files[i];
 }
 
-CUIK_API Cuik_IncludeIter cuikpp_first_include_search(Cuik_CPP* ctx) {
+Cuik_IncludeIter cuikpp_first_include_search(Cuik_CPP* ctx) {
     return (Cuik_IncludeIter){ .directory = ctx->system_include_dirs[0] };
 }
 
-CUIK_API bool cuikpp_next_include_search(Cuik_CPP* ctx, Cuik_IncludeIter* it) {
+bool cuikpp_next_include_search(Cuik_CPP* ctx, Cuik_IncludeIter* it) {
     if (it->i >= dyn_array_length(ctx->system_include_dirs)) {
         return false;
     }
@@ -33,7 +33,7 @@ CUIK_API bool cuikpp_next_include_search(Cuik_CPP* ctx, Cuik_IncludeIter* it) {
     return true;
 }
 
-CUIK_API Cuik_DefineIter cuikpp_first_define(Cuik_CPP* ctx) {
+Cuik_DefineIter cuikpp_first_define(Cuik_CPP* ctx) {
     for (int i = 0; i < MACRO_BUCKET_COUNT; i++) {
         if (ctx->macro_bucket_count[i] != 0) {
             // first slot in that non-empty bucket
@@ -44,7 +44,7 @@ CUIK_API Cuik_DefineIter cuikpp_first_define(Cuik_CPP* ctx) {
     return (Cuik_DefineIter){ .bucket = MACRO_BUCKET_COUNT, .id = 0 };
 }
 
-CUIK_API bool cuikpp_next_define(Cuik_CPP* ctx, Cuik_DefineIter* it) {
+bool cuikpp_next_define(Cuik_CPP* ctx, Cuik_DefineIter* it) {
     // we outta bounds
     if (it->bucket >= MACRO_BUCKET_COUNT) return false;
 
