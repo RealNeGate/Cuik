@@ -80,9 +80,10 @@ typedef struct TokenList {
 typedef struct TokenStream {
     const char* filepath;
 
+    TokenList list;
     // DynArray(Token)
-    struct Token* tokens;
-    size_t current;
+    // struct Token* tokens;
+    // size_t current;
 
     // if true, the preprocessor is allowed to delete after completion.
     // this shouldn't enabled when caching files

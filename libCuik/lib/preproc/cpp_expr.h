@@ -63,13 +63,12 @@ static intmax_t eval(Cuik_CPP* restrict c, TokenList* restrict in) {
     }
     dyn_array_put(c->scratch_list.tokens, (Token){ 0 });
 
-    TokenList pass2 = { c->tokens.tokens, c->tokens.current };
-    size_t old_tokens_length = dyn_array_length(pass2.tokens);
+    size_t old_tokens_length = dyn_array_length(c->tokens.list.tokens);
 
     // This expansion is temporary
     c->scratch_list.current = old_scratch_length;
-    expand(c, &pass2, &c->scratch_list, 0);
-    dyn_array_put(pass2.tokens, (Token){ 0 });
+    expand(c, &c->tokens.list, &c->scratch_list, 0);
+    dyn_array_put(c->scratch_list.tokens, (Token){ 0 });
 
     // free pass 1 scratch tokens
     dyn_array_set_length(c->scratch_list.tokens, old_scratch_length);
@@ -77,12 +76,11 @@ static intmax_t eval(Cuik_CPP* restrict c, TokenList* restrict in) {
     // Evaluate
     // assert(c->tokens.current != dyn_array_length(c->tokens.tokens) && "Expected the macro expansion to add something");
 
-    pass2.current = old_tokens_length;
-    intmax_t result = eval_ternary(c, &pass2);
+    c->tokens.list.current = old_tokens_length;
+    intmax_t result = eval_ternary(c, &c->tokens.list);
 
     // free pass 2 scratch tokens
-    dyn_array_set_length(pass2.tokens, old_tokens_length);
-    c->tokens.tokens = pass2.tokens;
+    dyn_array_set_length(c->tokens.list.tokens, old_tokens_length);
     return result;
 }
 

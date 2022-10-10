@@ -1,6 +1,6 @@
 static Token* get_last_token(TokenStream* restrict s) {
-    assert(dyn_array_length(s->tokens) > 0);
-    return &s->tokens[dyn_array_length(s->tokens) - 1];
+    assert(dyn_array_length(s->list.tokens) > 0);
+    return &s->list.tokens[dyn_array_length(s->list.tokens) - 1];
 }
 
 static bool concat_token(Cuik_CPP* restrict c, String a, String b, Token* out_token) {

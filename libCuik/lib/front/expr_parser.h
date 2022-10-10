@@ -366,13 +366,13 @@ static Expr* parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
                 .str.end = &t->content.data[t->content.length],
             };
 
-            size_t saved_lexer_pos = s->current;
+            size_t saved_lexer_pos = s->list.current;
             tokens_next(s);
 
             if (tokens_get(s)->type == TOKEN_STRING_DOUBLE_QUOTE ||
                 tokens_get(s)->type == TOKEN_STRING_WIDE_DOUBLE_QUOTE) {
                 // Precompute length
-                s->current = saved_lexer_pos;
+                s->list.current = saved_lexer_pos;
                 size_t total_len = t->content.length;
                 while (tokens_get(s)->type == TOKEN_STRING_DOUBLE_QUOTE ||
                     tokens_get(s)->type == TOKEN_STRING_WIDE_DOUBLE_QUOTE) {
@@ -387,7 +387,7 @@ static Expr* parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
                 buffer[curr++] = '\"';
 
                 // Fill up the buffer
-                s->current = saved_lexer_pos;
+                s->list.current = saved_lexer_pos;
                 while (tokens_get(s)->type == TOKEN_STRING_DOUBLE_QUOTE ||
                     tokens_get(s)->type == TOKEN_STRING_WIDE_DOUBLE_QUOTE) {
                     Token* segment = tokens_get(s);

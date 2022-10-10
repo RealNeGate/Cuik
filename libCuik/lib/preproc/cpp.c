@@ -71,6 +71,11 @@ static Token peek(TokenList* restrict in) {
     return in->tokens[in->current];
 }
 
+static SourceLoc get_end_location(TokenList* restrict in) {
+    Token* t = &in->tokens[in->current - 1];
+    return (SourceLoc){ t->location.raw + t->content.length };
+}
+
 static bool at_token_list_end(TokenList* restrict in) {
     return in->current >= dyn_array_length(in->tokens)-1;
 }
@@ -189,7 +194,7 @@ CUIK_API void cuikpp_init(Cuik_CPP* ctx, const char filepath[FILENAME_MAX]) {
     }
 
     ctx->tokens.filepath = filepath;
-    ctx->tokens.tokens = dyn_array_create(Token);
+    ctx->tokens.list.tokens = dyn_array_create(Token);
     ctx->tokens.invokes = dyn_array_create(MacroInvoke);
     ctx->tokens.files = dyn_array_create_with_initial_cap(Cuik_File, 256);
 
@@ -274,7 +279,7 @@ static void compute_line_map(TokenStream* s, const char* filename, char* data, s
     // !USE_INTRIN
     dyn_array_put(line_map, 0);
 
-    for (size_t i = 0; i < length; i++) {
+    for (size_t i = 0; i < length;) {
         while (i < length && data[i] != '\n') i += 1;
 
         i += 1;
@@ -506,7 +511,7 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
                 t.type = classify_ident(t.content.data, t.content.length);
             }
 
-            dyn_array_put(s->tokens, t);
+            dyn_array_put(s->list.tokens, t);
         }
 
         Token first = consume(in);
@@ -519,10 +524,7 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
 
             if (slot->include_guard.status == INCLUDE_GUARD_EXPECTING_NOTHING) {
                 // the file is practically pragma once
-                // fprintf(stderr, "%s: this file has an include guard around it called '%.*s'\n", slot->filepath, (int)slot->include_guard.define.length, (const char*)slot->include_guard.define.data);
                 nl_strmap_put_cstr(ctx->include_once, (const char*) slot->filepath, 0);
-            } else {
-                // fprintf(stderr, "%s: could not detect include guard\n", slot->filepath);
             }
 
             // write out profile entry
@@ -536,9 +538,9 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
             // if this is the last file, just exit
             if (ctx->stack_ptr == 0) {
                 // place last token
-                dyn_array_put(s->tokens, (Token){ 0 });
+                dyn_array_put(s->list.tokens, (Token){ 0 });
 
-                s->current = 0;
+                s->list.current = 0;
                 return CUIKPP_DONE;
             }
 
@@ -594,12 +596,8 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
             } else if (result == DIRECTIVE_YIELD) {
                 return CUIKPP_CONTINUE;
             } else if (result == DIRECTIVE_UNKNOWN) {
-                SourceRange r = { first.location, in->tokens[dyn_array_length(in->tokens) - 1].location };
+                SourceRange r = { first.location, get_end_location(in) };
                 diag(s, r, &cuikdg_unknown_directive, directive);
-                /*report(
-                    REPORT_ERROR, NULL, in, directive_loc,
-                    "unknown directive: %.*s", (int)directive.length, directive.data
-                );*/
                 return CUIKPP_ERROR;
             }
         } else if (first.type == TOKEN_IDENTIFIER) {
@@ -607,18 +605,13 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
             if (!is_defined(ctx, first.content.data, first.content.length)) {
                 // FAST PATH
                 first.type = classify_ident(first.content.data, first.content.length);
-                dyn_array_put(s->tokens, first);
+                dyn_array_put(s->list.tokens, first);
             } else {
                 in->current -= 1;
 
                 // SLOW PATH BECAUSE IT NEEDS TO SPAWN POSSIBLY METRIC SHIT LOADS
                 // OF TOKENS AND EXPAND WITH THE AVERAGE C PREPROCESSOR SPOOKIES
-                TokenList scratch_tokens = { s->tokens, s->current };
-
-                expand_ident(ctx, &scratch_tokens, in, 0);
-
-                s->current = scratch_tokens.current;
-                s->tokens = scratch_tokens.tokens;
+                expand_ident(ctx, &s->list, in, 0);
             }
         }
     }

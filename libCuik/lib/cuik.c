@@ -281,12 +281,12 @@ CUIK_API TokenStream* cuik_get_token_stream_from_tu(TranslationUnit* restrict tu
 }
 
 CUIK_API Token* cuik_get_tokens(TokenStream* restrict s) {
-    return &s->tokens[0];
+    return &s->list.tokens[0];
 }
 
 CUIK_API size_t cuik_get_token_count(TokenStream* restrict s) {
     // don't tell them about the EOF token :P
-    return dyn_array_length(s->tokens) - 1;
+    return dyn_array_length(s->list.tokens) - 1;
 }
 
 CUIK_API void cuik_print_type(TranslationUnit* restrict tu, Cuik_Type* restrict type) {

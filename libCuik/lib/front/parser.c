@@ -148,7 +148,7 @@ static Cuik_Type* find_tag(TranslationUnit* tu, const char* name) {
 // ( SOMETHING )
 // ( SOMETHING ,
 static size_t skip_expression_in_parens(TokenStream* restrict s, TknType* out_terminator) {
-    size_t saved = s->current;
+    size_t saved = s->list.current;
 
     // by default we expect to exit with closing parens
     *out_terminator = ')';
@@ -180,7 +180,7 @@ static size_t skip_expression_in_parens(TokenStream* restrict s, TknType* out_te
 //
 // this code sucks btw, idk why i just think it's lowkey ugly
 static size_t skip_expression_in_enum(TokenStream* restrict s, TknType* out_terminator) {
-    size_t saved = s->current;
+    size_t saved = s->list.current;
 
     // our basic bitch expectations
     *out_terminator = ',';
@@ -258,7 +258,7 @@ static void parse_global_symbols(TranslationUnit* tu, size_t start, size_t end, 
             // don't worry about normal globals, those have been taken care of...
             if (sym->current != 0 && (sym->storage_class == STORAGE_STATIC_FUNC || sym->storage_class == STORAGE_FUNC)) {
                 // Spin up a mini parser here
-                tokens.current = sym->current;
+                tokens.list.current = sym->current;
 
                 // intitialize use list
                 symbol_chain_start = symbol_chain_current = NULL;
@@ -365,7 +365,7 @@ static void type_resolve_pending_align(TranslationUnit* restrict tu, Cuik_Type* 
             assert(pending_exprs[i].mode == PENDING_ALIGNAS);
 
             TokenStream mini_lex = tu->tokens;
-            mini_lex.current = pending_exprs[i].expr_pos;
+            mini_lex.list.current = pending_exprs[i].expr_pos;
 
             SourceLoc loc = tokens_get_location(&mini_lex);
 
@@ -410,7 +410,7 @@ void type_layout(TranslationUnit* restrict tu, Cuik_Type* type, bool needs_compl
         if (type->array_count_lexer_pos) {
             // run mini parser for array count
             TokenStream mini_lex = tu->tokens;
-            mini_lex.current = type->array_count_lexer_pos;
+            mini_lex.list.current = type->array_count_lexer_pos;
             type->array_count = parse_const_expr(tu, &mini_lex);
             expect(tu, &mini_lex, ']');
         }
@@ -451,7 +451,7 @@ void type_layout(TranslationUnit* restrict tu, Cuik_Type* type, bool needs_compl
             if (type->enumerator.entries[i].lexer_pos != 0) {
                 // Spin up a mini expression parser here
                 TokenStream mini_lex = tu->tokens;
-                mini_lex.current = type->enumerator.entries[i].lexer_pos;
+                mini_lex.list.current = type->enumerator.entries[i].lexer_pos;
 
                 cursor = parse_const_expr(tu, &mini_lex);
             }
@@ -723,12 +723,12 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                 if (attr.is_typedef) {
                     // declarator (',' declarator)+ ';'
                     while (true) {
-                        size_t start_decl_token = s->current;
+                        size_t start_decl_token = s->list.current;
                         Decl decl = parse_declarator(tu, s, type, false, false);
 
                         // we wanna avoid getting stuck in infinite loops so if we dont
                         // do anything in an iteration then we want to exit with an error
-                        bool possibly_bad_decl = (s->current == start_decl_token);
+                        bool possibly_bad_decl = (s->list.current == start_decl_token);
 
                         if (decl.name != NULL) {
                             // make typedef
@@ -825,7 +825,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                     // normal variable lists
                     // declarator (',' declarator )+ ';'
                     while (true) {
-                        size_t start_decl_token = s->current;
+                        size_t start_decl_token = s->list.current;
 
                         SourceLoc decl_loc = tokens_get_location(s);
                         Decl decl = parse_declarator(tu, s, type, false, false);
@@ -836,7 +836,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
 
                         // we wanna avoid getting stuck in infinite loops so if we dont
                         // do anything in an iteration then we want to exit with an error
-                        bool possibly_bad_decl = (s->current == start_decl_token);
+                        bool possibly_bad_decl = (s->list.current == start_decl_token);
 
                         Stmt* n = make_stmt(tu, s, STMT_GLOBAL_DECL, sizeof(struct StmtDecl));
                         n->loc = decl.loc;
@@ -888,7 +888,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                             n->decl.attrs.is_root = !attr.is_extern && !attr.is_static;
 
                             if (tokens_get(s)->type == '{') {
-                                sym->current = s->current;
+                                sym->current = s->list.current;
                                 sym->terminator = '}';
 
                                 tokens_next(s);
@@ -901,7 +901,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                                         REPORT(ERROR, decl.loc, "Declaration ended in EOF");
 
                                         // restore the token stream
-                                        s->current = sym->current + 1;
+                                        s->list.current = sym->current + 1;
                                         goto skip_declaration;
                                     } else if (t->type == '{') {
                                         depth++;
@@ -922,7 +922,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                             } else {
                                 // '=' EXPRESSION ','
                                 // '=' EXPRESSION ';'
-                                sym->current = s->current;
+                                sym->current = s->list.current;
                                 sym->terminator = ';';
 
                                 int depth = 1;
@@ -933,7 +933,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                                         REPORT(ERROR, decl.loc, "Declaration was never closed");
 
                                         // restore the token stream
-                                        s->current = sym->current + 1;
+                                        s->list.current = sym->current + 1;
                                         goto skip_declaration;
                                     } else if (t->type == '(') {
                                         depth++;
@@ -943,7 +943,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                                         if (depth == 0) {
                                             REPORT(ERROR, decl.loc, "Unbalanced parenthesis");
 
-                                            s->current = sym->current + 1;
+                                            s->list.current = sym->current + 1;
                                             goto skip_declaration;
                                         }
                                     } else if (t->type == ';' || t->type == ',') {
@@ -989,7 +989,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                             n->decl.attrs.is_root = attr.is_tls || !(attr.is_static || attr.is_inline);
 
                             sym->terminator = '}';
-                            sym->current = s->current;
+                            sym->current = s->list.current;
                             tokens_next(s);
 
                             // we postpone parsing the function bodies
@@ -1002,7 +1002,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                                     SourceLoc l = tokens_get_last_location(s);
                                     report_fix(REPORT_ERROR, tu->errors, s, l, "}", "Function body ended in EOF");
 
-                                    s->current = sym->current + 1;
+                                    s->list.current = sym->current + 1;
                                     goto skip_declaration;
                                 } else if (t->type == '{') {
                                     depth++;
@@ -1101,11 +1101,10 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
         nl_strmap_for(i, tu->global_symbols) {
             Symbol* sym = &tu->global_symbols[i];
 
-            if (sym->current != 0 &&
-                (sym->storage_class == STORAGE_STATIC_VAR || sym->storage_class == STORAGE_GLOBAL)) {
+            if (sym->current != 0 && (sym->storage_class == STORAGE_STATIC_VAR || sym->storage_class == STORAGE_GLOBAL)) {
                 // Spin up a mini parser here
                 TokenStream mini_lex = *s;
-                mini_lex.current = sym->current;
+                mini_lex.list.current = sym->current;
 
                 // intitialize use list
                 symbol_chain_start = symbol_chain_current = NULL;
@@ -1162,7 +1161,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
             size_t current_lex_pos = static_assertions[i];
 
             TokenStream mini_lex = *s;
-            mini_lex.current = current_lex_pos;
+            mini_lex.list.current = current_lex_pos;
 
             intmax_t condition = parse_const_expr(tu, &mini_lex);
             if (tokens_get(&mini_lex)->type == ',') {
@@ -1280,7 +1279,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
             }
         }
 
-        dyn_array_destroy(tu->tokens.tokens);
+        dyn_array_destroy(tu->tokens.list.tokens);
     }
 
     #if 0
@@ -1329,7 +1328,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
         dyn_array_destroy(static_assertions);
 
         // free tokens
-        dyn_array_destroy(tu->tokens.tokens);
+        dyn_array_destroy(tu->tokens.list.tokens);
 
         cuik_destroy_translation_unit(tu);
         if (cuik_is_profiling()) cuik_profile_region_end();

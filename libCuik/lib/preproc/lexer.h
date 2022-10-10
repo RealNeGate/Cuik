@@ -176,51 +176,51 @@ static SourceLoc encode_macro_loc(uint32_t macro_id, uint32_t macro_offset) {
 }
 
 inline static bool tokens_peek_double_token(TokenStream* restrict s, TknType tkn) {
-    return s->tokens[s->current].type == tkn && s->tokens[s->current + 1].type == tkn;
+    return s->list.tokens[s->list.current].type == tkn && s->list.tokens[s->list.current + 1].type == tkn;
 }
 
 inline static SourceLoc tokens_get_last_location(TokenStream* restrict s) {
-    Token* t = &s->tokens[s->current - 1];
+    Token* t = &s->list.tokens[s->list.current - 1];
     return (SourceLoc){ t->location.raw + t->content.length };
 }
 
 inline static SourceLoc tokens_get_location(TokenStream* restrict s) {
-    return s->tokens[s->current].location;
+    return s->list.tokens[s->list.current].location;
 }
 
 inline static bool tokens_hit_line(TokenStream* restrict s) {
-    return s->tokens[s->current].hit_line;
+    return s->list.tokens[s->list.current].hit_line;
 }
 
 inline static bool tokens_eof(TokenStream* restrict s) {
-    return s->tokens[s->current].type == 0;
+    return s->list.tokens[s->list.current].type == 0;
 }
 
 inline static bool tokens_is(TokenStream* restrict s, TknType type) {
-    return s->tokens[s->current].type == type;
+    return s->list.tokens[s->list.current].type == type;
 }
 
 inline static bool tokens_match(TokenStream* restrict s, size_t len, const char* str) {
-    return string_equals(&s->tokens[s->current].content, &(String){ len, (const unsigned char*) str });
+    return string_equals(&s->list.tokens[s->list.current].content, &(String){ len, (const unsigned char*) str });
 }
 
 // this is used by the parser to get the next token
 inline static Token* tokens_get(TokenStream* restrict s) {
-    return &s->tokens[s->current];
+    return &s->list.tokens[s->list.current];
 }
 
 // there should be a NULL token so as long as we can read [current]
 // we can read one ahead.
 inline static Token* tokens_peek(TokenStream* restrict s) {
-    return &s->tokens[s->current + 1];
+    return &s->list.tokens[s->list.current + 1];
 }
 
 inline static void tokens_prev(TokenStream* restrict s) {
-    assert(s->current > 0);
-    s->current -= 1;
+    assert(s->list.current > 0);
+    s->list.current -= 1;
 }
 
 inline static void tokens_next(TokenStream* restrict s) {
-    assert(s->current < dyn_array_length(s->tokens));
-    s->current += 1;
+    assert(s->list.current < dyn_array_length(s->list.tokens));
+    s->list.current += 1;
 }

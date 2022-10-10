@@ -16,22 +16,20 @@ static void expect_no_newline(TokenList* restrict in);
 static DirectiveResult skip_directive_body(TokenList* restrict in);
 
 static DirectiveResult cpp__warning(Cuik_CPP* restrict ctx, CPPStackSlot* restrict slot, TokenList* restrict in, Cuikpp_Packet* restrict packet) {
+    SourceLoc loc = peek(in).location;
     String msg = get_pp_tokens_until_newline(ctx, in);
-    (void)msg;
-    /*report(
-        REPORT_WARNING, NULL, s, loc,
-        "directive: %.*s", (int)msg.length, msg.data
-    );*/
+
+    SourceRange r = { loc, get_end_location(in) };
+    diag(&ctx->tokens, r, &cuikdg_pp_warning, msg);
     return DIRECTIVE_SUCCESS;
 }
 
 static DirectiveResult cpp__error(Cuik_CPP* restrict ctx, CPPStackSlot* restrict slot, TokenList* restrict in, Cuikpp_Packet* restrict packet) {
+    SourceLoc loc = peek(in).location;
     String msg = get_pp_tokens_until_newline(ctx, in);
-    (void)msg;
-    /*report(
-        REPORT_ERROR, NULL, s, loc,
-        "directive: %.*s", (int)msg.length, msg.data
-    );*/
+
+    SourceRange r = { loc, get_end_location(in) };
+    diag(&ctx->tokens, r, &cuikdg_pp_error, msg);
     return DIRECTIVE_SUCCESS;
 }
 
@@ -48,23 +46,21 @@ static DirectiveResult cpp__pragma(Cuik_CPP* restrict ctx, CPPStackSlot* restric
         warn_if_newline(in);
     } else if (string_equals_cstr(&pragma_type, "message")) {
         String msg = get_pp_tokens_until_newline(ctx, in);
-        (void)msg;
-        /*report(
-           REPORT_INFO, NULL, s, loc,
-           "directive: %.*s", (int)msg.length, msg.data
-       );*/
+
+        SourceRange r = { loc, get_end_location(in) };
+        diag(s, r, &cuikdg_pp_message, msg);
     } else {
         // convert to #pragma blah => _Pragma("blah")
         unsigned char* str = gimme_the_shtuffs(ctx, sizeof("_Pragma"));
         memcpy(str, "_Pragma", sizeof("_Pragma"));
         Token t = { TOKEN_KW_Pragma, false, loc, { 7, str } };
-        dyn_array_put(s->tokens, t);
+        dyn_array_put(s->list.tokens, t);
 
         str = gimme_the_shtuffs(ctx, sizeof("("));
         str[0] = '(';
         str[1] = 0;
         t = (Token){ '(', false, loc, { 1, str } };
-        dyn_array_put(s->tokens, t);
+        dyn_array_put(s->list.tokens, t);
 
         // Skip until we hit a newline
         expect_no_newline(in);
@@ -89,14 +85,14 @@ static DirectiveResult cpp__pragma(Cuik_CPP* restrict ctx, CPPStackSlot* restric
             *curr++ = '\0';
 
             t = (Token){ TOKEN_STRING_DOUBLE_QUOTE, false, loc, { (curr - str) - 1, str } };
-            dyn_array_put(s->tokens, t);
+            dyn_array_put(s->list.tokens, t);
         }
 
         str = gimme_the_shtuffs(ctx, sizeof(")"));
         str[0] = ')';
         str[1] = 0;
         t = (Token){ ')', false, loc, { 1, str } };
-        dyn_array_put(s->tokens, t);
+        dyn_array_put(s->list.tokens, t);
     }
 
     return DIRECTIVE_SUCCESS;
@@ -139,10 +135,9 @@ static DirectiveResult cpp__include(Cuik_CPP* restrict ctx, CPPStackSlot* restri
     } else {
         in->current = savepoint;
 
-        TokenList scratch_tokens = { s->tokens, s->current };
-        size_t a = push_expansion(ctx, &scratch_tokens, in);
+        size_t a = push_expansion(ctx, &s->list, in);
+        Token t = consume(&s->list);
 
-        Token t = consume(&scratch_tokens);
         if (t.type == TOKEN_STRING_DOUBLE_QUOTE) {
             size_t len = t.content.length - 2;
             if (len > MAX_PATH) {
@@ -156,9 +151,7 @@ static DirectiveResult cpp__include(Cuik_CPP* restrict ctx, CPPStackSlot* restri
             generic_error(in, "expected file path!");
         }
 
-        pop_expansion(&scratch_tokens, a);
-        s->current = scratch_tokens.current;
-        s->tokens = scratch_tokens.tokens;
+        pop_expansion(&s->list, a);
     }
 
     // insert incomplete new stack slot

@@ -150,7 +150,7 @@ static Decl parse_declarator(TranslationUnit* tu, TokenStream* restrict s, Cuik_
         SourceLoc opening_loc = tokens_get_location(s);
 
         tokens_next(s);
-        size_t saved = s->current;
+        size_t saved = s->list.current;
 
         // dummy_type just avoids problems where the type would be NULL and needs to be read
         // it's not gonna modify and rarely really reads from it
@@ -160,8 +160,8 @@ static Decl parse_declarator(TranslationUnit* tu, TokenStream* restrict s, Cuik_
         expect_closing_paren(tu, s, opening_loc);
         type = parse_type_suffix(tu, s, type, NULL);
 
-        size_t saved_end = s->current;
-        s->current = saved;
+        size_t saved_end = s->list.current;
+        s->list.current = saved;
 
         Decl d = parse_declarator(tu, s, type, is_abstract, false);
 
@@ -183,7 +183,7 @@ static Decl parse_declarator(TranslationUnit* tu, TokenStream* restrict s, Cuik_
             }
         }
 
-        s->current = saved_end;
+        s->list.current = saved_end;
         return d;
     }
 
@@ -208,7 +208,7 @@ static Cuik_Type* parse_typename(TranslationUnit* tu, TokenStream* restrict s) {
 }
 
 static Cuik_Type* parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s, Cuik_Type* type, Atom name) {
-    assert(s->current > 0);
+    assert(s->list.current > 0);
     SourceLoc loc = tokens_get_last_location(s);
 
     // type suffixes like array [] and function ()
@@ -316,7 +316,7 @@ static Cuik_Type* parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s
                 tokens_next(s);
                 expect(tu, s, ']');
             } else {
-                current = s->current;
+                current = s->list.current;
 
                 int depth = 1;
                 while (depth) {
@@ -1157,7 +1157,7 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
 
     done:;
     if (type == 0) {
-        Token* last = &s->tokens[s->current];
+        Token* last = &s->list.tokens[s->list.current];
         REPORT(ERROR, loc, "unknown typename: %.*s", (int) last->content.length, last->content.data);
         return NULL;
     }
