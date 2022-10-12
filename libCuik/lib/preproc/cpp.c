@@ -250,7 +250,7 @@ bool cuikpp_find_location_in_bytes(TokenStream* tokens, SourceLoc loc, Cuik_File
         uint32_t macro_off = loc.raw & ((1u << SourceLoc_MacroOffsetBits) - 1);
 
         Cuik_FileLoc fl;
-        if (!cuikpp_find_location_in_bytes(tokens, tokens->invokes[macro_id].call_site, &fl)) {
+        if (!cuikpp_find_location_in_bytes(tokens, tokens->invokes[macro_id].def_site, &fl)) {
             assert(0 && "TODO");
         }
 
@@ -306,7 +306,7 @@ static void compute_line_map(TokenStream* s, const char* filename, char* data, s
     do {
         dyn_array_put(s->files, (Cuik_File){ filename, i, &data[i], line_map });
         i += single_file_limit;
-    } while (i + single_file_limit < length);
+    } while (i < length);
 }
 
 Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
@@ -352,6 +352,7 @@ Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
                 #endif
 
                 // initialize the lexer in the stack slot & record the file entry
+                slot->file_id = dyn_array_length(ctx->tokens.files);
                 slot->tokens = convert_to_token_list(ctx, dyn_array_length(ctx->tokens.files), packet->file.length, packet->file.data);
                 compute_line_map(&ctx->tokens, packet->file.input_path, packet->file.data, packet->file.length);
 
@@ -478,6 +479,7 @@ Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
         // initialize the file & lexer in the stack slot
         slot->include_guard = (struct CPPIncludeGuard){ 0 };
         // initialize the lexer in the stack slot & record file entry
+        slot->file_id = dyn_array_length(ctx->tokens.files);
         slot->tokens = convert_to_token_list(ctx, dyn_array_length(ctx->tokens.files), packet->file.length, packet->file.data);
         compute_line_map(&ctx->tokens, packet->file.input_path, packet->file.data, packet->file.length);
 
@@ -491,26 +493,9 @@ Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
     TokenStream* restrict s = &ctx->tokens;
 
     for (;;) {
-        // FAST PATH: raw tokens
-        while (!at_token_list_end(in)) {
-            Token t = consume(in);
-            if (t.type == 0 || t.type == TOKEN_HASH || t.type == TOKEN_DOUBLE_HASH) {
-                // Fallback to slow path
-                in->current -= 1;
-                break;
-            } else if (t.type == TOKEN_IDENTIFIER) {
-                if (is_defined(ctx, t.content.data, t.content.length)) {
-                    in->current -= 1;
-                    break;
-                }
+        Token first = { 0 };
+        if (!at_token_list_end(in)) first = consume(in);
 
-                t.type = classify_ident(t.content.data, t.content.length);
-            }
-
-            dyn_array_put(s->list.tokens, t);
-        }
-
-        Token first = consume(in);
         if (first.type != 0 && slot->include_guard.status == INCLUDE_GUARD_EXPECTING_NOTHING) {
             slot->include_guard.status = INCLUDE_GUARD_INVALID;
         }
@@ -542,7 +527,6 @@ Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
 
             // step out of this file into the previous one
             slot = &ctx->stack[ctx->stack_ptr - 1];
-
             in = &slot->tokens;
             continue;
         } else if (first.type == TOKEN_HASH) {
@@ -609,6 +593,8 @@ Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
                 // OF TOKENS AND EXPAND WITH THE AVERAGE C PREPROCESSOR SPOOKIES
                 expand_ident(ctx, &s->list, in, 0);
             }
+        } else {
+            dyn_array_put(s->list.tokens, first);
         }
     }
 }
@@ -758,6 +744,7 @@ static bool pop_scope(Cuik_CPP* restrict ctx, TokenList* restrict in) {
         return false;
     }
 
+    // diag(&ctx->tokens, get_token_range(&in->tokens[in->current - 1]), &cuikdg_pp_message, string_cstr("CLOSE"));
     ctx->depth--;
     return true;
 }

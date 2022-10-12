@@ -124,7 +124,6 @@ static void print_diag_message(const DiagDesc* desc, va_list ap) {
 
         fprintf(stderr, "%.*s", (int) args[i].length, args[i].data);
     }
-    fprintf(stderr, "\n");
 }
 
 void diag(TokenStream* tokens, SourceRange loc, const DiagDesc* desc, ...) {
@@ -141,6 +140,17 @@ void diag(TokenStream* tokens, SourceRange loc, const DiagDesc* desc, ...) {
     va_start(ap, desc);
     print_diag_message(desc, ap);
     va_end(ap);
+
+    if (loc.start.raw & SourceLoc_IsMacro) {
+        // we're in a macro
+        uint32_t macro_id = (loc.start.raw & ((1u << SourceLoc_MacroIDBits) - 1)) >> SourceLoc_MacroOffsetBits;
+        uint32_t macro_off = loc.start.raw & ((1u << SourceLoc_MacroOffsetBits) - 1);
+
+        MacroInvoke* m = &tokens->invokes[macro_id];
+        fprintf(stderr, " (Expanded from macro '%.*s')\n", (int) m->name.length, m->name.data);
+    } else {
+        fprintf(stderr, "\n");
+    }
 
     // Caret preview
     {

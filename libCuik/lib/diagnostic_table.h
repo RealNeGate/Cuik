@@ -1,5 +1,6 @@
 // Generic errors
 DIAG(expected_ident, REPORT_ERROR, "expected identifier")
+DIAG(unexpected_eof, REPORT_ERROR, "unexpected EOF")
 
 // Preprocessor errors
 DIAG(unknown_directive,  REPORT_ERROR, "unknown directive %0", DIAG_STRING)

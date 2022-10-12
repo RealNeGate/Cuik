@@ -77,7 +77,10 @@ static void parse_args(Cuik_CPP* restrict c, MacroArgs* restrict args, TokenList
     int paren_depth = 0;
     for (;;) {
         Token t = peek(in);
-        if (t.type == 0) goto error;
+        if (t.type == 0) {
+            in->current -= 1;
+            break;
+        }
 
         if (value_count) {
             if (t.type != ',') {
@@ -95,6 +98,7 @@ static void parse_args(Cuik_CPP* restrict c, MacroArgs* restrict args, TokenList
             t = consume(in);
 
             if (t.type == 0) {
+                in->current -= 1;
                 break;
             } else if (t.type == '(') {
                 paren_depth++;
@@ -191,13 +195,13 @@ static bool subst(Cuik_CPP* restrict c, TokenList* out_tokens, uint8_t* def_str,
 
     for (;;) {
         Token t = lexer_read(&in);
+        if (t.type == 0 || t.hit_line) {
+            return false;
+        }
 
         // convert token location into macro relative
         t.location = encode_macro_loc(macro_id, t.content.data - in.start);
-
-        if (t.type == 0 || t.hit_line) {
-            return false;
-        } else if (t.type == TOKEN_HASH) {
+        if (t.type == TOKEN_HASH) {
             t = lexer_read(&in);
             if (t.type != TOKEN_IDENTIFIER) {
                 // generic_error(&in, "expected identifier");
@@ -439,11 +443,11 @@ static bool expand_ident(Cuik_CPP* restrict c, TokenList* restrict out_tokens, T
                     Lexer args_lexer = { 0, (unsigned char*) args, (unsigned char*) args };
                     parse_params(c, &arglist, &args_lexer);
 
-                    printf("FUNCTION MACRO: %.*s    %.*s\n", (int)token_length, token_data, (int)def.length, def.data);
+                    /*printf("FUNCTION MACRO: %.*s    %.*s\n", (int)token_length, token_data, (int)def.length, def.data);
                     for (size_t i = 0; i < arglist.value_count; i++) {
                         printf("  ['%.*s'] = '%.*s'\n", (int) arglist.keys[i].length, arglist.keys[i].data, (int) arglist.values[i].length, arglist.values[i].data);
                     }
-                    printf("\n");
+                    printf("\n");*/
 
                     // macro hide set
                     size_t hidden = hide_macro(c, def_i);
@@ -455,8 +459,6 @@ static bool expand_ident(Cuik_CPP* restrict c, TokenList* restrict out_tokens, T
 
                     // before expanding the child macros we need to substitute all
                     // the arguments in, handle stringizing and ## concaternation.
-                    // subst(c, &c->scratch_list, (uint8_t*) def.data, &arglist, macro_id);
-                    // dyn_array_put(c->scratch_list.tokens, (Token){ 0 });
                     subst(c, &scratch, (uint8_t*) def.data, &arglist, macro_id);
                     dyn_array_put(scratch.tokens, (Token){ 0 });
 
@@ -464,7 +466,6 @@ static bool expand_ident(Cuik_CPP* restrict c, TokenList* restrict out_tokens, T
                     // expand(c, out_tokens, &c->scratch_list, macro_id);
                     expand(c, out_tokens, &scratch, macro_id);
 
-                    // dyn_array_set_length(c->scratch_list.tokens, old);
                     dyn_array_destroy(scratch.tokens);
                     unhide_macro(c, def_i, hidden);
                 }
