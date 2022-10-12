@@ -179,6 +179,14 @@ inline static bool tokens_peek_double_token(TokenStream* restrict s, TknType tkn
     return s->list.tokens[s->list.current].type == tkn && s->list.tokens[s->list.current + 1].type == tkn;
 }
 
+inline static SourceRange get_token_range(Token* t) {
+    return (SourceRange){ t->location, { t->location.raw + t->content.length } };
+}
+
+inline static SourceLoc get_end_location(Token* t) {
+    return (SourceLoc){ t->location.raw + t->content.length };
+}
+
 inline static SourceLoc tokens_get_last_location(TokenStream* restrict s) {
     Token* t = &s->list.tokens[s->list.current - 1];
     return (SourceLoc){ t->location.raw + t->content.length };

@@ -33,8 +33,8 @@ static intmax_t eval(Cuik_CPP* restrict c, TokenList* restrict in);
 static void* gimme_the_shtuffs(Cuik_CPP* restrict c, size_t len);
 static void trim_the_shtuffs(Cuik_CPP* restrict c, void* new_top);
 
-static void push_scope(Cuik_CPP* restrict ctx, TokenList* restrict in, bool initial);
-static void pop_scope(Cuik_CPP* restrict ctx, TokenList* restrict in);
+static bool push_scope(Cuik_CPP* restrict ctx, TokenList* restrict in, bool initial);
+static bool pop_scope(Cuik_CPP* restrict ctx, TokenList* restrict in);
 
 static void print_token_stream(TokenStream* s, size_t start, size_t end);
 
@@ -69,11 +69,6 @@ typedef struct CPPStackSlot {
 
 static Token peek(TokenList* restrict in) {
     return in->tokens[in->current];
-}
-
-static SourceLoc get_end_location(TokenList* restrict in) {
-    Token* t = &in->tokens[in->current - 1];
-    return (SourceLoc){ t->location.raw + t->content.length };
 }
 
 static bool at_token_list_end(TokenList* restrict in) {
@@ -244,6 +239,7 @@ Cuik_File* cuikpp_find_file(TokenStream* tokens, SourceLoc loc) {
 
 bool cuikpp_find_location_in_bytes(TokenStream* tokens, SourceLoc loc, Cuik_FileLoc* out_result) {
     if ((loc.raw & SourceLoc_IsMacro) == 0) {
+        assert((loc.raw >> SourceLoc_FilePosBits) < dyn_array_length(tokens->files));
         Cuik_File* f = &tokens->files[loc.raw >> SourceLoc_FilePosBits];
         uint32_t pos = loc.raw & ((1u << SourceLoc_FilePosBits) - 1);
 
@@ -596,7 +592,7 @@ Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
             } else if (result == DIRECTIVE_YIELD) {
                 return CUIKPP_CONTINUE;
             } else if (result == DIRECTIVE_UNKNOWN) {
-                SourceRange r = { first.location, get_end_location(in) };
+                SourceRange r = { first.location, get_end_location(&in->tokens[in->current - 1]) };
                 diag(s, r, &cuikdg_unknown_directive, directive);
                 return CUIKPP_ERROR;
             }
@@ -745,25 +741,26 @@ static void trim_the_shtuffs(Cuik_CPP* restrict c, void* new_top) {
     c->the_shtuffs_size = i;
 }
 
-static void push_scope(Cuik_CPP* restrict ctx, TokenList* restrict in, bool initial) {
+static bool push_scope(Cuik_CPP* restrict ctx, TokenList* restrict in, bool initial) {
     if (ctx->depth >= CPP_MAX_SCOPE_DEPTH - 1) {
-        generic_error(in, "Exceeded max scope depth!");
+        diag(&ctx->tokens, get_token_range(&in->tokens[in->current - 1]), &cuikdg_too_many_if_scopes);
+        return false;
     }
 
+    // diag(&ctx->tokens, get_token_range(&in->tokens[in->current - 1]), &cuikdg_pp_message, string_cstr("OPEN"));
     ctx->scope_eval[ctx->depth++] = initial;
+    return true;
 }
 
-static void pop_scope(Cuik_CPP* restrict ctx, TokenList* restrict in) {
+static bool pop_scope(Cuik_CPP* restrict ctx, TokenList* restrict in) {
     if (ctx->depth == 0) {
-        generic_error(in, "Too many endifs\n");
+        diag(&ctx->tokens, get_token_range(&in->tokens[in->current - 1]), &cuikdg_too_many_endifs);
+        return false;
     }
-    ctx->depth--;
-}
 
-/*static _Noreturn void generic_error(Lexer* restrict in, const char* msg) {
-    fprintf(stderr, "error: %s\n", msg);
-    abort();
-}*/
+    ctx->depth--;
+    return true;
+}
 
 static void expect(TokenList* restrict in, char ch) {
     Token t = consume(in);

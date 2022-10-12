@@ -6,7 +6,10 @@ static bool expand_with_defined(Cuik_CPP* restrict c, TokenList* restrict out_to
 
     for (;;) {
         Token t = consume(in);
-        if (t.type == 0 || t.hit_line) break;
+        if (t.type == 0 || t.hit_line) {
+            in->current -= 1;
+            break;
+        }
 
         if (t.type == TOKEN_IDENTIFIER && memeq(t.content.data, t.content.length, "defined", 7)) {
             String str = { 0 };

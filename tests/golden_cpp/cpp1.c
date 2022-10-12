@@ -1,6 +1,7 @@
 
 
-
+#define gamers(a)
+gamers(rise)
 
 #pragma message Hello World!
 

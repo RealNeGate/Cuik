@@ -19,7 +19,7 @@ static DirectiveResult cpp__warning(Cuik_CPP* restrict ctx, CPPStackSlot* restri
     SourceLoc loc = peek(in).location;
     String msg = get_pp_tokens_until_newline(ctx, in);
 
-    SourceRange r = { loc, get_end_location(in) };
+    SourceRange r = { loc, get_end_location(&in->tokens[in->current - 1]) };
     diag(&ctx->tokens, r, &cuikdg_pp_warning, msg);
     return DIRECTIVE_SUCCESS;
 }
@@ -28,7 +28,7 @@ static DirectiveResult cpp__error(Cuik_CPP* restrict ctx, CPPStackSlot* restrict
     SourceLoc loc = peek(in).location;
     String msg = get_pp_tokens_until_newline(ctx, in);
 
-    SourceRange r = { loc, get_end_location(in) };
+    SourceRange r = { loc, get_end_location(&in->tokens[in->current - 1]) };
     diag(&ctx->tokens, r, &cuikdg_pp_error, msg);
     return DIRECTIVE_SUCCESS;
 }
@@ -47,7 +47,7 @@ static DirectiveResult cpp__pragma(Cuik_CPP* restrict ctx, CPPStackSlot* restric
     } else if (string_equals_cstr(&pragma_type, "message")) {
         String msg = get_pp_tokens_until_newline(ctx, in);
 
-        SourceRange r = { loc, get_end_location(in) };
+        SourceRange r = { loc, get_end_location(&in->tokens[in->current - 1]) };
         diag(s, r, &cuikdg_pp_message, msg);
     } else {
         // convert to #pragma blah => _Pragma("blah")
@@ -197,9 +197,12 @@ static DirectiveResult cpp__include(Cuik_CPP* restrict ctx, CPPStackSlot* restri
 // 'define' IDENT '(' IDENT-LIST ')' PP-TOKENS NEWLINE
 // 'define' IDENT                    PP-TOKENS NEWLINE
 static DirectiveResult cpp__define(Cuik_CPP* restrict ctx, CPPStackSlot* restrict slot, TokenList* restrict in, Cuikpp_Packet* restrict packet) {
+    SourceLoc loc = peek(in).location;
     Token key = consume(in);
+
     if (key.type != TOKEN_IDENTIFIER) {
-        generic_error(in, "expected identifier!");
+        SourceRange r = { loc, get_end_location(&key) };
+        diag(&ctx->tokens, r, &cuikdg_expected_ident);
         return DIRECTIVE_ERROR;
     }
 
@@ -218,7 +221,8 @@ static DirectiveResult cpp__define(Cuik_CPP* restrict ctx, CPPStackSlot* restric
 
     // Insert into buckets
     if (ctx->macro_bucket_count[hash] >= SLOTS_PER_MACRO_BUCKET) {
-        generic_error(in, "cannot store macro, out of memory!");
+        SourceRange r = { loc, get_end_location(&key) };
+        diag(&ctx->tokens, r, &cuikdg_too_many_macros);
         return DIRECTIVE_ERROR;
     }
 
@@ -246,7 +250,8 @@ static DirectiveResult cpp__define(Cuik_CPP* restrict ctx, CPPStackSlot* restric
             }
 
             if (t.type != TOKEN_TRIPLE_DOT && t.type != TOKEN_IDENTIFIER) {
-                generic_error(in, "expected identifier!");
+                SourceRange r = { t.location, get_end_location(&t) };
+                diag(&ctx->tokens, r, &cuikdg_expected_ident);
                 return DIRECTIVE_ERROR;
             } else {
                 arg_count++;
@@ -265,9 +270,9 @@ static DirectiveResult cpp__define(Cuik_CPP* restrict ctx, CPPStackSlot* restric
 static DirectiveResult cpp__if(Cuik_CPP* restrict ctx, CPPStackSlot* restrict slot, TokenList* restrict in, Cuikpp_Packet* restrict packet) {
     expect_no_newline(in);
     if (eval(ctx, in)) {
-        push_scope(ctx, in, true);
+        if (!push_scope(ctx, in, true)) return DIRECTIVE_ERROR;
     } else {
-        push_scope(ctx, in, false);
+        if (!push_scope(ctx, in, false)) return DIRECTIVE_ERROR;
         skip_directive_body(in);
     }
 
@@ -281,14 +286,15 @@ static DirectiveResult cpp__if(Cuik_CPP* restrict ctx, CPPStackSlot* restrict sl
 static DirectiveResult cpp__ifdef(Cuik_CPP* restrict ctx, CPPStackSlot* restrict slot, TokenList* restrict in, Cuikpp_Packet* restrict packet) {
     Token t = consume(in);
     if (t.type != TOKEN_IDENTIFIER) {
-        generic_error(in, "expected identifier!");
+        SourceRange r = { t.location, get_end_location(&t) };
+        diag(&ctx->tokens, r, &cuikdg_expected_ident);
         return DIRECTIVE_ERROR;
     }
 
     if (is_defined(ctx, t.content.data, t.content.length)) {
-        push_scope(ctx, in, true);
+        if (!push_scope(ctx, in, true)) return DIRECTIVE_ERROR;
     } else {
-        push_scope(ctx, in, false);
+        if (!push_scope(ctx, in, false)) return DIRECTIVE_ERROR;
         skip_directive_body(in);
     }
 
@@ -299,12 +305,13 @@ static DirectiveResult cpp__ifdef(Cuik_CPP* restrict ctx, CPPStackSlot* restrict
 static DirectiveResult cpp__ifndef(Cuik_CPP* restrict ctx, CPPStackSlot* restrict slot, TokenList* restrict in, Cuikpp_Packet* restrict packet) {
     Token t = consume(in);
     if (t.type != TOKEN_IDENTIFIER) {
-        generic_error(in, "expected identifier!");
+        SourceRange r = { t.location, get_end_location(&t) };
+        diag(&ctx->tokens, r, &cuikdg_expected_ident);
         return DIRECTIVE_ERROR;
     }
 
     if (!is_defined(ctx, t.content.data, t.content.length)) {
-        push_scope(ctx, in, true);
+        if (!push_scope(ctx, in, true)) return DIRECTIVE_ERROR;
 
         // if we don't skip the body then maybe just maybe it's a guard macro
         if (slot->include_guard.status == INCLUDE_GUARD_LOOKING_FOR_IFNDEF) {
@@ -313,7 +320,7 @@ static DirectiveResult cpp__ifndef(Cuik_CPP* restrict ctx, CPPStackSlot* restric
             slot->include_guard.if_depth = ctx->depth;
         }
     } else {
-        push_scope(ctx, in, false);
+        if (!push_scope(ctx, in, false)) return DIRECTIVE_ERROR;
         skip_directive_body(in);
     }
 
@@ -363,14 +370,14 @@ static DirectiveResult cpp__endif(Cuik_CPP* restrict ctx, CPPStackSlot* restrict
     }
 
     warn_if_newline(in);
-    pop_scope(ctx, in);
-    return DIRECTIVE_SUCCESS;
+    return pop_scope(ctx, in) ? DIRECTIVE_SUCCESS : DIRECTIVE_ERROR;
 }
 
 static DirectiveResult cpp__undef(Cuik_CPP* restrict ctx, CPPStackSlot* restrict slot, TokenList* restrict in, Cuikpp_Packet* restrict packet) {
     Token key = consume(in);
     if (key.type != TOKEN_IDENTIFIER) {
-        generic_error(in, "expected identifier!");
+        SourceRange r = { key.location, get_end_location(&key) };
+        diag(&ctx->tokens, r, &cuikdg_expected_ident);
         return DIRECTIVE_ERROR;
     }
 
@@ -427,6 +434,10 @@ static DirectiveResult skip_directive_body(TokenList* restrict in) {
 
 static String get_pp_tokens_until_newline(Cuik_CPP* ctx, TokenList* in) {
     Token first = peek(in);
+    if (first.hit_line) {
+        return (String){ 0 };
+    }
+
     String str = peek(in).content;
     bool is_str = (first.type == TOKEN_STRING_WIDE_SINGLE_QUOTE || first.type == TOKEN_STRING_WIDE_DOUBLE_QUOTE);
 
