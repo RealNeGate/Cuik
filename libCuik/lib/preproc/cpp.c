@@ -600,11 +600,6 @@ Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
                 return CUIKPP_ERROR;
             }
         } else if (first.type == TOKEN_IDENTIFIER) {
-            /*if (in->tokens[in->current - 2].content.length == 1 &&
-                in->tokens[in->current - 2].content.data[0] == '#') {
-                __debugbreak();
-            }*/
-
             // check if it's actually a macro, if not categorize it if it's a keyword
             if (!is_defined(ctx, first.content.data, first.content.length)) {
                 // FAST PATH
