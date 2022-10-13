@@ -48,8 +48,8 @@ bool report_using_thin_errors = false;
 #define SET_COLOR_WHITE printf("\x1b[37m")
 
 void init_report_system(void) {
-    setvbuf(stdout, NULL, _IONBF, 0);
-    setvbuf(stderr, NULL, _IONBF, 0);
+    // setvbuf(stdout, NULL, _IONBF, 0);
+    // setvbuf(stderr, NULL, _IONBF, 0);
     setlocale(LC_ALL, ".UTF8");
 
     #if _WIN32
@@ -126,11 +126,29 @@ static void print_diag_message(const DiagDesc* desc, va_list ap) {
     }
 }
 
+// we use the call stack so we can print in reverse order
+void print_include(TokenStream* tokens, SourceLoc loc) {
+    ResolvedSourceLoc r;
+    if (cuikpp_find_location(tokens, loc, &r)) {
+        if (r.file->include_site.raw != 0) {
+            print_include(tokens, r.file->include_site);
+        }
+
+        fprintf(stderr, "Included from %s:%d\n", r.file->filename, r.line);
+    }
+}
+
 void diag(TokenStream* tokens, SourceRange loc, const DiagDesc* desc, ...) {
+    // print include stack
+    Cuik_File* file = cuikpp_find_file(tokens, loc.start);
+    if (file->include_site.raw != 0) {
+        print_include(tokens, file->include_site);
+    }
+
     fprintf(stderr, "\x1b[37m");
     ResolvedSourceLoc start;
     if (cuikpp_find_location(tokens, loc.start, &start)) {
-        fprintf(stderr, "%s:%d:%d: ", start.filename, start.line, start.column);
+        fprintf(stderr, "%s:%d:%d: ", start.file->filename, start.line, start.column);
     } else {
         fprintf(stderr, "??:??:??: ");
     }
@@ -171,7 +189,7 @@ void diag(TokenStream* tokens, SourceRange loc, const DiagDesc* desc, ...) {
         size_t tkn_len = 1;
         ResolvedSourceLoc end;
         if (cuikpp_find_location(tokens, loc.end, &end)) {
-            if (end.filename == start.filename && end.line == start.line && end.column > start.column) {
+            if (end.file == start.file && end.line == start.line && end.column > start.column) {
                 tkn_len = end.column - start.column;
             }
         }
@@ -298,8 +316,8 @@ void diag_writer_highlight(DiagWriter* writer, SourceRange loc) {
         assert(0 && "cuikpp_find_location failed?");
     }
 
-    assert(a.filename == b.filename && a.line == b.line);
-    if (writer->base.filename == NULL) {
+    assert(a.file == b.file && a.line == b.line);
+    if (writer->base.file == NULL) {
         // display line
         const char* line_start = a.line_str;
         while (*line_start && isspace(*line_start)) {
@@ -315,7 +333,7 @@ void diag_writer_highlight(DiagWriter* writer, SourceRange loc) {
         writer->line_end = line_end;
         writer->dist_from_line_start = line_start - a.line_str;
 
-        printf("%s:%d\n", a.filename, a.line);
+        printf("%s:%d\n", a.file->filename, a.line);
         draw_line_horizontal_pad();
         printf("%.*s\n", (int) (line_end - line_start), line_start);
         draw_line_horizontal_pad();
@@ -335,7 +353,7 @@ void diag_writer_highlight(DiagWriter* writer, SourceRange loc) {
 }
 
 bool diag_writer_is_compatible(DiagWriter* writer, SourceRange loc) {
-    if (writer->base.filename == NULL) {
+    if (writer->base.file == NULL) {
         return true;
     }
 
@@ -344,11 +362,11 @@ bool diag_writer_is_compatible(DiagWriter* writer, SourceRange loc) {
         assert(0 && "cuikpp_find_location failed?");
     }
 
-    return writer->base.filename == r.filename && writer->base.line == r.line;
+    return writer->base.file == r.file && writer->base.line == r.line;
 }
 
 void diag_writer_done(DiagWriter* writer) {
-    if (writer->base.filename != NULL) {
+    if (writer->base.file != NULL) {
         diag_writer_write_upto(writer, writer->line_end - writer->line_start);
         printf("\n");
     }

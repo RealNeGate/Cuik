@@ -606,7 +606,7 @@ void ast_dump_type(TranslationUnit* tu, Cuik_Type* ty, int depth, int offset) {
 
         ResolvedSourceLoc r;
         if (cuikpp_find_location(&tu->tokens, ty->loc, &r)) {
-            printf("// %s:%d\n", r.filename, r.line);
+            printf("// %s:%d\n", r.file->filename, r.line);
         } else {
             printf("\n");
         }

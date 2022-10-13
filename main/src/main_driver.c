@@ -161,9 +161,9 @@ static int count_pp_lines(TokenStream* s) {
 
         ResolvedSourceLoc r;
         if (cuikpp_find_location(s, t->location, &r)) {
-            if (last_file != r.filename && strcmp(r.filename, "<temp>") != 0) {
+            if (last_file != r.file->filename && strcmp(r.file->filename, "<temp>") != 0) {
                 line_count += 1;
-                last_file = r.filename;
+                last_file = r.file->filename;
             }
 
             if (last_line != r.line) {
@@ -191,10 +191,13 @@ static void dump_tokens(FILE* out_file, TokenStream* s) {
             assert(0 && "cuikpp_find_location failed?");
         }
 
-        if (last_file != r.filename && strcmp(r.filename, "<temp>") != 0) {
+        // TODO: remove this later
+        if (r.file->depth > 1) continue;
+
+        if (last_file != r.file->filename && strcmp(r.file->filename, "<temp>") != 0) {
             // TODO(NeGate): Kinda shitty but i just wanna duplicate
             // the backslashes to avoid them being treated as an escape
-            const char* in = (const char*) r.filename;
+            const char* in = (const char*) r.file->filename;
             char str[FILENAME_MAX], *out = str;
 
             while (*in) {
@@ -209,7 +212,7 @@ static void dump_tokens(FILE* out_file, TokenStream* s) {
             *out++ = '\0';
 
             fprintf(out_file, "\n#line %d \"%s\"\t", r.line, str);
-            last_file = r.filename;
+            last_file = r.file->filename;
         }
 
         if (last_line != r.line) {
@@ -347,7 +350,8 @@ static Cuik_CPP* make_preprocessor(const char* filepath) {
 
     // run the preprocessor
     if (cuikpp_default_run(cpp, fscache) == CUIKPP_ERROR) {
-        abort();
+        dump_tokens(stdout, cuikpp_get_token_stream(cpp));
+        exit(1);
     }
 
     if (args_bindgen != NULL) {

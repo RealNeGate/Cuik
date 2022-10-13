@@ -88,7 +88,7 @@ static void expect_from_lexer(Cuik_CPP* c, Lexer* l, char ch) {
             assert(0 && "TODO find_location");
         }
 
-        fprintf(stderr, "error %s:%d: expected '%c' got '%.*s'", r.filename, r.line, ch, (int) t.content.length, t.content.data);
+        fprintf(stderr, "error %s:%d: expected '%c' got '%.*s'", r.file->filename, r.line, ch, (int) t.content.length, t.content.data);
         abort();
     }
 }
@@ -224,9 +224,13 @@ static bool find_location(Cuik_File* file, uint32_t file_pos, ResolvedSourceLoc*
     uint32_t l = file->line_map[right - 1];
     assert(file_pos >= l);
 
+    // NOTE(NeGate): it's possible that l is lesser than file->file_pos_bias in the
+    // line_str calculation, this is fine (it happens when the line starts in the last
+    // chunk and crosses the boundary) we just need to do the math with ptrdiff_t
+    // such that if it goes negative it'll refer to the previous chunk of the content
     *out_result = (ResolvedSourceLoc){
-        .filename = file->filename,
-        .line_str = &file->content[l - file->file_pos_bias],
+        .file = file,
+        .line_str = &file->content[(ptrdiff_t)l - (ptrdiff_t)file->file_pos_bias],
         .line = right, .column = file_pos - l
     };
     return true;
@@ -268,7 +272,7 @@ bool cuikpp_find_location(TokenStream* tokens, SourceLoc loc, ResolvedSourceLoc*
     return find_location(fl.file, fl.pos, out_result);
 }
 
-static void compute_line_map(TokenStream* s, const char* filename, char* data, size_t length) {
+static void compute_line_map(TokenStream* s, int depth, SourceLoc include_site, const char* filename, char* data, size_t length) {
     DynArray(uint32_t) line_map = dyn_array_create_with_initial_cap(uint32_t, (length / 20) + 32);
 
     #if 1
@@ -304,7 +308,10 @@ static void compute_line_map(TokenStream* s, const char* filename, char* data, s
     // files bigger than the SourceLoc_FilePosBits allows will be fit into multiple sequencial files
     size_t i = 0, single_file_limit = (1u << SourceLoc_FilePosBits);
     do {
-        dyn_array_put(s->files, (Cuik_File){ filename, i, &data[i], line_map });
+        size_t chunk_end = i + single_file_limit;
+        if (chunk_end > length) chunk_end = length;
+
+        dyn_array_put(s->files, (Cuik_File){ filename, depth, include_site, i, chunk_end - i, &data[i], line_map });
         i += single_file_limit;
     } while (i < length);
 }
@@ -354,7 +361,7 @@ Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
                 // initialize the lexer in the stack slot & record the file entry
                 slot->file_id = dyn_array_length(ctx->tokens.files);
                 slot->tokens = convert_to_token_list(ctx, dyn_array_length(ctx->tokens.files), packet->file.length, packet->file.data);
-                compute_line_map(&ctx->tokens, packet->file.input_path, packet->file.data, packet->file.length);
+                compute_line_map(&ctx->tokens, 0, (SourceLoc){ 0 }, packet->file.input_path, packet->file.data, packet->file.length);
 
                 // we finished resolving
                 ctx->state1 = CUIK__CPP_NONE;
@@ -481,7 +488,7 @@ Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
         // initialize the lexer in the stack slot & record file entry
         slot->file_id = dyn_array_length(ctx->tokens.files);
         slot->tokens = convert_to_token_list(ctx, dyn_array_length(ctx->tokens.files), packet->file.length, packet->file.data);
-        compute_line_map(&ctx->tokens, packet->file.input_path, packet->file.data, packet->file.length);
+        compute_line_map(&ctx->tokens, ctx->stack_ptr - 1, slot->loc, packet->file.input_path, packet->file.data, packet->file.length);
 
         // we finished resolving
         ctx->state1 = CUIK__CPP_NONE;
@@ -734,14 +741,19 @@ static bool push_scope(Cuik_CPP* restrict ctx, TokenList* restrict in, bool init
     }
 
     // diag(&ctx->tokens, get_token_range(&in->tokens[in->current - 1]), &cuikdg_pp_message, string_cstr("OPEN"));
-    ctx->scope_eval[ctx->depth++] = initial;
+    ctx->scope_eval[ctx->depth++] = (struct Cuikpp_ScopeEval){ in->tokens[in->current - 1].location, initial };
     return true;
 }
 
 static bool pop_scope(Cuik_CPP* restrict ctx, TokenList* restrict in) {
     if (ctx->depth == 0) {
         diag(&ctx->tokens, get_token_range(&in->tokens[in->current - 1]), &cuikdg_too_many_endifs);
+        diag(&ctx->tokens, (SourceRange){ ctx->scope_eval[0].start, ctx->scope_eval[0].start }, &cuikdg_pp_message, string_cstr("expected for:"));
         return false;
+    } else if (ctx->depth == 1) {
+        // TODO: remove this later because it's just for testing
+        diag(&ctx->tokens, get_token_range(&in->tokens[in->current - 1]), &cuikdg_pp_message, string_cstr("we closed the last scope:"));
+        diag(&ctx->tokens, (SourceRange){ ctx->scope_eval[0].start, ctx->scope_eval[0].start }, &cuikdg_pp_message, string_cstr("expected for:"));
     }
 
     // diag(&ctx->tokens, get_token_range(&in->tokens[in->current - 1]), &cuikdg_pp_message, string_cstr("CLOSE"));

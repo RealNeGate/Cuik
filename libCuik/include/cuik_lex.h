@@ -36,10 +36,18 @@ typedef struct SourceRange {
 // This is what FileIDs refer to
 typedef struct {
     const char* filename;
+
+    int depth;
+    SourceLoc include_site;
     // describes how far from the start of the file we are.
     // used by line_map on big files
-    size_t file_pos_bias;
+    uint32_t file_pos_bias;
 
+    // NOTE: this is the size of this file chunk, big files consist
+    // of multiple chunks so you should use...
+    //
+    // TODO(NeGate): make function for doing this
+    uint32_t content_length;
     const char* content;
 
     // a DynArray(uint32_t) sorted to make it possible to binary search
@@ -93,7 +101,7 @@ typedef struct TokenStream {
 } TokenStream;
 
 typedef struct ResolvedSourceLoc {
-    const char* filename;
+    Cuik_File* file;
     const char* line_str;
     uint32_t line, column;
 } ResolvedSourceLoc;
@@ -134,10 +142,6 @@ bool cuikpp_next_define(Cuik_CPP* ctx, Cuik_DefineIter* src);
 // while ((f = cuikpp_next_file(f)))
 Cuik_File* cuikpp_next_file(Cuik_CPP* ctx, Cuik_File* f);
 
-// returns true on success
-bool cuikpp_find_location(TokenStream* tokens, SourceLoc loc, ResolvedSourceLoc* out_result);
-bool cuikpp_find_location_in_bytes(TokenStream* tokens, SourceLoc loc, Cuik_FileLoc* out_result);
-
 ////////////////////////////////
 // Preprocessor module
 ////////////////////////////////
@@ -155,6 +159,13 @@ void cuikpp_finalize(Cuik_CPP* ctx);
 // returns the final token stream (should not be called if you
 // haven't finished iterating through cuikpp_next)
 TokenStream* cuikpp_get_token_stream(Cuik_CPP* ctx);
+
+////////////////////////////////
+// Line info
+////////////////////////////////
+// returns true on success
+bool cuikpp_find_location(TokenStream* tokens, SourceLoc loc, ResolvedSourceLoc* out_result);
+bool cuikpp_find_location_in_bytes(TokenStream* tokens, SourceLoc loc, Cuik_FileLoc* out_result);
 
 // returns NULL on an invalid source location
 Cuik_File* cuikpp_find_file(TokenStream* tokens, SourceLoc loc);

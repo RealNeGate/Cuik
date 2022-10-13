@@ -1759,9 +1759,9 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
             assert(0 && "cuikpp_find_location failed?");
         }
 
-        if (a.filename != last_filepath) {
-            last_filepath = a.filename;
-            last_file_id = tb_file_create(tu->ir_mod, a.filename);
+        if (a.file->filename != last_filepath) {
+            last_filepath = a.file->filename;
+            last_file_id = tb_file_create(tu->ir_mod, a.file->filename);
         }
 
         insert_label(func);

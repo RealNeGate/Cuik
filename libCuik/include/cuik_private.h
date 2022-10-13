@@ -75,7 +75,10 @@ struct Cuik_CPP {
 
     // tells you if the current scope has had an entry evaluated,
     // this is important for choosing when to check #elif and #endif
-    bool scope_eval[CPP_MAX_SCOPE_DEPTH];
+    struct Cuikpp_ScopeEval {
+        SourceLoc start;
+        bool value;
+    } scope_eval[CPP_MAX_SCOPE_DEPTH];
 };
 
 struct Cuik_Linker {

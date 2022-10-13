@@ -62,9 +62,6 @@ static DirectiveResult cpp__pragma(Cuik_CPP* restrict ctx, CPPStackSlot* restric
         t = (Token){ '(', false, loc, { 1, str } };
         dyn_array_put(s->list.tokens, t);
 
-        // Skip until we hit a newline
-        expect_no_newline(in);
-
         String payload = get_pp_tokens_until_newline(ctx, in);
 
         // convert pragma content into string
@@ -130,8 +127,6 @@ static DirectiveResult cpp__include(Cuik_CPP* restrict ctx, CPPStackSlot* restri
         if (peek(in).type != '>') {
             generic_error(in, "expected '>' for #include");
         }
-
-        consume(in);
     } else {
         in->current = savepoint;
 
@@ -333,8 +328,8 @@ static DirectiveResult cpp__elif(Cuik_CPP* restrict ctx, CPPStackSlot* restrict 
     int last_scope = ctx->depth - 1;
 
     // if it didn't evaluate any of the other options try to do this
-    if (!ctx->scope_eval[last_scope] && eval(ctx, in)) {
-        ctx->scope_eval[last_scope] = true;
+    if (!ctx->scope_eval[last_scope].value && eval(ctx, in)) {
+        ctx->scope_eval[last_scope].value = true;
     } else {
         skip_directive_body(in);
     }
@@ -350,8 +345,8 @@ static DirectiveResult cpp__else(Cuik_CPP* restrict ctx, CPPStackSlot* restrict 
     // do this
     int last_scope = ctx->depth - 1;
 
-    if (!ctx->scope_eval[last_scope]) {
-        ctx->scope_eval[last_scope] = true;
+    if (!ctx->scope_eval[last_scope].value) {
+        ctx->scope_eval[last_scope].value = true;
     } else {
         skip_directive_body(in);
     }
@@ -460,15 +455,13 @@ static String get_pp_tokens_until_newline(Cuik_CPP* ctx, TokenList* in) {
 }
 
 static void warn_if_newline(TokenList* restrict in) {
-    size_t savepoint = in->current;
     while (!at_token_list_end(in)) {
         Token t = consume(in);
-        if (t.type == 0 || t.hit_line) break;
-
-        savepoint = in->current;
+        if (t.type == 0 || t.hit_line) {
+            in->current -= 1;
+            break;
+        }
     }
-
-    in->current = savepoint;
 }
 
 static void expect_no_newline(TokenList* restrict in) {
