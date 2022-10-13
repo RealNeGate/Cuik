@@ -191,10 +191,7 @@ static void dump_tokens(FILE* out_file, TokenStream* s) {
             assert(0 && "cuikpp_find_location failed?");
         }
 
-        // TODO: remove this later
-        if (r.file->depth > 1) continue;
-
-        if (last_file != r.file->filename && strcmp(r.file->filename, "<temp>") != 0) {
+        if (last_file != r.file->filename && r.file->filename[0] != '<') {
             // TODO(NeGate): Kinda shitty but i just wanna duplicate
             // the backslashes to avoid them being treated as an escape
             const char* in = (const char*) r.file->filename;
@@ -215,7 +212,7 @@ static void dump_tokens(FILE* out_file, TokenStream* s) {
             last_file = r.file->filename;
         }
 
-        if (last_line != r.line) {
+        if (r.file->filename[0] != '<' && last_line != r.line) {
             fprintf(out_file, "\n/* line %3d */\t", r.line);
             last_line = r.line;
         }

@@ -201,6 +201,7 @@ static bool subst(Cuik_CPP* restrict c, TokenList* out_tokens, uint8_t* def_str,
 
         // convert token location into macro relative
         t.location = encode_macro_loc(macro_id, t.content.data - in.start);
+
         if (t.type == TOKEN_HASH) {
             t = lexer_read(&in);
             if (t.type != TOKEN_IDENTIFIER) {
@@ -506,7 +507,10 @@ static bool expand(Cuik_CPP* restrict c, TokenList* out_tokens, TokenList* restr
     while (!at_token_list_end(in)) {
         size_t savepoint = in->current;
         Token t = consume(in);
-        if (t.type == 0 || t.hit_line) break;
+        if (t.type == 0 || t.hit_line) {
+            in->current -= 1;
+            break;
+        }
 
         depth += (t.type == '(');
 

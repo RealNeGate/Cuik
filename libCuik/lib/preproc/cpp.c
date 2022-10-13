@@ -36,7 +36,7 @@ static void trim_the_shtuffs(Cuik_CPP* restrict c, void* new_top);
 static bool push_scope(Cuik_CPP* restrict ctx, TokenList* restrict in, bool initial);
 static bool pop_scope(Cuik_CPP* restrict ctx, TokenList* restrict in);
 
-static void print_token_stream(TokenStream* s, size_t start, size_t end);
+static void print_token_stream(TokenList* in, size_t start, size_t end);
 
 static bool expand(Cuik_CPP* restrict c, TokenList* restrict out_tokens, TokenList* restrict in, uint32_t parent_macro);
 static bool expand_ident(Cuik_CPP* restrict c, TokenList* restrict out_tokens, TokenList* restrict in, uint32_t parent_macro);
@@ -197,6 +197,9 @@ void cuikpp_init(Cuik_CPP* ctx, const char filepath[FILENAME_MAX]) {
 
     // MacroID 0 is a null invocation
     dyn_array_put(ctx->tokens.invokes, (MacroInvoke){ 0 });
+
+    // FileID 0 is the builtin macro file or the NULL file depending on who you ask
+    dyn_array_put(ctx->tokens.files, (Cuik_File){ .filename = "<builtin>", .content_length = (1u << SourceLoc_FilePosBits) - 1u });
     tls_init();
 
     ctx->state1 = CUIK__CPP_FIRST_FILE;
@@ -208,6 +211,15 @@ void cuikpp_init(Cuik_CPP* ctx, const char filepath[FILENAME_MAX]) {
 
 // we can infer the column and line from doing a binary search on the TokenStream's line map
 static bool find_location(Cuik_File* file, uint32_t file_pos, ResolvedSourceLoc* out_result) {
+    if (file->line_map == NULL) {
+        *out_result = (ResolvedSourceLoc){
+            .file = file,
+            .line_str = "",
+            .line = 1, .column = file_pos
+        };
+        return true;
+    }
+
     file_pos += file->file_pos_bias;
 
     size_t left = 0;
@@ -693,6 +705,17 @@ Cuik_FileEntry* cuikpp_get_file_table(Cuik_CPP* ctx) {
     return &ctx->files[0];
 }
 */
+
+static void print_token_stream(TokenList* in, size_t start, size_t end) {
+    int last_line = 0;
+
+    printf("Tokens: ");
+    for (size_t i = start; i < end; i++) {
+        Token* t = &in->tokens[i];
+        printf("%.*s ", (int) t->content.length, t->content.data);
+    }
+    printf("\n\n");
+}
 
 void cuikpp_dump_defines(Cuik_CPP* ctx) {
     int count = 0;
