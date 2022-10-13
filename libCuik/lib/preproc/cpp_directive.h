@@ -271,9 +271,6 @@ static DirectiveResult cpp__if(Cuik_CPP* restrict ctx, CPPStackSlot* restrict sl
         skip_directive_body(in);
     }
 
-    // we should be one a different line now
-    warn_if_newline(in);
-
     return DIRECTIVE_SUCCESS;
 }
 

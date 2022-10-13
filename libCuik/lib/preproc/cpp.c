@@ -600,6 +600,11 @@ Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
                 return CUIKPP_ERROR;
             }
         } else if (first.type == TOKEN_IDENTIFIER) {
+            /*if (in->tokens[in->current - 2].content.length == 1 &&
+                in->tokens[in->current - 2].content.data[0] == '#') {
+                __debugbreak();
+            }*/
+
             // check if it's actually a macro, if not categorize it if it's a keyword
             if (!is_defined(ctx, first.content.data, first.content.length)) {
                 // FAST PATH
@@ -763,7 +768,6 @@ static bool push_scope(Cuik_CPP* restrict ctx, TokenList* restrict in, bool init
         return false;
     }
 
-    // diag(&ctx->tokens, get_token_range(&in->tokens[in->current - 1]), &cuikdg_pp_message, string_cstr("OPEN"));
     ctx->scope_eval[ctx->depth++] = (struct Cuikpp_ScopeEval){ in->tokens[in->current - 1].location, initial };
     return true;
 }
@@ -773,13 +777,8 @@ static bool pop_scope(Cuik_CPP* restrict ctx, TokenList* restrict in) {
         diag(&ctx->tokens, get_token_range(&in->tokens[in->current - 1]), &cuikdg_too_many_endifs);
         diag(&ctx->tokens, (SourceRange){ ctx->scope_eval[0].start, ctx->scope_eval[0].start }, &cuikdg_pp_message, string_cstr("expected for:"));
         return false;
-    } else if (ctx->depth == 1) {
-        // TODO: remove this later because it's just for testing
-        diag(&ctx->tokens, get_token_range(&in->tokens[in->current - 1]), &cuikdg_pp_message, string_cstr("we closed the last scope:"));
-        diag(&ctx->tokens, (SourceRange){ ctx->scope_eval[0].start, ctx->scope_eval[0].start }, &cuikdg_pp_message, string_cstr("expected for:"));
     }
 
-    // diag(&ctx->tokens, get_token_range(&in->tokens[in->current - 1]), &cuikdg_pp_message, string_cstr("CLOSE"));
     ctx->depth--;
     return true;
 }

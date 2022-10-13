@@ -429,10 +429,10 @@ static bool expand_ident(Cuik_CPP* restrict c, TokenList* restrict out_tokens, T
             const unsigned char* args = c->macro_bucket_keys[def_i] + c->macro_bucket_keys_length[def_i];
 
             // function macro
-            size_t savepoint = in->current;
-            Token paren_peek = consume(in);
-
+            Token paren_peek = peek(in);
             if (*args == '(' && paren_peek.type == '(') {
+                consume(in);
+
                 ////////////////////////////////
                 // Parse the arguments
                 ////////////////////////////////
@@ -475,8 +475,6 @@ static bool expand_ident(Cuik_CPP* restrict c, TokenList* restrict out_tokens, T
                 // tls_restore(keys);
                 tls_restore(arglist.values);
             } else if (def.length > 0) {
-                in->current = savepoint;
-
                 // expand and append
                 if (*args == '(' && paren_peek.type != '(') {
                     t.type = classify_ident(t.content.data, t.content.length);
