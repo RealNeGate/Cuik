@@ -249,7 +249,12 @@ static bool find_location(Cuik_File* file, uint32_t file_pos, ResolvedSourceLoc*
 }
 
 Cuik_File* cuikpp_find_file(TokenStream* tokens, SourceLoc loc) {
-    assert((loc.raw & SourceLoc_IsMacro) == 0 && "TODO: support macro find_location");
+    while (loc.raw & SourceLoc_IsMacro) {
+        uint32_t macro_id = (loc.raw & ((1u << SourceLoc_MacroIDBits) - 1)) >> SourceLoc_MacroOffsetBits;
+
+        loc = tokens->invokes[macro_id].call_site;
+    }
+
     return &tokens->files[loc.raw >> SourceLoc_FilePosBits];
 }
 
@@ -596,7 +601,7 @@ Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
                 return CUIKPP_CONTINUE;
             } else if (result == DIRECTIVE_UNKNOWN) {
                 SourceRange r = { first.location, get_end_location(&in->tokens[in->current - 1]) };
-                diag(s, r, &cuikdg_unknown_directive, directive);
+                diag_err(s, r, "unknown directive %_S", directive);
                 return CUIKPP_ERROR;
             }
         } else if (first.type == TOKEN_IDENTIFIER) {
@@ -759,7 +764,7 @@ static void trim_the_shtuffs(Cuik_CPP* restrict c, void* new_top) {
 
 static bool push_scope(Cuik_CPP* restrict ctx, TokenList* restrict in, bool initial) {
     if (ctx->depth >= CPP_MAX_SCOPE_DEPTH - 1) {
-        diag(&ctx->tokens, get_token_range(&in->tokens[in->current - 1]), &cuikdg_too_many_if_scopes);
+        diag_err(&ctx->tokens, get_token_range(&in->tokens[in->current - 1]), "too many #ifs");
         return false;
     }
 
@@ -769,8 +774,8 @@ static bool push_scope(Cuik_CPP* restrict ctx, TokenList* restrict in, bool init
 
 static bool pop_scope(Cuik_CPP* restrict ctx, TokenList* restrict in) {
     if (ctx->depth == 0) {
-        diag(&ctx->tokens, get_token_range(&in->tokens[in->current - 1]), &cuikdg_too_many_endifs);
-        diag(&ctx->tokens, (SourceRange){ ctx->scope_eval[0].start, ctx->scope_eval[0].start }, &cuikdg_pp_message, string_cstr("expected for:"));
+        diag_err(&ctx->tokens, get_token_range(&in->tokens[in->current - 1]), "too many #endif");
+        diag_note(&ctx->tokens, (SourceRange){ ctx->scope_eval[0].start, ctx->scope_eval[0].start }, "expected for:");
         return false;
     }
 

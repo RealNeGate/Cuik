@@ -230,7 +230,7 @@ bool type_equal(TranslationUnit* tu, Cuik_Type* ty1, Cuik_Type* ty2) {
     return true;
 }
 
-size_t type_as_string(TranslationUnit* tu, size_t max_len, char* buffer, Cuik_Type* type) {
+size_t type_as_string(size_t max_len, char* buffer, Cuik_Type* type) {
     if (type == NULL) {
         size_t i = cstr_copy(max_len, buffer, "(null)");
         buffer[i] = '\0';
@@ -313,12 +313,12 @@ size_t type_as_string(TranslationUnit* tu, size_t max_len, char* buffer, Cuik_Ty
             break;
         }
         case KIND_PTR: {
-            i += type_as_string(tu, max_len - i, &buffer[i], type->ptr_to);
+            i += type_as_string(max_len - i, &buffer[i], type->ptr_to);
             buffer[i++] = '*';
             break;
         }
         case KIND_ARRAY: {
-            i += type_as_string(tu, max_len - i, &buffer[i], type->array_of);
+            i += type_as_string(max_len - i, &buffer[i], type->array_of);
 
             if (i + 12 < max_len) {
                 buffer[i++] = '[';
@@ -335,7 +335,7 @@ size_t type_as_string(TranslationUnit* tu, size_t max_len, char* buffer, Cuik_Ty
             Param* param_list = type->func.param_list;
             size_t param_count = type->func.param_count;
 
-            i += type_as_string(tu, max_len - i, &buffer[i], type->func.return_type);
+            i += type_as_string(max_len - i, &buffer[i], type->func.return_type);
 
             assert(i < max_len);
             buffer[i++] = '(';
@@ -343,7 +343,7 @@ size_t type_as_string(TranslationUnit* tu, size_t max_len, char* buffer, Cuik_Ty
             for (size_t j = 0; j < param_count; j++) {
                 if (j) buffer[i++] = ',';
 
-                i += type_as_string(tu, max_len - i, &buffer[i], param_list[j].type);
+                i += type_as_string(max_len - i, &buffer[i], param_list[j].type);
             }
 
             assert(i < max_len);

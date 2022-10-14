@@ -178,7 +178,7 @@ Cuik_Type* target_generic_type_check_builtin(TranslationUnit* tu, Expr* e, const
 
             if (i == 2) {
                 if (arg_type->kind != KIND_PTR) {
-                    type_as_string(tu, sizeof(temp_string0), temp_string0, type);
+                    type_as_string(sizeof(temp_string0), temp_string0, type);
                     REPORT_EXPR(ERROR, args[i], "Expected pointer to '%s' for the 3rd argument", temp_string0);
                     goto failure;
                 }
@@ -187,8 +187,8 @@ Cuik_Type* target_generic_type_check_builtin(TranslationUnit* tu, Expr* e, const
             }
 
             if (!type_compatible(tu, arg_type, type, args[i])) {
-                type_as_string(tu, sizeof(temp_string0), temp_string0, arg_type);
-                type_as_string(tu, sizeof(temp_string1), temp_string1, type);
+                type_as_string(sizeof(temp_string0), temp_string0, arg_type);
+                type_as_string(sizeof(temp_string1), temp_string1, type);
 
                 REPORT_EXPR(ERROR, args[i], "Could not implicitly convert type %s into %s.", temp_string0, temp_string1);
                 goto failure;

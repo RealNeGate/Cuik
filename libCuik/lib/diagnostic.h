@@ -15,19 +15,10 @@ extern bool report_using_thin_errors;
 
 // These are your options for arguments in diagnostics
 typedef enum {
-    DIAG_VOID,
-    DIAG_INT,
-    DIAG_CSTR,
-    DIAG_STRING,
-} DiagArgType;
-
-typedef struct {
-    Cuik_ReportLevel level;
-    const char* format;
-
-    size_t arg_count;
-    DiagArgType args[];
-} DiagDesc;
+    DIAG_NOTE,
+    DIAG_WARN,
+    DIAG_ERR,
+} DiagType;
 
 typedef struct {
     TokenStream* tokens;
@@ -40,8 +31,20 @@ typedef struct {
     size_t cursor;
 } DiagWriter;
 
-// Refers to one-shot diagnostics
-void diag(TokenStream* tokens, SourceRange loc, const DiagDesc* desc, ...);
+typedef struct {
+    TokenStream* tokens;
+} Diagnostics;
+
+void cuikdg_init(void);
+
+// We extended onto the standard printf format when it starts with %_T, here's the
+// full table of additions:
+//
+//     %_T       Cuik_Type
+//     %_S       String
+void diag_note(TokenStream* tokens, SourceRange loc, const char* fmt, ...);
+void diag_warn(TokenStream* tokens, SourceRange loc, const char* fmt, ...);
+void diag_err(TokenStream* tokens, SourceRange loc, const char* fmt, ...);
 
 ////////////////////////////////
 // Complex diagnostic builder
@@ -50,13 +53,6 @@ DiagWriter diag_writer(TokenStream* tokens);
 void diag_writer_highlight(DiagWriter* writer, SourceRange loc);
 bool diag_writer_is_compatible(DiagWriter* writer, SourceRange loc);
 void diag_writer_done(DiagWriter* writer);
-
-void init_report_system(void);
-
-// diagnostic_table.h just has descriptions of all the possible diagnostics
-// we make a shit load of forward declarations for that here
-#define DIAG(name, level, fmt, ...) extern DiagDesc cuikdg_ ## name;
-#include "diagnostic_table.h"
 
 static void report_two_spots(Cuik_ReportLevel level, Cuik_ErrorStatus* err, TokenStream* tokens, SourceLoc loc, SourceLoc loc2, const char* msg, const char* loc_msg, const char* loc_msg2, const char* interjection) {}
 static void report(Cuik_ReportLevel level, Cuik_ErrorStatus* err, TokenStream* tokens, SourceLoc loc, const char* fmt, ...) {}

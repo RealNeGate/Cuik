@@ -27,17 +27,14 @@ static Cuik_Type* type_check_builtin(TranslationUnit* tu, Expr* e, const char* n
 
     if (strcmp(name, "_mm_setcsr") == 0) {
         if (arg_count != 1) {
-            diag(&tu->tokens, e->loc, &cuikdg_param_mismatch, name, 1);
+            diag_err(&tu->tokens, e->loc, "parameter mismatch (got %s, expected %d)", name, 1);
             return &builtin_types[TYPE_VOID];
         }
 
         Cuik_Type* arg_type = sema_expr(tu, args[0]);
         Cuik_Type* int_type = &builtin_types[TYPE_UINT];
         if (!type_compatible(tu, arg_type, int_type, args[0])) {
-            type_as_string(tu, sizeof(temp_string0), temp_string0, arg_type);
-            type_as_string(tu, sizeof(temp_string1), temp_string1, int_type);
-
-            REPORT_EXPR(ERROR, args[0], "Could not implicitly convert type %s into %s.", temp_string0, temp_string1);
+            diag_err(&tu->tokens, args[0]->loc, "Could not implicitly convert type %_T into %_T.", arg_type, int_type);
             return &builtin_types[TYPE_VOID];
         }
 

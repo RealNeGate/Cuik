@@ -10,15 +10,6 @@
 #include <windows.h>
 #endif
 
-#define DIAG(name, level_, fmt_, ...)                     \
-DiagDesc cuikdg_ ## name = {                              \
-    .level = level_,                                      \
-    .format = fmt_,                                       \
-    .arg_count = COUNTOF((DiagArgType[]){ __VA_ARGS__ }), \
-    .args = { __VA_ARGS__ }                               \
-};
-#include "diagnostic_table.h"
-
 static const char* report_names[] = {
     "verbose",
     "info",
@@ -42,12 +33,15 @@ static const char* const attribs[] = {
 
 bool report_using_thin_errors = false;
 
+// From types.c, we should factor this out into a public cuik function
+size_t type_as_string(size_t max_len, char* buffer, Cuik_Type* type);
+
 #define RESET_COLOR     printf("\x1b[0m")
 #define SET_COLOR_RED   printf("\x1b[31m")
 #define SET_COLOR_GREEN printf("\x1b[32m")
 #define SET_COLOR_WHITE printf("\x1b[37m")
 
-void init_report_system(void) {
+void cuikdg_init(void) {
     // setvbuf(stdout, NULL, _IONBF, 0);
     // setvbuf(stderr, NULL, _IONBF, 0);
     setlocale(LC_ALL, ".UTF8");
@@ -76,53 +70,49 @@ void init_report_system(void) {
     mtx_init(&report_mutex, mtx_plain | mtx_recursive);
 }
 
-static void print_diag_message(const DiagDesc* desc, va_list ap) {
-    size_t used = 0;
-    char str_pool[1024];
-    String args[16];
+static void print_diag_message(FILE* out_file, const char* fmt, va_list ap) {
+    char temp[200];
 
-    // Record argument messages
-    assert(desc->arg_count < 16);
-    for (int i = 0; i < desc->arg_count; i++) {
-        switch (desc->args[i]) {
-            case DIAG_CSTR: {
-                args[i] = string_cstr(va_arg(ap, const char*));
-                break;
+    // read & print any non-custom formatting
+    const char* start = fmt;
+    for (; *fmt; fmt++) {
+        if (fmt[0] == '%' && fmt[1] == '_') {
+            // printf old format stuff
+            if (fmt != start) {
+                memcpy(temp, start, fmt - start);
+                temp[fmt - start] = 0;
+                vfprintf(out_file, temp, ap);
             }
-            case DIAG_STRING: {
-                args[i] = va_arg(ap, String);
-                break;
+
+            // all custom formatting starts with %_
+            switch (fmt[2]) {
+                case 'S': {
+                    String s = va_arg(ap, String);
+                    fwrite(s.data, s.length, 1, out_file);
+                    break;
+                }
+
+                case 'T': {
+                    static _Thread_local char temp_string[1024];
+                    Cuik_Type* t = va_arg(ap, Cuik_Type*);
+                    type_as_string(sizeof(temp_string), temp_string, t);
+                    fwrite(temp_string, strlen(temp_string), 1, out_file);
+                    break;
+                }
+
+                default:
+                fprintf(out_file, "diagnostic error: unknown format %%_%c", fmt[0]);
+                abort();
             }
-            default: assert(0 && "TODO");
+
+            start = fmt + 3;
         }
     }
 
-    // Print message
-    const char* fmt = desc->format;
-    for (;;) {
-        // read & print any non-dollar sign text
-        const char* start = fmt;
-        while (*fmt && *fmt != '%') fmt++;
-
-        fwrite(start, (fmt - start), 1, stderr);
-
-        if (fmt[0] == 0) {
-            break;
-        } else if (fmt[1] == '%') {
-            fwrite("%", 1, 1, stderr);
-            continue;
-        }
-
-        // handle the fancy formats
-        fmt += 1;
-
-        int i = 0;
-        for (; *fmt >= '0' && *fmt <= '9'; fmt++) {
-            i *= 10;
-            i += (*fmt - '0');
-        }
-
-        fprintf(stderr, "%.*s", (int) args[i].length, args[i].data);
+    if (fmt != start) {
+        memcpy(temp, start, fmt - start);
+        temp[fmt - start] = 0;
+        vfprintf(out_file, temp, ap);
     }
 }
 
@@ -138,7 +128,7 @@ void print_include(TokenStream* tokens, SourceLoc loc) {
     }
 }
 
-void diag(TokenStream* tokens, SourceRange loc, const DiagDesc* desc, ...) {
+static void diag(DiagType type, TokenStream* tokens, SourceRange loc, const char* fmt, va_list ap) {
     // print include stack
     Cuik_File* file = cuikpp_find_file(tokens, loc.start);
     if (file->include_site.raw != 0) {
@@ -152,12 +142,8 @@ void diag(TokenStream* tokens, SourceRange loc, const DiagDesc* desc, ...) {
     } else {
         fprintf(stderr, "??:??:??: ");
     }
-    fprintf(stderr, "%s%s:\x1b[0m ", attribs[desc->level], report_names[desc->level]);
-
-    va_list ap;
-    va_start(ap, desc);
-    print_diag_message(desc, ap);
-    va_end(ap);
+    fprintf(stderr, "%s%s:\x1b[0m ", attribs[type], report_names[type]);
+    print_diag_message(stderr, fmt, ap);
 
     if (loc.start.raw & SourceLoc_IsMacro) {
         // we're in a macro
@@ -206,6 +192,18 @@ void diag(TokenStream* tokens, SourceRange loc, const DiagDesc* desc, ...) {
         fprintf(stderr, "\x1b[0m\n");
     }
 }
+
+#define DIAG_FN(type, name) \
+void name(TokenStream* tokens, SourceRange loc, const char* fmt, ...) { \
+    va_list ap;                       \
+    va_start(ap, fmt);                \
+    diag(type, tokens, loc, fmt, ap); \
+    va_end(ap);                       \
+}
+
+DIAG_FN(DIAG_NOTE, diag_note);
+DIAG_FN(DIAG_WARN, diag_warn);
+DIAG_FN(DIAG_ERR,  diag_err);
 
 static void tally_report_counter(Cuik_ReportLevel level, Cuik_ErrorStatus* err) {
     if (err == NULL) {

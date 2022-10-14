@@ -33,8 +33,8 @@ void hook_crash_handler(void);
 void init_timer_system(void);
 
 void cuik_init(void) {
+    cuikdg_init();
     init_timer_system();
-    init_report_system();
     hook_crash_handler();
 }
 
@@ -289,9 +289,9 @@ size_t cuik_get_token_count(TokenStream* restrict s) {
     return dyn_array_length(s->list.tokens) - 1;
 }
 
-void cuik_print_type(TranslationUnit* restrict tu, Cuik_Type* restrict type) {
+void cuik_print_type(Cuik_Type* restrict type) {
     char str[1024];
-    type_as_string(tu, 1024, str, type);
+    type_as_string(1024, str, type);
     printf("%s", str);
 }
 

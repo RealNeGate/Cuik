@@ -20,7 +20,7 @@ static DirectiveResult cpp__warning(Cuik_CPP* restrict ctx, CPPStackSlot* restri
     String msg = get_pp_tokens_until_newline(ctx, in);
 
     SourceRange r = { loc, get_end_location(&in->tokens[in->current - 1]) };
-    diag(&ctx->tokens, r, &cuikdg_pp_warning, msg);
+    diag_warn(&ctx->tokens, r, "%_S", msg);
     return DIRECTIVE_SUCCESS;
 }
 
@@ -29,7 +29,7 @@ static DirectiveResult cpp__error(Cuik_CPP* restrict ctx, CPPStackSlot* restrict
     String msg = get_pp_tokens_until_newline(ctx, in);
 
     SourceRange r = { loc, get_end_location(&in->tokens[in->current - 1]) };
-    diag(&ctx->tokens, r, &cuikdg_pp_error, msg);
+    diag_err(&ctx->tokens, r, "%_S", msg);
     return DIRECTIVE_SUCCESS;
 }
 
@@ -48,7 +48,7 @@ static DirectiveResult cpp__pragma(Cuik_CPP* restrict ctx, CPPStackSlot* restric
         String msg = get_pp_tokens_until_newline(ctx, in);
 
         SourceRange r = { loc, get_end_location(&in->tokens[in->current - 1]) };
-        diag(s, r, &cuikdg_pp_message, msg);
+        diag_note(s, r, "%_S", msg);
     } else {
         // convert to #pragma blah => _Pragma("blah")
         unsigned char* str = gimme_the_shtuffs(ctx, sizeof("_Pragma"));
@@ -197,7 +197,7 @@ static DirectiveResult cpp__define(Cuik_CPP* restrict ctx, CPPStackSlot* restric
 
     if (key.type != TOKEN_IDENTIFIER) {
         SourceRange r = { loc, get_end_location(&key) };
-        diag(&ctx->tokens, r, &cuikdg_expected_ident);
+        diag_err(&ctx->tokens, r, "expected identifier");
         return DIRECTIVE_ERROR;
     }
 
@@ -217,7 +217,7 @@ static DirectiveResult cpp__define(Cuik_CPP* restrict ctx, CPPStackSlot* restric
     // Insert into buckets
     if (ctx->macro_bucket_count[hash] >= SLOTS_PER_MACRO_BUCKET) {
         SourceRange r = { loc, get_end_location(&key) };
-        diag(&ctx->tokens, r, &cuikdg_too_many_macros);
+        diag_err(&ctx->tokens, r, "too many macros, out of memory!");
         return DIRECTIVE_ERROR;
     }
 
@@ -238,7 +238,7 @@ static DirectiveResult cpp__define(Cuik_CPP* restrict ctx, CPPStackSlot* restric
 
             if (arg_count) {
                 if (t.type != ',') {
-                    generic_error(in, "expected comma!");
+                    diag_err(&ctx->tokens, get_token_range(&t), "expected comma");
                 }
 
                 t = consume(in);
@@ -246,7 +246,7 @@ static DirectiveResult cpp__define(Cuik_CPP* restrict ctx, CPPStackSlot* restric
 
             if (t.type != TOKEN_TRIPLE_DOT && t.type != TOKEN_IDENTIFIER) {
                 SourceRange r = { t.location, get_end_location(&t) };
-                diag(&ctx->tokens, r, &cuikdg_expected_ident);
+                diag_err(&ctx->tokens, r, "expected identifier");
                 return DIRECTIVE_ERROR;
             } else {
                 arg_count++;
@@ -279,7 +279,7 @@ static DirectiveResult cpp__ifdef(Cuik_CPP* restrict ctx, CPPStackSlot* restrict
     Token t = consume(in);
     if (t.type != TOKEN_IDENTIFIER) {
         SourceRange r = { t.location, get_end_location(&t) };
-        diag(&ctx->tokens, r, &cuikdg_expected_ident);
+        diag_err(&ctx->tokens, r, "expected identifier");
         return DIRECTIVE_ERROR;
     }
 
@@ -298,7 +298,7 @@ static DirectiveResult cpp__ifndef(Cuik_CPP* restrict ctx, CPPStackSlot* restric
     Token t = consume(in);
     if (t.type != TOKEN_IDENTIFIER) {
         SourceRange r = { t.location, get_end_location(&t) };
-        diag(&ctx->tokens, r, &cuikdg_expected_ident);
+        diag_err(&ctx->tokens, r, "expected identifier");
         return DIRECTIVE_ERROR;
     }
 
@@ -369,7 +369,7 @@ static DirectiveResult cpp__undef(Cuik_CPP* restrict ctx, CPPStackSlot* restrict
     Token key = consume(in);
     if (key.type != TOKEN_IDENTIFIER) {
         SourceRange r = { key.location, get_end_location(&key) };
-        diag(&ctx->tokens, r, &cuikdg_expected_ident);
+        diag_err(&ctx->tokens, r, "expected identifier");
         return DIRECTIVE_ERROR;
     }
 

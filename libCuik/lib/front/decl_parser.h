@@ -238,9 +238,8 @@ static Cuik_Type* parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s
             if (param_count) {
                 if (tokens_get(s)->type != ',') {
                     tokens_prev(s);
-                    SourceLoc loc = tokens_get_last_location(s);
 
-                    REPORT(ERROR, loc, "Expected a comma after this declaration name");
+                    diag_err(s, tokens_get_last_range(s), "expected closing paren (or comma) after declaration name");
                     abort();
                 }
 
@@ -1148,7 +1147,7 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
             assert(type);
             break;
             default:
-            generic_error(tu, s, "invalid type");
+            diag_err(s, tokens_get_range(s), "could not parse type");
             break;
         }
 
@@ -1158,7 +1157,7 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
     done:;
     if (type == 0) {
         Token* last = &s->list.tokens[s->list.current];
-        REPORT(ERROR, loc, "unknown typename: %.*s", (int) last->content.length, last->content.data);
+        REPORT(ERROR, loc, "unknown typename: %_S", last->content);
         return NULL;
     }
 

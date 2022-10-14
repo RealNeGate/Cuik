@@ -161,7 +161,7 @@ Cuik_Type* new_array(TranslationUnit* tu, Cuik_Type* base, int count);
 Cuik_Type* new_vector(TranslationUnit* tu, Cuik_Type* base, int count);
 Cuik_Type* get_common_type(TranslationUnit* tu, Cuik_Type* ty1, Cuik_Type* ty2);
 bool type_equal(TranslationUnit* tu, Cuik_Type* a, Cuik_Type* b);
-size_t type_as_string(TranslationUnit* tu, size_t max_len, char* buffer, Cuik_Type* type_index);
+size_t type_as_string(size_t max_len, char* buffer, Cuik_Type* type_index);
 
 // is needs_complete is false then the size and alignment don't need to be non-zero
 void type_layout(TranslationUnit* restrict tu, Cuik_Type* type, bool needs_complete);

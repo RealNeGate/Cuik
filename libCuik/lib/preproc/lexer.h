@@ -196,6 +196,16 @@ inline static SourceLoc tokens_get_location(TokenStream* restrict s) {
     return s->list.tokens[s->list.current].location;
 }
 
+inline static SourceRange tokens_get_last_range(TokenStream* restrict s) {
+    Token* t = &s->list.tokens[s->list.current - 1];
+    return (SourceRange){ t->location, { t->location.raw + t->content.length } };
+}
+
+inline static SourceRange tokens_get_range(TokenStream* restrict s) {
+    Token* t = &s->list.tokens[s->list.current];
+    return (SourceRange){ t->location, { t->location.raw + t->content.length } };
+}
+
 inline static bool tokens_hit_line(TokenStream* restrict s) {
     return s->list.tokens[s->list.current].hit_line;
 }

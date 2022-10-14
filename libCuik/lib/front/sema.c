@@ -182,14 +182,14 @@ static bool implicit_conversion(TranslationUnit* tu, Cuik_Type* src, Cuik_Type* 
                 }
 
                 if (src->kind > dst->kind) {
-                    type_as_string(tu, sizeof(temp_string0), temp_string0, src);
-                    type_as_string(tu, sizeof(temp_string1), temp_string1, dst);
+                    type_as_string(sizeof(temp_string0), temp_string0, src);
+                    type_as_string(sizeof(temp_string1), temp_string1, dst);
 
                     REPORT_EXPR(WARNING, src_e, "Implicit conversion from '%s' to '%s' may lose data.", temp_string0, temp_string1);
                 }
             } else {
-                type_as_string(tu, sizeof(temp_string0), temp_string0, src);
-                type_as_string(tu, sizeof(temp_string1), temp_string1, dst);
+                type_as_string(sizeof(temp_string0), temp_string0, src);
+                type_as_string(sizeof(temp_string1), temp_string1, dst);
 
                 REPORT_EXPR(WARNING, src_e, "Implicit conversion from '%s' to '%s' may lose data.", temp_string0, temp_string1);
             }
@@ -197,8 +197,8 @@ static bool implicit_conversion(TranslationUnit* tu, Cuik_Type* src, Cuik_Type* 
     }
 
     if (!type_compatible(tu, src, dst, src_e)) {
-        type_as_string(tu, sizeof(temp_string0), temp_string0, src);
-        type_as_string(tu, sizeof(temp_string1), temp_string1, dst);
+        type_as_string(sizeof(temp_string0), temp_string0, src);
+        type_as_string(sizeof(temp_string1), temp_string1, dst);
 
         REPORT_EXPR(ERROR, src_e, "could not implicitly convert type %s into %s.", temp_string0, temp_string1);
         return false;
@@ -346,7 +346,7 @@ static InitNode* walk_initializer_layer(
     int relative_offset = 0;
     if (node->mode == INIT_MEMBER) {
         if (parent->kind != KIND_STRUCT && parent->kind != KIND_UNION) {
-            type_as_string(tu, sizeof(temp_string0), temp_string0, parent);
+            type_as_string(sizeof(temp_string0), temp_string0, parent);
 
             REPORT(ERROR, node->loc, "Member designator cannot be used on type %s", temp_string0);
             return NULL;
@@ -364,7 +364,7 @@ static InitNode* walk_initializer_layer(
         *cursor = search.index + 1;
     } else if (node->mode == INIT_ARRAY) {
         if (parent->kind != KIND_ARRAY) {
-            type_as_string(tu, sizeof(temp_string0), temp_string0, parent);
+            type_as_string(sizeof(temp_string0), temp_string0, parent);
 
             REPORT(ERROR, node->loc, "cannot apply array initializer to non-array (%s)", temp_string0);
             return NULL;
@@ -454,7 +454,7 @@ static InitNode* walk_initializer_layer(
                         *slots_left -= 1;
                         return node + 1;
                     } else {
-                        type_as_string(tu, sizeof(temp_string0), temp_string0, type->array_of);
+                        type_as_string(sizeof(temp_string0), temp_string0, type->array_of);
                         REPORT_EXPR(ERROR, e, "Could not use %sinitializer-string on array of %s", (node->expr->op == EXPR_WSTR) ? "wide " : "", temp_string0);
                         return NULL;
                     }
@@ -696,7 +696,7 @@ Member* sema_resolve_member_access(TranslationUnit* tu, Expr* restrict e, uint32
     }
 
     if (record_type->kind != KIND_STRUCT && record_type->kind != KIND_UNION) {
-        type_as_string(tu, sizeof(temp_string0), temp_string0, record_type);
+        type_as_string(sizeof(temp_string0), temp_string0, record_type);
         REPORT_EXPR(ERROR, e, "Cannot get the member of a non-record type (%s)", temp_string0);
         REPORT(INFO, record_type->loc.start, "Record found here:");
         return NULL;
@@ -718,7 +718,7 @@ Member* sema_resolve_member_access(TranslationUnit* tu, Expr* restrict e, uint32
         return search;
     }
 
-    type_as_string(tu, sizeof(temp_string0), temp_string0, record_type);
+    type_as_string(sizeof(temp_string0), temp_string0, record_type);
     REPORT_EXPR(ERROR, e, "Could not find member called '%s' for type '%s'", e->dot_arrow.name, temp_string0);
     return NULL;
 }
@@ -736,7 +736,7 @@ Cuik_Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
         case EXPR_VA_ARG: {
             Cuik_Type* va_list_type = sema_expr(tu, e->va_arg_.src);
             if (va_list_type->kind != KIND_PTR && va_list_type->ptr_to->kind != KIND_CHAR) {
-                type_as_string(tu, sizeof(temp_string0), temp_string0, va_list_type);
+                type_as_string(sizeof(temp_string0), temp_string0, va_list_type);
                 REPORT_EXPR(ERROR, e, "va_arg must take in a va_list in the first argument (got %s)", temp_string0);
             }
 
@@ -1069,7 +1069,7 @@ Cuik_Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
             }
 
             if (base->kind != KIND_PTR) {
-                type_as_string(tu, sizeof(temp_string0), temp_string0, base);
+                type_as_string(sizeof(temp_string0), temp_string0, base);
                 REPORT_EXPR(ERROR, e, "Cannot perform subscript [] with base type '%s'", temp_string0);
                 return (e->type = NULL);
             }
@@ -1087,7 +1087,7 @@ Cuik_Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
             } else if (base->kind == KIND_ARRAY) {
                 return (e->type = base->array_of);
             } else {
-                type_as_string(tu, sizeof(temp_string0), temp_string0, base);
+                type_as_string(sizeof(temp_string0), temp_string0, base);
                 REPORT_EXPR(ERROR, e, "Cannot dereference from non-pointer and non-array type (%s)", temp_string0);
                 abort();
             }
@@ -1116,7 +1116,7 @@ Cuik_Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
             e->call.target->cast_type = func_type;
 
             if (func_type->kind != KIND_FUNC) {
-                type_as_string(tu, sizeof(temp_string0), temp_string0, func_type);
+                type_as_string(sizeof(temp_string0), temp_string0, func_type);
 
                 REPORT_EXPR(ERROR, e->call.target, "function call target must be a function-type, got %s", temp_string0);
                 goto failure;
@@ -1184,7 +1184,7 @@ Cuik_Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
         case EXPR_TERNARY: {
             Cuik_Type* cond_type = sema_expr(tu, e->ternary_op.left);
             if (!is_scalar_type(tu, cond_type)) {
-                type_as_string(tu, sizeof(temp_string0), temp_string0, cond_type);
+                type_as_string(sizeof(temp_string0), temp_string0, cond_type);
 
                 REPORT_EXPR(ERROR, e, "Could not convert type %s into boolean.", temp_string0);
             }
@@ -1296,8 +1296,8 @@ Cuik_Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
                         lhs->kind <= KIND_DOUBLE &&
                         rhs->kind >= KIND_BOOL &&
                         rhs->kind <= KIND_DOUBLE)) {
-                    type_as_string(tu, sizeof(temp_string0), temp_string0, lhs);
-                    type_as_string(tu, sizeof(temp_string1), temp_string1, rhs);
+                    type_as_string(sizeof(temp_string0), temp_string0, lhs);
+                    type_as_string(sizeof(temp_string1), temp_string1, rhs);
 
                     REPORT_EXPR(ERROR, e, "Cannot apply binary operator to %s and %s.", temp_string0, temp_string1);
                     return (e->type = &builtin_types[TYPE_VOID]);
@@ -1446,8 +1446,8 @@ void sema_stmt(TranslationUnit* tu, Stmt* restrict s) {
 
                 e->cast_type = s->decl.type;
                 if (!type_compatible(tu, expr_type, s->decl.type, e)) {
-                    type_as_string(tu, sizeof(temp_string0), temp_string0, expr_type);
-                    type_as_string(tu, sizeof(temp_string1), temp_string1, s->decl.type);
+                    type_as_string(sizeof(temp_string0), temp_string0, expr_type);
+                    type_as_string(sizeof(temp_string1), temp_string1, s->decl.type);
 
                     REPORT_STMT(ERROR, s, "Could not implicitly convert type %s into %s.", temp_string0, temp_string1);
                 }
@@ -1487,7 +1487,7 @@ void sema_stmt(TranslationUnit* tu, Stmt* restrict s) {
 
             Cuik_Type* cond_type = sema_expr(tu, s->if_.cond);
             if (!is_scalar_type(tu, cond_type)) {
-                type_as_string(tu, sizeof(temp_string0), temp_string0, cond_type);
+                type_as_string(sizeof(temp_string0), temp_string0, cond_type);
 
                 REPORT_STMT(ERROR, s, "Could not convert type %s into boolean.", temp_string0);
             }
@@ -1553,7 +1553,7 @@ void sema_stmt(TranslationUnit* tu, Stmt* restrict s) {
             s->switch_.condition->cast_type = type;
 
             if (!(type->kind >= KIND_CHAR && type->kind <= KIND_LONG)) {
-                type_as_string(tu, sizeof(temp_string0), temp_string0, type);
+                type_as_string(sizeof(temp_string0), temp_string0, type);
 
                 REPORT_STMT(ERROR, s, "Switch case type must be an integral type, got a '%s'", type);
                 break;
@@ -1750,8 +1750,8 @@ static void sema_top_level(TranslationUnit* tu, Stmt* restrict s) {
                                     s->decl.type = type;
                                 }
                             } else {
-                                type_as_string(tu, sizeof(temp_string0), temp_string0, expr_type->array_of);
-                                type_as_string(tu, sizeof(temp_string1), temp_string1, type->array_of);
+                                type_as_string(sizeof(temp_string0), temp_string0, expr_type->array_of);
+                                type_as_string(sizeof(temp_string1), temp_string1, type->array_of);
 
                                 REPORT_STMT(ERROR, s, "Array initializer type mismatch (got '%s', expected '%s')", temp_string0, temp_string1);
                             }
@@ -1759,8 +1759,8 @@ static void sema_top_level(TranslationUnit* tu, Stmt* restrict s) {
                     }
 
                     if (!type_compatible(tu, expr_type, type, s->decl.initial)) {
-                        type_as_string(tu, sizeof(temp_string0), temp_string0, type);
-                        type_as_string(tu, sizeof(temp_string1), temp_string1, expr_type);
+                        type_as_string(sizeof(temp_string0), temp_string0, type);
+                        type_as_string(sizeof(temp_string1), temp_string1, expr_type);
 
                         REPORT_STMT(ERROR, s, "Declaration type does not match (got '%s', expected '%s')", temp_string0, temp_string1);
                     }
