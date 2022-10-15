@@ -192,11 +192,11 @@ static DirectiveResult cpp__include(Cuik_CPP* restrict ctx, CPPStackSlot* restri
 // 'define' IDENT '(' IDENT-LIST ')' PP-TOKENS NEWLINE
 // 'define' IDENT                    PP-TOKENS NEWLINE
 static DirectiveResult cpp__define(Cuik_CPP* restrict ctx, CPPStackSlot* restrict slot, TokenList* restrict in, Cuikpp_Packet* restrict packet) {
-    SourceLoc loc = peek(in).location;
+    SourceLoc key_loc = peek(in).location;
     Token key = consume(in);
 
     if (key.type != TOKEN_IDENTIFIER) {
-        SourceRange r = { loc, get_end_location(&key) };
+        SourceRange r = { key_loc, get_end_location(&key) };
         diag_err(&ctx->tokens, r, "expected identifier");
         return DIRECTIVE_ERROR;
     }
@@ -216,7 +216,7 @@ static DirectiveResult cpp__define(Cuik_CPP* restrict ctx, CPPStackSlot* restric
 
     // Insert into buckets
     if (ctx->macro_bucket_count[hash] >= SLOTS_PER_MACRO_BUCKET) {
-        SourceRange r = { loc, get_end_location(&key) };
+        SourceRange r = { key_loc, get_end_location(&key) };
         diag_err(&ctx->tokens, r, "too many macros, out of memory!");
         return DIRECTIVE_ERROR;
     }
@@ -254,10 +254,11 @@ static DirectiveResult cpp__define(Cuik_CPP* restrict ctx, CPPStackSlot* restric
         }
     }
 
+    SourceLoc loc = peek(in).location;
     String value = get_pp_tokens_until_newline(ctx, in);
     ctx->macro_bucket_values_start[e] = value.data;
     ctx->macro_bucket_values_end[e] = value.data + value.length;
-    ctx->macro_bucket_source_locs[e] = key.location;
+    ctx->macro_bucket_source_locs[e] = loc;
     return DIRECTIVE_SUCCESS;
 }
 

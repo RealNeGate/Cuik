@@ -7,12 +7,18 @@ static bool concat_token(Cuik_CPP* restrict c, String a, String b, Token* out_to
     return true;
 }
 
+// just the value (doesn't track the name of the parameter)
+typedef struct {
+    String content;
+    SourceRange loc;
+} MacroArg;
+
 typedef struct {
     int key_count;
     String* keys;
 
     int value_count;
-    String* values;
+    MacroArg* values;
 
     bool has_varargs;
 } MacroArgs;
@@ -72,7 +78,7 @@ static void parse_params(Cuik_CPP* restrict c, MacroArgs* args, Lexer* restrict 
 
 static void parse_args(Cuik_CPP* restrict c, MacroArgs* restrict args, TokenList* restrict in) {
     size_t value_count = 0;
-    String* values = tls_save();
+    MacroArg* values = tls_save();
 
     int paren_depth = 0;
     for (;;) {
@@ -94,6 +100,7 @@ static void parse_args(Cuik_CPP* restrict c, MacroArgs* restrict args, TokenList
         // we're incrementally building up the string in the "the shtuffs"
         size_t len = 0;
         unsigned char* str = gimme_the_shtuffs(c, 0);
+        SourceRange loc = { .start = peek(in).location };
         while (!at_token_list_end(in)) {
             t = consume(in);
 
@@ -126,6 +133,7 @@ static void parse_args(Cuik_CPP* restrict c, MacroArgs* restrict args, TokenList
             str[len + src.length] = ' ';
             len += src.length + 1;
         }
+        loc.end = get_token_range(&in->tokens[in->current - 1]).end;
 
         // null terminator
         if (len > 0) {
@@ -133,8 +141,8 @@ static void parse_args(Cuik_CPP* restrict c, MacroArgs* restrict args, TokenList
             len--;
         }
 
-        tls_push(sizeof(String));
-        values[value_count++] = (String){ len, str };
+        tls_push(sizeof(MacroArg));
+        values[value_count++] = (MacroArg){ .content = { len, str }, .loc = loc };
 
         if (t.type == ')' && paren_depth == 0) {
             break;
@@ -200,7 +208,7 @@ static bool subst(Cuik_CPP* restrict c, TokenList* out_tokens, uint8_t* def_str,
         }
 
         // convert token location into macro relative
-        t.location = encode_macro_loc(macro_id, t.content.data - in.start);
+        // t.location = encode_macro_loc(macro_id, t.content.data - in.start);
 
         if (t.type == TOKEN_HASH) {
             t = lexer_read(&in);
@@ -217,11 +225,11 @@ static bool subst(Cuik_CPP* restrict c, TokenList* out_tokens, uint8_t* def_str,
             }
 
             // at best we might double the string length from backslashes
-            unsigned char* stringized = gimme_the_shtuffs(c, (args->values[arg_i].length * 2) + 3);
+            unsigned char* stringized = gimme_the_shtuffs(c, (args->values[arg_i].content.length * 2) + 3);
             size_t len = 0;
 
             stringized[len++] = '"';
-            String str = args->values[arg_i];
+            String str = args->values[arg_i].content;
             for (size_t i = 0; i < str.length; i++) {
                 if (str.data[i] == '\\' || str.data[i] == '"' || str.data[i] == '\'') {
                     stringized[len++] = '\\';
@@ -243,7 +251,7 @@ static bool subst(Cuik_CPP* restrict c, TokenList* out_tokens, uint8_t* def_str,
 
             String b = lexer_read(&in).content;
             ptrdiff_t b_i = find_arg(args, b);
-            if (b_i >= 0) b = args->values[b_i];
+            if (b_i >= 0) b = args->values[b_i].content;
 
             // Literally join the data
             unsigned char* out = gimme_the_shtuffs(c, a.length + b.length + 16);
@@ -287,7 +295,7 @@ static bool subst(Cuik_CPP* restrict c, TokenList* out_tokens, uint8_t* def_str,
         } else if (t.type == TOKEN_IDENTIFIER) {
             if (t.content.data[0] == '_' && string_equals_cstr(&t.content, "__VA_ARGS__")) {
                 size_t key_count = args->key_count, value_count = args->value_count;
-                assert(key_count == value_count && "TODO");
+                // assert(key_count == value_count && "TODO");
 
                 for (size_t i = key_count; i < value_count; i++) {
                     // slap a comma between var args
@@ -299,8 +307,17 @@ static bool subst(Cuik_CPP* restrict c, TokenList* out_tokens, uint8_t* def_str,
                             });
                     }
 
-                    TokenList scratch = convert_line_to_token_list(c, macro_id, (uint8_t*) args->values[i].data);
-                    if (!expand(c, out_tokens, &scratch, macro_id)) {
+                    // __VA_ARGS__ is not technically a macro but because it needs to expand
+                    uint32_t vaargs_macro = dyn_array_length(c->tokens.invokes);
+                    dyn_array_put(c->tokens.invokes, (MacroInvoke){
+                            .name      = t.content,
+                            .parent    = macro_id,
+                            .call_site = t.location,
+                            .def_site  = args->values[i].loc,
+                        });
+
+                    TokenList scratch = convert_line_to_token_list(c, vaargs_macro, (uint8_t*) args->values[i].content.data);
+                    if (!expand(c, out_tokens, &scratch, vaargs_macro)) {
                         return false;
                     }
                     dyn_array_destroy(scratch.tokens);
@@ -309,7 +326,7 @@ static bool subst(Cuik_CPP* restrict c, TokenList* out_tokens, uint8_t* def_str,
                 ptrdiff_t arg_i = find_arg(args, t.content);
                 if (arg_i >= 0) {
                     // macro arguments must be expanded before they're placed
-                    TokenList scratch = convert_line_to_token_list(c, macro_id, (uint8_t*) args->values[arg_i].data);
+                    TokenList scratch = convert_line_to_token_list(c, macro_id, (uint8_t*) args->values[arg_i].content.data);
                     if (!expand(c, out_tokens, &scratch, macro_id)) {
                         return false;
                     }
@@ -332,26 +349,28 @@ static bool expand_ident(Cuik_CPP* restrict c, TokenList* restrict out_tokens, T
     Token t = consume(in);
 
     // can a loc come up in yo crib?
-    SourceLoc og_loc = t.location;
-
     if (parent_macro != 0) {
         // convert token location into macro relative
-        uint32_t macro_pos = c->tokens.invokes[parent_macro].call_site.raw;
-
-        if ((t.location.raw & SourceLoc_IsMacro) == 0) {
+        /*if ((t.location.raw & SourceLoc_IsMacro) == 0) {
             uint32_t pos = t.location.raw & ((1u << SourceLoc_FilePosBits) - 1);
-            t.location = encode_macro_loc(parent_macro, pos - macro_pos);
-        }
+            t.location = encode_macro_loc(parent_macro, pos);
+        } else {
+            // uint32_t macro_pos = c->tokens.invokes[parent_macro].def_site.start.raw;
+        }*/
+        t.location = encode_macro_loc(parent_macro, 0);
     }
 
     size_t token_length = t.content.length;
     const unsigned char* token_data = t.content.data;
     if (memeq(token_data, token_length, "__FILE__", 8) ||
         memeq(token_data, token_length, "L__FILE__", 9)) {
-        Cuik_File* f = cuikpp_find_file(&c->tokens, t.location);
-        if (f == NULL) {
-            assert(0 && "cuikpp_find_file failed?");
+        SourceLoc loc = t.location;
+        MacroInvoke* m;
+        while ((m = cuikpp_find_macro(&c->tokens, loc)) != NULL) {
+            loc = m->call_site;
         }
+
+        ResolvedSourceLoc r = cuikpp_find_location(&c->tokens, loc);
 
         // filepath as a string
         unsigned char* output_path_start = gimme_the_shtuffs(c, MAX_PATH + 4);
@@ -364,7 +383,7 @@ static bool expand_ident(Cuik_CPP* restrict c, TokenList* restrict out_tokens, T
         {
             // TODO(NeGate): Kinda shitty but i just wanna duplicate
             // the backslashes to avoid them being treated as an escape
-            const char* input_path = (const char*) f->filename;
+            const char* input_path = (const char*) r.file->filename;
             if (strlen(input_path) >= MAX_PATH) {
                 // generic_error(in, "preprocessor error: __FILE__ generated a file path that was too long\n");
                 abort();
@@ -398,10 +417,13 @@ static bool expand_ident(Cuik_CPP* restrict c, TokenList* restrict out_tokens, T
         t.content = (String){ length, out };
         dyn_array_put(out_tokens->tokens, t);
     } else if (memeq(token_data, token_length, "__LINE__", 8)) {
-        ResolvedSourceLoc r;
-        if (!cuikpp_find_location(&c->tokens, t.location, &r)) {
-            assert(0 && "__LINE__ failed?");
+        SourceLoc loc = t.location;
+        MacroInvoke* m;
+        while ((m = cuikpp_find_macro(&c->tokens, loc)) != NULL) {
+            loc = m->call_site;
         }
+
+        ResolvedSourceLoc r = cuikpp_find_location(&c->tokens, loc);
 
         // line number as a string
         unsigned char* out = gimme_the_shtuffs(c, 10);
@@ -417,14 +439,15 @@ static bool expand_ident(Cuik_CPP* restrict c, TokenList* restrict out_tokens, T
             String def = string_from_range(c->macro_bucket_values_start[def_i], c->macro_bucket_values_end[def_i]);
 
             // create macro invoke site
+            SourceLoc def_site = c->macro_bucket_source_locs[def_i];
             uint32_t macro_id = dyn_array_length(c->tokens.invokes);
             dyn_array_put(c->tokens.invokes, (MacroInvoke){
-                    .name        = t.content,
-                    .parent      = parent_macro,
-                    .def_site    = c->macro_bucket_source_locs[def_i],
-                    .call_site   = og_loc,
-                    .def_length  = def.length,
+                    .name      = t.content,
+                    .parent    = parent_macro,
+                    .def_site  = { def_site, { def_site.raw + def.length } },
+                    .call_site = t.location,
                 });
+            assert(t.location.raw != 0);
 
             const unsigned char* args = c->macro_bucket_keys[def_i] + c->macro_bucket_keys_length[def_i];
 
@@ -455,7 +478,7 @@ static bool expand_ident(Cuik_CPP* restrict c, TokenList* restrict out_tokens, T
                     size_t old = dyn_array_length(c->scratch_list.tokens);
 
                     TokenList scratch = {
-                        .tokens = dyn_array_create_with_initial_cap(Token, 2)
+                        .tokens = dyn_array_create_with_initial_cap(Token, 16)
                     };
 
                     // before expanding the child macros we need to substitute all
@@ -463,8 +486,6 @@ static bool expand_ident(Cuik_CPP* restrict c, TokenList* restrict out_tokens, T
                     subst(c, &scratch, (uint8_t*) def.data, &arglist, macro_id);
                     dyn_array_put(scratch.tokens, (Token){ 0 });
 
-                    // c->scratch_list.current = old;
-                    // expand(c, out_tokens, &c->scratch_list, macro_id);
                     expand(c, out_tokens, &scratch, macro_id);
 
                     dyn_array_destroy(scratch.tokens);
@@ -515,12 +536,12 @@ static bool expand(Cuik_CPP* restrict c, TokenList* out_tokens, TokenList* restr
         if (t.type != TOKEN_IDENTIFIER) {
             if (parent_macro != 0) {
                 // convert token location into macro relative
-                uint32_t macro_pos = c->tokens.invokes[parent_macro].call_site.raw;
-
-                if ((t.location.raw & SourceLoc_IsMacro) == 0) {
+                /*if ((t.location.raw & SourceLoc_IsMacro) == 0) {
                     uint32_t pos = t.location.raw & ((1u << SourceLoc_FilePosBits) - 1);
                     t.location = encode_macro_loc(parent_macro, pos);
-                }
+                } else {
+                }*/
+                t.location = encode_macro_loc(parent_macro, 0);
             }
 
             dyn_array_put(out_tokens->tokens, t);

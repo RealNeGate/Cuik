@@ -604,12 +604,8 @@ void ast_dump_type(TranslationUnit* tu, Cuik_Type* ty, int depth, int offset) {
             ty->record.name ? (char*)ty->record.name : "<unnamed>"
         );
 
-        ResolvedSourceLoc r;
-        if (cuikpp_find_location(&tu->tokens, ty->loc, &r)) {
-            printf("// %s:%d\n", r.file->filename, r.line);
-        } else {
-            printf("\n");
-        }
+        ResolvedSourceLoc r = cuikpp_find_location(&tu->tokens, ty->loc);
+        printf("// %s:%d\n", r.file->filename, r.line);
 
         char temp_string0[1024];
         Member* kids = ty->record.kids;

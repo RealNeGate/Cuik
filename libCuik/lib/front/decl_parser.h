@@ -237,9 +237,7 @@ static Cuik_Type* parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s
         while (tokens_get(s)->type && tokens_get(s)->type != ')') {
             if (param_count) {
                 if (tokens_get(s)->type != ',') {
-                    tokens_prev(s);
-
-                    diag_err(s, tokens_get_last_range(s), "expected closing paren (or comma) after declaration name");
+                    diag_err(s, tokens_get_range(s), "expected closing paren (or comma) after declaration name");
                     abort();
                 }
 

@@ -158,18 +158,16 @@ static int count_pp_lines(TokenStream* s) {
     int line_count = 0;
     for (size_t i = 0; i < count; i++) {
         Token* t = &tokens[i];
+        ResolvedSourceLoc r = cuikpp_find_location(s, t->location);
 
-        ResolvedSourceLoc r;
-        if (cuikpp_find_location(s, t->location, &r)) {
-            if (last_file != r.file->filename && strcmp(r.file->filename, "<temp>") != 0) {
-                line_count += 1;
-                last_file = r.file->filename;
-            }
+        if (last_file != r.file->filename && strcmp(r.file->filename, "<temp>") != 0) {
+            line_count += 1;
+            last_file = r.file->filename;
+        }
 
-            if (last_line != r.line) {
-                line_count += 1;
-                last_line = r.line;
-            }
+        if (last_line != r.line) {
+            line_count += 1;
+            last_line = r.line;
         }
     }
 
@@ -186,12 +184,20 @@ static void dump_tokens(FILE* out_file, TokenStream* s) {
     for (size_t i = 0; i < count; i++) {
         Token* t = &tokens[i];
 
-        ResolvedSourceLoc r;
-        if (!cuikpp_find_location(s, t->location, &r)) {
-            assert(0 && "cuikpp_find_location failed?");
+        /*int depth = 0;
+        SourceLoc loc = t->location;
+        MacroInvoke* m;
+        while ((m = cuikpp_find_macro(s, loc)) != NULL) {
+            loc = m->call_site;
+            depth++;
         }
 
-        if (last_file != r.file->filename && r.file->filename[0] != '<') {
+        if (depth > 0 && out_file == stdout) {
+            fprintf(out_file, "\x1b[0;35m");
+        }*/
+
+        ResolvedSourceLoc r = cuikpp_find_location(s, cuikpp_get_physical_location(s, t->location));
+        if (last_file != r.file->filename) {
             // TODO(NeGate): Kinda shitty but i just wanna duplicate
             // the backslashes to avoid them being treated as an escape
             const char* in = (const char*) r.file->filename;
@@ -212,12 +218,16 @@ static void dump_tokens(FILE* out_file, TokenStream* s) {
             last_file = r.file->filename;
         }
 
-        if (r.file->filename[0] != '<' && last_line != r.line) {
+        if (last_line != r.line) {
             fprintf(out_file, "\n/* line %3d */\t", r.line);
             last_line = r.line;
         }
 
         fprintf(out_file, "%.*s ", (int) t->content.length, t->content.data);
+
+        /*if (depth > 0 && out_file == stdout) {
+            fprintf(out_file, "\x1b[0m");
+        }*/
     }
 }
 

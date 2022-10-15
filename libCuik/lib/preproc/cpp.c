@@ -83,10 +83,7 @@ static Token consume(TokenList* restrict in) {
 static void expect_from_lexer(Cuik_CPP* c, Lexer* l, char ch) {
     Token t = lexer_read(l);
     if (t.type != ch) {
-        ResolvedSourceLoc r;
-        if (!cuikpp_find_location(&c->tokens, t.location, &r)) {
-            assert(0 && "TODO find_location");
-        }
+        ResolvedSourceLoc r = cuikpp_find_location(&c->tokens, t.location);
 
         fprintf(stderr, "error %s:%d: expected '%c' got '%.*s'", r.file->filename, r.line, ch, (int) t.content.length, t.content.data);
         abort();
@@ -210,14 +207,13 @@ void cuikpp_init(Cuik_CPP* ctx, const char filepath[FILENAME_MAX]) {
 }
 
 // we can infer the column and line from doing a binary search on the TokenStream's line map
-static bool find_location(Cuik_File* file, uint32_t file_pos, ResolvedSourceLoc* out_result) {
+static ResolvedSourceLoc find_location(Cuik_File* file, uint32_t file_pos) {
     if (file->line_map == NULL) {
-        *out_result = (ResolvedSourceLoc){
+        return (ResolvedSourceLoc){
             .file = file,
             .line_str = "",
             .line = 1, .column = file_pos
         };
-        return true;
     }
 
     file_pos += file->file_pos_bias;
@@ -240,53 +236,67 @@ static bool find_location(Cuik_File* file, uint32_t file_pos, ResolvedSourceLoc*
     // line_str calculation, this is fine (it happens when the line starts in the last
     // chunk and crosses the boundary) we just need to do the math with ptrdiff_t
     // such that if it goes negative it'll refer to the previous chunk of the content
-    *out_result = (ResolvedSourceLoc){
+    return (ResolvedSourceLoc){
         .file = file,
         .line_str = &file->content[(ptrdiff_t)l - (ptrdiff_t)file->file_pos_bias],
         .line = right, .column = file_pos - l
     };
-    return true;
+}
+
+MacroInvoke* cuikpp_find_macro(TokenStream* tokens, SourceLoc loc) {
+    if ((loc.raw & SourceLoc_IsMacro) == 0) {
+        return NULL;
+    }
+
+    uint32_t macro_id = (loc.raw >> SourceLoc_MacroOffsetBits) & ((1u << SourceLoc_MacroIDBits) - 1);
+    return &tokens->invokes[macro_id];
 }
 
 Cuik_File* cuikpp_find_file(TokenStream* tokens, SourceLoc loc) {
     while (loc.raw & SourceLoc_IsMacro) {
-        uint32_t macro_id = (loc.raw & ((1u << SourceLoc_MacroIDBits) - 1)) >> SourceLoc_MacroOffsetBits;
-
+        uint32_t macro_id = (loc.raw >> SourceLoc_MacroOffsetBits) & ((1u << SourceLoc_MacroIDBits) - 1);
         loc = tokens->invokes[macro_id].call_site;
     }
 
     return &tokens->files[loc.raw >> SourceLoc_FilePosBits];
 }
 
-bool cuikpp_find_location_in_bytes(TokenStream* tokens, SourceLoc loc, Cuik_FileLoc* out_result) {
-    if ((loc.raw & SourceLoc_IsMacro) == 0) {
+Cuik_FileLoc cuikpp_find_location_in_bytes(TokenStream* tokens, SourceLoc loc) {
+    assert((loc.raw & SourceLoc_IsMacro) == 0);
+    assert((loc.raw >> SourceLoc_FilePosBits) < dyn_array_length(tokens->files));
+    Cuik_File* f = &tokens->files[loc.raw >> SourceLoc_FilePosBits];
+    uint32_t pos = loc.raw & ((1u << SourceLoc_FilePosBits) - 1);
+
+    return (Cuik_FileLoc){ f, pos };
+
+    /*if ((loc.raw & SourceLoc_IsMacro) == 0) {
         assert((loc.raw >> SourceLoc_FilePosBits) < dyn_array_length(tokens->files));
         Cuik_File* f = &tokens->files[loc.raw >> SourceLoc_FilePosBits];
         uint32_t pos = loc.raw & ((1u << SourceLoc_FilePosBits) - 1);
 
-        *out_result = (Cuik_FileLoc){ f, pos };
-        return true;
+        return (Cuik_FileLoc){ f, pos };
     } else {
         uint32_t macro_id = (loc.raw & ((1u << SourceLoc_MacroIDBits) - 1)) >> SourceLoc_MacroOffsetBits;
         uint32_t macro_off = loc.raw & ((1u << SourceLoc_MacroOffsetBits) - 1);
 
-        Cuik_FileLoc fl;
-        if (!cuikpp_find_location_in_bytes(tokens, tokens->invokes[macro_id].def_site, &fl)) {
-            assert(0 && "TODO");
-        }
-
-        *out_result = (Cuik_FileLoc){ fl.file, fl.pos + macro_off };
-        return true;
-    }
+        Cuik_FileLoc fl = cuikpp_find_location_in_bytes(tokens, tokens->invokes[macro_id].def_site.start);
+        return (Cuik_FileLoc){ fl.file, fl.pos + macro_off };
+    }*/
 }
 
-bool cuikpp_find_location(TokenStream* tokens, SourceLoc loc, ResolvedSourceLoc* out_result) {
-    Cuik_FileLoc fl;
-    if (!cuikpp_find_location_in_bytes(tokens, loc, &fl)) {
-        return false;
-    }
+ResolvedSourceLoc cuikpp_find_location2(TokenStream* tokens, Cuik_FileLoc loc) {
+    return find_location(loc.file, loc.pos);
+}
 
-    return find_location(fl.file, fl.pos, out_result);
+ResolvedSourceLoc cuikpp_find_location(TokenStream* tokens, SourceLoc loc) {
+    Cuik_FileLoc fl = cuikpp_find_location_in_bytes(tokens, loc);
+    return find_location(fl.file, fl.pos);
+}
+
+SourceLoc cuikpp_get_physical_location(TokenStream* tokens, SourceLoc loc) {
+    MacroInvoke* m;
+    while ((m = cuikpp_find_macro(tokens, loc)) != NULL) { loc = m->call_site; }
+    return loc;
 }
 
 static void compute_line_map(TokenStream* s, int depth, SourceLoc include_site, const char* filename, char* data, size_t length) {

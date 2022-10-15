@@ -1754,11 +1754,7 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
         static thread_local TB_FileID last_file_id;
         static thread_local const char* last_filepath;
 
-        ResolvedSourceLoc a;
-        if (!cuikpp_find_location(&tu->tokens, s->loc, &a)) {
-            assert(0 && "cuikpp_find_location failed?");
-        }
-
+        ResolvedSourceLoc a = cuikpp_find_location(&tu->tokens, s->loc);
         if (a.file->filename != last_filepath) {
             last_filepath = a.file->filename;
             last_file_id = tb_file_create(tu->ir_mod, a.file->filename);

@@ -11,7 +11,7 @@
 #endif
 
 static const char* report_names[] = {
-    "verbose",
+    "note",
     "info",
     "warning",
     "error",
@@ -25,9 +25,8 @@ static WORD default_attribs;
 #endif
 
 static const char* const attribs[] = {
-    "\x1b[0m",
+    "\x1b[33m",
     "\x1b[32m",
-    "\x1b[31m",
     "\x1b[31m",
 };
 
@@ -118,79 +117,89 @@ static void print_diag_message(FILE* out_file, const char* fmt, va_list ap) {
 
 // we use the call stack so we can print in reverse order
 void print_include(TokenStream* tokens, SourceLoc loc) {
-    ResolvedSourceLoc r;
-    if (cuikpp_find_location(tokens, loc, &r)) {
-        if (r.file->include_site.raw != 0) {
-            print_include(tokens, r.file->include_site);
-        }
+    ResolvedSourceLoc r = cuikpp_find_location(tokens, loc);
 
-        fprintf(stderr, "Included from %s:%d\n", r.file->filename, r.line);
+    if (r.file->include_site.raw != 0) {
+        print_include(tokens, r.file->include_site);
+    }
+
+    fprintf(stderr, "Included from %s:%d\n", r.file->filename, r.line);
+}
+
+static void print_line(TokenStream* tokens, ResolvedSourceLoc start, size_t tkn_len) {
+    fprintf(stderr, "  %s\n", start.file->filename);
+
+    const char* line_start = start.line_str;
+    while (*line_start && isspace(*line_start)) line_start++;
+    size_t dist_from_line_start = line_start - start.line_str;
+
+    // line preview
+    if (*line_start != '\r' && *line_start != '\n') {
+        const char* line_end = line_start;
+        do { line_end++; } while (*line_end && *line_end != '\n');
+
+        fprintf(stderr, "%6d| %.*s\x1b[37m\n", start.line, (int)(line_end - line_start), line_start);
+    }
+
+    // underline
+    size_t start_pos = start.column > dist_from_line_start ? start.column - dist_from_line_start : 0;
+    fprintf(stderr, "        ");
+    fprintf(stderr, "\x1b[32m");
+
+    for (size_t i = 0; i < start_pos; i++) fprintf(stderr, " ");
+    fprintf(stderr, "^");
+    for (size_t i = 1; i < tkn_len; i++) fprintf(stderr, "~");
+
+    fprintf(stderr, "\x1b[0m\n");
+}
+
+static void print_line_with_backtrace(TokenStream* tokens, SourceLoc loc, size_t tkn_len) {
+    MacroInvoke* m = cuikpp_find_macro(tokens, loc);
+    if (m != NULL) {
+        // uint32_t macro_off = loc.raw & ((1u << SourceLoc_MacroOffsetBits) - 1);
+
+        print_line(tokens, cuikpp_find_location(tokens, m->def_site.start), tkn_len);
+        fprintf(stderr, "\n");
+        print_line_with_backtrace(tokens, m->call_site, 1);
+    } else {
+        print_line(tokens, cuikpp_find_location(tokens, loc), tkn_len);
     }
 }
 
 static void diag(DiagType type, TokenStream* tokens, SourceRange loc, const char* fmt, va_list ap) {
+    SourceLoc loc_start = loc.start;
+    // we wanna find the physical character
+    for (MacroInvoke* m; (m = cuikpp_find_macro(tokens, loc_start)) != NULL;) {
+        loc_start = m->call_site;
+    }
+
     // print include stack
-    Cuik_File* file = cuikpp_find_file(tokens, loc.start);
-    if (file->include_site.raw != 0) {
-        print_include(tokens, file->include_site);
+    ResolvedSourceLoc start = cuikpp_find_location(tokens, loc_start);
+    if (start.file->include_site.raw != 0) {
+        print_include(tokens, start.file->include_site);
     }
 
     fprintf(stderr, "\x1b[37m");
-    ResolvedSourceLoc start;
-    if (cuikpp_find_location(tokens, loc.start, &start)) {
-        fprintf(stderr, "%s:%d:%d: ", start.file->filename, start.line, start.column);
-    } else {
-        fprintf(stderr, "??:??:??: ");
-    }
+    fprintf(stderr, "%s:%d:%d: ", start.file->filename, start.line, start.column);
     fprintf(stderr, "%s%s:\x1b[0m ", attribs[type], report_names[type]);
     print_diag_message(stderr, fmt, ap);
+    fprintf(stderr, "\n");
 
-    if (loc.start.raw & SourceLoc_IsMacro) {
-        // we're in a macro
-        uint32_t macro_id = (loc.start.raw & ((1u << SourceLoc_MacroIDBits) - 1)) >> SourceLoc_MacroOffsetBits;
-        uint32_t macro_off = loc.start.raw & ((1u << SourceLoc_MacroOffsetBits) - 1);
-
-        MacroInvoke* m = &tokens->invokes[macro_id];
-        fprintf(stderr, " (Expanded from macro '%.*s')\n", (int) m->name.length, m->name.data);
-    } else {
-        fprintf(stderr, "\n");
+    SourceLoc loc_end = loc.end;
+    // we wanna find the physical character
+    for (MacroInvoke* m; (m = cuikpp_find_macro(tokens, loc_end)) != NULL;) {
+        loc_end = m->call_site;
     }
 
     // Caret preview
-    {
-        const char* line_start = start.line_str;
-        while (*line_start && isspace(*line_start)) {
-            line_start++;
-        }
-        size_t dist_from_line_start = line_start - start.line_str;
-
-        // line preview
-        if (*line_start != '\r' && *line_start != '\n') {
-            const char* line_end = line_start;
-            do { line_end++; } while (*line_end && *line_end != '\n');
-
-            fprintf(stderr, "%6d| %.*s\x1b[37m\n", start.line, (int)(line_end - line_start), line_start);
-        }
-
-        size_t tkn_len = 1;
-        ResolvedSourceLoc end;
-        if (cuikpp_find_location(tokens, loc.end, &end)) {
-            if (end.file == start.file && end.line == start.line && end.column > start.column) {
-                tkn_len = end.column - start.column;
-            }
-        }
-
-        // underline
-        size_t start_pos = start.column > dist_from_line_start ? start.column - dist_from_line_start : 0;
-        fprintf(stderr, "        ");
-        fprintf(stderr, "\x1b[32m");
-
-        for (size_t i = 0; i < start_pos; i++) fprintf(stderr, " ");
-        fprintf(stderr, "^");
-        for (size_t i = 1; i < tkn_len; i++) fprintf(stderr, "~");
-
-        fprintf(stderr, "\x1b[0m\n");
+    size_t tkn_len = 1;
+    ResolvedSourceLoc end = cuikpp_find_location(tokens, loc_end);
+    if (end.file == start.file && end.line == start.line && end.column > start.column) {
+        tkn_len = end.column - start.column;
     }
+
+    // print_line(tokens, start, tkn_len);
+    print_line_with_backtrace(tokens, loc.start, tkn_len);
 }
 
 #define DIAG_FN(type, name) \
@@ -219,10 +228,7 @@ static void tally_report_counter(Cuik_ReportLevel level, Cuik_ErrorStatus* err) 
 }
 
 static size_t draw_line(TokenStream* tokens, SourceLoc loc) {
-    ResolvedSourceLoc r;
-    if (!cuikpp_find_location(tokens, loc, &r)) {
-        assert(0 && "cuikpp_find_location failed?");
-    }
+    ResolvedSourceLoc r = cuikpp_find_location(tokens, loc);
 
     // display line
     const char* line_start = r.line_str;
@@ -308,11 +314,8 @@ static void diag_writer_write_upto(DiagWriter* writer, size_t pos) {
 }
 
 void diag_writer_highlight(DiagWriter* writer, SourceRange loc) {
-    ResolvedSourceLoc a, b;
-    if (!cuikpp_find_location(writer->tokens, loc.start, &a) ||
-        !cuikpp_find_location(writer->tokens, loc.end, &b)) {
-        assert(0 && "cuikpp_find_location failed?");
-    }
+    ResolvedSourceLoc a = cuikpp_find_location(writer->tokens, loc.start);
+    ResolvedSourceLoc b = cuikpp_find_location(writer->tokens, loc.end);
 
     assert(a.file == b.file && a.line == b.line);
     if (writer->base.file == NULL) {
@@ -355,11 +358,7 @@ bool diag_writer_is_compatible(DiagWriter* writer, SourceRange loc) {
         return true;
     }
 
-    ResolvedSourceLoc r;
-    if (!cuikpp_find_location(writer->tokens, loc.start, &r)) {
-        assert(0 && "cuikpp_find_location failed?");
-    }
-
+    ResolvedSourceLoc r = cuikpp_find_location(writer->tokens, loc.start);
     return writer->base.file == r.file && writer->base.line == r.line;
 }
 

@@ -71,8 +71,8 @@ typedef struct MacroInvoke {
     // 0 means it's got no parent
     uint32_t parent;
 
-    SourceLoc def_site, call_site;
-    uint16_t def_length, call_length;
+    SourceRange def_site;
+    SourceLoc call_site;
 } MacroInvoke;
 
 typedef struct TokenList {
@@ -163,12 +163,19 @@ TokenStream* cuikpp_get_token_stream(Cuik_CPP* ctx);
 ////////////////////////////////
 // Line info
 ////////////////////////////////
+// converts macro token to the physical token in a file
+SourceLoc cuikpp_get_physical_location(TokenStream* tokens, SourceLoc loc);
+
 // returns true on success
-bool cuikpp_find_location(TokenStream* tokens, SourceLoc loc, ResolvedSourceLoc* out_result);
-bool cuikpp_find_location_in_bytes(TokenStream* tokens, SourceLoc loc, Cuik_FileLoc* out_result);
+ResolvedSourceLoc cuikpp_find_location(TokenStream* tokens, SourceLoc loc);
+ResolvedSourceLoc cuikpp_find_location2(TokenStream* tokens, Cuik_FileLoc loc);
+Cuik_FileLoc cuikpp_find_location_in_bytes(TokenStream* tokens, SourceLoc loc);
 
 // returns NULL on an invalid source location
 Cuik_File* cuikpp_find_file(TokenStream* tokens, SourceLoc loc);
+
+// returns NULL for non-macros
+MacroInvoke* cuikpp_find_macro(TokenStream* tokens, SourceLoc loc);
 
 ////////////////////////////////
 // Preprocessor coroutine
@@ -249,3 +256,15 @@ bool cuikpp_undef(Cuik_CPP* ctx, size_t keylen, const char* key);
 // C preprocessor pretty printer
 ////////////////////////////////
 void cuikpp_dump_defines(Cuik_CPP* ctx);
+
+////////////////////////////////
+// Diagnostic engine
+////////////////////////////////
+// We extended onto the standard printf format when it starts with %_T, here's the
+// full table of additions:
+//
+//     %_T       Cuik_Type
+//     %_S       String
+void diag_note(TokenStream* tokens, SourceRange loc, const char* fmt, ...);
+void diag_warn(TokenStream* tokens, SourceRange loc, const char* fmt, ...);
+void diag_err(TokenStream* tokens, SourceRange loc, const char* fmt, ...);

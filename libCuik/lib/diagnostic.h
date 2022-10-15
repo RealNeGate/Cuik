@@ -37,15 +37,6 @@ typedef struct {
 
 void cuikdg_init(void);
 
-// We extended onto the standard printf format when it starts with %_T, here's the
-// full table of additions:
-//
-//     %_T       Cuik_Type
-//     %_S       String
-void diag_note(TokenStream* tokens, SourceRange loc, const char* fmt, ...);
-void diag_warn(TokenStream* tokens, SourceRange loc, const char* fmt, ...);
-void diag_err(TokenStream* tokens, SourceRange loc, const char* fmt, ...);
-
 ////////////////////////////////
 // Complex diagnostic builder
 ////////////////////////////////
