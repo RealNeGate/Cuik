@@ -62,13 +62,13 @@ bool cuikpp_next_define(Cuik_CPP* ctx, Cuik_DefineIter* it) {
     size_t e = (it->bucket * SLOTS_PER_MACRO_BUCKET) + it->id;
 
     size_t keylen = ctx->macro_bucket_keys_length[e];
-    const char* key = (const char*)ctx->macro_bucket_keys[e];
+    const unsigned char* key = ctx->macro_bucket_keys[e];
 
     size_t vallen = ctx->macro_bucket_values_end[e] - ctx->macro_bucket_values_start[e];
-    const char* val = (const char*)ctx->macro_bucket_values_start[e];
+    const unsigned char* val = ctx->macro_bucket_values_start[e];
 
     it->loc = ctx->macro_bucket_source_locs[e];
-    it->key = (struct Cuik_DefineKey){ keylen, key };
-    it->value = (struct Cuik_DefineVal){ vallen, val };
+    it->key = (String){ keylen, key };
+    it->value = (String){ vallen, val };
     return true;
 }

@@ -11,7 +11,7 @@ typedef enum ArgType {
     ARG_UNDEF,
     ARG_INCLUDE,
     ARG_PREPROC,
-    ARG_PPLOC,
+    ARG_PPREPL,
     ARG_AST,
     ARG_SYNTAX,
     ARG_EMITIR,
@@ -52,7 +52,7 @@ static const ArgDesc arg_descs[] = {
     { ARG_UNDEF,   "U",        "undef",   true,  "undefines a macro before compiling" },
     { ARG_INCLUDE, "I",        "include", true,  "add directory to the include searches" },
     { ARG_PREPROC, "P",        NULL,      false, "print preprocessor output to stdout" },
-    { ARG_PPLOC,   "pploc",    NULL,      false, "count the number of preprocessor lines of code" },
+    { ARG_PPREPL,  "xp",       NULL,      false, "enables the preprocessor REPL environment" },
     // parser
     { ARG_AST,     "ast",      NULL,      false, "" },
     { ARG_SYNTAX,  "xe",       NULL,      false, "type check only" },

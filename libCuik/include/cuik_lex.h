@@ -118,14 +118,7 @@ typedef struct Cuik_FileLoc {
 typedef struct Cuik_DefineIter {
     // public
     SourceLoc loc;
-    struct Cuik_DefineKey {
-        size_t len;
-        const char* data;
-    } key;
-    struct Cuik_DefineVal {
-        size_t len;
-        const char* data;
-    } value;
+    String key, value;
 
     // internal
     uint32_t bucket, id;

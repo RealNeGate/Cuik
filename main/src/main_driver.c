@@ -49,7 +49,7 @@ static bool args_ast;
 static bool args_types;
 static bool args_run;
 static bool args_nocrt;
-static bool args_pploc;
+static bool args_pprepl;
 static bool args_time;
 static bool args_verbose;
 static bool args_syntax_only;
@@ -80,6 +80,8 @@ static struct {
     { "x64_linux",   cuik_get_x64_target_desc, CUIK_SYSTEM_LINUX   },
 };
 enum { TARGET_OPTION_COUNT = sizeof(target_options) / sizeof(target_options[0]) };
+
+#include "pp_repl.h"
 
 static void initialize_opt_passes(void) {
     da_passes = dyn_array_create(TB_Pass);
@@ -147,32 +149,6 @@ static void tp_work_one_job(void* user_data) {
     threadpool_work_one_job((threadpool_t*) user_data);
 }
 #endif
-
-static int count_pp_lines(TokenStream* s) {
-    const char* last_file = NULL;
-    int last_line = 0;
-
-    Token* tokens = cuik_get_tokens(s);
-    size_t count = cuik_get_token_count(s);
-
-    int line_count = 0;
-    for (size_t i = 0; i < count; i++) {
-        Token* t = &tokens[i];
-        ResolvedSourceLoc r = cuikpp_find_location(s, t->location);
-
-        if (last_file != r.file->filename && strcmp(r.file->filename, "<temp>") != 0) {
-            line_count += 1;
-            last_file = r.file->filename;
-        }
-
-        if (last_line != r.line) {
-            line_count += 1;
-            last_line = r.line;
-        }
-    }
-
-    return line_count;
-}
 
 static void dump_tokens(FILE* out_file, TokenStream* s) {
     const char* last_file = NULL;
@@ -327,7 +303,7 @@ static void codegen_job(void* arg) {
 }
 
 // it'll use the normal CLI crap to do so
-static Cuik_CPP* make_preprocessor(const char* filepath) {
+static Cuik_CPP* make_preprocessor(const char* filepath, bool should_finalize) {
     Cuik_CPP* cpp = malloc(sizeof(Cuik_CPP));
     CUIK_TIMED_BLOCK("cuikpp_init") {
         cuikpp_init(cpp, filepath);
@@ -381,7 +357,9 @@ static Cuik_CPP* make_preprocessor(const char* filepath) {
         cuik_unlock_compilation_unit(&compilation_unit);
     }
 
-    cuikpp_finalize(cpp);
+    if (should_finalize) {
+        cuikpp_finalize(cpp);
+    }
     return cpp;
 }
 
@@ -447,7 +425,7 @@ static void preproc_file(void* arg) {
     const char* input = (const char*)arg;
 
     // preproc
-    Cuik_CPP* cpp = make_preprocessor(input);
+    Cuik_CPP* cpp = make_preprocessor(input, true);
 
     if (ithread_pool != NULL) {
         CUIK_CALL(ithread_pool, submit, compile_file, cpp);
@@ -943,7 +921,7 @@ int main(int argc, char** argv) {
             case ARG_OBJECT: flavor = TB_FLAVOR_OBJECT; break;
             case ARG_PREPROC: args_preprocess = true; break;
             case ARG_RUN: args_run = true; break;
-            case ARG_PPLOC: args_pploc = true; break;
+            case ARG_PPREPL: args_pprepl = true; break;
             case ARG_AST: args_ast = true; break;
             case ARG_ASSEMBLY: flavor = TB_FLAVOR_ASSEMBLY; break;
             case ARG_SYNTAX: args_syntax_only = true; break;
@@ -1045,23 +1023,11 @@ int main(int argc, char** argv) {
 
     fscache = cuik_fscache_create();
 
-    if (args_pploc) {
-        int total = 0;
-        dyn_array_for(i, input_files) {
-            Cuik_CPP* cpp = make_preprocessor(input_files[i]);
-
-            int c = count_pp_lines(cuikpp_get_token_stream(cpp));
-            printf("%s : %d (%zu tokens)\n", input_files[i], c, cuik_get_token_count(cuikpp_get_token_stream(cpp)));
-            total += c;
-
-            free_preprocessor(cpp);
-        }
-        printf("Total PPLoc: %d\n", total);
-        return EXIT_SUCCESS;
+    if (args_pprepl) {
+        return pp_repl();
     } else if (args_preprocess) {
         // preproc only
-        Cuik_CPP* cpp = make_preprocessor(input_files[0]);
-
+        Cuik_CPP* cpp = make_preprocessor(input_files[0], true);
         dump_tokens(stdout, cuikpp_get_token_stream(cpp));
         free_preprocessor(cpp);
 

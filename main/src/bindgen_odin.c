@@ -160,8 +160,8 @@ static void odinprint__include(const char* filepath) {
 
 static void odinprint__define(Cuik_DefineIter def) {
     printf("// #define %.*s %.*s\n",
-        (int)def.key.len, def.key.data,
-        (int)def.value.len, def.value.data
+        (int)def.key.length, def.key.data,
+        (int)def.value.length, def.value.data
     );
 }
 

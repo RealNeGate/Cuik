@@ -203,8 +203,8 @@ static void cprint__include(const char* filepath) {
 
 static void cprint__define(Cuik_DefineIter def) {
     printf("#define %.*s %.*s\n",
-        (int)def.key.len, def.key.data,
-        (int)def.value.len, def.value.data
+        (int)def.key.length, def.key.data,
+        (int)def.value.length, def.value.data
     );
 }
 
