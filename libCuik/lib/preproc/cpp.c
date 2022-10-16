@@ -206,6 +206,49 @@ void cuikpp_init(Cuik_CPP* ctx, const char filepath[FILENAME_MAX]) {
     };
 }
 
+void cuikpp_deinit(Cuik_CPP* ctx) {
+    #if CUIK__CPP_STATS
+    //printf("%40s | %zu file read | %zu fstats\n", ctx->files[0].filepath, ctx->total_files_read, ctx->total_fstats);
+    #if 1
+    printf(" %40s | %.06f ms read+lex\t| %4zu files read\t| %zu fstats\t| %f ms (%zu defines)\n",
+        ctx->files[0].filepath,
+        ctx->total_io_time / 1000000.0,
+        ctx->total_files_read,
+        ctx->total_fstats,
+        ctx->total_define_access_time / 1000000.0,
+        ctx->total_define_accesses);
+    #else
+    dyn_array_for(i, ctx->files) {
+        printf("%s,%zu\n", ctx->files[i].filepath, ctx->files[i].content_len);
+    }
+    /*printf("%s,%.06f,%.06f,%4zu,%.06f,%zu,\n",
+        ctx->files[0].filepath,
+        ctx->total_lex_time / 1000000.0,
+        ctx->total_io_time / 1000000.0,
+        ctx->total_files_read,
+        ctx->total_io_space / 1000000.0,
+        ctx->total_fstats);*/
+    #endif
+    #endif
+
+    if (ctx->macro_bucket_keys) {
+        cuikpp_finalize(ctx);
+    }
+
+    /*if (ctx->files != NULL) {
+        size_t count = dyn_array_length(ctx->files);
+
+        for (size_t i = 0; i < count; i++) {
+            CUIK_CALL(ctx->file_system, free_file, &ctx->files[i]);
+        }
+    }*/
+
+    cuik__vfree(ctx->stack, MAX_CPP_STACK_DEPTH * sizeof(CPPStackSlot));
+    cuik__vfree((void*) ctx->the_shtuffs, THE_SHTUFFS_SIZE);
+    ctx->stack = NULL;
+    ctx->the_shtuffs = NULL;
+}
+
 // we can infer the column and line from doing a binary search on the TokenStream's line map
 static ResolvedSourceLoc find_location(Cuik_File* file, uint32_t file_pos) {
     if (file->line_map == NULL) {
@@ -631,49 +674,6 @@ Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
             dyn_array_put(s->list.tokens, first);
         }
     }
-}
-
-void cuikpp_deinit(Cuik_CPP* ctx) {
-    #if CUIK__CPP_STATS
-    //printf("%40s | %zu file read | %zu fstats\n", ctx->files[0].filepath, ctx->total_files_read, ctx->total_fstats);
-    #if 1
-    printf(" %40s | %.06f ms read+lex\t| %4zu files read\t| %zu fstats\t| %f ms (%zu defines)\n",
-        ctx->files[0].filepath,
-        ctx->total_io_time / 1000000.0,
-        ctx->total_files_read,
-        ctx->total_fstats,
-        ctx->total_define_access_time / 1000000.0,
-        ctx->total_define_accesses);
-    #else
-    dyn_array_for(i, ctx->files) {
-        printf("%s,%zu\n", ctx->files[i].filepath, ctx->files[i].content_len);
-    }
-    /*printf("%s,%.06f,%.06f,%4zu,%.06f,%zu,\n",
-        ctx->files[0].filepath,
-        ctx->total_lex_time / 1000000.0,
-        ctx->total_io_time / 1000000.0,
-        ctx->total_files_read,
-        ctx->total_io_space / 1000000.0,
-        ctx->total_fstats);*/
-    #endif
-    #endif
-
-    if (ctx->macro_bucket_keys) {
-        cuikpp_finalize(ctx);
-    }
-
-    /*if (ctx->files != NULL) {
-        size_t count = dyn_array_length(ctx->files);
-
-        for (size_t i = 0; i < count; i++) {
-            CUIK_CALL(ctx->file_system, free_file, &ctx->files[i]);
-        }
-    }*/
-
-    cuik__vfree(ctx->stack, MAX_CPP_STACK_DEPTH * sizeof(CPPStackSlot));
-    cuik__vfree((void*) ctx->the_shtuffs, THE_SHTUFFS_SIZE);
-    ctx->stack = NULL;
-    ctx->the_shtuffs = NULL;
 }
 
 Cuikpp_Status cuikpp_default_run(Cuik_CPP* ctx, Cuik_FileCache* cache) {

@@ -202,6 +202,34 @@ static bool find_define(Cuik_CPP* restrict c, size_t* out_index, const unsigned 
     return found;
 }
 
+bool cuikpp_find_define_cstr(Cuik_CPP* restrict c, Cuik_DefineIter* out_ref, const char* key) {
+    size_t def_i;
+    if (!find_define(c, &def_i, (const unsigned char*) key, strlen(key))) {
+        return false;
+    }
+
+    out_ref->loc = c->macro_bucket_source_locs[def_i];
+    out_ref->key = (String){ c->macro_bucket_keys_length[def_i], c->macro_bucket_values_start[def_i] };
+    out_ref->value = string_from_range(c->macro_bucket_values_start[def_i], c->macro_bucket_values_end[def_i]);
+    out_ref->bucket = def_i / SLOTS_PER_MACRO_BUCKET;
+    out_ref->id = def_i % SLOTS_PER_MACRO_BUCKET;
+    return true;
+}
+
+bool cuikpp_find_define(Cuik_CPP* restrict c, Cuik_DefineIter* out_ref, size_t keylen, const char key[]) {
+    size_t def_i;
+    if (!find_define(c, &def_i, (const unsigned char*) key, keylen)) {
+        return false;
+    }
+
+    out_ref->loc = c->macro_bucket_source_locs[def_i];
+    out_ref->key = (String){ c->macro_bucket_keys_length[def_i], c->macro_bucket_values_start[def_i] };
+    out_ref->value = string_from_range(c->macro_bucket_values_start[def_i], c->macro_bucket_values_end[def_i]);
+    out_ref->bucket = def_i / SLOTS_PER_MACRO_BUCKET;
+    out_ref->id = def_i % SLOTS_PER_MACRO_BUCKET;
+    return true;
+}
+
 static bool is_defined(Cuik_CPP* restrict c, const unsigned char* start, size_t length) {
     size_t garbage;
     return find_define(c, &garbage, start, length);

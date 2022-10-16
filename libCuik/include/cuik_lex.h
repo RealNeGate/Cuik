@@ -222,7 +222,6 @@ typedef enum {
     CUIKPP_ERROR,
 } Cuikpp_Status;
 
-
 ////////////////////////////////
 // Preprocessor includes
 ////////////////////////////////
@@ -235,6 +234,9 @@ bool cuikpp_find_include_include(Cuik_CPP* ctx, char output[FILENAME_MAX], const
 ////////////////////////////////
 // Preprocessor symbol table
 ////////////////////////////////
+bool cuikpp_find_define_cstr(Cuik_CPP* restrict c, Cuik_DefineIter* out_ref, const char* key);
+bool cuikpp_find_define(Cuik_CPP* restrict c, Cuik_DefineIter* out_ref, size_t keylen, const char key[]);
+
 // Basically just `#define key`
 void cuikpp_define_empty_cstr(Cuik_CPP* ctx, const char key[]);
 void cuikpp_define_empty(Cuik_CPP* ctx, size_t keylen, const char key[]);

@@ -66,9 +66,7 @@ static int pp_repl(void) {
         if (strprefix(line, "quit")) {
             break;
         } else if (strprefix(line, "reload")) {
-            cuikpp_finalize(cpp);
             free_preprocessor(cpp);
-
             cpp = make_preprocessor(input_files[0], false);
             s = cuikpp_get_token_stream(cpp);
         } else if (strprefix(line, "loc")) {
@@ -82,6 +80,8 @@ static int pp_repl(void) {
                 }
             }
         } else if (strprefix(line, "view ")) {
+            // swap the newline with a nul terminator
+            line[strlen(line) - 1] = 0;
             printf("Viewing... %s\n", line + sizeof("view"));
             bool found = false;
 
