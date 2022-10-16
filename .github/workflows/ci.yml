@@ -2,10 +2,10 @@ name: Run Tests
 on: [push, pull_request, workflow_dispatch]
 
 jobs:
-  test_linux:
+  build_windows:
     runs-on: windows-2019
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v1
       - uses: seanmiddleditch/gha-setup-ninja@master
 
       - name: Download Submodules
