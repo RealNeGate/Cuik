@@ -5,35 +5,61 @@
 #include <stdatomic.h>
 #include "preproc/lexer.h"
 
+// We extend on stb_sprintf with support for a custom callback because
+// diagnostic formats have extra options.
+static const char* custom_diagnostic_format(uint32_t* out_length, char ch, va_list* va);
+
+#define STB_SPRINTF_STATIC
+#define STB_SPRINTF_IMPLEMENTATION
+#include "stb_sprintf.h"
+
 #if _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #endif
 
 static const char* report_names[] = {
-    "note",
-    "info",
-    "warning",
-    "error",
+    "\x1b[33mnote\x1b[0m",
+    "\x1b[32mwarning\x1b[0m",
+    "\x1b[31merror\x1b[0m",
 };
 
 mtx_t report_mutex;
-
-#if _WIN32
-static HANDLE console_handle;
-static WORD default_attribs;
-#endif
-
-static const char* const attribs[] = {
-    "\x1b[33m",
-    "\x1b[32m",
-    "\x1b[31m",
-};
-
 bool report_using_thin_errors = false;
 
 // From types.c, we should factor this out into a public cuik function
 size_t type_as_string(size_t max_len, char* buffer, Cuik_Type* type);
+
+static char* sprintf_callback(const char* buf, void* user, int len) {
+    fwrite(buf, len, 1, (FILE*) user);
+    return NULL;
+}
+
+static const char* custom_diagnostic_format(uint32_t* out_length, char ch, va_list* va) {
+    static _Thread_local char temp_string[1024];
+
+    switch (ch) {
+        case 'S': {
+            String str = va_arg(*va, String);
+
+            *out_length = str.length;
+            return (const char*) str.data;
+        }
+
+        case 'T': {
+            Cuik_Type* t = va_arg(*va, Cuik_Type*);
+            type_as_string(sizeof(temp_string), temp_string, t);
+
+            *out_length = strlen(temp_string);
+            return temp_string;
+        }
+
+        default:
+        fprintf(stderr, "diagnostic error: unknown format %%_%c", ch);
+        abort();
+        return NULL;
+    }
+}
 
 #define RESET_COLOR     printf("\x1b[0m")
 #define SET_COLOR_RED   printf("\x1b[31m")
@@ -46,73 +72,17 @@ void cuikdg_init(void) {
     setlocale(LC_ALL, ".UTF8");
 
     #if _WIN32
-    if (console_handle == NULL) {
-        console_handle = GetStdHandle(STD_OUTPUT_HANDLE);
-
-        // Enable ANSI/VT sequences on windows
-        HANDLE output_handle = GetStdHandle(STD_OUTPUT_HANDLE);
-        if (output_handle != INVALID_HANDLE_VALUE) {
-            DWORD old_mode;
-            if (GetConsoleMode(output_handle, &old_mode)) {
-                SetConsoleMode(output_handle, old_mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
-            }
+    // Enable ANSI/VT sequences on windows
+    HANDLE output_handle = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (output_handle != INVALID_HANDLE_VALUE) {
+        DWORD old_mode;
+        if (GetConsoleMode(output_handle, &old_mode)) {
+            SetConsoleMode(output_handle, old_mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
         }
-
-        CONSOLE_SCREEN_BUFFER_INFO info;
-        GetConsoleScreenBufferInfo(console_handle, &info);
-
-        default_attribs = info.wAttributes;
     }
-
     #endif
 
     mtx_init(&report_mutex, mtx_plain | mtx_recursive);
-}
-
-static void print_diag_message(FILE* out_file, const char* fmt, va_list ap) {
-    char temp[200];
-
-    // read & print any non-custom formatting
-    const char* start = fmt;
-    for (; *fmt; fmt++) {
-        if (fmt[0] == '%' && fmt[1] == '_') {
-            // printf old format stuff
-            if (fmt != start) {
-                memcpy(temp, start, fmt - start);
-                temp[fmt - start] = 0;
-                vfprintf(out_file, temp, ap);
-            }
-
-            // all custom formatting starts with %_
-            switch (fmt[2]) {
-                case 'S': {
-                    String s = va_arg(ap, String);
-                    fwrite(s.data, s.length, 1, out_file);
-                    break;
-                }
-
-                case 'T': {
-                    static _Thread_local char temp_string[1024];
-                    Cuik_Type* t = va_arg(ap, Cuik_Type*);
-                    type_as_string(sizeof(temp_string), temp_string, t);
-                    fwrite(temp_string, strlen(temp_string), 1, out_file);
-                    break;
-                }
-
-                default:
-                fprintf(out_file, "diagnostic error: unknown format %%_%c", fmt[0]);
-                abort();
-            }
-
-            start = fmt + 3;
-        }
-    }
-
-    if (fmt != start) {
-        memcpy(temp, start, fmt - start);
-        temp[fmt - start] = 0;
-        vfprintf(out_file, temp, ap);
-    }
 }
 
 // we use the call stack so we can print in reverse order
@@ -161,8 +131,12 @@ static void print_line_with_backtrace(TokenStream* tokens, SourceLoc loc, size_t
         l.column += macro_off;
 
         print_line(tokens, l, tkn_len);
-        fprintf(stderr, "  expanded from:\n");
-        print_line_with_backtrace(tokens, m->call_site, 1);
+
+        Cuik_File* next_file = cuikpp_find_file(tokens, m->call_site);
+        if (next_file->filename != l.file->filename) {
+            fprintf(stderr, "  expanded from:\n");
+            print_line_with_backtrace(tokens, m->call_site, 1);
+        }
     } else {
         print_line(tokens, cuikpp_find_location(tokens, loc), tkn_len);
     }
@@ -181,10 +155,11 @@ static void diag(DiagType type, TokenStream* tokens, SourceRange loc, const char
         print_include(tokens, start.file->include_site);
     }
 
+    char tmp[STB_SPRINTF_MIN];
     fprintf(stderr, "\x1b[37m");
     fprintf(stderr, "%s:%d:%d: ", start.file->filename, start.line, start.column);
-    fprintf(stderr, "%s%s:\x1b[0m ", attribs[type], report_names[type]);
-    print_diag_message(stderr, fmt, ap);
+    fprintf(stderr, "%s: ", report_names[type]);
+    stbsp_vsprintfcb(sprintf_callback, stderr, tmp, fmt, ap);
     fprintf(stderr, "\n");
 
     SourceLoc loc_end = loc.end;
@@ -202,6 +177,11 @@ static void diag(DiagType type, TokenStream* tokens, SourceRange loc, const char
 
     // print_line(tokens, start, tkn_len);
     print_line_with_backtrace(tokens, loc.start, tkn_len);
+    atomic_fetch_add((atomic_int*) tokens->error_tally, 1);
+}
+
+int cuikdg_error_count(TokenStream* s) {
+    return atomic_load((atomic_int*) s->error_tally);
 }
 
 #define DIAG_FN(type, name) \
@@ -215,91 +195,6 @@ void name(TokenStream* tokens, SourceRange loc, const char* fmt, ...) { \
 DIAG_FN(DIAG_NOTE, diag_note);
 DIAG_FN(DIAG_WARN, diag_warn);
 DIAG_FN(DIAG_ERR,  diag_err);
-
-static void tally_report_counter(Cuik_ReportLevel level, Cuik_ErrorStatus* err) {
-    if (err == NULL) {
-        if (level >= REPORT_ERROR) {
-            SET_COLOR_RED;
-            printf("ABORTING!!! (no diagnostics callback)\n");
-            RESET_COLOR;
-            abort();
-        }
-    } else {
-        atomic_fetch_add((atomic_int*) &err->tally[level], 1);
-    }
-}
-
-static size_t draw_line(TokenStream* tokens, SourceLoc loc) {
-    ResolvedSourceLoc r = cuikpp_find_location(tokens, loc);
-
-    // display line
-    const char* line_start = r.line_str;
-    while (*line_start && isspace(*line_start)) {
-        line_start++;
-    }
-    size_t dist_from_line_start = line_start - r.line_str;
-
-    // Draw line preview
-    if (*line_start != '\r' && *line_start != '\n') {
-        const char* line_end = line_start;
-        do { line_end++; } while (*line_end && *line_end != '\n');
-
-        printf("%6d| %.*s\n", r.line, (int)(line_end - line_start), line_start);
-        RESET_COLOR;
-    }
-
-    return dist_from_line_start;
-}
-
-static void draw_line_horizontal_pad(void) {
-    printf("        ");
-}
-
-static void print_backtrace(TokenStream* tokens, SourceLoc loc) {
-    #if 0
-    int line_bias = 0;
-    if (line->parent != 0) {
-        line_bias = print_backtrace(tokens, line->parent, line);
-    }
-
-    switch (loc->type) {
-        case SOURCE_LOC_MACRO: {
-            if (line->filepath[0] == '<') {
-                printf("In macro '%.*s' expanded at line %d:\n", (int)loc->length, line->line_str + loc->columns, line_bias + line->line);
-            } else {
-                printf("In macro '%.*s' expanded at %s:%d:%d:\n", (int)loc->length, line->line_str + loc->columns, line->filepath, line->line, loc->columns);
-            }
-
-            if (!report_using_thin_errors) {
-                // draw macro highlight
-                size_t dist_from_line_start = draw_line(tokens, loc_index);
-                draw_line_horizontal_pad();
-
-                // idk man
-                size_t start_pos = loc->columns > dist_from_line_start ? loc->columns - dist_from_line_start : 0;
-
-                // draw underline
-                SET_COLOR_GREEN;
-                // printf("\x1b[32m");
-
-                size_t tkn_len = loc->length;
-                for (size_t i = 0; i < start_pos; i++) printf(" ");
-                printf("^");
-                for (size_t i = 1; i < tkn_len; i++) printf("~");
-
-                // printf("\x1b[0m");
-                printf("\n");
-                RESET_COLOR;
-            }
-            return line_bias;
-        }
-
-        default:
-        printf("In file %s:%d:\n", line->filepath, line->line);
-        return line->line;
-    }
-    #endif
-}
 
 DiagWriter diag_writer(TokenStream* tokens) {
     return (DiagWriter){ .tokens = tokens };
@@ -337,9 +232,9 @@ void diag_writer_highlight(DiagWriter* writer, SourceRange loc) {
         writer->dist_from_line_start = line_start - a.line_str;
 
         printf("%s:%d\n", a.file->filename, a.line);
-        draw_line_horizontal_pad();
+        printf("         ");
         printf("%.*s\n", (int) (line_end - line_start), line_start);
-        draw_line_horizontal_pad();
+        printf("         ");
     }
 
     assert(b.column > a.column);
@@ -573,10 +468,6 @@ void report_two_spots(Cuik_ReportLevel level, Cuik_ErrorStatus* err, TokenStream
             size_t dist_from_line_start = draw_line(tokens, loc_index);
             draw_line_horizontal_pad();
 
-            #if _WIN32
-            SetConsoleTextAttribute(console_handle, (default_attribs & ~0xF) | FOREGROUND_GREEN);
-            #endif
-
             // draw underline
             size_t first_start_pos = loc->columns > dist_from_line_start ? loc->columns - dist_from_line_start : 0;
             size_t first_end_pos = first_start_pos + loc->length;
@@ -594,10 +485,6 @@ void report_two_spots(Cuik_ReportLevel level, Cuik_ErrorStatus* err, TokenStream
             printf("^");
             for (size_t i = second_start_pos + 1; i < second_end_pos; i++) printf("~");
             printf("\n");
-
-            #if _WIN32
-            SetConsoleTextAttribute(console_handle, default_attribs);
-            #endif
 
             draw_line_horizontal_pad();
 
@@ -619,10 +506,6 @@ void report_two_spots(Cuik_ReportLevel level, Cuik_ErrorStatus* err, TokenStream
                 size_t dist_from_line_start = draw_line(tokens, loc_index);
                 draw_line_horizontal_pad();
 
-                #if _WIN32
-                SetConsoleTextAttribute(console_handle, (default_attribs & ~0xF) | FOREGROUND_GREEN);
-                #endif
-
                 // draw underline
                 size_t start_pos = loc->columns > dist_from_line_start ? loc->columns - dist_from_line_start : 0;
 
@@ -631,10 +514,6 @@ void report_two_spots(Cuik_ReportLevel level, Cuik_ErrorStatus* err, TokenStream
                 printf("^");
                 for (size_t i = 1; i < tkn_len; i++) printf("~");
                 printf("\n");
-
-                #if _WIN32
-                SetConsoleTextAttribute(console_handle, default_attribs);
-                #endif
 
                 if (loc_msg) {
                     draw_line_horizontal_pad();
@@ -662,10 +541,6 @@ void report_two_spots(Cuik_ReportLevel level, Cuik_ErrorStatus* err, TokenStream
                 size_t dist_from_line_start = draw_line(tokens, loc2_index);
                 draw_line_horizontal_pad();
 
-                #if _WIN32
-                SetConsoleTextAttribute(console_handle, (default_attribs & ~0xF) | FOREGROUND_GREEN);
-                #endif
-
                 // draw underline
                 size_t start_pos = loc2->columns > dist_from_line_start
                     ? loc2->columns - dist_from_line_start : 0;
@@ -675,10 +550,6 @@ void report_two_spots(Cuik_ReportLevel level, Cuik_ErrorStatus* err, TokenStream
                 printf("^");
                 for (size_t i = 1; i < tkn_len; i++) printf("~");
                 printf("\n");
-
-                #if _WIN32
-                SetConsoleTextAttribute(console_handle, default_attribs);
-                #endif
 
                 if (loc_msg2) {
                     draw_line_horizontal_pad();

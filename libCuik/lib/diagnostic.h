@@ -36,6 +36,7 @@ typedef struct {
 } Diagnostics;
 
 void cuikdg_init(void);
+int cuikdg_error_count(TokenStream* s);
 
 ////////////////////////////////
 // Complex diagnostic builder
@@ -53,8 +54,6 @@ static void report_fix(Cuik_ReportLevel level, Cuik_ErrorStatus* err, TokenStrea
 // Report primitives
 static void report_header(Cuik_ReportLevel level, const char* fmt, ...) {}
 static void report_line(TokenStream* tokens, SourceLoc loci, int indent) {}
-
-static bool has_reports(Cuik_ReportLevel min, Cuik_ErrorStatus* err) { return false; }
 
 #if 0
 // loc_msg      |

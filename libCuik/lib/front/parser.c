@@ -1053,7 +1053,9 @@ TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* res
     s_global_symbols = tu->global_symbols;
     s_global_tags = tu->global_tags;
 
-    if (has_reports(REPORT_ERROR, tu->errors)) goto parse_error;
+    if (cuikdg_error_count(s)) {
+        goto parse_error;
+    }
 
     // Phase 2: resolve top level types, layout records and anything else so that
     // we have a complete global symbol table
@@ -1073,7 +1075,9 @@ TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* res
             }
         }
 
-        if (has_reports(REPORT_ERROR, tu->errors)) goto parse_error;
+        if (cuikdg_error_count(s)) {
+            goto parse_error;
+        }
 
         // bitvectors amirite
         size_t bitvec_bytes = (type_count + 7) / 8;
@@ -1095,7 +1099,9 @@ TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* res
             }
         }
 
-        if (has_reports(REPORT_ERROR, tu->errors)) goto parse_error;
+        if (cuikdg_error_count(s)) {
+            goto parse_error;
+        }
 
         // parse all global declarations
         nl_strmap_for(i, tu->global_symbols) {
@@ -1132,7 +1138,9 @@ TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* res
             }
         }
 
-        if (has_reports(REPORT_ERROR, tu->errors)) goto parse_error;
+        if (cuikdg_error_count(s)) {
+            goto parse_error;
+        }
 
         // do record layouts and shi
         for (ArenaSegment* a = tu->type_arena.base; a != NULL; a = a->next) {
@@ -1150,7 +1158,9 @@ TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* res
             }
         }
 
-        if (has_reports(REPORT_ERROR, tu->errors)) goto parse_error;
+        if (cuikdg_error_count(s)) {
+            goto parse_error;
+        }
         dyn_array_destroy(pending_exprs);
 
         ////////////////////////////////
@@ -1251,7 +1261,9 @@ TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* res
         tu->global_symbols = NULL;
         tu->global_tags = NULL;
 
-        if (has_reports(REPORT_ERROR, tu->errors)) goto parse_error;
+        if (cuikdg_error_count(s)) {
+            goto parse_error;
+        }
 
         // check for any qualified types and resolve them correctly
         for (ArenaSegment* a = tu->type_arena.base; a != NULL; a = a->next) {
@@ -1316,7 +1328,10 @@ TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* res
     // run type checker
     CUIK_TIMED_BLOCK("phase 4") {
         cuik__sema_pass(tu, NULL /* desc->thread_pool */);
-        if (has_reports(REPORT_ERROR, tu->errors)) goto parse_error;
+
+        if (cuikdg_error_count(s)) {
+            goto parse_error;
+        }
     }
 
     if (cuik_is_profiling()) cuik_profile_region_end();

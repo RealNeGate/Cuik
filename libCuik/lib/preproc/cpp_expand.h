@@ -320,12 +320,15 @@ static bool subst(Cuik_CPP* restrict c, TokenList* out_tokens, uint8_t* def_str,
             } else {
                 ptrdiff_t arg_i = find_arg(args, t.content);
                 if (arg_i >= 0) {
-                    // macro arguments must be expanded before they're placed
-                    TokenList scratch = convert_line_to_token_list(c, macro_id, (uint8_t*) args->values[arg_i].content.data);
-                    if (!expand(c, out_tokens, &scratch, macro_id)) {
-                        return false;
+                    String substitution = args->values[arg_i].content;
+                    if (substitution.length > 0) {
+                        // macro arguments must be expanded before they're placed
+                        TokenList scratch = convert_line_to_token_list(c, macro_id, (uint8_t*) substitution.data);
+                        if (!expand(c, out_tokens, &scratch, macro_id)) {
+                            return false;
+                        }
+                        dyn_array_destroy(scratch.tokens);
                     }
-                    dyn_array_destroy(scratch.tokens);
                 } else {
                     // Normal identifier
                     t.type = classify_ident(t.content.data, t.content.length);
@@ -455,7 +458,7 @@ static bool expand_ident(Cuik_CPP* restrict c, TokenList* restrict out_tokens, T
 
                     /*printf("FUNCTION MACRO: %.*s    %.*s\n", (int)token_length, token_data, (int)def.length, def.data);
                     for (size_t i = 0; i < arglist.value_count; i++) {
-                        printf("  ['%.*s'] = '%.*s'\n", (int) arglist.keys[i].length, arglist.keys[i].data, (int) arglist.values[i].length, arglist.values[i].data);
+                        printf("  ['%.*s'] = '%.*s'\n", (int) arglist.keys[i].length, arglist.keys[i].data, (int) arglist.values[i].content.length, arglist.values[i].content.data);
                     }
                     printf("\n");*/
 

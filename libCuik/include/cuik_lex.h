@@ -83,11 +83,10 @@ typedef struct TokenList {
 
 typedef struct TokenStream {
     const char* filepath;
-
     TokenList list;
-    // DynArray(Token)
-    // struct Token* tokens;
-    // size_t current;
+
+    // Incremented atomically by the diagnostics engine
+    int* error_tally;
 
     // if true, the preprocessor is allowed to delete after completion.
     // this shouldn't enabled when caching files
@@ -255,11 +254,11 @@ void cuikpp_dump_defines(Cuik_CPP* ctx);
 ////////////////////////////////
 // Diagnostic engine
 ////////////////////////////////
-// We extended onto the standard printf format when it starts with %_T, here's the
+// We extended onto the standard printf format when it starts with `%!`, here's the
 // full table of additions:
 //
-//     %_T       Cuik_Type
-//     %_S       String
+//     %!T       Cuik_Type
+//     %!S       String
 void diag_note(TokenStream* tokens, SourceRange loc, const char* fmt, ...);
 void diag_warn(TokenStream* tokens, SourceRange loc, const char* fmt, ...);
 void diag_err(TokenStream* tokens, SourceRange loc, const char* fmt, ...);

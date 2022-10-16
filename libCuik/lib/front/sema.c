@@ -110,20 +110,15 @@ bool type_compatible(TranslationUnit* tu, Cuik_Type* src, Cuik_Type* dst, Expr* 
                 a_expr->int_num.num == 0) {
                 return true;
             }
-        } else if (src->kind == KIND_FLOAT ||
-            dst->kind == KIND_DOUBLE) {
+        } else if (src->kind == KIND_FLOAT && dst->kind == KIND_DOUBLE) {
             return true;
-        } else if (src->kind == KIND_DOUBLE ||
-            dst->kind == KIND_FLOAT) {
+        } else if (src->kind == KIND_DOUBLE && dst->kind == KIND_FLOAT) {
             return true;
-        } else if (src->kind == KIND_PTR &&
-            dst->kind == KIND_BOOL) {
+        } else if (src->kind == KIND_PTR && dst->kind == KIND_BOOL) {
             return true;
-        } else if (src->kind == KIND_FUNC &&
-            dst->kind == KIND_BOOL) {
+        } else if (src->kind == KIND_FUNC && dst->kind == KIND_BOOL) {
             return true;
-        } else if (src->kind == KIND_FUNC &&
-            dst->kind == KIND_PTR) {
+        } else if (src->kind == KIND_FUNC && dst->kind == KIND_PTR) {
             if (dst->ptr_to->kind == KIND_FUNC) {
                 return type_equal(tu, src, dst->ptr_to);
             }
@@ -178,29 +173,20 @@ static bool implicit_conversion(TranslationUnit* tu, Cuik_Type* src, Cuik_Type* 
 
             if (is_src_float == is_dst_float) {
                 if (!is_src_float && src->is_unsigned != dst->is_unsigned) {
-                    REPORT_EXPR(WARNING, src_e, "Implicit conversion %s signedness", src->is_unsigned ? "adds" : "drops");
+                    diag_warn(&tu->tokens, src_e->loc, "Implicit conversion %s signedness", src->is_unsigned ? "adds" : "drops");
                 }
 
                 if (src->kind > dst->kind) {
-                    type_as_string(sizeof(temp_string0), temp_string0, src);
-                    type_as_string(sizeof(temp_string1), temp_string1, dst);
-
-                    REPORT_EXPR(WARNING, src_e, "Implicit conversion from '%s' to '%s' may lose data.", temp_string0, temp_string1);
+                    diag_warn(&tu->tokens, src_e->loc, "Implicit conversion from %!T to %!T may lose data.", src, dst);
                 }
             } else {
-                type_as_string(sizeof(temp_string0), temp_string0, src);
-                type_as_string(sizeof(temp_string1), temp_string1, dst);
-
-                REPORT_EXPR(WARNING, src_e, "Implicit conversion from '%s' to '%s' may lose data.", temp_string0, temp_string1);
+                diag_warn(&tu->tokens, src_e->loc, "Implicit conversion from %!T to %!T may lose data.", src, dst);
             }
         }
     }
 
     if (!type_compatible(tu, src, dst, src_e)) {
-        type_as_string(sizeof(temp_string0), temp_string0, src);
-        type_as_string(sizeof(temp_string1), temp_string1, dst);
-
-        REPORT_EXPR(ERROR, src_e, "could not implicitly convert type %s into %s.", temp_string0, temp_string1);
+        diag_err(&tu->tokens, src_e->loc, "could not implicitly convert type %!T into %!T.", src, dst);
         return false;
     }
 
@@ -1130,7 +1116,7 @@ Cuik_Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
 
             if (func_type->func.has_varargs) {
                 if (arg_count < param_count) {
-                    REPORT_EXPR(ERROR, e, "Not enough arguments (expected at least %d, got %d)", param_count, arg_count);
+                    diag_err(&tu->tokens, e->loc, "argument count mismatch (expected at least %d, got %d)", param_count, arg_count);
                     goto failure;
                 }
 
@@ -1163,7 +1149,7 @@ Cuik_Type* sema_expr(TranslationUnit* tu, Expr* restrict e) {
                 }
             } else {
                 if (arg_count != param_count) {
-                    REPORT_EXPR(ERROR, e, "Argument count mismatch (expected %d, got %d)", param_count, arg_count);
+                    diag_err(&tu->tokens, e->loc, "argument count mismatch (expected %d, got %d)", param_count, arg_count);
                     goto failure;
                 }
 

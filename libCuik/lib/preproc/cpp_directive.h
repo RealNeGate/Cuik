@@ -20,7 +20,7 @@ static DirectiveResult cpp__warning(Cuik_CPP* restrict ctx, CPPStackSlot* restri
     String msg = get_pp_tokens_until_newline(ctx, in);
 
     SourceRange r = { loc, get_end_location(&in->tokens[in->current - 1]) };
-    diag_warn(&ctx->tokens, r, "%_S", msg);
+    diag_warn(&ctx->tokens, r, "%!S", msg);
     return DIRECTIVE_SUCCESS;
 }
 
@@ -29,7 +29,7 @@ static DirectiveResult cpp__error(Cuik_CPP* restrict ctx, CPPStackSlot* restrict
     String msg = get_pp_tokens_until_newline(ctx, in);
 
     SourceRange r = { loc, get_end_location(&in->tokens[in->current - 1]) };
-    diag_err(&ctx->tokens, r, "%_S", msg);
+    diag_err(&ctx->tokens, r, "%!S", msg);
     return DIRECTIVE_SUCCESS;
 }
 
@@ -48,7 +48,7 @@ static DirectiveResult cpp__pragma(Cuik_CPP* restrict ctx, CPPStackSlot* restric
         String msg = get_pp_tokens_until_newline(ctx, in);
 
         SourceRange r = { loc, get_end_location(&in->tokens[in->current - 1]) };
-        diag_note(s, r, "%_S", msg);
+        diag_note(s, r, "%!S", msg);
     } else {
         // convert to #pragma blah => _Pragma("blah")
         unsigned char* str = gimme_the_shtuffs(ctx, sizeof("_Pragma"));

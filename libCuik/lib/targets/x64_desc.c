@@ -34,7 +34,7 @@ static Cuik_Type* type_check_builtin(TranslationUnit* tu, Expr* e, const char* n
         Cuik_Type* arg_type = sema_expr(tu, args[0]);
         Cuik_Type* int_type = &builtin_types[TYPE_UINT];
         if (!type_compatible(tu, arg_type, int_type, args[0])) {
-            diag_err(&tu->tokens, args[0]->loc, "Could not implicitly convert type %_T into %_T.", arg_type, int_type);
+            diag_err(&tu->tokens, args[0]->loc, "Could not implicitly convert type %!T into %!T.", arg_type, int_type);
             return &builtin_types[TYPE_VOID];
         }
 

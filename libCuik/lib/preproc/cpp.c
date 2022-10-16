@@ -185,6 +185,9 @@ void cuikpp_init(Cuik_CPP* ctx, const char filepath[FILENAME_MAX]) {
         directory[0] = '\0';
     }
 
+    // NOTE(NeGate): if it's allocated separately then when we trivially copy it
+    // we still refer to the same tally.
+    ctx->tokens.error_tally = calloc(sizeof(int), 1);
     ctx->tokens.filepath = filepath;
     ctx->tokens.list.tokens = dyn_array_create(Token);
     ctx->tokens.invokes = dyn_array_create(MacroInvoke);
