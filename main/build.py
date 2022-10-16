@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import glob
 import os
 import platform
@@ -21,7 +22,7 @@ ldflags = ""
 
 cflags = "-g -Wall -Werror -Wno-unused-function"
 cflags += " -I ../libCuik/include -I ../tilde-backend/include"
-cflags += " -DCUIK_USE_TB -D_CRT_SECURE_NO_WARNINGS"
+cflags += " -DCUIK_USE_TB "
 
 if False:
 	cflags += " -fsanitize=address"
@@ -33,9 +34,9 @@ if args.opt:
 if platform.system() == "Windows":
 	exe_ext = ".exe"
 	cflags += " -I ../c11threads"
-	# cflags += " -D_DLL"
-	# ldflags += " ../mimalloc/out/Release/mimalloc.lib -Xlinker /include:mi_version"
-	# ldflags += " -nodefaultlibs -lmsvcrt -lvcruntime -lucrt"
+	cflags += " -D_DLL -D_CRT_SECURE_NO_WARNINGS"
+	ldflags += " ../mimalloc/out/Release/mimalloc.lib -Xlinker /include:mi_version"
+	ldflags += " -nodefaultlibs -lmsvcrt -lvcruntime -lucrt"
 	subprocess.call(['build_mimalloc.bat'], cwd="..\\", shell=True)
 else:
 	exe_ext = ""

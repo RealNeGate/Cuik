@@ -3,19 +3,17 @@ on: [push, pull_request, workflow_dispatch]
 
 jobs:
   test_linux:
-    runs-on: ubuntu-latest
+    runs-on: windows-2019
     steps:
       - uses: actions/checkout@v2
-      - name: Download Clang
-        run: sudo apt-get install clang
-
-      - name: Download Ninja
-        run: sudo apt-get install ninja-build
+      - uses: seanmiddleditch/gha-setup-ninja@master
 
       - name: Download Submodules
         run: git submodule update --init --recursive
 
       - name: Build Cuik
         working-directory: main
-        run: ls ../tilde-backend && python build.py
+        run: |
+          call "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+          py build.py
         timeout-minutes: 10
