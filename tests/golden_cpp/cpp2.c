@@ -8,7 +8,7 @@ int main() {
     const char *word = "cat";
     word = "cat2";
 
-    FOO("Hello! %s\n", word);
+    FOO(16, "Hello! %s\n", word);
     // FOO2(word);
     return 0;
 }

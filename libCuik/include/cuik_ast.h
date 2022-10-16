@@ -1,3 +1,20 @@
+////////////////////////////////////////////
+// Cuik AST interface
+////////////////////////////////////////////
+// This module handles AST construction, printing, and walking.
+//
+// AST Overview:
+//
+//   Cuik_Type  - This represents all C types, qualified types currently act as a type
+//                as opposed to a view of a type (refactor coming soon)
+//
+//   Stmt       - statements (declarations count here) generally introduce sequence
+//                points.
+//
+//   Expr       - all expressions have some type and during type checking a new
+//                "cast type" is produced which represents the potential type
+//                promotion and is the type actually used by the parent node.
+//
 #pragma once
 #include "cuik.h"
 

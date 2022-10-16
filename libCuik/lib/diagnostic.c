@@ -156,10 +156,12 @@ static void print_line(TokenStream* tokens, ResolvedSourceLoc start, size_t tkn_
 static void print_line_with_backtrace(TokenStream* tokens, SourceLoc loc, size_t tkn_len) {
     MacroInvoke* m = cuikpp_find_macro(tokens, loc);
     if (m != NULL) {
-        // uint32_t macro_off = loc.raw & ((1u << SourceLoc_MacroOffsetBits) - 1);
+        uint32_t macro_off = loc.raw & ((1u << SourceLoc_MacroOffsetBits) - 1);
+        ResolvedSourceLoc l = cuikpp_find_location(tokens, m->def_site.start);
+        l.column += macro_off;
 
-        print_line(tokens, cuikpp_find_location(tokens, m->def_site.start), tkn_len);
-        fprintf(stderr, "\n");
+        print_line(tokens, l, tkn_len);
+        fprintf(stderr, "  expanded from:\n");
         print_line_with_backtrace(tokens, m->call_site, 1);
     } else {
         print_line(tokens, cuikpp_find_location(tokens, loc), tkn_len);

@@ -242,7 +242,9 @@ static TB_Reg cvt2rval(TranslationUnit* tu, TB_Function* func, const IRVal v, co
     }
 
     const Cuik_Type* dst = e->cast_type;
-    if (dst->kind == KIND_VOID) return 0;
+    if (dst->kind == KIND_VOID) {
+        return 0;
+    }
 
     return src != dst ? cast_reg(func, reg, src, dst) : reg;
 }

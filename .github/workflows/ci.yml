@@ -1,5 +1,5 @@
 name: Run Tests
-on: [push, pull_request, workflow_dispatch]
+on: [pull_request, workflow_dispatch]
 
 jobs:
   build_windows:
@@ -12,9 +12,8 @@ jobs:
         run: git submodule update --init --recursive
 
       - name: Build Cuik
-        working-directory: main
         shell: cmd
         run: |
           call "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\VC\Auxiliary\Build\vcvars64.bat
-          py build.py
+          cd main && py build.py
         timeout-minutes: 10

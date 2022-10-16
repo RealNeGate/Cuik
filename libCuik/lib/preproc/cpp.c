@@ -327,19 +327,24 @@ Cuik_FileLoc cuikpp_find_location_in_bytes(TokenStream* tokens, SourceLoc loc) {
     }*/
 }
 
+SourceLoc cuikpp_get_physical_location(TokenStream* tokens, SourceLoc loc) {
+    MacroInvoke* m;
+    while ((m = cuikpp_find_macro(tokens, loc)) != NULL) { loc = m->call_site; }
+    return loc;
+}
+
 ResolvedSourceLoc cuikpp_find_location2(TokenStream* tokens, Cuik_FileLoc loc) {
     return find_location(loc.file, loc.pos);
 }
 
 ResolvedSourceLoc cuikpp_find_location(TokenStream* tokens, SourceLoc loc) {
+    MacroInvoke* m;
+    while ((m = cuikpp_find_macro(tokens, loc)) != NULL) {
+        loc = m->call_site;
+    }
+
     Cuik_FileLoc fl = cuikpp_find_location_in_bytes(tokens, loc);
     return find_location(fl.file, fl.pos);
-}
-
-SourceLoc cuikpp_get_physical_location(TokenStream* tokens, SourceLoc loc) {
-    MacroInvoke* m;
-    while ((m = cuikpp_find_macro(tokens, loc)) != NULL) { loc = m->call_site; }
-    return loc;
 }
 
 static void compute_line_map(TokenStream* s, int depth, SourceLoc include_site, const char* filename, char* data, size_t length) {

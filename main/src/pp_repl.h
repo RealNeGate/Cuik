@@ -32,7 +32,7 @@ static int count_pp_lines(TokenStream* s) {
     int line_count = 0;
     for (size_t i = 0; i < count; i++) {
         Token* t = &tokens[i];
-        ResolvedSourceLoc r = cuikpp_find_location(s, cuikpp_get_physical_location(s, t->location));
+        ResolvedSourceLoc r = cuikpp_find_location(s, t->location);
 
         if (last_file != r.file->filename || last_line != r.line) {
             line_count += 1;

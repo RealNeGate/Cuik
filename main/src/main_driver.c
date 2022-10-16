@@ -172,7 +172,7 @@ static void dump_tokens(FILE* out_file, TokenStream* s) {
             fprintf(out_file, "\x1b[0;35m");
         }*/
 
-        ResolvedSourceLoc r = cuikpp_find_location(s, cuikpp_get_physical_location(s, t->location));
+        ResolvedSourceLoc r = cuikpp_find_location(s, t->location);
         if (last_file != r.file->filename) {
             // TODO(NeGate): Kinda shitty but i just wanna duplicate
             // the backslashes to avoid them being treated as an escape

@@ -33,25 +33,25 @@ typedef struct {
 // identifier-list:
 //   identifier
 //   identifier-list , identifier
-static void parse_params(Cuik_CPP* restrict c, MacroArgs* args, Lexer* restrict in) {
+static bool parse_params(Cuik_CPP* restrict c, MacroArgs* args, Lexer* restrict in) {
     args->key_count = 0;
     args->keys = tls_save();
 
     Token t = lexer_read(in);
     if (t.type != '(') {
         fprintf(stderr, "error: expected '('\n");
-        goto error;
+        return false;
     }
 
     for (;;) {
         t = lexer_read(in);
-        if (t.type == 0) goto error;
+        if (t.type == 0) return false;
         if (t.type == ')') break;
 
         if (args->key_count) {
             if (t.type != ',') {
                 fprintf(stderr, "error: expected comma\n");
-                goto error;
+                return false;
             }
 
             t = lexer_read(in);
@@ -66,17 +66,14 @@ static void parse_params(Cuik_CPP* restrict c, MacroArgs* args, Lexer* restrict 
             args->keys[args->key_count++] = t.content;
         } else {
             fprintf(stderr, "error: expected identifier or triple-dot\n");
-            goto error;
+            return false;
         }
     }
-    return;
 
-    // TODO(NeGate): improve this
-    error:
-    abort();
+    return true;
 }
 
-static void parse_args(Cuik_CPP* restrict c, MacroArgs* restrict args, TokenList* restrict in) {
+static bool parse_args(Cuik_CPP* restrict c, MacroArgs* restrict args, TokenList* restrict in) {
     size_t value_count = 0;
     MacroArg* values = tls_save();
 
@@ -91,7 +88,7 @@ static void parse_args(Cuik_CPP* restrict c, MacroArgs* restrict args, TokenList
         if (value_count) {
             if (t.type != ',') {
                 fprintf(stderr, "error: expected comma\n");
-                goto error;
+                return false;
             }
 
             t = consume(in);
@@ -151,11 +148,7 @@ static void parse_args(Cuik_CPP* restrict c, MacroArgs* restrict args, TokenList
 
     args->values = values;
     args->value_count = value_count;
-    return;
-
-    // TODO(NeGate): improve this
-    error:
-    abort();
+    return true;
 }
 
 static ptrdiff_t find_arg(MacroArgs* restrict args, String name) {
@@ -213,15 +206,17 @@ static bool subst(Cuik_CPP* restrict c, TokenList* out_tokens, uint8_t* def_str,
         if (t.type == TOKEN_HASH) {
             t = lexer_read(&in);
             if (t.type != TOKEN_IDENTIFIER) {
-                // generic_error(&in, "expected identifier");
-                abort();
+                SourceLoc loc = encode_macro_loc(macro_id, t.content.data - in.start);
+                diag_err(&c->tokens, (SourceRange){ loc, { loc.raw + t.content.length } }, "expected identifier");
+                return false;
             }
 
             // stringize arg
             ptrdiff_t arg_i = find_arg(args, t.content);
             if (arg_i < 0) {
-                // generic_error(&in, "cannot stringize unknown argument");
-                abort();
+                SourceLoc loc = encode_macro_loc(macro_id, t.content.data - in.start);
+                diag_err(&c->tokens, (SourceRange){ loc, { loc.raw + t.content.length } }, "cannot stringize unknown argument");
+                return false;
             }
 
             // at best we might double the string length from backslashes
@@ -351,26 +346,19 @@ static bool expand_ident(Cuik_CPP* restrict c, TokenList* restrict out_tokens, T
     // can a loc come up in yo crib?
     if (parent_macro != 0) {
         // convert token location into macro relative
-        /*if ((t.location.raw & SourceLoc_IsMacro) == 0) {
+        if ((t.location.raw & SourceLoc_IsMacro) == 0) {
             uint32_t pos = t.location.raw & ((1u << SourceLoc_FilePosBits) - 1);
             t.location = encode_macro_loc(parent_macro, pos);
         } else {
-            // uint32_t macro_pos = c->tokens.invokes[parent_macro].def_site.start.raw;
-        }*/
-        t.location = encode_macro_loc(parent_macro, 0);
+            t.location = encode_macro_loc(parent_macro, 0);
+        }
     }
 
     size_t token_length = t.content.length;
     const unsigned char* token_data = t.content.data;
     if (memeq(token_data, token_length, "__FILE__", 8) ||
         memeq(token_data, token_length, "L__FILE__", 9)) {
-        SourceLoc loc = t.location;
-        MacroInvoke* m;
-        while ((m = cuikpp_find_macro(&c->tokens, loc)) != NULL) {
-            loc = m->call_site;
-        }
-
-        ResolvedSourceLoc r = cuikpp_find_location(&c->tokens, loc);
+        ResolvedSourceLoc r = cuikpp_find_location(&c->tokens, t.location);
 
         // filepath as a string
         unsigned char* output_path_start = gimme_the_shtuffs(c, MAX_PATH + 4);
@@ -417,13 +405,7 @@ static bool expand_ident(Cuik_CPP* restrict c, TokenList* restrict out_tokens, T
         t.content = (String){ length, out };
         dyn_array_put(out_tokens->tokens, t);
     } else if (memeq(token_data, token_length, "__LINE__", 8)) {
-        SourceLoc loc = t.location;
-        MacroInvoke* m;
-        while ((m = cuikpp_find_macro(&c->tokens, loc)) != NULL) {
-            loc = m->call_site;
-        }
-
-        ResolvedSourceLoc r = cuikpp_find_location(&c->tokens, loc);
+        ResolvedSourceLoc r = cuikpp_find_location(&c->tokens, t.location);
 
         // line number as a string
         unsigned char* out = gimme_the_shtuffs(c, 10);
@@ -460,12 +442,16 @@ static bool expand_ident(Cuik_CPP* restrict c, TokenList* restrict out_tokens, T
                 // Parse the arguments
                 ////////////////////////////////
                 MacroArgs arglist = { 0 };
-                parse_args(c, &arglist, in);
+                if (!parse_args(c, &arglist, in)) {
+                    return false;
+                }
 
                 // We dont need to parse this part if it expands into nothing
                 if (def.length) {
                     Lexer args_lexer = { 0, (unsigned char*) args, (unsigned char*) args };
-                    parse_params(c, &arglist, &args_lexer);
+                    if (!parse_params(c, &arglist, &args_lexer)) {
+                        return false;
+                    }
 
                     /*printf("FUNCTION MACRO: %.*s    %.*s\n", (int)token_length, token_data, (int)def.length, def.data);
                     for (size_t i = 0; i < arglist.value_count; i++) {
@@ -536,12 +522,12 @@ static bool expand(Cuik_CPP* restrict c, TokenList* out_tokens, TokenList* restr
         if (t.type != TOKEN_IDENTIFIER) {
             if (parent_macro != 0) {
                 // convert token location into macro relative
-                /*if ((t.location.raw & SourceLoc_IsMacro) == 0) {
+                if ((t.location.raw & SourceLoc_IsMacro) == 0) {
                     uint32_t pos = t.location.raw & ((1u << SourceLoc_FilePosBits) - 1);
                     t.location = encode_macro_loc(parent_macro, pos);
                 } else {
-                }*/
-                t.location = encode_macro_loc(parent_macro, 0);
+                    t.location = encode_macro_loc(parent_macro, 0);
+                }
             }
 
             dyn_array_put(out_tokens->tokens, t);
