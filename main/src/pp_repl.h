@@ -83,22 +83,15 @@ static int pp_repl(void) {
             // swap the newline with a nul terminator
             line[strlen(line) - 1] = 0;
             printf("Viewing... %s\n", line + sizeof("view"));
-            bool found = false;
 
-            CUIKPP_FOR_DEFINES(it, cpp) {
-                if (string_equals_cstr(&it.key, line + sizeof("view"))) {
-                    found = true;
-
-                    if (it.value.length) {
-                        printf("#define %.*s %.*s\n", (int) it.key.length, it.key.data, (int) it.value.length, it.value.data);
-                    } else {
-                        printf("%.*s is empty\n", (int) it.key.length, it.key.data);
-                    }
-                    break;
+            Cuik_DefineIter it;
+            if (cuikpp_find_define_cstr(cpp, &it, line + sizeof("view"))) {
+                if (it.value.length) {
+                    printf("#define %.*s %.*s\n", (int) it.key.length, it.key.data, (int) it.value.length, it.value.data);
+                } else {
+                    printf("%.*s is empty\n", (int) it.key.length, it.key.data);
                 }
-            }
-
-            if (!found) {
+            } else {
                 printf("could not find '%s'\n", line + sizeof("view"));
             }
         }

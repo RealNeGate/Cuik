@@ -16,5 +16,6 @@ jobs:
         run: git submodule update --init --recursive
 
       - name: Build Cuik
-        run: cd main && python build.py
+        working-directory: main
+        run: python build.py
         timeout-minutes: 10
