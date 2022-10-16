@@ -17,5 +17,5 @@ jobs:
 
       - name: Build Cuik
         working-directory: main
-        run: python build.py
+        run: ls ../tilde-backend && python build.py
         timeout-minutes: 10
