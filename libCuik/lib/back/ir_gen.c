@@ -115,10 +115,18 @@ static TB_Reg cast_reg(TB_Function* func, TB_Reg reg, const Cuik_Type* src, cons
             // down-casts
             reg = tb_inst_trunc(func, reg, ctype_to_tbtype(dst));
         }
-    } else if (src->kind != KIND_BOOL &&
-        dst->kind == KIND_BOOL) {
+    } else if (src->kind != KIND_BOOL && dst->kind == KIND_BOOL) {
         TB_DataType dt = tb_function_get_node(func, reg)->dt;
-        reg = tb_inst_cmp_ne(func, reg, tb_inst_uint(func, dt, 0));
+        TB_Reg comparand;
+        if (dt.type == TB_FLOAT && dt.data == 32) {
+            comparand = tb_inst_float32(func, 0.0f);
+        } else if (dt.type == TB_FLOAT && dt.data == 64) {
+            comparand = tb_inst_float64(func, 0.0);
+        } else {
+            comparand = tb_inst_uint(func, dt, 0);
+        }
+
+        reg = tb_inst_cmp_ne(func, reg, comparand);
     } else if (src->kind == KIND_BOOL &&
         dst->kind >= KIND_CHAR &&
         dst->kind <= KIND_LONG) {
