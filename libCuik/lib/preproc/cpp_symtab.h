@@ -209,7 +209,7 @@ bool cuikpp_find_define_cstr(Cuik_CPP* restrict c, Cuik_DefineIter* out_ref, con
     }
 
     out_ref->loc = c->macro_bucket_source_locs[def_i];
-    out_ref->key = (String){ c->macro_bucket_keys_length[def_i], c->macro_bucket_values_start[def_i] };
+    out_ref->key = (String){ c->macro_bucket_keys_length[def_i], c->macro_bucket_keys[def_i] };
     out_ref->value = string_from_range(c->macro_bucket_values_start[def_i], c->macro_bucket_values_end[def_i]);
     out_ref->bucket = def_i / SLOTS_PER_MACRO_BUCKET;
     out_ref->id = def_i % SLOTS_PER_MACRO_BUCKET;
@@ -223,7 +223,7 @@ bool cuikpp_find_define(Cuik_CPP* restrict c, Cuik_DefineIter* out_ref, size_t k
     }
 
     out_ref->loc = c->macro_bucket_source_locs[def_i];
-    out_ref->key = (String){ c->macro_bucket_keys_length[def_i], c->macro_bucket_values_start[def_i] };
+    out_ref->key = (String){ c->macro_bucket_keys_length[def_i], c->macro_bucket_keys[def_i] };
     out_ref->value = string_from_range(c->macro_bucket_values_start[def_i], c->macro_bucket_values_end[def_i]);
     out_ref->bucket = def_i / SLOTS_PER_MACRO_BUCKET;
     out_ref->id = def_i % SLOTS_PER_MACRO_BUCKET;

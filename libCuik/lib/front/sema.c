@@ -103,16 +103,13 @@ bool type_compatible(TranslationUnit* tu, Cuik_Type* src, Cuik_Type* dst, Expr* 
             // just all integer casts are good
             return true;
             #endif
-        } else if (src->kind >= KIND_BOOL &&
-            src->kind <= KIND_LONG &&
-            dst->kind == KIND_PTR) {
-            if (a_expr->op == EXPR_INT &&
-                a_expr->int_num.num == 0) {
+        } else if (src->kind >= KIND_BOOL && src->kind <= KIND_LONG && dst->kind == KIND_PTR) {
+            if (a_expr->op == EXPR_INT && a_expr->int_num.num == 0) {
                 return true;
             }
-        } else if (src->kind == KIND_FLOAT && dst->kind == KIND_DOUBLE) {
+        } else if (src->kind == KIND_FLOAT || dst->kind == KIND_DOUBLE) {
             return true;
-        } else if (src->kind == KIND_DOUBLE && dst->kind == KIND_FLOAT) {
+        } else if (src->kind == KIND_DOUBLE || dst->kind == KIND_FLOAT) {
             return true;
         } else if (src->kind == KIND_PTR && dst->kind == KIND_BOOL) {
             return true;

@@ -432,64 +432,39 @@ static bool expand_ident(Cuik_CPP* restrict c, TokenList* restrict out_tokens, T
                     .def_site  = { def_site, { def_site.raw + def.length } },
                     .call_site = t.location,
                 });
-            assert(t.location.raw != 0);
 
             const unsigned char* args = c->macro_bucket_keys[def_i] + c->macro_bucket_keys_length[def_i];
 
-            // function macro
-            Token paren_peek = peek(in);
-            if (*args == '(' && paren_peek.type == '(') {
-                consume(in);
-
-                ////////////////////////////////
-                // Parse the arguments
-                ////////////////////////////////
-                MacroArgs arglist = { 0 };
-                if (!parse_args(c, &arglist, in)) {
-                    return false;
-                }
-
-                // We dont need to parse this part if it expands into nothing
-                if (def.length) {
-                    Lexer args_lexer = { 0, (unsigned char*) args, (unsigned char*) args };
-                    if (!parse_params(c, &arglist, &args_lexer)) {
-                        return false;
-                    }
-
-                    /*printf("FUNCTION MACRO: %.*s    %.*s\n", (int)token_length, token_data, (int)def.length, def.data);
-                    for (size_t i = 0; i < arglist.value_count; i++) {
-                        printf("  ['%.*s'] = '%.*s'\n", (int) arglist.keys[i].length, arglist.keys[i].data, (int) arglist.values[i].content.length, arglist.values[i].content.data);
-                    }
-                    printf("\n");*/
-
-                    // macro hide set
-                    size_t hidden = hide_macro(c, def_i);
-                    size_t old = dyn_array_length(c->scratch_list.tokens);
-
-                    TokenList scratch = {
-                        .tokens = dyn_array_create_with_initial_cap(Token, 16)
-                    };
-
-                    // before expanding the child macros we need to substitute all
-                    // the arguments in, handle stringizing and ## concaternation.
-                    subst(c, &scratch, (uint8_t*) def.data, &arglist, macro_id);
-                    dyn_array_put(scratch.tokens, (Token){ 0 });
-
-                    expand(c, out_tokens, &scratch, macro_id);
-
-                    dyn_array_destroy(scratch.tokens);
-                    unhide_macro(c, def_i, hidden);
-                }
-
-                // it's a stack and keys is after values so it'll get popped too
-                // tls_restore(keys);
-                tls_restore(arglist.values);
-            } else if (def.length > 0) {
+            // Some macros immediately alias others so this is supposed to avoid the
+            // heavier costs... but it's broken rn
+            size_t tail_call_hidden = SIZE_MAX;
+            size_t tail_call_defi = SIZE_MAX;
+            if (def.length > 0 && *args != '(' && peek(in).type == '(') {
                 // expand and append
-                if (*args == '(' && paren_peek.type != '(') {
-                    t.type = classify_ident(t.content.data, t.content.length);
-                    dyn_array_put(out_tokens->tokens, t);
-                } else {
+                Lexer temp_lex = {
+                    .start = (unsigned char*) def.data,
+                    .current = (unsigned char*) def.data
+                };
+                Token t = lexer_read(&temp_lex);
+
+                if (t.type == TOKEN_IDENTIFIER && def.length == t.content.length) {
+                    if (find_define(c, &def_i, t.content.data, t.content.length)) {
+                        def = string_from_range(
+                            c->macro_bucket_values_start[def_i],
+                            c->macro_bucket_values_end[def_i]
+                        );
+
+                        args = c->macro_bucket_keys[def_i] + c->macro_bucket_keys_length[def_i];
+
+                        tail_call_hidden = hide_macro(c, def_i);
+                        tail_call_defi = def_i;
+                    }
+                }
+            }
+
+            if (*args != '(') {
+                // object-like macro
+                if (def.length > 0) {
                     size_t hidden = hide_macro(c, def_i);
 
                     TokenList list = convert_line_to_token_list(c, macro_id, (unsigned char*) def.data);
@@ -498,6 +473,64 @@ static bool expand_ident(Cuik_CPP* restrict c, TokenList* restrict out_tokens, T
 
                     dyn_array_destroy(list.tokens);
                 }
+            } else {
+                Token paren_peek = peek(in);
+                if (paren_peek.type == '(') {
+                    // expand function-like macro
+                    consume(in);
+
+                    ////////////////////////////////
+                    // Parse the arguments
+                    ////////////////////////////////
+                    MacroArgs arglist = { 0 };
+                    if (!parse_args(c, &arglist, in)) {
+                        return false;
+                    }
+
+                    // We dont need to parse this part if it expands into nothing
+                    if (def.length) {
+                        Lexer args_lexer = { 0, (unsigned char*) args, (unsigned char*) args };
+                        if (!parse_params(c, &arglist, &args_lexer)) {
+                            return false;
+                        }
+
+                        /*printf("FUNCTION MACRO: %.*s    %.*s\n", (int)token_length, token_data, (int)def.length, def.data);
+                        for (size_t i = 0; i < arglist.value_count; i++) {
+                            printf("  ['%.*s'] = '%.*s'\n", (int) arglist.keys[i].length, arglist.keys[i].data, (int) arglist.values[i].content.length, arglist.values[i].content.data);
+                        }
+                        printf("\n");*/
+
+                        // macro hide set
+                        size_t hidden = hide_macro(c, def_i);
+                        size_t old = dyn_array_length(c->scratch_list.tokens);
+
+                        TokenList scratch = {
+                            .tokens = dyn_array_create_with_initial_cap(Token, 16)
+                        };
+
+                        // before expanding the child macros we need to substitute all
+                        // the arguments in, handle stringizing and ## concaternation.
+                        subst(c, &scratch, (uint8_t*) def.data, &arglist, macro_id);
+                        dyn_array_put(scratch.tokens, (Token){ 0 });
+
+                        expand(c, out_tokens, &scratch, macro_id);
+
+                        dyn_array_destroy(scratch.tokens);
+                        unhide_macro(c, def_i, hidden);
+                    }
+
+                    // it's a stack and keys is after values so it'll get popped too
+                    // tls_restore(keys);
+                    tls_restore(arglist.values);
+                } else {
+                    // Normal identifier
+                    t.type = classify_ident(t.content.data, t.content.length);
+                    dyn_array_put(out_tokens->tokens, t);
+                }
+            }
+
+            if (tail_call_hidden != SIZE_MAX) {
+                unhide_macro(c, tail_call_defi, tail_call_hidden);
             }
         } else {
             // Normal identifier
