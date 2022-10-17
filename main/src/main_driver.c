@@ -533,6 +533,9 @@ static void append_input_path(const char* path) {
     }
 }
 
+// we'll use subsystem windows if they defined WinMain in any of the TUs
+static bool subsystem_windows = false;
+
 static void irgen(void) {
     TIMESTAMP("IR generation");
 
@@ -541,6 +544,10 @@ static void irgen(void) {
             #if CUIK_ALLOW_THREADS
             size_t task_capacity = 0;
             FOR_EACH_TU(tu, &compilation_unit) {
+                if (cuik_get_entrypoint_status(tu) == CUIK_ENTRYPOINT_WINMAIN) {
+                    subsystem_windows = true;
+                }
+
                 size_t c = cuik_num_of_top_level_stmts(tu);
                 task_capacity += (c + (IRGEN_TASK_BATCH_SIZE - 1)) / IRGEN_TASK_BATCH_SIZE;
             }
@@ -578,6 +585,10 @@ static void irgen(void) {
             // free(tasks);
         } else {
             FOR_EACH_TU(tu, &compilation_unit) {
+                if (cuik_get_entrypoint_status(tu) == CUIK_ENTRYPOINT_WINMAIN) {
+                    subsystem_windows = true;
+                }
+
                 Cuik_CPP* cpp = cuik_get_translation_unit_user_data(tu);
                 free_preprocessor(cpp);
 
@@ -763,14 +774,6 @@ static bool export_output(void) {
         CUIK_TIMED_BLOCK("linker") {
             Cuik_Linker l;
             if (cuiklink_init(&l)) {
-                // we'll use subsystem windows if they defined WinMain in any of the TUs
-                bool subsystem_windows = false;
-                FOR_EACH_TU(tu, &compilation_unit) {
-                    if (cuik_get_entrypoint_status(tu) == CUIK_ENTRYPOINT_WINMAIN) {
-                        subsystem_windows = true;
-                    }
-                }
-
                 if (subsystem_windows) {
                     cuiklink_subsystem_windows(&l);
                 }
