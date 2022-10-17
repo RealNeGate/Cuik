@@ -41,6 +41,8 @@ int cuikdg_error_count(TokenStream* s);
 ////////////////////////////////
 // Complex diagnostic builder
 ////////////////////////////////
+void diag_header(DiagType type, const char* fmt, ...);
+
 DiagWriter diag_writer(TokenStream* tokens);
 void diag_writer_highlight(DiagWriter* writer, SourceRange loc);
 bool diag_writer_is_compatible(DiagWriter* writer, SourceRange loc);

@@ -183,6 +183,16 @@ static void diag(DiagType type, TokenStream* tokens, SourceRange loc, const char
     atomic_fetch_add((atomic_int*) tokens->error_tally, 1);
 }
 
+void diag_header(DiagType type, const char* fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    char tmp[STB_SPRINTF_MIN];
+    fprintf(stderr, "\x1b[37m%s: ", report_names[type]);
+    stbsp_vsprintfcb(sprintf_callback, stderr, tmp, fmt, ap);
+    fprintf(stderr, "\n");
+    va_end(ap);
+}
+
 int cuikdg_error_count(TokenStream* s) {
     return atomic_load((atomic_int*) s->error_tally);
 }
@@ -240,9 +250,10 @@ void diag_writer_highlight(DiagWriter* writer, SourceRange loc) {
         printf("         ");
     }
 
-    assert(b.column > a.column);
+    assert(b.column >= a.column);
     size_t start_pos = a.column > writer->dist_from_line_start ? a.column - writer->dist_from_line_start : 0;
     size_t tkn_len = b.column - a.column;
+    if (tkn_len == 0) tkn_len = 1;
 
     diag_writer_write_upto(writer, start_pos);
     //printf("\x1b[7m");

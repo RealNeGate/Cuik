@@ -3,6 +3,10 @@
 //#include <stdint.h>
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+
+#pragma comment (lib, "gdi32.lib")
+#pragma comment (lib, "user32.lib")
+#pragma comment (lib, "opengl32.lib")
  
 #ifndef __CUIK__
 LRESULT main_wnd_proc(HWND wnd, UINT message, WPARAM wparam, LPARAM lparam);

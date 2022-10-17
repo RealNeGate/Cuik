@@ -37,14 +37,16 @@ static DirectiveResult cpp__error(Cuik_CPP* restrict ctx, CPPStackSlot* restrict
 static DirectiveResult cpp__pragma(Cuik_CPP* restrict ctx, CPPStackSlot* restrict slot, TokenList* restrict in, Cuikpp_Packet* restrict packet) {
     TokenStream* restrict s = &ctx->tokens;
     SourceLoc loc = peek(in).location;
-    String pragma_type = consume(in).content;
+    String pragma_type = peek(in).content;
 
     if (string_equals_cstr(&pragma_type, "once")) {
         nl_strmap_put_cstr(ctx->include_once, (const char*) slot->filepath, 0);
 
         // We gotta hit a line by now
+        consume(in);
         warn_if_newline(in);
     } else if (string_equals_cstr(&pragma_type, "message")) {
+        consume(in);
         String msg = get_pp_tokens_until_newline(ctx, in);
 
         SourceRange r = { loc, get_end_location(&in->tokens[in->current - 1]) };

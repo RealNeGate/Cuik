@@ -268,7 +268,7 @@ static bool subst(Cuik_CPP* restrict c, TokenList* out_tokens, uint8_t* def_str,
                         *last = joined;
                     } else {
                         // remove top
-                        dyn_array_pop(out_tokens);
+                        dyn_array_pop(out_tokens->tokens);
 
                         // replace with expanded identifier
                         TokenList scratch = {

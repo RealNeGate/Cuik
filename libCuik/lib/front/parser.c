@@ -1305,7 +1305,7 @@ TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* res
     // output accumulated diagnostics
     nl_strmap_for(i, tu->unresolved_symbols) {
         Diag_UnresolvedSymbol* loc = tu->unresolved_symbols[i];
-        report_header(REPORT_ERROR, "could not resolve symbol: %s", loc->name);
+        diag_header(DIAG_ERR, "could not resolve symbol: %s", loc->name);
 
         DiagWriter d = diag_writer(&tu->tokens);
         for (; loc != NULL; loc = loc->next) {
