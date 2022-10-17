@@ -753,9 +753,9 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
                         }
 
                         // continues on commas, exists on semicolon
-                        // int a,   *b,  c[3]    ;
-                        //     ^    ^~   ^~~~    ^
-                        //     one  two  three   DONE
+                        // int a,   *b,   c[3]    ;
+                        //     ^    ^~    ^~~~    ^
+                        //     one  two   three   DONE
                         do {
                             Decl decl = {0};
                             Cuik_Type* member_type = member_base_type;
@@ -1144,9 +1144,12 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
             case OTHER:
             assert(type);
             break;
-            default:
-            diag_err(s, tokens_get_range(s), "could not parse type");
-            break;
+            default: {
+                Token* last = &s->list.tokens[s->list.current - 1];
+                diag_err(s, (SourceRange){ loc, get_token_range(last).end }, "unknown typename %!S", last->content);
+                tokens_next(s);
+                return NULL;
+            }
         }
 
         tokens_next(s);
@@ -1155,7 +1158,7 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
     done:;
     if (type == 0) {
         Token* last = &s->list.tokens[s->list.current];
-        REPORT(ERROR, loc, "unknown typename: %_S", last->content);
+        diag_err(s, get_token_range(last), "unknown typename %!S", last->content);
         return NULL;
     }
 

@@ -724,7 +724,8 @@ static bool export_output(void) {
         CUIK_TIMED_BLOCK("Export") {
             if (!tb_exporter_write_files(mod, flavor, debug_fmt, 1, &(const char*){ path })) {
                 fprintf(stderr, "error: could not write output. %s\n", path);
-                return false; }
+                return false;
+            }
         }
 
         return true;

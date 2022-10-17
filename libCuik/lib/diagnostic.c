@@ -97,7 +97,7 @@ void print_include(TokenStream* tokens, SourceLoc loc) {
 }
 
 static void print_line(TokenStream* tokens, ResolvedSourceLoc start, size_t tkn_len) {
-    fprintf(stderr, "  %s\n", start.file->filename);
+    // fprintf(stderr, "  %s\n", start.file->filename);
 
     const char* line_start = start.line_str;
     while (*line_start && isspace(*line_start)) line_start++;
@@ -130,13 +130,16 @@ static void print_line_with_backtrace(TokenStream* tokens, SourceLoc loc, size_t
         ResolvedSourceLoc l = cuikpp_find_location(tokens, m->def_site.start);
         l.column += macro_off;
 
-        print_line(tokens, l, tkn_len);
-
         Cuik_File* next_file = cuikpp_find_file(tokens, m->call_site);
         if (next_file->filename != l.file->filename) {
-            fprintf(stderr, "  expanded from:\n");
             print_line_with_backtrace(tokens, m->call_site, 1);
+            fprintf(stderr, "  expanded from %s:\n", l.file->filename);
+        } else {
+            print_line_with_backtrace(tokens, m->call_site, 1);
+            fprintf(stderr, "  expanded from:\n");
         }
+
+        print_line(tokens, l, tkn_len);
     } else {
         print_line(tokens, cuikpp_find_location(tokens, loc), tkn_len);
     }

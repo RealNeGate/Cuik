@@ -718,6 +718,7 @@ TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* res
                 Cuik_Type* type = parse_declspec(tu, s, &attr);
                 if (type == NULL) {
                     REPORT(ERROR, loc, "Could not parse base type.");
+                    type = &builtin_types[TYPE_INT];
                 }
 
                 if (attr.is_typedef) {

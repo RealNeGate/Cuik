@@ -10,11 +10,11 @@ parser.add_argument('--opt', action='store_true', help='runs optimize on compile
 
 args = parser.parse_args()
 if args.opt:
-	subprocess.check_call(['build.py', 'x64', 'aarch64', '--opt'], shell=True, cwd="../tilde-backend")
-	subprocess.check_call(['build.py', '--usetb', '--opt'], shell=True, cwd="../libCuik")
+	subprocess.check_call(['python', 'build.py', 'x64', 'aarch64', '--opt'], shell=True, cwd="../tilde-backend")
+	subprocess.check_call(['python', 'build.py', '--usetb', '--opt'], shell=True, cwd="../libCuik")
 else:
-	subprocess.check_call(['build.py', 'x64', 'aarch64'], shell=True, cwd="../tilde-backend")
-	subprocess.check_call(['build.py', '--usetb'], shell=True, cwd="../libCuik")
+	subprocess.check_call(['python', 'build.py', 'x64', 'aarch64'], shell=True, cwd="../tilde-backend")
+	subprocess.check_call(['python', 'build.py', '--usetb'], shell=True, cwd="../libCuik")
 
 # link everything together
 ninja = open('build.ninja', 'w')

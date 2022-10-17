@@ -902,62 +902,25 @@ static Expr* parse_expr_NEW(TranslationUnit* tu, TokenStream* restrict s, int mi
         };
 
         switch (binop) {
-            case TOKEN_TIMES:
-            e->op = EXPR_TIMES;
-            break;
-            case TOKEN_SLASH:
-            e->op = EXPR_SLASH;
-            break;
-            case TOKEN_PERCENT:
-            e->op = EXPR_PERCENT;
-            break;
-            case TOKEN_PLUS:
-            e->op = EXPR_PLUS;
-            break;
-            case TOKEN_MINUS:
-            e->op = EXPR_MINUS;
-            break;
-            case TOKEN_LEFT_SHIFT:
-            e->op = EXPR_SHL;
-            break;
-            case TOKEN_RIGHT_SHIFT:
-            e->op = EXPR_SHR;
-            break;
-            case TOKEN_GREATER_EQUAL:
-            e->op = EXPR_CMPGE;
-            break;
-            case TOKEN_LESS_EQUAL:
-            e->op = EXPR_CMPLE;
-            break;
-            case TOKEN_GREATER:
-            e->op = EXPR_CMPGT;
-            break;
-            case TOKEN_LESS:
-            e->op = EXPR_CMPLT;
-            break;
-            case TOKEN_EQUALITY:
-            e->op = EXPR_CMPEQ;
-            break;
-            case TOKEN_NOT_EQUAL:
-            e->op = EXPR_CMPNE;
-            break;
-            case TOKEN_AND:
-            e->op = EXPR_AND;
-            break;
-            case TOKEN_XOR:
-            e->op = EXPR_XOR;
-            break;
-            case TOKEN_OR:
-            e->op = EXPR_OR;
-            break;
-            case TOKEN_DOUBLE_AND:
-            e->op = EXPR_LOGICAL_AND;
-            break;
-            case TOKEN_DOUBLE_OR:
-            e->op = EXPR_LOGICAL_OR;
-            break;
-            default:
-            __builtin_unreachable();
+            case TOKEN_TIMES:         e->op = EXPR_TIMES;       break;
+            case TOKEN_SLASH:         e->op = EXPR_SLASH;       break;
+            case TOKEN_PERCENT:       e->op = EXPR_PERCENT;     break;
+            case TOKEN_PLUS:          e->op = EXPR_PLUS;        break;
+            case TOKEN_MINUS:         e->op = EXPR_MINUS;       break;
+            case TOKEN_LEFT_SHIFT:    e->op = EXPR_SHL;         break;
+            case TOKEN_RIGHT_SHIFT:   e->op = EXPR_SHR;         break;
+            case TOKEN_GREATER_EQUAL: e->op = EXPR_CMPGE;       break;
+            case TOKEN_LESS_EQUAL:    e->op = EXPR_CMPLE;       break;
+            case TOKEN_GREATER:       e->op = EXPR_CMPGT;       break;
+            case TOKEN_LESS:          e->op = EXPR_CMPLT;       break;
+            case TOKEN_EQUALITY:      e->op = EXPR_CMPEQ;       break;
+            case TOKEN_NOT_EQUAL:     e->op = EXPR_CMPNE;       break;
+            case TOKEN_AND:           e->op = EXPR_AND;         break;
+            case TOKEN_XOR:           e->op = EXPR_XOR;         break;
+            case TOKEN_OR:            e->op = EXPR_OR;          break;
+            case TOKEN_DOUBLE_AND:    e->op = EXPR_LOGICAL_AND; break;
+            case TOKEN_DOUBLE_OR:     e->op = EXPR_LOGICAL_OR;  break;
+            default: __builtin_unreachable();
         }
 
         result = e;
