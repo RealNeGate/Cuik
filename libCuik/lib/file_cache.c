@@ -7,8 +7,7 @@ struct Cuik_FileCache {
 };
 
 Cuik_FileCache* cuik_fscache_create(void) {
-    Cuik_FileCache* c = HEAP_ALLOC(sizeof(Cuik_FileCache));
-    memset(c, 0, sizeof(Cuik_FileCache));
+    Cuik_FileCache* c = calloc(1, sizeof(Cuik_FileCache));
 
     c->table = nl_strmap_alloc(TokenStream, 1024);
     mtx_init(&c->lock, mtx_plain);
@@ -22,7 +21,7 @@ void cuik_fscache_destroy(Cuik_FileCache* restrict c) {
     }
 
     mtx_destroy(&c->lock);
-    HEAP_FREE(c);
+    free(c);
 }
 
 void cuik_fscache_put(Cuik_FileCache* restrict c, const char* filepath, const TokenStream* tokens) {

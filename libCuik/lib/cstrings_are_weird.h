@@ -1,6 +1,22 @@
 #ifndef _CSTRINGS_ARE_WEIRD_H_
 #define _CSTRINGS_ARE_WEIRD_H_
 
+#ifdef _WIN32
+typedef wchar_t* OS_String;
+typedef wchar_t OS_Char;
+
+#define OS_STR(x) L##x
+#define OS_STR_FMT "S"
+#else
+typedef char* OS_String;
+typedef char OS_Char;
+
+#define OS_STR(x) x
+#define OS_STR_FMT "s"
+
+int sprintf_s(char* buffer, size_t len, const char* format, ...);
+#endif
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <string.h>

@@ -30,7 +30,7 @@ if args.asan:
 	cflags += " -fsanitize=address"
 
 if args.usetb:
-	cflags += " -I ../tilde-backend/include -DCUIK_USE_TB"
+	cflags += " -I ../tilde-backend/include -I ../common/ -DCUIK_USE_TB"
 
 os_name = platform.system()
 if os_name == "Windows":

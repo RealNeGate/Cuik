@@ -1,5 +1,5 @@
 #pragma once
-#include "../common.h"
+#include <common.h>
 #include "../str.h"
 #include "../arena.h"
 #include <dyn_array.h>

@@ -20,7 +20,7 @@ static char* utf16_to_utf8_on_heap(const wchar_t* input) {
     int bytes = WideCharToMultiByte(65001 /* UTF8 */, 0, input, -1, NULL, 0, NULL, NULL);
     if (bytes <= 0) return NULL;
 
-	char* output = HEAP_ALLOC(bytes + 1);
+    char* output = malloc(bytes + 1);
     WideCharToMultiByte(65001 /* UTF8 */, 0, input, -1, output, bytes, NULL, NULL);
     output[bytes] = 0;
 

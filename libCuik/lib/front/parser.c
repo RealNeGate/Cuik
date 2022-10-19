@@ -1220,7 +1220,7 @@ TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* res
 
             // passed to the threads to identify when things are done
             atomic_size_t tasks_remaining = (count + (PARSE_MUNCH_SIZE - 1)) / PARSE_MUNCH_SIZE;
-            ParserTaskInfo* tasks = HEAP_ALLOC(sizeof(ParserTaskInfo) * tasks_remaining);
+            ParserTaskInfo* tasks = malloc(sizeof(ParserTaskInfo) * tasks_remaining);
 
             size_t j = 0;
             for (size_t i = 0; i < padded; i += PARSE_MUNCH_SIZE) {
@@ -1252,7 +1252,7 @@ TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* res
                 CUIK_CALL(desc->thread_pool, work_one_job);
             }
 
-            HEAP_FREE(tasks);
+            free(tasks);
         } else {
             // single threaded mode
             parse_global_symbols(tu, 0, nl_strmap__get_header(tu->global_symbols)->load, *s);

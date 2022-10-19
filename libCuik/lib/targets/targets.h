@@ -1,5 +1,5 @@
 #pragma once
-#include "../common.h"
+#include <common.h>
 #include <preproc/lexer.h>
 #include <arena.h>
 #include <front/parser.h>

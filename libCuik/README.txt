@@ -19,8 +19,6 @@ library.
 
 Code overview:
 
-  Common  - shared utilities like allocators, strings and macros
-
   AST     - this is the package that provides AST construction, printing and
             walking, it doesn't do parsing itself. depends on Common.
 
