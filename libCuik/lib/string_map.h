@@ -86,8 +86,8 @@ do {                                                                            
     (map)[ins__.val_slot] = (value);                                             \
 } while (0)
 
-#define nl_strmap_get(map, key) \
-((map) != NULL ? nl_strmap__get(((NL_StrmapHeader*)(map)) - 1, (key)) : -1)
+#define nl_strmap_get(map, ...) \
+((map) != NULL ? nl_strmap__get(((NL_StrmapHeader*)(map)) - 1, (__VA_ARGS__)) : -1)
 
 #define nl_strmap_get_cstr(map, key) \
 ((map) != NULL ? nl_strmap__get(((NL_StrmapHeader*)(map)) - 1, nl_slice__cstr(key)) : -1)
