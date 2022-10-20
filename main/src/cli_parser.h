@@ -5,30 +5,8 @@ static const char* arg_is_set = "set";
 typedef enum ArgType {
     ARG_NONE = 0,
 
-    ARG_HELP,
-    ARG_VERBOSE,
-    ARG_DEFINE,
-    ARG_UNDEF,
-    ARG_INCLUDE,
-    ARG_PREPROC,
-    ARG_PPREPL,
-    ARG_AST,
-    ARG_SYNTAX,
-    ARG_EMITIR,
-    ARG_O0,
-    ARG_O1,
-    ARG_OUTPUT,
-    ARG_ASSEMBLY,
-    ARG_OBJECT,
-    ARG_DEBUG,
-    ARG_NOLIBC,
-    ARG_LIB,
-    ARG_BASED,
-    ARG_TARGET,
-    ARG_THREADS,
-    ARG_THINK,
-    ARG_TIME,
-    ARG_RUN,
+    #define X(name, short, long, has_args, msg) name,
+    #include "cli_args.h"
 } ArgType;
 
 typedef struct {
@@ -45,37 +23,8 @@ typedef struct Arg {
 } Arg;
 
 static const ArgDesc arg_descs[] = {
-    { ARG_HELP,    "h",        NULL,      false, "print help" },
-    { ARG_VERBOSE, "V",        NULL,      false, "print verbose messages" },
-    // preprocessor
-    { ARG_DEFINE,  "D",        "define",  true,  "defines a macro before compiling" },
-    { ARG_UNDEF,   "U",        "undef",   true,  "undefines a macro before compiling" },
-    { ARG_INCLUDE, "I",        "include", true,  "add directory to the include searches" },
-    { ARG_PREPROC, "P",        NULL,      false, "print preprocessor output to stdout" },
-    { ARG_PPREPL,  "xp",       NULL,      false, "enables the preprocessor REPL environment" },
-    // parser
-    { ARG_AST,     "ast",      NULL,      false, "" },
-    { ARG_SYNTAX,  "xe",       NULL,      false, "type check only" },
-    // optimizer
-    { ARG_O0,      "O0",       NULL,      false, "no optimizations" },
-    { ARG_O1,      "O1",       NULL,      false, "non-aggresive optimizations" },
-    // backend
-    { ARG_EMITIR,  "emit-ir",  NULL,      false, "print IR into stdout" },
-    { ARG_OUTPUT,  "o",        NULL,      true,  "set the output filepath" },
-    { ARG_OBJECT,  "c",        NULL,      false, "output object file" },
-    { ARG_ASSEMBLY,"S",        NULL,      false, "output assembly to stdout (not ready)" },
-    { ARG_DEBUG,   "g",        NULL,      false, "compile with debug information" },
-    // linker
-    { ARG_NOLIBC,  "nostdlib", NULL,      false, "don't include and link against the default CRT" },
-    { ARG_LIB,     "l",        NULL,      false, "add library name to the linking" },
-    { ARG_BASED,   "based",    NULL,      false, "use the TB linker (EXPERIMENTAL)" },
-    // misc
-    { ARG_TARGET,  "target",   NULL,      false, "change the target system and arch" },
-    { ARG_THREADS, "threads",  NULL,      false, "enabled multithreaded compilation" },
-    { ARG_TIME,    "T",        NULL,      false, "profile the compile times" },
-    { ARG_THINK,   "think",    NULL,      false, "aids in thinking about serious problems" },
-    // run
-    { ARG_RUN,     "r",        NULL,      false, "run the executable" },
+    #define X(name, short, long, has_args, msg) { name, short, long, has_args, msg },
+    #include "cli_args.h"
 };
 enum { ARG_DESC_COUNT = sizeof(arg_descs) / sizeof(arg_descs[0]) };
 
