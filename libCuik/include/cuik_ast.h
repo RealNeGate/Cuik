@@ -5,15 +5,17 @@
 //
 // AST Overview:
 //
-//   Cuik_Type  - This represents all C types, qualified types currently act as a type
-//                as opposed to a view of a type (refactor coming soon)
+//   Cuik_QualType - This refers to a type but also holds qualifiers (const, restrict, volatile)
 //
-//   Stmt       - statements (declarations count here) generally introduce sequence
-//                points.
+//   Cuik_Type     - This represents all C types, qualified types currently act as a type
+//                   as opposed to a view of a type (refactor coming soon)
 //
-//   Expr       - all expressions have some type and during type checking a new
-//                "cast type" is produced which represents the potential type
-//                promotion and is the type actually used by the parent node.
+//   Stmt          - statements (declarations count here) generally introduce sequence
+//                   points.
+//
+//   Expr          - all expressions have some type and during type checking a new
+//                   "cast type" is produced which represents the potential type
+//                   promotion and is the type actually used by the parent node.
 //
 #pragma once
 #include "cuik.h"
@@ -96,6 +98,23 @@ typedef struct {
     Cuik_Type* key;
     Expr* value;
 } C11GenericEntry;
+
+// This is a trick stolen from Clang, we store the qualifiers as
+// the bottom 3 bits of the pointer value, because of this we need
+// to enforce 16 byte alignment
+typedef enum Cuik_Qualifiers {
+    CUIK_QUAL_CONST    = (1u << 0u),
+    CUIK_QUAL_VOLATILE = (1u << 1u),
+    CUIK_QUAL_RESTRICT = (1u << 2u),
+    CUIK_QUAL_ATOMIC   = (1u << 3u),
+
+    // this is what's masked out when we convert to a pointer
+    CUIK_QUAL_FLAG_BITS = 0b1111,
+} Cuik_Qualifiers;
+
+typedef struct Cuik_QualType {
+    uintptr_t raw;
+} Cuik_QualType;
 
 struct Cuik_Type {
     Cuik_TypeKind kind;
@@ -576,3 +595,15 @@ struct Expr {
 };
 _Static_assert(offsetof(Expr, next_symbol_in_chain) == offsetof(Expr, next_symbol_in_chain2), "these should be aliasing");
 _Static_assert(offsetof(Expr, next_symbol_in_chain) == offsetof(Expr, builtin_sym.next_symbol_in_chain), "these should be aliasing");
+
+static Cuik_QualType cuik_make_qual_type(Cuik_Type* t, Cuik_Qualifiers quals) {
+    uintptr_t p = (uintptr_t) t;
+    assert((p & CUIK_QUAL_FLAG_BITS) == 0);
+    assert((quals & ~CUIK_QUAL_FLAG_BITS) == 0);
+
+    return (Cuik_QualType){ p | quals };
+}
+
+static Cuik_Type* cuik_canonical_type(const Cuik_QualType t) {
+    return (Cuik_Type*) (t.raw & CUIK_QUAL_FLAG_BITS);
+}
