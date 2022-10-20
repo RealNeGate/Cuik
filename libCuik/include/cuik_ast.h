@@ -20,6 +20,23 @@
 #pragma once
 #include "cuik.h"
 
+typedef enum Cuik_Qualifiers {
+    CUIK_QUAL_CONST    = (1u << 0u),
+    CUIK_QUAL_VOLATILE = (1u << 1u),
+    CUIK_QUAL_RESTRICT = (1u << 2u),
+    CUIK_QUAL_ATOMIC   = (1u << 3u),
+
+    // this is what's masked out when we convert to a pointer
+    CUIK_QUAL_FLAG_BITS = 0b1111,
+} Cuik_Qualifiers;
+
+// This is a trick stolen from Clang, we store the qualifiers as
+// the bottom 4 bits of the pointer value, because of this we need
+// to enforce 16 byte alignment
+typedef struct Cuik_QualType {
+    uintptr_t raw;
+} Cuik_QualType;
+
 typedef enum Cuik_TypeKind {
     KIND_VOID,
     KIND_BOOL,
@@ -38,10 +55,6 @@ typedef enum Cuik_TypeKind {
     KIND_UNION,
     KIND_VECTOR,
 
-    // after parsing these types are removed, they exist to avoid cloning a
-    // type before it's fully resolved
-    KIND_QUALIFIED_TYPE,
-
     // these are inferred as typedefs but don't map to anything yet
     KIND_PLACEHOLDER,
 
@@ -53,7 +66,7 @@ typedef enum Cuik_TypeKind {
 
 // Used by unions and structs
 typedef struct {
-    Cuik_Type* type;
+    Cuik_QualType type;
     Atom name;
 
     SourceLoc loc;
@@ -67,11 +80,11 @@ typedef struct {
 } Member;
 
 typedef struct {
-    bool is_static : 1;
+    bool is_static  : 1;
     bool is_typedef : 1;
-    bool is_inline : 1;
-    bool is_extern : 1;
-    bool is_tls : 1;
+    bool is_inline  : 1;
+    bool is_extern  : 1;
+    bool is_tls     : 1;
 
     // NOTE(NeGate): In all honesty, this should probably not be
     // here since it's used in cases that aren't relevant to attribs.
@@ -90,31 +103,14 @@ typedef struct {
 } EnumEntry;
 
 typedef struct {
-    Cuik_Type* type;
+    Cuik_QualType type;
     Atom name;
 } Param;
 
 typedef struct {
-    Cuik_Type* key;
+    Cuik_QualType key;
     Expr* value;
 } C11GenericEntry;
-
-// This is a trick stolen from Clang, we store the qualifiers as
-// the bottom 4 bits of the pointer value, because of this we need
-// to enforce 16 byte alignment
-typedef enum Cuik_Qualifiers {
-    CUIK_QUAL_CONST    = (1u << 0u),
-    CUIK_QUAL_VOLATILE = (1u << 1u),
-    CUIK_QUAL_RESTRICT = (1u << 2u),
-    CUIK_QUAL_ATOMIC   = (1u << 3u),
-
-    // this is what's masked out when we convert to a pointer
-    CUIK_QUAL_FLAG_BITS = 0b1111,
-} Cuik_Qualifiers;
-
-typedef struct Cuik_QualType {
-    uintptr_t raw;
-} Cuik_QualType;
 
 struct Cuik_Type {
     Cuik_TypeKind kind;
@@ -134,20 +130,16 @@ struct Cuik_Type {
 
     int ordinal;
 
-    bool is_const : 1;
-    bool is_atomic : 1;
     bool is_incomplete : 1;
     bool is_inprogress : 1;
 
     union {
-        Cuik_Type* qualified_ty;
-
         // Integers
         bool is_unsigned;
 
         // Arrays
         struct {
-            Cuik_Type* array_of;
+            Cuik_QualType array_of;
             int array_count;
 
             // if non-zero, then we must execute an expression
@@ -157,14 +149,14 @@ struct Cuik_Type {
 
         // Pointers
         struct {
-            Cuik_Type* ptr_to;
-            bool is_ptr_restrict : 1;
+            Cuik_QualType ptr_to;
         };
 
         // Function
         struct {
             Atom name;
-            Cuik_Type* return_type;
+            Cuik_QualType return_type;
+
             size_t param_count;
             Param* param_list;
 
@@ -189,7 +181,7 @@ struct Cuik_Type {
 
         struct {
             int count;
-            Cuik_Type* base;
+            Cuik_QualType base;
         } vector_;
 
         // Cuik_Typeof
@@ -226,7 +218,7 @@ typedef struct InitNode {
     // Fully resolved members with a kid_count of 0 will have
     // a proper offset and type after the type checking
     uint32_t offset;
-    Cuik_Type* type;
+    Cuik_QualType type;
 
     Expr* expr;
     InitNodeDesignator mode;
@@ -426,7 +418,7 @@ struct Stmt {
             Stmt* next;
         } switch_;
         struct StmtDecl {
-            Cuik_Type* type;
+            Cuik_QualType type;
             Atom name;
 
             // acceleration structure for scrubbing for symbols
@@ -472,7 +464,7 @@ struct Expr {
     int has_visited : 1;
 
     SourceRange loc;
-    Cuik_Type* type;
+    Cuik_QualType type;
 
     // this is the type it'll be desugared into
     // for example:
@@ -481,7 +473,7 @@ struct Expr {
     //
     //   their cast_type might be int because of C's
     //   promotion rules.
-    Cuik_Type* cast_type;
+    Cuik_QualType cast_type;
 
     union {
         struct {
@@ -517,11 +509,11 @@ struct Expr {
         } enum_val;
         struct {
             Expr* src;
-            Cuik_Type* type;
+            Cuik_QualType type;
         } va_arg_;
         struct {
             Expr* src;
-            Cuik_Type* type;
+            Cuik_QualType type;
         } cast;
         struct {
             Expr* left;
@@ -570,14 +562,14 @@ struct Expr {
         } str;
         // either sizeof(T) or _Alignof(T)
         struct {
-            Cuik_Type* type;
+            Cuik_QualType type;
         } x_of_type;
         // either sizeof(expr) or _Alignof(expr)
         struct {
             Expr* expr;
         } x_of_expr;
         struct {
-            Cuik_Type* type;
+            Cuik_QualType type;
             int count;
             InitNode* nodes;
         } init;
@@ -596,6 +588,12 @@ struct Expr {
 _Static_assert(offsetof(Expr, next_symbol_in_chain) == offsetof(Expr, next_symbol_in_chain2), "these should be aliasing");
 _Static_assert(offsetof(Expr, next_symbol_in_chain) == offsetof(Expr, builtin_sym.next_symbol_in_chain), "these should be aliasing");
 
+// takes in Cuik_QualType
+#define CUIK_QUAL_TYPE_NULL(a)     ((Cuik_QualType){ 0 })
+#define CUIK_QUAL_TYPE_IS_NULL(a)  ((a).raw != 0)
+#define CUIK_QUAL_TYPE_HAS(a, b)   (((a).raw & (b)) != 0)
+#define CUIK_QUAL_TYPE_ONLY(a, b)  (((a).raw & (b)) == (b))
+
 static Cuik_QualType cuik_make_qual_type(Cuik_Type* t, Cuik_Qualifiers quals) {
     uintptr_t p = (uintptr_t) t;
     assert((p & CUIK_QUAL_FLAG_BITS) == 0);
@@ -604,6 +602,12 @@ static Cuik_QualType cuik_make_qual_type(Cuik_Type* t, Cuik_Qualifiers quals) {
     return (Cuik_QualType){ p | quals };
 }
 
+static Cuik_QualType cuik_uncanonical_type(const Cuik_Type* t) {
+    uintptr_t p = (uintptr_t) t;
+    assert((p & CUIK_QUAL_FLAG_BITS) == 0);
+    return (Cuik_QualType){ p };
+}
+
 static Cuik_Type* cuik_canonical_type(const Cuik_QualType t) {
-    return (Cuik_Type*) (t.raw & CUIK_QUAL_FLAG_BITS);
+    return (Cuik_Type*) (t.raw & ~((uint64_t) CUIK_QUAL_FLAG_BITS));
 }
