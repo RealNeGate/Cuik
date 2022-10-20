@@ -100,7 +100,7 @@ typedef struct {
 } C11GenericEntry;
 
 // This is a trick stolen from Clang, we store the qualifiers as
-// the bottom 3 bits of the pointer value, because of this we need
+// the bottom 4 bits of the pointer value, because of this we need
 // to enforce 16 byte alignment
 typedef enum Cuik_Qualifiers {
     CUIK_QUAL_CONST    = (1u << 0u),
