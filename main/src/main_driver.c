@@ -1,11 +1,16 @@
 #include <cuik.h>
-#include <cuik_ast.h>
 #include "helper.h"
 #include "cli_parser.h"
 #include "json_perf.h"
 #include "flint_perf.h"
 #include "bindgen.h"
 #include <dyn_array.h>
+
+// Microsoft's definition of strtok_s actually matches
+// strtok_r on POSIX, not strtok_s on C11... tf
+#ifdef _WIN32
+#define strtok_r(a, b, c) strtok_s(a, b, c)
+#endif
 
 #ifndef __CUIK__
 #define CUIK_ALLOW_THREADS 1
@@ -63,7 +68,6 @@ static Bindgen* args_bindgen;
 static int args_opt_level;
 
 static TB_Module* mod;
-static Cuik_FileCache* fscache;
 
 static Cuik_IThreadpool* ithread_pool;
 static CompilationUnit compilation_unit;
@@ -154,8 +158,8 @@ static void dump_tokens(FILE* out_file, TokenStream* s) {
     const char* last_file = NULL;
     int last_line = 0;
 
-    Token* tokens = cuik_get_tokens(s);
-    size_t count = cuik_get_token_count(s);
+    Token* tokens = cuikpp_get_tokens(s);
+    size_t count = cuikpp_get_token_count(s);
 
     for (size_t i = 0; i < count; i++) {
         Token* t = &tokens[i];
@@ -332,7 +336,7 @@ static Cuik_CPP* make_preprocessor(const char* filepath, bool should_finalize) {
     }
 
     // run the preprocessor
-    if (cuikpp_default_run(cpp, fscache) == CUIKPP_ERROR) {
+    if (cuikpp_default_run(cpp) == CUIKPP_ERROR) {
         dump_tokens(stdout, cuikpp_get_token_stream(cpp));
         exit(1);
     }
@@ -371,33 +375,35 @@ static void free_preprocessor(Cuik_CPP* cpp) {
 static void compile_file(void* arg) {
     Cuik_CPP* cpp = arg;
 
+    cuikparse_make(CUIK_VERSION_C11, cuikpp_get_token_stream(cpp));
+    __debugbreak();
+
     // parse
-    Cuik_ErrorStatus errors;
-    Cuik_TranslationUnitDesc desc = {
-        .tokens         = cuikpp_get_token_stream(cpp),
-        .errors         = &errors,
-        .ir_module      = mod,
-        .has_debug_info = args_debug_info,
-        .target         = &target_desc,
-        #if CUIK_ALLOW_THREADS
-        .thread_pool    = ithread_pool ? ithread_pool : NULL,
-        #endif
-    };
+    /*
+        Cuik_TranslationUnitDesc desc = {
+            .tokens         = cuikpp_get_token_stream(cpp),
+            .ir_module      = mod,
+            .has_debug_info = args_debug_info,
+            .target         = &target_desc,
+            #if CUIK_ALLOW_THREADS
+            .thread_pool    = ithread_pool ? ithread_pool : NULL,
+            #endif
+        };
 
-    TranslationUnit* tu = cuik_parse_translation_unit(&desc);
-    if (tu == NULL) {
-        printf("Failed to parse with errors...");
-        exit(1);
-    }
-
-    Cuik_ImportRequest* imports = cuik_translation_unit_import_requests(tu);
-    if (imports != NULL) {
-        cuik_lock_compilation_unit(&compilation_unit);
-        for (; imports != NULL; imports = imports->next) {
-            dyn_array_put(input_libraries, imports->lib_name);
+        TranslationUnit* tu = cuik_parse_translation_unit(&desc);
+        if (tu == NULL) {
+            printf("Failed to parse with errors...");
+            exit(1);
         }
-        cuik_unlock_compilation_unit(&compilation_unit);
-    }
+
+        Cuik_ImportRequest* imports = cuik_translation_unit_import_requests(tu);
+        if (imports != NULL) {
+            cuik_lock_compilation_unit(&compilation_unit);
+            for (; imports != NULL; imports = imports->next) {
+                dyn_array_put(input_libraries, imports->lib_name);
+            }
+            cuik_unlock_compilation_unit(&compilation_unit);
+        }*/
 
     /*
     if (args_bindgen != NULL) {
@@ -416,9 +422,9 @@ static void compile_file(void* arg) {
 
         cuik_unlock_compilation_unit(&compilation_unit);
     }
-*/
+
     cuik_set_translation_unit_user_data(tu, cpp);
-    cuik_add_to_compilation_unit(&compilation_unit, tu);
+    cuik_add_to_compilation_unit(&compilation_unit, tu);*/
 }
 
 static void preproc_file(void* arg) {
@@ -560,13 +566,18 @@ static void irgen(void) {
                 // dispose the preprocessor crap now
                 free_preprocessor((Cuik_CPP*) cuik_set_translation_unit_user_data(tu, NULL));
 
-                CUIK_FOR_TOP_LEVEL_STMT(it, tu, 8192) {
+                size_t top_level_count = cuik_num_of_top_level_stmts(tu);
+                Stmt** top_level = cuik_get_top_level_stmts(tu);
+                for (size_t i = 0; i < top_level_count; i += 8192) {
+                    size_t end = i + 8192;
+                    if (end >= top_level_count) end = top_level_count;
+
                     assert(task_count < task_capacity);
                     IRGenTask* task = &tasks[task_count++];
                     *task = (IRGenTask){
                         .tu = tu,
-                        .stmts = it.start,
-                        .count = it.count,
+                        .stmts = &top_level[i],
+                        .count = end - i,
                         .remaining = &tasks_remaining
                     };
 
@@ -1025,8 +1036,6 @@ int main(int argc, char** argv) {
         );
     }
 
-    fscache = cuik_fscache_create();
-
     if (args_pprepl) {
         return pp_repl();
     } else if (args_preprocess) {
@@ -1075,7 +1084,6 @@ int main(int argc, char** argv) {
     ////////////////////////////////
     // backend work
     ////////////////////////////////
-    cuik_fscache_destroy(fscache);
     irgen();
     cuik_destroy_compilation_unit(&compilation_unit);
 

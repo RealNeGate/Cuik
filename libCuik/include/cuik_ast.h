@@ -26,7 +26,15 @@
 //  * add qualifiers to type pretty printer
 //
 #pragma once
-#include "cuik.h"
+#include <stdint.h>
+#include <stdbool.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+typedef char* Atom;
+typedef struct Expr Expr;
+typedef struct Stmt Stmt;
+typedef struct Cuik_Type Cuik_Type;
 
 typedef enum Cuik_Qualifiers {
     CUIK_QUAL_CONST    = (1u << 0u),
@@ -74,6 +82,24 @@ typedef enum Cuik_TypeKind {
     // it's a mess but it's worth it
     KIND_TYPEOF
 } Cuik_TypeKind;
+
+typedef enum Cuik_IntSuffix {
+    //                u   l   l
+    INT_SUFFIX_NONE = 0 + 0 + 0,
+    INT_SUFFIX_U    = 1 + 0 + 0,
+    INT_SUFFIX_L    = 0 + 2 + 0,
+    INT_SUFFIX_UL   = 1 + 2 + 0,
+    INT_SUFFIX_LL   = 0 + 2 + 2,
+    INT_SUFFIX_ULL  = 1 + 2 + 2,
+} Cuik_IntSuffix;
+
+typedef struct Cuik_Attribute {
+    struct Cuik_Attribute* prev;
+    SourceRange loc;
+
+    Atom name;
+    // TODO(NeGate): implement parameter list
+} Cuik_Attribute;
 
 // Used by unions and structs
 typedef struct {
@@ -670,3 +696,38 @@ static Cuik_QualType cuik_get_direct_type(Cuik_QualType type, int* level) {
     if (level == NULL) *level = l;
     return type;
 }
+
+////////////////////////////////////////////
+// Pretty printers
+////////////////////////////////////////////
+void cuik_dump_translation_unit(FILE* stream, TranslationUnit* tu, bool minimalist);
+
+////////////////////////////////////////////
+// Iterators
+////////////////////////////////////////////
+typedef struct {
+    // public
+    Expr* expr;
+
+    // internal
+    size_t index_;
+    Expr* parent_;
+} Cuik_ExprIter;
+
+typedef struct {
+    // public
+    Stmt* stmt;
+
+    // internal
+    size_t index_;
+    Stmt* parent_;
+} Cuik_StmtIter;
+
+#define CUIK_FOR_KID_IN_STMT(it, parent_) \
+for (Cuik_StmtIter it = { .parent = (parent_) }; cuik_next_stmt_kid(&it);)
+
+#define CUIK_FOR_KID_IN_EXPR(it, parent_) \
+for (Cuik_ExprIter it = { .parent = (parent_) }; cuik_next_expr_kid(&it);)
+
+bool cuik_next_expr_kid(Cuik_ExprIter* it);
+bool cuik_next_stmt_kid(Cuik_StmtIter* it);

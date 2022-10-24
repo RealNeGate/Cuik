@@ -94,14 +94,12 @@ struct TranslationUnit {
     struct TranslationUnit* next;
 
     void* user_data;
-    atomic_int ref_count;
 
     #ifdef CUIK_USE_TB
     TB_Module* ir_mod;
     #endif
 
     const char* filepath;
-    Cuik_ErrorStatus* errors;
     const Cuik_Warnings* warnings;
     Cuik_ImportRequest* import_libs;
 

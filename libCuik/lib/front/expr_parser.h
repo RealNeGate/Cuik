@@ -381,7 +381,7 @@ static Expr* parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
             while (tokens_get(s)->type != ')') {
                 if (tokens_get(s)->type == TOKEN_KW_default) {
                     if (default_loc.raw != 0) {
-                        report_two_spots(REPORT_ERROR, tu->errors, s,
+                        report_two_spots(REPORT_ERROR, s,
                             default_loc, tokens_get_location(s),
                             "multiple default cases on _Generic",
                             NULL, NULL, NULL);
@@ -434,12 +434,13 @@ static Expr* parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
         }
 
         default:
-        generic_error(tu, s, "could not parse expression");
+        diag_err(s, tokens_get_range(s), "could not parse expression");
+        break;
     }
+    tokens_next(s);
 
     e->loc.start = start_loc;
-    e->loc.end = tokens_get_location(s);
-    tokens_next(s);
+    e->loc.end = tokens_get_last_location(s);
     return e;
 }
 
@@ -473,12 +474,13 @@ static Expr* parse_expr_l1(TranslationUnit* tu, TokenStream* restrict s) {
         }
     }
 
+    start_loc = tokens_get_location(s);
     if (!e) e = parse_expr_l0(tu, s);
 
     // after any of the: [] () . ->
     // it'll restart and take a shot at matching another
     // piece of the expression.
-    try_again : {
+    try_again: {
         if (tokens_get(s)->type == '[') {
             Expr* base = e;
             e = make_expr(tu);
@@ -582,8 +584,9 @@ static Expr* parse_expr_l1(TranslationUnit* tu, TokenStream* restrict s) {
             *e = (Expr){
                 .op = EXPR_CALL,
                 .loc = { start_loc, end_loc },
-                .call = {target, param_count, param_start},
+                .call = { target, param_count, param_start },
             };
+            diag_note(s, e->loc, "EXPR");
 
             tls_restore(params);
             goto try_again;
@@ -930,41 +933,18 @@ static Expr* parse_expr_l14(TranslationUnit* tu, TokenStream* restrict s) {
 
         ExprOp op;
         switch (tokens_get(s)->type) {
-            case TOKEN_ASSIGN:
-            op = EXPR_ASSIGN;
-            break;
-            case TOKEN_PLUS_EQUAL:
-            op = EXPR_PLUS_ASSIGN;
-            break;
-            case TOKEN_MINUS_EQUAL:
-            op = EXPR_MINUS_ASSIGN;
-            break;
-            case TOKEN_TIMES_EQUAL:
-            op = EXPR_TIMES_ASSIGN;
-            break;
-            case TOKEN_SLASH_EQUAL:
-            op = EXPR_SLASH_ASSIGN;
-            break;
-            case TOKEN_PERCENT_EQUAL:
-            op = EXPR_PERCENT_ASSIGN;
-            break;
-            case TOKEN_AND_EQUAL:
-            op = EXPR_AND_ASSIGN;
-            break;
-            case TOKEN_OR_EQUAL:
-            op = EXPR_OR_ASSIGN;
-            break;
-            case TOKEN_XOR_EQUAL:
-            op = EXPR_XOR_ASSIGN;
-            break;
-            case TOKEN_LEFT_SHIFT_EQUAL:
-            op = EXPR_SHL_ASSIGN;
-            break;
-            case TOKEN_RIGHT_SHIFT_EQUAL:
-            op = EXPR_SHR_ASSIGN;
-            break;
-            default:
-            __builtin_unreachable();
+            case TOKEN_ASSIGN:            op = EXPR_ASSIGN;          break;
+            case TOKEN_PLUS_EQUAL:        op = EXPR_PLUS_ASSIGN;     break;
+            case TOKEN_MINUS_EQUAL:       op = EXPR_MINUS_ASSIGN;    break;
+            case TOKEN_TIMES_EQUAL:       op = EXPR_TIMES_ASSIGN;    break;
+            case TOKEN_SLASH_EQUAL:       op = EXPR_SLASH_ASSIGN;    break;
+            case TOKEN_PERCENT_EQUAL:     op = EXPR_PERCENT_ASSIGN;  break;
+            case TOKEN_AND_EQUAL:         op = EXPR_AND_ASSIGN;      break;
+            case TOKEN_OR_EQUAL:          op = EXPR_OR_ASSIGN;       break;
+            case TOKEN_XOR_EQUAL:         op = EXPR_XOR_ASSIGN;      break;
+            case TOKEN_LEFT_SHIFT_EQUAL:  op = EXPR_SHL_ASSIGN;      break;
+            case TOKEN_RIGHT_SHIFT_EQUAL: op = EXPR_SHR_ASSIGN;      break;
+            default: TODO();
         }
         tokens_next(s);
         Expr* rhs = parse_expr_l14(tu, s);

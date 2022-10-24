@@ -1,4 +1,10 @@
 
+_Static_assert(sizeof(int) >= 4, "int is nice");
+_Static_assert(sizeof(int) >= 2);
+
+int main(void) { return 0; }
+
+#if 0
 i\
 n\
 t main(void) {
@@ -6,7 +12,6 @@ t main(void) {
     return apple\U0001f431apple;
 }
 
-#if 0
 int foo(int* a) {
     static const struct {
         const char * zName ;

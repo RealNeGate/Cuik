@@ -72,7 +72,7 @@ static LoadResult get_file(const char* path) {
 }
 
 // cache is NULLable and if so it won't use it
-bool cuikpp_default_packet_handler(Cuik_CPP* ctx, Cuikpp_Packet* packet, Cuik_FileCache* cache) {
+bool cuikpp_default_packet_handler(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
     if (packet->tag == CUIKPP_PACKET_GET_FILE) {
         // we don't cache the main file
         LoadResult file = get_file(packet->file.input_path);
@@ -82,11 +82,6 @@ bool cuikpp_default_packet_handler(Cuik_CPP* ctx, Cuikpp_Packet* packet, Cuik_Fi
         packet->file.data = file.data;
         return true;
     } else if (packet->tag == CUIKPP_PACKET_QUERY_FILE) {
-        /*if (cache && cuik_fscache_query(cache, packet->file.input_path)) {
-            packet->query.found = true;
-            return true;
-        }*/
-
         #ifdef _WIN32
         packet->query.found = (GetFileAttributesA(packet->query.input_path) != INVALID_FILE_ATTRIBUTES);
         #else

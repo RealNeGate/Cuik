@@ -26,8 +26,8 @@ static int count_pp_lines(TokenStream* s) {
     const char* last_file = NULL;
     int last_line = 0;
 
-    Token* tokens = cuik_get_tokens(s);
-    size_t count = cuik_get_token_count(s);
+    Token* tokens = cuikpp_get_tokens(s);
+    size_t count = cuikpp_get_token_count(s);
 
     int line_count = 0;
     for (size_t i = 0; i < count; i++) {
@@ -70,7 +70,7 @@ static int pp_repl(void) {
             cpp = make_preprocessor(input_files[0], false);
             s = cuikpp_get_token_stream(cpp);
         } else if (strprefix(line, "loc")) {
-            printf("%d (%zu tokens)\n", count_pp_lines(s), cuik_get_token_count(s));
+            printf("%d (%zu tokens)\n", count_pp_lines(s), cuikpp_get_token_count(s));
         } else if (strprefix(line, "syms")) {
             CUIKPP_FOR_DEFINES(it, cpp) {
                 if (it.value.length) {

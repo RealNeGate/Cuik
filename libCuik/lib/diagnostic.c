@@ -97,8 +97,6 @@ void print_include(TokenStream* tokens, SourceLoc loc) {
 }
 
 static void print_line(TokenStream* tokens, ResolvedSourceLoc start, size_t tkn_len) {
-    // fprintf(stderr, "  %s\n", start.file->filename);
-
     const char* line_start = start.line_str;
     while (*line_start && isspace(*line_start)) line_start++;
     size_t dist_from_line_start = line_start - start.line_str;
@@ -146,6 +144,14 @@ static void print_line_with_backtrace(TokenStream* tokens, SourceLoc loc, size_t
 }
 
 static void diag(DiagType type, TokenStream* tokens, SourceRange loc, const char* fmt, va_list ap) {
+    size_t fixit_count = 0;
+    DiagFixit fixits[3];
+    while (*fmt == '#') {
+        assert(fixit_count < 3);
+        fixits[fixit_count++] = va_arg(ap, DiagFixit);
+        fmt += 1;
+    }
+
     SourceLoc loc_start = loc.start;
     // we wanna find the physical character
     for (MacroInvoke* m; (m = cuikpp_find_macro(tokens, loc_start)) != NULL;) {
@@ -172,14 +178,31 @@ static void diag(DiagType type, TokenStream* tokens, SourceRange loc, const char
     }
 
     // Caret preview
-    size_t tkn_len = 1;
+    size_t tkn_len;
     ResolvedSourceLoc end = cuikpp_find_location(tokens, loc_end);
     if (end.file == start.file && end.line == start.line && end.column > start.column) {
         tkn_len = end.column - start.column;
+    } else {
+        tkn_len = 1;
     }
 
     // print_line(tokens, start, tkn_len);
     print_line_with_backtrace(tokens, loc.start, tkn_len);
+
+    {
+        const char* line_start = start.line_str;
+        while (*line_start && isspace(*line_start)) line_start++;
+        size_t dist_from_line_start = line_start - start.line_str;
+
+        for (int i = 0; i < fixit_count; i++) {
+            size_t start_pos = start.column > dist_from_line_start ? start.column - dist_from_line_start : 0;
+            start_pos += fixits[i].offset;
+
+            fprintf(stderr, "        \x1b[32m");
+            for (size_t j = 0; j < start_pos; j++) fprintf(stderr, " ");
+            fprintf(stderr, "%s\x1b[0m\n", fixits[i].hint);
+        }
+    }
     atomic_fetch_add((atomic_int*) tokens->error_tally, 1);
 }
 

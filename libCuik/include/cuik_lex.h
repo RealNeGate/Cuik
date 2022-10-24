@@ -18,6 +18,7 @@ enum {
 };
 
 typedef struct Cuik_CPP Cuik_CPP;
+typedef struct Cuik_Target Cuik_Target;
 
 // TODO(NeGate): move this into common.h
 typedef struct String {
@@ -152,6 +153,9 @@ void cuikpp_finalize(Cuik_CPP* ctx);
 // haven't finished iterating through cuikpp_next)
 TokenStream* cuikpp_get_token_stream(Cuik_CPP* ctx);
 
+Token* cuikpp_get_tokens(TokenStream* restrict s);
+size_t cuikpp_get_token_count(TokenStream* restrict s);
+
 ////////////////////////////////
 // Line info
 ////////////////////////////////
@@ -221,21 +225,42 @@ typedef enum {
     CUIKPP_ERROR,
 } Cuikpp_Status;
 
-////////////////////////////////
-// Preprocessor includes
-////////////////////////////////
-// Adds include directory to the search list
-void cuikpp_add_include_directory(Cuik_CPP* ctx, const char dir[]);
+// simplifies whitespace for the lexer
+void cuiklex_canonicalize(size_t length, char* data);
 
-// Locates an include file from the `path` and copies it's fully qualified path into `output`
-bool cuikpp_find_include_include(Cuik_CPP* ctx, char output[FILENAME_MAX], const char* path);
+// Used by cuikpp_default_packet_handler, it canonicalizes paths according to the OS
+// NOTE: it doesn't guarentee the paths map to existing files.
+//
+// returns true on success
+bool cuik_canonicalize_path(char output[FILENAME_MAX], const char* input);
+
+// Iterates through all the cuikpp_next calls using cuikpp_default_packet_handler
+// and returns the final status.
+Cuikpp_Status cuikpp_default_run(Cuik_CPP* ctx);
+
+// Keep iterating through this and filling in the packets accordingly to preprocess a file.
+// returns CUIKPP_CONTINUE if it needs to keep running
+Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet);
+
+// Handles the default behavior of the packet written by cuikpp_next, if cache is NULL then
+// it's unused.
+//
+// returns true if it succeeded in whatever packet handling (loading the file correctly)
+bool cuikpp_default_packet_handler(Cuik_CPP* ctx, Cuikpp_Packet* packet);
+
+// if target is non-NULL it'll add predefined macros based on the target.
+void cuikpp_set_common_defines(Cuik_CPP* restrict out_cpp, const Cuik_Target* target, bool use_system_includes);
+
+// is the source location in the source file (none of the includes)
+bool cuikpp_is_in_main_file(TokenStream* tokens, SourceLoc loc);
+
+const char* cuikpp_get_main_file(TokenStream* tokens);
 
 ////////////////////////////////
 // Preprocessor symbol table
 ////////////////////////////////
 bool cuikpp_find_define_cstr(Cuik_CPP* restrict c, Cuik_DefineIter* out_ref, const char* key);
 bool cuikpp_find_define(Cuik_CPP* restrict c, Cuik_DefineIter* out_ref, size_t keylen, const char key[]);
-
 // Basically just `#define key`
 void cuikpp_define_empty_cstr(Cuik_CPP* ctx, const char key[]);
 void cuikpp_define_empty(Cuik_CPP* ctx, size_t keylen, const char key[]);
@@ -245,6 +270,33 @@ void cuikpp_define(Cuik_CPP* ctx, size_t keylen, const char key[], size_t vallen
 // Basically just `#undef key`
 bool cuikpp_undef_cstr(Cuik_CPP* ctx, const char* key);
 bool cuikpp_undef(Cuik_CPP* ctx, size_t keylen, const char* key);
+
+////////////////////////////////
+// Preprocessor includes
+////////////////////////////////
+// Adds include directory to the search list
+void cuikpp_add_include_directory(Cuik_CPP* ctx, const char dir[]);
+
+// Locates an include file from the `path` and copies it's fully qualified path into `output`
+bool cuikpp_find_include_include(Cuik_CPP* ctx, char output[FILENAME_MAX], const char* path);
+
+// This is an iterator for include search list in the preprocessor:
+//
+// Cuik_IncludeIter it = cuikpp_first_include_search(cpp);
+// while (cuikpp_next_include_search(cpp, &it)) { ... }
+typedef struct Cuik_IncludeIter {
+    // public
+    const char* directory;
+
+    // internal
+    size_t i;
+} Cuik_IncludeIter;
+
+#define CUIKPP_FOR_INCLUDE_SEARCHES(it, ctx) \
+for (Cuik_IncludeIter it = cuikpp_first_include_search(ctx); cuikpp_next_include_search(ctx, &it);)
+
+Cuik_IncludeIter cuikpp_first_include_search(Cuik_CPP* ctx);
+bool cuikpp_next_include_search(Cuik_CPP* ctx, Cuik_IncludeIter* it);
 
 ////////////////////////////////
 // C preprocessor pretty printer
@@ -259,6 +311,9 @@ void cuikpp_dump_defines(Cuik_CPP* ctx);
 //
 //     %!T       Cuik_Type
 //     %!S       String
+//
+// fixit diagnostics are added by placing a # at the start of the format string and
+// writing out a DiagFixit at the start of the var args
 void diag_note(TokenStream* tokens, SourceRange loc, const char* fmt, ...);
 void diag_warn(TokenStream* tokens, SourceRange loc, const char* fmt, ...);
 void diag_err(TokenStream* tokens, SourceRange loc, const char* fmt, ...);

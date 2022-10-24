@@ -3,7 +3,7 @@
 ////////////////////////////////
 static thread_local char temp_string0[1024];
 
-static Cuik_Attribute* parse_attributes(TranslationUnit* restrict tu, TokenStream* restrict s, Cuik_Attribute* last) {
+static Cuik_Attribute* parse_attributes(TokenStream* restrict s, Cuik_Attribute* last) {
     for (;;) {
         if (tokens_peek_double_token(s, '[')) {
             // C23 attribute:
@@ -16,7 +16,7 @@ static Cuik_Attribute* parse_attributes(TranslationUnit* restrict tu, TokenStrea
             // TODO(NeGate): we'll only handle the identifier case with no :: for now
             tokens_next(s), tokens_next(s);
             if (tokens_get(s)->type != TOKEN_IDENTIFIER) {
-                REPORT(ERROR, tokens_get_location(s), "Expected an identifier");
+                diag_err(s, tokens_get_range(s), "expected an identifier");
             } else {
                 Token* t = tokens_get(s);
                 a->name = atoms_put(t->content.length, t->content.data);
@@ -25,7 +25,7 @@ static Cuik_Attribute* parse_attributes(TranslationUnit* restrict tu, TokenStrea
             a->loc.end = tokens_get_location(s);
 
             if (!tokens_peek_double_token(s, ']')) {
-                REPORT(ERROR, tokens_get_location(s), "Expected closing ']]' for attribute");
+                diag_err(s, tokens_get_range(s), "expected closing ']]' for attribute");
             }
             tokens_next(s), tokens_next(s);
 
@@ -34,7 +34,7 @@ static Cuik_Attribute* parse_attributes(TranslationUnit* restrict tu, TokenStrea
             // TODO(NeGate): Correctly parse attributes instead of
             // ignoring them.
             tokens_next(s);
-            expect(tu, s, '(');
+            expect_char(s, '(');
 
             int depth = 1;
             while (depth) {
@@ -52,11 +52,11 @@ static Cuik_Attribute* parse_attributes(TranslationUnit* restrict tu, TokenStrea
     }
 }
 
-static bool skip_over_declspec(TranslationUnit* tu, TokenStream* restrict s) {
+static bool skip_over_declspec(TokenStream* restrict s) {
     if (tokens_get(s)->type == TOKEN_KW_declspec ||
         tokens_get(s)->type == TOKEN_KW_Pragma) {
         tokens_next(s);
-        expect(tu, s, '(');
+        expect_char(s, '(');
 
         // TODO(NeGate): Correctly parse declspec instead of
         // ignoring them.
@@ -115,7 +115,7 @@ static Decl parse_declarator(TranslationUnit* tu, TokenStream* restrict s, Cuik_
         tokens_next(s);
     }
 
-    skip_over_declspec(tu, s);
+    skip_over_declspec(s);
     bool is_nested_declarator = tokens_get(s)->type == '(';
 
     // disambiguate
@@ -192,7 +192,7 @@ static Decl parse_declarator(TranslationUnit* tu, TokenStream* restrict s, Cuik_
 static Cuik_QualType parse_typename(TranslationUnit* tu, TokenStream* restrict s) {
     // TODO(NeGate): Check if attributes are set, they shouldn't
     // be in this context.
-    Attribs attr = {0};
+    Attribs attr = { 0 };
     Cuik_QualType type = parse_declspec(tu, s, &attr);
     return parse_declarator(tu, s, type, true, false).type;
 }
@@ -313,7 +313,7 @@ static Cuik_QualType parse_type_suffix(TranslationUnit* tu, TokenStream* restric
                         depth++;
                     } else if (t->type == ']') {
                         if (depth == 0) {
-                            report_two_spots(REPORT_ERROR, tu->errors, s, open_brace, t->location,
+                            report_two_spots(REPORT_ERROR, s, open_brace, t->location,
                                 "Unbalanced brackets", "open", "close?", NULL);
                             abort();
                         }
@@ -640,7 +640,7 @@ static Cuik_QualType parse_declspec(TranslationUnit* tu, TokenStream* restrict s
                 tokens_next(s);
 
                 bool is_union = tkn_type == TOKEN_KW_union;
-                while (skip_over_declspec(tu, s)) {
+                while (skip_over_declspec(s)) {
                     // TODO(NeGate): printf("Don't forget about declspec\n");
                 }
 
@@ -689,7 +689,7 @@ static Cuik_QualType parse_declspec(TranslationUnit* tu, TokenStream* restrict s
                     Member* members = tls_save();
 
                     while (tokens_get(s)->type != '}') {
-                        if (skip_over_declspec(tu, s)) continue;
+                        if (skip_over_declspec(s)) continue;
 
                         // in case we have unnamed declarators and we somewhere for them to point to
                         SourceRange default_loc = tokens_get_range(s);

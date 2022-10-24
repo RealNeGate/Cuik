@@ -13,8 +13,6 @@
 
 #undef VOID // winnt.h loves including garbage
 
-#define OUT_OF_ORDER_CRAP 1
-
 // HACK: this is defined in sema.c but because we sometimes call semantics stuff in the
 // parser we need access to it to avoid some problems
 extern thread_local Stmt* cuik__sema_function_stmt;
@@ -62,6 +60,7 @@ thread_local static Arena local_ast_arena;
 thread_local static bool out_of_order_mode;
 
 static void expect(TranslationUnit* tu, TokenStream* restrict s, char ch);
+static bool expect_char(TokenStream* restrict s, char ch);
 static void expect_closing_paren(TranslationUnit* tu, TokenStream* restrict s, SourceLoc opening);
 static void expect_with_reason(TranslationUnit* tu, TokenStream* restrict s, char ch, const char* reason);
 static Symbol* find_local_symbol(TokenStream* restrict s);
@@ -71,7 +70,7 @@ static Stmt* parse_stmt_or_expr(TranslationUnit* tu, TokenStream* restrict s);
 static void parse_compound_stmt(TranslationUnit* tu, TokenStream* restrict s, Stmt* restrict node);
 static bool parse_decl_or_expr(TranslationUnit* tu, TokenStream* restrict s, size_t* body_count);
 
-static bool skip_over_declspec(TranslationUnit* tu, TokenStream* restrict s);
+static bool skip_over_declspec(TokenStream* restrict s);
 static bool try_parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attribs* attr);
 static Cuik_QualType parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attribs* attr);
 
@@ -223,6 +222,7 @@ static void diag_unresolved_symbol(TranslationUnit* tu, Atom name, SourceLoc loc
 
 #include "expr_parser.h"
 #include "decl_parser.h"
+#include "top_level_parser.h"
 
 typedef struct {
     // shared state, every run of phase2_parse_task will decrement this by one
@@ -538,19 +538,14 @@ TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* res
     }
 
     assert(desc->tokens != NULL);
-    assert(desc->errors != NULL);
-    memset(desc->errors, 0, sizeof(*desc->errors));
-
     // hacky but i don't wanna wrap it in a CUIK_TIMED_BLOCK
     uint64_t timer_start = cuik_time_in_nanos();
 
     TranslationUnit* tu = calloc(1, sizeof(TranslationUnit));
-    tu->ref_count = 1;
     tu->filepath = desc->tokens->filepath;
     tu->is_windows_long = desc->target->sys == CUIK_SYSTEM_WINDOWS;
     tu->target = *desc->target;
     tu->tokens = *desc->tokens;
-    tu->errors = desc->errors;
     tu->warnings = desc->warnings ? desc->warnings : &DEFAULT_WARNINGS;
 
     #ifdef CUIK_USE_TB
@@ -698,11 +693,11 @@ TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* res
 
                 expect(tu, s, ')');
             } else {
-                Cuik_Attribute* attribute_list = parse_attributes(tu, s, NULL);
+                Cuik_Attribute* attribute_list = parse_attributes(s, NULL);
                 SourceLoc loc = tokens_get_location(s);
 
                 // must be a declaration since it's a top level statement
-                Attribs attr = {0};
+                Attribs attr = { 0 };
                 Cuik_QualType type = parse_declspec(tu, s, &attr);
                 if (CUIK_QUAL_TYPE_IS_NULL(type)) {
                     REPORT(ERROR, loc, "Could not parse base type.");
@@ -724,7 +719,7 @@ TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* res
                             Stmt* n = make_stmt(tu, s);
                             n->op = STMT_DECL;
                             n->loc = decl.loc;
-                            n->attr_list = parse_attributes(tu, s, attribute_list);
+                            n->attr_list = parse_attributes(s, attribute_list);
                             n->decl = (struct StmtDecl){
                                 .name = decl.name,
                                 .type = decl.type,
@@ -851,7 +846,7 @@ TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* res
                             sym->storage_class = (attr.is_static ? STORAGE_STATIC_VAR : STORAGE_GLOBAL);
                         }
 
-                        n->attr_list = parse_attributes(tu, s, n->attr_list);
+                        n->attr_list = parse_attributes(s, n->attr_list);
 
                         bool requires_terminator = true;
                         if (tokens_get(s)->type == '=') {
@@ -984,7 +979,7 @@ TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* res
 
                                 if (t->type == '\0') {
                                     SourceLoc l = tokens_get_last_location(s);
-                                    report_fix(REPORT_ERROR, tu->errors, s, l, "}", "Function body ended in EOF");
+                                    report_fix(REPORT_ERROR, s, l, "}", "Function body ended in EOF");
 
                                     s->list.current = sym->current + 1;
                                     goto skip_declaration;
@@ -1335,17 +1330,6 @@ void* cuik_get_translation_unit_user_data(TranslationUnit* restrict tu) {
     return tu->user_data;
 }
 
-int cuik_acquire_translation_unit(TranslationUnit* restrict tu) {
-    return atomic_fetch_add(&tu->ref_count, 1);
-}
-
-void cuik_release_translation_unit(TranslationUnit* restrict tu) {
-    int r = --tu->ref_count;
-    if (r == 0) {
-        cuik_destroy_translation_unit(tu);
-    }
-}
-
 void cuik_destroy_translation_unit(TranslationUnit* restrict tu) {
     dyn_array_destroy(tu->top_level_stmts);
 
@@ -1361,30 +1345,6 @@ Cuik_ImportRequest* cuik_translation_unit_import_requests(TranslationUnit* restr
 
 TranslationUnit* cuik_next_translation_unit(TranslationUnit* restrict tu) {
     return tu->next;
-}
-
-Cuik_TopLevelIter cuik_first_top_level_stmt(TranslationUnit* restrict tu) {
-    return (Cuik_TopLevelIter){
-        .limit_ = dyn_array_length(tu->top_level_stmts),
-        .stmts_ = tu->top_level_stmts
-    };
-}
-
-bool cuik_next_top_level_stmt(Cuik_TopLevelIter* it, int step) {
-    size_t i = it->index_, limit = it->limit_;
-    if (i >= limit) {
-        return false;
-    }
-
-    if (i + step >= limit) {
-        it->count = step - ((i + step) - limit);
-    } else {
-        it->count = step;
-    }
-
-    it->start = &it->stmts_[i];
-    it->index_ = i + step;
-    return true;
 }
 
 Stmt** cuik_get_top_level_stmts(TranslationUnit* restrict tu) {
@@ -2005,7 +1965,7 @@ static bool parse_decl_or_expr(TranslationUnit* tu, TokenStream* restrict s, siz
                         return false;
                     } else if (tokens_get(s)->type != ',') {
                         SourceLoc loc = tokens_get_last_location(s);
-                        report_fix(REPORT_ERROR, tu->errors, s, loc, ";", "expected semicolon at the end of declaration");
+                        report_fix(REPORT_ERROR, s, loc, ";", "expected semicolon at the end of declaration");
                     } else {
                         tokens_next(s);
                     }
@@ -2125,28 +2085,26 @@ static intmax_t parse_const_expr(TranslationUnit* tu, TokenStream* restrict s) {
 static _Noreturn void generic_error(TranslationUnit* tu, TokenStream* restrict s, const char* msg) {
     SourceLoc loc = tokens_get_location(s);
 
-    report(REPORT_ERROR, NULL, s, loc, msg);
+    report(REPORT_ERROR, s, loc, msg);
     abort();
 }
 
 static void expect(TranslationUnit* tu, TokenStream* restrict s, char ch) {
     if (tokens_get(s)->type != ch) {
         Token* t = tokens_get(s);
-        SourceLoc loc = tokens_get_last_location(s);
+        SourceLoc loc = tokens_get_location(s);
 
-        char tmp[2] = { ch };
-        report_fix(REPORT_ERROR, NULL, s, loc, tmp, "expected '%c' got '%.*s'", ch, (int)t->content.length, t->content.data);
-        abort();
+        diag_err(s, (SourceRange){ loc, loc }, "expected '%c', got '%.*s'", ch, (int)t->content.length, t->content.data);
+    } else {
+        tokens_next(s);
     }
-
-    tokens_next(s);
 }
 
 static void expect_closing_paren(TranslationUnit* tu, TokenStream* restrict s, SourceLoc opening) {
     if (tokens_get(s)->type != ')') {
         SourceLoc loc = tokens_get_location(s);
 
-        report_two_spots(REPORT_ERROR, tu->errors, s, opening, loc,
+        report_two_spots(REPORT_ERROR, s, opening, loc,
             "expected closing parenthesis",
             "open", "close?", NULL
         );
@@ -2161,7 +2119,7 @@ static void expect_with_reason(TranslationUnit* tu, TokenStream* restrict s, cha
         SourceLoc loc = tokens_get_last_location(s);
 
         char fix[2] = { ch, '\0' };
-        report_fix(REPORT_ERROR, NULL, s, loc, fix, "expected '%c' for %s", ch, reason);
+        report_fix(REPORT_ERROR, s, loc, fix, "expected '%c' for %s", ch, reason);
         return;
     }
 

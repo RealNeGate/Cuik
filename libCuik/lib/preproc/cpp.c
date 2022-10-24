@@ -209,6 +209,15 @@ void cuikpp_init(Cuik_CPP* ctx, const char filepath[FILENAME_MAX]) {
     };
 }
 
+Token* cuikpp_get_tokens(TokenStream* restrict s) {
+    return &s->list.tokens[0];
+}
+
+size_t cuikpp_get_token_count(TokenStream* restrict s) {
+    // don't tell them about the EOF token :P
+    return dyn_array_length(s->list.tokens) - 1;
+}
+
 void cuikpp_deinit(Cuik_CPP* ctx) {
     #if CUIK__CPP_STATS
     //printf("%40s | %zu file read | %zu fstats\n", ctx->files[0].filepath, ctx->total_files_read, ctx->total_fstats);
@@ -684,13 +693,13 @@ Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
     }
 }
 
-Cuikpp_Status cuikpp_default_run(Cuik_CPP* ctx, Cuik_FileCache* cache) {
+Cuikpp_Status cuikpp_default_run(Cuik_CPP* ctx) {
     Cuikpp_Packet packet;
     for (;;) {
         Cuikpp_Status status = cuikpp_next(ctx, &packet);
         if (status != CUIKPP_CONTINUE) return status;
 
-        cuikpp_default_packet_handler(ctx, &packet, cache);
+        cuikpp_default_packet_handler(ctx, &packet);
     }
 }
 

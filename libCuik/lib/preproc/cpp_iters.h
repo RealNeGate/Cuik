@@ -1,6 +1,10 @@
 
 void cuikpp_add_include_directory(Cuik_CPP* ctx, const char dir[]) {
+    #ifdef _WIN32
     dyn_array_put(ctx->system_include_dirs, strdup(dir));
+    #else
+    dyn_array_put(ctx->system_include_dirs, _strdup(dir));
+    #endif
 }
 
 Cuik_File* cuikpp_next_file(Cuik_CPP* ctx, Cuik_File* f) {

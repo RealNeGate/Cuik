@@ -5,13 +5,19 @@
 #include <threads.h>
 #undef ERROR
 
-#define REPORT(lvl, loc, ...) report(REPORT_##lvl, tu->errors, &tu->tokens, (SourceLoc){ 0 }, __VA_ARGS__)
-#define REPORT_RANGED(lvl, a, b, ...) report_ranged(REPORT_##lvl, tu->errors, &tu->tokens, a, b, __VA_ARGS__)
-#define REPORT_EXPR(lvl, e, ...) report_ranged(REPORT_##lvl, tu->errors, &tu->tokens, (e)->loc.start, (e)->loc.end, __VA_ARGS__)
-#define REPORT_STMT(lvl, s, ...) report_ranged(REPORT_##lvl, tu->errors, &tu->tokens, (s)->loc.start, (s)->loc.end, __VA_ARGS__)
+#define REPORT(lvl, loc, ...) report(REPORT_##lvl, &tu->tokens, (SourceLoc){ 0 }, __VA_ARGS__)
+#define REPORT_RANGED(lvl, a, b, ...) report_ranged(REPORT_##lvl, &tu->tokens, a, b, __VA_ARGS__)
+#define REPORT_EXPR(lvl, e, ...) report_ranged(REPORT_##lvl, &tu->tokens, (e)->loc.start, (e)->loc.end, __VA_ARGS__)
+#define REPORT_STMT(lvl, s, ...) report_ranged(REPORT_##lvl, &tu->tokens, (s)->loc.start, (s)->loc.end, __VA_ARGS__)
 
 extern mtx_t report_mutex;
 extern bool report_using_thin_errors;
+
+typedef struct DiagFixit {
+    SourceRange loc;
+    int offset;
+    const char* hint;
+} DiagFixit;
 
 // These are your options for arguments in diagnostics
 typedef enum {
@@ -35,6 +41,14 @@ typedef struct {
     TokenStream* tokens;
 } Diagnostics;
 
+typedef enum Cuik_ReportLevel {
+    REPORT_VERBOSE,
+    REPORT_INFO,
+    REPORT_WARNING,
+    REPORT_ERROR,
+    REPORT_MAX
+} Cuik_ReportLevel;
+
 void cuikdg_init(void);
 int cuikdg_error_count(TokenStream* s);
 
@@ -48,10 +62,10 @@ void diag_writer_highlight(DiagWriter* writer, SourceRange loc);
 bool diag_writer_is_compatible(DiagWriter* writer, SourceRange loc);
 void diag_writer_done(DiagWriter* writer);
 
-static void report_two_spots(Cuik_ReportLevel level, Cuik_ErrorStatus* err, TokenStream* tokens, SourceLoc loc, SourceLoc loc2, const char* msg, const char* loc_msg, const char* loc_msg2, const char* interjection) {}
-static void report(Cuik_ReportLevel level, Cuik_ErrorStatus* err, TokenStream* tokens, SourceLoc loc, const char* fmt, ...) {}
-static void report_ranged(Cuik_ReportLevel level, Cuik_ErrorStatus* err, TokenStream* tokens, SourceLoc start_loc, SourceLoc end_loc, const char* fmt, ...) {}
-static void report_fix(Cuik_ReportLevel level, Cuik_ErrorStatus* err, TokenStream* tokens, SourceLoc loc, const char* tip, const char* fmt, ...) {}
+static void report_two_spots(Cuik_ReportLevel level, TokenStream* tokens, SourceLoc loc, SourceLoc loc2, const char* msg, const char* loc_msg, const char* loc_msg2, const char* interjection) {}
+static void report(Cuik_ReportLevel level, TokenStream* tokens, SourceLoc loc, const char* fmt, ...) {}
+static void report_ranged(Cuik_ReportLevel level, TokenStream* tokens, SourceLoc start_loc, SourceLoc end_loc, const char* fmt, ...) {}
+static void report_fix(Cuik_ReportLevel level, TokenStream* tokens, SourceLoc loc, const char* tip, const char* fmt, ...) {}
 
 // Report primitives
 static void report_header(Cuik_ReportLevel level, const char* fmt, ...) {}
