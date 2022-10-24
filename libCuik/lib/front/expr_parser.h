@@ -10,66 +10,15 @@ static Expr* parse_expr_l14(TranslationUnit* tu, TokenStream* restrict s);
 static Expr* parse_expr_l2(TranslationUnit* tu, TokenStream* restrict s);
 static Expr* parse_expr(TranslationUnit* tu, TokenStream* restrict s);
 
-static Expr* parse_function_literal(TranslationUnit* tu, TokenStream* restrict s, Cuik_Type* type) {
-    // if the literal doesn't have a parameter list it will inherit from the `type`
-    if (tokens_get(s)->type == '(') {
-        tokens_next(s);
-
-        // this might break on typeof because it's fucking weird...
-        // TODO(NeGate): error messages... no attributes here
-        Attribs attr = {0};
-        type = parse_declspec(tu, s, &attr);
-        type = parse_declarator(tu, s, type, true, true).type;
-
-        expect(tu, s, ')');
-    }
-
-    if (type->kind == KIND_PTR) {
-        type = type->ptr_to;
-    }
-
-    if (type->kind != KIND_FUNC) {
-        generic_error(tu, s, "Function literal base type is not a function type");
-    }
-
-    // Because of the "not a lambda" nature of the function literals they count as
-    // "scoped top level statements" which doesn't particularly change anything for
-    // it but is interesting to think about internally
-    Stmt* n = make_stmt(tu, s, STMT_FUNC_DECL, sizeof(struct StmtDecl));
-    n->loc = type->loc;
-    n->decl = (struct StmtDecl){
-        .type = type,
-        .name = NULL,
-        .attrs = {
-            .is_root = true, // to avoid it being vaporized
-            .is_inline = true,
-        },
-        .initial_as_stmt = NULL,
-    };
-    dyn_array_put(tu->top_level_stmts, n);
-
-    LOCAL_SCOPE {
-        parse_function_definition(tu, s, n);
-    }
-
-    Expr* e = make_expr(tu);
-    *e = (Expr){
-        .op = EXPR_FUNCTION,
-        .type = type,
-        .func = {n},
-    };
-    return e;
-}
-
 // NOTE(NeGate): This function will push all nodes it makes onto the temporary
 // storage where parse_initializer will move them into permanent storage.
 static void parse_initializer_member(TranslationUnit* tu, TokenStream* restrict s) {
     // Parse designator, it's just chains of:
-    // [const-expr]
-    // .identifier
+    //   [const-expr]
+    //   .identifier
     InitNode* current = NULL;
     try_again: {
-        if (tokens_get(s)->type == '[') {
+        if (tokens_get(s)->type == '[')  {
             SourceLoc loc = tokens_get_location(s);
             tokens_next(s);
 
@@ -91,11 +40,12 @@ static void parse_initializer_member(TranslationUnit* tu, TokenStream* restrict 
                 }
             }
             expect(tu, s, ']');
+            SourceLoc end_loc = tokens_get_last_location(s);
 
             current = (InitNode*)tls_push(sizeof(InitNode));
             *current = (InitNode){
                 .mode = INIT_ARRAY,
-                .loc = loc,
+                .loc = { loc, end_loc },
                 .kids_count = 1,
                 .start = start,
                 .count = count,
@@ -111,10 +61,11 @@ static void parse_initializer_member(TranslationUnit* tu, TokenStream* restrict 
             Atom name = atoms_put(t->content.length, t->content.data);
             tokens_next(s);
 
+            SourceLoc end_loc = tokens_get_last_location(s);
             current = (InitNode*)tls_push(sizeof(InitNode));
             *current = (InitNode){
                 .mode = INIT_MEMBER,
-                .loc = loc,
+                .loc = { loc, end_loc },
                 .kids_count = 1,
                 .member_name = name,
             };
@@ -159,7 +110,7 @@ static void parse_initializer_member(TranslationUnit* tu, TokenStream* restrict 
     }
 }
 
-static Expr* parse_initializer(TranslationUnit* tu, TokenStream* restrict s, Cuik_Type* type) {
+static Expr* parse_initializer(TranslationUnit* tu, TokenStream* restrict s, Cuik_QualType type) {
     SourceLoc loc = tokens_get_location(s);
 
     size_t count = 0;
@@ -190,7 +141,7 @@ static Expr* parse_initializer(TranslationUnit* tu, TokenStream* restrict s, Cui
     *e = (Expr){
         .op = EXPR_INITIALIZER,
         .loc = { loc, tokens_get_last_location(s) },
-        .init = {type, count, permanent_store},
+        .init = { type, count, permanent_store },
     };
     return e;
 }
@@ -223,14 +174,14 @@ static Expr* parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
                 expect(tu, s, '(');
                 Expr* src = parse_expr_l14(tu, s);
                 expect(tu, s, ',');
-                Cuik_Type* type = parse_typename(tu, s);
+                Cuik_QualType type = parse_typename(tu, s);
                 expect(tu, s, ')');
 
                 tokens_prev(s);
 
                 *e = (Expr){
                     .op = EXPR_VA_ARG,
-                    .va_arg_ = {src, type},
+                    .va_arg_ = { src, type },
                 };
                 break;
             }
@@ -246,7 +197,7 @@ static Expr* parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
                     *e = (Expr){
                         .op = EXPR_ENUM,
                         .type = sym->type,
-                        .enum_val = {&sym->type->enumerator.entries[sym->enum_value].value},
+                        .enum_val = { &cuik_canonical_type(sym->type)->enumerator.entries[sym->enum_value].value },
                     };
                 } else {
                     assert(sym->stmt != NULL);
@@ -274,7 +225,7 @@ static Expr* parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
                             *e = (Expr){
                                 .op = EXPR_ENUM,
                                 .type = symbol_search->type,
-                                .enum_val = {&symbol_search->type->enumerator.entries[symbol_search->enum_value].value},
+                                .enum_val = { &cuik_canonical_type(symbol_search->type)->enumerator.entries[symbol_search->enum_value].value },
                             };
                         } else {
                             *e = (Expr){
@@ -446,12 +397,12 @@ static Expr* parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
                     // the default case is like a normal entry but without a type :p
                     tls_push(sizeof(C11GenericEntry));
                     entries[entry_count++] = (C11GenericEntry){
-                        .key = NULL,
+                        .key = CUIK_QUAL_TYPE_NULL,
                         .value = expr,
                     };
                 } else {
-                    Cuik_Type* type = parse_typename(tu, s);
-                    assert(type != 0 && "TODO: error recovery");
+                    Cuik_QualType type = parse_typename(tu, s);
+                    assert(!CUIK_QUAL_TYPE_IS_NULL(type) && "TODO: error recovery");
 
                     expect(tu, s, ':');
                     Expr* expr = parse_expr_l14(tu, s);
@@ -500,7 +451,7 @@ static Expr* parse_expr_l1(TranslationUnit* tu, TokenStream* restrict s) {
         tokens_next(s);
 
         if (is_typename(tu, s)) {
-            Cuik_Type* type = parse_typename(tu, s);
+            Cuik_QualType type = parse_typename(tu, s);
             expect_closing_paren(tu, s, start_loc);
 
             if (tokens_get(s)->type == '{') {
@@ -701,7 +652,7 @@ static Expr* parse_expr_l2(TranslationUnit* tu, TokenStream* restrict s) {
         *e = (Expr){
             .op = EXPR_CAST,
             .loc = { start_loc, end_loc },
-            .cast = {value, &builtin_types[TYPE_BOOL]},
+            .cast = { value, cuik_make_qual_type(&builtin_types[TYPE_BOOL], 0) },
         };
         return e;
     } else if (tokens_get(s)->type == '-') {
@@ -775,7 +726,7 @@ static Expr* parse_expr_l2(TranslationUnit* tu, TokenStream* restrict s) {
 
         Expr* e = 0;
         if (is_typename(tu, s)) {
-            Cuik_Type* type = parse_typename(tu, s);
+            Cuik_QualType type = parse_typename(tu, s);
 
             if (has_paren) {
                 expect_closing_paren(tu, s, opening_loc);
@@ -795,7 +746,7 @@ static Expr* parse_expr_l2(TranslationUnit* tu, TokenStream* restrict s) {
                 *e = (Expr){
                     .op = operation_type == TOKEN_KW_sizeof ? EXPR_SIZEOF_T : EXPR_ALIGNOF_T,
                     .loc = { start_loc, end_loc },
-                    .x_of_type = {type},
+                    .x_of_type = { type },
                 };
             }
         } else {

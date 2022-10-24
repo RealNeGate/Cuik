@@ -17,6 +17,14 @@
 //                   "cast type" is produced which represents the potential type
 //                   promotion and is the type actually used by the parent node.
 //
+// TODO:
+//
+//  * rename all the bare types to use Cuik_
+//
+//  * implement VLAs
+//
+//  * add qualifiers to type pretty printer
+//
 #pragma once
 #include "cuik.h"
 
@@ -55,6 +63,9 @@ typedef enum Cuik_TypeKind {
     KIND_UNION,
     KIND_VECTOR,
 
+    // __declspec(align(N)) or _Alignas(N)
+    KIND_ALIGNED,
+
     // these are inferred as typedefs but don't map to anything yet
     KIND_PLACEHOLDER,
 
@@ -69,7 +80,7 @@ typedef struct {
     Cuik_QualType type;
     Atom name;
 
-    SourceLoc loc;
+    SourceRange loc;
     int align;
     int offset;
 
@@ -116,7 +127,7 @@ struct Cuik_Type {
     Cuik_TypeKind kind;
     int size;  // sizeof
     int align; // _Alignof
-    SourceLoc loc;
+    SourceRange loc;
 
     Cuik_Type* based;
     // used by cycle checking
@@ -146,6 +157,10 @@ struct Cuik_Type {
             // parser to resolve it
             int array_count_lexer_pos;
         };
+
+        struct {
+            Cuik_Type* base;
+        } aligned_on;
 
         // Pointers
         struct {
@@ -181,7 +196,7 @@ struct Cuik_Type {
 
         struct {
             int count;
-            Cuik_QualType base;
+            Cuik_Type* base;
         } vector_;
 
         // Cuik_Typeof
@@ -194,8 +209,6 @@ struct Cuik_Type {
         } placeholder;
     };
 };
-#define TYPE_IS_INTEGER(x) (((x)->kind >= KIND_CHAR) && ((x)->kind <= KIND_LONG))
-#define TYPE_IS_FLOAT(x) (((x)->kind >= KIND_FLOAT) && ((x)->kind <= KIND_DOUBLE))
 
 // designated initializer member
 // .x = 5
@@ -213,7 +226,7 @@ typedef struct InitNode {
     // are expected to find an expression
     // here.
     int kids_count;
-    SourceLoc loc;
+    SourceRange loc;
 
     // Fully resolved members with a kid_count of 0 will have
     // a proper offset and type after the type checking
@@ -356,7 +369,7 @@ typedef enum ExprOp {
 struct Stmt {
     struct {
         StmtOp op;
-        SourceLoc loc;
+        SourceRange loc;
         Cuik_Attribute* attr_list;
 
         // Used by the backend for backend-y things
@@ -588,9 +601,28 @@ struct Expr {
 _Static_assert(offsetof(Expr, next_symbol_in_chain) == offsetof(Expr, next_symbol_in_chain2), "these should be aliasing");
 _Static_assert(offsetof(Expr, next_symbol_in_chain) == offsetof(Expr, builtin_sym.next_symbol_in_chain), "these should be aliasing");
 
+static bool cuik_type_is_signed(Cuik_Type* t) { return (t->kind >= KIND_CHAR && t->kind <= KIND_LONG) && !t->is_unsigned; }
+static bool cuik_type_is_unsigned(Cuik_Type* t) { return (t->kind >= KIND_CHAR && t->kind <= KIND_LONG) && t->is_unsigned; }
+
+static bool cuik_type_is_integer(Cuik_Type* t) { return t->kind >= KIND_CHAR && t->kind <= KIND_LONG; }
+static bool cuik_type_is_integer_or_bool(Cuik_Type* t) { return t->kind >= KIND_BOOL && t->kind <= KIND_LONG; }
+static bool cuik_type_is_float(Cuik_Type* t) { return t->kind >= KIND_FLOAT && t->kind <= KIND_DOUBLE; }
+
+// [https://www.sigbus.info/n1570#6.2.5p21]
+// Arithmetic types and pointer types are collectively called scalar types.
+// Array and structure types are collectively called aggregate types.
+static bool cuik_type_is_scalar(Cuik_Type* t) { return t->kind >= KIND_BOOL && t->kind <= KIND_PTR; }
+static bool cuik_type_is_aggregate(Cuik_Type* t) { return t->kind >= KIND_ARRAY && t->kind <= KIND_UNION; }
+
+// [https://www.sigbus.info/n1570#6.2.5p18]
+// Integer and floating types are collectively called arithmetic types.
+static bool cuik_type_is_arithmatic(Cuik_Type* t) { return t->kind >= KIND_BOOL && t->kind <= KIND_FUNC; }
+
+static bool cuik_type_can_deref(Cuik_Type* t) { return t->kind == KIND_PTR || t->kind == KIND_ARRAY; }
+
 // takes in Cuik_QualType
-#define CUIK_QUAL_TYPE_NULL(a)     ((Cuik_QualType){ 0 })
-#define CUIK_QUAL_TYPE_IS_NULL(a)  ((a).raw != 0)
+#define CUIK_QUAL_TYPE_NULL        (Cuik_QualType){ 0 }
+#define CUIK_QUAL_TYPE_IS_NULL(a)  ((a).raw == 0)
 #define CUIK_QUAL_TYPE_HAS(a, b)   (((a).raw & (b)) != 0)
 #define CUIK_QUAL_TYPE_ONLY(a, b)  (((a).raw & (b)) == (b))
 
@@ -602,6 +634,10 @@ static Cuik_QualType cuik_make_qual_type(Cuik_Type* t, Cuik_Qualifiers quals) {
     return (Cuik_QualType){ p | quals };
 }
 
+static Cuik_Qualifiers cuik_get_quals(Cuik_QualType t) {
+    return t.raw & CUIK_QUAL_FLAG_BITS;
+}
+
 static Cuik_QualType cuik_uncanonical_type(const Cuik_Type* t) {
     uintptr_t p = (uintptr_t) t;
     assert((p & CUIK_QUAL_FLAG_BITS) == 0);
@@ -609,5 +645,28 @@ static Cuik_QualType cuik_uncanonical_type(const Cuik_Type* t) {
 }
 
 static Cuik_Type* cuik_canonical_type(const Cuik_QualType t) {
-    return (Cuik_Type*) (t.raw & ~((uint64_t) CUIK_QUAL_FLAG_BITS));
+    return (Cuik_Type*) (t.raw & ~((uintptr_t) CUIK_QUAL_FLAG_BITS));
+}
+
+// if level is non-NULL, *level stores the indirection level.
+//
+// example:
+//   cuik_get_direct_type(int****)
+//     return int, *level is 4
+//
+//   cuik_get_direct_type(T)
+//     return T, *level is 0
+//
+//   cuik_get_direct_type(T*)
+//     return T, *level is 1
+//
+static Cuik_QualType cuik_get_direct_type(Cuik_QualType type, int* level) {
+    int l = 0;
+    while (cuik_canonical_type(type)->kind == KIND_PTR) {
+        type = cuik_canonical_type(type)->ptr_to;
+        l += 1;
+    }
+
+    if (level == NULL) *level = l;
+    return type;
 }

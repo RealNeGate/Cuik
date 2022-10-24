@@ -26,22 +26,19 @@ typedef struct Cuik_Type Cuik_Type;
 #include "cuik_irgen.h"
 #endif
 
+typedef enum Cuik_ExtensionFlags {
+    CUIK_EXTENSIONS_MSVC  = (1u << 0u),
+    CUIK_EXTENSIONS_CLANG = (1u << 1u),
+    CUIK_EXTENSIONS_GCC   = (1u << 2u),
+    CUIK_EXTENSIONS_CUIK  = (1u << 3u),
+} Cuik_ExtensionFlags;
+
 // This is generated from
 //    #pragma comment(lib, "somelib.lib")
 typedef struct Cuik_ImportRequest {
     struct Cuik_ImportRequest* next;
     const char* lib_name;
 } Cuik_ImportRequest;
-
-/*typedef struct Cuik_Report {
-    Cuik_ReportFormat format;
-
-    // NULL for not applicable
-    Expr* exprs[2];
-    Stmt* stmts[2];
-    Cuik_Type* types[2];
-    SourceLoc* locations[2];
-} Cuik_Report;*/
 
 ////////////////////////////////////////////
 // Interfaces

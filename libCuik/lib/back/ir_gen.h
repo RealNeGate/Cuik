@@ -22,7 +22,6 @@ typedef enum IRValType {
 
 typedef struct IRVal {
     IRValType value_type;
-    Cuik_Type* type;
 
     union {
         TB_Reg reg;
@@ -70,9 +69,6 @@ inline static TB_DataType ctype_to_tbtype(const Cuik_Type* t) {
         case KIND_STRUCT:
         case KIND_UNION:
         return TB_TYPE_PTR;
-
-        case KIND_QUALIFIED_TYPE:
-        return ctype_to_tbtype(t->qualified_ty);
 
         default:
         abort(); // TODO

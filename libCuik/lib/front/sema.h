@@ -17,5 +17,7 @@ Member* sema_traverse_members(TranslationUnit* tu, Cuik_Type* record_type, Atom 
 
 // check that each type matches the cast type
 bool cuik__type_check_args(TranslationUnit* tu, Expr* e, int arg_count, Expr** args);
-Cuik_Type* sema_guess_type(TranslationUnit* tu, Stmt* restrict s);
-Cuik_Type* sema_expr(TranslationUnit* tu, Expr* e);
+Cuik_QualType sema_guess_type(TranslationUnit* tu, Stmt* restrict s);
+
+#define sema_expr(tu, e) cuik_canonical_type(cuik__sema_expr(tu, e))
+Cuik_QualType cuik__sema_expr(TranslationUnit* tu, Expr* e);

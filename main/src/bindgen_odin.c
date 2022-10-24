@@ -2,14 +2,9 @@
 #include "bindgen.h"
 
 static void odinprint__type(TranslationUnit* tu, DefinedTypeEntry** defined_types, Cuik_Type* type, int indent) {
-    // a based type in a cringe system can make all the difference in the world
-    while (type->based) {
-        if (type->also_known_as) {
-            printf("%s", type->also_known_as);
-            return;
-        }
-
-        type = type->based;
+    if (type->also_known_as) {
+        printf("%s", type->also_known_as);
+        return;
     }
 
     if (type->kind > KIND_DOUBLE) {
@@ -18,7 +13,7 @@ static void odinprint__type(TranslationUnit* tu, DefinedTypeEntry** defined_type
             case KIND_PTR: {
                 int level = 0;
                 while (type->kind == KIND_PTR) {
-                    type = type->ptr_to;
+                    type = cuik_canonical_type(type->ptr_to);
                     level += 1;
                 }
 
@@ -33,7 +28,7 @@ static void odinprint__type(TranslationUnit* tu, DefinedTypeEntry** defined_type
                 } else {
                     printf("[]");
                 }
-                odinprint__type(tu, defined_types, type->array_of, indent);
+                odinprint__type(tu, defined_types, cuik_canonical_type(type->array_of), indent);
                 break;
             }
 
@@ -55,7 +50,7 @@ static void odinprint__type(TranslationUnit* tu, DefinedTypeEntry** defined_type
                             printf("%s: ", type->record.kids[i].name);
                         }
 
-                        odinprint__type(tu, defined_types, type->record.kids[i].type, indent + 1);
+                        odinprint__type(tu, defined_types, cuik_canonical_type(type->record.kids[i].type), indent + 1);
                         printf(",\n");
                     }
 
@@ -70,10 +65,10 @@ static void odinprint__type(TranslationUnit* tu, DefinedTypeEntry** defined_type
                 for (size_t i = 0; i < type->func.param_count; i++) {
                     if (i) printf(", ");
                     printf("%s: ", type->func.param_list[i].name);
-                    odinprint__type(tu, defined_types, type->func.param_list[i].type, indent);
+                    odinprint__type(tu, defined_types, cuik_canonical_type(type->func.param_list[i].type), indent);
                 }
                 printf(") -> ");
-                odinprint__type(tu, defined_types, type->func.return_type, indent);
+                odinprint__type(tu, defined_types, cuik_canonical_type(type->func.return_type), indent);
                 break;
             }
 
@@ -142,7 +137,7 @@ static void odinprint__decl(TranslationUnit* tu, DefinedTypeEntry** defined_type
         // if (s->decl.attrs.is_inline) printf("inline ");
 
         printf("%s :: ", s->decl.name);
-        odinprint__type(tu, defined_types, s->decl.type, 0);
+        odinprint__type(tu, defined_types, cuik_canonical_type(s->decl.type), 0);
 
         if (s->op == STMT_GLOBAL_DECL) {
             printf(" ---");

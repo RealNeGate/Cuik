@@ -31,9 +31,9 @@ typedef struct ConstValue {
 } ConstValue;
 
 typedef struct Decl {
-    Cuik_Type* type;
+    Cuik_QualType type;
     Atom name;
-    SourceLoc loc;
+    SourceRange loc;
 } Decl;
 
 typedef enum StorageClass {
@@ -53,8 +53,8 @@ typedef enum StorageClass {
 
 typedef struct Symbol {
     Atom name;
-    Cuik_Type* type;
-    SourceLoc loc;
+    Cuik_QualType type;
+    SourceRange loc;
     StorageClass storage_class;
 
     union {
@@ -131,7 +131,6 @@ struct TranslationUnit {
     NL_Strmap(Symbol) global_symbols;
 };
 
-// builtin types at the start of the type table
 enum {
     TYPE_VOID,
     TYPE_BOOL,
@@ -149,19 +148,34 @@ enum {
 };
 extern Cuik_Type builtin_types[BUILTIN_TYPE_COUNT];
 
+extern Cuik_Type cuik__builtin_void;
+extern Cuik_Type cuik__builtin_bool;
+extern Cuik_Type cuik__builtin_char;
+extern Cuik_Type cuik__builtin_short;
+extern Cuik_Type cuik__builtin_int;
+extern Cuik_Type cuik__builtin_long;
+extern Cuik_Type cuik__builtin_uchar;
+extern Cuik_Type cuik__builtin_ushort;
+extern Cuik_Type cuik__builtin_uint;
+extern Cuik_Type cuik__builtin_ulong;
+extern Cuik_Type cuik__builtin_float;
+extern Cuik_Type cuik__builtin_double;
+
 Cuik_Type* new_func(TranslationUnit* tu);
 Cuik_Type* new_enum(TranslationUnit* tu);
 Cuik_Type* new_blank_type(TranslationUnit* tu);
-Cuik_Type* new_qualified_type(TranslationUnit* tu, Cuik_Type* base, bool is_atomic, bool is_const);
 Cuik_Type* new_record(TranslationUnit* tu, bool is_union);
-Cuik_Type* copy_type(TranslationUnit* tu, Cuik_Type* base);
-Cuik_Type* new_pointer(TranslationUnit* tu, Cuik_Type* base);
+Cuik_Type* new_aligned_type(TranslationUnit* tu, Cuik_Type* base);
+Cuik_Type* new_pointer(TranslationUnit* tu, Cuik_QualType base);
 Cuik_Type* new_typeof(TranslationUnit* tu, Expr* src);
-Cuik_Type* new_array(TranslationUnit* tu, Cuik_Type* base, int count);
-Cuik_Type* new_vector(TranslationUnit* tu, Cuik_Type* base, int count);
+Cuik_Type* new_array(TranslationUnit* tu, Cuik_QualType base, int count);
+Cuik_Type* new_vector(TranslationUnit* tu, Cuik_QualType base, int count);
 Cuik_Type* get_common_type(TranslationUnit* tu, Cuik_Type* ty1, Cuik_Type* ty2);
 bool type_equal(TranslationUnit* tu, Cuik_Type* a, Cuik_Type* b);
-size_t type_as_string(size_t max_len, char* buffer, Cuik_Type* type_index);
+
+// TODO(NeGate): merge these soon
+#define qual_type_as_string(max_len, buffer, type) type_as_string(max_len, buffer, cuik_canonical_type(type))
+size_t type_as_string(size_t max_len, char* buffer, Cuik_Type* type);
 
 // is needs_complete is false then the size and alignment don't need to be non-zero
 void type_layout(TranslationUnit* restrict tu, Cuik_Type* type, bool needs_complete);

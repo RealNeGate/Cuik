@@ -3,7 +3,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 This is Cuik (pronounced Quick), the fast C compiler front-end in the form of a
-library.
+library. IT IS NOT PRODUCTION-READY YET SO PLEASE DONT ACT LIKE IT IS.
 
 """
  The world needs better compiler tools, tools which are built as libraries. This
@@ -37,6 +37,11 @@ Key features:
   * Compiler-as-library design.
   * Faster compilation than Clang.
   * Powerful diagnostics engine.
+
+Active TODO:
+  * Redo constant evaluator
+  * Fix up API (i wanna make it stable eventually :P)
+  * Write C type pretty printers (for diagnostics and for user code)
 
 Future Goals:
 

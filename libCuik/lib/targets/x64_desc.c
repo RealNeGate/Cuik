@@ -19,8 +19,8 @@ static void set_defines(Cuik_CPP* cpp, Cuik_System sys) {
 }
 
 // TODO(NeGate): Add some type checking utilities to match against a list of types since that's kinda important :p
-static Cuik_Type* type_check_builtin(TranslationUnit* tu, Expr* e, const char* name, int arg_count, Expr** args) {
-    Cuik_Type* t = target_generic_type_check_builtin(tu, e, name, arg_count, args);
+static Cuik_Type* type_check_builtin(TranslationUnit* tu, Expr* e, const char* name, const char* builtin_value, int arg_count, Expr** args) {
+    Cuik_Type* t = target_generic_type_check_builtin(tu, e, name, builtin_value, arg_count, args);
     if (t != NULL) {
         return t;
     }
@@ -38,7 +38,7 @@ static Cuik_Type* type_check_builtin(TranslationUnit* tu, Expr* e, const char* n
             return &builtin_types[TYPE_VOID];
         }
 
-        args[0]->cast_type = &builtin_types[TYPE_UINT];
+        args[0]->cast_type = cuik_uncanonical_type(&builtin_types[TYPE_UINT]);
         return &builtin_types[TYPE_VOID];
     } else if (strcmp(name, "_mm_getcsr") == 0) {
         if (arg_count != 0) {
@@ -58,13 +58,8 @@ static Cuik_Type* type_check_builtin(TranslationUnit* tu, Expr* e, const char* n
 static bool win64_should_pass_via_reg(TranslationUnit* tu, Cuik_Type* type) {
     if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
         switch (type->size) {
-            case 1:
-            case 2:
-            case 4:
-            case 8:
-            return true;
-            default:
-            return false;
+            case 1: case 2: case 4: case 8: return true;
+            default: return false;
         }
     } else {
         return true;
@@ -74,7 +69,7 @@ static bool win64_should_pass_via_reg(TranslationUnit* tu, Cuik_Type* type) {
 static TB_FunctionPrototype* create_prototype(TranslationUnit* tu, Cuik_Type* type) {
     // decide if return value is aggregate
     TB_Module* m = tu->ir_mod;
-    bool is_aggregate_return = !win64_should_pass_via_reg(tu, type->func.return_type);
+    bool is_aggregate_return = !win64_should_pass_via_reg(tu, cuik_canonical_type(type->func.return_type));
 
     // parameters
     Param* param_list = type->func.param_list;
@@ -84,14 +79,13 @@ static TB_FunctionPrototype* create_prototype(TranslationUnit* tu, Cuik_Type* ty
     size_t real_param_count = (is_aggregate_return ? 1 : 0) + param_count;
 
     TB_DataType return_dt = TB_TYPE_PTR;
-    if (!is_aggregate_return) return_dt = ctype_to_tbtype(type->func.return_type);
+    if (!is_aggregate_return) return_dt = ctype_to_tbtype(cuik_canonical_type(type->func.return_type));
 
     TB_FunctionPrototype* proto = tb_prototype_create(tu->ir_mod, TB_STDCALL, return_dt, real_param_count, type->func.has_varargs);
-
     if (is_aggregate_return) {
         if (tu->has_tb_debug_info) {
             // it's a pointer to the debug type here
-            TB_DebugType* dbg_type = cuik__as_tb_debug_type(m, type->func.return_type);
+            TB_DebugType* dbg_type = cuik__as_tb_debug_type(m, cuik_canonical_type(type->func.return_type));
             tb_prototype_add_param_named(proto, TB_TYPE_PTR, "$retval", tb_debug_create_ptr(m, dbg_type));
         } else {
             tb_prototype_add_param(proto, TB_TYPE_PTR);
@@ -100,19 +94,20 @@ static TB_FunctionPrototype* create_prototype(TranslationUnit* tu, Cuik_Type* ty
 
     for (size_t i = 0; i < param_count; i++) {
         Param* p = &param_list[i];
+        Cuik_Type* type = cuik_canonical_type(p->type);
 
-        if (win64_should_pass_via_reg(tu, p->type)) {
-            TB_DataType dt = ctype_to_tbtype(p->type);
+        if (win64_should_pass_via_reg(tu, type)) {
+            TB_DataType dt = ctype_to_tbtype(type);
 
             assert(dt.width < 8);
             if (tu->has_tb_debug_info) {
-                tb_prototype_add_param_named(proto, dt, p->name, cuik__as_tb_debug_type(tu->ir_mod, p->type));
+                tb_prototype_add_param_named(proto, dt, p->name, cuik__as_tb_debug_type(tu->ir_mod, type));
             } else {
                 tb_prototype_add_param(proto, dt);
             }
         } else {
             if (tu->has_tb_debug_info) {
-                TB_DebugType* dbg_type = cuik__as_tb_debug_type(tu->ir_mod, p->type);
+                TB_DebugType* dbg_type = cuik__as_tb_debug_type(tu->ir_mod, type);
                 tb_prototype_add_param_named(proto, TB_TYPE_PTR, p->name, tb_debug_create_ptr(m, dbg_type));
             } else {
                 tb_prototype_add_param(proto, TB_TYPE_PTR);
@@ -127,12 +122,12 @@ static bool pass_return_via_reg(TranslationUnit* tu, Cuik_Type* type) {
     return win64_should_pass_via_reg(tu, type);
 }
 
-static int deduce_parameter_usage(TranslationUnit* tu, Cuik_Type* type) {
+static int deduce_parameter_usage(TranslationUnit* tu, Cuik_QualType type) {
     return 1;
 }
 
 static int pass_parameter(TranslationUnit* tu, TB_Function* func, Expr* e, bool is_vararg, TB_Reg* out_param) {
-    Cuik_Type* arg_type = e->type;
+    Cuik_Type* arg_type = cuik_canonical_type(e->type);
 
     if (!win64_should_pass_via_reg(tu, arg_type)) {
         // const pass-by-value is considered as a const ref
@@ -166,7 +161,8 @@ static int pass_parameter(TranslationUnit* tu, TB_Function* func, Expr* e, bool 
         TB_CharUnits size = arg_type->size;
         TB_CharUnits align = arg_type->align;
 
-        if (arg_type->is_const) {
+        __debugbreak();
+        if (0 /* arg_type->is_const */) {
             out_param[0] = arg_addr;
         } else {
             TB_Reg temp_slot = tb_inst_local(func, size, align);
@@ -263,11 +259,11 @@ const Cuik_ArchDesc* cuik_get_x64_target_desc(void) {
     static Cuik_ArchDesc t = { 0 };
     if (t.builtin_func_map == NULL) {
         // TODO(NeGate): make this thread safe
-        NL_Strmap(bool) builtins = NULL;
+        NL_Strmap(const char*) builtins = NULL;
 
         target_generic_fill_builtin_table(&builtins);
-        nl_strmap_put_cstr(builtins, "_mm_getcsr", 1);
-        nl_strmap_put_cstr(builtins, "_mm_setcsr", 1);
+        nl_strmap_put_cstr(builtins, "_mm_getcsr", NULL);
+        nl_strmap_put_cstr(builtins, "_mm_setcsr", NULL);
 
         t = (Cuik_ArchDesc){
             #ifdef CUIK_USE_TB

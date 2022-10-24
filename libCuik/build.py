@@ -35,7 +35,7 @@ if args.usetb:
 os_name = platform.system()
 if os_name == "Windows":
 	source_patterns.append("lib/back/microsoft_craziness.c")
-	cflags += " -D_CRT_SECURE_NO_WARNINGS"
+	cflags += " -ferror-limit=100 -D_CRT_SECURE_NO_WARNINGS"
 	cflags += " -I ../c11threads"
 
 # configure architecture-specific targeting

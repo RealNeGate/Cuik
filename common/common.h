@@ -22,6 +22,12 @@
 #define COUNTOF(...) (sizeof(__VA_ARGS__) / sizeof(__VA_ARGS__[0]))
 #endif
 
+#ifdef NDEBUG
+#define TODO() __builtin_unreachable()
+#else
+#define TODO() (assert(0 && "TODO"), __builtin_unreachable())
+#endif
+
 // just because we use a threads fallback layer which can include windows
 // and such which is annoying... eventually need to modify that out or something
 #ifndef thread_local

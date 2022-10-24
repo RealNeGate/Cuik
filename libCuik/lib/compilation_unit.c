@@ -65,7 +65,7 @@ void cuik_internal_link_compilation_unit(CompilationUnit* restrict cu) {
                     !s->decl.attrs.is_extern &&
                     !s->decl.attrs.is_typedef &&
                     !s->decl.attrs.is_inline &&
-                    s->decl.type->kind != KIND_FUNC &&
+                    cuik_canonical_type(s->decl.type)->kind != KIND_FUNC &&
                     s->decl.name != NULL) {
                     // printf("  Global Export! %s\n", s->decl.name);
                     nl_strmap_put_cstr(cu->export_table, s->decl.name, s);
