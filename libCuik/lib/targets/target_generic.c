@@ -72,7 +72,7 @@ const char* query_type(TranslationUnit* tu, const char* format, Cuik_Type** out_
 
     // pointer types
     while (*format == '*') {
-        t = new_pointer(tu, cuik_uncanonical_type(t));
+        t = cuik__new_pointer(&tu->types, cuik_uncanonical_type(t));
         format++;
     }
 
@@ -112,7 +112,7 @@ const char* check_type(TranslationUnit* tu, const char* format, Expr* e) {
 
         e->cast_type = cuik_uncanonical_type(t);
     } else {
-        if (!type_equal(tu, base, t)) {
+        if (!type_equal(base, t)) {
             diag_err(&tu->tokens, e->loc, "pointer argument's base type doesn't match parameter's (got %!T, expected %!T)", base, t);
         }
 

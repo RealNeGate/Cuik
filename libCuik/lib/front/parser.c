@@ -74,7 +74,7 @@ static bool skip_over_declspec(TokenStream* restrict s);
 static bool try_parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attribs* attr);
 static Cuik_QualType parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attribs* attr);
 
-static Decl parse_declarator(TranslationUnit* tu, TokenStream* restrict s, Cuik_QualType type, bool is_abstract, bool disabled_paren);
+static Decl parse_declarator(TranslationUnit* restrict tu, TokenStream* restrict s, Cuik_QualType type, bool is_abstract);
 static Cuik_QualType parse_typename(TranslationUnit* tu, TokenStream* restrict s);
 
 // It's like parse_expr but it doesn't do anything with comma operators to avoid
@@ -82,9 +82,8 @@ static Cuik_QualType parse_typename(TranslationUnit* tu, TokenStream* restrict s
 static intmax_t parse_const_expr(TranslationUnit* tu, TokenStream* restrict s);
 static Expr* parse_initializer(TranslationUnit* tu, TokenStream* restrict s, Cuik_QualType type);
 static bool parse_function_definition(TranslationUnit* tu, TokenStream* restrict s, Stmt* decl_node);
-static Cuik_QualType parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s, Cuik_QualType type, Atom name);
 
-static bool is_typename(TranslationUnit* tu, TokenStream* restrict s);
+static bool is_typename(Cuik_GlobalSymbols* syms, TokenStream* restrict s);
 
 static _Noreturn void generic_error(TranslationUnit* tu, TokenStream* restrict s, const char* msg);
 
@@ -119,23 +118,23 @@ static Expr* make_expr(TranslationUnit* tu) {
     return ARENA_ALLOC(&local_ast_arena, Expr);
 }
 
-static Symbol* find_global_symbol(TranslationUnit* tu, const char* name) {
-    ptrdiff_t search = nl_strmap_get_cstr(tu->global_symbols, name);
-    return (search >= 0) ? &tu->global_symbols[search] : NULL;
+static Symbol* find_global_symbol(Cuik_GlobalSymbols* restrict syms, const char* name) {
+    ptrdiff_t search = nl_strmap_get_cstr(syms->symbols, name);
+    return (search >= 0) ? &syms->symbols[search] : NULL;
 }
 
-static Cuik_Type* find_tag(TranslationUnit* tu, const char* name) {
+static Cuik_Type* find_tag(Cuik_GlobalSymbols* restrict syms, const char* name) {
     // try locals
     size_t i = local_tag_count;
     while (i--) {
-        if (strcmp((const char*)local_tags[i].key, name) == 0) {
+        if (strcmp((const char*) local_tags[i].key, name) == 0) {
             return local_tags[i].value;
         }
     }
 
     // try globals
-    ptrdiff_t search = nl_strmap_get_cstr(tu->global_tags, name);
-    return (search >= 0) ? tu->global_tags[search] : NULL;
+    ptrdiff_t search = nl_strmap_get_cstr(syms->tags, name);
+    return (search >= 0) ? syms->tags[search] : NULL;
 }
 
 // ( SOMETHING )
@@ -247,7 +246,7 @@ static void parse_global_symbols(TranslationUnit* tu, size_t start, size_t end, 
         out_of_order_mode = false;
 
         for (size_t i = start; i < end; i++) {
-            Symbol* sym = &tu->global_symbols[i];
+            Symbol* sym = &tu->globals.symbols[i];
 
             // don't worry about normal globals, those have been taken care of...
             if (sym->current != 0 && (sym->storage_class == STORAGE_STATIC_FUNC || sym->storage_class == STORAGE_FUNC)) {
@@ -364,7 +363,7 @@ static void type_resolve_pending_align(TranslationUnit* restrict tu, Cuik_Type* 
             SourceLoc loc = tokens_get_location(&mini_lex);
 
             int align = 0;
-            if (is_typename(tu, &mini_lex)) {
+            if (is_typename(&tu->globals, &mini_lex)) {
                 Cuik_Type* new_align = cuik_canonical_type(parse_typename(tu, &mini_lex));
                 if (new_align == NULL || new_align->align) {
                     REPORT(ERROR, loc, "_Alignas cannot operate with incomplete");
@@ -563,11 +562,12 @@ TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* res
     // use the thread local ones (we'll set our resulting hash map back in
     // such that if it resized the first time we don't need to resize again
     // if used on that same thread, just avoiding allocations and such)
-    tu->global_symbols = s_global_symbols;
-    tu->global_tags = s_global_tags;
+    tu->globals.symbols = s_global_symbols;
+    tu->globals.tags = s_global_tags;
+    tu->types = init_type_table();
 
-    nl_strmap_clear(tu->global_symbols);
-    nl_strmap_clear(tu->global_tags);
+    nl_strmap_clear(tu->globals.symbols);
+    nl_strmap_clear(tu->globals.tags);
 
     ////////////////////////////////
     // Parse translation unit
@@ -708,7 +708,7 @@ TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* res
                     // declarator (',' declarator)+ ';'
                     while (true) {
                         size_t start_decl_token = s->list.current;
-                        Decl decl = parse_declarator(tu, s, type, false, false);
+                        Decl decl = parse_declarator(tu, s, type, false);
 
                         // we wanna avoid getting stuck in infinite loops so if we dont
                         // do anything in an iteration then we want to exit with an error
@@ -731,7 +731,7 @@ TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* res
                             dyn_array_put(tu->top_level_stmts, n);
 
                             // check for collision
-                            Symbol* search = find_global_symbol(tu, decl.name);
+                            Symbol* search = find_global_symbol(&tu->globals, decl.name);
                             if (search != NULL) {
                                 if (search->storage_class != STORAGE_TYPEDEF) {
                                     abort();
@@ -741,7 +741,7 @@ TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* res
                                 }
 
                                 Cuik_Type* placeholder_space = cuik_canonical_type(search->type);
-                                if (placeholder_space->kind != KIND_PLACEHOLDER && !type_equal(tu, cuik_canonical_type(decl.type), placeholder_space)) {
+                                if (placeholder_space->kind != KIND_PLACEHOLDER && !type_equal(cuik_canonical_type(decl.type), placeholder_space)) {
                                     /*report_two_spots(REPORT_ERROR, tu->errors, s, decl.loc, search->loc,
                                         "typedef overrides previous declaration.",
                                         "old", "new", NULL);*/
@@ -759,7 +759,7 @@ TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* res
                                     .loc = decl.loc,
                                     .storage_class = STORAGE_TYPEDEF,
                                 };
-                                nl_strmap_put_cstr(tu->global_symbols, decl.name, sym);
+                                nl_strmap_put_cstr(tu->globals.symbols, decl.name, sym);
                             }
                         }
 
@@ -804,7 +804,7 @@ TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* res
                     while (true) {
                         size_t start_decl_token = s->list.current;
 
-                        Decl decl = parse_declarator(tu, s, type, false, false);
+                        Decl decl = parse_declarator(tu, s, type, false);
                         if (decl.name == NULL) {
                             diag_err(&tu->tokens, decl.loc, "Declaration has no name");
                             break;
@@ -825,12 +825,12 @@ TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* res
                         };
                         dyn_array_put(tu->top_level_stmts, n);
 
-                        Symbol* sym = find_global_symbol(tu, decl.name);
+                        Symbol* sym = find_global_symbol(&tu->globals, decl.name);
                         Symbol* old_definition = sym;
                         if (sym == NULL) {
                             // slap that bad boy into the symbol table
-                            ptrdiff_t sym_index = nl_strmap_puti_cstr(tu->global_symbols, decl.name);
-                            sym = &tu->global_symbols[sym_index];
+                            ptrdiff_t sym_index = nl_strmap_puti_cstr(tu->globals.symbols, decl.name);
+                            sym = &tu->globals.symbols[sym_index];
                         }
 
                         *sym = (Symbol){
@@ -1029,8 +1029,8 @@ TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* res
     out_of_order_mode = false;
 
     // synchronize the thread symbol tables
-    s_global_symbols = tu->global_symbols;
-    s_global_tags = tu->global_tags;
+    s_global_symbols = tu->globals.symbols;
+    s_global_tags = tu->globals.tags;
 
     if (cuikdg_error_count(s)) {
         goto parse_error;
@@ -1043,9 +1043,9 @@ TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* res
         // first we wanna check for cycles
         ////////////////////////////////
         size_t type_count = 0;
-        for (ArenaSegment* a = tu->type_arena.base; a != NULL; a = a->next) {
-            for (size_t used = 0; used < a->used; used += sizeof(Cuik_Type)) {
-                Cuik_Type* type = (Cuik_Type*)&a->data[used];
+        for (Cuik_TypeTableSegment* a = tu->types.base; a != NULL; a = a->next) {
+            for (size_t i = 0; i < a->count; i++) {
+                Cuik_Type* type = &a->_[i];
                 if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
                     type->ordinal = type_count++;
                 } else if (type->kind == KIND_PLACEHOLDER) {
@@ -1067,9 +1067,9 @@ TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* res
         memset(finished, 0, bitvec_bytes);
 
         // for each type, check for cycles
-        for (ArenaSegment* a = tu->type_arena.base; a != NULL; a = a->next) {
-            for (size_t used = 0; used < a->used; used += sizeof(Cuik_Type)) {
-                Cuik_Type* type = (Cuik_Type*)&a->data[used];
+        for (Cuik_TypeTableSegment* a = tu->types.base; a != NULL; a = a->next) {
+            for (size_t i = 0; i < a->count; i++) {
+                Cuik_Type* type = &a->_[i];
 
                 if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
                     // if cycles... quit lmao
@@ -1083,8 +1083,8 @@ TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* res
         }
 
         // parse all global declarations
-        nl_strmap_for(i, tu->global_symbols) {
-            Symbol* sym = &tu->global_symbols[i];
+        nl_strmap_for(i, tu->globals.symbols) {
+            Symbol* sym = &tu->globals.symbols[i];
 
             if (sym->current != 0 && (sym->storage_class == STORAGE_STATIC_VAR || sym->storage_class == STORAGE_GLOBAL)) {
                 // Spin up a mini parser here
@@ -1116,9 +1116,9 @@ TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* res
         }
 
         // do record layouts and shi
-        for (ArenaSegment* a = tu->type_arena.base; a != NULL; a = a->next) {
-            for (size_t used = 0; used < a->used; used += sizeof(Cuik_Type)) {
-                Cuik_Type* type = (Cuik_Type*)&a->data[used];
+        for (Cuik_TypeTableSegment* a = tu->types.base; a != NULL; a = a->next) {
+            for (size_t i = 0; i < a->count; i++) {
+                Cuik_Type* type = &a->_[i];
 
                 if (type->align == -1) {
                     // this means it's got a pending expression for an alignment
@@ -1187,7 +1187,7 @@ TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* res
 
         if (desc->thread_pool != NULL) {
             // disabled until we change the tables to arenas
-            size_t count = nl_strmap_get_load(tu->global_symbols);
+            size_t count = nl_strmap_get_load(tu->globals.symbols);
             size_t padded = (count + (PARSE_MUNCH_SIZE - 1)) & ~(PARSE_MUNCH_SIZE - 1);
 
             // passed to the threads to identify when things are done
@@ -1227,21 +1227,21 @@ TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* res
             free(tasks);
         } else {
             // single threaded mode
-            parse_global_symbols(tu, 0, nl_strmap__get_header(tu->global_symbols)->load, *s);
+            parse_global_symbols(tu, 0, nl_strmap__get_header(tu->globals.symbols)->load, *s);
         }
 
         // detach it because we're cool people
-        tu->global_symbols = NULL;
-        tu->global_tags = NULL;
+        tu->globals.symbols = NULL;
+        tu->globals.tags = NULL;
 
         if (cuikdg_error_count(s)) {
             goto parse_error;
         }
 
         // check for any qualified types and resolve them correctly
-        for (ArenaSegment* a = tu->type_arena.base; a != NULL; a = a->next) {
-            for (size_t used = 0; used < a->used; used += sizeof(Cuik_Type)) {
-                Cuik_Type* type = (Cuik_Type*) &a->data[used];
+        for (Cuik_TypeTableSegment* a = tu->types.base; a != NULL; a = a->next) {
+            for (size_t i = 0; i < a->count; i++) {
+                Cuik_Type* type = &a->_[i];
 
                 if (type->kind == KIND_ALIGNED) {
                     int align = type->align;
@@ -1334,7 +1334,7 @@ void cuik_destroy_translation_unit(TranslationUnit* restrict tu) {
     dyn_array_destroy(tu->top_level_stmts);
 
     arena_free(&tu->ast_arena);
-    arena_free(&tu->type_arena);
+    free_type_table(&tu->types);
     mtx_destroy(&tu->arena_mutex);
     free(tu);
 }
@@ -1353,18 +1353,6 @@ Stmt** cuik_get_top_level_stmts(TranslationUnit* restrict tu) {
 
 size_t cuik_num_of_top_level_stmts(TranslationUnit* restrict tu) {
     return dyn_array_length(tu->top_level_stmts);
-}
-
-Stmt* resolve_unknown_symbol(TranslationUnit* tu, Expr* e) {
-    Symbol* sym = find_global_symbol(tu, (char*)e->unknown_sym);
-    if (sym != NULL) return 0;
-
-    // Parameters are local and a special case how tf
-    assert(sym->storage_class != STORAGE_PARAM);
-
-    e->op = EXPR_SYMBOL;
-    e->symbol = sym->stmt;
-    return sym->stmt;
 }
 
 static Symbol* find_local_symbol(TokenStream* restrict s) {
@@ -1913,7 +1901,7 @@ static bool parse_decl_or_expr(TranslationUnit* tu, TokenStream* restrict s, siz
     } else if (tokens_get(s)->type == ';') {
         tokens_next(s);
         return true;
-    } else if (is_typename(tu, s)) {
+    } else if (is_typename(&tu->globals, s)) {
         Attribs attr = { 0 };
         Cuik_QualType type = parse_declspec(tu, s, &attr);
 
@@ -1927,7 +1915,7 @@ static bool parse_decl_or_expr(TranslationUnit* tu, TokenStream* restrict s, siz
                     expect_comma = true;
                 }
 
-                Decl decl = parse_declarator(tu, s, type, false, false);
+                Decl decl = parse_declarator(tu, s, type, false);
                 if (decl.name) {
                     diag_err(s, decl.loc, "typedef declaration must be named");
                     continue;
@@ -1973,7 +1961,7 @@ static bool parse_decl_or_expr(TranslationUnit* tu, TokenStream* restrict s, siz
                     expect_comma = true;
                 }
 
-                Decl decl = parse_declarator(tu, s, type, false, false);
+                Decl decl = parse_declarator(tu, s, type, false);
 
                 Stmt* n = make_stmt(tu, s);
                 n->op = STMT_DECL;

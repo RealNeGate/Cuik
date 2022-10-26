@@ -156,7 +156,6 @@ struct Cuik_Type {
     SourceRange loc;
 
     Cuik_Type* based;
-    // used by cycle checking
     Atom also_known_as;
 
     #ifdef CUIK_USE_TB
@@ -165,8 +164,8 @@ struct Cuik_Type {
     void* user_data;
     #endif
 
+    // used by cycle checking
     int ordinal;
-
     bool is_incomplete : 1;
     bool is_inprogress : 1;
 

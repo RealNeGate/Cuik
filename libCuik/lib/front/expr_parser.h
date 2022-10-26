@@ -219,7 +219,7 @@ static Expr* parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
                         .builtin_sym = { name },
                     };
                 } else {
-                    Symbol* symbol_search = find_global_symbol(tu, (const char*)name);
+                    Symbol* symbol_search = find_global_symbol(&tu->globals, (const char*)name);
                     if (symbol_search != NULL) {
                         if (symbol_search->storage_class == STORAGE_ENUM) {
                             *e = (Expr){
@@ -451,7 +451,7 @@ static Expr* parse_expr_l1(TranslationUnit* tu, TokenStream* restrict s) {
     if (tokens_get(s)->type == '(') {
         tokens_next(s);
 
-        if (is_typename(tu, s)) {
+        if (is_typename(&tu->globals, s)) {
             Cuik_QualType type = parse_typename(tu, s);
             expect_closing_paren(tu, s, start_loc);
 
@@ -728,7 +728,7 @@ static Expr* parse_expr_l2(TranslationUnit* tu, TokenStream* restrict s) {
         }
 
         Expr* e = 0;
-        if (is_typename(tu, s)) {
+        if (is_typename(&tu->globals, s)) {
             Cuik_QualType type = parse_typename(tu, s);
 
             if (has_paren) {

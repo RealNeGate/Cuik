@@ -38,42 +38,74 @@ Cuik_Type builtin_types[] = {
     [TYPE_DOUBLE] = {KIND_DOUBLE, 8, 8},
 };
 
-static Cuik_Type* alloc_type(TranslationUnit* tu, const Cuik_Type* src) {
-    mtx_lock(&tu->arena_mutex);
-    // Cuik_Type must be 16byte aligned
-    Cuik_Type* dst = arena_alloc(&tu->type_arena, sizeof(Cuik_Type), 16);
-    mtx_unlock(&tu->arena_mutex);
-
-    memcpy(dst, src, sizeof(Cuik_Type));
-    return dst;
+Cuik_TypeTable init_type_table(void) {
+    Cuik_TypeTable t = { 0 };
+    mtx_init(&t.mutex, mtx_plain);
+    return t;
 }
 
-Cuik_Type* new_enum(TranslationUnit* tu) {
-    return alloc_type(tu, &(Cuik_Type){
+void free_type_table(Cuik_TypeTable* types) {
+    Cuik_TypeTableSegment* s = types->base;
+    while (s != NULL) {
+        Cuik_TypeTableSegment* next = s->next;
+        cuik__vfree(s, sizeof(Cuik_TypeTableSegment) + (sizeof(Cuik_Type) * CUIK_TYPE_TABLE_SEGMENT_COUNT));
+        s = next;
+    }
+
+    types->base = types->top = NULL;
+}
+
+static Cuik_Type* alloc_type(Cuik_TypeTable* types, const Cuik_Type* src) {
+    Cuik_Type* t = NULL;
+    mtx_lock(&types->mutex);
+    Cuik_TypeTableSegment* top = types->top;
+    if (top != NULL && top->count < CUIK_TYPE_TABLE_SEGMENT_COUNT) {
+        t = &top->_[top->count++];
+    } else {
+        Cuik_TypeTableSegment* s = cuik__valloc(sizeof(Cuik_TypeTableSegment) + (sizeof(Cuik_Type) * CUIK_TYPE_TABLE_SEGMENT_COUNT));
+        s->count = 1;
+
+        // Insert to top of nodes
+        if (types->top) {
+            types->top->next = s;
+        } else {
+            types->base = s;
+        }
+        types->top = s;
+        t = &s->_[0];
+    }
+    mtx_unlock(&types->mutex);
+
+    memcpy(t, src, sizeof(Cuik_Type));
+    return t;
+}
+
+Cuik_Type* cuik__new_enum(Cuik_TypeTable* types) {
+    return alloc_type(types, &(Cuik_Type){
             .kind = KIND_ENUM,
         });
 }
 
-Cuik_Type* new_func(TranslationUnit* tu) {
-    return alloc_type(tu, &(Cuik_Type){
+Cuik_Type* cuik__new_func(Cuik_TypeTable* types) {
+    return alloc_type(types, &(Cuik_Type){
             .kind = KIND_FUNC,
             .size = 1,
             .align = 1,
         });
 }
 
-Cuik_Type* new_aligned_type(TranslationUnit* tu, Cuik_Type* base) {
-    return alloc_type(tu, base);
+Cuik_Type* new_aligned_type(Cuik_TypeTable* types, Cuik_Type* base) {
+    return alloc_type(types, base);
 }
 
-Cuik_Type* new_record(TranslationUnit* tu, bool is_union) {
-    return alloc_type(tu, &(Cuik_Type){
+Cuik_Type* cuik__new_record(Cuik_TypeTable* types, bool is_union) {
+    return alloc_type(types, &(Cuik_Type){
             .kind = is_union ? KIND_UNION : KIND_STRUCT,
         });
 }
 
-Cuik_Type* new_pointer(TranslationUnit* tu, Cuik_QualType base) {
-    return alloc_type(tu, &(Cuik_Type){
+Cuik_Type* cuik__new_pointer(Cuik_TypeTable* types, Cuik_QualType base) {
+    return alloc_type(types, &(Cuik_Type){
             .kind = KIND_PTR,
             .size = 8,
             .align = 8,
@@ -81,8 +113,8 @@ Cuik_Type* new_pointer(TranslationUnit* tu, Cuik_QualType base) {
         });
 }
 
-Cuik_Type* new_typeof(TranslationUnit* tu, Expr* src) {
-    return alloc_type(tu, &(Cuik_Type){
+Cuik_Type* cuik__new_typeof(Cuik_TypeTable* types, Expr* src) {
+    return alloc_type(types, &(Cuik_Type){
             .kind = KIND_TYPEOF,
 
             // ideally if you try using these it'll crash because things
@@ -95,11 +127,11 @@ Cuik_Type* new_typeof(TranslationUnit* tu, Expr* src) {
         });
 }
 
-Cuik_Type* new_array(TranslationUnit* tu, Cuik_QualType base, int count) {
+Cuik_Type* cuik__new_array(Cuik_TypeTable* types, Cuik_QualType base, int count) {
     Cuik_Type* canon = cuik_canonical_type(base);
     if (count == 0) {
         // these zero-sized arrays don't actually care about incomplete element types
-        return alloc_type(tu, &(Cuik_Type){
+        return alloc_type(types, &(Cuik_Type){
                 .kind = KIND_ARRAY,
                 .size = 0,
                 .align = canon->align,
@@ -117,7 +149,7 @@ Cuik_Type* new_array(TranslationUnit* tu, Cuik_QualType base, int count) {
     }
 
     assert(align != 0);
-    return alloc_type(tu, &(Cuik_Type){
+    return alloc_type(types, &(Cuik_Type){
             .kind = KIND_ARRAY,
             .size = dst,
             .align = align,
@@ -126,8 +158,8 @@ Cuik_Type* new_array(TranslationUnit* tu, Cuik_QualType base, int count) {
         });
 }
 
-Cuik_Type* new_vector(TranslationUnit* tu, Cuik_QualType base, int count) {
-    return alloc_type(tu, &(Cuik_Type){
+Cuik_Type* cuik__new_vector(Cuik_TypeTable* types, Cuik_QualType base, int count) {
+    return alloc_type(types, &(Cuik_Type){
             .kind = KIND_VECTOR,
             .size = 0,
             .align = cuik_canonical_type(base)->align,
@@ -136,8 +168,8 @@ Cuik_Type* new_vector(TranslationUnit* tu, Cuik_QualType base, int count) {
         });
 }
 
-Cuik_Type* new_blank_type(TranslationUnit* tu) {
-    return alloc_type(tu, &(Cuik_Type){ .kind = KIND_PLACEHOLDER });
+Cuik_Type* cuik__new_blank_type(Cuik_TypeTable* types) {
+    return alloc_type(types, &(Cuik_Type){ .kind = KIND_PLACEHOLDER });
 }
 
 // https://github.com/rui314/chibicc/blob/main/type.c
@@ -145,10 +177,10 @@ Cuik_Type* new_blank_type(TranslationUnit* tu) {
 // NOTE(NeGate): this function is called within the IR gen
 // code which is parallel so we need a mutex to avoid messing
 // up the type arena.
-Cuik_Type* get_common_type(TranslationUnit* tu, Cuik_Type* ty1, Cuik_Type* ty2) {
+Cuik_Type* get_common_type(Cuik_TypeTable* types, Cuik_Type* ty1, Cuik_Type* ty2) {
     // implictly convert arrays into pointers
     if (ty1->kind == KIND_ARRAY) {
-        return new_pointer(tu, ty1->array_of);
+        return cuik__new_pointer(types, ty1->array_of);
     }
 
     if (ty1->kind == KIND_VOID || ty2->kind == KIND_VOID) {
@@ -157,11 +189,11 @@ Cuik_Type* get_common_type(TranslationUnit* tu, Cuik_Type* ty1, Cuik_Type* ty2) 
 
     // implictly convert functions into function pointers
     if (ty1->kind == KIND_FUNC) {
-        return new_pointer(tu, cuik_make_qual_type(ty1, 0));
+        return cuik__new_pointer(types, cuik_make_qual_type(ty1, 0));
     }
 
     if (ty2->kind == KIND_FUNC) {
-        return new_pointer(tu, cuik_make_qual_type(ty2, 0));
+        return cuik__new_pointer(types, cuik_make_qual_type(ty2, 0));
     }
 
     // operations with floats promote up to floats
@@ -184,7 +216,7 @@ Cuik_Type* get_common_type(TranslationUnit* tu, Cuik_Type* ty1, Cuik_Type* ty2) 
     return ty1;
 }
 
-bool type_equal(TranslationUnit* tu, Cuik_Type* ty1, Cuik_Type* ty2) {
+bool type_equal(Cuik_Type* ty1, Cuik_Type* ty2) {
     if (ty1 == ty2) return true;
 
     // just because they match kind doesn't necessarily
@@ -210,7 +242,7 @@ bool type_equal(TranslationUnit* tu, Cuik_Type* ty1, Cuik_Type* ty2) {
         Param* param_list1 = ty1->func.param_list;
         Param* param_list2 = ty2->func.param_list;
         for (size_t i = 0; i < param_count1; i++) {
-            if (!type_equal(tu, cuik_canonical_type(param_list1[i].type), cuik_canonical_type(param_list2[i].type))) {
+            if (!type_equal(cuik_canonical_type(param_list1[i].type), cuik_canonical_type(param_list2[i].type))) {
                 return false;
             }
         }
@@ -222,7 +254,7 @@ bool type_equal(TranslationUnit* tu, Cuik_Type* ty1, Cuik_Type* ty2) {
 
         return (ty1 == ty2);
     } else if (ty1->kind == KIND_PTR) {
-        return type_equal(tu, cuik_canonical_type(ty1->ptr_to), cuik_canonical_type(ty2->ptr_to));
+        return type_equal(cuik_canonical_type(ty1->ptr_to), cuik_canonical_type(ty2->ptr_to));
     }
 
     // but by default kind matching is enough

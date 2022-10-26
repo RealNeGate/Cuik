@@ -38,11 +38,11 @@ typedef enum Cuik_Entrypoint {
 ////////////////////////////////
 // this represents the global symbol table, it can be generated
 // without fully parsing the translation unit.
-// typedef struct Cuik_SymbolTable Cuik_SymbolTable;
 
 ////////////////////////////////
 // Standard parsing
 ////////////////////////////////
+typedef struct Cuik_GlobalSymbols Cuik_GlobalSymbols;
 typedef struct Cuik_Parser Cuik_Parser;
 
 void cuikparse_make(Cuik_ParseVersion version, TokenStream* restrict tokens);

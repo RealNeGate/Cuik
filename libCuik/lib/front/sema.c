@@ -52,7 +52,7 @@ bool type_very_compatible(TranslationUnit* tu, Cuik_Type* src, Cuik_Type* dst) {
         case KIND_PTR:
         return type_very_compatible(tu, cuik_canonical_type(src->ptr_to), cuik_canonical_type(dst->ptr_to));
         case KIND_FUNC:
-        return type_equal(tu, src, dst);
+        return type_equal(src, dst);
 
         case KIND_ARRAY:
         if (!type_very_compatible(tu, cuik_canonical_type(src->array_of), cuik_canonical_type(dst->array_of))) {
@@ -77,7 +77,7 @@ bool type_compatible(TranslationUnit* tu, Cuik_Type* src, Cuik_Type* dst, Expr* 
 
     // implictly convert arrays into pointers
     if (src->kind == KIND_ARRAY && dst->kind == KIND_PTR) {
-        src = new_pointer(tu, src->array_of);
+        src = cuik__new_pointer(&tu->types, src->array_of);
     }
 
     if (src->kind != dst->kind) {
@@ -111,7 +111,7 @@ bool type_compatible(TranslationUnit* tu, Cuik_Type* src, Cuik_Type* dst, Expr* 
             Cuik_Type* dst_ptr_to = cuik_canonical_type(dst->ptr_to);
 
             if (dst_ptr_to->kind == KIND_FUNC) {
-                return type_equal(tu, src, dst_ptr_to);
+                return type_equal(src, dst_ptr_to);
             }
         }
 
@@ -125,7 +125,7 @@ bool type_compatible(TranslationUnit* tu, Cuik_Type* src, Cuik_Type* dst, Expr* 
             if (dst_ptr_to->kind == KIND_FUNC) dst = dst_ptr_to;
         }
 
-        return type_equal(tu, src, dst);
+        return type_equal(src, dst);
     } else if (src->kind == KIND_PTR) {
         // get base types
         while (src->kind == KIND_PTR) src = cuik_canonical_type(src->ptr_to);
@@ -141,7 +141,7 @@ bool type_compatible(TranslationUnit* tu, Cuik_Type* src, Cuik_Type* dst, Expr* 
             return true;
         }
 
-        return type_equal(tu, src, dst);
+        return type_equal(src, dst);
     }
 
     // but by default kind matching is enough
@@ -162,9 +162,9 @@ static bool implicit_conversion(TranslationUnit* tu, Cuik_QualType qsrc, Cuik_Qu
 
     // implictly convert functions & arrays into pointers
     if (dst->kind == KIND_FUNC) {
-        dst = new_pointer(tu, cuik_uncanonical_type(dst));
+        dst = cuik__new_pointer(&tu->types, cuik_uncanonical_type(dst));
     } else if (dst->kind == KIND_ARRAY) {
-        dst = new_pointer(tu, dst->array_of);
+        dst = cuik__new_pointer(&tu->types, dst->array_of);
     }
 
     if (tu->warnings->data_loss) {
@@ -429,7 +429,7 @@ static InitNode* walk_initializer_layer(
                     Cuik_Type* expr_type = sema_expr(tu, e);
 
                     if (expr_type->kind == KIND_ARRAY && type->kind == KIND_ARRAY &&
-                        type_equal(tu, cuik_canonical_type(expr_type->array_of), cuik_canonical_type(type->array_of))) {
+                        type_equal(cuik_canonical_type(expr_type->array_of), cuik_canonical_type(type->array_of))) {
                         // check if it fits properly
                         if (expr_type->array_count > type->array_count) {
                             diag_err(&tu->tokens, e->loc, "initializer-string too big for the initializer (%d elements out of %d)", expr_type->array_count, type->array_count);
@@ -803,7 +803,7 @@ Cuik_QualType cuik__sema_expr(TranslationUnit* tu, Expr* restrict e) {
             e->str.start = (unsigned char*)&out[0];
             e->str.end = (unsigned char*)&out[out_i];
 
-            return (e->type = cuik_uncanonical_type(new_array(tu, cuik_uncanonical_type(&cuik__builtin_short), out_i)));
+            return (e->type = cuik_uncanonical_type(cuik__new_array(&tu->types, cuik_uncanonical_type(&cuik__builtin_short), out_i)));
         }
         case EXPR_STR: {
             const char* in = (const char*)(e->str.start + 1);
@@ -828,7 +828,7 @@ Cuik_QualType cuik__sema_expr(TranslationUnit* tu, Expr* restrict e) {
             e->str.start = (unsigned char*)out;
             e->str.end = (unsigned char*)(out + out_i);
 
-            return (e->type = cuik_uncanonical_type(new_array(tu, cuik_uncanonical_type(&cuik__builtin_char), out_i)));
+            return (e->type = cuik_uncanonical_type(cuik__new_array(&tu->types, cuik_uncanonical_type(&cuik__builtin_char), out_i)));
         }
         case EXPR_SIZEOF: {
             Cuik_Type* src = cuik_canonical_type(cuik__sema_expr(tu, e->x_of_expr.expr));
@@ -899,7 +899,7 @@ Cuik_QualType cuik__sema_expr(TranslationUnit* tu, Expr* restrict e) {
                         REPORT_EXPR(ERROR, e, "Array cannot fit into declaration (needs %d, got %d)", old_array_count, new_array_count);
                     }
                 } else {
-                    e->init.type = new_array(tu, type->array_of, new_array_count);
+                    e->init.type = cuik__new_array(&tu->types, type->array_of, new_array_count);
                 }
             }*/
 
@@ -922,7 +922,7 @@ Cuik_QualType cuik__sema_expr(TranslationUnit* tu, Expr* restrict e) {
         case EXPR_ADDR: {
             uint64_t dst;
             Cuik_QualType src = cuik__sema_expr(tu, e->unary_op.src);
-            return (e->type = cuik_uncanonical_type(new_pointer(tu, src)));
+            return (e->type = cuik_uncanonical_type(cuik__new_pointer(&tu->types, src)));
         }
         case EXPR_SYMBOL: {
             Stmt* restrict sym = e->symbol;
@@ -954,7 +954,7 @@ Cuik_QualType cuik__sema_expr(TranslationUnit* tu, Expr* restrict e) {
 
                     // this is the only *current* example where something sets
                     // it's own cast_type it's an exception to the rules.
-                    e->cast_type = cuik_uncanonical_type(new_pointer(tu, type->array_of));
+                    e->cast_type = cuik_uncanonical_type(cuik__new_pointer(&tu->types, type->array_of));
                 }
 
                 return (e->type = sym->decl.type);
@@ -972,9 +972,9 @@ Cuik_QualType cuik__sema_expr(TranslationUnit* tu, Expr* restrict e) {
             // _Generic's controlling expression does rvalue conversions so
             // an array is treated as a pointer not an array
             if (src->kind == KIND_ARRAY) {
-                src = new_pointer(tu, src->array_of);
+                src = cuik__new_pointer(&tu->types, src->array_of);
             } else if (src->kind == KIND_FUNC) {
-                src = new_pointer(tu, cuik_uncanonical_type(src));
+                src = cuik__new_pointer(&tu->types, cuik_uncanonical_type(src));
             }
 
             Expr* default_case = 0;
@@ -1027,7 +1027,7 @@ Cuik_QualType cuik__sema_expr(TranslationUnit* tu, Expr* restrict e) {
             }
 
             if (base->kind == KIND_ARRAY) {
-                base = new_pointer(tu, base->array_of);
+                base = cuik__new_pointer(&tu->types, base->array_of);
             }
 
             if (base->kind != KIND_PTR) {
@@ -1157,7 +1157,7 @@ Cuik_QualType cuik__sema_expr(TranslationUnit* tu, Expr* restrict e) {
             if (ty1->kind == KIND_STRUCT || ty1->kind == KIND_UNION) {
                 type = cuik_uncanonical_type(ty1);
             } else {
-                type = cuik_uncanonical_type(get_common_type(tu, ty1, ty2));
+                type = cuik_uncanonical_type(get_common_type(&tu->types, ty1, ty2));
             }
 
             e->ternary_op.middle->cast_type = type;
@@ -1245,7 +1245,7 @@ Cuik_QualType cuik__sema_expr(TranslationUnit* tu, Expr* restrict e) {
                     return (e->type = cuik_uncanonical_type(&cuik__builtin_void));
                 }
 
-                Cuik_QualType type = cuik_uncanonical_type(get_common_type(tu, lhs, rhs));
+                Cuik_QualType type = cuik_uncanonical_type(get_common_type(&tu->types, lhs, rhs));
 
                 // Do we actually need to check both sides?
                 implicit_conversion(tu, cuik_uncanonical_type(lhs), type, e->bin_op.left);
@@ -1264,7 +1264,7 @@ Cuik_QualType cuik__sema_expr(TranslationUnit* tu, Expr* restrict e) {
         case EXPR_CMPLT:
         case EXPR_CMPLE: {
             Cuik_QualType type = cuik_uncanonical_type(get_common_type(
-                    tu,
+                    &tu->types,
                     cuik_canonical_type(cuik__sema_expr(tu, e->bin_op.left)),
                     cuik_canonical_type(cuik__sema_expr(tu, e->bin_op.right))
                 ));
@@ -1553,7 +1553,7 @@ Cuik_QualType sema_guess_type(TranslationUnit* tu, Stmt* restrict s) {
             int array_count;
             sema_infer_initializer_array_count(tu, e->init.count, e->init.nodes, 0, &array_count);
 
-            return cuik_uncanonical_type(new_array(tu, type->array_of, array_count));
+            return cuik_uncanonical_type(cuik__new_array(&tu->types, type->array_of, array_count));
         }
     }
 
@@ -1670,7 +1670,7 @@ static void sema_top_level(TranslationUnit* tu, Stmt* restrict s) {
 
                     if (s->decl.initial->op == EXPR_INITIALIZER || s->decl.initial->op == EXPR_STR || s->decl.initial->op == EXPR_WSTR) {
                         if (type->kind == KIND_ARRAY && expr_type->kind == KIND_ARRAY) {
-                            if (type_equal(tu, cuik_canonical_type(type->array_of), cuik_canonical_type(expr_type->array_of))) {
+                            if (type_equal(cuik_canonical_type(type->array_of), cuik_canonical_type(expr_type->array_of))) {
                                 if (type->array_count != 0 && type->array_count < expr_type->array_count) {
                                     diag_err(&tu->tokens, s->loc, "array initializer does not fit into declaration (expected %d, got %d)", type->array_count, expr_type->array_count);
                                 } else {
