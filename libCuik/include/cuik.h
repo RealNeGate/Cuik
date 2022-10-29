@@ -56,11 +56,33 @@ typedef struct Cuik_IDiagnostic {
 ////////////////////////////////////////////
 // Target descriptor
 ////////////////////////////////////////////
-typedef struct Cuik_ArchDesc Cuik_ArchDesc;
+typedef enum Cuik_System {
+    CUIK_SYSTEM_WINDOWS,
+    CUIK_SYSTEM_MACOS,
+    CUIK_SYSTEM_LINUX,
+    CUIK_SYSTEM_ANDROID,
+} Cuik_System;
+
+typedef enum Cuik_Environment {
+    CUIK_ENV_MSVC,
+    CUIK_ENV_GNU,
+} Cuik_Environment;
 
 // these can be fed into the preprocessor and parser to define
-// the correct builtins and predefined macros
-const Cuik_ArchDesc* cuik_get_x64_target_desc(void);
+// the correct builtin functions, types, and predefined macros
+typedef struct Cuik_Target Cuik_Target;
+
+// the naming convention of the targets here is
+//
+//    cuik_target_XXX_YYY_ZZZ
+//
+// where XXX is arch, YYY is system, ZZZ is environment
+//
+Cuik_Target* cuik_target_x64(Cuik_System system, Cuik_Environment env);
+void cuik_free_target(Cuik_Target* target);
+
+Cuik_System cuik_get_target_system(const Cuik_Target* t);
+Cuik_Environment cuik_get_target_env(const Cuik_Target* t);
 
 ////////////////////////////////////////////
 // Profiler
@@ -88,25 +110,6 @@ void cuik_profile_region_end(void);
 ////////////////////////////////////////////
 // General Cuik stuff
 ////////////////////////////////////////////
-// identical to the TB_System enum
-typedef enum Cuik_System {
-    CUIK_SYSTEM_WINDOWS,
-    CUIK_SYSTEM_LINUX,
-    CUIK_SYSTEM_MACOS,
-
-    // Not supported yet
-    CUIK_SYSTEM_ANDROID
-} Cuik_System;
-
-typedef struct Cuik_Target {
-    Cuik_System sys;
-    const Cuik_ArchDesc* arch;
-} Cuik_Target;
-
-#ifdef CUIK_USE_TB
-inline static TB_System cuik_system_to_tb(Cuik_System s) { return (TB_System) s; }
-#endif
-
 void cuik_init(void);
 
 // This should be called before exiting
@@ -119,8 +122,6 @@ void cuik_find_system_deps(const char* cuik_crt_directory);
 // can only be called after cuik_find_system_deps
 size_t cuik_get_system_search_path_count(void);
 void cuik_get_system_search_paths(const char** out, size_t n);
-
-bool cuik_lex_is_keyword(size_t length, const char* str);
 
 ////////////////////////////////////////////
 // Compilation unit management

@@ -337,7 +337,7 @@ static Decl parse_declarator(TranslationUnit* restrict tu, TokenStream* restrict
         Cuik_QualType dummy_type = cuik_uncanonical_type(&builtin_types[TYPE_VOID]);
         parse_declarator(tu, s, dummy_type, is_abstract);
 
-        expect_closing_paren(tu, s, opening_loc);
+        expect_closing_paren(s, opening_loc);
         type = parse_type_suffix(tu, s, type, NULL);
 
         size_t saved_end = s->list.current;
@@ -494,7 +494,7 @@ static Cuik_QualType parse_declspec(TranslationUnit* tu, TokenStream* restrict s
                 type = cuik__new_vector(&tu->types, cuik_uncanonical_type(type), count);
                 counter += OTHER;
 
-                expect_closing_paren(tu, s, opening_loc);
+                expect_closing_paren(s, opening_loc);
                 tokens_prev(s);
                 break;
             }
@@ -1074,7 +1074,7 @@ static Cuik_QualType parse_declspec(TranslationUnit* tu, TokenStream* restrict s
             case SIGNED + INT:
             case SIGNED + LONG:
             case SIGNED + LONG + INT:
-            type = &builtin_types[tu->is_windows_long ? TYPE_INT : TYPE_LONG];
+            type = &builtin_types[TYPE_INT];
             break;
             case UNSIGNED:
             case UNSIGNED + INT:
@@ -1082,7 +1082,7 @@ static Cuik_QualType parse_declspec(TranslationUnit* tu, TokenStream* restrict s
             break;
             case UNSIGNED + LONG:
             case UNSIGNED + LONG + INT:
-            type = &builtin_types[tu->is_windows_long ? TYPE_UINT : TYPE_ULONG];
+            type = &builtin_types[TYPE_UINT];
             break;
             case LONG + LONG:
             case LONG + LONG + INT:

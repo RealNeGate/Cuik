@@ -61,7 +61,7 @@ thread_local static bool out_of_order_mode;
 
 static void expect(TranslationUnit* tu, TokenStream* restrict s, char ch);
 static bool expect_char(TokenStream* restrict s, char ch);
-static void expect_closing_paren(TranslationUnit* tu, TokenStream* restrict s, SourceLoc opening);
+static void expect_closing_paren(TokenStream* restrict s, SourceLoc opening);
 static void expect_with_reason(TranslationUnit* tu, TokenStream* restrict s, char ch, const char* reason);
 static Symbol* find_local_symbol(TokenStream* restrict s);
 
@@ -219,8 +219,30 @@ static void diag_unresolved_symbol(TranslationUnit* tu, Atom name, SourceLoc loc
     mtx_unlock(&tu->diag_mutex);
 }
 
+struct Cuik_Parser {
+    Cuik_ParseVersion version;
+    TokenStream* tokens;
+    const Cuik_Target* target;
+    Cuik_Type* default_int;
+
+    // generated from #pragma comment(lib, "somelib.lib")
+    // it's a linked list
+    Cuik_ImportRequest* import_libs;
+    DynArray(int) static_assertions;
+
+    Cuik_TypeTable types;
+    Cuik_GlobalSymbols globals;
+};
+
+typedef enum ParseResult {
+    PARSE_WIT_ERRORS = -1,
+    NO_PARSE         = 0,
+    PARSE_SUCCESS    = 1,
+} ParseResult;
+
 #include "expr_parser.h"
 #include "decl_parser.h"
+#include "expr_parser2.h"
 #include "top_level_parser.h"
 
 typedef struct {
@@ -542,8 +564,7 @@ TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* res
 
     TranslationUnit* tu = calloc(1, sizeof(TranslationUnit));
     tu->filepath = desc->tokens->filepath;
-    tu->is_windows_long = desc->target->sys == CUIK_SYSTEM_WINDOWS;
-    tu->target = *desc->target;
+    tu->target = desc->target;
     tu->tokens = *desc->tokens;
     tu->warnings = desc->warnings ? desc->warnings : &DEFAULT_WARNINGS;
 
@@ -1100,7 +1121,7 @@ TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* res
 
                     e = parse_initializer(tu, &mini_lex, CUIK_QUAL_TYPE_NULL);
                 } else {
-                    e = parse_expr_l14(tu, &mini_lex);
+                    e = parse_expr_assign(tu, &mini_lex);
                     expect(tu, &mini_lex, sym->terminator);
                 }
 
@@ -1520,7 +1541,7 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 
                 cond = parse_expr(tu, s);
 
-                expect_closing_paren(tu, s, opening_loc);
+                expect_closing_paren(s, opening_loc);
             }
 
             Stmt* body;
@@ -1995,7 +2016,7 @@ static bool parse_decl_or_expr(TranslationUnit* tu, TokenStream* restrict s, siz
 
                         n->decl.initial = parse_initializer(tu, s, CUIK_QUAL_TYPE_NULL);
                     } else {
-                        n->decl.initial = parse_expr_l14(tu, s);
+                        n->decl.initial = parse_expr_assign(tu, s);
                     }
                 }
 
@@ -2058,7 +2079,7 @@ static Stmt* parse_stmt_or_expr(TranslationUnit* tu, TokenStream* restrict s) {
 }
 
 static intmax_t parse_const_expr(TranslationUnit* tu, TokenStream* restrict s) {
-    Expr* folded = cuik__optimize_ast(tu, parse_expr_l14(tu, s));
+    Expr* folded = cuik__optimize_ast(tu, parse_expr_assign(tu, s));
     if (folded->op != EXPR_INT) {
         diag_err(s, folded->loc, "could not parse expression as constant.");
         return 0;
@@ -2088,7 +2109,7 @@ static void expect(TranslationUnit* tu, TokenStream* restrict s, char ch) {
     }
 }
 
-static void expect_closing_paren(TranslationUnit* tu, TokenStream* restrict s, SourceLoc opening) {
+static void expect_closing_paren(TokenStream* restrict s, SourceLoc opening) {
     if (tokens_get(s)->type != ')') {
         SourceLoc loc = tokens_get_location(s);
 

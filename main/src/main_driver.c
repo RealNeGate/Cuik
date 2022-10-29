@@ -71,21 +71,27 @@ static TB_Module* mod;
 
 static Cuik_IThreadpool* ithread_pool;
 static CompilationUnit compilation_unit;
-static Cuik_Target target_desc;
+static Cuik_Target* target_desc;
 
-static struct {
+typedef struct TargetOption {
     const char* key;
 
-    const Cuik_ArchDesc* (*arch_fn)(void);
+    Cuik_Target* (*target)(Cuik_System, Cuik_Environment);
     Cuik_System system;
-} target_options[] = {
-    { "x64_windows", cuik_get_x64_target_desc, CUIK_SYSTEM_WINDOWS },
-    { "x64_macos",   cuik_get_x64_target_desc, CUIK_SYSTEM_MACOS   },
-    { "x64_linux",   cuik_get_x64_target_desc, CUIK_SYSTEM_LINUX   },
-};
-enum { TARGET_OPTION_COUNT = sizeof(target_options) / sizeof(target_options[0]) };
+    Cuik_Environment env;
+} TargetOption;
+static DynArray(TargetOption) target_options;
 
 #include "pp_repl.h"
+
+static void initialize_targets(void) {
+    target_options = dyn_array_create(TargetOption);
+
+    #define M(a, b, c, d) dyn_array_put(target_options, (TargetOption){ a, b, c, d })
+    M("x64_windows_msvc", cuik_target_x64, CUIK_SYSTEM_WINDOWS, CUIK_ENV_MSVC);
+    M("x64_macos_gnu",    cuik_target_x64, CUIK_SYSTEM_MACOS,   CUIK_ENV_GNU);
+    M("x64_linux_gnu",    cuik_target_x64, CUIK_SYSTEM_LINUX,   CUIK_ENV_GNU);
+}
 
 static void initialize_opt_passes(void) {
     da_passes = dyn_array_create(TB_Pass);
@@ -313,8 +319,7 @@ static Cuik_CPP* make_preprocessor(const char* filepath, bool should_finalize) {
         cuikpp_init(cpp, filepath);
     }
 
-    cuikpp_set_common_defines(cpp, &target_desc, !args_nocrt);
-
+    cuikpp_set_common_defines(cpp, target_desc, !args_nocrt);
     dyn_array_for(i, include_directories) {
         cuikpp_add_include_directory(cpp, include_directories[i]);
     }
@@ -375,7 +380,7 @@ static void free_preprocessor(Cuik_CPP* cpp) {
 static void compile_file(void* arg) {
     Cuik_CPP* cpp = arg;
 
-    cuikparse_make(CUIK_VERSION_C11, cuikpp_get_token_stream(cpp));
+    cuikparse_make(CUIK_VERSION_C11, cuikpp_get_token_stream(cpp), target_desc);
     __debugbreak();
 
     // parse
@@ -725,7 +730,7 @@ static bool export_output(void) {
     TB_DebugFormat debug_fmt = args_debug_info ? TB_DEBUGFMT_CODEVIEW : TB_DEBUGFMT_NONE;
 
     if (!args_use_syslinker) {
-        bool is_windows = (target_desc.sys == CUIK_SYSTEM_WINDOWS);
+        bool is_windows = (cuik_get_target_system(target_desc) == CUIK_SYSTEM_WINDOWS);
         const char* extension = NULL;
         switch (flavor) {
             case TB_FLAVOR_OBJECT:     extension = (is_windows?".obj":".o");  break;
@@ -758,7 +763,7 @@ static bool export_output(void) {
         } else {
             sprintf_s(
                 obj_output_path, FILENAME_MAX, "%s%s", output_path_no_ext,
-                target_desc.sys == CUIK_SYSTEM_WINDOWS ? ".obj" : ".o"
+                cuik_get_target_system(target_desc) == CUIK_SYSTEM_WINDOWS ? ".obj" : ".o"
             );
         }
 
@@ -841,17 +846,12 @@ int main(int argc, char** argv) {
 
     // get default system
     #if defined(_WIN32)
-    target_desc.sys = CUIK_SYSTEM_WINDOWS;
+    target_desc = cuik_target_x64(CUIK_SYSTEM_WINDOWS, CUIK_ENV_MSVC);
     #elif defined(__linux) || defined(linux)
-    target_desc.sys = CUIK_SYSTEM_LINUX;
+    target_desc = cuik_target_x64(CUIK_SYSTEM_LINUX, CUIK_ENV_MSVC);
     #elif defined(__APPLE__) || defined(__MACH__) || defined(macintosh)
-    target_desc.sys = CUIK_SYSTEM_MACOS;
+    target_desc = cuik_target_x64(CUIK_SYSTEM_MACOS, CUIK_ENV_MSVC);
     #endif
-
-    // get target
-    target_desc.arch = cuik_get_x64_target_desc();
-
-    // print_help(argv[0]);
 
     // parse arguments
     int i = 1;
@@ -911,10 +911,10 @@ int main(int argc, char** argv) {
             }
             case ARG_TARGET: {
                 bool success = false;
-                for (int i = 0; i < TARGET_OPTION_COUNT; i++) {
+                for (size_t i = 0; i < dyn_array_length(target_options); i++) {
                     if (strcmp(arg.value, target_options[i].key) == 0) {
-                        target_desc.arch = target_options[i].arch_fn();
-                        target_desc.sys = target_options[i].system;
+                        TargetOption* o = &target_options[i];
+                        target_desc = o->target(o->system, o->env);
                         success = true;
                         break;
                     }
@@ -923,7 +923,7 @@ int main(int argc, char** argv) {
                 if (!success) {
                     fprintf(stderr, "unknown target: %s\n", arg.value);
                     fprintf(stderr, "Supported targets:\n");
-                    for (int i = 0; i < TARGET_OPTION_COUNT; i++) {
+                    for (size_t i = 0; i < dyn_array_length(target_options); i++) {
                         fprintf(stderr, "    %s\n", target_options[i].key);
                     }
                     fprintf(stderr, "\n");
@@ -1026,13 +1026,14 @@ int main(int argc, char** argv) {
     }
     #endif
 
+    initialize_targets();
     initialize_opt_passes();
     cuik_create_compilation_unit(&compilation_unit);
 
     if (!args_ast && !args_types) {
-        TB_FeatureSet features = {0};
+        TB_FeatureSet features = { 0 };
         mod = tb_module_create(
-            TB_ARCH_X86_64, cuik_system_to_tb(target_desc.sys), &features, false
+            TB_ARCH_X86_64, (TB_System) cuik_get_target_system(target_desc), &features, false
         );
     }
 

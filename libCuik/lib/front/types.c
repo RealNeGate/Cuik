@@ -232,7 +232,6 @@ bool type_equal(Cuik_Type* ty1, Cuik_Type* ty2) {
         // if there's no params on it then just pretend like it matches
         // it helps get stuff like FARPROC to compile properly
         if (param_count1 == 0 || param_count2 == 0) return true;
-
         if (param_count1 != param_count2) return false;
 
         // match var args
@@ -301,6 +300,12 @@ size_t type_as_string(size_t max_len, char* buffer, Cuik_Type* type) {
             break;
         }
         case KIND_LONG: {
+            if (type->is_unsigned) i += cstr_copy(max_len - i, &buffer[i], "unsigned ");
+
+            i += cstr_copy(max_len - i, &buffer[i], "long");
+            break;
+        }
+        case KIND_LLONG: {
             if (type->is_unsigned) i += cstr_copy(max_len - i, &buffer[i], "unsigned ");
 
             i += cstr_copy(max_len - i, &buffer[i], "long long");

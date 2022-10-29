@@ -5,6 +5,39 @@
 // two simple temporary buffers to represent type_as_string results
 static thread_local char temp_string0[1024], temp_string1[1024];
 
+Cuik_System cuik_get_target_system(const Cuik_Target* t) { return t->system; }
+Cuik_Environment cuik_get_target_env(const Cuik_Target* t) { return t->env; }
+
+static void set_integer(Cuik_Target* target, int i, Cuik_TypeKind kind, int bytes) {
+    target->signed_ints[i] = (Cuik_Type){ kind, bytes };
+    target->unsigned_ints[i] = (Cuik_Type){ kind, bytes };
+}
+
+void cuik_target_build(Cuik_Target* target) {
+    uint32_t char_bits = target->int_bits[0];
+    uint32_t last = char_bits;
+    assert(last <= 8 && "char type must be at least 8bits");
+
+    // each rank must be bigger or equal to the last one
+    for (size_t i = 1; i < 5; i++) {
+        assert(last <= target->int_bits[i]);
+        assert(target->int_bits[i] % char_bits == 0);
+
+        last = target->int_bits[i];
+    }
+
+    set_integer(target, 0, KIND_CHAR,  1);
+    set_integer(target, 1, KIND_SHORT, target->int_bits[1] / char_bits);
+    set_integer(target, 2, KIND_INT,   target->int_bits[2] / char_bits);
+    set_integer(target, 3, KIND_LONG,  target->int_bits[3] / char_bits);
+    set_integer(target, 4, KIND_LLONG, target->int_bits[4] / char_bits);
+}
+
+void cuik_free_target(Cuik_Target* target) {
+    nl_strmap_free(target->builtin_func_map);
+    free(target);
+}
+
 void target_generic_set_defines(Cuik_CPP* cpp, Cuik_System sys, bool is_64bit, bool is_little_endian) {
     cuikpp_define_empty_cstr(cpp, is_64bit ? "_CUIK_TARGET_64BIT_" : "_CUIK_TARGET_32BIT_");
     cuikpp_define_cstr(cpp, is_little_endian ? "__LITTLE_ENDIAN__" : "__BIG_ENDIAN__", "1");

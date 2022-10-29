@@ -2,6 +2,10 @@
 _Static_assert(sizeof(int) >= 4, "int is nice");
 _Static_assert(sizeof(int) >= 2);
 
+static const long int long* foo(int x, int y) {
+    return 16;
+}
+
 int main(void) { return 0; }
 
 #if 0

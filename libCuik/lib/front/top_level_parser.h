@@ -1,21 +1,4 @@
-struct Cuik_Parser {
-    Cuik_ParseVersion version;
-    TokenStream* tokens;
-
-    // generated from #pragma comment(lib, "somelib.lib")
-    // it's a linked list
-    Cuik_ImportRequest* import_libs;
-    DynArray(int) static_assertions;
-
-    Cuik_TypeTable types;
-    Cuik_GlobalSymbols globals;
-};
-
-typedef enum ParseResult {
-    PARSE_WIT_ERRORS = -1,
-    NO_PARSE         = 0,
-    PARSE_SUCCESS    = 1,
-} ParseResult;
+static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* restrict s, Attribs* attr);
 
 static bool expect_char(TokenStream* restrict s, char ch) {
     if (tokens_get(s)->type != ch) {
@@ -151,27 +134,48 @@ static ParseResult parse_static_assert(Cuik_Parser* restrict parser, TokenStream
 
 // decls ::= decl-spec (declarator (',' declarator)+)?
 static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restrict s) {
-    /*    Cuik_Attribute* attribute_list = parse_attributes(s, NULL);
-        SourceLoc loc = tokens_get_location(s);
+    Cuik_Attribute* attribute_list = parse_attributes(s, NULL);
+    SourceLoc loc = tokens_get_location(s);
 
-        // must be a declaration since it's a top level statement
-        Attribs attr = { 0 };
-        Cuik_QualType type = parse_declspec(&parser->globals, s, &attr);
-        if (CUIK_QUAL_TYPE_IS_NULL(type)) {
-            diag_err(s, (SourceRange){ loc, tokens_get_last_location(s) }, "could not parse base type.");
-            type = cuik_uncanonical_type(&cuik__builtin_int);
-        }*/
+    // must be a declaration since it's a top level statement
+    Attribs attr = { 0 };
+    Cuik_QualType type = parse_declspec2(parser, s, &attr);
+    if (CUIK_QUAL_TYPE_IS_NULL(type)) {
+        diag_err(s, (SourceRange){ loc, tokens_get_last_location(s) }, "could not parse base type.");
+        type = cuik_uncanonical_type(parser->default_int);
+    }
+
+    // diag_note(s, (SourceRange){ loc, tokens_get_last_location(s) }, "Declspec");
+
+    // normal variable lists
+    // declarator (',' declarator )+ ';'
+    while (true) {
+        size_t start_decl_token = s->list.current;
+        Decl decl = parse_declarator2(parser, s, type, false);
+        if (decl.name == NULL) {
+            diag_err(s, decl.loc, "Declaration has no name");
+            break;
+        }
+
+        // diag_note(s, decl.loc, "Declarator: %s", decl.name);
+        __debugbreak();
+    }
 
     return NO_PARSE;
 }
 
-void cuikparse_make(Cuik_ParseVersion version, TokenStream* restrict s) {
+void cuikparse_make(Cuik_ParseVersion version, TokenStream* restrict s, const Cuik_Target* target) {
     assert(s != NULL);
 
     Cuik_Parser* parser = calloc(1, sizeof(Cuik_Parser));
     parser->version = version;
     parser->tokens = s;
+    parser->target = target;
     parser->static_assertions = dyn_array_create(int);
+    parser->types = init_type_table();
+
+    // just a shorthand so it's faster to grab
+    parser->default_int = (Cuik_Type*) &parser->target->signed_ints[CUIK_BUILTIN_INT];
 
     while (tokens_get(s)->type) {
         // skip any top level "null" statements
@@ -195,7 +199,7 @@ void cuikparse_make(Cuik_ParseVersion version, TokenStream* restrict s) {
         SourceLoc loc = tokens_get_location(s);
 
         // must be a declaration since it's a top level statement
-        Attribs attr = {0};
+        Attribs attr = { 0 };
         Cuik_QualType type = parse_declspec(tu, s, &attr);
         if (CUIK_QUAL_TYPE_IS_NULL(type)) {
             REPORT(ERROR, loc, "Could not parse base type.");

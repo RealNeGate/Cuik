@@ -127,6 +127,7 @@ struct TranslationUnit {
     #endif
 
     const char* filepath;
+    const Cuik_Target* target;
     const Cuik_Warnings* warnings;
     Cuik_ImportRequest* import_libs;
 
@@ -135,11 +136,9 @@ struct TranslationUnit {
     atomic_int id_gen;
 
     // common settings
-    bool is_windows_long;
     bool has_tb_debug_info;
 
     Cuik_Entrypoint entrypoint_status;
-    Cuik_Target target;
 
     Arena ast_arena;
 

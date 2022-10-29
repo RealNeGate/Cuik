@@ -4,14 +4,14 @@
 // two simple temporary buffers to represent type_as_string results
 static thread_local char temp_string0[1024], temp_string1[1024];
 
-static void set_defines(Cuik_CPP* cpp, Cuik_System sys) {
-    target_generic_set_defines(cpp, sys, true, true);
+static void set_defines(const Cuik_Target* target, Cuik_CPP* cpp) {
+    target_generic_set_defines(cpp, target->system, true, true);
 
-    if (sys == CUIK_SYSTEM_WINDOWS) {
+    if (target->system == CUIK_SYSTEM_WINDOWS) {
         cuikpp_define_cstr(cpp, "_M_X64", "100");
         cuikpp_define_cstr(cpp, "_AMD64_", "100");
         cuikpp_define_cstr(cpp, "_M_AMD64", "100");
-    } else if (sys == CUIK_SYSTEM_LINUX) {
+    } else if (target->system == CUIK_SYSTEM_LINUX) {
         cuikpp_define_cstr(cpp, "__x86_64__", "1");
         cuikpp_define_cstr(cpp, "__amd64",    "1");
         cuikpp_define_cstr(cpp, "__amd64__",  "1");
@@ -255,33 +255,41 @@ static TB_Reg compile_builtin(TranslationUnit* tu, TB_Function* func, const char
 }
 #endif /* CUIK_USE_TB */
 
-const Cuik_ArchDesc* cuik_get_x64_target_desc(void) {
-    static Cuik_ArchDesc t = { 0 };
-    if (t.builtin_func_map == NULL) {
-        // TODO(NeGate): make this thread safe
-        NL_Strmap(const char*) builtins = NULL;
+Cuik_Target* cuik_target_x64(Cuik_System system, Cuik_Environment env) {
+    NL_Strmap(const char*) builtins = NULL;
+    target_generic_fill_builtin_table(&builtins);
+    nl_strmap_put_cstr(builtins, "_mm_getcsr", NULL);
+    nl_strmap_put_cstr(builtins, "_mm_setcsr", NULL);
 
-        target_generic_fill_builtin_table(&builtins);
-        nl_strmap_put_cstr(builtins, "_mm_getcsr", NULL);
-        nl_strmap_put_cstr(builtins, "_mm_setcsr", NULL);
+    Cuik_Target* t = malloc(sizeof(Cuik_Target));
+    *t = (Cuik_Target){
+        .env = env,
+        .system = system,
 
-        t = (Cuik_ArchDesc){
-            #ifdef CUIK_USE_TB
-            .arch = TB_ARCH_X86_64,
-            #endif
+        .int_bits = { 8, 16, 32, 64, 64 },
 
-            .builtin_func_map = builtins,
-            .set_defines = set_defines,
-            #ifdef CUIK_USE_TB
-            .create_prototype = create_prototype,
-            .pass_return_via_reg = pass_return_via_reg,
-            .deduce_parameter_usage = deduce_parameter_usage,
-            .pass_parameter = pass_parameter,
-            .compile_builtin = compile_builtin,
-            #endif /* CUIK_USE_TB */
-            .type_check_builtin = type_check_builtin,
-        };
+        #ifdef CUIK_USE_TB
+        .arch = TB_ARCH_X86_64,
+        #endif
+
+        .builtin_func_map = builtins,
+        .set_defines = set_defines,
+        #ifdef CUIK_USE_TB
+        .create_prototype = create_prototype,
+        .pass_return_via_reg = pass_return_via_reg,
+        .deduce_parameter_usage = deduce_parameter_usage,
+        .pass_parameter = pass_parameter,
+        .compile_builtin = compile_builtin,
+        #endif /* CUIK_USE_TB */
+        .type_check_builtin = type_check_builtin,
+    };
+
+    // on MSVC, long means 32bit and this is necessary because of stuff like
+    // DWORD being defined as unsigned long.
+    if (env == CUIK_ENV_MSVC) {
+        t->int_bits[CUIK_BUILTIN_LONG] = 32;
     }
 
-    return &t;
+    cuik_target_build(t);
+    return t;
 }

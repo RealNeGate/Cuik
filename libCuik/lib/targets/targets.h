@@ -8,16 +8,34 @@
 #include <back/ir_gen.h>
 #endif
 
-struct Cuik_ArchDesc {
+enum {
+    CUIK_BUILTIN_CHAR,
+    CUIK_BUILTIN_SHORT,
+    CUIK_BUILTIN_INT,
+    CUIK_BUILTIN_LONG,
+    CUIK_BUILTIN_LLONG
+};
+
+struct Cuik_Target {
+    Cuik_Environment env;
+    Cuik_System system;
+
     #ifdef CUIK_USE_TB
     TB_Arch arch;
     #endif
 
     // tells us if a name is maps to a builtin
-    NL_Strmap(const char*) builtin_func_map;
+    // NL_Strmap(const char*)
+    const char** builtin_func_map;
+
+    // we don't have any enforcements on primitive integers other than what
+    // the spec might say.
+    //   sizeof(char) <= sizeof(short) <= sizeof(int) <= sizeof(long) <= sizeof(long long)
+    uint32_t int_bits[5];
+    Cuik_Type signed_ints[5], unsigned_ints[5];
 
     // initializes some target specific macro defines
-    void (*set_defines)(Cuik_CPP* cpp, Cuik_System sys);
+    void (*set_defines)(const Cuik_Target* self, Cuik_CPP* cpp);
 
     // when one of the builtins is spotted in the semantics pass, we might need to resolve it's
     // type
@@ -38,6 +56,11 @@ struct Cuik_ArchDesc {
     TB_Reg (*compile_builtin)(TranslationUnit* tu, TB_Function* func, const char* name, int arg_count, Expr** args);
     #endif /* CUIK_USE_TB */
 };
+
+// Called after initializing the integer sizes along with the callbacks.
+// Verify that the integer sizes are compliant and initialize real pointers
+// to Cuik_Types for them.
+void cuik_target_build(Cuik_Target* target);
 
 #ifdef CUIK_USE_TB
 typedef struct {

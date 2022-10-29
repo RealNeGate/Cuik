@@ -973,9 +973,9 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
 
                     // all builtins start with an underscore
                     if (*name == '_') {
-                        ptrdiff_t search = nl_strmap_get_cstr(tu->target.arch->builtin_func_map, name);
+                        ptrdiff_t search = nl_strmap_get_cstr(tu->target->builtin_func_map, name);
                         if (search >= 0) {
-                            TB_Reg val = tu->target.arch->compile_builtin(tu, func, name, arg_count, args);
+                            TB_Reg val = tu->target->compile_builtin(tu, func, name, arg_count, args);
 
                             return (IRVal){
                                 .value_type = RVALUE,
@@ -985,8 +985,8 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
                     }
                 }
             } else if (e->call.target->op == EXPR_BUILTIN_SYMBOL) {
-                const char* name = (const char*)e->call.target->builtin_sym.name;
-                TB_Reg val = tu->target.arch->compile_builtin(tu, func, name, arg_count, args);
+                const char* name = (const char*) e->call.target->builtin_sym.name;
+                TB_Reg val = tu->target->compile_builtin(tu, func, name, arg_count, args);
 
                 return (IRVal){
                     .value_type = RVALUE,
@@ -995,11 +995,11 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
             }
 
             // Resolve ABI arg count
-            bool is_aggregate_return = !tu->target.arch->pass_return_via_reg(tu, cuik_canonical_type(e->type));
+            bool is_aggregate_return = !tu->target->pass_return_via_reg(tu, cuik_canonical_type(e->type));
             size_t real_arg_count = is_aggregate_return ? 1 : 0;
 
             for (size_t i = 0; i < arg_count; i++) {
-                real_arg_count += tu->target.arch->deduce_parameter_usage(tu, args[i]->type);
+                real_arg_count += tu->target->deduce_parameter_usage(tu, args[i]->type);
             }
 
             TB_Reg* ir_args = tls_push(real_arg_count * sizeof(TB_Reg));
@@ -1018,7 +1018,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
 
             size_t ir_arg_count = is_aggregate_return ? 1 : 0;
             for (size_t i = 0; i < arg_count; i++) {
-                ir_arg_count += tu->target.arch->pass_parameter(
+                ir_arg_count += tu->target->pass_parameter(
                     tu, func, args[i], i >= varargs_cutoff, &ir_args[ir_arg_count]
                 );
             }
@@ -1732,7 +1732,7 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
 
             if (e) {
                 Cuik_Type* type = cuik_canonical_type(e->cast_type);
-                bool is_aggregate_return = !tu->target.arch->pass_return_via_reg(tu, type);
+                bool is_aggregate_return = !tu->target->pass_return_via_reg(tu, type);
 
                 if (is_aggregate_return) {
                     IRVal v = irgen_expr(tu, func, e);
@@ -1987,7 +1987,7 @@ TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, Stmt* re
         TB_Reg* params = parameter_map = tls_push(param_count * sizeof(TB_Reg));
         Cuik_Type* return_type = cuik_canonical_type(type->func.return_type);
 
-        bool is_aggregate_return = !tu->target.arch->pass_return_via_reg(tu, return_type);
+        bool is_aggregate_return = !tu->target->pass_return_via_reg(tu, return_type);
         if (is_aggregate_return) {
             return_value_address = tb_inst_param_addr(func, 0);
 

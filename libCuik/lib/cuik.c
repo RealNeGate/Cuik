@@ -66,10 +66,6 @@ void cuik_get_system_search_paths(const char** out, size_t n) {
     #endif
 }
 
-bool cuik_lex_is_keyword(size_t length, const char* str) {
-    return classify_ident((const unsigned char*)str, length) != TOKEN_IDENTIFIER;
-}
-
 static void set_defines(Cuik_CPP* cpp, const Cuik_Target* target, bool system_libs) {
     #ifdef _WIN32
     if (system_libs) {
@@ -149,7 +145,7 @@ static void set_defines(Cuik_CPP* cpp, const Cuik_Target* target, bool system_li
     cuikpp_add_include_directory(cpp, cuik__include_dir);
 
     // platform specific stuff
-    if (target->sys == CUIK_SYSTEM_WINDOWS) {
+    if (target->system == CUIK_SYSTEM_WINDOWS) {
         #ifdef _WIN32
         // WinSDK includes
         char filepath[FILENAME_MAX];
@@ -222,7 +218,7 @@ static void set_defines(Cuik_CPP* cpp, const Cuik_Target* target, bool system_li
         cuikpp_define_empty_cstr(cpp, "__analysis_noreturn");
         cuikpp_define_empty_cstr(cpp, "__ptr32");
         cuikpp_define_empty_cstr(cpp, "__ptr64");
-    } else if (target->sys == CUIK_SYSTEM_LINUX) {
+    } else if (target->system == CUIK_SYSTEM_LINUX) {
         // TODO(NeGate): Automatically detect these somehow...
         cuikpp_add_include_directory(cpp, "/usr/lib/gcc/x86_64-linux-gnu/9/include/");
         cuikpp_add_include_directory(cpp, "/usr/include/x86_64-linux-gnu/");
@@ -263,8 +259,8 @@ static void set_defines(Cuik_CPP* cpp, const Cuik_Target* target, bool system_li
         // cuikpp_define_empty_cstr(cpp, "_GNU_SOURCE");
     }
 
-    if (target != NULL && target->arch != NULL) {
-        target->arch->set_defines(cpp, target->sys);
+    if (target != NULL) {
+        target->set_defines(target, cpp);
     }
 }
 

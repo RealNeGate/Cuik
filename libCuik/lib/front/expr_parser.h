@@ -6,7 +6,7 @@
 ////////////////////////////////
 // This file is included into parser.h, it's parser of the parser module and is
 // completely static
-static Expr* parse_expr_l14(TranslationUnit* tu, TokenStream* restrict s);
+static Expr* parse_expr_assign(TranslationUnit* tu, TokenStream* restrict s);
 static Expr* parse_expr_l2(TranslationUnit* tu, TokenStream* restrict s);
 static Expr* parse_expr(TranslationUnit* tu, TokenStream* restrict s);
 
@@ -106,7 +106,7 @@ static void parse_initializer_member(TranslationUnit* tu, TokenStream* restrict 
     } else {
         // parse without comma operator
         current->kids_count = 0;
-        current->expr = parse_expr_l14(tu, s);
+        current->expr = parse_expr_assign(tu, s);
     }
 }
 
@@ -155,7 +155,7 @@ static Expr* parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
 
         Expr* e = parse_expr(tu, s);
 
-        expect_closing_paren(tu, s, start_loc);
+        expect_closing_paren(s, start_loc);
 
         e->has_parens = true;
         e->loc.start = start_loc;
@@ -171,11 +171,11 @@ static Expr* parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
             if (memeq(t->content.data, t->content.length, "__va_arg", sizeof("__va_arg") - 1)) {
                 tokens_next(s);
 
-                expect(tu, s, '(');
-                Expr* src = parse_expr_l14(tu, s);
-                expect(tu, s, ',');
+                expect_char(s, '(');
+                Expr* src = parse_expr_assign(tu, s);
+                expect_char(s, ',');
                 Cuik_QualType type = parse_typename(tu, s);
-                expect(tu, s, ')');
+                expect_char(s, ')');
 
                 tokens_prev(s);
 
@@ -212,7 +212,7 @@ static Expr* parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
                 Atom name = atoms_put(t->content.length, t->content.data);
 
                 // check if it's builtin
-                ptrdiff_t builtin_search = nl_strmap_get_cstr(tu->target.arch->builtin_func_map, name);
+                ptrdiff_t builtin_search = nl_strmap_get_cstr(tu->target->builtin_func_map, name);
                 if (builtin_search >= 0) {
                     *e = (Expr){
                         .op = EXPR_BUILTIN_SYMBOL,
@@ -366,7 +366,7 @@ static Expr* parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
             expect(tu, s, '(');
 
             // controlling expression followed by a comma
-            Expr* controlling_expr = parse_expr_l14(tu, s);
+            Expr* controlling_expr = parse_expr_assign(tu, s);
 
             *e = (Expr){
                 .op = EXPR_GENERIC,
@@ -392,7 +392,7 @@ static Expr* parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
 
                     default_loc = tokens_get_location(s);
                     expect(tu, s, ':');
-                    Expr* expr = parse_expr_l14(tu, s);
+                    Expr* expr = parse_expr_assign(tu, s);
 
                     // the default case is like a normal entry but without a type :p
                     tls_push(sizeof(C11GenericEntry));
@@ -405,7 +405,7 @@ static Expr* parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
                     assert(!CUIK_QUAL_TYPE_IS_NULL(type) && "TODO: error recovery");
 
                     expect(tu, s, ':');
-                    Expr* expr = parse_expr_l14(tu, s);
+                    Expr* expr = parse_expr_assign(tu, s);
 
                     tls_push(sizeof(C11GenericEntry));
                     entries[entry_count++] = (C11GenericEntry){
@@ -419,7 +419,7 @@ static Expr* parse_expr_l0(TranslationUnit* tu, TokenStream* restrict s) {
                 tokens_next(s);
             }
 
-            expect_closing_paren(tu, s, opening_loc);
+            expect_closing_paren(s, opening_loc);
 
             // move it to a more permanent storage
             C11GenericEntry* dst = arena_alloc(&thread_arena, entry_count * sizeof(C11GenericEntry), _Alignof(C11GenericEntry));
@@ -453,7 +453,7 @@ static Expr* parse_expr_l1(TranslationUnit* tu, TokenStream* restrict s) {
 
         if (is_typename(&tu->globals, s)) {
             Cuik_QualType type = parse_typename(tu, s);
-            expect_closing_paren(tu, s, start_loc);
+            expect_closing_paren(s, start_loc);
 
             if (tokens_get(s)->type == '{') {
                 tokens_next(s);
@@ -565,7 +565,7 @@ static Expr* parse_expr_l1(TranslationUnit* tu, TokenStream* restrict s) {
                 // NOTE(NeGate): This is a funny little work around because
                 // i don't wanna parse the comma operator within the expression
                 // i wanna parse it here so we just skip it.
-                Expr* e = parse_expr_l14(tu, s);
+                Expr* e = parse_expr_assign(tu, s);
                 *((Expr**)tls_push(sizeof(Expr*))) = e;
                 param_count++;
             }
@@ -732,7 +732,7 @@ static Expr* parse_expr_l2(TranslationUnit* tu, TokenStream* restrict s) {
             Cuik_QualType type = parse_typename(tu, s);
 
             if (has_paren) {
-                expect_closing_paren(tu, s, opening_loc);
+                expect_closing_paren(s, opening_loc);
             }
 
             // glorified backtracing on who own's the (
@@ -884,7 +884,7 @@ static Expr* parse_expr_NEW(TranslationUnit* tu, TokenStream* restrict s, int mi
 }
 
 // ternary
-static Expr* parse_expr_l13(TranslationUnit* tu, TokenStream* restrict s) {
+static Expr* parse_expr_ternary(TranslationUnit* tu, TokenStream* restrict s) {
     SourceLoc start_loc = tokens_get_location(s);
     Expr* lhs = parse_expr_NEW(tu, s, 0);
 
@@ -895,7 +895,7 @@ static Expr* parse_expr_l13(TranslationUnit* tu, TokenStream* restrict s) {
 
         expect(tu, s, ':');
 
-        Expr* rhs = parse_expr_l13(tu, s);
+        Expr* rhs = parse_expr_ternary(tu, s);
 
         SourceLoc end_loc = tokens_get_last_location(s);
         Expr* e = make_expr(tu);
@@ -914,9 +914,9 @@ static Expr* parse_expr_l13(TranslationUnit* tu, TokenStream* restrict s) {
 // = += -= *= /= %= <<= >>= &= ^= |=
 //
 // NOTE(NeGate): a=b=c is a=(b=c) not (a=b)=c
-static Expr* parse_expr_l14(TranslationUnit* tu, TokenStream* restrict s) {
+static Expr* parse_expr_assign(TranslationUnit* tu, TokenStream* restrict s) {
     SourceLoc start_loc = tokens_get_location(s);
-    Expr* lhs = parse_expr_l13(tu, s);
+    Expr* lhs = parse_expr_ternary(tu, s);
 
     if (tokens_get(s)->type == TOKEN_ASSIGN ||
         tokens_get(s)->type == TOKEN_PLUS_EQUAL ||
@@ -947,7 +947,7 @@ static Expr* parse_expr_l14(TranslationUnit* tu, TokenStream* restrict s) {
             default: TODO();
         }
         tokens_next(s);
-        Expr* rhs = parse_expr_l14(tu, s);
+        Expr* rhs = parse_expr_assign(tu, s);
 
         SourceLoc end_loc = tokens_get_last_location(s);
 
@@ -964,7 +964,7 @@ static Expr* parse_expr_l14(TranslationUnit* tu, TokenStream* restrict s) {
 
 static Expr* parse_expr_l15(TranslationUnit* tu, TokenStream* restrict s) {
     SourceLoc start_loc = tokens_get_location(s);
-    Expr* lhs = parse_expr_l14(tu, s);
+    Expr* lhs = parse_expr_assign(tu, s);
 
     while (tokens_get(s)->type == TOKEN_COMMA) {
         Expr* e = make_expr(tu);
@@ -973,7 +973,7 @@ static Expr* parse_expr_l15(TranslationUnit* tu, TokenStream* restrict s) {
 
         SourceLoc end_loc = tokens_get_last_location(s);
 
-        Expr* rhs = parse_expr_l14(tu, s);
+        Expr* rhs = parse_expr_assign(tu, s);
         *e = (Expr){
             .op = op,
             .loc = { start_loc, end_loc },

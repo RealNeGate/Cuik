@@ -45,7 +45,7 @@ typedef enum Cuik_Entrypoint {
 typedef struct Cuik_GlobalSymbols Cuik_GlobalSymbols;
 typedef struct Cuik_Parser Cuik_Parser;
 
-void cuikparse_make(Cuik_ParseVersion version, TokenStream* restrict tokens);
+void cuikparse_make(Cuik_ParseVersion version, TokenStream* restrict s, const Cuik_Target* target);
 
 
 

@@ -43,6 +43,7 @@ bool type_very_compatible(TranslationUnit* tu, Cuik_Type* src, Cuik_Type* dst) {
         case KIND_SHORT:
         case KIND_INT:
         case KIND_LONG:
+        case KIND_LLONG:
         return src->is_unsigned == dst->is_unsigned;
 
         case KIND_FLOAT:
@@ -81,8 +82,7 @@ bool type_compatible(TranslationUnit* tu, Cuik_Type* src, Cuik_Type* dst, Expr* 
     }
 
     if (src->kind != dst->kind) {
-        if (src->kind >= KIND_BOOL && src->kind <= KIND_LONG &&
-            dst->kind >= KIND_BOOL && dst->kind <= KIND_LONG) {
+        if (cuik_type_is_integer(src) && cuik_type_is_integer(dst)) {
             #if 0
             // we allow for implicit up-casts (char -> long)
             if (dst->kind >= src->kind) return true;
@@ -95,17 +95,13 @@ bool type_compatible(TranslationUnit* tu, Cuik_Type* src, Cuik_Type* dst, Expr* 
             // just all integer casts are good
             return true;
             #endif
-        } else if (src->kind >= KIND_BOOL && src->kind <= KIND_LONG && dst->kind == KIND_PTR) {
+        } else if (cuik_type_is_integer(src) && cuik_type_is_pointer(dst)) {
             if (a_expr->op == EXPR_INT && a_expr->int_num.num == 0) {
                 return true;
             }
-        } else if (src->kind == KIND_FLOAT || dst->kind == KIND_DOUBLE) {
+        } else if (cuik_type_is_float(src) && cuik_type_is_float(dst)) {
             return true;
-        } else if (src->kind == KIND_DOUBLE || dst->kind == KIND_FLOAT) {
-            return true;
-        } else if (src->kind == KIND_PTR && dst->kind == KIND_BOOL) {
-            return true;
-        } else if (src->kind == KIND_FUNC && dst->kind == KIND_BOOL) {
+        } else if (cuik_type_is_scalar(src) && cuik_type_is_bool(dst)) {
             return true;
         } else if (src->kind == KIND_FUNC && dst->kind == KIND_PTR) {
             Cuik_Type* dst_ptr_to = cuik_canonical_type(dst->ptr_to);
@@ -724,6 +720,9 @@ Cuik_QualType cuik__sema_expr(TranslationUnit* tu, Expr* restrict e) {
             return (e->type = type);
         }
         case EXPR_INT: {
+            const Cuik_Type* target_signed_ints = tu->target->signed_ints;
+            const Cuik_Type* target_unsigned_ints = tu->target->unsigned_ints;
+
             switch (e->int_num.suffix) {
                 case INT_SUFFIX_NONE: {
                     unsigned int original = (unsigned int)e->int_num.num;
@@ -731,10 +730,10 @@ Cuik_QualType cuik__sema_expr(TranslationUnit* tu, Expr* restrict e) {
 
                     if (original != expected) {
                         // REPORT_EXPR(ERROR, e, "Could not represent integer literal as int. (%llu or %llx)", expected, expected);
-                        return (e->type = cuik_uncanonical_type(&cuik__builtin_long));
+                        return (e->type = cuik_uncanonical_type(&target_signed_ints[CUIK_BUILTIN_LLONG]));
                     }
 
-                    return (e->type = cuik_uncanonical_type(&cuik__builtin_int));
+                    return (e->type = cuik_uncanonical_type(&target_signed_ints[CUIK_BUILTIN_INT]));
                 }
 
                 case INT_SUFFIX_U: {
@@ -743,21 +742,21 @@ Cuik_QualType cuik__sema_expr(TranslationUnit* tu, Expr* restrict e) {
 
                     if (original != expected) {
                         // REPORT_EXPR(ERROR, e, "Could not represent integer literal as unsigned int.");
-                        return (e->type = cuik_uncanonical_type(&cuik__builtin_ulong));
+                        return (e->type = cuik_uncanonical_type(&target_unsigned_ints[CUIK_BUILTIN_LLONG]));
                     }
 
-                    return (e->type = cuik_uncanonical_type(&cuik__builtin_uint));
+                    return (e->type = cuik_uncanonical_type(&target_unsigned_ints[CUIK_BUILTIN_INT]));
                 }
 
                 case INT_SUFFIX_L:
-                return (e->type = cuik_uncanonical_type(tu->is_windows_long ? &cuik__builtin_int : &cuik__builtin_long));
+                return (e->type = cuik_uncanonical_type(&target_signed_ints[CUIK_BUILTIN_LONG]));
                 case INT_SUFFIX_UL:
-                return (e->type = cuik_uncanonical_type(tu->is_windows_long ? &cuik__builtin_uint : &cuik__builtin_ulong));
+                return (e->type = cuik_uncanonical_type(&target_unsigned_ints[CUIK_BUILTIN_LONG]));
 
                 case INT_SUFFIX_LL:
-                return (e->type = cuik_uncanonical_type(&cuik__builtin_long));
+                return (e->type = cuik_uncanonical_type(&target_signed_ints[CUIK_BUILTIN_LLONG]));
                 case INT_SUFFIX_ULL:
-                return (e->type = cuik_uncanonical_type(&cuik__builtin_ulong));
+                return (e->type = cuik_uncanonical_type(&target_unsigned_ints[CUIK_BUILTIN_LLONG]));
 
                 default:
                 diag_err(&tu->tokens, e->loc, "could not represent integer literal.");
@@ -1055,15 +1054,15 @@ Cuik_QualType cuik__sema_expr(TranslationUnit* tu, Expr* restrict e) {
         }
         case EXPR_CALL: {
             if (e->call.target->op == EXPR_BUILTIN_SYMBOL) {
-                const char* name = (const char*)e->call.target->builtin_sym.name;
-                ptrdiff_t search = nl_strmap_get_cstr(tu->target.arch->builtin_func_map, name);
+                const char* name = (const char*) e->call.target->builtin_sym.name;
+                ptrdiff_t search = nl_strmap_get_cstr(tu->target->builtin_func_map, name);
                 assert(search >= 0);
 
                 Expr** args = e->call.param_start;
                 int arg_count = e->call.param_count;
 
-                Cuik_Type* ty = tu->target.arch->type_check_builtin(
-                    tu, e, name, tu->target.arch->builtin_func_map[search], arg_count, args
+                Cuik_Type* ty = tu->target->type_check_builtin(
+                    tu, e, name, tu->target->builtin_func_map[search], arg_count, args
                 );
 
                 return (e->type = cuik_uncanonical_type(ty ? ty : &cuik__builtin_void));
@@ -1598,7 +1597,7 @@ static void sema_top_level(TranslationUnit* tu, Stmt* restrict s) {
                 cuik__sema_function_stmt = 0;
                 break;
             } else {
-                TB_FunctionPrototype* proto = tu->target.arch->create_prototype(tu, type);
+                TB_FunctionPrototype* proto = tu->target->create_prototype(tu, type);
                 TB_Linkage linkage = s->decl.attrs.is_static ? TB_LINKAGE_PRIVATE : TB_LINKAGE_PUBLIC;
 
                 // TODO(NeGate): Fix this up because it's possibly wrong, essentially

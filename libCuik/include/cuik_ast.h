@@ -61,6 +61,7 @@ typedef enum Cuik_TypeKind {
     KIND_INT,
     KIND_ENUM,
     KIND_LONG,
+    KIND_LLONG,
     KIND_FLOAT,
     KIND_DOUBLE,
     KIND_PTR,
@@ -626,17 +627,20 @@ struct Expr {
 _Static_assert(offsetof(Expr, next_symbol_in_chain) == offsetof(Expr, next_symbol_in_chain2), "these should be aliasing");
 _Static_assert(offsetof(Expr, next_symbol_in_chain) == offsetof(Expr, builtin_sym.next_symbol_in_chain), "these should be aliasing");
 
-static bool cuik_type_is_signed(Cuik_Type* t) { return (t->kind >= KIND_CHAR && t->kind <= KIND_LONG) && !t->is_unsigned; }
-static bool cuik_type_is_unsigned(Cuik_Type* t) { return (t->kind >= KIND_CHAR && t->kind <= KIND_LONG) && t->is_unsigned; }
+static bool cuik_type_is_signed(Cuik_Type* t) { return (t->kind >= KIND_CHAR && t->kind <= KIND_LLONG) && !t->is_unsigned; }
+static bool cuik_type_is_unsigned(Cuik_Type* t) { return (t->kind >= KIND_CHAR && t->kind <= KIND_LLONG) && t->is_unsigned; }
 
-static bool cuik_type_is_integer(Cuik_Type* t) { return t->kind >= KIND_CHAR && t->kind <= KIND_LONG; }
-static bool cuik_type_is_integer_or_bool(Cuik_Type* t) { return t->kind >= KIND_BOOL && t->kind <= KIND_LONG; }
+static bool cuik_type_is_integer(Cuik_Type* t) { return t->kind >= KIND_CHAR && t->kind <= KIND_LLONG; }
+static bool cuik_type_is_integer_or_bool(Cuik_Type* t) { return t->kind >= KIND_BOOL && t->kind <= KIND_LLONG; }
 static bool cuik_type_is_float(Cuik_Type* t) { return t->kind >= KIND_FLOAT && t->kind <= KIND_DOUBLE; }
+
+static bool cuik_type_is_bool(Cuik_Type* t) { return t->kind == KIND_BOOL; }
+static bool cuik_type_is_pointer(Cuik_Type* t) { return t->kind == KIND_PTR; }
 
 // [https://www.sigbus.info/n1570#6.2.5p21]
 // Arithmetic types and pointer types are collectively called scalar types.
 // Array and structure types are collectively called aggregate types.
-static bool cuik_type_is_scalar(Cuik_Type* t) { return t->kind >= KIND_BOOL && t->kind <= KIND_PTR; }
+static bool cuik_type_is_scalar(Cuik_Type* t) { return t->kind >= KIND_BOOL && t->kind <= KIND_FUNC; }
 static bool cuik_type_is_aggregate(Cuik_Type* t) { return t->kind >= KIND_ARRAY && t->kind <= KIND_UNION; }
 
 // [https://www.sigbus.info/n1570#6.2.5p18]
