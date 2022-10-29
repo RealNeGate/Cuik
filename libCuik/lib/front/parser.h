@@ -70,7 +70,7 @@ typedef struct Symbol {
     // when handling global symbols and delaying their parsing
     // we want to be able to store what the position of the symbol's
     // "value" aka function bodies and intitial expressions
-    int current, terminator;
+    int token_start, token_end;
 } Symbol;
 
 // Variety of parser specific errors which are accumulated to

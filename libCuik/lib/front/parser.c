@@ -230,6 +230,10 @@ struct Cuik_Parser {
     Cuik_ImportRequest* import_libs;
     DynArray(int) static_assertions;
 
+    // out-of-order parsing is only done while in global scope
+    bool is_in_global_scope;
+
+    DynArray(Stmt*) top_level_stmts;
     Cuik_TypeTable types;
     Cuik_GlobalSymbols globals;
 };
@@ -271,9 +275,9 @@ static void parse_global_symbols(TranslationUnit* tu, size_t start, size_t end, 
             Symbol* sym = &tu->globals.symbols[i];
 
             // don't worry about normal globals, those have been taken care of...
-            if (sym->current != 0 && (sym->storage_class == STORAGE_STATIC_FUNC || sym->storage_class == STORAGE_FUNC)) {
+            if (sym->token_start != 0 && (sym->storage_class == STORAGE_STATIC_FUNC || sym->storage_class == STORAGE_FUNC)) {
                 // Spin up a mini parser here
-                tokens.list.current = sym->current;
+                tokens.list.current = sym->token_start;
 
                 // intitialize use list
                 symbol_chain_start = symbol_chain_current = NULL;
@@ -873,7 +877,7 @@ TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* res
                         if (tokens_get(s)->type == '=') {
                             tokens_next(s);
 
-                            if (old_definition && old_definition->current != 0) {
+                            if (old_definition && old_definition->token_start != 0) {
                                 /* report_two_spots(REPORT_ERROR, tu->errors, s, decl.loc, old_definition->stmt->loc,
                                     "Cannot redefine global declaration",
                                     NULL, NULL, "previous definition was:");*/
@@ -887,9 +891,7 @@ TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* res
                             n->decl.attrs.is_root = !attr.is_extern && !attr.is_static;
 
                             if (tokens_get(s)->type == '{') {
-                                sym->current = s->list.current;
-                                sym->terminator = '}';
-
+                                sym->token_start = s->list.current;
                                 tokens_next(s);
 
                                 int depth = 1;
@@ -900,7 +902,7 @@ TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* res
                                         REPORT(ERROR, decl.loc, "Declaration ended in EOF");
 
                                         // restore the token stream
-                                        s->list.current = sym->current + 1;
+                                        s->list.current = sym->token_start + 1;
                                         goto skip_declaration;
                                     } else if (t->type == '{') {
                                         depth++;
@@ -918,11 +920,12 @@ TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* res
 
                                     tokens_next(s);
                                 }
+
+                                sym->token_end = s->list.current;
                             } else {
                                 // '=' EXPRESSION ','
                                 // '=' EXPRESSION ';'
-                                sym->current = s->list.current;
-                                sym->terminator = ';';
+                                sym->token_start = s->list.current;
 
                                 int depth = 1;
                                 while (depth) {
@@ -932,7 +935,7 @@ TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* res
                                         REPORT(ERROR, decl.loc, "Declaration was never closed");
 
                                         // restore the token stream
-                                        s->list.current = sym->current + 1;
+                                        s->list.current = sym->token_start + 1;
                                         goto skip_declaration;
                                     } else if (t->type == '(') {
                                         depth++;
@@ -942,7 +945,7 @@ TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* res
                                         if (depth == 0) {
                                             REPORT(ERROR, decl.loc, "Unbalanced parenthesis");
 
-                                            s->list.current = sym->current + 1;
+                                            s->list.current = sym->token_start + 1;
                                             goto skip_declaration;
                                         }
                                     } else if (t->type == ';' || t->type == ',') {
@@ -950,7 +953,7 @@ TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* res
                                             REPORT(ERROR, decl.loc, "Declaration's expression has a weird semicolon");
                                             goto skip_declaration;
                                         } else if (depth == 1) {
-                                            sym->terminator = t->type;
+                                            sym->token_end = s->list.current;
                                             depth--;
                                         }
                                     }
@@ -961,6 +964,7 @@ TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* res
                                 // we ate the terminator but the code right below it
                                 // does need to know what it is...
                                 tokens_prev(s);
+                                sym->token_end = s->list.current;
                             }
                         } else if (tokens_get(s)->type == '{') {
                             // function bodies dont end in semicolon or comma, it just terminates
@@ -971,7 +975,7 @@ TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* res
                                 diag_err(&tu->tokens, decl.loc, "Somehow parsing a function body... on a non-function type?");
                             }
 
-                            if (old_definition && old_definition->current != 0) {
+                            if (old_definition && old_definition->token_start != 0) {
                                 /* report_two_spots(REPORT_ERROR, tu->errors, s, decl.loc, old_definition->stmt->loc,
                                     "Cannot redefine function declaration",
                                     NULL, NULL, "previous definition was:");*/
@@ -988,8 +992,7 @@ TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* res
                             //n->decl.attrs = attr;
                             n->decl.attrs.is_root = attr.is_tls || !(attr.is_static || attr.is_inline);
 
-                            sym->terminator = '}';
-                            sym->current = s->list.current;
+                            sym->token_start = s->list.current;
                             tokens_next(s);
 
                             // we postpone parsing the function bodies
@@ -1002,7 +1005,7 @@ TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* res
                                     SourceLoc l = tokens_get_last_location(s);
                                     report_fix(REPORT_ERROR, s, l, "}", "Function body ended in EOF");
 
-                                    s->list.current = sym->current + 1;
+                                    s->list.current = sym->token_start + 1;
                                     goto skip_declaration;
                                 } else if (t->type == '{') {
                                     depth++;
@@ -1012,6 +1015,8 @@ TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* res
 
                                 tokens_next(s);
                             }
+
+                            sym->token_end = s->list.current;
                         } else {
                             if (cuik_canonical_type(decl.type)->kind != KIND_FUNC) {
                                 if (n->decl.attrs.is_inline) {
@@ -1107,10 +1112,10 @@ TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* res
         nl_strmap_for(i, tu->globals.symbols) {
             Symbol* sym = &tu->globals.symbols[i];
 
-            if (sym->current != 0 && (sym->storage_class == STORAGE_STATIC_VAR || sym->storage_class == STORAGE_GLOBAL)) {
+            if (sym->token_start != 0 && (sym->storage_class == STORAGE_STATIC_VAR || sym->storage_class == STORAGE_GLOBAL)) {
                 // Spin up a mini parser here
                 TokenStream mini_lex = *s;
-                mini_lex.list.current = sym->current;
+                mini_lex.list.current = sym->token_start;
 
                 // intitialize use list
                 symbol_chain_start = symbol_chain_current = NULL;
@@ -1122,7 +1127,9 @@ TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* res
                     e = parse_initializer(tu, &mini_lex, CUIK_QUAL_TYPE_NULL);
                 } else {
                     e = parse_expr_assign(tu, &mini_lex);
-                    expect(tu, &mini_lex, sym->terminator);
+                    if (mini_lex.list.current != sym->token_end) {
+                        abort();
+                    }
                 }
 
                 sym->stmt->decl.initial = e;

@@ -1,3 +1,118 @@
+static Decl parse_declarator2(Cuik_Parser* restrict parser, TokenStream* restrict s, Cuik_QualType type, bool is_abstract);
+
+// [ ASSIGNMENT-EXPR ]
+//
+// returns the lbrace
+static size_t skip_expression_in_braces(TokenStream* s) {
+    // in the out of order case we defer expression parsing
+    SourceLoc open_brace = tokens_get_location(s);
+    tokens_next(s);
+
+    size_t current = s->list.current;
+    int depth = 1;
+    while (depth) {
+        Token* t = tokens_get(s);
+
+        if (t->type == '\0') {
+            diag_err(s, get_token_range(t), "array declaration ended in EOF");
+            return current;
+        } else if (t->type == '[') {
+            depth++;
+        } else if (t->type == ']') {
+            if (depth == 0) {
+                report_two_spots(REPORT_ERROR, s, open_brace, t->location, "unbalanced brackets", "open", "close?", NULL);
+                abort();
+            }
+
+            depth--;
+        }
+
+        tokens_next(s);
+    }
+
+    tokens_prev(s);
+    expect_char(s, ']');
+    return current;
+}
+
+// either ends with a comma or semicolon
+static ptrdiff_t skip_expression_in_list(TokenStream* restrict s, SourceRange error_loc, ptrdiff_t* out_end) {
+    // '=' EXPRESSION ','
+    // '=' EXPRESSION ';'
+    ptrdiff_t current = s->list.current;
+
+    int depth = 1;
+    while (depth) {
+        Token* t = tokens_get(s);
+
+        if (t->type == '\0') {
+            diag_err(s, error_loc, "Declaration was never closed");
+
+            // restore the token stream
+            s->list.current = current + 1;
+            return -1;
+        } else if (t->type == '(') {
+            depth++;
+        } else if (t->type == ')') {
+            depth--;
+
+            if (depth == 0) {
+                diag_err(s, error_loc, "Unbalanced parenthesis");
+
+                s->list.current = current + 1;
+                return -1;
+            }
+        } else if (t->type == ';' || t->type == ',') {
+            if (depth > 1 && t->type == ';') {
+                diag_err(s, error_loc, "Declaration's expression has a weird semicolon");
+                return -1;
+            } else if (depth == 1) {
+                depth--;
+                break;
+            }
+        }
+
+        tokens_next(s);
+    }
+
+    *out_end = s->list.current - 1;
+    return current;
+}
+
+static ptrdiff_t skip_brackets(TokenStream* restrict s, SourceRange error_loc, bool no_semicolons, ptrdiff_t* out_end) {
+    ptrdiff_t current = s->list.current;
+    tokens_next(s);
+
+    int depth = 1;
+    while (depth) {
+        Token* t = tokens_get(s);
+
+        if (t->type == '\0') {
+            diag_err(s, error_loc, "brackets ended in EOF");
+
+            // restore the token stream
+            s->list.current = current + 1;
+            return -1;
+        } else if (t->type == '{') {
+            depth++;
+        } else if (t->type == ';' && depth == 1 && no_semicolons) {
+            diag_err(s, tokens_get_range(s), "Spurious semicolon");
+            return -1;
+        } else if (t->type == '}') {
+            if (depth == 0) {
+                diag_err(s, error_loc, "Unbalanced brackets");
+                return -1;
+            }
+
+            depth--;
+        }
+
+        tokens_next(s);
+    }
+
+    *out_end = s->list.current - 1;
+    return current;
+}
 
 static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* restrict s, Attribs* attr) {
     enum {
@@ -177,12 +292,130 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
     return cuik_make_qual_type((Cuik_Type*) type, quals);
 }
 
+static Cuik_QualType parse_type_suffix2(Cuik_Parser* restrict parser, TokenStream* restrict s, Cuik_QualType type) {
+    Token* t = tokens_get(s);
+    if (t->type == '(') {
+        // function call
+        // void foo(int x)
+        //         ^^^^^^^
+        SourceLoc opening_loc = tokens_get_location(s);
+        tokens_next(s);
+
+        Cuik_Type* t = cuik__new_func(&parser->types);
+        t->func.return_type = type;
+
+        if (tokens_get(s)->type == TOKEN_KW_void && tokens_peek(s)->type == ')') {
+            // this is required pre-C23 to say no parameters (empty parens meant undefined)
+            tokens_next(s);
+            tokens_next(s);
+
+            t->func.param_list = 0;
+            t->func.param_count = 0;
+        } else {
+            size_t param_count = 0;
+            Param* params = tls_save();
+            bool has_varargs = false;
+
+            while (tokens_get(s)->type && tokens_get(s)->type != ')') {
+                if (param_count) {
+                    if (tokens_get(s)->type != ',') {
+                        diag_err(s, tokens_get_range(s), "expected closing paren (or comma) after declaration name");
+                    } else {
+                        tokens_next(s);
+                    }
+                }
+
+                if (tokens_get(s)->type == TOKEN_TRIPLE_DOT) {
+                    tokens_next(s);
+                    has_varargs = true;
+                    break;
+                }
+
+                Attribs param_attr = { 0 };
+                Cuik_QualType param_base_type = parse_declspec2(parser, s, &param_attr);
+                if (CUIK_QUAL_TYPE_IS_NULL(param_base_type)) {
+                    param_base_type = cuik_uncanonical_type(parser->default_int);
+                    tokens_next(s);
+                }
+
+                Decl param_decl = parse_declarator2(parser, s, param_base_type, false);
+                Cuik_QualType param_type = param_decl.type;
+
+                // Handle parameter sugar
+                Cuik_Type* param_type_canon = cuik_canonical_type(param_type);
+                if (param_type_canon->kind == KIND_ARRAY) {
+                    // Array parameters are desugared into pointers
+                    param_type = cuik_uncanonical_type(cuik__new_pointer(&parser->types, param_type_canon->array_of));
+                } else if (param_type_canon->kind == KIND_FUNC) {
+                    // Function parameters are desugared into pointers
+                    param_type = cuik_uncanonical_type(cuik__new_pointer(&parser->types, param_type));
+                }
+
+                // TODO(NeGate): Error check that no attribs are set
+                tls_push(sizeof(Param));
+                params[param_count++] = (Param){
+                    .type = param_type,
+                    .name = param_decl.name
+                };
+            }
+            expect_closing_paren(s, opening_loc);
+
+            // Allocate some more permanent storage
+            Param* permanent_store = arena_alloc(&local_ast_arena, param_count * sizeof(Param), _Alignof(Param));
+            memcpy(permanent_store, params, param_count * sizeof(Param));
+
+            t->func.param_list = permanent_store;
+            t->func.param_count = param_count;
+
+            // Before C23 empty parameter lists mean undefined set of parameters
+            // we're gonna stick with that for now...
+            if (parser->version < CUIK_VERSION_C23) {
+                t->func.has_varargs = (param_count == 0 || has_varargs);
+            } else {
+                t->func.has_varargs = has_varargs;
+            }
+
+            tls_restore(params);
+        }
+
+        type = cuik_uncanonical_type(t);
+    } else if (t->type == '[') {
+        // array
+        // int bar[8 * 8]
+        //        ^^^^^^^
+        SourceLoc open_brace = tokens_get_location(s);
+        tokens_next(s);
+
+        Cuik_Type* t = NULL;
+        if (parser->is_in_global_scope) {
+            size_t current = 0;
+            if (tokens_get(s)->type == ']') {
+                tokens_next(s);
+            } else if (tokens_get(s)->type == '*') {
+                tokens_next(s);
+                expect_char(s, ']');
+            } else {
+                current = skip_expression_in_braces(s);
+            }
+
+            // create placeholder array type
+            t = cuik__new_array(&parser->types, parse_type_suffix2(parser, s, type), 0);
+            t->loc = (SourceRange){ open_brace, tokens_get_last_location(s) };
+            t->array_count_lexer_pos = current;
+        } else {
+            __debugbreak();
+        }
+        type = cuik_uncanonical_type(t);
+    }
+
+    return type;
+}
+
 // declarator:
 //   pointerOPT direct-declarator
 static Decl parse_declarator2(Cuik_Parser* restrict parser, TokenStream* restrict s, Cuik_QualType type, bool is_abstract) {
     assert(!CUIK_QUAL_TYPE_IS_NULL(type));
     SourceLoc start_loc = tokens_get_location(s);
-    const Cuik_Type* default_int = &parser->target->signed_ints[CUIK_BUILTIN_INT];
 
     // pointer:
     //   * type-qualifier-listOPT
@@ -234,109 +467,18 @@ static Decl parse_declarator2(Cuik_Parser* restrict parser, TokenStream* restric
         // we pass a dummy type so we can skip over it
         parse_declarator2(parser, s, cuik_uncanonical_type(&builtin_types[TYPE_VOID]), is_abstract);
         expect_closing_paren(s, opening_loc);
-
-        nested_end = s->list.current;
     }
 
     // Handle suffixes like [] or ()
-    t = tokens_get(s);
-    if (t->type == '(') {
-        // function call
-        // void foo(int x)
-        //         ^^^^^^^
-        SourceLoc opening_loc = tokens_get_location(s);
-        tokens_next(s);
-
-        Cuik_Type* t = cuik__new_func(&parser->types);
-        t->func.return_type = type;
-
-        if (tokens_get(s)->type == TOKEN_KW_void && tokens_peek(s)->type == ')') {
-            // this is required pre-C23 to say no parameters (empty parens meant undefined)
-            tokens_next(s);
-            tokens_next(s);
-
-            t->func.param_list = 0;
-            t->func.param_count = 0;
-        } else {
-            size_t param_count = 0;
-            Param* params = tls_save();
-            bool has_varargs = false;
-
-            while (tokens_get(s)->type && tokens_get(s)->type != ')') {
-                if (param_count) {
-                    if (tokens_get(s)->type != ',') {
-                        diag_err(s, tokens_get_range(s), "expected closing paren (or comma) after declaration name");
-                    } else {
-                        tokens_next(s);
-                    }
-                }
-
-                if (tokens_get(s)->type == TOKEN_TRIPLE_DOT) {
-                    tokens_next(s);
-                    has_varargs = true;
-                    break;
-                }
-
-                Attribs param_attr = { 0 };
-                Cuik_QualType param_base_type = parse_declspec2(parser, s, &param_attr);
-                if (CUIK_QUAL_TYPE_IS_NULL(param_base_type)) {
-                    param_base_type = cuik_uncanonical_type(default_int);
-                    tokens_next(s);
-                }
-
-                Decl param_decl = parse_declarator2(parser, s, param_base_type, false);
-                Cuik_QualType param_type = param_decl.type;
-
-                // Handle parameter sugar
-                Cuik_Type* param_type_canon = cuik_canonical_type(param_type);
-                if (param_type_canon->kind == KIND_ARRAY) {
-                    // Array parameters are desugared into pointers
-                    param_type = cuik_uncanonical_type(cuik__new_pointer(&parser->types, param_type_canon->array_of));
-                } else if (param_type_canon->kind == KIND_FUNC) {
-                    // Function parameters are desugared into pointers
-                    param_type = cuik_uncanonical_type(cuik__new_pointer(&parser->types, param_type));
-                }
-
-                // TODO(NeGate): Error check that no attribs are set
-                tls_push(sizeof(Param));
-                params[param_count++] = (Param){
-                    .type = param_type,
-                    .name = param_decl.name
-                };
-            }
-            expect_closing_paren(s, opening_loc);
-
-            // Allocate some more permanent storage
-            Param* permanent_store = arena_alloc(&local_ast_arena, param_count * sizeof(Param), _Alignof(Param));
-            memcpy(permanent_store, params, param_count * sizeof(Param));
-
-            t->func.param_list = permanent_store;
-            t->func.param_count = param_count;
-
-            // Before C23 empty parameter lists mean undefined set of parameters
-            // we're gonna stick with that for now...
-            if (parser->version < CUIK_VERSION_C23) {
-                t->func.has_varargs = (param_count == 0 || has_varargs);
-            } else {
-                t->func.has_varargs = has_varargs;
-            }
-
-            tls_restore(params);
-        }
-
-        type = cuik_uncanonical_type(t);
-    } else if (t->type == '[') {
-        // array
-        // int bar[8 * 8]
-        //        ^^^^^^^
-        __debugbreak();
-    }
+    type = parse_type_suffix2(parser, s, type);
+    nested_end = s->list.current;
 
     if (nested_start >= 0) {
         assert(nested_end >= 0);
         s->list.current = nested_start;
 
         Decl nest = parse_declarator2(parser, s, type, is_abstract);
+        name = nest.name;
         type = nest.type;
 
         s->list.current = nested_end;
