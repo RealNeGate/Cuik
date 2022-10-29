@@ -246,7 +246,7 @@ typedef enum ParseResult {
 
 #include "expr_parser.h"
 #include "decl_parser.h"
-#include "expr_parser2.h"
+#include "decl_parser2.h"
 #include "top_level_parser.h"
 
 typedef struct {

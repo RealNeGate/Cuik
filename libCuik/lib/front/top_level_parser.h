@@ -1,4 +1,3 @@
-static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* restrict s, Attribs* attr);
 
 static Stmt* alloc_stmt(Cuik_Parser* parser) {
     Stmt* stmt = ARENA_ALLOC(&local_ast_arena, Stmt);
