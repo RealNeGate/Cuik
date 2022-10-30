@@ -166,9 +166,9 @@ struct Cuik_Type {
     #endif
 
     // used by cycle checking
-    int ordinal;
-    bool is_incomplete : 1;
-    bool is_inprogress : 1;
+    bool is_complete : 1;
+    bool is_visited  : 1;
+    bool is_progress : 1;
 
     union {
         // Integers

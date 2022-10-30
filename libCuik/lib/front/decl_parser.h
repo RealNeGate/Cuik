@@ -666,7 +666,7 @@ static Cuik_QualType parse_declspec(TranslationUnit* tu, TokenStream* restrict s
                         //assert(!type->is_incomplete);
                     } else {
                         type = cuik__new_record(&tu->types, is_union);
-                        type->is_incomplete = false;
+                        type->is_complete = true;
                         type->record.name = name;
 
                         // can't forward decl unnamed records so we
@@ -792,7 +792,7 @@ static Cuik_QualType parse_declspec(TranslationUnit* tu, TokenStream* restrict s
                         type = cuik__new_record(&tu->types, is_union);
                         type->loc = record_loc;
                         type->record.name = name;
-                        type->is_incomplete = true;
+                        type->is_complete = false;
 
                         if (out_of_order_mode) {
                             nl_strmap_put_cstr(tu->globals.tags, name, type);
@@ -839,7 +839,7 @@ static Cuik_QualType parse_declspec(TranslationUnit* tu, TokenStream* restrict s
                         }
                     } else {
                         type = cuik__new_enum(&tu->types);
-                        type->is_incomplete = true;
+                        type->is_complete = false;
                         type->enumerator.name = name;
 
                         if (name) {
@@ -936,7 +936,7 @@ static Cuik_QualType parse_declspec(TranslationUnit* tu, TokenStream* restrict s
                     type->enumerator.count = count;
 
                     if (out_of_order_mode) {
-                        type->is_incomplete = true;
+                        type->is_complete = false;
                         type->size = 0;
                         type->align = 0;
                     } else {
@@ -947,7 +947,7 @@ static Cuik_QualType parse_declspec(TranslationUnit* tu, TokenStream* restrict s
                     if (!type) {
                         type = cuik__new_enum(&tu->types);
                         type->record.name = name;
-                        type->is_incomplete = true;
+                        type->is_complete = false;
 
                         if (out_of_order_mode) {
                             nl_strmap_put_cstr(tu->globals.tags, name, type);
@@ -961,8 +961,7 @@ static Cuik_QualType parse_declspec(TranslationUnit* tu, TokenStream* restrict s
                         }
                     }
 
-                    // push back one because we push it forward one later but
-                    // shouldn't
+                    // push back one because we push it forward one later but shouldn't
                     tokens_prev(s);
                 }
 

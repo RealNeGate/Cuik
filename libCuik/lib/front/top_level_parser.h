@@ -148,6 +148,8 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
     Cuik_QualType type = parse_declspec2(parser, s, &attr);
     if (CUIK_QUAL_TYPE_IS_NULL(type)) {
         diag_err(s, (SourceRange){ loc, tokens_get_last_location(s) }, "could not parse base type.");
+        tokens_next(s);
+
         type = cuik_uncanonical_type(parser->default_int);
     }
     // diag_note(s, (SourceRange){ loc, tokens_get_last_location(s) }, "Declspec");

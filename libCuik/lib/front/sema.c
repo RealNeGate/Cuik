@@ -1396,11 +1396,7 @@ void sema_stmt(TranslationUnit* tu, Stmt* restrict s) {
                 }
             }
 
-            if (decl_type->size == 0 || decl_type->is_incomplete) {
-                /*report_two_spots(
-                    REPORT_ERROR, tu->errors, &tu->tokens, s->loc, decl_type->loc,
-                    "Incomplete type in declaration", "decl", "type", NULL
-                );*/
+            if (decl_type->size == 0 || !decl_type->is_complete) {
                 diag_err(&tu->tokens, s->loc, "incomplete type used in declaration");
                 diag_note(&tu->tokens, decl_type->loc, "type declared here");
             }
@@ -1530,7 +1526,7 @@ Cuik_QualType sema_guess_type(TranslationUnit* tu, Stmt* restrict s) {
         return cuik_uncanonical_type(NULL);
     }
 
-    if (type->is_incomplete) {
+    if (!type->is_complete) {
         if (type->kind == KIND_STRUCT) {
             diag_err(&tu->tokens, s->loc, "incomplete type (struct %s) in declaration", type->record.name);
         } else if (type->kind == KIND_UNION) {
@@ -1689,7 +1685,7 @@ static void sema_top_level(TranslationUnit* tu, Stmt* restrict s) {
                     }
                 }
 
-                if (type->size == 0 || type->is_incomplete) {
+                if (type->size == 0 || !type->is_complete) {
                     diag_err(&tu->tokens, s->loc, "incomplete type used in declaration");
                     diag_note(&tu->tokens, type->loc, "type declared here");
                 }

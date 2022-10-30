@@ -331,49 +331,41 @@ static void phase3_parse_task(void* arg) {
 // 0 no cycles
 // 1 cycles
 // 2 cycles and we gave an error msg
-static int type_cycles_dfs(TranslationUnit* restrict tu, Cuik_Type* type, uint8_t* visited, uint8_t* finished) {
+static int type_cycles_dfs(TranslationUnit* restrict tu, Cuik_Type* type) {
     // non-record types are always finished :P
     if (type->kind != KIND_STRUCT && type->kind != KIND_UNION) {
         return 0;
     }
 
-    // if (finished[o]) return false
-    int o = type->ordinal;
-    if (finished[o / 8] & (1u << (o % 8))) {
+    if (type->is_complete) {
         return 0;
     }
 
     // if (visited[o]) return true
-    if (visited[o / 8] & (1u << (o % 8))) {
+    if (type->is_visited) {
         return 1;
     }
 
-    // visited[o] = true
-    visited[o / 8] |= (1u << (o % 8));
+    type->is_visited = true;
 
     // for each m in members
     //   if (dfs(m)) return true
     for (size_t i = 0; i < type->record.kid_count; i++) {
-        int c = type_cycles_dfs(tu, cuik_canonical_type(type->record.kids[i].type), visited, finished);
+        int c = type_cycles_dfs(tu, cuik_canonical_type(type->record.kids[i].type));
         if (c) {
             // we already gave an error message, don't be redundant
             if (c != 2) {
                 const char* name = type->record.name ? (const char*)type->record.name : "<unnamed>";
 
-                abort();
-                // char tmp[256];
-                // sprintf_s(tmp, sizeof(tmp), "type %s has cycles", name);
-                /*report_two_spots(REPORT_ERROR, tu->errors,
-                    &tu->tokens, type->loc, type->record.kids[i].loc,
-                    tmp, NULL, NULL, "on");*/
+                diag_err(&tu->tokens, type->loc, "type %s has cycles", name);
+                diag_note(&tu->tokens, type->record.kids[i].loc, "see here");
             }
 
             return 2;
         }
     }
 
-    // finished[o] = true
-    finished[o / 8] |= (1u << (o % 8));
+    type->is_complete = true;
     return 0;
 }
 
@@ -418,12 +410,12 @@ static void type_resolve_pending_align(TranslationUnit* restrict tu, Cuik_Type* 
 
 void type_layout(TranslationUnit* restrict tu, Cuik_Type* type, bool needs_complete) {
     if (type->kind == KIND_VOID || type->size != 0) return;
-    if (type->is_inprogress) {
+    if (type->is_progress) {
         diag_err(&tu->tokens, type->loc, "Type has a circular dependency");
         return;
     }
 
-    type->is_inprogress = true;
+    type->is_progress = true;
 
     if (type->kind == KIND_ARRAY) {
         if (type->array_count_lexer_pos) {
@@ -474,7 +466,7 @@ void type_layout(TranslationUnit* restrict tu, Cuik_Type* type, bool needs_compl
 
         type->size = 4;
         type->align = 4;
-        type->is_incomplete = false;
+        type->is_complete = false;
     } else if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
         bool is_union = (type->kind == KIND_UNION);
 
@@ -545,10 +537,10 @@ void type_layout(TranslationUnit* restrict tu, Cuik_Type* type, bool needs_compl
         offset = align_up(offset, align);
         type->align = align;
         type->size = offset;
-        type->is_incomplete = false;
+        type->is_complete = true;
     }
 
-    type->is_inprogress = false;
+    type->is_progress = false;
 }
 
 static const Cuik_Warnings DEFAULT_WARNINGS = { 0 };
@@ -1068,14 +1060,12 @@ TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* res
         ////////////////////////////////
         // first we wanna check for cycles
         ////////////////////////////////
-        size_t type_count = 0;
         for (Cuik_TypeTableSegment* a = tu->types.base; a != NULL; a = a->next) {
             for (size_t i = 0; i < a->count; i++) {
                 Cuik_Type* type = &a->_[i];
-                if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
-                    type->ordinal = type_count++;
-                } else if (type->kind == KIND_PLACEHOLDER) {
-                    REPORT(ERROR, type->loc, "could not find type '%s'!", type->placeholder.name);
+
+                if (type->kind == KIND_PLACEHOLDER) {
+                    diag_err(s, type->loc, "could not find type '%s'!", type->placeholder.name);
                 }
             }
         }
@@ -1084,14 +1074,6 @@ TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* res
             goto parse_error;
         }
 
-        // bitvectors amirite
-        size_t bitvec_bytes = (type_count + 7) / 8;
-        uint8_t* visited = tls_push(bitvec_bytes);
-        uint8_t* finished = tls_push(bitvec_bytes);
-
-        memset(visited, 0, bitvec_bytes);
-        memset(finished, 0, bitvec_bytes);
-
         // for each type, check for cycles
         for (Cuik_TypeTableSegment* a = tu->types.base; a != NULL; a = a->next) {
             for (size_t i = 0; i < a->count; i++) {
@@ -1099,7 +1081,7 @@ TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* res
 
                 if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
                     // if cycles... quit lmao
-                    if (type_cycles_dfs(tu, type, visited, finished)) goto parse_error;
+                    if (type_cycles_dfs(tu, type)) goto parse_error;
                 }
             }
         }
@@ -1193,9 +1175,6 @@ TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* res
                 }
             }
         }
-
-        // we don't need to keep it afterwards
-        tls_restore(visited);
     }
     dyn_array_destroy(static_assertions);
 

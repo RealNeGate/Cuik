@@ -268,7 +268,7 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                         diag_note(s, type->loc, "see here");
                     } else {
                         type = cuik__new_record(&parser->types, is_union);
-                        type->is_incomplete = false;
+                        type->is_complete =  true;
                         type->record.name = name;
 
                         // can't forward decl unnamed records so we don't track it
@@ -298,7 +298,7 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                         Attribs member_attr = { 0 };
                         Cuik_QualType member_base_type = parse_declspec2(parser, s, &member_attr);
 
-                        // error recovery, if we couldn't parse the typename we skip the declaration
+                        // error recovery
                         if (CUIK_QUAL_TYPE_IS_NULL(member_base_type)) {
                             member_base_type = cuik_uncanonical_type(parser->default_int);
                             tokens_next(s);
@@ -390,7 +390,7 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                         type = cuik__new_record(&parser->types, is_union);
                         type->loc = record_loc;
                         type->record.name = name;
-                        type->is_incomplete = true;
+                        type->is_complete = false;
 
                         if (out_of_order_mode) {
                             nl_strmap_put_cstr(parser->globals.tags, name, type);
