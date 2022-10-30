@@ -11,7 +11,8 @@
 #include "parser.h"
 #include <targets/targets.h>
 
-#undef VOID // winnt.h loves including garbage
+// winnt.h loves including garbage
+#undef VOID
 
 // HACK: this is defined in sema.c but because we sometimes call semantics stuff in the
 // parser we need access to it to avoid some problems
@@ -29,8 +30,10 @@ typedef struct {
     enum {
         PENDING_ALIGNAS
     } mode;
-    size_t expr_pos;
     int* dst;
+
+    Cuik_Type* type;
+    size_t start, end;
 } PendingExpr;
 
 // starting point is used to disable the function literals
@@ -369,31 +372,31 @@ static int type_cycles_dfs(TranslationUnit* restrict tu, Cuik_Type* type) {
     return 0;
 }
 
-static void type_resolve_pending_align(TranslationUnit* restrict tu, Cuik_Type* type) {
+// returns 1 on errors
+static int type_resolve_pending_align(TranslationUnit* restrict tu) {
     size_t pending_count = dyn_array_length(pending_exprs);
     for (size_t i = 0; i < pending_count; i++) {
-        if (pending_exprs[i].dst == &type->align) {
-            assert(pending_exprs[i].mode == PENDING_ALIGNAS);
+        if (pending_exprs[i].mode == PENDING_ALIGNAS) {
+            Cuik_Type* type = pending_exprs[i].type;
 
             TokenStream mini_lex = tu->tokens;
-            mini_lex.list.current = pending_exprs[i].expr_pos;
-
-            SourceLoc loc = tokens_get_location(&mini_lex);
+            mini_lex.list.current = pending_exprs[i].start;
 
             int align = 0;
+            SourceLoc loc = tokens_get_location(&mini_lex);
             if (is_typename(&tu->globals, &mini_lex)) {
                 Cuik_Type* new_align = cuik_canonical_type(parse_typename(tu, &mini_lex));
                 if (new_align == NULL || new_align->align) {
-                    REPORT(ERROR, loc, "_Alignas cannot operate with incomplete");
+                    diag_err(&tu->tokens, type->loc, "_Alignas cannot operate with incomplete");
                 } else {
                     align = new_align->align;
                 }
             } else {
                 intmax_t new_align = parse_const_expr(tu, &mini_lex);
                 if (new_align == 0) {
-                    REPORT(ERROR, loc, "_Alignas cannot be applied with 0 alignment", new_align);
+                    diag_err(&tu->tokens, type->loc, "_Alignas cannot be applied with 0 alignment", new_align);
                 } else if (new_align >= INT16_MAX) {
-                    REPORT(ERROR, loc, "_Alignas(%zu) exceeds max alignment of %zu", new_align, INT16_MAX);
+                    diag_err(&tu->tokens, type->loc, "_Alignas(%zu) exceeds max alignment of %zu", new_align, INT16_MAX);
                 } else {
                     align = new_align;
                 }
@@ -401,11 +404,11 @@ static void type_resolve_pending_align(TranslationUnit* restrict tu, Cuik_Type* 
 
             assert(align != 0);
             type->align = align;
-            return;
+            return 0;
         }
     }
 
-    abort();
+    return 1;
 }
 
 void type_layout(TranslationUnit* restrict tu, Cuik_Type* type, bool needs_complete) {
@@ -1126,14 +1129,14 @@ TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* res
         }
 
         // do record layouts and shi
+        if (type_resolve_pending_align(tu)) {
+            goto parse_error;
+        }
+
         for (Cuik_TypeTableSegment* a = tu->types.base; a != NULL; a = a->next) {
             for (size_t i = 0; i < a->count; i++) {
                 Cuik_Type* type = &a->_[i];
-
-                if (type->align == -1) {
-                    // this means it's got a pending expression for an alignment
-                    type_resolve_pending_align(tu, type);
-                }
+                assert(type->align != -1);
 
                 if (type->size == 0) {
                     type_layout(tu, type, true);

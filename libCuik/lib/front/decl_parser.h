@@ -586,7 +586,7 @@ static Cuik_QualType parse_declspec(TranslationUnit* tu, TokenStream* restrict s
                     tokens_prev(s);
 
                     // Add to pending list
-                    PendingExpr e = {PENDING_ALIGNAS, current, NULL};
+                    PendingExpr e = { PENDING_ALIGNAS, NULL, NULL, current };
                     dyn_array_put(pending_exprs, e);
                     alignas_pending_expr = &pending_exprs[dyn_array_length(pending_exprs) - 1];
                 } else {
@@ -1135,6 +1135,7 @@ static Cuik_QualType parse_declspec(TranslationUnit* tu, TokenStream* restrict s
             new_type->align = forced_align;
         } else if (alignas_pending_expr != NULL) {
             new_type->align = -1;
+            alignas_pending_expr->type = new_type;
             alignas_pending_expr->dst = &new_type->align;
         }
         type = new_type;
