@@ -18,8 +18,10 @@ static LARGE_INTEGER timer_start;
 static mtx_t timer_mutex;
 
 static bool should_lock_profiler;
-static const Cuik_IProfiler* profiler;
 static uint64_t global_profiler_start;
+
+static const Cuik_IProfiler* profiler;
+static void* profiler_userdata;
 
 void init_timer_system(void) {
     #ifdef _WIN32
@@ -28,28 +30,29 @@ void init_timer_system(void) {
     #endif
 }
 
-void cuik_start_global_profiler(const Cuik_IProfiler* p, bool lock_on_plot) {
-    assert(p != NULL);
+void* cuikperf_start(size_t ud_size, const Cuik_IProfiler* p, bool lock_on_plot) {
     assert(profiler == NULL);
 
     profiler = p;
+    profiler_userdata = calloc(ud_size, 1);
     should_lock_profiler = lock_on_plot;
 
     if (lock_on_plot) {
         mtx_init(&timer_mutex, mtx_plain);
     }
 
-    CUIK_CALL(profiler, start);
+    profiler->start(profiler_userdata);
 
     global_profiler_start = cuik_time_in_nanos();
-    CUIK_CALL(profiler, begin_plot, global_profiler_start, "libCuik");
+    profiler->begin_plot(profiler_userdata, global_profiler_start, "libCuik");
+    return profiler_userdata;
 }
 
-void cuik_stop_global_profiler(void) {
+void cuikperf_stop(void) {
     assert(profiler != NULL);
 
-    CUIK_CALL(profiler, end_plot, cuik_time_in_nanos());
-    CUIK_CALL(profiler, stop);
+    profiler->end_plot(profiler_userdata, cuik_time_in_nanos());
+    profiler->stop(profiler_userdata);
 
     if (should_lock_profiler) {
         mtx_destroy(&timer_mutex);
@@ -57,7 +60,7 @@ void cuik_stop_global_profiler(void) {
     profiler = NULL;
 }
 
-bool cuik_is_profiling(void) {
+bool cuikperf_is_active(void) {
     return (profiler != NULL);
 }
 
@@ -75,7 +78,7 @@ uint64_t cuik_time_in_nanos(void) {
     #endif
 }
 
-void cuik_profile_region_start(uint64_t nanos, const char* fmt, ...) {
+void cuikperf_region_start(uint64_t nanos, const char* fmt, ...) {
     if (profiler == NULL) return;
 
     // lock if necessary
@@ -88,15 +91,15 @@ void cuik_profile_region_start(uint64_t nanos, const char* fmt, ...) {
     label[sizeof(label) - 1] = '\0';
     va_end(ap);
 
-    CUIK_CALL(profiler, begin_plot, nanos, label);
+    profiler->begin_plot(profiler_userdata, nanos, label);
     if (should_lock_profiler) mtx_unlock(&timer_mutex);
 }
 
-void cuik_profile_region_end(void) {
+void cuikperf_region_end(void) {
     if (profiler == NULL) return;
     uint64_t nanos = cuik_time_in_nanos();
 
     if (should_lock_profiler) mtx_lock(&timer_mutex);
-    CUIK_CALL(profiler, end_plot, nanos);
+    profiler->end_plot(profiler_userdata, nanos);
     if (should_lock_profiler) mtx_unlock(&timer_mutex);
 }

@@ -34,18 +34,13 @@ typedef enum Cuik_Entrypoint {
 } Cuik_Entrypoint;
 
 ////////////////////////////////
-// Symbol table management
-////////////////////////////////
-// this represents the global symbol table, it can be generated
-// without fully parsing the translation unit.
-
-////////////////////////////////
 // Standard parsing
 ////////////////////////////////
 typedef struct Cuik_GlobalSymbols Cuik_GlobalSymbols;
 typedef struct Cuik_Parser Cuik_Parser;
 
-void cuikparse_make(Cuik_ParseVersion version, TokenStream* restrict s, const Cuik_Target* target);
+// returns the number of parser errors
+int cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict s, const Cuik_Target* target);
 
 
 

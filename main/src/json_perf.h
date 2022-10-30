@@ -37,7 +37,7 @@ static void jsonperf__plot(void* user_data, uint64_t start_ns, uint64_t end_ns, 
         start_in_microseconds);
 }
 
-static Cuik_IProfiler jsonperf_profiler = {
+static Cuik_IProfiler json_profiler = {
     .start = jsonperf__start,
     .stop = jsonperf__stop,
     .plot = jsonperf__plot

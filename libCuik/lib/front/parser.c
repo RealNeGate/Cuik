@@ -558,8 +558,8 @@ TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* res
     thread_local static NL_Strmap(Cuik_Type*) s_global_tags;
     thread_local static NL_Strmap(Symbol) s_global_symbols;
 
-    if (cuik_is_profiling()) {
-        cuik_profile_region_start(cuik_time_in_nanos(), "parse: %s", desc->tokens->filepath);
+    if (cuikperf_is_active()) {
+        cuikperf_region_start(cuik_time_in_nanos(), "parse: %s", desc->tokens->filepath);
     }
 
     assert(desc->tokens != NULL);
@@ -1331,7 +1331,7 @@ TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* res
         }
     }
 
-    if (cuik_is_profiling()) cuik_profile_region_end();
+    if (cuikperf_is_active()) cuikperf_region_end();
     return tu;
 
     parse_error: {
@@ -1343,7 +1343,7 @@ TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* res
         dyn_array_destroy(tu->tokens.list.tokens);
 
         cuik_destroy_translation_unit(tu);
-        if (cuik_is_profiling()) cuik_profile_region_end();
+        if (cuikperf_is_active()) cuikperf_region_end();
         return NULL;
     }
 }

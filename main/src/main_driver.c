@@ -378,10 +378,11 @@ static void free_preprocessor(Cuik_CPP* cpp) {
 }
 
 static void compile_file(void* arg) {
-    Cuik_CPP* cpp = arg;
-
-    cuikparse_make(CUIK_VERSION_C11, cuikpp_get_token_stream(cpp), target_desc);
-    __debugbreak();
+    int errors = cuikparse_run(CUIK_VERSION_C11, cuikpp_get_token_stream(arg), target_desc);
+    if (errors > 0) {
+        printf("Failed to parse with %d errors...", errors);
+        exit(1);
+    }
 
     // parse
     /*
@@ -995,18 +996,12 @@ int main(int argc, char** argv) {
     }
 
     if (args_time) {
-        char* perf_output_path = malloc(FILENAME_MAX);
-
         #if 0
+        char* perf_output_path = cuikperf_start(FILENAME_MAX, &json_profiler, false);
         sprintf_s(perf_output_path, FILENAME_MAX, "%s.json", output_path_no_ext);
-
-        jsonperf_profiler.user_data = perf_output_path;
-        cuik_start_global_profiler(&jsonperf_profiler, false);
         #else
-        sprintf_s(perf_output_path, FILENAME_MAX, "%s.flint", output_path_no_ext);
-
-        flintperf_profiler.user_data = perf_output_path;
-        cuik_start_global_profiler(&flintperf_profiler, false);
+        char* perf_output_path = cuikperf_start(FILENAME_MAX, &spall_profiler, false);
+        sprintf_s(perf_output_path, FILENAME_MAX, "%s.spall", output_path_no_ext);
         #endif
     }
 
@@ -1160,7 +1155,7 @@ int main(int argc, char** argv) {
         printf("\n");
     }
 
-    if (args_time) cuik_stop_global_profiler();
+    if (args_time) cuikperf_stop();
 
     ////////////////////////////////
     // Running executable

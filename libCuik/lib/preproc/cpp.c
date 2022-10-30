@@ -422,8 +422,8 @@ Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
                 slot->start_time = cuik_time_in_nanos();
                 slot->include_guard = (struct CPPIncludeGuard){ 0 };
 
-                if (cuik_is_profiling()) {
-                    cuik_profile_region_start(cuik_time_in_nanos(), "preprocess: %s", slot->filepath);
+                if (cuikperf_is_active()) {
+                    cuikperf_region_start(cuik_time_in_nanos(), "preprocess: %s", slot->filepath);
                 }
 
                 packet->tag = CUIKPP_PACKET_GET_FILE;
@@ -561,8 +561,8 @@ Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
         slot = &ctx->stack[ctx->stack_ptr - 1];
     } else if (ctx->state1 == CUIK__CPP_GET_FILE) {
         const char* filepath = packet->file.input_path;
-        if (cuik_is_profiling()) {
-            cuik_profile_region_start(cuik_time_in_nanos(), "preprocess: %s", filepath);
+        if (cuikperf_is_active()) {
+            cuikperf_region_start(cuik_time_in_nanos(), "preprocess: %s", filepath);
         }
 
         #if CUIK__CPP_STATS
@@ -603,8 +603,8 @@ Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
             }
 
             // write out profile entry
-            if (cuik_is_profiling()) {
-                cuik_profile_region_end();
+            if (cuikperf_is_active()) {
+                cuikperf_region_end();
             }
 
             // free the token stream

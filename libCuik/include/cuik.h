@@ -34,22 +34,6 @@ typedef struct Cuik_IThreadpool {
     void (*work_one_job)(void* user_data);
 } Cuik_IThreadpool;
 
-typedef struct Cuik_IProfiler {
-    void* user_data;
-
-    void (*start)(void* user_data);
-    void (*stop)(void* user_data);
-
-    void (*begin_plot)(void* user_data, uint64_t nanos, const char* label);
-    void (*end_plot)(void* user_data, uint64_t nanos);
-} Cuik_IProfiler;
-
-typedef struct Cuik_IDiagnostic {
-    void* user_data;
-
-    //void(*report)(void* user_data, const Cuik_Report* r);
-} Cuik_IDiagnostic;
-
 // for doing calls on the interfaces
 #define CUIK_CALL(object, action, ...) ((object)->action((object)->user_data, ##__VA_ARGS__))
 
@@ -85,29 +69,6 @@ Cuik_System cuik_get_target_system(const Cuik_Target* t);
 Cuik_Environment cuik_get_target_env(const Cuik_Target* t);
 
 ////////////////////////////////////////////
-// Profiler
-////////////////////////////////////////////
-// lock_on_plot is true if the profiler->plot function cannot be called on multiple threads at
-// the same time.
-void cuik_start_global_profiler(const Cuik_IProfiler* profiler, bool lock_on_plot);
-void cuik_stop_global_profiler(void);
-bool cuik_is_profiling(void);
-
-// the absolute values here don't have to mean anything, it's just about being able
-// to measure between two points.
-uint64_t cuik_time_in_nanos(void);
-
-// Reports a region of time to the profiler callback
-void cuik_profile_region_start(uint64_t now, const char* fmt, ...);
-void cuik_profile_region_end(void);
-
-// Usage:
-// CUIK_TIMED_BLOCK("Beans %d", 5) {
-//   ...
-// }
-#define CUIK_TIMED_BLOCK(...) for (uint64_t __i = (cuik_profile_region_start(cuik_time_in_nanos(), __VA_ARGS__), 0); __i < 1; __i++, cuik_profile_region_end())
-
-////////////////////////////////////////////
 // General Cuik stuff
 ////////////////////////////////////////////
 void cuik_init(void);
@@ -140,6 +101,7 @@ void cuik_destroy_compilation_unit(CompilationUnit* restrict cu);
 void cuik_internal_link_compilation_unit(CompilationUnit* restrict cu);
 size_t cuik_num_of_translation_units_in_compilation_unit(CompilationUnit* restrict cu);
 
+#include "cuik_perf.h"
 #include "cuik_lex.h"
 #include "cuik_ast.h"
 #include "cuik_parse.h"

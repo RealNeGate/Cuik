@@ -313,7 +313,7 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
     return PARSE_SUCCESS;
 }
 
-void cuikparse_make(Cuik_ParseVersion version, TokenStream* restrict s, const Cuik_Target* target) {
+int cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict s, const Cuik_Target* target) {
     assert(s != NULL);
 
     Cuik_Parser* restrict parser = calloc(1, sizeof(Cuik_Parser));
@@ -344,4 +344,9 @@ void cuikparse_make(Cuik_ParseVersion version, TokenStream* restrict s, const Cu
         diag_err(s, tokens_get_range(s), "could not parse top level statement");
         tokens_next(s);
     }
+
+    parser->is_in_global_scope = false;
+    dyn_array_destroy(parser->static_assertions);
+
+    return cuikdg_error_count(s);
 }
