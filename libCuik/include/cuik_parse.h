@@ -16,7 +16,6 @@ typedef enum Cuik_ExtensionFlags {
     CUIK_EXTENSIONS_CUIK  = (1u << 3u),
 } Cuik_ExtensionFlags;
 
-// Reserved for further use, only CUIK_VERSION_C11 works
 typedef enum Cuik_ParseVersion {
     CUIK_VERSION_C89,
     CUIK_VERSION_C99,
