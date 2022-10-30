@@ -7,7 +7,7 @@ set /a passed = 0
 for %%f in (*.c) do (
     set /a tried += 1
 
-	cuik %%f --syntax
+	cuik %%f -xe
     if %ERRORLEVEL% EQU 0 (
         echo Success! %%f
         set /a passed += 1
