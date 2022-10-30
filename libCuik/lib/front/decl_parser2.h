@@ -131,12 +131,12 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
         UNSIGNED = 1 << 18,
     };
 
-    const Cuik_Type* target_signed_ints = parser->target->signed_ints;
-    const Cuik_Type* target_unsigned_ints = parser->target->unsigned_ints;
+    Cuik_Type* target_signed_ints = (Cuik_Type*) parser->target->signed_ints;
+    Cuik_Type* target_unsigned_ints = (Cuik_Type*) parser->target->unsigned_ints;
 
     int counter = 0;
     Cuik_Qualifiers quals = 0;
-    const Cuik_Type* type = NULL;
+    Cuik_Type* type = NULL;
 
     // _Alignas(N) or __declspec(align(N))
     // 0 means no forced alignment
@@ -196,6 +196,7 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                     counter += OTHER;
 
                     if (!expect_closing_paren(s, opening_loc)) return CUIK_QUAL_TYPE_NULL;
+                    tokens_prev(s);
                 } else {
                     // walk back, we didn't need to read that
                     quals |= CUIK_QUAL_ATOMIC;
@@ -238,6 +239,221 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                     }
                 }
                 break;
+            }
+
+            case TOKEN_KW_struct: case TOKEN_KW_union: {
+                if (counter) goto done;
+
+                SourceRange record_loc = tokens_get_range(s);
+                bool is_union = tkn_type == TOKEN_KW_union;
+                tokens_next(s);
+
+                Atom name = NULL;
+                if (tokens_get(s)->type == TOKEN_IDENTIFIER) {
+                    record_loc = tokens_get_range(s);
+
+                    Token* t = tokens_get(s);
+                    name = atoms_put(t->content.length, t->content.data);
+
+                    tokens_next(s);
+                }
+
+                if (tokens_get(s)->type == '{') {
+                    tokens_next(s);
+
+                    type = name ? find_tag(&parser->globals, (char*)name) : 0;
+                    if (type) {
+                        // can't re-complete a struct
+                        diag_warn(s, tokens_get_range(s), "struct was declared somewhere else");
+                        diag_note(s, type->loc, "see here");
+                    } else {
+                        type = cuik__new_record(&parser->types, is_union);
+                        type->is_incomplete = false;
+                        type->record.name = name;
+
+                        // can't forward decl unnamed records so we don't track it
+                        if (name) {
+                            if (parser->is_in_global_scope) {
+                                nl_strmap_put_cstr(parser->globals.tags, name, type);
+                            } else {
+                                if (local_tag_count + 1 >= MAX_LOCAL_TAGS) {
+                                    diag_err(s, tokens_get_range(s), "too many tags in local scopes (%d)", MAX_LOCAL_TAGS);
+                                } else {
+                                    local_tags[local_tag_count++] = (TagEntry){ name, type };
+                                }
+                            }
+                        }
+                    }
+
+                    type->loc = record_loc;
+                    counter += OTHER;
+                    size_t member_count = 0;
+                    Member* members = tls_save();
+                    while (tokens_get(s)->type != '}') {
+                        if (skip_over_declspec(s)) continue;
+
+                        // in case we have unnamed declarators and we somewhere for them to point to
+                        SourceRange default_loc = tokens_get_range(s);
+
+                        Attribs member_attr = { 0 };
+                        Cuik_QualType member_base_type = parse_declspec2(parser, s, &member_attr);
+
+                        // error recovery, if we couldn't parse the typename we skip the declaration
+                        if (CUIK_QUAL_TYPE_IS_NULL(member_base_type)) {
+                            member_base_type = cuik_uncanonical_type(parser->default_int);
+                            tokens_next(s);
+                        }
+
+                        // continues on commas, exists on semicolon
+                        // int a,   *b,   c[3]    ;
+                        //     ^    ^~    ^~~~    ^
+                        //     one  two   three   DONE
+                        do {
+                            Decl decl = { 0 };
+                            Cuik_QualType member_type = member_base_type;
+
+                            // not all members have declarators for example
+                            // char : 3; or struct { ... };
+                            if (tokens_get(s)->type != ';' && tokens_get(s)->type != ':') {
+                                decl = parse_declarator2(parser, s, member_base_type, false);
+                                member_type = decl.type;
+                            } else {
+                                decl.loc = default_loc;
+                            }
+
+                            // Append member
+                            tls_push(sizeof(Member));
+                            Member* member = &members[member_count++];
+
+                            *member = (Member){
+                                .loc = decl.loc,
+                                .type = member_type,
+                                .name = decl.name
+                            };
+
+                            if (tokens_get(s)->type == ':') {
+                                if (is_union) {
+                                    diag_warn(s, decl.loc, "Bitfield... unions... huh?!");
+                                } else if (CUIK_QUAL_TYPE_HAS(member_type, CUIK_QUAL_ATOMIC)) {
+                                    diag_err(s, decl.loc, "Cannot make bitfields using atomics");
+                                }
+                                tokens_next(s);
+
+                                // TODO(NeGate): implement new constant expression eval
+                                __debugbreak();
+                                member->is_bitfield = true;
+                                member->bit_offset = 0;
+                                member->bit_width = 0; // parse_const_expr(parser, s);
+                            }
+
+                            // i just wanted to logically split this from the top stuff, this is a breather comment
+                            if (tokens_get(s)->type == ',') {
+                                tokens_next(s);
+                                continue;
+                            } else if (tokens_get(s)->type == ';') {
+                                break;
+                            }
+                        } while (true);
+
+                        expect_char(s, ';');
+                    }
+
+                    if (!expect_char(s, '}')) return CUIK_QUAL_TYPE_NULL;
+                    tokens_prev(s);
+
+                    // put members into more permanent storage
+                    Member* permanent_store = arena_alloc(&local_ast_arena, member_count * sizeof(Member), _Alignof(Member));
+                    memcpy(permanent_store, members, member_count * sizeof(Member));
+
+                    type->align = 0;
+                    type->size = 0;
+
+                    type->record.kids = permanent_store;
+                    type->record.kid_count = member_count;
+
+                    if (!parser->is_in_global_scope) {
+                        __debugbreak();
+                        // type_layout(tu, type, true);
+                    }
+
+                    tls_restore(members);
+                } else {
+                    // refers to a complete version of the record (which may or may not be ready yet)
+                    if (name == NULL) {
+                        diag_err(s, record_loc, "Cannot have unnamed forward struct reference.");
+                        tokens_next(s);
+                        return CUIK_QUAL_TYPE_NULL;
+                    }
+
+                    type = find_tag(&parser->globals, (const char*)name);
+                    if (type == NULL) {
+                        type = cuik__new_record(&parser->types, is_union);
+                        type->loc = record_loc;
+                        type->record.name = name;
+                        type->is_incomplete = true;
+
+                        if (out_of_order_mode) {
+                            nl_strmap_put_cstr(parser->globals.tags, name, type);
+                        } else {
+                            if (local_tag_count + 1 >= MAX_LOCAL_TAGS) {
+                                diag_err(s, tokens_get_range(s), "too many tags in local scopes (%d)", MAX_LOCAL_TAGS);
+                            } else {
+                                local_tags[local_tag_count++] = (TagEntry){ name, type };
+                            }
+                        }
+                    }
+                    counter += OTHER;
+
+                    // push back one because we push it forward one later but
+                    // shouldn't
+                    tokens_prev(s);
+                }
+
+                break;
+            }
+
+            case TOKEN_IDENTIFIER: {
+                if (counter) goto done;
+
+                if (parser->is_in_global_scope) {
+                    Token* t = tokens_get(s);
+                    Atom name = atoms_put(t->content.length, t->content.data);
+
+                    // if the typename is already defined, then reuse that type index
+                    Symbol* old_def = find_global_symbol(&parser->globals, (const char*)name);
+                    // if not, we assume this must be a typedef'd type and reserve space
+                    if (old_def != NULL) {
+                        if (old_def->storage_class != STORAGE_TYPEDEF) {
+                            diag_err(s, tokens_get_range(s), "symbol '%s' is not a typedef.", name);
+                            diag_note(s, old_def->loc, "declared here");
+                            return CUIK_QUAL_TYPE_NULL;
+                        }
+
+                        type = cuik_canonical_type(old_def->type);
+                        quals |= cuik_get_quals(old_def->type);
+                        counter += OTHER;
+                    } else {
+                        // add placeholder
+                        Symbol sym = {
+                            .name = name,
+                            .type = cuik_uncanonical_type(type),
+                            .loc = get_token_range(t),
+                            .storage_class = STORAGE_TYPEDEF,
+                        };
+
+                        Cuik_Type* new_type = cuik__new_blank_type(&parser->types);
+                        new_type->loc = sym.loc;
+                        new_type->placeholder.name = name;
+                        type = new_type;
+                        counter += OTHER;
+
+                        nl_strmap_put_cstr(parser->globals.symbols, name, sym);
+                    }
+                    break;
+                } else {
+                    __debugbreak();
+                    break;
+                }
             }
 
             default: goto done;

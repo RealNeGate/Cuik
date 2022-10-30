@@ -19,8 +19,8 @@ static const char* custom_diagnostic_format(uint32_t* out_length, char ch, va_li
 #endif
 
 static const char* report_names[] = {
-    "\x1b[33mnote\x1b[0m",
-    "\x1b[32mwarning\x1b[0m",
+    "\x1b[32mnote\x1b[0m",
+    "\x1b[33mwarn\x1b[0m",
     "\x1b[31merror\x1b[0m",
 };
 
@@ -203,7 +203,10 @@ static void diag(DiagType type, TokenStream* tokens, SourceRange loc, const char
             fprintf(stderr, "%s\x1b[0m\n", fixits[i].hint);
         }
     }
-    atomic_fetch_add((atomic_int*) tokens->error_tally, 1);
+
+    if (type == DIAG_ERR) {
+        atomic_fetch_add((atomic_int*) tokens->error_tally, 1);
+    }
 }
 
 void diag_header(DiagType type, const char* fmt, ...) {

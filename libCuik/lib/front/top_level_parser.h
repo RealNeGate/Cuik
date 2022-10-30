@@ -167,7 +167,7 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
         Decl decl = parse_declarator2(parser, s, type, false);
         if (decl.name == NULL) {
             diag_warn(s, decl.loc, "Declaration has no name");
-            tokens_next(s);
+            // tokens_next(s);
         }
 
         // Convert into statement

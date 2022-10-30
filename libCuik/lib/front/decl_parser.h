@@ -690,7 +690,6 @@ static Cuik_QualType parse_declspec(TranslationUnit* tu, TokenStream* restrict s
 
                     size_t member_count = 0;
                     Member* members = tls_save();
-
                     while (tokens_get(s)->type != '}') {
                         if (skip_over_declspec(s)) continue;
 
