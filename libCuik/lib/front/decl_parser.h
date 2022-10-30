@@ -508,7 +508,6 @@ static Cuik_QualType parse_declspec(TranslationUnit* tu, TokenStream* restrict s
                     type = cuik_canonical_type(t);
                     quals |= cuik_get_quals(t);
                     quals |= CUIK_QUAL_ATOMIC;
-
                     counter += OTHER;
 
                     SourceLoc closing_loc = tokens_get_location(s);

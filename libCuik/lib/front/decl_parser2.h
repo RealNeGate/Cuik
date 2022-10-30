@@ -1,9 +1,11 @@
 static Decl parse_declarator2(Cuik_Parser* restrict parser, TokenStream* restrict s, Cuik_QualType type, bool is_abstract);
+static Cuik_QualType parse_typename2(Cuik_Parser* restrict parser, TokenStream* restrict s);
 
 // [ ASSIGNMENT-EXPR ]
+// ( ASSIGNMENT-EXPR )
 //
 // returns the lbrace
-static size_t skip_expression_in_braces(TokenStream* s) {
+static ptrdiff_t skip_expression_in_braces(TokenStream* s, char open, char close) {
     // in the out of order case we defer expression parsing
     SourceLoc open_brace = tokens_get_location(s);
     tokens_next(s);
@@ -14,14 +16,14 @@ static size_t skip_expression_in_braces(TokenStream* s) {
         Token* t = tokens_get(s);
 
         if (t->type == '\0') {
-            diag_err(s, get_token_range(t), "array declaration ended in EOF");
-            return current;
-        } else if (t->type == '[') {
+            diag_err(s, get_token_range(t), "expression never terminated");
+            return -1;
+        } else if (t->type == open) {
             depth++;
-        } else if (t->type == ']') {
+        } else if (t->type == close) {
             if (depth == 0) {
-                report_two_spots(REPORT_ERROR, s, open_brace, t->location, "unbalanced brackets", "open", "close?", NULL);
-                abort();
+                report_two_spots(REPORT_ERROR, s, open_brace, t->location, "unbalanced braces", "open", "close?", NULL);
+                return -1;
             }
 
             depth--;
@@ -31,7 +33,7 @@ static size_t skip_expression_in_braces(TokenStream* s) {
     }
 
     tokens_prev(s);
-    expect_char(s, ']');
+    if (!expect_char(s, close)) return -1;
     return current;
 }
 
@@ -146,7 +148,6 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
         TknType tkn_type = tokens_get(s)->type;
         switch (tkn_type) {
             // type-specifier:
-            // type-specifier:
             case TOKEN_KW_void:   counter += VOID;  break;
             case TOKEN_KW_Bool:   counter += BOOL;  break;
             case TOKEN_KW_char:   counter += CHAR;  break;
@@ -182,74 +183,123 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
             case TOKEN_KW_cdecl:   break;
             case TOKEN_KW_stdcall: break;
 
+            case TOKEN_KW_Atomic: {
+                tokens_next(s);
+                if (tokens_get(s)->type == '(') {
+                    SourceLoc opening_loc = tokens_get_location(s);
+                    tokens_next(s);
+
+                    Cuik_QualType t = parse_typename2(parser, s);
+                    type = cuik_canonical_type(t);
+                    quals |= cuik_get_quals(t);
+                    quals |= CUIK_QUAL_ATOMIC;
+                    counter += OTHER;
+
+                    if (!expect_closing_paren(s, opening_loc)) return CUIK_QUAL_TYPE_NULL;
+                } else {
+                    // walk back, we didn't need to read that
+                    quals |= CUIK_QUAL_ATOMIC;
+                    tokens_prev(s);
+                }
+                break;
+            }
+
+            case TOKEN_KW_Typeof: {
+                tokens_next(s);
+
+                SourceLoc opening_loc = tokens_get_location(s);
+                if (!expect_char(s, '(')) return CUIK_QUAL_TYPE_NULL;
+
+                tokens_next(s);
+                if (parser->is_in_global_scope) {
+                    // _Typeof ( SOMETHING )
+                    TknType terminator;
+                    ptrdiff_t start = skip_expression_in_braces(s, '(', ')');
+                    ptrdiff_t end = s->list.current;
+                    if (start < 0) {
+                        return CUIK_QUAL_TYPE_NULL;
+                    }
+
+                    // Add to pending list
+                    printf("MSG: Add _Typeof to pending list %zu\n", start);
+                    __debugbreak();
+                } else {
+                    if (is_typename(&parser->globals, s)) {
+                        type = cuik_canonical_type(parse_typename2(parser, s));
+                    } else {
+                        // we don't particularly resolve typeof for expressions immediately.
+                        // instead we just wait until all symbols are resolved properly
+                        Expr* src = NULL; // parse_expr(tu, s);
+                        type = cuik__new_typeof(&parser->types, src);
+                    }
+
+                    if (!expect_closing_paren(s, opening_loc)) {
+                        return CUIK_QUAL_TYPE_NULL;
+                    }
+                }
+                break;
+            }
+
             default: goto done;
         }
 
         switch (counter) {
-            case 0:
-            break; // not resolved yet
-            case VOID:
-            type = &cuik__builtin_void;
-            break;
-            case BOOL:
-            type = &cuik__builtin_bool;
-            break;
-            case CHAR:
-            case SIGNED + CHAR:
+            case 0: break; // not resolved yet
+            case VOID: type = &cuik__builtin_void; break;
+            case BOOL: type = &cuik__builtin_bool; break;
+
+            case CHAR: case SIGNED + CHAR:
             type = &target_signed_ints[CUIK_BUILTIN_CHAR];
             break;
+
             case UNSIGNED + CHAR:
             type = &target_unsigned_ints[CUIK_BUILTIN_CHAR];
             break;
-            case SHORT:
-            case SHORT + INT:
-            case SIGNED + SHORT:
-            case SIGNED + SHORT + INT:
+
+            case SHORT: case SHORT + INT: case SIGNED + SHORT: case SIGNED + SHORT + INT:
             type = &target_signed_ints[CUIK_BUILTIN_SHORT];
             break;
-            case UNSIGNED + SHORT:
-            case UNSIGNED + SHORT + INT:
+
+            case UNSIGNED + SHORT: case UNSIGNED + SHORT + INT:
             type = &target_unsigned_ints[CUIK_BUILTIN_SHORT];
             break;
-            case INT:
-            case SIGNED:
-            case SIGNED + INT:
+
+            case INT: case SIGNED: case SIGNED + INT:
             type = &target_signed_ints[CUIK_BUILTIN_INT];
             break;
-            case LONG:
-            case LONG + INT:
-            case SIGNED + LONG:
-            case SIGNED + LONG + INT:
+
+            case LONG: case LONG + INT: case SIGNED + LONG: case SIGNED + LONG + INT:
             type = &target_signed_ints[CUIK_BUILTIN_LONG];
             break;
-            case UNSIGNED:
-            case UNSIGNED + INT:
+
+            case UNSIGNED: case UNSIGNED + INT:
             type = &target_unsigned_ints[CUIK_BUILTIN_INT];
             break;
-            case UNSIGNED + LONG:
-            case UNSIGNED + LONG + INT:
+
+            case UNSIGNED + LONG: case UNSIGNED + LONG + INT:
             type = &target_unsigned_ints[CUIK_BUILTIN_LONG];
             break;
-            case LONG + LONG:
-            case LONG + LONG + INT:
-            case SIGNED + LONG + LONG:
-            case SIGNED + LONG + LONG + INT:
+
+            case LONG + LONG: case LONG + LONG + INT: case SIGNED + LONG + LONG: case SIGNED + LONG + LONG + INT:
             type = &target_signed_ints[CUIK_BUILTIN_LLONG];
             break;
-            case UNSIGNED + LONG + LONG:
-            case UNSIGNED + LONG + LONG + INT:
+
+            case UNSIGNED + LONG + LONG: case UNSIGNED + LONG + LONG + INT:
             type = &target_unsigned_ints[CUIK_BUILTIN_LLONG];
             break;
+
             case FLOAT:
             type = &builtin_types[TYPE_FLOAT];
             break;
-            case DOUBLE:
-            case LONG + DOUBLE:
+
+            case DOUBLE: case LONG + DOUBLE:
             type = &builtin_types[TYPE_DOUBLE];
             break;
+
             case OTHER:
             assert(type);
             break;
+
             default: {
                 Token* last = &s->list.tokens[s->list.current];
                 diag_err(s, (SourceRange){ loc.start, tokens_get_last_location(s) }, "unknown typename %!S", last->content);
@@ -290,6 +340,14 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
     }
 
     return cuik_make_qual_type((Cuik_Type*) type, quals);
+}
+
+static Cuik_QualType parse_typename2(Cuik_Parser* restrict parser, TokenStream* restrict s) {
+    // TODO(NeGate): Check if attributes are set, they shouldn't
+    // be in this context.
+    Attribs attr = { 0 };
+    Cuik_QualType type = parse_declspec2(parser, s, &attr);
+    return parse_declarator2(parser, s, type, true).type;
 }
 
 static Cuik_QualType parse_type_suffix2(Cuik_Parser* restrict parser, TokenStream* restrict s, Cuik_QualType type) {
@@ -395,7 +453,7 @@ static Cuik_QualType parse_type_suffix2(Cuik_Parser* restrict parser, TokenStrea
                 tokens_next(s);
                 expect_char(s, ']');
             } else {
-                current = skip_expression_in_braces(s);
+                current = skip_expression_in_braces(s, '[', ']');
             }
 
             // create placeholder array type

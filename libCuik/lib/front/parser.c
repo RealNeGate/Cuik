@@ -61,8 +61,8 @@ thread_local static bool out_of_order_mode;
 
 static void expect(TranslationUnit* tu, TokenStream* restrict s, char ch);
 static bool expect_char(TokenStream* restrict s, char ch);
-static void expect_closing_paren(TokenStream* restrict s, SourceLoc opening);
-static void expect_with_reason(TranslationUnit* tu, TokenStream* restrict s, char ch, const char* reason);
+static bool expect_closing_paren(TokenStream* restrict s, SourceLoc opening);
+static bool expect_with_reason(TranslationUnit* tu, TokenStream* restrict s, char ch, const char* reason);
 static Symbol* find_local_symbol(TokenStream* restrict s);
 
 static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s);
@@ -2116,28 +2116,30 @@ static void expect(TranslationUnit* tu, TokenStream* restrict s, char ch) {
     }
 }
 
-static void expect_closing_paren(TokenStream* restrict s, SourceLoc opening) {
+static bool expect_closing_paren(TokenStream* restrict s, SourceLoc opening) {
     if (tokens_get(s)->type != ')') {
         SourceLoc loc = tokens_get_location(s);
 
-        report_two_spots(REPORT_ERROR, s, opening, loc,
-            "expected closing parenthesis",
-            "open", "close?", NULL
+        report_two_spots(
+            REPORT_ERROR, s, opening, loc,
+            "expected closing parenthesis", "open", "close?", NULL
         );
-        return;
+        return false;
+    } else {
+        tokens_next(s);
+        return true;
     }
-
-    tokens_next(s);
 }
 
-static void expect_with_reason(TranslationUnit* tu, TokenStream* restrict s, char ch, const char* reason) {
+static bool expect_with_reason(TranslationUnit* tu, TokenStream* restrict s, char ch, const char* reason) {
     if (tokens_get(s)->type != ch) {
         SourceLoc loc = tokens_get_last_location(s);
 
         char fix[2] = { ch, '\0' };
         report_fix(REPORT_ERROR, s, loc, fix, "expected '%c' for %s", ch, reason);
-        return;
+        return false;
+    } else {
+        tokens_next(s);
+        return true;
     }
-
-    tokens_next(s);
 }
