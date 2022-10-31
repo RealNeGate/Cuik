@@ -84,6 +84,13 @@ static DynArray(TargetOption) target_options;
 
 #include "pp_repl.h"
 
+static void exit_or_hook(int code) {
+    if (IsDebuggerPresent()) {
+        __debugbreak();
+    }
+    exit(code);
+}
+
 static void initialize_targets(void) {
     target_options = dyn_array_create(TargetOption);
 
@@ -342,8 +349,8 @@ static Cuik_CPP* make_preprocessor(const char* filepath, bool should_finalize) {
 
     // run the preprocessor
     if (cuikpp_default_run(cpp) == CUIKPP_ERROR) {
-        dump_tokens(stdout, cuikpp_get_token_stream(cpp));
-        exit(1);
+        // dump_tokens(stdout, cuikpp_get_token_stream(cpp));
+        exit_or_hook(1);
     }
 
     if (args_bindgen != NULL) {
@@ -378,10 +385,10 @@ static void free_preprocessor(Cuik_CPP* cpp) {
 }
 
 static void compile_file(void* arg) {
-    int errors = cuikparse_run(CUIK_VERSION_C11, cuikpp_get_token_stream(arg), target_desc);
+    int errors = cuikparse_run(CUIK_VERSION_C23, cuikpp_get_token_stream(arg), target_desc);
     if (errors > 0) {
         printf("Failed to parse with %d errors...", errors);
-        exit(1);
+        exit_or_hook(1);
     }
 
     // parse

@@ -220,6 +220,7 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
                 }
             }
 
+            assert(!CUIK_QUAL_TYPE_IS_NULL(decl.type));
             *sym = (Symbol){
                 .name = decl.name,
                 .type = decl.type,
@@ -315,7 +316,9 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
     return PARSE_SUCCESS;
 }
 
+#define THROW_IF_ERROR() if ((r = cuikdg_error_count(s)) > 0) return r;
 int cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict s, const Cuik_Target* target) {
+    int r;
     assert(s != NULL);
 
     Cuik_Parser* restrict parser = calloc(1, sizeof(Cuik_Parser));
@@ -330,25 +333,59 @@ int cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict s, const Cuik
     parser->is_in_global_scope = true;
     parser->top_level_stmts = dyn_array_create(Stmt*);
 
-    while (tokens_get(s)->type) {
-        // skip any top level "null" statements
-        while (tokens_get(s)->type == ';') tokens_next(s);
-
-        if (parse_pragma(parser, s) != 0) continue;
-        if (parse_static_assert(parser, s) != 0) continue;
-
-        // since top level cannot have expressions we can assume that it's a declaration
-        // even if we don't detect a known typename (since it can be inferred to be a typedef),
-        // this allows us to skim the top level and do out-of-order declarations or generate
-        // a summary of the symbol table.
-        if (parse_decl(parser, s) != 0) continue;
-
-        diag_err(s, tokens_get_range(s), "could not parse top level statement");
-        tokens_next(s);
+    if (pending_exprs) {
+        dyn_array_clear(pending_exprs);
+    } else {
+        pending_exprs = dyn_array_create(PendingExpr);
     }
 
-    parser->is_in_global_scope = false;
-    dyn_array_destroy(parser->static_assertions);
+    // Phase 1: resolve all top level statements
+    CUIK_TIMED_BLOCK("phase 1") {
+        while (tokens_get(s)->type) {
+            // skip any top level "null" statements
+            while (tokens_get(s)->type == ';') tokens_next(s);
 
-    return cuikdg_error_count(s);
+            if (parse_pragma(parser, s) != 0) continue;
+            if (parse_static_assert(parser, s) != 0) continue;
+
+            // since top level cannot have expressions we can assume that it's a declaration
+            // even if we don't detect a known typename (since it can be inferred to be a typedef),
+            // this allows us to skim the top level and do out-of-order declarations or generate
+            // a summary of the symbol table.
+            if (parse_decl(parser, s) != 0) continue;
+
+            diag_err(s, tokens_get_range(s), "could not parse top level statement");
+            tokens_next(s);
+        }
+
+        parser->is_in_global_scope = false;
+    }
+    THROW_IF_ERROR();
+
+    // Phase 2: resolve top level types, layout records and
+    // anything else so that we have a complete global symbol table
+    CUIK_TIMED_BLOCK("phase 2") {
+        CUIK_FOR_TYPES(type, parser->types) {
+            if (type->kind == KIND_PLACEHOLDER) {
+                diag_err(s, type->loc, "could not find type '%s'!", type->placeholder.name);
+            }
+        }
+
+        if (cuikdg_error_count(s)) break;
+
+        CUIK_FOR_TYPES(type, parser->types) {
+            if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
+                // if cycles... quit lmao
+                if (type_cycles_dfs(s, type)) goto quit_phase2;
+            }
+        }
+
+        if (cuikdg_error_count(s)) break;
+        quit_phase2:;
+    }
+    THROW_IF_ERROR();
+
+    dyn_array_destroy(parser->static_assertions);
+    return 0;
 }
+#undef THROW_IF_ERROR

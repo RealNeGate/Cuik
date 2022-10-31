@@ -268,7 +268,7 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                         diag_note(s, type->loc, "see here");
                     } else {
                         type = cuik__new_record(&parser->types, is_union);
-                        type->is_complete =  true;
+                        type->is_complete = false;
                         type->record.name = name;
 
                         // can't forward decl unnamed records so we don't track it
@@ -434,17 +434,15 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                         counter += OTHER;
                     } else {
                         // add placeholder
+                        type = cuik__new_blank_type(&parser->types);
                         Symbol sym = {
                             .name = name,
                             .type = cuik_uncanonical_type(type),
                             .loc = get_token_range(t),
                             .storage_class = STORAGE_TYPEDEF,
                         };
-
-                        Cuik_Type* new_type = cuik__new_blank_type(&parser->types);
-                        new_type->loc = sym.loc;
-                        new_type->placeholder.name = name;
-                        type = new_type;
+                        type->loc = sym.loc;
+                        type->placeholder.name = name;
                         counter += OTHER;
 
                         nl_strmap_put_cstr(parser->globals.symbols, name, sym);

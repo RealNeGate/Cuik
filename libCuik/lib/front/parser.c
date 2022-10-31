@@ -90,6 +90,8 @@ static bool is_typename(Cuik_GlobalSymbols* syms, TokenStream* restrict s);
 
 static _Noreturn void generic_error(TranslationUnit* tu, TokenStream* restrict s, const char* msg);
 
+static int type_cycles_dfs(TokenStream* restrict s, Cuik_Type* type);
+
 // saves the local_symbol_count and local_tag_count before entering
 // and restores them when exiting since that'll allow us to open and
 // close local scopes in the perspective of variable lookup...
@@ -334,7 +336,7 @@ static void phase3_parse_task(void* arg) {
 // 0 no cycles
 // 1 cycles
 // 2 cycles and we gave an error msg
-static int type_cycles_dfs(TranslationUnit* restrict tu, Cuik_Type* type) {
+static int type_cycles_dfs(TokenStream* restrict s, Cuik_Type* type) {
     // non-record types are always finished :P
     if (type->kind != KIND_STRUCT && type->kind != KIND_UNION) {
         return 0;
@@ -354,14 +356,14 @@ static int type_cycles_dfs(TranslationUnit* restrict tu, Cuik_Type* type) {
     // for each m in members
     //   if (dfs(m)) return true
     for (size_t i = 0; i < type->record.kid_count; i++) {
-        int c = type_cycles_dfs(tu, cuik_canonical_type(type->record.kids[i].type));
+        int c = type_cycles_dfs(s, cuik_canonical_type(type->record.kids[i].type));
         if (c) {
             // we already gave an error message, don't be redundant
             if (c != 2) {
                 const char* name = type->record.name ? (const char*)type->record.name : "<unnamed>";
 
-                diag_err(&tu->tokens, type->loc, "type %s has cycles", name);
-                diag_note(&tu->tokens, type->record.kids[i].loc, "see here");
+                diag_err(s, type->loc, "type %s has cycles", name);
+                diag_note(s, type->record.kids[i].loc, "see here");
             }
 
             return 2;
@@ -1063,13 +1065,9 @@ TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* res
         ////////////////////////////////
         // first we wanna check for cycles
         ////////////////////////////////
-        for (Cuik_TypeTableSegment* a = tu->types.base; a != NULL; a = a->next) {
-            for (size_t i = 0; i < a->count; i++) {
-                Cuik_Type* type = &a->_[i];
-
-                if (type->kind == KIND_PLACEHOLDER) {
-                    diag_err(s, type->loc, "could not find type '%s'!", type->placeholder.name);
-                }
+        CUIK_FOR_TYPES(type, tu->types) {
+            if (type->kind == KIND_PLACEHOLDER) {
+                diag_err(s, type->loc, "could not find type '%s'!", type->placeholder.name);
             }
         }
 
@@ -1078,14 +1076,10 @@ TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* res
         }
 
         // for each type, check for cycles
-        for (Cuik_TypeTableSegment* a = tu->types.base; a != NULL; a = a->next) {
-            for (size_t i = 0; i < a->count; i++) {
-                Cuik_Type* type = &a->_[i];
-
-                if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
-                    // if cycles... quit lmao
-                    if (type_cycles_dfs(tu, type)) goto parse_error;
-                }
+        CUIK_FOR_TYPES(type, tu->types) {
+            if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
+                // if cycles... quit lmao
+                if (type_cycles_dfs(&tu->tokens, type)) goto parse_error;
             }
         }
 
@@ -1133,14 +1127,11 @@ TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* res
             goto parse_error;
         }
 
-        for (Cuik_TypeTableSegment* a = tu->types.base; a != NULL; a = a->next) {
-            for (size_t i = 0; i < a->count; i++) {
-                Cuik_Type* type = &a->_[i];
-                assert(type->align != -1);
+        CUIK_FOR_TYPES(type, tu->types) {
+            assert(type->align != -1);
 
-                if (type->size == 0) {
-                    type_layout(tu, type, true);
-                }
+            if (type->size == 0) {
+                type_layout(tu, type, true);
             }
         }
 
