@@ -467,11 +467,18 @@ static bool expand_ident(Cuik_CPP* restrict c, TokenList* restrict out_tokens, T
                 if (def.length > 0) {
                     size_t hidden = hide_macro(c, def_i);
 
-                    TokenList list = convert_line_to_token_list(c, macro_id, (unsigned char*) def.data);
-                    expand(c, out_tokens, &list, macro_id);
-                    unhide_macro(c, def_i, hidden);
+                    MacroArgs arglist = { 0 };
+                    TokenList scratch = {
+                        .tokens = dyn_array_create_with_initial_cap(Token, 16)
+                    };
 
-                    dyn_array_destroy(list.tokens);
+                    subst(c, &scratch, (uint8_t*) def.data, &arglist, macro_id);
+                    dyn_array_put(scratch.tokens, (Token){ 0 });
+
+                    expand(c, out_tokens, &scratch, macro_id);
+
+                    unhide_macro(c, def_i, hidden);
+                    dyn_array_destroy(scratch.tokens);
                 }
             } else {
                 Token paren_peek = peek(in);
