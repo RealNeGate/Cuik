@@ -28,6 +28,8 @@ static const ArgDesc arg_descs[] = {
 };
 enum { ARG_DESC_COUNT = sizeof(arg_descs) / sizeof(arg_descs[0]) };
 
+static void exit_or_hook(int code);
+
 // returns argument, *out_param is the name of the parameter
 static Arg get_cli_arg(int* index, int argc, char** argv) {
     int i = *index;
@@ -55,7 +57,7 @@ static Arg get_cli_arg(int* index, int argc, char** argv) {
                         if (opt[long_name_len] == 0) {
                             if ((i + 1) >= argc) {
                                 fprintf(stderr, "error: no argument after -%s\n", long_name);
-                                exit(1);
+                                exit_or_hook(1);
                             }
 
                             *index += 1;
@@ -74,7 +76,7 @@ static Arg get_cli_arg(int* index, int argc, char** argv) {
 
             // could not find an option
             fprintf(stderr, "error: could not find option --%s\n", opt);
-            exit(1);
+            exit_or_hook(1);
         } else {
             // short names
             const char* opt = &argv[i][1];
@@ -92,7 +94,7 @@ static Arg get_cli_arg(int* index, int argc, char** argv) {
                             return (Arg){ arg_descs[j].type, &opt[short_name_len] };
                         } else if ((i + 1) >= argc) {
                             fprintf(stderr, "error: no argument after -%s\n", short_name);
-                            exit(1);
+                            exit_or_hook(1);
                         }
 
                         *index += 1;
@@ -103,7 +105,7 @@ static Arg get_cli_arg(int* index, int argc, char** argv) {
 
             // could not find an option
             fprintf(stderr, "error: could not find option -%s\n", opt);
-            exit(1);
+            exit_or_hook(1);
         }
     }
 
@@ -142,4 +144,3 @@ static void print_help(const char* argv0) {
     }
     printf("\n");
 }
-

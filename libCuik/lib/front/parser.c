@@ -9,6 +9,7 @@
 //   - make the expect(...) code be a little smarter, if it knows that it's expecting
 //   a token for a specific operation... tell the user
 #include "parser.h"
+#include "../pp_map.h"
 #include <targets/targets.h>
 
 // winnt.h loves including garbage
@@ -227,7 +228,10 @@ static void diag_unresolved_symbol(TranslationUnit* tu, Atom name, SourceLoc loc
 struct Cuik_Parser {
     Cuik_ParseVersion version;
     TokenStream* tokens;
+
     const Cuik_Target* target;
+    // this refers to the `int` type, it comes from the target
+    // but it's more convenient to access it from here.
     Cuik_Type* default_int;
 
     // generated from #pragma comment(lib, "somelib.lib")
@@ -250,8 +254,10 @@ typedef enum ParseResult {
 } ParseResult;
 
 #include "expr_parser.h"
+#include "expr_parser2.h"
 #include "decl_parser.h"
 #include "decl_parser2.h"
+#include "stmt_parser.h"
 #include "top_level_parser.h"
 
 typedef struct {
@@ -1602,7 +1608,8 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
             expect(tu, s, ':');
 
             n->case_ = (struct StmtCase){
-                .key = key, .body = 0, .next = 0};
+                .key = key, .body = 0, .next = 0
+            };
         }
 
         switch (current_switch_or_case->op) {

@@ -329,7 +329,7 @@ int cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict s, const Cuik
     parser->types = init_type_table();
 
     // just a shorthand so it's faster to grab
-    parser->default_int = (Cuik_Type*) &parser->target->signed_ints[CUIK_BUILTIN_INT];
+    parser->default_int = (Cuik_Type*) &target->signed_ints[CUIK_BUILTIN_INT];
     parser->is_in_global_scope = true;
     parser->top_level_stmts = dyn_array_create(Stmt*);
 
@@ -381,11 +381,54 @@ int cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict s, const Cuik
         }
 
         if (cuikdg_error_count(s)) break;
+
+        // parse all global declarations
+        nl_strmap_for(i, parser->globals.symbols) {
+            Symbol* sym = &parser->globals.symbols[i];
+
+            if (sym->token_start != 0 && (sym->storage_class == STORAGE_STATIC_VAR || sym->storage_class == STORAGE_GLOBAL)) {
+                // Spin up a mini parser here
+                TokenStream mini_lex = *s;
+                mini_lex.list.current = sym->token_start;
+
+                // intitialize use list
+                symbol_chain_start = symbol_chain_current = NULL;
+
+                Expr* e = NULL;
+                if (tokens_get(&mini_lex)->type == '{') {
+                    tokens_next(&mini_lex);
+
+                    __debugbreak();
+                    // e = parse_initializer(parser, &mini_lex, CUIK_QUAL_TYPE_NULL);
+                } else {
+                    e = parse_assignment(parser, &mini_lex);
+                    if (mini_lex.list.current != sym->token_end) {
+                        __debugbreak();
+                    }
+
+                    cuik_dump_expr(stdout, e, 0);
+                    printf("\n\n");
+                }
+
+                sym->stmt->decl.initial = e;
+
+                // finalize use list
+                sym->stmt->decl.first_symbol = symbol_chain_start;
+            }
+        }
+
         quit_phase2:;
     }
     THROW_IF_ERROR();
-
     dyn_array_destroy(parser->static_assertions);
+
+    CUIK_TIMED_BLOCK("phase 3") {
+        size_t load = nl_strmap__get_header(parser->globals.symbols)->load;
+        printf("%zu\n", load);
+        // parse_global_symbols(tu, 0, load, *s);
+    }
+    THROW_IF_ERROR();
+
     return 0;
 }
 #undef THROW_IF_ERROR

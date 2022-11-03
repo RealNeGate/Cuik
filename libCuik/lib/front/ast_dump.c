@@ -6,6 +6,121 @@ static thread_local char temp_string0[1024], temp_string1[1024];
 static thread_local Stmt* function_stmt;
 static thread_local bool barz[64];
 
+void cuik_dump_expr(FILE* stream, Expr* e, int depth) {
+    for (int i = 0; i < depth; i++) printf("  ");
+
+    if (e->cast_type.raw != e->type.raw) {
+        // qual_type_as_string(sizeof(temp_string0), temp_string0, e->type);
+        qual_type_as_string(sizeof(temp_string1), temp_string1, e->cast_type);
+
+        if (e->op != EXPR_CAST && cuik_canonical_type(e->cast_type)->kind != TYPE_VOID) {
+            // we don't wanna place implicit casts to void, it's weird
+            printf("implicit-cast %s\n", temp_string1);
+            depth++;
+
+            for (int i = 0; i < depth; i++) printf("  ");
+            printf("\n");
+        }
+    }
+
+    switch (e->op) {
+        case EXPR_CHAR:
+        case EXPR_WCHAR: {
+            qual_type_as_string(sizeof(temp_string0), temp_string0, e->type);
+            fprintf(stream, "char '%s' %u\n", temp_string0, e->char_lit);
+            break;
+        }
+        case EXPR_INT: {
+            qual_type_as_string(sizeof(temp_string0), temp_string0, e->type);
+            fprintf(stream, "int '%s' %llu\n", temp_string0, e->int_num.num);
+            break;
+        }
+        case EXPR_COMMA:
+        case EXPR_PLUS:
+        case EXPR_MINUS:
+        case EXPR_TIMES:
+        case EXPR_SLASH:
+        case EXPR_PERCENT:
+        case EXPR_AND:
+        case EXPR_OR:
+        case EXPR_XOR:
+        case EXPR_SHL:
+        case EXPR_SHR:
+        case EXPR_PLUS_ASSIGN:
+        case EXPR_MINUS_ASSIGN:
+        case EXPR_ASSIGN:
+        case EXPR_TIMES_ASSIGN:
+        case EXPR_PERCENT_ASSIGN:
+        case EXPR_SLASH_ASSIGN:
+        case EXPR_AND_ASSIGN:
+        case EXPR_OR_ASSIGN:
+        case EXPR_XOR_ASSIGN:
+        case EXPR_SHL_ASSIGN:
+        case EXPR_SHR_ASSIGN:
+        case EXPR_CMPEQ:
+        case EXPR_CMPNE:
+        case EXPR_CMPGT:
+        case EXPR_CMPGE:
+        case EXPR_CMPLT:
+        case EXPR_CMPLE:
+        case EXPR_LOGICAL_AND:
+        case EXPR_LOGICAL_OR:
+        case EXPR_PTRADD:
+        case EXPR_PTRSUB:
+        case EXPR_PTRDIFF: {
+            static const char* names[] = {
+                [EXPR_COMMA] = "Comma",
+
+                [EXPR_PLUS] = "add",
+                [EXPR_MINUS] = "sub",
+                [EXPR_TIMES] = "mul",
+                [EXPR_SLASH] = "div",
+                [EXPR_PERCENT] = "mod",
+                [EXPR_AND] = "bit-and",
+                [EXPR_OR] = "bit-or",
+                [EXPR_XOR] = "bit-xor",
+                [EXPR_SHL] = "shl",
+                [EXPR_SHR] = "shr",
+
+                [EXPR_PLUS_ASSIGN] = "add-assign",
+                [EXPR_MINUS_ASSIGN] = "sub-assign",
+                [EXPR_ASSIGN] = "assign",
+                [EXPR_TIMES_ASSIGN] = "mul-assign",
+                [EXPR_PERCENT_ASSIGN] = "mod-assign",
+                [EXPR_SLASH_ASSIGN] = "div-assign",
+                [EXPR_AND_ASSIGN] = "bit-and-assign",
+                [EXPR_OR_ASSIGN] = "bit-or-assign",
+                [EXPR_XOR_ASSIGN] = "bit-xor-assign",
+                [EXPR_SHL_ASSIGN] = "shl-assign",
+                [EXPR_SHR_ASSIGN] = "shr-assign",
+
+                [EXPR_CMPEQ] = "cmp-equal",
+                [EXPR_CMPNE] = "cmp-not-equal",
+                [EXPR_CMPGT] = "cmp-greater",
+                [EXPR_CMPGE] = "cmp-greater-equal",
+                [EXPR_CMPLT] = "cmp-lesser",
+                [EXPR_CMPLE] = "cmp-lesser-equal",
+
+                [EXPR_LOGICAL_AND] = "and",
+                [EXPR_LOGICAL_OR] = "or",
+
+                [EXPR_PTRADD] = "ptradd",
+                [EXPR_PTRSUB] = "ptrsub",
+                [EXPR_PTRDIFF] = "ptrdiff"
+            };
+
+            qual_type_as_string(sizeof(temp_string0), temp_string0, e->type);
+            fprintf(stream, "%s '%s'\n", names[e->op], temp_string0);
+
+            cuik_dump_expr(stream, e->bin_op.left, depth + 1);
+            cuik_dump_expr(stream, e->bin_op.right, depth + 1);
+            break;
+        }
+        default:
+        abort();
+    }
+}
+
 static void print_barz(int depth, bool last_node) {
     if (last_node) {
         for (int i = 0; i < depth - 1; i++) {
@@ -21,7 +136,7 @@ static void print_barz(int depth, bool last_node) {
     barz[depth - 1] = !last_node;
 }
 
-static void dump_expr(TranslationUnit* tu, FILE* stream, Expr* restrict e, int depth, bool last_node) {
+static void dump_expr(FILE* stream, Expr* restrict e, int depth, bool last_node) {
     print_barz(depth, last_node);
 
     if (e->cast_type.raw != e->type.raw) {
@@ -166,10 +281,10 @@ static void dump_expr(TranslationUnit* tu, FILE* stream, Expr* restrict e, int d
             Expr** args = e->call.param_start;
             int arg_count = e->call.param_count;
 
-            dump_expr(tu, stream, e->call.target, depth + 1, arg_count == 0);
+            dump_expr(stream, e->call.target, depth + 1, arg_count == 0);
 
             for (size_t i = 0; i < arg_count; i++) {
-                dump_expr(tu, stream, args[i], depth + 1, i == (arg_count - 1));
+                dump_expr(stream, args[i], depth + 1, i == (arg_count - 1));
             }
             break;
         }
@@ -177,9 +292,9 @@ static void dump_expr(TranslationUnit* tu, FILE* stream, Expr* restrict e, int d
             qual_type_as_string(sizeof(temp_string0), temp_string0, e->type);
             fprintf(stream, "Ternary '%s'\n", temp_string0);
 
-            dump_expr(tu, stream, e->ternary_op.left, depth + 1, false);
-            dump_expr(tu, stream, e->ternary_op.middle, depth + 1, false);
-            dump_expr(tu, stream, e->ternary_op.right, depth + 1, true);
+            dump_expr(stream, e->ternary_op.left, depth + 1, false);
+            dump_expr(stream, e->ternary_op.middle, depth + 1, false);
+            dump_expr(stream, e->ternary_op.right, depth + 1, true);
             break;
         }
         case EXPR_ARROW_R: {
@@ -188,7 +303,7 @@ static void dump_expr(TranslationUnit* tu, FILE* stream, Expr* restrict e, int d
             char* name = (char*)e->dot_arrow.member->name;
             fprintf(stream, "Arrow %s '%s'\n", name ? name : "<unnamed>", temp_string0);
 
-            dump_expr(tu, stream, e->dot_arrow.base, depth + 1, true);
+            dump_expr(stream, e->dot_arrow.base, depth + 1, true);
             break;
         }
         case EXPR_DOT_R: {
@@ -197,22 +312,22 @@ static void dump_expr(TranslationUnit* tu, FILE* stream, Expr* restrict e, int d
             char* name = (char*)e->dot_arrow.member->name;
             fprintf(stream, "Dot %s '%s'\n", name ? name : "<unnamed>", temp_string0);
 
-            dump_expr(tu, stream, e->dot_arrow.base, depth + 1, true);
+            dump_expr(stream, e->dot_arrow.base, depth + 1, true);
             break;
         }
         case EXPR_SUBSCRIPT: {
             qual_type_as_string(sizeof(temp_string0), temp_string0, e->type);
             fprintf(stream, "Subscript '%s'\n", temp_string0);
 
-            dump_expr(tu, stream, e->subscript.base, depth + 1, false);
-            dump_expr(tu, stream, e->subscript.index, depth + 1, true);
+            dump_expr(stream, e->subscript.base, depth + 1, false);
+            dump_expr(stream, e->subscript.index, depth + 1, true);
             break;
         }
         case EXPR_DEREF: {
             qual_type_as_string(sizeof(temp_string0), temp_string0, e->type);
             fprintf(stream, "Deref '%s'\n", temp_string0);
 
-            dump_expr(tu, stream, e->unary_op.src, depth + 1, true);
+            dump_expr(stream, e->unary_op.src, depth + 1, true);
             break;
         }
         case EXPR_GENERIC: {
@@ -221,63 +336,63 @@ static void dump_expr(TranslationUnit* tu, FILE* stream, Expr* restrict e, int d
             qual_type_as_string(sizeof(temp_string0), temp_string0, e->type);
             fprintf(stream, "Generic '%s'\n", temp_string0);
 
-            dump_expr(tu, stream, e->generic_.controlling_expr, depth + 1, true);
+            dump_expr(stream, e->generic_.controlling_expr, depth + 1, true);
             break;
         }
         case EXPR_ADDR: {
             qual_type_as_string(sizeof(temp_string0), temp_string0, e->type);
             fprintf(stream, "Addr '%s'\n", temp_string0);
 
-            dump_expr(tu, stream, e->unary_op.src, depth + 1, true);
+            dump_expr(stream, e->unary_op.src, depth + 1, true);
             break;
         }
         case EXPR_POST_INC: {
             qual_type_as_string(sizeof(temp_string0), temp_string0, e->type);
             fprintf(stream, "PostIncrement '%s'\n", temp_string0);
 
-            dump_expr(tu, stream, e->unary_op.src, depth + 1, true);
+            dump_expr(stream, e->unary_op.src, depth + 1, true);
             break;
         }
         case EXPR_POST_DEC: {
             qual_type_as_string(sizeof(temp_string0), temp_string0, e->type);
             fprintf(stream, "PostDecrement '%s'\n", temp_string0);
 
-            dump_expr(tu, stream, e->unary_op.src, depth + 1, true);
+            dump_expr(stream, e->unary_op.src, depth + 1, true);
             break;
         }
         case EXPR_PRE_INC: {
             qual_type_as_string(sizeof(temp_string0), temp_string0, e->type);
             fprintf(stream, "PreIncrement '%s'\n", temp_string0);
 
-            dump_expr(tu, stream, e->unary_op.src, depth + 1, true);
+            dump_expr(stream, e->unary_op.src, depth + 1, true);
             break;
         }
         case EXPR_PRE_DEC: {
             qual_type_as_string(sizeof(temp_string0), temp_string0, e->type);
             fprintf(stream, "PreDecrement '%s'\n", temp_string0);
 
-            dump_expr(tu, stream, e->unary_op.src, depth + 1, true);
+            dump_expr(stream, e->unary_op.src, depth + 1, true);
             break;
         }
         case EXPR_LOGICAL_NOT: {
             qual_type_as_string(sizeof(temp_string0), temp_string0, e->type);
             fprintf(stream, "LogicalNot '%s'\n", temp_string0);
 
-            dump_expr(tu, stream, e->unary_op.src, depth + 1, true);
+            dump_expr(stream, e->unary_op.src, depth + 1, true);
             break;
         }
         case EXPR_NOT: {
             qual_type_as_string(sizeof(temp_string0), temp_string0, e->type);
             fprintf(stream, "BinaryNot '%s'\n", temp_string0);
 
-            dump_expr(tu, stream, e->unary_op.src, depth + 1, true);
+            dump_expr(stream, e->unary_op.src, depth + 1, true);
             break;
         }
         case EXPR_NEGATE: {
             qual_type_as_string(sizeof(temp_string0), temp_string0, e->type);
             fprintf(stream, "Negate '%s'\n", temp_string0);
 
-            dump_expr(tu, stream, e->unary_op.src, depth + 1, true);
+            dump_expr(stream, e->unary_op.src, depth + 1, true);
             break;
         }
         case EXPR_CAST: {
@@ -285,14 +400,14 @@ static void dump_expr(TranslationUnit* tu, FILE* stream, Expr* restrict e, int d
             qual_type_as_string(sizeof(temp_string1), temp_string1, e->cast.type);
 
             fprintf(stream, "Cast '%s' -> '%s'\n", temp_string0, temp_string1);
-            dump_expr(tu, stream, e->cast.src, depth + 1, true);
+            dump_expr(stream, e->cast.src, depth + 1, true);
             break;
         }
         case EXPR_VA_ARG: {
             qual_type_as_string(sizeof(temp_string0), temp_string0, e->va_arg_.type);
 
             fprintf(stream, "VaArg '%s'\n", temp_string0);
-            dump_expr(tu, stream, e->va_arg_.src, depth + 1, true);
+            dump_expr(stream, e->va_arg_.src, depth + 1, true);
             break;
         }
         case EXPR_COMMA:
@@ -372,8 +487,8 @@ static void dump_expr(TranslationUnit* tu, FILE* stream, Expr* restrict e, int d
             qual_type_as_string(sizeof(temp_string0), temp_string0, e->type);
             fprintf(stream, "%s '%s'\n", names[e->op], temp_string0);
 
-            dump_expr(tu, stream, e->bin_op.left, depth + 1, false);
-            dump_expr(tu, stream, e->bin_op.right, depth + 1, true);
+            dump_expr(stream, e->bin_op.left, depth + 1, false);
+            dump_expr(stream, e->bin_op.right, depth + 1, true);
             break;
         }
         default:
@@ -402,7 +517,7 @@ static void dump_stmt(TranslationUnit* tu, FILE* stream, Stmt* restrict s, int d
                 }
 
                 if (s->decl.initial) {
-                    dump_expr(tu, stream, s->decl.initial, depth + 1, true);
+                    dump_expr(stream, s->decl.initial, depth + 1, true);
                 }
             }
             break;
@@ -431,13 +546,13 @@ static void dump_stmt(TranslationUnit* tu, FILE* stream, Stmt* restrict s, int d
         }
         case STMT_EXPR: {
             fprintf(stream, "Expr\n");
-            dump_expr(tu, stream, s->expr.expr, depth + 1, true);
+            dump_expr(stream, s->expr.expr, depth + 1, true);
             break;
         }
         case STMT_RETURN: {
             fprintf(stream, "Return\n");
             if (s->return_.expr) {
-                dump_expr(tu, stream, s->return_.expr, depth + 1, true);
+                dump_expr(stream, s->return_.expr, depth + 1, true);
             }
             break;
         }
@@ -455,12 +570,12 @@ static void dump_stmt(TranslationUnit* tu, FILE* stream, Stmt* restrict s, int d
         }
         case STMT_GOTO: {
             fprintf(stream, "Goto\n");
-            dump_expr(tu, stream, s->goto_.target, depth + 1, true);
+            dump_expr(stream, s->goto_.target, depth + 1, true);
             break;
         }
         case STMT_SWITCH: {
             fprintf(stream, "Switch\n");
-            dump_expr(tu, stream, s->switch_.condition, depth + 1, true);
+            dump_expr(stream, s->switch_.condition, depth + 1, true);
             dump_stmt(tu, stream, s->switch_.body, depth + 1, true);
             break;
         }
@@ -476,7 +591,7 @@ static void dump_stmt(TranslationUnit* tu, FILE* stream, Stmt* restrict s, int d
         }
         case STMT_IF: {
             fprintf(stream, "If\n");
-            dump_expr(tu, stream, s->if_.cond, depth + 1, s->if_.body == 0);
+            dump_expr(stream, s->if_.cond, depth + 1, s->if_.body == 0);
 
             if (s->if_.body) {
                 dump_stmt(tu, stream, s->if_.body, depth + 1, s->if_.next == 0);
@@ -493,10 +608,10 @@ static void dump_stmt(TranslationUnit* tu, FILE* stream, Stmt* restrict s, int d
             fprintf(stream, "DoWhile\n");
 
             if (s->do_while.body) {
-                dump_expr(tu, stream, s->do_while.cond, depth + 1, false);
+                dump_expr(stream, s->do_while.cond, depth + 1, false);
                 dump_stmt(tu, stream, s->do_while.body, depth + 1, true);
             } else {
-                dump_expr(tu, stream, s->do_while.cond, depth + 1, true);
+                dump_expr(stream, s->do_while.cond, depth + 1, true);
             }
             break;
         }
@@ -504,10 +619,10 @@ static void dump_stmt(TranslationUnit* tu, FILE* stream, Stmt* restrict s, int d
             fprintf(stream, "While\n");
 
             if (s->while_.body) {
-                dump_expr(tu, stream, s->while_.cond, depth + 1, false);
+                dump_expr(stream, s->while_.cond, depth + 1, false);
                 dump_stmt(tu, stream, s->while_.body, depth + 1, true);
             } else {
-                dump_expr(tu, stream, s->while_.cond, depth + 1, true);
+                dump_expr(stream, s->while_.cond, depth + 1, true);
             }
             break;
         }
@@ -535,7 +650,7 @@ static void dump_stmt(TranslationUnit* tu, FILE* stream, Stmt* restrict s, int d
             if (s->for_.cond) {
                 print_barz(depth + 1, false);
                 fprintf(stream, "Cond:\n");
-                dump_expr(tu, stream, s->for_.cond, depth + 2, true);
+                dump_expr(stream, s->for_.cond, depth + 2, true);
             }
 
             print_barz(depth + 1, s->for_.next == 0);
@@ -547,7 +662,7 @@ static void dump_stmt(TranslationUnit* tu, FILE* stream, Stmt* restrict s, int d
             if (s->for_.next) {
                 print_barz(depth + 1, true);
                 fprintf(stream, "Next:\n");
-                dump_expr(tu, stream, s->for_.next, depth + 2, true);
+                dump_expr(stream, s->for_.next, depth + 2, true);
             }
             break;
         }

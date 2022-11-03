@@ -704,6 +704,7 @@ static Cuik_QualType cuik_get_direct_type(Cuik_QualType type, int* level) {
 // Pretty printers
 ////////////////////////////////////////////
 void cuik_dump_translation_unit(FILE* stream, TranslationUnit* tu, bool minimalist);
+void cuik_dump_expr(FILE* stream, Expr* e, int depth);
 
 ////////////////////////////////////////////
 // Iterators

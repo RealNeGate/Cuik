@@ -263,7 +263,7 @@ bool type_equal(Cuik_Type* ty1, Cuik_Type* ty2) {
 
 size_t type_as_string(size_t max_len, char* buffer, Cuik_Type* type) {
     if (type == NULL) {
-        size_t i = cstr_copy(max_len, buffer, "(null)");
+        size_t i = cstr_copy(max_len, buffer, "nil");
         buffer[i] = '\0';
         return i;
     }

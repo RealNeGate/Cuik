@@ -123,8 +123,9 @@ static Expr* parse_initializer(TranslationUnit* tu, TokenStream* restrict s, Cui
             expect(tu, s, ',');
 
             if (tokens_get(s)->type == '}') break;
-        } else
+        } else {
             expect_comma = true;
+        }
 
         parse_initializer_member(tu, s);
         count += 1;
@@ -592,23 +593,6 @@ static Expr* parse_expr_l1(TranslationUnit* tu, TokenStream* restrict s) {
             goto try_again;
         }
 
-        // post fix, you can only put one and just after all the other operators
-        // in this precendence.
-        if (tokens_get(s)->type == TOKEN_INCREMENT || tokens_get(s)->type == TOKEN_DECREMENT) {
-            bool is_inc = tokens_get(s)->type == TOKEN_INCREMENT;
-            tokens_next(s);
-
-            SourceLoc end_loc = tokens_get_last_location(s);
-
-            Expr* src = e;
-            e = make_expr(tu);
-            *e = (Expr){
-                .op = is_inc ? EXPR_POST_INC : EXPR_POST_DEC,
-                .loc = { start_loc, end_loc },
-                .unary_op.src = src,
-            };
-        }
-
         return e;
     }
 }
@@ -772,7 +756,6 @@ static Expr* parse_expr_l2(TranslationUnit* tu, TokenStream* restrict s) {
         Expr* value = parse_expr_l1(tu, s);
 
         SourceLoc end_loc = tokens_get_last_location(s);
-
         Expr* e = make_expr(tu);
         *e = (Expr){
             .op = EXPR_ADDR,

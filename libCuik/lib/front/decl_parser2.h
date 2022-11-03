@@ -77,7 +77,7 @@ static ptrdiff_t skip_expression_in_list(TokenStream* restrict s, SourceRange er
         tokens_next(s);
     }
 
-    *out_end = s->list.current - 1;
+    *out_end = s->list.current;
     return current;
 }
 

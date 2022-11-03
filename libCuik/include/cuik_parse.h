@@ -47,8 +47,6 @@ int cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict s, const Cuik
 
 
 
-
-
 typedef struct TranslationUnit TranslationUnit;
 
 typedef struct Cuik_Warnings {

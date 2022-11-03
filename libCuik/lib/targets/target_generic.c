@@ -16,6 +16,7 @@ static void set_integer(Cuik_Target* target, int i, Cuik_TypeKind kind, int byte
 void cuik_target_build(Cuik_Target* target) {
     uint32_t char_bits = target->int_bits[0];
     uint32_t last = char_bits;
+    (void) last;
     assert(last <= 8 && "char type must be at least 8bits");
 
     // each rank must be bigger or equal to the last one
