@@ -55,6 +55,7 @@ static bool args_types;
 static bool args_run;
 static bool args_nocrt;
 static bool args_pprepl;
+static bool args_live;
 static bool args_time;
 static bool args_verbose;
 static bool args_syntax_only;
@@ -83,6 +84,7 @@ typedef struct TargetOption {
 static DynArray(TargetOption) target_options;
 
 #include "pp_repl.h"
+#include "live.h"
 
 static void exit_or_hook(int code) {
     if (IsDebuggerPresent()) {
@@ -854,6 +856,92 @@ static bool export_output(void) {
     }
 }
 
+static int run_compiler(threadpool_t* thread_pool) {
+    ////////////////////////////////
+    // frontend work
+    ////////////////////////////////
+    TIMESTAMP("Frontend");
+    CUIK_TIMED_BLOCK("Frontend") {
+        if (ithread_pool != NULL) {
+            #if CUIK_ALLOW_THREADS
+            dyn_array_for(i, input_files) {
+                tp_submit(thread_pool, preproc_file, (void*) input_files[i]);
+            }
+
+            threadpool_wait(thread_pool);
+            #endif
+        } else {
+            dyn_array_for(i, input_files) {
+                preproc_file((void*) input_files[i]);
+            }
+        }
+
+        TIMESTAMP("Internal link");
+        CUIK_TIMED_BLOCK("internal link") {
+            cuik_internal_link_compilation_unit(&compilation_unit);
+        }
+
+        if (args_syntax_only) {
+            return 0;
+        }
+    }
+
+    if (files_with_errors > 0) {
+        return 1;
+    }
+
+    if (args_ast) {
+        FOR_EACH_TU(tu, &compilation_unit) {
+            cuik_dump_translation_unit(stdout, tu, true);
+        }
+        return 0;
+    }
+
+    ////////////////////////////////
+    // backend work
+    ////////////////////////////////
+    irgen();
+    cuik_destroy_compilation_unit(&compilation_unit);
+
+    if (dyn_array_length(da_passes) != 0) {
+        // TODO: we probably want to do the fancy threading soon
+        TIMESTAMP("Optimizer");
+        CUIK_TIMED_BLOCK("Optimizer") {
+            tb_module_optimize(mod, dyn_array_length(da_passes), da_passes);
+        }
+    }
+
+    if (args_ir) {
+        TIMESTAMP("IR Printer");
+        TB_FOR_FUNCTIONS(f, mod) {
+            tb_function_print(f, tb_default_print_callback, stdout, false);
+            printf("\n\n");
+        }
+
+        goto cleanup_tb;
+    }
+
+    CUIK_TIMED_BLOCK("CodeGen") {
+        codegen();
+    }
+
+    if (args_run) {
+        // printf("JIT compiling...\n");
+        fprintf(stderr, "error: JIT not supported yet!\n");
+        abort();
+        // run_as_jit();
+    } else {
+        if (!export_output()) {
+            return 1;
+        }
+    }
+
+    cleanup_tb:
+    tb_free_thread_resources();
+    tb_module_destroy(mod);
+    return 0;
+}
+
 int main(int argc, char** argv) {
     cuik_init();
     find_system_deps();
@@ -959,6 +1047,7 @@ int main(int argc, char** argv) {
             case ARG_OBJECT: flavor = TB_FLAVOR_OBJECT; break;
             case ARG_PREPROC: args_preprocess = true; break;
             case ARG_RUN: args_run = true; break;
+            case ARG_LIVE: args_live = true; break;
             case ARG_PPREPL: args_pprepl = true; break;
             case ARG_AST: args_ast = true; break;
             case ARG_ASSEMBLY: flavor = TB_FLAVOR_ASSEMBLY; break;
@@ -1045,7 +1134,6 @@ int main(int argc, char** argv) {
 
     initialize_targets();
     initialize_opt_passes();
-    cuik_create_compilation_unit(&compilation_unit);
 
     if (!args_ast && !args_types) {
         TB_FeatureSet features = { 0 };
@@ -1065,86 +1153,25 @@ int main(int argc, char** argv) {
         return EXIT_SUCCESS;
     }
 
-    ////////////////////////////////
-    // frontend work
-    ////////////////////////////////
-    TIMESTAMP("Frontend");
-    CUIK_TIMED_BLOCK("Frontend") {
-        if (ithread_pool != NULL) {
-            #if CUIK_ALLOW_THREADS
-            dyn_array_for(i, input_files) {
-                tp_submit(thread_pool, preproc_file, (void*) input_files[i]);
-            }
+    if (args_live) {
+        LiveCompiler l;
+        do {
+            printf("\x1b[2J");
+            printf("OUTPUT OF %s:\n", input_files[0]);
 
-            threadpool_wait(thread_pool);
-            #endif
-        } else {
-            dyn_array_for(i, input_files) {
-                preproc_file((void*) input_files[i]);
-            }
-        }
-
-        TIMESTAMP("Internal link");
-        CUIK_TIMED_BLOCK("internal link") {
-            cuik_internal_link_compilation_unit(&compilation_unit);
-        }
-
-        if (args_syntax_only) goto done;
-    }
-
-    if (files_with_errors > 0) {
-        exit_or_hook(1);
-    }
-
-    if (args_ast) {
-        FOR_EACH_TU(tu, &compilation_unit) {
-            cuik_dump_translation_unit(stdout, tu, true);
-        }
-        goto done;
-    }
-
-    ////////////////////////////////
-    // backend work
-    ////////////////////////////////
-    irgen();
-    cuik_destroy_compilation_unit(&compilation_unit);
-
-    if (dyn_array_length(da_passes) != 0) {
-        // TODO: we probably want to do the fancy threading soon
-        TIMESTAMP("Optimizer");
-        CUIK_TIMED_BLOCK("Optimizer") {
-            tb_module_optimize(mod, dyn_array_length(da_passes), da_passes);
-        }
-    }
-
-    if (args_ir) {
-        TIMESTAMP("IR Printer");
-        TB_FOR_FUNCTIONS(f, mod) {
-            tb_function_print(f, tb_default_print_callback, stdout, false);
-            printf("\n\n");
-        }
-        goto done;
-    }
-
-    CUIK_TIMED_BLOCK("CodeGen") {
-        codegen();
-    }
-
-    if (args_run) {
-        // printf("JIT compiling...\n");
-        fprintf(stderr, "error: JIT not supported yet!\n");
-        abort();
-        // run_as_jit();
+            cuik_create_compilation_unit(&compilation_unit);
+            run_compiler(thread_pool);
+            cuik_destroy_compilation_unit(&compilation_unit);
+        } while (live_compile_watch(&l));
     } else {
-        if (!export_output()) {
-            return 1;
-        }
+        cuik_create_compilation_unit(&compilation_unit);
+
+        int status = run_compiler(thread_pool);
+        if (status != 0) exit_or_hook(status);
+
+        cuik_destroy_compilation_unit(&compilation_unit);
     }
 
-    tb_free_thread_resources();
-    tb_module_destroy(mod);
-
-    done:
     TIMESTAMP("Done");
     #if CUIK_ALLOW_THREADS
     if (thread_pool != NULL) {

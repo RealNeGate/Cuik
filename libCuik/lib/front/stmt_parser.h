@@ -43,6 +43,8 @@ static bool parse_decl_or_expr2(Cuik_Parser* parser, TokenStream* restrict s, si
                 .type = decl.type,
                 .attrs = attr,
             };
+            *((Stmt**)tls_push(sizeof(Stmt*))) = n;
+            *body_count += 1;
 
             Expr* e = NULL;
             if (tokens_get(s)->type == '=') {
@@ -88,7 +90,6 @@ static bool parse_decl_or_expr2(Cuik_Parser* parser, TokenStream* restrict s, si
             }
         }
 
-        expect_char(s, ';');
         return true;
     } else {
         Stmt* n = alloc_stmt();

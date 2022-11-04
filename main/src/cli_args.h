@@ -1,5 +1,6 @@
 X(ARG_HELP,    "h",        NULL,      false, "print help")
 X(ARG_VERBOSE, "V",        NULL,      false, "print verbose messages")
+X(ARG_LIVE,    "live",     NULL,      false, "runs compiler persistently, repeats compile step whenever the input changes")
 // preprocessor
 X(ARG_DEFINE,  "D",        "define",  true,  "defines a macro before compiling")
 X(ARG_UNDEF,   "U",        "undef",   true,  "undefines a macro before compiling")
