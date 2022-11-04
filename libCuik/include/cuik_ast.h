@@ -701,6 +701,16 @@ static Cuik_QualType cuik_get_direct_type(Cuik_QualType type, int* level) {
 }
 
 ////////////////////////////////////////////
+// Type checker
+////////////////////////////////////////////
+// This represents a compiled source file
+typedef struct TranslationUnit TranslationUnit;
+
+// returns the number of errors in this phase.
+// if thread_pool is non-NULL the type checking will be parallelized
+int cuiksema_run(TranslationUnit* restrict tu, Cuik_IThreadpool* restrict thread_pool);
+
+////////////////////////////////////////////
 // Pretty printers
 ////////////////////////////////////////////
 void cuik_dump_translation_unit(FILE* stream, TranslationUnit* tu, bool minimalist);

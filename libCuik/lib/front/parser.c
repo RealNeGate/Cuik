@@ -19,6 +19,8 @@
 // parser we need access to it to avoid some problems
 extern thread_local Stmt* cuik__sema_function_stmt;
 
+static const Cuik_Warnings DEFAULT_WARNINGS = { 0 };
+
 // how big are the phase2 parse tasks
 #define PARSE_MUNCH_SIZE (131072)
 
@@ -225,7 +227,7 @@ static void diag_unresolved_symbol(TranslationUnit* tu, Atom name, SourceLoc loc
     mtx_unlock(&tu->diag_mutex);
 }
 
-struct Cuik_Parser {
+typedef struct Cuik_Parser {
     Cuik_ParseVersion version;
     TokenStream tokens;
 
@@ -245,7 +247,9 @@ struct Cuik_Parser {
     DynArray(Stmt*) top_level_stmts;
     Cuik_TypeTable types;
     Cuik_GlobalSymbols globals;
-};
+
+    NL_Strmap(Diag_UnresolvedSymbol*) unresolved_symbols;
+} Cuik_Parser;
 
 typedef enum ParseResult {
     PARSE_WIT_ERRORS = -1,
@@ -612,7 +616,6 @@ void type_layout2(Cuik_Parser* parser, Cuik_Type* type, bool needs_complete) {
 
         type->size = 4;
         type->align = 4;
-        type->is_complete = false;
     } else if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
         bool is_union = (type->kind == KIND_UNION);
 
@@ -683,13 +686,11 @@ void type_layout2(Cuik_Parser* parser, Cuik_Type* type, bool needs_complete) {
         offset = align_up(offset, align);
         type->align = align;
         type->size = offset;
-        type->is_complete = true;
     }
 
+    type->is_complete = true;
     type->is_progress = false;
 }
-
-static const Cuik_Warnings DEFAULT_WARNINGS = { 0 };
 
 TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* restrict desc) {
     // we can preserve this across multiple uses
@@ -1438,7 +1439,7 @@ TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* res
 
     // run type checker
     CUIK_TIMED_BLOCK("phase 4") {
-        cuik__sema_pass(tu, NULL /* desc->thread_pool */);
+        cuiksema_run(tu, NULL /* desc->thread_pool */);
 
         if (cuikdg_error_count(s)) {
             goto parse_error;

@@ -226,12 +226,12 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
 
         if (attr.is_typedef) {
             // typedef is just a special storage class
-            diag_note(s, decl.loc, "Typedef: %s", decl.name);
+            // diag_note(s, decl.loc, "Typedef: %s", decl.name);
         } else {
             n->attr_list = parse_attributes(s, n->attr_list);
 
             if (decl.name != NULL) {
-                diag_note(s, decl.loc, "Declarator: %s", decl.name);
+                // diag_note(s, decl.loc, "Declarator: %s", decl.name);
 
                 // declaration endings
                 ptrdiff_t expr_start, expr_end;
@@ -267,8 +267,8 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
                         sym->token_start = expr_start;
                         sym->token_end = expr_end;
 
-                        SourceRange r = { s->list.tokens[expr_start].location, get_token_range(&s->list.tokens[expr_end]).end };
-                        diag_note(s, r, "Body");
+                        // SourceRange r = { s->list.tokens[expr_start].location, get_token_range(&s->list.tokens[expr_end]).end };
+                        // diag_note(s, r, "Body");
                     }
                     break;
                 } else {
@@ -288,7 +288,7 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
                     sym->token_end = expr_end;
 
                     SourceRange r = { s->list.tokens[expr_start].location, get_token_range(&s->list.tokens[expr_end]).end };
-                    diag_note(s, r, "Initializer");
+                    // diag_note(s, r, "Initializer");
                 }
             }
         }
@@ -310,8 +310,43 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
     return PARSE_SUCCESS;
 }
 
-#define THROW_IF_ERROR() if ((r = cuikdg_error_count(s)) > 0) return r;
-int cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict s, const Cuik_Target* target) {
+static void resolve_pending_exprs(Cuik_Parser* parser) {
+    size_t pending_count = dyn_array_length(pending_exprs);
+    for (size_t i = 0; i < pending_count; i++) {
+        if (pending_exprs[i].mode == PENDING_ALIGNAS) {
+            Cuik_Type* type = pending_exprs[i].type;
+
+            TokenStream mini_lex = parser->tokens;
+            mini_lex.list.current = pending_exprs[i].start;
+
+            int align = 0;
+            SourceLoc loc = tokens_get_location(&mini_lex);
+            if (is_typename(&parser->globals, &mini_lex)) {
+                Cuik_Type* new_align = cuik_canonical_type(parse_typename2(parser, &mini_lex));
+                if (new_align == NULL || new_align->align) {
+                    diag_err(&mini_lex, type->loc, "_Alignas cannot operate with incomplete");
+                } else {
+                    align = new_align->align;
+                }
+            } else {
+                intmax_t new_align = parse_const_expr2(parser, &mini_lex);
+                if (new_align == 0) {
+                    diag_err(&mini_lex, type->loc, "_Alignas cannot be applied with 0 alignment", new_align);
+                } else if (new_align >= INT16_MAX) {
+                    diag_err(&mini_lex, type->loc, "_Alignas(%zu) exceeds max alignment of %zu", new_align, INT16_MAX);
+                } else {
+                    align = new_align;
+                }
+            }
+
+            assert(align != 0);
+            type->align = align;
+        }
+    }
+}
+
+#define THROW_IF_ERROR() if ((r = cuikdg_error_count(s)) > 0) return (Cuik_ParseResult){ r };
+Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict s, const Cuik_Target* target) {
     int r;
     assert(s != NULL);
 
@@ -376,6 +411,8 @@ int cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict s, const Cuik
 
         if (cuikdg_error_count(s)) break;
 
+        // do record layouts and shi
+        resolve_pending_exprs(parser);
         CUIK_FOR_TYPES(type, parser->types) {
             assert(type->align != -1);
 
@@ -407,9 +444,6 @@ int cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict s, const Cuik
                     if (mini_lex.list.current != sym->token_end) {
                         __debugbreak();
                     }
-
-                    cuik_dump_expr(stdout, e, 0);
-                    printf("\n\n");
                 }
 
                 sym->stmt->decl.initial = e;
@@ -459,7 +493,38 @@ int cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict s, const Cuik
     }
     THROW_IF_ERROR();
 
-    cuik_dump(stdout, dyn_array_length(parser->top_level_stmts), parser->top_level_stmts, false);
-    return 0;
+    // output accumulated diagnostics
+    nl_strmap_for(i, parser->unresolved_symbols) {
+        Diag_UnresolvedSymbol* loc = parser->unresolved_symbols[i];
+        diag_header(DIAG_ERR, "could not resolve symbol: %s", loc->name);
+
+        DiagWriter d = diag_writer(s);
+        for (; loc != NULL; loc = loc->next) {
+            if (!diag_writer_is_compatible(&d, loc->loc)) {
+                // end line
+                diag_writer_done(&d);
+                d = diag_writer(s);
+            }
+
+            diag_writer_highlight(&d, loc->loc);
+        }
+        diag_writer_done(&d);
+        printf("\n");
+    }
+
+    // convert to translation unit
+    TranslationUnit* tu = malloc(sizeof(TranslationUnit));
+    *tu = (TranslationUnit){
+        .filepath = s->filepath,
+        .warnings = &DEFAULT_WARNINGS,
+        .target = target,
+        .tokens = *s,
+        .top_level_stmts = parser->top_level_stmts,
+        .types = parser->types,
+        .globals = parser->globals,
+    };
+
+    // cuik_dump(stdout, dyn_array_length(parser->top_level_stmts), parser->top_level_stmts, false);
+    return (Cuik_ParseResult){ .tu = tu };
 }
 #undef THROW_IF_ERROR

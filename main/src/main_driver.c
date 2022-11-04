@@ -384,12 +384,40 @@ static void free_preprocessor(Cuik_CPP* cpp) {
     free(cpp);
 }
 
-static void compile_file(void* arg) {
-    int errors = cuikparse_run(CUIK_VERSION_C23, cuikpp_get_token_stream(arg), target_desc);
-    if (errors > 0) {
-        printf("Failed to parse with %d errors...", errors);
-        exit_or_hook(1);
+static _Atomic int files_with_errors;
+
+static void compile_file(void* arg);
+static void preproc_file(void* arg) {
+    const char* input = (const char*)arg;
+
+    // preproc
+    Cuik_CPP* cpp = make_preprocessor(input, true);
+
+    if (ithread_pool != NULL) {
+        CUIK_CALL(ithread_pool, submit, compile_file, cpp);
+    } else {
+        compile_file(cpp);
     }
+}
+
+static void compile_file(void* arg) {
+    Cuik_ParseResult result = cuikparse_run(CUIK_VERSION_C23, cuikpp_get_token_stream(arg), target_desc);
+    if (result.error_count > 0) {
+        printf("Failed to parse with %d errors...", result.error_count);
+        files_with_errors++;
+        return;
+    }
+
+    TranslationUnit* tu = result.tu;
+    int r = cuiksema_run(tu, NULL);
+    if (r > 0) {
+        printf("Failed to type check with %d errors...", r);
+        files_with_errors++;
+        return;
+    }
+
+    cuik_set_translation_unit_user_data(tu, arg /* the preprocessor */);
+    cuik_add_to_compilation_unit(&compilation_unit, tu);
 
     // parse
     /*
@@ -438,19 +466,6 @@ static void compile_file(void* arg) {
 
     cuik_set_translation_unit_user_data(tu, cpp);
     cuik_add_to_compilation_unit(&compilation_unit, tu);*/
-}
-
-static void preproc_file(void* arg) {
-    const char* input = (const char*)arg;
-
-    // preproc
-    Cuik_CPP* cpp = make_preprocessor(input, true);
-
-    if (ithread_pool != NULL) {
-        CUIK_CALL(ithread_pool, submit, compile_file, cpp);
-    } else {
-        compile_file(cpp);
-    }
 }
 
 static bool str_ends_with(const char* cstr, const char* postfix) {
@@ -1075,6 +1090,10 @@ int main(int argc, char** argv) {
         }
 
         if (args_syntax_only) goto done;
+    }
+
+    if (files_with_errors > 0) {
+        exit_or_hook(1);
     }
 
     if (args_ast) {

@@ -1683,6 +1683,8 @@ static void sema_top_level(TranslationUnit* tu, Stmt* restrict s) {
                     if (!type_compatible(tu, expr_type, type, s->decl.initial)) {
                         diag_err(&tu->tokens, s->loc, "declaration type does not match (got '%s', expected '%s')", type, expr_type);
                     }
+
+                    s->decl.initial->cast_type = s->decl.type;
                 }
 
                 if (type->size == 0 || !type->is_complete) {
@@ -1743,7 +1745,7 @@ static void sema_task(void* arg) {
     }
 }
 
-void cuik__sema_pass(TranslationUnit* restrict tu, Cuik_IThreadpool* restrict thread_pool) {
+int cuiksema_run(TranslationUnit* restrict tu, Cuik_IThreadpool* restrict thread_pool) {
     tls_init();
     size_t count = dyn_array_length(tu->top_level_stmts);
 
@@ -1800,4 +1802,6 @@ void cuik__sema_pass(TranslationUnit* restrict tu, Cuik_IThreadpool* restrict th
             in_the_semantic_phase = false;
         }
     }
+
+    return cuikdg_error_count(&tu->tokens);
 }

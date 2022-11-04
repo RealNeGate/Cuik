@@ -1,8 +1,7 @@
 ////////////////////////////////
 // C parser
 ////////////////////////////////
-// This module can parse C11 code.
-//
+// This module can parse C code (currently C11 with Microsoft and GNU extensions)
 #pragma once
 #include <stdint.h>
 #include <stdbool.h>
@@ -32,22 +31,29 @@ typedef enum Cuik_Entrypoint {
     CUIK_ENTRYPOINT_CUSTOM
 } Cuik_Entrypoint;
 
-////////////////////////////////
 // Standard parsing
-////////////////////////////////
 typedef struct Cuik_GlobalSymbols Cuik_GlobalSymbols;
-typedef struct Cuik_Parser Cuik_Parser;
 
-// returns the number of parser errors
-int cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict s, const Cuik_Target* target);
+typedef struct Cuik_ParseResult {
+    int error_count;
+    TranslationUnit* tu; // if error_count == 0, then tu is a valid TU
+} Cuik_ParseResult;
 
-
-
-
-
+Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict s, const Cuik_Target* target);
 
 
-typedef struct TranslationUnit TranslationUnit;
+
+
+
+
+
+
+
+
+
+
+
+
 
 typedef struct Cuik_Warnings {
     // implicitly converting between types and losing information

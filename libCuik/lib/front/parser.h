@@ -215,6 +215,4 @@ void type_layout(TranslationUnit* restrict tu, Cuik_Type* type, bool needs_compl
 bool const_eval_try_offsetof_hack(TranslationUnit* tu, const Expr* e, uint64_t* out);
 
 Expr* cuik__optimize_ast(TranslationUnit* tu, Expr* e);
-// if thread_pool is NULL, the semantics are done single threaded
-void cuik__sema_pass(TranslationUnit* restrict tu, Cuik_IThreadpool* restrict thread_pool);
 void cuik__function_analysis(TranslationUnit* restrict tu, Stmt* restrict s);
