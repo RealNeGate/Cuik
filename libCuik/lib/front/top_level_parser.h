@@ -1,9 +1,4 @@
-
-static Stmt* alloc_stmt(Cuik_Parser* parser) {
-    Stmt* stmt = ARENA_ALLOC(&local_ast_arena, Stmt);
-    memset(stmt, 0, sizeof(Stmt));
-    return stmt;
-}
+void type_layout2(Cuik_Parser* parser, Cuik_Type* type, bool needs_complete);
 
 static bool expect_char(TokenStream* restrict s, char ch) {
     if (tokens_get(s)->type != ch) {
@@ -169,11 +164,10 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
         Decl decl = parse_declarator2(parser, s, type, false);
         if (decl.name == NULL) {
             diag_warn(s, decl.loc, "Declaration has no name");
-            // tokens_next(s);
         }
 
         // Convert into statement
-        Stmt* n = alloc_stmt(parser);
+        Stmt* n = alloc_stmt();
         n->op = STMT_GLOBAL_DECL;
         n->loc = decl.loc;
         n->decl = (struct StmtDecl){
@@ -323,7 +317,7 @@ int cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict s, const Cuik
 
     Cuik_Parser* restrict parser = calloc(1, sizeof(Cuik_Parser));
     parser->version = version;
-    parser->tokens = s;
+    parser->tokens = *s;
     parser->target = target;
     parser->static_assertions = dyn_array_create(int);
     parser->types = init_type_table();
@@ -382,6 +376,14 @@ int cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict s, const Cuik
 
         if (cuikdg_error_count(s)) break;
 
+        CUIK_FOR_TYPES(type, parser->types) {
+            assert(type->align != -1);
+
+            if (type->size == 0) type_layout2(parser, type, true);
+        }
+
+        if (cuikdg_error_count(s)) break;
+
         // parse all global declarations
         nl_strmap_for(i, parser->globals.symbols) {
             Symbol* sym = &parser->globals.symbols[i];
@@ -423,12 +425,41 @@ int cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict s, const Cuik
     dyn_array_destroy(parser->static_assertions);
 
     CUIK_TIMED_BLOCK("phase 3") {
+        // allocate the local symbol tables
+        local_symbols = malloc(sizeof(Symbol) * MAX_LOCAL_SYMBOLS);
+        local_tags = malloc(sizeof(TagEntry) * MAX_LOCAL_TAGS);
+
         size_t load = nl_strmap__get_header(parser->globals.symbols)->load;
         printf("%zu\n", load);
-        // parse_global_symbols(tu, 0, load, *s);
+
+        TokenStream tokens = *s;
+        for (size_t i = 0; i < load; i++) {
+            Symbol* sym = &parser->globals.symbols[i];
+
+            // don't worry about normal globals, those have been taken care of...
+            if (sym->token_start != 0 && (sym->storage_class == STORAGE_STATIC_FUNC || sym->storage_class == STORAGE_FUNC)) {
+                // Spin up a mini parser here
+                tokens.list.current = sym->token_start;
+
+                // intitialize use list
+                symbol_chain_start = symbol_chain_current = NULL;
+
+                // Some sanity checks in case a local symbol is leaked funny.
+                assert(local_symbol_start == 0 && local_symbol_count == 0);
+                parse_function(parser, &tokens, sym->stmt);
+                local_symbol_start = local_symbol_count = 0;
+
+                // finalize use list
+                sym->stmt->decl.first_symbol = symbol_chain_start;
+            }
+        }
+
+        free(local_symbols), local_symbols = NULL;
+        free(local_tags), local_tags = NULL;
     }
     THROW_IF_ERROR();
 
+    cuik_dump(stdout, dyn_array_length(parser->top_level_stmts), parser->top_level_stmts, false);
     return 0;
 }
 #undef THROW_IF_ERROR

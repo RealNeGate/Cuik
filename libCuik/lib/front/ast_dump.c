@@ -498,7 +498,7 @@ static void dump_expr(FILE* stream, Expr* restrict e, int depth, bool last_node)
     barz[depth - 1] = false;
 }
 
-static void dump_stmt(TranslationUnit* tu, FILE* stream, Stmt* restrict s, int depth, bool last_node) {
+static void dump_stmt(FILE* stream, Stmt* restrict s, int depth, bool last_node) {
     if (s == NULL) return;
     print_barz(depth, last_node);
 
@@ -529,7 +529,7 @@ static void dump_stmt(TranslationUnit* tu, FILE* stream, Stmt* restrict s, int d
             Stmt* old_function_stmt = function_stmt;
             function_stmt = s;
 
-            dump_stmt(tu, stream, s->decl.initial_as_stmt, depth + 1, true);
+            dump_stmt(stream, s->decl.initial_as_stmt, depth + 1, true);
             function_stmt = old_function_stmt;
             break;
         }
@@ -540,7 +540,7 @@ static void dump_stmt(TranslationUnit* tu, FILE* stream, Stmt* restrict s, int d
             size_t count = s->compound.kids_count;
 
             for (size_t i = 0; i < count; i++) {
-                dump_stmt(tu, stream, kids[i], depth + 1, i == (count - 1));
+                dump_stmt(stream, kids[i], depth + 1, i == (count - 1));
             }
             break;
         }
@@ -576,17 +576,17 @@ static void dump_stmt(TranslationUnit* tu, FILE* stream, Stmt* restrict s, int d
         case STMT_SWITCH: {
             fprintf(stream, "Switch\n");
             dump_expr(stream, s->switch_.condition, depth + 1, true);
-            dump_stmt(tu, stream, s->switch_.body, depth + 1, true);
+            dump_stmt(stream, s->switch_.body, depth + 1, true);
             break;
         }
         case STMT_CASE: {
             fprintf(stream, "Case %"PRId64"\n", s->case_.key);
-            dump_stmt(tu, stream, s->case_.body, depth + 1, true);
+            dump_stmt(stream, s->case_.body, depth + 1, true);
             break;
         }
         case STMT_DEFAULT: {
             fprintf(stream, "Default\n");
-            dump_stmt(tu, stream, s->default_.body, depth + 1, true);
+            dump_stmt(stream, s->default_.body, depth + 1, true);
             break;
         }
         case STMT_IF: {
@@ -594,12 +594,12 @@ static void dump_stmt(TranslationUnit* tu, FILE* stream, Stmt* restrict s, int d
             dump_expr(stream, s->if_.cond, depth + 1, s->if_.body == 0);
 
             if (s->if_.body) {
-                dump_stmt(tu, stream, s->if_.body, depth + 1, s->if_.next == 0);
+                dump_stmt(stream, s->if_.body, depth + 1, s->if_.next == 0);
 
                 if (s->if_.next) {
                     print_barz(depth, false);
                     fprintf(stream, "Else:\n");
-                    dump_stmt(tu, stream, s->if_.next, depth + 1, true);
+                    dump_stmt(stream, s->if_.next, depth + 1, true);
                 }
             }
             break;
@@ -609,7 +609,7 @@ static void dump_stmt(TranslationUnit* tu, FILE* stream, Stmt* restrict s, int d
 
             if (s->do_while.body) {
                 dump_expr(stream, s->do_while.cond, depth + 1, false);
-                dump_stmt(tu, stream, s->do_while.body, depth + 1, true);
+                dump_stmt(stream, s->do_while.body, depth + 1, true);
             } else {
                 dump_expr(stream, s->do_while.cond, depth + 1, true);
             }
@@ -620,7 +620,7 @@ static void dump_stmt(TranslationUnit* tu, FILE* stream, Stmt* restrict s, int d
 
             if (s->while_.body) {
                 dump_expr(stream, s->while_.cond, depth + 1, false);
-                dump_stmt(tu, stream, s->while_.body, depth + 1, true);
+                dump_stmt(stream, s->while_.body, depth + 1, true);
             } else {
                 dump_expr(stream, s->while_.cond, depth + 1, true);
             }
@@ -639,10 +639,10 @@ static void dump_stmt(TranslationUnit* tu, FILE* stream, Stmt* restrict s, int d
                         size_t count = first->compound.kids_count;
 
                         for (size_t i = 0; i < count; i++) {
-                            dump_stmt(tu, stream, kids[i], depth + 2, i == (count - 1));
+                            dump_stmt(stream, kids[i], depth + 2, i == (count - 1));
                         }
                     } else {
-                        dump_stmt(tu, stream, first, depth + 2, true);
+                        dump_stmt(stream, first, depth + 2, true);
                     }
                 }
             }
@@ -656,7 +656,7 @@ static void dump_stmt(TranslationUnit* tu, FILE* stream, Stmt* restrict s, int d
             print_barz(depth + 1, s->for_.next == 0);
             fprintf(stream, "Body:\n");
             if (s->for_.body) {
-                dump_stmt(tu, stream, s->for_.body, depth + 2, true);
+                dump_stmt(stream, s->for_.body, depth + 2, true);
             }
 
             if (s->for_.next) {
@@ -673,15 +673,14 @@ static void dump_stmt(TranslationUnit* tu, FILE* stream, Stmt* restrict s, int d
     barz[depth - 1] = false;
 }
 
-void cuik_dump_translation_unit(FILE* stream, TranslationUnit* tu, bool minimalist) {
+void cuik_dump(FILE* stream, size_t count, Stmt** top_level, bool minimalist) {
     tls_init();
-
     fprintf(stream, "TranslationUnit\n");
     barz[0] = true;
 
     if (minimalist) {
-        for (size_t i = 0, count = dyn_array_length(tu->top_level_stmts); i < count; i++) {
-            Stmt* stmt = tu->top_level_stmts[i];
+        for (size_t i = 0; i < count; i++) {
+            Stmt* stmt = top_level[i];
             if (!stmt->decl.attrs.is_used || stmt->decl.attrs.is_typedef) continue;
 
             bool is_last = (i == (count - 1));
@@ -694,13 +693,17 @@ void cuik_dump_translation_unit(FILE* stream, TranslationUnit* tu, bool minimali
                 is_last = (j == (count - 1));
             }
 
-            dump_stmt(tu, stream, stmt, 1, is_last);
+            dump_stmt(stream, stmt, 1, is_last);
         }
     } else {
-        for (size_t i = 0, count = dyn_array_length(tu->top_level_stmts); i < count; i++) {
-            dump_stmt(tu, stream, tu->top_level_stmts[i], 1, i == (count - 1));
+        for (size_t i = 0; i < count; i++) {
+            dump_stmt(stream, top_level[i], 1, i == (count - 1));
         }
     }
+}
+
+void cuik_dump_translation_unit(FILE* stream, TranslationUnit* tu, bool minimalist) {
+    cuik_dump(stream, dyn_array_length(tu->top_level_stmts), tu->top_level_stmts, minimalist);
 }
 
 void ast_dump_stats(TranslationUnit* tu, FILE* stream) {

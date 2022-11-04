@@ -795,3 +795,14 @@ static Expr* parse_expr_(Cuik_Parser* restrict parser, TokenStream* restrict s) 
 
     return lhs;
 }
+
+static intmax_t parse_const_expr2(Cuik_Parser* parser, TokenStream* restrict s) {
+    Expr* folded = cuik__optimize_ast(NULL, parse_assignment(parser, s));
+    if (folded->op != EXPR_INT) {
+        diag_err(s, folded->loc, "could not parse expression as constant.");
+        return 0;
+    }
+
+    return (intmax_t) folded->int_num.num;
+}
+

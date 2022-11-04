@@ -66,7 +66,7 @@ thread_local static bool out_of_order_mode;
 static void expect(TranslationUnit* tu, TokenStream* restrict s, char ch);
 static bool expect_char(TokenStream* restrict s, char ch);
 static bool expect_closing_paren(TokenStream* restrict s, SourceLoc opening);
-static bool expect_with_reason(TranslationUnit* tu, TokenStream* restrict s, char ch, const char* reason);
+static bool expect_with_reason(TokenStream* restrict s, char ch, const char* reason);
 static Symbol* find_local_symbol(TokenStream* restrict s);
 
 static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s);
@@ -227,7 +227,7 @@ static void diag_unresolved_symbol(TranslationUnit* tu, Atom name, SourceLoc loc
 
 struct Cuik_Parser {
     Cuik_ParseVersion version;
-    TokenStream* tokens;
+    TokenStream tokens;
 
     const Cuik_Target* target;
     // this refers to the `int` type, it comes from the target
@@ -522,6 +522,141 @@ void type_layout(TranslationUnit* restrict tu, Cuik_Type* type, bool needs_compl
                 int bits_in_region = member_type->kind == KIND_BOOL ? 1 : (member_size * 8);
                 if (bit_width > bits_in_region) {
                     diag_err(&tu->tokens, type->loc, "bitfield cannot fit in this type.");
+                }
+
+                if (current_bit_offset + bit_width > bits_in_region) {
+                    current_bit_offset = 0;
+
+                    offset = align_up(offset + member_size, member_align);
+                    member->bit_offset = offset;
+                }
+
+                current_bit_offset += bit_width;
+            } else {
+                if (is_union) {
+                    if (member_size > offset) offset = member_size;
+                } else {
+                    offset += member_size;
+                }
+            }
+
+            // the total alignment of a struct/union is based on the biggest member
+            last_member_size = member_size;
+            if (member_align > align) align = member_align;
+        }
+
+        offset = align_up(offset, align);
+        type->align = align;
+        type->size = offset;
+        type->is_complete = true;
+    }
+
+    type->is_progress = false;
+}
+
+void type_layout2(Cuik_Parser* parser, Cuik_Type* type, bool needs_complete) {
+    if (type->kind == KIND_VOID || type->size != 0) return;
+    if (type->is_progress) {
+        diag_err(&parser->tokens, type->loc, "Type has a circular dependency");
+        return;
+    }
+
+    type->is_progress = true;
+
+    if (type->kind == KIND_ARRAY) {
+        if (type->array_count_lexer_pos) {
+            // run mini parser for array count
+            TokenStream mini_lex = parser->tokens;
+            mini_lex.list.current = type->array_count_lexer_pos;
+            type->array_count = parse_const_expr2(parser, &mini_lex);
+            expect_char(&mini_lex, ']');
+        }
+
+        // layout crap
+        if (type->array_count != 0) {
+            if (cuik_canonical_type(type->array_of)->size == 0) {
+                type_layout2(parser, cuik_canonical_type(type->array_of), true);
+            }
+
+            if (cuik_canonical_type(type->array_of)->size == 0) {
+                diag_err(&parser->tokens, type->loc, "could not resolve type (ICE)");
+                return;
+            }
+        }
+
+        uint64_t result = cuik_canonical_type(type->array_of)->size * type->array_count;
+
+        // size checks
+        if (result >= INT32_MAX) {
+            diag_err(&parser->tokens, type->loc, "cannot declare an array that exceeds 0x7FFFFFFE bytes (got 0x%zX or %zi)", result, result);
+        }
+
+        type->size = result;
+        type->align = cuik_canonical_type(type->array_of)->align;
+    } else if (type->kind == KIND_ENUM) {
+        int cursor = 0;
+
+        for (int i = 0; i < type->enumerator.count; i++) {
+            // if the value is undecided, best time to figure it out is now
+            if (type->enumerator.entries[i].lexer_pos != 0) {
+                // Spin up a mini expression parser here
+                TokenStream mini_lex = parser->tokens;
+                mini_lex.list.current = type->enumerator.entries[i].lexer_pos;
+
+                cursor = parse_const_expr2(parser, &mini_lex);
+            }
+
+            type->enumerator.entries[i].value = cursor;
+            cursor += 1;
+        }
+
+        type->size = 4;
+        type->align = 4;
+        type->is_complete = false;
+    } else if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
+        bool is_union = (type->kind == KIND_UNION);
+
+        size_t member_count = type->record.kid_count;
+        Member* members = type->record.kids;
+
+        // for unions this just represents the max size
+        int offset = 0;
+        int last_member_size = 0;
+        int current_bit_offset = 0;
+        // struct/union are aligned to the biggest member alignment
+        int align = 0;
+
+        for (size_t i = 0; i < member_count; i++) {
+            Member* member = &members[i];
+
+            if (cuik_canonical_type(member->type)->kind == KIND_FUNC) {
+                diag_err(&parser->tokens, type->loc, "cannot put function types into a struct, try a function pointer");
+            } else {
+                type_layout2(parser, cuik_canonical_type(member->type), true);
+            }
+
+            Cuik_Type* member_type = cuik_canonical_type(member->type);
+            int member_align = member_type->align;
+            int member_size = member_type->size;
+            if (!is_union) {
+                int new_offset = align_up(offset, member_align);
+
+                // If we realign, reset the bit offset
+                if (offset != new_offset) {
+                    current_bit_offset = last_member_size = 0;
+                }
+                offset = new_offset;
+            }
+
+            member->offset = is_union ? 0 : offset;
+            member->align = member_align;
+
+            // bitfields
+            if (member->is_bitfield) {
+                int bit_width = member->bit_width;
+                int bits_in_region = member_type->kind == KIND_BOOL ? 1 : (member_size * 8);
+                if (bit_width > bits_in_region) {
+                    diag_err(&parser->tokens, type->loc, "bitfield cannot fit in this type.");
                 }
 
                 if (current_bit_offset + bit_width > bits_in_region) {
@@ -1514,7 +1649,7 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
         n->op = STMT_RETURN;
         n->return_ = (struct StmtReturn){ .expr = e };
 
-        expect_with_reason(tu, s, ';', "return");
+        expect_with_reason(s, ';', "return");
     } else if (peek == TOKEN_KW_if) {
         n = make_stmt(tu, s);
         tokens_next(s);
@@ -1918,7 +2053,7 @@ static bool parse_decl_or_expr(TranslationUnit* tu, TokenStream* restrict s, siz
             bool expect_comma = false;
             while (tokens_get(s)->type != ';') {
                 if (expect_comma) {
-                    expect_with_reason(tu, s, ',', "typedef");
+                    expect_with_reason(s, ',', "typedef");
                 } else {
                     expect_comma = true;
                 }
@@ -2111,7 +2246,7 @@ static bool expect_closing_paren(TokenStream* restrict s, SourceLoc opening) {
     }
 }
 
-static bool expect_with_reason(TranslationUnit* tu, TokenStream* restrict s, char ch, const char* reason) {
+static bool expect_with_reason(TokenStream* restrict s, char ch, const char* reason) {
     if (tokens_get(s)->type != ch) {
         SourceLoc loc = tokens_get_last_location(s);
 

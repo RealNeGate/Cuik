@@ -655,8 +655,8 @@ static Cuik_QualType parse_type_suffix2(Cuik_Parser* restrict parser, TokenStrea
         // array
         // int bar[8 * 8]
         //        ^^^^^^^
-        SourceLoc open_brace = tokens_get_location(s);
         tokens_next(s);
+        SourceLoc open_brace = tokens_get_location(s);
 
         Cuik_Type* t = NULL;
         if (parser->is_in_global_scope) {
@@ -667,7 +667,8 @@ static Cuik_QualType parse_type_suffix2(Cuik_Parser* restrict parser, TokenStrea
                 tokens_next(s);
                 expect_char(s, ']');
             } else {
-                current = skip_expression_in_braces(s, '[', ']');
+                current = s->list.current;
+                skip_expression_in_braces(s, '[', ']');
             }
 
             // create placeholder array type
