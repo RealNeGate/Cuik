@@ -405,7 +405,7 @@ static void preproc_file(void* arg) {
 static void compile_file(void* arg) {
     Cuik_ParseResult result = cuikparse_run(CUIK_VERSION_C23, cuikpp_get_token_stream(arg), target_desc);
     if (result.error_count > 0) {
-        printf("Failed to parse with %d errors...", result.error_count);
+        printf("Failed to parse with %d errors...\n", result.error_count);
         files_with_errors++;
         return;
     }
@@ -413,7 +413,7 @@ static void compile_file(void* arg) {
     TranslationUnit* tu = result.tu;
     int r = cuiksema_run(tu, NULL);
     if (r > 0) {
-        printf("Failed to type check with %d errors...", r);
+        printf("Failed to type check with %d errors...\n", r);
         files_with_errors++;
         return;
     }
@@ -857,6 +857,8 @@ static bool export_output(void) {
 }
 
 static int run_compiler(threadpool_t* thread_pool) {
+    files_with_errors = 0;
+
     ////////////////////////////////
     // frontend work
     ////////////////////////////////

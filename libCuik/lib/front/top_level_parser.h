@@ -162,9 +162,9 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
     while (!tokens_eof(s)) {
         size_t start_decl_token = s->list.current;
         Decl decl = parse_declarator2(parser, s, type, false);
-        if (decl.name == NULL) {
-            diag_warn(s, decl.loc, "Declaration has no name");
-        }
+        // if (decl.name == NULL) {
+        // diag_warn(s, decl.loc, "Declaration has no name");
+        // }
 
         // Convert into statement
         Stmt* n = alloc_stmt();
@@ -464,8 +464,6 @@ Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict 
         local_tags = malloc(sizeof(TagEntry) * MAX_LOCAL_TAGS);
 
         size_t load = nl_strmap__get_header(parser->globals.symbols)->load;
-        printf("%zu\n", load);
-
         TokenStream tokens = *s;
         for (size_t i = 0; i < load; i++) {
             Symbol* sym = &parser->globals.symbols[i];

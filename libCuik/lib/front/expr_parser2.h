@@ -346,6 +346,7 @@ static Expr* parse_primary_expr(Cuik_Parser* parser, TokenStream* restrict s) {
 
         default:
         diag_err(s, tokens_get_range(s), "could not parse expression");
+        tokens_prev(s);
         break;
     }
     tokens_next(s);
