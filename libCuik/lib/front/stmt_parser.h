@@ -78,6 +78,8 @@ static bool parse_decl_or_expr2(Cuik_Parser* parser, TokenStream* restrict s, si
                     .name = decl.name,
                     .type = decl.type,
                     .storage_class = attr.is_typedef ? STORAGE_TYPEDEF : STORAGE_LOCAL,
+                    .loc = decl.loc,
+                    .stmt = n,
                 };
             }
 
@@ -569,7 +571,7 @@ static Stmt* parse_stmt2(Cuik_Parser* parser, TokenStream* restrict s) {
         };
 
         expect_char(s, ';');
-    } else if (peek == TOKEN_IDENTIFIER || tokens_peek(s)->type == TOKEN_COLON) {
+    } else if (peek == TOKEN_IDENTIFIER && tokens_peek(s)->type == TOKEN_COLON) {
         // label amirite
         // IDENTIFIER COLON STMT
         Token* t = tokens_get(s);

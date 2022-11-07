@@ -6,7 +6,7 @@
 #include "../string_map.h"
 
 thread_local static Arena atoms_arena;
-thread_local static NL_Strmap(Atom) interner;
+thread_local NL_Strmap(Atom) interner;
 
 void atoms_init(void) {
     interner = nl_strmap_alloc(Atom, 65536);

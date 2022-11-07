@@ -1110,12 +1110,14 @@ int main(int argc, char** argv) {
 
     if (args_time) {
         #if 0
-        char* perf_output_path = cuikperf_start(FILENAME_MAX, &json_profiler, false);
+        char* perf_output_path = cuikperf_init(FILENAME_MAX, &json_profiler, false);
         sprintf_s(perf_output_path, FILENAME_MAX, "%s.json", output_path_no_ext);
         #else
-        char* perf_output_path = cuikperf_start(FILENAME_MAX, &spall_profiler, false);
+        char* perf_output_path = cuikperf_init(FILENAME_MAX, &spall_profiler, false);
         sprintf_s(perf_output_path, FILENAME_MAX, "%s.spall", output_path_no_ext);
         #endif
+
+        cuikperf_start();
     }
 
     // spin up worker threads

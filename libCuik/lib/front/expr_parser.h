@@ -587,7 +587,7 @@ static Expr* parse_expr_l1(TranslationUnit* tu, TokenStream* restrict s) {
                 .loc = { start_loc, end_loc },
                 .call = { target, param_count, param_start },
             };
-            diag_note(s, e->loc, "EXPR");
+            // diag_note(s, e->loc, "EXPR");
 
             tls_restore(params);
             goto try_again;

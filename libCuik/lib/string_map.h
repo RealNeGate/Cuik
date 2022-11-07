@@ -213,7 +213,7 @@ static NL_StrmapHeader* nl_strmap__resize(NL_StrmapHeader* table, size_t value_t
 
             new_table->keys[new_slot] = *old_key;
             new_table->indices[new_slot] = new_val_slot;
-            memcpy(&new_table->values[new_slot * value_type_size], old_value, value_type_size);
+            memcpy(&new_table->values[new_val_slot * value_type_size], old_value, value_type_size);
         }
     }
 

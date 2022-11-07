@@ -17,11 +17,12 @@ typedef struct Cuik_IProfiler {
     void (*end_plot)(void* user_data, uint64_t nanos);
 } Cuik_IProfiler;
 
-// lock_on_plot is true if the profiler->plot function cannot be called on multiple threads at
-// the same time.
+// lock_on_plot is true if the profiler->plot function shall not be called on multiple threads at
+// the same time, make this false whenever plot has internal synchronization or is single threaded.
 //
-// returns the userdata
-void* cuikperf_start(size_t ud_size, const Cuik_IProfiler* profiler, bool lock_on_plot);
+// returns the allocated userdata, call cuikperf_start to start making plots
+void* cuikperf_init(size_t ud_size, const Cuik_IProfiler* profiler, bool lock_on_plot);
+void cuikperf_start(void);
 void cuikperf_stop(void);
 bool cuikperf_is_active(void);
 

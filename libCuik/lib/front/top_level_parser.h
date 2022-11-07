@@ -522,7 +522,6 @@ Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict 
         .globals = parser->globals,
     };
 
-    // cuik_dump(stdout, dyn_array_length(parser->top_level_stmts), parser->top_level_stmts, false);
     return (Cuik_ParseResult){ .tu = tu };
 }
 #undef THROW_IF_ERROR
