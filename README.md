@@ -68,6 +68,10 @@ It can currently compile programs using the subset of C it currently supports bu
 * GNU extensions
 * Proper Mac/Linux support
 
+## What's in progress right now?
+
+I'm in the cpp-optimize branch doing some refactors, i redid some details of the preprocessor to improve speed, then  i started redoing the Cuik parser API and fixing bugs such as the use of abort in the parsing (for a library this should never happen, it should error recover or return to the user)
+
 ## File structure
 In case you care to look around here's what the folders mean:
 ```
