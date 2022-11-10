@@ -333,32 +333,32 @@ static TB_Reg inc_or_dec(TranslationUnit* tu, TB_Function* func, IRVal address, 
     return postfix ? loaded : operation;
 }
 
-InitNode* count_max_tb_init_objects(int node_count, InitNode* node, int* out_count) {
-    for (int i = 0; i < node_count; i++) {
-        if (node->kids_count == 0) {
-            *out_count += 1;
-            node += 1;
+int count_max_tb_init_objects(InitNode* root_node) {
+    int sum = 0;
+    for (InitNode* n = root_node->kid; n != NULL; n = n->next) {
+        if (n->kids_count == 0) {
+            sum += 1;
         } else {
-            node = count_max_tb_init_objects(node->kids_count, node + 1, out_count);
+            sum += count_max_tb_init_objects(n->kid);
         }
     }
 
-    return node;
+    return sum;
 }
 
 // TODO(NeGate): Revisit this code as a smarter man...
 // if the addr is 0 then we only apply constant initializers.
 // func doesn't need to be non-NULL if it's addr is NULL.
-InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, TB_Initializer* init, TB_Reg addr, int node_count, InitNode* node) {
-    for (int i = 0; i < node_count; i++) {
-        if (node->kids_count > 0) {
-            node = eval_initializer_objects(tu, func, init, addr, node->kids_count, node + 1);
+void eval_initializer_objects(TranslationUnit* tu, TB_Function* func, TB_Initializer* init, TB_Reg addr, InitNode* root_node) {
+    for (InitNode* n = root_node->kid; n != NULL; n = n->next) {
+        if (n->kids_count > 0) {
+            eval_initializer_objects(tu, func, init, addr, n->kid);
         } else {
-            Cuik_Type* child_type = cuik_canonical_type(node->type);
-            int offset = node->offset;
+            Cuik_Type* child_type = cuik_canonical_type(n->type);
+            int offset = n->offset;
 
             // initialize a value
-            Expr* e = node->expr;
+            Expr* e = n->expr;
             assert(e != NULL);
 
             Cuik_Type* type = cuik_canonical_type(e->type);
@@ -432,12 +432,12 @@ InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, TB_In
             }
 
             if (!success) {
-                if (node->mode == INIT_ARRAY && node->count > 1) {
+                if (n->mode == INIT_ARRAY && n->count > 1) {
                     // GNU array initializer extensions...
                     if (e->op == EXPR_INT) {
                         if (!func) {
                             ptrdiff_t size = child_type->size;
-                            ptrdiff_t count = node->count;
+                            ptrdiff_t count = n->count;
                             char* region = tb_initializer_add_region(tu->ir_mod, init, offset, count * size);
 
                             #if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
@@ -567,27 +567,21 @@ InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, TB_In
                     }
                 }
             }
-
-            node += 1;
         }
     }
-
-    return node;
 }
 
-static void gen_local_initializer(TranslationUnit* tu, TB_Function* func, TB_Reg addr, Cuik_Type* type, int node_count, InitNode* nodes) {
+static void gen_local_initializer(TranslationUnit* tu, TB_Function* func, TB_Reg addr, Cuik_Type* type, InitNode* root_node) {
     // Walk initializer for max constant expression initializers.
-    int max_tb_objects = 0;
-    count_max_tb_init_objects(node_count, nodes, &max_tb_objects);
-
+    int max_tb_objects = count_max_tb_init_objects(root_node);
     TB_Initializer* init = tb_initializer_create(tu->ir_mod, type->size, type->align, max_tb_objects);
 
     // Initialize all const expressions
-    eval_initializer_objects(tu, func, init, TB_NULL_REG, node_count, nodes);
+    eval_initializer_objects(tu, func, init, TB_NULL_REG, root_node);
     tb_inst_initialize_mem(func, addr, init);
 
     // Initialize all dynamic expressions
-    eval_initializer_objects(tu, func, init, addr, node_count, nodes);
+    eval_initializer_objects(tu, func, init, addr, root_node);
 }
 
 static TB_Initializer* gen_global_initializer(TranslationUnit* tu, Cuik_Type* type, Expr* initial, const char* name) {
@@ -625,21 +619,16 @@ static TB_Initializer* gen_global_initializer(TranslationUnit* tu, Cuik_Type* ty
                 t = type;
             }
 
-            int node_count = initial->init.count;
-            InitNode* nodes = initial->init.nodes;
+            InitNode* root_node = initial->init.root;
 
             // Walk initializer for max constant expression initializers.
-            int max_tb_objects = 0;
-            count_max_tb_init_objects(node_count, nodes, &max_tb_objects);
-
+            int max_tb_objects = count_max_tb_init_objects(root_node);
             TB_Initializer* init = tb_initializer_create(tu->ir_mod, type->size, type->align, max_tb_objects);
 
             // Initialize all const expressions
-            eval_initializer_objects(tu, NULL, init, TB_NULL_REG, node_count, nodes);
+            eval_initializer_objects(tu, NULL, init, TB_NULL_REG, root_node);
             return init;
-        } else if (initial->op == EXPR_INT ||
-            initial->op == EXPR_FLOAT32 ||
-            initial->op == EXPR_FLOAT64) {
+        } else if (initial->op == EXPR_INT || initial->op == EXPR_FLOAT32 || initial->op == EXPR_FLOAT64) {
             TB_Initializer* init = tb_initializer_create(tu->ir_mod, type->size, type->align, 1);
             void* region = tb_initializer_add_region(tu->ir_mod, init, 0, type->size);
 
@@ -768,7 +757,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
             Cuik_Type* type = cuik_canonical_type(e->init.type);
             TB_Reg addr = tb_inst_local(func, type->size, type->align);
 
-            gen_local_initializer(tu, func, addr, type, e->init.count, e->init.nodes);
+            gen_local_initializer(tu, func, addr, type, e->init.root);
 
             return (IRVal){
                 .value_type = LVALUE,
@@ -1661,9 +1650,7 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
             Attribs attrs = s->decl.attrs;
 
             Cuik_Type* type = cuik_canonical_type(s->decl.type);
-            int kind = type->kind;
-            int size = type->size;
-            int align = type->align;
+            int kind = type->kind, size = type->size, align = type->align;
 
             if (attrs.is_static) {
                 // Static initialization
@@ -1698,7 +1685,7 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
                 Expr* e = s->decl.initial;
 
                 if (e->op == EXPR_INITIALIZER) {
-                    gen_local_initializer(tu, func, addr, type, e->init.count, e->init.nodes);
+                    gen_local_initializer(tu, func, addr, type, e->init.root);
                 } else {
                     if (kind == KIND_ARRAY && (e->op == EXPR_STR || e->op == EXPR_WSTR)) {
                         IRVal v = irgen_expr(tu, func, s->decl.initial);

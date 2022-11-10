@@ -183,6 +183,26 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
             case TOKEN_KW_cdecl:   break;
             case TOKEN_KW_stdcall: break;
 
+            case TOKEN_KW_declspec: {
+                // TODO(NeGate): Correctly parse declspec instead of ignoring them.
+                tokens_next(s);
+                expect_char(s, '(');
+
+                int depth = 1;
+                while (depth) {
+                    if (tokens_get(s)->type == '(') {
+                        depth++;
+                    } else if (tokens_get(s)->type == ')') {
+                        depth--;
+                    }
+
+                    tokens_next(s);
+                }
+
+                tokens_prev(s);
+                break;
+            }
+
             case TOKEN_KW_Atomic: {
                 tokens_next(s);
                 if (tokens_get(s)->type == '(') {
@@ -241,12 +261,173 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                 break;
             }
 
+            // enum-specifier  ::= 'enum' identifier? '{' enumerator-list (',')? '}' | 'enum' identifier
+            // enumerator-list ::= enumerator (',' enumerator)*
+            // enumerator      ::= identifier | identifier '=' constant-expression
+            case TOKEN_KW_enum: {
+                if (counter) goto done;
+                counter += OTHER;
+                tokens_next(s);
+
+                Atom name = NULL;
+                if (tokens_get(s)->type == TOKEN_IDENTIFIER) {
+                    Token* t = tokens_get(s);
+                    name = atoms_put(t->content.length, t->content.data);
+                    tokens_next(s);
+                }
+
+                if (tokens_get(s)->type == '{') {
+                    tokens_next(s);
+
+                    type = name ? find_tag(&parser->globals, (char*) name) : 0;
+                    if (type) {
+                        // can't re-complete a enum
+                        size_t count = type->enumerator.count;
+                        if (count) {
+                            diag_err(s, tokens_get_range(s), "cannot recomplete an enumerator");
+                            diag_note(s, type->loc, "see here");
+                        }
+                    } else {
+                        type = cuik__new_enum(&parser->types);
+                        type->is_complete = false;
+                        type->enumerator.name = name;
+
+                        if (name) {
+                            if (parser->is_in_global_scope) {
+                                nl_strmap_put_cstr(parser->globals.tags, name, type);
+                            } else if (local_tag_count + 1 >= MAX_LOCAL_TAGS) {
+                                diag_err(s, tokens_get_range(s), "too many tags in local scopes (%d)", MAX_LOCAL_TAGS);
+                            } else {
+                                local_tags[local_tag_count++] = (TagEntry){ name, type };
+                            }
+                        }
+                    }
+
+                    // starts at zero and after any entry it increments
+                    // you can override it by using:
+                    // identifier = int-const-expr
+                    int cursor = 0;
+
+                    size_t count = 0;
+                    EnumEntry* start = tls_save();
+
+                    // in global scope we delay resolving the enumerator values which is kinda problematic since
+                    type->enumerator.entries = start;
+                    type->enumerator.count = 0;
+
+                    while (tokens_get(s)->type != '}') {
+                        // parse name
+                        Token* t = tokens_get(s);
+                        if (t->type != TOKEN_IDENTIFIER) {
+                            diag_err(s, tokens_get_range(s), "expected identifier for enum name entry.");
+                        }
+
+                        Atom name = atoms_put(t->content.length, t->content.data);
+                        tokens_next(s);
+
+                        int lexer_pos = 0;
+                        if (tokens_get(s)->type == '=') {
+                            tokens_next(s);
+
+                            if (parser->is_in_global_scope) {
+                                TknType terminator;
+                                lexer_pos = skip_expression_in_enum(s, &terminator);
+
+                                if (terminator == 0) {
+                                    diag_err(s, tokens_get_range(s), "expected comma or } (got EOF)");
+                                    break;
+                                }
+                            } else {
+                                cursor = parse_const_expr2(parser, s);
+                            }
+                        }
+
+                        // Allocate into temporary buffer
+                        tls_push(sizeof(EnumEntry));
+                        start[count] = (EnumEntry){ name, lexer_pos, cursor };
+
+                        Symbol sym = {
+                            .name = name,
+                            .type = cuik_uncanonical_type(type),
+                            .loc = get_token_range(t),
+                            .storage_class = STORAGE_ENUM,
+                            .enum_value = count
+                        };
+
+                        if (parser->is_in_global_scope) {
+                            nl_strmap_put_cstr(parser->globals.symbols, name, sym);
+                        } else {
+                            local_symbols[local_symbol_count++] = sym;
+                            cursor += 1;
+                        }
+
+                        if (tokens_get(s)->type == ',') {
+                            tokens_next(s);
+                            continue;
+                        } else {
+                            break;
+                        }
+                        count += 1;
+                    }
+                    expect_char(s, '}');
+                    tokens_prev(s);
+
+                    // move to more permanent storage
+                    EnumEntry* permanent_store = arena_alloc(&local_ast_arena, count * sizeof(EnumEntry), _Alignof(EnumEntry));
+                    memcpy(permanent_store, start, count * sizeof(EnumEntry));
+                    tls_restore(start);
+
+                    type->enumerator.entries = permanent_store;
+                    type->enumerator.count = count;
+
+                    if (parser->is_in_global_scope) {
+                        type->is_complete = false;
+                        type->size = 0;
+                        type->align = 0;
+                    } else {
+                        type_layout2(parser, type, true);
+                    }
+                } else {
+                    if (name == NULL) {
+                        __debugbreak();
+                        diag_err(s, tokens_get_range(s), "expected { after enum declaration");
+                        break;
+                    }
+
+                    type = find_tag(&parser->globals, (char*)name);
+                    if (!type) {
+                        type = cuik__new_enum(&parser->types);
+                        type->record.name = name;
+                        type->is_complete = false;
+
+                        if (parser->is_in_global_scope) {
+                            nl_strmap_put_cstr(parser->globals.tags, name, type);
+                        } else {
+                            if (local_tag_count + 1 >= MAX_LOCAL_TAGS) {
+                                diag_err(s, tokens_get_range(s), "too many tags in local scopes (%d)", MAX_LOCAL_TAGS);
+                                return CUIK_QUAL_TYPE_NULL;
+                            }
+
+                            local_tags[local_tag_count] = (TagEntry){ name, type };
+                        }
+                    }
+
+                    // push back one because we push it forward one later but shouldn't
+                    tokens_prev(s);
+                }
+                break;
+            }
+
             case TOKEN_KW_struct: case TOKEN_KW_union: {
                 if (counter) goto done;
+                counter += OTHER;
 
                 SourceRange record_loc = tokens_get_range(s);
                 bool is_union = tkn_type == TOKEN_KW_union;
                 tokens_next(s);
+
+                // TODO(NeGate): handle struct/union declspecs
+                while (skip_over_declspec(s)) {}
 
                 Atom name = NULL;
                 if (tokens_get(s)->type == TOKEN_IDENTIFIER) {
@@ -262,9 +443,9 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                     tokens_next(s);
 
                     type = name ? find_tag(&parser->globals, (char*)name) : 0;
-                    if (type) {
+                    if (type && type->is_complete) {
                         // can't re-complete a struct
-                        diag_warn(s, tokens_get_range(s), "struct was declared somewhere else");
+                        diag_warn(s, record_loc, "struct was declared somewhere else");
                         diag_note(s, type->loc, "see here");
                     } else {
                         type = cuik__new_record(&parser->types, is_union);
@@ -286,7 +467,7 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                     }
 
                     type->loc = record_loc;
-                    counter += OTHER;
+
                     size_t member_count = 0;
                     Member* members = tls_save();
                     while (tokens_get(s)->type != '}') {
@@ -340,10 +521,9 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                                 tokens_next(s);
 
                                 // TODO(NeGate): implement new constant expression eval
-                                __debugbreak();
                                 member->is_bitfield = true;
                                 member->bit_offset = 0;
-                                member->bit_width = 0; // parse_const_expr(parser, s);
+                                member->bit_width = parse_const_expr2(parser, s);
                             }
 
                             // i just wanted to logically split this from the top stuff, this is a breather comment
@@ -357,8 +537,7 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
 
                         expect_char(s, ';');
                     }
-
-                    if (!expect_char(s, '}')) return CUIK_QUAL_TYPE_NULL;
+                    expect_char(s, '}');
                     tokens_prev(s);
 
                     // put members into more permanent storage
@@ -392,7 +571,7 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                         type->record.name = name;
                         type->is_complete = false;
 
-                        if (out_of_order_mode) {
+                        if (parser->is_in_global_scope) {
                             nl_strmap_put_cstr(parser->globals.tags, name, type);
                         } else {
                             if (local_tag_count + 1 >= MAX_LOCAL_TAGS) {
@@ -402,7 +581,6 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                             }
                         }
                     }
-                    counter += OTHER;
 
                     // push back one because we push it forward one later but
                     // shouldn't
@@ -449,8 +627,27 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                     }
                     break;
                 } else {
-                    __debugbreak();
-                    break;
+                    Symbol* sym = find_local_symbol(s);
+                    if (sym != NULL && sym->storage_class == STORAGE_TYPEDEF) {
+                        type = cuik_canonical_type(sym->type);
+                        quals |= cuik_get_quals(sym->type);
+                        counter += OTHER;
+                        break;
+                    }
+
+                    Token* t = tokens_get(s);
+                    Atom name = atoms_put(t->content.length, t->content.data);
+
+                    sym = find_global_symbol(&parser->globals, (const char*)name);
+                    if (sym != NULL && sym->storage_class == STORAGE_TYPEDEF) {
+                        type = cuik_canonical_type(sym->type);
+                        quals |= cuik_get_quals(sym->type);
+                        counter += OTHER;
+                        break;
+                    }
+
+                    // if not a typename, this isn't a typedecl
+                    goto done;
                 }
             }
 
@@ -530,6 +727,7 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
     if (type == 0) {
         Token* last = &s->list.tokens[s->list.current];
         diag_err(s, loc, "unknown typename %!S", last->content);
+        tokens_next(s);
         return CUIK_QUAL_TYPE_NULL;
     }
 

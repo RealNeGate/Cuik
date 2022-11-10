@@ -246,11 +246,10 @@ typedef enum InitNodeDesignator {
 } InitNodeDesignator;
 
 typedef struct InitNode {
-    // the children are directly after
-    // this node, if the value is 0
-    // then there's no children and we
-    // are expected to find an expression
-    // here.
+    // the children are directly after this
+    // node, if the value is 0 then there's
+    // no children and we are expected to
+    // find an expression here.
     int kids_count;
     SourceRange loc;
 
@@ -261,6 +260,14 @@ typedef struct InitNode {
 
     Expr* expr;
     InitNodeDesignator mode;
+
+    // we're lisp-pilled:
+    //   root
+    //    |
+    //   kid 1 -> kid 2 -> kid 3
+    struct InitNode* kid;
+    struct InitNode* next;
+
     union {
         // INIT_MEMBER
         Atom member_name;
@@ -609,8 +616,7 @@ struct Expr {
         } x_of_expr;
         struct {
             Cuik_QualType type;
-            int count;
-            InitNode* nodes;
+            InitNode* root;
         } init;
         struct {
             Stmt* src;

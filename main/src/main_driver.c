@@ -856,6 +856,7 @@ static bool export_output(void) {
     }
 }
 
+// returns status code
 static int run_compiler(threadpool_t* thread_pool) {
     files_with_errors = 0;
 
@@ -883,13 +884,8 @@ static int run_compiler(threadpool_t* thread_pool) {
             cuik_internal_link_compilation_unit(&compilation_unit);
         }
 
-        if (args_syntax_only) {
-            return 0;
-        }
-    }
-
-    if (files_with_errors > 0) {
-        return 1;
+        if (files_with_errors > 0) return 1;
+        if (args_syntax_only) return 0;
     }
 
     if (args_ast) {

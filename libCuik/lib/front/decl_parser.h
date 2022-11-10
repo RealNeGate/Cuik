@@ -717,8 +717,7 @@ static Cuik_QualType parse_declspec(TranslationUnit* tu, TokenStream* restrict s
 
                             // not all members have declarators for example
                             // char : 3; or struct { ... };
-                            if (tokens_get(s)->type != ';' &&
-                                tokens_get(s)->type != ':') {
+                            if (tokens_get(s)->type != ';' && tokens_get(s)->type != ':') {
                                 decl = parse_declarator(tu, s, member_base_type, false);
                                 member_type = decl.type;
                             } else {
@@ -1020,7 +1019,7 @@ static Cuik_QualType parse_declspec(TranslationUnit* tu, TokenStream* restrict s
                     Token* t = tokens_get(s);
                     Atom name = atoms_put(t->content.length, t->content.data);
 
-                    sym = find_global_symbol(&tu->globals, (const char*)name);
+                    sym = find_global_symbol(&tu->globals, (const char*) name);
                     if (sym != NULL && sym->storage_class == STORAGE_TYPEDEF) {
                         type = cuik_canonical_type(sym->type);
                         quals |= cuik_get_quals(sym->type);

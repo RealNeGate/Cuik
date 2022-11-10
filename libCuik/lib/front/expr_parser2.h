@@ -546,7 +546,7 @@ static Expr* parse_unary(Cuik_Parser* restrict parser, TokenStream* restrict s) 
 
         bool has_paren = false;
         SourceLoc opening_loc = { 0 };
-        if (tkn == '(') {
+        if (tokens_get(s)->type == '(') {
             has_paren = true;
 
             opening_loc = tokens_get_location(s);
@@ -798,7 +798,7 @@ static Expr* parse_expr_(Cuik_Parser* restrict parser, TokenStream* restrict s) 
 }
 
 static intmax_t parse_const_expr2(Cuik_Parser* parser, TokenStream* restrict s) {
-    Expr* folded = cuik__optimize_ast(NULL, parse_assignment(parser, s));
+    Expr* folded = cuik__optimize_ast(parser->tu, parse_assignment(parser, s));
     if (folded->op != EXPR_INT) {
         diag_err(s, folded->loc, "could not parse expression as constant.");
         return 0;

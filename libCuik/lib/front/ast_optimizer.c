@@ -64,12 +64,12 @@ bool const_eval_try_offsetof_hack(TranslationUnit* tu, const Expr* e, uint64_t* 
             }
 
             if (is_arrow && !did_deref) {
-                REPORT_EXPR(ERROR, arrow_base, "Arrow cannot be applied to non-pointer type.");
+                diag_err(&tu->tokens, arrow_base->loc, "Arrow cannot be applied to non-pointer type.");
                 return false;
             }
 
             if (record_type->kind != KIND_STRUCT && record_type->kind != KIND_UNION) {
-                REPORT_EXPR(ERROR, arrow_base, "Cannot do member access with non-aggregate type.");
+                diag_err(&tu->tokens, arrow_base->loc, "Cannot do member access with non-aggregate type.");
                 return false;
             }
 
@@ -156,12 +156,13 @@ Expr* cuik__optimize_ast(TranslationUnit* tu, Expr* e) {
         }
 
         case EXPR_SIZEOF: {
+            diag_note(&tu->tokens, e->x_of_expr.expr->loc, "A");
             Cuik_Type* src = cuik_canonical_type(cuik__sema_expr(tu, e->x_of_expr.expr));
             if (src->size == 0) {
                 type_layout(tu, src, true);
 
                 if (src->size == 0) {
-                    REPORT_EXPR(ERROR, e, "Could not resolve type of expression");
+                    diag_err(&tu->tokens, e->loc, "Could not resolve type of expression");
                 }
             }
 

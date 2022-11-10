@@ -10,47 +10,61 @@ static Expr* parse_expr_assign(TranslationUnit* tu, TokenStream* restrict s);
 static Expr* parse_expr_l2(TranslationUnit* tu, TokenStream* restrict s);
 static Expr* parse_expr(TranslationUnit* tu, TokenStream* restrict s);
 
-// NOTE(NeGate): This function will push all nodes it makes onto the temporary
-// storage where parse_initializer will move them into permanent storage.
-static void parse_initializer_member(TranslationUnit* tu, TokenStream* restrict s) {
-    // Parse designator, it's just chains of:
-    //   [const-expr]
-    //   .identifier
-    InitNode* current = NULL;
-    try_again: {
+static InitNode* make_init_node(TokenStream* restrict s, int mode) {
+    InitNode* n = ARENA_ALLOC(&local_ast_arena, InitNode);
+    *n = (InitNode){ .mode = mode };
+    return n;
+}
+
+// new tail
+static InitNode* append_to_init_list(TokenStream* restrict s, InitNode* parent, InitNode* tail, InitNode* elem) {
+    if (tail != NULL) {
+        tail->next = elem;
+    } else {
+        parent->kid = elem;
+    }
+
+    parent->kids_count += 1;
+    return elem;
+}
+
+// initalizer-designator:
+//   [const-expr]
+//   .identifier
+static InitNode* parse_initializer_member(TranslationUnit* tu, TokenStream* restrict s) {
+    InitNode* current = make_init_node(s, INIT_NONE);
+    InitNode* head = current;
+
+    int depth = 0;
+    for (;; depth++) {
         if (tokens_get(s)->type == '[')  {
             SourceLoc loc = tokens_get_location(s);
             tokens_next(s);
 
-            int start = parse_const_expr(tu, s);
+            intmax_t start = parse_const_expr(tu, s);
             if (start < 0) {
                 // TODO(NeGate): Error messages
-                generic_error(tu, s, "Array initializer range is broken.");
+                diag_err(s, tokens_get_range(s), "array initializer range is broken.");
             }
 
             // GNU-extension: array range initializer
-            int count = 1;
+            intmax_t count = 1;
             if (tokens_get(s)->type == TOKEN_TRIPLE_DOT) {
                 tokens_next(s);
 
                 count = parse_const_expr(tu, s) - start;
                 if (count <= 1) {
                     // TODO(NeGate): Error messages
-                    generic_error(tu, s, "Array initializer range is broken.");
+                    diag_err(s, tokens_get_range(s), "array initializer range is broken.");
                 }
             }
-            expect(tu, s, ']');
-            SourceLoc end_loc = tokens_get_last_location(s);
+            expect_char(s, ']');
 
-            current = (InitNode*)tls_push(sizeof(InitNode));
-            *current = (InitNode){
-                .mode = INIT_ARRAY,
-                .loc = { loc, end_loc },
-                .kids_count = 1,
-                .start = start,
-                .count = count,
-            };
-            goto try_again;
+            current->mode = INIT_ARRAY, current->start = start, current->count = count;
+            current->loc = (SourceRange){ loc, tokens_get_last_location(s) };
+            // create new kid
+            current->kid = make_init_node(s, INIT_NONE), current = current->kid;
+            continue;
         }
 
         if (tokens_get(s)->type == '.') {
@@ -61,88 +75,75 @@ static void parse_initializer_member(TranslationUnit* tu, TokenStream* restrict 
             Atom name = atoms_put(t->content.length, t->content.data);
             tokens_next(s);
 
-            SourceLoc end_loc = tokens_get_last_location(s);
-            current = (InitNode*)tls_push(sizeof(InitNode));
-            *current = (InitNode){
-                .mode = INIT_MEMBER,
-                .loc = { loc, end_loc },
-                .kids_count = 1,
-                .member_name = name,
-            };
-            goto try_again;
+            current->mode = INIT_MEMBER, current->member_name = name;
+            current->loc = (SourceRange){ loc, tokens_get_last_location(s) };
+            // create new kid
+            current->kid = make_init_node(s, INIT_NONE), current = current->kid;
+            continue;
         }
+
+        break;
     }
 
-    if (current != NULL) {
-        expect(tu, s, '=');
-    } else {
-        current = (InitNode*)tls_push(sizeof(InitNode));
-        *current = (InitNode){ 0 };
+    if (depth > 0) {
+        expect_char(s, '=');
     }
 
     // it can either be a normal expression
     // or a nested designated initializer
+    SourceLoc loc = tokens_get_location(s);
     if (tokens_get(s)->type == '{') {
         tokens_next(s);
 
-        size_t local_count = 0;
-
         // don't expect one the first time
         bool expect_comma = false;
+        InitNode* tail = current->kid;
         while (tokens_get(s)->type != '}') {
             if (expect_comma) {
-                expect(tu, s, ',');
+                expect_char(s, ',');
 
                 // we allow for trailing commas like ballers do
                 if (tokens_get(s)->type == '}') break;
             } else expect_comma = true;
 
-            parse_initializer_member(tu, s);
-            local_count += 1;
+            // attach to our linked list
+            tail = append_to_init_list(s, current, tail, parse_initializer_member(tu, s));
         }
-
-        current->kids_count = local_count;
-        expect(tu, s, '}');
+        expect_char(s, '}');
     } else {
         // parse without comma operator
-        current->kids_count = 0;
         current->expr = parse_expr_assign(tu, s);
     }
+    current->loc = (SourceRange){ loc, tokens_get_last_location(s) };
+
+    return head;
 }
 
 static Expr* parse_initializer(TranslationUnit* tu, TokenStream* restrict s, Cuik_QualType type) {
     SourceLoc loc = tokens_get_location(s);
 
-    size_t count = 0;
-    InitNode* start = tls_save();
+    InitNode *root = ARENA_ALLOC(&local_ast_arena, InitNode), *tail = NULL;
+    *root = (InitNode){ 0 };
 
     // don't expect one the first time
     bool expect_comma = false;
     while (tokens_get(s)->type != '}') {
-        if (expect_comma) {
-            expect(tu, s, ',');
+        tail = append_to_init_list(s, root, tail, parse_initializer_member(tu, s));
 
-            if (tokens_get(s)->type == '}') break;
+        if (tokens_get(s)->type == ',') {
+            tokens_next(s);
+            continue;
         } else {
-            expect_comma = true;
+            break;
         }
-
-        parse_initializer_member(tu, s);
-        count += 1;
     }
-
-    size_t total_node_count = ((InitNode*)tls_save()) - start;
-    expect(tu, s, '}');
-
-    InitNode* permanent_store = arena_alloc(&thread_arena, total_node_count * sizeof(InitNode), _Alignof(InitNode));
-    memcpy(permanent_store, start, total_node_count * sizeof(InitNode));
-    tls_restore(start);
+    expect_char(s, '}');
 
     Expr* e = make_expr(tu);
     *e = (Expr){
         .op = EXPR_INITIALIZER,
         .loc = { loc, tokens_get_last_location(s) },
-        .init = { type, count, permanent_store },
+        .init = { type, root },
     };
     return e;
 }

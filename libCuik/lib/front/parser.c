@@ -31,7 +31,8 @@ typedef struct {
 
 typedef struct {
     enum {
-        PENDING_ALIGNAS
+        PENDING_ALIGNAS,
+        PENDING_BITWIDTH,
     } mode;
     int* dst;
 
@@ -227,7 +228,7 @@ static void diag_unresolved_symbol(TranslationUnit* tu, Atom name, SourceLoc loc
     mtx_unlock(&tu->diag_mutex);
 }
 
-typedef struct Cuik_Parser {
+struct Cuik_Parser {
     Cuik_ParseVersion version;
     TokenStream tokens;
 
@@ -249,12 +250,17 @@ typedef struct Cuik_Parser {
     Cuik_GlobalSymbols globals;
 
     NL_Strmap(Diag_UnresolvedSymbol*) unresolved_symbols;
-} Cuik_Parser;
+
+    // Once top-level parsing is complete we'll compute the TU (which stores
+    // similar data to the parser but without the parser-specific details like
+    // a static assertions list or unresolved symbols)
+    TranslationUnit* tu;
+};
 
 typedef enum ParseResult {
     PARSE_WIT_ERRORS = -1,
-    NO_PARSE         = 0,
-    PARSE_SUCCESS    = 1,
+    NO_PARSE         =  0,
+    PARSE_SUCCESS    =  1,
 } ParseResult;
 
 #include "expr_parser.h"

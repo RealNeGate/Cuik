@@ -76,11 +76,11 @@ inline static TB_DataType ctype_to_tbtype(const Cuik_Type* t) {
 }
 
 _Noreturn void internal_error(const char* fmt, ...);
-InitNode* count_max_tb_init_objects(int node_count, InitNode* node, int* out_count);
+int count_max_tb_init_objects(InitNode* root_node);
 TB_DebugType* cuik__as_tb_debug_type(TB_Module* mod, Cuik_Type* t);
 
 // func is NULL then it's not allowed to compute any dynamic initializer expressions
-InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, TB_Initializer* init, TB_Reg addr, int node_count, InitNode* node);
+void eval_initializer_objects(TranslationUnit* tu, TB_Function* func, TB_Initializer* init, TB_Reg addr, InitNode* node);
 
 TB_Register irgen_as_rvalue(TranslationUnit* tu, TB_Function* func, Expr* e);
 IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e);

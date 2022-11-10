@@ -313,11 +313,11 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
 static void resolve_pending_exprs(Cuik_Parser* parser) {
     size_t pending_count = dyn_array_length(pending_exprs);
     for (size_t i = 0; i < pending_count; i++) {
+        TokenStream mini_lex = parser->tokens;
+        mini_lex.list.current = pending_exprs[i].start;
+
         if (pending_exprs[i].mode == PENDING_ALIGNAS) {
             Cuik_Type* type = pending_exprs[i].type;
-
-            TokenStream mini_lex = parser->tokens;
-            mini_lex.list.current = pending_exprs[i].start;
 
             int align = 0;
             SourceLoc loc = tokens_get_location(&mini_lex);
@@ -341,6 +341,9 @@ static void resolve_pending_exprs(Cuik_Parser* parser) {
 
             assert(align != 0);
             type->align = align;
+        } else if (pending_exprs[i].mode == PENDING_BITWIDTH) {
+            intmax_t result = parse_const_expr2(parser, &mini_lex);
+            *pending_exprs[i].dst = result;
         }
     }
 }
@@ -350,17 +353,17 @@ Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict 
     int r;
     assert(s != NULL);
 
-    Cuik_Parser* restrict parser = calloc(1, sizeof(Cuik_Parser));
-    parser->version = version;
-    parser->tokens = *s;
-    parser->target = target;
-    parser->static_assertions = dyn_array_create(int);
-    parser->types = init_type_table();
+    Cuik_Parser parser = { 0 };
+    parser.version = version;
+    parser.tokens = *s;
+    parser.target = target;
+    parser.static_assertions = dyn_array_create(int);
+    parser.types = init_type_table();
 
     // just a shorthand so it's faster to grab
-    parser->default_int = (Cuik_Type*) &target->signed_ints[CUIK_BUILTIN_INT];
-    parser->is_in_global_scope = true;
-    parser->top_level_stmts = dyn_array_create(Stmt*);
+    parser.default_int = (Cuik_Type*) &target->signed_ints[CUIK_BUILTIN_INT];
+    parser.is_in_global_scope = true;
+    parser.top_level_stmts = dyn_array_create(Stmt*);
 
     if (pending_exprs) {
         dyn_array_clear(pending_exprs);
@@ -374,27 +377,39 @@ Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict 
             // skip any top level "null" statements
             while (tokens_get(s)->type == ';') tokens_next(s);
 
-            if (parse_pragma(parser, s) != 0) continue;
-            if (parse_static_assert(parser, s) != 0) continue;
+            if (parse_pragma(&parser, s) != 0) continue;
+            if (parse_static_assert(&parser, s) != 0) continue;
 
             // since top level cannot have expressions we can assume that it's a declaration
             // even if we don't detect a known typename (since it can be inferred to be a typedef),
             // this allows us to skim the top level and do out-of-order declarations or generate
             // a summary of the symbol table.
-            if (parse_decl(parser, s) != 0) continue;
+            if (parse_decl(&parser, s) != 0) continue;
 
             diag_err(s, tokens_get_range(s), "could not parse top level statement");
             tokens_next(s);
         }
 
-        parser->is_in_global_scope = false;
+        parser.is_in_global_scope = false;
     }
     THROW_IF_ERROR();
 
     // Phase 2: resolve top level types, layout records and
     // anything else so that we have a complete global symbol table
     CUIK_TIMED_BLOCK("phase 2") {
-        CUIK_FOR_TYPES(type, parser->types) {
+        // convert to translation unit
+        parser.tu = malloc(sizeof(TranslationUnit));
+        *parser.tu = (TranslationUnit){
+            .filepath = s->filepath,
+            .warnings = &DEFAULT_WARNINGS,
+            .target = target,
+            .tokens = *s,
+            .top_level_stmts = parser.top_level_stmts,
+            .types = parser.types,
+            .globals = parser.globals,
+        };
+
+        CUIK_FOR_TYPES(type, parser.types) {
             if (type->kind == KIND_PLACEHOLDER) {
                 diag_err(s, type->loc, "could not find type '%s'!", type->placeholder.name);
             }
@@ -402,7 +417,7 @@ Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict 
 
         if (cuikdg_error_count(s)) break;
 
-        CUIK_FOR_TYPES(type, parser->types) {
+        CUIK_FOR_TYPES(type, parser.types) {
             if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
                 // if cycles... quit lmao
                 if (type_cycles_dfs(s, type)) goto quit_phase2;
@@ -412,18 +427,18 @@ Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict 
         if (cuikdg_error_count(s)) break;
 
         // do record layouts and shi
-        resolve_pending_exprs(parser);
-        CUIK_FOR_TYPES(type, parser->types) {
+        resolve_pending_exprs(&parser);
+        CUIK_FOR_TYPES(type, parser.types) {
             assert(type->align != -1);
 
-            if (type->size == 0) type_layout2(parser, type, true);
+            if (type->size == 0) type_layout2(&parser, type, true);
         }
 
         if (cuikdg_error_count(s)) break;
 
         // parse all global declarations
-        nl_strmap_for(i, parser->globals.symbols) {
-            Symbol* sym = &parser->globals.symbols[i];
+        nl_strmap_for(i, parser.globals.symbols) {
+            Symbol* sym = &parser.globals.symbols[i];
 
             if (sym->token_start != 0 && (sym->storage_class == STORAGE_STATIC_VAR || sym->storage_class == STORAGE_GLOBAL)) {
                 // Spin up a mini parser here
@@ -440,7 +455,7 @@ Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict 
                     __debugbreak();
                     // e = parse_initializer(parser, &mini_lex, CUIK_QUAL_TYPE_NULL);
                 } else {
-                    e = parse_assignment(parser, &mini_lex);
+                    e = parse_assignment(&parser, &mini_lex);
                     if (mini_lex.list.current != sym->token_end) {
                         __debugbreak();
                     }
@@ -456,17 +471,20 @@ Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict 
         quit_phase2:;
     }
     THROW_IF_ERROR();
-    dyn_array_destroy(parser->static_assertions);
+    dyn_array_destroy(parser.static_assertions);
 
     CUIK_TIMED_BLOCK("phase 3") {
+        // we might have added types in phase2, update accordingly
+        parser.types = parser.tu->types;
+
         // allocate the local symbol tables
         local_symbols = malloc(sizeof(Symbol) * MAX_LOCAL_SYMBOLS);
         local_tags = malloc(sizeof(TagEntry) * MAX_LOCAL_TAGS);
 
-        size_t load = nl_strmap__get_header(parser->globals.symbols)->load;
+        size_t load = nl_strmap__get_header(parser.globals.symbols)->load;
         TokenStream tokens = *s;
         for (size_t i = 0; i < load; i++) {
-            Symbol* sym = &parser->globals.symbols[i];
+            Symbol* sym = &parser.globals.symbols[i];
 
             // don't worry about normal globals, those have been taken care of...
             if (sym->token_start != 0 && (sym->storage_class == STORAGE_STATIC_FUNC || sym->storage_class == STORAGE_FUNC)) {
@@ -478,7 +496,7 @@ Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict 
 
                 // Some sanity checks in case a local symbol is leaked funny.
                 assert(local_symbol_start == 0 && local_symbol_count == 0);
-                parse_function(parser, &tokens, sym->stmt);
+                parse_function(&parser, &tokens, sym->stmt);
                 local_symbol_start = local_symbol_count = 0;
 
                 // finalize use list
@@ -492,8 +510,8 @@ Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict 
     THROW_IF_ERROR();
 
     // output accumulated diagnostics
-    nl_strmap_for(i, parser->unresolved_symbols) {
-        Diag_UnresolvedSymbol* loc = parser->unresolved_symbols[i];
+    nl_strmap_for(i, parser.unresolved_symbols) {
+        Diag_UnresolvedSymbol* loc = parser.unresolved_symbols[i];
         diag_header(DIAG_ERR, "could not resolve symbol: %s", loc->name);
 
         DiagWriter d = diag_writer(s);
@@ -509,19 +527,8 @@ Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict 
         diag_writer_done(&d);
         printf("\n");
     }
+    nl_strmap_free(parser.unresolved_symbols);
 
-    // convert to translation unit
-    TranslationUnit* tu = malloc(sizeof(TranslationUnit));
-    *tu = (TranslationUnit){
-        .filepath = s->filepath,
-        .warnings = &DEFAULT_WARNINGS,
-        .target = target,
-        .tokens = *s,
-        .top_level_stmts = parser->top_level_stmts,
-        .types = parser->types,
-        .globals = parser->globals,
-    };
-
-    return (Cuik_ParseResult){ .tu = tu };
+    return (Cuik_ParseResult){ .tu = parser.tu };
 }
 #undef THROW_IF_ERROR

@@ -322,7 +322,7 @@ static InitSearchResult get_next_member_in_type(Cuik_Type* type, int target, int
     return (InitSearchResult){ 0 };
 }
 
-static InitNode* walk_initializer_layer(
+static void walk_initializer_layer(
     TranslationUnit* tu, Cuik_Type* parent, int base_offset,
     int bounds /* max slots to fill */, InitNode* node, int* cursor,
     int* max_cursor, int* slots_left /* slots left in this layer */
@@ -335,14 +335,14 @@ static InitNode* walk_initializer_layer(
     if (node->mode == INIT_MEMBER) {
         if (parent->kind != KIND_STRUCT && parent->kind != KIND_UNION) {
             diag_err(&tu->tokens, parent->loc, "Member designator cannot be used on type %!T", parent);
-            return NULL;
+            return;
         }
 
         int index = 0;
         InitSearchResult search = find_member_by_name(parent, node->member_name, &index, 0);
         if (search.member == NULL) {
             diag_err(&tu->tokens, node->loc, "could not find member '%s' in record", node->member_name);
-            return NULL;
+            return;
         }
 
         type = cuik_canonical_type(search.member->type);
@@ -351,7 +351,7 @@ static InitNode* walk_initializer_layer(
     } else if (node->mode == INIT_ARRAY) {
         if (parent->kind != KIND_ARRAY) {
             diag_err(&tu->tokens, node->loc, "cannot apply array initializer to non-array %!T", parent);
-            return NULL;
+            return;
         }
 
         type = cuik_canonical_type(parent->array_of);
@@ -366,7 +366,7 @@ static InitNode* walk_initializer_layer(
     ////////////////////////////////
     if (bounds > 0 && *cursor > bounds) {
         diag_err(&tu->tokens, node->loc, "excess elements in initializer list (max %d)", bounds);
-        return NULL;
+        return;
     }
 
     // if it's a record then find the next member via weird tree walking
@@ -432,37 +432,32 @@ static InitNode* walk_initializer_layer(
                         }
 
                         *slots_left -= 1;
-                        return node + 1;
+                        return;
                     } else {
                         type_as_string(sizeof(temp_string0), temp_string0, cuik_canonical_type(type->array_of));
                         diag_err(&tu->tokens, e->loc, "Could not use %sinitializer-string on array of %s", (node->expr->op == EXPR_WSTR) ? "wide " : "", temp_string0);
-                        return NULL;
+                        return;
                     }
                 }
             }
 
             int array_count = type->array_count;
+            InitNode* n = node->kid;
             if (array_count == 0) {
                 while (*slots_left) {
-                    node = walk_initializer_layer(
-                        tu, type, pos, 0, node, cursor, max_cursor, slots_left
-                    );
+                    assert(n != NULL);
 
-                    // failure so we unwind
-                    if (node == NULL) return NULL;
+                    walk_initializer_layer(tu, type, pos, 0, n, cursor, max_cursor, slots_left);
+                    n = n->next;
                 }
             } else {
                 for (int i = 0; i < array_count && *slots_left; i++) {
-                    node = walk_initializer_layer(
-                        tu, type, pos, array_count, node, cursor, max_cursor, slots_left
-                    );
+                    assert(n != NULL);
 
-                    // failure so we unwind
-                    if (node == NULL) return NULL;
+                    walk_initializer_layer(tu, type, pos, array_count, n, cursor, max_cursor, slots_left);
+                    n = n->next;
                 }
             }
-
-            return node;
         } else {
             /*if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
               REPORT_EXPR(ERROR, e, "Cannot write initializer for struct/union without surrounding brackets");
@@ -485,98 +480,92 @@ static InitNode* walk_initializer_layer(
 
             e->cast_type = node->type;
             *slots_left -= 1;
-            return node + 1;
         }
     } else {
         // compound literals can be used on both scalars and aggregates.
         int kid_cursor = 0, kid_max_cursor, kid_slots_left = node->kids_count, node_count = node->kids_count;
-        node += 1;
 
+        InitNode* n = node->kid;
         if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
             // TODO(NeGate): unions will actually skip all the other entries once
             // you've picked once which is something we should keep in mind later
             int member_count = compute_initializer_bounds(type);
             for (size_t i = 0; i < node_count; i++) {
-                node = walk_initializer_layer(
-                    tu, type, pos, member_count, node, &kid_cursor, &kid_max_cursor, &kid_slots_left
-                );
+                assert(n != NULL);
 
-                // failure so we unwind
-                if (node == NULL) return NULL;
+                walk_initializer_layer(
+                    tu, type, pos, member_count, n, &kid_cursor, &kid_max_cursor, &kid_slots_left
+                );
+                n = n->next;
             }
         } else if (type->kind == KIND_ARRAY) {
             int array_count = compute_initializer_bounds(type);
             for (int i = 0; i < node_count; i++) {
-                node = walk_initializer_layer(
-                    tu, type, pos, array_count, node, &kid_cursor, &kid_max_cursor, &kid_slots_left
-                );
+                assert(n != NULL);
 
-                // failure so we unwind
-                if (node == NULL) return NULL;
+                walk_initializer_layer(
+                    tu, type, pos, array_count, n, &kid_cursor, &kid_max_cursor, &kid_slots_left
+                );
+                n = n->next;
             }
         } else {
             if (node->kids_count != 0) {
-                REPORT(ERROR, node->loc, "cannot have multiple elements in scalar initalizer");
-                return NULL;
+                diag_err(&tu->tokens, node->loc, "cannot have multiple elements in scalar initalizer");
+                return;
             }
 
             // scalars
-            node = walk_initializer_layer(
+            walk_initializer_layer(
                 tu, type, pos, 1, node, &kid_cursor, &kid_max_cursor, &kid_slots_left
             );
         }
 
         *slots_left -= 1;
-        return node;
     }
 }
 
-static InitNode* sema_infer_initializer_array_count(TranslationUnit* tu, int node_count, InitNode* node, int depth, int* out_array_count) {
-    size_t cursor = 0;
-    size_t max = 0;
-
-    for (int i = 0; i < node_count; i++) {
+static void sema_infer_initializer_array_count(TranslationUnit* tu, InitNode* root_node, int depth, int* out_array_count) {
+    size_t cursor = 0, max = 0;
+    for (InitNode* n = root_node->kid; n != NULL; n = n->next) {
         if (depth == 0) {
             // members shouldn't be here :p
-            if (node->mode == INIT_MEMBER) {
-                return 0;
-            } else if (node->mode == INIT_ARRAY) {
-                cursor = node->start + node->count;
+            if (n->mode == INIT_MEMBER) {
+                return;
+            } else if (n->mode == INIT_ARRAY) {
+                cursor = n->start + n->count;
                 if (cursor > max) max = cursor;
-            } else if (node->mode == INIT_NONE) {
+            } else if (n->mode == INIT_NONE) {
                 cursor++;
                 if (cursor > max) max = cursor;
             }
         }
 
-        if (node->kids_count == 0) {
-            node += 1;
-        } else {
-            node = sema_infer_initializer_array_count(tu, node->kids_count, node + 1, depth + 1, NULL);
+        if (n->kids_count > 0) {
+            sema_infer_initializer_array_count(tu, n->kid, depth + 1, NULL);
         }
     }
 
     if (depth == 0) {
         assert(max == (int)max);
-
         *out_array_count = max;
     }
-    return node;
 }
 
-static InitNode* walk_initializer_for_sema(TranslationUnit* tu, Cuik_Type* type, int node_count, InitNode* node, int base_offset) {
-    /*if (type->kind == KIND_STRUCT &&
-        type->record.name != NULL &&
-        cstr_equals(type->record.name, "Expr")) __debugbreak();*/
-
-    int cursor = 0, max_cursor = 0, slots_left = node_count, bounds = compute_initializer_bounds(type);
+static void walk_initializer_for_sema(TranslationUnit* tu, Cuik_Type* type, InitNode* root, int base_offset) {
+    InitNode* n = root->kid;
+    int cursor = 0, max_cursor = 0, slots_left = root->kids_count, bounds = compute_initializer_bounds(type);
     if (bounds > 0) {
         for (int i = 0; i < bounds && slots_left; i++) {
-            node = walk_initializer_layer(tu, type, 0, bounds, node, &cursor, &max_cursor, &slots_left);
+            assert(n != NULL);
+
+            walk_initializer_layer(tu, type, 0, bounds, n, &cursor, &max_cursor, &slots_left);
+            n = n->next;
         }
     } else {
         while (slots_left > 0) {
-            node = walk_initializer_layer(tu, type, 0, bounds, node, &cursor, &max_cursor, &slots_left);
+            assert(n != NULL);
+            walk_initializer_layer(tu, type, 0, bounds, n, &cursor, &max_cursor, &slots_left);
+            n = n->next;
         }
 
         if (type->array_count == 0) {
@@ -584,8 +573,6 @@ static InitNode* walk_initializer_for_sema(TranslationUnit* tu, Cuik_Type* type,
             type_layout(tu, type, true);
         }
     }
-
-    return node;
 }
 
 static void try_resolve_typeof(TranslationUnit* tu, Cuik_Type* ty) {
@@ -902,7 +889,7 @@ Cuik_QualType cuik__sema_expr(TranslationUnit* tu, Expr* restrict e) {
                 }
             }*/
 
-            walk_initializer_for_sema(tu, t, e->init.count, e->init.nodes, 0);
+            walk_initializer_for_sema(tu, t, e->init.root, 0);
             return (e->type = e->init.type);
         }
         case EXPR_LOGICAL_NOT: {
@@ -1546,8 +1533,7 @@ Cuik_QualType sema_guess_type(TranslationUnit* tu, Stmt* restrict s) {
         if (type->kind == KIND_ARRAY && e->op == EXPR_INITIALIZER) {
             // check how many top level statements we have
             int array_count;
-            sema_infer_initializer_array_count(tu, e->init.count, e->init.nodes, 0, &array_count);
-
+            sema_infer_initializer_array_count(tu, e->init.root, 0, &array_count);
             return cuik_uncanonical_type(cuik__new_array(&tu->types, type->array_of, array_count));
         }
     }
