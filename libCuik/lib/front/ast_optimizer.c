@@ -45,8 +45,7 @@ bool const_eval_try_offsetof_hack(TranslationUnit* tu, const Expr* e, uint64_t* 
         bool is_arrow = e->op == EXPR_ARROW;
         Expr* base_e = e->dot_arrow.base;
 
-        while (base_e->op == EXPR_ARROW ||
-            base_e->op == EXPR_DOT) {
+        while (base_e->op == EXPR_ARROW || base_e->op == EXPR_DOT) {
             // traverse any dot/arrow chains
             base_e = base_e->dot_arrow.base;
         }

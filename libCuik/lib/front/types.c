@@ -3,21 +3,21 @@
 
 // TODO(NeGate): add a proper long long type
 // eventually we wanna make this bound to the target
-Cuik_Type cuik__builtin_void = { KIND_VOID,  0, 0 };
-Cuik_Type cuik__builtin_bool = { KIND_BOOL,  1, 1 };
+Cuik_Type cuik__builtin_void = { KIND_VOID,  0, 0, .is_complete = true };
+Cuik_Type cuik__builtin_bool = { KIND_BOOL,  1, 1, .is_complete = true };
 // signed
-Cuik_Type cuik__builtin_char  = { KIND_CHAR,  1, 1 };
-Cuik_Type cuik__builtin_short = { KIND_SHORT, 2, 2 };
-Cuik_Type cuik__builtin_int   = { KIND_INT,   4, 4 };
-Cuik_Type cuik__builtin_long  = { KIND_LONG,  8, 8 };
+Cuik_Type cuik__builtin_char  = { KIND_CHAR,  1, 1, .is_complete = true };
+Cuik_Type cuik__builtin_short = { KIND_SHORT, 2, 2, .is_complete = true };
+Cuik_Type cuik__builtin_int   = { KIND_INT,   4, 4, .is_complete = true };
+Cuik_Type cuik__builtin_long  = { KIND_LONG,  8, 8, .is_complete = true };
 // unsigned
-Cuik_Type cuik__builtin_uchar  = { KIND_CHAR,  1, 1 };
-Cuik_Type cuik__builtin_ushort = { KIND_SHORT, 2, 2 };
-Cuik_Type cuik__builtin_uint   = { KIND_INT,   4, 4 };
-Cuik_Type cuik__builtin_ulong  = { KIND_LONG,  8, 8 };
+Cuik_Type cuik__builtin_uchar  = { KIND_CHAR,  1, 1, .is_complete = true };
+Cuik_Type cuik__builtin_ushort = { KIND_SHORT, 2, 2, .is_complete = true };
+Cuik_Type cuik__builtin_uint   = { KIND_INT,   4, 4, .is_complete = true };
+Cuik_Type cuik__builtin_ulong  = { KIND_LONG,  8, 8, .is_complete = true };
 // floats
-Cuik_Type cuik__builtin_float  = { KIND_FLOAT,  4, 4 };
-Cuik_Type cuik__builtin_double = { KIND_DOUBLE, 8, 8 };
+Cuik_Type cuik__builtin_float  = { KIND_FLOAT,  4, 4, .is_complete = true };
+Cuik_Type cuik__builtin_double = { KIND_DOUBLE, 8, 8, .is_complete = true };
 
 Cuik_Type builtin_types[] = {
     // crap
@@ -109,6 +109,7 @@ Cuik_Type* cuik__new_pointer(Cuik_TypeTable* types, Cuik_QualType base) {
             .kind = KIND_PTR,
             .size = 8,
             .align = 8,
+            .is_complete = true,
             .ptr_to = base,
         });
 }
@@ -153,6 +154,7 @@ Cuik_Type* cuik__new_array(Cuik_TypeTable* types, Cuik_QualType base, int count)
             .kind = KIND_ARRAY,
             .size = dst,
             .align = align,
+            .is_complete = true,
             .array_of = base,
             .array_count = count,
         });
@@ -163,6 +165,7 @@ Cuik_Type* cuik__new_vector(Cuik_TypeTable* types, Cuik_QualType base, int count
             .kind = KIND_VECTOR,
             .size = 0,
             .align = cuik_canonical_type(base)->align,
+            .is_complete = true,
             .array_of = base,
             .array_count = 0,
         });

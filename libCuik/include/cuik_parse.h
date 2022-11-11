@@ -34,9 +34,18 @@ typedef enum Cuik_Entrypoint {
 // Standard parsing
 typedef struct Cuik_GlobalSymbols Cuik_GlobalSymbols;
 
+// This is generated from
+//    #pragma comment(lib, "somelib.lib")
+typedef struct Cuik_ImportRequest {
+    struct Cuik_ImportRequest* next;
+    const char* lib_name;
+} Cuik_ImportRequest;
+
 typedef struct Cuik_ParseResult {
     int error_count;
+
     TranslationUnit* tu; // if error_count == 0, then tu is a valid TU
+    Cuik_ImportRequest* imports; // linked list of imported libs
 } Cuik_ParseResult;
 
 Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict s, const Cuik_Target* target);
@@ -101,15 +110,6 @@ void cuik_destroy_translation_unit(TranslationUnit* restrict tu);
 ////////////////////////////////
 // Standard parsing
 ////////////////////////////////
-// This is generated from
-//    #pragma comment(lib, "somelib.lib")
-typedef struct Cuik_ImportRequest {
-    struct Cuik_ImportRequest* next;
-    const char* lib_name;
-} Cuik_ImportRequest;
-
-Cuik_ImportRequest* cuik_translation_unit_import_requests(TranslationUnit* restrict tu);
-
 // does this translation unit have a main? what type?
 Cuik_Entrypoint cuik_get_entrypoint_status(TranslationUnit* restrict tu);
 

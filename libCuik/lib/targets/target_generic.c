@@ -92,7 +92,7 @@ static Expr* resolve_memory_order_expr(TranslationUnit* tu, Expr* e) {
 const char* query_type(TranslationUnit* tu, const char* format, Cuik_Type** out_type) {
     Cuik_Type* t = NULL;
     #define C(k, v) case k: t = &cuik__builtin_ ## v; break
-    switch (*format) {
+    switch (*format++) {
         C('v', void);
         C('b', bool);
         C('c', char);
@@ -119,13 +119,19 @@ const char* check_type(TranslationUnit* tu, const char* format, Expr* e) {
 
     Cuik_Type* t = NULL;
     #define C(k, v) case k: t = &cuik__builtin_ ## v; break;
-    switch (*format) {
+    switch (*format++) {
         C('v', void);
         C('b', bool);
         C('c', char);
         C('s', short);
         C('i', int);
         C('l', long);
+
+        case '.': {
+            // dot is var args so just don't really type check it?
+            e->cast_type = e->type;
+            return format - 1;
+        }
         default: break;
     }
     #undef C
@@ -146,7 +152,7 @@ const char* check_type(TranslationUnit* tu, const char* format, Expr* e) {
 
         e->cast_type = cuik_uncanonical_type(t);
     } else {
-        if (!type_equal(base, t)) {
+        if (t->kind != KIND_VOID && !type_equal(base, t)) {
             diag_err(&tu->tokens, e->loc, "pointer argument's base type doesn't match parameter's (got %!T, expected %!T)", base, t);
         }
 
@@ -168,7 +174,7 @@ Cuik_Type* target_generic_type_check_builtin(TranslationUnit* tu, Expr* e, const
     format = query_type(tu, format, &return_type);
 
     // check parameters
-    for (size_t i = 0; *format; i++) {
+    for (size_t i = 0; i < arg_count && *format; i++) {
         format = check_type(tu, format, args[i]);
     }
 

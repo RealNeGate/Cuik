@@ -2258,7 +2258,8 @@ static bool expect_with_reason(TokenStream* restrict s, char ch, const char* rea
         SourceLoc loc = tokens_get_last_location(s);
 
         char fix[2] = { ch, '\0' };
-        report_fix(REPORT_ERROR, s, loc, fix, "expected '%c' for %s", ch, reason);
+        DiagFixit fixit = { { loc, loc }, 0, fix };
+        diag_err(s, fixit.loc, "#expected '%c' for %s", fixit, ch, reason);
         return false;
     } else {
         tokens_next(s);

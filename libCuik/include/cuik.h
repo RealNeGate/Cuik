@@ -98,8 +98,13 @@ void cuik_lock_compilation_unit(CompilationUnit* restrict cu);
 void cuik_unlock_compilation_unit(CompilationUnit* restrict cu);
 void cuik_add_to_compilation_unit(CompilationUnit* restrict cu, TranslationUnit* restrict tu);
 void cuik_destroy_compilation_unit(CompilationUnit* restrict cu);
-void cuik_internal_link_compilation_unit(CompilationUnit* restrict cu);
 size_t cuik_num_of_translation_units_in_compilation_unit(CompilationUnit* restrict cu);
+
+#if CUIK_USE_TB
+void cuik_internal_link_compilation_unit(CompilationUnit* restrict cu, TB_Module* mod);
+#else
+void cuik_internal_link_compilation_unit(CompilationUnit* restrict cu, void* mod);
+#endif
 
 #include "cuik_perf.h"
 #include "cuik_lex.h"

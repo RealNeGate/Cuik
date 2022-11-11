@@ -159,7 +159,8 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
     //
     // init-declarator:
     //   declarator ('=' initializer)?
-    while (!tokens_eof(s)) {
+    bool has_semicolon = true;
+    while (!tokens_eof(s) && tokens_get(s)->type != ';') {
         size_t start_decl_token = s->list.current;
         Decl decl = parse_declarator2(parser, s, type, false);
         // if (decl.name == NULL) {
@@ -269,7 +270,11 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
 
                         // SourceRange r = { s->list.tokens[expr_start].location, get_token_range(&s->list.tokens[expr_end]).end };
                         // diag_note(s, r, "Body");
+                    } else {
+                        s->list.current = dyn_array_length(s->list.tokens) - 1;
+                        return PARSE_WIT_ERRORS;
                     }
+                    has_semicolon = false;
                     break;
                 } else {
                     expr_start = expr_end = -1;
@@ -293,18 +298,22 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
             }
         }
 
-        if (tokens_get(s)->type == ';') {
-            tokens_next(s);
-            break;
-        } else if (tokens_get(s)->type == ',') {
+        if (tokens_get(s)->type == ',') {
             tokens_next(s);
             continue;
+        } else {
+            break;
         }
+    }
+
+    if (has_semicolon) {
+        expect_char(s, ';');
     }
 
     // we measure success here on forward progress
     if (starting_point == s->list.current) {
         tokens_next(s);
+        return PARSE_WIT_ERRORS;
     }
 
     return PARSE_SUCCESS;
@@ -373,7 +382,7 @@ Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict 
 
     // Phase 1: resolve all top level statements
     CUIK_TIMED_BLOCK("phase 1") {
-        while (tokens_get(s)->type) {
+        while (!tokens_eof(s)) {
             // skip any top level "null" statements
             while (tokens_get(s)->type == ';') tokens_next(s);
 
@@ -452,12 +461,11 @@ Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict 
                 if (tokens_get(&mini_lex)->type == '{') {
                     tokens_next(&mini_lex);
 
-                    __debugbreak();
-                    // e = parse_initializer(parser, &mini_lex, CUIK_QUAL_TYPE_NULL);
+                    e = parse_initializer2(&parser, &mini_lex, CUIK_QUAL_TYPE_NULL);
                 } else {
                     e = parse_assignment(&parser, &mini_lex);
                     if (mini_lex.list.current != sym->token_end) {
-                        __debugbreak();
+                        diag_err(&mini_lex, tokens_get_range(&mini_lex), "Failed to parse expression");
                     }
                 }
 
@@ -481,7 +489,7 @@ Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict 
         local_symbols = malloc(sizeof(Symbol) * MAX_LOCAL_SYMBOLS);
         local_tags = malloc(sizeof(TagEntry) * MAX_LOCAL_TAGS);
 
-        size_t load = nl_strmap__get_header(parser.globals.symbols)->load;
+        size_t load = nl_strmap_get_load(parser.globals.symbols);
         TokenStream tokens = *s;
         for (size_t i = 0; i < load; i++) {
             Symbol* sym = &parser.globals.symbols[i];
@@ -529,6 +537,6 @@ Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict 
     }
     nl_strmap_free(parser.unresolved_symbols);
 
-    return (Cuik_ParseResult){ .tu = parser.tu };
+    return (Cuik_ParseResult){ .tu = parser.tu, .imports = parser.import_libs };
 }
 #undef THROW_IF_ERROR

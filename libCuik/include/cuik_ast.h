@@ -633,27 +633,27 @@ struct Expr {
 _Static_assert(offsetof(Expr, next_symbol_in_chain) == offsetof(Expr, next_symbol_in_chain2), "these should be aliasing");
 _Static_assert(offsetof(Expr, next_symbol_in_chain) == offsetof(Expr, builtin_sym.next_symbol_in_chain), "these should be aliasing");
 
-static bool cuik_type_is_signed(Cuik_Type* t) { return (t->kind >= KIND_CHAR && t->kind <= KIND_LLONG) && !t->is_unsigned; }
-static bool cuik_type_is_unsigned(Cuik_Type* t) { return (t->kind >= KIND_CHAR && t->kind <= KIND_LLONG) && t->is_unsigned; }
+static bool cuik_type_is_signed(const Cuik_Type* t) { return (t->kind >= KIND_CHAR && t->kind <= KIND_LLONG) && !t->is_unsigned; }
+static bool cuik_type_is_unsigned(const Cuik_Type* t) { return (t->kind >= KIND_CHAR && t->kind <= KIND_LLONG) && t->is_unsigned; }
 
-static bool cuik_type_is_integer(Cuik_Type* t) { return t->kind >= KIND_CHAR && t->kind <= KIND_LLONG; }
-static bool cuik_type_is_integer_or_bool(Cuik_Type* t) { return t->kind >= KIND_BOOL && t->kind <= KIND_LLONG; }
-static bool cuik_type_is_float(Cuik_Type* t) { return t->kind >= KIND_FLOAT && t->kind <= KIND_DOUBLE; }
+static bool cuik_type_is_integer(const Cuik_Type* t) { return t->kind >= KIND_CHAR && t->kind <= KIND_LLONG; }
+static bool cuik_type_is_integer_or_bool(const Cuik_Type* t) { return t->kind >= KIND_BOOL && t->kind <= KIND_LLONG; }
+static bool cuik_type_is_float(const Cuik_Type* t) { return t->kind >= KIND_FLOAT && t->kind <= KIND_DOUBLE; }
 
-static bool cuik_type_is_bool(Cuik_Type* t) { return t->kind == KIND_BOOL; }
-static bool cuik_type_is_pointer(Cuik_Type* t) { return t->kind == KIND_PTR; }
+static bool cuik_type_is_bool(const Cuik_Type* t) { return t->kind == KIND_BOOL; }
+static bool cuik_type_is_pointer(const Cuik_Type* t) { return t->kind == KIND_PTR; }
 
 // [https://www.sigbus.info/n1570#6.2.5p21]
 // Arithmetic types and pointer types are collectively called scalar types.
 // Array and structure types are collectively called aggregate types.
-static bool cuik_type_is_scalar(Cuik_Type* t) { return t->kind >= KIND_BOOL && t->kind <= KIND_FUNC; }
-static bool cuik_type_is_aggregate(Cuik_Type* t) { return t->kind >= KIND_ARRAY && t->kind <= KIND_UNION; }
+static bool cuik_type_is_scalar(const Cuik_Type* t) { return t->kind >= KIND_BOOL && t->kind <= KIND_FUNC; }
+static bool cuik_type_is_aggregate(const Cuik_Type* t) { return t->kind >= KIND_ARRAY && t->kind <= KIND_UNION; }
 
 // [https://www.sigbus.info/n1570#6.2.5p18]
 // Integer and floating types are collectively called arithmetic types.
-static bool cuik_type_is_arithmatic(Cuik_Type* t) { return t->kind >= KIND_BOOL && t->kind <= KIND_FUNC; }
+static bool cuik_type_is_arithmatic(const Cuik_Type* t) { return t->kind >= KIND_BOOL && t->kind <= KIND_FUNC; }
 
-static bool cuik_type_can_deref(Cuik_Type* t) { return t->kind == KIND_PTR || t->kind == KIND_ARRAY; }
+static bool cuik_type_can_deref(const Cuik_Type* t) { return t->kind == KIND_PTR || t->kind == KIND_ARRAY; }
 
 // takes in Cuik_QualType
 #define CUIK_QUAL_TYPE_NULL        (Cuik_QualType){ 0 }
@@ -702,7 +702,7 @@ static Cuik_QualType cuik_get_direct_type(Cuik_QualType type, int* level) {
         l += 1;
     }
 
-    if (level == NULL) *level = l;
+    if (level != NULL) *level = l;
     return type;
 }
 

@@ -53,6 +53,8 @@ inline static TB_DataType ctype_to_tbtype(const Cuik_Type* t) {
         case KIND_INT:
         return TB_TYPE_I32;
         case KIND_LONG:
+        return TB_TYPE_I32;
+        case KIND_LLONG:
         return TB_TYPE_I64;
         case KIND_FLOAT:
         return TB_TYPE_F32;

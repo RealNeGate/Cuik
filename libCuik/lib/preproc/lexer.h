@@ -213,7 +213,8 @@ inline static bool tokens_hit_line(TokenStream* restrict s) {
 }
 
 inline static bool tokens_eof(TokenStream* restrict s) {
-    return s->list.tokens[s->list.current].type == 0;
+    return s->list.current >= dyn_array_length(s->list.tokens) - 1;
+    // return s->list.tokens[s->list.current].type == 0;
 }
 
 inline static bool tokens_is(TokenStream* restrict s, TknType type) {

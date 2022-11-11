@@ -3,6 +3,8 @@ static Expr* parse_expr_(Cuik_Parser* restrict parser, TokenStream* restrict s);
 static Expr* parse_cast(Cuik_Parser* restrict parser, TokenStream* restrict s);
 static Expr* parse_unary(Cuik_Parser* restrict parser, TokenStream* restrict s);
 static Expr* parse_assignment(Cuik_Parser* restrict parser, TokenStream* restrict s);
+static Expr* parse_initializer2(Cuik_Parser* restrict parser, TokenStream* restrict s, Cuik_QualType type);
+static intmax_t parse_const_expr2(Cuik_Parser* parser, TokenStream* restrict s);
 
 typedef struct {
     char prec;
@@ -55,6 +57,127 @@ static ExprInfo get_binop(TknType ty) {
 
 static Expr* alloc_expr(void) {
     return ARENA_ALLOC(&local_ast_arena, Expr);
+}
+
+// initalizer-designator:
+//   [const-expr]
+//   .identifier
+static InitNode* parse_initializer_member2(Cuik_Parser* parser, TokenStream* restrict s) {
+    InitNode* current = make_init_node(s, INIT_NONE);
+    InitNode* head = current;
+
+    int depth = 0;
+    for (;; depth++) {
+        if (tokens_get(s)->type == '[')  {
+            SourceLoc loc = tokens_get_location(s);
+            tokens_next(s);
+
+            intmax_t start = parse_const_expr2(parser, s);
+            if (start < 0) {
+                // TODO(NeGate): Error messages
+                diag_err(s, tokens_get_range(s), "array initializer range is broken.");
+            }
+
+            // GNU-extension: array range initializer
+            intmax_t count = 1;
+            if (tokens_get(s)->type == TOKEN_TRIPLE_DOT) {
+                tokens_next(s);
+
+                count = parse_const_expr2(parser, s) - start;
+                if (count <= 1) {
+                    // TODO(NeGate): Error messages
+                    diag_err(s, tokens_get_range(s), "array initializer range is broken.");
+                }
+            }
+            expect_char(s, ']');
+
+            current->mode = INIT_ARRAY, current->start = start, current->count = count;
+            current->loc = (SourceRange){ loc, tokens_get_last_location(s) };
+            // create new kid
+            current->kid = make_init_node(s, INIT_NONE), current = current->kid;
+            continue;
+        }
+
+        if (tokens_get(s)->type == '.') {
+            tokens_next(s);
+            SourceLoc loc = tokens_get_location(s);
+
+            Token* t = tokens_get(s);
+            Atom name = atoms_put(t->content.length, t->content.data);
+            tokens_next(s);
+
+            current->mode = INIT_MEMBER, current->member_name = name;
+            current->loc = (SourceRange){ loc, tokens_get_last_location(s) };
+            // create new kid
+            current->kid = make_init_node(s, INIT_NONE), current = current->kid;
+            continue;
+        }
+
+        break;
+    }
+
+    if (depth > 0) {
+        expect_char(s, '=');
+    }
+
+    // it can either be a normal expression
+    // or a nested designated initializer
+    SourceLoc loc = tokens_get_location(s);
+    if (tokens_get(s)->type == '{') {
+        tokens_next(s);
+
+        // don't expect one the first time
+        bool expect_comma = false;
+        InitNode* tail = current->kid;
+        while (!tokens_eof(s) && tokens_get(s)->type != '}') {
+            if (expect_comma) {
+                if (!expect_char(s, ',')) tokens_next(s);
+
+                // we allow for trailing commas like ballers do
+                if (tokens_get(s)->type == '}') break;
+            } else expect_comma = true;
+
+            // attach to our linked list
+            tail = append_to_init_list(s, current, tail, parse_initializer_member2(parser, s));
+        }
+        expect_char(s, '}');
+    } else {
+        // parse without comma operator
+        current->expr = parse_assignment(parser, s);
+    }
+    current->loc = (SourceRange){ loc, tokens_get_last_location(s) };
+
+    return head;
+}
+
+static Expr* parse_initializer2(Cuik_Parser* parser, TokenStream* restrict s, Cuik_QualType type) {
+    SourceLoc loc = tokens_get_location(s);
+    expect_char(s, '{');
+
+    InitNode *root = ARENA_ALLOC(&local_ast_arena, InitNode), *tail = NULL;
+    *root = (InitNode){ 0 };
+
+    // don't expect one the first time
+    bool expect_comma = false;
+    while (!tokens_eof(s) && tokens_get(s)->type != '}') {
+        tail = append_to_init_list(s, root, tail, parse_initializer_member2(parser, s));
+
+        if (tokens_get(s)->type == ',') {
+            tokens_next(s);
+            continue;
+        } else {
+            break;
+        }
+    }
+    expect_char(s, '}');
+
+    Expr* e = alloc_expr();
+    *e = (Expr){
+        .op = EXPR_INITIALIZER,
+        .loc = { loc, tokens_get_last_location(s) },
+        .init = { type, root },
+    };
+    return e;
 }
 
 // primary-expression:
@@ -241,8 +364,7 @@ static Expr* parse_primary_expr(Cuik_Parser* parser, TokenStream* restrict s) {
                 // Precompute length
                 s->list.current = saved_lexer_pos;
                 size_t total_len = t->content.length;
-                while (tokens_get(s)->type == TOKEN_STRING_DOUBLE_QUOTE ||
-                    tokens_get(s)->type == TOKEN_STRING_WIDE_DOUBLE_QUOTE) {
+                while (!tokens_eof(s) && (tokens_get(s)->type == TOKEN_STRING_DOUBLE_QUOTE || tokens_get(s)->type == TOKEN_STRING_WIDE_DOUBLE_QUOTE)) {
                     Token* segment = tokens_get(s);
                     total_len += segment->content.length - 2;
                     tokens_next(s);
@@ -255,8 +377,7 @@ static Expr* parse_primary_expr(Cuik_Parser* parser, TokenStream* restrict s) {
 
                 // Fill up the buffer
                 s->list.current = saved_lexer_pos;
-                while (tokens_get(s)->type == TOKEN_STRING_DOUBLE_QUOTE ||
-                    tokens_get(s)->type == TOKEN_STRING_WIDE_DOUBLE_QUOTE) {
+                while (!tokens_eof(s) && (tokens_get(s)->type == TOKEN_STRING_DOUBLE_QUOTE || tokens_get(s)->type == TOKEN_STRING_WIDE_DOUBLE_QUOTE)) {
                     Token* segment = tokens_get(s);
 
                     memcpy(&buffer[curr], segment->content.data + 1, segment->content.length - 2);
@@ -294,7 +415,7 @@ static Expr* parse_primary_expr(Cuik_Parser* parser, TokenStream* restrict s) {
             C11GenericEntry* entries = tls_save();
 
             SourceRange default_loc = { 0 };
-            while (tokens_get(s)->type != ')') {
+            while (!tokens_eof(s) && tokens_get(s)->type != ')') {
                 if (tokens_get(s)->type == TOKEN_KW_default) {
                     if (default_loc.start.raw != 0) {
                         diag_err(s, tokens_get_range(s), "multiple default cases on _Generic");
@@ -382,8 +503,7 @@ static Expr* parse_postfix(Cuik_Parser* restrict parser, TokenStream* restrict s
         }
 
         tokens_next(s);
-        __debugbreak();
-        e = NULL; // parse_initializer2(parser, s, type);
+        e = parse_initializer2(parser, s, type);
     }
 
     normal_path:
@@ -472,9 +592,9 @@ static Expr* parse_postfix(Cuik_Parser* restrict parser, TokenStream* restrict s
             size_t param_count = 0;
             void* params = tls_save();
 
-            while (tokens_get(s)->type != ')') {
+            while (!tokens_eof(s) && tokens_get(s)->type != ')') {
                 if (param_count) {
-                    expect_char(s, ',');
+                    if (!expect_char(s, ',')) tokens_next(s);
                 }
 
                 Expr* e = parse_assignment(parser, s);
@@ -514,7 +634,7 @@ static Expr* parse_postfix(Cuik_Parser* restrict parser, TokenStream* restrict s
             *e = (Expr){
                 .op = is_inc ? EXPR_POST_INC : EXPR_POST_DEC,
                 .loc = { start_loc, end_loc },
-                .unary_op.src = e,
+                .unary_op.src = src,
             };
             goto try_again;
         }
@@ -535,8 +655,6 @@ static Expr* parse_postfix(Cuik_Parser* restrict parser, TokenStream* restrict s
 // unary-operator: one of
 //     & * + - ~ !
 static Expr* parse_unary(Cuik_Parser* restrict parser, TokenStream* restrict s) {
-    // TODO(NeGate): Convert this code into a loop... please?
-    // TODO(NeGate): just rewrite this in general...
     SourceLoc start_loc = tokens_get_location(s);
     TknType tkn = tokens_get(s)->type;
 
@@ -757,7 +875,6 @@ static Expr* parse_assignment(Cuik_Parser* restrict parser, TokenStream* restric
         .bin_op = { lhs, rhs },
     };
     return e;
-
 }
 
 static Expr* parse_expr_(Cuik_Parser* restrict parser, TokenStream* restrict s) {

@@ -352,7 +352,7 @@ static Cuik_CPP* make_preprocessor(const char* filepath, bool should_finalize) {
     // run the preprocessor
     if (cuikpp_default_run(cpp) == CUIKPP_ERROR) {
         // dump_tokens(stdout, cuikpp_get_token_stream(cpp));
-        exit_or_hook(1);
+        return NULL;
     }
 
     if (args_bindgen != NULL) {
@@ -394,11 +394,14 @@ static void preproc_file(void* arg) {
 
     // preproc
     Cuik_CPP* cpp = make_preprocessor(input, true);
-
-    if (ithread_pool != NULL) {
-        CUIK_CALL(ithread_pool, submit, compile_file, cpp);
+    if (cpp != NULL) {
+        if (ithread_pool != NULL) {
+            CUIK_CALL(ithread_pool, submit, compile_file, cpp);
+        } else {
+            compile_file(cpp);
+        }
     } else {
-        compile_file(cpp);
+        files_with_errors++;
     }
 }
 
@@ -408,6 +411,16 @@ static void compile_file(void* arg) {
         printf("Failed to parse with %d errors...\n", result.error_count);
         files_with_errors++;
         return;
+    }
+
+    // #pragma comment(lib, "foo.lib")
+    Cuik_ImportRequest* imports = result.imports;
+    if (imports != NULL) {
+        cuik_lock_compilation_unit(&compilation_unit);
+        for (; imports != NULL; imports = imports->next) {
+            dyn_array_put(input_libraries, imports->lib_name);
+        }
+        cuik_unlock_compilation_unit(&compilation_unit);
     }
 
     TranslationUnit* tu = result.tu;
@@ -857,7 +870,7 @@ static bool export_output(void) {
 }
 
 // returns status code
-static int run_compiler(threadpool_t* thread_pool) {
+static int run_compiler(threadpool_t* thread_pool, bool destroy_cu_after_ir) {
     files_with_errors = 0;
 
     ////////////////////////////////
@@ -878,15 +891,25 @@ static int run_compiler(threadpool_t* thread_pool) {
                 preproc_file((void*) input_files[i]);
             }
         }
-
-        TIMESTAMP("Internal link");
-        CUIK_TIMED_BLOCK("internal link") {
-            cuik_internal_link_compilation_unit(&compilation_unit);
-        }
-
-        if (files_with_errors > 0) return 1;
-        if (args_syntax_only) return 0;
     }
+
+    TB_FeatureSet features = { 0 };
+    mod = tb_module_create(
+        TB_ARCH_X86_64, (TB_System) cuik_get_target_system(target_desc), &features, false
+    );
+
+    TIMESTAMP("Internal link");
+    CUIK_TIMED_BLOCK("internal link") {
+        cuik_internal_link_compilation_unit(&compilation_unit, mod);
+    }
+
+    if (files_with_errors > 0) {
+        fprintf(stderr, "%d files with errors!\n", files_with_errors);
+        return 1;
+    }
+
+    if (args_syntax_only) return 0;
+    if (args_types) return 0;
 
     if (args_ast) {
         FOR_EACH_TU(tu, &compilation_unit) {
@@ -898,29 +921,33 @@ static int run_compiler(threadpool_t* thread_pool) {
     ////////////////////////////////
     // backend work
     ////////////////////////////////
-    irgen();
-    cuik_destroy_compilation_unit(&compilation_unit);
-
-    if (dyn_array_length(da_passes) != 0) {
-        // TODO: we probably want to do the fancy threading soon
-        TIMESTAMP("Optimizer");
-        CUIK_TIMED_BLOCK("Optimizer") {
-            tb_module_optimize(mod, dyn_array_length(da_passes), da_passes);
-        }
-    }
-
-    if (args_ir) {
-        TIMESTAMP("IR Printer");
-        TB_FOR_FUNCTIONS(f, mod) {
-            tb_function_print(f, tb_default_print_callback, stdout, false);
-            printf("\n\n");
+    CUIK_TIMED_BLOCK("Backend") {
+        irgen();
+        if (destroy_cu_after_ir) {
+            cuik_destroy_compilation_unit(&compilation_unit);
         }
 
-        goto cleanup_tb;
-    }
+        if (dyn_array_length(da_passes) != 0) {
+            // TODO: we probably want to do the fancy threading soon
+            TIMESTAMP("Optimizer");
+            CUIK_TIMED_BLOCK("Optimizer") {
+                tb_module_optimize(mod, dyn_array_length(da_passes), da_passes);
+            }
+        }
 
-    CUIK_TIMED_BLOCK("CodeGen") {
-        codegen();
+        if (args_ir) {
+            TIMESTAMP("IR Printer");
+            TB_FOR_FUNCTIONS(f, mod) {
+                tb_function_print(f, tb_default_print_callback, stdout, false);
+                printf("\n\n");
+            }
+
+            goto cleanup_tb;
+        }
+
+        CUIK_TIMED_BLOCK("CodeGen") {
+            codegen();
+        }
     }
 
     if (args_run) {
@@ -1135,20 +1162,18 @@ int main(int argc, char** argv) {
     initialize_targets();
     initialize_opt_passes();
 
-    if (!args_ast && !args_types) {
-        TB_FeatureSet features = { 0 };
-        mod = tb_module_create(
-            TB_ARCH_X86_64, (TB_System) cuik_get_target_system(target_desc), &features, false
-        );
-    }
-
     if (args_pprepl) {
         return pp_repl();
     } else if (args_preprocess) {
         // preproc only
         Cuik_CPP* cpp = make_preprocessor(input_files[0], true);
-        dump_tokens(stdout, cuikpp_get_token_stream(cpp));
-        free_preprocessor(cpp);
+        if (cpp) {
+            dump_tokens(stdout, cuikpp_get_token_stream(cpp));
+            free_preprocessor(cpp);
+        } else {
+            fprintf(stderr, "Could not preprocess file: %s", input_files[0]);
+            return EXIT_FAILURE;
+        }
 
         return EXIT_SUCCESS;
     }
@@ -1160,16 +1185,13 @@ int main(int argc, char** argv) {
             printf("OUTPUT OF %s:\n", input_files[0]);
 
             cuik_create_compilation_unit(&compilation_unit);
-            run_compiler(thread_pool);
-            cuik_destroy_compilation_unit(&compilation_unit);
+            run_compiler(thread_pool, true);
         } while (live_compile_watch(&l));
     } else {
         cuik_create_compilation_unit(&compilation_unit);
 
-        int status = run_compiler(thread_pool);
+        int status = run_compiler(thread_pool, true);
         if (status != 0) exit_or_hook(status);
-
-        cuik_destroy_compilation_unit(&compilation_unit);
     }
 
     TIMESTAMP("Done");

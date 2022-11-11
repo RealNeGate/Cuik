@@ -56,7 +56,7 @@ static bool parse_decl_or_expr2(Cuik_Parser* parser, TokenStream* restrict s, si
                 tokens_next(s);
 
                 if (tokens_get(s)->type == '{') {
-                    __debugbreak();
+                    e = parse_initializer2(parser, s, CUIK_QUAL_TYPE_NULL);
                 } else {
                     e = parse_assignment(parser, s);
                 }
@@ -95,6 +95,7 @@ static bool parse_decl_or_expr2(Cuik_Parser* parser, TokenStream* restrict s, si
         return true;
     } else {
         Stmt* n = alloc_stmt();
+        size_t start_tkn = s->list.current; // used for error recovery
         Expr* expr = parse_expr_(parser, s);
 
         n->op = STMT_EXPR;
@@ -104,7 +105,11 @@ static bool parse_decl_or_expr2(Cuik_Parser* parser, TokenStream* restrict s, si
         *((Stmt**)tls_push(sizeof(Stmt*))) = n;
         *body_count += 1;
 
-        expect_char(s, ';');
+        if (start_tkn == s->list.current) {
+            tokens_next(s);
+        } else if (!expect_with_reason(s, ';', "expression")) {
+            return PARSE_WIT_ERRORS;
+        }
         return true;
     }
 }
@@ -163,13 +168,18 @@ static ParseResult parse_stmt_or_expr2(Cuik_Parser* parser, TokenStream* restric
             return PARSE_SUCCESS;
         } else {
             Stmt* n = alloc_stmt();
+            size_t start_tkn = s->list.current; // used for error recovery
 
             Expr* expr = parse_expr_(parser, s);
             n->op = STMT_EXPR;
             n->loc = expr->loc;
             n->expr = (struct StmtExpr){ .expr = expr };
 
-            if (!expect_char(s, ';')) return PARSE_WIT_ERRORS;
+            if (start_tkn == s->list.current) {
+                tokens_next(s);
+            } else if (!expect_with_reason(s, ';', "expression")) {
+                return PARSE_WIT_ERRORS;
+            }
 
             *out_result = n;
             return PARSE_SUCCESS;
@@ -306,7 +316,7 @@ static Stmt* parse_stmt2(Cuik_Parser* parser, TokenStream* restrict s) {
             // GNU extension, case ranges
             tokens_next(s);
             intmax_t key_max = parse_const_expr2(parser, s);
-            expect_char(s, ':');
+            expect_with_reason(s, ':', "case");
 
             assert(key_max > key);
             n->case_.key = key;
@@ -321,7 +331,7 @@ static Stmt* parse_stmt2(Cuik_Parser* parser, TokenStream* restrict s) {
                 n = curr;
             }
         } else {
-            expect_char(s, ':');
+            expect_with_reason(s, ':', "case");
 
             n->case_ = (struct StmtCase){
                 .key = key, .body = 0, .next = 0
@@ -350,7 +360,7 @@ static Stmt* parse_stmt2(Cuik_Parser* parser, TokenStream* restrict s) {
             default: __builtin_unreachable();
         }
         current_switch_or_case = n;
-        expect_char(s, ':');
+        expect_with_reason(s, ':', "default");
 
         n->op = STMT_DEFAULT;
         n->default_ = (struct StmtDefault){
@@ -364,7 +374,7 @@ static Stmt* parse_stmt2(Cuik_Parser* parser, TokenStream* restrict s) {
         assert(current_breakable);
 
         tokens_next(s);
-        expect_char(s, ';');
+        expect_with_reason(s, ';', "break");
 
         n->op = STMT_BREAK;
         n->break_ = (struct StmtBreak){
@@ -376,7 +386,7 @@ static Stmt* parse_stmt2(Cuik_Parser* parser, TokenStream* restrict s) {
         assert(current_continuable);
 
         tokens_next(s);
-        expect_char(s, ';');
+        expect_with_reason(s, ';', "continue");
 
         n->op = STMT_CONTINUE;
         n->continue_ = (struct StmtContinue){
@@ -570,7 +580,7 @@ static Stmt* parse_stmt2(Cuik_Parser* parser, TokenStream* restrict s) {
             .target = target,
         };
 
-        expect_char(s, ';');
+        expect_with_reason(s, ';', "goto");
     } else if (peek == TOKEN_IDENTIFIER && tokens_peek(s)->type == TOKEN_COLON) {
         // label amirite
         // IDENTIFIER COLON STMT

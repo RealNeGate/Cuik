@@ -35,7 +35,7 @@ X(__c11_atomic_fetch_and, "v.")
 // microsoft extensions
 X(__assume, "vb")
 X(__debugbreak, "vv")
-X(__va_start, "vc*.")
+X(__va_start, "vc**.")
 X(_umul128, "llll*")
 X(_mul128, "llll*")
 X(_InterlockedExchange, "ii*i")

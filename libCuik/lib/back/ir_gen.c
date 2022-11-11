@@ -34,7 +34,7 @@ TB_DebugType* cuik__as_tb_debug_type(TB_Module* mod, Cuik_Type* t) {
         case KIND_BOOL:
         return (t->debug_type = tb_debug_get_bool(mod));
 
-        case KIND_CHAR: case KIND_SHORT: case KIND_INT: case KIND_LONG:
+        case KIND_CHAR: case KIND_SHORT: case KIND_INT: case KIND_LONG: case KIND_LLONG:
         return (t->debug_type = tb_debug_get_integer(mod, !t->is_unsigned, t->size * 8));
 
         case KIND_FLOAT:
@@ -98,10 +98,7 @@ static TB_Reg cast_reg(TB_Function* func, TB_Reg reg, const Cuik_Type* src, cons
     }
 
     // Cast into correct type
-    if (src->kind >= KIND_CHAR &&
-        src->kind <= KIND_LONG &&
-        dst->kind >= KIND_CHAR &&
-        dst->kind <= KIND_LONG) {
+    if (cuik_type_is_integer(src) && cuik_type_is_integer(dst)) {
         if (dst->kind > src->kind) {
             // up-casts
             if (src->is_unsigned)
@@ -128,50 +125,33 @@ static TB_Reg cast_reg(TB_Function* func, TB_Reg reg, const Cuik_Type* src, cons
         dst->kind >= KIND_CHAR &&
         dst->kind <= KIND_LONG) {
         reg = tb_inst_zxt(func, reg, ctype_to_tbtype(dst));
-    } else if (src->kind >= KIND_CHAR &&
-        src->kind <= KIND_LONG &&
-        dst->kind == KIND_FUNC) {
+    } else if (cuik_type_is_integer(src) && dst->kind == KIND_FUNC) {
         // integer -> function
         reg = tb_inst_int2ptr(func, reg);
-    } else if (src->kind == KIND_FUNC &&
-        dst->kind >= KIND_CHAR &&
-        dst->kind <= KIND_LONG) {
+    } else if (src->kind == KIND_FUNC && cuik_type_is_integer(dst)) {
         // function -> integer
         reg = tb_inst_ptr2int(func, reg, ctype_to_tbtype(dst));
-    } else if (src->kind >= KIND_CHAR &&
-        src->kind <= KIND_LONG &&
-        dst->kind == KIND_PTR) {
+    } else if (cuik_type_is_integer(src) && dst->kind == KIND_PTR) {
         reg = tb_inst_int2ptr(func, reg);
-    } else if (src->kind == KIND_PTR &&
-        dst->kind >= KIND_CHAR &&
-        dst->kind <= KIND_LONG) {
+    } else if (src->kind == KIND_PTR && cuik_type_is_integer(dst)) {
         reg = tb_inst_ptr2int(func, reg, ctype_to_tbtype(dst));
-    } else if (src->kind == KIND_PTR &&
-        dst->kind == KIND_PTR) {
+    } else if (src->kind == KIND_PTR && dst->kind == KIND_PTR) {
         /* TB has opaque pointers, nothing needs to be done. */
-    } else if (src->kind == KIND_FLOAT &&
-        dst->kind == KIND_DOUBLE) {
+    } else if (src->kind == KIND_FLOAT && dst->kind == KIND_DOUBLE) {
         TB_DataType dt = tb_function_get_node(func, reg)->dt;
 
         if (!(dt.type == TB_FLOAT && dt.data == TB_FLT_64 && dt.width == 0)) {
             reg = tb_inst_fpxt(func, reg, TB_TYPE_F64);
         }
-    } else if (src->kind == KIND_DOUBLE &&
-        dst->kind == KIND_FLOAT) {
+    } else if (src->kind == KIND_DOUBLE && dst->kind == KIND_FLOAT) {
         TB_DataType dt = tb_function_get_node(func, reg)->dt;
 
         if (!(dt.type == TB_FLOAT && dt.data == TB_FLT_32 && dt.width == 0)) {
             reg = tb_inst_trunc(func, reg, TB_TYPE_F32);
         }
-    } else if (src->kind >= KIND_FLOAT &&
-        src->kind <= KIND_DOUBLE &&
-        dst->kind >= KIND_CHAR &&
-        dst->kind <= KIND_LONG) {
+    } else if (cuik_type_is_float(src) && cuik_type_is_integer(dst)) {
         reg = tb_inst_float2int(func, reg, ctype_to_tbtype(dst), !dst->is_unsigned);
-    } else if (src->kind >= KIND_CHAR &&
-        src->kind <= KIND_LONG &&
-        dst->kind >= KIND_FLOAT &&
-        dst->kind <= KIND_DOUBLE) {
+    } else if (cuik_type_is_integer(src) && cuik_type_is_float(dst)) {
         reg = tb_inst_int2float(func, reg, ctype_to_tbtype(dst), !src->is_unsigned);
     }
 
