@@ -3,7 +3,7 @@
 
 int foo(int x) {
     switch (x) {
-        case 1: return 3;
+        case 1: return 33;
         case 2: return 7;
         case 3: return 3;
         case 4: return 98;
