@@ -203,6 +203,53 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                 break;
             }
 
+            case TOKEN_KW_Vector: {
+                // _Vector '(' TYPENAME ',' CONST-EXPR ')'
+                if (counter) goto done;
+                tokens_next(s);
+
+                SourceLoc opening_loc = tokens_get_location(s);
+                if (!expect_char(s, '(')) return CUIK_QUAL_TYPE_NULL;
+
+                type = cuik_canonical_type(parse_typename2(parser, s));
+                if (!cuik_type_is_integer(type) && !cuik_type_is_float(type)) {
+                    diag_err(s, loc, "Only integers and floats can be used for _Vector types");
+                    return CUIK_QUAL_TYPE_NULL;
+                }
+
+                if (!expect_char(s, ',')) return CUIK_QUAL_TYPE_NULL;
+
+                intmax_t count = parse_const_expr2(parser, s);
+
+                if (count <= 0) {
+                    diag_err(s, loc, "_Vector types must have a positive width");
+                    return CUIK_QUAL_TYPE_NULL;
+                }
+
+                if (count == 1) {
+                    diag_err(s, loc, "It's not even a _Vector type... that's a scalar...");
+                    return CUIK_QUAL_TYPE_NULL;
+                }
+
+                if (count > 64) {
+                    diag_err(s, loc, "_Vector type is too wide (%" PRIiMAX ", max is 64)", count);
+                    return CUIK_QUAL_TYPE_NULL;
+                }
+
+                // only allow power of two widths
+                if ((count & (count - 1)) != 0) {
+                    diag_err(s, loc, "_Vector types can only have power-of-two widths");
+                    return CUIK_QUAL_TYPE_NULL;
+                }
+
+                type = cuik__new_vector(&parser->types, cuik_uncanonical_type(type), count);
+                counter += OTHER;
+
+                expect_closing_paren(s, opening_loc);
+                tokens_prev(s);
+                break;
+            }
+
             case TOKEN_KW_Atomic: {
                 tokens_next(s);
                 if (tokens_get(s)->type == '(') {
@@ -243,7 +290,7 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
 
                     // Add to pending list
                     printf("MSG: Add _Typeof to pending list %zu\n", start);
-                    __debugbreak();
+                    abort();
                 } else {
                     if (is_typename(&parser->globals, s)) {
                         type = cuik_canonical_type(parse_typename2(parser, s));
@@ -551,8 +598,7 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                     type->record.kid_count = member_count;
 
                     if (!parser->is_in_global_scope) {
-                        __debugbreak();
-                        // type_layout(tu, type, true);
+                        type_layout2(parser, type, true);
                     }
 
                     tls_restore(members);
@@ -874,8 +920,52 @@ static Cuik_QualType parse_type_suffix2(Cuik_Parser* restrict parser, TokenStrea
             t->loc = (SourceRange){ open_brace, tokens_get_last_location(s) };
             t->array_count_lexer_pos = current;
         } else {
-            __debugbreak();
+            size_t depth = 0;
+            size_t* counts = tls_save();
+            tokens_prev(s);
+
+            do {
+                tokens_next(s);
+
+                long long count;
+                if (tokens_get(s)->type == ']') {
+                    count = 0;
+                    tokens_next(s);
+                } else if (tokens_get(s)->type == '*') {
+                    count = 0;
+                    tokens_next(s);
+                    expect_char(s, ']');
+                } else {
+                    count = parse_const_expr2(parser, s);
+                    expect_char(s, ']');
+                }
+
+                tls_push(sizeof(size_t));
+                counts[depth++] = count;
+            } while (!tokens_eof(s) && tokens_get(s)->type == '[');
+
+            t = cuik_canonical_type(type);
+            size_t expected_size = t->size;
+            while (depth--) {
+                assert(t->size == expected_size);
+
+                uint64_t a = expected_size;
+                uint64_t b = counts[depth];
+                uint64_t result = a * b;
+
+                // size checks
+                if (result >= INT32_MAX) {
+                    diag_err(s, t->loc, "cannot declare an array that exceeds 0x7FFFFFFE bytes (got 0x%zX or %zi)", result, result);
+                    continue;
+                }
+
+                t = cuik__new_array(&parser->types, cuik_uncanonical_type(t), counts[depth]);
+                expected_size = result;
+            }
+
+            tls_restore(counts);
         }
+
         type = cuik_uncanonical_type(t);
     }
 

@@ -874,9 +874,9 @@ Cuik_QualType cuik__sema_expr(TranslationUnit* tu, Expr* restrict e) {
             Cuik_Type* t = cuik_canonical_type(e->init.type);
             try_resolve_typeof(tu, t);
 
-            /*Cuik_QualType type = e->init.type;
-            if (type->kind == KIND_ARRAY) {
-                int old_array_count = type->array_count;
+            if (t->kind == KIND_ARRAY) {
+                int old_array_count = t->array_count;
+                int new_array_count = e->init.root->kids_count;
 
                 // if it's 0, then it's unsized and anything goes
                 if (old_array_count != 0) {
@@ -885,9 +885,10 @@ Cuik_QualType cuik__sema_expr(TranslationUnit* tu, Expr* restrict e) {
                         REPORT_EXPR(ERROR, e, "Array cannot fit into declaration (needs %d, got %d)", old_array_count, new_array_count);
                     }
                 } else {
-                    e->init.type = cuik__new_array(&tu->types, type->array_of, new_array_count);
+                    t = cuik__new_array(&tu->types, t->array_of, new_array_count);
+                    e->init.type = cuik_make_qual_type(t, cuik_get_quals(e->init.type));
                 }
-            }*/
+            }
 
             walk_initializer_for_sema(tu, t, e->init.root, 0);
             return (e->type = e->init.type);

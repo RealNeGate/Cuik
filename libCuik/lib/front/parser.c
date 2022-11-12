@@ -208,26 +208,6 @@ static size_t skip_expression_in_enum(TokenStream* restrict s, TknType* out_term
     return saved;
 }
 
-static void diag_unresolved_symbol(TranslationUnit* tu, Atom name, SourceLoc loc) {
-    Diag_UnresolvedSymbol* d = ARENA_ALLOC(&thread_arena, Diag_UnresolvedSymbol);
-    d->next = NULL;
-    d->name = name;
-    d->loc = (SourceRange){ loc, { loc.raw + strlen(name) } };
-
-    mtx_lock(&tu->diag_mutex);
-    ptrdiff_t search = nl_strmap_get_cstr(tu->unresolved_symbols, name);
-    if (search < 0) {
-        search = nl_strmap_puti_cstr(tu->unresolved_symbols, name);
-        tu->unresolved_symbols[search] = d;
-    } else {
-        Diag_UnresolvedSymbol* old = tu->unresolved_symbols[search];
-        while (old->next != NULL) old = old->next;
-
-        old->next = d;
-    }
-    mtx_unlock(&tu->diag_mutex);
-}
-
 struct Cuik_Parser {
     Cuik_ParseVersion version;
     TokenStream tokens;
@@ -262,6 +242,26 @@ typedef enum ParseResult {
     NO_PARSE         =  0,
     PARSE_SUCCESS    =  1,
 } ParseResult;
+
+static void diag_unresolved_symbol(Cuik_Parser* parser, Atom name, SourceLoc loc) {
+    Diag_UnresolvedSymbol* d = ARENA_ALLOC(&local_ast_arena, Diag_UnresolvedSymbol);
+    d->next = NULL;
+    d->name = name;
+    d->loc = (SourceRange){ loc, { loc.raw + strlen(name) } };
+
+    // mtx_lock(&parser->diag_mutex);
+    ptrdiff_t search = nl_strmap_get_cstr(parser->unresolved_symbols, name);
+    if (search < 0) {
+        search = nl_strmap_puti_cstr(parser->unresolved_symbols, name);
+        parser->unresolved_symbols[search] = d;
+    } else {
+        Diag_UnresolvedSymbol* old = parser->unresolved_symbols[search];
+        while (old->next != NULL) old = old->next;
+
+        old->next = d;
+    }
+    // mtx_unlock(&parser->diag_mutex);
+}
 
 #include "expr_parser.h"
 #include "expr_parser2.h"
