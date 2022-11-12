@@ -63,11 +63,8 @@ static Expr* alloc_expr(void) {
 //   [const-expr]
 //   .identifier
 static InitNode* parse_initializer_member2(Cuik_Parser* parser, TokenStream* restrict s) {
-    InitNode* current = make_init_node(s, INIT_NONE);
-    InitNode* head = current;
-
-    int depth = 0;
-    for (;; depth++) {
+    InitNode *current = NULL, *head = NULL;
+    for (;;) {
         if (tokens_get(s)->type == '[')  {
             SourceLoc loc = tokens_get_location(s);
             tokens_next(s);
@@ -91,10 +88,15 @@ static InitNode* parse_initializer_member2(Cuik_Parser* parser, TokenStream* res
             }
             expect_char(s, ']');
 
+            if (current == NULL) {
+                current = head = make_init_node(s, INIT_ARRAY);
+            } else {
+                InitNode* n = make_init_node(s, INIT_ARRAY);
+                current->kid = n;
+                current = n;
+            }
             current->mode = INIT_ARRAY, current->start = start, current->count = count;
             current->loc = (SourceRange){ loc, tokens_get_last_location(s) };
-            // create new kid
-            current->kid = make_init_node(s, INIT_NONE), current = current->kid;
             continue;
         }
 
@@ -106,17 +108,24 @@ static InitNode* parse_initializer_member2(Cuik_Parser* parser, TokenStream* res
             Atom name = atoms_put(t->content.length, t->content.data);
             tokens_next(s);
 
-            current->mode = INIT_MEMBER, current->member_name = name;
+            if (current == NULL) {
+                current = head = make_init_node(s, INIT_MEMBER);
+            } else {
+                InitNode* n = make_init_node(s, INIT_MEMBER);
+                current->kid = n;
+                current = n;
+            }
+            current->member_name = name;
             current->loc = (SourceRange){ loc, tokens_get_last_location(s) };
-            // create new kid
-            current->kid = make_init_node(s, INIT_NONE), current = current->kid;
             continue;
         }
 
         break;
     }
 
-    if (depth > 0) {
+    if (current == NULL) {
+        current = head = make_init_node(s, INIT_NONE);
+    } else {
         expect_char(s, '=');
     }
 
@@ -273,8 +282,8 @@ static Expr* parse_primary_expr(Cuik_Parser* parser, TokenStream* restrict s) {
                             };
                         }
                     } else {
-                        //diag_unresolved_symbol(parser, name, start_loc);
-                        diag_err(s, get_token_range(t), "could not resolve symbol: %s", name);
+                        diag_unresolved_symbol(parser, name, start_loc);
+                        // diag_err(s, get_token_range(t), "could not resolve symbol: %s", name);
 
                         *e = (Expr){
                             .op = EXPR_UNKNOWN_SYMBOL,
@@ -502,7 +511,6 @@ static Expr* parse_postfix(Cuik_Parser* restrict parser, TokenStream* restrict s
             goto normal_path;
         }
 
-        tokens_next(s);
         e = parse_initializer2(parser, s, type);
     }
 
@@ -541,10 +549,11 @@ static Expr* parse_postfix(Cuik_Parser* restrict parser, TokenStream* restrict s
                 diag_err(s, tokens_get_range(s), "Expected identifier after member access a.b");
             }
 
-            SourceLoc end_loc = tokens_get_location(s);
-
             Token* t = tokens_get(s);
             Atom name = atoms_put(t->content.length, t->content.data);
+            tokens_next(s);
+
+            SourceLoc end_loc = tokens_get_last_location(s);
 
             Expr* base = e;
             e = alloc_expr();
@@ -554,7 +563,6 @@ static Expr* parse_postfix(Cuik_Parser* restrict parser, TokenStream* restrict s
                 .dot_arrow = { .base = base, .name = name },
             };
 
-            tokens_next(s);
             goto try_again;
         }
 
@@ -565,11 +573,11 @@ static Expr* parse_postfix(Cuik_Parser* restrict parser, TokenStream* restrict s
                 diag_err(s, tokens_get_range(s), "Expected identifier after member access a.b");
             }
 
-            SourceLoc end_loc = tokens_get_location(s);
-
             Token* t = tokens_get(s);
             Atom name = atoms_put(t->content.length, t->content.data);
+            tokens_next(s);
 
+            SourceLoc end_loc = tokens_get_last_location(s);
             Expr* base = e;
             e = alloc_expr();
             *e = (Expr){
@@ -578,7 +586,6 @@ static Expr* parse_postfix(Cuik_Parser* restrict parser, TokenStream* restrict s
                 .dot_arrow = { .base = base, .name = name },
             };
 
-            tokens_next(s);
             goto try_again;
         }
 
@@ -699,13 +706,12 @@ static Expr* parse_unary(Cuik_Parser* restrict parser, TokenStream* restrict s) 
         }
 
         normal_path:
+        Expr* src = parse_unary(parser, s);
         if (has_paren) {
             expect_closing_paren(s, opening_loc);
         }
 
-        Expr* src = parse_unary(parser, s);
         SourceLoc end_loc = tokens_get_last_location(s);
-
         Expr* e = alloc_expr();
         *e = (Expr){
             .op = (tkn == TOKEN_KW_sizeof ? EXPR_SIZEOF : EXPR_ALIGNOF),
