@@ -46,6 +46,21 @@ static bool parse_decl_or_expr2(Cuik_Parser* parser, TokenStream* restrict s, si
             *((Stmt**)tls_push(sizeof(Stmt*))) = n;
             *body_count += 1;
 
+            if (decl.name != NULL) {
+                if (local_symbol_count >= MAX_LOCAL_SYMBOLS) {
+                    diag_err(s, decl.loc, "local symbol count exceeds %d (got %d)", MAX_LOCAL_SYMBOLS, local_symbol_count);
+                    return false;
+                }
+
+                local_symbols[local_symbol_count++] = (Symbol){
+                    .name = decl.name,
+                    .type = decl.type,
+                    .storage_class = attr.is_typedef ? STORAGE_TYPEDEF : STORAGE_LOCAL,
+                    .loc = decl.loc,
+                    .stmt = n,
+                };
+            }
+
             Expr* e = NULL;
             if (tokens_get(s)->type == '=') {
                 if (n->decl.attrs.is_inline) {
@@ -67,21 +82,6 @@ static bool parse_decl_or_expr2(Cuik_Parser* parser, TokenStream* restrict s, si
                 }
             }
             n->decl.initial = e;
-
-            if (decl.name != NULL) {
-                if (local_symbol_count >= MAX_LOCAL_SYMBOLS) {
-                    diag_err(s, decl.loc, "local symbol count exceeds %d (got %d)", MAX_LOCAL_SYMBOLS, local_symbol_count);
-                    return false;
-                }
-
-                local_symbols[local_symbol_count++] = (Symbol){
-                    .name = decl.name,
-                    .type = decl.type,
-                    .storage_class = attr.is_typedef ? STORAGE_TYPEDEF : STORAGE_LOCAL,
-                    .loc = decl.loc,
-                    .stmt = n,
-                };
-            }
 
             if (tokens_get(s)->type == ';') {
                 tokens_next(s);
