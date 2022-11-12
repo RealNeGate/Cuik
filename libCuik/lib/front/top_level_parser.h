@@ -203,9 +203,27 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
                 }
 
                 Cuik_Type* placeholder_space = cuik_canonical_type(old_def->type);
-                if (placeholder_space->kind != KIND_PLACEHOLDER && !type_equal(cuik_canonical_type(decl.type), placeholder_space)) {
-                    diag_err(s, decl.loc, "declaration incompatible with previous declaration");
-                    diag_note(s, old_def->loc, "see here");
+                Cuik_Type* decl_type = cuik_canonical_type(decl.type);
+                if (placeholder_space->kind != KIND_PLACEHOLDER && !type_equal(decl_type, placeholder_space)) {
+                    Cuik_Type *t1 = placeholder_space, *t2 = decl_type;
+                    // only deref if both can
+                    while (t1->kind == t2->kind && t1->kind == KIND_PTR) {
+                        t1 = cuik_canonical_type(t1->ptr_to);
+                        t2 = cuik_canonical_type(t2->ptr_to);
+                    }
+
+                    bool incompat = true;
+                    if (t1->kind == t2->kind && (t1->kind == KIND_STRUCT || t2->kind == KIND_UNION)) {
+                        // if the tag names match... it's all good
+                        if (t1->record.name != NULL && t2->record.name && strcmp(t1->record.name, t2->record.name) == 0) {
+                            incompat = false;
+                        }
+                    }
+
+                    if (incompat) {
+                        diag_err(s, decl.loc, "declaration incompatible with previous declaration");
+                        diag_note(s, old_def->loc, "see here");
+                    }
                 }
 
                 if (attr.is_typedef) {
@@ -232,8 +250,6 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
             n->attr_list = parse_attributes(s, n->attr_list);
 
             if (decl.name != NULL) {
-                // diag_note(s, decl.loc, "Declarator: %s", decl.name);
-
                 // declaration endings
                 ptrdiff_t expr_start, expr_end;
                 if (tokens_get(s)->type == '=') {
@@ -267,9 +283,6 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
                     if (expr_start >= 0) {
                         sym->token_start = expr_start;
                         sym->token_end = expr_end;
-
-                        // SourceRange r = { s->list.tokens[expr_start].location, get_token_range(&s->list.tokens[expr_end]).end };
-                        // diag_note(s, r, "Body");
                     } else {
                         s->list.current = dyn_array_length(s->list.tokens) - 1;
                         return PARSE_WIT_ERRORS;
@@ -291,8 +304,7 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
                 if (expr_start >= 0) {
                     sym->token_start = expr_start;
                     sym->token_end = expr_end;
-
-                    SourceRange r = { s->list.tokens[expr_start].location, get_token_range(&s->list.tokens[expr_end]).end };
+                    // SourceRange r = { s->list.tokens[expr_start].location, get_token_range(&s->list.tokens[expr_end]).end };
                     // diag_note(s, r, "Initializer");
                 }
             }
