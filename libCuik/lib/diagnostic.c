@@ -121,26 +121,47 @@ static void print_line(TokenStream* tokens, ResolvedSourceLoc start, size_t tkn_
     fprintf(stderr, "\x1b[0m\n");
 }
 
-static void print_line_with_backtrace(TokenStream* tokens, SourceLoc loc, size_t tkn_len) {
+// end goes after start
+static ptrdiff_t source_range_difference(TokenStream* tokens, Cuik_FileLoc s, Cuik_FileLoc e) {
+    ResolvedSourceLoc l = cuikpp_find_location2(tokens, s);
+    ResolvedSourceLoc end = cuikpp_find_location2(tokens, e);
+
+    size_t tkn_len;
+    if (end.file == l.file && end.line == l.line && end.column > l.column) {
+        return end.column - l.column;
+    } else {
+        return 1;
+    }
+}
+
+static void print_line_with_backtrace(TokenStream* tokens, SourceLoc loc, SourceLoc end) {
+    // find the range of chars in this level
+    Cuik_FileLoc l;
+    size_t tkn_len;
+
+    uint32_t macro_off = loc.raw & ((1u << SourceLoc_MacroOffsetBits) - 1);
     MacroInvoke* m = cuikpp_find_macro(tokens, loc);
     if (m != NULL) {
-        uint32_t macro_off = loc.raw & ((1u << SourceLoc_MacroOffsetBits) - 1);
-        ResolvedSourceLoc l = cuikpp_find_location(tokens, m->def_site.start);
-        l.column += macro_off;
+        l = cuikpp_find_location_in_bytes(tokens, m->def_site.start);
+        l.pos += macro_off;
 
+        tkn_len = end.raw - loc.raw;
+    } else {
+        l = cuikpp_find_location_in_bytes(tokens, loc);
+        tkn_len = source_range_difference(tokens, l, cuikpp_find_location_in_bytes(tokens, end));
+    }
+
+    if (m != NULL) {
         Cuik_File* next_file = cuikpp_find_file(tokens, m->call_site);
+        print_line_with_backtrace(tokens, m->call_site, offset_source_loc(m->call_site, m->name.length));
         if (next_file->filename != l.file->filename) {
-            print_line_with_backtrace(tokens, m->call_site, 1);
             fprintf(stderr, "  expanded from %s:\n", l.file->filename);
         } else {
-            print_line_with_backtrace(tokens, m->call_site, 1);
             fprintf(stderr, "  expanded from:\n");
         }
-
-        print_line(tokens, l, tkn_len);
-    } else {
-        print_line(tokens, cuikpp_find_location(tokens, loc), tkn_len);
     }
+
+    print_line(tokens, cuikpp_find_location2(tokens, l), tkn_len);
 }
 
 static void diag(DiagType type, TokenStream* tokens, SourceRange loc, const char* fmt, va_list ap) {
@@ -177,17 +198,8 @@ static void diag(DiagType type, TokenStream* tokens, SourceRange loc, const char
         loc_end = m->call_site;
     }
 
-    // Caret preview
-    size_t tkn_len;
-    ResolvedSourceLoc end = cuikpp_find_location(tokens, loc_end);
-    if (end.file == start.file && end.line == start.line && end.column > start.column) {
-        tkn_len = end.column - start.column;
-    } else {
-        tkn_len = 1;
-    }
-
     // print_line(tokens, start, tkn_len);
-    print_line_with_backtrace(tokens, loc.start, tkn_len);
+    print_line_with_backtrace(tokens, loc.start, loc.end);
 
     {
         const char* line_start = start.line_str;

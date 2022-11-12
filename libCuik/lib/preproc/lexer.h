@@ -161,6 +161,10 @@ ptrdiff_t parse_char(size_t len, const char* str, int* output);
 uint64_t parse_int(size_t len, const char* str, Cuik_IntSuffix* out_suffix);
 TknType classify_ident(const unsigned char* restrict str, size_t len);
 
+static SourceLoc offset_source_loc(SourceLoc loc, uint32_t offset) {
+    return (SourceLoc){ loc.raw + offset };
+}
+
 static SourceLoc encode_file_loc(uint32_t file_id, uint32_t file_offset) {
     // Big files take up several file IDs
     uint32_t real_file_id = file_id + (file_offset >> SourceLoc_FilePosBits);
