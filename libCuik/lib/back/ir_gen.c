@@ -1582,13 +1582,15 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
         static thread_local const char* last_filepath;
 
         ResolvedSourceLoc a = cuikpp_find_location(&tu->tokens, s->loc.start);
-        if (a.file->filename != last_filepath) {
+        if (a.file->filename[0] != '<' && a.file->filename != last_filepath) {
             last_filepath = a.file->filename;
             last_file_id = tb_file_create(tu->ir_mod, a.file->filename);
         }
 
         insert_label(func);
-        tb_inst_loc(func, last_file_id, a.line);
+        if (last_filepath[0] != '<') {
+            tb_inst_loc(func, last_file_id, a.line);
+        }
     } else {
         insert_label(func);
     }
@@ -1621,7 +1623,6 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
             size_t count = s->compound.kids_count;
 
             for (size_t i = 0; i < count; i++) {
-                insert_label(func);
                 irgen_stmt(tu, func, kids[i]);
             }
             break;
@@ -1921,8 +1922,8 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
             TB_DataType dt = tb_function_get_node(func, key)->dt;
 
             tb_inst_switch(func, dt, key, default_label, entry_count, entries);
-            tb_inst_set_label(func, tb_basic_block_create(func));
 
+            tb_inst_set_label(func, tb_basic_block_create(func));
             irgen_stmt(tu, func, s->switch_.body);
 
             fallthrough_label(func, break_label);
