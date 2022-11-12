@@ -471,8 +471,6 @@ Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict 
 
                 Expr* e = NULL;
                 if (tokens_get(&mini_lex)->type == '{') {
-                    tokens_next(&mini_lex);
-
                     e = parse_initializer2(&parser, &mini_lex, CUIK_QUAL_TYPE_NULL);
                 } else {
                     e = parse_assignment(&parser, &mini_lex);
