@@ -45,6 +45,7 @@ typedef enum Cuik_System {
     CUIK_SYSTEM_MACOS,
     CUIK_SYSTEM_LINUX,
     CUIK_SYSTEM_ANDROID,
+    CUIK_SYSTEM_WEB,
 } Cuik_System;
 
 typedef enum Cuik_Environment {
@@ -63,6 +64,7 @@ typedef struct Cuik_Target Cuik_Target;
 // where XXX is arch, YYY is system, ZZZ is environment
 //
 Cuik_Target* cuik_target_x64(Cuik_System system, Cuik_Environment env);
+Cuik_Target* cuik_target_wasm(Cuik_System system, Cuik_Environment env);
 void cuik_free_target(Cuik_Target* target);
 
 Cuik_System cuik_get_target_system(const Cuik_Target* t);

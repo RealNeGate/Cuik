@@ -97,9 +97,10 @@ static void initialize_targets(void) {
     target_options = dyn_array_create(TargetOption);
 
     #define M(a, b, c, d) dyn_array_put(target_options, (TargetOption){ a, b, c, d })
-    M("x64_windows_msvc", cuik_target_x64, CUIK_SYSTEM_WINDOWS, CUIK_ENV_MSVC);
-    M("x64_macos_gnu",    cuik_target_x64, CUIK_SYSTEM_MACOS,   CUIK_ENV_GNU);
-    M("x64_linux_gnu",    cuik_target_x64, CUIK_SYSTEM_LINUX,   CUIK_ENV_GNU);
+    M("x64_windows_msvc", cuik_target_x64,  CUIK_SYSTEM_WINDOWS, CUIK_ENV_MSVC);
+    M("x64_macos_gnu",    cuik_target_x64,  CUIK_SYSTEM_MACOS,   CUIK_ENV_GNU);
+    M("x64_linux_gnu",    cuik_target_x64,  CUIK_SYSTEM_LINUX,   CUIK_ENV_GNU);
+    M("wasm32",           cuik_target_wasm, CUIK_SYSTEM_WEB,     CUIK_ENV_GNU);
 }
 
 static void initialize_opt_passes(void) {

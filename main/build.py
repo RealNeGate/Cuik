@@ -13,7 +13,7 @@ args = parser.parse_args()
 #######################################
 # Handle dependencies
 #######################################
-tb_args = ['python', 'build.py', 'x64', 'aarch64']
+tb_args = ['python', 'build.py', 'x64', 'aarch64', 'wasm']
 libcuik_args = ['python', 'build.py', '--usetb']
 
 if args.opt:
