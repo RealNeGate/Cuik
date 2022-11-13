@@ -27,9 +27,15 @@ static LONG WINAPI unhandled_exception_handler(PEXCEPTION_POINTERS exception_ptr
 
     printf("\nCrash dump:\n");
     for (size_t i = 0; i < frames; i++) {
-        SymFromAddr(process, (DWORD64)stack[i], 0, symbol);
+        SymFromAddr(process, (DWORD64) stack[i], 0, symbol);
 
-        printf("    %-40s - 0x%llX\n", symbol->Name, symbol->Address);
+        DWORD disp;
+        IMAGEHLP_LINE64 line;
+        if (SymGetLineFromAddr64(process, (DWORD64) stack[i], &disp, &line)) {
+            printf("    %-40s - 0x%llX - %s:%lu%+ld\n", symbol->Name, symbol->Address, line.FileName, line.LineNumber, disp);
+        } else {
+            printf("    %-40s - 0x%llX\n", symbol->Name, symbol->Address);
+        }
     }
 
     free(symbol);
