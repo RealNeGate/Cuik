@@ -490,10 +490,12 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                     tokens_next(s);
 
                     type = name ? find_tag(&parser->globals, (char*)name) : 0;
-                    if (type && type->is_complete) {
+                    if (type) {
                         // can't re-complete a struct
-                        diag_warn(s, record_loc, "struct was declared somewhere else");
-                        diag_note(s, type->loc, "see here");
+                        if (type->is_complete) {
+                            diag_warn(s, record_loc, "struct was declared somewhere else");
+                            diag_note(s, type->loc, "see here");
+                        }
                     } else {
                         type = cuik__new_record(&parser->types, is_union);
                         type->is_complete = false;

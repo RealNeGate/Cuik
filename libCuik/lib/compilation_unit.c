@@ -102,18 +102,21 @@ void cuik_internal_link_compilation_unit(CompilationUnit* restrict cu, void* mod
                     nl_strmap_put_cstr(cu->export_table, s->decl.name, s);
                 }
 
-                Cuik_Type* type = cuik_canonical_type(s->decl.type);
-                bool is_external_sym = (type->kind == KIND_FUNC && s->decl.initial_as_stmt == NULL);
-
                 #ifdef CUIK_USE_TB
-                if (s->decl.attrs.is_extern && is_external_sym && mod != NULL) {
-                    // if we have a TB module, fill it up with declarations
-                    if (s->decl.attrs.is_tls && !atomic_flag_test_and_set(&irgen_defined_tls_index)) {
-                        tb_module_set_tls_index(tu->ir_mod, (TB_Symbol*) tb_extern_create(tu->ir_mod, "_tls_index", TB_EXTERNAL_SO_LOCAL));
-                    }
+                if (s->decl.attrs.is_used && !s->decl.attrs.is_typedef) {
+                    Cuik_Type* type = cuik_canonical_type(s->decl.type);
+                    bool is_external_sym = (type->kind == KIND_FUNC && s->decl.initial_as_stmt == NULL);
+                    if (s->decl.attrs.is_extern) is_external_sym = true;
 
-                    TB_Linkage linkage = s->decl.attrs.is_static ? TB_LINKAGE_PRIVATE : TB_LINKAGE_PUBLIC;
-                    s->backing.g = tb_global_create(tu->ir_mod, name, s->decl.attrs.is_tls ? TB_STORAGE_TLS : TB_STORAGE_DATA, linkage);
+                    if (!is_external_sym && mod != NULL) {
+                        // if we have a TB module, fill it up with declarations
+                        if (s->decl.attrs.is_tls && !atomic_flag_test_and_set(&irgen_defined_tls_index)) {
+                            tb_module_set_tls_index(tu->ir_mod, (TB_Symbol*) tb_extern_create(tu->ir_mod, "_tls_index", TB_EXTERNAL_SO_LOCAL));
+                        }
+
+                        TB_Linkage linkage = s->decl.attrs.is_static ? TB_LINKAGE_PRIVATE : TB_LINKAGE_PUBLIC;
+                        s->backing.g = tb_global_create(tu->ir_mod, name, s->decl.attrs.is_tls ? TB_STORAGE_TLS : TB_STORAGE_DATA, linkage);
+                    }
                 }
                 #endif
             }

@@ -93,6 +93,7 @@ static InitNode* parse_initializer_member2(Cuik_Parser* parser, TokenStream* res
             } else {
                 InitNode* n = make_init_node(s, INIT_ARRAY);
                 current->kid = n;
+                current->kids_count++;
                 current = n;
             }
             current->mode = INIT_ARRAY, current->start = start, current->count = count;
@@ -113,6 +114,7 @@ static InitNode* parse_initializer_member2(Cuik_Parser* parser, TokenStream* res
             } else {
                 InitNode* n = make_init_node(s, INIT_MEMBER);
                 current->kid = n;
+                current->kids_count++;
                 current = n;
             }
             current->member_name = name;

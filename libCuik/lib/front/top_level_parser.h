@@ -217,6 +217,10 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
                         // if the tag names match... it's all good
                         if (t1->record.name != NULL && t2->record.name && strcmp(t1->record.name, t2->record.name) == 0) {
                             incompat = false;
+
+                            if (decl_type->size == 0 && placeholder_space->size != 0) {
+                                decl.type = old_def->type;
+                            }
                         }
                     }
 

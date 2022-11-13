@@ -21,21 +21,21 @@ Cuik_Type cuik__builtin_double = { KIND_DOUBLE, 8, 8, .is_complete = true };
 
 Cuik_Type builtin_types[] = {
     // crap
-    [TYPE_VOID] = {KIND_VOID, 0, 0},
-    [TYPE_BOOL] = {KIND_BOOL, 1, 1},
+    [TYPE_VOID] = {KIND_VOID, 0, 0, .is_complete = true},
+    [TYPE_BOOL] = {KIND_BOOL, 1, 1, .is_complete = true},
     // signed
-    [TYPE_CHAR] = {KIND_CHAR, 1, 1},
-    [TYPE_SHORT] = {KIND_SHORT, 2, 2},
-    [TYPE_INT] = {KIND_INT, 4, 4},
-    [TYPE_LONG] = {KIND_LONG, 8, 8},
+    [TYPE_CHAR] = {KIND_CHAR, 1, 1, .is_complete = true},
+    [TYPE_SHORT] = {KIND_SHORT, 2, 2, .is_complete = true},
+    [TYPE_INT] = {KIND_INT, 4, 4, .is_complete = true},
+    [TYPE_LONG] = {KIND_LONG, 8, 8, .is_complete = true},
     // unsigned
-    [TYPE_UCHAR] = {KIND_CHAR, 1, 1, .is_unsigned = true},
-    [TYPE_USHORT] = {KIND_SHORT, 2, 2, .is_unsigned = true},
-    [TYPE_UINT] = {KIND_INT, 4, 4, .is_unsigned = true},
-    [TYPE_ULONG] = {KIND_LONG, 8, 8, .is_unsigned = true},
+    [TYPE_UCHAR] = {KIND_CHAR, 1, 1, .is_unsigned = true, .is_complete = true},
+    [TYPE_USHORT] = {KIND_SHORT, 2, 2, .is_unsigned = true, .is_complete = true},
+    [TYPE_UINT] = {KIND_INT, 4, 4, .is_unsigned = true, .is_complete = true},
+    [TYPE_ULONG] = {KIND_LONG, 8, 8, .is_unsigned = true, .is_complete = true},
     // floats
-    [TYPE_FLOAT] = {KIND_FLOAT, 4, 4},
-    [TYPE_DOUBLE] = {KIND_DOUBLE, 8, 8},
+    [TYPE_FLOAT] = {KIND_FLOAT, 4, 4, .is_complete = true},
+    [TYPE_DOUBLE] = {KIND_DOUBLE, 8, 8, .is_complete = true},
 };
 
 Cuik_TypeTable init_type_table(void) {

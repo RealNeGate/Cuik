@@ -99,7 +99,9 @@ bool type_compatible(TranslationUnit* tu, Cuik_Type* src, Cuik_Type* dst, Expr* 
             if (a_expr->op == EXPR_INT && a_expr->int_num.num == 0) {
                 return true;
             }
-        } else if (cuik_type_is_float(src) && cuik_type_is_float(dst)) {
+        } else if (cuik_type_is_float(src) && cuik_type_is_integer(dst)) {
+            return true;
+        } else if (cuik_type_is_integer(src) && cuik_type_is_float(dst)) {
             return true;
         } else if (cuik_type_is_scalar(src) && cuik_type_is_bool(dst)) {
             return true;
@@ -124,8 +126,10 @@ bool type_compatible(TranslationUnit* tu, Cuik_Type* src, Cuik_Type* dst, Expr* 
         return type_equal(src, dst);
     } else if (src->kind == KIND_PTR) {
         // get base types
-        while (src->kind == KIND_PTR) src = cuik_canonical_type(src->ptr_to);
-        while (dst->kind == KIND_PTR) dst = cuik_canonical_type(dst->ptr_to);
+        while (src->kind == KIND_PTR && dst->kind == KIND_PTR) {
+            src = cuik_canonical_type(src->ptr_to);
+            dst = cuik_canonical_type(dst->ptr_to);
+        }
 
         // void -> T is fine
         if (src->kind == KIND_VOID) {
@@ -629,12 +633,13 @@ Member* sema_traverse_members(TranslationUnit* tu, Cuik_Type* record_type, Atom 
 
 Member* sema_resolve_member_access(TranslationUnit* tu, Expr* restrict e, uint32_t* out_offset) {
     bool is_arrow = (e->op == EXPR_ARROW);
+    static int ticker = 0;
     Cuik_Type* base_type = sema_expr(tu, e->dot_arrow.base);
 
     Cuik_Type* record_type = NULL;
     if (is_arrow) {
         if (base_type->kind != KIND_PTR && base_type->kind != KIND_ARRAY) {
-            diag_err(&tu->tokens, e->loc, "Cannot do arrow operator on non-pointer type.");
+            diag_err(&tu->tokens, e->dot_arrow.base->loc, "Cannot do arrow operator on non-pointer type.");
             return NULL;
         }
 
@@ -655,8 +660,8 @@ Member* sema_resolve_member_access(TranslationUnit* tu, Expr* restrict e, uint32
 
     if (record_type->kind != KIND_STRUCT && record_type->kind != KIND_UNION) {
         type_as_string(sizeof(temp_string0), temp_string0, record_type);
-        REPORT_EXPR(ERROR, e, "Cannot get the member of a non-record type (%s)", temp_string0);
-        REPORT(INFO, record_type->loc.start, "Record found here:");
+        diag_err(&tu->tokens, e->loc, "Cannot get the member of a non-record type (%s)", temp_string0);
+        diag_note(&tu->tokens, record_type->loc, "see record here");
         return NULL;
     }
 
@@ -664,7 +669,8 @@ Member* sema_resolve_member_access(TranslationUnit* tu, Expr* restrict e, uint32
         type_layout(tu, record_type, true);
 
         if (record_type->size == 0) {
-            REPORT_EXPR(ERROR, e, "Cannot access members in incomplete type");
+            diag_err(&tu->tokens, e->loc, "Cannot access members in incomplete type");
+            diag_note(&tu->tokens, record_type->loc, "see here");
             return NULL;
         }
     }
@@ -677,7 +683,7 @@ Member* sema_resolve_member_access(TranslationUnit* tu, Expr* restrict e, uint32
     }
 
     type_as_string(sizeof(temp_string0), temp_string0, record_type);
-    REPORT_EXPR(ERROR, e, "Could not find member called '%s' for type '%s'", e->dot_arrow.name, temp_string0);
+    diag_err(&tu->tokens, e->loc, "Could not find member called '%s' for type '%s'", e->dot_arrow.name, temp_string0);
     return NULL;
 }
 
