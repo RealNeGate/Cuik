@@ -1,6 +1,13 @@
+#include <stdio.h>
+
 #define NULL ((void*)0)
 #warning "Hello"
 #define FOO(a, b) (a + b)
+
+int main(void) {
+    printf("%d\n", foo().b);
+    return 0;
+}
 
 T* da_global;
 int I = 16;
@@ -17,7 +24,7 @@ struct Foo foo() {
     return f;
 }
 
-T bar(T a, T b);
+T bar(T a, T b) { return a * b; }
 
 struct Foo {
     T a, b;
@@ -31,4 +38,5 @@ struct Baz {
 static_assert(sizeof(T) != 2, "Wack");
 static_assert(sizeof(T) != 8, "Woah");
 
+int zzz = 15;
 typedef int T;

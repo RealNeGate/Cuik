@@ -65,7 +65,7 @@ static Arg get_cli_arg(int* index, int argc, char** argv) {
                         } else {
                             if (argv[i][long_name_len + 3] == 0) {
                                 fprintf(stderr, "error: argument for --%s is empty\n", long_name);
-                                exit(1);
+                                exit_or_hook(1);
                             }
 
                             return (Arg){ arg_descs[j].type, argv[i] + long_name_len + 3 };

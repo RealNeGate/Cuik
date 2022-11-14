@@ -486,8 +486,8 @@ Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
                 assert(ctx->stack_ptr > 1);
                 CPPStackSlot* restrict prev_slot = &ctx->stack[ctx->stack_ptr - 2];
 
-                // int loc = tokens_get_location_line(&prev_slot->tokens);
-                // fprintf(stderr, "error %s:%d: Could not find file! %s\n", prev_slot->tokens.filepath, loc, slot->filepath);
+                SourceRange loc = get_token_range(&prev_slot->tokens.tokens[prev_slot->tokens.current]);
+                diag_err(&ctx->tokens, loc, "could not find file: %s", slot->filepath);
                 return CUIKPP_ERROR;
             }
 
