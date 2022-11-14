@@ -598,7 +598,6 @@ static void irgen(void) {
             #if CUIK_ALLOW_THREADS
             size_t task_capacity = 0;
             FOR_EACH_TU(tu, &compilation_unit) {
-                cuikcg_set_debug_info(tu, args_debug_info ? 1 : 0);
                 if (cuik_get_entrypoint_status(tu) == CUIK_ENTRYPOINT_WINMAIN) {
                     subsystem_windows = true;
                 }
@@ -645,7 +644,6 @@ static void irgen(void) {
             // free(tasks);
         } else {
             FOR_EACH_TU(tu, &compilation_unit) {
-                cuikcg_set_debug_info(tu, args_debug_info ? 1 : 0);
                 if (cuik_get_entrypoint_status(tu) == CUIK_ENTRYPOINT_WINMAIN) {
                     subsystem_windows = true;
                 }
@@ -908,7 +906,7 @@ static int run_compiler(threadpool_t* thread_pool, bool destroy_cu_after_ir) {
 
     TIMESTAMP("Internal link");
     CUIK_TIMED_BLOCK("internal link") {
-        cuik_internal_link_compilation_unit(&compilation_unit, mod);
+        cuik_internal_link_compilation_unit(&compilation_unit, mod, args_debug_info);
     }
 
     if (files_with_errors > 0) {

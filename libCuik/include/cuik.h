@@ -102,10 +102,15 @@ void cuik_add_to_compilation_unit(CompilationUnit* restrict cu, TranslationUnit*
 void cuik_destroy_compilation_unit(CompilationUnit* restrict cu);
 size_t cuik_num_of_translation_units_in_compilation_unit(CompilationUnit* restrict cu);
 
+// currently there's only two levels:
+//   0 no debug info
+//   1 some debug info
+//
+// we have planned a mode to treat larger macros as inline sites
 #if CUIK_USE_TB
-void cuik_internal_link_compilation_unit(CompilationUnit* restrict cu, TB_Module* mod);
+void cuik_internal_link_compilation_unit(CompilationUnit* restrict cu, TB_Module* mod, int debug_info_level);
 #else
-void cuik_internal_link_compilation_unit(CompilationUnit* restrict cu, void* mod);
+void cuik_internal_link_compilation_unit(CompilationUnit* restrict cu, void* mod, int debug_info_level);
 #endif
 
 #include "cuik_perf.h"

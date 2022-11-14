@@ -2016,8 +2016,4 @@ TB_Module* cuik_get_tb_module(TranslationUnit* restrict tu) {
     return tu->ir_mod;
 }
 
-void cuikcg_set_debug_info(TranslationUnit* restrict tu, int level) {
-    tu->has_tb_debug_info = level ? 1 : 0;
-}
-
 #endif /* CUIK_USE_TB */
