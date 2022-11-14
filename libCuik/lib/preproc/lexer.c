@@ -430,18 +430,24 @@ Token lexer_read(Lexer* restrict l) {
         // join backslash-newlines
         size_t length = (next_token_bound - start);
         for (size_t i = 0; i < length; i++) {
-            if (start[i] == '\\' && start[i + 1] == '\n') {
-                memmove(start + i, start + i + 2, length - (i + 2));
-                length -= 2, i -= 1;
+            if (start[i] == '\\' && (start[i + 1] == '\r' || start[i + 1] == '\n')) {
+                size_t deletion_len = (start[i + 1] + start[i + 2] == '\r' + '\n') ? 3 : 2;
+
+                memmove(start + i, start + i + deletion_len, length - (i + deletion_len));
+                length -= deletion_len, i -= 1;
             }
         }
 
         // fill excess with spaces
         size_t space_count = (next_token_bound - start) - length;
         memset(start + length, ' ', space_count);
-        current = start + length;
-    }
 
+        // re-read token
+        Lexer mini = { .start = start, .current = start };
+        lexer_read(&mini);
+
+        current = mini.current;
+    }
     l->current = current;
 
     // encode token

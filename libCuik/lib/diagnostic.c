@@ -231,6 +231,10 @@ void diag_header(DiagType type, const char* fmt, ...) {
     va_end(ap);
 }
 
+void cuikdg_tally_error(TokenStream* s) {
+    atomic_fetch_add((atomic_int*) s->error_tally, 1);
+}
+
 int cuikdg_error_count(TokenStream* s) {
     return atomic_load((atomic_int*) s->error_tally);
 }
@@ -282,10 +286,10 @@ void diag_writer_highlight(DiagWriter* writer, SourceRange loc) {
         writer->line_end = line_end;
         writer->dist_from_line_start = line_start - a.line_str;
 
-        printf("%s:%d\n", a.file->filename, a.line);
-        printf("         ");
+        printf("  %s:%d\n", a.file->filename, a.line);
+        printf("    ");
         printf("%.*s\n", (int) (line_end - line_start), line_start);
-        printf("         ");
+        printf("    ");
     }
 
     assert(b.column >= a.column);

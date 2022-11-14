@@ -988,10 +988,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
             size_t ir_arg_count = real_arg_count;
             for (size_t i = arg_count; i--;) {
                 ir_arg_count -= tu->target->deduce_parameter_usage(tu, args[i]->type);
-
-                tu->target->pass_parameter(
-                    tu, func, args[i], i >= varargs_cutoff, &ir_args[ir_arg_count]
-                );
+                tu->target->pass_parameter(tu, func, args[i], i >= varargs_cutoff, &ir_args[ir_arg_count]);
             }
             assert(ir_arg_count == (is_aggregate_return ? 1 : 0));
 

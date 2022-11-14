@@ -909,7 +909,7 @@ static int run_compiler(threadpool_t* thread_pool, bool destroy_cu_after_ir) {
         cuik_internal_link_compilation_unit(&compilation_unit, mod, args_debug_info);
     }
 
-    if (files_with_errors > 0) {
+    if (files_with_errors > 0 && dyn_array_length(input_files) > 1) {
         fprintf(stderr, "%d files with errors!\n", files_with_errors);
         return 1;
     }

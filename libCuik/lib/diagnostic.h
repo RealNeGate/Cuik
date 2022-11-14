@@ -51,6 +51,7 @@ typedef enum Cuik_ReportLevel {
 
 void cuikdg_init(void);
 int cuikdg_error_count(TokenStream* s);
+void cuikdg_tally_error(TokenStream* s);
 
 ////////////////////////////////
 // Complex diagnostic builder

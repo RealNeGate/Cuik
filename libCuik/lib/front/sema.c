@@ -884,7 +884,7 @@ Cuik_QualType cuik__sema_expr(TranslationUnit* tu, Expr* restrict e) {
                 if (old_array_count != 0) {
                     // verify that everything fits correctly
                     if (old_array_count < new_array_count) {
-                        REPORT_EXPR(ERROR, e, "Array cannot fit into declaration (needs %d, got %d)", old_array_count, new_array_count);
+                        diag_err(&tu->tokens, e->loc, "Array cannot fit into declaration (needs %d, got %d)", old_array_count, new_array_count);
                     }
                 } else {
                     t = cuik__new_array(&tu->types, t->array_of, new_array_count);
@@ -1616,6 +1616,7 @@ static void sema_top_level(TranslationUnit* tu, Stmt* restrict s) {
 
                                     // preserve qualifiers
                                     s->decl.type = cuik_make_qual_type(expr_type, quals);
+                                    type = cuik_canonical_type(s->decl.type);
                                 }
                             } else {
                                 diag_err(&tu->tokens, s->loc, "array initializer type mismatch (got '%s', expected '%s')", cuik_canonical_type(expr_type->array_of), cuik_canonical_type(type->array_of));

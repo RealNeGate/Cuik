@@ -534,6 +534,7 @@ Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict 
     // output accumulated diagnostics
     nl_strmap_for(i, parser.unresolved_symbols) {
         Diag_UnresolvedSymbol* loc = parser.unresolved_symbols[i];
+        cuikdg_tally_error(s);
         diag_header(DIAG_ERR, "could not resolve symbol: %s", loc->name);
 
         DiagWriter d = diag_writer(s);
@@ -550,11 +551,23 @@ Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict 
         printf("\n");
     }
     nl_strmap_free(parser.unresolved_symbols);
+    THROW_IF_ERROR();
 
-    if (find_global_symbol(&parser.globals, "WinMain") != NULL) {
-        parser.tu->entrypoint_status = CUIK_ENTRYPOINT_WINMAIN;
-    } else if (find_global_symbol(&parser.globals, "main") != NULL) {
-        parser.tu->entrypoint_status = CUIK_ENTRYPOINT_MAIN;
+    {
+        Symbol* sym = find_global_symbol(&parser.globals, "WinMain");
+        if (sym != NULL && sym->storage_class == STORAGE_FUNC && sym->token_start != 0) {
+            parser.tu->entrypoint_status = CUIK_ENTRYPOINT_WINMAIN;
+        }
+
+        sym = find_global_symbol(&parser.globals, "wmain");
+        if (sym != NULL && sym->storage_class == STORAGE_FUNC && sym->token_start != 0) {
+            parser.tu->entrypoint_status = CUIK_ENTRYPOINT_MAIN;
+        }
+
+        sym = find_global_symbol(&parser.globals, "main");
+        if (sym != NULL && sym->storage_class == STORAGE_FUNC && sym->token_start != 0) {
+            parser.tu->entrypoint_status = CUIK_ENTRYPOINT_MAIN;
+        }
     }
 
     return (Cuik_ParseResult){ .tu = parser.tu, .imports = parser.import_libs };
