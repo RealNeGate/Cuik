@@ -6,6 +6,8 @@
 
 The plan is a modern C11 compiler which can mostly work with Clang, GCC, and MSVC while also introducing some new ideas.
 
+[Discord?](https://discord.gg/UFuHChZswc)
+
 ## Why write a C compiler?
 * To improve the compile times on debug builds without sacrificing features like I would with TCC.
 * To test out my upcoming (and currently private) compiler backend.
