@@ -407,11 +407,15 @@ static void preproc_file(void* arg) {
 }
 
 static void compile_file(void* arg) {
-    Cuik_ParseResult result = cuikparse_run(CUIK_VERSION_C23, cuikpp_get_token_stream(arg), target_desc);
-    if (result.error_count > 0) {
-        printf("Failed to parse with %d errors...\n", result.error_count);
-        files_with_errors++;
-        return;
+    Cuik_ParseResult result;
+    TokenStream* tokens = cuikpp_get_token_stream(arg);
+    CUIK_TIMED_BLOCK("parse: %s\n", cuikpp_get_main_file(tokens)) {
+        result = cuikparse_run(CUIK_VERSION_C23, tokens, target_desc);
+        if (result.error_count > 0) {
+            printf("Failed to parse with %d errors...\n", result.error_count);
+            files_with_errors++;
+            return;
+        }
     }
 
     // #pragma comment(lib, "foo.lib")
@@ -594,6 +598,7 @@ static void irgen(void) {
             #if CUIK_ALLOW_THREADS
             size_t task_capacity = 0;
             FOR_EACH_TU(tu, &compilation_unit) {
+                cuikcg_set_debug_info(tu, args_debug_info ? 1 : 0);
                 if (cuik_get_entrypoint_status(tu) == CUIK_ENTRYPOINT_WINMAIN) {
                     subsystem_windows = true;
                 }
@@ -640,6 +645,7 @@ static void irgen(void) {
             // free(tasks);
         } else {
             FOR_EACH_TU(tu, &compilation_unit) {
+                cuikcg_set_debug_info(tu, args_debug_info ? 1 : 0);
                 if (cuik_get_entrypoint_status(tu) == CUIK_ENTRYPOINT_WINMAIN) {
                     subsystem_windows = true;
                 }
@@ -697,7 +703,8 @@ static void codegen(void) {
     }
 }
 
-static void run_as_jit(void) {
+// TODO(NeGate): finish implementing this stuff
+/* static void run_as_jit(void) {
     #ifdef _WIN32
     dyn_array_put(input_libraries, "kernel32.lib");
 
@@ -762,7 +769,7 @@ static void run_as_jit(void) {
     fprintf(stderr, "error: JIT not supported yet!\n");
     abort();
     #endif
-}
+} */
 
 static bool export_output(void) {
     // TODO(NeGate): do a smarter system (just default to whatever the different platforms like)
@@ -951,15 +958,27 @@ static int run_compiler(threadpool_t* thread_pool, bool destroy_cu_after_ir) {
         }
     }
 
+    if (!export_output()) {
+        return 1;
+    }
+
+    ////////////////////////////////
+    // Running executable
+    ////////////////////////////////
     if (args_run) {
-        // printf("JIT compiling...\n");
-        fprintf(stderr, "error: JIT not supported yet!\n");
-        abort();
-        // run_as_jit();
-    } else {
-        if (!export_output()) {
-            return 1;
+        char* exe = strdup(output_name);
+
+        #ifdef _WIN32
+        for (char* s = exe; *s; s++) {
+            if (*s == '/') *s = '\\';
         }
+        #endif
+
+        printf("\n\nRunning: %s...\n", exe);
+        int exit_code = system(exe);
+
+        printf("Exit code: %d\n", exit_code);
+        if (exit_code) return exit_code;
     }
 
     cleanup_tb:
@@ -973,6 +992,7 @@ int main(int argc, char** argv) {
     find_system_deps();
 
     mark_timestamp(NULL);
+    initialize_targets();
 
     program_name = argv[0];
     include_directories = dyn_array_create(const char*);
@@ -1160,7 +1180,6 @@ int main(int argc, char** argv) {
     }
     #endif
 
-    initialize_targets();
     initialize_opt_passes();
 
     if (args_pprepl) {
@@ -1232,25 +1251,6 @@ int main(int argc, char** argv) {
     }
 
     if (args_time) cuikperf_stop();
-
-    ////////////////////////////////
-    // Running executable
-    ////////////////////////////////
-    /*if (args_run) {
-        char* exe = strdup(output_name);
-
-        #ifdef _WIN32
-        for (char* s = exe; *s; s++) {
-            if (*s == '/') *s = '\\';
-        }
-        #endif
-
-        printf("\n\nRunning: %s...\n", exe);
-        int exit_code = system(exe);
-        printf("Exit code: %d\n", exit_code);
-
-        return exit_code;
-    }*/
 
     return 0;
 }

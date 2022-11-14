@@ -551,6 +551,12 @@ Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict 
     }
     nl_strmap_free(parser.unresolved_symbols);
 
+    if (find_global_symbol(&parser.globals, "WinMain") != NULL) {
+        parser.tu->entrypoint_status = CUIK_ENTRYPOINT_WINMAIN;
+    } else if (find_global_symbol(&parser.globals, "main") != NULL) {
+        parser.tu->entrypoint_status = CUIK_ENTRYPOINT_MAIN;
+    }
+
     return (Cuik_ParseResult){ .tu = parser.tu, .imports = parser.import_libs };
 }
 #undef THROW_IF_ERROR

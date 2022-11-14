@@ -27,8 +27,6 @@ typedef enum Cuik_Entrypoint {
 
     CUIK_ENTRYPOINT_MAIN,
     CUIK_ENTRYPOINT_WINMAIN,
-
-    CUIK_ENTRYPOINT_CUSTOM
 } Cuik_Entrypoint;
 
 // Standard parsing
@@ -44,8 +42,8 @@ typedef struct Cuik_ImportRequest {
 typedef struct Cuik_ParseResult {
     int error_count;
 
-    TranslationUnit* tu; // if error_count == 0, then tu is a valid TU
-    Cuik_ImportRequest* imports; // linked list of imported libs
+    TranslationUnit* tu;         // if error_count == 0, then tu is a valid TU.
+    Cuik_ImportRequest* imports; // linked list of imported libs.
 } Cuik_ParseResult;
 
 Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict s, const Cuik_Target* target);

@@ -24,7 +24,7 @@ X(ARG_NOLIBC,  "nostdlib", NULL,      false, "don't include and link against the
 X(ARG_LIB,     "l",        NULL,      false, "add library name to the linking")
 X(ARG_BASED,   "based",    NULL,      false, "use the TB linker (EXPERIMENTAL)")
 // misc
-X(ARG_TARGET,  "target",   NULL,      false, "change the target system and arch")
+X(ARG_TARGET,  "target",   NULL,      true,  "change the target system and arch")
 X(ARG_THREADS, "threads",  NULL,      false, "enabled multithreaded compilation")
 X(ARG_TIME,    "T",        NULL,      false, "profile the compile times")
 X(ARG_THINK,   "think",    NULL,      false, "aids in thinking about serious problems")

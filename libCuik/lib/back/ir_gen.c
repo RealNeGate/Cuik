@@ -1658,7 +1658,7 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
             }
 
             TB_Reg addr = tb_inst_local(func, size, align);
-            if (tu->has_tb_debug_info) {
+            if (tu->has_tb_debug_info && s->decl.name != NULL) {
                 tb_function_attrib_variable(func, addr, s->decl.name, cuik__as_tb_debug_type(tu->ir_mod, type));
             }
 
@@ -2015,4 +2015,9 @@ TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, Stmt* re
 TB_Module* cuik_get_tb_module(TranslationUnit* restrict tu) {
     return tu->ir_mod;
 }
+
+void cuikcg_set_debug_info(TranslationUnit* restrict tu, int level) {
+    tu->has_tb_debug_info = level ? 1 : 0;
+}
+
 #endif /* CUIK_USE_TB */

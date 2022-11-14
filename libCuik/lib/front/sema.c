@@ -99,11 +99,7 @@ bool type_compatible(TranslationUnit* tu, Cuik_Type* src, Cuik_Type* dst, Expr* 
             if (a_expr->op == EXPR_INT && a_expr->int_num.num == 0) {
                 return true;
             }
-        } else if (cuik_type_is_float(src) && cuik_type_is_integer(dst)) {
-            return true;
-        } else if (cuik_type_is_integer(src) && cuik_type_is_float(dst)) {
-            return true;
-        } else if (cuik_type_is_scalar(src) && cuik_type_is_bool(dst)) {
+        } else if (cuik_type_is_scalar(src) && cuik_type_is_scalar(dst)) {
             return true;
         } else if (src->kind == KIND_FUNC && dst->kind == KIND_PTR) {
             Cuik_Type* dst_ptr_to = cuik_canonical_type(dst->ptr_to);
