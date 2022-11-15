@@ -17,7 +17,7 @@ else:
 
 # link everything together
 ninja = open('build.ninja', 'w')
-ldflags = ""
+ldflags = " -fuse-ld=lld-link"
 
 cflags = "-g -Wall -Werror -Wno-unused-function"
 cflags += " -I ../libCuik/include -I ../tilde-backend/include"
