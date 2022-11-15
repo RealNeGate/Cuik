@@ -225,6 +225,10 @@ typedef enum {
     CUIKPP_ERROR,
 } Cuikpp_Status;
 
+static bool cuiklex_is_macro_loc(SourceLoc loc) {
+    return loc.raw & SourceLoc_IsMacro;
+}
+
 // simplifies whitespace for the lexer
 void cuiklex_canonicalize(size_t length, char* data);
 

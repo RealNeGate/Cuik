@@ -985,12 +985,20 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
                 varargs_cutoff = func_type->func.param_count;
             }
 
+            #if 0
             size_t ir_arg_count = real_arg_count;
             for (size_t i = arg_count; i--;) {
                 ir_arg_count -= tu->target->deduce_parameter_usage(tu, args[i]->type);
                 tu->target->pass_parameter(tu, func, args[i], i >= varargs_cutoff, &ir_args[ir_arg_count]);
             }
             assert(ir_arg_count == (is_aggregate_return ? 1 : 0));
+            #else
+            size_t ir_arg_count = is_aggregate_return ? 1 : 0;
+            for (size_t i = 0; i < arg_count; i++) {
+                ir_arg_count += tu->target->pass_parameter(tu, func, args[i], i >= varargs_cutoff, &ir_args[ir_arg_count]);
+            }
+            assert(ir_arg_count == real_arg_count);
+            #endif
 
             // Resolve call target
             //
@@ -1579,15 +1587,16 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
         static thread_local TB_FileID last_file_id;
         static thread_local const char* last_filepath;
 
-        ResolvedSourceLoc a = cuikpp_find_location(&tu->tokens, s->loc.start);
-        if (a.file->filename[0] != '<' && a.file->filename != last_filepath) {
-            last_filepath = a.file->filename;
-            last_file_id = tb_file_create(tu->ir_mod, a.file->filename);
-        }
-
         insert_label(func);
-        if (last_filepath[0] != '<') {
-            tb_inst_loc(func, last_file_id, a.line);
+
+        ResolvedSourceLoc loc = cuikpp_find_location(&tu->tokens, s->loc.start);
+        if (loc.file->filename[0] != '<') {
+            if (loc.file->filename != last_filepath) {
+                last_filepath = loc.file->filename;
+                last_file_id = tb_file_create(tu->ir_mod, loc.file->filename);
+            }
+
+            tb_inst_loc(func, last_file_id, loc.line);
         }
     } else {
         insert_label(func);
