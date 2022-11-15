@@ -1,5 +1,6 @@
 #include <cuik.h>
-#include "../common.h"
+#include <common.h>
+#include "../cstrings_are_weird.h"
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN

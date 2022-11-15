@@ -1,11 +1,16 @@
 #include <cuik.h>
-#include <cuik_ast.h>
 #include "helper.h"
 #include "cli_parser.h"
 #include "json_perf.h"
 #include "flint_perf.h"
 #include "bindgen.h"
 #include <dyn_array.h>
+
+// Microsoft's definition of strtok_s actually matches
+// strtok_r on POSIX, not strtok_s on C11... tf
+#ifdef _WIN32
+#define strtok_r(a, b, c) strtok_s(a, b, c)
+#endif
 
 #ifndef __CUIK__
 #define CUIK_ALLOW_THREADS 1
@@ -25,6 +30,12 @@ enum {
 };
 #define TIMESTAMP(x) if (args_verbose) mark_timestamp(x)
 
+#ifdef _WIN32
+#define NULL_FILEPATH "NUL"
+#else
+#define NULL_FILEPATH "/dev/null"
+#endif
+
 // compiler arguments
 static DynArray(const char*) include_directories;
 static DynArray(const char*) input_libraries;
@@ -34,6 +45,7 @@ static DynArray(const char*) input_defines;
 static DynArray(TB_Pass) da_passes;
 static const char* output_name;
 static char output_path_no_ext[FILENAME_MAX];
+static bool output_path_null;
 
 static TB_OutputFlavor flavor = TB_FLAVOR_EXECUTABLE;
 
@@ -42,8 +54,8 @@ static bool args_ast;
 static bool args_types;
 static bool args_run;
 static bool args_nocrt;
-static bool args_pploc;
-static bool args_assembly;
+static bool args_pprepl;
+static bool args_live;
 static bool args_time;
 static bool args_verbose;
 static bool args_syntax_only;
@@ -57,23 +69,39 @@ static Bindgen* args_bindgen;
 static int args_opt_level;
 
 static TB_Module* mod;
-static Cuik_FileCache* fscache;
 
 static Cuik_IThreadpool* ithread_pool;
 static CompilationUnit compilation_unit;
-static Cuik_Target target_desc;
+static Cuik_Target* target_desc;
 
-static struct {
+typedef struct TargetOption {
     const char* key;
 
-    const Cuik_ArchDesc* (*arch_fn)(void);
+    Cuik_Target* (*target)(Cuik_System, Cuik_Environment);
     Cuik_System system;
-} target_options[] = {
-    { "x64_windows", cuik_get_x64_target_desc, CUIK_SYSTEM_WINDOWS },
-    { "x64_macos",   cuik_get_x64_target_desc, CUIK_SYSTEM_MACOS   },
-    { "x64_linux",   cuik_get_x64_target_desc, CUIK_SYSTEM_LINUX   },
-};
-enum { TARGET_OPTION_COUNT = sizeof(target_options) / sizeof(target_options[0]) };
+    Cuik_Environment env;
+} TargetOption;
+static DynArray(TargetOption) target_options;
+
+#include "pp_repl.h"
+#include "live.h"
+
+static void exit_or_hook(int code) {
+    if (IsDebuggerPresent()) {
+        __debugbreak();
+    }
+    exit(code);
+}
+
+static void initialize_targets(void) {
+    target_options = dyn_array_create(TargetOption);
+
+    #define M(a, b, c, d) dyn_array_put(target_options, (TargetOption){ a, b, c, d })
+    M("x64_windows_msvc", cuik_target_x64,  CUIK_SYSTEM_WINDOWS, CUIK_ENV_MSVC);
+    M("x64_macos_gnu",    cuik_target_x64,  CUIK_SYSTEM_MACOS,   CUIK_ENV_GNU);
+    M("x64_linux_gnu",    cuik_target_x64,  CUIK_SYSTEM_LINUX,   CUIK_ENV_GNU);
+    M("wasm32",           cuik_target_wasm, CUIK_SYSTEM_WEB,     CUIK_ENV_GNU);
+}
 
 static void initialize_opt_passes(void) {
     da_passes = dyn_array_create(TB_Pass);
@@ -95,6 +123,7 @@ static void initialize_opt_passes(void) {
         dyn_array_put(da_passes, tb_opt_dead_block_elim());
         dyn_array_put(da_passes, tb_opt_subexpr_elim());
         dyn_array_put(da_passes, tb_opt_remove_pass_nodes());
+        dyn_array_put(da_passes, tb_opt_compact_dead_regs());
 
         // dyn_array_put(da_passes, tb_opt_inline());
 
@@ -141,58 +170,34 @@ static void tp_work_one_job(void* user_data) {
 }
 #endif
 
-static int count_pp_lines(TokenStream* s) {
-    const char* last_file = NULL;
-    int last_line = 0;
-
-    Token* tokens = cuik_get_tokens(s);
-    size_t count = cuik_get_token_count(s);
-
-    int line_count = 0;
-    for (size_t i = 0; i < count; i++) {
-        Token* t = &tokens[i];
-        SourceLoc* loc = &s->locations[t->location];
-
-        if (last_file != loc->line->filepath && strcmp(loc->line->filepath, "<temp>") != 0) {
-            line_count += 1;
-            last_file = loc->line->filepath;
-        }
-
-        if (last_line != loc->line->line) {
-            line_count += 1;
-            last_line = loc->line->line;
-        }
-    }
-
-    return line_count;
-}
-
-static SourceLoc* try_for_nicer_loc(TokenStream* s, SourceLoc* loc) {
-    while (loc->line->filepath[0] == '<' && loc->line->parent != 0) {
-        loc = &s->locations[loc->line->parent];
-    }
-
-    return loc;
-}
-
 static void dump_tokens(FILE* out_file, TokenStream* s) {
     const char* last_file = NULL;
     int last_line = 0;
 
-    Token* tokens = cuik_get_tokens(s);
-    size_t count = cuik_get_token_count(s);
+    Token* tokens = cuikpp_get_tokens(s);
+    size_t count = cuikpp_get_token_count(s);
 
     for (size_t i = 0; i < count; i++) {
         Token* t = &tokens[i];
-        SourceLoc* loc = try_for_nicer_loc(s, &s->locations[t->location]);
 
-        if (last_file != loc->line->filepath && strcmp(loc->line->filepath, "<temp>") != 0) {
-            char str[FILENAME_MAX];
+        /*int depth = 0;
+        SourceLoc loc = t->location;
+        MacroInvoke* m;
+        while ((m = cuikpp_find_macro(s, loc)) != NULL) {
+            loc = m->call_site;
+            depth++;
+        }
 
+        if (depth > 0 && out_file == stdout) {
+            fprintf(out_file, "\x1b[0;35m");
+        }*/
+
+        ResolvedSourceLoc r = cuikpp_find_location(s, t->location);
+        if (last_file != r.file->filename) {
             // TODO(NeGate): Kinda shitty but i just wanna duplicate
             // the backslashes to avoid them being treated as an escape
-            const char* in = (const char*)loc->line->filepath;
-            char* out = str;
+            const char* in = (const char*) r.file->filename;
+            char str[FILENAME_MAX], *out = str;
 
             while (*in) {
                 if (*in == '\\') {
@@ -205,16 +210,20 @@ static void dump_tokens(FILE* out_file, TokenStream* s) {
             }
             *out++ = '\0';
 
-            fprintf(out_file, "\n#line %d \"%s\"\t", loc->line->line, str);
-            last_file = loc->line->filepath;
+            fprintf(out_file, "\n#line %d \"%s\"\t", r.line, str);
+            last_file = r.file->filename;
         }
 
-        if (last_line != loc->line->line) {
-            fprintf(out_file, "\n/* line %3d */\t", loc->line->line);
-            last_line = loc->line->line;
+        if (last_line != r.line) {
+            fprintf(out_file, "\n/* line %3d */\t", r.line);
+            last_line = r.line;
         }
 
-        fprintf(out_file, "%.*s ", (int)(t->end - t->start), t->start);
+        fprintf(out_file, "%.*s ", (int) t->content.length, t->content.data);
+
+        /*if (depth > 0 && out_file == stdout) {
+            fprintf(out_file, "\x1b[0m");
+        }*/
     }
 }
 
@@ -250,17 +259,18 @@ static void irgen_job(void* arg) {
                 continue;
             }
 
-            TB_Function* func = NULL;
+            TB_Symbol* sym = NULL;
             const char* name = task.stmts[i]->decl.name;
             if (name == NULL) {
                 // these are untracked in the gen ir because they don't map to named IR stuff
-                func = cuik_stmt_gen_ir(task.tu, task.stmts[i]);
+                sym = cuikcg_top_level(task.tu, mod, task.stmts[i]);
             } else {
                 CUIK_TIMED_BLOCK("IrGen: %s", name) {
-                    func = cuik_stmt_gen_ir(task.tu, task.stmts[i]);
+                    sym = cuikcg_top_level(task.tu, mod, task.stmts[i]);
                 }
             }
 
+            TB_Function* func = tb_symbol_as_function(sym);
             if (func != NULL) {
                 CUIK_TIMED_BLOCK("Canonicalize: %s", name) {
                     for (size_t j = 0; j < PASS_COUNT; j++) {
@@ -313,14 +323,13 @@ static void codegen_job(void* arg) {
 }
 
 // it'll use the normal CLI crap to do so
-static Cuik_CPP* make_preprocessor(const char* filepath) {
+static Cuik_CPP* make_preprocessor(const char* filepath, bool should_finalize) {
     Cuik_CPP* cpp = malloc(sizeof(Cuik_CPP));
     CUIK_TIMED_BLOCK("cuikpp_init") {
         cuikpp_init(cpp, filepath);
     }
 
-    cuikpp_set_common_defines(cpp, &target_desc, !args_nocrt);
-
+    cuikpp_set_common_defines(cpp, target_desc, !args_nocrt);
     dyn_array_for(i, include_directories) {
         cuikpp_add_include_directory(cpp, include_directories[i]);
     }
@@ -329,9 +338,9 @@ static Cuik_CPP* make_preprocessor(const char* filepath) {
         const char* equal = strchr(input_defines[i], '=');
 
         if (equal == NULL) {
-            cuikpp_define_empty(cpp, input_defines[i]);
+            cuikpp_define_empty_cstr(cpp, input_defines[i]);
         } else {
-            cuikpp_define_slice(
+            cuikpp_define(
                 cpp,
                 // before equals
                 equal - input_defines[i], input_defines[i],
@@ -342,15 +351,16 @@ static Cuik_CPP* make_preprocessor(const char* filepath) {
     }
 
     // run the preprocessor
-    if (cuikpp_default_run(cpp, fscache) == CUIKPP_ERROR) {
-        abort();
+    if (cuikpp_default_run(cpp) == CUIKPP_ERROR) {
+        // dump_tokens(stdout, cuikpp_get_token_stream(cpp));
+        return NULL;
     }
 
     if (args_bindgen != NULL) {
         cuik_lock_compilation_unit(&compilation_unit);
 
         // include any of the files that are directly included by the original file
-        CUIKPP_FOR_FILES(it, cpp) {
+        /*CUIKPP_FOR_FILES(it, cpp) {
             if (it.file->depth == 2) {
                 args_bindgen->include(it.file->filepath);
             }
@@ -358,15 +368,17 @@ static Cuik_CPP* make_preprocessor(const char* filepath) {
 
         TokenStream* tokens = cuikpp_get_token_stream(cpp);
         CUIKPP_FOR_DEFINES(it, cpp) {
-            if (cuikpp_is_in_main_file(tokens, it.loc)) {
+            if (cuikpp_is_in_main_file(tokens, it.loc.start)) {
                 args_bindgen->define(it);
             }
-        }
+        }*/
 
         cuik_unlock_compilation_unit(&compilation_unit);
     }
 
-    cuikpp_finalize(cpp);
+    if (should_finalize) {
+        cuikpp_finalize(cpp);
+    }
     return cpp;
 }
 
@@ -375,29 +387,39 @@ static void free_preprocessor(Cuik_CPP* cpp) {
     free(cpp);
 }
 
+static _Atomic int files_with_errors;
+
+static void compile_file(void* arg);
+static void preproc_file(void* arg) {
+    const char* input = (const char*)arg;
+
+    // preproc
+    Cuik_CPP* cpp = make_preprocessor(input, true);
+    if (cpp != NULL) {
+        if (ithread_pool != NULL) {
+            CUIK_CALL(ithread_pool, submit, compile_file, cpp);
+        } else {
+            compile_file(cpp);
+        }
+    } else {
+        files_with_errors++;
+    }
+}
+
 static void compile_file(void* arg) {
-    Cuik_CPP* cpp = arg;
-
-    // parse
-    Cuik_ErrorStatus errors;
-    Cuik_TranslationUnitDesc desc = {
-        .tokens         = cuikpp_get_token_stream(cpp),
-        .errors         = &errors,
-        .ir_module      = mod,
-        .has_debug_info = args_debug_info,
-        .target         = &target_desc,
-        #if CUIK_ALLOW_THREADS
-        .thread_pool    = ithread_pool ? ithread_pool : NULL,
-        #endif
-    };
-
-    TranslationUnit* tu = cuik_parse_translation_unit(&desc);
-    if (tu == NULL) {
-        printf("Failed to parse with errors...");
-        exit(1);
+    Cuik_ParseResult result;
+    TokenStream* tokens = cuikpp_get_token_stream(arg);
+    CUIK_TIMED_BLOCK("parse: %s\n", cuikpp_get_main_file(tokens)) {
+        result = cuikparse_run(CUIK_VERSION_C23, tokens, target_desc);
+        if (result.error_count > 0) {
+            printf("Failed to parse with %d errors...\n", result.error_count);
+            files_with_errors++;
+            return;
+        }
     }
 
-    Cuik_ImportRequest* imports = cuik_translation_unit_import_requests(tu);
+    // #pragma comment(lib, "foo.lib")
+    Cuik_ImportRequest* imports = result.imports;
     if (imports != NULL) {
         cuik_lock_compilation_unit(&compilation_unit);
         for (; imports != NULL; imports = imports->next) {
@@ -406,6 +428,45 @@ static void compile_file(void* arg) {
         cuik_unlock_compilation_unit(&compilation_unit);
     }
 
+    TranslationUnit* tu = result.tu;
+    int r = cuiksema_run(tu, NULL);
+    if (r > 0) {
+        printf("Failed to type check with %d errors...\n", r);
+        files_with_errors++;
+        return;
+    }
+
+    cuik_set_translation_unit_user_data(tu, arg /* the preprocessor */);
+    cuik_add_to_compilation_unit(&compilation_unit, tu);
+
+    // parse
+    /*
+        Cuik_TranslationUnitDesc desc = {
+            .tokens         = cuikpp_get_token_stream(cpp),
+            .ir_module      = mod,
+            .has_debug_info = args_debug_info,
+            .target         = &target_desc,
+            #if CUIK_ALLOW_THREADS
+            .thread_pool    = ithread_pool ? ithread_pool : NULL,
+            #endif
+        };
+
+        TranslationUnit* tu = cuik_parse_translation_unit(&desc);
+        if (tu == NULL) {
+            printf("Failed to parse with errors...");
+            exit(1);
+        }
+
+        Cuik_ImportRequest* imports = cuik_translation_unit_import_requests(tu);
+        if (imports != NULL) {
+            cuik_lock_compilation_unit(&compilation_unit);
+            for (; imports != NULL; imports = imports->next) {
+                dyn_array_put(input_libraries, imports->lib_name);
+            }
+            cuik_unlock_compilation_unit(&compilation_unit);
+        }*/
+
+    /*
     if (args_bindgen != NULL) {
         cuik_lock_compilation_unit(&compilation_unit);
         TokenStream* tokens = cuikpp_get_token_stream(cpp);
@@ -415,7 +476,7 @@ static void compile_file(void* arg) {
         DefinedTypeEntry* defined_types = NULL;
         CUIK_FOR_TOP_LEVEL_STMT(it, tu, 1) {
             Stmt* s = *it.start;
-            if (cuikpp_is_in_main_file(tokens, s->loc)) {
+            if (cuikpp_is_in_main_file(tokens, s->loc.start)) {
                 args_bindgen->decl(tu, &defined_types, s);
             }
         }
@@ -424,20 +485,7 @@ static void compile_file(void* arg) {
     }
 
     cuik_set_translation_unit_user_data(tu, cpp);
-    cuik_add_to_compilation_unit(&compilation_unit, tu);
-}
-
-static void preproc_file(void* arg) {
-    const char* input = (const char*)arg;
-
-    // preproc
-    Cuik_CPP* cpp = make_preprocessor(input);
-
-    if (ithread_pool != NULL) {
-        CUIK_CALL(ithread_pool, submit, compile_file, cpp);
-    } else {
-        compile_file(cpp);
-    }
+    cuik_add_to_compilation_unit(&compilation_unit, tu);*/
 }
 
 static bool str_ends_with(const char* cstr, const char* postfix) {
@@ -539,6 +587,9 @@ static void append_input_path(const char* path) {
     }
 }
 
+// we'll use subsystem windows if they defined WinMain in any of the TUs
+static bool subsystem_windows = false;
+
 static void irgen(void) {
     TIMESTAMP("IR generation");
 
@@ -547,6 +598,10 @@ static void irgen(void) {
             #if CUIK_ALLOW_THREADS
             size_t task_capacity = 0;
             FOR_EACH_TU(tu, &compilation_unit) {
+                if (cuik_get_entrypoint_status(tu) == CUIK_ENTRYPOINT_WINMAIN) {
+                    subsystem_windows = true;
+                }
+
                 size_t c = cuik_num_of_top_level_stmts(tu);
                 task_capacity += (c + (IRGEN_TASK_BATCH_SIZE - 1)) / IRGEN_TASK_BATCH_SIZE;
             }
@@ -559,13 +614,18 @@ static void irgen(void) {
                 // dispose the preprocessor crap now
                 free_preprocessor((Cuik_CPP*) cuik_set_translation_unit_user_data(tu, NULL));
 
-                CUIK_FOR_TOP_LEVEL_STMT(it, tu, 8192) {
+                size_t top_level_count = cuik_num_of_top_level_stmts(tu);
+                Stmt** top_level = cuik_get_top_level_stmts(tu);
+                for (size_t i = 0; i < top_level_count; i += 8192) {
+                    size_t end = i + 8192;
+                    if (end >= top_level_count) end = top_level_count;
+
                     assert(task_count < task_capacity);
                     IRGenTask* task = &tasks[task_count++];
                     *task = (IRGenTask){
                         .tu = tu,
-                        .stmts = it.start,
-                        .count = it.count,
+                        .stmts = &top_level[i],
+                        .count = end - i,
                         .remaining = &tasks_remaining
                     };
 
@@ -584,6 +644,10 @@ static void irgen(void) {
             // free(tasks);
         } else {
             FOR_EACH_TU(tu, &compilation_unit) {
+                if (cuik_get_entrypoint_status(tu) == CUIK_ENTRYPOINT_WINMAIN) {
+                    subsystem_windows = true;
+                }
+
                 Cuik_CPP* cpp = cuik_get_translation_unit_user_data(tu);
                 free_preprocessor(cpp);
 
@@ -637,7 +701,8 @@ static void codegen(void) {
     }
 }
 
-static void run_as_jit(void) {
+// TODO(NeGate): finish implementing this stuff
+/* static void run_as_jit(void) {
     #ifdef _WIN32
     dyn_array_put(input_libraries, "kernel32.lib");
 
@@ -702,14 +767,14 @@ static void run_as_jit(void) {
     fprintf(stderr, "error: JIT not supported yet!\n");
     abort();
     #endif
-}
+} */
 
 static bool export_output(void) {
     // TODO(NeGate): do a smarter system (just default to whatever the different platforms like)
     TB_DebugFormat debug_fmt = args_debug_info ? TB_DEBUGFMT_CODEVIEW : TB_DEBUGFMT_NONE;
 
     if (!args_use_syslinker) {
-        bool is_windows = (target_desc.sys == CUIK_SYSTEM_WINDOWS);
+        bool is_windows = (cuik_get_target_system(target_desc) == CUIK_SYSTEM_WINDOWS);
         const char* extension = NULL;
         switch (flavor) {
             case TB_FLAVOR_OBJECT:     extension = (is_windows?".obj":".o");  break;
@@ -720,7 +785,11 @@ static bool export_output(void) {
         }
 
         char path[FILENAME_MAX];
-        sprintf_s(path, FILENAME_MAX, "%s%s", output_path_no_ext, extension);
+        if (output_path_null) {
+            strcpy(path, NULL_FILEPATH);
+        } else {
+            sprintf_s(path, FILENAME_MAX, "%s%s", output_path_no_ext, extension);
+        }
 
         TIMESTAMP("Export");
         CUIK_TIMED_BLOCK("Export") {
@@ -733,10 +802,14 @@ static bool export_output(void) {
         return true;
     } else {
         char obj_output_path[FILENAME_MAX];
-        sprintf_s(
-            obj_output_path, FILENAME_MAX, "%s%s", output_path_no_ext,
-            target_desc.sys == CUIK_SYSTEM_WINDOWS ? ".obj" : ".o"
-        );
+        if (output_path_null) {
+            strcpy(obj_output_path, NULL_FILEPATH);
+        } else {
+            sprintf_s(
+                obj_output_path, FILENAME_MAX, "%s%s", output_path_no_ext,
+                cuik_get_target_system(target_desc) == CUIK_SYSTEM_WINDOWS ? ".obj" : ".o"
+            );
+        }
 
         TIMESTAMP("Export object");
         CUIK_TIMED_BLOCK("Export object") {
@@ -747,7 +820,13 @@ static bool export_output(void) {
             }
         }
 
-        if (flavor == TB_FLAVOR_OBJECT) {
+        if (flavor == TB_FLAVOR_ASSEMBLY) {
+            char cmd[2048];
+            snprintf(cmd, 2048, "dumpbin %s /disasm", obj_output_path);
+            return system(cmd) == 0;
+        }
+
+        if (output_path_null || flavor == TB_FLAVOR_OBJECT) {
             return true;
         }
 
@@ -755,14 +834,6 @@ static bool export_output(void) {
         CUIK_TIMED_BLOCK("linker") {
             Cuik_Linker l;
             if (cuiklink_init(&l)) {
-                // we'll use subsystem windows if they defined WinMain in any of the TUs
-                bool subsystem_windows = false;
-                FOR_EACH_TU(tu, &compilation_unit) {
-                    if (cuik_get_entrypoint_status(tu) == CUIK_ENTRYPOINT_WINMAIN) {
-                        subsystem_windows = true;
-                    }
-                }
-
                 if (subsystem_windows) {
                     cuiklink_subsystem_windows(&l);
                 }
@@ -804,11 +875,122 @@ static bool export_output(void) {
     }
 }
 
+// returns status code
+static int run_compiler(threadpool_t* thread_pool, bool destroy_cu_after_ir) {
+    files_with_errors = 0;
+
+    ////////////////////////////////
+    // frontend work
+    ////////////////////////////////
+    TIMESTAMP("Frontend");
+    CUIK_TIMED_BLOCK("Frontend") {
+        if (ithread_pool != NULL) {
+            #if CUIK_ALLOW_THREADS
+            dyn_array_for(i, input_files) {
+                tp_submit(thread_pool, preproc_file, (void*) input_files[i]);
+            }
+
+            threadpool_wait(thread_pool);
+            #endif
+        } else {
+            dyn_array_for(i, input_files) {
+                preproc_file((void*) input_files[i]);
+            }
+        }
+    }
+
+    TB_FeatureSet features = { 0 };
+    mod = tb_module_create(
+        TB_ARCH_X86_64, (TB_System) cuik_get_target_system(target_desc), &features, false
+    );
+
+    TIMESTAMP("Internal link");
+    CUIK_TIMED_BLOCK("internal link") {
+        cuik_internal_link_compilation_unit(&compilation_unit, mod, args_debug_info);
+    }
+
+    if (files_with_errors > 0 && dyn_array_length(input_files) > 1) {
+        fprintf(stderr, "%d files with errors!\n", files_with_errors);
+        return 1;
+    }
+
+    if (args_syntax_only) return 0;
+    if (args_types) return 0;
+
+    if (args_ast) {
+        FOR_EACH_TU(tu, &compilation_unit) {
+            cuik_dump_translation_unit(stdout, tu, true);
+        }
+        return 0;
+    }
+
+    ////////////////////////////////
+    // backend work
+    ////////////////////////////////
+    CUIK_TIMED_BLOCK("Backend") {
+        irgen();
+        if (destroy_cu_after_ir) {
+            cuik_destroy_compilation_unit(&compilation_unit);
+        }
+
+        if (dyn_array_length(da_passes) != 0) {
+            // TODO: we probably want to do the fancy threading soon
+            TIMESTAMP("Optimizer");
+            CUIK_TIMED_BLOCK("Optimizer") {
+                tb_module_optimize(mod, dyn_array_length(da_passes), da_passes);
+            }
+        }
+
+        if (args_ir) {
+            TIMESTAMP("IR Printer");
+            TB_FOR_FUNCTIONS(f, mod) {
+                tb_function_print(f, tb_default_print_callback, stdout, false);
+                printf("\n\n");
+            }
+
+            goto cleanup_tb;
+        }
+
+        CUIK_TIMED_BLOCK("CodeGen") {
+            codegen();
+        }
+    }
+
+    if (!export_output()) {
+        return 1;
+    }
+
+    ////////////////////////////////
+    // Running executable
+    ////////////////////////////////
+    if (args_run) {
+        char* exe = strdup(output_name);
+
+        #ifdef _WIN32
+        for (char* s = exe; *s; s++) {
+            if (*s == '/') *s = '\\';
+        }
+        #endif
+
+        printf("\n\nRunning: %s...\n", exe);
+        int exit_code = system(exe);
+
+        printf("Exit code: %d\n", exit_code);
+        if (exit_code) return exit_code;
+    }
+
+    cleanup_tb:
+    tb_free_thread_resources();
+    tb_module_destroy(mod);
+    return 0;
+}
+
 int main(int argc, char** argv) {
     cuik_init();
     find_system_deps();
 
     mark_timestamp(NULL);
+    initialize_targets();
 
     program_name = argv[0];
     include_directories = dyn_array_create(const char*);
@@ -819,17 +1001,12 @@ int main(int argc, char** argv) {
 
     // get default system
     #if defined(_WIN32)
-    target_desc.sys = CUIK_SYSTEM_WINDOWS;
+    target_desc = cuik_target_x64(CUIK_SYSTEM_WINDOWS, CUIK_ENV_MSVC);
     #elif defined(__linux) || defined(linux)
-    target_desc.sys = CUIK_SYSTEM_LINUX;
+    target_desc = cuik_target_x64(CUIK_SYSTEM_LINUX, CUIK_ENV_MSVC);
     #elif defined(__APPLE__) || defined(__MACH__) || defined(macintosh)
-    target_desc.sys = CUIK_SYSTEM_MACOS;
+    target_desc = cuik_target_x64(CUIK_SYSTEM_MACOS, CUIK_ENV_MSVC);
     #endif
-
-    // get target
-    target_desc.arch = cuik_get_x64_target_desc();
-
-    // print_help(argv[0]);
 
     // parse arguments
     int i = 1;
@@ -889,10 +1066,10 @@ int main(int argc, char** argv) {
             }
             case ARG_TARGET: {
                 bool success = false;
-                for (int i = 0; i < TARGET_OPTION_COUNT; i++) {
+                for (size_t i = 0; i < dyn_array_length(target_options); i++) {
                     if (strcmp(arg.value, target_options[i].key) == 0) {
-                        target_desc.arch = target_options[i].arch_fn();
-                        target_desc.sys = target_options[i].system;
+                        TargetOption* o = &target_options[i];
+                        target_desc = o->target(o->system, o->env);
                         success = true;
                         break;
                     }
@@ -901,7 +1078,7 @@ int main(int argc, char** argv) {
                 if (!success) {
                     fprintf(stderr, "unknown target: %s\n", arg.value);
                     fprintf(stderr, "Supported targets:\n");
-                    for (int i = 0; i < TARGET_OPTION_COUNT; i++) {
+                    for (size_t i = 0; i < dyn_array_length(target_options); i++) {
                         fprintf(stderr, "    %s\n", target_options[i].key);
                     }
                     fprintf(stderr, "\n");
@@ -914,8 +1091,10 @@ int main(int argc, char** argv) {
             case ARG_OBJECT: flavor = TB_FLAVOR_OBJECT; break;
             case ARG_PREPROC: args_preprocess = true; break;
             case ARG_RUN: args_run = true; break;
-            case ARG_PPLOC: args_pploc = true; break;
+            case ARG_LIVE: args_live = true; break;
+            case ARG_PPREPL: args_pprepl = true; break;
             case ARG_AST: args_ast = true; break;
+            case ARG_ASSEMBLY: flavor = TB_FLAVOR_ASSEMBLY; break;
             case ARG_SYNTAX: args_syntax_only = true; break;
             case ARG_VERBOSE: args_verbose = true; break;
             case ARG_THINK: args_think = true; break;
@@ -939,12 +1118,9 @@ int main(int argc, char** argv) {
         return EXIT_FAILURE;
     }
 
-    if (args_assembly) {
-        fprintf(stderr, "error: emitting assembly doesn't work yet\n");
-        return EXIT_FAILURE;
-    }
-
-    {
+    if (output_name != NULL && strcmp(output_name, "$nul") == 0) {
+        output_path_null = true;
+    } else {
         const char* filename = output_name ? output_name : input_files[0];
         const char* ext = strrchr(filename, '.');
         size_t len = ext ? (ext - filename) : strlen(filename);
@@ -975,19 +1151,15 @@ int main(int argc, char** argv) {
     }
 
     if (args_time) {
-        char* perf_output_path = malloc(FILENAME_MAX);
-
         #if 0
+        char* perf_output_path = cuikperf_init(FILENAME_MAX, &json_profiler, false);
         sprintf_s(perf_output_path, FILENAME_MAX, "%s.json", output_path_no_ext);
-
-        jsonperf_profiler.user_data = perf_output_path;
-        cuik_start_global_profiler(&jsonperf_profiler, false);
         #else
-        sprintf_s(perf_output_path, FILENAME_MAX, "%s.flint", output_path_no_ext);
-
-        flintperf_profiler.user_data = perf_output_path;
-        cuik_start_global_profiler(&flintperf_profiler, false);
+        char* perf_output_path = cuikperf_init(FILENAME_MAX, &spall_profiler, false);
+        sprintf_s(perf_output_path, FILENAME_MAX, "%s.spall", output_path_no_ext);
         #endif
+
+        cuikperf_start();
     }
 
     // spin up worker threads
@@ -1007,117 +1179,39 @@ int main(int argc, char** argv) {
     #endif
 
     initialize_opt_passes();
-    cuik_create_compilation_unit(&compilation_unit);
 
-    if (!args_ast && !args_types) {
-        TB_FeatureSet features = {0};
-        mod = tb_module_create(
-            TB_ARCH_X86_64, cuik_system_to_tb(target_desc.sys), &features, false
-        );
-    }
-
-    fscache = cuik_fscache_create();
-
-    if (args_pploc) {
-        int total = 0;
-        dyn_array_for(i, input_files) {
-            Cuik_CPP* cpp = make_preprocessor(input_files[i]);
-
-            int c = count_pp_lines(cuikpp_get_token_stream(cpp));
-            printf("%s : %d (%zu tokens)\n", input_files[i], c, cuik_get_token_count(cuikpp_get_token_stream(cpp)));
-            total += c;
-
-            free_preprocessor(cpp);
-        }
-        printf("Total PPLoc: %d\n", total);
-        return EXIT_SUCCESS;
+    if (args_pprepl) {
+        return pp_repl();
     } else if (args_preprocess) {
         // preproc only
-        Cuik_CPP* cpp = make_preprocessor(input_files[0]);
-
-        dump_tokens(stdout, cuikpp_get_token_stream(cpp));
-        free_preprocessor(cpp);
+        Cuik_CPP* cpp = make_preprocessor(input_files[0], true);
+        if (cpp) {
+            dump_tokens(stdout, cuikpp_get_token_stream(cpp));
+            free_preprocessor(cpp);
+        } else {
+            fprintf(stderr, "Could not preprocess file: %s", input_files[0]);
+            return EXIT_FAILURE;
+        }
 
         return EXIT_SUCCESS;
     }
 
-    ////////////////////////////////
-    // frontend work
-    ////////////////////////////////
-    TIMESTAMP("Frontend");
-    CUIK_TIMED_BLOCK("Frontend") {
-        if (ithread_pool != NULL) {
-            #if CUIK_ALLOW_THREADS
-            dyn_array_for(i, input_files) {
-                tp_submit(thread_pool, preproc_file, (void*) input_files[i]);
-            }
+    if (args_live) {
+        LiveCompiler l;
+        do {
+            printf("\x1b[2J");
+            printf("OUTPUT OF %s:\n", input_files[0]);
 
-            threadpool_wait(thread_pool);
-            #endif
-        } else {
-            dyn_array_for(i, input_files) {
-                preproc_file((void*) input_files[i]);
-            }
-        }
-
-        TIMESTAMP("Internal link");
-        CUIK_TIMED_BLOCK("internal link") {
-            cuik_internal_link_compilation_unit(&compilation_unit);
-        }
-
-        if (args_syntax_only) goto done;
-    }
-
-    if (args_ast) {
-        FOR_EACH_TU(tu, &compilation_unit) {
-            cuik_dump_translation_unit(stdout, tu, true);
-        }
-        goto done;
-    }
-
-    ////////////////////////////////
-    // backend work
-    ////////////////////////////////
-    cuik_fscache_destroy(fscache);
-    irgen();
-    cuik_destroy_compilation_unit(&compilation_unit);
-
-    if (dyn_array_length(da_passes) != 0) {
-        // TODO: we probably want to do the fancy threading soon
-        TIMESTAMP("Optimizer");
-        CUIK_TIMED_BLOCK("Optimizer") {
-            tb_module_optimize(mod, dyn_array_length(da_passes), da_passes);
-        }
-    }
-
-    if (args_ir) {
-        TIMESTAMP("IR Printer");
-        TB_FOR_FUNCTIONS(f, mod) {
-            tb_function_print(f, tb_default_print_callback, stdout, false);
-            printf("\n\n");
-        }
-        goto done;
-    }
-
-    CUIK_TIMED_BLOCK("CodeGen") {
-        codegen();
-    }
-
-    if (args_run) {
-        // printf("JIT compiling...\n");
-        fprintf(stderr, "error: JIT not supported yet!\n");
-        abort();
-        // run_as_jit();
+            cuik_create_compilation_unit(&compilation_unit);
+            run_compiler(thread_pool, true);
+        } while (live_compile_watch(&l));
     } else {
-        if (!export_output()) {
-            return 1;
-        }
+        cuik_create_compilation_unit(&compilation_unit);
+
+        int status = run_compiler(thread_pool, true);
+        if (status != 0) exit_or_hook(status);
     }
 
-    tb_free_thread_resources();
-    tb_module_destroy(mod);
-
-    done:
     TIMESTAMP("Done");
     #if CUIK_ALLOW_THREADS
     if (thread_pool != NULL) {
@@ -1154,26 +1248,7 @@ int main(int argc, char** argv) {
         printf("\n");
     }
 
-    if (args_time) cuik_stop_global_profiler();
-
-    ////////////////////////////////
-    // Running executable
-    ////////////////////////////////
-    /*if (args_run) {
-        char* exe = strdup(output_name);
-
-        #ifdef _WIN32
-        for (char* s = exe; *s; s++) {
-            if (*s == '/') *s = '\\';
-        }
-        #endif
-
-        printf("\n\nRunning: %s...\n", exe);
-        int exit_code = system(exe);
-        printf("Exit code: %d\n", exit_code);
-
-        return exit_code;
-    }*/
+    if (args_time) cuikperf_stop();
 
     return 0;
 }

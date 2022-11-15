@@ -9,15 +9,17 @@
 //   - make the expect(...) code be a little smarter, if it knows that it's expecting
 //   a token for a specific operation... tell the user
 #include "parser.h"
+#include "../pp_map.h"
 #include <targets/targets.h>
 
-#undef VOID // winnt.h loves including garbage
-
-#define OUT_OF_ORDER_CRAP 1
+// winnt.h loves including garbage
+#undef VOID
 
 // HACK: this is defined in sema.c but because we sometimes call semantics stuff in the
 // parser we need access to it to avoid some problems
 extern thread_local Stmt* cuik__sema_function_stmt;
+
+static const Cuik_Warnings DEFAULT_WARNINGS = { 0 };
 
 // how big are the phase2 parse tasks
 #define PARSE_MUNCH_SIZE (131072)
@@ -29,10 +31,13 @@ typedef struct {
 
 typedef struct {
     enum {
-        PENDING_ALIGNAS
+        PENDING_ALIGNAS,
+        PENDING_BITWIDTH,
     } mode;
-    size_t expr_pos;
     int* dst;
+
+    Cuik_Type* type;
+    size_t start, end;
 } PendingExpr;
 
 // starting point is used to disable the function literals
@@ -62,33 +67,34 @@ thread_local static Arena local_ast_arena;
 thread_local static bool out_of_order_mode;
 
 static void expect(TranslationUnit* tu, TokenStream* restrict s, char ch);
-static void expect_closing_paren(TranslationUnit* tu, TokenStream* restrict s, SourceLocIndex opening);
-static void expect_with_reason(TranslationUnit* tu, TokenStream* restrict s, char ch, const char* reason);
+static bool expect_char(TokenStream* restrict s, char ch);
+static bool expect_closing_paren(TokenStream* restrict s, SourceLoc opening);
+static bool expect_with_reason(TokenStream* restrict s, char ch, const char* reason);
 static Symbol* find_local_symbol(TokenStream* restrict s);
 
 static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s);
 static Stmt* parse_stmt_or_expr(TranslationUnit* tu, TokenStream* restrict s);
-static Stmt* parse_compound_stmt(TranslationUnit* tu, TokenStream* restrict s);
-static void parse_decl_or_expr(TranslationUnit* tu, TokenStream* restrict s, size_t* body_count);
+static void parse_compound_stmt(TranslationUnit* tu, TokenStream* restrict s, Stmt* restrict node);
+static bool parse_decl_or_expr(TranslationUnit* tu, TokenStream* restrict s, size_t* body_count);
 
-static bool skip_over_declspec(TranslationUnit* tu, TokenStream* restrict s);
+static bool skip_over_declspec(TokenStream* restrict s);
 static bool try_parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attribs* attr);
-static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attribs* attr);
+static Cuik_QualType parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attribs* attr);
 
-static Decl parse_declarator(TranslationUnit* tu, TokenStream* restrict s, Cuik_Type* type, bool is_abstract, bool disabled_paren);
-static Cuik_Type* parse_typename(TranslationUnit* tu, TokenStream* restrict s);
+static Decl parse_declarator(TranslationUnit* restrict tu, TokenStream* restrict s, Cuik_QualType type, bool is_abstract);
+static Cuik_QualType parse_typename(TranslationUnit* tu, TokenStream* restrict s);
 
 // It's like parse_expr but it doesn't do anything with comma operators to avoid
 // parsing issues.
 static intmax_t parse_const_expr(TranslationUnit* tu, TokenStream* restrict s);
-static Expr* parse_initializer(TranslationUnit* tu, TokenStream* restrict s, Cuik_Type* type);
-static Expr* parse_function_literal(TranslationUnit* tu, TokenStream* restrict s, Cuik_Type* type);
-static void parse_function_definition(TranslationUnit* tu, TokenStream* restrict s, Stmt* n);
-static Cuik_Type* parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s, Cuik_Type* type, Atom name);
+static Expr* parse_initializer(TranslationUnit* tu, TokenStream* restrict s, Cuik_QualType type);
+static bool parse_function_definition(TranslationUnit* tu, TokenStream* restrict s, Stmt* decl_node);
 
-static bool is_typename(TranslationUnit* tu, TokenStream* restrict s);
+static bool is_typename(Cuik_GlobalSymbols* syms, TokenStream* restrict s);
 
 static _Noreturn void generic_error(TranslationUnit* tu, TokenStream* restrict s, const char* msg);
+
+static int type_cycles_dfs(TokenStream* restrict s, Cuik_Type* type);
 
 // saves the local_symbol_count and local_tag_count before entering
 // and restores them when exiting since that'll allow us to open and
@@ -111,18 +117,9 @@ static int align_up(int a, int b) {
     return a + (b - (a % b)) % b;
 }
 
-static String get_token_as_string(Lexer* l) {
-    return (String){ .length = l->token_end - l->token_start, .data = l->token_start };
-}
-
-// allocated size is sizeof(struct StmtHeader) + extra_size
-static Stmt* make_stmt(TranslationUnit* tu, TokenStream* restrict s, StmtOp op, size_t extra_size) {
-    Stmt* stmt = arena_alloc(&local_ast_arena, sizeof(Stmt), _Alignof(max_align_t));
-
-    memset(stmt, 0, offsetof(Stmt, backing.user_data) + sizeof(((Stmt*)0)->backing.user_data));
-
-    stmt->op = op;
-    stmt->loc = tokens_get_location_index(s);
+static Stmt* make_stmt(TranslationUnit* tu, TokenStream* restrict s) {
+    Stmt* stmt = arena_alloc(&local_ast_arena, sizeof(Stmt), _Alignof(Stmt));
+    memset(stmt, 0, sizeof(Stmt));
     return stmt;
 }
 
@@ -130,29 +127,29 @@ static Expr* make_expr(TranslationUnit* tu) {
     return ARENA_ALLOC(&local_ast_arena, Expr);
 }
 
-static Symbol* find_global_symbol(TranslationUnit* tu, const char* name) {
-    ptrdiff_t search = nl_strmap_get_cstr(tu->global_symbols, name);
-    return (search >= 0) ? &tu->global_symbols[search] : NULL;
+static Symbol* find_global_symbol(Cuik_GlobalSymbols* restrict syms, const char* name) {
+    ptrdiff_t search = nl_strmap_get_cstr(syms->symbols, name);
+    return (search >= 0) ? &syms->symbols[search] : NULL;
 }
 
-static Cuik_Type* find_tag(TranslationUnit* tu, const char* name) {
+static Cuik_Type* find_tag(Cuik_GlobalSymbols* restrict syms, const char* name) {
     // try locals
     size_t i = local_tag_count;
     while (i--) {
-        if (strcmp((const char*)local_tags[i].key, name) == 0) {
+        if (strcmp((const char*) local_tags[i].key, name) == 0) {
             return local_tags[i].value;
         }
     }
 
     // try globals
-    ptrdiff_t search = nl_strmap_get_cstr(tu->global_tags, name);
-    return (search >= 0) ? tu->global_tags[search] : NULL;
+    ptrdiff_t search = nl_strmap_get_cstr(syms->tags, name);
+    return (search >= 0) ? syms->tags[search] : NULL;
 }
 
 // ( SOMETHING )
 // ( SOMETHING ,
 static size_t skip_expression_in_parens(TokenStream* restrict s, TknType* out_terminator) {
-    size_t saved = s->current;
+    size_t saved = s->list.current;
 
     // by default we expect to exit with closing parens
     *out_terminator = ')';
@@ -184,7 +181,7 @@ static size_t skip_expression_in_parens(TokenStream* restrict s, TknType* out_te
 //
 // this code sucks btw, idk why i just think it's lowkey ugly
 static size_t skip_expression_in_enum(TokenStream* restrict s, TknType* out_terminator) {
-    size_t saved = s->current;
+    size_t saved = s->list.current;
 
     // our basic bitch expectations
     *out_terminator = ',';
@@ -211,28 +208,67 @@ static size_t skip_expression_in_enum(TokenStream* restrict s, TknType* out_term
     return saved;
 }
 
-static void diag_unresolved_symbol(TranslationUnit* tu, Atom name, SourceLocIndex loc) {
-    Diag_UnresolvedSymbol* d = ARENA_ALLOC(&thread_arena, Diag_UnresolvedSymbol);
+struct Cuik_Parser {
+    Cuik_ParseVersion version;
+    TokenStream tokens;
+
+    const Cuik_Target* target;
+    // this refers to the `int` type, it comes from the target
+    // but it's more convenient to access it from here.
+    Cuik_Type* default_int;
+
+    // generated from #pragma comment(lib, "somelib.lib")
+    // it's a linked list
+    Cuik_ImportRequest* import_libs;
+    DynArray(int) static_assertions;
+
+    // out-of-order parsing is only done while in global scope
+    bool is_in_global_scope;
+
+    DynArray(Stmt*) top_level_stmts;
+    Cuik_TypeTable types;
+    Cuik_GlobalSymbols globals;
+
+    NL_Strmap(Diag_UnresolvedSymbol*) unresolved_symbols;
+
+    // Once top-level parsing is complete we'll compute the TU (which stores
+    // similar data to the parser but without the parser-specific details like
+    // a static assertions list or unresolved symbols)
+    TranslationUnit* tu;
+};
+
+typedef enum ParseResult {
+    PARSE_WIT_ERRORS = -1,
+    NO_PARSE         =  0,
+    PARSE_SUCCESS    =  1,
+} ParseResult;
+
+static void diag_unresolved_symbol(Cuik_Parser* parser, Atom name, SourceLoc loc) {
+    Diag_UnresolvedSymbol* d = ARENA_ALLOC(&local_ast_arena, Diag_UnresolvedSymbol);
     d->next = NULL;
     d->name = name;
-    d->loc = loc;
+    d->loc = (SourceRange){ loc, { loc.raw + strlen(name) } };
 
-    mtx_lock(&tu->diag_mutex);
-    ptrdiff_t search = nl_strmap_get_cstr(tu->unresolved_symbols, name);
+    // mtx_lock(&parser->diag_mutex);
+    ptrdiff_t search = nl_strmap_get_cstr(parser->unresolved_symbols, name);
     if (search < 0) {
-        search = nl_strmap_puti_cstr(tu->unresolved_symbols, name);
-        tu->unresolved_symbols[search] = d;
+        search = nl_strmap_puti_cstr(parser->unresolved_symbols, name);
+        parser->unresolved_symbols[search] = d;
     } else {
-        Diag_UnresolvedSymbol* old = tu->unresolved_symbols[search];
+        Diag_UnresolvedSymbol* old = parser->unresolved_symbols[search];
         while (old->next != NULL) old = old->next;
 
         old->next = d;
     }
-    mtx_unlock(&tu->diag_mutex);
+    // mtx_unlock(&parser->diag_mutex);
 }
 
 #include "expr_parser.h"
+#include "expr_parser2.h"
 #include "decl_parser.h"
+#include "decl_parser2.h"
+#include "stmt_parser.h"
+#include "top_level_parser.h"
 
 typedef struct {
     // shared state, every run of phase2_parse_task will decrement this by one
@@ -257,12 +293,12 @@ static void parse_global_symbols(TranslationUnit* tu, size_t start, size_t end, 
         out_of_order_mode = false;
 
         for (size_t i = start; i < end; i++) {
-            Symbol* sym = &tu->global_symbols[i];
+            Symbol* sym = &tu->globals.symbols[i];
 
             // don't worry about normal globals, those have been taken care of...
-            if (sym->current != 0 && (sym->storage_class == STORAGE_STATIC_FUNC || sym->storage_class == STORAGE_FUNC)) {
+            if (sym->token_start != 0 && (sym->storage_class == STORAGE_STATIC_FUNC || sym->storage_class == STORAGE_FUNC)) {
                 // Spin up a mini parser here
-                tokens.current = sym->current;
+                tokens.list.current = sym->token_start;
 
                 // intitialize use list
                 symbol_chain_start = symbol_chain_current = NULL;
@@ -316,77 +352,69 @@ static void phase3_parse_task(void* arg) {
 // 0 no cycles
 // 1 cycles
 // 2 cycles and we gave an error msg
-static int type_cycles_dfs(TranslationUnit* restrict tu, Cuik_Type* type, uint8_t* visited, uint8_t* finished) {
+static int type_cycles_dfs(TokenStream* restrict s, Cuik_Type* type) {
     // non-record types are always finished :P
     if (type->kind != KIND_STRUCT && type->kind != KIND_UNION) {
         return 0;
     }
 
-    // if (finished[o]) return false
-    int o = type->ordinal;
-    if (finished[o / 8] & (1u << (o % 8))) {
+    if (type->is_complete) {
         return 0;
     }
 
     // if (visited[o]) return true
-    if (visited[o / 8] & (1u << (o % 8))) {
+    if (type->is_visited) {
         return 1;
     }
 
-    // visited[o] = true
-    visited[o / 8] |= (1u << (o % 8));
+    type->is_visited = true;
 
     // for each m in members
     //   if (dfs(m)) return true
     for (size_t i = 0; i < type->record.kid_count; i++) {
-        int c = type_cycles_dfs(tu, type->record.kids[i].type, visited, finished);
+        int c = type_cycles_dfs(s, cuik_canonical_type(type->record.kids[i].type));
         if (c) {
             // we already gave an error message, don't be redundant
             if (c != 2) {
                 const char* name = type->record.name ? (const char*)type->record.name : "<unnamed>";
 
-                char tmp[256];
-                sprintf_s(tmp, sizeof(tmp), "type %s has cycles", name);
-
-                report_two_spots(REPORT_ERROR, tu->errors,
-                    &tu->tokens, type->loc, type->record.kids[i].loc,
-                    tmp, NULL, NULL, "on");
+                diag_err(s, type->loc, "type %s has cycles", name);
+                diag_note(s, type->record.kids[i].loc, "see here");
             }
 
             return 2;
         }
     }
 
-    // finished[o] = true
-    finished[o / 8] |= (1u << (o % 8));
+    type->is_complete = true;
     return 0;
 }
 
-static void type_resolve_pending_align(TranslationUnit* restrict tu, Cuik_Type* type) {
+// returns 1 on errors
+static int type_resolve_pending_align(TranslationUnit* restrict tu) {
     size_t pending_count = dyn_array_length(pending_exprs);
     for (size_t i = 0; i < pending_count; i++) {
-        if (pending_exprs[i].dst == &type->align) {
-            assert(pending_exprs[i].mode == PENDING_ALIGNAS);
+        if (pending_exprs[i].mode == PENDING_ALIGNAS) {
+            Cuik_Type* type = pending_exprs[i].type;
 
             TokenStream mini_lex = tu->tokens;
-            mini_lex.current = pending_exprs[i].expr_pos;
-
-            SourceLocIndex loc = tokens_get_location_index(&mini_lex);
+            mini_lex.list.current = pending_exprs[i].start;
 
             int align = 0;
-            if (is_typename(tu, &mini_lex)) {
-                Cuik_Type* new_align = parse_typename(tu, &mini_lex);
+            SourceLoc loc = tokens_get_location(&mini_lex);
+            if (is_typename(&tu->globals, &mini_lex)) {
+                Cuik_Type* new_align = cuik_canonical_type(parse_typename(tu, &mini_lex));
                 if (new_align == NULL || new_align->align) {
-                    REPORT(ERROR, loc, "_Alignas cannot operate with incomplete");
+                    diag_err(&tu->tokens, type->loc, "_Alignas cannot operate with incomplete");
                 } else {
                     align = new_align->align;
                 }
             } else {
                 intmax_t new_align = parse_const_expr(tu, &mini_lex);
                 if (new_align == 0) {
-                    REPORT(ERROR, loc, "_Alignas cannot be applied with 0 alignment", new_align);
+                    diag_err(&tu->tokens, type->loc, "_Alignas cannot be applied with 0 alignment", new_align);
                 } else if (new_align >= INT16_MAX) {
-                    REPORT(ERROR, loc, "_Alignas(%zu) exceeds max alignment of %zu", new_align, INT16_MAX);
+                    diag_err(&tu->tokens, type->loc, "_Alignas(%zu) exceeds max alignment of %zu", new_align, INT16_MAX);
                 } else {
                     align = new_align;
                 }
@@ -394,59 +422,52 @@ static void type_resolve_pending_align(TranslationUnit* restrict tu, Cuik_Type* 
 
             assert(align != 0);
             type->align = align;
-            return;
+            return 0;
         }
     }
 
-    abort();
+    return 1;
 }
 
 void type_layout(TranslationUnit* restrict tu, Cuik_Type* type, bool needs_complete) {
     if (type->kind == KIND_VOID || type->size != 0) return;
-    if (type->is_inprogress) {
-        REPORT(ERROR, type->loc, "Type has a circular dependency");
-        abort();
+    if (type->is_progress) {
+        diag_err(&tu->tokens, type->loc, "Type has a circular dependency");
+        return;
     }
 
-    type->is_inprogress = true;
+    type->is_progress = true;
 
     if (type->kind == KIND_ARRAY) {
         if (type->array_count_lexer_pos) {
             // run mini parser for array count
             TokenStream mini_lex = tu->tokens;
-            mini_lex.current = type->array_count_lexer_pos;
+            mini_lex.list.current = type->array_count_lexer_pos;
             type->array_count = parse_const_expr(tu, &mini_lex);
             expect(tu, &mini_lex, ']');
         }
 
         // layout crap
         if (type->array_count != 0) {
-            if (type->array_of->size == 0) {
-                type_layout(tu, type->array_of, true);
+            if (cuik_canonical_type(type->array_of)->size == 0) {
+                type_layout(tu, cuik_canonical_type(type->array_of), true);
             }
 
-            if (type->array_of->size == 0) {
-                REPORT(ERROR, type->loc, "could not resolve type (ICE)");
-                abort();
+            if (cuik_canonical_type(type->array_of)->size == 0) {
+                diag_err(&tu->tokens, type->loc, "could not resolve type (ICE)");
+                return;
             }
         }
 
-        uint64_t result = type->array_of->size * type->array_count;
+        uint64_t result = cuik_canonical_type(type->array_of)->size * type->array_count;
 
         // size checks
         if (result >= INT32_MAX) {
-            REPORT(ERROR, type->loc, "cannot declare an array that exceeds 0x7FFFFFFE bytes (got 0x%zX or %zi)", result, result);
+            diag_err(&tu->tokens, type->loc, "cannot declare an array that exceeds 0x7FFFFFFE bytes (got 0x%zX or %zi)", result, result);
         }
 
         type->size = result;
-        type->align = type->array_of->align;
-    } else if (type->kind == KIND_QUALIFIED_TYPE) {
-        if (type->qualified_ty->size == 0) {
-            type_layout(tu, type->qualified_ty, needs_complete);
-        }
-
-        type->size = type->qualified_ty->size;
-        type->align = type->qualified_ty->align;
+        type->align = cuik_canonical_type(type->array_of)->align;
     } else if (type->kind == KIND_ENUM) {
         int cursor = 0;
 
@@ -455,9 +476,10 @@ void type_layout(TranslationUnit* restrict tu, Cuik_Type* type, bool needs_compl
             if (type->enumerator.entries[i].lexer_pos != 0) {
                 // Spin up a mini expression parser here
                 TokenStream mini_lex = tu->tokens;
-                mini_lex.current = type->enumerator.entries[i].lexer_pos;
+                mini_lex.list.current = type->enumerator.entries[i].lexer_pos;
 
                 cursor = parse_const_expr(tu, &mini_lex);
+                type->enumerator.entries[i].lexer_pos = 0;
             }
 
             type->enumerator.entries[i].value = cursor;
@@ -466,7 +488,7 @@ void type_layout(TranslationUnit* restrict tu, Cuik_Type* type, bool needs_compl
 
         type->size = 4;
         type->align = 4;
-        type->is_incomplete = false;
+        type->is_complete = false;
     } else if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
         bool is_union = (type->kind == KIND_UNION);
 
@@ -483,14 +505,15 @@ void type_layout(TranslationUnit* restrict tu, Cuik_Type* type, bool needs_compl
         for (size_t i = 0; i < member_count; i++) {
             Member* member = &members[i];
 
-            if (member->type->kind == KIND_FUNC) {
-                REPORT(ERROR, type->loc, "Cannot put function types into a struct, try a function pointer");
+            if (cuik_canonical_type(member->type)->kind == KIND_FUNC) {
+                diag_err(&tu->tokens, type->loc, "cannot put function types into a struct, try a function pointer");
             } else {
-                type_layout(tu, member->type, true);
+                type_layout(tu, cuik_canonical_type(member->type), true);
             }
 
-            int member_align = member->type->align;
-            int member_size = member->type->size;
+            Cuik_Type* member_type = cuik_canonical_type(member->type);
+            int member_align = member_type->align;
+            int member_size = member_type->size;
             if (!is_union) {
                 int new_offset = align_up(offset, member_align);
 
@@ -507,9 +530,9 @@ void type_layout(TranslationUnit* restrict tu, Cuik_Type* type, bool needs_compl
             // bitfields
             if (member->is_bitfield) {
                 int bit_width = member->bit_width;
-                int bits_in_region = member->type->kind == KIND_BOOL ? 1 : (member_size * 8);
+                int bits_in_region = member_type->kind == KIND_BOOL ? 1 : (member_size * 8);
                 if (bit_width > bits_in_region) {
-                    REPORT(ERROR, type->loc, "Bitfield cannot fit in this type.");
+                    diag_err(&tu->tokens, type->loc, "bitfield cannot fit in this type.");
                 }
 
                 if (current_bit_offset + bit_width > bits_in_region) {
@@ -536,37 +559,165 @@ void type_layout(TranslationUnit* restrict tu, Cuik_Type* type, bool needs_compl
         offset = align_up(offset, align);
         type->align = align;
         type->size = offset;
-        type->is_incomplete = false;
+        type->is_complete = true;
     }
 
-    type->is_inprogress = false;
+    type->is_progress = false;
 }
 
-static const Cuik_Warnings DEFAULT_WARNINGS = { 0 };
+void type_layout2(Cuik_Parser* parser, Cuik_Type* type, bool needs_complete) {
+    if (type->kind == KIND_VOID || type->size != 0) return;
+    if (type->is_progress) {
+        diag_err(&parser->tokens, type->loc, "Type has a circular dependency");
+        return;
+    }
 
-CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* restrict desc) {
+    type->is_progress = true;
+
+    if (type->kind == KIND_ARRAY) {
+        if (type->array_count_lexer_pos) {
+            // run mini parser for array count
+            TokenStream mini_lex = parser->tokens;
+            mini_lex.list.current = type->array_count_lexer_pos;
+            type->array_count = parse_const_expr2(parser, &mini_lex);
+            expect_char(&mini_lex, ']');
+        }
+
+        // layout crap
+        if (type->array_count != 0) {
+            if (cuik_canonical_type(type->array_of)->size == 0) {
+                type_layout2(parser, cuik_canonical_type(type->array_of), true);
+            }
+
+            if (cuik_canonical_type(type->array_of)->size == 0) {
+                diag_err(&parser->tokens, type->loc, "could not resolve type (ICE)");
+                return;
+            }
+        }
+
+        uint64_t result = cuik_canonical_type(type->array_of)->size * type->array_count;
+
+        // size checks
+        if (result >= INT32_MAX) {
+            diag_err(&parser->tokens, type->loc, "cannot declare an array that exceeds 0x7FFFFFFE bytes (got 0x%zX or %zi)", result, result);
+        }
+
+        type->size = result;
+        type->align = cuik_canonical_type(type->array_of)->align;
+    } else if (type->kind == KIND_ENUM) {
+        int cursor = 0;
+        // if (type->enumerator.name && strcmp(type->enumerator.name, "D3D_DRIVER_TYPE") == 0) __debugbreak();
+
+        for (int i = 0; i < type->enumerator.count; i++) {
+            // if the value is undecided, best time to figure it out is now
+            if (type->enumerator.entries[i].lexer_pos != 0) {
+                // Spin up a mini expression parser here
+                TokenStream mini_lex = parser->tokens;
+                mini_lex.list.current = type->enumerator.entries[i].lexer_pos;
+
+                cursor = parse_const_expr2(parser, &mini_lex);
+                type->enumerator.entries[i].lexer_pos = 0;
+            }
+
+            type->enumerator.entries[i].value = cursor;
+            cursor += 1;
+        }
+
+        type->size = 4;
+        type->align = 4;
+    } else if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
+        bool is_union = (type->kind == KIND_UNION);
+
+        size_t member_count = type->record.kid_count;
+        Member* members = type->record.kids;
+
+        // for unions this just represents the max size
+        int offset = 0;
+        int last_member_size = 0;
+        int current_bit_offset = 0;
+        // struct/union are aligned to the biggest member alignment
+        int align = 0;
+
+        for (size_t i = 0; i < member_count; i++) {
+            Member* member = &members[i];
+
+            if (cuik_canonical_type(member->type)->kind == KIND_FUNC) {
+                diag_err(&parser->tokens, type->loc, "cannot put function types into a struct, try a function pointer");
+            } else {
+                type_layout2(parser, cuik_canonical_type(member->type), true);
+            }
+
+            Cuik_Type* member_type = cuik_canonical_type(member->type);
+            int member_align = member_type->align;
+            int member_size = member_type->size;
+            if (!is_union) {
+                int new_offset = align_up(offset, member_align);
+
+                // If we realign, reset the bit offset
+                if (offset != new_offset) {
+                    current_bit_offset = last_member_size = 0;
+                }
+                offset = new_offset;
+            }
+
+            member->offset = is_union ? 0 : offset;
+            member->align = member_align;
+
+            // bitfields
+            if (member->is_bitfield) {
+                int bit_width = member->bit_width;
+                int bits_in_region = member_type->kind == KIND_BOOL ? 1 : (member_size * 8);
+                if (bit_width > bits_in_region) {
+                    diag_err(&parser->tokens, type->loc, "bitfield cannot fit in this type.");
+                }
+
+                if (current_bit_offset + bit_width > bits_in_region) {
+                    current_bit_offset = 0;
+
+                    offset = align_up(offset + member_size, member_align);
+                    member->bit_offset = offset;
+                }
+
+                current_bit_offset += bit_width;
+            } else {
+                if (is_union) {
+                    if (member_size > offset) offset = member_size;
+                } else {
+                    offset += member_size;
+                }
+            }
+
+            // the total alignment of a struct/union is based on the biggest member
+            last_member_size = member_size;
+            if (member_align > align) align = member_align;
+        }
+
+        offset = align_up(offset, align);
+        type->align = align;
+        type->size = offset;
+    }
+
+    type->is_complete = true;
+    type->is_progress = false;
+}
+
+TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* restrict desc) {
     // we can preserve this across multiple uses
     thread_local static NL_Strmap(Cuik_Type*) s_global_tags;
     thread_local static NL_Strmap(Symbol) s_global_symbols;
 
-    if (cuik_is_profiling()) {
-        cuik_profile_region_start(cuik_time_in_nanos(), "parse: %s", desc->tokens->filepath);
+    if (cuikperf_is_active()) {
+        cuikperf_region_start(cuik_time_in_nanos(), "parse: %s", desc->tokens->filepath);
     }
 
     assert(desc->tokens != NULL);
-    assert(desc->errors != NULL);
-    memset(desc->errors, 0, sizeof(*desc->errors));
-
     // hacky but i don't wanna wrap it in a CUIK_TIMED_BLOCK
     uint64_t timer_start = cuik_time_in_nanos();
 
     TranslationUnit* tu = calloc(1, sizeof(TranslationUnit));
-    tu->ref_count = 1;
     tu->filepath = desc->tokens->filepath;
-    tu->is_windows_long = desc->target->sys == CUIK_SYSTEM_WINDOWS;
-    tu->target = *desc->target;
+    tu->target = desc->target;
     tu->tokens = *desc->tokens;
-    tu->errors = desc->errors;
     tu->warnings = desc->warnings ? desc->warnings : &DEFAULT_WARNINGS;
 
     #ifdef CUIK_USE_TB
@@ -584,11 +735,12 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
     // use the thread local ones (we'll set our resulting hash map back in
     // such that if it resized the first time we don't need to resize again
     // if used on that same thread, just avoiding allocations and such)
-    tu->global_symbols = s_global_symbols;
-    tu->global_tags = s_global_tags;
+    tu->globals.symbols = s_global_symbols;
+    tu->globals.tags = s_global_tags;
+    tu->types = init_type_table();
 
-    nl_strmap_clear(tu->global_symbols);
-    nl_strmap_clear(tu->global_tags);
+    nl_strmap_clear(tu->globals.symbols);
+    nl_strmap_clear(tu->globals.tags);
 
     ////////////////////////////////
     // Parse translation unit
@@ -621,10 +773,10 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
 
                 // Slap it into a proper C string so we don't accidentally
                 // walk off the end and go random places
-                size_t len = (tokens_get(s)->end - tokens_get(s)->start) - 1;
+                size_t len = (tokens_get(s)->content.length) - 1;
                 unsigned char* out = tls_push(len);
                 {
-                    const char* in = (const char*) tokens_get(s)->start;
+                    const char* in = (const char*) tokens_get(s)->content.data;
 
                     size_t out_i = 0, in_i = 1;
                     while (in_i < len) {
@@ -643,36 +795,36 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                     out[out_i++] = '\0';
                 }
 
-                Lexer pragma_lex = { "<temp>", out, out, 1 };
-                lexer_read(&pragma_lex);
-
-                String pragma_name = get_token_as_string(&pragma_lex);
+                Lexer pragma_lex = { 0, out, out };
+                String pragma_name = lexer_read(&pragma_lex).content;
                 if (string_equals_cstr(&pragma_name, "comment")) {
                     // https://learn.microsoft.com/en-us/cpp/preprocessor/comment-c-cpp?view=msvc-170
                     //   'comment' '(' comment-type [ ',' "comment-string" ] ')'
                     // supported comment types:
                     //   lib - links library against final output
-                    lexer_read(&pragma_lex);
-
-                    if (pragma_lex.token_type != '(') {
+                    Token t = lexer_read(&pragma_lex);
+                    if (t.type != '(') {
                         generic_error(tu, s, "expected (");
                     }
 
-                    lexer_read(&pragma_lex);
-                    String comment_type = get_token_as_string(&pragma_lex);
-                    lexer_read(&pragma_lex);
+                    String comment_string = { 0 };
+                    String comment_type = lexer_read(&pragma_lex).content;
 
-                    String comment_string;
-                    if (pragma_lex.token_type == ',') {
-                        lexer_read(&pragma_lex);
-                        comment_string = get_token_as_string(&pragma_lex);
+                    t = lexer_read(&pragma_lex);
+                    if (t.type == ',') {
+                        t = lexer_read(&pragma_lex);
+                        if (t.type != TOKEN_STRING_DOUBLE_QUOTE) {
+                            generic_error(tu, s, "expected string literal");
+                        }
+
+                        comment_string = t.content;
                         comment_string.length -= 2;
                         comment_string.data += 1;
 
-                        lexer_read(&pragma_lex);
+                        t = lexer_read(&pragma_lex);
                     }
 
-                    if (pragma_lex.token_type != ')') {
+                    if (t.type != ')') {
                         generic_error(tu, s, "expected )");
                     }
 
@@ -714,31 +866,33 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
 
                 expect(tu, s, ')');
             } else {
-                Cuik_Attribute* attribute_list = parse_attributes(tu, s, NULL);
-                SourceLocIndex loc = tokens_get_location_index(s);
+                Cuik_Attribute* attribute_list = parse_attributes(s, NULL);
+                SourceLoc loc = tokens_get_location(s);
 
                 // must be a declaration since it's a top level statement
-                Attribs attr = {0};
-                Cuik_Type* type = parse_declspec(tu, s, &attr);
-                if (type == NULL) {
+                Attribs attr = { 0 };
+                Cuik_QualType type = parse_declspec(tu, s, &attr);
+                if (CUIK_QUAL_TYPE_IS_NULL(type)) {
                     REPORT(ERROR, loc, "Could not parse base type.");
+                    type = cuik_uncanonical_type(&cuik__builtin_int);
                 }
 
                 if (attr.is_typedef) {
                     // declarator (',' declarator)+ ';'
                     while (true) {
-                        size_t start_decl_token = s->current;
-                        Decl decl = parse_declarator(tu, s, type, false, false);
+                        size_t start_decl_token = s->list.current;
+                        Decl decl = parse_declarator(tu, s, type, false);
 
                         // we wanna avoid getting stuck in infinite loops so if we dont
                         // do anything in an iteration then we want to exit with an error
-                        bool possibly_bad_decl = (s->current == start_decl_token);
+                        bool possibly_bad_decl = (s->list.current == start_decl_token);
 
                         if (decl.name != NULL) {
                             // make typedef
-                            Stmt* n = make_stmt(tu, s, STMT_DECL, sizeof(struct StmtDecl));
+                            Stmt* n = make_stmt(tu, s);
+                            n->op = STMT_DECL;
                             n->loc = decl.loc;
-                            n->attr_list = parse_attributes(tu, s, attribute_list);
+                            n->attr_list = parse_attributes(s, attribute_list);
                             n->decl = (struct StmtDecl){
                                 .name = decl.name,
                                 .type = decl.type,
@@ -750,44 +904,35 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                             dyn_array_put(tu->top_level_stmts, n);
 
                             // check for collision
-                            Symbol* search = find_global_symbol(tu, decl.name);
+                            Symbol* search = find_global_symbol(&tu->globals, decl.name);
                             if (search != NULL) {
                                 if (search->storage_class != STORAGE_TYPEDEF) {
-                                    report_two_spots(REPORT_ERROR, tu->errors, s, decl.loc, search->loc,
+                                    abort();
+                                    /* report_two_spots(REPORT_ERROR, tu->errors, s, decl.loc, search->loc,
                                         "typedef overrides previous declaration.",
-                                        "old", "new", NULL);
+                                        "old", "new", NULL);*/
                                 }
 
-                                Cuik_Type* placeholder_space = search->type;
-                                if (placeholder_space->kind != KIND_PLACEHOLDER && !type_equal(tu, decl.type, search->type)) {
-                                    report_two_spots(REPORT_ERROR, tu->errors, s, decl.loc, search->loc,
+                                Cuik_Type* placeholder_space = cuik_canonical_type(search->type);
+                                if (placeholder_space->kind != KIND_PLACEHOLDER && !type_equal(cuik_canonical_type(decl.type), placeholder_space)) {
+                                    /*report_two_spots(REPORT_ERROR, tu->errors, s, decl.loc, search->loc,
                                         "typedef overrides previous declaration.",
-                                        "old", "new", NULL);
+                                        "old", "new", NULL);*/
+                                    abort();
                                 }
 
                                 // replace placeholder with actual entry
-                                Atom old_name = decl.name;
-
-                                *placeholder_space = (Cuik_Type){
-                                    .kind = KIND_QUALIFIED_TYPE,
-                                    .size = decl.type->size,
-                                    .align = decl.type->align,
-                                    .loc = decl.loc,
-                                    .also_known_as = old_name,
-                                    .qualified_ty = decl.type,
-                                };
+                                memcpy(placeholder_space, cuik_canonical_type(decl.type), sizeof(Cuik_Type));
+                                placeholder_space->also_known_as = decl.name;
                             } else {
-                                Cuik_Type* clone = new_qualified_type(tu, decl.type, decl.type->is_atomic, decl.type->is_const);
-                                clone->also_known_as = decl.name;
-
                                 // add new entry
                                 Symbol sym = {
                                     .name = decl.name,
-                                    .type = clone,
+                                    .type = decl.type,
                                     .loc = decl.loc,
                                     .storage_class = STORAGE_TYPEDEF,
                                 };
-                                nl_strmap_put_cstr(tu->global_symbols, decl.name, sym);
+                                nl_strmap_put_cstr(tu->globals.symbols, decl.name, sym);
                             }
                         }
 
@@ -811,8 +956,9 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                     }
                 } else {
                     if (tokens_get(s)->type == ';') {
-                        Stmt* n = make_stmt(tu, s, STMT_GLOBAL_DECL, sizeof(struct StmtDecl));
-                        n->loc = loc;
+                        Stmt* n = make_stmt(tu, s);
+                        n->op = STMT_GLOBAL_DECL;
+                        n->loc = tokens_get_range(s);
                         n->attr_list = attribute_list;
                         n->decl = (struct StmtDecl){
                             .name = NULL,
@@ -829,20 +975,20 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                     // normal variable lists
                     // declarator (',' declarator )+ ';'
                     while (true) {
-                        size_t start_decl_token = s->current;
+                        size_t start_decl_token = s->list.current;
 
-                        SourceLocIndex decl_loc = tokens_get_location_index(s);
-                        Decl decl = parse_declarator(tu, s, type, false, false);
+                        Decl decl = parse_declarator(tu, s, type, false);
                         if (decl.name == NULL) {
-                            REPORT(ERROR, decl_loc, "Declaration has no name");
+                            diag_err(&tu->tokens, decl.loc, "Declaration has no name");
                             break;
                         }
 
                         // we wanna avoid getting stuck in infinite loops so if we dont
                         // do anything in an iteration then we want to exit with an error
-                        bool possibly_bad_decl = (s->current == start_decl_token);
+                        bool possibly_bad_decl = (s->list.current == start_decl_token);
 
-                        Stmt* n = make_stmt(tu, s, STMT_GLOBAL_DECL, sizeof(struct StmtDecl));
+                        Stmt* n = make_stmt(tu, s);
+                        n->op = STMT_GLOBAL_DECL;
                         n->loc = decl.loc;
                         n->attr_list = attribute_list;
                         n->decl = (struct StmtDecl){
@@ -852,12 +998,12 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                         };
                         dyn_array_put(tu->top_level_stmts, n);
 
-                        Symbol* sym = find_global_symbol(tu, decl.name);
+                        Symbol* sym = find_global_symbol(&tu->globals, decl.name);
                         Symbol* old_definition = sym;
                         if (sym == NULL) {
                             // slap that bad boy into the symbol table
-                            ptrdiff_t sym_index = nl_strmap_puti_cstr(tu->global_symbols, decl.name);
-                            sym = &tu->global_symbols[sym_index];
+                            ptrdiff_t sym_index = nl_strmap_puti_cstr(tu->globals.symbols, decl.name);
+                            sym = &tu->globals.symbols[sym_index];
                         }
 
                         *sym = (Symbol){
@@ -867,22 +1013,23 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                             .stmt = n,
                         };
 
-                        if (decl.type->kind == KIND_FUNC) {
+                        if (cuik_canonical_type(decl.type)->kind == KIND_FUNC) {
                             sym->storage_class = (attr.is_static ? STORAGE_STATIC_FUNC : STORAGE_FUNC);
                         } else {
                             sym->storage_class = (attr.is_static ? STORAGE_STATIC_VAR : STORAGE_GLOBAL);
                         }
 
-                        n->attr_list = parse_attributes(tu, s, n->attr_list);
+                        n->attr_list = parse_attributes(s, n->attr_list);
 
                         bool requires_terminator = true;
                         if (tokens_get(s)->type == '=') {
                             tokens_next(s);
 
-                            if (old_definition && old_definition->current != 0) {
-                                report_two_spots(REPORT_ERROR, tu->errors, s, decl.loc, old_definition->stmt->loc,
+                            if (old_definition && old_definition->token_start != 0) {
+                                /* report_two_spots(REPORT_ERROR, tu->errors, s, decl.loc, old_definition->stmt->loc,
                                     "Cannot redefine global declaration",
-                                    NULL, NULL, "previous definition was:");
+                                    NULL, NULL, "previous definition was:");*/
+                                abort();
                             }
 
                             if (n->decl.attrs.is_inline) {
@@ -892,9 +1039,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                             n->decl.attrs.is_root = !attr.is_extern && !attr.is_static;
 
                             if (tokens_get(s)->type == '{') {
-                                sym->current = s->current;
-                                sym->terminator = '}';
-
+                                sym->token_start = s->list.current;
                                 tokens_next(s);
 
                                 int depth = 1;
@@ -905,12 +1050,12 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                                         REPORT(ERROR, decl.loc, "Declaration ended in EOF");
 
                                         // restore the token stream
-                                        s->current = sym->current + 1;
+                                        s->list.current = sym->token_start + 1;
                                         goto skip_declaration;
                                     } else if (t->type == '{') {
                                         depth++;
                                     } else if (t->type == ';' && depth == 1) {
-                                        REPORT(ERROR, tokens_get_location_index(s), "Spurious semicolon");
+                                        REPORT(ERROR, tokens_get_location(s), "Spurious semicolon");
                                         goto skip_declaration;
                                     } else if (t->type == '}') {
                                         if (depth == 0) {
@@ -923,11 +1068,12 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
 
                                     tokens_next(s);
                                 }
+
+                                sym->token_end = s->list.current;
                             } else {
                                 // '=' EXPRESSION ','
                                 // '=' EXPRESSION ';'
-                                sym->current = s->current;
-                                sym->terminator = ';';
+                                sym->token_start = s->list.current;
 
                                 int depth = 1;
                                 while (depth) {
@@ -937,7 +1083,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                                         REPORT(ERROR, decl.loc, "Declaration was never closed");
 
                                         // restore the token stream
-                                        s->current = sym->current + 1;
+                                        s->list.current = sym->token_start + 1;
                                         goto skip_declaration;
                                     } else if (t->type == '(') {
                                         depth++;
@@ -947,7 +1093,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                                         if (depth == 0) {
                                             REPORT(ERROR, decl.loc, "Unbalanced parenthesis");
 
-                                            s->current = sym->current + 1;
+                                            s->list.current = sym->token_start + 1;
                                             goto skip_declaration;
                                         }
                                     } else if (t->type == ';' || t->type == ',') {
@@ -955,7 +1101,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                                             REPORT(ERROR, decl.loc, "Declaration's expression has a weird semicolon");
                                             goto skip_declaration;
                                         } else if (depth == 1) {
-                                            sym->terminator = t->type;
+                                            sym->token_end = s->list.current;
                                             depth--;
                                         }
                                     }
@@ -966,20 +1112,22 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                                 // we ate the terminator but the code right below it
                                 // does need to know what it is...
                                 tokens_prev(s);
+                                sym->token_end = s->list.current;
                             }
                         } else if (tokens_get(s)->type == '{') {
                             // function bodies dont end in semicolon or comma, it just terminates
                             // the declaration list
                             requires_terminator = false;
 
-                            if (decl.type->kind != KIND_FUNC) {
-                                REPORT(ERROR, decl.loc, "Somehow parsing a function body... on a non-function type?");
+                            if (cuik_canonical_type(decl.type)->kind != KIND_FUNC) {
+                                diag_err(&tu->tokens, decl.loc, "Somehow parsing a function body... on a non-function type?");
                             }
 
-                            if (old_definition && old_definition->current != 0) {
-                                report_two_spots(REPORT_ERROR, tu->errors, s, decl.loc, old_definition->stmt->loc,
+                            if (old_definition && old_definition->token_start != 0) {
+                                /* report_two_spots(REPORT_ERROR, tu->errors, s, decl.loc, old_definition->stmt->loc,
                                     "Cannot redefine function declaration",
-                                    NULL, NULL, "previous definition was:");
+                                    NULL, NULL, "previous definition was:");*/
+                                abort();
                             }
 
                             if (sym->name[0] == 'm' && strcmp(sym->name, "main") == 0) {
@@ -992,8 +1140,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                             //n->decl.attrs = attr;
                             n->decl.attrs.is_root = attr.is_tls || !(attr.is_static || attr.is_inline);
 
-                            sym->terminator = '}';
-                            sym->current = s->current;
+                            sym->token_start = s->list.current;
                             tokens_next(s);
 
                             // we postpone parsing the function bodies
@@ -1003,10 +1150,10 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                                 Token* t = tokens_get(s);
 
                                 if (t->type == '\0') {
-                                    SourceLocIndex l = tokens_get_last_location_index(s);
-                                    report_fix(REPORT_ERROR, tu->errors, s, l, "}", "Function body ended in EOF");
+                                    SourceLoc l = tokens_get_last_location(s);
+                                    report_fix(REPORT_ERROR, s, l, "}", "Function body ended in EOF");
 
-                                    s->current = sym->current + 1;
+                                    s->list.current = sym->token_start + 1;
                                     goto skip_declaration;
                                 } else if (t->type == '{') {
                                     depth++;
@@ -1016,8 +1163,10 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
 
                                 tokens_next(s);
                             }
+
+                            sym->token_end = s->list.current;
                         } else {
-                            if (decl.type->kind != KIND_FUNC) {
+                            if (cuik_canonical_type(decl.type)->kind != KIND_FUNC) {
                                 if (n->decl.attrs.is_inline) {
                                     REPORT(ERROR, decl.loc, "Declaration cannot be inline");
                                 }
@@ -1054,10 +1203,12 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
     out_of_order_mode = false;
 
     // synchronize the thread symbol tables
-    s_global_symbols = tu->global_symbols;
-    s_global_tags = tu->global_tags;
+    s_global_symbols = tu->globals.symbols;
+    s_global_tags = tu->globals.tags;
 
-    if (has_reports(REPORT_ERROR, tu->errors)) goto parse_error;
+    if (cuikdg_error_count(s)) {
+        goto parse_error;
+    }
 
     // Phase 2: resolve top level types, layout records and anything else so that
     // we have a complete global symbol table
@@ -1065,69 +1216,50 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
         ////////////////////////////////
         // first we wanna check for cycles
         ////////////////////////////////
-        size_t type_count = 0;
-        for (ArenaSegment* a = tu->type_arena.base; a != NULL; a = a->next) {
-            for (size_t used = 0; used < a->used; used += sizeof(Cuik_Type)) {
-                Cuik_Type* type = (Cuik_Type*)&a->data[used];
-                if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
-                    type->ordinal = type_count++;
-                } else if (type->kind == KIND_PLACEHOLDER) {
-                    REPORT(ERROR, type->loc, "could not find type '%s'!", type->placeholder.name);
-                }
+        CUIK_FOR_TYPES(type, tu->types) {
+            if (type->kind == KIND_PLACEHOLDER) {
+                diag_err(s, type->loc, "could not find type '%s'!", type->placeholder.name);
             }
         }
 
-        if (has_reports(REPORT_ERROR, tu->errors)) goto parse_error;
-
-        // bitvectors amirite
-        size_t bitvec_bytes = (type_count + 7) / 8;
-        uint8_t* visited = tls_push(bitvec_bytes);
-        uint8_t* finished = tls_push(bitvec_bytes);
-
-        memset(visited, 0, bitvec_bytes);
-        memset(finished, 0, bitvec_bytes);
+        if (cuikdg_error_count(s)) {
+            goto parse_error;
+        }
 
         // for each type, check for cycles
-        for (ArenaSegment* a = tu->type_arena.base; a != NULL; a = a->next) {
-            for (size_t used = 0; used < a->used; used += sizeof(Cuik_Type)) {
-                Cuik_Type* type = (Cuik_Type*)&a->data[used];
-
-                if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
-                    // if cycles... quit lmao
-                    if (type_cycles_dfs(tu, type, visited, finished)) goto parse_error;
-                }
+        CUIK_FOR_TYPES(type, tu->types) {
+            if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
+                // if cycles... quit lmao
+                if (type_cycles_dfs(&tu->tokens, type)) goto parse_error;
             }
         }
 
-        if (has_reports(REPORT_ERROR, tu->errors)) goto parse_error;
+        if (cuikdg_error_count(s)) {
+            goto parse_error;
+        }
 
         // parse all global declarations
-        nl_strmap_for(i, tu->global_symbols) {
-            Symbol* sym = &tu->global_symbols[i];
+        nl_strmap_for(i, tu->globals.symbols) {
+            Symbol* sym = &tu->globals.symbols[i];
 
-            if (sym->current != 0 &&
-                (sym->storage_class == STORAGE_STATIC_VAR || sym->storage_class == STORAGE_GLOBAL)) {
+            if (sym->token_start != 0 && (sym->storage_class == STORAGE_STATIC_VAR || sym->storage_class == STORAGE_GLOBAL)) {
                 // Spin up a mini parser here
                 TokenStream mini_lex = *s;
-                mini_lex.current = sym->current;
+                mini_lex.list.current = sym->token_start;
 
                 // intitialize use list
                 symbol_chain_start = symbol_chain_current = NULL;
 
                 Expr* e;
-                if (tokens_get(&mini_lex)->type == '@') {
-                    // function literals are a Cuik extension
-                    // TODO(NeGate): error messages
+                if (tokens_get(&mini_lex)->type == '{') {
                     tokens_next(&mini_lex);
 
-                    e = parse_function_literal(tu, &mini_lex, sym->type);
-                } else if (tokens_get(&mini_lex)->type == '{') {
-                    tokens_next(&mini_lex);
-
-                    e = parse_initializer(tu, &mini_lex, NULL);
+                    e = parse_initializer(tu, &mini_lex, CUIK_QUAL_TYPE_NULL);
                 } else {
-                    e = parse_expr_l14(tu, &mini_lex);
-                    expect(tu, &mini_lex, sym->terminator);
+                    e = parse_expr_assign(tu, &mini_lex);
+                    if (mini_lex.list.current != sym->token_end) {
+                        abort();
+                    }
                 }
 
                 sym->stmt->decl.initial = e;
@@ -1137,25 +1269,26 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
             }
         }
 
-        if (has_reports(REPORT_ERROR, tu->errors)) goto parse_error;
+        if (cuikdg_error_count(s)) {
+            goto parse_error;
+        }
 
         // do record layouts and shi
-        for (ArenaSegment* a = tu->type_arena.base; a != NULL; a = a->next) {
-            for (size_t used = 0; used < a->used; used += sizeof(Cuik_Type)) {
-                Cuik_Type* type = (Cuik_Type*)&a->data[used];
+        if (type_resolve_pending_align(tu)) {
+            goto parse_error;
+        }
 
-                if (type->align == -1) {
-                    // this means it's got a pending expression for an alignment
-                    type_resolve_pending_align(tu, type);
-                }
+        CUIK_FOR_TYPES(type, tu->types) {
+            assert(type->align != -1);
 
-                if (type->size == 0) {
-                    type_layout(tu, type, true);
-                }
+            if (type->size == 0) {
+                type_layout(tu, type, true);
             }
         }
 
-        if (has_reports(REPORT_ERROR, tu->errors)) goto parse_error;
+        if (cuikdg_error_count(s)) {
+            goto parse_error;
+        }
         dyn_array_destroy(pending_exprs);
 
         ////////////////////////////////
@@ -1166,7 +1299,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
             size_t current_lex_pos = static_assertions[i];
 
             TokenStream mini_lex = *s;
-            mini_lex.current = current_lex_pos;
+            mini_lex.list.current = current_lex_pos;
 
             intmax_t condition = parse_const_expr(tu, &mini_lex);
             if (tokens_get(&mini_lex)->type == ',') {
@@ -1179,17 +1312,14 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                 tokens_next(&mini_lex);
 
                 if (condition == 0) {
-                    REPORT(ERROR, tokens_get_location_index(&mini_lex), "Static assertion failed: %.*s", (int)(t->end - t->start), t->start);
+                    REPORT(ERROR, tokens_get_location(&mini_lex), "Static assertion failed: %.*s", (int) t->content.length, t->content.data);
                 }
             } else {
                 if (condition == 0) {
-                    REPORT(ERROR, tokens_get_location_index(&mini_lex), "Static assertion failed");
+                    REPORT(ERROR, tokens_get_location(&mini_lex), "Static assertion failed");
                 }
             }
         }
-
-        // we don't need to keep it afterwards
-        tls_restore(visited);
     }
     dyn_array_destroy(static_assertions);
 
@@ -1209,12 +1339,12 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
 
         if (desc->thread_pool != NULL) {
             // disabled until we change the tables to arenas
-            size_t count = nl_strmap_get_load(tu->global_symbols);
+            size_t count = nl_strmap_get_load(tu->globals.symbols);
             size_t padded = (count + (PARSE_MUNCH_SIZE - 1)) & ~(PARSE_MUNCH_SIZE - 1);
 
             // passed to the threads to identify when things are done
             atomic_size_t tasks_remaining = (count + (PARSE_MUNCH_SIZE - 1)) / PARSE_MUNCH_SIZE;
-            ParserTaskInfo* tasks = HEAP_ALLOC(sizeof(ParserTaskInfo) * tasks_remaining);
+            ParserTaskInfo* tasks = malloc(sizeof(ParserTaskInfo) * tasks_remaining);
 
             size_t j = 0;
             for (size_t i = 0; i < padded; i += PARSE_MUNCH_SIZE) {
@@ -1246,45 +1376,43 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
                 CUIK_CALL(desc->thread_pool, work_one_job);
             }
 
-            HEAP_FREE(tasks);
+            free(tasks);
         } else {
             // single threaded mode
-            parse_global_symbols(tu, 0, nl_strmap__get_header(tu->global_symbols)->load, *s);
+            parse_global_symbols(tu, 0, nl_strmap__get_header(tu->globals.symbols)->load, *s);
         }
 
         // detach it because we're cool people
-        tu->global_symbols = NULL;
-        tu->global_tags = NULL;
+        tu->globals.symbols = NULL;
+        tu->globals.tags = NULL;
 
-        if (has_reports(REPORT_ERROR, tu->errors)) goto parse_error;
+        if (cuikdg_error_count(s)) {
+            goto parse_error;
+        }
 
         // check for any qualified types and resolve them correctly
-        for (ArenaSegment* a = tu->type_arena.base; a != NULL; a = a->next) {
-            for (size_t used = 0; used < a->used; used += sizeof(Cuik_Type)) {
-                Cuik_Type* type = (Cuik_Type*)&a->data[used];
+        for (Cuik_TypeTableSegment* a = tu->types.base; a != NULL; a = a->next) {
+            for (size_t i = 0; i < a->count; i++) {
+                Cuik_Type* type = &a->_[i];
 
-                if (type->kind == KIND_QUALIFIED_TYPE) {
-                    SourceLocIndex loc = type->loc;
-                    bool is_atomic = type->is_atomic;
-                    bool is_const = type->is_const;
+                if (type->kind == KIND_ALIGNED) {
                     int align = type->align;
+                    SourceRange loc = type->loc;
                     Atom aka = type->also_known_as;
-
-                    Cuik_Type* based = type->qualified_ty;
+                    Cuik_Type* based = type->aligned_on.base;
 
                     // copy and replace the qualifier slots
                     memcpy(type, based, sizeof(Cuik_Type));
+
                     type->loc = loc;
                     type->also_known_as = aka;
                     type->based = based;
                     type->align = align;
-                    type->is_const = is_const;
-                    type->is_atomic = is_atomic;
                 }
             }
         }
 
-        dyn_array_destroy(tu->tokens.tokens);
+        dyn_array_destroy(tu->tokens.list.tokens);
     }
 
     #if 0
@@ -1297,7 +1425,7 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
     // output accumulated diagnostics
     nl_strmap_for(i, tu->unresolved_symbols) {
         Diag_UnresolvedSymbol* loc = tu->unresolved_symbols[i];
-        report_header(REPORT_ERROR, "could not resolve symbol: %s", loc->name);
+        diag_header(DIAG_ERR, "could not resolve symbol: %s", loc->name);
 
         DiagWriter d = diag_writer(&tu->tokens);
         for (; loc != NULL; loc = loc->next) {
@@ -1320,11 +1448,14 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
 
     // run type checker
     CUIK_TIMED_BLOCK("phase 4") {
-        cuik__sema_pass(tu, NULL /* desc->thread_pool */);
-        if (has_reports(REPORT_ERROR, tu->errors)) goto parse_error;
+        cuiksema_run(tu, NULL /* desc->thread_pool */);
+
+        if (cuikdg_error_count(s)) {
+            goto parse_error;
+        }
     }
 
-    if (cuik_is_profiling()) cuik_profile_region_end();
+    if (cuikperf_is_active()) cuikperf_region_end();
     return tu;
 
     parse_error: {
@@ -1333,100 +1464,51 @@ CUIK_API TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnit
         dyn_array_destroy(static_assertions);
 
         // free tokens
-        dyn_array_destroy(tu->tokens.tokens);
+        dyn_array_destroy(tu->tokens.list.tokens);
 
         cuik_destroy_translation_unit(tu);
-        if (cuik_is_profiling()) cuik_profile_region_end();
+        if (cuikperf_is_active()) cuikperf_region_end();
         return NULL;
     }
 }
 
-CUIK_API void* cuik_set_translation_unit_user_data(TranslationUnit* restrict tu, void* ud) {
+void* cuik_set_translation_unit_user_data(TranslationUnit* restrict tu, void* ud) {
     void* old = tu->user_data;
     tu->user_data = ud;
     return old;
 }
 
-CUIK_API void* cuik_get_translation_unit_user_data(TranslationUnit* restrict tu) {
+void* cuik_get_translation_unit_user_data(TranslationUnit* restrict tu) {
     return tu->user_data;
 }
 
-CUIK_API int cuik_acquire_translation_unit(TranslationUnit* restrict tu) {
-    return atomic_fetch_add(&tu->ref_count, 1);
-}
-
-CUIK_API void cuik_release_translation_unit(TranslationUnit* restrict tu) {
-    int r = --tu->ref_count;
-    if (r == 0) {
-        cuik_destroy_translation_unit(tu);
-    }
-}
-
-CUIK_API void cuik_destroy_translation_unit(TranslationUnit* restrict tu) {
+void cuik_destroy_translation_unit(TranslationUnit* restrict tu) {
     dyn_array_destroy(tu->top_level_stmts);
 
     arena_free(&tu->ast_arena);
-    arena_free(&tu->type_arena);
+    free_type_table(&tu->types);
     mtx_destroy(&tu->arena_mutex);
     free(tu);
 }
 
-CUIK_API Cuik_ImportRequest* cuik_translation_unit_import_requests(TranslationUnit* restrict tu) {
+Cuik_ImportRequest* cuik_translation_unit_import_requests(TranslationUnit* restrict tu) {
     return tu->import_libs;
 }
 
-CUIK_API TranslationUnit* cuik_next_translation_unit(TranslationUnit* restrict tu) {
+TranslationUnit* cuik_next_translation_unit(TranslationUnit* restrict tu) {
     return tu->next;
 }
 
-CUIK_API Cuik_TopLevelIter cuik_first_top_level_stmt(TranslationUnit* restrict tu) {
-    return (Cuik_TopLevelIter){
-        .limit_ = dyn_array_length(tu->top_level_stmts),
-        .stmts_ = tu->top_level_stmts
-    };
-}
-
-CUIK_API bool cuik_next_top_level_stmt(Cuik_TopLevelIter* it, int step) {
-    size_t i = it->index_, limit = it->limit_;
-    if (i >= limit) {
-        return false;
-    }
-
-    if (i + step >= limit) {
-        it->count = step - ((i + step) - limit);
-    } else {
-        it->count = step;
-    }
-
-    it->start = &it->stmts_[i];
-    it->index_ = i + step;
-    return true;
-}
-
-CUIK_API Stmt** cuik_get_top_level_stmts(TranslationUnit* restrict tu) {
+Stmt** cuik_get_top_level_stmts(TranslationUnit* restrict tu) {
     return tu->top_level_stmts;
 }
 
-CUIK_API size_t cuik_num_of_top_level_stmts(TranslationUnit* restrict tu) {
+size_t cuik_num_of_top_level_stmts(TranslationUnit* restrict tu) {
     return dyn_array_length(tu->top_level_stmts);
-}
-
-Stmt* resolve_unknown_symbol(TranslationUnit* tu, Expr* e) {
-    Symbol* sym = find_global_symbol(tu, (char*)e->unknown_sym);
-    if (sym != NULL) return 0;
-
-    // Parameters are local and a special case how tf
-    assert(sym->storage_class != STORAGE_PARAM);
-
-    e->op = EXPR_SYMBOL;
-    e->symbol = sym->stmt;
-    return sym->stmt;
 }
 
 static Symbol* find_local_symbol(TokenStream* restrict s) {
     Token* t = tokens_get(s);
-    const unsigned char* name = t->start;
-    size_t length = t->end - t->start;
 
     // Try local variables
     size_t i = local_symbol_count;
@@ -1435,7 +1517,7 @@ static Symbol* find_local_symbol(TokenStream* restrict s) {
         const char* sym = local_symbols[i].name;
         size_t sym_length = strlen(sym);
 
-        if (sym_length == length && memcmp(name, sym, length) == 0) {
+        if (memeq(t->content.data, t->content.length, sym, sym_length)) {
             return &local_symbols[i];
         }
     }
@@ -1446,16 +1528,16 @@ static Symbol* find_local_symbol(TokenStream* restrict s) {
 ////////////////////////////////
 // STATEMENTS
 ////////////////////////////////
-static void parse_function_definition(TranslationUnit* tu, TokenStream* restrict s, Stmt* n) {
-    Cuik_Type* type = n->decl.type;
+static bool parse_function_definition(TranslationUnit* tu, TokenStream* restrict s, Stmt* decl_node) {
+    Cuik_Type* type = cuik_canonical_type(decl_node->decl.type);
 
     Param* param_list = type->func.param_list;
     size_t param_count = type->func.param_count;
 
     assert(local_symbol_start == local_symbol_count);
     if (param_count >= INT16_MAX) {
-        REPORT(ERROR, n->loc, "Function parameter count cannot exceed %d (got %d)", param_count, MAX_LOCAL_SYMBOLS);
-        abort();
+        diag_err(s, decl_node->loc, "Function parameter count cannot exceed %d (got %d)", param_count, MAX_LOCAL_SYMBOLS);
+        return false;
     }
 
     for (size_t i = 0; i < param_count; i++) {
@@ -1471,26 +1553,24 @@ static void parse_function_definition(TranslationUnit* tu, TokenStream* restrict
         }
     }
 
-    // skip {
+    // skip { for parse_compound_stmt
     tokens_next(s);
 
-    cuik__sema_function_stmt = n;
-    Stmt* body = parse_compound_stmt(tu, s);
-    assert(body != NULL);
+    cuik__sema_function_stmt = decl_node;
+    Stmt* body = make_stmt(tu, s);
+    parse_compound_stmt(tu, s, body);
     cuik__sema_function_stmt = NULL;
 
-    n->op = STMT_FUNC_DECL;
-    n->decl.initial_as_stmt = body;
+    decl_node->op = STMT_FUNC_DECL;
+    decl_node->decl.initial_as_stmt = body;
 
-    // TODO(NeGate): redo the label look in a sec
     nl_strmap_free(labels);
+    return true;
 }
 
-static Stmt* parse_compound_stmt(TranslationUnit* tu, TokenStream* restrict s) {
-    Stmt* node = NULL;
-
+static void parse_compound_stmt(TranslationUnit* tu, TokenStream* restrict s, Stmt* node) {
     LOCAL_SCOPE {
-        node = make_stmt(tu, s, STMT_COMPOUND, sizeof(struct StmtCompound));
+        node->loc.start = tokens_get_location(s);
 
         size_t kid_count = 0;
         Stmt** kids = tls_save();
@@ -1510,8 +1590,8 @@ static Stmt* parse_compound_stmt(TranslationUnit* tu, TokenStream* restrict s) {
             }
         }
 
-        node->end_loc = tokens_get_location_index(s);
         expect(tu, s, '}');
+        node->loc.end = tokens_get_last_location(s);
 
         Stmt** permanent_storage = arena_alloc(&thread_arena, kid_count * sizeof(Stmt*), _Alignof(Stmt*));
         memcpy(permanent_storage, kids, kid_count * sizeof(Stmt*));
@@ -1523,24 +1603,19 @@ static Stmt* parse_compound_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 
         tls_restore(kids);
     }
-
-    return node;
 }
 
-// TODO(NeGate): Doesn't handle declarators or expression-statements
+// Doesn't handle declarators or expression-statements
 static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
-    TknType peek = tokens_get(s)->type;
-
-    if (peek == '{') {
-        tokens_next(s);
-        return parse_compound_stmt(tu, s);
-    } else if (peek == TOKEN_KW_Static_assert) {
+    // _Static_assert doesn't produce a statement, handle these first.
+    // label declarations only produce a new statement if they haven't been used yet.
+    SourceLoc start = tokens_get_location(s);
+    while (tokens_get(s)->type == TOKEN_KW_Static_assert) {
         tokens_next(s);
         expect(tu, s, '(');
 
-        SourceLocIndex start = tokens_get_location_index(s);
         intmax_t condition = parse_const_expr(tu, s);
-        SourceLocIndex end = tokens_get_last_location_index(s);
+        SourceLoc end = tokens_get_last_location(s);
 
         if (tokens_get(s)->type == ',') {
             tokens_next(s);
@@ -1552,20 +1627,28 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
             tokens_next(s);
 
             if (condition == 0) {
-                REPORT_RANGED(ERROR, start, end, "Static assertion failed! %.*s", (int) (t->end - t->start), t->start);
+                diag_err(&tu->tokens, (SourceRange){ start, end }, "static assertion failed! %.*s", (int) t->content.length, t->content.data);
             }
         } else {
             if (condition == 0) {
-                REPORT_RANGED(ERROR, start, end, "Static assertion failed!");
+                diag_err(&tu->tokens, (SourceRange){ start, end }, "static assertion failed!");
             }
         }
 
         expect(tu, s, ')');
         expect(tu, s, ';');
+    }
 
-        // TAIL CALL
-        return parse_stmt(tu, s);
+    Stmt* n = NULL;
+    SourceLoc loc_start = tokens_get_location(s);
+    TknType peek = tokens_get(s)->type;
+    if (peek == '{') {
+        tokens_next(s);
+
+        n = make_stmt(tu, s);
+        parse_compound_stmt(tu, s, n);
     } else if (peek == TOKEN_KW_return) {
+        n = make_stmt(tu, s);
         tokens_next(s);
 
         Expr* e = 0;
@@ -1573,24 +1656,23 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
             e = parse_expr(tu, s);
         }
 
-        Stmt* n = make_stmt(tu, s, STMT_RETURN, sizeof(struct StmtReturn));
+        n->op = STMT_RETURN;
         n->return_ = (struct StmtReturn){ .expr = e };
 
-        expect_with_reason(tu, s, ';', "return");
-        return n;
+        expect_with_reason(s, ';', "return");
     } else if (peek == TOKEN_KW_if) {
+        n = make_stmt(tu, s);
         tokens_next(s);
-        Stmt* n = make_stmt(tu, s, STMT_IF, sizeof(struct StmtIf));
 
         LOCAL_SCOPE {
             Expr* cond;
             {
-                SourceLocIndex opening_loc = tokens_get_location_index(s);
+                SourceLoc opening_loc = tokens_get_location(s);
                 expect(tu, s, '(');
 
                 cond = parse_expr(tu, s);
 
-                expect_closing_paren(tu, s, opening_loc);
+                expect_closing_paren(s, opening_loc);
             }
 
             Stmt* body;
@@ -1607,25 +1689,24 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
                 }
             }
 
+            n->op = STMT_IF;
             n->if_ = (struct StmtIf){
                 .cond = cond,
                 .body = body,
                 .next = next,
             };
         }
-
-        return n;
     } else if (peek == TOKEN_KW_switch) {
+        n = make_stmt(tu, s);
         tokens_next(s);
-        Stmt* n = make_stmt(tu, s, STMT_SWITCH, sizeof(struct StmtSwitch));
 
         LOCAL_SCOPE {
             expect(tu, s, '(');
             Expr* cond = parse_expr(tu, s);
             expect(tu, s, ')');
 
-            n->switch_ = (struct StmtSwitch){
-                .condition = cond};
+            n->op = STMT_SWITCH;
+            n->switch_ = (struct StmtSwitch){ .condition = cond };
 
             // begin a new chain but keep the old one
             Stmt* old_switch = current_switch_or_case;
@@ -1640,14 +1721,14 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
             current_breakable = old_breakable;
             current_switch_or_case = old_switch;
         }
-        return n;
     } else if (peek == TOKEN_KW_case) {
         // TODO(NeGate): error messages
+        n = make_stmt(tu, s);
         assert(current_switch_or_case);
-
         tokens_next(s);
-        Stmt* n = make_stmt(tu, s, STMT_CASE, sizeof(struct StmtCase));
+
         Stmt* top = n;
+        top->op = STMT_CASE;
 
         intmax_t key = parse_const_expr(tu, s);
         if (tokens_get(s)->type == TOKEN_TRIPLE_DOT) {
@@ -1660,7 +1741,8 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
             n->case_.key = key;
 
             for (intmax_t i = key; i < key_max; i++) {
-                Stmt* curr = make_stmt(tu, s, STMT_CASE, sizeof(struct StmtCase));
+                Stmt* curr = make_stmt(tu, s);
+                curr->op = STMT_CASE;
                 curr->case_ = (struct StmtCase){.key = i + 1};
 
                 // Append to list
@@ -1671,84 +1753,69 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
             expect(tu, s, ':');
 
             n->case_ = (struct StmtCase){
-                .key = key, .body = 0, .next = 0};
+                .key = key, .body = 0, .next = 0
+            };
         }
 
         switch (current_switch_or_case->op) {
-            case STMT_CASE:
-            current_switch_or_case->case_.next = top;
-            break;
-            case STMT_DEFAULT:
-            current_switch_or_case->default_.next = top;
-            break;
-            case STMT_SWITCH:
-            current_switch_or_case->switch_.next = top;
-            break;
-            default:
-            abort();
+            case STMT_CASE: current_switch_or_case->case_.next = top; break;
+            case STMT_DEFAULT: current_switch_or_case->default_.next = top; break;
+            case STMT_SWITCH: current_switch_or_case->switch_.next = top; break;
+            default: __builtin_unreachable();
         }
         current_switch_or_case = n;
 
         Stmt* body = parse_stmt_or_expr(tu, s);
         n->case_.body = body;
-        return top;
     } else if (peek == TOKEN_KW_default) {
         // TODO(NeGate): error messages
+        n = make_stmt(tu, s);
         assert(current_switch_or_case);
-
         tokens_next(s);
-        Stmt* n = make_stmt(tu, s, STMT_DEFAULT, sizeof(struct StmtDefault));
 
         switch (current_switch_or_case->op) {
-            case STMT_CASE:
-            current_switch_or_case->case_.next = n;
-            break;
-            case STMT_DEFAULT:
-            current_switch_or_case->default_.next = n;
-            break;
-            case STMT_SWITCH:
-            current_switch_or_case->switch_.next = n;
-            break;
-            default:
-            abort();
+            case STMT_CASE: current_switch_or_case->case_.next = n; break;
+            case STMT_DEFAULT: current_switch_or_case->default_.next = n; break;
+            case STMT_SWITCH: current_switch_or_case->switch_.next = n; break;
+            default: __builtin_unreachable();
         }
         current_switch_or_case = n;
         expect(tu, s, ':');
 
+        n->op = STMT_DEFAULT;
         n->default_ = (struct StmtDefault){
             .body = 0, .next = 0,
         };
 
         Stmt* body = parse_stmt_or_expr(tu, s);
         n->default_.body = body;
-        return n;
     } else if (peek == TOKEN_KW_break) {
         // TODO(NeGate): error messages
+        n = make_stmt(tu, s);
         assert(current_breakable);
 
         tokens_next(s);
         expect(tu, s, ';');
 
-        Stmt* n = make_stmt(tu, s, STMT_BREAK, sizeof(struct StmtBreak));
+        n->op = STMT_BREAK;
         n->break_ = (struct StmtBreak){
             .target = current_breakable,
         };
-        return n;
     } else if (peek == TOKEN_KW_continue) {
         // TODO(NeGate): error messages
+        n = make_stmt(tu, s);
         assert(current_continuable);
 
         tokens_next(s);
         expect(tu, s, ';');
 
-        Stmt* n = make_stmt(tu, s, STMT_CONTINUE, sizeof(struct StmtContinue));
+        n->op = STMT_CONTINUE;
         n->continue_ = (struct StmtContinue){
             .target = current_continuable,
         };
-        return n;
     } else if (peek == TOKEN_KW_while) {
+        n = make_stmt(tu, s);
         tokens_next(s);
-        Stmt* n = make_stmt(tu, s, STMT_WHILE, sizeof(struct StmtWhile));
 
         LOCAL_SCOPE {
             expect(tu, s, '(');
@@ -1769,6 +1836,7 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
                 current_continuable = old_continuable;
             }
 
+            n->op = STMT_WHILE;
             n->while_ = (struct StmtWhile){
                 .cond = cond,
                 .body = body,
@@ -1777,8 +1845,8 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 
         return n;
     } else if (peek == TOKEN_KW_for) {
+        n = make_stmt(tu, s);
         tokens_next(s);
-        Stmt* n = make_stmt(tu, s, STMT_FOR, sizeof(struct StmtFor));
 
         LOCAL_SCOPE {
             expect(tu, s, '(');
@@ -1790,7 +1858,8 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
                 tokens_next(s);
             } else {
                 // NOTE(NeGate): This is just a decl list or a single expression.
-                first = make_stmt(tu, s, STMT_COMPOUND, sizeof(struct StmtCompound));
+                first = make_stmt(tu, s);
+                first->op = STMT_COMPOUND;
 
                 size_t kid_count = 0;
                 Stmt** kids = tls_save();
@@ -1839,6 +1908,7 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
                 current_continuable = old_continuable;
             }
 
+            n->op = STMT_FOR;
             n->for_ = (struct StmtFor){
                 .first = first,
                 .cond = cond,
@@ -1846,11 +1916,9 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
                 .next = next,
             };
         }
-
-        return n;
     } else if (peek == TOKEN_KW_do) {
+        n = make_stmt(tu, s);
         tokens_next(s);
-        Stmt* n = make_stmt(tu, s, STMT_DO_WHILE, sizeof(struct StmtDoWhile));
 
         // Push this as a breakable statement
         LOCAL_SCOPE {
@@ -1870,7 +1938,7 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
             if (tokens_get(s)->type != TOKEN_KW_while) {
                 Token* t = tokens_get(s);
 
-                REPORT(ERROR, t->location, "%s:%d: error: expected 'while' got '%.*s'", (int)(t->end - t->start), t->start);
+                REPORT(ERROR, t->location, "%s:%d: error: expected 'while' got '%.*s'", (int)t->content.length, t->content.data);
                 abort();
             }
             tokens_next(s);
@@ -1882,6 +1950,7 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
             expect(tu, s, ')');
             expect(tu, s, ';');
 
+            n->op = STMT_DO_WHILE;
             n->do_while = (struct StmtDoWhile){
                 .cond = cond,
                 .body = body,
@@ -1890,18 +1959,18 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 
         return n;
     } else if (peek == TOKEN_KW_goto) {
+        n = make_stmt(tu, s);
         tokens_next(s);
-        Stmt* n = make_stmt(tu, s, STMT_GOTO, sizeof(struct StmtGoto));
 
         // read label name
         Token* t = tokens_get(s);
-        SourceLocIndex loc = t->location;
+        SourceLoc loc = t->location;
         if (t->type != TOKEN_IDENTIFIER) {
             REPORT(ERROR, loc, "expected identifier for goto target name");
             return n;
         }
 
-        Atom name = atoms_put(t->end - t->start, t->start);
+        Atom name = atoms_put(t->content.length, t->content.data);
 
         // skip to the semicolon
         tokens_next(s);
@@ -1911,42 +1980,45 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
         if (search >= 0) {
             *target = (Expr){
                 .op = EXPR_SYMBOL,
-                .start_loc = loc,
-                .end_loc = loc,
+                .loc = { loc, loc },
                 .symbol = labels[search],
             };
         } else {
             // not defined yet, make a placeholder
-            Stmt* label_decl = make_stmt(tu, s, STMT_LABEL, sizeof(struct StmtLabel));
+            Stmt* label_decl = make_stmt(tu, s);
+            label_decl->op = STMT_LABEL;
             label_decl->label = (struct StmtLabel){ .name = name };
             nl_strmap_put_cstr(labels, name, label_decl);
 
             *target = (Expr){
                 .op = EXPR_SYMBOL,
-                .start_loc = loc,
-                .end_loc = loc,
+                .loc = { loc, loc },
                 .symbol = label_decl,
             };
         }
 
+        n->op = STMT_GOTO;
         n->goto_ = (struct StmtGoto){
             .target = target,
         };
 
         expect(tu, s, ';');
-        return n;
-    } else if (peek == TOKEN_IDENTIFIER && tokens_peek(s)->type == TOKEN_COLON) {
+    } else if (peek == TOKEN_IDENTIFIER || tokens_peek(s)->type == TOKEN_COLON) {
         // label amirite
         // IDENTIFIER COLON STMT
+        n = make_stmt(tu, s);
+
         Token* t = tokens_get(s);
-        Atom name = atoms_put(t->end - t->start, t->start);
+        Atom name = atoms_put(t->content.length, t->content.data);
 
         Stmt* n = NULL;
         ptrdiff_t search = nl_strmap_get_cstr(labels, name);
         if (search >= 0) {
             n = labels[search];
         } else {
-            n = make_stmt(tu, s, STMT_LABEL, sizeof(struct StmtLabel));
+            n = make_stmt(tu, s);
+            n->op = STMT_LABEL;
+            n->loc = tokens_get_range(s);
             n->label = (struct StmtLabel){ .name = name };
             nl_strmap_put_cstr(labels, name, n);
         }
@@ -1955,42 +2027,56 @@ static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s) {
 
         tokens_next(s);
         tokens_next(s);
-        return n;
-    } else {
-        return 0;
     }
+
+    if (n != NULL) {
+        n->loc.start = loc_start;
+        n->loc.end = tokens_get_last_location(s);
+    }
+    return n;
 }
 
-static void parse_decl_or_expr(TranslationUnit* tu, TokenStream* restrict s, size_t* body_count) {
+// Doesn't handle it's own error recovery, once we return false the caller should try
+// what it feels is necessary to get it to another parsable unit.
+static bool parse_decl_or_expr(TranslationUnit* tu, TokenStream* restrict s, size_t* body_count) {
     if (tokens_get(s)->type == TOKEN_KW_Pragma) {
         tokens_next(s);
         expect(tu, s, '(');
 
         if (tokens_get(s)->type != TOKEN_STRING_DOUBLE_QUOTE) {
-            generic_error(tu, s, "pragma declaration expects string literal");
+            diag_err(s, tokens_get_range(s), "pragma declaration expects string literal");
+            return false;
         }
         tokens_next(s);
 
         expect(tu, s, ')');
+        return true;
     } else if (tokens_get(s)->type == ';') {
         tokens_next(s);
-    } else if (is_typename(tu, s)) {
-        Attribs attr = {0};
-        Cuik_Type* type = parse_declspec(tu, s, &attr);
+        return true;
+    } else if (is_typename(&tu->globals, s)) {
+        Attribs attr = { 0 };
+        Cuik_QualType type = parse_declspec(tu, s, &attr);
 
         if (attr.is_typedef) {
             // don't expect one the first time
             bool expect_comma = false;
             while (tokens_get(s)->type != ';') {
                 if (expect_comma) {
-                    expect_with_reason(tu, s, ',', "typedef");
-                } else expect_comma = true;
+                    expect_with_reason(s, ',', "typedef");
+                } else {
+                    expect_comma = true;
+                }
 
-                Decl decl = parse_declarator(tu, s, type, false, false);
-                assert(decl.name);
+                Decl decl = parse_declarator(tu, s, type, false);
+                if (decl.name) {
+                    diag_err(s, decl.loc, "typedef declaration must be named");
+                    continue;
+                }
 
                 // make typedef
-                Stmt* n = make_stmt(tu, s, STMT_DECL, sizeof(struct StmtDecl));
+                Stmt* n = make_stmt(tu, s);
+                n->op = STMT_DECL;
                 n->loc = decl.loc;
                 n->decl = (struct StmtDecl){
                     .name = decl.name,
@@ -1999,8 +2085,8 @@ static void parse_decl_or_expr(TranslationUnit* tu, TokenStream* restrict s, siz
                 };
 
                 if (local_symbol_count >= MAX_LOCAL_SYMBOLS) {
-                    REPORT(ERROR, decl.loc, "Local symbol count exceeds %d (got %d)", MAX_LOCAL_SYMBOLS, local_symbol_count);
-                    abort();
+                    diag_err(s, decl.loc, "local symbol count exceeds %d (got %d)", MAX_LOCAL_SYMBOLS, local_symbol_count);
+                    return false;
                 }
 
                 local_symbols[local_symbol_count++] = (Symbol){
@@ -2012,27 +2098,26 @@ static void parse_decl_or_expr(TranslationUnit* tu, TokenStream* restrict s, siz
 
             expect(tu, s, ';');
         } else {
-            // TODO(NeGate): Kinda ugly
-            // don't expect one the first time
             bool expect_comma = false;
             while (tokens_get(s)->type != ';') {
                 if (expect_comma) {
                     if (tokens_get(s)->type == '{') {
-                        generic_error(tu, s, "nested functions are not allowed... yet");
+                        diag_err(s, tokens_get_range(s), "nested functions are not allowed... yet");
+                        return false;
                     } else if (tokens_get(s)->type != ',') {
-                        SourceLocIndex loc = tokens_get_last_location_index(s);
-
-                        report_fix(REPORT_ERROR, tu->errors, s, loc, ";", "expected semicolon at the end of declaration");
+                        SourceLoc loc = tokens_get_last_location(s);
+                        report_fix(REPORT_ERROR, s, loc, ";", "expected semicolon at the end of declaration");
+                    } else {
+                        tokens_next(s);
                     }
-
-                    tokens_next(s);
                 } else {
                     expect_comma = true;
                 }
 
-                Decl decl = parse_declarator(tu, s, type, false, false);
+                Decl decl = parse_declarator(tu, s, type, false);
 
-                Stmt* n = make_stmt(tu, s, STMT_DECL, sizeof(struct StmtDecl));
+                Stmt* n = make_stmt(tu, s);
+                n->op = STMT_DECL;
                 n->loc = decl.loc;
                 n->decl = (struct StmtDecl){
                     .type = decl.type,
@@ -2042,51 +2127,52 @@ static void parse_decl_or_expr(TranslationUnit* tu, TokenStream* restrict s, siz
                 };
 
                 if (local_symbol_count >= MAX_LOCAL_SYMBOLS) {
-                    REPORT(ERROR, decl.loc, "Local symbol count exceeds %d (got %d)", MAX_LOCAL_SYMBOLS, local_symbol_count);
-                    abort();
+                    diag_err(s, decl.loc, "Local symbol count exceeds %d (got %d)", MAX_LOCAL_SYMBOLS, local_symbol_count);
+                    return false;
                 }
 
-                local_symbols[local_symbol_count++] = (Symbol){
-                    .name = decl.name,
-                    .type = decl.type,
-                    .storage_class = STORAGE_LOCAL,
-                    .stmt = n,
-                };
+                if (decl.name != NULL) {
+                    local_symbols[local_symbol_count++] = (Symbol){
+                        .name = decl.name,
+                        .type = decl.type,
+                        .storage_class = STORAGE_LOCAL,
+                        .stmt = n,
+                    };
+                }
 
-                Expr* initial = 0;
                 if (tokens_get(s)->type == '=') {
                     tokens_next(s);
 
-                    if (tokens_get(s)->type == '@') {
-                        // function literals are a Cuik extension
-                        // TODO(NeGate): error messages
-                        tokens_next(s);
-                        initial = parse_function_literal(tu, s, decl.type);
-                    } else if (tokens_get(s)->type == '{') {
+                    if (tokens_get(s)->type == '{') {
                         tokens_next(s);
 
-                        initial = parse_initializer(tu, s, NULL);
+                        n->decl.initial = parse_initializer(tu, s, CUIK_QUAL_TYPE_NULL);
                     } else {
-                        initial = parse_expr_l14(tu, s);
+                        n->decl.initial = parse_expr_assign(tu, s);
                     }
                 }
 
-                n->decl.initial = initial;
                 *((Stmt**)tls_push(sizeof(Stmt*))) = n;
                 *body_count += 1;
             }
 
             expect(tu, s, ';');
         }
+
+        return true;
     } else {
-        Stmt* n = make_stmt(tu, s, STMT_EXPR, sizeof(struct StmtExpr));
+        Stmt* n = make_stmt(tu, s);
         Expr* expr = parse_expr(tu, s);
 
+        n->op = STMT_EXPR;
+        n->loc = expr->loc;
         n->expr = (struct StmtExpr){ .expr = expr };
 
         *((Stmt**)tls_push(sizeof(Stmt*))) = n;
         *body_count += 1;
+
         expect(tu, s, ';');
+        return true;
     }
 }
 
@@ -2096,24 +2182,26 @@ static Stmt* parse_stmt_or_expr(TranslationUnit* tu, TokenStream* restrict s) {
         expect(tu, s, '(');
 
         if (tokens_get(s)->type != TOKEN_STRING_DOUBLE_QUOTE) {
-            generic_error(tu, s, "pragma declaration expects string literal");
+            diag_err(s, tokens_get_range(s), "pragma declaration expects string literal");
+            return NULL;
         }
         tokens_next(s);
 
         expect(tu, s, ')');
-        return 0;
+        return NULL;
     } else if (tokens_get(s)->type == ';') {
         tokens_next(s);
-        return 0;
+        return NULL;
     } else {
         Stmt* stmt = parse_stmt(tu, s);
-
-        if (stmt) {
+        if (stmt != NULL) {
             return stmt;
         } else {
-            Stmt* n = make_stmt(tu, s, STMT_EXPR, sizeof(struct StmtExpr));
+            Stmt* n = make_stmt(tu, s);
 
             Expr* expr = parse_expr(tu, s);
+            n->op = STMT_EXPR;
+            n->loc = expr->loc;
             n->expr = (struct StmtExpr){ .expr = expr };
 
             expect(tu, s, ';');
@@ -2123,12 +2211,10 @@ static Stmt* parse_stmt_or_expr(TranslationUnit* tu, TokenStream* restrict s) {
 }
 
 static intmax_t parse_const_expr(TranslationUnit* tu, TokenStream* restrict s) {
-    SourceLocIndex foo = tokens_get_location_index(s);
-    Expr* folded = cuik__optimize_ast(tu, parse_expr_l14(tu, s));
+    Expr* folded = cuik__optimize_ast(tu, parse_expr_assign(tu, s));
     if (folded->op != EXPR_INT) {
-        ((void) foo);
-        REPORT_EXPR(ERROR, folded, "Could not parse expression as constant.");
-        return 1;
+        diag_err(s, folded->loc, "could not parse expression as constant.");
+        return 0;
     }
 
     return (intmax_t) folded->int_num.num;
@@ -2138,47 +2224,48 @@ static intmax_t parse_const_expr(TranslationUnit* tu, TokenStream* restrict s) {
 // ERRORS
 ////////////////////////////////
 static _Noreturn void generic_error(TranslationUnit* tu, TokenStream* restrict s, const char* msg) {
-    SourceLocIndex loc = tokens_get_location_index(s);
+    SourceLoc loc = tokens_get_location(s);
 
-    report(REPORT_ERROR, NULL, s, loc, msg);
+    report(REPORT_ERROR, s, loc, msg);
     abort();
 }
 
 static void expect(TranslationUnit* tu, TokenStream* restrict s, char ch) {
     if (tokens_get(s)->type != ch) {
         Token* t = tokens_get(s);
-        SourceLocIndex loc = tokens_get_last_location_index(s);
+        SourceLoc loc = tokens_get_location(s);
 
-        char tmp[2] = { ch };
-        report_fix(REPORT_ERROR, NULL, s, loc, tmp, "expected '%c' got '%.*s'", ch, (int)(t->end - t->start), t->start);
-        abort();
+        diag_err(s, (SourceRange){ loc, loc }, "expected '%c', got '%.*s'", ch, (int)t->content.length, t->content.data);
+    } else {
+        tokens_next(s);
     }
-
-    tokens_next(s);
 }
 
-static void expect_closing_paren(TranslationUnit* tu, TokenStream* restrict s, SourceLocIndex opening) {
+static bool expect_closing_paren(TokenStream* restrict s, SourceLoc opening) {
     if (tokens_get(s)->type != ')') {
-        SourceLocIndex loc = tokens_get_location_index(s);
+        SourceLoc loc = tokens_get_location(s);
 
-        report_two_spots(REPORT_ERROR, tu->errors, s, opening, loc,
-            "expected closing parenthesis",
-            "open", "close?", NULL
+        report_two_spots(
+            REPORT_ERROR, s, opening, loc,
+            "expected closing parenthesis", "open", "close?", NULL
         );
-        return;
+        return false;
+    } else {
+        tokens_next(s);
+        return true;
     }
-
-    tokens_next(s);
 }
 
-static void expect_with_reason(TranslationUnit* tu, TokenStream* restrict s, char ch, const char* reason) {
+static bool expect_with_reason(TokenStream* restrict s, char ch, const char* reason) {
     if (tokens_get(s)->type != ch) {
-        SourceLocIndex loc = tokens_get_last_location_index(s);
+        SourceLoc loc = tokens_get_last_location(s);
 
         char fix[2] = { ch, '\0' };
-        report_fix(REPORT_ERROR, NULL, s, loc, fix, "expected '%c' for %s", ch, reason);
-        return;
+        DiagFixit fixit = { { loc, loc }, 0, fix };
+        diag_err(s, fixit.loc, "#expected '%c' for %s", fixit, ch, reason);
+        return false;
+    } else {
+        tokens_next(s);
+        return true;
     }
-
-    tokens_next(s);
 }

@@ -6,8 +6,8 @@ static ConstValue const_eval_bin_op(ExprOp op, ConstValue a, ConstValue b);
 #define signed_const(x) (ConstValue) { true, .signed_value = (x) }
 
 // Const eval probably needs some rework...
-Cuik_Type* sema_expr(TranslationUnit* tu, Expr* e);
-Cuik_Type* sema_guess_type(TranslationUnit* tu, Stmt* restrict s);
+Cuik_QualType cuik__sema_expr(TranslationUnit* tu, Expr* e);
+Cuik_QualType sema_guess_type(TranslationUnit* tu, Stmt* restrict s);
 Member* sema_traverse_members(TranslationUnit* tu, Cuik_Type* record_type, Atom name, uint32_t* out_offset);
 
 // I've forsaken god by doing this, im sorry... it's ugly because it has to be i swear...
@@ -21,10 +21,10 @@ typedef struct {
 static WalkMemberReturn walk_member_accesses(TranslationUnit* tu, const Expr* e, Cuik_Type* type) {
     const Expr* base_expr = e->dot_arrow.base;
 
-    WalkMemberReturn base = {0};
+    WalkMemberReturn base = { 0 };
     if (base_expr->op != EXPR_ARROW && base_expr->op != EXPR_DOT) {
         // use that base type we've been patiently keeping around
-        base = (WalkMemberReturn){type, 0};
+        base = (WalkMemberReturn){ type, 0 };
     } else {
         base = walk_member_accesses(tu, e->dot_arrow.base, type);
     }
@@ -34,7 +34,7 @@ static WalkMemberReturn walk_member_accesses(TranslationUnit* tu, const Expr* e,
     if (!member) abort();
     if (member->is_bitfield) abort();
 
-    return (WalkMemberReturn){member->type, base.offset + relative};
+    return (WalkMemberReturn){ cuik_canonical_type(member->type), base.offset + relative };
 }
 
 bool const_eval_try_offsetof_hack(TranslationUnit* tu, const Expr* e, uint64_t* out) {
@@ -45,8 +45,7 @@ bool const_eval_try_offsetof_hack(TranslationUnit* tu, const Expr* e, uint64_t* 
         bool is_arrow = e->op == EXPR_ARROW;
         Expr* base_e = e->dot_arrow.base;
 
-        while (base_e->op == EXPR_ARROW ||
-            base_e->op == EXPR_DOT) {
+        while (base_e->op == EXPR_ARROW || base_e->op == EXPR_DOT) {
             // traverse any dot/arrow chains
             base_e = base_e->dot_arrow.base;
         }
@@ -55,29 +54,21 @@ bool const_eval_try_offsetof_hack(TranslationUnit* tu, const Expr* e, uint64_t* 
         Cuik_Type* record_type = NULL;
         Expr* arrow_base = base_e;
         if (arrow_base->op == EXPR_CAST) {
-            record_type = arrow_base->cast.type;
+            record_type = cuik_canonical_type(arrow_base->cast.type);
 
             bool did_deref = false;
-            for (;;) {
-                if (!did_deref && record_type->kind == KIND_PTR) {
-                    record_type = record_type->ptr_to;
-                    did_deref = true;
-                    continue;
-                } else if (record_type->kind == KIND_QUALIFIED_TYPE) {
-                    record_type = record_type->qualified_ty;
-                    continue;
-                }
-
-                break;
+            while (!did_deref && record_type->kind == KIND_PTR) {
+                record_type = cuik_canonical_type(record_type->ptr_to);
+                did_deref = true;
             }
 
             if (is_arrow && !did_deref) {
-                REPORT_EXPR(ERROR, arrow_base, "Arrow cannot be applied to non-pointer type.");
+                diag_err(&tu->tokens, arrow_base->loc, "Arrow cannot be applied to non-pointer type.");
                 return false;
             }
 
             if (record_type->kind != KIND_STRUCT && record_type->kind != KIND_UNION) {
-                REPORT_EXPR(ERROR, arrow_base, "Cannot do member access with non-aggregate type.");
+                diag_err(&tu->tokens, arrow_base->loc, "Cannot do member access with non-aggregate type.");
                 return false;
             }
 
@@ -123,7 +114,10 @@ static ConstValue gimme(const Expr* e) {
 Expr* cuik__optimize_ast(TranslationUnit* tu, Expr* e) {
     switch (e->op) {
         case EXPR_ENUM: {
-            int64_t v = *e->enum_val.num;
+            if (e->enum_val.num->lexer_pos != 0) {
+                type_layout(tu, cuik_canonical_type(e->type), true);
+            }
+            int64_t v = e->enum_val.num->value;
 
             e->op = EXPR_INT;
             e->int_num.suffix = INT_SUFFIX_NONE;
@@ -164,12 +158,13 @@ Expr* cuik__optimize_ast(TranslationUnit* tu, Expr* e) {
         }
 
         case EXPR_SIZEOF: {
-            Cuik_Type* src = sema_expr(tu, e->x_of_expr.expr);
+            diag_note(&tu->tokens, e->x_of_expr.expr->loc, "A");
+            Cuik_Type* src = cuik_canonical_type(cuik__sema_expr(tu, e->x_of_expr.expr));
             if (src->size == 0) {
                 type_layout(tu, src, true);
 
                 if (src->size == 0) {
-                    REPORT_EXPR(ERROR, e, "Could not resolve type of expression");
+                    diag_err(&tu->tokens, e->loc, "Could not resolve type of expression");
                 }
             }
 
@@ -179,40 +174,40 @@ Expr* cuik__optimize_ast(TranslationUnit* tu, Expr* e) {
             break;
         }
         case EXPR_SIZEOF_T: {
-            if (e->x_of_type.type->size == 0) {
-                type_layout(tu, e->x_of_type.type, true);
+            Cuik_Type* src = cuik_canonical_type(e->x_of_type.type);
+            if (src->size == 0) {
+                type_layout(tu, src, true);
 
-                if (e->x_of_type.type->size == 0) {
-                    REPORT_EXPR(ERROR, e, "Could not resolve type");
+                if (src->size == 0) {
+                    diag_err(&tu->tokens, e->loc, "Could not resolve type");
                 }
             }
 
-            size_t x = e->x_of_type.type->size;
             e->op = EXPR_INT;
             e->int_num.suffix = INT_SUFFIX_ULL;
-            e->int_num.num = x;
+            e->int_num.num = src->size;
             break;
         }
         case EXPR_ALIGNOF_T: {
-            if (e->x_of_type.type->size == 0) {
-                type_layout(tu, e->x_of_type.type, true);
+            Cuik_Type* src = cuik_canonical_type(e->x_of_type.type);
+            if (src->size == 0) {
+                type_layout(tu, src, true);
 
-                if (e->x_of_type.type->size == 0) {
-                    REPORT_EXPR(ERROR, e, "Could not resolve type");
+                if (src->size == 0) {
+                    diag_err(&tu->tokens, e->loc, "could not resolve type");
                 }
             }
 
-            size_t x = e->x_of_type.type->align;
             e->op = EXPR_INT;
             e->int_num.suffix = INT_SUFFIX_ULL;
-            e->int_num.num = x;
+            e->int_num.num = src->align;
             break;
         }
         case EXPR_NOT: {
             Expr* src = cuik__optimize_ast(tu, e->unary_op.src);
 
             // ~(N - 1) => -N
-            if (src->op == EXPR_INT && e->type != NULL && TYPE_IS_INTEGER(e->type)) {
+            if (src->op == EXPR_INT && !CUIK_QUAL_TYPE_IS_NULL(e->type) && cuik_type_is_integer(cuik_canonical_type(e->type))) {
                 e->op = EXPR_NEGATE;
                 src->int_num.num += 1;
                 return e;

@@ -22,7 +22,6 @@ typedef enum IRValType {
 
 typedef struct IRVal {
     IRValType value_type;
-    Cuik_Type* type;
 
     union {
         TB_Reg reg;
@@ -54,6 +53,8 @@ inline static TB_DataType ctype_to_tbtype(const Cuik_Type* t) {
         case KIND_INT:
         return TB_TYPE_I32;
         case KIND_LONG:
+        return TB_TYPE_I32;
+        case KIND_LLONG:
         return TB_TYPE_I64;
         case KIND_FLOAT:
         return TB_TYPE_F32;
@@ -71,20 +72,17 @@ inline static TB_DataType ctype_to_tbtype(const Cuik_Type* t) {
         case KIND_UNION:
         return TB_TYPE_PTR;
 
-        case KIND_QUALIFIED_TYPE:
-        return ctype_to_tbtype(t->qualified_ty);
-
         default:
         abort(); // TODO
     }
 }
 
 _Noreturn void internal_error(const char* fmt, ...);
-InitNode* count_max_tb_init_objects(int node_count, InitNode* node, int* out_count);
+int count_max_tb_init_objects(InitNode* root_node);
 TB_DebugType* cuik__as_tb_debug_type(TB_Module* mod, Cuik_Type* t);
 
 // func is NULL then it's not allowed to compute any dynamic initializer expressions
-InitNode* eval_initializer_objects(TranslationUnit* tu, TB_Function* func, SourceLocIndex loc, TB_Initializer* init, TB_Reg addr, int node_count, InitNode* node);
+void eval_initializer_objects(TranslationUnit* tu, TB_Function* func, TB_Initializer* init, TB_Reg addr, InitNode* node);
 
 TB_Register irgen_as_rvalue(TranslationUnit* tu, TB_Function* func, Expr* e);
 IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e);

@@ -1,5 +1,57 @@
+////////////////////////////////////////////
+// Cuik AST interface
+////////////////////////////////////////////
+// This module handles AST construction, printing, and walking.
+//
+// AST Overview:
+//
+//   Cuik_QualType - This refers to a type but also holds qualifiers (const, restrict, volatile)
+//
+//   Cuik_Type     - This represents all C types, qualified types currently act as a type
+//                   as opposed to a view of a type (refactor coming soon)
+//
+//   Stmt          - statements (declarations count here) generally introduce sequence
+//                   points.
+//
+//   Expr          - all expressions have some type and during type checking a new
+//                   "cast type" is produced which represents the potential type
+//                   promotion and is the type actually used by the parent node.
+//
+// TODO:
+//
+//  * rename all the bare types to use Cuik_
+//
+//  * implement VLAs
+//
+//  * add qualifiers to type pretty printer
+//
 #pragma once
-#include "cuik.h"
+#include <stdint.h>
+#include <stdbool.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+typedef char* Atom;
+typedef struct Expr Expr;
+typedef struct Stmt Stmt;
+typedef struct Cuik_Type Cuik_Type;
+
+typedef enum Cuik_Qualifiers {
+    CUIK_QUAL_CONST    = (1u << 0u),
+    CUIK_QUAL_VOLATILE = (1u << 1u),
+    CUIK_QUAL_RESTRICT = (1u << 2u),
+    CUIK_QUAL_ATOMIC   = (1u << 3u),
+
+    // this is what's masked out when we convert to a pointer
+    CUIK_QUAL_FLAG_BITS = 0b1111,
+} Cuik_Qualifiers;
+
+// This is a trick stolen from Clang, we store the qualifiers as
+// the bottom 4 bits of the pointer value, because of this we need
+// to enforce 16 byte alignment
+typedef struct Cuik_QualType {
+    uintptr_t raw;
+} Cuik_QualType;
 
 typedef enum Cuik_TypeKind {
     KIND_VOID,
@@ -9,6 +61,7 @@ typedef enum Cuik_TypeKind {
     KIND_INT,
     KIND_ENUM,
     KIND_LONG,
+    KIND_LLONG,
     KIND_FLOAT,
     KIND_DOUBLE,
     KIND_PTR,
@@ -19,9 +72,8 @@ typedef enum Cuik_TypeKind {
     KIND_UNION,
     KIND_VECTOR,
 
-    // after parsing these types are removed, they exist to avoid cloning a
-    // type before it's fully resolved
-    KIND_QUALIFIED_TYPE,
+    // __declspec(align(N)) or _Alignas(N)
+    KIND_ALIGNED,
 
     // these are inferred as typedefs but don't map to anything yet
     KIND_PLACEHOLDER,
@@ -32,12 +84,30 @@ typedef enum Cuik_TypeKind {
     KIND_TYPEOF
 } Cuik_TypeKind;
 
+typedef enum Cuik_IntSuffix {
+    //                u   l   l
+    INT_SUFFIX_NONE = 0 + 0 + 0,
+    INT_SUFFIX_U    = 1 + 0 + 0,
+    INT_SUFFIX_L    = 0 + 2 + 0,
+    INT_SUFFIX_UL   = 1 + 2 + 0,
+    INT_SUFFIX_LL   = 0 + 2 + 2,
+    INT_SUFFIX_ULL  = 1 + 2 + 2,
+} Cuik_IntSuffix;
+
+typedef struct Cuik_Attribute {
+    struct Cuik_Attribute* prev;
+    SourceRange loc;
+
+    Atom name;
+    // TODO(NeGate): implement parameter list
+} Cuik_Attribute;
+
 // Used by unions and structs
 typedef struct {
-    Cuik_Type* type;
+    Cuik_QualType type;
     Atom name;
 
-    SourceLocIndex loc;
+    SourceRange loc;
     int align;
     int offset;
 
@@ -48,11 +118,11 @@ typedef struct {
 } Member;
 
 typedef struct {
-    bool is_static : 1;
+    bool is_static  : 1;
     bool is_typedef : 1;
-    bool is_inline : 1;
-    bool is_extern : 1;
-    bool is_tls : 1;
+    bool is_inline  : 1;
+    bool is_extern  : 1;
+    bool is_tls     : 1;
 
     // NOTE(NeGate): In all honesty, this should probably not be
     // here since it's used in cases that aren't relevant to attribs.
@@ -71,12 +141,12 @@ typedef struct {
 } EnumEntry;
 
 typedef struct {
-    Cuik_Type* type;
+    Cuik_QualType type;
     Atom name;
 } Param;
 
 typedef struct {
-    Cuik_Type* key;
+    Cuik_QualType key;
     Expr* value;
 } C11GenericEntry;
 
@@ -84,10 +154,9 @@ struct Cuik_Type {
     Cuik_TypeKind kind;
     int size;  // sizeof
     int align; // _Alignof
-    SourceLocIndex loc;
+    SourceRange loc;
 
     Cuik_Type* based;
-    // used by cycle checking
     Atom also_known_as;
 
     #ifdef CUIK_USE_TB
@@ -96,22 +165,18 @@ struct Cuik_Type {
     void* user_data;
     #endif
 
-    int ordinal;
-
-    bool is_const : 1;
-    bool is_atomic : 1;
-    bool is_incomplete : 1;
-    bool is_inprogress : 1;
+    // used by cycle checking
+    bool is_complete : 1;
+    bool is_visited  : 1;
+    bool is_progress : 1;
 
     union {
-        Cuik_Type* qualified_ty;
-
         // Integers
         bool is_unsigned;
 
         // Arrays
         struct {
-            Cuik_Type* array_of;
+            Cuik_QualType array_of;
             int array_count;
 
             // if non-zero, then we must execute an expression
@@ -119,16 +184,20 @@ struct Cuik_Type {
             int array_count_lexer_pos;
         };
 
+        struct {
+            Cuik_Type* base;
+        } aligned_on;
+
         // Pointers
         struct {
-            Cuik_Type* ptr_to;
-            bool is_ptr_restrict : 1;
+            Cuik_QualType ptr_to;
         };
 
         // Function
         struct {
             Atom name;
-            Cuik_Type* return_type;
+            Cuik_QualType return_type;
+
             size_t param_count;
             Param* param_list;
 
@@ -166,8 +235,6 @@ struct Cuik_Type {
         } placeholder;
     };
 };
-#define TYPE_IS_INTEGER(x) (((x)->kind >= KIND_CHAR) && ((x)->kind <= KIND_LONG))
-#define TYPE_IS_FLOAT(x) (((x)->kind >= KIND_FLOAT) && ((x)->kind <= KIND_DOUBLE))
 
 // designated initializer member
 // .x = 5
@@ -179,21 +246,28 @@ typedef enum InitNodeDesignator {
 } InitNodeDesignator;
 
 typedef struct InitNode {
-    // the children are directly after
-    // this node, if the value is 0
-    // then there's no children and we
-    // are expected to find an expression
-    // here.
+    // the children are directly after this
+    // node, if the value is 0 then there's
+    // no children and we are expected to
+    // find an expression here.
     int kids_count;
-    SourceLocIndex loc;
+    SourceRange loc;
 
     // Fully resolved members with a kid_count of 0 will have
     // a proper offset and type after the type checking
     uint32_t offset;
-    Cuik_Type* type;
+    Cuik_QualType type;
 
     Expr* expr;
     InitNodeDesignator mode;
+
+    // we're lisp-pilled:
+    //   root
+    //    |
+    //   kid 1 -> kid 2 -> kid 3
+    struct InitNode* kid;
+    struct InitNode* next;
+
     union {
         // INIT_MEMBER
         Atom member_name;
@@ -328,8 +402,7 @@ typedef enum ExprOp {
 struct Stmt {
     struct {
         StmtOp op;
-        SourceLocIndex loc;
-        SourceLocIndex end_loc;
+        SourceRange loc;
         Cuik_Attribute* attr_list;
 
         // Used by the backend for backend-y things
@@ -391,7 +464,7 @@ struct Stmt {
             Stmt* next;
         } switch_;
         struct StmtDecl {
-            Cuik_Type* type;
+            Cuik_QualType type;
             Atom name;
 
             // acceleration structure for scrubbing for symbols
@@ -436,10 +509,8 @@ struct Expr {
     int has_parens : 1;
     int has_visited : 1;
 
-    SourceLocIndex start_loc;
-    SourceLocIndex end_loc;
-
-    Cuik_Type* type;
+    SourceRange loc;
+    Cuik_QualType type;
 
     // this is the type it'll be desugared into
     // for example:
@@ -448,7 +519,7 @@ struct Expr {
     //
     //   their cast_type might be int because of C's
     //   promotion rules.
-    Cuik_Type* cast_type;
+    Cuik_QualType cast_type;
 
     union {
         struct {
@@ -480,15 +551,15 @@ struct Expr {
         int param_num;
 
         struct ExprEnum {
-            int* num;
+            EnumEntry* num;
         } enum_val;
         struct {
             Expr* src;
-            Cuik_Type* type;
+            Cuik_QualType type;
         } va_arg_;
         struct {
             Expr* src;
-            Cuik_Type* type;
+            Cuik_QualType type;
         } cast;
         struct {
             Expr* left;
@@ -537,16 +608,15 @@ struct Expr {
         } str;
         // either sizeof(T) or _Alignof(T)
         struct {
-            Cuik_Type* type;
+            Cuik_QualType type;
         } x_of_type;
         // either sizeof(expr) or _Alignof(expr)
         struct {
             Expr* expr;
         } x_of_expr;
         struct {
-            Cuik_Type* type;
-            int count;
-            InitNode* nodes;
+            Cuik_QualType type;
+            InitNode* root;
         } init;
         struct {
             Stmt* src;
@@ -560,5 +630,126 @@ struct Expr {
         } int_num;
     };
 };
-//_Static_assert(offsetof(Expr, next_symbol_in_chain) == offsetof(Expr, next_symbol_in_chain2), "these should be aliasing");
-//_Static_assert(offsetof(Expr, next_symbol_in_chain) == offsetof(Expr, builtin_sym.next_symbol_in_chain), "these should be aliasing");
+_Static_assert(offsetof(Expr, next_symbol_in_chain) == offsetof(Expr, next_symbol_in_chain2), "these should be aliasing");
+_Static_assert(offsetof(Expr, next_symbol_in_chain) == offsetof(Expr, builtin_sym.next_symbol_in_chain), "these should be aliasing");
+
+static bool cuik_type_is_signed(const Cuik_Type* t) { return (t->kind >= KIND_CHAR && t->kind <= KIND_LLONG) && !t->is_unsigned; }
+static bool cuik_type_is_unsigned(const Cuik_Type* t) { return (t->kind >= KIND_CHAR && t->kind <= KIND_LLONG) && t->is_unsigned; }
+
+static bool cuik_type_is_integer(const Cuik_Type* t) { return t->kind >= KIND_CHAR && t->kind <= KIND_LLONG; }
+static bool cuik_type_is_integer_or_bool(const Cuik_Type* t) { return t->kind >= KIND_BOOL && t->kind <= KIND_LLONG; }
+static bool cuik_type_is_float(const Cuik_Type* t) { return t->kind >= KIND_FLOAT && t->kind <= KIND_DOUBLE; }
+
+static bool cuik_type_is_bool(const Cuik_Type* t) { return t->kind == KIND_BOOL; }
+static bool cuik_type_is_pointer(const Cuik_Type* t) { return t->kind == KIND_PTR; }
+
+// [https://www.sigbus.info/n1570#6.2.5p21]
+// Arithmetic types and pointer types are collectively called scalar types.
+// Array and structure types are collectively called aggregate types.
+static bool cuik_type_is_scalar(const Cuik_Type* t) { return t->kind >= KIND_BOOL && t->kind <= KIND_FUNC; }
+static bool cuik_type_is_aggregate(const Cuik_Type* t) { return t->kind >= KIND_ARRAY && t->kind <= KIND_UNION; }
+
+// [https://www.sigbus.info/n1570#6.2.5p18]
+// Integer and floating types are collectively called arithmetic types.
+static bool cuik_type_is_arithmatic(const Cuik_Type* t) { return t->kind >= KIND_BOOL && t->kind <= KIND_FUNC; }
+
+static bool cuik_type_can_deref(const Cuik_Type* t) { return t->kind == KIND_PTR || t->kind == KIND_ARRAY; }
+
+// takes in Cuik_QualType
+#define CUIK_QUAL_TYPE_NULL        (Cuik_QualType){ 0 }
+#define CUIK_QUAL_TYPE_IS_NULL(a)  ((a).raw == 0)
+#define CUIK_QUAL_TYPE_HAS(a, b)   (((a).raw & (b)) != 0)
+#define CUIK_QUAL_TYPE_ONLY(a, b)  (((a).raw & (b)) == (b))
+
+static Cuik_QualType cuik_make_qual_type(Cuik_Type* t, Cuik_Qualifiers quals) {
+    uintptr_t p = (uintptr_t) t;
+    assert((p & CUIK_QUAL_FLAG_BITS) == 0);
+    assert((quals & ~CUIK_QUAL_FLAG_BITS) == 0);
+
+    return (Cuik_QualType){ p | quals };
+}
+
+static Cuik_Qualifiers cuik_get_quals(Cuik_QualType t) {
+    return t.raw & CUIK_QUAL_FLAG_BITS;
+}
+
+static Cuik_QualType cuik_uncanonical_type(const Cuik_Type* t) {
+    uintptr_t p = (uintptr_t) t;
+    assert((p & CUIK_QUAL_FLAG_BITS) == 0);
+    return (Cuik_QualType){ p };
+}
+
+static Cuik_Type* cuik_canonical_type(const Cuik_QualType t) {
+    return (Cuik_Type*) (t.raw & ~((uintptr_t) CUIK_QUAL_FLAG_BITS));
+}
+
+// if level is non-NULL, *level stores the indirection level.
+//
+// example:
+//   cuik_get_direct_type(int****)
+//     return int, *level is 4
+//
+//   cuik_get_direct_type(T)
+//     return T, *level is 0
+//
+//   cuik_get_direct_type(T*)
+//     return T, *level is 1
+//
+static Cuik_QualType cuik_get_direct_type(Cuik_QualType type, int* level) {
+    int l = 0;
+    while (cuik_canonical_type(type)->kind == KIND_PTR) {
+        type = cuik_canonical_type(type)->ptr_to;
+        l += 1;
+    }
+
+    if (level != NULL) *level = l;
+    return type;
+}
+
+////////////////////////////////////////////
+// Type checker
+////////////////////////////////////////////
+// This represents a compiled source file
+typedef struct TranslationUnit TranslationUnit;
+
+// returns the number of errors in this phase.
+// if thread_pool is non-NULL the type checking will be parallelized
+int cuiksema_run(TranslationUnit* restrict tu, Cuik_IThreadpool* restrict thread_pool);
+
+////////////////////////////////////////////
+// Pretty printers
+////////////////////////////////////////////
+void cuik_dump_translation_unit(FILE* stream, TranslationUnit* tu, bool minimalist);
+
+void cuik_dump(FILE* stream, size_t count, Stmt** top_level, bool minimalist);
+void cuik_dump_expr(FILE* stream, Expr* e, int depth);
+
+////////////////////////////////////////////
+// Iterators
+////////////////////////////////////////////
+typedef struct {
+    // public
+    Expr* expr;
+
+    // internal
+    size_t index_;
+    Expr* parent_;
+} Cuik_ExprIter;
+
+typedef struct {
+    // public
+    Stmt* stmt;
+
+    // internal
+    size_t index_;
+    Stmt* parent_;
+} Cuik_StmtIter;
+
+#define CUIK_FOR_KID_IN_STMT(it, parent_) \
+for (Cuik_StmtIter it = { .parent = (parent_) }; cuik_next_stmt_kid(&it);)
+
+#define CUIK_FOR_KID_IN_EXPR(it, parent_) \
+for (Cuik_ExprIter it = { .parent = (parent_) }; cuik_next_expr_kid(&it);)
+
+bool cuik_next_expr_kid(Cuik_ExprIter* it);
+bool cuik_next_stmt_kid(Cuik_StmtIter* it);

@@ -2,17 +2,13 @@
 
 static void cprint__type(TranslationUnit* tu, DefinedTypeEntry** defined_types, Cuik_Type* type, const char* name, int indent) {
     // a based type in a cringe system can make all the difference in the world
-    while (type->based) {
-        if (type->also_known_as) {
-            printf("%s", type->also_known_as);
+    if (type->also_known_as) {
+        printf("%s", type->also_known_as);
 
-            if (name) {
-                printf(" %s", name);
-            }
-            return;
+        if (name) {
+            printf(" %s", name);
         }
-
-        type = type->based;
+        return;
     }
 
     if (type->kind > KIND_DOUBLE) {
@@ -21,7 +17,7 @@ static void cprint__type(TranslationUnit* tu, DefinedTypeEntry** defined_types, 
             case KIND_PTR: {
                 int level = 0;
                 while (type->kind == KIND_PTR) {
-                    type = type->ptr_to;
+                    type = cuik_canonical_type(type->ptr_to);
                     level += 1;
                 }
 
@@ -34,7 +30,7 @@ static void cprint__type(TranslationUnit* tu, DefinedTypeEntry** defined_types, 
                     //     PTRIFY
                     //      VVV
                     //  void (*foo)()
-                    cprint__type(tu, defined_types, type->func.return_type, NULL, indent);
+                    cprint__type(tu, defined_types, cuik_canonical_type(type->func.return_type), NULL, indent);
                     printf(" (");
                     while (level--) printf("*");
 
@@ -46,7 +42,7 @@ static void cprint__type(TranslationUnit* tu, DefinedTypeEntry** defined_types, 
                     // print suffix
                     for (size_t i = 0; i < type->func.param_count; i++) {
                         if (i) printf(", ");
-                        cprint__type(tu, defined_types, type->func.param_list[i].type, type->func.param_list[i].name, indent);
+                        cprint__type(tu, defined_types, cuik_canonical_type(type->func.param_list[i].type), type->func.param_list[i].name, indent);
                     }
                     printf(")");
                 } else {
@@ -61,17 +57,17 @@ static void cprint__type(TranslationUnit* tu, DefinedTypeEntry** defined_types, 
             }
 
             case KIND_ARRAY: {
-                cprint__type(tu, defined_types, type->array_of, name, indent);
+                cprint__type(tu, defined_types, cuik_canonical_type(type->array_of), name, indent);
 
                 // suffix
                 while (type->kind == KIND_ARRAY) {
-                    if (type->array_count) {
+                    if (type->array_count > 0) {
                         printf("[%d]", type->array_count);
                     } else {
                         printf("[]");
                     }
 
-                    type = type->array_of;
+                    type = cuik_canonical_type(type->array_of);
                 }
                 break;
             }
@@ -93,7 +89,7 @@ static void cprint__type(TranslationUnit* tu, DefinedTypeEntry** defined_types, 
                     for (size_t i = 0; i < type->record.kid_count; i++) {
                         for (size_t j = 0; j < indent+1; j++) printf("    ");
 
-                        cprint__type(tu, defined_types, type->record.kids[i].type, type->record.kids[i].name, indent + 1);
+                        cprint__type(tu, defined_types, cuik_canonical_type(type->record.kids[i].type), type->record.kids[i].name, indent + 1);
                         printf(";\n");
                     }
 
@@ -108,7 +104,7 @@ static void cprint__type(TranslationUnit* tu, DefinedTypeEntry** defined_types, 
             }
 
             case KIND_FUNC: {
-                cprint__type(tu, defined_types, type->func.return_type, NULL, indent);
+                cprint__type(tu, defined_types, cuik_canonical_type(type->func.return_type), NULL, indent);
 
                 if (name) {
                     printf(" %s", name);
@@ -117,7 +113,7 @@ static void cprint__type(TranslationUnit* tu, DefinedTypeEntry** defined_types, 
                 printf("(");
                 for (size_t i = 0; i < type->func.param_count; i++) {
                     if (i) printf(", ");
-                    cprint__type(tu, defined_types, type->func.param_list[i].type, type->func.param_list[i].name, indent);
+                    cprint__type(tu, defined_types, cuik_canonical_type(type->func.param_list[i].type), type->func.param_list[i].name, indent);
                 }
                 printf(")");
                 break;
@@ -188,7 +184,7 @@ static void cprint__decl(TranslationUnit* tu, DefinedTypeEntry** defined_types, 
         if (s->decl.attrs.is_extern) printf("extern ");
         if (s->decl.attrs.is_inline) printf("inline ");
 
-        cprint__type(tu, defined_types, s->decl.type, s->decl.name, 0);
+        cprint__type(tu, defined_types, cuik_canonical_type(s->decl.type), s->decl.name, 0);
         printf(";\n");
     }
 }
@@ -203,8 +199,8 @@ static void cprint__include(const char* filepath) {
 
 static void cprint__define(Cuik_DefineIter def) {
     printf("#define %.*s %.*s\n",
-        (int)def.key.len, def.key.data,
-        (int)def.value.len, def.value.data
+        (int)def.key.length, def.key.data,
+        (int)def.value.length, def.value.data
     );
 }
 

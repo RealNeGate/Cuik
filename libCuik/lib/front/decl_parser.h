@@ -3,7 +3,7 @@
 ////////////////////////////////
 static thread_local char temp_string0[1024];
 
-static Cuik_Attribute* parse_attributes(TranslationUnit* restrict tu, TokenStream* restrict s, Cuik_Attribute* last) {
+static Cuik_Attribute* parse_attributes(TokenStream* restrict s, Cuik_Attribute* last) {
     for (;;) {
         if (tokens_peek_double_token(s, '[')) {
             // C23 attribute:
@@ -11,21 +11,21 @@ static Cuik_Attribute* parse_attributes(TranslationUnit* restrict tu, TokenStrea
             //   [[foo]]  [[foo::bar]]  [[foo(1, 3)]]
             Cuik_Attribute* a = ARENA_ALLOC(&local_ast_arena, Cuik_Attribute);
             a->prev = last;
-            a->start_loc = tokens_get_location_index(s);
+            a->loc.start = tokens_get_location(s);
 
             // TODO(NeGate): we'll only handle the identifier case with no :: for now
             tokens_next(s), tokens_next(s);
             if (tokens_get(s)->type != TOKEN_IDENTIFIER) {
-                REPORT(ERROR, tokens_get_location_index(s), "Expected an identifier");
+                diag_err(s, tokens_get_range(s), "expected an identifier");
             } else {
                 Token* t = tokens_get(s);
-                a->name = atoms_put(t->end - t->start, t->start);
+                a->name = atoms_put(t->content.length, t->content.data);
                 tokens_next(s);
             }
-            a->end_loc = tokens_get_location_index(s);
+            a->loc.end = tokens_get_location(s);
 
             if (!tokens_peek_double_token(s, ']')) {
-                REPORT(ERROR, tokens_get_location_index(s), "Expected closing ']]' for attribute");
+                diag_err(s, tokens_get_range(s), "expected closing ']]' for attribute");
             }
             tokens_next(s), tokens_next(s);
 
@@ -34,7 +34,7 @@ static Cuik_Attribute* parse_attributes(TranslationUnit* restrict tu, TokenStrea
             // TODO(NeGate): Correctly parse attributes instead of
             // ignoring them.
             tokens_next(s);
-            expect(tu, s, '(');
+            expect_char(s, '(');
 
             int depth = 1;
             while (depth) {
@@ -52,195 +52,34 @@ static Cuik_Attribute* parse_attributes(TranslationUnit* restrict tu, TokenStrea
     }
 }
 
-static bool skip_over_declspec(TranslationUnit* tu, TokenStream* restrict s) {
-    if (tokens_get(s)->type == TOKEN_KW_declspec ||
-        tokens_get(s)->type == TOKEN_KW_Pragma) {
-        tokens_next(s);
-        expect(tu, s, '(');
-
-        // TODO(NeGate): Correctly parse declspec instead of
-        // ignoring them.
-        int depth = 1;
-        while (depth) {
-            if (tokens_get(s)->type == '(')
-                depth++;
-            else if (tokens_get(s)->type == ')')
-                depth--;
-
-            tokens_next(s);
-        }
-
-        return true;
-    }
-
-    return false;
-}
-
-static Decl parse_declarator(TranslationUnit* tu, TokenStream* restrict s, Cuik_Type* type, bool is_abstract, bool disabled_paren) {
-    assert(type != NULL);
-
-    // handle calling convention
-    // TODO(NeGate): Actually pass these to the AST
-    parse_another_qualifier2: {
-        switch (tokens_get(s)->type) {
-            case TOKEN_KW_cdecl:
-            case TOKEN_KW_stdcall:
-            tokens_next(s);
-            goto parse_another_qualifier2;
-            default:
-            break;
-        }
-    }
-
-    // handle pointers
-    while (tokens_get(s)->type == '*') {
-        type = type ? new_pointer(tu, type) : 0;
-        tokens_next(s);
-
-        parse_another_qualifier : {
-            switch (tokens_get(s)->type) {
-                case TOKEN_KW_Atomic: {
-                    type->is_atomic = true;
-                    tokens_next(s);
-                    goto parse_another_qualifier;
-                }
-                case TOKEN_KW_restrict: {
-                    type->is_ptr_restrict = true;
-                    tokens_next(s);
-                    goto parse_another_qualifier;
-                }
-
-                case TOKEN_KW_const:
-                case TOKEN_KW_volatile:
-                case TOKEN_KW_cdecl:
-                case TOKEN_KW_stdcall: {
-                    tokens_next(s);
-                    goto parse_another_qualifier;
-                }
-
-                default:
-                break;
-            }
-        }
-    }
-
-    skip_over_declspec(tu, s);
-
-    bool is_nested_declarator = tokens_get(s)->type == '(';
-
-    // disambiguate
-    if (!out_of_order_mode && is_nested_declarator && is_abstract) {
-        tokens_next(s);
-
-        if (is_typename(tu, s)) {
-            is_nested_declarator = false;
-        }
-
-        tokens_prev(s);
-    }
-
-    if (is_nested_declarator) {
-        // TODO(NeGate): I don't like this code...
-        // it essentially just skips over the stuff in the
-        // parenthesis to do the suffix then comes back
-        // for the parenthesis after wards, restoring back to
-        // the end of the declarator when it's done.
-        //
-        // should be right after the (
-        SourceLocIndex opening_loc = tokens_get_location_index(s);
-
-        tokens_next(s);
-        size_t saved = s->current;
-
-        // dummy_type just avoids problems where the type would be NULL and needs to be read
-        // it's not gonna modify and rarely really reads from it
-        Cuik_Type* dummy_type = &builtin_types[TYPE_VOID];
-        parse_declarator(tu, s, dummy_type, is_abstract, false);
-
-        expect_closing_paren(tu, s, opening_loc);
-        type = parse_type_suffix(tu, s, type, NULL);
-
-        size_t saved_end = s->current;
-        s->current = saved;
-
-        Decl d = parse_declarator(tu, s, type, is_abstract, false);
-
-        // inherit name
-        // TODO(NeGate): I'm not sure if this is correct ngl
-        if (!d.name) {
-            Cuik_Type* t = d.type;
-
-            if (t->kind == KIND_PTR) {
-                t = d.type->ptr_to;
-
-                if (t->kind == KIND_FUNC) {
-                    d.name = t->func.name;
-                } else if (t->kind == KIND_STRUCT) {
-                    d.name = t->record.name;
-                } else if (t->kind == KIND_UNION) {
-                    d.name = t->record.name;
-                }
-            }
-        }
-
-        s->current = saved_end;
-        return d;
-    }
-
-    Atom name = NULL;
-    Token* t = tokens_get(s);
-    SourceLocIndex loc = tokens_get_location_index(s);
-    if (!is_abstract && t->type == TOKEN_IDENTIFIER) {
-        name = atoms_put(t->end - t->start, t->start);
-        tokens_next(s);
-    }
-
-    type = parse_type_suffix(tu, s, type, name);
-    return (Decl){type, name, loc};
-}
-
-static Cuik_Type* parse_typename(TranslationUnit* tu, TokenStream* restrict s) {
-    // TODO(NeGate): Check if attributes are set, they shouldn't
-    // be in this context.
-    Attribs attr = {0};
-    Cuik_Type* type = parse_declspec(tu, s, &attr);
-    return parse_declarator(tu, s, type, true, false).type;
-}
-
-static Cuik_Type* parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s, Cuik_Type* type, Atom name) {
-    assert(s->current > 0);
-    SourceLocIndex loc = tokens_get_last_location_index(s);
+static Cuik_QualType parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s, Cuik_QualType type, Atom name) {
+    assert(s->list.current > 0);
+    SourceLoc loc = tokens_get_last_location(s);
 
     // type suffixes like array [] and function ()
     if (tokens_get(s)->type == '(') {
         tokens_next(s);
 
-        Cuik_Type* return_type = type;
-
-        type = new_func(tu);
-        type->func.name = name;
-        type->func.return_type = return_type;
-
+        Cuik_Type* t = cuik__new_func(&tu->types);
+        t->func.name = name;
+        t->func.return_type = type;
         if (tokens_get(s)->type == TOKEN_KW_void && tokens_peek(s)->type == ')') {
             tokens_next(s);
             tokens_next(s);
 
-            type->func.param_list = 0;
-            type->func.param_count = 0;
-            return type;
+            t->func.param_list = 0;
+            t->func.param_count = 0;
+            return cuik_uncanonical_type(t);
         }
 
         size_t param_count = 0;
-        void* params = tls_save();
+        Param* params = tls_save();
         bool has_varargs = false;
 
         while (tokens_get(s)->type && tokens_get(s)->type != ')') {
             if (param_count) {
                 if (tokens_get(s)->type != ',') {
-                    tokens_prev(s);
-                    SourceLocIndex loc = tokens_get_last_location_index(s);
-
-                    REPORT(ERROR, loc, "Expected a comma after this declaration name");
+                    diag_err(s, tokens_get_range(s), "expected closing paren (or comma) after declaration name");
                     abort();
                 }
 
@@ -254,9 +93,9 @@ static Cuik_Type* parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s
                 break;
             }
 
-            Attribs arg_attr = {0};
-            Cuik_Type* arg_base_type = parse_declspec(tu, s, &arg_attr);
-            if (arg_base_type == NULL) {
+            Attribs arg_attr = { 0 };
+            Cuik_QualType arg_base_type = parse_declspec(tu, s, &arg_attr);
+            if (CUIK_QUAL_TYPE_IS_NULL(arg_base_type)) {
                 while (tokens_get(s)->type && tokens_get(s)->type != ')') {
                     tokens_next(s);
                 }
@@ -264,26 +103,24 @@ static Cuik_Type* parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s
                 break;
             }
 
-            Decl param_decl = parse_declarator(tu, s, arg_base_type, false, false);
-            Cuik_Type* param_type = param_decl.type;
+            Decl param_decl = parse_declarator(tu, s, arg_base_type, false);
+            Cuik_QualType param_type = param_decl.type;
 
-            Cuik_Type* param_real_type = param_type;
-            while (param_real_type->kind == KIND_QUALIFIED_TYPE) param_real_type = param_real_type->qualified_ty;
-
-            if (param_real_type->kind == KIND_ARRAY) {
+            Cuik_Type* param_type_canon = cuik_canonical_type(param_type);
+            if (param_type_canon->kind == KIND_ARRAY) {
                 // Array parameters are desugared into pointers
-                param_type = new_pointer(tu, param_real_type->array_of);
-            } else if (param_type->kind == KIND_FUNC) {
+                param_type = cuik_uncanonical_type(new_pointer(tu, param_type_canon->array_of));
+            } else if (param_type_canon->kind == KIND_FUNC) {
                 // Function parameters are desugared into pointers
-                param_type = new_pointer(tu, param_real_type);
+                param_type = cuik_uncanonical_type(new_pointer(tu, param_type));
             }
 
             // TODO(NeGate): Error check that no attribs are set
-            *((Param*)tls_push(sizeof(Param))) = (Param){
+            tls_push(sizeof(Param));
+            params[param_count++] = (Param){
                 .type = param_type,
                 .name = param_decl.name
             };
-            param_count++;
         }
 
         if (tokens_get(s)->type != ')') {
@@ -295,18 +132,20 @@ static Cuik_Type* parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s
         Param* permanent_store = arena_alloc(&tu->ast_arena, param_count * sizeof(Param), _Alignof(Param));
         memcpy(permanent_store, params, param_count * sizeof(Param));
 
-        type->func.param_list = permanent_store;
-        type->func.param_count = param_count;
+        t->func.param_list = permanent_store;
+        t->func.param_count = param_count;
 
         // Before C23 empty parameter lists mean undefined set of parameters
         // we're gonna stick with that for now...
-        type->func.has_varargs = param_count == 0 ? true : has_varargs;
+        // TODO(NeGate): add a C version check for it
+        t->func.has_varargs = param_count == 0 ? true : has_varargs;
 
         tls_restore(params);
+        type = cuik_uncanonical_type(t);
     } else if (tokens_get(s)->type == '[') {
         if (out_of_order_mode) {
             // in the out of order case we defer expression parsing
-            SourceLocIndex open_brace = tokens_get_location_index(s);
+            SourceLoc open_brace = tokens_get_location(s);
             tokens_next(s);
 
             size_t current = 0;
@@ -316,7 +155,7 @@ static Cuik_Type* parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s
                 tokens_next(s);
                 expect(tu, s, ']');
             } else {
-                current = s->current;
+                current = s->list.current;
 
                 int depth = 1;
                 while (depth) {
@@ -329,7 +168,7 @@ static Cuik_Type* parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s
                         depth++;
                     } else if (t->type == ']') {
                         if (depth == 0) {
-                            report_two_spots(REPORT_ERROR, tu->errors, s, open_brace, t->location,
+                            report_two_spots(REPORT_ERROR, s, open_brace, t->location,
                                 "Unbalanced brackets", "open", "close?", NULL);
                             abort();
                         }
@@ -344,18 +183,16 @@ static Cuik_Type* parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s
                 expect(tu, s, ']');
             }
 
-            type = parse_type_suffix(tu, s, type, name);
-
+            Cuik_Type* t = cuik__new_array(&tu->types, parse_type_suffix(tu, s, type, name), 0);
             // create placeholder array type
-            type = new_array(tu, type, 0);
-            type->loc = tokens_get_location_index(s);
-            type->array_count_lexer_pos = current;
-            return type;
+            t->loc = (SourceRange){ open_brace, tokens_get_last_location(s) };
+            t->array_count_lexer_pos = current;
+            type = cuik_uncanonical_type(t);
         } else {
             size_t depth = 0;
             size_t* counts = tls_save();
 
-            // TODO(NeGate): read some array qualifiers... then throw them away
+            // TODO(NeGate): read some array qualifiers
             do {
                 tokens_next(s);
 
@@ -376,9 +213,9 @@ static Cuik_Type* parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s
                 counts[depth++] = count;
             } while (tokens_get(s)->type == '[');
 
-            size_t expected_size = type->size;
+            size_t expected_size = cuik_canonical_type(type)->size;
             while (depth--) {
-                assert(type->size == expected_size);
+                assert(cuik_canonical_type(type)->size == expected_size);
 
                 uint64_t a = expected_size;
                 uint64_t b = counts[depth];
@@ -386,11 +223,11 @@ static Cuik_Type* parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s
 
                 // size checks
                 if (result >= INT32_MAX) {
-                    REPORT(ERROR, loc, "cannot declare an array that exceeds 0x7FFFFFFE bytes (got 0x%zX or %zi)", result, result);
-                    abort();
+                    diag_err(s, cuik_canonical_type(type)->loc, "cannot declare an array that exceeds 0x7FFFFFFE bytes (got 0x%zX or %zi)", result, result);
+                    return CUIK_QUAL_TYPE_NULL;
                 }
 
-                type = new_array(tu, type, counts[depth]);
+                type = cuik_uncanonical_type(cuik__new_array(&tu->types, type, counts[depth]));
                 expected_size = result;
             }
 
@@ -401,113 +238,232 @@ static Cuik_Type* parse_type_suffix(TranslationUnit* tu, TokenStream* restrict s
     return type;
 }
 
+static bool skip_over_declspec(TokenStream* restrict s) {
+    if (tokens_get(s)->type == TOKEN_KW_declspec ||
+        tokens_get(s)->type == TOKEN_KW_Pragma) {
+        tokens_next(s);
+        expect_char(s, '(');
+
+        // TODO(NeGate): Correctly parse declspec instead of
+        // ignoring them.
+        int depth = 1;
+        while (depth) {
+            if (tokens_get(s)->type == '(')
+                depth++;
+            else if (tokens_get(s)->type == ')')
+                depth--;
+
+            tokens_next(s);
+        }
+
+        return true;
+    }
+
+    return false;
+}
+
+static Cuik_QualType parse_ptr_qualifiers(TokenStream* restrict s, Cuik_QualType type) {
+    for (;;) {
+        TknType t = tokens_get(s)->type;
+        if (t == TOKEN_KW_Atomic) {
+            type.raw |= CUIK_QUAL_ATOMIC;
+            tokens_next(s);
+        } else if (t == TOKEN_KW_restrict) {
+            type.raw |= CUIK_QUAL_RESTRICT;
+            tokens_next(s);
+        } else if (t == TOKEN_KW_const) {
+            type.raw |= CUIK_QUAL_CONST;
+            tokens_next(s);
+        } else if (t == TOKEN_KW_volatile) {
+            type.raw |= CUIK_QUAL_VOLATILE;
+            tokens_next(s);
+        } else if (t == TOKEN_KW_cdecl || t == TOKEN_KW_stdcall) {
+            tokens_next(s);
+        } else {
+            break;
+        }
+    }
+
+    return type;
+}
+
+static Decl parse_declarator(TranslationUnit* restrict tu, TokenStream* restrict s, Cuik_QualType type, bool is_abstract) {
+    assert(!CUIK_QUAL_TYPE_IS_NULL(type));
+    SourceLoc start_loc = tokens_get_location(s);
+
+    // pointer:
+    //   * type-qualifier-listOPT
+    //   * type-qualifier-listOPT pointer
+    for (;;) {
+        type = parse_ptr_qualifiers(s, type);
+
+        if (tokens_get(s)->type == '*') {
+            tokens_next(s);
+            type = cuik_uncanonical_type(cuik__new_pointer(&tu->types, type));
+        } else {
+            break;
+        }
+    }
+
+    skip_over_declspec(s);
+    bool is_nested_declarator = tokens_get(s)->type == '(';
+
+    // disambiguate
+    if (!out_of_order_mode && is_nested_declarator && is_abstract) {
+        tokens_next(s);
+
+        if (is_typename(&tu->globals, s)) {
+            is_nested_declarator = false;
+        }
+
+        tokens_prev(s);
+    }
+
+    if (is_nested_declarator) {
+        // TODO(NeGate): I don't like this code...
+        // it essentially just skips over the stuff in the
+        // parenthesis to do the suffix then comes back
+        // for the parenthesis after wards, restoring back to
+        // the end of the declarator when it's done.
+        //
+        // should be right after the (
+        SourceLoc opening_loc = tokens_get_location(s);
+
+        tokens_next(s);
+        size_t saved = s->list.current;
+
+        // dummy_type just avoids problems where the type would be NULL and needs to be read
+        // it's not gonna modify and rarely really reads from it
+        Cuik_QualType dummy_type = cuik_uncanonical_type(&builtin_types[TYPE_VOID]);
+        parse_declarator(tu, s, dummy_type, is_abstract);
+
+        expect_closing_paren(s, opening_loc);
+        type = parse_type_suffix(tu, s, type, NULL);
+
+        size_t saved_end = s->list.current;
+        s->list.current = saved;
+
+        Decl d = parse_declarator(tu, s, type, is_abstract);
+
+        // inherit name
+        // TODO(NeGate): I'm not sure if this is correct ngl
+        if (!d.name) {
+            Cuik_Type* t = cuik_canonical_type(d.type);
+
+            if (t->kind == KIND_PTR) {
+                t = cuik_canonical_type(cuik_canonical_type(d.type)->ptr_to);
+
+                if (t->kind == KIND_FUNC) {
+                    d.name = t->func.name;
+                } else if (t->kind == KIND_STRUCT) {
+                    d.name = t->record.name;
+                } else if (t->kind == KIND_UNION) {
+                    d.name = t->record.name;
+                }
+            }
+        }
+
+        s->list.current = saved_end;
+        return d;
+    }
+
+    Atom name = NULL;
+    Token* t = tokens_get(s);
+    if (!is_abstract && t->type == TOKEN_IDENTIFIER) {
+        name = atoms_put(t->content.length, t->content.data);
+        tokens_next(s);
+    }
+
+    SourceLoc end_loc = tokens_get_last_location(s);
+    type = parse_type_suffix(tu, s, type, name);
+    return (Decl){ type, name, { start_loc, end_loc } };
+}
+
+static Cuik_QualType parse_typename(TranslationUnit* tu, TokenStream* restrict s) {
+    // TODO(NeGate): Check if attributes are set, they shouldn't
+    // be in this context.
+    Attribs attr = { 0 };
+    Cuik_QualType type = parse_declspec(tu, s, &attr);
+    return parse_declarator(tu, s, type, true).type;
+}
+
 // https://github.com/rui314/chibicc/blob/90d1f7f199cc55b13c7fdb5839d1409806633fdb/parse.c#L381
-static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attribs* attr) {
+static Cuik_QualType parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attribs* attr) {
     enum {
-        VOID = 1 << 0,
-        BOOL = 1 << 2,
-        CHAR = 1 << 4,
-        SHORT = 1 << 6,
-        INT = 1 << 8,
-        LONG = 1 << 10,
-        FLOAT = 1 << 12,
-        DOUBLE = 1 << 14,
-        OTHER = 1 << 16,
-        SIGNED = 1 << 17,
+        VOID     = 1 << 0,
+        BOOL     = 1 << 2,
+        CHAR     = 1 << 4,
+        SHORT    = 1 << 6,
+        INT      = 1 << 8,
+        LONG     = 1 << 10,
+        FLOAT    = 1 << 12,
+        DOUBLE   = 1 << 14,
+        OTHER    = 1 << 16,
+        SIGNED   = 1 << 17,
         UNSIGNED = 1 << 18,
     };
 
     int counter = 0;
+    Cuik_Qualifiers quals = 0;
     Cuik_Type* type = NULL;
-
-    bool is_atomic = false;
-    bool is_const = false;
 
     // _Alignas(N) or __declspec(align(N))
     // 0 means no forced alignment
     int forced_align = 0;
     PendingExpr* alignas_pending_expr = NULL;
 
-    SourceLocIndex loc = tokens_get_location_index(s);
+    SourceRange loc = tokens_get_range(s);
     do {
         TknType tkn_type = tokens_get(s)->type;
         switch (tkn_type) {
-            case TOKEN_KW_void:
-            counter += VOID;
-            break;
-            case TOKEN_KW_Bool:
-            counter += BOOL;
-            break;
-            case TOKEN_KW_char:
-            counter += CHAR;
-            break;
-            case TOKEN_KW_short:
-            counter += SHORT;
-            break;
-            case TOKEN_KW_int:
-            counter += INT;
-            break;
-            case TOKEN_KW_long:
-            counter += LONG;
-            break;
-            case TOKEN_KW_float:
-            counter += FLOAT;
-            break;
-            case TOKEN_KW_double:
-            counter += DOUBLE;
+            // type-specifier:
+            case TOKEN_KW_void:   counter += VOID;  break;
+            case TOKEN_KW_Bool:   counter += BOOL;  break;
+            case TOKEN_KW_char:   counter += CHAR;  break;
+            case TOKEN_KW_short:  counter += SHORT; break;
+            case TOKEN_KW_int:    counter += INT;   break;
+            case TOKEN_KW_long:   counter += LONG;  break;
+            case TOKEN_KW_float:  counter += FLOAT; break;
+            case TOKEN_KW_double: counter += DOUBLE;break;
+
+            case TOKEN_KW_Complex: case TOKEN_KW_Imaginary:
+            diag_err(s, loc, "Complex types are not supported in CuikC");
             break;
 
-            case TOKEN_KW_unsigned:
-            counter |= UNSIGNED;
-            break;
-            case TOKEN_KW_signed:
-            counter |= SIGNED;
-            break;
+            case TOKEN_KW_unsigned: counter |= UNSIGNED; break;
+            case TOKEN_KW_signed:   counter |= SIGNED;   break;
 
-            case TOKEN_KW_register: /* lmao */
-            break;
-            case TOKEN_KW_Noreturn: /* lmao */
-            break;
-            case TOKEN_KW_static:
-            attr->is_static = true;
-            break;
-            case TOKEN_KW_typedef:
-            attr->is_typedef = true;
-            break;
-            case TOKEN_KW_inline:
-            attr->is_inline = true;
-            break;
-            case TOKEN_KW_extern:
-            attr->is_extern = true;
-            break;
-            case TOKEN_KW_Thread_local:
-            attr->is_tls = true;
-            break;
+            // storage-class-specifier:
+            case TOKEN_KW_Thread_local: attr->is_tls     = true; break;
+            case TOKEN_KW_typedef:      attr->is_typedef = true; break;
+            case TOKEN_KW_extern:       attr->is_extern  = true; break;
+            case TOKEN_KW_static:       attr->is_static  = true; break;
+            case TOKEN_KW_inline:       attr->is_inline  = true; break;
+            case TOKEN_KW_auto:         /* lmao */               break;
+            case TOKEN_KW_register:     /* lmao */               break;
+            case TOKEN_KW_Noreturn:     /* lmao */               break;
 
-            case TOKEN_KW_cdecl:
-            break;
-            case TOKEN_KW_stdcall:
-            break;
+            // Qualifiers
+            case TOKEN_KW_const:    quals |= CUIK_QUAL_CONST;    break;
+            case TOKEN_KW_volatile: quals |= CUIK_QUAL_VOLATILE; break;
 
-            case TOKEN_KW_Complex:
-            case TOKEN_KW_Imaginary: {
-                REPORT(ERROR, loc, "Complex types are not supported in CuikC");
-                break;
-            }
+            // TODO(NeGate): implement these eventually
+            // currently i don't need them since the ABIs are the same on my platform (x64 windows)
+            case TOKEN_KW_cdecl:   break;
+            case TOKEN_KW_stdcall: break;
 
             case TOKEN_KW_Vector: {
                 // _Vector '(' TYPENAME ',' CONST-EXPR ')'
                 if (counter) goto done;
                 tokens_next(s);
 
-                SourceLocIndex opening_loc = tokens_get_location_index(s);
+                SourceLoc opening_loc = tokens_get_location(s);
                 expect(tu, s, '(');
 
-                type = parse_typename(tu, s);
-                if (!(type->kind >= KIND_CHAR && type->kind <= KIND_LONG) &&
-                    !(type->kind == KIND_FLOAT || type->kind == KIND_DOUBLE)) {
+                type = cuik_canonical_type(parse_typename(tu, s));
+                if (!cuik_type_is_integer(type) && !cuik_type_is_float(type)) {
                     REPORT(ERROR, loc, "Only integers and floats can be used for _Vector types");
-                    return NULL;
+                    return CUIK_QUAL_TYPE_NULL;
                 }
 
                 expect(tu, s, ',');
@@ -516,67 +472,64 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
 
                 if (count <= 0) {
                     REPORT(ERROR, loc, "_Vector types must have a positive width");
-                    return NULL;
+                    return CUIK_QUAL_TYPE_NULL;
                 }
 
                 if (count == 1) {
                     REPORT(ERROR, loc, "It's not even a _Vector type... that's a scalar...");
-                    return NULL;
+                    return CUIK_QUAL_TYPE_NULL;
                 }
 
                 if (count > 64) {
                     REPORT(ERROR, loc, "_Vector type is too wide (%" PRIiMAX ", max is 64)", count);
-                    return NULL;
+                    return CUIK_QUAL_TYPE_NULL;
                 }
 
                 // only allow power of two widths
                 if ((count & (count - 1)) != 0) {
                     REPORT(ERROR, loc, "_Vector types can only have power-of-two widths");
-                    return NULL;
+                    return CUIK_QUAL_TYPE_NULL;
                 }
 
-                type = new_vector(tu, type, count);
+                type = cuik__new_vector(&tu->types, cuik_uncanonical_type(type), count);
                 counter += OTHER;
 
-                expect_closing_paren(tu, s, opening_loc);
+                expect_closing_paren(s, opening_loc);
                 tokens_prev(s);
                 break;
             }
             case TOKEN_KW_Atomic: {
                 tokens_next(s);
                 if (tokens_get(s)->type == '(') {
-                    SourceLocIndex opening_loc = tokens_get_location_index(s);
+                    SourceLoc opening_loc = tokens_get_location(s);
                     tokens_next(s);
 
-                    type = parse_typename(tu, s);
+                    Cuik_QualType t = parse_typename(tu, s);
+                    type = cuik_canonical_type(t);
+                    quals |= cuik_get_quals(t);
+                    quals |= CUIK_QUAL_ATOMIC;
                     counter += OTHER;
-                    is_atomic = true;
 
-                    SourceLocIndex closing_loc = tokens_get_location_index(s);
+                    SourceLoc closing_loc = tokens_get_location(s);
                     if (tokens_get(s)->type != ')') {
-                        report_two_spots(REPORT_ERROR, tu->errors, s, opening_loc, closing_loc, "expected closing parenthesis for _Atomic", "open", "close?", NULL);
-                        return NULL;
+                        // report_two_spots(REPORT_ERROR, tu->errors, s, opening_loc, closing_loc, "expected closing parenthesis for _Atomic", "open", "close?", NULL);
+                        __debugbreak();
+                        tokens_next(s);
+                        return CUIK_QUAL_TYPE_NULL;
                     }
                 } else {
                     // walk back, we didn't need to read that
-                    is_atomic = true;
+                    quals |= CUIK_QUAL_ATOMIC;
                     tokens_prev(s);
                 }
                 break;
             }
-            case TOKEN_KW_const:
-            is_const = true;
-            break;
-            case TOKEN_KW_volatile:
-            break;
-            case TOKEN_KW_auto:
-            break;
 
             case TOKEN_KW_Typeof: {
                 tokens_next(s);
                 if (tokens_get(s)->type != '(') {
                     REPORT(ERROR, loc, "expected opening parenthesis for _Typeof");
-                    return NULL;
+                    return CUIK_QUAL_TYPE_NULL;
                 }
                 tokens_next(s);
 
@@ -587,25 +540,25 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
 
                     if (terminator == 0 || terminator == ',') {
                         REPORT(ERROR, loc, "expected closing parenthesis for _Typeof%s", terminator ? " (got EOF)" : "");
-                        return NULL;
+                        return CUIK_QUAL_TYPE_NULL;
                     }
 
                     // Add to pending list
                     printf("MSG: Add _Typeof to pending list %zu ending at %c\n", current, terminator);
                     __builtin_trap();
                 } else {
-                    if (is_typename(tu, s)) {
-                        type = parse_typename(tu, s);
+                    if (is_typename(&tu->globals, s)) {
+                        type = cuik_canonical_type(parse_typename(tu, s));
                     } else {
                         // we don't particularly resolve typeof for expressions immediately.
                         // instead we just wait until all symbols are resolved properly
                         Expr* src = parse_expr(tu, s);
-                        type = new_typeof(tu, src);
+                        type = cuik__new_typeof(&tu->types, src);
                     }
 
                     if (tokens_get(s)->type != ')') {
                         REPORT(ERROR, loc, "expected closing parenthesis for _Typeof");
-                        return NULL;
+                        return CUIK_QUAL_TYPE_NULL;
                     }
                 }
                 break;
@@ -614,7 +567,7 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
             case TOKEN_KW_Alignas: {
                 if (alignas_pending_expr != NULL) {
                     REPORT(ERROR, loc, "cannot apply two _Alignas to one type");
-                    return NULL;
+                    return CUIK_QUAL_TYPE_NULL;
                 }
 
                 tokens_next(s);
@@ -627,18 +580,18 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
 
                     if (terminator == 0 || terminator == ',') {
                         REPORT(ERROR, loc, "expected closing parenthesis for _Alignas%s", terminator ? " (got EOF)" : "");
-                        return NULL;
+                        return CUIK_QUAL_TYPE_NULL;
                     }
 
                     tokens_prev(s);
 
                     // Add to pending list
-                    PendingExpr e = {PENDING_ALIGNAS, current, NULL};
+                    PendingExpr e = { PENDING_ALIGNAS, NULL, NULL, current };
                     dyn_array_put(pending_exprs, e);
                     alignas_pending_expr = &pending_exprs[dyn_array_length(pending_exprs) - 1];
                 } else {
-                    if (is_typename(tu, s)) {
-                        Cuik_Type* new_align = parse_typename(tu, s);
+                    if (is_typename(&tu->globals, s)) {
+                        Cuik_Type* new_align = cuik_canonical_type(parse_typename(tu, s));
                         if (new_align == NULL || new_align->align) {
                             REPORT(ERROR, loc, "_Alignas cannot operate with incomplete");
                         } else {
@@ -657,7 +610,7 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
 
                     if (tokens_get(s)->type != ')') {
                         REPORT(ERROR, loc, "expected closing parenthesis for _Alignas");
-                        return NULL;
+                        return CUIK_QUAL_TYPE_NULL;
                     }
                 }
                 break;
@@ -686,20 +639,20 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
             case TOKEN_KW_struct:
             case TOKEN_KW_union: {
                 if (counter) goto done;
-                SourceLocIndex record_loc = tokens_get_location_index(s);
+                SourceRange record_loc = tokens_get_range(s);
                 tokens_next(s);
 
                 bool is_union = tkn_type == TOKEN_KW_union;
-                while (skip_over_declspec(tu, s)) {
+                while (skip_over_declspec(s)) {
                     // TODO(NeGate): printf("Don't forget about declspec\n");
                 }
 
                 Atom name = NULL;
                 if (tokens_get(s)->type == TOKEN_IDENTIFIER) {
-                    record_loc = tokens_get_location_index(s);
+                    record_loc = tokens_get_range(s);
 
                     Token* t = tokens_get(s);
-                    name = atoms_put(t->end - t->start, t->start);
+                    name = atoms_put(t->content.length, t->content.data);
 
                     tokens_next(s);
                 }
@@ -707,23 +660,23 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
                 if (tokens_get(s)->type == '{') {
                     tokens_next(s);
 
-                    type = name ? find_tag(tu, (char*)name) : 0;
+                    type = name ? find_tag(&tu->globals, (char*)name) : 0;
                     if (type) {
                         // can't re-complete a struct
                         //assert(!type->is_incomplete);
                     } else {
-                        type = new_record(tu, is_union);
-                        type->is_incomplete = false;
+                        type = cuik__new_record(&tu->types, is_union);
+                        type->is_complete = true;
                         type->record.name = name;
 
                         // can't forward decl unnamed records so we
                         // don't track it
                         if (name) {
                             if (out_of_order_mode) {
-                                nl_strmap_put_cstr(tu->global_tags, name, type);
+                                nl_strmap_put_cstr(tu->globals.tags, name, type);
                             } else {
                                 if (local_tag_count + 1 >= MAX_LOCAL_TAGS) {
-                                    SourceLocIndex loc2 = tokens_get_location_index(s);
+                                    SourceLoc loc2 = tokens_get_location(s);
                                     REPORT(ERROR, loc2, "too many tags in local scopes (%d)", MAX_LOCAL_TAGS);
                                     abort();
                                 }
@@ -737,18 +690,17 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
 
                     size_t member_count = 0;
                     Member* members = tls_save();
-
                     while (tokens_get(s)->type != '}') {
-                        if (skip_over_declspec(tu, s)) continue;
+                        if (skip_over_declspec(s)) continue;
 
                         // in case we have unnamed declarators and we somewhere for them to point to
-                        SourceLocIndex default_loc = tokens_get_location_index(s);
+                        SourceRange default_loc = tokens_get_range(s);
 
-                        Attribs member_attr = {0};
-                        Cuik_Type* member_base_type = parse_declspec(tu, s, &member_attr);
+                        Attribs member_attr = { 0 };
+                        Cuik_QualType member_base_type = parse_declspec(tu, s, &member_attr);
 
                         // error recovery, if we couldn't parse the typename we skip the declaration
-                        if (member_base_type == 0) {
+                        if (CUIK_QUAL_TYPE_IS_NULL(member_base_type)) {
                             while (tokens_get(s)->type != ';') tokens_next(s);
 
                             tokens_next(s);
@@ -756,18 +708,17 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
                         }
 
                         // continues on commas, exists on semicolon
-                        // int a,   *b,  c[3]    ;
-                        //     ^    ^~   ^~~~    ^
-                        //     one  two  three   DONE
+                        // int a,   *b,   c[3]    ;
+                        //     ^    ^~    ^~~~    ^
+                        //     one  two   three   DONE
                         do {
-                            Decl decl = {0};
-                            Cuik_Type* member_type = member_base_type;
+                            Decl decl = { 0 };
+                            Cuik_QualType member_type = member_base_type;
 
                             // not all members have declarators for example
                             // char : 3; or struct { ... };
-                            if (tokens_get(s)->type != ';' &&
-                                tokens_get(s)->type != ':') {
-                                decl = parse_declarator(tu, s, member_base_type, false, false);
+                            if (tokens_get(s)->type != ';' && tokens_get(s)->type != ':') {
+                                decl = parse_declarator(tu, s, member_base_type, false);
                                 member_type = decl.type;
                             } else {
                                 decl.loc = default_loc;
@@ -785,9 +736,9 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
 
                             if (tokens_get(s)->type == ':') {
                                 if (is_union) {
-                                    REPORT(WARNING, decl.loc, "Bitfield... unions... huh?!");
-                                } else if (member_type->is_atomic) {
-                                    REPORT(ERROR, decl.loc, "Cannot make bitfields using atomics");
+                                    diag_warn(&tu->tokens, decl.loc, "Bitfield... unions... huh?!");
+                                } else if (CUIK_QUAL_TYPE_HAS(member_type, CUIK_QUAL_ATOMIC)) {
+                                    diag_err(&tu->tokens, decl.loc, "Cannot make bitfields using atomics");
                                 }
                                 tokens_next(s);
 
@@ -800,14 +751,17 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
                             if (tokens_get(s)->type == ',') {
                                 tokens_next(s);
                                 continue;
-                            } else if (tokens_get(s)->type == ';') break;
+                            } else if (tokens_get(s)->type == ';') {
+                                break;
+                            }
                         } while (true);
 
                         expect(tu, s, ';');
                     }
 
                     if (tokens_get(s)->type != '}') {
-                        generic_error(tu, s, "Unclosed member list!");
+                        diag_err(&tu->tokens, tokens_get_range(s), "Unclosed member list!");
+                        tokens_next(s);
                     }
 
                     // put members into more permanent storage
@@ -827,20 +781,23 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
                     tls_restore(members);
                 } else {
                     // TODO(NeGate): must be a forward decl, handle it
-                    if (name == NULL) generic_error(tu, s, "Cannot have unnamed forward struct reference.");
+                    if (name == NULL) {
+                        diag_err(&tu->tokens, record_loc, "Cannot have unnamed forward struct reference.");
+                        return CUIK_QUAL_TYPE_NULL;
+                    }
 
-                    type = find_tag(tu, (const char*)name);
+                    type = find_tag(&tu->globals, (const char*)name);
                     if (type == NULL) {
-                        type = new_record(tu, is_union);
+                        type = cuik__new_record(&tu->types, is_union);
                         type->loc = record_loc;
                         type->record.name = name;
-                        type->is_incomplete = true;
+                        type->is_complete = false;
 
                         if (out_of_order_mode) {
-                            nl_strmap_put_cstr(tu->global_tags, name, type);
+                            nl_strmap_put_cstr(tu->globals.tags, name, type);
                         } else {
                             if (local_tag_count + 1 >= MAX_LOCAL_TAGS) {
-                                SourceLocIndex loc2 = tokens_get_location_index(s);
+                                SourceLoc loc2 = tokens_get_location(s);
                                 REPORT(ERROR, loc2, "too many tags in local scopes (%d)", MAX_LOCAL_TAGS);
                                 abort();
                             }
@@ -864,14 +821,14 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
                 Token* t = tokens_get(s);
                 Atom name = NULL;
                 if (tokens_get(s)->type == TOKEN_IDENTIFIER) {
-                    name = atoms_put(t->end - t->start, t->start);
+                    name = atoms_put(t->content.length, t->content.data);
                     tokens_next(s);
                 }
 
                 if (tokens_get(s)->type == '{') {
                     tokens_next(s);
 
-                    type = name ? find_tag(tu, (char*)name) : 0;
+                    type = name ? find_tag(&tu->globals, (char*)name) : 0;
                     if (type) {
                         // can't re-complete a enum
                         // TODO(NeGate): error messages
@@ -880,16 +837,16 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
                             generic_error(tu, s, "Cannot recomplete an enumerator");
                         }
                     } else {
-                        type = new_enum(tu);
-                        type->is_incomplete = true;
+                        type = cuik__new_enum(&tu->types);
+                        type->is_complete = false;
                         type->enumerator.name = name;
 
                         if (name) {
-                            if (out_of_order_mode)
-                                nl_strmap_put_cstr(tu->global_tags, name, type);
-                            else {
+                            if (out_of_order_mode) {
+                                nl_strmap_put_cstr(tu->globals.tags, name, type);
+                            } else {
                                 if (local_tag_count + 1 >= MAX_LOCAL_TAGS) {
-                                    SourceLocIndex loc2 = tokens_get_location_index(s);
+                                    SourceLoc loc2 = tokens_get_location(s);
                                     REPORT(ERROR, loc2, "too many tags in local scopes (%d)", MAX_LOCAL_TAGS);
                                     abort();
                                 }
@@ -922,7 +879,7 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
                             generic_error(tu, s, "expected identifier for enum name entry.");
                         }
 
-                        Atom name = atoms_put(t->end - t->start, t->start);
+                        Atom name = atoms_put(t->content.length, t->content.data);
                         tokens_next(s);
 
                         int lexer_pos = 0;
@@ -934,8 +891,7 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
                                 lexer_pos = skip_expression_in_enum(s, &terminator);
 
                                 if (terminator == 0) {
-                                    SourceLocIndex loc2 = tokens_get_location_index(s);
-                                    REPORT(ERROR, loc2, "expected comma or } (got EOF)");
+                                    diag_err(&tu->tokens, tokens_get_range(s), "expected comma or } (got EOF)");
                                     abort();
                                 }
                             } else {
@@ -945,17 +901,18 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
 
                         // Allocate into temporary buffer
                         tls_push(sizeof(EnumEntry));
-                        start[count] = (EnumEntry){name, lexer_pos, cursor};
+                        start[count] = (EnumEntry){ name, lexer_pos, cursor };
 
                         Symbol sym = {
                             .name = name,
-                            .type = type,
-                            .loc = t->location,
+                            .type = cuik_uncanonical_type(type),
+                            .loc = get_token_range(t),
                             .storage_class = STORAGE_ENUM,
-                            .enum_value = count};
+                            .enum_value = count
+                        };
 
                         if (out_of_order_mode) {
-                            nl_strmap_put_cstr(tu->global_symbols, name, sym);
+                            nl_strmap_put_cstr(tu->globals.symbols, name, sym);
                         } else {
                             local_symbols[local_symbol_count++] = sym;
                             cursor += 1;
@@ -978,34 +935,32 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
                     type->enumerator.count = count;
 
                     if (out_of_order_mode) {
-                        type->is_incomplete = true;
+                        type->is_complete = false;
                         type->size = 0;
                         type->align = 0;
                     } else {
                         type_layout(tu, type, true);
                     }
                 } else {
-                    type = find_tag(tu, (char*)name);
+                    type = find_tag(&tu->globals, (char*)name);
                     if (!type) {
-                        type = new_enum(tu);
+                        type = cuik__new_enum(&tu->types);
                         type->record.name = name;
-                        type->is_incomplete = true;
+                        type->is_complete = false;
 
                         if (out_of_order_mode) {
-                            nl_strmap_put_cstr(tu->global_tags, name, type);
+                            nl_strmap_put_cstr(tu->globals.tags, name, type);
                         } else {
                             if (local_tag_count + 1 >= MAX_LOCAL_TAGS) {
-                                SourceLocIndex loc2 = tokens_get_location_index(s);
-                                REPORT(ERROR, loc2, "too many tags in local scopes (%d)", MAX_LOCAL_TAGS);
-                                abort();
+                                diag_err(&tu->tokens, tokens_get_range(s), "too many tags in local scopes (%d)", MAX_LOCAL_TAGS);
+                                return CUIK_QUAL_TYPE_NULL;
                             }
 
                             local_tags[local_tag_count] = (TagEntry){name, type};
                         }
                     }
 
-                    // push back one because we push it forward one later but
-                    // shouldn't
+                    // push back one because we push it forward one later but shouldn't
                     tokens_prev(s);
                 }
 
@@ -1018,58 +973,56 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
 
                 if (out_of_order_mode) {
                     Token* t = tokens_get(s);
-                    Atom name = atoms_put(t->end - t->start, t->start);
+                    Atom name = atoms_put(t->content.length, t->content.data);
 
                     // if the typename is already defined, then reuse that type index
-                    Symbol* sym = find_global_symbol(tu, (const char*)name);
+                    Symbol* sym = find_global_symbol(&tu->globals, (const char*)name);
                     // if not, we assume this must be a typedef'd type and reserve space
                     if (sym != NULL) {
                         if (sym->storage_class != STORAGE_TYPEDEF) {
-                            sprintf_s(temp_string0, sizeof(temp_string0), "symbol '%s' is not a typedef", name);
-
-                            SourceLocIndex loc2 = tokens_get_location_index(s);
-                            report_two_spots(
-                                REPORT_ERROR, tu->errors, s, loc2, sym->loc,
-                                temp_string0, "use", "def", NULL
-                            );
-                            return NULL;
+                            diag_err(&tu->tokens, tokens_get_range(s), "symbol '%s' is not a typedef.", name);
+                            diag_note(&tu->tokens, sym->loc, "declared here");
+                            return CUIK_QUAL_TYPE_NULL;
                         }
 
-                        type = sym->type;
+                        type = cuik_canonical_type(sym->type);
+                        quals |= cuik_get_quals(sym->type);
                         counter += OTHER;
                     } else {
                         //printf("MSG: Add typename to pending list '%s'\n", name);
 
                         // add placeholder
+                        type = cuik__new_blank_type(&tu->types);
                         Symbol sym = {
                             .name = name,
-                            .type = new_blank_type(tu),
-                            .loc = t->location,
+                            .type = cuik_uncanonical_type(type),
+                            .loc = get_token_range(t),
                             .storage_class = STORAGE_TYPEDEF,
                         };
-                        type = sym.type;
-                        type->loc = t->location;
+                        type->loc = sym.loc;
                         type->placeholder.name = name;
                         counter += OTHER;
 
-                        nl_strmap_put_cstr(tu->global_symbols, name, sym);
+                        nl_strmap_put_cstr(tu->globals.symbols, name, sym);
                     }
 
                     break;
                 } else {
                     Symbol* sym = find_local_symbol(s);
                     if (sym != NULL && sym->storage_class == STORAGE_TYPEDEF) {
-                        type = sym->type;
+                        type = cuik_canonical_type(sym->type);
+                        quals |= cuik_get_quals(sym->type);
                         counter += OTHER;
                         break;
                     }
 
                     Token* t = tokens_get(s);
-                    Atom name = atoms_put(t->end - t->start, t->start);
+                    Atom name = atoms_put(t->content.length, t->content.data);
 
-                    sym = find_global_symbol(tu, (const char*)name);
+                    sym = find_global_symbol(&tu->globals, (const char*) name);
                     if (sym != NULL && sym->storage_class == STORAGE_TYPEDEF) {
-                        type = sym->type;
+                        type = cuik_canonical_type(sym->type);
+                        quals |= cuik_get_quals(sym->type);
                         counter += OTHER;
                         break;
                     }
@@ -1117,7 +1070,7 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
             case SIGNED + INT:
             case SIGNED + LONG:
             case SIGNED + LONG + INT:
-            type = &builtin_types[tu->is_windows_long ? TYPE_INT : TYPE_LONG];
+            type = &builtin_types[TYPE_INT];
             break;
             case UNSIGNED:
             case UNSIGNED + INT:
@@ -1125,7 +1078,7 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
             break;
             case UNSIGNED + LONG:
             case UNSIGNED + LONG + INT:
-            type = &builtin_types[tu->is_windows_long ? TYPE_UINT : TYPE_ULONG];
+            type = &builtin_types[TYPE_UINT];
             break;
             case LONG + LONG:
             case LONG + LONG + INT:
@@ -1147,43 +1100,50 @@ static Cuik_Type* parse_declspec(TranslationUnit* tu, TokenStream* restrict s, A
             case OTHER:
             assert(type);
             break;
-            default:
-            generic_error(tu, s, "invalid type");
-            break;
+            default: {
+                Token* last = &s->list.tokens[s->list.current];
+                diag_err(s, (SourceRange){ loc.start, tokens_get_last_location(s) }, "unknown typename %!S", last->content);
+                tokens_next(s);
+                return CUIK_QUAL_TYPE_NULL;
+            }
         }
 
         tokens_next(s);
     } while (true);
 
-    done:;
+    done:
+    loc = (SourceRange){ loc.start, tokens_get_last_location(s) };
     if (type == 0) {
-        Token* last = &s->tokens[s->current];
-        REPORT(ERROR, loc, "unknown typename: %.*s", (int) (last->end - last->start), last->start);
-        return NULL;
+        Token* last = &s->list.tokens[s->list.current];
+        diag_err(s, loc, "unknown typename %!S", last->content);
+        return CUIK_QUAL_TYPE_NULL;
     }
 
-    if (is_atomic || is_const || (forced_align && type->align != forced_align)) {
-        if (forced_align && forced_align < type->align) {
+    if (forced_align && type->align != forced_align) {
+        if (forced_align < type->align) {
             REPORT(ERROR, loc, "forced alignment %d cannot be smaller than original alignment %d", forced_align, type->align);
-            return NULL;
+            return CUIK_QUAL_TYPE_NULL;
         }
 
-        type = new_qualified_type(tu, type, is_atomic, is_const);
+        // clone it since we need to modify it
+        Cuik_Type* new_type = cuik__new_blank_type(&tu->types);
+        *new_type = *type;
+        new_type->loc = loc;
 
         if (forced_align) {
-            type->align = forced_align;
+            new_type->align = forced_align;
         } else if (alignas_pending_expr != NULL) {
-            type->align = -1;
-            alignas_pending_expr->dst = &type->align;
+            new_type->align = -1;
+            alignas_pending_expr->type = new_type;
+            alignas_pending_expr->dst = &new_type->align;
         }
-
-        type->loc = loc;
+        type = new_type;
     }
 
-    return type;
+    return cuik_make_qual_type(type, quals);
 }
 
-static bool is_typename(TranslationUnit* tu, TokenStream* restrict s) {
+static bool is_typename(Cuik_GlobalSymbols* restrict syms, TokenStream* restrict s) {
     Token* t = tokens_get(s);
 
     switch (t->type) {
@@ -1218,7 +1178,7 @@ static bool is_typename(TranslationUnit* tu, TokenStream* restrict s) {
         case TOKEN_IDENTIFIER: {
             // good question...
             Token* t = tokens_get(s);
-            Atom name = atoms_put(t->end - t->start, t->start);
+            Atom name = atoms_put(t->content.length, t->content.data);
 
             Symbol* loc = find_local_symbol(s);
             if (loc != NULL) {
@@ -1235,7 +1195,7 @@ static bool is_typename(TranslationUnit* tu, TokenStream* restrict s) {
                 return (loc->storage_class == STORAGE_TYPEDEF);
             }
 
-            Symbol* glob = find_global_symbol(tu, (const char*)name);
+            Symbol* glob = find_global_symbol(syms, (const char*)name);
             if (glob != NULL && glob->storage_class == STORAGE_TYPEDEF) return true;
 
             return false;

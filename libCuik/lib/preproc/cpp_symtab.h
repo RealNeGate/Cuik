@@ -1,13 +1,13 @@
 
-CUIK_API void cuikpp_define_empty(Cuik_CPP* ctx, const char* key) {
-    cuikpp_define_empty_slice(ctx, strlen(key), key);
+void cuikpp_define_empty_cstr(Cuik_CPP* ctx, const char* key) {
+    cuikpp_define_empty(ctx, strlen(key), key);
 }
 
-CUIK_API void cuikpp_define(Cuik_CPP* ctx, const char* key, const char* val) {
-    cuikpp_define_slice(ctx, strlen(key), key, strlen(val), val);
+void cuikpp_define_cstr(Cuik_CPP* ctx, const char* key, const char* val) {
+    cuikpp_define(ctx, strlen(key), key, strlen(val), val);
 }
 
-CUIK_API void cuikpp_define_empty_slice(Cuik_CPP* ctx, size_t keylen, const char* key) {
+void cuikpp_define_empty(Cuik_CPP* ctx, size_t keylen, const char* key) {
     // TODO(NeGate): Work around to get any of the macro bucket
     // keys to be at 16bytes aligned
     size_t pad_len = (keylen + 15) & ~15;
@@ -29,10 +29,10 @@ CUIK_API void cuikpp_define_empty_slice(Cuik_CPP* ctx, size_t keylen, const char
 
     ctx->macro_bucket_values_start[e] = NULL;
     ctx->macro_bucket_values_end[e] = NULL;
-    ctx->macro_bucket_source_locs[e] = 0;
+    ctx->macro_bucket_source_locs[e] = (SourceLoc){ 0 };
 }
 
-CUIK_API void cuikpp_define_slice(Cuik_CPP* ctx, size_t keylen, const char* key, size_t vallen, const char* value) {
+void cuikpp_define(Cuik_CPP* ctx, size_t keylen, const char* key, size_t vallen, const char* value) {
     // TODO(NeGate): Work around to get any of the macro bucket
     // keys to be at 16bytes aligned
     size_t pad_len = (keylen + 15) & ~15;
@@ -62,8 +62,42 @@ CUIK_API void cuikpp_define_slice(Cuik_CPP* ctx, size_t keylen, const char* key,
 
         ctx->macro_bucket_values_start[e] = (const unsigned char*)newvalue;
         ctx->macro_bucket_values_end[e] = (const unsigned char*)newvalue + vallen;
-        ctx->macro_bucket_source_locs[e] = 0;
+        ctx->macro_bucket_source_locs[e] = (SourceLoc){ 0 };
     }
+}
+
+bool cuikpp_undef_cstr(Cuik_CPP* ctx, const char* key) {
+    return cuikpp_undef(ctx, strlen(key), key);
+}
+
+bool cuikpp_undef(Cuik_CPP* ctx, size_t keylen, const char* key) {
+    // Hash name
+    uint64_t slot = hash_ident(key, keylen);
+    size_t base = slot * SLOTS_PER_MACRO_BUCKET;
+    size_t count = ctx->macro_bucket_count[slot];
+
+    // TODO(NeGate): We might wanna invest into a faster data structure.
+    for (size_t i = 0; i < count; i++) {
+        size_t e = base + i;
+
+        if (ctx->macro_bucket_keys_length[e] == keylen && memcmp(ctx->macro_bucket_keys[e], key, keylen) == 0) {
+            // remove swap
+            size_t last = base + (count - 1);
+
+            if (i != last) {
+                ctx->macro_bucket_keys_length[e] = ctx->macro_bucket_keys_length[last];
+                ctx->macro_bucket_keys[e] = ctx->macro_bucket_keys[last];
+                ctx->macro_bucket_values_start[e] = ctx->macro_bucket_values_start[last];
+                ctx->macro_bucket_values_end[e] = ctx->macro_bucket_values_end[last];
+                ctx->macro_bucket_source_locs[e] = ctx->macro_bucket_source_locs[last];
+            }
+
+            ctx->macro_bucket_count[slot] -= 1;
+            return true;
+        }
+    }
+
+    return false;
 }
 
 // murmur3 32-bit without UB unaligned accesses
@@ -166,6 +200,34 @@ static bool find_define(Cuik_CPP* restrict c, size_t* out_index, const unsigned 
     c->total_define_accesses += 1;
     #endif
     return found;
+}
+
+bool cuikpp_find_define_cstr(Cuik_CPP* restrict c, Cuik_DefineIter* out_ref, const char* key) {
+    size_t def_i;
+    if (!find_define(c, &def_i, (const unsigned char*) key, strlen(key))) {
+        return false;
+    }
+
+    out_ref->loc = c->macro_bucket_source_locs[def_i];
+    out_ref->key = (String){ c->macro_bucket_keys_length[def_i], c->macro_bucket_keys[def_i] };
+    out_ref->value = string_from_range(c->macro_bucket_values_start[def_i], c->macro_bucket_values_end[def_i]);
+    out_ref->bucket = def_i / SLOTS_PER_MACRO_BUCKET;
+    out_ref->id = def_i % SLOTS_PER_MACRO_BUCKET;
+    return true;
+}
+
+bool cuikpp_find_define(Cuik_CPP* restrict c, Cuik_DefineIter* out_ref, size_t keylen, const char key[]) {
+    size_t def_i;
+    if (!find_define(c, &def_i, (const unsigned char*) key, keylen)) {
+        return false;
+    }
+
+    out_ref->loc = c->macro_bucket_source_locs[def_i];
+    out_ref->key = (String){ c->macro_bucket_keys_length[def_i], c->macro_bucket_keys[def_i] };
+    out_ref->value = string_from_range(c->macro_bucket_values_start[def_i], c->macro_bucket_values_end[def_i]);
+    out_ref->bucket = def_i / SLOTS_PER_MACRO_BUCKET;
+    out_ref->id = def_i % SLOTS_PER_MACRO_BUCKET;
+    return true;
 }
 
 static bool is_defined(Cuik_CPP* restrict c, const unsigned char* start, size_t length) {

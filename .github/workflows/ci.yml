@@ -1,20 +1,19 @@
 name: Run Tests
-on: [push, pull_request, workflow_dispatch]
+on: [pull_request, workflow_dispatch]
 
 jobs:
-  test_linux:
-    runs-on: ubuntu-latest
+  build_windows:
+    runs-on: windows-2019
     steps:
-      - uses: actions/checkout@v2
-      - name: Download Clang
-        run: sudo apt-get install clang
-
-      - name: Download Ninja
-        run: sudo apt-get install ninja-build
+      - uses: actions/checkout@v1
+      - uses: seanmiddleditch/gha-setup-ninja@master
 
       - name: Download Submodules
         run: git submodule update --init --recursive
 
       - name: Build Cuik
-        run: cd main && python build.py
+        shell: cmd
+        run: |
+          call "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\VC\Auxiliary\Build\vcvars64.bat
+          cd main && py build.py
         timeout-minutes: 10
