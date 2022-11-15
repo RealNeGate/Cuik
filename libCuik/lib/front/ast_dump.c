@@ -166,7 +166,7 @@ static void dump_expr(FILE* stream, Expr* restrict e, int depth, bool last_node)
         }
         case EXPR_ENUM: {
             qual_type_as_string(sizeof(temp_string0), temp_string0, e->type);
-            fprintf(stream, "EnumLiteral %lld '%s'\n", (long long)e->enum_val.num, temp_string0);
+            fprintf(stream, "EnumLiteral %d '%s'\n", e->enum_val.num->value, temp_string0);
             break;
         }
         case EXPR_FLOAT32:

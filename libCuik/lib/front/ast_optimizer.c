@@ -114,7 +114,10 @@ static ConstValue gimme(const Expr* e) {
 Expr* cuik__optimize_ast(TranslationUnit* tu, Expr* e) {
     switch (e->op) {
         case EXPR_ENUM: {
-            int64_t v = *e->enum_val.num;
+            if (e->enum_val.num->lexer_pos != 0) {
+                type_layout(tu, cuik_canonical_type(e->type), true);
+            }
+            int64_t v = e->enum_val.num->value;
 
             e->op = EXPR_INT;
             e->int_num.suffix = INT_SUFFIX_NONE;

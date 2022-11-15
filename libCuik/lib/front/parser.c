@@ -479,6 +479,7 @@ void type_layout(TranslationUnit* restrict tu, Cuik_Type* type, bool needs_compl
                 mini_lex.list.current = type->enumerator.entries[i].lexer_pos;
 
                 cursor = parse_const_expr(tu, &mini_lex);
+                type->enumerator.entries[i].lexer_pos = 0;
             }
 
             type->enumerator.entries[i].value = cursor;
@@ -605,6 +606,7 @@ void type_layout2(Cuik_Parser* parser, Cuik_Type* type, bool needs_complete) {
         type->align = cuik_canonical_type(type->array_of)->align;
     } else if (type->kind == KIND_ENUM) {
         int cursor = 0;
+        // if (type->enumerator.name && strcmp(type->enumerator.name, "D3D_DRIVER_TYPE") == 0) __debugbreak();
 
         for (int i = 0; i < type->enumerator.count; i++) {
             // if the value is undecided, best time to figure it out is now
@@ -614,6 +616,7 @@ void type_layout2(Cuik_Parser* parser, Cuik_Type* type, bool needs_complete) {
                 mini_lex.list.current = type->enumerator.entries[i].lexer_pos;
 
                 cursor = parse_const_expr2(parser, &mini_lex);
+                type->enumerator.entries[i].lexer_pos = 0;
             }
 
             type->enumerator.entries[i].value = cursor;

@@ -551,7 +551,7 @@ struct Expr {
         int param_num;
 
         struct ExprEnum {
-            int* num;
+            EnumEntry* num;
         } enum_val;
         struct {
             Expr* src;

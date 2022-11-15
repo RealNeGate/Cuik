@@ -247,7 +247,7 @@ static Expr* parse_primary_expr(Cuik_Parser* parser, TokenStream* restrict s) {
                     *e = (Expr){
                         .op = EXPR_ENUM,
                         .type = sym->type,
-                        .enum_val = { &cuik_canonical_type(sym->type)->enumerator.entries[sym->enum_value].value },
+                        .enum_val = { &cuik_canonical_type(sym->type)->enumerator.entries[sym->enum_value] },
                     };
                 } else {
                     assert(sym->stmt != NULL);
@@ -275,7 +275,7 @@ static Expr* parse_primary_expr(Cuik_Parser* parser, TokenStream* restrict s) {
                             *e = (Expr){
                                 .op = EXPR_ENUM,
                                 .type = symbol_search->type,
-                                .enum_val = { &cuik_canonical_type(symbol_search->type)->enumerator.entries[symbol_search->enum_value].value },
+                                .enum_val = { &cuik_canonical_type(symbol_search->type)->enumerator.entries[symbol_search->enum_value] },
                             };
                         } else {
                             *e = (Expr){

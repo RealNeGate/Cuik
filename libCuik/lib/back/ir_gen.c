@@ -711,7 +711,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
         case EXPR_ENUM: {
             return (IRVal){
                 .value_type = RVALUE,
-                .reg = tb_inst_sint(func, TB_TYPE_I32, *e->enum_val.num),
+                .reg = tb_inst_sint(func, TB_TYPE_I32, e->enum_val.num->value),
             };
         }
         case EXPR_FLOAT32:

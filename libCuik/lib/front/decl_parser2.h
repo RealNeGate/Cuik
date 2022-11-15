@@ -39,8 +39,8 @@ static ptrdiff_t skip_expression_in_braces(TokenStream* s, char open, char close
 
 // either ends with a comma or semicolon
 static ptrdiff_t skip_expression_in_list(TokenStream* restrict s, SourceRange error_loc, ptrdiff_t* out_end) {
-    // '=' EXPRESSION ','
-    // '=' EXPRESSION ';'
+    // EXPRESSION ','
+    // EXPRESSION ';'
     ptrdiff_t current = s->list.current;
 
     int depth = 1;
@@ -69,6 +69,46 @@ static ptrdiff_t skip_expression_in_list(TokenStream* restrict s, SourceRange er
                 diag_err(s, error_loc, "Declaration's expression has a weird semicolon");
                 return -1;
             } else if (depth == 1) {
+                depth--;
+                break;
+            }
+        }
+
+        tokens_next(s);
+    }
+
+    *out_end = s->list.current;
+    return current;
+}
+
+static ptrdiff_t skip_expression_in_enum2(TokenStream* restrict s, ptrdiff_t* out_end) {
+    // EXPRESSION ','
+    // EXPRESSION '}'
+    ptrdiff_t current = s->list.current;
+
+    int depth = 1;
+    while (depth) {
+        Token* t = tokens_get(s);
+
+        if (t->type == '\0') {
+            diag_err(s, get_token_range(t), "Declaration was never closed");
+
+            // restore the token stream
+            s->list.current = current + 1;
+            return -1;
+        } else if (t->type == '(') {
+            depth++;
+        } else if (t->type == ')') {
+            depth--;
+
+            if (depth == 0) {
+                diag_err(s, get_token_range(t), "Unbalanced parenthesis");
+
+                s->list.current = current + 1;
+                return -1;
+            }
+        } else if (t->type == '}' || t->type == ',') {
+            if (depth == 1) {
                 depth--;
                 break;
             }
@@ -377,10 +417,10 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                             tokens_next(s);
 
                             if (parser->is_in_global_scope) {
-                                TknType terminator;
-                                lexer_pos = skip_expression_in_enum(s, &terminator);
+                                ptrdiff_t lexer_end;
+                                lexer_pos = skip_expression_in_enum2(s, &lexer_end);
 
-                                if (terminator == 0) {
+                                if (lexer_pos < 0) {
                                     diag_err(s, tokens_get_range(s), "expected comma or } (got EOF)");
                                     break;
                                 }
@@ -408,13 +448,13 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                             cursor += 1;
                         }
 
+                        count += 1;
                         if (tokens_get(s)->type == ',') {
                             tokens_next(s);
                             continue;
                         } else {
                             break;
                         }
-                        count += 1;
                     }
                     expect_char(s, '}');
                     tokens_prev(s);
@@ -436,7 +476,6 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                     }
                 } else {
                     if (name == NULL) {
-                        __debugbreak();
                         diag_err(s, tokens_get_range(s), "expected { after enum declaration");
                         break;
                     }

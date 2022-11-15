@@ -456,7 +456,9 @@ Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict 
         CUIK_FOR_TYPES(type, parser.types) {
             assert(type->align != -1);
 
-            if (type->size == 0) type_layout2(&parser, type, true);
+            if (type->size == 0 || !type->is_complete) {
+                type_layout2(&parser, type, true);
+            }
         }
 
         if (cuikdg_error_count(s)) break;
