@@ -158,7 +158,6 @@ Expr* cuik__optimize_ast(TranslationUnit* tu, Expr* e) {
         }
 
         case EXPR_SIZEOF: {
-            diag_note(&tu->tokens, e->x_of_expr.expr->loc, "A");
             Cuik_Type* src = cuik_canonical_type(cuik__sema_expr(tu, e->x_of_expr.expr));
             if (src->size == 0) {
                 type_layout(tu, src, true);

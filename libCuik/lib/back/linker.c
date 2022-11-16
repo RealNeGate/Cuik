@@ -129,12 +129,12 @@ bool cuiklink_invoke(Cuik_Linker* l, const char* filename, const char* crt_name)
     };
     PROCESS_INFORMATION pi = { 0 };
 
-    // printf("Linker command:\n%S\n", cmd_line);
     if (!CreateProcessW(NULL, cmd_line, NULL, NULL, TRUE, 0, NULL, NULL, &si, &pi)) {
         WaitForSingleObject(pi.hProcess, INFINITE);
         CloseHandle(pi.hProcess);
         CloseHandle(pi.hThread);
 
+        printf("Linker command:\n%S\n", cmd_line);
         fprintf(stderr, "Linker command could not be executed.\n");
         return false;
     }

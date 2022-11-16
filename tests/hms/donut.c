@@ -1,4 +1,5 @@
-extern void printf(const char* fmt, ...);
+#include <stdio.h>
+
 extern void memset(void* dst, int val, unsigned long long n);
 extern int putchar(int ch);
 extern double cos(double x);

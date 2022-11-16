@@ -21,6 +21,7 @@ static ExprOp get_unary(TknType ty) {
         ON(PLUS,               PLUS); // this is a hack, it'll be treated as empty even tho it says EXPR_PLUS
         ON(TILDE,              NOT);
         ON(AND,                ADDR);
+        ON(INCREMENT,          PRE_INC);
         ON(DECREMENT,          PRE_DEC);
         // zero means it's not a unary operator
         default: return 0;
