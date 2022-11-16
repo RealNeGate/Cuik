@@ -329,207 +329,192 @@ int count_max_tb_init_objects(InitNode* root_node) {
 // TODO(NeGate): Revisit this code as a smarter man...
 // if the addr is 0 then we only apply constant initializers.
 // func doesn't need to be non-NULL if it's addr is NULL.
-void eval_initializer_objects(TranslationUnit* tu, TB_Function* func, TB_Initializer* init, TB_Reg addr, InitNode* root_node) {
-    for (InitNode* n = root_node->kid; n != NULL; n = n->next) {
-        if (n->kids_count > 0) {
-            eval_initializer_objects(tu, func, init, addr, n->kid);
-        } else {
-            Cuik_Type* child_type = cuik_canonical_type(n->type);
-            int offset = n->offset;
+void eval_initializer_objects(TranslationUnit* tu, TB_Function* func, TB_Initializer* init, TB_Reg addr, InitNode* n) {
+    if (n->kid != NULL) {
+        // if (n->mode == INIT_MEMBER && strcmp(n->member_name, "SampleDesc") == 0) __debugbreak();
 
-            // initialize a value
-            Expr* e = n->expr;
-            assert(e != NULL);
+        for (InitNode* k = n->kid; k != NULL; k = k->next) {
+            eval_initializer_objects(tu, func, init, addr, k);
+        }
+    } else {
+        Cuik_Type* child_type = cuik_canonical_type(n->type);
+        int offset = n->offset;
 
-            Cuik_Type* type = cuik_canonical_type(e->type);
-            bool success = false;
-            if (!func && e->op == EXPR_SYMBOL) {
-                Stmt* stmt = e->symbol;
+        // initialize a value
+        Expr* e = n->expr;
+        assert(e != NULL);
 
-                // hacky just to make it possible for some symbols to appear in the
-                // initializers
-                //
-                // TODO(NeGate): Fix it up so that more operations can be
-                // performed at compile time and baked into the initializer
-                if (stmt->op == STMT_GLOBAL_DECL) {
-                    const char* name = (const char*) stmt->decl.name;
+        Cuik_Type* type = cuik_canonical_type(e->type);
+        bool success = false;
+        if (!func && e->op == EXPR_SYMBOL) {
+            Stmt* stmt = e->symbol;
 
-                    bool is_external_sym = (type->kind == KIND_FUNC && stmt->decl.initial_as_stmt == NULL);
-                    if (stmt->decl.attrs.is_extern) is_external_sym = true;
+            // hacky just to make it possible for some symbols to appear in the
+            // initializers
+            //
+            // TODO(NeGate): Fix it up so that more operations can be
+            // performed at compile time and baked into the initializer
+            if (stmt->op == STMT_GLOBAL_DECL) {
+                const char* name = (const char*) stmt->decl.name;
 
-                    if (is_external_sym) {
-                        IRVal val = { 0 };
+                bool is_external_sym = (type->kind == KIND_FUNC && stmt->decl.initial_as_stmt == NULL);
+                if (stmt->decl.attrs.is_extern) is_external_sym = true;
 
-                        mtx_lock(&tu->arena_mutex);
-                        if (tu->parent != NULL) {
-                            if (stmt->backing.e != 0) {
-                                tb_initializer_add_extern(tu->ir_mod, init, offset, stmt->backing.e);
-                            } else {
-                                // It's either a proper external or links to
-                                // a file within the compilation unit, we don't
-                                // know yet
-                                CompilationUnit* restrict cu = tu->parent;
-                                cuik_lock_compilation_unit(cu);
+                if (is_external_sym) {
+                    IRVal val = { 0 };
 
-                                ptrdiff_t search = nl_strmap_get_cstr(cu->export_table, name);
-                                if (search >= 0) {
-                                    // Figure out what the symbol is and link it together
-                                    Stmt* real_symbol = cu->export_table[search];
-
-                                    if (real_symbol->op == STMT_FUNC_DECL) {
-                                        tb_initializer_add_function(tu->ir_mod, init, offset, real_symbol->backing.f);
-                                    } else if (real_symbol->op == STMT_GLOBAL_DECL) {
-                                        tb_initializer_add_global(tu->ir_mod, init, offset, real_symbol->backing.g);
-                                    } else {
-                                        abort();
-                                    }
-                                } else {
-                                    // Always creates a real external in this case
-                                    stmt->backing.e = tb_extern_create(tu->ir_mod, name, TB_EXTERNAL_SO_LOCAL);
-                                    tb_initializer_add_extern(tu->ir_mod, init, offset, stmt->backing.e);
-                                }
-
-                                // NOTE(NeGate): we might wanna move this mutex unlock earlier
-                                // it doesn't seem like we might need it honestly...
-                                cuik_unlock_compilation_unit(cu);
-                            }
-                        } else {
-                            stmt->backing.e = tb_extern_create(tu->ir_mod, name, TB_EXTERNAL_SO_LOCAL);
+                    mtx_lock(&tu->arena_mutex);
+                    if (tu->parent != NULL) {
+                        if (stmt->backing.e != 0) {
                             tb_initializer_add_extern(tu->ir_mod, init, offset, stmt->backing.e);
-                        }
+                        } else {
+                            // It's either a proper external or links to
+                            // a file within the compilation unit, we don't
+                            // know yet
+                            CompilationUnit* restrict cu = tu->parent;
+                            cuik_lock_compilation_unit(cu);
 
-                        mtx_unlock(&tu->arena_mutex);
-                    } else {
-                        // Global defined within the TU
-                        tb_initializer_add_global(tu->ir_mod, init, offset, stmt->backing.g);
-                    }
+                            ptrdiff_t search = nl_strmap_get_cstr(cu->export_table, name);
+                            if (search >= 0) {
+                                // Figure out what the symbol is and link it together
+                                Stmt* real_symbol = cu->export_table[search];
 
-                    success = true;
-                } else if (stmt->op == STMT_FUNC_DECL) {
-                    tb_initializer_add_function(tu->ir_mod, init, offset, stmt->backing.f);
-                    success = true;
-                }
-            }
-
-            if (!success) {
-                if (n->mode == INIT_ARRAY && n->count > 1) {
-                    // GNU array initializer extensions...
-                    if (e->op == EXPR_INT) {
-                        if (!func) {
-                            ptrdiff_t size = child_type->size;
-                            ptrdiff_t count = n->count;
-                            char* region = tb_initializer_add_region(tu->ir_mod, init, offset, count * size);
-
-                            #if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-                            #error "Stop this immoral bullshit please... until someone fixes this at least :p"
-                            #else
-                            for (ptrdiff_t i = 0; i < count; i++) {
-                                uint64_t value = e->int_num.num;
-                                memcpy(region + (i * size), &value, size);
+                                if (real_symbol->op == STMT_FUNC_DECL) {
+                                    tb_initializer_add_function(tu->ir_mod, init, offset, real_symbol->backing.f);
+                                } else if (real_symbol->op == STMT_GLOBAL_DECL) {
+                                    tb_initializer_add_global(tu->ir_mod, init, offset, real_symbol->backing.g);
+                                } else {
+                                    abort();
+                                }
+                            } else {
+                                // Always creates a real external in this case
+                                stmt->backing.e = tb_extern_create(tu->ir_mod, name, TB_EXTERNAL_SO_LOCAL);
+                                tb_initializer_add_extern(tu->ir_mod, init, offset, stmt->backing.e);
                             }
-                            #endif
 
-                            success = true;
+                            // NOTE(NeGate): we might wanna move this mutex unlock earlier
+                            // it doesn't seem like we might need it honestly...
+                            cuik_unlock_compilation_unit(cu);
                         }
                     } else {
-                        // i'll just neglect this until someone brings it up again
-                        assert(0 && "TODO");
+                        stmt->backing.e = tb_extern_create(tu->ir_mod, name, TB_EXTERNAL_SO_LOCAL);
+                        tb_initializer_add_extern(tu->ir_mod, init, offset, stmt->backing.e);
                     }
+
+                    mtx_unlock(&tu->arena_mutex);
+                } else {
+                    // Global defined within the TU
+                    tb_initializer_add_global(tu->ir_mod, init, offset, stmt->backing.g);
                 }
+
+                success = true;
+            } else if (stmt->op == STMT_FUNC_DECL) {
+                tb_initializer_add_function(tu->ir_mod, init, offset, stmt->backing.f);
+                success = true;
             }
+        }
 
-            if (!success) {
-                e = cuik__optimize_ast(tu, e);
-
-                switch (e->op) {
-                    // TODO(NeGate): Implement constants for literals
-                    // to allow for more stuff to be precomputed.
-                    case EXPR_INT:
+        if (!success) {
+            if (n->mode == INIT_ARRAY && n->count > 1) {
+                // GNU array initializer extensions...
+                if (e->op == EXPR_INT) {
                     if (!func) {
-                        int size = child_type->size;
-                        void* region = tb_initializer_add_region(tu->ir_mod, init, offset, size);
+                        ptrdiff_t size = child_type->size;
+                        ptrdiff_t count = n->count;
+                        char* region = tb_initializer_add_region(tu->ir_mod, init, offset, count * size);
 
                         #if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
                         #error "Stop this immoral bullshit please... until someone fixes this at least :p"
                         #else
-                        uint64_t value = e->int_num.num;
-                        memcpy(region, &value, size);
-                        #endif
-                        break;
-                    }
-
-                    case EXPR_STR:
-                    case EXPR_WSTR:
-                    if (!func) {
-                        size_t str_bytes = type->size;
-
-                        char* dst = NULL;
-                        if (child_type->kind == KIND_PTR) {
-                            // if it's a string pointer, then we make a dummy string array
-                            // and point to that with another initializer
-                            char temp[1024];
-                            snprintf(temp, 1024, "DUMMY@%d", tu->id_gen++);
-
-                            TB_Initializer* dummy_init = tb_initializer_create(tu->ir_mod, str_bytes, 2, 1);
-                            dst = tb_initializer_add_region(tu->ir_mod, dummy_init, 0, str_bytes);
-
-                            TB_Global* dummy = tb_global_create(tu->ir_mod, temp, TB_STORAGE_DATA, TB_LINKAGE_PRIVATE);
-                            tb_global_set_initializer(tu->ir_mod, dummy, dummy_init);
-
-                            tb_initializer_add_global(tu->ir_mod, init, offset, dummy);
-                        } else {
-                            dst = tb_initializer_add_region(tu->ir_mod, init, offset, str_bytes);
+                        for (ptrdiff_t i = 0; i < count; i++) {
+                            uint64_t value = e->int_num.num;
+                            memcpy(region + (i * size), &value, size);
                         }
+                        #endif
 
-                        // write out string bytes with the nice zeroes at the end
-                        memcpy(dst, e->str.start, str_bytes);
-                        break;
+                        success = true;
+                    }
+                } else {
+                    // i'll just neglect this until someone brings it up again
+                    assert(0 && "TODO");
+                }
+            }
+        }
+
+        if (!success) {
+            e = cuik__optimize_ast(tu, e);
+
+            switch (e->op) {
+                // TODO(NeGate): Implement constants for literals
+                // to allow for more stuff to be precomputed.
+                case EXPR_INT:
+                if (!func) {
+                    int size = child_type->size;
+                    void* region = tb_initializer_add_region(tu->ir_mod, init, offset, size);
+
+                    #if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+                    #error "Stop this immoral bullshit please... until someone fixes this at least :p"
+                    #else
+                    uint64_t value = e->int_num.num;
+                    memcpy(region, &value, size);
+                    #endif
+                    break;
+                }
+
+                case EXPR_STR:
+                case EXPR_WSTR:
+                if (!func) {
+                    size_t str_bytes = type->size;
+
+                    char* dst = NULL;
+                    if (child_type->kind == KIND_PTR) {
+                        // if it's a string pointer, then we make a dummy string array
+                        // and point to that with another initializer
+                        char temp[1024];
+                        snprintf(temp, 1024, "DUMMY@%d", tu->id_gen++);
+
+                        TB_Initializer* dummy_init = tb_initializer_create(tu->ir_mod, str_bytes, 2, 1);
+                        dst = tb_initializer_add_region(tu->ir_mod, dummy_init, 0, str_bytes);
+
+                        TB_Global* dummy = tb_global_create(tu->ir_mod, temp, TB_STORAGE_DATA, TB_LINKAGE_PRIVATE);
+                        tb_global_set_initializer(tu->ir_mod, dummy, dummy_init);
+
+                        tb_initializer_add_global(tu->ir_mod, init, offset, dummy);
+                    } else {
+                        dst = tb_initializer_add_region(tu->ir_mod, init, offset, str_bytes);
                     }
 
-                    // fallthrough
-                    // dynamic expressions
-                    default: {
-                        if (addr) {
-                            assert(func != NULL);
+                    // write out string bytes with the nice zeroes at the end
+                    memcpy(dst, e->str.start, str_bytes);
+                    break;
+                }
 
-                            Cuik_TypeKind kind = child_type->kind;
-                            int size = child_type->size;
-                            int align = child_type->align;
+                // fallthrough
+                // dynamic expressions
+                default: {
+                    if (addr) {
+                        assert(func != NULL);
 
-                            if (kind == KIND_STRUCT || kind == KIND_UNION || kind == KIND_ARRAY) {
-                                if (e->op == EXPR_INT && e->int_num.num == 0) {
-                                    // placing the address calculation here might improve performance or readability
-                                    // of IR in the debug builds, for release builds it shouldn't matter
-                                    TB_Reg effective_addr;
-                                    if (offset) {
-                                        effective_addr = tb_inst_member_access(func, addr, offset);
-                                    } else {
-                                        effective_addr = addr;
-                                    }
+                        Cuik_TypeKind kind = child_type->kind;
+                        int size = child_type->size;
+                        int align = child_type->align;
 
-                                    TB_Reg size_reg = tb_inst_uint(func, TB_TYPE_I64, size);
-                                    TB_Reg val_reg = tb_inst_uint(func, TB_TYPE_I8, 0);
-                                    tb_inst_memset(func, effective_addr, val_reg, size_reg, align);
+                        if (kind == KIND_STRUCT || kind == KIND_UNION || kind == KIND_ARRAY) {
+                            if (e->op == EXPR_INT && e->int_num.num == 0) {
+                                // placing the address calculation here might improve performance or readability
+                                // of IR in the debug builds, for release builds it shouldn't matter
+                                TB_Reg effective_addr;
+                                if (offset) {
+                                    effective_addr = tb_inst_member_access(func, addr, offset);
                                 } else {
-                                    IRVal v = irgen_expr(tu, func, e);
-
-                                    // placing the address calculation here might improve performance or readability
-                                    // of IR in the debug builds, for release builds it shouldn't matter
-                                    TB_Reg effective_addr;
-                                    if (offset) {
-                                        effective_addr = tb_inst_member_access(func, addr, offset);
-                                    } else {
-                                        effective_addr = addr;
-                                    }
-
-                                    TB_Reg size_reg = tb_inst_uint(func, TB_TYPE_I64, size);
-                                    tb_inst_memcpy(func, effective_addr, v.reg, size_reg, align);
+                                    effective_addr = addr;
                                 }
-                            } else {
-                                // hacky but we set the cast so that the rvalue returns a normal value
-                                e->cast_type = cuik_uncanonical_type(child_type);
 
-                                TB_Reg v = irgen_as_rvalue(tu, func, e);
+                                TB_Reg size_reg = tb_inst_uint(func, TB_TYPE_I64, size);
+                                TB_Reg val_reg = tb_inst_uint(func, TB_TYPE_I8, 0);
+                                tb_inst_memset(func, effective_addr, val_reg, size_reg, align);
+                            } else {
+                                IRVal v = irgen_expr(tu, func, e);
 
                                 // placing the address calculation here might improve performance or readability
                                 // of IR in the debug builds, for release builds it shouldn't matter
@@ -540,11 +525,28 @@ void eval_initializer_objects(TranslationUnit* tu, TB_Function* func, TB_Initial
                                     effective_addr = addr;
                                 }
 
-                                tb_inst_store(func, ctype_to_tbtype(child_type), effective_addr, v, align);
+                                TB_Reg size_reg = tb_inst_uint(func, TB_TYPE_I64, size);
+                                tb_inst_memcpy(func, effective_addr, v.reg, size_reg, align);
                             }
+                        } else {
+                            // hacky but we set the cast so that the rvalue returns a normal value
+                            e->cast_type = cuik_uncanonical_type(child_type);
+
+                            TB_Reg v = irgen_as_rvalue(tu, func, e);
+
+                            // placing the address calculation here might improve performance or readability
+                            // of IR in the debug builds, for release builds it shouldn't matter
+                            TB_Reg effective_addr;
+                            if (offset) {
+                                effective_addr = tb_inst_member_access(func, addr, offset);
+                            } else {
+                                effective_addr = addr;
+                            }
+
+                            tb_inst_store(func, ctype_to_tbtype(child_type), effective_addr, v, align);
                         }
-                        break;
                     }
+                    break;
                 }
             }
         }
