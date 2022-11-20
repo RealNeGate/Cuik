@@ -21,7 +21,7 @@ X(ARG_ASSEMBLY,"S",        NULL,      false, "output assembly to stdout (not rea
 X(ARG_DEBUG,   "g",        NULL,      false, "compile with debug information")
 // linker
 X(ARG_NOLIBC,  "nostdlib", NULL,      false, "don't include and link against the default CRT")
-X(ARG_LIB,     "l",        NULL,      false, "add library name to the linking")
+X(ARG_LIB,     "l",        NULL,      true,  "add library name to the linking")
 X(ARG_BASED,   "based",    NULL,      false, "use the TB linker (EXPERIMENTAL)")
 // misc
 X(ARG_TARGET,  "target",   NULL,      true,  "change the target system and arch")

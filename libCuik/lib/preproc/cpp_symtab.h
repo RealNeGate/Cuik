@@ -1,13 +1,17 @@
 
 void cuikpp_define_empty_cstr(Cuik_CPP* ctx, const char* key) {
+    assert(*key != 0);
     cuikpp_define_empty(ctx, strlen(key), key);
 }
 
 void cuikpp_define_cstr(Cuik_CPP* ctx, const char* key, const char* val) {
+    assert(*val != 0);
     cuikpp_define(ctx, strlen(key), key, strlen(val), val);
 }
 
 void cuikpp_define_empty(Cuik_CPP* ctx, size_t keylen, const char* key) {
+    assert(keylen > 0);
+
     // TODO(NeGate): Work around to get any of the macro bucket
     // keys to be at 16bytes aligned
     size_t pad_len = (keylen + 15) & ~15;
@@ -33,6 +37,8 @@ void cuikpp_define_empty(Cuik_CPP* ctx, size_t keylen, const char* key) {
 }
 
 void cuikpp_define(Cuik_CPP* ctx, size_t keylen, const char* key, size_t vallen, const char* value) {
+    assert(keylen > 0);
+
     // TODO(NeGate): Work around to get any of the macro bucket
     // keys to be at 16bytes aligned
     size_t pad_len = (keylen + 15) & ~15;
@@ -85,11 +91,11 @@ bool cuikpp_undef(Cuik_CPP* ctx, size_t keylen, const char* key) {
             size_t last = base + (count - 1);
 
             if (i != last) {
-                ctx->macro_bucket_keys_length[e] = ctx->macro_bucket_keys_length[last];
-                ctx->macro_bucket_keys[e] = ctx->macro_bucket_keys[last];
+                ctx->macro_bucket_keys_length[e]  = ctx->macro_bucket_keys_length[last];
+                ctx->macro_bucket_keys[e]         = ctx->macro_bucket_keys[last];
                 ctx->macro_bucket_values_start[e] = ctx->macro_bucket_values_start[last];
-                ctx->macro_bucket_values_end[e] = ctx->macro_bucket_values_end[last];
-                ctx->macro_bucket_source_locs[e] = ctx->macro_bucket_source_locs[last];
+                ctx->macro_bucket_values_end[e]   = ctx->macro_bucket_values_end[last];
+                ctx->macro_bucket_source_locs[e]  = ctx->macro_bucket_source_locs[last];
             }
 
             ctx->macro_bucket_count[slot] -= 1;
@@ -185,7 +191,8 @@ static bool find_define(Cuik_CPP* restrict c, size_t* out_index, const unsigned 
 
         if (c->macro_bucket_keys_length[e] == length) {
             if (memory_equals16(c->macro_bucket_keys[e], start, length)) {
-                *out_index = e;
+
+                *out_index = base;
                 found = true;
                 break;
             }

@@ -476,7 +476,7 @@ void eval_initializer_objects(TranslationUnit* tu, TB_Function* func, TB_Initial
                         TB_Initializer* dummy_init = tb_initializer_create(tu->ir_mod, str_bytes, 2, 1);
                         dst = tb_initializer_add_region(tu->ir_mod, dummy_init, 0, str_bytes);
 
-                        TB_Global* dummy = tb_global_create(tu->ir_mod, temp, TB_STORAGE_DATA, TB_LINKAGE_PRIVATE);
+                        TB_Global* dummy = tb_global_create(tu->ir_mod, temp, TB_STORAGE_DATA, NULL, TB_LINKAGE_PRIVATE);
                         tb_global_set_initializer(tu->ir_mod, dummy, dummy_init);
 
                         tb_initializer_add_global(tu->ir_mod, init, offset, dummy);
@@ -580,7 +580,7 @@ static TB_Initializer* gen_global_initializer(TranslationUnit* tu, Cuik_Type* ty
                 char temp[1024];
                 snprintf(temp, 1024, "%s@%d", name, tu->id_gen++);
 
-                TB_Global* dummy = tb_global_create(tu->ir_mod, temp, TB_STORAGE_DATA, TB_LINKAGE_PRIVATE);
+                TB_Global* dummy = tb_global_create(tu->ir_mod, temp, TB_STORAGE_DATA, NULL, TB_LINKAGE_PRIVATE);
 
                 char* dst = tb_initializer_add_region(tu->ir_mod, init, 0, len);
                 memcpy(dst, initial->str.start, len);
@@ -1584,7 +1584,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
 void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
     if (s == NULL) return;
 
-    if (1 /* settings.is_debug_info */) {
+    if (tu->has_tb_debug_info) {
         // TODO(NeGate): Fix this up later!!!
         static thread_local TB_FileID last_file_id;
         static thread_local const char* last_filepath;
@@ -1658,7 +1658,12 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
                     tb_module_set_tls_index(tu->ir_mod, (TB_Symbol*) tb_extern_create(tu->ir_mod, "_tls_index", TB_EXTERNAL_SO_LOCAL));
                 }
 
-                TB_Global* g = tb_global_create(tu->ir_mod, name, attrs.is_tls ? TB_STORAGE_TLS : TB_STORAGE_DATA, TB_LINKAGE_PRIVATE);
+                TB_DebugType* dbg_type = NULL;
+                if (tu->has_tb_debug_info) {
+                    dbg_type = cuik__as_tb_debug_type(tu->ir_mod, cuik_canonical_type(s->decl.type));
+                }
+
+                TB_Global* g = tb_global_create(tu->ir_mod, name, attrs.is_tls ? TB_STORAGE_TLS : TB_STORAGE_DATA, dbg_type, TB_LINKAGE_PRIVATE);
                 tb_global_set_initializer(tu->ir_mod, g, init);
                 tls_restore(name);
 

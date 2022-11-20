@@ -100,13 +100,13 @@ static TB_FunctionPrototype* create_prototype(TranslationUnit* tu, Cuik_Type* ty
             TB_DataType dt = ctype_to_tbtype(type);
 
             assert(dt.width < 8);
-            if (tu->has_tb_debug_info) {
+            if (tu->has_tb_debug_info && p->name) {
                 tb_prototype_add_param_named(proto, dt, p->name, cuik__as_tb_debug_type(tu->ir_mod, type));
             } else {
                 tb_prototype_add_param(proto, dt);
             }
         } else {
-            if (tu->has_tb_debug_info) {
+            if (tu->has_tb_debug_info && p->name) {
                 TB_DebugType* dbg_type = cuik__as_tb_debug_type(tu->ir_mod, type);
                 tb_prototype_add_param_named(proto, TB_TYPE_PTR, p->name, tb_debug_create_ptr(m, dbg_type));
             } else {
@@ -175,8 +175,7 @@ static int pass_parameter(TranslationUnit* tu, TB_Function* func, Expr* e, bool 
 
         return 1;
     } else {
-        if (arg_type->kind == KIND_STRUCT ||
-            arg_type->kind == KIND_UNION) {
+        if (arg_type->kind == KIND_STRUCT || arg_type->kind == KIND_UNION) {
             // Convert aggregate into TB scalar
             IRVal arg = irgen_expr(tu, func, e);
             TB_Reg arg_addr = TB_NULL_REG;

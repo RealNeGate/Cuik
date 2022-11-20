@@ -35,8 +35,8 @@ static void spallperf__begin_plot(void* user_data, uint64_t nanos, const char* l
     uint32_t tid = getpid();
     #endif
 
-    // SpallTraceBeginLenTid(&ctx, &muh_buffer, label, strlen(label), tid, nanos);
-    SpallTraceBeginLenArgsTidPid(&ctx, &muh_buffer, label, strlen(label), "Poop", 4, tid, 0, nanos);
+    SpallTraceBeginLenTid(&ctx, &muh_buffer, label, strlen(label), tid, nanos);
+    // SpallTraceBeginLenArgsTidPid(&ctx, &muh_buffer, label, strlen(label), "Poop", 4, tid, 0, nanos);
 }
 
 static void spallperf__end_plot(void* user_data, uint64_t nanos) {

@@ -116,7 +116,12 @@ void cuik_internal_link_compilation_unit(CompilationUnit* restrict cu, void* mod
                         }
 
                         TB_Linkage linkage = s->decl.attrs.is_static ? TB_LINKAGE_PRIVATE : TB_LINKAGE_PUBLIC;
-                        s->backing.g = tb_global_create(tu->ir_mod, name, s->decl.attrs.is_tls ? TB_STORAGE_TLS : TB_STORAGE_DATA, linkage);
+                        TB_DebugType* dbg_type = NULL;
+                        if (debug_info_level > 0) {
+                            dbg_type = cuik__as_tb_debug_type(tu->ir_mod, cuik_canonical_type(s->decl.type));
+                        }
+
+                        s->backing.g = tb_global_create(tu->ir_mod, name, s->decl.attrs.is_tls ? TB_STORAGE_TLS : TB_STORAGE_DATA, dbg_type, linkage);
                     }
                 }
                 #endif

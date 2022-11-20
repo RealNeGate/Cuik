@@ -6,6 +6,8 @@
 #pragma comment (lib, "user32.lib")
 #pragma comment (lib, "opengl32.lib")
 
+LRESULT main_wnd_proc(HWND wnd, UINT message, WPARAM wparam, LPARAM lparam);
+
 int main(int argc, char** argv, char** env) {
     const char* name = "Hello, World!";
     

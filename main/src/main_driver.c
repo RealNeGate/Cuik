@@ -36,6 +36,8 @@ enum {
 #define NULL_FILEPATH "/dev/null"
 #endif
 
+static _Atomic int files_with_errors;
+
 // compiler arguments
 static DynArray(const char*) include_directories;
 static DynArray(const char*) input_libraries;
@@ -353,6 +355,7 @@ static Cuik_CPP* make_preprocessor(const char* filepath, bool should_finalize) {
     // run the preprocessor
     if (cuikpp_default_run(cpp) == CUIKPP_ERROR) {
         // dump_tokens(stdout, cuikpp_get_token_stream(cpp));
+        files_with_errors++;
         return NULL;
     }
 
@@ -386,8 +389,6 @@ static void free_preprocessor(Cuik_CPP* cpp) {
     cuikpp_deinit(cpp);
     free(cpp);
 }
-
-static _Atomic int files_with_errors;
 
 static void compile_file(void* arg);
 static void preproc_file(void* arg) {

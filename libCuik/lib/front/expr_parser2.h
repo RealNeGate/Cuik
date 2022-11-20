@@ -932,4 +932,3 @@ static intmax_t parse_const_expr2(Cuik_Parser* parser, TokenStream* restrict s) 
 
     return (intmax_t) folded->int_num.num;
 }
-

@@ -15,6 +15,7 @@
 // gcc/clang
 X(__builtin_expect, "vb")
 X(__builtin_trap, "vv")
+X(__builtin_clz, "ii")
 
 // cuik internal
 X(__c11_atomic_compare_exchange_strong, "v.")
@@ -33,6 +34,8 @@ X(__c11_atomic_fetch_xor, "v.")
 X(__c11_atomic_fetch_and, "v.")
 
 // microsoft extensions
+X(_byteswap_ulong, "ii")
+
 X(__assume, "vb")
 X(__debugbreak, "vv")
 X(__va_start, "vc**.")

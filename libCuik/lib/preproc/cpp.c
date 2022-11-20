@@ -223,7 +223,7 @@ void cuikpp_deinit(Cuik_CPP* ctx) {
     //printf("%40s | %zu file read | %zu fstats\n", ctx->files[0].filepath, ctx->total_files_read, ctx->total_fstats);
     #if 1
     printf(" %40s | %.06f ms read+lex\t| %4zu files read\t| %zu fstats\t| %f ms (%zu defines)\n",
-        ctx->files[0].filepath,
+        ctx->tokens.filepath,
         ctx->total_io_time / 1000000.0,
         ctx->total_files_read,
         ctx->total_fstats,

@@ -399,6 +399,12 @@ BuiltinResult target_generic_compile_builtin(TranslationUnit* tu, TB_Function* f
     } else if (strcmp(name, "__c11_atomic_signal_fence") == 0) {
         printf("TODO __c11_atomic_signal_fence!");
         abort();
+    } else if (strcmp(name, "_byteswap_ulong") == 0) {
+        TB_Reg src = irgen_as_rvalue(tu, func, args[0]);
+        return ZZZ(tb_inst_bswap(func, src));
+    } else if (strcmp(name, "__builtin_clz") == 0) {
+        TB_Reg src = irgen_as_rvalue(tu, func, args[0]);
+        return ZZZ(tb_inst_clz(func, src));
     } else if (strcmp(name, "__c11_atomic_exchange") == 0) {
         TB_Reg dst = irgen_as_rvalue(tu, func, args[0]);
         TB_Reg src = irgen_as_rvalue(tu, func, args[1]);

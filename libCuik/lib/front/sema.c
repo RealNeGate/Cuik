@@ -1024,8 +1024,9 @@ Cuik_QualType cuik__sema_expr(TranslationUnit* tu, Expr* restrict e) {
                 return (e->type = cuik_uncanonical_type(&cuik__builtin_void));
             }
 
+            const Cuik_Type* target_signed_ints = tu->target->signed_ints;
             e->subscript.base->cast_type = cuik_uncanonical_type(base);
-            e->subscript.index->cast_type = cuik_uncanonical_type(&cuik__builtin_long);
+            e->subscript.index->cast_type = cuik_uncanonical_type(&target_signed_ints[CUIK_BUILTIN_LLONG]);
             return (e->type = base->ptr_to);
         }
         case EXPR_DEREF: {
@@ -1331,8 +1332,8 @@ void sema_stmt(TranslationUnit* tu, Stmt* restrict s) {
                         kid->op == STMT_DEFAULT) {
                         killer = 0;
                     } else {
-                        diag_warn(&tu->tokens, kid->loc, "Dead code");
-                        diag_note(&tu->tokens, killer->loc, "After");
+                        // diag_warn(&tu->tokens, kid->loc, "Dead code");
+                        // diag_note(&tu->tokens, killer->loc, "After");
                     }
                 } else {
                     if (kid->op == STMT_RETURN ||

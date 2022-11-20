@@ -206,10 +206,20 @@ Expr* cuik__optimize_ast(TranslationUnit* tu, Expr* e) {
             Expr* src = cuik__optimize_ast(tu, e->unary_op.src);
 
             // ~(N - 1) => -N
-            if (src->op == EXPR_INT && !CUIK_QUAL_TYPE_IS_NULL(e->type) && cuik_type_is_integer(cuik_canonical_type(e->type))) {
-                e->op = EXPR_NEGATE;
-                src->int_num.num += 1;
-                return e;
+            if (src->op == EXPR_INT) {
+                if (!CUIK_QUAL_TYPE_IS_NULL(e->type) && cuik_type_is_integer(cuik_canonical_type(e->type))) {
+                    e->op = EXPR_NEGATE;
+                    src->int_num.num += 1;
+                    return e;
+                } else {
+                    cuik__sema_expr(tu, src);
+                    uint64_t mask = UINT64_MAX >> (cuik_canonical_type(src->type)->size*8);
+
+                    e->op = EXPR_INT;
+                    e->int_num.suffix = src->int_num.suffix;
+                    e->int_num.num = ~src->int_num.num & mask;
+                    return e;
+                }
             }
 
             break;

@@ -419,6 +419,11 @@ static bool expand_ident(Cuik_CPP* restrict c, TokenList* restrict out_tokens, T
         t.content = (String){ length, out };
         dyn_array_put(out_tokens->tokens, t);
     } else {
+        if (strncmp((const char*) token_data, "SDL_static_cast", token_length) == 0) {
+            // printf("\n\n");
+            // __debugbreak();
+        }
+
         size_t def_i;
         if (find_define(c, &def_i, token_data, token_length)) {
             String def = string_from_range(c->macro_bucket_values_start[def_i], c->macro_bucket_values_end[def_i]);
@@ -465,8 +470,6 @@ static bool expand_ident(Cuik_CPP* restrict c, TokenList* restrict out_tokens, T
             if (*args != '(') {
                 // object-like macro
                 if (def.length > 0) {
-                    size_t hidden = hide_macro(c, def_i);
-
                     MacroArgs arglist = { 0 };
                     TokenList scratch = {
                         .tokens = dyn_array_create_with_initial_cap(Token, 16)
@@ -475,6 +478,7 @@ static bool expand_ident(Cuik_CPP* restrict c, TokenList* restrict out_tokens, T
                     subst(c, &scratch, (uint8_t*) def.data, &arglist, macro_id);
                     dyn_array_put(scratch.tokens, (Token){ 0 });
 
+                    size_t hidden = hide_macro(c, def_i);
                     expand(c, out_tokens, &scratch, macro_id);
 
                     unhide_macro(c, def_i, hidden);
@@ -507,8 +511,6 @@ static bool expand_ident(Cuik_CPP* restrict c, TokenList* restrict out_tokens, T
                         }
                         printf("\n");*/
 
-                        // macro hide set
-                        size_t hidden = hide_macro(c, def_i);
                         size_t old = dyn_array_length(c->scratch_list.tokens);
 
                         TokenList scratch = {
@@ -520,6 +522,8 @@ static bool expand_ident(Cuik_CPP* restrict c, TokenList* restrict out_tokens, T
                         subst(c, &scratch, (uint8_t*) def.data, &arglist, macro_id);
                         dyn_array_put(scratch.tokens, (Token){ 0 });
 
+                        // macro hide set
+                        size_t hidden = hide_macro(c, def_i);
                         expand(c, out_tokens, &scratch, macro_id);
 
                         dyn_array_destroy(scratch.tokens);
