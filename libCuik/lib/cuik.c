@@ -15,10 +15,12 @@ char cuik__include_dir[FILENAME_MAX];
 MicrosoftCraziness_Find_Result cuik__vswhere;
 
 static char* utf16_to_utf8_on_heap(const wchar_t* input) {
+    if (input == NULL) return NULL;
+
     int bytes = WideCharToMultiByte(65001 /* UTF8 */, 0, input, -1, NULL, 0, NULL, NULL);
     if (bytes <= 0) return NULL;
 
-	char* output = HEAP_ALLOC(bytes + 1);
+    char* output = malloc(bytes + 1);
     WideCharToMultiByte(65001 /* UTF8 */, 0, input, -1, output, bytes, NULL, NULL);
     output[bytes] = 0;
 
@@ -30,17 +32,17 @@ static char* utf16_to_utf8_on_heap(const wchar_t* input) {
 void hook_crash_handler(void);
 void init_timer_system(void);
 
-CUIK_API void cuik_init(void) {
+void cuik_init(void) {
+    cuikdg_init();
     init_timer_system();
-    init_report_system();
     hook_crash_handler();
 }
 
-CUIK_API void cuik_free_thread_resources(void) {
+void cuik_free_thread_resources(void) {
     arena_free(&thread_arena);
 }
 
-CUIK_API void cuik_find_system_deps(const char* cuik_crt_directory) {
+void cuik_find_system_deps(const char* cuik_crt_directory) {
     #ifdef _WIN32
     cuik__vswhere = cuik__find_visual_studio_and_windows_sdk();
     #endif
@@ -48,7 +50,7 @@ CUIK_API void cuik_find_system_deps(const char* cuik_crt_directory) {
     sprintf_s(cuik__include_dir, FILENAME_MAX, "%s"SLASH"crt"SLASH"include"SLASH, cuik_crt_directory);
 }
 
-CUIK_API size_t cuik_get_system_search_path_count(void) {
+size_t cuik_get_system_search_path_count(void) {
     #ifdef _WIN32
     return 3;
     #else
@@ -56,16 +58,12 @@ CUIK_API size_t cuik_get_system_search_path_count(void) {
     #endif
 }
 
-CUIK_API void cuik_get_system_search_paths(const char** out, size_t n) {
+void cuik_get_system_search_paths(const char** out, size_t n) {
     #ifdef _WIN32
     if (n >= 1) out[0] = utf16_to_utf8_on_heap(cuik__vswhere.vs_library_path);
     if (n >= 2) out[1] = utf16_to_utf8_on_heap(cuik__vswhere.windows_sdk_um_library_path);
     if (n >= 3) out[2] = utf16_to_utf8_on_heap(cuik__vswhere.windows_sdk_ucrt_library_path);
     #endif
-}
-
-CUIK_API bool cuik_lex_is_keyword(size_t length, const char* str) {
-    return classify_ident((const unsigned char*)str, length) != TOKEN_IDENTIFIER;
 }
 
 static void set_defines(Cuik_CPP* cpp, const Cuik_Target* target, bool system_libs) {
@@ -82,38 +80,38 @@ static void set_defines(Cuik_CPP* cpp, const Cuik_Target* target, bool system_li
     #endif
 
     // DO NOT REMOVE THESE, IF THEY'RE MISSING THE PREPROCESSOR WILL NOT DETECT THEM
-    cuikpp_define_empty(cpp, "__FILE__");
-    cuikpp_define_empty(cpp, "L__FILE__");
-    cuikpp_define_empty(cpp, "__LINE__");
-    cuikpp_define_empty(cpp, "__COUNTER__");
+    cuikpp_define_empty_cstr(cpp, "__FILE__");
+    cuikpp_define_empty_cstr(cpp, "L__FILE__");
+    cuikpp_define_empty_cstr(cpp, "__LINE__");
+    cuikpp_define_empty_cstr(cpp, "__COUNTER__");
 
     // CuikC specific
-    cuikpp_define(cpp, "__CUIK__", STR(CUIK_COMPILER_MAJOR));
-    cuikpp_define(cpp, "__CUIK_MINOR__", STR(CUIK_COMPILER_MINOR));
+    cuikpp_define_cstr(cpp, "__CUIK__", STR(CUIK_COMPILER_MAJOR));
+    cuikpp_define_cstr(cpp, "__CUIK_MINOR__", STR(CUIK_COMPILER_MINOR));
 
     // C23/Cuik bool being available without stdbool.h
-    cuikpp_define_empty(cpp, "__bool_true_false_are_defined");
-    cuikpp_define(cpp, "bool", "_Bool");
-    cuikpp_define(cpp, "false", "0");
-    cuikpp_define(cpp, "true", "1");
+    cuikpp_define_empty_cstr(cpp, "__bool_true_false_are_defined");
+    cuikpp_define_cstr(cpp, "bool", "_Bool");
+    cuikpp_define_cstr(cpp, "false", "0");
+    cuikpp_define_cstr(cpp, "true", "1");
 
     // GNU C
-    cuikpp_define(cpp, "__BYTE_ORDER__", "1");
-    cuikpp_define(cpp, "__ORDER_LITTLE_ENDIAN", "1");
-    cuikpp_define(cpp, "__ORDER_BIG_ENDIAN", "2");
+    cuikpp_define_cstr(cpp, "__BYTE_ORDER__", "1");
+    cuikpp_define_cstr(cpp, "__ORDER_LITTLE_ENDIAN", "1");
+    cuikpp_define_cstr(cpp, "__ORDER_BIG_ENDIAN", "2");
 
     // Standard C macros
-    cuikpp_define(cpp, "__STDC__", "1");
-    cuikpp_define(cpp, "__STDC_VERSION__", "201112L"); // C11
+    cuikpp_define_cstr(cpp, "__STDC__", "1");
+    cuikpp_define_cstr(cpp, "__STDC_VERSION__", "201112L"); // C11
 
     // currently there's no freestanding mode but if there was this would be
     // turned off for it
     bool freestanding = false;
 
-    cuikpp_define(cpp, "__STDC_HOSTED__", freestanding ? "0" : "1");
-    cuikpp_define(cpp, "__STDC_NO_COMPLEX__", "1");
-    cuikpp_define(cpp, "__STDC_NO_VLA__", "1");
-    cuikpp_define(cpp, "__STDC_NO_THREADS__", "1");
+    cuikpp_define_cstr(cpp, "__STDC_HOSTED__", freestanding ? "0" : "1");
+    cuikpp_define_cstr(cpp, "__STDC_NO_COMPLEX__", "1");
+    cuikpp_define_cstr(cpp, "__STDC_NO_VLA__", "1");
+    cuikpp_define_cstr(cpp, "__STDC_NO_THREADS__", "1");
 
     {
         // The time of translation of the preprocessing translation unit
@@ -130,21 +128,24 @@ static void set_defines(Cuik_CPP* cpp, const Cuik_Target* target, bool system_li
         // Mmm dd yyyy
         char date_str[20];
         snprintf(date_str, 20, "\"%.3s%3d %d\"", mon_name[timeinfo->tm_mon], timeinfo->tm_mday, 1900 + timeinfo->tm_year);
-        cuikpp_define(cpp, "__DATE__", date_str);
+        cuikpp_define_cstr(cpp, "__DATE__", date_str);
 
-        // hh:mm:ss
+        // The time of translation of the preprocessing translation unit: a
+        // character string literal of the form "hh:mm:ss" as in the time
+        // generated by the asctime function. If the time of translation is
+        // not available, an implementation-defined valid time shall be supplied.
         char time_str[20];
         snprintf(time_str, 20, "\"%.2d:%.2d:%.2d\"", timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
-        cuikpp_define(cpp, "__TIME__", time_str);
+        cuikpp_define_cstr(cpp, "__TIME__", time_str);
     }
 
-    cuikpp_define(cpp, "static_assert", "_Static_assert");
-    cuikpp_define(cpp, "typeof", "_Typeof");
+    cuikpp_define_cstr(cpp, "static_assert", "_Static_assert");
+    cuikpp_define_cstr(cpp, "typeof", "_Typeof");
 
     cuikpp_add_include_directory(cpp, cuik__include_dir);
 
     // platform specific stuff
-    if (target->sys == CUIK_SYSTEM_WINDOWS) {
+    if (target->system == CUIK_SYSTEM_WINDOWS) {
         #ifdef _WIN32
         // WinSDK includes
         char filepath[FILENAME_MAX];
@@ -177,47 +178,47 @@ static void set_defines(Cuik_CPP* cpp, const Cuik_Target* target, bool system_li
         }
         #endif
 
-        cuikpp_define_empty(cpp, "_MT");
+        cuikpp_define_empty_cstr(cpp, "_MT");
         if (true) {
-            cuikpp_define_empty(cpp, "_DLL");
+            cuikpp_define_empty_cstr(cpp, "_DLL");
         }
 
-        //cuikpp_define_empty(cpp, "_NO_CRT_STDIO_INLINE");
-        //cuikpp_define_empty(cpp, "_CRT_NONSTDC_NO_WARNINGS");
-        //cuikpp_define_empty(cpp, "_CRT_SECURE_NO_WARNINGS");
+        //cuikpp_define_empty_cstr(cpp, "_NO_CRT_STDIO_INLINE");
+        //cuikpp_define_empty_cstr(cpp, "_CRT_NONSTDC_NO_WARNINGS");
+        //cuikpp_define_empty_cstr(cpp, "_CRT_SECURE_NO_WARNINGS");
 
         // we support MSVC extensions
-        cuikpp_define(cpp, "_MSC_EXTENSIONS", "1");
-        cuikpp_define(cpp, "_INTEGRAL_MAX_BITS", "64");
+        cuikpp_define_cstr(cpp, "_MSC_EXTENSIONS", "1");
+        cuikpp_define_cstr(cpp, "_INTEGRAL_MAX_BITS", "64");
 
-        cuikpp_define(cpp, "_USE_ATTRIBUTES_FOR_SAL", "0");
+        cuikpp_define_cstr(cpp, "_USE_ATTRIBUTES_FOR_SAL", "0");
 
         // pretend to be MSVC
         if (true) {
-            cuikpp_define(cpp, "_MSC_BUILD", "1");
-            cuikpp_define(cpp, "_MSC_FULL_VER", "192930137");
-            cuikpp_define(cpp, "_MSC_VER", "1929");
+            cuikpp_define_cstr(cpp, "_MSC_BUILD", "1");
+            cuikpp_define_cstr(cpp, "_MSC_FULL_VER", "192930137");
+            cuikpp_define_cstr(cpp, "_MSC_VER", "1929");
         }
 
         // wrappers over MSVC based keywords and features
-        cuikpp_define(cpp, "__int8", "char");
-        cuikpp_define(cpp, "__int16", "short");
-        cuikpp_define(cpp, "__int32", "int");
-        cuikpp_define(cpp, "__int64", "long long");
-        cuikpp_define(cpp, "__pragma(x)", "_Pragma(#x)");
-        cuikpp_define(cpp, "__inline", "inline");
-        cuikpp_define(cpp, "__forceinline", "inline");
-        cuikpp_define(cpp, "__signed__", "signed");
-        cuikpp_define(cpp, "__alignof", "_Alignof");
-        cuikpp_define(cpp, "__CRTDECL", "__cdecl");
+        cuikpp_define_cstr(cpp, "__int8", "char");
+        cuikpp_define_cstr(cpp, "__int16", "short");
+        cuikpp_define_cstr(cpp, "__int32", "int");
+        cuikpp_define_cstr(cpp, "__int64", "long long");
+        cuikpp_define_cstr(cpp, "__pragma(x)", "_Pragma(#x)");
+        cuikpp_define_cstr(cpp, "__inline", "inline");
+        cuikpp_define_cstr(cpp, "__forceinline", "inline");
+        cuikpp_define_cstr(cpp, "__signed__", "signed");
+        cuikpp_define_cstr(cpp, "__alignof", "_Alignof");
+        cuikpp_define_cstr(cpp, "__CRTDECL", "__cdecl");
 
         // things we don't handle yet so we just remove them
-        cuikpp_define_empty(cpp, "_Frees_ptr_");
-        cuikpp_define_empty(cpp, "__unaligned");
-        cuikpp_define_empty(cpp, "__analysis_noreturn");
-        cuikpp_define_empty(cpp, "__ptr32");
-        cuikpp_define_empty(cpp, "__ptr64");
-    } else if (target->sys == CUIK_SYSTEM_LINUX) {
+        cuikpp_define_empty_cstr(cpp, "_Frees_ptr_");
+        cuikpp_define_empty_cstr(cpp, "__unaligned");
+        cuikpp_define_empty_cstr(cpp, "__analysis_noreturn");
+        cuikpp_define_empty_cstr(cpp, "__ptr32");
+        cuikpp_define_empty_cstr(cpp, "__ptr64");
+    } else if (target->system == CUIK_SYSTEM_LINUX) {
         // TODO(NeGate): Automatically detect these somehow...
         cuikpp_add_include_directory(cpp, "/usr/lib/gcc/x86_64-linux-gnu/9/include/");
         cuikpp_add_include_directory(cpp, "/usr/include/x86_64-linux-gnu/");
@@ -225,75 +226,59 @@ static void set_defines(Cuik_CPP* cpp, const Cuik_Target* target, bool system_li
         cuikpp_add_include_directory(cpp, "/usr/include/");
 
         // things we don't handle yet so we just remove them
-        cuikpp_define_empty(cpp, "__THROWNL");
+        cuikpp_define_empty_cstr(cpp, "__THROWNL");
 
         #if 0
-        cuikpp_define(cpp, "__uint8_t", "unsigned char");
-        cuikpp_define(cpp, "__uint16_t", "unsigned short");
-        cuikpp_define(cpp, "__uint32_t", "unsigned int");
-        cuikpp_define(cpp, "__uint64_t", "unsigned long long");
+        cuikpp_define_cstr(cpp, "__uint8_t", "unsigned char");
+        cuikpp_define_cstr(cpp, "__uint16_t", "unsigned short");
+        cuikpp_define_cstr(cpp, "__uint32_t", "unsigned int");
+        cuikpp_define_cstr(cpp, "__uint64_t", "unsigned long long");
 
-        cuikpp_define(cpp, "__int8_t", "char");
-        cuikpp_define(cpp, "__int16_t", "short");
-        cuikpp_define(cpp, "__int32_t", "int");
-        cuikpp_define(cpp, "__int64_t", "long long");
+        cuikpp_define_cstr(cpp, "__int8_t", "char");
+        cuikpp_define_cstr(cpp, "__int16_t", "short");
+        cuikpp_define_cstr(cpp, "__int32_t", "int");
+        cuikpp_define_cstr(cpp, "__int64_t", "long long");
         #endif
 
         // pretend to be GCC
-        cuikpp_define(cpp, "__inline", "inline");
-        cuikpp_define(cpp, "__restrict", "restrict");
-        cuikpp_define(cpp, "__gnuc_va_list", "char*");
-        cuikpp_define_empty(cpp, "__extension__");
-        cuikpp_define_empty(cpp, "__asm__()");
-        // cuikpp_define(cpp, "_ISOC11_SOURCE", "1");
-        // cuikpp_define(cpp, "__USE_ISOC11", "1");
+        cuikpp_define_cstr(cpp, "__inline", "inline");
+        cuikpp_define_cstr(cpp, "__restrict", "restrict");
+        cuikpp_define_cstr(cpp, "__gnuc_va_list", "char*");
+        cuikpp_define_empty_cstr(cpp, "__extension__");
+        cuikpp_define_empty_cstr(cpp, "__asm__()");
+        // cuikpp_define_cstr(cpp, "_ISOC11_SOURCE", "1");
+        // cuikpp_define_cstr(cpp, "__USE_ISOC11", "1");
 
-        cuikpp_define(cpp, "__GNUC_MINOR__", "2");
-        cuikpp_define(cpp, "__GNUC_PATCHLEVEL__", "1");
-        cuikpp_define(cpp, "__GNUC_STDC_INLINE__", "1");
-        cuikpp_define(cpp, "__GNUC__", "4");
-        cuikpp_define(cpp, "__GXX_ABI_VERSION", "1002");
+        cuikpp_define_cstr(cpp, "__GNUC_MINOR__", "2");
+        cuikpp_define_cstr(cpp, "__GNUC_PATCHLEVEL__", "1");
+        cuikpp_define_cstr(cpp, "__GNUC_STDC_INLINE__", "1");
+        cuikpp_define_cstr(cpp, "__GNUC__", "4");
+        cuikpp_define_cstr(cpp, "__GXX_ABI_VERSION", "1002");
 
-        // cuikpp_define(cpp, "__GNUC__", "9");
-        // cuikpp_define_empty(cpp, "_GNU_SOURCE");
+        // cuikpp_define_cstr(cpp, "__GNUC__", "9");
+        // cuikpp_define_empty_cstr(cpp, "_GNU_SOURCE");
     }
 
-    if (target != NULL && target->arch != NULL) {
-        target->arch->set_defines(cpp, target->sys);
+    if (target != NULL) {
+        target->set_defines(target, cpp);
     }
 }
 
-CUIK_API void cuikpp_set_common_defines(Cuik_CPP* restrict out_cpp, const Cuik_Target* target, bool use_system_includes) {
+void cuikpp_set_common_defines(Cuik_CPP* restrict out_cpp, const Cuik_Target* target, bool use_system_includes) {
     set_defines(out_cpp, target, use_system_includes);
 }
 
-CUIK_API Cuik_Entrypoint cuik_get_entrypoint_status(TranslationUnit* restrict tu) {
+Cuik_Entrypoint cuik_get_entrypoint_status(TranslationUnit* restrict tu) {
     return tu->entrypoint_status;
 }
 
-CUIK_API const char* cuik_get_location_file(TokenStream* restrict s, SourceLocIndex loc) {
-    return s->locations[loc].line->filepath;
-}
-
-CUIK_API int cuik_get_location_line(TokenStream* restrict s, SourceLocIndex loc) {
-    return s->locations[loc].line->line;
-}
-
-CUIK_API TokenStream* cuik_get_token_stream_from_tu(TranslationUnit* restrict tu) {
+TokenStream* cuik_get_token_stream_from_tu(TranslationUnit* restrict tu) {
     return &tu->tokens;
 }
 
-CUIK_API Token* cuik_get_tokens(TokenStream* restrict s) {
-    return &s->tokens[0];
-}
-
-CUIK_API size_t cuik_get_token_count(TokenStream* restrict s) {
-    return dyn_array_length(s->tokens);
-}
-
-CUIK_API void cuik_print_type(TranslationUnit* restrict tu, Cuik_Type* restrict type) {
+void cuik_print_type(Cuik_Type* restrict type) {
     char str[1024];
-    type_as_string(tu, 1024, str, type);
+    type_as_string(1024, str, type);
     printf("%s", str);
 }
 

@@ -30,12 +30,12 @@ if args.asan:
 	cflags += " -fsanitize=address"
 
 if args.usetb:
-	cflags += " -I ../tilde-backend/include -DCUIK_USE_TB"
+	cflags += " -I ../tilde-backend/include -I ../common/ -DCUIK_USE_TB"
 
 os_name = platform.system()
 if os_name == "Windows":
 	source_patterns.append("lib/back/microsoft_craziness.c")
-	cflags += " -D_CRT_SECURE_NO_WARNINGS"
+	cflags += " -ferror-limit=100 -D_CRT_SECURE_NO_WARNINGS"
 	cflags += " -I ../c11threads"
 
 # configure architecture-specific targeting
@@ -75,15 +75,13 @@ rule lib
 
 # compile libCuik
 objs = []
+
 for pattern in source_patterns:
 	list = glob.glob(pattern)
 	for f in list:
 		obj = os.path.basename(f).replace('.c', '.o')
 		ninja.write(f"build bin/{obj}: cc {f}\n")
 		objs.append("bin/"+obj)
-
-if os_name == "Windows":
-	list.append("../c11threads/threads_msvc.c")
 
 ninja.write(f"build libcuik{lib_ext}: lib {' '.join(objs)}\n")
 ninja.close()

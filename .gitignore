@@ -80,3 +80,4 @@ tests/golden/tmp.txt
 tests/golden/tmp2.txt
 build.ninja
 *.lib
+*.spall

@@ -18,8 +18,8 @@
 
 // HACK(NeGate): i wanna call tb_free_thread_resources on thread exit...
 extern void tb_free_thread_resources(void);
-extern void flintperf__start_thread(void);
-extern void flintperf__stop_thread(void);
+extern void spallperf__start_thread(void);
+extern void spallperf__stop_thread(void);
 
 typedef _Atomic uint32_t atomic_uint32_t;
 
@@ -74,33 +74,34 @@ static bool do_work(threadpool_t* threadpool) {
 
 static int threadpool_thread(void* arg) {
     threadpool_t* threadpool = arg;
-    flintperf__start_thread();
+    spallperf__start_thread();
 
     CUIK_TIMED_BLOCK("thread") {
         while (threadpool->running) {
             if (do_work(threadpool)) {
-                // CUIK_TIMED_BLOCK("semaphore wait") {
                 #ifdef _WIN32
                 WaitForSingleObjectEx(threadpool->sem, -1, false); // wait for jobs
                 #else
                 sem_wait(&threadpool->sem);
                 #endif
-                // }
             }
         }
     }
 
-    flintperf__stop_thread();
+    spallperf__stop_thread();
     tb_free_thread_resources();
     cuik_free_thread_resources();
     return 0;
 }
 
 threadpool_t* threadpool_create(size_t worker_count, size_t workqueue_size) {
-    if (worker_count == 0 || workqueue_size == 0)
+    if (worker_count == 0 || workqueue_size == 0) {
         return NULL;
-    if ((workqueue_size & (workqueue_size - 1)) != 0)
+    }
+
+    if ((workqueue_size & (workqueue_size - 1)) != 0) {
         return NULL;
+    }
 
     threadpool_t* threadpool = malloc(sizeof(threadpool_t));
     *threadpool = (threadpool_t){ 0 };
@@ -115,14 +116,14 @@ threadpool_t* threadpool_create(size_t worker_count, size_t workqueue_size) {
     #else
     if (sem_init(&threadpool->sem, 0 /* shared between threads */, worker_count) != 0) {
         fprintf(stderr, "error: could not create semaphore!\n");
-        abort();
+        return NULL;
     }
     #endif
 
     for (int i = 0; i < worker_count; i++) {
         if (thrd_create(&threadpool->threads[i], threadpool_thread, threadpool) != thrd_success) {
             fprintf(stderr, "error: could not create worker threads!\n");
-            abort();
+            return NULL;
         }
     }
 

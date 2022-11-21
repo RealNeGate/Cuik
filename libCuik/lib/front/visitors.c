@@ -7,7 +7,7 @@
 #define SWITCH1(a)    SWITCH_ITER { CASE_YIELD(0, a); CASE_END(1); }
 #define SWITCH2(a, b) SWITCH_ITER { CASE_YIELD(0, a); CASE_YIELD(1, b); CASE_END(2); }
 
-CUIK_API bool cuik_next_stmt_kid(Cuik_StmtIter* it) {
+bool cuik_next_stmt_kid(Cuik_StmtIter* it) {
     Stmt* restrict s = it->parent_;
     switch (s->op) {
         case STMT_NONE:
@@ -75,7 +75,7 @@ CUIK_API bool cuik_next_stmt_kid(Cuik_StmtIter* it) {
     #endif
 }
 
-CUIK_API bool cuik_next_expr_kid(Cuik_ExprIter* it) {
+bool cuik_next_expr_kid(Cuik_ExprIter* it) {
     Expr* restrict e = it->parent_;
     switch (e->op) {
         case EXPR_UNKNOWN_SYMBOL:
@@ -217,7 +217,7 @@ CUIK_API bool cuik_next_expr_kid(Cuik_ExprIter* it) {
 }
 
 #if 0
-CUIK_API void cuik_visit_top_level(TranslationUnit* restrict tu, void* user_data, Cuik_StmtVisitor* visitor) {
+void cuik_visit_top_level(TranslationUnit* restrict tu, void* user_data, Cuik_StmtVisitor* visitor) {
     size_t count = arrlen(tu->top_level_stmts);
     CUIK_TIMED_BLOCK("top level visitor (%zu statements)", count) {
         for (size_t i = 0; i < count; i++) {
@@ -238,7 +238,7 @@ static void task_caller(void* arg) {
     *task.tasks_remaining -= 1;
 }
 
-CUIK_API void cuik_visit_top_level_threaded(TranslationUnit* restrict tu, const Cuik_IThreadpool* restrict thread_pool, int batch_size, ThreadedWaiter* restrict waiter, void* user_data, Cuik_StmtVisitor* visitor) {
+void cuik_visit_top_level_threaded(TranslationUnit* restrict tu, const Cuik_IThreadpool* restrict thread_pool, int batch_size, ThreadedWaiter* restrict waiter, void* user_data, Cuik_StmtVisitor* visitor) {
     static_assert(sizeof(atomic_size_t) == sizeof(size_t), "size_t isn't lock free?");
 
     assert(thread_pool != NULL);
@@ -271,7 +271,7 @@ CUIK_API void cuik_visit_top_level_threaded(TranslationUnit* restrict tu, const 
     }
 }
 
-CUIK_API void cuik_wait_on_waiter(const Cuik_IThreadpool* restrict thread_pool, ThreadedWaiter* restrict waiter) {
+void cuik_wait_on_waiter(const Cuik_IThreadpool* restrict thread_pool, ThreadedWaiter* restrict waiter) {
     static_assert(sizeof(atomic_size_t) == sizeof(size_t), "size_t isn't lock free?");
 
     // "highway robbery on steve jobs" job stealing amirite...

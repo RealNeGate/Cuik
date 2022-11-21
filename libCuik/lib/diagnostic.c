@@ -5,262 +5,297 @@
 #include <stdatomic.h>
 #include "preproc/lexer.h"
 
+// We extend on stb_sprintf with support for a custom callback because
+// diagnostic formats have extra options.
+static const char* custom_diagnostic_format(uint32_t* out_length, char ch, va_list* va);
+
+#define STB_SPRINTF_STATIC
+#define STB_SPRINTF_IMPLEMENTATION
+#include "stb_sprintf.h"
+
 #if _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #endif
 
-#define GET_SOURCE_LOC(loc) (&tokens->locations[loc])
-
 static const char* report_names[] = {
-    "verbose",
-    "info",
-    "warning",
-    "error",
+    "\x1b[32mnote\x1b[0m",
+    "\x1b[33mwarn\x1b[0m",
+    "\x1b[31merror\x1b[0m",
 };
 
 mtx_t report_mutex;
-
-#if _WIN32
-static HANDLE console_handle;
-static WORD default_attribs;
-
-const static int attribs[] = {
-    FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE | FOREGROUND_INTENSITY,
-    FOREGROUND_GREEN | FOREGROUND_INTENSITY,
-    FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_INTENSITY,
-    FOREGROUND_RED | FOREGROUND_INTENSITY,
-};
-#else
-static const char* const attribs[] = {
-    "\x1b[0m",
-    "\x1b[32m",
-    "\x1b[31m",
-    "\x1b[31m",
-};
-#endif
-
 bool report_using_thin_errors = false;
 
-#if _WIN32
-#define RESET_COLOR     SetConsoleTextAttribute(console_handle, default_attribs)
-#define SET_COLOR_RED   SetConsoleTextAttribute(console_handle, (default_attribs & ~0xF) | FOREGROUND_RED)
-#define SET_COLOR_GREEN SetConsoleTextAttribute(console_handle, (default_attribs & ~0xF) | FOREGROUND_GREEN)
-#define SET_COLOR_WHITE SetConsoleTextAttribute(console_handle, (default_attribs & ~0xF) | FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE | FOREGROUND_INTENSITY)
-#else
+// From types.c, we should factor this out into a public cuik function
+size_t type_as_string(size_t max_len, char* buffer, Cuik_Type* type);
+
+static char* sprintf_callback(const char* buf, void* user, int len) {
+    fwrite(buf, len, 1, (FILE*) user);
+    return NULL;
+}
+
+static const char* custom_diagnostic_format(uint32_t* out_length, char ch, va_list* va) {
+    static _Thread_local char temp_string[1024];
+
+    switch (ch) {
+        case 'S': {
+            String str = va_arg(*va, String);
+
+            *out_length = str.length;
+            return (const char*) str.data;
+        }
+
+        case 'T': {
+            Cuik_Type* t = va_arg(*va, Cuik_Type*);
+            type_as_string(sizeof(temp_string), temp_string, t);
+
+            *out_length = strlen(temp_string);
+            return temp_string;
+        }
+
+        default:
+        fprintf(stderr, "diagnostic error: unknown format %%_%c", ch);
+        abort();
+        return NULL;
+    }
+}
+
 #define RESET_COLOR     printf("\x1b[0m")
 #define SET_COLOR_RED   printf("\x1b[31m")
 #define SET_COLOR_GREEN printf("\x1b[32m")
 #define SET_COLOR_WHITE printf("\x1b[37m")
-#endif
 
-void init_report_system(void) {
-    setvbuf(stdout, NULL, _IONBF, 0);
-    setvbuf(stderr, NULL, _IONBF, 0);
+void cuikdg_init(void) {
+    // setvbuf(stdout, NULL, _IONBF, 0);
+    // setvbuf(stderr, NULL, _IONBF, 0);
+    setlocale(LC_ALL, ".UTF8");
 
     #if _WIN32
-    if (console_handle == NULL) {
-        console_handle = GetStdHandle(STD_OUTPUT_HANDLE);
-
-        // Enable ANSI/VT sequences on windows
-        HANDLE output_handle = GetStdHandle(STD_OUTPUT_HANDLE);
-        if (output_handle != INVALID_HANDLE_VALUE) {
-            DWORD old_mode;
-            if (GetConsoleMode(output_handle, &old_mode)) {
-                SetConsoleMode(output_handle, old_mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
-            }
+    // Enable ANSI/VT sequences on windows
+    HANDLE output_handle = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (output_handle != INVALID_HANDLE_VALUE) {
+        DWORD old_mode;
+        if (GetConsoleMode(output_handle, &old_mode)) {
+            SetConsoleMode(output_handle, old_mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
         }
-
-        CONSOLE_SCREEN_BUFFER_INFO info;
-        GetConsoleScreenBufferInfo(console_handle, &info);
-
-        default_attribs = info.wAttributes;
     }
-
     #endif
 
     mtx_init(&report_mutex, mtx_plain | mtx_recursive);
 }
 
-static void print_level_name(Cuik_ReportLevel level) {
-    #if _WIN32
-    SetConsoleTextAttribute(console_handle, (default_attribs & ~0xF) | attribs[level]);
-    printf("%s: ", report_names[level]);
-    SetConsoleTextAttribute(console_handle, default_attribs);
-    #else
-    printf("%s%s:\x1b[0m ", attribs[level], report_names[level]);
-    #endif
-}
+// we use the call stack so we can print in reverse order
+void print_include(TokenStream* tokens, SourceLoc loc) {
+    ResolvedSourceLoc r = cuikpp_find_location(tokens, loc);
 
-static void display_line(Cuik_ReportLevel level, TokenStream* tokens, SourceLoc* loc) {
-    SourceLocIndex loci = 0;
-    while (loc->line->filepath[0] == '<' && loc->line->parent != 0) {
-        loci = loc->line->parent;
-        loc = GET_SOURCE_LOC(loci);
+    if (r.file->include_site.raw != 0) {
+        print_include(tokens, r.file->include_site);
     }
 
-    SET_COLOR_WHITE;
-    printf("%s:%d:%d: ", loc->line->filepath, loc->line->line, loc->columns);
-    print_level_name(level);
+    fprintf(stderr, "Included from %s:%d\n", r.file->filename, r.line);
 }
 
-static void tally_report_counter(Cuik_ReportLevel level, Cuik_ErrorStatus* err) {
-    if (err == NULL) {
-        if (level >= REPORT_ERROR) {
-            SET_COLOR_RED;
-            printf("ABORTING!!! (no diagnostics callback)\n");
-            RESET_COLOR;
-            abort();
-        }
-    } else {
-        atomic_fetch_add((atomic_int*) &err->tally[level], 1);
-    }
-}
+static void print_line(TokenStream* tokens, ResolvedSourceLoc start, size_t tkn_len) {
+    const char* line_start = start.line_str;
+    while (*line_start && isspace(*line_start)) line_start++;
+    size_t dist_from_line_start = line_start - start.line_str;
 
-static size_t draw_line(TokenStream* tokens, SourceLocIndex loc_index) {
-    SourceLine* line = GET_SOURCE_LOC(loc_index)->line;
-
-    // display line
-    const char* line_start = (const char*)line->line_str;
-    while (*line_start && isspace(*line_start)) {
-        line_start++;
-    }
-    size_t dist_from_line_start = line_start - (const char*)line->line_str;
-
-    // Draw line preview
+    // line preview
     if (*line_start != '\r' && *line_start != '\n') {
         const char* line_end = line_start;
-        // printf("    ");
-        printf("%6d| ", line->line);
-        do {
-            putchar(*line_end != '\t' ? *line_end : ' ');
-            line_end++;
-        } while (*line_end && *line_end != '\n');
-        printf("\n");
+        do { line_end++; } while (*line_end && *line_end != '\n');
 
-        RESET_COLOR;
+        fprintf(stderr, "%6d| %.*s\x1b[37m\n", start.line, (int)(line_end - line_start), line_start);
     }
 
-    return dist_from_line_start;
+    // underline
+    size_t start_pos = start.column > dist_from_line_start ? start.column - dist_from_line_start : 0;
+    fprintf(stderr, "        ");
+    fprintf(stderr, "\x1b[32m");
+
+    for (size_t i = 0; i < start_pos; i++) fprintf(stderr, " ");
+    fprintf(stderr, "^");
+    for (size_t i = 1; i < tkn_len; i++) fprintf(stderr, "~");
+
+    fprintf(stderr, "\x1b[0m\n");
 }
 
-static void draw_line_horizontal_pad(void) {
-    printf("        ");
+// end goes after start
+static ptrdiff_t source_range_difference(TokenStream* tokens, Cuik_FileLoc s, Cuik_FileLoc e) {
+    ResolvedSourceLoc l = cuikpp_find_location2(tokens, s);
+    ResolvedSourceLoc end = cuikpp_find_location2(tokens, e);
+
+    size_t tkn_len;
+    if (end.file == l.file && end.line == l.line && end.column > l.column) {
+        return end.column - l.column;
+    } else {
+        return 1;
+    }
 }
 
-static SourceLoc merge_source_locations(TokenStream* tokens, SourceLocIndex starti, SourceLocIndex endi) {
-    //starti = try_for_nicer_loc(tokens, starti);
-    //endi = try_for_nicer_loc(tokens, endi);
+static void print_line_with_backtrace(TokenStream* tokens, SourceLoc loc, SourceLoc end) {
+    // find the range of chars in this level
+    Cuik_FileLoc l;
+    size_t tkn_len;
 
-    const SourceLoc* start = GET_SOURCE_LOC(starti);
-    const SourceLoc* end = GET_SOURCE_LOC(endi);
+    uint32_t macro_off = loc.raw & ((1u << SourceLoc_MacroOffsetBits) - 1);
+    MacroInvoke* m = cuikpp_find_macro(tokens, loc);
+    if (m != NULL) {
+        l = cuikpp_find_location_in_bytes(tokens, m->def_site.start);
+        l.pos += macro_off;
 
-    if (start->line->filepath != end->line->filepath &&
-        start->line->line != end->line->line) {
-        return *start;
+        tkn_len = end.raw - loc.raw;
+    } else {
+        l = cuikpp_find_location_in_bytes(tokens, loc);
+        tkn_len = source_range_difference(tokens, l, cuikpp_find_location_in_bytes(tokens, end));
     }
 
-    // We can only merge if it's on the same line... for now...
-    size_t start_columns = start->columns;
-    size_t end_columns = end->columns + end->length;
-    if (start_columns >= end_columns) {
-        return *start;
-    }
-
-    return (SourceLoc){ .line = start->line, .columns = start_columns, .length = end_columns - start_columns};
-}
-
-static int print_backtrace(TokenStream* tokens, SourceLocIndex loc_index, SourceLine* kid) {
-    SourceLoc* loc = GET_SOURCE_LOC(loc_index);
-    SourceLine* line = loc->line;
-
-    int line_bias = 0;
-    if (line->parent != 0) {
-        line_bias = print_backtrace(tokens, line->parent, line);
-    }
-
-    switch (loc->type) {
-        case SOURCE_LOC_MACRO: {
-            if (line->filepath[0] == '<') {
-                printf("In macro '%.*s' expanded at line %d:\n", (int)loc->length, line->line_str + loc->columns, line_bias + line->line);
-            } else {
-                printf("In macro '%.*s' expanded at %s:%d:%d:\n", (int)loc->length, line->line_str + loc->columns, line->filepath, line->line, loc->columns);
-            }
-
-            if (!report_using_thin_errors) {
-                // draw macro highlight
-                size_t dist_from_line_start = draw_line(tokens, loc_index);
-                draw_line_horizontal_pad();
-
-                // idk man
-                size_t start_pos = loc->columns > dist_from_line_start ? loc->columns - dist_from_line_start : 0;
-
-                // draw underline
-                SET_COLOR_GREEN;
-                // printf("\x1b[32m");
-
-                size_t tkn_len = loc->length;
-                for (size_t i = 0; i < start_pos; i++) printf(" ");
-                printf("^");
-                for (size_t i = 1; i < tkn_len; i++) printf("~");
-
-                // printf("\x1b[0m");
-                printf("\n");
-                RESET_COLOR;
-            }
-            return line_bias;
+    if (m != NULL) {
+        Cuik_File* next_file = cuikpp_find_file(tokens, m->call_site);
+        print_line_with_backtrace(tokens, m->call_site, offset_source_loc(m->call_site, m->name.length));
+        if (next_file->filename != l.file->filename) {
+            fprintf(stderr, "  expanded from %s:\n", l.file->filename);
+        } else {
+            fprintf(stderr, "  expanded from:\n");
         }
+    }
 
-        default:
-        printf("In file %s:%d:\n", line->filepath, line->line);
-        return line->line;
+    print_line(tokens, cuikpp_find_location2(tokens, l), tkn_len);
+}
+
+static void diag(DiagType type, TokenStream* tokens, SourceRange loc, const char* fmt, va_list ap) {
+    size_t fixit_count = 0;
+    DiagFixit fixits[3];
+    while (*fmt == '#') {
+        assert(fixit_count < 3);
+        fixits[fixit_count++] = va_arg(ap, DiagFixit);
+        fmt += 1;
+    }
+
+    SourceLoc loc_start = loc.start;
+    // we wanna find the physical character
+    for (MacroInvoke* m; (m = cuikpp_find_macro(tokens, loc_start)) != NULL;) {
+        loc_start = m->call_site;
+    }
+
+    // print include stack
+    ResolvedSourceLoc start = cuikpp_find_location(tokens, loc_start);
+    if (start.file->include_site.raw != 0) {
+        print_include(tokens, start.file->include_site);
+    }
+
+    char tmp[STB_SPRINTF_MIN];
+    fprintf(stderr, "\x1b[37m");
+    fprintf(stderr, "%s:%d:%d: ", start.file->filename, start.line, start.column);
+    fprintf(stderr, "%s: ", report_names[type]);
+    stbsp_vsprintfcb(sprintf_callback, stderr, tmp, fmt, ap);
+    fprintf(stderr, "\n");
+
+    SourceLoc loc_end = loc.end;
+    // we wanna find the physical character
+    for (MacroInvoke* m; (m = cuikpp_find_macro(tokens, loc_end)) != NULL;) {
+        loc_end = m->call_site;
+    }
+
+    // print_line(tokens, start, tkn_len);
+    print_line_with_backtrace(tokens, loc.start, loc.end);
+
+    {
+        const char* line_start = start.line_str;
+        while (*line_start && isspace(*line_start)) line_start++;
+        size_t dist_from_line_start = line_start - start.line_str;
+
+        for (int i = 0; i < fixit_count; i++) {
+            size_t start_pos = start.column > dist_from_line_start ? start.column - dist_from_line_start : 0;
+            start_pos += fixits[i].offset;
+
+            fprintf(stderr, "        \x1b[32m");
+            for (size_t j = 0; j < start_pos; j++) fprintf(stderr, " ");
+            fprintf(stderr, "%s\x1b[0m\n", fixits[i].hint);
+        }
+    }
+
+    if (type == DIAG_ERR) {
+        atomic_fetch_add((atomic_int*) tokens->error_tally, 1);
     }
 }
+
+void diag_header(DiagType type, const char* fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    char tmp[STB_SPRINTF_MIN];
+    fprintf(stderr, "\x1b[37m%s: ", report_names[type]);
+    stbsp_vsprintfcb(sprintf_callback, stderr, tmp, fmt, ap);
+    fprintf(stderr, "\n");
+    va_end(ap);
+}
+
+void cuikdg_tally_error(TokenStream* s) {
+    atomic_fetch_add((atomic_int*) s->error_tally, 1);
+}
+
+int cuikdg_error_count(TokenStream* s) {
+    return atomic_load((atomic_int*) s->error_tally);
+}
+
+#define DIAG_FN(type, name) \
+void name(TokenStream* tokens, SourceRange loc, const char* fmt, ...) { \
+    va_list ap;                       \
+    va_start(ap, fmt);                \
+    diag(type, tokens, loc, fmt, ap); \
+    va_end(ap);                       \
+}
+
+DIAG_FN(DIAG_NOTE, diag_note);
+DIAG_FN(DIAG_WARN, diag_warn);
+DIAG_FN(DIAG_ERR,  diag_err);
 
 DiagWriter diag_writer(TokenStream* tokens) {
-    return (DiagWriter){ .tokens = tokens, .base = UINT32_MAX };
+    return (DiagWriter){ .tokens = tokens };
 }
 
 static void diag_writer_write_upto(DiagWriter* writer, size_t pos) {
     if (writer->cursor < pos) {
         int l = pos - writer->cursor;
         for (int i = 0; i < l; i++) printf(" ");
+
         //printf("%.*s", (int)(pos - writer->cursor), writer->line_start + writer->cursor);
         writer->cursor = pos;
     }
 }
 
-void diag_writer_highlight(DiagWriter* writer, SourceLocIndex loc_index) {
-    SourceLoc* loc = &writer->tokens->locations[loc_index];
-    while (loc->line->filepath[0] == '<' && loc->line->parent != 0) {
-        loc = &writer->tokens->locations[loc->line->parent];
-    }
+void diag_writer_highlight(DiagWriter* writer, SourceRange loc) {
+    ResolvedSourceLoc a = cuikpp_find_location(writer->tokens, loc.start);
+    ResolvedSourceLoc b = cuikpp_find_location(writer->tokens, loc.end);
 
-    if (writer->base == UINT32_MAX) {
-        SourceLine* line = loc->line;
-        const char* line_start = (const char*)line->line_str;
+    assert(a.file == b.file && a.line == b.line);
+    if (writer->base.file == NULL) {
+        // display line
+        const char* line_start = a.line_str;
         while (*line_start && isspace(*line_start)) {
             line_start++;
         }
+        size_t dist_from_line_start = line_start - a.line_str;
 
         const char* line_end = line_start;
-        do {
-            line_end++;
-        } while (*line_end && *line_end != '\n');
+        do { line_end++; } while (*line_end && *line_end != '\n');
 
-        writer->base = loc_index;
+        writer->base = a;
         writer->line_start = line_start;
         writer->line_end = line_end;
-        writer->dist_from_line_start = line_start - (const char*)line->line_str;
+        writer->dist_from_line_start = line_start - a.line_str;
 
-        printf("%s:%d\n", line->filepath, line->line);
-        draw_line_horizontal_pad();
+        printf("  %s:%d\n", a.file->filename, a.line);
+        printf("    ");
         printf("%.*s\n", (int) (line_end - line_start), line_start);
-        draw_line_horizontal_pad();
+        printf("    ");
     }
 
-    size_t start_pos = loc->columns > writer->dist_from_line_start ? loc->columns - writer->dist_from_line_start : 0;
-    size_t tkn_len = loc->length;
+    assert(b.column >= a.column);
+    size_t start_pos = a.column > writer->dist_from_line_start ? a.column - writer->dist_from_line_start : 0;
+    size_t tkn_len = b.column - a.column;
+    if (tkn_len == 0) tkn_len = 1;
 
     diag_writer_write_upto(writer, start_pos);
     //printf("\x1b[7m");
@@ -271,23 +306,23 @@ void diag_writer_highlight(DiagWriter* writer, SourceLocIndex loc_index) {
     printf("\x1b[0m");
 }
 
-bool diag_writer_is_compatible(DiagWriter* writer, SourceLocIndex loc) {
-    if (writer->base == UINT32_MAX) {
+bool diag_writer_is_compatible(DiagWriter* writer, SourceRange loc) {
+    if (writer->base.file == NULL) {
         return true;
     }
 
-    SourceLine* line1 = writer->tokens->locations[writer->base].line;
-    SourceLine* line2 = writer->tokens->locations[loc].line;
-    return line1 == line2;
+    ResolvedSourceLoc r = cuikpp_find_location(writer->tokens, loc.start);
+    return writer->base.file == r.file && writer->base.line == r.line;
 }
 
 void diag_writer_done(DiagWriter* writer) {
-    if (writer->base != UINT32_MAX) {
+    if (writer->base.file != NULL) {
         diag_writer_write_upto(writer, writer->line_end - writer->line_start);
         printf("\n");
     }
 }
 
+#if 0
 static void highlight_line(TokenStream* tokens, SourceLocIndex loc_index, SourceLoc* loc) {
     SourceLine* line = GET_SOURCE_LOC(loc_index)->line;
 
@@ -313,7 +348,7 @@ static void highlight_line(TokenStream* tokens, SourceLocIndex loc_index, Source
         printf("%4d| ", line->line);
         printf("%.*s", (int) start_pos, line_start);
         printf("%.*s", (int) tkn_len, line_start + start_pos);
-        RESET_COLOR;
+        printf("\x1b[0m");
         printf("%.*s", (int) (line_len - (start_pos + tkn_len)), line_start + start_pos + tkn_len);
         printf("\n");
     }
@@ -489,10 +524,6 @@ void report_two_spots(Cuik_ReportLevel level, Cuik_ErrorStatus* err, TokenStream
             size_t dist_from_line_start = draw_line(tokens, loc_index);
             draw_line_horizontal_pad();
 
-            #if _WIN32
-            SetConsoleTextAttribute(console_handle, (default_attribs & ~0xF) | FOREGROUND_GREEN);
-            #endif
-
             // draw underline
             size_t first_start_pos = loc->columns > dist_from_line_start ? loc->columns - dist_from_line_start : 0;
             size_t first_end_pos = first_start_pos + loc->length;
@@ -510,10 +541,6 @@ void report_two_spots(Cuik_ReportLevel level, Cuik_ErrorStatus* err, TokenStream
             printf("^");
             for (size_t i = second_start_pos + 1; i < second_end_pos; i++) printf("~");
             printf("\n");
-
-            #if _WIN32
-            SetConsoleTextAttribute(console_handle, default_attribs);
-            #endif
 
             draw_line_horizontal_pad();
 
@@ -535,10 +562,6 @@ void report_two_spots(Cuik_ReportLevel level, Cuik_ErrorStatus* err, TokenStream
                 size_t dist_from_line_start = draw_line(tokens, loc_index);
                 draw_line_horizontal_pad();
 
-                #if _WIN32
-                SetConsoleTextAttribute(console_handle, (default_attribs & ~0xF) | FOREGROUND_GREEN);
-                #endif
-
                 // draw underline
                 size_t start_pos = loc->columns > dist_from_line_start ? loc->columns - dist_from_line_start : 0;
 
@@ -547,10 +570,6 @@ void report_two_spots(Cuik_ReportLevel level, Cuik_ErrorStatus* err, TokenStream
                 printf("^");
                 for (size_t i = 1; i < tkn_len; i++) printf("~");
                 printf("\n");
-
-                #if _WIN32
-                SetConsoleTextAttribute(console_handle, default_attribs);
-                #endif
 
                 if (loc_msg) {
                     draw_line_horizontal_pad();
@@ -578,10 +597,6 @@ void report_two_spots(Cuik_ReportLevel level, Cuik_ErrorStatus* err, TokenStream
                 size_t dist_from_line_start = draw_line(tokens, loc2_index);
                 draw_line_horizontal_pad();
 
-                #if _WIN32
-                SetConsoleTextAttribute(console_handle, (default_attribs & ~0xF) | FOREGROUND_GREEN);
-                #endif
-
                 // draw underline
                 size_t start_pos = loc2->columns > dist_from_line_start
                     ? loc2->columns - dist_from_line_start : 0;
@@ -591,10 +606,6 @@ void report_two_spots(Cuik_ReportLevel level, Cuik_ErrorStatus* err, TokenStream
                 printf("^");
                 for (size_t i = 1; i < tkn_len; i++) printf("~");
                 printf("\n");
-
-                #if _WIN32
-                SetConsoleTextAttribute(console_handle, default_attribs);
-                #endif
 
                 if (loc_msg2) {
                     draw_line_horizontal_pad();
@@ -620,3 +631,4 @@ bool has_reports(Cuik_ReportLevel minimum, Cuik_ErrorStatus* err) {
 
     return false;
 }
+#endif

@@ -1,13 +1,25 @@
 
-int foo(int* a) {
-    static const struct {
-        const char * zName ; 
-        const char * zCols ; 
-    } table[] = {
-        { "sqlite_stat1" , "tbl,idx,stat" } , 
-        { "sqlite_stat4" , 0 } , 
-        { "sqlite_stat3" , 0 } , 
-    };
+_Static_assert(sizeof(int) >= 4, "int is nice");
+_Static_assert(sizeof(int) >= 2);
 
-    return ++*a;
-}
+int foo[165][64];
+
+typedef struct Recursive {
+    Recursive* next;
+    int value;
+} Recursive;
+
+int bar = 8593 + 628953;
+int first = (16 * (6 + 62)), second = 89843 + sizeof(int);
+int (*baz)(void);
+
+static const long int long* test(int x, int y) { return 16; }
+
+typedef int T, *P;
+
+int main(void) { return 0; }
+
+int T = 69;
+inline int x = 16;
+
+int (((A)));

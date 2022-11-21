@@ -1,9 +1,9 @@
 #pragma once
-#include "../common.h"
+#include <common.h>
 #include "../str.h"
 #include "../arena.h"
 #include <dyn_array.h>
-#include <cuik.h>
+#include <cuik_lex.h>
 
 #define TKN2(x, y)                  (((y) << 8) | (x))
 #define TKN3(x, y, z) (((z) << 16) | ((y) << 8) | (x))
@@ -27,6 +27,8 @@ typedef enum TknType {
     TOKEN_HASH = '#',
     TOKEN_AT = '@',
 
+    TOKEN_TILDE = '~',
+    TOKEN_EXCLAMATION = '!',
     TOKEN_COLON = ':',
     TOKEN_SEMICOLON = ';',
 
@@ -147,107 +149,103 @@ typedef enum TknType {
 #undef TKN3
 
 typedef struct {
-} SourceLineManager;
-
-typedef struct {
-    ////////////////////////////////
-    // USER-PROVIDED
-    ////////////////////////////////
-    const char* filepath;
-    const unsigned char* start;
-    const unsigned char* current;
-    int current_line;
-
-    int column_bias; // it'll just be added to the column count when we're checking stuff
-
-    ////////////////////////////////
-    // INTERNALS
-    ////////////////////////////////
-    const unsigned char* line_current;
-    const unsigned char* line_current2;
-
-    // when reading it spotted a line or EOF, it must be manually reset
-    bool hit_line;
-
-    // current token info
-    TknType token_type;
-    const unsigned char* token_start;
-    const unsigned char* token_end;
+    uint32_t file_id;
+    unsigned char* start;
+    unsigned char* current;
 } Lexer;
 
 // this is used by the preprocessor to scan tokens in
-void lexer_read(Lexer* restrict l);
+Token lexer_read(Lexer* restrict l);
 
-intptr_t parse_char(size_t len, const char* str, int* output);
+ptrdiff_t parse_char(size_t len, const char* str, int* output);
 uint64_t parse_int(size_t len, const char* str, Cuik_IntSuffix* out_suffix);
 TknType classify_ident(const unsigned char* restrict str, size_t len);
 
-inline static String lexer_get_string(Lexer* restrict l) {
-    return string_from_range(l->token_start, l->token_end);
+static SourceLoc offset_source_loc(SourceLoc loc, uint32_t offset) {
+    return (SourceLoc){ loc.raw + offset };
 }
 
-inline static bool lexer_match(Lexer* restrict l, size_t len, const char* str) {
-    if ((l->token_end - l->token_start) != len) return false;
+static SourceLoc encode_file_loc(uint32_t file_id, uint32_t file_offset) {
+    // Big files take up several file IDs
+    uint32_t real_file_id = file_id + (file_offset >> SourceLoc_FilePosBits);
+    uint32_t real_file_offset = file_offset & ((1u << SourceLoc_FilePosBits) - 1);
+    assert(real_file_id < (1u << SourceLoc_FileIDBits) && "Too many files!");
 
-    return memcmp(l->token_start, str, len) == 0;
+    return (SourceLoc){ (real_file_id << SourceLoc_FilePosBits) | real_file_offset };
+}
+
+static SourceLoc encode_macro_loc(uint32_t macro_id, uint32_t macro_offset) {
+    assert(macro_id < (1u << SourceLoc_MacroIDBits) && "Too many macros!");
+    assert(macro_offset < (1u << SourceLoc_MacroOffsetBits) && "Macro too long!");
+
+    return (SourceLoc){ SourceLoc_IsMacro | (macro_id << SourceLoc_MacroOffsetBits) | macro_offset };
 }
 
 inline static bool tokens_peek_double_token(TokenStream* restrict s, TknType tkn) {
-    return s->tokens[s->current].type == tkn && s->tokens[s->current + 1].type == tkn;
+    return s->list.tokens[s->list.current].type == tkn && s->list.tokens[s->list.current + 1].type == tkn;
 }
 
-inline static SourceLocIndex tokens_get_last_location_index(TokenStream* restrict s) {
-    return s->tokens[s->current - 1].location;
+inline static SourceRange get_token_range(Token* t) {
+    return (SourceRange){ t->location, { t->location.raw + t->content.length } };
 }
 
-inline static SourceLocIndex tokens_get_location_index(TokenStream* restrict s) {
-    return s->tokens[s->current].location;
+inline static SourceLoc get_end_location(Token* t) {
+    return (SourceLoc){ t->location.raw + t->content.length };
+}
+
+inline static SourceLoc tokens_get_last_location(TokenStream* restrict s) {
+    Token* t = &s->list.tokens[s->list.current - 1];
+    return (SourceLoc){ t->location.raw + t->content.length };
+}
+
+inline static SourceLoc tokens_get_location(TokenStream* restrict s) {
+    return s->list.tokens[s->list.current].location;
+}
+
+inline static SourceRange tokens_get_last_range(TokenStream* restrict s) {
+    Token* t = &s->list.tokens[s->list.current - 1];
+    return (SourceRange){ t->location, { t->location.raw + t->content.length } };
+}
+
+inline static SourceRange tokens_get_range(TokenStream* restrict s) {
+    Token* t = &s->list.tokens[s->list.current];
+    return (SourceRange){ t->location, { t->location.raw + t->content.length } };
 }
 
 inline static bool tokens_hit_line(TokenStream* restrict s) {
-    return s->tokens[s->current].hit_line;
-}
-
-inline static int tokens_get_location_line(TokenStream* restrict s) {
-    return s->locations[s->tokens[s->current].location].line->line;
+    return s->list.tokens[s->list.current].hit_line;
 }
 
 inline static bool tokens_eof(TokenStream* restrict s) {
-    return s->tokens[s->current].type == 0;
+    return s->list.current >= dyn_array_length(s->list.tokens) - 1;
+    // return s->list.tokens[s->list.current].type == 0;
 }
 
 inline static bool tokens_is(TokenStream* restrict s, TknType type) {
-    return s->tokens[s->current].type == type;
+    return s->list.tokens[s->list.current].type == type;
 }
 
 inline static bool tokens_match(TokenStream* restrict s, size_t len, const char* str) {
-    Token* t = &s->tokens[s->current];
-    if ((t->end - t->start) != len) return false;
-
-    return memcmp(t->start, str, len) == 0;
-}
-
-inline static SourceLoc* tokens_get_location(TokenStream* restrict s) {
-    return &s->locations[s->tokens[s->current].location];
+    return string_equals(&s->list.tokens[s->list.current].content, &(String){ len, (const unsigned char*) str });
 }
 
 // this is used by the parser to get the next token
 inline static Token* tokens_get(TokenStream* restrict s) {
-    return &s->tokens[s->current];
+    return &s->list.tokens[s->list.current];
 }
 
 // there should be a NULL token so as long as we can read [current]
 // we can read one ahead.
 inline static Token* tokens_peek(TokenStream* restrict s) {
-    return &s->tokens[s->current + 1];
+    return &s->list.tokens[s->list.current + 1];
 }
 
 inline static void tokens_prev(TokenStream* restrict s) {
-    assert(s->current > 0);
-    s->current -= 1;
+    assert(s->list.current > 0);
+    s->list.current -= 1;
 }
 
 inline static void tokens_next(TokenStream* restrict s) {
-    assert(s->current < dyn_array_length(s->tokens));
-    s->current += 1;
+    assert(s->list.current < dyn_array_length(s->list.tokens));
+    s->list.current += 1;
 }

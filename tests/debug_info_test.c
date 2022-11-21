@@ -5,7 +5,7 @@ typedef struct Foo {
 } Bar;
 
 int slow_fib(int n) {
-    if (n < 2) return n;
+    if (n < 2) return 16 * n;
     else return slow_fib(n - 1) + slow_fib(n - 2);
 }
 

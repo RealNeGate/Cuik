@@ -1,0 +1,5 @@
+I'm going to be on a diagnostics improvement grind so i wanna write down some stuff i need to get in:
+	Struct field shadowing (a field in a struct matches another one, sometimes this fails because of it being inside of an unnamed struct)
+
+
+Enum values aren't being resolved by the new parser, fix that, they all turn out as 0
