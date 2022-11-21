@@ -419,11 +419,6 @@ static bool expand_ident(Cuik_CPP* restrict c, TokenList* restrict out_tokens, T
         t.content = (String){ length, out };
         dyn_array_put(out_tokens->tokens, t);
     } else {
-        if (strncmp((const char*) token_data, "SDL_static_cast", token_length) == 0) {
-            // printf("\n\n");
-            // __debugbreak();
-        }
-
         size_t def_i;
         if (find_define(c, &def_i, token_data, token_length)) {
             String def = string_from_range(c->macro_bucket_values_start[def_i], c->macro_bucket_values_end[def_i]);

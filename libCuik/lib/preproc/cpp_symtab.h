@@ -191,8 +191,7 @@ static bool find_define(Cuik_CPP* restrict c, size_t* out_index, const unsigned 
 
         if (c->macro_bucket_keys_length[e] == length) {
             if (memory_equals16(c->macro_bucket_keys[e], start, length)) {
-
-                *out_index = base;
+                *out_index = e;
                 found = true;
                 break;
             }
