@@ -6,6 +6,8 @@
 
 The plan is a modern C11 compiler which can mostly work with Clang, GCC, and MSVC while also introducing some new ideas.
 
+[Discord?](https://discord.gg/UFuHChZswc)
+
 ## Why write a C compiler?
 * To improve the compile times on debug builds without sacrificing features like I would with TCC.
 * To test out my upcoming (and currently private) compiler backend.
@@ -15,7 +17,7 @@ The plan is a modern C11 compiler which can mostly work with Clang, GCC, and MSV
 ## How to install?
 Mac & Linux aren't ready yet but i'll be moving forward to those platforms in the upcoming months
 
-You will need [Tup](https://gittup.org/tup/index.html) and if you're on windows also MSVC (i use link.exe for now... sorry, i'll remove the linker dependency soon)
+You will need Git, Python, a C compiler (not msvc but gcc and clang should work fine) and on windows you'll need MSVC (i use link.exe for now... sorry, i'll remove the linker dependency soon)
 
 ```
 git clone https://github.com/RealNeGate/Cuik
@@ -68,20 +70,20 @@ It can currently compile programs using the subset of C it currently supports bu
 * GNU extensions
 * Proper Mac/Linux support
 
+## What's in progress right now?
+
+I'm in the cpp-optimize branch doing some refactors, i redid some details of the preprocessor to improve speed, then  i started redoing the Cuik parser API and fixing bugs such as the use of abort in the parsing (for a library this should never happen, it should error recover or return to the user)
+
 ## File structure
 In case you care to look around here's what the folders mean:
 ```
-# libCuik itself
-lib/
-include/
+# this is where the main driver goes (it does "mostly" normal CC command line interactions)
+main/
 
-# and it's dependencies (TB binaries go here)
-deps/
+# Actual library (can be used separate of the main driver)
+libCuik/
 
-# these are the programs that actually call into libCuik
-drivers/
-
-# not ciabatta but the freestanding includes like stddef.h along with some helpers
+# not [ciabatta](https://github.com/flysand7/ciabatta) but the freestanding includes like stddef.h along with some helpers
 crt/
 
 # random crap
