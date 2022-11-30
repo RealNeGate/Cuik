@@ -34,11 +34,11 @@
 #define thread_local _Thread_local
 #endif
 
-#define SWAP(a, b)      \
-do {                    \
-    typeof(a) temp = a; \
-    a = b;              \
-    b = temp;           \
+#define SWAP(T, a, b) \
+do {                  \
+    T temp = a;       \
+    a = b;            \
+    b = temp;         \
 } while (0)
 
 #ifndef MAX_PATH

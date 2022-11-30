@@ -244,9 +244,23 @@ static bool subst(Cuik_CPP* restrict c, TokenList* out_tokens, uint8_t* def_str,
             Token* last = &out_tokens->tokens[dyn_array_length(out_tokens->tokens) - 1];
             String a = last->content;
 
+            unsigned char* savepoint = in.current;
             String b = lexer_read(&in).content;
             ptrdiff_t b_i = find_arg(args, b);
             if (b_i >= 0) b = args->values[b_i].content;
+
+            if (b.data[0] == '_' && string_equals_cstr(&b, "__VA_ARGS__")) {
+                // if we just followed a comma and concat a __VA_ARGS__ which expands
+                // to nothing, then we delete the comma
+                size_t key_count = args->key_count, value_count = args->value_count;
+
+                if (string_equals_cstr(&a, ",") && key_count == value_count) {
+                    dyn_array_pop(out_tokens->tokens);
+                } else {
+                    in.current = savepoint;
+                }
+                continue;
+            }
 
             // Literally join the data
             unsigned char* out = gimme_the_shtuffs(c, a.length + b.length + 16);

@@ -46,7 +46,7 @@ typedef struct Cuik_ParseResult {
     Cuik_ImportRequest* imports; // linked list of imported libs.
 } Cuik_ParseResult;
 
-Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict s, const Cuik_Target* target);
+Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict s, Cuik_Target* target);
 
 
 
@@ -88,7 +88,7 @@ typedef struct Cuik_TranslationUnitDesc {
     #endif
 
     // if target is non-NULL, builtins will be used based on said target.
-    const Cuik_Target* target;
+    Cuik_Target* target;
 
     // if thread_pool is NULL, parsing is single threaded
     Cuik_IThreadpool* thread_pool;

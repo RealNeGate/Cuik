@@ -90,15 +90,17 @@ static Expr* resolve_memory_order_expr(TranslationUnit* tu, Expr* e) {
 }
 
 const char* query_type(TranslationUnit* tu, const char* format, Cuik_Type** out_type) {
+    Cuik_Type* target_signed_ints = tu->target->signed_ints;
     Cuik_Type* t = NULL;
     #define C(k, v) case k: t = &cuik__builtin_ ## v; break
     switch (*format++) {
-        C('v', void);
-        C('b', bool);
-        C('c', char);
-        C('s', short);
-        C('i', int);
-        C('l', long);
+        case 'v': t = &cuik__builtin_void; break;
+        case 'b': t = &cuik__builtin_bool; break;
+        case 'c': t = &target_signed_ints[CUIK_BUILTIN_CHAR]; break;
+        case 's': t = &target_signed_ints[CUIK_BUILTIN_SHORT]; break;
+        case 'i': t = &target_signed_ints[CUIK_BUILTIN_INT]; break;
+        case 'l': t = &target_signed_ints[CUIK_BUILTIN_LONG]; break;
+        case 'L': t = &target_signed_ints[CUIK_BUILTIN_LLONG]; break;
         default: break;
     }
     #undef C
@@ -117,16 +119,17 @@ const char* query_type(TranslationUnit* tu, const char* format, Cuik_Type** out_
 const char* check_type(TranslationUnit* tu, const char* format, Expr* e) {
     cuik__sema_expr(tu, e);
 
+    Cuik_Type* target_signed_ints = tu->target->signed_ints;
     Cuik_Type* t = NULL;
     #define C(k, v) case k: t = &cuik__builtin_ ## v; break;
     switch (*format++) {
-        C('v', void);
-        C('b', bool);
-        C('c', char);
-        C('s', short);
-        C('i', int);
-        C('l', long);
-
+        case 'v': t = &cuik__builtin_void; break;
+        case 'b': t = &cuik__builtin_bool; break;
+        case 'c': t = &target_signed_ints[CUIK_BUILTIN_CHAR]; break;
+        case 's': t = &target_signed_ints[CUIK_BUILTIN_SHORT]; break;
+        case 'i': t = &target_signed_ints[CUIK_BUILTIN_INT]; break;
+        case 'l': t = &target_signed_ints[CUIK_BUILTIN_LONG]; break;
+        case 'L': t = &target_signed_ints[CUIK_BUILTIN_LLONG]; break;
         case '.': {
             // dot is var args so just don't really type check it?
             e->cast_type = e->type;
@@ -178,7 +181,79 @@ Cuik_Type* target_generic_type_check_builtin(TranslationUnit* tu, Expr* e, const
         format = check_type(tu, format, args[i]);
     }
 
-    return return_type;
+    if (strcmp(name, "__c11_atomic_load") == 0) {
+        if (arg_count != 2) {
+            REPORT_EXPR(ERROR, e, "%s requires 2 arguments", name);
+            return &cuik__builtin_int;
+        }
+
+        Cuik_Type* base_type = expect_pointer(tu, e, args[0]);
+
+        // fn(T* obj, int order)
+        args[0]->cast_type = args[0]->type;
+        args[1] = resolve_memory_order_expr(tu, args[1]);
+
+        cuik__type_check_args(tu, e, arg_count, args);
+        return base_type;
+    } else if (strcmp(name, "__c11_atomic_exchange") == 0 ||
+        strcmp(name, "__c11_atomic_fetch_add") == 0 ||
+        strcmp(name, "__c11_atomic_fetch_sub") == 0 ||
+        strcmp(name, "__c11_atomic_fetch_or") == 0 ||
+        strcmp(name, "__c11_atomic_fetch_xor") == 0 ||
+        strcmp(name, "__c11_atomic_fetch_and") == 0) {
+        if (arg_count != 3) {
+            diag_err(&tu->tokens, e->loc, "%s requires 3 arguments", name);
+            return &cuik__builtin_int;
+        }
+
+        // fn(T* obj, T arg, int order)
+        Cuik_Type* base_type = expect_pointer(tu, e, args[0]);
+
+        args[0]->cast_type = args[0]->type;
+        args[1]->cast_type = cuik_uncanonical_type(base_type);
+        args[2] = resolve_memory_order_expr(tu, args[1]);
+
+        cuik__type_check_args(tu, e, arg_count, args);
+        return base_type;
+    } else if (strcmp(name, "__builtin_mul_overflow") == 0) {
+        if (arg_count != 3) {
+            diag_err(&tu->tokens, e->loc, "%s requires 3 arguments", name);
+            goto failure;
+        }
+
+        Cuik_Type* type = sema_expr(tu, args[0]);
+        if (type->kind < KIND_CHAR || type->kind > KIND_LONG) {
+            diag_err(&tu->tokens, e->loc, "%s can only be applied onto integers", name);
+            goto failure;
+        }
+        args[0]->cast_type = cuik_uncanonical_type(&cuik__builtin_int);
+
+        for (size_t i = 1; i < arg_count; i++) {
+            Cuik_Type* arg_type = sema_expr(tu, args[i]);
+
+            if (i == 2) {
+                if (arg_type->kind != KIND_PTR) {
+                    diag_err(&tu->tokens, args[i]->loc, "expected pointer to %!T for the 3rd argument", type);
+                    goto failure;
+                }
+
+                arg_type = cuik_canonical_type(arg_type->ptr_to);
+            }
+
+            if (!type_compatible(tu, arg_type, type, args[i])) {
+                diag_err(&tu->tokens, args[i]->loc, "could not implicitly convert type %!T into %!T.", arg_type, type);
+                goto failure;
+            }
+
+            Cuik_Type* cast_type = (i == 2) ? new_pointer(tu, cuik_uncanonical_type(type)) : type;
+            args[i]->cast_type = cuik_uncanonical_type(cast_type);
+        }
+
+        failure:
+        return &cuik__builtin_bool;
+    } else {
+        return return_type;
+    }
 
     #if 0
     if (strcmp(name, "__va_start") == 0) {
@@ -249,76 +324,6 @@ Cuik_Type* target_generic_type_check_builtin(TranslationUnit* tu, Expr* e, const
         args[4]->cast_type = cuik_uncanonical_type(&cuik__builtin_int);
 
         cuik__type_check_args(tu, e, arg_count, args);
-        return &cuik__builtin_bool;
-    } else if (strcmp(name, "__c11_atomic_load") == 0) {
-        if (arg_count != 2) {
-            REPORT_EXPR(ERROR, e, "%s requires 2 arguments", name);
-            return &cuik__builtin_int;
-        }
-
-        Cuik_Type* base_type = expect_pointer(tu, e, args[0]);
-
-        // fn(T* obj, int order)
-        args[0]->cast_type = args[0]->type;
-        args[1] = resolve_memory_order_expr(tu, args[1]);
-
-        cuik__type_check_args(tu, e, arg_count, args);
-        return base_type;
-    } else if (strcmp(name, "__c11_atomic_exchange") == 0 ||
-        strcmp(name, "__c11_atomic_fetch_add") == 0 ||
-        strcmp(name, "__c11_atomic_fetch_sub") == 0 ||
-        strcmp(name, "__c11_atomic_fetch_or") == 0 ||
-        strcmp(name, "__c11_atomic_fetch_xor") == 0 ||
-        strcmp(name, "__c11_atomic_fetch_and") == 0) {
-        if (arg_count != 3) {
-            diag_err(&tu->tokens, e->loc, "%s requires 3 arguments", name);
-            return &cuik__builtin_int;
-        }
-
-        // fn(T* obj, T arg, int order)
-        Cuik_Type* base_type = expect_pointer(tu, e, args[0]);
-
-        args[0]->cast_type = args[0]->type;
-        args[1]->cast_type = base_type;
-        args[2] = resolve_memory_order_expr(tu, args[1]);
-
-        cuik__type_check_args(tu, e, arg_count, args);
-        return base_type;
-    } else if (strcmp(name, "__builtin_mul_overflow") == 0) {
-        if (arg_count != 3) {
-            diag_err(&tu->tokens, e->loc, "%s requires 3 arguments", name);
-            goto failure;
-        }
-
-        Cuik_Type* type = sema_expr(tu, args[0]);
-        if (type->kind < KIND_CHAR || type->kind > KIND_LONG) {
-            diag_err(&tu->tokens, e->loc, "%s can only be applied onto integers", name);
-            goto failure;
-        }
-        args[0]->cast_type = cuik_uncanonical_type(&cuik__builtin_int);
-
-        for (size_t i = 1; i < arg_count; i++) {
-            Cuik_Type* arg_type = sema_expr(tu, args[i]);
-
-            if (i == 2) {
-                if (arg_type->kind != KIND_PTR) {
-                    diag_err(&tu->tokens, args[i]->loc, "expected pointer to %!T for the 3rd argument", type);
-                    goto failure;
-                }
-
-                arg_type = cuik_canonical_type(arg_type->ptr_to);
-            }
-
-            if (!type_compatible(tu, arg_type, type, args[i])) {
-                diag_err(&tu->tokens, args[i]->loc, "could not implicitly convert type %!T into %!T.", arg_type, type);
-                goto failure;
-            }
-
-            Cuik_Type* cast_type = (i == 2) ? new_pointer(tu, cuik_uncanonical_type(type)) : type;
-            args[i]->cast_type = cast_type;
-        }
-
-        failure:
         return &cuik__builtin_bool;
     } else if (strcmp(name, "__assume") == 0) {
         if (arg_count != 1) {

@@ -47,7 +47,7 @@ size_t cuik_num_of_translation_units_in_compilation_unit(CompilationUnit* restri
     return cu->count;
 }
 
-#if CUIK_USE_TB
+#ifdef CUIK_USE_TB
 void cuik_internal_link_compilation_unit(CompilationUnit* restrict cu, TB_Module* mod, int debug_info_level)
 #else
 void cuik_internal_link_compilation_unit(CompilationUnit* restrict cu, void* mod, int debug_info_level)
@@ -73,7 +73,7 @@ void cuik_internal_link_compilation_unit(CompilationUnit* restrict cu, void* mod
                     if (!s->decl.attrs.is_used) continue;
                 }
 
-                #if CUIK_USE_TB
+                #ifdef CUIK_USE_TB
                 TB_FunctionPrototype* proto = tu->target->create_prototype(tu, cuik_canonical_type(s->decl.type));
                 TB_Linkage linkage = s->decl.attrs.is_static ? TB_LINKAGE_PRIVATE : TB_LINKAGE_PUBLIC;
 

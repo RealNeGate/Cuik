@@ -133,7 +133,7 @@ struct TranslationUnit {
     #endif
 
     const char* filepath;
-    const Cuik_Target* target;
+    Cuik_Target* target;
     const Cuik_Warnings* warnings;
     Cuik_ImportRequest* import_libs;
 

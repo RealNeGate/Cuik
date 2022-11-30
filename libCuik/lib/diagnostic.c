@@ -145,6 +145,7 @@ static void print_line_with_backtrace(TokenStream* tokens, SourceLoc loc, Source
         l = cuikpp_find_location_in_bytes(tokens, m->def_site.start);
         l.pos += macro_off;
 
+        assert(end.raw > loc.raw);
         tkn_len = end.raw - loc.raw;
     } else {
         l = cuikpp_find_location_in_bytes(tokens, loc);

@@ -273,7 +273,7 @@ static void irgen_job(void* arg) {
             }
 
             TB_Function* func = tb_symbol_as_function(sym);
-            if (func != NULL) {
+            if (func != NULL && args_opt_level == 0) {
                 CUIK_TIMED_BLOCK("Canonicalize: %s", name) {
                     for (size_t j = 0; j < PASS_COUNT; j++) {
                         CUIK_TIMED_BLOCK("Opt%s", passes[j].name, name) {
@@ -580,7 +580,9 @@ static void append_input_path(const char* path) {
             fprintf(stderr, "Invalid filepath! %s\n", path);
         }
 
-        if (str_ends_with(newstr, ".o") || str_ends_with(newstr, ".obj")) {
+        if (str_ends_with(newstr, ".a") || str_ends_with(newstr, ".lib")) {
+            dyn_array_put(input_libraries, newstr);
+        } else if (str_ends_with(newstr, ".o") || str_ends_with(newstr, ".obj")) {
             dyn_array_put(input_objects, newstr);
         } else {
             dyn_array_put(input_files, newstr);
@@ -772,7 +774,7 @@ static void codegen(void) {
 
 static bool export_output(void) {
     // TODO(NeGate): do a smarter system (just default to whatever the different platforms like)
-    TB_DebugFormat debug_fmt = args_debug_info ? TB_DEBUGFMT_CODEVIEW : TB_DEBUGFMT_NONE;
+    TB_DebugFormat debug_fmt = (args_debug_info ? TB_DEBUGFMT_CODEVIEW : TB_DEBUGFMT_NONE);
 
     if (!args_use_syslinker) {
         bool is_windows = (cuik_get_target_system(target_desc) == CUIK_SYSTEM_WINDOWS);

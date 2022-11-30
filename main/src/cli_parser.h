@@ -91,7 +91,7 @@ static Arg get_cli_arg(int* index, int argc, char** argv) {
                         return (Arg){ arg_descs[j].type, arg_is_set };
                     } else {
                         if (opt[short_name_len] != 0) {
-                            return (Arg){ arg_descs[j].type, &opt[short_name_len + 1] };
+                            return (Arg){ arg_descs[j].type, &opt[short_name_len] };
                         } else if ((i + 1) >= argc) {
                             fprintf(stderr, "error: no argument after -%s\n", short_name);
                             exit_or_hook(1);

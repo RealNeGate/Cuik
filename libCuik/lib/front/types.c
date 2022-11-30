@@ -9,12 +9,12 @@ Cuik_Type cuik__builtin_bool = { KIND_BOOL,  1, 1, .is_complete = true };
 Cuik_Type cuik__builtin_char  = { KIND_CHAR,  1, 1, .is_complete = true };
 Cuik_Type cuik__builtin_short = { KIND_SHORT, 2, 2, .is_complete = true };
 Cuik_Type cuik__builtin_int   = { KIND_INT,   4, 4, .is_complete = true };
-Cuik_Type cuik__builtin_long  = { KIND_LONG,  8, 8, .is_complete = true };
+Cuik_Type cuik__builtin_long  = { KIND_LLONG, 8, 8, .is_complete = true };
 // unsigned
 Cuik_Type cuik__builtin_uchar  = { KIND_CHAR,  1, 1, .is_complete = true };
 Cuik_Type cuik__builtin_ushort = { KIND_SHORT, 2, 2, .is_complete = true };
 Cuik_Type cuik__builtin_uint   = { KIND_INT,   4, 4, .is_complete = true };
-Cuik_Type cuik__builtin_ulong  = { KIND_LONG,  8, 8, .is_complete = true };
+Cuik_Type cuik__builtin_ulong  = { KIND_LLONG, 8, 8, .is_complete = true };
 // floats
 Cuik_Type cuik__builtin_float  = { KIND_FLOAT,  4, 4, .is_complete = true };
 Cuik_Type cuik__builtin_double = { KIND_DOUBLE, 8, 8, .is_complete = true };
@@ -27,12 +27,12 @@ Cuik_Type builtin_types[] = {
     [TYPE_CHAR] = {KIND_CHAR, 1, 1, .is_complete = true},
     [TYPE_SHORT] = {KIND_SHORT, 2, 2, .is_complete = true},
     [TYPE_INT] = {KIND_INT, 4, 4, .is_complete = true},
-    [TYPE_LONG] = {KIND_LONG, 8, 8, .is_complete = true},
+    [TYPE_LONG] = {KIND_LLONG, 8, 8, .is_complete = true},
     // unsigned
     [TYPE_UCHAR] = {KIND_CHAR, 1, 1, .is_unsigned = true, .is_complete = true},
     [TYPE_USHORT] = {KIND_SHORT, 2, 2, .is_unsigned = true, .is_complete = true},
     [TYPE_UINT] = {KIND_INT, 4, 4, .is_unsigned = true, .is_complete = true},
-    [TYPE_ULONG] = {KIND_LONG, 8, 8, .is_unsigned = true, .is_complete = true},
+    [TYPE_ULONG] = {KIND_LLONG, 8, 8, .is_unsigned = true, .is_complete = true},
     // floats
     [TYPE_FLOAT] = {KIND_FLOAT, 4, 4, .is_complete = true},
     [TYPE_DOUBLE] = {KIND_DOUBLE, 8, 8, .is_complete = true},

@@ -8,7 +8,8 @@
 //   c   char
 //   s   short
 //   i   int
-//   l   long (64bit)
+//   l   long
+//   L   long long
 //   !   single arbitrary parameter
 //   .   variadic parameters
 //
@@ -16,6 +17,9 @@
 X(__builtin_expect, "vb")
 X(__builtin_trap, "vv")
 X(__builtin_clz, "ii")
+X(__builtin_mul_overflow, "v.")
+
+X(__builtin_unreachable, "v")
 
 // cuik internal
 X(__c11_atomic_compare_exchange_strong, "v.")
@@ -39,8 +43,8 @@ X(_byteswap_ulong, "ii")
 X(__assume, "vb")
 X(__debugbreak, "vv")
 X(__va_start, "vc**.")
-X(_umul128, "llll*")
-X(_mul128, "llll*")
-X(_InterlockedExchange, "ii*i")
-X(_InterlockedCompareExchange, "ii*ii")
+X(_umul128, "LLLL*")
+X(_mul128, "LLLL*")
+X(_InterlockedExchange, "ll*l")
+X(_InterlockedCompareExchange, "ll*ll")
 #undef X

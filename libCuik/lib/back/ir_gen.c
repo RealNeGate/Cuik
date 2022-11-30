@@ -99,13 +99,14 @@ static TB_Reg cast_reg(TB_Function* func, TB_Reg reg, const Cuik_Type* src, cons
 
     // Cast into correct type
     if (cuik_type_is_integer(src) && cuik_type_is_integer(dst)) {
-        if (dst->kind > src->kind) {
+        if (dst->size > src->size) {
             // up-casts
-            if (src->is_unsigned)
+            if (src->is_unsigned) {
                 reg = tb_inst_zxt(func, reg, ctype_to_tbtype(dst));
-            else
+            } else {
                 reg = tb_inst_sxt(func, reg, ctype_to_tbtype(dst));
-        } else if (dst->kind < src->kind) {
+            }
+        } else if (dst->size < src->size) {
             // down-casts
             reg = tb_inst_trunc(func, reg, ctype_to_tbtype(dst));
         }
@@ -121,9 +122,7 @@ static TB_Reg cast_reg(TB_Function* func, TB_Reg reg, const Cuik_Type* src, cons
         }
 
         reg = tb_inst_cmp_ne(func, reg, comparand);
-    } else if (src->kind == KIND_BOOL &&
-        dst->kind >= KIND_CHAR &&
-        dst->kind <= KIND_LONG) {
+    } else if (src->kind == KIND_BOOL && cuik_type_is_integer(dst)) {
         reg = tb_inst_zxt(func, reg, ctype_to_tbtype(dst));
     } else if (cuik_type_is_integer(src) && dst->kind == KIND_FUNC) {
         // integer -> function
@@ -314,13 +313,9 @@ static TB_Reg inc_or_dec(TranslationUnit* tu, TB_Function* func, IRVal address, 
 }
 
 int count_max_tb_init_objects(InitNode* root_node) {
-    int sum = 0;
-    for (InitNode* n = root_node->kid; n != NULL; n = n->next) {
-        if (n->kids_count == 0) {
-            sum += 1;
-        } else {
-            sum += count_max_tb_init_objects(n->kid);
-        }
+    int sum = root_node->kids_count;
+    for (InitNode* k = root_node->kid; k != NULL; k = k->next) {
+        sum += count_max_tb_init_objects(k);
     }
 
     return sum;
@@ -529,9 +524,6 @@ void eval_initializer_objects(TranslationUnit* tu, TB_Function* func, TB_Initial
                                 tb_inst_memcpy(func, effective_addr, v.reg, size_reg, align);
                             }
                         } else {
-                            // hacky but we set the cast so that the rvalue returns a normal value
-                            e->cast_type = cuik_uncanonical_type(child_type);
-
                             TB_Reg v = irgen_as_rvalue(tu, func, e);
 
                             // placing the address calculation here might improve performance or readability
@@ -1464,6 +1456,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
 
                     TB_Reg size_reg = tb_inst_uint(func, TB_TYPE_I64, type->size);
                     tb_inst_memcpy(func, lhs.reg, rhs.reg, size_reg, type->align);
+                    data = rhs.reg;
                 } else if (type->kind == KIND_FLOAT || type->kind == KIND_DOUBLE) {
                     TB_Reg r = cvt2rval(tu, func, rhs, e->bin_op.right);
 
@@ -1534,6 +1527,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
                 }
 
                 if (e->op == EXPR_ASSIGN) {
+                    assert(data);
                     return (IRVal){
                         .value_type = RVALUE,
                         .reg = data

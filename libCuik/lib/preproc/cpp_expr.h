@@ -71,13 +71,17 @@ static intmax_t eval(Cuik_CPP* restrict c, TokenList* restrict in) {
     // This expansion is temporary
     c->scratch_list.current = old_scratch_length;
     expand(c, &c->tokens.list, &c->scratch_list, 0);
-    dyn_array_put(c->scratch_list.tokens, (Token){ 0 });
+    dyn_array_put(c->tokens.list.tokens, (Token){ 0 });
 
     // free pass 1 scratch tokens
     dyn_array_set_length(c->scratch_list.tokens, old_scratch_length);
 
     // Evaluate
-    // assert(c->tokens.current != dyn_array_length(c->tokens.tokens) && "Expected the macro expansion to add something");
+    if (old_tokens_length == dyn_array_length(c->tokens.list.tokens)) {
+        SourceLoc loc = c->tokens.list.tokens[old_tokens_length - 1].location;
+        diag_err(&c->tokens, (SourceRange){ loc, loc }, "expected macro expression");
+        return 0;
+    }
 
     c->tokens.list.current = old_tokens_length;
     intmax_t result = eval_ternary(c, &c->tokens.list);

@@ -374,7 +374,7 @@ static void resolve_pending_exprs(Cuik_Parser* parser) {
 }
 
 #define THROW_IF_ERROR() if ((r = cuikdg_error_count(s)) > 0) return (Cuik_ParseResult){ r };
-Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict s, const Cuik_Target* target) {
+Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict s, Cuik_Target* target) {
     int r;
     assert(s != NULL);
 
