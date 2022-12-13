@@ -1,5 +1,10 @@
 I'm going to be on a diagnostics improvement grind so i wanna write down some stuff i need to get in:
 	Struct field shadowing (a field in a struct matches another one, sometimes this fails because of it being inside of an unnamed struct)
 
+~~ Enum values aren't being resolved by the new parser, fix that, they all turn out as 0 ~~
 
-Enum values aren't being resolved by the new parser, fix that, they all turn out as 0
+I'm on my selfhost grind so this is the self script for now:
+```
+  cuik main/src/*.c libCuik/lib/**.c c11threads/threads_msvc.c tilde-backend/tildebackend.lib -I common -I c11threads -I libCuik/include -I libCuik/lib -I tilde-backend/include -DCUIK_USE_TB -o cuik_self.exe -threads
+```
+run in the main repo folder

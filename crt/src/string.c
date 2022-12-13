@@ -3,7 +3,7 @@
 void* memcpy(void* restrict s1, const void* restrict s2, size_t n) {
 	const unsigned char* restrict c2 = s2;
 	unsigned char* restrict c1 = s1;
-	
+
 	while (n--) *c1++ = *c2++;
 	return s1;
 }
@@ -11,11 +11,11 @@ void* memcpy(void* restrict s1, const void* restrict s2, size_t n) {
 int memcmp(const void *s1, const void *s2, size_t n) {
 	const unsigned char* u1 = s1;
 	const unsigned char* u2 = s2;
-	
+
     for (; n--; u1++, u2++) {
 		if (*u1 != *u2) return *u1 - *u2;
     }
-	
+
     return 0;
 }
 

@@ -66,15 +66,16 @@ static const char keywords[][16] = {
     "__declspec"
 };
 
-static uint16_t hash_with_len(const void* data, size_t len) {
-    uint8_t* p = (uint8_t*)data;
-    uint16_t hash = 0;
-
-    for (size_t i = 0; i < len; i++) {
-        hash ^= (p[i] << (i % 8));
+#define PERFECT_HASH_SEED 13751172963623158798ULL
+static uint64_t hash_with_len(const void* data, size_t len) {
+    const uint8_t* p = data;
+    uint64_t h = 0;
+    for (size_t j = 0; j < len && j < 7; j++) {
+        h = p[j] + h*256;
     }
-
-    return hash;
+    // The low byte of the signature is the length.
+    h = len + h*256;
+    return h;
 }
 
 TknType classify_ident(const unsigned char* restrict str, size_t len) {
@@ -82,35 +83,23 @@ TknType classify_ident(const unsigned char* restrict str, size_t len) {
     // KEYWORDS ARRAY AND TOKEN TYPES)
     //
     // https://gist.github.com/RealNeGate/397db4aaace43e0499dc8f7b429ccc17
-    //
-    // BINARY SEARCH ARRAYS
-    const static uint16_t keys[64] = {
-
-        0x00A5,0x00BA,0x0165,0x0170,0x0205,0x0211,0x0223,0x022C,
-        0x0232,0x0245,0x0259,0x02A7,0x0433,0x0495,0x04AA,0x04DF,
-        0x054A,0x05CF,0x05DD,0x080D,0x081E,0x0820,0x084F,0x0851,
-        0x088D,0x089D,0x09A9,0x0A4B,0x10A3,0x110E,0x1145,0x11AF,
-        0x137D,0x145F,0x15EE,0x180D,0x2155,0x21E5,0x21F0,0x22A1,
-        0x22DD,0x2635,0x2681,0x2684,0x2855,0x2A14,0x2B9C,0x2D8A,
-        0x2DCD,0x2E11,0x34C2,0x3AC1,0xFFFF,0xFFFF,0xFFFF,0xFFFF,
-        0xFFFF,0xFFFF,0xFFFF,0xFFFF,0xFFFF,0xFFFF,0xFFFF,0xFFFF,
-
+    static const uint8_t values[256] = {
+        [77] = 0 /* auto */, [194] = 1 /* break */, [31] = 2 /* case */, [5] = 3 /* char */,
+        [224] = 4 /* const */, [34] = 5 /* continue */, [132] = 6 /* default */, [76] = 7 /* do */,
+        [160] = 8 /* double */, [216] = 9 /* else */, [102] = 10 /* enum */, [247] = 11 /* extern */,
+        [250] = 12 /* float */, [153] = 13 /* for */, [71] = 14 /* goto */, [173] = 15 /* if */,
+        [85] = 16 /* inline */, [39] = 17 /* int */, [74] = 18 /* long */, [17] = 19 /* register */,
+        [128] = 20 /* restrict */, [157] = 21 /* return */, [117] = 22 /* short */, [243] = 23 /* signed */,
+        [12] = 24 /* sizeof */, [234] = 25 /* static */, [43] = 26 /* struct */, [72] = 27 /* switch */,
+        [137] = 28 /* typedef */, [232] = 29 /* union */, [93] = 30 /* unsigned */, [10] = 31 /* void */,
+        [155] = 32 /* volatile */, [44] = 33 /* while */, [91] = 34 /* _Alignas */, [15] = 35 /* _Alignof */,
+        [131] = 36 /* _Atomic */, [36] = 37 /* _Bool */, [118] = 38 /* _Complex */, [60] = 39 /* _Generic */,
+        [185] = 40 /* _Imaginary */, [121] = 41 /* _Pragma */, [240] = 42 /* _Noreturn */, [144] = 43 /* _Static_assert */,
+        [174] = 44 /* _Thread_local */, [130] = 45 /* _Typeof */, [150] = 46 /* _Vector */, [61] = 47 /* __asm__ */,
+        [125] = 48 /* __attribute__ */, [22] = 49 /* __cdecl */, [181] = 50 /* __stdcall */, [235] = 51 /* __declspec */,
     };
-    const static uint8_t values[64] = {
-        15,7,17,13,10,14,0,31,18,2,9,3,33,29,1,37,12,22,4,16,8,21,25,24,11,23,27,26,45,28,36,41,49,46,6,47,35,39,32,40,30,5,50,48,34,20,19,51,38,42,43,44,
-    };
-    // HASH STRING
-    uint16_t n = hash_with_len(str, len);
-
-    // BRANCHLESS BINARY SEARCH
-    size_t i = 0;
-    i += (keys[i + 32] <= n) * 32;
-    i += (keys[i + 16] <= n) * 16;
-    i += (keys[i + 8] <= n) * 8;
-    i += (keys[i + 4] <= n) * 4;
-    i += (keys[i + 2] <= n) * 2;
-    i += (keys[i + 1] <= n) * 1;
-    size_t v = values[i];
+    size_t v = (hash_with_len(str, len) * PERFECT_HASH_SEED) >> 56;
+    v = values[v];
 
     // VERIFY
     #if !USE_INTRIN
