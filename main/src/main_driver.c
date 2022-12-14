@@ -65,6 +65,7 @@ static bool args_debug_info;
 static bool args_preprocess;
 static bool args_think;
 static bool args_use_syslinker = true;
+static Cuik_ParseVersion args_version = CUIK_VERSION_C23;
 static int args_threads = -1;
 
 static Bindgen* args_bindgen;
@@ -411,7 +412,7 @@ static void compile_file(void* arg) {
     Cuik_ParseResult result;
     TokenStream* tokens = cuikpp_get_token_stream(arg);
     CUIK_TIMED_BLOCK("parse: %s\n", cuikpp_get_main_file(tokens)) {
-        result = cuikparse_run(CUIK_VERSION_C23, tokens, target_desc);
+        result = cuikparse_run(args_version, tokens, target_desc);
         if (result.error_count > 0) {
             printf("Failed to parse with %d errors...\n", result.error_count);
             files_with_errors++;
@@ -439,33 +440,6 @@ static void compile_file(void* arg) {
 
     cuik_set_translation_unit_user_data(tu, arg /* the preprocessor */);
     cuik_add_to_compilation_unit(&compilation_unit, tu);
-
-    // parse
-    /*
-        Cuik_TranslationUnitDesc desc = {
-            .tokens         = cuikpp_get_token_stream(cpp),
-            .ir_module      = mod,
-            .has_debug_info = args_debug_info,
-            .target         = &target_desc,
-            #if CUIK_ALLOW_THREADS
-            .thread_pool    = ithread_pool ? ithread_pool : NULL,
-            #endif
-        };
-
-        TranslationUnit* tu = cuik_parse_translation_unit(&desc);
-        if (tu == NULL) {
-            printf("Failed to parse with errors...");
-            exit(1);
-        }
-
-        Cuik_ImportRequest* imports = cuik_translation_unit_import_requests(tu);
-        if (imports != NULL) {
-            cuik_lock_compilation_unit(&compilation_unit);
-            for (; imports != NULL; imports = imports->next) {
-                dyn_array_put(input_libraries, imports->lib_name);
-            }
-            cuik_unlock_compilation_unit(&compilation_unit);
-        }*/
 
     /*
     if (args_bindgen != NULL) {
@@ -702,6 +676,8 @@ static void codegen(void) {
             tb_module_compile_function(mod, f, TB_ISEL_FAST);
         }
     }
+
+    if (args_verbose) printf("  IRGen: %zu functions compiled\n", tb_module_get_function_count(mod));
 }
 
 // TODO(NeGate): finish implementing this stuff
@@ -954,13 +930,14 @@ static int run_compiler(threadpool_t* thread_pool, bool destroy_cu_after_ir) {
             goto cleanup_tb;
         }
 
+        TIMESTAMP("Codegen");
         CUIK_TIMED_BLOCK("CodeGen") {
             codegen();
         }
-    }
 
-    if (!export_output()) {
-        return 1;
+        if (!export_output()) {
+            return 1;
+        }
     }
 
     ////////////////////////////////
@@ -1088,6 +1065,16 @@ int main(int argc, char** argv) {
                 }
                 break;
             }
+            case ARG_LANG: {
+                if (strcmp(arg.value, "c11")) args_verbose = CUIK_VERSION_C11;
+                else if (strcmp(arg.value, "c23")) args_verbose = CUIK_VERSION_C23;
+                else if (strcmp(arg.value, "glsl")) args_verbose = CUIK_VERSION_GLSL;
+                else {
+                    fprintf(stderr, "unknown compiler version: %s\n", arg.value);
+                    fprintf(stderr, "supported languages: c11, c23, glsl\n");
+                }
+                break;
+            }
             case ARG_O0: args_opt_level = 0; break;
             case ARG_O1: args_opt_level = 1; break;
             case ARG_OUTPUT: output_name = arg.value; break;
@@ -1211,11 +1198,18 @@ int main(int argc, char** argv) {
     } else {
         cuik_create_compilation_unit(&compilation_unit);
 
+        uint64_t start_time = args_verbose ? cuik_time_in_nanos() : 0;
         int status = run_compiler(thread_pool, true);
+
+        TIMESTAMP("Done");
+        if (args_verbose) {
+            uint64_t now = cuik_time_in_nanos();
+            printf("\n\nCUIK: %f ms\n", (now - start_time) / 1000000.0);
+        }
+
         if (status != 0) exit_or_hook(status);
     }
 
-    TIMESTAMP("Done");
     #if CUIK_ALLOW_THREADS
     if (thread_pool != NULL) {
         threadpool_free(thread_pool);

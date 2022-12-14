@@ -33,6 +33,27 @@ static DirectiveResult cpp__error(Cuik_CPP* restrict ctx, CPPStackSlot* restrict
     return DIRECTIVE_SUCCESS;
 }
 
+// passthrough all tokens raw
+static DirectiveResult cpp__version(Cuik_CPP* restrict ctx, CPPStackSlot* restrict slot, TokenList* restrict in, Cuikpp_Packet* restrict packet) {
+    TokenStream* restrict s = &ctx->tokens;
+    dyn_array_put(s->list.tokens, in->tokens[in->current - 2]);
+    dyn_array_put(s->list.tokens, in->tokens[in->current - 1]);
+
+    for (;;) {
+        Token t = consume(in);
+        if (t.type == 0 || t.hit_line) {
+            in->current -= 1;
+            return DIRECTIVE_SUCCESS;
+        }
+
+        dyn_array_put(s->list.tokens, t);
+    }
+}
+
+static DirectiveResult cpp__extension(Cuik_CPP* restrict ctx, CPPStackSlot* restrict slot, TokenList* restrict in, Cuikpp_Packet* restrict packet) {
+    return cpp__version(ctx, slot, in, packet);
+}
+
 // 'pragma' PP-TOKENS[OPT] NEWLINE
 static DirectiveResult cpp__pragma(Cuik_CPP* restrict ctx, CPPStackSlot* restrict slot, TokenList* restrict in, Cuikpp_Packet* restrict packet) {
     TokenStream* restrict s = &ctx->tokens;

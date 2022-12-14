@@ -263,10 +263,12 @@ static void diag_unresolved_symbol(Cuik_Parser* parser, Atom name, SourceLoc loc
     // mtx_unlock(&parser->diag_mutex);
 }
 
+#define THROW_IF_ERROR() if ((r = cuikdg_error_count(s)) > 0) return (Cuik_ParseResult){ r };
 #include "expr_parser.h"
 #include "expr_parser2.h"
 #include "decl_parser.h"
 #include "decl_parser2.h"
+#include "glsl_parser.h"
 #include "stmt_parser.h"
 #include "top_level_parser.h"
 

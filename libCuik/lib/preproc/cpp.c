@@ -661,6 +661,11 @@ Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
                 case 7:
                 MATCH(include);
                 MATCH(warning);
+                MATCH(version);
+                break;
+
+                case 9:
+                MATCH(extension);
                 break;
             }
             #undef MATCH

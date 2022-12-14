@@ -373,11 +373,13 @@ static void resolve_pending_exprs(Cuik_Parser* parser) {
     }
 }
 
-#define THROW_IF_ERROR() if ((r = cuikdg_error_count(s)) > 0) return (Cuik_ParseResult){ r };
 Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict s, Cuik_Target* target) {
-    int r;
     assert(s != NULL);
+    if (version == CUIK_VERSION_GLSL) {
+        return cuikparse_run_glsl(version, s, target);
+    }
 
+    int r;
     Cuik_Parser parser = { 0 };
     parser.version = version;
     parser.tokens = *s;
@@ -396,6 +398,7 @@ Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict 
         pending_exprs = dyn_array_create(PendingExpr);
     }
 
+    // Normal C parsing
     // Phase 1: resolve all top level statements
     CUIK_TIMED_BLOCK("phase 1") {
         while (!tokens_eof(s)) {

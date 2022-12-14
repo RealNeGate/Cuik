@@ -16,10 +16,14 @@ typedef enum Cuik_ExtensionFlags {
 } Cuik_ExtensionFlags;
 
 typedef enum Cuik_ParseVersion {
+    // C language
     CUIK_VERSION_C89,
     CUIK_VERSION_C99,
     CUIK_VERSION_C11,
     CUIK_VERSION_C23,
+
+    // GL shading language
+    CUIK_VERSION_GLSL,
 } Cuik_ParseVersion;
 
 typedef enum Cuik_Entrypoint {

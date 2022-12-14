@@ -8,6 +8,7 @@ X(ARG_INCLUDE, "I",        "include", true,  "add directory to the include searc
 X(ARG_PREPROC, "P",        NULL,      false, "print preprocessor output to stdout")
 X(ARG_PPREPL,  "xp",       NULL,      false, "enables the preprocessor REPL environment")
 // parser
+X(ARG_LANG,    "lang",     NULL,      false, "choose the language (c11, c23, glsl)")
 X(ARG_AST,     "ast",      NULL,      false, "print AST into stdout")
 X(ARG_SYNTAX,  "xe",       NULL,      false, "type check only")
 // optimizer
