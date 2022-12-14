@@ -14,7 +14,7 @@ typedef struct DynArrayHeader {
     char data[];
 } DynArrayHeader;
 
-inline static void* dyn_array_internal_create(size_t type_size, size_t cap) {
+static void* dyn_array_internal_create(size_t type_size, size_t cap) {
     DynArrayHeader* header = malloc(sizeof(DynArrayHeader) + (type_size * cap));
 
     *header = (DynArrayHeader){
@@ -23,14 +23,14 @@ inline static void* dyn_array_internal_create(size_t type_size, size_t cap) {
     return &header->data[0];
 }
 
-inline static void dyn_array_internal_destroy(void* ptr) {
+static void dyn_array_internal_destroy(void* ptr) {
     if (ptr != NULL) {
         DynArrayHeader* header = ((DynArrayHeader*)ptr) - 1;
         free(header);
     }
 }
 
-inline static void* dyn_array_internal_reserve(void* ptr, size_t type_size, size_t extra) {
+static void* dyn_array_internal_reserve(void* ptr, size_t type_size, size_t extra) {
     DynArrayHeader* header = ((DynArrayHeader*)ptr) - 1;
 
     if (header->size + extra >= header->capacity) {
@@ -47,7 +47,7 @@ inline static void* dyn_array_internal_reserve(void* ptr, size_t type_size, size
     return ptr;
 }
 
-inline static void* dyn_array_internal_trim(void* ptr, size_t type_size) {
+static void* dyn_array_internal_trim(void* ptr, size_t type_size) {
     DynArrayHeader* header = ((DynArrayHeader*)ptr) - 1;
     header->capacity = header->size;
 

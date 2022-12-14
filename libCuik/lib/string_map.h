@@ -44,7 +44,7 @@ typedef struct {
 #define NL_FREE(p)       free(p)
 
 #ifdef NL_STRING_MAP_INLINE
-#define NL_API inline static
+#define NL_API static
 #else
 #define NL_API extern
 #endif
