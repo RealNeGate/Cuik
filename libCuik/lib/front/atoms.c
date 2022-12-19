@@ -83,16 +83,11 @@ Atom atoms_put(size_t len, const unsigned char* str) {
 
             interner_len++;
             interner[i] = newstr;
-            result = newstr;
-            goto leave;
+            return newstr;
         } else if (len == strlen(interner[i]) && memcmp(str, interner[i], len) == 0) {
-            result = interner[i];
-            goto leave;
+            return interner[i];
         }
     }
-
-    leave:
-    return result;
 }
 
 Atom atoms_putc(const unsigned char* str) {
