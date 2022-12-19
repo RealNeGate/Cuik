@@ -123,7 +123,7 @@ static uint64_t hash_ident(const void* key, size_t len) {
 
     // load/mix up to 3 remaining tail bytes into a tail block
     uint32_t t = 0;
-    uint8_t *tail = ((uint8_t*) key) + 4*(len/4);
+    const uint8_t *tail = ((const uint8_t*) key) + 4*(len/4);
     switch(len & 3) {
         case 3: t ^= tail[2] << 16;
         case 2: t ^= tail[1] <<  8;
