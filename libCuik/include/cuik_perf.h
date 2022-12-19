@@ -13,7 +13,7 @@ typedef struct Cuik_IProfiler {
     void (*start)(void* user_data);
     void (*stop)(void* user_data);
 
-    void (*begin_plot)(void* user_data, uint64_t nanos, const char* label);
+    void (*begin_plot)(void* user_data, uint64_t nanos, const char* label, const char* extra);
     void (*end_plot)(void* user_data, uint64_t nanos);
 } Cuik_IProfiler;
 
@@ -31,11 +31,12 @@ bool cuikperf_is_active(void);
 uint64_t cuik_time_in_nanos(void);
 
 // Reports a region of time to the profiler callback
-void cuikperf_region_start(uint64_t now, const char* fmt, ...);
+void cuikperf_region_start(uint64_t now, const char* fmt, const char* extra);
 void cuikperf_region_end(void);
 
 // Usage:
 // CUIK_TIMED_BLOCK("Beans %d", 5) {
 //   ...
 // }
-#define CUIK_TIMED_BLOCK(...) for (uint64_t __i = (cuikperf_region_start(cuik_time_in_nanos(), __VA_ARGS__), 0); __i < 1; __i++, cuikperf_region_end())
+#define CUIK_TIMED_BLOCK(label) for (uint64_t __i = (cuikperf_region_start(cuik_time_in_nanos(), label, NULL), 0); __i < 1; __i++, cuikperf_region_end())
+#define CUIK_TIMED_BLOCK_ARGS(label, extra) for (uint64_t __i = (cuikperf_region_start(cuik_time_in_nanos(), label, extra), 0); __i < 1; __i++, cuikperf_region_end())

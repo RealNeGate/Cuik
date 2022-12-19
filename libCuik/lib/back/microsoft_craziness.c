@@ -318,7 +318,7 @@ void find_windows_kit_root(MicrosoftCraziness_Find_Result *result) {
     HKEY main_key;
 
     LSTATUS rc = RegOpenKeyExA(HKEY_LOCAL_MACHINE, "SOFTWARE\\Microsoft\\Windows Kits\\Installed Roots",
-        0, KEY_QUERY_VALUE | KEY_WOW64_32KEY | KEY_ENUMERATE_SUB_KEYS, &main_key);
+        0, KEY_QUERY_VALUE | KEY_ENUMERATE_SUB_KEYS, &main_key);
     if (rc != S_OK) return;
 
     // Look for a Windows 10 entry.
@@ -508,7 +508,7 @@ void find_visual_studio_by_fighting_through_microsoft_craziness(MicrosoftCrazine
     // If we get here, we didn't find Visual Studio 2017. Try earlier versions.
 
     HKEY vs7_key;
-    HRESULT rc = RegOpenKeyExA(HKEY_LOCAL_MACHINE, "SOFTWARE\\Microsoft\\VisualStudio\\SxS\\VS7", 0, KEY_QUERY_VALUE | KEY_WOW64_32KEY, &vs7_key);
+    HRESULT rc = RegOpenKeyExA(HKEY_LOCAL_MACHINE, "SOFTWARE\\Microsoft\\VisualStudio\\SxS\\VS7", 0, KEY_QUERY_VALUE, &vs7_key);
     if (rc != S_OK)  return;
 
     // Hardcoded search for 4 prior Visual Studio versions. Is there something better to do here?

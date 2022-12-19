@@ -291,7 +291,7 @@ static void reset_global_parser_state() {
 }
 
 static void parse_global_symbols(TranslationUnit* tu, size_t start, size_t end, TokenStream tokens) {
-    CUIK_TIMED_BLOCK("phase 3: %zu-%zu", start, end) {
+    CUIK_TIMED_BLOCK("phase 3") {
         out_of_order_mode = false;
 
         for (size_t i = start; i < end; i++) {

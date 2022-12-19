@@ -28,15 +28,15 @@ static void spallperf__stop(void* user_data) {
     SpallQuit(&ctx);
 }
 
-static void spallperf__begin_plot(void* user_data, uint64_t nanos, const char* label) {
+static void spallperf__begin_plot(void* user_data, uint64_t nanos, const char* label, const char* extra) {
     #if _WIN32
     uint32_t tid = GetCurrentThreadId();
     #else
     uint32_t tid = getpid();
     #endif
 
-    SpallTraceBeginLenTid(&ctx, &muh_buffer, label, strlen(label), tid, nanos);
-    // SpallTraceBeginLenArgsTidPid(&ctx, &muh_buffer, label, strlen(label), "Poop", 4, tid, 0, nanos);
+    // SpallTraceBeginLenTid(&ctx, &muh_buffer, label, strlen(label), tid, nanos);
+    SpallTraceBeginLenArgsTidPid(&ctx, &muh_buffer, label, strlen(label), extra, strlen(extra), tid, 0, nanos);
 }
 
 static void spallperf__end_plot(void* user_data, uint64_t nanos) {

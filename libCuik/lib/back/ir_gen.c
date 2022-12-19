@@ -326,8 +326,6 @@ int count_max_tb_init_objects(InitNode* root_node) {
 // func doesn't need to be non-NULL if it's addr is NULL.
 void eval_initializer_objects(TranslationUnit* tu, TB_Function* func, TB_Initializer* init, TB_Reg addr, InitNode* n) {
     if (n->kid != NULL) {
-        // if (n->mode == INIT_MEMBER && strcmp(n->member_name, "SampleDesc") == 0) __debugbreak();
-
         for (InitNode* k = n->kid; k != NULL; k = k->next) {
             eval_initializer_objects(tu, func, init, addr, k);
         }
@@ -1351,6 +1349,14 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
                 // Load inputs
                 IRVal lhs = irgen_expr(tu, func, e->bin_op.left);
                 IRVal rhs = irgen_expr(tu, func, e->bin_op.right);
+
+                // convert into address
+                if (lhs.value_type == LVALUE_SYMBOL) {
+                    lhs = (IRVal){
+                        .value_type = LVALUE,
+                        .reg = tb_inst_get_symbol_address(func, lhs.sym),
+                    };
+                }
                 assert(lhs.value_type == LVALUE);
 
                 if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
@@ -1403,6 +1409,14 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
                     } else if (e->op == EXPR_MINUS_ASSIGN) {
                         TB_Reg op = tb_inst_atomic_sub(func, lhs.reg, r, TB_MEM_ORDER_SEQ_CST);
                         op = tb_inst_sub(func, op, r, 0);
+
+                        return (IRVal){
+                            .value_type = RVALUE,
+                            .reg = op,
+                        };
+                    } else if (e->op == EXPR_AND_ASSIGN) {
+                        TB_Reg op = tb_inst_atomic_and(func, lhs.reg, r, TB_MEM_ORDER_SEQ_CST);
+                        op = tb_inst_and(func, op, r);
 
                         return (IRVal){
                             .value_type = RVALUE,

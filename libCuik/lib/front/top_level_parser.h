@@ -454,18 +454,6 @@ Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict 
 
         if (cuikdg_error_count(s)) break;
 
-        // do record layouts and shi
-        resolve_pending_exprs(&parser);
-        CUIK_FOR_TYPES(type, parser.types) {
-            assert(type->align != -1);
-
-            if (type->size == 0 || !type->is_complete) {
-                type_layout2(&parser, type, true);
-            }
-        }
-
-        if (cuikdg_error_count(s)) break;
-
         // parse all global declarations
         nl_strmap_for(i, parser.globals.symbols) {
             Symbol* sym = &parser.globals.symbols[i];
@@ -492,6 +480,18 @@ Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict 
 
                 // finalize use list
                 sym->stmt->decl.first_symbol = symbol_chain_start;
+            }
+        }
+
+        if (cuikdg_error_count(s)) break;
+
+        // do record layouts and shi
+        resolve_pending_exprs(&parser);
+        CUIK_FOR_TYPES(type, parser.types) {
+            assert(type->align != -1);
+
+            if (type->size == 0 || !type->is_complete) {
+                type_layout2(&parser, type, true);
             }
         }
 

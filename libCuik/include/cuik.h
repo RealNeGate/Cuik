@@ -82,10 +82,6 @@ void cuik_free_thread_resources(void);
 // operation meaning that once it's only done once for the process.
 void cuik_find_system_deps(const char* cuik_crt_directory);
 
-// can only be called after cuik_find_system_deps
-size_t cuik_get_system_search_path_count(void);
-void cuik_get_system_search_paths(const char** out, size_t n);
-
 ////////////////////////////////////////////
 // Compilation unit management
 ////////////////////////////////////////////

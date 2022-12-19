@@ -1615,7 +1615,7 @@ static void sema_mark_children(TranslationUnit* tu, Expr* restrict e) {
 static void sema_task(void* arg) {
     SemaTaskInfo task = *((SemaTaskInfo*)arg);
 
-    CUIK_TIMED_BLOCK("sema: %zu-%zu", task.start, task.end) {
+    CUIK_TIMED_BLOCK("sema") {
         in_the_semantic_phase = true;
 
         for (size_t i = task.start; i < task.end; i++) {

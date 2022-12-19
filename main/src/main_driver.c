@@ -1,9 +1,7 @@
 #include <cuik.h>
 #include "helper.h"
 #include "cli_parser.h"
-#include "json_perf.h"
-#include "flint_perf.h"
-#include "bindgen.h"
+#include "spall_perf.h"
 #include <dyn_array.h>
 
 // Microsoft's definition of strtok_s actually matches
@@ -68,7 +66,6 @@ static bool args_use_syslinker = true;
 static Cuik_ParseVersion args_version = CUIK_VERSION_C23;
 static int args_threads = -1;
 
-static Bindgen* args_bindgen;
 static int args_opt_level;
 
 static TB_Module* mod;
@@ -253,7 +250,7 @@ static void irgen_job(void* arg) {
     };
     enum { PASS_COUNT = sizeof(passes) / sizeof(passes[0]) };
 
-    CUIK_TIMED_BLOCK("IrGen: %zu", task.count) {
+    CUIK_TIMED_BLOCK("IRGen") {
         size_t i = 0;
         while (i < task.count) {
             // skip all the typedefs
@@ -268,16 +265,16 @@ static void irgen_job(void* arg) {
                 // these are untracked in the gen ir because they don't map to named IR stuff
                 sym = cuikcg_top_level(task.tu, mod, task.stmts[i]);
             } else {
-                CUIK_TIMED_BLOCK("IrGen: %s", name) {
+                CUIK_TIMED_BLOCK_ARGS("FunctionIR", name) {
                     sym = cuikcg_top_level(task.tu, mod, task.stmts[i]);
                 }
             }
 
             TB_Function* func = tb_symbol_as_function(sym);
             if (func != NULL && args_opt_level == 0) {
-                CUIK_TIMED_BLOCK("Canonicalize: %s", name) {
+                CUIK_TIMED_BLOCK_ARGS("Canonicalize", name) {
                     for (size_t j = 0; j < PASS_COUNT; j++) {
-                        CUIK_TIMED_BLOCK("Opt%s", passes[j].name, name) {
+                        CUIK_TIMED_BLOCK_ARGS(passes[j].name, name) {
                             passes[j].func_run(func);
                         }
                     }
@@ -360,26 +357,6 @@ static Cuik_CPP* make_preprocessor(const char* filepath, bool should_finalize) {
         return NULL;
     }
 
-    if (args_bindgen != NULL) {
-        cuik_lock_compilation_unit(&compilation_unit);
-
-        // include any of the files that are directly included by the original file
-        /*CUIKPP_FOR_FILES(it, cpp) {
-            if (it.file->depth == 2) {
-                args_bindgen->include(it.file->filepath);
-            }
-        }
-
-        TokenStream* tokens = cuikpp_get_token_stream(cpp);
-        CUIKPP_FOR_DEFINES(it, cpp) {
-            if (cuikpp_is_in_main_file(tokens, it.loc.start)) {
-                args_bindgen->define(it);
-            }
-        }*/
-
-        cuik_unlock_compilation_unit(&compilation_unit);
-    }
-
     if (should_finalize) {
         cuikpp_finalize(cpp);
     }
@@ -411,7 +388,7 @@ static void preproc_file(void* arg) {
 static void compile_file(void* arg) {
     Cuik_ParseResult result;
     TokenStream* tokens = cuikpp_get_token_stream(arg);
-    CUIK_TIMED_BLOCK("parse: %s\n", cuikpp_get_main_file(tokens)) {
+    CUIK_TIMED_BLOCK_ARGS("parse", cuikpp_get_main_file(tokens)) {
         result = cuikparse_run(args_version, tokens, target_desc);
         if (result.error_count > 0) {
             printf("Failed to parse with %d errors...\n", result.error_count);
@@ -440,27 +417,6 @@ static void compile_file(void* arg) {
 
     cuik_set_translation_unit_user_data(tu, arg /* the preprocessor */);
     cuik_add_to_compilation_unit(&compilation_unit, tu);
-
-    /*
-    if (args_bindgen != NULL) {
-        cuik_lock_compilation_unit(&compilation_unit);
-        TokenStream* tokens = cuikpp_get_token_stream(cpp);
-
-        args_bindgen->file(cuikpp_get_main_file(tokens));
-
-        DefinedTypeEntry* defined_types = NULL;
-        CUIK_FOR_TOP_LEVEL_STMT(it, tu, 1) {
-            Stmt* s = *it.start;
-            if (cuikpp_is_in_main_file(tokens, s->loc.start)) {
-                args_bindgen->decl(tu, &defined_types, s);
-            }
-        }
-
-        cuik_unlock_compilation_unit(&compilation_unit);
-    }
-
-    cuik_set_translation_unit_user_data(tu, cpp);
-    cuik_add_to_compilation_unit(&compilation_unit, tu);*/
 }
 
 static bool str_ends_with(const char* cstr, const char* postfix) {
@@ -570,7 +526,7 @@ static bool subsystem_windows = false;
 static void irgen(void) {
     TIMESTAMP("IR generation");
 
-    CUIK_TIMED_BLOCK("IR generation") {
+    CUIK_TIMED_BLOCK("IRGen") {
         if (ithread_pool != NULL) {
             #if CUIK_ALLOW_THREADS
             size_t task_capacity = 0;
@@ -855,7 +811,12 @@ static bool export_output(void) {
 }
 
 // returns status code
-static int run_compiler(threadpool_t* thread_pool, bool destroy_cu_after_ir) {
+#if CUIK_ALLOW_THREADS
+static int run_compiler(threadpool_t* thread_pool, bool destroy_cu_after_ir)
+#else
+static int run_compiler(bool destroy_cu_after_ir)
+#endif
+{
     files_with_errors = 0;
 
     ////////////////////////////////
@@ -1090,7 +1051,13 @@ int main(int argc, char** argv) {
             case ARG_THINK: args_think = true; break;
             case ARG_BASED: args_use_syslinker = false; break;
             case ARG_TIME: args_time = true; break;
+            #if CUIK_ALLOW_THREADS
             case ARG_THREADS: args_threads = calculate_worker_thread_count(); break;
+            #else
+            case ARG_THREADS:
+            printf("warning: Cuik was not built with threading support, this option will be ignored.\n");
+            break;
+            #endif
             case ARG_DEBUG: args_debug_info = true; break;
             case ARG_EMITIR: args_ir = true; break;
             case ARG_NOLIBC: args_nocrt = true; break;
@@ -1193,13 +1160,21 @@ int main(int argc, char** argv) {
             printf("OUTPUT OF %s:\n", input_files[0]);
 
             cuik_create_compilation_unit(&compilation_unit);
+            #if CUIK_ALLOW_THREADS
             run_compiler(thread_pool, true);
+            #else
+            run_compiler(true);
+            #endif
         } while (live_compile_watch(&l));
     } else {
         cuik_create_compilation_unit(&compilation_unit);
 
         uint64_t start_time = args_verbose ? cuik_time_in_nanos() : 0;
+        #if CUIK_ALLOW_THREADS
         int status = run_compiler(thread_pool, true);
+        #else
+        int status = run_compiler(true);
+        #endif
 
         TIMESTAMP("Done");
         if (args_verbose) {
@@ -1240,7 +1215,9 @@ int main(int argc, char** argv) {
                 printf("]");
             }
 
+            #if CUIK_ALLOW_THREADS
             thrd_yield();
+            #endif
         }
         printf("\n");
     }

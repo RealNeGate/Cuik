@@ -423,7 +423,7 @@ Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
                 slot->include_guard = (struct CPPIncludeGuard){ 0 };
 
                 if (cuikperf_is_active()) {
-                    cuikperf_region_start(cuik_time_in_nanos(), "preprocess: %s", slot->filepath);
+                    cuikperf_region_start(cuik_time_in_nanos(), "preprocess", slot->filepath);
                 }
 
                 packet->tag = CUIKPP_PACKET_GET_FILE;
@@ -562,7 +562,7 @@ Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
     } else if (ctx->state1 == CUIK__CPP_GET_FILE) {
         const char* filepath = packet->file.input_path;
         if (cuikperf_is_active()) {
-            cuikperf_region_start(cuik_time_in_nanos(), "preprocess: %s", filepath);
+            cuikperf_region_start(cuik_time_in_nanos(), "preprocess", filepath);
         }
 
         #if CUIK__CPP_STATS
