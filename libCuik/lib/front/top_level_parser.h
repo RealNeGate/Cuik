@@ -443,8 +443,6 @@ Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict 
     }
     THROW_IF_ERROR();
 
-    check_for_entry(parser.tu, &parser.globals);
-
     if (only_code_index) {
         // convert to translation unit
         parser.tu = malloc(sizeof(TranslationUnit));
@@ -457,6 +455,8 @@ Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict 
             .types = parser.types,
             .globals = parser.globals,
         };
+
+        check_for_entry(parser.tu, &parser.globals);
         return (Cuik_ParseResult){ .tu = parser.tu, .imports = parser.import_libs };
     }
 
@@ -596,6 +596,7 @@ Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict 
     nl_strmap_free(parser.unresolved_symbols);
     THROW_IF_ERROR();
 
+    check_for_entry(parser.tu, &parser.globals);
     return (Cuik_ParseResult){ .tu = parser.tu, .imports = parser.import_libs };
 }
 #undef THROW_IF_ERROR
