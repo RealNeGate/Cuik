@@ -13,10 +13,7 @@
 //   * unused AST nodes do not NEED be compiled.
 //
 #pragma once
-#include <stdint.h>
-#include <stdbool.h>
-#include <stdio.h>
-#include <stdlib.h>
+#include "cuik_prelude.h"
 #include <tb.h>
 
 // returns NULL on failure

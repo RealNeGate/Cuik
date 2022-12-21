@@ -26,11 +26,7 @@
 //  * add qualifiers to type pretty printer
 //
 #pragma once
-#include <stdint.h>
-#include <stdbool.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <assert.h>
+#include "cuik_prelude.h"
 
 typedef char* Atom;
 typedef struct Expr Expr;
@@ -715,15 +711,15 @@ typedef struct TranslationUnit TranslationUnit;
 
 // returns the number of errors in this phase.
 // if thread_pool is non-NULL the type checking will be parallelized
-int cuiksema_run(TranslationUnit* restrict tu, Cuik_IThreadpool* restrict thread_pool);
+CUIK_API int cuiksema_run(TranslationUnit* restrict tu, Cuik_IThreadpool* restrict thread_pool);
 
 ////////////////////////////////////////////
 // Pretty printers
 ////////////////////////////////////////////
-void cuik_dump_translation_unit(FILE* stream, TranslationUnit* tu, bool minimalist);
+CUIK_API void cuik_dump_translation_unit(FILE* stream, TranslationUnit* tu, bool minimalist);
 
-void cuik_dump(FILE* stream, size_t count, Stmt** top_level, bool minimalist);
-void cuik_dump_expr(FILE* stream, Expr* e, int depth);
+CUIK_API void cuik_dump(FILE* stream, size_t count, Stmt** top_level, bool minimalist);
+CUIK_API void cuik_dump_expr(FILE* stream, Expr* e, int depth);
 
 ////////////////////////////////////////////
 // Iterators
@@ -752,5 +748,5 @@ for (Cuik_StmtIter it = { .parent = (parent_) }; cuik_next_stmt_kid(&it);)
 #define CUIK_FOR_KID_IN_EXPR(it, parent_) \
 for (Cuik_ExprIter it = { .parent = (parent_) }; cuik_next_expr_kid(&it);)
 
-bool cuik_next_expr_kid(Cuik_ExprIter* it);
-bool cuik_next_stmt_kid(Cuik_StmtIter* it);
+CUIK_API bool cuik_next_expr_kid(Cuik_ExprIter* it);
+CUIK_API bool cuik_next_stmt_kid(Cuik_StmtIter* it);

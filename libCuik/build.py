@@ -7,6 +7,7 @@ import argparse
 parser = argparse.ArgumentParser(description='Compiles TB')
 parser.add_argument('--usetb', action='store_true', help='compiles with the TB integration code')
 parser.add_argument('--opt', action='store_true', help='runs optimize on compiled source')
+parser.add_argument('--shared', action='store_true', help='compile shared object')
 parser.add_argument('--asan', action='store_true', help='compile with ASAN')
 
 args = parser.parse_args()
@@ -22,6 +23,9 @@ source_patterns = [
 
 ninja = open('build.ninja', 'w')
 cflags = "-g -I include -I lib -I deps -Wall -Werror -Wno-unused-function -Wno-unused-variable"
+
+if args.shared:
+	cflags += " -DCUIK_USE_DLL"
 
 if args.opt:
 	cflags += " -O2 -DNDEBUG"
@@ -54,10 +58,14 @@ rule cc
   command = clang $in $cflags -MD -MF $out.d -c -o $out
   description = CC $in $out
 
+rule shared_obj
+  command = clang $in $ldflags -g -o $out -shared
+  description = LINK $out
 """)
 
 if os_name == "Windows":
 	lib_ext = ".lib"
+	so_ext = ".dll"
 	ninja.write("""
 rule lib
   command = lib /nologo $in /out:$out
@@ -66,6 +74,7 @@ rule lib
 """)
 else:
 	lib_ext = ".a"
+	so_ext = ".so"
 	ninja.write("""
 rule lib
   command = ar -rcs $out $in
@@ -83,7 +92,11 @@ for pattern in source_patterns:
 		ninja.write(f"build bin/{obj}: cc {f}\n")
 		objs.append("bin/"+obj)
 
-ninja.write(f"build libcuik{lib_ext}: lib {' '.join(objs)}\n")
+if args.shared:
+	ninja.write(f"build libcuik{so_ext}: shared_obj {' '.join(objs)}\n")
+else:
+	ninja.write(f"build libcuik{lib_ext}: lib {' '.join(objs)}\n")
+
 ninja.close()
 
 # run ninja

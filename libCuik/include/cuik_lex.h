@@ -1,8 +1,5 @@
 #pragma once
-#include <stdint.h>
-#include <stdbool.h>
-#include <stdio.h>
-#include <stdlib.h>
+#include "cuik_prelude.h"
 
 enum {
     SourceLoc_IsMacro          = 1u << 31u,
@@ -126,52 +123,52 @@ typedef struct Cuik_DefineIter {
 
 #define CUIKPP_FOR_DEFINES(it, ctx) for (Cuik_DefineIter it = cuikpp_first_define(ctx); cuikpp_next_define(ctx, &it);)
 
-Cuik_DefineIter cuikpp_first_define(Cuik_CPP* ctx);
-bool cuikpp_next_define(Cuik_CPP* ctx, Cuik_DefineIter* src);
+CUIK_API Cuik_DefineIter cuikpp_first_define(Cuik_CPP* ctx);
+CUIK_API bool cuikpp_next_define(Cuik_CPP* ctx, Cuik_DefineIter* src);
 
 // This is an iterator for include search list in the preprocessor:
 //
 // Cuik_File* f = NULL;
 // while ((f = cuikpp_next_file(f)))
-Cuik_File* cuikpp_next_file(Cuik_CPP* ctx, Cuik_File* f);
+CUIK_API Cuik_File* cuikpp_next_file(Cuik_CPP* ctx, Cuik_File* f);
 
 ////////////////////////////////
 // Preprocessor module
 ////////////////////////////////
 // Initialize preprocessor, allocates memory which needs to be freed via cuikpp_deinit
-void cuikpp_init(Cuik_CPP* ctx, const char filepath[FILENAME_MAX]);
+CUIK_API void cuikpp_init(Cuik_CPP* ctx, const char filepath[FILENAME_MAX]);
 
 // NOTE: it doesn't own the memory for the files it may have used
 // and thus you must free them, this can be done by iterating over
 // them using CUIKPP_FOR_FILES
-void cuikpp_deinit(Cuik_CPP* ctx);
+CUIK_API void cuikpp_deinit(Cuik_CPP* ctx);
 
 // You can't preprocess any more files after this
-void cuikpp_finalize(Cuik_CPP* ctx);
+CUIK_API void cuikpp_finalize(Cuik_CPP* ctx);
 
 // returns the final token stream (should not be called if you
 // haven't finished iterating through cuikpp_next)
-TokenStream* cuikpp_get_token_stream(Cuik_CPP* ctx);
+CUIK_API TokenStream* cuikpp_get_token_stream(Cuik_CPP* ctx);
 
-Token* cuikpp_get_tokens(TokenStream* restrict s);
-size_t cuikpp_get_token_count(TokenStream* restrict s);
+CUIK_API Token* cuikpp_get_tokens(TokenStream* restrict s);
+CUIK_API size_t cuikpp_get_token_count(TokenStream* restrict s);
 
 ////////////////////////////////
 // Line info
 ////////////////////////////////
 // converts macro token to the physical token in a file
-SourceLoc cuikpp_get_physical_location(TokenStream* tokens, SourceLoc loc);
+CUIK_API SourceLoc cuikpp_get_physical_location(TokenStream* tokens, SourceLoc loc);
 
 // returns true on success
-ResolvedSourceLoc cuikpp_find_location(TokenStream* tokens, SourceLoc loc);
-ResolvedSourceLoc cuikpp_find_location2(TokenStream* tokens, Cuik_FileLoc loc);
-Cuik_FileLoc cuikpp_find_location_in_bytes(TokenStream* tokens, SourceLoc loc);
+CUIK_API ResolvedSourceLoc cuikpp_find_location(TokenStream* tokens, SourceLoc loc);
+CUIK_API ResolvedSourceLoc cuikpp_find_location2(TokenStream* tokens, Cuik_FileLoc loc);
+CUIK_API Cuik_FileLoc cuikpp_find_location_in_bytes(TokenStream* tokens, SourceLoc loc);
 
 // returns NULL on an invalid source location
-Cuik_File* cuikpp_find_file(TokenStream* tokens, SourceLoc loc);
+CUIK_API Cuik_File* cuikpp_find_file(TokenStream* tokens, SourceLoc loc);
 
 // returns NULL for non-macros
-MacroInvoke* cuikpp_find_macro(TokenStream* tokens, SourceLoc loc);
+CUIK_API MacroInvoke* cuikpp_find_macro(TokenStream* tokens, SourceLoc loc);
 
 ////////////////////////////////
 // Preprocessor coroutine
@@ -230,59 +227,59 @@ static bool cuiklex_is_macro_loc(SourceLoc loc) {
 }
 
 // simplifies whitespace for the lexer
-void cuiklex_canonicalize(size_t length, char* data);
+CUIK_API void cuiklex_canonicalize(size_t length, char* data);
 
 // Used by cuikpp_default_packet_handler, it canonicalizes paths according to the OS
 // NOTE: it doesn't guarentee the paths map to existing files.
 //
 // returns true on success
-bool cuik_canonicalize_path(char output[FILENAME_MAX], const char* input);
+CUIK_API bool cuik_canonicalize_path(char output[FILENAME_MAX], const char* input);
 
 // Iterates through all the cuikpp_next calls using cuikpp_default_packet_handler
 // and returns the final status.
-Cuikpp_Status cuikpp_default_run(Cuik_CPP* ctx);
+CUIK_API Cuikpp_Status cuikpp_default_run(Cuik_CPP* ctx);
 
 // Keep iterating through this and filling in the packets accordingly to preprocess a file.
 // returns CUIKPP_CONTINUE if it needs to keep running
-Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet);
+CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet);
 
 // Handles the default behavior of the packet written by cuikpp_next, if cache is NULL then
 // it's unused.
 //
 // returns true if it succeeded in whatever packet handling (loading the file correctly)
-bool cuikpp_default_packet_handler(Cuik_CPP* ctx, Cuikpp_Packet* packet);
+CUIK_API bool cuikpp_default_packet_handler(Cuik_CPP* ctx, Cuikpp_Packet* packet);
 
 // if target is non-NULL it'll add predefined macros based on the target.
-void cuikpp_set_common_defines(Cuik_CPP* restrict out_cpp, const Cuik_Target* target, bool use_system_includes);
+CUIK_API void cuikpp_set_common_defines(Cuik_CPP* restrict out_cpp, const Cuik_Target* target, bool use_system_includes);
 
 // is the source location in the source file (none of the includes)
-bool cuikpp_is_in_main_file(TokenStream* tokens, SourceLoc loc);
+CUIK_API bool cuikpp_is_in_main_file(TokenStream* tokens, SourceLoc loc);
 
-const char* cuikpp_get_main_file(TokenStream* tokens);
+CUIK_API const char* cuikpp_get_main_file(TokenStream* tokens);
 
 ////////////////////////////////
 // Preprocessor symbol table
 ////////////////////////////////
-bool cuikpp_find_define_cstr(Cuik_CPP* restrict c, Cuik_DefineIter* out_ref, const char* key);
-bool cuikpp_find_define(Cuik_CPP* restrict c, Cuik_DefineIter* out_ref, size_t keylen, const char key[]);
+CUIK_API bool cuikpp_find_define_cstr(Cuik_CPP* restrict c, Cuik_DefineIter* out_ref, const char* key);
+CUIK_API bool cuikpp_find_define(Cuik_CPP* restrict c, Cuik_DefineIter* out_ref, size_t keylen, const char key[]);
 // Basically just `#define key`
-void cuikpp_define_empty_cstr(Cuik_CPP* ctx, const char key[]);
-void cuikpp_define_empty(Cuik_CPP* ctx, size_t keylen, const char key[]);
+CUIK_API void cuikpp_define_empty_cstr(Cuik_CPP* ctx, const char key[]);
+CUIK_API void cuikpp_define_empty(Cuik_CPP* ctx, size_t keylen, const char key[]);
 // Basically just `#define key value`
-void cuikpp_define_cstr(Cuik_CPP* ctx, const char key[], const char value[]);
-void cuikpp_define(Cuik_CPP* ctx, size_t keylen, const char key[], size_t vallen, const char value[]);
+CUIK_API void cuikpp_define_cstr(Cuik_CPP* ctx, const char key[], const char value[]);
+CUIK_API void cuikpp_define(Cuik_CPP* ctx, size_t keylen, const char key[], size_t vallen, const char value[]);
 // Basically just `#undef key`
-bool cuikpp_undef_cstr(Cuik_CPP* ctx, const char* key);
-bool cuikpp_undef(Cuik_CPP* ctx, size_t keylen, const char* key);
+CUIK_API bool cuikpp_undef_cstr(Cuik_CPP* ctx, const char* key);
+CUIK_API bool cuikpp_undef(Cuik_CPP* ctx, size_t keylen, const char* key);
 
 ////////////////////////////////
 // Preprocessor includes
 ////////////////////////////////
 // Adds include directory to the search list
-void cuikpp_add_include_directory(Cuik_CPP* ctx, const char dir[]);
+CUIK_API void cuikpp_add_include_directory(Cuik_CPP* ctx, const char dir[]);
 
 // Locates an include file from the `path` and copies it's fully qualified path into `output`
-bool cuikpp_find_include_include(Cuik_CPP* ctx, char output[FILENAME_MAX], const char* path);
+CUIK_API bool cuikpp_find_include_include(Cuik_CPP* ctx, char output[FILENAME_MAX], const char* path);
 
 // This is an iterator for include search list in the preprocessor:
 //
@@ -299,13 +296,13 @@ typedef struct Cuik_IncludeIter {
 #define CUIKPP_FOR_INCLUDE_SEARCHES(it, ctx) \
 for (Cuik_IncludeIter it = cuikpp_first_include_search(ctx); cuikpp_next_include_search(ctx, &it);)
 
-Cuik_IncludeIter cuikpp_first_include_search(Cuik_CPP* ctx);
-bool cuikpp_next_include_search(Cuik_CPP* ctx, Cuik_IncludeIter* it);
+CUIK_API Cuik_IncludeIter cuikpp_first_include_search(Cuik_CPP* ctx);
+CUIK_API bool cuikpp_next_include_search(Cuik_CPP* ctx, Cuik_IncludeIter* it);
 
 ////////////////////////////////
 // C preprocessor pretty printer
 ////////////////////////////////
-void cuikpp_dump_defines(Cuik_CPP* ctx);
+CUIK_API void cuikpp_dump_defines(Cuik_CPP* ctx);
 
 ////////////////////////////////
 // Diagnostic engine
@@ -318,6 +315,6 @@ void cuikpp_dump_defines(Cuik_CPP* ctx);
 //
 // fixit diagnostics are added by placing a # at the start of the format string and
 // writing out a DiagFixit at the start of the var args
-void diag_note(TokenStream* tokens, SourceRange loc, const char* fmt, ...);
-void diag_warn(TokenStream* tokens, SourceRange loc, const char* fmt, ...);
-void diag_err(TokenStream* tokens, SourceRange loc, const char* fmt, ...);
+CUIK_API void diag_note(TokenStream* tokens, SourceRange loc, const char* fmt, ...);
+CUIK_API void diag_warn(TokenStream* tokens, SourceRange loc, const char* fmt, ...);
+CUIK_API void diag_err(TokenStream* tokens, SourceRange loc, const char* fmt, ...);

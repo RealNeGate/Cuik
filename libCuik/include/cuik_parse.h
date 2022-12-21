@@ -3,10 +3,7 @@
 ////////////////////////////////
 // This module can parse C code (currently C11 with Microsoft and GNU extensions)
 #pragma once
-#include <stdint.h>
-#include <stdbool.h>
-#include <stdio.h>
-#include <stdlib.h>
+#include "cuik_prelude.h"
 
 typedef enum Cuik_ExtensionFlags {
     CUIK_EXTENSIONS_MSVC  = (1u << 0u),
@@ -50,7 +47,7 @@ typedef struct Cuik_ParseResult {
     Cuik_ImportRequest* imports; // linked list of imported libs.
 } Cuik_ParseResult;
 
-Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict s, Cuik_Target* target);
+CUIK_API Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict s, Cuik_Target* target, bool only_code_index);
 
 
 
@@ -113,9 +110,9 @@ void cuik_destroy_translation_unit(TranslationUnit* restrict tu);
 // Standard parsing
 ////////////////////////////////
 // does this translation unit have a main? what type?
-Cuik_Entrypoint cuik_get_entrypoint_status(TranslationUnit* restrict tu);
+CUIK_API Cuik_Entrypoint cuik_get_entrypoint_status(TranslationUnit* restrict tu);
 
-TokenStream* cuik_get_token_stream_from_tu(TranslationUnit* restrict tu);
+CUIK_API TokenStream* cuik_get_token_stream_from_tu(TranslationUnit* restrict tu);
 
-Stmt** cuik_get_top_level_stmts(TranslationUnit* restrict tu);
-size_t cuik_num_of_top_level_stmts(TranslationUnit* restrict tu);
+CUIK_API Stmt** cuik_get_top_level_stmts(TranslationUnit* restrict tu);
+CUIK_API size_t cuik_num_of_top_level_stmts(TranslationUnit* restrict tu);

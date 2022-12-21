@@ -21,18 +21,18 @@ typedef struct Cuik_IProfiler {
 // the same time, make this false whenever plot has internal synchronization or is single threaded.
 //
 // returns the allocated userdata, call cuikperf_start to start making plots
-void* cuikperf_init(size_t ud_size, const Cuik_IProfiler* profiler, bool lock_on_plot);
-void cuikperf_start(void);
-void cuikperf_stop(void);
-bool cuikperf_is_active(void);
+CUIK_API void* cuikperf_init(size_t ud_size, const Cuik_IProfiler* profiler, bool lock_on_plot);
+CUIK_API void cuikperf_start(void);
+CUIK_API void cuikperf_stop(void);
+CUIK_API bool cuikperf_is_active(void);
 
 // the absolute values here don't have to mean anything, it's just about being able
 // to measure between two points.
-uint64_t cuik_time_in_nanos(void);
+CUIK_API uint64_t cuik_time_in_nanos(void);
 
 // Reports a region of time to the profiler callback
-void cuikperf_region_start(uint64_t now, const char* fmt, const char* extra);
-void cuikperf_region_end(void);
+CUIK_API void cuikperf_region_start(uint64_t now, const char* fmt, const char* extra);
+CUIK_API void cuikperf_region_end(void);
 
 // Usage:
 // CUIK_TIMED_BLOCK("Beans %d", 5) {

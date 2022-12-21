@@ -1,15 +1,7 @@
 #pragma once
-#include <stdint.h>
-#include <stdbool.h>
-#include <stdio.h>
-#include <stdlib.h>
+#include "cuik_prelude.h"
 
-#ifdef _WIN32
-// Microsoft's definition of strtok_s actually matches
-// strtok_r on POSIX, not strtok_s on C11... tf
-#define strtok_r(a, b, c) strtok_s(a, b, c)
-#define strdup _strdup
-#else
+#ifndef _WIN32
 int sprintf_s(char* buffer, size_t len, const char* format, ...);
 #endif
 
@@ -63,24 +55,24 @@ typedef struct Cuik_Target Cuik_Target;
 //
 // where XXX is arch, YYY is system, ZZZ is environment
 //
-Cuik_Target* cuik_target_x64(Cuik_System system, Cuik_Environment env);
-Cuik_Target* cuik_target_wasm(Cuik_System system, Cuik_Environment env);
-void cuik_free_target(Cuik_Target* target);
+CUIK_API Cuik_Target* cuik_target_x64(Cuik_System system, Cuik_Environment env);
+CUIK_API Cuik_Target* cuik_target_wasm(Cuik_System system, Cuik_Environment env);
+CUIK_API void cuik_free_target(Cuik_Target* target);
 
-Cuik_System cuik_get_target_system(const Cuik_Target* t);
-Cuik_Environment cuik_get_target_env(const Cuik_Target* t);
+CUIK_API Cuik_System cuik_get_target_system(const Cuik_Target* t);
+CUIK_API Cuik_Environment cuik_get_target_env(const Cuik_Target* t);
 
 ////////////////////////////////////////////
 // General Cuik stuff
 ////////////////////////////////////////////
-void cuik_init(void);
+CUIK_API void cuik_init(void);
 
 // This should be called before exiting
-void cuik_free_thread_resources(void);
+CUIK_API void cuik_free_thread_resources(void);
 
 // locates the system includes, libraries and other tools. this is a global
 // operation meaning that once it's only done once for the process.
-void cuik_find_system_deps(const char* cuik_crt_directory);
+CUIK_API void cuik_find_system_deps(const char* cuik_crt_directory);
 
 ////////////////////////////////////////////
 // Compilation unit management
@@ -89,14 +81,14 @@ void cuik_find_system_deps(const char* cuik_crt_directory);
 
 // if the translation units are in a compilation unit you can walk this chain of pointers
 // to read them
-TranslationUnit* cuik_next_translation_unit(TranslationUnit* restrict tu);
+CUIK_API TranslationUnit* cuik_next_translation_unit(TranslationUnit* restrict tu);
 
-void cuik_create_compilation_unit(CompilationUnit* restrict cu);
-void cuik_lock_compilation_unit(CompilationUnit* restrict cu);
-void cuik_unlock_compilation_unit(CompilationUnit* restrict cu);
-void cuik_add_to_compilation_unit(CompilationUnit* restrict cu, TranslationUnit* restrict tu);
-void cuik_destroy_compilation_unit(CompilationUnit* restrict cu);
-size_t cuik_num_of_translation_units_in_compilation_unit(CompilationUnit* restrict cu);
+CUIK_API void cuik_create_compilation_unit(CompilationUnit* restrict cu);
+CUIK_API void cuik_lock_compilation_unit(CompilationUnit* restrict cu);
+CUIK_API void cuik_unlock_compilation_unit(CompilationUnit* restrict cu);
+CUIK_API void cuik_add_to_compilation_unit(CompilationUnit* restrict cu, TranslationUnit* restrict tu);
+CUIK_API void cuik_destroy_compilation_unit(CompilationUnit* restrict cu);
+CUIK_API size_t cuik_num_of_translation_units_in_compilation_unit(CompilationUnit* restrict cu);
 
 // currently there's only two levels:
 //   0 no debug info
@@ -104,9 +96,9 @@ size_t cuik_num_of_translation_units_in_compilation_unit(CompilationUnit* restri
 //
 // we have planned a mode to treat larger macros as inline sites
 #ifdef CUIK_USE_TB
-void cuik_internal_link_compilation_unit(CompilationUnit* restrict cu, TB_Module* mod, int debug_info_level);
+CUIK_API void cuik_internal_link_compilation_unit(CompilationUnit* restrict cu, TB_Module* mod, int debug_info_level);
 #else
-void cuik_internal_link_compilation_unit(CompilationUnit* restrict cu, void* mod, int debug_info_level);
+CUIK_API void cuik_internal_link_compilation_unit(CompilationUnit* restrict cu, void* mod, int debug_info_level);
 #endif
 
 #include "cuik_perf.h"

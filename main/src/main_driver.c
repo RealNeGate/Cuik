@@ -8,6 +8,7 @@
 // strtok_r on POSIX, not strtok_s on C11... tf
 #ifdef _WIN32
 #define strtok_r(a, b, c) strtok_s(a, b, c)
+#define strdup _strdup
 #endif
 
 #ifndef __CUIK__
@@ -389,7 +390,7 @@ static void compile_file(void* arg) {
     Cuik_ParseResult result;
     TokenStream* tokens = cuikpp_get_token_stream(arg);
     CUIK_TIMED_BLOCK_ARGS("parse", cuikpp_get_main_file(tokens)) {
-        result = cuikparse_run(args_version, tokens, target_desc);
+        result = cuikparse_run(args_version, tokens, target_desc, false);
         if (result.error_count > 0) {
             printf("Failed to parse with %d errors...\n", result.error_count);
             files_with_errors++;

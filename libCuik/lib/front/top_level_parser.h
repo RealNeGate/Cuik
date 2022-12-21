@@ -375,10 +375,29 @@ static void resolve_pending_exprs(Cuik_Parser* parser) {
     }
 }
 
-Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict s, Cuik_Target* target) {
+static void check_for_entry(TranslationUnit* restrict tu, Cuik_GlobalSymbols* restrict globals) {
+    Symbol* sym = find_global_symbol(globals, "WinMain");
+    if (sym != NULL && sym->storage_class == STORAGE_FUNC && sym->token_start != 0) {
+        tu->entrypoint_status = CUIK_ENTRYPOINT_WINMAIN;
+    }
+
+    sym = find_global_symbol(globals, "wmain");
+    if (sym != NULL && sym->storage_class == STORAGE_FUNC && sym->token_start != 0) {
+        tu->entrypoint_status = CUIK_ENTRYPOINT_MAIN;
+    }
+
+    sym = find_global_symbol(globals, "main");
+    if (sym != NULL && sym->storage_class == STORAGE_FUNC && sym->token_start != 0) {
+        tu->entrypoint_status = CUIK_ENTRYPOINT_MAIN;
+    }
+}
+
+Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict s, Cuik_Target* target, bool only_code_index) {
     assert(s != NULL);
     if (version == CUIK_VERSION_GLSL) {
-        return cuikparse_run_glsl(version, s, target);
+        diag_err(s, tokens_get_range(s), "TODO");
+        return (Cuik_ParseResult){ 1 };
+        // return cuikparse_run_glsl(version, s, target);
     }
 
     int r;
@@ -423,6 +442,23 @@ Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict 
         parser.is_in_global_scope = false;
     }
     THROW_IF_ERROR();
+
+    check_for_entry(parser.tu, &parser.globals);
+
+    if (only_code_index) {
+        // convert to translation unit
+        parser.tu = malloc(sizeof(TranslationUnit));
+        *parser.tu = (TranslationUnit){
+            .filepath = s->filepath,
+            .warnings = &DEFAULT_WARNINGS,
+            .target = target,
+            .tokens = *s,
+            .top_level_stmts = parser.top_level_stmts,
+            .types = parser.types,
+            .globals = parser.globals,
+        };
+        return (Cuik_ParseResult){ .tu = parser.tu, .imports = parser.import_libs };
+    }
 
     // Phase 2: resolve top level types, layout records and
     // anything else so that we have a complete global symbol table
@@ -559,23 +595,6 @@ Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict 
     }
     nl_strmap_free(parser.unresolved_symbols);
     THROW_IF_ERROR();
-
-    {
-        Symbol* sym = find_global_symbol(&parser.globals, "WinMain");
-        if (sym != NULL && sym->storage_class == STORAGE_FUNC && sym->token_start != 0) {
-            parser.tu->entrypoint_status = CUIK_ENTRYPOINT_WINMAIN;
-        }
-
-        sym = find_global_symbol(&parser.globals, "wmain");
-        if (sym != NULL && sym->storage_class == STORAGE_FUNC && sym->token_start != 0) {
-            parser.tu->entrypoint_status = CUIK_ENTRYPOINT_MAIN;
-        }
-
-        sym = find_global_symbol(&parser.globals, "main");
-        if (sym != NULL && sym->storage_class == STORAGE_FUNC && sym->token_start != 0) {
-            parser.tu->entrypoint_status = CUIK_ENTRYPOINT_MAIN;
-        }
-    }
 
     return (Cuik_ParseResult){ .tu = parser.tu, .imports = parser.import_libs };
 }
