@@ -13,7 +13,15 @@
     return -((short) 101);
 }*/
 
-uint32_t mul_by(const uint32_t *data, size_t len, uint32_t m) {
+int regalloc(int a, int b, int c) {
+    int d = b + a;
+    int e = b + c;
+    int f = e + b;
+    int g = d + f;
+    return g;
+}
+
+/*uint32_t mul_by(const uint32_t *data, size_t len, uint32_t m) {
     uint32_t sum = 0;
     for (uint32_t i = 0; i < len - 1; i++) {
         uint32_t x = data[i], y = data[i + 1];
@@ -22,7 +30,7 @@ uint32_t mul_by(const uint32_t *data, size_t len, uint32_t m) {
     return sum;
 }
 
-/*int m(int x, int a, int d) {
+int m(int x, int a, int d) {
     int b, c, e;
     if(x > 0) {
         e = 0;
