@@ -53,6 +53,10 @@ void cuik_internal_link_compilation_unit(CompilationUnit* restrict cu, TB_Module
 void cuik_internal_link_compilation_unit(CompilationUnit* restrict cu, void* mod, int debug_info_level)
 #endif
 {
+    if (cu->head && cu->head->next == NULL) {
+        return;
+    }
+
     FOR_EACH_TU(tu, cu) {
         size_t count = dyn_array_length(tu->top_level_stmts);
         tu->ir_mod = mod;

@@ -155,7 +155,7 @@ static int calculate_worker_thread_count(void) {
     #ifdef _WIN32
     SYSTEM_INFO sysinfo;
     GetSystemInfo(&sysinfo);
-    return sysinfo.dwNumberOfProcessors - 4;
+    return (sysinfo.dwNumberOfProcessors / 4) * 3;
     #else
     return 1;
     #endif

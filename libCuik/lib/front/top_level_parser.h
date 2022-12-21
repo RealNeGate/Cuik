@@ -198,8 +198,10 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
 
             if (old_def != NULL) {
                 if (old_def->storage_class != st_class) {
-                    diag_err(s, decl.loc, "declaration previously defined.");
+                    diag_warn(s, decl.loc, "declaration previously defined.");
                     diag_note(s, old_def->loc, "see here");
+
+                    st_class = old_def->storage_class;
                 }
 
                 Cuik_Type* placeholder_space = cuik_canonical_type(old_def->type);
