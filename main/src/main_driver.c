@@ -98,10 +98,11 @@ static void initialize_targets(void) {
     target_options = dyn_array_create(TargetOption);
 
     #define M(a, b, c, d) dyn_array_put(target_options, (TargetOption){ a, b, c, d })
-    M("x64_windows_msvc", cuik_target_x64,  CUIK_SYSTEM_WINDOWS, CUIK_ENV_MSVC);
-    M("x64_macos_gnu",    cuik_target_x64,  CUIK_SYSTEM_MACOS,   CUIK_ENV_GNU);
-    M("x64_linux_gnu",    cuik_target_x64,  CUIK_SYSTEM_LINUX,   CUIK_ENV_GNU);
-    M("wasm32",           cuik_target_wasm, CUIK_SYSTEM_WEB,     CUIK_ENV_GNU);
+    M("x64_windows_msvc",         cuik_target_x64,       CUIK_SYSTEM_WINDOWS,     CUIK_ENV_MSVC);
+    M("x64_macos_gnu",            cuik_target_x64,       CUIK_SYSTEM_MACOS,       CUIK_ENV_GNU);
+    M("x64_linux_gnu",            cuik_target_x64,       CUIK_SYSTEM_LINUX,       CUIK_ENV_GNU);
+    M("aarch64_windows_msvc",     cuik_target_aarch64,   CUIK_SYSTEM_WINDOWS,     CUIK_ENV_MSVC);
+    M("wasm32",                   cuik_target_wasm,      CUIK_SYSTEM_WEB,         CUIK_ENV_GNU);
 }
 
 static void initialize_opt_passes(void) {
@@ -940,6 +941,8 @@ int main(int argc, char** argv) {
     input_objects = dyn_array_create(const char*);
     input_files = dyn_array_create(const char*);
     input_defines = dyn_array_create(const char*);
+
+    dyn_array_put(include_directories, "W:\\Workspace\\Winapi\\windows\\");
 
     // get default system
     #if defined(_WIN32)

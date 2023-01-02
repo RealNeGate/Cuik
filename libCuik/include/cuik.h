@@ -56,6 +56,7 @@ typedef struct Cuik_Target Cuik_Target;
 // where XXX is arch, YYY is system, ZZZ is environment
 //
 CUIK_API Cuik_Target* cuik_target_x64(Cuik_System system, Cuik_Environment env);
+CUIK_API Cuik_Target* cuik_target_aarch64(Cuik_System system, Cuik_Environment env);
 CUIK_API Cuik_Target* cuik_target_wasm(Cuik_System system, Cuik_Environment env);
 CUIK_API void cuik_free_target(Cuik_Target* target);
 

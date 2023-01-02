@@ -11,31 +11,12 @@ parser.add_argument('--asan', action='store_true', help='instrument code with th
 args = parser.parse_args()
 
 #######################################
-# Handle dependencies
-#######################################
-tb_args = ['py', 'build.py', 'x64', 'aarch64', 'wasm']
-libcuik_args = ['py', 'build.py', '--usetb']
-
-if args.opt:
-	tb_args.append('--opt')
-	libcuik_args.append('--opt')
-
-if args.asan:
-	tb_args.append('--asan')
-	libcuik_args.append('--asan')
-
-subprocess.check_call(tb_args, shell=True, cwd="../tilde-backend")
-subprocess.check_call(libcuik_args, shell=True, cwd="../libCuik")
-
-#######################################
 # link everything together
 #######################################
 ninja = open('build.ninja', 'w')
 ldflags = " -fuse-ld=lld-link"
 
-cflags = "-g -Wall -Werror -Wno-unused-function"
-cflags += " -I ../libCuik/include -I ../tilde-backend/include"
-cflags += " -DCUIK_USE_TB "
+cflags = "-g -Wall -Werror -Wno-unused-function -Wno-unused-variable"
 
 if args.asan:
 	cflags += " -fsanitize=address"
@@ -80,15 +61,12 @@ rule link
 objs = []
 list = glob.glob("src/*.c")
 
-if platform.system() == "Windows":
-	list.append("../c11threads/threads_msvc.c")
-
 for f in list:
 	obj = os.path.basename(f).replace('.c', '.o')
 	ninja.write(f"build bin/{obj}: cc {f}\n")
 	objs.append("bin/"+obj)
 
-ninja.write(f"build cuik{exe_ext}: link {' '.join(objs)} ../libCuik/libcuik.lib ../tilde-backend/tildebackend.lib\n")
+ninja.write(f"build jake{exe_ext}: link {' '.join(objs)}\n")
 ninja.close()
 
 subprocess.call(['ninja'])

@@ -1,0 +1,4 @@
+build:
+  echo "Hello"
+  echo "I'm bob"
+  echo "Goodbye"

@@ -14,8 +14,8 @@
 #include <windows.h>
 
 #include <GL/gl.h>
-#include "glcorearb.h"  // download from https://www.khronos.org/registry/OpenGL/api/GL/glcorearb.h
-#include "wglext.h"     // download from https://www.khronos.org/registry/OpenGL/api/GL/wglext.h
+#include <GL/glcorearb.h>  // download from https://www.khronos.org/registry/OpenGL/api/GL/glcorearb.h
+#include <GL/wglext.h>     // download from https://www.khronos.org/registry/OpenGL/api/GL/wglext.h
 // also download https://www.khronos.org/registry/EGL/api/KHR/khrplatform.h and put in "KHR" folder
 
 #define _USE_MATH_DEFINES
