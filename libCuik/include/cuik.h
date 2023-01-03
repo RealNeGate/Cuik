@@ -34,8 +34,8 @@ typedef struct Cuik_IThreadpool {
 ////////////////////////////////////////////
 typedef enum Cuik_System {
     CUIK_SYSTEM_WINDOWS,
-    CUIK_SYSTEM_MACOS,
     CUIK_SYSTEM_LINUX,
+    CUIK_SYSTEM_MACOS,
     CUIK_SYSTEM_ANDROID,
     CUIK_SYSTEM_WEB,
 } Cuik_System;
