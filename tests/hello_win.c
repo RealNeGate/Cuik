@@ -1,4 +1,4 @@
-__declspec(dllexport) extern int MessageBoxA(
+__declspec(dllimport) extern int MessageBoxA(
   void*        hWnd,
   const char*  lpText,
   const char*  lpCaption,
