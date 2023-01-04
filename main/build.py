@@ -52,7 +52,7 @@ if platform.system() == "Windows":
 	exe_ext = ".exe"
 	cflags += " -I ../c11threads -D_CRT_SECURE_NO_WARNINGS"
 	# when we're not doing ASAN, we should be using mimalloc
-	if False: # not args.asan:
+	if True: # not args.asan:
 		cflags += " -D_DLL"
 		ldflags += " ../mimalloc/out/Release/mimalloc.lib -Xlinker /include:mi_version"
 		ldflags += " -nodefaultlibs -lmsvcrt -lvcruntime -lucrt"
