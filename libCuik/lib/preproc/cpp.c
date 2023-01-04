@@ -437,6 +437,7 @@ Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
             // get back a file
             case 1: {
                 if (packet->file.length == 0) {
+                    fprintf(stderr, "\x1b[31merror\x1b[0m: file doesn't exist.\n");
                     return CUIKPP_ERROR;
                 }
 

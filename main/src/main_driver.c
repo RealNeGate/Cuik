@@ -355,7 +355,6 @@ static Cuik_CPP* make_preprocessor(const char* filepath, bool should_finalize) {
     // run the preprocessor
     if (cuikpp_default_run(cpp) == CUIKPP_ERROR) {
         // dump_tokens(stdout, cuikpp_get_token_stream(cpp));
-        files_with_errors++;
         return NULL;
     }
 
@@ -841,6 +840,11 @@ static int run_compiler(bool destroy_cu_after_ir)
         }
     }
 
+    if (files_with_errors > 0) {
+        fprintf(stderr, "%d files with %s!\n", files_with_errors, files_with_errors > 1 ? "errors" : "error");
+        return 1;
+    }
+
     TB_FeatureSet features = { 0 };
     mod = tb_module_create(
         TB_ARCH_X86_64, (TB_System) cuik_get_target_system(target_desc), &features, false
@@ -849,11 +853,6 @@ static int run_compiler(bool destroy_cu_after_ir)
     TIMESTAMP("Internal link");
     CUIK_TIMED_BLOCK("internal link") {
         cuik_internal_link_compilation_unit(&compilation_unit, mod, args_debug_info);
-    }
-
-    if (files_with_errors > 0 && dyn_array_length(input_files) > 1) {
-        fprintf(stderr, "%d files with errors!\n", files_with_errors);
-        return 1;
     }
 
     if (args_syntax_only) return 0;
