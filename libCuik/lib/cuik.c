@@ -150,12 +150,11 @@ static void set_defines(Cuik_CPP* cpp, const Cuik_Target* target, bool system_li
     if (target->system == CUIK_SYSTEM_WINDOWS) {
         // WinSDK includes
         char filepath[FILENAME_MAX];
-        /*if (snprintf(filepath, FILENAME_MAX, "%swindows.zip\\", cuik__core_dir) > FILENAME_MAX) {
+        if (snprintf(filepath, FILENAME_MAX, "%swindows.zip\\", cuik__core_dir) > FILENAME_MAX) {
             printf("internal compiler error: WinSDK directory too long!\n");
             abort();
         }
         cuikpp_add_include_directory(cpp, filepath);
-        cuikpp_add_include_directory(cpp, "W:\\Workspace\\Winapi\\windows\\");*/
 
         #ifdef _WIN32
         /*if (snprintf(filepath, FILENAME_MAX, "%S\\um\\", cuik__vswhere.windows_sdk_include) > FILENAME_MAX) {
