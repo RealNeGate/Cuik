@@ -45,14 +45,6 @@ static uint64_t hash_ident(const void* key, size_t len) {
     return (h ^ (h >> 16));
 }
 
-void atoms_init(void) {
-    interner_len = 0;
-}
-
-void atoms_deinit(void) {
-    arena_free(&atoms_arena);
-}
-
 void atoms_dump_stats(void) {
     printf("Atoms arena: %zu MB\n", arena_get_memory_usage(&atoms_arena) / (1024*1024));
 }

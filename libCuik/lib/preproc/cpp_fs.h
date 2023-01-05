@@ -1,4 +1,5 @@
 #include <zip/zip.h>
+#include <front/atoms.h>
 
 typedef struct LoadResult {
     bool found;
@@ -101,36 +102,78 @@ static struct {
 
     LoadResult contents;
     struct zip_t* zip;
+
+    NL_Strmap(int) listing;
 } zip_cache;
 
-static int open_file_in_zip(Cuikpp_Packet* packet, const char* og_path, const char* path) {
+thread_local static Arena str_arena;
+
+static int get_file_in_zip(Cuikpp_Packet* packet, const char* og_path, const char* path) {
     // we do a little trolling... essentially the windows file system is SOOOO BADD
     // that using a fucking ZIP file to store my stuff is not even that bad of an idea.
     char tmp[FILENAME_MAX];
-    snprintf(tmp, FILENAME_MAX, "%.*s", (int)(path - og_path) - 1, og_path);
-    for (size_t i = 0; i < FILENAME_MAX; i++) {
+    int zip_path_len = snprintf(tmp, FILENAME_MAX, "%.*s", (int)(path - og_path) - 1, og_path);
+
+    char* newpath = tmp + zip_path_len + 1;
+    strncpy(newpath, path, FILENAME_MAX - (zip_path_len + 1));
+
+    int total = zip_path_len + strlen(path) + 1;
+    for (size_t i = 0; i < total; i++) {
         if (tmp[i] == '\\') tmp[i] = '/';
         if (tmp[i] >= 'A' && tmp[i] <= 'Z') tmp[i] -= ('A' - 'a');
     }
 
     if (strcmp(tmp, zip_cache.path) != 0) {
         // Invalidate old zip
-        if (zip_cache.zip != NULL) {
-            printf("[LOG] invalidating old zip: %s\n", tmp);
-            zip_close(zip_cache.zip);
+        CUIK_TIMED_BLOCK("invalidate_old_zip") {
+            if (zip_cache.zip != NULL) {
+                printf("[LOG] invalidating old zip: %s\n", tmp);
+                zip_close(zip_cache.zip);
+            }
+
+            strcpy_s(zip_cache.path, FILENAME_MAX, tmp);
         }
 
-        strcpy_s(zip_cache.path, FILENAME_MAX, tmp);
+        CUIK_TIMED_BLOCK("zip_open") {
+            zip_cache.zip = zip_open(zip_cache.path, 0, 'r');
+            if (zip_cache.zip == NULL) {
+                packet->query.found = false;
+                return -1;
+            }
+        }
 
-        zip_cache.zip = zip_open(zip_cache.path, 0, 'r');
-        if (zip_cache.zip == NULL) {
-            packet->query.found = false;
-            return -1;
+        CUIK_TIMED_BLOCK("zip_index") {
+            size_t n = zip_entries_total(zip_cache.zip);
+            for (size_t i = 0; i < n; ++i) {
+                zip_entry_openbyindex(zip_cache.zip, i);
+                const char* name = zip_entry_name(zip_cache.zip);
+
+                if (!zip_entry_isdir(zip_cache.zip)) {
+                    size_t len = strlen(name);
+                    Atom newstr = arena_alloc(&str_arena, len + 1, 1);
+
+                    for (size_t j = 0; j < len; j++) {
+                        if (name[j] == '\\') {
+                            newstr[j] = '/';
+                        } else if (name[j] >= 'A' && name[j] <= 'Z') {
+                            newstr[j] = name[j] - ('A' - 'a');
+                        } else {
+                            newstr[j] = name[j];
+                        }
+                    }
+                    newstr[len] = 0;
+
+                    // printf("  %s\n", newstr);
+                    nl_strmap_put_cstr(zip_cache.listing, newstr, i);
+                }
+                zip_entry_close(zip_cache.zip);
+            }
         }
     }
 
     // Load file from ZIP
-    return zip_entry_open(zip_cache.zip, path);
+    ptrdiff_t i = nl_strmap_get_cstr(zip_cache.listing, newpath);
+    return i >= 0 ? zip_cache.listing[i] : -1;
 }
 
 // cache is NULLable and if so it won't use it
@@ -142,15 +185,23 @@ bool cuikpp_default_packet_handler(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
             PathPieceType t;
             path = read_path(&t, path);
             if (t == PATH_ZIP) {
-                if (open_file_in_zip(packet, og_path, path) == 0) {
+                CUIK_TIMED_BLOCK("zip_read") {
+                    int i = get_file_in_zip(packet, og_path, path);
+                    assert(i >= 0);
+
                     struct zip_t* zip = zip_cache.zip;
+                    zip_entry_openbyindex(zip, i);
 
                     size_t size = zip_entry_size(zip);
                     void* buf = cuik__valloc((size + 16 + 4095) & ~4095);
-                    zip_entry_noallocread(zip, (void*) buf, size);
-                    zip_entry_close(zip_cache.zip);
+                    CUIK_TIMED_BLOCK("zip_entry_noallocread") {
+                        zip_entry_noallocread(zip, (void*) buf, size);
+                    }
 
-                    cuiklex_canonicalize(size, buf);
+                    zip_entry_close(zip_cache.zip);
+                    CUIK_TIMED_BLOCK("cuiklex_canonicalize") {
+                        cuiklex_canonicalize(size, buf);
+                    }
                     packet->file.length = size;
                     packet->file.data = buf;
                 }
@@ -159,8 +210,14 @@ bool cuikpp_default_packet_handler(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
             }
         }
 
-        LoadResult file = get_file(packet->file.input_path);
-        cuiklex_canonicalize(file.length, file.data);
+        LoadResult file;
+        CUIK_TIMED_BLOCK("get_file") {
+            file = get_file(packet->file.input_path);
+        }
+
+        CUIK_TIMED_BLOCK("cuiklex_canonicalize") {
+            cuiklex_canonicalize(file.length, file.data);
+        }
 
         packet->file.length = file.length;
         packet->file.data = file.data;
@@ -174,11 +231,7 @@ bool cuikpp_default_packet_handler(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
             PathPieceType t;
             path = read_path(&t, path);
             if (t == PATH_ZIP) {
-                if (open_file_in_zip(packet, og_path, path) == 0) {
-                    packet->query.found = true;
-                    zip_entry_close(zip_cache.zip);
-                }
-
+                packet->query.found = (get_file_in_zip(packet, og_path, path) >= 0);
                 return true;
             }
         }

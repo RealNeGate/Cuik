@@ -322,7 +322,6 @@ static void phase3_parse_task(void* arg) {
     reset_global_parser_state();
 
     tls_init();
-    atoms_init();
 
     // allocate the local symbol tables
     if (local_symbols == NULL) {
@@ -728,7 +727,6 @@ TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* res
     #endif
 
     tls_init();
-    atoms_init();
     mtx_init(&tu->arena_mutex, mtx_plain);
     mtx_init(&tu->diag_mutex, mtx_plain);
 
