@@ -3,6 +3,7 @@
 
 // internal globals to Cuik
 char cuik__include_dir[FILENAME_MAX];
+char cuik__core_dir[FILENAME_MAX];
 
 #ifdef _WIN32
 #include "back/microsoft_craziness.h"
@@ -47,6 +48,7 @@ void cuik_find_system_deps(const char* cuik_crt_directory) {
     cuik__vswhere = cuik__find_visual_studio_and_windows_sdk();
     #endif
 
+    sprintf_s(cuik__core_dir, FILENAME_MAX, "%s"SLASH"crt"SLASH, cuik_crt_directory);
     sprintf_s(cuik__include_dir, FILENAME_MAX, "%s"SLASH"crt"SLASH"include"SLASH, cuik_crt_directory);
 }
 
@@ -146,11 +148,17 @@ static void set_defines(Cuik_CPP* cpp, const Cuik_Target* target, bool system_li
 
     // platform specific stuff
     if (target->system == CUIK_SYSTEM_WINDOWS) {
-        #ifdef _WIN32
         // WinSDK includes
         char filepath[FILENAME_MAX];
+        /*if (snprintf(filepath, FILENAME_MAX, "%swindows.zip\\", cuik__core_dir) > FILENAME_MAX) {
+            printf("internal compiler error: WinSDK directory too long!\n");
+            abort();
+        }
+        cuikpp_add_include_directory(cpp, filepath);
+        cuikpp_add_include_directory(cpp, "W:\\Workspace\\Winapi\\windows\\");*/
 
-        if (snprintf(filepath, FILENAME_MAX, "%S\\um\\", cuik__vswhere.windows_sdk_include) > FILENAME_MAX) {
+        #ifdef _WIN32
+        /*if (snprintf(filepath, FILENAME_MAX, "%S\\um\\", cuik__vswhere.windows_sdk_include) > FILENAME_MAX) {
             printf("internal compiler error: WinSDK include directory too long!\n");
             abort();
         }
@@ -160,7 +168,7 @@ static void set_defines(Cuik_CPP* cpp, const Cuik_Target* target, bool system_li
             printf("internal compiler error: WinSDK include directory too long!\n");
             abort();
         }
-        cuikpp_add_include_directory(cpp, filepath);
+        cuikpp_add_include_directory(cpp, filepath);*/
 
         // VS include
         if (snprintf(filepath, FILENAME_MAX, "%S\\", cuik__vswhere.vs_include_path) > FILENAME_MAX) {
@@ -209,8 +217,10 @@ static void set_defines(Cuik_CPP* cpp, const Cuik_Target* target, bool system_li
         cuikpp_define_cstr(cpp, "__inline", "inline");
         cuikpp_define_cstr(cpp, "__forceinline", "inline");
         cuikpp_define_cstr(cpp, "__signed__", "signed");
+        cuikpp_define_cstr(cpp, "__restrict__", "restrict");
         cuikpp_define_cstr(cpp, "__alignof", "_Alignof");
         cuikpp_define_cstr(cpp, "__CRTDECL", "__cdecl");
+        cuikpp_define_empty_cstr(cpp, "__CRT__NO_INLINE");
 
         // things we don't handle yet so we just remove them
         cuikpp_define_empty_cstr(cpp, "_Frees_ptr_");

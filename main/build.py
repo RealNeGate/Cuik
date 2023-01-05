@@ -13,15 +13,17 @@ args = parser.parse_args()
 #######################################
 # Handle dependencies
 #######################################
+tb_args = ['make']
 libcuik_args = ['py', 'build.py', '--usetb']
 
 if args.opt:
+	tb_args.append('OPT=2')
 	libcuik_args.append('--opt')
 
 if args.asan:
 	libcuik_args.append('--asan')
 
-subprocess.check_call(['make'], shell=True, cwd="../tilde-backend")
+subprocess.check_call(tb_args, shell=True, cwd="../tilde-backend")
 subprocess.check_call(libcuik_args, shell=True, cwd="../libCuik")
 
 #######################################
@@ -49,7 +51,7 @@ if platform.system() == "Windows":
 	exe_ext = ".exe"
 	cflags += " -I ../c11threads -D_CRT_SECURE_NO_WARNINGS"
 	# when we're not doing ASAN, we should be using mimalloc
-	if False: # not args.asan:
+	if True: # not args.asan:
 		cflags += " -D_DLL"
 		ldflags += " ../mimalloc/out/Release/mimalloc.lib -Xlinker /include:mi_version"
 		ldflags += " -nodefaultlibs -lmsvcrt -lvcruntime -lucrt"

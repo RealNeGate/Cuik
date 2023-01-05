@@ -5,6 +5,7 @@ X(ARG_LIVE,    "live",     NULL,      false, "runs compiler persistently, repeat
 X(ARG_DEFINE,  "D",        "define",  true,  "defines a macro before compiling")
 X(ARG_UNDEF,   "U",        "undef",   true,  "undefines a macro before compiling")
 X(ARG_INCLUDE, "I",        "include", true,  "add directory to the include searches")
+X(ARG_PPTEST,  "Pp",       NULL,      false, "test preprocessor")
 X(ARG_PREPROC, "P",        NULL,      false, "print preprocessor output to stdout")
 X(ARG_PPREPL,  "xp",       NULL,      false, "enables the preprocessor REPL environment")
 // parser

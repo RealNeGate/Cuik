@@ -60,6 +60,7 @@ static bool args_live;
 static bool args_time;
 static bool args_verbose;
 static bool args_syntax_only;
+static bool args_test_preproc;
 static bool args_debug_info;
 static bool args_preprocess;
 static bool args_think;
@@ -376,10 +377,15 @@ static void preproc_file(void* arg) {
     // preproc
     Cuik_CPP* cpp = make_preprocessor(input, true);
     if (cpp != NULL) {
-        if (ithread_pool != NULL) {
-            CUIK_CALL(ithread_pool, submit, compile_file, cpp);
+        if (args_test_preproc) {
+            // dispose the preprocessor crap now
+            free_preprocessor(cpp);
         } else {
-            compile_file(cpp);
+            if (ithread_pool != NULL) {
+                CUIK_CALL(ithread_pool, submit, compile_file, cpp);
+            } else {
+                compile_file(cpp);
+            }
         }
     } else {
         files_with_errors++;
@@ -840,6 +846,7 @@ static int run_compiler(bool destroy_cu_after_ir)
         }
     }
 
+    if (args_test_preproc) return 0;
     if (files_with_errors > 0) {
         fprintf(stderr, "%d files with %s!\n", files_with_errors, files_with_errors > 1 ? "errors" : "error");
         return 1;
@@ -940,8 +947,6 @@ int main(int argc, char** argv) {
     input_objects = dyn_array_create(const char*);
     input_files = dyn_array_create(const char*);
     input_defines = dyn_array_create(const char*);
-
-    dyn_array_put(include_directories, "W:\\Workspace\\Winapi\\windows\\");
 
     // get default system
     #if defined(_WIN32)
@@ -1050,6 +1055,7 @@ int main(int argc, char** argv) {
             case ARG_AST: args_ast = true; break;
             case ARG_ASSEMBLY: flavor = TB_FLAVOR_ASSEMBLY; break;
             case ARG_SYNTAX: args_syntax_only = true; break;
+            case ARG_PPTEST: args_test_preproc = true; break;
             case ARG_VERBOSE: args_verbose = true; break;
             case ARG_THINK: args_think = true; break;
             case ARG_BASED: args_use_syslinker = false; break;

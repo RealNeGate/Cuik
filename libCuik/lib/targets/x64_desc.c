@@ -7,14 +7,14 @@ static thread_local char temp_string0[1024], temp_string1[1024];
 static void set_defines(const Cuik_Target* target, Cuik_CPP* cpp) {
     target_generic_set_defines(cpp, target->system, true, true);
 
+    cuikpp_define_cstr(cpp, "__x86_64__", "1");
+    cuikpp_define_cstr(cpp, "__amd64",    "1");
+    cuikpp_define_cstr(cpp, "__amd64__",  "1");
+
     if (target->system == CUIK_SYSTEM_WINDOWS) {
         cuikpp_define_cstr(cpp, "_M_X64", "100");
         cuikpp_define_cstr(cpp, "_AMD64_", "100");
         cuikpp_define_cstr(cpp, "_M_AMD64", "100");
-    } else if (target->system == CUIK_SYSTEM_LINUX) {
-        cuikpp_define_cstr(cpp, "__x86_64__", "1");
-        cuikpp_define_cstr(cpp, "__amd64",    "1");
-        cuikpp_define_cstr(cpp, "__amd64__",  "1");
     }
 }
 

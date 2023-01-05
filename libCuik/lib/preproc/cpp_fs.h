@@ -1,3 +1,4 @@
+#include <zip/zip.h>
 
 typedef struct LoadResult {
     bool found;
@@ -71,10 +72,93 @@ static LoadResult get_file(const char* path) {
     #endif
 }
 
+typedef enum {
+    PATH_NORMAL,  //  baz.c
+    PATH_DIR,     //  foo/
+    PATH_ZIP,     //  bar.zip/
+} PathPieceType;
+
+const char* read_path(PathPieceType* out_t, const char* str) {
+    PathPieceType t = PATH_NORMAL;
+    const char* ext = NULL;
+
+    for (; *str; str++) {
+        if (*str == '/' || *str == '\\') {
+            t = (ext+4 == str) && strncmp(ext, ".zip", 3) == 0 ? PATH_ZIP : PATH_DIR;
+            str++;
+            break;
+        } else if (*str == '.') {
+            ext = str;
+        }
+    }
+
+    *out_t = t;
+    return str;
+}
+
+static struct {
+    char path[FILENAME_MAX];
+
+    LoadResult contents;
+    struct zip_t* zip;
+} zip_cache;
+
+static int open_file_in_zip(Cuikpp_Packet* packet, const char* og_path, const char* path) {
+    // we do a little trolling... essentially the windows file system is SOOOO BADD
+    // that using a fucking ZIP file to store my stuff is not even that bad of an idea.
+    char tmp[FILENAME_MAX];
+    snprintf(tmp, FILENAME_MAX, "%.*s", (int)(path - og_path) - 1, og_path);
+    for (size_t i = 0; i < FILENAME_MAX; i++) {
+        if (tmp[i] == '\\') tmp[i] = '/';
+        if (tmp[i] >= 'A' && tmp[i] <= 'Z') tmp[i] -= ('A' - 'a');
+    }
+
+    if (strcmp(tmp, zip_cache.path) != 0) {
+        // Invalidate old zip
+        if (zip_cache.zip != NULL) {
+            printf("[LOG] invalidating old zip: %s\n", tmp);
+            zip_close(zip_cache.zip);
+        }
+
+        strcpy_s(zip_cache.path, FILENAME_MAX, tmp);
+
+        zip_cache.zip = zip_open(zip_cache.path, 0, 'r');
+        if (zip_cache.zip == NULL) {
+            packet->query.found = false;
+            return -1;
+        }
+    }
+
+    // Load file from ZIP
+    return zip_entry_open(zip_cache.zip, path);
+}
+
 // cache is NULLable and if so it won't use it
 bool cuikpp_default_packet_handler(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
     if (packet->tag == CUIKPP_PACKET_GET_FILE) {
-        // we don't cache the main file
+        const char* og_path = packet->file.input_path;
+        const char* path = og_path;
+        while (*path) {
+            PathPieceType t;
+            path = read_path(&t, path);
+            if (t == PATH_ZIP) {
+                if (open_file_in_zip(packet, og_path, path) == 0) {
+                    struct zip_t* zip = zip_cache.zip;
+
+                    size_t size = zip_entry_size(zip);
+                    void* buf = cuik__valloc((size + 16 + 4095) & ~4095);
+                    zip_entry_noallocread(zip, (void*) buf, size);
+                    zip_entry_close(zip_cache.zip);
+
+                    cuiklex_canonicalize(size, buf);
+                    packet->file.length = size;
+                    packet->file.data = buf;
+                }
+
+                return true;
+            }
+        }
+
         LoadResult file = get_file(packet->file.input_path);
         cuiklex_canonicalize(file.length, file.data);
 
@@ -82,6 +166,23 @@ bool cuikpp_default_packet_handler(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
         packet->file.data = file.data;
         return true;
     } else if (packet->tag == CUIKPP_PACKET_QUERY_FILE) {
+        // find out if the path has a zip in it
+        // TODO(NeGate): we don't handle recursive zips yet, pl0x fix
+        const char* og_path = packet->file.input_path;
+        const char* path = og_path;
+        while (*path) {
+            PathPieceType t;
+            path = read_path(&t, path);
+            if (t == PATH_ZIP) {
+                if (open_file_in_zip(packet, og_path, path) == 0) {
+                    packet->query.found = true;
+                    zip_entry_close(zip_cache.zip);
+                }
+
+                return true;
+            }
+        }
+
         #ifdef _WIN32
         packet->query.found = (GetFileAttributesA(packet->query.input_path) != INVALID_FILE_ATTRIBUTES);
         #else

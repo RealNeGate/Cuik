@@ -17,6 +17,7 @@ source_patterns = [
 	"lib/preproc/*.c",
 	"lib/front/*.c",
 	"lib/targets/*.c",
+	"lib/zip/*.c",
 	"lib/back/ir_gen.c",
 	"lib/back/linker.c"
 ]

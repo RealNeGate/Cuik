@@ -4,7 +4,7 @@
 #define MACRO_BUCKET_COUNT 1024
 
 #define THE_SHTUFFS_SIZE (32 << 20)
-#define CUIK__CPP_STATS 0
+#define CUIK__CPP_STATS 1
 
 typedef struct PragmaOnceEntry {
     char* key;
