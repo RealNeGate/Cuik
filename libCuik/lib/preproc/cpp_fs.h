@@ -284,9 +284,11 @@ bool cuikpp_default_packet_handler(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
     if (packet->tag == CUIKPP_PACKET_GET_FILE) {
         const char* og_path = packet->file.input_path;
         const char* path = og_path;
+
         while (*path) {
             PathPieceType t;
             path = read_path(&t, path);
+
             if (t == PATH_ZIP) {
                 CUIK_TIMED_BLOCK("zip_read") {
                     struct R_get_file_in_zip r = get_file_in_zip(packet, og_path, path);

@@ -334,7 +334,7 @@ static Cuik_CPP* make_preprocessor(const char* filepath, bool should_finalize) {
 
     cuikpp_set_common_defines(cpp, target_desc, !args_nocrt);
     dyn_array_for(i, include_directories) {
-        cuikpp_add_include_directory(cpp, include_directories[i]);
+        cuikpp_add_include_directory(cpp, false, include_directories[i]);
     }
 
     dyn_array_for(i, input_defines) {

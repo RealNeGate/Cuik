@@ -17,7 +17,7 @@
 
 #define NL_STRING_MAP_IMPL
 #define NL_STRING_MAP_INLINE
-#include "../string_map.h"
+#include <string_map.h>
 
 #define MAX_LOCAL_SYMBOLS (1 << 20)
 #define MAX_LOCAL_TAGS (1 << 16)

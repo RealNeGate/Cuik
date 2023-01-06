@@ -1,10 +1,13 @@
+#ifdef _WIN32
+#define strdup(s) _strdup(s)
+#endif
 
-void cuikpp_add_include_directory(Cuik_CPP* ctx, const char dir[]) {
-    #ifdef _WIN32
-    dyn_array_put(ctx->system_include_dirs, _strdup(dir));
-    #else
-    dyn_array_put(ctx->system_include_dirs, strdup(dir));
-    #endif
+void cuikpp_add_include_directory(Cuik_CPP* ctx, bool is_system, const char dir[]) {
+    Cuik_IncludeDir idir = {
+        is_system, strdup(dir)
+    };
+
+    dyn_array_put(ctx->system_include_dirs, idir);
 }
 
 Cuik_File* cuikpp_next_file(Cuik_CPP* ctx, Cuik_File* f) {
@@ -23,18 +26,12 @@ Cuik_File* cuikpp_next_file(Cuik_CPP* ctx, Cuik_File* f) {
     return &ctx->tokens.files[i];
 }
 
-Cuik_IncludeIter cuikpp_first_include_search(Cuik_CPP* ctx) {
-    return (Cuik_IncludeIter){ .directory = ctx->system_include_dirs[0] };
+CUIK_API Cuik_IncludeDir* cuikpp_get_include_dirs(Cuik_CPP* ctx) {
+    return &ctx->system_include_dirs[0];
 }
 
-bool cuikpp_next_include_search(Cuik_CPP* ctx, Cuik_IncludeIter* it) {
-    if (it->i >= dyn_array_length(ctx->system_include_dirs)) {
-        return false;
-    }
-
-    it->directory = ctx->system_include_dirs[it->i];
-    it->i += 1;
-    return true;
+CUIK_API size_t cuikpp_get_include_dir_count(Cuik_CPP* ctx) {
+    return dyn_array_length(ctx->system_include_dirs);
 }
 
 Cuik_DefineIter cuikpp_first_define(Cuik_CPP* ctx) {

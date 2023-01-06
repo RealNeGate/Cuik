@@ -4,7 +4,7 @@
 #define MACRO_BUCKET_COUNT 1024
 
 #define THE_SHTUFFS_SIZE (32 << 20)
-#define CUIK__CPP_STATS 1
+#define CUIK__CPP_STATS 0
 
 typedef struct PragmaOnceEntry {
     char* key;
@@ -25,6 +25,7 @@ struct Cuik_CPP {
 
     // powers __COUNTER__
     int unique_counter;
+    bool included_system_header;
 
     // we got a little state machine design
     // to emulate some bootleg coroutines :P
@@ -59,8 +60,8 @@ struct Cuik_CPP {
     int* include_once;
 
     // system libraries
-    // DynArray(char*)
-    char** system_include_dirs;
+    // DynArray(Cuik_IncludeDir)
+    Cuik_IncludeDir* system_include_dirs;
 
     // how deep into directive scopes (#if, #ifndef, #ifdef) is it
     int depth;

@@ -144,7 +144,7 @@ static void set_defines(Cuik_CPP* cpp, const Cuik_Target* target, bool system_li
     cuikpp_define_cstr(cpp, "static_assert", "_Static_assert");
     cuikpp_define_cstr(cpp, "typeof", "_Typeof");
 
-    cuikpp_add_include_directory(cpp, cuik__include_dir);
+    cuikpp_add_include_directory(cpp, true, cuik__include_dir);
 
     // platform specific stuff
     if (target->system == CUIK_SYSTEM_WINDOWS) {
@@ -154,7 +154,7 @@ static void set_defines(Cuik_CPP* cpp, const Cuik_Target* target, bool system_li
             printf("internal compiler error: WinSDK directory too long!\n");
             abort();
         }
-        cuikpp_add_include_directory(cpp, filepath);
+        cuikpp_add_include_directory(cpp, true, filepath);
 
         #ifdef _WIN32
         /*if (snprintf(filepath, FILENAME_MAX, "%S\\um\\", cuik__vswhere.windows_sdk_include) > FILENAME_MAX) {
@@ -174,14 +174,14 @@ static void set_defines(Cuik_CPP* cpp, const Cuik_Target* target, bool system_li
             printf("internal compiler error: VS include directory too long!\n");
             abort();
         }
-        cuikpp_add_include_directory(cpp, filepath);
+        cuikpp_add_include_directory(cpp, true, filepath);
 
         if (system_libs) {
             if (snprintf(filepath, FILENAME_MAX, "%S\\ucrt\\", cuik__vswhere.windows_sdk_include) > FILENAME_MAX) {
                 printf("internal compiler error: WinSDK include directory too long!\n");
                 abort();
             }
-            cuikpp_add_include_directory(cpp, filepath);
+            cuikpp_add_include_directory(cpp, true, filepath);
         }
         #endif
 
@@ -229,10 +229,10 @@ static void set_defines(Cuik_CPP* cpp, const Cuik_Target* target, bool system_li
         cuikpp_define_empty_cstr(cpp, "__ptr64");
     } else if (target->system == CUIK_SYSTEM_LINUX) {
         // TODO(NeGate): Automatically detect these somehow...
-        cuikpp_add_include_directory(cpp, "/usr/lib/gcc/x86_64-linux-gnu/9/include/");
-        cuikpp_add_include_directory(cpp, "/usr/include/x86_64-linux-gnu/");
-        cuikpp_add_include_directory(cpp, "/usr/local/include/");
-        cuikpp_add_include_directory(cpp, "/usr/include/");
+        cuikpp_add_include_directory(cpp, true, "/usr/lib/gcc/x86_64-linux-gnu/9/include/");
+        cuikpp_add_include_directory(cpp, true, "/usr/include/x86_64-linux-gnu/");
+        cuikpp_add_include_directory(cpp, true, "/usr/local/include/");
+        cuikpp_add_include_directory(cpp, true, "/usr/include/");
 
         // things we don't handle yet so we just remove them
         cuikpp_define_empty_cstr(cpp, "__THROWNL");

@@ -34,6 +34,7 @@ typedef struct SourceRange {
 // This is what FileIDs refer to
 typedef struct {
     const char* filename;
+    bool is_system;
 
     int depth;
     SourceLoc include_site;
@@ -152,6 +153,9 @@ CUIK_API TokenStream* cuikpp_get_token_stream(Cuik_CPP* ctx);
 
 CUIK_API Token* cuikpp_get_tokens(TokenStream* restrict s);
 CUIK_API size_t cuikpp_get_token_count(TokenStream* restrict s);
+
+CUIK_API Cuik_File* cuikpp_get_files(TokenStream* restrict s);
+CUIK_API size_t cuikpp_get_file_count(TokenStream* restrict s);
 
 ////////////////////////////////
 // Line info
@@ -276,28 +280,18 @@ CUIK_API bool cuikpp_undef(Cuik_CPP* ctx, size_t keylen, const char* key);
 // Preprocessor includes
 ////////////////////////////////
 // Adds include directory to the search list
-CUIK_API void cuikpp_add_include_directory(Cuik_CPP* ctx, const char dir[]);
+CUIK_API void cuikpp_add_include_directory(Cuik_CPP* ctx, bool is_system, const char dir[]);
 
 // Locates an include file from the `path` and copies it's fully qualified path into `output`
 CUIK_API bool cuikpp_find_include_include(Cuik_CPP* ctx, char output[FILENAME_MAX], const char* path);
 
-// This is an iterator for include search list in the preprocessor:
-//
-// Cuik_IncludeIter it = cuikpp_first_include_search(cpp);
-// while (cuikpp_next_include_search(cpp, &it)) { ... }
-typedef struct Cuik_IncludeIter {
-    // public
-    const char* directory;
+typedef struct {
+    bool is_system;
+    char* name;
+} Cuik_IncludeDir;
 
-    // internal
-    size_t i;
-} Cuik_IncludeIter;
-
-#define CUIKPP_FOR_INCLUDE_SEARCHES(it, ctx) \
-for (Cuik_IncludeIter it = cuikpp_first_include_search(ctx); cuikpp_next_include_search(ctx, &it);)
-
-CUIK_API Cuik_IncludeIter cuikpp_first_include_search(Cuik_CPP* ctx);
-CUIK_API bool cuikpp_next_include_search(Cuik_CPP* ctx, Cuik_IncludeIter* it);
+CUIK_API Cuik_IncludeDir* cuikpp_get_include_dirs(Cuik_CPP* ctx);
+CUIK_API size_t cuikpp_get_include_dir_count(Cuik_CPP* ctx);
 
 ////////////////////////////////
 // C preprocessor pretty printer
