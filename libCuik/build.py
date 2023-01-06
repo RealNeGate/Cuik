@@ -29,7 +29,7 @@ if args.shared:
 	cflags += " -DCUIK_USE_DLL"
 
 if args.opt:
-	cflags += " -O2 -DNDEBUG"
+	cflags += " -flto -O2 -DNDEBUG"
 
 if args.asan:
 	cflags += " -fsanitize=address"
@@ -100,5 +100,4 @@ else:
 
 ninja.close()
 
-# run ninja
-subprocess.call(['ninja'])
+exit(subprocess.call(['ninja']))

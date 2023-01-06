@@ -23,6 +23,7 @@ You will need Git, Python, a C compiler (not msvc but gcc and clang should work 
 git clone https://github.com/RealNeGate/Cuik
 cd Cuik/main
 python build.py
+ninja
 ```
 
 ## How am I doing?

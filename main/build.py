@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import glob
 import os
+import sys
 import platform
 import subprocess
 import argparse
@@ -13,14 +14,15 @@ args = parser.parse_args()
 #######################################
 # Handle dependencies
 #######################################
-tb_args = ['make']
-libcuik_args = ['py', 'build.py', '--usetb']
+tb_args = [sys.executable, 'build.py', 'x64', 'aarch64', 'wasm']
+libcuik_args = [sys.executable, 'build.py', '--usetb']
 
 if args.opt:
-	tb_args.append('OPT=2')
+	tb_args.append('--opt')
 	libcuik_args.append('--opt')
 
 if args.asan:
+	tb_args.append('--asan')
 	libcuik_args.append('--asan')
 
 subprocess.check_call(tb_args, shell=True, cwd="../tilde-backend")
@@ -44,7 +46,8 @@ if args.asan:
 		ldflags += " \"C:/Program Files/LLVM/lib/clang/15.0.0/lib/windows/clang_rt.asan-x86_64.lib\""
 
 if args.opt:
-	cflags += " -O2 -DNDEBUG"
+	cflags  += " -flto -O2 -DNDEBUG"
+	ldflags += " -flto"
 
 # windows' CRT doesn't support c11 threads so we provide a fallback
 if platform.system() == "Windows":
@@ -90,4 +93,4 @@ for f in list:
 ninja.write(f"build cuik{exe_ext}: link {' '.join(objs)} ../libCuik/libcuik.lib ../tilde-backend/tildebackend.lib\n")
 ninja.close()
 
-subprocess.call(['ninja'])
+exit(subprocess.call(['ninja']))

@@ -377,6 +377,16 @@ static void preproc_file(void* arg) {
     // preproc
     Cuik_CPP* cpp = make_preprocessor(input, true);
     if (cpp != NULL) {
+        // test shit, delet dis later
+        /*Cuik_File* files = cuikpp_get_files(cuikpp_get_token_stream(cpp));
+        size_t file_count = cuikpp_get_file_count(cuikpp_get_token_stream(cpp));
+
+        printf("%s: ", input);
+        for (size_t i = 0; i < file_count; i++) {
+            if (!files[i].is_system) printf("%s ", files[i].filename);
+        }
+        printf("\n");*/
+
         if (args_test_preproc) {
             // dispose the preprocessor crap now
             free_preprocessor(cpp);
