@@ -23,7 +23,7 @@ source_patterns = [
 ]
 
 ninja = open('build.ninja', 'w')
-cflags = "-g -I include -I lib -I deps -Wall -Werror -Wno-unused-function -Wno-unused-variable"
+cflags = "-g -I ../common/ -I include -I lib -I deps -Wall -Werror -Wno-unused-function -Wno-unused-variable"
 
 if args.shared:
 	cflags += " -DCUIK_USE_DLL"
@@ -35,7 +35,7 @@ if args.asan:
 	cflags += " -fsanitize=address"
 
 if args.usetb:
-	cflags += " -I ../tilde-backend/include -I ../common/ -DCUIK_USE_TB"
+	cflags += " -I ../tilde-backend/include -DCUIK_USE_TB"
 
 os_name = platform.system()
 if os_name == "Windows":

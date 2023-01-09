@@ -23,6 +23,16 @@ typedef struct String {
     const unsigned char* data;
 } String;
 
+typedef enum Cuik_IntSuffix {
+    //                u   l   l
+    INT_SUFFIX_NONE = 0 + 0 + 0,
+    INT_SUFFIX_U    = 1 + 0 + 0,
+    INT_SUFFIX_L    = 0 + 2 + 0,
+    INT_SUFFIX_UL   = 1 + 2 + 0,
+    INT_SUFFIX_LL   = 0 + 2 + 2,
+    INT_SUFFIX_ULL  = 1 + 2 + 2,
+} Cuik_IntSuffix;
+
 typedef struct SourceLoc {
     uint32_t raw;
 } SourceLoc;
@@ -136,13 +146,13 @@ CUIK_API Cuik_File* cuikpp_next_file(Cuik_CPP* ctx, Cuik_File* f);
 ////////////////////////////////
 // Preprocessor module
 ////////////////////////////////
-// Initialize preprocessor, allocates memory which needs to be freed via cuikpp_deinit
-CUIK_API void cuikpp_init(Cuik_CPP* ctx, const char filepath[FILENAME_MAX]);
+// Initialize preprocessor, allocates memory which needs to be freed via cuikpp_free
+CUIK_API Cuik_CPP* cuikpp_make(const char filepath[FILENAME_MAX]);
 
 // NOTE: it doesn't own the memory for the files it may have used
 // and thus you must free them, this can be done by iterating over
-// them using CUIKPP_FOR_FILES
-CUIK_API void cuikpp_deinit(Cuik_CPP* ctx);
+// them using CUIKPP_FOR_FILES.
+CUIK_API void cuikpp_free(Cuik_CPP* ctx);
 
 // You can't preprocess any more files after this
 CUIK_API void cuikpp_finalize(Cuik_CPP* ctx);

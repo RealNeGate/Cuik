@@ -6,18 +6,18 @@ Cuik_ParseResult cuikparse_run_glsl(Cuik_ParseVersion version, TokenStream* rest
     parser.version = version;
     parser.tokens = *s;
     parser.target = target;
-    parser.static_assertions = dyn_array_create(int);
+    parser.static_assertions = dyn_array_create(int, 2048);
     parser.types = init_type_table();
 
     // just a shorthand so it's faster to grab
     parser.default_int = (Cuik_Type*) &target->signed_ints[CUIK_BUILTIN_INT];
     parser.is_in_global_scope = true;
-    parser.top_level_stmts = dyn_array_create(Stmt*);
+    parser.top_level_stmts = dyn_array_create(Stmt*, 1024);
 
     if (pending_exprs) {
         dyn_array_clear(pending_exprs);
     } else {
-        pending_exprs = dyn_array_create(PendingExpr);
+        pending_exprs = dyn_array_create(PendingExpr, 1024);
     }
 
     // Phase 1: resolve all top level statements

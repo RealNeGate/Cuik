@@ -167,7 +167,7 @@ static TokenList convert_line_to_token_list(Cuik_CPP* restrict c, uint32_t macro
     };
 
     TokenList list = { 0 };
-    list.tokens = dyn_array_create_with_initial_cap(Token, 32);
+    list.tokens = dyn_array_create(Token, 32);
     for (;;) {
         Token t = lexer_read(&l);
         if (t.type == 0 || t.hit_line) break;
@@ -286,7 +286,7 @@ static bool subst(Cuik_CPP* restrict c, TokenList* out_tokens, uint8_t* def_str,
 
                         // replace with expanded identifier
                         TokenList scratch = {
-                            .tokens = dyn_array_create_with_initial_cap(Token, 2)
+                            .tokens = dyn_array_create(Token, 2)
                         };
                         dyn_array_put(scratch.tokens, joined);
                         dyn_array_put(scratch.tokens, (Token){ 0 });
@@ -481,7 +481,7 @@ static bool expand_ident(Cuik_CPP* restrict c, TokenList* restrict out_tokens, T
                 if (def.length > 0) {
                     MacroArgs arglist = { 0 };
                     TokenList scratch = {
-                        .tokens = dyn_array_create_with_initial_cap(Token, 16)
+                        .tokens = dyn_array_create(Token, 16)
                     };
 
                     subst(c, &scratch, (uint8_t*) def.data, &arglist, macro_id);
@@ -523,7 +523,7 @@ static bool expand_ident(Cuik_CPP* restrict c, TokenList* restrict out_tokens, T
                         size_t old = dyn_array_length(c->scratch_list.tokens);
 
                         TokenList scratch = {
-                            .tokens = dyn_array_create_with_initial_cap(Token, 16)
+                            .tokens = dyn_array_create(Token, 16)
                         };
 
                         // before expanding the child macros we need to substitute all

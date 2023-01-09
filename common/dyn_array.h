@@ -4,7 +4,6 @@
 #include <stddef.h>
 #include <stdio.h>
 #include <assert.h>
-#include <cuik.h>
 
 #define INITIAL_CAP 4096
 
@@ -57,8 +56,8 @@ static void* dyn_array_internal_trim(void* ptr, size_t type_size) {
 }
 
 #define DynArray(T) T*
-#define dyn_array_create(T) dyn_array_internal_create(sizeof(T), INITIAL_CAP)
-#define dyn_array_create_with_initial_cap(T, cap) dyn_array_internal_create(sizeof(T), cap)
+#define dyn_array_create(T, cap) dyn_array_internal_create(sizeof(T), cap)
+#define dyn_array_create_defcap(T) dyn_array_internal_create(sizeof(T), INITIAL_CAP)
 #define dyn_array_destroy(arr) (dyn_array_internal_destroy(arr), (arr) = NULL)
 #define dyn_array_pop(arr) ((arr)[(((DynArrayHeader*)(arr)) - 1)->size -= 1])
 

@@ -1,5 +1,6 @@
 #pragma once
 #include "cuik_prelude.h"
+#include <dyn_array.h>
 
 #ifndef _WIN32
 int sprintf_s(char* buffer, size_t len, const char* format, ...);
@@ -106,6 +107,7 @@ CUIK_API void cuik_internal_link_compilation_unit(CompilationUnit* restrict cu, 
 #include "cuik_lex.h"
 #include "cuik_ast.h"
 #include "cuik_parse.h"
+#include "cuik_driver.h"
 
 #ifdef CUIK_USE_TB
 #include "cuik_irgen.h"

@@ -1,6 +1,5 @@
 #include <cuik.h>
 #include "helper.h"
-#include "cli_parser.h"
 #include "spall_perf.h"
 #include <dyn_array.h>
 
@@ -96,7 +95,7 @@ static void exit_or_hook(int code) {
 }
 
 static void initialize_targets(void) {
-    target_options = dyn_array_create(TargetOption);
+    target_options = dyn_array_create(TargetOption, 32);
 
     #define M(a, b, c, d) dyn_array_put(target_options, (TargetOption){ a, b, c, d })
     M("x64_windows_msvc",         cuik_target_x64,       CUIK_SYSTEM_WINDOWS,     CUIK_ENV_MSVC);
@@ -107,7 +106,7 @@ static void initialize_targets(void) {
 }
 
 static void initialize_opt_passes(void) {
-    da_passes = dyn_array_create(TB_Pass);
+    da_passes = dyn_array_create(TB_Pass, 32);
 
     if (args_opt_level) {
         dyn_array_put(da_passes, tb_opt_hoist_locals());
@@ -323,51 +322,6 @@ static void codegen_job(void* arg) {
     #if CUIK_ALLOW_THREADS
     if (task.remaining != NULL) *task.remaining -= 1;
     #endif
-}
-
-// it'll use the normal CLI crap to do so
-static Cuik_CPP* make_preprocessor(const char* filepath, bool should_finalize) {
-    Cuik_CPP* cpp = malloc(sizeof(Cuik_CPP));
-    CUIK_TIMED_BLOCK("cuikpp_init") {
-        cuikpp_init(cpp, filepath);
-    }
-
-    cuikpp_set_common_defines(cpp, target_desc, !args_nocrt);
-    dyn_array_for(i, include_directories) {
-        cuikpp_add_include_directory(cpp, false, include_directories[i]);
-    }
-
-    dyn_array_for(i, input_defines) {
-        const char* equal = strchr(input_defines[i], '=');
-
-        if (equal == NULL) {
-            cuikpp_define_empty_cstr(cpp, input_defines[i]);
-        } else {
-            cuikpp_define(
-                cpp,
-                // before equals
-                equal - input_defines[i], input_defines[i],
-                // after equals
-                strlen(equal + 1), equal + 1
-            );
-        }
-    }
-
-    // run the preprocessor
-    if (cuikpp_default_run(cpp) == CUIKPP_ERROR) {
-        // dump_tokens(stdout, cuikpp_get_token_stream(cpp));
-        return NULL;
-    }
-
-    if (should_finalize) {
-        cuikpp_finalize(cpp);
-    }
-    return cpp;
-}
-
-static void free_preprocessor(Cuik_CPP* cpp) {
-    cuikpp_deinit(cpp);
-    free(cpp);
 }
 
 static void compile_file(void* arg);
@@ -966,6 +920,9 @@ int main(int argc, char** argv) {
     #elif defined(__APPLE__) || defined(__MACH__) || defined(macintosh)
     target_desc = cuik_target_x64(CUIK_SYSTEM_MACOS, CUIK_ENV_MSVC);
     #endif
+
+    Cuik_CompilerArgs args = { .version = CUIK_VERSION_C23 };
+    cuik_parse_args(args, argc - 1, argv + 1);
 
     // parse arguments
     int i = 1;

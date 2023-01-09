@@ -35,7 +35,7 @@ ninja = open('build.ninja', 'w')
 ldflags = " -fuse-ld=lld-link"
 
 cflags = "-g -Wall -Werror -Wno-unused-function"
-cflags += " -I ../libCuik/include -I ../tilde-backend/include"
+cflags += " -I ../common/ -I ../libCuik/include -I ../tilde-backend/include"
 cflags += " -DCUIK_USE_TB "
 
 if args.asan:
