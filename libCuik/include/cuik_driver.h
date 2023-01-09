@@ -26,14 +26,16 @@ typedef struct Cuik_CompilerArgs {
     int threads;
     int opt_level;
     Cuik_ParseVersion version;
+    TB_OutputFlavor flavor;
     Cuik_Target* target;
+
+    const char* output_name;
+    const char* crt_dirpath;
 
     DynArray(const char*) sources;
     DynArray(const char*) includes;
     DynArray(const char*) libraries;
     DynArray(const char*) defines;
-    // DynArray(const char*) objects;
-    // DynArray(const char*) input_defines;
 } Cuik_CompilerArgs;
 
 // consumes text argument and fills the relevant values in the Cuik_CompilerArgs.
