@@ -458,23 +458,7 @@ static bool export_output(Cuik_CompilerArgs* restrict args, TB_Module* mod, bool
     if (output_name != NULL && strcmp(output_name, "$nul") == 0) {
         output_path_null = true;
     } else {
-        const char* filename = output_name ? output_name : args->sources[0];
-        const char* ext = strrchr(filename, '.');
-        size_t len = ext ? (ext - filename) : strlen(filename);
-
-        if (filename[len - 1] == '/' || filename[len - 1] == '\\') {
-            const char* slash = strrchr(args->sources[0], '/');
-            if (!slash) slash = strrchr(args->sources[0], '\\');
-
-            if (!slash) slash = args->sources[0];
-            else slash += 1; // skip the slash
-
-            // we have an output directory instead of a file
-            sprintf_s(output_path_no_ext, FILENAME_MAX, "%.*s%s", (int)len, filename, slash);
-        } else {
-            memcpy(output_path_no_ext, filename, len);
-            output_path_no_ext[len] = '\0';
-        }
+        cuik_driver_get_output_path(args, FILENAME_MAX, output_path_no_ext);
 
         if (output_name == NULL) {
             #if _WIN32
@@ -586,7 +570,7 @@ static bool export_output(Cuik_CompilerArgs* restrict args, TB_Module* mod, bool
     }
 }
 
-int cuik_compile(Cuik_IThreadpool* restrict thread_pool, Cuik_CompilerArgs* restrict args, bool destroy_cu_after_ir) {
+int cuik_driver_compile(Cuik_IThreadpool* restrict thread_pool, Cuik_CompilerArgs* restrict args, bool destroy_cu_after_ir) {
     _Atomic int files_with_errors = 0;
     _Atomic int complete = 0;
 
@@ -683,4 +667,40 @@ int cuik_compile(Cuik_IThreadpool* restrict thread_pool, Cuik_CompilerArgs* rest
     tb_free_thread_resources();
     tb_module_destroy(mod);
     return 0;
+}
+
+bool cuik_driver_get_output_path(Cuik_CompilerArgs* args, int cap, char path[]) {
+    assert(cap >= 1);
+    if (args->output_name != NULL && strcmp(args->output_name, "$nul") == 0) {
+        path[0] = 0;
+        return true;
+    }
+
+    const char* filename = args->output_name ? args->output_name : args->sources[0];
+    const char* ext = strrchr(filename, '.');
+    size_t len = ext ? (ext - filename) : strlen(filename);
+
+    if (filename[len - 1] == '/' || filename[len - 1] == '\\') {
+        const char* slash = strrchr(args->sources[0], '/');
+        if (!slash) slash = strrchr(args->sources[0], '\\');
+
+        if (!slash) slash = args->sources[0];
+        else slash += 1; // skip the slash
+
+        size_t total = strlen(slash)+len+1;
+        if (total > cap) {
+            return false;
+        }
+
+        snprintf(path, total, "%.*s%s", (int)len, filename, slash);
+        return true;
+    } else {
+        if (len >= cap) {
+            return false;
+        }
+
+        memcpy(path, filename, len);
+        path[len] = '\0';
+        return true;
+    }
 }

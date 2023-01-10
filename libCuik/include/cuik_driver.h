@@ -46,4 +46,7 @@ int cuik_parse_arg(Cuik_CompilerArgs* args, int argc, const char* argv[]);
 void cuik_parse_args(Cuik_CompilerArgs* args, int argc, const char* argv[]);
 
 Cuik_CPP* cuik_driver_preprocess(const char* filepath, const Cuik_CompilerArgs* args, bool should_finalize);
-int cuik_compile(Cuik_IThreadpool* restrict thread_pool, Cuik_CompilerArgs* restrict args, bool destroy_cu_after_ir);
+
+int cuik_driver_compile(Cuik_IThreadpool* restrict thread_pool, Cuik_CompilerArgs* restrict args, bool destroy_cu_after_ir);
+
+bool cuik_driver_get_output_path(Cuik_CompilerArgs* args, int len, char path[]);

@@ -397,39 +397,10 @@ int main(int argc, const char** argv) {
         return EXIT_FAILURE;
     }
 
-    if (output_name != NULL && strcmp(output_name, "$nul") == 0) {
-        output_path_null = true;
-    } else {
-        const char* filename = output_name ? output_name : input_files[0];
-        const char* ext = strrchr(filename, '.');
-        size_t len = ext ? (ext - filename) : strlen(filename);
-
-        if (filename[len - 1] == '/' || filename[len - 1] == '\\') {
-            const char* slash = strrchr(input_files[0], '/');
-            if (!slash) slash = strrchr(input_files[0], '\\');
-
-            if (!slash) slash = input_files[0];
-            else slash += 1; // skip the slash
-
-            // we have an output directory instead of a file
-            sprintf_s(output_path_no_ext, FILENAME_MAX, "%.*s%s", (int)len, filename, slash);
-        } else {
-            memcpy(output_path_no_ext, filename, len);
-            output_path_no_ext[len] = '\0';
-        }
-
-        if (output_name == NULL) {
-            #if _WIN32
-            char* str = malloc(FILENAME_MAX);
-            sprintf_s(str, FILENAME_MAX, "%s.exe", output_path_no_ext);
-            output_name = str;
-            #else
-            output_name = output_path_no_ext;
-            #endif
-        }
-    }
-
     if (args.time) {
+        char output_path_no_ext[FILENAME_MAX];
+        cuik_driver_get_output_path(&args, FILENAME_MAX, output_path_no_ext);
+
         #if 0
         char* perf_output_path = cuikperf_init(FILENAME_MAX, &json_profiler, false);
         sprintf_s(perf_output_path, FILENAME_MAX, "%s.json", output_path_no_ext);
@@ -445,9 +416,9 @@ int main(int argc, const char** argv) {
     #if CUIK_ALLOW_THREADS
     threadpool_t* thread_pool = NULL;
     if (args.threads > 1) {
-        if (args.verbose) printf("Starting with %d threads...\n", args_threads);
+        if (args.verbose) printf("Starting with %d threads...\n", args.threads);
 
-        thread_pool = threadpool_create(args_threads - 1, 4096);
+        thread_pool = threadpool_create(args.threads - 1, 4096);
         ithread_pool = malloc(sizeof(Cuik_IThreadpool));
         *ithread_pool = (Cuik_IThreadpool){
             .user_data = thread_pool,
@@ -465,7 +436,7 @@ int main(int argc, const char** argv) {
             dump_tokens(stdout, cuikpp_get_token_stream(cpp));
             cuikpp_free(cpp);
         } else {
-            fprintf(stderr, "Could not preprocess file: %s", input_files[0]);
+            fprintf(stderr, "Could not preprocess file: %s", args.sources[0]);
             return EXIT_FAILURE;
         }
 
@@ -478,13 +449,11 @@ int main(int argc, const char** argv) {
             printf("\x1b[2J");
             printf("OUTPUT OF %s:\n", args.sources[0]);
 
-            cuik_compile(ithread_pool, &args, true);
-        } while (live_compile_watch(&l));
+            cuik_driver_compile(ithread_pool, &args, true);
+        } while (live_compile_watch(&l, &args));
     } else {
-        cuik_create_compilation_unit(&compilation_unit);
-
         uint64_t start_time = args.verbose ? cuik_time_in_nanos() : 0;
-        int status = cuik_compile(ithread_pool, &args, true);
+        int status = cuik_driver_compile(ithread_pool, &args, true);
 
         if (args.verbose) {
             uint64_t now = cuik_time_in_nanos();
