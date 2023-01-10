@@ -10,7 +10,7 @@ The plan is a modern C11 compiler which can mostly work with Clang, GCC, and MSV
 
 ## Why write a C compiler?
 * To improve the compile times on debug builds without sacrificing features like I would with TCC.
-* To test out my upcoming (and currently private) compiler backend.
+* To test out my upcoming compiler backend, TB.
 * To add some extensions to improve the workflow of C programmers.
 * Because I can.
 
