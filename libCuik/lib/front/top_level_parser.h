@@ -183,9 +183,12 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
         if (decl.name != NULL) {
             // Check for duplicates
             old_def = sym = find_global_symbol(&parser->globals, decl.name);
+            int ts = 0, te = 0;
             if (old_def == NULL) {
                 ptrdiff_t sym_index = nl_strmap_puti_cstr(parser->globals.symbols, decl.name);
                 sym = &parser->globals.symbols[sym_index];
+            } else {
+                ts = old_def->token_start, te = old_def->token_end;
             }
 
             StorageClass st_class;
@@ -247,6 +250,8 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
                 .storage_class = st_class,
                 .loc = decl.loc,
                 .stmt = n,
+                .token_start = ts,
+                .token_end = te
             };
         }
 
@@ -540,7 +545,6 @@ Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict 
             Stmt* restrict s = parser.top_level_stmts[i];
 
             if ((s->op == STMT_DECL || s->op == STMT_GLOBAL_DECL) && s->decl.initial) {
-                printf("FOLD: %s\n", s->decl.name);
                 s->decl.initial = cuik__optimize_ast(&parser, s->decl.initial);
             }
         }
@@ -596,6 +600,7 @@ Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict 
         free(local_symbols), local_symbols = NULL;
         free(local_tags), local_tags = NULL;
     }
+    dyn_array_destroy(parser.local_static_storage_decls);
     THROW_IF_ERROR();
 
     // output accumulated diagnostics:

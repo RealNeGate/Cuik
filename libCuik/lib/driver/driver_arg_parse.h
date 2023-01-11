@@ -234,7 +234,7 @@ int cuik_parse_arg(Cuik_CompilerArgs* args, int argc, const char* argv[]) {
         case ARG_NOLIBC: args->nocrt = true; break;
         case ARG_HELP: {
             print_help();
-            return EXIT_SUCCESS;
+            return i;
         }
 
         case ARG_THREADS:
