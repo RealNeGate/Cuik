@@ -215,7 +215,7 @@ size_t type_as_string(size_t max_len, char* buffer, Cuik_Type* type);
 void type_layout(TranslationUnit* restrict tu, Cuik_Type* type, bool needs_complete);
 void type_layout2(Cuik_Parser* restrict parser, Cuik_Type* type, bool needs_complete);
 
-bool const_eval_try_offsetof_hack(TranslationUnit* tu, const Expr* e, uint64_t* out);
+bool const_eval_try_offsetof_hack(Cuik_Parser* restrict parser, const Expr* e, uint64_t* out);
 
-Expr* cuik__optimize_ast(TranslationUnit* tu, Expr* e);
+Expr* cuik__optimize_ast(Cuik_Parser* restrict parser, Expr* e);
 void cuik__function_analysis(TranslationUnit* restrict tu, Stmt* restrict s);

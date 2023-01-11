@@ -213,7 +213,7 @@ struct Cuik_Parser {
     // but it's more convenient to access it from here.
     Cuik_Type* default_int;
 
-    // generated from #pragma comment(lib, "somelib.lib")
+    //  generated from #pragma comment(lib, "somelib.lib")
     // it's a linked list
     Cuik_ImportRequest* import_libs;
     DynArray(int) static_assertions;
@@ -261,12 +261,11 @@ static void diag_unresolved_symbol(Cuik_Parser* parser, Atom name, SourceLoc loc
 
 #define THROW_IF_ERROR() if ((r = cuikdg_error_count(s)) > 0) return (Cuik_ParseResult){ r };
 #include "expr_parser.h"
-#include "expr_parser2.h"
 #include "decl_parser.h"
-#include "decl_parser2.h"
 #include "glsl_parser.h"
 #include "stmt_parser.h"
 #include "top_level_parser.h"
+#include "ast_optimizer.h"
 
 // 0 no cycles
 // 1 cycles

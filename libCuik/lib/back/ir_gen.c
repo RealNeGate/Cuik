@@ -436,8 +436,6 @@ void eval_initializer_objects(TranslationUnit* tu, TB_Function* func, TB_Initial
         }
 
         if (!success) {
-            e = cuik__optimize_ast(tu, e);
-
             switch (e->op) {
                 // TODO(NeGate): Implement constants for literals
                 // to allow for more stuff to be precomputed.
@@ -632,7 +630,7 @@ static TB_Initializer* gen_global_initializer(TranslationUnit* tu, Cuik_Type* ty
             while (base->op == EXPR_SUBSCRIPT) {
                 uint64_t stride = cuik_canonical_type(base->type)->size;
 
-                Expr* index_expr = cuik__optimize_ast(tu, base->subscript.index);
+                Expr* index_expr = cuik__optimize_ast(NULL, base->subscript.index);
                 assert(index_expr->op == EXPR_INT && "could not resolve as constant initializer");
 
                 uint64_t index = index_expr->int_num.num;
@@ -860,14 +858,6 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
             return irgen_expr(tu, func, e->generic_.controlling_expr);
         }
         case EXPR_ADDR: {
-            uint64_t dst;
-            if (const_eval_try_offsetof_hack(tu, e->unary_op.src, &dst)) {
-                return (IRVal){
-                    .value_type = RVALUE,
-                    .reg = tb_inst_uint(func, TB_TYPE_PTR, dst)
-                };
-            }
-
             IRVal src = irgen_expr(tu, func, e->unary_op.src);
             if (src.value_type == LVALUE) {
                 src.value_type = RVALUE;

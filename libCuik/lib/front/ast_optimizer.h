@@ -8,7 +8,7 @@ static ConstValue const_eval_bin_op(ExprOp op, ConstValue a, ConstValue b);
 // Const eval probably needs some rework...
 Cuik_QualType cuik__sema_expr(TranslationUnit* tu, Expr* e);
 Cuik_QualType sema_guess_type(TranslationUnit* tu, Stmt* restrict s);
-Member* sema_traverse_members(TranslationUnit* tu, Cuik_Type* record_type, Atom name, uint32_t* out_offset);
+Member* sema_traverse_members(Cuik_Type* record_type, Atom name, uint32_t* out_offset);
 
 // I've forsaken god by doing this, im sorry... it's ugly because it has to be i swear...
 typedef struct {
@@ -18,7 +18,7 @@ typedef struct {
 
 // just returns the byte offset it traveled in these DOTs and ARROWs.
 // the type we pass in is that of whatever's at the end of the DOT and ARROW chain
-static WalkMemberReturn walk_member_accesses(TranslationUnit* tu, const Expr* e, Cuik_Type* type) {
+static WalkMemberReturn walk_member_accesses(Cuik_Parser* restrict parser, const Expr* e, Cuik_Type* type) {
     const Expr* base_expr = e->dot_arrow.base;
 
     WalkMemberReturn base = { 0 };
@@ -26,18 +26,18 @@ static WalkMemberReturn walk_member_accesses(TranslationUnit* tu, const Expr* e,
         // use that base type we've been patiently keeping around
         base = (WalkMemberReturn){ type, 0 };
     } else {
-        base = walk_member_accesses(tu, e->dot_arrow.base, type);
+        base = walk_member_accesses(parser, e->dot_arrow.base, type);
     }
 
     uint32_t relative = 0;
-    Member* member = sema_traverse_members(tu, base.type, e->dot_arrow.name, &relative);
+    Member* member = sema_traverse_members(base.type, e->dot_arrow.name, &relative);
     if (!member) abort();
     if (member->is_bitfield) abort();
 
     return (WalkMemberReturn){ cuik_canonical_type(member->type), base.offset + relative };
 }
 
-bool const_eval_try_offsetof_hack(TranslationUnit* tu, const Expr* e, uint64_t* out) {
+bool const_eval_try_offsetof_hack(Cuik_Parser* restrict parser, const Expr* e, uint64_t* out) {
     // hacky but handles things like:
     //   &(((T*)0)->apple)
     //   sizeof(((T*)0).apple)
@@ -63,16 +63,16 @@ bool const_eval_try_offsetof_hack(TranslationUnit* tu, const Expr* e, uint64_t* 
             }
 
             if (is_arrow && !did_deref) {
-                diag_err(&tu->tokens, arrow_base->loc, "Arrow cannot be applied to non-pointer type.");
+                diag_err(&parser->tokens, arrow_base->loc, "Arrow cannot be applied to non-pointer type.");
                 return false;
             }
 
             if (record_type->kind != KIND_STRUCT && record_type->kind != KIND_UNION) {
-                diag_err(&tu->tokens, arrow_base->loc, "Cannot do member access with non-aggregate type.");
+                diag_err(&parser->tokens, arrow_base->loc, "Cannot do member access with non-aggregate type.");
                 return false;
             }
 
-            Expr* folded = cuik__optimize_ast(tu, arrow_base->cast.src);
+            Expr* folded = cuik__optimize_ast(parser, arrow_base->cast.src);
             if (folded->op != EXPR_INT) {
                 return false;
             }
@@ -85,7 +85,7 @@ bool const_eval_try_offsetof_hack(TranslationUnit* tu, const Expr* e, uint64_t* 
             return false;
         }
 
-        offset += walk_member_accesses(tu, e, record_type).offset;
+        offset += walk_member_accesses(parser, e, record_type).offset;
         *out = offset;
         return true;
     }
@@ -111,11 +111,11 @@ static ConstValue gimme(const Expr* e) {
     }
 }
 
-Expr* cuik__optimize_ast(TranslationUnit* tu, Expr* e) {
+Expr* cuik__optimize_ast(Cuik_Parser* restrict parser, Expr* e) {
     switch (e->op) {
         case EXPR_ENUM: {
             if (e->enum_val.num->lexer_pos != 0) {
-                type_layout(tu, cuik_canonical_type(e->type), true);
+                type_layout2(parser, cuik_canonical_type(e->type), true);
             }
             int64_t v = e->enum_val.num->value;
 
@@ -126,7 +126,7 @@ Expr* cuik__optimize_ast(TranslationUnit* tu, Expr* e) {
         }
 
         case EXPR_CAST: {
-            Expr* src = cuik__optimize_ast(tu, e->cast.src);
+            Expr* src = cuik__optimize_ast(parser, e->cast.src);
 
             if (src->op == EXPR_INT) {
                 src->type = e->cast.type;
@@ -145,12 +145,12 @@ Expr* cuik__optimize_ast(TranslationUnit* tu, Expr* e) {
         }
 
         case EXPR_TERNARY: {
-            Expr* cond = cuik__optimize_ast(tu, e->ternary_op.left);
+            Expr* cond = cuik__optimize_ast(parser, e->ternary_op.left);
             if (cond->op == EXPR_INT) {
                 if (cond->int_num.num != 0) {
-                    return cuik__optimize_ast(tu, e->ternary_op.middle);
+                    return cuik__optimize_ast(parser, e->ternary_op.middle);
                 } else {
-                    return cuik__optimize_ast(tu, e->ternary_op.right);
+                    return cuik__optimize_ast(parser, e->ternary_op.right);
                 }
             }
 
@@ -158,12 +158,12 @@ Expr* cuik__optimize_ast(TranslationUnit* tu, Expr* e) {
         }
 
         case EXPR_SIZEOF: {
-            Cuik_Type* src = cuik_canonical_type(cuik__sema_expr(tu, e->x_of_expr.expr));
+            Cuik_Type* src = cuik_canonical_type(cuik__sema_expr(NULL, e->x_of_expr.expr));
             if (src->size == 0) {
-                type_layout(tu, src, true);
+                type_layout2(parser, src, true);
 
                 if (src->size == 0) {
-                    diag_err(&tu->tokens, e->loc, "Could not resolve type of expression");
+                    diag_err(&parser->tokens, e->loc, "Could not resolve type of expression");
                 }
             }
 
@@ -172,13 +172,28 @@ Expr* cuik__optimize_ast(TranslationUnit* tu, Expr* e) {
             e->int_num.num = src->size;
             break;
         }
+        case EXPR_ALIGNOF: {
+            Cuik_Type* src = cuik_canonical_type(cuik__sema_expr(NULL, e->x_of_expr.expr));
+            if (src->size == 0) {
+                type_layout2(parser, src, true);
+
+                if (src->size == 0) {
+                    diag_err(&parser->tokens, e->loc, "Could not resolve type of expression");
+                }
+            }
+
+            e->op = EXPR_INT;
+            e->int_num.suffix = INT_SUFFIX_ULL;
+            e->int_num.num = src->align;
+            break;
+        }
         case EXPR_SIZEOF_T: {
             Cuik_Type* src = cuik_canonical_type(e->x_of_type.type);
             if (src->size == 0) {
-                type_layout(tu, src, true);
+                type_layout2(parser, src, true);
 
                 if (src->size == 0) {
-                    diag_err(&tu->tokens, e->loc, "Could not resolve type");
+                    diag_err(&parser->tokens, e->loc, "Could not resolve type");
                 }
             }
 
@@ -190,10 +205,10 @@ Expr* cuik__optimize_ast(TranslationUnit* tu, Expr* e) {
         case EXPR_ALIGNOF_T: {
             Cuik_Type* src = cuik_canonical_type(e->x_of_type.type);
             if (src->size == 0) {
-                type_layout(tu, src, true);
+                type_layout2(parser, src, true);
 
                 if (src->size == 0) {
-                    diag_err(&tu->tokens, e->loc, "could not resolve type");
+                    diag_err(&parser->tokens, e->loc, "could not resolve type");
                 }
             }
 
@@ -203,7 +218,7 @@ Expr* cuik__optimize_ast(TranslationUnit* tu, Expr* e) {
             break;
         }
         case EXPR_NOT: {
-            Expr* src = cuik__optimize_ast(tu, e->unary_op.src);
+            Expr* src = cuik__optimize_ast(parser, e->unary_op.src);
 
             // ~(N - 1) => -N
             if (src->op == EXPR_INT) {
@@ -212,7 +227,7 @@ Expr* cuik__optimize_ast(TranslationUnit* tu, Expr* e) {
                     src->int_num.num += 1;
                     return e;
                 } else {
-                    cuik__sema_expr(tu, src);
+                    cuik__sema_expr(NULL, src);
                     uint64_t mask = UINT64_MAX >> (cuik_canonical_type(src->type)->size*8);
 
                     e->op = EXPR_INT;
@@ -221,11 +236,10 @@ Expr* cuik__optimize_ast(TranslationUnit* tu, Expr* e) {
                     return e;
                 }
             }
-
             break;
         }
         case EXPR_NEGATE: {
-            Expr* src = cuik__optimize_ast(tu, e->unary_op.src);
+            Expr* src = cuik__optimize_ast(parser, e->unary_op.src);
             if (src->op == EXPR_INT) {
                 uint64_t x = src->int_num.num;
 
@@ -238,7 +252,7 @@ Expr* cuik__optimize_ast(TranslationUnit* tu, Expr* e) {
         }
         case EXPR_ADDR: {
             uint64_t dst;
-            if (const_eval_try_offsetof_hack(tu, e->unary_op.src, &dst)) {
+            if (const_eval_try_offsetof_hack(parser, e->unary_op.src, &dst)) {
                 e->op = EXPR_INT;
                 e->int_num.suffix = INT_SUFFIX_ULL;
                 e->int_num.num = dst;
@@ -260,10 +274,10 @@ Expr* cuik__optimize_ast(TranslationUnit* tu, Expr* e) {
         case EXPR_CMPLE:
         case EXPR_CMPGT:
         case EXPR_CMPLT: {
-            Expr* a = cuik__optimize_ast(tu, e->bin_op.right);
+            Expr* a = cuik__optimize_ast(parser, e->bin_op.right);
 
             if (a->op == EXPR_FLOAT32 || a->op == EXPR_FLOAT64) {
-                Expr* b = cuik__optimize_ast(tu, e->bin_op.left);
+                Expr* b = cuik__optimize_ast(parser, e->bin_op.left);
 
                 if (b->op == EXPR_INT || b->op == EXPR_FLOAT32 || b->op == EXPR_FLOAT64) {
                     switch (e->op) {
@@ -285,7 +299,7 @@ Expr* cuik__optimize_ast(TranslationUnit* tu, Expr* e) {
                 ExprOp op = e->op;
 
                 // TODO(NeGate): we can pull off a fancy tail recursion trick when we chain binary operators together
-                Expr* b = cuik__optimize_ast(tu, e->bin_op.left);
+                Expr* b = cuik__optimize_ast(parser, e->bin_op.left);
                 if (b->op != EXPR_INT) {
                     break;
                 }

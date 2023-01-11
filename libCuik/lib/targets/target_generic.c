@@ -78,7 +78,6 @@ static Cuik_Type* expect_pointer(TranslationUnit* tu, Expr* e, Expr* arg) {
 }
 
 static Expr* resolve_memory_order_expr(TranslationUnit* tu, Expr* e) {
-    e = cuik__optimize_ast(tu, e);
     e->cast_type = cuik_uncanonical_type(&cuik__builtin_int);
 
     if (e->op != EXPR_INT) {

@@ -122,10 +122,12 @@ int main(int argc, const char** argv) {
     cuik_init();
     find_system_deps();
 
-    Cuik_CompilerArgs args = { .version = CUIK_VERSION_C23 };
-
-    // get default system
-    args.target = cuik_host_target();
+    Cuik_CompilerArgs args = {
+        .version = CUIK_VERSION_C23,
+        .target = cuik_host_target(),
+        .flavor = TB_FLAVOR_EXECUTABLE,
+        .crt_dirpath = crt_dirpath,
+    };
     cuik_parse_args(&args, argc - 1, argv + 1);
 
     if (dyn_array_length(args.sources) == 0) {

@@ -210,6 +210,7 @@ int cuik_parse_arg(Cuik_CompilerArgs* args, int argc, const char* argv[]) {
         case ARG_OUTPUT: args->output_name = arg.value; break;
         case ARG_OBJECT: args->flavor = TB_FLAVOR_OBJECT; break;
         case ARG_PP: args->preprocess = true; break;
+        case ARG_PPTEST: args->test_preproc = true; break;
         case ARG_RUN: args->run = true; break;
         case ARG_LIVE: args->live = true; break;
         case ARG_PPREPL: args->pprepl = true; break;
