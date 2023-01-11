@@ -1,7 +1,7 @@
 #include <cuik.h>
 #include <threads.h>
-
-static const char* arg_is_set = "set";
+#include "driver_fs.h"
+#include "driver_arg_parse.h"
 
 enum {
     IRGEN_TASK_BATCH_SIZE = 8192,
@@ -13,113 +13,6 @@ enum {
 #else
 #define NULL_FILEPATH "/dev/null"
 #endif
-
-typedef enum ArgType {
-    ARG_NONE = 0,
-
-    #define X(name, short, long, has_args, msg) name,
-    #include "driver_args.h"
-} ArgType;
-
-typedef struct {
-    ArgType type;
-    const char* alias; // -a
-    const char* name;  // --name
-    bool has_arg;
-    const char* desc;
-} ArgDesc;
-
-typedef struct Arg {
-    ArgType key;
-    const char* value;
-} Arg;
-
-static const ArgDesc arg_descs[] = {
-    #define X(name, short, long, has_args, msg) { name, short, long, has_args, msg },
-    #include "driver_args.h"
-};
-enum { ARG_DESC_COUNT = sizeof(arg_descs) / sizeof(arg_descs[0]) };
-
-static const ArgDesc* find_arg_desc(const char* arg, bool is_long_name) {
-    if (is_long_name) {
-        for (size_t i = 0; i < ARG_DESC_COUNT; i++) {
-            const char* n = arg_descs[i].name;
-            if (n && strncmp(arg, n, strlen(n)) == 0) {
-                return &arg_descs[i];
-            }
-        }
-    } else {
-        for (size_t i = 0; i < ARG_DESC_COUNT; i++) {
-            const char* n = arg_descs[i].alias;
-            if (n && strncmp(arg, n, strlen(n)) == 0) {
-                return &arg_descs[i];
-            }
-        }
-    }
-
-    return NULL;
-}
-
-static Arg read_arg(int* out_arg_length, int argc, const char* argv[]) {
-    // identify argument kind
-    const char* first = argv[0];
-
-    if (first[0] == '-') {
-        bool is_long_name = (first[1] == '-');
-
-        // check for equals
-        const char* equals = strchr(first, '=');
-        const ArgDesc* desc = find_arg_desc(&first[is_long_name ? 2 : 1], is_long_name);
-        if (desc == NULL) {
-            // could not find an option
-            fprintf(stderr, "error: could not find match for %s\n", first);
-            *out_arg_length = 1;
-            return (Arg){ 0 };
-        }
-
-        if (desc->has_arg) {
-            /*if (argv[i][long_name_len] == 0) {
-                if ((i + 1) >= argc) {
-                    fprintf(stderr, "error: no argument after -%s\n", long_name);
-                    exit_or_hook(1);
-                }
-
-                *index += 1;
-                return (Arg){ arg_descs[j].type, argv[i + 1] };
-            } else {
-                if (argv[i][long_name_len + 3] == 0) {
-                    fprintf(stderr, "error: argument for --%s is empty\n", long_name);
-                    exit_or_hook(1);
-                }
-
-                return (Arg){ arg_descs[j].type, argv[i] + long_name_len + 3 };
-            }*/
-        } else {
-        }
-
-        *out_arg_length = 1;
-        return (Arg){ desc->type, arg_is_set };
-    } else {
-        *out_arg_length = 1;
-        return (Arg){ ARG_NONE, first };
-    }
-}
-
-int cuik_parse_arg(Cuik_CompilerArgs* args, int argc, const char* argv[]) {
-    int i;
-    Arg arg = read_arg(&i, argc, argv);
-    switch (arg.key) {
-        default: break;
-    }
-
-    return i;
-}
-
-void cuik_parse_args(Cuik_CompilerArgs* args, int argc, const char* argv[]) {
-    for (int i = 0; i < argc;) {
-        i += cuik_parse_arg(args, argc - i, argv + i);
-    }
-}
 
 Cuik_CPP* cuik_driver_preprocess(const char* filepath, const Cuik_CompilerArgs* args, bool should_finalize) {
     Cuik_CPP* cpp = NULL;

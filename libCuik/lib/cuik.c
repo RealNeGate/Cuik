@@ -43,6 +43,16 @@ void cuik_free_thread_resources(void) {
     arena_free(&thread_arena);
 }
 
+Cuik_Target* cuik_host_target(void) {
+    #if defined(_WIN32)
+    return cuik_target_x64(CUIK_SYSTEM_WINDOWS, CUIK_ENV_MSVC);
+    #elif defined(__linux) || defined(linux)
+    return cuik_target_x64(CUIK_SYSTEM_LINUX, CUIK_ENV_MSVC);
+    #elif defined(__APPLE__) || defined(__MACH__) || defined(macintosh)
+    return cuik_target_x64(CUIK_SYSTEM_MACOS, CUIK_ENV_MSVC);
+    #endif
+}
+
 void cuik_find_system_deps(const char* cuik_crt_directory) {
     #ifdef _WIN32
     cuik__vswhere = cuik__find_visual_studio_and_windows_sdk();

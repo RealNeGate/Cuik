@@ -64,6 +64,8 @@ CUIK_API void cuik_free_target(Cuik_Target* target);
 CUIK_API Cuik_System cuik_get_target_system(const Cuik_Target* t);
 CUIK_API Cuik_Environment cuik_get_target_env(const Cuik_Target* t);
 
+Cuik_Target* cuik_host_target(void);
+
 ////////////////////////////////////////////
 // General Cuik stuff
 ////////////////////////////////////////////

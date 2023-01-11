@@ -14,6 +14,7 @@ args = parser.parse_args()
 
 source_patterns = [
 	"lib/*.c",
+	"lib/driver/*.c",
 	"lib/preproc/*.c",
 	"lib/front/*.c",
 	"lib/targets/*.c",

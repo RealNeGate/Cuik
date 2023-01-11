@@ -6,7 +6,6 @@
 #include "cuik_prelude.h"
 
 typedef struct Cuik_CompilerArgs {
-    // Boolean flags
     bool ir            : 1;
     bool ast           : 1;
     bool types         : 1;
