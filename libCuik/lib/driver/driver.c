@@ -80,6 +80,7 @@ static void preproc_file(void* arg) {
         return;
     }
 
+    job->cpp = cpp;
     if (job->thread_pool != NULL) {
         CUIK_CALL(job->thread_pool, submit, compile_file, job);
     } else {
@@ -470,7 +471,7 @@ int cuik_driver_compile(Cuik_IThreadpool* restrict thread_pool, Cuik_CompilerArg
     CompilationUnit compilation_unit = { 0 };
     cuik_create_compilation_unit(&compilation_unit);
     CUIK_TIMED_BLOCK("Frontend") {
-        if (thread_pool == NULL) {
+        if (thread_pool != NULL) {
             size_t source_count = dyn_array_length(args->sources);
             CompilerJob* jobs = malloc(source_count * sizeof(CompilerJob));
 

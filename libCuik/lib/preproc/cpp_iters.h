@@ -3,10 +3,7 @@
 #endif
 
 void cuikpp_add_include_directory(Cuik_CPP* ctx, bool is_system, const char dir[]) {
-    Cuik_IncludeDir idir = {
-        is_system, strdup(dir)
-    };
-
+    Cuik_IncludeDir idir = { is_system, strdup(dir) };
     dyn_array_put(ctx->system_include_dirs, idir);
 }
 

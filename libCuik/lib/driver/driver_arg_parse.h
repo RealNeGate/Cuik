@@ -135,6 +135,7 @@ int cuik_parse_arg(Cuik_CompilerArgs* args, int argc, const char* argv[]) {
         case ARG_NONE: {
             if (arg.value == NULL) return i;
 
+            append_input_path(args, arg.value);
             break;
         }
         case ARG_DEFINE: {

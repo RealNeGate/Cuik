@@ -7,6 +7,7 @@ static thread_local char temp_string0[1024], temp_string1[1024];
 static void set_defines(const Cuik_Target* target, Cuik_CPP* cpp) {
     target_generic_set_defines(cpp, target->system, true, true);
 
+    cuikpp_define_cstr(cpp, "__x86_64",   "1");
     cuikpp_define_cstr(cpp, "__x86_64__", "1");
     cuikpp_define_cstr(cpp, "__amd64",    "1");
     cuikpp_define_cstr(cpp, "__amd64__",  "1");

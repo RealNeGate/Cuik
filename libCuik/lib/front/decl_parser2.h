@@ -917,6 +917,8 @@ static Cuik_QualType parse_type_suffix2(Cuik_Parser* restrict parser, TokenStrea
             }
             expect_closing_paren(s, opening_loc);
 
+            while (skip_over_declspec(s)) {}
+
             // Allocate some more permanent storage
             Param* permanent_store = arena_alloc(&local_ast_arena, param_count * sizeof(Param), _Alignof(Param));
             memcpy(permanent_store, params, param_count * sizeof(Param));

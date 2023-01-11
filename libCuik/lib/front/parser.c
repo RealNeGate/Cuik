@@ -81,11 +81,9 @@ static bool try_parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Att
 static Cuik_QualType parse_declspec(TranslationUnit* tu, TokenStream* restrict s, Attribs* attr);
 
 static Decl parse_declarator(TranslationUnit* restrict tu, TokenStream* restrict s, Cuik_QualType type, bool is_abstract);
-static Cuik_QualType parse_typename(TranslationUnit* tu, TokenStream* restrict s);
 
 // It's like parse_expr but it doesn't do anything with comma operators to avoid
 // parsing issues.
-static intmax_t parse_const_expr(TranslationUnit* tu, TokenStream* restrict s);
 static Expr* parse_initializer(TranslationUnit* tu, TokenStream* restrict s, Cuik_QualType type);
 
 static bool is_typename(Cuik_GlobalSymbols* syms, TokenStream* restrict s);
@@ -311,45 +309,6 @@ static int type_cycles_dfs(TokenStream* restrict s, Cuik_Type* type) {
     return 0;
 }
 
-// returns 1 on errors
-static int type_resolve_pending_align(TranslationUnit* restrict tu) {
-    size_t pending_count = dyn_array_length(pending_exprs);
-    for (size_t i = 0; i < pending_count; i++) {
-        if (pending_exprs[i].mode == PENDING_ALIGNAS) {
-            Cuik_Type* type = pending_exprs[i].type;
-
-            TokenStream mini_lex = tu->tokens;
-            mini_lex.list.current = pending_exprs[i].start;
-
-            int align = 0;
-            SourceLoc loc = tokens_get_location(&mini_lex);
-            if (is_typename(&tu->globals, &mini_lex)) {
-                Cuik_Type* new_align = cuik_canonical_type(parse_typename(tu, &mini_lex));
-                if (new_align == NULL || new_align->align) {
-                    diag_err(&tu->tokens, type->loc, "_Alignas cannot operate with incomplete");
-                } else {
-                    align = new_align->align;
-                }
-            } else {
-                intmax_t new_align = parse_const_expr(tu, &mini_lex);
-                if (new_align == 0) {
-                    diag_err(&tu->tokens, type->loc, "_Alignas cannot be applied with 0 alignment", new_align);
-                } else if (new_align >= INT16_MAX) {
-                    diag_err(&tu->tokens, type->loc, "_Alignas(%zu) exceeds max alignment of %zu", new_align, INT16_MAX);
-                } else {
-                    align = new_align;
-                }
-            }
-
-            assert(align != 0);
-            type->align = align;
-            return 0;
-        }
-    }
-
-    return 1;
-}
-
 void type_layout(TranslationUnit* restrict tu, Cuik_Type* type, bool needs_complete) {
     if (type->kind == KIND_VOID || type->size != 0) return;
     if (type->is_progress) {
@@ -361,11 +320,7 @@ void type_layout(TranslationUnit* restrict tu, Cuik_Type* type, bool needs_compl
 
     if (type->kind == KIND_ARRAY) {
         if (type->array_count_lexer_pos) {
-            // run mini parser for array count
-            TokenStream mini_lex = tu->tokens;
-            mini_lex.list.current = type->array_count_lexer_pos;
-            type->array_count = parse_const_expr(tu, &mini_lex);
-            expect(tu, &mini_lex, ']');
+            assert(0 && "Parserless type checker!!!");
         }
 
         // layout crap
@@ -390,26 +345,7 @@ void type_layout(TranslationUnit* restrict tu, Cuik_Type* type, bool needs_compl
         type->size = result;
         type->align = cuik_canonical_type(type->array_of)->align;
     } else if (type->kind == KIND_ENUM) {
-        int cursor = 0;
-
-        for (int i = 0; i < type->enumerator.count; i++) {
-            // if the value is undecided, best time to figure it out is now
-            if (type->enumerator.entries[i].lexer_pos != 0) {
-                // Spin up a mini expression parser here
-                TokenStream mini_lex = tu->tokens;
-                mini_lex.list.current = type->enumerator.entries[i].lexer_pos;
-
-                cursor = parse_const_expr(tu, &mini_lex);
-                type->enumerator.entries[i].lexer_pos = 0;
-            }
-
-            type->enumerator.entries[i].value = cursor;
-            cursor += 1;
-        }
-
-        type->size = 4;
-        type->align = 4;
-        type->is_complete = false;
+        assert(0 && "Parserless type checker!!!");
     } else if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
         bool is_union = (type->kind == KIND_UNION);
 
@@ -673,16 +609,6 @@ static Symbol* find_local_symbol(TokenStream* restrict s) {
     }
 
     return NULL;
-}
-
-static intmax_t parse_const_expr(TranslationUnit* tu, TokenStream* restrict s) {
-    Expr* folded = cuik__optimize_ast(tu, parse_expr_assign(tu, s));
-    if (folded->op != EXPR_INT) {
-        diag_err(s, folded->loc, "could not parse expression as constant.");
-        return 0;
-    }
-
-    return (intmax_t) folded->int_num.num;
 }
 
 ////////////////////////////////

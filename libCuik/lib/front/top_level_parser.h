@@ -576,7 +576,10 @@ Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict 
     }
     THROW_IF_ERROR();
 
-    // output accumulated diagnostics
+    // output accumulated diagnostics:
+    //   unlike basically any other C compiler i know of we can accumulate
+    //   one of the most common error messages to make it easier to read as
+    //   one of these "so called" sane humans.
     nl_strmap_for(i, parser.unresolved_symbols) {
         Diag_UnresolvedSymbol* loc = parser.unresolved_symbols[i];
         cuikdg_tally_error(s);
