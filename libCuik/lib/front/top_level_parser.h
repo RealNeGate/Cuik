@@ -176,6 +176,7 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
             .type = decl.type,
             .attrs = attr,
         };
+
         dyn_array_put(parser->top_level_stmts, n);
 
         Symbol *old_def = NULL, *sym = NULL;
@@ -406,6 +407,7 @@ Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict 
     parser.tokens = *s;
     parser.target = target;
     parser.static_assertions = dyn_array_create(int, 2048);
+    parser.local_static_storage_decls = dyn_array_create(Stmt*, 64);
     parser.types = init_type_table();
 
     // just a shorthand so it's faster to grab
@@ -533,6 +535,16 @@ Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict 
             }
         }
 
+        // constant fold any global expressions
+        dyn_array_for(i, parser.top_level_stmts) {
+            Stmt* restrict s = parser.top_level_stmts[i];
+
+            if ((s->op == STMT_DECL || s->op == STMT_GLOBAL_DECL) && s->decl.initial) {
+                printf("FOLD: %s\n", s->decl.name);
+                s->decl.initial = cuik__optimize_ast(&parser, s->decl.initial);
+            }
+        }
+
         quit_phase2:;
     }
     THROW_IF_ERROR();
@@ -565,6 +577,16 @@ Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict 
                 assert(local_symbol_start == 0 && local_symbol_count == 0);
                 parse_function(&parser, &tokens, sym->stmt);
                 local_symbol_start = local_symbol_count = 0;
+
+                // constant fold any static-locals
+                dyn_array_for(i, parser.local_static_storage_decls) {
+                    Stmt* restrict s = parser.local_static_storage_decls[i];
+
+                    if ((s->op == STMT_DECL || s->op == STMT_GLOBAL_DECL) && s->decl.initial) {
+                        s->decl.initial = cuik__optimize_ast(&parser, s->decl.initial);
+                    }
+                }
+                dyn_array_clear(parser.local_static_storage_decls);
 
                 // finalize use list
                 sym->stmt->decl.first_symbol = symbol_chain_start;

@@ -648,7 +648,8 @@ static TB_Initializer* gen_global_initializer(TranslationUnit* tu, Cuik_Type* ty
             tb_initializer_add_global(tu->ir_mod, init, 0, stmt->backing.g);
             return init;
         } else {
-            assert(0);
+            fprintf(stderr, "internal compiler error: cannot compile global initializer as constant (%s : %s).\n", tu->filepath, name);
+            abort();
         }
     }
 

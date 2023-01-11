@@ -262,6 +262,12 @@ static bool subst(Cuik_CPP* restrict c, TokenList* out_tokens, uint8_t* def_str,
                 continue;
             }
 
+            /*if (a.length == 1 && a.data[0] == 'w') {
+                SourceLoc loc = encode_macro_loc(macro_id, t.content.data - in.start);
+                diag_note(&c->tokens, (SourceRange){ loc, { loc.raw + t.content.length } }, "expected identifier");
+                __debugbreak();
+            }*/
+
             // Literally join the data
             unsigned char* out = gimme_the_shtuffs(c, a.length + b.length + 16);
             memcpy(out, a.data, a.length);
@@ -273,33 +279,39 @@ static bool subst(Cuik_CPP* restrict c, TokenList* out_tokens, uint8_t* def_str,
             Token joined = lexer_read(&scratch);
 
             // if they only form one token then process it
-            if (lexer_read(&scratch).type == 0) {
-                if (joined.type == TOKEN_IDENTIFIER) {
-                    joined.type = classify_ident(joined.content.data, joined.content.length);
-                    joined.location = t.location;
+            if (joined.type == TOKEN_IDENTIFIER) {
+                joined.type = classify_ident(joined.content.data, joined.content.length);
+                joined.location = t.location;
 
-                    if (!is_defined(c, joined.content.data, joined.content.length)) {
-                        *last = joined;
-                    } else {
-                        // remove top
-                        dyn_array_pop(out_tokens->tokens);
-
-                        // replace with expanded identifier
-                        TokenList scratch = {
-                            .tokens = dyn_array_create(Token, 2)
-                        };
-                        dyn_array_put(scratch.tokens, joined);
-                        dyn_array_put(scratch.tokens, (Token){ 0 });
-
-                        if (!expand_ident(c, out_tokens, &scratch, macro_id)) {
-                            return false;
-                        }
-
-                        dyn_array_destroy(scratch.tokens);
-                    }
-                } else {
+                if (!is_defined(c, joined.content.data, joined.content.length)) {
                     *last = joined;
+                } else {
+                    // remove top
+                    dyn_array_pop(out_tokens->tokens);
+
+                    // replace with expanded identifier
+                    TokenList scratch = {
+                        .tokens = dyn_array_create(Token, 2)
+                    };
+                    dyn_array_put(scratch.tokens, joined);
+                    dyn_array_put(scratch.tokens, (Token){ 0 });
+
+                    if (!expand_ident(c, out_tokens, &scratch, macro_id)) {
+                        return false;
+                    }
+
+                    dyn_array_destroy(scratch.tokens);
                 }
+            } else {
+                *last = joined;
+            }
+
+            // Copy over any of the extra tokens
+            for (;;) {
+                Token t = lexer_read(&scratch);
+                if (t.type == 0) break;
+
+                dyn_array_put(out_tokens->tokens, t);
             }
         } else if (t.type == TOKEN_IDENTIFIER) {
             if (t.content.data[0] == '_' && string_equals_cstr(&t.content, "__VA_ARGS__")) {

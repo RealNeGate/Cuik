@@ -218,6 +218,9 @@ struct Cuik_Parser {
     Cuik_ImportRequest* import_libs;
     DynArray(int) static_assertions;
 
+    // this is all the globals including the static locals
+    DynArray(Stmt*) local_static_storage_decls;
+
     // out-of-order parsing is only done while in global scope
     bool is_in_global_scope;
 

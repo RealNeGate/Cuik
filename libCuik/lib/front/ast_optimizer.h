@@ -158,7 +158,7 @@ Expr* cuik__optimize_ast(Cuik_Parser* restrict parser, Expr* e) {
         }
 
         case EXPR_SIZEOF: {
-            Cuik_Type* src = cuik_canonical_type(cuik__sema_expr(NULL, e->x_of_expr.expr));
+            Cuik_Type* src = cuik_canonical_type(cuik__sema_expr(parser->tu, e->x_of_expr.expr));
             if (src->size == 0) {
                 type_layout2(parser, src, true);
 
@@ -173,7 +173,7 @@ Expr* cuik__optimize_ast(Cuik_Parser* restrict parser, Expr* e) {
             break;
         }
         case EXPR_ALIGNOF: {
-            Cuik_Type* src = cuik_canonical_type(cuik__sema_expr(NULL, e->x_of_expr.expr));
+            Cuik_Type* src = cuik_canonical_type(cuik__sema_expr(parser->tu, e->x_of_expr.expr));
             if (src->size == 0) {
                 type_layout2(parser, src, true);
 
@@ -227,7 +227,7 @@ Expr* cuik__optimize_ast(Cuik_Parser* restrict parser, Expr* e) {
                     src->int_num.num += 1;
                     return e;
                 } else {
-                    cuik__sema_expr(NULL, src);
+                    cuik__sema_expr(parser->tu, src);
                     uint64_t mask = UINT64_MAX >> (cuik_canonical_type(src->type)->size*8);
 
                     e->op = EXPR_INT;

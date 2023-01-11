@@ -430,10 +430,6 @@ static bool export_output(Cuik_CompilerArgs* restrict args, TB_Module* mod, bool
                 // Add system libpaths
                 cuiklink_add_default_libpaths(&l);
 
-                char lib_dir[FILENAME_MAX];
-                sprintf_s(lib_dir, FILENAME_MAX, "%s/crt/lib/", args->crt_dirpath);
-                cuiklink_add_libpath(&l, lib_dir);
-
                 // Add Cuik output
                 cuiklink_add_input_file(&l, obj_output_path);
 
@@ -451,7 +447,6 @@ static bool export_output(Cuik_CompilerArgs* restrict args, TB_Module* mod, bool
                     cuiklink_add_input_file(&l, "ucrt.lib");
                     cuiklink_add_input_file(&l, "msvcrt.lib");
                     cuiklink_add_input_file(&l, "vcruntime.lib");
-                    cuiklink_add_input_file(&l, "win32_rt.lib");
                     #endif
                 }
 

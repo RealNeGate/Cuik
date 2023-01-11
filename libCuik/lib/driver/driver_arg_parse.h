@@ -119,9 +119,17 @@ static Arg read_arg(int* out_arg_length, int argc, const char* argv[]) {
         return A(1, ARG_NONE, NULL);
     }
 
-    if (desc->has_arg) return A(1, desc->type, arg_is_set);
-    if (equals != NULL) return A(1, desc->type, equals + 1);
-    if (argc == 1) return A(2, desc->type, argv[1]);
+    if (!desc->has_arg) return A(1, desc->type, arg_is_set);
+    if (is_long_name) {
+        if (equals != NULL) return A(1, desc->type, equals + 1);
+    } else {
+        size_t alias_len = strlen(desc->alias);
+        if (strlen(first) - 1 > alias_len) {
+            return A(1, desc->type, first + 1 + alias_len);
+        }
+    }
+
+    if (argc >= 1) return A(2, desc->type, argv[1]);
 
     fprintf(stderr, "error: no argument after %s\n", first);
     return A(1, ARG_NONE, NULL);
