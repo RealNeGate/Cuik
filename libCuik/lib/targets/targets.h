@@ -44,6 +44,7 @@ struct Cuik_Target {
     #ifdef CUIK_USE_TB
     // Callee ABI handling:
     TB_FunctionPrototype* (*create_prototype)(TranslationUnit* tu, Cuik_Type* type);
+    TB_Reg (*get_parameter)(TranslationUnit* tu, TB_Function* func, Cuik_Type* type, TB_Reg reg);
 
     // Caller ABI handling:
     // returns the aggregate size, if it's zero there's no aggregate

@@ -13,15 +13,24 @@ int main() {
 #else
 #include <limits.h>
 #include <stdio.h>
+#include <stdint.h>
 
-int test(size_t nmemb, size_t size) {
-    if(nmemb > SIZE_MAX/size) {
+int test(size_t x) {
+    if(x > SIZE_MAX) {
+        return 0;
+    }
+    return 1;
+}
+
+int test2(size_t x, size_t y) {
+    if(x > SIZE_MAX/y) {
         return 0;
     }
     return 1;
 }
 
 int main() {
-    return test(512, 1);
+    printf("%d\n", test2(512, 1));
+    return 0;
 }
 #endif

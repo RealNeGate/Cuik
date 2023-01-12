@@ -60,10 +60,7 @@ static Cuik_Type* type_check_builtin(TranslationUnit* tu, Expr* e, const char* n
 // or any scalars are passed via registers
 static bool win64_should_pass_via_reg(TranslationUnit* tu, Cuik_Type* type) {
     if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
-        switch (type->size) {
-            case 1: case 2: case 4: case 8: return true;
-            default: return false;
-        }
+        return type->size <= 8;
     } else {
         return true;
     }
@@ -128,6 +125,14 @@ static TB_FunctionPrototype* create_prototype(TranslationUnit* tu, Cuik_Type* ty
 
 static bool pass_return_via_reg(TranslationUnit* tu, Cuik_Type* type) {
     return win64_should_pass_via_reg(tu, type);
+}
+
+static TB_Reg get_parameter(TranslationUnit* tu, TB_Function* func, Cuik_Type* type, TB_Reg reg) {
+    if (win64_should_pass_via_reg(tu, type)) {
+        return reg;
+    } else {
+        return tb_inst_load(func, TB_TYPE_PTR, reg, 8);
+    }
 }
 
 static int deduce_parameter_usage(TranslationUnit* tu, Cuik_QualType type) {
@@ -288,6 +293,7 @@ Cuik_Target* cuik_target_x64(Cuik_System system, Cuik_Environment env) {
         #ifdef CUIK_USE_TB
         .create_prototype = create_prototype,
         .pass_return_via_reg = pass_return_via_reg,
+        .get_parameter = get_parameter,
         .deduce_parameter_usage = deduce_parameter_usage,
         .pass_parameter = pass_parameter,
         .compile_builtin = compile_builtin,

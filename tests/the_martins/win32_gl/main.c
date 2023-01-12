@@ -14,8 +14,8 @@
 #include <windows.h>
 
 #include <GL/gl.h>
-#include <GL/glcorearb.h>  // download from https://www.khronos.org/registry/OpenGL/api/GL/glcorearb.h
-#include <GL/wglext.h>     // download from https://www.khronos.org/registry/OpenGL/api/GL/wglext.h
+#include "GL/glcorearb.h"  // download from https://www.khronos.org/registry/OpenGL/api/GL/glcorearb.h
+#include "GL/wglext.h"     // download from https://www.khronos.org/registry/OpenGL/api/GL/wglext.h
 // also download https://www.khronos.org/registry/EGL/api/KHR/khrplatform.h and put in "KHR" folder
 
 #define _USE_MATH_DEFINES
@@ -32,27 +32,27 @@
 
 // make sure you use functions that are valid for selected GL version (specified when context is created)
 #define GL_FUNCTIONS(X) \
-    X(PFNGLCREATEBUFFERSPROC,            glCreateBuffers            ) \
-    X(PFNGLNAMEDBUFFERSTORAGEPROC,       glNamedBufferStorage       ) \
-    X(PFNGLBINDVERTEXARRAYPROC,          glBindVertexArray          ) \
-    X(PFNGLCREATEVERTEXARRAYSPROC,       glCreateVertexArrays       ) \
-    X(PFNGLVERTEXARRAYATTRIBBINDINGPROC, glVertexArrayAttribBinding ) \
-    X(PFNGLVERTEXARRAYVERTEXBUFFERPROC,  glVertexArrayVertexBuffer  ) \
-    X(PFNGLVERTEXARRAYATTRIBFORMATPROC,  glVertexArrayAttribFormat  ) \
-    X(PFNGLENABLEVERTEXARRAYATTRIBPROC,  glEnableVertexArrayAttrib  ) \
-    X(PFNGLCREATESHADERPROGRAMVPROC,     glCreateShaderProgramv     ) \
-    X(PFNGLGETPROGRAMIVPROC,             glGetProgramiv             ) \
-    X(PFNGLGETPROGRAMINFOLOGPROC,        glGetProgramInfoLog        ) \
-    X(PFNGLGENPROGRAMPIPELINESPROC,      glGenProgramPipelines      ) \
-    X(PFNGLUSEPROGRAMSTAGESPROC,         glUseProgramStages         ) \
-    X(PFNGLBINDPROGRAMPIPELINEPROC,      glBindProgramPipeline      ) \
-    X(PFNGLPROGRAMUNIFORMMATRIX2FVPROC,  glProgramUniformMatrix2fv  ) \
-    X(PFNGLBINDTEXTUREUNITPROC,          glBindTextureUnit          ) \
-    X(PFNGLCREATETEXTURESPROC,           glCreateTextures           ) \
-    X(PFNGLTEXTUREPARAMETERIPROC,        glTextureParameteri        ) \
-    X(PFNGLTEXTURESTORAGE2DPROC,         glTextureStorage2D         ) \
-    X(PFNGLTEXTURESUBIMAGE2DPROC,        glTextureSubImage2D        ) \
-    X(PFNGLDEBUGMESSAGECALLBACKPROC,     glDebugMessageCallback     )
+X(PFNGLCREATEBUFFERSPROC,            glCreateBuffers            ) \
+X(PFNGLNAMEDBUFFERSTORAGEPROC,       glNamedBufferStorage       ) \
+X(PFNGLBINDVERTEXARRAYPROC,          glBindVertexArray          ) \
+X(PFNGLCREATEVERTEXARRAYSPROC,       glCreateVertexArrays       ) \
+X(PFNGLVERTEXARRAYATTRIBBINDINGPROC, glVertexArrayAttribBinding ) \
+X(PFNGLVERTEXARRAYVERTEXBUFFERPROC,  glVertexArrayVertexBuffer  ) \
+X(PFNGLVERTEXARRAYATTRIBFORMATPROC,  glVertexArrayAttribFormat  ) \
+X(PFNGLENABLEVERTEXARRAYATTRIBPROC,  glEnableVertexArrayAttrib  ) \
+X(PFNGLCREATESHADERPROGRAMVPROC,     glCreateShaderProgramv     ) \
+X(PFNGLGETPROGRAMIVPROC,             glGetProgramiv             ) \
+X(PFNGLGETPROGRAMINFOLOGPROC,        glGetProgramInfoLog        ) \
+X(PFNGLGENPROGRAMPIPELINESPROC,      glGenProgramPipelines      ) \
+X(PFNGLUSEPROGRAMSTAGESPROC,         glUseProgramStages         ) \
+X(PFNGLBINDPROGRAMPIPELINEPROC,      glBindProgramPipeline      ) \
+X(PFNGLPROGRAMUNIFORMMATRIX2FVPROC,  glProgramUniformMatrix2fv  ) \
+X(PFNGLBINDTEXTUREUNITPROC,          glBindTextureUnit          ) \
+X(PFNGLCREATETEXTURESPROC,           glCreateTextures           ) \
+X(PFNGLTEXTUREPARAMETERIPROC,        glTextureParameteri        ) \
+X(PFNGLTEXTURESTORAGE2DPROC,         glTextureStorage2D         ) \
+X(PFNGLTEXTURESUBIMAGE2DPROC,        glTextureSubImage2D        ) \
+X(PFNGLDEBUGMESSAGECALLBACKPROC,     glDebugMessageCallback     )
 
 #define X(type, name) static type name;
 GL_FUNCTIONS(X)
@@ -89,7 +89,7 @@ static LRESULT CALLBACK WindowProc(HWND wnd, UINT msg, WPARAM wparam, LPARAM lpa
 {
     switch (msg)
     {
-    case WM_DESTROY:
+        case WM_DESTROY:
         PostQuitMessage(0);
         return 0;
     }
@@ -158,7 +158,7 @@ static void GetWglFunctions(void)
 
     // https://www.khronos.org/registry/OpenGL/extensions/ARB/WGL_ARB_extensions_string.txt
     PFNWGLGETEXTENSIONSSTRINGARBPROC wglGetExtensionsStringARB =
-        (void*)wglGetProcAddress("wglGetExtensionsStringARB");
+    (void*)wglGetProcAddress("wglGetExtensionsStringARB");
     if (!wglGetExtensionsStringARB)
     {
         FatalError("OpenGL does not support WGL_ARB_extensions_string extension!");
@@ -218,9 +218,10 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
     GetWglFunctions();
 
     // register window class to have custom WindowProc callback
+    int s = sizeof(WNDCLASSEXW);
     WNDCLASSEXW wc =
     {
-        .cbSize = sizeof(wc),
+        .cbSize = s,
         .lpfnWndProc = WindowProc,
         .hInstance = instance,
         .hIcon = LoadIcon(NULL, IDI_APPLICATION),
@@ -301,11 +302,11 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
             WGL_CONTEXT_MAJOR_VERSION_ARB, 4,
             WGL_CONTEXT_MINOR_VERSION_ARB, 5,
             WGL_CONTEXT_PROFILE_MASK_ARB,  WGL_CONTEXT_CORE_PROFILE_BIT_ARB,
-#ifndef NDEBUG
+            #ifndef NDEBUG
             // ask for debug context for non "Release" builds
             // this is so we can enable debug callback
             WGL_CONTEXT_FLAGS_ARB, WGL_CONTEXT_DEBUG_BIT_ARB,
-#endif
+            #endif
             0,
         };
 
@@ -319,15 +320,15 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
         Assert(ok && "Failed to make current OpenGL context");
 
         // load OpenGL functions
-#define X(type, name) name = (type)wglGetProcAddress(#name); Assert(name);
+        #define X(type, name) name = (type)wglGetProcAddress(#name); Assert(name);
         GL_FUNCTIONS(X)
-#undef X
+            #undef X
 
-#ifndef NDEBUG
+        #ifndef NDEBUG
         // enable debug callback
         glDebugMessageCallback(&DebugCallback, NULL);
         glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
-#endif
+        #endif
     }
 
     struct Vertex
@@ -420,7 +421,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
             "    uv = a_uv;                                \n"
             "    color = vec4(a_color, 1);                 \n"
             "}                                             \n"
-        ;
+            ;
 
         const char* glsl_fshader =
             "#version 450 core                             \n"
@@ -439,7 +440,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
             "{                                             \n"
             "    o_color = color * texture(s_texture, uv); \n"
             "}                                             \n"
-        ;
+            ;
 
         vshader = glCreateShaderProgramv(GL_VERTEX_SHADER, 1, &glsl_vshader);
         fshader = glCreateShaderProgramv(GL_FRAGMENT_SHADER, 1, &glsl_fshader);

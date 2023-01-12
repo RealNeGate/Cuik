@@ -161,7 +161,11 @@ static void dump_expr(FILE* stream, Expr* restrict e, int depth, bool last_node)
         }
         case EXPR_INT: {
             qual_type_as_string(sizeof(temp_string0), temp_string0, e->type);
-            fprintf(stream, "IntegerLiteral %llu '%s'\n", e->int_num.num, temp_string0);
+            if (cuik_type_is_signed(cuik_canonical_type(e->type))) {
+                fprintf(stream, "IntegerLiteral %lld '%s'\n", e->int_num.num, temp_string0);
+            } else {
+                fprintf(stream, "IntegerLiteral %llu '%s'\n", e->int_num.num, temp_string0);
+            }
             break;
         }
         case EXPR_ENUM: {
