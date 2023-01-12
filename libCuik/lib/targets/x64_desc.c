@@ -47,6 +47,8 @@ static Cuik_Type* type_check_builtin(TranslationUnit* tu, Expr* e, const char* n
         }
 
         return &builtin_types[TYPE_UINT];
+    } else if (strcmp(name, "__readgsqword") == 0) {
+        return &builtin_types[TYPE_USHORT];
     } else {
         REPORT_EXPR(ERROR, e->call.target, "unimplemented builtin '%s'", name);
         return &builtin_types[TYPE_VOID];
@@ -82,7 +84,12 @@ static TB_FunctionPrototype* create_prototype(TranslationUnit* tu, Cuik_Type* ty
     TB_DataType return_dt = TB_TYPE_PTR;
     if (!is_aggregate_return) return_dt = ctype_to_tbtype(cuik_canonical_type(type->func.return_type));
 
-    TB_FunctionPrototype* proto = tb_prototype_create(tu->ir_mod, TB_STDCALL, return_dt, real_param_count, type->func.has_varargs);
+    TB_DebugType* ret_type = NULL;
+    if (tu->has_tb_debug_info && !is_aggregate_return) {
+        ret_type = cuik__as_tb_debug_type(m, cuik_canonical_type(type->func.return_type));
+    }
+
+    TB_FunctionPrototype* proto = tb_prototype_create(tu->ir_mod, TB_STDCALL, return_dt, ret_type, real_param_count, type->func.has_varargs);
     if (is_aggregate_return) {
         if (tu->has_tb_debug_info) {
             // it's a pointer to the debug type here
@@ -248,6 +255,9 @@ static TB_Reg compile_builtin(TranslationUnit* tu, TB_Function* func, const char
         return tb_inst_x86_ldmxcsr(func, irgen_as_rvalue(tu, func, args[0]));
     } else if (strcmp(name, "_mm_getcsr") == 0) {
         return tb_inst_x86_stmxcsr(func);
+    } else if (strcmp(name, "__readgsqword") == 0) {
+        // TODO(NeGate): implement readgs/writegs with all the type variants
+        return tb_inst_uint(func, TB_TYPE_I16, 0);
     } else {
         assert(0 && "unimplemented builtin!");
         return 0;
@@ -260,6 +270,7 @@ Cuik_Target* cuik_target_x64(Cuik_System system, Cuik_Environment env) {
     target_generic_fill_builtin_table(&builtins);
     nl_strmap_put_cstr(builtins, "_mm_getcsr", NULL);
     nl_strmap_put_cstr(builtins, "_mm_setcsr", NULL);
+    nl_strmap_put_cstr(builtins, "__readgsqword", NULL);
 
     Cuik_Target* t = malloc(sizeof(Cuik_Target));
     *t = (Cuik_Target){

@@ -54,8 +54,7 @@ static Cuik_Attribute* parse_attributes(TokenStream* restrict s, Cuik_Attribute*
 }
 
 static bool skip_over_declspec(TokenStream* restrict s) {
-    if (tokens_get(s)->type == TOKEN_KW_declspec ||
-        tokens_get(s)->type == TOKEN_KW_Pragma) {
+    if (tokens_get(s)->type == TOKEN_KW_declspec || tokens_get(s)->type == TOKEN_KW_Pragma) {
         tokens_next(s);
         expect_char(s, '(');
 
@@ -1081,7 +1080,7 @@ static Cuik_QualType parse_type_suffix2(Cuik_Parser* restrict parser, TokenStrea
             }
             expect_closing_paren(s, opening_loc);
 
-            while (skip_over_declspec(s)) {}
+            // while (skip_over_declspec(s)) {}
 
             // Allocate some more permanent storage
             Param* permanent_store = arena_alloc(&local_ast_arena, param_count * sizeof(Param), _Alignof(Param));

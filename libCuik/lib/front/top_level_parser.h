@@ -180,17 +180,91 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
         dyn_array_put(parser->top_level_stmts, n);
 
         Symbol *old_def = NULL, *sym = NULL;
+        int ts = 0, te = 0;
         if (decl.name != NULL) {
             // Check for duplicates
+            assert(!CUIK_QUAL_TYPE_IS_NULL(decl.type));
             old_def = sym = find_global_symbol(&parser->globals, decl.name);
-            int ts = 0, te = 0;
             if (old_def == NULL) {
                 ptrdiff_t sym_index = nl_strmap_puti_cstr(parser->globals.symbols, decl.name);
                 sym = &parser->globals.symbols[sym_index];
-            } else {
-                ts = old_def->token_start, te = old_def->token_end;
+                *sym = (Symbol){
+                    .name = decl.name,
+                    .type = decl.type,
+                    .loc  = decl.loc,
+                    .stmt = n
+                };
             }
+        }
 
+        bool has_body = false;
+        if (attr.is_typedef) {
+            // typedef is just a special storage class
+            // diag_note(s, decl.loc, "Typedef: %s", decl.name);
+        } else {
+            n->attr_list = parse_attributes(s, n->attr_list);
+
+            if (decl.name != NULL) {
+                // declaration endings
+                ptrdiff_t expr_start, expr_end;
+                if (tokens_get(s)->type == '=') {
+                    // initializer:
+                    //   assignment-expression
+                    //   '{' initializer-list '}'
+                    //
+                    // since this is global scope we don't actually parse
+                    // the expression, instead we can skim over it with
+                    // brace matching.
+                    tokens_next(s);
+
+                    if (n->decl.attrs.is_inline) {
+                        diag_err(s, decl.loc, "non-function declarations cannot be inline");
+                    }
+                    n->decl.attrs.is_root = !attr.is_extern && !attr.is_static;
+
+                    if (tokens_get(s)->type == '{') {
+                        expr_start = skip_brackets(s, decl.loc, true, &expr_end);
+                    } else {
+                        expr_start = skip_expression_in_list(s, decl.loc, &expr_end);
+                    }
+                    has_body = true;
+                } else if (tokens_get(s)->type == '{') {
+                    if (cuik_canonical_type(decl.type)->kind != KIND_FUNC) {
+                        diag_err(s, decl.loc, "cannot add function body to non-function declaration");
+                    }
+
+                    n->op = STMT_FUNC_DECL;
+                    n->decl.attrs.is_root = attr.is_tls || !(attr.is_static || attr.is_inline);
+                    expr_start = skip_brackets(s, decl.loc, false, &expr_end);
+                    if (expr_start < 0) {
+                        s->list.current = dyn_array_length(s->list.tokens) - 1;
+                        return PARSE_WIT_ERRORS;
+                    }
+
+                    has_semicolon = false;
+                    has_body = true;
+                } else {
+                    expr_start = expr_end = -1;
+
+                    if (cuik_canonical_type(decl.type)->kind != KIND_FUNC) {
+                        if (n->decl.attrs.is_inline) {
+                            diag_err(s, decl.loc, "non-function declaration cannot be inline");
+                        }
+
+                        n->decl.attrs.is_root = !attr.is_extern && !attr.is_static;
+                    }
+                }
+
+                if (expr_start >= 0) {
+                    sym->token_start = expr_start;
+                    sym->token_end = expr_end;
+                    // SourceRange r = { s->list.tokens[expr_start].location, get_token_range(&s->list.tokens[expr_end]).end };
+                    // diag_note(s, r, "Initializer");
+                }
+            }
+        }
+
+        if (decl.name != NULL) {
             StorageClass st_class;
             if (attr.is_typedef) {
                 st_class = STORAGE_TYPEDEF;
@@ -243,86 +317,17 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
                 }
             }
 
-            assert(!CUIK_QUAL_TYPE_IS_NULL(decl.type));
-            *sym = (Symbol){
-                .name = decl.name,
-                .type = decl.type,
-                .storage_class = st_class,
-                .loc = decl.loc,
-                .stmt = n,
-                .token_start = ts,
-                .token_end = te
-            };
-        }
-
-        if (attr.is_typedef) {
-            // typedef is just a special storage class
-            // diag_note(s, decl.loc, "Typedef: %s", decl.name);
-        } else {
-            n->attr_list = parse_attributes(s, n->attr_list);
-
-            if (decl.name != NULL) {
-                // declaration endings
-                ptrdiff_t expr_start, expr_end;
-                if (tokens_get(s)->type == '=') {
-                    // initializer:
-                    //   assignment-expression
-                    //   '{' initializer-list '}'
-                    //
-                    // since this is global scope we don't actually parse
-                    // the expression, instead we can skim over it with
-                    // brace matching.
-                    tokens_next(s);
-
-                    if (n->decl.attrs.is_inline) {
-                        diag_err(s, decl.loc, "non-function declarations cannot be inline");
-                    }
-                    n->decl.attrs.is_root = !attr.is_extern && !attr.is_static;
-
-                    if (tokens_get(s)->type == '{') {
-                        expr_start = skip_brackets(s, decl.loc, true, &expr_end);
-                    } else {
-                        expr_start = skip_expression_in_list(s, decl.loc, &expr_end);
-                    }
-                } else if (tokens_get(s)->type == '{') {
-                    if (cuik_canonical_type(decl.type)->kind != KIND_FUNC) {
-                        diag_err(s, decl.loc, "cannot add function body to non-function declaration");
-                    }
-
-                    n->decl.attrs.is_root = attr.is_tls || !(attr.is_static || attr.is_inline);
-                    expr_start = skip_brackets(s, decl.loc, false, &expr_end);
-
-                    if (expr_start >= 0) {
-                        sym->token_start = expr_start;
-                        sym->token_end = expr_end;
-                    } else {
-                        s->list.current = dyn_array_length(s->list.tokens) - 1;
-                        return PARSE_WIT_ERRORS;
-                    }
-                    has_semicolon = false;
-                    break;
-                } else {
-                    expr_start = expr_end = -1;
-
-                    if (cuik_canonical_type(decl.type)->kind != KIND_FUNC) {
-                        if (n->decl.attrs.is_inline) {
-                            diag_err(s, decl.loc, "non-function declaration cannot be inline");
-                        }
-
-                        n->decl.attrs.is_root = !attr.is_extern && !attr.is_static;
-                    }
-                }
-
-                if (expr_start >= 0) {
-                    sym->token_start = expr_start;
-                    sym->token_end = expr_end;
-                    // SourceRange r = { s->list.tokens[expr_start].location, get_token_range(&s->list.tokens[expr_end]).end };
-                    // diag_note(s, r, "Initializer");
-                }
+            if (sym->stmt != n && has_body) {
+                sym->stmt = n;
             }
+
+            sym->storage_class = st_class;
         }
 
-        if (tokens_get(s)->type == ',') {
+        if (!has_semicolon) {
+            // function body
+            break;
+        } else if (tokens_get(s)->type == ',') {
             tokens_next(s);
             continue;
         } else {

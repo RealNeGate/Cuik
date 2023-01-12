@@ -37,7 +37,12 @@ static TB_FunctionPrototype* create_prototype(TranslationUnit* tu, Cuik_Type* ty
     TB_DataType return_dt = TB_TYPE_PTR;
     if (!is_aggregate_return) return_dt = ctype_to_tbtype(cuik_canonical_type(type->func.return_type));
 
-    TB_FunctionPrototype* proto = tb_prototype_create(tu->ir_mod, TB_STDCALL, return_dt, real_param_count, type->func.has_varargs);
+    TB_DebugType* ret_type = NULL;
+    if (tu->has_tb_debug_info && !is_aggregate_return) {
+        ret_type = cuik__as_tb_debug_type(m, cuik_canonical_type(type->func.return_type));
+    }
+
+    TB_FunctionPrototype* proto = tb_prototype_create(tu->ir_mod, TB_STDCALL, return_dt, ret_type, real_param_count, type->func.has_varargs);
     if (is_aggregate_return) {
         if (tu->has_tb_debug_info) {
             // it's a pointer to the debug type here

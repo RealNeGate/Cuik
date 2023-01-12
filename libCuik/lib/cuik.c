@@ -229,8 +229,7 @@ static void set_defines(Cuik_CPP* cpp, const Cuik_Target* target, bool system_li
         cuikpp_define_cstr(cpp, "__restrict__", "restrict");
         cuikpp_define_cstr(cpp, "__alignof", "_Alignof");
         cuikpp_define_cstr(cpp, "__CRTDECL", "__cdecl");
-        cuikpp_define_cstr(cpp, "__builtin_offsetof", "__offsetof");
-        cuikpp_define_empty_cstr(cpp, "__CRT__NO_INLINE");
+        // cuikpp_define_empty_cstr(cpp, "__CRT__NO_INLINE");
 
         // things we don't handle yet so we just remove them
         cuikpp_define_empty_cstr(cpp, "_Frees_ptr_");

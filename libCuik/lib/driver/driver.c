@@ -519,8 +519,8 @@ int cuik_driver_compile(Cuik_IThreadpool* restrict thread_pool, Cuik_CompilerArg
     ////////////////////////////////
     // backend work
     ////////////////////////////////
+    bool subsystem_windows;
     CUIK_TIMED_BLOCK("Backend") {
-        bool subsystem_windows;
         irgen(thread_pool, args, &compilation_unit, mod, &subsystem_windows);
 
         if (destroy_cu_after_ir) {
@@ -546,10 +546,10 @@ int cuik_driver_compile(Cuik_IThreadpool* restrict thread_pool, Cuik_CompilerArg
         CUIK_TIMED_BLOCK("CodeGen") {
             codegen(thread_pool, args, &compilation_unit, mod);
         }
+    }
 
-        if (!export_output(args, mod, subsystem_windows)) {
-            return 1;
-        }
+    if (!export_output(args, mod, subsystem_windows)) {
+        return 1;
     }
 
     cleanup_tb:
