@@ -51,12 +51,11 @@ I'll be supporting all the normal extensions such as:
 - [ ] __builtin_trap, __builtin_expect
 - [ ] x86 SIMD intrinsics
 - [x] typeof
-- [ ] case ranges
+- [x] case ranges
 - [ ] computed goto
 
 And some possibly novel extensions such as:
 - [x] Out of order functions
-- [ ] [Tagged unions](https://gist.github.com/RealNeGate/94a3074dd4e6d29ee3170f4a70c3dad2)
 
 
 ## What's left?
@@ -65,7 +64,7 @@ It can currently compile programs using the subset of C it currently supports bu
 * Bug fixes
 * Self hosting
 * Thread local
-* Atomics (halfway there)
+* Atomics (80% done, just missing the weird stuff like float and struct support)
 * MSVC extensions
 * GNU extensions
 * Proper Mac/Linux support
