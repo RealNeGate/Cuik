@@ -82,29 +82,6 @@ struct Cuik_CPP {
     } scope_eval[CPP_MAX_SCOPE_DEPTH];
 };
 
-struct Cuik_Linker {
-    bool subsystem_windows;
-
-    // translation units
-    #ifdef _WIN32
-    wchar_t* input_file_buffer;
-    #else
-    char* input_file_buffer;
-    #endif
-
-    size_t input_file_top;
-    size_t input_file_count;
-
-    // system libraries
-    #ifdef _WIN32
-    wchar_t* libpaths_buffer;
-    #else
-    char* libpaths_buffer;
-    #endif
-    size_t libpaths_top;
-    size_t libpaths_count;
-};
-
 struct CompilationUnit {
     // avoid exposing the mtx_t since it's messy
     void* lock;

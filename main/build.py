@@ -80,7 +80,7 @@ rule link
 
 # compile source files
 objs = []
-list = glob.glob("src/*.c")
+list = glob.glob("src/main_driver.c")
 
 if platform.system() == "Windows":
 	list.append("../c11threads/threads_msvc.c")

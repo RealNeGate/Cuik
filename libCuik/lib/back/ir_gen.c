@@ -778,7 +778,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
                     .value_type = LVALUE_SYMBOL,
                     .sym = stmt->backing.s,
                 };
-            } else if (stmt->op == STMT_GLOBAL_DECL) {
+            } else if (stmt->op == STMT_GLOBAL_DECL || (stmt->op == STMT_DECL && stmt->decl.attrs.is_static)) {
                 if (stmt->backing.s == NULL) {
                     // check if it's defined by another TU
                     // functions are external by default
@@ -1671,7 +1671,7 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
                 tb_global_set_initializer(tu->ir_mod, g, init);
                 tls_restore(name);
 
-                s->backing.r = tb_inst_get_symbol_address(func, (TB_Symbol*) g);
+                s->backing.g = g;
                 break;
             }
 

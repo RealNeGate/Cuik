@@ -12,23 +12,6 @@ char cuik__core_dir[FILENAME_MAX];
 #define SLASH "/"
 #endif
 
-#ifdef _WIN32
-MicrosoftCraziness_Find_Result cuik__vswhere;
-
-static char* utf16_to_utf8_on_heap(const wchar_t* input) {
-    if (input == NULL) return NULL;
-
-    int bytes = WideCharToMultiByte(65001 /* UTF8 */, 0, input, -1, NULL, 0, NULL, NULL);
-    if (bytes <= 0) return NULL;
-
-    char* output = malloc(bytes + 1);
-    WideCharToMultiByte(65001 /* UTF8 */, 0, input, -1, output, bytes, NULL, NULL);
-    output[bytes] = 0;
-
-    return output;
-}
-#endif
-
 // hacky
 void hook_crash_handler(void);
 void init_timer_system(void);
@@ -43,7 +26,7 @@ void cuik_free_thread_resources(void) {
     arena_free(&thread_arena);
 }
 
-Cuik_Target* cuik_host_target(void) {
+Cuik_Target* cuik_target_host(void) {
     #if defined(_WIN32)
     return cuik_target_x64(CUIK_SYSTEM_WINDOWS, CUIK_ENV_MSVC);
     #elif defined(__linux) || defined(linux)
@@ -54,43 +37,11 @@ Cuik_Target* cuik_host_target(void) {
 }
 
 void cuik_find_system_deps(const char* cuik_crt_directory) {
-    #ifdef _WIN32
-    cuik__vswhere = cuik__find_visual_studio_and_windows_sdk();
-    #endif
-
     sprintf_s(cuik__core_dir, FILENAME_MAX, "%s"SLASH"crt"SLASH, cuik_crt_directory);
     sprintf_s(cuik__include_dir, FILENAME_MAX, "%s"SLASH"crt"SLASH"include"SLASH, cuik_crt_directory);
 }
 
-size_t cuik_get_system_search_path_count(void) {
-    #ifdef _WIN32
-    return 3;
-    #else
-    return 0;
-    #endif
-}
-
-void cuik_get_system_search_paths(const char** out, size_t n) {
-    #ifdef _WIN32
-    if (n >= 1) out[0] = utf16_to_utf8_on_heap(cuik__vswhere.vs_library_path);
-    if (n >= 2) out[1] = utf16_to_utf8_on_heap(cuik__vswhere.windows_sdk_um_library_path);
-    if (n >= 3) out[2] = utf16_to_utf8_on_heap(cuik__vswhere.windows_sdk_ucrt_library_path);
-    #endif
-}
-
-static void set_defines(Cuik_CPP* cpp, const Cuik_Target* target, bool system_libs) {
-    #ifdef _WIN32
-    if (system_libs) {
-        if (cuik__vswhere.windows_sdk_include == NULL) {
-            printf("warning: could not automatically find WinSDK include path\n");
-        }
-
-        if (cuik__vswhere.vs_include_path == NULL) {
-            printf("warning: could not automatically find VS include path\n");
-        }
-    }
-    #endif
-
+void cuik_set_standard_defines(Cuik_CPP* cpp, const Cuik_CompilerArgs* args) {
     // DO NOT REMOVE THESE, IF THEY'RE MISSING THE PREPROCESSOR WILL NOT DETECT THEM
     cuikpp_define_empty_cstr(cpp, "__FILE__");
     cuikpp_define_empty_cstr(cpp, "L__FILE__");
@@ -155,89 +106,13 @@ static void set_defines(Cuik_CPP* cpp, const Cuik_Target* target, bool system_li
     cuikpp_define_cstr(cpp, "typeof", "_Typeof");
 
     cuikpp_add_include_directory(cpp, true, cuik__include_dir);
+    args->toolchain.set_preprocessor(args->toolchain.ctx, args, cpp);
 
-    // platform specific stuff
-    if (target->system == CUIK_SYSTEM_WINDOWS) {
-        // WinSDK includes
-        char filepath[FILENAME_MAX];
-        /*if (snprintf(filepath, FILENAME_MAX, "%swindows.zip\\", cuik__core_dir) > FILENAME_MAX) {
-            printf("internal compiler error: WinSDK directory too long!\n");
-            abort();
-        }
-        cuikpp_add_include_directory(cpp, true, filepath);*/
+    if (args->target != NULL) {
+        args->target->set_defines(args->target, cpp);
+    }
 
-        #ifdef _WIN32
-        if (snprintf(filepath, FILENAME_MAX, "%S\\um\\", cuik__vswhere.windows_sdk_include) > FILENAME_MAX) {
-            printf("internal compiler error: WinSDK include directory too long!\n");
-            abort();
-        }
-        cuikpp_add_include_directory(cpp, true, filepath);
-
-        if (snprintf(filepath, FILENAME_MAX, "%S\\shared\\", cuik__vswhere.windows_sdk_include) > FILENAME_MAX) {
-            printf("internal compiler error: WinSDK include directory too long!\n");
-            abort();
-        }
-        cuikpp_add_include_directory(cpp, true, filepath);
-
-        // VS include
-        if (snprintf(filepath, FILENAME_MAX, "%S\\", cuik__vswhere.vs_include_path) > FILENAME_MAX) {
-            printf("internal compiler error: VS include directory too long!\n");
-            abort();
-        }
-        cuikpp_add_include_directory(cpp, true, filepath);
-
-        if (system_libs) {
-            if (snprintf(filepath, FILENAME_MAX, "%S\\ucrt\\", cuik__vswhere.windows_sdk_include) > FILENAME_MAX) {
-                printf("internal compiler error: WinSDK include directory too long!\n");
-                abort();
-            }
-            cuikpp_add_include_directory(cpp, true, filepath);
-        }
-        #endif
-
-        cuikpp_define_empty_cstr(cpp, "_MT");
-        if (true) {
-            cuikpp_define_empty_cstr(cpp, "_DLL");
-        }
-
-        //cuikpp_define_empty_cstr(cpp, "_NO_CRT_STDIO_INLINE");
-        //cuikpp_define_empty_cstr(cpp, "_CRT_NONSTDC_NO_WARNINGS");
-        //cuikpp_define_empty_cstr(cpp, "_CRT_SECURE_NO_WARNINGS");
-
-        // we support MSVC extensions
-        cuikpp_define_cstr(cpp, "_MSC_EXTENSIONS", "1");
-        cuikpp_define_cstr(cpp, "_INTEGRAL_MAX_BITS", "64");
-
-        cuikpp_define_cstr(cpp, "_USE_ATTRIBUTES_FOR_SAL", "0");
-
-        // pretend to be MSVC
-        if (true) {
-            cuikpp_define_cstr(cpp, "_MSC_BUILD", "1");
-            cuikpp_define_cstr(cpp, "_MSC_FULL_VER", "192930137");
-            cuikpp_define_cstr(cpp, "_MSC_VER", "1929");
-        }
-
-        // wrappers over MSVC based keywords and features
-        cuikpp_define_cstr(cpp, "__int8", "char");
-        cuikpp_define_cstr(cpp, "__int16", "short");
-        cuikpp_define_cstr(cpp, "__int32", "int");
-        cuikpp_define_cstr(cpp, "__int64", "long long");
-        cuikpp_define_cstr(cpp, "__pragma(x)", "_Pragma(#x)");
-        cuikpp_define_cstr(cpp, "__inline", "inline");
-        cuikpp_define_cstr(cpp, "__forceinline", "inline");
-        cuikpp_define_cstr(cpp, "__signed__", "signed");
-        cuikpp_define_cstr(cpp, "__restrict__", "restrict");
-        cuikpp_define_cstr(cpp, "__alignof", "_Alignof");
-        cuikpp_define_cstr(cpp, "__CRTDECL", "__cdecl");
-        // cuikpp_define_empty_cstr(cpp, "__CRT__NO_INLINE");
-
-        // things we don't handle yet so we just remove them
-        cuikpp_define_empty_cstr(cpp, "_Frees_ptr_");
-        cuikpp_define_empty_cstr(cpp, "__unaligned");
-        cuikpp_define_empty_cstr(cpp, "__analysis_noreturn");
-        cuikpp_define_empty_cstr(cpp, "__ptr32");
-        cuikpp_define_empty_cstr(cpp, "__ptr64");
-    } else if (target->system == CUIK_SYSTEM_LINUX) {
+    /*if (args->target->system == CUIK_SYSTEM_LINUX) {
         // TODO(NeGate): Automatically detect these somehow...
         cuikpp_add_include_directory(cpp, true, "/usr/lib/gcc/x86_64-linux-gnu/9/include/");
         cuikpp_add_include_directory(cpp, true, "/usr/include/x86_64-linux-gnu/");
@@ -276,15 +151,7 @@ static void set_defines(Cuik_CPP* cpp, const Cuik_Target* target, bool system_li
 
         // cuikpp_define_cstr(cpp, "__GNUC__", "9");
         // cuikpp_define_empty_cstr(cpp, "_GNU_SOURCE");
-    }
-
-    if (target != NULL) {
-        target->set_defines(target, cpp);
-    }
-}
-
-void cuikpp_set_common_defines(Cuik_CPP* restrict out_cpp, const Cuik_Target* target, bool use_system_includes) {
-    set_defines(out_cpp, target, use_system_includes);
+    }*/
 }
 
 Cuik_Entrypoint cuik_get_entrypoint_status(TranslationUnit* restrict tu) {

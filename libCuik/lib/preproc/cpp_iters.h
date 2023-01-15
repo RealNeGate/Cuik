@@ -7,6 +7,18 @@ void cuikpp_add_include_directory(Cuik_CPP* ctx, bool is_system, const char dir[
     dyn_array_put(ctx->system_include_dirs, idir);
 }
 
+CUIK_API void cuikpp_add_include_directoryf(Cuik_CPP* ctx, bool is_system, const char* fmt, ...) {
+    char* out = malloc(FILENAME_MAX);
+
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(out, FILENAME_MAX, fmt, ap);
+    va_end(ap);
+
+    Cuik_IncludeDir idir = { is_system, out };
+    dyn_array_put(ctx->system_include_dirs, idir);
+}
+
 Cuik_File* cuikpp_next_file(Cuik_CPP* ctx, Cuik_File* f) {
     // first element
     if (f == NULL) return &ctx->tokens.files[0];

@@ -1,4 +1,3 @@
-//
 // Author:   Jonathan Blow
 // Version:  1
 // Date:     31 August, 2018
@@ -7,57 +6,9 @@
 //
 //          https://opensource.org/licenses/MIT
 //
-//
-//
-// See the comments for how to use this library just below the includes.
-//
-
-//
-// This file was about 400 lines before we started adding these comments.
-// You might think that's way too much code to do something as simple
-// as finding a few library and executable paths. I agree. However,
-// Microsoft's own solution to this problem, called "vswhere", is a
-// mere EIGHT THOUSAND LINE PROGRAM, spread across 70 files,
-// that they posted to github *unironically*.
-//
-// I am not making this up: https://github.com/Microsoft/vswhere
-//
-// Several people have therefore found the need to solve this problem
-// themselves. We referred to some of these other solutions when
-// figuring out what to do, most prominently ziglang's version,
-// by Ryan Saunderson.
-//
-// I hate this kind of code. The fact that we have to do this at all
-// is stupid, and the actual maneuvers we need to go through
-// are just painful. If programming were like this all the time,
-// I would quit.
-//
-// Because this is such an absurd waste of time, I felt it would be
-// useful to package the code in an easily-reusable way, in the
-// style of the stb libraries. We haven't gone as all-out as some
-// of the stb libraries do (which compile in C with no includes, often).
-// For this version you need C++ and the headers at the top of the file.
-//
-// We return the strings as Windows wide character strings. Aesthetically
-// I don't like that (I think most sane programs are UTF-8 internally),
-// but apparently, not all valid Windows file paths can even be converted
-// correctly to UTF-8. So have fun with that. It felt safest and simplest
-// to stay with wchar_t since all of this code is fully ensconced in
-// Windows crazy-land.
-//
-// One other shortcut I took is that this is hardcoded to return the
-// folders for x64 libraries. If you want x86 or arm, you can make
-// slight edits to the code below, or, if enough people want this,
-// I can work it in here.
-//
-#include "microsoft_craziness.h"
+#include <cuik.h>
 
 #include <windows.h>
-#include <stdio.h>
-#include <stdint.h>
-#include <stdlib.h>
-#include <string.h>
-#include <stdbool.h>
 #include <io.h>         // For _get_osfhandle
 
 #ifdef _WIN32
@@ -68,25 +19,27 @@
 #pragma comment(lib, "Ole32.lib")
 #pragma comment(lib, "OleAut32.lib")
 
-void free_resources(MicrosoftCraziness_Find_Result *result) {
-    free(result->windows_sdk_root);
-    free(result->windows_sdk_um_library_path);
-    free(result->windows_sdk_ucrt_library_path);
-    free(result->vs_exe_path);
-    free(result->vs_library_path);
-}
+typedef struct {
+    int windows_sdk_version; // Zero if no Windows SDK found.
 
+    wchar_t windows_sdk_include[FILENAME_MAX];
+    wchar_t windows_sdk_root[FILENAME_MAX];
+
+    wchar_t vs_exe_path[FILENAME_MAX];
+    wchar_t vc_tools_install[FILENAME_MAX];
+    wchar_t vs_library_path[FILENAME_MAX];
+    wchar_t vs_include_path[FILENAME_MAX];
+} Cuik_WindowsToolchain;
 
 // COM objects for the ridiculous Microsoft craziness.
-
 #undef  INTERFACE
 #define INTERFACE ISetupInstance
 DECLARE_INTERFACE_ (ISetupInstance, IUnknown)
 {
-    BEGIN_INTERFACE
+    BEGIN_INTERFACE;
 
-        // IUnknown methods
-        STDMETHOD (QueryInterface)   (THIS_  REFIID, void **) PURE;
+    // IUnknown methods
+    STDMETHOD (QueryInterface)   (THIS_  REFIID, void **) PURE;
     STDMETHOD_(ULONG, AddRef)    (THIS) PURE;
     STDMETHOD_(ULONG, Release)   (THIS) PURE;
 
@@ -107,10 +60,10 @@ DECLARE_INTERFACE_ (ISetupInstance, IUnknown)
 #define INTERFACE IEnumSetupInstances
 DECLARE_INTERFACE_ (IEnumSetupInstances, IUnknown)
 {
-    BEGIN_INTERFACE
+    BEGIN_INTERFACE;
 
-        // IUnknown methods
-        STDMETHOD (QueryInterface)   (THIS_  REFIID, void **) PURE;
+    // IUnknown methods
+    STDMETHOD (QueryInterface)   (THIS_  REFIID, void **) PURE;
     STDMETHOD_(ULONG, AddRef)    (THIS) PURE;
     STDMETHOD_(ULONG, Release)   (THIS) PURE;
 
@@ -155,7 +108,7 @@ DECLARE_INTERFACE_ (ISetupConfiguration, IUnknown)
 
 typedef struct {
     int32_t best_version[4];  // For Windows 8 versions, only two of these numbers are used.
-    wchar_t *best_name;
+    wchar_t* best_name; // [FILENAME_MAX]
 } Version_Data;
 
 bool os_file_exists(wchar_t *name) {
@@ -197,13 +150,13 @@ wchar_t *concat(wchar_t *a, wchar_t *b, wchar_t *c, wchar_t *d) {
     return result;
 }
 
-typedef void (*Visit_Proc_W)(wchar_t *short_name, wchar_t *full_name, Version_Data *data);
+typedef bool (*Visit_Proc_W)(wchar_t *short_name, Version_Data *data);
 bool visit_files_w(wchar_t *dir_name, Version_Data *data, Visit_Proc_W proc) {
+    data->best_name[0] = 0;
 
     // Visit everything in one folder (non-recursively). If it's a directory
     // that doesn't start with ".", call the visit proc on it. The visit proc
     // will see if the filename conforms to the expected versioning pattern.
-
     WIN32_FIND_DATAW find_data;
 
     wchar_t *wildcard_name = concat2(dir_name, L"\\*");
@@ -214,9 +167,9 @@ bool visit_files_w(wchar_t *dir_name, Version_Data *data, Visit_Proc_W proc) {
 
     while (true) {
         if ((find_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) && (find_data.cFileName[0] != '.')) {
-            wchar_t *full_name = concat3(dir_name, L"\\", find_data.cFileName);
-            proc(find_data.cFileName, full_name, data);
-            free(full_name);
+            if (proc(find_data.cFileName, data)) {
+                swprintf(data->best_name, FILENAME_MAX, L"%s\\%s", dir_name, find_data.cFileName);
+            }
         }
 
         BOOL success = FindNextFileW(handle, &find_data);
@@ -224,10 +177,8 @@ bool visit_files_w(wchar_t *dir_name, Version_Data *data, Visit_Proc_W proc) {
     }
 
     FindClose(handle);
-
     return true;
 }
-
 
 wchar_t *find_windows_kit_root_with_key(HKEY key, wchar_t *version) {
     // Given a key to an already opened registry entry,
@@ -255,96 +206,77 @@ wchar_t *find_windows_kit_root_with_key(HKEY key, wchar_t *version) {
     return value;
 }
 
-void win10_best(wchar_t *short_name, wchar_t *full_name, Version_Data *data) {
+bool win10_best(wchar_t *short_name, Version_Data *data) {
     // Find the Windows 10 subdirectory with the highest version number.
-
     int i0, i1, i2, i3;
     int success = swscanf_s(short_name, L"%d.%d.%d.%d", &i0, &i1, &i2, &i3);
-    if (success < 4) return;
+    if (success < 4) return false;
 
-    if (i0 < data->best_version[0]) return;
+    if (i0 < data->best_version[0]) return false;
     else if (i0 == data->best_version[0]) {
-        if (i1 < data->best_version[1]) return;
+        if (i1 < data->best_version[1]) return false;
         else if (i1 == data->best_version[1]) {
-            if (i2 < data->best_version[2]) return;
+            if (i2 < data->best_version[2]) return false;
             else if (i2 == data->best_version[2]) {
-                if (i3 < data->best_version[3]) return;
+                if (i3 < data->best_version[3]) return false;
             }
         }
     }
 
-    // we have to copy_string and free here because visit_files free's the full_name string
-    // after we execute this function, so Win*_Data would contain an invalid pointer.
-    if (data->best_name) free(data->best_name);
-    data->best_name = _wcsdup(full_name);
-
-    if (data->best_name) {
+    if (!data->best_name[0]) {
         data->best_version[0] = i0;
         data->best_version[1] = i1;
         data->best_version[2] = i2;
         data->best_version[3] = i3;
     }
+    return true;
 }
 
-void win8_best(wchar_t *short_name, wchar_t *full_name, Version_Data *data) {
+bool win8_best(wchar_t *short_name, Version_Data *data) {
     // Find the Windows 8 subdirectory with the highest version number.
-
     int i0, i1;
     int success = swscanf_s(short_name, L"winv%d.%d", &i0, &i1);
-    if (success < 2) return;
+    if (success < 2) return false;
 
-    if (i0 < data->best_version[0]) return;
+    if (i0 < data->best_version[0]) return false;
     else if (i0 == data->best_version[0]) {
-        if (i1 < data->best_version[1]) return;
+        if (i1 < data->best_version[1]) return false;
     }
 
-    // we have to copy_string and free here because visit_files free's the full_name string
-    // after we execute this function, so Win*_Data would contain an invalid pointer.
-    if (data->best_name) free(data->best_name);
-    data->best_name = _wcsdup(full_name);
-
-    if (data->best_name) {
+    if (!data->best_name[0]) {
         data->best_version[0] = i0;
         data->best_version[1] = i1;
     }
+    return true;
 }
 
-void find_windows_kit_root(MicrosoftCraziness_Find_Result *result) {
+void find_windows_kit_root(Cuik_WindowsToolchain* result) {
     // Information about the Windows 10 and Windows 8 development kits
     // is stored in the same place in the registry. We open a key
     // to that place, first checking preferntially for a Windows 10 kit,
     // then, if that's not found, a Windows 8 kit.
-
     HKEY main_key;
-
     LSTATUS rc = RegOpenKeyExA(HKEY_LOCAL_MACHINE, "SOFTWARE\\Microsoft\\Windows Kits\\Installed Roots",
         0, KEY_QUERY_VALUE | KEY_ENUMERATE_SUB_KEYS, &main_key);
     if (rc != S_OK) return;
 
     // Look for a Windows 10 entry.
     wchar_t *windows10_root = find_windows_kit_root_with_key(main_key, L"KitsRoot10");
-
     if (windows10_root) {
         wchar_t *windows10_lib = concat2(windows10_root, L"Lib");
 
-        Version_Data data = {0};
+        Version_Data data = {.best_name = result->windows_sdk_root};
         visit_files_w(windows10_lib, &data, win10_best);
         free(windows10_lib);
 
-        if (data.best_name) {
+        if (data.best_name[0]) {
             result->windows_sdk_version = 10;
-            result->windows_sdk_root = data.best_name;
-            wchar_t* include_path = malloc(MAX_PATH * sizeof(wchar_t));
 
-            int success = swprintf_s(include_path, MAX_PATH,
+            swprintf_s(result->windows_sdk_include, MAX_PATH,
                 L"%sInclude\\%d.%d.%d.%d",
                 windows10_root,
                 data.best_version[0], data.best_version[1],
                 data.best_version[2], data.best_version[3]);
-
-            if (success < MAX_PATH) {
-                result->windows_sdk_include = include_path;
-            }
 
             free(windows10_root);
             RegCloseKey(main_key);
@@ -355,28 +287,21 @@ void find_windows_kit_root(MicrosoftCraziness_Find_Result *result) {
 
     // Look for a Windows 8 entry.
     wchar_t *windows8_root = find_windows_kit_root_with_key(main_key, L"KitsRoot81");
-
     if (windows8_root) {
         wchar_t *windows8_lib = concat2(windows8_root, L"Lib");
 
-        Version_Data data = {0};
+        Version_Data data = {.best_name = result->windows_sdk_root};
         visit_files_w(windows8_lib, &data, win8_best);
         free(windows8_lib);
 
-        if (data.best_name) {
+        if (data.best_name[0]) {
             result->windows_sdk_version = 8;
-            result->windows_sdk_root = data.best_name;
-            wchar_t* include_path = malloc(MAX_PATH * sizeof(wchar_t));
 
-            int success = swprintf_s(include_path, MAX_PATH,
+            swprintf_s(result->windows_sdk_include, MAX_PATH,
                 L"%sInclude\\%d.%d.%d.%d",
                 windows10_root,
                 data.best_version[0], data.best_version[1],
                 data.best_version[2], data.best_version[3]);
-
-            if (success < MAX_PATH) {
-                result->windows_sdk_include = include_path;
-            }
 
             free(windows10_root);
             free(windows8_root);
@@ -391,7 +316,7 @@ void find_windows_kit_root(MicrosoftCraziness_Find_Result *result) {
     RegCloseKey(main_key);
 }
 
-bool find_visual_studio_2017_by_fighting_through_microsoft_craziness(MicrosoftCraziness_Find_Result *result) {
+bool find_visual_studio_2017_by_fighting_through_microsoft_craziness(Cuik_WindowsToolchain *result) {
     /* HRESULT rc = */ CoInitialize(NULL);
     // "Subsequent valid calls return false." So ignore false.
     // if rc != S_OK  return false;
@@ -454,19 +379,16 @@ bool find_visual_studio_2017_by_fighting_through_microsoft_craziness(MicrosoftCr
         if (!read_result) continue;
 
         wchar_t *version_tail = wcschr(version, '\n');
-        if (version_tail)  *version_tail = 0;  // Stomp the data, because nobody cares about it.
+        if (version_tail) *version_tail = 0;  // Stomp the data, because nobody cares about it.
 
         wchar_t *include_path = concat4(bstr_inst_path, L"\\VC\\Tools\\MSVC\\", version, L"\\include");
         wchar_t *library_path = concat4(bstr_inst_path, L"\\VC\\Tools\\MSVC\\", version, L"\\lib\\x64");
         wchar_t *library_file = concat2(library_path, L"\\vcruntime.lib");  // @Speed: Could have library_path point to this string, with a smaller count, to save on memory flailing!
 
         if (os_file_exists(library_file)) {
-            wchar_t *link_exe_path = concat4(bstr_inst_path, L"\\VC\\Tools\\MSVC\\", version, L"\\bin\\Hostx64\\x64");
+            swprintf(result->vc_tools_install, MAX_PATH, L"%s\\VC\\Tools\\MSVC\\%s\\", bstr_inst_path, version);
             free(version);
 
-            result->vs_exe_path     = link_exe_path;
-            result->vs_include_path = include_path;
-            result->vs_library_path = library_path;
             found_visual_studio_2017 = true;
             break;
         }
@@ -485,7 +407,7 @@ bool find_visual_studio_2017_by_fighting_through_microsoft_craziness(MicrosoftCr
     return found_visual_studio_2017;
 }
 
-void find_visual_studio_by_fighting_through_microsoft_craziness(MicrosoftCraziness_Find_Result *result) {
+void find_visual_studio_by_fighting_through_microsoft_craziness(Cuik_WindowsToolchain* result) {
     // The name of this procedure is kind of cryptic. Its purpose is
     // to fight through Microsoft craziness. The things that the fine
     // Visual Studio team want you to do, JUST TO FIND A SINGLE FOLDER
@@ -518,41 +440,35 @@ void find_visual_studio_by_fighting_through_microsoft_craziness(MicrosoftCrazine
     for (int i = 0; i < NUM_VERSIONS; i++) {
         wchar_t *v = versions[i];
 
-        DWORD dw_type;
-        DWORD cb_data;
-
+        DWORD dw_type, cb_data;
         LSTATUS rc = RegQueryValueExW(vs7_key, v, NULL, &dw_type, NULL, &cb_data);
         if ((rc == ERROR_FILE_NOT_FOUND) || (dw_type != REG_SZ)) {
             continue;
         }
 
         wchar_t *buffer = (wchar_t *)malloc(cb_data);
-        if (!buffer)  return;
+        if (!buffer) return;
 
         rc = RegQueryValueExW(vs7_key, v, NULL, NULL, (LPBYTE)buffer, &cb_data);
-        if (rc != 0)  continue;
+        if (rc != 0) continue;
 
         // @Robustness: Do the zero-termination thing suggested in the RegQueryValue docs?
-
-        wchar_t *lib_path = concat2(buffer, L"VC\\Lib\\amd64");
-        wchar_t *include_path = concat2(buffer, L"VC\\Include");
+        swprintf(result->vs_library_path, MAX_PATH, L"%sVC\\Lib\\amd64\\", buffer);
+        swprintf(result->vs_include_path, MAX_PATH, L"%sVC\\Include\\", buffer);
 
         // Check to see whether a vcruntime.lib actually exists here.
-        wchar_t *vcruntime_filename = concat2(lib_path, L"\\vcruntime.lib");
+        wchar_t *vcruntime_filename = concat2(result->vs_library_path, L"\\vcruntime.lib");
         bool vcruntime_exists = os_file_exists(vcruntime_filename);
         free(vcruntime_filename);
 
         if (vcruntime_exists) {
-            result->vs_exe_path     = concat2(buffer, L"VC\\bin\\amd64");
-            result->vs_include_path = include_path;
-            result->vs_library_path = lib_path;
+            swprintf(result->vs_exe_path, MAX_PATH, L"%SVC\\bin\\amd64", buffer);
 
             free(buffer);
             RegCloseKey(vs7_key);
             return;
         }
 
-        free(lib_path);
         free(buffer);
     }
 
@@ -561,27 +477,147 @@ void find_visual_studio_by_fighting_through_microsoft_craziness(MicrosoftCrazine
     // If we get here, we failed to find anything.
 }
 
+static void add_libraries(void* ctx, const Cuik_CompilerArgs* args, Cuik_Linker* l) {
+    Cuik_WindowsToolchain* t = ctx;
 
-MicrosoftCraziness_Find_Result cuik__find_visual_studio_and_windows_sdk() {
-    MicrosoftCraziness_Find_Result result = { 0 };
-    find_windows_kit_root(&result);
+    cuiklink_add_libpathf(l, "%S", t->vs_library_path);
+    cuiklink_add_libpathf(l, "%S\\um\\x64", t->windows_sdk_root);
+}
 
-    if (result.windows_sdk_root) {
-        result.windows_sdk_um_library_path   = concat2(result.windows_sdk_root, L"\\um\\x64");
-        result.windows_sdk_ucrt_library_path = concat2(result.windows_sdk_root, L"\\ucrt\\x64");
+static void set_preprocessor(void* ctx, const Cuik_CompilerArgs* args, Cuik_CPP* cpp) {
+    Cuik_WindowsToolchain* t = ctx;
+
+    cuikpp_add_include_directoryf(cpp, true, "%S\\um\\",      t->windows_sdk_include);
+    cuikpp_add_include_directoryf(cpp, true, "%S\\shared\\",  t->windows_sdk_include);
+    cuikpp_add_include_directoryf(cpp, true, "%S",            t->vs_include_path);
+    if (!args->nocrt) {
+        cuikpp_add_include_directoryf(cpp, true, "%S\\ucrt\\", t->windows_sdk_include);
     }
 
-    find_visual_studio_by_fighting_through_microsoft_craziness(&result);
-
-    if (result.vs_exe_path == NULL || result.vs_include_path == NULL || result.vs_library_path == NULL) {
-        wchar_t* vc_tools_install = _wgetenv(L"VCToolsInstallDir");
-
-        if (vc_tools_install != NULL) {
-            result.vs_exe_path     = concat2(vc_tools_install, L"bin\\Hostx64\\x64");
-            result.vs_include_path = concat2(vc_tools_install, L"include");
-            result.vs_library_path = concat2(vc_tools_install, L"lib");
-        }
+    cuikpp_define_empty_cstr(cpp, "_MT");
+    if (true) {
+        cuikpp_define_empty_cstr(cpp, "_DLL");
     }
 
-    return result;
+    // we support MSVC extensions
+    cuikpp_define_cstr(cpp, "_MSC_EXTENSIONS", "1");
+    cuikpp_define_cstr(cpp, "_INTEGRAL_MAX_BITS", "64");
+
+    cuikpp_define_cstr(cpp, "_USE_ATTRIBUTES_FOR_SAL", "0");
+
+    // pretend to be MSVC
+    {
+        cuikpp_define_cstr(cpp, "_MSC_BUILD", "1");
+        cuikpp_define_cstr(cpp, "_MSC_FULL_VER", "192930137");
+        cuikpp_define_cstr(cpp, "_MSC_VER", "1929");
+    }
+
+    // wrappers over MSVC based keywords and features
+    cuikpp_define_cstr(cpp, "__int8", "char");
+    cuikpp_define_cstr(cpp, "__int16", "short");
+    cuikpp_define_cstr(cpp, "__int32", "int");
+    cuikpp_define_cstr(cpp, "__int64", "long long");
+    cuikpp_define_cstr(cpp, "__pragma(x)", "_Pragma(#x)");
+    cuikpp_define_cstr(cpp, "__inline", "inline");
+    cuikpp_define_cstr(cpp, "__forceinline", "inline");
+    cuikpp_define_cstr(cpp, "__signed__", "signed");
+    cuikpp_define_cstr(cpp, "__restrict__", "restrict");
+    cuikpp_define_cstr(cpp, "__alignof", "_Alignof");
+    cuikpp_define_cstr(cpp, "__CRTDECL", "__cdecl");
+
+    // things we don't handle yet so we just remove them
+    cuikpp_define_empty_cstr(cpp, "_Frees_ptr_");
+    cuikpp_define_empty_cstr(cpp, "__unaligned");
+    cuikpp_define_empty_cstr(cpp, "__analysis_noreturn");
+    cuikpp_define_empty_cstr(cpp, "__ptr32");
+    cuikpp_define_empty_cstr(cpp, "__ptr64");
+}
+
+static bool invoke_link(void* ctx, const Cuik_CompilerArgs* args, Cuik_Linker* linker, const char* filename) {
+    enum { CMD_LINE_MAX = 4096 };
+    Cuik_WindowsToolchain* t = ctx;
+
+    wchar_t cmd_line[CMD_LINE_MAX];
+    int cmd_line_len = swprintf(cmd_line, CMD_LINE_MAX,
+        L"%sbin\\Hostx64\\x64\\link.exe /nologo /machine:amd64 "
+        "/subsystem:%s /debug:full /pdb:%S.pdb /out:%S.exe /incremental:no ",
+        t->vc_tools_install, linker->subsystem_windows ? L"windows" : L"console",
+        filename, filename
+    );
+
+    dyn_array_for(i, linker->libpaths) {
+        cmd_line_len += swprintf(&cmd_line[cmd_line_len], CMD_LINE_MAX - cmd_line_len, L"/libpath:\"%S\" ", linker->libpaths[i]);
+    }
+
+    dyn_array_for(i, linker->inputs) {
+        cmd_line_len += swprintf(&cmd_line[cmd_line_len], CMD_LINE_MAX - cmd_line_len, L"%S ", linker->inputs[i]);
+    }
+
+    STARTUPINFOW si = {
+        .cb = sizeof(STARTUPINFOW),
+        .dwFlags = STARTF_USESTDHANDLES,
+        .hStdInput = GetStdHandle(STD_INPUT_HANDLE),
+        .hStdError = GetStdHandle(STD_ERROR_HANDLE),
+        .hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE),
+    };
+
+    PROCESS_INFORMATION pi = { 0 };
+    if (!CreateProcessW(NULL, cmd_line, NULL, NULL, TRUE, 0, NULL, NULL, &si, &pi)) {
+        WaitForSingleObject(pi.hProcess, INFINITE);
+        CloseHandle(pi.hProcess);
+        CloseHandle(pi.hThread);
+
+        printf("Linker command:\n%S\n", cmd_line);
+        fprintf(stderr, "Linker command could not be executed.\n");
+        return false;
+    }
+
+    // Wait until child process exits.
+    WaitForSingleObject(pi.hProcess, INFINITE);
+
+    DWORD exit_code = 0;
+    if (!GetExitCodeProcess(pi.hProcess, &exit_code)) {
+        fprintf(stderr, "Failed to retrieve linker exit code.\n");
+        goto error;
+    }
+
+    if (exit_code != 0) {
+        fprintf(stderr, "Linker exited with code %lu\n", exit_code);
+        goto error;
+    }
+
+    // Close process and thread handles.
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+
+    error:
+    fprintf(stderr, "Linker command:\n%S\n", cmd_line);
+
+    if (pi.hProcess && pi.hProcess != INVALID_HANDLE_VALUE) CloseHandle(pi.hProcess);
+    if (pi.hThread && pi.hThread != INVALID_HANDLE_VALUE) CloseHandle(pi.hThread);
+    return false;
+}
+
+Cuik_Toolchain cuik_toolchain_msvc(void) {
+    Cuik_WindowsToolchain* result = malloc(sizeof(Cuik_WindowsToolchain));
+    result->vc_tools_install[0] = 0;
+
+    find_windows_kit_root(result);
+
+    wchar_t* vc_tools_install = _wgetenv(L"VCToolsInstallDir");
+    if (vc_tools_install != NULL) {
+        wcsncpy(result->vc_tools_install, vc_tools_install, MAX_PATH);
+        swprintf(result->vs_include_path, MAX_PATH, L"%s\\include\\", vc_tools_install);
+        swprintf(result->vs_library_path, MAX_PATH, L"%slib\\", vc_tools_install);
+        swprintf(result->vs_exe_path, MAX_PATH, L"%sVC\\bin\\amd64", vc_tools_install);
+    } else {
+        find_visual_studio_by_fighting_through_microsoft_craziness(result);
+    }
+
+    return (Cuik_Toolchain){
+        .ctx = result,
+        .set_preprocessor = set_preprocessor,
+        .add_libraries = add_libraries,
+        .invoke_link = invoke_link
+    };
 }

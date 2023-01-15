@@ -263,9 +263,6 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet);
 // returns true if it succeeded in whatever packet handling (loading the file correctly)
 CUIK_API bool cuikpp_default_packet_handler(Cuik_CPP* ctx, Cuikpp_Packet* packet);
 
-// if target is non-NULL it'll add predefined macros based on the target.
-CUIK_API void cuikpp_set_common_defines(Cuik_CPP* restrict out_cpp, const Cuik_Target* target, bool use_system_includes);
-
 // is the source location in the source file (none of the includes)
 CUIK_API bool cuikpp_is_in_main_file(TokenStream* tokens, SourceLoc loc);
 
@@ -291,6 +288,9 @@ CUIK_API bool cuikpp_undef(Cuik_CPP* ctx, size_t keylen, const char* key);
 ////////////////////////////////
 // Adds include directory to the search list
 CUIK_API void cuikpp_add_include_directory(Cuik_CPP* ctx, bool is_system, const char dir[]);
+
+// Adds include directory to the search list but with printf formatting
+CUIK_API void cuikpp_add_include_directoryf(Cuik_CPP* ctx, bool is_system, const char* fmt, ...);
 
 // Locates an include file from the `path` and copies it's fully qualified path into `output`
 CUIK_API bool cuikpp_find_include_include(Cuik_CPP* ctx, char output[FILENAME_MAX], const char* path);

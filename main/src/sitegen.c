@@ -12,9 +12,6 @@
 #if CUIK_ALLOW_THREADS
 #include <threads.h>
 #include <stdatomic.h>
-
-#define THREADPOOL_IMPL
-#define HAS_CUIK_CLASS
 #include "threadpool.h"
 #endif
 
@@ -70,6 +67,14 @@ static int calculate_worker_thread_count(void) {
     return 1;
     #endif
 }
+
+static void tp_submit(void* user_data, void fn(void*), void* arg) {
+    threadpool_submit((threadpool_t*) user_data, fn, arg);
+}
+
+static void tp_work_one_job(void* user_data) {
+    threadpool_work_one_job((threadpool_t*) user_data);
+}
 #endif
 
 static void dump_tokens(FILE* out_file, TokenStream* s) {
@@ -115,13 +120,13 @@ static void dump_tokens(FILE* out_file, TokenStream* s) {
 
 int main(int argc, const char** argv) {
     cuik_init();
+    find_system_deps();
 
     Cuik_CompilerArgs args = {
         .version = CUIK_VERSION_C23,
-        .target = cuik_target_host(),
-        .toolchain = cuik_toolchain_host(),
+        .target = cuik_host_target(),
         .flavor = TB_FLAVOR_EXECUTABLE,
-        .core_dirpath = crt_dirpath,
+        .crt_dirpath = crt_dirpath,
     };
     cuik_parse_args(&args, argc - 1, argv + 1);
 
@@ -132,29 +137,40 @@ int main(int argc, const char** argv) {
 
     if (args.time) {
         char output_path_no_ext[FILENAME_MAX];
-        cuik_driver_get_output_name(&args, FILENAME_MAX, output_path_no_ext);
+        cuik_driver_get_output_path(&args, FILENAME_MAX, output_path_no_ext);
 
+        #if 0
+        char* perf_output_path = cuikperf_init(FILENAME_MAX, &json_profiler, false);
+        sprintf_s(perf_output_path, FILENAME_MAX, "%s.json", output_path_no_ext);
+        #else
         char* perf_output_path = cuikperf_init(FILENAME_MAX, &spall_profiler, false);
         sprintf_s(perf_output_path, FILENAME_MAX, "%s.spall", output_path_no_ext);
+        #endif
 
         cuikperf_start();
     }
 
+    Cuik_IThreadpool* ithread_pool = NULL;
+
     // spin up worker threads
-    Cuik_IThreadpool *tp = NULL, __tp;
     #if CUIK_ALLOW_THREADS
+    threadpool_t* thread_pool = NULL;
     if (args.threads > 1) {
         if (args.verbose) printf("Starting with %d threads...\n", args.threads);
 
-        __tp = threadpool_create_class(args.threads - 1, 4096);
-        tp = &__tp;
+        thread_pool = threadpool_create(args.threads - 1, 4096);
+        ithread_pool = malloc(sizeof(Cuik_IThreadpool));
+        *ithread_pool = (Cuik_IThreadpool){
+            .user_data = thread_pool,
+            .submit = tp_submit,
+            .work_one_job = tp_work_one_job
+        };
     }
     #endif
 
     if (args.preprocess) {
         // preproc only
         Cuik_CPP* cpp = cuik_driver_preprocess(args.sources[0], &args, true);
-
         if (cpp) {
             dump_tokens(stdout, cuikpp_get_token_stream(cpp));
             cuikpp_free(cpp);
@@ -172,11 +188,11 @@ int main(int argc, const char** argv) {
             printf("\x1b[2J");
             printf("OUTPUT OF %s:\n", args.sources[0]);
 
-            cuik_driver_compile(tp, &args, true);
+            cuik_driver_compile(ithread_pool, &args, true);
         } while (live_compile_watch(&l, &args));
     } else {
         uint64_t start_time = args.verbose ? cuik_time_in_nanos() : 0;
-        int status = cuik_driver_compile(tp, &args, true);
+        int status = cuik_driver_compile(ithread_pool, &args, true);
 
         if (args.verbose) {
             uint64_t now = cuik_time_in_nanos();
@@ -187,38 +203,11 @@ int main(int argc, const char** argv) {
     }
 
     #if CUIK_ALLOW_THREADS
-    threadpool_destroy_class(tp);
-    #endif
-
-    if (args.think) {
-        uint64_t t1 = cuik_time_in_nanos();
-        double elapsed = 0.0;
-
-        // 120 seconds of gamer time
-        printf("Waiting around...\n\n");
-        printf(
-            "So people have told me that 2 minute compiles aren't really that bad\n"
-            "so i figured that we should give them the freedom to waste their time\n"
-        );
-
-        int old_chars = -1;
-        while (elapsed = (cuik_time_in_nanos() - t1) / 1000000000.0, elapsed < 120.0) {
-            int num_chars = (int)((elapsed / 120.0) * 30.0);
-            if (num_chars != old_chars) {
-                old_chars = num_chars;
-
-                printf("\r[");
-                for (int i = 0; i < num_chars; i++) printf("#");
-                for (int i = 0; i < 30 - num_chars; i++) printf(" ");
-                printf("]");
-            }
-
-            #if CUIK_ALLOW_THREADS
-            thrd_yield();
-            #endif
-        }
-        printf("\n");
+    if (thread_pool != NULL) {
+        threadpool_free(thread_pool);
+        thread_pool = NULL;
     }
+    #endif
 
     if (args.time) cuikperf_stop();
     return 0;

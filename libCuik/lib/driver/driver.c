@@ -20,7 +20,7 @@ Cuik_CPP* cuik_driver_preprocess(const char* filepath, const Cuik_CompilerArgs* 
         cpp = cuikpp_make(filepath);
     }
 
-    cuikpp_set_common_defines(cpp, args->target, !args->nocrt);
+    cuik_set_standard_defines(cpp, args);
     dyn_array_for(i, args->includes) {
         cuikpp_add_include_directory(cpp, false, args->includes[i]);
     }
@@ -176,11 +176,11 @@ static void irgen_job(void* arg) {
             TB_Function* func = tb_symbol_as_function(sym);
             if (func != NULL && task.opt_level == 0) {
                 CUIK_TIMED_BLOCK_ARGS("Canonicalize", name) {
-                    for (size_t j = 0; j < PASS_COUNT; j++) {
+                    /*for (size_t j = 0; j < PASS_COUNT; j++) {
                         CUIK_TIMED_BLOCK_ARGS(passes[j].name, name) {
                             passes[j].func_run(func);
                         }
-                    }
+                    }*/
 
                     /*#ifndef NDEBUG
                     int error_count = tb_function_validate(func);
@@ -352,7 +352,7 @@ static bool export_output(Cuik_CompilerArgs* restrict args, TB_Module* mod, bool
     if (output_name != NULL && strcmp(output_name, "$nul") == 0) {
         output_path_null = true;
     } else {
-        cuik_driver_get_output_path(args, FILENAME_MAX, output_path_no_ext);
+        cuik_driver_get_output_name(args, FILENAME_MAX, output_path_no_ext);
 
         if (output_name == NULL) {
             #if _WIN32
@@ -421,38 +421,29 @@ static bool export_output(Cuik_CompilerArgs* restrict args, TB_Module* mod, bool
         }
 
         CUIK_TIMED_BLOCK("linker") {
-            Cuik_Linker l;
-            if (cuiklink_init(&l)) {
-                if (subsystem_windows) {
-                    cuiklink_subsystem_windows(&l);
-                }
+            Cuik_Linker l = { .subsystem_windows = subsystem_windows };
 
-                // Add system libpaths
-                cuiklink_add_default_libpaths(&l);
+            // Add system libpaths
+            cuiklink_apply_toolchain_libs(&l, args);
 
-                // Add Cuik output
-                cuiklink_add_input_file(&l, obj_output_path);
+            // Add Cuik output
+            cuiklink_add_input_file(&l, obj_output_path);
 
-                // Add input libraries
-                dyn_array_for(i, args->libraries) {
-                    cuiklink_add_input_file(&l, args->libraries[i]);
-                }
-
-                /*dyn_array_for(i, input_objects) {
-                    cuiklink_add_input_file(&l, input_objects[i]);
-                }*/
-
-                if (!args->nocrt) {
-                    #ifdef _WIN32
-                    cuiklink_add_input_file(&l, "ucrt.lib");
-                    cuiklink_add_input_file(&l, "msvcrt.lib");
-                    cuiklink_add_input_file(&l, "vcruntime.lib");
-                    #endif
-                }
-
-                cuiklink_invoke(&l, output_path_no_ext, "ucrt");
-                cuiklink_deinit(&l);
+            // Add input libraries
+            dyn_array_for(i, args->libraries) {
+                cuiklink_add_input_file(&l, args->libraries[i]);
             }
+
+            if (!args->nocrt) {
+                #ifdef _WIN32
+                cuiklink_add_input_file(&l, "ucrt.lib");
+                cuiklink_add_input_file(&l, "msvcrt.lib");
+                cuiklink_add_input_file(&l, "vcruntime.lib");
+                #endif
+            }
+
+            cuiklink_invoke(&l, args, output_path_no_ext);
+            cuiklink_deinit(&l);
         }
 
         return true;
@@ -552,13 +543,34 @@ int cuik_driver_compile(Cuik_IThreadpool* restrict thread_pool, Cuik_CompilerArg
         return 1;
     }
 
+    ////////////////////////////////
+    // Running executable
+    ////////////////////////////////
+    if (args->run) {
+        char exe[FILENAME_MAX];
+        cuik_driver_get_output_name(args, FILENAME_MAX, exe);
+        strncat(exe, ".exe", FILENAME_MAX);
+
+        #ifdef _WIN32
+        for (char* s = exe; *s; s++) {
+            if (*s == '/') *s = '\\';
+        }
+        #endif
+
+        printf("\n\nRunning: %s...\n", exe);
+        int exit_code = system(exe);
+
+        printf("Exit code: %d\n", exit_code);
+        if (exit_code) return exit_code;
+    }
+
     cleanup_tb:
     tb_free_thread_resources();
     tb_module_destroy(mod);
     return 0;
 }
 
-bool cuik_driver_get_output_path(Cuik_CompilerArgs* args, int cap, char path[]) {
+bool cuik_driver_get_output_name(Cuik_CompilerArgs* args, int cap, char path[]) {
     assert(cap >= 1);
     if (args->output_name != NULL && strcmp(args->output_name, "$nul") == 0) {
         path[0] = 0;
@@ -592,4 +604,16 @@ bool cuik_driver_get_output_path(Cuik_CompilerArgs* args, int cap, char path[]) 
         path[len] = '\0';
         return true;
     }
+}
+
+CUIK_API void cuik_toolchain_free(Cuik_Toolchain* toolchain) {
+    free(toolchain->ctx);
+}
+
+CUIK_API Cuik_Toolchain cuik_toolchain_host(void) {
+    #ifdef _MSC_VER
+    return cuik_toolchain_msvc();
+    #else
+    return NULL;
+    #endif
 }
