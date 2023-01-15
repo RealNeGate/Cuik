@@ -25,6 +25,7 @@ struct Cuik_CPP {
 
     // powers __COUNTER__
     int unique_counter;
+    bool included_system_header;
 
     // we got a little state machine design
     // to emulate some bootleg coroutines :P
@@ -59,8 +60,8 @@ struct Cuik_CPP {
     int* include_once;
 
     // system libraries
-    // DynArray(char*)
-    char** system_include_dirs;
+    // DynArray(Cuik_IncludeDir)
+    Cuik_IncludeDir* system_include_dirs;
 
     // how deep into directive scopes (#if, #ifndef, #ifdef) is it
     int depth;
@@ -79,29 +80,6 @@ struct Cuik_CPP {
         SourceLoc start;
         bool value;
     } scope_eval[CPP_MAX_SCOPE_DEPTH];
-};
-
-struct Cuik_Linker {
-    bool subsystem_windows;
-
-    // translation units
-    #ifdef _WIN32
-    wchar_t* input_file_buffer;
-    #else
-    char* input_file_buffer;
-    #endif
-
-    size_t input_file_top;
-    size_t input_file_count;
-
-    // system libraries
-    #ifdef _WIN32
-    wchar_t* libpaths_buffer;
-    #else
-    char* libpaths_buffer;
-    #endif
-    size_t libpaths_top;
-    size_t libpaths_count;
 };
 
 struct CompilationUnit {

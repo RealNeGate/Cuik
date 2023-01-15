@@ -124,7 +124,8 @@ static intmax_t eval_unary(Cuik_CPP* restrict c, TokenList* restrict in) {
             abort();
         }
     } else {
-        // report(REPORT_ERROR, NULL, s, t.location, "could not parse expression");
+        SourceLoc loc = c->tokens.list.tokens[c->tokens.list.current - 1].location;
+        diag_err(&c->tokens, (SourceRange){ loc, loc }, "could macro expression");
         abort();
     }
 
@@ -191,7 +192,7 @@ static int get_precendence(TknType ty) {
 
 static intmax_t eval_binop(Cuik_CPP* restrict c, TokenList* restrict in, int min_prec) {
     // This precendence climber is always left associative
-    intmax_t result = eval_unary(c, in);
+    intmax_t result = eval_l2(c, in);
 
     int prec;
     TknType binop;

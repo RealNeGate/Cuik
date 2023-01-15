@@ -12,6 +12,13 @@ typedef enum Cuik_ExtensionFlags {
     CUIK_EXTENSIONS_CUIK  = (1u << 3u),
 } Cuik_ExtensionFlags;
 
+typedef struct Cuik_Warnings {
+    // implicitly converting between types and losing information
+    bool data_loss : 1;
+    bool unused_decls : 1;
+    bool unused_funcs : 1;
+} Cuik_Warnings;
+
 typedef enum Cuik_ParseVersion {
     // C language
     CUIK_VERSION_C89,
@@ -49,66 +56,15 @@ typedef struct Cuik_ParseResult {
 
 CUIK_API Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict s, Cuik_Target* target, bool only_code_index);
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-typedef struct Cuik_Warnings {
-    // implicitly converting between types and losing information
-    bool data_loss : 1;
-    bool unused_decls : 1;
-    bool unused_funcs : 1;
-} Cuik_Warnings;
-
-// used to initialize translation units with cuik_parse_translation_unit
-typedef struct Cuik_TranslationUnitDesc {
-    // tokens CANNOT be NULL
-    TokenStream* tokens;
-
-    // warnings CANNOT be NULL
-    const Cuik_Warnings* warnings;
-
-    #ifdef CUIK_USE_TB
-    // if ir_module is non-NULL then translation unit will be used for
-    // IR generation and function and global signatures will be filled
-    // in accordingly, multiple translation units can be created for the
-    // same module you just have to attach them to each other with a
-    // compilation unit and internally link them.
-    TB_Module* ir_module;
-    bool has_debug_info;
-    #endif
-
-    // if target is non-NULL, builtins will be used based on said target.
-    Cuik_Target* target;
-
-    // if thread_pool is NULL, parsing is single threaded
-    Cuik_IThreadpool* thread_pool;
-} Cuik_TranslationUnitDesc;
-
-TranslationUnit* cuik_parse_translation_unit(const Cuik_TranslationUnitDesc* restrict desc);
-
 // sets the user data field, returns the old value
-void* cuik_set_translation_unit_user_data(TranslationUnit* restrict tu, void* ud);
+CUIK_API void* cuik_set_translation_unit_user_data(TranslationUnit* restrict tu, void* ud);
 
 // returns user data field
-void* cuik_get_translation_unit_user_data(TranslationUnit* restrict tu);
+CUIK_API void* cuik_get_translation_unit_user_data(TranslationUnit* restrict tu);
 
 // force delete the translation unit regardless of references held
-void cuik_destroy_translation_unit(TranslationUnit* restrict tu);
+CUIK_API void cuik_destroy_translation_unit(TranslationUnit* restrict tu);
 
-////////////////////////////////
-// Standard parsing
-////////////////////////////////
 // does this translation unit have a main? what type?
 CUIK_API Cuik_Entrypoint cuik_get_entrypoint_status(TranslationUnit* restrict tu);
 

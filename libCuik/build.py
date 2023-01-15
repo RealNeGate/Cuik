@@ -14,27 +14,30 @@ args = parser.parse_args()
 
 source_patterns = [
 	"lib/*.c",
+	"lib/driver/*.c",
 	"lib/preproc/*.c",
 	"lib/front/*.c",
 	"lib/targets/*.c",
+	"lib/toolchains/*.c",
+	"lib/zip/*.c",
 	"lib/back/ir_gen.c",
 	"lib/back/linker.c"
 ]
 
 ninja = open('build.ninja', 'w')
-cflags = "-g -I include -I lib -I deps -Wall -Werror -Wno-unused-function -Wno-unused-variable"
+cflags = "-g -I ../common/ -I include -I lib -I deps -Wall -Werror -Wno-unused-function -Wno-unused-variable"
 
 if args.shared:
 	cflags += " -DCUIK_USE_DLL"
 
 if args.opt:
-	cflags += " -O2 -DNDEBUG"
+	cflags += " -flto -O2 -DNDEBUG"
 
 if args.asan:
 	cflags += " -fsanitize=address"
 
 if args.usetb:
-	cflags += " -I ../tilde-backend/include -I ../common/ -DCUIK_USE_TB"
+	cflags += " -I ../tilde-backend/include -DCUIK_USE_TB"
 
 os_name = platform.system()
 if os_name == "Windows":
@@ -99,5 +102,4 @@ else:
 
 ninja.close()
 
-# run ninja
-subprocess.call(['ninja'])
+exit(subprocess.call(['ninja']))

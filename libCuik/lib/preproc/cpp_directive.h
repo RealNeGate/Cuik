@@ -202,7 +202,7 @@ static DirectiveResult cpp__include(Cuik_CPP* restrict ctx, CPPStackSlot* restri
         assert(num_system_include_dirs > 0);
 
         ctx->state2 = 1;
-        sprintf_s(path, FILENAME_MAX, "%s%s", ctx->system_include_dirs[0], filename);
+        sprintf_s(path, FILENAME_MAX, "%s%s", ctx->system_include_dirs[0].name, filename);
     }
 
     packet->tag = CUIKPP_PACKET_QUERY_FILE;

@@ -59,9 +59,10 @@ TB_DebugType* cuik__as_tb_debug_type(TB_Module* mod, Cuik_Type* t) {
         case KIND_UNION: {
             Member* kids = t->record.kids;
             size_t count = t->record.kid_count;
+            const char* tag = t->record.name;
 
             TB_DebugType** list = malloc(count * sizeof(TB_DebugType*));
-            TB_DebugType* rec = t->kind == KIND_STRUCT ? tb_debug_create_struct(mod) : tb_debug_create_union(mod);
+            TB_DebugType* rec = t->kind == KIND_STRUCT ? tb_debug_create_struct(mod, tag) : tb_debug_create_union(mod, tag);
             t->debug_type = rec;
 
             int unnamed_count = 0;
@@ -435,8 +436,6 @@ void eval_initializer_objects(TranslationUnit* tu, TB_Function* func, TB_Initial
         }
 
         if (!success) {
-            e = cuik__optimize_ast(tu, e);
-
             switch (e->op) {
                 // TODO(NeGate): Implement constants for literals
                 // to allow for more stuff to be precomputed.
@@ -631,7 +630,7 @@ static TB_Initializer* gen_global_initializer(TranslationUnit* tu, Cuik_Type* ty
             while (base->op == EXPR_SUBSCRIPT) {
                 uint64_t stride = cuik_canonical_type(base->type)->size;
 
-                Expr* index_expr = cuik__optimize_ast(tu, base->subscript.index);
+                Expr* index_expr = cuik__optimize_ast(NULL, base->subscript.index);
                 assert(index_expr->op == EXPR_INT && "could not resolve as constant initializer");
 
                 uint64_t index = index_expr->int_num.num;
@@ -649,7 +648,8 @@ static TB_Initializer* gen_global_initializer(TranslationUnit* tu, Cuik_Type* ty
             tb_initializer_add_global(tu->ir_mod, init, 0, stmt->backing.g);
             return init;
         } else {
-            assert(0);
+            fprintf(stderr, "internal compiler error: cannot compile global initializer as constant (%s : %s).\n", tu->filepath, name);
+            abort();
         }
     }
 
@@ -778,7 +778,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
                     .value_type = LVALUE_SYMBOL,
                     .sym = stmt->backing.s,
                 };
-            } else if (stmt->op == STMT_GLOBAL_DECL) {
+            } else if (stmt->op == STMT_GLOBAL_DECL || (stmt->op == STMT_DECL && stmt->decl.attrs.is_static)) {
                 if (stmt->backing.s == NULL) {
                     // check if it's defined by another TU
                     // functions are external by default
@@ -843,12 +843,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
             Cuik_Type* arg_type = cuik_canonical_type(function_type->func.param_list[param_num].type);
             assert(arg_type != NULL);
 
-            if (arg_type->kind == KIND_STRUCT ||
-                arg_type->kind == KIND_UNION) {
-                // TODO(NeGate): Assumes pointer size
-                reg = tb_inst_load(func, TB_TYPE_PTR, reg, 8);
-            }
-
+            reg = tu->target->get_parameter(tu, func, arg_type, reg);
             return (IRVal){
                 .value_type = LVALUE,
                 .reg = reg
@@ -859,14 +854,6 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
             return irgen_expr(tu, func, e->generic_.controlling_expr);
         }
         case EXPR_ADDR: {
-            uint64_t dst;
-            if (const_eval_try_offsetof_hack(tu, e->unary_op.src, &dst)) {
-                return (IRVal){
-                    .value_type = RVALUE,
-                    .reg = tb_inst_uint(func, TB_TYPE_PTR, dst)
-                };
-            }
-
             IRVal src = irgen_expr(tu, func, e->unary_op.src);
             if (src.value_type == LVALUE) {
                 src.value_type = RVALUE;
@@ -973,6 +960,12 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
             // mapping to, if it's arg_count then there's really none
             size_t varargs_cutoff = arg_count;
             Cuik_Type* func_type = cuik_canonical_type(e->call.target->type);
+            bool is_indirect_func_ptr = false;
+            if (func_type->kind == KIND_PTR) {
+                is_indirect_func_ptr  = true;
+                func_type = cuik_canonical_type(func_type->ptr_to);
+            }
+
             if (func_type->func.has_varargs) {
                 varargs_cutoff = func_type->func.param_count;
             }
@@ -1002,7 +995,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
             if (is_aggregate_return) dt = TB_TYPE_VOID;
 
             TB_Reg r;
-            if (func_ptr.value_type == LVALUE_SYMBOL) {
+            if (func_ptr.value_type == LVALUE_SYMBOL && !is_indirect_func_ptr) {
                 r = tb_inst_call(func, dt, func_ptr.sym, real_arg_count, ir_args);
             } else {
                 TB_Reg target_reg = cvt2rval(tu, func, func_ptr, e->call.target);
@@ -1589,25 +1582,28 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
     }
 }
 
+static void emit_location(TranslationUnit* tu, TB_Function* func, SourceLoc loc) {
+    // TODO(NeGate): Fix this up later!!!
+    static thread_local TB_FileID last_file_id;
+    static thread_local const char* last_filepath;
+
+    ResolvedSourceLoc rloc = cuikpp_find_location(&tu->tokens, loc);
+    if (rloc.file->filename[0] != '<') {
+        if (rloc.file->filename != last_filepath) {
+            last_filepath = rloc.file->filename;
+            last_file_id = tb_file_create(tu->ir_mod, rloc.file->filename);
+        }
+
+        tb_inst_loc(func, last_file_id, rloc.line);
+    }
+}
+
 void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
     if (s == NULL) return;
 
     if (tu->has_tb_debug_info) {
-        // TODO(NeGate): Fix this up later!!!
-        static thread_local TB_FileID last_file_id;
-        static thread_local const char* last_filepath;
-
         insert_label(func);
-
-        ResolvedSourceLoc loc = cuikpp_find_location(&tu->tokens, s->loc.start);
-        if (loc.file->filename[0] != '<') {
-            if (loc.file->filename != last_filepath) {
-                last_filepath = loc.file->filename;
-                last_file_id = tb_file_create(tu->ir_mod, loc.file->filename);
-            }
-
-            tb_inst_loc(func, last_file_id, loc.line);
-        }
+        emit_location(tu, func, s->loc.start);
     } else {
         insert_label(func);
     }
@@ -1675,7 +1671,7 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
                 tb_global_set_initializer(tu->ir_mod, g, init);
                 tls_restore(name);
 
-                s->backing.r = tb_inst_get_symbol_address(func, (TB_Symbol*) g);
+                s->backing.g = g;
                 break;
             }
 

@@ -23,6 +23,16 @@ typedef struct String {
     const unsigned char* data;
 } String;
 
+typedef enum Cuik_IntSuffix {
+    //                u   l   l
+    INT_SUFFIX_NONE = 0 + 0 + 0,
+    INT_SUFFIX_U    = 1 + 0 + 0,
+    INT_SUFFIX_L    = 0 + 2 + 0,
+    INT_SUFFIX_UL   = 1 + 2 + 0,
+    INT_SUFFIX_LL   = 0 + 2 + 2,
+    INT_SUFFIX_ULL  = 1 + 2 + 2,
+} Cuik_IntSuffix;
+
 typedef struct SourceLoc {
     uint32_t raw;
 } SourceLoc;
@@ -34,6 +44,7 @@ typedef struct SourceRange {
 // This is what FileIDs refer to
 typedef struct {
     const char* filename;
+    bool is_system;
 
     int depth;
     SourceLoc include_site;
@@ -135,13 +146,13 @@ CUIK_API Cuik_File* cuikpp_next_file(Cuik_CPP* ctx, Cuik_File* f);
 ////////////////////////////////
 // Preprocessor module
 ////////////////////////////////
-// Initialize preprocessor, allocates memory which needs to be freed via cuikpp_deinit
-CUIK_API void cuikpp_init(Cuik_CPP* ctx, const char filepath[FILENAME_MAX]);
+// Initialize preprocessor, allocates memory which needs to be freed via cuikpp_free
+CUIK_API Cuik_CPP* cuikpp_make(const char filepath[FILENAME_MAX]);
 
 // NOTE: it doesn't own the memory for the files it may have used
 // and thus you must free them, this can be done by iterating over
-// them using CUIKPP_FOR_FILES
-CUIK_API void cuikpp_deinit(Cuik_CPP* ctx);
+// them using CUIKPP_FOR_FILES.
+CUIK_API void cuikpp_free(Cuik_CPP* ctx);
 
 // You can't preprocess any more files after this
 CUIK_API void cuikpp_finalize(Cuik_CPP* ctx);
@@ -152,6 +163,9 @@ CUIK_API TokenStream* cuikpp_get_token_stream(Cuik_CPP* ctx);
 
 CUIK_API Token* cuikpp_get_tokens(TokenStream* restrict s);
 CUIK_API size_t cuikpp_get_token_count(TokenStream* restrict s);
+
+CUIK_API Cuik_File* cuikpp_get_files(TokenStream* restrict s);
+CUIK_API size_t cuikpp_get_file_count(TokenStream* restrict s);
 
 ////////////////////////////////
 // Line info
@@ -249,9 +263,6 @@ CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet);
 // returns true if it succeeded in whatever packet handling (loading the file correctly)
 CUIK_API bool cuikpp_default_packet_handler(Cuik_CPP* ctx, Cuikpp_Packet* packet);
 
-// if target is non-NULL it'll add predefined macros based on the target.
-CUIK_API void cuikpp_set_common_defines(Cuik_CPP* restrict out_cpp, const Cuik_Target* target, bool use_system_includes);
-
 // is the source location in the source file (none of the includes)
 CUIK_API bool cuikpp_is_in_main_file(TokenStream* tokens, SourceLoc loc);
 
@@ -276,28 +287,21 @@ CUIK_API bool cuikpp_undef(Cuik_CPP* ctx, size_t keylen, const char* key);
 // Preprocessor includes
 ////////////////////////////////
 // Adds include directory to the search list
-CUIK_API void cuikpp_add_include_directory(Cuik_CPP* ctx, const char dir[]);
+CUIK_API void cuikpp_add_include_directory(Cuik_CPP* ctx, bool is_system, const char dir[]);
+
+// Adds include directory to the search list but with printf formatting
+CUIK_API void cuikpp_add_include_directoryf(Cuik_CPP* ctx, bool is_system, const char* fmt, ...);
 
 // Locates an include file from the `path` and copies it's fully qualified path into `output`
 CUIK_API bool cuikpp_find_include_include(Cuik_CPP* ctx, char output[FILENAME_MAX], const char* path);
 
-// This is an iterator for include search list in the preprocessor:
-//
-// Cuik_IncludeIter it = cuikpp_first_include_search(cpp);
-// while (cuikpp_next_include_search(cpp, &it)) { ... }
-typedef struct Cuik_IncludeIter {
-    // public
-    const char* directory;
+typedef struct {
+    bool is_system;
+    char* name;
+} Cuik_IncludeDir;
 
-    // internal
-    size_t i;
-} Cuik_IncludeIter;
-
-#define CUIKPP_FOR_INCLUDE_SEARCHES(it, ctx) \
-for (Cuik_IncludeIter it = cuikpp_first_include_search(ctx); cuikpp_next_include_search(ctx, &it);)
-
-CUIK_API Cuik_IncludeIter cuikpp_first_include_search(Cuik_CPP* ctx);
-CUIK_API bool cuikpp_next_include_search(Cuik_CPP* ctx, Cuik_IncludeIter* it);
+CUIK_API Cuik_IncludeDir* cuikpp_get_include_dirs(Cuik_CPP* ctx);
+CUIK_API size_t cuikpp_get_include_dir_count(Cuik_CPP* ctx);
 
 ////////////////////////////////
 // C preprocessor pretty printer

@@ -13,7 +13,7 @@ bool type_compatible(TranslationUnit* tu, Cuik_Type* a, Cuik_Type* b, Expr* a_ex
 // Semantics pass
 // out_offset is added onto so it needs to be initialized
 Member* sema_resolve_member_access(TranslationUnit* tu, Expr* e, uint32_t* out_offset);
-Member* sema_traverse_members(TranslationUnit* tu, Cuik_Type* record_type, Atom name, uint32_t* out_offset);
+Member* sema_traverse_members(Cuik_Type* record_type, Atom name, uint32_t* out_offset);
 
 // check that each type matches the cast type
 bool cuik__type_check_args(TranslationUnit* tu, Expr* e, int arg_count, Expr** args);

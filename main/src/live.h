@@ -21,13 +21,13 @@ typedef struct {
 
 // currently we only support modifying the main file when the live loop is active
 // it'll return true when it changes happen, it returns false once the user asks to quit.
-static bool live_compile_watch(LiveCompiler* l) {
-    if (dyn_array_length(input_files) > 1) {
+static bool live_compile_watch(LiveCompiler* l, Cuik_CompilerArgs* args) {
+    if (dyn_array_length(args->sources) > 1) {
         printf("TODO: live compile does not support multiple files yet!");
         return false;
     }
 
-    const char* source_file = input_files[0];
+    const char* source_file = args->sources[0];
     l->og_last_write = get_last_write_time(source_file);
 
     // Wait for the user to save again

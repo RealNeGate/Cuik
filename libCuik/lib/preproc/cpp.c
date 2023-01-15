@@ -19,7 +19,7 @@
 
 #define NL_STRING_MAP_IMPL
 #define NL_STRING_MAP_INLINE
-#include "../string_map.h"
+#include <string_map.h>
 
 // GOD I HATE FORWARD DECLARATIONS
 static uint64_t hash_ident(const void* key, size_t len);
@@ -98,7 +98,7 @@ static TokenList convert_to_token_list(Cuik_CPP* restrict c, uint32_t file_id, s
     };
 
     TokenList list = { 0 };
-    list.tokens = dyn_array_create_with_initial_cap(Token, 32 + ((length + 7) / 8));
+    list.tokens = dyn_array_create(Token, 32 + ((length + 7) / 8));
     for (;;) {
         Token t = lexer_read(&l);
         if (t.type == 0) break;
@@ -151,10 +151,11 @@ bool cuikpp_is_in_main_file(TokenStream* tokens, SourceLoc loc) {
     return f->filename == tokens->filepath;
 }
 
-void cuikpp_init(Cuik_CPP* ctx, const char filepath[FILENAME_MAX]) {
+Cuik_CPP* cuikpp_make(const char filepath[FILENAME_MAX]) {
     size_t sz = sizeof(void*) * MACRO_BUCKET_COUNT * SLOTS_PER_MACRO_BUCKET;
     size_t sz2 = sizeof(SourceRange) * MACRO_BUCKET_COUNT * SLOTS_PER_MACRO_BUCKET;
 
+    Cuik_CPP* ctx = malloc(sizeof(Cuik_CPP));
     *ctx = (Cuik_CPP){
         .stack = cuik__valloc(MAX_CPP_STACK_DEPTH * sizeof(CPPStackSlot)),
 
@@ -168,7 +169,7 @@ void cuikpp_init(Cuik_CPP* ctx, const char filepath[FILENAME_MAX]) {
     };
 
     // initialize dynamic arrays
-    ctx->system_include_dirs = dyn_array_create(char*);
+    ctx->system_include_dirs = dyn_array_create(char*, 64);
     ctx->stack_ptr = 1;
 
     char* slash = strrchr(filepath, '\\');
@@ -189,11 +190,11 @@ void cuikpp_init(Cuik_CPP* ctx, const char filepath[FILENAME_MAX]) {
     // we still refer to the same tally.
     ctx->tokens.error_tally = calloc(sizeof(int), 1);
     ctx->tokens.filepath = filepath;
-    ctx->tokens.list.tokens = dyn_array_create(Token);
-    ctx->tokens.invokes = dyn_array_create(MacroInvoke);
-    ctx->tokens.files = dyn_array_create_with_initial_cap(Cuik_File, 256);
+    ctx->tokens.list.tokens = dyn_array_create(Token, 4096);
+    ctx->tokens.invokes = dyn_array_create(MacroInvoke, 4096);
+    ctx->tokens.files = dyn_array_create(Cuik_File, 256);
 
-    ctx->scratch_list.tokens = dyn_array_create(Token);
+    ctx->scratch_list.tokens = dyn_array_create(Token, 4096);
 
     // MacroID 0 is a null invocation
     dyn_array_put(ctx->tokens.invokes, (MacroInvoke){ 0 });
@@ -207,6 +208,15 @@ void cuikpp_init(Cuik_CPP* ctx, const char filepath[FILENAME_MAX]) {
         .filepath = filepath,
         .directory = directory,
     };
+    return ctx;
+}
+
+CUIK_API Cuik_File* cuikpp_get_files(TokenStream* restrict s) {
+    return &s->files[1];
+}
+
+CUIK_API size_t cuikpp_get_file_count(TokenStream* restrict s) {
+    return dyn_array_length(s->files) - 1;
 }
 
 Token* cuikpp_get_tokens(TokenStream* restrict s) {
@@ -218,29 +228,16 @@ size_t cuikpp_get_token_count(TokenStream* restrict s) {
     return dyn_array_length(s->list.tokens) - 1;
 }
 
-void cuikpp_deinit(Cuik_CPP* ctx) {
+void cuikpp_free(Cuik_CPP* ctx) {
     #if CUIK__CPP_STATS
-    //printf("%40s | %zu file read | %zu fstats\n", ctx->files[0].filepath, ctx->total_files_read, ctx->total_fstats);
-    #if 1
     printf(" %40s | %.06f ms read+lex\t| %4zu files read\t| %zu fstats\t| %f ms (%zu defines)\n",
         ctx->tokens.filepath,
         ctx->total_io_time / 1000000.0,
         ctx->total_files_read,
         ctx->total_fstats,
         ctx->total_define_access_time / 1000000.0,
-        ctx->total_define_accesses);
-    #else
-    dyn_array_for(i, ctx->files) {
-        printf("%s,%zu\n", ctx->files[i].filepath, ctx->files[i].content_len);
-    }
-    /*printf("%s,%.06f,%.06f,%4zu,%.06f,%zu,\n",
-        ctx->files[0].filepath,
-        ctx->total_lex_time / 1000000.0,
-        ctx->total_io_time / 1000000.0,
-        ctx->total_files_read,
-        ctx->total_io_space / 1000000.0,
-        ctx->total_fstats);*/
-    #endif
+        ctx->total_define_accesses
+    );
     #endif
 
     if (ctx->macro_bucket_keys) {
@@ -359,8 +356,8 @@ ResolvedSourceLoc cuikpp_find_location(TokenStream* tokens, SourceLoc loc) {
     return find_location(fl.file, fl.pos);
 }
 
-static void compute_line_map(TokenStream* s, int depth, SourceLoc include_site, const char* filename, char* data, size_t length) {
-    DynArray(uint32_t) line_map = dyn_array_create_with_initial_cap(uint32_t, (length / 20) + 32);
+static void compute_line_map(TokenStream* s, bool is_system, int depth, SourceLoc include_site, const char* filename, char* data, size_t length) {
+    DynArray(uint32_t) line_map = dyn_array_create(uint32_t, (length / 20) + 32);
 
     #if 1
     // !USE_INTRIN
@@ -398,7 +395,7 @@ static void compute_line_map(TokenStream* s, int depth, SourceLoc include_site, 
         size_t chunk_end = i + single_file_limit;
         if (chunk_end > length) chunk_end = length;
 
-        dyn_array_put(s->files, (Cuik_File){ filename, depth, include_site, i, chunk_end - i, &data[i], line_map });
+        dyn_array_put(s->files, (Cuik_File){ filename, is_system, depth, include_site, i, chunk_end - i, &data[i], line_map });
         i += single_file_limit;
     } while (i < length);
 }
@@ -437,6 +434,7 @@ Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
             // get back a file
             case 1: {
                 if (packet->file.length == 0) {
+                    fprintf(stderr, "\x1b[31merror\x1b[0m: file doesn't exist.\n");
                     return CUIKPP_ERROR;
                 }
 
@@ -448,7 +446,7 @@ Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
                 // initialize the lexer in the stack slot & record the file entry
                 slot->file_id = dyn_array_length(ctx->tokens.files);
                 slot->tokens = convert_to_token_list(ctx, dyn_array_length(ctx->tokens.files), packet->file.length, packet->file.data);
-                compute_line_map(&ctx->tokens, 0, (SourceLoc){ 0 }, packet->file.input_path, packet->file.data, packet->file.length);
+                compute_line_map(&ctx->tokens, false, 0, (SourceLoc){ 0 }, packet->file.input_path, packet->file.data, packet->file.length);
 
                 // we finished resolving
                 ctx->state1 = CUIK__CPP_NONE;
@@ -494,13 +492,14 @@ Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
             // ask for the next filepath
             // it's ok this const removal is based
             char* path = (char*) packet->query.input_path;
-            sprintf_s(path, FILENAME_MAX, "%s%s", ctx->system_include_dirs[index], slot->filepath);
+            sprintf_s(path, FILENAME_MAX, "%s%s", ctx->system_include_dirs[index].name, slot->filepath);
 
             packet->query.found = false;
             return CUIKPP_CONTINUE;
         }
 
         const char* filepath = packet->file.input_path;
+        ctx->included_system_header = ctx->system_include_dirs[ctx->state2].is_system;
 
         packet->tag = CUIKPP_PACKET_CANONICALIZE;
         packet->canonicalize.input_path = filepath;
@@ -575,7 +574,7 @@ Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
         // initialize the lexer in the stack slot & record file entry
         slot->file_id = dyn_array_length(ctx->tokens.files);
         slot->tokens = convert_to_token_list(ctx, dyn_array_length(ctx->tokens.files), packet->file.length, packet->file.data);
-        compute_line_map(&ctx->tokens, ctx->stack_ptr - 1, slot->loc, packet->file.input_path, packet->file.data, packet->file.length);
+        compute_line_map(&ctx->tokens, ctx->included_system_header, ctx->stack_ptr - 1, slot->loc, packet->file.input_path, packet->file.data, packet->file.length);
 
         // we finished resolving
         ctx->state1 = CUIK__CPP_NONE;
@@ -732,16 +731,6 @@ void cuikpp_finalize(Cuik_CPP* ctx) {
 TokenStream* cuikpp_get_token_stream(Cuik_CPP* ctx) {
     return &ctx->tokens;
 }
-
-/*
-size_t cuikpp_get_file_table_count(Cuik_CPP* ctx) {
-    return dyn_array_length(ctx->files);
-}
-
-Cuik_FileEntry* cuikpp_get_file_table(Cuik_CPP* ctx) {
-    return &ctx->files[0];
-}
-*/
 
 static void print_token_stream(TokenList* in, size_t start, size_t end) {
     int last_line = 0;

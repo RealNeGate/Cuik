@@ -81,16 +81,6 @@ typedef enum Cuik_TypeKind {
     KIND_TYPEOF
 } Cuik_TypeKind;
 
-typedef enum Cuik_IntSuffix {
-    //                u   l   l
-    INT_SUFFIX_NONE = 0 + 0 + 0,
-    INT_SUFFIX_U    = 1 + 0 + 0,
-    INT_SUFFIX_L    = 0 + 2 + 0,
-    INT_SUFFIX_UL   = 1 + 2 + 0,
-    INT_SUFFIX_LL   = 0 + 2 + 2,
-    INT_SUFFIX_ULL  = 1 + 2 + 2,
-} Cuik_IntSuffix;
-
 typedef struct Cuik_Attribute {
     struct Cuik_Attribute* prev;
     SourceRange loc;

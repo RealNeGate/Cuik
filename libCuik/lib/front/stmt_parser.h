@@ -46,6 +46,10 @@ static bool parse_decl_or_expr2(Cuik_Parser* parser, TokenStream* restrict s, si
             *((Stmt**)tls_push(sizeof(Stmt*))) = n;
             *body_count += 1;
 
+            if (attr.is_static) {
+                dyn_array_put(parser->local_static_storage_decls, n);
+            }
+
             if (decl.name != NULL) {
                 if (local_symbol_count >= MAX_LOCAL_SYMBOLS) {
                     diag_err(s, decl.loc, "local symbol count exceeds %d (got %d)", MAX_LOCAL_SYMBOLS, local_symbol_count);

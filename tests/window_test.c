@@ -6,6 +6,14 @@
 #pragma comment (lib, "user32.lib")
 #pragma comment (lib, "opengl32.lib")
 
+LRESULT main_wnd_proc(HWND wnd, UINT message, WPARAM wparam, LPARAM lparam) {
+    if (message == WM_DESTROY) {
+        ExitProcess(0);
+    }
+
+    return DefWindowProcA(wnd, message, wparam, lparam);
+}
+
 int main(int argc, char** argv, char** env) {
     const char* name = "Hello, World!";
     
@@ -35,10 +43,3 @@ int main(int argc, char** argv, char** env) {
     return 0;
 }
 
-LRESULT main_wnd_proc(HWND wnd, UINT message, WPARAM wparam, LPARAM lparam) {
-    if (message == WM_DESTROY) {
-        ExitProcess(0);
-    }
-
-    return DefWindowProcA(wnd, message, wparam, lparam);
-}

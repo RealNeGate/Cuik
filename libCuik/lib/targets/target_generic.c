@@ -10,7 +10,7 @@ Cuik_Environment cuik_get_target_env(const Cuik_Target* t) { return t->env; }
 
 static void set_integer(Cuik_Target* target, int i, Cuik_TypeKind kind, int bytes) {
     target->signed_ints[i] = (Cuik_Type){ kind, bytes, bytes, .is_complete = true };
-    target->unsigned_ints[i] = (Cuik_Type){ kind, bytes, bytes, .is_complete = true };
+    target->unsigned_ints[i] = (Cuik_Type){ kind, bytes, bytes, .is_complete = true, .is_unsigned = true };
 }
 
 void cuik_target_build(Cuik_Target* target) {
@@ -78,7 +78,6 @@ static Cuik_Type* expect_pointer(TranslationUnit* tu, Expr* e, Expr* arg) {
 }
 
 static Expr* resolve_memory_order_expr(TranslationUnit* tu, Expr* e) {
-    e = cuik__optimize_ast(tu, e);
     e->cast_type = cuik_uncanonical_type(&cuik__builtin_int);
 
     if (e->op != EXPR_INT) {

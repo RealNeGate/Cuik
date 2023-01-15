@@ -3,7 +3,7 @@
 
 #define NL_STRING_MAP_IMPL
 #define NL_STRING_MAP_INLINE
-#include "../string_map.h"
+#include <string_map.h>
 
 enum { INTERNER_EXP = 24 };
 
@@ -43,14 +43,6 @@ static uint64_t hash_ident(const void* key, size_t len) {
     h = ((h^len) ^ ((h^len) >> 16))*0x85ebca6b;
     h = (h ^ (h >> 13))*0xc2b2ae35;
     return (h ^ (h >> 16));
-}
-
-void atoms_init(void) {
-    interner_len = 0;
-}
-
-void atoms_deinit(void) {
-    arena_free(&atoms_arena);
 }
 
 void atoms_dump_stats(void) {

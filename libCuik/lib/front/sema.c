@@ -441,7 +441,8 @@ static int walk_initializer_layer(TranslationUnit* tu, Cuik_Type* parent, int ba
 
             // normal ass scalar
             Cuik_QualType expr_type = cuik__sema_expr(tu, e);
-            e = node->expr = cuik__optimize_ast(tu, e);
+            // TODO(NeGate): we might wanna fold the expression to have constant expressions
+            // node->expr = e;
 
             // zero is allowed for everything, so don't do the normal checks in that case
             if (!(e->op == EXPR_INT && e->int_num.num == 0)) {
@@ -549,7 +550,7 @@ static bool is_assignable_expr(TranslationUnit* tu, Expr* restrict e) {
     }
 }
 
-Member* sema_traverse_members(TranslationUnit* tu, Cuik_Type* record_type, Atom name, uint32_t* out_offset) {
+Member* sema_traverse_members(Cuik_Type* record_type, Atom name, uint32_t* out_offset) {
     Member* kids = record_type->record.kids;
     size_t count = record_type->record.kid_count;
 
@@ -562,7 +563,7 @@ Member* sema_traverse_members(TranslationUnit* tu, Cuik_Type* record_type, Atom 
             Cuik_Type* child = cuik_canonical_type(member->type);
             assert(child->kind == KIND_STRUCT || child->kind == KIND_UNION);
 
-            Member* search = sema_traverse_members(tu, child, name, out_offset);
+            Member* search = sema_traverse_members(child, name, out_offset);
             if (search) {
                 *out_offset += member->offset;
                 return search;
@@ -621,7 +622,7 @@ Member* sema_resolve_member_access(TranslationUnit* tu, Expr* restrict e, uint32
     }
 
     uint32_t offset = 0;
-    Member* search = sema_traverse_members(tu, record_type, e->dot_arrow.name, &offset);
+    Member* search = sema_traverse_members(record_type, e->dot_arrow.name, &offset);
     if (search) {
         *out_offset += offset;
         return search;
@@ -1306,7 +1307,7 @@ void sema_stmt(TranslationUnit* tu, Stmt* restrict s) {
                 Cuik_Qualifiers decl_quals = cuik_get_quals(s->decl.type);
                 try_resolve_typeof(tu, decl_type);
 
-                Expr* e = s->decl.initial = cuik__optimize_ast(tu, s->decl.initial);
+                Expr* e = s->decl.initial;
                 if (e->op == EXPR_INITIALIZER && CUIK_QUAL_TYPE_IS_NULL(e->init.type)) {
                     // give it something to go off of
                     e->init.type = s->decl.type;
@@ -1537,12 +1538,6 @@ static void sema_top_level(TranslationUnit* tu, Stmt* restrict s) {
 
             bool is_external_sym = (type->kind == KIND_FUNC && s->decl.initial_as_stmt == NULL);
             if (s->decl.attrs.is_extern) is_external_sym = true;
-
-            if (type->kind != KIND_FUNC && s->decl.initial) {
-                // constant fold the global expression such that it's easier to spot constant
-                // expressions.
-                s->decl.initial = cuik__optimize_ast(tu, s->decl.initial);
-            }
 
             if (!is_external_sym) {
                 if (s->decl.initial) {

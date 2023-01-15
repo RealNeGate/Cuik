@@ -1,3 +1,5 @@
+#include <zip/zip.h>
+#include <front/atoms.h>
 
 typedef struct LoadResult {
     bool found;
@@ -71,17 +73,274 @@ static LoadResult get_file(const char* path) {
     #endif
 }
 
+typedef enum {
+    PATH_NORMAL,  //  baz.c
+    PATH_DIR,     //  foo/
+    PATH_ZIP,     //  bar.zip/
+} PathPieceType;
+
+const char* read_path(PathPieceType* out_t, const char* str) {
+    PathPieceType t = PATH_NORMAL;
+    const char* ext = NULL;
+
+    for (; *str; str++) {
+        if (*str == '/' || *str == '\\') {
+            t = (ext+4 == str) && strncmp(ext, ".zip", 3) == 0 ? PATH_ZIP : PATH_DIR;
+            str++;
+            break;
+        } else if (*str == '.') {
+            ext = str;
+        }
+    }
+
+    *out_t = t;
+    return str;
+}
+
+#ifdef _WIN32
+typedef struct {
+    HANDLE file;
+    HANDLE mapping;
+    size_t size;
+    void* data;
+} FileMap;
+
+static FileMap open_file_map(const char* filepath) {
+    HANDLE file = CreateFileA(filepath, GENERIC_READ, FILE_SHARE_READ, 0, OPEN_EXISTING, 0, 0);
+    if (file == INVALID_HANDLE_VALUE) {
+        DWORD err = GetLastError();
+        fprintf(stderr, "Could not open file! %s\nWin32 Error: %lu", filepath, err);
+        return (FileMap){ INVALID_HANDLE_VALUE };
+    }
+
+    LARGE_INTEGER size;
+    if (!GetFileSizeEx(file, &size)) {
+        fprintf(stderr, "Could not read file size! %s", filepath);
+        return (FileMap){ INVALID_HANDLE_VALUE };
+    }
+
+    HANDLE mapping = CreateFileMappingA(file, NULL, PAGE_READONLY, 0, 0, 0);
+    if (!mapping) {
+        fprintf(stderr, "Could not map file! %s", filepath);
+        return (FileMap){ INVALID_HANDLE_VALUE };
+    }
+
+    void* memory = MapViewOfFileEx(mapping, FILE_MAP_READ, 0, 0, 0, 0);
+    if (!memory) {
+        fprintf(stderr, "Could not view mapped file! %s", filepath);
+        return (FileMap){ INVALID_HANDLE_VALUE };
+    }
+
+    return (FileMap){
+        .file = file,
+        .mapping = mapping,
+        .size = size.QuadPart,
+        .data = memory
+    };
+}
+
+static void close_file_map(FileMap* file_map) {
+    UnmapViewOfFile(file_map->data);
+    CloseHandle(file_map->mapping);
+    CloseHandle(file_map->file);
+}
+#else
+typedef struct {
+    int fd;
+    size_t size;
+    void* data;
+} FileMap;
+
+static FileMap open_file_map(const char* filepath) {
+    int fd = open(filepath, O_RDONLY);
+
+    struct stat file_stats;
+    if (fstat(fd, &file_stats) == -1) {
+        fprintf(stderr, "could not figure out file size: %s\n", filepath);
+        return (FileMap){ 0 };
+    }
+
+    void* buffer = mmap(NULL, finfo.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+    if (buffer == MAP_FAILED) {
+        fprintf(stderr, "could not map file: %s\n", filepath);
+        return (FileMap){ 0 };
+    }
+
+    return (FileMap){ fd, file_stats.st_size, buffer };
+}
+
+static void close_file_map(FileMap* file_map) {
+    munmap(file_map->data, file_map->size);
+    close(file_map->fd);
+}
+#endif
+
+// TODO(NeGate): implement smarter cache for open zip files
+typedef struct {
+    char path[FILENAME_MAX];
+    FileMap file_map;
+    struct zip_t* zip;
+    NL_Strmap(int) listing;
+} OpenZipFile;
+
+enum { MAX_OPEN_ZIP_FILES = 32 };
+static OpenZipFile zip_cache[MAX_OPEN_ZIP_FILES];
+
+thread_local static Arena str_arena;
+
+static uint32_t fnv1a(size_t len, const void *key) {
+    const uint8_t* data = key;
+    uint32_t h = 0x811C9DC5;
+    for (size_t i = 0; i < len; i++) {
+        h = (data[i] ^ h) * 0x01000193;
+    }
+
+    return h;
+}
+
+// looks dumb but C doesn't have multireturns
+static struct R_get_file_in_zip {
+    OpenZipFile* zip;
+    int index;
+} get_file_in_zip(Cuikpp_Packet* packet, const char* og_path, const char* path) {
+    // we do a little trolling... essentially the windows file system is SOOOO BADD
+    // that using a fucking ZIP file to store my stuff is not even that bad of an idea.
+    char tmp[FILENAME_MAX];
+    int zip_path_len = snprintf(tmp, FILENAME_MAX, "%.*s", (int)(path - og_path) - 1, og_path);
+
+    char* newpath = tmp + zip_path_len + 1;
+    strncpy(newpath, path, FILENAME_MAX - (zip_path_len + 1));
+
+    int total = zip_path_len + strlen(path) + 1;
+    for (size_t i = 0; i < total; i++) {
+        if (tmp[i] == '\\') tmp[i] = '/';
+        if (tmp[i] >= 'A' && tmp[i] <= 'Z') tmp[i] -= ('A' - 'a');
+    }
+
+    // compute hash
+    uint32_t hash = fnv1a(zip_path_len, tmp);
+    OpenZipFile* open_zip = &zip_cache[hash & (MAX_OPEN_ZIP_FILES - 1)];
+
+    if (strcmp(tmp, open_zip->path) != 0) {
+        // Invalidate old zip
+        CUIK_TIMED_BLOCK("invalidate_open_zip") {
+            if (open_zip->zip != NULL) {
+                printf("[LOG] invalidating old zip: %s\n", tmp);
+                zip_close(open_zip->zip);
+                close_file_map(&open_zip->file_map);
+            }
+
+            strcpy_s(open_zip->path, FILENAME_MAX, tmp);
+        }
+
+        CUIK_TIMED_BLOCK("zip_open") {
+            open_zip->file_map = open_file_map(open_zip->path);
+            open_zip->zip = zip_stream_open(open_zip->file_map.data, open_zip->file_map.size, 0, 'r');
+            if (open_zip->zip == NULL) {
+                packet->query.found = false;
+                return (struct R_get_file_in_zip){ .index = -1 };
+            }
+        }
+
+        CUIK_TIMED_BLOCK("zip_index") {
+            size_t n = zip_entries_total(open_zip->zip);
+            for (size_t i = 0; i < n; ++i) {
+                zip_entry_openbyindex(open_zip->zip, i);
+                const char* name = zip_entry_name(open_zip->zip);
+
+                if (!zip_entry_isdir(open_zip->zip)) {
+                    size_t len = strlen(name);
+                    Atom newstr = arena_alloc(&str_arena, len + 1, 1);
+
+                    for (size_t j = 0; j < len; j++) {
+                        if (name[j] == '\\') {
+                            newstr[j] = '/';
+                        } else if (name[j] >= 'A' && name[j] <= 'Z') {
+                            newstr[j] = name[j] - ('A' - 'a');
+                        } else {
+                            newstr[j] = name[j];
+                        }
+                    }
+                    newstr[len] = 0;
+
+                    // printf("  %s\n", newstr);
+                    nl_strmap_put_cstr(open_zip->listing, newstr, i);
+                }
+                zip_entry_close(open_zip->zip);
+            }
+        }
+    }
+
+    // Load file from ZIP
+    ptrdiff_t i = nl_strmap_get_cstr(open_zip->listing, newpath);
+    return (struct R_get_file_in_zip){
+        open_zip,
+        i >= 0 ? open_zip->listing[i] : -1
+    };
+}
+
 // cache is NULLable and if so it won't use it
 bool cuikpp_default_packet_handler(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
     if (packet->tag == CUIKPP_PACKET_GET_FILE) {
-        // we don't cache the main file
-        LoadResult file = get_file(packet->file.input_path);
-        cuiklex_canonicalize(file.length, file.data);
+        const char* og_path = packet->file.input_path;
+        const char* path = og_path;
+
+        while (*path) {
+            PathPieceType t;
+            path = read_path(&t, path);
+
+            if (t == PATH_ZIP) {
+                CUIK_TIMED_BLOCK("zip_read") {
+                    struct R_get_file_in_zip r = get_file_in_zip(packet, og_path, path);
+                    assert(r.index >= 0);
+
+                    struct zip_t* zip = r.zip->zip;
+                    zip_entry_openbyindex(zip, r.index);
+
+                    size_t size = zip_entry_size(zip);
+                    void* buf = cuik__valloc(size + 16);
+                    CUIK_TIMED_BLOCK("zip_entry_noallocread") {
+                        zip_entry_noallocread(zip, (void*) buf, size);
+                    }
+
+                    zip_entry_close(zip);
+                    CUIK_TIMED_BLOCK("cuiklex_canonicalize") {
+                        cuiklex_canonicalize(size, buf);
+                    }
+                    packet->file.length = size;
+                    packet->file.data = buf;
+                }
+
+                return true;
+            }
+        }
+
+        LoadResult file;
+        CUIK_TIMED_BLOCK("get_file") {
+            file = get_file(packet->file.input_path);
+        }
+
+        CUIK_TIMED_BLOCK("cuiklex_canonicalize") {
+            cuiklex_canonicalize(file.length, file.data);
+        }
 
         packet->file.length = file.length;
         packet->file.data = file.data;
         return true;
     } else if (packet->tag == CUIKPP_PACKET_QUERY_FILE) {
+        // find out if the path has a zip in it
+        // TODO(NeGate): we don't handle recursive zips yet, pl0x fix
+        const char* og_path = packet->file.input_path;
+        const char* path = og_path;
+        while (*path) {
+            PathPieceType t;
+            path = read_path(&t, path);
+            if (t == PATH_ZIP) {
+                packet->query.found = (get_file_in_zip(packet, og_path, path).index >= 0);
+                return true;
+            }
+        }
+
         #ifdef _WIN32
         packet->query.found = (GetFileAttributesA(packet->query.input_path) != INVALID_FILE_ATTRIBUTES);
         #else
