@@ -346,23 +346,18 @@ static bool export_output(Cuik_CompilerArgs* restrict args, TB_Module* mod, bool
     // TODO(NeGate): do a smarter system (just default to whatever the different platforms like)
     TB_DebugFormat debug_fmt = (args->debug_info ? TB_DEBUGFMT_CODEVIEW : TB_DEBUGFMT_NONE);
 
-    bool output_path_null = false;
-    const char* output_name = args->output_name;
     char output_path_no_ext[FILENAME_MAX];
-    if (output_name != NULL && strcmp(output_name, "$nul") == 0) {
-        output_path_null = true;
-    } else {
-        cuik_driver_get_output_name(args, FILENAME_MAX, output_path_no_ext);
+    cuik_driver_get_output_name(args, FILENAME_MAX, output_path_no_ext);
 
-        if (output_name == NULL) {
-            #if _WIN32
-            char* str = malloc(FILENAME_MAX);
-            sprintf_s(str, FILENAME_MAX, "%s.exe", output_path_no_ext);
-            output_name = str;
-            #else
-            output_name = output_path_no_ext;
-            #endif
-        }
+    const char* output_name = args->output_name;
+    if (output_name == NULL) {
+        #if _WIN32
+        char* str = malloc(FILENAME_MAX);
+        sprintf_s(str, FILENAME_MAX, "%s.exe", output_path_no_ext);
+        output_name = str;
+        #else
+        output_name = output_path_no_ext;
+        #endif
     }
 
     if (args->based) {
@@ -377,11 +372,7 @@ static bool export_output(Cuik_CompilerArgs* restrict args, TB_Module* mod, bool
         }
 
         char path[FILENAME_MAX];
-        if (output_path_null) {
-            strcpy(path, NULL_FILEPATH);
-        } else {
-            sprintf_s(path, FILENAME_MAX, "%s%s", output_path_no_ext, extension);
-        }
+        sprintf_s(path, FILENAME_MAX, "%s%s", output_path_no_ext, extension);
 
         CUIK_TIMED_BLOCK("Export") {
             if (!tb_exporter_write_files(mod, args->flavor, debug_fmt, 1, &(const char*){ path })) {
@@ -393,14 +384,10 @@ static bool export_output(Cuik_CompilerArgs* restrict args, TB_Module* mod, bool
         return true;
     } else {
         char obj_output_path[FILENAME_MAX];
-        if (output_path_null) {
-            strcpy(obj_output_path, NULL_FILEPATH);
-        } else {
-            sprintf_s(
-                obj_output_path, FILENAME_MAX, "%s%s", output_path_no_ext,
-                cuik_get_target_system(args->target) == CUIK_SYSTEM_WINDOWS ? ".obj" : ".o"
-            );
-        }
+        sprintf_s(
+            obj_output_path, FILENAME_MAX, "%s%s", output_path_no_ext,
+            cuik_get_target_system(args->target) == CUIK_SYSTEM_WINDOWS ? ".obj" : ".o"
+        );
 
         CUIK_TIMED_BLOCK("Export object") {
             if (!tb_exporter_write_files(mod, TB_FLAVOR_OBJECT, debug_fmt, 1, (const char*[]) { obj_output_path })) {
@@ -416,7 +403,7 @@ static bool export_output(Cuik_CompilerArgs* restrict args, TB_Module* mod, bool
             return system(cmd) == 0;
         }
 
-        if (output_path_null || args->flavor == TB_FLAVOR_OBJECT) {
+        if (args->flavor == TB_FLAVOR_OBJECT) {
             return true;
         }
 
