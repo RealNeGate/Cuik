@@ -20,13 +20,6 @@
 
 #include "live.h"
 
-static void exit_or_hook(int code) {
-    if (IsDebuggerPresent()) {
-        __debugbreak();
-    }
-    exit(code);
-}
-
 /*static void initialize_opt_passes(void) {
     da_passes = dyn_array_create(TB_Pass, 32);
 
@@ -183,7 +176,7 @@ int main(int argc, const char** argv) {
             printf("\n\nCUIK: %f ms\n", (now - start_time) / 1000000.0);
         }
 
-        if (status != 0) exit_or_hook(status);
+        if (status != 0) exit(status);
     }
 
     #if CUIK_ALLOW_THREADS

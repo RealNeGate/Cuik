@@ -123,7 +123,6 @@ static int pass_parameter(TranslationUnit* tu, TB_Function* func, Expr* e, bool 
         TB_CharUnits align = arg_type->align;
 
         if (0 /* arg_type->is_const */) {
-            __debugbreak();
             out_param[0] = arg_addr;
         } else {
             TB_Reg temp_slot = tb_inst_local(func, size, align);
