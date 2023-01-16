@@ -44,6 +44,9 @@ if os_name == "Windows":
 	source_patterns.append("lib/back/microsoft_craziness.c")
 	cflags += " -ferror-limit=100 -D_CRT_SECURE_NO_WARNINGS"
 	cflags += " -I ../c11threads"
+else os_name == "Darwin":
+	cflags += " -I ../c11threads"
+	
 
 # configure architecture-specific targeting
 if platform.machine() == "AMD64":

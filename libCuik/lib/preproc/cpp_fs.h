@@ -1,6 +1,12 @@
 #include <zip/zip.h>
 #include <front/atoms.h>
 
+#ifndef _WIN32
+#include <sys/mman.h>
+#include <fcntl.h>
+#include <unistd.h>
+#endif
+
 typedef struct LoadResult {
     bool found;
 
@@ -160,7 +166,7 @@ static FileMap open_file_map(const char* filepath) {
         return (FileMap){ 0 };
     }
 
-    void* buffer = mmap(NULL, finfo.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+    void* buffer = mmap(NULL, file_stats.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
     if (buffer == MAP_FAILED) {
         fprintf(stderr, "could not map file: %s\n", filepath);
         return (FileMap){ 0 };
@@ -230,7 +236,7 @@ static struct R_get_file_in_zip {
                 close_file_map(&open_zip->file_map);
             }
 
-            strcpy_s(open_zip->path, FILENAME_MAX, tmp);
+            strncpy(open_zip->path, tmp, FILENAME_MAX);
         }
 
         CUIK_TIMED_BLOCK("zip_open") {
