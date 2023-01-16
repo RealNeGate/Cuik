@@ -8,12 +8,6 @@ enum {
     TB_TASK_BATCH_SIZE = 8192,
 };
 
-#ifdef _WIN32
-#define NULL_FILEPATH "NUL"
-#else
-#define NULL_FILEPATH "/dev/null"
-#endif
-
 Cuik_CPP* cuik_driver_preprocess(const char* filepath, const Cuik_CompilerArgs* args, bool should_finalize) {
     Cuik_CPP* cpp = NULL;
     CUIK_TIMED_BLOCK("cuikpp_init") {

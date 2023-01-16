@@ -1,7 +1,6 @@
 X(HELP,        "h",        NULL,      false, "print help")
 X(VERBOSE,     "V",        NULL,      false, "print verbose messages")
 X(LIVE,        "live",     NULL,      false, "runs compiler persistently, repeats compile step whenever the input changes")
-X(BAKE,        "bake",     NULL,      false, "use libCuik to write a C compile option")
 // preprocessor
 X(DEFINE,      "D",        "define",  true,  "defines a macro before compiling")
 X(UNDEF,       "U",        "undef",   true,  "undefines a macro before compiling")
