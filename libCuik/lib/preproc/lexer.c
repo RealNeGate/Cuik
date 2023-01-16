@@ -102,11 +102,7 @@ TknType classify_ident(const unsigned char* restrict str, size_t len) {
     v = values[v];
 
     // VERIFY
-    #if !USE_INTRIN
-    if (strlen(keywords[v]) != len) return TOKEN_IDENTIFIER;
-
-    return memcmp((const char*) str, keywords[v], len) == 0 ? (0x10000000 + v) : TOKEN_IDENTIFIER;
-    #else
+    #if USE_INTRIN && CUIK__IS_X64
     __m128i kw128 = _mm_loadu_si128((__m128i*)&keywords[v]);
     __m128i str128 = _mm_loadu_si128((__m128i*)str);
 
@@ -121,6 +117,10 @@ TknType classify_ident(const unsigned char* restrict str, size_t len) {
         _SIDD_UNIT_MASK);
 
     return result == 16 ? (0x10000000 + v) : TOKEN_IDENTIFIER;
+    #else
+    if (strlen(keywords[v]) != len) return TOKEN_IDENTIFIER;
+
+    return memcmp((const char*) str, keywords[v], len) == 0 ? (0x10000000 + v) : TOKEN_IDENTIFIER;
     #endif
 }
 
@@ -280,7 +280,7 @@ Token lexer_read(Lexer* restrict l) {
             }
 
             #if !USE_INTRIN
-            for (char* s = start; s != current; s++) {
+            for (unsigned char* s = start; s != current; s++) {
                 if (*s == '\\') {
                     current = slow_identifier_lexing(l, current, start);
                     break;
