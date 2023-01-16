@@ -594,7 +594,9 @@ CUIK_API void cuik_toolchain_free(Cuik_Toolchain* toolchain) {
 CUIK_API Cuik_Toolchain cuik_toolchain_host(void) {
     #ifdef _MSC_VER
     return cuik_toolchain_msvc();
+    #elif __APPLE__
+    return cuik_toolchain_darwin();
     #else
-    return NULL;
+    return (Cuik_Toolchain){ 0 };
     #endif
 }

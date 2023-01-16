@@ -734,7 +734,7 @@ static Expr* parse_unary(Cuik_Parser* restrict parser, TokenStream* restrict s) 
             return e;
         }
 
-        normal_path:
+        normal_path:;
         Expr* src = parse_unary(parser, s);
         if (has_paren) {
             expect_closing_paren(s, opening_loc);
