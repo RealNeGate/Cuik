@@ -31,9 +31,14 @@ subprocess.check_call(libcuik_args, shell=True, cwd="../libCuik")
 #######################################
 # link everything together
 #######################################
-ninja = open('build.ninja', 'w')
-ldflags = " -fuse-ld=lld"
+system = platform.system()
+ninja  = open('build.ninja', 'w')
 
+if system == "Windows":
+	ldflags = " -fuse-ld=lld-link"
+else:
+	ldflags = " -fuse-ld=lld"
+	
 cflags = "-g -Wall -Werror -Wno-unused-function"
 cflags += " -I ../common/ -I ../libCuik/include -I ../tilde-backend/include"
 cflags += " -DCUIK_USE_TB "
@@ -48,8 +53,6 @@ if args.asan:
 if args.opt:
 	cflags  += " -flto -O2 -DNDEBUG"
 	ldflags += " -flto"
-	
-system = platform.system()
 
 # windows' CRT doesn't support c11 threads so we provide a fallback
 if system == "Windows":
