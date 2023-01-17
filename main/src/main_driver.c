@@ -1,6 +1,5 @@
 #include <cuik.h>
 #include "helper.h"
-#include "spall_perf.h"
 #include <dyn_array.h>
 
 #ifndef __CUIK__
@@ -18,6 +17,7 @@
 #include "threadpool.h"
 #endif
 
+#include "spall_perf.h"
 #include "live.h"
 
 /*static void initialize_opt_passes(void) {
@@ -108,6 +108,10 @@ static void dump_tokens(FILE* out_file, TokenStream* s) {
 
 int main(int argc, const char** argv) {
     cuik_init();
+    #ifdef CUIK_USE_SPALL_AUTO
+    spall_auto_init("perf.spall");
+    spall_auto_thread_init(1, 256ull<<20ull, 65536);
+    #endif
 
     Cuik_CompilerArgs args = {
         .version = CUIK_VERSION_C23,
@@ -214,5 +218,10 @@ int main(int argc, const char** argv) {
     }
 
     if (args.time) cuikperf_stop();
+
+    #ifdef CUIK_USE_SPALL_AUTO
+    spall_auto_thread_quit();
+    spall_auto_quit();
+    #endif
     return 0;
 }

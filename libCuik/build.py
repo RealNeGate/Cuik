@@ -31,7 +31,7 @@ if args.shared:
 	cflags += " -DCUIK_USE_DLL"
 
 if args.opt:
-	cflags += " -flto -O2 -DNDEBUG"
+	cflags += " -O2 -DNDEBUG"
 
 if args.asan:
 	cflags += " -fsanitize=address"
@@ -39,14 +39,16 @@ if args.asan:
 if args.usetb:
 	cflags += " -I ../tilde-backend/include -DCUIK_USE_TB"
 
+if True:
+	cflags += " -finstrument-functions"
+
 os_name = platform.system()
 if os_name == "Windows":
 	source_patterns.append("lib/back/microsoft_craziness.c")
 	cflags += " -ferror-limit=100 -D_CRT_SECURE_NO_WARNINGS"
 	cflags += " -I ../c11threads"
-else os_name == "Darwin":
+elif os_name == "Darwin":
 	cflags += " -I ../c11threads"
-	
 
 # configure architecture-specific targeting
 if platform.machine() == "AMD64":

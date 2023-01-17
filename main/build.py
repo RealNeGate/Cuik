@@ -46,8 +46,10 @@ if args.asan:
 		ldflags += " \"C:/Program Files/LLVM/lib/clang/15.0.0/lib/windows/clang_rt.asan-x86_64.lib\""
 
 if args.opt:
-	cflags  += " -flto -O2 -DNDEBUG"
-	ldflags += " -flto"
+	cflags  += " -O2 -DNDEBUG"
+
+if True:
+	cflags += " -DCUIK_USE_SPALL_AUTO -finstrument-functions"
 
 # windows' CRT doesn't support c11 threads so we provide a fallback
 if platform.system() == "Windows":
