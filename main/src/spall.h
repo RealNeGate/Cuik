@@ -60,6 +60,7 @@ enum {
     SpallEventType_Instant             = 5,
 
     SpallEventType_Overwrite_Timestamp = 6, // Retroactively change timestamp units - useful for incrementally improving RDTSC frequency.
+    SpallEventType_Pad_Skip            = 7,
 };
 
 typedef struct SpallBeginEvent {
@@ -86,6 +87,11 @@ typedef struct SpallEndEvent {
     uint32_t tid;
     double   when;
 } SpallEndEvent;
+
+typedef struct SpallPadSkipEvent {
+    uint8_t  type; // = SpallEventType_Pad_Skip
+    uint32_t size;
+} SpallPadSkipEvent;
 
 #pragma pack(pop)
 
@@ -123,8 +129,10 @@ struct SpallProfile {
     SpallWriteCallback write;
     SpallFlushCallback flush;
     SpallCloseCallback close;
+    size_t file_cap;
 
     void *data;
+    _Atomic size_t offset;
 };
 
 #ifdef __cplusplus
@@ -156,19 +164,20 @@ extern "C" {
         if (ferror((FILE *)ctx->data)) return false;
         #endif*/
 
+        /*size_t off = atomic_fetch_add(&ctx->offset, n);
+        if (off+n >= ctx->file_cap) {
+            // bump file size again
+            if (ctx->file_cap) ctx->file_cap += (ctx->file_cap / 2);
+            else ctx->file_cap = 3221225472;
+
+            printf("Bump to %zu\n", ctx->file_cap);
+            SetFilePointer(ctx->data, ctx->file_cap, NULL, FILE_BEGIN);
+            SetEndOfFile(ctx->data);
+        }*/
+
         if (buffer != NULL) {
             buffer->wait_start = SPALL_BUFFER_PROFILING_GET_TIME();
-            for (;;) {
-                DWORD r = WaitForSingleObject(buffer->overlapped.hEvent, 1000);
-                if (r == WAIT_TIMEOUT) {
-                    DWORD x;
-                    GetOverlappedResult(ctx->data, &buffer->overlapped, &x, FALSE);
-
-                    printf("Timeout... keep waiting for write (%lu)\n", x);
-                } else if (r == WAIT_OBJECT_0) {
-                    break;
-                }
-            }
+            WaitForSingleObject(buffer->overlapped.hEvent, INFINITE);
             buffer->wait_end = buffer->write_event_end = SPALL_BUFFER_PROFILING_GET_TIME();
         } else {
             OVERLAPPED o = {
@@ -179,11 +188,14 @@ extern "C" {
             return true;
         }
 
+        // buffer->overlapped.Offset = off & 0xFFFFFFFF;
+        // buffer->overlapped.OffsetHigh = (off >> 32ull) & 0xFFFFFFFF;
         buffer->overlapped.Offset = 0xFFFFFFFF;
         buffer->overlapped.OffsetHigh = 0xFFFFFFFF;
 
         buffer->write_event_start = SPALL_BUFFER_PROFILING_GET_TIME();
         assert((((uintptr_t) p) & 0xFFF) == 0);
+        assert((n & 0xFFF) == 0);
         WriteFile(ctx->data, p, n, NULL, &buffer->overlapped);
         buffer->write_end = SPALL_BUFFER_PROFILING_GET_TIME();
         assert(GetLastError() == ERROR_IO_PENDING);
@@ -230,6 +242,17 @@ extern "C" {
         double old_start = wb->write_event_start;
         wb->wait_start = -1.0;
 
+        // generate NOP padding
+        size_t padded = (n + sizeof(SpallPadSkipEvent) + 4095) & ~4095;
+        assert(padded <= wb->threshold);
+
+        if (padded != n + sizeof(SpallPadSkipEvent)) {
+            SpallPadSkipEvent* m = (SpallPadSkipEvent*) &wb->data[wb->head];
+            m->type = SpallEventType_Pad_Skip;
+            m->size = padded - (n + sizeof(SpallPadSkipEvent));
+            n = padded;
+        }
+
         if (n > 0 && ctx) {
             // SPALL_BUFFER_PROFILE_BEGIN();
             if (!ctx->write) return false;
@@ -243,7 +266,6 @@ extern "C" {
             wb->head = wb->write_i ? wb->threshold : 0;
 
             if (wb->wait_start >= 0.0) {
-                // printf("Write took %f somethings\n", wb->write_event_end - old_start);
                 if (!spall_buffer_begin_ex(ctx, wb, "Wait", 4, wb->wait_start, (uint32_t)(uintptr_t)wb->data, 4222222221)) return false;
                 if (!spall_buffer_end_ex(ctx, wb, wb->wait_end, (uint32_t)(uintptr_t)wb->data, 4222222221)) return false;
             }
@@ -388,9 +410,14 @@ extern "C" {
         if (ctx.is_json) {
             if (!ctx.write(&ctx, NULL, "{\"traceEvents\":[\n", sizeof("{\"traceEvents\":[\n") - 1)) { spall_quit(&ctx); return ctx; }
         } else {
-            SpallHeader header;
-            size_t len = spall_build_header(&header, sizeof(header), timestamp_unit);
-            if (!ctx.write(&ctx, NULL, &header, len)) { spall_quit(&ctx); return ctx; }
+            _Alignas(4096) char foo[4096];
+            size_t len = spall_build_header((SpallHeader*) &foo, sizeof(SpallHeader), timestamp_unit);
+            *((SpallPadSkipEvent*)&foo[len]) = (SpallPadSkipEvent){
+                .type = SpallEventType_Pad_Skip,
+                .size = 4096 - (len+sizeof(SpallPadSkipEvent))
+            };
+
+            if (!ctx.write(&ctx, NULL, foo, 4096)) { spall_quit(&ctx); return ctx; }
         }
 
         return ctx;
@@ -405,9 +432,11 @@ extern "C" {
             fclose((FILE *)ctx.data);
             ctx.data = fopen(filename, "ab");
         } */
-        ctx.data = CreateFileA(filename, GENERIC_WRITE, FILE_SHARE_WRITE, 0, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED | FILE_FLAG_NO_BUFFERING, 0);
+
+        void* data = CreateFileA(filename, SYNCHRONIZE | FILE_APPEND_DATA, FILE_SHARE_WRITE, 0, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED | FILE_FLAG_NO_BUFFERING, 0);
+
         // if (!ctx.data) { spall_quit(&ctx); return ctx; }
-        ctx = spall_init_callbacks(timestamp_unit, spall__file_write, spall__file_flush, spall__file_close, ctx.data, is_json);
+        ctx = spall_init_callbacks(timestamp_unit, spall__file_write, spall__file_flush, spall__file_close, data, is_json);
         return ctx;
     }
 

@@ -38,7 +38,7 @@ if system == "Windows":
 	ldflags = " -fuse-ld=lld-link"
 else:
 	ldflags = " -fuse-ld=lld"
-	
+
 cflags = "-g -Wall -Werror -Wno-unused-function"
 cflags += " -I ../common/ -I ../libCuik/include -I ../tilde-backend/include"
 cflags += " -DCUIK_USE_TB "
@@ -62,7 +62,7 @@ if system == "Windows":
 	exe_ext = ".exe"
 	cflags += " -I ../c11threads -D_CRT_SECURE_NO_WARNINGS"
 	# when we're not doing ASAN, we should be using mimalloc
-	if True: # not args.asan:
+	if False: # not args.asan:
 		cflags += " -D_DLL"
 		ldflags += " ../mimalloc/out/Release/mimalloc.lib -Xlinker /include:mi_version"
 		ldflags += " -nodefaultlibs -lmsvcrt -lvcruntime -lucrt"
@@ -109,4 +109,4 @@ for f in list:
 ninja.write(f"build cuik{exe_ext}: link {' '.join(objs)} ../libCuik/libcuik{lib_ext} ../tilde-backend/tildebackend{lib_ext}\n")
 ninja.close()
 
-exit(subprocess.call(['ninja']))
+exit(subprocess.call(['ninja', '-j2']))

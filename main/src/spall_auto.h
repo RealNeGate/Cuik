@@ -532,7 +532,7 @@ extern "C" {
     #endif
 
     SPALL_NOINSTRUMENT SPALL_FORCEINLINE void (spall_auto_thread_init)(uint32_t _tid, size_t buffer_size, int64_t symbol_cache_size) {
-        uint8_t *buffer = (uint8_t *)_aligned_malloc(buffer_size, 4096);
+        uint8_t *buffer = _aligned_malloc(buffer_size, 4096);
         memset(&spall_buffer, 0, sizeof(SpallBuffer));
         spall_buffer.data = buffer;
         spall_buffer.length = buffer_size;
@@ -554,7 +554,7 @@ extern "C" {
         spall_thread_running = false;
         ah_free(&addr_map);
         spall_buffer_quit(&spall_ctx, &spall_buffer);
-        free(spall_buffer.data);
+        _aligned_free(spall_buffer.data);
     }
 
     void spall_auto_init(char *filename) {
@@ -565,14 +565,15 @@ extern "C" {
         static bool sym_initted = false;
         if (!sym_initted) {
             process = GetCurrentProcess();
-            char temp_data[4096];
-            SpallBuffer temp = { temp_data, sizeof(temp_data) };
+            uint8_t *temp_data = _aligned_malloc(8192, 4096);
+            SpallBuffer temp = { temp_data, 8192 };
             spall_buffer_init(&spall_ctx, &temp);
             spall_buffer_begin(&spall_ctx, &temp, "SymInitialize", sizeof("SymInitialize") - 1, (double)__rdtsc());
             SymSetOptions(SYMOPT_DEFERRED_LOADS | SYMOPT_LOAD_LINES | SYMOPT_UNDNAME | SYMOPT_FAIL_CRITICAL_ERRORS | SYMOPT_DEFERRED_LOADS);
             SymInitialize(process, NULL, TRUE);
             spall_buffer_end(&spall_ctx, &temp, (double)__rdtsc());
             spall_buffer_quit(&spall_ctx, &temp);
+            _aligned_free(temp_data);
         }
         #if _MSC_VER && !__clang__
         if (spall_auto__tls_index == 0xFFFFFFFF) {
