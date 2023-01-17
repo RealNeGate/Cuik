@@ -18,7 +18,6 @@ source_patterns = [
 	"lib/preproc/*.c",
 	"lib/front/*.c",
 	"lib/targets/*.c",
-	"lib/toolchains/*.c",
 	"lib/zip/*.c",
 	"lib/back/ir_gen.c",
 	"lib/back/linker.c"
@@ -44,10 +43,12 @@ if True:
 
 os_name = platform.system()
 if os_name == "Windows":
+	source_patterns.append("lib/toolchains/msvc.c")
 	source_patterns.append("lib/back/microsoft_craziness.c")
 	cflags += " -ferror-limit=100 -D_CRT_SECURE_NO_WARNINGS"
 	cflags += " -I ../c11threads"
 elif os_name == "Darwin":
+	source_patterns.append("lib/toolchains/darwin.c")
 	cflags += " -I ../c11threads"
 
 # configure architecture-specific targeting

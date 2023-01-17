@@ -68,6 +68,8 @@ CUIK_API Cuik_Toolchain cuik_toolchain_host(void);
 
 #ifdef _WIN32
 CUIK_API Cuik_Toolchain cuik_toolchain_msvc(void);
+#elif __APPLE__
+CUIK_API Cuik_Toolchain cuik_toolchain_darwin(void);
 #endif
 
 CUIK_API void cuik_toolchain_free(Cuik_Toolchain* toolchain);

@@ -31,9 +31,14 @@ subprocess.check_call(libcuik_args, shell=True, cwd="../libCuik")
 #######################################
 # link everything together
 #######################################
-ninja = open('build.ninja', 'w')
-ldflags = " -fuse-ld=lld-link"
+system = platform.system()
+ninja  = open('build.ninja', 'w')
 
+if system == "Windows":
+	ldflags = " -fuse-ld=lld-link"
+else:
+	ldflags = " -fuse-ld=lld"
+	
 cflags = "-g -Wall -Werror -Wno-unused-function"
 cflags += " -I ../common/ -I ../libCuik/include -I ../tilde-backend/include"
 cflags += " -DCUIK_USE_TB "
@@ -52,7 +57,8 @@ if True:
 	cflags += " -DCUIK_USE_SPALL_AUTO -finstrument-functions"
 
 # windows' CRT doesn't support c11 threads so we provide a fallback
-if platform.system() == "Windows":
+if system == "Windows":
+	lib_ext = ".lib"
 	exe_ext = ".exe"
 	cflags += " -I ../c11threads -D_CRT_SECURE_NO_WARNINGS"
 	# when we're not doing ASAN, we should be using mimalloc
@@ -61,8 +67,14 @@ if platform.system() == "Windows":
 		ldflags += " ../mimalloc/out/Release/mimalloc.lib -Xlinker /include:mi_version"
 		ldflags += " -nodefaultlibs -lmsvcrt -lvcruntime -lucrt"
 		subprocess.call(['build_mimalloc.bat'], cwd="..\\", shell=True)
+elif system == "Darwin":
+	exe_ext = ""
+	lib_ext = ".a"
+	cflags += " -I ../c11threads"
+	cflags += " -Wno-deprecated-declarations"
 else:
 	exe_ext = ""
+	lib_ext = ".a"
 
 # write some rules
 ninja.write(f"""
@@ -84,15 +96,17 @@ rule link
 objs = []
 list = glob.glob("src/main_driver.c")
 
-if platform.system() == "Windows":
+if system == "Windows":
 	list.append("../c11threads/threads_msvc.c")
+elif system == "Darwin":
+	list.append("../c11threads/threads_posix.c")
 
 for f in list:
 	obj = os.path.basename(f).replace('.c', '.o')
 	ninja.write(f"build bin/{obj}: cc {f}\n")
 	objs.append("bin/"+obj)
 
-ninja.write(f"build cuik{exe_ext}: link {' '.join(objs)} ../libCuik/libcuik.lib ../tilde-backend/tildebackend.lib\n")
+ninja.write(f"build cuik{exe_ext}: link {' '.join(objs)} ../libCuik/libcuik{lib_ext} ../tilde-backend/tildebackend{lib_ext}\n")
 ninja.close()
 
 exit(subprocess.call(['ninja']))

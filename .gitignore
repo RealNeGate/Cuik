@@ -11,7 +11,7 @@ Truct/
 lib/preproc/dfa.h
 
 # *.lib
-# *.a
+*.a
 
 # Prerequisites
 *.d

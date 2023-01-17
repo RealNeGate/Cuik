@@ -1,6 +1,9 @@
+typedef struct {
+    uint64_t og_last_write;
+} LiveCompiler;
 
 #if _WIN32
-static uint64_t get_last_write_time(const char filepath[]) {
+static uint64_t get_last_write_time(const char* filepath) {
     WIN32_FIND_DATA data;
     HANDLE handle = FindFirstFile(filepath, &data);
 
@@ -11,13 +14,6 @@ static uint64_t get_last_write_time(const char filepath[]) {
     FindClose(handle);
     return i.QuadPart;
 }
-#else
-#error "TODO: implement get_last_write_time for this platform"
-#endif
-
-typedef struct {
-    uint64_t og_last_write;
-} LiveCompiler;
 
 // currently we only support modifying the main file when the live loop is active
 // it'll return true when it changes happen, it returns false once the user asks to quit.
@@ -40,6 +36,7 @@ static bool live_compile_watch(LiveCompiler* l, Cuik_CompilerArgs* args) {
 
     // wait for it to finish writing before trying to compile
     int ticks = 0;
+
     while (GetFileAttributesA(source_file) == INVALID_FILE_ATTRIBUTES) {
         SleepEx(1, FALSE);
 
@@ -51,3 +48,19 @@ static bool live_compile_watch(LiveCompiler* l, Cuik_CompilerArgs* args) {
 
     return true;
 }
+#else
+static uint64_t get_last_write_time(const char* filepath) {
+    return 0;
+}
+
+static bool live_compile_watch(LiveCompiler* l, Cuik_CompilerArgs* args) {
+    if (dyn_array_length(args->sources) > 1) {
+        printf("TODO: live compile does not support multiple files yet!");
+        return false;
+    }
+
+    const char* source_file = args->sources[0];
+    l->og_last_write = get_last_write_time(source_file);
+    return false;
+}
+#endif

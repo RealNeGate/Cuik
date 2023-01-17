@@ -1,6 +1,8 @@
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#else
+#include <glob.h>
 #endif
 
 static bool str_ends_with(const char* cstr, const char* postfix) {
@@ -66,9 +68,7 @@ static void filtered_append(Cuik_CompilerArgs* args, const char* path, bool recu
     }
 
     #else
-    fprintf(stderr, "filepath filters not supported on your platform yet :(\n");
-    fprintf(stderr, "umm... i mean you can probably remind me if you want :)\n");
-    abort();
+        #error "filtered_append isn't implemented on this platform yet"
     #endif
 }
 
