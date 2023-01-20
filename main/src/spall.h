@@ -36,6 +36,7 @@ TODO: Optional Helper APIs:
 #include <stdio.h>
 #include <string.h>
 #include <stdbool.h>
+#include <process.h>
 
 #define SPALL_FN static inline SPALL_NOINSTRUMENT
 
@@ -112,7 +113,15 @@ typedef struct SpallBuffer {
     double write_event_start, write_event_end;
     double wait_start, wait_end;
     double write_end;
-    OVERLAPPED overlapped;
+
+    struct {
+        HANDLE thread;
+
+        _Atomic bool is_running;
+        _Atomic(const void*) ptr;
+        _Atomic uint32_t size;
+    } writer;
+
     // Internal data - don't assign this
     size_t head;
     SpallProfile *ctx;
@@ -156,52 +165,59 @@ extern "C" {
     SPALL_FN SPALL_FORCEINLINE bool spall_buffer_begin_ex(SpallProfile *ctx, SpallBuffer *wb, const char *name, signed long name_len, double when, uint32_t tid, uint32_t pid);
     SPALL_FN SPALL_FORCEINLINE bool spall_buffer_end_ex(SpallProfile *ctx, SpallBuffer *wb, double when, uint32_t tid, uint32_t pid);
 
+    static void spall__writer_thread(void* arg) {
+        SpallBuffer* buffer = arg;
+        SpallProfile* ctx = buffer->ctx;
+
+        while (buffer->writer.is_running) {
+            // wait for the user to
+            void* not_ready_state = NULL;
+            WaitOnAddress(&buffer->writer.ptr, &not_ready_state, sizeof(void*), INFINITE);
+            if (!buffer->writer.is_running) break;
+            if (!buffer->writer.ptr) continue;
+
+            size_t size = buffer->writer.size;
+            const void* ptr = buffer->writer.ptr;
+
+            // main thread can go ahead now
+            buffer->writer.ptr = NULL;
+
+            // printf("T2: Write start!\n");
+            double start = SPALL_BUFFER_PROFILING_GET_TIME();
+            WriteFile(ctx->data, ptr, size, NULL, NULL);
+            double end = SPALL_BUFFER_PROFILING_GET_TIME();
+
+            printf("Buffer: %p\n", ctx);
+            double elapsed = ((end - start) * ctx->timestamp_unit) / 1000000.0;
+            double megas = size / (1024.0*1024.0);
+            printf("Write was %f MB/s (%f MB in %f seconds)\n", megas / elapsed, megas, elapsed);
+            // printf("T2: Write done!\n");
+        }
+    }
+
     SPALL_FN SPALL_FORCEINLINE bool spall__file_write(SpallProfile *ctx, SpallBuffer *buffer, const void *p, size_t n) {
         if (!ctx->data) return false;
 
-        /*#ifdef SPALL_DEBUG
-        if (feof((FILE *)ctx->data)) return false;
-        if (ferror((FILE *)ctx->data)) return false;
-        #endif*/
+        if (buffer) {
+            buffer->write_event_start = SPALL_BUFFER_PROFILING_GET_TIME();
 
-        /*size_t off = atomic_fetch_add(&ctx->offset, n);
-        if (off+n >= ctx->file_cap) {
-            // bump file size again
-            if (ctx->file_cap) ctx->file_cap += (ctx->file_cap / 2);
-            else ctx->file_cap = 3221225472;
+            // ptr must happen afterwards because it can trigger the
+            // write event to modify it
+            buffer->writer.size = n;
+            buffer->writer.ptr = p;
+            WakeByAddressSingle(&buffer->writer.ptr);
+            // printf("T1: Write try?\n");
+            // wait for the pointer to becomes NULL
+            while (buffer->writer.ptr != NULL) {
+                // nothing
+                _mm_pause();
+            }
 
-            printf("Bump to %zu\n", ctx->file_cap);
-            SetFilePointer(ctx->data, ctx->file_cap, NULL, FILE_BEGIN);
-            SetEndOfFile(ctx->data);
-        }*/
-
-        if (buffer != NULL) {
-            buffer->wait_start = SPALL_BUFFER_PROFILING_GET_TIME();
-            WaitForSingleObject(buffer->overlapped.hEvent, INFINITE);
-            buffer->wait_end = buffer->write_event_end = SPALL_BUFFER_PROFILING_GET_TIME();
+            buffer->write_end = SPALL_BUFFER_PROFILING_GET_TIME();
         } else {
-            OVERLAPPED o = {
-                .Offset = 0xFFFFFFFF,
-                .OffsetHigh = 0xFFFFFFFF,
-            };
-            WriteFile(ctx->data, p, n, NULL, &o);
-            return true;
+            WriteFile(ctx->data, p, n, NULL, NULL);
         }
 
-        // buffer->overlapped.Offset = off & 0xFFFFFFFF;
-        // buffer->overlapped.OffsetHigh = (off >> 32ull) & 0xFFFFFFFF;
-        buffer->overlapped.Offset = 0xFFFFFFFF;
-        buffer->overlapped.OffsetHigh = 0xFFFFFFFF;
-
-        buffer->write_event_start = SPALL_BUFFER_PROFILING_GET_TIME();
-        assert((((uintptr_t) p) & 0xFFF) == 0);
-        assert((n & 0xFFF) == 0);
-        WriteFile(ctx->data, p, n, NULL, &buffer->overlapped);
-        buffer->write_end = SPALL_BUFFER_PROFILING_GET_TIME();
-        assert(GetLastError() == ERROR_IO_PENDING);
-        // printf("Async write: %zu bytes\n");
-
-        // if (fwrite(p, n, 1, (FILE *)ctx->data) != 1) return false;
         return true;
     }
     SPALL_FN bool spall__file_flush(SpallProfile *ctx) {
@@ -224,6 +240,7 @@ extern "C" {
         fflush((FILE *)ctx->data);
         fclose((FILE *)ctx->data);*/
 
+        SetEndOfFile(ctx->data);
         CloseHandle(ctx->data);
         ctx->data = NULL;
     }
@@ -239,8 +256,6 @@ extern "C" {
 
         size_t base = wb->write_i ? wb->threshold : 0;
         size_t n = wb->head - base;
-        double old_start = wb->write_event_start;
-        wb->wait_start = -1.0;
 
         // generate NOP padding
         size_t padded = (n + sizeof(SpallPadSkipEvent) + 4095) & ~4095;
@@ -264,18 +279,18 @@ extern "C" {
 
             wb->write_i = (wb->write_i + 1) % 2;
             wb->head = wb->write_i ? wb->threshold : 0;
+            // SPALL_BUFFER_PROFILE_END("Buffer waiting");
 
-            if (wb->wait_start >= 0.0) {
+            /*if (wb->wait_start >= 0.0) {
                 if (!spall_buffer_begin_ex(ctx, wb, "Wait", 4, wb->wait_start, (uint32_t)(uintptr_t)wb->data, 4222222221)) return false;
                 if (!spall_buffer_end_ex(ctx, wb, wb->wait_end, (uint32_t)(uintptr_t)wb->data, 4222222221)) return false;
             }
-            // SPALL_BUFFER_PROFILE_END("Buffer waiting");
 
             if (old_start >= 0.0) {
                 // printf("Write took %f somethings\n", wb->write_event_end - old_start);
                 if (!spall_buffer_begin_ex(ctx, wb, "Async", 5, old_start, 0, 69)) return false;
                 if (!spall_buffer_end_ex(ctx, wb, wb->write_event_end, 0, 69)) return false;
-            }
+            }*/
 
             if (!spall_buffer_begin_ex(ctx, wb, "WriteFile", 9, wb->write_event_start, 0, 70)) return false;
             if (!spall_buffer_end_ex(ctx, wb, wb->write_end, 0, 70)) return false;
@@ -313,16 +328,22 @@ extern "C" {
     }
 
     SPALL_FN bool spall_buffer_init(SpallProfile *ctx, SpallBuffer *wb) {
-        wb->overlapped = (OVERLAPPED){ .hEvent = CreateEventA(NULL, false, true, NULL) };
         wb->threshold = wb->length / 2;
-        wb->write_event_start = -1.0;
-
-        if (!spall_buffer_flush(NULL, wb)) return false;
         wb->ctx = ctx;
+        wb->write_event_start = -1.0;
+        wb->writer.is_running = true;
+        wb->writer.thread = (void*) _beginthread(spall__writer_thread, 0, wb);
         return true;
     }
     SPALL_FN bool spall_buffer_quit(SpallProfile *ctx, SpallBuffer *wb) {
         if (!spall_buffer_flush(ctx, wb)) return false;
+
+        // fake a write event and then it'll quit
+        wb->writer.is_running = false;
+        wb->writer.ptr = (void*) 1;
+        WakeByAddressSingle(&wb->writer.ptr);
+        WaitForSingleObject(&wb->writer.thread, INFINITE);
+
         wb->ctx = NULL;
         return true;
     }
@@ -433,7 +454,11 @@ extern "C" {
             ctx.data = fopen(filename, "ab");
         } */
 
-        void* data = CreateFileA(filename, SYNCHRONIZE | FILE_APPEND_DATA, FILE_SHARE_WRITE, 0, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED | FILE_FLAG_NO_BUFFERING, 0);
+        void* data = CreateFileA(filename, SYNCHRONIZE | FILE_APPEND_DATA, FILE_SHARE_WRITE, 0, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, 0);
+
+        enum { FILE_CAP = 3221225472ull };
+        SetFilePointer(data, FILE_CAP, NULL, FILE_BEGIN);
+        SetEndOfFile(data);
 
         // if (!ctx.data) { spall_quit(&ctx); return ctx; }
         ctx = spall_init_callbacks(timestamp_unit, spall__file_write, spall__file_flush, spall__file_close, data, is_json);
