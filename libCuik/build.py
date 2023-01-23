@@ -9,6 +9,7 @@ parser.add_argument('--usetb', action='store_true', help='compiles with the TB i
 parser.add_argument('--opt', action='store_true', help='runs optimize on compiled source')
 parser.add_argument('--shared', action='store_true', help='compile shared object')
 parser.add_argument('--asan', action='store_true', help='compile with ASAN')
+parser.add_argument('--autospall', action='store_true', help='instrument code with SpallAuto')
 
 args = parser.parse_args()
 
@@ -38,7 +39,7 @@ if args.asan:
 if args.usetb:
 	cflags += " -I ../tilde-backend/include -DCUIK_USE_TB"
 
-if True:
+if args.autospall:
 	cflags += " -finstrument-functions"
 
 os_name = platform.system()

@@ -9,6 +9,7 @@ import argparse
 parser = argparse.ArgumentParser(description='Compiles libCuik')
 parser.add_argument('--opt', action='store_true', help='runs optimize on compiled source')
 parser.add_argument('--asan', action='store_true', help='instrument code with the AddressSanitizer')
+parser.add_argument('--autospall', action='store_true', help='instrument code with SpallAuto')
 args = parser.parse_args()
 
 #######################################
@@ -24,6 +25,10 @@ if args.opt:
 if args.asan:
 	tb_args.append('--asan')
 	libcuik_args.append('--asan')
+
+if args.autospall:
+	tb_args.append('--autospall')
+	libcuik_args.append('--autospall')
 
 subprocess.check_call(tb_args, shell=True, cwd="../tilde-backend")
 subprocess.check_call(libcuik_args, shell=True, cwd="../libCuik")
@@ -53,7 +58,7 @@ if args.asan:
 if args.opt:
 	cflags  += " -O2 -DNDEBUG"
 
-if True:
+if args.autospall:
 	cflags += " -DCUIK_USE_SPALL_AUTO -finstrument-functions"
 
 # windows' CRT doesn't support c11 threads so we provide a fallback

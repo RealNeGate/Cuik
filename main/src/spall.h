@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: Â© 2022 Phillip Trudeau-Tavara <pmttavara@protonmail.com>
+// SPDX-FileCopyrightText: © 2022 Phillip Trudeau-Tavara <pmttavara@protonmail.com>
 // SPDX-License-Identifier: 0BSD
 
 /*
@@ -25,7 +25,7 @@ TODO: Optional Helper APIs:
 
 #if !defined(_MSC_VER) || defined(__clang__)
 #define SPALL_NOINSTRUMENT __attribute__((no_instrument_function))
-#define SPALL_FORCEINLINE // __attribute__((always_inline))
+#define SPALL_FORCEINLINE __attribute__((always_inline))
 #else
 #define _CRT_SECURE_NO_WARNINGS
 #define SPALL_NOINSTRUMENT // Can't noinstrument on MSVC!
@@ -36,7 +36,6 @@ TODO: Optional Helper APIs:
 #include <stdio.h>
 #include <string.h>
 #include <stdbool.h>
-#include <process.h>
 
 #define SPALL_FN static inline SPALL_NOINSTRUMENT
 
@@ -98,37 +97,8 @@ typedef struct SpallPadSkipEvent {
 
 typedef struct SpallProfile SpallProfile;
 
-// Important!: If you are writing Begin/End events, then do NOT write
-//             events for the same PID + TID pair on different buffers!!!
-typedef struct SpallBuffer {
-    void *data;
-    size_t length;
-
-    // windows async file IO crap
-    //   current half being written (0 or 1)
-    size_t write_i;
-    //   half the buffer
-    size_t threshold;
-    //   event for checking when this half is complete
-    double write_event_start, write_event_end;
-    double wait_start, wait_end;
-    double write_end;
-
-    struct {
-        HANDLE thread;
-
-        _Atomic bool is_running;
-        _Atomic(const void*) ptr;
-        _Atomic uint32_t size;
-    } writer;
-
-    // Internal data - don't assign this
-    size_t head;
-    SpallProfile *ctx;
-} SpallBuffer;
-
 // Important!: If you define your own callbacks, mark them SPALL_NOINSTRUMENT!
-typedef bool (*SpallWriteCallback)(SpallProfile *self, SpallBuffer *buffer, const void *data, size_t length);
+typedef bool (*SpallWriteCallback)(SpallProfile *self, const void *data, size_t length);
 typedef bool (*SpallFlushCallback)(SpallProfile *self);
 typedef void (*SpallCloseCallback)(SpallProfile *self);
 
@@ -138,423 +108,327 @@ struct SpallProfile {
     SpallWriteCallback write;
     SpallFlushCallback flush;
     SpallCloseCallback close;
-    size_t file_cap;
-
     void *data;
-    _Atomic size_t offset;
 };
+
+// Important!: If you are writing Begin/End events, then do NOT write
+//             events for the same PID + TID pair on different buffers!!!
+typedef struct SpallBuffer {
+    void *data;
+    size_t length;
+
+    // Internal data - don't assign this
+    size_t head;
+    SpallProfile *ctx;
+} SpallBuffer;
 
 #ifdef __cplusplus
 extern "C" {
-    #endif
+#endif
 
-    #if defined(SPALL_BUFFER_PROFILING) && !defined(SPALL_BUFFER_PROFILING_GET_TIME)
-    #error "You must #define SPALL_BUFFER_PROFILING_GET_TIME() to profile buffer flushes."
-    #endif
+#if defined(SPALL_BUFFER_PROFILING) && !defined(SPALL_BUFFER_PROFILING_GET_TIME)
+#error "You must #define SPALL_BUFFER_PROFILING_GET_TIME() to profile buffer flushes."
+#endif
 
-    SPALL_FN SPALL_FORCEINLINE void spall__buffer_profile(SpallProfile *ctx, SpallBuffer *wb, double spall_time_begin, double spall_time_end, const char *name, int name_len);
-    #ifdef SPALL_BUFFER_PROFILING
-    #define SPALL_BUFFER_PROFILE_BEGIN() double spall_time_begin = (SPALL_BUFFER_PROFILING_GET_TIME())
-    // Don't call this with anything other than a string literal
-    #define SPALL_BUFFER_PROFILE_END(name) spall__buffer_profile(ctx, wb, spall_time_begin, (SPALL_BUFFER_PROFILING_GET_TIME()), "" name "", sizeof("" name "") - 1)
-    #else
-    #define SPALL_BUFFER_PROFILE_BEGIN()
-    #define SPALL_BUFFER_PROFILE_END(name)
-    #endif
+SPALL_FN SPALL_FORCEINLINE void spall__buffer_profile(SpallProfile *ctx, SpallBuffer *wb, double spall_time_begin, double spall_time_end, const char *name, int name_len);
+#ifdef SPALL_BUFFER_PROFILING
+#define SPALL_BUFFER_PROFILE_BEGIN() double spall_time_begin = (SPALL_BUFFER_PROFILING_GET_TIME())
+// Don't call this with anything other than a string literal
+#define SPALL_BUFFER_PROFILE_END(name) spall__buffer_profile(ctx, wb, spall_time_begin, (SPALL_BUFFER_PROFILING_GET_TIME()), "" name "", sizeof("" name "") - 1)
+#else
+#define SPALL_BUFFER_PROFILE_BEGIN()
+#define SPALL_BUFFER_PROFILE_END(name)
+#endif
 
-    SPALL_FN SPALL_FORCEINLINE bool spall_buffer_begin_ex(SpallProfile *ctx, SpallBuffer *wb, const char *name, signed long name_len, double when, uint32_t tid, uint32_t pid);
-    SPALL_FN SPALL_FORCEINLINE bool spall_buffer_end_ex(SpallProfile *ctx, SpallBuffer *wb, double when, uint32_t tid, uint32_t pid);
+SPALL_FN SPALL_FORCEINLINE bool spall__file_write(SpallProfile *ctx, const void *p, size_t n) {
+    if (!ctx->data) return false;
+#ifdef SPALL_DEBUG
+    if (feof((FILE *)ctx->data)) return false;
+    if (ferror((FILE *)ctx->data)) return false;
+#endif
 
-    static void spall__writer_thread(void* arg) {
-        SpallBuffer* buffer = arg;
-        SpallProfile* ctx = buffer->ctx;
+    if (fwrite(p, n, 1, (FILE *)ctx->data) != 1) return false;
+    return true;
+}
+SPALL_FN bool spall__file_flush(SpallProfile *ctx) {
+    if (!ctx->data) return false;
+    if (fflush((FILE *)ctx->data)) return false;
+    return true;
+}
+SPALL_FN void spall__file_close(SpallProfile *ctx) {
+    if (!ctx->data) return;
 
-        while (buffer->writer.is_running) {
-            // wait for the user to
-            void* not_ready_state = NULL;
-            WaitOnAddress(&buffer->writer.ptr, &not_ready_state, sizeof(void*), INFINITE);
-            if (!buffer->writer.is_running) break;
-            if (!buffer->writer.ptr) continue;
-
-            size_t size = buffer->writer.size;
-            const void* ptr = buffer->writer.ptr;
-
-            // main thread can go ahead now
-            buffer->writer.ptr = NULL;
-
-            // printf("T2: Write start!\n");
-            double start = SPALL_BUFFER_PROFILING_GET_TIME();
-            WriteFile(ctx->data, ptr, size, NULL, NULL);
-            double end = SPALL_BUFFER_PROFILING_GET_TIME();
-
-            printf("Buffer: %p\n", ctx);
-            double elapsed = ((end - start) * ctx->timestamp_unit) / 1000000.0;
-            double megas = size / (1024.0*1024.0);
-            printf("Write was %f MB/s (%f MB in %f seconds)\n", megas / elapsed, megas, elapsed);
-            // printf("T2: Write done!\n");
+    if (ctx->is_json) {
+#ifdef SPALL_DEBUG
+        if (!feof((FILE *)ctx->data) && !ferror((FILE *)ctx->data))
+#endif
+        {
+            fseek((FILE *)ctx->data, -2, SEEK_CUR); // seek back to overwrite trailing comma
+            fwrite("\n]}\n", sizeof("\n]}\n") - 1, 1, (FILE *)ctx->data);
         }
     }
+    fflush((FILE *)ctx->data);
+    fclose((FILE *)ctx->data);
+    ctx->data = NULL;
+}
 
-    SPALL_FN SPALL_FORCEINLINE bool spall__file_write(SpallProfile *ctx, SpallBuffer *buffer, const void *p, size_t n) {
-        if (!ctx->data) return false;
+SPALL_FN SPALL_FORCEINLINE bool spall__buffer_flush(SpallProfile *ctx, SpallBuffer *wb) {
+    // precon: wb
+    // precon: wb->data
+    // precon: wb->head <= wb->length
+    // precon: !ctx || ctx->write
+#ifdef SPALL_DEBUG
+    if (wb->ctx != ctx) return false; // Buffer must be bound to this context (or to NULL)
+#endif
 
-        if (buffer) {
-            buffer->write_event_start = SPALL_BUFFER_PROFILING_GET_TIME();
-
-            // ptr must happen afterwards because it can trigger the
-            // write event to modify it
-            buffer->writer.size = n;
-            buffer->writer.ptr = p;
-            WakeByAddressSingle(&buffer->writer.ptr);
-            // printf("T1: Write try?\n");
-            // wait for the pointer to becomes NULL
-            while (buffer->writer.ptr != NULL) {
-                // nothing
-                _mm_pause();
-            }
-
-            buffer->write_end = SPALL_BUFFER_PROFILING_GET_TIME();
+    if (wb->head && ctx) {
+        SPALL_BUFFER_PROFILE_BEGIN();
+        if (!ctx->write) return false;
+        if (ctx->write == spall__file_write) {
+            if (!spall__file_write(ctx, wb->data, wb->head)) return false;
         } else {
-            WriteFile(ctx->data, p, n, NULL, NULL);
+            if (!ctx->write(ctx, wb->data, wb->head)) return false;
         }
+        SPALL_BUFFER_PROFILE_END("Buffer Flush");
+    }
+    wb->head = 0;
+    return true;
+}
 
+SPALL_FN SPALL_FORCEINLINE bool spall__buffer_write(SpallProfile *ctx, SpallBuffer *wb, void *p, size_t n) {
+    // precon: !wb || wb->head < wb->length
+    // precon: !ctx || ctx->write
+    if (!wb) return ctx->write && ctx->write(ctx, p, n);
+#ifdef SPALL_DEBUG
+    if (wb->ctx != ctx) return false; // Buffer must be bound to this context (or to NULL)
+#endif
+    if (wb->head + n > wb->length && !spall__buffer_flush(ctx, wb)) return false;
+    if (n > wb->length) {
+        SPALL_BUFFER_PROFILE_BEGIN();
+        if (!ctx->write || !ctx->write(ctx, p, n)) return false;
+        SPALL_BUFFER_PROFILE_END("Unbuffered Write");
         return true;
     }
-    SPALL_FN bool spall__file_flush(SpallProfile *ctx) {
-        if (!ctx->data) return false;
-        // if (fflush((FILE *)ctx->data)) return false;
-        return true;
-    }
-    SPALL_FN void spall__file_close(SpallProfile *ctx) {
-        if (!ctx->data) return;
+    memcpy((char *)wb->data + wb->head, p, n);
+    wb->head += n;
+    return true;
+}
 
-        /*if (ctx->is_json) {
-            #ifdef SPALL_DEBUG
-            if (!feof((FILE *)ctx->data) && !ferror((FILE *)ctx->data))
-                #endif
-            {
-                fseek((FILE *)ctx->data, -2, SEEK_CUR); // seek back to overwrite trailing comma
-                fwrite("\n]}\n", sizeof("\n]}\n") - 1, 1, (FILE *)ctx->data);
+SPALL_FN bool spall_buffer_flush(SpallProfile *ctx, SpallBuffer *wb) {
+#ifdef SPALL_DEBUG
+    if (!wb) return false;
+    if (!wb->data) return false;
+#endif
+
+    if (!spall__buffer_flush(ctx, wb)) return false;
+    return true;
+}
+
+SPALL_FN bool spall_buffer_init(SpallProfile *ctx, SpallBuffer *wb) {
+    if (!spall_buffer_flush(NULL, wb)) return false;
+    wb->ctx = ctx;
+    return true;
+}
+SPALL_FN bool spall_buffer_quit(SpallProfile *ctx, SpallBuffer *wb) {
+    if (!spall_buffer_flush(ctx, wb)) return false;
+    wb->ctx = NULL;
+    return true;
+}
+
+SPALL_FN bool spall_buffer_abort(SpallBuffer *wb) {
+    if (!wb) return false;
+    wb->ctx = NULL;
+    if (!spall__buffer_flush(NULL, wb)) return false;
+    return true;
+}
+
+SPALL_FN size_t spall_build_header(void *buffer, size_t rem_size, double timestamp_unit) {
+    size_t header_size = sizeof(SpallHeader);
+    if (header_size > rem_size) {
+        return 0;
+    }
+
+    SpallHeader *header = (SpallHeader *)buffer;
+    header->magic_header = 0x0BADF00D;
+    header->version = 1;
+    header->timestamp_unit = timestamp_unit;
+    header->must_be_0 = 0;
+    return header_size;
+}
+SPALL_FN SPALL_FORCEINLINE size_t spall_build_begin(void *buffer, size_t rem_size, const char *name, signed long name_len, const char *args, signed long args_len, double when, uint32_t tid, uint32_t pid) {
+    SpallBeginEventMax *ev = (SpallBeginEventMax *)buffer;
+    uint8_t trunc_name_len = (uint8_t)SPALL_MIN(name_len, 255); // will be interpreted as truncated in the app (?)
+    uint8_t trunc_args_len = (uint8_t)SPALL_MIN(args_len, 255); // will be interpreted as truncated in the app (?)
+
+    size_t ev_size = sizeof(SpallBeginEvent) + trunc_name_len + trunc_args_len;
+    if (ev_size > rem_size) {
+        return 0;
+    }
+
+    ev->event.type = SpallEventType_Begin;
+    ev->event.category = 0;
+    ev->event.pid = pid;
+    ev->event.tid = tid;
+    ev->event.when = when;
+    ev->event.name_length = trunc_name_len;
+    ev->event.args_length = trunc_args_len;
+    memcpy(ev->name_bytes,            name, trunc_name_len);
+    memcpy(ev->name_bytes + name_len, args, trunc_args_len);
+
+    return ev_size;
+}
+SPALL_FN SPALL_FORCEINLINE size_t spall_build_end(void *buffer, size_t rem_size, double when, uint32_t tid, uint32_t pid) {
+    size_t ev_size = sizeof(SpallEndEvent);
+    if (ev_size > rem_size) {
+        return 0;
+    }
+
+    SpallEndEvent *ev = (SpallEndEvent *)buffer;
+    ev->type = SpallEventType_End;
+    ev->pid = pid;
+    ev->tid = tid;
+    ev->when = when;
+
+    return ev_size;
+}
+
+SPALL_FN void spall_quit(SpallProfile *ctx) {
+    if (!ctx) return;
+    if (ctx->close) ctx->close(ctx);
+
+    memset(ctx, 0, sizeof(*ctx));
+}
+
+SPALL_FN SpallProfile spall_init_callbacks(double timestamp_unit,
+                                           SpallWriteCallback write,
+                                           SpallFlushCallback flush,
+                                           SpallCloseCallback close,
+                                           void *userdata,
+                                           bool is_json) {
+    SpallProfile ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    if (timestamp_unit < 0) return ctx;
+    ctx.timestamp_unit = timestamp_unit;
+    ctx.is_json = is_json;
+    ctx.data = userdata;
+    ctx.write = write;
+    ctx.flush = flush;
+    ctx.close = close;
+
+    if (ctx.is_json) {
+        if (!ctx.write(&ctx, "{\"traceEvents\":[\n", sizeof("{\"traceEvents\":[\n") - 1)) { spall_quit(&ctx); return ctx; }
+    } else {
+        SpallHeader header;
+        size_t len = spall_build_header(&header, sizeof(header), timestamp_unit);
+        if (!ctx.write(&ctx, &header, len)) { spall_quit(&ctx); return ctx; }
+    }
+
+    return ctx;
+}
+
+SPALL_FN SpallProfile spall_init_file_ex(const char *filename, double timestamp_unit, bool is_json) {
+    SpallProfile ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    if (!filename) return ctx;
+    ctx.data = fopen(filename, "wb"); // TODO: handle utf8 and long paths on windows
+    if (ctx.data) { // basically freopen() but we don't want to force users to lug along another macro define
+        fclose((FILE *)ctx.data);
+        ctx.data = fopen(filename, "ab");
+    }
+    if (!ctx.data) { spall_quit(&ctx); return ctx; }
+    ctx = spall_init_callbacks(timestamp_unit, spall__file_write, spall__file_flush, spall__file_close, ctx.data, is_json);
+    return ctx;
+}
+
+SPALL_FN SpallProfile spall_init_file     (const char* filename, double timestamp_unit) { return spall_init_file_ex(filename, timestamp_unit, false); }
+SPALL_FN SpallProfile spall_init_file_json(const char* filename, double timestamp_unit) { return spall_init_file_ex(filename, timestamp_unit, true); }
+
+SPALL_FN bool spall_flush(SpallProfile *ctx) {
+#ifdef SPALL_DEBUG
+    if (!ctx) return false;
+#endif
+
+    if (!ctx->flush || !ctx->flush(ctx)) return false;
+    return true;
+}
+
+SPALL_FN SPALL_FORCEINLINE bool spall_buffer_begin_args(SpallProfile *ctx, SpallBuffer *wb, const char *name, signed long name_len, const char *args, signed long args_len, double when, uint32_t tid, uint32_t pid) {
+#ifdef SPALL_DEBUG
+    if (!ctx) return false;
+    if (!name) return false;
+    if (name_len <= 0) return false;
+    if (!wb) return false;
+#endif
+
+    if (ctx->is_json) {
+        char buf[1024];
+        int buf_len = snprintf(buf, sizeof(buf),
+                               "{\"ph\":\"B\",\"ts\":%f,\"pid\":%u,\"tid\":%u,\"name\":\"%.*s\",\"args\":\"%.*s\"},\n",
+                               when * ctx->timestamp_unit, pid, tid, (int)(uint8_t)name_len, name, (int)(uint8_t)args_len, args);
+        if (buf_len <= 0) return false;
+        if (buf_len >= sizeof(buf)) return false;
+        if (!spall__buffer_write(ctx, wb, buf, buf_len)) return false;
+    } else {
+        if ((wb->head + sizeof(SpallBeginEventMax)) > wb->length) {
+            if (!spall__buffer_flush(ctx, wb)) {
+                return false;
             }
         }
-        fflush((FILE *)ctx->data);
-        fclose((FILE *)ctx->data);*/
 
-        SetEndOfFile(ctx->data);
-        CloseHandle(ctx->data);
-        ctx->data = NULL;
+        wb->head += spall_build_begin((char *)wb->data + wb->head, wb->length - wb->head, name, name_len, args, args_len, when, tid, pid);
     }
 
-    SPALL_FN SPALL_FORCEINLINE bool spall__buffer_flush(SpallProfile *ctx, SpallBuffer *wb) {
-        // precon: wb
-        // precon: wb->data
-        // precon: wb->head <= wb->length
-        // precon: !ctx || ctx->write
-        #ifdef SPALL_DEBUG
-        if (wb->ctx != ctx) return false; // Buffer must be bound to this context (or to NULL)
-        #endif
+    return true;
+}
 
-        size_t base = wb->write_i ? wb->threshold : 0;
-        size_t n = wb->head - base;
+SPALL_FN SPALL_FORCEINLINE bool spall_buffer_begin_ex(SpallProfile *ctx, SpallBuffer *wb, const char *name, signed long name_len, double when, uint32_t tid, uint32_t pid) {
+    return spall_buffer_begin_args(ctx, wb, name, name_len, "", 0, when, tid, pid);
+}
 
-        // generate NOP padding
-        size_t padded = (n + sizeof(SpallPadSkipEvent) + 4095) & ~4095;
-        assert(padded <= wb->threshold);
+SPALL_FN bool spall_buffer_begin(SpallProfile *ctx, SpallBuffer *wb, const char *name, signed long name_len, double when) {
+    return spall_buffer_begin_args(ctx, wb, name, name_len, "", 0, when, 0, 0);
+}
 
-        if (padded != n + sizeof(SpallPadSkipEvent)) {
-            SpallPadSkipEvent* m = (SpallPadSkipEvent*) &wb->data[wb->head];
-            m->type = SpallEventType_Pad_Skip;
-            m->size = padded - (n + sizeof(SpallPadSkipEvent));
-            n = padded;
-        }
+SPALL_FN SPALL_FORCEINLINE bool spall_buffer_end_ex(SpallProfile *ctx, SpallBuffer *wb, double when, uint32_t tid, uint32_t pid) {
+#ifdef SPALL_DEBUG
+    if (!ctx) return false;
+    if (!wb) return false;
+#endif
 
-        if (n > 0 && ctx) {
-            // SPALL_BUFFER_PROFILE_BEGIN();
-            if (!ctx->write) return false;
-            if (ctx->write == spall__file_write) {
-                if (!spall__file_write(ctx, wb, wb->data + base, n)) return false;
-            } else {
-                if (!ctx->write(ctx, wb, wb->data + base, n)) return false;
+    if (ctx->is_json) {
+        char buf[512];
+        int buf_len = snprintf(buf, sizeof(buf),
+                               "{\"ph\":\"E\",\"ts\":%f,\"pid\":%u,\"tid\":%u},\n",
+                               when * ctx->timestamp_unit, pid, tid);
+        if (buf_len <= 0) return false;
+        if (buf_len >= sizeof(buf)) return false;
+        if (!spall__buffer_write(ctx, wb, buf, buf_len)) return false;
+    } else {
+        if ((wb->head + sizeof(SpallEndEvent)) > wb->length) {
+            if (!spall__buffer_flush(ctx, wb)) {
+                return false;
             }
-
-            wb->write_i = (wb->write_i + 1) % 2;
-            wb->head = wb->write_i ? wb->threshold : 0;
-            // SPALL_BUFFER_PROFILE_END("Buffer waiting");
-
-            /*if (wb->wait_start >= 0.0) {
-                if (!spall_buffer_begin_ex(ctx, wb, "Wait", 4, wb->wait_start, (uint32_t)(uintptr_t)wb->data, 4222222221)) return false;
-                if (!spall_buffer_end_ex(ctx, wb, wb->wait_end, (uint32_t)(uintptr_t)wb->data, 4222222221)) return false;
-            }
-
-            if (old_start >= 0.0) {
-                // printf("Write took %f somethings\n", wb->write_event_end - old_start);
-                if (!spall_buffer_begin_ex(ctx, wb, "Async", 5, old_start, 0, 69)) return false;
-                if (!spall_buffer_end_ex(ctx, wb, wb->write_event_end, 0, 69)) return false;
-            }*/
-
-            if (!spall_buffer_begin_ex(ctx, wb, "WriteFile", 9, wb->write_event_start, 0, 70)) return false;
-            if (!spall_buffer_end_ex(ctx, wb, wb->write_end, 0, 70)) return false;
-        }
-        return true;
-    }
-
-    SPALL_FN SPALL_FORCEINLINE bool spall__buffer_write(SpallProfile *ctx, SpallBuffer *wb, void *p, size_t n) {
-        // precon: !wb || wb->head < wb->length
-        // precon: !ctx || ctx->write
-        if (!wb) return ctx->write && ctx->write(ctx, NULL, p, n);
-        #ifdef SPALL_DEBUG
-        if (wb->ctx != ctx) return false; // Buffer must be bound to this context (or to NULL)
-        #endif
-
-        size_t base = wb->write_i ? wb->threshold : 0;
-        if ((wb->head + n) - base > wb->threshold && !spall__buffer_flush(ctx, wb)) return false;
-        if (n > wb->length) {
-            abort();
         }
 
-        memcpy((char *)wb->data + wb->head, p, n);
-        wb->head += n;
-        return true;
+        wb->head += spall_build_end((char *)wb->data + wb->head, wb->length - wb->head, when, tid, pid);
     }
 
-    SPALL_FN bool spall_buffer_flush(SpallProfile *ctx, SpallBuffer *wb) {
-        #ifdef SPALL_DEBUG
-        if (!wb) return false;
-        if (!wb->data) return false;
-        #endif
+    return true;
+}
 
-        if (!spall__buffer_flush(ctx, wb)) return false;
-        return true;
-    }
+SPALL_FN bool spall_buffer_end(SpallProfile *ctx, SpallBuffer *wb, double when) { return spall_buffer_end_ex(ctx, wb, when, 0, 0); }
 
-    SPALL_FN bool spall_buffer_init(SpallProfile *ctx, SpallBuffer *wb) {
-        wb->threshold = wb->length / 2;
-        wb->ctx = ctx;
-        wb->write_event_start = -1.0;
-        wb->writer.is_running = true;
-        wb->writer.thread = (void*) _beginthread(spall__writer_thread, 0, wb);
-        return true;
-    }
-    SPALL_FN bool spall_buffer_quit(SpallProfile *ctx, SpallBuffer *wb) {
-        if (!spall_buffer_flush(ctx, wb)) return false;
+SPALL_FN SPALL_FORCEINLINE void spall__buffer_profile(SpallProfile *ctx, SpallBuffer *wb, double spall_time_begin, double spall_time_end, const char *name, int name_len) {
+    // precon: ctx
+    // precon: ctx->write
+    char temp_buffer_data[2048];
+    SpallBuffer temp_buffer = { temp_buffer_data, sizeof(temp_buffer_data) };
+    if (!spall_buffer_begin_ex(ctx, &temp_buffer, name, name_len, spall_time_begin, (uint32_t)(uintptr_t)wb->data, 4222222222)) return;
+    if (!spall_buffer_end_ex(ctx, &temp_buffer, spall_time_end, (uint32_t)(uintptr_t)wb->data, 4222222222)) return;
+    if (ctx->write) ctx->write(ctx, temp_buffer_data, temp_buffer.head);
+}
 
-        // fake a write event and then it'll quit
-        wb->writer.is_running = false;
-        wb->writer.ptr = (void*) 1;
-        WakeByAddressSingle(&wb->writer.ptr);
-        WaitForSingleObject(&wb->writer.thread, INFINITE);
-
-        wb->ctx = NULL;
-        return true;
-    }
-
-    SPALL_FN bool spall_buffer_abort(SpallBuffer *wb) {
-        if (!wb) return false;
-        wb->ctx = NULL;
-        if (!spall__buffer_flush(NULL, wb)) return false;
-        return true;
-    }
-
-    SPALL_FN size_t spall_build_header(void *buffer, size_t rem_size, double timestamp_unit) {
-        size_t header_size = sizeof(SpallHeader);
-        if (header_size > rem_size) {
-            return 0;
-        }
-
-        SpallHeader *header = (SpallHeader *)buffer;
-        header->magic_header = 0x0BADF00D;
-        header->version = 1;
-        header->timestamp_unit = timestamp_unit;
-        header->must_be_0 = 0;
-        return header_size;
-    }
-    SPALL_FN SPALL_FORCEINLINE size_t spall_build_begin(void *buffer, size_t rem_size, const char *name, signed long name_len, const char *args, signed long args_len, double when, uint32_t tid, uint32_t pid) {
-        SpallBeginEventMax *ev = (SpallBeginEventMax *)buffer;
-        uint8_t trunc_name_len = (uint8_t)SPALL_MIN(name_len, 255); // will be interpreted as truncated in the app (?)
-        uint8_t trunc_args_len = (uint8_t)SPALL_MIN(args_len, 255); // will be interpreted as truncated in the app (?)
-
-        size_t ev_size = sizeof(SpallBeginEvent) + trunc_name_len + trunc_args_len;
-        if (ev_size > rem_size) {
-            return 0;
-        }
-
-        ev->event.type = SpallEventType_Begin;
-        ev->event.category = 0;
-        ev->event.pid = pid;
-        ev->event.tid = tid;
-        ev->event.when = when;
-        ev->event.name_length = trunc_name_len;
-        ev->event.args_length = trunc_args_len;
-        memcpy(ev->name_bytes,            name, trunc_name_len);
-        memcpy(ev->name_bytes + name_len, args, trunc_args_len);
-
-        return ev_size;
-    }
-    SPALL_FN SPALL_FORCEINLINE size_t spall_build_end(void *buffer, size_t rem_size, double when, uint32_t tid, uint32_t pid) {
-        size_t ev_size = sizeof(SpallEndEvent);
-        if (ev_size > rem_size) {
-            return 0;
-        }
-
-        SpallEndEvent *ev = (SpallEndEvent *)buffer;
-        ev->type = SpallEventType_End;
-        ev->pid = pid;
-        ev->tid = tid;
-        ev->when = when;
-
-        return ev_size;
-    }
-
-    SPALL_FN void spall_quit(SpallProfile *ctx) {
-        if (!ctx) return;
-        if (ctx->close) ctx->close(ctx);
-
-        memset(ctx, 0, sizeof(*ctx));
-    }
-
-    SPALL_FN SpallProfile spall_init_callbacks(double timestamp_unit,
-        SpallWriteCallback write,
-        SpallFlushCallback flush,
-        SpallCloseCallback close,
-        void *userdata,
-        bool is_json) {
-        SpallProfile ctx;
-        memset(&ctx, 0, sizeof(ctx));
-        if (timestamp_unit < 0) return ctx;
-        ctx.timestamp_unit = timestamp_unit;
-        ctx.is_json = is_json;
-        ctx.data = userdata;
-        ctx.write = write;
-        ctx.flush = flush;
-        ctx.close = close;
-
-        if (ctx.is_json) {
-            if (!ctx.write(&ctx, NULL, "{\"traceEvents\":[\n", sizeof("{\"traceEvents\":[\n") - 1)) { spall_quit(&ctx); return ctx; }
-        } else {
-            _Alignas(4096) char foo[4096];
-            size_t len = spall_build_header((SpallHeader*) &foo, sizeof(SpallHeader), timestamp_unit);
-            *((SpallPadSkipEvent*)&foo[len]) = (SpallPadSkipEvent){
-                .type = SpallEventType_Pad_Skip,
-                .size = 4096 - (len+sizeof(SpallPadSkipEvent))
-            };
-
-            if (!ctx.write(&ctx, NULL, foo, 4096)) { spall_quit(&ctx); return ctx; }
-        }
-
-        return ctx;
-    }
-
-    SPALL_FN SpallProfile spall_init_file_ex(const char *filename, double timestamp_unit, bool is_json) {
-        SpallProfile ctx;
-        memset(&ctx, 0, sizeof(ctx));
-        if (!filename) return ctx;
-        /* ctx.data = fopen(filename, "wb"); // TODO: handle utf8 and long paths on windows
-        if (ctx.data) { // basically freopen() but we don't want to force users to lug along another macro define
-            fclose((FILE *)ctx.data);
-            ctx.data = fopen(filename, "ab");
-        } */
-
-        void* data = CreateFileA(filename, SYNCHRONIZE | FILE_APPEND_DATA, FILE_SHARE_WRITE, 0, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, 0);
-
-        enum { FILE_CAP = 3221225472ull };
-        SetFilePointer(data, FILE_CAP, NULL, FILE_BEGIN);
-        SetEndOfFile(data);
-
-        // if (!ctx.data) { spall_quit(&ctx); return ctx; }
-        ctx = spall_init_callbacks(timestamp_unit, spall__file_write, spall__file_flush, spall__file_close, data, is_json);
-        return ctx;
-    }
-
-    SPALL_FN SpallProfile spall_init_file     (const char* filename, double timestamp_unit) { return spall_init_file_ex(filename, timestamp_unit, false); }
-    SPALL_FN SpallProfile spall_init_file_json(const char* filename, double timestamp_unit) { return spall_init_file_ex(filename, timestamp_unit, true); }
-
-    SPALL_FN bool spall_flush(SpallProfile *ctx) {
-        #ifdef SPALL_DEBUG
-        if (!ctx) return false;
-        #endif
-
-        if (!ctx->flush || !ctx->flush(ctx)) return false;
-        return true;
-    }
-
-    SPALL_FN SPALL_FORCEINLINE bool spall_buffer_begin_args(SpallProfile *ctx, SpallBuffer *wb, const char *name, signed long name_len, const char *args, signed long args_len, double when, uint32_t tid, uint32_t pid) {
-        #ifdef SPALL_DEBUG
-        if (!ctx) return false;
-        if (!name) return false;
-        if (name_len <= 0) return false;
-        if (!wb) return false;
-        #endif
-
-        if (ctx->is_json) {
-            char buf[1024];
-            int buf_len = snprintf(buf, sizeof(buf),
-                "{\"ph\":\"B\",\"ts\":%f,\"pid\":%u,\"tid\":%u,\"name\":\"%.*s\",\"args\":\"%.*s\"},\n",
-                when * ctx->timestamp_unit, pid, tid, (int)(uint8_t)name_len, name, (int)(uint8_t)args_len, args);
-            if (buf_len <= 0) return false;
-            if (buf_len >= sizeof(buf)) return false;
-            if (!spall__buffer_write(ctx, wb, buf, buf_len)) return false;
-        } else {
-            size_t base = wb->write_i ? wb->threshold : 0;
-            if ((wb->head + sizeof(SpallBeginEventMax)) - base > wb->threshold) {
-                if (!spall__buffer_flush(ctx, wb)) {
-                    return false;
-                }
-            }
-
-            size_t rel = wb->head - base;
-            wb->head += spall_build_begin((char *)wb->data + wb->head, wb->threshold - rel, name, name_len, args, args_len, when, tid, pid);
-        }
-
-        return true;
-    }
-
-    SPALL_FN SPALL_FORCEINLINE bool spall_buffer_begin_ex(SpallProfile *ctx, SpallBuffer *wb, const char *name, signed long name_len, double when, uint32_t tid, uint32_t pid) {
-        return spall_buffer_begin_args(ctx, wb, name, name_len, "", 0, when, tid, pid);
-    }
-
-    SPALL_FN bool spall_buffer_begin(SpallProfile *ctx, SpallBuffer *wb, const char *name, signed long name_len, double when) {
-        return spall_buffer_begin_args(ctx, wb, name, name_len, "", 0, when, 0, 0);
-    }
-
-    SPALL_FN SPALL_FORCEINLINE bool spall_buffer_end_ex(SpallProfile *ctx, SpallBuffer *wb, double when, uint32_t tid, uint32_t pid) {
-        #ifdef SPALL_DEBUG
-        if (!ctx) return false;
-        if (!wb) return false;
-        #endif
-
-        if (ctx->is_json) {
-            char buf[512];
-            int buf_len = snprintf(buf, sizeof(buf),
-                "{\"ph\":\"E\",\"ts\":%f,\"pid\":%u,\"tid\":%u},\n",
-                when * ctx->timestamp_unit, pid, tid);
-            if (buf_len <= 0) return false;
-            if (buf_len >= sizeof(buf)) return false;
-            if (!spall__buffer_write(ctx, wb, buf, buf_len)) return false;
-        } else {
-            size_t base = wb->write_i ? wb->threshold : 0;
-            if ((wb->head + sizeof(SpallBeginEventMax)) - base > wb->threshold) {
-                if (!spall__buffer_flush(ctx, wb)) {
-                    return false;
-                }
-            }
-
-            size_t rel = wb->head - base;
-            wb->head += spall_build_end((char *)wb->data + wb->head, wb->threshold - rel, when, tid, pid);
-        }
-
-        return true;
-    }
-
-    SPALL_FN bool spall_buffer_end(SpallProfile *ctx, SpallBuffer *wb, double when) { return spall_buffer_end_ex(ctx, wb, when, 0, 0); }
-
-    SPALL_FN SPALL_FORCEINLINE void spall__buffer_profile(SpallProfile *ctx, SpallBuffer *wb, double spall_time_begin, double spall_time_end, const char *name, int name_len) {
-        // precon: ctx
-        // precon: ctx->write
-        if (!spall_buffer_begin_ex(ctx, wb, name, name_len, spall_time_begin, (uint32_t)(uintptr_t)wb->data, 4222222222)) return;
-        if (!spall_buffer_end_ex(ctx, wb, spall_time_end, (uint32_t)(uintptr_t)wb->data, 4222222222)) return;
-    }
-
-    #ifdef __cplusplus
+#ifdef __cplusplus
 }
 #endif
 
