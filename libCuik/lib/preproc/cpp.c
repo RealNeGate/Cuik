@@ -244,14 +244,6 @@ void cuikpp_free(Cuik_CPP* ctx) {
         cuikpp_finalize(ctx);
     }
 
-    /*if (ctx->files != NULL) {
-        size_t count = dyn_array_length(ctx->files);
-
-        for (size_t i = 0; i < count; i++) {
-            CUIK_CALL(ctx->file_system, free_file, &ctx->files[i]);
-        }
-    }*/
-
     cuik__vfree(ctx->stack, MAX_CPP_STACK_DEPTH * sizeof(CPPStackSlot));
     cuik__vfree((void*) ctx->the_shtuffs, THE_SHTUFFS_SIZE);
     ctx->stack = NULL;

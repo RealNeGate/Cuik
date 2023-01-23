@@ -147,7 +147,7 @@ int cuik_parse_arg(Cuik_CompilerArgs* args, int argc, const char* argv[]) {
             break;
         }
         case ARG_DEFINE: {
-            dyn_array_put(args->defines, arg.value);
+            dyn_array_put(args->defines, strdup(arg.value));
             break;
         }
         case ARG_INCLUDE: {
@@ -256,4 +256,3 @@ void cuik_parse_args(Cuik_CompilerArgs* args, int argc, const char* argv[]) {
         i += cuik_parse_arg(args, argc - i, argv + i);
     }
 }
-

@@ -292,9 +292,6 @@ CUIK_API void cuikpp_add_include_directory(Cuik_CPP* ctx, bool is_system, const 
 // Adds include directory to the search list but with printf formatting
 CUIK_API void cuikpp_add_include_directoryf(Cuik_CPP* ctx, bool is_system, const char* fmt, ...);
 
-// Locates an include file from the `path` and copies it's fully qualified path into `output`
-CUIK_API bool cuikpp_find_include_include(Cuik_CPP* ctx, char output[FILENAME_MAX], const char* path);
-
 typedef struct {
     bool is_system;
     char* name;

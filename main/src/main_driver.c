@@ -108,6 +108,8 @@ static void dump_tokens(FILE* out_file, TokenStream* s) {
 
 int main(int argc, const char** argv) {
     cuik_init();
+    find_system_deps();
+
     #ifdef CUIK_USE_SPALL_AUTO
     spall_auto_init("perf.spall");
     spall_auto_thread_init(1, 1ull<<28ull, 65536);
