@@ -43,5 +43,4 @@ static void find_system_deps(void) {
     }
 
     *slash = '\0';
-    cuik_find_system_deps(crt_dirpath);
 }

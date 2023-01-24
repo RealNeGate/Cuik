@@ -160,6 +160,7 @@ CUIK_API void cuikpp_finalize(Cuik_CPP* ctx);
 // returns the final token stream (should not be called if you
 // haven't finished iterating through cuikpp_next)
 CUIK_API TokenStream* cuikpp_get_token_stream(Cuik_CPP* ctx);
+CUIK_API void cuiklex_free_tokens(TokenStream* tokens);
 
 CUIK_API Token* cuikpp_get_tokens(TokenStream* restrict s);
 CUIK_API size_t cuikpp_get_token_count(TokenStream* restrict s);
@@ -291,6 +292,11 @@ CUIK_API void cuikpp_add_include_directory(Cuik_CPP* ctx, bool is_system, const 
 
 // Adds include directory to the search list but with printf formatting
 CUIK_API void cuikpp_add_include_directoryf(Cuik_CPP* ctx, bool is_system, const char* fmt, ...);
+
+// Locates an include file from the `path` and copies it's fully qualified path into `output`
+// This is built for the cuikpp_default_run preprocessor handling, if you have a custom file system
+// you'll need to iterate the include directories yourself
+CUIK_API bool cuikpp_find_include_include(Cuik_CPP* ctx, char output[FILENAME_MAX], const char* path);
 
 typedef struct {
     bool is_system;

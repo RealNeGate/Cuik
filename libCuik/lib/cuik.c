@@ -1,10 +1,6 @@
 #include <cuik.h>
 #include "targets/targets.h"
 
-// internal globals to Cuik
-char cuik__include_dir[FILENAME_MAX];
-char cuik__core_dir[FILENAME_MAX];
-
 #ifdef _WIN32
 #include "back/microsoft_craziness.h"
 #define SLASH "\\"
@@ -34,11 +30,6 @@ Cuik_Target* cuik_target_host(void) {
     #elif defined(__APPLE__) || defined(__MACH__) || defined(macintosh)
     return cuik_target_x64(CUIK_SYSTEM_MACOS, CUIK_ENV_MSVC);
     #endif
-}
-
-void cuik_find_system_deps(const char* cuik_crt_directory) {
-    sprintf_s(cuik__core_dir, FILENAME_MAX, "%s"SLASH"crt"SLASH, cuik_crt_directory);
-    sprintf_s(cuik__include_dir, FILENAME_MAX, "%s"SLASH"crt"SLASH"include"SLASH, cuik_crt_directory);
 }
 
 void cuik_set_standard_defines(Cuik_CPP* cpp, const Cuik_CompilerArgs* args) {
@@ -105,7 +96,7 @@ void cuik_set_standard_defines(Cuik_CPP* cpp, const Cuik_CompilerArgs* args) {
     cuikpp_define_cstr(cpp, "static_assert", "_Static_assert");
     cuikpp_define_cstr(cpp, "typeof", "_Typeof");
 
-    cuikpp_add_include_directory(cpp, true, cuik__include_dir);
+    cuikpp_add_include_directoryf(cpp, true, "%s"SLASH"crt"SLASH"include"SLASH, args->core_dirpath);
     args->toolchain.set_preprocessor(args->toolchain.ctx, args, cpp);
 
     if (args->target != NULL) {

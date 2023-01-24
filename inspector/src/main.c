@@ -10,6 +10,9 @@ static char  logbuf[64000];
 static int   logbuf_updated = 0;
 static float bg[3] = { 90, 95, 100 };
 
+static Cuik_Target* muh_target;
+static Cuik_Toolchain muh_toolchain;
+
 static void write_log(const char *text) {
     if (logbuf[0]) { strcat(logbuf, "\n"); }
     strcat(logbuf, text);
@@ -193,52 +196,74 @@ static void style_window(mu_Context *ctx) {
     }
 }
 
+static void mu_moving_label(mu_Context *ctx, float *anim_t, const char *str) {
+    int len = strlen(str);
+    mu_Id id = mu_get_id(ctx, str, len);
+    mu_Rect r = mu_layout_next(ctx);
+
+    mu_Font font = ctx->style->font;
+    int tw = ctx->text_width(font, str, len);
+
+    mu_update_control(ctx, id, r, 0);
+    if (ctx->hover == id) {
+        // we're moving the text
+        (*anim_t) -= 30.0 * (1.0 / 165.0);
+        *anim_t = fmodf(*anim_t, tw + 32.0);
+    } else {
+        *anim_t = 0.0;
+    }
+
+    mu_push_clip_rect(ctx, r);
+    mu_Vec2 pos = {
+        .x = r.x + ctx->style->padding,
+        .y = r.y + (r.h - ctx->text_height(font)) / 2
+    };
+
+    mu_Vec2 a = { pos.x + *anim_t, pos.y };
+    mu_draw_text(ctx, font, str, -1, a, ctx->style->colors[MU_COLOR_TEXT]);
+    mu_Vec2 b = { pos.x + fmodf(*anim_t + (tw+32.0), (tw + 32.0) * 2.0), pos.y };
+    mu_draw_text(ctx, font, str, -1, b, ctx->style->colors[MU_COLOR_TEXT]);
+
+    mu_pop_clip_rect(ctx);
+}
+
 static void process_frame(mu_Context *ctx) {
     mu_begin(ctx);
 
-    int opt = MU_OPT_NOCLOSE | MU_OPT_NOTITLE | MU_OPT_NORESIZE;
-    if (mu_begin_window_ex(ctx, "", mu_rect(0, 0, r_width() * 0.3, r_height()), opt)) {
-        // Include finder
-        //   i can't name how many times i just wanted to know where tf stdio.h was
-        if (mu_header(ctx, "Include locator")) {
-            static char locator_path[FILENAME_MAX];
-            static char located_path[FILENAME_MAX];
-            static bool located;
+    // Include finder
+    //   i can't name how many times i just wanted to know where tf stdio.h was
+    int opt = MU_OPT_NORESIZE | MU_OPT_NOCLOSE;
+    if (mu_begin_window_ex(ctx, "Include locator", mu_rect(300.0, 300.0, 480.0, 162.0), opt)) {
+        static char search_path[FILENAME_MAX];
+        static char located_path[FILENAME_MAX];
+        static bool located;
 
-            int sw = mu_get_current_container(ctx)->body.w * 0.85;
-            mu_layout_row(ctx, 2, (int[]) { sw, -1 }, 0);
-            mu_textbox(ctx, locator_path, FILENAME_MAX);
-            if (mu_button(ctx, "Search?")) {
-                Cuik_CompilerArgs args = {
-                    .version = CUIK_VERSION_C23,
-                    .target = cuik_target_host(),
-                    .toolchain = cuik_toolchain_host(),
-                    .flavor = TB_FLAVOR_EXECUTABLE,
-                    .core_dirpath = "W:/Workspace/Cuik",
-                };
+        mu_layout_row(ctx, 1, (int[]) { -1 }, 0);
+        if (mu_textbox(ctx, search_path, FILENAME_MAX)) {
+            Cuik_CompilerArgs args = {
+                .version = CUIK_VERSION_C23,
+                .target = muh_target,
+                .toolchain = muh_toolchain,
+                .flavor = TB_FLAVOR_EXECUTABLE,
+                .core_dirpath = "W:/Workspace/Cuik",
+            };
 
-                Cuik_CPP* cpp = cuikpp_make("");
-                cuik_set_standard_defines(cpp, &args);
-                dyn_array_for(i, args.includes) {
-                    cuikpp_add_include_directory(cpp, false, args.includes[i]);
-                }
+            // we're not preprocessing a file so we don't need input
+            Cuik_CPP* cpp = cuikpp_make(NULL);
+            cuik_set_standard_defines(cpp, &args);
 
-                located = false;
-                dyn_array_for(i, cpp->system_include_dirs) {
-                    sprintf_s(located_path, FILENAME_MAX, "%s%s", cpp->system_include_dirs[i].name, locator_path);
-                    FILE* f = fopen(located_path, "r");
-                    if (f != NULL) {
-                        fclose(f);
-                        located = true;
-                        break;
-                    }
-                }
-                cuikpp_free(cpp);
-            }
+            located = cuikpp_find_include_include(cpp, located_path, search_path);
 
-            if (located) {
-                mu_label(ctx, located_path);
-                mu_label(ctx, "Copy?");
+            cuiklex_free_tokens(cuikpp_get_token_stream(cpp));
+            cuikpp_free(cpp);
+        }
+
+        if (located) {
+            static float anim_t;
+            mu_moving_label(ctx, &anim_t, located_path);
+
+            if (mu_button(ctx, "Copy?")) {
+                SDL_SetClipboardText(located_path);
             }
         }
 
@@ -276,6 +301,8 @@ static int text_height(mu_Font font) {
 
 int main(int argc, char* argv[]) {
     cuik_init();
+    muh_target = cuik_target_host();
+    muh_toolchain = cuik_toolchain_host();
 
     /* init SDL and renderer */
     SDL_Init(SDL_INIT_EVERYTHING);

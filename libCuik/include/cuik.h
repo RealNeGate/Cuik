@@ -82,10 +82,6 @@ CUIK_API void cuik_init(void);
 // This should be called before exiting
 CUIK_API void cuik_free_thread_resources(void);
 
-// locates the system includes, libraries and other tools. this is a global
-// operation meaning that once it's only done once for the process.
-CUIK_API void cuik_find_system_deps(const char* cuik_crt_directory);
-
 ////////////////////////////////////////////
 // Compilation unit management
 ////////////////////////////////////////////

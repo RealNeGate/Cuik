@@ -22,7 +22,7 @@
 
 #define MAX_QUADS 16384
 #define MAX_CLIPS 256
-#define FONT_SIZE 1024
+#define FONT_TEXTURE_SIZE 1024
 
 typedef struct {
     float l, t, r, b;
@@ -56,6 +56,7 @@ static GLchar tmp_string[1024];
 static struct {
     // starts at 32 goes to 128
     GLuint texture;
+    int descent;
     stbrp_rect glyphs[96];
 } font;
 
@@ -267,16 +268,7 @@ void r_init(void) {
     glTextureSubImage2D(atlas_id, 0, 0, 0, ATLAS_WIDTH, ATLAS_HEIGHT, GL_RED, GL_UNSIGNED_BYTE, atlas_texture);
 
     {
-        GLuint id;
-        glCreateTextures(GL_TEXTURE_2D, 1, &id);
-        glTextureParameteri(id, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-        glTextureParameteri(id, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-        glTextureParameteri(id, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTextureParameteri(id, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        glTextureStorage2D(id, 1, GL_RGBA8, FONT_SIZE, FONT_SIZE);
-        font.texture = id;
-
-        TTF_Font* sdl_font = TTF_OpenFont("notosans.ttf", 24);
+        TTF_Font* sdl_font = TTF_OpenFont("notosans.ttf", 16);
         if (sdl_font == NULL) {
             const char* err = TTF_GetError();
             printf("%s\n", err);
@@ -292,19 +284,38 @@ void r_init(void) {
         }
 
         stbrp_context ctx;
-        stbrp_init_target(&ctx, FONT_SIZE, FONT_SIZE, malloc(100 * sizeof(stbrp_node)), 100);
+        stbrp_init_target(&ctx, FONT_TEXTURE_SIZE, FONT_TEXTURE_SIZE, malloc(100 * sizeof(stbrp_node)), 100);
         stbrp_pack_rects(&ctx, font.glyphs, 96);
 
         // upload characters now
+        SDL_Surface* s = SDL_CreateRGBSurface(0, FONT_TEXTURE_SIZE, FONT_TEXTURE_SIZE, 32, 0, 0, 0, 0xff);
+        SDL_SetColorKey(s, SDL_TRUE, SDL_MapRGBA(s->format, 0, 0, 0, 0));
+
         for (size_t i = 32; i < 128; i++) {
             stbrp_rect* r = &font.glyphs[i - 32];
-            char ch[2] = { i, 0 };
 
-            SDL_Surface* s = TTF_RenderUTF8_Blended(sdl_font, ch, (SDL_Color){ 255, 255, 255, 255 });
-            if (s != NULL) {
-                glTextureSubImage2D(id, 0, r->x, r->y, s->pitch / sizeof(uint32_t), r->h, GL_RGBA, GL_UNSIGNED_BYTE, s->pixels);
+            SDL_Surface* glyph = TTF_RenderGlyph32_Blended(sdl_font, i, (SDL_Color){ 255, 255, 255, 255 });
+            if (glyph != NULL) {
+                SDL_Rect dst = { r->x, r->y, glyph->w, glyph->h };
+                SDL_BlitSurface(glyph, NULL, s, &dst);
+                SDL_FreeSurface(glyph);
             }
         }
+
+        GLuint id;
+        glCreateTextures(GL_TEXTURE_2D, 1, &id);
+        glTextureParameteri(id, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTextureParameteri(id, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTextureParameteri(id, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTextureParameteri(id, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTextureStorage2D(id, 1, GL_RGBA8, FONT_TEXTURE_SIZE, FONT_TEXTURE_SIZE);
+        font.texture = id;
+        font.descent = TTF_FontDescent(sdl_font);
+
+        SDL_LockSurface(s);
+        glTextureSubImage2D(id, 0, 0, 0, s->w, s->h, GL_RGBA, GL_UNSIGNED_BYTE, s->pixels);
+        SDL_UnlockSurface(s);
+        SDL_FreeSurface(s);
     }
 }
 
@@ -323,13 +334,13 @@ static void flush(void) {
     rect_head = rect_tail;
 }
 
-static void push_quad(GLint tid, mu_Rect dst, mu_Rect src, mu_Color color) {
+static void push_quad(GLint tid, float tw, float th, mu_Rect dst, mu_Rect src, mu_Color color) {
     if (rect_tail == MAX_QUADS) { flush(); }
 
-    float u = src.x / (float)ATLAS_WIDTH;
-    float v = src.y / (float)ATLAS_HEIGHT;
-    float s = src.w / (float)ATLAS_WIDTH;
-    float t = src.h / (float)ATLAS_HEIGHT;
+    float u = src.x / tw;
+    float v = src.y / th;
+    float s = src.w / tw;
+    float t = src.h / th;
 
     rects[rect_tail++] = (Rect){
         // pos & size
@@ -342,28 +353,28 @@ static void push_quad(GLint tid, mu_Rect dst, mu_Rect src, mu_Color color) {
 }
 
 void r_draw_rect(mu_Rect rect, mu_Color color) {
-    push_quad(0, rect, atlas[ATLAS_WHITE], color);
+    push_quad(0, ATLAS_WIDTH, ATLAS_HEIGHT, rect, atlas[ATLAS_WHITE], color);
 }
 
 void r_draw_text(const char *text, mu_Vec2 pos, mu_Color color) {
-    mu_Rect dst = { pos.x, pos.y, 0, 0 };
+    mu_Rect dst = { pos.x, pos.y + font.descent, 0, 0 };
     for (const char *p = text; *p; p++) {
         if ((*p & 0xc0) == 0x80) { continue; }
         int chr = mu_min((unsigned char) *p, 127);
 
-        #if 0
+        #if 1
         stbrp_rect* r = &font.glyphs[chr - 32];
         dst.w = r->w;
         dst.h = r->h;
 
         mu_Rect src = { r->x, r->y, r->w, r->h };
-        push_quad(1, dst, src, color);
+        push_quad(1, FONT_TEXTURE_SIZE, FONT_TEXTURE_SIZE, dst, src, color);
         dst.x += dst.w;
         #else
         mu_Rect src = atlas[ATLAS_FONT + chr];
         dst.w = src.w;
         dst.h = src.h;
-        push_quad(0, dst, src, color);
+        push_quad(0, ATLAS_WIDTH, ATLAS_HEIGHT, dst, src, color);
         dst.x += dst.w;
         #endif
     }
@@ -373,7 +384,7 @@ void r_draw_icon(int id, mu_Rect rect, mu_Color color) {
     mu_Rect src = atlas[id];
     int x = rect.x + (rect.w - src.w) / 2;
     int y = rect.y + (rect.h - src.h) / 2;
-    push_quad(0, mu_rect(x, y, src.w, src.h), src, color);
+    push_quad(0, ATLAS_WIDTH, ATLAS_HEIGHT, mu_rect(x, y, src.w, src.h), src, color);
 }
 
 int r_get_text_width(const char *text, int len) {
@@ -381,14 +392,14 @@ int r_get_text_width(const char *text, int len) {
     for (const char *p = text; *p && len--; p++) {
         if ((*p & 0xc0) == 0x80) { continue; }
         int chr = mu_min((unsigned char) *p, 127);
-        // res += font.glyphs[chr - 32].w;
-        res += atlas[ATLAS_FONT + chr].w;
+        res += font.glyphs[chr - 32].w;
+        // res += atlas[ATLAS_FONT + chr].w;
     }
     return res;
 }
 
 int r_get_text_height(void) {
-    return 18;
+    return 16;
 }
 
 void r_set_clip_rect(mu_Rect rect) {

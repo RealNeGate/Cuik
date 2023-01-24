@@ -19,6 +19,19 @@ CUIK_API void cuikpp_add_include_directoryf(Cuik_CPP* ctx, bool is_system, const
     dyn_array_put(ctx->system_include_dirs, idir);
 }
 
+CUIK_API bool cuikpp_find_include_include(Cuik_CPP* ctx, char output[FILENAME_MAX], const char* path) {
+    dyn_array_for(i, ctx->system_include_dirs) {
+        sprintf_s(output, FILENAME_MAX, "%s%s", ctx->system_include_dirs[i].name, path);
+        FILE* f = fopen(output, "r");
+        if (f != NULL) {
+            fclose(f);
+            return true;
+        }
+    }
+
+    return false;
+}
+
 Cuik_File* cuikpp_next_file(Cuik_CPP* ctx, Cuik_File* f) {
     // first element
     if (f == NULL) return &ctx->tokens.files[0];

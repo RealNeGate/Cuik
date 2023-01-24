@@ -152,6 +152,10 @@ bool cuikpp_is_in_main_file(TokenStream* tokens, SourceLoc loc) {
 }
 
 Cuik_CPP* cuikpp_make(const char filepath[FILENAME_MAX]) {
+    if (filepath == NULL) {
+        filepath = "";
+    }
+
     size_t sz = sizeof(void*) * MACRO_BUCKET_COUNT * SLOTS_PER_MACRO_BUCKET;
     size_t sz2 = sizeof(SourceRange) * MACRO_BUCKET_COUNT * SLOTS_PER_MACRO_BUCKET;
 
@@ -228,6 +232,13 @@ size_t cuikpp_get_token_count(TokenStream* restrict s) {
     return dyn_array_length(s->list.tokens) - 1;
 }
 
+void cuiklex_free_tokens(TokenStream* tokens) {
+    dyn_array_destroy(tokens->list.tokens);
+    dyn_array_destroy(tokens->invokes);
+    dyn_array_destroy(tokens->files);
+    free(tokens->error_tally);
+}
+
 void cuikpp_free(Cuik_CPP* ctx) {
     #if CUIK__CPP_STATS
     printf(" %40s | %.06f ms read+lex\t| %4zu files read\t| %zu fstats\t| %f ms (%zu defines)\n",
@@ -240,14 +251,21 @@ void cuikpp_free(Cuik_CPP* ctx) {
     );
     #endif
 
+    dyn_array_for(i, ctx->system_include_dirs) {
+        free(ctx->system_include_dirs[i].name);
+    }
+    dyn_array_destroy(ctx->system_include_dirs);
+
     if (ctx->macro_bucket_keys) {
         cuikpp_finalize(ctx);
     }
 
     cuik__vfree(ctx->stack, MAX_CPP_STACK_DEPTH * sizeof(CPPStackSlot));
     cuik__vfree((void*) ctx->the_shtuffs, THE_SHTUFFS_SIZE);
+
     ctx->stack = NULL;
     ctx->the_shtuffs = NULL;
+    free(ctx);
 }
 
 // we can infer the column and line from doing a binary search on the TokenStream's line map
