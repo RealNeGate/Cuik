@@ -2,6 +2,7 @@
 #include <threads.h>
 #include "driver_fs.h"
 #include "driver_arg_parse.h"
+#include "../file_map.h"
 
 enum {
     IRGEN_TASK_BATCH_SIZE = 8192,
@@ -336,6 +337,28 @@ static void codegen(Cuik_IThreadpool* restrict thread_pool, Cuik_CompilerArgs* r
     if (args->verbose) printf("  IRGen: %zu functions compiled\n", tb_module_get_function_count(mod));
 }
 
+static Cuik_Linker gimme_linker(Cuik_CompilerArgs* restrict args, bool subsystem_windows) {
+    Cuik_Linker l = { .subsystem_windows = subsystem_windows };
+
+    // Add system libpaths
+    cuiklink_apply_toolchain_libs(&l, args);
+
+    // Add input libraries
+    dyn_array_for(i, args->libraries) {
+        cuiklink_add_input_file(&l, args->libraries[i]);
+    }
+
+    if (!args->nocrt) {
+        #ifdef _WIN32
+        cuiklink_add_input_file(&l, "ucrt.lib");
+        cuiklink_add_input_file(&l, "msvcrt.lib");
+        cuiklink_add_input_file(&l, "vcruntime.lib");
+        #endif
+    }
+
+    return l;
+}
+
 static bool export_output(Cuik_CompilerArgs* restrict args, TB_Module* mod, bool subsystem_windows) {
     // TODO(NeGate): do a smarter system (just default to whatever the different platforms like)
     TB_DebugFormat debug_fmt = (args->debug_info ? TB_DEBUGFMT_CODEVIEW : TB_DEBUGFMT_NONE);
@@ -354,25 +377,30 @@ static bool export_output(Cuik_CompilerArgs* restrict args, TB_Module* mod, bool
         #endif
     }
 
-    if (args->based) {
+    if (args->based && (args->flavor == TB_FLAVOR_SHARED || args->flavor == TB_FLAVOR_EXECUTABLE)) {
         bool is_windows = (cuik_get_target_system(args->target) == CUIK_SYSTEM_WINDOWS);
-        const char* extension = NULL;
-        switch (args->flavor) {
-            case TB_FLAVOR_OBJECT:     extension = (is_windows?".obj":".o");  break;
-            case TB_FLAVOR_STATIC:     extension = (is_windows?".lib":".a");  break;
-            case TB_FLAVOR_SHARED:     extension = (is_windows?".dll":".so"); break;
-            case TB_FLAVOR_EXECUTABLE: extension = (is_windows?".exe":"");    break;
-            default: assert(0);
-        }
 
-        char path[FILENAME_MAX];
-        sprintf_s(path, FILENAME_MAX, "%s%s", output_path_no_ext, extension);
+        CUIK_TIMED_BLOCK("Export linked") {
+            TB_Linker* l = tb_linker_create();
 
-        CUIK_TIMED_BLOCK("Export") {
-            if (!tb_exporter_write_files(mod, args->flavor, debug_fmt, 1, &(const char*){ path })) {
-                fprintf(stderr, "error: could not write output. %s\n", path);
-                return false;
+            // locate libraries and feed them into TB... in theory this process
+            // can be somewhat multithreaded so we might wanna consider that.
+            Cuik_Linker tmp_linker = gimme_linker(args, subsystem_windows);
+
+            char path[FILENAME_MAX];
+            dyn_array_for(i, tmp_linker.inputs) {
+                if (cuiklink_find_library(&tmp_linker, path, tmp_linker.inputs[i])) {
+                    FileMap fm = open_file_map(path);
+                    TB_Slice s = { fm.size, fm.data };
+
+                    printf("tb link: loading %s\n", path);
+                    tb_linker_append_library(l, tb_archive_parse_lib(s));
+                }
             }
+
+            __debugbreak();
+            tb_linker_append_module(l, mod);
+            tb_linker_destroy(l);
         }
 
         return true;
@@ -402,26 +430,10 @@ static bool export_output(Cuik_CompilerArgs* restrict args, TB_Module* mod, bool
         }
 
         CUIK_TIMED_BLOCK("linker") {
-            Cuik_Linker l = { .subsystem_windows = subsystem_windows };
+            Cuik_Linker l = gimme_linker(args, subsystem_windows);
 
-            // Add system libpaths
-            cuiklink_apply_toolchain_libs(&l, args);
-
-            // Add Cuik output
+            // Add Cuik object
             cuiklink_add_input_file(&l, obj_output_path);
-
-            // Add input libraries
-            dyn_array_for(i, args->libraries) {
-                cuiklink_add_input_file(&l, args->libraries[i]);
-            }
-
-            if (!args->nocrt) {
-                #ifdef _WIN32
-                cuiklink_add_input_file(&l, "ucrt.lib");
-                cuiklink_add_input_file(&l, "msvcrt.lib");
-                cuiklink_add_input_file(&l, "vcruntime.lib");
-                #endif
-            }
 
             cuiklink_invoke(&l, args, output_path_no_ext);
             cuiklink_deinit(&l);

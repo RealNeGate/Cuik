@@ -64,7 +64,9 @@ CUIK_API void cuik_set_standard_defines(Cuik_CPP* cpp, const Cuik_CompilerArgs* 
 CUIK_API Cuik_CPP* cuik_driver_preprocess(const char* filepath, const Cuik_CompilerArgs* args, bool should_finalize);
 CUIK_API int cuik_driver_compile(Cuik_IThreadpool* restrict thread_pool, Cuik_CompilerArgs* restrict args, bool destroy_cu_after_ir);
 
-CUIK_API Cuik_Toolchain cuik_toolchain_host(void);
+#ifdef CUIK_USE_TB
+CUIK_API void cuik_apply_tb_toolchain_libs(TB_Linker* l);
+#endif
 
 #ifdef _WIN32
 CUIK_API Cuik_Toolchain cuik_toolchain_msvc(void);
@@ -72,4 +74,5 @@ CUIK_API Cuik_Toolchain cuik_toolchain_msvc(void);
 CUIK_API Cuik_Toolchain cuik_toolchain_darwin(void);
 #endif
 
+CUIK_API Cuik_Toolchain cuik_toolchain_host(void);
 CUIK_API void cuik_toolchain_free(Cuik_Toolchain* toolchain);

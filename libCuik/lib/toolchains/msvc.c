@@ -608,7 +608,7 @@ Cuik_Toolchain cuik_toolchain_msvc(void) {
     if (vc_tools_install != NULL) {
         wcsncpy(result->vc_tools_install, vc_tools_install, MAX_PATH);
         swprintf(result->vs_include_path, MAX_PATH, L"%s\\include\\", vc_tools_install);
-        swprintf(result->vs_library_path, MAX_PATH, L"%slib\\", vc_tools_install);
+        swprintf(result->vs_library_path, MAX_PATH, L"%slib\\x64\\", vc_tools_install);
         swprintf(result->vs_exe_path, MAX_PATH, L"%sVC\\bin\\amd64", vc_tools_install);
     } else {
         find_visual_studio_by_fighting_through_microsoft_craziness(result);

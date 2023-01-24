@@ -68,7 +68,7 @@ static void filtered_append(Cuik_CompilerArgs* args, const char* path, bool recu
     }
 
     #else
-        #error "filtered_append isn't implemented on this platform yet"
+    #error "filtered_append isn't implemented on this platform yet"
     #endif
 }
 

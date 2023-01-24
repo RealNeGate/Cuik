@@ -46,6 +46,21 @@ void cuiklink_add_input_file(Cuik_Linker* l, const char* filepath) {
     dyn_array_put(l->inputs, strdup(filepath));
 }
 
+bool cuiklink_find_library(Cuik_Linker* l, char output[FILENAME_MAX], const char* filepath) {
+    dyn_array_for(i, l->libpaths) {
+        const char* lp = l->libpaths[i];
+        snprintf(output, FILENAME_MAX, "%s%s%s", lp, lp[strlen(lp) - 1] != '/' ? "/" : "", filepath);
+
+        FILE* f = fopen(output, "rb");
+        if (f) {
+            fclose(f);
+            return true;
+        }
+    }
+
+    return false;
+}
+
 bool cuiklink_invoke(Cuik_Linker* l, Cuik_CompilerArgs* args, const char* filename) {
     return args->toolchain.invoke_link(args->toolchain.ctx, args, l, filename);
 }
