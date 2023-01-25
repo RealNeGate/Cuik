@@ -398,8 +398,11 @@ static bool export_output(Cuik_CompilerArgs* restrict args, TB_Module* mod, bool
                 }
             }
 
-            __debugbreak();
             tb_linker_append_module(l, mod);
+            if (!tb_linker_export_files(l, 1, (const char*[]) { output_name })) {
+                fprintf(stderr, "error: could not write linked file output. %s\n", output_name);
+                return false;
+            }
             tb_linker_destroy(l);
         }
 
