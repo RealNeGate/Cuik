@@ -402,7 +402,9 @@ static bool export_output(Cuik_CompilerArgs* restrict args, TB_Module* mod, bool
                         ar = tb_archive_parse_lib(s);
                     }
 
-                    tb_linker_append_library(l, ar);
+                    CUIK_TIMED_BLOCK("tb_linker_append_library") {
+                        tb_linker_append_library(l, ar);
+                    }
                 } else {
                     fprintf(stderr, "could not find library: %s\n", tmp_linker.inputs[i]);
                     errors++;
