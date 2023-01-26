@@ -350,6 +350,7 @@ static Cuik_Linker gimme_linker(Cuik_CompilerArgs* restrict args, bool subsystem
 
     if (!args->nocrt) {
         #ifdef _WIN32
+        cuiklink_add_input_file(&l, "kernel32.lib");
         cuiklink_add_input_file(&l, "ucrt.lib");
         cuiklink_add_input_file(&l, "msvcrt.lib");
         cuiklink_add_input_file(&l, "vcruntime.lib");
@@ -382,27 +383,62 @@ static bool export_output(Cuik_CompilerArgs* restrict args, TB_Module* mod, bool
 
         CUIK_TIMED_BLOCK("Export linked") {
             TB_Linker* l = tb_linker_create();
+            int errors = 0;
 
             // locate libraries and feed them into TB... in theory this process
             // can be somewhat multithreaded so we might wanna consider that.
             Cuik_Linker tmp_linker = gimme_linker(args, subsystem_windows);
-
             char path[FILENAME_MAX];
             dyn_array_for(i, tmp_linker.inputs) {
                 if (cuiklink_find_library(&tmp_linker, path, tmp_linker.inputs[i])) {
-                    FileMap fm = open_file_map(path);
-                    TB_Slice s = { fm.size, fm.data };
+                    TB_Slice s;
+                    CUIK_TIMED_BLOCK("open_file_map") {
+                        FileMap fm = open_file_map(path);
+                        s = (TB_Slice){ fm.size, fm.data };
+                    }
 
-                    printf("tb link: loading %s\n", path);
-                    tb_linker_append_library(l, tb_archive_parse_lib(s));
+                    TB_ArchiveFile* ar;
+                    CUIK_TIMED_BLOCK("tb_archive_parse_lib") {
+                        ar = tb_archive_parse_lib(s);
+                    }
+
+                    tb_linker_append_library(l, ar);
+                } else {
+                    fprintf(stderr, "could not find library: %s\n", tmp_linker.inputs[i]);
+                    errors++;
                 }
             }
 
-            tb_linker_append_module(l, mod);
-            if (!tb_linker_export_files(l, 1, (const char*[]) { output_name })) {
-                fprintf(stderr, "error: could not write linked file output. %s\n", output_name);
+            if (errors) {
+                fprintf(stderr, "library search paths:\n");
+                dyn_array_for(i, tmp_linker.libpaths) {
+                    fprintf(stderr, "  %s\n", tmp_linker.libpaths[i]);
+                }
                 return false;
             }
+
+            CUIK_TIMED_BLOCK("tb_linker_append_module") {
+                tb_linker_append_module(l, mod);
+            }
+
+            TB_Exports exports = tb_linker_export(l);
+            assert(exports.count == 1);
+
+            FILE* file = NULL;
+            CUIK_TIMED_BLOCK("fopen") {
+                file = fopen(output_name, "wb");
+                if (file == NULL) {
+                    fprintf(stderr, "could not open file for writing! %s", output_name);
+                    // tb_platform_heap_free(exports.files[0].data);
+                    return false;
+                }
+            }
+
+            CUIK_TIMED_BLOCK("fwrite") {
+                fwrite(exports.files[0].data, 1, exports.files[0].length, file);
+            }
+
+            fclose(file);
             tb_linker_destroy(l);
         }
 

@@ -482,6 +482,7 @@ static void add_libraries(void* ctx, const Cuik_CompilerArgs* args, Cuik_Linker*
 
     cuiklink_add_libpathf(l, "%S", t->vs_library_path);
     cuiklink_add_libpathf(l, "%S\\um\\x64", t->windows_sdk_root);
+    cuiklink_add_libpathf(l, "%S\\ucrt\\x64", t->windows_sdk_root);
 }
 
 static void set_preprocessor(void* ctx, const Cuik_CompilerArgs* args, Cuik_CPP* cpp) {

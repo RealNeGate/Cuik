@@ -16,7 +16,7 @@ LRESULT main_wnd_proc(HWND wnd, UINT message, WPARAM wparam, LPARAM lparam) {
 
 int main(int argc, char** argv, char** env) {
     const char* name = "Hello, World!";
-    
+
     WNDCLASSA wc = { 0 };
     wc.hInstance = GetModuleHandleA(NULL);
     wc.lpfnWndProc = main_wnd_proc;
@@ -42,4 +42,3 @@ int main(int argc, char** argv, char** env) {
     }
     return 0;
 }
-

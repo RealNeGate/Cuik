@@ -17,7 +17,6 @@ args = parser.parse_args()
 #######################################
 tb_args = [sys.executable, 'build.py', 'x64', 'aarch64', 'wasm']
 libcuik_args = [sys.executable, 'build.py', '--usetb']
-args.asan = True
 
 if args.opt:
 	tb_args.append('--opt')
