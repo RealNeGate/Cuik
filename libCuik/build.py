@@ -109,4 +109,4 @@ else:
 
 ninja.close()
 
-exit(subprocess.call(['ninja', '-j2']))
+exit(subprocess.call(['ninja', '-j3']))

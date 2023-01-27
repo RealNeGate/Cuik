@@ -165,6 +165,7 @@ int main(int argc, const char** argv) {
         return EXIT_SUCCESS;
     }
 
+    int status = 0;
     if (args.live) {
         LiveCompiler l;
         do {
@@ -175,14 +176,12 @@ int main(int argc, const char** argv) {
         } while (live_compile_watch(&l, &args));
     } else {
         uint64_t start_time = args.verbose ? cuik_time_in_nanos() : 0;
-        int status = cuik_driver_compile(tp, &args, true);
+        status = cuik_driver_compile(tp, &args, true);
 
         if (args.verbose) {
             uint64_t now = cuik_time_in_nanos();
             printf("\n\nCUIK: %f ms\n", (now - start_time) / 1000000.0);
         }
-
-        if (status != 0) exit(status);
     }
 
     #if CUIK_ALLOW_THREADS
@@ -225,5 +224,5 @@ int main(int argc, const char** argv) {
     spall_auto_thread_quit();
     spall_auto_quit();
     #endif
-    return 0;
+    return status;
 }

@@ -360,7 +360,7 @@ void eval_initializer_objects(TranslationUnit* tu, TB_Function* func, TB_Initial
                     mtx_lock(&tu->arena_mutex);
                     if (tu->parent != NULL) {
                         if (stmt->backing.e != 0) {
-                            tb_initializer_add_extern(tu->ir_mod, init, offset, stmt->backing.e);
+                            tb_initializer_add_symbol_reloc(tu->ir_mod, init, offset, stmt->backing.s);
                         } else {
                             // It's either a proper external or links to
                             // a file within the compilation unit, we don't
@@ -372,18 +372,11 @@ void eval_initializer_objects(TranslationUnit* tu, TB_Function* func, TB_Initial
                             if (search >= 0) {
                                 // Figure out what the symbol is and link it together
                                 Stmt* real_symbol = cu->export_table[search];
-
-                                if (real_symbol->op == STMT_FUNC_DECL) {
-                                    tb_initializer_add_function(tu->ir_mod, init, offset, real_symbol->backing.f);
-                                } else if (real_symbol->op == STMT_GLOBAL_DECL) {
-                                    tb_initializer_add_global(tu->ir_mod, init, offset, real_symbol->backing.g);
-                                } else {
-                                    abort();
-                                }
+                                tb_initializer_add_symbol_reloc(tu->ir_mod, init, offset, real_symbol->backing.s);
                             } else {
                                 // Always creates a real external in this case
                                 stmt->backing.e = tb_extern_create(tu->ir_mod, name, TB_EXTERNAL_SO_LOCAL);
-                                tb_initializer_add_extern(tu->ir_mod, init, offset, stmt->backing.e);
+                                tb_initializer_add_symbol_reloc(tu->ir_mod, init, offset, stmt->backing.s);
                             }
 
                             // NOTE(NeGate): we might wanna move this mutex unlock earlier
@@ -392,18 +385,18 @@ void eval_initializer_objects(TranslationUnit* tu, TB_Function* func, TB_Initial
                         }
                     } else {
                         stmt->backing.e = tb_extern_create(tu->ir_mod, name, TB_EXTERNAL_SO_LOCAL);
-                        tb_initializer_add_extern(tu->ir_mod, init, offset, stmt->backing.e);
+                        tb_initializer_add_symbol_reloc(tu->ir_mod, init, offset, stmt->backing.s);
                     }
 
                     mtx_unlock(&tu->arena_mutex);
                 } else {
                     // Global defined within the TU
-                    tb_initializer_add_global(tu->ir_mod, init, offset, stmt->backing.g);
+                    tb_initializer_add_symbol_reloc(tu->ir_mod, init, offset, stmt->backing.s);
                 }
 
                 success = true;
             } else if (stmt->op == STMT_FUNC_DECL) {
-                tb_initializer_add_function(tu->ir_mod, init, offset, stmt->backing.f);
+                tb_initializer_add_symbol_reloc(tu->ir_mod, init, offset, stmt->backing.s);
                 success = true;
             }
         }
@@ -471,7 +464,7 @@ void eval_initializer_objects(TranslationUnit* tu, TB_Function* func, TB_Initial
                         TB_Global* dummy = tb_global_create(tu->ir_mod, temp, TB_STORAGE_DATA, NULL, TB_LINKAGE_PRIVATE);
                         tb_global_set_initializer(tu->ir_mod, dummy, dummy_init);
 
-                        tb_initializer_add_global(tu->ir_mod, init, offset, dummy);
+                        tb_initializer_add_symbol_reloc(tu->ir_mod, init, offset, (TB_Symbol*) dummy);
                     } else {
                         dst = tb_initializer_add_region(tu->ir_mod, init, offset, str_bytes);
                     }
@@ -577,7 +570,7 @@ static TB_Initializer* gen_global_initializer(TranslationUnit* tu, Cuik_Type* ty
 
                 // assumes pointer width is 8 bytes
                 init = tb_initializer_create(tu->ir_mod, 8, 8, 1);
-                tb_initializer_add_global(tu->ir_mod, init, 0, dummy);
+                tb_initializer_add_symbol_reloc(tu->ir_mod, init, 0, (TB_Symbol*) dummy);
             } else {
                 char* dst = tb_initializer_add_region(tu->ir_mod, init, 0, type->size);
                 memcpy(dst, initial->str.start, initial->str.end - initial->str.start);
@@ -645,7 +638,7 @@ static TB_Initializer* gen_global_initializer(TranslationUnit* tu, Cuik_Type* ty
             Stmt* stmt = base->symbol;
             assert(stmt->op == STMT_GLOBAL_DECL && "could not resolve as constant initializer");
 
-            tb_initializer_add_global(tu->ir_mod, init, 0, stmt->backing.g);
+            tb_initializer_add_symbol_reloc(tu->ir_mod, init, 0, stmt->backing.s);
             return init;
         } else {
             fprintf(stderr, "internal compiler error: cannot compile global initializer as constant (%s : %s).\n", tu->filepath, name);

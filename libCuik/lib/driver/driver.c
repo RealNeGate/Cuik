@@ -390,23 +390,26 @@ static bool export_output(Cuik_CompilerArgs* restrict args, TB_Module* mod, bool
             Cuik_Linker tmp_linker = gimme_linker(args, subsystem_windows);
             char path[FILENAME_MAX];
             dyn_array_for(i, tmp_linker.inputs) {
-                if (cuiklink_find_library(&tmp_linker, path, tmp_linker.inputs[i])) {
+                CUIK_TIMED_BLOCK(tmp_linker.inputs[i]) {
+                    CUIK_TIMED_BLOCK("cuiklink_find_library") {
+                        if (!cuiklink_find_library(&tmp_linker, path, tmp_linker.inputs[i])) {
+                            fprintf(stderr, "could not find library: %s\n", tmp_linker.inputs[i]);
+                            errors++;
+                            goto skip;
+                        }
+                    }
+
                     TB_Slice s;
                     CUIK_TIMED_BLOCK("open_file_map") {
                         FileMap fm = open_file_map(path);
                         s = (TB_Slice){ fm.size, fm.data };
                     }
 
-                    TB_ArchiveFile* ar;
-                    CUIK_TIMED_BLOCK("tb_archive_parse_lib") {
-                        ar = tb_archive_parse_lib(s);
+                    CUIK_TIMED_BLOCK("tb_linker_append_library") {
+                        tb_linker_append_library(l, s);
                     }
-
-                    tb_linker_append_library(l, ar);
-                } else {
-                    fprintf(stderr, "could not find library: %s\n", tmp_linker.inputs[i]);
-                    errors++;
                 }
+                skip:;
             }
 
             if (errors) {
