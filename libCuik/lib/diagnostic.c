@@ -287,10 +287,10 @@ void diag_writer_highlight(DiagWriter* writer, SourceRange loc) {
         writer->line_end = line_end;
         writer->dist_from_line_start = line_start - a.line_str;
 
-        printf("  %s:%d\n", a.file->filename, a.line);
-        printf("    ");
-        printf("%.*s\n", (int) (line_end - line_start), line_start);
-        printf("    ");
+        fprintf(stderr, "  %s:%d\n", a.file->filename, a.line);
+        fprintf(stderr, "    ");
+        fprintf(stderr, "%.*s\n", (int) (line_end - line_start), line_start);
+        fprintf(stderr, "    ");
     }
 
     assert(b.column >= a.column);
@@ -301,10 +301,10 @@ void diag_writer_highlight(DiagWriter* writer, SourceRange loc) {
     diag_writer_write_upto(writer, start_pos);
     //printf("\x1b[7m");
     //diag_writer_write_upto(writer, start_pos + tkn_len);
-    printf("\x1b[32m^");
-    for (int i = 1; i < tkn_len; i++) printf("~");
+    fprintf(stderr, "\x1b[32m^");
+    for (int i = 1; i < tkn_len; i++) fprintf(stderr, "~");
     writer->cursor = start_pos + tkn_len;
-    printf("\x1b[0m");
+    fprintf(stderr, "\x1b[0m");
 }
 
 bool diag_writer_is_compatible(DiagWriter* writer, SourceRange loc) {
@@ -319,7 +319,7 @@ bool diag_writer_is_compatible(DiagWriter* writer, SourceRange loc) {
 void diag_writer_done(DiagWriter* writer) {
     if (writer->base.file != NULL) {
         diag_writer_write_upto(writer, writer->line_end - writer->line_start);
-        printf("\n");
+        fprintf(stderr, "\n");
     }
 }
 

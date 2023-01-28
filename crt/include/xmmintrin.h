@@ -1,6 +1,7 @@
 #pragma once
 
 typedef _Vector(float, 4) __m128;
+typedef _Vector(double, 2) __m128d;
 
 // actual builtins
 float  __builtin_ia32_sqrtss(__m128 a);

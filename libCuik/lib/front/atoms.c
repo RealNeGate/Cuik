@@ -54,7 +54,6 @@ Atom atoms_put(size_t len, const unsigned char* str) {
         interner = cuik__valloc(sizeof(Atom) * (1u << INTERNER_EXP));
     }
 
-    Atom result = NULL;
     uint64_t hash = hash_ident(str, len);
     for (size_t i = hash;;) {
         // hash table lookup
