@@ -26,9 +26,9 @@ Cuik_Target* cuik_target_host(void) {
     #if defined(_WIN32)
     return cuik_target_x64(CUIK_SYSTEM_WINDOWS, CUIK_ENV_MSVC);
     #elif defined(__linux) || defined(linux)
-    return cuik_target_x64(CUIK_SYSTEM_LINUX, CUIK_ENV_MSVC);
+    return cuik_target_x64(CUIK_SYSTEM_LINUX, CUIK_ENV_GNU);
     #elif defined(__APPLE__) || defined(__MACH__) || defined(macintosh)
-    return cuik_target_x64(CUIK_SYSTEM_MACOS, CUIK_ENV_MSVC);
+    return cuik_target_x64(CUIK_SYSTEM_MACOS, CUIK_ENV_GNU);
     #endif
 }
 

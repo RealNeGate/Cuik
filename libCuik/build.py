@@ -26,6 +26,7 @@ source_patterns = [
 
 ninja = open('build.ninja', 'w')
 cflags = "-g -I ../common/ -I include -I lib -I deps -Wall -Werror -Wno-unused-function -Wno-unused-variable"
+cflags += " -DCUIK_ALLOW_THREADS"
 
 if args.shared:
 	cflags += " -DCUIK_USE_DLL"

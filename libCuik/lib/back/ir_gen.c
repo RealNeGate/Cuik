@@ -111,6 +111,8 @@ static TB_Reg cast_reg(TB_Function* func, TB_Reg reg, const Cuik_Type* src, cons
             // down-casts
             reg = tb_inst_trunc(func, reg, ctype_to_tbtype(dst));
         }
+    } else if (src->kind == KIND_ARRAY && dst->kind == KIND_BOOL) {
+        reg = tb_inst_bool(func, true);
     } else if (src->kind != KIND_BOOL && dst->kind == KIND_BOOL) {
         TB_DataType dt = tb_function_get_node(func, reg)->dt;
         TB_Reg comparand;

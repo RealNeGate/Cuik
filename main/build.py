@@ -47,6 +47,7 @@ else:
 cflags = "-g -Wall -Werror -Wno-unused-function"
 cflags += " -I ../common/ -I ../libCuik/include -I ../tilde-backend/include"
 cflags += " -DCUIK_USE_TB "
+cflags += " -DCUIK_ALLOW_THREADS"
 
 if args.asan:
 	cflags += " -fsanitize=address"

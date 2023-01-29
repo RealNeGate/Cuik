@@ -5,6 +5,6 @@ I'm going to be on a diagnostics improvement grind so i wanna write down some st
 
 I'm on my selfhost grind so this is the self script for now:
 ```
-  cuik main/src/*.c libCuik/lib/**.c c11threads/threads_msvc.c tilde-backend/tildebackend.lib -I common -I c11threads -I libCuik/include -I libCuik/lib -I tilde-backend/include -DCUIK_USE_TB -o cuik_self.exe -threads
+cuik main/src/main_driver.c libCuik/lib/**.c c11threads/threads_msvc.c tilde-backend/tildebackend.lib -I common -I c11threads -I libCuik/include -I libCuik/lib -I tilde-backend/include -DCUIK_USE_TB -o self/cuik.exe -j
 ```
 run in the main repo folder

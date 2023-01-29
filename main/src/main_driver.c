@@ -2,12 +2,6 @@
 #include "helper.h"
 #include <dyn_array.h>
 
-#ifndef __CUIK__
-#define CUIK_ALLOW_THREADS 1
-#else
-#define CUIK_ALLOW_THREADS 0
-#endif
-
 #if CUIK_ALLOW_THREADS
 #include <threads.h>
 #include <stdatomic.h>
@@ -52,18 +46,6 @@
         // dyn_array_put(da_passes, tb_opt_compact_dead_regs());
     }
 }*/
-
-#if CUIK_ALLOW_THREADS
-static int calculate_worker_thread_count(void) {
-    #ifdef _WIN32
-    SYSTEM_INFO sysinfo;
-    GetSystemInfo(&sysinfo);
-    return (sysinfo.dwNumberOfProcessors / 4) * 3;
-    #else
-    return 1;
-    #endif
-}
-#endif
 
 static void dump_tokens(FILE* out_file, TokenStream* s) {
     const char* last_file = NULL;

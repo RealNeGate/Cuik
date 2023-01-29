@@ -25,7 +25,7 @@ static thread_local char temp_string0[1024], temp_string1[1024];
 void sema_stmt(TranslationUnit* tu, Stmt* restrict s);
 
 static bool is_scalar_type(TranslationUnit* tu, Cuik_Type* type) {
-    return (type->kind >= KIND_BOOL && type->kind <= KIND_FUNC);
+    return (type->kind >= KIND_BOOL && type->kind <= KIND_ARRAY);
 }
 
 static bool is_constant_zero(TranslationUnit* tu, const Expr* e) {

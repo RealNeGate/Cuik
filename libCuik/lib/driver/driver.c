@@ -4,6 +4,10 @@
 #include "driver_arg_parse.h"
 #include "../file_map.h"
 
+#ifdef CUIK_ALLOW_THREADS
+#include <stdatomic.h>
+#endif
+
 enum {
     IRGEN_TASK_BATCH_SIZE = 8192,
     TB_TASK_BATCH_SIZE = 8192,
@@ -504,7 +508,7 @@ int cuik_driver_compile(Cuik_IThreadpool* restrict thread_pool, Cuik_CompilerArg
                 CUIK_CALL(thread_pool, submit, preproc_file, &jobs[i]);
             }
 
-            while (complete == source_count) thrd_yield();
+            while (complete < source_count) thrd_yield();
             free(jobs);
         } else {
             dyn_array_for(i, args->sources) {

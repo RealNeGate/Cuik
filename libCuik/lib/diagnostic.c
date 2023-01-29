@@ -181,6 +181,7 @@ static void diag(DiagType type, TokenStream* tokens, SourceRange loc, const char
     }
 
     // print include stack
+    mtx_lock(&report_mutex);
     ResolvedSourceLoc start = cuikpp_find_location(tokens, loc_start);
     if (start.file->include_site.raw != 0) {
         print_include(tokens, start.file->include_site);
@@ -216,6 +217,7 @@ static void diag(DiagType type, TokenStream* tokens, SourceRange loc, const char
             fprintf(stderr, "%s\x1b[0m\n", fixits[i].hint);
         }
     }
+    mtx_unlock(&report_mutex);
 
     if (type == DIAG_ERR) {
         atomic_fetch_add((atomic_int*) tokens->error_tally, 1);

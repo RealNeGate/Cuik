@@ -80,7 +80,7 @@ static Cuik_Type* expect_pointer(TranslationUnit* tu, Expr* e, Expr* arg) {
 static Expr* resolve_memory_order_expr(TranslationUnit* tu, Expr* e) {
     e->cast_type = cuik_uncanonical_type(&cuik__builtin_int);
 
-    if (e->op != EXPR_INT) {
+    if (e->op != EXPR_INT && e->op != EXPR_ENUM) {
         diag_err(&tu->tokens, e->loc, "memory order must be a constant expression");
         return e;
     }

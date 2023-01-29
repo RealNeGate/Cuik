@@ -176,8 +176,9 @@ static SourceLoc encode_file_loc(uint32_t file_id, uint32_t file_offset) {
 
 static SourceLoc encode_macro_loc(uint32_t macro_id, uint32_t macro_offset) {
     assert(macro_id < (1u << SourceLoc_MacroIDBits) && "Too many macros!");
-    assert(macro_offset < (1u << SourceLoc_MacroOffsetBits) && "Macro too long!");
+    // assert(macro_offset < (1u << SourceLoc_MacroOffsetBits) && "Macro too long!");
 
+    if (macro_offset >= (1u << SourceLoc_MacroOffsetBits)) macro_offset = (1u << SourceLoc_MacroOffsetBits) - 1;
     return (SourceLoc){ SourceLoc_IsMacro | (macro_id << SourceLoc_MacroOffsetBits) | macro_offset };
 }
 

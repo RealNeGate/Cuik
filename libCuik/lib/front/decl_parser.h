@@ -555,7 +555,7 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
 
                     // starts at zero and after any entry it increments
                     // you can override it by using:
-                    // identifier = int-const-expr
+                    //   identifier = int-const-expr
                     int cursor = 0;
 
                     size_t count = 0;
@@ -635,6 +635,8 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                         type->size = 0;
                         type->align = 0;
                     } else {
+                        type->is_complete = true;
+                        type->size = type->align = 4;
                         type_layout2(parser, type, true);
                     }
                 } else {
@@ -723,6 +725,12 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                     Member* members = tls_save();
                     while (tokens_get(s)->type != '}') {
                         if (skip_over_declspec(s)) continue;
+
+                        // skip any random semicolons
+                        if (tokens_get(s)->type == ';') {
+                            tokens_next(s);
+                            continue;
+                        }
 
                         // in case we have unnamed declarators and we somewhere for them to point to
                         SourceRange default_loc = tokens_get_range(s);

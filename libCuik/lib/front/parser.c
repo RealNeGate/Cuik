@@ -424,6 +424,7 @@ void type_layout(TranslationUnit* restrict tu, Cuik_Type* type, bool needs_compl
     type->is_progress = false;
 }
 
+int aaaaaa = 0;
 void type_layout2(Cuik_Parser* parser, Cuik_Type* type, bool needs_complete) {
     if (type->kind == KIND_VOID || type->size != 0) return;
     if (type->is_progress) {
@@ -435,6 +436,7 @@ void type_layout2(Cuik_Parser* parser, Cuik_Type* type, bool needs_complete) {
 
     if (type->kind == KIND_ARRAY) {
         if (type->array_count_lexer_pos) {
+            aaaaaa++;
             // run mini parser for array count
             TokenStream mini_lex = parser->tokens;
             mini_lex.list.current = type->array_count_lexer_pos;
