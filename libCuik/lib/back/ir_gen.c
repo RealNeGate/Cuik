@@ -116,9 +116,9 @@ static TB_Reg cast_reg(TB_Function* func, TB_Reg reg, const Cuik_Type* src, cons
     } else if (src->kind != KIND_BOOL && dst->kind == KIND_BOOL) {
         TB_DataType dt = tb_function_get_node(func, reg)->dt;
         TB_Reg comparand;
-        if (dt.type == TB_FLOAT && dt.data == 32) {
+        if (dt.type == TB_FLOAT && dt.data == TB_FLT_32) {
             comparand = tb_inst_float32(func, 0.0f);
-        } else if (dt.type == TB_FLOAT && dt.data == 64) {
+        } else if (dt.type == TB_FLOAT && dt.data == TB_FLT_64) {
             comparand = tb_inst_float64(func, 0.0);
         } else {
             comparand = tb_inst_uint(func, dt, 0);

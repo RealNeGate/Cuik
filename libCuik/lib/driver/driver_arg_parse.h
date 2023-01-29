@@ -243,7 +243,7 @@ int cuik_parse_arg(Cuik_CompilerArgs* args, int argc, const char* argv[]) {
         SYSTEM_INFO sysinfo;
         GetSystemInfo(&sysinfo);
 
-        int n = ((sysinfo.dwNumberOfProcessors / 4) * 3) - 1;
+        int n = (sysinfo.dwNumberOfProcessors / 2) - 1;
         args->threads = (n < 1 ? 1 : n);
         #else
         assert(0 && "TODO(NeGate): implement core count detection on this platform");

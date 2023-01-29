@@ -1,7 +1,7 @@
 // I'd recommend not messing with the internals
 // here...
-#define SLOTS_PER_MACRO_BUCKET 1024
-#define MACRO_BUCKET_COUNT 1024
+#define SLOTS_PER_MACRO_BUCKET 256
+#define MACRO_BUCKET_COUNT 4096
 
 #define THE_SHTUFFS_SIZE (32 << 20)
 #define CUIK__CPP_STATS 0

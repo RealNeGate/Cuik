@@ -468,6 +468,7 @@ Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict 
             .globals = parser.globals,
         };
 
+        mtx_init(&parser.tu->arena_mutex, mtx_plain);
         check_for_entry(parser.tu, &parser.globals);
         return (Cuik_ParseResult){ .tu = parser.tu, .imports = parser.import_libs };
     }
@@ -486,6 +487,7 @@ Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict 
             .types = parser.types,
             .globals = parser.globals,
         };
+        mtx_init(&parser.tu->arena_mutex, mtx_plain);
 
         CUIK_FOR_TYPES(type, parser.types) {
             if (type->kind == KIND_PLACEHOLDER) {

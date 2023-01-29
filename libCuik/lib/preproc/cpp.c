@@ -240,17 +240,6 @@ void cuiklex_free_tokens(TokenStream* tokens) {
 }
 
 void cuikpp_free(Cuik_CPP* ctx) {
-    #if CUIK__CPP_STATS
-    printf(" %40s | %.06f ms read+lex\t| %4zu files read\t| %zu fstats\t| %f ms (%zu defines)\n",
-        ctx->tokens.filepath,
-        ctx->total_io_time / 1000000.0,
-        ctx->total_files_read,
-        ctx->total_fstats,
-        ctx->total_define_access_time / 1000000.0,
-        ctx->total_define_accesses
-    );
-    #endif
-
     dyn_array_for(i, ctx->system_include_dirs) {
         free(ctx->system_include_dirs[i].name);
     }
@@ -455,7 +444,9 @@ Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
 
                 // initialize the lexer in the stack slot & record the file entry
                 slot->file_id = dyn_array_length(ctx->tokens.files);
-                slot->tokens = convert_to_token_list(ctx, dyn_array_length(ctx->tokens.files), packet->file.length, packet->file.data);
+                CUIK_TIMED_BLOCK("convert_to_token_list") {
+                    slot->tokens = convert_to_token_list(ctx, dyn_array_length(ctx->tokens.files), packet->file.length, packet->file.data);
+                }
                 compute_line_map(&ctx->tokens, false, 0, (SourceLoc){ 0 }, packet->file.input_path, packet->file.data, packet->file.length);
 
                 // we finished resolving
@@ -583,7 +574,9 @@ Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
         slot->include_guard = (struct CPPIncludeGuard){ 0 };
         // initialize the lexer in the stack slot & record file entry
         slot->file_id = dyn_array_length(ctx->tokens.files);
-        slot->tokens = convert_to_token_list(ctx, dyn_array_length(ctx->tokens.files), packet->file.length, packet->file.data);
+        CUIK_TIMED_BLOCK("convert_to_token_list") {
+            slot->tokens = convert_to_token_list(ctx, dyn_array_length(ctx->tokens.files), packet->file.length, packet->file.data);
+        }
         compute_line_map(&ctx->tokens, ctx->included_system_header, ctx->stack_ptr - 1, slot->loc, packet->file.input_path, packet->file.data, packet->file.length);
 
         // we finished resolving
@@ -596,114 +589,125 @@ Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
     TokenStream* restrict s = &ctx->tokens;
 
     for (;;) {
-        Token first = { 0 };
-        if (!at_token_list_end(in)) first = consume(in);
-
-        if (first.type != 0 && slot->include_guard.status == INCLUDE_GUARD_EXPECTING_NOTHING) {
-            slot->include_guard.status = INCLUDE_GUARD_INVALID;
-        }
-
-        if (first.type == 0) {
-            ctx->stack_ptr -= 1;
+        // Hot code, just copying tokens over
+        Token first;
+        for (;;) {
+            if (at_token_list_end(in)) goto pop_stack;
 
             if (slot->include_guard.status == INCLUDE_GUARD_EXPECTING_NOTHING) {
-                // the file is practically pragma once
-                nl_strmap_put_cstr(ctx->include_once, (const char*) slot->filepath, 0);
+                slot->include_guard.status = INCLUDE_GUARD_INVALID;
             }
 
-            // write out profile entry
-            if (cuikperf_is_active()) {
-                cuikperf_region_end();
-            }
+            first = consume(in);
+            if (first.type == TOKEN_IDENTIFIER) {
+                // check if it's actually a macro, if not categorize it if it's a keyword
+                if (!is_defined(ctx, first.content.data, first.content.length)) {
+                    // FAST PATH
+                    first.type = classify_ident(first.content.data, first.content.length);
+                    dyn_array_put(s->list.tokens, first);
+                } else {
+                    in->current -= 1;
 
-            // free the token stream
-            dyn_array_destroy(in->tokens);
-
-            // if this is the last file, just exit
-            if (ctx->stack_ptr == 0) {
-                // place last token
-                dyn_array_put(s->list.tokens, (Token){ 0 });
-
-                s->list.current = 0;
-                return CUIKPP_DONE;
-            }
-
-            // step out of this file into the previous one
-            slot = &ctx->stack[ctx->stack_ptr - 1];
-            in = &slot->tokens;
-            continue;
-        } else if (first.type == TOKEN_HASH) {
-            DirectiveResult result = DIRECTIVE_UNKNOWN;
-            String directive = consume(in).content;
-
-            // shorthand for calling the directives in cpp_directive.h
-            #define MATCH(str)                                         \
-            if (memcmp(directive.data, #str, sizeof(#str) - 1) == 0) { \
-                result = cpp__ ## str(ctx, slot, in, packet);          \
-                break;                                                 \
-            }
-
-            // all the directives go here
-            switch (directive.length) {
-                case 2:
-                MATCH(if);
+                    // SLOW PATH BECAUSE IT NEEDS TO SPAWN POSSIBLY METRIC SHIT LOADS
+                    // OF TOKENS AND EXPAND WITH THE AVERAGE C PREPROCESSOR SPOOKIES
+                    expand_ident(ctx, &s->list, in, 0);
+                }
+            } else if (first.type == TOKEN_HASH) {
+                // slow path
                 break;
-
-                case 4:
-                MATCH(elif);
-                MATCH(else);
-                break;
-
-                case 5:
-                MATCH(undef);
-                MATCH(error);
-                MATCH(ifdef);
-                MATCH(endif);
-                break;
-
-                case 6:
-                MATCH(define);
-                MATCH(pragma);
-                MATCH(ifndef);
-                break;
-
-                case 7:
-                MATCH(include);
-                MATCH(warning);
-                MATCH(version);
-                break;
-
-                case 9:
-                MATCH(extension);
-                break;
-            }
-            #undef MATCH
-
-            if (result == DIRECTIVE_ERROR) {
-                return CUIKPP_ERROR;
-            } else if (result == DIRECTIVE_YIELD) {
-                return CUIKPP_CONTINUE;
-            } else if (result == DIRECTIVE_UNKNOWN) {
-                SourceRange r = { first.location, get_end_location(&in->tokens[in->current - 1]) };
-                diag_err(s, r, "unknown directive %_S", directive);
-                return CUIKPP_ERROR;
-            }
-        } else if (first.type == TOKEN_IDENTIFIER) {
-            // check if it's actually a macro, if not categorize it if it's a keyword
-            if (!is_defined(ctx, first.content.data, first.content.length)) {
-                // FAST PATH
-                first.type = classify_ident(first.content.data, first.content.length);
-                dyn_array_put(s->list.tokens, first);
             } else {
-                in->current -= 1;
-
-                // SLOW PATH BECAUSE IT NEEDS TO SPAWN POSSIBLY METRIC SHIT LOADS
-                // OF TOKENS AND EXPAND WITH THE AVERAGE C PREPROCESSOR SPOOKIES
-                expand_ident(ctx, &s->list, in, 0);
+                dyn_array_put(s->list.tokens, first);
             }
-        } else {
-            dyn_array_put(s->list.tokens, first);
         }
+
+        // Slow code, defines
+        DirectiveResult result = DIRECTIVE_UNKNOWN;
+        String directive = consume(in).content;
+
+        // shorthand for calling the directives in cpp_directive.h
+        #define MATCH(str)                                         \
+        if (memcmp(directive.data, #str, sizeof(#str) - 1) == 0) { \
+            result = cpp__ ## str(ctx, slot, in, packet);          \
+            break;                                                 \
+        }
+
+        // all the directives go here
+        switch (directive.length) {
+            case 2:
+            MATCH(if);
+            break;
+
+            case 4:
+            MATCH(elif);
+            MATCH(else);
+            break;
+
+            case 5:
+            MATCH(undef);
+            MATCH(error);
+            MATCH(ifdef);
+            MATCH(endif);
+            break;
+
+            case 6:
+            MATCH(define);
+            MATCH(pragma);
+            MATCH(ifndef);
+            break;
+
+            case 7:
+            MATCH(include);
+            MATCH(warning);
+            MATCH(version);
+            break;
+
+            case 9:
+            MATCH(extension);
+            break;
+        }
+        #undef MATCH
+
+        if (result == DIRECTIVE_ERROR) {
+            return CUIKPP_ERROR;
+        } else if (result == DIRECTIVE_YIELD) {
+            return CUIKPP_CONTINUE;
+        } else if (result == DIRECTIVE_UNKNOWN) {
+            SourceRange r = { first.location, get_end_location(&in->tokens[in->current - 1]) };
+            diag_err(s, r, "unknown directive %_S", directive);
+            return CUIKPP_ERROR;
+        }
+        continue;
+
+        // this is called when we're done with a specific file
+        pop_stack:
+        ctx->stack_ptr -= 1;
+
+        if (slot->include_guard.status == INCLUDE_GUARD_EXPECTING_NOTHING) {
+            // the file is practically pragma once
+            nl_strmap_put_cstr(ctx->include_once, (const char*) slot->filepath, 0);
+        }
+
+        // write out profile entry
+        if (cuikperf_is_active()) {
+            cuikperf_region_end();
+        }
+
+        // free the token stream
+        dyn_array_destroy(in->tokens);
+
+        // if this is the last file, just exit
+        if (ctx->stack_ptr == 0) {
+            // place last token
+            dyn_array_put(s->list.tokens, (Token){ 0 });
+
+            s->list.current = 0;
+            return CUIKPP_DONE;
+        }
+
+        // step out of this file into the previous one
+        slot = &ctx->stack[ctx->stack_ptr - 1];
+        in = &slot->tokens;
+        continue;
     }
 }
 
@@ -718,6 +722,19 @@ Cuikpp_Status cuikpp_default_run(Cuik_CPP* ctx) {
 }
 
 void cuikpp_finalize(Cuik_CPP* ctx) {
+    #if CUIK__CPP_STATS
+    mtx_lock(&report_mutex);
+    printf(" %80s | %.06f ms read+lex\t| %4zu files read\t| %zu fstats\t| %f ms (%zu defines)\n",
+        ctx->tokens.filepath,
+        ctx->total_io_time / 1000000.0,
+        ctx->total_files_read,
+        ctx->total_fstats,
+        ctx->total_define_access_time / 1000000.0,
+        ctx->total_define_accesses
+    );
+    mtx_unlock(&report_mutex);
+    #endif
+
     CUIK_TIMED_BLOCK("cuikpp_finalize") {
         size_t sz = sizeof(void*) * MACRO_BUCKET_COUNT * SLOTS_PER_MACRO_BUCKET;
         size_t sz2 = sizeof(SourceRange) * MACRO_BUCKET_COUNT * SLOTS_PER_MACRO_BUCKET;

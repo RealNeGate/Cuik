@@ -47,6 +47,8 @@ static Cuik_Type* type_check_builtin(TranslationUnit* tu, Expr* e, const char* n
         }
 
         return &builtin_types[TYPE_UINT];
+    } else if (strcmp(name, "__rdtsc") == 0) {
+        return &builtin_types[TYPE_ULONG];
     } else if (strcmp(name, "__readgsqword") == 0) {
         return &builtin_types[TYPE_USHORT];
     } else {
@@ -259,6 +261,8 @@ static TB_Reg compile_builtin(TranslationUnit* tu, TB_Function* func, const char
         return tb_inst_x86_ldmxcsr(func, irgen_as_rvalue(tu, func, args[0]));
     } else if (strcmp(name, "_mm_getcsr") == 0) {
         return tb_inst_x86_stmxcsr(func);
+    } else if (strcmp(name, "__rdtsc") == 0) {
+        return tb_inst_x86_rdtsc(func);
     } else if (strcmp(name, "__readgsqword") == 0) {
         // TODO(NeGate): implement readgs/writegs with all the type variants
         return tb_inst_uint(func, TB_TYPE_I16, 0);
@@ -275,6 +279,7 @@ Cuik_Target* cuik_target_x64(Cuik_System system, Cuik_Environment env) {
     nl_strmap_put_cstr(builtins, "_mm_getcsr", NULL);
     nl_strmap_put_cstr(builtins, "_mm_setcsr", NULL);
     nl_strmap_put_cstr(builtins, "__readgsqword", NULL);
+    nl_strmap_put_cstr(builtins, "__rdtsc", NULL);
 
     Cuik_Target* t = malloc(sizeof(Cuik_Target));
     *t = (Cuik_Target){

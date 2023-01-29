@@ -88,6 +88,17 @@ static Expr* resolve_memory_order_expr(TranslationUnit* tu, Expr* e) {
     return e;
 }
 
+static int get_memory_order_val(Expr* e) {
+    if (e->op == EXPR_INT) {
+        return e->int_num.num;
+    } else if (e->op == EXPR_ENUM) {
+        return e->enum_val.num->value;
+    } else {
+        assert(0 && "get_memory_order_val got bad input?");
+        return 0;
+    }
+}
+
 const char* query_type(TranslationUnit* tu, const char* format, Cuik_Type** out_type) {
     Cuik_Type* target_signed_ints = tu->target->signed_ints;
     Cuik_Type* t = NULL;
@@ -412,9 +423,8 @@ BuiltinResult target_generic_compile_builtin(TranslationUnit* tu, TB_Function* f
     } else if (strcmp(name, "__c11_atomic_exchange") == 0) {
         TB_Reg dst = irgen_as_rvalue(tu, func, args[0]);
         TB_Reg src = irgen_as_rvalue(tu, func, args[1]);
+        int order = get_memory_order_val(args[2]);
 
-        assert(args[2]->op == EXPR_INT && args[2]->int_num.num < 6);
-        int order = args[2]->int_num.num;
         return ZZZ(tb_inst_atomic_xchg(func, dst, src, order));
     } else if (strcmp(name, "__c11_atomic_load") == 0) {
         TB_Reg addr = irgen_as_rvalue(tu, func, args[0]);
@@ -422,23 +432,20 @@ BuiltinResult target_generic_compile_builtin(TranslationUnit* tu, TB_Function* f
         Cuik_Type* cast_type = cuik_canonical_type(args[0]->cast_type);
         assert(cast_type->kind == KIND_PTR);
         TB_DataType dt = ctype_to_tbtype(cuik_canonical_type(cast_type->ptr_to));
+        int order = get_memory_order_val(args[1]);
 
-        assert(args[1]->op == EXPR_INT && args[1]->int_num.num < 6);
-        int order = args[1]->int_num.num;
         return ZZZ(tb_inst_atomic_load(func, addr, dt, order));
     } else if (strcmp(name, "__c11_atomic_fetch_add") == 0) {
         TB_Reg dst = irgen_as_rvalue(tu, func, args[0]);
         TB_Reg src = irgen_as_rvalue(tu, func, args[1]);
+        int order = get_memory_order_val(args[2]);
 
-        assert(args[2]->op == EXPR_INT && args[2]->int_num.num < 6);
-        int order = args[2]->int_num.num;
         return ZZZ(tb_inst_atomic_add(func, dst, src, order));
     } else if (strcmp(name, "__c11_atomic_fetch_sub") == 0) {
         TB_Reg dst = irgen_as_rvalue(tu, func, args[0]);
         TB_Reg src = irgen_as_rvalue(tu, func, args[1]);
+        int order = get_memory_order_val(args[2]);
 
-        assert(args[2]->op == EXPR_INT && args[2]->int_num.num < 6);
-        int order = args[2]->int_num.num;
         return ZZZ(tb_inst_atomic_sub(func, dst, src, order));
     } else if (strcmp(name, "__builtin_mul_overflow") == 0) {
         Cuik_Type* type = cuik_canonical_type(args[0]->cast_type);
