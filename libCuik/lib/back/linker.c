@@ -6,7 +6,6 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #define SLASH "\\"
-#define strdup(x) _strdup(x)
 #else
 #define SLASH "/"
 #endif
@@ -21,7 +20,7 @@ void cuiklink_apply_toolchain_libs(Cuik_Linker* l, Cuik_CompilerArgs* args) {
 }
 
 void cuiklink_add_libpath(Cuik_Linker* l, const char filepath[]) {
-    char* out = strdup(filepath);
+    char* out = cuik_strdup(filepath);
     for (char* s = out; *s; s++) {
         if (*s == '\\') *s = '/';
     }
@@ -29,7 +28,7 @@ void cuiklink_add_libpath(Cuik_Linker* l, const char filepath[]) {
 }
 
 void cuiklink_add_libpathf(Cuik_Linker* l, const char* fmt, ...) {
-    char* out = malloc(FILENAME_MAX);
+    char* out = cuik_malloc(FILENAME_MAX);
 
     va_list ap;
     va_start(ap, fmt);
@@ -43,7 +42,7 @@ void cuiklink_add_libpathf(Cuik_Linker* l, const char* fmt, ...) {
 }
 
 void cuiklink_add_input_file(Cuik_Linker* l, const char* filepath) {
-    dyn_array_put(l->inputs, strdup(filepath));
+    dyn_array_put(l->inputs, cuik_strdup(filepath));
 }
 
 bool cuiklink_find_library(Cuik_Linker* l, char output[FILENAME_MAX], const char* filepath) {

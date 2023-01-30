@@ -8,7 +8,7 @@ CUIK_API void cuikpp_add_include_directory(Cuik_CPP* ctx, bool is_system, const 
 }
 
 CUIK_API void cuikpp_add_include_directoryf(Cuik_CPP* ctx, bool is_system, const char* fmt, ...) {
-    char* out = malloc(FILENAME_MAX);
+    char* out = cuik_malloc(FILENAME_MAX);
 
     va_list ap;
     va_start(ap, fmt);

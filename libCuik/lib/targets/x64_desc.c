@@ -281,7 +281,7 @@ Cuik_Target* cuik_target_x64(Cuik_System system, Cuik_Environment env) {
     nl_strmap_put_cstr(builtins, "__readgsqword", NULL);
     nl_strmap_put_cstr(builtins, "__rdtsc", NULL);
 
-    Cuik_Target* t = malloc(sizeof(Cuik_Target));
+    Cuik_Target* t = cuik_malloc(sizeof(Cuik_Target));
     *t = (Cuik_Target){
         .env = env,
         .system = system,

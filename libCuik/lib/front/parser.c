@@ -578,7 +578,7 @@ void cuik_destroy_translation_unit(TranslationUnit* restrict tu) {
     arena_free(&tu->ast_arena);
     free_type_table(&tu->types);
     mtx_destroy(&tu->arena_mutex);
-    free(tu);
+    cuik_free(tu);
 }
 
 Cuik_ImportRequest* cuik_translation_unit_import_requests(TranslationUnit* restrict tu) {

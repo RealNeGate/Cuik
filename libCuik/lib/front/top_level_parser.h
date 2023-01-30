@@ -457,7 +457,7 @@ Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict 
 
     if (only_code_index) {
         // convert to translation unit
-        parser.tu = malloc(sizeof(TranslationUnit));
+        parser.tu = cuik_malloc(sizeof(TranslationUnit));
         *parser.tu = (TranslationUnit){
             .filepath = s->filepath,
             .warnings = &DEFAULT_WARNINGS,
@@ -477,7 +477,7 @@ Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict 
     // anything else so that we have a complete global symbol table
     CUIK_TIMED_BLOCK("phase 2") {
         // convert to translation unit
-        parser.tu = malloc(sizeof(TranslationUnit));
+        parser.tu = cuik_malloc(sizeof(TranslationUnit));
         *parser.tu = (TranslationUnit){
             .filepath = s->filepath,
             .warnings = &DEFAULT_WARNINGS,
@@ -566,8 +566,8 @@ Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict 
         parser.types = parser.tu->types;
 
         // allocate the local symbol tables
-        local_symbols = malloc(sizeof(Symbol) * MAX_LOCAL_SYMBOLS);
-        local_tags = malloc(sizeof(TagEntry) * MAX_LOCAL_TAGS);
+        local_symbols = cuik_malloc(sizeof(Symbol) * MAX_LOCAL_SYMBOLS);
+        local_tags = cuik_malloc(sizeof(TagEntry) * MAX_LOCAL_TAGS);
 
         // TODO(NeGate): remember this code is stuff that can be made multithreaded, if we
         // care we can add that back in.
@@ -604,8 +604,8 @@ Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict 
             }
         }
 
-        free(local_symbols), local_symbols = NULL;
-        free(local_tags), local_tags = NULL;
+        cuik_free(local_symbols), local_symbols = NULL;
+        cuik_free(local_tags), local_tags = NULL;
     }
     dyn_array_destroy(parser.local_static_storage_decls);
     THROW_IF_ERROR();

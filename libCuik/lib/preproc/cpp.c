@@ -159,7 +159,7 @@ Cuik_CPP* cuikpp_make(const char filepath[FILENAME_MAX]) {
     size_t sz = sizeof(void*) * MACRO_BUCKET_COUNT * SLOTS_PER_MACRO_BUCKET;
     size_t sz2 = sizeof(SourceRange) * MACRO_BUCKET_COUNT * SLOTS_PER_MACRO_BUCKET;
 
-    Cuik_CPP* ctx = malloc(sizeof(Cuik_CPP));
+    Cuik_CPP* ctx = cuik_malloc(sizeof(Cuik_CPP));
     *ctx = (Cuik_CPP){
         .stack = cuik__valloc(MAX_CPP_STACK_DEPTH * sizeof(CPPStackSlot)),
 
@@ -192,7 +192,7 @@ Cuik_CPP* cuikpp_make(const char filepath[FILENAME_MAX]) {
 
     // NOTE(NeGate): if it's allocated separately then when we trivially copy it
     // we still refer to the same tally.
-    ctx->tokens.error_tally = calloc(sizeof(int), 1);
+    ctx->tokens.error_tally = cuik_calloc(1, sizeof(int));
     ctx->tokens.filepath = filepath;
     ctx->tokens.list.tokens = dyn_array_create(Token, 4096);
     ctx->tokens.invokes = dyn_array_create(MacroInvoke, 4096);
@@ -236,12 +236,12 @@ void cuiklex_free_tokens(TokenStream* tokens) {
     dyn_array_destroy(tokens->list.tokens);
     dyn_array_destroy(tokens->invokes);
     dyn_array_destroy(tokens->files);
-    free(tokens->error_tally);
+    cuik_free(tokens->error_tally);
 }
 
 void cuikpp_free(Cuik_CPP* ctx) {
     dyn_array_for(i, ctx->system_include_dirs) {
-        free(ctx->system_include_dirs[i].name);
+        cuik_free(ctx->system_include_dirs[i].name);
     }
     dyn_array_destroy(ctx->system_include_dirs);
 
@@ -254,7 +254,7 @@ void cuikpp_free(Cuik_CPP* ctx) {
 
     ctx->stack = NULL;
     ctx->the_shtuffs = NULL;
-    free(ctx);
+    cuik_free(ctx);
 }
 
 // we can infer the column and line from doing a binary search on the TokenStream's line map

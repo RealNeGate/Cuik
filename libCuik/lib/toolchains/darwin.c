@@ -1,4 +1,5 @@
 #include <cuik.h>
+#include <common.h>
 
 static void add_libraries(void* ctx, const Cuik_CompilerArgs* args, Cuik_Linker* l) {
 }

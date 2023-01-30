@@ -35,7 +35,7 @@ static void filtered_append(Cuik_CompilerArgs* args, const char* path, bool recu
                 sprintf_s(tmp, MAX_PATH, "%.*s%s", (int)(slash - path) + 1, path, find_data.cFileName);
             }
 
-            char* new_path = malloc(MAX_PATH);
+            char* new_path = cuik_malloc(MAX_PATH);
             if (!cuik_canonicalize_path(new_path, tmp)) {
                 fprintf(stderr, "Invalid filepath! %s\n", tmp);
             }
@@ -85,7 +85,7 @@ static void append_input_path(Cuik_CompilerArgs* args, const char* path) {
     if (star != NULL) {
         filtered_append(args, path, star[1] == '*');
     } else {
-        char* newstr = malloc(FILENAME_MAX);
+        char* newstr = cuik_malloc(FILENAME_MAX);
         if (!cuik_canonicalize_path(newstr, path)) {
             fprintf(stderr, "Invalid filepath! %s\n", path);
         } else {

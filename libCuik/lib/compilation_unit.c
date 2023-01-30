@@ -3,7 +3,7 @@
 
 void cuik_create_compilation_unit(CompilationUnit* restrict cu) {
     *cu = (CompilationUnit){0};
-    cu->lock = malloc(sizeof(mtx_t));
+    cu->lock = cuik_malloc(sizeof(mtx_t));
     mtx_init((mtx_t*) cu->lock, mtx_plain);
 }
 
@@ -39,7 +39,7 @@ void cuik_destroy_compilation_unit(CompilationUnit* restrict cu) {
     }
 
     mtx_destroy((mtx_t*) cu->lock);
-    free(cu->lock);
+    cuik_free(cu->lock);
     *cu = (CompilationUnit){0};
 }
 

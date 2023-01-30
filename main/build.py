@@ -16,8 +16,8 @@ args.opt = True
 #######################################
 # Handle dependencies
 #######################################
-tb_args = [sys.executable, 'build.py', 'x64', 'aarch64', 'wasm']
-libcuik_args = [sys.executable, 'build.py', '-usetb']
+tb_args = [sys.executable, 'build.py', '-mimalloc', 'x64', 'aarch64', 'wasm']
+libcuik_args = [sys.executable, 'build.py', '-usetb', '-mimalloc']
 
 if args.opt:
 	tb_args.append('-opt')
@@ -68,12 +68,6 @@ if system == "Windows":
 	lib_ext = ".lib"
 	exe_ext = ".exe"
 	cflags += " -I ../c11threads -D_CRT_SECURE_NO_WARNINGS"
-	# when we're not doing ASAN, we should be using mimalloc
-	if True: # not args.asan:
-		cflags += " -D_DLL"
-		ldflags += " ../mimalloc/out/Release/mimalloc.lib -Xlinker /include:mi_version"
-		ldflags += " -nodefaultlibs -lmsvcrt -lvcruntime -lucrt"
-		subprocess.call(['build_mimalloc.bat'], cwd="..\\", shell=True)
 elif system == "Darwin":
 	exe_ext = ""
 	lib_ext = ".a"
@@ -101,7 +95,10 @@ rule link
 
 # compile source files
 objs = []
-list = glob.glob("src/main_driver.c")
+list = [ "src/main_driver.c" ]
+
+# mimalloc unity build
+list.append("../mimalloc/src/static.c")
 
 if system == "Windows":
 	list.append("../c11threads/threads_msvc.c")

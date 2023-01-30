@@ -7,13 +7,10 @@
 //          https://opensource.org/licenses/MIT
 //
 #include <cuik.h>
+#include <common.h>
 
 #include <windows.h>
 #include <io.h>         // For _get_osfhandle
-
-#ifdef _WIN32
-#define strdup(x) _strdup(x)
-#endif
 
 #pragma comment(lib, "Advapi32.lib")
 #pragma comment(lib, "Ole32.lib")
@@ -138,7 +135,7 @@ wchar_t *concat(wchar_t *a, wchar_t *b, wchar_t *c, wchar_t *d) {
     int len_d = 0;
     if (d) len_d = wcslen(d);
 
-    wchar_t *result = (wchar_t *)malloc((len_a + len_b + len_c + len_d + 1) * 2);
+    wchar_t *result = (wchar_t *)cuik_malloc((len_a + len_b + len_c + len_d + 1) * 2);
     memcpy(result, a, len_a*2);
     memcpy(result + len_a, b, len_b*2);
 
@@ -161,7 +158,7 @@ bool visit_files_w(wchar_t *dir_name, Version_Data *data, Visit_Proc_W proc) {
 
     wchar_t *wildcard_name = concat2(dir_name, L"\\*");
     HANDLE handle = FindFirstFileW(wildcard_name, &find_data);
-    free(wildcard_name);
+    cuik_free(wildcard_name);
 
     if (handle == INVALID_HANDLE_VALUE) return false;
 
@@ -190,7 +187,7 @@ wchar_t *find_windows_kit_root_with_key(HKEY key, wchar_t *version) {
     if (rc != 0)  return NULL;
 
     DWORD length = required_length + 2;  // The +2 is for the maybe optional zero later on. Probably we are over-allocating.
-    wchar_t *value = (wchar_t *)malloc(length * sizeof(wchar_t));
+    wchar_t *value = (wchar_t *)cuik_malloc(length * sizeof(wchar_t));
     if (!value) return NULL;
 
     rc = RegQueryValueExW(key, version, NULL, NULL, (LPBYTE)value, &length);  // We know that version is zero-terminated...
@@ -267,7 +264,7 @@ void find_windows_kit_root(Cuik_WindowsToolchain* result) {
 
         Version_Data data = {.best_name = result->windows_sdk_root};
         visit_files_w(windows10_lib, &data, win10_best);
-        free(windows10_lib);
+        cuik_free(windows10_lib);
 
         if (data.best_name[0]) {
             result->windows_sdk_version = 10;
@@ -278,7 +275,7 @@ void find_windows_kit_root(Cuik_WindowsToolchain* result) {
                 data.best_version[0], data.best_version[1],
                 data.best_version[2], data.best_version[3]);
 
-            free(windows10_root);
+            cuik_free(windows10_root);
             RegCloseKey(main_key);
             return;
         }
@@ -292,7 +289,7 @@ void find_windows_kit_root(Cuik_WindowsToolchain* result) {
 
         Version_Data data = {.best_name = result->windows_sdk_root};
         visit_files_w(windows8_lib, &data, win8_best);
-        free(windows8_lib);
+        cuik_free(windows8_lib);
 
         if (data.best_name[0]) {
             result->windows_sdk_version = 8;
@@ -303,16 +300,16 @@ void find_windows_kit_root(Cuik_WindowsToolchain* result) {
                 data.best_version[0], data.best_version[1],
                 data.best_version[2], data.best_version[3]);
 
-            free(windows10_root);
-            free(windows8_root);
+            cuik_free(windows10_root);
+            cuik_free(windows8_root);
             RegCloseKey(main_key);
             return;
         }
     }
 
     // If we get here, we failed to find anything.
-    free(windows10_root);
-    free(windows8_root);
+    cuik_free(windows10_root);
+    cuik_free(windows8_root);
     RegCloseKey(main_key);
 }
 
@@ -358,7 +355,7 @@ bool find_visual_studio_2017_by_fighting_through_microsoft_craziness(Cuik_Window
 
         FILE *f;
         errno_t open_result = _wfopen_s(&f, tools_filename, L"rt");
-        free(tools_filename);
+        cuik_free(tools_filename);
         if (open_result != 0) continue;
         if (!f) continue;
 
@@ -372,7 +369,7 @@ bool find_visual_studio_2017_by_fighting_through_microsoft_craziness(Cuik_Window
 
         // Warning: This multiplication by 2 presumes there is no variable-length encoding in the wchars (wacky characters in the file could betray this expectation).
         uint64_t version_bytes = (tools_file_size.QuadPart + 1) * 2;
-        wchar_t *version = (wchar_t *)malloc(version_bytes);
+        wchar_t *version = (wchar_t *)cuik_malloc(version_bytes);
 
         wchar_t *read_result = fgetws(version, version_bytes, f);
         fclose(f);
@@ -387,13 +384,13 @@ bool find_visual_studio_2017_by_fighting_through_microsoft_craziness(Cuik_Window
 
         if (os_file_exists(library_file)) {
             swprintf(result->vc_tools_install, MAX_PATH, L"%s\\VC\\Tools\\MSVC\\%s\\", bstr_inst_path, version);
-            free(version);
+            cuik_free(version);
 
             found_visual_studio_2017 = true;
             break;
         }
 
-        free(version);
+        cuik_free(version);
 
         /*
            Ryan Saunderson said:
@@ -446,7 +443,7 @@ void find_visual_studio_by_fighting_through_microsoft_craziness(Cuik_WindowsTool
             continue;
         }
 
-        wchar_t *buffer = (wchar_t *)malloc(cb_data);
+        wchar_t *buffer = (wchar_t *)cuik_malloc(cb_data);
         if (!buffer) return;
 
         rc = RegQueryValueExW(vs7_key, v, NULL, NULL, (LPBYTE)buffer, &cb_data);
@@ -459,17 +456,17 @@ void find_visual_studio_by_fighting_through_microsoft_craziness(Cuik_WindowsTool
         // Check to see whether a vcruntime.lib actually exists here.
         wchar_t *vcruntime_filename = concat2(result->vs_library_path, L"\\vcruntime.lib");
         bool vcruntime_exists = os_file_exists(vcruntime_filename);
-        free(vcruntime_filename);
+        cuik_free(vcruntime_filename);
 
         if (vcruntime_exists) {
             swprintf(result->vs_exe_path, MAX_PATH, L"%SVC\\bin\\amd64", buffer);
 
-            free(buffer);
+            cuik_free(buffer);
             RegCloseKey(vs7_key);
             return;
         }
 
-        free(buffer);
+        cuik_free(buffer);
     }
 
     RegCloseKey(vs7_key);
@@ -601,7 +598,7 @@ static bool invoke_link(void* ctx, const Cuik_CompilerArgs* args, Cuik_Linker* l
 }
 
 Cuik_Toolchain cuik_toolchain_msvc(void) {
-    Cuik_WindowsToolchain* result = malloc(sizeof(Cuik_WindowsToolchain));
+    Cuik_WindowsToolchain* result = cuik_malloc(sizeof(Cuik_WindowsToolchain));
     result->vc_tools_install[0] = 0;
 
     find_windows_kit_root(result);

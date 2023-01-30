@@ -61,7 +61,7 @@ TB_DebugType* cuik__as_tb_debug_type(TB_Module* mod, Cuik_Type* t) {
             size_t count = t->record.kid_count;
             const char* tag = t->record.name;
 
-            TB_DebugType** list = malloc(count * sizeof(TB_DebugType*));
+            TB_DebugType** list = cuik_malloc(count * sizeof(TB_DebugType*));
             TB_DebugType* rec = t->kind == KIND_STRUCT ? tb_debug_create_struct(mod, tag) : tb_debug_create_union(mod, tag);
             t->debug_type = rec;
 

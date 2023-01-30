@@ -1,4 +1,5 @@
 #include <cuik.h>
+#include <common.h>
 #include <threads.h>
 #include "driver_fs.h"
 #include "driver_arg_parse.h"
@@ -241,7 +242,7 @@ static void irgen(Cuik_IThreadpool* restrict thread_pool, Cuik_CompilerArgs* res
                 task_capacity += (c + (IRGEN_TASK_BATCH_SIZE - 1)) / IRGEN_TASK_BATCH_SIZE;
             }
 
-            IRGenTask* tasks = malloc(task_capacity * sizeof(IRGenTask));
+            IRGenTask* tasks = cuik_malloc(task_capacity * sizeof(IRGenTask));
             atomic_size_t tasks_remaining = task_capacity;
 
             size_t task_count = 0;
@@ -308,7 +309,7 @@ static void codegen(Cuik_IThreadpool* restrict thread_pool, Cuik_CompilerArgs* r
         size_t count = 0, capacity = (tb_module_get_function_count(mod) + TB_TASK_BATCH_SIZE - 1) / TB_TASK_BATCH_SIZE;
         atomic_size_t tasks_remaining = capacity;
 
-        CodegenTask* tasks = malloc(capacity * sizeof(CodegenTask));
+        CodegenTask* tasks = cuik_malloc(capacity * sizeof(CodegenTask));
         size_t i = 0;
         TB_FOR_FUNCTIONS(f, mod) {
             if ((i % TB_TASK_BATCH_SIZE) == 0) {
@@ -327,7 +328,7 @@ static void codegen(Cuik_IThreadpool* restrict thread_pool, Cuik_CompilerArgs* r
             CUIK_CALL(thread_pool, work_one_job);
         }
 
-        free(tasks);
+        cuik_free(tasks);
         #else
         fprintf(stderr, "Please compile with -DCUIK_ALLOW_THREADS if you wanna spin up threads");
         abort();
@@ -374,7 +375,7 @@ static bool export_output(Cuik_CompilerArgs* restrict args, TB_Module* mod, bool
     const char* output_name = args->output_name;
     if (output_name == NULL) {
         #if _WIN32
-        char* str = malloc(FILENAME_MAX);
+        char* str = cuik_malloc(FILENAME_MAX);
         sprintf_s(str, FILENAME_MAX, "%s.exe", output_path_no_ext);
         output_name = str;
         #else
@@ -498,7 +499,7 @@ int cuik_driver_compile(Cuik_IThreadpool* restrict thread_pool, Cuik_CompilerArg
     CUIK_TIMED_BLOCK("Frontend") {
         if (thread_pool != NULL) {
             size_t source_count = dyn_array_length(args->sources);
-            CompilerJob* jobs = malloc(source_count * sizeof(CompilerJob));
+            CompilerJob* jobs = cuik_malloc(source_count * sizeof(CompilerJob));
 
             dyn_array_for(i, args->sources) {
                 jobs[i] = (CompilerJob){
@@ -509,7 +510,7 @@ int cuik_driver_compile(Cuik_IThreadpool* restrict thread_pool, Cuik_CompilerArg
             }
 
             while (complete < source_count) thrd_yield();
-            free(jobs);
+            cuik_free(jobs);
         } else {
             dyn_array_for(i, args->sources) {
                 CompilerJob job = {
@@ -646,7 +647,7 @@ bool cuik_driver_get_output_name(Cuik_CompilerArgs* args, int cap, char path[]) 
 }
 
 CUIK_API void cuik_toolchain_free(Cuik_Toolchain* toolchain) {
-    free(toolchain->ctx);
+    cuik_free(toolchain->ctx);
 }
 
 CUIK_API Cuik_Toolchain cuik_toolchain_host(void) {
