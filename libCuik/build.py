@@ -5,11 +5,11 @@ import subprocess
 import argparse
 
 parser = argparse.ArgumentParser(description='Compiles TB')
-parser.add_argument('--usetb', action='store_true', help='compiles with the TB integration code')
-parser.add_argument('--opt', action='store_true', help='runs optimize on compiled source')
-parser.add_argument('--shared', action='store_true', help='compile shared object')
-parser.add_argument('--asan', action='store_true', help='compile with ASAN')
-parser.add_argument('--autospall', action='store_true', help='instrument code with SpallAuto')
+parser.add_argument('-usetb', action='store_true', help='compiles with the TB integration code')
+parser.add_argument('-opt', action='store_true', help='runs optimize on compiled source')
+parser.add_argument('-shared', action='store_true', help='compile shared object')
+parser.add_argument('-asan', action='store_true', help='compile with ASAN')
+parser.add_argument('-autospall', action='store_true', help='instrument code with SpallAuto')
 
 args = parser.parse_args()
 
@@ -28,17 +28,10 @@ ninja = open('build.ninja', 'w')
 cflags = "-g -I ../common/ -I include -I lib -I deps -Wall -Werror -Wno-unused-function -Wno-unused-variable"
 cflags += " -DCUIK_ALLOW_THREADS"
 
-if args.shared:
-	cflags += " -DCUIK_USE_DLL"
-
-if args.opt:
-	cflags += " -O2 -DNDEBUG"
-
-if args.asan:
-	cflags += " -fsanitize=address"
-
-if args.usetb:
-	cflags += " -I ../tilde-backend/include -DCUIK_USE_TB"
+if args.shared: cflags += " -DCUIK_USE_DLL"
+if args.opt:    cflags += " -O2 -DNDEBUG"
+if args.asan:   cflags += " -fsanitize=address"
+if args.usetb:  cflags += " -I ../tilde-backend/include -DCUIK_USE_TB"
 
 if args.autospall:
 	cflags += " -finstrument-functions"

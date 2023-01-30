@@ -14,7 +14,7 @@ thread_local static Atom* interner;
 
 // murmur3 32-bit without UB unaligned accesses
 // https://github.com/demetri/scribbles/blob/master/hashing/ub_aware_hash_functions.c
-static uint64_t hash_ident(const void* key, size_t len) {
+static uint32_t hash_ident(const void* key, size_t len) {
     uint32_t h = 0;
 
     // main body, work on 32-bit blocks at a time
@@ -54,11 +54,11 @@ Atom atoms_put(size_t len, const unsigned char* str) {
         interner = cuik__valloc(sizeof(Atom) * (1u << INTERNER_EXP));
     }
 
-    uint64_t hash = hash_ident(str, len);
+    uint32_t hash = hash_ident(str, len);
     for (size_t i = hash;;) {
         // hash table lookup
         uint32_t mask = (1 << INTERNER_EXP) - 1;
-        uint32_t step = (hash >> (64 - INTERNER_EXP)) | 1;
+        uint32_t step = (hash >> (32 - INTERNER_EXP)) | 1;
         i = (i + step) & mask;
 
         if (interner[i] == NULL) {

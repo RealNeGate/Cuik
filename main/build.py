@@ -7,28 +7,29 @@ import subprocess
 import argparse
 
 parser = argparse.ArgumentParser(description='Compiles libCuik')
-parser.add_argument('--opt', action='store_true', help='runs optimize on compiled source')
-parser.add_argument('--asan', action='store_true', help='instrument code with the AddressSanitizer')
-parser.add_argument('--autospall', action='store_true', help='instrument code with SpallAuto')
+parser.add_argument('-opt', action='store_true', help='runs optimize on compiled source')
+parser.add_argument('-asan', action='store_true', help='instrument code with the AddressSanitizer')
+parser.add_argument('-autospall', action='store_true', help='instrument code with SpallAuto')
 args = parser.parse_args()
+args.opt = True
 
 #######################################
 # Handle dependencies
 #######################################
 tb_args = [sys.executable, 'build.py', 'x64', 'aarch64', 'wasm']
-libcuik_args = [sys.executable, 'build.py', '--usetb']
+libcuik_args = [sys.executable, 'build.py', '-usetb']
 
 if args.opt:
-	tb_args.append('--opt')
-	libcuik_args.append('--opt')
+	tb_args.append('-opt')
+	libcuik_args.append('-opt')
 
 if args.asan:
-	tb_args.append('--asan')
-	libcuik_args.append('--asan')
+	tb_args.append('-asan')
+	libcuik_args.append('-asan')
 
 if args.autospall:
-	tb_args.append('--autospall')
-	libcuik_args.append('--autospall')
+	tb_args.append('-autospall')
+	libcuik_args.append('-autospall')
 
 subprocess.check_call(tb_args, shell=True, cwd="../tilde-backend")
 subprocess.check_call(libcuik_args, shell=True, cwd="../libCuik")
@@ -46,7 +47,7 @@ else:
 
 cflags = "-g -Wall -Werror -Wno-unused-function"
 cflags += " -I ../common/ -I ../libCuik/include -I ../tilde-backend/include"
-cflags += " -DCUIK_USE_TB "
+cflags += " -DCUIK_USE_TB"
 cflags += " -DCUIK_ALLOW_THREADS"
 
 if args.asan:
@@ -68,7 +69,7 @@ if system == "Windows":
 	exe_ext = ".exe"
 	cflags += " -I ../c11threads -D_CRT_SECURE_NO_WARNINGS"
 	# when we're not doing ASAN, we should be using mimalloc
-	if False: # not args.asan:
+	if True: # not args.asan:
 		cflags += " -D_DLL"
 		ldflags += " ../mimalloc/out/Release/mimalloc.lib -Xlinker /include:mi_version"
 		ldflags += " -nodefaultlibs -lmsvcrt -lvcruntime -lucrt"
