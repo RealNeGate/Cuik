@@ -1,0 +1,20 @@
+BasedOnStyle: WebKit
+IndentWidth: 4
+TabWidth: 4
+ColumnLimit: 0
+PointerAlignment: Left
+
+AlignTrailingComments: true
+AlignOperands: false
+AlignConsecutiveAssignments: false
+AlignConsecutiveMacros: false
+AlignConsecutiveDeclarations: false
+AlignEscapedNewlinesLeft: false
+
+BreakBeforeBraces: Attach
+BreakBeforeBinaryOperators: None
+AllowShortCaseLabelsOnASingleLine: true
+AllowShortIfStatementsOnASingleLine: Always
+AllowShortEnumsOnASingleLine: false
+
+SortIncludes: false

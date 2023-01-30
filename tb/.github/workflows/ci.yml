@@ -1,0 +1,86 @@
+name: CI
+on: [pull_request, workflow_dispatch, push]
+
+jobs:
+  build_windows_clang:
+    runs-on: windows-2019
+    steps:
+      - uses: actions/checkout@v1
+      - uses: seanmiddleditch/gha-setup-ninja@master
+
+      - name: Download Submodules
+        run: git submodule update --init --recursive
+
+      - name: Build TB
+        shell: cmd
+        run: |
+          call "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\VC\Auxiliary\Build\vcvars64.bat
+          py build.py -opt x64 aarch64 wasm
+        timeout-minutes: 10
+
+      - name: upload artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: tb-windows
+          path: tildebackend.lib
+  build_windows_msvc:
+    runs-on: windows-2019
+    steps:
+      - uses: actions/checkout@v1
+      - uses: seanmiddleditch/gha-setup-ninja@master
+
+      - name: Download Submodules
+        run: git submodule update --init --recursive
+
+      - name: Build TB
+        shell: cmd
+        run: |
+          call "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\VC\Auxiliary\Build\vcvars64.bat
+          py build.py -opt x64 aarch64 wasm -cc=cl
+        timeout-minutes: 10
+  build_mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v1
+      - uses: seanmiddleditch/gha-setup-ninja@master
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Download LLVM
+        run: |
+          brew update
+          brew install llvm@14
+
+      - name: Download Submodules
+        run: git submodule update --init --recursive
+
+      - name: Build TB
+        run: python3 build.py -opt x64 aarch64 wasm
+        timeout-minutes: 10
+
+      - name: upload artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: tb-macos
+          path: tildebackend.a
+  build_linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v1
+      - uses: seanmiddleditch/gha-setup-ninja@master
+      - name: Download LLVM
+        run: sudo apt-get install llvm-11 clang-11
+
+      - name: Download Submodules
+        run: git submodule update --init --recursive
+
+      - name: Build TB
+        run: python build.py -opt x64 aarch64 wasm
+        timeout-minutes: 10
+
+      - name: upload artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: tb-linux
+          path: tildebackend.a

@@ -1,0 +1,102 @@
+Figure out what to do with this code snippet
+
+
+        if (n->type == TB_LABEL) {
+            if (f->nodes[n->label.terminator].type == TB_GOTO) {
+                TB_Reg target_reg = tb_find_reg_from_label(f, f->nodes[n->label.terminator].goto_.label);
+                TB_Node* target = &f->nodes[target_reg];
+
+                if (tb_node_is_phi_node(f, target->next)) {
+                    //  goto Lx <-- we can jump thread this
+                    //  ...
+                    // Lx:
+                    //  a = i1 1
+                    //  goto Ly
+                    // Ly:
+                    //  ...
+                    // Lz:
+                    //  merge = phi(Lx:a, Lz:b)
+                    //  if (merge) Li else Lj
+                    TB_Node* if_node = &f->nodes[f->nodes[target->next].next];
+                    if (if_node->type == TB_IF && if_node->if_.cond == target->next) {
+                        int count = tb_node_get_phi_width(f, target->next);
+                        TB_PhiInput* inputs = tb_node_get_phi_inputs(f, target->next);
+
+                        int input_slot = -1;
+                        loop(j, count) {
+                            if (inputs[j].label == i) {
+                                input_slot = j;
+                                break;
+                            }
+                        }
+
+                        TB_Reg match = input_slot >= 0 ? inputs[input_slot].val : TB_NULL_REG;
+                        if (f->nodes[match].type == TB_INTEGER_CONST) {
+                            OPTIMIZER_LOG(i, "jump threading through PHI node");
+
+                            // remove this from the inputs list
+                            switch (f->nodes[match].type) {
+                                case TB_PHI1: tb_murder_node(f, &f->nodes[match]); break;
+                                case TB_PHI2: f->nodes[match].type = TB_PHI1; break;
+                                case TB_PHIN: f->nodes[match].phi.count -= 1; break;
+                                default: break;
+                            }
+
+                            // remove swap amirite
+                            if (count == 1) {
+                                OPTIMIZER_LOG(match, "due to jump threading, PHI node became PASS due to only having a single pred");
+                                TB_Reg src = inputs[input_slot].val;
+
+                                f->nodes[match].type = TB_PASS;
+                                f->nodes[match].pass.value = src;
+                            } else if (count > 1) {
+                                inputs[input_slot] = inputs[count-1];
+                            }
+
+                            // fold original GOTO
+                            TB_Label new_target = !tb_node_is_constant_zero(f, match) ?
+                                if_node->if_.if_true : if_node->if_.if_false;
+
+                            f->nodes[n->label.terminator].goto_.label = new_target;
+                            changes++;
+
+                            // just don't run the stuff below, move on...
+                            continue;
+                        }
+                    }
+                }
+            }
+
+            TB_Node* end = f->nodes;
+            TB_Reg bb_start = 0;
+            TB_Reg bb_end = 0;
+
+            // Find sequence of labels
+            int count = 0;
+            {
+                TB_Node* seq = n;
+                while (seq = &f->nodes[seq->next],
+                    seq->type == TB_LABEL && seq != end) {
+                    bb_end = seq->label.terminator;
+                    count += 1;
+                }
+
+                bb_start = (seq - f->nodes);
+            }
+
+            if (count > 0) {
+                TB_Label label = n->label.id;
+
+                TB_Node* seq = &f->nodes[n->next];
+                do {
+                    OPTIMIZER_LOG(i, "merge labels r%d", (TB_Reg)(seq - f->nodes));
+                    replace_label(f, seq, label, i);
+                    seq = &f->nodes[seq->next];
+                } while (seq->type == TB_LABEL && seq != end);
+
+                assert(bb_end >= 0);
+                n->next = bb_start;
+                n->label.terminator = bb_end;
+                changes++;
+            }
+        }

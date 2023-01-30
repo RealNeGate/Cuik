@@ -82,6 +82,11 @@ ninja.write(f"""
 cflags = {cflags}
 ldflags = {ldflags}
 
+rule mimalloc
+  depfile = $out.d
+  command = clang $in -I ../mimalloc/include -g -O2 -MD -MF $out.d -c -o $out
+  description = MIMALLOC $in $out
+
 rule cc
   depfile = $out.d
   command = clang $in $cflags -MD -MF $out.d -c -o $out
@@ -97,9 +102,6 @@ rule link
 objs = []
 list = [ "src/main_driver.c" ]
 
-# mimalloc unity build
-list.append("../mimalloc/src/static.c")
-
 if system == "Windows":
 	list.append("../c11threads/threads_msvc.c")
 elif system == "Darwin":
@@ -109,6 +111,9 @@ for f in list:
 	obj = os.path.basename(f).replace('.c', '.o')
 	ninja.write(f"build bin/{obj}: cc {f}\n")
 	objs.append("bin/"+obj)
+
+ninja.write(f"build bin/mimalloc.o: mimalloc ../mimalloc/src/static.c\n")
+objs.append("bin/mimalloc.o")
 
 ninja.write(f"build cuik{exe_ext}: link {' '.join(objs)} ../libCuik/libcuik{lib_ext} ../tilde-backend/tildebackend{lib_ext}\n")
 ninja.close()

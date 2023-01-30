@@ -1,0 +1,57 @@
+name: Deploy
+on: [workflow_dispatch]
+
+jobs:
+  build_windows:
+    runs-on: windows-2019
+    steps:
+      - uses: actions/checkout@v1
+      - uses: seanmiddleditch/gha-setup-ninja@master
+
+      - name: Download Submodules
+        run: git submodule update --init --recursive
+
+      - name: Build TB
+        shell: cmd
+        run: |
+          call "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\VC\Auxiliary\Build\vcvars64.bat
+          py build.py x64 aarch64 wasm
+        timeout-minutes: 10
+
+      - name: Copy artifacts
+        run: |
+          mkdir dist
+          cp include dist
+          cp -r tildebackend.lib dist
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v1
+        with:
+          name: windows_artifacts
+          path: dist
+  build_linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v1
+      - uses: seanmiddleditch/gha-setup-ninja@master
+      - name: Download LLVM
+        run: sudo apt-get install llvm-11 clang-11
+
+      - name: Download Submodules
+        run: git submodule update --init --recursive
+
+      - name: Build TB
+        run: python3 build.py x64 aarch64 wasm
+        timeout-minutes: 10
+
+      - name: Copy artifacts
+        run: |
+          mkdir dist
+          cp include dist
+          cp -r tildebackend.a dist
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v1
+        with:
+          name: ubuntu_artifacts
+          path: dist
