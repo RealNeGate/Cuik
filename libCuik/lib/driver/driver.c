@@ -2,6 +2,7 @@
 #include <common.h>
 #include <threads.h>
 #include "driver_fs.h"
+#include "driver_opts.h"
 #include "driver_arg_parse.h"
 #include "../file_map.h"
 
@@ -558,12 +559,18 @@ int cuik_driver_compile(Cuik_IThreadpool* restrict thread_pool, Cuik_CompilerArg
             cuik_destroy_compilation_unit(&compilation_unit);
         }
 
-        /*if (dyn_array_length(da_passes) != 0) {
+        if (args->opt_level >= 1) {
             // TODO: we probably want to do the fancy threading soon
             CUIK_TIMED_BLOCK("Optimizer") {
-                tb_module_optimize(mod, dyn_array_length(da_passes), da_passes);
+                size_t pass_count = COUNTOF(passes_O1);
+                TB_Pass* passes = cuik_malloc(pass_count * sizeof(TB_Pass));
+                for (size_t i = 0; i < pass_count; i++) {
+                    passes[i] = passes_O1[i]();
+                }
+
+                tb_module_optimize(mod, pass_count, passes);
             }
-        }*/
+        }
 
         if (args->ir) {
             TB_FOR_FUNCTIONS(f, mod) {

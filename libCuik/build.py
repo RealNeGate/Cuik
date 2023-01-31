@@ -36,7 +36,7 @@ if args.asan:     cflags += " -fsanitize=address"
 if args.usetb:    cflags += " -I ../tb/include -DCUIK_USE_TB"
 
 if args.autospall:
-	cflags += " -finstrument-functions"
+	cflags += " -finstrument-functions-after-inlining"
 
 os_name = platform.system()
 if os_name == "Windows":
@@ -66,7 +66,7 @@ rule cc
   description = CC $in $out
 
 rule lexgen
-  command = cmd /c clang $in $cflags -o lg{exe_ext} && lg $out
+  command = cmd /c clang $in -o lg{exe_ext} && lg $out
   description = LEXGEN $in $out
 
 rule shared_obj

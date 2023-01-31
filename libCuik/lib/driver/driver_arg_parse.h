@@ -214,6 +214,7 @@ int cuik_parse_arg(Cuik_CompilerArgs* args, int argc, const char* argv[]) {
             }
             break;
         }
+        case ARG_OPTLVL: args->opt_level = atoi(arg.value); break;
         case ARG_OUTPUT: args->output_name = arg.value; break;
         case ARG_OBJECT: args->flavor = TB_FLAVOR_OBJECT; break;
         case ARG_PP: args->preprocess = true; break;

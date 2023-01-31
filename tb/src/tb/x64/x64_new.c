@@ -180,7 +180,7 @@ static size_t x64v2_resolve_stack_usage(Ctx* restrict ctx, TB_Function* f, size_
     if (usage > 16) {
         usage = align_up(usage + 8, 16) + 8;
     } else {
-        usage = 8;
+        usage = 0;
     }
 
     return usage;
@@ -306,6 +306,16 @@ static void x64v2_initial_reg_alloc(Ctx* restrict ctx) {
 
     set_put(&ctx->free_regs[0], RBP);
     set_put(&ctx->free_regs[0], RSP);
+    ctx->active[0] = 0, ctx->active[1] = 0;
+    ctx->active_count += 2;
+}
+
+static GAD_VAL x64v2_phi_alloc(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
+    if (f->nodes[r].dt.type == TB_FLOAT) {
+        return GAD_FN(regalloc)(ctx, f, r, X64_REG_CLASS_XMM);
+    } else {
+        return GAD_FN(regalloc)(ctx, f, r, X64_REG_CLASS_GPR);
+    }
 }
 
 static GAD_VAL x64v2_cond_to_reg(Ctx* restrict ctx, TB_Function* f, TB_Reg r, int cc) {
@@ -434,26 +444,24 @@ static void x64v2_store(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
     TB_Node* restrict n = &f->nodes[r];
 
     GAD_VAL addr = ctx->values[n->store.address];
+    GAD_VAL* src = &ctx->values[n->store.value];
     if (addr.is_spill) {
         // restore from spill
-        tb_todo();
-        /*GAD_VAL tmp = GAD_FN(alloc_reg)(ctx, f, X64_REG_CLASS_GPR, TB_TEMP_REG);
+        GAD_VAL tmp = GAD_FN(regalloc)(ctx, f, X64_REG_CLASS_GPR, r);
         INST2(MOV, &tmp, &addr, TB_TYPE_PTR);
 
         addr = val_base_disp(TB_TYPE_PTR, tmp.gpr, 0);
-        addr.is_spill = true;*/
+        addr.is_spill = true;
     } else if (addr.type == VAL_GPR) {
         addr = val_base_disp(TB_TYPE_PTR, addr.gpr, 0);
     }
 
     LegalInt l = legalize_int(n->dt);
-    GAD_VAL* src = &ctx->values[n->store.value];
-
     if (l.mask) x64v2_mask_out(ctx, f, l, src);
     INST2(MOV, &addr, src, l.dt);
 
     if (addr.is_spill) {
-        tb_assert_once("Freeing temporary register in addr.mem.base");
+        // tb_assert_once("Freeing temporary register in addr.mem.base");
     }
 }
 
@@ -781,24 +789,24 @@ static Val x64v2_eval(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
 
         case TB_ARRAY_ACCESS: {
             uint32_t stride = n->array_access.stride;
-            GAD_VAL index = ctx->values[n->array_access.index];
+            GAD_VAL* index = &ctx->values[n->array_access.index];
 
             // if it's an LEA index*stride
             // then stride > 0, if not it's free
             // do think of it however
             uint8_t stride_as_shift = 0;
 
-            GAD_VAL dst = GAD_FN(regalloc)(ctx, f, r, X64_REG_CLASS_GPR);
+            GAD_VAL dst;
             bool written_to_dst = false;
-
             if (tb_is_power_of_two(stride)) {
                 stride_as_shift = tb_ffs(stride) - 1;
 
                 if (stride_as_shift > 3) {
                     assert(stride_as_shift < 64 && "Stride to big!!!");
+                    dst = GAD_FN(regalloc)(ctx, f, r, X64_REG_CLASS_GPR);
                     written_to_dst = true;
 
-                    INST2(MOV, &dst, &index, TB_TYPE_PTR);
+                    INST2(MOV, &dst, index, TB_TYPE_PTR);
 
                     // shl index, stride_as_shift
                     EMIT1(&ctx->emit, rex(true, 0, dst.gpr, 0));
@@ -809,12 +817,13 @@ static Val x64v2_eval(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
                     stride_as_shift = 0; // pre-multiplied, don't propagate
                 }
             } else {
+                dst = GAD_FN(regalloc)(ctx, f, r, X64_REG_CLASS_GPR);
                 written_to_dst = true;
 
                 // imul dst, index, stride
-                EMIT1(&ctx->emit, rex(true, dst.gpr, index.gpr, 0));
+                EMIT1(&ctx->emit, rex(true, dst.gpr, index->gpr, 0));
                 EMIT1(&ctx->emit, 0x69);
-                EMIT1(&ctx->emit, mod_rx_rm(MOD_DIRECT, dst.gpr, index.gpr));
+                EMIT1(&ctx->emit, mod_rx_rm(MOD_DIRECT, dst.gpr, index->gpr));
                 EMIT4(&ctx->emit, stride);
 
                 stride_as_shift = 0; // pre-multiplied, don't propagate
@@ -828,17 +837,22 @@ static Val x64v2_eval(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
             assert(base.type == VAL_GPR);
 
             if (stride_as_shift) {
-                GAD_VAL addr = val_base_index(TB_TYPE_PTR, base.gpr, written_to_dst ? dst.gpr : index.gpr, stride_as_shift);
+                GAD_VAL addr = val_base_index(TB_TYPE_PTR, base.gpr, written_to_dst ? dst.gpr : index->gpr, stride_as_shift);
+                addr.mem.is_rvalue = false;
 
-                // INST2(LEA, &dst, &addr, TB_TYPE_PTR);
-                return addr;
+                if (written_to_dst) {
+                    INST2(LEA, &dst, &addr, TB_TYPE_PTR);
+                    return dst;
+                } else {
+                    return (ctx->values[r] = addr);
+                }
             } else {
                 if (written_to_dst) {
                     INST2(ADD, &dst, &base, TB_TYPE_PTR);
                 } else {
                     // tb_assert_once("does this path get hit?");
                     // INST2(LEA, &dst, &addr, TB_TYPE_PTR);
-                    return val_base_index(TB_TYPE_PTR, base.gpr, index.gpr, SCALE_X1);
+                    return val_base_index(TB_TYPE_PTR, base.gpr, index->gpr, SCALE_X1);
                 }
                 return dst;
             }
@@ -874,7 +888,10 @@ static Val x64v2_eval(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
             GAD_VAL dst = GAD_FN(regalloc)(ctx, f, r, X64_REG_CLASS_GPR);
             GAD_VAL src = ctx->values[n->unary.src];
 
-            INST2(MOV, &dst, &src, n->dt);
+            if (dst.type != src.type || dst.reg != src.reg) {
+                INST2(MOV, &dst, &src, n->dt);
+            }
+
             INST1(type == TB_NOT ? NOT : NEG, &dst);
             return dst;
         }
