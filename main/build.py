@@ -11,7 +11,7 @@ parser.add_argument('-opt', action='store_true', help='runs optimize on compiled
 parser.add_argument('-asan', action='store_true', help='instrument code with the AddressSanitizer')
 parser.add_argument('-autospall', action='store_true', help='instrument code with SpallAuto')
 args = parser.parse_args()
-args.opt = True
+args.opt = False
 
 #######################################
 # Handle dependencies
@@ -61,7 +61,7 @@ if args.opt:
 	cflags  += " -O2 -DNDEBUG"
 
 if args.autospall:
-	cflags += " -DCUIK_USE_SPALL_AUTO -finstrument-functions"
+	cflags += " -DCUIK_USE_SPALL_AUTO -finstrument-functions-after-inlining"
 
 # windows' CRT doesn't support c11 threads so we provide a fallback
 if system == "Windows":

@@ -47,7 +47,7 @@ else:
 	if args.mimalloc: cflags += " -I ../mimalloc/include -DTB_USE_MIMALLOC"
 	if args.luajit: cflags += " -DTB_USE_LUAJIT -I deps/luajit/src"
 	if args.opt: cflags += " -O2 -DNDEBUG"
-	if args.autospall: cflags += " -finstrument-functions"
+	if args.autospall: cflags += " -finstrument-functions-after-inlining"
 
 os_name = platform.system()
 if os_name == "Windows": cflags += " -D_CRT_SECURE_NO_WARNINGS"

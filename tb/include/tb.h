@@ -1277,6 +1277,8 @@ extern "C" {
     ////////////////////////////////
     // Transformation pass library
     ////////////////////////////////
+    typedef TB_Pass(*TB_OptFn)(void);
+
     // function level
     TB_API TB_Pass tb_opt_hoist_locals(void);
     TB_API TB_Pass tb_opt_merge_rets(void);

@@ -168,6 +168,7 @@ static FunctionTallySimple tally_memory_usage_simple(TB_Function* restrict f) {
 // user-defined forward decls
 static size_t GAD_FN(resolve_stack_usage)(Ctx* restrict ctx, TB_Function* f, size_t stack_usage, size_t caller_usage);
 static void GAD_FN(resolve_local_patches)(Ctx* restrict ctx, TB_Function* f);
+static GAD_VAL GAD_FN(phi_alloc)(Ctx* restrict ctx, TB_Function* f, TB_Reg r);
 static void GAD_FN(call)(Ctx* restrict ctx, TB_Function* f, TB_Reg r);
 static void GAD_FN(store)(Ctx* restrict ctx, TB_Function* f, TB_Reg r);
 static void GAD_FN(spill)(Ctx* restrict ctx, TB_Function* f, GAD_VAL* dst_val, GAD_VAL* src_val);
@@ -394,9 +395,11 @@ static void GAD_FN(eval_bb_edge)(Ctx* restrict ctx, TB_Function* f, TB_Label fro
             int count = tb_node_get_phi_width(f, r);
             TB_PhiInput* inputs = tb_node_get_phi_inputs(f, r);
 
+            GAD_FN(regalloc_step)(ctx, f, r);
+
             // if the destination is not initialized, do that
             if (ctx->values[r].type == 0) {
-                GAD_FN(regalloc_step)(ctx, f, r);
+                ctx->values[r] = GAD_FN(phi_alloc)(ctx, f, r);
             }
 
             FOREACH_N(j, 0, count) {
@@ -612,9 +615,8 @@ static TB_FunctionOutput GAD_FN(compile_function)(TB_Function* restrict f, const
         }
 
         // Linear scan
-        GAD_FN(initial_reg_alloc)(ctx);
-
         ctx->active = tb_platform_heap_alloc(f->node_count * sizeof(TB_Reg));
+        GAD_FN(initial_reg_alloc)(ctx);
         GAD_FN(resolve_params)(ctx, f, ctx->values);
     }
 

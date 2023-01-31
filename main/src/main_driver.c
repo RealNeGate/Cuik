@@ -106,9 +106,11 @@ int main(int argc, const char** argv) {
     };
     cuik_parse_args(&args, argc - 1, argv + 1);
 
+    int status = EXIT_SUCCESS;
     if (dyn_array_length(args.sources) == 0) {
         fprintf(stderr, "error: no input files!\n");
-        return EXIT_FAILURE;
+        status = EXIT_FAILURE;
+        goto done;
     }
 
     if (args.time) {
@@ -147,7 +149,6 @@ int main(int argc, const char** argv) {
         return EXIT_SUCCESS;
     }
 
-    int status = 0;
     if (args.live) {
         LiveCompiler l;
         do {
@@ -202,6 +203,7 @@ int main(int argc, const char** argv) {
 
     if (args.time) cuikperf_stop();
 
+    done:
     #ifdef CUIK_USE_SPALL_AUTO
     spall_auto_thread_quit();
     spall_auto_quit();
