@@ -234,19 +234,8 @@ static DirectiveResult cpp__define(Cuik_CPP* restrict ctx, CPPStackSlot* restric
         }
     }
 
-    uint64_t hash = hash_ident(key.content.data, key.content.length);
-    uint64_t e = ctx->macro_bucket_count[hash] + (hash * SLOTS_PER_MACRO_BUCKET);
-
-    // Insert into buckets
-    if (ctx->macro_bucket_count[hash] >= SLOTS_PER_MACRO_BUCKET) {
-        SourceRange r = { key_loc, get_end_location(&key) };
-        diag_err(&ctx->tokens, r, "too many macros, out of memory!");
-        return DIRECTIVE_ERROR;
-    }
-
-    ctx->macro_bucket_count[hash] += 1;
-    ctx->macro_bucket_keys[e] = key.content.data;
-    ctx->macro_bucket_keys_length[e] = key.content.length;
+    size_t i = insert_symtab(ctx, key.content.length, (const char*) key.content.data);
+    ctx->macros.keys[i] = key.content;
 
     // if there's a parenthesis directly after the identifier
     // it's a macro function... yes this is an purposeful off-by-one
@@ -279,9 +268,7 @@ static DirectiveResult cpp__define(Cuik_CPP* restrict ctx, CPPStackSlot* restric
 
     SourceLoc loc = peek(in).location;
     String value = get_pp_tokens_until_newline(ctx, in);
-    ctx->macro_bucket_values_start[e] = value.data;
-    ctx->macro_bucket_values_end[e] = value.data + value.length;
-    ctx->macro_bucket_source_locs[e] = loc;
+    ctx->macros.vals[i] = (MacroDef){ value, loc };
     return DIRECTIVE_SUCCESS;
 }
 

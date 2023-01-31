@@ -1,9 +1,6 @@
-#ifdef _WIN32
-#define strdup(s) _strdup(s)
-#endif
 
 CUIK_API void cuikpp_add_include_directory(Cuik_CPP* ctx, bool is_system, const char dir[]) {
-    Cuik_IncludeDir idir = { is_system, strdup(dir) };
+    Cuik_IncludeDir idir = { is_system, cuik_strdup(dir) };
     dyn_array_put(ctx->system_include_dirs, idir);
 }
 
@@ -57,41 +54,32 @@ CUIK_API size_t cuikpp_get_include_dir_count(Cuik_CPP* ctx) {
 }
 
 Cuik_DefineIter cuikpp_first_define(Cuik_CPP* ctx) {
-    for (int i = 0; i < MACRO_BUCKET_COUNT; i++) {
-        if (ctx->macro_bucket_count[i] != 0) {
-            // first slot in that non-empty bucket
-            return (Cuik_DefineIter){ .bucket = i, .id = 0 };
+    size_t cap = 1u << ctx->macros.exp;
+    for (size_t i = 0; i < cap; i++) {
+        if (ctx->macros.keys[i].length != 0 && ctx->macros.keys[i].length != MACRO_DEF_TOMBSTONE) {
+            return (Cuik_DefineIter){ .index = i };
         }
     }
 
-    return (Cuik_DefineIter){ .bucket = MACRO_BUCKET_COUNT, .id = 0 };
+    return (Cuik_DefineIter){ .index = 0 };
 }
 
 bool cuikpp_next_define(Cuik_CPP* ctx, Cuik_DefineIter* it) {
-    // we outta bounds
-    if (it->bucket >= MACRO_BUCKET_COUNT) return false;
+    size_t cap = 1u << ctx->macros.exp;
+    size_t e = it->index;
+    if (e >= cap) return false;
 
-    // find next bucket
-    it->id += 1;
-    while (it->id >= ctx->macro_bucket_count[it->bucket]) {
-        it->id = 0;
-        it->bucket += 1;
+    it->loc = ctx->macros.vals[e].loc;
+    it->key = ctx->macros.keys[e];
+    it->value = ctx->macros.vals[e].value;
 
-        if (it->bucket >= MACRO_BUCKET_COUNT) {
-            return false;
+    for (size_t i = it->index + 1; i < cap; i++) {
+        if (ctx->macros.keys[i].length != 0 && ctx->macros.keys[i].length != MACRO_DEF_TOMBSTONE) {
+            it->index = i;
+            break;
         }
     }
 
-    size_t e = (it->bucket * SLOTS_PER_MACRO_BUCKET) + it->id;
-
-    size_t keylen = ctx->macro_bucket_keys_length[e];
-    const unsigned char* key = ctx->macro_bucket_keys[e];
-
-    size_t vallen = ctx->macro_bucket_values_end[e] - ctx->macro_bucket_values_start[e];
-    const unsigned char* val = ctx->macro_bucket_values_start[e];
-
-    it->loc = ctx->macro_bucket_source_locs[e];
-    it->key = (String){ keylen, key };
-    it->value = (String){ vallen, val };
+    it->index = cap;
     return true;
 }

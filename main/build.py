@@ -84,7 +84,7 @@ ldflags = {ldflags}
 
 rule mimalloc
   depfile = $out.d
-  command = clang $in -I ../mimalloc/include -g -O2 -MD -MF $out.d -c -o $out
+  command = clang $in -I ../mimalloc/include -DMI_SECURE=1 -g -O2 -MD -MF $out.d -c -o $out
   description = MIMALLOC $in $out
 
 rule cc

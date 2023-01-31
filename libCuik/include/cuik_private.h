@@ -1,10 +1,9 @@
 // I'd recommend not messing with the internals
 // here...
-#define SLOTS_PER_MACRO_BUCKET 256
-#define MACRO_BUCKET_COUNT 4096
-
 #define THE_SHTUFFS_SIZE (32 << 20)
 #define CUIK__CPP_STATS 0
+
+#define MACRO_DEF_TOMBSTONE SIZE_MAX
 
 typedef struct PragmaOnceEntry {
     char* key;
@@ -14,6 +13,11 @@ typedef struct PragmaOnceEntry {
 enum {
     CPP_MAX_SCOPE_DEPTH = 4096,
 };
+
+typedef struct {
+    String value;
+    SourceLoc loc;
+} MacroDef;
 
 struct Cuik_CPP {
     // used to store macro expansion results
@@ -66,13 +70,11 @@ struct Cuik_CPP {
     // how deep into directive scopes (#if, #ifndef, #ifdef) is it
     int depth;
 
-    // TODO(NeGate): Remove this and put a proper hash map or literally anything else PLEASE
-    const unsigned char** macro_bucket_keys;
-    size_t* macro_bucket_keys_length;
-    const unsigned char** macro_bucket_values_start;
-    const unsigned char** macro_bucket_values_end;
-    SourceLoc* macro_bucket_source_locs;
-    int macro_bucket_count[MACRO_BUCKET_COUNT];
+    struct {
+        size_t exp, len;
+        String* keys;   // [1 << exp]
+        MacroDef* vals; // [1 << exp]
+    } macros;
 
     // tells you if the current scope has had an entry evaluated,
     // this is important for choosing when to check #elif and #endif

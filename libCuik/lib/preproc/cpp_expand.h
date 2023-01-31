@@ -447,10 +447,10 @@ static bool expand_ident(Cuik_CPP* restrict c, TokenList* restrict out_tokens, T
     } else {
         size_t def_i;
         if (find_define(c, &def_i, token_data, token_length)) {
-            String def = string_from_range(c->macro_bucket_values_start[def_i], c->macro_bucket_values_end[def_i]);
+            String def = c->macros.vals[def_i].value;
+            SourceLoc def_site = c->macros.vals[def_i].loc;
 
             // create macro invoke site
-            SourceLoc def_site = c->macro_bucket_source_locs[def_i];
             uint32_t macro_id = dyn_array_length(c->tokens.invokes);
             dyn_array_put(c->tokens.invokes, (MacroInvoke){
                     .name      = t.content,
@@ -459,7 +459,7 @@ static bool expand_ident(Cuik_CPP* restrict c, TokenList* restrict out_tokens, T
                     .call_site = t.location,
                 });
 
-            const unsigned char* args = c->macro_bucket_keys[def_i] + c->macro_bucket_keys_length[def_i];
+            const unsigned char* args = c->macros.keys[def_i].data + c->macros.keys[def_i].length;
 
             // Some macros immediately alias others so this is supposed to avoid the
             // heavier costs... but it's broken rn
@@ -475,12 +475,9 @@ static bool expand_ident(Cuik_CPP* restrict c, TokenList* restrict out_tokens, T
 
                 if (t.type == TOKEN_IDENTIFIER && def.length == t.content.length) {
                     if (find_define(c, &def_i, t.content.data, t.content.length)) {
-                        def = string_from_range(
-                            c->macro_bucket_values_start[def_i],
-                            c->macro_bucket_values_end[def_i]
-                        );
-
-                        args = c->macro_bucket_keys[def_i] + c->macro_bucket_keys_length[def_i];
+                        def = c->macros.vals[def_i].value;
+                        def_site = c->macros.vals[def_i].loc;
+                        args = c->macros.keys[def_i].data + c->macros.keys[def_i].length;
 
                         tail_call_hidden = hide_macro(c, def_i);
                         tail_call_defi = def_i;

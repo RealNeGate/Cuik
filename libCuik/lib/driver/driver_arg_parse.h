@@ -2,7 +2,6 @@
 // strtok_r on POSIX, not strtok_s on C11... tf
 #ifdef _WIN32
 #define strtok_r(a, b, c) strtok_s(a, b, c)
-#define strdup _strdup
 #endif
 
 typedef enum ArgType {
@@ -147,12 +146,12 @@ int cuik_parse_arg(Cuik_CompilerArgs* args, int argc, const char* argv[]) {
             break;
         }
         case ARG_DEFINE: {
-            dyn_array_put(args->defines, strdup(arg.value));
+            dyn_array_put(args->defines, cuik_strdup(arg.value));
             break;
         }
         case ARG_INCLUDE: {
             // resolve a fullpath
-            char* newstr = malloc(FILENAME_MAX);
+            char* newstr = cuik_malloc(FILENAME_MAX);
             if (cuik_canonicalize_path(newstr, arg.value)) {
                 size_t end = strlen(newstr);
 
@@ -174,7 +173,7 @@ int cuik_parse_arg(Cuik_CompilerArgs* args, int argc, const char* argv[]) {
             break;
         }
         case ARG_LIB: {
-            char* newstr = strdup(arg.value);
+            char* newstr = cuik_strdup(arg.value);
 
             char* ctx;
             char* a = strtok_r(newstr, ",", &ctx);

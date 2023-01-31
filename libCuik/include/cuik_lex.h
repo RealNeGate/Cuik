@@ -128,8 +128,7 @@ typedef struct Cuik_DefineIter {
     SourceLoc loc;
     String key, value;
 
-    // internal
-    uint32_t bucket, id;
+    size_t index;
 } Cuik_DefineIter;
 
 #define CUIKPP_FOR_DEFINES(it, ctx) for (Cuik_DefineIter it = cuikpp_first_define(ctx); cuikpp_next_define(ctx, &it);)

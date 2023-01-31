@@ -22,7 +22,7 @@
 #include <string_map.h>
 
 // GOD I HATE FORWARD DECLARATIONS
-static uint64_t hash_ident(const void* key, size_t len);
+static uint32_t hash_ident(const void* key, size_t len);
 static bool is_defined(Cuik_CPP* restrict c, const unsigned char* start, size_t length);
 static void expect(TokenList* restrict in, char ch);
 static intmax_t eval(Cuik_CPP* restrict c, TokenList* restrict in);
@@ -156,18 +156,15 @@ Cuik_CPP* cuikpp_make(const char filepath[FILENAME_MAX]) {
         filepath = "";
     }
 
-    size_t sz = sizeof(void*) * MACRO_BUCKET_COUNT * SLOTS_PER_MACRO_BUCKET;
-    size_t sz2 = sizeof(SourceRange) * MACRO_BUCKET_COUNT * SLOTS_PER_MACRO_BUCKET;
-
     Cuik_CPP* ctx = cuik_malloc(sizeof(Cuik_CPP));
     *ctx = (Cuik_CPP){
         .stack = cuik__valloc(MAX_CPP_STACK_DEPTH * sizeof(CPPStackSlot)),
 
-        .macro_bucket_keys = cuik__valloc(sz),
-        .macro_bucket_keys_length = cuik__valloc(sz),
-        .macro_bucket_values_start = cuik__valloc(sz),
-        .macro_bucket_values_end = cuik__valloc(sz),
-        .macro_bucket_source_locs = cuik__valloc(sz2),
+        .macros = {
+            .exp = 16,
+            .keys = cuik__valloc((1u << 16) * sizeof(String)),
+            .vals = cuik__valloc((1u << 16) * sizeof(MacroDef)),
+        },
 
         .the_shtuffs = cuik__valloc(THE_SHTUFFS_SIZE),
     };
@@ -245,7 +242,7 @@ void cuikpp_free(Cuik_CPP* ctx) {
     }
     dyn_array_destroy(ctx->system_include_dirs);
 
-    if (ctx->macro_bucket_keys) {
+    if (ctx->macros.keys) {
         cuikpp_finalize(ctx);
     }
 
@@ -736,21 +733,12 @@ void cuikpp_finalize(Cuik_CPP* ctx) {
     #endif
 
     CUIK_TIMED_BLOCK("cuikpp_finalize") {
-        size_t sz = sizeof(void*) * MACRO_BUCKET_COUNT * SLOTS_PER_MACRO_BUCKET;
-        size_t sz2 = sizeof(SourceRange) * MACRO_BUCKET_COUNT * SLOTS_PER_MACRO_BUCKET;
-
-        cuik__vfree((void*)ctx->macro_bucket_keys, sz);
-        cuik__vfree((void*)ctx->macro_bucket_keys_length, sz);
-        cuik__vfree((void*)ctx->macro_bucket_values_start, sz);
-        cuik__vfree((void*)ctx->macro_bucket_values_end, sz);
-        cuik__vfree((void*)ctx->macro_bucket_source_locs, sz2);
+        cuik__vfree(ctx->macros.keys, (1u << ctx->macros.exp) * sizeof(String));
+        cuik__vfree(ctx->macros.vals, (1u << ctx->macros.exp) * sizeof(MacroDef));
         cuik__vfree((void*)ctx->stack, 1024 * sizeof(CPPStackSlot));
 
-        ctx->macro_bucket_keys = NULL;
-        ctx->macro_bucket_keys_length = NULL;
-        ctx->macro_bucket_values_start = NULL;
-        ctx->macro_bucket_values_end = NULL;
-        ctx->macro_bucket_source_locs = NULL;
+        ctx->macros.keys = NULL;
+        ctx->macros.vals = NULL;
         ctx->stack = NULL;
     }
 }
@@ -773,20 +761,14 @@ static void print_token_stream(TokenList* in, size_t start, size_t end) {
 void cuikpp_dump_defines(Cuik_CPP* ctx) {
     int count = 0;
 
-    for (int i = 0; i < MACRO_BUCKET_COUNT; i++) {
-        for (int j = 0; j < ctx->macro_bucket_count[i]; j++) {
-            size_t e = (i * SLOTS_PER_MACRO_BUCKET) + j;
+    size_t cap = 1u << ctx->macros.exp;
+    for (size_t i = 0; i < cap; i++) {
+        if (ctx->macros.keys[i].length != 0 && ctx->macros.keys[i].length != MACRO_DEF_TOMBSTONE) {
+            String key = ctx->macros.keys[i];
+            String val = ctx->macros.vals[i].value;
 
-            size_t keylen = ctx->macro_bucket_keys_length[e];
-            const char* key = (const char*)ctx->macro_bucket_keys[e];
-
-            size_t vallen = ctx->macro_bucket_values_end[e] - ctx->macro_bucket_values_start[e];
-            const char* val = (const char*)ctx->macro_bucket_values_start[e];
-
-            printf("  #define %.*s %.*s\n", (int)keylen, key, (int)vallen, val);
+            printf("  #define %.*s %.*s\n", (int)key.length, key.data, (int)val.length, val.data);
         }
-
-        count += ctx->macro_bucket_count[i];
     }
 
     printf("\n// Macro defines active: %d\n", count);
