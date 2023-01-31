@@ -31,7 +31,7 @@ if args.autospall:
 	tb_args.append('-autospall')
 	libcuik_args.append('-autospall')
 
-subprocess.check_call(tb_args, shell=True, cwd="../tilde-backend")
+subprocess.check_call(tb_args, shell=True, cwd="../tb")
 subprocess.check_call(libcuik_args, shell=True, cwd="../libCuik")
 
 #######################################
@@ -46,7 +46,7 @@ else:
 	ldflags = " -fuse-ld=lld"
 
 cflags = "-g -Wall -Werror -Wno-unused-function"
-cflags += " -I ../common/ -I ../libCuik/include -I ../tilde-backend/include"
+cflags += " -I ../common/ -I ../libCuik/include -I ../tb/include"
 cflags += " -DCUIK_USE_TB"
 cflags += " -DCUIK_ALLOW_THREADS"
 
@@ -115,7 +115,7 @@ for f in list:
 ninja.write(f"build bin/mimalloc.o: mimalloc ../mimalloc/src/static.c\n")
 objs.append("bin/mimalloc.o")
 
-ninja.write(f"build cuik{exe_ext}: link {' '.join(objs)} ../libCuik/libcuik{lib_ext} ../tilde-backend/tildebackend{lib_ext}\n")
+ninja.write(f"build cuik{exe_ext}: link {' '.join(objs)} ../libCuik/libcuik{lib_ext} ../tb/tb{lib_ext}\n")
 ninja.close()
 
-exit(subprocess.call(['ninja', '-j2']))
+exit(subprocess.call(['ninja']))

@@ -1,13 +1,32 @@
 #pragma once
 #include <assert.h>
-#include <limits.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <inttypes.h>
+
+// Cuik currently uses mimalloc so we wrap those calls here
+#ifdef CUIK_USE_MIMALLOC
+#include <mimalloc.h>
+
+#define cuik_malloc(size)        mi_malloc(size)
+#define cuik_calloc(count, size) mi_calloc(count, size)
+#define cuik_free(ptr)           mi_free(ptr)
+#define cuik_realloc(ptr, size)  mi_realloc(ptr, size)
+#define cuik_strdup(x)           mi_strdup(x)
+#else
+#define cuik_malloc(size)        malloc(size)
+#define cuik_calloc(count, size) calloc(count, size)
+#define cuik_free(size)          free(size)
+#define cuik_realloc(ptr, size)  realloc(ptr, size)
+#ifdef _WIN32
+#define cuik_strdup(x)           _strdup(x)
+#else
+#define cuik_strdup(x)           strdup(x)
+#endif
+#endif
 
 #if defined(__amd64__) || defined(_M_AMD64)
 #define CUIK__IS_X64 1
@@ -46,27 +65,6 @@ do {                  \
     a = b;            \
     b = temp;         \
 } while (0)
-
-// Cuik currently uses mimalloc so we wrap those calls here
-#ifdef CUIK_USE_MIMALLOC
-#include <mimalloc.h>
-
-#define cuik_malloc(size)        mi_malloc(size)
-#define cuik_calloc(count, size) mi_calloc(count, size)
-#define cuik_free(ptr)           mi_free(ptr)
-#define cuik_realloc(ptr, size)  mi_realloc(ptr, size)
-#define cuik_strdup(x)           mi_strdup(x)
-#else
-#define cuik_malloc(size)        malloc(size)
-#define cuik_calloc(count, size) calloc(count, size)
-#define cuik_free(size)          free(size)
-#define cuik_realloc(ptr, size)  realloc(ptr, size)
-#ifdef _WIN32
-#define cuik_strdup(x)           _strdup(x)
-#else
-#define cuik_strdup(x)           strdup(x)
-#endif
-#endif
 
 #ifndef MAX_PATH
 #define MAX_PATH 260

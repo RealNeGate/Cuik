@@ -3,7 +3,7 @@
 
 #define NL_STRING_MAP_IMPL
 #define NL_STRING_MAP_INLINE
-#include "../string_map.h"
+#include <string_map.h>
 
 typedef struct {
     TB_Slice name;

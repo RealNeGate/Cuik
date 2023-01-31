@@ -33,7 +33,7 @@ if args.mimalloc: cflags += " -DCUIK_USE_MIMALLOC -I ../mimalloc/include"
 if args.shared:   cflags += " -DCUIK_USE_DLL"
 if args.opt:      cflags += " -O2 -DNDEBUG"
 if args.asan:     cflags += " -fsanitize=address"
-if args.usetb:    cflags += " -I ../tilde-backend/include -DCUIK_USE_TB"
+if args.usetb:    cflags += " -I ../tb/include -DCUIK_USE_TB"
 
 if args.autospall:
 	cflags += " -finstrument-functions"
@@ -105,4 +105,4 @@ else:
 
 ninja.close()
 
-exit(subprocess.call(['ninja', '-j3']))
+exit(subprocess.call(['ninja']))
