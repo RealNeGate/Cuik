@@ -161,9 +161,9 @@ Cuik_CPP* cuikpp_make(const char filepath[FILENAME_MAX]) {
         .stack = cuik__valloc(MAX_CPP_STACK_DEPTH * sizeof(CPPStackSlot)),
 
         .macros = {
-            .exp = 16,
-            .keys = cuik__valloc((1u << 16) * sizeof(String)),
-            .vals = cuik__valloc((1u << 16) * sizeof(MacroDef)),
+            .exp = 24,
+            .keys = cuik__valloc((1u << 24) * sizeof(String)),
+            .vals = cuik__valloc((1u << 24) * sizeof(MacroDef)),
         },
 
         .the_shtuffs = cuik__valloc(THE_SHTUFFS_SIZE),

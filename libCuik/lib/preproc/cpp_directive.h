@@ -234,9 +234,6 @@ static DirectiveResult cpp__define(Cuik_CPP* restrict ctx, CPPStackSlot* restric
         }
     }
 
-    size_t i = insert_symtab(ctx, key.content.length, (const char*) key.content.data);
-    ctx->macros.keys[i] = key.content;
-
     // if there's a parenthesis directly after the identifier
     // it's a macro function... yes this is an purposeful off-by-one
     // it's mostly ok tho
@@ -268,6 +265,8 @@ static DirectiveResult cpp__define(Cuik_CPP* restrict ctx, CPPStackSlot* restric
 
     SourceLoc loc = peek(in).location;
     String value = get_pp_tokens_until_newline(ctx, in);
+
+    size_t i = insert_symtab(ctx, key.content.length, (const char*) key.content.data);
     ctx->macros.vals[i] = (MacroDef){ value, loc };
     return DIRECTIVE_SUCCESS;
 }

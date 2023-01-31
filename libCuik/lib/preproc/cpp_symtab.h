@@ -7,7 +7,8 @@ static size_t insert_symtab(Cuik_CPP* ctx, size_t len, const char* key) {
         uint32_t step = (hash >> (32 - ctx->macros.exp)) | 1;
         i = (i + step) & mask;
 
-        if (ctx->macros.keys[i].length == 0 || ctx->macros.keys[i].length == MACRO_DEF_TOMBSTONE) {
+        String* k = &ctx->macros.keys[i];
+        if (k->length == 0 || k->length == MACRO_DEF_TOMBSTONE) {
             // empty slot
             if (ctx->macros.len > mask) {
                 printf("Symbol table: out of memory!\n");
@@ -15,8 +16,9 @@ static size_t insert_symtab(Cuik_CPP* ctx, size_t len, const char* key) {
             }
 
             ctx->macros.len++;
+            ctx->macros.keys[i] = (String){ len, (const unsigned char*) key };
             return i;
-        } else if (len == ctx->macros.keys[i].length && memcmp(key, ctx->macros.keys[i].data, len) == 0) {
+        } else if (len == k->length && memcmp(key, k->data, len) == 0) {
             return i;
         }
     }
@@ -47,7 +49,6 @@ void cuikpp_define_empty(Cuik_CPP* ctx, size_t keylen, const char* key) {
     keylen = *paren == '(' ? paren - newkey : keylen;
 
     size_t i = insert_symtab(ctx, keylen, newkey);
-    ctx->macros.keys[i] = (String){ keylen, (const unsigned char*) newkey };
     ctx->macros.vals[i] = (MacroDef){ 0 };
 }
 
@@ -75,8 +76,7 @@ void cuikpp_define(Cuik_CPP* ctx, size_t keylen, const char* key, size_t vallen,
         memset(newvalue + vallen, 0, rem);
     }
 
-    size_t i = insert_symtab(ctx, keylen, newkey);
-    ctx->macros.keys[i] = (String){ keylen, (const unsigned char*) newkey };
+    size_t i = insert_symtab(ctx, len, newkey);
     ctx->macros.vals[i] = (MacroDef){ { vallen, (const unsigned char*) newvalue } };
 }
 
@@ -92,11 +92,13 @@ bool cuikpp_undef(Cuik_CPP* ctx, size_t keylen, const char* key) {
         uint32_t step = (hash >> (32 - ctx->macros.exp)) | 1;
         i = (i + step) & mask;
 
-        if (ctx->macros.keys[i].length == MACRO_DEF_TOMBSTONE) {
+        String* k = &ctx->macros.keys[i];
+        if (k->length == MACRO_DEF_TOMBSTONE) {
             continue;
-        } else if (ctx->macros.keys[i].length == 0) {
+        } else if (k->length == 0) {
             break;
-        } else if (keylen == ctx->macros.keys[i].length && memcmp(key, ctx->macros.keys[i].data, keylen) == 0) {
+        } else if (keylen == k->length && memcmp(key, k->data, keylen) == 0) {
+            ctx->macros.len--;
             ctx->macros.keys[i] = (String){ MACRO_DEF_TOMBSTONE, 0 };
             return true;
         }
@@ -178,11 +180,10 @@ static bool find_define(Cuik_CPP* restrict ctx, size_t* out_index, const unsigne
         uint32_t step = (hash >> (32 - ctx->macros.exp)) | 1;
         i = (i + step) & mask;
 
-        if (ctx->macros.keys[i].length == MACRO_DEF_TOMBSTONE) {
-            continue;
-        } else if (ctx->macros.keys[i].length == 0) {
+        String* k = &ctx->macros.keys[i];
+        if (k->length == 0) {
             break;
-        } else if (length == ctx->macros.keys[i].length && memcmp(start, ctx->macros.keys[i].data, length) == 0) {
+        } else if (length == k->length && memcmp(start, k->data, length) == 0) {
             *out_index = i;
             found = true;
             break;
