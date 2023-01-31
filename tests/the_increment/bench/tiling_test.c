@@ -23,14 +23,13 @@ void fn(int16_t* A, uint16_t* B, uint16_t* C) {
     }
 }
 
-#if 0
 void foo(size_t* a, size_t* b, size_t c) {
-	a[c] += 16;
-	b[c] += 16;
+    a[c] += 16;
+    b[c] += 16;
 }
 
 void bar(size_t* a, size_t b) {
-	a[b] += 16;
+    a[b] += 16;
 }
 
 
@@ -54,10 +53,10 @@ int test(int a, int b) {
 }
 
 size_t foo2(size_t* a, size_t n) {
-	size_t b = 0;
-	for (size_t i = 0; i < n; i++) {
-		b += a[i];
-	}
+    size_t b = 0;
+    for (size_t i = 0; i < n; i++) {
+        b += a[i];
+    }
     return b;
 }
 
@@ -68,4 +67,3 @@ static size_t bar2(size_t a) {
 size_t foo3(size_t a) {
     return a % 2 != 0 ? 4 : 2;
 }
-#endif
