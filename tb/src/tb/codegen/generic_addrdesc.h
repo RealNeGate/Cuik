@@ -56,13 +56,6 @@ struct Ctx {
     // we actually used.
     uint64_t regs_to_save;
 
-    // Patch info
-    uint32_t label_patch_count;
-    uint32_t ret_patch_count;
-
-    LabelPatch* label_patches;
-    ReturnPatch* ret_patches;
-
     // Extra stuff
     // GAD_EXTRA_CTX is a struct body
     struct GAD_EXTRA_CTX;
@@ -261,6 +254,13 @@ static LiveInterval get_live_interval(Ctx* restrict ctx, TB_Reg r) {
     return li;
 }
 
+// a lives throughout the entire lifetime of b
+static bool GAD_FN(encompass)(Ctx* restrict ctx, TB_Function* f, TB_Reg a, TB_Reg b) {
+    LiveInterval a_li = get_live_interval(ctx, a);
+    LiveInterval b_li = get_live_interval(ctx, b);
+    return b_li.start < a_li.end && b_li.end >= a_li.start;
+}
+
 static void GAD_FN(explicit_steal)(Ctx* restrict ctx, TB_Function* f, TB_Reg r, TB_Reg spill_reg, ptrdiff_t active_i) {
     // replace spill with r
     ctx->stack_usage = align_up(ctx->stack_usage + 8, 8);
@@ -303,7 +303,7 @@ static GAD_VAL GAD_FN(steal)(Ctx* restrict ctx, TB_Function* f, TB_Reg r, int re
     return (GAD_VAL){ 0 };
 }
 
-static GAD_VAL GAD_FN(regalloc)(Ctx* restrict ctx, TB_Function* f, TB_Reg r, int reg_class) {
+static GAD_VAL GAD_FN(regalloc2)(Ctx* restrict ctx, TB_Function* f, TB_Reg r, int reg_class, bool can_recycle, TB_Reg phi_steal) {
     TB_DataType dt = f->nodes[r].dt;
 
     LiveInterval r_li = get_live_interval(ctx, r);
@@ -325,8 +325,23 @@ static GAD_VAL GAD_FN(regalloc)(Ctx* restrict ctx, TB_Function* f, TB_Reg r, int
         (void)success;
         assert(success && "Could not find spillable values");
     } else {
-        bool success = false;
-        if (0 /* can_recycle */ && ctx->active_count > 0) {
+        if (phi_steal != TB_NULL_REG && tb_node_is_phi_node(f, phi_steal) && ctx->values[phi_steal].type != 0) {
+            int count = tb_node_get_phi_width(f, phi_steal);
+            TB_PhiInput* inputs = tb_node_get_phi_inputs(f, phi_steal);
+
+            FOREACH_N(i, 0, count) {
+                if (inputs[i].val == r) {
+                    // check if we're the last use of the PHI in the basic block.
+                    // TODO(NeGate): this is a very conservative way to do so lmao, fix it
+                    if (tb_node_is_terminator(f, f->nodes[r].next)) {
+                        ctx->values[r] = ctx->values[phi_steal];
+                        goto done;
+                    }
+                }
+            }
+        }
+
+        if (can_recycle && ctx->active_count > 0) {
             printf("  try recycling r%u\n", r);
             FOREACH_N(k, 0, ctx->active_count) {
                 TB_Reg other_r = ctx->active[k];
@@ -338,12 +353,12 @@ static GAD_VAL GAD_FN(regalloc)(Ctx* restrict ctx, TB_Function* f, TB_Reg r, int
 
                     ctx->values[r] = ctx->values[other_r];
                     ctx->active[k] = r;
-                    success = true;
+                    goto done;
                 }
             }
         }
 
-        if (!success) {
+        {
             ptrdiff_t reg_num = set_pop_any(&ctx->free_regs[reg_class]);
             assert(reg_num >= 0);
 
@@ -359,7 +374,31 @@ static GAD_VAL GAD_FN(regalloc)(Ctx* restrict ctx, TB_Function* f, TB_Reg r, int
         }
     }
 
+    done:
     return ctx->values[r];
+}
+
+static GAD_VAL GAD_FN(regalloc)(Ctx* restrict ctx, TB_Function* f, TB_Reg r, int reg_class) {
+    return GAD_FN(regalloc2)(ctx, f, r, reg_class, false, 0);
+}
+
+static void GAD_FN(kill_reg)(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
+    FOREACH_N(i, 0, ctx->active_count) {
+        TB_Reg k = ctx->active[i];
+        if (k == r) {
+            // remove from active
+            if (i != ctx->active_count - 1) {
+                ctx->active[i] = ctx->active[ctx->active_count - 1];
+            }
+
+            // add back to register pool
+            if (ctx->values[k].type >= GAD_VAL_REGISTER && ctx->values[k].type < GAD_VAL_REGISTER + GAD_NUM_REG_FAMILIES) {
+                printf("  free %s\n", GPR_NAMES[ctx->values[k].reg]);
+                set_remove(&ctx->free_regs[ctx->values[k].type - GAD_VAL_REGISTER], ctx->values[k].reg);
+            }
+            ctx->active_count -= 1;
+        }
+    }
 }
 
 // done before running an instruction
@@ -369,6 +408,10 @@ static void GAD_FN(regalloc_step)(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
     // expire old intervals
     FOREACH_REVERSE_N(j, 0, ctx->active_count) {
         TB_Reg k = ctx->active[j];
+        if (k == 0) {
+            continue;
+        }
+
         LiveInterval k_li = get_live_interval(ctx, k);
         if (k_li.end >= r_li.start) {
             break;

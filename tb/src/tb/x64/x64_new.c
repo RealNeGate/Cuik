@@ -187,14 +187,14 @@ static size_t x64v2_resolve_stack_usage(Ctx* restrict ctx, TB_Function* f, size_
 }
 
 static void x64v2_resolve_local_patches(Ctx* restrict ctx, TB_Function* f) {
-    FOREACH_N(i, 0, ctx->ret_patch_count) {
-        uint32_t pos = ctx->ret_patches[i];
+    FOREACH_N(i, 0, ctx->emit.ret_patch_count) {
+        uint32_t pos = ctx->emit.ret_patches[i];
         PATCH4(&ctx->emit, pos, GET_CODE_POS(&ctx->emit) - (pos + 4));
     }
 
-    FOREACH_N(i, 0, ctx->label_patch_count) {
-        uint32_t pos = ctx->label_patches[i].pos;
-        uint32_t target_lbl = ctx->label_patches[i].target_lbl;
+    FOREACH_N(i, 0, ctx->emit.label_patch_count) {
+        uint32_t pos = ctx->emit.label_patches[i].pos;
+        uint32_t target_lbl = ctx->emit.label_patches[i].target_lbl;
 
         PATCH4(&ctx->emit, pos, ctx->emit.labels[target_lbl] - (pos + 4));
     }
@@ -445,15 +445,24 @@ static void x64v2_store(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
 
     GAD_VAL addr = ctx->values[n->store.address];
     GAD_VAL* src = &ctx->values[n->store.value];
-    if (addr.is_spill) {
-        // restore from spill
-        GAD_VAL tmp = GAD_FN(regalloc)(ctx, f, X64_REG_CLASS_GPR, r);
+    if ((addr.type == VAL_MEM || addr.type == VAL_GLOBAL) && addr.mem.is_rvalue) {
+        // convert into lvalue
+        GAD_VAL tmp = GAD_FN(regalloc)(ctx, f, r, X64_REG_CLASS_GPR);
         INST2(MOV, &tmp, &addr, TB_TYPE_PTR);
 
         addr = val_base_disp(TB_TYPE_PTR, tmp.gpr, 0);
         addr.is_spill = true;
     } else if (addr.type == VAL_GPR) {
         addr = val_base_disp(TB_TYPE_PTR, addr.gpr, 0);
+    }
+
+    // we can't have a memory operand on both sides and the
+    // address will be a memory operand.
+    if (src->type == VAL_MEM) {
+        GAD_VAL old = *src;
+        GAD_VAL new_src = GAD_FN(regalloc)(ctx, f, n->store.value, X64_REG_CLASS_GPR);
+
+        INST2(src->mem.is_rvalue ? MOV : LEA, &new_src, &old, TB_TYPE_PTR);
     }
 
     LegalInt l = legalize_int(n->dt);
@@ -760,11 +769,19 @@ static Val x64v2_eval(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
         case TB_LOAD: {
             LegalInt l = legalize_int(n->dt);
 
+            GAD_VAL src = ctx->values[n->load.address];
+            if (!n->load.is_volatile && is_lvalue(&src)) {
+                if (GAD_FN(encompass)(ctx, f, r, n->load.address)) {
+                    src.mem.is_rvalue = true;
+                    return (ctx->values[r] = src);
+                }
+            }
+
             // convert entry into memory slot
             GAD_VAL dst = GAD_FN(regalloc)(ctx, f, r, X64_REG_CLASS_GPR);
-            GAD_VAL src = ctx->values[n->load.address];
+            src = ctx->values[n->load.address];
 
-            if (src.is_spill) {
+            if ((src.type == VAL_MEM || src.type == VAL_GLOBAL) && src.mem.is_rvalue) {
                 // restore from spill
                 INST2(MOV, &dst, &src, TB_TYPE_PTR);
 
@@ -866,7 +883,7 @@ static Val x64v2_eval(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
         case TB_MUL: {
             const static Inst2Type ops[] = { AND, OR, XOR, ADD, SUB, IMUL };
 
-            GAD_VAL dst = GAD_FN(regalloc)(ctx, f, r, X64_REG_CLASS_GPR);
+            GAD_VAL dst = GAD_FN(regalloc2)(ctx, f, r, X64_REG_CLASS_GPR, true, n->i_arith.a);
             GAD_VAL a = ctx->values[n->i_arith.a];
             GAD_VAL b = ctx->values[n->i_arith.b];
 

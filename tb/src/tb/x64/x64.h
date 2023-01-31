@@ -228,6 +228,10 @@ inline static Val val_base_index_disp(TB_DataType dt, GPR b, GPR i, Scale s, int
     };
 }
 
+inline static bool is_lvalue(const Val* v) {
+    return (v->type == VAL_MEM || v->type == VAL_GLOBAL) && !v->mem.is_rvalue;
+}
+
 inline static bool is_value_mem(const Val* v) {
     return v->type == VAL_MEM || v->type == VAL_GLOBAL;
 }
