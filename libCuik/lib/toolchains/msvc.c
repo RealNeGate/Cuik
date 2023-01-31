@@ -522,7 +522,7 @@ static void set_preprocessor(void* ctx, const Cuik_CompilerArgs* args, Cuik_CPP*
     cuikpp_define_cstr(cpp, "__restrict__", "restrict");
     cuikpp_define_cstr(cpp, "__alignof", "_Alignof");
     cuikpp_define_cstr(cpp, "__CRTDECL", "__cdecl");
-    cuikpp_define_cstr(cpp, "_CRT_INTERNAL_NONSTDC_NAMES", "1");
+    cuikpp_define_cstr(cpp, "_CRT_DECLARE_NONSTDC_NAMES", "1");
 
     // things we don't handle yet so we just remove them
     cuikpp_define_empty_cstr(cpp, "_Frees_ptr_");
