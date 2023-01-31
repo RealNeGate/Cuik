@@ -1,4 +1,3 @@
-#define _CRT_SECURE_NO_WARNINGS
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -122,7 +121,7 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    printf("%d\n", table_id_counter);
+    // printf("%d\n", table_id_counter);
     FILE* file = fopen(argv[1], "wb");
     fprintf(file, "enum {\n");
     fprintf(file, "    DFA_IDENTIFIER   = %d,\n", ident);

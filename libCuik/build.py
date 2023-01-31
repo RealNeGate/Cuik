@@ -44,25 +44,30 @@ if os_name == "Windows":
 	source_patterns.append("lib/back/microsoft_craziness.c")
 	cflags += " -ferror-limit=100 -D_CRT_SECURE_NO_WARNINGS"
 	cflags += " -I ../c11threads"
+	exe_ext = ".exe"
 elif os_name == "Darwin":
 	source_patterns.append("lib/toolchains/darwin.c")
 	cflags += " -I ../c11threads"
+	exe_ext = ""
+else:
+	exe_ext = ""
 
 # configure architecture-specific targeting
 if platform.machine() == "AMD64":
 	cflags += " -msse4.2"
 
-# write out config
+# write some rules
 ninja.write(f"""
 cflags = {cflags}
-""")
 
-# write some rules
-ninja.write("""
 rule cc
   depfile = $out.d
   command = clang $in $cflags -MD -MF $out.d -c -o $out
   description = CC $in $out
+
+rule lexgen
+  command = cmd /c clang $in $cflags -o lg{exe_ext} && lg $out
+  description = LEXGEN $in $out
 
 rule shared_obj
   command = clang $in $ldflags -g -o $out -shared
@@ -88,6 +93,9 @@ rule lib
 
 """)
 
+# compile lexer DFA
+ninja.write(f"build lib/preproc/dfa.h: lexgen lexgen.c\n")
+
 # compile libCuik
 objs = []
 
@@ -104,5 +112,4 @@ else:
 	ninja.write(f"build libcuik{lib_ext}: lib {' '.join(objs)}\n")
 
 ninja.close()
-
 exit(subprocess.call(['ninja']))
