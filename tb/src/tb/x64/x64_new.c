@@ -230,9 +230,8 @@ static void x64v2_resolve_params(Ctx* restrict ctx, TB_Function* f, GAD_VAL* val
 
                 // Allocate space in stack
                 assert(get_data_type_size(dt) <= 8 && "Parameter too big");
+                DBG("r%u (t=%d .. %d)\n", r, ctx->ordinal[r], ctx->ordinal[ctx->intervals[r]]);
 
-                int startpoint = ctx->ordinal[r];
-                printf("r%u (t=%d .. %d)\n", r, startpoint, ctx->ordinal[ctx->intervals[r]]);
                 if (dt.width || TB_IS_FLOAT_TYPE(dt)) {
                     // xmm parameters
                     if (i < 4) {
@@ -262,7 +261,7 @@ static void x64v2_resolve_params(Ctx* restrict ctx, TB_Function* f, GAD_VAL* val
                         // GAD_FN(force_stack)(ctx, f, r, );
                     }
 
-                    printf("  assign to %s\n", GPR_NAMES[values[r].reg]);
+                    DBG("  assign to %s\n", GPR_NAMES[values[r].reg]);
                     set_put(&ctx->free_regs[X64_REG_CLASS_GPR], values[r].reg);
                 }
 
@@ -402,15 +401,8 @@ static void x64v2_branch_if(Ctx* restrict ctx, TB_Function* f, TB_Reg cond, TB_L
             INST2(TEST, src, src, l.dt);
             cc = NE;
         } else if (src->type == VAL_IMM) {
-            tb_todo();
-
-            /*GAD_VAL tmp = GAD_FN(alloc_reg)(ctx, f, X64_REG_CLASS_GPR, TB_TEMP_REG);
-
-            // 'xor a, a' will set ZF to 1
-            INST2(XOR, &tmp, &tmp, l.dt);
-            GAD_FN(unlock_register)(ctx, f, X64_REG_CLASS_GPR, tmp.gpr);
-
-            cc = (src.imm ? E : NE);*/
+            JMP(src->imm ? if_true : if_false);
+            return;
         } else {
             tb_todo();
         }

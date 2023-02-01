@@ -14,39 +14,6 @@
 #include "spall_perf.h"
 #include "live.h"
 
-/*static void initialize_opt_passes(void) {
-    da_passes = dyn_array_create(TB_Pass, 32);
-
-    if (args.opt_level) {
-        dyn_array_put(da_passes, tb_opt_hoist_locals());
-        dyn_array_put(da_passes, tb_opt_merge_rets());
-
-        dyn_array_put(da_passes, tb_opt_instcombine());
-        dyn_array_put(da_passes, tb_opt_dead_expr_elim());
-        dyn_array_put(da_passes, tb_opt_dead_block_elim());
-        dyn_array_put(da_passes, tb_opt_subexpr_elim());
-
-        dyn_array_put(da_passes, tb_opt_mem2reg());
-        dyn_array_put(da_passes, tb_opt_remove_pass_nodes());
-        dyn_array_put(da_passes, tb_opt_instcombine());
-        dyn_array_put(da_passes, tb_opt_remove_pass_nodes());
-        dyn_array_put(da_passes, tb_opt_dead_expr_elim());
-        dyn_array_put(da_passes, tb_opt_dead_block_elim());
-        dyn_array_put(da_passes, tb_opt_subexpr_elim());
-        dyn_array_put(da_passes, tb_opt_remove_pass_nodes());
-        dyn_array_put(da_passes, tb_opt_compact_dead_regs());
-
-        // dyn_array_put(da_passes, tb_opt_inline());
-
-        // aggresive optimizations
-        // TODO(NeGate): loop optimizations, data structure reordering
-        // switch optimizations
-
-        // dyn_array_put(da_passes, tb_opt_remove_pass_nodes());
-        // dyn_array_put(da_passes, tb_opt_compact_dead_regs());
-    }
-}*/
-
 static void dump_tokens(FILE* out_file, TokenStream* s) {
     const char* last_file = NULL;
     int last_line = 0;

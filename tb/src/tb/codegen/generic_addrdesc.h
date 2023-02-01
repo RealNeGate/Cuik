@@ -18,8 +18,10 @@ static_assert(sizeof(double) == sizeof(uint64_t), "big bitch... double gotta be 
 static thread_local size_t s_local_thread_id;
 
 #if 0
+#define DBG(...) printf(__VA_ARGS__)
 #define LISTING(...) printf(__VA_ARGS__)
 #else
+#define DBG(...)
 #define LISTING(fmt, ...)
 #endif
 
@@ -275,8 +277,8 @@ static void GAD_FN(explicit_steal)(Ctx* restrict ctx, TB_Function* f, TB_Reg r, 
     *restore_val = ctx->values[spill_reg];
     ctx->values[spill_reg] = slot;
 
-    printf("  steal r%u for r%u\n", spill_reg, r);
-    printf("  spill r%u to [rbp - %d]\n", spill_reg, ctx->stack_usage);
+    DBG("  steal r%u for r%u\n", spill_reg, r);
+    DBG("  spill r%u to [rbp - %d]\n", spill_reg, ctx->stack_usage);
     GAD_FN(spill)(ctx, f, &slot, &ctx->values[r]);
 
     // TODO(NeGate): sort by increasing end point
@@ -291,7 +293,7 @@ static bool GAD_FN(free_reg)(Ctx* restrict ctx, TB_Function* f, int reg_class, i
                 ctx->active[i] = ctx->active[ctx->active_count - 1];
             }
 
-            printf("    free %s\n", GPR_NAMES[reg_num]);
+            DBG("    free %s\n", GPR_NAMES[reg_num]);
             set_remove(&ctx->free_regs[reg_class], reg_num);
             ctx->active_count -= 1;
             return true;
@@ -302,9 +304,7 @@ static bool GAD_FN(free_reg)(Ctx* restrict ctx, TB_Function* f, int reg_class, i
 }
 
 static GAD_VAL GAD_FN(steal)(Ctx* restrict ctx, TB_Function* f, TB_Reg r, int reg_class, int reg_num) {
-    LiveInterval r_li = get_live_interval(ctx, r);
-    printf("r%u (t=%d .. %d)\n", r, r_li.start, r_li.end);
-
+    DBG("r%u\n", r);
     FOREACH_N(i, 0, ctx->active_count) {
         TB_Reg spill_reg = ctx->active[i];
         // LiveInterval spill_li = get_live_interval(ctx, spill_reg);
@@ -332,7 +332,7 @@ static GAD_VAL GAD_FN(regalloc2)(Ctx* restrict ctx, TB_Function* f, TB_Reg r, in
     TB_DataType dt = f->nodes[r].dt;
 
     LiveInterval r_li = get_live_interval(ctx, r);
-    printf("r%u (t=%d .. %d)\n", r, r_li.start, r_li.end);
+    DBG("r%u (t=%d .. %d)\n", r, r_li.start, r_li.end);
 
     if (ctx->active_count == ctx->free_regs[reg_class].capacity) {
         bool success = false;
@@ -368,14 +368,14 @@ static GAD_VAL GAD_FN(regalloc2)(Ctx* restrict ctx, TB_Function* f, TB_Reg r, in
         }
 
         if (can_recycle && ctx->active_count > 0) {
-            printf("  try recycling r%u\n", r);
+            DBG("  try recycling r%u\n", r);
             FOREACH_N(k, 0, ctx->active_count) {
                 TB_Reg other_r = ctx->active[k];
                 if (other_r == 0) continue;
 
                 LiveInterval other_li = get_live_interval(ctx, other_r);
                 if (other_li.end == r_li.start) {
-                    printf("  recycle r%u for r%u\n", other_r, r);
+                    DBG("  recycle r%u for r%u\n", other_r, r);
 
                     ctx->values[r] = ctx->values[other_r];
                     ctx->active[k] = r;
@@ -388,7 +388,7 @@ static GAD_VAL GAD_FN(regalloc2)(Ctx* restrict ctx, TB_Function* f, TB_Reg r, in
             ptrdiff_t reg_num = set_pop_any(&ctx->free_regs[reg_class]);
             assert(reg_num >= 0);
 
-            printf("  assign to %s\n", GPR_NAMES[reg_num]);
+            DBG("  assign to %s\n", GPR_NAMES[reg_num]);
             ctx->values[r] = (GAD_VAL){
                 .type = GAD_VAL_REGISTER + reg_class,
                 .r = r, .dt = dt, .reg = reg_num
@@ -425,14 +425,14 @@ static void GAD_FN(regalloc_step)(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
         }
 
         // remove from active
-        printf("  expired r%u\n", k);
+        DBG("  expired r%u\n", k);
         if (j != ctx->active_count - 1) {
             ctx->active[j] = ctx->active[ctx->active_count - 1];
         }
 
         // add back to register pool
         if ((ctx->values[k].type >= GAD_VAL_REGISTER && ctx->values[k].type < GAD_VAL_REGISTER + GAD_NUM_REG_FAMILIES) && !ctx->values[k].is_ref) {
-            printf("    free %s\n", GPR_NAMES[ctx->values[k].reg]);
+            DBG("    free %s\n", GPR_NAMES[ctx->values[k].reg]);
             set_remove(&ctx->free_regs[ctx->values[k].type - GAD_VAL_REGISTER], ctx->values[k].reg);
         }
         ctx->active_count -= 1;
@@ -495,6 +495,10 @@ static void GAD_FN(eval_bb)(Ctx* restrict ctx, TB_Function* f, TB_Label bb, TB_L
                     .line = n->line_info.line,
                     .pos = GET_CODE_POS(&ctx->emit)
                 };
+                break;
+            }
+
+            case TB_INITIALIZE: {
                 break;
             }
 
