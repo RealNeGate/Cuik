@@ -1226,8 +1226,6 @@ extern "C" {
         } mode;
         const char* name;
 
-        // if l_state is not NULL, it'll run the lua function described
-        void* l_state;
         union {
             bool(*bb_run)(TB_Function* f, TB_Reg bb);
             bool(*loop_run)(TB_Function* f, const TB_Loop* l);

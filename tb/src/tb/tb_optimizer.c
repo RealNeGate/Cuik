@@ -1,16 +1,6 @@
 #include "tb_internal.h"
 #include <stdarg.h>
 
-#ifdef TB_USE_LUAJIT
-#include <lua.h>
-#include <lualib.h>
-#include <lauxlib.h>
-#include <luajit.h>
-
-#include "opt/lua_glue.h"
-#include "opt/lua_prelude.inc"
-#endif
-
 #ifdef _WIN32
 #define strdup(s) _strdup(s)
 #define strtok_r(a, b, c) strtok_s(a, b, c)
@@ -83,26 +73,6 @@ static void print_diff(const char* description, const char* oldstr, const char* 
     //__debugbreak();
 }
 
-#ifdef TB_USE_LUAJIT
-static lua_State* begin_lua_pass(void* l_state) {
-    lua_State* L = lua_newthread(l_state);
-    lua_getglobal(L, "DA_FUNC");
-    return L;
-}
-
-static bool end_lua_pass(lua_State* L, int arg_count) {
-    int ret = lua_pcall(L, arg_count, 0, 0);
-    if (ret > 1) {
-        const char* str = lua_tostring(L, -1);
-        tb_panic("Lua runtime exited with %d\n%s\n", ret, str);
-    } else if (ret == 1) {
-        return true;
-    } else {
-        return false;
-    }
-}
-#endif
-
 #define TB_DEBUG_DIFF_TOOL 0
 static bool schedule_function_level_opts(TB_Module* m, size_t pass_count, const TB_Pass passes[]) {
     bool changes = false;
@@ -115,12 +85,13 @@ static bool schedule_function_level_opts(TB_Module* m, size_t pass_count, const 
     };
     #endif
 
+    bool validate_after_passes = false;
     TB_FOR_FUNCTIONS(f, m) {
         // printf("ORIGINAL\n");
         // tb_function_print(f, tb_default_print_callback, stdout, false);
         // printf("\n\n");
 
-        if (tb_function_validate(f) > 0) {
+        if (validate_after_passes && tb_function_validate(f) > 0) {
             fprintf(stderr, "Validator failed on %s on original IR\n", f->super.name);
             abort();
         }
@@ -134,18 +105,7 @@ static bool schedule_function_level_opts(TB_Module* m, size_t pass_count, const 
             switch (passes[j].mode) {
                 case TB_BASIC_BLOCK_PASS: {
                     TB_FOR_BASIC_BLOCK(bb, f) {
-                        if (passes[j].l_state != NULL) {
-                            #ifdef TB_USE_LUAJIT
-                            lua_State* L = begin_lua_pass(passes[j].l_state);
-                            lua_pushlightuserdata(L, f);
-                            lua_pushinteger(L, bb);
-                            changes |= end_lua_pass(L, 2);
-                            #else
-                            tb_panic("Not compiled with luajit support");
-                            #endif
-                        } else {
-                            changes |= passes[j].bb_run(f, bb);
-                        }
+                        changes |= passes[j].bb_run(f, bb);
                     }
                     break;
                 }
@@ -163,45 +123,27 @@ static bool schedule_function_level_opts(TB_Module* m, size_t pass_count, const 
 
                     FOREACH_N(k, 0, loops.count) {
                         const TB_Loop* l = &loops.loops[k];
-
-                        if (passes[j].l_state != NULL) {
-                            #ifdef TB_USE_LUAJIT
-                            lua_State* L = begin_lua_pass(passes[j].l_state);
-                            lua_pushlightuserdata(L, f);
-                            lua_pushlightuserdata(L, (void*) l);
-                            changes |= end_lua_pass(L, 2);
-                            #else
-                            tb_panic("Not compiled with luajit support");
-                            #endif
-                        } else {
-                            changes |= passes[j].loop_run(f, l);
-                        }
+                        changes |= passes[j].loop_run(f, l);
                     }
 
+                    if (validate_after_passes && tb_function_validate(f) > 0) {
+                        fprintf(stderr, "Validator failed on %s after %s\n", f->super.name, passes[j].name);
+                        abort();
+                    }
                     tb_free_loop_info(loops);
                     break;
                 }
 
                 case TB_FUNCTION_PASS:
-                if (passes[j].l_state != NULL) {
-                    #ifdef TB_USE_LUAJIT
-                    lua_State* L = begin_lua_pass(passes[j].l_state);
-                    lua_pushlightuserdata(L, f);
-                    changes |= end_lua_pass(L, 1);
-                    #else
-                    tb_panic("Not compiled with luajit support");
-                    #endif
-                } else {
-                    changes |= passes[j].func_run(f);
+                changes |= passes[j].func_run(f);
 
-                    // printf("%s\n", passes[j].name);
-                    // tb_function_print(f, tb_default_print_callback, stdout, false);
-                    // printf("\n\n");
+                // printf("%s\n", passes[j].name);
+                // tb_function_print(f, tb_default_print_callback, stdout, false);
+                // printf("\n\n");
 
-                    if (tb_function_validate(f) > 0) {
-                        fprintf(stderr, "Validator failed on %s after %s\n", f->super.name, passes[j].name);
-                        abort();
-                    }
+                if (validate_after_passes && tb_function_validate(f) > 0) {
+                    fprintf(stderr, "Validator failed on %s after %s\n", f->super.name, passes[j].name);
+                    abort();
                 }
                 break;
 
@@ -238,18 +180,7 @@ static bool schedule_module_level_opt(TB_Module* m, const TB_Pass* pass) {
         tb_unreachable();
     }
 
-    if (pass->l_state != NULL) {
-        #ifdef TB_USE_LUAJIT
-        lua_State* L = begin_lua_pass(pass->l_state);
-        lua_pushlightuserdata(L, m);
-        return end_lua_pass(L, 1);
-        #else
-        fprintf(stderr, "Not compiled with luajit support");
-        return false;
-        #endif
-    } else {
-        return pass->mod_run(m);
-    }
+    return pass->mod_run(m);
 }
 
 TB_API bool tb_module_optimize(TB_Module* m, size_t pass_count, const TB_Pass passes[]) {
@@ -283,46 +214,3 @@ TB_API bool tb_module_optimize(TB_Module* m, size_t pass_count, const TB_Pass pa
 
     return changes;
 }
-
-#ifdef TB_USE_LUAJIT
-TB_API TB_Pass tb_opt_load_lua_pass(const char* path, enum TB_PassMode mode) {
-    lua_State *L = luaL_newstate();
-    if (L == NULL) abort();
-
-    // Load prelude into block
-    luaL_openlibs(L);
-    int status = luaL_loadstring(L, PRELUDE);
-    if (status != 0) {
-        const char* str = lua_tostring(L, -1);
-        tb_panic("could not load lua script: %d\n%s\n", status, str);
-    }
-
-    // pcall will call that block as a function
-    int ret = lua_pcall(L, 0, 0, 0);
-    if (ret != 0) {
-        const char* str = lua_tostring(L, -1);
-        tb_panic("Lua runtime exited with %d\n%s\n", ret, str);
-    }
-
-    // Load passes
-    status = luaL_loadfile(L, path);
-    if (status != 0) {
-        const char* str = lua_tostring(L, -1);
-        tb_panic("could not load lua script: %d\n%s\n", status, str);
-    }
-
-    // Returns the function for the pass
-    ret = lua_pcall(L, 0, 1, 0);
-    if (ret != 0) {
-        const char* str = lua_tostring(L, -1);
-        tb_panic("Lua runtime exited with %d\n%s\n", ret, str);
-    }
-
-    lua_setglobal(L, "DA_FUNC");
-    return (TB_Pass){ .mode = mode, .name = NULL, .l_state = L };
-}
-
-TB_API void tb_opt_unload_lua_pass(TB_Pass* p) {
-    lua_close((lua_State*) p->l_state);
-}
-#endif

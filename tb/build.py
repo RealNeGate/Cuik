@@ -8,7 +8,6 @@ parser = argparse.ArgumentParser(description='Compiles TB')
 parser.add_argument('targets', metavar='N', type=str, nargs='+', help='decide which targets to compile with')
 parser.add_argument('-cc', help='choose which compiler to use')
 parser.add_argument('-mimalloc', action='store_true', help='use mimalloc')
-parser.add_argument('-luajit', action='store_true', help='enable using luajit for TB passes')
 parser.add_argument('-opt', action='store_true', help='runs optimize on compiled source')
 parser.add_argument('-asan', action='store_true', help='compile with ASAN')
 parser.add_argument('-autospall', action='store_true', help='instrument code with SpallAuto')
@@ -35,17 +34,15 @@ ninja = open('build.ninja', 'w')
 
 is_cl = (args.cc == "cl")
 if is_cl:
-	cflags = "/nologo /Z7 /I ../common /I include /I deps/luajit/src /W2 /wd4244 /wd4146 /WX /diagnostics:caret"
+	cflags = "/nologo /Z7 /I ../common /I include /W2 /wd4244 /wd4146 /WX /diagnostics:caret"
 	if args.asan: cflags += " /fsanitize=address"
 	if args.mimalloc: cflags += " /I ../mimalloc/include /DTB_USE_MIMALLOC"
-	if args.luajit: cflags += " /DTB_USE_LUAJIT"
 	if args.opt: cflags += " /Ox /DNDEBUG"
 	if args.autospall: cflags += " /GH /Gh"
 else:
 	cflags = "-g -I ../common -I include -Wall -Werror -Wno-unused-function"
 	if args.asan: cflags += " -fsanitize=address"
 	if args.mimalloc: cflags += " -I ../mimalloc/include -DTB_USE_MIMALLOC"
-	if args.luajit: cflags += " -DTB_USE_LUAJIT -I deps/luajit/src"
 	if args.opt: cflags += " -O2 -DNDEBUG"
 	if args.autospall: cflags += " -finstrument-functions-after-inlining"
 
