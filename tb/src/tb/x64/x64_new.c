@@ -66,6 +66,21 @@ static void x64v2_ret_jmp(Ctx* restrict ctx) {
     ret_jmp(&ctx->emit);
 }
 
+static void emit_imul_gpr_gpr_imm(Ctx* restrict ctx, TB_Function* f, GAD_VAL dst, GAD_VAL a, int32_t imm, TB_DataType dt) {
+    int bits_in_type = dt.type == TB_PTR ? 64 : dt.data;
+
+    // IMUL r64, r/m64, imm32
+    //   REX.W + 69 /r id
+    if (a.type == VAL_MEM) {
+        EMIT1(&ctx->emit, rex(bits_in_type == 64, dst.gpr, a.mem.base, a.mem.index != GPR_NONE ? a.mem.index : 0));
+    } else {
+        EMIT1(&ctx->emit, rex(bits_in_type == 64, dst.gpr, a.gpr, 0x00));
+    }
+    EMIT1(&ctx->emit, 0x69);
+    emit_memory_operand(&ctx->emit, dst.gpr, &a);
+    EMIT4(&ctx->emit, imm);
+}
+
 static void emit_shift_gpr_imm(Ctx* restrict ctx, TB_Function* f, ShiftType type, GPR dst, uint8_t imm, TB_DataType dt) {
     int bits_in_type = dt.type == TB_PTR ? 64 : dt.data;
 
@@ -285,12 +300,14 @@ static void x64v2_resolve_stack_slot(Ctx* restrict ctx, TB_Function* f, TB_Node*
         if (dt.width || TB_IS_FLOAT_TYPE(dt)) {
             tb_todo();
         } else {
-            // don't keep a reference of it in GPR if it's in memory
-            INST2(MOV, &dst, &ctx->values[r], TB_TYPE_I64);
-            tb_todo();
+            if (ctx->values[r].type == VAL_GPR) {
+                // don't keep a reference of it in GPR if it's in memory
+                INST2(MOV, &dst, &ctx->values[r], TB_TYPE_I64);
+                GAD_FN(free_reg)(ctx, f, X64_REG_CLASS_GPR, ctx->values[r].reg);
+            }
         }
 
-        ctx->stack_usage += 8;
+        ctx->values[r] = ctx->values[n - f->nodes] = dst;
     } else if (n->type == TB_LOCAL) {
         TB_Reg r = n - f->nodes;
 
@@ -458,7 +475,7 @@ static void x64v2_store(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
 
     // we can't have a memory operand on both sides and the
     // address will be a memory operand.
-    if (src->type == VAL_MEM) {
+    if (is_value_mem(src)) {
         GAD_VAL old = *src;
         GAD_VAL new_src = GAD_FN(regalloc)(ctx, f, n->store.value, X64_REG_CLASS_GPR);
 
@@ -587,30 +604,33 @@ static void x64v2_call(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
     }
 }
 
+static GAD_VAL get_immediate(Ctx* restrict ctx, TB_Function* f, TB_Reg r, uint64_t imm) {
+    TB_Node* restrict n = &f->nodes[r];
+
+    if (fits_into_int32(imm)) {
+        LegalInt l = legalize_int(n->dt);
+        if (l.mask) imm &= l.mask;
+
+        return (ctx->values[r] = val_imm(n->dt, imm));
+    } else {
+        GAD_VAL dst = GAD_FN(regalloc)(ctx, f, r, X64_REG_CLASS_GPR);
+
+        // MOVABS REX.W B8+r imm64
+        EMIT1(&ctx->emit, dst.gpr >= 8 ? 0x49 : 0x48);
+        EMIT1(&ctx->emit, 0xB8 + (dst.gpr & 7));
+        EMIT8(&ctx->emit, imm);
+        return dst;
+    }
+}
+
 static Val x64v2_eval(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
     TB_Node* restrict n = &f->nodes[r];
     TB_NodeTypeEnum type = n->type;
 
     switch (type) {
         case TB_INTEGER_CONST: {
-            if (n->integer.num_words == 1 && fits_into_int32(n->integer.single_word)) {
-                LegalInt l = legalize_int(n->dt);
-                uint64_t imm = n->integer.single_word;
-                if (l.mask) {
-                    imm &= l.mask;
-                }
-
-                return (ctx->values[r] = val_imm(n->dt, imm));
-            } else {
-                assert(n->integer.num_words == 1);
-                GAD_VAL dst = GAD_FN(regalloc)(ctx, f, r, X64_REG_CLASS_GPR);
-
-                // MOVABS REX.W B8+r imm64
-                EMIT1(&ctx->emit, dst.gpr >= 8 ? 0x49 : 0x48);
-                EMIT1(&ctx->emit, 0xB8 + (dst.gpr & 7));
-                EMIT8(&ctx->emit, n->integer.single_word);
-                return dst;
-            }
+            assert(n->integer.num_words == 1);
+            return get_immediate(ctx, f, r, n->integer.single_word);
         }
         case TB_STRING_CONST: {
             const char* str = n->string.data;
@@ -718,6 +738,9 @@ static Val x64v2_eval(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
             LegalInt l = legalize_int(src_dt);
             int bits_in_type = l.dt.type == TB_PTR ? 64 : l.dt.data;
 
+            LegalInt dst_l = legalize_int(n->dt);
+            int dst_bits_in_type = dst_l.dt.type == TB_PTR ? 64 : dst_l.dt.data;
+
             // gonna be either MOV, MOVSX or MOVZX
             Inst2Type op = MOV;
 
@@ -729,24 +752,34 @@ static Val x64v2_eval(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
                 default: op = MOV; break;
             }
 
-            GAD_VAL dst = GAD_FN(regalloc)(ctx, f, r, X64_REG_CLASS_GPR);
-            GAD_VAL src = ctx->values[n->unary.src];
+            if (ctx->values[n->unary.src].type == VAL_IMM) {
+                #define MASK_UPTO(pos) (~UINT64_C(0) >> (64 - pos))
 
-            INST2(op, &dst, &src, l.dt);
-            if (op == MOV && l.mask != 0) {
-                // complex extensions
-                if (sign_ext) {
-                    LegalInt dst_l = legalize_int(n->dt);
-                    int dst_bits_in_type = dst_l.dt.type == TB_PTR ? 64 : dst_l.dt.data;
-                    int shift_amt = dst_bits_in_type - bits_in_type;
+                uint64_t src = ctx->values[n->unary.src].imm;
+                uint64_t sign_bit = (src >> (bits_in_type - 1)) & 1;
+                uint64_t mask = MASK_UPTO(dst_bits_in_type) & ~MASK_UPTO(bits_in_type);
+                return get_immediate(ctx, f, r, (src & ~mask) | (sign_bit ? mask : 0));
 
-                    emit_shift_gpr_imm(ctx, f, SHL, dst.gpr, shift_amt, dst_l.dt);
-                    emit_shift_gpr_imm(ctx, f, SAR, dst.gpr, shift_amt, dst_l.dt);
-                } else {
-                    x64v2_mask_out(ctx, f, l, &dst);
+                #undef MASK_UPTO
+            } else {
+                GAD_VAL dst = GAD_FN(regalloc)(ctx, f, r, X64_REG_CLASS_GPR);
+                GAD_VAL src = ctx->values[n->unary.src];
+
+                INST2(op, &dst, &src, l.dt);
+                if (op == MOV && l.mask != 0) {
+                    // complex extensions
+                    if (sign_ext) {
+                        int shift_amt = dst_bits_in_type - bits_in_type;
+
+                        emit_shift_gpr_imm(ctx, f, SHL, dst.gpr, shift_amt, dst_l.dt);
+                        emit_shift_gpr_imm(ctx, f, SAR, dst.gpr, shift_amt, dst_l.dt);
+                    } else {
+                        x64v2_mask_out(ctx, f, l, &dst);
+                    }
                 }
+
+                return dst;
             }
-            return dst;
         }
 
         case TB_TRUNCATE: {
@@ -851,6 +884,11 @@ static Val x64v2_eval(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
                 && "stride_as_shift can't fit into an LEA");
 
             GAD_VAL base = ctx->values[n->array_access.base];
+            if (is_value_mem(&base)) {
+                GAD_VAL tmp = GAD_FN(regalloc)(ctx, f, n->array_access.base, X64_REG_CLASS_GPR);
+                INST2(base.mem.is_rvalue ? MOV : LEA, &tmp, &base, TB_TYPE_PTR);
+                base = tmp;
+            }
             assert(base.type == VAL_GPR);
 
             if (stride_as_shift) {
@@ -864,13 +902,8 @@ static Val x64v2_eval(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
                     return (ctx->values[r] = addr);
                 }
             } else {
-                if (written_to_dst) {
-                    INST2(ADD, &dst, &base, TB_TYPE_PTR);
-                } else {
-                    // tb_assert_once("does this path get hit?");
-                    // INST2(LEA, &dst, &addr, TB_TYPE_PTR);
-                    return val_base_index(TB_TYPE_PTR, base.gpr, index->gpr, SCALE_X1);
-                }
+                assert(written_to_dst);
+                INST2(ADD, &dst, &base, TB_TYPE_PTR);
                 return dst;
             }
         }
@@ -879,9 +912,8 @@ static Val x64v2_eval(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
         case TB_OR:
         case TB_XOR:
         case TB_ADD:
-        case TB_SUB:
-        case TB_MUL: {
-            const static Inst2Type ops[] = { AND, OR, XOR, ADD, SUB, IMUL };
+        case TB_SUB: {
+            const static Inst2Type ops[] = { AND, OR, XOR, ADD, SUB };
 
             GAD_VAL dst = GAD_FN(regalloc2)(ctx, f, r, X64_REG_CLASS_GPR, true, n->i_arith.a);
             GAD_VAL a = ctx->values[n->i_arith.a];
@@ -891,13 +923,52 @@ static Val x64v2_eval(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
                 INST2(ops[type - TB_AND], &dst, &a, n->dt);
                 return dst;
             } else if (dst.type == a.type && dst.reg == a.reg) {
-                INST2(ops[type - TB_AND], &dst, &b, n->dt);
+                if (type == TB_MUL && b.type == VAL_IMM) {
+                    INST2(MOV, &dst, &b, n->dt);
+                    INST2(ops[type - TB_AND], &dst, &b, n->dt);
+                    return dst;
+                } else {
+                    INST2(ops[type - TB_AND], &dst, &dst, n->dt);
+                    return dst;
+                }
+            } else if (type == TB_MUL && is_rvalue(&a) && b.type == VAL_IMM) {
+                LegalInt l = legalize_int(n->dt);
+                int bits_in_type = l.dt.type == TB_PTR ? 64 : l.dt.data;
+
+                // IMUL r64, r/m64, imm32
+                //   REX.W + 69 /r id
+                if (a.type == VAL_MEM) {
+                    EMIT1(&ctx->emit, rex(bits_in_type == 64, dst.gpr, a.mem.base, a.mem.index != GPR_NONE ? a.mem.index : 0));
+                } else {
+                    EMIT1(&ctx->emit, rex(bits_in_type == 64, 0x00, dst.gpr, 0x00));
+                }
+                EMIT1(&ctx->emit, 0x69);
+                emit_memory_operand(&ctx->emit, dst.gpr, &a);
+                EMIT4(&ctx->emit, b.imm);
                 return dst;
             } else {
                 INST2(MOV, &dst, &a, n->dt);
                 INST2(ops[type - TB_AND], &dst, &b, n->dt);
                 return dst;
             }
+        }
+        case TB_MUL: {
+            GAD_VAL dst = GAD_FN(regalloc2)(ctx, f, r, X64_REG_CLASS_GPR, true, n->i_arith.a);
+            GAD_VAL a = ctx->values[n->i_arith.a];
+            GAD_VAL b = ctx->values[n->i_arith.b];
+
+            if (b.type == VAL_IMM) {
+                LegalInt l = legalize_int(n->dt);
+                emit_imul_gpr_gpr_imm(ctx, f, dst, a, b.imm, l.dt);
+            } else if (dst.type == b.type && dst.reg == b.reg) {
+                INST2(IMUL, &dst, &a, n->dt);
+            } else if (dst.type == a.type && dst.reg == a.reg) {
+                INST2(IMUL, &dst, &b, n->dt);
+            } else {
+                INST2(MOV, &dst, &a, n->dt);
+                INST2(IMUL, &dst, &b, n->dt);
+            }
+            return dst;
         }
 
         case TB_NOT:
@@ -913,6 +984,58 @@ static Val x64v2_eval(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
             return dst;
         }
 
+        case TB_UDIV:
+        case TB_SDIV:
+        case TB_UMOD:
+        case TB_SMOD: {
+            assert(n->dt.width == 0 && "TODO: Implement vector integer division and modulo");
+
+            LegalInt l = legalize_int(n->dt);
+            bool is_signed = (type == TB_SDIV || type == TB_SMOD);
+            bool is_div    = (type == TB_UDIV || type == TB_SDIV);
+
+            GAD_FN(steal)(ctx, f, r, X64_REG_CLASS_GPR, RAX);
+            GAD_FN(steal)(ctx, f, r, X64_REG_CLASS_GPR, RDX);
+
+            GAD_VAL b = ctx->values[n->i_arith.b];
+            if (is_value_mem(&b)) {
+                GAD_VAL tmp = GAD_FN(regalloc)(ctx, f, n->i_arith.b, X64_REG_CLASS_GPR);
+                INST2(b.mem.is_rvalue ? MOV : LEA, &tmp, &b, TB_TYPE_PTR);
+                b = tmp;
+            } else if (b.type == VAL_IMM) {
+                GAD_VAL tmp = GAD_FN(regalloc)(ctx, f, n->i_arith.b, X64_REG_CLASS_GPR);
+                INST2(MOV, &tmp, &b, TB_TYPE_PTR);
+                b = tmp;
+            }
+
+            // MOV rax, a
+            x64v2_mov_to_explicit_gpr(ctx, f, RAX, n->i_arith.a);
+
+            if (is_signed) {
+                // cqo/cdq (sign extend RAX into RDX)
+                if (l.dt.type == TB_PTR || (l.dt.type == TB_INT && l.dt.data == 64)) {
+                    EMIT1(&ctx->emit, 0x48);
+                }
+                EMIT1(&ctx->emit, 0x99);
+            } else {
+                // xor rdx, rdx
+                EMIT1(&ctx->emit, 0x31);
+                EMIT1(&ctx->emit, mod_rx_rm(MOD_DIRECT, RDX, RDX));
+            }
+
+            INST1(is_signed ? IDIV : DIV, &b);
+
+            if (l.mask) {
+                Val dst = val_gpr(l.dt, is_div ? RAX : RDX);
+                if (l.mask) x64v2_mask_out(ctx, f, l, &dst);
+            }
+
+            // free the other piece of the divmod result
+            GAD_FN(free_reg)(ctx, f, X64_REG_CLASS_GPR, is_div ? RDX : RAX);
+
+            // the return value is in RAX for division and RDX for modulo
+            return (ctx->values[r] = val_gpr(l.dt, is_div ? RAX : RDX));
+        }
         case TB_SHR:
         case TB_SHL:
         case TB_SAR: {
@@ -946,9 +1069,8 @@ static Val x64v2_eval(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
                 INST2(MOV, &dst, &a, l.dt);
 
                 // MOV rcx, b
-                GAD_VAL rcx = val_gpr(l.dt, RCX);
-                GAD_VAL b = ctx->values[n->i_arith.b];
-                INST2(MOV, &rcx, &b, l.dt);
+                GAD_FN(steal)(ctx, f, r, X64_REG_CLASS_GPR, RCX);
+                x64v2_mov_to_explicit_gpr(ctx, f, RCX, n->i_arith.b);
 
                 // D2 /4       shl r/m, cl
                 // D2 /5       shr r/m, cl
@@ -962,6 +1084,7 @@ static Val x64v2_eval(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
                     case TB_SAR: EMIT1(&ctx->emit, mod_rx_rm(MOD_DIRECT, 0x07, dst.gpr)); break;
                     default: tb_unreachable();
                 }
+                GAD_FN(free_reg)(ctx, f, X64_REG_CLASS_GPR, RCX);
 
                 if (l.mask) x64v2_mask_out(ctx, f, l, &dst);
                 return dst;
@@ -994,6 +1117,12 @@ static Val x64v2_eval(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
 
                 GAD_VAL lhs_val = ctx->values[lhs];
                 GAD_VAL rhs_val = ctx->values[rhs];
+                if (is_value_mem(&rhs_val)) {
+                    GAD_VAL tmp = GAD_FN(regalloc)(ctx, f, rhs, X64_REG_CLASS_GPR);
+                    INST2(rhs_val.mem.is_rvalue ? MOV : LEA, &tmp, &rhs_val, TB_TYPE_PTR);
+                    rhs_val = tmp;
+                }
+
                 INST2(CMP, &lhs_val, &rhs_val, cmp_dt);
 
                 switch (type) {

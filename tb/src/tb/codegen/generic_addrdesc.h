@@ -283,6 +283,24 @@ static void GAD_FN(explicit_steal)(Ctx* restrict ctx, TB_Function* f, TB_Reg r, 
     ctx->active[active_i] = r;
 }
 
+static bool GAD_FN(free_reg)(Ctx* restrict ctx, TB_Function* f, int reg_class, int reg_num) {
+    FOREACH_N(i, 0, ctx->active_count) {
+        TB_Reg r = ctx->active[i];
+        if (ctx->values[r].type == GAD_VAL_REGISTER + reg_class && ctx->values[r].reg == reg_num) {
+            if (i != ctx->active_count - 1) {
+                ctx->active[i] = ctx->active[ctx->active_count - 1];
+            }
+
+            printf("    free %s\n", GPR_NAMES[reg_num]);
+            set_remove(&ctx->free_regs[reg_class], reg_num);
+            ctx->active_count -= 1;
+            return true;
+        }
+    }
+
+    return false;
+}
+
 static GAD_VAL GAD_FN(steal)(Ctx* restrict ctx, TB_Function* f, TB_Reg r, int reg_class, int reg_num) {
     LiveInterval r_li = get_live_interval(ctx, r);
     printf("r%u (t=%d .. %d)\n", r, r_li.start, r_li.end);
@@ -299,8 +317,15 @@ static GAD_VAL GAD_FN(steal)(Ctx* restrict ctx, TB_Function* f, TB_Reg r, int re
         }
     }
 
-    tb_panic("steal");
-    return (GAD_VAL){ 0 };
+    set_put(&ctx->free_regs[reg_class], reg_num);
+    GAD_VAL v = {
+        .type = GAD_VAL_REGISTER + reg_class,
+        .r = r, .dt = f->nodes[r].dt, .reg = reg_num
+    };
+
+    ctx->values[r] = v;
+    ctx->active[ctx->active_count++] = r;
+    return v;
 }
 
 static GAD_VAL GAD_FN(regalloc2)(Ctx* restrict ctx, TB_Function* f, TB_Reg r, int reg_class, bool can_recycle, TB_Reg phi_steal) {
@@ -335,6 +360,7 @@ static GAD_VAL GAD_FN(regalloc2)(Ctx* restrict ctx, TB_Function* f, TB_Reg r, in
                     // TODO(NeGate): this is a very conservative way to do so lmao, fix it
                     if (tb_node_is_terminator(f, f->nodes[r].next)) {
                         ctx->values[r] = ctx->values[phi_steal];
+                        ctx->values[r].is_ref = true;
                         goto done;
                     }
                 }
@@ -345,9 +371,9 @@ static GAD_VAL GAD_FN(regalloc2)(Ctx* restrict ctx, TB_Function* f, TB_Reg r, in
             printf("  try recycling r%u\n", r);
             FOREACH_N(k, 0, ctx->active_count) {
                 TB_Reg other_r = ctx->active[k];
-                LiveInterval other_li = get_live_interval(ctx, other_r);
+                if (other_r == 0) continue;
 
-                printf("    [%zu] = r%u\n", k, other_r);
+                LiveInterval other_li = get_live_interval(ctx, other_r);
                 if (other_li.end == r_li.start) {
                     printf("  recycle r%u for r%u\n", other_r, r);
 
@@ -382,25 +408,6 @@ static GAD_VAL GAD_FN(regalloc)(Ctx* restrict ctx, TB_Function* f, TB_Reg r, int
     return GAD_FN(regalloc2)(ctx, f, r, reg_class, false, 0);
 }
 
-static void GAD_FN(kill_reg)(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
-    FOREACH_N(i, 0, ctx->active_count) {
-        TB_Reg k = ctx->active[i];
-        if (k == r) {
-            // remove from active
-            if (i != ctx->active_count - 1) {
-                ctx->active[i] = ctx->active[ctx->active_count - 1];
-            }
-
-            // add back to register pool
-            if (ctx->values[k].type >= GAD_VAL_REGISTER && ctx->values[k].type < GAD_VAL_REGISTER + GAD_NUM_REG_FAMILIES) {
-                printf("  free %s\n", GPR_NAMES[ctx->values[k].reg]);
-                set_remove(&ctx->free_regs[ctx->values[k].type - GAD_VAL_REGISTER], ctx->values[k].reg);
-            }
-            ctx->active_count -= 1;
-        }
-    }
-}
-
 // done before running an instruction
 static void GAD_FN(regalloc_step)(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
     LiveInterval r_li = get_live_interval(ctx, r);
@@ -424,8 +431,8 @@ static void GAD_FN(regalloc_step)(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
         }
 
         // add back to register pool
-        if (ctx->values[k].type >= GAD_VAL_REGISTER && ctx->values[k].type < GAD_VAL_REGISTER + GAD_NUM_REG_FAMILIES) {
-            printf("  free %s\n", GPR_NAMES[ctx->values[k].reg]);
+        if ((ctx->values[k].type >= GAD_VAL_REGISTER && ctx->values[k].type < GAD_VAL_REGISTER + GAD_NUM_REG_FAMILIES) && !ctx->values[k].is_ref) {
+            printf("    free %s\n", GPR_NAMES[ctx->values[k].reg]);
             set_remove(&ctx->free_regs[ctx->values[k].type - GAD_VAL_REGISTER], ctx->values[k].reg);
         }
         ctx->active_count -= 1;

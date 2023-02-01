@@ -59,7 +59,8 @@ typedef enum Inst2FPFlags {
 
 typedef struct Val {
     uint8_t type;
-    bool is_spill;
+    bool is_spill : 1;
+    bool is_ref : 1;
     TB_DataType dt;
     TB_Reg r;
 
@@ -230,6 +231,10 @@ inline static Val val_base_index_disp(TB_DataType dt, GPR b, GPR i, Scale s, int
 
 inline static bool is_lvalue(const Val* v) {
     return (v->type == VAL_MEM || v->type == VAL_GLOBAL) && !v->mem.is_rvalue;
+}
+
+inline static bool is_rvalue(const Val* v) {
+    return (v->type == VAL_MEM || v->type == VAL_GLOBAL) && v->mem.is_rvalue;
 }
 
 inline static bool is_value_mem(const Val* v) {
