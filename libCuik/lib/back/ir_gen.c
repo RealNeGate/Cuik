@@ -1335,8 +1335,8 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
 
             if (CUIK_QUAL_TYPE_HAS(e->type, CUIK_QUAL_ATOMIC)) {
                 // Load inputs
-                IRVal lhs = irgen_expr(tu, func, e->bin_op.left);
                 IRVal rhs = irgen_expr(tu, func, e->bin_op.right);
+                IRVal lhs = irgen_expr(tu, func, e->bin_op.left);
 
                 // convert into address
                 if (lhs.value_type == LVALUE_SYMBOL) {
@@ -1780,8 +1780,8 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
             break;
         }
         case STMT_WHILE: {
-            TB_Label body = tb_basic_block_create(func);
             TB_Label header = tb_basic_block_create(func);
+            TB_Label body = tb_basic_block_create(func);
             TB_Label exit = tb_basic_block_create(func);
             s->backing.l = exit;
 
@@ -1790,7 +1790,7 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
             // developer of TB :p
             // essentially we can store both the header and exit labels
             // implicitly as one if they're next to each other
-            assert(header == exit - 1);
+            assert(header == exit - 2);
             fallthrough_label(func, header);
 
             TB_Reg cond = irgen_as_rvalue(tu, func, s->while_.cond);
@@ -1798,6 +1798,7 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
 
             tb_inst_set_label(func, body);
             if (s->while_.body) {
+                emit_location(tu, func, s->while_.body->loc.start);
                 irgen_stmt(tu, func, s->while_.body);
             }
 
@@ -1818,6 +1819,7 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
 
             fallthrough_label(func, body);
             if (s->do_while.body) {
+                emit_location(tu, func, s->do_while.body->loc.start);
                 irgen_stmt(tu, func, s->do_while.body);
             }
 
@@ -1842,6 +1844,7 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
             assert(header == exit - 2);
 
             if (s->for_.first) {
+                emit_location(tu, func, s->for_.first->loc.start);
                 irgen_stmt(tu, func, s->for_.first);
                 tb_inst_goto(func, header);
             }
@@ -1871,7 +1874,11 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
         case STMT_CONTINUE: {
             // this is really hacky but we always store the loop header label one
             // behind the exit label in terms of IDs.
-            tb_inst_goto(func, s->continue_.target->backing.l - 2);
+            if (s->continue_.target->op == STMT_DO_WHILE) {
+                tb_inst_goto(func, s->continue_.target->backing.l - 1);
+            } else {
+                tb_inst_goto(func, s->continue_.target->backing.l - 2);
+            }
             break;
         }
         case STMT_BREAK: {

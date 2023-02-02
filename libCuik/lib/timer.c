@@ -94,20 +94,17 @@ void init_timer_system(void) {
     #endif
 }
 
-void* cuikperf_init(size_t ud_size, const Cuik_IProfiler* p, bool lock_on_plot) {
+void cuikperf_start(void* ud, const Cuik_IProfiler* p, bool lock_on_plot) {
     assert(profiler == NULL);
 
     profiler = p;
-    profiler_userdata = calloc(ud_size, 1);
+    profiler_userdata = ud;
     should_lock_profiler = lock_on_plot;
 
     if (lock_on_plot) {
         mtx_init(&timer_mutex, mtx_plain);
     }
-    return profiler_userdata;
-}
 
-void cuikperf_start(void) {
     profiler->start(profiler_userdata);
     profiler->begin_plot(profiler_userdata, cuik_time_in_nanos(), "libCuik", "");
 }

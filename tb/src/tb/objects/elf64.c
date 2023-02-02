@@ -4,9 +4,6 @@
 
 struct TB_ModuleExporter {
     size_t write_pos;
-
-    size_t temporary_memory_capacity;
-    void* temporary_memory;
 };
 
 static void put_symbol(TB_Emitter* strtbl, TB_Emitter* stab, const char* name, uint8_t sym_info, Elf64_Half section_index, Elf64_Addr value, Elf64_Xword size) {

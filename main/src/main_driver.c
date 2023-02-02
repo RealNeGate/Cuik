@@ -81,13 +81,11 @@ int main(int argc, const char** argv) {
     }
 
     if (args.time) {
-        char output_path_no_ext[FILENAME_MAX];
-        cuik_driver_get_output_name(&args, FILENAME_MAX, output_path_no_ext);
+        char* perf_output_path = malloc(FILENAME_MAX);
+        cuik_driver_get_output_name(&args, FILENAME_MAX, perf_output_path);
+        strncat(perf_output_path, ".spall", FILENAME_MAX);
 
-        char* perf_output_path = cuikperf_init(FILENAME_MAX, &spall_profiler, false);
-        sprintf_s(perf_output_path, FILENAME_MAX, "%s.spall", output_path_no_ext);
-
-        cuikperf_start();
+        cuikperf_start(perf_output_path, &spall_profiler, false);
     }
 
     // spin up worker threads

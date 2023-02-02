@@ -493,15 +493,13 @@ TB_API TB_Exports tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
         }
 
         if (e->debug_sections.length > 0) {
-            size_t capacity = 0;
-            FOREACH_N(i, 0, e->debug_sections.length) {
-                capacity += e->debug_sections.data[i].relocation_count;
-            }
-
             TB_FIXED_ARRAY(COFF_ImageReloc) relocs = {
-                .cap = capacity / sizeof(COFF_ImageReloc),
                 .elems = (COFF_ImageReloc*) &output[e->write_pos]
             };
+
+            FOREACH_N(i, 0, e->debug_sections.length) {
+                relocs.cap += e->debug_sections.data[i].relocation_count;
+            }
             assert(e->write_pos == e->debug_section_headers[0].pointer_to_reloc);
 
             FOREACH_N(i, 0, e->debug_sections.length) {
@@ -522,7 +520,7 @@ TB_API TB_Exports tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
                 }
             }
 
-            assert(count == capacity);
+            assert(relocs.count == relocs.cap);
             e->write_pos += relocs.count * sizeof(COFF_ImageReloc);
         }
 
