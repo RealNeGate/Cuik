@@ -724,23 +724,11 @@ extern "C" {
         TB_Slice strtbl;
     } TB_ArchiveFileParser;
 
-    typedef struct {
-        enum {
-            TB_EXPORT_PACKET_NONE,
-
-            // allocates region of memory used for output
-            TB_EXPORT_PACKET_ALLOC,
-        } type;
-        union {
-            struct {
-                // input
-                size_t request_size;
-
-                // output
-                void* memory;
-            } alloc;
-        };
-    } TB_ModuleExportPacket;
+    typedef enum {
+        TB_EXECUTABLE_UNKNOWN,
+        TB_EXECUTABLE_PE,
+        TB_EXECUTABLE_ELF,
+    } TB_ExecutableType;
 
     typedef struct TB_ModuleExporter TB_ModuleExporter;
 
@@ -838,7 +826,9 @@ extern "C" {
     typedef struct TB_LinkerSection TB_LinkerSection;
     typedef struct TB_LinkerSectionPiece TB_LinkerSectionPiece;
 
-    TB_API TB_Linker* tb_linker_create(void);
+    TB_API TB_ExecutableType tb_system_executable_format(TB_System s);
+
+    TB_API TB_Linker* tb_linker_create(TB_ExecutableType type, TB_Arch arch);
     TB_API TB_Exports tb_linker_export(TB_Linker* l);
     TB_API void tb_linker_destroy(TB_Linker* l);
 

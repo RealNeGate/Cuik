@@ -20,6 +20,7 @@ X(__builtin_clz, "ii")
 X(__builtin_mul_overflow, "v.")
 
 X(__builtin_unreachable, "v")
+X(__builtin_syscall, "v.")
 
 // cuik internal
 X(__c11_atomic_compare_exchange_strong, "v.")

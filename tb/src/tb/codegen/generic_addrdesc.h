@@ -792,7 +792,10 @@ static TB_FunctionOutput GAD_FN(compile_function)(TB_Function* restrict f, const
             ctx->ordinal[n - f->nodes] = counter++;
         }
     }
-    dyn_array_trim(ctx->stack_slots);
+
+    if (ctx->stack_slots) {
+        dyn_array_trim(ctx->stack_slots);
+    }
 
     // We generate nodes via a postorder walk
     TB_PostorderWalk walk = {

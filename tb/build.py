@@ -21,6 +21,7 @@ source_patterns = [
 	"src/tb/codegen/*.c",
 	"src/tb/bigint/*.c",
 	"src/tb/objects/*.c",
+	"src/tb/linker/*.c",
 	"src/tb/system/*.c",
 	"src/tb/debug/*.c",
 	"src/tb/debug/cv/*.c",

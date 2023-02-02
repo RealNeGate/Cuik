@@ -385,10 +385,12 @@ static bool export_output(Cuik_CompilerArgs* restrict args, TB_Module* mod, bool
     }
 
     if (args->based && (args->flavor == TB_FLAVOR_SHARED || args->flavor == TB_FLAVOR_EXECUTABLE)) {
-        bool is_windows = (cuik_get_target_system(args->target) == CUIK_SYSTEM_WINDOWS);
+        Cuik_System sys = cuik_get_target_system(args->target);
+        bool is_windows = (sys == CUIK_SYSTEM_WINDOWS);
 
         CUIK_TIMED_BLOCK("Export linked") {
-            TB_Linker* l = tb_linker_create();
+            // TB_ExecutableType exe = tb_system_executable_format((TB_System) sys);
+            TB_Linker* l = tb_linker_create(TB_EXECUTABLE_ELF, TB_ARCH_X86_64);
             int errors = 0;
 
             // locate libraries and feed them into TB... in theory this process
