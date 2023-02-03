@@ -7,25 +7,25 @@ import subprocess
 import argparse
 
 parser = argparse.ArgumentParser(description='Compiles libCuik')
-parser.add_argument('--opt', action='store_true', help='runs optimize on compiled source')
-parser.add_argument('--asan', action='store_true', help='instrument code with the AddressSanitizer')
+parser.add_argument('-opt', action='store_true', help='runs optimize on compiled source')
+parser.add_argument('-asan', action='store_true', help='instrument code with the AddressSanitizer')
 args = parser.parse_args()
 
 #######################################
 # Handle dependencies
 #######################################
-tb_args = [sys.executable, 'build.py', 'x64', 'aarch64', 'wasm']
-libcuik_args = [sys.executable, 'build.py', '--usetb']
+tb_args = [sys.executable, 'build.py', '-mimalloc', 'x64', 'aarch64', 'wasm']
+libcuik_args = [sys.executable, 'build.py', '-mimalloc', '-usetb']
 
 if args.opt:
-	tb_args.append('--opt')
-	libcuik_args.append('--opt')
+	tb_args.append('-opt')
+	libcuik_args.append('-opt')
 
 if args.asan:
-	tb_args.append('--asan')
-	libcuik_args.append('--asan')
+	tb_args.append('-asan')
+	libcuik_args.append('-asan')
 
-subprocess.check_call(tb_args, shell=True, cwd="../tilde-backend")
+subprocess.check_call(tb_args, shell=True, cwd="../tb")
 subprocess.check_call(libcuik_args, shell=True, cwd="../libCuik")
 
 #######################################
@@ -41,7 +41,7 @@ else:
 	ldflags = " -fuse-ld=lld"
 
 cflags = "-g -Wall -Werror -Wno-unused-function"
-cflags += " -I ../common/ -I SDL2/include -I ../libCuik/include -I ../tilde-backend/include"
+cflags += " -I ../mimalloc/include -I ../common/ -I SDL2/include -I ../libCuik/include -I ../tb/include"
 cflags += " -DCUIK_USE_TB "
 
 if args.asan:
@@ -55,12 +55,6 @@ if system == "Windows":
 	lib_ext = ".lib"
 	exe_ext = ".exe"
 	cflags += " -I ../c11threads -D_CRT_SECURE_NO_WARNINGS"
-	# when we're not doing ASAN, we should be using mimalloc
-	if False: # not args.asan:
-		cflags += " -D_DLL"
-		ldflags += " ../mimalloc/out/Release/mimalloc.lib -Xlinker /include:mi_version"
-		ldflags += " -nodefaultlibs -lmsvcrt -lvcruntime -lucrt"
-		subprocess.call(['build_mimalloc.bat'], cwd="..\\", shell=True)
 elif system == "Darwin":
 	exe_ext = ""
 	lib_ext = ".a"
@@ -74,6 +68,11 @@ else:
 ninja.write(f"""
 cflags = {cflags}
 ldflags = {ldflags}
+
+rule mimalloc
+  depfile = $out.d
+  command = clang $in -I ../mimalloc/include -DMI_SECURE=1 -g -O2 -MD -MF $out.d -c -o $out
+  description = MIMALLOC $in $out
 
 rule cc
   depfile = $out.d
@@ -100,7 +99,10 @@ for f in list:
 	ninja.write(f"build bin/{obj}: cc {f}\n")
 	objs.append("bin/"+obj)
 
-ninja.write(f"build inspector{exe_ext}: link {' '.join(objs)} ../libCuik/libcuik{lib_ext} ../tilde-backend/tildebackend{lib_ext}\n")
+ninja.write(f"build bin/mimalloc.o: mimalloc ../mimalloc/src/static.c\n")
+objs.append("bin/mimalloc.o")
+
+ninja.write(f"build inspector{exe_ext}: link {' '.join(objs)} ../libCuik/libcuik{lib_ext} ../tb/tb{lib_ext}\n")
 ninja.close()
 
 exit(subprocess.call(['ninja', '-j2']))

@@ -1,9 +1,5 @@
 #pragma once
-#include <stdbool.h>
-#include <stdlib.h>
-#include <stddef.h>
-#include <stdio.h>
-#include <assert.h>
+#include <common.h>
 
 #define INITIAL_CAP 64
 
@@ -14,7 +10,7 @@ typedef struct DynArrayHeader {
 } DynArrayHeader;
 
 static void* dyn_array_internal_create(size_t type_size, size_t cap) {
-    DynArrayHeader* header = malloc(sizeof(DynArrayHeader) + (type_size * cap));
+    DynArrayHeader* header = cuik_malloc(sizeof(DynArrayHeader) + (type_size * cap));
 
     *header = (DynArrayHeader){
         .capacity = cap
@@ -25,7 +21,7 @@ static void* dyn_array_internal_create(size_t type_size, size_t cap) {
 static void dyn_array_internal_destroy(void* ptr) {
     if (ptr != NULL) {
         DynArrayHeader* header = ((DynArrayHeader*)ptr) - 1;
-        free(header);
+        cuik_free(header);
     }
 }
 
@@ -37,7 +33,7 @@ static void* dyn_array_internal_reserve(void* ptr, size_t type_size, size_t extr
     DynArrayHeader* header = ((DynArrayHeader*)ptr) - 1;
     if (header->size + extra >= header->capacity) {
         header->capacity = (header->size + extra) * 2;
-        DynArrayHeader* new_ptr = realloc(header, sizeof(DynArrayHeader) + (type_size * header->capacity));
+        DynArrayHeader* new_ptr = cuik_realloc(header, sizeof(DynArrayHeader) + (type_size * header->capacity));
         if (!new_ptr) {
             fprintf(stderr, "error: out of memory!");
             abort();
@@ -53,7 +49,7 @@ static void* dyn_array_internal_trim(void* ptr, size_t type_size) {
     DynArrayHeader* header = ((DynArrayHeader*)ptr) - 1;
     header->capacity = header->size;
 
-    DynArrayHeader* new_ptr = realloc(header, sizeof(DynArrayHeader) + (type_size * header->capacity));
+    DynArrayHeader* new_ptr = cuik_realloc(header, sizeof(DynArrayHeader) + (type_size * header->capacity));
     assert(new_ptr != NULL);
     return &new_ptr->data[0];
 }

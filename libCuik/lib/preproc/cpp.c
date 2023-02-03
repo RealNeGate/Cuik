@@ -236,22 +236,46 @@ void cuiklex_free_tokens(TokenStream* tokens) {
     cuik_free(tokens->error_tally);
 }
 
+void cuikpp_finalize(Cuik_CPP* ctx) {
+    #if CUIK__CPP_STATS
+    mtx_lock(&report_mutex);
+    printf(" %80s | %.06f ms read+lex\t| %4zu files read\t| %zu fstats\t| %f ms (%zu defines)\n",
+        ctx->tokens.filepath,
+        ctx->total_io_time / 1000000.0,
+        ctx->total_files_read,
+        ctx->total_fstats,
+        ctx->total_define_access_time / 1000000.0,
+        ctx->total_define_accesses
+    );
+    mtx_unlock(&report_mutex);
+    #endif
+
+    CUIK_TIMED_BLOCK("cuikpp_finalize") {
+        cuik__vfree(ctx->macros.keys, (1u << ctx->macros.exp) * sizeof(String));
+        cuik__vfree(ctx->macros.vals, (1u << ctx->macros.exp) * sizeof(MacroDef));
+        cuik__vfree(ctx->stack, MAX_CPP_STACK_DEPTH * sizeof(CPPStackSlot));
+
+        ctx->macros.keys = NULL;
+        ctx->macros.vals = NULL;
+        ctx->stack = NULL;
+    }
+}
+
 void cuikpp_free(Cuik_CPP* ctx) {
     dyn_array_for(i, ctx->system_include_dirs) {
         cuik_free(ctx->system_include_dirs[i].name);
     }
+    dyn_array_destroy(ctx->scratch_list.tokens);
     dyn_array_destroy(ctx->system_include_dirs);
 
     if (ctx->macros.keys) {
         cuikpp_finalize(ctx);
     }
 
-    cuik__vfree(ctx->stack, MAX_CPP_STACK_DEPTH * sizeof(CPPStackSlot));
     cuik__vfree((void*) ctx->the_shtuffs, THE_SHTUFFS_SIZE);
-
-    ctx->stack = NULL;
-    ctx->the_shtuffs = NULL;
     cuik_free(ctx);
+
+    ctx->the_shtuffs = NULL;
 }
 
 // we can infer the column and line from doing a binary search on the TokenStream's line map
@@ -715,31 +739,6 @@ Cuikpp_Status cuikpp_default_run(Cuik_CPP* ctx) {
         if (status != CUIKPP_CONTINUE) return status;
 
         cuikpp_default_packet_handler(ctx, &packet);
-    }
-}
-
-void cuikpp_finalize(Cuik_CPP* ctx) {
-    #if CUIK__CPP_STATS
-    mtx_lock(&report_mutex);
-    printf(" %80s | %.06f ms read+lex\t| %4zu files read\t| %zu fstats\t| %f ms (%zu defines)\n",
-        ctx->tokens.filepath,
-        ctx->total_io_time / 1000000.0,
-        ctx->total_files_read,
-        ctx->total_fstats,
-        ctx->total_define_access_time / 1000000.0,
-        ctx->total_define_accesses
-    );
-    mtx_unlock(&report_mutex);
-    #endif
-
-    CUIK_TIMED_BLOCK("cuikpp_finalize") {
-        cuik__vfree(ctx->macros.keys, (1u << ctx->macros.exp) * sizeof(String));
-        cuik__vfree(ctx->macros.vals, (1u << ctx->macros.exp) * sizeof(MacroDef));
-        cuik__vfree((void*)ctx->stack, 1024 * sizeof(CPPStackSlot));
-
-        ctx->macros.keys = NULL;
-        ctx->macros.vals = NULL;
-        ctx->stack = NULL;
     }
 }
 

@@ -99,6 +99,22 @@ X(PFNGLDEBUGMESSAGECALLBACKPROC,     glDebugMessageCallback     )
 GL_FUNCTIONS(X)
 #undef X
 
+#ifndef NDEBUG
+static void APIENTRY dbg_callback(GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, const GLchar* message, const void* user) {
+    printf("%s\n", message);
+
+    if (severity == GL_DEBUG_SEVERITY_HIGH || severity == GL_DEBUG_SEVERITY_MEDIUM) {
+        if (IsDebuggerPresent()) {
+            printf("OpenGL error - check the callstack in debugger\n");
+            __debugbreak();
+        }
+
+        printf("OpenGL API usage error! Use debugger to examine call stack!\n");
+        abort();
+    }
+}
+#endif
+
 static GLuint load_shader(GLenum type, const char* src) {
     GLuint id = glCreateShader(type);
     glShaderSource(id, 1, &src, NULL);
@@ -144,6 +160,7 @@ void r_init(void) {
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 5);
+    SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 0);
 
     // init SDL window
     window = SDL_CreateWindow(
@@ -225,6 +242,12 @@ void r_init(void) {
         "   fColor.a *= texture(uTextures[Tex], UV).r;\n"
         "}\n";
 
+    #ifndef NDEBUG
+    // enable debug callback
+    glDebugMessageCallback(&dbg_callback, NULL);
+    glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
+    #endif
+
     program = load_shader_program(
         load_shader(GL_VERTEX_SHADER, VERTEX),
         load_shader(GL_FRAGMENT_SHADER, FRAGMENT)
@@ -250,12 +273,12 @@ void r_init(void) {
     glCreateBuffers(2, rect_bo);
 
     int flags = GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT;
-    glNamedBufferStorage(rect_bo[0], MAX_QUADS * sizeof(Rect), NULL, flags);
+    glNamedBufferStorage(rect_bo[0], MAX_QUADS * sizeof(Rect), NULL, flags | GL_DYNAMIC_STORAGE_BIT);
     glNamedBufferStorage(rect_bo[1], MAX_QUADS * sizeof(Rect), NULL, 0);
     rects = glMapNamedBufferRange(rect_bo[0], 0, MAX_QUADS * sizeof(Rect), flags | GL_MAP_INVALIDATE_BUFFER_BIT);
 
     glCreateBuffers(2, clip_bo);
-    glNamedBufferStorage(clip_bo[0], MAX_QUADS * sizeof(Clip), NULL, flags);
+    glNamedBufferStorage(clip_bo[0], MAX_QUADS * sizeof(Clip), NULL, flags | GL_DYNAMIC_STORAGE_BIT);
     glNamedBufferStorage(clip_bo[1], MAX_QUADS * sizeof(Clip), NULL, 0);
     clip_rects = glMapNamedBufferRange(clip_bo[0], 0, MAX_CLIPS * sizeof(Clip), flags | GL_MAP_INVALIDATE_BUFFER_BIT);
 
@@ -313,6 +336,12 @@ void r_init(void) {
         font.descent = TTF_FontDescent(sdl_font);
 
         SDL_LockSurface(s);
+        uint32_t* pixels = s->pixels;;
+        pixels[0] = 0xFFFFFFFF;
+        pixels[1] = 0xFFFFFFFF;
+        pixels[s->w] = 0xFFFFFFFF;
+        pixels[1+s->w] = 0xFFFFFFFF;
+
         glTextureSubImage2D(id, 0, 0, 0, s->w, s->h, GL_RGBA, GL_UNSIGNED_BYTE, s->pixels);
         SDL_UnlockSurface(s);
         SDL_FreeSurface(s);
@@ -435,5 +464,5 @@ void r_present(void) {
     glUseProgram(0);
 
     SDL_GL_SwapWindow(window);
-    glFinish();
+    // glFinish();
 }

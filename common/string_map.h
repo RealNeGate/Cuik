@@ -38,10 +38,19 @@ typedef struct {
     const uint8_t* data;
 } NL_Slice;
 
+#if defined(TB_USE_MIMALLOC) || defined(CUIK_USE_MIMALLOC)
+#include <mimalloc.h>
+
+#define NL_MALLOC(s)     mi_malloc(s)
+#define NL_CALLOC(c, s)  mi_calloc(c, s)
+#define NL_REALLOC(p, s) mi_realloc(p, s)
+#define NL_FREE(p)       mi_free(p)
+#else
 #define NL_MALLOC(s)     malloc(s)
 #define NL_CALLOC(c, s)  calloc(c, s)
 #define NL_REALLOC(p, s) realloc(p, s)
 #define NL_FREE(p)       free(p)
+#endif
 
 #ifdef NL_STRING_MAP_INLINE
 #define NL_API static
