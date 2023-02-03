@@ -10,16 +10,16 @@
 #include <stdlib.h>
 #include <string.h>
 
+// https://semver.org/
+#define TB_VERSION_MAJOR 0
+#define TB_VERSION_MINOR 2
+#define TB_VERSION_PATCH 0
+
+#define TB_API extern
+
 #ifdef __cplusplus
 extern "C" {
     #endif
-
-    // https://semver.org/
-    #define TB_VERSION_MAJOR 0
-    #define TB_VERSION_MINOR 2
-    #define TB_VERSION_PATCH 0
-
-    #define TB_API extern
 
     // These are flags
     typedef enum TB_ArithmaticBehavior {
