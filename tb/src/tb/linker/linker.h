@@ -133,7 +133,7 @@ typedef struct TB_Linker {
 } TB_Linker;
 
 // TB helpers
-size_t tb__layout_text_section(TB_Module* m, ptrdiff_t* restrict entrypoint);
+size_t tb__layout_text_section(TB_Module* m, ptrdiff_t* restrict entrypoint, const char* entrypoint_name);
 
 // Symbol table
 TB_LinkerSymbol* tb__find_symbol(TB_SymbolTable* restrict symtab, TB_Slice name);
@@ -148,4 +148,4 @@ TB_LinkerSectionPiece* tb__append_piece(TB_LinkerSection* section, int kind, siz
 
 size_t tb__pad_file(uint8_t* output, size_t write_pos, char pad, size_t align);
 void tb__apply_external_relocs(TB_Linker* l, TB_Module* m, uint8_t* output);
-size_t tb__apply_section_contents(TB_Linker* l, uint8_t* output, size_t write_pos, TB_LinkerSection* text, TB_LinkerSection* data, TB_LinkerSection* rdata);
+size_t tb__apply_section_contents(TB_Linker* l, uint8_t* output, size_t write_pos, TB_LinkerSection* text, TB_LinkerSection* data, TB_LinkerSection* rdata, size_t section_alignment);

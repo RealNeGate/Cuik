@@ -95,7 +95,7 @@ static void append_module(TB_Linker* l, TB_Module* m) {
     // Convert module into sections which we can then append to the output
     ptrdiff_t entry;
     TB_LinkerSection* text = tb__find_or_create_section(l, ".text", IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_CNT_CODE);
-    m->linker.text = tb__append_piece(text, PIECE_TEXT, tb__layout_text_section(m, &entry), NULL, m);
+    m->linker.text = tb__append_piece(text, PIECE_TEXT, tb__layout_text_section(m, &entry, "mainCRTStartup"), NULL, m);
     if (entry >= 0) {
         l->entrypoint = m->linker.text->offset + entry;
         // printf("Found entry at %zu\n", l->entrypoint);
@@ -586,7 +586,7 @@ static TB_Exports export(TB_Linker* l) {
     }
     write_pos = tb__pad_file(output, write_pos, 0x00, 0x200);
 
-    tb__apply_section_contents(l, output, write_pos, text, data, rdata);
+    tb__apply_section_contents(l, output, write_pos, text, data, rdata, 512);
 
     // TODO(NeGate): multithread this too
     CUIK_TIMED_BLOCK("apply final relocations") {

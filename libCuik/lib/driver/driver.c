@@ -366,22 +366,13 @@ static Cuik_Linker gimme_linker(Cuik_CompilerArgs* restrict args, bool subsystem
     return l;
 }
 
-static bool export_output(Cuik_CompilerArgs* restrict args, TB_Module* mod, bool subsystem_windows) {
+static bool export_output(Cuik_CompilerArgs* restrict args, TB_Module* mod, const char* output_path, bool subsystem_windows) {
     // TODO(NeGate): do a smarter system (just default to whatever the different platforms like)
     TB_DebugFormat debug_fmt = (args->debug_info ? TB_DEBUGFMT_CODEVIEW : TB_DEBUGFMT_NONE);
 
-    char output_path_no_ext[FILENAME_MAX];
-    cuik_driver_get_output_name(args, FILENAME_MAX, output_path_no_ext);
-
     const char* output_name = args->output_name;
     if (output_name == NULL) {
-        #if _WIN32
-        char* str = cuik_malloc(FILENAME_MAX);
-        sprintf_s(str, FILENAME_MAX, "%s.exe", output_path_no_ext);
-        output_name = str;
-        #else
-        output_name = output_path_no_ext;
-        #endif
+        output_name = output_path;
     }
 
     if (args->based && (args->flavor == TB_FLAVOR_SHARED || args->flavor == TB_FLAVOR_EXECUTABLE)) {
@@ -457,7 +448,7 @@ static bool export_output(Cuik_CompilerArgs* restrict args, TB_Module* mod, bool
     } else {
         char obj_output_path[FILENAME_MAX];
         sprintf_s(
-            obj_output_path, FILENAME_MAX, "%s%s", output_path_no_ext,
+            obj_output_path, FILENAME_MAX, "%s%s", output_path,
             cuik_get_target_system(args->target) == CUIK_SYSTEM_WINDOWS ? ".obj" : ".o"
         );
 
@@ -485,7 +476,7 @@ static bool export_output(Cuik_CompilerArgs* restrict args, TB_Module* mod, bool
             // Add Cuik object
             cuiklink_add_input_file(&l, obj_output_path);
 
-            cuiklink_invoke(&l, args, output_path_no_ext);
+            cuiklink_invoke(&l, args, output_path);
             cuiklink_deinit(&l);
         }
 
@@ -588,7 +579,10 @@ int cuik_driver_compile(Cuik_IThreadpool* restrict thread_pool, Cuik_CompilerArg
         }
     }
 
-    if (!export_output(args, mod, subsystem_windows)) {
+    char output_path[FILENAME_MAX];
+    cuik_driver_get_output_name(args, FILENAME_MAX, output_path);
+
+    if (!export_output(args, mod, output_path, subsystem_windows)) {
         return 1;
     }
 
@@ -596,18 +590,14 @@ int cuik_driver_compile(Cuik_IThreadpool* restrict thread_pool, Cuik_CompilerArg
     // Running executable
     ////////////////////////////////
     if (args->run) {
-        char exe[FILENAME_MAX];
-        cuik_driver_get_output_name(args, FILENAME_MAX, exe);
-        strncat(exe, ".exe", FILENAME_MAX);
-
         #ifdef _WIN32
-        for (char* s = exe; *s; s++) {
+        for (char* s = output_path; *s; s++) {
             if (*s == '/') *s = '\\';
         }
         #endif
 
-        printf("\n\nRunning: %s...\n", exe);
-        int exit_code = system(exe);
+        printf("\n\nRunning: %s...\n", output_path);
+        int exit_code = system(output_path);
 
         printf("Exit code: %d\n", exit_code);
         if (exit_code) return exit_code;

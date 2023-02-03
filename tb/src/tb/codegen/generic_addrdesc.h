@@ -17,7 +17,7 @@ static_assert(sizeof(double) == sizeof(uint64_t), "big bitch... double gotta be 
 
 static thread_local size_t s_local_thread_id;
 
-#if 0
+#if 1
 #define DBG(...) printf(__VA_ARGS__)
 #define LISTING(...) printf(__VA_ARGS__)
 #else
@@ -295,28 +295,32 @@ static GAD_VAL* GAD_FN(find_spill)(Ctx* restrict ctx, TB_Function* f, TB_Reg r) 
 }
 
 // Evicts old values and keeps the registers reserved, you'd have to manually free them later
-static void GAD_FN(evict)(Ctx* restrict ctx, TB_Function* f, int reg_class, uint64_t regs_to_evict) {
+static void GAD_FN(evict)(Ctx* restrict ctx, TB_Function* f, int reg_class, uint64_t regs_to_evict, int split) {
     FOREACH_N(i, 0, ctx->active_count) {
         TB_Reg r = ctx->active[i];
 
-        if (r != 0 && ctx->values[r].type == GAD_VAL_REGISTER + reg_class &&
-            ((1u << ctx->values[r].reg) & regs_to_evict) != 0) {
-            // replace spill with r
-            ctx->stack_usage = align_up(ctx->stack_usage + 8, 8);
+        if (r != 0 && ctx->values[r].type == GAD_VAL_REGISTER + reg_class && ((1u << ctx->values[r].reg) & regs_to_evict) != 0) {
+            LiveInterval r_li = get_live_interval(ctx, r);
+            if (r_li.end != split) {
+                // replace spill with r
+                ctx->stack_usage = align_up(ctx->stack_usage + 8, 8);
 
-            // spill (we're saving the old value because we need to restore before leaving
-            // this basic block)
-            GAD_VAL* restore_val = GAD_FN(find_spill)(ctx, f, r);
-            GAD_VAL slot = GAD_MAKE_STACK_SLOT(ctx, f, r, -ctx->stack_usage);
-            if (restore_val == NULL) {
-                restore_val = &ctx->spills[ctx->spill_count++];
-                *restore_val = ctx->values[r];
+                // spill (we're saving the old value because we need to restore before leaving
+                // this basic block)
+                GAD_VAL* restore_val = GAD_FN(find_spill)(ctx, f, r);
+                GAD_VAL slot = GAD_MAKE_STACK_SLOT(ctx, f, r, -ctx->stack_usage);
+                if (restore_val == NULL) {
+                    restore_val = &ctx->spills[ctx->spill_count++];
+                    *restore_val = ctx->values[r];
+                }
+                ctx->values[r] = slot;
+                ctx->values[r].is_spill = true;
+
+                DBG("  spill r%u to [rbp - %d]\n", r, ctx->stack_usage);
+                GAD_FN(spill)(ctx, f, &slot, restore_val, r);
+            } else {
+                DBG("  expired r%u before eviction\n", r);
             }
-            ctx->values[r] = slot;
-            ctx->values[r].is_spill = true;
-
-            DBG("  spill r%u to [rbp - %d]\n", r, ctx->stack_usage);
-            GAD_FN(spill)(ctx, f, &slot, restore_val, r);
 
             // TODO(NeGate): sort by increasing end point
             if (i != ctx->active_count - 1) {

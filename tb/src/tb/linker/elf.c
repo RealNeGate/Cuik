@@ -14,20 +14,20 @@ static void append_module(TB_Linker* l, TB_Module* m) {
     // Convert module into sections which we can then append to the output
     ptrdiff_t entry;
     TB_LinkerSection* text = tb__find_or_create_section(l, ".text", PF_X | PF_R);
-    m->linker.text = tb__append_piece(text, PIECE_TEXT, tb__layout_text_section(m, &entry), NULL, m);
+    m->linker.text = tb__append_piece(text, PIECE_TEXT, tb__layout_text_section(m, &entry, "_start"), NULL, m);
     if (entry >= 0) {
         l->entrypoint = m->linker.text->offset + entry;
         // printf("Found entry at %zu\n", l->entrypoint);
     }
 
     if (m->data_region_size > 0) {
-        TB_LinkerSection* data = tb__find_or_create_section(l, ".data", IMAGE_SCN_MEM_WRITE | IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA);
+        TB_LinkerSection* data = tb__find_or_create_section(l, ".data", PF_W | PF_R);
         m->linker.data = tb__append_piece(data, PIECE_DATA, m->data_region_size, NULL, m);
     }
 
     TB_LinkerSection* rdata = NULL;
     if (m->rdata_region_size > 0) {
-        rdata = tb__find_or_create_section(l, ".rdata", IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA);
+        rdata = tb__find_or_create_section(l, ".rdata", PF_R);
         m->linker.rdata = tb__append_piece(rdata, PIECE_RDATA, m->rdata_region_size, NULL, m);
     }
 
@@ -57,15 +57,15 @@ static TB_Exports export(TB_Linker* l) {
         + (nl_strmap_get_load(l->sections) * sizeof(Elf64_Phdr));
 
     size_t section_content_size = 0;
-    uint64_t virt_addr = 0x1000; // this area is reserved for the PE header stuff
+    uint64_t virt_addr = size_of_headers; // align_up(size_of_headers, 4096);
     CUIK_TIMED_BLOCK("layout sections") {
         nl_strmap_for(i, l->sections) {
             TB_LinkerSection* s = l->sections[i];
             s->offset = size_of_headers + section_content_size;
-            section_content_size += align_up(size_of_headers + s->total_size, 512) - size_of_headers;
+            section_content_size += s->total_size;
 
             s->address = virt_addr;
-            virt_addr += align_up(s->total_size, 4096);
+            virt_addr += s->total_size;
         }
     }
 
@@ -96,7 +96,7 @@ static TB_Exports export(TB_Linker* l) {
         .e_machine = machine,
         .e_entry = 0,
 
-        .e_phoff = size_of_headers,
+        .e_phoff = sizeof(Elf64_Ehdr),
         .e_flags = 0,
 
         .e_ehsize = sizeof(Elf64_Ehdr),
@@ -104,26 +104,43 @@ static TB_Exports export(TB_Linker* l) {
         .e_phentsize = sizeof(Elf64_Phdr),
         .e_phnum     = nl_strmap_get_load(l->sections),
     };
+
+    // text section crap
+    TB_LinkerSection* text  = tb__find_section(l, ".text", PF_X | PF_R);
+    if (text && l->entrypoint >= 0) {
+        header.e_entry = text->address + l->entrypoint;
+    } else {
+        printf("tblink: could not find entrypoint!\n");
+    }
     WRITE(&header, sizeof(header));
 
     // write section headers
     nl_strmap_for(i, l->sections) {
         TB_LinkerSection* s = l->sections[i];
         Elf64_Phdr sec = {
-            .p_memsz  = align_up(s->total_size, 4096),
-            .p_vaddr  = s->address,
-            .p_offset = s->offset,
-            .p_filesz = s->total_size,
+            .p_type   = PT_LOAD,
             .p_flags  = s->flags,
+            .p_offset = s->offset,
+            .p_vaddr  = s->address,
+            .p_filesz = s->total_size,
+            .p_memsz  = s->total_size,
+            .p_align  = 0,
         };
         WRITE(&sec, sizeof(sec));
     }
 
-    TB_LinkerSection* text  = tb__find_section(l, ".text", PF_X | PF_R);
     TB_LinkerSection* data  = tb__find_section(l, ".data", PF_W | PF_R);
     TB_LinkerSection* rdata = tb__find_section(l, ".rdata", PF_R);
 
-    tb__apply_section_contents(l, output, write_pos, text, data, rdata);
+    write_pos = tb__apply_section_contents(l, output, write_pos, text, data, rdata, 1);
+    assert(write_pos == output_size);
+
+    // TODO(NeGate): multithread this too
+    CUIK_TIMED_BLOCK("apply final relocations") {
+        dyn_array_for(i, l->ir_modules) {
+            tb__apply_external_relocs(l, l->ir_modules[i], output);
+        }
+    }
 
     // write section contents
     return (TB_Exports){ .count = 1, .files = { { output_size, output } } };

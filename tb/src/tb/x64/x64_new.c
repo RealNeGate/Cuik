@@ -576,7 +576,7 @@ static void x64v2_call(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
         } else {
             GAD_VAL dst, src = ctx->values[param_reg];
             if (i < params->gpr_count) {
-                GAD_FN(evict)(ctx, f, X64_REG_CLASS_GPR, 1u << params->gprs[i]);
+                GAD_FN(evict)(ctx, f, X64_REG_CLASS_GPR, 1u << params->gprs[i], 0);
 
                 dst = val_gpr(param_dt, params->gprs[i]);
                 caller_saved &= ~(1u << params->gprs[i]);
@@ -601,7 +601,7 @@ static void x64v2_call(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
         }
     }
 
-    GAD_FN(evict)(ctx, f, X64_REG_CLASS_GPR, caller_saved);
+    GAD_FN(evict)(ctx, f, X64_REG_CLASS_GPR, caller_saved, ctx->ordinal[r]);
 
     switch (type) {
         case TB_CALL: {
@@ -690,7 +690,7 @@ static void x64v2_initializer(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
     TB_Reg addr = n->init.addr;
     TB_Initializer* i = n->init.src;
 
-    GAD_FN(evict)(ctx, f, X64_REG_CLASS_GPR, (1u << RDI) | (1u << RAX) | (1u << RCX));
+    GAD_FN(evict)(ctx, f, X64_REG_CLASS_GPR, (1u << RDI) | (1u << RAX) | (1u << RCX), ctx->ordinal[r]);
 
     // Zero out the space
     //   mov rdi, ADDRESS
@@ -1097,7 +1097,7 @@ static Val x64v2_eval(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
             bool is_div    = (type == TB_UDIV || type == TB_SDIV);
 
             GAD_VAL dst = GAD_FN(steal)(ctx, f, r, X64_REG_CLASS_GPR, is_div ? RAX : RDX);
-            GAD_FN(evict)(ctx, f, X64_REG_CLASS_GPR, 1u << (is_div ? RDX : RAX));
+            GAD_FN(evict)(ctx, f, X64_REG_CLASS_GPR, 1u << (is_div ? RDX : RAX), ctx->ordinal[r]);
 
             GAD_VAL b = x64v2_force_into_gpr(ctx, f, n->i_arith.b, ctx->values[n->i_arith.b], true);
 
@@ -1161,7 +1161,7 @@ static Val x64v2_eval(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
                 INST2(MOV, &dst, &a, l.dt);
 
                 // MOV rcx, b
-                GAD_FN(evict)(ctx, f, X64_REG_CLASS_GPR, 1u << RCX);
+                GAD_FN(evict)(ctx, f, X64_REG_CLASS_GPR, 1u << RCX, ctx->ordinal[r]);
                 x64v2_mov_to_explicit_gpr(ctx, f, RCX, n->i_arith.b);
 
                 // D2 /4       shl r/m, cl

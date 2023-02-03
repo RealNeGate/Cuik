@@ -51,8 +51,7 @@ TB_API void tb_linker_destroy(TB_Linker* l) {
 }
 
 // also finds the entrypoints (kill two birds amirite)
-size_t tb__layout_text_section(TB_Module* m, ptrdiff_t* restrict entrypoint) {
-    const char* entrypoint_name = "mainCRTStartup";
+size_t tb__layout_text_section(TB_Module* m, ptrdiff_t* restrict entrypoint, const char* entrypoint_name) {
     char entrypoint_name_first_char = entrypoint_name[0];
 
     size_t size = 0;
@@ -97,7 +96,7 @@ size_t tb__pad_file(uint8_t* output, size_t write_pos, char pad, size_t align) {
     return write_pos;
 }
 
-size_t tb__apply_section_contents(TB_Linker* l, uint8_t* output, size_t write_pos, TB_LinkerSection* text, TB_LinkerSection* data, TB_LinkerSection* rdata) {
+size_t tb__apply_section_contents(TB_Linker* l, uint8_t* output, size_t write_pos, TB_LinkerSection* text, TB_LinkerSection* data, TB_LinkerSection* rdata, size_t section_alignment) {
     // write section contents
     // TODO(NeGate): we can actually parallelize this part of linking
     CUIK_TIMED_BLOCK("write sections") {
@@ -228,7 +227,7 @@ size_t tb__apply_section_contents(TB_Linker* l, uint8_t* output, size_t write_po
                 write_pos += p->size;
             }
 
-            write_pos = tb__pad_file(output, write_pos, 0x00, 512);
+            write_pos = tb__pad_file(output, write_pos, 0x00, section_alignment);
         }
     }
 
