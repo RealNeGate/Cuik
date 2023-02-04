@@ -193,10 +193,8 @@ extern "C" {
         /* Memory operations */
         TB_STORE,
 
-        TB_MEMCLR,
         TB_MEMCPY,
         TB_MEMSET,
-        TB_MEMCMP,
         TB_INITIALIZE,
 
         /* Atomics */
@@ -261,6 +259,8 @@ extern "C" {
         /* Bitmagic */
         TB_BSWAP,
         TB_CLZ,
+        TB_CTZ,
+        TB_POPCNT,
 
         /* Unary operations */
         TB_NOT,
@@ -1082,9 +1082,6 @@ extern "C" {
     // both locations cannot overlap.
     TB_API void tb_inst_memcpy(TB_Function* f, TB_Reg dst, TB_Reg src, TB_Reg count, TB_CharUnits align);
 
-    // Clears a memory region to zeroes
-    TB_API void tb_inst_memclr(TB_Function* f, TB_Reg addr, TB_CharUnits size, TB_CharUnits align);
-
     // result = base + (index * stride)
     TB_API TB_Reg tb_inst_array_access(TB_Function* f, TB_Reg base, TB_Reg index, uint32_t stride);
 
@@ -1112,6 +1109,8 @@ extern "C" {
     // Bitmagic operations
     TB_API TB_Reg tb_inst_bswap(TB_Function* f, TB_Reg n);
     TB_API TB_Reg tb_inst_clz(TB_Function* f, TB_Reg n);
+    TB_API TB_Reg tb_inst_ctz(TB_Function* f, TB_Reg n);
+    TB_API TB_Reg tb_inst_popcount(TB_Function* f, TB_Reg n);
 
     // Bitwise operations
     TB_API TB_Reg tb_inst_not(TB_Function* f, TB_Reg n);

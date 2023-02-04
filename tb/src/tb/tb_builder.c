@@ -588,11 +588,6 @@ TB_API void tb_inst_memcpy(TB_Function* f, TB_Reg dst, TB_Reg src, TB_Reg size, 
     f->nodes[r].mem_op = (struct TB_NodeMemoryOp) { dst, src, size, align };
 }
 
-TB_API void tb_inst_memclr(TB_Function* f, TB_Reg addr, TB_CharUnits size, TB_CharUnits align) {
-    TB_Reg r = tb_make_reg(f, TB_MEMCLR, TB_TYPE_I8);
-    f->nodes[r].clear = (struct TB_NodeMemoryClear) { addr, size, align };
-}
-
 TB_API TB_Reg tb_inst_not(TB_Function* f, TB_Reg n) {
     TB_DataType dt = f->nodes[n].dt;
 

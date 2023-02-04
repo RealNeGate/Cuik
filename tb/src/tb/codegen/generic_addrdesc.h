@@ -173,7 +173,7 @@ static FunctionTallySimple tally_memory_usage_simple(TB_Function* restrict f) {
 static size_t GAD_FN(resolve_stack_usage)(Ctx* restrict ctx, TB_Function* f, size_t stack_usage, size_t caller_usage);
 static void GAD_FN(resolve_local_patches)(Ctx* restrict ctx, TB_Function* f);
 static GAD_VAL GAD_FN(phi_alloc)(Ctx* restrict ctx, TB_Function* f, TB_Reg r);
-static void GAD_FN(initializer)(Ctx* restrict ctx, TB_Function* f, TB_Reg r);
+static void GAD_FN(mem_op)(Ctx* restrict ctx, TB_Function* f, TB_Reg r);
 static void GAD_FN(call)(Ctx* restrict ctx, TB_Function* f, TB_Reg r);
 static void GAD_FN(store)(Ctx* restrict ctx, TB_Function* f, TB_Reg r);
 static void GAD_FN(spill)(Ctx* restrict ctx, TB_Function* f, GAD_VAL* dst_val, GAD_VAL* src_val, TB_Reg r);
@@ -281,7 +281,7 @@ static LiveInterval get_live_interval(Ctx* restrict ctx, TB_Reg r) {
 static bool GAD_FN(encompass)(Ctx* restrict ctx, TB_Function* f, TB_Reg a, TB_Reg b) {
     LiveInterval a_li = get_live_interval(ctx, a);
     LiveInterval b_li = get_live_interval(ctx, b);
-    return b_li.start < a_li.end && b_li.end >= a_li.start;
+    return b_li.start >= a_li.start && b_li.end <= a_li.end;
 }
 
 static GAD_VAL* GAD_FN(find_spill)(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
@@ -302,22 +302,24 @@ static void GAD_FN(evict)(Ctx* restrict ctx, TB_Function* f, int reg_class, uint
         if (r != 0 && ctx->values[r].type == GAD_VAL_REGISTER + reg_class && ((1u << ctx->values[r].reg) & regs_to_evict) != 0) {
             LiveInterval r_li = get_live_interval(ctx, r);
             if (r_li.end != split) {
-                // replace spill with r
-                ctx->stack_usage = align_up(ctx->stack_usage + 8, 8);
-
                 // spill (we're saving the old value because we need to restore before leaving
                 // this basic block)
-                GAD_VAL* restore_val = GAD_FN(find_spill)(ctx, f, r);
+                GAD_VAL old_val = ctx->values[r];
+
+                // allocate new stack slot
+                ctx->stack_usage = align_up(ctx->stack_usage + 8, 8);
                 GAD_VAL slot = GAD_MAKE_STACK_SLOT(ctx, f, r, -ctx->stack_usage);
-                if (restore_val == NULL) {
-                    restore_val = &ctx->spills[ctx->spill_count++];
-                    *restore_val = ctx->values[r];
-                }
+                slot.mem.is_rvalue = true;
+
+                // take our previously held value and make that the restore value
+                GAD_VAL* restore_val = &ctx->spills[ctx->spill_count++];
+                *restore_val = ctx->values[r];
+
+                // use the stack slot now
                 ctx->values[r] = slot;
-                ctx->values[r].is_spill = true;
 
                 DBG("  spill r%u to [rbp - %d]\n", r, ctx->stack_usage);
-                GAD_FN(spill)(ctx, f, &slot, restore_val, r);
+                GAD_FN(spill)(ctx, f, &ctx->values[r], &old_val, r);
             } else {
                 DBG("  expired r%u before eviction\n", r);
             }
@@ -339,6 +341,7 @@ static void GAD_FN(explicit_steal)(Ctx* restrict ctx, TB_Function* f, TB_Reg r, 
 
     GAD_VAL slot = GAD_MAKE_STACK_SLOT(ctx, f, r, -ctx->stack_usage);
     slot.dt = f->nodes[r].dt;
+    slot.mem.is_rvalue = true;
     ctx->values[r] = ctx->values[spill_reg];
 
     // spill (we're saving the old value because we need to restore before leaving
@@ -584,8 +587,10 @@ static void GAD_FN(eval_bb)(Ctx* restrict ctx, TB_Function* f, TB_Label bb, TB_L
                 break;
             }
 
+            case TB_MEMSET:
+            case TB_MEMCPY:
             case TB_INITIALIZE: {
-                GAD_FN(initializer)(ctx, f, r);
+                GAD_FN(mem_op)(ctx, f, r);
                 break;
             }
 
@@ -636,7 +641,9 @@ static void GAD_FN(eval_bb)(Ctx* restrict ctx, TB_Function* f, TB_Label bb, TB_L
         LiveInterval r_li = get_live_interval(ctx, restore_val->r);
 
         // restore spilled regs... except if it's basic block local
-        if (!(r_li.start < bb_li.end && r_li.end >= bb_li.start)) {
+        if (r_li.start >= bb_li.start && r_li.end <= bb_li.end) {
+            DBG("discard r%u since BB local\n", restore_val->r);
+        } else {
             DBG("restore r%u\n", restore_val->r);
             GAD_FN(spill)(ctx, f, restore_val, &ctx->values[restore_val->r], restore_val->r);
         }
