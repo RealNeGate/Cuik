@@ -102,6 +102,9 @@ rule link
 objs = []
 list = [ "src/main_driver.c" ]
 
+# support code (we might wanna merge it with the threads stuff)
+list.append("../common/common.c")
+
 if system == "Windows":
 	list.append("../c11threads/threads_msvc.c")
 elif system == "Darwin":

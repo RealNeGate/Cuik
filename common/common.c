@@ -1,11 +1,10 @@
+// Common is just a bunch of crap i want accessible to all projects in the Cuik repo
 #include "arena.h"
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #endif
-
-thread_local Arena thread_arena;
 
 void* arena_alloc(Arena* arena, size_t size, size_t align) {
     // alignment must be a power of two

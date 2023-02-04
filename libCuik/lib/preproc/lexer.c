@@ -1,4 +1,5 @@
 #include "lexer.h"
+#include <arena.h>
 
 #if USE_INTRIN && CUIK__IS_X64
 #include <x86intrin.h>

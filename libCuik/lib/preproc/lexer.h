@@ -1,7 +1,7 @@
 #pragma once
 #include <common.h>
+#include <arena.h>
 #include "../str.h"
-#include "../arena.h"
 #include <dyn_array.h>
 #include <cuik_lex.h>
 
@@ -153,6 +153,8 @@ typedef struct {
     unsigned char* start;
     unsigned char* current;
 } Lexer;
+
+extern thread_local Arena thread_arena;
 
 // this is used by the preprocessor to scan tokens in
 Token lexer_read(Lexer* restrict l);

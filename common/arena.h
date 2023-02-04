@@ -18,8 +18,6 @@ typedef struct {
     ArenaSegment* top;
 } Arena;
 
-extern thread_local Arena thread_arena;
-
 #define ARENA_ALLOC(arena, T) arena_alloc(arena, sizeof(T), _Alignof(T))
 
 void* arena_alloc(Arena* arena, size_t size, size_t align);

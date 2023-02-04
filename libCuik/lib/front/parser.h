@@ -11,7 +11,6 @@
 
 #include "atoms.h"
 #include <common.h>
-#include "../arena.h"
 #include "../diagnostic.h"
 #include "../preproc/lexer.h"
 

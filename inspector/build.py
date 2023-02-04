@@ -89,6 +89,8 @@ rule link
 objs = []
 list = glob.glob("src/*.c")
 
+list.append("../common/common.c")
+
 if system == "Windows":
 	list.append("../c11threads/threads_msvc.c")
 elif system == "Darwin":

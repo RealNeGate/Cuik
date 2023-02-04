@@ -1,6 +1,6 @@
 #pragma once
-#include <arena.h>
 #include <common.h>
+#include <arena.h>
 #include <compilation_unit.h>
 
 #include <front/parser.h>

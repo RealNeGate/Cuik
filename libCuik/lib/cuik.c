@@ -12,6 +12,8 @@
 void hook_crash_handler(void);
 void init_timer_system(void);
 
+thread_local Arena thread_arena;
+
 void cuik_init(void) {
     cuikdg_init();
     init_timer_system();
