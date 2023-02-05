@@ -17,7 +17,7 @@ static_assert(sizeof(double) == sizeof(uint64_t), "big bitch... double gotta be 
 
 static thread_local size_t s_local_thread_id;
 
-#if 1
+#if 0
 #define DBG(...) printf(__VA_ARGS__)
 #define LISTING(...) printf(__VA_ARGS__)
 #else
@@ -65,7 +65,8 @@ struct Ctx {
 
     // just keeps track of the callee saved registers that
     // we actually used.
-    uint64_t regs_to_save;
+    uint64_t callee_saved[GAD_NUM_REG_FAMILIES];
+    uint64_t regs_to_save[GAD_NUM_REG_FAMILIES];
 
     // Extra stuff
     // GAD_EXTRA_CTX is a struct body
@@ -467,6 +468,9 @@ static GAD_VAL GAD_FN(regalloc2)(Ctx* restrict ctx, TB_Function* f, TB_Reg r, in
         };
         set_put(&ctx->free_regs[reg_class], reg_num);
 
+        // mark register as to be saved
+        ctx->regs_to_save[reg_class] |= (1u << reg_num) & ctx->callee_saved[reg_class];
+
         // TODO(NeGate): sort by increasing end point
         ctx->active[ctx->active_count++] = r;
     }
@@ -484,6 +488,9 @@ static GAD_VAL GAD_FN(regalloc_tmp)(Ctx* restrict ctx, TB_Function* f, TB_DataTy
 
     assert(ctx->tmp_count+1 < 4);
     ctx->tmps[ctx->tmp_count++] = (RegisterRef){ reg_class, reg_num };
+
+    // mark register as to be saved
+    ctx->regs_to_save[reg_class] |= (1u << reg_num) & ctx->callee_saved[reg_class];
 
     return (GAD_VAL){
         .type = GAD_VAL_REGISTER + reg_class, .dt = dt, .reg = reg_num
@@ -738,7 +745,7 @@ static TB_FunctionOutput GAD_FN(compile_function)(TB_Function* restrict f, const
         memset(ctx->values, 0, f->node_count * sizeof(GAD_VAL));
     }
 
-    tb_function_print(f, tb_default_print_callback, stdout, false);
+    // tb_function_print(f, tb_default_print_callback, stdout, false);
 
     // Compute register allocation
     {
@@ -841,7 +848,7 @@ static TB_FunctionOutput GAD_FN(compile_function)(TB_Function* restrict f, const
         .code = ctx->emit.data,
         .code_size = ctx->emit.count,
         .stack_usage = ctx->stack_usage,
-        .prologue_epilogue_metadata = ctx->regs_to_save,
+        .prologue_epilogue_metadata = ctx->regs_to_save[0],
         .stack_slots = ctx->stack_slots
     };
 

@@ -285,8 +285,6 @@ static void x64v2_resolve_stack_slot(Ctx* restrict ctx, TB_Function* f, TB_Node*
                 // don't keep a reference of it in GPR if it's in memory
                 INST2(MOV, &dst, &ctx->values[r], TB_TYPE_I64);
                 GAD_FN(free_reg)(ctx, f, X64_REG_CLASS_GPR, ctx->values[r].reg);
-
-                dst.mem.is_rvalue = true;
             }
         }
 
@@ -298,6 +296,7 @@ static void x64v2_resolve_stack_slot(Ctx* restrict ctx, TB_Function* f, TB_Node*
         }
 
         ctx->values[r] = ctx->values[n - f->nodes] = dst;
+        ctx->values[r].mem.is_rvalue = true;
     } else if (n->type == TB_LOCAL) {
         TB_Reg r = n - f->nodes;
         ctx->stack_usage = align_up(ctx->stack_usage + n->local.size, n->local.alignment);
@@ -318,6 +317,10 @@ static void x64v2_initial_reg_alloc(Ctx* restrict ctx) {
     ctx->stack_usage = 16;
     ctx->free_regs[0] = set_create(16);
     ctx->free_regs[1] = set_create(16);
+
+    bool is_sysv = (ctx->f->super.module->target_abi == TB_ABI_SYSTEMV);
+    ctx->callee_saved[0] = is_sysv ? SYSV_ABI_CALLEE_SAVED : WIN64_ABI_CALLEE_SAVED;
+    ctx->callee_saved[1] = 0;
 
     set_put(&ctx->free_regs[0], RBP);
     set_put(&ctx->free_regs[0], RSP);
