@@ -381,7 +381,7 @@ static bool export_output(Cuik_CompilerArgs* restrict args, TB_Module* mod, cons
 
         CUIK_TIMED_BLOCK("Export linked") {
             // TB_ExecutableType exe = tb_system_executable_format((TB_System) sys);
-            TB_Linker* l = tb_linker_create(TB_EXECUTABLE_ELF, TB_ARCH_X86_64);
+            TB_Linker* l = tb_linker_create(TB_EXECUTABLE_PE, TB_ARCH_X86_64);
             int errors = 0;
 
             // locate libraries and feed them into TB... in theory this process
