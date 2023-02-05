@@ -1,5 +1,18 @@
 #include "coff.h"
 
+#define IMAGE_SYM_CLASS_EXTERNAL 0x0002
+#define IMAGE_SYM_CLASS_STATIC   0x0003
+#define IMAGE_SYM_CLASS_LABEL    0x0006
+#define IMAGE_SYM_CLASS_FILE     0x0067
+
+TB_ObjectStorageClass classify_storage_class(uint16_t st_class) {
+    switch (st_class) {
+        case IMAGE_SYM_CLASS_EXTERNAL: return TB_OBJECT_STORAGE_EXTERN;
+        case IMAGE_SYM_CLASS_STATIC:   return TB_OBJECT_STORAGE_STATIC;
+        default: return TB_OBJECT_STORAGE_NULL;
+    }
+}
+
 // let's ignore error handling for now :p
 // buffered reading i guess?
 TB_ObjectFile* tb_object_parse_coff(const TB_Slice file) {
@@ -34,7 +47,12 @@ TB_ObjectFile* tb_object_parse_coff(const TB_Slice file) {
         COFF_Symbol* sym = (COFF_Symbol*) &file.data[symbol_offset];
 
         TB_ObjectSymbol* out_sym = &obj_file->symbols[obj_file->symbol_count++];
-        *out_sym = (TB_ObjectSymbol) { 0 };
+        *out_sym = (TB_ObjectSymbol) {
+            .ordinal = sym_id,
+            .st_class = classify_storage_class(sym->storage_class),
+            .section_num = sym->section_number,
+            .value = sym->value
+        };
 
         // Parse string table name stuff
         if (sym->long_name[0] == 0) {
@@ -48,16 +66,14 @@ TB_ObjectFile* tb_object_parse_coff(const TB_Slice file) {
             out_sym->name = (TB_Slice){ len, sym->short_name };
         }
 
-        // Process aux symbols
-        // FOREACH_N(j, 0, sym->aux_symbols_count) {
-        // TODO(NeGate): idk do something
-        // }
+        // TODO(NeGate): Process aux symbols
+        // FOREACH_N(j, 0, sym->aux_symbols_count) {}
 
         sym_id += sym->aux_symbols_count + 1;
     }
 
     // trim the symbol table
-    obj_file->symbols = realloc(obj_file->symbols, obj_file->symbol_count * sizeof(TB_ObjectSymbol));
+    obj_file->symbols = tb_platform_heap_realloc(obj_file->symbols, obj_file->symbol_count * sizeof(TB_ObjectSymbol));
 
     obj_file->section_count = header->num_sections;
     FOREACH_N(i, 0, header->num_sections) {
@@ -66,7 +82,7 @@ TB_ObjectFile* tb_object_parse_coff(const TB_Slice file) {
         COFF_SectionHeader* sec = (COFF_SectionHeader*) &file.data[section_offset];
 
         TB_ObjectSection* restrict out_sec = &obj_file->sections[i];
-        *out_sec = (TB_ObjectSection) { .flags = sec->characteristics };
+        *out_sec = (TB_ObjectSection) { .ordinal = i, .flags = sec->characteristics };
 
         // Parse string table name stuff
         uint32_t long_name[2];

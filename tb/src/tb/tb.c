@@ -630,9 +630,9 @@ uint32_t tb_emit_const_patch(TB_Module* m, TB_Function* source, size_t pos, cons
 //
 void tb_object_free(TB_ObjectFile* obj) {
     FOREACH_N(i, 0, obj->section_count) {
-        free(obj->sections[i].relocations);
+        tb_platform_heap_free(obj->sections[i].relocations);
     }
-    free(obj);
+    tb_platform_heap_free(obj);
 }
 
 //

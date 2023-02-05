@@ -66,8 +66,11 @@ typedef struct TB_LinkerSymbol {
     // value
     TB_LinkerSymbolTag tag;
     union {
-        // for normal symbols
-        uint32_t rva;
+        // for normal symbols,
+        struct {
+            TB_LinkerSectionPiece* piece;
+            uint32_t secrel;
+        } normal;
 
         // for IR module symbols
         TB_Symbol* sym;
@@ -102,6 +105,16 @@ typedef struct {
     uint64_t *iat, *ilt;
 } ImportTable;
 
+typedef struct {
+    TB_ObjectRelocType type;
+    int addend;
+
+    TB_LinkerSymbol* source;
+    // if target is NULL, check name
+    TB_LinkerSymbol* target;
+    TB_Slice name;
+} TB_LinkerReloc;
+
 // Format-specific vtable:
 typedef struct TB_LinkerVtbl {
     void(*append_object)(TB_Linker* l, TB_ObjectFile* obj);
@@ -117,6 +130,7 @@ typedef struct TB_Linker {
     NL_Strmap(TB_LinkerSection*) sections;
 
     // for relocations
+    DynArray(TB_LinkerReloc) relocations;
     DynArray(TB_Module*) ir_modules;
     TB_SymbolTable symtab;
 
@@ -137,7 +151,7 @@ size_t tb__layout_text_section(TB_Module* m, ptrdiff_t* restrict entrypoint, con
 
 // Symbol table
 TB_LinkerSymbol* tb__find_symbol(TB_SymbolTable* restrict symtab, TB_Slice name);
-bool tb__append_symbol(TB_SymbolTable* restrict symtab, const TB_LinkerSymbol* sym);
+TB_LinkerSymbol* tb__append_symbol(TB_SymbolTable* restrict symtab, const TB_LinkerSymbol* sym);
 uint64_t tb__compute_rva(TB_Linker* l, TB_Module* m, const TB_Symbol* s);
 
 // Section management

@@ -99,136 +99,129 @@ size_t tb__pad_file(uint8_t* output, size_t write_pos, char pad, size_t align) {
 size_t tb__apply_section_contents(TB_Linker* l, uint8_t* output, size_t write_pos, TB_LinkerSection* text, TB_LinkerSection* data, TB_LinkerSection* rdata, size_t section_alignment) {
     // write section contents
     // TODO(NeGate): we can actually parallelize this part of linking
-    CUIK_TIMED_BLOCK("write sections") {
-        nl_strmap_for(i, l->sections) {
-            TB_LinkerSection* s = l->sections[i];
-            assert(s->offset == write_pos);
+    CUIK_TIMED_BLOCK("write sections") nl_strmap_for(i, l->sections) {
+        TB_LinkerSection* s = l->sections[i];
+        assert(s->offset == write_pos);
 
-            for (TB_LinkerSectionPiece* p = s->first; p != NULL; p = p->next) {
-                uint8_t* p_out = &output[write_pos];
-                TB_Module* m = p->module;
+        for (TB_LinkerSectionPiece* p = s->first; p != NULL; p = p->next) {
+            uint8_t* p_out = &output[write_pos];
+            TB_Module* m = p->module;
 
-                switch (p->kind) {
-                    case PIECE_NORMAL: {
-                        memcpy(p_out, p->data, p->size);
-                        break;
-                    }
-                    case PIECE_TEXT: {
-                        // Target specific: resolve internal call patches
-                        tb__find_code_generator(m)->emit_call_patches(m);
-
-                        TB_FOR_FUNCTIONS(func, m) {
-                            TB_FunctionOutput* out_f = func->output;
-                            if (out_f) {
-                                memcpy(p_out, out_f->code, out_f->code_size);
-                                p_out += out_f->code_size;
-                            }
-                        }
-                        break;
-                    }
-                    case PIECE_DATA: {
-                        memset(p_out, 0, p->size);
-                        FOREACH_N(i, 0, m->max_threads) {
-                            pool_for(TB_Global, g, m->thread_info[i].globals) {
-                                if (g->storage != TB_STORAGE_DATA) continue;
-                                TB_Initializer* init = g->init;
-
-                                // clear out space
-                                memset(&p_out[g->pos], 0, init->size);
-
-                                FOREACH_N(k, 0, init->obj_count) {
-                                    if (init->objects[k].type == TB_INIT_OBJ_REGION) {
-                                        memcpy(
-                                            &p_out[g->pos + init->objects[k].offset],
-                                            init->objects[k].region.ptr,
-                                            init->objects[k].region.size
-                                        );
-                                    } else {
-                                        // tb_todo();
-                                    }
-                                }
-                            }
-                        }
-                        break;
-                    }
-                    case PIECE_RDATA: {
-                        memset(p_out, 0, p->size);
-                        FOREACH_N(i, 0, m->max_threads) {
-                            dyn_array_for(j, m->thread_info[i].const_patches) {
-                                TB_ConstPoolPatch* p = &m->thread_info[i].const_patches[j];
-                                memcpy(&p_out[p->rdata_pos], p->data, p->length);
-                            }
-                        }
-                        break;
-                    }
-                    case PIECE_PDATA: {
-                        uint32_t* p_out32 = (uint32_t*) p_out;
-
-                        uint32_t text_rva = text->address + m->linker.text->offset;
-                        uint32_t rdata_rva = rdata->address + m->linker.rdata->offset;
-
-                        TB_FOR_FUNCTIONS(f, m) {
-                            TB_FunctionOutput* out_f = f->output;
-                            if (out_f != NULL) {
-                                // both into the text section
-                                *p_out32++ = text_rva + out_f->code_pos;
-                                *p_out32++ = text_rva + out_f->code_pos + out_f->code_size;
-
-                                // refers to rdata section
-                                *p_out32++ = rdata_rva + out_f->unwind_info;
-                            }
-                        }
-                        break;
-                    }
-                    case PIECE_RELOC: {
-                        uint32_t data_rva  = data->address + m->linker.data->offset;
-                        uint32_t data_file = data->offset  + m->linker.data->offset;
-
-                        uint32_t last_page = 0;
-                        uint32_t* last_block = NULL;
-                        FOREACH_N(i, 0, m->max_threads) {
-                            pool_for(TB_Global, g, m->thread_info[i].globals) {
-                                TB_Initializer* init = g->init;
-
-                                FOREACH_N(k, 0, init->obj_count) {
-                                    size_t actual_pos  = g->pos + init->objects[k].offset;
-                                    size_t actual_page = actual_pos & ~4095;
-                                    size_t page_offset = actual_pos - actual_page;
-
-                                    if (init->objects[k].type == TB_INIT_OBJ_RELOC) {
-                                        const TB_Symbol* s = init->objects[k].reloc;
-
-                                        if (last_page != actual_page) {
-                                            last_page  = data_rva + actual_page;
-                                            last_block = (uint32_t*) p_out;
-
-                                            last_block[0] = data_rva + actual_page;
-                                            last_block[1] = 8; // block size field (includes RVA field and itself)
-                                            p_out += 8;
-                                        }
-
-                                        // compute RVA
-                                        uint32_t file_pos = data_file + actual_pos;
-                                        *((uint64_t*) &output[file_pos]) = tb__compute_rva(l, m, s);
-
-                                        // emit relocation
-                                        uint16_t payload = (10 << 12) | page_offset; // (IMAGE_REL_BASED_DIR64 << 12) | offset
-                                        *((uint16_t*) p_out) = payload, p_out += sizeof(uint16_t);
-                                        last_block[1] += 2;
-                                    }
-                                }
-                            }
-                        }
-                        break;
-                    }
-                    default: tb_todo();
+            switch (p->kind) {
+                case PIECE_NORMAL: {
+                    memcpy(p_out, p->data, p->size);
+                    break;
                 }
+                case PIECE_TEXT: {
+                    // Target specific: resolve internal call patches
+                    tb__find_code_generator(m)->emit_call_patches(m);
 
-                write_pos += p->size;
+                    TB_FOR_FUNCTIONS(func, m) {
+                        TB_FunctionOutput* out_f = func->output;
+                        if (out_f) {
+                            memcpy(p_out, out_f->code, out_f->code_size);
+                            p_out += out_f->code_size;
+                        }
+                    }
+                    break;
+                }
+                case PIECE_DATA: {
+                    memset(p_out, 0, p->size);
+                    FOREACH_N(i, 0, m->max_threads) {
+                        pool_for(TB_Global, g, m->thread_info[i].globals) {
+                            if (g->storage != TB_STORAGE_DATA) continue;
+                            TB_Initializer* init = g->init;
+
+                            // clear out space
+                            memset(&p_out[g->pos], 0, init->size);
+
+                            FOREACH_N(k, 0, init->obj_count) if (init->objects[k].type == TB_INIT_OBJ_REGION) {
+                                memcpy(
+                                    &p_out[g->pos + init->objects[k].offset],
+                                    init->objects[k].region.ptr,
+                                    init->objects[k].region.size
+                                );
+                            }
+                        }
+                    }
+                    break;
+                }
+                case PIECE_RDATA: {
+                    memset(p_out, 0, p->size);
+                    FOREACH_N(i, 0, m->max_threads) {
+                        dyn_array_for(j, m->thread_info[i].const_patches) {
+                            TB_ConstPoolPatch* p = &m->thread_info[i].const_patches[j];
+                            memcpy(&p_out[p->rdata_pos], p->data, p->length);
+                        }
+                    }
+                    break;
+                }
+                case PIECE_PDATA: {
+                    uint32_t* p_out32 = (uint32_t*) p_out;
+
+                    uint32_t text_rva = text->address + m->linker.text->offset;
+                    uint32_t rdata_rva = rdata->address + m->linker.rdata->offset;
+
+                    TB_FOR_FUNCTIONS(f, m) {
+                        TB_FunctionOutput* out_f = f->output;
+                        if (out_f != NULL) {
+                            // both into the text section
+                            *p_out32++ = text_rva + out_f->code_pos;
+                            *p_out32++ = text_rva + out_f->code_pos + out_f->code_size;
+
+                            // refers to rdata section
+                            *p_out32++ = rdata_rva + out_f->unwind_info;
+                        }
+                    }
+                    break;
+                }
+                case PIECE_RELOC: {
+                    uint32_t data_rva  = data->address + m->linker.data->offset;
+                    uint32_t data_file = data->offset  + m->linker.data->offset;
+
+                    uint32_t last_page = 0;
+                    uint32_t* last_block = NULL;
+                    TB_FOR_GLOBALS(g, m) {
+                        TB_Initializer* init = g->init;
+
+                        FOREACH_N(k, 0, init->obj_count) {
+                            size_t actual_pos  = g->pos + init->objects[k].offset;
+                            size_t actual_page = actual_pos & ~4095;
+                            size_t page_offset = actual_pos - actual_page;
+
+                            if (init->objects[k].type != TB_INIT_OBJ_RELOC) {
+                                continue;
+                            }
+
+                            const TB_Symbol* s = init->objects[k].reloc;
+                            if (last_page != actual_page) {
+                                last_page  = data_rva + actual_page;
+                                last_block = (uint32_t*) p_out;
+
+                                last_block[0] = data_rva + actual_page;
+                                last_block[1] = 8; // block size field (includes RVA field and itself)
+                                p_out += 8;
+                            }
+
+                            // compute RVA
+                            uint32_t file_pos = data_file + actual_pos;
+                            *((uint64_t*) &output[file_pos]) = tb__compute_rva(l, m, s);
+
+                            // emit relocation
+                            uint16_t payload = (10 << 12) | page_offset; // (IMAGE_REL_BASED_DIR64 << 12) | offset
+                            *((uint16_t*) p_out) = payload, p_out += sizeof(uint16_t);
+                            last_block[1] += 2;
+                        }
+                    }
+                    break;
+                }
+                default: tb_todo();
             }
 
-            write_pos = tb__pad_file(output, write_pos, 0x00, section_alignment);
+            write_pos += p->size;
         }
+
+        write_pos = tb__pad_file(output, write_pos, 0x00, section_alignment);
     }
 
     return write_pos;
@@ -242,32 +235,32 @@ TB_LinkerSection* tb__find_section(TB_Linker* linker, const char* name, uint32_t
 TB_LinkerSection* tb__find_or_create_section(TB_Linker* linker, const char* name, uint32_t flags) {
     // allocate new section if one doesn't exist already
     ptrdiff_t search = nl_strmap_get_cstr(linker->sections, name);
-    if (search < 0) {
-        TB_LinkerSection* s = tb_platform_heap_alloc(sizeof(TB_LinkerSection));
-        *s = (TB_LinkerSection){ .name = { strlen(name), (const uint8_t*) name }, .flags = flags };
-
-        nl_strmap_put_cstr(linker->sections, name, s);
-        return s;
-    } else {
+    if (search >= 0) {
         // assert(linker->sections[search]->flags == flags);
         return linker->sections[search];
     }
+
+    TB_LinkerSection* s = tb_platform_heap_alloc(sizeof(TB_LinkerSection));
+    *s = (TB_LinkerSection){ .name = { strlen(name), (const uint8_t*) name }, .flags = flags };
+    nl_strmap_put_cstr(linker->sections, name, s);
+    return s;
 }
 
 TB_LinkerSection* tb__find_or_create_section2(TB_Linker* linker, size_t name_len, const uint8_t* name_str, uint32_t flags) {
     // allocate new section if one doesn't exist already
     NL_Slice name = { name_len, name_str };
     ptrdiff_t search = nl_strmap_get(linker->sections, name);
-    if (search < 0) {
-        TB_LinkerSection* s = tb_platform_heap_alloc(sizeof(TB_LinkerSection));
-        *s = (TB_LinkerSection){ .name = name, .flags = flags };
 
-        nl_strmap_put(linker->sections, name, s);
-        return s;
-    } else {
+    if (search >= 0) {
         // assert(linker->sections[search]->flags == flags);
         return linker->sections[search];
     }
+
+    TB_LinkerSection* s = tb_platform_heap_alloc(sizeof(TB_LinkerSection));
+    *s = (TB_LinkerSection){ .name = name, .flags = flags };
+
+    nl_strmap_put(linker->sections, name, s);
+    return s;
 }
 
 TB_LinkerSectionPiece* tb__append_piece(TB_LinkerSection* section, int kind, size_t size, const void* data, TB_Module* mod) {
@@ -341,8 +334,7 @@ TB_LinkerSymbol* tb__find_symbol(TB_SymbolTable* restrict symtab, TB_Slice name)
     }
 }
 
-// returns true if it replaces a slot
-bool tb__append_symbol(TB_SymbolTable* restrict symtab, const TB_LinkerSymbol* sym) {
+TB_LinkerSymbol* tb__append_symbol(TB_SymbolTable* restrict symtab, const TB_LinkerSymbol* sym) {
     TB_Slice name = sym->name;
 
     uint32_t mask = (1u << symtab->exp) - 1;
@@ -361,14 +353,12 @@ bool tb__append_symbol(TB_SymbolTable* restrict symtab, const TB_LinkerSymbol* s
 
             symtab->len++;
             memcpy(&symtab->ht[i], sym, sizeof(TB_LinkerSymbol));
-            return false;
+            return &symtab->ht[i];
         } else if (name.length == symtab->ht[i].name.length && memcmp(name.data, symtab->ht[i].name.data, name.length) == 0) {
             // proper collision... this is a linker should we throw warnings?
             // memcpy(&symtab->ht[i], sym, sizeof(TB_LinkerSymbol));
-            // __debugbreak();
-            return true;
+            return &symtab->ht[i];
         }
     }
 }
-
 

@@ -106,6 +106,8 @@ struct { size_t cap, count; T* elems; }
 #undef TB_FOR_FUNCTIONS
 #define TB_FOR_FUNCTIONS(it, m) for (TB_Function* it = (TB_Function*) m->first_symbol_of_tag[TB_SYMBOL_FUNCTION]; it != NULL; it = (TB_Function*) it->super.next)
 
+#define TB_FOR_GLOBALS(it, m) FOREACH_N(_it_, 0, m->max_threads) pool_for(TB_Global, it, m->thread_info[_it_].globals)
+
 typedef struct TB_ConstPoolPatch {
     TB_Function* source;
     uint32_t pos; // relative to the start of the function body

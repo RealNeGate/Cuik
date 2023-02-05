@@ -1,3 +1,4 @@
+// https://github.com/dotnet/runtime/blob/main/docs/design/specs/PE-COFF.md
 #pragma once
 #include "../tb_internal.h"
 #include <sys/stat.h>

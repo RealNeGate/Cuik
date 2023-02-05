@@ -126,8 +126,10 @@ size_t tb_archive_parse_entries(TB_ArchiveFileParser* restrict parser, size_t st
             const char* imported_symbol = (const char*) &sym->contents[sizeof(COFF_ImportHeader)];
             const char* dll_path = (const char*) &sym->contents[sizeof(COFF_ImportHeader) + strlen(imported_symbol) + 1];
 
+            TB_Slice import_name = { 0 };
             if (import->name_type == 3) {
-                // skip ?, underscores
+                // for odd reasons windows has some symbols with @ and underscores (C++ amirite)
+                // and we have to strip them out.
                 const char* leading = imported_symbol;
                 const char* at = strchr(imported_symbol, '@');
                 if (at == NULL) at = imported_symbol + strlen(imported_symbol);
@@ -136,16 +138,15 @@ size_t tb_archive_parse_entries(TB_ArchiveFileParser* restrict parser, size_t st
                     if (*s == '_') leading = s+1;
                 }
 
-                // TODO(NeGate): fix this leak
-                char* newstr = tb_platform_heap_alloc(at - leading);
-                memcpy(newstr, leading, at - leading);
-                newstr[at - leading] = 0;
-
-                imported_symbol = newstr;
+                import_name.length = at - leading;
+                import_name.data   = (const uint8_t*) leading;
+            } else {
+                import_name.length = strlen(imported_symbol);
+                import_name.data   = (const uint8_t*) imported_symbol;
             }
 
             // printf("%s : %s : %d\n", dll_path, imported_symbol, import->name_type);
-            out_entry[entry_count++] = (TB_ArchiveEntry){ { strlen(dll_path), (const uint8_t*) dll_path }, .import_name = imported_symbol, .ordinal = import->ordinal_hint };
+            out_entry[entry_count++] = (TB_ArchiveEntry){ { strlen(dll_path), (const uint8_t*) dll_path }, .import_name = import_name, .ordinal = import->ordinal_hint };
         } else {
             TB_ObjectFile* long_mode = tb_object_parse_coff((TB_Slice){ len, sym->contents });
 

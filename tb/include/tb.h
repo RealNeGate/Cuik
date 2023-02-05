@@ -658,6 +658,7 @@ extern "C" {
 
     typedef struct {
         TB_Slice name;
+        uint32_t ordinal;
         uint32_t flags;
 
         size_t virtual_address;
@@ -669,14 +670,31 @@ extern "C" {
 
         size_t relocation_count;
         TB_ObjectReloc* relocations;
+
+        // this is zeroed out by the loader and left for the user to do crap with
+        void* user_data;
     } TB_ObjectSection;
 
     typedef enum {
+        TB_OBJECT_SYMBOL_NORMAL,
         TB_OBJECT_SYMBOL_SECTION
     } TB_ObjectSymbolType;
 
+    typedef enum {
+        TB_OBJECT_STORAGE_NULL,
+
+        TB_OBJECT_STORAGE_EXTERN, // exported
+        TB_OBJECT_STORAGE_IMPORT, // forward decl
+        TB_OBJECT_STORAGE_STATIC, // local
+    } TB_ObjectStorageClass;
+
     typedef struct {
         TB_ObjectSymbolType type;
+        TB_ObjectStorageClass st_class;
+        int section_num;
+        uint32_t ordinal;
+        uint32_t value;
+
         TB_Slice name;
 
         // this is zeroed out by the loader and left for the user to do crap with
@@ -704,8 +722,8 @@ extern "C" {
     typedef struct {
         TB_Slice name;
 
-        // if import_name is NULL, we're dealing with an object file
-        const char* import_name;
+        // if import_name is empty, we're dealing with an object file
+        TB_Slice import_name;
         uint16_t ordinal;
 
         TB_ObjectFile* obj;

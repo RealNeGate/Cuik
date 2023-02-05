@@ -18,10 +18,16 @@ const static uint8_t dos_stub[] = {
 };
 
 void append_object(TB_Linker* l, TB_ObjectFile* obj) {
-    qsort(obj->sections, obj->section_count, sizeof(TB_ObjectSection), compare_sections);
+    CUIK_TIMED_BLOCK("sort sections") {
+        qsort(obj->sections, obj->section_count, sizeof(TB_ObjectSection), compare_sections);
+    }
 
+    // Apply all sections (generate lookup for sections based on ordinals)
+    TB_ObjectSection** og_sort = tb_platform_heap_alloc(obj->section_count * sizeof(TB_ObjectSection*));
     FOREACH_N(i, 0, obj->section_count) {
         TB_ObjectSection* s = &obj->sections[i];
+        og_sort[s->ordinal] = s;
+
         if (s->name.length && s->name.data[0] == '_') continue;
         if (s->name.length >= 8) continue;
 
@@ -35,7 +41,44 @@ void append_object(TB_Linker* l, TB_ObjectFile* obj) {
 
         TB_LinkerSection* ls = tb__find_or_create_section2(l, s->name.length, s->name.data, s->flags);
         TB_LinkerSectionPiece* p = tb__append_piece(ls, PIECE_NORMAL, s->raw_data.length, s->raw_data.data, NULL);
+        s->user_data = p;
         p->vsize = s->virtual_size;
+    }
+
+    // Append all symbols
+    CUIK_TIMED_BLOCK("apply symbols") {
+        FOREACH_N(i, 0, obj->symbol_count) {
+            TB_ObjectSymbol* restrict sym = &obj->symbols[i];
+
+            if (sym->section_num > 0) {
+                // TB_Slice sec_name = og_sort[sym->section_num - 1]->name;
+                // printf("    %.*s = %.*s:%d\n", (int) sym->name.length, sym->name.data, (int) sec_name.length, sec_name.data, sym->value);
+
+                TB_LinkerSymbol s = {
+                    .name = sym->name,
+                    .tag = TB_LINKER_SYMBOL_NORMAL,
+                    .normal = { og_sort[sym->section_num - 1]->user_data, sym->value }
+                };
+                sym->user_data = tb__append_symbol(&l->symtab, &s);
+            }
+        }
+    }
+
+    CUIK_TIMED_BLOCK("parse relocations") {
+        FOREACH_N(i, 0, obj->section_count) {
+            TB_ObjectSection* restrict s = &obj->sections[i];
+
+            // some relocations point to sections within the same object file, we resolve
+            // their symbols early.
+            FOREACH_N(j, 0, s->relocation_count) {
+                TB_ObjectReloc* restrict reloc = &s->relocations[j];
+
+                TB_ObjectSymbol* restrict src_symbol = &obj->symbols[reloc->symbol_index];
+                if (src_symbol->type == TB_OBJECT_STORAGE_STATIC || src_symbol->type == TB_OBJECT_STORAGE_EXTERN) {
+                    __debugbreak();
+                }
+            }
+        }
     }
 }
 
@@ -51,7 +94,7 @@ static void append_library(TB_Linker* l, TB_Slice ar_file) {
     FOREACH_N(i, 0, new_count) {
         TB_ArchiveEntry* restrict e = &entries[i];
 
-        if (e->import_name) {
+        if (e->import_name.length) {
             // import from DLL
             TB_Slice libname = e->name;
             ptrdiff_t import_index = -1;
@@ -76,15 +119,18 @@ static void append_library(TB_Linker* l, TB_Slice ar_file) {
                 dyn_array_put(l->imports, t);
             }
 
-            // fprintf(stderr, "%s\n", e->import_name);
             TB_LinkerSymbol sym = {
-                .name = { strlen(e->import_name), (const uint8_t*) e->import_name },
+                .name = e->import_name,
                 .tag = TB_LINKER_SYMBOL_IMPORT,
                 .import = { import_index, e->ordinal }
             };
             tb__append_symbol(&l->symtab, &sym);
         } else {
-            append_object(l, e->obj);
+            // fprintf(stderr, "%.*s\n", (int) e->name.length, e->name.data);
+            CUIK_TIMED_BLOCK("append object file") {
+                append_object(l, e->obj);
+                tb_object_free(e->obj);
+            }
         }
     }
 
