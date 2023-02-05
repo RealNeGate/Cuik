@@ -480,7 +480,8 @@ static TB_Exports export(TB_Linker* l) {
 
     size_t size_of_headers =
         sizeof(dos_stub)
-        + sizeof(PE_Header)
+        + sizeof(uint32_t) // PE magic number
+        + sizeof(COFF_FileHeader)
         + sizeof(PE_OptionalHeader64)
         + (nl_strmap_get_load(l->sections) * sizeof(PE_SectionHeader));
 
@@ -541,15 +542,14 @@ static TB_Exports export(TB_Linker* l) {
     }
 
     size_t output_size = size_of_headers + section_content_size;
-    PE_Header header = {
-        .magic = 0x00004550,
+    COFF_FileHeader header = {
         .machine = 0x8664,
         .section_count = nl_strmap_get_load(l->sections),
         .timestamp = time(NULL),
         .symbol_table = 0,
         .symbol_count = 0,
-        .size_of_optional_header = sizeof(PE_OptionalHeader64),
-        .characteristics = 0x2 /* executable */
+        .optional_header_size = sizeof(PE_OptionalHeader64),
+        .flags = 0x2 /* executable */
     };
 
     PE_OptionalHeader64 opt_header = {
@@ -610,9 +610,12 @@ static TB_Exports export(TB_Linker* l) {
 
     size_t write_pos = 0;
     uint8_t* restrict output = tb_platform_heap_alloc(output_size);
-    WRITE(dos_stub, sizeof(dos_stub));
-    WRITE(&header, sizeof(PE_Header));
-    WRITE(&opt_header, sizeof(PE_OptionalHeader64));
+
+    uint32_t pe_magic = 0x00004550;
+    WRITE(dos_stub,    sizeof(dos_stub));
+    WRITE(&pe_magic,   sizeof(pe_magic));
+    WRITE(&header,     sizeof(header));
+    WRITE(&opt_header, sizeof(opt_header));
 
     nl_strmap_for(i, l->sections) {
         TB_LinkerSection* s = l->sections[i];

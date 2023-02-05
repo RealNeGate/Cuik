@@ -127,11 +127,11 @@ TB_API TB_Exports tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
 
     // COFF file header & section headers
     COFF_FileHeader header = {
-        .num_sections = number_of_sections,
+        .section_count = number_of_sections,
         .timestamp = time(NULL),
         .symbol_count = 0,
         .symbol_table = 0,
-        .characteristics = IMAGE_FILE_LINE_NUMS_STRIPPED
+        .flags = IMAGE_FILE_LINE_NUMS_STRIPPED
     };
 
     num_of_relocs[S_PDATA] = m->compiled_function_count * 3;
@@ -289,7 +289,7 @@ TB_API TB_Exports tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
         WRITE(&header, sizeof(COFF_FileHeader));
 
         // figure out how many section headers to write out
-        int count = (header.num_sections - e->debug_sections.length);
+        int count = (header.section_count - e->debug_sections.length);
         WRITE(sections, count * sizeof(COFF_SectionHeader));
         WRITE(e->debug_section_headers, e->debug_sections.length * sizeof(COFF_SectionHeader));
 

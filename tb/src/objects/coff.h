@@ -119,12 +119,12 @@ static_assert(sizeof(COFF_SectionHeader) == 40, "COFF Section header size != 40 
 
 typedef struct COFF_FileHeader {
     uint16_t machine;
-    uint16_t num_sections;
+    uint16_t section_count;
     uint32_t timestamp;
     uint32_t symbol_table;
     uint32_t symbol_count;
     uint16_t optional_header_size;
-    uint16_t characteristics;
+    uint16_t flags;
 } COFF_FileHeader;
 static_assert(sizeof(COFF_FileHeader) == 20, "COFF File header size != 20 bytes");
 
@@ -201,17 +201,6 @@ typedef struct {
     uint16_t e_res2[10]; // Reserved words
     uint32_t e_lfanew;   // File address of new exe header
 } PE_DosHeader;
-
-typedef struct {
-    uint32_t magic; // PE\0\0 or 0x00004550
-    uint16_t machine;
-    uint16_t section_count;
-    uint32_t timestamp;
-    uint32_t symbol_table;
-    uint32_t symbol_count;
-    uint16_t size_of_optional_header;
-    uint16_t characteristics;
-} PE_Header;
 
 typedef struct {
     uint32_t virtual_address;

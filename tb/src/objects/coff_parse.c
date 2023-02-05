@@ -18,7 +18,7 @@ TB_ObjectStorageClass classify_storage_class(uint16_t st_class) {
 TB_ObjectFile* tb_object_parse_coff(const TB_Slice file) {
     COFF_FileHeader* header = (COFF_FileHeader*) &file.data[0];
 
-    TB_ObjectFile* obj_file = tb_platform_heap_alloc(sizeof(TB_ObjectFile) + (header->num_sections * sizeof(TB_ObjectSection)));
+    TB_ObjectFile* obj_file = tb_platform_heap_alloc(sizeof(TB_ObjectFile) + (header->section_count * sizeof(TB_ObjectSection)));
 
     // not using calloc since i only really wanna clear the header
     memset(obj_file, 0, sizeof(TB_ObjectFile));
@@ -75,8 +75,8 @@ TB_ObjectFile* tb_object_parse_coff(const TB_Slice file) {
     // trim the symbol table
     obj_file->symbols = tb_platform_heap_realloc(obj_file->symbols, obj_file->symbol_count * sizeof(TB_ObjectSymbol));
 
-    obj_file->section_count = header->num_sections;
-    FOREACH_N(i, 0, header->num_sections) {
+    obj_file->section_count = header->section_count;
+    FOREACH_N(i, 0, header->section_count) {
         // TODO(NeGate): bounds check this
         size_t section_offset = sizeof(COFF_FileHeader) + (i * sizeof(COFF_SectionHeader));
         COFF_SectionHeader* sec = (COFF_SectionHeader*) &file.data[section_offset];
