@@ -17,19 +17,19 @@ if not args.cc:
 	args.cc = "clang"
 
 source_patterns = [
-	"src/tb/*.c",
-	"src/tb/codegen/*.c",
-	"src/tb/bigint/*.c",
-	"src/tb/objects/*.c",
-	"src/tb/linker/*.c",
-	"src/tb/system/*.c",
-	"src/tb/debug/*.c",
-	"src/tb/debug/cv/*.c",
-	"src/tb/opt/*.c"
+	"src/*.c",
+	"src/codegen/*.c",
+	"src/bigint/*.c",
+	"src/objects/*.c",
+	"src/linker/*.c",
+	"src/system/*.c",
+	"src/debug/*.c",
+	"src/debug/cv/*.c",
+	"src/opt/*.c"
 ]
 
 for i in args.targets:
-	source_patterns.append("src/tb/"+i+"/*.c")
+	source_patterns.append("src/"+i+"/*.c")
 
 ninja = open('build.ninja', 'w')
 
