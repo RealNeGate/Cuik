@@ -958,11 +958,11 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
             break;
 
             case FLOAT:
-            type = &builtin_types[TYPE_FLOAT];
+            type = &cuik__builtin_float;
             break;
 
             case DOUBLE: case LONG + DOUBLE:
-            type = &builtin_types[TYPE_DOUBLE];
+            type = &cuik__builtin_double;
             break;
 
             case OTHER:
@@ -1240,7 +1240,7 @@ static Decl parse_declarator2(Cuik_Parser* restrict parser, TokenStream* restric
         nested_start = s->list.current;
 
         // we pass a dummy type so we can skip over it
-        parse_declarator2(parser, s, cuik_uncanonical_type(&builtin_types[TYPE_VOID]), is_abstract);
+        parse_declarator2(parser, s, cuik_uncanonical_type(&cuik__builtin_void), is_abstract);
         expect_closing_paren(s, opening_loc);
     }
 

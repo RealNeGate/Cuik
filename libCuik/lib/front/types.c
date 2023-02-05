@@ -1,45 +1,15 @@
 #include <threads.h>
 #include "parser.h"
+#include <targets/targets.h>
 
-// TODO(NeGate): add a proper long long type
-// eventually we wanna make this bound to the target
 Cuik_Type cuik__builtin_void = { KIND_VOID,  0, 0, .is_complete = true };
 Cuik_Type cuik__builtin_bool = { KIND_BOOL,  1, 1, .is_complete = true };
-// signed
-Cuik_Type cuik__builtin_char  = { KIND_CHAR,  1, 1, .is_complete = true };
-Cuik_Type cuik__builtin_short = { KIND_SHORT, 2, 2, .is_complete = true };
-Cuik_Type cuik__builtin_int   = { KIND_INT,   4, 4, .is_complete = true };
-Cuik_Type cuik__builtin_long  = { KIND_LLONG, 8, 8, .is_complete = true };
-// unsigned
-Cuik_Type cuik__builtin_uchar  = { KIND_CHAR,  1, 1, .is_complete = true };
-Cuik_Type cuik__builtin_ushort = { KIND_SHORT, 2, 2, .is_complete = true };
-Cuik_Type cuik__builtin_uint   = { KIND_INT,   4, 4, .is_complete = true };
-Cuik_Type cuik__builtin_ulong  = { KIND_LLONG, 8, 8, .is_complete = true };
-// floats
 Cuik_Type cuik__builtin_float  = { KIND_FLOAT,  4, 4, .is_complete = true };
 Cuik_Type cuik__builtin_double = { KIND_DOUBLE, 8, 8, .is_complete = true };
 
-Cuik_Type builtin_types[] = {
-    // crap
-    [TYPE_VOID] = {KIND_VOID, 0, 0, .is_complete = true},
-    [TYPE_BOOL] = {KIND_BOOL, 1, 1, .is_complete = true},
-    // signed
-    [TYPE_CHAR] = {KIND_CHAR, 1, 1, .is_complete = true},
-    [TYPE_SHORT] = {KIND_SHORT, 2, 2, .is_complete = true},
-    [TYPE_INT] = {KIND_INT, 4, 4, .is_complete = true},
-    [TYPE_LONG] = {KIND_LLONG, 8, 8, .is_complete = true},
-    // unsigned
-    [TYPE_UCHAR] = {KIND_CHAR, 1, 1, .is_unsigned = true, .is_complete = true},
-    [TYPE_USHORT] = {KIND_SHORT, 2, 2, .is_unsigned = true, .is_complete = true},
-    [TYPE_UINT] = {KIND_INT, 4, 4, .is_unsigned = true, .is_complete = true},
-    [TYPE_ULONG] = {KIND_LLONG, 8, 8, .is_unsigned = true, .is_complete = true},
-    // floats
-    [TYPE_FLOAT] = {KIND_FLOAT, 4, 4, .is_complete = true},
-    [TYPE_DOUBLE] = {KIND_DOUBLE, 8, 8, .is_complete = true},
-};
-
-Cuik_TypeTable init_type_table(void) {
+Cuik_TypeTable init_type_table(Cuik_Target* target) {
     Cuik_TypeTable t = { 0 };
+    t.target = target;
     mtx_init(&t.mutex, mtx_plain);
     return t;
 }
@@ -187,7 +157,7 @@ Cuik_Type* get_common_type(Cuik_TypeTable* types, Cuik_Type* ty1, Cuik_Type* ty2
     }
 
     if (ty1->kind == KIND_VOID || ty2->kind == KIND_VOID) {
-        return &builtin_types[TYPE_VOID];
+        return &cuik__builtin_void;
     }
 
     // implictly convert functions into function pointers
@@ -207,8 +177,9 @@ Cuik_Type* get_common_type(Cuik_TypeTable* types, Cuik_Type* ty1, Cuik_Type* ty2
         return &cuik__builtin_float;
 
     // promote any small integral types into ints
-    if (ty1->size < 4) ty1 = &cuik__builtin_int;
-    if (ty2->size < 4) ty2 = &cuik__builtin_int;
+    Cuik_Type* int_type = &types->target->signed_ints[CUIK_BUILTIN_INT];
+    if (ty1->size < int_type->size) ty1 = int_type;
+    if (ty2->size < int_type->size) ty2 = int_type;
 
     // if the types don't match pick the bigger one
     if (ty1->size != ty2->size) return (ty1->size < ty2->size) ? ty2 : ty1;

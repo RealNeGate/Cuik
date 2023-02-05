@@ -418,7 +418,7 @@ Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict 
     parser.target = target;
     parser.static_assertions = dyn_array_create(int, 2048);
     parser.local_static_storage_decls = dyn_array_create(Stmt*, 64);
-    parser.types = init_type_table();
+    parser.types = init_type_table(target);
 
     // just a shorthand so it's faster to grab
     parser.default_int = (Cuik_Type*) &target->signed_ints[CUIK_BUILTIN_INT];

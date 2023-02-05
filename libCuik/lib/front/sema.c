@@ -704,7 +704,7 @@ Cuik_QualType cuik__sema_expr(TranslationUnit* tu, Expr* restrict e) {
             }
         }
         case EXPR_ENUM: {
-            return (e->type = cuik_uncanonical_type(&cuik__builtin_int));
+            return (e->type = cuik_uncanonical_type(&tu->target->signed_ints[CUIK_BUILTIN_INT]));
         }
         case EXPR_FLOAT32: {
             return (e->type = cuik_uncanonical_type(&cuik__builtin_float));
@@ -713,10 +713,10 @@ Cuik_QualType cuik__sema_expr(TranslationUnit* tu, Expr* restrict e) {
             return (e->type = cuik_uncanonical_type(&cuik__builtin_double));
         }
         case EXPR_CHAR: {
-            return (e->type = cuik_uncanonical_type(&cuik__builtin_int));
+            return (e->type = cuik_uncanonical_type(&tu->target->signed_ints[CUIK_BUILTIN_INT]));
         }
         case EXPR_WCHAR: {
-            return (e->type = cuik_uncanonical_type(&cuik__builtin_short));
+            return (e->type = cuik_uncanonical_type(&tu->target->signed_ints[CUIK_BUILTIN_SHORT]));
         }
         case EXPR_WSTR: {
             const char* in = (const char*)(e->str.start + 1);
@@ -742,7 +742,8 @@ Cuik_QualType cuik__sema_expr(TranslationUnit* tu, Expr* restrict e) {
             e->str.start = (unsigned char*)&out[0];
             e->str.end = (unsigned char*)&out[out_i];
 
-            return (e->type = cuik_uncanonical_type(cuik__new_array(&tu->types, cuik_uncanonical_type(&cuik__builtin_short), out_i)));
+            Cuik_QualType wchar_type = cuik_uncanonical_type(&tu->target->signed_ints[CUIK_BUILTIN_SHORT]);
+            return (e->type = cuik_uncanonical_type(cuik__new_array(&tu->types, wchar_type, out_i)));
         }
         case EXPR_STR: {
             const char* in = (const char*)(e->str.start + 1);
@@ -767,7 +768,8 @@ Cuik_QualType cuik__sema_expr(TranslationUnit* tu, Expr* restrict e) {
             e->str.start = (unsigned char*)out;
             e->str.end = (unsigned char*)(out + out_i);
 
-            return (e->type = cuik_uncanonical_type(cuik__new_array(&tu->types, cuik_uncanonical_type(&cuik__builtin_char), out_i)));
+            Cuik_QualType char_type = cuik_uncanonical_type(&tu->target->signed_ints[CUIK_BUILTIN_CHAR]);
+            return (e->type = cuik_uncanonical_type(cuik__new_array(&tu->types, char_type, out_i)));
         }
         case EXPR_SIZEOF: {
             Cuik_Type* src = cuik_canonical_type(cuik__sema_expr(tu, e->x_of_expr.expr));
@@ -775,7 +777,7 @@ Cuik_QualType cuik__sema_expr(TranslationUnit* tu, Expr* restrict e) {
             //assert(src->size && "Something went wrong...");
             *e = (Expr){
                 .op = EXPR_INT,
-                .type = cuik_uncanonical_type(&cuik__builtin_ulong),
+                .type = cuik_uncanonical_type(tu->target->size_type),
                 .int_num = { src->size, INT_SUFFIX_ULL }
             };
             return e->type;
@@ -786,7 +788,7 @@ Cuik_QualType cuik__sema_expr(TranslationUnit* tu, Expr* restrict e) {
             //assert(src->align && "Something went wrong...");
             *e = (Expr){
                 .op = EXPR_INT,
-                .type = cuik_uncanonical_type(&cuik__builtin_ulong),
+                .type = cuik_uncanonical_type(tu->target->size_type),
                 .int_num = { src->align, INT_SUFFIX_ULL }
             };
             return e->type;
@@ -802,7 +804,7 @@ Cuik_QualType cuik__sema_expr(TranslationUnit* tu, Expr* restrict e) {
             assert(t->size && "Something went wrong...");
             *e = (Expr){
                 .op = EXPR_INT,
-                .type = cuik_uncanonical_type(&cuik__builtin_ulong),
+                .type = cuik_uncanonical_type(tu->target->size_type),
                 .int_num = { t->size, INT_SUFFIX_NONE }
             };
             return e->type;
@@ -818,7 +820,7 @@ Cuik_QualType cuik__sema_expr(TranslationUnit* tu, Expr* restrict e) {
             assert(t->align && "Something went wrong...");
             *e = (Expr){
                 .op = EXPR_INT,
-                .type = cuik_uncanonical_type(&cuik__builtin_ulong),
+                .type = cuik_uncanonical_type(tu->target->size_type),
                 .int_num = { t->align, INT_SUFFIX_NONE }
             };
             return e->type;
@@ -1052,7 +1054,7 @@ Cuik_QualType cuik__sema_expr(TranslationUnit* tu, Expr* restrict e) {
 
                     // all integers ranked lower than int are promoted to int
                     if (src->kind >= KIND_BOOL && src->kind < KIND_INT) {
-                        src = &cuik__builtin_int;
+                        src = &tu->target->signed_ints[CUIK_BUILTIN_INT];
                     }
 
                     // all floats ranked lower than double are promoted to double
@@ -1164,14 +1166,14 @@ Cuik_QualType cuik__sema_expr(TranslationUnit* tu, Expr* restrict e) {
                         e->bin_op.right->cast_type = e->bin_op.right->type;
 
                         e->op = EXPR_PTRDIFF;
-                        return (e->type = cuik_uncanonical_type(&cuik__builtin_long));
+                        return (e->type = cuik_uncanonical_type(tu->target->ptrdiff_type));
                     } else {
                         diag_err(&tu->tokens, e->loc, "Cannot do pointer addition with two pointer operands, one must be an integral type.");
                         return (e->type = cuik_uncanonical_type(&cuik__builtin_void));
                     }
                 } else {
                     e->bin_op.left->cast_type = e->bin_op.left->type;
-                    e->bin_op.right->cast_type = cuik_uncanonical_type(&cuik__builtin_ulong);
+                    e->bin_op.right->cast_type = cuik_uncanonical_type(tu->target->ptrdiff_type);
 
                     if (cuik_canonical_type(lhs->ptr_to)->size == 0) {
                         diag_err(&tu->tokens, e->loc, "Cannot do pointer arithmatic on incomplete type");

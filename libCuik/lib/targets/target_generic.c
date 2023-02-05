@@ -71,14 +71,14 @@ static Cuik_Type* expect_pointer(TranslationUnit* tu, Expr* e, Expr* arg) {
     Cuik_Type* dst_type = sema_expr(tu, arg);
     if (dst_type->kind != KIND_PTR) {
         diag_err(&tu->tokens, arg->loc, "argument should be a pointer");
-        return &cuik__builtin_int;
+        return &tu->target->signed_ints[CUIK_BUILTIN_INT];
     }
 
     return cuik_canonical_type(dst_type->ptr_to);
 }
 
 static Expr* resolve_memory_order_expr(TranslationUnit* tu, Expr* e) {
-    e->cast_type = cuik_uncanonical_type(&cuik__builtin_int);
+    e->cast_type = cuik_uncanonical_type(&tu->target->signed_ints[CUIK_BUILTIN_INT]);
 
     if (e->op != EXPR_INT && e->op != EXPR_ENUM) {
         diag_err(&tu->tokens, e->loc, "memory order must be a constant expression");
@@ -194,7 +194,7 @@ Cuik_Type* target_generic_type_check_builtin(TranslationUnit* tu, Expr* e, const
     if (strcmp(name, "__c11_atomic_load") == 0) {
         if (arg_count != 2) {
             REPORT_EXPR(ERROR, e, "%s requires 2 arguments", name);
-            return &cuik__builtin_int;
+            return &tu->target->signed_ints[CUIK_BUILTIN_INT];
         }
 
         Cuik_Type* base_type = expect_pointer(tu, e, args[0]);
@@ -213,7 +213,7 @@ Cuik_Type* target_generic_type_check_builtin(TranslationUnit* tu, Expr* e, const
         strcmp(name, "__c11_atomic_fetch_and") == 0) {
         if (arg_count != 3) {
             diag_err(&tu->tokens, e->loc, "%s requires 3 arguments", name);
-            return &cuik__builtin_int;
+            return &tu->target->signed_ints[CUIK_BUILTIN_INT];
         }
 
         // fn(T* obj, T arg, int order)
@@ -236,7 +236,7 @@ Cuik_Type* target_generic_type_check_builtin(TranslationUnit* tu, Expr* e, const
             diag_err(&tu->tokens, e->loc, "%s can only be applied onto integers", name);
             goto failure;
         }
-        args[0]->cast_type = cuik_uncanonical_type(&cuik__builtin_int);
+        args[0]->cast_type = cuik_uncanonical_type(&tu->target->signed_ints[CUIK_BUILTIN_INT]);
 
         for (size_t i = 1; i < arg_count; i++) {
             Cuik_Type* arg_type = sema_expr(tu, args[i]);

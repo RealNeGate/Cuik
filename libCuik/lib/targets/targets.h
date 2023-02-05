@@ -34,6 +34,9 @@ struct Cuik_Target {
     uint32_t int_bits[5];
     Cuik_Type signed_ints[5], unsigned_ints[5];
 
+    // this is size_t and ptrdiff_t
+    Cuik_Type *size_type, *ptrdiff_type;
+
     // initializes some target specific macro defines
     void (*set_defines)(const Cuik_Target* self, Cuik_CPP* cpp);
 

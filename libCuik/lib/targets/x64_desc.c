@@ -26,34 +26,37 @@ static Cuik_Type* type_check_builtin(TranslationUnit* tu, Expr* e, const char* n
         return t;
     }
 
+    Cuik_Type* target_signed_ints = tu->target->signed_ints;
+    Cuik_Type* target_unsigned_ints = tu->target->unsigned_ints;
+
     if (strcmp(name, "_mm_setcsr") == 0) {
         if (arg_count != 1) {
             diag_err(&tu->tokens, e->loc, "parameter mismatch (got %s, expected %d)", name, 1);
-            return &builtin_types[TYPE_VOID];
+            return &cuik__builtin_void;
         }
 
         Cuik_Type* arg_type = sema_expr(tu, args[0]);
-        Cuik_Type* int_type = &builtin_types[TYPE_UINT];
+        Cuik_Type* int_type = &target_unsigned_ints[CUIK_BUILTIN_INT];
         if (!type_compatible(tu, arg_type, int_type, args[0])) {
             diag_err(&tu->tokens, args[0]->loc, "Could not implicitly convert type %!T into %!T.", arg_type, int_type);
-            return &builtin_types[TYPE_VOID];
+            return &cuik__builtin_void;
         }
 
-        args[0]->cast_type = cuik_uncanonical_type(&builtin_types[TYPE_UINT]);
-        return &builtin_types[TYPE_VOID];
+        args[0]->cast_type = cuik_uncanonical_type(int_type);
+        return &cuik__builtin_void;
     } else if (strcmp(name, "_mm_getcsr") == 0) {
         if (arg_count != 0) {
-            REPORT_EXPR(ERROR, e, "%s requires 0 arguments", name);
+            diag_err(&tu->tokens, e->loc, "%s requires 0 arguments", name);
         }
 
-        return &builtin_types[TYPE_UINT];
+        return &target_unsigned_ints[CUIK_BUILTIN_INT];
     } else if (strcmp(name, "__rdtsc") == 0) {
-        return &builtin_types[TYPE_ULONG];
+        return &target_unsigned_ints[CUIK_BUILTIN_LLONG];
     } else if (strcmp(name, "__readgsqword") == 0) {
-        return &builtin_types[TYPE_USHORT];
+        return &target_unsigned_ints[CUIK_BUILTIN_SHORT];
     } else {
-        REPORT_EXPR(ERROR, e->call.target, "unimplemented builtin '%s'", name);
-        return &builtin_types[TYPE_VOID];
+        diag_err(&tu->tokens, e->loc, "unimplemented builtin %s", name);
+        return &cuik__builtin_void;
     }
 }
 
@@ -310,6 +313,9 @@ Cuik_Target* cuik_target_x64(Cuik_System system, Cuik_Environment env) {
     if (env == CUIK_ENV_MSVC) {
         t->int_bits[CUIK_BUILTIN_LONG] = 32;
     }
+
+    t->size_type = &t->unsigned_ints[CUIK_BUILTIN_LLONG];
+    t->ptrdiff_type = &t->signed_ints[CUIK_BUILTIN_LLONG];
 
     cuik_target_build(t);
     return t;

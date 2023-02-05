@@ -764,7 +764,7 @@ static Expr* parse_unary(Cuik_Parser* restrict parser, TokenStream* restrict s) 
                 *e = (Expr){
                     .op = EXPR_CAST,
                     .loc = { start_loc, end_loc },
-                    .cast = { value, cuik_make_qual_type(&builtin_types[TYPE_BOOL], 0) },
+                    .cast = { value, cuik_make_qual_type(&cuik__builtin_bool, 0) },
                 };
             } else {
                 *e = (Expr){

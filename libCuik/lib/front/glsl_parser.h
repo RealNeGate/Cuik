@@ -7,7 +7,7 @@ Cuik_ParseResult cuikparse_run_glsl(Cuik_ParseVersion version, TokenStream* rest
     parser.tokens = *s;
     parser.target = target;
     parser.static_assertions = dyn_array_create(int, 2048);
-    parser.types = init_type_table();
+    parser.types = init_type_table(target);
 
     // just a shorthand so it's faster to grab
     parser.default_int = (Cuik_Type*) &target->signed_ints[CUIK_BUILTIN_INT];

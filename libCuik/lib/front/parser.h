@@ -105,6 +105,8 @@ enum {
 };
 
 typedef struct Cuik_TypeTable {
+    Cuik_Target* target;
+
     // This is where we allocate all our Cuik_Types, well in theory they can
     // be allocated anywhere but the parser will use the arena for performance
     // and maintainability reasons.
@@ -158,37 +160,12 @@ struct TranslationUnit {
     Cuik_GlobalSymbols globals;
 };
 
-enum {
-    TYPE_VOID,
-    TYPE_BOOL,
-    TYPE_CHAR,
-    TYPE_SHORT,
-    TYPE_INT,
-    TYPE_LONG,
-    TYPE_UCHAR,
-    TYPE_USHORT,
-    TYPE_UINT,
-    TYPE_ULONG,
-    TYPE_FLOAT,
-    TYPE_DOUBLE,
-    BUILTIN_TYPE_COUNT,
-};
-extern Cuik_Type builtin_types[BUILTIN_TYPE_COUNT];
-
 extern Cuik_Type cuik__builtin_void;
 extern Cuik_Type cuik__builtin_bool;
-extern Cuik_Type cuik__builtin_char;
-extern Cuik_Type cuik__builtin_short;
-extern Cuik_Type cuik__builtin_int;
-extern Cuik_Type cuik__builtin_long;
-extern Cuik_Type cuik__builtin_uchar;
-extern Cuik_Type cuik__builtin_ushort;
-extern Cuik_Type cuik__builtin_uint;
-extern Cuik_Type cuik__builtin_ulong;
 extern Cuik_Type cuik__builtin_float;
 extern Cuik_Type cuik__builtin_double;
 
-Cuik_TypeTable init_type_table(void);
+Cuik_TypeTable init_type_table(Cuik_Target* target);
 void free_type_table(Cuik_TypeTable* types);
 
 Cuik_Type* new_aligned_type(Cuik_TypeTable* types, Cuik_Type* base);

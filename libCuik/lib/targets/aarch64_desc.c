@@ -176,6 +176,9 @@ Cuik_Target* cuik_target_aarch64(Cuik_System system, Cuik_Environment env) {
         .type_check_builtin = type_check_builtin,
     };
 
+    t->size_type = &t->unsigned_ints[CUIK_BUILTIN_LLONG];
+    t->ptrdiff_type = &t->signed_ints[CUIK_BUILTIN_LLONG];
+
     cuik_target_build(t);
     return t;
 }
