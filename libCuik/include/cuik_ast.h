@@ -221,7 +221,7 @@ struct Cuik_Type {
             Atom name;
         } placeholder;
     };
-};
+} __attribute__((aligned(16)));
 
 // designated initializer member
 // .x = 5

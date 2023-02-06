@@ -1060,7 +1060,7 @@ static Val x64v2_eval(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
                     INST2(ops[type - TB_AND], &dst, &b, n->dt);
                     return dst;
                 } else {
-                    INST2(ops[type - TB_AND], &dst, &dst, n->dt);
+                    INST2(ops[type - TB_AND], &dst, &b, n->dt);
                     return dst;
                 }
             } else if (type == TB_MUL && is_rvalue(&a) && b.type == VAL_IMM) {

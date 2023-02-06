@@ -450,7 +450,6 @@ static GAD_VAL GAD_FN(regalloc2)(Ctx* restrict ctx, TB_Function* f, TB_Reg r, in
                 if (other_li.end == r_li.start) {
                     DBG("  recycle r%u for r%u\n", other_r, r);
 
-                    ctx->values[other_r] = (GAD_VAL){ 0 };
                     ctx->values[r] = ctx->values[other_r];
                     ctx->active[k] = r;
                     goto done;
