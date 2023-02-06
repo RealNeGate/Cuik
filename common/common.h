@@ -10,11 +10,20 @@
 #ifdef CUIK_USE_MIMALLOC
 #include <mimalloc.h>
 
+#if 0
+#define cuik_malloc(size)        (printf("malloc(" #size ") @ " __FILE__ ":%d\n", __LINE__), mi_malloc(size))
+#define cuik_calloc(count, size) (printf("calloc(" #count ", " #size ") @ " __FILE__ ":%d\n", __LINE__), mi_calloc(count, size))
+#define cuik_free(ptr)           (printf("free(" #ptr ") @ " __FILE__ ":%d\n", __LINE__), mi_free(ptr))
+#define cuik_realloc(ptr, size)  (printf("realloc(" #ptr ", " #size ") @ " __FILE__ ":%d\n", __LINE__), mi_realloc(ptr, size))
+#define cuik_strdup(x)           (printf("strdup(" #x ") @ " __FILE__ ":%d\n", __LINE__), mi_strdup(x))
+#else
 #define cuik_malloc(size)        mi_malloc(size)
 #define cuik_calloc(count, size) mi_calloc(count, size)
 #define cuik_free(ptr)           mi_free(ptr)
 #define cuik_realloc(ptr, size)  mi_realloc(ptr, size)
 #define cuik_strdup(x)           mi_strdup(x)
+#endif
+
 #else
 #define cuik_malloc(size)        malloc(size)
 #define cuik_calloc(count, size) calloc(count, size)

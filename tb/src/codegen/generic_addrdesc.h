@@ -406,6 +406,28 @@ static GAD_VAL GAD_FN(steal)(Ctx* restrict ctx, TB_Function* f, TB_Reg r, int re
     return v;
 }
 
+// victim gets potentially robbed of the register by r
+static bool GAD_FN(try_steal)(Ctx* restrict ctx, TB_Function* f, TB_Reg victim, TB_Reg r) {
+    LiveInterval r_li = get_live_interval(ctx, r);
+
+    DBG("try steal r%u for r%u\n", victim, r);
+    FOREACH_N(k, 0, ctx->active_count) {
+        if (ctx->active[k] == victim) {
+            LiveInterval other_li = get_live_interval(ctx, victim);
+            if (other_li.end == r_li.start) {
+                DBG("  steal r%u from r%u\n", victim, r);
+
+                ctx->values[r] = ctx->values[victim];
+                ctx->active[k] = r;
+                ctx->values[victim].is_ref = true;
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
 static GAD_VAL GAD_FN(regalloc2)(Ctx* restrict ctx, TB_Function* f, TB_Reg r, int reg_class, bool can_recycle, TB_Reg phi_steal) {
     TB_DataType dt = f->nodes[r].dt;
     LiveInterval r_li = get_live_interval(ctx, r);
@@ -452,6 +474,7 @@ static GAD_VAL GAD_FN(regalloc2)(Ctx* restrict ctx, TB_Function* f, TB_Reg r, in
 
                     ctx->values[r] = ctx->values[other_r];
                     ctx->active[k] = r;
+                    ctx->values[other_r].is_ref = true;
                     goto done;
                 }
             }

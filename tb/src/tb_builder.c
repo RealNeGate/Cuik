@@ -503,6 +503,10 @@ TB_API TB_Reg tb_inst_array_access(TB_Function* f, TB_Reg base, TB_Reg index, ui
 }
 
 TB_API TB_Reg tb_inst_member_access(TB_Function* f, TB_Reg base, int32_t offset) {
+    if (offset == 0) {
+        return base;
+    }
+
     TB_Reg r = tb_make_reg(f, TB_MEMBER_ACCESS, TB_TYPE_PTR);
     f->nodes[r].member_access.base = base;
     f->nodes[r].member_access.offset = offset;

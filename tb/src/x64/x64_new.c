@@ -836,7 +836,7 @@ static Val x64v2_eval(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
                     // GAD_FN(unlock_register)(ctx, f, X64_REG_CLASS_GPR, t1.gpr);
                     return dst;
                 } else {
-                    return val_global(n->global.value);
+                    return (ctx->values[r] = val_global(n->global.value));
                 }
             } else if (s->tag == TB_SYMBOL_FUNCTION) {
                 GAD_VAL dst = GAD_FN(regalloc)(ctx, f, r, X64_REG_CLASS_GPR);
@@ -963,9 +963,17 @@ static Val x64v2_eval(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
         case TB_MEMBER_ACCESS: {
             GAD_VAL src = ctx->values[n->member_access.base];
 
-            if (GAD_FN(encompass)(ctx, f, n->member_access.base, r)) {
-                src.mem.disp += n->member_access.offset;
+            if (src.type == VAL_GLOBAL) {
+                src.global.disp += n->member_access.offset;
                 return (ctx->values[r] = src);
+            }
+
+            if (src.type == VAL_MEM) {
+                if (GAD_FN(try_steal)(ctx, f, n->member_access.base, r) ||
+                    GAD_FN(encompass)(ctx, f, n->member_access.base, r)) {
+                    src.mem.disp += n->member_access.offset;
+                    return (ctx->values[r] = src);
+                }
             }
 
             GAD_VAL dst = GAD_FN(regalloc)(ctx, f, r, X64_REG_CLASS_GPR);
@@ -1006,7 +1014,7 @@ static Val x64v2_eval(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
 
                     stride_as_shift = 0; // pre-multiplied, don't propagate
                 }
-            } else {
+            } else if (index->type == VAL_GPR) {
                 dst = GAD_FN(regalloc)(ctx, f, r, X64_REG_CLASS_GPR);
                 written_to_dst = true;
 
@@ -1023,7 +1031,29 @@ static Val x64v2_eval(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
             assert(stride_as_shift >= 0 && stride_as_shift <= 3 && "stride_as_shift can't fit into an LEA");
 
             GAD_VAL base = x64v2_force_into_gpr(ctx, f, n->array_access.base, ctx->values[n->array_access.base], true);
-            if (stride_as_shift) {
+            if (index->type == VAL_IMM) {
+                if (index->imm) {
+                    GAD_VAL addr = val_base_disp(TB_TYPE_PTR, base.gpr, index->imm * stride);
+
+                    if (0 && GAD_FN(encompass)(ctx, f, n->array_access.base, r)) {
+                        return (ctx->values[r] = addr);
+                    } else {
+                        if (!written_to_dst) {
+                            dst = GAD_FN(regalloc)(ctx, f, r, X64_REG_CLASS_GPR);
+                        }
+
+                        INST2(LEA, &dst, &addr, TB_TYPE_PTR);
+                    }
+                } else {
+                    if (!written_to_dst) {
+                        dst = GAD_FN(regalloc)(ctx, f, r, X64_REG_CLASS_GPR);
+                    }
+
+                    INST2(MOV, &dst, &base, TB_TYPE_PTR);
+                }
+                return dst;
+            } else if (stride_as_shift) {
+                assert(index->type == VAL_GPR);
                 GAD_VAL addr = val_base_index(TB_TYPE_PTR, base.gpr, written_to_dst ? dst.gpr : index->gpr, stride_as_shift);
                 addr.mem.is_rvalue = false;
 
@@ -1045,13 +1075,15 @@ static Val x64v2_eval(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
         case TB_XOR:
         case TB_ADD:
         case TB_SUB: {
-            const static Inst2Type ops[] = { AND, OR, XOR, ADD, SUB };
+            const static Inst2Type ops[]  = { AND, OR, XOR, ADD, SUB };
+            const static bool is_commut[] = { 1,   1,  1,   1,   0 };
 
-            GAD_VAL dst = GAD_FN(regalloc2)(ctx, f, r, X64_REG_CLASS_GPR, true, n->i_arith.a);
+            GAD_VAL dst = GAD_FN(regalloc2)(ctx, f, r, X64_REG_CLASS_GPR, is_commut[type - TB_AND], n->i_arith.a);
             GAD_VAL a = ctx->values[n->i_arith.a];
             GAD_VAL b = ctx->values[n->i_arith.b];
 
-            if (dst.type == b.type && dst.reg == b.reg) {
+            if (is_commut[type - TB_AND] && dst.type == b.type && dst.reg == b.reg) {
+                // only works if it's commutative
                 INST2(ops[type - TB_AND], &dst, &a, n->dt);
                 return dst;
             } else if (dst.type == a.type && dst.reg == a.reg) {

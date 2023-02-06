@@ -539,9 +539,9 @@ static bool invoke_link(void* ctx, const Cuik_CompilerArgs* args, Cuik_Linker* l
     wchar_t cmd_line[CMD_LINE_MAX];
     int cmd_line_len = swprintf(cmd_line, CMD_LINE_MAX,
         L"%sbin\\Hostx64\\x64\\link.exe /nologo /machine:amd64 "
-        "/subsystem:%s /debug:full /pdb:%S.pdb /out:%S.exe /incremental:no ",
+        "/subsystem:%s /debug:%S /pdb:%S.pdb /out:%S.exe /incremental:no ",
         t->vc_tools_install, linker->subsystem_windows ? L"windows" : L"console",
-        filename, filename
+        args->debug_info ? "full" : "none", filename, filename
     );
 
     dyn_array_for(i, linker->libpaths) {
@@ -590,7 +590,7 @@ static bool invoke_link(void* ctx, const Cuik_CompilerArgs* args, Cuik_Linker* l
     CloseHandle(pi.hThread);
 
     error:
-    fprintf(stderr, "Linker command:\n%S\n", cmd_line);
+    // fprintf(stderr, "Linker command:\n%S\n", cmd_line);
 
     if (pi.hProcess && pi.hProcess != INVALID_HANDLE_VALUE) CloseHandle(pi.hProcess);
     if (pi.hThread && pi.hThread != INVALID_HANDLE_VALUE) CloseHandle(pi.hThread);
