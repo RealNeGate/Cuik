@@ -73,16 +73,28 @@ It can currently compile programs using the subset of C it currently supports bu
 ## What's in progress right now?
 
 I'm working on self hosting which means I'm mostly bug fixing, I started on the EXE exporting stuff for TB so we can probably expect linkerless compiles stable soon.
+
 ## File structure
+
 In case you care to look around here's what the folders mean:
+
 ```
 # this is where the main driver goes (it does "mostly" normal CC command line interactions)
 main/
 
-# Actual library (can be used separate of the main driver)
+# a WIP GUI app which will display info from libCuik
+inspector/
+
+# C frontend library
 libCuik/
 
-# not [ciabatta](https://github.com/flysand7/ciabatta) but the freestanding includes like stddef.h along with some helpers
+# General compiler backend library
+tb/
+
+# the general heap allocator used
+mimalloc/
+
+# the freestanding includes like stddef.h along with some helpers
 crt/
 
 # random crap
