@@ -328,6 +328,18 @@ static void x64v2_initial_reg_alloc(Ctx* restrict ctx) {
     ctx->active_count += 2;
 }
 
+static void x64v2_barrier(Ctx* restrict ctx, TB_Function* f, TB_Label bb, TB_Reg except) {
+    TB_FOR_NODE(r, f, bb) {
+        if (r != except && f->nodes[r].type == TB_LOAD && is_rvalue(&ctx->values[r])) {
+            // resolve into a register because we're about to load
+            // and don't know what'll happen
+            GAD_VAL old = ctx->values[r];
+            GAD_VAL tmp = GAD_FN(regalloc)(ctx, f, r, X64_REG_CLASS_GPR);
+            INST2(MOV, &tmp, &old, f->nodes[r].dt);
+        }
+    }
+}
+
 static GAD_VAL x64v2_phi_alloc(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
     if (f->nodes[r].dt.type == TB_FLOAT) {
         return GAD_FN(regalloc)(ctx, f, r, X64_REG_CLASS_XMM);
