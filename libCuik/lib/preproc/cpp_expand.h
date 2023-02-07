@@ -262,12 +262,6 @@ static bool subst(Cuik_CPP* restrict c, TokenList* out_tokens, uint8_t* def_str,
                 continue;
             }
 
-            /*if (a.length == 1 && a.data[0] == 'w') {
-                SourceLoc loc = encode_macro_loc(macro_id, t.content.data - in.start);
-                diag_note(&c->tokens, (SourceRange){ loc, { loc.raw + t.content.length } }, "expected identifier");
-                __debugbreak();
-            }*/
-
             // Literally join the data
             unsigned char* out = gimme_the_shtuffs(c, a.length + b.length + 16);
             memcpy(out, a.data, a.length);

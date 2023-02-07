@@ -620,6 +620,7 @@ static Expr* parse_postfix(Cuik_Parser* restrict parser, TokenStream* restrict s
 
         // Function call
         if (tokens_get(s)->type == '(') {
+            SourceLoc open_loc = tokens_get_location(s);
             tokens_next(s);
 
             Expr* target = e;
@@ -630,7 +631,11 @@ static Expr* parse_postfix(Cuik_Parser* restrict parser, TokenStream* restrict s
 
             while (!tokens_eof(s) && tokens_get(s)->type != ')') {
                 if (param_count) {
-                    if (!expect_char(s, ',')) tokens_next(s);
+                    if (tokens_get(s)->type != ',') {
+                        break;
+                    }
+
+                    tokens_next(s);
                 }
 
                 Expr* e = parse_assignment(parser, s);
@@ -638,11 +643,7 @@ static Expr* parse_postfix(Cuik_Parser* restrict parser, TokenStream* restrict s
                 param_count++;
             }
 
-            if (tokens_get(s)->type != ')') {
-                diag_err(s, tokens_get_range(s), "Unclosed parameter list!");
-            }
-            tokens_next(s);
-
+            expect_closing_paren(s, open_loc);
             SourceLoc end_loc = tokens_get_last_location(s);
 
             // Copy parameter refs into more permanent storage

@@ -76,7 +76,7 @@ void append_object(TB_Linker* l, TB_Slice obj_name, TB_ObjectFile* obj) {
 
                 TB_ObjectSymbol* restrict src_symbol = &obj->symbols[reloc->symbol_index];
                 if (src_symbol->type == TB_OBJECT_STORAGE_STATIC || src_symbol->type == TB_OBJECT_STORAGE_EXTERN) {
-                    __debugbreak();
+                    tb_todo();
                 }
             }
         }

@@ -638,12 +638,10 @@ static void expect(TranslationUnit* tu, TokenStream* restrict s, char ch) {
 
 static bool expect_closing_paren(TokenStream* restrict s, SourceLoc opening) {
     if (tokens_get(s)->type != ')') {
-        SourceLoc loc = tokens_get_location(s);
+        SourceRange loc = tokens_get_range(s);
 
-        report_two_spots(
-            REPORT_ERROR, s, opening, loc,
-            "expected closing parenthesis", "open", "close?", NULL
-        );
+        DiagFixit fixit = { loc, 0, ")" };
+        diag_err(s, fixit.loc, "#expected closing paren", fixit);
         return false;
     } else {
         tokens_next(s);
