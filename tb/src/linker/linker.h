@@ -50,9 +50,6 @@ typedef enum TB_LinkerSymbolTag {
     // TB defined
     TB_LINKER_SYMBOL_TB,
 
-    // local to the translation unit
-    TB_LINKER_SYMBOL_STATIC,
-
     // imported from shared object
     TB_LINKER_SYMBOL_IMPORT,
 } TB_LinkerSymbolTag;
@@ -65,6 +62,7 @@ typedef struct TB_LinkerSymbol {
 
     // value
     TB_LinkerSymbolTag tag;
+    TB_Slice object_name;
     union {
         // for normal symbols,
         struct {
@@ -73,7 +71,10 @@ typedef struct TB_LinkerSymbol {
         } normal;
 
         // for IR module symbols
-        TB_Symbol* sym;
+        struct {
+            TB_LinkerSectionPiece* piece;
+            TB_Symbol* sym;
+        } tb;
 
         // for imports, refers to the imports array in TB_Linker
         struct {
@@ -117,7 +118,7 @@ typedef struct {
 
 // Format-specific vtable:
 typedef struct TB_LinkerVtbl {
-    void(*append_object)(TB_Linker* l, TB_ObjectFile* obj);
+    void(*append_object)(TB_Linker* l, TB_Slice obj_name, TB_ObjectFile* obj);
     void(*append_library)(TB_Linker* l, TB_Slice ar_file);
     void(*append_module)(TB_Linker* l, TB_Module* m);
     TB_Exports(*export)(TB_Linker* l);
@@ -147,7 +148,8 @@ typedef struct TB_Linker {
 } TB_Linker;
 
 // TB helpers
-size_t tb__layout_text_section(TB_Module* m, ptrdiff_t* restrict entrypoint, const char* entrypoint_name);
+size_t tb__get_symbol_pos(TB_Symbol* s);
+size_t tb__layout_text_section(TB_Module* m);
 
 // Symbol table
 TB_LinkerSymbol* tb__find_symbol(TB_SymbolTable* restrict symtab, TB_Slice name);

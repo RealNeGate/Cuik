@@ -17,7 +17,7 @@ const static uint8_t dos_stub[] = {
     0x6d,0x6f,0x64,0x65,0x2e,0x24,0x00,0x00
 };
 
-void append_object(TB_Linker* l, TB_ObjectFile* obj) {
+void append_object(TB_Linker* l, TB_Slice obj_name, TB_ObjectFile* obj) {
     CUIK_TIMED_BLOCK("sort sections") {
         qsort(obj->sections, obj->section_count, sizeof(TB_ObjectSection), compare_sections);
     }
@@ -57,6 +57,7 @@ void append_object(TB_Linker* l, TB_ObjectFile* obj) {
                 TB_LinkerSymbol s = {
                     .name = sym->name,
                     .tag = TB_LINKER_SYMBOL_NORMAL,
+                    .object_name = obj_name,
                     .normal = { og_sort[sym->section_num - 1]->user_data, sym->value }
                 };
                 sym->user_data = tb__append_symbol(&l->symtab, &s);
@@ -122,13 +123,14 @@ static void append_library(TB_Linker* l, TB_Slice ar_file) {
             TB_LinkerSymbol sym = {
                 .name = e->import_name,
                 .tag = TB_LINKER_SYMBOL_IMPORT,
+                // .object_name = obj_name,
                 .import = { import_index, e->ordinal }
             };
             tb__append_symbol(&l->symtab, &sym);
         } else {
             // fprintf(stderr, "%.*s\n", (int) e->name.length, e->name.data);
             CUIK_TIMED_BLOCK("append object file") {
-                append_object(l, e->obj);
+                append_object(l, e->name, e->obj);
                 tb_object_free(e->obj);
             }
         }
@@ -139,13 +141,8 @@ static void append_library(TB_Linker* l, TB_Slice ar_file) {
 
 static void append_module(TB_Linker* l, TB_Module* m) {
     // Convert module into sections which we can then append to the output
-    ptrdiff_t entry;
     TB_LinkerSection* text = tb__find_or_create_section(l, ".text", IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_CNT_CODE);
-    m->linker.text = tb__append_piece(text, PIECE_TEXT, tb__layout_text_section(m, &entry, "mainCRTStartup"), NULL, m);
-    if (entry >= 0) {
-        l->entrypoint = m->linker.text->offset + entry;
-        // printf("Found entry at %zu\n", l->entrypoint);
-    }
+    m->linker.text = tb__append_piece(text, PIECE_TEXT, tb__layout_text_section(m), NULL, m);
 
     if (m->data_region_size > 0) {
         TB_LinkerSection* data = tb__find_or_create_section(l, ".data", IMAGE_SCN_MEM_WRITE | IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA);
@@ -217,15 +214,18 @@ static void append_module(TB_Linker* l, TB_Module* m) {
 
     CUIK_TIMED_BLOCK("apply symbols") {
         static const enum TB_SymbolTag tags[] = { TB_SYMBOL_FUNCTION, TB_SYMBOL_GLOBAL };
+        TB_Slice obj_name = { sizeof("<tb module>")-1, (const uint8_t*) "<tb module>" };
 
         FOREACH_N(i, 0, COUNTOF(tags)) {
             enum TB_SymbolTag tag = tags[i];
+            TB_LinkerSectionPiece* piece = i ? m->linker.data : m->linker.text;
 
             for (TB_Symbol* sym = m->first_symbol_of_tag[tag]; sym != NULL; sym = sym->next) {
                 TB_LinkerSymbol ls = {
                     .name = { strlen(sym->name), (const uint8_t*) sym->name },
                     .tag = TB_LINKER_SYMBOL_TB,
-                    .sym = sym
+                    .object_name = obj_name,
+                    .tb = { piece, sym }
                 };
                 tb__append_symbol(&l->symtab, &ls);
             }
@@ -473,6 +473,18 @@ static COFF_ImportDirectory* gen_imports(TB_Linker* l, PE_ImageDataDirectory* im
 static TB_Exports export(TB_Linker* l) {
     PE_ImageDataDirectory imp_dir, iat_dir;
     COFF_ImportDirectory* import_dirs;
+
+    if (l->entrypoint < 0) {
+        TB_Slice name = { sizeof("mainCRTStartup") - 1, (const uint8_t*) "mainCRTStartup" };
+        TB_LinkerSymbol* sym = tb__find_symbol(&l->symtab, name);
+        if (sym) {
+            if (sym->tag == TB_LINKER_SYMBOL_NORMAL) {
+                l->entrypoint = sym->normal.piece->offset + sym->normal.secrel;
+            } else if (sym->tag == TB_LINKER_SYMBOL_TB) {
+                l->entrypoint = sym->tb.piece->offset + tb__get_symbol_pos(sym->tb.sym);
+            }
+        }
+    }
 
     CUIK_TIMED_BLOCK("generate imports") {
         import_dirs = gen_imports(l, &imp_dir, &iat_dir);

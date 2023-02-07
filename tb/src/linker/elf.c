@@ -2,7 +2,7 @@
 #include "linker.h"
 #include "../objects/elf64.h"
 
-static void append_object(TB_Linker* l, TB_ObjectFile* obj) {
+static void append_object(TB_Linker* l, TB_Slice obj_name, TB_ObjectFile* obj) {
     // implement this
 }
 
@@ -12,13 +12,8 @@ static void append_library(TB_Linker* l, TB_Slice ar_file) {
 
 static void append_module(TB_Linker* l, TB_Module* m) {
     // Convert module into sections which we can then append to the output
-    ptrdiff_t entry;
     TB_LinkerSection* text = tb__find_or_create_section(l, ".text", PF_X | PF_R);
-    m->linker.text = tb__append_piece(text, PIECE_TEXT, tb__layout_text_section(m, &entry, "_start"), NULL, m);
-    if (entry >= 0) {
-        l->entrypoint = m->linker.text->offset + entry;
-        // printf("Found entry at %zu\n", l->entrypoint);
-    }
+    m->linker.text = tb__append_piece(text, PIECE_TEXT, tb__layout_text_section(m), NULL, m);
 
     if (m->data_region_size > 0) {
         TB_LinkerSection* data = tb__find_or_create_section(l, ".data", PF_W | PF_R);
@@ -36,12 +31,13 @@ static void append_module(TB_Linker* l, TB_Module* m) {
 
         FOREACH_N(i, 0, COUNTOF(tags)) {
             enum TB_SymbolTag tag = tags[i];
+            TB_LinkerSectionPiece* piece = i ? m->linker.data : m->linker.text;
 
             for (TB_Symbol* sym = m->first_symbol_of_tag[tag]; sym != NULL; sym = sym->next) {
                 TB_LinkerSymbol ls = {
                     .name = { strlen(sym->name), (const uint8_t*) sym->name },
                     .tag = TB_LINKER_SYMBOL_TB,
-                    .sym = sym
+                    .tb = { piece, sym }
                 };
                 tb__append_symbol(&l->symtab, &ls);
             }
@@ -53,6 +49,18 @@ static void append_module(TB_Linker* l, TB_Module* m) {
 
 #define WRITE(data, size) (memcpy(&output[write_pos], data, size), write_pos += (size))
 static TB_Exports export(TB_Linker* l) {
+    if (l->entrypoint < 0) {
+        TB_Slice name = { sizeof("_start") - 1, (const uint8_t*) "_start" };
+        TB_LinkerSymbol* sym = tb__find_symbol(&l->symtab, name);
+        if (sym) {
+            if (sym->tag == TB_LINKER_SYMBOL_NORMAL) {
+                l->entrypoint = sym->normal.piece->offset + sym->normal.secrel;
+            } else if (sym->tag == TB_LINKER_SYMBOL_TB) {
+                l->entrypoint = sym->tb.piece->offset + tb__get_symbol_pos(sym->tb.sym);
+            }
+        }
+    }
+
     size_t size_of_headers = sizeof(Elf64_Ehdr)
         + (nl_strmap_get_load(l->sections) * sizeof(Elf64_Phdr));
 

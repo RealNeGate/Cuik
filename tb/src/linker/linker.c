@@ -30,8 +30,8 @@ TB_API TB_Linker* tb_linker_create(TB_ExecutableType exe, TB_Arch arch) {
     return l;
 }
 
-TB_API void tb_linker_append_object(TB_Linker* l, TB_ObjectFile* obj) {
-    l->vtbl.append_object(l, obj);
+TB_API void tb_linker_append_object(TB_Linker* l, TB_Slice obj_name, TB_ObjectFile* obj) {
+    l->vtbl.append_object(l, obj_name, obj);
 }
 
 TB_API void tb_linker_append_module(TB_Linker* l, TB_Module* m) {
@@ -50,20 +50,22 @@ TB_API void tb_linker_destroy(TB_Linker* l) {
     tb_platform_heap_free(l);
 }
 
+size_t tb__get_symbol_pos(TB_Symbol* s) {
+    if (s->tag == TB_SYMBOL_FUNCTION) {
+        return ((TB_Function*) s)->output->code_pos;
+    } else if (s->tag == TB_SYMBOL_GLOBAL) {
+        return ((TB_Global*) s)->pos;
+    } else {
+        tb_todo();
+    }
+}
+
 // also finds the entrypoints (kill two birds amirite)
-size_t tb__layout_text_section(TB_Module* m, ptrdiff_t* restrict entrypoint, const char* entrypoint_name) {
-    char entrypoint_name_first_char = entrypoint_name[0];
-
+size_t tb__layout_text_section(TB_Module* m) {
     size_t size = 0;
-    *entrypoint = -1;
-
     TB_FOR_FUNCTIONS(f, m) {
         TB_FunctionOutput* out_f = f->output;
         if (out_f == NULL) continue;
-
-        if (f->super.name[0] == entrypoint_name_first_char && strcmp(f->super.name, entrypoint_name) == 0) {
-            *entrypoint = size;
-        }
 
         out_f->code_pos = size;
         size += out_f->code_size;
