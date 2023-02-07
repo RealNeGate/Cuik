@@ -197,7 +197,7 @@ int cuik_parse_arg(Cuik_CompilerArgs* args, int argc, const char* argv[]) {
             if (!success) {
                 fprintf(stderr, "unknown target: %s\n", arg.value);
                 fprintf(stderr, "Supported targets:\n");
-                for (size_t i = 0; i < dyn_array_length(target_options); i++) {
+                for (size_t i = 0; i < TARGET_OPTION_COUNT; i++) {
                     fprintf(stderr, "    %s\n", target_options[i].key);
                 }
                 fprintf(stderr, "\n");

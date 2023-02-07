@@ -10,7 +10,7 @@ static tb_atomic_int total_tid;
 
 ICodeGen* tb__find_code_generator(TB_Module* m) {
     switch (m->target_arch) {
-        #if 1
+        #if 0
         // work in progress
         case TB_ARCH_X86_64: return &tb__x64v2_codegen;
         #else

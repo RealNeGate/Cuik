@@ -368,7 +368,10 @@ static COFF_ImportDirectory* gen_imports(TB_Linker* l, PE_ImageDataDirectory* im
             import_entry_count += dyn_array_length(l->imports[i].thunks) + 1;
         }
     }
-    dyn_array_set_length(l->imports, j); // trimmed
+
+    if (l->imports) {
+        dyn_array_set_length(l->imports, j); // trimmed
+    }
 
     // Generate import thunks
     uint32_t thunk_id_counter = 0;
