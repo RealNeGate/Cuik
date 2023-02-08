@@ -173,7 +173,7 @@ static FunctionTallySimple tally_memory_usage_simple(TB_Function* restrict f) {
 // user-defined forward decls
 static size_t GAD_FN(resolve_stack_usage)(Ctx* restrict ctx, TB_Function* f, size_t stack_usage, size_t caller_usage);
 static void GAD_FN(resolve_local_patches)(Ctx* restrict ctx, TB_Function* f);
-static void GAD_FN(barrier)(Ctx* restrict ctx, TB_Function* f, TB_Label bb, TB_Reg except);
+static void GAD_FN(barrier)(Ctx* restrict ctx, TB_Function* f, TB_Label bb, TB_Reg except, int split);
 static GAD_VAL GAD_FN(phi_alloc)(Ctx* restrict ctx, TB_Function* f, TB_Reg r);
 static void GAD_FN(mem_op)(Ctx* restrict ctx, TB_Function* f, TB_Reg r);
 static void GAD_FN(call)(Ctx* restrict ctx, TB_Function* f, TB_Reg r);
@@ -465,11 +465,10 @@ static GAD_VAL GAD_FN(regalloc2)(Ctx* restrict ctx, TB_Function* f, TB_Reg r, in
 
         if (can_recycle && ctx->active_count > 0) {
             DBG("  try recycling r%u\n", r);
-            FOREACH_N(k, 0, ctx->active_count) {
+            FOREACH_N(k, 0, ctx->active_count) if (ctx->active[k] == phi_steal) {
                 TB_Reg other_r = ctx->active[k];
-                if (other_r == 0) continue;
-
                 LiveInterval other_li = get_live_interval(ctx, other_r);
+
                 if (other_li.end == r_li.start) {
                     DBG("  recycle r%u for r%u\n", other_r, r);
 
@@ -620,13 +619,13 @@ static void GAD_FN(eval_bb)(Ctx* restrict ctx, TB_Function* f, TB_Label bb, TB_L
             case TB_MEMSET:
             case TB_MEMCPY:
             case TB_INITIALIZE: {
-                GAD_FN(barrier)(ctx, f, bb, 0);
+                GAD_FN(barrier)(ctx, f, bb, 0, ctx->ordinal[r]);
                 GAD_FN(mem_op)(ctx, f, r);
                 break;
             }
 
             case TB_STORE: {
-                GAD_FN(barrier)(ctx, f, bb, f->nodes[r].store.address);
+                GAD_FN(barrier)(ctx, f, bb, f->nodes[r].store.address, ctx->ordinal[r]);
                 GAD_FN(store)(ctx, f, r);
                 break;
             }
@@ -635,7 +634,7 @@ static void GAD_FN(eval_bb)(Ctx* restrict ctx, TB_Function* f, TB_Label bb, TB_L
             case TB_SCALL:
             case TB_VCALL: {
                 // TODO(NeGate): move barrier closer to the callsite
-                GAD_FN(barrier)(ctx, f, bb, 0);
+                GAD_FN(barrier)(ctx, f, bb, 0, ctx->ordinal[r]);
                 GAD_FN(call)(ctx, f, r);
                 break;
             }

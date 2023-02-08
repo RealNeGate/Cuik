@@ -10,7 +10,7 @@ static tb_atomic_int total_tid;
 
 ICodeGen* tb__find_code_generator(TB_Module* m) {
     switch (m->target_arch) {
-        #if 0
+        #if 1
         // work in progress
         case TB_ARCH_X86_64: return &tb__x64v2_codegen;
         #else
@@ -69,16 +69,6 @@ TB_API TB_Module* tb_module_create_for_host(const TB_FeatureSet* features, bool 
 
     return tb_module_create(arch, sys, features, is_jit);
 }
-
-/*
-inline static uint64_t foo(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return ((long long)ts.tv_sec * 1000000000LL) + ts.tv_nsec;
-}
-
-#define TELL_ME_WHY() for (uint64_t __start = foo(), __i = 0; __i < 1; __i++, printf("Took: %f microseconds\n", (foo() - __start) / 1000.0))
-*/
 
 TB_API TB_Module* tb_module_create(TB_Arch arch, TB_System sys, const TB_FeatureSet* features, bool is_jit) {
     TB_Module* m = tb_platform_heap_alloc(sizeof(TB_Module));

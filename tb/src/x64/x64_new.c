@@ -328,9 +328,10 @@ static void x64v2_initial_reg_alloc(Ctx* restrict ctx) {
     ctx->active_count += 2;
 }
 
-static void x64v2_barrier(Ctx* restrict ctx, TB_Function* f, TB_Label bb, TB_Reg except) {
+static void x64v2_barrier(Ctx* restrict ctx, TB_Function* f, TB_Label bb, TB_Reg except, int split) {
     TB_FOR_NODE(r, f, bb) {
-        if (r != except && f->nodes[r].type == TB_LOAD && is_rvalue(&ctx->values[r])) {
+        LiveInterval r_li = get_live_interval(ctx, r);
+        if (r_li.end >= split && r != except && f->nodes[r].type == TB_LOAD && is_rvalue(&ctx->values[r])) {
             // resolve into a register because we're about to load
             // and don't know what'll happen
             GAD_VAL old = ctx->values[r];
@@ -349,13 +350,12 @@ static GAD_VAL x64v2_phi_alloc(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
 }
 
 static GAD_VAL x64v2_cond_to_reg(Ctx* restrict ctx, TB_Function* f, TB_Reg r, int cc) {
-    GAD_VAL* dst = &ctx->values[r];
-
-    EMIT1(&ctx->emit, (dst->gpr >= 8) ? 0x41 : 0x40);
+    GAD_VAL dst = GAD_FN(regalloc)(ctx, f, r, X64_REG_CLASS_GPR);
+    EMIT1(&ctx->emit, (dst.gpr >= 8) ? 0x41 : 0x40);
     EMIT1(&ctx->emit, 0x0F);
     EMIT1(&ctx->emit, 0x90 + cc);
-    EMIT1(&ctx->emit, mod_rx_rm(MOD_DIRECT, 0, dst->gpr));
-    return *dst;
+    EMIT1(&ctx->emit, mod_rx_rm(MOD_DIRECT, 0, dst.gpr));
+    return dst;
 }
 
 static void x64v2_mov_to_explicit_gpr(Ctx* restrict ctx, TB_Function* f, GPR dst_gpr, TB_Reg r) {
@@ -786,7 +786,7 @@ static Val x64v2_eval(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
             //     ...
             // }
             GAD_VAL dst = GAD_FN(regalloc)(ctx, f, r, X64_REG_CLASS_GPR);
-            GAD_VAL addr = ctx->values[n->member_access.base];
+            GAD_VAL addr = ctx->values[n->unary.src];
 
             if (addr.type == VAL_MEM && !addr.mem.is_rvalue) {
                 addr.mem.disp += 8;
@@ -926,6 +926,7 @@ static Val x64v2_eval(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
             }
         }
 
+        case TB_PTR2INT:
         case TB_TRUNCATE: {
             // TB_DataType src_dt = f->nodes[n->unary.src].dt;
 
@@ -980,7 +981,7 @@ static Val x64v2_eval(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
                 return (ctx->values[r] = src);
             }
 
-            if (src.type == VAL_MEM) {
+            if (src.type == VAL_MEM && !src.mem.is_rvalue) {
                 if (GAD_FN(try_steal)(ctx, f, n->member_access.base, r) ||
                     GAD_FN(encompass)(ctx, f, n->member_access.base, r)) {
                     src.mem.disp += n->member_access.offset;
@@ -1069,11 +1070,15 @@ static Val x64v2_eval(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
                 GAD_VAL addr = val_base_index(TB_TYPE_PTR, base.gpr, written_to_dst ? dst.gpr : index->gpr, stride_as_shift);
                 addr.mem.is_rvalue = false;
 
-                if (written_to_dst) {
+                if (GAD_FN(encompass)(ctx, f, n->array_access.base, r)) {
+                    return (ctx->values[r] = addr);
+                } else {
+                    if (!written_to_dst) {
+                        dst = GAD_FN(regalloc)(ctx, f, r, X64_REG_CLASS_GPR);
+                    }
+
                     INST2(LEA, &dst, &addr, TB_TYPE_PTR);
                     return dst;
-                } else {
-                    return (ctx->values[r] = addr);
                 }
             } else {
                 assert(written_to_dst);
@@ -1136,9 +1141,7 @@ static Val x64v2_eval(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
             if (b.type == VAL_IMM) {
                 LegalInt l = legalize_int(n->dt);
                 emit_imul_gpr_gpr_imm(ctx, f, dst, a, b.imm, l.dt);
-            } else if (dst.type == b.type && dst.reg == b.reg) {
-                INST2(IMUL, &dst, &a, n->dt);
-            } else if (dst.type == a.type && dst.reg == a.reg) {
+            } else if (dst.type == a.type && dst.reg == a.reg && b.type != VAL_IMM) {
                 INST2(IMUL, &dst, &b, n->dt);
             } else {
                 INST2(MOV, &dst, &a, n->dt);
@@ -1304,7 +1307,7 @@ static Val x64v2_eval(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
             assert(cc != -1);
 
             GAD_FN(set_flags)(ctx, f, r, cc);
-            return val_flags(cc);
+            return (ctx->values[r] = val_flags(cc));
         }
 
         default: tb_todo();

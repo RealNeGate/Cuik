@@ -386,9 +386,14 @@ typedef enum ExprOp {
     EXPR_MAX
 } ExprOp;
 
+typedef enum {
+    STMT_FLAGS_HAS_IR_BACKING = 1,
+} StmtFlags;
+
 struct Stmt {
     struct {
         StmtOp op;
+        StmtFlags flags;
         SourceRange loc;
         Cuik_Attribute* attr_list;
 

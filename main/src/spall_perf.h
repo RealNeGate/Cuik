@@ -15,17 +15,10 @@ static SpallProfile ctx;
 static _Thread_local SpallBuffer muh_buffer;
 
 void spallperf__start_thread(void) {
-    size_t size = 4 * 1024 * 1024;
-
     #ifdef CUIK_USE_SPALL_AUTO
-    #if _WIN32
-    uint32_t tid = GetCurrentThreadId();
+    spall_auto_thread_init(1, 1ull<<28ull);
     #else
-    uint32_t tid = getpid();
-    #endif
-
-    spall_auto_thread_init(tid, size, 8*1024*1024);
-    #else
+    size_t size = 4 * 1024 * 1024;
     muh_buffer = (SpallBuffer){ malloc(size), size };
     spall_buffer_init(&ctx, &muh_buffer);
     #endif

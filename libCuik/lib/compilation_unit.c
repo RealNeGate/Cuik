@@ -180,7 +180,12 @@ void cuik_internal_link_compilation_unit(CompilationUnit* restrict cu, Cuik_IThr
                 .count = end - i,
                 .remaining = &remaining
             };
-            CUIK_CALL(thread_pool, submit, ir_alloc_task, sizeof(t), &t);
+
+            if (thread_pool) {
+                CUIK_CALL(thread_pool, submit, ir_alloc_task, sizeof(t), &t);
+            } else {
+                ir_alloc_task(&t);
+            }
         }
     }
 

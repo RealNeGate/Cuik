@@ -1862,6 +1862,7 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
 
             if (s->for_.next) {
                 insert_label(func);
+                emit_location(tu, func, s->for_.next->loc.start);
                 irgen_expr(tu, func, s->for_.next);
             }
 

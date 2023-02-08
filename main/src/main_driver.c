@@ -61,7 +61,7 @@ int main(int argc, const char** argv) {
 
     #ifdef CUIK_USE_SPALL_AUTO
     spall_auto_init("perf.spall");
-    spall_auto_thread_init(1, 1ull<<28ull, 65536);
+    spall_auto_thread_init(1, 1ull<<28ull);
     #endif
 
     Cuik_CompilerArgs args = {
