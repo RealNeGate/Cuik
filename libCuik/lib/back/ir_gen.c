@@ -319,6 +319,7 @@ int count_max_tb_init_objects(InitNode* root_node) {
     int sum = root_node->kids_count;
     for (InitNode* k = root_node->kid; k != NULL; k = k->next) {
         sum += count_max_tb_init_objects(k);
+        if (k->expr && k->expr->op == EXPR_ADDR) sum += 1;
     }
 
     return sum;
@@ -445,6 +446,35 @@ void eval_initializer_objects(TranslationUnit* tu, TB_Function* func, TB_Initial
                     uint64_t value = e->int_num.num;
                     memcpy(region, &value, size);
                     #endif
+                    break;
+                }
+
+                case EXPR_ADDR:
+                if (!func) {
+                    void* region = tb_initializer_add_region(tu->ir_mod, init, offset, type->size);
+
+                    // &some_global[a][b][c]
+                    uint64_t addr_offset = 0;
+                    Expr* base = e->unary_op.src;
+                    while (base->op == EXPR_SUBSCRIPT) {
+                        uint64_t stride = cuik_canonical_type(base->type)->size;
+
+                        Expr* index_expr = cuik__optimize_ast(NULL, base->subscript.index);
+                        assert(index_expr->op == EXPR_INT && "could not resolve as constant initializer");
+
+                        uint64_t index = index_expr->int_num.num;
+                        addr_offset += (index * stride);
+                        base = base->subscript.base;
+                    }
+
+                    // TODO(NeGate): Assumes we're on a 64bit target...
+                    memcpy(region, &addr_offset, sizeof(uint64_t));
+
+                    assert(base->op == EXPR_SYMBOL && "could not resolve as constant initializer");
+                    Stmt* stmt = base->symbol;
+                    assert(stmt->op == STMT_GLOBAL_DECL && "could not resolve as constant initializer");
+
+                    tb_initializer_add_symbol_reloc(tu->ir_mod, init, offset, stmt->backing.s);
                     break;
                 }
 

@@ -209,6 +209,8 @@ typedef struct {
     Member* member;
     int index;
     int offset;
+
+    int next_index;
 } InitSearchResult;
 
 // this figures out how many members are in one initializer's namespace
@@ -302,15 +304,17 @@ static InitSearchResult get_next_member_in_type(Cuik_Type* type, int target, int
                 return (InitSearchResult){ member, *base_index, offset + member->offset };
             }
 
+            int base = *base_index;
             InitSearchResult search = get_next_member_in_type(
                 type, target, base_index, offset + member->offset, stop_at_struct
             );
 
             if (search.member != NULL) {
+                if (type->kind == KIND_UNION) search.next_index = base + compute_initializer_bounds(type);
                 return search;
             }
         } else if (*base_index == target) {
-            return (InitSearchResult){ member, *base_index, offset + member->offset };
+            return (InitSearchResult){ member, *base_index, offset + member->offset, *base_index + 1 };
         }
 
         if (member->name != NULL) {
@@ -343,7 +347,7 @@ static int walk_initializer_layer(TranslationUnit* tu, Cuik_Type* parent, int ba
 
         type = cuik_canonical_type(search.member->type);
         relative_offset = search.offset;
-        *cursor = search.index + 1;
+        *cursor = search.next_index;
     } else if (node->mode == INIT_ARRAY) {
         if (parent->kind != KIND_ARRAY) {
             diag_err(&tu->tokens, node->loc, "cannot apply array initializer to non-array %!T", parent);
@@ -375,6 +379,7 @@ static int walk_initializer_layer(TranslationUnit* tu, Cuik_Type* parent, int ba
 
             type = cuik_canonical_type(search.member->type);
             relative_offset = search.offset;
+            *cursor = search.next_index;
         } else if (parent->kind == KIND_ARRAY) {
             type = cuik_canonical_type(parent->array_of);
             relative_offset = (*cursor - 1) * type->size;
