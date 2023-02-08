@@ -51,12 +51,12 @@ static bool parse_decl_or_expr2(Cuik_Parser* parser, TokenStream* restrict s, si
             }
 
             if (decl.name != NULL) {
-                if (local_symbol_count >= MAX_LOCAL_SYMBOLS) {
-                    diag_err(s, decl.loc, "local symbol count exceeds %d (got %d)", MAX_LOCAL_SYMBOLS, local_symbol_count);
+                if (scope.local_count >= MAX_LOCAL_SYMBOLS) {
+                    diag_err(s, decl.loc, "local symbol count exceeds %d (got %d)", MAX_LOCAL_SYMBOLS, scope.local_count);
                     return false;
                 }
 
-                local_symbols[local_symbol_count++] = (Symbol){
+                local_symbols[scope.local_count++] = (Symbol){
                     .name = decl.name,
                     .type = decl.type,
                     .storage_class = attr.is_typedef ? STORAGE_TYPEDEF : STORAGE_LOCAL,
@@ -623,7 +623,7 @@ static bool parse_function(Cuik_Parser* parser, TokenStream* restrict s, Stmt* d
     Param* param_list = type->func.param_list;
     size_t param_count = type->func.param_count;
 
-    assert(local_symbol_start == local_symbol_count);
+    assert(scope.local_start == scope.local_count);
     if (param_count >= INT16_MAX) {
         diag_err(s, decl_node->loc, "Function parameter count cannot exceed %d (got %d)", param_count, MAX_LOCAL_SYMBOLS);
         return false;
@@ -633,7 +633,7 @@ static bool parse_function(Cuik_Parser* parser, TokenStream* restrict s, Stmt* d
         Param* p = &param_list[i];
         if (p->name == NULL) continue;
 
-        local_symbols[local_symbol_count++] = (Symbol){
+        local_symbols[scope.local_count++] = (Symbol){
             .name = p->name,
             .type = p->type,
             .storage_class = STORAGE_PARAM,

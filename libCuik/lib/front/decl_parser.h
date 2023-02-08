@@ -529,13 +529,26 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                 if (tokens_get(s)->type == '{') {
                     tokens_next(s);
 
-                    type = name ? find_tag(&parser->globals, (char*) name) : 0;
+                    bool in_scope;
+                    type = name ? find_tag(parser, (char*) name, &in_scope) : 0;
                     if (type) {
                         // can't re-complete a enum
                         size_t count = type->enumerator.count;
                         if (count) {
-                            diag_err(s, tokens_get_range(s), "cannot recomplete an enumerator");
-                            diag_note(s, type->loc, "see here");
+                            if (in_scope) {
+                                diag_err(s, tokens_get_range(s), "cannot recomplete an enumerator");
+                                diag_note(s, type->loc, "see here");
+                                break;
+                            }
+
+                            type = cuik__new_enum(&parser->types);
+                            type->is_complete = false;
+                            type->enumerator.name = name;
+                            if (scope.tag_count + 1 >= MAX_LOCAL_TAGS) {
+                                diag_err(s, tokens_get_range(s), "too many tags in local scopes (%d)", MAX_LOCAL_TAGS);
+                            } else {
+                                local_tags[scope.tag_count++] = (TagEntry){ name, type };
+                            }
                         }
                     } else {
                         type = cuik__new_enum(&parser->types);
@@ -545,10 +558,10 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                         if (name) {
                             if (parser->is_in_global_scope) {
                                 nl_strmap_put_cstr(parser->globals.tags, name, type);
-                            } else if (local_tag_count + 1 >= MAX_LOCAL_TAGS) {
+                            } else if (scope.tag_count + 1 >= MAX_LOCAL_TAGS) {
                                 diag_err(s, tokens_get_range(s), "too many tags in local scopes (%d)", MAX_LOCAL_TAGS);
                             } else {
-                                local_tags[local_tag_count++] = (TagEntry){ name, type };
+                                local_tags[scope.tag_count++] = (TagEntry){ name, type };
                             }
                         }
                     }
@@ -607,7 +620,7 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                         if (parser->is_in_global_scope) {
                             nl_strmap_put_cstr(parser->globals.symbols, name, sym);
                         } else {
-                            local_symbols[local_symbol_count++] = sym;
+                            local_symbols[scope.local_count++] = sym;
                             cursor += 1;
                         }
 
@@ -645,7 +658,8 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                         break;
                     }
 
-                    type = find_tag(&parser->globals, (char*)name);
+                    bool in_scope;
+                    type = find_tag(parser, (char*)name, &in_scope);
                     if (!type) {
                         type = cuik__new_enum(&parser->types);
                         type->record.name = name;
@@ -654,12 +668,12 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                         if (parser->is_in_global_scope) {
                             nl_strmap_put_cstr(parser->globals.tags, name, type);
                         } else {
-                            if (local_tag_count + 1 >= MAX_LOCAL_TAGS) {
+                            if (scope.tag_count + 1 >= MAX_LOCAL_TAGS) {
                                 diag_err(s, tokens_get_range(s), "too many tags in local scopes (%d)", MAX_LOCAL_TAGS);
                                 return CUIK_QUAL_TYPE_NULL;
                             }
 
-                            local_tags[local_tag_count] = (TagEntry){ name, type };
+                            local_tags[scope.tag_count] = (TagEntry){ name, type };
                         }
                     }
 
@@ -693,12 +707,26 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                 if (tokens_get(s)->type == '{') {
                     tokens_next(s);
 
-                    type = name ? find_tag(&parser->globals, (char*)name) : 0;
+                    bool in_scope;
+                    type = name ? find_tag(parser, (char*) name, &in_scope) : 0;
                     if (type) {
-                        // can't re-complete a struct
-                        if (type->is_complete) {
-                            diag_warn(s, record_loc, "struct was declared somewhere else");
-                            diag_note(s, type->loc, "see here");
+                        // can't re-complete a enum
+                        size_t count = type->enumerator.count;
+                        if (count) {
+                            if (in_scope) {
+                                diag_warn(s, record_loc, "struct was declared somewhere else");
+                                diag_note(s, type->loc, "see here");
+                                break;
+                            }
+
+                            type = cuik__new_record(&parser->types, is_union);
+                            type->is_complete = false;
+                            type->record.name = name;
+                            if (scope.tag_count + 1 >= MAX_LOCAL_TAGS) {
+                                diag_err(s, tokens_get_range(s), "too many tags in local scopes (%d)", MAX_LOCAL_TAGS);
+                            } else {
+                                local_tags[scope.tag_count++] = (TagEntry){ name, type };
+                            }
                         }
                     } else {
                         type = cuik__new_record(&parser->types, is_union);
@@ -710,10 +738,10 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                             if (parser->is_in_global_scope) {
                                 nl_strmap_put_cstr(parser->globals.tags, name, type);
                             } else {
-                                if (local_tag_count + 1 >= MAX_LOCAL_TAGS) {
+                                if (scope.tag_count + 1 >= MAX_LOCAL_TAGS) {
                                     diag_err(s, tokens_get_range(s), "too many tags in local scopes (%d)", MAX_LOCAL_TAGS);
                                 } else {
-                                    local_tags[local_tag_count++] = (TagEntry){ name, type };
+                                    local_tags[scope.tag_count++] = (TagEntry){ name, type };
                                 }
                             }
                         }
@@ -822,7 +850,8 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                         return CUIK_QUAL_TYPE_NULL;
                     }
 
-                    type = find_tag(&parser->globals, (const char*)name);
+                    bool in_scope;
+                    type = find_tag(parser, (const char*)name, &in_scope);
                     if (type == NULL) {
                         type = cuik__new_record(&parser->types, is_union);
                         type->loc = record_loc;
@@ -832,10 +861,10 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                         if (parser->is_in_global_scope) {
                             nl_strmap_put_cstr(parser->globals.tags, name, type);
                         } else {
-                            if (local_tag_count + 1 >= MAX_LOCAL_TAGS) {
+                            if (scope.tag_count + 1 >= MAX_LOCAL_TAGS) {
                                 diag_err(s, tokens_get_range(s), "too many tags in local scopes (%d)", MAX_LOCAL_TAGS);
                             } else {
-                                local_tags[local_tag_count++] = (TagEntry){ name, type };
+                                local_tags[scope.tag_count++] = (TagEntry){ name, type };
                             }
                         }
                     }

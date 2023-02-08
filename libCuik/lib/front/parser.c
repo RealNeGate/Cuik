@@ -40,13 +40,18 @@ typedef struct {
     size_t start, end;
 } PendingExpr;
 
+thread_local static struct LexicalScope {
+    // current values
+    int local_start, local_count;
+    int tag_count;
+
+    // this is the first tag in the current scope
+    int tag_scope_start;
+} scope;
+
 // starting point is used to disable the function literals
 // from reading from their parent function
-thread_local static int local_symbol_start = 0;
-thread_local static int local_symbol_count = 0;
 thread_local static Symbol* local_symbols;
-
-thread_local static int local_tag_count = 0;
 thread_local static TagEntry* local_tags;
 
 // Global symbol stuff
@@ -92,20 +97,12 @@ static _Noreturn void generic_error(TranslationUnit* tu, TokenStream* restrict s
 
 static int type_cycles_dfs(TokenStream* restrict s, Cuik_Type* type);
 
-// saves the local_symbol_count and local_tag_count before entering
-// and restores them when exiting since that'll allow us to open and
-// close local scopes in the perspective of variable lookup...
-//
-// TODO(NeGate): add a field to keep track of "last local symbol count"
-// such that we can give proper errors on shadowing
-//
 // Usage:
 //  LOCAL_SCOPE {
 //      /* do parse work */
 //  }
 #define LOCAL_SCOPE \
-for (int saved = local_symbol_count, saved2 = local_tag_count, _i_ = 0; _i_ == 0; \
-    _i_ += 1, local_symbol_count = saved, local_tag_count = saved2)
+for (struct LexicalScope saved = scope, *_i_ = (saved.tag_scope_start = saved.tag_count, &saved); _i_; _i_ = NULL, scope = saved)
 
 static int align_up(int a, int b) {
     if (b == 0) return 0;
@@ -126,20 +123,6 @@ static Expr* make_expr(TranslationUnit* tu) {
 static Symbol* find_global_symbol(Cuik_GlobalSymbols* restrict syms, const char* name) {
     ptrdiff_t search = nl_strmap_get_cstr(syms->symbols, name);
     return (search >= 0) ? &syms->symbols[search] : NULL;
-}
-
-static Cuik_Type* find_tag(Cuik_GlobalSymbols* restrict syms, const char* name) {
-    // try locals
-    size_t i = local_tag_count;
-    while (i--) {
-        if (strcmp((const char*) local_tags[i].key, name) == 0) {
-            return local_tags[i].value;
-        }
-    }
-
-    // try globals
-    ptrdiff_t search = nl_strmap_get_cstr(syms->tags, name);
-    return (search >= 0) ? syms->tags[search] : NULL;
 }
 
 // ( SOMETHING )
@@ -260,6 +243,25 @@ static void diag_unresolved_symbol(Cuik_Parser* parser, Atom name, SourceLoc loc
         old->next = d;
     }
     // mtx_unlock(&parser->diag_mutex);
+}
+
+static Cuik_Type* find_tag(Cuik_Parser* restrict parser, const char* name, bool* is_in_scope) {
+    Cuik_GlobalSymbols* restrict syms = &parser->globals;
+
+    // try locals
+    size_t i = scope.tag_count;
+    while (i--) {
+        if (strcmp((const char*) local_tags[i].key, name) == 0) {
+            *is_in_scope = i >= scope.tag_scope_start;
+            return local_tags[i].value;
+        }
+    }
+
+    // try globals
+    ptrdiff_t search = nl_strmap_get_cstr(syms->tags, name);
+
+    *is_in_scope = search >= 0 && parser->is_in_global_scope;
+    return (search >= 0) ? syms->tags[search] : NULL;
 }
 
 #define THROW_IF_ERROR() if ((r = cuikdg_error_count(s)) > 0) return (Cuik_ParseResult){ r };
@@ -601,8 +603,8 @@ static Symbol* find_local_symbol(TokenStream* restrict s) {
     Token* t = tokens_get(s);
 
     // Try local variables
-    size_t i = local_symbol_count;
-    size_t start = local_symbol_start;
+    size_t i = scope.local_count;
+    size_t start = scope.local_start;
     while (i-- > start) {
         const char* sym = local_symbols[i].name;
         size_t sym_length = strlen(sym);

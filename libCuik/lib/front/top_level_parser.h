@@ -584,10 +584,10 @@ Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict 
                 // intitialize use list
                 symbol_chain_start = symbol_chain_current = NULL;
 
-                // Some sanity checks in case a local symbol is leaked funny.
-                assert(local_symbol_start == 0 && local_symbol_count == 0);
+                // Some sanity checks in case a local symbol is acting funny.
+                assert(scope.local_start == 0 && scope.local_count == 0);
                 parse_function(&parser, &tokens, sym->stmt);
-                local_symbol_start = local_symbol_count = 0;
+                scope.local_start = scope.local_count = 0;
 
                 // constant fold any static-locals
                 dyn_array_for(i, parser.local_static_storage_decls) {
