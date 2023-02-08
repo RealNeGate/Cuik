@@ -41,12 +41,19 @@ typedef struct {
     uint16_t class, num;
 } RegisterRef;
 
+typedef struct {
+    // pos, origin is relative to the function body.
+    // target is label
+    uint32_t pos, origin, target;
+} JumpTablePatch;
+
 struct Ctx {
     TB_CGEmitter emit;
 
     TB_Function* f;
     TB_Predeccesors preds;
     TB_TemporaryStorage* tls;
+    DynArray(JumpTablePatch) jump_table_patches;
 
     TB_Reg* active;
     size_t active_count;
@@ -188,6 +195,7 @@ static void GAD_FN(resolve_stack_slot)(Ctx* restrict ctx, TB_Function* f, TB_Nod
 static void GAD_FN(return)(Ctx* restrict ctx, TB_Function* f, TB_Node* restrict n);
 static void GAD_FN(move)(Ctx* restrict ctx, TB_Function* f, TB_Reg dst, TB_Reg src);
 static void GAD_FN(branch_if)(Ctx* restrict ctx, TB_Function* f, TB_Reg cond, TB_Label if_true, TB_Label if_false, TB_Reg fallthrough);
+static void GAD_FN(branch_jumptable)(Ctx* restrict ctx, TB_Function* f, TB_Reg r, uint64_t min, uint64_t max, size_t entry_count, TB_SwitchEntry* entries, TB_Label default_label);
 static GAD_VAL GAD_FN(cond_to_reg)(Ctx* restrict ctx, TB_Function* f, TB_Reg r, int cc);
 
 static void GAD_FN(get_data_type_size)(TB_DataType dt, TB_CharUnits* out_size, TB_CharUnits* out_align) {
@@ -727,9 +735,45 @@ static void GAD_FN(eval_bb)(Ctx* restrict ctx, TB_Function* f, TB_Label bb, TB_L
             break;
         }
 
+        case TB_SWITCH: {
+            size_t entry_count = (end->switch_.entries_end - end->switch_.entries_start) / 2;
+            TB_SwitchEntry* entries = (TB_SwitchEntry*) &f->vla.data[end->switch_.entries_start];
+
+            // check if there's at most only one space between entries
+            uint64_t last = entries[0].key;
+            uint64_t min = last, max = last;
+
+            bool use_jump_table = true;
+            FOREACH_N(i, 1, entry_count) {
+                uint64_t key = entries[i].key;
+                min = (min > key) ? key : min;
+                max = (max > key) ? max : key;
+
+                int64_t dist = entries[i].key - last;
+                if (dist > 2) {
+                    use_jump_table = false;
+                    break;
+                }
+                last = entries[i].key;
+            }
+
+            if (use_jump_table) {
+                GAD_FN(branch_jumptable)(ctx, f, end->switch_.key, min, max, entry_count, entries, end->switch_.default_label);
+            } else {
+                assert(0 && "Implement sparse switch statements");
+            }
+            break;
+        }
         default: tb_todo();
     }
 
+    if (ctx->tmp_count > 0) {
+        FOREACH_N(i, 0, ctx->tmp_count) {
+            RegisterRef rr = ctx->tmps[i];
+            set_remove(&ctx->free_regs[rr.class], rr.num);
+        }
+        ctx->tmp_count = 0;
+    }
     // unbind flags now
     ctx->flags_bound = 0;
 }

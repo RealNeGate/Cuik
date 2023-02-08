@@ -194,6 +194,18 @@ static void x64v2_resolve_local_patches(Ctx* restrict ctx, TB_Function* f) {
 
         PATCH4(&ctx->emit, pos, ctx->emit.labels[target_lbl] - (pos + 4));
     }
+
+    // Resolve jump table patches
+    if (ctx->jump_table_patches != NULL) {
+        FOREACH_N(i, 0, dyn_array_length(ctx->jump_table_patches)) {
+            uint32_t pos = ctx->jump_table_patches[i].pos;
+            int32_t src = ctx->jump_table_patches[i].origin;
+            int32_t target = ctx->emit.labels[ctx->jump_table_patches[i].target];
+
+            PATCH4(&ctx->emit, pos, target - src);
+        }
+        dyn_array_destroy(ctx->jump_table_patches);
+    }
 }
 
 static void x64v2_resolve_params(Ctx* restrict ctx, TB_Function* f, GAD_VAL* values) {
@@ -390,6 +402,22 @@ static void x64v2_return(Ctx* restrict ctx, TB_Function* f, TB_Node* restrict n)
     } else tb_todo();
 }
 
+static void x64v2_steal_mov(Ctx* restrict ctx, TB_Function* f, TB_Reg r, int reg_class, int reg_num) {
+    GAD_VAL src = ctx->values[r];
+    GAD_VAL dst = GAD_FN(steal)(ctx, f, r, X64_REG_CLASS_GPR, RDI);
+    INST2(!is_lvalue(&src) ? MOV : LEA, &dst, &src, f->nodes[r].dt);
+}
+
+static GAD_VAL x64v2_force_into_gpr(Ctx* restrict ctx, TB_Function* f, TB_Reg r, GAD_VAL src, bool allow_imm) {
+    if (is_value_mem(&src) || (allow_imm && src.type == VAL_IMM)) {
+        GAD_VAL tmp = GAD_FN(regalloc_tmp)(ctx, f, f->nodes[r].dt, X64_REG_CLASS_GPR);
+        INST2(!is_lvalue(&src) ? MOV : LEA, &tmp, &src, f->nodes[r].dt);
+        return tmp;
+    } else {
+        return src;
+    }
+}
+
 static void x64v2_branch_if(Ctx* restrict ctx, TB_Function* f, TB_Reg cond, TB_Label if_true, TB_Label if_false, TB_Reg fallthrough) {
     Cond cc = 0;
     if (ctx->flags_bound == cond) {
@@ -435,20 +463,87 @@ static void x64v2_branch_if(Ctx* restrict ctx, TB_Function* f, TB_Reg cond, TB_L
     }
 }
 
-static void x64v2_steal_mov(Ctx* restrict ctx, TB_Function* f, TB_Reg r, int reg_class, int reg_num) {
-    GAD_VAL src = ctx->values[r];
-    GAD_VAL dst = GAD_FN(steal)(ctx, f, r, X64_REG_CLASS_GPR, RDI);
-    INST2(!is_lvalue(&src) ? MOV : LEA, &dst, &src, f->nodes[r].dt);
-}
+static void x64v2_branch_jumptable(Ctx* restrict ctx, TB_Function* f, TB_Reg src, uint64_t min, uint64_t max, size_t entry_count, TB_SwitchEntry* entries, TB_Label default_label) {
+    LegalInt l = legalize_int(f->nodes[src].dt);
+    GAD_VAL key = x64v2_force_into_gpr(ctx, f, src, ctx->values[src], true);
 
-static GAD_VAL x64v2_force_into_gpr(Ctx* restrict ctx, TB_Function* f, TB_Reg r, GAD_VAL src, bool allow_imm) {
-    if (is_value_mem(&src) || (allow_imm && src.type == VAL_IMM)) {
-        GAD_VAL tmp = GAD_FN(regalloc_tmp)(ctx, f, f->nodes[r].dt, X64_REG_CLASS_GPR);
-        INST2(!is_lvalue(&src) ? MOV : LEA, &tmp, &src, f->nodes[r].dt);
-        return tmp;
-    } else {
-        return src;
+    // Simple range check
+    if (min) {
+        Val min_val = val_imm(TB_TYPE_I64, min);
+        INST2(SUB, &key, &min_val, l.dt);
     }
+    Val range_val = val_imm(TB_TYPE_I64, max - min);
+    INST2(CMP, &key, &range_val, l.dt);
+    JCC(G, default_label);
+
+    // Jump table call
+    // lea jump_table, [rip + JUMP_TABLE]
+    size_t jump_table_patch = GET_CODE_POS(&ctx->emit) + 3;
+    GAD_VAL tmp = GAD_FN(regalloc_tmp)(ctx, f, l.dt, X64_REG_CLASS_GPR);
+    EMIT1(&ctx->emit, rex(true, tmp.gpr, 0, 0));
+    EMIT1(&ctx->emit, 0x8D);
+    EMIT1(&ctx->emit, mod_rx_rm(0, tmp.gpr, RBP));
+    EMIT4(&ctx->emit, 0);
+    // CAST key to 64bit
+    int bits_in_type = l.dt.type == TB_PTR ? 64 : l.dt.data;
+    if (bits_in_type == 8) {
+        INST2(MOVSXB, &key, &key, TB_TYPE_I64);
+    } else if (bits_in_type == 16) {
+        INST2(MOVSXW, &key, &key, TB_TYPE_I64);
+    } else if (bits_in_type == 32) {
+        INST2(MOVSXD, &key, &key, TB_TYPE_I64);
+    } else if (bits_in_type == 64) {
+        // no instruction necessary
+    } else {
+        assert(0 && "TODO: implement arbitrary precision sign extend here");
+    }
+    // mov key, [jump_table + key*4]
+    Val arith = val_base_index(TB_TYPE_PTR, tmp.gpr, key.gpr, SCALE_X4);
+    INST2(MOVSXD, &key, &arith, TB_TYPE_I64);
+    // add key, jump_table
+    INST2(ADD, &key, &tmp, TB_TYPE_PTR);
+    // jmp key
+    if (key.gpr >= 8) EMIT1(&ctx->emit, rex(true, 0, key.gpr, 0));
+    EMIT1(&ctx->emit, 0xFF);
+    EMIT1(&ctx->emit, mod_rx_rm(MOD_DIRECT, 4, key.gpr));
+
+    uint32_t jump_table_start = GET_CODE_POS(&ctx->emit);
+    PATCH4(&ctx->emit, jump_table_patch, jump_table_start - (jump_table_patch + 4));
+
+    // Construct jump table
+    //   similar to clang we use relative jumps since this avoids
+    //   passing unnecessary absolute relocations to the linker/loader
+    if (ctx->jump_table_patches == NULL) {
+        ctx->jump_table_patches = dyn_array_create(JumpTablePatch, tb_next_pow2(max - min));
+    }
+
+    size_t jump_table_bytes = ((max+1) - min) * 4;
+    void* p = tb_cgemit_reserve(&ctx->emit, jump_table_bytes);
+    memset(p, 0, jump_table_bytes);
+    tb_cgemit_commit(&ctx->emit, jump_table_bytes);
+
+    Set entries_set = set_create((max+1) - min);
+    FOREACH_N(i, 0, entry_count) {
+        JumpTablePatch p;
+        p.pos = jump_table_start + ((entries[i].key - min) * 4);
+        p.origin = jump_table_start;
+        p.target = entries[i].value;
+
+        dyn_array_put(ctx->jump_table_patches, p);
+        set_put(&entries_set, entries[i].key - min);
+    }
+
+    // handle default cases
+    FOREACH_N(i, 0, (max+1) - min) {
+        if (!set_get(&entries_set, i)) {
+            JumpTablePatch p;
+            p.pos = jump_table_start + (i * 4);
+            p.origin = jump_table_start;
+            p.target = default_label;
+            dyn_array_put(ctx->jump_table_patches, p);
+        }
+    }
+    set_free(&entries_set);
 }
 
 static void x64v2_spill(Ctx* restrict ctx, TB_Function* f, GAD_VAL* dst_val, GAD_VAL* src_val, TB_Reg r) {
