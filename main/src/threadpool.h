@@ -10,19 +10,18 @@ typedef void work_routine(void*);
 
 typedef struct {
     work_routine* fn;
-    void* arg;
+    char arg[56];
 } work_t;
 
 threadpool_t* threadpool_create(size_t worker_count, size_t workqueue_size);
-void threadpool_submit(threadpool_t* threadpool, work_routine fn, void* arg);
+void threadpool_submit(threadpool_t* threadpool, work_routine fn, size_t arg_size, void* arg);
 void threadpool_wait(threadpool_t* threadpool);
 void threadpool_work_one_job(threadpool_t* threadpool);
 void threadpool_work_while_wait(threadpool_t* threadpool);
 void threadpool_free(threadpool_t* threadpool);
 int threadpool_get_thread_count(threadpool_t* threadpool);
 
-// Kinda OOP-y but i don't care, we can use callbacks as a
-// treat.
+// Kinda OOP-y but i don't care, we can use callbacks as a treat.
 #ifdef HAS_CUIK_CLASS
 Cuik_IThreadpool threadpool_create_class(int threads, int workqueue_size);
 #endif /* HAS_CUIK_CLASS */
@@ -162,7 +161,7 @@ threadpool_t* threadpool_create(size_t worker_count, size_t workqueue_size) {
     return threadpool;
 }
 
-void threadpool_submit(threadpool_t* threadpool, work_routine fn, void* arg) {
+void threadpool_submit(threadpool_t* threadpool, work_routine fn, size_t arg_size, void* arg) {
     ptrdiff_t i = 0;
     for (;;) {
         // might wanna change the memory order on this atomic op
@@ -183,7 +182,10 @@ void threadpool_submit(threadpool_t* threadpool, work_routine fn, void* arg) {
         }
     }
 
-    threadpool->work[i] = (work_t){ fn, arg };
+    assert(arg_size < sizeof(threadpool->work[i].arg));
+    threadpool->work[i].fn = fn;
+    memcpy(threadpool->work[i].arg, arg, arg_size);
+
     threadpool->jobs_done += 1;
     threadpool->queue += 1;
 
@@ -245,8 +247,8 @@ int threadpool_get_thread_count(threadpool_t* threadpool) {
 }
 
 #ifdef HAS_CUIK_CLASS
-static void threadpool__submit(void* user_data, void fn(void*), void* arg) {
-    threadpool_submit((threadpool_t*) user_data, fn, arg);
+static void threadpool__submit(void* user_data, void fn(void*), size_t arg_size, void* arg) {
+    threadpool_submit((threadpool_t*) user_data, fn, arg_size, arg);
 }
 
 static void threadpool__work_one_job(void* user_data) {

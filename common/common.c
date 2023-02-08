@@ -1,10 +1,7 @@
 // Common is just a bunch of crap i want accessible to all projects in the Cuik repo
 #include "arena.h"
-
-#ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-#endif
+#include "futex.h"
+#include <stdatomic.h>
 
 void* arena_alloc(Arena* arena, size_t size, size_t align) {
     // alignment must be a power of two
@@ -85,4 +82,149 @@ size_t arena_get_memory_usage(Arena* arena) {
         c += s->capacity;
     }
     return c;
+}
+
+////////////////////////////////
+// Futex functions
+////////////////////////////////
+void futex_dec(Futex* f) {
+    if (atomic_fetch_sub(f, 1) == 1) {
+        futex_signal(f);
+    }
+}
+
+#ifdef __linux__
+#include <linux/futex.h>
+#include <sys/syscall.h>
+
+void futex_signal(Futex* addr) {
+    int ret = syscall(SYS_futex, addr, FUTEX_WAKE | FUTEX_PRIVATE_FLAG, 1, NULL, NULL, 0);
+    if (ret == -1) {
+        perror("Futex wake");
+        __debugbreak();
+    }
+}
+
+void futex_broadcast(Futex* addr) {
+    int ret = syscall(SYS_futex, addr, FUTEX_WAKE | FUTEX_PRIVATE_FLAG, INT32_MAX, NULL, NULL, 0);
+    if (ret == -1) {
+        perror("Futex wake");
+        __debugbreak();
+    }
+}
+
+void futex_wait(Futex* addr, Futex val) {
+    for (;;) {
+        int ret = syscall(SYS_futex, addr, FUTEX_WAIT | FUTEX_PRIVATE_FLAG, val, NULL, NULL, 0);
+        if (ret == -1) {
+            if (errno != EAGAIN) {
+                perror("Futex wait");
+                __debugbreak();
+            } else {
+                return;
+            }
+        } else if (ret == 0) {
+            if (*addr != val) {
+                return;
+            }
+        }
+    }
+}
+
+#elif defined(__APPLE__)
+
+enum {
+    UL_COMPARE_AND_WAIT = 0x00000001,
+    ULF_WAKE_ALL        = 0x00000100,
+    ULF_NO_ERRNO        = 0x01000000
+};
+
+/* timeout is specified in microseconds */
+int __ulock_wait(uint32_t operation, void *addr, uint64_t value, uint32_t timeout);
+int __ulock_wake(uint32_t operation, void *addr, uint64_t wake_value);
+
+void futex_signal(Futex* addr) {
+    for (;;) {
+        int ret = __ulock_wake(UL_COMPARE_AND_WAIT | ULF_NO_ERRNO, addr, 0);
+        if (ret >= 0) {
+            return;
+        }
+        ret = -ret;
+        if (ret == EINTR || ret == EFAULT) {
+            continue;
+        }
+        if (ret == ENOENT) {
+            return;
+        }
+        printf("futex wake fail?\n");
+        __debugbreak();
+    }
+}
+
+void _tpool_broadcast(TPool_Futex *addr) {
+    for (;;) {
+        int ret = __ulock_wake(UL_COMPARE_AND_WAIT | ULF_NO_ERRNO | ULF_WAKE_ALL, addr, 0);
+        if (ret >= 0) {
+            return;
+        }
+        ret = -ret;
+        if (ret == EINTR || ret == EFAULT) {
+            continue;
+        }
+        if (ret == ENOENT) {
+            return;
+        }
+        printf("futex wake fail?\n");
+        __debugbreak();
+    }
+}
+
+void futex_wait(Futex* addr, Futex val) {
+    for (;;) {
+        int ret = __ulock_wait(UL_COMPARE_AND_WAIT | ULF_NO_ERRNO, addr, val, 0);
+        if (ret >= 0) {
+            if (*addr != val) {
+                return;
+            }
+            continue;
+        }
+        ret = -ret;
+        if (ret == EINTR || ret == EFAULT) {
+            continue;
+        }
+        if (ret == ENOENT) {
+            return;
+        }
+
+        printf("futex wait fail?\n");
+        __debugbreak();
+    }
+}
+
+#elif defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+
+#pragma comment(lib, "Synchronization.lib")
+
+void futex_signal(Futex* addr) {
+    WakeByAddressSingle((void*) addr);
+}
+
+void futex_broadcast(Futex* addr) {
+    WakeByAddressAll((void*) addr);
+}
+
+void futex_wait(Futex* addr, Futex val) {
+    for (;;) {
+        WaitOnAddress(addr, (void *)&val, sizeof(val), INFINITE);
+        if (*addr != val) break;
+    }
+}
+#endif
+
+void futex_wait_eq(Futex* addr, Futex val) {
+    while (*addr != val) {
+        futex_wait(addr, *addr);
+    }
 }

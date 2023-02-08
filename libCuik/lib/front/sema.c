@@ -1625,7 +1625,6 @@ static void sema_task(void* arg) {
 }
 
 int cuiksema_run(TranslationUnit* restrict tu, Cuik_IThreadpool* restrict thread_pool) {
-    tls_init();
     size_t count = dyn_array_length(tu->top_level_stmts);
 
     // simple mark and sweep to remove unused symbols
@@ -1659,15 +1658,13 @@ int cuiksema_run(TranslationUnit* restrict tu, Cuik_IThreadpool* restrict thread
                 size_t limit = i + SEMA_MUNCH_SIZE;
                 if (limit > count) limit = count;
 
-                SemaTaskInfo* task = tls_push(sizeof(SemaTaskInfo));
-                *task = (SemaTaskInfo){
+                SemaTaskInfo t = {
                     .tasks_remaining = &tasks_remaining,
                     .start = i,
                     .end = limit,
                     .tu = tu
                 };
-
-                CUIK_CALL(thread_pool, submit, sema_task, task);
+                CUIK_CALL(thread_pool, submit, sema_task, sizeof(t), &t);
             }
 
             while (tasks_remaining != 0) {

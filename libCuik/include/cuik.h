@@ -22,8 +22,9 @@ typedef struct Cuik_IThreadpool {
     // fed into the member functions here
     void* user_data;
 
-    // runs the function fn with arg as the parameter on a thread
-    void (*submit)(void* user_data, void fn(void*), void* arg);
+    // runs the function fn with arg as the parameter on a thread.
+    //   arg_size from Cuik is always going to be less than 64bytes
+    void (*submit)(void* user_data, void fn(void*), size_t arg_size, void* arg);
 
     // tries to work one job before returning (can also not work at all)
     void (*work_one_job)(void* user_data);
@@ -104,9 +105,9 @@ CUIK_API size_t cuik_num_of_translation_units_in_compilation_unit(CompilationUni
 //
 // we have planned a mode to treat larger macros as inline sites
 #ifdef CUIK_USE_TB
-CUIK_API void cuik_internal_link_compilation_unit(CompilationUnit* restrict cu, TB_Module* mod, int debug_info_level);
+CUIK_API void cuik_internal_link_compilation_unit(CompilationUnit* restrict cu, Cuik_IThreadpool* restrict thread_pool, TB_Module* mod, int debug_info_level);
 #else
-CUIK_API void cuik_internal_link_compilation_unit(CompilationUnit* restrict cu, void* mod, int debug_info_level);
+CUIK_API void cuik_internal_link_compilation_unit(CompilationUnit* restrict cu, Cuik_IThreadpool* restrict thread_pool, void* mod, int debug_info_level);
 #endif
 
 #include "cuik_perf.h"
