@@ -55,7 +55,7 @@ static const char* custom_diagnostic_format(uint32_t* out_length, char ch, va_li
         }
 
         default:
-        fprintf(stderr, "diagnostic error: unknown format %%_%c", ch);
+        fprintf(stderr, "\x1b[31mdiagnostic error\x1b[0m: unknown format %%_%c", ch);
         abort();
         return NULL;
     }
@@ -160,11 +160,20 @@ static void print_line_with_backtrace(TokenStream* tokens, SourceLoc loc, Source
         l = cuikpp_find_location_in_bytes(tokens, m->def_site.start);
         l.pos += macro_off;
 
-        // assert(end.raw >= loc.raw);
-        tkn_len = end.raw < loc.raw ? 1 : (end.raw - loc.raw);
+        MacroInvoke* m2 = cuikpp_find_macro(tokens, end);
+        if (m == m2) {
+            tkn_len = end.raw < loc.raw ? 1 : (end.raw - loc.raw);
+        } else {
+            tkn_len = m->def_site.end.raw - m->def_site.start.raw;
+        }
     } else {
         l = cuikpp_find_location_in_bytes(tokens, loc);
-        tkn_len = source_range_difference(tokens, l, cuikpp_find_location_in_bytes(tokens, end));
+
+        if (cuikpp_find_macro(tokens, end) == NULL) {
+            tkn_len = source_range_difference(tokens, l, cuikpp_find_location_in_bytes(tokens, end));
+        } else {
+            tkn_len = 1;
+        }
     }
 
     if (m != NULL) {
@@ -183,10 +192,6 @@ static void print_line_with_backtrace(TokenStream* tokens, SourceLoc loc, Source
 static void diag(DiagType type, TokenStream* tokens, SourceRange loc, const char* fmt, va_list ap) {
     Cuik_Diagnostics* d = tokens->diag;
     assert(d != NULL);
-
-    if (d->callback && d->callback(d, d->userdata, type) == 0) {
-        return;
-    }
 
     size_t fixit_count = 0;
     DiagFixit fixits[3];
@@ -239,6 +244,8 @@ static void diag(DiagType type, TokenStream* tokens, SourceRange loc, const char
             fprintf(stderr, "%s\x1b[0m\n", fixits[i].hint);
         }
     }
+
+    if (d->callback) d->callback(d, d->userdata, type);
     mtx_unlock(&report_mutex);
 
     if (type == DIAG_ERR) {

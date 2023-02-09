@@ -31,7 +31,7 @@ int main(int argc, char *argv[]) {
         int padded_size = fsize + 16;
 
         fseek(fp, 0, SEEK_SET);
-        unsigned char *b = malloc(fsize + 16);
+        unsigned char *b = malloc(padded_size);
         fread(b, fsize, 1, fp);
         memset(b+fsize, 0, 16);
         fclose(fp);
@@ -44,8 +44,8 @@ int main(int argc, char *argv[]) {
         fprintf(out, "    .name = \"%s\",\n", strrchr(fname, '/')+1);
         fprintf(out, "    .size = %d,\n", fsize);
         fprintf(out, "    .data = {\n        ");
-        for (int j = 0; j < fsize; ++j) {
-            fprintf(out, "0x%02x%s", b[j], j == fsize-1 ? "" : ((j+1) % 16 == 0 ? ",\n        " : ","));
+        for (int j = 0; j < padded_size; ++j) {
+            fprintf(out, "0x%02x%s", b[j], j == padded_size-1 ? "" : ((j+1) % 16 == 0 ? ",\n        " : ","));
         }
         fprintf(out, "\n    }\n};\n\n");
         free(b);

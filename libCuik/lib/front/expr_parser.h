@@ -229,6 +229,8 @@ static void parse_string_literal(Cuik_Parser* parser, TokenStream* restrict s, E
         } else if (memeq(t->content.data, t->content.length, "__func__", sizeof("__func__") - 1)) {
             if (cuik__sema_function_stmt) total_len += strlen(cuik__sema_function_stmt->decl.name);
             else total_len += 3; // "???"
+        } else {
+            break;
         }
 
         tokens_next(s);
@@ -255,6 +257,8 @@ static void parse_string_literal(Cuik_Parser* parser, TokenStream* restrict s, E
                 memcpy(&buffer[curr], "???", 3);
                 curr += 3;
             }
+        } else {
+            break;
         }
 
         tokens_next(s);

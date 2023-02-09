@@ -26,9 +26,7 @@ typedef enum {
     DIAG_ERR,
 } DiagType;
 
-// calls before a diagnostic is emitted, if it returns 0 then diagnostic
-// will not display.
-typedef int (*Cuik_DiagCallback)(Cuik_Diagnostics* diag, void* userdata, DiagType type);
+typedef void (*Cuik_DiagCallback)(Cuik_Diagnostics* diag, void* userdata, DiagType type);
 
 // TODO(NeGate): move this into common.h
 typedef struct String {

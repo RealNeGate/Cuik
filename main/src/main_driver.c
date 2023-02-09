@@ -54,8 +54,7 @@ static void dump_tokens(FILE* out_file, TokenStream* s) {
     }
 }
 
-static int test_callback(Cuik_Diagnostics* diag, void* userdata, DiagType type) {
-    return 1;
+static void test_callback(Cuik_Diagnostics* diag, void* userdata, DiagType type) {
 }
 
 int main(int argc, const char** argv) {
@@ -72,8 +71,7 @@ int main(int argc, const char** argv) {
         .toolchain = cuik_toolchain_host(),
         .flavor = TB_FLAVOR_EXECUTABLE,
 
-        .diag_userdata = NULL,
-        .diag_callback = test_callback,
+        // .diag_callback = test_callback,
     };
     cuik_parse_args(&args, argc - 1, argv + 1);
 
