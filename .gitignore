@@ -72,6 +72,7 @@ preprocessed.c
 
 project.4coder
 *.cache
+libCuik/freestanding.c
 tests/golden/tmp.txt
 tests/golden/tmp2.txt
 build.ninja
