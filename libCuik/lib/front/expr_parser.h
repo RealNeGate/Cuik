@@ -178,6 +178,7 @@ static InitNode* parse_initializer_member2(Cuik_Parser* parser, TokenStream* res
             // attach to our linked list
             tail = append_to_init_list(s, current, tail, parse_initializer_member2(parser, s));
         }
+
         expect_char(s, '}');
     } else {
         // parse without comma operator
@@ -216,6 +217,53 @@ static Expr* parse_initializer2(Cuik_Parser* parser, TokenStream* restrict s, Cu
         .init = { type, root },
     };
     return e;
+}
+
+static void parse_string_literal(Cuik_Parser* parser, TokenStream* restrict s, Expr* e) {
+    size_t saved_lexer_pos = s->list.current;
+    size_t total_len = 0;
+    while (!tokens_eof(s)) {
+        Token* t = tokens_get(s);
+        if (t->type == TOKEN_STRING_DOUBLE_QUOTE || t->type == TOKEN_STRING_WIDE_DOUBLE_QUOTE) {
+            total_len += t->content.length - 2;
+        } else if (memeq(t->content.data, t->content.length, "__func__", sizeof("__func__") - 1)) {
+            if (cuik__sema_function_stmt) total_len += strlen(cuik__sema_function_stmt->decl.name);
+            else total_len += 3; // "???"
+        }
+
+        tokens_next(s);
+    }
+
+    size_t curr = 0;
+    char* buffer = arena_alloc(&thread_arena, total_len + 3, 4);
+
+    buffer[curr++] = '\"';
+
+    // Fill up the buffer
+    s->list.current = saved_lexer_pos;
+    while (!tokens_eof(s)) {
+        Token* t = tokens_get(s);
+        if (t->type == TOKEN_STRING_DOUBLE_QUOTE || t->type == TOKEN_STRING_WIDE_DOUBLE_QUOTE) {
+            memcpy(&buffer[curr], t->content.data + 1, t->content.length - 2);
+            curr += t->content.length - 2;
+        } else if (memeq(t->content.data, t->content.length, "__func__", sizeof("__func__") - 1)) {
+            if (cuik__sema_function_stmt) {
+                size_t len = strlen(cuik__sema_function_stmt->decl.name);
+                memcpy(&buffer[curr], cuik__sema_function_stmt->decl.name, len);
+                curr += len;
+            } else {
+                memcpy(&buffer[curr], "???", 3);
+                curr += 3;
+            }
+        }
+
+        tokens_next(s);
+    }
+
+    buffer[curr++] = '\"';
+
+    e->str.start = (const unsigned char*)buffer;
+    e->str.end = (const unsigned char*)(buffer + curr);
 }
 
 // primary-expression:
@@ -259,6 +307,16 @@ static Expr* parse_primary_expr(Cuik_Parser* parser, TokenStream* restrict s) {
                 *e = (Expr){
                     .op = EXPR_VA_ARG,
                     .va_arg_ = { src, type },
+                };
+                break;
+            } else if (!parser->is_in_global_scope && memeq(t->content.data, t->content.length, "__func__", sizeof("__func__") - 1)) {
+                tokens_next(s);
+
+                Atom name = cuik__sema_function_stmt->decl.name;
+                *e = (Expr){
+                    .op = EXPR_STR,
+                    .str.start = (const unsigned char*) name,
+                    .str.end = (const unsigned char*) &name[strlen(name)],
                 };
                 break;
             }
@@ -385,51 +443,11 @@ static Expr* parse_primary_expr(Cuik_Parser* parser, TokenStream* restrict s) {
 
         case TOKEN_STRING_DOUBLE_QUOTE:
         case TOKEN_STRING_WIDE_DOUBLE_QUOTE: {
-            Token* t = tokens_get(s);
             bool is_wide = (tokens_get(s)->type == TOKEN_STRING_WIDE_DOUBLE_QUOTE);
-
             *e = (Expr){
                 .op = is_wide ? EXPR_WSTR : EXPR_STR,
-                .str.start = t->content.data,
-                .str.end = &t->content.data[t->content.length],
             };
-
-            size_t saved_lexer_pos = s->list.current;
-            tokens_next(s);
-
-            if (tokens_get(s)->type == TOKEN_STRING_DOUBLE_QUOTE ||
-                tokens_get(s)->type == TOKEN_STRING_WIDE_DOUBLE_QUOTE) {
-                // Precompute length
-                s->list.current = saved_lexer_pos;
-                size_t total_len = t->content.length;
-                while (!tokens_eof(s) && (tokens_get(s)->type == TOKEN_STRING_DOUBLE_QUOTE || tokens_get(s)->type == TOKEN_STRING_WIDE_DOUBLE_QUOTE)) {
-                    Token* segment = tokens_get(s);
-                    total_len += segment->content.length - 2;
-                    tokens_next(s);
-                }
-
-                size_t curr = 0;
-                char* buffer = arena_alloc(&thread_arena, total_len + 3, 4);
-
-                buffer[curr++] = '\"';
-
-                // Fill up the buffer
-                s->list.current = saved_lexer_pos;
-                while (!tokens_eof(s) && (tokens_get(s)->type == TOKEN_STRING_DOUBLE_QUOTE || tokens_get(s)->type == TOKEN_STRING_WIDE_DOUBLE_QUOTE)) {
-                    Token* segment = tokens_get(s);
-
-                    memcpy(&buffer[curr], segment->content.data + 1, segment->content.length - 2);
-                    curr += segment->content.length - 2;
-
-                    tokens_next(s);
-                }
-
-                buffer[curr++] = '\"';
-
-                e->str.start = (const unsigned char*)buffer;
-                e->str.end = (const unsigned char*)(buffer + curr);
-            }
-
+            parse_string_literal(parser, s, e);
             tokens_prev(s);
             break;
         }

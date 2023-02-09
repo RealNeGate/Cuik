@@ -74,13 +74,18 @@ static ParseResult parse_pragma(Cuik_Parser* restrict parser, TokenStream* restr
             comment_string.data += 1;
 
             t = lexer_read(&pragma_lex);
+            while (t.type == TOKEN_STRING_DOUBLE_QUOTE) {
+                t = lexer_read(&pragma_lex);
+            }
         }
 
         if (t.type != ')') {
             diag_err(s, tokens_get_range(s), "expected )");
         }
 
-        if (string_equals_cstr(&comment_type, "lib")) {
+        if (string_equals_cstr(&comment_type, "linker")) {
+            // TODO(NeGate): implement /linker, it just passes arguments to the linker
+        } else if (string_equals_cstr(&comment_type, "lib")) {
             if (comment_string.length == 0) {
                 diag_err(s, tokens_get_range(s), "pragma comment lib expected lib name");
             }

@@ -1137,6 +1137,10 @@ static Cuik_QualType parse_type_suffix2(Cuik_Parser* restrict parser, TokenStrea
             tls_restore(params);
         }
 
+        if (!parser->is_in_global_scope) {
+            t->is_complete = true;
+        }
+
         type = cuik_uncanonical_type(t);
     } else if (t->type == '[') {
         // array

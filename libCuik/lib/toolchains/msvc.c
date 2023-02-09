@@ -526,6 +526,7 @@ static void set_preprocessor(void* ctx, const Cuik_CompilerArgs* args, Cuik_CPP*
 
     // things we don't handle yet so we just remove them
     cuikpp_define_empty_cstr(cpp, "_Frees_ptr_");
+    cuikpp_define_empty_cstr(cpp, "_Check_return_");
     cuikpp_define_empty_cstr(cpp, "__unaligned");
     cuikpp_define_empty_cstr(cpp, "__analysis_noreturn");
     cuikpp_define_empty_cstr(cpp, "__ptr32");

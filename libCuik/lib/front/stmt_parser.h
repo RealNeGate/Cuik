@@ -63,6 +63,10 @@ static bool parse_decl_or_expr2(Cuik_Parser* parser, TokenStream* restrict s, si
                     .loc = decl.loc,
                     .stmt = n,
                 };
+
+                if (cuik_canonical_type(decl.type)->kind == KIND_FUNC) {
+                    dyn_array_put(parser->top_level_stmts, n);
+                }
             }
 
             Expr* e = NULL;

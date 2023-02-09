@@ -472,7 +472,7 @@ void eval_initializer_objects(TranslationUnit* tu, TB_Function* func, TB_Initial
 
                     assert(base->op == EXPR_SYMBOL && "could not resolve as constant initializer");
                     Stmt* stmt = base->symbol;
-                    assert(stmt->op == STMT_GLOBAL_DECL && "could not resolve as constant initializer");
+                    assert((stmt->op == STMT_GLOBAL_DECL || stmt->op == STMT_FUNC_DECL) && "could not resolve as constant initializer");
 
                     tb_initializer_add_symbol_reloc(tu->ir_mod, init, offset, stmt->backing.s);
                     break;
@@ -803,49 +803,43 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
                     .value_type = LVALUE_SYMBOL,
                     .sym = stmt->backing.s,
                 };
-            } else if (stmt->op == STMT_GLOBAL_DECL || (stmt->op == STMT_DECL && stmt->decl.attrs.is_static)) {
+            } else if (type->kind == KIND_FUNC || stmt->op == STMT_GLOBAL_DECL || (stmt->op == STMT_DECL && stmt->decl.attrs.is_static)) {
                 if (stmt->backing.s == NULL) {
                     // check if it's defined by another TU
                     // functions are external by default
                     const char* name = (const char*) stmt->decl.name;
-                    bool is_external_sym = (type->kind == KIND_FUNC && stmt->decl.initial_as_stmt == NULL);
-                    if (stmt->decl.attrs.is_extern) is_external_sym = true;
 
-                    if (is_external_sym) {
-                        IRVal val = { 0 };
+                    if (tu->parent != NULL) {
+                        // It's either a proper external or links to
+                        // a file within the compilation unit, we don't
+                        // know yet
+                        CompilationUnit* restrict cu = tu->parent;
+                        cuik_lock_compilation_unit(cu);
 
-                        if (tu->parent != NULL) {
-                            // It's either a proper external or links to
-                            // a file within the compilation unit, we don't
-                            // know yet
-                            CompilationUnit* restrict cu = tu->parent;
-                            cuik_lock_compilation_unit(cu);
+                        ptrdiff_t search = nl_strmap_get_cstr(cu->export_table, name);
+                        if (search >= 0) {
+                            // Figure out what the symbol is and link it together
+                            Stmt* real_symbol = cu->export_table[search];
 
-                            ptrdiff_t search = nl_strmap_get_cstr(cu->export_table, name);
-                            if (search >= 0) {
-                                // Figure out what the symbol is and link it together
-                                Stmt* real_symbol = cu->export_table[search];
-
-                                if (real_symbol->op == STMT_FUNC_DECL) {
-                                    stmt->backing.f = real_symbol->backing.f;
-                                } else if (real_symbol->op == STMT_GLOBAL_DECL) {
-                                    stmt->backing.g = real_symbol->backing.g;
-                                } else {
-                                    abort();
-                                }
+                            if (real_symbol->op == STMT_FUNC_DECL) {
+                                stmt->backing.f = real_symbol->backing.f;
+                            } else if (real_symbol->op == STMT_GLOBAL_DECL) {
+                                stmt->backing.g = real_symbol->backing.g;
                             } else {
-                                // Always creates a real external in this case
-                                stmt->backing.e = tb_extern_create(tu->ir_mod, name, TB_EXTERNAL_SO_LOCAL);
+                                abort();
                             }
-
-                            // NOTE(NeGate): we might wanna move this mutex unlock earlier
-                            // it doesn't seem like we might need it honestly...
-                            cuik_unlock_compilation_unit(cu);
                         } else {
-                            mtx_lock(&tu->arena_mutex);
+                            // Always creates a real external in this case
                             stmt->backing.e = tb_extern_create(tu->ir_mod, name, TB_EXTERNAL_SO_LOCAL);
-                            mtx_unlock(&tu->arena_mutex);
                         }
+
+                        // NOTE(NeGate): we might wanna move this mutex unlock earlier
+                        // it doesn't seem like we might need it honestly...
+                        cuik_unlock_compilation_unit(cu);
+                    } else {
+                        mtx_lock(&tu->arena_mutex);
+                        stmt->backing.e = tb_extern_create(tu->ir_mod, name, TB_EXTERNAL_SO_LOCAL);
+                        mtx_unlock(&tu->arena_mutex);
                     }
                 }
 
@@ -1700,6 +1694,10 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
                 break;
             }
 
+            if (kind == KIND_FUNC) {
+                break;
+            }
+
             TB_Reg addr = tb_inst_local(func, size, align);
             if (tu->has_tb_debug_info && s->decl.name != NULL) {
                 tb_function_attrib_variable(func, addr, s->decl.name, cuik__as_tb_debug_type(tu->ir_mod, type));
@@ -1863,6 +1861,7 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
         case STMT_FOR: {
             TB_Label header = tb_basic_block_create(func);
             TB_Label body = tb_basic_block_create(func);
+            TB_Label next = tb_basic_block_create(func);
             TB_Label exit = tb_basic_block_create(func);
             s->backing.l = exit;
 
@@ -1871,7 +1870,7 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
             // developer of TB :p
             // essentially we can store both the header and exit labels
             // implicitly as one if they're next to each other
-            assert(header == exit - 2);
+            assert(next == exit - 1);
 
             if (s->for_.first) {
                 emit_location(tu, func, s->for_.first->loc.start);
@@ -1891,7 +1890,7 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
             irgen_stmt(tu, func, s->for_.body);
 
             if (s->for_.next) {
-                insert_label(func);
+                fallthrough_label(func, next);
                 emit_location(tu, func, s->for_.next->loc.start);
                 irgen_expr(tu, func, s->for_.next);
             }
@@ -1905,10 +1904,10 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
         case STMT_CONTINUE: {
             // this is really hacky but we always store the loop header label one
             // behind the exit label in terms of IDs.
-            if (s->continue_.target->op == STMT_DO_WHILE) {
-                tb_inst_goto(func, s->continue_.target->backing.l - 1);
-            } else {
+            if (s->continue_.target->op == STMT_WHILE) {
                 tb_inst_goto(func, s->continue_.target->backing.l - 2);
+            } else {
+                tb_inst_goto(func, s->continue_.target->backing.l - 1);
             }
             break;
         }
@@ -2046,21 +2045,13 @@ TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, Stmt* re
 
         //tb_inst_set_scope(func, old_tb_scope);
         return (TB_Symbol*) func;
-    } else if (s->op == STMT_DECL || s->op == STMT_GLOBAL_DECL) {
-        if (s->decl.name == NULL     ||
-            !s->decl.attrs.is_used   ||
-            s->decl.attrs.is_typedef ||
-            s->decl.attrs.is_extern  ||
-            cuik_canonical_type(s->decl.type)->kind == KIND_FUNC) {
-            return NULL;
-        }
-
+    } else if (s->flags & STMT_FLAGS_HAS_IR_BACKING) {
         TB_Initializer* init = gen_global_initializer(tu, cuik_canonical_type(s->decl.type), s->decl.initial, s->decl.name);
         tb_global_set_initializer(tu->ir_mod, (TB_Global*) s->backing.s, init);
         return s->backing.s;
-    } else {
-        return NULL;
     }
+
+    return NULL;
 }
 
 TB_Module* cuik_get_tb_module(TranslationUnit* restrict tu) {

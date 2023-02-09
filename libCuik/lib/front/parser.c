@@ -102,7 +102,7 @@ static int type_cycles_dfs(TokenStream* restrict s, Cuik_Type* type);
 //      /* do parse work */
 //  }
 #define LOCAL_SCOPE \
-for (struct LexicalScope saved = scope, *_i_ = (saved.tag_scope_start = saved.tag_count, &saved); _i_; _i_ = NULL, scope = saved)
+for (struct LexicalScope saved = scope, *_i_ = (scope.tag_scope_start = saved.tag_count, &saved); _i_; _i_ = NULL, scope = saved)
 
 static int align_up(int a, int b) {
     if (b == 0) return 0;
@@ -426,7 +426,6 @@ void type_layout(TranslationUnit* restrict tu, Cuik_Type* type, bool needs_compl
     type->is_progress = false;
 }
 
-int aaaaaa = 0;
 void type_layout2(Cuik_Parser* parser, Cuik_Type* type, bool needs_complete) {
     if (type->kind == KIND_VOID || type->size != 0) return;
     if (type->is_progress) {
@@ -438,7 +437,6 @@ void type_layout2(Cuik_Parser* parser, Cuik_Type* type, bool needs_complete) {
 
     if (type->kind == KIND_ARRAY) {
         if (type->array_count_lexer_pos) {
-            aaaaaa++;
             // run mini parser for array count
             TokenStream mini_lex = parser->tokens;
             mini_lex.list.current = type->array_count_lexer_pos;

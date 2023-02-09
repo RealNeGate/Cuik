@@ -154,10 +154,14 @@ void cuik_internal_link_compilation_unit(CompilationUnit* restrict cu, Cuik_IThr
                     if (!s->decl.attrs.is_static  && !s->decl.attrs.is_extern &&
                         !s->decl.attrs.is_typedef && !s->decl.attrs.is_inline &&
                         s->decl.name && cuik_canonical_type(s->decl.type)->kind != KIND_FUNC) {
-                        nl_strmap_put_cstr(cu->export_table, s->decl.name, s);
-                    }
+                        ptrdiff_t search = nl_strmap_get_cstr(cu->export_table, name);
 
-                    s->flags |= STMT_FLAGS_HAS_IR_BACKING;
+                        // only enter one of them and whichever goes in, will have IR backing
+                        if (search < 0) {
+                            s->flags |= STMT_FLAGS_HAS_IR_BACKING;
+                            nl_strmap_put_cstr(cu->export_table, s->decl.name, s);
+                        }
+                    }
                 }
             }
         }

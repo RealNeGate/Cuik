@@ -182,7 +182,7 @@ void threadpool_submit(threadpool_t* threadpool, work_routine fn, size_t arg_siz
         }
     }
 
-    assert(arg_size < sizeof(threadpool->work[i].arg));
+    assert(arg_size <= sizeof(threadpool->work[i].arg));
     threadpool->work[i].fn = fn;
     memcpy(threadpool->work[i].arg, arg, arg_size);
 
@@ -257,7 +257,6 @@ static void threadpool__work_one_job(void* user_data) {
 
 Cuik_IThreadpool threadpool_create_class(int worker_count, int workqueue_size) {
     threadpool_t* tp = threadpool_create(worker_count, workqueue_size);
-
     return (Cuik_IThreadpool){
         .user_data = tp,
         .submit = threadpool__submit,

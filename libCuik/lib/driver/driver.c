@@ -507,7 +507,7 @@ int cuik_driver_compile(Cuik_IThreadpool* restrict thread_pool, Cuik_CompilerArg
             }
         }
 
-        futex_wait_eq(&remaining, 0);
+        if (thread_pool) futex_wait_eq(&remaining, 0);
     }
 
     if (args->test_preproc) return 0;

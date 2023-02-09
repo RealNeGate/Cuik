@@ -11,6 +11,7 @@ parser.add_argument('-opt', action='store_true', help='runs optimize on compiled
 parser.add_argument('-asan', action='store_true', help='instrument code with the AddressSanitizer')
 parser.add_argument('-autospall', action='store_true', help='instrument code with SpallAuto')
 args = parser.parse_args()
+args.opt = False
 
 #######################################
 # Handle dependencies

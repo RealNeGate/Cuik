@@ -54,8 +54,12 @@ static void emit_imul_gpr_gpr_imm(Ctx* restrict ctx, TB_Function* f, GAD_VAL dst
     //   REX.W + 69 /r id
     if (a.type == VAL_MEM) {
         EMIT1(&ctx->emit, rex(bits_in_type == 64, dst.gpr, a.mem.base, a.mem.index != GPR_NONE ? a.mem.index : 0));
-    } else {
+    } else if (a.type == VAL_GLOBAL) {
+        EMIT1(&ctx->emit, rex(bits_in_type == 64, dst.gpr, 0x00, 0x00));
+    } else if (a.type == VAL_GPR) {
         EMIT1(&ctx->emit, rex(bits_in_type == 64, dst.gpr, a.gpr, 0x00));
+    } else {
+        tb_todo();
     }
     EMIT1(&ctx->emit, 0x69);
     emit_memory_operand(&ctx->emit, dst.gpr, &a);
@@ -474,7 +478,7 @@ static void x64v2_branch_jumptable(Ctx* restrict ctx, TB_Function* f, TB_Reg src
     }
     Val range_val = val_imm(TB_TYPE_I64, max - min);
     INST2(CMP, &key, &range_val, l.dt);
-    JCC(G, default_label);
+    JCC(A, default_label);
 
     // Jump table call
     // lea jump_table, [rip + JUMP_TABLE]
@@ -722,11 +726,11 @@ static void x64v2_call(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
         case TB_VCALL: {
             GAD_VAL target = ctx->values[n->vcall.target];
 
-            assert(target.type == VAL_MEM && target.mem.index == GPR_NONE && target.mem.disp == 0);
-            target = val_gpr(TB_TYPE_PTR, target.mem.base);
-
-            // call r/m64
-            INST1(CALL_RM, &target);
+            if (target.type == VAL_GPR || is_value_mem(&target)) {
+                INST1(CALL_RM, &target);
+            } else {
+                tb_todo();
+            }
             break;
         }
         default: tb_todo();
@@ -1004,7 +1008,7 @@ static Val x64v2_eval(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
                 GAD_VAL dst = GAD_FN(regalloc2)(ctx, f, r, X64_REG_CLASS_GPR, true, 0);
                 GAD_VAL src = ctx->values[n->unary.src];
 
-                INST2(op, &dst, &src, l.dt);
+                INST2(op, &dst, &src, dst_l.dt);
                 if (op == MOV && l.mask != 0) {
                     // complex extensions
                     if (sign_ext) {
@@ -1233,7 +1237,9 @@ static Val x64v2_eval(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
             GAD_VAL a = ctx->values[n->i_arith.a];
             GAD_VAL b = ctx->values[n->i_arith.b];
 
-            if (b.type == VAL_IMM) {
+            if (a.type == VAL_IMM && b.type == VAL_IMM) {
+                return get_immediate(ctx, f, r, a.imm * b.imm);
+            } else if (b.type == VAL_IMM) {
                 LegalInt l = legalize_int(n->dt);
                 emit_imul_gpr_gpr_imm(ctx, f, dst, a, b.imm, l.dt);
             } else if (dst.type == a.type && dst.reg == a.reg && b.type != VAL_IMM) {
