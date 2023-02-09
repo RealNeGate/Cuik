@@ -24,8 +24,9 @@ struct Cuik_CompilerArgs {
 
     int threads, opt_level;
     const char* output_name;
-    // this is the freestanding includes folder
-    const char* core_dirpath;
+
+    void* diag_userdata;
+    Cuik_DiagCallback diag_callback;
 
     DynArray(const char*) sources;
     DynArray(const char*) includes;

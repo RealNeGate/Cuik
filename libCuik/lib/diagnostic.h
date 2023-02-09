@@ -19,13 +19,6 @@ typedef struct DiagFixit {
     const char* hint;
 } DiagFixit;
 
-// These are your options for arguments in diagnostics
-typedef enum {
-    DIAG_NOTE,
-    DIAG_WARN,
-    DIAG_ERR,
-} DiagType;
-
 typedef struct {
     TokenStream* tokens;
     ResolvedSourceLoc base;
@@ -37,9 +30,17 @@ typedef struct {
     size_t cursor;
 } DiagWriter;
 
-typedef struct {
-    TokenStream* tokens;
-} Diagnostics;
+struct Cuik_Diagnostics {
+    Cuik_DiagCallback callback;
+    void* userdata;
+
+    // We write the text output to a buffer such that we
+    // can do ordered output.
+    Cuik_Parser* parser;
+
+    // Incremented atomically by the diagnostics engine
+    _Atomic int error_tally;
+};
 
 typedef enum Cuik_ReportLevel {
     REPORT_VERBOSE,
@@ -52,6 +53,9 @@ typedef enum Cuik_ReportLevel {
 void cuikdg_init(void);
 int cuikdg_error_count(TokenStream* s);
 void cuikdg_tally_error(TokenStream* s);
+
+Cuik_Diagnostics* cuikdg_make(Cuik_DiagCallback callback, void* userdata);
+void cuikdg_free(Cuik_Diagnostics* diag);
 
 ////////////////////////////////
 // Complex diagnostic builder
@@ -71,19 +75,3 @@ static void report_fix(Cuik_ReportLevel level, TokenStream* tokens, SourceLoc lo
 // Report primitives
 static void report_header(Cuik_ReportLevel level, const char* fmt, ...) {}
 static void report_line(TokenStream* tokens, SourceLoc loci, int indent) {}
-
-#if 0
-// loc_msg      |
-// loc_msg2     |> are all nullable
-// interjection |
-void report_two_spots(Cuik_ReportLevel level, Cuik_ErrorStatus* err, TokenStream* tokens, SourceLoc loc, SourceLoc loc2, const char* msg, const char* loc_msg, const char* loc_msg2, const char* interjection);
-void report(Cuik_ReportLevel level, Cuik_ErrorStatus* err, TokenStream* tokens, SourceLoc loc, const char* fmt, ...);
-void report_ranged(Cuik_ReportLevel level, Cuik_ErrorStatus* err, TokenStream* tokens, SourceLoc start_loc, SourceLoc end_loc, const char* fmt, ...);
-void report_fix(Cuik_ReportLevel level, Cuik_ErrorStatus* err, TokenStream* tokens, SourceLoc loc, const char* tip, const char* fmt, ...);
-
-// Report primitives
-void report_header(Cuik_ReportLevel level, const char* fmt, ...);
-void report_line(TokenStream* tokens, SourceLoc loci, int indent);
-
-bool has_reports(Cuik_ReportLevel min, Cuik_ErrorStatus* err);
-#endif

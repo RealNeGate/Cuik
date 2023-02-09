@@ -119,8 +119,6 @@ typedef struct Cuik_TypeTable {
 for (Cuik_TypeTableSegment* _a_ = (types).base; _a_ != NULL; _a_ = _a_->next) \
 for (Cuik_Type *it = _a_->_, *_end_ = &it[_a_->count]; it != _end_; it++)
 
-typedef struct Cuik_Parser Cuik_Parser;
-
 struct TranslationUnit {
     // circular references amirite...
     struct CompilationUnit* parent;

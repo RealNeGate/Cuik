@@ -56,6 +56,11 @@ else:
 if platform.machine() == "AMD64":
 	cflags += " -msse4.2"
 
+# package freestanding headers into object file
+freestanding_headers = ""
+for f in glob.glob("../crt/include/*.h"):
+	freestanding_headers += ' ' + f.replace('\\', '/')
+
 # write some rules
 ninja.write(f"""
 cflags = {cflags}
@@ -68,6 +73,10 @@ rule cc
 rule lexgen
   command = cmd /c clang $in -o lg{exe_ext} && lg $out
   description = LEXGEN $in $out
+
+rule headers
+  command = cmd /c clang meta/hexembed.c -o headers{exe_ext} && headers $out {freestanding_headers}
+  description = HEADERS $out
 
 rule shared_obj
   command = clang $in $ldflags -g -o $out -shared
@@ -93,11 +102,15 @@ rule lib
 
 """)
 
+ninja.write(f"build freestanding.c: headers meta/hexembed.c {freestanding_headers}\n")
+ninja.write(f"build bin/freestanding.o: cc freestanding.c\n")
+
 # compile lexer DFA
-ninja.write(f"build lib/preproc/dfa.h: lexgen lexgen.c\n")
+ninja.write(f"build lib/preproc/dfa.h: lexgen meta/lexgen.c\n")
 
 # compile libCuik
 objs = []
+objs.append("bin/freestanding.o")
 
 for pattern in source_patterns:
 	list = glob.glob(pattern)

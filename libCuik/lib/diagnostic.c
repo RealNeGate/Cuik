@@ -85,6 +85,21 @@ void cuikdg_init(void) {
     mtx_init(&report_mutex, mtx_plain | mtx_recursive);
 }
 
+Cuik_Diagnostics* cuikdg_make(Cuik_DiagCallback callback, void* userdata) {
+    Cuik_Diagnostics* d = cuik_calloc(1, sizeof(Cuik_Diagnostics));
+    d->callback = callback;
+    d->userdata = userdata;
+    return d;
+}
+
+Cuik_Parser* cuikdg_get_parser(Cuik_Diagnostics* diag) {
+    return diag->parser;
+}
+
+void cuikdg_free(Cuik_Diagnostics* diag) {
+    cuik_free(diag);
+}
+
 // we use the call stack so we can print in reverse order
 void print_include(TokenStream* tokens, SourceLoc loc) {
     ResolvedSourceLoc r = cuikpp_find_location(tokens, loc);
@@ -166,6 +181,13 @@ static void print_line_with_backtrace(TokenStream* tokens, SourceLoc loc, Source
 }
 
 static void diag(DiagType type, TokenStream* tokens, SourceRange loc, const char* fmt, va_list ap) {
+    Cuik_Diagnostics* d = tokens->diag;
+    assert(d != NULL);
+
+    if (d->callback && d->callback(d, d->userdata, type) == 0) {
+        return;
+    }
+
     size_t fixit_count = 0;
     DiagFixit fixits[3];
     while (*fmt == '#') {
@@ -220,7 +242,7 @@ static void diag(DiagType type, TokenStream* tokens, SourceRange loc, const char
     mtx_unlock(&report_mutex);
 
     if (type == DIAG_ERR) {
-        atomic_fetch_add((atomic_int*) tokens->error_tally, 1);
+        atomic_fetch_add(&tokens->diag->error_tally, 1);
     }
 }
 
@@ -235,11 +257,11 @@ void diag_header(DiagType type, const char* fmt, ...) {
 }
 
 void cuikdg_tally_error(TokenStream* s) {
-    atomic_fetch_add((atomic_int*) s->error_tally, 1);
+    atomic_fetch_add(&s->diag->error_tally, 1);
 }
 
 int cuikdg_error_count(TokenStream* s) {
-    return atomic_load((atomic_int*) s->error_tally);
+    return atomic_load(&s->diag->error_tally);
 }
 
 #define DIAG_FN(type, name) \

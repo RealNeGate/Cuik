@@ -1,5 +1,4 @@
 #include <cuik.h>
-#include "helper.h"
 #include <dyn_array.h>
 
 #if CUIK_ALLOW_THREADS
@@ -55,9 +54,12 @@ static void dump_tokens(FILE* out_file, TokenStream* s) {
     }
 }
 
+static int test_callback(Cuik_Diagnostics* diag, void* userdata, DiagType type) {
+    return 1;
+}
+
 int main(int argc, const char** argv) {
     cuik_init();
-    find_system_deps();
 
     #ifdef CUIK_USE_SPALL_AUTO
     spall_auto_init("perf.spall");
@@ -69,7 +71,9 @@ int main(int argc, const char** argv) {
         .target = cuik_target_host(),
         .toolchain = cuik_toolchain_host(),
         .flavor = TB_FLAVOR_EXECUTABLE,
-        .core_dirpath = crt_dirpath,
+
+        .diag_userdata = NULL,
+        .diag_callback = test_callback,
     };
     cuik_parse_args(&args, argc - 1, argv + 1);
 

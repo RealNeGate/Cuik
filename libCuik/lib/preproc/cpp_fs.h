@@ -2,12 +2,22 @@
 #include <front/atoms.h>
 #include "../file_map.h"
 
+typedef struct InternalFile InternalFile;
+struct InternalFile {
+    InternalFile* next;
+    const char* name;
+    size_t size;
+    char data[];
+};
+
 typedef struct LoadResult {
     bool found;
 
     size_t length;
     char* data;
 } LoadResult;
+
+extern InternalFile* cuik__ifiles_root;
 
 static LoadResult get_file(const char* path) {
     #ifdef _WIN32
@@ -202,12 +212,31 @@ static struct R_get_file_in_zip {
     };
 }
 
+InternalFile* find_internal_file(const char* name) {
+    InternalFile* f = cuik__ifiles_root;
+    for (; f != NULL; f = f->next) {
+        if (strcmp(name, f->name) == 0) return f;
+    }
+
+    return NULL;
+}
+
 // cache is NULLable and if so it won't use it
 bool cuikpp_default_packet_handler(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
     if (packet->tag == CUIKPP_PACKET_GET_FILE) {
         const char* og_path = packet->file.input_path;
-        const char* path = og_path;
 
+        // check if it's in the freestanding header directory
+        if (strncmp(og_path, "$cuik", 5) == 0 && (og_path[5] == '/' || og_path[5] == '\\')) {
+            InternalFile* f = find_internal_file(og_path + 6);
+            if (f) {
+                packet->file.length = f->size;
+                packet->file.data = f->data;
+                return true;
+            }
+        }
+
+        const char* path = og_path;
         while (*path) {
             PathPieceType t;
             path = read_path(&t, path);
@@ -251,9 +280,17 @@ bool cuikpp_default_packet_handler(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
         packet->file.data = file.data;
         return true;
     } else if (packet->tag == CUIKPP_PACKET_QUERY_FILE) {
+        const char* og_path = packet->file.input_path;
+
+        // check if it's in the freestanding header directory
+        if (strncmp(og_path, "$cuik", 5) == 0 && (og_path[5] == '/' || og_path[5] == '\\')) {
+            const InternalFile* f = find_internal_file(og_path + 6);
+            packet->query.found = (f != NULL);
+            return true;
+        }
+
         // find out if the path has a zip in it
         // TODO(NeGate): we don't handle recursive zips yet, pl0x fix
-        const char* og_path = packet->file.input_path;
         const char* path = og_path;
         while (*path) {
             PathPieceType t;
@@ -273,7 +310,13 @@ bool cuikpp_default_packet_handler(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
 
         return true;
     } else if (packet->tag == CUIKPP_PACKET_CANONICALIZE) {
-        return cuik_canonicalize_path(packet->canonicalize.output_path, packet->canonicalize.input_path);
+        const char* og_path = packet->canonicalize.input_path;
+        if (strncmp(og_path, "$cuik", 5) == 0 && (og_path[5] == '/' || og_path[5] == '\\')) {
+            strcpy(packet->canonicalize.output_path, og_path);
+            return true;
+        }
+
+        return cuik_canonicalize_path(packet->canonicalize.output_path, og_path);
     } else {
         return false;
     }

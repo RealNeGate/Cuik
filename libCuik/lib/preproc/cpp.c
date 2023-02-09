@@ -151,7 +151,7 @@ bool cuikpp_is_in_main_file(TokenStream* tokens, SourceLoc loc) {
     return f->filename == tokens->filepath;
 }
 
-Cuik_CPP* cuikpp_make(const char filepath[FILENAME_MAX]) {
+Cuik_CPP* cuikpp_make(const char filepath[FILENAME_MAX], Cuik_DiagCallback callback, void* userdata) {
     if (filepath == NULL) {
         filepath = "";
     }
@@ -187,9 +187,7 @@ Cuik_CPP* cuikpp_make(const char filepath[FILENAME_MAX]) {
         directory[0] = '\0';
     }
 
-    // NOTE(NeGate): if it's allocated separately then when we trivially copy it
-    // we still refer to the same tally.
-    ctx->tokens.error_tally = cuik_calloc(1, sizeof(int));
+    ctx->tokens.diag = cuikdg_make(callback, userdata);
     ctx->tokens.filepath = filepath;
     ctx->tokens.list.tokens = dyn_array_create(Token, 4096);
     ctx->tokens.invokes = dyn_array_create(MacroInvoke, 4096);
@@ -233,7 +231,7 @@ void cuiklex_free_tokens(TokenStream* tokens) {
     dyn_array_destroy(tokens->list.tokens);
     dyn_array_destroy(tokens->invokes);
     dyn_array_destroy(tokens->files);
-    cuik_free(tokens->error_tally);
+    cuikdg_free(tokens->diag);
 }
 
 void cuikpp_finalize(Cuik_CPP* ctx) {

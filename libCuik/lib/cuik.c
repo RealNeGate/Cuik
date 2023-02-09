@@ -98,7 +98,7 @@ void cuik_set_standard_defines(Cuik_CPP* cpp, const Cuik_CompilerArgs* args) {
     cuikpp_define_cstr(cpp, "static_assert", "_Static_assert");
     cuikpp_define_cstr(cpp, "typeof", "_Typeof");
 
-    cuikpp_add_include_directoryf(cpp, true, "%s"SLASH"crt"SLASH"include"SLASH, args->core_dirpath);
+    cuikpp_add_include_directory(cpp, true, "$cuik/");
     args->toolchain.set_preprocessor(args->toolchain.ctx, args, cpp);
 
     if (args->target != NULL) {

@@ -429,6 +429,7 @@ Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict 
     parser.default_int = (Cuik_Type*) &target->signed_ints[CUIK_BUILTIN_INT];
     parser.is_in_global_scope = true;
     parser.top_level_stmts = dyn_array_create(Stmt*, 1024);
+    parser.tokens.diag->parser = &parser;
 
     if (pending_exprs) {
         dyn_array_clear(pending_exprs);
@@ -647,6 +648,7 @@ Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict 
     THROW_IF_ERROR();
 
     check_for_entry(parser.tu, &parser.globals);
+    parser.tokens.diag->parser = NULL;
     return (Cuik_ParseResult){ .tu = parser.tu, .imports = parser.import_libs };
 }
 #undef THROW_IF_ERROR

@@ -16,6 +16,19 @@ enum {
 
 typedef struct Cuik_CPP Cuik_CPP;
 typedef struct Cuik_Target Cuik_Target;
+typedef struct Cuik_Parser Cuik_Parser;
+typedef struct Cuik_Diagnostics Cuik_Diagnostics;
+
+// These are your options for arguments in diagnostics
+typedef enum {
+    DIAG_NOTE,
+    DIAG_WARN,
+    DIAG_ERR,
+} DiagType;
+
+// calls before a diagnostic is emitted, if it returns 0 then diagnostic
+// will not display.
+typedef int (*Cuik_DiagCallback)(Cuik_Diagnostics* diag, void* userdata, DiagType type);
 
 // TODO(NeGate): move this into common.h
 typedef struct String {
@@ -94,8 +107,7 @@ typedef struct TokenStream {
     const char* filepath;
     TokenList list;
 
-    // Incremented atomically by the diagnostics engine
-    int* error_tally;
+    Cuik_Diagnostics* diag;
 
     // if true, the preprocessor is allowed to delete after completion.
     // this shouldn't enabled when caching files
@@ -146,7 +158,7 @@ CUIK_API Cuik_File* cuikpp_next_file(Cuik_CPP* ctx, Cuik_File* f);
 // Preprocessor module
 ////////////////////////////////
 // Initialize preprocessor, allocates memory which needs to be freed via cuikpp_free
-CUIK_API Cuik_CPP* cuikpp_make(const char filepath[FILENAME_MAX]);
+CUIK_API Cuik_CPP* cuikpp_make(const char filepath[FILENAME_MAX], Cuik_DiagCallback callback, void* userdata);
 
 // NOTE: it doesn't own the memory for the files it may have used
 // and thus you must free them, this can be done by iterating over

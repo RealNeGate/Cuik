@@ -72,3 +72,6 @@ CUIK_API TokenStream* cuik_get_token_stream_from_tu(TranslationUnit* restrict tu
 
 CUIK_API Stmt** cuik_get_top_level_stmts(TranslationUnit* restrict tu);
 CUIK_API size_t cuik_num_of_top_level_stmts(TranslationUnit* restrict tu);
+
+CUIK_API Cuik_Parser* cuikdg_get_parser(Cuik_Diagnostics* diag);
+
