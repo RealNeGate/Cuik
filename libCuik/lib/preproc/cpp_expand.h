@@ -1,3 +1,10 @@
+static void dump(TokenNode* head) {
+    for (TokenNode* n = head; n; n = n->next) {
+        printf("%.*s ", (int) n->t.content.length, n->t.content.data);
+    }
+    printf("\n");
+}
+
 static Token* get_last_token(TokenStream* restrict s) {
     assert(dyn_array_length(s->list.tokens) > 0);
     return &s->list.tokens[dyn_array_length(s->list.tokens) - 1];
@@ -158,7 +165,7 @@ static TokenNode* parse_args2(Cuik_CPP* restrict c, MacroArgs* restrict args, To
 
     int paren_depth = 0;
     TokenNode* prev = NULL;
-    for (;;) {
+    while (curr) {
         Token t = curr->t;
         if (t.type == 0) {
             curr = prev;
@@ -232,7 +239,7 @@ static TokenNode* parse_args2(Cuik_CPP* restrict c, MacroArgs* restrict args, To
 
     args->values = values;
     args->value_count = value_count;
-    return curr;
+    return curr ? curr : prev;
 }
 
 static ptrdiff_t find_arg(MacroArgs* restrict args, String name) {
@@ -301,7 +308,7 @@ static TokenList into_list(Cuik_CPP* restrict c, uint8_t* def_str) {
 // parse function macros where def_lex is the lexer for the macro definition
 // TODO(NeGate): redo the error messages here
 #define NEXT_TOKEN() (curr = curr->next, curr->t)
-static TokenNode* subst(Cuik_CPP* restrict c, TokenNode* head, const uint8_t* subst_start, MacroArgs* restrict args, uint32_t macro_id) {
+static bool subst(Cuik_CPP* restrict c, TokenNode* head, const uint8_t* subst_start, MacroArgs* restrict args, uint32_t macro_id) {
     TokenNode *curr = head, *prev = NULL;
     for (; curr; prev = curr, curr = curr->next) {
         Token t = curr->t;
@@ -320,6 +327,7 @@ static TokenNode* subst(Cuik_CPP* restrict c, TokenNode* head, const uint8_t* su
             curr = curr->next;
 
             // stringize arg
+            t = curr->t;
             ptrdiff_t arg_i = find_arg(args, t.content);
             if (arg_i < 0) {
                 diag_err(&c->tokens, r, "cannot stringize unknown argument");
@@ -385,7 +393,6 @@ static TokenNode* subst(Cuik_CPP* restrict c, TokenNode* head, const uint8_t* su
 
             // if they only form one token then process it
             if (joined.type == TOKEN_IDENTIFIER) {
-                joined.type = classify_ident(joined.content.data, joined.content.length);
                 joined.location = t.location;
 
                 if (!is_defined(c, joined.content.data, joined.content.length)) {
@@ -454,26 +461,25 @@ static TokenNode* subst(Cuik_CPP* restrict c, TokenNode* head, const uint8_t* su
                 if (arg_i >= 0) {
                     String substitution = args->values[arg_i].content;
                     if (substitution.length > 0) {
-                        // macro arguments must be expanded before they're placed
-                        /*TokenArray scratch = convert_line_to_token_list(c, macro_id, (uint8_t*) substitution.data);
-                        if (!expand(c, out_tokens, &scratch, macro_id)) {
-                            return false;
-                        }
-                        dyn_array_destroy(scratch.tokens);*/
-
-                        // TokenList scratch = convert_line_to_token_list(c, macro_id, (uint8_t*) substitution.data);
-
-                        // Stitch expansion into output
                         TokenList list = into_list(c, (uint8_t*) substitution.data);
+                        TokenNode* old_next = curr->next;
+
                         expand(c, list.head, macro_id);
-                        curr->t = list.head->t;
+
+                        // replace *curr with newest expansion
+                        TokenNode* new_tail = list.head;
+                        while (new_tail->next) new_tail = new_tail->next;
+
+                        new_tail->next = old_next;
+                        *curr = *list.head;
+                        curr = new_tail;
                     }
                 }
             }
         }
     }
 
-    return curr;
+    return true;
 }
 #undef NEXT_TOKEN
 
@@ -556,7 +562,9 @@ static bool expand_builtin_idents(Cuik_CPP* restrict c, Token* t) {
     }
 }
 
-static TokenNode* expand_ident(Cuik_CPP* restrict c, TokenArray* in, TokenNode* head, uint32_t parent_macro) {
+// return.head is the start of the new output stream segment
+// return.tail is the input stream's new position
+static TokenList expand_ident(Cuik_CPP* restrict c, TokenArray* in, TokenNode* head, uint32_t parent_macro) {
     // expansion:
     //   foo()                   #define foo bar(x, y, z)
     //   VVV
@@ -573,7 +581,7 @@ static TokenNode* expand_ident(Cuik_CPP* restrict c, TokenArray* in, TokenNode* 
     // can a loc come up in yo crib?
     if (expand_builtin_idents(c, &t)) {
         head->t = t;
-        return head->next;
+        return (TokenList){ .head = head, .tail = head->next };
     }
 
     TokenNode* end = head ? head->next : NULL;
@@ -607,22 +615,17 @@ static TokenNode* expand_ident(Cuik_CPP* restrict c, TokenArray* in, TokenNode* 
                 expand(c, list.head, macro_id);
 
                 // attach to complete tokens list
-                head->t = list.head->t;
-                unhide_macro(c, def_i, hidden);
+                if (head == NULL) {
+                    head = list.head;
+                }
 
-                /*MacroArgs arglist = { 0 };
-                TokenArray scratch = {
-                    .tokens = dyn_array_create(Token, 16)
-                };
+                TokenNode* new_tail = list.head;
+                while (new_tail->next) new_tail = new_tail->next;
 
-                subst(c, &scratch, (uint8_t*) def.data, &arglist, macro_id);
-                dyn_array_put(scratch.tokens, (Token){ 0 });
-
-                size_t hidden = hide_macro(c, def_i);
-                expand(c, out_tokens, &scratch, macro_id);
+                new_tail->next = end;
+                *head = *list.head;
 
                 unhide_macro(c, def_i, hidden);
-                dyn_array_destroy(scratch.tokens);*/
             }
         } else {
             Token paren = in ? peek(in) : head->next->t;
@@ -635,7 +638,7 @@ static TokenNode* expand_ident(Cuik_CPP* restrict c, TokenArray* in, TokenNode* 
                 ////////////////////////////////
                 MacroArgs arglist = { 0 };
                 if (in) {
-                    if (!parse_args(c, &arglist, in)) return NULL;
+                    if (!parse_args(c, &arglist, in)) return (TokenList){ 0 };
                 } else {
                     end = parse_args2(c, &arglist, head->next->next);
                 }
@@ -645,11 +648,11 @@ static TokenNode* expand_ident(Cuik_CPP* restrict c, TokenArray* in, TokenNode* 
                     Lexer args_lexer = { 0, (unsigned char*) args, (unsigned char*) args };
                     if (!parse_params(c, &arglist, &args_lexer)) goto err;
 
-                    printf("FUNCTION MACRO: %.*s    %.*s\n", (int)t.content.length, t.content.data, (int)def.length, def.data);
+                    /*printf("FUNCTION MACRO: %.*s    %.*s\n", (int)t.content.length, t.content.data, (int)def.length, def.data);
                     for (size_t i = 0; i < arglist.value_count; i++) {
                         printf("  ['%.*s'] = '%.*s'\n", (int) arglist.keys[i].length, arglist.keys[i].data, (int) arglist.values[i].content.length, arglist.values[i].content.data);
                     }
-                    printf("\n");
+                    printf("\n");*/
 
                     // convert definition into token list
                     size_t hidden = hide_macro(c, def_i);
@@ -657,30 +660,22 @@ static TokenNode* expand_ident(Cuik_CPP* restrict c, TokenArray* in, TokenNode* 
 
                     // replace arguments and perform concats
                     subst(c, list.head, list.start, &arglist, macro_id);
+                    // dump(list.head);
+
+                    // expand body
                     expand(c, list.head, macro_id);
 
                     // attach to complete tokens list
-                    head->t = list.head->t;
+                    if (head == NULL) {
+                        head = list.head;
+
+                        TokenNode* new_tail = list.head;
+                        while (new_tail->next) new_tail = new_tail->next;
+                        new_tail->next = end;
+                    }
+                    *head = *list.head;
+
                     unhide_macro(c, def_i, hidden);
-
-                    __debugbreak();
-                    /*size_t old = dyn_array_length(c->scratch_list.tokens);
-
-                    TokenArray scratch = {
-                        .tokens = dyn_array_create(Token, 16)
-                    };
-
-                    // before expanding the child macros we need to substitute all
-                    // the arguments in, handle stringizing and ## concaternation.
-                    subst(c, &scratch, (uint8_t*) def.data, &arglist, macro_id);
-                    dyn_array_put(scratch.tokens, (Token){ 0 });
-
-                    // macro hide set
-                    size_t hidden = hide_macro(c, def_i);
-                    expand(c, out_tokens, &scratch, macro_id);
-
-                    dyn_array_destroy(scratch.tokens);
-                    unhide_macro(c, def_i, hidden);*/
                 }
 
                 // it's a stack and keys is after values so it'll get popped too
@@ -691,7 +686,7 @@ static TokenNode* expand_ident(Cuik_CPP* restrict c, TokenArray* in, TokenNode* 
     }
 
     err:
-    return end;
+    return (TokenList){ .head = head, .tail = end };
 }
 
 static TokenNode* expand(Cuik_CPP* restrict c, TokenNode* restrict head, uint32_t parent_macro) {
@@ -719,7 +714,7 @@ static TokenNode* expand(Cuik_CPP* restrict c, TokenNode* restrict head, uint32_
                 }
             }
         } else {
-            curr = expand_ident(c, NULL, savepoint, parent_macro);
+            curr = expand_ident(c, NULL, savepoint, parent_macro).tail;
         }
 
         if (t->type == ')') {

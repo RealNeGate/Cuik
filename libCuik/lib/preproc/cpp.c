@@ -50,7 +50,7 @@ static bool pop_scope(Cuik_CPP* restrict ctx, TokenArray* restrict in);
 static void print_token_stream(TokenArray* in, size_t start, size_t end);
 
 static TokenNode* expand(Cuik_CPP* restrict c, TokenNode* restrict head, uint32_t parent_macro);
-static TokenNode* expand_ident(Cuik_CPP* restrict c, TokenArray* in, TokenNode* head, uint32_t parent_macro);
+static TokenList expand_ident(Cuik_CPP* restrict c, TokenArray* in, TokenNode* head, uint32_t parent_macro);
 
 #define MAX_CPP_STACK_DEPTH 1024
 
@@ -642,7 +642,17 @@ Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
                         if (expand_builtin_idents(ctx, &first)) {
                             dyn_array_put(s->list.tokens, first);
                         } else {
-                            expand_ident(ctx, in, NULL, 0);
+                            TokenList l = expand_ident(ctx, in, NULL, 0);
+                            for (TokenNode* n = l.head; n != l.tail; n = n->next) {
+                                Token* restrict t = &n->t;
+                                if (t->type == 0) {
+                                    continue;
+                                } else if (t->type == TOKEN_IDENTIFIER) {
+                                    t->type = classify_ident(t->content.data, t->content.length);
+                                }
+
+                                dyn_array_put(s->list.tokens, *t);
+                            }
                         }
                     }
                 }
