@@ -1,11 +1,13 @@
 #include <cuik.h>
 #include <common.h>
 #include <futex.h>
+#include <arena.h>
 #include <threads.h>
 #include "driver_fs.h"
 #include "driver_opts.h"
 #include "driver_arg_parse.h"
 #include "../file_map.h"
+#include "../front/parser.h"
 
 #ifdef CUIK_ALLOW_THREADS
 #include <stdatomic.h>
@@ -58,7 +60,13 @@ typedef struct {
     CompilationUnit* cu;
     Cuik_IThreadpool* thread_pool;
     Cuik_CompilerArgs* args;
+    Cuik_CPP** preprocessors;
+} SharedDriverState;
 
+typedef struct {
+    SharedDriverState* stuff;
+
+    size_t input_i;
     const char* input;
     Cuik_CPP* cpp;
 
@@ -66,25 +74,38 @@ typedef struct {
     Futex* remaining;
 } CompilerJob;
 
+static void dump_errors(TokenStream* tokens) {
+    Arena* arena = &tokens->diag->buffer;
+    for (ArenaSegment* s = arena->base; s != NULL; s = s->next) {
+        fwrite(s->data, s->used, 1, stderr);
+    }
+
+    int r = cuikdg_error_count(tokens);
+    if (r) fprintf(stderr, "failed with %d errors...\n", r);
+}
+
 static void compile_file(void* arg);
 static void preproc_file(void* arg) {
     CompilerJob* restrict job = arg;
-    Cuik_CPP* cpp = cuik_driver_preprocess(job->input, job->args, true);
+    Cuik_CompilerArgs* restrict args = job->stuff->args;
+
+    Cuik_CPP* cpp = cuik_driver_preprocess(job->input, args, true);
+    job->stuff->preprocessors[job->input_i] = cpp;
     if (cpp == NULL) {
         *job->errors += 1;
         return;
     }
 
     // dispose the preprocessor crap since we didn't need it
-    if (job->args->test_preproc) {
+    if (args->test_preproc) {
         cuikpp_free(cpp);
         futex_dec(job->remaining);
         return;
     }
 
     job->cpp = cpp;
-    if (job->thread_pool != NULL) {
-        CUIK_CALL(job->thread_pool, submit, compile_file, sizeof(CompilerJob), job);
+    if (job->stuff->thread_pool != NULL) {
+        CUIK_CALL(job->stuff->thread_pool, submit, compile_file, sizeof(CompilerJob), job);
     } else {
         compile_file(job);
     }
@@ -92,13 +113,15 @@ static void preproc_file(void* arg) {
 
 static void compile_file(void* arg) {
     CompilerJob* job = arg;
+    CompilationUnit* cu = job->stuff->cu;
+    Cuik_CompilerArgs* args = job->stuff->args;
 
     Cuik_ParseResult result;
     TokenStream* tokens = cuikpp_get_token_stream(job->cpp);
     CUIK_TIMED_BLOCK_ARGS("parse", cuikpp_get_main_file(tokens)) {
-        result = cuikparse_run(job->args->version, tokens, job->args->target, false);
+        result = cuikparse_run(args->version, tokens, args->target, false);
+
         if (result.error_count > 0) {
-            printf("Failed to parse with %d errors...\n", result.error_count);
             futex_dec(job->remaining);
             *job->errors += 1;
             return;
@@ -108,24 +131,22 @@ static void compile_file(void* arg) {
     // #pragma comment(lib, "foo.lib")
     Cuik_ImportRequest* imports = result.imports;
     if (imports != NULL) {
-        cuik_lock_compilation_unit(job->cu);
+        cuik_lock_compilation_unit(cu);
         for (; imports != NULL; imports = imports->next) {
-            dyn_array_put(job->args->libraries, imports->lib_name);
+            dyn_array_put(job->stuff->args->libraries, imports->lib_name);
         }
-        cuik_unlock_compilation_unit(job->cu);
+        cuik_unlock_compilation_unit(cu);
     }
 
     TranslationUnit* tu = result.tu;
-    int r = cuiksema_run(tu, NULL);
-    if (r > 0) {
-        printf("%s: failed to type check with %d errors...\n", cuikpp_get_main_file(tokens), r);
+    if (cuiksema_run(tu, NULL) > 0) {
         futex_dec(job->remaining);
         *job->errors += 1;
         return;
     }
 
     cuik_set_translation_unit_user_data(tu, job->cpp);
-    cuik_add_to_compilation_unit(job->cu, tu);
+    cuik_add_to_compilation_unit(cu, result.tu);
     futex_dec(job->remaining);
 }
 
@@ -487,14 +508,17 @@ int cuik_driver_compile(Cuik_IThreadpool* restrict thread_pool, Cuik_CompilerArg
 
     CompilationUnit compilation_unit = { 0 };
     cuik_create_compilation_unit(&compilation_unit);
+
+    SharedDriverState stuff = { &compilation_unit, thread_pool, args };
     CUIK_TIMED_BLOCK("Frontend") {
         Futex remaining = dyn_array_length(args->sources);
+        stuff.preprocessors = malloc(dyn_array_length(args->sources) * sizeof(Cuik_CPP*));
+
         dyn_array_for(i, args->sources) {
             CompilerJob job = {
-                .cu = &compilation_unit,
-                .thread_pool = thread_pool,
-                .args = args,
+                .stuff = &stuff,
 
+                .input_i = i,
                 .input = args->sources[i],
                 .errors = &parse_errors,
                 .remaining = &remaining,
@@ -508,11 +532,17 @@ int cuik_driver_compile(Cuik_IThreadpool* restrict thread_pool, Cuik_CompilerArg
         }
 
         if (thread_pool) futex_wait_eq(&remaining, 0);
+
+        size_t tu_count = dyn_array_length(args->sources);
+        for (size_t i = 0; i < tu_count; i++) {
+            TokenStream* tokens = cuikpp_get_token_stream(stuff.preprocessors[i]);
+            fprintf(stderr, "[%zu/%zu] CC %s\n", i+1, tu_count, cuikpp_get_main_file(tokens));
+            dump_errors(tokens);
+        }
     }
 
     if (args->test_preproc) return 0;
     if (parse_errors > 0) {
-        fprintf(stderr, "%d files with %s!\n", parse_errors, parse_errors >= 1 ? "errors" : "error");
         return 1;
     }
 

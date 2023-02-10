@@ -1,7 +1,7 @@
-static intmax_t eval_ternary(Cuik_CPP* restrict c, TokenList* restrict in);
+static intmax_t eval_ternary(Cuik_CPP* restrict c, TokenArray* restrict in);
 
 // same as expand(...) except that it converts 'defined(MACRO)' and 'defined MACRO' into 0 or 1
-static bool expand_with_defined(Cuik_CPP* restrict c, TokenList* restrict out_tokens, TokenList* restrict in, uint32_t macro_id) {
+static bool expand_with_defined(Cuik_CPP* restrict c, TokenArray* restrict out_tokens, TokenArray* restrict in, uint32_t macro_id) {
     int depth = 0;
 
     for (;;) {
@@ -56,10 +56,12 @@ static bool expand_with_defined(Cuik_CPP* restrict c, TokenList* restrict out_to
     return true;
 }
 
-static intmax_t eval(Cuik_CPP* restrict c, TokenList* restrict in) {
+static intmax_t eval(Cuik_CPP* restrict c, TokenArray* restrict in) {
     // We need to get rid of the defined(MACRO) and defined MACRO before we
     // do real expansion or else it'll give us incorrect results
-    size_t old_scratch_length = dyn_array_length(c->scratch_list.tokens);
+    __debugbreak();
+    return 0;
+    /*size_t old_scratch_length = dyn_array_length(c->scratch_list.tokens);
     if (!expand_with_defined(c, &c->scratch_list, in, 0)) {
         // TODO(NeGate): error messages
         abort();
@@ -88,10 +90,10 @@ static intmax_t eval(Cuik_CPP* restrict c, TokenList* restrict in) {
 
     // free pass 2 scratch tokens
     dyn_array_set_length(c->tokens.list.tokens, old_tokens_length);
-    return result;
+    return result;*/
 }
 
-static intmax_t eval_unary(Cuik_CPP* restrict c, TokenList* restrict in) {
+static intmax_t eval_unary(Cuik_CPP* restrict c, TokenArray* restrict in) {
     bool flip = false;
     while (peek(in).type == '!') {
         flip = !flip;
@@ -132,7 +134,7 @@ static intmax_t eval_unary(Cuik_CPP* restrict c, TokenList* restrict in) {
     return flip ? !val : val;
 }
 
-static intmax_t eval_l2(Cuik_CPP* restrict c, TokenList* restrict in) {
+static intmax_t eval_l2(Cuik_CPP* restrict c, TokenArray* restrict in) {
     if (peek(in).type == '-') {
         consume(in);
         return -eval_unary(c, in);
@@ -190,7 +192,7 @@ static int get_precendence(TknType ty) {
     }
 }
 
-static intmax_t eval_binop(Cuik_CPP* restrict c, TokenList* restrict in, int min_prec) {
+static intmax_t eval_binop(Cuik_CPP* restrict c, TokenArray* restrict in, int min_prec) {
     // This precendence climber is always left associative
     intmax_t result = eval_l2(c, in);
 
@@ -233,7 +235,7 @@ static intmax_t eval_binop(Cuik_CPP* restrict c, TokenList* restrict in, int min
     return result;
 }
 
-static intmax_t eval_ternary(Cuik_CPP* restrict c, TokenList* restrict in) {
+static intmax_t eval_ternary(Cuik_CPP* restrict c, TokenArray* restrict in) {
     intmax_t lhs = eval_binop(c, in, 0);
 
     if (peek(in).type == '?') {

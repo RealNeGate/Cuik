@@ -62,7 +62,7 @@ void cuikdg_free(Cuik_Diagnostics* diag);
 ////////////////////////////////
 // Complex diagnostic builder
 ////////////////////////////////
-void diag_header(DiagType type, const char* fmt, ...);
+void diag_header(TokenStream* tokens, DiagType type, const char* fmt, ...);
 
 DiagWriter diag_writer(TokenStream* tokens);
 void diag_writer_highlight(DiagWriter* writer, SourceRange loc);

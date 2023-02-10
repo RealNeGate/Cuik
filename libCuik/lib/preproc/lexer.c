@@ -273,8 +273,9 @@ Token lexer_read(Lexer* restrict l) {
     // generate valid token types
     switch (state) {
         case 0: {
-            fprintf(stderr, "illegal lexer char: %c\n", *start);
-            abort();
+            fprintf(stderr, "illegal lexer char: %c (%d)\n", *start, *start);
+            current++;
+            goto redo_lex;
         }
         case DFA_IDENTIFIER_L:
         case DFA_IDENTIFIER: {

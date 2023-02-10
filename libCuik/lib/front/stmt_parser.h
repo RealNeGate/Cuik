@@ -115,7 +115,13 @@ static bool parse_decl_or_expr2(Cuik_Parser* parser, TokenStream* restrict s, si
 
         if (start_tkn == s->list.current) {
             tokens_next(s);
-        } else if (!expect_with_reason(s, ';', "expression")) {
+        } else if (tokens_get(s)->type != ';' && start_tkn+1 == s->list.current) {
+            diag_err(s, expr->loc, "unknown typename");
+
+            // error recovery, skip until ;
+            while (!tokens_eof(s) && tokens_get(s)->type != ';') tokens_next(s);
+            return PARSE_WIT_ERRORS;
+        } else if (!expect_with_reason(s, ';', "ex2pression")) {
             return PARSE_WIT_ERRORS;
         }
         return true;

@@ -45,7 +45,7 @@ int main(int argc, char *argv[]) {
         fprintf(out, "    .size = %d,\n", fsize);
         fprintf(out, "    .data = {\n        ");
         for (int j = 0; j < padded_size; ++j) {
-            fprintf(out, "0x%02x%s", b[j], j == padded_size-1 ? "" : ((j+1) % 16 == 0 ? ",\n        " : ","));
+            fprintf(out, "0x%02x%s", b[j] == '\t' ? ' ' : b[j], j == padded_size-1 ? "" : ((j+1) % 16 == 0 ? ",\n        " : ","));
         }
         fprintf(out, "\n    }\n};\n\n");
         free(b);

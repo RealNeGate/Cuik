@@ -621,12 +621,10 @@ Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict 
     //   one of the most common error messages to make it easier to read as
     //   one of these "so called" sane humans.
     if (nl_strmap_get_load(parser.unresolved_symbols) > 0) {
-        mtx_lock(&report_mutex);
-
         nl_strmap_for(i, parser.unresolved_symbols) {
             Diag_UnresolvedSymbol* loc = parser.unresolved_symbols[i];
             cuikdg_tally_error(s);
-            diag_header(DIAG_ERR, "could not resolve symbol: %s", loc->name);
+            diag_header(s, DIAG_ERR, "could not resolve symbol: %s", loc->name);
 
             DiagWriter d = diag_writer(s);
             for (; loc != NULL; loc = loc->next) {
@@ -641,8 +639,6 @@ Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict 
             diag_writer_done(&d);
             printf("\n");
         }
-
-        mtx_unlock(&report_mutex);
     }
     nl_strmap_free(parser.unresolved_symbols);
     THROW_IF_ERROR();

@@ -3,6 +3,9 @@ typedef struct {
 } LiveCompiler;
 
 #if _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+
 static uint64_t get_last_write_time(const char* filepath) {
     WIN32_FIND_DATA data;
     HANDLE handle = FindFirstFile(filepath, &data);

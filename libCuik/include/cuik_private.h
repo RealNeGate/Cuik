@@ -25,7 +25,7 @@ struct Cuik_CPP {
     unsigned char* the_shtuffs;
 
     TokenStream tokens;
-    TokenList scratch_list;
+    TokenArray scratch_list;
 
     // powers __COUNTER__
     int unique_counter;

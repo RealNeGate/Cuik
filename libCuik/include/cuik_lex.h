@@ -95,15 +95,15 @@ typedef struct MacroInvoke {
     SourceLoc call_site;
 } MacroInvoke;
 
-typedef struct TokenList {
+typedef struct TokenArray {
     // DynArray(Token)
     struct Token* tokens;
     size_t current;
-} TokenList;
+} TokenArray;
 
 typedef struct TokenStream {
     const char* filepath;
-    TokenList list;
+    TokenArray list;
 
     Cuik_Diagnostics* diag;
 
