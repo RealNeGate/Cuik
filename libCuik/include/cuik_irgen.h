@@ -16,5 +16,8 @@
 #include "cuik_prelude.h"
 #include <tb.h>
 
+// allocates all the functions and globals necessary to do IRgen.
+void cuikcg_allocate_ir(CompilationUnit* restrict cu, Cuik_IThreadpool* restrict thread_pool, TB_Module* m);
+
 // returns NULL on failure
 TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, Stmt* restrict s);

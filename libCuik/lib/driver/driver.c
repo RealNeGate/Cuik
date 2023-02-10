@@ -546,13 +546,18 @@ int cuik_driver_compile(Cuik_IThreadpool* restrict thread_pool, Cuik_CompilerArg
         return 1;
     }
 
-    TB_FeatureSet features = { 0 };
-    TB_Module* mod = tb_module_create(
-        TB_ARCH_X86_64, (TB_System) cuik_get_target_system(args->target), &features, false
-    );
-
     CUIK_TIMED_BLOCK("internal link") {
-        cuik_internal_link_compilation_unit(&compilation_unit, thread_pool, mod, args->debug_info);
+        cuik_internal_link_compilation_unit(&compilation_unit, thread_pool, args->debug_info);
+    }
+
+    TB_Module* mod = NULL;
+    CUIK_TIMED_BLOCK("allocate IR") {
+        TB_FeatureSet features = { 0 };
+        mod = tb_module_create(
+            TB_ARCH_X86_64, (TB_System) cuik_get_target_system(args->target), &features, false
+        );
+
+        cuikcg_allocate_ir(&compilation_unit, thread_pool, mod);
     }
 
     if (args->syntax_only) return 0;

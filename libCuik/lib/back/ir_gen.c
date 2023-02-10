@@ -1,5 +1,6 @@
 #ifdef CUIK_USE_TB
 #include "ir_gen.h"
+#include <futex.h>
 #include <compilation_unit.h>
 #include <targets/targets.h>
 
@@ -2056,6 +2057,109 @@ TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, Stmt* re
 
 TB_Module* cuik_get_tb_module(TranslationUnit* restrict tu) {
     return tu->ir_mod;
+}
+
+typedef struct {
+    TB_Module* mod;
+    TranslationUnit* tu;
+
+    Stmt** stmts;
+    size_t count;
+
+    Futex* remaining;
+} IRAllocTask;
+
+static void ir_alloc_task(void* task) {
+    CUIK_TIMED_BLOCK("ir_alloc_task") {
+        IRAllocTask t = *(IRAllocTask*) task;
+
+        for (size_t i = 0; i < t.count; i++) {
+            Stmt* s = t.stmts[i];
+            if ((s->flags & STMT_FLAGS_HAS_IR_BACKING) == 0) continue;
+
+            if (s->op == STMT_FUNC_DECL) {
+                TB_FunctionPrototype* proto = t.tu->target->create_prototype(t.tu, cuik_canonical_type(s->decl.type));
+                TB_Linkage linkage = s->decl.attrs.is_static ? TB_LINKAGE_PRIVATE : TB_LINKAGE_PUBLIC;
+
+                // TODO(NeGate): Fix this up because it's possibly wrong, essentially
+                // inline linkage means all the definitions must match which isn't
+                // necessarily the same as static where they all can share a name but
+                // are different and internal.
+                TB_Function* func;
+                const char* name = s->decl.name;
+                if (s->decl.attrs.is_inline) {
+                    linkage = TB_LINKAGE_PRIVATE;
+
+                    char temp[1024];
+                    snprintf(temp, 1024, "_K%d_%s", t.tu->id_gen++, name ? name : "<unnamed>");
+
+                    func = tb_function_create(t.tu->ir_mod, temp, linkage);
+                } else {
+                    func = tb_function_create(t.tu->ir_mod, name, linkage);
+                }
+                tb_function_set_prototype(func, proto);
+                s->backing.f = func;
+            } else if (s->decl.attrs.is_used && !s->decl.attrs.is_typedef) {
+                Cuik_Type* type = cuik_canonical_type(s->decl.type);
+                bool is_external_sym = (type->kind == KIND_FUNC && s->decl.initial_as_stmt == NULL);
+                if (s->decl.attrs.is_extern) is_external_sym = true;
+
+                const char* name = s->decl.name;
+                if (!is_external_sym) {
+                    // if we have a TB module, fill it up with declarations
+                    if (s->decl.attrs.is_tls && !atomic_flag_test_and_set(&irgen_defined_tls_index)) {
+                        tb_module_set_tls_index(t.tu->ir_mod, (TB_Symbol*) tb_extern_create(t.tu->ir_mod, "_tls_index", TB_EXTERNAL_SO_LOCAL));
+                    }
+
+                    TB_Linkage linkage = s->decl.attrs.is_static ? TB_LINKAGE_PRIVATE : TB_LINKAGE_PUBLIC;
+                    TB_DebugType* dbg_type = NULL;
+                    if (t.tu->has_tb_debug_info) {
+                        dbg_type = cuik__as_tb_debug_type(t.tu->ir_mod, cuik_canonical_type(s->decl.type));
+                    }
+
+                    s->backing.g = tb_global_create(t.tu->ir_mod, name, s->decl.attrs.is_tls ? TB_STORAGE_TLS : TB_STORAGE_DATA, dbg_type, linkage);
+                }
+            }
+        }
+
+        futex_dec(t.remaining);
+    }
+}
+
+void cuikcg_allocate_ir(CompilationUnit* restrict cu, Cuik_IThreadpool* restrict thread_pool, TB_Module* m) {
+    // we actually fill the remaining count while we dispatch tasks, it's ok for it to hit 0
+    // occasionally (very rare realistically).
+    enum { BATCH_SIZE = 65536 };
+
+    Futex remaining = 0;
+    FOR_EACH_TU(tu, cu) {
+        size_t count = dyn_array_length(tu->top_level_stmts);
+        remaining += (count + (BATCH_SIZE - 1)) / BATCH_SIZE;
+
+        Stmt** top_level = tu->top_level_stmts;
+        tu->ir_mod = m;
+
+        for (size_t i = 0; i < count; i += BATCH_SIZE) {
+            size_t end = i + BATCH_SIZE;
+            if (end >= count) end = count;
+
+            IRAllocTask t = {
+                .mod = m,
+                .tu = tu,
+                .stmts = &top_level[i],
+                .count = end - i,
+                .remaining = &remaining
+            };
+
+            if (thread_pool) {
+                CUIK_CALL(thread_pool, submit, ir_alloc_task, sizeof(t), &t);
+            } else {
+                ir_alloc_task(&t);
+            }
+        }
+    }
+
+    if (thread_pool) futex_wait_eq(&remaining, 0);
 }
 
 #endif /* CUIK_USE_TB */

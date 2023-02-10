@@ -104,11 +104,7 @@ CUIK_API size_t cuik_num_of_translation_units_in_compilation_unit(CompilationUni
 //   1 some debug info
 //
 // we have planned a mode to treat larger macros as inline sites
-#ifdef CUIK_USE_TB
-CUIK_API void cuik_internal_link_compilation_unit(CompilationUnit* restrict cu, Cuik_IThreadpool* restrict thread_pool, TB_Module* mod, int debug_info_level);
-#else
-CUIK_API void cuik_internal_link_compilation_unit(CompilationUnit* restrict cu, Cuik_IThreadpool* restrict thread_pool, void* mod, int debug_info_level);
-#endif
+CUIK_API void cuik_internal_link_compilation_unit(CompilationUnit* restrict cu, Cuik_IThreadpool* restrict thread_pool, int debug_info_level);
 
 #include "cuik_perf.h"
 #include "cuik_lex.h"
