@@ -416,6 +416,8 @@ Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict 
         // return cuikparse_run_glsl(version, s, target);
     }
 
+    tls_init();
+
     int r;
     Cuik_Parser parser = { 0 };
     parser.version = version;

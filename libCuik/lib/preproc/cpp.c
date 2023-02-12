@@ -202,8 +202,6 @@ Cuik_CPP* cuikpp_make(const char filepath[FILENAME_MAX], Cuik_DiagCallback callb
     ctx->tokens.invokes = dyn_array_create(MacroInvoke, 4096);
     ctx->tokens.files = dyn_array_create(Cuik_File, 256);
 
-    ctx->scratch_list.tokens = dyn_array_create(Token, 4096);
-
     // MacroID 0 is a null invocation
     dyn_array_put(ctx->tokens.invokes, (MacroInvoke){ 0 });
 
@@ -272,7 +270,6 @@ void cuikpp_free(Cuik_CPP* ctx) {
     dyn_array_for(i, ctx->system_include_dirs) {
         cuik_free(ctx->system_include_dirs[i].name);
     }
-    dyn_array_destroy(ctx->scratch_list.tokens);
     dyn_array_destroy(ctx->system_include_dirs);
 
     if (ctx->macros.keys) {
@@ -642,6 +639,8 @@ Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
                         if (expand_builtin_idents(ctx, &first)) {
                             dyn_array_put(s->list.tokens, first);
                         } else {
+                            void* savepoint = tls_save();
+
                             TokenList l = expand_ident(ctx, in, NULL, 0);
                             for (TokenNode* n = l.head; n != l.tail; n = n->next) {
                                 Token* restrict t = &n->t;
@@ -653,6 +652,8 @@ Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
 
                                 dyn_array_put(s->list.tokens, *t);
                             }
+
+                            tls_restore(savepoint);
                         }
                     }
                 }

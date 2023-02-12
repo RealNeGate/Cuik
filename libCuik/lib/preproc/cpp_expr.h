@@ -1,107 +1,77 @@
-static intmax_t eval_ternary(Cuik_CPP* restrict c, TokenArray* restrict in);
-
-// same as expand(...) except that it converts 'defined(MACRO)' and 'defined MACRO' into 0 or 1
-static bool expand_with_defined(Cuik_CPP* restrict c, TokenArray* restrict out_tokens, TokenArray* restrict in, uint32_t macro_id) {
-    int depth = 0;
-
-    for (;;) {
-        Token t = consume(in);
-        if (t.type == 0 || t.hit_line) {
-            in->current -= 1;
-            break;
-        }
-
-        if (t.type == TOKEN_IDENTIFIER && memeq(t.content.data, t.content.length, "defined", 7)) {
-            String str = { 0 };
-
-            t = consume(in);
-            if (t.type == '(') {
-                t = consume(in);
-                if (t.type != TOKEN_IDENTIFIER) {
-                    // generic_error(in, "expected identifier!");
-                    fprintf(stderr, "expected identifier\n");
-                    return false;
-                }
-
-                str = t.content;
-
-                t = consume(in);
-                if (t.type != ')') {
-                    fprintf(stderr, "expected ')'\n");
-                    return false;
-                }
-            } else if (t.type == TOKEN_IDENTIFIER) {
-                str = t.content;
-            } else {
-                // generic_error(in, "expected identifier for 'defined'!");
-                fprintf(stderr, "expected identifier for 'defined'!\n");
-                return false;
-            }
-
-            bool found = is_defined(c, str.data, str.length);
-
-            // we really just allocated like two bytes just to store this lmao
-            char* out = gimme_the_shtuffs(c, 2);
-            out[0] = found ? '1' : '0';
-            out[1] = '\0';
-
-            t.type = TOKEN_INTEGER;
-            t.content = string_cstr(out);
-            dyn_array_put(out_tokens->tokens, t);
-        } else {
-            dyn_array_put(out_tokens->tokens, t);
-        }
-    }
-
-    return true;
-}
+static intmax_t eval_ternary(Cuik_CPP* restrict c, TokenList* restrict in);
 
 static intmax_t eval(Cuik_CPP* restrict c, TokenArray* restrict in) {
+    void* savepoint = tls_save();
+
+    TokenList l = line_into_list(in);
+
     // We need to get rid of the defined(MACRO) and defined MACRO before we
     // do real expansion or else it'll give us incorrect results
-    __debugbreak();
-    return 0;
-    /*size_t old_scratch_length = dyn_array_length(c->scratch_list.tokens);
-    if (!expand_with_defined(c, &c->scratch_list, in, 0)) {
-        // TODO(NeGate): error messages
-        abort();
+    for (TokenNode* n = l.head; n != NULL; n = n->next) {
+        if (n->t.type != TOKEN_IDENTIFIER || !string_equals_cstr(&n->t.content, "defined")) {
+            continue;
+        }
+
+        TokenNode* start = n;
+        String str = { 0 };
+
+        n = n->next;
+        if (n->t.type == '(') {
+            n = n->next;
+            if (n->t.type != TOKEN_IDENTIFIER) {
+                fprintf(stderr, "expected identifier\n");
+                return 0;
+            }
+
+            str = n->t.content;
+
+            n = n->next;
+            if (n->t.type != ')') {
+                fprintf(stderr, "expected ')'\n");
+                return false;
+            }
+        } else if (n->t.type == TOKEN_IDENTIFIER) {
+            str = n->t.content;
+        } else {
+            fprintf(stderr, "expected identifier for 'defined'!\n");
+            return 0;
+        }
+
+        bool found = is_defined(c, str.data, str.length);
+
+        start->t.type = TOKEN_INTEGER;
+        start->t.content = string_cstr(found ? "1" : "0");
+        start->next = n->next;
     }
-    dyn_array_put(c->scratch_list.tokens, (Token){ 0 });
 
-    size_t old_tokens_length = dyn_array_length(c->tokens.list.tokens);
+    expand(c, l.head, 0);
 
-    // This expansion is temporary
-    c->scratch_list.current = old_scratch_length;
-    expand(c, &c->tokens.list, &c->scratch_list, 0);
-    dyn_array_put(c->tokens.list.tokens, (Token){ 0 });
+    // don't worry about the tail being correct, it doesn't matter here
+    intmax_t result = eval_ternary(c, &l);
+    tls_restore(savepoint);
 
-    // free pass 1 scratch tokens
-    dyn_array_set_length(c->scratch_list.tokens, old_scratch_length);
-
-    // Evaluate
-    if (old_tokens_length == dyn_array_length(c->tokens.list.tokens)) {
-        SourceLoc loc = c->tokens.list.tokens[old_tokens_length - 1].location;
-        diag_err(&c->tokens, (SourceRange){ loc, loc }, "expected macro expression");
-        return 0;
-    }
-
-    c->tokens.list.current = old_tokens_length;
-    intmax_t result = eval_ternary(c, &c->tokens.list);
-
-    // free pass 2 scratch tokens
-    dyn_array_set_length(c->tokens.list.tokens, old_tokens_length);
-    return result;*/
+    return result;
 }
 
-static intmax_t eval_unary(Cuik_CPP* restrict c, TokenArray* restrict in) {
+// consume for lists
+static Token grab_n_go(TokenList* restrict in) {
+    TokenNode* n = in->head;
+    return (in->head = in->head->next, n->t);
+}
+
+// some helpers to make TokenList act like a TokenArray
+#define PEEK(in) (in->head->t)
+#define CONSUME(in) grab_n_go(in)
+
+static intmax_t eval_unary(Cuik_CPP* restrict c, TokenList* restrict in) {
     bool flip = false;
-    while (peek(in).type == '!') {
+    while (PEEK(in).type == '!') {
         flip = !flip;
-        in->current += 1;
+        in->head = in->head->next;
     }
 
     intmax_t val;
-    Token t = consume(in);
+    Token t = CONSUME(in);
     if (t.type == TOKEN_INTEGER) {
         Cuik_IntSuffix suffix;
         val = parse_int(t.content.length, (const char*) t.content.data, &suffix);
@@ -119,7 +89,7 @@ static intmax_t eval_unary(Cuik_CPP* restrict c, TokenArray* restrict in) {
     } else if (t.type == '(') {
         val = eval_ternary(c, in);
 
-        if (consume(in).type != ')') {
+        if (CONSUME(in).type != ')') {
             /*report_two_spots(REPORT_ERROR, NULL, s, t.location, tokens_get(s)->location,
                 "expected closing parenthesis for macro subexpression",
                 "open", "close?", NULL);*/
@@ -134,12 +104,12 @@ static intmax_t eval_unary(Cuik_CPP* restrict c, TokenArray* restrict in) {
     return flip ? !val : val;
 }
 
-static intmax_t eval_l2(Cuik_CPP* restrict c, TokenArray* restrict in) {
-    if (peek(in).type == '-') {
-        consume(in);
+static intmax_t eval_l2(Cuik_CPP* restrict c, TokenList* restrict in) {
+    if (PEEK(in).type == '-') {
+        CONSUME(in);
         return -eval_unary(c, in);
-    } else if (peek(in).type == '+') {
-        consume(in);
+    } else if (PEEK(in).type == '+') {
+        CONSUME(in);
         return eval_unary(c, in);
     } else {
         return eval_unary(c, in);
@@ -192,22 +162,21 @@ static int get_precendence(TknType ty) {
     }
 }
 
-static intmax_t eval_binop(Cuik_CPP* restrict c, TokenArray* restrict in, int min_prec) {
+static intmax_t eval_binop(Cuik_CPP* restrict c, TokenList* restrict in, int min_prec) {
     // This precendence climber is always left associative
     intmax_t result = eval_l2(c, in);
 
     int prec;
     TknType binop;
 
-    // It's kinda weird but you don't have to read it because you're a bitch anyways
-    while (!at_token_list_end(in)) {
-        TknType binop = consume(in).type;
+    while (in->head) {
+        TknType binop = PEEK(in).type;
         int prec = get_precendence(binop);
         if (prec == 0 || prec < min_prec) {
-            in->current -= 1;
             break;
         }
 
+        in->head = in->head->next;
         intmax_t rhs = eval_binop(c, in, prec + 1);
         switch (binop) {
             case TOKEN_TIMES: result *= rhs; break;
@@ -235,18 +204,18 @@ static intmax_t eval_binop(Cuik_CPP* restrict c, TokenArray* restrict in, int mi
     return result;
 }
 
-static intmax_t eval_ternary(Cuik_CPP* restrict c, TokenArray* restrict in) {
+static intmax_t eval_ternary(Cuik_CPP* restrict c, TokenList* restrict in) {
     intmax_t lhs = eval_binop(c, in, 0);
 
-    if (peek(in).type == '?') {
-        consume(in);
+    if (in->head && in->head->t.type == '?') {
+        CONSUME(in);
 
         intmax_t mhs = eval_ternary(c, in);
-        if (peek(in).type != ':') {
+        if (PEEK(in).type != ':') {
             // report(REPORT_ERROR, NULL, s, tokens_get_location(s), "expected : for ternary");
             abort();
         }
-        consume(in);
+        CONSUME(in);
 
         intmax_t rhs = eval_ternary(c, in);
         return lhs ? mhs : rhs;

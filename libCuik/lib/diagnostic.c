@@ -145,6 +145,13 @@ void cuikdg_free(Cuik_Diagnostics* diag) {
     cuik_free(diag);
 }
 
+CUIK_API void cuikdg_dump_to_file(TokenStream* tokens, FILE* out) {
+    Arena* arena = &tokens->diag->buffer;
+    for (ArenaSegment* s = arena->base; s != NULL; s = s->next) {
+        fwrite(s->data, s->used, 1, stderr);
+    }
+}
+
 // we use the call stack so we can print in reverse order
 void print_include(TokenStream* tokens, SourceLoc loc) {
     ResolvedSourceLoc r = cuikpp_find_location(tokens, loc);

@@ -76,13 +76,13 @@ static DirectiveResult cpp__pragma(Cuik_CPP* restrict ctx, CPPStackSlot* restric
         // convert to #pragma blah => _Pragma("blah")
         unsigned char* str = gimme_the_shtuffs(ctx, sizeof("_Pragma"));
         memcpy(str, "_Pragma", sizeof("_Pragma"));
-        Token t = { TOKEN_KW_Pragma, false, loc, { 7, str } };
+        Token t = { TOKEN_KW_Pragma, false, false, loc, { 7, str } };
         dyn_array_put(s->list.tokens, t);
 
         str = gimme_the_shtuffs(ctx, sizeof("("));
         str[0] = '(';
         str[1] = 0;
-        t = (Token){ '(', false, loc, { 1, str } };
+        t = (Token){ '(', false, false, loc, { 1, str } };
         dyn_array_put(s->list.tokens, t);
 
         String payload = get_pp_tokens_until_newline(ctx, in);
@@ -104,14 +104,14 @@ static DirectiveResult cpp__pragma(Cuik_CPP* restrict ctx, CPPStackSlot* restric
             *curr++ = '\"';
             *curr++ = '\0';
 
-            t = (Token){ TOKEN_STRING_DOUBLE_QUOTE, false, loc, { (curr - str) - 1, str } };
+            t = (Token){ TOKEN_STRING_DOUBLE_QUOTE, false, false, loc, { (curr - str) - 1, str } };
             dyn_array_put(s->list.tokens, t);
         }
 
         str = gimme_the_shtuffs(ctx, sizeof(")"));
         str[0] = ')';
         str[1] = 0;
-        t = (Token){ ')', false, loc, { 1, str } };
+        t = (Token){ ')', false, false, loc, { 1, str } };
         dyn_array_put(s->list.tokens, t);
     }
 
@@ -127,13 +127,14 @@ static DirectiveResult cpp__include(Cuik_CPP* restrict ctx, CPPStackSlot* restri
 
     // Evaluate
     size_t savepoint = in->current;
-    if (consume(in).type == '<') {
+    Token t = consume(in);
+    if (t.type == '<') {
         is_lib_include = true;
         size_t len = 0;
 
         // Hacky but mostly works
         for (;;) {
-            Token t = consume(in);
+            t = consume(in);
             if (t.type == '>') break;
 
             if (len + t.content.length > MAX_PATH) {
@@ -150,26 +151,17 @@ static DirectiveResult cpp__include(Cuik_CPP* restrict ctx, CPPStackSlot* restri
         if (peek(in).type != '>') {
             generic_error(in, "expected '>' for #include");
         }
-    } else {
-        in->current = savepoint;
-
-        size_t a = push_expansion(ctx, &s->list, in);
-        Token t = consume(&s->list);
-
-        if (t.type == TOKEN_STRING_DOUBLE_QUOTE) {
-            size_t len = t.content.length - 2;
-            if (len > MAX_PATH) {
-                generic_error(in, "filepath too long!");
-                abort();
-            }
-
-            memcpy(filename, t.content.data + 1, len);
-            filename[len] = '\0';
-        } else {
-            generic_error(in, "expected file path!");
+    } else if (t.type == TOKEN_STRING_DOUBLE_QUOTE) {
+        size_t len = t.content.length - 2;
+        if (len > MAX_PATH) {
+            generic_error(in, "filepath too long!");
+            abort();
         }
 
-        pop_expansion(&s->list, a);
+        memcpy(filename, t.content.data + 1, len);
+        filename[len] = '\0';
+    } else {
+        generic_error(in, "expected file path!");
     }
 
     // insert incomplete new stack slot

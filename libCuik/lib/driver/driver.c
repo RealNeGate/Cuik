@@ -47,6 +47,8 @@ Cuik_CPP* cuik_driver_preprocess(const char* filepath, const Cuik_CompilerArgs* 
 
     // run the preprocessor
     if (cuikpp_default_run(cpp) == CUIKPP_ERROR) {
+        cuikdg_dump_to_file(cuikpp_get_token_stream(cpp), stderr);
+        cuikpp_free(cpp);
         return NULL;
     }
 
@@ -75,10 +77,7 @@ typedef struct {
 } CompilerJob;
 
 static void dump_errors(TokenStream* tokens) {
-    Arena* arena = &tokens->diag->buffer;
-    for (ArenaSegment* s = arena->base; s != NULL; s = s->next) {
-        fwrite(s->data, s->used, 1, stderr);
-    }
+    cuikdg_dump_to_file(tokens, stderr);
 
     int r = cuikdg_error_count(tokens);
     if (r) fprintf(stderr, "failed with %d errors...\n", r);

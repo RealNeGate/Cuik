@@ -23,6 +23,7 @@ static void dump_tokens(FILE* out_file, TokenStream* s) {
     for (size_t i = 0; i < count; i++) {
         Token* t = &tokens[i];
 
+        if (t->location.raw == 0) __debugbreak();
         ResolvedSourceLoc r = cuikpp_find_location(s, t->location);
         if (last_file != r.file->filename) {
             // TODO(NeGate): Kinda shitty but i just wanna duplicate
@@ -106,14 +107,14 @@ int main(int argc, const char** argv) {
         Cuik_CPP* cpp = cuik_driver_preprocess(args.sources[0], &args, true);
 
         if (cpp) {
+            cuikdg_dump_to_file(cuikpp_get_token_stream(cpp), stderr);
+
             dump_tokens(stdout, cuikpp_get_token_stream(cpp));
             cuikpp_free(cpp);
+            return EXIT_SUCCESS;
         } else {
-            fprintf(stderr, "Could not preprocess file: %s", args.sources[0]);
             return EXIT_FAILURE;
         }
-
-        return EXIT_SUCCESS;
     }
 
     if (args.live) {

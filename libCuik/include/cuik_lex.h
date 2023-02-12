@@ -77,7 +77,8 @@ typedef struct {
 
 typedef struct Token {
     // it's a TknType but GCC doesn't like incomplete enums
-    int type     : 31;
+    int type     : 30;
+    int expanded : 1;
     int hit_line : 1;
 
     SourceLoc location;
@@ -334,3 +335,5 @@ CUIK_API void cuikpp_dump_defines(Cuik_CPP* ctx);
 CUIK_API void diag_note(TokenStream* tokens, SourceRange loc, const char* fmt, ...);
 CUIK_API void diag_warn(TokenStream* tokens, SourceRange loc, const char* fmt, ...);
 CUIK_API void diag_err(TokenStream* tokens, SourceRange loc, const char* fmt, ...);
+
+CUIK_API void cuikdg_dump_to_file(TokenStream* tokens, FILE* out);
