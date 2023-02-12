@@ -141,6 +141,9 @@ static void pop_expansion(TokenArray* out_tokens, size_t save) {
     // out_tokens->current = 0;
 }
 
+// include this if you want to enable the preprocessor debugger
+#include "cpp_dbg.h"
+
 // Basically a mini-unity build that takes up just the CPP module
 #include "cpp_symtab.h"
 #include "cpp_expand.h"
@@ -478,6 +481,9 @@ Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
                 ctx->state1 = CUIK__CPP_NONE;
 
                 // continue along to the actual preprocessing now
+                #ifdef CPP_DBG
+                cppdbg__break();
+                #endif /* CPP_DBG */
                 break;
             }
 

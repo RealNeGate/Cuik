@@ -641,6 +641,15 @@ static TokenList expand_ident(Cuik_CPP* restrict c, TokenArray* in, TokenNode* h
         String def = c->macros.vals[def_i].value;
         SourceLoc def_site = c->macros.vals[def_i].loc;
 
+        #ifdef CPP_DBG
+        for (size_t i = 0; i < 100; i++) {
+            if (breakpoints[i] && strncmp((const char*) t.content.data, breakpoints[i], t.content.length) == 0) {
+                cppdbg__break();
+                break;
+            }
+        }
+        #endif /* CPP_DBG */
+
         // create macro invoke site
         uint32_t macro_id = dyn_array_length(c->tokens.invokes);
         dyn_array_put(c->tokens.invokes, (MacroInvoke){
