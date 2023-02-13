@@ -26,8 +26,8 @@ TildeBackend (Tilde or TB for short)
     You'll need to install a C compiler, Ninja and Python3.
 
     ```
-      git clone --recurse-submodules -j8 https://github.com/RealNeGate/tilde-backend.git
-      cd tilde-backend
+      git clone --recurse-submodules -j8 https://github.com/RealNeGate/Cuik.git
+      cd tb
       py build.py
     ```
 
