@@ -134,11 +134,13 @@ static DirectiveResult cpp__include(Cuik_CPP* restrict ctx, CPPStackSlot* restri
 
         // Hacky but mostly works
         for (;;) {
-            t = consume(in);
+            t = peek(in);
             if (t.type == '>') break;
 
+            in->current += 1;
             if (len + t.content.length > MAX_PATH) {
-                generic_error(in, "filename too long!");
+                diag_err(&ctx->tokens, (SourceRange){ loc, loc }, "filename too long!");
+                return DIRECTIVE_ERROR;
             }
 
             memcpy(&filename[len], t.content.data, t.content.length);
@@ -148,20 +150,22 @@ static DirectiveResult cpp__include(Cuik_CPP* restrict ctx, CPPStackSlot* restri
         // slap that null terminator on it like a boss bitch
         filename[len] = '\0';
 
-        if (peek(in).type != '>') {
-            generic_error(in, "expected '>' for #include");
+        t = consume(in);
+        if (t.type != '>') {
+            diag_err(&ctx->tokens, get_token_range(&t), "expected '>' for #include");
+            return DIRECTIVE_ERROR;
         }
     } else if (t.type == TOKEN_STRING_DOUBLE_QUOTE) {
         size_t len = t.content.length - 2;
         if (len > MAX_PATH) {
-            generic_error(in, "filepath too long!");
-            abort();
+            diag_err(&ctx->tokens, (SourceRange){ loc, loc }, "filename too long!");
+            return DIRECTIVE_ERROR;
         }
 
         memcpy(filename, t.content.data + 1, len);
         filename[len] = '\0';
     } else {
-        generic_error(in, "expected file path!");
+        diag_err(&ctx->tokens, (SourceRange){ loc, loc }, "expected file path!");
     }
 
     // insert incomplete new stack slot

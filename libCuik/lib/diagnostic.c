@@ -308,7 +308,7 @@ void diag_header(TokenStream* tokens, DiagType type, const char* fmt, ...) {
     va_start(ap, fmt);
     char tmp[STB_SPRINTF_MIN];
     sprintfcb(tokens->diag, "\x1b[37m%s: ", report_names[type]);
-    stbsp_vsprintfcb(sprintf_callback, stderr, tmp, fmt, ap);
+    stbsp_vsprintfcb(sprintf_callback, &tokens->diag->buffer, tmp, fmt, ap);
     *(char*)arena_alloc(&tokens->diag->buffer, 1, 1) = '\n';
     va_end(ap);
 }

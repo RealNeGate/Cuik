@@ -38,9 +38,6 @@ static bool is_defined(Cuik_CPP* restrict c, const unsigned char* start, size_t 
 static void expect(TokenArray* restrict in, char ch);
 static intmax_t eval(Cuik_CPP* restrict c, TokenArray* restrict in);
 
-// static _Noreturn void generic_error(Lexer* restrict in, const char* msg);
-#define generic_error(...)
-
 static void* gimme_the_shtuffs(Cuik_CPP* restrict c, size_t len);
 static void trim_the_shtuffs(Cuik_CPP* restrict c, void* new_top);
 
@@ -77,6 +74,22 @@ typedef struct CPPStackSlot {
         String define;
     } include_guard;
 } CPPStackSlot;
+
+// just the value (doesn't track the name of the parameter)
+typedef struct {
+    String content;
+    SourceRange loc;
+} MacroArg;
+
+typedef struct {
+    int key_count;
+    String* keys;
+
+    int value_count;
+    MacroArg* values;
+
+    bool has_varargs;
+} MacroArgs;
 
 static Token peek(TokenArray* restrict in) {
     return in->tokens[in->current];
@@ -142,7 +155,7 @@ static void pop_expansion(TokenArray* out_tokens, size_t save) {
 }
 
 // include this if you want to enable the preprocessor debugger
-#include "cpp_dbg.h"
+// #include "cpp_dbg.h"
 
 // Basically a mini-unity build that takes up just the CPP module
 #include "cpp_symtab.h"

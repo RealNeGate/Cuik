@@ -97,7 +97,6 @@ static void preproc_file(void* arg) {
 
     // dispose the preprocessor crap since we didn't need it
     if (args->test_preproc) {
-        cuikpp_free(cpp);
         futex_dec(job->remaining);
         return;
     }
@@ -263,9 +262,6 @@ static void irgen(Cuik_IThreadpool* restrict thread_pool, Cuik_CompilerArgs* res
 
             size_t task_count = 0;
             FOR_EACH_TU(tu, cu) {
-                // dispose the preprocessor crap now
-                cuikpp_free((Cuik_CPP*) cuik_set_translation_unit_user_data(tu, NULL));
-
                 size_t top_level_count = cuik_num_of_top_level_stmts(tu);
                 Stmt** top_level = cuik_get_top_level_stmts(tu);
                 for (size_t i = 0; i < top_level_count; i += 8192) {
@@ -300,9 +296,6 @@ static void irgen(Cuik_IThreadpool* restrict thread_pool, Cuik_CompilerArgs* res
                 if (cuik_get_entrypoint_status(tu) == CUIK_ENTRYPOINT_WINMAIN) {
                     *subsystem_windows = true;
                 }
-
-                Cuik_CPP* cpp = cuik_get_translation_unit_user_data(tu);
-                cuikpp_free(cpp);
 
                 size_t c = cuik_num_of_top_level_stmts(tu);
                 IRGenTask task = {
@@ -534,9 +527,15 @@ int cuik_driver_compile(Cuik_IThreadpool* restrict thread_pool, Cuik_CompilerArg
 
         size_t tu_count = dyn_array_length(args->sources);
         for (size_t i = 0; i < tu_count; i++) {
-            TokenStream* tokens = cuikpp_get_token_stream(stuff.preprocessors[i]);
-            fprintf(stderr, "[%zu/%zu] CC %s\n", i+1, tu_count, cuikpp_get_main_file(tokens));
-            dump_errors(tokens);
+            fprintf(stderr, "[%zu/%zu] CC %s\n", i+1, tu_count, args->sources[i]);
+
+            if (stuff.preprocessors[i]) {
+                TokenStream* tokens = cuikpp_get_token_stream(stuff.preprocessors[i]);
+                if (tokens) {
+                    dump_errors(tokens);
+                    cuikpp_free(stuff.preprocessors[i]);
+                }
+            }
         }
     }
 

@@ -36,4 +36,6 @@ foo(x,y,z);*/
 p() i[q()] = { q(1), r(2,3), r(4,), r(,5), r(,) };
 char c[2][6] = { str(hello), str() };*/
 
-#include <excpt.h>
+#include <stdio.h>
+
+int main() { return printf("Hello, World!"); }

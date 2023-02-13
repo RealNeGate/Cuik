@@ -15,22 +15,6 @@ static bool concat_token(Cuik_CPP* restrict c, String a, String b, Token* out_to
     return true;
 }
 
-// just the value (doesn't track the name of the parameter)
-typedef struct {
-    String content;
-    SourceRange loc;
-} MacroArg;
-
-typedef struct {
-    int key_count;
-    String* keys;
-
-    int value_count;
-    MacroArg* values;
-
-    bool has_varargs;
-} MacroArgs;
-
 // [https://www.sigbus.info/n1570#6.10p1] This just handles parsing the # define param list
 //
 // After '# define identifier':
@@ -315,10 +299,7 @@ static bool expand_builtin_idents(Cuik_CPP* restrict c, Token* t) {
             // TODO(NeGate): Kinda shitty but i just wanna duplicate
             // the backslashes to avoid them being treated as an escape
             const char* input_path = (const char*) r.file->filename;
-            if (strlen(input_path) >= MAX_PATH) {
-                // generic_error(in, "preprocessor error: __FILE__ generated a file path that was too long\n");
-                abort();
-            }
+            assert(strlen(input_path) < MAX_PATH && "__FILE__ too long?");
 
             while (*input_path) {
                 if (*input_path == '\\') {
@@ -370,7 +351,7 @@ static bool subst(Cuik_CPP* restrict c, TokenNode* head, const uint8_t* subst_st
     TokenNode *curr = head, *prev = NULL;
     while (curr != NULL) {
         Token t = curr->t;
-        if (t.type == 0 || t.hit_line) {
+        if (t.hit_line) {
             break;
         }
 
@@ -432,13 +413,12 @@ static bool subst(Cuik_CPP* restrict c, TokenNode* head, const uint8_t* subst_st
                 size_t key_count = args->key_count, value_count = args->value_count;
 
                 if (string_equals_cstr(&a, ",") && key_count == value_count) {
-                    // TODO(NeGate): implement this
-                    __debugbreak();
-                } else {
-                    curr = savepoint;
+                    // delete comma
+                    prev->t.type = 0;
+                    prev->t.content = (String){ 0 };
                 }
 
-                prev = curr, curr = curr->next;
+                prev->next = curr;
                 continue;
             }
 
@@ -495,7 +475,12 @@ static bool subst(Cuik_CPP* restrict c, TokenNode* head, const uint8_t* subst_st
         } else if (t.type == TOKEN_IDENTIFIER) {
             if (t.content.data[0] == '_' && string_equals_cstr(&t.content, "__VA_ARGS__")) {
                 size_t key_count = args->key_count, value_count = args->value_count;
-                // assert(key_count == value_count && "TODO");
+                if (key_count == value_count) {
+                    curr->t.type = 0;
+                    curr->t.content = (String){ 0 };
+                    goto next;
+                }
+
                 TokenNode* old_next = curr->next;
                 TokenNode* tail = NULL;
 
@@ -529,7 +514,10 @@ static bool subst(Cuik_CPP* restrict c, TokenNode* head, const uint8_t* subst_st
                             .def_site  = args->values[i].loc,
                         });
 
-                    Lexer in = { 0, (uint8_t*) args->values[i].content.data };
+                    String arg = args->values[i].content;
+                    if (arg.length == 0) continue;
+
+                    Lexer in = { 0, (uint8_t*) arg.data };
                     in.current = in.start;
 
                     TokenNode* before_arg = tail;
@@ -550,9 +538,21 @@ static bool subst(Cuik_CPP* restrict c, TokenNode* head, const uint8_t* subst_st
                         }
                     }
 
-                    expand(c, before_arg ? before_arg->next : curr, vaargs_macro);
+                    TokenNode* first_token_in_arg = before_arg ? before_arg->next : curr;
+                    expand(c, first_token_in_arg, vaargs_macro);
+
+                    TokenNode* new_tail = first_token_in_arg;
+                    while (new_tail->next) new_tail = new_tail->next;
+                    tail = new_tail;
                 }
-                tail->next = old_next, curr = old_next;
+
+                if (tail) {
+                    tail->next = old_next, prev = tail;
+                } else {
+                    curr->t.type = 0;
+                    curr->t.content = (String){ 0 };
+                }
+                curr = old_next;
                 continue;
             } else {
                 ptrdiff_t arg_i = find_arg(args, t.content);
@@ -592,6 +592,7 @@ static bool subst(Cuik_CPP* restrict c, TokenNode* head, const uint8_t* subst_st
             }
         }
 
+        next:
         prev = curr, curr = curr->next;
     }
 
@@ -641,15 +642,6 @@ static TokenList expand_ident(Cuik_CPP* restrict c, TokenArray* in, TokenNode* h
         String def = c->macros.vals[def_i].value;
         SourceLoc def_site = c->macros.vals[def_i].loc;
 
-        #ifdef CPP_DBG
-        for (size_t i = 0; i < 100; i++) {
-            if (breakpoints[i] && strncmp((const char*) t.content.data, breakpoints[i], t.content.length) == 0) {
-                cppdbg__break();
-                break;
-            }
-        }
-        #endif /* CPP_DBG */
-
         // create macro invoke site
         uint32_t macro_id = dyn_array_length(c->tokens.invokes);
         dyn_array_put(c->tokens.invokes, (MacroInvoke){
@@ -687,12 +679,41 @@ static TokenList expand_ident(Cuik_CPP* restrict c, TokenArray* in, TokenNode* h
             // printf("OBJECT MACRO: %.*s    %.*s\n\n", (int)t.content.length, t.content.data, (int)def.length, def.data);
             // diag_note(&c->tokens, (SourceRange){ def_site, { def_site.raw + def.length } }, "%!S", t.content);
 
+            #ifdef CPP_DBG
+            int dbgmod = 0;
+            for (size_t i = 0; i < 100; i++) {
+                if (breakpoints[i] && strncmp((const char*) t.content.data, breakpoints[i], t.content.length) == 0) {
+                    printf("Hit: %.*s\n", (int) t.content.length, t.content.data);
+                    cppdbg__arglist = NULL;
+                    dbgmod = cppdbg__break();
+                    break;
+                }
+            }
+            #endif /* CPP_DBG */
+
             // replace arguments and perform concats
             MacroArgs arglist = { 0 };
             size_t hidden = hide_macro(c, def_i);
 
             subst(c, list.head, list.start, &arglist, macro_id);
+
+            #ifdef CPP_DBG
+            if (dbgmod == 1) {
+                printf("Substituion:\n");
+                dump(list.head);
+                dbgmod = cppdbg__break();
+            }
+            #endif /* CPP_DBG */
+
             expand(c, list.head, macro_id);
+
+            #ifdef CPP_DBG
+            if (dbgmod == 1) {
+                printf("Expansion:\n");
+                dump(list.head);
+                dbgmod = cppdbg__break();
+            }
+            #endif /* CPP_DBG */
 
             unhide_macro(c, def_i, hidden);
 
@@ -743,17 +764,45 @@ static TokenList expand_ident(Cuik_CPP* restrict c, TokenArray* in, TokenNode* h
                 Lexer args_lexer = { 0, (unsigned char*) args, (unsigned char*) args };
                 if (!parse_params(c, &arglist, &args_lexer)) goto done;
 
-                /*printf("FUNCTION MACRO: %.*s    %.*s\n", (int)t.content.length, t.content.data, (int)def.length, def.data);
-                for (size_t i = 0; i < arglist.value_count; i++) {
-                    printf("  ['%.*s'] = '%.*s'\n", (int) arglist.keys[i].length, arglist.keys[i].data, (int) arglist.values[i].content.length, arglist.values[i].content.data);
+                #ifdef CPP_DBG
+                int dbgmod = 0;
+                for (size_t i = 0; i < 100; i++) {
+                    if (breakpoints[i] && strncmp((const char*) t.content.data, breakpoints[i], t.content.length) == 0) {
+                        printf("Hit: %.*s\n", (int) t.content.length, t.content.data);
+                        cppdbg__arglist = &arglist;
+                        dbgmod = cppdbg__break();
+                        break;
+                    }
                 }
-                printf("\n");*/
+                #endif /* CPP_DBG */
+
+                int foo = 0;
+                if (foo) {
+                    dump(list.head);
+                }
 
                 // replace arguments and perform concats
                 subst(c, list.head, list.start, &arglist, macro_id);
 
+                #ifdef CPP_DBG
+                if (dbgmod == 1) {
+                    printf("Substituion:\n");
+                    dump(list.head);
+                    dbgmod = cppdbg__break();
+                }
+                #endif /* CPP_DBG */
+
                 size_t hidden = hide_macro(c, def_i);
                 expand(c, list.head, macro_id);
+
+                #ifdef CPP_DBG
+                if (dbgmod == 1) {
+                    printf("Expansion:\n");
+                    dump(list.head);
+                    dbgmod = cppdbg__break();
+                }
+                #endif /* CPP_DBG */
+
                 unhide_macro(c, def_i, hidden);
 
                 // attach to complete tokens list
@@ -775,6 +824,12 @@ static TokenList expand_ident(Cuik_CPP* restrict c, TokenArray* in, TokenNode* h
         }
     }
 
+    if (head == NULL) {
+        head = tls_push(sizeof(TokenNode));
+        head->next = NULL;
+        head->t = t;
+    }
+
     done:
     return (TokenList){ .head = head, .tail = end };
 }
@@ -786,9 +841,6 @@ static TokenNode* expand(Cuik_CPP* restrict c, TokenNode* restrict head, uint32_
     while (curr != NULL) {
         TokenNode* savepoint = curr;
         Token* restrict t = &curr->t;
-        if (t->type == 0 || t->hit_line) {
-            break;
-        }
 
         curr = curr->next;
         depth += (t->type == '(');
