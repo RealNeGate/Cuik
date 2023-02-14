@@ -182,6 +182,7 @@ static size_t GAD_FN(resolve_stack_usage)(Ctx* restrict ctx, TB_Function* f, siz
 static void GAD_FN(resolve_local_patches)(Ctx* restrict ctx, TB_Function* f);
 static void GAD_FN(barrier)(Ctx* restrict ctx, TB_Function* f, TB_Label bb, TB_Reg except, int split);
 static GAD_VAL GAD_FN(phi_alloc)(Ctx* restrict ctx, TB_Function* f, TB_Reg r);
+static void GAD_FN(misc_op)(Ctx* restrict ctx, TB_Function* f, TB_Reg r);
 static void GAD_FN(mem_op)(Ctx* restrict ctx, TB_Function* f, TB_Reg r);
 static void GAD_FN(call)(Ctx* restrict ctx, TB_Function* f, TB_Reg r);
 static void GAD_FN(store)(Ctx* restrict ctx, TB_Function* f, TB_Reg r);
@@ -644,6 +645,12 @@ static void GAD_FN(eval_bb)(Ctx* restrict ctx, TB_Function* f, TB_Label bb, TB_L
                 // TODO(NeGate): move barrier closer to the callsite
                 GAD_FN(barrier)(ctx, f, bb, 0, ctx->ordinal[r]);
                 GAD_FN(call)(ctx, f, r);
+                break;
+            }
+
+            case TB_DEBUGBREAK: {
+                GAD_FN(barrier)(ctx, f, bb, 0, ctx->ordinal[r]);
+                GAD_FN(misc_op)(ctx, f, r);
                 break;
             }
 

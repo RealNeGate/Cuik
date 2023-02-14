@@ -797,6 +797,19 @@ static GAD_VAL get_immediate(Ctx* restrict ctx, TB_Function* f, TB_Reg r, uint64
     }
 }
 
+static void x64v2_misc_op(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
+    TB_Node* restrict n = &f->nodes[r];
+    TB_NodeTypeEnum type = n->type;
+
+    switch (type) {
+        case TB_DEBUGBREAK:
+        EMIT1(&ctx->emit, 0xCC);
+        break;
+
+        default: tb_todo();
+    }
+}
+
 static void x64v2_mem_op(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
     TB_Node* restrict n = &f->nodes[r];
     TB_NodeTypeEnum type = n->type;
