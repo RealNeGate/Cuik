@@ -23,7 +23,6 @@ static void dump_tokens(FILE* out_file, TokenStream* s) {
     for (size_t i = 0; i < count; i++) {
         Token* t = &tokens[i];
 
-        if (t->location.raw == 0) __debugbreak();
         ResolvedSourceLoc r = cuikpp_find_location(s, t->location);
         if (last_file != r.file->filename) {
             // TODO(NeGate): Kinda shitty but i just wanna duplicate
@@ -55,8 +54,7 @@ static void dump_tokens(FILE* out_file, TokenStream* s) {
     }
 }
 
-static void test_callback(Cuik_Diagnostics* diag, void* userdata, DiagType type) {
-}
+// static void test_callback(Cuik_Diagnostics* diag, void* userdata, DiagType type) {}
 
 int main(int argc, const char** argv) {
     cuik_init();

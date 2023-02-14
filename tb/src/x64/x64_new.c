@@ -604,18 +604,35 @@ static void x64v2_store(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
         addr = val_base_disp(TB_TYPE_PTR, addr.gpr, 0);
     }
 
-    // we can't have a memory operand on both sides and the
-    // address will be a memory operand.
-    GAD_VAL new_src;
-    if (is_value_mem(src)) {
-        new_src = GAD_FN(regalloc_tmp)(ctx, f, n->dt, X64_REG_CLASS_GPR);
-        INST2(src->mem.is_rvalue ? MOV : LEA, &new_src, src, TB_TYPE_PTR);
-        src = &new_src;
-    }
+    if (n->dt.type == TB_FLOAT) {
+        uint8_t flags = legalize_float(n->dt);
 
-    LegalInt l = legalize_int(n->dt);
-    if (l.mask) x64v2_mask_out(ctx, f, l, src);
-    INST2(MOV, &addr, src, l.dt);
+        // we can't have a memory operand on both sides and the
+        // address will be a memory operand.
+        GAD_VAL new_src;
+        if (is_value_mem(src)) {
+            assert(src->mem.is_rvalue);
+
+            new_src = GAD_FN(regalloc_tmp)(ctx, f, n->dt, X64_REG_CLASS_XMM);
+            INST2SSE(FP_MOV, &new_src, src, flags);
+            src = &new_src;
+        }
+
+        INST2SSE(FP_MOV, &addr, src, flags);
+    } else {
+        // we can't have a memory operand on both sides and the
+        // address will be a memory operand.
+        GAD_VAL new_src;
+        if (is_value_mem(src)) {
+            new_src = GAD_FN(regalloc_tmp)(ctx, f, n->dt, X64_REG_CLASS_GPR);
+            INST2(src->mem.is_rvalue ? MOV : LEA, &new_src, src, TB_TYPE_PTR);
+            src = &new_src;
+        }
+
+        LegalInt l = legalize_int(n->dt);
+        if (l.mask) x64v2_mask_out(ctx, f, l, src);
+        INST2(MOV, &addr, src, l.dt);
+    }
 }
 
 static void x64v2_call(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
@@ -872,6 +889,42 @@ static Val x64v2_eval(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
             EMIT4(&ctx->emit, disp);
             return dst;
         }
+        case TB_FLOAT64_CONST: {
+            assert(n->dt.type == TB_FLOAT && n->dt.width == 0);
+            uint64_t imm = (Cvt_F64U64) { .f = n->flt64.value }.i;
+
+            GAD_VAL dst = GAD_FN(regalloc)(ctx, f, r, X64_REG_CLASS_XMM);
+            if (imm == 0) {
+                // xorps dst, dst
+                if (dst.xmm >= 8) {
+                    EMIT1(&ctx->emit, rex(true, dst.xmm, dst.xmm, 0));
+                }
+
+                EMIT1(&ctx->emit, 0x0F);
+                EMIT1(&ctx->emit, 0x57);
+                EMIT1(&ctx->emit, mod_rx_rm(MOD_DIRECT, dst.xmm, dst.xmm));
+            } else {
+                // Convert it to raw bits
+                EMIT1(&ctx->emit, 0xF2);
+                if (dst.xmm >= 8) EMIT1(&ctx->emit, 0x44);
+                EMIT1(&ctx->emit, 0x0F);
+                EMIT1(&ctx->emit, 0x10);
+                EMIT1(&ctx->emit, mod_rx_rm(MOD_INDIRECT, dst.xmm, RBP));
+                EMIT4(&ctx->emit, 0);
+
+                uint64_t* rdata_payload = tb_platform_arena_alloc(sizeof(uint64_t));
+                *rdata_payload = imm;
+
+                uint32_t pos = tb_emit_const_patch(
+                    f->super.module, f, GET_CODE_POS(&ctx->emit) - 4,
+                    rdata_payload, sizeof(uint64_t),
+                    s_local_thread_id
+                );
+                PATCH4(&ctx->emit, GET_CODE_POS(&ctx->emit) - 4, pos);
+            }
+
+            return dst;
+        }
 
         case TB_VA_START: {
             assert(f->super.module->target_abi == TB_ABI_WIN64 && "How does va_start even work on SysV?");
@@ -1043,9 +1096,55 @@ static Val x64v2_eval(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
             }
         }
 
-        case TB_LOAD: {
-            LegalInt l = legalize_int(n->dt);
+        case TB_UINT2FLOAT:
+        case TB_INT2FLOAT: {
+            TB_DataType dt = n->dt;
+            assert(dt.width == 0 && "TODO: Implement vector int2float");
+            // TB_DataType src_dt = f->nodes[n->unary.src].dt;
 
+            GAD_VAL val = GAD_FN(regalloc)(ctx, f, r, X64_REG_CLASS_XMM);
+            GAD_VAL src = x64v2_force_into_gpr(ctx, f, n->unary.src, ctx->values[n->unary.src], true);
+            // assert(src.type == VAL_MEM || src.type == VAL_GLOBAL || src.type == VAL_GPR);
+
+            if (type == TB_UINT2FLOAT && dt.data <= 32) {
+                // zero extend 32bit value to 64bit
+                INST2(MOV, &src, &src, TB_TYPE_I32);
+            }
+
+            // it's either 32bit or 64bit conversion
+            // F3       0F 2A /r      CVTSI2SS xmm1, r/m32
+            // F3 REX.W 0F 2A /r      CVTSI2SS xmm1, r/m64
+            // F2       0F 2A /r      CVTSI2SD xmm1, r/m32
+            // F2 REX.W 0F 2A /r      CVTSI2SD xmm1, r/m64
+            if (dt.width == 0) {
+                EMIT1(&ctx->emit, (dt.data == TB_FLT_64) ? 0xF2 : 0xF3);
+            } else if (dt.data == TB_FLT_64) {
+                // packed double
+                EMIT1(&ctx->emit, 0x66);
+            }
+
+            uint8_t rx = val.xmm;
+            uint8_t base, index;
+            if (src.type == VAL_MEM) {
+                base  = src.mem.base;
+                index = src.mem.index != GPR_NONE ? src.mem.index : 0;
+            } else if (src.type == VAL_GPR) {
+                base  = src.gpr;
+                index = 0;
+            } else tb_unreachable();
+
+            bool is_64bit = (dt.data > 32 || type == TB_UINT2FLOAT);
+            if (is_64bit || rx >= 8 || base >= 8 || index >= 8) {
+                EMIT1(&ctx->emit, rex(is_64bit, rx, base, index));
+            }
+
+            EMIT1(&ctx->emit, 0x0F);
+            EMIT1(&ctx->emit, 0x2A);
+            emit_memory_operand(&ctx->emit, rx, &src);
+            return val;
+        }
+
+        case TB_LOAD: {
             GAD_VAL src = ctx->values[n->load.address];
             if (!n->load.is_volatile && is_lvalue(&src)) {
                 if (GAD_FN(encompass)(ctx, f, n->load.address, r)) {
@@ -1054,22 +1153,44 @@ static Val x64v2_eval(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
                 }
             }
 
-            // convert entry into memory slot
-            GAD_VAL dst = GAD_FN(regalloc)(ctx, f, r, X64_REG_CLASS_GPR);
-            src = ctx->values[n->load.address];
+            if (n->dt.type == TB_FLOAT) {
+                uint8_t flags = legalize_float(n->dt);
 
-            if ((src.type == VAL_MEM || src.type == VAL_GLOBAL) && src.mem.is_rvalue) {
-                // restore from spill
-                INST2(MOV, &dst, &src, TB_TYPE_PTR);
+                // convert entry into memory slot
+                GAD_VAL dst = GAD_FN(regalloc)(ctx, f, r, X64_REG_CLASS_XMM);
+                src = ctx->values[n->load.address];
 
-                src = val_base_disp(TB_TYPE_PTR, dst.gpr, 0);
-            } else if (src.type == VAL_GPR) {
-                src = val_base_disp(TB_TYPE_PTR, src.gpr, 0);
+                if ((src.type == VAL_MEM || src.type == VAL_GLOBAL) && src.mem.is_rvalue) {
+                    // restore from spill
+                    INST2(MOV, &dst, &src, TB_TYPE_PTR);
+
+                    src = val_base_disp(TB_TYPE_PTR, dst.gpr, 0);
+                } else if (src.type == VAL_GPR) {
+                    src = val_base_disp(TB_TYPE_PTR, src.gpr, 0);
+                }
+
+                INST2SSE(FP_MOV, &dst, &src, flags);
+                return dst;
+            } else {
+                LegalInt l = legalize_int(n->dt);
+
+                // convert entry into memory slot
+                GAD_VAL dst = GAD_FN(regalloc)(ctx, f, r, X64_REG_CLASS_GPR);
+                src = ctx->values[n->load.address];
+
+                if ((src.type == VAL_MEM || src.type == VAL_GLOBAL) && src.mem.is_rvalue) {
+                    // restore from spill
+                    INST2(MOV, &dst, &src, TB_TYPE_PTR);
+
+                    src = val_base_disp(TB_TYPE_PTR, dst.gpr, 0);
+                } else if (src.type == VAL_GPR) {
+                    src = val_base_disp(TB_TYPE_PTR, src.gpr, 0);
+                }
+
+                if (l.mask) x64v2_mask_out(ctx, f, l, &src);
+                INST2(MOV, &dst, &src, l.dt);
+                return dst;
             }
-
-            if (l.mask) x64v2_mask_out(ctx, f, l, &src);
-            INST2(MOV, &dst, &src, l.dt);
-            return dst;
         }
 
         case TB_MEMBER_ACCESS: {
@@ -1374,7 +1495,19 @@ static Val x64v2_eval(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
 
             Cond cc = -1;
             if (TB_IS_FLOAT_TYPE(cmp_dt)) {
-                tb_todo();
+                uint8_t flags = legalize_float(cmp_dt);
+
+                GAD_VAL tmp = GAD_FN(regalloc_tmp)(ctx, f, n->dt, X64_REG_CLASS_XMM);
+                INST2SSE(FP_MOV, &tmp, &ctx->values[n->cmp.a], flags);
+                INST2SSE(FP_UCOMI, &tmp, &ctx->values[n->cmp.b], flags);
+
+                switch (type) {
+                    case TB_CMP_EQ:  cc = E; break;
+                    case TB_CMP_NE:  cc = NE; break;
+                    case TB_CMP_FLT: cc = B; break;
+                    case TB_CMP_FLE: cc = BE; break;
+                    default: tb_unreachable();
+                }
             } else {
                 cmp_dt = legalize_int(cmp_dt).dt;
 
@@ -1388,7 +1521,7 @@ static Val x64v2_eval(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
                     invert = true;
                 }
 
-                if (lhs_val.type == VAL_IMM) {
+                if (lhs_val.type == VAL_IMM || (is_value_mem(&lhs_val) && is_value_mem(&rhs_val))) {
                     // both operands are immediatees... we should've resolved this in the optimizer
                     lhs_val = x64v2_force_into_gpr(ctx, f, lhs, lhs_val, true);
                 }

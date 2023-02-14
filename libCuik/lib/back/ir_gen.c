@@ -450,6 +450,33 @@ void eval_initializer_objects(TranslationUnit* tu, TB_Function* func, TB_Initial
                     break;
                 }
 
+                case EXPR_FLOAT32:
+                if (!func) {
+                    int size = child_type->size;
+                    void* region = tb_initializer_add_region(tu->ir_mod, init, offset, size);
+
+                    #if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+                    #error "Stop this immoral bullshit please... until someone fixes this at least :p"
+                    #else
+                    float x = e->float_num;
+                    memcpy(region, &x, size);
+                    #endif
+                    break;
+                }
+
+                case EXPR_FLOAT64:
+                if (!func) {
+                    int size = child_type->size;
+                    void* region = tb_initializer_add_region(tu->ir_mod, init, offset, size);
+
+                    #if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+                    #error "Stop this immoral bullshit please... until someone fixes this at least :p"
+                    #else
+                    memcpy(region, &e->float_num, size);
+                    #endif
+                    break;
+                }
+
                 case EXPR_ADDR:
                 if (!func) {
                     void* region = tb_initializer_add_region(tu->ir_mod, init, offset, type->size);
@@ -628,6 +655,20 @@ static TB_Initializer* gen_global_initializer(TranslationUnit* tu, Cuik_Type* ty
         } else if (initial->op == EXPR_INT || initial->op == EXPR_FLOAT32 || initial->op == EXPR_FLOAT64) {
             TB_Initializer* init = tb_initializer_create(tu->ir_mod, type->size, type->align, 1);
             void* region = tb_initializer_add_region(tu->ir_mod, init, 0, type->size);
+
+            Cuik_Type* expr_type = cuik_canonical_type(initial->type);
+            Cuik_Type* cast_type = cuik_canonical_type(initial->cast_type);
+            if (initial->op == EXPR_INT && (cast_type->kind == KIND_FLOAT || cast_type->kind == KIND_DOUBLE)) {
+                initial->op = cast_type->kind == KIND_DOUBLE ? EXPR_FLOAT64 : EXPR_FLOAT32;
+
+                if (cuik_type_is_signed(expr_type)) {
+                    int64_t old = initial->int_num.num;
+                    initial->float_num = (double) old;
+                } else {
+                    uint64_t old = initial->int_num.num;
+                    initial->float_num = (double) old;
+                }
+            }
 
             if (initial->op == EXPR_INT) {
                 uint64_t value = initial->int_num.num;
