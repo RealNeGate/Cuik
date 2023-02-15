@@ -25,8 +25,12 @@ struct TB_LinkerSectionPiece {
     } kind;
 
     TB_Module* module;
+    TB_LinkerSection* parent;
+
     // vsize is the virtual size
     size_t offset, vsize, size;
+    // 1 means it's immutable
+    uint32_t flags;
     const uint8_t* data;
 };
 
@@ -110,10 +114,14 @@ typedef struct {
     TB_ObjectRelocType type;
     int addend;
 
-    TB_LinkerSymbol* source;
     // if target is NULL, check name
     TB_LinkerSymbol* target;
     TB_Slice name;
+
+    struct {
+        TB_LinkerSectionPiece* piece;
+        size_t offset;
+    } source;
 } TB_LinkerReloc;
 
 // Format-specific vtable:

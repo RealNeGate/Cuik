@@ -17,6 +17,13 @@ const static uint8_t dos_stub[] = {
     0x6d,0x6f,0x64,0x65,0x2e,0x24,0x00,0x00
 };
 
+static int symbol_cmp(const void* a, const void* b) {
+    const TB_ObjectSymbol* sym_a = (const TB_ObjectSymbol*)a;
+    const TB_ObjectSymbol* sym_b = (const TB_ObjectSymbol*)b;
+
+    return sym_a->ordinal - sym_b->ordinal;
+}
+
 void append_object(TB_Linker* l, TB_Slice obj_name, TB_ObjectFile* obj) {
     CUIK_TIMED_BLOCK("sort sections") {
         qsort(obj->sections, obj->section_count, sizeof(TB_ObjectSection), compare_sections);
@@ -27,9 +34,6 @@ void append_object(TB_Linker* l, TB_Slice obj_name, TB_ObjectFile* obj) {
     FOREACH_N(i, 0, obj->section_count) {
         TB_ObjectSection* s = &obj->sections[i];
         og_sort[s->ordinal] = s;
-
-        if (s->name.length && s->name.data[0] == '_') continue;
-        if (s->name.length >= 8) continue;
 
         // trim the dollar sign (if applies)
         FOREACH_N(j, 0, s->name.length) {
@@ -42,7 +46,19 @@ void append_object(TB_Linker* l, TB_Slice obj_name, TB_ObjectFile* obj) {
         TB_LinkerSection* ls = tb__find_or_create_section2(l, s->name.length, s->name.data, s->flags);
         TB_LinkerSectionPiece* p = tb__append_piece(ls, PIECE_NORMAL, s->raw_data.length, s->raw_data.data, NULL);
         s->user_data = p;
+        p->flags = 1;
         p->vsize = s->virtual_size;
+    }
+
+    // this is where static linkage symbols go
+    static _Thread_local TB_SymbolTable local_symtab;
+
+    local_symtab.len = 0;
+    local_symtab.exp = 10;
+    if (local_symtab.ht == NULL) {
+        local_symtab.ht = tb_platform_valloc((1u << local_symtab.exp) * sizeof(TB_LinkerSymbol));
+    } else {
+        memset(local_symtab.ht, 0, (1u << local_symtab.exp) * sizeof(TB_LinkerSymbol));
     }
 
     // Append all symbols
@@ -54,13 +70,21 @@ void append_object(TB_Linker* l, TB_Slice obj_name, TB_ObjectFile* obj) {
                 // TB_Slice sec_name = og_sort[sym->section_num - 1]->name;
                 // printf("    %.*s = %.*s:%d\n", (int) sym->name.length, sym->name.data, (int) sec_name.length, sec_name.data, sym->value);
 
+                TB_LinkerSectionPiece* p = og_sort[sym->section_num - 1]->user_data;
+                assert(p != NULL);
+
                 TB_LinkerSymbol s = {
                     .name = sym->name,
                     .tag = TB_LINKER_SYMBOL_NORMAL,
                     .object_name = obj_name,
-                    .normal = { og_sort[sym->section_num - 1]->user_data, sym->value }
+                    .normal = { p, sym->value }
                 };
-                sym->user_data = tb__append_symbol(&l->symtab, &s);
+
+                if (sym->st_class == TB_OBJECT_STORAGE_STATIC) {
+                    sym->user_data = tb__append_symbol(&l->symtab, &s);
+                } else if (sym->st_class == TB_OBJECT_STORAGE_EXTERN) {
+                    sym->user_data = tb__append_symbol(&l->symtab, &s);
+                }
             }
         }
     }
@@ -68,19 +92,53 @@ void append_object(TB_Linker* l, TB_Slice obj_name, TB_ObjectFile* obj) {
     CUIK_TIMED_BLOCK("parse relocations") {
         FOREACH_N(i, 0, obj->section_count) {
             TB_ObjectSection* restrict s = &obj->sections[i];
+            TB_LinkerSectionPiece* restrict p = s->user_data;
 
             // some relocations point to sections within the same object file, we resolve
             // their symbols early.
             FOREACH_N(j, 0, s->relocation_count) {
                 TB_ObjectReloc* restrict reloc = &s->relocations[j];
 
-                TB_ObjectSymbol* restrict src_symbol = &obj->symbols[reloc->symbol_index];
-                if (src_symbol->type == TB_OBJECT_STORAGE_STATIC || src_symbol->type == TB_OBJECT_STORAGE_EXTERN) {
-                    tb_todo();
+                // resolve address used in relocation, symbols are sorted so we can binary search
+                TB_ObjectSymbol key = { .ordinal = reloc->symbol_index };
+                TB_ObjectSymbol* restrict src_symbol = bsearch(&key, obj->symbols, obj->symbol_count, sizeof(TB_ObjectSymbol), symbol_cmp);
+
+                if (src_symbol->section_num == i) {
+                    // relocation is section-local so we can resolve it early.
+                    assert(p->kind == PIECE_NORMAL);
+
+                    // make the section data mutable to allow some relocations to be applied
+                    if (p->flags & 1) {
+                        p->flags &= ~1;
+
+                        void* new_data = tb_platform_heap_alloc(p->size);
+                        memcpy(new_data, p->data, p->size);
+                        p->data = new_data;
+                    }
+
+                    uint32_t* dst = (uint32_t*) &p->data[reloc->virtual_address];
+                    *dst += (src_symbol->value + reloc->addend) - reloc->virtual_address;
+                } else {
+                    TB_LinkerReloc r = {
+                        .type   = reloc->type,
+                        .addend = reloc->addend,
+                        .target = src_symbol->user_data,
+                        .source = {
+                            .piece = p,
+                            .offset = reloc->virtual_address
+                        }
+                    };
+
+                    if (r.target == NULL) {
+                        r.name = src_symbol->name;
+                    }
+                    dyn_array_put(l->relocations, r);
                 }
             }
         }
     }
+
+    // tb_platform_vfree(local_symtab.ht, (1u << local_symtab.exp) * sizeof(TB_LinkerSymbol));
 }
 
 static void append_library(TB_Linker* l, TB_Slice ar_file) {
@@ -305,6 +363,44 @@ void tb__apply_external_relocs(TB_Linker* l, TB_Module* m, uint8_t* output) {
                 (*dst) += (rdata_piece_rva - actual_pos);
             }
         }
+    }
+
+    dyn_array_for(i, l->relocations) {
+        TB_LinkerReloc* restrict r = &l->relocations[i];
+        TB_LinkerSection* restrict s = r->source.piece->parent;
+
+        uint32_t actual_pos = s->address + r->source.piece->offset + r->source.offset;
+        int32_t* dst = (int32_t*) &output[s->offset + r->source.piece->offset + r->source.offset];
+
+        TB_LinkerSymbol* sym = r->target;
+        if (sym == NULL) {
+            sym = tb__find_symbol(&l->symtab, r->name);
+            if (sym == NULL) continue;
+        }
+
+        uint32_t target_rva = 0;
+        switch (sym->tag) {
+            case TB_LINKER_SYMBOL_NORMAL:
+            target_rva = sym->normal.piece->parent->address + sym->normal.piece->offset + sym->normal.secrel;
+            break;
+
+            case TB_LINKER_SYMBOL_TB:
+            target_rva = sym->normal.piece->parent->address + sym->normal.piece->offset + tb__get_symbol_pos(sym->tb.sym);
+            break;
+
+            case TB_LINKER_SYMBOL_IMPORT:
+            ImportTable* table = &l->imports[sym->import.id];
+            ImportThunk t = { .name = sym->name, .ordinal = sym->import.ordinal };
+
+            dyn_array_put(table->thunks, t);
+            break;
+
+            default:
+            tb_todo();
+            break;
+        }
+
+        (*dst) += ((target_rva + r->addend) - actual_pos);
     }
 }
 
@@ -642,7 +738,9 @@ static TB_Exports export(TB_Linker* l) {
             .characteristics = s->flags,
         };
 
-        assert(s->name.length < 8);
+        // TODO(NeGate): don't truncate section names
+        if (s->name.length < 8) s->name.length = 8;
+
         memcpy(sec_header.name, s->name.data, s->name.length);
         sec_header.name[s->name.length] = 0;
 

@@ -270,6 +270,7 @@ TB_LinkerSectionPiece* tb__append_piece(TB_LinkerSection* section, int kind, siz
     TB_LinkerSectionPiece* piece = tb_platform_heap_alloc(sizeof(TB_LinkerSectionPiece));
     *piece = (TB_LinkerSectionPiece){
         .kind   = kind,
+        .parent = section,
         .offset = section->total_size,
         .size   = size,
         .vsize  = size,
@@ -363,4 +364,3 @@ TB_LinkerSymbol* tb__append_symbol(TB_SymbolTable* restrict symtab, const TB_Lin
         }
     }
 }
-
