@@ -34,10 +34,14 @@ struct TB_LinkerSectionPiece {
     const uint8_t* data;
 };
 
+typedef enum {
+    TB_LINKER_SECTION_DISCARD = 1
+} TB_LinkerSectionFlags;
+
 struct TB_LinkerSection {
     NL_Slice name;
 
-    // probably memory characteristics like EXECUTE (output format specific)
+    TB_LinkerSectionFlags generic_flags;
     uint32_t flags;
 
     size_t address; // usually a relative virtual address.
@@ -57,6 +61,15 @@ typedef enum TB_LinkerSymbolTag {
     // imported from shared object
     TB_LINKER_SYMBOL_IMPORT,
 } TB_LinkerSymbolTag;
+
+typedef struct {
+    TB_Slice name;
+    // this is the location the thunk will call
+    uint32_t ds_address;
+    // this is the ID of the thunk
+    uint32_t thunk_id;
+    uint16_t ordinal;
+} ImportThunk;
 
 // all symbols appended to the linker are converted into
 // these and used for all kinds of relocation resolution.
@@ -84,6 +97,7 @@ typedef struct TB_LinkerSymbol {
         struct {
             uint32_t id;
             uint16_t ordinal;
+            ImportThunk* thunk;
         } import;
     };
 } TB_LinkerSymbol;
@@ -93,15 +107,6 @@ typedef struct TB_SymbolTable {
     size_t exp, len;
     TB_LinkerSymbol* ht; // [1 << exp]
 } TB_SymbolTable;
-
-typedef struct {
-    TB_Slice name;
-    // this is the location the thunk will call
-    uint32_t ds_address;
-    // this is the ID of the thunk
-    uint32_t thunk_id;
-    uint16_t ordinal;
-} ImportThunk;
 
 typedef struct {
     TB_Slice libpath;
@@ -158,6 +163,8 @@ typedef struct TB_Linker {
 // TB helpers
 size_t tb__get_symbol_pos(TB_Symbol* s);
 size_t tb__layout_text_section(TB_Module* m);
+
+ImportThunk* tb__find_or_create_import(TB_Linker* l, TB_LinkerSymbol* restrict sym);
 
 // Symbol table
 TB_LinkerSymbol* tb__find_symbol(TB_SymbolTable* restrict symtab, TB_Slice name);

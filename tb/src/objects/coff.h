@@ -48,6 +48,7 @@
 #define IMAGE_REL_AMD64_SECTION  0x000A
 #define IMAGE_REL_AMD64_SECREL   0x000B
 
+#define IMAGE_SCN_LNK_REMOVE      0x00000800
 #define IMAGE_SCN_MEM_DISCARDABLE 0x02000000
 #define IMAGE_SCN_MEM_EXECUTE     0x20000000
 #define IMAGE_SCN_MEM_READ        0x40000000
@@ -253,7 +254,6 @@ typedef struct { // size 40 bytes
     uint16_t linenos_count;
     uint32_t characteristics;
 } PE_SectionHeader;
-
 
 typedef struct {
     unsigned long ptrtype     :5; // ordinal specifying pointer type (CV_ptrtype_e)

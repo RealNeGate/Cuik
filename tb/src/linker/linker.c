@@ -103,8 +103,9 @@ size_t tb__apply_section_contents(TB_Linker* l, uint8_t* output, size_t write_po
     // TODO(NeGate): we can actually parallelize this part of linking
     CUIK_TIMED_BLOCK("write sections") nl_strmap_for(i, l->sections) {
         TB_LinkerSection* s = l->sections[i];
-        assert(s->offset == write_pos);
+        if (s->generic_flags & TB_LINKER_SECTION_DISCARD) continue;
 
+        assert(s->offset == write_pos);
         for (TB_LinkerSectionPiece* p = s->first; p != NULL; p = p->next) {
             uint8_t* p_out = &output[write_pos];
             TB_Module* m = p->module;
@@ -319,6 +320,23 @@ static uint32_t murmur(const void* key, size_t len) {
     h = ((h^len) ^ ((h^len) >> 16))*0x85ebca6b;
     h = (h ^ (h >> 13))*0xc2b2ae35;
     return (h ^ (h >> 16));
+}
+
+ImportThunk* tb__find_or_create_import(TB_Linker* l, TB_LinkerSymbol* restrict sym) {
+    assert(sym->tag == TB_LINKER_SYMBOL_IMPORT);
+    TB_Slice name = sym->name;
+
+    ImportTable* table = &l->imports[sym->import.id];
+    dyn_array_for(i, table->thunks) {
+        if (table->thunks[i].name.length == name.length &&
+            memcmp(table->thunks[i].name.data, name.data, name.length) == 0) {
+            return &table->thunks[i];
+        }
+    }
+
+    ImportThunk t = { .name = name, .ordinal = sym->import.ordinal };
+    dyn_array_put(table->thunks, t);
+    return &table->thunks[dyn_array_length(table->thunks) - 1];
 }
 
 TB_LinkerSymbol* tb__find_symbol(TB_SymbolTable* restrict symtab, TB_Slice name) {

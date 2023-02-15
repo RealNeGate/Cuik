@@ -61,8 +61,13 @@ static TB_Exports export(TB_Linker* l) {
         }
     }
 
+    size_t final_section_count = 0;
+    nl_strmap_for(i, l->sections) {
+        final_section_count += (l->sections[i]->generic_flags & TB_LINKER_SECTION_DISCARD) == 0;
+    }
+
     size_t size_of_headers = sizeof(Elf64_Ehdr)
-        + (nl_strmap_get_load(l->sections) * sizeof(Elf64_Phdr));
+        + (final_section_count * sizeof(Elf64_Phdr));
 
     size_t section_content_size = 0;
     uint64_t virt_addr = size_of_headers; // align_up(size_of_headers, 4096);
@@ -110,7 +115,7 @@ static TB_Exports export(TB_Linker* l) {
         .e_ehsize = sizeof(Elf64_Ehdr),
 
         .e_phentsize = sizeof(Elf64_Phdr),
-        .e_phnum     = nl_strmap_get_load(l->sections),
+        .e_phnum     = final_section_count,
     };
 
     // text section crap

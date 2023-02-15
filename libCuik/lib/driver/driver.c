@@ -368,15 +368,16 @@ static bool export_output(Cuik_CompilerArgs* restrict args, TB_Module* mod, cons
     // TODO(NeGate): do a smarter system (just default to whatever the different platforms like)
     TB_DebugFormat debug_fmt = (args->debug_info ? TB_DEBUGFMT_CODEVIEW : TB_DEBUGFMT_NONE);
 
-    const char* output_name = args->output_name;
-    if (output_name == NULL) {
-        output_name = output_path;
-    }
+    Cuik_System sys = cuik_get_target_system(args->target);
+    bool is_windows = (sys == CUIK_SYSTEM_WINDOWS);
+
+    char output_name[FILENAME_MAX];
+    sprintf_s(
+        output_name, FILENAME_MAX, "%s%s", output_path,
+        cuik_get_target_system(args->target) == CUIK_SYSTEM_WINDOWS ? ".exe" : ""
+    );
 
     if (args->based && (args->flavor == TB_FLAVOR_SHARED || args->flavor == TB_FLAVOR_EXECUTABLE)) {
-        Cuik_System sys = cuik_get_target_system(args->target);
-        bool is_windows = (sys == CUIK_SYSTEM_WINDOWS);
-
         CUIK_TIMED_BLOCK("Export linked") {
             // TB_ExecutableType exe = tb_system_executable_format((TB_System) sys);
             TB_Linker* l = NULL;
