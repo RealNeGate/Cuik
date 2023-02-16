@@ -55,6 +55,9 @@ typedef enum TB_LinkerSymbolTag {
     // external linkage
     TB_LINKER_SYMBOL_NORMAL,
 
+    // used for windows stuff as "__ImageBase"
+    TB_LINKER_SYMBOL_IMAGEBASE,
+
     // TB defined
     TB_LINKER_SYMBOL_TB,
 
@@ -71,6 +74,10 @@ typedef struct {
     uint16_t ordinal;
 } ImportThunk;
 
+typedef enum TB_LinkerSymbolFlags {
+    TB_LINKER_SYMBOL_WEAK = 1,
+} TB_LinkerSymbolFlags;
+
 // all symbols appended to the linker are converted into
 // these and used for all kinds of relocation resolution.
 typedef struct TB_LinkerSymbol {
@@ -79,6 +86,7 @@ typedef struct TB_LinkerSymbol {
 
     // value
     TB_LinkerSymbolTag tag;
+    TB_LinkerSymbolFlags flags;
     TB_Slice object_name;
     union {
         // for normal symbols,
@@ -86,6 +94,10 @@ typedef struct TB_LinkerSymbol {
             TB_LinkerSectionPiece* piece;
             uint32_t secrel;
         } normal;
+
+        struct {
+            uint32_t rva;
+        } imagebase;
 
         // for IR module symbols
         struct {
@@ -119,6 +131,9 @@ typedef struct {
     TB_ObjectRelocType type;
     int addend;
 
+    // flags
+    bool is_weak : 1;
+
     // if target is NULL, check name
     TB_LinkerSymbol* target;
     TB_Slice name;
@@ -131,6 +146,7 @@ typedef struct {
 
 // Format-specific vtable:
 typedef struct TB_LinkerVtbl {
+    void(*init)(TB_Linker* l);
     void(*append_object)(TB_Linker* l, TB_Slice obj_name, TB_ObjectFile* obj);
     void(*append_library)(TB_Linker* l, TB_Slice ar_file);
     void(*append_module)(TB_Linker* l, TB_Module* m);

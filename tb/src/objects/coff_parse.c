@@ -5,11 +5,14 @@
 #define IMAGE_SYM_CLASS_LABEL    0x0006
 #define IMAGE_SYM_CLASS_FILE     0x0067
 
-TB_ObjectStorageClass classify_storage_class(uint16_t st_class) {
+TB_ObjectSymbolType classify_symbol_type(uint16_t st_class) {
     switch (st_class) {
-        case IMAGE_SYM_CLASS_EXTERNAL: return TB_OBJECT_STORAGE_EXTERN;
-        case IMAGE_SYM_CLASS_STATIC:   return TB_OBJECT_STORAGE_STATIC;
-        default: return TB_OBJECT_STORAGE_NULL;
+        case IMAGE_SYM_CLASS_WEAK_EXTERNAL: return TB_OBJECT_SYMBOL_WEAK_EXTERN;
+        case IMAGE_SYM_CLASS_EXTERNAL: return TB_OBJECT_SYMBOL_EXTERN;
+        case IMAGE_SYM_CLASS_STATIC:   return TB_OBJECT_SYMBOL_STATIC;
+        case IMAGE_SYM_CLASS_LABEL:    return TB_OBJECT_SYMBOL_STATIC;
+        case IMAGE_SYM_CLASS_SECTION:  return TB_OBJECT_SYMBOL_SECTION;
+        default: return TB_OBJECT_SYMBOL_UNKNOWN;
     }
 }
 
@@ -49,7 +52,7 @@ TB_ObjectFile* tb_object_parse_coff(const TB_Slice file) {
         TB_ObjectSymbol* out_sym = &obj_file->symbols[obj_file->symbol_count++];
         *out_sym = (TB_ObjectSymbol) {
             .ordinal = sym_id,
-            .st_class = classify_storage_class(sym->storage_class),
+            .type = classify_symbol_type(sym->storage_class),
             .section_num = sym->section_number,
             .value = sym->value
         };
@@ -124,7 +127,7 @@ TB_ObjectFile* tb_object_parse_coff(const TB_Slice file) {
                 }
 
                 if (src_relocs[j].Type >= IMAGE_REL_AMD64_REL32 && src_relocs[j].Type <= IMAGE_REL_AMD64_REL32_5) {
-                    dst_relocs[j].addend = src_relocs[j].Type - IMAGE_REL_AMD64_REL32;
+                    dst_relocs[j].addend = 4 + (src_relocs[j].Type - IMAGE_REL_AMD64_REL32);
                 }
 
                 dst_relocs[j].symbol_index = src_relocs[j].SymbolTableIndex;

@@ -676,22 +676,18 @@ extern "C" {
     } TB_ObjectSection;
 
     typedef enum {
-        TB_OBJECT_SYMBOL_NORMAL,
-        TB_OBJECT_SYMBOL_SECTION
+        TB_OBJECT_SYMBOL_UNKNOWN,
+        TB_OBJECT_SYMBOL_EXTERN,      // exported
+        TB_OBJECT_SYMBOL_WEAK_EXTERN, // weak
+        TB_OBJECT_SYMBOL_IMPORT,      // forward decl
+        TB_OBJECT_SYMBOL_STATIC,      // local
+        TB_OBJECT_SYMBOL_SECTION,     // local
     } TB_ObjectSymbolType;
-
-    typedef enum {
-        TB_OBJECT_STORAGE_NULL,
-
-        TB_OBJECT_STORAGE_EXTERN, // exported
-        TB_OBJECT_STORAGE_IMPORT, // forward decl
-        TB_OBJECT_STORAGE_STATIC, // local
-    } TB_ObjectStorageClass;
 
     typedef struct {
         TB_ObjectSymbolType type;
-        TB_ObjectStorageClass st_class;
         int section_num;
+
         uint32_t ordinal;
         uint32_t value;
 

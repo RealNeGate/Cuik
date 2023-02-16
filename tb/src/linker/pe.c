@@ -24,6 +24,18 @@ static int symbol_cmp(const void* a, const void* b) {
     return sym_a->ordinal - sym_b->ordinal;
 }
 
+// fuck you. *de__imp_ your names*
+static TB_Slice deimp_your_names(TB_Slice name) {
+    // convert __imp_ names into DLL compatible ones
+    size_t imp_prefix_len = sizeof("__imp_")-1;
+    if (name.length >= imp_prefix_len && memcmp(name.data, "__imp_", imp_prefix_len) == 0) {
+        name.data += imp_prefix_len;
+        name.length -= imp_prefix_len;
+    }
+
+    return name;
+}
+
 void append_object(TB_Linker* l, TB_Slice obj_name, TB_ObjectFile* obj) {
     CUIK_TIMED_BLOCK("sort sections") {
         qsort(obj->sections, obj->section_count, sizeof(TB_ObjectSection), compare_sections);
@@ -77,9 +89,12 @@ void append_object(TB_Linker* l, TB_Slice obj_name, TB_ObjectFile* obj) {
                     .normal = { p, sym->value }
                 };
 
-                if (sym->st_class == TB_OBJECT_STORAGE_STATIC) {
-                    sym->user_data = tb__append_symbol(&l->symtab, &s);
-                } else if (sym->st_class == TB_OBJECT_STORAGE_EXTERN) {
+                if (sym->type == TB_OBJECT_SYMBOL_STATIC) {
+                    TB_LinkerSymbol* new_s = tb_platform_heap_alloc(sizeof(s));
+                    *new_s = s;
+
+                    sym->user_data = new_s;
+                } else if (sym->type == TB_OBJECT_SYMBOL_EXTERN || sym->type == TB_OBJECT_SYMBOL_WEAK_EXTERN) {
                     sym->user_data = tb__append_symbol(&l->symtab, &s);
                 }
             }
@@ -114,20 +129,21 @@ void append_object(TB_Linker* l, TB_Slice obj_name, TB_ObjectFile* obj) {
                     }
 
                     uint32_t* dst = (uint32_t*) &p->data[reloc->virtual_address];
-                    *dst += (src_symbol->value + reloc->addend) - reloc->virtual_address;
+                    *dst += src_symbol->value - (reloc->virtual_address + reloc->addend);
                 } else {
                     TB_LinkerReloc r = {
-                        .type   = reloc->type,
-                        .addend = reloc->addend,
-                        .target = src_symbol->user_data,
-                        .source = {
+                        .type    = reloc->type,
+                        .addend  = reloc->addend,
+                        .is_weak = (src_symbol->type == TB_OBJECT_SYMBOL_WEAK_EXTERN),
+                        .target  = src_symbol->user_data,
+                        .source  = {
                             .piece = p,
                             .offset = reloc->virtual_address
                         }
                     };
 
                     if (r.target == NULL) {
-                        r.name = src_symbol->name;
+                        r.name = deimp_your_names(src_symbol->name);
                     }
                     dyn_array_put(l->relocations, r);
                 }
@@ -294,11 +310,10 @@ void tb__apply_external_relocs(TB_Linker* l, TB_Module* m, uint8_t* output) {
     TB_LinkerSection* data  = tb__find_section(l, ".data",  IMAGE_SCN_MEM_WRITE | IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA);
     TB_LinkerSection* rdata = tb__find_section(l, ".rdata", IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA);
 
+    uint64_t trampoline_rva = text->address + l->trampoline_pos;
     FOREACH_N(i, 0, m->max_threads) {
         uint64_t text_piece_rva = text->address + m->linker.text->offset;
         uint64_t text_piece_file = text->offset + m->linker.text->offset;
-
-        uint64_t trampoline_rva = text->address + l->trampoline_pos;
 
         uint64_t data_piece_rva = 0;
         if (m->linker.data) {
@@ -380,7 +395,11 @@ void tb__apply_external_relocs(TB_Linker* l, TB_Module* m, uint8_t* output) {
             break;
 
             case TB_LINKER_SYMBOL_IMPORT:
-            target_rva = text->address + l->trampoline_pos + sym->import.thunk->ds_address;
+            target_rva = trampoline_rva + (sym->import.thunk->thunk_id * 6);
+            break;
+
+            case TB_LINKER_SYMBOL_IMAGEBASE:
+            target_rva = sym->imagebase.rva;
             break;
 
             default:
@@ -414,7 +433,7 @@ static COFF_ImportDirectory* gen_imports(TB_Linker* l, PE_ImageDataDirectory* im
                         if (strcmp(ext->super.name, "_tls_index") == 0) {
                             continue;
                         } else {
-                            printf("tblink: unresolved external: %s\n", ext->super.name);
+                            fprintf(stderr, "tblink: unresolved external: %s\n", ext->super.name);
                             errors++;
                             continue;
                         }
@@ -433,10 +452,13 @@ static COFF_ImportDirectory* gen_imports(TB_Linker* l, PE_ImageDataDirectory* im
             TB_LinkerSymbol* sym = r->target;
             if (sym == NULL) {
                 r->target = sym = tb__find_symbol(&l->symtab, r->name);
-                if (sym == NULL) continue;
+                if (sym == NULL && !r->is_weak) {
+                    fprintf(stderr, "tblink: unresolved external: %.*s\n", (int) r->name.length, r->name.data);
+                    continue;
+                }
             }
 
-            if (sym->tag != TB_LINKER_SYMBOL_IMPORT) continue;
+            if (!sym || sym->tag != TB_LINKER_SYMBOL_IMPORT) continue;
             sym->import.thunk = tb__find_or_create_import(l, sym);
         }
     }
@@ -561,6 +583,14 @@ static COFF_ImportDirectory* gen_imports(TB_Linker* l, PE_ImageDataDirectory* im
         l->trampoline_pos = piece->offset;
     }
     return import_dirs;
+}
+
+static void init(TB_Linker* l) {
+    tb__append_symbol(&l->symtab, &(TB_LinkerSymbol){
+            .name = { sizeof("__ImageBase") - 1, (const uint8_t*) "__ImageBase" },
+            .tag = TB_LINKER_SYMBOL_IMAGEBASE,
+            .imagebase = { 0 }
+        });
 }
 
 #define WRITE(data, size) (memcpy(&output[write_pos], data, size), write_pos += (size))
@@ -763,6 +793,7 @@ static TB_Exports export(TB_Linker* l) {
 }
 
 TB_LinkerVtbl tb__linker_pe = {
+    .init           = init,
     .append_object  = append_object,
     .append_library = append_library,
     .append_module  = append_module,

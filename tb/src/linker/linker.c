@@ -27,6 +27,8 @@ TB_API TB_Linker* tb_linker_create(TB_ExecutableType exe, TB_Arch arch) {
         case TB_EXECUTABLE_ELF: l->vtbl = tb__linker_elf; break;
         default: break;
     }
+
+    l->vtbl.init(l);
     return l;
 }
 
