@@ -833,7 +833,7 @@ static void x64v2_mem_op(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
             EMIT1(&ctx->emit, mod_rx_rm(MOD_DIRECT, RAX, RAX));
             //   rep stosb
             EMIT1(&ctx->emit, 0xF3);
-            EMIT1(&ctx->emit, 0xAA);
+            EMIT1(&ctx->emit, 0xA4);
 
             set_remove(&ctx->free_regs[X64_REG_CLASS_GPR], RAX);
             set_remove(&ctx->free_regs[X64_REG_CLASS_GPR], RCX);
@@ -851,7 +851,7 @@ static void x64v2_mem_op(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
             x64v2_mov_to_explicit_gpr(ctx, f, RAX, n->mem_op.src);
             //   rep stosb
             EMIT1(&ctx->emit, 0xF3);
-            EMIT1(&ctx->emit, 0xA4);
+            EMIT1(&ctx->emit, 0xAA);
 
             set_remove(&ctx->free_regs[X64_REG_CLASS_GPR], RAX);
             set_remove(&ctx->free_regs[X64_REG_CLASS_GPR], RCX);
@@ -1102,7 +1102,7 @@ static Val x64v2_eval(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
                 GAD_VAL src = ctx->values[n->unary.src];
 
                 LegalInt l = legalize_int(n->dt);
-                INST2(MOV, &dst, &src, l.dt);
+                INST2(!is_lvalue(&src) ? MOV : LEA, &dst, &src, l.dt);
 
                 if (l.mask) x64v2_mask_out(ctx, f, l, &dst);
                 return dst;
