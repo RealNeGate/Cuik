@@ -851,7 +851,7 @@ static void x64v2_mem_op(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
             x64v2_mov_to_explicit_gpr(ctx, f, RAX, n->mem_op.src);
             //   rep stosb
             EMIT1(&ctx->emit, 0xF3);
-            EMIT1(&ctx->emit, 0xAA);
+            EMIT1(&ctx->emit, 0xA4);
 
             set_remove(&ctx->free_regs[X64_REG_CLASS_GPR], RAX);
             set_remove(&ctx->free_regs[X64_REG_CLASS_GPR], RCX);
