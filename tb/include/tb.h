@@ -656,25 +656,6 @@ extern "C" {
         size_t addend;
     } TB_ObjectReloc;
 
-    typedef struct {
-        TB_Slice name;
-        uint32_t ordinal;
-        uint32_t flags;
-
-        size_t virtual_address;
-        size_t virtual_size;
-
-        // You can have a virtual size without having a raw
-        // data size, that's how the BSS section works
-        TB_Slice raw_data;
-
-        size_t relocation_count;
-        TB_ObjectReloc* relocations;
-
-        // this is zeroed out by the loader and left for the user to do crap with
-        void* user_data;
-    } TB_ObjectSection;
-
     typedef enum {
         TB_OBJECT_SYMBOL_UNKNOWN,
         TB_OBJECT_SYMBOL_EXTERN,      // exported
@@ -693,9 +674,34 @@ extern "C" {
 
         TB_Slice name;
 
+        // for COFF, this is the auxillary
+        void* extra;
+
         // this is zeroed out by the loader and left for the user to do crap with
         void* user_data;
     } TB_ObjectSymbol;
+
+    typedef struct {
+        TB_Slice name;
+        uint32_t ordinal;
+        uint32_t flags;
+
+        // the section symbol... if applies
+        TB_ObjectSymbol* sym;
+
+        size_t virtual_address;
+        size_t virtual_size;
+
+        // You can have a virtual size without having a raw
+        // data size, that's how the BSS section works
+        TB_Slice raw_data;
+
+        size_t relocation_count;
+        TB_ObjectReloc* relocations;
+
+        // this is zeroed out by the loader and left for the user to do crap with
+        void* user_data;
+    } TB_ObjectSection;
 
     typedef enum {
         TB_OBJECT_FILE_UNKNOWN,

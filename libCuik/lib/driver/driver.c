@@ -378,6 +378,8 @@ static bool export_output(Cuik_CompilerArgs* restrict args, TB_Module* mod, cons
     );
 
     if (args->based && (args->flavor == TB_FLAVOR_SHARED || args->flavor == TB_FLAVOR_EXECUTABLE)) {
+        fprintf(stderr, "LINK %s\n", output_name);
+
         CUIK_TIMED_BLOCK("Export linked") {
             // TB_ExecutableType exe = tb_system_executable_format((TB_System) sys);
             TB_Linker* l = NULL;
@@ -436,7 +438,10 @@ static bool export_output(Cuik_CompilerArgs* restrict args, TB_Module* mod, cons
             }
 
             TB_Exports exports = tb_linker_export(l);
-            assert(exports.count == 1);
+            if (exports.count == 0) {
+                fprintf(stderr, "\x1b[31merror\x1b[0m: could not link executable\n");
+                return false;
+            }
 
             FILE* file = NULL;
             CUIK_TIMED_BLOCK("fopen") {
@@ -482,13 +487,14 @@ static bool export_output(Cuik_CompilerArgs* restrict args, TB_Module* mod, cons
             return true;
         }
 
+        fprintf(stderr, "LINK %s\n", output_path);
         CUIK_TIMED_BLOCK("linker") {
             Cuik_Linker l = gimme_linker(args, subsystem_windows);
 
             // Add Cuik object
             cuiklink_add_input_file(&l, obj_output_path);
 
-            cuiklink_invoke(&l, args, output_path);
+            cuiklink_invoke(&l, args, output_name);
             cuiklink_deinit(&l);
         }
 

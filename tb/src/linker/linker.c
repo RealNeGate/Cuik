@@ -76,6 +76,21 @@ size_t tb__layout_text_section(TB_Module* m) {
     return size;
 }
 
+uint64_t tb__get_symbol_rva(TB_Linker* l, TB_LinkerSymbol* sym) {
+    switch (sym->tag) {
+        case TB_LINKER_SYMBOL_NORMAL:
+        return sym->normal.piece->parent->address + sym->normal.piece->offset + sym->normal.secrel;
+
+        case TB_LINKER_SYMBOL_TB:
+        return sym->normal.piece->parent->address + sym->normal.piece->offset + tb__get_symbol_pos(sym->tb.sym);
+
+        case TB_LINKER_SYMBOL_IMAGEBASE:
+        return sym->imagebase.rva;
+
+        default: tb_todo(); return 0;
+    }
+}
+
 uint64_t tb__compute_rva(TB_Linker* l, TB_Module* m, const TB_Symbol* s) {
     if (s->tag == TB_SYMBOL_FUNCTION) {
         ptrdiff_t search = nl_strmap_get_cstr(l->sections, ".text");
@@ -84,6 +99,12 @@ uint64_t tb__compute_rva(TB_Linker* l, TB_Module* m, const TB_Symbol* s) {
         TB_Function* f = (TB_Function*) s;
         assert(f->output != NULL);
         return text->address + m->linker.text->offset + f->output->code_pos;
+    } else if (s->tag == TB_SYMBOL_GLOBAL) {
+        ptrdiff_t search = nl_strmap_get_cstr(l->sections, ".data");
+        TB_LinkerSection* data = (search >= 0 ? l->sections[search] : NULL);
+
+        TB_Global* g = (TB_Global*) s;
+        return data->address + m->linker.data->offset + g->pos;
     }
 
     tb_todo();
@@ -100,6 +121,29 @@ size_t tb__pad_file(uint8_t* output, size_t write_pos, char pad, size_t align) {
     return write_pos;
 }
 
+void tb__merge_sections(TB_Linker* linker, TB_LinkerSection* from, TB_LinkerSection* to) {
+    if (from == NULL || to == NULL) return;
+
+    // remove 'from' from final output
+    from->generic_flags |= TB_LINKER_SECTION_DISCARD;
+
+    if (to->last) to->last->next = from->first;
+    else to->first = from->first;
+    to->last = from->last;
+
+    if (from->last) {
+        size_t offset = to->total_size;
+
+        for (TB_LinkerSectionPiece* p = from->first; p != NULL; p = p->next) {
+            p->offset = offset;
+            offset += p->size;
+        }
+
+        to->total_size += from->total_size;
+        assert(offset == to->total_size);
+    }
+}
+
 size_t tb__apply_section_contents(TB_Linker* l, uint8_t* output, size_t write_pos, TB_LinkerSection* text, TB_LinkerSection* data, TB_LinkerSection* rdata, size_t section_alignment) {
     // write section contents
     // TODO(NeGate): we can actually parallelize this part of linking
@@ -114,6 +158,8 @@ size_t tb__apply_section_contents(TB_Linker* l, uint8_t* output, size_t write_po
 
             switch (p->kind) {
                 case PIECE_NORMAL: {
+                    if (p->data == NULL) goto skip;
+
                     memcpy(p_out, p->data, p->size);
                     break;
                 }
@@ -181,10 +227,11 @@ size_t tb__apply_section_contents(TB_Linker* l, uint8_t* output, size_t write_po
                     break;
                 }
                 case PIECE_RELOC: {
+                    // TODO(NeGate): currently windows only
                     uint32_t data_rva  = data->address + m->linker.data->offset;
                     uint32_t data_file = data->offset  + m->linker.data->offset;
 
-                    uint32_t last_page = 0;
+                    uint32_t last_page = 0xFFFFFFFF;
                     uint32_t* last_block = NULL;
                     TB_FOR_GLOBALS(g, m) {
                         TB_Initializer* init = g->init;
@@ -224,6 +271,7 @@ size_t tb__apply_section_contents(TB_Linker* l, uint8_t* output, size_t write_po
             }
 
             write_pos += p->size;
+            skip:;
         }
 
         write_pos = tb__pad_file(output, write_pos, 0x00, section_alignment);
@@ -383,4 +431,25 @@ TB_LinkerSymbol* tb__append_symbol(TB_SymbolTable* restrict symtab, const TB_Lin
             return &symtab->ht[i];
         }
     }
+}
+
+TB_UnresolvedSymbol* tb__unresolved_symbol(TB_Linker* l, TB_Slice name) {
+    TB_UnresolvedSymbol* d = tb_platform_heap_alloc(sizeof(TB_UnresolvedSymbol));
+    *d = (TB_UnresolvedSymbol){ .name = name };
+
+    // mtx_lock(&parser->diag_mutex);
+    NL_Slice name2 = { name.length, name.data };
+    ptrdiff_t search = nl_strmap_get(l->unresolved_symbols, name2);
+    if (search < 0) {
+        search = nl_strmap_puti(l->unresolved_symbols, name2);
+        l->unresolved_symbols[search] = d;
+    } else {
+        TB_UnresolvedSymbol* old = l->unresolved_symbols[search];
+        while (old->next != NULL) old = old->next;
+
+        old->next = d;
+    }
+    // mtx_unlock(&parser->diag_mutex);
+
+    return d;
 }

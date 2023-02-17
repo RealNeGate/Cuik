@@ -41,43 +41,6 @@ TB_ObjectFile* tb_object_parse_coff(const TB_Slice file) {
         .data   = &file.data[string_table_pos]
     };
 
-    obj_file->symbols = tb_platform_heap_alloc(header->symbol_count * sizeof(TB_ObjectSymbol));
-    obj_file->symbol_count = 0;
-
-    size_t sym_id = 0;
-    while (sym_id < header->symbol_count) {
-        size_t symbol_offset = header->symbol_table + (sym_id * sizeof(COFF_Symbol));
-        COFF_Symbol* sym = (COFF_Symbol*) &file.data[symbol_offset];
-
-        TB_ObjectSymbol* out_sym = &obj_file->symbols[obj_file->symbol_count++];
-        *out_sym = (TB_ObjectSymbol) {
-            .ordinal = sym_id,
-            .type = classify_symbol_type(sym->storage_class),
-            .section_num = sym->section_number,
-            .value = sym->value
-        };
-
-        // Parse string table name stuff
-        if (sym->long_name[0] == 0) {
-            // string table access (read a cstring)
-            // TODO(NeGate): bounds check this
-            const uint8_t* data = &string_table.data[sym->long_name[1]];
-            out_sym->name = (TB_Slice){ strlen((const char*) data), data };
-        } else {
-            // normal inplace string
-            size_t len = strlen((const char*) sym->short_name);
-            out_sym->name = (TB_Slice){ len, sym->short_name };
-        }
-
-        // TODO(NeGate): Process aux symbols
-        // FOREACH_N(j, 0, sym->aux_symbols_count) {}
-
-        sym_id += sym->aux_symbols_count + 1;
-    }
-
-    // trim the symbol table
-    obj_file->symbols = tb_platform_heap_realloc(obj_file->symbols, obj_file->symbol_count * sizeof(TB_ObjectSymbol));
-
     obj_file->section_count = header->section_count;
     FOREACH_N(i, 0, header->section_count) {
         // TODO(NeGate): bounds check this
@@ -147,6 +110,50 @@ TB_ObjectFile* tb_object_parse_coff(const TB_Slice file) {
             out_sec->raw_data = (TB_Slice){ sec->raw_data_size, &file.data[sec->raw_data_pos] };
         }
     }
+
+    obj_file->symbols = tb_platform_heap_alloc(header->symbol_count * sizeof(TB_ObjectSymbol));
+    obj_file->symbol_count = 0;
+
+    size_t sym_id = 0;
+    while (sym_id < header->symbol_count) {
+        size_t symbol_offset = header->symbol_table + (sym_id * sizeof(COFF_Symbol));
+        COFF_Symbol* sym = (COFF_Symbol*) &file.data[symbol_offset];
+
+        TB_ObjectSymbol* out_sym = &obj_file->symbols[obj_file->symbol_count++];
+        *out_sym = (TB_ObjectSymbol) {
+            .ordinal = sym_id,
+            .type = classify_symbol_type(sym->storage_class),
+            .section_num = sym->section_number,
+            .value = sym->value
+        };
+
+        if (sym->storage_class == IMAGE_SYM_CLASS_SECTION && sym->section_number > 0) {
+            obj_file->sections[sym->section_number - 1].sym = out_sym;
+        }
+
+        // Parse string table name stuff
+        if (sym->long_name[0] == 0) {
+            // string table access (read a cstring)
+            // TODO(NeGate): bounds check this
+            const uint8_t* data = &string_table.data[sym->long_name[1]];
+            out_sym->name = (TB_Slice){ strlen((const char*) data), data };
+        } else {
+            // normal inplace string
+            size_t len = strlen((const char*) sym->short_name);
+            out_sym->name = (TB_Slice){ len, sym->short_name };
+        }
+
+        // TODO(NeGate): Process aux symbols
+        if (sym->aux_symbols_count) {
+            out_sym->extra = &sym[1];
+        }
+        // FOREACH_N(j, 0, sym->aux_symbols_count) {}
+
+        sym_id += sym->aux_symbols_count + 1;
+    }
+
+    // trim the symbol table
+    obj_file->symbols = tb_platform_heap_realloc(obj_file->symbols, obj_file->symbol_count * sizeof(TB_ObjectSymbol));
 
     return obj_file;
 }

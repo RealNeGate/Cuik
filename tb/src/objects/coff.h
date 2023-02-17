@@ -51,6 +51,7 @@
 #define IMAGE_REL_AMD64_SECREL   0x000B
 
 #define IMAGE_SCN_LNK_REMOVE      0x00000800
+#define IMAGE_SCN_LNK_COMDAT      0x00001000
 #define IMAGE_SCN_MEM_DISCARDABLE 0x02000000
 #define IMAGE_SCN_MEM_EXECUTE     0x20000000
 #define IMAGE_SCN_MEM_READ        0x40000000
@@ -209,6 +210,15 @@ typedef struct {
     uint32_t virtual_address;
     uint32_t size;
 } PE_ImageDataDirectory;
+
+typedef struct {
+    uint64_t raw_data_start;
+    uint64_t raw_data_end;
+    uint64_t index_address;
+    uint64_t callback_address;
+    uint32_t zero_fill_size;
+    uint32_t flags;
+} PE_TLSDirectory;
 
 #define IMAGE_NUMBEROF_DIRECTORY_ENTRIES 16
 typedef struct {

@@ -21,7 +21,9 @@ struct TB_LinkerSectionPiece {
         // Write the TB module's pdata section
         PIECE_PDATA,
         // Write the TB module's reloc section
-        PIECE_RELOC
+        PIECE_RELOC,
+        // Write the object file's reloc section
+        PIECE_RELOC2
     } kind;
 
     TB_Module* module;
@@ -35,7 +37,8 @@ struct TB_LinkerSectionPiece {
 };
 
 typedef enum {
-    TB_LINKER_SECTION_DISCARD = 1
+    TB_LINKER_SECTION_DISCARD = 1,
+    TB_LINKER_SECTION_COMDAT = 2,
 } TB_LinkerSectionFlags;
 
 struct TB_LinkerSection {
@@ -132,7 +135,8 @@ typedef struct {
     int addend;
 
     // flags
-    bool is_weak : 1;
+    bool is_thunk : 1;
+    bool is_weak  : 1;
 
     // if target is NULL, check name
     TB_LinkerSymbol* target;
@@ -142,6 +146,8 @@ typedef struct {
         TB_LinkerSectionPiece* piece;
         size_t offset;
     } source;
+
+    TB_Slice obj_name;
 } TB_LinkerReloc;
 
 // Format-specific vtable:
@@ -152,6 +158,16 @@ typedef struct TB_LinkerVtbl {
     void(*append_module)(TB_Linker* l, TB_Module* m);
     TB_Exports(*export)(TB_Linker* l);
 } TB_LinkerVtbl;
+
+typedef struct TB_UnresolvedSymbol TB_UnresolvedSymbol;
+struct TB_UnresolvedSymbol {
+    TB_UnresolvedSymbol* next;
+
+    TB_Slice name;
+    // if ext == NULL then use reloc
+    TB_External* ext;
+    TB_LinkerReloc* reloc;
+};
 
 typedef struct TB_Linker {
     TB_Arch target_arch;
@@ -167,14 +183,21 @@ typedef struct TB_Linker {
     size_t trampoline_pos;  // relative to the .text section
     TB_Emitter trampolines; // these are for calling imported functions
 
+    NL_Strmap(TB_UnresolvedSymbol*) unresolved_symbols;
+
     // Windows specific:
     //   on windows, we use DLLs to interact with the OS so
     //   there needs to be a way to load these immediately,
     //   imports do just that.
+    TB_LinkerSymbol* tls_index_sym;
+    uint32_t iat_pos;
     DynArray(ImportTable) imports;
 
     TB_LinkerVtbl vtbl;
 } TB_Linker;
+
+// Error handling
+TB_UnresolvedSymbol* tb__unresolved_symbol(TB_Linker* l, TB_Slice name);
 
 // TB helpers
 size_t tb__get_symbol_pos(TB_Symbol* s);
@@ -186,8 +209,11 @@ ImportThunk* tb__find_or_create_import(TB_Linker* l, TB_LinkerSymbol* restrict s
 TB_LinkerSymbol* tb__find_symbol(TB_SymbolTable* restrict symtab, TB_Slice name);
 TB_LinkerSymbol* tb__append_symbol(TB_SymbolTable* restrict symtab, const TB_LinkerSymbol* sym);
 uint64_t tb__compute_rva(TB_Linker* l, TB_Module* m, const TB_Symbol* s);
+uint64_t tb__get_symbol_rva(TB_Linker* l, TB_LinkerSymbol* sym);
 
 // Section management
+void tb__merge_sections(TB_Linker* linker, TB_LinkerSection* from, TB_LinkerSection* to);
+
 TB_LinkerSection* tb__find_section(TB_Linker* linker, const char* name, uint32_t flags);
 TB_LinkerSection* tb__find_or_create_section(TB_Linker* linker, const char* name, uint32_t flags);
 TB_LinkerSection* tb__find_or_create_section2(TB_Linker* linker, size_t name_len, const uint8_t* name_str, uint32_t flags);

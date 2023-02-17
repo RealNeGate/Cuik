@@ -639,7 +639,7 @@ Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict 
                 diag_writer_highlight(&d, loc->loc);
             }
             diag_writer_done(&d);
-            printf("\n");
+            fprintf(stderr, "\n");
         }
     }
     nl_strmap_free(parser.unresolved_symbols);

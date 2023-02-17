@@ -29,7 +29,6 @@ static LoadResult get_file(const char* path) {
 
     LARGE_INTEGER file_size;
     if (!GetFileSizeEx(file, &file_size)) {
-        // must be a file stream
         fprintf(stderr, "error: could not check file size of '%s'!\n", path);
         return (LoadResult){ .found = false };
     }
