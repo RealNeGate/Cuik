@@ -292,10 +292,10 @@ void cuikpp_free(Cuik_CPP* ctx) {
         cuikpp_finalize(ctx);
     }
 
+    ctx->the_shtuffs = NULL;
+
     cuik__vfree((void*) ctx->the_shtuffs, THE_SHTUFFS_SIZE);
     cuik_free(ctx);
-
-    ctx->the_shtuffs = NULL;
 }
 
 // we can infer the column and line from doing a binary search on the TokenStream's line map
