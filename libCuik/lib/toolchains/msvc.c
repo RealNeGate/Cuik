@@ -563,13 +563,8 @@ static bool invoke_link(void* ctx, const Cuik_CompilerArgs* args, Cuik_Linker* l
 
     PROCESS_INFORMATION pi = { 0 };
     if (!CreateProcessW(NULL, cmd_line, NULL, NULL, TRUE, 0, NULL, NULL, &si, &pi)) {
-        WaitForSingleObject(pi.hProcess, INFINITE);
-        CloseHandle(pi.hProcess);
-        CloseHandle(pi.hThread);
-
-        printf("Linker command:\n%S\n", cmd_line);
         fprintf(stderr, "Linker command could not be executed.\n");
-        return false;
+        goto error;
     }
 
     // Wait until child process exits.
@@ -589,6 +584,7 @@ static bool invoke_link(void* ctx, const Cuik_CompilerArgs* args, Cuik_Linker* l
     // Close process and thread handles.
     CloseHandle(pi.hProcess);
     CloseHandle(pi.hThread);
+    return true;
 
     error:
     // fprintf(stderr, "Linker command:\n%S\n", cmd_line);

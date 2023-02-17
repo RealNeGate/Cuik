@@ -83,16 +83,3 @@ struct Cuik_CPP {
         bool value;
     } scope_eval[CPP_MAX_SCOPE_DEPTH];
 };
-
-struct CompilationUnit {
-    // avoid exposing the mtx_t since it's messy
-    void* lock;
-    size_t count;
-
-    // NL_Strmap but like without the macro wrapping
-    Stmt** export_table;
-
-    // linked list of all TUs referenced
-    TranslationUnit* head;
-    TranslationUnit* tail;
-};

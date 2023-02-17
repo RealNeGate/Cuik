@@ -136,7 +136,7 @@ void append_object(TB_Linker* l, TB_Slice obj_name, TB_ObjectFile* obj) {
                 TB_ObjectSymbol key = { .ordinal = reloc->symbol_index };
                 TB_ObjectSymbol* restrict src_symbol = bsearch(&key, obj->symbols, obj->symbol_count, sizeof(TB_ObjectSymbol), symbol_cmp);
 
-                if (r->type == TB_OBJECT_RELOC_ADDR64) {
+                if (reloc->type == TB_OBJECT_RELOC_ADDR64) {
 
                 } else if (src_symbol->section_num == i) {
                     // relocation is section-local so we can resolve it early.

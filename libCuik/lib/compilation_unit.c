@@ -1,22 +1,24 @@
-#include "compilation_unit.h"
-#include "targets/targets.h"
+#include <common.h>
+#include <cuik.h>
+#include <threads.h>
+#include <front/parser.h>
 #include <futex.h>
 
-void cuik_create_compilation_unit(CompilationUnit* restrict cu) {
-    *cu = (CompilationUnit){0};
-    cu->lock = cuik_malloc(sizeof(mtx_t));
-    mtx_init((mtx_t*) cu->lock, mtx_plain);
+CUIK_API CompilationUnit* cuik_create_compilation_unit(void) {
+    CompilationUnit* cu = cuik_calloc(1, sizeof(CompilationUnit));
+    mtx_init(&cu->lock, mtx_plain);
+    return cu;
 }
 
-void cuik_lock_compilation_unit(CompilationUnit* restrict cu) {
-    mtx_lock((mtx_t*) cu->lock);
+CUIK_API void cuik_lock_compilation_unit(CompilationUnit* restrict cu) {
+    mtx_lock(&cu->lock);
 }
 
-void cuik_unlock_compilation_unit(CompilationUnit* restrict cu) {
-    mtx_unlock((mtx_t*) cu->lock);
+CUIK_API void cuik_unlock_compilation_unit(CompilationUnit* restrict cu) {
+    mtx_unlock(&cu->lock);
 }
 
-void cuik_add_to_compilation_unit(CompilationUnit* restrict cu, TranslationUnit* restrict tu) {
+CUIK_API void cuik_add_to_compilation_unit(CompilationUnit* restrict cu, TranslationUnit* restrict tu) {
     assert(tu->next == NULL && "somehow the TU is already attached to something...");
     cuik_lock_compilation_unit(cu);
 
@@ -30,25 +32,26 @@ void cuik_add_to_compilation_unit(CompilationUnit* restrict cu, TranslationUnit*
     cuik_unlock_compilation_unit(cu);
 }
 
-void cuik_destroy_compilation_unit(CompilationUnit* restrict cu) {
-    // walk all the TUs and free them (if they're not freed already)
-    TranslationUnit* tu = cu->head;
-    while (tu != NULL) {
-        TranslationUnit* next = tu->next;
-        cuik_destroy_translation_unit(tu);
-        tu = next;
-    }
+CUIK_API void cuik_destroy_compilation_unit(CompilationUnit* restrict cu) {
+    if (cu) {
+        // walk all the TUs and free them (if they're not freed already)
+        TranslationUnit* tu = cu->head;
+        while (tu != NULL) {
+            TranslationUnit* next = tu->next;
+            cuik_destroy_translation_unit(tu);
+            tu = next;
+        }
 
-    mtx_destroy((mtx_t*) cu->lock);
-    cuik_free(cu->lock);
-    *cu = (CompilationUnit){0};
+        mtx_destroy(&cu->lock);
+        *cu = (CompilationUnit){0};
+    }
 }
 
-size_t cuik_num_of_translation_units_in_compilation_unit(CompilationUnit* restrict cu) {
+CUIK_API size_t cuik_num_of_translation_units_in_compilation_unit(CompilationUnit* restrict cu) {
     return cu->count;
 }
 
-void cuik_internal_link_compilation_unit(CompilationUnit* restrict cu, Cuik_IThreadpool* restrict thread_pool, int debug_info_level) {
+CUIK_API void cuik_internal_link_compilation_unit(CompilationUnit* restrict cu, Cuik_IThreadpool* restrict thread_pool, int debug_info_level) {
     CUIK_TIMED_BLOCK("internal link") {
         FOR_EACH_TU(tu, cu) {
             size_t count = dyn_array_length(tu->top_level_stmts);

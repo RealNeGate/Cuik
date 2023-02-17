@@ -141,7 +141,9 @@ static uint16_t convert_to_codeview_type(CV_Builder* builder, TB_DebugType* type
 }
 
 static TB_Slice gimme_cstr_as_slice(const char* str) {
-    return (TB_Slice){ strlen(str), (uint8_t*) strdup(str) };
+    TB_Slice s = { strlen(str) };
+    s.data = memcpy(tb_platform_heap_alloc(s.length), str, s.length);
+    return s;
 }
 
 static void add_reloc(TB_ObjectSection* section, const TB_ObjectReloc* reloc) {

@@ -92,7 +92,7 @@ CUIK_API void cuik_free_thread_resources(void);
 // to read them
 CUIK_API TranslationUnit* cuik_next_translation_unit(TranslationUnit* restrict tu);
 
-CUIK_API void cuik_create_compilation_unit(CompilationUnit* restrict cu);
+CUIK_API CompilationUnit* cuik_create_compilation_unit(void);
 CUIK_API void cuik_lock_compilation_unit(CompilationUnit* restrict cu);
 CUIK_API void cuik_unlock_compilation_unit(CompilationUnit* restrict cu);
 CUIK_API void cuik_add_to_compilation_unit(CompilationUnit* restrict cu, TranslationUnit* restrict tu);

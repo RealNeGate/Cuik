@@ -13,50 +13,11 @@
 #include "spall_perf.h"
 #include "live.h"
 
-static void dump_tokens(FILE* out_file, TokenStream* s) {
-    const char* last_file = NULL;
-    int last_line = 0;
-
-    Token* tokens = cuikpp_get_tokens(s);
-    size_t count = cuikpp_get_token_count(s);
-
-    for (size_t i = 0; i < count; i++) {
-        Token* t = &tokens[i];
-
-        ResolvedSourceLoc r = cuikpp_find_location(s, t->location);
-        if (last_file != r.file->filename) {
-            // TODO(NeGate): Kinda shitty but i just wanna duplicate
-            // the backslashes to avoid them being treated as an escape
-            const char* in = (const char*) r.file->filename;
-            char str[FILENAME_MAX], *out = str;
-
-            while (*in) {
-                if (*in == '\\') {
-                    *out++ = '\\';
-                    *out++ = '\\';
-                    in++;
-                } else {
-                    *out++ = *in++;
-                }
-            }
-            *out++ = '\0';
-
-            fprintf(out_file, "\n#line %d \"%s\"\t", r.line, str);
-            last_file = r.file->filename;
-        }
-
-        if (last_line != r.line) {
-            fprintf(out_file, "\n/* line %3d */\t", r.line);
-            last_line = r.line;
-        }
-
-        fprintf(out_file, "%.*s ", (int) t->content.length, t->content.data);
-    }
-}
-
-// static void test_callback(Cuik_Diagnostics* diag, void* userdata, DiagType type) {}
+// #define STB_LEAKCHECK_IMPLEMENTATION
+// #include <stb_leakcheck.h>
 
 int main(int argc, const char** argv) {
+    // setlocale(LC_ALL, ".UTF8");
     cuik_init();
 
     #ifdef CUIK_USE_SPALL_AUTO
@@ -69,8 +30,6 @@ int main(int argc, const char** argv) {
         .target = cuik_target_host(),
         .toolchain = cuik_toolchain_host(),
         .flavor = TB_FLAVOR_EXECUTABLE,
-
-        // .diag_callback = test_callback,
     };
     cuik_parse_args(&args, argc - 1, argv + 1);
 
@@ -80,62 +39,6 @@ int main(int argc, const char** argv) {
         status = EXIT_FAILURE;
         goto done;
     }
-
-    if (args.time) {
-        char* perf_output_path = malloc(FILENAME_MAX);
-        cuik_driver_get_output_name(&args, FILENAME_MAX, perf_output_path);
-        strncat(perf_output_path, ".spall", FILENAME_MAX);
-
-        cuikperf_start(perf_output_path, &spall_profiler, false);
-    }
-
-    // spin up worker threads
-    Cuik_IThreadpool *tp = NULL, __tp;
-    #if CUIK_ALLOW_THREADS
-    if (args.threads > 1) {
-        if (args.verbose) printf("Starting with %d threads...\n", args.threads);
-
-        __tp = threadpool_create_class(args.threads - 1, 4096);
-        tp = &__tp;
-    }
-    #endif
-
-    if (args.preprocess) {
-        // preproc only
-        Cuik_CPP* cpp = cuik_driver_preprocess(args.sources[0], &args, true);
-
-        if (cpp) {
-            cuikdg_dump_to_file(cuikpp_get_token_stream(cpp), stderr);
-
-            dump_tokens(stdout, cuikpp_get_token_stream(cpp));
-            cuikpp_free(cpp);
-            return EXIT_SUCCESS;
-        } else {
-            return EXIT_FAILURE;
-        }
-    }
-
-    if (args.live) {
-        LiveCompiler l;
-        do {
-            printf("\x1b[2J");
-            printf("OUTPUT OF %s:\n", args.sources[0]);
-
-            cuik_driver_compile(tp, &args, true);
-        } while (live_compile_watch(&l, &args));
-    } else {
-        uint64_t start_time = args.verbose ? cuik_time_in_nanos() : 0;
-        status = cuik_driver_compile(tp, &args, true);
-
-        if (args.verbose) {
-            uint64_t now = cuik_time_in_nanos();
-            printf("\n\nCUIK: %f ms\n", (now - start_time) / 1000000.0);
-        }
-    }
-
-    #if CUIK_ALLOW_THREADS
-    threadpool_destroy_class(tp);
-    #endif
 
     if (args.think) {
         uint64_t t1 = cuik_time_in_nanos();
@@ -167,12 +70,60 @@ int main(int argc, const char** argv) {
         printf("\n");
     }
 
+    if (args.time) {
+        char* perf_output_path = cuik_malloc(FILENAME_MAX);
+        cuik_driver_get_output_name(&args, FILENAME_MAX, perf_output_path);
+        strncat(perf_output_path, ".spall", FILENAME_MAX);
+
+        cuikperf_start(perf_output_path, &spall_profiler, false);
+        cuik_free(perf_output_path);
+    }
+
+    // spin up worker threads
+    Cuik_IThreadpool *tp = NULL, __tp;
+    #if CUIK_ALLOW_THREADS
+    if (args.threads > 1) {
+        if (args.verbose) printf("Starting with %d threads...\n", args.threads);
+
+        __tp = threadpool_create_class(args.threads - 1, 4096);
+        tp = &__tp;
+    }
+    #endif
+
+    if (args.live) {
+        LiveCompiler l;
+        do {
+            printf("\x1b[2J");
+            printf("OUTPUT OF %s:\n", args.sources[0]);
+
+            cuik_destroy_compilation_unit(cuik_driver_compile(tp, &args, true));
+        } while (live_compile_watch(&l, &args));
+    } else {
+        uint64_t start_time = args.verbose ? cuik_time_in_nanos() : 0;
+
+        CompilationUnit* cu = cuik_driver_compile(tp, &args, true);
+        status = (cu ? 0 : 1);
+        cuik_destroy_compilation_unit(cu);
+
+        if (args.verbose) {
+            uint64_t now = cuik_time_in_nanos();
+            printf("\n\nCUIK: %f ms\n", (now - start_time) / 1000000.0);
+        }
+    }
+
+    #if CUIK_ALLOW_THREADS
+    threadpool_destroy_class(tp);
+    #endif
+
     if (args.time) cuikperf_stop();
+    cuik_free_args(&args);
 
     done:
     #ifdef CUIK_USE_SPALL_AUTO
     spall_auto_thread_quit();
     spall_auto_quit();
     #endif
+
+    // stb_leakcheck_dumpmem();
     return status;
 }

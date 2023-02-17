@@ -10,9 +10,6 @@
 #define REPORT_EXPR(lvl, e, ...) report_ranged(REPORT_##lvl, &tu->tokens, (e)->loc.start, (e)->loc.end, __VA_ARGS__)
 #define REPORT_STMT(lvl, s, ...) report_ranged(REPORT_##lvl, &tu->tokens, (s)->loc.start, (s)->loc.end, __VA_ARGS__)
 
-extern mtx_t report_mutex;
-extern bool report_using_thin_errors;
-
 typedef struct DiagFixit {
     SourceRange loc;
     int offset;
@@ -34,6 +31,7 @@ struct Cuik_Diagnostics {
     Cuik_DiagCallback callback;
     void* userdata;
 
+    mtx_t lock;
     Arena buffer;
 
     // We write the text output to a buffer such that we
@@ -52,7 +50,6 @@ typedef enum Cuik_ReportLevel {
     REPORT_MAX
 } Cuik_ReportLevel;
 
-void cuikdg_init(void);
 int cuikdg_error_count(TokenStream* s);
 void cuikdg_tally_error(TokenStream* s);
 

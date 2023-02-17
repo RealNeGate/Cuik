@@ -158,6 +158,17 @@ struct TranslationUnit {
     Cuik_GlobalSymbols globals;
 };
 
+struct CompilationUnit {
+    mtx_t lock;
+    size_t count;
+
+    NL_Strmap(Stmt*) export_table;
+
+    // linked list of all TUs referenced
+    TranslationUnit* head;
+    TranslationUnit* tail;
+};
+
 extern Cuik_Type cuik__builtin_void;
 extern Cuik_Type cuik__builtin_bool;
 extern Cuik_Type cuik__builtin_float;

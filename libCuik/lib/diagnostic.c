@@ -24,9 +24,6 @@ static const char* report_names[] = {
     "\x1b[31merror\x1b[0m",
 };
 
-mtx_t report_mutex;
-bool report_using_thin_errors = false;
-
 // From types.c, we should factor this out into a public cuik function
 size_t type_as_string(size_t max_len, char* buffer, Cuik_Type* type);
 
@@ -111,38 +108,22 @@ static int sprintfcb(Cuik_Diagnostics* d, char const *fmt, ...) {
 #define SET_COLOR_GREEN printf("\x1b[32m")
 #define SET_COLOR_WHITE printf("\x1b[37m")
 
-void cuikdg_init(void) {
-    // setvbuf(stdout, NULL, _IONBF, 0);
-    // setvbuf(stderr, NULL, _IONBF, 0);
-    setlocale(LC_ALL, ".UTF8");
-
-    #if _WIN32
-    // Enable ANSI/VT sequences on windows
-    HANDLE output_handle = GetStdHandle(STD_OUTPUT_HANDLE);
-    if (output_handle != INVALID_HANDLE_VALUE) {
-        DWORD old_mode;
-        if (GetConsoleMode(output_handle, &old_mode)) {
-            SetConsoleMode(output_handle, old_mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
-        }
-    }
-    #endif
-
-    mtx_init(&report_mutex, mtx_plain | mtx_recursive);
-}
-
 Cuik_Diagnostics* cuikdg_make(Cuik_DiagCallback callback, void* userdata) {
     Cuik_Diagnostics* d = cuik_calloc(1, sizeof(Cuik_Diagnostics));
     d->callback = callback;
     d->userdata = userdata;
+    mtx_init(&d->lock, mtx_plain);
     return d;
+}
+
+void cuikdg_free(Cuik_Diagnostics* diag) {
+    mtx_destroy(&diag->lock);
+    arena_free(&diag->buffer);
+    cuik_free(diag);
 }
 
 Cuik_Parser* cuikdg_get_parser(Cuik_Diagnostics* diag) {
     return diag->parser;
-}
-
-void cuikdg_free(Cuik_Diagnostics* diag) {
-    cuik_free(diag);
 }
 
 CUIK_API void cuikdg_dump_to_file(TokenStream* tokens, FILE* out) {
@@ -260,7 +241,7 @@ static void diag(DiagType type, TokenStream* tokens, SourceRange loc, const char
     }
 
     // print include stack
-    mtx_lock(&report_mutex);
+    mtx_lock(&d->lock);
     ResolvedSourceLoc start = cuikpp_find_location(tokens, loc_start);
     if (start.file->include_site.raw != 0) {
         print_include(tokens, start.file->include_site);
@@ -296,7 +277,7 @@ static void diag(DiagType type, TokenStream* tokens, SourceRange loc, const char
     }
 
     if (d->callback) d->callback(d, d->userdata, type);
-    mtx_unlock(&report_mutex);
+    mtx_unlock(&d->lock);
 
     if (type == DIAG_ERR) {
         atomic_fetch_add(&tokens->diag->error_tally, 1);

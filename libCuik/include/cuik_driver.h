@@ -28,10 +28,10 @@ struct Cuik_CompilerArgs {
     void* diag_userdata;
     Cuik_DiagCallback diag_callback;
 
-    DynArray(const char*) sources;
-    DynArray(const char*) includes;
-    DynArray(const char*) libraries;
-    DynArray(const char*) defines;
+    DynArray(char*) sources;
+    DynArray(char*) includes;
+    DynArray(char*) libraries;
+    DynArray(char*) defines;
 
     bool ir            : 1;
     bool ast           : 1;
@@ -59,11 +59,13 @@ CUIK_API void cuik_parse_args(Cuik_CompilerArgs* args, int argc, const char* arg
 // without an extension
 CUIK_API bool cuik_driver_get_output_name(Cuik_CompilerArgs* args, int len, char path[]);
 
+CUIK_API void cuik_free_args(Cuik_CompilerArgs* args);
+
 // if target is non-NULL it'll add predefined macros based on the target.
 CUIK_API void cuik_set_standard_defines(Cuik_CPP* cpp, const Cuik_CompilerArgs* args);
 
 CUIK_API Cuik_CPP* cuik_driver_preprocess(const char* filepath, const Cuik_CompilerArgs* args, bool should_finalize);
-CUIK_API int cuik_driver_compile(Cuik_IThreadpool* restrict thread_pool, Cuik_CompilerArgs* restrict args, bool destroy_cu_after_ir);
+CUIK_API CompilationUnit* cuik_driver_compile(Cuik_IThreadpool* restrict thread_pool, Cuik_CompilerArgs* restrict args, bool destroy_cu_after_ir);
 
 #ifdef CUIK_USE_TB
 CUIK_API void cuik_apply_tb_toolchain_libs(TB_Linker* l);

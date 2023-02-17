@@ -123,6 +123,7 @@ static TokenArray convert_to_token_list(Cuik_CPP* restrict c, uint32_t file_id, 
 
     TokenArray list = { 0 };
     list.tokens = dyn_array_create(Token, 32 + ((length + 7) / 8));
+
     for (;;) {
         Token t = lexer_read(&l);
         if (t.type == 0) break;
@@ -251,16 +252,22 @@ size_t cuikpp_get_token_count(TokenStream* restrict s) {
 }
 
 void cuiklex_free_tokens(TokenStream* tokens) {
+    dyn_array_for(i, tokens->files) {
+        // only free the root line_map, all the others are offsets of this one
+        if (tokens->files[i].file_pos_bias == 0) {
+            dyn_array_destroy(tokens->files[i].line_map);
+        }
+    }
+
+    dyn_array_destroy(tokens->files);
     dyn_array_destroy(tokens->list.tokens);
     dyn_array_destroy(tokens->invokes);
-    dyn_array_destroy(tokens->files);
     cuikdg_free(tokens->diag);
 }
 
 void cuikpp_finalize(Cuik_CPP* ctx) {
     #if CUIK__CPP_STATS
-    mtx_lock(&report_mutex);
-    printf(" %80s | %.06f ms read+lex\t| %4zu files read\t| %zu fstats\t| %f ms (%zu defines)\n",
+    fprintf(stderr, " %80s | %.06f ms read+lex\t| %4zu files read\t| %zu fstats\t| %f ms (%zu defines)\n",
         ctx->tokens.filepath,
         ctx->total_io_time / 1000000.0,
         ctx->total_files_read,
@@ -268,7 +275,6 @@ void cuikpp_finalize(Cuik_CPP* ctx) {
         ctx->total_define_access_time / 1000000.0,
         ctx->total_define_accesses
     );
-    mtx_unlock(&report_mutex);
     #endif
 
     CUIK_TIMED_BLOCK("cuikpp_finalize") {
@@ -280,6 +286,8 @@ void cuikpp_finalize(Cuik_CPP* ctx) {
         ctx->macros.vals = NULL;
         ctx->stack = NULL;
     }
+
+    nl_strmap_free(ctx->include_once);
 }
 
 void cuikpp_free(Cuik_CPP* ctx) {
@@ -291,8 +299,6 @@ void cuikpp_free(Cuik_CPP* ctx) {
     if (ctx->macros.keys) {
         cuikpp_finalize(ctx);
     }
-
-    ctx->the_shtuffs = NULL;
 
     cuik__vfree((void*) ctx->the_shtuffs, THE_SHTUFFS_SIZE);
     cuik_free(ctx);

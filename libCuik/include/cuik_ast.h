@@ -222,6 +222,7 @@ struct Cuik_Type {
         } placeholder;
     };
 } __attribute__((aligned(16)));
+_Static_assert(_Alignof(Cuik_Type) == 16, "we need 16byte alignment for Cuik_QualType");
 
 // designated initializer member
 // .x = 5
