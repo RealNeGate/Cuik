@@ -22,7 +22,7 @@ static bool should_lock_profiler;
 static const Cuik_IProfiler* profiler;
 static void* profiler_userdata;
 
-#ifdef _WIN32
+#if defined(_AMD64_) || defined(__amd64__)
 double get_rdtsc_multiplier(void) {
     // Cache the answer so that multiple calls never take the slow path more than once
     static double multiplier = 0;
@@ -61,7 +61,6 @@ double get_rdtsc_multiplier(void) {
 
     // Slow path
     if (!tsc_freq) {
-
         // Get time before sleep
         uint64_t qpc_begin = 0; QueryPerformanceCounter((LARGE_INTEGER *)&qpc_begin);
         uint64_t tsc_begin = __rdtsc();
@@ -88,7 +87,7 @@ double get_rdtsc_multiplier(void) {
 #endif
 
 void init_timer_system(void) {
-    #ifdef _WIN32
+    #if defined(_AMD64_) || defined(__amd64__)
     rdtsc_freq = get_rdtsc_multiplier() / 1000000.0;
     timer_start = __rdtsc();
     #endif
@@ -125,7 +124,7 @@ bool cuikperf_is_active(void) {
 }
 
 uint64_t cuik_time_in_nanos(void) {
-    #ifdef _WIN32
+    #if defined(_AMD64_) || defined(__amd64__)
     return (__rdtsc() - timer_start) * (rdtsc_freq * 1000000000.0);
     #else
     struct timespec ts;

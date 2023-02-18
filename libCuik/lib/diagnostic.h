@@ -5,11 +5,6 @@
 #include <threads.h>
 #undef ERROR
 
-#define REPORT(lvl, loc, ...) report(REPORT_##lvl, &tu->tokens, (SourceLoc){ 0 }, __VA_ARGS__)
-#define REPORT_RANGED(lvl, a, b, ...) report_ranged(REPORT_##lvl, &tu->tokens, a, b, __VA_ARGS__)
-#define REPORT_EXPR(lvl, e, ...) report_ranged(REPORT_##lvl, &tu->tokens, (e)->loc.start, (e)->loc.end, __VA_ARGS__)
-#define REPORT_STMT(lvl, s, ...) report_ranged(REPORT_##lvl, &tu->tokens, (s)->loc.start, (s)->loc.end, __VA_ARGS__)
-
 typedef struct DiagFixit {
     SourceRange loc;
     int offset;

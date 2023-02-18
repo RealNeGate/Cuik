@@ -560,6 +560,7 @@ CompilationUnit* cuik_driver_compile(Cuik_IThreadpool* restrict thread_pool, Cui
 
     CompilationUnit* cu = cuik_create_compilation_unit();
     SharedDriverState stuff = { cu, thread_pool, args };
+    size_t tu_count = dyn_array_length(args->sources);
     CUIK_TIMED_BLOCK("Frontend") {
         Futex remaining = dyn_array_length(args->sources);
         stuff.preprocessors = cuik_malloc(dyn_array_length(args->sources) * sizeof(Cuik_CPP*));
@@ -583,7 +584,6 @@ CompilationUnit* cuik_driver_compile(Cuik_IThreadpool* restrict thread_pool, Cui
 
         if (thread_pool) futex_wait_eq(&remaining, 0);
 
-        size_t tu_count = dyn_array_length(args->sources);
         for (size_t i = 0; i < tu_count; i++) {
             fprintf(stderr, "[%zu/%zu] CC %s\n", i+1, tu_count, args->sources[i]);
 
@@ -595,13 +595,9 @@ CompilationUnit* cuik_driver_compile(Cuik_IThreadpool* restrict thread_pool, Cui
                     if (args->preprocess) {
                         dump_tokens(stdout, tokens);
                     }
-
-                    cuiklex_free_tokens(tokens);
-                    cuikpp_free(stuff.preprocessors[i]);
                 }
             }
         }
-        cuik_free(stuff.preprocessors);
     }
 
     if (args->test_preproc) return cu;
@@ -637,6 +633,17 @@ CompilationUnit* cuik_driver_compile(Cuik_IThreadpool* restrict thread_pool, Cui
     bool subsystem_windows;
     CUIK_TIMED_BLOCK("Backend") {
         irgen(thread_pool, args, cu, mod, &subsystem_windows);
+
+        for (size_t i = 0; i < tu_count; i++) {
+            if (stuff.preprocessors[i]) {
+                TokenStream* tokens = cuikpp_get_token_stream(stuff.preprocessors[i]);
+                if (tokens) {
+                    cuiklex_free_tokens(tokens);
+                    cuikpp_free(stuff.preprocessors[i]);
+                }
+            }
+        }
+        cuik_free(stuff.preprocessors);
 
         if (destroy_cu_after_ir) {
             cuik_destroy_compilation_unit(cu);

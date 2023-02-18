@@ -193,7 +193,7 @@ Cuik_Type* target_generic_type_check_builtin(TranslationUnit* tu, Expr* e, const
 
     if (strcmp(name, "__c11_atomic_load") == 0) {
         if (arg_count != 2) {
-            REPORT_EXPR(ERROR, e, "%s requires 2 arguments", name);
+            diag_err(&tu->tokens, e->loc, "%s requires 2 arguments", name);
             return &tu->target->signed_ints[CUIK_BUILTIN_INT];
         }
 
@@ -268,7 +268,7 @@ Cuik_Type* target_generic_type_check_builtin(TranslationUnit* tu, Expr* e, const
     #if 0
     if (strcmp(name, "__va_start") == 0) {
         if (arg_count != 2) {
-            REPORT_EXPR(ERROR, e, "%s requires 2 arguments", name);
+            diag_err(&tu->tokens, e->loc, "%s requires 2 arguments", name);
             return &cuik__builtin_int;
         }
 
@@ -278,7 +278,7 @@ Cuik_Type* target_generic_type_check_builtin(TranslationUnit* tu, Expr* e, const
 
         // second is completely generic so long as it's a parameter
         if (args[1]->op != EXPR_PARAM) {
-            REPORT_EXPR(ERROR, e, "va_start's second parameter must be a parameter name", name);
+            diag_err(&tu->tokens, e->loc, "va_start's second parameter must be a parameter name", name);
             return &cuik__builtin_int;
         }
 
@@ -286,7 +286,7 @@ Cuik_Type* target_generic_type_check_builtin(TranslationUnit* tu, Expr* e, const
         return &cuik__builtin_void;
     } else if (strcmp(name, "__builtin_expect") == 0) {
         if (arg_count != 2) {
-            REPORT_EXPR(ERROR, e, "%s requires 2 arguments", name);
+            diag_err(&tu->tokens, e->loc, "%s requires 2 arguments", name);
             return &cuik__builtin_void;
         }
 
@@ -299,7 +299,7 @@ Cuik_Type* target_generic_type_check_builtin(TranslationUnit* tu, Expr* e, const
         return args[0]->cast_type;
     } else if (strcmp(name, "__builtin_syscall") == 0) {
         if (arg_count < 1) {
-            REPORT_EXPR(ERROR, e, "%s requires at least one argument (the syscall number)", name);
+            diag_err(&tu->tokens, e->loc, "%s requires at least one argument (the syscall number)", name);
             return &cuik__builtin_void;
         }
 
@@ -314,13 +314,13 @@ Cuik_Type* target_generic_type_check_builtin(TranslationUnit* tu, Expr* e, const
         return &cuik__builtin_long;
     } else if (strcmp(name, "__builtin_trap") == 0) {
         if (arg_count != 0) {
-            REPORT_EXPR(ERROR, e, "%s doesn't require arguments", name);
+            diag_err(&tu->tokens, e->loc, "%s doesn't require arguments", name);
         }
 
         return &cuik__builtin_void;
     } else if (strcmp(name, "__c11_atomic_compare_exchange_strong") == 0) {
         if (arg_count != 5) {
-            REPORT_EXPR(ERROR, e, "%s requires 5 arguments", name);
+            diag_err(&tu->tokens, e->loc, "%s requires 5 arguments", name);
             return &cuik__builtin_int;
         }
 

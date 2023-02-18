@@ -439,7 +439,7 @@ static int walk_initializer_layer(TranslationUnit* tu, Cuik_Type* parent, int ba
             }
         } else {
             /*if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
-              REPORT_EXPR(ERROR, e, "Cannot write initializer for struct/union without surrounding brackets");
+              diag_err(&tu->tokens, e->loc, "Cannot write initializer for struct/union without surrounding brackets");
               return node + 1;
             }*/
             assert(node->expr);
@@ -652,7 +652,7 @@ Cuik_QualType cuik__sema_expr(TranslationUnit* tu, Expr* restrict e) {
             Cuik_Type* va_list_type = cuik_canonical_type(cuik__sema_expr(tu, e->va_arg_.src));
             if (va_list_type->kind != KIND_PTR && cuik_canonical_type(va_list_type->ptr_to)->kind != KIND_CHAR) {
                 type_as_string(sizeof(temp_string0), temp_string0, va_list_type);
-                REPORT_EXPR(ERROR, e, "va_arg must take in a va_list in the first argument (got %s)", temp_string0);
+                diag_err(&tu->tokens, e->loc, "va_arg must take in a va_list in the first argument (got %s)", temp_string0);
             }
 
             Cuik_QualType type = e->va_arg_.type;
@@ -674,7 +674,7 @@ Cuik_QualType cuik__sema_expr(TranslationUnit* tu, Expr* restrict e) {
                     unsigned long long expected = (unsigned long long)e->int_num.num;
 
                     if (original != expected) {
-                        // REPORT_EXPR(ERROR, e, "Could not represent integer literal as int. (%llu or %llx)", expected, expected);
+                        // diag_err(&tu->tokens, e->loc, "Could not represent integer literal as int. (%llu or %llx)", expected, expected);
                         return (e->type = cuik_uncanonical_type(&target_signed_ints[CUIK_BUILTIN_LLONG]));
                     }
 
@@ -686,7 +686,7 @@ Cuik_QualType cuik__sema_expr(TranslationUnit* tu, Expr* restrict e) {
                     unsigned long long expected = (unsigned long long)e->int_num.num;
 
                     if (original != expected) {
-                        // REPORT_EXPR(ERROR, e, "Could not represent integer literal as unsigned int.");
+                        // diag_err(&tu->tokens, e->loc, "Could not represent integer literal as unsigned int.");
                         return (e->type = cuik_uncanonical_type(&target_unsigned_ints[CUIK_BUILTIN_LLONG]));
                     }
 
@@ -940,7 +940,7 @@ Cuik_QualType cuik__sema_expr(TranslationUnit* tu, Expr* restrict e) {
             if (match == 0) {
                 if (default_case == 0) {
                     // if we didn't match anything and there's no default case, error out
-                    REPORT_EXPR(ERROR, e, "Could not match _Generic against any cases");
+                    diag_err(&tu->tokens, e->loc, "Could not match _Generic against any cases");
                     return (e->type = cuik_uncanonical_type(&cuik__builtin_void));
                 }
 
@@ -1325,7 +1325,7 @@ void sema_stmt(TranslationUnit* tu, Stmt* restrict s) {
                     // Auto-detect array count from initializer
                     if (decl_type->kind == KIND_ARRAY && expr_type->kind == KIND_ARRAY) {
                         if (decl_type->array_count != 0 && decl_type->array_count < expr_type->array_count) {
-                            REPORT_STMT(ERROR, s, "Array initializer does not fit into declaration (expected %d, got %d)", decl_type->array_count, expr_type->array_count);
+                            diag_err(&tu->tokens, s->loc, "array initializer does not fit into declaration (expected %d, got %d)", decl_type->array_count, expr_type->array_count);
                         } else {
                             s->decl.type = cuik_make_qual_type(expr_type, decl_quals);
                             decl_type = cuik_canonical_type(s->decl.type);
@@ -1367,14 +1367,14 @@ void sema_stmt(TranslationUnit* tu, Stmt* restrict s) {
         }
         case STMT_IF: {
             if (s->if_.cond->op >= EXPR_ASSIGN && s->if_.cond->op <= EXPR_SHR_ASSIGN && !s->if_.cond->has_parens) {
-                REPORT_EXPR(WARNING, s->if_.cond, "using assignment as condition without parenthesis");
+                diag_warn(&tu->tokens, s->if_.cond->loc, "using assignment as condition without parenthesis");
             }
 
             Cuik_Type* cond_type = cuik_canonical_type(cuik__sema_expr(tu, s->if_.cond));
             if (!is_scalar_type(tu, cond_type)) {
                 type_as_string(sizeof(temp_string0), temp_string0, cond_type);
 
-                REPORT_STMT(ERROR, s, "Could not convert type %s into boolean.", temp_string0);
+                diag_err(&tu->tokens, s->loc, "Could not convert type %s into boolean.", temp_string0);
             }
             s->if_.cond->cast_type = cuik_uncanonical_type(&cuik__builtin_bool);
 
@@ -1388,7 +1388,7 @@ void sema_stmt(TranslationUnit* tu, Stmt* restrict s) {
             if (s->while_.cond->op >= EXPR_ASSIGN &&
                 s->while_.cond->op <= EXPR_SHR_ASSIGN &&
                 !s->while_.cond->has_parens) {
-                REPORT_EXPR(WARNING, s->while_.cond, "using assignment as condition without parenthesis");
+                diag_warn(&tu->tokens, s->while_.cond->loc, "using assignment as condition without parenthesis");
             }
 
             sema_expr(tu, s->while_.cond);
@@ -1512,13 +1512,13 @@ static void sema_top_level(TranslationUnit* tu, Stmt* restrict s) {
             assert(type->kind == KIND_FUNC);
 
             if (s->decl.attrs.is_static && s->decl.attrs.is_extern) {
-                REPORT_STMT(ERROR, s, "Function '%s' cannot be both static and extern.", name);
+                diag_err(&tu->tokens, s->loc, "Function '%s' cannot be both static and extern.", name);
                 break;
             }
 
             if (s->decl.attrs.is_static && !s->decl.attrs.is_inline) {
                 if (tu->warnings->unused_funcs && !s->decl.attrs.is_used) {
-                    REPORT_STMT(WARNING, s, "Function '%s' is never used.", name);
+                    diag_warn(&tu->tokens, s->loc, "Function '%s' is never used.", name);
                 }
             }
 
@@ -1539,7 +1539,7 @@ static void sema_top_level(TranslationUnit* tu, Stmt* restrict s) {
             if (s->decl.attrs.is_typedef) break;
 
             if (s->decl.attrs.is_static && s->decl.attrs.is_extern) {
-                REPORT_STMT(ERROR, s, "Global declaration '%s' cannot be both static and extern.", name);
+                diag_err(&tu->tokens, s->loc, "Global declaration '%s' cannot be both static and extern.", name);
                 break;
             }
 
