@@ -158,6 +158,7 @@ size_t tb_archive_parse_entries(TB_ArchiveFileParser* restrict parser, size_t st
                 }
             }
 
+            long_mode->name = sym_name;
             out_entry[entry_count++] = (TB_ArchiveEntry){ sym_name, .obj = long_mode };
         }
 

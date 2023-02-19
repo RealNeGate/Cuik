@@ -16,6 +16,21 @@ TB_ObjectSymbolType classify_symbol_type(uint16_t st_class) {
     }
 }
 
+static long long parse_decimal_int(size_t n, const char* str) {
+    const char* end = &str[n];
+
+    int result = 0;
+    while (str != end) {
+        if (*str < '0' || *str > '9') break;
+
+        result *= 10;
+        result += *str - '0';
+        str++;
+    }
+
+    return result;
+}
+
 // let's ignore error handling for now :p
 // buffered reading i guess?
 TB_ObjectFile* tb_object_parse_coff(const TB_Slice file) {
@@ -51,11 +66,12 @@ TB_ObjectFile* tb_object_parse_coff(const TB_Slice file) {
         *out_sec = (TB_ObjectSection) { .ordinal = i, .flags = sec->characteristics };
 
         // Parse string table name stuff
-        uint32_t long_name[2];
-        memcpy(long_name, sec->name, sizeof(uint8_t[8]));
-        if (long_name[0] == 0) {
+        if (sec->name[0] == '/') {
             // string table access
-            tb_todo();
+            int offset = parse_decimal_int(7, &sec->name[1]);
+
+            const uint8_t* data = &string_table.data[offset];
+            out_sec->name = (TB_Slice){ strlen((const char*) data), data };
         } else {
             // normal inplace string
             size_t len = strlen(sec->name);

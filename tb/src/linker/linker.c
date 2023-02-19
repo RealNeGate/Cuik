@@ -84,17 +84,31 @@ size_t tb__layout_text_section(TB_Module* m) {
 }
 
 uint64_t tb__get_symbol_rva(TB_Linker* l, TB_LinkerSymbol* sym) {
-    switch (sym->tag) {
-        case TB_LINKER_SYMBOL_NORMAL:
-        return sym->normal.piece->parent->address + sym->normal.piece->offset + sym->normal.secrel;
-
-        case TB_LINKER_SYMBOL_TB:
-        return tb__compute_rva(l, sym->tb.sym->module, sym->tb.sym);
-
-        case TB_LINKER_SYMBOL_IMAGEBASE:
+    if (sym->tag == TB_LINKER_SYMBOL_ABSOLUTE) {
+        return 0;
+    } else if (sym->tag == TB_LINKER_SYMBOL_IMAGEBASE) {
         return sym->imagebase;
+    }
 
-        default: tb_todo(); return 0;
+    // normal or TB
+    assert(sym->tag == TB_LINKER_SYMBOL_NORMAL || sym->tag == TB_LINKER_SYMBOL_TB);
+    TB_LinkerSectionPiece* piece = sym->normal.piece;
+
+    uint32_t rva = piece->parent->address + piece->offset;
+    if (sym->tag == TB_LINKER_SYMBOL_NORMAL) {
+        return rva + sym->normal.secrel;
+    }
+
+    TB_Symbol* s = sym->tb.sym;
+    if (s->tag == TB_SYMBOL_FUNCTION) {
+        TB_Function* f = (TB_Function*) s;
+        assert(f->output != NULL);
+
+        return rva + f->output->code_pos;
+    } else if (s->tag == TB_SYMBOL_GLOBAL) {
+        return rva + ((TB_Global*) s)->pos;
+    } else {
+        tb_todo();
     }
 }
 
@@ -467,3 +481,75 @@ TB_UnresolvedSymbol* tb__unresolved_symbol(TB_Linker* l, TB_Slice name) {
 
     return d;
 }
+
+void tb__apply_module_relocs(TB_Linker* l, TB_Module* m, uint8_t* output) {
+    TB_LinkerSection* text  = tb__find_section(l, ".text",  IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_CNT_CODE);
+    TB_LinkerSection* data  = tb__find_section(l, ".data",  IMAGE_SCN_MEM_WRITE | IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA);
+    TB_LinkerSection* rdata = tb__find_section(l, ".rdata", IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA);
+
+    uint64_t trampoline_rva = text->address + l->trampoline_pos;
+    FOREACH_N(i, 0, m->max_threads) {
+        uint64_t text_piece_rva = text->address + m->linker.text->offset;
+        uint64_t text_piece_file = text->offset + m->linker.text->offset;
+
+        uint64_t data_piece_rva = 0;
+        if (m->linker.data) {
+            data_piece_rva = data->address + m->linker.data->offset;
+        }
+
+        FOREACH_N(j, 0, dyn_array_length(m->thread_info[i].symbol_patches)) {
+            TB_SymbolPatch* patch = &m->thread_info[i].symbol_patches[j];
+
+            if (patch->target->tag == TB_SYMBOL_EXTERNAL) {
+                TB_FunctionOutput* out_f = patch->source->output;
+                size_t actual_pos = text_piece_rva + out_f->code_pos + out_f->prologue_length + patch->pos + 4;
+
+                ImportThunk* thunk = patch->target->address;
+                assert(thunk != NULL);
+
+                int32_t p = (trampoline_rva + (thunk->thunk_id * 6)) - actual_pos;
+                int32_t* dst = (int32_t*) &output[text_piece_file + out_f->code_pos + out_f->prologue_length + patch->pos];
+
+                (*dst) += p;
+            } else if (patch->target->tag == TB_SYMBOL_FUNCTION) {
+                // internal patching has already handled this
+            } else if (patch->target->tag == TB_SYMBOL_GLOBAL) {
+                TB_FunctionOutput* out_f = patch->source->output;
+                size_t actual_pos = text_piece_rva + out_f->code_pos + out_f->prologue_length + patch->pos + 4;
+
+                TB_Global* global = (TB_Global*) patch->target;
+                (void)global;
+                assert(global->super.tag == TB_SYMBOL_GLOBAL);
+
+                int32_t* dst = (int32_t*) &output[text_piece_file + out_f->code_pos + out_f->prologue_length + patch->pos];
+                if (global->storage == TB_STORAGE_DATA) {
+                    int32_t p = (data_piece_rva + global->pos) - actual_pos;
+
+                    (*dst) += p;
+                } else if (global->storage == TB_STORAGE_TLS) {
+                    (*dst) += (data_piece_rva + global->pos);
+                } else {
+                    tb_todo();
+                }
+            } else {
+                tb_todo();
+            }
+        }
+
+        if (m->linker.rdata) {
+            uint64_t rdata_piece_rva = rdata->address + m->linker.rdata->offset;
+
+            FOREACH_N(j, 0, dyn_array_length(m->thread_info[i].const_patches)) {
+                TB_ConstPoolPatch* patch = &m->thread_info[i].const_patches[j];
+                TB_FunctionOutput* out_f = patch->source->output;
+
+                size_t actual_pos = text_piece_rva + out_f->code_pos + out_f->prologue_length + patch->pos + 4;
+                int32_t* dst = (int32_t*) &output[text_piece_file + out_f->code_pos + out_f->prologue_length + patch->pos];
+
+                // relocations add not replace
+                (*dst) += (rdata_piece_rva - actual_pos);
+            }
+        }
+    }
+}
+

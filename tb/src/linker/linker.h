@@ -52,8 +52,6 @@ struct TB_LinkerSection {
     TB_LinkerSectionFlags generic_flags;
     uint32_t flags;
 
-    size_t number;
-
     size_t address; // usually a relative virtual address.
     size_t offset;  // in the file.
 
@@ -162,13 +160,56 @@ typedef struct {
     TB_Slice obj_name;
 } TB_LinkerReloc;
 
+typedef struct {
+    // if target is NULL, check name
+    TB_LinkerSymbol* target;
+    TB_Slice name;
+
+    TB_LinkerSectionPiece* src_piece;
+    uint32_t src_offset;
+
+    // 0 is NULL
+    uint32_t obj_file;
+
+    // highest bit is set for thunks (symbols which start with __imp_)
+    uint32_t addend;
+} TB_LinkerRelocRel;
+
+typedef struct {
+    // if target is NULL, check name
+    TB_LinkerSymbol* target;
+    TB_Slice name;
+
+    TB_LinkerSectionPiece* src_piece;
+    uint32_t src_offset;
+
+    // 0 is NULL
+    uint32_t obj_file;
+} TB_LinkerRelocAbs;
+
+typedef struct TB_LinkerThreadInfo TB_LinkerThreadInfo;
+struct TB_LinkerThreadInfo {
+    TB_Linker* parent;
+
+    // this refers to a separate TB_Linker's thread info
+    TB_LinkerThreadInfo* next_in_thread;
+    // this is the next thread info for the same TB_Linker
+    TB_LinkerThreadInfo* next;
+
+    // relocations
+    //   we store different kinds of relocations in different arrays
+    //   to simplify.
+    DynArray(TB_LinkerRelocRel) relatives;
+    DynArray(TB_LinkerRelocAbs) absolutes;
+};
+
 // Format-specific vtable:
 typedef struct TB_LinkerVtbl {
-    void(*init)(TB_Linker* l);
-    void(*append_object)(TB_Linker* l, TB_Slice obj_name, TB_ObjectFile* obj);
-    void(*append_library)(TB_Linker* l, TB_Slice ar_file);
-    void(*append_module)(TB_Linker* l, TB_Module* m);
-    TB_Exports(*export)(TB_Linker* l);
+    void (*init)(TB_Linker* l);
+    void (*append_object)(TB_Linker* l, TB_Slice obj_name, TB_ObjectFile* obj);
+    void (*append_library)(TB_Linker* l, TB_Slice ar_file);
+    void (*append_module)(TB_Linker* l, TB_Module* m);
+    TB_Exports (*export)(TB_Linker* l);
 } TB_LinkerVtbl;
 
 typedef struct TB_UnresolvedSymbol TB_UnresolvedSymbol;
@@ -176,9 +217,7 @@ struct TB_UnresolvedSymbol {
     TB_UnresolvedSymbol* next;
 
     TB_Slice name;
-    // if ext == NULL then use reloc
-    TB_External* ext;
-    TB_LinkerReloc* reloc;
+    uint32_t reloc;
 };
 
 typedef struct TB_Linker {
@@ -187,7 +226,9 @@ typedef struct TB_Linker {
     NL_Strmap(TB_LinkerSection*) sections;
 
     // for relocations
-    DynArray(TB_LinkerReloc) relocations;
+    TB_LinkerThreadInfo* first_thread_info;
+
+    DynArray(TB_ObjectFile*) object_files;
     DynArray(TB_Module*) ir_modules;
     TB_SymbolTable symtab;
 
@@ -236,5 +277,5 @@ TB_LinkerSection* tb__find_or_create_section2(TB_Linker* linker, size_t name_len
 TB_LinkerSectionPiece* tb__append_piece(TB_LinkerSection* section, int kind, size_t size, const void* data, TB_Module* mod);
 
 size_t tb__pad_file(uint8_t* output, size_t write_pos, char pad, size_t align);
-void tb__apply_external_relocs(TB_Linker* l, TB_Module* m, uint8_t* output);
+void tb__apply_module_relocs(TB_Linker* l, TB_Module* m, uint8_t* output);
 size_t tb__apply_section_contents(TB_Linker* l, uint8_t* output, size_t write_pos, TB_LinkerSection* text, TB_LinkerSection* data, TB_LinkerSection* rdata, size_t section_alignment, size_t image_base);

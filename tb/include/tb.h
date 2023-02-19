@@ -708,6 +708,7 @@ extern "C" {
     typedef struct {
         TB_ObjectFileType type;
         TB_Arch           arch;
+        TB_Slice          name;
 
         size_t           symbol_count;
         TB_ObjectSymbol* symbols;

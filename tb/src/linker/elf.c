@@ -146,8 +146,10 @@ static TB_Exports export(TB_Linker* l) {
     // TODO(NeGate): multithread this too
     CUIK_TIMED_BLOCK("apply final relocations") {
         dyn_array_for(i, l->ir_modules) {
-            tb__apply_external_relocs(l, l->ir_modules[i], output);
+            tb__apply_module_relocs(l, l->ir_modules[i], output);
         }
+
+        // tb__apply_external_relocs(l, output, opt_header.image_base);
     }
 
     // write section contents
