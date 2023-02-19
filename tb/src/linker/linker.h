@@ -4,6 +4,8 @@
 #define NL_STRING_MAP_INLINE
 #include <string_map.h>
 
+typedef struct TB_LinkerSymbol TB_LinkerSymbol;
+
 // we use a linked list to store these because i couldn't be bothered to allocate
 // one giant sequential region for the entire linker.
 struct TB_LinkerSectionPiece {
@@ -22,23 +24,26 @@ struct TB_LinkerSectionPiece {
         PIECE_PDATA,
         // Write the TB module's reloc section
         PIECE_RELOC,
-        // Write the object file's reloc section
-        PIECE_RELOC2
     } kind;
 
     TB_Module* module;
     TB_LinkerSection* parent;
 
+    TB_LinkerSymbol* first_sym;
+
     // vsize is the virtual size
     size_t offset, vsize, size;
+    // this is for COFF $ management
+    uint32_t order;
     // 1 means it's immutable
+    // 2 means it's live
     uint32_t flags;
     const uint8_t* data;
 };
 
 typedef enum {
     TB_LINKER_SECTION_DISCARD = 1,
-    TB_LINKER_SECTION_COMDAT = 2,
+    TB_LINKER_SECTION_COMDAT  = 2,
 } TB_LinkerSectionFlags;
 
 struct TB_LinkerSection {
@@ -47,14 +52,19 @@ struct TB_LinkerSection {
     TB_LinkerSectionFlags generic_flags;
     uint32_t flags;
 
+    size_t number;
+
     size_t address; // usually a relative virtual address.
     size_t offset;  // in the file.
 
+    size_t piece_count;
     size_t total_size;
     TB_LinkerSectionPiece *first, *last;
 };
 
 typedef enum TB_LinkerSymbolTag {
+    TB_LINKER_SYMBOL_ABSOLUTE = 0,
+
     // external linkage
     TB_LINKER_SYMBOL_NORMAL,
 
@@ -78,19 +88,22 @@ typedef struct {
 } ImportThunk;
 
 typedef enum TB_LinkerSymbolFlags {
-    TB_LINKER_SYMBOL_WEAK = 1,
+    TB_LINKER_SYMBOL_WEAK   = 1,
+    TB_LINKER_SYMBOL_COMDAT = 2,
 } TB_LinkerSymbolFlags;
 
 // all symbols appended to the linker are converted into
 // these and used for all kinds of relocation resolution.
-typedef struct TB_LinkerSymbol {
+struct TB_LinkerSymbol {
     // key
     TB_Slice name;
 
     // value
     TB_LinkerSymbolTag tag;
     TB_LinkerSymbolFlags flags;
+    TB_LinkerSymbol* next;
     TB_Slice object_name;
+
     union {
         // for normal symbols,
         struct {
@@ -98,9 +111,8 @@ typedef struct TB_LinkerSymbol {
             uint32_t secrel;
         } normal;
 
-        struct {
-            uint32_t rva;
-        } imagebase;
+        uint32_t absolute;
+        uint32_t imagebase;
 
         // for IR module symbols
         struct {
@@ -115,7 +127,7 @@ typedef struct TB_LinkerSymbol {
             ImportThunk* thunk;
         } import;
     };
-} TB_LinkerSymbol;
+};
 
 // MSI hash table
 typedef struct TB_SymbolTable {
@@ -172,7 +184,6 @@ struct TB_UnresolvedSymbol {
 typedef struct TB_Linker {
     TB_Arch target_arch;
 
-    ptrdiff_t entrypoint; // -1 if not available
     NL_Strmap(TB_LinkerSection*) sections;
 
     // for relocations
@@ -189,7 +200,9 @@ typedef struct TB_Linker {
     //   on windows, we use DLLs to interact with the OS so
     //   there needs to be a way to load these immediately,
     //   imports do just that.
-    TB_LinkerSymbol* tls_index_sym;
+    //
+    // this is where all the .reloc stuff from object files goes
+    TB_LinkerSectionPiece* main_reloc;
     uint32_t iat_pos;
     DynArray(ImportTable) imports;
 
@@ -199,6 +212,8 @@ typedef struct TB_Linker {
 // Error handling
 TB_UnresolvedSymbol* tb__unresolved_symbol(TB_Linker* l, TB_Slice name);
 
+TB_LinkerSectionPiece* tb__get_piece(TB_Linker* l, TB_LinkerSymbol* restrict sym);
+
 // TB helpers
 size_t tb__get_symbol_pos(TB_Symbol* s);
 size_t tb__layout_text_section(TB_Module* m);
@@ -206,6 +221,7 @@ size_t tb__layout_text_section(TB_Module* m);
 ImportThunk* tb__find_or_create_import(TB_Linker* l, TB_LinkerSymbol* restrict sym);
 
 // Symbol table
+TB_LinkerSymbol* tb__find_symbol_cstr(TB_SymbolTable* restrict symtab, const char* name);
 TB_LinkerSymbol* tb__find_symbol(TB_SymbolTable* restrict symtab, TB_Slice name);
 TB_LinkerSymbol* tb__append_symbol(TB_SymbolTable* restrict symtab, const TB_LinkerSymbol* sym);
 uint64_t tb__compute_rva(TB_Linker* l, TB_Module* m, const TB_Symbol* s);
@@ -221,4 +237,4 @@ TB_LinkerSectionPiece* tb__append_piece(TB_LinkerSection* section, int kind, siz
 
 size_t tb__pad_file(uint8_t* output, size_t write_pos, char pad, size_t align);
 void tb__apply_external_relocs(TB_Linker* l, TB_Module* m, uint8_t* output);
-size_t tb__apply_section_contents(TB_Linker* l, uint8_t* output, size_t write_pos, TB_LinkerSection* text, TB_LinkerSection* data, TB_LinkerSection* rdata, size_t section_alignment);
+size_t tb__apply_section_contents(TB_Linker* l, uint8_t* output, size_t write_pos, TB_LinkerSection* text, TB_LinkerSection* data, TB_LinkerSection* rdata, size_t section_alignment, size_t image_base);

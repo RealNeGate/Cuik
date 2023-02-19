@@ -49,18 +49,6 @@ static void append_module(TB_Linker* l, TB_Module* m) {
 
 #define WRITE(data, size) (memcpy(&output[write_pos], data, size), write_pos += (size))
 static TB_Exports export(TB_Linker* l) {
-    if (l->entrypoint < 0) {
-        TB_Slice name = { sizeof("_start") - 1, (const uint8_t*) "_start" };
-        TB_LinkerSymbol* sym = tb__find_symbol(&l->symtab, name);
-        if (sym) {
-            if (sym->tag == TB_LINKER_SYMBOL_NORMAL) {
-                l->entrypoint = sym->normal.piece->offset + sym->normal.secrel;
-            } else if (sym->tag == TB_LINKER_SYMBOL_TB) {
-                l->entrypoint = sym->tb.piece->offset + tb__get_symbol_pos(sym->tb.sym);
-            }
-        }
-    }
-
     size_t final_section_count = 0;
     nl_strmap_for(i, l->sections) {
         final_section_count += (l->sections[i]->generic_flags & TB_LINKER_SECTION_DISCARD) == 0;
@@ -120,10 +108,17 @@ static TB_Exports export(TB_Linker* l) {
 
     // text section crap
     TB_LinkerSection* text  = tb__find_section(l, ".text", PF_X | PF_R);
-    if (text && l->entrypoint >= 0) {
-        header.e_entry = text->address + l->entrypoint;
+    TB_LinkerSymbol* sym = tb__find_symbol_cstr(&l->symtab, "_start");
+    if (text && sym) {
+        if (sym->tag == TB_LINKER_SYMBOL_NORMAL) {
+            header.e_entry = text->address + sym->normal.piece->offset + sym->normal.secrel;
+        } else if (sym->tag == TB_LINKER_SYMBOL_TB) {
+            header.e_entry = text->address + sym->tb.piece->offset + tb__get_symbol_pos(sym->tb.sym);
+        } else {
+            tb_todo();
+        }
     } else {
-        printf("tblink: could not find entrypoint!\n");
+        fprintf(stderr, "tblink: could not find entrypoint!\n");
     }
     WRITE(&header, sizeof(header));
 
@@ -145,7 +140,7 @@ static TB_Exports export(TB_Linker* l) {
     TB_LinkerSection* data  = tb__find_section(l, ".data", PF_W | PF_R);
     TB_LinkerSection* rdata = tb__find_section(l, ".rdata", PF_R);
 
-    write_pos = tb__apply_section_contents(l, output, write_pos, text, data, rdata, 1);
+    write_pos = tb__apply_section_contents(l, output, write_pos, text, data, rdata, 1, 0);
     assert(write_pos == output_size);
 
     // TODO(NeGate): multithread this too

@@ -636,11 +636,6 @@ extern "C" {
 
         // x64 only
         TB_OBJECT_RELOC_REL32,   // relative 32bit displacement
-        TB_OBJECT_RELOC_REL32_1, //   plus 1
-        TB_OBJECT_RELOC_REL32_2, //   plus 2
-        TB_OBJECT_RELOC_REL32_3, //   and so on
-        TB_OBJECT_RELOC_REL32_4, //   ...
-        TB_OBJECT_RELOC_REL32_5,
 
         // Aarch64 only
         TB_OBJECT_RELOC_BRANCH26, // 26bit displacement for B and BL instructions

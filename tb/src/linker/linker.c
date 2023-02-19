@@ -15,7 +15,6 @@ TB_API TB_Linker* tb_linker_create(TB_ExecutableType exe, TB_Arch arch) {
     TB_Linker* l = tb_platform_heap_alloc(sizeof(TB_Linker));
     memset(l, 0, sizeof(TB_Linker));
     l->target_arch = arch;
-    l->entrypoint = -1;
 
     l->symtab.exp = 14;
     CUIK_TIMED_BLOCK("tb_platform_valloc") {
@@ -52,6 +51,14 @@ TB_API void tb_linker_destroy(TB_Linker* l) {
     tb_platform_heap_free(l);
 }
 
+TB_LinkerSectionPiece* tb__get_piece(TB_Linker* l, TB_LinkerSymbol* restrict sym) {
+    if (sym && (sym->tag == TB_LINKER_SYMBOL_NORMAL || sym->tag == TB_LINKER_SYMBOL_TB)) {
+        return sym->normal.piece;
+    }
+
+    return NULL;
+}
+
 size_t tb__get_symbol_pos(TB_Symbol* s) {
     if (s->tag == TB_SYMBOL_FUNCTION) {
         return ((TB_Function*) s)->output->code_pos;
@@ -82,10 +89,10 @@ uint64_t tb__get_symbol_rva(TB_Linker* l, TB_LinkerSymbol* sym) {
         return sym->normal.piece->parent->address + sym->normal.piece->offset + sym->normal.secrel;
 
         case TB_LINKER_SYMBOL_TB:
-        return sym->normal.piece->parent->address + sym->normal.piece->offset + tb__get_symbol_pos(sym->tb.sym);
+        return tb__compute_rva(l, sym->tb.sym->module, sym->tb.sym);
 
         case TB_LINKER_SYMBOL_IMAGEBASE:
-        return sym->imagebase.rva;
+        return sym->imagebase;
 
         default: tb_todo(); return 0;
     }
@@ -135,16 +142,18 @@ void tb__merge_sections(TB_Linker* linker, TB_LinkerSection* from, TB_LinkerSect
         size_t offset = to->total_size;
 
         for (TB_LinkerSectionPiece* p = from->first; p != NULL; p = p->next) {
+            p->parent = to;
             p->offset = offset;
             offset += p->size;
         }
 
         to->total_size += from->total_size;
+        to->piece_count += from->piece_count;
         assert(offset == to->total_size);
     }
 }
 
-size_t tb__apply_section_contents(TB_Linker* l, uint8_t* output, size_t write_pos, TB_LinkerSection* text, TB_LinkerSection* data, TB_LinkerSection* rdata, size_t section_alignment) {
+size_t tb__apply_section_contents(TB_Linker* l, uint8_t* output, size_t write_pos, TB_LinkerSection* text, TB_LinkerSection* data, TB_LinkerSection* rdata, size_t section_alignment, size_t image_base) {
     // write section contents
     // TODO(NeGate): we can actually parallelize this part of linking
     CUIK_TIMED_BLOCK("write sections") nl_strmap_for(i, l->sections) {
@@ -257,7 +266,7 @@ size_t tb__apply_section_contents(TB_Linker* l, uint8_t* output, size_t write_po
 
                             // compute RVA
                             uint32_t file_pos = data_file + actual_pos;
-                            *((uint64_t*) &output[file_pos]) = tb__compute_rva(l, m, s);
+                            *((uint64_t*) &output[file_pos]) = tb__compute_rva(l, m, s) + image_base;
 
                             // emit relocation
                             uint16_t payload = (10 << 12) | page_offset; // (IMAGE_REL_BASED_DIR64 << 12) | offset
@@ -329,6 +338,7 @@ TB_LinkerSectionPiece* tb__append_piece(TB_LinkerSection* section, int kind, siz
         .module = mod
     };
     section->total_size += size;
+    section->piece_count += 1;
 
     if (section->last == NULL) {
         section->first = section->last = piece;
@@ -387,6 +397,10 @@ ImportThunk* tb__find_or_create_import(TB_Linker* l, TB_LinkerSymbol* restrict s
     ImportThunk t = { .name = name, .ordinal = sym->import.ordinal };
     dyn_array_put(table->thunks, t);
     return &table->thunks[dyn_array_length(table->thunks) - 1];
+}
+
+TB_LinkerSymbol* tb__find_symbol_cstr(TB_SymbolTable* restrict symtab, const char* name) {
+    return tb__find_symbol(symtab, (TB_Slice){ strlen(name), (const uint8_t*) name });
 }
 
 TB_LinkerSymbol* tb__find_symbol(TB_SymbolTable* restrict symtab, TB_Slice name) {

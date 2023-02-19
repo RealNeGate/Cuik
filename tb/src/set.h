@@ -1,4 +1,5 @@
 #pragma once
+#include "tb_internal.h"
 #include <stdbool.h>
 #include <stdlib.h>
 #include <stddef.h>
@@ -13,14 +14,17 @@ typedef struct Set {
 } Set;
 
 inline static Set set_create(size_t cap) {
+    void* ptr = tb_platform_heap_alloc(((cap + 63) / 64) * sizeof(uint64_t));
+    memset(ptr, 0, ((cap + 63) / 64) * sizeof(uint64_t));
+
     return (Set){
         .capacity = cap,
-        .data = calloc((cap + 63) / 64, sizeof(uint64_t)),
+        .data = ptr,
     };
 }
 
 inline static void set_free(Set* s) {
-    free(s->data);
+    tb_platform_heap_free(s->data);
 }
 
 inline static void set_clear(Set* s) {

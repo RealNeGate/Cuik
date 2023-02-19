@@ -44,10 +44,6 @@ static TB_Slice deimp_your_names(TB_Slice name, bool* is_thunk) {
 }
 
 void append_object(TB_Linker* l, TB_Slice obj_name, TB_ObjectFile* obj) {
-    CUIK_TIMED_BLOCK("sort sections") {
-        qsort(obj->sections, obj->section_count, sizeof(TB_ObjectSection), compare_sections);
-    }
-
     // Apply all sections (generate lookup for sections based on ordinals)
     TB_ObjectSection** og_sort = tb_platform_heap_alloc(obj->section_count * sizeof(TB_ObjectSection*));
     FOREACH_N(i, 0, obj->section_count) {
@@ -55,8 +51,15 @@ void append_object(TB_Linker* l, TB_Slice obj_name, TB_ObjectFile* obj) {
         og_sort[s->ordinal] = s;
 
         // trim the dollar sign (if applies)
+        uint32_t order = 0;
         FOREACH_N(j, 0, s->name.length) {
             if (s->name.data[j] == '$') {
+                // convert letters into score
+                FOREACH_N(k, j + 1, s->name.length) {
+                    order <<= 8;
+                    order += s->name.data[i];
+                }
+
                 s->name.length = j;
                 break;
             }
@@ -67,7 +70,7 @@ void append_object(TB_Linker* l, TB_Slice obj_name, TB_ObjectFile* obj) {
             l, s->name.length, s->name.data, s->flags & ~0x00F00000
         );
 
-        if ((s->flags & (IMAGE_SCN_LNK_REMOVE | IMAGE_SCN_MEM_DISCARDABLE)) || s->name.data[0] == '/') {
+        if (s->flags & IMAGE_SCN_LNK_REMOVE) {
             ls->generic_flags |= TB_LINKER_SECTION_DISCARD;
         }
 
@@ -82,12 +85,16 @@ void append_object(TB_Linker* l, TB_Slice obj_name, TB_ObjectFile* obj) {
 
         TB_LinkerSectionPiece* p = tb__append_piece(ls, PIECE_NORMAL, s->raw_data.length, raw_data, NULL);
         s->user_data = p;
+
+        p->order = order;
         p->flags = 1;
         p->vsize = s->virtual_size;
     }
 
     // Append all symbols
     CUIK_TIMED_BLOCK("apply symbols") {
+        COFF_AuxSectionSymbol* comdat_aux = NULL;
+
         FOREACH_N(i, 0, obj->symbol_count) {
             TB_ObjectSymbol* restrict sym = &obj->symbols[i];
 
@@ -95,29 +102,60 @@ void append_object(TB_Linker* l, TB_Slice obj_name, TB_ObjectFile* obj) {
                 // TB_Slice sec_name = og_sort[sym->section_num - 1]->name;
                 // printf("    %.*s = %.*s:%d\n", (int) sym->name.length, sym->name.data, (int) sec_name.length, sec_name.data, sym->value);
 
-                TB_LinkerSectionPiece* p = og_sort[sym->section_num - 1]->user_data;
-                assert(p != NULL);
+                TB_ObjectSection* sec = og_sort[sym->section_num - 1];
+                if (sec->name.length == sym->name.length && memcmp(sym->name.data, sec->name.data, sym->name.length) == 0) {
+                    // we're a section symbol
+                    // COMDAT is how linkers handle merging of inline functions in C++
+                    if ((sec->flags & IMAGE_SCN_LNK_COMDAT)) {
+                        // the next symbol is the actual COMDAT symbol
+                        comdat_aux = sym->extra;
+                    }
+                } else {
+                    TB_LinkerSectionPiece* p = sec->user_data;
+                    assert(p != NULL);
 
-                TB_LinkerSymbol s = {
-                    .name = sym->name,
-                    .tag = TB_LINKER_SYMBOL_NORMAL,
-                    .object_name = obj_name,
-                    .normal = { p, sym->value }
-                };
+                    TB_LinkerSymbol s = {
+                        .name = sym->name,
+                        .tag = TB_LINKER_SYMBOL_NORMAL,
+                        .object_name = obj_name,
+                        .normal = { p, sym->value }
+                    };
 
-                if (sym->type == TB_OBJECT_SYMBOL_STATIC) {
-                    TB_LinkerSymbol* new_s = tb_platform_heap_alloc(sizeof(s));
-                    *new_s = s;
+                    TB_LinkerSymbol* lnk_s = NULL;
+                    if (sym->type == TB_OBJECT_SYMBOL_STATIC) {
+                        TB_LinkerSymbol* lnk_s = tb_platform_heap_alloc(sizeof(s));
+                        *lnk_s = s;
+                    } else if (sym->type == TB_OBJECT_SYMBOL_EXTERN || sym->type == TB_OBJECT_SYMBOL_WEAK_EXTERN) {
+                        if (comdat_aux) {
+                            s.flags |= TB_LINKER_SYMBOL_COMDAT;
 
-                    sym->user_data = new_s;
-                } else if (sym->type == TB_OBJECT_SYMBOL_EXTERN || sym->type == TB_OBJECT_SYMBOL_WEAK_EXTERN) {
-                    sym->user_data = tb__append_symbol(&l->symtab, &s);
+                            // check if it already exists as a COMDAT
+                            TB_LinkerSymbol* old = tb__find_symbol(&l->symtab, sym->name);
+                            if (old && (old->flags & TB_LINKER_SYMBOL_COMDAT)) {
+                                if (comdat_aux->selection == 2) {
+                                    // comdat any, any duplicates will be ignored
+                                    p->size = 0;
+                                } else {
+                                    tb_todo();
+                                }
+                            } else {
+                                lnk_s = tb__append_symbol(&l->symtab, &s);
+                            }
+
+                            comdat_aux = NULL;
+                        } else {
+                            lnk_s = tb__append_symbol(&l->symtab, &s);
+                        }
+                    }
+
+                    // add to the section piece's symbol list
+                    if (lnk_s) {
+                        lnk_s->next = p->first_sym;
+                        p->first_sym = lnk_s;
+
+                        sym->user_data = lnk_s;
+                    }
                 }
-
-                // COMDAT is how linkers handle merging of inline functions in C++
-                /*if (og_sort[sym->section_num - 1]->flags & IMAGE_SCN_LNK_COMDAT) {
-                    __debugbreak();
-                }*/
             }
         }
     }
@@ -137,7 +175,23 @@ void append_object(TB_Linker* l, TB_Slice obj_name, TB_ObjectFile* obj) {
                 TB_ObjectSymbol* restrict src_symbol = bsearch(&key, obj->symbols, obj->symbol_count, sizeof(TB_ObjectSymbol), symbol_cmp);
 
                 if (reloc->type == TB_OBJECT_RELOC_ADDR64) {
+                    TB_LinkerReloc r = {
+                        .type    = reloc->type,
+                        .addend  = reloc->addend,
+                        .is_weak = (src_symbol->type == TB_OBJECT_SYMBOL_WEAK_EXTERN),
+                        .target  = src_symbol->user_data,
+                        .source  = {
+                            .piece = p,
+                            .offset = reloc->virtual_address
+                        },
+                        .obj_name = obj_name
+                    };
 
+                    if (r.target == NULL) {
+                        bool is_thunk;
+                        r.name = deimp_your_names(src_symbol->name, &is_thunk);
+                    }
+                    dyn_array_put(l->relocations, r);
                 } else if (src_symbol->section_num == i) {
                     // relocation is section-local so we can resolve it early.
                     assert(p->kind == PIECE_NORMAL);
@@ -281,7 +335,7 @@ static void append_module(TB_Linker* l, TB_Module* m) {
     }
 
     if (m->data_region_size > 0) CUIK_TIMED_BLOCK(".reloc") {
-        uint32_t last_page = 0, reloc_size = 0;
+        uint32_t last_page = UINT32_MAX, reloc_size = 0;
         FOREACH_N(i, 0, m->max_threads) {
             pool_for(TB_Global, g, m->thread_info[i].globals) {
                 TB_Initializer* init = g->init;
@@ -332,7 +386,6 @@ static void append_module(TB_Linker* l, TB_Module* m) {
 }
 
 void tb__apply_external_relocs(TB_Linker* l, TB_Module* m, uint8_t* output) {
-    // ptrdiff_t global_data_rva = 0x1000 + import_table.count;
     TB_LinkerSection* text  = tb__find_section(l, ".text",  IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_CNT_CODE);
     TB_LinkerSection* data  = tb__find_section(l, ".data",  IMAGE_SCN_MEM_WRITE | IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA);
     TB_LinkerSection* rdata = tb__find_section(l, ".rdata", IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA);
@@ -406,24 +459,49 @@ void tb__apply_external_relocs(TB_Linker* l, TB_Module* m, uint8_t* output) {
     dyn_array_for(i, l->relocations) {
         TB_LinkerReloc* restrict r = &l->relocations[i];
         TB_LinkerSection* restrict s = r->source.piece->parent;
+        if (r->type == TB_OBJECT_RELOC_ADDR64) continue;
         if (r->target == NULL || (s->generic_flags & TB_LINKER_SECTION_DISCARD)) continue;
 
-        uint32_t actual_pos = s->address + r->source.piece->offset + r->source.offset;
         int32_t* dst = (int32_t*) &output[s->offset + r->source.piece->offset + r->source.offset];
 
         uint32_t target_rva = 0;
-        TB_LinkerSymbol* restrict sym = r->target;
+        TB_LinkerSymbol* sym = r->target;
         if (sym->tag == TB_LINKER_SYMBOL_IMPORT) {
             if (r->is_thunk) {
                 target_rva = iat_pos + (sym->import.thunk->thunk_id * 8);
             } else {
                 target_rva = trampoline_rva + (sym->import.thunk->thunk_id * 6);
             }
+        } else if (sym->tag == TB_LINKER_SYMBOL_ABSOLUTE) {
+            target_rva = 0;
         } else {
             target_rva = tb__get_symbol_rva(l, sym);
         }
 
-        (*dst) += target_rva - (actual_pos + r->addend);
+        switch (r->type) {
+            case TB_OBJECT_RELOC_ADDR32NB: {
+                (*dst) += target_rva;
+                break;
+            }
+            case TB_OBJECT_RELOC_SECTION: {
+                if (sym->tag != TB_LINKER_SYMBOL_IMPORT && sym->tag != TB_LINKER_SYMBOL_ABSOLUTE && sym->tag != TB_LINKER_SYMBOL_IMAGEBASE) {
+                    (*dst) += sym->normal.piece->parent->number;
+                }
+                break;
+            }
+            case TB_OBJECT_RELOC_SECREL: {
+                if (sym->tag != TB_LINKER_SYMBOL_IMPORT && sym->tag != TB_LINKER_SYMBOL_ABSOLUTE && sym->tag != TB_LINKER_SYMBOL_IMAGEBASE) {
+                    (*dst) += (target_rva - sym->normal.piece->parent->address);
+                }
+                break;
+            }
+            case TB_OBJECT_RELOC_REL32: {
+                uint32_t actual_pos = s->address + r->source.piece->offset + r->source.offset;
+                (*dst) += target_rva - (actual_pos + r->addend);
+                break;
+            }
+            default: tb_todo();
+        }
     }
 }
 
@@ -530,6 +608,12 @@ static COFF_ImportDirectory* gen_imports(TB_Linker* l, PE_ImageDataDirectory* im
         dyn_array_set_length(l->imports, j); // trimmed
     }
 
+    if (import_entry_count == 0) {
+        *imp_dir = (PE_ImageDataDirectory){ 0 };
+        *iat_dir = (PE_ImageDataDirectory){ 0 };
+        return NULL;
+    }
+
     // Generate import thunks
     uint32_t thunk_id_counter = 0;
     l->trampolines = (TB_Emitter){ 0 };
@@ -629,37 +713,84 @@ static COFF_ImportDirectory* gen_imports(TB_Linker* l, PE_ImageDataDirectory* im
     return import_dirs;
 }
 
+static void* gen_reloc_section(TB_Linker* l) {
+    // generates .reloc for all object files
+    uint32_t reloc_sec_size = 0;
+    uint32_t last_page = UINT32_MAX;
+    TB_LinkerSectionPiece* last_piece = NULL;
+
+    dyn_array_for(i, l->relocations) {
+        TB_LinkerReloc* restrict r = &l->relocations[i];
+        if (r->type != TB_OBJECT_RELOC_ADDR64) continue;
+        if (r->target == NULL || r->target->tag == TB_LINKER_SYMBOL_IMPORT || r->target->tag == TB_LINKER_SYMBOL_ABSOLUTE) continue;
+
+        TB_LinkerSection* s = r->source.piece->parent;
+        if (s->generic_flags & TB_LINKER_SECTION_DISCARD) continue;
+
+        size_t actual_pos = r->source.piece->offset + r->source.offset;
+        size_t actual_page = actual_pos & ~4095;
+
+        if (last_piece != r->source.piece && last_page != actual_page) {
+            last_piece = r->source.piece;
+            last_page = actual_page;
+
+            reloc_sec_size += 8;
+        }
+
+        reloc_sec_size += 2;
+    }
+
+    if (reloc_sec_size) {
+        void* reloc = tb_platform_heap_alloc(reloc_sec_size);
+
+        TB_LinkerSection* reloc_sec = tb__find_or_create_section(l, ".reloc", IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA);
+        l->main_reloc = tb__append_piece(reloc_sec, PIECE_NORMAL, reloc_sec_size, reloc, NULL);
+
+        return reloc;
+    } else {
+        return NULL;
+    }
+}
+
+#define CSTRING(str) { sizeof(str)-1, (const uint8_t*) str }
 static void init(TB_Linker* l) {
     tb__append_symbol(&l->symtab, &(TB_LinkerSymbol){
-            .name = { sizeof("__ImageBase") - 1, (const uint8_t*) "__ImageBase" },
+            .name = CSTRING("__ImageBase"),
             .tag = TB_LINKER_SYMBOL_IMAGEBASE,
-            .imagebase = { 0 }
         });
+
+    // This is practically just ripped from LLD
+    //   https://github.com/llvm/llvm-project/blob/3d0a5bf7dea509f130c51868361a38daeee7816a/lld/COFF/Driver.cpp#L2192
+    #define add_abs(name_) tb__append_symbol(&l->symtab, &(TB_LinkerSymbol){ .name = CSTRING(name_) })
+    add_abs("__volatile_metadata");
+    add_abs("__guard_memcpy_fptr");
+    add_abs("__guard_fids_count");
+    add_abs("__guard_fids_table");
+    add_abs("__guard_flags");
+    add_abs("__guard_iat_count");
+    add_abs("__guard_iat_table");
+    add_abs("__guard_longjmp_count");
+    add_abs("__guard_longjmp_table");
+    // Needed for MSVC 2017 15.5 CRT.
+    add_abs("__enclave_config");
+    // Needed for MSVC 2019 16.8 CRT.
+    add_abs("__guard_eh_cont_count");
+    add_abs("__guard_eh_cont_table");
+}
+
+static int compare_linker_sections(const void* a, const void* b) {
+    const TB_LinkerSectionPiece* sec_a = *(const TB_LinkerSectionPiece**) a;
+    const TB_LinkerSectionPiece* sec_b = *(const TB_LinkerSectionPiece**) b;
+
+    return sec_a->order - sec_b->order;
 }
 
 #define WRITE(data, size) (memcpy(&output[write_pos], data, size), write_pos += (size))
 static TB_Exports export(TB_Linker* l) {
-    PE_ImageDataDirectory imp_dir, iat_dir, tls_dir;
+    PE_ImageDataDirectory imp_dir, iat_dir;
     COFF_ImportDirectory* import_dirs;
 
-    if (l->entrypoint < 0) {
-        TB_Slice name = { sizeof("mainCRTStartup") - 1, (const uint8_t*) "mainCRTStartup" };
-        TB_LinkerSymbol* sym = tb__find_symbol(&l->symtab, name);
-        if (sym) {
-            if (sym->tag == TB_LINKER_SYMBOL_NORMAL) {
-                l->entrypoint = sym->normal.piece->offset + sym->normal.secrel;
-            } else if (sym->tag == TB_LINKER_SYMBOL_TB) {
-                l->entrypoint = sym->tb.piece->offset + tb__get_symbol_pos(sym->tb.sym);
-            }
-        }
-    }
-
-    ////////////////////////////////
-    // Merge any sections we care to like
-    //   .00cfg     .gfids
-    //
-    // moved into .rdata
-    ////////////////////////////////
+    // Merge sections into .rdata
     TB_LinkerSection* rdata = tb__find_section(l, ".rdata", IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA);
     {
         tb__merge_sections(l, tb__find_section(l, ".gfids", IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA), rdata);
@@ -669,17 +800,98 @@ static TB_Exports export(TB_Linker* l) {
         tb__merge_sections(l, tb__find_section(l, ".CRT",   IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA), rdata);
     }
 
-    size_t final_section_count = 0;
-    nl_strmap_for(i, l->sections) {
-        final_section_count += (l->sections[i]->generic_flags & TB_LINKER_SECTION_DISCARD) == 0;
+    CUIK_TIMED_BLOCK("GC sections") {
+        DynArray(TB_LinkerSectionPiece*) stack = NULL;
+
+        // find roots
+        TB_LinkerSectionPiece* entry = tb__get_piece(l, tb__find_symbol_cstr(&l->symtab, "mainCRTStartup"));
+        if (entry) {
+            dyn_array_put(stack, entry);
+        }
+
+        // mark
+        while (dyn_array_length(stack)) {
+            TB_LinkerSectionPiece* p = dyn_array_pop(stack);
+
+            for (TB_LinkerSymbol* sym = p->first_sym; sym != NULL; sym = sym->next) {
+                TB_LinkerSectionPiece* kid = tb__get_piece(l, sym);
+
+                if (kid->size > 0 && !(kid->parent->generic_flags & TB_LINKER_SECTION_DISCARD) && !(kid->flags & 2)) {
+                    kid->flags |= 2;
+                    dyn_array_put(stack, kid);
+                }
+            }
+        }
+
+        dyn_array_destroy(stack);
+    }
+
+    CUIK_TIMED_BLOCK("sort sections") {
+        TB_LinkerSectionPiece** array_form = NULL;
+
+        nl_strmap_for(i, l->sections) {
+            TB_LinkerSection* s = l->sections[i];
+            if (s->generic_flags & TB_LINKER_SECTION_DISCARD) continue;
+
+            size_t piece_count = s->piece_count;
+
+            ////////////////////////////////
+            // Sort sections
+            ////////////////////////////////
+            // convert into array
+            assert(s->piece_count != 0);
+            array_form = tb_platform_heap_realloc(array_form, piece_count * sizeof(TB_LinkerSectionPiece*));
+
+            size_t j = 0;
+            for (TB_LinkerSectionPiece* p = s->first; p != NULL; p = p->next) {
+                if (p->size != 0 && (p->flags & 2)) {
+                    array_form[j++] = p;
+                }
+            }
+            fprintf(stderr, "%.*s: %zu -> %zu\n", (int) s->name.length, s->name.data, piece_count, j);
+            piece_count = j;
+
+            if (piece_count == 0) {
+                s->generic_flags |= TB_LINKER_SECTION_DISCARD;
+                continue;
+            }
+
+            // sort
+            CUIK_TIMED_BLOCK("sort section") {
+                qsort(array_form, piece_count, sizeof(TB_LinkerSectionPiece*), compare_linker_sections);
+            }
+
+            // convert back into linked list
+            array_form[0]->offset = 0;
+
+            size_t offset = array_form[0]->size;
+            for (j = 1; j < piece_count; j++) {
+                array_form[j]->offset = offset;
+                offset += array_form[j]->size;
+
+                array_form[j-1]->next = array_form[j];
+            }
+            s->total_size = offset;
+
+            s->first = array_form[0];
+            s->last = array_form[piece_count - 1];
+            array_form[piece_count - 1]->next = NULL;
+        }
+        tb_platform_heap_free(array_form);
     }
 
     CUIK_TIMED_BLOCK("generate imports") {
         import_dirs = gen_imports(l, &imp_dir, &iat_dir);
     }
 
-    if (import_dirs == NULL) {
-        return (TB_Exports){ 0 };
+    CUIK_TIMED_BLOCK("generate .reloc") {
+        gen_reloc_section(l);
+    }
+
+    size_t final_section_count = 0;
+    nl_strmap_for(i, l->sections) {
+        l->sections[i]->number = i;
+        final_section_count += (l->sections[i]->generic_flags & TB_LINKER_SECTION_DISCARD) == 0;
     }
 
     size_t size_of_headers = sizeof(dos_stub)
@@ -715,46 +927,41 @@ static TB_Exports export(TB_Linker* l) {
         }
     }
 
-    // Handle tls index
-    TB_LinkerSymbol* tls_used_sym = tb__find_symbol(&l->symtab, (TB_Slice){ sizeof("_tls_used")-1, (const uint8_t*) "_tls_used" });
-    if (tls_used_sym) {
-        // fill in directory
-        tls_dir.virtual_address = tb__get_symbol_rva(l, tls_used_sym);
-        tls_dir.size = sizeof(PE_TLSDirectory);
-    }
-
     TB_LinkerSection* text = tb__find_section(l, ".text", IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_CNT_CODE);
     TB_LinkerSection* data = tb__find_section(l, ".data", IMAGE_SCN_MEM_WRITE | IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA);
-    iat_dir.virtual_address += rdata->address;
-    imp_dir.virtual_address += rdata->address;
-    CUIK_TIMED_BLOCK("relocate imports and trampolines") {
-        dyn_array_for(i, l->imports) {
-            ImportTable* imp = &l->imports[i];
-            COFF_ImportDirectory* header = &import_dirs[i];
-            header->import_lookup_table  += rdata->address;
-            header->import_address_table += rdata->address;
-            header->name += rdata->address;
 
-            uint64_t *ilt = imp->ilt, *iat = imp->iat;
-            uint64_t iat_rva = header->import_address_table;
-            uint64_t trampoline_rva = text->address + l->trampoline_pos;
+    if (import_dirs != NULL) {
+        iat_dir.virtual_address += rdata->address;
+        imp_dir.virtual_address += rdata->address;
+        CUIK_TIMED_BLOCK("relocate imports and trampolines") {
+            dyn_array_for(i, l->imports) {
+                ImportTable* imp = &l->imports[i];
+                COFF_ImportDirectory* header = &import_dirs[i];
+                header->import_lookup_table  += rdata->address;
+                header->import_address_table += rdata->address;
+                header->name += rdata->address;
 
-            dyn_array_for(j, imp->thunks) {
-                if (iat[j] != 0) {
-                    iat[j] += rdata->address;
-                    ilt[j] += rdata->address;
+                uint64_t *ilt = imp->ilt, *iat = imp->iat;
+                uint64_t iat_rva = header->import_address_table;
+                uint64_t trampoline_rva = text->address + l->trampoline_pos;
+
+                dyn_array_for(j, imp->thunks) {
+                    if (iat[j] != 0) {
+                        iat[j] += rdata->address;
+                        ilt[j] += rdata->address;
+                    }
+
+                    // Relocate trampoline entries to point into the IAT, the PE loader will
+                    // fill these slots in with absolute addresses of the symbols.
+                    int32_t* trampoline_dst = (int32_t*) &l->trampolines.data[imp->thunks[j].ds_address + 2];
+                    assert(*trampoline_dst == 0 && "We set this earlier... why isn't it here?");
+
+                    (*trampoline_dst) += (iat_rva + j*8) - (trampoline_rva + imp->thunks[j].ds_address + 6);
                 }
-
-                // Relocate trampoline entries to point into the IAT, the PE loader will
-                // fill these slots in with absolute addresses of the symbols.
-                int32_t* trampoline_dst = (int32_t*) &l->trampolines.data[imp->thunks[j].ds_address + 2];
-                assert(*trampoline_dst == 0 && "We set this earlier... why isn't it here?");
-
-                (*trampoline_dst) += (iat_rva + j*8) - (trampoline_rva + imp->thunks[j].ds_address + 6);
             }
         }
+        l->iat_pos = iat_dir.virtual_address;
     }
-    l->iat_pos = iat_dir.virtual_address;
 
     size_t output_size = size_of_headers + section_content_size;
     COFF_FileHeader header = {
@@ -764,7 +971,7 @@ static TB_Exports export(TB_Linker* l) {
         .symbol_table = 0,
         .symbol_count = 0,
         .optional_header_size = sizeof(PE_OptionalHeader64),
-        .flags = 0x2 /* executable */
+        .flags = 0x2 | 0x0020 /* executable, >2GB */
     };
 
     PE_OptionalHeader64 opt_header = {
@@ -789,7 +996,7 @@ static TB_Exports export(TB_Linker* l) {
         .size_of_image = virt_addr,
         .size_of_headers = (size_of_headers + 0x1FF) & ~0x1FF,
         .subsystem = IMAGE_SUBSYSTEM_WINDOWS_CUI,
-        .dll_characteristics = 0x40 | 0x20, /* dynamic base, high entropy */
+        .dll_characteristics = 0x40 | 0x20 | 0x0100 | 0x8000, /* dynamic base, high entropy, nx compat, terminal server aware */
 
         .size_of_stack_reserve = 2 << 20,
         .size_of_stack_commit = 4096,
@@ -798,9 +1005,19 @@ static TB_Exports export(TB_Linker* l) {
         .data_directories = {
             [IMAGE_DIRECTORY_ENTRY_IMPORT] = imp_dir,
             [IMAGE_DIRECTORY_ENTRY_IAT] = iat_dir,
-            [IMAGE_DIRECTORY_ENTRY_TLS] = tls_dir,
         }
     };
+
+    // TB_LinkerSection* tls = tb__find_section(l, ".tls", IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_CNT_CODE);
+    TB_LinkerSymbol* tls_used_sym = tb__find_symbol_cstr(&l->symtab, "_tls_used");
+    if (tls_used_sym) {
+        opt_header.data_directories[IMAGE_DIRECTORY_ENTRY_TLS] = (PE_ImageDataDirectory){ tb__get_symbol_rva(l, tls_used_sym), sizeof(PE_TLSDirectory) };
+    }
+
+    TB_LinkerSymbol* load_config_used_sym = tb__find_symbol_cstr(&l->symtab, "_load_config_used");
+    if (load_config_used_sym) {
+        opt_header.data_directories[IMAGE_DIRECTORY_ENTRY_LOAD_CONFIG] = (PE_ImageDataDirectory){ tb__get_symbol_rva(l, load_config_used_sym), 0x140 };
+    }
 
     TB_LinkerSection* pdata = tb__find_section(l, ".pdata", IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA);
     if (pdata) {
@@ -817,8 +1034,15 @@ static TB_Exports export(TB_Linker* l) {
         opt_header.base_of_code = text->address;
         opt_header.size_of_code = align_up(text->total_size, 4096);
 
-        if (l->entrypoint >= 0) {
-            opt_header.entrypoint = text->address + l->entrypoint;
+        TB_LinkerSymbol* sym = tb__find_symbol_cstr(&l->symtab, "mainCRTStartup");
+        if (sym) {
+            if (sym->tag == TB_LINKER_SYMBOL_NORMAL) {
+                opt_header.entrypoint = text->address + sym->normal.piece->offset + sym->normal.secrel;
+            } else if (sym->tag == TB_LINKER_SYMBOL_TB) {
+                opt_header.entrypoint = text->address + sym->tb.piece->offset + tb__get_symbol_pos(sym->tb.sym);
+            } else {
+                tb_todo();
+            }
         } else {
             printf("tblink: could not find entrypoint!\n");
         }
@@ -848,19 +1072,69 @@ static TB_Exports export(TB_Linker* l) {
             sec_header.size_of_raw_data = s->total_size;
         }
 
-        assert(s->name.length < 8);
-        memcpy(sec_header.name, s->name.data, s->name.length);
+        memcpy(sec_header.name, s->name.data, s->name.length >= 8 ? 8 : s->name.length);
         WRITE(&sec_header, sizeof(sec_header));
     }
     write_pos = tb__pad_file(output, write_pos, 0x00, 0x200);
 
-    tb__apply_section_contents(l, output, write_pos, text, data, rdata, 512);
+    tb__apply_section_contents(l, output, write_pos, text, data, rdata, 512, opt_header.image_base);
 
     // TODO(NeGate): multithread this too
     CUIK_TIMED_BLOCK("apply final relocations") {
         dyn_array_for(i, l->ir_modules) {
             tb__apply_external_relocs(l, l->ir_modules[i], output);
         }
+    }
+
+    // now that we've laid out the final output, we can initialize the massive .reloc chunk
+    if (l->main_reloc) {
+        uint8_t* p_start = (uint8_t*) &output[l->main_reloc->parent->offset + l->main_reloc->offset];
+        uint8_t* p_out = p_start;
+
+        uint32_t last_page = 0xFFFFFFFF;
+        uint32_t* last_block = NULL;
+        TB_LinkerSectionPiece* last_piece = NULL;
+        dyn_array_for(i, l->relocations) {
+            TB_LinkerReloc* restrict r = &l->relocations[i];
+            if (r->type != TB_OBJECT_RELOC_ADDR64) continue;
+            if (r->target == NULL || r->target->tag == TB_LINKER_SYMBOL_IMPORT) continue;
+
+            TB_LinkerSection* s = r->source.piece->parent;
+            if (s->generic_flags & TB_LINKER_SECTION_DISCARD) continue;
+
+            size_t actual_pos = r->source.piece->offset + r->source.offset;
+            if (r->target->tag == TB_LINKER_SYMBOL_ABSOLUTE) {
+                uint64_t* reloc = (uint64_t*) &output[s->offset + actual_pos];
+                *reloc += r->target->absolute;
+                continue;
+            }
+
+            size_t actual_page = actual_pos & ~4095;
+            size_t page_offset = actual_pos - actual_page;
+
+            if (last_piece != r->source.piece && last_page != actual_page) {
+                last_piece = r->source.piece;
+                last_page  = actual_page;
+                last_block = (uint32_t*) p_out;
+
+                last_block[0] = s->address + actual_page;
+                last_block[1] = 8; // block size field (includes RVA field and itself)
+                p_out += 8;
+            }
+
+            // compute RVA
+            uint32_t file_pos = s->offset + actual_pos;
+            uint64_t* reloc = (uint64_t*) &output[file_pos];
+            *reloc += opt_header.image_base + tb__get_symbol_rva(l, r->target);
+
+            // emit relocation
+            uint16_t payload = (10 << 12) | page_offset; // (IMAGE_REL_BASED_DIR64 << 12) | offset
+            *((uint16_t*) p_out) = payload, p_out += 2;
+            last_block[1] += 2;
+        }
+
+        size_t actual_reloc_size = p_out - p_start;
+        assert(actual_reloc_size == l->main_reloc->size);
     }
 
     return (TB_Exports){ .count = 1, .files = { { output_size, output } } };

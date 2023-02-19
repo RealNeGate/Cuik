@@ -15,6 +15,17 @@ void init_timer_system(void);
 thread_local Arena thread_arena;
 
 void cuik_init(void) {
+    #if _WIN32
+    // Enable ANSI/VT sequences on windows
+    HANDLE output_handle = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (output_handle != INVALID_HANDLE_VALUE) {
+        DWORD old_mode;
+        if (GetConsoleMode(output_handle, &old_mode)) {
+            SetConsoleMode(output_handle, old_mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+        }
+    }
+    #endif
+
     init_timer_system();
     hook_crash_handler();
 }

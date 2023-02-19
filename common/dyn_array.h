@@ -75,7 +75,7 @@ do {                                                             \
 } while (0)
 
 #define dyn_array_trim(arr) (arr = dyn_array_internal_trim(arr, sizeof(*arr)))
-#define dyn_array_clear(arr) (((((DynArrayHeader*)(arr)) - 1)->size) = 0)
+#define dyn_array_clear(arr) (arr ? (((((DynArrayHeader*)(arr)) - 1)->size) = 0) : 0)
 #define dyn_array_set_length(arr, newlen) (((((DynArrayHeader*)(arr)) - 1)->size) = (newlen))
 #define dyn_array_length(arr) ((arr) ? (((DynArrayHeader*)(arr)) - 1)->size : 0)
 #define dyn_array_for(it, arr) for (ptrdiff_t it = 0, _count_ = dyn_array_length(arr); it < _count_; it++)
