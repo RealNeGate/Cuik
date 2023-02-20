@@ -247,19 +247,22 @@ static void x64v2_resolve_params(Ctx* restrict ctx, TB_Function* f, GAD_VAL* val
                                 .r = r, .dt = dt, .reg = SYSV_GPR_PARAMETERS[i],
                             };
                         }
+
+                        DBG("  assign to %s\n", GPR_NAMES[values[r].reg]);
+                        set_put(&ctx->free_regs[X64_REG_CLASS_GPR], values[r].reg);
                     } else if (i < 4) {
                         ctx->active[ctx->active_count++] = r;
                         values[r] = (GAD_VAL){
                             .type = GAD_VAL_REGISTER + X64_REG_CLASS_GPR,
                             .r = r, .dt = dt, .reg = WIN64_GPR_PARAMETERS[i],
                         };
+
+                        DBG("  assign to %s\n", GPR_NAMES[values[r].reg]);
+                        set_put(&ctx->free_regs[X64_REG_CLASS_GPR], values[r].reg);
                     } else {
                         values[r] = GAD_MAKE_STACK_SLOT(ctx, f, r, 16 + (i * 8));
                         // GAD_FN(force_stack)(ctx, f, r, );
                     }
-
-                    DBG("  assign to %s\n", GPR_NAMES[values[r].reg]);
-                    set_put(&ctx->free_regs[X64_REG_CLASS_GPR], values[r].reg);
                 }
 
                 // short circuit
