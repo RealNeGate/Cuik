@@ -141,29 +141,10 @@ typedef struct {
 } ImportTable;
 
 typedef struct {
-    TB_ObjectRelocType type;
-    int addend;
-
-    // flags
-    bool is_thunk : 1;
-    bool is_weak  : 1;
-
     // if target is NULL, check name
     TB_LinkerSymbol* target;
     TB_Slice name;
-
-    struct {
-        TB_LinkerSectionPiece* piece;
-        size_t offset;
-    } source;
-
-    TB_Slice obj_name;
-} TB_LinkerReloc;
-
-typedef struct {
-    // if target is NULL, check name
-    TB_LinkerSymbol* target;
-    TB_Slice name;
+    TB_Slice* alt;
 
     TB_LinkerSectionPiece* src_piece;
     uint32_t src_offset;
@@ -179,6 +160,7 @@ typedef struct {
     // if target is NULL, check name
     TB_LinkerSymbol* target;
     TB_Slice name;
+    TB_Slice* alt;
 
     TB_LinkerSectionPiece* src_piece;
     uint32_t src_offset;
@@ -186,6 +168,10 @@ typedef struct {
     // 0 is NULL
     uint32_t obj_file;
 } TB_LinkerRelocAbs;
+
+typedef struct {
+    TB_Slice from, to;
+} TB_LinkerCmd;
 
 typedef struct TB_LinkerThreadInfo TB_LinkerThreadInfo;
 struct TB_LinkerThreadInfo {
@@ -195,6 +181,12 @@ struct TB_LinkerThreadInfo {
     TB_LinkerThreadInfo* next_in_thread;
     // this is the next thread info for the same TB_Linker
     TB_LinkerThreadInfo* next;
+
+    // commands
+    //   these are generated in object files and such but won't get
+    //   executed until export time
+    DynArray(TB_LinkerCmd) merges;
+    DynArray(TB_LinkerCmd) alternates;
 
     // relocations
     //   we store different kinds of relocations in different arrays
