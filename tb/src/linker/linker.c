@@ -144,6 +144,7 @@ size_t tb__pad_file(uint8_t* output, size_t write_pos, char pad, size_t align) {
 
 void tb__merge_sections(TB_Linker* linker, TB_LinkerSection* from, TB_LinkerSection* to) {
     if (from == NULL || to == NULL) return;
+    if (from->generic_flags & TB_LINKER_SECTION_DISCARD) return;
 
     // remove 'from' from final output
     from->generic_flags |= TB_LINKER_SECTION_DISCARD;

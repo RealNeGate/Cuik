@@ -5,6 +5,20 @@
 #include <string_map.h>
 
 typedef struct TB_LinkerSymbol TB_LinkerSymbol;
+typedef struct TB_LinkerThreadInfo TB_LinkerThreadInfo;
+
+typedef enum {
+    TB_LINKER_PIECE_IMMUTABLE = 1,
+
+    // by the time GC is done, this is resolved and we can
+    // assume any pieces without this set are dead.
+    TB_LINKER_PIECE_LIVE      = 2,
+} TB_LinkerPieceFlags;
+
+typedef struct {
+    TB_LinkerThreadInfo* info;
+    size_t index;
+} TB_LinkerRelocRef;
 
 // we use a linked list to store these because i couldn't be bothered to allocate
 // one giant sequential region for the entire linker.
@@ -30,14 +44,14 @@ struct TB_LinkerSectionPiece {
     TB_LinkerSection* parent;
 
     TB_LinkerSymbol* first_sym;
+    DynArray(TB_LinkerRelocRef) abs_refs;
+    DynArray(TB_LinkerRelocRef) rel_refs;
 
     // vsize is the virtual size
     size_t offset, vsize, size;
     // this is for COFF $ management
     uint32_t order;
-    // 1 means it's immutable
-    // 2 means it's live
-    uint32_t flags;
+    TB_LinkerPieceFlags flags;
     const uint8_t* data;
 };
 
@@ -140,7 +154,11 @@ typedef struct {
     uint64_t *iat, *ilt;
 } ImportTable;
 
-typedef struct {
+typedef struct TB_LinkerRelocRel TB_LinkerRelocRel;
+struct TB_LinkerRelocRel {
+    // within the same piece
+    TB_LinkerRelocRel* next;
+
     // if target is NULL, check name
     TB_LinkerSymbol* target;
     TB_Slice name;
@@ -154,9 +172,13 @@ typedef struct {
 
     // highest bit is set for thunks (symbols which start with __imp_)
     uint32_t addend;
-} TB_LinkerRelocRel;
+};
 
-typedef struct {
+typedef struct TB_LinkerRelocAbs TB_LinkerRelocAbs;
+struct TB_LinkerRelocAbs {
+    // within the same piece
+    TB_LinkerRelocAbs* next;
+
     // if target is NULL, check name
     TB_LinkerSymbol* target;
     TB_Slice name;
@@ -167,13 +189,12 @@ typedef struct {
 
     // 0 is NULL
     uint32_t obj_file;
-} TB_LinkerRelocAbs;
+};
 
 typedef struct {
     TB_Slice from, to;
 } TB_LinkerCmd;
 
-typedef struct TB_LinkerThreadInfo TB_LinkerThreadInfo;
 struct TB_LinkerThreadInfo {
     TB_Linker* parent;
 

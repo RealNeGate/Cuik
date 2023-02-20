@@ -600,7 +600,7 @@ CompilationUnit* cuik_driver_compile(Cuik_IThreadpool* restrict thread_pool, Cui
         }
     }
 
-    if (args->test_preproc) return cu;
+    if (args->preprocess || args->test_preproc) return cu;
     if (parse_errors > 0) goto error;
 
     CUIK_TIMED_BLOCK("internal link") {
