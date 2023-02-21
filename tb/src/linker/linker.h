@@ -47,6 +47,10 @@ struct TB_LinkerSectionPiece {
     DynArray(TB_LinkerRelocRef) abs_refs;
     DynArray(TB_LinkerRelocRef) rel_refs;
 
+    // NULL if doesn't apply.
+    //   for a COFF .text section, this is the .pdata
+    TB_LinkerSectionPiece* associate;
+
     // vsize is the virtual size
     size_t offset, vsize, size;
     // this is for COFF $ management
@@ -65,6 +69,7 @@ struct TB_LinkerSection {
 
     TB_LinkerSectionFlags generic_flags;
     uint32_t flags;
+    uint32_t number;
 
     size_t address; // usually a relative virtual address.
     size_t offset;  // in the file.
@@ -171,7 +176,8 @@ struct TB_LinkerRelocRel {
     uint32_t obj_file;
 
     // highest bit is set for thunks (symbols which start with __imp_)
-    uint32_t addend;
+    uint16_t addend;
+    uint16_t type;
 };
 
 typedef struct TB_LinkerRelocAbs TB_LinkerRelocAbs;
