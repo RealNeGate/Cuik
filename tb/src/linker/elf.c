@@ -6,7 +6,7 @@ static void append_object(TB_Linker* l, TB_Slice obj_name, TB_ObjectFile* obj) {
     // implement this
 }
 
-static void append_library(TB_Linker* l, TB_Slice ar_file) {
+static void append_library(TB_Linker* l, TB_Slice ar_name, TB_Slice ar_file) {
     // implement this
 }
 

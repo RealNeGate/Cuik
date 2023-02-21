@@ -91,7 +91,10 @@ typedef enum TB_LinkerSymbolTag {
     // TB defined
     TB_LINKER_SYMBOL_TB,
 
-    // imported from shared object
+    // import thunks
+    TB_LINKER_SYMBOL_THUNK,
+
+    // imported from shared object (named with __imp_)
     TB_LINKER_SYMBOL_IMPORT,
 } TB_LinkerSymbolTag;
 
@@ -143,6 +146,10 @@ struct TB_LinkerSymbol {
             uint16_t ordinal;
             ImportThunk* thunk;
         } import;
+
+        struct {
+            TB_LinkerSymbol* import_sym;
+        } thunk;
     };
 };
 
@@ -175,7 +182,6 @@ struct TB_LinkerRelocRel {
     // 0 is NULL
     uint32_t obj_file;
 
-    // highest bit is set for thunks (symbols which start with __imp_)
     uint16_t addend;
     uint16_t type;
 };
@@ -226,7 +232,7 @@ struct TB_LinkerThreadInfo {
 typedef struct TB_LinkerVtbl {
     void (*init)(TB_Linker* l);
     void (*append_object)(TB_Linker* l, TB_Slice obj_name, TB_ObjectFile* obj);
-    void (*append_library)(TB_Linker* l, TB_Slice ar_file);
+    void (*append_library)(TB_Linker* l, TB_Slice ar_name, TB_Slice ar_file);
     void (*append_module)(TB_Linker* l, TB_Module* m);
     TB_Exports (*export)(TB_Linker* l);
 } TB_LinkerVtbl;

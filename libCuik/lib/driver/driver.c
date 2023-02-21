@@ -472,7 +472,8 @@ static bool export_output(Cuik_CompilerArgs* restrict args, TB_Module* mod, cons
                     }
 
                     CUIK_TIMED_BLOCK("tb_linker_append_library") {
-                        tb_linker_append_library(l, s);
+                        TB_Slice path_slice = { strlen(path), (const uint8_t*) cuik_strdup(path) };
+                        tb_linker_append_library(l, path_slice, s);
                     }
                 }
                 skip:;

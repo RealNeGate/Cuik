@@ -39,8 +39,8 @@ TB_API void tb_linker_append_module(TB_Linker* l, TB_Module* m) {
     l->vtbl.append_module(l, m);
 }
 
-TB_API void tb_linker_append_library(TB_Linker* l, TB_Slice ar_file) {
-    l->vtbl.append_library(l, ar_file);
+TB_API void tb_linker_append_library(TB_Linker* l, TB_Slice ar_name, TB_Slice ar_file) {
+    l->vtbl.append_library(l, ar_name, ar_file);
 }
 
 TB_API TB_Exports tb_linker_export(TB_Linker* l) {
@@ -153,6 +153,12 @@ void tb__merge_sections(TB_Linker* linker, TB_LinkerSection* from, TB_LinkerSect
     else to->first = from->first;
     to->last = from->last;
 
+    #if 1
+    // we don't care about fixing up the offsets because they'll be properly laid out
+    // after this is all done
+    to->total_size += from->total_size;
+    to->piece_count += from->piece_count;
+    #else
     if (from->last) {
         size_t offset = to->total_size;
 
@@ -166,6 +172,7 @@ void tb__merge_sections(TB_Linker* linker, TB_LinkerSection* from, TB_LinkerSect
         to->piece_count += from->piece_count;
         assert(offset == to->total_size);
     }
+    #endif
 }
 
 size_t tb__apply_section_contents(TB_Linker* l, uint8_t* output, size_t write_pos, TB_LinkerSection* text, TB_LinkerSection* data, TB_LinkerSection* rdata, size_t section_alignment, size_t image_base) {

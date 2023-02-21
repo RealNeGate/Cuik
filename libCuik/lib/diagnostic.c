@@ -266,7 +266,7 @@ static void diag(DiagType type, TokenStream* tokens, SourceRange loc, const char
         while (*line_start && isspace(*line_start)) line_start++;
         size_t dist_from_line_start = line_start - start.line_str;
 
-        for (int i = 0; i < fixit_count; i++) {
+        for (size_t i = 0; i < fixit_count; i++) {
             size_t start_pos = start.column > dist_from_line_start ? start.column - dist_from_line_start : 0;
             start_pos += fixits[i].offset;
 
@@ -321,7 +321,7 @@ DiagWriter diag_writer(TokenStream* tokens) {
 static void diag_writer_write_upto(DiagWriter* writer, size_t pos) {
     if (writer->cursor < pos) {
         int l = pos - writer->cursor;
-        for (int i = 0; i < l; i++) printf(" ");
+        for (size_t i = 0; i < l; i++) printf(" ");
 
         //printf("%.*s", (int)(pos - writer->cursor), writer->line_start + writer->cursor);
         writer->cursor = pos;
@@ -365,7 +365,7 @@ void diag_writer_highlight(DiagWriter* writer, SourceRange loc) {
     //printf("\x1b[7m");
     //diag_writer_write_upto(writer, start_pos + tkn_len);
     sprintfcb(tokens->diag, "\x1b[32m^");
-    for (int i = 1; i < tkn_len; i++) sprintfcb(tokens->diag, "~");
+    for (size_t i = 1; i < tkn_len; i++) sprintfcb(tokens->diag, "~");
     writer->cursor = start_pos + tkn_len;
     sprintfcb(tokens->diag, "\x1b[0m");
 }

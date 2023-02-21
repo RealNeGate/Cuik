@@ -63,7 +63,7 @@ TB_ObjectFile* tb_object_parse_coff(const TB_Slice file) {
         COFF_SectionHeader* sec = (COFF_SectionHeader*) &file.data[section_offset];
 
         TB_ObjectSection* restrict out_sec = &obj_file->sections[i];
-        *out_sec = (TB_ObjectSection) { .ordinal = i, .flags = sec->characteristics };
+        *out_sec = (TB_ObjectSection) { .flags = sec->characteristics };
 
         // Parse string table name stuff
         if (sec->name[0] == '/') {

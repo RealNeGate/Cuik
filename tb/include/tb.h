@@ -678,7 +678,6 @@ extern "C" {
 
     typedef struct {
         TB_Slice name;
-        uint32_t ordinal;
         uint32_t flags;
 
         // the section symbol... if applies
@@ -708,7 +707,9 @@ extern "C" {
     typedef struct {
         TB_ObjectFileType type;
         TB_Arch           arch;
+
         TB_Slice          name;
+        TB_Slice          ar_name;
 
         size_t           symbol_count;
         TB_ObjectSymbol* symbols;
@@ -857,7 +858,7 @@ extern "C" {
     // Adds static library to output
     //   this can include imports (wrappers for DLL symbols) along with
     //   normal sections.
-    TB_API void tb_linker_append_library(TB_Linker* l, TB_Slice ar_file);
+    TB_API void tb_linker_append_library(TB_Linker* l, TB_Slice ar_name, TB_Slice ar_file);
 
     ////////////////////////////////
     // JIT compilation
