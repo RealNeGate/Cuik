@@ -41,7 +41,7 @@ static const DPInst inst_table[] = {
 static void emit_dp_imm(TB_CGEmitter* restrict e, DPOpcode op, GPR dst, GPR src, uint16_t imm, uint8_t shift, bool _64bit) {
     uint32_t inst = _64bit ? (1u << 31u) : 0;
 
-    inst |= ((op & 0xFF) << 24u);
+    inst |= ((inst_table[op].i & 0xFF) << 24u);
 
     if (op == ADD || op == SUB) {
         if (shift == 12) inst |= (shift << 22u);
@@ -62,18 +62,11 @@ static void emit_dp_imm(TB_CGEmitter* restrict e, DPOpcode op, GPR dst, GPR src,
 //
 // 0000 0000 0000 0000 0000 0000 0000 0000
 // AOOO OOOO SS_M MMMM IIII IINN NNND DDDD
-//
-// A - set when we're doing the 64bit variant of the instruction
-// O - is the opcode
-// S - shift
-// I - immediate
-// N - source
-// M - second source
-// D - destination
+// x101 1110 xx1m mmmm x000 01nn nnnd dddd  -  add Sd Sn Sm
 static void emit_dp_r(TB_CGEmitter* restrict e, DPOpcode op, GPR dst, GPR a, GPR b, uint16_t imm, uint8_t shift, bool _64bit) {
     uint32_t inst = _64bit ? (1u << 31u) : 0;
 
-    inst |= ((op & 0xFF) << 24u);
+    inst |= ((inst_table[op].r & 0x7F) << 24u);
 
     if (op == ADD || op == SUB) {
         if (shift == 12) inst |= (shift << 22u);
@@ -86,6 +79,36 @@ static void emit_dp_r(TB_CGEmitter* restrict e, DPOpcode op, GPR dst, GPR a, GPR
     inst |= (b & 0b11111) << 16u;
     inst |= (imm & 0xFFF) << 10u;
     inst |= (a & 0b11111) << 5u;
+    inst |= (dst & 0b11111) << 0u;
+    EMIT4(e, inst);
+}
+
+static void emit_mov(TB_CGEmitter* restrict e, uint8_t dst, uint8_t src, bool _64bit) {
+    uint32_t inst = (_64bit ? (1 << 31u) : 0);
+
+    inst |= (0b00101010 << 24u);
+    inst |= (src & 0b11111) << 16u;
+    inst |= (0b11111) << 5u;
+    inst |= (dst & 0b11111) << 0u;
+    EMIT4(e, inst);
+}
+
+static void emit_movz(TB_CGEmitter* restrict e, uint8_t dst, uint16_t imm, uint8_t shift, bool _64bit) {
+    uint32_t inst = (_64bit ? (1 << 31u) : 0);
+
+    inst |= (0b010100101 << 23u);
+    inst |= shift << 21u;
+    inst |= imm << 5u;
+    inst |= (dst & 0b11111) << 0u;
+    EMIT4(e, inst);
+}
+
+static void emit_movk(TB_CGEmitter* restrict e, uint8_t dst, uint16_t imm, uint8_t shift, bool _64bit) {
+    uint32_t inst = (_64bit ? (1 << 31u) : 0);
+
+    inst |= (0b011100101 << 23u);
+    inst |= shift << 21u;
+    inst |= imm << 5u;
     inst |= (dst & 0b11111) << 0u;
     EMIT4(e, inst);
 }

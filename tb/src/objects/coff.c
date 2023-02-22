@@ -68,11 +68,7 @@ TB_API TB_Exports tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
     // Generate .xdata section (unwind info)
     ////////////////////////////////
     TB_Emitter xdata = { 0 };
-    {
-        if (e->code_gen->emit_win64eh_unwind_info == NULL) {
-            tb_panic("write_xdata_section: emit_win64eh_unwind_info is required.");
-        }
-
+    if (e->code_gen->emit_win64eh_unwind_info) {
         TB_FOR_FUNCTIONS(f, m) {
             TB_FunctionOutput* out_f = f->output;
 

@@ -1348,7 +1348,7 @@ extern "C" {
     ////////////////////////////////
     #ifdef TB_COMPILE_TESTS
     bool tb_x64_test_suite(void);
-    bool tb_aarch64_test_suite(void);
+    // bool tb_aarch64_test_suite(void);
     #endif /* TB_COMPILE_TESTS */
 
     #ifdef __cplusplus

@@ -820,7 +820,7 @@ static TB_FunctionOutput GAD_FN(compile_function)(TB_Function* restrict f, const
         memset(ctx->values, 0, f->node_count * sizeof(GAD_VAL));
     }
 
-    // tb_function_print(f, tb_default_print_callback, stdout, false);
+    tb_function_print(f, tb_default_print_callback, stdout, false);
 
     // Compute register allocation
     {

@@ -3,6 +3,7 @@
 #include <futex.h>
 #include <arena.h>
 #include <threads.h>
+#include "targets/targets.h"
 #include "driver_fs.h"
 #include "driver_opts.h"
 #include "driver_arg_parse.h"
@@ -438,11 +439,11 @@ static bool export_output(Cuik_CompilerArgs* restrict args, TB_Module* mod, cons
             TB_Linker* l = NULL;
             switch (sys) {
                 case CUIK_SYSTEM_WINDOWS:
-                l = tb_linker_create(TB_EXECUTABLE_PE, TB_ARCH_X86_64);
+                l = tb_linker_create(TB_EXECUTABLE_PE, args->target->arch);
                 break;
 
                 case CUIK_SYSTEM_LINUX:
-                l = tb_linker_create(TB_EXECUTABLE_ELF, TB_ARCH_X86_64);
+                l = tb_linker_create(TB_EXECUTABLE_ELF, args->target->arch);
                 break;
 
                 default:
@@ -612,7 +613,7 @@ CompilationUnit* cuik_driver_compile(Cuik_IThreadpool* restrict thread_pool, Cui
     CUIK_TIMED_BLOCK("allocate IR") {
         TB_FeatureSet features = { 0 };
         mod = tb_module_create(
-            TB_ARCH_X86_64, (TB_System) cuik_get_target_system(args->target), &features, false
+            args->target->arch, (TB_System) cuik_get_target_system(args->target), &features, false
         );
 
         cuikcg_allocate_ir(cu, thread_pool, mod);

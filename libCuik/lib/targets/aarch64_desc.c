@@ -87,6 +87,14 @@ static int deduce_parameter_usage(TranslationUnit* tu, Cuik_QualType type) {
     return 1;
 }
 
+static TB_Reg get_parameter(TranslationUnit* tu, TB_Function* func, Cuik_Type* type, TB_Reg reg) {
+    if (should_pass_on_value_stack(tu, type)) {
+        return tb_inst_load(func, TB_TYPE_PTR, reg, 8);
+    } else {
+        return reg;
+    }
+}
+
 static int pass_parameter(TranslationUnit* tu, TB_Function* func, Expr* e, bool is_vararg, TB_Reg* out_param) {
     Cuik_Type* arg_type = cuik_canonical_type(e->type);
 
