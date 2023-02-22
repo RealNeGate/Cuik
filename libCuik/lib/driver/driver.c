@@ -534,7 +534,7 @@ static bool export_output(Cuik_CompilerArgs* restrict args, TB_Module* mod, cons
 
         if (args->flavor == TB_FLAVOR_ASSEMBLY) {
             char cmd[2048];
-            snprintf(cmd, 2048, "dumpbin %s /disasm", obj_output_path);
+            snprintf(cmd, 2048, "dumpbin %s /nologo /disasm", obj_output_path);
             return system(cmd) == 0;
         }
 
@@ -602,8 +602,8 @@ CompilationUnit* cuik_driver_compile(Cuik_IThreadpool* restrict thread_pool, Cui
         }
     }
 
-    if (args->preprocess || args->test_preproc) return cu;
     if (parse_errors > 0) goto error;
+    if (args->preprocess || args->test_preproc) return cu;
 
     CUIK_TIMED_BLOCK("internal link") {
         cuik_internal_link_compilation_unit(cu, thread_pool, args->debug_info);
@@ -661,6 +661,7 @@ CompilationUnit* cuik_driver_compile(Cuik_IThreadpool* restrict thread_pool, Cui
                 }
 
                 tb_module_optimize(mod, pass_count, passes);
+                cuik_free(passes);
             }
         }
 
