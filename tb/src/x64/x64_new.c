@@ -177,7 +177,7 @@ static size_t x64v2_resolve_stack_usage(Ctx* restrict ctx, TB_Function* f, size_
     size_t usage = stack_usage + (caller_usage * 8);
 
     // Align stack usage to 16bytes and add 8 bytes for the return address
-    if (usage > 16) {
+    if (ctx->needs_stack || usage > 16) {
         usage = align_up(usage + 8, 16) + 8;
     } else {
         usage = 0;
@@ -316,12 +316,14 @@ static void x64v2_resolve_stack_slot(Ctx* restrict ctx, TB_Function* f, TB_Node*
 
         ctx->values[r] = ctx->values[n - f->nodes] = dst;
         ctx->values[r].mem.is_rvalue = true;
+        ctx->needs_stack = true;
     } else if (n->type == TB_LOCAL) {
         TB_Reg r = n - f->nodes;
         ctx->stack_usage = align_up(ctx->stack_usage + n->local.size, n->local.alignment);
 
         int pos = -ctx->stack_usage;
         ctx->values[r] = GAD_MAKE_STACK_SLOT(ctx, f, r, pos);
+        ctx->needs_stack = true;
 
         for (TB_Attrib* attrib = n->first_attrib; attrib != NULL; attrib = attrib->next) {
             if (attrib->type == TB_ATTRIB_VARIABLE) {

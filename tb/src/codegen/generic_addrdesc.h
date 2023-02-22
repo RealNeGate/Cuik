@@ -58,6 +58,8 @@ struct Ctx {
     TB_Reg* active;
     size_t active_count;
 
+    bool needs_stack;
+
     // we can allocate 4 temporaries at any one time (which is kinda a lot)
     size_t tmp_count;
     RegisterRef tmps[4];
