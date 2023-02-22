@@ -47,8 +47,11 @@ else:
 	if args.opt: cflags += " -O2 -DNDEBUG"
 	if args.autospall: cflags += " -finstrument-functions-after-inlining"
 
+cflags += " -I ../c11threads"
+
 os_name = platform.system()
-if os_name == "Windows": cflags += " -D_CRT_SECURE_NO_WARNINGS"
+if os_name == "Windows":
+	cflags += " -D_CRT_SECURE_NO_WARNINGS"
 
 # configure architecture-specific targeting
 if platform.machine() == "AMD64":

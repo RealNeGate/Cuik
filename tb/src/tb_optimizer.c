@@ -1,11 +1,6 @@
 #include "tb_internal.h"
 #include <stdarg.h>
 
-#ifdef _WIN32
-#define strdup(s) _strdup(s)
-#define strtok_r(a, b, c) strtok_s(a, b, c)
-#endif
-
 #define DIFF_BUFFER_SIZE 131072
 
 static void print_to_buffer(void* user_data, const char* fmt, ...) {

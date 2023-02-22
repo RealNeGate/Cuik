@@ -147,7 +147,7 @@ TB_API void tb_function_attrib_variable(TB_Function* f, TB_Reg r, const char* na
     assert(type != NULL);
 
     TB_Attrib* a = tb_make_attrib(f);
-    *a = (TB_Attrib) { .type = TB_ATTRIB_VARIABLE, .var = { tb_platform_string_alloc(name), type } };
+    *a = (TB_Attrib) { .type = TB_ATTRIB_VARIABLE, .var = { tb__arena_strdup(f->super.module, name), type } };
     append_attrib(f, r, a);
 }
 
@@ -475,8 +475,10 @@ TB_API TB_Reg tb_inst_float64(TB_Function* f, double imm) {
 }
 
 TB_API TB_Reg tb_inst_string(TB_Function* f, size_t len, const char* str) {
-    char* newstr = tb_platform_arena_alloc(len);
+    mtx_lock(&f->super.module->lock);
+    char* newstr = arena_alloc(&f->super.module->arena, len, 1);
     memcpy(newstr, str, len);
+    mtx_unlock(&f->super.module->lock);
 
     TB_Reg r = tb_make_reg(f, TB_STRING_CONST, TB_TYPE_PTR);
     f->nodes[r].string = (struct TB_NodeString) { .length = len, .data = newstr };
@@ -484,13 +486,10 @@ TB_API TB_Reg tb_inst_string(TB_Function* f, size_t len, const char* str) {
 }
 
 TB_API TB_Reg tb_inst_cstring(TB_Function* f, const char* str) {
-    size_t len = strlen(str);
-    char* newstr = tb_platform_arena_alloc(len + 1);
-    memcpy(newstr, str, len);
-    newstr[len] = '\0';
+    char* newstr = tb__arena_strdup(f->super.module, str);
 
     TB_Reg r = tb_make_reg(f, TB_STRING_CONST, TB_TYPE_PTR);
-    f->nodes[r].string = (struct TB_NodeString) { .length = len + 1, .data = newstr };
+    f->nodes[r].string = (struct TB_NodeString) { .length = strlen(str) + 1, .data = newstr };
     return r;
 }
 

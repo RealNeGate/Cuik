@@ -429,7 +429,8 @@ extern "C" {
         TB_Attrib*  first_attrib;
 
         union {
-            uint8_t raw_operands[16];
+            TB_Reg raw_regs[4];
+
             struct TB_NodeInt {
                 size_t num_words;
                 union {
@@ -904,8 +905,8 @@ extern "C" {
     // adds a parameter to the function prototype, TB doesn't support struct
     // parameters so the frontend must lower them to pointers or any other type
     // depending on their preferred ABI.
-    TB_API void tb_prototype_add_param(TB_FunctionPrototype* p, TB_DataType dt);
-    TB_API void tb_prototype_add_param_named(TB_FunctionPrototype* p, TB_DataType dt, const char* name, TB_DebugType* debug_type);
+    TB_API void tb_prototype_add_param(TB_Module* m, TB_FunctionPrototype* p, TB_DataType dt);
+    TB_API void tb_prototype_add_param_named(TB_Module* m, TB_FunctionPrototype* p, TB_DataType dt, const char* name, TB_DebugType* debug_type);
 
     ////////////////////////////////
     // Constant Initializers

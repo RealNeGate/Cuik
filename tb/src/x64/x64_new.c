@@ -811,15 +811,6 @@ static void x64v2_misc_op(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
         EMIT1(&ctx->emit, 0xCC);
         break;
 
-        default: tb_todo();
-    }
-}
-
-static void x64v2_mem_op(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
-    TB_Node* restrict n = &f->nodes[r];
-    TB_NodeTypeEnum type = n->type;
-
-    switch (type) {
         case TB_INITIALIZE: {
             TB_Reg addr = n->init.addr;
             TB_Initializer* i = n->init.src;
@@ -930,8 +921,12 @@ static Val x64v2_eval(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
                 EMIT1(&ctx->emit, mod_rx_rm(MOD_INDIRECT, dst.xmm, RBP));
                 EMIT4(&ctx->emit, 0);
 
-                uint64_t* rdata_payload = tb_platform_arena_alloc(sizeof(uint64_t));
-                *rdata_payload = imm;
+                TB_Module* m = f->super.module;
+                mtx_lock(&m->lock);
+                uint64_t* rdata_payload = ARENA_ALLOC(&m->arena, uint64_t);
+                mtx_unlock(&m->lock);
+
+                memcpy(rdata_payload, &imm, sizeof(uint64_t));
 
                 uint32_t pos = tb_emit_const_patch(
                     f->super.module, f, GET_CODE_POS(&ctx->emit) - 4,

@@ -185,7 +185,6 @@ static void GAD_FN(resolve_local_patches)(Ctx* restrict ctx, TB_Function* f);
 static void GAD_FN(barrier)(Ctx* restrict ctx, TB_Function* f, TB_Label bb, TB_Reg except, int split);
 static GAD_VAL GAD_FN(phi_alloc)(Ctx* restrict ctx, TB_Function* f, TB_Reg r);
 static void GAD_FN(misc_op)(Ctx* restrict ctx, TB_Function* f, TB_Reg r);
-static void GAD_FN(mem_op)(Ctx* restrict ctx, TB_Function* f, TB_Reg r);
 static void GAD_FN(call)(Ctx* restrict ctx, TB_Function* f, TB_Reg r);
 static void GAD_FN(store)(Ctx* restrict ctx, TB_Function* f, TB_Reg r);
 static void GAD_FN(spill)(Ctx* restrict ctx, TB_Function* f, GAD_VAL* dst_val, GAD_VAL* src_val, TB_Reg r);
@@ -627,11 +626,12 @@ static void GAD_FN(eval_bb)(Ctx* restrict ctx, TB_Function* f, TB_Label bb, TB_L
                 break;
             }
 
+            case TB_DEBUGBREAK:
             case TB_MEMSET:
             case TB_MEMCPY:
             case TB_INITIALIZE: {
                 GAD_FN(barrier)(ctx, f, bb, 0, ctx->ordinal[r]);
-                GAD_FN(mem_op)(ctx, f, r);
+                GAD_FN(misc_op)(ctx, f, r);
                 break;
             }
 
@@ -647,12 +647,6 @@ static void GAD_FN(eval_bb)(Ctx* restrict ctx, TB_Function* f, TB_Label bb, TB_L
                 // TODO(NeGate): move barrier closer to the callsite
                 GAD_FN(barrier)(ctx, f, bb, 0, ctx->ordinal[r]);
                 GAD_FN(call)(ctx, f, r);
-                break;
-            }
-
-            case TB_DEBUGBREAK: {
-                GAD_FN(barrier)(ctx, f, bb, 0, ctx->ordinal[r]);
-                GAD_FN(misc_op)(ctx, f, r);
                 break;
             }
 
@@ -798,7 +792,7 @@ static TB_FunctionOutput GAD_FN(compile_function)(TB_Function* restrict f, const
         size_t ctx_size = sizeof(Ctx) + (2 * f->node_count * sizeof(GAD_VAL));
         FunctionTallySimple tally = tally_memory_usage_simple(f);
 
-        ctx = tb_tls_push(tls, ctx_size);
+        ctx = arena_alloc(&tb__arena, ctx_size, _Alignof(Ctx));
         *ctx = (Ctx){
             .f = f,
             .tls = tls,
@@ -806,23 +800,24 @@ static TB_FunctionOutput GAD_FN(compile_function)(TB_Function* restrict f, const
                 .f = f,
                 .data = out,
                 .capacity = out_capacity,
-                .labels = tb_tls_push(tls, f->bb_count * sizeof(uint32_t)),
-                .label_patches = tb_tls_push(tls, tally.label_patch_count * sizeof(LabelPatch)),
-                .ret_patches = tb_tls_push(tls, tally.return_count * sizeof(ReturnPatch)),
+                .labels = ARENA_ARR_ALLOC(&tb__arena, f->bb_count, uint32_t),
+                .label_patches = ARENA_ARR_ALLOC(&tb__arena, tally.label_patch_count, LabelPatch),
+                .ret_patches = ARENA_ARR_ALLOC(&tb__arena, tally.return_count, ReturnPatch),
             },
             .preds = preds,
-            .ordinal = tb_tls_push(tls, f->node_count * sizeof(int)),
-            .intervals = tb_tls_push(tls, f->node_count * sizeof(int)),
-            .spills = tb_tls_push(tls, f->node_count * sizeof(GAD_VAL))
+            .ordinal = ARENA_ARR_ALLOC(&tb__arena, f->node_count, int),
+            .intervals = ARENA_ARR_ALLOC(&tb__arena, f->node_count, int),
+            .spills = ARENA_ARR_ALLOC(&tb__arena, f->node_count, GAD_VAL)
         };
-
-        f->line_count = 0;
-        f->lines = tb_platform_arena_alloc(tally.line_info_count * sizeof(TB_Line));
-
         memset(ctx->values, 0, f->node_count * sizeof(GAD_VAL));
+
+        mtx_lock(&f->super.module->lock);
+        f->line_count = 0;
+        f->lines = ARENA_ARR_ALLOC(&f->super.module->arena, tally.line_info_count, TB_Line);
+        mtx_unlock(&f->super.module->lock);
     }
 
-    tb_function_print(f, tb_default_print_callback, stdout, false);
+    // tb_function_print(f, tb_default_print_callback, stdout, false);
 
     // Compute register allocation
     {
@@ -929,5 +924,6 @@ static TB_FunctionOutput GAD_FN(compile_function)(TB_Function* restrict f, const
         .stack_slots = ctx->stack_slots
     };
 
+    arena_clear(&tb__arena);
     return func_out;
 }

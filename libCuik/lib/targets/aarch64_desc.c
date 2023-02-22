@@ -47,9 +47,9 @@ static TB_FunctionPrototype* create_prototype(TranslationUnit* tu, Cuik_Type* ty
         if (tu->has_tb_debug_info) {
             // it's a pointer to the debug type here
             TB_DebugType* dbg_type = cuik__as_tb_debug_type(m, cuik_canonical_type(type->func.return_type));
-            tb_prototype_add_param_named(proto, TB_TYPE_PTR, "$retval", tb_debug_create_ptr(m, dbg_type));
+            tb_prototype_add_param_named(tu->ir_mod, proto, TB_TYPE_PTR, "$retval", tb_debug_create_ptr(m, dbg_type));
         } else {
-            tb_prototype_add_param(proto, TB_TYPE_PTR);
+            tb_prototype_add_param(tu->ir_mod, proto, TB_TYPE_PTR);
         }
     }
 
@@ -62,16 +62,16 @@ static TB_FunctionPrototype* create_prototype(TranslationUnit* tu, Cuik_Type* ty
 
             assert(dt.width < 8);
             if (tu->has_tb_debug_info) {
-                tb_prototype_add_param_named(proto, dt, p->name, cuik__as_tb_debug_type(tu->ir_mod, type));
+                tb_prototype_add_param_named(tu->ir_mod, proto, dt, p->name, cuik__as_tb_debug_type(tu->ir_mod, type));
             } else {
-                tb_prototype_add_param(proto, dt);
+                tb_prototype_add_param(tu->ir_mod, proto, dt);
             }
         } else {
             if (tu->has_tb_debug_info) {
                 TB_DebugType* dbg_type = cuik__as_tb_debug_type(tu->ir_mod, type);
-                tb_prototype_add_param_named(proto, TB_TYPE_PTR, p->name, tb_debug_create_ptr(m, dbg_type));
+                tb_prototype_add_param_named(tu->ir_mod, proto, TB_TYPE_PTR, p->name, tb_debug_create_ptr(m, dbg_type));
             } else {
-                tb_prototype_add_param(proto, TB_TYPE_PTR);
+                tb_prototype_add_param(tu->ir_mod, proto, TB_TYPE_PTR);
             }
         }
     }

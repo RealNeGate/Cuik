@@ -121,7 +121,7 @@ ICodeGen tb__x64_codegen = {
     .emit_win64eh_unwind_info = x64_emit_win64eh_unwind_info,
 
     .fast_path = x64_fast_compile_function,
-    .complex_path = x64_complex_compile_function
+    // .complex_path = x64_complex_compile_function
 };
 #if _MSC_VER
 _Pragma("warning (pop)")

@@ -22,6 +22,8 @@
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+
+#define strtok_r(a, b, c) strtok_s(a, b, c)
 #else
 // NOTE(NeGate): I love how we assume that if it's not windows
 // its just posix, these are the only options i guess
@@ -37,6 +39,9 @@
 #include "set.h"
 #include "builtins.h"
 #include "pool.h"
+
+#include <arena.h>
+#include <threads.h>
 
 // ***********************************
 // Constraints
@@ -369,6 +374,11 @@ struct TB_Module {
     int max_threads;
     bool is_jit;
 
+    // we have a global lock since the arena can be accessed
+    // from any thread.
+    mtx_t lock;
+    Arena arena;
+
     TB_ABI target_abi;
     TB_Arch target_arch;
     TB_System target_system;
@@ -398,11 +408,7 @@ struct TB_Module {
         DynArray(TB_SymbolPatch) symbol_patches;
     } thread_info[TB_MAX_THREADS];
 
-    struct {
-        size_t count;
-        size_t capacity;
-        TB_File* data;
-    } files;
+    DynArray(TB_File) files;
 
     // Linker
     struct {
@@ -638,8 +644,6 @@ inline static bool tb_is_power_of_two(uint64_t x) {
     return (x & (x - 1)) == 0;
 }
 
-uint64_t tb__sxt(uint64_t src, uint64_t src_bits, uint64_t dst_bits);
-
 // gets the next biggest number to 'v' in the sorted array
 // if 'v' is too big, then it'll return false, if not it's
 // true and 'result' will store the number we got
@@ -725,9 +729,16 @@ uint32_t tb__crc32(uint32_t crc, size_t length, const void* data);
 // out_bytes needs at least 16 bytes
 void tb__md5sum(uint8_t* out_bytes, uint8_t* initial_msg, size_t initial_len);
 
+uint64_t tb__sxt(uint64_t src, uint64_t src_bits, uint64_t dst_bits);
+
+char* tb__arena_strdup(TB_Module* m, const char* src);
+
 inline static bool tb_data_type_match(const TB_DataType* a, const TB_DataType* b) {
     return a->type == b->type && a->width == b->width;
 }
+
+// temporary arena
+extern thread_local Arena tb__arena;
 
 // NOTE(NeGate): Place all the codegen interfaces down here
 extern ICodeGen tb__x64_codegen;

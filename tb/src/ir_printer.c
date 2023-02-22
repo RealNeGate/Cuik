@@ -87,7 +87,7 @@ static void tb_print_node(TB_Function* f, TB_PrintCallback callback, void* user_
             break;
         }
         case TB_LINE_INFO: {
-            callback(user_data, "  # line %s:%d", f->super.module->files.data[n->line_info.file].path, n->line_info.line);
+            callback(user_data, "  # line %s:%d", f->super.module->files[n->line_info.file].path, n->line_info.line);
             break;
         }
         case TB_FLOAT32_CONST: {

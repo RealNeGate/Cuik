@@ -19,8 +19,10 @@ typedef struct {
 } Arena;
 
 #define ARENA_ALLOC(arena, T) arena_alloc(arena, sizeof(T), _Alignof(T))
+#define ARENA_ARR_ALLOC(arena, count, T) arena_alloc(arena, (count) * sizeof(T), _Alignof(T))
 
 void* arena_alloc(Arena* arena, size_t size, size_t align);
+void arena_clear(Arena* arena);
 void arena_free(Arena* arena);
 void arena_trim(Arena* arena);
 void arena_append(Arena* arena, Arena* other);

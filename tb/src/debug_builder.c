@@ -72,7 +72,7 @@ TB_API TB_DebugType* tb_debug_create_union(TB_Module* m, const char* tag) {
 
 TB_API TB_DebugType* tb_debug_create_field(TB_Module* m, TB_DebugType* type, const char* name, TB_CharUnits offset) {
     assert(name);
-    return NEW(TB_DEBUG_TYPE_FIELD, .field = { tb_platform_string_alloc(name), offset, type });
+    return NEW(TB_DEBUG_TYPE_FIELD, .field = { tb__arena_strdup(m, name), offset, type });
 }
 
 TB_API void tb_debug_complete_record(TB_DebugType* type, TB_DebugType** members, size_t count, TB_CharUnits size, TB_CharUnits align) {

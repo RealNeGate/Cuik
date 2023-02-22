@@ -826,7 +826,11 @@ static void fast_eval_basic_block(X64_FastCtx* restrict ctx, TB_Function* f, TB_
                     EMIT1(&ctx->emit, mod_rx_rm(MOD_INDIRECT, dst_xmm, RBP));
                     EMIT4(&ctx->emit, 0);
 
-                    uint32_t* rdata_payload = tb_platform_arena_alloc(sizeof(uint32_t));
+                    TB_Module* m = f->super.module;
+                    mtx_lock(&m->lock);
+                    uint32_t* rdata_payload = ARENA_ALLOC(&m->arena, uint32_t);
+                    mtx_unlock(&m->lock);
+
                     *rdata_payload = imm;
 
                     uint32_t pos = tb_emit_const_patch(
@@ -863,7 +867,11 @@ static void fast_eval_basic_block(X64_FastCtx* restrict ctx, TB_Function* f, TB_
                     EMIT1(&ctx->emit, mod_rx_rm(MOD_INDIRECT, dst_xmm, RBP));
                     EMIT4(&ctx->emit, 0);
 
-                    uint64_t* rdata_payload = tb_platform_arena_alloc(sizeof(uint64_t));
+                    TB_Module* m = f->super.module;
+                    mtx_lock(&m->lock);
+                    uint64_t* rdata_payload = ARENA_ALLOC(&m->arena, uint64_t);
+                    mtx_unlock(&m->lock);
+
                     *rdata_payload = imm;
 
                     uint32_t pos = tb_emit_const_patch(
@@ -1782,20 +1790,24 @@ static void fast_eval_basic_block(X64_FastCtx* restrict ctx, TB_Function* f, TB_
                     EMIT1(&ctx->emit, 0x57);
                     EMIT1(&ctx->emit, ((dst_xmm & 7) << 3) | RBP);
 
+                    TB_Module* m = f->super.module;
+                    mtx_lock(&m->lock);
+
                     void* payload = NULL;
                     if (dt.data == TB_FLT_64) {
-                        uint64_t* rdata_payload = tb_platform_arena_alloc(2 * sizeof(uint64_t));
+                        uint64_t* rdata_payload = ARENA_ALLOC(&m->arena, uint64_t[2]);
                         rdata_payload[0] = (1ull << 63ull);
                         rdata_payload[1] = (1ull << 63ull);
                         payload = rdata_payload;
                     } else {
-                        uint32_t* rdata_payload = tb_platform_arena_alloc(4 * sizeof(uint32_t));
+                        uint32_t* rdata_payload = ARENA_ALLOC(&m->arena, uint32_t[4]);
                         rdata_payload[0] = (1ull << 31ull);
                         rdata_payload[1] = (1ull << 31ull);
                         rdata_payload[2] = (1ull << 31ull);
                         rdata_payload[3] = (1ull << 31ull);
                         payload = rdata_payload;
                     }
+                    mtx_unlock(&m->lock);
 
                     uint32_t disp = tb_emit_const_patch(f->super.module, f, GET_CODE_POS(&ctx->emit), payload, 2 * sizeof(uint64_t), s_local_thread_id);
                     EMIT4(&ctx->emit, disp);
@@ -2476,8 +2488,10 @@ TB_FunctionOutput x64_fast_compile_function(TB_Function* restrict f, const TB_Fe
             };
         }
 
+        mtx_lock(&f->super.module->lock);
         f->line_count = 0;
-        f->lines = tb_platform_arena_alloc(tally.line_info_count * sizeof(TB_Line));
+        f->lines = ARENA_ARR_ALLOC(&f->super.module->arena, tally.line_info_count, TB_Line);
+        mtx_unlock(&f->super.module->lock);
 
         ctx->gpr_available = 14;
         ctx->xmm_available = 16;

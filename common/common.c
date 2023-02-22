@@ -42,6 +42,10 @@ void* arena_alloc(Arena* arena, size_t size, size_t align) {
     return ptr;
 }
 
+void arena_clear(Arena* arena) {
+    __debugbreak();
+}
+
 void arena_free(Arena* arena) {
     if (arena->base) {
         ArenaSegment* c = arena->base;
@@ -197,7 +201,6 @@ void futex_wait(Futex* addr, Futex val) {
         }
 
         printf("futex wait fail?\n");
-        __debugbreak();
     }
 }
 

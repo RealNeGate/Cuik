@@ -39,21 +39,3 @@ bool  tb_platform_vprotect(void* ptr, size_t size, TB_MemProtect prot);
 void* tb_platform_heap_alloc(size_t size);
 void* tb_platform_heap_realloc(void* ptr, size_t size);
 void  tb_platform_heap_free(void* ptr);
-
-////////////////////////////////
-// String arena
-////////////////////////////////
-char* tb_platform_string_alloc(const char* str);
-void  tb_platform_string_free();
-
-////////////////////////////////
-// Persistent arena allocator
-////////////////////////////////
-void tb_platform_arena_init();
-
-// this persistent arena allocator is used all of the backend
-// worker threads to store data until the end of compilation.
-void* tb_platform_arena_alloc(size_t size);
-
-// NOTE(NeGate): Free is supposed to free all allocations.
-void tb_platform_arena_free(void);

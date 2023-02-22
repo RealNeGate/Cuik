@@ -177,7 +177,8 @@ static TB_SectionGroup codeview_generate_debug_info(TB_Module* m, TB_TemporarySt
     );
 
     // Write type table
-    uint32_t* file_table_offset = tb_tls_push(tls, m->files.count * sizeof(uint32_t));
+    size_t file_count = dyn_array_length(m->files);
+    uint32_t* file_table_offset = tb_tls_push(tls, file_count * sizeof(uint32_t));
 
     TB_Emitter debugs_out = { 0 };
 
@@ -211,11 +212,11 @@ static TB_SectionGroup codeview_generate_debug_info(TB_Module* m, TB_TemporarySt
             // skip the NULL file entry
             size_t pos = 1;
             file_table_offset[0] = 0;
-            FOREACH_N(i, 1, m->files.count) {
-                size_t len = strlen(m->files.data[i].path);
+            FOREACH_N(i, 1, file_count) {
+                size_t len = strlen(m->files[i].path);
 
                 tb_out_reserve(&debugs_out, len + 1);
-                tb_outs_UNSAFE(&debugs_out, len + 1, (const uint8_t*)m->files.data[i].path);
+                tb_outs_UNSAFE(&debugs_out, len + 1, (const uint8_t*)m->files[i].path);
 
                 file_table_offset[i] = pos;
                 pos += len + 1;
@@ -235,9 +236,9 @@ static TB_SectionGroup codeview_generate_debug_info(TB_Module* m, TB_TemporarySt
             tb_out4b(&debugs_out, 0);
 
             size_t pos = 0;
-            FOREACH_N(i, 1, m->files.count) {
+            FOREACH_N(i, 1, file_count) {
                 uint8_t sum[16];
-                md5sum_file(sum, m->files.data[i].path);
+                md5sum_file(sum, m->files[i].path);
 
                 tb_out4b(&debugs_out, file_table_offset[i]);
                 tb_out2b(&debugs_out, 0x0110);

@@ -2,7 +2,7 @@
 #include "host.h"
 #include "coroutine.h"
 
-enum { BATCH_SIZE = 8192 };
+thread_local Arena tb__arena;
 
 static thread_local uint8_t* tb_thread_storage;
 static thread_local int tid;
@@ -31,6 +31,17 @@ int tb__get_local_tid(void) {
     }
 
     return tid - 1;
+}
+
+char* tb__arena_strdup(TB_Module* m, const char* src) {
+    mtx_lock(&m->lock);
+
+    size_t length = strlen(src);
+    char* newstr = arena_alloc(&m->arena, length, 1);
+    memcpy(newstr, src, length + 1);
+
+    mtx_unlock(&m->lock);
+    return newstr;
 }
 
 static TB_CodeRegion* get_or_allocate_code_region(TB_Module* m, int tid) {
@@ -96,10 +107,7 @@ TB_API TB_Module* tb_module_create(TB_Arch arch, TB_System sys, const TB_Feature
         return NULL;
     }
 
-    m->files.count = 1;
-    m->files.capacity = 64;
-    m->files.data = tb_platform_heap_alloc(64 * sizeof(TB_File));
-    m->files.data[0] = (TB_File) { 0 };
+    dyn_array_put(m->files, (TB_File){ 0 });
 
     FOREACH_N(i, 0, TB_MAX_THREADS) {
         m->thread_info[i].const_patches  = dyn_array_create(TB_ConstPoolPatch, 4096);
@@ -108,8 +116,7 @@ TB_API TB_Module* tb_module_create(TB_Arch arch, TB_System sys, const TB_Feature
 
     // we start a little off the start just because
     m->rdata_region_size = 16;
-
-    tb_platform_arena_init();
+    mtx_init(&m->lock, mtx_plain);
     return m;
 }
 
@@ -122,7 +129,10 @@ TB_API bool tb_module_compile_function(TB_Module* m, TB_Function* f, TB_ISelMode
     assert(id < TB_MAX_THREADS);
 
     TB_CodeRegion* region = get_or_allocate_code_region(m, id);
-    TB_FunctionOutput* func_out = tb_platform_arena_alloc(sizeof(TB_FunctionOutput));
+
+    mtx_lock(&m->lock);
+    TB_FunctionOutput* func_out = ARENA_ALLOC(&m->arena, TB_FunctionOutput);
+    mtx_unlock(&m->lock);
 
     if (isel_mode == TB_ISEL_COMPLEX && code_gen->complex_path == NULL) {
         // TODO(NeGate): we need better logging...
@@ -194,12 +204,10 @@ TB_API void tb_module_kill_symbol(TB_Module* m, TB_Symbol* sym) {
 }
 
 TB_API void tb_module_destroy(TB_Module* m) {
-    tb_platform_arena_free();
-    tb_platform_string_free();
+    arena_free(&m->arena);
 
     {
         TB_Symbol* s = m->first_symbol_of_tag[TB_SYMBOL_FUNCTION];
-
         if (s != NULL) {
             enum TB_SymbolTag tag = s->tag;
 
@@ -237,26 +245,32 @@ TB_API void tb_module_destroy(TB_Module* m) {
 
     tb_platform_vfree(m->prototypes_arena, PROTOTYPES_ARENA_SIZE * sizeof(uint64_t));
 
-    tb_platform_heap_free(m->files.data);
+    dyn_array_destroy(m->files);
     tb_platform_heap_free(m);
 }
 
 TB_API TB_FileID tb_file_create(TB_Module* m, const char* path) {
+    mtx_lock(&m->lock);
+
     // skip the NULL file entry
-    FOREACH_N(i, 1, m->files.count) {
-        if (strcmp(m->files.data[i].path, path) == 0) return i;
+    // TODO(NeGate): we should introduce a hash map
+    FOREACH_N(i, 1, dyn_array_length(m->files)) {
+        if (strcmp(m->files[i].path, path) == 0) return i;
     }
 
-    if (m->files.count + 1 >= m->files.capacity) {
-        m->files.capacity *= 2;
-        m->files.data = tb_platform_heap_realloc(m->files.data, m->files.capacity * sizeof(TB_File));
-    }
+    // Allocate string (for now they all live to the end of the module, we might
+    // allow for changing this later, doesn't matter for AOT... which is the usecase
+    // of this?)
+    size_t len = strlen(path);
+    char* newstr = arena_alloc(&m->arena, len, 1);
+    memcpy(newstr, path, len);
 
-    char* str = tb_platform_string_alloc(path);
+    TB_File f = { .path = newstr };
+    TB_FileID id = dyn_array_length(m->files) - 1;
+    dyn_array_put(m->files, f);
 
-    size_t r = m->files.count++;
-    m->files.data[r] = (TB_File) { .path = str };
-    return r;
+    mtx_unlock(&m->lock);
+    return id;
 }
 
 void tb_function_reserve_nodes(TB_Function* f, size_t extra) {
@@ -289,14 +303,14 @@ TB_API TB_FunctionPrototype* tb_prototype_create(TB_Module* m, TB_CallingConv co
     return p;
 }
 
-TB_API void tb_prototype_add_param(TB_FunctionPrototype* p, TB_DataType dt) {
+TB_API void tb_prototype_add_param(TB_Module* m, TB_FunctionPrototype* p, TB_DataType dt) {
     assert(p->param_count + 1 <= p->param_capacity);
     p->params[p->param_count++] = (TB_PrototypeParam){ dt };
 }
 
-TB_API void tb_prototype_add_param_named(TB_FunctionPrototype* p, TB_DataType dt, const char* name, TB_DebugType* debug_type) {
+TB_API void tb_prototype_add_param_named(TB_Module* m, TB_FunctionPrototype* p, TB_DataType dt, const char* name, TB_DebugType* debug_type) {
     assert(p->param_count + 1 <= p->param_capacity);
-    p->params[p->param_count++] = (TB_PrototypeParam){ dt, tb_platform_string_alloc(name), debug_type };
+    p->params[p->param_count++] = (TB_PrototypeParam){ dt, tb__arena_strdup(m, name), debug_type };
 }
 
 TB_API TB_Function* tb_function_create(TB_Module* m, const char* name, TB_Linkage linkage) {
@@ -325,7 +339,7 @@ TB_API TB_Function* tb_function_create(TB_Module* m, const char* name, TB_Linkag
 }
 
 TB_API void tb_symbol_set_name(TB_Symbol* s, const char* name) {
-    s->name = tb_platform_string_alloc(name);
+    s->name = tb__arena_strdup(s->module, name);
 }
 
 TB_API const char* tb_symbol_get_name(TB_Symbol* s) {
@@ -434,7 +448,7 @@ TB_API TB_Global* tb_global_create(TB_Module* m, const char* name, TB_StorageCla
     *g = (TB_Global){
         .super = {
             .tag = TB_SYMBOL_GLOBAL,
-            .name = tb_platform_string_alloc(name),
+            .name = tb__arena_strdup(m, name),
             .module = m,
         },
         .dbg_type = dbg_type,
@@ -486,7 +500,7 @@ TB_API TB_External* tb_extern_create(TB_Module* m, const char* name, TB_External
     *e = (TB_External){
         .super = {
             .tag = TB_SYMBOL_EXTERNAL,
-            .name = tb_platform_string_alloc(name),
+            .name = tb__arena_strdup(m, name),
             .module = m,
         },
         .type = type,
