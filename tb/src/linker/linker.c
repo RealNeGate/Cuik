@@ -158,6 +158,10 @@ void tb__merge_sections(TB_Linker* linker, TB_LinkerSection* from, TB_LinkerSect
     // after this is all done
     to->total_size += from->total_size;
     to->piece_count += from->piece_count;
+
+    for (TB_LinkerSectionPiece* p = from->first; p != NULL; p = p->next) {
+        p->parent = to;
+    }
     #else
     if (from->last) {
         size_t offset = to->total_size;
@@ -406,17 +410,17 @@ static uint32_t murmur(const void* key, size_t len) {
 
 ImportThunk* tb__find_or_create_import(TB_Linker* l, TB_LinkerSymbol* restrict sym) {
     assert(sym->tag == TB_LINKER_SYMBOL_IMPORT);
-    TB_Slice name = sym->name;
+    TB_Slice sym_name = { sym->name.length - (sizeof("__imp_") - 1), sym->name.data + sizeof("__imp_") - 1 };
 
     ImportTable* table = &l->imports[sym->import.id];
     dyn_array_for(i, table->thunks) {
-        if (table->thunks[i].name.length == name.length &&
-            memcmp(table->thunks[i].name.data, name.data, name.length) == 0) {
+        if (table->thunks[i].name.length == sym_name.length &&
+            memcmp(table->thunks[i].name.data, sym_name.data, sym_name.length) == 0) {
             return &table->thunks[i];
         }
     }
 
-    ImportThunk t = { .name = name, .ordinal = sym->import.ordinal };
+    ImportThunk t = { .name = sym_name, .ordinal = sym->import.ordinal };
     dyn_array_put(table->thunks, t);
     return &table->thunks[dyn_array_length(table->thunks) - 1];
 }

@@ -533,16 +533,16 @@ static void set_preprocessor(void* ctx, const Cuik_CompilerArgs* args, Cuik_CPP*
     cuikpp_define_empty_cstr(cpp, "__ptr64");
 }
 
-static bool invoke_link(void* ctx, const Cuik_CompilerArgs* args, Cuik_Linker* linker, const char* filename) {
+static bool invoke_link(void* ctx, const Cuik_CompilerArgs* args, Cuik_Linker* linker, const char* output, const char* filename) {
     enum { CMD_LINE_MAX = 4096 };
     Cuik_WindowsToolchain* t = ctx;
 
     wchar_t cmd_line[CMD_LINE_MAX];
     int cmd_line_len = swprintf(cmd_line, CMD_LINE_MAX,
         L"%sbin\\Hostx64\\x64\\link.exe /nologo /machine:amd64 "
-        "/subsystem:%s /debug:%S /pdb:%S.pdb /out:%S.exe /incremental:no ",
+        "/subsystem:%s /debug:%S /pdb:%S.pdb /out:%S /incremental:no ",
         t->vc_tools_install, linker->subsystem_windows ? L"windows" : L"console",
-        args->debug_info ? "full" : "none", filename, filename
+        args->debug_info ? "full" : "none", filename, output
     );
 
     dyn_array_for(i, linker->libpaths) {

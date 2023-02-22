@@ -548,7 +548,7 @@ static bool export_output(Cuik_CompilerArgs* restrict args, TB_Module* mod, cons
             // Add Cuik object
             cuiklink_add_input_file(&l, obj_output_path);
 
-            cuiklink_invoke(&l, args, output_name);
+            cuiklink_invoke(&l, args, output_name, output_path);
             cuiklink_deinit(&l);
         }
 

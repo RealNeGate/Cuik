@@ -11,7 +11,7 @@ static void set_preprocessor(void* ctx, const Cuik_CompilerArgs* args, Cuik_CPP*
     cuikpp_define_cstr(cpp, "__apple_build_version__", "14000029");
 }
 
-static bool invoke_link(void* ctx, const Cuik_CompilerArgs* args, Cuik_Linker* linker, const char* filename) {
+static bool invoke_link(void* ctx, const Cuik_CompilerArgs* args, Cuik_Linker* linker, const char* output, const char* filename) {
     return false;
 }
 

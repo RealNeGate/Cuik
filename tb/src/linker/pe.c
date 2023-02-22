@@ -100,20 +100,6 @@ static TB_LinkerThreadInfo* get_thread_info(TB_Linker* l) {
     }
 }
 
-// fuck you. *de__imp_ your names*
-//
-// __imp_ refers to the raw DLL imports
-static bool deimp_your_names(TB_Slice name, TB_Slice* out_name) {
-    // convert __imp_ names into DLL compatible ones
-    size_t imp_prefix_len = sizeof("__imp_")-1;
-    if (name.length >= imp_prefix_len && memcmp(name.data, "__imp_", imp_prefix_len) == 0) {
-        *out_name = (TB_Slice){ name.length - imp_prefix_len, name.data + imp_prefix_len };
-        return true;
-    }
-
-    return false;
-}
-
 void append_object(TB_Linker* l, TB_Slice obj_name, TB_ObjectFile* obj) {
     TB_LinkerThreadInfo* info = get_thread_info(l);
 
@@ -129,7 +115,7 @@ void append_object(TB_Linker* l, TB_Slice obj_name, TB_ObjectFile* obj) {
                 // convert letters into score
                 FOREACH_N(k, j + 1, s->name.length) {
                     order <<= 8;
-                    order += s->name.data[i];
+                    order += s->name.data[k];
                 }
 
                 s->name.length = j;
@@ -412,7 +398,7 @@ static void append_library(TB_Linker* l, TB_Slice ar_name, TB_Slice ar_file) {
             memcpy(newstr + sizeof("__imp_") - 1, e->import_name.data, e->import_name.length);
 
             TB_LinkerSymbol sym = {
-                .name = e->import_name,
+                .name = { newlen, newstr },
                 .tag = TB_LINKER_SYMBOL_IMPORT,
                 // .object_name = obj_name,
                 .import = { import_index, e->ordinal }
@@ -420,7 +406,7 @@ static void append_library(TB_Linker* l, TB_Slice ar_name, TB_Slice ar_file) {
             TB_LinkerSymbol* import_sym = tb__append_symbol(&l->symtab, &sym);
 
             // make the thunk-like symbol
-            sym.name = (TB_Slice){ newlen, newstr };
+            sym.name = e->import_name;
             sym.tag = TB_LINKER_SYMBOL_THUNK;
             sym.thunk.import_sym = import_sym;
             tb__append_symbol(&l->symtab, &sym);
@@ -539,6 +525,10 @@ static void apply_external_relocs(TB_Linker* l, uint8_t* output, uint64_t image_
     TB_LinkerSection* text  = tb__find_section(l, ".text", IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_CNT_CODE);
     uint32_t trampoline_rva = text->address + l->trampoline_pos;
     uint32_t iat_pos = l->iat_pos;
+
+    TB_LinkerSymbol* cum = tb__find_symbol_cstr(&l->symtab, "__xi_a");
+    TB_LinkerSymbol* piss = tb__find_symbol_cstr(&l->symtab, "__xi_z");
+    (void)cum,(void)piss;
 
     // TODO(NeGate): we can multithread this code with a job stealing queue
     for (TB_LinkerThreadInfo* restrict info = l->first_thread_info; info; info = info->next) {
@@ -697,8 +687,12 @@ static COFF_ImportDirectory* gen_imports(TB_Linker* l, PE_ImageDataDirectory* im
                         continue;
                     }
 
-                    if (sym->tag != TB_LINKER_SYMBOL_IMPORT) continue;
-                    ext->super.address = tb__find_or_create_import(l, sym);
+                    if (sym->tag == TB_LINKER_SYMBOL_IMPORT) {
+                        ext->super.address = tb__find_or_create_import(l, sym);
+                    } else if (sym->tag == TB_LINKER_SYMBOL_THUNK) {
+                        TB_LinkerSymbol* isym = sym->thunk.import_sym;
+                        ext->super.address = tb__find_or_create_import(l, isym);
+                    }
                 }
             }
         }
@@ -1034,7 +1028,7 @@ static bool finalize_sections(TB_Linker* l) {
                         array_form[j++] = p;
                     }
                 }
-                fprintf(stderr, "%.*s: %zu -> %zu\n", (int) s->name.length, s->name.data, piece_count, j);
+                // fprintf(stderr, "%.*s: %zu -> %zu\n", (int) s->name.length, s->name.data, piece_count, j);
                 piece_count = j;
             }
 

@@ -30,4 +30,4 @@ CUIK_API void cuiklink_add_input_file(Cuik_Linker* l, const char* filepath);
 CUIK_API bool cuiklink_find_library(Cuik_Linker* l, char output[FILENAME_MAX], const char* filepath);
 
 // return true if it succeeds
-CUIK_API bool cuiklink_invoke(Cuik_Linker* l, Cuik_CompilerArgs* args, const char* filename);
+CUIK_API bool cuiklink_invoke(Cuik_Linker* l, Cuik_CompilerArgs* args, const char* output, const char* filename);

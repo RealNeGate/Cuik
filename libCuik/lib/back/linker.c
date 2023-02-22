@@ -60,6 +60,6 @@ bool cuiklink_find_library(Cuik_Linker* l, char output[FILENAME_MAX], const char
     return false;
 }
 
-bool cuiklink_invoke(Cuik_Linker* l, Cuik_CompilerArgs* args, const char* filename) {
-    return args->toolchain.invoke_link(args->toolchain.ctx, args, l, filename);
+bool cuiklink_invoke(Cuik_Linker* l, Cuik_CompilerArgs* args, const char* output_file, const char* filename) {
+    return args->toolchain.invoke_link(args->toolchain.ctx, args, l, output_file, filename);
 }

@@ -12,7 +12,7 @@ struct Cuik_Toolchain {
     void(*add_libraries)(void* ctx, const Cuik_CompilerArgs* args, Cuik_Linker* linker);
     void(*set_preprocessor)(void* ctx, const Cuik_CompilerArgs* args, Cuik_CPP* cpp);
 
-    bool(*invoke_link)(void* ctx, const Cuik_CompilerArgs* args, Cuik_Linker* linker, const char* filename);
+    bool(*invoke_link)(void* ctx, const Cuik_CompilerArgs* args, Cuik_Linker* linker, const char* output, const char* filename);
 };
 
 struct Cuik_CompilerArgs {
