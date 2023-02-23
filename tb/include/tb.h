@@ -183,7 +183,6 @@ extern "C" {
         /* metadata */
         TB_LINE_INFO,
         TB_KEEPALIVE,
-        TB_POISON,
 
         TB_ICALL, /* internal use only, inline call */
         TB_CALL,  /* function call */
@@ -220,6 +219,8 @@ extern "C" {
         TB_RET,
         TB_UNREACHABLE,
         TB_TRAP,
+
+        TB_POISON,
 
         /* Load */
         TB_LOAD,
@@ -1270,11 +1271,6 @@ extern "C" {
     // Applies optimizations to the entire module
     TB_API bool tb_module_optimize(TB_Module* m, size_t pass_count, const TB_Pass passes[]);
 
-    #ifdef TB_USE_LUAJIT
-    TB_API TB_Pass tb_opt_load_lua_pass(const char* path, enum TB_PassMode mode);
-    TB_API void tb_opt_unload_lua_pass(TB_Pass* p);
-    #endif
-
     // analysis
     TB_API TB_Predeccesors tb_get_predeccesors(TB_Function* f);
     TB_API TB_DominanceFrontiers tb_get_dominance_frontiers(TB_Function* f, TB_Predeccesors p, const TB_Label* doms);
@@ -1316,6 +1312,7 @@ extern "C" {
     TB_API TB_Pass tb_opt_instcombine(void);
     TB_API TB_Pass tb_opt_subexpr_elim(void);
     TB_API TB_Pass tb_opt_remove_pass_nodes(void);
+    TB_API TB_Pass tb_opt_cfg_simplify(void);
     TB_API TB_Pass tb_opt_mem2reg(void);
     TB_API TB_Pass tb_opt_compact_dead_regs(void);
     TB_API TB_Pass tb_opt_dead_block_elim(void);
@@ -1330,6 +1327,8 @@ extern "C" {
     ////////////////////////////////
     TB_API TB_Reg tb_node_get_last_register(TB_Function* f);
     TB_API TB_Reg tb_node_get_previous(TB_Function* f, TB_Reg at);
+
+    TB_API TB_Reg tb_node_get_first_insertion_point(TB_Function* f, TB_Label bb);
 
     TB_API TB_Node* tb_function_get_node(TB_Function* f, TB_Reg r);
     TB_API int tb_function_get_label_count(TB_Function* f);

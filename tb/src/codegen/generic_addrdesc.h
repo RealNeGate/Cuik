@@ -587,8 +587,6 @@ static void GAD_FN(eval_bb_edge)(Ctx* restrict ctx, TB_Function* f, TB_Label fro
             int count = tb_node_get_phi_width(f, r);
             TB_PhiInput* inputs = tb_node_get_phi_inputs(f, r);
 
-            GAD_FN(regalloc_step)(ctx, f, r);
-
             // if the destination is not initialized, do that
             if (ctx->values[r].type == 0) {
                 ctx->values[r] = GAD_FN(phi_alloc)(ctx, f, r);
@@ -859,10 +857,10 @@ static TB_FunctionOutput GAD_FN(compile_function)(TB_Function* restrict f, const
                         TB_Reg src = inputs[j].val;
                         TB_Reg bb_end = f->bbs[inputs[j].label].end;
 
-                        if (ctx->ordinal[ctx->intervals[src]] < ctx->ordinal[bb_end]) {
-                            ctx->intervals[src] = bb_end;
-                        } else if (ctx->intervals[src] == 0) {
+                        if (ctx->intervals[src] == 0) {
                             ctx->intervals[src] = r;
+                        } else if (ctx->ordinal[ctx->intervals[src]] < ctx->ordinal[bb_end]) {
+                            ctx->intervals[src] = bb_end;
                         }
                     }
                 } else {

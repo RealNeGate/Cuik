@@ -5,42 +5,6 @@
 #define NL_MAP_IMPL
 #include "../hash_map.h"
 
-static void replace_label(TB_Function* f, TB_Label old, TB_Label new) {
-    f->bbs[old] = (TB_BasicBlock){ 0 };
-
-    #define X(l) if (l == old) l = new
-    TB_FOR_BASIC_BLOCK(bb, f) {
-        TB_FOR_NODE(r, f, bb) {
-            TB_Node* n = &f->nodes[r];
-
-            if (tb_node_is_phi_node(f, r)) {
-                size_t count = tb_node_get_phi_width(f, r);
-                TB_PhiInput* inputs = tb_node_get_phi_inputs(f, r);
-
-                FOREACH_N(i, 0, count) {
-                    X(inputs[i].label);
-                }
-            } else if (n->type == TB_IF) {
-                X(n->if_.if_true);
-                X(n->if_.if_false);
-            } else if (n->type == TB_GOTO) {
-                X(n->goto_.label);
-            } else if (n->type == TB_SWITCH) {
-                size_t entry_start = n->switch_.entries_start;
-                size_t entry_count = (n->switch_.entries_end - n->switch_.entries_start) / 2;
-
-                for (size_t j = 0; j < entry_count; j++) {
-                    TB_SwitchEntry* e = (TB_SwitchEntry*)&f->vla.data[entry_start + (j * 2)];
-                    X(e->value);
-                }
-
-                X(n->switch_.default_label);
-            }
-        }
-    }
-    #undef X
-}
-
 static bool compact_regs(TB_Function* f) {
     int changes = 0;
     TB_Node* nodes = f->nodes;
@@ -377,6 +341,26 @@ static bool inst_combine(TB_Function* f) {
                         n->cmp.a = a->unary.src;
                         changes++;
                     }
+                }
+            }
+
+            // check if all paths are identical
+            if (tb_node_is_phi_node(f, r)) {
+                int count = tb_node_get_phi_width(f, r);
+                TB_PhiInput* inputs = tb_node_get_phi_inputs(f, r);
+
+                bool success = true;
+                FOREACH_N(i, 1, count) {
+                    if (inputs[i].val != inputs[0].val) {
+                        success = false;
+                        break;
+                    }
+                }
+
+                if (success) {
+                    n->type = TB_PASS;
+                    n->unary.src = inputs[0].val;
+                    changes++;
                 }
             }
 

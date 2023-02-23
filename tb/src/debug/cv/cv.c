@@ -347,7 +347,7 @@ static TB_SectionGroup codeview_generate_debug_info(TB_Module* m, TB_TemporarySt
             tb_out2b(&debugs_out, 0x1101);
             tb_out4b(&debugs_out, 0);
 
-            tb_out_reserve(&debugs_out, sizeof(creator_str));
+            tb_out_reserve(&debugs_out, path_len);
             tb_outs_UNSAFE(&debugs_out, path_len, (const uint8_t*)path);
         }
 

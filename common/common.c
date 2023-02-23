@@ -17,7 +17,7 @@ void* arena_alloc(Arena* arena, size_t size, size_t align) {
     if (arena->top && arena->top->used + size + align < ARENA_SEGMENT_SIZE - sizeof(ArenaSegment)) {
         ptr = &arena->top->data[arena->top->used];
         arena->top->used = (arena->top->used + size + align_mask) & ~align_mask;
-    } else {
+    } else if (arena->top == NULL || arena->top->next == NULL) {
         // Add new page
         ArenaSegment* s = cuik__valloc(ARENA_SEGMENT_SIZE);
 
@@ -27,9 +27,19 @@ void* arena_alloc(Arena* arena, size_t size, size_t align) {
         }
 
         s->next = NULL;
-        s->used = (size + align_mask) & ~align_mask;
         s->capacity = ARENA_SEGMENT_SIZE;
+        s->used = (size + align_mask) & ~align_mask;
         s->_pad = 0;
+        ptr = s->data;
+
+        // Insert to top of nodes
+        if (arena->top) arena->top->next = s;
+        else arena->base = s;
+
+        arena->top = s;
+    } else {
+        ArenaSegment* s = arena->top->next;
+        s->used = (size + align_mask) & ~align_mask;
         ptr = s->data;
 
         // Insert to top of nodes
@@ -43,7 +53,8 @@ void* arena_alloc(Arena* arena, size_t size, size_t align) {
 }
 
 void arena_clear(Arena* arena) {
-    __debugbreak();
+    arena->top = arena->base;
+    arena->base->used = 0;
 }
 
 void arena_free(Arena* arena) {

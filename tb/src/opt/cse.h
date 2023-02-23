@@ -18,6 +18,9 @@ static bool is_node_the_same(TB_Node* a, TB_Node* b) {
         // TODO: handle large integer comparisons
         return false;
 
+        case TB_POISON:
+        return true;
+
         case TB_KEEPALIVE:
         case TB_VA_START:
         case TB_NOT:

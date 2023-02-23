@@ -322,3 +322,23 @@ TB_API TB_LoopInfo tb_get_loop_info(TB_Function* f, TB_Predeccesors preds, TB_La
 TB_API void tb_free_loop_info(TB_LoopInfo l) {
     dyn_array_destroy(l.loops);
 }
+
+TB_API TB_Reg tb_node_get_first_insertion_point(TB_Function* f, TB_Label bb) {
+    TB_Reg basepoint = f->bbs[bb].start;
+    TB_Reg prev = basepoint;
+    TB_FOR_NODE(r, f, bb) {
+        TB_Node* n = &f->nodes[r];
+
+        if (n->type != TB_PARAM &&
+            n->type != TB_PARAM_ADDR &&
+            n->type != TB_PHI1 &&
+            n->type != TB_PHI2 &&
+            n->type != TB_PHIN &&
+            !TB_IS_NODE_TERMINATOR(n->type)) {
+            basepoint = (n - f->nodes);
+        }
+        prev = r;
+    }
+
+    return basepoint == 1 ? prev : basepoint;
+}

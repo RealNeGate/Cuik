@@ -964,6 +964,14 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
         }
         case EXPR_DEREF: {
             TB_Reg reg = irgen_as_rvalue(tu, func, e->unary_op.src);
+
+            if (cuik_canonical_type(e->type)->kind == KIND_FUNC) {
+                return (IRVal){
+                    .value_type = RVALUE,
+                    .reg = reg,
+                };
+            }
+
             return (IRVal){
                 .value_type = LVALUE,
                 .reg = reg,

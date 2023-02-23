@@ -3,7 +3,6 @@
 #include "preproc/lexer.h"
 #include <cuik.h>
 #include <threads.h>
-#undef ERROR
 
 typedef struct DiagFixit {
     SourceRange loc;

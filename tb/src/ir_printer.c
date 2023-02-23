@@ -65,6 +65,7 @@ static void tb_print_node(TB_Function* f, TB_PrintCallback callback, void* user_
 
     switch (type) {
         case TB_NULL: callback(user_data, "  r%-8u = NOP", i); break;
+        case TB_POISON: callback(user_data, "  r%-8u = POISON", i); break;
         case TB_DEBUGBREAK: callback(user_data, "  DEBUGBREAK"); break;
         case TB_INTEGER_CONST: {
             if (n->integer.num_words == 1) {
@@ -434,6 +435,7 @@ TB_API void tb_function_print(TB_Function* f, TB_PrintCallback callback, void* u
     callback(user_data, "%s():\n", f->super.name);
 
     TB_FOR_BASIC_BLOCK(bb, f) {
+        if (f->bbs[bb].start == 0) continue;
         callback(user_data, "L%d: # r%u terminates at r%u\n", bb, f->bbs[bb].start, f->bbs[bb].end);
 
         TB_FOR_NODE(r, f, bb) {

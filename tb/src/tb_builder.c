@@ -1051,6 +1051,15 @@ TB_API TB_Reg tb_inst_if(TB_Function* f, TB_Reg cond, TB_Label if_true, TB_Label
     return r;
 }
 
+static int switch_entry_cmp(const void* a, const void* b) {
+    const uint32_t key_a = *(const uint32_t*) a;
+    const uint32_t key_b = *(const uint32_t*) b;
+
+    if (key_a < key_b) return -1;
+    if (key_a > key_b) return 1;
+    return 0;
+}
+
 TB_API void tb_inst_switch(TB_Function* f, TB_DataType dt, TB_Reg key, TB_Label default_label, size_t entry_count, const TB_SwitchEntry* entries) {
     // the switch entries are 2 slots each
     size_t param_count = entry_count * 2;
@@ -1058,6 +1067,7 @@ TB_API void tb_inst_switch(TB_Function* f, TB_DataType dt, TB_Reg key, TB_Label 
 
     TB_Reg* vla = tb_vla_reserve(f, param_count);
     memcpy(vla, entries, param_count * sizeof(TB_Reg));
+    qsort(vla, param_count, sizeof(TB_Reg[2]), switch_entry_cmp);
     f->vla.count += param_count;
 
     int param_end = f->vla.count;

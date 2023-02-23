@@ -1557,6 +1557,10 @@ static Val x64v2_eval(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
             return (ctx->values[r] = val_flags(cc));
         }
 
+        case TB_POISON: {
+            return (ctx->values[r] = val_imm(n->dt, 0));
+        }
+
         default: tb_todo();
     }
 

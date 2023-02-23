@@ -69,7 +69,9 @@ static void add_phi_operand(Mem2Reg_Ctx* restrict c, TB_Function* f, TB_Reg phi_
     TB_Node* phi_node = &f->nodes[phi_reg];
     phi_node->dt = dt;
 
-    if (phi_node->type == TB_NULL) {
+    if (phi_node->type == TB_POISON) {
+        return;
+    } else if (phi_node->type == TB_NULL) {
         phi_node->type = TB_PHI1;
         phi_node->phi2.inputs[0] = (TB_PhiInput){ label, reg };
         return;
@@ -120,7 +122,27 @@ static void ssa_replace_phi_arg(Mem2Reg_Ctx* c, TB_Function* f, TB_Label bb, TB_
 
         int count = tb_node_get_phi_width(f, phi_reg);
         TB_PhiInput* inputs = tb_node_get_phi_inputs(f, phi_reg);
-        TB_Reg top = stack[var][dyn_array_length(stack[var]) - 1];
+
+        TB_Reg top;
+        if (dyn_array_length(stack[var]) == 0) {
+            // this is UB land, insert poison
+            TB_Reg basepoint = tb_node_get_first_insertion_point(f, 0);
+
+            if (f->nodes[basepoint].type == TB_POISON) {
+                // we probably already inserted a poison in this pass, nothing
+                // says we can't reuse it.
+                top = basepoint;
+            } else {
+                TB_Reg new_reg = tb_function_insert_after(f, 0, basepoint);
+
+                f->nodes[new_reg].type = TB_POISON;
+                f->nodes[new_reg].dt = TB_TYPE_VOID;
+
+                top = new_reg;
+            }
+        } else {
+            top = stack[var][dyn_array_length(stack[var]) - 1];
+        }
 
         bool found = false;
         FOREACH_N(j, 0, count) {
@@ -171,7 +193,7 @@ static void ssa_rename(Mem2Reg_Ctx* c, TB_Function* f, TB_Label bb, DynArray(TB_
                 dyn_array_put(stack[var], r);
             }
         } else if (n->type == TB_STORE) {
-            int var = get_variable_id(c, n->mem_op.dst);
+            int var = get_variable_id(c, n->store.address);
             if (var >= 0) {
                 dyn_array_put(stack[var], n->store.value);
                 tb_kill_op(f, r);
@@ -179,10 +201,15 @@ static void ssa_rename(Mem2Reg_Ctx* c, TB_Function* f, TB_Label bb, DynArray(TB_
         } else if (n->type == TB_LOAD) {
             int var = get_variable_id(c, n->load.address);
             if (var >= 0) {
-                assert(dyn_array_length(stack[var]) > 0);
-
-                n->type = TB_PASS;
-                n->pass.value = stack[var][dyn_array_length(stack[var]) - 1];
+                if (dyn_array_length(stack[var]) == 0) {
+                    // this is UB since it implies we've read before initializing the
+                    // stack slot.
+                    n->type = TB_POISON;
+                    n->dt = TB_TYPE_VOID;
+                } else {
+                    n->type = TB_PASS;
+                    n->pass.value = stack[var][dyn_array_length(stack[var]) - 1];
+                }
             }
         }
     }
@@ -560,6 +587,7 @@ bool mem2reg(TB_Function* f) {
 
     ssa_rename(&c, f, 0, stack);
     tb_free_dominance_frontiers(f, &df);
+
     return true;
 }
 

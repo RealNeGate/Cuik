@@ -16,7 +16,7 @@ ICodeGen* tb__find_code_generator(TB_Module* m) {
         #else
         case TB_ARCH_X86_64: return &tb__x64_codegen;
         #endif
-        case TB_ARCH_AARCH64: return &tb__aarch64_codegen;
+        // case TB_ARCH_AARCH64: return &tb__aarch64_codegen;
         // case TB_ARCH_WASM32: return &tb__wasm32_codegen;
         default: return NULL;
     }
@@ -37,7 +37,7 @@ char* tb__arena_strdup(TB_Module* m, const char* src) {
     mtx_lock(&m->lock);
 
     size_t length = strlen(src);
-    char* newstr = arena_alloc(&m->arena, length, 1);
+    char* newstr = arena_alloc(&m->arena, length + 1, 1);
     memcpy(newstr, src, length + 1);
 
     mtx_unlock(&m->lock);
@@ -262,11 +262,11 @@ TB_API TB_FileID tb_file_create(TB_Module* m, const char* path) {
     // allow for changing this later, doesn't matter for AOT... which is the usecase
     // of this?)
     size_t len = strlen(path);
-    char* newstr = arena_alloc(&m->arena, len, 1);
+    char* newstr = arena_alloc(&m->arena, len + 1, 1);
     memcpy(newstr, path, len);
 
     TB_File f = { .path = newstr };
-    TB_FileID id = dyn_array_length(m->files) - 1;
+    TB_FileID id = dyn_array_length(m->files);
     dyn_array_put(m->files, f);
 
     mtx_unlock(&m->lock);
