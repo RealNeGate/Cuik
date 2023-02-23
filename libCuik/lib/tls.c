@@ -29,7 +29,7 @@ void* cuik__valloc(size_t size) {
 
 void cuik__vfree(void* ptr, size_t size) {
     #ifdef _WIN32
-    VirtualFree(ptr, size, MEM_RELEASE);
+    VirtualFree(ptr, 0, MEM_RELEASE);
     #else
     munmap(ptr, size);
     #endif

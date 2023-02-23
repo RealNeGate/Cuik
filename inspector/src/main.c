@@ -7,6 +7,9 @@
 #include <cuik.h>
 #include <mimalloc.h>
 
+// #define STB_LEAKCHECK_IMPLEMENTATION
+// #include <stb_leakcheck.h>
+
 static char  logbuf[64000];
 static int   logbuf_updated = 0;
 static float bg[3] = { 90, 95, 100 };
@@ -246,16 +249,16 @@ static void process_frame(mu_Context *ctx) {
                 .target = muh_target,
                 .toolchain = muh_toolchain,
                 .flavor = TB_FLAVOR_EXECUTABLE,
-                .core_dirpath = "W:/Workspace/Cuik",
             };
 
             // we're not preprocessing a file so we don't need input
-            Cuik_CPP* cpp = cuikpp_make(NULL);
+            Cuik_CPP* cpp = cuikpp_make(NULL, NULL, NULL);
             cuik_set_standard_defines(cpp, &args);
 
             located = cuikpp_find_include_include(cpp, located_path, search_path);
 
             cuiklex_free_tokens(cuikpp_get_token_stream(cpp));
+            cuik_free_args(&args);
             cuikpp_free(cpp);
         }
 

@@ -1,6 +1,6 @@
 #include <zip/zip.h>
 #include <front/atoms.h>
-#include "../file_map.h"
+#include <file_map.h>
 
 typedef struct InternalFile InternalFile;
 struct InternalFile {
