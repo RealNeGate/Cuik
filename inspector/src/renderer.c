@@ -238,7 +238,7 @@ void r_init(void) {
         "layout(location = 1) uniform sampler2D uTextures[16];\n"
         "\n"
         "void main() {\n"
-        "   fColor = Color.bgra;\n"
+        "   fColor = Color.rgba;\n"
         "   fColor.a *= texture(uTextures[Tex], UV).r;\n"
         "}\n";
 

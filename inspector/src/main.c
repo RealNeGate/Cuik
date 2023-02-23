@@ -6,6 +6,7 @@
 
 #include <cuik.h>
 #include <mimalloc.h>
+#include <file_map.h>
 
 // #define STB_LEAKCHECK_IMPLEMENTATION
 // #include <stb_leakcheck.h>
@@ -16,6 +17,8 @@ static float bg[3] = { 90, 95, 100 };
 
 static Cuik_Target* muh_target;
 static Cuik_Toolchain muh_toolchain;
+
+static TB_ObjectFile* muh_object_file;
 
 static void write_log(const char *text) {
     if (logbuf[0]) { strcat(logbuf, "\n"); }
@@ -154,6 +157,27 @@ static void log_window(mu_Context *ctx) {
     }
 }
 
+static void mu_label_with_len(mu_Context *ctx, TB_Slice text) {
+    mu_Rect rect = mu_layout_next(ctx);
+    mu_Vec2 pos;
+    mu_Font font = ctx->style->font;
+    mu_push_clip_rect(ctx, rect);
+    pos.y = rect.y + (rect.h - ctx->text_height(font)) / 2;
+    pos.x = rect.x + ctx->style->padding;
+    mu_draw_text(ctx, font, (const char*) text.data, text.length, pos, ctx->style->colors[MU_COLOR_TEXT]);
+    mu_pop_clip_rect(ctx);
+}
+
+static void mu_label_with_color(mu_Context *ctx, const char* text, mu_Color color) {
+    mu_Rect rect = mu_layout_next(ctx);
+    mu_Vec2 pos;
+    mu_Font font = ctx->style->font;
+    mu_push_clip_rect(ctx, rect);
+    pos.y = rect.y + (rect.h - ctx->text_height(font)) / 2;
+    pos.x = rect.x + ctx->style->padding;
+    mu_draw_text(ctx, font, text, -1, pos, color);
+    mu_pop_clip_rect(ctx);
+}
 
 static int uint8_slider(mu_Context *ctx, unsigned char *value, int low, int high) {
     static float tmp;
@@ -274,6 +298,63 @@ static void process_frame(mu_Context *ctx) {
         mu_end_window(ctx);
     }
 
+    if (mu_begin_window_ex(ctx, "window_test.obj", mu_rect(1000.0, 100.0, 480.0, 600.0), MU_OPT_NORESIZE)) {
+        // mu_Rect client_area = mu_get_current_container(ctx)->rect;
+        // mu_draw_rect(ctx, client_area, mu_color(255, 127, 63, 255));
+        TB_ObjectFile* file = muh_object_file;
+
+        char tmp[10];
+        if (mu_header_ex(ctx, "Sections", MU_OPT_EXPANDED)) {
+            mu_layout_row(ctx, 4, (int[]) { 36, 120, 120, -1 }, 0);
+
+            for (size_t i = 0; i < file->section_count; i++) {
+                TB_ObjectSection* s = &file->sections[i];
+
+                snprintf(tmp, 10, "%zu", i);
+                mu_label(ctx, tmp);
+
+                // Name
+                mu_label_with_len(ctx, s->name);
+
+                // Size
+                size_t size = s->raw_data.length;
+                if (size < s->virtual_size) size = s->virtual_size;
+                snprintf(tmp, 10, "0x%08zX", size);
+                mu_label(ctx, tmp);
+
+                mu_push_id(ctx, &i, sizeof(i));
+                if (mu_button(ctx, "View")) {
+
+                }
+                mu_pop_id(ctx);
+            }
+        }
+
+        if (mu_header_ex(ctx, "Symbols", MU_OPT_EXPANDED)) {
+            mu_layout_row(ctx, 3, (int[]) { 36, 80, -1 }, 0);
+
+            for (size_t i = 0; i < file->symbol_count; i++) {
+                TB_ObjectSymbol* s = &file->symbols[i];
+
+                // Symbol ID
+                snprintf(tmp, 10, "%u", s->ordinal);
+                mu_label(ctx, tmp);
+
+                if (s->section_num > 0) {
+                    TB_ObjectSection* sec = &file->sections[s->section_num - 1];
+                    mu_label_with_len(ctx, sec->name);
+                } else {
+                    mu_label_with_color(ctx, "*none*", mu_color(255, 102, 102, 255));
+                }
+
+                // Name
+                mu_label_with_len(ctx, s->name);
+            }
+        }
+
+        mu_end_window(ctx);
+    }
+
     mu_end(ctx);
 }
 
@@ -317,6 +398,9 @@ int main(int argc, char* argv[]) {
     mu_init(ctx);
     ctx->text_width = text_width;
     ctx->text_height = text_height;
+
+    FileMap fm = open_file_map("W:/Workspace/Cuik/tests/window_test.obj");
+    muh_object_file = tb_object_parse_coff((TB_Slice){ fm.size, fm.data });
 
     /* main loop */
     for (;;) {
