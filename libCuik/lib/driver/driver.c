@@ -513,6 +513,7 @@ static bool export_output(Cuik_CompilerArgs* restrict args, TB_Module* mod, cons
             }
 
             fclose(file);
+            tb_exporter_free(exports);
             tb_linker_destroy(l);
         }
 
@@ -524,24 +525,33 @@ static bool export_output(Cuik_CompilerArgs* restrict args, TB_Module* mod, cons
             cuik_get_target_system(args->target) == CUIK_SYSTEM_WINDOWS ? ".obj" : ".o"
         );
 
-        CUIK_TIMED_BLOCK("Export object") {
-            if (!tb_exporter_write_files(mod, TB_FLAVOR_OBJECT, debug_fmt, 1, (const char*[]) { obj_output_path })) {
-                remove(obj_output_path);
-                fprintf(stderr, "error: could not write object file output. %s\n", obj_output_path);
+        TB_Exports exports = tb_module_object_export(mod, TB_DEBUGFMT_CODEVIEW);
+        if (exports.count == 0) {
+            fprintf(stderr, "\x1b[31merror\x1b[0m: could not link executable\n");
+            return false;
+        }
+
+        FILE* file = NULL;
+        CUIK_TIMED_BLOCK("fopen") {
+            file = fopen(obj_output_path, "wb");
+            if (file == NULL) {
+                fprintf(stderr, "\x1b[31merror\x1b[0m: could not open file for writing! %s\n", output_name);
                 return false;
             }
         }
 
-        if (args->flavor == TB_FLAVOR_ASSEMBLY) {
-            char cmd[2048];
-            snprintf(cmd, 2048, "dumpbin %s /nologo /disasm", obj_output_path);
-            return system(cmd) == 0;
+        CUIK_TIMED_BLOCK("fwrite") {
+            fwrite(exports.files[0].data, 1, exports.files[0].length, file);
         }
+
+        fclose(file);
+        tb_exporter_free(exports);
 
         if (args->flavor == TB_FLAVOR_OBJECT) {
             return true;
         }
 
+        // This uses the system linker which isn't fun
         fprintf(stderr, "LINK %s\n", output_path);
         CUIK_TIMED_BLOCK("linker") {
             Cuik_Linker l = gimme_linker(args, subsystem_windows);

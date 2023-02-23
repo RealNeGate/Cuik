@@ -856,12 +856,8 @@ extern "C" {
         } files[TB_MAX_EXPORTS];
     } TB_Exports;
 
-    TB_API TB_Exports tb_exporter_write_output(TB_Module* m, TB_OutputFlavor flavor, TB_DebugFormat debug_fmt);
+    TB_API TB_Exports tb_module_object_export(TB_Module* m, TB_DebugFormat debug_fmt);
     TB_API void tb_exporter_free(TB_Exports exports);
-
-    // Same as tb_exporter_write_output except it doesn't return the buffers and instead writes to the filepaths provided (using the C FILE IO)
-    // Returns true on success
-    TB_API bool tb_exporter_write_files(TB_Module* m, TB_OutputFlavor flavor, TB_DebugFormat debug_fmt, size_t path_count, const char* paths[]);
 
     ////////////////////////////////
     // Linker exporter
@@ -876,9 +872,6 @@ extern "C" {
     TB_API TB_Linker* tb_linker_create(TB_ExecutableType type, TB_Arch arch);
     TB_API TB_Exports tb_linker_export(TB_Linker* l);
     TB_API void tb_linker_destroy(TB_Linker* l);
-
-    // tb_linker_export except it outputs to files
-    TB_API bool tb_linker_export_files(TB_Linker* l, size_t path_count, const char* paths[]);
 
     // Links compiled module into output
     TB_API void tb_linker_append_module(TB_Linker* l, TB_Module* m);
