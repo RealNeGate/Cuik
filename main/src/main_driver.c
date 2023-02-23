@@ -13,10 +13,17 @@
 #include "spall_perf.h"
 #include "live.h"
 
+#include "objdump.h"
+
 // #define STB_LEAKCHECK_IMPLEMENTATION
 // #include <stb_leakcheck.h>
 
 int main(int argc, const char** argv) {
+    // Cuik can be opened as a OBJ file parser
+    if (argc >= 2 && strcmp(argv[1], "-objdump") == 0) {
+        return run_objdump(argc - 2, argv + 2);
+    }
+
     // setlocale(LC_ALL, ".UTF8");
     cuik_init();
 

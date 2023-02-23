@@ -47,8 +47,18 @@ typedef struct {
     uint32_t pos, origin, target;
 } JumpTablePatch;
 
+enum {
+    CG_RESULT_SUCCESS,
+
+    // errors
+    CG_RESULT_TODO,
+};
+
 struct Ctx {
     TB_CGEmitter emit;
+
+    // for panic-based error handling
+    jmp_buf restore_point;
 
     TB_Function* f;
     TB_Predeccesors preds;
@@ -241,6 +251,10 @@ static bool GAD_FN(fits_into_int32)(TB_Node* n) {
     }
 
     return false;
+}
+
+static void GAD_FN(trap)(Ctx* restrict ctx, int code) {
+    longjmp(ctx->restore_point, code);
 }
 
 static void GAD_FN(set_flags)(Ctx* restrict ctx, TB_Function* f, TB_Reg r, int cc) {
@@ -786,7 +800,6 @@ static TB_FunctionOutput GAD_FN(compile_function)(TB_Function* restrict f, const
     TB_TemporaryStorage* tls = tb_tls_allocate();
     TB_Predeccesors preds = tb_get_temp_predeccesors(f, tls);
 
-    //bool is_ctx_heap_allocated = false;
     Ctx* restrict ctx = NULL;
     {
         size_t ctx_size = sizeof(Ctx) + (2 * f->node_count * sizeof(GAD_VAL));
@@ -815,6 +828,14 @@ static TB_FunctionOutput GAD_FN(compile_function)(TB_Function* restrict f, const
         f->line_count = 0;
         f->lines = ARENA_ARR_ALLOC(&f->super.module->arena, tally.line_info_count, TB_Line);
         mtx_unlock(&f->super.module->lock);
+    }
+
+    // Setup restore point so the codegen can safely exit
+    int result_code = setjmp(ctx->restore_point);
+    if (result_code != 0) {
+        // we had an error
+        arena_clear(&tb__arena);
+        return (TB_FunctionOutput){ .result = result_code };
     }
 
     // tb_function_print(f, tb_default_print_callback, stdout, false);

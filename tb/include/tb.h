@@ -677,6 +677,32 @@ extern "C" {
         void* user_data;
     } TB_ObjectSymbol;
 
+    typedef enum {
+        TB_COFF_SECTION_NO_PAD      = 0x00000008,
+        TB_COFF_SECTION_CODE        = 0x00000020,
+        TB_COFF_SECTION_INIT        = 0x00000040,
+        TB_COFF_SECTION_UNINIT      = 0x00000080,
+        TB_COFF_SECTION_OTHER       = 0x00000100,
+        TB_COFF_SECTION_INFO        = 0x00000200,
+        TB_COFF_SECTION_REMOVE      = 0x00000800,
+        TB_COFF_SECTION_COMDAT      = 0x00001000,
+
+        // this is actually a 4bit field
+        TB_COFF_SECTION_ALIGN       = 0x00F00000,
+
+        // if we have more than 65535 relocations we do this
+        TB_COFF_SECTION_RELOC_OVR   = 0x00F00000,
+
+        // memory flags
+        TB_COFF_SECTION_DISCARDABLE = 0x02000000,
+        TB_COFF_SECTION_NOT_CACHED  = 0x04000000,
+        TB_COFF_SECTION_NOT_PAGED   = 0x08000000,
+        TB_COFF_SECTION_SHARED      = 0x10000000,
+        TB_COFF_SECTION_EXECUTE     = 0x20000000,
+        TB_COFF_SECTION_READ        = 0x40000000,
+        TB_COFF_SECTION_WRITE       = 0x80000000,
+    } TB_COFF_SectionFlags;
+
     typedef struct {
         TB_Slice name;
         uint32_t flags;

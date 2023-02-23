@@ -289,6 +289,8 @@ typedef struct TB_StackSlot {
 
 typedef struct TB_FunctionOutput {
     TB_Linkage linkage;
+    int result;
+
     uint8_t prologue_length;
     uint8_t epilogue_length;
 

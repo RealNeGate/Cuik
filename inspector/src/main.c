@@ -241,7 +241,7 @@ static void process_frame(mu_Context *ctx) {
 
         mu_layout_row(ctx, 1, (int[]) { -1 }, 0);
         if (mu_textbox(ctx, search_path, FILENAME_MAX)) {
-            /*Cuik_CompilerArgs args = {
+            Cuik_CompilerArgs args = {
                 .version = CUIK_VERSION_C23,
                 .target = muh_target,
                 .toolchain = muh_toolchain,
@@ -257,7 +257,6 @@ static void process_frame(mu_Context *ctx) {
 
             cuiklex_free_tokens(cuikpp_get_token_stream(cpp));
             cuikpp_free(cpp);
-            mi_collect(true);*/
         }
 
         if (located) {

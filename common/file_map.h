@@ -12,8 +12,6 @@ typedef struct {
 static FileMap open_file_map(const char* filepath) {
     HANDLE file = CreateFileA(filepath, GENERIC_READ, FILE_SHARE_READ, 0, OPEN_EXISTING, 0, 0);
     if (file == INVALID_HANDLE_VALUE) {
-        DWORD err = GetLastError();
-        fprintf(stderr, "Could not open file! %s\nWin32 Error: %lu", filepath, err);
         return (FileMap){ INVALID_HANDLE_VALUE };
     }
 
@@ -64,13 +62,11 @@ static FileMap open_file_map(const char* filepath) {
 
     struct stat file_stats;
     if (fstat(fd, &file_stats) == -1) {
-        fprintf(stderr, "could not figure out file size: %s\n", filepath);
         return (FileMap){ 0 };
     }
 
     void* buffer = mmap(NULL, file_stats.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
     if (buffer == MAP_FAILED) {
-        fprintf(stderr, "could not map file: %s\n", filepath);
         return (FileMap){ 0 };
     }
 
