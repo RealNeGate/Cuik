@@ -416,14 +416,6 @@ TB_API void tb_inst_volatile_store(TB_Function* f, TB_DataType dt, TB_Reg addr, 
     };
 }
 
-TB_API void tb_inst_initialize_mem(TB_Function* f, TB_Reg addr, TB_Initializer* src) {
-    TB_Reg r = tb_make_reg(f, TB_INITIALIZE, TB_TYPE_PTR);
-    f->nodes[r].init = (struct TB_NodeInitialize) {
-        .addr = addr,
-        .src  = src,
-    };
-}
-
 TB_API TB_Reg tb_inst_bool(TB_Function* f, bool imm) {
     TB_Reg r = tb_make_reg(f, TB_INTEGER_CONST, TB_TYPE_BOOL);
     f->nodes[r].integer.num_words = 1;
@@ -475,22 +467,17 @@ TB_API TB_Reg tb_inst_float64(TB_Function* f, double imm) {
 }
 
 TB_API TB_Reg tb_inst_string(TB_Function* f, size_t len, const char* str) {
-    mtx_lock(&f->super.module->lock);
-    char* newstr = arena_alloc(&f->super.module->arena, len, 1);
-    memcpy(newstr, str, len);
-    mtx_unlock(&f->super.module->lock);
+    TB_Global* dummy = tb_global_create(f->super.module, NULL, NULL, TB_LINKAGE_PRIVATE);
+    tb_global_set_storage(f->super.module, &f->super.module->rdata, dummy, 0, len, 1);
 
-    TB_Reg r = tb_make_reg(f, TB_STRING_CONST, TB_TYPE_PTR);
-    f->nodes[r].string = (struct TB_NodeString) { .length = len, .data = newstr };
-    return r;
+    char* dst = tb_global_add_region(f->super.module, dummy, 0, len);
+    memcpy(dst, str, len);
+
+    return tb_inst_get_symbol_address(f, (TB_Symbol*) dummy);
 }
 
 TB_API TB_Reg tb_inst_cstring(TB_Function* f, const char* str) {
-    char* newstr = tb__arena_strdup(f->super.module, str);
-
-    TB_Reg r = tb_make_reg(f, TB_STRING_CONST, TB_TYPE_PTR);
-    f->nodes[r].string = (struct TB_NodeString) { .length = strlen(str) + 1, .data = newstr };
-    return r;
+    return tb_inst_string(f, strlen(str), str);
 }
 
 TB_API TB_Reg tb_inst_array_access(TB_Function* f, TB_Reg base, TB_Reg index, uint32_t stride) {

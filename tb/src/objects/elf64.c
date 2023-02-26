@@ -54,6 +54,10 @@ TB_API TB_Exports tb_elf64obj_write_output(TB_Module* m, const IDebugFormat* dbg
 
     TB_ModuleExporter e = { 0 };
 
+    CUIK_TIMED_BLOCK("layout section") {
+        tb_module_layout_sections(m);
+    }
+
     // tally up .data relocations
     /*uint32_t data_relocation_count = 0;
 
@@ -215,22 +219,21 @@ TB_API TB_Exports tb_elf64obj_write_output(TB_Module* m, const IDebugFormat* dbg
     }
 
     // Code section
-    sections[S_TEXT].sh_size = tb_helper_get_text_section_layout(m, 0);
+    sections[S_TEXT].sh_size = m->text.total_size;
 
     // Target specific: resolve internal call patches
     size_t local_patch_count = code_gen->emit_call_patches(m);
 
     FOREACH_N(i, 0, m->max_threads) {
         sections[S_TEXT_REL].sh_size += dyn_array_length(m->thread_info[i].symbol_patches) * sizeof(Elf64_Rela);
-        sections[S_TEXT_REL].sh_size += dyn_array_length(m->thread_info[i].const_patches) * sizeof(Elf64_Rela);
+        // sections[S_TEXT_REL].sh_size += dyn_array_length(m->thread_info[i].const_patches) * sizeof(Elf64_Rela);
     }
     sections[S_TEXT_REL].sh_size -= local_patch_count * sizeof(Elf64_Rela);
 
     FOREACH_N(t, 0, m->max_threads) {
         pool_for(TB_Global, g, m->thread_info[t].globals) {
-            TB_Initializer* init = g->init;
-            FOREACH_N(k, 0, init->obj_count) {
-                sections[S_DATA_REL].sh_size += (init->objects[k].type != TB_INIT_OBJ_REGION) * sizeof(Elf64_Rela);
+            FOREACH_N(k, 0, g->obj_count) {
+                sections[S_DATA_REL].sh_size += (g->objects[k].type != TB_INIT_OBJ_REGION) * sizeof(Elf64_Rela);
             }
         }
     }
@@ -287,8 +290,8 @@ TB_API TB_Exports tb_elf64obj_write_output(TB_Module* m, const IDebugFormat* dbg
     // set some sizes and pass the stab and string table to the context
     sections[S_STAB].sh_size   = stab.count;
     sections[S_STRTAB].sh_size = strtbl.count;
-    sections[S_DATA].sh_size   = m->data_region_size;
-    sections[S_RODATA].sh_size = m->rdata_region_size;
+    sections[S_DATA].sh_size   = m->data.total_size;
+    sections[S_RODATA].sh_size = m->rdata.total_size;
 
     // Calculate file offsets
     size_t output_size = sizeof(Elf64_Ehdr);
@@ -310,7 +313,7 @@ TB_API TB_Exports tb_elf64obj_write_output(TB_Module* m, const IDebugFormat* dbg
         WRITE(strtbl.data, strtbl.count);
 
         // TEXT section
-        e.write_pos = tb_helper_write_text_section(e.write_pos, m, output, sections[S_TEXT].sh_offset);
+        e.write_pos = tb_helper_write_section(e.write_pos, &m->text, output, sections[S_TEXT].sh_offset);
 
         // TEXT patches
         {
@@ -341,7 +344,6 @@ TB_API TB_Exports tb_elf64obj_write_output(TB_Module* m, const IDebugFormat* dbg
                         TB_Global* global = (TB_Global*) p->target;
                         ((void) global);
                         assert(global->super.tag == TB_SYMBOL_GLOBAL);
-                        assert(global->storage == TB_STORAGE_DATA);
 
                         Elf64_Rela rela = {
                             .r_offset = actual_pos,
@@ -353,25 +355,12 @@ TB_API TB_Exports tb_elf64obj_write_output(TB_Module* m, const IDebugFormat* dbg
                         tb_todo();
                     }
                 }
-
-                FOREACH_N(j, 0, dyn_array_length(m->thread_info[i].const_patches)) {
-                    TB_ConstPoolPatch* p = &m->thread_info[i].const_patches[j];
-                    TB_FunctionOutput* out_f = p->source->output;
-
-                    size_t actual_pos = out_f->code_pos + out_f->prologue_length + p->pos;
-                    Elf64_Rela rela = {
-                        .r_offset = actual_pos,
-                        .r_info   = ELF64_R_INFO(S_RODATA, R_X86_64_PC32),
-                        .r_addend = -4
-                    };
-                    TB_FIXED_ARRAY_APPEND(relocs, rela);
-                }
             }
 
             WRITE(relocs.elems, relocs.count * sizeof(Elf64_Rela));
         }
 
-        e.write_pos = tb_helper_write_data_section(e.write_pos, m, output, sections[S_DATA].sh_offset);
+        e.write_pos = tb_helper_write_section(e.write_pos, &m->data, output, sections[S_DATA].sh_offset);
 
         // write DATA patches
         {
@@ -384,17 +373,15 @@ TB_API TB_Exports tb_elf64obj_write_output(TB_Module* m, const IDebugFormat* dbg
 
             FOREACH_N(i, 0, m->max_threads) {
                 pool_for(TB_Global, g, m->thread_info[i].globals) {
-                    TB_Initializer* init = g->init;
-
-                    FOREACH_N(k, 0, init->obj_count) {
-                        size_t actual_pos = g->pos + init->objects[k].offset;
+                    FOREACH_N(k, 0, g->obj_count) {
+                        size_t actual_pos = g->pos + g->objects[k].offset;
 
                         // load the addend from the buffer
                         uint64_t addend;
                         memcpy(&addend, &data[actual_pos], sizeof(addend));
 
-                        if (init->objects[k].type == TB_INIT_OBJ_RELOC) {
-                            const TB_Symbol* s = init->objects[k].reloc;
+                        if (g->objects[k].type == TB_INIT_OBJ_RELOC) {
+                            const TB_Symbol* s = g->objects[k].reloc;
 
                             switch (s->tag) {
                                 case TB_SYMBOL_GLOBAL: {
@@ -440,7 +427,7 @@ TB_API TB_Exports tb_elf64obj_write_output(TB_Module* m, const IDebugFormat* dbg
             WRITE(relocs.elems, relocs.count * sizeof(Elf64_Rela));
         }
 
-        e.write_pos = tb_helper_write_rodata_section(e.write_pos, m, output, sections[S_RODATA].sh_offset);
+        e.write_pos = tb_helper_write_section(e.write_pos, &m->rdata, output, sections[S_RODATA].sh_offset);
 
         assert(e.write_pos == sections[S_STAB].sh_offset);
         WRITE(stab.data, stab.count);
@@ -452,137 +439,6 @@ TB_API TB_Exports tb_elf64obj_write_output(TB_Module* m, const IDebugFormat* dbg
     // Done
     tb_platform_heap_free(strtbl.data);
     tb_platform_heap_free(stab.data);
-
-    return (TB_Exports){ .count = 1, .files = { { output_size, output } } };
-}
-
-TB_API TB_Exports tb_elf64exe_write_output(TB_Module* m, const IDebugFormat* dbg) {
-    enum {
-        S_TEXT,
-        S_RODATA,
-        S_MAX,
-    };
-
-    TB_ModuleExporter e = { 0 };
-
-    uint16_t machine = 0;
-    switch (m->target_arch) {
-        case TB_ARCH_X86_64: machine = EM_X86_64; break;
-        case TB_ARCH_AARCH64: machine = EM_AARCH64; break;
-        default: tb_todo();
-    }
-
-    Elf64_Ehdr header = {
-        .e_ident = {
-            [EI_MAG0]       = 0x7F, // magic number
-            [EI_MAG1]       = 'E',
-            [EI_MAG2]       = 'L',
-            [EI_MAG3]       = 'F',
-            [EI_CLASS]      = 2, // 64bit ELF file
-            [EI_DATA]       = 1, // little-endian
-            [EI_VERSION]    = 1, // 1.0
-            [EI_OSABI]      = 0,
-            [EI_ABIVERSION] = 0
-        },
-        .e_type = ET_EXEC,
-        .e_version = 1,
-        .e_machine = machine,
-        .e_entry = 0,
-
-        .e_flags = 0,
-        .e_ehsize = sizeof(Elf64_Ehdr),
-
-        // segment headers go at the end of the file
-        // and are filed in later.
-        .e_phoff     = 0,
-        .e_phentsize = sizeof(Elf64_Phdr),
-        .e_phnum     = S_MAX,
-    };
-
-    Elf64_Phdr sections[] = {
-        [S_TEXT] = {
-            .p_type = PT_LOAD,
-            .p_flags = PF_X | PF_R,
-            .p_align = 4096,
-        },
-        [S_RODATA] = {
-            .p_type = PT_LOAD,
-            .p_flags = PF_R,
-            .p_align = 4096,
-
-            .p_memsz = m->rdata_region_size,
-            .p_filesz = m->rdata_region_size
-        }
-    };
-
-    // Code section
-    size_t code_section_size = tb_helper_get_text_section_layout(m, 0);
-    {
-        // memory size is aligned to 4K bytes because of page alignment
-        sections[S_TEXT].p_memsz = align_up(code_section_size, sections[S_TEXT].p_align);
-        sections[S_TEXT].p_filesz = code_section_size;
-    }
-
-    // Layout sections in virtual memory
-    {
-        size_t offset = sizeof(Elf64_Ehdr);
-        FOREACH_N(i, 0, S_MAX) {
-            sections[i].p_vaddr = offset;
-            offset = align_up(offset + sections[i].p_memsz, sections[i].p_align);
-        }
-    }
-
-    // Apply TEXT relocations
-    {
-        // Target specific: resolve internal call patches
-        const ICodeGen* restrict code_gen = tb__find_code_generator(m);
-        code_gen->emit_call_patches(m);
-
-        // TODO: Handle rodata relocations
-        FOREACH_N(i, 0, m->max_threads) {
-            dyn_array_for(j, m->thread_info[i].symbol_patches) {
-                //TB_ExternFunctionPatch* p = &m->thread_info[i].ecall_patches[j];
-                //TB_FunctionOutput* out_f = p->source->output;
-                tb_todo();
-            }
-
-            FOREACH_N(j, 0, dyn_array_length(m->thread_info[i].const_patches)) {
-                TB_ConstPoolPatch* p = &m->thread_info[i].const_patches[j];
-                TB_FunctionOutput* out_f = p->source->output;
-                assert(out_f && "Patch cannot be applied to function with no compiled output");
-
-                size_t actual_pos = out_f->code_pos + out_f->prologue_length + p->pos + 4;
-
-                uint32_t* patch_mem = (uint32_t*) &out_f->code[out_f->prologue_length + p->pos];
-                *patch_mem += sections[S_RODATA].p_vaddr - actual_pos;
-            }
-        }
-    }
-
-    // Layout sections in file memory
-    size_t file_offset = sizeof(Elf64_Ehdr);
-    FOREACH_N(i, 0, S_MAX) {
-        file_offset = align_up(file_offset, 4096);
-        sections[i].p_offset = file_offset;
-
-        file_offset += sections[i].p_filesz;
-    }
-    header.e_phoff = file_offset;
-
-    size_t output_size = file_offset + (S_MAX * sizeof(Elf64_Phdr));
-    uint8_t* output = tb_platform_heap_alloc(output_size);
-
-    {
-        WRITE(&header, sizeof(Elf64_Ehdr));
-
-        zero_data(&e, output, align_up(e.write_pos, 4096) - e.write_pos);
-        e.write_pos = tb_helper_write_text_section(e.write_pos, m, output, sections[S_TEXT].p_offset);
-
-        zero_data(&e, output, align_up(e.write_pos, 4096) - e.write_pos);
-        e.write_pos = tb_helper_write_rodata_section(e.write_pos, m, output, sections[S_RODATA].p_offset);
-
-        WRITE(sections, S_MAX * sizeof(Elf64_Phdr));
-    }
 
     return (TB_Exports){ .count = 1, .files = { { output_size, output } } };
 }

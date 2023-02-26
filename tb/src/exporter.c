@@ -33,3 +33,43 @@ TB_API void tb_exporter_free(TB_Exports exports) {
         tb_platform_heap_free(exports.files[i].data);
     }
 }
+
+static void layout_section(TB_ModuleSection* restrict section) {
+    if (!section->dirty) {
+        return;
+    }
+
+    uint64_t offset = 0;
+    size_t id = 0;
+
+    dyn_array_for(i, section->functions) {
+        TB_Function* restrict f = section->functions[i];
+        TB_FunctionOutput* out_f = f->output;
+        if (out_f != NULL) {
+            f->super.symbol_id = id++;
+
+            out_f->code_pos = offset;
+            offset += out_f->code_size;
+        }
+    }
+
+    dyn_array_for(i, section->globals) {
+        TB_Global* g = section->globals[i];
+
+        if (g->super.name) {
+            g->super.symbol_id = id++;
+
+            g->pos = offset;
+            offset = align_up(offset + g->size, g->align);
+        }
+    }
+    section->total_size = offset;
+    section->dirty = false;
+}
+
+TB_API void tb_module_layout_sections(TB_Module* m) {
+    layout_section(&m->text);
+    layout_section(&m->data);
+    layout_section(&m->rdata);
+    layout_section(&m->tls);
+}

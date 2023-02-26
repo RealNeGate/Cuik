@@ -11,27 +11,20 @@ static void append_library(TB_Linker* l, TB_Slice ar_name, TB_Slice ar_file) {
 }
 
 static void append_module(TB_Linker* l, TB_Module* m) {
-    // Convert module into sections which we can then append to the output
-    TB_LinkerSection* text = tb__find_or_create_section(l, ".text", PF_X | PF_R);
-    m->linker.text = tb__append_piece(text, PIECE_TEXT, tb__layout_text_section(m), NULL, m);
-
-    if (m->data_region_size > 0) {
-        TB_LinkerSection* data = tb__find_or_create_section(l, ".data", PF_W | PF_R);
-        m->linker.data = tb__append_piece(data, PIECE_DATA, m->data_region_size, NULL, m);
+    CUIK_TIMED_BLOCK("layout section") {
+        tb_module_layout_sections(m);
     }
 
-    TB_LinkerSection* rdata = NULL;
-    if (m->rdata_region_size > 0) {
-        rdata = tb__find_or_create_section(l, ".rdata", PF_R);
-        m->linker.rdata = tb__append_piece(rdata, PIECE_RDATA, m->rdata_region_size, NULL, m);
-    }
+    tb__append_module_section(l, &m->text, ".text", PF_X | PF_R);
+    tb__append_module_section(l, &m->data, ".data", PF_W | PF_R);
+    tb__append_module_section(l, &m->rdata, ".rdata", PF_R);
 
     CUIK_TIMED_BLOCK("apply symbols") {
         static const enum TB_SymbolTag tags[] = { TB_SYMBOL_FUNCTION, TB_SYMBOL_GLOBAL };
 
         FOREACH_N(i, 0, COUNTOF(tags)) {
             enum TB_SymbolTag tag = tags[i];
-            TB_LinkerSectionPiece* piece = i ? m->linker.data : m->linker.text;
+            TB_LinkerSectionPiece* piece = i ? m->data.piece : m->text.piece;
 
             for (TB_Symbol* sym = m->first_symbol_of_tag[tag]; sym != NULL; sym = sym->next) {
                 TB_LinkerSymbol ls = {

@@ -640,8 +640,7 @@ static void GAD_FN(eval_bb)(Ctx* restrict ctx, TB_Function* f, TB_Label bb, TB_L
 
             case TB_DEBUGBREAK:
             case TB_MEMSET:
-            case TB_MEMCPY:
-            case TB_INITIALIZE: {
+            case TB_MEMCPY: {
                 GAD_FN(barrier)(ctx, f, bb, 0, ctx->ordinal[r]);
                 GAD_FN(misc_op)(ctx, f, r);
                 break;

@@ -375,6 +375,8 @@ static TB_SectionGroup codeview_generate_debug_info(TB_Module* m, TB_TemporarySt
         FOREACH_N(i, 0, m->max_threads) {
             pool_for(TB_Global, g, m->thread_info[i].globals) {
                 const char* name = g->super.name;
+                if (name == NULL) continue;
+
                 size_t name_len = strlen(g->super.name) + 1;
                 CV_TypeIndex type = g->dbg_type ? convert_to_codeview_type(&builder, g->dbg_type) : T_VOID;
 
@@ -491,9 +493,9 @@ static TB_SectionGroup codeview_generate_debug_info(TB_Module* m, TB_TemporarySt
                     TB_DebugType* type = out_f->stack_slots[j].storage_type;
 
                     const char* var_name = out_f->stack_slots[j].name;
-                    size_t var_name_len = strlen(var_name);
-                    assert(var_name != NULL);
+                    if (var_name == NULL) continue;
 
+                    size_t var_name_len = strlen(var_name);
                     uint32_t type_index = convert_to_codeview_type(&builder, type);
 
                     // define S_REGREL32

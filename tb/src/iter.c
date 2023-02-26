@@ -24,7 +24,6 @@ TB_API bool tb_next_node_input(const TB_Function* f, TB_NodeInputIter* iter) {
         case TB_INTEGER_CONST:
         case TB_FLOAT32_CONST:
         case TB_FLOAT64_CONST:
-        case TB_STRING_CONST:
         case TB_LOCAL:
         case TB_PARAM:
         case TB_GOTO:
@@ -37,14 +36,6 @@ TB_API bool tb_next_node_input(const TB_Function* f, TB_NodeInputIter* iter) {
         case TB_POISON:
         case TB_TRAP:
         return false;
-
-        case TB_INITIALIZE:
-        switch (iter->index_++) {
-            case 0: return (iter->r = n->init.addr, true);
-            case 1: return false;
-            default: tb_unreachable();
-        }
-        break;
 
         case TB_KEEPALIVE:
         case TB_VA_START:

@@ -4,8 +4,8 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
-#include <DbgHelp.h>
 #include <time.h>
+#include <DbgHelp.h>
 #pragma comment(lib, "Dbghelp.lib")
 
 #include <threads.h>

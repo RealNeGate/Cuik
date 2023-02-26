@@ -369,7 +369,7 @@ static Val fast_eval(X64_FastCtx* ctx, TB_Function* f, TB_Reg r) {
             TB_Module* m = f->super.module;
             const TB_Global* g = n->global.value;
 
-            if (g->storage == TB_STORAGE_TLS) {
+            if (g->parent->is_tls) {
                 if (m->tls_index_extern == 0) {
                     tb_panic("TB error: no tls_index provided\n");
                 }
@@ -833,12 +833,13 @@ static void fast_eval_basic_block(X64_FastCtx* restrict ctx, TB_Function* f, TB_
 
                     *rdata_payload = imm;
 
-                    uint32_t pos = tb_emit_const_patch(
+                    /*uint32_t pos = tb_emit_const_patch(
                         f->super.module, f, GET_CODE_POS(&ctx->emit) - 4,
                         rdata_payload, sizeof(uint32_t),
                         s_local_thread_id
                     );
-                    PATCH4(&ctx->emit, GET_CODE_POS(&ctx->emit) - 4, pos);
+                    PATCH4(&ctx->emit, GET_CODE_POS(&ctx->emit) - 4, pos);*/
+                    tb_todo();
                 }
                 break;
             }
@@ -874,31 +875,16 @@ static void fast_eval_basic_block(X64_FastCtx* restrict ctx, TB_Function* f, TB_
 
                     *rdata_payload = imm;
 
-                    uint32_t pos = tb_emit_const_patch(
+                    /*uint32_t pos = tb_emit_const_patch(
                         f->super.module, f, GET_CODE_POS(&ctx->emit) - 4,
                         rdata_payload, sizeof(uint64_t),
                         s_local_thread_id
                     );
-                    PATCH4(&ctx->emit, GET_CODE_POS(&ctx->emit) - 4, pos);
+                    PATCH4(&ctx->emit, GET_CODE_POS(&ctx->emit) - 4, pos);*/
+                    tb_todo();
                 }
                 break;
             }
-            case TB_STRING_CONST: {
-                const char* str = n->string.data;
-                size_t len = n->string.length;
-
-                GPR dst_gpr = fast_alloc_gpr(ctx, f, r);
-                fast_def_gpr(ctx, f, r, dst_gpr, TB_TYPE_PTR);
-
-                EMIT1(&ctx->emit, rex(true, dst_gpr, RBP, 0));
-                EMIT1(&ctx->emit, 0x8D);
-                EMIT1(&ctx->emit, mod_rx_rm(MOD_INDIRECT, dst_gpr, RBP));
-
-                uint32_t disp = tb_emit_const_patch(f->super.module, f, GET_CODE_POS(&ctx->emit), str, len, s_local_thread_id);
-                EMIT4(&ctx->emit, disp);
-                break;
-            }
-
             case TB_LINE_INFO: {
                 f->lines[f->line_count++] = (TB_Line) {
                     .file = n->line_info.file, .line = n->line_info.line, .pos = GET_CODE_POS(&ctx->emit)
@@ -1100,18 +1086,6 @@ static void fast_eval_basic_block(X64_FastCtx* restrict ctx, TB_Function* f, TB_
                 } else {
                     fast_folded_op(ctx, f, MOV, &addr, n->store.value);
                 }
-                break;
-            }
-            case TB_INITIALIZE: {
-                TB_Reg addr = n->mem_op.dst;
-
-                TB_Initializer* i = n->init.src;
-
-                assert(i->obj_count == 0);
-                Val src = val_imm(TB_TYPE_I32, 0);
-                fast_memset_const_size(ctx, f, addr, &src, i->size, true);
-
-                fast_kill_reg(ctx, f, addr);
                 break;
             }
             case TB_MEMSET: {
@@ -1809,8 +1783,10 @@ static void fast_eval_basic_block(X64_FastCtx* restrict ctx, TB_Function* f, TB_
                     }
                     mtx_unlock(&m->lock);
 
-                    uint32_t disp = tb_emit_const_patch(f->super.module, f, GET_CODE_POS(&ctx->emit), payload, 2 * sizeof(uint64_t), s_local_thread_id);
-                    EMIT4(&ctx->emit, disp);
+                    /*uint32_t disp = tb_emit_const_patch(f->super.module, f, GET_CODE_POS(&ctx->emit), payload, 2 * sizeof(uint64_t), s_local_thread_id);
+                    EMIT4(&ctx->emit, disp);*/
+                    (void) payload;
+                    tb_todo();
                 } else {
                     // we probably want some recycling eventually...
                     GPR dst_gpr = fast_alloc_gpr(ctx, f, r);

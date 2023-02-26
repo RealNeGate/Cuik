@@ -34,6 +34,8 @@ int tb__get_local_tid(void) {
 }
 
 char* tb__arena_strdup(TB_Module* m, const char* src) {
+    if (src == NULL) return NULL;
+
     mtx_lock(&m->lock);
 
     size_t length = strlen(src);
@@ -110,13 +112,13 @@ TB_API TB_Module* tb_module_create(TB_Arch arch, TB_System sys, const TB_Feature
     dyn_array_put(m->files, (TB_File){ 0 });
 
     FOREACH_N(i, 0, TB_MAX_THREADS) {
-        m->thread_info[i].const_patches  = dyn_array_create(TB_ConstPoolPatch, 4096);
+        // m->thread_info[i].const_patches  = dyn_array_create(TB_ConstPoolPatch, 4096);
         m->thread_info[i].symbol_patches = dyn_array_create(TB_SymbolPatch, 4096);
     }
 
     // we start a little off the start just because
-    m->rdata_region_size = 16;
     mtx_init(&m->lock, mtx_plain);
+    m->tls.is_tls = true;
     return m;
 }
 
@@ -170,6 +172,7 @@ TB_API bool tb_module_compile_function(TB_Module* m, TB_Function* f, TB_ISelMode
         func_out->epilogue_length = epilogue_len;
         func_out->code_size += (prologue_len + epilogue_len);
     }
+    f->section->total_size += func_out->code_size;
 
     tb_atomic_size_add(&m->compiled_function_count, 1);
     region->size += func_out->code_size;
@@ -185,7 +188,6 @@ TB_API size_t tb_module_get_function_count(TB_Module* m) {
 TB_API void tb_module_kill_symbol(TB_Module* m, TB_Symbol* sym) {
     switch (sym->tag) {
         case TB_SYMBOL_TOMBSTONE: break;
-        case TB_SYMBOL_SYMLINK: break;
         case TB_SYMBOL_FUNCTION: {
             TB_Function* f = (TB_Function*) sym;
 
@@ -240,7 +242,6 @@ TB_API void tb_module_destroy(TB_Module* m) {
         pool_destroy(m->thread_info[i].debug_types);
 
         dyn_array_destroy(m->thread_info[i].symbol_patches);
-        dyn_array_destroy(m->thread_info[i].const_patches);
     }
 
     tb_platform_vfree(m->prototypes_arena, PROTOTYPES_ARENA_SIZE * sizeof(uint64_t));
@@ -313,8 +314,9 @@ TB_API void tb_prototype_add_param_named(TB_Module* m, TB_FunctionPrototype* p, 
     p->params[p->param_count++] = (TB_PrototypeParam){ dt, tb__arena_strdup(m, name), debug_type };
 }
 
-TB_API TB_Function* tb_function_create(TB_Module* m, const char* name, TB_Linkage linkage) {
+TB_API TB_Function* tb_function_create(TB_Module* m, TB_ModuleSection* section, const char* name, TB_Linkage linkage) {
     TB_Function* f = (TB_Function*) tb_symbol_alloc(m, TB_SYMBOL_FUNCTION, name, sizeof(TB_Function));
+    f->section = section ? section : &m->text;
     f->linkage = linkage;
 
     f->bb_capacity = 4;
@@ -335,6 +337,14 @@ TB_API TB_Function* tb_function_create(TB_Module* m, const char* name, TB_Linkag
     // this is just a dummy slot so that things like parameters can anchor to
     f->nodes[1] = (TB_Node) { .next = 0 };
     f->bbs[0] = (TB_BasicBlock){ 1, 1 };
+
+    if (section == NULL) {
+        section = &m->text;
+    }
+
+    mtx_lock(&m->lock);
+    dyn_array_put(section->functions, f);
+    mtx_unlock(&m->lock);
     return f;
 }
 
@@ -404,44 +414,28 @@ TB_API const TB_FunctionPrototype* tb_function_get_prototype(TB_Function* f) {
     return f->prototype;
 }
 
-TB_API TB_Initializer* tb_initializer_create(TB_Module* m, size_t size, size_t align, size_t max_objects) {
-    tb_assume(size == (uint32_t)size);
-    tb_assume(align == (uint32_t)align);
-    tb_assume(max_objects == (uint32_t)max_objects);
-
-    size_t space_needed = (sizeof(TB_Initializer) + (sizeof(uint64_t) - 1)) / sizeof(uint64_t);
-    space_needed += ((max_objects * sizeof(TB_InitObj)) + (sizeof(uint64_t) - 1)) / sizeof(uint64_t);
-
-    TB_Initializer* init = tb_platform_heap_alloc(sizeof(TB_Initializer) + (space_needed * sizeof(uint64_t)));
-    init->size = size;
-    init->align = align;
-    init->obj_capacity = max_objects;
-    init->obj_count = 0;
-    return init;
-}
-
-TB_API void* tb_initializer_add_region(TB_Module* m, TB_Initializer* init, size_t offset, size_t size) {
+TB_API void* tb_global_add_region(TB_Module* m, TB_Global* g, size_t offset, size_t size) {
     assert(offset == (uint32_t)offset);
     assert(size == (uint32_t)size);
-    assert(init->obj_count + 1 <= init->obj_capacity);
+    assert(g->obj_count + 1 <= g->obj_capacity);
 
     void* ptr = tb_platform_heap_alloc(size);
-    init->objects[init->obj_count++] = (TB_InitObj) {
+    g->objects[g->obj_count++] = (TB_InitObj) {
         .type = TB_INIT_OBJ_REGION, .offset = offset, .region = { .size = size, .ptr = ptr }
     };
 
     return ptr;
 }
 
-TB_API void tb_initializer_add_symbol_reloc(TB_Module* m, TB_Initializer* init, size_t offset, const TB_Symbol* symbol) {
-    assert(offset == (uint32_t)offset);
-    assert(init->obj_count + 1 <= init->obj_capacity);
+TB_API void tb_global_add_symbol_reloc(TB_Module* m, TB_Global* g, size_t offset, const TB_Symbol* symbol) {
+    assert(offset == (uint32_t) offset);
+    assert(g->obj_count + 1 <= g->obj_capacity);
     assert(symbol != NULL);
 
-    init->objects[init->obj_count++] = (TB_InitObj) { .type = TB_INIT_OBJ_RELOC, .offset = offset, .reloc = symbol };
+    g->objects[g->obj_count++] = (TB_InitObj) { .type = TB_INIT_OBJ_RELOC, .offset = offset, .reloc = symbol };
 }
 
-TB_API TB_Global* tb_global_create(TB_Module* m, const char* name, TB_StorageClass storage, TB_DebugType* dbg_type, TB_Linkage linkage) {
+TB_API TB_Global* tb_global_create(TB_Module* m, const char* name, TB_DebugType* dbg_type, TB_Linkage linkage) {
     int tid = tb__get_local_tid();
 
     TB_Global* g = pool_put(m->thread_info[tid].globals);
@@ -452,28 +446,41 @@ TB_API TB_Global* tb_global_create(TB_Module* m, const char* name, TB_StorageCla
             .module = m,
         },
         .dbg_type = dbg_type,
-        .linkage = linkage,
-        .storage = storage
+        .linkage = linkage
     };
     tb_symbol_append(m, (TB_Symbol*) g);
 
     return g;
 }
 
-TB_API void tb_global_set_initializer(TB_Module* m, TB_Global* global, TB_Initializer* init) {
-    tb_atomic_size_t* region_size = global->storage == TB_STORAGE_TLS ? &m->tls_region_size : &m->data_region_size;
-    size_t pos = tb_atomic_size_add(region_size, init->size + init->align);
+TB_API void tb_global_set_storage(TB_Module* m, TB_ModuleSection* section, TB_Global* global, size_t size, size_t align, size_t max_objects) {
+    global->parent = section;
+    global->pos = 0;
+    global->size = size;
+    global->align = align;
+    global->obj_count = 0;
+    global->obj_capacity = max_objects;
 
-    // TODO(NeGate): Assert on non power of two alignment
-    size_t align_mask = init->align - 1;
-    pos = (pos + align_mask) & ~align_mask;
+    mtx_lock(&m->lock);
+    global->objects = ARENA_ARR_ALLOC(&m->arena, max_objects, TB_InitObj);
+    dyn_array_put(section->globals, global);
+    mtx_unlock(&m->lock);
+}
 
-    assert(init);
-    assert(pos < UINT32_MAX && "Cannot fit global into space");
-    assert((pos + init->size) < UINT32_MAX && "Cannot fit global into space");
+TB_API TB_ModuleSection* tb_module_get_text(TB_Module* m) {
+    return &m->text;
+}
 
-    global->pos = pos;
-    global->init = init;
+TB_API TB_ModuleSection* tb_module_get_rdata(TB_Module* m) {
+    return &m->rdata;
+}
+
+TB_API TB_ModuleSection* tb_module_get_data(TB_Module* m) {
+    return &m->data;
+}
+
+TB_API TB_ModuleSection* tb_module_get_tls(TB_Module* m) {
+    return &m->tls;
 }
 
 TB_API void tb_module_set_tls_index(TB_Module* m, TB_Symbol* e) {
@@ -610,23 +617,6 @@ void tb_emit_symbol_patch(TB_Module* m, TB_Function* source, const TB_Symbol* ta
 
     TB_SymbolPatch p = { .source = source, .target = target, .is_function = is_function, .pos = pos };
     dyn_array_put(m->thread_info[local_thread_id].symbol_patches, p);
-}
-
-uint32_t tb_emit_const_patch(TB_Module* m, TB_Function* source, size_t pos, const void* ptr, size_t len, size_t local_thread_id) {
-    assert(pos == (uint32_t)pos);
-    assert(len == (uint32_t)len);
-
-    size_t align = len > 8 ? 16 : 0;
-    size_t alloc_pos = tb_atomic_size_add(&m->rdata_region_size, len + align);
-
-    size_t rdata_pos = len > 8 ? align_up(alloc_pos, 16) : alloc_pos;
-    TB_ConstPoolPatch p = {
-        .source = source, .pos = pos, .rdata_pos = rdata_pos, .data = ptr, .length = len
-    };
-    dyn_array_put(m->thread_info[local_thread_id].const_patches, p);
-
-    assert(rdata_pos == (uint32_t)rdata_pos);
-    return rdata_pos;
 }
 
 //

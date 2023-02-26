@@ -425,23 +425,21 @@ static void append_library(TB_Linker* l, TB_Slice ar_name, TB_Slice ar_file) {
 }
 
 static void append_module(TB_Linker* l, TB_Module* m) {
+    CUIK_TIMED_BLOCK("layout section") {
+        tb_module_layout_sections(m);
+    }
+
+    // Target specific: resolve internal call patches
+    tb__find_code_generator(m)->emit_call_patches(m);
+
     // Convert module into sections which we can then append to the output
-    TB_LinkerSection* text = tb__find_or_create_section(l, ".text", IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_CNT_CODE);
-    m->linker.text = tb__append_piece(text, PIECE_TEXT, tb__layout_text_section(m), NULL, m);
-
-    if (m->data_region_size > 0) {
-        TB_LinkerSection* data = tb__find_or_create_section(l, ".data", IMAGE_SCN_MEM_WRITE | IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA);
-        m->linker.data = tb__append_piece(data, PIECE_DATA, m->data_region_size, NULL, m);
-    }
-
-    TB_LinkerSection* rdata = NULL;
-    if (m->rdata_region_size > 0) {
-        rdata = tb__find_or_create_section(l, ".rdata", IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA);
-        m->linker.rdata = tb__append_piece(rdata, PIECE_RDATA, m->rdata_region_size, NULL, m);
-    }
+    tb__append_module_section(l, &m->text, ".text", IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_CNT_CODE);
+    tb__append_module_section(l, &m->data, ".data", IMAGE_SCN_MEM_WRITE | IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA);
+    tb__append_module_section(l, &m->rdata, ".rdata", IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA);
 
     if (m->compiled_function_count > 0) {
-        if (rdata) {
+        TB_LinkerSection* rdata = m->rdata.piece ? m->rdata.piece->parent : NULL;
+        if (!rdata) {
             rdata = tb__find_or_create_section(l, ".rdata", IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA);
         }
 
@@ -467,19 +465,17 @@ static void append_module(TB_Linker* l, TB_Module* m) {
         }
 
         TB_LinkerSection* pdata = tb__find_or_create_section(l, ".pdata", IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA);
-        m->linker.text->associate = tb__append_piece(pdata, PIECE_PDATA, m->compiled_function_count * 12, NULL, m);
+        m->text.piece->associate = tb__append_piece(pdata, PIECE_PDATA, m->compiled_function_count * 12, NULL, m);
     }
 
-    if (m->data_region_size > 0) CUIK_TIMED_BLOCK(".reloc") {
+    if (m->data.total_size > 0) CUIK_TIMED_BLOCK(".reloc") {
         uint32_t last_page = UINT32_MAX, reloc_size = 0;
         FOREACH_N(i, 0, m->max_threads) {
             pool_for(TB_Global, g, m->thread_info[i].globals) {
-                TB_Initializer* init = g->init;
+                FOREACH_N(k, 0, g->obj_count) {
+                    size_t actual_page = g->pos + g->objects[k].offset;
 
-                FOREACH_N(k, 0, init->obj_count) {
-                    size_t actual_page = g->pos + init->objects[k].offset;
-
-                    if (init->objects[k].type == TB_INIT_OBJ_RELOC) {
+                    if (g->objects[k].type == TB_INIT_OBJ_RELOC) {
                         if (last_page != actual_page) {
                             last_page = actual_page;
                             reloc_size += 8;
@@ -493,7 +489,7 @@ static void append_module(TB_Linker* l, TB_Module* m) {
 
         if (reloc_size > 0) {
             TB_LinkerSection* reloc = tb__find_or_create_section(l, ".reloc", IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA);
-            m->linker.data->associate = tb__append_piece(reloc, PIECE_RELOC, reloc_size, NULL, m);
+            m->data.piece->associate = tb__append_piece(reloc, PIECE_RELOC, reloc_size, NULL, m);
         }
     }
 
@@ -503,9 +499,11 @@ static void append_module(TB_Linker* l, TB_Module* m) {
 
         FOREACH_N(i, 0, COUNTOF(tags)) {
             enum TB_SymbolTag tag = tags[i];
-            TB_LinkerSectionPiece* piece = i ? m->linker.data : m->linker.text;
+            TB_LinkerSectionPiece* piece = i ? m->data.piece : m->text.piece;
 
             for (TB_Symbol* sym = m->first_symbol_of_tag[tag]; sym != NULL; sym = sym->next) {
+                if (sym->name == NULL) continue;
+
                 TB_LinkerSymbol ls = {
                     .name = { strlen(sym->name), (const uint8_t*) sym->name },
                     .tag = TB_LINKER_SYMBOL_TB,
@@ -930,9 +928,9 @@ static bool finalize_sections(TB_Linker* l) {
 
             // mark module content
             if (p->module) {
-                gc_mark(l, p->module->linker.text);
-                gc_mark(l, p->module->linker.data);
-                gc_mark(l, p->module->linker.rdata);
+                gc_mark(l, p->module->text.piece);
+                gc_mark(l, p->module->data.piece);
+                gc_mark(l, p->module->rdata.piece);
             }
 
             // mark any kid symbols

@@ -20,7 +20,6 @@ static bool dead_expr_elim(TB_Function* f) {
                         // keep
                         case TB_NULL:
                         case TB_LINE_INFO:
-                        case TB_INITIALIZE:
                         case TB_PHI1:
                         case TB_PHI2:
                         case TB_PHIN:
@@ -79,7 +78,6 @@ static bool dead_expr_elim(TB_Function* f) {
                         case TB_ARRAY_ACCESS:
                         case TB_MEMBER_ACCESS:
                         case TB_BITCAST:
-                        case TB_STRING_CONST:
                         case TB_FLOAT32_CONST:
                         case TB_FLOAT64_CONST:
                         case TB_INT2PTR:

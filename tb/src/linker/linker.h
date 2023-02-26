@@ -28,12 +28,8 @@ struct TB_LinkerSectionPiece {
     enum {
         // write the data buffer in this struct
         PIECE_NORMAL,
-        // Write the TB module's text section
-        PIECE_TEXT,
-        // Write the TB module's data section
-        PIECE_DATA,
-        // Write the TB module's rdata section
-        PIECE_RDATA,
+        // Write TB_ModuleSection
+        PIECE_MODULE_SECTION,
         // Write the TB module's pdata section
         PIECE_PDATA,
         // Write the TB module's reloc section
@@ -282,7 +278,7 @@ TB_LinkerSectionPiece* tb__get_piece(TB_Linker* l, TB_LinkerSymbol* restrict sym
 
 // TB helpers
 size_t tb__get_symbol_pos(TB_Symbol* s);
-size_t tb__layout_text_section(TB_Module* m);
+void tb__append_module_section(TB_Linker* l, TB_ModuleSection* section, const char* name, uint32_t flags);
 
 ImportThunk* tb__find_or_create_import(TB_Linker* l, TB_LinkerSymbol* restrict sym);
 

@@ -62,6 +62,10 @@ TB_API TB_Exports tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
     e->code_gen = tb__find_code_generator(m);
     e->string_table_mark = 4;
 
+    CUIK_TIMED_BLOCK("layout section") {
+        tb_module_layout_sections(m);
+    }
+
     const char* path = "fallback.obj";
 
     ////////////////////////////////
@@ -80,14 +84,14 @@ TB_API TB_Exports tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
     }
 
     int number_of_sections = 5
-        + (m->tls_region_size ? 1 : 0)
+        + (m->tls.total_size ? 1 : 0)
         + (dbg != NULL ? dbg->number_of_debug_sections(m) : 0);
 
     // mark each with a unique id
     size_t function_sym_start = (number_of_sections * 2);
     size_t external_sym_start = function_sym_start + m->compiled_function_count;
 
-    size_t text_section_size = tb_helper_get_text_section_layout(m, function_sym_start);
+    size_t text_section_size = m->text.total_size;
     size_t unique_id_counter = 0;
     FOREACH_N(i, 0, m->max_threads) {
         pool_for(TB_External, ext, m->thread_info[i].externals) {
@@ -114,9 +118,8 @@ TB_API TB_Exports tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
     size_t num_of_relocs[S_MAX] = { 0 };
     FOREACH_N(t, 0, m->max_threads) {
         pool_for(TB_Global, g, m->thread_info[t].globals) {
-            TB_Initializer* init = g->init;
-            FOREACH_N(k, 0, init->obj_count) {
-                num_of_relocs[S_DATA] += (init->objects[k].type != TB_INIT_OBJ_REGION);
+            FOREACH_N(k, 0, g->obj_count) {
+                num_of_relocs[S_DATA] += (g->objects[k].type != TB_INIT_OBJ_REGION);
             }
         }
     }
@@ -140,12 +143,12 @@ TB_API TB_Exports tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
         [S_RDATA] = (COFF_SectionHeader){
             .name = { ".rdata" }, // .rdata
             .characteristics = COFF_CHARACTERISTICS_RODATA,
-            .raw_data_size = m->rdata_region_size
+            .raw_data_size = m->rdata.total_size
         },
         [S_DATA] = (COFF_SectionHeader){
             .name = { ".data" }, // .data
             .characteristics = COFF_CHARACTERISTICS_DATA,
-            .raw_data_size = m->data_region_size
+            .raw_data_size = m->data.total_size
         },
         [S_PDATA] = (COFF_SectionHeader){
             .name = { ".pdata" }, // .pdata
@@ -161,7 +164,7 @@ TB_API TB_Exports tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
         [S_TLS] = (COFF_SectionHeader){
             .name = { ".tls$" },
             .characteristics = COFF_CHARACTERISTICS_DATA,
-            .raw_data_size = m->tls_region_size,
+            .raw_data_size = m->tls.total_size
         },
     };
 
@@ -211,7 +214,6 @@ TB_API TB_Exports tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
     {
         num_of_relocs[S_TEXT] = 0;
         FOREACH_N(i, 0, m->max_threads) {
-            num_of_relocs[S_TEXT] += dyn_array_length(m->thread_info[i].const_patches);
             num_of_relocs[S_TEXT] += dyn_array_length(m->thread_info[i].symbol_patches);
         }
         num_of_relocs[S_TEXT] -= local_patch_count;
@@ -259,18 +261,18 @@ TB_API TB_Exports tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
     }
 
     size_t string_table_size = 4;
-    TB_FOR_FUNCTIONS(f, m) {
+    TB_FOR_FUNCTIONS(f, m) if (f->super.name) {
         size_t name_len = strlen(f->super.name);
         if (name_len >= 8) string_table_size += name_len + 1;
     }
 
     FOREACH_N(i, 0, m->max_threads) {
-        pool_for(TB_External, ext, m->thread_info[i].externals) {
+        pool_for(TB_External, ext, m->thread_info[i].externals) if (ext->super.name) {
             size_t name_len = strlen(ext->super.name);
             if (name_len >= 8) string_table_size += name_len + 1;
         }
 
-        pool_for(TB_Global, g, m->thread_info[i].globals) {
+        pool_for(TB_Global, g, m->thread_info[i].globals) if (g->super.name) {
             size_t name_len = strlen(g->super.name);
             if (name_len >= 8) string_table_size += name_len + 1;
         }
@@ -289,10 +291,9 @@ TB_API TB_Exports tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
         WRITE(sections, count * sizeof(COFF_SectionHeader));
         WRITE(e->debug_section_headers, e->debug_sections.length * sizeof(COFF_SectionHeader));
 
-        // TEXT section
-        e->write_pos = tb_helper_write_text_section(e->write_pos, m, output, sections[S_TEXT].raw_data_pos);
-        e->write_pos = tb_helper_write_rodata_section(e->write_pos, m, output, sections[S_RDATA].raw_data_pos);
-        e->write_pos = tb_helper_write_data_section(e->write_pos, m, output, sections[S_DATA].raw_data_pos);
+        e->write_pos = tb_helper_write_section(e->write_pos, &m->text, output, sections[S_TEXT].raw_data_pos);
+        e->write_pos = tb_helper_write_section(e->write_pos, &m->rdata, output, sections[S_RDATA].raw_data_pos);
+        e->write_pos = tb_helper_write_section(e->write_pos, &m->data, output, sections[S_DATA].raw_data_pos);
 
         // PDATA section
         {
@@ -319,29 +320,7 @@ TB_API TB_Exports tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
         }
 
         // TLS section
-        {
-            assert(e->write_pos == sections[S_TLS].raw_data_pos);
-            uint8_t* tls = &output[e->write_pos];
-            e->write_pos += m->tls_region_size;
-
-            FOREACH_N(i, 0, m->max_threads) {
-                pool_for(TB_Global, g, m->thread_info[i].globals) {
-                    if (g->storage != TB_STORAGE_TLS) continue;
-
-                    TB_Initializer* init = g->init;
-
-                    // clear out space
-                    memset(&tls[g->pos], 0, init->size);
-
-                    FOREACH_N(k, 0, init->obj_count) {
-                        const TB_InitObj* o = &init->objects[k];
-                        if (o->type == TB_INIT_OBJ_REGION) {
-                            memcpy(&tls[g->pos + o->offset], o->region.ptr, o->region.size);
-                        }
-                    }
-                }
-            }
-        }
+        e->write_pos = tb_helper_write_section(e->write_pos, &m->tls, output, sections[S_TLS].raw_data_pos);
 
         // write DEBUG sections
         FOREACH_N(i, 0, e->debug_sections.length) {
@@ -358,7 +337,7 @@ TB_API TB_Exports tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
 
             assert(e->write_pos == sections[S_TEXT].pointer_to_reloc);
             FOREACH_N(i, 0, m->max_threads) {
-                dyn_array_for(j, m->thread_info[i].const_patches) {
+                /*dyn_array_for(j, m->thread_info[i].const_patches) {
                     TB_ConstPoolPatch* p = &m->thread_info[i].const_patches[j];
                     TB_FunctionOutput* out_f = p->source->output;
 
@@ -369,7 +348,7 @@ TB_API TB_Exports tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
                         .VirtualAddress = actual_pos
                     };
                     TB_FIXED_ARRAY_APPEND(relocs, r);
-                }
+                }*/
 
                 dyn_array_for(j, m->thread_info[i].symbol_patches) {
                     TB_SymbolPatch* p = &m->thread_info[i].symbol_patches[j];
@@ -391,8 +370,8 @@ TB_API TB_Exports tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
                         TB_FIXED_ARRAY_APPEND(relocs, r);
                     } else if (p->target->tag == TB_SYMBOL_GLOBAL) {
                         COFF_ImageReloc r = {
-                            .Type = ((TB_Global*) p->target)->storage == TB_STORAGE_TLS ? IMAGE_REL_AMD64_SECREL : IMAGE_REL_AMD64_REL32,
-                            .SymbolTableIndex = p->target->symbol_id,
+                            .Type = ((TB_Global*) p->target)->parent->is_tls ? IMAGE_REL_AMD64_SECREL : IMAGE_REL_AMD64_REL32,
+                            .SymbolTableIndex = symbol_id,
                             .VirtualAddress = actual_pos
                         };
                         TB_FIXED_ARRAY_APPEND(relocs, r);
@@ -402,6 +381,7 @@ TB_API TB_Exports tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
                 }
             }
 
+            tb_todo();
             assert(relocs.count == relocs.cap);
             e->write_pos += relocs.count * sizeof(COFF_ImageReloc);
         }
@@ -414,7 +394,7 @@ TB_API TB_Exports tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
             };
 
             assert(e->write_pos == sections[S_DATA].pointer_to_reloc);
-            FOREACH_N(i, 0, m->max_threads) {
+            /*FOREACH_N(i, 0, m->max_threads) {
                 pool_for(TB_Global, g, m->thread_info[i].globals) {
                     TB_Initializer* init = g->init;
 
@@ -433,8 +413,9 @@ TB_API TB_Exports tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
                         }
                     }
                 }
-            }
+            }*/
 
+            tb_todo();
             assert(relocs.count == relocs.cap);
             e->write_pos += relocs.count * sizeof(COFF_ImageReloc);
         }
@@ -535,8 +516,11 @@ TB_API TB_Exports tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
             count = append_section_sym(symbols, count, &sections[S_PDATA], ".pdata", IMAGE_SYM_CLASS_STATIC);
             count = append_section_sym(symbols, count, &sections[S_XDATA], ".xdata", IMAGE_SYM_CLASS_STATIC);
 
-            e->tls_section_num = (count / 2) + 1;
-            if (m->tls_region_size) {
+            m->rdata.section_num = 2;
+            m->data.section_num = 3;
+
+            if (m->tls.total_size) {
+                m->tls.section_num = (count / 2) + 1;
                 count = append_section_sym(symbols, count, &sections[S_TLS], ".tls$", IMAGE_SYM_CLASS_STATIC);
             }
 
@@ -619,7 +603,7 @@ TB_API TB_Exports tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
                     bool is_extern = g->linkage == TB_LINKAGE_PUBLIC;
                     COFF_Symbol sym = {
                         .value = g->pos,
-                        .section_number = g->storage == TB_STORAGE_TLS ? e->tls_section_num : 3, // data or tls section
+                        .section_number = g->parent->section_num,
                         .storage_class = is_extern ? IMAGE_SYM_CLASS_EXTERNAL : IMAGE_SYM_CLASS_STATIC
                     };
 

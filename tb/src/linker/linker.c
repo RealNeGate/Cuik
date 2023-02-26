@@ -119,17 +119,17 @@ uint64_t tb__compute_rva(TB_Linker* l, TB_Module* m, const TB_Symbol* s) {
 
         TB_Function* f = (TB_Function*) s;
         assert(f->output != NULL);
-        return text->address + m->linker.text->offset + f->output->code_pos;
+        return text->address + m->text.piece->offset + f->output->code_pos;
     } else if (s->tag == TB_SYMBOL_GLOBAL) {
         ptrdiff_t search = nl_strmap_get_cstr(l->sections, ".data");
         TB_LinkerSection* data = (search >= 0 ? l->sections[search] : NULL);
 
         TB_Global* g = (TB_Global*) s;
-        return data->address + m->linker.data->offset + g->pos;
+        return data->address + m->data.piece->offset + g->pos;
+    } else {
+        tb_todo();
+        return 0;
     }
-
-    tb_todo();
-    return 0;
 }
 
 size_t tb__pad_file(uint8_t* output, size_t write_pos, char pad, size_t align) {
@@ -179,6 +179,13 @@ void tb__merge_sections(TB_Linker* linker, TB_LinkerSection* from, TB_LinkerSect
     #endif
 }
 
+void tb__append_module_section(TB_Linker* l, TB_ModuleSection* section, const char* name, uint32_t flags) {
+    if (section->total_size > 0) {
+        TB_LinkerSection* ls = tb__find_or_create_section(l, name, flags);
+        section->piece = tb__append_piece(ls, PIECE_MODULE_SECTION, section->total_size, section, NULL);
+    }
+}
+
 size_t tb__apply_section_contents(TB_Linker* l, uint8_t* output, size_t write_pos, TB_LinkerSection* text, TB_LinkerSection* data, TB_LinkerSection* rdata, size_t section_alignment, size_t image_base) {
     // write section contents
     // TODO(NeGate): we can actually parallelize this part of linking
@@ -198,55 +205,15 @@ size_t tb__apply_section_contents(TB_Linker* l, uint8_t* output, size_t write_po
                     memcpy(p_out, p->data, p->size);
                     break;
                 }
-                case PIECE_TEXT: {
-                    // Target specific: resolve internal call patches
-                    tb__find_code_generator(m)->emit_call_patches(m);
-
-                    TB_FOR_FUNCTIONS(func, m) {
-                        TB_FunctionOutput* out_f = func->output;
-                        if (out_f) {
-                            memcpy(p_out, out_f->code, out_f->code_size);
-                            p_out += out_f->code_size;
-                        }
-                    }
-                    break;
-                }
-                case PIECE_DATA: {
-                    memset(p_out, 0, p->size);
-                    FOREACH_N(i, 0, m->max_threads) {
-                        pool_for(TB_Global, g, m->thread_info[i].globals) {
-                            if (g->storage != TB_STORAGE_DATA) continue;
-                            TB_Initializer* init = g->init;
-
-                            // clear out space
-                            memset(&p_out[g->pos], 0, init->size);
-
-                            FOREACH_N(k, 0, init->obj_count) if (init->objects[k].type == TB_INIT_OBJ_REGION) {
-                                memcpy(
-                                    &p_out[g->pos + init->objects[k].offset],
-                                    init->objects[k].region.ptr,
-                                    init->objects[k].region.size
-                                );
-                            }
-                        }
-                    }
-                    break;
-                }
-                case PIECE_RDATA: {
-                    memset(p_out, 0, p->size);
-                    FOREACH_N(i, 0, m->max_threads) {
-                        dyn_array_for(j, m->thread_info[i].const_patches) {
-                            TB_ConstPoolPatch* p = &m->thread_info[i].const_patches[j];
-                            memcpy(&p_out[p->rdata_pos], p->data, p->length);
-                        }
-                    }
+                case PIECE_MODULE_SECTION: {
+                    tb_helper_write_section(0, (TB_ModuleSection*) p->data, p_out, 0);
                     break;
                 }
                 case PIECE_PDATA: {
                     uint32_t* p_out32 = (uint32_t*) p_out;
 
-                    uint32_t text_rva = text->address + m->linker.text->offset;
-                    uint32_t rdata_rva = rdata->address + m->linker.rdata->offset;
+                    uint32_t text_rva = text->address + m->text.piece->offset;
+                    uint32_t rdata_rva = rdata->address + m->rdata.piece->offset;
 
                     TB_FOR_FUNCTIONS(f, m) {
                         TB_FunctionOutput* out_f = f->output;
@@ -263,24 +230,22 @@ size_t tb__apply_section_contents(TB_Linker* l, uint8_t* output, size_t write_po
                 }
                 case PIECE_RELOC: {
                     // TODO(NeGate): currently windows only
-                    uint32_t data_rva  = data->address + m->linker.data->offset;
-                    uint32_t data_file = data->offset  + m->linker.data->offset;
+                    uint32_t data_rva  = data->address + m->data.piece->offset;
+                    uint32_t data_file = data->offset  + m->data.piece->offset;
 
                     uint32_t last_page = 0xFFFFFFFF;
                     uint32_t* last_block = NULL;
                     TB_FOR_GLOBALS(g, m) {
-                        TB_Initializer* init = g->init;
-
-                        FOREACH_N(k, 0, init->obj_count) {
-                            size_t actual_pos  = g->pos + init->objects[k].offset;
+                        FOREACH_N(k, 0, g->obj_count) {
+                            size_t actual_pos  = g->pos + g->objects[k].offset;
                             size_t actual_page = actual_pos & ~4095;
                             size_t page_offset = actual_pos - actual_page;
 
-                            if (init->objects[k].type != TB_INIT_OBJ_RELOC) {
+                            if (g->objects[k].type != TB_INIT_OBJ_RELOC) {
                                 continue;
                             }
 
-                            const TB_Symbol* s = init->objects[k].reloc;
+                            const TB_Symbol* s = g->objects[k].reloc;
                             if (last_page != actual_page) {
                                 last_page  = data_rva + actual_page;
                                 last_block = (uint32_t*) p_out;
@@ -495,18 +460,18 @@ TB_UnresolvedSymbol* tb__unresolved_symbol(TB_Linker* l, TB_Slice name) {
 }
 
 void tb__apply_module_relocs(TB_Linker* l, TB_Module* m, uint8_t* output) {
-    TB_LinkerSection* text  = tb__find_section(l, ".text",  IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_CNT_CODE);
+    TB_LinkerSection* text  = tb__find_section(l, ".text",  IMAGE_SCN_MEM_READ  | IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_CNT_CODE);
     TB_LinkerSection* data  = tb__find_section(l, ".data",  IMAGE_SCN_MEM_WRITE | IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA);
-    TB_LinkerSection* rdata = tb__find_section(l, ".rdata", IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA);
+    // TB_LinkerSection* rdata = tb__find_section(l, ".rdata", IMAGE_SCN_MEM_READ  | IMAGE_SCN_CNT_INITIALIZED_DATA);
 
     uint64_t trampoline_rva = text->address + l->trampoline_pos;
     FOREACH_N(i, 0, m->max_threads) {
-        uint64_t text_piece_rva = text->address + m->linker.text->offset;
-        uint64_t text_piece_file = text->offset + m->linker.text->offset;
+        uint64_t text_piece_rva = text->address + m->text.piece->offset;
+        uint64_t text_piece_file = text->offset + m->text.piece->offset;
 
         uint64_t data_piece_rva = 0;
-        if (m->linker.data) {
-            data_piece_rva = data->address + m->linker.data->offset;
+        if (m->data.piece) {
+            data_piece_rva = data->address + m->data.piece->offset;
         }
 
         FOREACH_N(j, 0, dyn_array_length(m->thread_info[i].symbol_patches)) {
@@ -534,21 +499,19 @@ void tb__apply_module_relocs(TB_Linker* l, TB_Module* m, uint8_t* output) {
                 assert(global->super.tag == TB_SYMBOL_GLOBAL);
 
                 int32_t* dst = (int32_t*) &output[text_piece_file + out_f->code_pos + out_f->prologue_length + patch->pos];
-                if (global->storage == TB_STORAGE_DATA) {
+                if (!global->parent->is_tls) {
                     int32_t p = (data_piece_rva + global->pos) - actual_pos;
 
                     (*dst) += p;
-                } else if (global->storage == TB_STORAGE_TLS) {
-                    (*dst) += (data_piece_rva + global->pos);
                 } else {
-                    tb_todo();
+                    (*dst) += (data_piece_rva + global->pos);
                 }
             } else {
                 tb_todo();
             }
         }
 
-        if (m->linker.rdata) {
+        /*if (m->linker.rdata) {
             uint64_t rdata_piece_rva = rdata->address + m->linker.rdata->offset;
 
             FOREACH_N(j, 0, dyn_array_length(m->thread_info[i].const_patches)) {
@@ -561,7 +524,7 @@ void tb__apply_module_relocs(TB_Linker* l, TB_Module* m, uint8_t* output) {
                 // relocations add not replace
                 (*dst) += (rdata_piece_rva - actual_pos);
             }
-        }
+        }*/
+        tb_todo();
     }
 }
-

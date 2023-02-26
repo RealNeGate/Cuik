@@ -62,7 +62,6 @@ static bool remove_passes(TB_Function* f) {
                     case TB_INTEGER_CONST:
                     case TB_FLOAT32_CONST:
                     case TB_FLOAT64_CONST:
-                    case TB_STRING_CONST:
                     case TB_LOCAL:
                     case TB_PARAM:
                     case TB_GOTO:
@@ -73,10 +72,6 @@ static bool remove_passes(TB_Function* f) {
                     case TB_DEBUGBREAK:
                     case TB_TRAP:
                     case TB_POISON:
-                    break;
-
-                    case TB_INITIALIZE:
-                    X(n->init.addr);
                     break;
 
                     case TB_KEEPALIVE:
@@ -386,38 +381,6 @@ static bool inst_combine(TB_Function* f) {
 
                 n->type = TB_NULL;
                 changes++;
-            } else if (type == TB_INITIALIZE) {
-                TB_Reg addr = n->init.addr;
-                TB_Initializer* init = n->init.src;
-
-                if (init->obj_count == 0) {
-                    OPTIMIZER_LOG(r, "Replaced complex initializer with memset");
-
-                    TB_Label bb2 = tb_find_label_from_reg(f, addr);
-                    TB_Reg imm_reg = tb_function_insert_after(f, bb2, addr);
-                    f->nodes[imm_reg].type = TB_INTEGER_CONST;
-                    f->nodes[imm_reg].dt = TB_TYPE_I8;
-                    f->nodes[imm_reg].integer = (struct TB_NodeInt) {
-                        .num_words = 1,
-                        .single_word = 0
-                    };
-
-                    TB_Reg size_reg = tb_function_insert_after(f, bb2, imm_reg);
-                    f->nodes[size_reg].type = TB_INTEGER_CONST;
-                    f->nodes[size_reg].dt = TB_TYPE_PTR;
-                    f->nodes[size_reg].integer = (struct TB_NodeInt) {
-                        .num_words = 1,
-                        .single_word = init->size
-                    };
-
-                    n = &f->nodes[r];
-                    n->type = TB_MEMSET;
-                    n->mem_op.dst = addr;
-                    n->mem_op.src = imm_reg;
-                    n->mem_op.size = size_reg;
-                    n->mem_op.align = init->align;
-                    changes++;
-                }
             } else if (type == TB_MEMBER_ACCESS) {
                 TB_Node* base = &f->nodes[n->member_access.base];
 
@@ -544,8 +507,8 @@ static bool inst_combine(TB_Function* f) {
             } else if (type == TB_IF) {
                 TB_Node* cond = &f->nodes[n->if_.cond];
 
-                if (cond->type == TB_STRING_CONST) {
-                    // (if str B C) => (goto B)
+                if (cond->type == TB_GET_SYMBOL_ADDRESS) {
+                    // (if (sym B) 0) => (goto B)
                     TB_Label new_target = n->if_.if_true;
 
                     n->type = TB_GOTO;

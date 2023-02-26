@@ -811,31 +811,6 @@ static void x64v2_misc_op(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
         EMIT1(&ctx->emit, 0xCC);
         break;
 
-        case TB_INITIALIZE: {
-            TB_Reg addr = n->init.addr;
-            TB_Initializer* i = n->init.src;
-
-            GAD_FN(evict)(ctx, f, X64_REG_CLASS_GPR, (1u << RDI) | (1u << RAX) | (1u << RCX), ctx->ordinal[r]);
-
-            // Zero out the space
-            //   mov rdi, ADDRESS
-            x64v2_mov_to_explicit_gpr(ctx, f, RDI, addr);
-            //   mov rcx, SIZE
-            GAD_VAL rcx = val_gpr(TB_TYPE_I32, RCX);
-            GAD_VAL src = val_imm(TB_TYPE_I32, i->size);
-            INST2(MOV, &rcx, &src, TB_TYPE_I32);
-            //   xor rax, rax
-            EMIT1(&ctx->emit, 0x31);
-            EMIT1(&ctx->emit, mod_rx_rm(MOD_DIRECT, RAX, RAX));
-            //   rep stosb
-            EMIT1(&ctx->emit, 0xF3);
-            EMIT1(&ctx->emit, 0xAA);
-
-            set_remove(&ctx->free_regs[X64_REG_CLASS_GPR], RAX);
-            set_remove(&ctx->free_regs[X64_REG_CLASS_GPR], RCX);
-            set_remove(&ctx->free_regs[X64_REG_CLASS_GPR], RDI);
-            break;
-        }
         case TB_MEMSET: {
             GAD_FN(evict)(ctx, f, X64_REG_CLASS_GPR, (1u << RDI) | (1u << RAX) | (1u << RCX), ctx->ordinal[r]);
 
@@ -885,19 +860,6 @@ static Val x64v2_eval(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
             assert(n->integer.num_words == 1);
             return get_immediate(ctx, f, r, n->integer.single_word);
         }
-        case TB_STRING_CONST: {
-            const char* str = n->string.data;
-            size_t len = n->string.length;
-
-            GAD_VAL dst = GAD_FN(regalloc)(ctx, f, r, X64_REG_CLASS_GPR);
-            EMIT1(&ctx->emit, rex(true, dst.gpr, RBP, 0));
-            EMIT1(&ctx->emit, 0x8D);
-            EMIT1(&ctx->emit, mod_rx_rm(MOD_INDIRECT, dst.gpr, RBP));
-
-            uint32_t disp = tb_emit_const_patch(f->super.module, f, GET_CODE_POS(&ctx->emit), str, len, s_local_thread_id);
-            EMIT4(&ctx->emit, disp);
-            return dst;
-        }
         case TB_FLOAT64_CONST: {
             assert(n->dt.type == TB_FLOAT && n->dt.width == 0);
             uint64_t imm = (Cvt_F64U64) { .f = n->flt64.value }.i;
@@ -928,12 +890,13 @@ static Val x64v2_eval(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
 
                 memcpy(rdata_payload, &imm, sizeof(uint64_t));
 
-                uint32_t pos = tb_emit_const_patch(
+                /*uint32_t pos = tb_emit_const_patch(
                     f->super.module, f, GET_CODE_POS(&ctx->emit) - 4,
                     rdata_payload, sizeof(uint64_t),
                     s_local_thread_id
                 );
-                PATCH4(&ctx->emit, GET_CODE_POS(&ctx->emit) - 4, pos);
+                PATCH4(&ctx->emit, GET_CODE_POS(&ctx->emit) - 4, pos);*/
+                tb_todo();
             }
 
             return dst;
@@ -972,7 +935,7 @@ static Val x64v2_eval(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
             const TB_Symbol* s = n->sym.value;
             if (s->tag == TB_SYMBOL_GLOBAL) {
                 const TB_Global* g = (const TB_Global*)s;
-                if (g->storage == TB_STORAGE_TLS) {
+                if (g->parent->is_tls) {
                     if (m->tls_index_extern == 0) {
                         tb_panic("TB error: no tls_index provided\n");
                     }

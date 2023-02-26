@@ -82,11 +82,6 @@ static void tb_print_node(TB_Function* f, TB_PrintCallback callback, void* user_
             }
             break;
         }
-        case TB_STRING_CONST: {
-            callback(user_data, "  r%-8u = string ", i);
-            print_string(callback, user_data, (const uint8_t*) n->string.data, n->string.length);
-            break;
-        }
         case TB_LINE_INFO: {
             callback(user_data, "  # line %s:%d", f->super.module->files[n->line_info.file].path, n->line_info.line);
             break;
@@ -109,10 +104,6 @@ static void tb_print_node(TB_Function* f, TB_PrintCallback callback, void* user_
         }
         case TB_MEMCPY: {
             callback(user_data, "  memcpy r%d r%d r%d", n->mem_op.dst, n->mem_op.src, n->mem_op.size);
-            break;
-        }
-        case TB_INITIALIZE: {
-            callback(user_data, "  initializer r%u, ...", n->init.addr);
             break;
         }
         case TB_MEMBER_ACCESS: {

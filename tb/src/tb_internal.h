@@ -113,16 +113,6 @@ struct { size_t cap, count; T* elems; }
 
 #define TB_FOR_GLOBALS(it, m) FOREACH_N(_it_, 0, m->max_threads) pool_for(TB_Global, it, m->thread_info[_it_].globals)
 
-typedef struct TB_ConstPoolPatch {
-    TB_Function* source;
-    uint32_t pos; // relative to the start of the function body
-
-    size_t rdata_pos;
-
-    size_t length;
-    const void* data;
-} TB_ConstPoolPatch;
-
 typedef struct TB_SymbolPatch {
     TB_Function* source;
     uint32_t pos; // relative to the start of the function body
@@ -139,15 +129,38 @@ struct TB_External {
     TB_ExternalType type;
 };
 
+typedef struct TB_InitObj {
+    enum {
+        TB_INIT_OBJ_REGION,
+        TB_INIT_OBJ_RELOC,
+    } type;
+    TB_CharUnits offset;
+    union {
+        struct {
+            TB_CharUnits size;
+            const void* ptr;
+        } region;
+
+        const TB_Symbol* reloc;
+    };
+} TB_InitObj;
+
 struct TB_Global {
     TB_Symbol super;
 
-    TB_DebugType* dbg_type;
+    TB_ModuleSection* parent;
     TB_Linkage linkage;
-    TB_StorageClass storage;
 
-    TB_Initializer* init;
+    // layout stuff
     uint32_t pos;
+    TB_CharUnits size, align;
+
+    // debug info
+    TB_DebugType* dbg_type;
+
+    // contents
+    uint32_t obj_count, obj_capacity;
+    TB_InitObj* objects;
 };
 
 typedef struct TB_PrototypeParam {
@@ -173,32 +186,6 @@ struct TB_FunctionPrototype {
 
     // payload
     TB_PrototypeParam params[];
-};
-
-typedef struct TB_InitObj {
-    enum {
-        TB_INIT_OBJ_REGION,
-        TB_INIT_OBJ_RELOC,
-    } type;
-    TB_CharUnits offset;
-    union {
-        struct {
-            TB_CharUnits size;
-            const void* ptr;
-        } region;
-
-        const TB_Symbol* reloc;
-    };
-} TB_InitObj;
-
-struct TB_Initializer {
-    // header
-    TB_CharUnits size, align;
-    uint32_t obj_capacity;
-    uint32_t obj_count;
-
-    // payload
-    TB_InitObj objects[];
 };
 
 struct TB_DebugType {
@@ -316,6 +303,7 @@ struct TB_Function {
     TB_Symbol super;
 
     const TB_FunctionPrototype* prototype;
+    TB_ModuleSection* section;
     TB_Linkage linkage;
 
     // Parameter acceleration structure
@@ -372,6 +360,22 @@ typedef struct {
     uint8_t data[CODE_REGION_BUFFER_SIZE - sizeof(size_t)];
 } TB_CodeRegion;
 
+struct TB_ModuleSection {
+    // this isn't computed until export time
+    size_t total_size;
+    TB_LinkerSectionPiece *piece;
+
+    int section_num;
+
+    // have things been added since the last layout pass
+    bool is_tls;
+    bool dirty;
+
+    // this is all the globals within the section
+    DynArray(TB_Function*) functions;
+    DynArray(TB_Global*) globals;
+};
+
 struct TB_Module {
     int max_threads;
     bool is_jit;
@@ -406,25 +410,19 @@ struct TB_Module {
         Pool(TB_Global) globals;
         Pool(TB_External) externals;
 
-        DynArray(TB_ConstPoolPatch) const_patches;
         DynArray(TB_SymbolPatch) symbol_patches;
     } thread_info[TB_MAX_THREADS];
 
     DynArray(TB_File) files;
 
-    // Linker
-    struct {
-        TB_LinkerSectionPiece *text, *data, *rdata;
-    } linker;
+    // Common sections
+    TB_ModuleSection text, data, rdata, tls;
+
+    // TODO(NeGate): custom sections
 
     // JIT
     void* jit_region;
     size_t jit_region_size;
-
-    // we need to keep track of these for layout reasons
-    tb_atomic_size_t data_region_size;
-    tb_atomic_size_t rdata_region_size;
-    tb_atomic_size_t tls_region_size;
 
     // The code is stored into giant buffers
     // there's on per code gen thread so that
@@ -699,8 +697,8 @@ void cuikperf_region_end(void);
 // EXPORTER HELPER
 ////////////////////////////////
 size_t tb_helper_write_text_section(size_t write_pos, TB_Module* m, uint8_t* output, uint32_t pos);
-size_t tb_helper_write_data_section(size_t write_pos, TB_Module* m, uint8_t* output, uint32_t pos);
-size_t tb_helper_write_rodata_section(size_t write_pos, TB_Module* m, uint8_t* output, uint32_t pos);
+size_t tb_helper_write_rdata_section(size_t write_pos, TB_Module* m, uint8_t* output, uint32_t pos);
+size_t tb_helper_write_section(size_t write_pos, TB_ModuleSection* section, uint8_t* output, uint32_t pos);
 size_t tb_helper_get_text_section_layout(TB_Module* m, size_t symbol_id_start);
 
 ////////////////////////////////
@@ -720,7 +718,6 @@ TB_Label* tb_calculate_immediate_predeccessors(TB_Function* f, TB_TemporaryStora
 TB_Predeccesors tb_get_temp_predeccesors(TB_Function* f, TB_TemporaryStorage* tls);
 void tb_free_temp_predeccesors(TB_TemporaryStorage* tls, TB_Predeccesors preds);
 
-uint32_t tb_emit_const_patch(TB_Module* m, TB_Function* source, size_t pos, const void* ptr,size_t len, size_t local_thread_id);
 void tb_emit_symbol_patch(TB_Module* m, TB_Function* source, const TB_Symbol* target, size_t pos, bool is_function, size_t local_thread_id);
 
 TB_Reg* tb_vla_reserve(TB_Function* f, size_t count);

@@ -109,16 +109,6 @@ extern "C" {
         TB_LINKAGE_PRIVATE
     } TB_Linkage;
 
-    typedef enum TB_StorageClass {
-        // data is the default way to handle storage, this is usually
-        // passed onto the .data section
-        TB_STORAGE_DATA,
-
-        // Thread local storage will have the values defined per thread
-        // and only accessible within that thread
-        TB_STORAGE_TLS
-    } TB_StorageClass;
-
     typedef enum TB_MemoryOrder {
         TB_MEM_ORDER_RELAXED,
         TB_MEM_ORDER_CONSUME,
@@ -194,7 +184,6 @@ extern "C" {
 
         TB_MEMCPY,
         TB_MEMSET,
-        TB_INITIALIZE,
 
         /* Atomics */
         TB_ATOMIC_TEST_AND_SET,
@@ -239,7 +228,6 @@ extern "C" {
         TB_INTEGER_CONST,
         TB_FLOAT32_CONST,
         TB_FLOAT64_CONST,
-        TB_STRING_CONST,
 
         /* Conversions */
         TB_TRUNCATE,
@@ -362,7 +350,7 @@ extern "C" {
     typedef struct TB_Module            TB_Module;
     typedef struct TB_Attrib            TB_Attrib;
     typedef struct TB_DebugType         TB_DebugType;
-    typedef struct TB_Initializer       TB_Initializer;
+    typedef struct TB_ModuleSection     TB_ModuleSection;
     typedef struct TB_FunctionPrototype TB_FunctionPrototype;
 
     // Refers generically to objects within a module
@@ -375,8 +363,6 @@ extern "C" {
 
             // symbol is dead now
             TB_SYMBOL_TOMBSTONE,
-            // refers to another symbol
-            TB_SYMBOL_SYMLINK,
 
             TB_SYMBOL_EXTERNAL,
             TB_SYMBOL_GLOBAL,
@@ -400,11 +386,6 @@ extern "C" {
 
         // after this point it's tag-specific storage
     } TB_Symbol;
-
-    typedef struct TB_Symlink {
-        TB_Symbol super;
-        struct TB_Symbol* link;
-    } TB_Symlink;
 
     // references to a node within a TB_Function
     // these are virtual registers so they don't necessarily
@@ -579,15 +560,6 @@ extern "C" {
                 TB_Reg size;
                 TB_CharUnits align;
             } mem_op;
-            struct TB_NodeMemoryClear {
-                TB_Reg dst;
-                TB_CharUnits size;
-                TB_CharUnits align;
-            } clear;
-            struct TB_NodeInitialize {
-                TB_Reg addr;
-                TB_Initializer* src;
-            } init;
         };
     } TB_Node;
     static_assert(sizeof(TB_Node) <= 32, "sizeof(TB_Node) <= 32");
@@ -837,6 +809,10 @@ extern "C" {
     // dont and the tls_index is used, it'll crash
     TB_API void tb_module_set_tls_index(TB_Module* m, TB_Symbol* e);
 
+    // You don't need to manually call this unless you want to resolve locations before
+    // exporting.
+    TB_API void tb_module_layout_sections(TB_Module* m);
+
     ////////////////////////////////
     // Exporter
     ////////////////////////////////
@@ -929,25 +905,24 @@ extern "C" {
     TB_API void tb_prototype_add_param_named(TB_Module* m, TB_FunctionPrototype* p, TB_DataType dt, const char* name, TB_DebugType* debug_type);
 
     ////////////////////////////////
-    // Constant Initializers
+    // Globals
     ////////////////////////////////
-    // NOTE: the max objects is a cap and thus it can be bigger than the actual
-    // number used.
-    TB_API TB_Initializer* tb_initializer_create(TB_Module* m, size_t size, size_t align, size_t max_objects);
+    TB_API TB_Global* tb_global_create(TB_Module* m, const char* name, TB_DebugType* dbg_type, TB_Linkage linkage);
 
-    // returns a buffer which the user can fill to then have represented in the
-    // initializer
-    TB_API void* tb_initializer_add_region(TB_Module* m, TB_Initializer* id, size_t offset, size_t size);
+    // allocate space for the global
+    TB_API void tb_global_set_storage(TB_Module* m, TB_ModuleSection* section, TB_Global* global, size_t size, size_t align, size_t max_objects);
+
+    // returns a buffer which the user can fill to then have represented in the initializer
+    TB_API void* tb_global_add_region(TB_Module* m, TB_Global* global, size_t offset, size_t size);
 
     // places a relocation for a global at offset, the size of the relocation
     // depends on the pointer size
-    TB_API void tb_initializer_add_symbol_reloc(TB_Module* m, TB_Initializer* init, size_t offset, const TB_Symbol* symbol);
+    TB_API void tb_global_add_symbol_reloc(TB_Module* m, TB_Global* global, size_t offset, const TB_Symbol* symbol);
 
-    ////////////////////////////////
-    // Constant Initializers
-    ////////////////////////////////
-    TB_API TB_Global* tb_global_create(TB_Module* m, const char* name, TB_StorageClass storage, TB_DebugType* dbg_type, TB_Linkage linkage);
-    TB_API void tb_global_set_initializer(TB_Module* m, TB_Global* global, TB_Initializer* initializer);
+    TB_API TB_ModuleSection* tb_module_get_text(TB_Module* m);
+    TB_API TB_ModuleSection* tb_module_get_rdata(TB_Module* m);
+    TB_API TB_ModuleSection* tb_module_get_data(TB_Module* m);
+    TB_API TB_ModuleSection* tb_module_get_tls(TB_Module* m);
 
     ////////////////////////////////
     // Function Attributes
@@ -1049,7 +1024,8 @@ extern "C" {
     // this only allows for power of two vector types
     TB_API TB_DataType tb_vector_type(TB_DataTypeEnum type, int width);
 
-    TB_API TB_Function* tb_function_create(TB_Module* m, const char* name, TB_Linkage linkage);
+    // if section is NULL, default to .text
+    TB_API TB_Function* tb_function_create(TB_Module* m, TB_ModuleSection* section, const char* name, TB_Linkage linkage);
 
     TB_API void* tb_function_get_jit_pos(TB_Function* f);
 
@@ -1109,9 +1085,6 @@ extern "C" {
     TB_API TB_Reg tb_inst_float64(TB_Function* f, double imm);
     TB_API TB_Reg tb_inst_cstring(TB_Function* f, const char* str);
     TB_API TB_Reg tb_inst_string(TB_Function* f, size_t len, const char* str);
-
-    // Applies an initializer to a memory region
-    TB_API void tb_inst_initialize_mem(TB_Function* f, TB_Reg addr, TB_Initializer* src);
 
     // Broadcasts 'val' across 'count' elements starting 'dst'
     TB_API void tb_inst_memset(TB_Function* f, TB_Reg dst, TB_Reg val, TB_Reg count, TB_CharUnits align);
