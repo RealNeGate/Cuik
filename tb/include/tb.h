@@ -378,6 +378,9 @@ extern "C" {
         // It's kinda a weird circular reference but yea
         TB_Module* module;
 
+        // helpful for sorting and getting consistent builds
+        int ordinal;
+
         union {
             // if we're JITing then this maps to the address of the symbol
             void* address;
@@ -1014,6 +1017,9 @@ extern "C" {
     TB_API TB_Function* tb_symbol_as_function(TB_Symbol* s);
     TB_API TB_External* tb_symbol_as_external(TB_Symbol* s);
     TB_API TB_Global* tb_symbol_as_global(TB_Symbol* s);
+
+    // used when sorting things within sections, helps make consistent builds
+    TB_API void tb_symbol_set_ordinal(TB_Symbol* s, int ordinal);
 
     ////////////////////////////////
     // Function IR Generation

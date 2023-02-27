@@ -111,7 +111,11 @@ struct { size_t cap, count; T* elems; }
 #undef TB_FOR_FUNCTIONS
 #define TB_FOR_FUNCTIONS(it, m) for (TB_Function* it = (TB_Function*) m->first_symbol_of_tag[TB_SYMBOL_FUNCTION]; it != NULL; it = (TB_Function*) it->super.next)
 
-#define TB_FOR_GLOBALS(it, m) FOREACH_N(_it_, 0, m->max_threads) pool_for(TB_Global, it, m->thread_info[_it_].globals)
+#undef TB_FOR_GLOBALS
+#define TB_FOR_GLOBALS(it, m) for (TB_Global* it = (TB_Global*) m->first_symbol_of_tag[TB_SYMBOL_GLOBAL]; it != NULL; it = (TB_Global*) it->super.next)
+
+#undef TB_FOR_EXTERNALS
+#define TB_FOR_EXTERNALS(it, m) for (TB_External* it = (TB_External*) m->first_symbol_of_tag[TB_SYMBOL_EXTERNAL]; it != NULL; it = (TB_External*) it->super.next)
 
 typedef struct TB_SymbolPatch {
     TB_Function* source;
@@ -598,12 +602,14 @@ size_t tb_out_get_pos(TB_Emitter* o, void* p);
 
 // Adds null terminator onto the end and returns the starting position of the string
 size_t tb_outstr_nul_UNSAFE(TB_Emitter* o, const char* str);
+size_t tb_outstr_nul(TB_Emitter* o, const char* str);
 
 void tb_out1b_UNSAFE(TB_Emitter* o, uint8_t i);
 void tb_out4b_UNSAFE(TB_Emitter* o, uint32_t i);
 void tb_outstr_UNSAFE(TB_Emitter* o, const char* str);
 void tb_outs_UNSAFE(TB_Emitter* o, size_t len, const void* str);
-void tb_outs(TB_Emitter* o, size_t len, const void* str);
+size_t tb_outs(TB_Emitter* o, size_t len, const void* str);
+void* tb_out_get(TB_Emitter* o, size_t pos);
 
 // fills region with zeros
 void tb_out_zero(TB_Emitter* o, size_t len);

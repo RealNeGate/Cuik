@@ -468,7 +468,7 @@ TB_API TB_Reg tb_inst_float64(TB_Function* f, double imm) {
 
 TB_API TB_Reg tb_inst_string(TB_Function* f, size_t len, const char* str) {
     TB_Global* dummy = tb_global_create(f->super.module, NULL, NULL, TB_LINKAGE_PRIVATE);
-    tb_global_set_storage(f->super.module, &f->super.module->rdata, dummy, 0, len, 1);
+    tb_global_set_storage(f->super.module, &f->super.module->rdata, dummy, len, 1, 1);
 
     char* dst = tb_global_add_region(f->super.module, dummy, 0, len);
     memcpy(dst, str, len);

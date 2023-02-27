@@ -78,16 +78,14 @@ TB_API TB_Exports tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
     size_t external_sym_start = function_sym_start + m->compiled_function_count;
 
     size_t unique_id_counter = 0;
-    FOREACH_N(i, 0, m->max_threads) {
-        pool_for(TB_External, ext, m->thread_info[i].externals) {
-            ext->super.symbol_id = external_sym_start + unique_id_counter;
-            unique_id_counter += 1;
-        }
+    TB_FOR_EXTERNALS(ext, m) {
+        ext->super.symbol_id = external_sym_start + unique_id_counter;
+        unique_id_counter += 1;
+    }
 
-        pool_for(TB_Global, g, m->thread_info[i].globals) {
-            g->super.symbol_id = external_sym_start + unique_id_counter;
-            unique_id_counter += 1;
-        }
+    TB_FOR_GLOBALS(g, m) {
+        g->super.symbol_id = external_sym_start + unique_id_counter;
+        unique_id_counter += 1;
     }
 
     size_t string_table_cap = unique_id_counter + m->compiled_function_count;
@@ -96,7 +94,7 @@ TB_API TB_Exports tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
     // COFF file header & section headers
     COFF_FileHeader header = {
         .section_count = section_count,
-        .timestamp = time(NULL),
+        .timestamp = 1056582000u, // my birthday since that's consistent :P
         .symbol_count = 0,
         .symbol_table = 0,
         .flags = IMAGE_FILE_LINE_NUMS_STRIPPED
@@ -112,6 +110,7 @@ TB_API TB_Exports tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
     size_t output_size = sizeof(COFF_FileHeader);
     output_size += section_count * sizeof(COFF_SectionHeader);
     dyn_array_for(i, sections) {
+        sections[i]->section_num = 1 + i;
         sections[i]->raw_data_pos = output_size;
         output_size += sections[i]->total_size;
     }
@@ -236,6 +235,10 @@ TB_API TB_Exports tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
             .raw_data_size = debug_sections.data[i].raw_data.length,
             .pointer_to_reloc = (uintptr_t) debug_sections.data[i].user_data
         };
+
+        if (dbg == &tb__codeview_debug_format) {
+            header.characteristics |= IMAGE_SCN_MEM_DISCARDABLE;
+        }
 
         TB_Slice name = debug_sections.data[i].name;
         assert(name.length <= 8);
@@ -392,61 +395,60 @@ TB_API TB_Exports tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
         WRITE(&sym, sizeof(sym));
     }
 
-    FOREACH_N(i, 0, m->max_threads) {
-        pool_for(TB_External, ext, m->thread_info[i].externals) {
-            COFF_Symbol sym = {
-                .value = 0,
-                .section_number = 0,
-                .storage_class = IMAGE_SYM_CLASS_EXTERNAL
-            };
+    TB_FOR_EXTERNALS(ext, m) {
+        COFF_Symbol sym = {
+            .value = 0,
+            .section_number = 0,
+            .storage_class = IMAGE_SYM_CLASS_EXTERNAL
+        };
 
-            size_t name_len = strlen(ext->super.name);
+        size_t name_len = strlen(ext->super.name);
+        assert(name_len < UINT16_MAX);
+
+        if (name_len >= 8) {
+            sym.long_name[0] = 0; // this value is 0 for long names
+            sym.long_name[1] = string_table_mark;
+
+            string_table[string_table_length++] = ext->super.name;
+            string_table_mark += name_len + 1;
+        } else {
+            memcpy(sym.short_name, ext->super.name, name_len + 1);
+        }
+
+        WRITE(&sym, sizeof(sym));
+    }
+
+    TB_FOR_GLOBALS(g, m) {
+        bool is_extern = g->linkage == TB_LINKAGE_PUBLIC;
+        COFF_Symbol sym = {
+            .value = g->pos,
+            .section_number = g->parent->section_num,
+            .storage_class = is_extern ? IMAGE_SYM_CLASS_EXTERNAL : IMAGE_SYM_CLASS_STATIC
+        };
+
+        if (g->super.name) {
+            size_t name_len = strlen(g->super.name);
             assert(name_len < UINT16_MAX);
 
             if (name_len >= 8) {
                 sym.long_name[0] = 0; // this value is 0 for long names
                 sym.long_name[1] = string_table_mark;
 
-                string_table[string_table_length++] = ext->super.name;
+                string_table[string_table_length++] = g->super.name;
                 string_table_mark += name_len + 1;
             } else {
-                memcpy(sym.short_name, ext->super.name, name_len + 1);
+                memcpy(sym.short_name, g->super.name, name_len + 1);
             }
-
-            WRITE(&sym, sizeof(sym));
+        } else {
+            snprintf((char*) sym.short_name, 8, "$%07zu", g->super.symbol_id);
         }
 
-        pool_for(TB_Global, g, m->thread_info[i].globals) {
-            bool is_extern = g->linkage == TB_LINKAGE_PUBLIC;
-            COFF_Symbol sym = {
-                .value = g->pos,
-                .section_number = g->parent->section_num,
-                .storage_class = is_extern ? IMAGE_SYM_CLASS_EXTERNAL : IMAGE_SYM_CLASS_STATIC
-            };
-
-            if (g->super.name) {
-                size_t name_len = strlen(g->super.name);
-                assert(name_len < UINT16_MAX);
-
-                if (name_len >= 8) {
-                    sym.long_name[0] = 0; // this value is 0 for long names
-                    sym.long_name[1] = string_table_mark;
-
-                    string_table[string_table_length++] = g->super.name;
-                    string_table_mark += name_len + 1;
-                } else {
-                    memcpy(sym.short_name, g->super.name, name_len + 1);
-                }
-            } else {
-                snprintf((char*) sym.short_name, 8, "$%07zu", g->super.symbol_id);
-            }
-
-            WRITE(&sym, sizeof(sym));
-        }
+        WRITE(&sym, sizeof(sym));
     }
 
     // write string table
     {
+        (void) string_table_pos;
         assert(write_pos == string_table_pos);
 
         WRITE(&string_table_mark, sizeof(string_table_mark));

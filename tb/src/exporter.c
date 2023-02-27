@@ -39,22 +39,61 @@ static void layout_section(TB_ModuleSection* restrict section) {
         return;
     }
 
-    uint64_t offset = 0;
-    dyn_array_for(i, section->globals) {
-        TB_Global* g = section->globals[i];
+    CUIK_TIMED_BLOCK_ARGS("layout section", section->name) {
+        uint64_t offset = 0;
+        dyn_array_for(i, section->globals) {
+            TB_Global* g = section->globals[i];
 
-        if (g->super.name) {
             g->pos = offset;
             offset = align_up(offset + g->size, g->align);
         }
+        section->total_size = offset;
+        section->laid_out = true;
     }
-    section->total_size = offset;
-    section->laid_out = true;
+}
+
+static int compare_symbols(const void* a, const void* b) {
+    const TB_Symbol* sym_a = *(const TB_Symbol**) a;
+    const TB_Symbol* sym_b = *(const TB_Symbol**) b;
+
+    return sym_a->ordinal - sym_b->ordinal;
 }
 
 TB_API void tb_module_layout_sections(TB_Module* m) {
     // text section is special because it holds code
-    {
+    TB_Symbol** array_form = NULL;
+    FOREACH_N(tag, 0, TB_SYMBOL_MAX) {
+        if (m->symbol_count[tag] < 1) continue;
+
+        CUIK_TIMED_BLOCK("sort") {
+            array_form = tb_platform_heap_realloc(array_form, m->symbol_count[tag] * sizeof(TB_Symbol*));
+
+            size_t i = 0;
+            CUIK_TIMED_BLOCK("convert to array") {
+                for (TB_Symbol* s = m->first_symbol_of_tag[tag]; s != NULL; s = s->next) {
+                    array_form[i++] = s;
+                }
+                assert(i == m->symbol_count[tag]);
+            }
+
+            CUIK_TIMED_BLOCK("sort by ordinal") {
+                qsort(array_form, i, sizeof(TB_Symbol*), compare_symbols);
+            }
+
+            CUIK_TIMED_BLOCK("convert back to list") {
+                m->first_symbol_of_tag[tag] = array_form[0];
+                m->last_symbol_of_tag[tag] = array_form[i - 1];
+
+                FOREACH_N(j, 1, i) {
+                    array_form[j-1]->next = array_form[j];
+                }
+                array_form[i-1]->next = NULL;
+            }
+        }
+    }
+    tb_platform_heap_free(array_form);
+
+    CUIK_TIMED_BLOCK("layout code") {
         size_t offset = 0;
         TB_FOR_FUNCTIONS(f, m) {
             TB_FunctionOutput* out_f = f->output;
@@ -71,4 +110,41 @@ TB_API void tb_module_layout_sections(TB_Module* m) {
     layout_section(&m->data);
     layout_section(&m->rdata);
     layout_section(&m->tls);
+}
+
+size_t tb_helper_write_section(TB_Module* m, size_t write_pos, TB_ModuleSection* section, uint8_t* output, uint32_t pos) {
+    assert(write_pos == pos);
+    uint8_t* data = &output[pos];
+
+    switch (section->kind) {
+        case TB_MODULE_SECTION_TEXT:
+        TB_FOR_FUNCTIONS(f, m) {
+            TB_FunctionOutput* out_f = f->output;
+
+            if (out_f != NULL) {
+                memcpy(data + out_f->code_pos, out_f->code, out_f->code_size);
+            }
+        }
+        break;
+
+        case TB_MODULE_SECTION_DATA:
+        case TB_MODULE_SECTION_TLS:
+        dyn_array_for(i, section->globals) {
+            TB_Global* restrict g = section->globals[i];
+
+            memset(&data[g->pos], 0, g->size);
+            FOREACH_N(k, 0, g->obj_count) {
+                if (g->objects[k].type == TB_INIT_OBJ_REGION) {
+                    memcpy(&data[g->pos + g->objects[k].offset], g->objects[k].region.ptr, g->objects[k].region.size);
+                }
+            }
+        }
+        break;
+
+        default:
+        tb_todo();
+        break;
+    }
+
+    return write_pos + section->total_size;
 }

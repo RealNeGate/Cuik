@@ -174,6 +174,7 @@ static void GAD_FN(resolve_params)(Ctx* restrict ctx, TB_Function* f, GAD_VAL* v
 
     size_t param_count = proto->param_count;
     assert(param_count == 0);
+    (void) param_count;
 }
 
 static void GAD_FN(branch_if)(Ctx* restrict ctx, TB_Function* f, TB_Reg cond, TB_Label if_true, TB_Label if_false, TB_Reg fallthrough) {

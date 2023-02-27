@@ -1886,6 +1886,7 @@ typedef struct {
     Stmt** stmts;
     size_t count;
 
+    size_t ordinal_base;
     Futex* remaining;
 } IRAllocTask;
 
@@ -1917,6 +1918,8 @@ static void ir_alloc_task(void* task) {
                 } else {
                     func = tb_function_create(t.tu->ir_mod, name, linkage);
                 }
+
+                tb_symbol_set_ordinal((TB_Symbol*) func, t.ordinal_base + i);
                 tb_function_set_prototype(func, proto);
                 s->backing.f = func;
             } else if (s->decl.attrs.is_used && !s->decl.attrs.is_typedef) {
@@ -1938,6 +1941,7 @@ static void ir_alloc_task(void* task) {
                     }
 
                     s->backing.g = tb_global_create(t.tu->ir_mod, name, dbg_type, linkage);
+                    tb_symbol_set_ordinal((TB_Symbol*) s->backing.g, t.ordinal_base + i);
                 }
             }
         }
@@ -1952,6 +1956,7 @@ void cuikcg_allocate_ir(CompilationUnit* restrict cu, Cuik_IThreadpool* restrict
     enum { BATCH_SIZE = 65536 };
 
     Futex remaining = 0;
+    size_t ordinal = 0;
     FOR_EACH_TU(tu, cu) {
         size_t count = dyn_array_length(tu->top_level_stmts);
         remaining += (count + (BATCH_SIZE - 1)) / BATCH_SIZE;
@@ -1968,9 +1973,11 @@ void cuikcg_allocate_ir(CompilationUnit* restrict cu, Cuik_IThreadpool* restrict
                 .tu = tu,
                 .stmts = &top_level[i],
                 .count = end - i,
-                .remaining = &remaining
+                .remaining = &remaining,
+                .ordinal_base = ordinal,
             };
 
+            ordinal += t.count;
             if (thread_pool) {
                 CUIK_CALL(thread_pool, submit, ir_alloc_task, sizeof(t), &t);
             } else {

@@ -633,6 +633,7 @@ static void apply_external_relocs(TB_Linker* l, uint8_t* output, uint64_t image_
         }
 
         size_t actual_reloc_size = p_out - p_start;
+        (void) actual_reloc_size;
         assert(actual_reloc_size == l->main_reloc->size);
     }
 }

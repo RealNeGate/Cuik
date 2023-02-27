@@ -1,4 +1,4 @@
-#include "../../objects/coff.h"
+#include "../../tb_internal.h"
 #include "cv.h"
 
 // constant sized "hash map" which is used to
@@ -24,7 +24,7 @@ static void md5sum_file(uint8_t out_bytes[16], const char* filepath) {
     }
 
     size_t len  = file_stats.st_size;
-    unsigned char* data = tb_platform_heap_alloc(len + 17);
+    unsigned char* data = tb_platform_heap_alloc(len + 1);
 
     fseek(file, 0, SEEK_SET);
     fread(data, 1, len, file);

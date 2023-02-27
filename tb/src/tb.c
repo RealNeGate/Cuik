@@ -261,7 +261,10 @@ TB_API TB_FileID tb_file_create(TB_Module* m, const char* path) {
     // skip the NULL file entry
     // TODO(NeGate): we should introduce a hash map
     FOREACH_N(i, 1, dyn_array_length(m->files)) {
-        if (strcmp(m->files[i].path, path) == 0) return i;
+        if (strcmp(m->files[i].path, path) == 0) {
+            mtx_unlock(&m->lock);
+            return i;
+        }
     }
 
     // Allocate string (for now they all live to the end of the module, we might
@@ -317,6 +320,10 @@ TB_API void tb_prototype_add_param(TB_Module* m, TB_FunctionPrototype* p, TB_Dat
 TB_API void tb_prototype_add_param_named(TB_Module* m, TB_FunctionPrototype* p, TB_DataType dt, const char* name, TB_DebugType* debug_type) {
     assert(p->param_count + 1 <= p->param_capacity);
     p->params[p->param_count++] = (TB_PrototypeParam){ dt, tb__arena_strdup(m, name), debug_type };
+}
+
+TB_API void tb_symbol_set_ordinal(TB_Symbol* s, int ordinal) {
+    s->ordinal = ordinal;
 }
 
 TB_API TB_Function* tb_function_create(TB_Module* m, const char* name, TB_Linkage linkage) {
@@ -450,6 +457,7 @@ TB_API TB_Global* tb_global_create(TB_Module* m, const char* name, TB_DebugType*
 }
 
 TB_API void tb_global_set_storage(TB_Module* m, TB_ModuleSection* section, TB_Global* global, size_t size, size_t align, size_t max_objects) {
+    assert(size > 0 && align > 0 && tb_is_power_of_two(align));
     global->parent = section;
     global->pos = 0;
     global->size = size;
@@ -662,6 +670,10 @@ void* tb_out_grab(TB_Emitter* o, size_t count) {
     return p;
 }
 
+void* tb_out_get(TB_Emitter* o, size_t pos) {
+    return &o->data[o->count];
+}
+
 size_t tb_out_grab_i(TB_Emitter* o, size_t count) {
     tb_out_reserve(o, count);
 
@@ -753,14 +765,26 @@ size_t tb_outstr_nul_UNSAFE(TB_Emitter* o, const char* str) {
     return start;
 }
 
+size_t tb_outstr_nul(TB_Emitter* o, const char* str) {
+    size_t start = o->count;
+    size_t len = strlen(str) + 1;
+    tb_out_reserve(o, len);
+
+    memcpy(&o->data[o->count], str, len);
+    return start;
+}
+
 void tb_outstr_UNSAFE(TB_Emitter* o, const char* str) {
     while (*str) o->data[o->count++] = *str++;
 }
 
-void tb_outs(TB_Emitter* o, size_t len, const void* str) {
+size_t tb_outs(TB_Emitter* o, size_t len, const void* str) {
     tb_out_reserve(o, len);
+    size_t start = o->count;
+
     memcpy(&o->data[o->count], str, len);
     o->count += len;
+    return start;
 }
 
 void tb_outs_UNSAFE(TB_Emitter* o, size_t len, const void* str) {
