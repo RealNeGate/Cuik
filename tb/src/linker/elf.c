@@ -15,9 +15,9 @@ static void append_module(TB_Linker* l, TB_Module* m) {
         tb_module_layout_sections(m);
     }
 
-    tb__append_module_section(l, &m->text, ".text", PF_X | PF_R);
-    tb__append_module_section(l, &m->data, ".data", PF_W | PF_R);
-    tb__append_module_section(l, &m->rdata, ".rdata", PF_R);
+    tb__append_module_section(l, m, &m->text, ".text", PF_X | PF_R);
+    tb__append_module_section(l, m, &m->data, ".data", PF_W | PF_R);
+    tb__append_module_section(l, m, &m->rdata, ".rdata", PF_R);
 
     CUIK_TIMED_BLOCK("apply symbols") {
         static const enum TB_SymbolTag tags[] = { TB_SYMBOL_FUNCTION, TB_SYMBOL_GLOBAL };

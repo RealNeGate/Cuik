@@ -303,7 +303,6 @@ struct TB_Function {
     TB_Symbol super;
 
     const TB_FunctionPrototype* prototype;
-    TB_ModuleSection* section;
     TB_Linkage linkage;
 
     // Parameter acceleration structure
@@ -350,29 +349,41 @@ struct TB_Function {
 };
 
 typedef struct {
-    uint32_t func_id;
-    uint32_t label_id;
-    uint32_t pos; // relative to the start of the function
-} TB_LabelSymbol;
-
-typedef struct {
     size_t capacity, size;
     uint8_t data[CODE_REGION_BUFFER_SIZE - sizeof(size_t)];
 } TB_CodeRegion;
 
+typedef enum {
+    // stores globals
+    TB_MODULE_SECTION_DATA,
+
+    // data but it's thread local
+    TB_MODULE_SECTION_TLS,
+
+    // holds all the code (no globals)
+    TB_MODULE_SECTION_TEXT,
+} TB_ModuleSectionKind;
+
 struct TB_ModuleSection {
-    // this isn't computed until export time
-    size_t total_size;
-    TB_LinkerSectionPiece *piece;
+    char* name;
+    TB_LinkerSectionPiece* piece;
 
     int section_num;
+    TB_ModuleSectionKind kind;
+
+    // export-specific
+    uint32_t flags;
+
+    // this isn't computed until export time
+    uint32_t raw_data_pos;
+    uint32_t total_size;
+    uint32_t reloc_count;
+    uint32_t reloc_pos;
 
     // have things been added since the last layout pass
-    bool is_tls;
     bool dirty;
 
     // this is all the globals within the section
-    DynArray(TB_Function*) functions;
     DynArray(TB_Global*) globals;
 };
 
@@ -416,9 +427,8 @@ struct TB_Module {
     DynArray(TB_File) files;
 
     // Common sections
-    TB_ModuleSection text, data, rdata, tls;
-
     // TODO(NeGate): custom sections
+    TB_ModuleSection text, data, rdata, tls;
 
     // JIT
     void* jit_region;
@@ -697,8 +707,7 @@ void cuikperf_region_end(void);
 // EXPORTER HELPER
 ////////////////////////////////
 size_t tb_helper_write_text_section(size_t write_pos, TB_Module* m, uint8_t* output, uint32_t pos);
-size_t tb_helper_write_rdata_section(size_t write_pos, TB_Module* m, uint8_t* output, uint32_t pos);
-size_t tb_helper_write_section(size_t write_pos, TB_ModuleSection* section, uint8_t* output, uint32_t pos);
+size_t tb_helper_write_section(TB_Module* m, size_t write_pos, TB_ModuleSection* section, uint8_t* output, uint32_t pos);
 size_t tb_helper_get_text_section_layout(TB_Module* m, size_t symbol_id_start);
 
 ////////////////////////////////

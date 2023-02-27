@@ -118,7 +118,13 @@ TB_API TB_Module* tb_module_create(TB_Arch arch, TB_System sys, const TB_Feature
 
     // we start a little off the start just because
     mtx_init(&m->lock, mtx_plain);
-    m->tls.is_tls = true;
+
+    m->text.name  = tb__arena_strdup(m, ".text");
+    m->text.kind  = TB_MODULE_SECTION_TEXT;
+    m->data.name  = tb__arena_strdup(m, ".data");
+    m->rdata.name = tb__arena_strdup(m, sys == TB_SYSTEM_WINDOWS ? ".rdata" : ".rodata");
+    m->tls.name   = tb__arena_strdup(m, sys == TB_SYSTEM_WINDOWS ? ".tls$"  : ".tls");
+    m->tls.kind   = TB_MODULE_SECTION_TLS;
     return m;
 }
 
@@ -172,7 +178,6 @@ TB_API bool tb_module_compile_function(TB_Module* m, TB_Function* f, TB_ISelMode
         func_out->epilogue_length = epilogue_len;
         func_out->code_size += (prologue_len + epilogue_len);
     }
-    f->section->total_size += func_out->code_size;
 
     tb_atomic_size_add(&m->compiled_function_count, 1);
     region->size += func_out->code_size;
@@ -314,9 +319,8 @@ TB_API void tb_prototype_add_param_named(TB_Module* m, TB_FunctionPrototype* p, 
     p->params[p->param_count++] = (TB_PrototypeParam){ dt, tb__arena_strdup(m, name), debug_type };
 }
 
-TB_API TB_Function* tb_function_create(TB_Module* m, TB_ModuleSection* section, const char* name, TB_Linkage linkage) {
+TB_API TB_Function* tb_function_create(TB_Module* m, const char* name, TB_Linkage linkage) {
     TB_Function* f = (TB_Function*) tb_symbol_alloc(m, TB_SYMBOL_FUNCTION, name, sizeof(TB_Function));
-    f->section = section ? section : &m->text;
     f->linkage = linkage;
 
     f->bb_capacity = 4;
@@ -337,14 +341,6 @@ TB_API TB_Function* tb_function_create(TB_Module* m, TB_ModuleSection* section, 
     // this is just a dummy slot so that things like parameters can anchor to
     f->nodes[1] = (TB_Node) { .next = 0 };
     f->bbs[0] = (TB_BasicBlock){ 1, 1 };
-
-    if (section == NULL) {
-        section = &m->text;
-    }
-
-    mtx_lock(&m->lock);
-    dyn_array_put(section->functions, f);
-    mtx_unlock(&m->lock);
     return f;
 }
 

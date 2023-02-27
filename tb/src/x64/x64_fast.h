@@ -369,7 +369,7 @@ static Val fast_eval(X64_FastCtx* ctx, TB_Function* f, TB_Reg r) {
             TB_Module* m = f->super.module;
             const TB_Global* g = n->global.value;
 
-            if (g->parent->is_tls) {
+            if (g->parent->kind == TB_MODULE_SECTION_TLS) {
                 if (m->tls_index_extern == 0) {
                     tb_panic("TB error: no tls_index provided\n");
                 }

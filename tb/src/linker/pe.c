@@ -433,9 +433,9 @@ static void append_module(TB_Linker* l, TB_Module* m) {
     tb__find_code_generator(m)->emit_call_patches(m);
 
     // Convert module into sections which we can then append to the output
-    tb__append_module_section(l, &m->text, ".text", IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_CNT_CODE);
-    tb__append_module_section(l, &m->data, ".data", IMAGE_SCN_MEM_WRITE | IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA);
-    tb__append_module_section(l, &m->rdata, ".rdata", IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA);
+    tb__append_module_section(l, m, &m->text, ".text", IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_CNT_CODE);
+    tb__append_module_section(l, m, &m->data, ".data", IMAGE_SCN_MEM_WRITE | IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA);
+    tb__append_module_section(l, m, &m->rdata, ".rdata", IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA);
 
     if (m->compiled_function_count > 0) {
         TB_LinkerSection* rdata = m->rdata.piece ? m->rdata.piece->parent : NULL;

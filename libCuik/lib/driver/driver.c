@@ -525,7 +525,7 @@ static bool export_output(Cuik_CompilerArgs* restrict args, TB_Module* mod, cons
             cuik_get_target_system(args->target) == CUIK_SYSTEM_WINDOWS ? ".obj" : ".o"
         );
 
-        TB_Exports exports = tb_module_object_export(mod, TB_DEBUGFMT_CODEVIEW);
+        TB_Exports exports = tb_module_object_export(mod, debug_fmt);
         if (exports.count == 0) {
             fprintf(stderr, "\x1b[31merror\x1b[0m: could not link executable\n");
             return false;

@@ -1913,9 +1913,9 @@ static void ir_alloc_task(void* task) {
                     char temp[1024];
                     snprintf(temp, 1024, "_K%d_%s", t.tu->id_gen++, name ? name : "<unnamed>");
 
-                    func = tb_function_create(t.tu->ir_mod, NULL, temp, linkage);
+                    func = tb_function_create(t.tu->ir_mod, temp, linkage);
                 } else {
-                    func = tb_function_create(t.tu->ir_mod, NULL, name, linkage);
+                    func = tb_function_create(t.tu->ir_mod, name, linkage);
                 }
                 tb_function_set_prototype(func, proto);
                 s->backing.f = func;

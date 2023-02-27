@@ -278,7 +278,7 @@ TB_LinkerSectionPiece* tb__get_piece(TB_Linker* l, TB_LinkerSymbol* restrict sym
 
 // TB helpers
 size_t tb__get_symbol_pos(TB_Symbol* s);
-void tb__append_module_section(TB_Linker* l, TB_ModuleSection* section, const char* name, uint32_t flags);
+void tb__append_module_section(TB_Linker* l, TB_Module* m, TB_ModuleSection* section, const char* name, uint32_t flags);
 
 ImportThunk* tb__find_or_create_import(TB_Linker* l, TB_LinkerSymbol* restrict sym);
 

@@ -1025,7 +1025,7 @@ extern "C" {
     TB_API TB_DataType tb_vector_type(TB_DataTypeEnum type, int width);
 
     // if section is NULL, default to .text
-    TB_API TB_Function* tb_function_create(TB_Module* m, TB_ModuleSection* section, const char* name, TB_Linkage linkage);
+    TB_API TB_Function* tb_function_create(TB_Module* m, const char* name, TB_Linkage linkage);
 
     TB_API void* tb_function_get_jit_pos(TB_Function* f);
 

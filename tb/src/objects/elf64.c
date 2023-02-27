@@ -313,7 +313,7 @@ TB_API TB_Exports tb_elf64obj_write_output(TB_Module* m, const IDebugFormat* dbg
         WRITE(strtbl.data, strtbl.count);
 
         // TEXT section
-        e.write_pos = tb_helper_write_section(e.write_pos, &m->text, output, sections[S_TEXT].sh_offset);
+        e.write_pos = tb_helper_write_section(m, e.write_pos, &m->text, output, sections[S_TEXT].sh_offset);
 
         // TEXT patches
         {
@@ -360,7 +360,7 @@ TB_API TB_Exports tb_elf64obj_write_output(TB_Module* m, const IDebugFormat* dbg
             WRITE(relocs.elems, relocs.count * sizeof(Elf64_Rela));
         }
 
-        e.write_pos = tb_helper_write_section(e.write_pos, &m->data, output, sections[S_DATA].sh_offset);
+        e.write_pos = tb_helper_write_section(m, e.write_pos, &m->data, output, sections[S_DATA].sh_offset);
 
         // write DATA patches
         {
@@ -427,7 +427,7 @@ TB_API TB_Exports tb_elf64obj_write_output(TB_Module* m, const IDebugFormat* dbg
             WRITE(relocs.elems, relocs.count * sizeof(Elf64_Rela));
         }
 
-        e.write_pos = tb_helper_write_section(e.write_pos, &m->rdata, output, sections[S_RODATA].sh_offset);
+        e.write_pos = tb_helper_write_section(m, e.write_pos, &m->rdata, output, sections[S_RODATA].sh_offset);
 
         assert(e.write_pos == sections[S_STAB].sh_offset);
         WRITE(stab.data, stab.count);

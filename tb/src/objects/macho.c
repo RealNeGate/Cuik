@@ -113,7 +113,7 @@ TB_API TB_Exports tb_macho_write_output(TB_Module* m, const IDebugFormat* dbg) {
     WRITE(&segment_cmd, sizeof(segment_cmd));
     WRITE(&sections, sizeof(MO_Section64) * NUMBER_OF_SECTIONS);
 
-    e->write_pos = tb_helper_write_section(e->write_pos, &m->text, output, sections[0].offset);
+    e->write_pos = tb_helper_write_section(m, e->write_pos, &m->text, output, sections[0].offset);
 
     // emit section contents
     FOREACH_N(i, 0, NUMBER_OF_SECTIONS) {

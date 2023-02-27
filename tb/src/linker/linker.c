@@ -179,10 +179,10 @@ void tb__merge_sections(TB_Linker* linker, TB_LinkerSection* from, TB_LinkerSect
     #endif
 }
 
-void tb__append_module_section(TB_Linker* l, TB_ModuleSection* section, const char* name, uint32_t flags) {
+void tb__append_module_section(TB_Linker* l, TB_Module* mod, TB_ModuleSection* section, const char* name, uint32_t flags) {
     if (section->total_size > 0) {
         TB_LinkerSection* ls = tb__find_or_create_section(l, name, flags);
-        section->piece = tb__append_piece(ls, PIECE_MODULE_SECTION, section->total_size, section, NULL);
+        section->piece = tb__append_piece(ls, PIECE_MODULE_SECTION, section->total_size, section, mod);
     }
 }
 
@@ -206,7 +206,7 @@ size_t tb__apply_section_contents(TB_Linker* l, uint8_t* output, size_t write_po
                     break;
                 }
                 case PIECE_MODULE_SECTION: {
-                    tb_helper_write_section(0, (TB_ModuleSection*) p->data, p_out, 0);
+                    tb_helper_write_section(m, 0, (TB_ModuleSection*) p->data, p_out, 0);
                     break;
                 }
                 case PIECE_PDATA: {
@@ -499,7 +499,7 @@ void tb__apply_module_relocs(TB_Linker* l, TB_Module* m, uint8_t* output) {
                 assert(global->super.tag == TB_SYMBOL_GLOBAL);
 
                 int32_t* dst = (int32_t*) &output[text_piece_file + out_f->code_pos + out_f->prologue_length + patch->pos];
-                if (!global->parent->is_tls) {
+                if (global->parent->kind != TB_MODULE_SECTION_TLS) {
                     int32_t p = (data_piece_rva + global->pos) - actual_pos;
 
                     (*dst) += p;
