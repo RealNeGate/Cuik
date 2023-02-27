@@ -380,8 +380,7 @@ struct TB_ModuleSection {
     uint32_t reloc_count;
     uint32_t reloc_pos;
 
-    // have things been added since the last layout pass
-    bool dirty;
+    bool laid_out;
 
     // this is all the globals within the section
     DynArray(TB_Global*) globals;

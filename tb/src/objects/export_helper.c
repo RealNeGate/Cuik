@@ -10,7 +10,7 @@ size_t tb_helper_write_section(TB_Module* m, size_t write_pos, TB_ModuleSection*
             TB_FunctionOutput* out_f = f->output;
 
             if (out_f != NULL) {
-                memcpy(output + out_f->code_pos, out_f->code, out_f->code_size);
+                memcpy(data + out_f->code_pos, out_f->code, out_f->code_size);
             }
         }
         break;

@@ -35,7 +35,7 @@ TB_API void tb_exporter_free(TB_Exports exports) {
 }
 
 static void layout_section(TB_ModuleSection* restrict section) {
-    if (!section->dirty) {
+    if (section->laid_out) {
         return;
     }
 
@@ -49,7 +49,7 @@ static void layout_section(TB_ModuleSection* restrict section) {
         }
     }
     section->total_size = offset;
-    section->dirty = false;
+    section->laid_out = true;
 }
 
 TB_API void tb_module_layout_sections(TB_Module* m) {
@@ -65,7 +65,7 @@ TB_API void tb_module_layout_sections(TB_Module* m) {
         }
 
         m->text.total_size = offset;
-        m->text.dirty = false;
+        m->text.laid_out = true;
     }
 
     layout_section(&m->data);
