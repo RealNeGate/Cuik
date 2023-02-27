@@ -29,6 +29,13 @@ struct TB_ModuleExporter {
     COFF_SectionHeader* debug_section_headers;
 };
 
+static int compare_relocs(const void* a, const void* b) {
+    const COFF_ImageReloc* aa = (const COFF_ImageReloc*) a;
+    const COFF_ImageReloc* bb = (const COFF_ImageReloc*) b;
+
+    return aa->VirtualAddress - bb->VirtualAddress;
+}
+
 static COFF_Symbol section_sym(const char* name, int num, int sc) {
     COFF_Symbol s = { .section_number = num, .storage_class = sc, .aux_symbols_count = 1 };
     strncpy((char*) s.short_name, name, 8);
@@ -256,7 +263,7 @@ TB_API TB_Exports tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
     }
 
     // write raw data
-    FOREACH_N(i, 0, section_count) {
+    dyn_array_for(i, sections) {
         write_pos = tb_helper_write_section(
             m, write_pos, sections[i], output, sections[i]->raw_data_pos
         );
@@ -325,6 +332,9 @@ TB_API TB_Exports tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
                 }
             }
         }
+
+        // sort relocations by virtual address
+        qsort(&output[sections[i]->reloc_pos], sections[i]->reloc_count, sizeof(COFF_ImageReloc), compare_relocs);
     }
 
     FOREACH_N(i, 0, debug_sections.length) {
