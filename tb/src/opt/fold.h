@@ -1,3 +1,4 @@
+
 #define MASK_UPTO(pos) (~UINT64_C(0) >> (64 - pos))
 #define BEXTR(src,pos) (((src) >> (pos)) & 1)
 uint64_t tb__sxt(uint64_t src, uint64_t src_bits, uint64_t dst_bits) {
@@ -110,6 +111,138 @@ static bool is_associative(TB_NodeTypeEnum type) {
     }
 }
 
+typedef struct {
+    TB_Reg r;
+    bool changes;
+} BinOpReg;
+
+static bool const_fold(TB_Function* f, TB_Node* n);
+
+static BinOpReg create_binop(TB_Function* f, TB_Reg r, TB_Reg x, TB_Reg y) {
+    TB_NodeTypeEnum type = f->nodes[r].type;
+    TB_DataType dt = f->nodes[r].dt;
+
+    bool changes = false;
+    if (f->nodes[x].type == TB_INTEGER_CONST && f->nodes[y].type != TB_INTEGER_CONST) {
+        OPTIMIZER_LOG(r, "moved constants to right hand side.");
+        tb_swap(TB_Reg, x, y);
+
+        f->nodes[r].i_arith.a = x;
+        f->nodes[r].i_arith.b = y;
+        changes = true;
+    }
+
+    if (f->nodes[x].type == type && f->nodes[y].type != type) {
+        // Reshuffle the adds from
+        // (x + y) + z => x + (y + z)
+        OPTIMIZER_LOG(r, "Reassociated expressions");
+
+        TB_Reg xx = f->nodes[x].i_arith.a;
+        TB_Reg yy = f->nodes[x].i_arith.b;
+        TB_Reg zz = y;
+
+        TB_Reg xy_reg = tb_function_insert_before(f, r);
+
+        TB_Node* xy = &f->nodes[xy_reg];
+        xy->type = type;
+        xy->dt = dt;
+        xy->i_arith.a = yy;
+        xy->i_arith.b = zz;
+        if (type >= TB_ADD && type <= TB_SMOD) {
+            xy->i_arith.arith_behavior = f->nodes[r].i_arith.arith_behavior;
+        }
+
+        BinOpReg new_xy = create_binop(f, xy_reg, xx, yy);
+        const_fold(f, &f->nodes[new_xy.r]);
+
+        TB_Node* n = &f->nodes[r];
+        n->i_arith.a = xx;
+        n->i_arith.b = new_xy.r;
+        changes = true;
+    }
+
+    return (BinOpReg){ r, changes };
+}
+
+static bool phi_motion(TB_Function* f, TB_Node* n) {
+    /*TB_Reg r = (n - f->nodes);
+
+    if (tb_node_is_phi_node(f, r)) {
+        int count = tb_node_get_phi_width(f, r);
+        TB_PhiInput* inputs = tb_node_get_phi_inputs(f, r);
+
+        // (phi (add X A)), (add Y A)) => (add (phi(X, Y) A)
+        TB_NodeTypeEnum shared_type = 0;
+        TB_Reg shared_a = 0;
+        TB_ArithmaticBehavior shared_ab = 0;
+
+        bool success = (count > 0);
+        FOREACH_N(j, 0, count) {
+            TB_Reg a = inputs[j].val;
+
+            if (f->nodes[a].type >= TB_AND && f->nodes[a].type <= TB_SMOD) {
+                if (shared_type == 0) {
+                    // decide on a shared value
+                    shared_a = f->nodes[a].i_arith.a;
+                    shared_type = f->nodes[a].type;
+                    shared_ab = f->nodes[a].i_arith.arith_behavior;
+                } else if (shared_type != f->nodes[a].type || f->nodes[a].i_arith.arith_behavior == shared_ab) {
+                    // does it not share the left side?
+                    if (f->nodes[a].i_arith.a != shared_a) {
+                        success = false;
+                        break;
+                    }
+                }
+            } else {
+                success = false;
+                break;
+            }
+        }
+
+        if (success) {
+            FOREACH_N(j, 0, count) {
+                TB_Reg a = inputs[j].val;
+
+                if (f->nodes[a].type >= TB_AND && f->nodes[a].type <= TB_SMOD) {
+                    inputs[j].val = f->nodes[a].i_arith.b;
+                }
+            }
+
+            TB_Label bb = tb_find_label_from_reg(f, r);
+            TB_Reg shared_op = tb_function_insert_after(f, bb, r);
+            f->nodes[shared_op].type = shared_type;
+            f->nodes[shared_op].dt = f->nodes[r].dt;
+            f->nodes[shared_op].i_arith.a = shared_a;
+            f->nodes[shared_op].i_arith.b = 0;
+            f->nodes[shared_op].i_arith.arith_behavior = shared_ab;
+
+            tb_function_find_replace_reg(f, r, shared_op);
+
+            // set after the replace op
+            f->nodes[shared_op].i_arith.b = r;
+            return true;
+        }
+    }*/
+
+    return false;
+}
+
+static bool reassoc(TB_Function* f, TB_Node* n) {
+    if (!is_associative(n->type)) {
+        return false;
+    }
+
+    TB_Reg old = n - f->nodes;
+    BinOpReg result = create_binop(f, old, n->i_arith.a, n->i_arith.b);
+    if (old != result.r) {
+        f->nodes[old].type = TB_PASS;
+        f->nodes[old].pass.value = result.r;
+        return true;
+    }
+
+    return result.changes;
+}
+
 static bool is_commutative(TB_NodeTypeEnum type) {
     switch (type) {
         case TB_ADD: case TB_MUL:
@@ -122,8 +255,7 @@ static bool is_commutative(TB_NodeTypeEnum type) {
     }
 }
 
-static void const_fold(TB_Function* f, TB_OptimizerCtx* restrict ctx, TB_Reg r) {
-    TB_Node* n = &f->nodes[r];
+static bool const_fold(TB_Function* f, TB_Node* n) {
     TB_DataType dt = n->dt;
 
     switch (n->type) {
@@ -150,8 +282,7 @@ static void const_fold(TB_Function* f, TB_OptimizerCtx* restrict ctx, TB_Reg r) 
                     BigInt_inc(src->integer.num_words, words);
                     n->integer.words = words;
                 }
-
-                MARK(r);
+                return true;
             }
 
             break;
@@ -174,8 +305,7 @@ static void const_fold(TB_Function* f, TB_OptimizerCtx* restrict ctx, TB_Reg r) 
                     BigInt_not(src->integer.num_words, words);
                     n->integer.words = words;
                 }
-
-                MARK(r);
+                return true;
             }
 
             break;
@@ -214,8 +344,6 @@ static void const_fold(TB_Function* f, TB_OptimizerCtx* restrict ctx, TB_Reg r) 
                 } else {
                     n->integer.words = words;
                 }
-
-                MARK(r);
             }
             break;
         }
@@ -241,8 +369,6 @@ static void const_fold(TB_Function* f, TB_OptimizerCtx* restrict ctx, TB_Reg r) 
                 } else {
                     n->integer.words = words;
                 }
-
-                MARK(r);
             }
             break;
         }
@@ -273,7 +399,7 @@ static void const_fold(TB_Function* f, TB_OptimizerCtx* restrict ctx, TB_Reg r) 
         case TB_CMP_FLE: {
             // if it's commutative: move constants to the right
             if (is_commutative(n->type) && f->nodes[n->i_arith.a].type == TB_INTEGER_CONST && f->nodes[n->i_arith.b].type != TB_INTEGER_CONST) {
-                SWAP_BINOP_REGS(n);
+                tb_swap(TB_Reg, n->i_arith.a, n->i_arith.b);
             }
 
             TB_Node* a = &f->nodes[n->i_arith.a];
@@ -291,7 +417,11 @@ static void const_fold(TB_Function* f, TB_OptimizerCtx* restrict ctx, TB_Reg r) 
                         default: tb_todo();
                     }
 
-                    TRANSMUTE_TO_INT(n, result);
+                    n->type = TB_INTEGER_CONST;
+                    n->dt = TB_TYPE_BOOL;
+                    n->integer.num_words = 1;
+                    n->integer.single_word = result;
+                    return true;
                 } else if (n->type >= TB_FADD && n->type <= TB_FDIV) {
                     float result = 0.0f;
                     switch (n->type) {
@@ -302,7 +432,10 @@ static void const_fold(TB_Function* f, TB_OptimizerCtx* restrict ctx, TB_Reg r) 
                         default: tb_todo();
                     }
 
-                    TRANSMUTE_TO_FLOAT32(n, result);
+                    n->type = TB_FLOAT32_CONST;
+                    n->dt = TB_TYPE_F32;
+                    n->flt32.value = result;
+                    return true;
                 }
             } else if (n->dt.type == TB_INT && b->type == TB_INTEGER_CONST) {
                 if (a->type == TB_INTEGER_CONST) {
@@ -331,8 +464,6 @@ static void const_fold(TB_Function* f, TB_OptimizerCtx* restrict ctx, TB_Reg r) 
                     uint64_t shift = (64 - (n->dt.data % 64)), mask = (~UINT64_C(0) >> shift) << shift;
                     words[num_a_words-1] &= ~mask;
 
-                    // convert into integer
-                    remove_refs(f, ctx, n);
                     n->type = TB_INTEGER_CONST;
                     n->integer.num_words = num_a_words;
                     if (num_a_words == 1) {
@@ -340,7 +471,6 @@ static void const_fold(TB_Function* f, TB_OptimizerCtx* restrict ctx, TB_Reg r) 
                     } else {
                         n->integer.words = words;
                     }
-                    MARK(r);
 
                     // if we fail, delete our allocation, we probably should avoid failing in the future
                     fail:
@@ -359,24 +489,28 @@ static void const_fold(TB_Function* f, TB_OptimizerCtx* restrict ctx, TB_Reg r) 
                             case TB_XOR: case TB_OR:
                             case TB_SHL: case TB_SHR:
                             case TB_SAR:
-                            TRANSMUTE_TO_PASS(n, ar);
-                            break;
+                            n->type = TB_PASS;
+                            n->pass.value = ar;
+                            return true;
 
                             case TB_MUL: case TB_AND:
-                            TRANSMUTE_TO_INT(n, 0);
-                            break;
+                            n->type = TB_INTEGER_CONST;
+                            n->integer.num_words = 1;
+                            n->integer.single_word = 0;
+                            return true;
 
                             case TB_SDIV: case TB_UDIV:
-                            TRANSMUTE_TO_POISON(n);
-                            break;
+                            n->type = TB_POISON;
+                            return true;
 
                             default: break;
                         }
                     } else if (BigInt_is_small_num(num_src_words, src_words, 1)) {
                         switch (n->type) {
                             case TB_MUL: case TB_SDIV: case TB_UDIV:
-                            TRANSMUTE_TO_PASS(n, ar);
-                            break;
+                            n->type = TB_PASS;
+                            n->pass.value = ar;
+                            return true;
 
                             default: break;
                         }
@@ -400,13 +534,10 @@ static void const_fold(TB_Function* f, TB_OptimizerCtx* restrict ctx, TB_Reg r) 
                                 f->nodes[new_op].integer.num_words = 1;
                                 f->nodes[new_op].integer.single_word = log2;
 
-                                tb_todo();
-                                // remove_refs(f, ctx, n);
-                                /* n->type = TB_SHL;
+                                n->type = TB_SHL;
                                 n->dt = dt;
                                 n->i_arith = (struct TB_NodeIArith) { .a = a - f->nodes, .b = new_op };
-                                changes = true; */
-                                break;
+                                return true;
                             }
                         } else if (n->type == TB_UMOD || n->type == TB_SMOD) {
                             // (mod a N) => (and a N-1) where N is a power of two
@@ -421,15 +552,12 @@ static void const_fold(TB_Function* f, TB_OptimizerCtx* restrict ctx, TB_Reg r) 
                                 extra->dt = n->dt;
                                 extra->integer.num_words = 1;
                                 extra->integer.single_word = mask - 1;
-                                MARK(extra_reg);
 
                                 // new AND operation to replace old MOD
-                                tb_todo();
-                                /* n = &f->nodes[r];
+                                n = &f->nodes[r];
                                 n->type = TB_AND;
                                 n->i_arith.b = extra_reg;
-                                changes = true; */
-                                break;
+                                return true;
                             }
                         }
                     }
@@ -441,4 +569,7 @@ static void const_fold(TB_Function* f, TB_OptimizerCtx* restrict ctx, TB_Reg r) 
         default:
         break;
     }
+
+    // didn't change shit :(
+    return false;
 }

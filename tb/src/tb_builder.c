@@ -377,9 +377,13 @@ TB_API TB_Reg tb_inst_local(TB_Function* f, uint32_t size, TB_CharUnits alignmen
     tb_assume(size > 0);
     tb_assume(alignment > 0 && tb_is_power_of_two(alignment));
 
-    TB_Reg r = tb_make_reg(f, TB_LOCAL, TB_TYPE_PTR);
+    // insert in the entry block
+    TB_Reg r = tb_function_insert_after(f, 0, tb_node_get_first_insertion_point(f, 0));
+    f->nodes[r].type = TB_LOCAL;
+    f->nodes[r].dt = TB_TYPE_PTR;
     f->nodes[r].local.alignment = alignment;
     f->nodes[r].local.size = size;
+
     return r;
 }
 

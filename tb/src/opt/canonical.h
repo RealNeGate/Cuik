@@ -1,31 +1,416 @@
+#define NL_MAP_IMPL
+#include "../hash_map.h"
 
-static void canonical_opt(TB_Function* f, TB_OptimizerCtx* restrict ctx, TB_Reg r) {
-    if (dce(f, ctx, r)) {
-        return;
+typedef struct {
+    NL_Map(TB_Reg, TB_Reg) def_table;
+} PassCtx;
+
+static void handle_pass(TB_Function* f, PassCtx* ctx, TB_Label bb, TB_Reg r) {
+    TB_Node* n = &f->nodes[r];
+
+    #define X(reg)                                         \
+    do {                                                   \
+        ptrdiff_t search = nl_map_get(ctx->def_table, reg);\
+        if (search >= 0) {                                 \
+            reg = (ctx->def_table)[search].v;              \
+        }                                                  \
+    } while (0)
+
+    switch (n->type) {
+        case TB_NULL:
+        case TB_INTEGER_CONST:
+        case TB_FLOAT32_CONST:
+        case TB_FLOAT64_CONST:
+        case TB_LOCAL:
+        case TB_PARAM:
+        case TB_GOTO:
+        case TB_LINE_INFO:
+        case TB_GET_SYMBOL_ADDRESS:
+        case TB_X86INTRIN_STMXCSR:
+        case TB_UNREACHABLE:
+        case TB_DEBUGBREAK:
+        case TB_TRAP:
+        case TB_POISON:
+        break;
+
+        case TB_KEEPALIVE:
+        case TB_VA_START:
+        case TB_NOT:
+        case TB_NEG:
+        case TB_X86INTRIN_SQRT:
+        case TB_X86INTRIN_RSQRT:
+        case TB_INT2PTR:
+        case TB_PTR2INT:
+        case TB_UINT2FLOAT:
+        case TB_FLOAT2UINT:
+        case TB_INT2FLOAT:
+        case TB_FLOAT2INT:
+        case TB_TRUNCATE:
+        case TB_X86INTRIN_LDMXCSR:
+        case TB_BITCAST:
+        X(n->unary.src);
+        break;
+
+        case TB_ATOMIC_LOAD:
+        case TB_ATOMIC_XCHG:
+        case TB_ATOMIC_ADD:
+        case TB_ATOMIC_SUB:
+        case TB_ATOMIC_AND:
+        case TB_ATOMIC_XOR:
+        case TB_ATOMIC_OR:
+        case TB_ATOMIC_CMPXCHG:
+        X(n->atomic.addr);
+        X(n->atomic.src);
+        break;
+
+        case TB_ATOMIC_CMPXCHG2:
+        X(n->atomic.src);
+        break;
+
+        case TB_MEMCPY:
+        case TB_MEMSET:
+        X(n->mem_op.dst);
+        X(n->mem_op.src);
+        X(n->mem_op.size);
+        break;
+
+        case TB_MEMBER_ACCESS:
+        X(n->member_access.base);
+        break;
+
+        case TB_ARRAY_ACCESS:
+        X(n->array_access.base);
+        X(n->array_access.index);
+        break;
+
+        case TB_PARAM_ADDR:
+        X(n->param_addr.param);
+        break;
+
+        case TB_PASS:
+        X(n->pass.value);
+        break;
+
+        case TB_PHI1:
+        X(n->phi1.inputs[0].val);
+        break;
+
+        case TB_PHI2:
+        FOREACH_N(it, 0, 2) {
+            X(n->phi2.inputs[it].val);
+        }
+        break;
+
+        case TB_PHIN:
+        FOREACH_N(it, 0, n->phi.count) {
+            X(n->phi.inputs[it].val);
+        }
+        break;
+
+        case TB_LOAD:
+        X(n->load.address);
+        break;
+
+        case TB_STORE:
+        X(n->store.address);
+        X(n->store.value);
+        break;
+
+        case TB_ZERO_EXT:
+        case TB_SIGN_EXT:
+        case TB_FLOAT_EXT:
+        X(n->unary.src);
+        break;
+
+        case TB_AND:
+        case TB_OR:
+        case TB_XOR:
+        case TB_ADD:
+        case TB_SUB:
+        case TB_MUL:
+        case TB_UDIV:
+        case TB_SDIV:
+        case TB_UMOD:
+        case TB_SMOD:
+        case TB_SAR:
+        case TB_SHL:
+        case TB_SHR:
+        X(n->i_arith.a);
+        X(n->i_arith.b);
+        break;
+
+        case TB_FADD:
+        case TB_FSUB:
+        case TB_FMUL:
+        case TB_FDIV:
+        X(n->f_arith.a);
+        X(n->f_arith.b);
+        break;
+
+        case TB_CMP_EQ:
+        case TB_CMP_NE:
+        case TB_CMP_SLT:
+        case TB_CMP_SLE:
+        case TB_CMP_ULT:
+        case TB_CMP_ULE:
+        case TB_CMP_FLT:
+        case TB_CMP_FLE:
+        X(n->cmp.a);
+        X(n->cmp.b);
+        break;
+
+        case TB_SCALL: {
+            X(n->scall.target);
+
+            FOREACH_N(it, n->scall.param_start, n->scall.param_end) {
+                X(f->vla.data[it]);
+            }
+            break;
+        }
+
+        case TB_VCALL: {
+            X(n->vcall.target);
+
+            FOREACH_N(it, n->vcall.param_start, n->vcall.param_end) {
+                X(f->vla.data[it]);
+            }
+            break;
+        }
+
+        case TB_CALL:
+        case TB_ICALL: {
+            FOREACH_N(it, n->call.param_start, n->call.param_end) {
+                X(f->vla.data[it]);
+            }
+            break;
+        }
+
+        case TB_SWITCH: X(n->switch_.key); break;
+        case TB_IF: X(n->if_.cond); break;
+        case TB_RET: X(n->ret.value); break;
+
+        default: tb_todo();
     }
+    #undef X
 
     if (f->nodes[r].type == TB_PASS) {
-        TB_Reg replace = f->nodes[r].pass.value;
+        OPTIMIZER_LOG(r, "Replacing PASS with r%d", f->nodes[r].pass.value);
 
-        for (Use* u = ctx->users[r]; u; u = u->next) {
-            tb_node_find_replace_reg(f, &f->nodes[u->r], r, replace);
-            MARK(u->r);
+        // if the node we're pointing to is also in the map then we look at it's parent
+        TB_Reg pointee = f->nodes[r].pass.value;
+        ptrdiff_t search;
+        while (search = nl_map_get(ctx->def_table, pointee), search >= 0) {
+            pointee = ctx->def_table[search].v;
         }
-        return;
-    }
 
-    if (f->nodes[r].type == TB_INTEGER_CONST) {
-        // any users of a constant are checked for constant folding
-        for (Use* u = ctx->users[r]; u; u = u->next) {
-            const_fold(f, ctx, u->r);
+        nl_map_put(ctx->def_table, r, pointee);
+
+        // if it matches find, then remove find from the basic block
+        if (f->bbs[bb].start == r) {
+            f->bbs[bb].start = f->nodes[f->bbs[bb].start].next;
         }
-        return;
+
+        if (f->bbs[bb].end == r) {
+            f->bbs[bb].end = tb_node_get_previous(f, f->bbs[bb].end);
+        }
+
+        f->nodes[r].type = TB_NULL;
     }
 }
 
+static bool simplify_cmp(TB_Function* f, TB_Node* n) {
+    TB_Reg r = n - f->nodes;
 
+    if (n->type >= TB_CMP_EQ && n->type <= TB_CMP_ULE) {
+        TB_Node* a = &f->nodes[n->cmp.a];
+        TB_Node* b = &f->nodes[n->cmp.b];
 
+        if (n->type == TB_CMP_EQ && tb_node_is_constant_zero(f, n->cmp.b) &&
+            a->type == TB_CMP_EQ && tb_node_is_constant_zero(f, a->cmp.b)) {
+            // (cmpeq (cmpeq a 0) 0) => (cmpeq a 0)
+            OPTIMIZER_LOG(r, "removed redundant comparisons");
 
+            n->type = TB_PASS;
+            n->pass.value = a->cmp.a;
+            return true;
+        } else if (n->type == TB_CMP_NE && tb_node_is_constant_zero(f, n->cmp.b) &&
+            a->type == TB_CMP_EQ && tb_node_is_constant_zero(f, a->cmp.b)) {
+            // (cmpeq (cmpeq a 0) 0) => (cmpne a 0)
+            OPTIMIZER_LOG(r, "removed redundant comparisons");
+
+            n->type = TB_PASS;
+            n->pass.value = a->cmp.a;
+            a->type = TB_CMP_NE;
+            return true;
+        } else {
+            // Sometimes we promote some types up when we don't need to
+            // (cmp (sxt/zxt A) (int B))
+            // VVV
+            // (cmp A (int B))
+            if (a->type == TB_SIGN_EXT && b->type == TB_SIGN_EXT) {
+                OPTIMIZER_LOG(r, "removed unnecessary sign extension");
+                TB_DataType dt = f->nodes[a->unary.src].dt;
+
+                n->cmp.dt = dt;
+                n->cmp.a = a->unary.src;
+                n->cmp.b = b->unary.src;
+                return true;
+            } else if (a->type == TB_ZERO_EXT && b->type == TB_ZERO_EXT) {
+                OPTIMIZER_LOG(r, "removed unnecessary zero extension");
+                TB_DataType dt = f->nodes[a->unary.src].dt;
+
+                n->cmp.dt = dt;
+                n->cmp.a = a->unary.src;
+                n->cmp.b = b->unary.src;
+                return true;
+            } else if (a->type == TB_SIGN_EXT && b->type == TB_INTEGER_CONST && TB_DATA_TYPE_EQUALS(f->nodes[a->unary.src].dt, b->dt)) {
+                OPTIMIZER_LOG(r, "removed unnecessary sign extension for compare against constants");
+
+                n->cmp.a = a->unary.src;
+                return true;
+            } else if (a->type == TB_ZERO_EXT && b->type == TB_INTEGER_CONST && TB_DATA_TYPE_EQUALS(f->nodes[a->unary.src].dt, b->dt)) {
+                OPTIMIZER_LOG(r, "removed unnecessary zero extension for compare against constants");
+
+                n->cmp.a = a->unary.src;
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+static bool simplify_pointers(TB_Function* f, TB_Node* n) {
+    TB_NodeTypeEnum type = n->type;
+    TB_Reg r = n - f->nodes;
+
+    if (type == TB_MEMBER_ACCESS) {
+        TB_Node* base = &f->nodes[n->member_access.base];
+
+        if (base->type == TB_MEMBER_ACCESS) {
+            uint32_t offset = n->member_access.offset;
+            offset += base->member_access.offset;
+
+            if (!TB_FITS_INTO(int32_t, offset)) {
+                OPTIMIZER_LOG(r, "FAILURE cannot fold into member access without overflow");
+            } else {
+                TB_Reg base_base = base->member_access.base;
+
+                n->member_access.base = base_base;
+                n->member_access.offset = offset;
+                return true;
+            }
+        } else {
+            int32_t offset = n->member_access.offset;
+
+            if (offset == 0) {
+                OPTIMIZER_LOG(r, "elided member access to first element");
+
+                n->type = TB_PASS;
+                n->pass.value = n->member_access.base;
+                return true;
+            }
+        }
+    } else if (type == TB_ARRAY_ACCESS) {
+        TB_Node* index = &f->nodes[n->array_access.index];
+
+        if (index->type == TB_INTEGER_CONST && index->integer.num_words == 1) {
+            uint64_t index_imm = index->integer.single_word;
+
+            uint64_t res = n->array_access.stride * index_imm;
+            if (!TB_FITS_INTO(int32_t, res)) {
+                OPTIMIZER_LOG(r, "FAILURE cannot fold into array access without overflow");
+            } else {
+                // success!
+                OPTIMIZER_LOG(r, "folded constant array access");
+                TB_Reg base_reg = n->array_access.base;
+
+                n->type = TB_MEMBER_ACCESS;
+                n->member_access.base = base_reg;
+                n->member_access.offset = res;
+                return true;
+            }
+        } else if (tb_node_is_constant_zero(f, n->array_access.index)) {
+            OPTIMIZER_LOG(r, "elided array access to first element");
+
+            n->type = TB_PASS;
+            n->pass.value = n->array_access.base;
+            return true;
+        } else if (index->type == TB_MUL) {
+            TB_Node* potential_constant = &f->nodes[index->i_arith.b];
+
+            if (potential_constant->type == TB_INTEGER_CONST && potential_constant->integer.num_words == 1) {
+                // don't worry it doesn't loop i just needed to have 'break' support
+                uint64_t factor = potential_constant->integer.single_word;
+                if (!TB_FITS_INTO(int32_t, factor)) {
+                    OPTIMIZER_LOG(r, "FAILURE multiply cannot fold into array access because too big");
+                    goto fail;
+                }
+
+                uint64_t res = n->array_access.stride * factor;
+                if (!TB_FITS_INTO(int32_t, res)) {
+                    OPTIMIZER_LOG(r, "FAILURE multiply cannot fold into array access without overflow");
+                    goto fail;
+                }
+
+                // success!
+                OPTIMIZER_LOG(r, "folded multiply into array access");
+                n->array_access.index = index->i_arith.a;
+                n->array_access.stride = res;
+                return true;
+
+                fail:;
+            }
+        } else if (index->type == TB_ADD) {
+            // (array A (add B O) C) => (member (array A B C) O*C)
+            TB_Node* potential_constant = &f->nodes[index->i_arith.b];
+
+            if (potential_constant->type == TB_INTEGER_CONST && potential_constant->integer.num_words == 1) {
+                TB_CharUnits c = n->array_access.stride;
+                uint64_t res = potential_constant->integer.single_word * c;
+
+                if (res < UINT32_MAX) {
+                    OPTIMIZER_LOG(r, "converted add into member access");
+                    TB_Label bb2 = tb_find_label_from_reg(f, n->array_access.index);
+                    TB_Reg new_array_reg = tb_function_insert_after(f, bb2, n->array_access.index);
+
+                    TB_Reg a = n->array_access.base;
+                    TB_Reg b = index->i_arith.a;
+
+                    n = &f->nodes[r];
+                    n->type = TB_MEMBER_ACCESS;
+                    n->dt = TB_TYPE_PTR;
+                    n->member_access.base = new_array_reg;
+                    n->member_access.offset = potential_constant->integer.single_word * c;
+
+                    TB_Node* new_array = &f->nodes[new_array_reg];
+                    new_array->type = TB_ARRAY_ACCESS;
+                    new_array->dt = TB_TYPE_PTR;
+                    new_array->array_access.base = a;
+                    new_array->array_access.index = b;
+                    new_array->array_access.stride = c;
+                    return true;
+                }
+            }
+        }
+    } else if (type == TB_INT2PTR) {
+        TB_Node* src = &f->nodes[n->unary.src];
+
+        if (src->type == TB_INTEGER_CONST && src->integer.num_words == 1) {
+            OPTIMIZER_LOG(r, "constant int2ptr removed.");
+
+            uint64_t imm = src->integer.single_word;
+
+            n->type = TB_INTEGER_CONST;
+            // preserve the int2ptr's pointer type
+            n->integer.num_words = 1;
+            n->integer.single_word = imm;
+            return true;
+        }
+    }
+
+    return false;
+}
 
 
 
@@ -83,325 +468,13 @@ static bool compact_regs(TB_Function* f) {
     return changes;
 }
 
-static bool remove_passes(TB_Function* f) {
-    int changes = 0;
-
-    if (f->node_count > 300) {
-        NL_Map(TB_Reg, TB_Reg) def_table = { 0 };
-
-        TB_FOR_BASIC_BLOCK(bb, f) {
-            TB_FOR_NODE(r, f, bb) {
-                TB_Node* n = &f->nodes[r];
-
-                #define X(reg)                                     \
-                do {                                               \
-                    ptrdiff_t search = nl_map_get(def_table, reg); \
-                    if (search >= 0) {                             \
-                        reg = def_table[search].v;                 \
-                    }                                              \
-                } while (0)
-
-                switch (n->type) {
-                    case TB_NULL:
-                    case TB_INTEGER_CONST:
-                    case TB_FLOAT32_CONST:
-                    case TB_FLOAT64_CONST:
-                    case TB_LOCAL:
-                    case TB_PARAM:
-                    case TB_GOTO:
-                    case TB_LINE_INFO:
-                    case TB_GET_SYMBOL_ADDRESS:
-                    case TB_X86INTRIN_STMXCSR:
-                    case TB_UNREACHABLE:
-                    case TB_DEBUGBREAK:
-                    case TB_TRAP:
-                    case TB_POISON:
-                    break;
-
-                    case TB_KEEPALIVE:
-                    case TB_VA_START:
-                    case TB_NOT:
-                    case TB_NEG:
-                    case TB_X86INTRIN_SQRT:
-                    case TB_X86INTRIN_RSQRT:
-                    case TB_INT2PTR:
-                    case TB_PTR2INT:
-                    case TB_UINT2FLOAT:
-                    case TB_FLOAT2UINT:
-                    case TB_INT2FLOAT:
-                    case TB_FLOAT2INT:
-                    case TB_TRUNCATE:
-                    case TB_X86INTRIN_LDMXCSR:
-                    case TB_BITCAST:
-                    X(n->unary.src);
-                    break;
-
-                    case TB_ATOMIC_LOAD:
-                    case TB_ATOMIC_XCHG:
-                    case TB_ATOMIC_ADD:
-                    case TB_ATOMIC_SUB:
-                    case TB_ATOMIC_AND:
-                    case TB_ATOMIC_XOR:
-                    case TB_ATOMIC_OR:
-                    case TB_ATOMIC_CMPXCHG:
-                    X(n->atomic.addr);
-                    X(n->atomic.src);
-                    break;
-
-                    case TB_ATOMIC_CMPXCHG2:
-                    X(n->atomic.src);
-                    break;
-
-                    case TB_MEMCPY:
-                    case TB_MEMSET:
-                    X(n->mem_op.dst);
-                    X(n->mem_op.src);
-                    X(n->mem_op.size);
-                    break;
-
-                    case TB_MEMBER_ACCESS:
-                    X(n->member_access.base);
-                    break;
-
-                    case TB_ARRAY_ACCESS:
-                    X(n->array_access.base);
-                    X(n->array_access.index);
-                    break;
-
-                    case TB_PARAM_ADDR:
-                    X(n->param_addr.param);
-                    break;
-
-                    case TB_PASS:
-                    X(n->pass.value);
-                    break;
-
-                    case TB_PHI1:
-                    X(n->phi1.inputs[0].val);
-                    break;
-
-                    case TB_PHI2:
-                    FOREACH_N(it, 0, 2) {
-                        X(n->phi2.inputs[it].val);
-                    }
-                    break;
-
-                    case TB_PHIN:
-                    FOREACH_N(it, 0, n->phi.count) {
-                        X(n->phi.inputs[it].val);
-                    }
-                    break;
-
-                    case TB_LOAD:
-                    X(n->load.address);
-                    break;
-
-                    case TB_STORE:
-                    X(n->store.address);
-                    X(n->store.value);
-                    break;
-
-                    case TB_ZERO_EXT:
-                    case TB_SIGN_EXT:
-                    case TB_FLOAT_EXT:
-                    X(n->unary.src);
-                    break;
-
-                    case TB_AND:
-                    case TB_OR:
-                    case TB_XOR:
-                    case TB_ADD:
-                    case TB_SUB:
-                    case TB_MUL:
-                    case TB_UDIV:
-                    case TB_SDIV:
-                    case TB_UMOD:
-                    case TB_SMOD:
-                    case TB_SAR:
-                    case TB_SHL:
-                    case TB_SHR:
-                    X(n->i_arith.a);
-                    X(n->i_arith.b);
-                    break;
-
-                    case TB_FADD:
-                    case TB_FSUB:
-                    case TB_FMUL:
-                    case TB_FDIV:
-                    X(n->f_arith.a);
-                    X(n->f_arith.b);
-                    break;
-
-                    case TB_CMP_EQ:
-                    case TB_CMP_NE:
-                    case TB_CMP_SLT:
-                    case TB_CMP_SLE:
-                    case TB_CMP_ULT:
-                    case TB_CMP_ULE:
-                    case TB_CMP_FLT:
-                    case TB_CMP_FLE:
-                    X(n->cmp.a);
-                    X(n->cmp.b);
-                    break;
-
-                    case TB_SCALL: {
-                        X(n->scall.target);
-
-                        FOREACH_N(it, n->scall.param_start, n->scall.param_end) {
-                            X(f->vla.data[it]);
-                        }
-                        break;
-                    }
-
-                    case TB_VCALL: {
-                        X(n->vcall.target);
-
-                        FOREACH_N(it, n->vcall.param_start, n->vcall.param_end) {
-                            X(f->vla.data[it]);
-                        }
-                        break;
-                    }
-
-                    case TB_CALL:
-                    case TB_ICALL: {
-                        FOREACH_N(it, n->call.param_start, n->call.param_end) {
-                            X(f->vla.data[it]);
-                        }
-                        break;
-                    }
-
-                    case TB_SWITCH: X(n->switch_.key); break;
-                    case TB_IF: X(n->if_.cond); break;
-                    case TB_RET: X(n->ret.value); break;
-
-                    default: tb_todo();
-                }
-                #undef X
-
-                if (f->nodes[r].type == TB_PASS) {
-                    OPTIMIZER_LOG(r, "Replacing PASS with r%d", f->nodes[r].pass.value);
-
-                    // if the node we're pointing to is also in the map then we look at it's parent
-                    TB_Reg pointee = f->nodes[r].pass.value;
-                    ptrdiff_t search;
-                    while (search = nl_map_get(def_table, pointee), search >= 0) {
-                        pointee = def_table[search].v;
-                    }
-
-                    nl_map_put(def_table, r, pointee);
-
-                    // if it matches find, then remove find from the basic block
-                    if (f->bbs[bb].start == r) {
-                        f->bbs[bb].start = f->nodes[f->bbs[bb].start].next;
-                    }
-
-                    if (f->bbs[bb].end == r) {
-                        f->bbs[bb].end = tb_node_get_previous(f, f->bbs[bb].end);
-                    }
-
-                    f->nodes[r].type = TB_NULL;
-                    changes++;
-                }
-            }
-        }
-
-        nl_map_free(def_table);
-    } else {
-        TB_FOR_BASIC_BLOCK(bb, f) {
-            TB_FOR_NODE(r, f, bb) {
-                if (f->nodes[r].type == TB_PASS) {
-                    OPTIMIZER_LOG(r, "Replacing PASS with r%d", f->nodes[r].pass.value);
-
-                    tb_function_find_replace_reg(f, r, f->nodes[r].pass.value);
-                    tb_murder_reg(f, r);
-                    changes++;
-                }
-            }
-        }
-    }
-
-    return changes;
-}
-
 static bool inst_combine(TB_Function* f) {
     int changes = 0;
     TB_FOR_BASIC_BLOCK(bb, f) {
         TB_FOR_NODE(r, f, bb) {
             TB_Node* n = &f->nodes[r];
 
-            if (n->type >= TB_CMP_EQ && n->type <= TB_CMP_ULE) {
-                TB_Node* a = &f->nodes[n->cmp.a];
-                TB_Node* b = &f->nodes[n->cmp.b];
 
-                if (n->type == TB_CMP_EQ && tb_node_is_constant_zero(f, n->cmp.b) &&
-                    a->type == TB_CMP_EQ && tb_node_is_constant_zero(f, a->cmp.b)) {
-                    // (cmpeq (cmpeq a 0) 0) => (cmpeq a 0)
-                    OPTIMIZER_LOG(r, "removed redundant comparisons");
-
-                    n->type = TB_PASS;
-                    n->pass.value = a->cmp.a;
-                } else if (n->type == TB_CMP_NE && tb_node_is_constant_zero(f, n->cmp.b) &&
-                    a->type == TB_CMP_EQ && tb_node_is_constant_zero(f, a->cmp.b)) {
-                    // (cmpeq (cmpeq a 0) 0) => (cmpne a 0)
-                    OPTIMIZER_LOG(r, "removed redundant comparisons");
-
-                    n->type = TB_PASS;
-                    n->pass.value = a->cmp.a;
-                    a->type = TB_CMP_NE;
-                } else {
-                    // Sometimes we promote some types up when we don't need to
-                    // (cmp (sxt/zxt A) (int B))
-                    // VVV
-                    // (cmp A (int B))
-                    if (a->type == TB_SIGN_EXT && b->type == TB_SIGN_EXT) {
-                        OPTIMIZER_LOG(r, "removed unnecessary sign extension");
-                        TB_DataType dt = f->nodes[a->unary.src].dt;
-
-                        n->cmp.dt = dt;
-                        n->cmp.a = a->unary.src;
-                        n->cmp.b = b->unary.src;
-                        changes++;
-                    } else if (a->type == TB_ZERO_EXT && b->type == TB_ZERO_EXT) {
-                        OPTIMIZER_LOG(r, "removed unnecessary zero extension");
-                        TB_DataType dt = f->nodes[a->unary.src].dt;
-
-                        n->cmp.dt = dt;
-                        n->cmp.a = a->unary.src;
-                        n->cmp.b = b->unary.src;
-                        changes++;
-                    } else if (a->type == TB_SIGN_EXT && b->type == TB_INTEGER_CONST && TB_DATA_TYPE_EQUALS(f->nodes[a->unary.src].dt, b->dt)) {
-                        OPTIMIZER_LOG(r, "removed unnecessary sign extension for compare against constants");
-
-                        n->cmp.a = a->unary.src;
-                        changes++;
-                    } else if (a->type == TB_ZERO_EXT && b->type == TB_INTEGER_CONST && TB_DATA_TYPE_EQUALS(f->nodes[a->unary.src].dt, b->dt)) {
-                        OPTIMIZER_LOG(r, "removed unnecessary zero extension for compare against constants");
-
-                        n->cmp.a = a->unary.src;
-                        changes++;
-                    }
-                }
-            }
-
-            // check if all paths are identical
-            if (tb_node_is_phi_node(f, r)) {
-                int count = tb_node_get_phi_width(f, r);
-                TB_PhiInput* inputs = tb_node_get_phi_inputs(f, r);
-
-                bool success = true;
-                FOREACH_N(i, 1, count) {
-                    if (inputs[i].val != inputs[0].val) {
-                        success = false;
-                        break;
-                    }
-                }
-
-                if (success) {
-                    n->type = TB_PASS;
-                    n->unary.src = inputs[0].val;
-                    changes++;
-                }
-            }
 
             if (phi_motion(f, n)) {
                 n = &f->nodes[r];
@@ -419,136 +492,7 @@ static bool inst_combine(TB_Function* f) {
             }
 
             TB_NodeTypeEnum type = n->type;
-            if (n->type == TB_PASS) {
-                OPTIMIZER_LOG(r, "Replacing PASS with r%d", n->unary.src);
-                tb_function_find_replace_reg(f, r, n->unary.src);
-
-                n->type = TB_NULL;
-                changes++;
-            } else if (type == TB_MEMBER_ACCESS) {
-                TB_Node* base = &f->nodes[n->member_access.base];
-
-                if (base->type == TB_MEMBER_ACCESS) {
-                    uint32_t offset = n->member_access.offset;
-                    offset += base->member_access.offset;
-
-                    if (!TB_FITS_INTO(int32_t, offset)) {
-                        OPTIMIZER_LOG(r, "FAILURE cannot fold into member access without overflow");
-                    } else {
-                        TB_Reg base_base = base->member_access.base;
-
-                        n->member_access.base = base_base;
-                        n->member_access.offset = offset;
-                        changes++;
-                    }
-                } else {
-                    int32_t offset = n->member_access.offset;
-
-                    if (offset == 0) {
-                        OPTIMIZER_LOG(r, "elided member access to first element");
-
-                        n->type = TB_PASS;
-                        n->pass.value = n->member_access.base;
-                        changes++;
-                    }
-                }
-            } else if (type == TB_ARRAY_ACCESS) {
-                TB_Node* index = &f->nodes[n->array_access.index];
-
-                if (index->type == TB_INTEGER_CONST && index->integer.num_words == 1) {
-                    uint64_t index_imm = index->integer.single_word;
-
-                    uint64_t res = n->array_access.stride * index_imm;
-                    if (!TB_FITS_INTO(int32_t, res)) {
-                        OPTIMIZER_LOG(r, "FAILURE cannot fold into array access without overflow");
-                    } else {
-                        // success!
-                        OPTIMIZER_LOG(r, "folded constant array access");
-                        TB_Reg base_reg = n->array_access.base;
-
-                        n->type = TB_MEMBER_ACCESS;
-                        n->member_access.base = base_reg;
-                        n->member_access.offset = res;
-                        changes++;
-                    }
-                } else if (tb_node_is_constant_zero(f, n->array_access.index)) {
-                    OPTIMIZER_LOG(r, "elided array access to first element");
-
-                    n->type = TB_PASS;
-                    n->pass.value = n->array_access.base;
-                    changes++;
-                } else if (index->type == TB_MUL) {
-                    TB_Node* potential_constant = &f->nodes[index->i_arith.b];
-
-                    if (potential_constant->type == TB_INTEGER_CONST && potential_constant->integer.num_words == 1) {
-                        // don't worry it doesn't loop i just needed to have 'break' support
-                        do {
-                            uint64_t factor = potential_constant->integer.single_word;
-                            if (!TB_FITS_INTO(int32_t, factor)) {
-                                OPTIMIZER_LOG(r, "FAILURE multiply cannot fold into array access because too big");
-                                break;
-                            }
-
-                            uint64_t res = n->array_access.stride * factor;
-                            if (!TB_FITS_INTO(int32_t, res)) {
-                                OPTIMIZER_LOG(r, "FAILURE multiply cannot fold into array access without overflow");
-                                break;
-                            }
-
-                            // success!
-                            OPTIMIZER_LOG(r, "folded multiply into array access");
-                            n->array_access.index = index->i_arith.a;
-                            n->array_access.stride = res;
-                            changes++;
-                        } while (0);
-                    }
-                } else if (index->type == TB_ADD) {
-                    // (array A (add B O) C) => (member (array A B C) O*C)
-                    TB_Node* potential_constant = &f->nodes[index->i_arith.b];
-
-                    if (potential_constant->type == TB_INTEGER_CONST && potential_constant->integer.num_words == 1) {
-                        TB_CharUnits c = n->array_access.stride;
-                        uint64_t res = potential_constant->integer.single_word * c;
-
-                        if (res < UINT32_MAX) {
-                            OPTIMIZER_LOG(r, "converted add into member access");
-                            TB_Label bb2 = tb_find_label_from_reg(f, n->array_access.index);
-                            TB_Reg new_array_reg = tb_function_insert_after(f, bb2, n->array_access.index);
-
-                            TB_Reg a = n->array_access.base;
-                            TB_Reg b = index->i_arith.a;
-
-                            n = &f->nodes[r];
-                            n->type = TB_MEMBER_ACCESS;
-                            n->dt = TB_TYPE_PTR;
-                            n->member_access.base = new_array_reg;
-                            n->member_access.offset = potential_constant->integer.single_word * c;
-
-                            TB_Node* new_array = &f->nodes[new_array_reg];
-                            new_array->type = TB_ARRAY_ACCESS;
-                            new_array->dt = TB_TYPE_PTR;
-                            new_array->array_access.base = a;
-                            new_array->array_access.index = b;
-                            new_array->array_access.stride = c;
-                            changes++;
-                        }
-                    }
-                }
-            } else if (type == TB_INT2PTR) {
-                TB_Node* src = &f->nodes[n->unary.src];
-
-                if (src->type == TB_INTEGER_CONST && src->integer.num_words == 1) {
-                    OPTIMIZER_LOG(r, "constant int2ptr removed.");
-
-                    uint64_t imm = src->integer.single_word;
-
-                    n->type = TB_INTEGER_CONST;
-                    // preserve the int2ptr's pointer type
-                    n->integer.num_words = 1;
-                    n->integer.single_word = imm;
-                    changes++;
-                }
-            } else if (type == TB_IF) {
+            else if (type == TB_IF) {
                 TB_Node* cond = &f->nodes[n->if_.cond];
 
                 if (cond->type == TB_GET_SYMBOL_ADDRESS) {

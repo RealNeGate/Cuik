@@ -1,103 +1,104 @@
 #include "../tb_internal.h"
 #include <stdarg.h>
 
-typedef struct Use Use;
-struct Use {
-    Use* next;
-    TB_Reg r;
-};
-
-typedef struct TB_OptimizerCtx {
-    // we have to mark any instructions which are
-    // changed per pass.
-    bool is_changed_ir_on_heap;
-    size_t changed_ir_cap;
-    size_t changed_ir_count;
-    TB_Reg* changed_ir;
-
-    // users[reg] is an unordered list
-    Use** users;
-} TB_OptimizerCtx;
-
 typedef struct TB_Pass {
     // it's either a module-level pass or function-level
     bool is_module;
     const char* name;
 
     union {
-        bool(*func_run)(TB_Function* f, TB_OptimizerCtx* ctx, TB_TemporaryStorage* tls);
+        bool(*func_run)(TB_Function* f, TB_TemporaryStorage* tls);
         bool(*mod_run)(TB_Module* m);
     };
 } TB_Pass;
-
-// optimizer specific macros
-#include "opt_words.h"
 
 // unity build with all the passes
 #include "dce.h"
 #include "fold.h"
 #include "canonical.h"
-#include "hoist_locals.h"
+#include "merge_ret.h"
+#include "mem2reg.h"
 
-static Use** generate_use_list(TB_Function* f, TB_TemporaryStorage* tls) {
-    Use** users = tb_tls_push(tls, f->node_count * sizeof(Use*));
+static void dce_mark(TB_Function* f, Set* live, TB_Reg r) {
+    set_put(live, r);
 
+    TB_FOR_INPUT_IN_REG(it, f, r) {
+        if (!set_get(live, it.r)) dce_mark(f, live, it.r);
+    }
+}
+
+static void dce(TB_Function* f) {
+    // mark roots
+    Set live = set_create(f->node_count);
     TB_FOR_BASIC_BLOCK(bb, f) {
         TB_FOR_NODE(r, f, bb) {
-            TB_Node* n = &f->nodes[r];
+            if (!is_expr_like(f, r)) dce_mark(f, &live, r);
+        }
+    }
 
-            TB_FOR_INPUT_IN_NODE(it, f, n) {
-                Use* new_edge = tb_tls_push(tls, sizeof(Use));
-                new_edge->next = users[it.r];
-                new_edge->r = r;
-                users[it.r] = new_edge;
+    // sweep
+    FOREACH_N(r, 0, f->node_count) {
+        if (set_get(&live, r)) continue;
+
+        f->nodes[r].type = TB_NULL;
+    }
+    set_free(&live);
+}
+
+static void canonicalize(TB_Function* f) {
+    TB_FOR_BASIC_BLOCK(bb, f) {
+        TB_FOR_NODE(r, f, bb) {
+            const_fold(f, &f->nodes[r]);
+            simplify_cmp(f, &f->nodes[r]);
+            reassoc(f, &f->nodes[r]);
+            simplify_pointers(f, &f->nodes[r]);
+
+            // check if all paths are identical
+            if (tb_node_is_phi_node(f, r)) {
+                int count = tb_node_get_phi_width(f, r);
+                TB_PhiInput* inputs = tb_node_get_phi_inputs(f, r);
+
+                bool success = true;
+                FOREACH_N(i, 1, count) {
+                    if (inputs[i].val != inputs[0].val) {
+                        success = false;
+                        break;
+                    }
+                }
+
+                if (success) {
+                    f->nodes[r].type = TB_PASS;
+                    f->nodes[r].unary.src = inputs[0].val;
+                }
             }
         }
     }
 
-    return users;
-}
-
-static bool canonicalize(TB_Function* f, TB_OptimizerCtx* restrict ctx) {
-    // fold, ld/st ops
-    //     only try canonicalization on changed instructions.
-    bool changes = ctx->changed_ir_count;
-    while (ctx->changed_ir_count > 0) {
-        TB_Reg r = ctx->changed_ir[--ctx->changed_ir_count];
-        canonical_opt(f, ctx, r);
+    PassCtx ctx = { 0 };
+    TB_FOR_BASIC_BLOCK(bb, f) {
+        TB_FOR_NODE(r, f, bb) {
+            handle_pass(f, &ctx, bb, r);
+        }
     }
-    return changes;
+    nl_map_free(ctx.def_table);
+
+    // kill any unused regs
+    dce(f);
 }
 
 static void schedule_function_level_opts(TB_Module* m, TB_Function* f, size_t pass_count, const TB_Pass* passes[]) {
     TB_TemporaryStorage* tls = tb_tls_allocate();
-    // __debugbreak();
-
-    size_t c = f->node_count < 100 ? 100 : f->node_count;
-    TB_OptimizerCtx ctx = {
-        .changed_ir_cap = c,
-        .changed_ir = tb_tls_push(tls, c * sizeof(TB_Reg))
-    };
-
-    // generate user-list (we only do this once, we incrementally rebuild it while doing passes)
-    ctx.users = generate_use_list(f, tls);
-
-    // canonicalize all instructions first
-    TB_FOR_BASIC_BLOCK(bb, f) {
-        TB_FOR_NODE(r, f, bb) {
-            canonical_opt(f, &ctx, r);
-        }
-    }
 
     // run passes
     FOREACH_N(i, 0, pass_count) {
-        canonicalize(f, &ctx);
+        canonicalize(f);
 
-        passes[i]->func_run(f, &ctx, tls);
+        passes[i]->func_run(f, tls);
+        tb_function_print(f, tb_default_print_callback, stdout, false);
     }
 
-    // final simplication, just in case
-    canonicalize(f, &ctx);
+    // just in case
+    canonicalize(f);
 }
 
 TB_API void tb_module_optimize(TB_Module* m, size_t pass_count, const TB_Pass* passes[]) {

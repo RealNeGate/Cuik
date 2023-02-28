@@ -1,6 +1,5 @@
-#include "../tb_internal.h"
 
-static bool merge_rets(TB_Function* f) {
+static bool merge_rets(TB_Function* f, TB_TemporaryStorage* tls) {
     int count = 0;
     TB_PhiInput* inputs = NULL;
 
@@ -53,7 +52,6 @@ static bool merge_rets(TB_Function* f) {
             .dt = dt,
             .ret = (struct TB_NodeReturn){ reg_base },
         };
-
         return true;
     } else {
         if (inputs != NULL) {
@@ -69,10 +67,7 @@ static bool merge_rets(TB_Function* f) {
     }
 }
 
-TB_API TB_Pass tb_opt_merge_rets(void) {
-    return (TB_Pass){
-        .mode = TB_FUNCTION_PASS,
-        .name = "MergeReturns",
-        .func_run = merge_rets,
-    };
-}
+const TB_Pass tb_opt_merge_rets = {
+    .name = "MergeReturns",
+    .func_run = merge_rets,
+};

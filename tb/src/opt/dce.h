@@ -1,6 +1,7 @@
 static bool is_expr_like(TB_Function* f, TB_Reg r) {
     TB_Node* n = &f->nodes[r];
     switch (n->type) {
+        case TB_NULL:
         case TB_GET_SYMBOL_ADDRESS:
         case TB_INTEGER_CONST:
         case TB_ARRAY_ACCESS:
@@ -54,12 +55,4 @@ static bool is_expr_like(TB_Function* f, TB_Reg r) {
         default:
         return false;
     }
-}
-
-static bool dce(TB_Function* f, TB_OptimizerCtx* restrict ctx, TB_Reg r) {
-    if (ctx->users[r] == NULL && is_expr_like(f, r)) {
-        tb_kill_op(f, r);
-        return true;
-    }
-    return false;
 }

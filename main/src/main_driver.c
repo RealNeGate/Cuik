@@ -131,6 +131,7 @@ int main(int argc, const char** argv) {
     spall_auto_quit();
     #endif
 
+    __debugbreak();
     // stb_leakcheck_dumpmem();
     return status;
 }
