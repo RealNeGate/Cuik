@@ -1,7 +1,5 @@
-#include "../tb_internal.h"
-
 // We just move them up because it's slightly easier to think about them
-static bool hoist_locals(TB_Function* f) {
+static bool hoist_locals(TB_Function* f, TB_OptimizerCtx* ctx, TB_TemporaryStorage* tls) {
     size_t locals_to_move = 0;
 
     for (TB_Label bb = 1; bb < f->bb_count; bb++) {
@@ -62,10 +60,7 @@ static bool hoist_locals(TB_Function* f) {
     return true;
 }
 
-TB_API TB_Pass tb_opt_hoist_locals(void) {
-    return (TB_Pass){
-        .mode = TB_FUNCTION_PASS,
-        .name = "HoistLocals",
-        .func_run = hoist_locals,
-    };
-}
+const TB_Pass tb_opt_hoist_locals = {
+    .name = "HoistLocals",
+    .func_run = hoist_locals,
+};

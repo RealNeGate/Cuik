@@ -1,3 +1,47 @@
+
+static void canonical_opt(TB_Function* f, TB_OptimizerCtx* restrict ctx, TB_Reg r) {
+    if (dce(f, ctx, r)) {
+        return;
+    }
+
+    if (f->nodes[r].type == TB_PASS) {
+        TB_Reg replace = f->nodes[r].pass.value;
+
+        for (Use* u = ctx->users[r]; u; u = u->next) {
+            tb_node_find_replace_reg(f, &f->nodes[u->r], r, replace);
+            MARK(u->r);
+        }
+        return;
+    }
+
+    if (f->nodes[r].type == TB_INTEGER_CONST) {
+        // any users of a constant are checked for constant folding
+        for (Use* u = ctx->users[r]; u; u = u->next) {
+            const_fold(f, ctx, u->r);
+        }
+        return;
+    }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#if 0
 #include "../tb_internal.h"
 #include "cse.h"
 #include "fold.h"
@@ -550,35 +594,4 @@ static bool inst_combine(TB_Function* f) {
 
     return (changes > 0);
 }
-
-TB_API TB_Pass tb_opt_remove_pass_nodes(void) {
-    return (TB_Pass){
-        .mode = TB_FUNCTION_PASS,
-        .name = "RemovePassNodes",
-        .func_run = remove_passes,
-    };
-}
-
-TB_API TB_Pass tb_opt_subexpr_elim(void) {
-    return (TB_Pass){
-        .mode = TB_FUNCTION_PASS,
-        .name = "CommonSubexprElim",
-        .func_run = cse,
-    };
-}
-
-TB_API TB_Pass tb_opt_instcombine(void) {
-    return (TB_Pass){
-        .mode = TB_FUNCTION_PASS,
-        .name = "InstCombine",
-        .func_run = inst_combine,
-    };
-}
-
-TB_API TB_Pass tb_opt_compact_dead_regs(void) {
-    return (TB_Pass){
-        .mode = TB_FUNCTION_PASS,
-        .name = "CompactDeadRegs",
-        .func_run = compact_regs,
-    };
-}
+#endif

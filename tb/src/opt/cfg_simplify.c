@@ -58,7 +58,6 @@ static bool cfg_simplify(TB_Function* f) {
 
 TB_API TB_Pass tb_opt_cfg_simplify(void) {
     return (TB_Pass){
-        .mode = TB_FUNCTION_PASS,
         .name = "SimplifyCFG",
         .func_run = cfg_simplify,
     };

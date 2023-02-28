@@ -25,7 +25,7 @@ source_patterns = [
 	"src/system/*.c",
 	"src/debug/*.c",
 	"src/debug/cv/*.c",
-	"src/opt/*.c"
+	"src/opt/optimizer.c"
 ]
 
 for i in args.targets:

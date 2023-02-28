@@ -219,15 +219,6 @@ static void irgen_job(void* arg) {
     IRGenTask task = *((IRGenTask*) arg);
     TB_Module* mod = task.mod;
 
-    // simple function level passes
-    TB_Pass passes[] = {
-        tb_opt_instcombine(),
-        tb_opt_remove_pass_nodes(),
-        tb_opt_dead_expr_elim(),
-        tb_opt_compact_dead_regs()
-    };
-    enum { PASS_COUNT = sizeof(passes) / sizeof(passes[0]) };
-
     CUIK_TIMED_BLOCK("IRGen") {
         size_t i = 0;
         while (i < task.count) {
@@ -664,14 +655,7 @@ CompilationUnit* cuik_driver_compile(Cuik_IThreadpool* restrict thread_pool, Cui
         if (args->opt_level >= 1) {
             // TODO: we probably want to do the fancy threading soon
             CUIK_TIMED_BLOCK("Optimizer") {
-                size_t pass_count = COUNTOF(passes_O1);
-                TB_Pass* passes = cuik_malloc(pass_count * sizeof(TB_Pass));
-                for (size_t i = 0; i < pass_count; i++) {
-                    passes[i] = passes_O1[i]();
-                }
-
-                tb_module_optimize(mod, pass_count, passes);
-                cuik_free(passes);
+                tb_module_optimize(mod, COUNTOF(passes_O1), passes_O1);
             }
         }
 

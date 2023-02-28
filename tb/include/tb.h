@@ -414,7 +414,7 @@ extern "C" {
         TB_Attrib*  first_attrib;
 
         union {
-            TB_Reg raw_regs[4];
+            TB_Reg inputs[4];
 
             struct TB_NodeInt {
                 size_t num_words;
@@ -1211,37 +1211,10 @@ extern "C" {
     ////////////////////////////////
     // Optimizer
     ////////////////////////////////
-    typedef struct TB_Pass {
-        // the pass modes tell us what things the pass can modify
-        // and what it's being scheduled to run on
-        enum TB_PassMode {
-            // basic blocks
-            TB_BASIC_BLOCK_PASS,
-
-            // loops' basic blocks
-            TB_LOOP_PASS,
-
-            // this is where a majority of optimizations live
-            // applied to all functions in a module but any execution
-            // shall not affect functions outside of the one it's applied on
-            TB_FUNCTION_PASS,
-
-            // unstructured and applied to the entire module
-            // can modify the entire module data
-            TB_MODULE_PASS,
-        } mode;
-        const char* name;
-
-        union {
-            bool(*bb_run)(TB_Function* f, TB_Reg bb);
-            bool(*loop_run)(TB_Function* f, const TB_Loop* l);
-            bool(*func_run)(TB_Function* f);
-            bool(*mod_run)(TB_Module* m);
-        };
-    } TB_Pass;
+    typedef struct TB_Pass TB_Pass;
 
     // Applies optimizations to the entire module
-    TB_API bool tb_module_optimize(TB_Module* m, size_t pass_count, const TB_Pass passes[]);
+    TB_API void tb_module_optimize(TB_Module* m, size_t pass_count, const TB_Pass* passes[]);
 
     // analysis
     TB_API TB_Predeccesors tb_get_predeccesors(TB_Function* f);
@@ -1276,23 +1249,9 @@ extern "C" {
     ////////////////////////////////
     // Transformation pass library
     ////////////////////////////////
-    typedef TB_Pass(*TB_OptFn)(void);
-
-    // function level
-    TB_API TB_Pass tb_opt_hoist_locals(void);
-    TB_API TB_Pass tb_opt_merge_rets(void);
-    TB_API TB_Pass tb_opt_instcombine(void);
-    TB_API TB_Pass tb_opt_subexpr_elim(void);
-    TB_API TB_Pass tb_opt_remove_pass_nodes(void);
-    TB_API TB_Pass tb_opt_cfg_simplify(void);
-    TB_API TB_Pass tb_opt_mem2reg(void);
-    TB_API TB_Pass tb_opt_compact_dead_regs(void);
-    TB_API TB_Pass tb_opt_dead_block_elim(void);
-    TB_API TB_Pass tb_opt_dead_expr_elim(void);
-    TB_API TB_Pass tb_opt_load_store_elim(void);
-
-    // module level
-    // TB_API TB_Pass tb_opt_inline(void);
+    TB_API const TB_Pass tb_opt_hoist_locals;
+    TB_API const TB_Pass tb_opt_merge_rets;
+    TB_API const TB_Pass tb_opt_mem2reg;
 
     ////////////////////////////////
     // IR access

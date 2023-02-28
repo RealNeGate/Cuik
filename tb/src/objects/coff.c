@@ -81,11 +81,11 @@ TB_API TB_Exports tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
     int section_count = dyn_array_length(sections) + (dbg ? dbg->number_of_debug_sections(m) : 0);
 
     // .pdata and .xdata
-    bool has_unwind_info = false;
+    /*bool has_unwind_info = false;
     if (section_count > 0 && sections[0] == &m->text) {
         section_count += 2;
         has_unwind_info = true;
-    }
+    }*/
 
     // mark each with a unique id
     size_t function_sym_start = (section_count * 2);
