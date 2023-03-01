@@ -5,7 +5,7 @@ import subprocess
 import argparse
 
 parser = argparse.ArgumentParser(description='Compiles TB')
-parser.add_argument('targets', metavar='N', type=str, nargs='+', help='decide which targets to compile with')
+parser.add_argument('targets', metavar='N', type=str, nargs='*', help='decide which targets to compile with')
 parser.add_argument('-cc', help='choose which compiler to use')
 parser.add_argument('-mimalloc', action='store_true', help='use mimalloc')
 parser.add_argument('-opt', action='store_true', help='runs optimize on compiled source')

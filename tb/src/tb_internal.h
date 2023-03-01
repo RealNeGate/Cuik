@@ -36,6 +36,7 @@
 #include "tb_platform.h"
 #include "bigint/BigInt.h"
 #include "dyn_array.h"
+#include "hash_map.h"
 #include "set.h"
 #include "builtins.h"
 #include "pool.h"
@@ -95,16 +96,10 @@ struct { size_t cap, count; T* elems; }
 #define TB_DATA_TYPE_EQUALS(a, b) ((a).raw == (b).raw)
 #define TB_DT_EQUALS(a, b) ((a).raw == (b).raw)
 
-#ifdef TB_FOR_BASIC_BLOCK
 #undef TB_FOR_BASIC_BLOCK
-
-// simple optimization of it within the TB code
-// since we have access to the structures
 #define TB_FOR_BASIC_BLOCK(it, f) for (TB_Label it = 0; it < f->bb_count; it++)
-#endif
 
-#define TB_FOR_NODE(it, f, bb) for (TB_Reg it = f->bbs[bb].start; it != 0; it = f->nodes[it].next)
-#define TB_FOR_NODE_AFTER(it, f, first) for (TB_Reg it = f->nodes[reg].start; it != 0; it = f->nodes[it].next)
+#define TB_FOR_NODE(it, f, bb) for (TB_Node* it = f->bbs[bb].start; it != 0; it = it->next)
 
 #define TB_FOR_SYMBOL_WITH_TAG(it, m, tag) for (TB_Symbol* it = m->first_symbol_of_tag[tag]; it != NULL; it = it->next)
 
@@ -303,6 +298,19 @@ typedef struct TB_FunctionOutput {
     DynArray(TB_StackSlot) stack_slots;
 } TB_FunctionOutput;
 
+// usually 1024 byte regions
+typedef struct TB_NodePage TB_NodePage;
+
+enum {
+    TB_NODE_PAGE_GENERAL_CAP = 1024 - (sizeof(TB_NodePage*) + sizeof(size_t[2])),
+};
+
+struct TB_NodePage {
+    TB_NodePage* next;
+    size_t used, cap;
+    char data[];
+};
+
 struct TB_Function {
     TB_Symbol super;
 
@@ -310,34 +318,18 @@ struct TB_Function {
     TB_Linkage linkage;
 
     // Parameter acceleration structure
-    TB_Reg* params;
+    TB_Node** params;
 
     // Basic block array (also makes up the CFG as an implicit graph)
     size_t bb_capacity, bb_count;
     TB_BasicBlock* bbs;
 
-    // Nodes array
-    TB_Reg node_capacity, node_count;
-    TB_Node* nodes;
+    // Nodes allocator (micro block alloc)
+    TB_NodePage *head, *tail;
 
     // Used by the IR building
     TB_Reg last_reg;
     TB_Reg current_label;
-
-    // Used by nodes which have variable
-    // length arguments like PHI and CALL.
-    // SWITCH has arguments here too but they
-    // are two slots each
-    struct {
-        size_t capacity;
-        size_t count;
-        TB_Reg* data;
-    } vla;
-
-    // Attribute pool
-    size_t attrib_pool_capacity;
-    size_t attrib_pool_count;
-    TB_Attrib* attrib_pool;
 
     // Part of the debug info
     size_t line_count;
@@ -629,27 +621,8 @@ uint32_t tb_get4b(TB_Emitter* o, uint32_t pos);
 ////////////////////////////////
 // IR ANALYSIS
 ////////////////////////////////
-TB_Label tb_find_label_from_reg(TB_Function* f, TB_Reg target);
-TB_Reg tb_find_first_use(const TB_Function* f, TB_Reg find, size_t start, size_t end);
-void tb_function_find_replace_reg(TB_Function* f, TB_Reg find, TB_Reg replace);
-void tb_node_find_replace_reg(TB_Function* f, TB_Node* n, TB_Reg find, TB_Reg replace);
-size_t tb_count_uses(const TB_Function* f, TB_Reg find, size_t start, size_t end);
-void tb_function_reserve_nodes(TB_Function* f, size_t extra);
-TB_Reg tb_insert_copy_ops(TB_Function* f, const TB_Reg* params, TB_Reg at, const TB_Function* src_func, TB_Reg src_base, int count);
-TB_Reg tb_function_insert_before(TB_Function* f, TB_Reg at);
-TB_Reg tb_function_insert_after(TB_Function* f, TB_Label bb, TB_Reg at);
-
-inline static void tb_murder_node(TB_Function* f, TB_Node* n) {
-    n->type = TB_NULL;
-}
-
-inline static void tb_murder_reg(TB_Function* f, TB_Reg r) {
-    f->nodes[r].type = TB_NULL;
-}
-
-inline static void tb_kill_op(TB_Function* f, TB_Reg at) {
-    f->nodes[at].type = TB_NULL;
-}
+TB_Label tb_find_label_from_reg(TB_Function* f, TB_Node* target);
+void tb_function_find_replace_reg(TB_Function* f, TB_Node* find, TB_Node* replace);
 
 inline static uint64_t align_up(uint64_t a, uint64_t b) {
     return a + (b - (a % b)) % b;
@@ -709,6 +682,13 @@ void cuikperf_region_end(void);
 #define CUIK_TIMED_BLOCK_ARGS(label, extra) for (uint64_t __i = (cuikperf_region_start(cuik_time_in_nanos(), label, extra), 0); __i < 1; __i++, cuikperf_region_end())
 #endif
 
+TB_Node* tb_alloc_node(TB_Function* f, int type, TB_DataType dt, int input_count, size_t extra);
+TB_Node* tb_alloc_at_end(TB_Function* f, int type, TB_DataType dt, int input_count, size_t extra);
+void tb_insert_node(TB_Function* f, TB_Label bb, TB_Node* a, TB_Node* b);
+
+void tb_transmute_to_pass(TB_Node* n, TB_Node* point_to);
+uint64_t* tb_transmute_to_int(TB_Function* f, TB_Label bb, TB_Node* n, int num_words);
+
 ////////////////////////////////
 // EXPORTER HELPER
 ////////////////////////////////
@@ -723,10 +703,11 @@ int tb__get_local_tid(void);
 TB_Symbol* tb_symbol_alloc(TB_Module* m, enum TB_SymbolTag tag, const char* name, size_t size);
 void tb_symbol_append(TB_Module* m, TB_Symbol* s);
 
-// TODO(NeGate): refactor this stuff such that it starts with two underscores, it makes
-// it more clear that these are TB private
-void tb_function_calculate_use_count(const TB_Function* f, int use_count[]);
-int tb_function_find_uses_of_node(const TB_Function* f, TB_Reg def, TB_Reg uses[]);
+typedef struct {
+    NL_Map(TB_Node*, int) use_count;
+} TB_UseCount;
+
+void tb_function_calculate_use_count(const TB_Function* f, TB_UseCount* use_count);
 
 // if tls is NULL then the return value is heap allocated
 TB_Label* tb_calculate_immediate_predeccessors(TB_Function* f, TB_TemporaryStorage* tls, TB_Label l, int* dst_count);

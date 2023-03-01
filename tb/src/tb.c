@@ -197,9 +197,7 @@ TB_API void tb_module_kill_symbol(TB_Module* m, TB_Symbol* sym) {
             TB_Function* f = (TB_Function*) sym;
 
             tb_platform_heap_free(f->bbs);
-            tb_platform_heap_free(f->nodes);
-            tb_platform_heap_free(f->attrib_pool);
-            tb_platform_heap_free(f->vla.data);
+            tb_todo(); // free node arena
             break;
         }
         case TB_SYMBOL_EXTERNAL: break;
@@ -213,20 +211,11 @@ TB_API void tb_module_kill_symbol(TB_Module* m, TB_Symbol* sym) {
 TB_API void tb_module_destroy(TB_Module* m) {
     arena_free(&m->arena);
 
-    {
-        TB_Symbol* s = m->first_symbol_of_tag[TB_SYMBOL_FUNCTION];
-        if (s != NULL) {
-            enum TB_SymbolTag tag = s->tag;
-
-            do {
-                TB_Symbol* next = s->next;
-                tb_assume(tag == s->tag);
-
-                // TODO(NeGate): probably wanna have a custom heap for the symbol table
-                tb_platform_heap_free(s);
-                s = next;
-            } while (s != NULL);
-        }
+    TB_Symbol* s = m->first_symbol_of_tag[TB_SYMBOL_FUNCTION];
+    while (s) {
+        TB_Symbol* next = s->next;
+        tb_module_kill_symbol(m, s);
+        s = next;
     }
 
     FOREACH_N(i, 0, m->max_threads) {
@@ -282,15 +271,6 @@ TB_API TB_FileID tb_file_create(TB_Module* m, const char* path) {
     return id;
 }
 
-void tb_function_reserve_nodes(TB_Function* f, size_t extra) {
-    if (f->node_count + extra >= f->node_capacity) {
-        f->node_capacity = (f->node_count + extra) * 2;
-
-        f->nodes = tb_platform_heap_realloc(f->nodes, sizeof(TB_Node) * f->node_capacity);
-        if (f->nodes == NULL) tb_panic("Out of memory");
-    }
-}
-
 TB_API TB_FunctionPrototype* tb_prototype_create(TB_Module* m, TB_CallingConv conv, TB_DataType return_dt, TB_DebugType* return_type, int num_params, bool has_varargs) {
     assert(num_params == (uint32_t)num_params);
 
@@ -333,21 +313,6 @@ TB_API TB_Function* tb_function_create(TB_Module* m, const char* name, TB_Linkag
     f->bb_capacity = 4;
     f->bb_count = 1;
     f->bbs = tb_platform_heap_alloc(f->bb_capacity * sizeof(TB_BasicBlock));
-
-    f->node_capacity = 64;
-    f->node_count = 2;
-    f->nodes = tb_platform_heap_alloc(f->node_capacity * sizeof(TB_Node));
-
-    f->attrib_pool_capacity = 64;
-    f->attrib_pool_count = 1; // 0 is reserved
-    f->attrib_pool = tb_platform_heap_alloc(64 * sizeof(TB_Attrib));
-
-    // Null slot
-    f->nodes[0] = (TB_Node) { .next = 0 };
-
-    // this is just a dummy slot so that things like parameters can anchor to
-    f->nodes[1] = (TB_Node) { .next = 0 };
-    f->bbs[0] = (TB_BasicBlock){ 1, 1 };
     return f;
 }
 
@@ -360,54 +325,26 @@ TB_API const char* tb_symbol_get_name(TB_Symbol* s) {
 }
 
 TB_API void tb_function_set_prototype(TB_Function* f, const TB_FunctionPrototype* p) {
-    size_t old_param_count = f->prototype != NULL ? f->prototype->param_count : 0;
-    size_t new_param_count = p->param_count;
-
+    assert(f->prototype == NULL);
     const ICodeGen* restrict code_gen = tb__find_code_generator(f->super.module);
 
-    f->params = tb_platform_heap_realloc(f->params, sizeof(TB_Reg) * new_param_count);
-    if (new_param_count > 0 && f->params == NULL) {
+    size_t param_count = p->param_count;
+    f->params = tb_platform_heap_realloc(f->params, sizeof(TB_Reg) * param_count);
+    if (param_count > 0 && f->params == NULL) {
         tb_panic("tb_function_set_prototype: Out of memory!");
     }
 
-    // walk to the end of the param list (it starts directly after the entry label)
-    TB_Reg prev = 1, r = 1;
-    size_t count = 0;
-    FOREACH_N(i, 0, old_param_count) {
-        // reassign these old slots
+    f->current_label = 0;
+    FOREACH_N(i, 0, param_count) {
         TB_DataType dt = p->params[i].dt;
         TB_CharUnits size, align;
         code_gen->get_data_type_size(dt, &size, &align);
 
-        assert(r != TB_NULL_REG);
-        // fill in acceleration structure
-        f->params[count++] = r;
-
-        // reinitialize node
-        f->nodes[r].type = TB_PARAM;
-        f->nodes[r].dt = dt;
-        f->nodes[r].param = (struct TB_NodeParam) { .id = i, .size = size };
-
-        prev = r;
-        r = f->nodes[r].next;
-    }
-
-    FOREACH_N(i, old_param_count, new_param_count) {
-        TB_Reg new_reg = tb_function_insert_after(f, 0, prev);
-        TB_Node* new_node = &f->nodes[new_reg];
-
-        TB_DataType dt = p->params[i].dt;
-        TB_CharUnits size, align;
-        code_gen->get_data_type_size(dt, &size, &align);
+        TB_Node* n = tb_alloc_at_end(f, TB_PARAM, dt, 0, sizeof(TB_NodeParam));
+        TB_NODE_SET_EXTRA(n, TB_NodeParam, .id = i, .size = size);
 
         // fill in acceleration structure
-        f->params[count++] = new_reg;
-
-        // initialize node
-        new_node->type = TB_PARAM;
-        new_node->dt = dt;
-        new_node->param = (struct TB_NodeParam){ .id = i, .size = size };
-        prev = new_reg;
+        f->params[i] = n;
     }
 
     f->prototype = p;

@@ -813,14 +813,8 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
             TB_DataType dt = ctype_to_tbtype(return_type);
             if (is_aggregate_return) dt = TB_TYPE_VOID;
 
-            TB_Reg r;
-            if (func_ptr.value_type == LVALUE_SYMBOL && !is_indirect_func_ptr) {
-                r = tb_inst_call(func, dt, func_ptr.sym, real_arg_count, ir_args);
-            } else {
-                TB_Reg target_reg = cvt2rval(tu, func, func_ptr, e->call.target);
-
-                r = tb_inst_vcall(func, dt, target_reg, real_arg_count, ir_args);
-            }
+            TB_Reg target_reg = cvt2rval(tu, func, func_ptr, e->call.target);
+            TB_Reg r = tb_inst_vcall(func, dt, target_reg, real_arg_count, ir_args);
 
             if (is_aggregate_return) {
                 TB_Reg result = ir_args[0];

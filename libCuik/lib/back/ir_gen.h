@@ -81,7 +81,7 @@ _Noreturn void internal_error(const char* fmt, ...);
 int count_max_tb_init_objects(InitNode* root_node);
 TB_DebugType* cuik__as_tb_debug_type(TB_Module* mod, Cuik_Type* t);
 
-TB_Register irgen_as_rvalue(TranslationUnit* tu, TB_Function* func, Expr* e);
+TB_Reg irgen_as_rvalue(TranslationUnit* tu, TB_Function* func, Expr* e);
 IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e);
 void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s);
 

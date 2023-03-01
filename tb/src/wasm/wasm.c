@@ -71,7 +71,9 @@ TB_FunctionOutput wasm_fast_compile_function(TB_Function* restrict f, const TB_F
     int* use_count = tb_tls_push(tls, f->node_count * sizeof(WasmVal));
     WasmCtx ctx = { .vals = (WasmVal*) use_count };
 
-    tb_function_calculate_use_count(f, use_count);
+    TB_UseCount use_count = { 0 };
+    tb_function_calculate_use_count(f, &use_count);
+
     FOREACH_REVERSE_N(i, 0, f->node_count) {
         ctx.vals[i].users_left = use_count[i];
         ctx.vals[i].local_slot = -1;

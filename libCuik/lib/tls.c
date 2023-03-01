@@ -1,13 +1,6 @@
 #include "common.h"
 #include <stdalign.h>
 
-#ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-#else
-#include <sys/mman.h>
-#endif
-
 #define TEMPORARY_STORAGE_SIZE (32 << 20)
 
 typedef struct TemporaryStorage {
@@ -18,22 +11,6 @@ typedef struct TemporaryStorage {
 } TemporaryStorage;
 
 static _Thread_local TemporaryStorage* temp_storage;
-
-void* cuik__valloc(size_t size) {
-    #ifdef _WIN32
-    return VirtualAlloc(NULL, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
-    #else
-    return mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    #endif
-}
-
-void cuik__vfree(void* ptr, size_t size) {
-    #ifdef _WIN32
-    VirtualFree(ptr, 0, MEM_RELEASE);
-    #else
-    munmap(ptr, size);
-    #endif
-}
 
 void tls_init(void) {
     if (temp_storage == NULL) {

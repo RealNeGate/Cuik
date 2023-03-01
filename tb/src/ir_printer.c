@@ -59,6 +59,7 @@ static void print_string(TB_PrintCallback callback, void* user_data, const uint8
 }
 
 static void tb_print_node(TB_Function* f, TB_PrintCallback callback, void* user_data, TB_Node* restrict n) {
+    #if 0
     TB_Reg i = n - f->nodes;
     TB_NodeTypeEnum type = n->type;
     TB_DataType dt = n->dt;
@@ -420,6 +421,7 @@ static void tb_print_node(TB_Function* f, TB_PrintCallback callback, void* user_
             tb_todo();
         }
     }
+    #endif
 }
 
 TB_API void tb_function_print(TB_Function* f, TB_PrintCallback callback, void* user_data, bool display_nops) {
@@ -429,10 +431,10 @@ TB_API void tb_function_print(TB_Function* f, TB_PrintCallback callback, void* u
         if (f->bbs[bb].start == 0) continue;
         callback(user_data, "L%d: # r%u terminates at r%u\n", bb, f->bbs[bb].start, f->bbs[bb].end);
 
-        TB_FOR_NODE(r, f, bb) {
-            if (!display_nops && f->nodes[r].type == TB_NULL) continue;
+        TB_FOR_NODE(n, f, bb) {
+            if (!display_nops && n->type == TB_NULL) continue;
 
-            tb_print_node(f, callback, user_data, &f->nodes[r]);
+            tb_print_node(f, callback, user_data, n);
             callback(user_data, "\n");
         }
     }

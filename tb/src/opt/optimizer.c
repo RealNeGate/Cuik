@@ -48,7 +48,7 @@ static void dce(TB_Function* f) {
 static void canonicalize(TB_Function* f) {
     TB_FOR_BASIC_BLOCK(bb, f) {
         TB_FOR_NODE(r, f, bb) {
-            const_fold(f, &f->nodes[r]);
+            const_fold(f, bb, &f->nodes[r]);
             simplify_cmp(f, &f->nodes[r]);
             reassoc(f, &f->nodes[r]);
             simplify_pointers(f, &f->nodes[r]);
@@ -84,6 +84,10 @@ static void canonicalize(TB_Function* f) {
 
     // kill any unused regs
     dce(f);
+}*/
+
+static void canonicalize(TB_Function* f) {
+
 }
 
 static void schedule_function_level_opts(TB_Module* m, TB_Function* f, size_t pass_count, const TB_Pass* passes[]) {

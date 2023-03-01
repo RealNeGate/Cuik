@@ -15,35 +15,31 @@ static void postorder(TB_Function* f, TB_PostorderWalk* ctx, TB_Label bb) {
 
     ctx->visited[bb] = true;
 
-    TB_Node* end = &f->nodes[f->bbs[bb].end];
+    TB_Node* end = f->bbs[bb].end;
     if (end->type == TB_NULL || end->type == TB_RET || end->type == TB_TRAP || end->type == TB_UNREACHABLE) {
         /* RET can't do shit in this context */
-    } else if (end->type == TB_GOTO) {
-        postorder(f, ctx, end->goto_.label);
-    } else if (end->type == TB_IF) {
-        postorder(f, ctx, end->if_.if_false);
-        postorder(f, ctx, end->if_.if_true);
-    } else if (end->type == TB_SWITCH) {
-        // each entry takes up two slots in the VLA storage (i just put random crap in there like arguments for function calls)
-        size_t entry_count = (end->switch_.entries_end - end->switch_.entries_start) / 2;
-        TB_SwitchEntry* entries = (TB_SwitchEntry*) &f->vla.data[end->switch_.entries_start];
+    } else if (end->type == TB_BRANCH) {
+        TB_NodeBranch* br = TB_NODE_GET_EXTRA(end);
+        postorder(f, ctx, br->default_label);
 
-        postorder(f, ctx, end->switch_.default_label);
-
-        FOREACH_REVERSE_N(i, 0, entry_count) {
-            postorder(f, ctx, entries[i].value);
+        FOREACH_REVERSE_N(i, 0, br->count) {
+            postorder(f, ctx, br->targets[i].value);
         }
     } else {
-        tb_function_print(f, tb_default_print_callback, stdout, true);
         tb_panic("Invalid IR :v(\n");
     }
 
     ctx->traversal[ctx->count++] = bb;
 }
 
+TB_API void tb_function_get_postorder_explicit(TB_Function* f, TB_PostorderWalk* walk) {
+    memset(walk->visited, 0, f->bb_count * sizeof(bool));
+    postorder(f, walk, 0);
+}
+
 TB_API TB_PostorderWalk tb_function_get_postorder(TB_Function* f) {
     TB_PostorderWalk walk = {
-        .traversal = tb_platform_heap_alloc(f->bb_count * sizeof(TB_Reg)),
+        .traversal = tb_platform_heap_alloc(f->bb_count * sizeof(TB_Label)),
         .visited = tb_platform_heap_alloc(f->bb_count * sizeof(bool))
     };
 
@@ -54,11 +50,6 @@ TB_API TB_PostorderWalk tb_function_get_postorder(TB_Function* f) {
 TB_API void tb_function_free_postorder(TB_PostorderWalk* walk) {
     tb_platform_heap_free(walk->visited);
     tb_platform_heap_free(walk->traversal);
-}
-
-TB_API void tb_function_get_postorder_explicit(TB_Function* f, TB_PostorderWalk* walk) {
-    memset(walk->visited, 0, f->bb_count * sizeof(bool));
-    postorder(f, walk, 0);
 }
 
 static int find_traversal_index(DomContext* ctx, TB_Label l) {
@@ -210,7 +201,7 @@ TB_API size_t tb_get_dominators(TB_Function* f, TB_Predeccesors preds, TB_Label*
         TB_TemporaryStorage* tls = tb_tls_steal();
 
         ctx.order.count = 0;
-        ctx.order.traversal = tb_tls_push(tls, f->bb_count * sizeof(TB_Reg));
+        ctx.order.traversal = tb_tls_push(tls, f->bb_count * sizeof(TB_Node*));
 
         // we only need the visited array for this scope, it's just to avoid
         // recursing forever on post order traversal stuff
@@ -323,22 +314,19 @@ TB_API void tb_free_loop_info(TB_LoopInfo l) {
     dyn_array_destroy(l.loops);
 }
 
-TB_API TB_Reg tb_node_get_first_insertion_point(TB_Function* f, TB_Label bb) {
-    TB_Reg basepoint = f->bbs[bb].start;
-    TB_Reg prev = basepoint;
-    TB_FOR_NODE(r, f, bb) {
-        TB_Node* n = &f->nodes[r];
+TB_API TB_Node* tb_node_get_first_insertion_point(TB_Function* f, TB_Label bb) {
+    TB_Node* basepoint = f->bbs[bb].start;
+    TB_Node* prev = basepoint;
 
+    TB_FOR_NODE(n, f, bb) {
         if (n->type != TB_PARAM &&
             n->type != TB_PARAM_ADDR &&
-            n->type != TB_PHI1 &&
-            n->type != TB_PHI2 &&
-            n->type != TB_PHIN &&
+            n->type != TB_PHI &&
             !TB_IS_NODE_TERMINATOR(n->type)) {
-            basepoint = (n - f->nodes);
+            prev = basepoint;
+            basepoint = n;
         }
-        prev = r;
     }
 
-    return basepoint == 1 ? prev : basepoint;
+    return basepoint ? basepoint : prev;
 }

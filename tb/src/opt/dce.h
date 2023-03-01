@@ -1,5 +1,4 @@
-static bool is_expr_like(TB_Function* f, TB_Reg r) {
-    TB_Node* n = &f->nodes[r];
+static bool is_expr_like(TB_Function* f, TB_Node* n) {
     switch (n->type) {
         case TB_NULL:
         case TB_GET_SYMBOL_ADDRESS:
@@ -47,7 +46,8 @@ static bool is_expr_like(TB_Function* f, TB_Reg r) {
         return true;
 
         case TB_LOAD:
-        if (!n->load.is_volatile) {
+        case TB_ATOMIC_LOAD:
+        if (!TB_NODE_GET_EXTRA_T(n, TB_NodeMemAccess)->is_volatile) {
             return true;
         }
         return false;
