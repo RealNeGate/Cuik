@@ -12,6 +12,12 @@ uint64_t* tb_transmute_to_int(TB_Function* f, TB_Label bb, TB_Node* n, int num_w
     return i->words;
 }
 
+void tb_transmute_to_poison(TB_Node* n) {
+    n->type = TB_POISON;
+    n->input_count = 1;
+    n->extra_count = 0;
+}
+
 void tb_transmute_to_pass(TB_Node* n, TB_Node* point_to) {
     size_t size = sizeof(TB_Node) + (n->input_count * sizeof(TB_Node*)) + n->extra_count;
     assert(size >= sizeof(TB_Node) + sizeof(TB_Node*));

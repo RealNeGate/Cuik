@@ -2,212 +2,32 @@
 #include "../hash_map.h"
 
 typedef struct {
-    NL_Map(TB_Reg, TB_Reg) def_table;
+    NL_Map(TB_Node*, TB_Node*) def_table;
 } PassCtx;
 
-static void handle_pass(TB_Function* f, PassCtx* ctx, TB_Label bb, TB_Reg r) {
-    TB_Node* n = &f->nodes[r];
-
-    #define X(reg)                                         \
-    do {                                                   \
-        ptrdiff_t search = nl_map_get(ctx->def_table, reg);\
-        if (search >= 0) {                                 \
-            reg = (ctx->def_table)[search].v;              \
-        }                                                  \
-    } while (0)
-
-    switch (n->type) {
-        case TB_NULL:
-        case TB_INTEGER_CONST:
-        case TB_FLOAT32_CONST:
-        case TB_FLOAT64_CONST:
-        case TB_LOCAL:
-        case TB_PARAM:
-        case TB_GOTO:
-        case TB_LINE_INFO:
-        case TB_GET_SYMBOL_ADDRESS:
-        case TB_X86INTRIN_STMXCSR:
-        case TB_UNREACHABLE:
-        case TB_DEBUGBREAK:
-        case TB_TRAP:
-        case TB_POISON:
-        break;
-
-        case TB_KEEPALIVE:
-        case TB_VA_START:
-        case TB_NOT:
-        case TB_NEG:
-        case TB_X86INTRIN_SQRT:
-        case TB_X86INTRIN_RSQRT:
-        case TB_INT2PTR:
-        case TB_PTR2INT:
-        case TB_UINT2FLOAT:
-        case TB_FLOAT2UINT:
-        case TB_INT2FLOAT:
-        case TB_FLOAT2INT:
-        case TB_TRUNCATE:
-        case TB_X86INTRIN_LDMXCSR:
-        case TB_BITCAST:
-        X(n->unary.src);
-        break;
-
-        case TB_ATOMIC_LOAD:
-        case TB_ATOMIC_XCHG:
-        case TB_ATOMIC_ADD:
-        case TB_ATOMIC_SUB:
-        case TB_ATOMIC_AND:
-        case TB_ATOMIC_XOR:
-        case TB_ATOMIC_OR:
-        case TB_ATOMIC_CMPXCHG:
-        X(n->atomic.addr);
-        X(n->atomic.src);
-        break;
-
-        case TB_ATOMIC_CMPXCHG2:
-        X(n->atomic.src);
-        break;
-
-        case TB_MEMCPY:
-        case TB_MEMSET:
-        X(n->mem_op.dst);
-        X(n->mem_op.src);
-        X(n->mem_op.size);
-        break;
-
-        case TB_MEMBER_ACCESS:
-        X(n->member_access.base);
-        break;
-
-        case TB_ARRAY_ACCESS:
-        X(n->array_access.base);
-        X(n->array_access.index);
-        break;
-
-        case TB_PARAM_ADDR:
-        X(n->param_addr.param);
-        break;
-
-        case TB_PASS:
-        X(n->pass.value);
-        break;
-
-        case TB_PHI1:
-        X(n->phi1.inputs[0].val);
-        break;
-
-        case TB_PHI2:
-        FOREACH_N(it, 0, 2) {
-            X(n->phi2.inputs[it].val);
+static void handle_pass(TB_Function* f, PassCtx* ctx, TB_Label bb, TB_Node* n) {
+    TB_FOR_INPUT_IN_NODE(in, n) {
+        ptrdiff_t search = nl_map_get(ctx->def_table, *in);
+        if (search >= 0) {
+            *in = ctx->def_table[search].v;
         }
-        break;
-
-        case TB_PHIN:
-        FOREACH_N(it, 0, n->phi.count) {
-            X(n->phi.inputs[it].val);
-        }
-        break;
-
-        case TB_LOAD:
-        X(n->load.address);
-        break;
-
-        case TB_STORE:
-        X(n->store.address);
-        X(n->store.value);
-        break;
-
-        case TB_ZERO_EXT:
-        case TB_SIGN_EXT:
-        case TB_FLOAT_EXT:
-        X(n->unary.src);
-        break;
-
-        case TB_AND:
-        case TB_OR:
-        case TB_XOR:
-        case TB_ADD:
-        case TB_SUB:
-        case TB_MUL:
-        case TB_UDIV:
-        case TB_SDIV:
-        case TB_UMOD:
-        case TB_SMOD:
-        case TB_SAR:
-        case TB_SHL:
-        case TB_SHR:
-        X(n->i_arith.a);
-        X(n->i_arith.b);
-        break;
-
-        case TB_FADD:
-        case TB_FSUB:
-        case TB_FMUL:
-        case TB_FDIV:
-        X(n->f_arith.a);
-        X(n->f_arith.b);
-        break;
-
-        case TB_CMP_EQ:
-        case TB_CMP_NE:
-        case TB_CMP_SLT:
-        case TB_CMP_SLE:
-        case TB_CMP_ULT:
-        case TB_CMP_ULE:
-        case TB_CMP_FLT:
-        case TB_CMP_FLE:
-        X(n->cmp.a);
-        X(n->cmp.b);
-        break;
-
-        case TB_SCALL: {
-            X(n->scall.target);
-
-            FOREACH_N(it, n->scall.param_start, n->scall.param_end) {
-                X(f->vla.data[it]);
-            }
-            break;
-        }
-
-        case TB_VCALL: {
-            X(n->vcall.target);
-
-            FOREACH_N(it, n->vcall.param_start, n->vcall.param_end) {
-                X(f->vla.data[it]);
-            }
-            break;
-        }
-
-        case TB_CALL:
-        case TB_ICALL: {
-            FOREACH_N(it, n->call.param_start, n->call.param_end) {
-                X(f->vla.data[it]);
-            }
-            break;
-        }
-
-        case TB_SWITCH: X(n->switch_.key); break;
-        case TB_IF: X(n->if_.cond); break;
-        case TB_RET: X(n->ret.value); break;
-
-        default: tb_todo();
     }
-    #undef X
 
-    if (f->nodes[r].type == TB_PASS) {
-        OPTIMIZER_LOG(r, "Replacing PASS with r%d", f->nodes[r].pass.value);
+    if (n->type == TB_PASS) {
+        OPTIMIZER_LOG(n, "Replacing PASS with r%d", n->inputs[0]);
 
         // if the node we're pointing to is also in the map then we look at it's parent
-        TB_Reg pointee = f->nodes[r].pass.value;
+        TB_Node* pointee = n->inputs[0];
         ptrdiff_t search;
         while (search = nl_map_get(ctx->def_table, pointee), search >= 0) {
             pointee = ctx->def_table[search].v;
         }
 
-        nl_map_put(ctx->def_table, r, pointee);
+        nl_map_put(ctx->def_table, n, pointee);
 
         // if it matches find, then remove find from the basic block
         if (f->bbs[bb].start == r) {
-            f->bbs[bb].start = f->nodes[f->bbs[bb].start].next;
+            f->bbs[bb].start = f->bbs[bb].start->next;
         }
 
         if (f->bbs[bb].end == r) {

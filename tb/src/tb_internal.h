@@ -687,6 +687,7 @@ TB_Node* tb_alloc_at_end(TB_Function* f, int type, TB_DataType dt, int input_cou
 void tb_insert_node(TB_Function* f, TB_Label bb, TB_Node* a, TB_Node* b);
 
 void tb_transmute_to_pass(TB_Node* n, TB_Node* point_to);
+void tb_transmute_to_poison(TB_Node* n);
 uint64_t* tb_transmute_to_int(TB_Function* f, TB_Label bb, TB_Node* n, int num_words);
 
 ////////////////////////////////

@@ -315,53 +315,48 @@ static bool const_fold(TB_Function* f, TB_Label bb, TB_Node* n) {
                     // partial binary operations e.g.
                     //   a * 0 = 0
                     //   a + 0 = a
-                    int num_src_words = b->integer.num_words;
-                    BigInt_t* src_words = num_src_words == 1 ? &b->integer.single_word : b->integer.words;
+                    TB_NodeInt* bi = TB_NODE_GET_EXTRA(b);
 
-                    TB_Reg ar = n->i_arith.a;
-                    if (BigInt_is_zero(num_src_words, src_words)) {
+                    if (BigInt_is_zero(bi->num_words, bi->words)) {
                         switch (n->type) {
                             case TB_ADD: case TB_SUB:
                             case TB_XOR: case TB_OR:
                             case TB_SHL: case TB_SHR:
                             case TB_SAR:
-                            n->type = TB_PASS;
-                            n->pass.value = ar;
+                            tb_transmute_to_pass(n, a);
                             return true;
 
                             case TB_MUL: case TB_AND:
-                            n->type = TB_INTEGER_CONST;
-                            n->integer.num_words = 1;
-                            n->integer.single_word = 0;
+                            uint64_t* words = tb_transmute_to_int(f, bb, n, 1);
+                            words[0] = 0;
                             return true;
 
                             case TB_SDIV: case TB_UDIV:
-                            n->type = TB_POISON;
+                            tb_transmute_to_poison(n);
                             return true;
 
                             default: break;
                         }
-                    } else if (BigInt_is_small_num(num_src_words, src_words, 1)) {
+                    } else if (BigInt_is_small_num(bi->num_words, bi->words, 1)) {
                         switch (n->type) {
                             case TB_MUL: case TB_SDIV: case TB_UDIV:
-                            n->type = TB_PASS;
-                            n->pass.value = ar;
+                            tb_transmute_to_pass(n, a);
                             return true;
 
                             default: break;
                         }
                     }
 
-                    TB_Label bb = tb_find_label_from_reg(f, ar);
-                    if (b->integer.num_words == 1) {
+                    if (bi->num_words == 1) {
                         if (n->type == TB_MUL) {
                             // (a * b) => (a << log2(b)) where b is a power of two
-                            uint64_t log2 = tb_ffs(b->integer.single_word) - 1;
-                            if (b->integer.single_word == (UINT64_C(1) << log2)) {
+                            uint64_t log2 = tb_ffs(bi->words[0]) - 1;
+                            if (bi->words[0] == (UINT64_C(1) << log2)) {
                                 OPTIMIZER_LOG(n, "converted power-of-two multiply into left shift");
 
                                 // It's a power of two, swap in a left-shift
-                                TB_Node* new_op = tb_alloc_node(f, TB_INTEGER_CONST, dt, 0, sizeof(TB_NodeInt) + sizeof(uint64_t));
+                                tb_todo();
+                                /* TB_Node* new_op = tb_alloc_node(f, TB_INTEGER_CONST, dt, 0, sizeof(TB_NodeInt) + sizeof(uint64_t));
                                 TB_NODE_GET_EXTRA_T(new_op, TB_NodeInt)->words[0] = log2;
 
                                 f->nodes[new_op].type = TB_INTEGER_CONST;
@@ -372,16 +367,17 @@ static bool const_fold(TB_Function* f, TB_Label bb, TB_Node* n) {
                                 n->type = TB_SHL;
                                 n->dt = dt;
                                 n->i_arith = (struct TB_NodeIArith) { .a = a - f->nodes, .b = new_op };
-                                return true;
+                                return true; */
                             }
                         } else if (n->type == TB_UMOD || n->type == TB_SMOD) {
                             // (mod a N) => (and a N-1) where N is a power of two
-                            uint64_t mask = b->integer.single_word;
+                            uint64_t mask = bi->words[0];
                             if (tb_is_power_of_two(mask)) {
-                                OPTIMIZER_LOG(r, "converted modulo into AND with constant mask");
+                                OPTIMIZER_LOG(n, "converted modulo into AND with constant mask");
 
+                                tb_todo();
                                 // generate mask
-                                TB_Reg extra_reg = tb_function_insert_after(f, bb, ar);
+                                /* TB_Reg extra_reg = tb_function_insert_after(f, bb, ar);
                                 TB_Node* extra = &f->nodes[extra_reg];
                                 extra->type = TB_INTEGER_CONST;
                                 extra->dt = n->dt;
@@ -392,7 +388,7 @@ static bool const_fold(TB_Function* f, TB_Label bb, TB_Node* n) {
                                 n = &f->nodes[r];
                                 n->type = TB_AND;
                                 n->i_arith.b = extra_reg;
-                                return true;
+                                return true; */
                             }
                         }
                     }
