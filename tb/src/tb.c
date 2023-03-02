@@ -12,7 +12,7 @@ ICodeGen* tb__find_code_generator(TB_Module* m) {
     switch (m->target_arch) {
         #if 1
         // work in progress
-        case TB_ARCH_X86_64: return &tb__x64v2_codegen;
+        case TB_ARCH_X86_64: return &tb__dummy_codegen;
         #else
         case TB_ARCH_X86_64: return &tb__x64_codegen;
         #endif
@@ -313,6 +313,7 @@ TB_API TB_Function* tb_function_create(TB_Module* m, const char* name, TB_Linkag
     f->bb_capacity = 4;
     f->bb_count = 1;
     f->bbs = tb_platform_heap_alloc(f->bb_capacity * sizeof(TB_BasicBlock));
+    f->bbs[0] = (TB_BasicBlock){ 0 };
     return f;
 }
 

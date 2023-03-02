@@ -760,7 +760,7 @@ TB_API TB_Label tb_basic_block_create(TB_Function* f) {
 }
 
 TB_API bool tb_basic_block_is_complete(TB_Function* f, TB_Label bb) {
-    return TB_IS_NODE_TERMINATOR(f->bbs[bb].end->type);
+    return f->bbs[bb].end && TB_IS_NODE_TERMINATOR(f->bbs[bb].end->type);
 }
 
 TB_API void tb_inst_set_label(TB_Function* f, TB_Label l) {
@@ -777,7 +777,7 @@ TB_API TB_Label tb_inst_get_label(TB_Function* f) {
 TB_API void tb_inst_goto(TB_Function* f, TB_Label id) {
     tb_assume(id >= 0 && id < f->bb_count);
 
-    TB_Node* n = tb_alloc_at_end(f, TB_BRANCH, f->prototype->return_dt, 1, sizeof(TB_NodeBranch));
+    TB_Node* n = tb_alloc_at_end(f, TB_BRANCH, TB_TYPE_VOID, 1, sizeof(TB_NodeBranch));
     n->inputs[0] = NULL;
     TB_NODE_SET_EXTRA(n, TB_NodeBranch, .default_label = id);
 }
@@ -785,7 +785,7 @@ TB_API void tb_inst_goto(TB_Function* f, TB_Label id) {
 TB_API void tb_inst_if(TB_Function* f, TB_Node* cond, TB_Label if_true, TB_Label if_false) {
     assert(cond);
 
-    TB_Node* n = tb_alloc_at_end(f, TB_BRANCH, f->prototype->return_dt, 1, sizeof(TB_NodeBranch) + sizeof(TB_SwitchEntry));
+    TB_Node* n = tb_alloc_at_end(f, TB_BRANCH, TB_TYPE_VOID, 1, sizeof(TB_NodeBranch) + sizeof(TB_SwitchEntry));
     n->inputs[0] = cond;
 
     TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
@@ -804,7 +804,7 @@ static int switch_entry_cmp(const void* a, const void* b) {
 }
 
 TB_API void tb_inst_branch(TB_Function* f, TB_DataType dt, TB_Node* key, TB_Label default_label, size_t entry_count, const TB_SwitchEntry* entries) {
-    TB_Node* n = tb_alloc_at_end(f, TB_BRANCH, f->prototype->return_dt, 1, sizeof(TB_NodeBranch) + (entry_count * sizeof(TB_SwitchEntry)));
+    TB_Node* n = tb_alloc_at_end(f, TB_BRANCH, TB_TYPE_VOID, 1, sizeof(TB_NodeBranch) + (entry_count * sizeof(TB_SwitchEntry)));
     n->inputs[0] = key;
 
     TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
@@ -818,6 +818,6 @@ TB_API void tb_inst_branch(TB_Function* f, TB_DataType dt, TB_Node* key, TB_Labe
 }
 
 TB_API void tb_inst_ret(TB_Function* f, TB_Node* value) {
-    TB_Node* n = tb_alloc_at_end(f, TB_RET, f->prototype->return_dt, 1, 0);
+    TB_Node* n = tb_alloc_at_end(f, TB_RET, TB_TYPE_VOID, 1, 0);
     n->inputs[0] = value;
 }

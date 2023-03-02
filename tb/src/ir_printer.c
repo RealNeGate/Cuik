@@ -8,57 +8,140 @@ TB_API void tb_default_print_callback(void* user_data, const char* fmt, ...) {
     va_end(ap);
 }
 
+#define P(...) callback(user_data, __VA_ARGS__)
 static void tb_print_type(TB_DataType dt, TB_PrintCallback callback, void* user_data) {
     assert(dt.width < 8 && "Vector width too big!");
 
     switch (dt.type) {
         case TB_INT: {
-            if (dt.data == 0) callback(user_data, "void");
-            else callback(user_data, "i%d", dt.data);
+            if (dt.data == 0) P("void");
+            else P("i%d", dt.data);
             break;
         }
         case TB_PTR: {
-            if (dt.data == 0) callback(user_data, "ptr");
-            else callback(user_data, "ptr%d", dt.data);
+            if (dt.data == 0) P("ptr");
+            else P("ptr%d", dt.data);
             break;
         }
         case TB_FLOAT: {
-            if (dt.data == TB_FLT_32) callback(user_data, "f32");
-            if (dt.data == TB_FLT_64) callback(user_data, "f64");
+            if (dt.data == TB_FLT_32) P("f32");
+            if (dt.data == TB_FLT_64) P("f64");
             break;
         }
         default: tb_todo();
     }
 }
 
-static void print_string(TB_PrintCallback callback, void* user_data, const uint8_t* data, size_t length) {
-    if (length == 0) {
-        callback(user_data, "\"\"");
-        return;
-    }
+typedef struct {
+    NL_Map(TB_Node*, int) ordinals;
+    int count;
+} TB_PrinterCtx;
 
-    // skip a null terminator
-    if (data[length - 1] == 0) length--;
+// just a unique identifier for printing
+#define NAME(n) get_name(ctx, n)
+static int get_name(TB_PrinterCtx* ctx, TB_Node* n) {
+    ptrdiff_t search = nl_map_get(ctx->ordinals, n);
+    if (search >= 0) return ctx->ordinals[search].v;
 
-    size_t last = 0;
-    callback(user_data, "\"");
-    FOREACH_N(i, 0, length) {
-        if (data[i] < 32 || data[i] >= 128) {
-            // print all the non-fancy chars
-            callback(user_data, "%.*s", (int)(i - last), data + last);
-            switch (data[i]) {
-                case '\r': callback(user_data, "\\r"); break;
-                case '\n': callback(user_data, "\\n"); break;
-                default: callback(user_data, "\\x%02x", data[i]); break;
-            }
-            last = i + 1;
-        }
-    }
-
-    callback(user_data, "%.*s\"", (int)(length - last), data + last);
+    nl_map_put(ctx->ordinals, n, ctx->count);
+    return ctx->count++;
 }
 
-static void tb_print_node(TB_Function* f, TB_PrintCallback callback, void* user_data, TB_Node* restrict n) {
+static void tb_print_node(TB_Function* f, TB_PrinterCtx* ctx, TB_PrintCallback callback, void* user_data, TB_Node* restrict n) {
+    TB_NodeTypeEnum type = n->type;
+    TB_DataType dt = n->dt;
+
+    // check if non-void
+    if (dt.type == TB_INT && dt.data == 0) {
+        P("  ");
+    } else {
+        P("  r%-8d = ", NAME(n));
+        tb_print_type(dt, callback, user_data);
+        P(".");
+    }
+
+    switch (type) {
+        case TB_PARAM: P("param "); break;
+        case TB_PARAM_ADDR: P("paramaddr "); break;
+
+        case TB_INTEGER_CONST: P("int "); break;
+
+        case TB_ZERO_EXT: P("zxt "); break;
+        case TB_SIGN_EXT: P("sxt "); break;
+        case TB_TRUNCATE: P("trunc "); break;
+        case TB_BITCAST: P("bitcast "); break;
+
+        case TB_CMP_NE: P("cmp.ne "); break;
+        case TB_CMP_EQ: P("cmp.eq "); break;
+        case TB_CMP_ULT: P("cmp.ult "); break;
+        case TB_CMP_ULE: P("cmp.sle "); break;
+        case TB_CMP_SLT: P("cmp.slt "); break;
+        case TB_CMP_SLE: P("cmp.sle "); break;
+        case TB_CMP_FLT: P("cmp.lt "); break;
+        case TB_CMP_FLE: P("cmp.le "); break;
+
+        case TB_AND: P("and "); break;
+        case TB_OR: P("or "); break;
+        case TB_XOR: P("xor "); break;
+        case TB_ADD: P("add "); break;
+        case TB_SUB: P("sub "); break;
+        case TB_MUL: P("mul "); break;
+        case TB_UDIV: P("udiv "); break;
+        case TB_SDIV: P("sdiv "); break;
+        case TB_UMOD: P("umod "); break;
+        case TB_SMOD: P("smod "); break;
+        case TB_SHL: P("shl "); break;
+        case TB_SHR: P("shr "); break;
+        case TB_SAR: P("sar "); break;
+
+        case TB_LOAD: P("load "); break;
+        case TB_STORE: P("store "); break;
+
+        case TB_BRANCH: P("br "); break;
+        case TB_RET: P("ret "); break;
+
+        default: tb_todo(); break;
+    }
+
+    FOREACH_N(i, 0, n->input_count) {
+        if (i) P(", ");
+
+        P("r%d", NAME(n->inputs[i]));
+    }
+
+    switch (type) {
+        case TB_INTEGER_CONST: {
+            TB_NodeInt* num = TB_NODE_GET_EXTRA(n);
+
+            if (num->num_words == 1) {
+                P("%"PRIu64, num->words[0]);
+            } else {
+                P("0x");
+                FOREACH_N(i, 0, num->num_words) {
+                    if (num) P("'");
+                    P("%016"PRIx64, num->words[i]);
+                }
+            }
+            break;
+        }
+        case TB_BRANCH: {
+            TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
+
+            if (br->count == 0) {
+                P(" L%d", br->default_label);
+            } else {
+                P(" { ");
+                FOREACH_N(i, 0, br->count) {
+                    if (i) P(", ");
+                    P("%llu: L%d", br->targets[i].key, br->targets[i].value);
+                }
+                P(" } else L%d", br->default_label);
+            }
+            break;
+        }
+        default: break;
+    }
+
     #if 0
     TB_Reg i = n - f->nodes;
     TB_NodeTypeEnum type = n->type;
@@ -425,17 +508,18 @@ static void tb_print_node(TB_Function* f, TB_PrintCallback callback, void* user_
 }
 
 TB_API void tb_function_print(TB_Function* f, TB_PrintCallback callback, void* user_data, bool display_nops) {
-    callback(user_data, "%s():\n", f->super.name);
+    P("%s:\n", f->super.name);
+    TB_PrinterCtx ctx = { 0 };
 
     TB_FOR_BASIC_BLOCK(bb, f) {
         if (f->bbs[bb].start == 0) continue;
-        callback(user_data, "L%d: # r%u terminates at r%u\n", bb, f->bbs[bb].start, f->bbs[bb].end);
+        P("L%d:\n", bb);
 
         TB_FOR_NODE(n, f, bb) {
             if (!display_nops && n->type == TB_NULL) continue;
 
-            tb_print_node(f, callback, user_data, n);
-            callback(user_data, "\n");
+            tb_print_node(f, &ctx, callback, user_data, n);
+            P("\n");
         }
     }
 }

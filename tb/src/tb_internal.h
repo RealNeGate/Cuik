@@ -743,6 +743,7 @@ extern ICodeGen tb__x64_codegen;
 extern ICodeGen tb__x64v2_codegen;
 extern ICodeGen tb__aarch64_codegen;
 extern ICodeGen tb__wasm32_codegen;
+extern ICodeGen tb__dummy_codegen;
 
 // And all debug formats here
 //extern IDebugFormat dwarf_debug_format;
