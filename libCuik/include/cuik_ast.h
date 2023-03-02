@@ -401,7 +401,7 @@ struct Stmt {
         // Used by the backend for backend-y things
         union {
             #ifdef CUIK_USE_TB
-            TB_Reg r;
+            TB_Node* r;
             TB_Label l;
             TB_Function* f;
             TB_Symbol* s;

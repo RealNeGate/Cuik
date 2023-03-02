@@ -6,14 +6,14 @@
 
 atomic_flag irgen_defined_tls_index;
 
-// Maps param_num -> TB_Reg
-static thread_local TB_Reg* parameter_map;
+// Maps param_num -> TB_Node*
+static thread_local TB_Node** parameter_map;
 
 static thread_local Cuik_Type* function_type;
 static thread_local const char* function_name;
 
 // For aggregate returns
-static _Thread_local TB_Reg return_value_address;
+static _Thread_local TB_Node* return_value_address;
 
 static void fallthrough_label(TB_Function* func, TB_Label target) {
     if (!tb_basic_block_is_complete(func, tb_inst_get_label(func))) {
@@ -94,7 +94,7 @@ TB_DebugType* cuik__as_tb_debug_type(TB_Module* mod, Cuik_Type* t) {
     }
 }
 
-static TB_Reg cast_reg(TB_Function* func, TB_Reg reg, const Cuik_Type* src, const Cuik_Type* dst) {
+static TB_Node* cast_reg(TB_Function* func, TB_Node* reg, const Cuik_Type* src, const Cuik_Type* dst) {
     if (dst->kind == KIND_VOID) {
         return reg;
     }
@@ -115,8 +115,8 @@ static TB_Reg cast_reg(TB_Function* func, TB_Reg reg, const Cuik_Type* src, cons
     } else if (src->kind == KIND_ARRAY && dst->kind == KIND_BOOL) {
         reg = tb_inst_bool(func, true);
     } else if (src->kind != KIND_BOOL && dst->kind == KIND_BOOL) {
-        TB_DataType dt = tb_function_get_node(func, reg)->dt;
-        TB_Reg comparand;
+        TB_DataType dt = reg->dt;
+        TB_Node* comparand;
         if (dt.type == TB_FLOAT && dt.data == TB_FLT_32) {
             comparand = tb_inst_float32(func, 0.0f);
         } else if (dt.type == TB_FLOAT && dt.data == TB_FLT_64) {
@@ -141,13 +141,13 @@ static TB_Reg cast_reg(TB_Function* func, TB_Reg reg, const Cuik_Type* src, cons
     } else if (src->kind == KIND_PTR && dst->kind == KIND_PTR) {
         /* TB has opaque pointers, nothing needs to be done. */
     } else if (src->kind == KIND_FLOAT && dst->kind == KIND_DOUBLE) {
-        TB_DataType dt = tb_function_get_node(func, reg)->dt;
+        TB_DataType dt = reg->dt;
 
         if (!(dt.type == TB_FLOAT && dt.data == TB_FLT_64 && dt.width == 0)) {
             reg = tb_inst_fpxt(func, reg, TB_TYPE_F64);
         }
     } else if (src->kind == KIND_DOUBLE && dst->kind == KIND_FLOAT) {
-        TB_DataType dt = tb_function_get_node(func, reg)->dt;
+        TB_DataType dt = reg->dt;
 
         if (!(dt.type == TB_FLOAT && dt.data == TB_FLT_32 && dt.width == 0)) {
             reg = tb_inst_trunc(func, reg, TB_TYPE_F32);
@@ -162,10 +162,11 @@ static TB_Reg cast_reg(TB_Function* func, TB_Reg reg, const Cuik_Type* src, cons
     return reg;
 }
 
-static TB_Reg cvt2rval(TranslationUnit* tu, TB_Function* func, const IRVal v, const Expr* e) {
+static TB_Node* cvt2rval(TranslationUnit* tu, TB_Function* func, const IRVal v, const Expr* e) {
     Cuik_Type* src = cuik_canonical_type(e->type);
+    bool is_volatile = CUIK_QUAL_TYPE_HAS(e->type, CUIK_QUAL_VOLATILE);
 
-    TB_Reg reg = 0;
+    TB_Node* reg = 0;
     switch (v.value_type) {
         case RVALUE: {
             reg = v.reg;
@@ -175,11 +176,11 @@ static TB_Reg cvt2rval(TranslationUnit* tu, TB_Function* func, const IRVal v, co
             TB_Label merger = tb_basic_block_create(func);
 
             fallthrough_label(func, v.phi.if_true);
-            TB_Reg one = tb_inst_bool(func, true);
+            TB_Node* one = tb_inst_bool(func, true);
             tb_inst_goto(func, merger);
 
             tb_inst_set_label(func, v.phi.if_false);
-            TB_Reg zero = tb_inst_bool(func, false);
+            TB_Node* zero = tb_inst_bool(func, false);
             tb_inst_goto(func, merger);
 
             tb_inst_set_label(func, merger);
@@ -193,7 +194,7 @@ static TB_Reg cvt2rval(TranslationUnit* tu, TB_Function* func, const IRVal v, co
                 src = cuik_canonical_type(e->cast_type);
                 reg = v.reg;
             } else {
-                reg = tb_inst_load(func, ctype_to_tbtype(src), v.reg, src->align);
+                reg = tb_inst_load(func, ctype_to_tbtype(src), v.reg, src->align, is_volatile);
             }
             break;
         }
@@ -201,7 +202,7 @@ static TB_Reg cvt2rval(TranslationUnit* tu, TB_Function* func, const IRVal v, co
             uint64_t mask = (UINT64_MAX >> (64ull - v.bits.width));
             TB_DataType dt = ctype_to_tbtype(src);
 
-            reg = tb_inst_load(func, dt, v.reg, src->align);
+            reg = tb_inst_load(func, dt, v.reg, src->align, is_volatile);
             if (v.bits.width != (src->size * 8)) {
                 reg = tb_inst_and(func, reg, tb_inst_uint(func, dt, mask));
             }
@@ -221,7 +222,7 @@ static TB_Reg cvt2rval(TranslationUnit* tu, TB_Function* func, const IRVal v, co
                 // just pass the address don't load
                 src = cuik_canonical_type(e->cast_type);
             } else {
-                reg = tb_inst_load(func, ctype_to_tbtype(src), reg, src->align);
+                reg = tb_inst_load(func, ctype_to_tbtype(src), reg, src->align, is_volatile);
             }
             break;
         }
@@ -237,11 +238,11 @@ static TB_Reg cvt2rval(TranslationUnit* tu, TB_Function* func, const IRVal v, co
     return src != dst ? cast_reg(func, reg, src, dst) : reg;
 }
 
-TB_Reg irgen_as_rvalue(TranslationUnit* tu, TB_Function* func, Expr* e) {
+TB_Node* irgen_as_rvalue(TranslationUnit* tu, TB_Function* func, Expr* e) {
     return cvt2rval(tu, func, irgen_expr(tu, func, e), e);
 }
 
-TB_Reg irgen_as_lvalue(TranslationUnit* tu, TB_Function* func, Expr* e) {
+TB_Node* irgen_as_lvalue(TranslationUnit* tu, TB_Function* func, Expr* e) {
     IRVal v = irgen_expr(tu, func, e);
 
     if (v.value_type == LVALUE) {
@@ -250,25 +251,26 @@ TB_Reg irgen_as_lvalue(TranslationUnit* tu, TB_Function* func, Expr* e) {
         return tb_inst_get_symbol_address(func, v.sym);
     } else if (v.value_type == RVALUE) {
         Cuik_Type* t = cuik_canonical_type(e->cast_type);
+        bool is_volatile = CUIK_QUAL_TYPE_HAS(e->cast_type, CUIK_QUAL_VOLATILE);
 
         // spawn a lil temporary
-        TB_DataType dt = tb_function_get_node(func, v.reg)->dt;
+        TB_DataType dt = v.reg->dt;
 
-        TB_Reg temporary = tb_inst_local(func, t->size, t->align);
-        tb_inst_store(func, dt, temporary, v.reg, t->align);
+        TB_Node* temporary = tb_inst_local(func, t->size, t->align);
+        tb_inst_store(func, dt, temporary, v.reg, t->align, is_volatile);
         return temporary;
     } else {
         abort();
     }
 }
 
-static TB_Reg inc_or_dec(TranslationUnit* tu, TB_Function* func, IRVal address, Expr* e, Cuik_Type* type, bool postfix, bool is_inc) {
+static TB_Node* inc_or_dec(TranslationUnit* tu, TB_Function* func, IRVal address, Expr* e, Cuik_Type* type, bool postfix, bool is_inc, bool is_volatile) {
     TB_DataType dt = ctype_to_tbtype(type);
     bool is_atomic = false; /* type->is_atomic; */
 
-    TB_Reg loaded = TB_NULL_REG;
+    TB_Node* loaded = TB_NULL_REG;
     if (is_atomic) {
-        TB_Reg stride;
+        TB_Node* stride;
         if (type->kind == KIND_PTR) {
             // pointer arithmatic
             stride = tb_inst_uint(func, TB_TYPE_PTR, cuik_canonical_type(type->ptr_to)->size);
@@ -291,7 +293,7 @@ static TB_Reg inc_or_dec(TranslationUnit* tu, TB_Function* func, IRVal address, 
         loaded = cvt2rval(tu, func, address, e);
     }
 
-    TB_Reg operation;
+    TB_Node* operation;
     if (type->kind == KIND_PTR) {
         // pointer arithmatic
         int32_t stride = cuik_canonical_type(type->ptr_to)->size;
@@ -300,7 +302,7 @@ static TB_Reg inc_or_dec(TranslationUnit* tu, TB_Function* func, IRVal address, 
             ? tb_inst_member_access(func, loaded,  stride)
             : tb_inst_member_access(func, loaded, -stride);
     } else {
-        TB_Reg one = tb_inst_uint(func, dt, 1);
+        TB_Node* one = tb_inst_uint(func, dt, 1);
         TB_ArithmaticBehavior ab = type->is_unsigned ? 0 : TB_ARITHMATIC_NSW;
 
         operation = is_inc
@@ -310,7 +312,7 @@ static TB_Reg inc_or_dec(TranslationUnit* tu, TB_Function* func, IRVal address, 
 
     if (!is_atomic) {
         assert(address.value_type == LVALUE);
-        tb_inst_store(func, dt, address.reg, operation, type->align);
+        tb_inst_store(func, dt, address.reg, operation, type->align, is_volatile);
     }
 
     return postfix ? loaded : operation;
@@ -339,7 +341,7 @@ static void eval_global_initializer(TranslationUnit* tu, TB_Global* g, InitNode*
     }
 }
 
-static void eval_local_initializer(TranslationUnit* tu, TB_Function* func, TB_Reg addr, InitNode* n) {
+static void eval_local_initializer(TranslationUnit* tu, TB_Function* func, TB_Node* addr, InitNode* n) {
     if (n->kid != NULL) {
         for (InitNode* k = n->kid; k != NULL; k = k->next) {
             eval_local_initializer(tu, func, addr, k);
@@ -348,8 +350,8 @@ static void eval_local_initializer(TranslationUnit* tu, TB_Function* func, TB_Re
         Cuik_Type* child_type = cuik_canonical_type(n->type);
         int offset = n->offset;
 
-        TB_Reg val = irgen_as_rvalue(tu, func, n->expr);
-        TB_DataType dt = tb_function_get_node(func, val)->dt;
+        TB_Node* val = irgen_as_rvalue(tu, func, n->expr);
+        TB_DataType dt = val->dt;
 
         Cuik_Type* type = cuik_canonical_type(n->expr->type);
         if (n->mode == INIT_ARRAY && n->count > 1) {
@@ -357,20 +359,20 @@ static void eval_local_initializer(TranslationUnit* tu, TB_Function* func, TB_Re
             size_t count = n->count;
 
             for (size_t i = 0; i < count; i++) {
-                TB_Reg addr_offset = tb_inst_member_access(func, addr, n->offset + (i * size));
-                tb_inst_store(func, dt, addr_offset, val, type->align);
+                TB_Node* addr_offset = tb_inst_member_access(func, addr, n->offset + (i * size));
+                tb_inst_store(func, dt, addr_offset, val, type->align, false);
             }
         } else {
-            TB_Reg addr_offset = tb_inst_member_access(func, addr, n->offset);
-            tb_inst_store(func, dt, addr_offset, val, type->align);
+            TB_Node* addr_offset = tb_inst_member_access(func, addr, n->offset);
+            tb_inst_store(func, dt, addr_offset, val, type->align, false);
         }
     }
 }
 
-static void gen_local_initializer(TranslationUnit* tu, TB_Function* func, TB_Reg addr, Cuik_Type* type, InitNode* root_node) {
-    TB_Reg size_reg = tb_inst_uint(func, TB_TYPE_I64, type->size);
-    TB_Reg val_reg = tb_inst_uint(func, TB_TYPE_I8, 0);
-    tb_inst_memset(func, addr, val_reg, size_reg, type->align);
+static void gen_local_initializer(TranslationUnit* tu, TB_Function* func, TB_Node* addr, Cuik_Type* type, InitNode* root_node) {
+    TB_Node* size_reg = tb_inst_uint(func, TB_TYPE_I64, type->size);
+    TB_Node* val_reg = tb_inst_uint(func, TB_TYPE_I8, 0);
+    tb_inst_memset(func, addr, val_reg, size_reg, type->align, false);
 
     eval_local_initializer(tu, func, addr, root_node);
 }
@@ -544,7 +546,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
         }
         case EXPR_INITIALIZER: {
             Cuik_Type* type = cuik_canonical_type(e->init.type);
-            TB_Reg addr = tb_inst_local(func, type->size, type->align);
+            TB_Node* addr = tb_inst_local(func, type->size, type->align);
 
             gen_local_initializer(tu, func, addr, type, e->init.root);
 
@@ -567,9 +569,9 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
 
             // post-increment
             // NOTE: this assumes pointer size is 64bit
-            TB_Reg pre = tb_inst_load(func, TB_TYPE_PTR, src.reg, 8);
-            TB_Reg post = tb_inst_member_access(func, pre, 8);
-            tb_inst_store(func, TB_TYPE_PTR, src.reg, post, 8);
+            TB_Node* pre = tb_inst_load(func, TB_TYPE_PTR, src.reg, 8, false);
+            TB_Node* post = tb_inst_member_access(func, pre, 8);
+            tb_inst_store(func, TB_TYPE_PTR, src.reg, post, 8, false);
 
             return (IRVal){
                 .value_type = LVALUE,
@@ -649,7 +651,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
         }
         case EXPR_PARAM: {
             int param_num = e->param_num;
-            TB_Reg reg = parameter_map[param_num];
+            TB_Node* reg = parameter_map[param_num];
 
             Cuik_Type* arg_type = cuik_canonical_type(function_type->func.param_list[param_num].type);
             assert(arg_type != NULL);
@@ -678,8 +680,8 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
             }
         }
         case EXPR_LOGICAL_NOT: {
-            TB_Reg reg = irgen_as_rvalue(tu, func, e->unary_op.src);
-            TB_DataType dt = tb_function_get_node(func, reg)->dt;
+            TB_Node* reg = irgen_as_rvalue(tu, func, e->unary_op.src);
+            TB_DataType dt = reg->dt;
 
             return (IRVal){
                 .value_type = RVALUE,
@@ -699,7 +701,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
             };
         }
         case EXPR_CAST: {
-            TB_Reg src = irgen_as_rvalue(tu, func, e->cast.src);
+            TB_Node* src = irgen_as_rvalue(tu, func, e->cast.src);
             Cuik_Type* t = cuik_canonical_type(e->cast.type);
 
             // stuff like ((void) x)
@@ -713,7 +715,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
             };
         }
         case EXPR_DEREF: {
-            TB_Reg reg = irgen_as_rvalue(tu, func, e->unary_op.src);
+            TB_Node* reg = irgen_as_rvalue(tu, func, e->unary_op.src);
 
             if (cuik_canonical_type(e->type)->kind == KIND_FUNC) {
                 return (IRVal){
@@ -742,7 +744,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
                     if (*name == '_') {
                         ptrdiff_t search = nl_strmap_get_cstr(tu->target->builtin_func_map, name);
                         if (search >= 0) {
-                            TB_Reg val = tu->target->compile_builtin(tu, func, name, arg_count, args);
+                            TB_Node* val = tu->target->compile_builtin(tu, func, name, arg_count, args);
 
                             return (IRVal){
                                 .value_type = RVALUE,
@@ -753,7 +755,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
                 }
             } else if (e->call.target->op == EXPR_BUILTIN_SYMBOL) {
                 const char* name = (const char*) e->call.target->builtin_sym.name;
-                TB_Reg val = tu->target->compile_builtin(tu, func, name, arg_count, args);
+                TB_Node* val = tu->target->compile_builtin(tu, func, name, arg_count, args);
 
                 return (IRVal){
                     .value_type = RVALUE,
@@ -769,7 +771,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
                 real_arg_count += tu->target->deduce_parameter_usage(tu, args[i]->type);
             }
 
-            TB_Reg* ir_args = tls_push(real_arg_count * sizeof(TB_Reg));
+            TB_Node** ir_args = tls_push(real_arg_count * sizeof(TB_Node*));
             Cuik_Type* return_type = cuik_canonical_type(e->type);
             if (is_aggregate_return) {
                 ir_args[0] = tb_inst_local(func, return_type->size, return_type->align);
@@ -779,9 +781,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
             // mapping to, if it's arg_count then there's really none
             size_t varargs_cutoff = arg_count;
             Cuik_Type* func_type = cuik_canonical_type(e->call.target->type);
-            bool is_indirect_func_ptr = false;
             if (func_type->kind == KIND_PTR) {
-                is_indirect_func_ptr  = true;
                 func_type = cuik_canonical_type(func_type->ptr_to);
             }
 
@@ -813,11 +813,11 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
             TB_DataType dt = ctype_to_tbtype(return_type);
             if (is_aggregate_return) dt = TB_TYPE_VOID;
 
-            TB_Reg target_reg = cvt2rval(tu, func, func_ptr, e->call.target);
-            TB_Reg r = tb_inst_vcall(func, dt, target_reg, real_arg_count, ir_args);
+            TB_Node* target_reg = cvt2rval(tu, func, func_ptr, e->call.target);
+            TB_Node* r = tb_inst_call(func, dt, target_reg, real_arg_count, ir_args);
 
             if (is_aggregate_return) {
-                TB_Reg result = ir_args[0];
+                TB_Node* result = ir_args[0];
                 tls_restore(ir_args);
 
                 return (IRVal){
@@ -828,11 +828,11 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
                 tls_restore(ir_args);
 
                 if (return_type->kind == KIND_STRUCT || return_type->kind == KIND_UNION) {
-                    TB_DataType dt = tb_function_get_node(func, r)->dt;
+                    TB_DataType dt = r->dt;
 
                     // spawn a lil temporary
-                    TB_Reg addr = tb_inst_local(func, return_type->size, return_type->align);
-                    tb_inst_store(func, dt, addr, r, return_type->align);
+                    TB_Node* addr = tb_inst_local(func, return_type->size, return_type->align);
+                    tb_inst_store(func, dt, addr, r, return_type->align, false);
 
                     return (IRVal){
                         .value_type = LVALUE,
@@ -847,8 +847,8 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
             }
         }
         case EXPR_SUBSCRIPT: {
-            TB_Reg base = irgen_as_rvalue(tu, func, e->subscript.base);
-            TB_Reg index = irgen_as_rvalue(tu, func, e->subscript.index);
+            TB_Node* base = irgen_as_rvalue(tu, func, e->subscript.base);
+            TB_Node* index = irgen_as_rvalue(tu, func, e->subscript.index);
 
             int stride = cuik_canonical_type(e->type)->size;
             return (IRVal){
@@ -857,7 +857,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
             };
         }
         case EXPR_DOT_R: {
-            TB_Reg src = irgen_as_lvalue(tu, func, e->dot_arrow.base);
+            TB_Node* src = irgen_as_lvalue(tu, func, e->dot_arrow.base);
 
             Member* member = e->dot_arrow.member;
             assert(member != NULL);
@@ -879,7 +879,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
             }
         }
         case EXPR_ARROW_R: {
-            TB_Reg src = irgen_as_rvalue(tu, func, e->dot_arrow.base);
+            TB_Node* src = irgen_as_rvalue(tu, func, e->dot_arrow.base);
 
             Member* member = e->dot_arrow.member;
             assert(member != NULL);
@@ -903,6 +903,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
         case EXPR_PRE_INC:
         case EXPR_PRE_DEC: {
             bool is_inc = (e->op == EXPR_PRE_INC);
+            bool is_volatile = CUIK_QUAL_TYPE_HAS(e->type, CUIK_QUAL_VOLATILE);
 
             IRVal src = {
                 .value_type = LVALUE,
@@ -911,12 +912,13 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
 
             return (IRVal){
                 .value_type = RVALUE,
-                .reg = inc_or_dec(tu, func, src, e->unary_op.src, cuik_canonical_type(e->type), false, is_inc),
+                .reg = inc_or_dec(tu, func, src, e->unary_op.src, cuik_canonical_type(e->type), false, is_inc, is_volatile),
             };
         }
         case EXPR_POST_INC:
         case EXPR_POST_DEC: {
             bool is_inc = (e->op == EXPR_POST_INC);
+            bool is_volatile = CUIK_QUAL_TYPE_HAS(e->type, CUIK_QUAL_VOLATILE);
 
             IRVal src = {
                 .value_type = LVALUE,
@@ -925,7 +927,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
 
             return (IRVal){
                 .value_type = RVALUE,
-                .reg = inc_or_dec(tu, func, src, e->unary_op.src, cuik_canonical_type(e->type), true, is_inc),
+                .reg = inc_or_dec(tu, func, src, e->unary_op.src, cuik_canonical_type(e->type), true, is_inc, is_volatile),
             };
         }
         case EXPR_LOGICAL_AND:
@@ -968,7 +970,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
                 true_lbl = tb_basic_block_create(func);
                 false_lbl = tb_basic_block_create(func);
 
-                TB_Reg a_reg = cvt2rval(tu, func, a, e->bin_op.left);
+                TB_Node* a_reg = cvt2rval(tu, func, a, e->bin_op.left);
                 if (is_and) {
                     tb_inst_if(func, a_reg, try_rhs_lbl, false_lbl);
                 } else {
@@ -979,7 +981,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
             // Eval second operand
             tb_inst_set_label(func, try_rhs_lbl);
 
-            TB_Reg b = irgen_as_rvalue(tu, func, e->bin_op.right);
+            TB_Node* b = irgen_as_rvalue(tu, func, e->bin_op.right);
             tb_inst_if(func, b, true_lbl, false_lbl);
 
             // Just in case
@@ -996,8 +998,8 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
         }
         case EXPR_PTRADD:
         case EXPR_PTRSUB: {
-            TB_Reg l = irgen_as_rvalue(tu, func, e->bin_op.left);
-            TB_Reg r = irgen_as_rvalue(tu, func, e->bin_op.right);
+            TB_Node* l = irgen_as_rvalue(tu, func, e->bin_op.left);
+            TB_Node* r = irgen_as_rvalue(tu, func, e->bin_op.right);
 
             Cuik_Type* type = cuik_canonical_type(e->type);
 
@@ -1012,8 +1014,8 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
             };
         }
         case EXPR_PTRDIFF: {
-            TB_Reg l = irgen_as_rvalue(tu, func, e->bin_op.left);
-            TB_Reg r = irgen_as_rvalue(tu, func, e->bin_op.right);
+            TB_Node* l = irgen_as_rvalue(tu, func, e->bin_op.left);
+            TB_Node* r = irgen_as_rvalue(tu, func, e->bin_op.right);
 
             Cuik_Type* type = cuik_canonical_type(e->bin_op.left->cast_type);
             int stride = cuik_canonical_type(type->ptr_to)->size;
@@ -1021,8 +1023,8 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
             l = tb_inst_ptr2int(func, l, TB_TYPE_I64);
             r = tb_inst_ptr2int(func, r, TB_TYPE_I64);
 
-            TB_Reg diff = tb_inst_sub(func, l, r, TB_ARITHMATIC_NSW | TB_ARITHMATIC_NUW);
-            TB_Reg diff_in_elems = tb_inst_div(func, diff, tb_inst_sint(func, tb_function_get_node(func, diff)->dt, stride), true);
+            TB_Node* diff = tb_inst_sub(func, l, r, TB_ARITHMATIC_NSW | TB_ARITHMATIC_NUW);
+            TB_Node* diff_in_elems = tb_inst_div(func, diff, tb_inst_sint(func, diff->dt, stride), true);
 
             return (IRVal){
                 .value_type = RVALUE,
@@ -1039,11 +1041,11 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
         case EXPR_XOR:
         case EXPR_SHL:
         case EXPR_SHR: {
-            TB_Reg l = irgen_as_rvalue(tu, func, e->bin_op.left);
-            TB_Reg r = irgen_as_rvalue(tu, func, e->bin_op.right);
+            TB_Node* l = irgen_as_rvalue(tu, func, e->bin_op.left);
+            TB_Node* r = irgen_as_rvalue(tu, func, e->bin_op.right);
             Cuik_Type* restrict type = cuik_canonical_type(e->type);
 
-            TB_Reg data;
+            TB_Node* data;
             if (type->kind == KIND_FLOAT || type->kind == KIND_DOUBLE) {
                 switch (e->op) {
                     case EXPR_PLUS:  data = tb_inst_fadd(func, l, r); break;
@@ -1082,10 +1084,10 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
         }
         case EXPR_CMPEQ:
         case EXPR_CMPNE: {
-            TB_Reg l = irgen_as_rvalue(tu, func, e->bin_op.left);
-            TB_Reg r = irgen_as_rvalue(tu, func, e->bin_op.right);
+            TB_Node* l = irgen_as_rvalue(tu, func, e->bin_op.left);
+            TB_Node* r = irgen_as_rvalue(tu, func, e->bin_op.right);
 
-            TB_Reg result;
+            TB_Node* result;
             if (e->op == EXPR_CMPEQ) {
                 result = tb_inst_cmp_eq(func, l, r);
             } else {
@@ -1101,11 +1103,11 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
         case EXPR_CMPGE:
         case EXPR_CMPLT:
         case EXPR_CMPLE: {
-            TB_Reg l = irgen_as_rvalue(tu, func, e->bin_op.left);
-            TB_Reg r = irgen_as_rvalue(tu, func, e->bin_op.right);
+            TB_Node* l = irgen_as_rvalue(tu, func, e->bin_op.left);
+            TB_Node* r = irgen_as_rvalue(tu, func, e->bin_op.right);
 
             Cuik_Type* type = cuik_canonical_type(e->bin_op.left->cast_type);
-            TB_Reg data;
+            TB_Node* data;
             if (type->kind == KIND_FLOAT || type->kind == KIND_DOUBLE) {
                 switch (e->op) {
                     case EXPR_CMPGT: data = tb_inst_cmp_fgt(func, l, r); break;
@@ -1169,7 +1171,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
                     // Implement big atomic copy
                     abort();
                 } else if (type->kind == KIND_FLOAT || type->kind == KIND_DOUBLE) {
-                    TB_Reg r = cvt2rval(tu, func, rhs, e->bin_op.right);
+                    TB_Node* r = cvt2rval(tu, func, rhs, e->bin_op.right);
 
                     // float assignment can be done atomic by using the normal
                     // integer stuff
@@ -1195,7 +1197,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
                         assert(0 && "TODO");
                     }
                 } else {
-                    TB_Reg r = cvt2rval(tu, func, rhs, e->bin_op.right);
+                    TB_Node* r = cvt2rval(tu, func, rhs, e->bin_op.right);
 
                     if (e->op == EXPR_ASSIGN) {
                         tb_inst_atomic_xchg(func, lhs.reg, r, TB_MEM_ORDER_SEQ_CST);
@@ -1205,7 +1207,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
                             .reg = r,
                         };
                     } else if (e->op == EXPR_PLUS_ASSIGN) {
-                        TB_Reg op = tb_inst_atomic_add(func, lhs.reg, r, TB_MEM_ORDER_SEQ_CST);
+                        TB_Node* op = tb_inst_atomic_add(func, lhs.reg, r, TB_MEM_ORDER_SEQ_CST);
                         op = tb_inst_add(func, op, r, 0);
 
                         return (IRVal){
@@ -1213,7 +1215,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
                             .reg = op,
                         };
                     } else if (e->op == EXPR_MINUS_ASSIGN) {
-                        TB_Reg op = tb_inst_atomic_sub(func, lhs.reg, r, TB_MEM_ORDER_SEQ_CST);
+                        TB_Node* op = tb_inst_atomic_sub(func, lhs.reg, r, TB_MEM_ORDER_SEQ_CST);
                         op = tb_inst_sub(func, op, r, 0);
 
                         return (IRVal){
@@ -1221,7 +1223,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
                             .reg = op,
                         };
                     } else if (e->op == EXPR_AND_ASSIGN) {
-                        TB_Reg op = tb_inst_atomic_and(func, lhs.reg, r, TB_MEM_ORDER_SEQ_CST);
+                        TB_Node* op = tb_inst_atomic_and(func, lhs.reg, r, TB_MEM_ORDER_SEQ_CST);
                         op = tb_inst_and(func, op, r);
 
                         return (IRVal){
@@ -1241,7 +1243,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
                     lhs.reg = tb_inst_get_symbol_address(func, lhs.sym);
                 }
 
-                TB_Reg l = TB_NULL_REG;
+                TB_Node* l = TB_NULL_REG;
                 if (e->op != EXPR_ASSIGN) {
                     // don't do this conversion for ASSIGN, since it won't
                     // be needing it
@@ -1256,29 +1258,25 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
                     int stride = cuik_canonical_type(type->ptr_to)->size;
                     assert(stride);
 
-                    TB_Reg r = cvt2rval(tu, func, rhs, e->bin_op.right);
-                    TB_Reg arith = tb_inst_array_access(func, l, r, dir * stride);
+                    TB_Node* r = cvt2rval(tu, func, rhs, e->bin_op.right);
+                    TB_Node* arith = tb_inst_array_access(func, l, r, dir * stride);
 
                     assert(lhs.value_type == LVALUE);
-                    if (is_volatile) {
-                        tb_inst_volatile_store(func, TB_TYPE_PTR, lhs.reg, arith, type->align);
-                    } else {
-                        tb_inst_store(func, TB_TYPE_PTR, lhs.reg, arith, type->align);
-                    }
+                    tb_inst_store(func, TB_TYPE_PTR, lhs.reg, arith, type->align, is_volatile);
                     return lhs;
                 }
 
                 TB_DataType dt = ctype_to_tbtype(type);
 
-                TB_Reg data = TB_NULL_REG;
+                TB_Node* data = TB_NULL_REG;
                 if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
                     if (e->op != EXPR_ASSIGN) abort();
 
-                    TB_Reg size_reg = tb_inst_uint(func, TB_TYPE_I64, type->size);
-                    tb_inst_memcpy(func, lhs.reg, rhs.reg, size_reg, type->align);
+                    TB_Node* size_reg = tb_inst_uint(func, TB_TYPE_I64, type->size);
+                    tb_inst_memcpy(func, lhs.reg, rhs.reg, size_reg, type->align, is_volatile);
                     data = rhs.reg;
                 } else if (type->kind == KIND_FLOAT || type->kind == KIND_DOUBLE) {
-                    TB_Reg r = cvt2rval(tu, func, rhs, e->bin_op.right);
+                    TB_Node* r = cvt2rval(tu, func, rhs, e->bin_op.right);
 
                     switch (e->op) {
                         case EXPR_ASSIGN:       data = r;                        break;
@@ -1290,13 +1288,9 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
                     }
 
                     assert(lhs.value_type == LVALUE);
-                    if (is_volatile) {
-                        tb_inst_volatile_store(func, dt, lhs.reg, data, type->align);
-                    } else {
-                        tb_inst_store(func, dt, lhs.reg, data, type->align);
-                    }
+                    tb_inst_store(func, dt, lhs.reg, data, type->align, is_volatile);
                 } else {
-                    TB_Reg r = cvt2rval(tu, func, rhs, e->bin_op.right);
+                    TB_Node* r = cvt2rval(tu, func, rhs, e->bin_op.right);
                     TB_ArithmaticBehavior ab = type->is_unsigned ? 0 : TB_ARITHMATIC_NSW;
 
                     switch (e->op) {
@@ -1316,9 +1310,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
 
                     if (lhs.value_type == LVALUE_BITS && lhs.bits.width != (type->size * 8)) {
                         // NOTE(NeGate): the semantics around volatile bitfields are janky at best
-                        TB_Reg old_value;
-                        if (is_volatile) old_value = tb_inst_volatile_load(func, dt, lhs.reg, type->align);
-                        else old_value = tb_inst_load(func, dt, lhs.reg, type->align);
+                        TB_Node* old_value = tb_inst_load(func, dt, lhs.reg, type->align, is_volatile);
 
                         // mask out the space for our bitfield member
                         uint64_t clear_mask = ~((UINT64_MAX >> (64ull - lhs.bits.width)) << lhs.bits.offset);
@@ -1339,59 +1331,55 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
                         assert(lhs.value_type == LVALUE);
                     }
 
-                    if (is_volatile) {
-                        tb_inst_volatile_store(func, dt, lhs.reg, data, type->align);
-                    } else {
-                        tb_inst_store(func, dt, lhs.reg, data, type->align);
+                    tb_inst_store(func, dt, lhs.reg, data, type->align, is_volatile);
+
+                    if (e->op == EXPR_ASSIGN) {
+                        assert(data);
+                        return (IRVal){
+                            .value_type = RVALUE,
+                            .reg = data
+                        };
                     }
+
+                    return lhs;
+                }
+            }
+            case EXPR_TERNARY: {
+                TB_Node* cond = irgen_as_rvalue(tu, func, e->ternary_op.left);
+
+                TB_Label if_true = tb_basic_block_create(func);
+                TB_Label if_false = tb_basic_block_create(func);
+                TB_Label exit = tb_basic_block_create(func);
+
+                tb_inst_if(func, cond, if_true, if_false);
+
+                TB_Node* true_val;
+                {
+                    tb_inst_set_label(func, if_true);
+
+                    true_val = irgen_as_rvalue(tu, func, e->ternary_op.middle);
+                    if_true = tb_inst_get_label(func);
+                    tb_inst_goto(func, exit);
                 }
 
-                if (e->op == EXPR_ASSIGN) {
-                    assert(data);
-                    return (IRVal){
-                        .value_type = RVALUE,
-                        .reg = data
-                    };
+                TB_Node* false_val;
+                {
+                    tb_inst_set_label(func, if_false);
+
+                    false_val = irgen_as_rvalue(tu, func, e->ternary_op.right);
+                    if_false = tb_inst_get_label(func);
+                    tb_inst_goto(func, exit);
                 }
+                tb_inst_set_label(func, exit);
 
-                return lhs;
+                return (IRVal){
+                    .value_type = RVALUE,
+                    .reg = tb_inst_phi2(func, if_true, true_val, if_false, false_val),
+                };
             }
+
+            default: TODO();
         }
-        case EXPR_TERNARY: {
-            TB_Reg cond = irgen_as_rvalue(tu, func, e->ternary_op.left);
-
-            TB_Label if_true = tb_basic_block_create(func);
-            TB_Label if_false = tb_basic_block_create(func);
-            TB_Label exit = tb_basic_block_create(func);
-
-            tb_inst_if(func, cond, if_true, if_false);
-
-            TB_Reg true_val;
-            {
-                tb_inst_set_label(func, if_true);
-
-                true_val = irgen_as_rvalue(tu, func, e->ternary_op.middle);
-                if_true = tb_inst_get_label(func);
-                tb_inst_goto(func, exit);
-            }
-
-            TB_Reg false_val;
-            {
-                tb_inst_set_label(func, if_false);
-
-                false_val = irgen_as_rvalue(tu, func, e->ternary_op.right);
-                if_false = tb_inst_get_label(func);
-                tb_inst_goto(func, exit);
-            }
-            tb_inst_set_label(func, exit);
-
-            return (IRVal){
-                .value_type = RVALUE,
-                .reg = tb_inst_phi2(func, if_true, true_val, if_false, false_val),
-            };
-        }
-
-        default: TODO();
     }
 }
 
@@ -1501,7 +1489,7 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
                 break;
             }
 
-            TB_Reg addr = tb_inst_local(func, size, align);
+            TB_Node* addr = tb_inst_local(func, size, align);
             if (tu->has_tb_debug_info && s->decl.name != NULL) {
                 tb_function_attrib_variable(func, addr, s->decl.name, cuik__as_tb_debug_type(tu->ir_mod, type));
             }
@@ -1514,18 +1502,18 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
                 } else {
                     if (kind == KIND_ARRAY && (e->op == EXPR_STR || e->op == EXPR_WSTR)) {
                         IRVal v = irgen_expr(tu, func, s->decl.initial);
-                        TB_Reg size_reg = tb_inst_uint(func, TB_TYPE_I64, size);
+                        TB_Node* size_reg = tb_inst_uint(func, TB_TYPE_I64, size);
 
-                        tb_inst_memcpy(func, addr, v.reg, size_reg, align);
+                        tb_inst_memcpy(func, addr, v.reg, size_reg, align, false);
                     } else if (kind == KIND_STRUCT || kind == KIND_UNION) {
                         IRVal v = irgen_expr(tu, func, s->decl.initial);
-                        TB_Reg size_reg = tb_inst_uint(func, TB_TYPE_I64, size);
+                        TB_Node* size_reg = tb_inst_uint(func, TB_TYPE_I64, size);
 
-                        tb_inst_memcpy(func, addr, v.reg, size_reg, align);
+                        tb_inst_memcpy(func, addr, v.reg, size_reg, align, false);
                     } else {
-                        TB_Reg v = irgen_as_rvalue(tu, func, s->decl.initial);
+                        TB_Node* v = irgen_as_rvalue(tu, func, s->decl.initial);
 
-                        tb_inst_store(func, ctype_to_tbtype(type), addr, v, align);
+                        tb_inst_store(func, ctype_to_tbtype(type), addr, v, align, false);
                     }
                 }
             } else {
@@ -1554,14 +1542,14 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
                     int size = type->size;
                     int align = type->align;
 
-                    TB_Reg dst_address = tb_inst_load(func, TB_TYPE_PTR, return_value_address, 8);
-                    TB_Reg size_reg = tb_inst_uint(func, TB_TYPE_I64, size);
+                    TB_Node* dst_address = tb_inst_load(func, TB_TYPE_PTR, return_value_address, 8, false);
+                    TB_Node* size_reg = tb_inst_uint(func, TB_TYPE_I64, size);
 
-                    tb_inst_memcpy(func, dst_address, v.reg, size_reg, align);
+                    tb_inst_memcpy(func, dst_address, v.reg, size_reg, align, false);
                     tb_inst_ret(func, TB_NULL_REG);
                 } else {
                     IRVal v = irgen_expr(tu, func, e);
-                    TB_Reg r = TB_NULL_REG;
+                    TB_Node* r = TB_NULL_REG;
                     if (v.value_type == LVALUE) {
                         // Implicit array to pointer
                         if (type->kind == KIND_ARRAY) {
@@ -1570,7 +1558,7 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
                             assert(type->size <= 8);
                             TB_DataType dt = { { TB_INT, 0, type->size * 8 } };
 
-                            r = tb_inst_load(func, dt, v.reg, type->align);
+                            r = tb_inst_load(func, dt, v.reg, type->align, false);
                         }
                     }
 
@@ -1584,7 +1572,7 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
             break;
         }
         case STMT_IF: {
-            TB_Reg cond = irgen_as_rvalue(tu, func, s->if_.cond);
+            TB_Node* cond = irgen_as_rvalue(tu, func, s->if_.cond);
 
             TB_Label if_true = tb_basic_block_create(func);
             TB_Label if_false = tb_basic_block_create(func);
@@ -1624,7 +1612,7 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
             assert(header == exit - 2);
             fallthrough_label(func, header);
 
-            TB_Reg cond = irgen_as_rvalue(tu, func, s->while_.cond);
+            TB_Node* cond = irgen_as_rvalue(tu, func, s->while_.cond);
             tb_inst_if(func, cond, body, exit);
 
             tb_inst_set_label(func, body);
@@ -1656,7 +1644,7 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
 
             insert_label(func);
 
-            TB_Reg cond = irgen_as_rvalue(tu, func, s->do_while.cond);
+            TB_Node* cond = irgen_as_rvalue(tu, func, s->do_while.cond);
             tb_inst_if(func, cond, body, exit);
             tb_inst_set_label(func, exit);
             break;
@@ -1683,7 +1671,7 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
             fallthrough_label(func, header);
 
             if (s->for_.cond) {
-                TB_Reg cond = irgen_as_rvalue(tu, func, s->for_.cond);
+                TB_Node* cond = irgen_as_rvalue(tu, func, s->for_.cond);
                 tb_inst_if(func, cond, body, exit);
             } else {
                 tb_inst_goto(func, body);
@@ -1771,10 +1759,9 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
                 default_label = break_label;
             }
 
-            TB_Reg key = irgen_as_rvalue(tu, func, s->switch_.condition);
-            TB_DataType dt = tb_function_get_node(func, key)->dt;
+            TB_Node* key = irgen_as_rvalue(tu, func, s->switch_.condition);
 
-            tb_inst_switch(func, dt, key, default_label, entry_count, entries);
+            tb_inst_branch(func, key->dt, key, default_label, entry_count, entries);
 
             tb_inst_set_label(func, tb_basic_block_create(func));
             irgen_stmt(tu, func, s->switch_.body);
@@ -1805,7 +1792,7 @@ TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, Stmt* re
         // Parameters
         size_t param_count = type->func.param_count;
 
-        TB_Reg* params = parameter_map = tls_push(param_count * sizeof(TB_Reg));
+        TB_Node** params = parameter_map = tls_push(param_count * sizeof(TB_Node*));
         Cuik_Type* return_type = cuik_canonical_type(type->func.return_type);
 
         bool is_aggregate_return = !tu->target->pass_return_via_reg(tu, return_type);
