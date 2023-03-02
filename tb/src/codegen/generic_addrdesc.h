@@ -55,8 +55,9 @@ enum {
 };
 
 typedef struct {
-    int last_use, ordinal;
-} LiveInterval;
+    TB_Node* last_use;
+    int ordinal;
+} Liveness;
 
 typedef struct {
     TB_Node* key;
@@ -84,7 +85,7 @@ struct Ctx {
     RegisterRef tmps[4];
 
     // some analysis
-    NL_Map(TB_Node*, LiveInterval) intervals;
+    NL_Map(TB_Node*, Liveness) intervals;
 
     // Used to allocate stack stuff
     uint32_t stack_usage;
@@ -132,18 +133,15 @@ static FunctionTallySimple tally_memory_usage_simple(TB_Function* restrict f) {
         label_patch_count += 1;
 
         TB_FOR_BASIC_BLOCK(bb, f) {
-            TB_FOR_NODE(r, f, bb) {
-                TB_Node* n = &f->nodes[r];
+            TB_FOR_NODE(n, f, bb) {
                 TB_NodeTypeEnum t = n->type;
 
                 if (t == TB_RET) return_count++;
                 else if (t == TB_LOCAL) locals_count++;
-                else if (t == TB_IF) label_patch_count += 2;
-                else if (t == TB_GOTO) label_patch_count++;
-                else if (t == TB_LINE_INFO) line_info_count++;
-                else if (t == TB_SWITCH) {
-                    label_patch_count += 1 + ((n->switch_.entries_end - n->switch_.entries_start) / 2);
+                else if (t == TB_BRANCH) {
+                    label_patch_count += 1 + TB_NODE_GET_EXTRA_T(n, TB_NodeBranch)->count;
                 }
+                else if (t == TB_LINE_INFO) line_info_count++;
             }
         }
     }
@@ -244,14 +242,14 @@ static void GAD_FN(get_data_type_size)(TB_DataType dt, TB_CharUnits* out_size, T
     }
 }
 
-#define GET_VAL(n) (*get_val(n))
+#define GET_VAL(n) (*GAD_FN(get_val)(ctx, n))
 static GAD_VAL* GAD_FN(get_val)(Ctx* restrict ctx, TB_Node* n) {
     uint32_t hash = (((uintptr_t) n) * 11400714819323198485llu) >> 32u;
 
     for (size_t i = hash;;) {
         // hash table lookup
-        uint32_t mask = (1 << INTERNER_EXP) - 1;
-        uint32_t step = (hash >> (32 - INTERNER_EXP)) | 1;
+        uint32_t mask = (1 << ctx->values_exp) - 1;
+        uint32_t step = (hash >> (32 - ctx->values_exp)) | 1;
         i = (i + step) & mask;
 
         if (ctx->values[i].key == NULL) {
@@ -269,8 +267,8 @@ static GAD_VAL* GAD_FN(get_val)(Ctx* restrict ctx, TB_Node* n) {
 }
 
 static bool GAD_FN(fits_into_int32)(TB_Node* n) {
-    if (n->type == TB_INTEGER_CONST && n->integer.num_words == 1) {
-        uint64_t x = n->integer.single_word;
+    if (n->type == TB_INTEGER_CONST && TB_NODE_GET_EXTRA_T(n, TB_NodeInt)->num_words == 1) {
+        uint64_t x = TB_NODE_GET_EXTRA_T(n, TB_NodeInt)->words[0];
         int32_t y = x & 0xFFFFFFFF;
 
         return (int64_t)y == x;
@@ -295,7 +293,7 @@ static void GAD_FN(kill_flags)(Ctx* restrict ctx, TB_Function* f) {
         // write value to a more persistent space
         GAD_VAL v = GAD_FN(cond_to_reg)(ctx, f, ctx->flags_bound, ctx->flags_code);
         assert(v.type != GAD_VAL_UNRESOLVED);
-        ctx->values[ctx->flags_bound] = v;
+        GET_VAL(ctx->flags_bound) = v;
 
         // reset flags
         ctx->flags_bound = TB_NULL_REG;
@@ -308,9 +306,15 @@ typedef struct {
 } LiveInterval;
 
 static LiveInterval get_bb_interval(Ctx* restrict ctx, TB_Function* f, TB_Label bb) {
+    ptrdiff_t search = nl_map_get(ctx->intervals, f->bbs[bb].start);
+    assert(search >= 0);
+
+    ptrdiff_t search2 = nl_map_get(ctx->intervals, f->bbs[bb].end);
+    assert(search2 >= 0);
+
     LiveInterval li;
-    li.start = ctx->ordinal[f->bbs[bb].start];
-    li.end = ctx->ordinal[f->bbs[bb].end];
+    li.start = ctx->intervals[search].v.ordinal;
+    li.end = ctx->intervals[search2].v.ordinal;
 
     if (li.start > li.end) {
         tb_swap(int, li.start, li.end);
@@ -318,10 +322,17 @@ static LiveInterval get_bb_interval(Ctx* restrict ctx, TB_Function* f, TB_Label 
     return li;
 }
 
-static LiveInterval get_live_interval(Ctx* restrict ctx, TB_Node* r) {
+static LiveInterval get_live_interval(Ctx* restrict ctx, TB_Node* n) {
+    ptrdiff_t search = nl_map_get(ctx->intervals, n);
+    assert(search >= 0);
+
+    TB_Node* last_use = ctx->intervals[search].v.last_use;
+    ptrdiff_t search2 = nl_map_get(ctx->intervals, last_use);
+    assert(search2 >= 0);
+
     LiveInterval li;
-    li.start = ctx->ordinal[r];
-    li.end = ctx->ordinal[ctx->intervals[r]];
+    li.start = ctx->intervals[search].v.ordinal;
+    li.end = ctx->intervals[search2].v.ordinal;
 
     if (li.start > li.end) {
         tb_swap(int, li.start, li.end);
@@ -336,9 +347,9 @@ static bool GAD_FN(encompass)(Ctx* restrict ctx, TB_Function* f, TB_Node* a, TB_
     return b_li.start >= a_li.start && b_li.end <= a_li.end;
 }
 
-static GAD_VAL* GAD_FN(find_spill)(Ctx* restrict ctx, TB_Function* f, TB_Node* r) {
+static GAD_VAL* GAD_FN(find_spill)(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
     FOREACH_N(i, 0, ctx->spill_count) {
-        if (ctx->spills[i].r == r) {
+        if (ctx->spills[i].r == n) {
             return &ctx->spills[i];
         }
     }
@@ -349,29 +360,30 @@ static GAD_VAL* GAD_FN(find_spill)(Ctx* restrict ctx, TB_Function* f, TB_Node* r
 // Evicts old values and keeps the registers reserved, you'd have to manually free them later
 static void GAD_FN(evict)(Ctx* restrict ctx, TB_Function* f, int reg_class, uint64_t regs_to_evict, int split) {
     FOREACH_N(i, 0, ctx->active_count) {
-        TB_Node* r = ctx->active[i];
+        TB_Node* n = ctx->active[i];
+        GAD_VAL* v = &GET_VAL(n);
 
-        if (r != 0 && ctx->values[r].type == GAD_VAL_REGISTER + reg_class && ((1u << ctx->values[r].reg) & regs_to_evict) != 0) {
-            LiveInterval r_li = get_live_interval(ctx, r);
+        if (n != NULL && v->type == GAD_VAL_REGISTER + reg_class && ((1u << v->reg) & regs_to_evict) != 0) {
+            LiveInterval r_li = get_live_interval(ctx, n);
             if (r_li.end != split) {
                 // spill (we're saving the old value because we need to restore before leaving
                 // this basic block)
-                GAD_VAL old_val = ctx->values[r];
+                GAD_VAL old_val = *v;
 
                 // allocate new stack slot
                 ctx->stack_usage = align_up(ctx->stack_usage + 8, 8);
-                GAD_VAL slot = GAD_MAKE_STACK_SLOT(ctx, f, r, -ctx->stack_usage);
+                GAD_VAL slot = GAD_MAKE_STACK_SLOT(ctx, f, n, -ctx->stack_usage);
                 slot.mem.is_rvalue = true;
 
                 // take our previously held value and make that the restore value
                 GAD_VAL* restore_val = &ctx->spills[ctx->spill_count++];
-                *restore_val = ctx->values[r];
+                *restore_val = *v;
 
                 // use the stack slot now
-                ctx->values[r] = slot;
+                GET_VAL(n) = slot;
 
                 DBG("  spill r%u to [rbp - %d]\n", r, ctx->stack_usage);
-                GAD_FN(spill)(ctx, f, &ctx->values[r], &old_val, r);
+                GAD_FN(spill)(ctx, f, &GET_VAL(n), &old_val, n);
             } else {
                 DBG("  expired r%u before eviction\n", r);
             }
@@ -391,37 +403,40 @@ static void GAD_FN(explicit_steal)(Ctx* restrict ctx, TB_Function* f, TB_Node* n
     // replace spill with r
     ctx->stack_usage = align_up(ctx->stack_usage + 8, 8);
 
-    GAD_VAL slot = GAD_MAKE_STACK_SLOT(ctx, f, r, -ctx->stack_usage);
+    GAD_VAL slot = GAD_MAKE_STACK_SLOT(ctx, f, n, -ctx->stack_usage);
     slot.dt = n->dt;
     slot.mem.is_rvalue = true;
-    ctx->values[r] = ctx->values[spill_reg];
+    GET_VAL(n) = GET_VAL(spill_reg);
 
     // spill (we're saving the old value because we need to restore before leaving
     // this basic block)
     GAD_VAL* restore_val = &ctx->spills[ctx->spill_count++];
-    *restore_val = ctx->values[spill_reg];
-    ctx->values[spill_reg] = slot;
+    *restore_val = GET_VAL(spill_reg);
+    GET_VAL(spill_reg) = slot;
 
-    DBG("  steal r%u for r%u\n", spill_reg, r);
+    DBG("  steal r%u for r%u\n", spill_reg, n);
     DBG("  spill r%u to [rbp - %d]\n", spill_reg, ctx->stack_usage);
-    GAD_FN(spill)(ctx, f, &slot, &ctx->values[r], r);
+    GAD_FN(spill)(ctx, f, &slot, &GET_VAL(n), n);
 
     // TODO(NeGate): sort by increasing end point
-    ctx->active[active_i] = r;
+    ctx->active[active_i] = n;
 }
 
 static bool GAD_FN(free_reg)(Ctx* restrict ctx, TB_Function* f, int reg_class, int reg_num) {
     set_remove(&ctx->free_regs[reg_class], reg_num);
 
     FOREACH_N(i, 0, ctx->active_count) {
-        TB_Node* r = ctx->active[i];
-        if (ctx->values[r].type == GAD_VAL_REGISTER + reg_class && ctx->values[r].reg == reg_num) {
+        TB_Node* n = ctx->active[i];
+        GAD_VAL* v = &GET_VAL(n);
+
+        if (v->type == GAD_VAL_REGISTER + reg_class && v->reg == reg_num) {
             DBG("free %s\n", GPR_NAMES[reg_num]);
 
             if (i != ctx->active_count - 1) {
                 ctx->active[i] = ctx->active[ctx->active_count - 1];
             }
-            ctx->values[r] = (GAD_VAL){ 0 };
+
+            *v = (GAD_VAL){ 0 };
             ctx->active_count -= 1;
             return true;
         }
@@ -434,13 +449,14 @@ static GAD_VAL GAD_FN(steal)(Ctx* restrict ctx, TB_Function* f, TB_Node* n, int 
     DBG("steal %s for r%u\n", GPR_NAMES[reg_num], r);
     FOREACH_N(i, 0, ctx->active_count) {
         TB_Node* spill_reg = ctx->active[i];
+        GAD_VAL* spill_v = &GET_VAL(spill_reg);
         // LiveInterval spill_li = get_live_interval(ctx, spill_reg);
 
-        if (ctx->values[spill_reg].type == GAD_VAL_REGISTER + reg_class && ctx->values[spill_reg].reg == reg_num) {
+        if (spill_v->type == GAD_VAL_REGISTER + reg_class && spill_v->reg == reg_num) {
             // spill_li.end > r_li.end;
             // it's not a register in the proper regclass and it's not outliving r
-            GAD_FN(explicit_steal)(ctx, f, r, spill_reg, i);
-            return ctx->values[r];
+            GAD_FN(explicit_steal)(ctx, f, n, spill_reg, i);
+            return GET_VAL(n);
         }
     }
 
@@ -449,11 +465,11 @@ static GAD_VAL GAD_FN(steal)(Ctx* restrict ctx, TB_Function* f, TB_Node* n, int 
     set_put(&ctx->free_regs[reg_class], reg_num);
     GAD_VAL v = {
         .type = GAD_VAL_REGISTER + reg_class,
-        .r = r, .dt = n->dt, .reg = reg_num
+        .r = n, .dt = n->dt, .reg = reg_num
     };
 
-    ctx->values[r] = v;
-    ctx->active[ctx->active_count++] = r;
+    GET_VAL(n) = v;
+    ctx->active[ctx->active_count++] = n;
     return v;
 }
 
@@ -468,9 +484,10 @@ static bool GAD_FN(try_steal)(Ctx* restrict ctx, TB_Function* f, TB_Node* victim
             if (other_li.end == r_li.start) {
                 DBG("  steal r%u from r%u\n", victim, r);
 
-                ctx->values[r] = ctx->values[victim];
+                GAD_VAL* victim_v = &GET_VAL(victim);
+                GET_VAL(r) = *victim_v;
                 ctx->active[k] = r;
-                ctx->values[victim].is_ref = true;
+                victim_v->is_ref = true;
                 return true;
             }
         }
@@ -486,9 +503,10 @@ static GAD_VAL GAD_FN(regalloc2)(Ctx* restrict ctx, TB_Function* f, TB_Node* n, 
     if (ctx->active_count == ctx->free_regs[reg_class].capacity) {
         FOREACH_N(i, 0, ctx->active_count) {
             TB_Node* spill_reg = ctx->active[i];
+            GAD_VAL* spill_v = &GET_VAL(spill_reg);
 
-            if (ctx->values[spill_reg].type == GAD_VAL_REGISTER + reg_class) {
-                GAD_FN(explicit_steal)(ctx, f, r, spill_reg, i);
+            if (spill_v->type == GAD_VAL_REGISTER + reg_class) {
+                GAD_FN(explicit_steal)(ctx, f, n, spill_reg, i);
                 goto done;
             }
         }
@@ -500,10 +518,10 @@ static GAD_VAL GAD_FN(regalloc2)(Ctx* restrict ctx, TB_Function* f, TB_Node* n, 
             TB_PhiInput* inputs = tb_node_get_phi_inputs(f, phi_steal);
 
             FOREACH_N(i, 0, count) {
-                if (inputs[i].val == r) {
+                if (inputs[i].val == n) {
                     // check if we're the last use of the PHI in the basic block.
                     // TODO(NeGate): this is a very conservative way to do so lmao, fix it
-                    if (tb_node_is_terminator(f, f->nodes[r].next)) {
+                    if (tb_node_is_terminator(f, n->next)) {
                         ctx->values[r] = ctx->values[phi_steal];
                         ctx->values[r].is_ref = true;
                         goto done;
@@ -521,9 +539,10 @@ static GAD_VAL GAD_FN(regalloc2)(Ctx* restrict ctx, TB_Function* f, TB_Node* n, 
                 if (other_li.end == r_li.start) {
                     DBG("  recycle r%u for r%u\n", other_r, r);
 
-                    ctx->values[r] = ctx->values[other_r];
-                    ctx->active[k] = r;
-                    ctx->values[other_r].is_ref = true;
+                    GAD_VAL* other_v = &GET_VAL(other_r);
+                    GET_VAL(n) = *other_v;
+                    ctx->active[k] = n;
+                    other_v->is_ref = true;
                     goto done;
                 }
             }
@@ -533,9 +552,9 @@ static GAD_VAL GAD_FN(regalloc2)(Ctx* restrict ctx, TB_Function* f, TB_Node* n, 
         assert(reg_num >= 0);
 
         DBG("  assign to %s\n", GPR_NAMES[reg_num]);
-        ctx->values[r] = (GAD_VAL){
+        GET_VAL(n) = (GAD_VAL){
             .type = GAD_VAL_REGISTER + reg_class,
-            .r = r, .dt = n->dt, .reg = reg_num
+            .r = n, .dt = n->dt, .reg = reg_num
         };
         set_put(&ctx->free_regs[reg_class], reg_num);
 
@@ -543,7 +562,7 @@ static GAD_VAL GAD_FN(regalloc2)(Ctx* restrict ctx, TB_Function* f, TB_Node* n, 
         ctx->regs_to_save[reg_class] |= (1u << reg_num) & ctx->callee_saved[reg_class];
 
         // TODO(NeGate): sort by increasing end point
-        ctx->active[ctx->active_count++] = r;
+        ctx->active[ctx->active_count++] = n;
     }
 
     done:
@@ -635,9 +654,8 @@ static void GAD_FN(eval_bb)(Ctx* restrict ctx, TB_Function* f, TB_Label bb, TB_L
     ctx->emit.labels[bb] = GET_CODE_POS(&ctx->emit);
 
     TB_Node* bb_end = f->bbs[bb].end;
-    TB_FOR_NODE(r, f, bb) {
-        if (r == bb_end) break;
-        TB_Node* restrict n = &f->nodes[r];
+    TB_FOR_NODE(n, f, bb) {
+        if (n == bb_end) break;
         TB_NodeTypeEnum reg_type = n->type;
         // TB_DataType dt = n->dt;
 
@@ -666,13 +684,19 @@ static void GAD_FN(eval_bb)(Ctx* restrict ctx, TB_Function* f, TB_Label bb, TB_L
             case TB_DEBUGBREAK:
             case TB_MEMSET:
             case TB_MEMCPY: {
-                GAD_FN(barrier)(ctx, f, bb, 0, ctx->ordinal[r]);
+                ptrdiff_t search = nl_map_get(ctx->ordinal, n);
+                assert(search >= 0);
+
+                GAD_FN(barrier)(ctx, f, bb, NULL, ctx->intervals[search].v.ordinal);
                 GAD_FN(misc_op)(ctx, f, r);
                 break;
             }
 
             case TB_STORE: {
-                GAD_FN(barrier)(ctx, f, bb, f->nodes[r].store.address, ctx->ordinal[r]);
+                ptrdiff_t search = nl_map_get(ctx->ordinal, n);
+                assert(search >= 0);
+
+                GAD_FN(barrier)(ctx, f, bb, n->inputs[0], ctx->intervals[search].v.ordinal);
                 GAD_FN(store)(ctx, f, r);
                 break;
             }
@@ -681,7 +705,10 @@ static void GAD_FN(eval_bb)(Ctx* restrict ctx, TB_Function* f, TB_Label bb, TB_L
             case TB_SCALL:
             case TB_VCALL: {
                 // TODO(NeGate): move barrier closer to the callsite
-                GAD_FN(barrier)(ctx, f, bb, 0, ctx->ordinal[r]);
+                ptrdiff_t search = nl_map_get(ctx->ordinal, n);
+                assert(search >= 0);
+
+                GAD_FN(barrier)(ctx, f, bb, NULL, ctx->intervals[search].v.ordinal);
                 GAD_FN(call)(ctx, f, r);
                 break;
             }
@@ -693,11 +720,11 @@ static void GAD_FN(eval_bb)(Ctx* restrict ctx, TB_Function* f, TB_Label bb, TB_L
                 tb_todo();
             }
 
-            GAD_FN(eval)(ctx, f, r);
+            GAD_FN(eval)(ctx, f, n);
             break;
         }
 
-        ctx->values[r].r = r;
+        ctx->values[r].r = n;
         if (ctx->tmp_count > 0) {
             FOREACH_N(i, 0, ctx->tmp_count) {
                 RegisterRef rr = ctx->tmps[i];
@@ -726,7 +753,7 @@ static void GAD_FN(eval_bb)(Ctx* restrict ctx, TB_Function* f, TB_Label bb, TB_L
             GAD_FN(spill)(ctx, f, restore_val, &ctx->values[restore_val->r], restore_val->r);
         }
 
-        ctx->values[restore_val->r] = *restore_val;
+        GET_VAL(restore_val->r) = *restore_val;
         *restore_val = (GAD_VAL){ 0 };
     }
     ctx->spill_count = 0;
@@ -917,9 +944,7 @@ static TB_FunctionOutput GAD_FN(compile_function)(TB_Function* restrict f, const
     int counter = 0;
     size_t caller_usage = 0;
     TB_FOR_BASIC_BLOCK(bb, f) {
-        TB_FOR_NODE(r, f, bb) {
-            TB_Node* n = &f->nodes[r];
-
+        TB_FOR_NODE(n, f, bb) {
             if (n->type == TB_PARAM_ADDR || n->type == TB_LOCAL) {
                 GAD_FN(resolve_stack_slot)(ctx, f, n);
             } else if (EITHER2(n->type, TB_CALL, TB_VCALL)) {
@@ -927,7 +952,8 @@ static TB_FunctionOutput GAD_FN(compile_function)(TB_Function* restrict f, const
                 if (caller_usage < param_usage) caller_usage = param_usage;
             }
 
-            ctx->ordinal[n - f->nodes] = counter++;
+            tb_todo();
+            // ctx->ordinal[n - f->nodes] = counter++;
         }
     }
 

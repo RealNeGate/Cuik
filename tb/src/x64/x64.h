@@ -61,7 +61,7 @@ typedef struct Val {
     bool is_spill : 1;
     bool is_ref : 1;
     TB_DataType dt;
-    TB_Reg r;
+    TB_Node* r;
 
     union {
         int reg;

@@ -212,15 +212,13 @@ static void x64v2_resolve_local_patches(Ctx* restrict ctx, TB_Function* f) {
     }
 }
 
-static void x64v2_resolve_params(Ctx* restrict ctx, TB_Function* f, GAD_VAL* values) {
+static void x64v2_resolve_params(Ctx* restrict ctx, TB_Function* f) {
     bool is_sysv = (f->super.module->target_abi == TB_ABI_SYSTEMV);
     const TB_FunctionPrototype* restrict proto = f->prototype;
 
     size_t param_count = proto->param_count;
     TB_FOR_BASIC_BLOCK(bb, f) {
-        TB_FOR_NODE(r, f, bb) {
-            TB_Node* n = &f->nodes[r];
-
+        TB_FOR_NODE(n, f, bb) {
             if (n->type == TB_PARAM) {
                 size_t i = n->param.id;
                 TB_DataType dt = n->dt;
@@ -242,25 +240,25 @@ static void x64v2_resolve_params(Ctx* restrict ctx, TB_Function* f, GAD_VAL* val
                     if (is_sysv) {
                         if (i < 6) {
                             ctx->active[ctx->active_count++] = r;
-                            values[r] = (GAD_VAL){
+                            GET_VAL(n) = (GAD_VAL){
                                 .type = GAD_VAL_REGISTER + X64_REG_CLASS_GPR,
                                 .r = r, .dt = dt, .reg = SYSV_GPR_PARAMETERS[i],
                             };
                         }
 
-                        DBG("  assign to %s\n", GPR_NAMES[values[r].reg]);
-                        set_put(&ctx->free_regs[X64_REG_CLASS_GPR], values[r].reg);
+                        DBG("  assign to %s\n", GPR_NAMES[GET_VAL(n).reg]);
+                        set_put(&ctx->free_regs[X64_REG_CLASS_GPR], GET_VAL(n).reg);
                     } else if (i < 4) {
                         ctx->active[ctx->active_count++] = r;
-                        values[r] = (GAD_VAL){
+                        GET_VAL(n) = (GAD_VAL){
                             .type = GAD_VAL_REGISTER + X64_REG_CLASS_GPR,
                             .r = r, .dt = dt, .reg = WIN64_GPR_PARAMETERS[i],
                         };
 
-                        DBG("  assign to %s\n", GPR_NAMES[values[r].reg]);
-                        set_put(&ctx->free_regs[X64_REG_CLASS_GPR], values[r].reg);
+                        DBG("  assign to %s\n", GPR_NAMES[GET_VAL(n).reg]);
+                        set_put(&ctx->free_regs[X64_REG_CLASS_GPR], GET_VAL(n).reg);
                     } else {
-                        values[r] = GAD_MAKE_STACK_SLOT(ctx, f, r, 16 + (i * 8));
+                        GET_VAL(n) = GAD_MAKE_STACK_SLOT(ctx, f, r, 16 + (i * 8));
                         // GAD_FN(force_stack)(ctx, f, r, );
                     }
                 }
@@ -289,9 +287,9 @@ static void x64v2_resolve_params(Ctx* restrict ctx, TB_Function* f, GAD_VAL* val
     }
 }
 
-static void x64v2_resolve_stack_slot(Ctx* restrict ctx, TB_Function* f, TB_Node* restrict n) {
+static void x64v2_resolve_stack_slot(Ctx* restrict ctx, TB_Function* f, TB_Node* nestrict n) {
     if (n->type == TB_PARAM_ADDR) {
-        TB_Node* r = n->param_addr.param;
+        TB_Node* n = n->param_addr.param;
         int id = f->nodes[n->param_addr.param].param.id;
         TB_DataType dt = n->dt;
 
@@ -300,10 +298,10 @@ static void x64v2_resolve_stack_slot(Ctx* restrict ctx, TB_Function* f, TB_Node*
         if (dt.width || TB_IS_FLOAT_TYPE(dt)) {
             tb_todo();
         } else {
-            if (ctx->values[r].type == VAL_GPR) {
+            if (GET_VAL(n).type == VAL_GPR) {
                 // don't keep a reference of it in GPR if it's in memory
-                INST2(MOV, &dst, &ctx->values[r], TB_TYPE_I64);
-                GAD_FN(free_reg)(ctx, f, X64_REG_CLASS_GPR, ctx->values[r].reg);
+                INST2(MOV, &dst, &GET_VAL(n), TB_TYPE_I64);
+                GAD_FN(free_reg)(ctx, f, X64_REG_CLASS_GPR, GET_VAL(n).reg);
             }
         }
 
@@ -314,15 +312,15 @@ static void x64v2_resolve_stack_slot(Ctx* restrict ctx, TB_Function* f, TB_Node*
             dyn_array_put(ctx->stack_slots, (TB_StackSlot){ r, pos, proto_param->name, tb_debug_get_void(f->super.module) });
         }
 
-        ctx->values[r] = ctx->values[n - f->nodes] = dst;
-        ctx->values[r].mem.is_rvalue = true;
+        GET_VAL(n) = ctx->values[n - f->nodes] = dst;
+        GET_VAL(n).mem.is_rvalue = true;
         ctx->needs_stack = true;
     } else if (n->type == TB_LOCAL) {
-        TB_Node* r = n - f->nodes;
+        TB_Node* n = n - f->nodes;
         ctx->stack_usage = align_up(ctx->stack_usage + n->local.size, n->local.alignment);
 
         int pos = -ctx->stack_usage;
-        ctx->values[r] = GAD_MAKE_STACK_SLOT(ctx, f, r, pos);
+        GET_VAL(n) = GAD_MAKE_STACK_SLOT(ctx, f, r, pos);
         ctx->needs_stack = true;
 
         for (TB_Attrib* attrib = n->first_attrib; attrib != NULL; attrib = attrib->next) {
@@ -350,19 +348,19 @@ static void x64v2_initial_reg_alloc(Ctx* restrict ctx) {
 }
 
 static void x64v2_barrier(Ctx* restrict ctx, TB_Function* f, TB_Label bb, TB_Node* except, int split) {
-    TB_FOR_NODE(r, f, bb) {
-        LiveInterval r_li = get_live_interval(ctx, r);
-        if (r_li.end >= split && r != except && f->nodes[r].type == TB_LOAD && is_rvalue(&ctx->values[r])) {
+    TB_FOR_NODE(n, f, bb) {
+        LiveInterval r_li = get_live_interval(ctx, n);
+        if (r_li.end >= split && r != except && f->nodes[r].type == TB_LOAD && is_rvalue(&GET_VAL(n))) {
             // resolve into a register because we're about to load
             // and don't know what'll happen
-            GAD_VAL old = ctx->values[r];
-            GAD_VAL tmp = GAD_FN(regalloc)(ctx, f, r, X64_REG_CLASS_GPR);
-            INST2(MOV, &tmp, &old, f->nodes[r].dt);
+            GAD_VAL old = GET_VAL(n);
+            GAD_VAL tmp = GAD_FN(regalloc)(ctx, f, n, X64_REG_CLASS_GPR);
+            INST2(MOV, &tmp, &old, n->dt);
         }
     }
 }
 
-static GAD_VAL x64v2_phi_alloc(Ctx* restrict ctx, TB_Function* f, TB_Node* r) {
+static GAD_VAL x64v2_phi_alloc(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
     if (f->nodes[r].dt.type == TB_FLOAT) {
         return GAD_FN(regalloc)(ctx, f, r, X64_REG_CLASS_XMM);
     } else {
@@ -370,7 +368,7 @@ static GAD_VAL x64v2_phi_alloc(Ctx* restrict ctx, TB_Function* f, TB_Node* r) {
     }
 }
 
-static GAD_VAL x64v2_cond_to_reg(Ctx* restrict ctx, TB_Function* f, TB_Node* r, int cc) {
+static GAD_VAL x64v2_cond_to_reg(Ctx* restrict ctx, TB_Function* f, TB_Node* n, int cc) {
     GAD_VAL dst = GAD_FN(regalloc)(ctx, f, r, X64_REG_CLASS_GPR);
     EMIT1(&ctx->emit, (dst.gpr >= 8) ? 0x41 : 0x40);
     EMIT1(&ctx->emit, 0x0F);
@@ -379,9 +377,9 @@ static GAD_VAL x64v2_cond_to_reg(Ctx* restrict ctx, TB_Function* f, TB_Node* r, 
     return dst;
 }
 
-static void x64v2_mov_to_explicit_gpr(Ctx* restrict ctx, TB_Function* f, GPR dst_gpr, TB_Node* r) {
+static void x64v2_mov_to_explicit_gpr(Ctx* restrict ctx, TB_Function* f, GPR dst_gpr, TB_Node* n) {
     GAD_VAL dst = val_gpr(f->nodes[r].dt, dst_gpr);
-    GAD_VAL* src = &ctx->values[r];
+    GAD_VAL* src = &GET_VAL(n);
     LegalInt l = legalize_int(f->nodes[r].dt);
 
     if (src->type == VAL_MEM || src->type == VAL_GLOBAL) {
@@ -400,7 +398,7 @@ static void x64v2_mov_to_explicit_gpr(Ctx* restrict ctx, TB_Function* f, GPR dst
     }
 }
 
-static void x64v2_return(Ctx* restrict ctx, TB_Function* f, TB_Node* restrict n) {
+static void x64v2_return(Ctx* restrict ctx, TB_Function* f, TB_Node* nestrict n) {
     TB_DataType dt = n->dt;
 
     // Evaluate return value
@@ -411,13 +409,13 @@ static void x64v2_return(Ctx* restrict ctx, TB_Function* f, TB_Node* restrict n)
     } else tb_todo();
 }
 
-static void x64v2_steal_mov(Ctx* restrict ctx, TB_Function* f, TB_Node* r, int reg_class, int reg_num) {
-    GAD_VAL src = ctx->values[r];
+static void x64v2_steal_mov(Ctx* restrict ctx, TB_Function* f, TB_Node* n, int reg_class, int reg_num) {
+    GAD_VAL src = GET_VAL(n);
     GAD_VAL dst = GAD_FN(steal)(ctx, f, r, X64_REG_CLASS_GPR, RDI);
     INST2(!is_lvalue(&src) ? MOV : LEA, &dst, &src, f->nodes[r].dt);
 }
 
-static GAD_VAL x64v2_force_into_gpr(Ctx* restrict ctx, TB_Function* f, TB_Node* r, GAD_VAL src, bool allow_imm) {
+static GAD_VAL x64v2_force_into_gpr(Ctx* restrict ctx, TB_Function* f, TB_Node* n, GAD_VAL src, bool allow_imm) {
     if (is_value_mem(&src) || (allow_imm && src.type == VAL_IMM)) {
         GAD_VAL tmp = GAD_FN(regalloc_tmp)(ctx, f, f->nodes[r].dt, X64_REG_CLASS_GPR);
         INST2(!is_lvalue(&src) ? MOV : LEA, &tmp, &src, f->nodes[r].dt);
@@ -555,7 +553,7 @@ static void x64v2_branch_jumptable(Ctx* restrict ctx, TB_Function* f, TB_Node* s
     set_free(&entries_set);
 }
 
-static void x64v2_spill(Ctx* restrict ctx, TB_Function* f, GAD_VAL* dst_val, GAD_VAL* src_val, TB_Node* r) {
+static void x64v2_spill(Ctx* restrict ctx, TB_Function* f, GAD_VAL* dst_val, GAD_VAL* src_val, TB_Node* n) {
     // masking is unnecessary here due to type safety
     if (!(src_val->type == GAD_VAL_REGISTER + X64_REG_CLASS_GPR && src_val->type == dst_val->type && src_val->reg == dst_val->reg)) {
         LegalInt l = legalize_int(f->nodes[r].dt);
@@ -577,8 +575,8 @@ static void x64v2_move(Ctx* restrict ctx, TB_Function* f, TB_Node* dst, TB_Node*
     LegalInt l = legalize_int(f->nodes[src].dt);
     GAD_VAL* dst_val = &ctx->values[dst];
 
-    /*if (f->nodes[src].type == TB_ADD && f->nodes[src].i_arith.a == dst) {
-        GAD_VAL* src_val = &ctx->values[f->nodes[src].i_arith.b];
+    /*if (f->nodes[src].type == TB_ADD && f->nodes[src].inputs[0] == dst) {
+        GAD_VAL* src_val = &ctx->values[f->nodes[src].inputs[1]];
 
         INST2(ADD, dst_val, src_val, f->nodes[src].dt);
         if (l.mask) x64v2_mask_out(ctx, f, l, dst_val);
@@ -593,8 +591,8 @@ static void x64v2_move(Ctx* restrict ctx, TB_Function* f, TB_Node* dst, TB_Node*
     }
 }
 
-static void x64v2_store(Ctx* restrict ctx, TB_Function* f, TB_Node* r) {
-    TB_Node* restrict n = &f->nodes[r];
+static void x64v2_store(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
+    TB_Node* nestrict n = &f->nodes[r];
 
     GAD_VAL addr = ctx->values[n->store.address];
     GAD_VAL* src = &ctx->values[n->store.value];
@@ -640,8 +638,8 @@ static void x64v2_store(Ctx* restrict ctx, TB_Function* f, TB_Node* r) {
     }
 }
 
-static void x64v2_call(Ctx* restrict ctx, TB_Function* f, TB_Node* r) {
-    TB_Node* restrict n = &f->nodes[r];
+static void x64v2_call(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
+    TB_Node* nestrict n = &f->nodes[r];
     TB_NodeTypeEnum type = n->type;
 
     static const struct ParamDescriptor {
@@ -783,14 +781,14 @@ static void x64v2_call(Ctx* restrict ctx, TB_Function* f, TB_Node* r) {
     }
 }
 
-static GAD_VAL get_immediate(Ctx* restrict ctx, TB_Function* f, TB_Node* r, uint64_t imm) {
-    TB_Node* restrict n = &f->nodes[r];
+static GAD_VAL get_immediate(Ctx* restrict ctx, TB_Function* f, TB_Node* n, uint64_t imm) {
+    TB_Node* nestrict n = &f->nodes[r];
 
     if (fits_into_int32(imm)) {
         LegalInt l = legalize_int(n->dt);
         if (l.mask) imm &= l.mask;
 
-        return (ctx->values[r] = val_imm(n->dt, imm));
+        return (GET_VAL(n) = val_imm(n->dt, imm));
     } else {
         GAD_VAL dst = GAD_FN(regalloc)(ctx, f, r, X64_REG_CLASS_GPR);
 
@@ -802,8 +800,8 @@ static GAD_VAL get_immediate(Ctx* restrict ctx, TB_Function* f, TB_Node* r, uint
     }
 }
 
-static void x64v2_misc_op(Ctx* restrict ctx, TB_Function* f, TB_Node* r) {
-    TB_Node* restrict n = &f->nodes[r];
+static void x64v2_misc_op(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
+    TB_Node* nestrict n = &f->nodes[r];
     TB_NodeTypeEnum type = n->type;
 
     switch (type) {
@@ -851,14 +849,16 @@ static void x64v2_misc_op(Ctx* restrict ctx, TB_Function* f, TB_Node* r) {
     }
 }
 
-static Val x64v2_eval(Ctx* restrict ctx, TB_Function* f, TB_Node* r) {
-    TB_Node* restrict n = &f->nodes[r];
+static Val x64v2_eval(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
+    TB_Node* nestrict n = &f->nodes[r];
     TB_NodeTypeEnum type = n->type;
 
     switch (type) {
         case TB_INTEGER_CONST: {
-            assert(n->integer.num_words == 1);
-            return get_immediate(ctx, f, r, n->integer.single_word);
+            TB_NodeInt* i = TB_NODE_GET_EXTRA(n->inputs[1]);
+            assert(i->num_words == 1);
+
+            return get_immediate(ctx, f, r, i->words[0]);
         }
         case TB_FLOAT64_CONST: {
             assert(n->dt.type == TB_FLOAT && n->dt.width == 0);
@@ -976,7 +976,7 @@ static Val x64v2_eval(Ctx* restrict ctx, TB_Function* f, TB_Node* r) {
                     // GAD_FN(unlock_register)(ctx, f, X64_REG_CLASS_GPR, t1.gpr);
                     return dst;
                 } else {
-                    return (ctx->values[r] = val_global(n->global.value));
+                    return (GET_VAL(n) = val_global(n->global.value));
                 }
             } else if (s->tag == TB_SYMBOL_FUNCTION) {
                 GAD_VAL dst = GAD_FN(regalloc)(ctx, f, r, X64_REG_CLASS_GPR);
@@ -1125,7 +1125,7 @@ static Val x64v2_eval(Ctx* restrict ctx, TB_Function* f, TB_Node* r) {
             if (!n->load.is_volatile && is_lvalue(&src)) {
                 if (GAD_FN(encompass)(ctx, f, n->load.address, r)) {
                     src.mem.is_rvalue = true;
-                    return (ctx->values[r] = src);
+                    return (GET_VAL(n) = src);
                 }
             }
 
@@ -1174,14 +1174,14 @@ static Val x64v2_eval(Ctx* restrict ctx, TB_Function* f, TB_Node* r) {
 
             if (src.type == VAL_GLOBAL) {
                 src.global.disp += n->member_access.offset;
-                return (ctx->values[r] = src);
+                return (GET_VAL(n) = src);
             }
 
             if (src.type == VAL_MEM && !src.mem.is_rvalue) {
                 if (GAD_FN(try_steal)(ctx, f, n->member_access.base, r) ||
                     GAD_FN(encompass)(ctx, f, n->member_access.base, r)) {
                     src.mem.disp += n->member_access.offset;
-                    return (ctx->values[r] = src);
+                    return (GET_VAL(n) = src);
                 }
             }
 
@@ -1245,7 +1245,7 @@ static Val x64v2_eval(Ctx* restrict ctx, TB_Function* f, TB_Node* r) {
                     GAD_VAL addr = val_base_disp(TB_TYPE_PTR, base.gpr, index->imm * stride);
 
                     if (0 && GAD_FN(encompass)(ctx, f, n->array_access.base, r)) {
-                        return (ctx->values[r] = addr);
+                        return (GET_VAL(n) = addr);
                     } else {
                         if (!written_to_dst) {
                             dst = GAD_FN(regalloc)(ctx, f, r, X64_REG_CLASS_GPR);
@@ -1267,7 +1267,7 @@ static Val x64v2_eval(Ctx* restrict ctx, TB_Function* f, TB_Node* r) {
                 addr.mem.is_rvalue = false;
 
                 if (GAD_FN(encompass)(ctx, f, n->array_access.base, r)) {
-                    return (ctx->values[r] = addr);
+                    return (GET_VAL(n) = addr);
                 } else {
                     if (!written_to_dst) {
                         dst = GAD_FN(regalloc)(ctx, f, r, X64_REG_CLASS_GPR);
@@ -1291,9 +1291,9 @@ static Val x64v2_eval(Ctx* restrict ctx, TB_Function* f, TB_Node* r) {
             const static Inst2Type ops[]  = { AND, OR, XOR, ADD, SUB };
             const static bool is_commut[] = { 1,   1,  1,   1,   0 };
 
-            GAD_VAL dst = GAD_FN(regalloc2)(ctx, f, r, X64_REG_CLASS_GPR, is_commut[type - TB_AND], n->i_arith.a);
-            GAD_VAL a = ctx->values[n->i_arith.a];
-            GAD_VAL b = ctx->values[n->i_arith.b];
+            GAD_VAL dst = GAD_FN(regalloc2)(ctx, f, r, X64_REG_CLASS_GPR, is_commut[type - TB_AND], n->inputs[0]);
+            GAD_VAL a = ctx->values[n->inputs[0]];
+            GAD_VAL b = ctx->values[n->inputs[1]];
 
             if (is_commut[type - TB_AND] && dst.type == b.type && dst.reg == b.reg) {
                 // only works if it's commutative
@@ -1330,9 +1330,9 @@ static Val x64v2_eval(Ctx* restrict ctx, TB_Function* f, TB_Node* r) {
             }
         }
         case TB_MUL: {
-            GAD_VAL dst = GAD_FN(regalloc2)(ctx, f, r, X64_REG_CLASS_GPR, true, n->i_arith.a);
-            GAD_VAL a = ctx->values[n->i_arith.a];
-            GAD_VAL b = ctx->values[n->i_arith.b];
+            GAD_VAL dst = GAD_FN(regalloc2)(ctx, f, r, X64_REG_CLASS_GPR, true, n->inputs[0]);
+            GAD_VAL a = ctx->values[n->inputs[0]];
+            GAD_VAL b = ctx->values[n->inputs[1]];
 
             if (a.type == VAL_IMM && b.type == VAL_IMM) {
                 return get_immediate(ctx, f, r, a.imm * b.imm);
@@ -1374,10 +1374,10 @@ static Val x64v2_eval(Ctx* restrict ctx, TB_Function* f, TB_Node* r) {
             GAD_VAL dst = GAD_FN(steal)(ctx, f, r, X64_REG_CLASS_GPR, is_div ? RAX : RDX);
             GAD_FN(evict)(ctx, f, X64_REG_CLASS_GPR, 1u << (is_div ? RDX : RAX), ctx->ordinal[r]);
 
-            GAD_VAL b = x64v2_force_into_gpr(ctx, f, n->i_arith.b, ctx->values[n->i_arith.b], true);
+            GAD_VAL b = x64v2_force_into_gpr(ctx, f, n->inputs[1], ctx->values[n->inputs[1]], true);
 
             // MOV rax, a
-            x64v2_mov_to_explicit_gpr(ctx, f, RAX, n->i_arith.a);
+            x64v2_mov_to_explicit_gpr(ctx, f, RAX, n->inputs[0]);
 
             if (is_signed) {
                 // cqo/cdq (sign extend RAX into RDX)
@@ -1410,12 +1410,11 @@ static Val x64v2_eval(Ctx* restrict ctx, TB_Function* f, TB_Node* r) {
             int bits_in_type = l.dt.type == TB_PTR ? 64 : l.dt.data;
 
             GAD_VAL dst = GAD_FN(regalloc)(ctx, f, r, X64_REG_CLASS_GPR);
-            if (f->nodes[n->i_arith.b].type == TB_INTEGER_CONST &&
-                f->nodes[n->i_arith.b].integer.num_words == 1) {
-                uint64_t imm = f->nodes[n->i_arith.b].integer.single_word;
+            if (n->inputs[1]->type == TB_INTEGER_CONST && TB_NODE_GET_EXTRA_T(n->inputs[1])->num_words == 1) {
+                uint64_t imm = TB_NODE_GET_EXTRA_T(n->inputs[1])->words[0];
                 assert(imm < 64);
 
-                GAD_VAL a = ctx->values[n->i_arith.a];
+                GAD_VAL a = ctx->values[n->inputs[0]];
                 INST2(MOV, &dst, &a, n->dt);
 
                 ShiftType shift_type = SHL;
@@ -1432,12 +1431,12 @@ static Val x64v2_eval(Ctx* restrict ctx, TB_Function* f, TB_Node* r) {
             } else {
                 // the shift instruction uses RCX (well CL) for the shift amount
                 // resolve this after the eviction to avoid it getting caught up in it
-                GAD_VAL a = ctx->values[n->i_arith.a];
+                GAD_VAL a = GET_VAL(n->inputs[0]);
                 INST2(MOV, &dst, &a, l.dt);
 
                 // MOV rcx, b
                 GAD_FN(evict)(ctx, f, X64_REG_CLASS_GPR, 1u << RCX, ctx->ordinal[r]);
-                x64v2_mov_to_explicit_gpr(ctx, f, RCX, n->i_arith.b);
+                x64v2_mov_to_explicit_gpr(ctx, f, RCX, n->inputs[1]);
 
                 // D2 /4       shl r/m, cl
                 // D2 /5       shr r/m, cl
@@ -1466,7 +1465,7 @@ static Val x64v2_eval(Ctx* restrict ctx, TB_Function* f, TB_Node* r) {
         case TB_CMP_ULE:
         case TB_CMP_FLT:
         case TB_CMP_FLE: {
-            TB_DataType cmp_dt = n->cmp.dt;
+            TB_DataType cmp_dt = TB_NODE_GET_EXTRA_T(n, TB_NodeCompare)->dt;
             assert(cmp_dt.width == 0 && "TODO: Implement vector compares");
 
             Cond cc = -1;
@@ -1474,8 +1473,8 @@ static Val x64v2_eval(Ctx* restrict ctx, TB_Function* f, TB_Node* r) {
                 uint8_t flags = legalize_float(cmp_dt);
 
                 GAD_VAL tmp = GAD_FN(regalloc_tmp)(ctx, f, n->dt, X64_REG_CLASS_XMM);
-                INST2SSE(FP_MOV, &tmp, &ctx->values[n->cmp.a], flags);
-                INST2SSE(FP_UCOMI, &tmp, &ctx->values[n->cmp.b], flags);
+                INST2SSE(FP_MOV, &tmp, &GET_VAL(n->inputs[0]), flags);
+                INST2SSE(FP_UCOMI, &tmp, &GET_VAL(n->inputs[1]), flags);
 
                 switch (type) {
                     case TB_CMP_EQ:  cc = E; break;
@@ -1488,10 +1487,10 @@ static Val x64v2_eval(Ctx* restrict ctx, TB_Function* f, TB_Node* r) {
                 cmp_dt = legalize_int(cmp_dt).dt;
 
                 bool invert = false;
-                TB_Node* lhs = n->cmp.a, rhs = n->cmp.b;
+                TB_Node* lhs = n->inputs[0], rhs = n->inputs[1];
 
-                GAD_VAL lhs_val = ctx->values[lhs];
-                GAD_VAL rhs_val = ctx->values[rhs];
+                GAD_VAL lhs_val = GET_VAL(lhs);
+                GAD_VAL rhs_val = GET_VAL(rhs);
                 if (lhs_val.type == VAL_IMM) {
                     tb_swap(GAD_VAL, lhs_val, rhs_val);
                     invert = true;
@@ -1516,12 +1515,12 @@ static Val x64v2_eval(Ctx* restrict ctx, TB_Function* f, TB_Node* r) {
             }
             assert(cc != -1);
 
-            GAD_FN(set_flags)(ctx, f, r, cc);
-            return (ctx->values[r] = val_flags(cc));
+            GAD_FN(set_flags)(ctx, f, n, cc);
+            return (GET_VAL(n) = val_flags(cc));
         }
 
         case TB_POISON: {
-            return (ctx->values[r] = val_imm(n->dt, 0));
+            return (GET_VAL(n) = val_imm(n->dt, 0));
         }
 
         default: tb_todo();
@@ -1532,7 +1531,7 @@ static Val x64v2_eval(Ctx* restrict ctx, TB_Function* f, TB_Node* r) {
 }
 
 static size_t GAD_FN(emit_call_patches)(TB_Module* restrict m) {
-    size_t r = 0;
+    size_t count = 0;
     FOREACH_N(i, 0, m->max_threads) {
         TB_SymbolPatch* patches = m->thread_info[i].symbol_patches;
 
@@ -1550,12 +1549,12 @@ static size_t GAD_FN(emit_call_patches)(TB_Module* restrict m) {
 
                 uint32_t p = ((TB_Function*) patch->target)->output->code_pos - actual_pos;
                 memcpy(&out_f->code[out_f->prologue_length + patch->pos], &p, sizeof(uint32_t));
-                r += 1;
+                count += 1;
             }
         }
     }
 
-    return r;
+    return count;
 }
 
 #if _MSC_VER
