@@ -29,7 +29,7 @@ source_patterns = [
 ]
 
 for i in args.targets:
-	source_patterns.append("src/"+i+"/*.c")
+	source_patterns.append("src/"+i+"/x64_new.c")
 
 ninja = open('build.ninja', 'w')
 
@@ -47,7 +47,7 @@ else:
 	if args.opt: cflags += " -O2 -DNDEBUG"
 	if args.autospall: cflags += " -finstrument-functions-after-inlining"
 
-cflags += " -fno-spell-checking -I ../c11threads"
+cflags += " -fno-spell-checking -ferror-limit=999 -I ../c11threads"
 
 os_name = platform.system()
 if os_name == "Windows":

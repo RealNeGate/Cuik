@@ -76,6 +76,8 @@ TB_Node* tb_alloc_node(TB_Function* f, int type, TB_DataType dt, int input_count
         if (f->tail) f->tail->next = page, f->tail = page;
         else f->head = f->tail = page;
 
+        f->node_count += 1;
+
         // initialize
         TB_Node* n = (TB_Node*) page->data;
         n->type = type;
@@ -89,6 +91,8 @@ TB_Node* tb_alloc_node(TB_Function* f, int type, TB_DataType dt, int input_count
     // we have a node and we can fit our allocation there
     TB_Node* n = (TB_Node*) &f->tail->data[f->tail->used];
     f->tail->used += necessary_size;
+
+    f->node_count += 1;
 
     // initialize
     n->type = type;

@@ -325,6 +325,7 @@ struct TB_Function {
     TB_BasicBlock* bbs;
 
     // Nodes allocator (micro block alloc)
+    size_t node_count;
     TB_NodePage *head, *tail;
 
     // Used by the IR building
