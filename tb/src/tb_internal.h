@@ -663,11 +663,11 @@ inline static bool tb_next_biggest(int* result, int v, size_t n, const int* arr)
 #if 1
 #define OPTIMIZER_LOG(at, ...) ((void) (at))
 #else
-#define OPTIMIZER_LOG(at, ...)                       \
-do {                                                 \
-    printf("%s:r%d: ", f->super.name, (TB_Reg)(at)); \
-    printf(__VA_ARGS__);                             \
-    printf(" (part of %s)\n", __FUNCTION__);         \
+#define OPTIMIZER_LOG(at, ...)               \
+do {                                         \
+    printf("%s:%p: ", f->super.name, (at));  \
+    printf(__VA_ARGS__);                     \
+    printf(" (part of %s)\n", __FUNCTION__); \
 } while (0)
 #endif
 
@@ -709,6 +709,7 @@ typedef struct {
 } TB_UseCount;
 
 void tb_function_calculate_use_count(const TB_Function* f, TB_UseCount* use_count);
+size_t tb_node_get_expected(TB_Node* n);
 
 // if tls is NULL then the return value is heap allocated
 TB_Label* tb_calculate_immediate_predeccessors(TB_Function* f, TB_TemporaryStorage* tls, TB_Label l, int* dst_count);

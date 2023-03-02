@@ -386,11 +386,6 @@ extern "C" {
 
     #define TB_NULL_REG NULL
 
-    typedef struct {
-        TB_Label label;
-        TB_Reg val;
-    } TB_PhiInput;
-
     typedef struct TB_Node TB_Node;
     struct TB_Node {
         TB_NodeType type;
@@ -477,6 +472,11 @@ extern "C" {
     typedef struct {
         TB_Label labels[];
     } TB_NodePhi;
+
+    typedef struct {
+        TB_Label label;
+        TB_Node* val;
+    } TB_PhiInput;
 
     #if 0
     union {

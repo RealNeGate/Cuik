@@ -275,7 +275,7 @@ TB_API TB_LoopInfo tb_get_loop_info(TB_Function* f, TB_Predeccesors preds, TB_La
         }
 
         if (backedge) {
-            printf("L%zu is a loop (backedge: L%d)\n    ", bb, backedge);
+            // printf("L%zu is a loop (backedge: L%d)\n    ", bb, backedge);
 
             TB_Loop l = { .parent_loop = -1, .header = bb, .backedge = backedge };
             l.body = tb_platform_heap_alloc(f->bb_count * sizeof(TB_Label));
@@ -302,8 +302,6 @@ TB_API TB_LoopInfo tb_get_loop_info(TB_Function* f, TB_Predeccesors preds, TB_La
 
             fatherfull_behavior:
             dyn_array_put(loops, l);
-
-            printf("\n\n");
         }
     }
 

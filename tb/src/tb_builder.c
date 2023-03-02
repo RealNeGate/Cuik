@@ -733,7 +733,7 @@ TB_API TB_Node* tb_inst_cmp_fge(TB_Function* f, TB_Node* a, TB_Node* b) {
 TB_API TB_Node* tb_inst_phi2(TB_Function* f, TB_Label a_label, TB_Node* a, TB_Label b_label, TB_Node* b) {
     tb_assume(TB_DATA_TYPE_EQUALS(a->dt, b->dt));
 
-    TB_Node* n = tb_alloc_at_end(f, TB_PHI, a->dt, 2, sizeof(TB_NodeCompare) + sizeof(TB_Label[2]));
+    TB_Node* n = tb_alloc_at_end(f, TB_PHI, a->dt, 2, sizeof(TB_NodePhi) + sizeof(TB_Label[2]));
     n->inputs[0] = a;
     n->inputs[1] = b;
     TB_NodePhi* phi = TB_NODE_GET_EXTRA(n);
@@ -775,10 +775,7 @@ TB_API void tb_inst_goto(TB_Function* f, TB_Label id) {
 
     TB_Node* n = tb_alloc_at_end(f, TB_BRANCH, f->prototype->return_dt, 1, sizeof(TB_NodeBranch));
     n->inputs[0] = NULL;
-
-    TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
-    br->count = 0;
-    br->default_label = id;
+    TB_NODE_SET_EXTRA(n, TB_NodeBranch, .default_label = id);
 }
 
 TB_API void tb_inst_if(TB_Function* f, TB_Node* cond, TB_Label if_true, TB_Label if_false) {

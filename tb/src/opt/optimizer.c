@@ -17,58 +17,62 @@ typedef struct TB_Pass {
 #include "fold.h"
 #include "canonical.h"
 #include "merge_ret.h"
-#include "mem2reg.h"
+// #include "mem2reg.h"
 
-static void dce_mark(TB_Function* f, Set* live, TB_Reg r) {
-    set_put(live, r);
+typedef struct {
+    NL_Map(TB_Node*, char) marked;
+} DCE;
 
-    TB_FOR_INPUT_IN_REG(it, f, r) {
-        if (!set_get(live, it.r)) dce_mark(f, live, it.r);
+static void dce_mark(TB_Function* f, DCE* dce, TB_Node* n) {
+    nl_map_put(dce->marked, n, 1);
+
+    TB_FOR_INPUT_IN_NODE(it, n) {
+        ptrdiff_t search = nl_map_get(dce->marked, n);
+        if (search < 0) dce_mark(f, dce, *it);
     }
 }
 
 static void dce(TB_Function* f) {
     // mark roots
-    Set live = set_create(f->node_count);
+    DCE dce = { 0 };
     TB_FOR_BASIC_BLOCK(bb, f) {
         TB_FOR_NODE(r, f, bb) {
-            if (!is_expr_like(f, r)) dce_mark(f, &live, r);
+            if (!is_expr_like(f, r)) dce_mark(f, &dce, r);
         }
     }
 
     // sweep
-    FOREACH_N(r, 0, f->node_count) {
-        if (set_get(&live, r)) continue;
+    TB_FOR_BASIC_BLOCK(bb, f) {
+        TB_FOR_NODE(n, f, bb) {
+            ptrdiff_t search = nl_map_get(dce.marked, n);
+            if (search >= 0) continue;
 
-        f->nodes[r].type = TB_NULL;
+            TB_KILL_NODE(n);
+        }
     }
-    set_free(&live);
+    nl_map_free(dce.marked);
 }
 
 static void canonicalize(TB_Function* f) {
     TB_FOR_BASIC_BLOCK(bb, f) {
-        TB_FOR_NODE(r, f, bb) {
-            const_fold(f, bb, &f->nodes[r]);
-            simplify_cmp(f, &f->nodes[r]);
-            reassoc(f, &f->nodes[r]);
-            simplify_pointers(f, &f->nodes[r]);
+        TB_FOR_NODE(n, f, bb) {
+            const_fold(f, bb, n);
+            simplify_cmp(f, n);
+            // reassoc(f, n);
+            simplify_pointers(f, n);
 
             // check if all paths are identical
-            if (tb_node_is_phi_node(f, r)) {
-                int count = tb_node_get_phi_width(f, r);
-                TB_PhiInput* inputs = tb_node_get_phi_inputs(f, r);
-
+            if (n->type == TB_PHI) {
                 bool success = true;
-                FOREACH_N(i, 1, count) {
-                    if (inputs[i].val != inputs[0].val) {
+                FOREACH_N(i, 1, n->input_count) {
+                    if (n->inputs[0] != n->inputs[i]) {
                         success = false;
                         break;
                     }
                 }
 
                 if (success) {
-                    f->nodes[r].type = TB_PASS;
-                    f->nodes[r].unary.src = inputs[0].val;
+                    tb_transmute_to_pass(n, n->inputs[0]);
                 }
             }
         }
@@ -84,10 +88,6 @@ static void canonicalize(TB_Function* f) {
 
     // kill any unused regs
     dce(f);
-}*/
-
-static void canonicalize(TB_Function* f) {
-
 }
 
 static void schedule_function_level_opts(TB_Module* m, TB_Function* f, size_t pass_count, const TB_Pass* passes[]) {

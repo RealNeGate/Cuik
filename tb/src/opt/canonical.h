@@ -26,41 +26,37 @@ static void handle_pass(TB_Function* f, PassCtx* ctx, TB_Label bb, TB_Node* n) {
         nl_map_put(ctx->def_table, n, pointee);
 
         // if it matches find, then remove find from the basic block
-        if (f->bbs[bb].start == r) {
+        if (f->bbs[bb].start == n) {
             f->bbs[bb].start = f->bbs[bb].start->next;
         }
 
-        if (f->bbs[bb].end == r) {
+        if (f->bbs[bb].end == n) {
             f->bbs[bb].end = tb_node_get_previous(f, f->bbs[bb].end);
         }
 
-        f->nodes[r].type = TB_NULL;
+        TB_KILL_NODE(n);
     }
 }
 
 static bool simplify_cmp(TB_Function* f, TB_Node* n) {
-    TB_Reg r = n - f->nodes;
-
     if (n->type >= TB_CMP_EQ && n->type <= TB_CMP_ULE) {
-        TB_Node* a = &f->nodes[n->cmp.a];
-        TB_Node* b = &f->nodes[n->cmp.b];
+        TB_Node* a = n->inputs[0];
+        TB_Node* b = n->inputs[1];
 
-        if (n->type == TB_CMP_EQ && tb_node_is_constant_zero(f, n->cmp.b) &&
-            a->type == TB_CMP_EQ && tb_node_is_constant_zero(f, a->cmp.b)) {
+        if (n->type == TB_CMP_EQ && tb_node_is_constant_zero(b) &&
+            a->type == TB_CMP_EQ && tb_node_is_constant_zero(a->inputs[1])) {
             // (cmpeq (cmpeq a 0) 0) => (cmpeq a 0)
-            OPTIMIZER_LOG(r, "removed redundant comparisons");
+            OPTIMIZER_LOG(n, "removed redundant comparisons");
 
-            n->type = TB_PASS;
-            n->pass.value = a->cmp.a;
+            tb_transmute_to_pass(n, a->inputs[0]);
             return true;
-        } else if (n->type == TB_CMP_NE && tb_node_is_constant_zero(f, n->cmp.b) &&
-            a->type == TB_CMP_EQ && tb_node_is_constant_zero(f, a->cmp.b)) {
+        } else if (n->type == TB_CMP_NE && tb_node_is_constant_zero(b) &&
+            a->type == TB_CMP_EQ && tb_node_is_constant_zero(a->inputs[1])) {
             // (cmpeq (cmpeq a 0) 0) => (cmpne a 0)
-            OPTIMIZER_LOG(r, "removed redundant comparisons");
+            OPTIMIZER_LOG(n, "removed redundant comparisons");
 
-            n->type = TB_PASS;
-            n->pass.value = a->cmp.a;
             a->type = TB_CMP_NE;
+            tb_transmute_to_pass(n, a->inputs[0]);
             return true;
         } else {
             // Sometimes we promote some types up when we don't need to
@@ -68,30 +64,30 @@ static bool simplify_cmp(TB_Function* f, TB_Node* n) {
             // VVV
             // (cmp A (int B))
             if (a->type == TB_SIGN_EXT && b->type == TB_SIGN_EXT) {
-                OPTIMIZER_LOG(r, "removed unnecessary sign extension");
-                TB_DataType dt = f->nodes[a->unary.src].dt;
+                OPTIMIZER_LOG(n, "removed unnecessary sign extension");
+                TB_DataType dt = a->inputs[0]->dt;
 
-                n->cmp.dt = dt;
-                n->cmp.a = a->unary.src;
-                n->cmp.b = b->unary.src;
+                n->inputs[0] = a->inputs[0];
+                n->inputs[1] = b->inputs[0];
+                TB_NODE_SET_EXTRA(n, TB_NodeCompare, .cmp_dt = dt);
                 return true;
             } else if (a->type == TB_ZERO_EXT && b->type == TB_ZERO_EXT) {
-                OPTIMIZER_LOG(r, "removed unnecessary zero extension");
-                TB_DataType dt = f->nodes[a->unary.src].dt;
+                OPTIMIZER_LOG(n, "removed unnecessary zero extension");
+                TB_DataType dt = a->inputs[0]->dt;
 
-                n->cmp.dt = dt;
-                n->cmp.a = a->unary.src;
-                n->cmp.b = b->unary.src;
+                n->inputs[0] = a->inputs[0];
+                n->inputs[1] = b->inputs[0];
+                TB_NODE_SET_EXTRA(n, TB_NodeCompare, .cmp_dt = dt);
                 return true;
-            } else if (a->type == TB_SIGN_EXT && b->type == TB_INTEGER_CONST && TB_DATA_TYPE_EQUALS(f->nodes[a->unary.src].dt, b->dt)) {
-                OPTIMIZER_LOG(r, "removed unnecessary sign extension for compare against constants");
+            } else if (a->type == TB_SIGN_EXT && b->type == TB_INTEGER_CONST && TB_DATA_TYPE_EQUALS(a->inputs[0]->dt, b->dt)) {
+                OPTIMIZER_LOG(n, "removed unnecessary sign extension for compare against constants");
 
-                n->cmp.a = a->unary.src;
+                n->inputs[0] = a->inputs[0];
                 return true;
-            } else if (a->type == TB_ZERO_EXT && b->type == TB_INTEGER_CONST && TB_DATA_TYPE_EQUALS(f->nodes[a->unary.src].dt, b->dt)) {
-                OPTIMIZER_LOG(r, "removed unnecessary zero extension for compare against constants");
+            } else if (a->type == TB_ZERO_EXT && b->type == TB_INTEGER_CONST && TB_DATA_TYPE_EQUALS(a->inputs[0]->dt, b->dt)) {
+                OPTIMIZER_LOG(n, "removed unnecessary zero extension for compare against constants");
 
-                n->cmp.a = a->unary.src;
+                n->inputs[0] = a->inputs[0];
                 return true;
             }
         }
@@ -102,99 +98,98 @@ static bool simplify_cmp(TB_Function* f, TB_Node* n) {
 
 static bool simplify_pointers(TB_Function* f, TB_Node* n) {
     TB_NodeTypeEnum type = n->type;
-    TB_Reg r = n - f->nodes;
 
     if (type == TB_MEMBER_ACCESS) {
-        TB_Node* base = &f->nodes[n->member_access.base];
+        TB_Node* base = n->inputs[0];
+        int64_t offset = TB_NODE_GET_EXTRA_T(n, TB_NodeMember)->offset;
 
         if (base->type == TB_MEMBER_ACCESS) {
-            uint32_t offset = n->member_access.offset;
-            offset += base->member_access.offset;
+            offset += TB_NODE_GET_EXTRA_T(base, TB_NodeMember)->offset;
 
             if (!TB_FITS_INTO(int32_t, offset)) {
-                OPTIMIZER_LOG(r, "FAILURE cannot fold into member access without overflow");
+                OPTIMIZER_LOG(n, "FAILURE cannot fold into member access without overflow");
             } else {
-                TB_Reg base_base = base->member_access.base;
+                TB_Node* base_base = base->inputs[0];
 
-                n->member_access.base = base_base;
-                n->member_access.offset = offset;
+                n->inputs[0] = base_base;
+                TB_NODE_SET_EXTRA(n, TB_NodeMember, .offset = offset);
                 return true;
             }
-        } else {
-            int32_t offset = n->member_access.offset;
+        } else if (offset == 0) {
+            OPTIMIZER_LOG(n, "elided member access to first element");
 
-            if (offset == 0) {
-                OPTIMIZER_LOG(r, "elided member access to first element");
-
-                n->type = TB_PASS;
-                n->pass.value = n->member_access.base;
-                return true;
-            }
+            tb_transmute_to_pass(n, base);
+            return true;
         }
     } else if (type == TB_ARRAY_ACCESS) {
-        TB_Node* index = &f->nodes[n->array_access.index];
+        TB_Node* base = n->inputs[0];
+        TB_Node* index = n->inputs[1];
+        int64_t stride = TB_NODE_GET_EXTRA_T(n, TB_NodeArray)->stride;
 
-        if (index->type == TB_INTEGER_CONST && index->integer.num_words == 1) {
-            uint64_t index_imm = index->integer.single_word;
+        if (index->type == TB_INTEGER_CONST && TB_NODE_GET_EXTRA_T(index, TB_NodeInt)->num_words == 1) {
+            int64_t index_imm = TB_NODE_GET_EXTRA_T(index, TB_NodeInt)->words[0];
 
-            uint64_t res = n->array_access.stride * index_imm;
+            int64_t res = stride * index_imm;
             if (!TB_FITS_INTO(int32_t, res)) {
-                OPTIMIZER_LOG(r, "FAILURE cannot fold into array access without overflow");
+                OPTIMIZER_LOG(n, "FAILURE cannot fold into array access without overflow");
             } else {
                 // success!
-                OPTIMIZER_LOG(r, "folded constant array access");
-                TB_Reg base_reg = n->array_access.base;
+                OPTIMIZER_LOG(n, "folded constant array access");
 
-                n->type = TB_MEMBER_ACCESS;
+                tb_todo();
+                /* n->type = TB_MEMBER_ACCESS;
+                n->inputs[0] = base;
                 n->member_access.base = base_reg;
-                n->member_access.offset = res;
+                n->member_access.offset = res; */
                 return true;
             }
-        } else if (tb_node_is_constant_zero(f, n->array_access.index)) {
-            OPTIMIZER_LOG(r, "elided array access to first element");
+        } else if (tb_node_is_constant_zero(index)) {
+            OPTIMIZER_LOG(n, "elided array access to first element");
 
-            n->type = TB_PASS;
-            n->pass.value = n->array_access.base;
+            tb_transmute_to_pass(n, base);
             return true;
         } else if (index->type == TB_MUL) {
-            TB_Node* potential_constant = &f->nodes[index->i_arith.b];
+            TB_Node* potential_constant = index->inputs[1];
 
-            if (potential_constant->type == TB_INTEGER_CONST && potential_constant->integer.num_words == 1) {
+            if (potential_constant->type == TB_INTEGER_CONST && TB_NODE_GET_EXTRA_T(potential_constant, TB_NodeInt)->num_words == 1) {
                 // don't worry it doesn't loop i just needed to have 'break' support
-                uint64_t factor = potential_constant->integer.single_word;
+                int64_t factor = TB_NODE_GET_EXTRA_T(potential_constant, TB_NodeInt)->words[0];
                 if (!TB_FITS_INTO(int32_t, factor)) {
-                    OPTIMIZER_LOG(r, "FAILURE multiply cannot fold into array access because too big");
+                    OPTIMIZER_LOG(n, "FAILURE multiply cannot fold into array access because too big");
                     goto fail;
                 }
 
-                uint64_t res = n->array_access.stride * factor;
+                int64_t res = stride * factor;
                 if (!TB_FITS_INTO(int32_t, res)) {
-                    OPTIMIZER_LOG(r, "FAILURE multiply cannot fold into array access without overflow");
+                    OPTIMIZER_LOG(n, "FAILURE multiply cannot fold into array access without overflow");
                     goto fail;
                 }
 
                 // success!
-                OPTIMIZER_LOG(r, "folded multiply into array access");
-                n->array_access.index = index->i_arith.a;
-                n->array_access.stride = res;
+                OPTIMIZER_LOG(n, "folded multiply into array access");
+                n->inputs[1] = index->inputs[0];
+                TB_NODE_SET_EXTRA(n, TB_NodeArray, .stride = res);
                 return true;
 
                 fail:;
             }
         } else if (index->type == TB_ADD) {
             // (array A (add B O) C) => (member (array A B C) O*C)
-            TB_Node* potential_constant = &f->nodes[index->i_arith.b];
+            TB_Node* potential_constant = index->inputs[1];
 
-            if (potential_constant->type == TB_INTEGER_CONST && potential_constant->integer.num_words == 1) {
-                TB_CharUnits c = n->array_access.stride;
-                uint64_t res = potential_constant->integer.single_word * c;
+            if (potential_constant->type == TB_INTEGER_CONST && TB_NODE_GET_EXTRA_T(potential_constant, TB_NodeInt)->num_words == 1) {
+                int64_t res = TB_NODE_GET_EXTRA_T(potential_constant, TB_NodeInt)->words[0];
+                res *= stride;
 
                 if (res < UINT32_MAX) {
-                    OPTIMIZER_LOG(r, "converted add into member access");
-                    TB_Label bb2 = tb_find_label_from_reg(f, n->array_access.index);
-                    TB_Reg new_array_reg = tb_function_insert_after(f, bb2, n->array_access.index);
+                    OPTIMIZER_LOG(n, "converted add into member access");
+                    tb_todo();
 
-                    TB_Reg a = n->array_access.base;
+                    #if 0
+                    TB_Label bb2 = tb_find_label_from_reg(f, n->inputs[1]);
+                    TB_Reg new_array_reg = tb_insert_node(f, bb2, n->inputs[1]);
+
+                    TB_Reg a = n->inputs[0];
                     TB_Reg b = index->i_arith.a;
 
                     n = &f->nodes[r];
@@ -210,14 +205,16 @@ static bool simplify_pointers(TB_Function* f, TB_Node* n) {
                     new_array->array_access.index = b;
                     new_array->array_access.stride = c;
                     return true;
+                    #endif
                 }
             }
         }
     } else if (type == TB_INT2PTR) {
+        #if 0
         TB_Node* src = &f->nodes[n->unary.src];
 
         if (src->type == TB_INTEGER_CONST && src->integer.num_words == 1) {
-            OPTIMIZER_LOG(r, "constant int2ptr removed.");
+            OPTIMIZER_LOG(n, "constant int2ptr removed.");
 
             uint64_t imm = src->integer.single_word;
 
@@ -227,6 +224,7 @@ static bool simplify_pointers(TB_Function* f, TB_Node* n) {
             n->integer.single_word = imm;
             return true;
         }
+        #endif
     }
 
     return false;
@@ -262,7 +260,7 @@ static bool compact_regs(TB_Function* f) {
     TB_FOR_BASIC_BLOCK(bb, f) {
         TB_Reg prev = f->bbs[bb].start;
 
-        for (TB_Reg r = prev; r != 0; prev = r, r = nodes[r].next) {
+        for (TB_Reg r = prev; r != 0; prev = n, r = nodes[r].next) {
             if (nodes[r].type == TB_NULL) {
                 bool start_of_bb = (prev == r);
 
@@ -291,7 +289,7 @@ static bool compact_regs(TB_Function* f) {
 static bool inst_combine(TB_Function* f) {
     int changes = 0;
     TB_FOR_BASIC_BLOCK(bb, f) {
-        TB_FOR_NODE(r, f, bb) {
+        TB_FOR_NODE(n, f, bb) {
             TB_Node* n = &f->nodes[r];
 
 
@@ -325,7 +323,7 @@ static bool inst_combine(TB_Function* f) {
                     changes++;
                 } else if (cond->type == TB_INTEGER_CONST) {
                     // (if A B C) => (goto X) where X = A ? B : C
-                    TB_Label new_target = !tb_node_is_constant_zero(f, n->if_.cond) ?
+                    TB_Label new_target = !tb_node_is_constant_zero(n->if_.cond) ?
                         n->if_.if_true : n->if_.if_false;
 
                     n->type = TB_GOTO;
@@ -334,7 +332,7 @@ static bool inst_combine(TB_Function* f) {
                     changes++;
                 } else if (cond->type == TB_CMP_NE && tb_node_is_constant_zero(f, cond->cmp.b)) {
                     // (if (cmpne A 0) B C) => (if A B C)
-                    OPTIMIZER_LOG(r, "removed redundant compare-to-zero on if node");
+                    OPTIMIZER_LOG(n, "removed redundant compare-to-zero on if node");
 
                     TB_DataType dt = f->nodes[cond->cmp.a].dt;
 
@@ -343,7 +341,7 @@ static bool inst_combine(TB_Function* f) {
                     changes++;
                 } else if (cond->type == TB_CMP_EQ && tb_node_is_constant_zero(f, cond->cmp.b)) {
                     // (if (cmpeq A 0) B C) => (if A C B)
-                    OPTIMIZER_LOG(r, "removed redundant compare-to-zero on if node");
+                    OPTIMIZER_LOG(n, "removed redundant compare-to-zero on if node");
 
                     TB_DataType dt = f->nodes[cond->cmp.a].dt;
 
