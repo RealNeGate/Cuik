@@ -406,7 +406,7 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
     // Live intervals:
     //   We compute this for register allocation along
     //   with the "ordinals" which act as our timeline.
-    int counter = 0, bb_count = 0, label_patch_count = 0;
+    int counter = 0, label_patch_count = 0, return_count = 0;
     TB_FOR_BASIC_BLOCK(bb, f) {
         TB_FOR_NODE(n, f, bb) {
             // create new entry with no last user
@@ -415,6 +415,8 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
 
             if (n->type == TB_BRANCH) {
                 label_patch_count += 1 + TB_NODE_GET_EXTRA_T(n, TB_NodeBranch)->count;
+            } else if (n->type == TB_RET) {
+                return_count += 1;
             }
 
             TB_FOR_INPUT_IN_NODE(in, n) {
@@ -429,12 +431,12 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
 
     // allocate more stuff now that we've run stats on the IR
     ctx->emit.labels = ARENA_ARR_ALLOC(&tb__arena, f->bb_count, uint32_t);
-    ctx->emit.label_patches = ARENA_ARR_ALLOC(&tb__arena, tally.label_patch_count, LabelPatch);
-    ctx->emit.ret_patches = ARENA_ARR_ALLOC(&tb__arena, tally.return_count, ReturnPatch);
+    ctx->emit.label_patches = ARENA_ARR_ALLOC(&tb__arena, label_patch_count, LabelPatch);
+    ctx->emit.ret_patches = ARENA_ARR_ALLOC(&tb__arena, return_count, ReturnPatch);
 
     // allocate values map and active, for linear scan
-    size_t ht_cap = tb_next_pow2((counter * 4) / 3) - 1;
-    size_t ht_exp = tb_ffs(ht_cap - 1);
+    size_t ht_cap = tb_next_pow2((counter * 4) / 3);
+    size_t ht_exp = tb_ffs(~(ht_cap - 1)) - 1;
 
     ctx->values_exp = ht_exp;
     ctx->values = arena_alloc(&tb__arena, ht_cap * sizeof(ValueDesc), _Alignof(ValueDesc));
