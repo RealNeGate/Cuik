@@ -259,8 +259,6 @@ inline static bool is_value_match(const Val* a, const Val* b) {
     else return false;
 }
 
-static int get_data_type_size(const TB_DataType dt);
-
 #ifdef __GNUC__
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-variable"

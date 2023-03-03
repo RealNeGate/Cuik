@@ -29,7 +29,7 @@ source_patterns = [
 ]
 
 for i in args.targets:
-	source_patterns.append("src/"+i+"/x64_new.c")
+	source_patterns.append("src/"+i+"/dummy.c")
 
 ninja = open('build.ninja', 'w')
 

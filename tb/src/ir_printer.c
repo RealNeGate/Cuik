@@ -64,6 +64,7 @@ static void tb_print_node(TB_Function* f, TB_PrinterCtx* ctx, TB_PrintCallback c
         case TB_PARAM: P("param "); break;
         case TB_PARAM_ADDR: P("paramaddr "); break;
 
+        case TB_POISON: P("poison "); break;
         case TB_INTEGER_CONST: P("int "); break;
 
         case TB_ZERO_EXT: P("zxt "); break;
@@ -97,6 +98,8 @@ static void tb_print_node(TB_Function* f, TB_PrinterCtx* ctx, TB_PrintCallback c
         case TB_LOAD: P("load "); break;
         case TB_STORE: P("store "); break;
 
+        case TB_CALL: P("call "); break;
+        case TB_SCALL: P("syscall "); break;
         case TB_BRANCH: P("br "); break;
         case TB_RET: P("ret "); break;
 

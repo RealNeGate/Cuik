@@ -1,10 +1,14 @@
 
-long long do_stuff(long long value) {
+long long do_stuff(void) {
+    return 3 + 16;
+}
+
+/*long long do_stuff(long long value) {
     if (value < 0) {
         return 0;
     }
     return value;
-}
+}*/
 
 /*int without_restrict(int const* const x, int* y) {
     if(*x == 0) {

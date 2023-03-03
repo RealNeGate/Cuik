@@ -855,7 +855,7 @@ static Val x64v2_eval(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
 
     switch (type) {
         case TB_INTEGER_CONST: {
-            TB_NodeInt* i = TB_NODE_GET_EXTRA(n->inputs[1]);
+            TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
             assert(i->num_words == 1);
 
             return get_immediate(ctx, f, r, i->words[0]);

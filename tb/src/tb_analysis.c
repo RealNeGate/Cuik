@@ -20,11 +20,11 @@ static void postorder(TB_Function* f, TB_PostorderWalk* ctx, TB_Label bb) {
         /* RET can't do shit in this context */
     } else if (end->type == TB_BRANCH) {
         TB_NodeBranch* br = TB_NODE_GET_EXTRA(end);
-        postorder(f, ctx, br->default_label);
-
         FOREACH_REVERSE_N(i, 0, br->count) {
             postorder(f, ctx, br->targets[i].value);
         }
+
+        postorder(f, ctx, br->default_label);
     } else {
         tb_panic("Invalid IR :v(\n");
     }

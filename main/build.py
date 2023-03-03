@@ -15,7 +15,7 @@ args = parser.parse_args()
 #######################################
 # Handle dependencies
 #######################################
-tb_args = [sys.executable, 'build.py', '-mimalloc', 'x64']
+tb_args = [sys.executable, 'build.py', '-mimalloc', 'dummy_arch']
 libcuik_args = [sys.executable, 'build.py', '-usetb', '-mimalloc']
 
 if args.opt:
@@ -40,7 +40,7 @@ system = platform.system()
 ninja  = open('build.ninja', 'w')
 
 if system == "Windows":
-	ldflags = " -fuse-ld=lld-link"
+	ldflags = " " # " -fuse-ld=lld-link"
 else:
 	ldflags = " -fuse-ld=lld"
 
