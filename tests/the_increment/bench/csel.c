@@ -3,10 +3,20 @@
     return 3 + 16;
 }*/
 
-int foo(int value) {
-    /*if (value) {
-        value = -1;
-    }*/
+int fa(int value) {
+    return value;
+}
+
+int* fb(int value) {
+    return &value;
+}
+
+int fc(int value) {
+    return value + 16 - 5 & 3;
+}
+
+int fd(int value) {
+    if (value - 10) return ~value;
 
     return value;
 }

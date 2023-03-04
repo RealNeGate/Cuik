@@ -18,10 +18,10 @@ typedef struct Mem2Reg_Ctx {
     // Stack slots we're going to convert into
     // SSA form
     size_t  to_promote_count;
-    TB_Reg* to_promote;
+    TB_Node** to_promote;
 
     // [to_promote_count][bb_count]
-    TB_Reg* current_def;
+    TB_Node** current_def;
 
     TB_Predeccesors preds;
     // [bb_count]
@@ -29,9 +29,9 @@ typedef struct Mem2Reg_Ctx {
 } Mem2Reg_Ctx;
 
 static int bits_in_data_type(int pointer_size, TB_DataType dt);
-static Coherency tb_get_stack_slot_coherency(TB_Function* f, TB_Reg address, TB_DataType* dt, int* out_use_count);
+static Coherency tb_get_stack_slot_coherency(TB_Function* f, TB_Node* address, TB_DataType* dt, int* out_use_count);
 
-static int get_variable_id(Mem2Reg_Ctx* restrict c, TB_Reg r) {
+static int get_variable_id(Mem2Reg_Ctx* restrict c, TB_Node* r) {
     // TODO(NeGate): Maybe we speed this up... maybe it doesn't matter :P
     FOREACH_N(i, 0, c->to_promote_count) {
         if (c->to_promote[i] == r) return (int)i;
@@ -42,111 +42,79 @@ static int get_variable_id(Mem2Reg_Ctx* restrict c, TB_Reg r) {
 
 // This doesn't really generate a PHI node, it just produces a NULL node which will
 // be mutated into a PHI node by the rest of the code.
-static TB_Reg new_phi(Mem2Reg_Ctx* restrict c, TB_Function* f, int var, TB_Label block, TB_DataType dt) {
-    TB_Reg r = f->bbs[block].start;
+static TB_Node* new_phi(Mem2Reg_Ctx* restrict c, TB_Function* f, int var, TB_Label block, TB_DataType dt) {
+    size_t pred_count = c->preds.count[block];
 
-    // add as first BB node
-    tb_function_reserve_nodes(f, 1);
-    TB_Reg new_phi_reg = f->node_count++;
-    f->nodes[new_phi_reg] = (TB_Node) { .type = TB_NULL, .dt = dt, .next = r };
-    f->bbs[block].start = new_phi_reg;
+    // phi nodes need to be allocated at the top of a BB
+    TB_Node* n = tb_alloc_at_end(f, TB_PHI, dt, pred_count, sizeof(TB_NodePhi) + (pred_count * sizeof(TB_Label)));
+    TB_NodePhi* phi = TB_NODE_GET_EXTRA(n);
+    tb_insert_node(f, block, tb_node_get_first_insertion_point(f, block), n);
 
-    OPTIMIZER_LOG(new_phi_reg, "Insert new PHI node (in L%d)", block);
-    return new_phi_reg;
+    // we're putting placeholder -1 here
+    FOREACH_N(i, 0, pred_count) {
+        phi->labels[i] = -1;
+    }
+
+    OPTIMIZER_LOG(n, "Insert new PHI node (in L%d)", block);
+    return n;
 }
 
-static void add_phi_operand(Mem2Reg_Ctx* restrict c, TB_Function* f, TB_Reg phi_reg, TB_Label label, TB_Reg reg) {
+static void add_phi_operand(Mem2Reg_Ctx* restrict c, TB_Function* f, TB_Node* phi_node, TB_Label label, TB_Node* node) {
     // we're using NULL nodes as the baseline PHI0
-    if (phi_reg == reg) {
+    if (phi_node == node) {
         return;
     }
 
-    OPTIMIZER_LOG(phi_reg, "  adding r%d to PHI", reg);
-    TB_DataType dt = f->nodes[reg].dt;
-
-    TB_Node* phi_node = &f->nodes[phi_reg];
-    phi_node->dt = dt;
-
+    phi_node->dt = node->dt;
     if (phi_node->type == TB_POISON) {
         return;
-    } else if (phi_node->type == TB_NULL) {
-        phi_node->type = TB_PHI1;
-        phi_node->phi2.inputs[0] = (TB_PhiInput){ label, reg };
-        return;
-    } else if (phi_node->type == TB_PASS) {
-        TB_Label input_label = tb_find_label_from_reg(f, phi_node->pass.value);
-
-        phi_node->type = TB_PHI2;
-        phi_node->phi2.inputs[0] = (TB_PhiInput){ input_label, phi_node->pass.value };
-        phi_node->phi2.inputs[1] = (TB_PhiInput){ label, reg };
     }
 
-    int count = tb_node_get_phi_width(f, phi_reg);
-    TB_PhiInput* inputs = tb_node_get_phi_inputs(f, phi_reg);
+    assert(phi_node->type == TB_PHI);
+    OPTIMIZER_LOG(phi_node, "  adding r%d to PHI", reg);
 
-    if (count == 1) {
-        phi_node->type = TB_PHI2;
-        phi_node->phi2.inputs[0] = inputs[0];
-        phi_node->phi2.inputs[1] = (TB_PhiInput){ label, reg };
-    } else if (count == 2) {
-        phi_node->type = TB_PHIN;
-
-        TB_PhiInput* new_inputs = tb_platform_heap_alloc(3 * sizeof(TB_PhiInput));
-        new_inputs[0] = inputs[0];
-        new_inputs[1] = inputs[1];
-        new_inputs[2] = (TB_PhiInput){ label, reg };
-
-        phi_node->phi.count = 3;
-        phi_node->phi.inputs = new_inputs;
-    } else {
-        size_t index = phi_node->phi.count++;
-        phi_node->phi.inputs = tb_platform_heap_realloc(phi_node->phi.inputs, phi_node->phi.count * sizeof(TB_PhiInput));
-        if (phi_node->phi.inputs == NULL) {
-            tb_panic("add_phi_operand: Out of memory!");
-        }
-
-        phi_node->phi.inputs[index] = (TB_PhiInput) { label, reg };
+    TB_NodePhi* phi = TB_NODE_GET_EXTRA(phi_node);
+    FOREACH_N(i, 0, phi_node->input_count) if (phi->labels[i] == -1) {
+        phi->labels[i] = label;
+        phi_node->inputs[i] = node;
+        break;
     }
+
+    tb_unreachable();
 }
 
-static void write_variable(Mem2Reg_Ctx* c, int var, TB_Label block, TB_Reg value) {
+static void write_variable(Mem2Reg_Ctx* c, int var, TB_Label block, TB_Node* value) {
     c->current_def[(var * c->bb_count) + block] = value;
 }
 
-static void ssa_replace_phi_arg(Mem2Reg_Ctx* c, TB_Function* f, TB_Label bb, TB_Label dst, DynArray(TB_Reg)* stack) {
+static void ssa_replace_phi_arg(Mem2Reg_Ctx* c, TB_Function* f, TB_Label bb, TB_Label dst, DynArray(TB_Node*)* stack) {
     FOREACH_N(var, 0, c->to_promote_count) {
-        TB_Reg phi_reg = c->current_def[(var * f->bb_count) + dst];
-        if (!tb_node_is_phi_node(f, phi_reg)) continue;
+        TB_Node* phi_reg = c->current_def[(var * f->bb_count) + dst];
+        if (phi_reg == NULL || phi_reg->type != TB_PHI) continue;
 
-        int count = tb_node_get_phi_width(f, phi_reg);
-        TB_PhiInput* inputs = tb_node_get_phi_inputs(f, phi_reg);
-
-        TB_Reg top;
+        TB_Node* top;
         if (dyn_array_length(stack[var]) == 0) {
             // this is UB land, insert poison
-            TB_Reg basepoint = tb_node_get_first_insertion_point(f, 0);
+            TB_Node* basepoint = tb_node_get_first_insertion_point(f, 0);
 
-            if (f->nodes[basepoint].type == TB_POISON) {
+            if (basepoint->type == TB_POISON) {
                 // we probably already inserted a poison in this pass, nothing
                 // says we can't reuse it.
                 top = basepoint;
             } else {
-                TB_Reg new_reg = tb_function_insert_after(f, 0, basepoint);
-
-                f->nodes[new_reg].type = TB_POISON;
-                f->nodes[new_reg].dt = TB_TYPE_VOID;
-
-                top = new_reg;
+                top = tb_alloc_node(f, TB_POISON, TB_TYPE_VOID, 0, 0);
+                tb_insert_node(f, 0, basepoint, top);
             }
         } else {
             top = stack[var][dyn_array_length(stack[var]) - 1];
         }
 
         bool found = false;
-        FOREACH_N(j, 0, count) {
-            if (inputs[j].label == bb) {
+        TB_NodePhi* phi = TB_NODE_GET_EXTRA(phi_reg);
+        FOREACH_N(j, 0, phi_reg->input_count) {
+            if (phi->labels[j] == bb) {
                 // try to replace
-                inputs[j].val = top;
+                phi_reg->inputs[j] = top;
                 found = true;
                 break;
             }
@@ -158,12 +126,12 @@ static void ssa_replace_phi_arg(Mem2Reg_Ctx* c, TB_Function* f, TB_Label bb, TB_
     }
 }
 
-static void ssa_rename(Mem2Reg_Ctx* c, TB_Function* f, TB_Label bb, DynArray(TB_Reg)* stack) {
+static void ssa_rename(Mem2Reg_Ctx* c, TB_Function* f, TB_Label bb, DynArray(TB_Node*)* stack) {
     // push phi nodes
     size_t* old_len = tb_tls_push(c->tls, sizeof(size_t) * f->bb_count);
     FOREACH_N(var, 0, c->to_promote_count) {
-        TB_Reg value = c->current_def[(var * f->bb_count) + bb];
-        if (tb_node_is_phi_node(f, value)) {
+        TB_Node* value = c->current_def[(var * f->bb_count) + bb];
+        if (value && value->type == TB_PHI) {
             dyn_array_put(stack[var], value);
         }
 
@@ -171,65 +139,47 @@ static void ssa_rename(Mem2Reg_Ctx* c, TB_Function* f, TB_Label bb, DynArray(TB_
     }
 
     // rewrite operations
-    TB_FOR_NODE(r, f, bb) {
-        TB_Node* n = &f->nodes[r];
-
+    TB_FOR_NODE(n, f, bb) {
         if (n->type == TB_LOCAL) {
-            int var = get_variable_id(c, r);
+            int var = get_variable_id(c, n);
             if (var >= 0) {
-                tb_kill_op(f, r);
-            }
-        } else if (n->type == TB_PARAM_ADDR) {
-            int var = get_variable_id(c, r);
-            if (var >= 0) {
-                dyn_array_put(stack[var], n->param_addr.param);
-                tb_kill_op(f, r);
+                TB_KILL_NODE(n);
             }
         } else if (n->type == TB_MEMSET) {
-            int var = get_variable_id(c, n->mem_op.dst);
+            int var = get_variable_id(c, n->inputs[0]);
             if (var >= 0) {
-                dyn_array_put(stack[var], r);
+                dyn_array_put(stack[var], n);
             }
         } else if (n->type == TB_STORE) {
-            int var = get_variable_id(c, n->store.address);
+            int var = get_variable_id(c, n->inputs[0]);
             if (var >= 0) {
-                dyn_array_put(stack[var], n->store.value);
-                tb_kill_op(f, r);
+                dyn_array_put(stack[var], n->inputs[1]);
+                TB_KILL_NODE(n);
             }
         } else if (n->type == TB_LOAD) {
-            int var = get_variable_id(c, n->load.address);
+            int var = get_variable_id(c, n->inputs[0]);
             if (var >= 0) {
                 if (dyn_array_length(stack[var]) == 0) {
                     // this is UB since it implies we've read before initializing the
                     // stack slot.
-                    n->type = TB_POISON;
-                    n->dt = TB_TYPE_VOID;
+                    tb_transmute_to_poison(n);
                 } else {
-                    n->type = TB_PASS;
-                    n->pass.value = stack[var][dyn_array_length(stack[var]) - 1];
+                    tb_transmute_to_pass(n, stack[var][dyn_array_length(stack[var]) - 1]);
                 }
             }
         }
     }
 
     // replace phi arguments on successor
-    TB_Node* end = &f->nodes[f->bbs[bb].end];
+    TB_Node* end = f->bbs[bb].end;
     if (end->type == TB_NULL || end->type == TB_RET || end->type == TB_TRAP || end->type == TB_UNREACHABLE) {
         /* RET can't do shit in this context */
-    } else if (end->type == TB_GOTO) {
-        ssa_replace_phi_arg(c, f, bb, end->goto_.label, stack);
-    } else if (end->type == TB_IF) {
-        ssa_replace_phi_arg(c, f, bb, end->if_.if_true, stack);
-        ssa_replace_phi_arg(c, f, bb, end->if_.if_false, stack);
-    } else if (end->type == TB_SWITCH) {
-        // each entry takes up two slots in the VLA storage (i just put random crap in there like arguments for function calls)
-        size_t entry_count = (end->switch_.entries_end - end->switch_.entries_start) / 2;
-        TB_SwitchEntry* entries = (TB_SwitchEntry*) &f->vla.data[end->switch_.entries_start];
+    } else if (end->type == TB_BRANCH) {
+        TB_NodeBranch* br = TB_NODE_GET_EXTRA(end);
+        ssa_replace_phi_arg(c, f, bb, br->default_label, stack);
 
-        ssa_replace_phi_arg(c, f, bb, end->switch_.default_label, stack);
-
-        FOREACH_REVERSE_N(i, 0, entry_count) {
-            ssa_replace_phi_arg(c, f, bb, entries[i].value, stack);
+        FOREACH_REVERSE_N(i, 0, br->count) {
+            ssa_replace_phi_arg(c, f, bb, br->targets[i].value, stack);
         }
     } else {
         tb_todo();
@@ -250,7 +200,7 @@ static void ssa_rename(Mem2Reg_Ctx* c, TB_Function* f, TB_Label bb, DynArray(TB_
 }
 
 typedef struct {
-    TB_Reg new_reg;
+    TB_Node* new_reg;
 
     int32_t offset;
     TB_CharUnits size;
@@ -287,7 +237,7 @@ static ptrdiff_t compatible_with_configs(size_t config_count, AggregateConfig* c
     return -2;
 }
 
-static bool attempt_sroa(TB_Function* f, TB_TemporaryStorage* tls, TB_Reg address, int use_count) {
+static bool attempt_sroa(TB_Function* f, TB_TemporaryStorage* tls, TB_Node* address, int use_count) {
     size_t config_count = 0;
     AggregateConfig* configs = tb_tls_push(tls, 0);
 
@@ -295,10 +245,8 @@ static bool attempt_sroa(TB_Function* f, TB_TemporaryStorage* tls, TB_Reg addres
 
     int acceptable_use_count = 0;
     TB_FOR_BASIC_BLOCK(bb, f) {
-        TB_FOR_NODE(r, f, bb) {
-            TB_Node* n = &f->nodes[r];
-
-            if (n->type == TB_MEMSET && n->mem_op.dst == address) {
+        TB_FOR_NODE(n, f, bb) {
+            if (n->type == TB_MEMSET && n->inputs[0] == address) {
                 // we can assume memset is valid since the COHERENCY_BAD_DATA_TYPE
                 // wouldn't have let us get this far
                 //
@@ -311,11 +259,10 @@ static bool attempt_sroa(TB_Function* f, TB_TemporaryStorage* tls, TB_Reg addres
                 // we don't need to worry about volatile either since COHERENCY_VOLATILE
                 // handled it earlier
                 int32_t offset = 0;
-                if (n->load.address == address) {
+                if (n->inputs[0] == address) {
                     offset = 0;
-                } else if (f->nodes[n->load.address].type == TB_MEMBER_ACCESS &&
-                    f->nodes[n->load.address].member_access.base == address) {
-                    offset = f->nodes[n->load.address].member_access.offset;
+                } else if (n->inputs[0]->type == TB_MEMBER_ACCESS && n->inputs[0]->inputs[0] == address) {
+                    offset = TB_NODE_GET_EXTRA_T(n->inputs[0], TB_NodeMember)->offset;
                 } else {
                     continue;
                 }
@@ -339,35 +286,32 @@ static bool attempt_sroa(TB_Function* f, TB_TemporaryStorage* tls, TB_Reg addres
     }
 
     // split configurations
-    uint32_t alignment = f->nodes[address].local.alignment;
+    TB_NodeLocal* l = TB_NODE_GET_EXTRA(address);
+    uint32_t alignment = l->align;
 
     FOREACH_N(i, 0, config_count) {
         // we can assume that address is in the entry block since HoistLocals
-        TB_Reg split = tb_function_insert_after(f, 0, address);
-        f->nodes[split].type = TB_LOCAL;
-        f->nodes[split].dt = TB_TYPE_PTR;
-        f->nodes[split].local.alignment = alignment;
-        f->nodes[split].local.size = configs[i].size;
+        TB_Node* n = tb_alloc_node(f, TB_LOCAL, TB_TYPE_PTR, 0, sizeof(TB_NodeLocal));
+        tb_insert_node(f, 0, address, n);
+        TB_NODE_SET_EXTRA(n, TB_NodeLocal, .size = configs[i].size, .align = alignment);
 
-        configs[i].new_reg = split;
+        configs[i].new_reg = n;
     }
 
     TB_FOR_BASIC_BLOCK(bb, f) {
-        TB_FOR_NODE(r, f, bb) {
-            TB_Node* n = &f->nodes[r];
-
+        TB_FOR_NODE(n, f, bb) {
             if (n->type == TB_LOAD || n->type == TB_STORE) {
-                if (n->load.address == address) {
+                if (n->inputs[0] == address) {
                     ptrdiff_t slot = find_config(config_count, configs, 0);
 
-                    n->load.address = configs[slot].new_reg;
-                } else if (f->nodes[n->load.address].type == TB_MEMBER_ACCESS &&
-                    f->nodes[n->load.address].member_access.base == address) {
+                    n->inputs[0] = configs[slot].new_reg;
+                } else if (n->inputs[0]->type == TB_MEMBER_ACCESS && n->inputs[0]->inputs[0] == address) {
                     // replace the old member access with a clean stack slot
-                    ptrdiff_t slot = find_config(config_count, configs, f->nodes[n->load.address].member_access.offset);
+                    TB_NodeMember* member = TB_NODE_GET_EXTRA(n->inputs[0]);
+                    ptrdiff_t slot = find_config(config_count, configs, member->offset);
 
-                    tb_murder_reg(f, n->load.address);
-                    n->load.address = configs[slot].new_reg;
+                    TB_KILL_NODE(n->inputs[0]);
+                    n->inputs[0] = configs[slot].new_reg;
                 } else {
                     continue;
                 }
@@ -375,7 +319,7 @@ static bool attempt_sroa(TB_Function* f, TB_TemporaryStorage* tls, TB_Reg addres
         }
     }
 
-    tb_murder_reg(f, address);
+    TB_KILL_NODE(address);
     return true;
 }
 
@@ -386,49 +330,45 @@ bool mem2reg(TB_Function* f, TB_TemporaryStorage* tls) {
     // Decide which stack slots to promote
     ////////////////////////////////
     size_t to_promote_count = 0;
-    TB_Reg* to_promote = tb_tls_push(tls, 0);
+    TB_Node** to_promote = tb_tls_push(tls, 0);
 
     int changes = 0;
     TB_FOR_BASIC_BLOCK(bb, f) {
-        TB_FOR_NODE(r, f, bb) {
-            TB_Node* n = &f->nodes[r];
-
-            if (n->type == TB_LOCAL || n->type == TB_PARAM_ADDR) {
+        TB_FOR_NODE(n, f, bb) {
+            if (n->type == TB_LOCAL) {
                 TB_DataType dt;
                 int use_count;
-                Coherency coherence = tb_get_stack_slot_coherency(f, r, &dt, &use_count);
+                Coherency coherence = tb_get_stack_slot_coherency(f, n, &dt, &use_count);
 
                 switch (coherence) {
                     case COHERENCY_GOOD: {
-                        *((TB_Reg*)tb_tls_push(tls, sizeof(TB_Reg))) = r;
+                        *((TB_Node**)tb_tls_push(tls, sizeof(TB_Node*))) = n;
                         to_promote_count++;
 
                         n->dt = dt;
 
-                        OPTIMIZER_LOG(r, "promoting to IR register");
+                        OPTIMIZER_LOG(n, "promoting to IR register");
                         break;
                     }
                     case COHERENCY_UNINITIALIZED: {
-                        OPTIMIZER_LOG(r, "could not mem2reg a stack slot (uninitialized)");
+                        OPTIMIZER_LOG(n, "could not mem2reg a stack slot (uninitialized)");
                         break;
                     }
                     case COHERENCY_VOLATILE: {
-                        OPTIMIZER_LOG(r, "could not mem2reg a stack slot (volatile load/store)");
+                        OPTIMIZER_LOG(n, "could not mem2reg a stack slot (volatile load/store)");
                         break;
                     }
                     case COHERENCY_USES_ADDRESS: {
-                        if (n->type == TB_LOCAL && attempt_sroa(f, tls, r, use_count)) {
-                            // tb_function_print(f, tb_default_print_callback, stdout, false);
-
-                            OPTIMIZER_LOG(r, "SROA on stack structure");
+                        if (n->type == TB_LOCAL && attempt_sroa(f, tls, n, use_count)) {
+                            OPTIMIZER_LOG(n, "SROA on stack structure");
                             changes++;
                         } else {
-                            OPTIMIZER_LOG(r, "could not mem2reg a stack slot (uses pointer arithmatic)");
+                            OPTIMIZER_LOG(n, "could not mem2reg a stack slot (uses pointer arithmatic)");
                         }
                         break;
                     }
                     case COHERENCY_BAD_DATA_TYPE: {
-                        OPTIMIZER_LOG(r, "could not mem2reg a stack slot (data type is too inconsistent)");
+                        OPTIMIZER_LOG(n, "could not mem2reg a stack slot (data type is too inconsistent)");
                         break;
                     }
                     default: tb_todo();
@@ -450,8 +390,8 @@ bool mem2reg(TB_Function* f, TB_TemporaryStorage* tls) {
     c.to_promote = to_promote;
 
     c.bb_count = f->bb_count;
-    c.current_def = tb_tls_push(tls, to_promote_count * c.bb_count * sizeof(TB_Reg));
-    memset(c.current_def, 0, to_promote_count * c.bb_count * sizeof(TB_Reg));
+    c.current_def = tb_tls_push(tls, to_promote_count * c.bb_count * sizeof(TB_Node*));
+    memset(c.current_def, 0, to_promote_count * c.bb_count * sizeof(TB_Node*));
 
     // Calculate all the immediate predecessors
     c.preds = tb_get_temp_predeccesors(f, tls);
@@ -467,26 +407,17 @@ bool mem2reg(TB_Function* f, TB_TemporaryStorage* tls) {
     ////////////////////////////////
     // Identify the final value of all the variables in the function per basic block
     FOREACH_N(bb, 0, f->bb_count) {
-        TB_FOR_NODE(r, f, bb) {
-            TB_Node* n = &f->nodes[r];
-
+        TB_FOR_NODE(n, f, bb) {
             switch (n->type) {
-                case TB_PARAM_ADDR: {
-                    // Parameter stack slots map to parameter registers
-                    // so we need to tell mem2reg about that.
-                    int var = get_variable_id(&c, r);
-                    if (var >= 0) {
-                        write_variable(&c, var, bb, n->param_addr.param);
-                    }
-                    break;
-                }
                 case TB_MEMSET: {
-                    int var = get_variable_id(&c, n->mem_op.dst);
+                    int var = get_variable_id(&c, n->inputs[0]);
                     if (var >= 0) {
                         // this stores the "primary type" of the specific address
-                        TB_DataType dt = f->nodes[to_promote[var]].dt;
+                        TB_DataType dt = to_promote[var]->dt;
+                        (void) dt;
 
-                        if (dt.type == TB_FLOAT && dt.data == TB_FLT_32) {
+                        tb_todo();
+                        /* if (dt.type == TB_FLOAT && dt.data == TB_FLT_32) {
                             f->nodes[r].type = TB_FLOAT32_CONST;
                             f->nodes[r].dt = dt;
                             f->nodes[r].flt32.value = 0.0;
@@ -499,16 +430,16 @@ bool mem2reg(TB_Function* f, TB_TemporaryStorage* tls) {
                             f->nodes[r].dt = dt;
                             f->nodes[r].integer.num_words = 1;
                             f->nodes[r].integer.single_word = 0;
-                        }
+                        } */
 
-                        write_variable(&c, var, bb, r);
+                        write_variable(&c, var, bb, n);
                     }
                     break;
                 }
                 case TB_STORE: {
-                    int var = get_variable_id(&c, n->store.address);
+                    int var = get_variable_id(&c, n->inputs[0]);
                     if (var >= 0) {
-                        write_variable(&c, var, bb, n->store.value);
+                        write_variable(&c, var, bb, n->inputs[1]);
                     }
                     break;
                 }
@@ -528,7 +459,7 @@ bool mem2reg(TB_Function* f, TB_TemporaryStorage* tls) {
         queue_count = 0;
 
         FOREACH_N(bb, 0, f->bb_count) {
-            TB_Reg r = c.current_def[(var * f->bb_count) + bb];
+            TB_Node* r = c.current_def[(var * f->bb_count) + bb];
             if (r != 0) {
                 set_put(&ever_worked, bb);
                 queue[queue_count++] = bb;
@@ -541,18 +472,18 @@ bool mem2reg(TB_Function* f, TB_TemporaryStorage* tls) {
             size_t i = 0;
             while (i < queue_count) {
                 TB_Label bb = queue[i];
-                TB_Reg value = c.current_def[(var * f->bb_count) + bb];
-                TB_DataType dt = f->nodes[value].dt;
+                TB_Node* value = c.current_def[(var * f->bb_count) + bb];
+                TB_DataType dt = value->dt;
 
                 FOREACH_N(k, 0, df.count[bb]) {
                     TB_Label l = df._[bb][k];
                     if (!set_first_time(&has_already, l)) continue;
 
-                    TB_Reg phi_reg = c.current_def[(var * f->bb_count) + l];
-                    if (phi_reg == 0) {
+                    TB_Node* phi_reg = c.current_def[(var * f->bb_count) + l];
+                    if (phi_reg == NULL) {
                         phi_reg = new_phi(&c, f, var, l, dt);
-                    } else if (!tb_node_is_phi_node(f, phi_reg)) {
-                        TB_Reg old_reg = phi_reg;
+                    } else if (phi_reg->type != TB_PHI) {
+                        TB_Node* old_reg = phi_reg;
                         phi_reg = new_phi(&c, f, var, l, dt);
                         add_phi_operand(&c, f, phi_reg, l, old_reg);
                     }
@@ -576,9 +507,9 @@ bool mem2reg(TB_Function* f, TB_TemporaryStorage* tls) {
     ////////////////////////////////
     // Phase 2: Rename loads and stores
     ////////////////////////////////
-    DynArray(TB_Reg)* stack = tb_tls_push(tls, c.to_promote_count * sizeof(DynArray(TB_Reg)));
+    DynArray(TB_Node*)* stack = tb_tls_push(tls, c.to_promote_count * sizeof(DynArray(TB_Node*)));
     FOREACH_N(var, 0, c.to_promote_count) {
-        stack[var] = dyn_array_create(TB_Reg, 16);
+        stack[var] = dyn_array_create(TB_Node*, 16);
     }
 
     ssa_rename(&c, f, 0, stack);
@@ -601,57 +532,50 @@ static int bits_in_data_type(int pointer_size, TB_DataType dt) {
 
 // NOTE(NeGate): a stack slot is coherent when all loads and stores share
 // the same type and alignment along with not needing any address usage.
-static Coherency tb_get_stack_slot_coherency(TB_Function* f, TB_Reg address, TB_DataType* out_dt, int* out_use_count) {
+static Coherency tb_get_stack_slot_coherency(TB_Function* f, TB_Node* address, TB_DataType* out_dt, int* out_use_count) {
     // if there's a difference between the times we want the value and the
     // times we want the address, then some address calculations are being done
     // and thus we can't mem2reg
     int use_count = 0;
     TB_FOR_BASIC_BLOCK(bb, f) {
-        TB_FOR_NODE(r, f, bb) {
-            TB_Node* n = &f->nodes[r];
-
-            TB_FOR_INPUT_IN_NODE(it, f, n) {
-                if (it.r == address) use_count += 1;
+        TB_FOR_NODE(n, f, bb) {
+            TB_FOR_INPUT_IN_NODE(in, n) {
+                if (*in == address) use_count += 1;
             }
         }
     }
     *out_use_count = use_count;
 
     int value_based_use_count = 0;
-    int pointer_size = tb__find_code_generator(f->super.module)->pointer_size;
+
+    ICodeGen* cg = tb__find_code_generator(f->super.module);
+    int pointer_size = cg->pointer_size;
+    int char_size = cg->minimum_addressable_size;
 
     // pick the first load/store and use that as the baseline
     TB_DataType dt = TB_TYPE_VOID;
     bool initialized = false;
     int dt_bits = 0;
     TB_FOR_BASIC_BLOCK(bb, f) {
-        TB_FOR_NODE(r, f, bb) {
-            TB_Node* n = &f->nodes[r];
+        TB_FOR_NODE(n, f, bb) {
+            if (n->type == TB_MEMSET && n->inputs[0] == address && tb_node_is_constant_zero(n->inputs[1])) {
+                TB_NodeInt* size = TB_NODE_GET_EXTRA(n->inputs[2]);
 
-            static_assert(offsetof(TB_Node, load.address) == offsetof(TB_Node, store.address),
-                "TB_Node::load.address == TB_Node::store.address");
+                if (n->inputs[2]->type == TB_INTEGER_CONST && size->num_words == 1) {
+                    // untyped zeroing store
+                    // we're hoping all data types match in size to continue along
+                    int bits = char_size * size->words[0];
 
-            if (n->type == TB_MEMSET &&
-                n->mem_op.dst == address &&
-                f->nodes[n->mem_op.src].type == TB_INTEGER_CONST &&
-                f->nodes[n->mem_op.src].integer.num_words == 1 &&
-                f->nodes[n->mem_op.src].integer.single_word == 0 &&
-                f->nodes[n->mem_op.size].type == TB_INTEGER_CONST &&
-                f->nodes[n->mem_op.size].integer.num_words == 1) {
-                // untyped zeroing store
-                // we're hoping all data types match in size to continue along
-                int bits = bits_in_data_type(pointer_size, f->nodes[n->mem_op.src].dt) *
-                    f->nodes[n->mem_op.size].integer.single_word;
-
-                if (bits == 0 || (dt_bits > 0 && bits != dt_bits)) {
-                    return COHERENCY_BAD_DATA_TYPE;
+                    if (bits == 0 || (dt_bits > 0 && bits != dt_bits)) {
+                        return COHERENCY_BAD_DATA_TYPE;
+                    }
+                    dt_bits = bits;
+                    value_based_use_count += 1;
                 }
-                dt_bits = bits;
-                value_based_use_count += 1;
-            } else if ((n->type == TB_LOAD || n->type == TB_STORE) && n->load.address == address) {
+            } else if ((n->type == TB_LOAD || n->type == TB_STORE) && n->inputs[0] == address) {
                 value_based_use_count += 1;
 
-                if (n->load.is_volatile) {
+                if (TB_NODE_GET_EXTRA_T(n, TB_NodeMemAccess)->is_volatile) {
                     return COHERENCY_VOLATILE;
                 } else {
                     if (!initialized) {

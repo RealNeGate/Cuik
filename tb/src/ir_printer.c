@@ -55,6 +55,9 @@ TB_API const char* tb_node_get_name(TB_Node* n) {
         case TB_POISON: return "poison";
         case TB_INTEGER_CONST: return "int";
 
+        case TB_PASS: return "pass";
+        case TB_PHI: return "phi";
+
         case TB_ZERO_EXT: return "zxt";
         case TB_SIGN_EXT: return "sxt";
         case TB_TRUNCATE: return "trunc";
@@ -82,6 +85,7 @@ TB_API const char* tb_node_get_name(TB_Node* n) {
         case TB_SHL: return "shl";
         case TB_SHR: return "shr";
         case TB_SAR: return "sar";
+        case TB_NOT: return "not";
 
         case TB_LOAD: return "load";
         case TB_STORE: return "store";

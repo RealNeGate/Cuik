@@ -309,7 +309,7 @@ TB_API TB_Node* tb_inst_local(TB_Function* f, uint32_t size, TB_CharUnits alignm
     tb_assume(alignment > 0 && tb_is_power_of_two(alignment));
 
     // insert in the entry block
-    TB_Node* n = tb_alloc_node(f, TB_LOCAL, TB_TYPE_PTR, 0, 0);
+    TB_Node* n = tb_alloc_node(f, TB_LOCAL, TB_TYPE_PTR, 0, sizeof(TB_NodeLocal));
     tb_insert_node(f, 0, tb_node_get_first_insertion_point(f, 0), n);
     TB_NODE_SET_EXTRA(n, TB_NodeLocal, .size = size, .align = alignment);
     return n;

@@ -79,6 +79,7 @@ typedef struct Def {
 
 typedef struct Ctx {
     TB_CGEmitter emit;
+    bool emit_asm;
 
     // for panic-based error handling
     jmp_buf restore_point;
@@ -120,6 +121,13 @@ static LiveInterval get_bb_interval(Ctx* restrict ctx, TB_Function* f, TB_Label 
         tb_swap(int, li.start, li.end);
     }
     return li;
+}
+
+#define NAME(n) get_ordinal(ctx, n)
+static int get_ordinal(Ctx* restrict ctx, TB_Node* n) {
+    ptrdiff_t search = nl_map_get(ctx->intervals, n);
+    assert(search >= 0);
+    return ctx->intervals[search].v.ordinal;
 }
 
 static LiveInterval get_live_interval(Ctx* restrict ctx, TB_Node* n) {
@@ -180,11 +188,11 @@ static bool fits_into_int32(uint64_t x) {
 #define DEF(n, ...) (ctx->defs[ctx->def_count] = (Def){ n, __VA_ARGS__ }, ctx->def_count++)
 
 static Val isel(Ctx* restrict ctx, TB_Node* n);
-static void emit_sequence(Ctx* restrict ctx, TB_Node* n, bool emit_asm);
+static void emit_sequence(Ctx* restrict ctx, TB_Node* n);
 static void patch_local_labels(Ctx* restrict ctx);
 static Val spill_to_stack_slot(Ctx* restrict ctx, TB_Node* n, TB_Node* p, Val* src);
 static Val get_initial_param_val(Ctx* restrict ctx, TB_Node* n);
-static void copy_value(Ctx* restrict ctx, Val* dst, Val* src, TB_DataType dt, bool emit_asm);
+static void copy_value(Ctx* restrict ctx, Val* dst, Val* src, TB_DataType dt);
 
 static void add_active(Ctx* restrict ctx, TB_Node* n, LiveInterval r_li) {
     // insert by increasing end point
@@ -318,11 +326,13 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
 
     // allocate values map and active, for linear scan
     size_t ht_cap = tb_next_pow2((counter * 4) / 3);
-    size_t ht_exp = tb_ffs(~(ht_cap - 1)) - 1;
+    size_t ht_exp = 32 - tb_clz(ht_cap - 1);
+    assert(ht_cap == (1u << ht_exp));
 
     ctx->values_exp = ht_exp;
     ctx->values = arena_alloc(&tb__arena, ht_cap * sizeof(ValueDesc), _Alignof(ValueDesc));
     ctx->active = arena_alloc(&tb__arena, counter * sizeof(TB_Node*), _Alignof(TB_Node*));
+    memset(ctx->values, 0, ht_cap * sizeof(ValueDesc));
 
     // BB scheduling:
     //   we run through BBs in a reverse postorder walk, currently
@@ -340,18 +350,22 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
     //   fixed and which need allocation. For now regalloc is handled
     //   immediately but in theory it could be delayed until all selection
     //   is done.
-    bool emit_asm = true;
+    ctx->emit_asm = true;
     FOREACH_REVERSE_N(i, 0, walk.count) {
         TB_Label bb = walk.traversal[i];
 
         // mark BB start
         ctx->emit.labels[bb] = GET_CODE_POS(&ctx->emit);
-        if (emit_asm) {
+        if (ctx->emit_asm) {
             printf("L%d:\n", bb);
         }
 
         TB_FOR_NODE(n, f, bb) {
-            if (emit_asm) printf("  \x1b[32m# %s sequence\x1b[0m\n", tb_node_get_name(n));
+            if (n->type == TB_NULL) continue;
+
+            if (ctx->emit_asm) {
+                printf("  \x1b[32m# %s sequence\x1b[0m\n", tb_node_get_name(n));
+            }
 
             // selection
             Val v;
@@ -389,7 +403,7 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
 
                 case TB_BRANCH: {
                     // handle phi nodes
-                    tb_todo();
+                    // tb_todo();
 
                     // do normal isel now
                     assert(ctx->def_count == 0);
@@ -436,6 +450,17 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
                     remove_active(ctx, i, k);
                 }
             }
+            // spill any leftover registers if we're branching
+            if (n->type == TB_BRANCH) {
+                FOREACH_N(i, 0, ctx->active_count) {
+                    TB_Node* k = ctx->active[i];
+                    Val* v = &GET_VAL(k);
+
+                    Val slot = spill_to_stack_slot(ctx, k, NULL, v);
+                    *v = slot;
+                }
+                ctx->active_count = 0;
+            }
             //   allocate new regs
             FOREACH_N(i, 0, ctx->def_count) {
                 Def* d = &ctx->defs[i];
@@ -443,17 +468,35 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
                 // copied from somewhere else
                 if (d->based) {
                     Val* src = &GET_VAL(d->based);
+                    LiveInterval src_li = get_live_interval(ctx, d->based);
 
-                    // allocate copy
-                    Val copy = alloc_reg(ctx, f, d->n, d->reg_class);
-                    copy_value(ctx, &copy, src, d->n->dt, emit_asm);
-                    d->reg = copy.reg;
+                    // if the source dies when the definition is born, we can just alias them
+                    if (src_li.end == r_li.start && src->type == CG_VAL_REGISTER + d->reg_class) {
+                        if (ctx->emit_asm) {
+                            printf("  \x1b[32m#   recycled r%d for r%d\x1b[0m\n", NAME(d->based), NAME(n));
+                        }
+                        d->reg = src->reg;
+
+                        // remove from active list
+                        FOREACH_N(j, 0, ctx->active_count) if (ctx->active[j] == d->based) {
+                            remove_active(ctx, j, ctx->active[j]);
+                            break;
+                        }
+
+                        // insert new to active
+                        add_active(ctx, n, r_li);
+                    } else {
+                        // allocate copy
+                        Val copy = alloc_reg(ctx, f, d->n, d->reg_class);
+                        copy_value(ctx, &copy, src, d->n->dt);
+                        d->reg = copy.reg;
+                    }
                 } else {
                     Val* src = &GET_VAL(d->n);
                     if (src->type != CG_VAL_REGISTER + d->reg_class) {
                         Val old = *src;
                         alloc_reg(ctx, f, d->n, d->reg_class);
-                        copy_value(ctx, src, &old, d->n->dt, emit_asm);
+                        copy_value(ctx, src, &old, d->n->dt);
                         d->reg = src->reg;
                     } else {
                         d->reg = src->reg;
@@ -470,13 +513,13 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
             GET_VAL(n) = v;
 
             // Arch-specific: convert instruction buffer into actual instructions
-            emit_sequence(ctx, n, emit_asm);
+            emit_sequence(ctx, n);
 
             skip:;
         }
     }
 
-    if (emit_asm) {
+    if (ctx->emit_asm) {
         printf(".ret:\n");
     }
 

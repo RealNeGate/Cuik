@@ -264,6 +264,10 @@ inline static bool is_value_match(const Val* a, const Val* b) {
 #pragma GCC diagnostic ignored "-Wunused-variable"
 #endif
 static const char* GPR_NAMES[] = { "RAX", "RCX", "RDX", "RBX", "RSP", "RBP", "RSI", "RDI", "R8",  "R9", "R10", "R11", "R12", "R13", "R14", "R15" };
+static const char* COND_NAMES[] = {
+    "O", "NO", "B", "NB", "E", "NE", "BE", "A",
+    "S", "NS", "P", "NP", "L", "GE", "LE", "G"
+};
 #ifdef __GNUC__
 #pragma GCC diagnostic pop
 #endif

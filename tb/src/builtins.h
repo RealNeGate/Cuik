@@ -7,6 +7,10 @@ typedef struct TB_MultiplyResult {
 } TB_MultiplyResult;
 
 #if defined(_MSC_VER) && !defined(__clang__)
+inline static int tb_clz(uint32_t x) {
+    return _lzcnt_u64(x);
+}
+
 inline static int tb_ffs(uint32_t x) {
     unsigned long index;
     return _BitScanForward(&index, x) ? 1 + index : 0;
@@ -48,6 +52,10 @@ inline static TB_MultiplyResult tb_mul64x128(uint64_t a, uint64_t b) {
     return (TB_MultiplyResult) { lo, hi };
 }
 #else
+inline static int tb_clz(uint32_t x) {
+    return __builtin_clz(x);
+}
+
 inline static int tb_ffs(uint32_t x) {
     return __builtin_ffs(x);
 }
@@ -65,7 +73,7 @@ inline static int tb_popcount64(uint64_t x) {
 }
 
 inline static uint64_t tb_next_pow2(uint64_t x) {
-    return x == 1 ? 1 : 1 << (64 - __builtin_clzl(x - 1));
+    return x == 1 ? 1 : 1 << (64 - __builtin_clzll(x - 1));
 }
 
 inline static bool tb_add_overflow(uint64_t a, uint64_t b, uint64_t* result) {

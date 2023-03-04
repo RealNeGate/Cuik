@@ -17,7 +17,7 @@ typedef struct TB_Pass {
 #include "fold.h"
 #include "canonical.h"
 #include "merge_ret.h"
-// #include "mem2reg.h"
+#include "mem2reg.h"
 
 typedef struct {
     NL_Map(TB_Node*, char) marked;
@@ -87,7 +87,7 @@ static void canonicalize(TB_Function* f) {
     nl_map_free(ctx.def_table);
 
     // kill any unused regs
-    dce(f);
+    // dce(f);
 }
 
 static void schedule_function_level_opts(TB_Module* m, TB_Function* f, size_t pass_count, const TB_Pass* passes[]) {
@@ -98,7 +98,6 @@ static void schedule_function_level_opts(TB_Module* m, TB_Function* f, size_t pa
         canonicalize(f);
 
         passes[i]->func_run(f, tls);
-        tb_function_print(f, tb_default_print_callback, stdout, false);
     }
 
     // just in case
