@@ -10,12 +10,7 @@ static tb_atomic_int total_tid;
 
 ICodeGen* tb__find_code_generator(TB_Module* m) {
     switch (m->target_arch) {
-        #if 1
-        // work in progress
-        case TB_ARCH_X86_64: return &tb__dummy_codegen;
-        #else
         case TB_ARCH_X86_64: return &tb__x64_codegen;
-        #endif
         // case TB_ARCH_AARCH64: return &tb__aarch64_codegen;
         // case TB_ARCH_WASM32: return &tb__wasm32_codegen;
         default: return NULL;
@@ -197,7 +192,7 @@ TB_API void tb_module_kill_symbol(TB_Module* m, TB_Symbol* sym) {
             TB_Function* f = (TB_Function*) sym;
 
             tb_platform_heap_free(f->bbs);
-            tb_todo(); // free node arena
+            // tb_todo(); // free node arena
             break;
         }
         case TB_SYMBOL_EXTERNAL: break;
@@ -554,11 +549,13 @@ void tb_tls_restore(TB_TemporaryStorage* store, void* ptr) {
     store->used = i;
 }
 
-void tb_emit_symbol_patch(TB_Module* m, TB_Function* source, const TB_Symbol* target, size_t pos, bool is_function, size_t local_thread_id) {
+void tb_emit_symbol_patch(TB_Module* m, TB_Function* source, const TB_Symbol* target, size_t pos, bool is_function) {
+    int id = tb__get_local_tid();
+    assert(id < TB_MAX_THREADS);
     assert(pos == (uint32_t)pos);
 
     TB_SymbolPatch p = { .source = source, .target = target, .is_function = is_function, .pos = pos };
-    dyn_array_put(m->thread_info[local_thread_id].symbol_patches, p);
+    dyn_array_put(m->thread_info[id].symbol_patches, p);
 }
 
 //

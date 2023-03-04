@@ -58,7 +58,7 @@ TB_API void tb_function_attrib_variable(TB_Function* f, TB_Node* n, const char* 
 }
 
 TB_Node* tb_alloc_node(TB_Function* f, int type, TB_DataType dt, int input_count, size_t extra) {
-    assert(input_count < 256 && "too many inputs!");
+    assert(input_count < UINT16_MAX && "too many inputs!");
     size_t align_mask = _Alignof(TB_Node) - 1;
     size_t necessary_size = sizeof(TB_Node) + (sizeof(TB_Node*) * input_count) + extra;
     necessary_size = (necessary_size + align_mask) & ~align_mask;
@@ -99,6 +99,7 @@ TB_Node* tb_alloc_node(TB_Function* f, int type, TB_DataType dt, int input_count
     n->input_count = input_count;
     n->extra_count = extra;
     n->dt = dt;
+    n->first_attrib = NULL;
     n->next = NULL;
     return n;
 }
@@ -258,9 +259,20 @@ TB_API TB_Node* tb_inst_param(TB_Function* f, int param_id) {
 
 TB_API TB_Node* tb_inst_param_addr(TB_Function* f, int param_id) {
     tb_assume(param_id < f->prototype->param_count);
+    const ICodeGen* restrict code_gen = tb__find_code_generator(f->super.module);
 
-    TB_Node* n = tb_alloc_at_end(f, TB_PARAM_ADDR, TB_TYPE_PTR, 1, 0);
-    n->inputs[0] = f->params[param_id];
+    TB_DataType dt = f->params[param_id]->dt;
+    TB_CharUnits size, align;
+    code_gen->get_data_type_size(dt, &size, &align);
+
+    TB_Node* n = tb_alloc_at_end(f, TB_LOCAL, TB_TYPE_PTR, 0, sizeof(TB_NodeLocal));
+    tb_insert_node(f, 0, tb_node_get_first_insertion_point(f, 0), n);
+    TB_NODE_SET_EXTRA(n, TB_NodeLocal, .size = size, .align = align);
+
+    TB_Node* n2 = tb_alloc_at_end(f, TB_STORE, dt, 2, sizeof(TB_NodeMemAccess));
+    n2->inputs[0] = n;
+    n2->inputs[1] = f->params[param_id];
+    TB_NODE_SET_EXTRA(n2, TB_NodeMemAccess, .align = align);
     return n;
 }
 
@@ -649,7 +661,7 @@ TB_API TB_Node* tb_inst_fdiv(TB_Function* f, TB_Node* a, TB_Node* b) {
 }
 
 TB_API TB_Node* tb_inst_va_start(TB_Function* f, TB_Node* a) {
-    assert(a->type == TB_PARAM_ADDR);
+    assert(a->type == TB_LOCAL);
 
     TB_Node* n = tb_alloc_at_end(f, TB_VA_START, TB_TYPE_PTR, 1, 0);
     n->inputs[0] = a;

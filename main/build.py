@@ -15,7 +15,7 @@ args = parser.parse_args()
 #######################################
 # Handle dependencies
 #######################################
-tb_args = [sys.executable, 'build.py', '-mimalloc', 'dummy_arch']
+tb_args = [sys.executable, 'build.py', '-mimalloc', 'x64']
 libcuik_args = [sys.executable, 'build.py', '-usetb', '-mimalloc']
 
 if args.opt:

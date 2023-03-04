@@ -47,6 +47,54 @@ static int get_name(TB_PrinterCtx* ctx, TB_Node* n) {
     return ctx->count++;
 }
 
+TB_API const char* tb_node_get_name(TB_Node* n) {
+    switch (n->type) {
+        case TB_PARAM: return "param";
+        case TB_LOCAL: return "local";
+
+        case TB_POISON: return "poison";
+        case TB_INTEGER_CONST: return "int";
+
+        case TB_ZERO_EXT: return "zxt";
+        case TB_SIGN_EXT: return "sxt";
+        case TB_TRUNCATE: return "trunc";
+        case TB_BITCAST: return "bitcast";
+
+        case TB_CMP_NE: return "cmp.ne";
+        case TB_CMP_EQ: return "cmp.eq";
+        case TB_CMP_ULT: return "cmp.ult";
+        case TB_CMP_ULE: return "cmp.sle";
+        case TB_CMP_SLT: return "cmp.slt";
+        case TB_CMP_SLE: return "cmp.sle";
+        case TB_CMP_FLT: return "cmp.lt";
+        case TB_CMP_FLE: return "cmp.le";
+
+        case TB_AND: return "and";
+        case TB_OR: return "or";
+        case TB_XOR: return "xor";
+        case TB_ADD: return "add";
+        case TB_SUB: return "sub";
+        case TB_MUL: return "mul";
+        case TB_UDIV: return "udiv";
+        case TB_SDIV: return "sdiv";
+        case TB_UMOD: return "umod";
+        case TB_SMOD: return "smod";
+        case TB_SHL: return "shl";
+        case TB_SHR: return "shr";
+        case TB_SAR: return "sar";
+
+        case TB_LOAD: return "load";
+        case TB_STORE: return "store";
+
+        case TB_CALL: return "call";
+        case TB_SCALL: return "syscall";
+        case TB_BRANCH: return "br";
+        case TB_RET: return "ret";
+
+        default: return NULL;
+    }
+}
+
 static void tb_print_node(TB_Function* f, TB_PrinterCtx* ctx, TB_PrintCallback callback, void* user_data, TB_Node* restrict n) {
     TB_NodeTypeEnum type = n->type;
     TB_DataType dt = n->dt;
@@ -60,56 +108,16 @@ static void tb_print_node(TB_Function* f, TB_PrinterCtx* ctx, TB_PrintCallback c
         P(".");
     }
 
-    switch (type) {
-        case TB_PARAM: P("param "); break;
-        case TB_PARAM_ADDR: P("paramaddr "); break;
-
-        case TB_POISON: P("poison "); break;
-        case TB_INTEGER_CONST: P("int "); break;
-
-        case TB_ZERO_EXT: P("zxt "); break;
-        case TB_SIGN_EXT: P("sxt "); break;
-        case TB_TRUNCATE: P("trunc "); break;
-        case TB_BITCAST: P("bitcast "); break;
-
-        case TB_CMP_NE: P("cmp.ne "); break;
-        case TB_CMP_EQ: P("cmp.eq "); break;
-        case TB_CMP_ULT: P("cmp.ult "); break;
-        case TB_CMP_ULE: P("cmp.sle "); break;
-        case TB_CMP_SLT: P("cmp.slt "); break;
-        case TB_CMP_SLE: P("cmp.sle "); break;
-        case TB_CMP_FLT: P("cmp.lt "); break;
-        case TB_CMP_FLE: P("cmp.le "); break;
-
-        case TB_AND: P("and "); break;
-        case TB_OR: P("or "); break;
-        case TB_XOR: P("xor "); break;
-        case TB_ADD: P("add "); break;
-        case TB_SUB: P("sub "); break;
-        case TB_MUL: P("mul "); break;
-        case TB_UDIV: P("udiv "); break;
-        case TB_SDIV: P("sdiv "); break;
-        case TB_UMOD: P("umod "); break;
-        case TB_SMOD: P("smod "); break;
-        case TB_SHL: P("shl "); break;
-        case TB_SHR: P("shr "); break;
-        case TB_SAR: P("sar "); break;
-
-        case TB_LOAD: P("load "); break;
-        case TB_STORE: P("store "); break;
-
-        case TB_CALL: P("call "); break;
-        case TB_SCALL: P("syscall "); break;
-        case TB_BRANCH: P("br "); break;
-        case TB_RET: P("ret "); break;
-
-        default: tb_todo(); break;
-    }
+    printf("%s ", tb_node_get_name(n));
 
     FOREACH_N(i, 0, n->input_count) {
         if (i) P(", ");
 
-        P("r%d", NAME(n->inputs[i]));
+        if (n->inputs[i]) {
+            P("r%d", NAME(n->inputs[i]));
+        } else {
+            P("_");
+        }
     }
 
     switch (type) {
@@ -125,6 +133,11 @@ static void tb_print_node(TB_Function* f, TB_PrinterCtx* ctx, TB_PrintCallback c
                     P("%016"PRIx64, num->words[i]);
                 }
             }
+            break;
+        }
+        case TB_LOCAL: {
+            TB_NodeLocal* l = TB_NODE_GET_EXTRA(n);
+            P("@size %zu @align %zu", l->size, l->align);
             break;
         }
         case TB_BRANCH: {

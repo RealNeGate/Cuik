@@ -318,7 +318,6 @@ TB_API TB_Node* tb_node_get_first_insertion_point(TB_Function* f, TB_Label bb) {
 
     TB_FOR_NODE(n, f, bb) {
         if (n->type != TB_PARAM &&
-            n->type != TB_PARAM_ADDR &&
             n->type != TB_PHI &&
             !TB_IS_NODE_TERMINATOR(n->type)) {
             prev = basepoint;

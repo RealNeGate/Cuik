@@ -1,16 +1,10 @@
 #include "../tb_internal.h"
 #include "../codegen/emitter.h"
 
-#include "../x64/x64.h"
-
 enum {
     CG_VAL_UNRESOLVED = 0,
     CG_VAL_FLAGS      = 1,
     CG_VAL_REGISTER   = 2,
-};
-
-enum {
-    CG_REGISTER_CLASSES = 2
 };
 
 static void get_data_type_size(TB_DataType dt, TB_CharUnits* out_size, TB_CharUnits* out_align) {
@@ -45,89 +39,6 @@ static void get_data_type_size(TB_DataType dt, TB_CharUnits* out_size, TB_CharUn
     }
 }
 
-typedef enum X86_DataType {
-    X86_TYPE_NONE = 0,
-
-    X86_TYPE_BYTE,     // 1
-    X86_TYPE_WORD,     // 2
-    X86_TYPE_DWORD,    // 4
-    X86_TYPE_QWORD,    // 8
-
-    X86_TYPE_PBYTE,   // int8 x 16 = 16
-    X86_TYPE_PWORD,   // int16 x 8 = 16
-    X86_TYPE_PDWORD,  // int32 x 4 = 16
-    X86_TYPE_PQWORD,  // int64 x 2 = 16
-
-    X86_TYPE_SSE_SS,  // float32 x 1 = 4
-    X86_TYPE_SSE_SD,  // float64 x 1 = 8
-    X86_TYPE_SSE_PS,  // float32 x 4 = 16
-    X86_TYPE_SSE_PD,  // float64 x 2 = 16
-
-    X86_TYPE_XMMWORD, // the generic idea of them
-} X86_DataType;
-
-typedef enum X86_InstType {
-    X86_MOV,
-
-    X86_AND,
-    X86_ADD,
-} X86_InstType;
-
-typedef enum X86_InstrFlags {
-    // uses xmm registers for the reg array
-    X86_INSTR_XMMREG = (1u << 0u),
-
-    // r/m is a memory operand
-    X86_INSTR_USE_MEMOP = (1u << 1u),
-
-    // r/m is a rip-relative address (X86_INSTR_USE_MEMOP is always set when this is set)
-    X86_INSTR_USE_RIPMEM = (1u << 2u),
-
-    // LOCK prefix is present
-    X86_INSTR_LOCK = (1u << 3u),
-
-    // uses a signed immediate
-    X86_INSTR_IMMEDIATE = (1u << 4u),
-
-    // absolute means it's using the 64bit immediate (cannot be applied while a memory operand is active)
-    X86_INSTR_ABSOLUTE = (1u << 5u),
-
-    // set if the r/m can be found on the right hand side
-    X86_INSTR_DIRECTION = (1u << 6u),
-
-    // uses the second data type because the instruction is weird like MOVSX or MOVZX
-    X86_INSTR_TWO_DATA_TYPES = (1u << 7u)
-} X86_InstrFlags;
-
-typedef struct X86_Inst {
-    X86_InstType type;
-
-    X86_DataType data_type  : 8;
-    X86_DataType data_type2 : 8;
-    // X86_Segment segment  : 8;
-    X86_InstrFlags flags    : 8;
-    uint8_t length;
-
-    // normal operands
-    int8_t regs[4];
-
-    // immediate operand
-    //   imm for INSTR_IMMEDIATE
-    //   abs for INSTR_ABSOLUTE
-    union {
-        int32_t  imm;
-        uint64_t abs;
-    };
-
-    // memory operand
-    struct {
-        int8_t base;
-        int8_t index;
-        Scale scale;
-        int32_t disp;
-    } mem;
-} X86_Inst;
-
 // per instruction selection
 enum {
     CG_MAX_DEFS  = 8,
@@ -136,6 +47,7 @@ enum {
 
 typedef struct {
     TB_Node* last_use;
+    int user_count;
     int ordinal;
 } Liveness;
 
@@ -174,6 +86,9 @@ typedef struct Ctx {
     // some analysis
     NL_Map(TB_Node*, Liveness) intervals;
 
+    // Stack
+    uint32_t stack_usage;
+
     // Reg alloc
     TB_Node** active;
     size_t active_count;
@@ -183,9 +98,9 @@ typedef struct Ctx {
     // instruction queue
     size_t inst_count, def_count;
     Def defs[CG_MAX_DEFS];
-    X86_Inst insts[CG_MAX_INSTS];
+    Inst insts[CG_MAX_INSTS];
 
-    // current value
+    // current value table
     size_t values_count, values_exp;
     ValueDesc* values;
 } Ctx;
@@ -212,6 +127,13 @@ static LiveInterval get_live_interval(Ctx* restrict ctx, TB_Node* n) {
     assert(search >= 0);
 
     TB_Node* last_use = ctx->intervals[search].v.last_use;
+    if (last_use == NULL) {
+        LiveInterval li;
+        li.start = ctx->intervals[search].v.ordinal;
+        li.end = INT_MAX;
+        return li;
+    }
+
     ptrdiff_t search2 = nl_map_get(ctx->intervals, last_use);
     assert(search2 >= 0);
 
@@ -254,71 +176,39 @@ static bool fits_into_int32(uint64_t x) {
     return (int64_t)y == x;
 }
 
-#define SUBMIT_INST(op, ...) (ctx->insts[ctx->inst_count++] = (X86_Inst){ X86_ ## op, __VA_ARGS__ })
+#define SUBMIT_INST(op, ...) (ctx->insts[ctx->inst_count++] = (X86_Inst){ op, __VA_ARGS__ })
 #define DEF(n, ...) (ctx->defs[ctx->def_count] = (Def){ n, __VA_ARGS__ }, ctx->def_count++)
 
-// references an allocated
-#define REF(x) (-(x))
+static Val isel(Ctx* restrict ctx, TB_Node* n);
+static void emit_sequence(Ctx* restrict ctx, TB_Node* n, bool emit_asm);
+static void patch_local_labels(Ctx* restrict ctx);
+static Val spill_to_stack_slot(Ctx* restrict ctx, TB_Node* n, TB_Node* p, Val* src);
+static Val get_initial_param_val(Ctx* restrict ctx, TB_Node* n);
+static void copy_value(Ctx* restrict ctx, Val* dst, Val* src, TB_DataType dt, bool emit_asm);
 
-// *out_mask of 0 means no mask
-static X86_DataType legalize_int(TB_DataType dt, uint64_t* out_mask) {
-    assert(dt.type == TB_INT || dt.type == TB_PTR);
-    if (dt.type == TB_PTR) return *out_mask = 0, X86_TYPE_QWORD;
-
-    X86_DataType t = X86_TYPE_NONE;
-    int bits = 0;
-
-    if (dt.data <= 8) bits = 8, t = X86_TYPE_BYTE;
-    else if (dt.data <= 16) bits = 16, t = X86_TYPE_WORD;
-    else if (dt.data <= 32) bits = 32, t = X86_TYPE_DWORD;
-    else if (dt.data <= 64) bits = 64, t = X86_TYPE_QWORD;
-
-    assert(bits != 0 && "TODO: large int support");
-    uint64_t mask = ~UINT64_C(0) >> (64 - dt.data);
-
-    *out_mask = (dt.data == bits) ? 0 : mask;
-    return t;
-}
-
-enum {
-    REG_CLASS_GPR,
-    REG_CLASS_XMM
-};
-
-static Val isel(Ctx* restrict ctx, TB_Node* n) {
-    switch (n->type) {
-        case TB_INTEGER_CONST: {
-            TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
-            assert(i->num_words == 1);
-
-            uint64_t x = i->words[0];
-            assert(fits_into_int32(x));
-            return val_imm(n->dt, x);
-        }
-        case TB_ADD: {
-            uint64_t mask;
-            X86_DataType t = legalize_int(n->dt, &mask);
-
-            int dst = DEF(n, .based = n->inputs[0], .reg_class = REG_CLASS_GPR, .live_in = true, .live_out = true);
-            Val* b = &GET_VAL(n->inputs[1]);
-            if (b->type == VAL_IMM) {
-                SUBMIT_INST(ADD, .data_type = t, .flags = X86_INSTR_IMMEDIATE, .regs[0] = REF(dst), .imm = b->imm);
-            } else {
-                int other = DEF(n->inputs[1], .reg_class = REG_CLASS_GPR);
-                SUBMIT_INST(ADD, .data_type = t, .regs[0] = REF(dst), .regs[1] = REF(other));
-            }
-
-            if (mask) SUBMIT_INST(AND, .data_type = t, .regs[0] = REF(dst));
-            return val_gpr(n->dt, REF(dst));
-        }
-        default: tb_todo();
+static void add_active(Ctx* restrict ctx, TB_Node* n, LiveInterval r_li) {
+    // insert by increasing end point
+    // TODO(NeGate): do binary insert since the array is sorted
+    size_t i = 0;
+    for (; i < ctx->active_count; i++) {
+        LiveInterval k_li = get_live_interval(ctx, ctx->active[i]);
+        if (k_li.end >= r_li.end) break;
     }
+
+    // we know where to insert
+    FOREACH_REVERSE_N(j, i, ctx->active_count) {
+        ctx->active[j+1] = ctx->active[j];
+    }
+
+    ctx->active[i] = n;
+    ctx->active_count += 1;
 }
 
 static void remove_active(Ctx* restrict ctx, size_t i, TB_Node* n) {
     if (i + 1 == ctx->active_count) {
         memmove(&ctx->active[i], &ctx->active[i + 1], ctx->active_count - 1);
     }
+    ctx->active_count -= 1;
 }
 
 static Val alloc_reg(Ctx* restrict ctx, TB_Function* f, TB_Node* n, int reg_class) {
@@ -352,19 +242,7 @@ static Val alloc_reg(Ctx* restrict ctx, TB_Function* f, TB_Node* n, int reg_clas
         // mark register as to be saved
         // ctx->regs_to_save[reg_class] |= (1u << reg_num) & ctx->callee_saved[reg_class];
 
-        // insert by increasing end point
-        // TODO(NeGate): do binary insert since the array is sorted
-        FOREACH_REVERSE_N(i, 0, ctx->active_count) {
-            LiveInterval k_li = get_live_interval(ctx, ctx->active[i]);
-            if (k_li.end > r_li.end) continue;
-
-            memmove(ctx->active, ctx->active[i + 1], (ctx->active_count - i) * sizeof(TB_Node*));
-            ctx->active[i + 1] = n;
-            ctx->active_count += 1;
-        }
-
-        // insert at the end
-        ctx->active[ctx->active_count++] = n;
+        add_active(ctx, n, r_li);
         return v;
     }
 }
@@ -384,9 +262,6 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
             .f = f,
             .data = out,
             .capacity = out_capacity,
-            // .labels = ARENA_ARR_ALLOC(&tb__arena, f->bb_count, uint32_t),
-            // .label_patches = ARENA_ARR_ALLOC(&tb__arena, tally.label_patch_count, LabelPatch),
-            // .ret_patches = ARENA_ARR_ALLOC(&tb__arena, tally.return_count, ReturnPatch),
         }
     };
 
@@ -406,7 +281,7 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
     // Live intervals:
     //   We compute this for register allocation along
     //   with the "ordinals" which act as our timeline.
-    int counter = 0, label_patch_count = 0, return_count = 0;
+    int counter = 0, label_patch_count = 0, return_count = 0, caller_usage = 0;
     TB_FOR_BASIC_BLOCK(bb, f) {
         TB_FOR_NODE(n, f, bb) {
             // create new entry with no last user
@@ -417,14 +292,21 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
                 label_patch_count += 1 + TB_NODE_GET_EXTRA_T(n, TB_NodeBranch)->count;
             } else if (n->type == TB_RET) {
                 return_count += 1;
+            } else if (n->type == TB_CALL) {
+                // system calls don't count, we track this for ABI
+                // and stack allocation purposes.
+                if (caller_usage < n->input_count) {
+                    caller_usage = n->input_count;
+                }
             }
 
-            TB_FOR_INPUT_IN_NODE(in, n) {
+            TB_FOR_INPUT_IN_NODE(in, n) if (*in) {
                 // extend last user
                 ptrdiff_t search = nl_map_get(ctx->intervals, *in);
                 assert(search >= 0 && "use before define?");
 
                 ctx->intervals[search].v.last_use = n;
+                ctx->intervals[search].v.user_count++;
             }
         }
     }
@@ -458,23 +340,43 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
     //   fixed and which need allocation. For now regalloc is handled
     //   immediately but in theory it could be delayed until all selection
     //   is done.
+    bool emit_asm = true;
     FOREACH_REVERSE_N(i, 0, walk.count) {
         TB_Label bb = walk.traversal[i];
-        TB_Node* bb_end = f->bbs[bb].end;
 
         // mark BB start
-        // ctx->emit.labels[bb] = GET_CODE_POS(&ctx->emit);
+        ctx->emit.labels[bb] = GET_CODE_POS(&ctx->emit);
+        if (emit_asm) {
+            printf("L%d:\n", bb);
+        }
 
-        // doesn't iterate over the terminator
-        for (TB_Node* n = f->bbs[bb].start; n != bb_end; n = n->next) {
+        TB_FOR_NODE(n, f, bb) {
+            if (emit_asm) printf("  \x1b[32m# %s sequence\x1b[0m\n", tb_node_get_name(n));
+
             // selection
+            Val v;
             switch (n->type) {
                 case TB_NULL:
-                case TB_PARAM:
-                case TB_LOCAL:
-                case TB_PARAM_ADDR:
                 case TB_PHI:
                 goto skip;
+
+                case TB_PARAM: {
+                    Val v = get_initial_param_val(ctx, n);
+
+                    // if we used a register, mark that
+                    if (v.type >= CG_VAL_REGISTER && v.type < CG_VAL_REGISTER + CG_REGISTER_CLASSES) {
+                        set_remove(&ctx->free_regs[v.type - CG_VAL_REGISTER], v.reg);
+                        add_active(ctx, n, get_live_interval(ctx, n));
+                    }
+                    GET_VAL(n) = v;
+                    goto skip;
+                }
+
+                case TB_LOCAL: {
+                    Val* src = &GET_VAL(n);
+                    assert(src != NULL);
+                    goto skip;
+                }
 
                 case TB_LINE_INFO: {
                     /*f->lines[f->line_count++] = (TB_Line) {
@@ -485,11 +387,38 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
                     goto skip;
                 }
 
+                case TB_BRANCH: {
+                    // handle phi nodes
+                    tb_todo();
+
+                    // do normal isel now
+                    assert(ctx->def_count == 0);
+                    v = isel(ctx, n);
+                    break;
+                }
+
+                case TB_STORE: {
+                    TB_Node* src = n->inputs[1];
+                    Liveness* restrict ni = nl_map_get_checked(ctx->intervals, src);
+                    if (n->inputs[0]->type == TB_LOCAL && src->type == TB_PARAM &&
+                        ni->user_count == 1 && ni->last_use == n) {
+                        // we want to use the stack slot for this local.
+                        // we don't even need to fill the TB_PARAM since
+                        // it's only used here.
+                        TB_Node* local = n->inputs[0];
+                        v = GET_VAL(src);
+
+                        Val slot = spill_to_stack_slot(ctx, ni->last_use, src, &v);
+                        GET_VAL(local) = slot;
+                        goto skip;
+                    }
+
+                    v = isel(ctx, n);
+                    break;
+                }
                 default:
                 assert(ctx->def_count == 0);
-
-                Val v = isel(ctx, n);
-                GET_VAL(n) = v;
+                v = isel(ctx, n);
                 break;
             }
 
@@ -504,8 +433,8 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
                 Val* v = &GET_VAL(k);
                 if (v->type >= CG_VAL_REGISTER && v->type < CG_VAL_REGISTER + CG_REGISTER_CLASSES) {
                     set_remove(&ctx->free_regs[v->type - CG_VAL_REGISTER], v->reg);
+                    remove_active(ctx, i, k);
                 }
-                remove_active(ctx, i, k);
             }
             //   allocate new regs
             FOREACH_N(i, 0, ctx->def_count) {
@@ -517,34 +446,42 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
 
                     // allocate copy
                     Val copy = alloc_reg(ctx, f, d->n, d->reg_class);
-                    (void)src;
-                    (void)copy;
-                    __debugbreak();
+                    copy_value(ctx, &copy, src, d->n->dt, emit_asm);
+                    d->reg = copy.reg;
+                } else {
+                    Val* src = &GET_VAL(d->n);
+                    if (src->type != CG_VAL_REGISTER + d->reg_class) {
+                        Val old = *src;
+                        alloc_reg(ctx, f, d->n, d->reg_class);
+                        copy_value(ctx, src, &old, d->n->dt, emit_asm);
+                        d->reg = src->reg;
+                    } else {
+                        d->reg = src->reg;
+                    }
                 }
-                tb_todo();
             }
             ctx->def_count = 0;
 
-            // emit sequences
-            FOREACH_N(i, 0, ctx->inst_count) {
-                tb_todo();
+            // resolve any potential allocated reg reference
+            if (v.type >= CG_VAL_REGISTER && v.type < CG_VAL_REGISTER + CG_REGISTER_CLASSES) {
+                ptrdiff_t def_i = -v.reg - 2;
+                v.reg = ctx->defs[def_i].reg;
             }
-            ctx->inst_count = 0;
+            GET_VAL(n) = v;
+
+            // Arch-specific: convert instruction buffer into actual instructions
+            emit_sequence(ctx, n, emit_asm);
 
             skip:;
         }
-
-        // handle terminator
-        printf("L%d\n", bb);
-
-        // GAD_FN(eval_bb)(ctx, f, bb, i > 0 ? walk.traversal[i - 1] : 0);
     }
 
-    EMIT1(&ctx->emit, 0xC3);
+    if (emit_asm) {
+        printf(".ret:\n");
+    }
 
     //  Label patching: we make sure any local labels
-    //
-
+    patch_local_labels(ctx);
 
     // we're done, clean up
     TB_FunctionOutput func_out = {
@@ -557,37 +494,6 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
     };
 
     arena_clear(&tb__arena);
-    __debugbreak();
+    // __debugbreak();
     return func_out;
 }
-
-size_t emit_prologue(uint8_t* out, uint64_t saved, uint64_t stack_usage) {
-    return 0;
-}
-
-size_t emit_epilogue(uint8_t* out, uint64_t saved, uint64_t stack_usage) {
-    return 0;
-}
-
-static size_t emit_call_patches(TB_Module* restrict m) {
-    return 0;
-}
-
-#if _MSC_VER
-_Pragma("warning (push)") _Pragma("warning (disable: 4028)")
-#endif
-ICodeGen tb__dummy_codegen = {
-    .minimum_addressable_size = 8,
-    .pointer_size = 64,
-
-    .emit_call_patches  = emit_call_patches,
-    .get_data_type_size = get_data_type_size,
-    .emit_prologue      = emit_prologue,
-    .emit_epilogue      = emit_epilogue,
-
-    .fast_path = compile_function,
-    //.complex_path = x64_complex_compile_function
-};
-#if _MSC_VER
-_Pragma("warning (pop)")
-#endif

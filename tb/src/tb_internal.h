@@ -717,7 +717,7 @@ TB_Label* tb_calculate_immediate_predeccessors(TB_Function* f, TB_TemporaryStora
 TB_Predeccesors tb_get_temp_predeccesors(TB_Function* f, TB_TemporaryStorage* tls);
 void tb_free_temp_predeccesors(TB_TemporaryStorage* tls, TB_Predeccesors preds);
 
-void tb_emit_symbol_patch(TB_Module* m, TB_Function* source, const TB_Symbol* target, size_t pos, bool is_function, size_t local_thread_id);
+void tb_emit_symbol_patch(TB_Module* m, TB_Function* source, const TB_Symbol* target, size_t pos, bool is_function);
 
 TB_Reg* tb_vla_reserve(TB_Function* f, size_t count);
 
@@ -740,10 +740,8 @@ extern thread_local Arena tb__arena;
 
 // NOTE(NeGate): Place all the codegen interfaces down here
 extern ICodeGen tb__x64_codegen;
-extern ICodeGen tb__x64v2_codegen;
 extern ICodeGen tb__aarch64_codegen;
 extern ICodeGen tb__wasm32_codegen;
-extern ICodeGen tb__dummy_codegen;
 
 // And all debug formats here
 //extern IDebugFormat dwarf_debug_format;

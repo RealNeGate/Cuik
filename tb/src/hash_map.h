@@ -42,6 +42,8 @@ do {                                                                            
 #define nl_map_get(map, key) \
 ((map) != NULL ? nl_map__get(((NL_MapHeader*)(map)) - 1, sizeof(*map), sizeof(key), &(key)) : -1)
 
+#define nl_map_get_checked(map, key) (&(map)[nl_map__check(nl_map_get(map, key))].v)
+
 #define nl_map_free(map) \
 do {                                              \
     if ((map) != NULL) {                          \
@@ -75,6 +77,11 @@ NL_HASH_MAP_API NL_MapInsert nl_map__insert(void* map, size_t entry_size, size_t
 NL_HASH_MAP_API ptrdiff_t nl_map__get(NL_MapHeader* restrict table, size_t entry_size, size_t key_size, const void* key);
 NL_HASH_MAP_API void nl_map__free(NL_MapHeader* restrict table);
 #endif
+
+inline static ptrdiff_t nl_map__check(ptrdiff_t x) {
+    assert(x >= 0 && "map entry not found!");
+    return x;
+}
 
 #endif /* NL_MAP_H */
 
