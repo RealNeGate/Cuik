@@ -265,14 +265,15 @@ TB_API TB_Node* tb_inst_param_addr(TB_Function* f, int param_id) {
     TB_CharUnits size, align;
     code_gen->get_data_type_size(dt, &size, &align);
 
-    TB_Node* n = tb_alloc_at_end(f, TB_LOCAL, TB_TYPE_PTR, 0, sizeof(TB_NodeLocal));
+    TB_Node* n = tb_alloc_node(f, TB_LOCAL, TB_TYPE_PTR, 0, sizeof(TB_NodeLocal));
     tb_insert_node(f, 0, tb_node_get_first_insertion_point(f, 0), n);
     TB_NODE_SET_EXTRA(n, TB_NodeLocal, .size = size, .align = align);
 
-    TB_Node* n2 = tb_alloc_at_end(f, TB_STORE, dt, 2, sizeof(TB_NodeMemAccess));
+    TB_Node* n2 = tb_alloc_node(f, TB_STORE, dt, 2, sizeof(TB_NodeMemAccess));
     n2->inputs[0] = n;
     n2->inputs[1] = f->params[param_id];
     TB_NODE_SET_EXTRA(n2, TB_NodeMemAccess, .align = align);
+    tb_insert_node(f, 0, n, n2);
     return n;
 }
 
