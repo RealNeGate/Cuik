@@ -1384,6 +1384,10 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
 }
 
 static void emit_location(TranslationUnit* tu, TB_Function* func, SourceLoc loc) {
+    if (!tu->has_tb_debug_info) {
+        return;
+    }
+
     // TODO(NeGate): Fix this up later!!!
     static thread_local TB_FileID last_file_id;
     static thread_local const char* last_filepath;
@@ -1402,12 +1406,8 @@ static void emit_location(TranslationUnit* tu, TB_Function* func, SourceLoc loc)
 void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
     if (s == NULL) return;
 
-    if (tu->has_tb_debug_info) {
-        insert_label(func);
-        emit_location(tu, func, s->loc.start);
-    } else {
-        insert_label(func);
-    }
+    insert_label(func);
+    emit_location(tu, func, s->loc.start);
 
     switch (s->op) {
         case STMT_NONE: {

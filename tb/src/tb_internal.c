@@ -99,10 +99,9 @@ TB_Label* tb_calculate_immediate_predeccessors(TB_Function* f, TB_TemporaryStora
     else preds = tb_platform_heap_alloc(f->bb_count * sizeof(TB_Label));
 
     TB_FOR_BASIC_BLOCK(bb, f) {
-        // Empty BB
-        if (f->bbs[bb].end == 0) continue;
-
         TB_Node* end = f->bbs[bb].end;
+        if (end == NULL) continue;
+
         switch (end->type) {
             case TB_BRANCH: {
                 TB_NodeBranch* br = TB_NODE_GET_EXTRA(end);

@@ -104,10 +104,11 @@ static void tb_print_node(TB_Function* f, TB_PrinterCtx* ctx, TB_PrintCallback c
     TB_DataType dt = n->dt;
 
     // check if non-void
-    if (dt.type == TB_INT && dt.data == 0) {
+    int name = NAME(n);
+    if ((dt.type == TB_INT && dt.data == 0) || n->type == TB_STORE) {
         P("  ");
     } else {
-        P("  r%-8d = ", NAME(n));
+        P("  r%-8d = ", name);
         tb_print_type(dt, callback, user_data);
         P(".");
     }

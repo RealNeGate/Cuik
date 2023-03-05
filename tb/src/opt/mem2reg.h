@@ -46,13 +46,13 @@ static TB_Node* new_phi(Mem2Reg_Ctx* restrict c, TB_Function* f, int var, TB_Lab
     size_t pred_count = c->preds.count[block];
 
     // phi nodes need to be allocated at the top of a BB
-    TB_Node* n = tb_alloc_at_end(f, TB_PHI, dt, pred_count, sizeof(TB_NodePhi) + (pred_count * sizeof(TB_Label)));
+    TB_Node* n = tb_alloc_node(f, TB_PHI, dt, pred_count, sizeof(TB_NodePhi) + (pred_count * sizeof(TB_Label)));
     TB_NodePhi* phi = TB_NODE_GET_EXTRA(n);
     tb_insert_node(f, block, tb_node_get_first_insertion_point(f, block), n);
 
     // we're putting placeholder -1 here
     FOREACH_N(i, 0, pred_count) {
-        phi->labels[i] = -1;
+        phi->labels[i] = c->preds.preds[block][i];
     }
 
     OPTIMIZER_LOG(n, "Insert new PHI node (in L%d)", block);
@@ -74,13 +74,14 @@ static void add_phi_operand(Mem2Reg_Ctx* restrict c, TB_Function* f, TB_Node* ph
     OPTIMIZER_LOG(phi_node, "  adding r%d to PHI", reg);
 
     TB_NodePhi* phi = TB_NODE_GET_EXTRA(phi_node);
-    FOREACH_N(i, 0, phi_node->input_count) if (phi->labels[i] == -1) {
-        phi->labels[i] = label;
-        phi_node->inputs[i] = node;
-        break;
+    FOREACH_N(i, 0, phi_node->input_count) {
+        if (phi->labels[i] == label) {
+            phi_node->inputs[i] = node;
+            return;
+        }
     }
 
-    tb_unreachable();
+    // tb_unreachable();
 }
 
 static void write_variable(Mem2Reg_Ctx* c, int var, TB_Label block, TB_Node* value) {

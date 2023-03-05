@@ -3,6 +3,7 @@
     return 3 + 16;
 }*/
 
+#if 1
 int fa(int value) {
     return value;
 }
@@ -19,6 +20,15 @@ int fd(int value) {
     if (value - 10) return ~value;
 
     return value;
+}
+#endif
+
+int fe(int value) {
+    int sum = 0;
+    while (value--) {
+        sum += value;
+    }
+    return sum;
 }
 
 /*int without_restrict(int const* const x, int* y) {
