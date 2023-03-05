@@ -182,7 +182,7 @@ static void print_operand(Val* v) {
     }
 }
 
-static Val spill_to_stack_slot(Ctx* restrict ctx, TB_Node* n, Val* src) {
+static Val spill_to_stack_slot(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n, Val* src) {
     if (src && src->type == VAL_MEM && src->mem.base == RBP) {
         return *src;
     }
@@ -201,15 +201,9 @@ static Val spill_to_stack_slot(Ctx* restrict ctx, TB_Node* n, Val* src) {
     }
 
     if (src != NULL) {
-        INST2(MOV, &dst, src, n->dt);
-        if (ctx->emit_asm) {
-            printf("  MOV ");
-            print_operand(&dst);
-            printf(", ");
-            print_operand(src);
-
-            printf("  \x1b[32m# spill r%d\x1b[0m\n", NAME(n));
-        }
+        seq->ra_insts[seq->ra_inst_count++] = (RegallocInst){
+            RA_SPILL, n, dst, *src, false
+        };
     }
 
     return dst;
@@ -342,35 +336,38 @@ static Val isel(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n) {
     }
 }
 
-static void copy_value(Ctx* restrict ctx, Val* dst, Val* src, TB_DataType dt, bool load) {
-    if (load) {
-        Val s = *src;
-        if (s.type == VAL_GPR) {
-            s = val_base_disp(TB_TYPE_PTR, s.gpr, 0);
-        }
-
-        INST2(MOV, dst, &s, dt);
-        if (ctx->emit_asm) {
-            printf("  MOV ");
-            print_operand(dst);
-            printf(", ");
-            print_operand(&s);
-            printf("  \x1b[32m# copy\x1b[0m\n");
-        }
-    } else {
-        INST2(!is_lvalue(src) ? MOV : LEA, dst, src, dt);
-        if (ctx->emit_asm) {
-            printf("  %s ", !is_lvalue(src) ? "MOV" : "LEA");
-            print_operand(dst);
-            printf(", ");
-            print_operand(src);
-            printf("  \x1b[32m# copy\x1b[0m\n");
-        }
-    }
-}
-
 static void emit_sequence(Ctx* restrict ctx, Sequence* restrict seq) {
     TB_Node* n = seq->node;
+
+    FOREACH_N(i, 0, seq->ra_inst_count) {
+        RegallocInst* restrict inst = &seq->ra_insts[i];
+        TB_DataType dt = inst->n->dt;
+
+        if (inst->load) {
+            Val s = inst->src;
+            if (s.type == VAL_GPR) {
+                s = val_base_disp(TB_TYPE_PTR, s.gpr, 0);
+            }
+
+            INST2(MOV, &inst->dst, &s, dt);
+            if (ctx->emit_asm) {
+                printf("  MOV ");
+                print_operand(&inst->dst);
+                printf(", ");
+                print_operand(&s);
+                printf("  \x1b[32m# copy\x1b[0m\n");
+            }
+        } else {
+            INST2(!is_lvalue(&inst->src) ? MOV : LEA, &inst->dst, &inst->src, dt);
+            if (ctx->emit_asm) {
+                printf("  %s ", !is_lvalue(&inst->src) ? "MOV" : "LEA");
+                print_operand(&inst->dst);
+                printf(", ");
+                print_operand(&inst->src);
+                printf("  \x1b[32m# copy\x1b[0m\n");
+            }
+        }
+    }
 
     FOREACH_N(i, 0, seq->inst_count) {
         Inst* restrict inst = &seq->insts[i];
@@ -465,6 +462,10 @@ static void emit_sequence(Ctx* restrict ctx, Sequence* restrict seq) {
             }
             printf("\n");
         }
+    }
+
+    if (n == NULL) {
+        return;
     }
 
     // Handle terminators
