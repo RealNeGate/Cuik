@@ -76,7 +76,7 @@ typedef struct Inst {
     uint8_t length;
 
     // normal operands
-    int8_t regs[4];
+    int regs[4];
 
     // immediate operand
     //   imm for INSTR_IMMEDIATE
@@ -88,17 +88,14 @@ typedef struct Inst {
 
     // memory operand
     struct {
-        int8_t base;
-        int8_t index;
+        int base;
+        int index;
         Scale scale;
         int32_t disp;
     } mem;
 } Inst;
 
 #include "generic_cg.h"
-
-// references an allocated
-#define REF(x) (-((x) + 2))
 
 #define SUBMIT_INST_RR(op, dt, a, b) (seq->insts[seq->inst_count++] = (Inst){ X86_FIRST_INST2 + op, .data_type = dt, .regs = { (a), (b), GPR_NONE, GPR_NONE } })
 #define SUBMIT_INST_RI(op, dt, a, b) (seq->insts[seq->inst_count++] = (Inst){ X86_FIRST_INST2 + op, .flags = X86_INSTR_IMMEDIATE, .data_type = dt, .regs = { (a), GPR_NONE, GPR_NONE, GPR_NONE }, .imm = (b) })
@@ -150,8 +147,8 @@ static int classify_reg_class(TB_DataType dt) {
     return dt.type == TB_FLOAT ? REG_CLASS_XMM : REG_CLASS_GPR;
 }
 
-static int8_t resolve_ref(Sequence* restrict seq, int8_t x) {
-    if (x < -1) return seq->defs[-x - 2].reg;
+static int8_t resolve_ref(Ctx* restrict ctx, int8_t x) {
+    if (x < -1) return ctx->defs[-x - 2].reg;
     return x;
 }
 
@@ -220,18 +217,6 @@ static Val spill_to_stack_slot(Ctx* restrict ctx, Sequence* restrict seq, TB_Nod
     return dst;
 }
 
-static bool should_tile(TB_Node* n) {
-    switch (n->type) {
-        case TB_LOAD:
-        case TB_SIGN_EXT:
-        case TB_ZERO_EXT:
-        return true;
-
-        default:
-        return false;
-    }
-}
-
 static Val isel(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n) {
     TB_NodeTypeEnum type = n->type;
     switch (type) {
@@ -244,41 +229,16 @@ static Val isel(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n) {
             return val_imm(n->dt, x);
         }
 
-        case TB_SIGN_EXT: {
-            uint64_t mask;
-            X86_DataType t = legalize_int(n->dt, &mask);
-
-            if (mask) {
-                // int shift_amt = dst_bits_in_type - bits_in_type;
-                //
-                // shl dst, shift_amt
-                // sar dst, shift_amt
-                tb_todo();
-            }
-
-            // (sxt (load ptr)) => movsx dst, [ptr]
-            if (try_tile(ctx, n->inputs[0], TB_LOAD)) {
-                int addr = DEF(n, .based = n->inputs[0]->inputs[0], .reg_class = REG_CLASS_GPR);
-                int dst = DEF(n, .reg_class = REG_CLASS_GPR);
-
-                SUBMIT(inst_rb(MOVSXD, t, REF(dst), REF(addr), 0));
-                return val_gpr(n->dt, REF(dst));
-            }
-
-            tb_todo();
-            return val_gpr(n->dt, RAX);
-        }
-
         case TB_NOT:
         case TB_NEG: {
             uint64_t mask;
             X86_DataType t = legalize_int(n->dt, &mask);
 
             int dst = DEF(n, .based = n->inputs[0], .reg_class = REG_CLASS_GPR);
-            SUBMIT_INST_R(type == TB_NOT ? NOT : NEG, t, REF(dst));
+            SUBMIT_INST_R(type == TB_NOT ? NOT : NEG, t, USE(dst));
 
-            if (mask) SUBMIT_INST_RI(AND, t, REF(dst), mask);
-            return val_gpr(n->dt, REF(dst));
+            if (mask) SUBMIT_INST_RI(AND, t, USE(dst), mask);
+            return val_gpr(n->dt, USE(dst));
         }
 
         case TB_AND:
@@ -292,18 +252,18 @@ static Val isel(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n) {
             uint64_t mask;
             X86_DataType t = legalize_int(n->dt, &mask);
 
-            int dst = DEF(n, .based = n->inputs[0], .reg_class = REG_CLASS_GPR);
+            int dst = DEF_BASED(n, n->inputs[0], REG_CLASS_GPR);
             Val* b = &GET_VAL(n->inputs[1]);
             if (b->type == VAL_IMM) {
                 // $ add dst, b->imm
-                SUBMIT_INST_RI(op, t, REF(dst), b->imm);
+                SUBMIT_INST_RI(op, t, USE(dst), b->imm);
             } else {
                 int other = DEF(n->inputs[1], .reg_class = REG_CLASS_GPR);
-                SUBMIT_INST_RR(op, t, REF(dst), REF(other));
+                SUBMIT_INST_RR(op, t, USE(dst), USE(other));
             }
 
-            if (mask) SUBMIT_INST_RI(AND, t, REF(dst), mask);
-            return val_gpr(n->dt, REF(dst));
+            if (mask) SUBMIT_INST_RI(AND, t, USE(dst), mask);
+            return val_gpr(n->dt, USE(dst));
         }
         case TB_CMP_EQ:
         case TB_CMP_NE:
@@ -322,16 +282,16 @@ static Val isel(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n) {
             X86_DataType t = legalize_int(cmp_dt, &mask);
             assert(mask == 0);
 
-            int dst = DEF(n->inputs[0], .reg_class = REG_CLASS_GPR);
+            int dst = USE(n->inputs[0]);
             Val* b = &GET_VAL(n->inputs[1]);
 
             Cond cc = -1;
             bool invert = false;
             if (b->type == VAL_IMM) {
-                SUBMIT_INST_RI(CMP, t, REF(dst), b->imm);
+                SUBMIT_INST_RI(CMP, t, USE(dst), b->imm);
             } else {
-                int other = DEF(n->inputs[1], .reg_class = REG_CLASS_GPR);
-                SUBMIT_INST_RR(CMP, t, REF(dst), REF(other));
+                int other = USE(n->inputs[1]);
+                SUBMIT_INST_RR(CMP, t, USE(dst), USE(other));
             }
 
             switch (type) {
@@ -347,8 +307,13 @@ static Val isel(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n) {
         }
 
         case TB_LOAD: {
-            int dst = DEF(n, .based = n->inputs[0], .reg_class = REG_CLASS_GPR, .load = true);
-            return val_gpr(n->dt, REF(dst));
+            uint64_t mask;
+            X86_DataType t = legalize_int(n->dt, &mask);
+
+            int dst = DEF_BASED(n, n->inputs[0], REG_CLASS_GPR);
+            SUBMIT(inst_rm(MOV, t, dst, val_base_disp(TB_TYPE_PTR, USE(dst), 0)));
+
+            return val_gpr(n->dt, USE(dst));
         }
         case TB_STORE: {
             uint64_t mask;
@@ -368,8 +333,8 @@ static Val isel(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n) {
             if (peep->type == VAL_MEM && !peep->mem.is_rvalue && peep->mem.index == GPR_NONE) {
                 inst = inst_mr(MOV, t, *peep, GPR_NONE);
             } else {
-                int addr = DEF(n->inputs[0], .reg_class = REG_CLASS_GPR);
-                inst = inst_mr(MOV, t, val_base_disp(TB_TYPE_PTR, REF(addr), 0), GPR_NONE);
+                int addr = DEF_BASED(n, n->inputs[0], REG_CLASS_GPR);
+                inst = inst_mr(MOV, t, val_base_disp(TB_TYPE_PTR, USE(addr), 0), GPR_NONE);
             }
 
             Val* peep2 = &GET_VAL(n->inputs[1]);
@@ -377,7 +342,7 @@ static Val isel(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n) {
                 inst.flags |= X86_INSTR_IMMEDIATE;
                 inst.imm = peep2->imm;
             } else {
-                int src = DEF(n->inputs[1], .reg_class = REG_CLASS_GPR);
+                int src = DEF_BASED(n, n->inputs[1], REG_CLASS_GPR);
                 inst.regs[1] = src;
             }
 
@@ -463,8 +428,8 @@ static void emit_sequence(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n)
                     has_mem_op = false;
 
                     // resolve  any DEF references
-                    int8_t base = resolve_ref(seq, inst->mem.base);
-                    int8_t index = resolve_ref(seq, inst->mem.index);
+                    int8_t base = resolve_ref(ctx, inst->mem.base);
+                    int8_t index = resolve_ref(ctx, inst->mem.index);
 
                     operands[j] = (Val){ .type = VAL_MEM, .mem = { .base = base, index, inst->mem.scale, inst->mem.disp } };
                 } else if (has_immediate) {
@@ -477,7 +442,7 @@ static void emit_sequence(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n)
                     break;
                 }
             } else {
-                int8_t reg = resolve_ref(seq, inst->regs[j]);
+                int8_t reg = resolve_ref(ctx, inst->regs[j]);
                 operands[j] = (Val){ .type = VAL_GPR, .gpr = reg };
             }
         }
