@@ -29,6 +29,7 @@ int fd(int value) {
 
     return value;
 }
+#endif
 
 int fe(int value) {
     int sum = 0;
@@ -37,10 +38,13 @@ int fe(int value) {
     }
     return sum;
 }
-#endif
 
 long long ff(int* value) {
     return *value;
+}
+
+long long fg(int* value) {
+    return ((long long) *value) & 63;
 }
 
 /*int without_restrict(int const* const x, int* y) {

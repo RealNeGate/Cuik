@@ -220,6 +220,18 @@ static Val spill_to_stack_slot(Ctx* restrict ctx, Sequence* restrict seq, TB_Nod
     return dst;
 }
 
+static bool should_tile(TB_Node* n) {
+    switch (n->type) {
+        case TB_LOAD:
+        case TB_SIGN_EXT:
+        case TB_ZERO_EXT:
+        return true;
+
+        default:
+        return false;
+    }
+}
+
 static Val isel(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n) {
     TB_NodeTypeEnum type = n->type;
     switch (type) {

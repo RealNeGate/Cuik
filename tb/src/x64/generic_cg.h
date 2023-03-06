@@ -225,6 +225,7 @@ static bool fits_into_int32(uint64_t x) {
 #define DEF(n, ...) (seq->defs[seq->def_count] = (Def){ n, __VA_ARGS__ }, seq->def_count++)
 
 static int classify_reg_class(TB_DataType dt);
+static bool should_tile(TB_Node* n);
 static Val isel(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n);
 static void emit_sequence(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n);
 static void patch_local_labels(Ctx* restrict ctx);
@@ -396,7 +397,7 @@ static void linear_scan(Ctx* restrict ctx, TB_Function* f, Sequence* seq, TB_Nod
             Val old = *src;
             alloc_reg_allow_spill(ctx, f, seq, d->n, d->reg_class);
 
-            if (d->based == NULL) {
+            if (d->based == NULL && old.type != 0) {
                 copy_value(ctx, src, &old, dt, d->load, d->n, "materialize");
                 dyn_array_put(ctx->reloads, (Reload){ d->n, old });
             }
@@ -596,8 +597,8 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
             Sequence seq = { 0 };
             Liveness* l = get_liveness(ctx, n);
 
-            if (l->user_count == 1 && tb_is_expr_like(n)) {
-                dyn_array_put(ctx->in_bound, n);
+            if (l->user_count <= 1 && should_tile(n)) {
+                if (l->user_count) dyn_array_put(ctx->in_bound, n);
                 continue;
             }
 

@@ -182,7 +182,6 @@ static bool const_fold(TB_Function* f, TB_Label bb, TB_Node* n) {
 
                 uint64_t* words = tb_transmute_to_int(f, bb, n, dst_num_words);
                 BigInt_copy(src_i->num_words, words, src_i->words);
-                BigInt_not(src_i->num_words, words);
 
                 FOREACH_N(i, src_i->num_words, dst_num_words) {
                     words[i] = is_signed ? ~UINT64_C(0) : 0;
