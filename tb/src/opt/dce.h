@@ -1,6 +1,6 @@
-static bool is_expr_like(TB_Function* f, TB_Node* n) {
+
+TB_API bool tb_is_expr_like(TB_Node* n) {
     switch (n->type) {
-        case TB_NULL:
         case TB_GET_SYMBOL_ADDRESS:
         case TB_INTEGER_CONST:
         case TB_ARRAY_ACCESS:

@@ -1290,6 +1290,8 @@ extern "C" {
     ////////////////////////////////
     TB_API const char* tb_node_get_name(TB_Node* n);
 
+    TB_API bool tb_is_expr_like(TB_Node* n);
+
     TB_API TB_Node* tb_node_get_last_register(TB_Function* f);
     TB_API TB_Node* tb_node_get_previous(TB_Function* f, TB_Node* at);
 

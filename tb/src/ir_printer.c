@@ -41,10 +41,8 @@ typedef struct {
 #define NAME(n) get_name(ctx, n)
 static int get_name(TB_PrinterCtx* ctx, TB_Node* n) {
     ptrdiff_t search = nl_map_get(ctx->ordinals, n);
-    if (search >= 0) return ctx->ordinals[search].v;
-
-    nl_map_put(ctx->ordinals, n, ctx->count);
-    return ctx->count++;
+    assert(search >= 0);
+    return ctx->ordinals[search].v;
 }
 
 TB_API const char* tb_node_get_name(TB_Node* n) {
@@ -104,11 +102,10 @@ static void tb_print_node(TB_Function* f, TB_PrinterCtx* ctx, TB_PrintCallback c
     TB_DataType dt = n->dt;
 
     // check if non-void
-    int name = NAME(n);
     if ((dt.type == TB_INT && dt.data == 0) || n->type == TB_STORE) {
         P("  ");
     } else {
-        P("  r%-8d = ", name);
+        P("  r%-8d = ", NAME(n));
         tb_print_type(dt, callback, user_data);
         P(".");
     }
@@ -531,6 +528,13 @@ static void tb_print_node(TB_Function* f, TB_PrinterCtx* ctx, TB_PrintCallback c
 TB_API void tb_function_print(TB_Function* f, TB_PrintCallback callback, void* user_data, bool display_nops) {
     P("%s:\n", f->super.name);
     TB_PrinterCtx ctx = { 0 };
+
+    TB_FOR_BASIC_BLOCK(bb, f) {
+        TB_FOR_NODE(n, f, bb) if (n->type != TB_NULL) {
+            int i = ctx.count++;
+            nl_map_put(ctx.ordinals, n, i);
+        }
+    }
 
     TB_FOR_BASIC_BLOCK(bb, f) {
         if (f->bbs[bb].start == 0) continue;

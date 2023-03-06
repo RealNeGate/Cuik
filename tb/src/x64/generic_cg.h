@@ -59,7 +59,7 @@ typedef struct {
 typedef struct Def {
     TB_Node* n;
 
-    // if live_in and we want to make a mutable copy, we use
+    // if non-NULL we want to make a mutable copy, we use
     // this to define what we copy from.
     TB_Node* based;
 
@@ -74,28 +74,26 @@ typedef struct Def {
 // these are where we handle things like spill, reload, swap and move
 // for the sake of making regalloc work.
 typedef struct {
-    enum { RA_COPY, RA_SPILL, RA_RELOAD } type;
+    enum { RA_COPY, RA_PHI_MOVE, RA_SPILL, RA_RELOAD } type;
 
     TB_Node* n;
     Val dst, src;
     bool load;
 } RegallocInst;
 
-typedef struct Sequence Sequence;
-struct Sequence {
-    Sequence* next;
-    TB_Node* node;
-
-    // if def_count is -1, we'll do regalloc instructions
-    int label, ra_inst_count;
+typedef struct {
     int inst_count, def_count;
 
-    RegallocInst ra_insts[8];
-    Def defs[8];
-    Inst insts[8];
-};
+    Def defs[4];
+    Inst insts[4];
+} Sequence;
 
-typedef struct Ctx {
+typedef struct {
+    TB_Node* n;
+    Val v;
+} Reload;
+
+typedef struct {
     TB_CGEmitter emit;
     bool emit_asm;
 
@@ -108,24 +106,26 @@ typedef struct Ctx {
 
     TB_Label fallthrough;
 
+    // expression like values can be queued up here if they have one user
+    DynArray(TB_Node)* in_bound;
+
     // Stack
     uint32_t stack_usage;
 
     // Reg alloc
+    DynArray(Reload) reloads;
+
     TB_Node** active;
     size_t active_count;
 
     Set free_regs[CG_REGISTER_CLASSES];
-
-    // instruction sequences
-    Sequence *first, *last;
 
     // current value table
     size_t values_count, values_exp;
     ValueDesc* values;
 } Ctx;
 
-#define NAME(n) (get_liveness(ctx, n)->start)
+#define NAME(n) (get_liveness(ctx, n)->t)
 static Liveness* get_liveness(Ctx* restrict ctx, TB_Node* n) {
     uint32_t hash = (((uintptr_t) n) * 11400714819323198485llu) >> 32u;
 
@@ -208,6 +208,15 @@ static Val* get_val(Ctx* restrict ctx, TB_Node* n) {
     }
 }
 
+static bool try_tile(Ctx* restrict ctx, TB_Node* n, int type) {
+    dyn_array_for(i, ctx->in_bound) if (ctx->in_bound[i] == n && n->type == type) {
+        dyn_array_remove(ctx->in_bound, i);
+        return true;
+    }
+
+    return false;
+}
+
 static bool fits_into_int32(uint64_t x) {
     int32_t y = x & 0xFFFFFFFF;
     return (int64_t)y == x;
@@ -215,12 +224,12 @@ static bool fits_into_int32(uint64_t x) {
 
 #define DEF(n, ...) (seq->defs[seq->def_count] = (Def){ n, __VA_ARGS__ }, seq->def_count++)
 
+static int classify_reg_class(TB_DataType dt);
 static Val isel(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n);
-static void emit_sequence(Ctx* restrict ctx, Sequence* restrict seq);
+static void emit_sequence(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n);
 static void patch_local_labels(Ctx* restrict ctx);
 static Val spill_to_stack_slot(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n, Val* src);
-static Val get_initial_param_val(Ctx* restrict ctx, TB_Node* n);
-static void copy_value(Ctx* restrict ctx, Val* dst, Val* src, TB_DataType dt, bool is_load);
+static void copy_value(Ctx* restrict ctx, Val* dst, Val* src, TB_DataType dt, bool load, TB_Node* n, const char* reason);
 
 static void add_active(Ctx* restrict ctx, TB_Node* n, LiveInterval r_li) {
     // insert by increasing end point
@@ -240,9 +249,21 @@ static void add_active(Ctx* restrict ctx, TB_Node* n, LiveInterval r_li) {
     ctx->active_count += 1;
 }
 
-static void remove_active(Ctx* restrict ctx, size_t i, TB_Node* n) {
-    if (i + 1 == ctx->active_count) {
-        memmove(&ctx->active[i], &ctx->active[i + 1], ctx->active_count - 1);
+static ptrdiff_t find_active(Ctx* restrict ctx, int reg_class, int reg_num) {
+    FOREACH_N(i, 0, ctx->active_count) {
+        Val* v = &GET_VAL(ctx->active[i]);
+
+        if (v->type == CG_VAL_REGISTER + reg_class && v->reg == reg_num) {
+            return i;
+        }
+    }
+
+    return 0;
+}
+
+static void remove_active(Ctx* restrict ctx, size_t i) {
+    if (i + 1 != ctx->active_count) {
+        memmove(&ctx->active[i], &ctx->active[i + 1], (ctx->active_count - i) * sizeof(TB_Node*));
     }
     ctx->active_count -= 1;
 }
@@ -259,7 +280,7 @@ static bool alloc_reg(Ctx* restrict ctx, TB_Function* f, TB_Node* n, int reg_cla
 
     Val v = {
         .type = CG_VAL_REGISTER + reg_class,
-        .r = n, .dt = n->dt, .reg = reg_num
+        .dt = n->dt, .reg = reg_num
     };
 
     GET_VAL(n) = v;
@@ -269,6 +290,7 @@ static bool alloc_reg(Ctx* restrict ctx, TB_Function* f, TB_Node* n, int reg_cla
     // ctx->regs_to_save[reg_class] |= (1u << reg_num) & ctx->callee_saved[reg_class];
 
     add_active(ctx, n, r_li);
+    printf("  \x1b[32m#   assign r%d to %s\x1b[0m\n", NAME(n), GPR_NAMES[reg_num]);
     return true;
 }
 
@@ -278,7 +300,7 @@ static void trap(Ctx* restrict ctx, int code) {
 
 static size_t estimate_hash_map_size(size_t s) {
     // allocate values map and active, for linear scan
-    size_t ht_cap = tb_next_pow2((s * 4) / 3);
+    size_t ht_cap = tb_next_pow2((s * 8) / 5);
     size_t ht_exp = 32 - tb_clz(ht_cap - 1);
 
     assert(ht_cap == (1u << ht_exp));
@@ -290,45 +312,20 @@ static void phi_edge(TB_Function* f, Ctx* restrict ctx, Sequence* restrict seq, 
         if (n->type == TB_NULL) continue;
         if (n->type != TB_PHI) break;
 
-        Val* dst_v = &GET_VAL(n);
-        if (dst_v->type == 0) {
-            // allocate phi slot
-            *dst_v = spill_to_stack_slot(ctx, seq, n, NULL);
+        Val* dst = &GET_VAL(n);
+        if (dst->type == 0) {
+            if (!alloc_reg(ctx, f, n, classify_reg_class(n->dt))) {
+                tb_panic("Cannot allocate phi!\n");
+            }
         }
 
         // handle phis
         TB_NodePhi* phi = TB_NODE_GET_EXTRA(n);
         FOREACH_N(i, 0, n->input_count) if (phi->labels[i] == src) {
-            // Val* src_v = &GET_VAL(n->inputs[i]);
+            Val* src_v = &GET_VAL(n->inputs[i]);
 
-            tb_todo();
-            // copy_value(ctx, dst_v, src_v, n->dt, false);
+            copy_value(ctx, dst, src_v, n->dt, false, n, "phi move");
             break;
-        }
-    }
-}
-
-static Sequence* alloc_sequence(TB_Node* n) {
-    Sequence* restrict s = arena_alloc(&tb__arena, sizeof(Sequence), _Alignof(Sequence));
-    s->node = n;
-    s->label = -1;
-    s->def_count = 0;
-    s->inst_count = 0;
-    return s;
-}
-
-static void expire_dead_intervals(Ctx* restrict ctx, int current_time) {
-    for (size_t i = 0; i < ctx->active_count;) {
-        TB_Node* k = ctx->active[i];
-        LiveInterval k_li = get_live_interval(ctx, k);
-        if (k_li.end >= current_time) break;
-
-        Val* v = &GET_VAL(k);
-        if (v->type >= CG_VAL_REGISTER && v->type < CG_VAL_REGISTER + CG_REGISTER_CLASSES) {
-            set_remove(&ctx->free_regs[v->type - CG_VAL_REGISTER], v->reg);
-            remove_active(ctx, i, k);
-        } else {
-            i++;
         }
     }
 }
@@ -338,133 +335,113 @@ static ptrdiff_t find_best_spill(Ctx* restrict ctx) {
     return 0;
 }
 
-static void linear_scan(TB_Function* f, Ctx* restrict ctx) {
-    typedef struct {
-        TB_Node* n;
-        Val v;
-    } Reload;
-    DynArray(Reload) reloads = NULL;
-    // __debugbreak();
+static void alloc_reg_allow_spill(Ctx* restrict ctx, TB_Function* f, Sequence* seq, TB_Node* n, int reg_class) {
+    if (!alloc_reg(ctx, f, n, reg_class)) {
+        ptrdiff_t spill = find_best_spill(ctx);
+        TB_Node* spill_n = ctx->active[spill];
 
-    // at this point in time, the sequence is all instructions no RA
-    Sequence* seq = (Sequence*) ctx->first;
-    for (; seq != NULL; seq = seq->next) {
-        TB_Node* n = seq->node;
-        LiveInterval r_li = get_live_interval(ctx, n);
+        // we need to reload the spill before we leave the BB
+        Val* spill_v = &GET_VAL(spill_n);
+        dyn_array_put(ctx->reloads, (Reload){ spill_n, *spill_v });
 
-        expire_dead_intervals(ctx, r_li.start);
+        spill_to_stack_slot(ctx, seq, spill_n, spill_v);
 
-        // allocate any definitions in the sequence
-        FOREACH_N(i, 0, seq->def_count) {
-            Def* d = &seq->defs[i];
-            Val* src = &GET_VAL(d->n);
-            // TB_DataType dt = d->n->dt;
+        // free register
+        set_remove(&ctx->free_regs[spill_v->type - CG_VAL_REGISTER], spill_v->reg);
+        remove_active(ctx, spill);
+    }
+}
 
-            // copied from somewhere else
-            if (d->based) {
-                Val* based = &GET_VAL(d->based);
+static void linear_scan(Ctx* restrict ctx, TB_Function* f, Sequence* seq, TB_Node* n, int bb_start, int time) {
+    // allocate any definitions in the sequence
+    FOREACH_N(i, 0, seq->def_count) {
+        Def* d = &seq->defs[i];
+        Val* src = &GET_VAL(d->n);
+        TB_DataType dt = d->n->dt;
 
-                // if the source dies when the definition is born, we can just alias them
-                LiveInterval src_li = get_live_interval(ctx, d->based);
-                if (src_li.end == r_li.start && based->type == CG_VAL_REGISTER + d->reg_class) {
-                    /*if (ctx->emit_asm) {
-                        printf("  \x1b[32m#   recycled r%d for r%d\x1b[0m\n", NAME(d->based), NAME(n));
-                    }*/
+        // copied from somewhere else
+        Val* based = NULL;
+        if (d->based) {
+            based = &GET_VAL(d->based);
 
-                    // remove from active list
-                    FOREACH_N(j, 0, ctx->active_count) if (ctx->active[j] == d->based) {
-                        remove_active(ctx, j, ctx->active[j]);
-                        break;
-                    }
+            if (based->type == 0 && d->based->type == TB_PHI) {
+                // allocate phi node late
+                if (!alloc_reg(ctx, f, d->based, classify_reg_class(n->dt))) {
+                    tb_panic("Cannot allocate phi!\n");
+                }
+            }
 
-                    // insert new to active
-                    add_active(ctx, n, r_li);
-                    d->reg = based->reg;
-                } else {
-                    // try normal allocation
-                    if (!alloc_reg(ctx, f, d->n, d->reg_class)) {
-                        ptrdiff_t spill = find_best_spill(ctx);
-                        TB_Node* spill_n = ctx->active[spill];
-
-                        // we need to reload the spill before we leave the BB
-                        Val* spill_v = &GET_VAL(spill_n);
-                        dyn_array_put(reloads, (Reload){ spill_n, *spill_v });
-
-                        spill_to_stack_slot(ctx, seq, spill_n, spill_v);
-
-                        // free register
-                        set_remove(&ctx->free_regs[spill_v->type - CG_VAL_REGISTER], spill_v->reg);
-                        remove_active(ctx, spill, ctx->active[spill]);
-                    }
-
-                    seq->ra_insts[seq->ra_inst_count++] = (RegallocInst){
-                        RA_COPY, d->n, *src, *based, d->load
-                    };
-                    d->reg = src->reg;
+            // if the source dies when the definition is born, we can just alias them
+            LiveInterval src_li = get_live_interval(ctx, d->based);
+            if (src_li.end >= bb_start && src_li.end <= time && based->type == CG_VAL_REGISTER + d->reg_class) {
+                if (ctx->emit_asm) {
+                    printf("  \x1b[32m#   recycled r%d for r%d\x1b[0m\n", NAME(d->based), NAME(n));
                 }
 
+                // remove from active list
+                FOREACH_N(j, 0, ctx->active_count) if (ctx->active[j] == d->based) {
+                    remove_active(ctx, j);
+                    break;
+                }
+
+                // insert new to active
+                add_active(ctx, n, get_live_interval(ctx, n));
+                d->reg = based->reg;
                 continue;
             }
-
-            if (src->type != CG_VAL_REGISTER + d->reg_class) {
-                // try normal allocation
-                Val old = *src;
-                if (!alloc_reg(ctx, f, d->n, d->reg_class)) {
-                    // TODO(NeGate): spill
-                    tb_todo();
-                }
-
-                seq->ra_insts[seq->ra_inst_count++] = (RegallocInst){
-                    RA_COPY, d->n, *src, old, d->load
-                };
-            }
-            d->reg = src->reg;
         }
 
-        if ((seq->next == NULL || (seq->next && seq->next->label != seq->label)) && dyn_array_length(reloads)) {
-            // insert reloads
-            Sequence* new_seq = alloc_sequence(n);
-            new_seq->next = seq->next;
-            new_seq->label = seq->label;
-            seq->node = NULL;
-            seq->next = new_seq;
+        if (src->type != CG_VAL_REGISTER + d->reg_class || d->load) {
+            // try normal allocation
+            Val old = *src;
+            alloc_reg_allow_spill(ctx, f, seq, d->n, d->reg_class);
 
-            dyn_array_for(i, reloads) {
-                Val* src = &GET_VAL(reloads[i].n);
-                new_seq->ra_insts[new_seq->ra_inst_count++] = (RegallocInst){
-                    RA_RELOAD, reloads[i].n, reloads[i].v, *src, false
-                };
+            if (d->based == NULL) {
+                copy_value(ctx, src, &old, dt, d->load, d->n, "materialize");
+                dyn_array_put(ctx->reloads, (Reload){ d->n, old });
             }
+        }
 
-            // clear
-            dyn_array_clear(reloads);
-            seq = new_seq;
+        if (d->based) {
+            copy_value(ctx, src, based, dt, d->load, d->n, "clone");
+        }
+
+        d->reg = src->reg;
+    }
+}
+
+static void expire_intervals(Ctx* restrict ctx, int current_time) {
+    for (size_t i = 0; i < ctx->active_count;) {
+        TB_Node* k = ctx->active[i];
+        LiveInterval k_li = get_live_interval(ctx, k);
+        if (k_li.end >= current_time) break;
+
+        Val* v = &GET_VAL(k);
+        if (v->type >= CG_VAL_REGISTER && v->type < CG_VAL_REGISTER + CG_REGISTER_CLASSES) {
+            printf("  \x1b[32m#   free %s from r%d\x1b[0m\n", GPR_NAMES[v->reg], NAME(k));
+            set_remove(&ctx->free_regs[v->type - CG_VAL_REGISTER], v->reg);
+            remove_active(ctx, i);
+        } else {
+            i++;
         }
     }
+}
 
-    dyn_array_destroy(reloads);
+static void reg_alloc(Ctx* restrict ctx, TB_Function* f, Sequence* seq, TB_Node* n, int bb_start, Val v) {
+    int time = NAME(n);
+    expire_intervals(ctx, time);
 
-    #if 0
-    /*if (n->type == TB_BRANCH) {
-        // write active phi-edges
-        TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
-        FOREACH_REVERSE_N(i, 0, br->count) {
-            phi_edge(f, ctx, bb, br->targets[i].value);
-        }
-        phi_edge(f, ctx, bb, br->default_label);
+    linear_scan(ctx, f, seq, n, bb_start, time);
 
-        FOREACH_N(i, 0, ctx->active_count) {
-            TB_Node* k = ctx->active[i];
-            // we've spilled these already
-            if (k->type == TB_PHI) continue;
+    // resolve any potential allocated reg reference
+    if (v.type >= CG_VAL_REGISTER && v.type < CG_VAL_REGISTER + CG_REGISTER_CLASSES && v.reg < -1) {
+        ptrdiff_t def_i = -v.reg - 2;
+        v.reg = seq->defs[def_i].reg;
+    }
 
-            Val* v = &GET_VAL(k);
-            Val slot = spill_to_stack_slot(ctx, k, v);
-            *v = slot;
-        }
-        ctx->active_count = 0;
-    }*/
-    #endif
+    if (v.type) {
+        GET_VAL(n) = v;
+    }
 }
 
 // Codegen through here is done in phases
@@ -489,10 +466,10 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
         return (TB_FunctionOutput){ .result = result_code };
     }
 
-    ctx->free_regs[0] = set_create(3);
+    ctx->free_regs[0] = set_create(16);
     ctx->free_regs[1] = set_create(16);
 
-    // set_put(&ctx->free_regs[0], RBP), set_put(&ctx->free_regs[0], RSP);
+    set_put(&ctx->free_regs[0], RBP), set_put(&ctx->free_regs[0], RSP);
 
     // BB scheduling:
     //   we run through BBs in a reverse postorder walk, currently
@@ -516,45 +493,12 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
 
     int counter = 0, label_patch_count = 0, return_count = 0, caller_usage = 0;
     FOREACH_REVERSE_N(i, 0, walk.count) {
-        TB_FOR_NODE(n, f, walk.traversal[i]) if (n->type != TB_NULL) {
+        TB_Label bb = walk.traversal[i];
+
+        TB_FOR_NODE(n, f, bb) if (n->type != TB_NULL) {
             put_liveness(ctx, n, counter++);
         }
     }
-
-    TB_FOR_BASIC_BLOCK(bb, f) {
-        TB_FOR_NODE(n, f, bb) if (n->type != TB_NULL) {
-            int t = get_liveness(ctx, n)->t;
-
-            if (n->type == TB_BRANCH) {
-                label_patch_count += 1 + TB_NODE_GET_EXTRA_T(n, TB_NodeBranch)->count;
-            } else if (n->type == TB_RET) {
-                return_count += 1;
-            } else if (n->type == TB_CALL) {
-                // system calls don't count, we track this for ABI
-                // and stack allocation purposes.
-                if (caller_usage < n->input_count) {
-                    caller_usage = n->input_count;
-                }
-            }
-
-            TB_FOR_INPUT_IN_NODE(in, n) if (*in) {
-                // extend last user
-                Liveness* l = get_liveness(ctx, *in);
-                assert(l);
-
-                // mark range
-                if (t < l->start) l->start = t;
-                if (t > l->end) l->end = t;
-
-                l->user_count++;
-            }
-        }
-    }
-
-    // allocate more stuff now that we've run stats on the IR
-    ctx->emit.labels = ARENA_ARR_ALLOC(&tb__arena, f->bb_count, uint32_t);
-    ctx->emit.label_patches = ARENA_ARR_ALLOC(&tb__arena, label_patch_count, LabelPatch);
-    ctx->emit.ret_patches = ARENA_ARR_ALLOC(&tb__arena, return_count, ReturnPatch);
 
     // allocate values map and active, for linear scan
     ctx->values_exp = estimate_hash_map_size(counter);
@@ -564,130 +508,140 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
     ctx->active = arena_alloc(&tb__arena, counter * sizeof(TB_Node*), _Alignof(TB_Node*));
     memset(ctx->values, 0, values_cap * sizeof(ValueDesc));
 
+    CUIK_TIMED_BLOCK("liveness analysis") {
+        TB_FOR_BASIC_BLOCK(bb, f) {
+            TB_FOR_NODE(n, f, bb) if (n->type != TB_NULL) {
+                int t = get_liveness(ctx, n)->t;
+
+                if (n->type == TB_BRANCH) {
+                    label_patch_count += 1 + TB_NODE_GET_EXTRA_T(n, TB_NodeBranch)->count;
+                } else if (n->type == TB_RET) {
+                    return_count += 1;
+                } else if (n->type == TB_CALL) {
+                    // system calls don't count, we track this for ABI
+                    // and stack allocation purposes.
+                    if (caller_usage < n->input_count) {
+                        caller_usage = n->input_count;
+                    }
+                } else if (n->type == TB_PHI) {
+                    Liveness* l = get_liveness(ctx, n);
+
+                    TB_NodePhi* phi = TB_NODE_GET_EXTRA(n);
+                    FOREACH_N(j, 0, n->input_count) {
+                        Liveness* l2 = get_liveness(ctx, n->inputs[j]);
+
+                        // extend last user
+                        int t2 = NAME(f->bbs[phi->labels[j]].end);
+
+                        // mark range
+                        if (t2 < l->start) l->start = t2;
+                        if (t2 > l->end) l->end = t2;
+
+                        // mark self range
+                        if (t2 < l2->start) l2->start = t2;
+                        if (t2 > l2->end) l2->end = t2;
+
+                        l->user_count++;
+                    }
+                    continue;
+                }
+
+                TB_FOR_INPUT_IN_NODE(in, n) if (*in) {
+                    // extend last user
+                    Liveness* l = get_liveness(ctx, *in);
+                    assert(l);
+
+                    // mark range
+                    if (t < l->start) l->start = t;
+                    if (t > l->end) l->end = t;
+
+                    l->user_count++;
+                }
+            }
+        }
+    }
+
+    // allocate more stuff now that we've run stats on the IR
+    ctx->emit.labels = ARENA_ARR_ALLOC(&tb__arena, f->bb_count, uint32_t);
+    ctx->emit.label_patches = ARENA_ARR_ALLOC(&tb__arena, label_patch_count, LabelPatch);
+    ctx->emit.ret_patches = ARENA_ARR_ALLOC(&tb__arena, return_count, ReturnPatch);
+
     // Instruction selection:
     //   we just decide which instructions to emit, which operands are
     //   fixed and which need allocation. For now regalloc is handled
     //   immediately but in theory it could be delayed until all selection
     //   is done.
     ctx->emit_asm = true;
-    FOREACH_REVERSE_N(i, 0, walk.count) {
+    CUIK_TIMED_BLOCK("isel") FOREACH_REVERSE_N(i, 0, walk.count) {
         TB_Label bb = walk.traversal[i];
 
-        // mark fallthrough
+        // mark BB start & fallthrough
         ctx->fallthrough = (i > 0 ? walk.traversal[i - 1] : -1);
-
-        // mark BB start
         ctx->emit.labels[bb] = GET_CODE_POS(&ctx->emit);
 
+        if (ctx->emit_asm) printf("L%d:\n", bb);
+
+        int bb_start = NAME(f->bbs[bb].start);
         TB_FOR_NODE(n, f, bb) if (n->type != TB_NULL) {
-            // selection
-            Sequence* seq = alloc_sequence(n);
-            if (ctx->last == NULL) {
-                ctx->first = ctx->last = seq;
-            } else {
-                ctx->last->next = seq;
-                ctx->last = seq;
+            if (n->type == TB_LINE_INFO) {
+                /*f->lines[f->line_count++] = (TB_Line) {
+                    .file = n->line_info.file,
+                    .line = n->line_info.line,
+                    .pos = GET_CODE_POS(&ctx->emit)
+                };*/
+                continue;
             }
 
-            seq->label = bb;
+            printf("  \x1b[32m# %s sequence\x1b[0m\n", tb_node_get_name(n));
+            Sequence seq = { 0 };
+            Liveness* l = get_liveness(ctx, n);
 
-            Val v;
-            switch (n->type) {
-                case TB_NULL:
-                case TB_PHI:
-                goto skip;
-
-                case TB_PARAM: {
-                    Val v = get_initial_param_val(ctx, n);
-
-                    // if we used a register, mark that
-                    if (v.type >= CG_VAL_REGISTER && v.type < CG_VAL_REGISTER + CG_REGISTER_CLASSES) {
-                        set_remove(&ctx->free_regs[v.type - CG_VAL_REGISTER], v.reg);
-                        add_active(ctx, n, get_live_interval(ctx, n));
-                    }
-                    GET_VAL(n) = v;
-                    goto skip;
-                }
-
-                case TB_LOCAL: {
-                    Val* src = &GET_VAL(n);
-                    if (src->type == 0) {
-                        *src = spill_to_stack_slot(ctx, seq, n, NULL);
-                    }
-                    goto skip;
-                }
-
-                case TB_LINE_INFO: {
-                    /*f->lines[f->line_count++] = (TB_Line) {
-                        .file = n->line_info.file,
-                        .line = n->line_info.line,
-                        .pos = GET_CODE_POS(&ctx->emit)
-                    };*/
-                    goto skip;
-                }
-
-                case TB_BRANCH: {
-                    // do normal isel now
-                    v = isel(ctx, seq, n);
-                    break;
-                }
-
-                case TB_STORE: {
-                    TB_Node* src = n->inputs[1];
-                    Liveness* restrict ni = get_liveness(ctx, src);
-                    if (n->inputs[0]->type == TB_LOCAL && src->type == TB_PARAM && ni->user_count == 1) {
-                        // we want to use the stack slot for this local.
-                        // we don't even need to fill the TB_PARAM since
-                        // it's only used here.
-                        TB_Node* local = n->inputs[0];
-                        v = GET_VAL(src);
-
-                        Val slot = spill_to_stack_slot(ctx, seq, src, &v);
-                        GET_VAL(local) = slot;
-                        goto skip;
-                    }
-
-                    v = isel(ctx, seq, n);
-                    break;
-                }
-
-                default:
-                v = isel(ctx, seq, n);
-                break;
+            if (l->user_count == 1 && tb_is_expr_like(n)) {
+                dyn_array_put(ctx->in_bound, n);
+                continue;
             }
 
-            // resolve any potential allocated reg reference
-            if (v.type >= CG_VAL_REGISTER && v.type < CG_VAL_REGISTER + CG_REGISTER_CLASSES) {
-                ptrdiff_t def_i = -v.reg - 2;
-                v.reg = seq->defs[def_i].reg;
-            }
-            GET_VAL(n) = v;
+            // we need to resolve all the inbounds
+            while (dyn_array_length(ctx->in_bound)) {
+                TB_Node* expr = dyn_array_pop(ctx->in_bound); // pop top
 
-            skip:;
+                Val v = isel(ctx, &seq, expr);
+                reg_alloc(ctx, f, &seq, expr, bb_start, v);
+
+                // Arch-specific: convert instruction buffer into actual instructions
+                emit_sequence(ctx, &seq, expr);
+                seq = (Sequence){ 0 };
+            }
+
+            Val v = isel(ctx, &seq, n);
+            reg_alloc(ctx, f, &seq, n, bb_start, v);
+
+            // Handle branch edges
+            if (n->type == TB_BRANCH) {
+                // write active phi-edges
+                TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
+                FOREACH_REVERSE_N(i, 0, br->count) {
+                    phi_edge(f, ctx, &seq, bb, br->targets[i].value);
+                }
+                phi_edge(f, ctx, &seq, bb, br->default_label);
+
+                if (dyn_array_length(ctx->reloads)) {
+                    // insert reloads
+                    dyn_array_for(i, ctx->reloads) {
+                        Reload* restrict r = &ctx->reloads[i];
+
+                        Val* src = &GET_VAL(r->n);
+                        copy_value(ctx, &r->v, src, r->n->dt, false, r->n, "reload");
+                    }
+
+                    // clear
+                    dyn_array_clear(ctx->reloads);
+                }
+            }
+
+            // Arch-specific: convert instruction buffer into actual instructions
+            emit_sequence(ctx, &seq, n);
         }
-    }
-
-    // reg alloc
-    linear_scan(f, ctx);
-
-    // emit sequences
-    int last = -1;
-    for (Sequence* seq = ctx->first; seq; seq = seq->next) {
-        if (ctx->emit_asm) {
-            if (seq->label != last) {
-                printf("L%d:\n", seq->label);
-                last = seq->label;
-            }
-
-            if (seq->node) {
-                printf("  \x1b[32m# %s sequence\x1b[0m\n", tb_node_get_name(seq->node));
-            } else {
-                printf("  \x1b[32m# reloads\x1b[0m\n");
-            }
-        }
-
-        // Arch-specific: convert instruction buffer into actual instructions
-        emit_sequence(ctx, seq);
     }
 
     // __debugbreak();

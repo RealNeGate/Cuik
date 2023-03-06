@@ -136,6 +136,20 @@ static Inst inst_rm(int op, X86_DataType dt, int lhs, Val mem) {
     };
 }
 
+static Inst inst_rb(int op, X86_DataType dt, int lhs, int base, int disp) {
+    return (Inst){
+        X86_FIRST_INST2 + op,
+        .flags = X86_INSTR_USE_MEMOP,
+        .data_type = dt,
+        .regs = { lhs, GPR_NONE, GPR_NONE, GPR_NONE },
+        .mem = { base, GPR_NONE, SCALE_X1, disp }
+    };
+}
+
+static int classify_reg_class(TB_DataType dt) {
+    return dt.type == TB_FLOAT ? REG_CLASS_XMM : REG_CLASS_GPR;
+}
+
 static int8_t resolve_ref(Sequence* restrict seq, int8_t x) {
     if (x < -1) return seq->defs[-x - 2].reg;
     return x;
@@ -159,15 +173,6 @@ static X86_DataType legalize_int(TB_DataType dt, uint64_t* out_mask) {
 
     *out_mask = (dt.data == bits) ? 0 : mask;
     return t;
-}
-
-static Val get_initial_param_val(Ctx* restrict ctx, TB_Node* n) {
-    int id = TB_NODE_GET_EXTRA_T(n, TB_NodeParam)->id;
-    if (id >= 4) {
-        return val_stack(TB_TYPE_PTR, 16 + (id * 8));
-    } else {
-        return val_gpr(n->dt, WIN64_GPR_PARAMETERS[id]);
-    }
 }
 
 static void print_operand(Val* v) {
@@ -201,9 +206,15 @@ static Val spill_to_stack_slot(Ctx* restrict ctx, Sequence* restrict seq, TB_Nod
     }
 
     if (src != NULL) {
-        seq->ra_insts[seq->ra_inst_count++] = (RegallocInst){
-            RA_SPILL, n, dst, *src, false
-        };
+        INST2(!is_lvalue(src) ? MOV : LEA, &dst, src, n->dt);
+        if (ctx->emit_asm) {
+            printf("  MOV ");
+            print_operand(&dst);
+            printf(", ");
+            print_operand(src);
+
+            printf(" \x1b[32m# spill r%d\x1b[0m\n", NAME(n));
+        }
     }
 
     return dst;
@@ -219,6 +230,31 @@ static Val isel(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n) {
             uint64_t x = i->words[0];
             assert(fits_into_int32(x));
             return val_imm(n->dt, x);
+        }
+
+        case TB_SIGN_EXT: {
+            uint64_t mask;
+            X86_DataType t = legalize_int(n->dt, &mask);
+
+            if (mask) {
+                // int shift_amt = dst_bits_in_type - bits_in_type;
+                //
+                // shl dst, shift_amt
+                // sar dst, shift_amt
+                tb_todo();
+            }
+
+            // (sxt (load ptr)) => movsx dst, [ptr]
+            if (try_tile(ctx, n->inputs[0], TB_LOAD)) {
+                int addr = DEF(n, .based = n->inputs[0]->inputs[0], .reg_class = REG_CLASS_GPR);
+                int dst = DEF(n, .reg_class = REG_CLASS_GPR);
+
+                SUBMIT(inst_rb(MOVSXD, t, REF(dst), REF(addr), 0));
+                return val_gpr(n->dt, REF(dst));
+            }
+
+            tb_todo();
+            return val_gpr(n->dt, RAX);
         }
 
         case TB_NOT:
@@ -306,6 +342,15 @@ static Val isel(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n) {
             uint64_t mask;
             X86_DataType t = legalize_int(n->dt, &mask);
 
+            Liveness* restrict ni = get_liveness(ctx, n->inputs[1]);
+            if (n->inputs[0]->type == TB_LOCAL && n->inputs[1]->type == TB_PARAM && ni->user_count == 1) {
+                // we want to use the stack slot for this local.
+                // we don't even need to fill the TB_PARAM since
+                // it's only used here.
+                int id = TB_NODE_GET_EXTRA_T(n->inputs[1], TB_NodeParam)->id;
+                GET_VAL(n->inputs[0]) = val_stack(TB_TYPE_PTR, 16 + (id * 8));
+            }
+
             Val* peep = &GET_VAL(n->inputs[0]);
             Inst inst;
             if (peep->type == VAL_MEM && !peep->mem.is_rvalue && peep->mem.index == GPR_NONE) {
@@ -328,47 +373,61 @@ static Val isel(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n) {
             return (Val){ 0 };
         }
 
-        // these are handled later on
+        case TB_PARAM: {
+            int id = TB_NODE_GET_EXTRA_T(n, TB_NodeParam)->id;
+            if (id >= 4) {
+                return val_stack(TB_TYPE_PTR, 16 + (id * 8));
+            } else {
+                return val_gpr(n->dt, WIN64_GPR_PARAMETERS[id]);
+            }
+        }
+
+        case TB_LOCAL: {
+            // allocate stack slot
+            TB_NodeLocal* local = TB_NODE_GET_EXTRA(n);
+
+            int pos = STACK_ALLOC(local->size, local->align);
+            return val_stack(TB_TYPE_PTR, pos);
+        }
+
+        case TB_NULL:
+        case TB_PHI:
         case TB_BRANCH:
         case TB_RET:
         return (Val){ 0 };
+
         default: tb_todo();
     }
 }
 
-static void emit_sequence(Ctx* restrict ctx, Sequence* restrict seq) {
-    TB_Node* n = seq->node;
+static void copy_value(Ctx* restrict ctx, Val* dst, Val* src, TB_DataType dt, bool load, TB_Node* n, const char* reason) {
+    if (load) {
+        Val s = *src;
+        if (s.type == VAL_GPR) {
+            s = val_base_disp(TB_TYPE_PTR, s.gpr, 0);
+        }
 
-    FOREACH_N(i, 0, seq->ra_inst_count) {
-        RegallocInst* restrict inst = &seq->ra_insts[i];
-        TB_DataType dt = inst->n->dt;
-
-        if (inst->load) {
-            Val s = inst->src;
-            if (s.type == VAL_GPR) {
-                s = val_base_disp(TB_TYPE_PTR, s.gpr, 0);
-            }
-
-            INST2(MOV, &inst->dst, &s, dt);
-            if (ctx->emit_asm) {
-                printf("  MOV ");
-                print_operand(&inst->dst);
-                printf(", ");
-                print_operand(&s);
-                printf("  \x1b[32m# copy\x1b[0m\n");
-            }
-        } else {
-            INST2(!is_lvalue(&inst->src) ? MOV : LEA, &inst->dst, &inst->src, dt);
-            if (ctx->emit_asm) {
-                printf("  %s ", !is_lvalue(&inst->src) ? "MOV" : "LEA");
-                print_operand(&inst->dst);
-                printf(", ");
-                print_operand(&inst->src);
-                printf("  \x1b[32m# copy\x1b[0m\n");
-            }
+        INST2(MOV, dst, &s, dt);
+        if (ctx->emit_asm) {
+            printf("  MOV ");
+            print_operand(dst);
+            printf(", ");
+            print_operand(&s);
+            printf(" \x1b[32m# copy\x1b[0m\n");
+        }
+    } else {
+        INST2(!is_lvalue(src) ? MOV : LEA, dst, src, dt);
+        if (ctx->emit_asm) {
+            printf("  %s ", !is_lvalue(src) ? "MOV" : "LEA");
+            print_operand(dst);
+            printf(", ");
+            print_operand(src);
+            printf(" \x1b[32m# %s r%d\x1b[0m\n", reason, NAME(n));
         }
     }
+}
 
+static void emit_sequence(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n) {
     FOREACH_N(i, 0, seq->inst_count) {
         Inst* restrict inst = &seq->insts[i];
 
@@ -452,6 +511,12 @@ static void emit_sequence(Ctx* restrict ctx, Sequence* restrict seq) {
                 A(XOR);
                 A(CMP);
                 A(MOV);
+
+                A(MOVSXB);
+                A(MOVSXW);
+                A(MOVSXD);
+                A(MOVZXB);
+                A(MOVZXW);
                 default: tb_todo();
             }
             #undef A
@@ -524,8 +589,10 @@ static void emit_sequence(Ctx* restrict ctx, Sequence* restrict seq) {
             printf("  \x1b[32m#   return already in RAX\x1b[0m\n");
         }
 
-        ret_jmp(&ctx->emit);
-        if (ctx->emit_asm) printf("  JMP .ret\n");
+        if (ctx->fallthrough != -1) {
+            ret_jmp(&ctx->emit);
+            if (ctx->emit_asm) printf("  JMP .ret\n");
+        }
     }
 }
 

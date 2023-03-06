@@ -3,6 +3,7 @@
     return 3 + 16;
 }*/
 
+#if 0
 int do_stuff(int a, int b, int c) {
     int d = b + a;
     int e = b - c;
@@ -11,7 +12,6 @@ int do_stuff(int a, int b, int c) {
     return d + e + f + g;
 }
 
-#if 0
 int fa(int value) {
     return value;
 }
@@ -38,6 +38,10 @@ int fe(int value) {
     return sum;
 }
 #endif
+
+long long ff(int* value) {
+    return *value;
+}
 
 /*int without_restrict(int const* const x, int* y) {
     if(*x == 0) {

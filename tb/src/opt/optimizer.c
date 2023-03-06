@@ -37,7 +37,7 @@ static void dce(TB_Function* f) {
     DCE dce = { 0 };
     TB_FOR_BASIC_BLOCK(bb, f) {
         TB_FOR_NODE(r, f, bb) {
-            if (!is_expr_like(f, r)) dce_mark(f, &dce, r);
+            if (!tb_is_expr_like(r)) dce_mark(f, &dce, r);
         }
     }
 

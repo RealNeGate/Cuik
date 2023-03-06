@@ -37,11 +37,18 @@
 #include "bigint/BigInt.h"
 #include "dyn_array.h"
 #include "hash_map.h"
-#include "set.h"
 #include "builtins.h"
 #include "pool.h"
 
+#define FOREACH_N(it, start, end) \
+for (ptrdiff_t it = (start), end__ = (end); it < end__; ++it)
+
+#define FOREACH_REVERSE_N(it, start, end) \
+for (ptrdiff_t it = (end), start__ = (start); (it--) > start__;)
+
 #include <arena.h>
+#include "set.h"
+
 #include <threads.h>
 
 // ***********************************
@@ -558,12 +565,6 @@ do {                                      \
 #define CONCAT_(x, y) x ## y
 #define CONCAT(x, y) CONCAT_(x, y)
 #endif
-
-#define FOREACH_N(it, start, end) \
-for (ptrdiff_t it = (start), end__ = (end); it < end__; ++it)
-
-#define FOREACH_REVERSE_N(it, start, end) \
-for (ptrdiff_t it = (end), start__ = (start); (it--) > start__;)
 
 // sometimes you just gotta do it to em'
 // imagine i++ but like i++y (more like ((i += y) - y)) or something idk
