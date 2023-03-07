@@ -1,14 +1,9 @@
 
-/*int do_stuff(void) {
-    return 3 + 16;
-}*/
-
-#if 0
 int do_stuff(int a, int b, int c) {
     int d = b + a;
-    int e = b - c;
-    int f = e & b;
-    int g = d ^ f;
+    int e = b + c;
+    int f = e + b;
+    int g = d + f;
     return d + e + f + g;
 }
 
@@ -29,7 +24,6 @@ int fd(int value) {
 
     return value;
 }
-#endif
 
 int fe(int value) {
     int sum = 0;
@@ -39,12 +33,12 @@ int fe(int value) {
     return sum;
 }
 
-long long ff(int* value) {
-    return *value;
-}
-
 long long fg(int* value) {
     return ((long long) *value) & 63;
+}
+
+long long ff(int* value) {
+    return *value;
 }
 
 /*int without_restrict(int const* const x, int* y) {
@@ -55,4 +49,3 @@ long long fg(int* value) {
 
     return 1;
 }*/
-

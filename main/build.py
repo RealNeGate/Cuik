@@ -11,6 +11,7 @@ parser.add_argument('-opt', action='store_true', help='runs optimize on compiled
 parser.add_argument('-asan', action='store_true', help='instrument code with the AddressSanitizer')
 parser.add_argument('-autospall', action='store_true', help='instrument code with SpallAuto')
 args = parser.parse_args()
+args.asan = True
 
 #######################################
 # Handle dependencies
@@ -54,7 +55,7 @@ if args.asan:
 	# TODO: my ASAN didn't work without me passing the lib directly, this should be commented out
 	# once i figure that out
 	if platform.system() == "Windows":
-		ldflags += " \"C:/Program Files/LLVM/lib/clang/15.0.0/lib/windows/clang_rt.asan-x86_64.lib\""
+		ldflags += " \"C:/Program Files/LLVM/lib/clang/14.0.0/lib/windows/clang_rt.asan-x86_64.lib\""
 
 if args.opt:
 	cflags  += " -O2 -DNDEBUG"
@@ -114,8 +115,8 @@ for f in list:
 	ninja.write(f"build bin/{obj}: cc {f}\n")
 	objs.append("bin/"+obj)
 
-ninja.write(f"build bin/mimalloc.o: mimalloc ../mimalloc/src/static.c\n")
-objs.append("bin/mimalloc.o")
+# ninja.write(f"build bin/mimalloc.o: mimalloc ../mimalloc/src/static.c\n")
+# objs.append("bin/mimalloc.o")
 
 ninja.write(f"build cuik{exe_ext}: link {' '.join(objs)} ../libCuik/libcuik{lib_ext} ../tb/tb{lib_ext}\n")
 ninja.close()

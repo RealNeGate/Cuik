@@ -81,6 +81,7 @@ TB_Node* tb_alloc_node(TB_Function* f, int type, TB_DataType dt, int input_count
         // initialize
         TB_Node* n = (TB_Node*) page->data;
         n->type = type;
+        n->first_attrib = NULL;
         n->input_count = input_count;
         n->extra_count = extra;
         n->dt = dt;
@@ -96,6 +97,7 @@ TB_Node* tb_alloc_node(TB_Function* f, int type, TB_DataType dt, int input_count
 
     // initialize
     n->type = type;
+    n->first_attrib = NULL;
     n->input_count = input_count;
     n->extra_count = extra;
     n->dt = dt;

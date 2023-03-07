@@ -24,11 +24,13 @@ typedef struct {
 } DCE;
 
 static void dce_mark(TB_Function* f, DCE* dce, TB_Node* n) {
+    ptrdiff_t search = nl_map_get(dce->marked, n);
+    if (search >= 0) return;
+
     nl_map_put(dce->marked, n, 1);
 
-    TB_FOR_INPUT_IN_NODE(it, n) {
-        ptrdiff_t search = nl_map_get(dce->marked, n);
-        if (search < 0) dce_mark(f, dce, *it);
+    TB_FOR_INPUT_IN_NODE(in, n) if (*in) {
+        dce_mark(f, dce, *in);
     }
 }
 
@@ -43,11 +45,13 @@ static void dce(TB_Function* f) {
 
     // sweep
     TB_FOR_BASIC_BLOCK(bb, f) {
-        TB_FOR_NODE(n, f, bb) {
+        TB_Node* n = f->bbs[bb].start;
+        for (; n != NULL; n = n->next) {
             ptrdiff_t search = nl_map_get(dce.marked, n);
-            if (search >= 0) continue;
 
-            TB_KILL_NODE(n);
+            if (search < 0 && tb_is_expr_like(n)) {
+                TB_KILL_NODE(n);
+            }
         }
     }
     nl_map_free(dce.marked);
@@ -87,7 +91,7 @@ static void canonicalize(TB_Function* f) {
     nl_map_free(ctx.def_table);
 
     // kill any unused regs
-    // dce(f);
+    dce(f);
 }
 
 static void schedule_function_level_opts(TB_Module* m, TB_Function* f, size_t pass_count, const TB_Pass* passes[]) {
