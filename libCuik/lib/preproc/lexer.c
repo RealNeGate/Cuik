@@ -337,7 +337,6 @@ Token lexer_read(Lexer* restrict l) {
         case DFA_STRING: {
             char quote_type = current[-1];
 
-            #if !USE_INTRIN
             for (; *current && *current != quote_type; current++) {
                 // skip escape codes
                 if (*current == '\\') {
@@ -350,35 +349,6 @@ Token lexer_read(Lexer* restrict l) {
             }
 
             current += 1;
-            #else
-            __m128i pattern = _mm_set1_epi8(quote_type);
-
-            do {
-                __m128i bytes = _mm_loadu_si128((__m128i*)current);
-
-                // strings either end at the quote or are cut off early via a
-                // newline unless you put a backslash-newline joiner.
-                __m128i test_quote = _mm_cmpeq_epi8(bytes, pattern);
-                __m128i test_newline = _mm_cmpeq_epi8(bytes, _mm_set1_epi8('\n'));
-                __m128i test = _mm_or_si128(test_quote, test_newline);
-                int len = __builtin_ffs(_mm_movemask_epi8(test));
-
-                if (len) {
-                    current += len;
-
-                    // backslash join
-                    if (current[-1] == '\n' && current[-2] == '\\') continue;
-
-                    // escape + quote like \"
-                    if (current[-1] == quote_type && current[-2] == '\\' && current[-3] != '\\') continue;
-
-                    break;
-                } else {
-                    current += 16;
-                }
-            } while (*current);
-            #endif
-
             t.type = quote_type;
 
             if (start[0] == 'L') {

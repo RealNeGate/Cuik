@@ -639,7 +639,7 @@ static void x64v2_store(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
 }
 
 static void x64v2_call(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
-    TB_Node* nestrict n = &f->nodes[r];
+    TB_Node* restrict n = &f->nodes[r];
     TB_NodeTypeEnum type = n->type;
 
     static const struct ParamDescriptor {

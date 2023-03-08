@@ -132,7 +132,6 @@ TB_API bool tb_module_compile_function(TB_Module* m, TB_Function* f, TB_ISelMode
     assert(id < TB_MAX_THREADS);
 
     TB_CodeRegion* region = get_or_allocate_code_region(m, id);
-
     mtx_lock(&m->lock);
     TB_FunctionOutput* func_out = ARENA_ALLOC(&m->arena, TB_FunctionOutput);
     mtx_unlock(&m->lock);
@@ -143,12 +142,15 @@ TB_API bool tb_module_compile_function(TB_Module* m, TB_Function* f, TB_ISelMode
         isel_mode = TB_ISEL_FAST;
     }
 
-    uint8_t* local_buffer = &region->data[region->size];
-    size_t local_capacity = region->capacity - region->size;
-    if (isel_mode == TB_ISEL_COMPLEX) {
-        *func_out = code_gen->complex_path(f, &m->features, local_buffer, local_capacity, id);
-    } else {
-        *func_out = code_gen->fast_path(f, &m->features, local_buffer, local_capacity, id);
+    CUIK_TIMED_BLOCK_ARGS("CompileFunc", f->super.name) {
+        uint8_t* local_buffer = &region->data[region->size];
+        size_t local_capacity = region->capacity - region->size;
+
+        if (isel_mode == TB_ISEL_COMPLEX) {
+            *func_out = code_gen->complex_path(f, &m->features, local_buffer, local_capacity, id);
+        } else {
+            *func_out = code_gen->fast_path(f, &m->features, local_buffer, local_capacity, id);
+        }
     }
 
     // prologue & epilogue insertion

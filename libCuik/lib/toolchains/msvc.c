@@ -247,7 +247,7 @@ bool win8_best(wchar_t *short_name, Version_Data *data) {
     return true;
 }
 
-void find_windows_kit_root(Cuik_WindowsToolchain* result) {
+bool find_windows_kit_root(Cuik_WindowsToolchain* result) {
     // Information about the Windows 10 and Windows 8 development kits
     // is stored in the same place in the registry. We open a key
     // to that place, first checking preferntially for a Windows 10 kit,
@@ -255,7 +255,7 @@ void find_windows_kit_root(Cuik_WindowsToolchain* result) {
     HKEY main_key;
     LSTATUS rc = RegOpenKeyExA(HKEY_LOCAL_MACHINE, "SOFTWARE\\Microsoft\\Windows Kits\\Installed Roots",
         0, KEY_QUERY_VALUE | KEY_ENUMERATE_SUB_KEYS, &main_key);
-    if (rc != S_OK) return;
+    if (rc != S_OK) return false;
 
     // Look for a Windows 10 entry.
     wchar_t *windows10_root = find_windows_kit_root_with_key(main_key, L"KitsRoot10");
@@ -277,7 +277,7 @@ void find_windows_kit_root(Cuik_WindowsToolchain* result) {
 
             cuik_free(windows10_root);
             RegCloseKey(main_key);
-            return;
+            return true;
         }
 
     }
@@ -303,7 +303,7 @@ void find_windows_kit_root(Cuik_WindowsToolchain* result) {
             cuik_free(windows10_root);
             cuik_free(windows8_root);
             RegCloseKey(main_key);
-            return;
+            return true;
         }
     }
 
@@ -311,6 +311,7 @@ void find_windows_kit_root(Cuik_WindowsToolchain* result) {
     cuik_free(windows10_root);
     cuik_free(windows8_root);
     RegCloseKey(main_key);
+    return false;
 }
 
 bool find_visual_studio_2017_by_fighting_through_microsoft_craziness(Cuik_WindowsToolchain *result) {
@@ -594,11 +595,37 @@ static bool invoke_link(void* ctx, const Cuik_CompilerArgs* args, Cuik_Linker* l
     return false;
 }
 
+// tries to walk about `steps` slashes in the filepath and return the pointer to said
+// slash, if it can't reach then it'll return NULL
+static const wchar_t* step_out_dir(const wchar_t* path, int steps) {
+    int slashes_hit = 0;
+    const wchar_t* end = path + wcslen(path);
+
+    while (slashes_hit != steps && end-- != path) {
+        if (*end == '/') slashes_hit++;
+        else if (*end == '\\') slashes_hit++;
+    }
+
+    return (slashes_hit == steps) ? end : NULL;
+}
+
 Cuik_Toolchain cuik_toolchain_msvc(void) {
     Cuik_WindowsToolchain* result = cuik_malloc(sizeof(Cuik_WindowsToolchain));
     result->vc_tools_install[0] = 0;
 
-    find_windows_kit_root(result);
+    if (!find_windows_kit_root(result)) {
+        // when installing from the mmozeiko's portable MSVC script, the registry doesn't
+        // get setup so we search for the windows kit via environment variables.
+        wchar_t* sdk_libs = _wgetenv(L"SDK_LIBS");
+        if (sdk_libs != NULL) {
+            result->windows_sdk_version = 10;
+
+            wcsncpy(result->windows_sdk_include, _wgetenv(L"SDK_INCLUDE"), MAX_PATH);
+            wcsncpy(result->windows_sdk_root, _wgetenv(L"SDK_LIBS"), MAX_PATH);
+        } else {
+            fprintf(stderr, "warning: could not locate windows SDK\n");
+        }
+    }
 
     wchar_t* vc_tools_install = _wgetenv(L"VCToolsInstallDir");
     if (vc_tools_install != NULL) {

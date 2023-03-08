@@ -524,7 +524,7 @@ void tb__apply_module_relocs(TB_Linker* l, TB_Module* m, uint8_t* output) {
                 // relocations add not replace
                 (*dst) += (rdata_piece_rva - actual_pos);
             }
-        }*/
-        tb_todo();
+        }
+        tb_todo();*/
     }
 }

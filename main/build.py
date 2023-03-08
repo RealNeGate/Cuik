@@ -11,7 +11,6 @@ parser.add_argument('-opt', action='store_true', help='runs optimize on compiled
 parser.add_argument('-asan', action='store_true', help='instrument code with the AddressSanitizer')
 parser.add_argument('-autospall', action='store_true', help='instrument code with SpallAuto')
 args = parser.parse_args()
-args.asan = True
 
 #######################################
 # Handle dependencies
@@ -115,8 +114,8 @@ for f in list:
 	ninja.write(f"build bin/{obj}: cc {f}\n")
 	objs.append("bin/"+obj)
 
-# ninja.write(f"build bin/mimalloc.o: mimalloc ../mimalloc/src/static.c\n")
-# objs.append("bin/mimalloc.o")
+ninja.write(f"build bin/mimalloc.o: mimalloc ../mimalloc/src/static.c\n")
+objs.append("bin/mimalloc.o")
 
 ninja.write(f"build cuik{exe_ext}: link {' '.join(objs)} ../libCuik/libcuik{lib_ext} ../tb/tb{lib_ext}\n")
 ninja.close()

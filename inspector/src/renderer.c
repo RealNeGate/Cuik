@@ -464,5 +464,5 @@ void r_present(void) {
     glUseProgram(0);
 
     SDL_GL_SwapWindow(window);
-    // glFinish();
+    glFinish();
 }

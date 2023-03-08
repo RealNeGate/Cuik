@@ -90,16 +90,17 @@ TB_API TB_Exports tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
     // mark each with a unique id
     size_t function_sym_start = (section_count * 2);
     size_t external_sym_start = function_sym_start + m->compiled_function_count;
-
     size_t unique_id_counter = 0;
-    TB_FOR_EXTERNALS(ext, m) {
-        ext->super.symbol_id = external_sym_start + unique_id_counter;
-        unique_id_counter += 1;
-    }
+    CUIK_TIMED_BLOCK("AllocSymbolIDs") {
+        TB_FOR_EXTERNALS(ext, m) {
+            ext->super.symbol_id = external_sym_start + unique_id_counter;
+            unique_id_counter += 1;
+        }
 
-    TB_FOR_GLOBALS(g, m) {
-        g->super.symbol_id = external_sym_start + unique_id_counter;
-        unique_id_counter += 1;
+        TB_FOR_GLOBALS(g, m) {
+            g->super.symbol_id = external_sym_start + unique_id_counter;
+            unique_id_counter += 1;
+        }
     }
 
     size_t string_table_cap = unique_id_counter + m->compiled_function_count;
@@ -196,23 +197,25 @@ TB_API TB_Exports tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
     // compute string table size
     size_t string_table_size = 4;
     size_t string_table_pos = output_size;
-    TB_FOR_FUNCTIONS(f, m) if (f->super.name) {
-        size_t name_len = strlen(f->super.name);
-        if (name_len >= 8) string_table_size += name_len + 1;
-    }
-
-    FOREACH_N(i, 0, m->max_threads) {
-        pool_for(TB_External, ext, m->thread_info[i].externals) if (ext->super.name) {
-            size_t name_len = strlen(ext->super.name);
+    CUIK_TIMED_BLOCK("StringTblLayout") {
+        TB_FOR_FUNCTIONS(f, m) if (f->super.name) {
+            size_t name_len = strlen(f->super.name);
             if (name_len >= 8) string_table_size += name_len + 1;
         }
 
-        pool_for(TB_Global, g, m->thread_info[i].globals) if (g->super.name) {
-            size_t name_len = strlen(g->super.name);
-            if (name_len >= 8) string_table_size += name_len + 1;
+        FOREACH_N(i, 0, m->max_threads) {
+            pool_for(TB_External, ext, m->thread_info[i].externals) if (ext->super.name) {
+                size_t name_len = strlen(ext->super.name);
+                if (name_len >= 8) string_table_size += name_len + 1;
+            }
+
+            pool_for(TB_Global, g, m->thread_info[i].globals) if (g->super.name) {
+                size_t name_len = strlen(g->super.name);
+                if (name_len >= 8) string_table_size += name_len + 1;
+            }
         }
+        output_size += string_table_size;
     }
-    output_size += string_table_size;
 
     ////////////////////////////////
     // write output
@@ -220,260 +223,262 @@ TB_API TB_Exports tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
     size_t write_pos = 0;
     uint8_t* restrict output = tb_platform_heap_alloc(output_size);
 
-    // write COFF header
-    WRITE(&header, sizeof(header));
-
-    // write sections headers
-    dyn_array_for(i, sections) {
-        COFF_SectionHeader header = {
-            .characteristics = sections[i]->flags,
-            .raw_data_size = sections[i]->total_size,
-            .raw_data_pos = sections[i]->raw_data_pos,
-            .pointer_to_reloc = sections[i]->reloc_pos
-        };
-        strncpy(header.name, sections[i]->name, 8);
-
-        if (sections[i]->reloc_count >= 0xFFFF) {
-            header.num_reloc = 0xFFFF;
-            header.characteristics |= IMAGE_SCN_LNK_NRELOC_OVFL;
-        } else {
-            header.num_reloc = sections[i]->reloc_count;
-        }
-
+    CUIK_TIMED_BLOCK("write output") {
+        // write COFF header
         WRITE(&header, sizeof(header));
-    }
 
-    FOREACH_N(i, 0, debug_sections.length) {
-        COFF_SectionHeader header = {
-            .characteristics = COFF_CHARACTERISTICS_DEBUG,
-            .raw_data_size = debug_sections.data[i].raw_data.length,
-            .pointer_to_reloc = (uintptr_t) debug_sections.data[i].user_data
-        };
+        // write sections headers
+        dyn_array_for(i, sections) {
+            COFF_SectionHeader header = {
+                .characteristics = sections[i]->flags,
+                .raw_data_size = sections[i]->total_size,
+                .raw_data_pos = sections[i]->raw_data_pos,
+                .pointer_to_reloc = sections[i]->reloc_pos
+            };
+            strncpy(header.name, sections[i]->name, 8);
 
-        if (dbg == &tb__codeview_debug_format) {
-            header.characteristics |= IMAGE_SCN_MEM_DISCARDABLE;
-        }
-
-        TB_Slice name = debug_sections.data[i].name;
-        assert(name.length <= 8);
-        memcpy(header.name, name.data, name.length);
-
-        size_t reloc_count = debug_sections.data[i].relocation_count;
-        if (reloc_count >= 0xFFFF) {
-            header.num_reloc = 0xFFFF;
-            header.characteristics |= IMAGE_SCN_LNK_NRELOC_OVFL;
-        } else {
-            header.num_reloc = reloc_count;
-        }
-
-        WRITE(&header, sizeof(header));
-    }
-
-    // write raw data
-    dyn_array_for(i, sections) {
-        write_pos = tb_helper_write_section(
-            m, write_pos, sections[i], output, sections[i]->raw_data_pos
-        );
-    }
-
-    FOREACH_N(i, 0, debug_sections.length) {
-        assert(write_pos == debug_sections.data[i].virtual_address);
-
-        memcpy(&output[write_pos], debug_sections.data[i].raw_data.data, debug_sections.data[i].raw_data.length);
-        write_pos += debug_sections.data[i].raw_data.length;
-    }
-
-    // write relocations
-    dyn_array_for(i, sections) {
-        assert(write_pos == sections[i]->reloc_pos);
-
-        if (sections[i]->kind == TB_MODULE_SECTION_TEXT) {
-            FOREACH_N(i, 0, m->max_threads) {
-                dyn_array_for(j, m->thread_info[i].symbol_patches) {
-                    TB_SymbolPatch* p = &m->thread_info[i].symbol_patches[j];
-                    TB_FunctionOutput* out_f = p->source->output;
-
-                    size_t actual_pos = out_f->code_pos + out_f->prologue_length + p->pos;
-                    size_t symbol_id = p->target->symbol_id;
-
-                    if (p->target->tag == TB_SYMBOL_FUNCTION) {
-                        // internal patch, already handled
-                    } else if (p->target->tag == TB_SYMBOL_EXTERNAL) {
-                        assert(symbol_id != 0);
-                        COFF_ImageReloc r = {
-                            .Type = IMAGE_REL_AMD64_REL32,
-                            .SymbolTableIndex = symbol_id,
-                            .VirtualAddress = actual_pos
-                        };
-                        WRITE(&r, sizeof(r));
-                    } else if (p->target->tag == TB_SYMBOL_GLOBAL) {
-                        assert(symbol_id != 0);
-                        COFF_ImageReloc r = {
-                            .Type = ((TB_Global*) p->target)->parent->kind == TB_MODULE_SECTION_TLS ? IMAGE_REL_AMD64_SECREL : IMAGE_REL_AMD64_REL32,
-                            .SymbolTableIndex = symbol_id,
-                            .VirtualAddress = actual_pos
-                        };
-                        WRITE(&r, sizeof(r));
-                    } else {
-                        tb_todo();
-                    }
-                }
+            if (sections[i]->reloc_count >= 0xFFFF) {
+                header.num_reloc = 0xFFFF;
+                header.characteristics |= IMAGE_SCN_LNK_NRELOC_OVFL;
+            } else {
+                header.num_reloc = sections[i]->reloc_count;
             }
-        } else {
-            dyn_array_for(j, sections[i]->globals) {
-                TB_Global* restrict g = sections[i]->globals[j];
 
-                FOREACH_N(k, 0, g->obj_count) {
-                    size_t actual_pos = g->pos + g->objects[k].offset;
-
-                    if (g->objects[k].type == TB_INIT_OBJ_RELOC) {
-                        const TB_Symbol* s = g->objects[k].reloc;
-
-                        COFF_ImageReloc r = {
-                            .Type = IMAGE_REL_AMD64_ADDR64,
-                            .SymbolTableIndex = s->symbol_id,
-                            .VirtualAddress = actual_pos
-                        };
-                        WRITE(&r, sizeof(r));
-                    }
-                }
-            }
+            WRITE(&header, sizeof(header));
         }
 
-        // sort relocations by virtual address
-        qsort(&output[sections[i]->reloc_pos], sections[i]->reloc_count, sizeof(COFF_ImageReloc), compare_relocs);
-    }
-
-    FOREACH_N(i, 0, debug_sections.length) {
-        assert(write_pos == (uintptr_t) debug_sections.data[i].user_data);
-        FOREACH_N(j, 0, debug_sections.data[i].relocation_count) {
-            TB_ObjectReloc* in_reloc = &debug_sections.data[i].relocations[j];
-
-            COFF_ImageReloc r = {
-                .SymbolTableIndex = in_reloc->symbol_index,
-                .VirtualAddress = in_reloc->virtual_address
+        FOREACH_N(i, 0, debug_sections.length) {
+            COFF_SectionHeader header = {
+                .characteristics = COFF_CHARACTERISTICS_DEBUG,
+                .raw_data_size = debug_sections.data[i].raw_data.length,
+                .pointer_to_reloc = (uintptr_t) debug_sections.data[i].user_data
             };
 
-            switch (in_reloc->type) {
-                case TB_OBJECT_RELOC_SECREL:  r.Type = IMAGE_REL_AMD64_SECREL; break;
-                case TB_OBJECT_RELOC_SECTION: r.Type = IMAGE_REL_AMD64_SECTION; break;
-                default: tb_todo();
+            if (dbg == &tb__codeview_debug_format) {
+                header.characteristics |= IMAGE_SCN_MEM_DISCARDABLE;
             }
-            WRITE(&r, sizeof(r));
-        }
-    }
 
-    // write symbols
-    size_t symbol_count = 1;
-    dyn_array_for(i, sections) {
-        COFF_Symbol s = {
-            .section_number = symbol_count,
-            .storage_class = IMAGE_SYM_CLASS_STATIC,
-            .aux_symbols_count = 1
-        };
-        strncpy((char*) s.short_name, sections[i]->name, 8);
-        WRITE(&s, sizeof(s));
+            TB_Slice name = debug_sections.data[i].name;
+            assert(name.length <= 8);
+            memcpy(header.name, name.data, name.length);
 
-        COFF_AuxSectionSymbol aux = {
-            .length = sections[i]->total_size,
-            .reloc_count = sections[i]->reloc_count,
-            .number = symbol_count,
-        };
-        WRITE(&aux, sizeof(aux));
-        symbol_count++;
-    }
+            size_t reloc_count = debug_sections.data[i].relocation_count;
+            if (reloc_count >= 0xFFFF) {
+                header.num_reloc = 0xFFFF;
+                header.characteristics |= IMAGE_SCN_LNK_NRELOC_OVFL;
+            } else {
+                header.num_reloc = reloc_count;
+            }
 
-    uint32_t string_table_mark = 4;
-    size_t string_table_length = 0;
-    TB_FOR_FUNCTIONS(f, m) {
-        TB_FunctionOutput* out_f = f->output;
-        if (out_f == NULL) continue;
-
-        bool is_extern = out_f->linkage == TB_LINKAGE_PUBLIC;
-        COFF_Symbol sym = {
-            .value = out_f->code_pos,
-            .section_number = 1,
-            .storage_class = is_extern ? IMAGE_SYM_CLASS_EXTERNAL : IMAGE_SYM_CLASS_STATIC
-        };
-
-        const char* name = f->super.name;
-        size_t name_len = strlen(name);
-        assert(name_len < UINT16_MAX);
-        if (name_len >= 8) {
-            sym.long_name[0] = 0; // this value is 0 for long names
-            sym.long_name[1] = string_table_mark;
-
-            string_table[string_table_length++] = (char*)name;
-            string_table_mark += name_len + 1;
-        } else {
-            memcpy(sym.short_name, name, name_len + 1);
+            WRITE(&header, sizeof(header));
         }
 
-        WRITE(&sym, sizeof(sym));
-    }
-
-    TB_FOR_EXTERNALS(ext, m) {
-        COFF_Symbol sym = {
-            .value = 0,
-            .section_number = 0,
-            .storage_class = IMAGE_SYM_CLASS_EXTERNAL
-        };
-
-        size_t name_len = strlen(ext->super.name);
-        assert(name_len < UINT16_MAX);
-
-        if (name_len >= 8) {
-            sym.long_name[0] = 0; // this value is 0 for long names
-            sym.long_name[1] = string_table_mark;
-
-            string_table[string_table_length++] = ext->super.name;
-            string_table_mark += name_len + 1;
-        } else {
-            memcpy(sym.short_name, ext->super.name, name_len + 1);
+        // write raw data
+        dyn_array_for(i, sections) {
+            write_pos = tb_helper_write_section(
+                m, write_pos, sections[i], output, sections[i]->raw_data_pos
+            );
         }
 
-        WRITE(&sym, sizeof(sym));
-    }
+        FOREACH_N(i, 0, debug_sections.length) {
+            assert(write_pos == debug_sections.data[i].virtual_address);
 
-    TB_FOR_GLOBALS(g, m) {
-        bool is_extern = g->linkage == TB_LINKAGE_PUBLIC;
-        COFF_Symbol sym = {
-            .value = g->pos,
-            .section_number = g->parent->section_num,
-            .storage_class = is_extern ? IMAGE_SYM_CLASS_EXTERNAL : IMAGE_SYM_CLASS_STATIC
-        };
+            memcpy(&output[write_pos], debug_sections.data[i].raw_data.data, debug_sections.data[i].raw_data.length);
+            write_pos += debug_sections.data[i].raw_data.length;
+        }
 
-        if (g->super.name) {
-            size_t name_len = strlen(g->super.name);
+        // write relocations
+        dyn_array_for(i, sections) {
+            assert(write_pos == sections[i]->reloc_pos);
+
+            if (sections[i]->kind == TB_MODULE_SECTION_TEXT) {
+                FOREACH_N(i, 0, m->max_threads) {
+                    dyn_array_for(j, m->thread_info[i].symbol_patches) {
+                        TB_SymbolPatch* p = &m->thread_info[i].symbol_patches[j];
+                        TB_FunctionOutput* out_f = p->source->output;
+
+                        size_t actual_pos = out_f->code_pos + out_f->prologue_length + p->pos;
+                        size_t symbol_id = p->target->symbol_id;
+
+                        if (p->target->tag == TB_SYMBOL_FUNCTION) {
+                            // internal patch, already handled
+                        } else if (p->target->tag == TB_SYMBOL_EXTERNAL) {
+                            assert(symbol_id != 0);
+                            COFF_ImageReloc r = {
+                                .Type = IMAGE_REL_AMD64_REL32,
+                                .SymbolTableIndex = symbol_id,
+                                .VirtualAddress = actual_pos
+                            };
+                            WRITE(&r, sizeof(r));
+                        } else if (p->target->tag == TB_SYMBOL_GLOBAL) {
+                            assert(symbol_id != 0);
+                            COFF_ImageReloc r = {
+                                .Type = ((TB_Global*) p->target)->parent->kind == TB_MODULE_SECTION_TLS ? IMAGE_REL_AMD64_SECREL : IMAGE_REL_AMD64_REL32,
+                                .SymbolTableIndex = symbol_id,
+                                .VirtualAddress = actual_pos
+                            };
+                            WRITE(&r, sizeof(r));
+                        } else {
+                            tb_todo();
+                        }
+                    }
+                }
+            } else {
+                dyn_array_for(j, sections[i]->globals) {
+                    TB_Global* restrict g = sections[i]->globals[j];
+
+                    FOREACH_N(k, 0, g->obj_count) {
+                        size_t actual_pos = g->pos + g->objects[k].offset;
+
+                        if (g->objects[k].type == TB_INIT_OBJ_RELOC) {
+                            const TB_Symbol* s = g->objects[k].reloc;
+
+                            COFF_ImageReloc r = {
+                                .Type = IMAGE_REL_AMD64_ADDR64,
+                                .SymbolTableIndex = s->symbol_id,
+                                .VirtualAddress = actual_pos
+                            };
+                            WRITE(&r, sizeof(r));
+                        }
+                    }
+                }
+            }
+
+            // sort relocations by virtual address
+            qsort(&output[sections[i]->reloc_pos], sections[i]->reloc_count, sizeof(COFF_ImageReloc), compare_relocs);
+        }
+
+        FOREACH_N(i, 0, debug_sections.length) {
+            assert(write_pos == (uintptr_t) debug_sections.data[i].user_data);
+            FOREACH_N(j, 0, debug_sections.data[i].relocation_count) {
+                TB_ObjectReloc* in_reloc = &debug_sections.data[i].relocations[j];
+
+                COFF_ImageReloc r = {
+                    .SymbolTableIndex = in_reloc->symbol_index,
+                    .VirtualAddress = in_reloc->virtual_address
+                };
+
+                switch (in_reloc->type) {
+                    case TB_OBJECT_RELOC_SECREL:  r.Type = IMAGE_REL_AMD64_SECREL; break;
+                    case TB_OBJECT_RELOC_SECTION: r.Type = IMAGE_REL_AMD64_SECTION; break;
+                    default: tb_todo();
+                }
+                WRITE(&r, sizeof(r));
+            }
+        }
+
+        // write symbols
+        size_t symbol_count = 1;
+        dyn_array_for(i, sections) {
+            COFF_Symbol s = {
+                .section_number = symbol_count,
+                .storage_class = IMAGE_SYM_CLASS_STATIC,
+                .aux_symbols_count = 1
+            };
+            strncpy((char*) s.short_name, sections[i]->name, 8);
+            WRITE(&s, sizeof(s));
+
+            COFF_AuxSectionSymbol aux = {
+                .length = sections[i]->total_size,
+                .reloc_count = sections[i]->reloc_count,
+                .number = symbol_count,
+            };
+            WRITE(&aux, sizeof(aux));
+            symbol_count++;
+        }
+
+        uint32_t string_table_mark = 4;
+        size_t string_table_length = 0;
+        TB_FOR_FUNCTIONS(f, m) {
+            TB_FunctionOutput* out_f = f->output;
+            if (out_f == NULL) continue;
+
+            bool is_extern = out_f->linkage == TB_LINKAGE_PUBLIC;
+            COFF_Symbol sym = {
+                .value = out_f->code_pos,
+                .section_number = 1,
+                .storage_class = is_extern ? IMAGE_SYM_CLASS_EXTERNAL : IMAGE_SYM_CLASS_STATIC
+            };
+
+            const char* name = f->super.name;
+            size_t name_len = strlen(name);
+            assert(name_len < UINT16_MAX);
+            if (name_len >= 8) {
+                sym.long_name[0] = 0; // this value is 0 for long names
+                sym.long_name[1] = string_table_mark;
+
+                string_table[string_table_length++] = (char*)name;
+                string_table_mark += name_len + 1;
+            } else {
+                memcpy(sym.short_name, name, name_len + 1);
+            }
+
+            WRITE(&sym, sizeof(sym));
+        }
+
+        TB_FOR_EXTERNALS(ext, m) {
+            COFF_Symbol sym = {
+                .value = 0,
+                .section_number = 0,
+                .storage_class = IMAGE_SYM_CLASS_EXTERNAL
+            };
+
+            size_t name_len = strlen(ext->super.name);
             assert(name_len < UINT16_MAX);
 
             if (name_len >= 8) {
                 sym.long_name[0] = 0; // this value is 0 for long names
                 sym.long_name[1] = string_table_mark;
 
-                string_table[string_table_length++] = g->super.name;
+                string_table[string_table_length++] = ext->super.name;
                 string_table_mark += name_len + 1;
             } else {
-                memcpy(sym.short_name, g->super.name, name_len + 1);
+                memcpy(sym.short_name, ext->super.name, name_len + 1);
             }
-        } else {
-            snprintf((char*) sym.short_name, 8, "$%07zu", g->super.symbol_id);
+
+            WRITE(&sym, sizeof(sym));
         }
 
-        WRITE(&sym, sizeof(sym));
-    }
+        TB_FOR_GLOBALS(g, m) {
+            bool is_extern = g->linkage == TB_LINKAGE_PUBLIC;
+            COFF_Symbol sym = {
+                .value = g->pos,
+                .section_number = g->parent->section_num,
+                .storage_class = is_extern ? IMAGE_SYM_CLASS_EXTERNAL : IMAGE_SYM_CLASS_STATIC
+            };
 
-    // write string table
-    {
-        (void) string_table_pos;
-        assert(write_pos == string_table_pos);
+            if (g->super.name) {
+                size_t name_len = strlen(g->super.name);
+                assert(name_len < UINT16_MAX);
 
-        WRITE(&string_table_mark, sizeof(string_table_mark));
-        FOREACH_N(i, 0, string_table_length) {
-            const char* s = string_table[i];
-            size_t l = strlen(s) + 1;
+                if (name_len >= 8) {
+                    sym.long_name[0] = 0; // this value is 0 for long names
+                    sym.long_name[1] = string_table_mark;
 
-            WRITE(s, l);
+                    string_table[string_table_length++] = g->super.name;
+                    string_table_mark += name_len + 1;
+                } else {
+                    memcpy(sym.short_name, g->super.name, name_len + 1);
+                }
+            } else {
+                snprintf((char*) sym.short_name, 8, "$%07zu", g->super.symbol_id);
+            }
+
+            WRITE(&sym, sizeof(sym));
+        }
+
+        // write string table
+        {
+            (void) string_table_pos;
+            assert(write_pos == string_table_pos);
+
+            WRITE(&string_table_mark, sizeof(string_table_mark));
+            FOREACH_N(i, 0, string_table_length) {
+                const char* s = string_table[i];
+                size_t l = strlen(s) + 1;
+
+                WRITE(s, l);
+            }
         }
     }
 

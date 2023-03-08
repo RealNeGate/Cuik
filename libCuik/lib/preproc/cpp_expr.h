@@ -1,9 +1,14 @@
 static intmax_t eval_ternary(Cuik_CPP* restrict c, TokenList* restrict in);
 
+static _Thread_local jmp_buf eval__restore_point;
+
 static intmax_t eval(Cuik_CPP* restrict c, TokenArray* restrict in) {
     void* savepoint = tls_save();
 
     TokenList l = line_into_list(in);
+    if (l.head == NULL) {
+        return 0;
+    }
 
     // We need to get rid of the defined(MACRO) and defined MACRO before we
     // do real expansion or else it'll give us incorrect results
@@ -44,7 +49,15 @@ static intmax_t eval(Cuik_CPP* restrict c, TokenArray* restrict in) {
         start->next = n->next;
     }
 
-    expand(c, l.head, 0);
+    expand(c, l.head, 0, NULL);
+    if (l.head->t.type == 0) {
+        return 0;
+    }
+
+    int result_code = setjmp(eval__restore_point);
+    if (result_code != 0) {
+        return 0;
+    }
 
     // don't worry about the tail being correct, it doesn't matter here
     intmax_t result = eval_ternary(c, &l);
@@ -82,7 +95,7 @@ static intmax_t eval_unary(Cuik_CPP* restrict c, TokenList* restrict in) {
         ptrdiff_t distance = parse_char(t.content.length, (const char*) t.content.data, &ch);
         if (distance < 0) {
             // report(REPORT_ERROR, NULL, s, t.location, "could not parse char literal");
-            abort();
+            longjmp(eval__restore_point, 1);
         }
 
         val = ch;
@@ -93,12 +106,12 @@ static intmax_t eval_unary(Cuik_CPP* restrict c, TokenList* restrict in) {
             /*report_two_spots(REPORT_ERROR, NULL, s, t.location, tokens_get(s)->location,
                 "expected closing parenthesis for macro subexpression",
                 "open", "close?", NULL);*/
-            abort();
+            longjmp(eval__restore_point, 1);
         }
     } else {
-        SourceLoc loc = c->tokens.list.tokens[c->tokens.list.current - 1].location;
+        SourceLoc loc = c->tokens.list.tokens[c->tokens.list.current].location;
         diag_err(&c->tokens, (SourceRange){ loc, loc }, "could macro expression");
-        abort();
+        longjmp(eval__restore_point, 1);
     }
 
     return flip ? !val : val;

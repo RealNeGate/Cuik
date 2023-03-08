@@ -451,7 +451,7 @@ static bool subst(Cuik_CPP* restrict c, TokenNode* head, const uint8_t* subst_st
                     // replace *curr with newest expansion
                     TokenNode* old_next = prev->next;
 
-                    TokenList list = expand_ident(c, NULL, prev, macro_id);
+                    TokenList list = expand_ident(c, NULL, prev, macro_id, NULL);
                     TokenNode* new_tail = list.head;
                     while (new_tail->next) new_tail = new_tail->next;
 
@@ -539,7 +539,7 @@ static bool subst(Cuik_CPP* restrict c, TokenNode* head, const uint8_t* subst_st
                     }
 
                     TokenNode* first_token_in_arg = before_arg ? before_arg->next : curr;
-                    expand(c, first_token_in_arg, vaargs_macro);
+                    expand(c, first_token_in_arg, vaargs_macro, NULL);
 
                     TokenNode* new_tail = first_token_in_arg;
                     while (new_tail->next) new_tail = new_tail->next;
@@ -572,7 +572,7 @@ static bool subst(Cuik_CPP* restrict c, TokenNode* head, const uint8_t* subst_st
                     }
 
                     TokenNode* old_next = curr->next;
-                    expand(c, list.head, macro_id);
+                    expand(c, list.head, macro_id, NULL);
 
                     // replace *curr with newest expansion
                     TokenNode* new_tail = list.head;
@@ -611,7 +611,7 @@ static void skip_nodes(TokenNode* head, TokenNode* tail) {
 
 // return.head is the start of the new output stream segment
 // return.tail is the input stream's new position
-static TokenList expand_ident(Cuik_CPP* restrict c, TokenArray* in, TokenNode* head, uint32_t parent_macro) {
+static TokenList expand_ident(Cuik_CPP* restrict c, TokenArray* in, TokenNode* head, uint32_t parent_macro, TokenArray* rest) {
     // expansion:
     //   foo()                   #define foo bar(x, y, z)
     //   VVV
@@ -682,7 +682,7 @@ static TokenList expand_ident(Cuik_CPP* restrict c, TokenArray* in, TokenNode* h
             #ifdef CPP_DBG
             int dbgmod = 0;
             for (size_t i = 0; i < 100; i++) {
-                if (breakpoints[i] && strncmp((const char*) t.content.data, breakpoints[i], t.content.length) == 0) {
+                if (breakpoints[i] && t.content.length == strlen(breakpoints[i]) && memcmp(t.content.data, breakpoints[i], t.content.length) == 0) {
                     printf("Hit: %.*s\n", (int) t.content.length, t.content.data);
                     cppdbg__arglist = NULL;
                     dbgmod = cppdbg__break();
@@ -705,7 +705,7 @@ static TokenList expand_ident(Cuik_CPP* restrict c, TokenArray* in, TokenNode* h
             }
             #endif /* CPP_DBG */
 
-            expand(c, list.head, macro_id);
+            expand(c, list.head, macro_id, in);
 
             #ifdef CPP_DBG
             if (dbgmod == 1) {
@@ -734,7 +734,17 @@ static TokenList expand_ident(Cuik_CPP* restrict c, TokenArray* in, TokenNode* h
             new_tail->next = end;
             *head = *list.head;
         } else {
-            if (in ? (peek(in).type == '(') : (head->next && head->next->t.type == '(')) {
+            TknType peeked = 0;
+            if (in) {
+                peeked = peek(in).type;
+            } else if (head->next) {
+                peeked = head->next->t.type;
+            } else if (rest) {
+                peeked = peek(rest).type;
+                in = rest;
+            }
+
+            if (peeked == '(') {
                 // expand function-like macro
                 if (in) consume(in);
 
@@ -767,7 +777,7 @@ static TokenList expand_ident(Cuik_CPP* restrict c, TokenArray* in, TokenNode* h
                 #ifdef CPP_DBG
                 int dbgmod = 0;
                 for (size_t i = 0; i < 100; i++) {
-                    if (breakpoints[i] && strncmp((const char*) t.content.data, breakpoints[i], t.content.length) == 0) {
+                    if (breakpoints[i] && t.content.length == strlen(breakpoints[i]) && memcmp(t.content.data, breakpoints[i], t.content.length) == 0) {
                         printf("Hit: %.*s\n", (int) t.content.length, t.content.data);
                         cppdbg__arglist = &arglist;
                         dbgmod = cppdbg__break();
@@ -793,7 +803,7 @@ static TokenList expand_ident(Cuik_CPP* restrict c, TokenArray* in, TokenNode* h
                 #endif /* CPP_DBG */
 
                 size_t hidden = hide_macro(c, def_i);
-                expand(c, list.head, macro_id);
+                expand(c, list.head, macro_id, in);
 
                 #ifdef CPP_DBG
                 if (dbgmod == 1) {
@@ -834,7 +844,7 @@ static TokenList expand_ident(Cuik_CPP* restrict c, TokenArray* in, TokenNode* h
     return (TokenList){ .head = head, .tail = end };
 }
 
-static TokenNode* expand(Cuik_CPP* restrict c, TokenNode* restrict head, uint32_t parent_macro) {
+static TokenNode* expand(Cuik_CPP* restrict c, TokenNode* restrict head, uint32_t parent_macro, TokenArray* rest) {
     int depth = 0;
 
     TokenNode* curr = head;
@@ -856,7 +866,7 @@ static TokenNode* expand(Cuik_CPP* restrict c, TokenNode* restrict head, uint32_
                 }
             }
         } else {
-            curr = expand_ident(c, NULL, savepoint, parent_macro).tail;
+            curr = expand_ident(c, NULL, savepoint, parent_macro, rest).tail;
         }
 
         if (t->type == ')') {

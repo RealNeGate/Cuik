@@ -26,6 +26,7 @@ typedef enum X86_InstType {
     //   dst = COPY src
     X86_INST_COPY = -4,
     X86_INST_MOVE = -5,
+    X86_INST_CALL_SYM = -6,
 } X86_InstType;
 
 // for memory operands imm[0] is two fields:
@@ -96,6 +97,16 @@ static Inst inst_move(TB_DataType dt, int lhs, int rhs) {
     };
 }
 
+static Inst inst_call_sym(TB_DataType dt, int dst, const TB_Symbol* sym) {
+    return (Inst){
+        .type = X86_INST_CALL_SYM,
+        .layout = X86_OP_L,
+        .data_type = dt,
+        .regs = { dst },
+        .imm[0] = (uintptr_t) sym,
+    };
+}
+
 static Inst inst_copy(TB_DataType dt, int lhs, int rhs) {
     return (Inst){
         .type = X86_INST_COPY,
@@ -127,7 +138,7 @@ static Inst inst_ri(int op, TB_DataType dt, int dst, int lhs, int32_t imm) {
 static Inst inst_r(int op, TB_DataType dt, int dst, int src) {
     return (Inst){
         .type = X86_FIRST_INST2 + op,
-        .layout = X86_OP_I,
+        .layout = X86_OP_R,
         .data_type = dt,
         .regs = { dst, src },
     };
@@ -219,7 +230,7 @@ static Val spill_to_stack_slot(Ctx* restrict ctx, Sequence* restrict seq, TB_Nod
 
     if (src != NULL) {
         INST2(!is_lvalue(src) ? MOV : LEA, &dst, src, n->dt);
-        if (ctx->emit_asm) {
+        ASM {
             printf("  MOV ");
             print_operand(&dst);
             printf(", ");
@@ -433,7 +444,7 @@ static int isel(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n) {
 
             if (br->count == 0) {
                 if (ctx->fallthrough != br->default_label) {
-                    JMP(br->default_label);
+                    SUBMIT(inst_jmp(br->default_label));
                 }
             } else if (br->count == 1) {
                 // if-like branch
@@ -446,6 +457,67 @@ static int isel(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n) {
             } else {
                 tb_todo();
             }
+            break;
+        }
+
+        case TB_CALL: {
+            static const struct ParamDescriptor {
+                int gpr_count;
+                int xmm_count;
+                uint16_t callee_saved_xmm_count; // XMM0 - XMMwhatever
+                uint16_t caller_saved_gprs;      // bitfield
+
+                GPR gprs[6];
+            } param_descs[] = {
+                // win64
+                { 4, 4, 16, WIN64_ABI_CALLER_SAVED,  { RCX, RDX, R8, R9,   0,  0 } },
+                // system v
+                { 6, 4, 5, SYSV_ABI_CALLER_SAVED,    { RDI, RSI, RDX, RCX, R8, R9 } },
+                // syscall
+                { 6, 4, 5, SYSCALL_ABI_CALLER_SAVED, { RDI, RSI, RDX, R10, R8, R9 } },
+            };
+
+            bool is_sysv = (ctx->target_abi == TB_ABI_SYSTEMV);
+            const struct ParamDescriptor* restrict desc = &param_descs[is_sysv ? 1 : 0];
+            if (type == TB_SCALL) {
+                desc = &param_descs[2];
+            }
+
+            // generate clones of each parameter which live until the CALL instruction executes
+            dst = DEF_HINTED(n, REG_CLASS_GPR, RAX);
+            int fake_dst = DEF_FORCED(n, REG_CLASS_GPR, RAX, dst);
+
+            FOREACH_N(i, 1, n->input_count) {
+                TB_Node* param = n->inputs[i];
+                TB_DataType param_dt = param->dt;
+
+                if (TB_IS_FLOAT_TYPE(param_dt) || param_dt.width) {
+                    tb_todo();
+                } else {
+                    int src = ISEL(param);
+
+                    if (i - 1 < desc->gpr_count) {
+                        int param_def = DEF_FORCED(param, REG_CLASS_GPR, desc->gprs[i - 1], fake_dst);
+
+                        SUBMIT(inst_copy(param->dt, param_def, src));
+                    } else {
+                        tb_todo();
+                    }
+                }
+            }
+
+            if (type == TB_SCALL) {
+                __debugbreak();
+            } else {
+                if (try_tile(ctx, n->inputs[0]) && n->inputs[0]->type == TB_GET_SYMBOL_ADDRESS) {
+                    TB_NodeSymbol* s = TB_NODE_GET_EXTRA(n->inputs[0]);
+                    SUBMIT(inst_call_sym(n->dt, fake_dst, s->sym));
+                } else {
+                    __debugbreak();
+                }
+            }
+
+            SUBMIT(inst_copy(n->dt, dst, USE(fake_dst)));
             break;
         }
 
@@ -475,7 +547,7 @@ static int8_t resolve_use(Ctx* restrict ctx, int x) {
 
 static void inst2_print(Ctx* restrict ctx, Inst2Type op, Val* dst, Val* src, TB_DataType dt) {
     INST2(op, dst, src, dt);
-    if (ctx->emit_asm) {
+    ASM {
         #define A(x) case x: printf("  " #x " "); break
         switch (op) {
             A(ADD);
@@ -505,7 +577,7 @@ static void inst2_print(Ctx* restrict ctx, Inst2Type op, Val* dst, Val* src, TB_
 
 static void inst1_print(Ctx* restrict ctx, int op, Val* src) {
     INST1(op, src);
-    if (ctx->emit_asm) {
+    ASM {
         #define A(x) case x: printf("  " #x " "); break
         switch (op) {
             A(IDIV);
@@ -528,13 +600,26 @@ static void emit_sequence(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n)
 
         if (inst->type == X86_INST_JMP) {
             JMP(inst->imm[0]);
-            if (ctx->emit_asm) {
+            ASM {
                 printf("  JMP L%zu\n", inst->imm[0]);
             }
             continue;
         } else if (inst->type == X86_INST_JCC) {
             JCC(inst->imm[1], inst->imm[0]);
-            if (ctx->emit_asm) printf("  J%s L%zu\n", COND_NAMES[inst->imm[1]], inst->imm[0]);
+            ASM {
+                printf("  J%s L%zu\n", COND_NAMES[inst->imm[1]], inst->imm[0]);
+            }
+            continue;
+        } else if (inst->type == X86_INST_CALL_SYM) {
+            const TB_Symbol* target = (const TB_Symbol*) (uintptr_t) inst->imm[0];
+
+            tb_emit_symbol_patch(ctx->module, ctx->f, target, GET_CODE_POS(&ctx->emit) + 1, true);
+
+            // CALL rel32
+            EMIT1(&ctx->emit, 0xE8), EMIT4(&ctx->emit, 0x0);
+            ASM {
+                printf("  CALL %s\n", target->name);
+            }
             continue;
         }
 
@@ -604,7 +689,9 @@ static void emit_sequence(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n)
 
             if (ctx->fallthrough != -1) {
                 ret_jmp(&ctx->emit);
-                if (ctx->emit_asm) printf("  JMP .ret\n");
+                ASM {
+                    printf("  JMP .ret\n");
+                }
             }
         } else if (inst->type >= X86_FIRST_UNARY) {
             if (!is_value_match(&ops[0], &ops[1])) {

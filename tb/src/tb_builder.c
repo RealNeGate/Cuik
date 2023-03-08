@@ -422,14 +422,14 @@ TB_API TB_Node* tb_inst_get_symbol_address(TB_Function* f, const TB_Symbol* targ
 }
 
 TB_API TB_Node* tb_inst_syscall(TB_Function* f, TB_DataType dt, TB_Node* syscall_num, size_t param_count, TB_Node** params) {
-    TB_Node* n = tb_alloc_at_end(f, TB_SCALL, dt, param_count, 0);
+    TB_Node* n = tb_alloc_at_end(f, TB_SCALL, dt, 1 + param_count, 0);
     n->inputs[0] = syscall_num;
     memcpy(n->inputs + 1, params, param_count * sizeof(TB_Node*));
     return n;
 }
 
 TB_API TB_Node* tb_inst_call(TB_Function* f, TB_DataType dt, TB_Node* target, size_t param_count, TB_Node** params) {
-    TB_Node* n = tb_alloc_at_end(f, TB_CALL, dt, param_count, 0);
+    TB_Node* n = tb_alloc_at_end(f, TB_CALL, dt, 1 + param_count, 0);
     n->inputs[0] = target;
     memcpy(n->inputs + 1, params, param_count * sizeof(TB_Node*));
     return n;

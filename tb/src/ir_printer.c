@@ -60,6 +60,7 @@ TB_API const char* tb_node_get_name(TB_Node* n) {
         case TB_SIGN_EXT: return "sxt";
         case TB_TRUNCATE: return "trunc";
         case TB_BITCAST: return "bitcast";
+        case TB_GET_SYMBOL_ADDRESS: return "symbol";
 
         case TB_CMP_NE: return "cmp.ne";
         case TB_CMP_EQ: return "cmp.eq";
@@ -140,6 +141,11 @@ static void tb_print_node(TB_Function* f, TB_PrinterCtx* ctx, TB_PrintCallback c
         case TB_LOCAL: {
             TB_NodeLocal* l = TB_NODE_GET_EXTRA(n);
             P("@size %zu @align %zu", l->size, l->align);
+            break;
+        }
+        case TB_GET_SYMBOL_ADDRESS: {
+            TB_NodeSymbol* s = TB_NODE_GET_EXTRA(n);
+            P("%s", s->sym->name);
             break;
         }
         case TB_BRANCH: {

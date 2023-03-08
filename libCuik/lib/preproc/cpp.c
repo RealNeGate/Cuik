@@ -11,6 +11,7 @@
 #include "../diagnostic.h"
 
 #include "lexer.h"
+#include <setjmp.h>
 #include <sys/stat.h>
 
 #if USE_INTRIN
@@ -46,8 +47,8 @@ static bool pop_scope(Cuik_CPP* restrict ctx, TokenArray* restrict in);
 
 static void print_token_stream(TokenArray* in, size_t start, size_t end);
 
-static TokenNode* expand(Cuik_CPP* restrict c, TokenNode* restrict head, uint32_t parent_macro);
-static TokenList expand_ident(Cuik_CPP* restrict c, TokenArray* in, TokenNode* head, uint32_t parent_macro);
+static TokenNode* expand(Cuik_CPP* restrict c, TokenNode* restrict head, uint32_t parent_macro, TokenArray* rest);
+static TokenList expand_ident(Cuik_CPP* restrict c, TokenArray* in, TokenNode* head, uint32_t parent_macro, TokenArray* rest);
 
 #define MAX_CPP_STACK_DEPTH 1024
 
@@ -137,22 +138,6 @@ static TokenArray convert_to_token_list(Cuik_CPP* restrict c, uint32_t file_id, 
 
 static String get_token_as_string(TokenStream* restrict in) {
     return tokens_get(in)->content;
-}
-
-static size_t push_expansion(Cuik_CPP* c, TokenArray* restrict out_tokens, TokenArray* restrict in) {
-    // we're gonna temporarily expand the filepath (in case some dumbfuck put macros in it)
-    size_t save = dyn_array_length(out_tokens->tokens);
-    /*out_tokens->current = save;
-
-    expand(c, out_tokens, in, 0);
-    assert(out_tokens->current != dyn_array_length(out_tokens->tokens) && "Expected the macro expansion to add something");*/
-    return save;
-}
-
-static void pop_expansion(TokenArray* out_tokens, size_t save) {
-    // reset token stream
-    // dyn_array_set_length(out_tokens->tokens, save);
-    // out_tokens->current = 0;
 }
 
 // include this if you want to enable the preprocessor debugger
@@ -666,7 +651,7 @@ Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
                         } else {
                             void* savepoint = tls_save();
 
-                            TokenList l = expand_ident(ctx, in, NULL, 0);
+                            TokenList l = expand_ident(ctx, in, NULL, 0, NULL);
                             for (TokenNode* n = l.head; n != l.tail; n = n->next) {
                                 Token* restrict t = &n->t;
                                 if (t->type == 0) {

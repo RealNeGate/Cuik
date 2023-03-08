@@ -24,6 +24,7 @@ void tb_transmute_to_poison(TB_Node* n) {
 
 void tb_transmute_to_pass(TB_Node* n, TB_Node* point_to) {
     size_t size = sizeof(TB_Node) + (n->input_count * sizeof(TB_Node*)) + n->extra_count;
+    (void) size;
     assert(size >= sizeof(TB_Node) + sizeof(TB_Node*));
 
     n->type = TB_PASS;

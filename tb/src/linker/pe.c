@@ -342,6 +342,7 @@ void append_object(TB_Linker* l, TB_Slice obj_name, TB_ObjectFile* obj) {
                 if (src_symbol->type == TB_OBJECT_SYMBOL_WEAK_EXTERN) {
                     tb_todo();
                 }
+
                 dyn_array_put(info->relatives, r);
                 dyn_array_put(p->rel_refs, (TB_LinkerRelocRef){
                         info, dyn_array_length(info->relatives) - 1
@@ -437,7 +438,8 @@ static void append_module(TB_Linker* l, TB_Module* m) {
     tb__append_module_section(l, m, &m->data, ".data", IMAGE_SCN_MEM_WRITE | IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA);
     tb__append_module_section(l, m, &m->rdata, ".rdata", IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA);
 
-    if (m->compiled_function_count > 0) {
+    const ICodeGen* restrict code_gen = tb__find_code_generator(m);
+    if (m->compiled_function_count > 0 && code_gen->emit_win64eh_unwind_info) {
         TB_LinkerSection* rdata = m->rdata.piece ? m->rdata.piece->parent : NULL;
         if (!rdata) {
             rdata = tb__find_or_create_section(l, ".rdata", IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA);
@@ -445,7 +447,6 @@ static void append_module(TB_Linker* l, TB_Module* m) {
 
         CUIK_TIMED_BLOCK("generate xdata") {
             TB_Emitter xdata = { 0 };
-            const ICodeGen* restrict code_gen = tb__find_code_generator(m);
 
             TB_FOR_FUNCTIONS(f, m) {
                 TB_FunctionOutput* out_f = f->output;
@@ -523,10 +524,6 @@ static void apply_external_relocs(TB_Linker* l, uint8_t* output, uint64_t image_
     TB_LinkerSection* text  = tb__find_section(l, ".text", IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_CNT_CODE);
     uint32_t trampoline_rva = text->address + l->trampoline_pos;
     uint32_t iat_pos = l->iat_pos;
-
-    TB_LinkerSymbol* cum = tb__find_symbol_cstr(&l->symtab, "__xi_a");
-    TB_LinkerSymbol* piss = tb__find_symbol_cstr(&l->symtab, "__xi_z");
-    (void)cum,(void)piss;
 
     // TODO(NeGate): we can multithread this code with a job stealing queue
     for (TB_LinkerThreadInfo* restrict info = l->first_thread_info; info; info = info->next) {

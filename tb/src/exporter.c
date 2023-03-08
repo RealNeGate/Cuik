@@ -25,7 +25,11 @@ TB_API TB_Exports tb_module_object_export(TB_Module* m, TB_DebugFormat debug_fmt
     };
 
     assert(fn[m->target_system] != NULL && "TODO");
-    return fn[m->target_system](m, find_debug_format(debug_fmt));
+    TB_Exports e;
+    CUIK_TIMED_BLOCK("export") {
+        e = fn[m->target_system](m, find_debug_format(debug_fmt));
+    }
+    return e;
 }
 
 TB_API void tb_exporter_free(TB_Exports exports) {
