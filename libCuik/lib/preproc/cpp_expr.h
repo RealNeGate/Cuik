@@ -1,4 +1,5 @@
 static intmax_t eval_ternary(Cuik_CPP* restrict c, TokenList* restrict in);
+static intmax_t eval_ternary_safe(Cuik_CPP* restrict c, TokenList* restrict in);
 
 static _Thread_local jmp_buf eval__restore_point;
 
@@ -54,16 +55,19 @@ static intmax_t eval(Cuik_CPP* restrict c, TokenArray* restrict in) {
         return 0;
     }
 
-    int result_code = setjmp(eval__restore_point);
-    if (result_code != 0) {
-        return 0;
-    }
-
     // don't worry about the tail being correct, it doesn't matter here
-    intmax_t result = eval_ternary(c, &l);
+    intmax_t result = eval_ternary_safe(c, &l);
     tls_restore(savepoint);
 
     return result;
+}
+
+static intmax_t eval_ternary_safe(Cuik_CPP* restrict c, TokenList* restrict in) {
+    if (setjmp(eval__restore_point)) {
+        return 0;
+    }
+
+    return eval_ternary(c, in);
 }
 
 // consume for lists

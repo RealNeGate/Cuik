@@ -327,7 +327,7 @@ TB_API void tb_function_set_prototype(TB_Function* f, const TB_FunctionPrototype
     const ICodeGen* restrict code_gen = tb__find_code_generator(f->super.module);
 
     size_t param_count = p->param_count;
-    f->params = tb_platform_heap_realloc(f->params, sizeof(TB_Reg) * param_count);
+    f->params = tb_platform_heap_realloc(f->params, sizeof(TB_Node*) * param_count);
     if (param_count > 0 && f->params == NULL) {
         tb_panic("tb_function_set_prototype: Out of memory!");
     }
