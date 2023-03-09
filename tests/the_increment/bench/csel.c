@@ -47,11 +47,11 @@ long long fh(int* value) {
 
 int main() {}
 
-/*int without_restrict(int const* const x, int* y) {
+int without_restrict(int const* const x, int* y) {
     if(*x == 0) {
         *y = 1;
         return *x;
     }
 
     return 1;
-}*/
+}

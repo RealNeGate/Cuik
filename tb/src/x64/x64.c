@@ -407,9 +407,9 @@ static int isel(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n) {
                 ptrdiff_t search = nl_map_get(ctx->stack_slots, n->inputs[0]);
                 assert(search >= 0);
 
-                inst_mr(MOV, n->dt, RBP, GPR_NONE, SCALE_X1, ctx->stack_slots[search].v, src);
+                SUBMIT(inst_mr(MOV, n->dt, RBP, GPR_NONE, SCALE_X1, ctx->stack_slots[search].v, src));
             } else {
-                inst_mr(MOV, n->dt, USE_VAL(n->inputs[0]), GPR_NONE, SCALE_X1, 0, src);
+                SUBMIT(inst_mr(MOV, n->dt, ISEL(n->inputs[0]), GPR_NONE, SCALE_X1, 0, src));
             }
             break;
         }
@@ -667,6 +667,16 @@ static void emit_sequence(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n)
                 ops[1] = val_base_index(TB_TYPE_I64, regs[2], regs[3], scale);
                 ops[1].mem.disp = disp;
                 op_count = 2;
+                break;
+            }
+            case X86_OP_MR: {
+                Scale scale = (inst->imm[0] >> 32);
+                int32_t disp = inst->imm[0] & 0xFFFFFFFF;
+
+                ops[1] = val_base_index(TB_TYPE_I64, regs[2], regs[3], scale);
+                ops[1].mem.disp = disp;
+                ops[2] = val_gpr(TB_TYPE_I64, regs[1]);
+                op_count = 3;
                 break;
             }
             default: tb_todo();
