@@ -658,10 +658,7 @@ extern "C" {
         TB_Label** preds;
     } TB_Predeccesors;
 
-    typedef struct TB_DominanceFrontiers {
-        int* count;
-        TB_Label** _;
-    } TB_DominanceFrontiers;
+    typedef struct TB_DominanceFrontiers TB_DominanceFrontiers;
 
     typedef enum {
         TB_OBJECT_RELOC_NONE, // how?

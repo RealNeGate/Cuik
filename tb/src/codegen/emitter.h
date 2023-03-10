@@ -18,6 +18,8 @@ typedef struct {
     // technically NULLable, just can't use patches if NULL
     TB_Function* f;
 
+    bool emit_asm;
+
     // this is mapped to a giant buffer and is technically allow to use the entire rest
     // of said buffer
     size_t count, capacity;

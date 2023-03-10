@@ -62,8 +62,10 @@ inline static void set_copy(Set* dst, Set* src) {
 }
 
 inline static size_t set_popcount(Set* s) {
+    size_t n = (s->capacity + 63) / 64;
+
     size_t sum = 0;
-    for (size_t i = 0; i < s->capacity; i++) {
+    for (size_t i = 0; i < n; i++) {
         sum += tb_popcount64(s->data[i]);
     }
 

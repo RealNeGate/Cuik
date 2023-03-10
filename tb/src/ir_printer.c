@@ -56,6 +56,9 @@ TB_API const char* tb_node_get_name(TB_Node* n) {
         case TB_PASS: return "pass";
         case TB_PHI: return "phi";
 
+        case TB_ARRAY_ACCESS: return "array";
+        case TB_MEMBER_ACCESS: return "member";
+
         case TB_ZERO_EXT: return "zxt";
         case TB_SIGN_EXT: return "sxt";
         case TB_TRUNCATE: return "trunc";
@@ -94,7 +97,7 @@ TB_API const char* tb_node_get_name(TB_Node* n) {
         case TB_BRANCH: return "br";
         case TB_RET: return "ret";
 
-        default: return NULL;
+        default: tb_todo();return "(unknown)";
     }
 }
 
@@ -141,6 +144,16 @@ static void tb_print_node(TB_Function* f, TB_PrinterCtx* ctx, TB_PrintCallback c
         case TB_LOCAL: {
             TB_NodeLocal* l = TB_NODE_GET_EXTRA(n);
             P("@size %zu @align %zu", l->size, l->align);
+            break;
+        }
+        case TB_MEMBER_ACCESS: {
+            TB_NodeMember* m = TB_NODE_GET_EXTRA(n);
+            P(" + %lld", m->offset);
+            break;
+        }
+        case TB_ARRAY_ACCESS: {
+            TB_NodeArray* a = TB_NODE_GET_EXTRA(n);
+            P(" * %lld", a->stride);
             break;
         }
         case TB_GET_SYMBOL_ADDRESS: {

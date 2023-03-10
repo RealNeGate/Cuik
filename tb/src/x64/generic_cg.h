@@ -50,15 +50,6 @@ typedef struct {
     int val;
 } ValueDesc;
 
-typedef struct {
-    int start, end;
-} LiveInterval;
-
-typedef struct {
-    TB_Node* n;
-    Val v;
-} Reload;
-
 typedef struct Sequence {
     struct Sequence* next;
 
@@ -83,16 +74,12 @@ typedef struct Def {
     int live_until;
 } Def;
 
-typedef struct {
+typedef struct Ctx {
     TB_CGEmitter emit;
-    bool emit_asm;
 
     TB_Module* module;
     TB_Function* f;
     TB_ABI target_abi;
-
-    // for panic-based error handling
-    jmp_buf restore_point;
 
     // machine output sequences
     Sequence *first, *last;
@@ -110,8 +97,6 @@ typedef struct {
     NL_Map(TB_Node*, int) stack_slots;
 
     // Reg alloc
-    DynArray(Reload) reloads;
-
     Def** active;
     size_t active_count;
 
@@ -123,7 +108,7 @@ typedef struct {
 } Ctx;
 
 #if 1
-#define ASM if (ctx->emit_asm)
+#define ASM if (ctx->emit.emit_asm)
 #else
 #define ASM if (0)
 #endif
@@ -264,10 +249,6 @@ static void remove_active(Ctx* restrict ctx, size_t i) {
     ctx->active_count -= 1;
 }
 
-static void trap(Ctx* restrict ctx, int code) {
-    longjmp(ctx->restore_point, code);
-}
-
 static size_t estimate_hash_map_size(size_t s) {
     // allocate values map and active, for linear scan
     size_t ht_cap = tb_next_pow2((s * 8) / 5);
@@ -338,7 +319,7 @@ static void linear_scan(Ctx* restrict ctx, TB_Function* f, size_t node_count) {
     Def** sorted = tb_platform_heap_alloc(def_count * sizeof(Def*));
     FOREACH_N(i, 0, def_count) {
         Def* d = &ctx->defs[i];
-        if (d->reg >= 0) {
+        if (d->reg >= 0 && d->live_until >= 0) {
             Def* until = &ctx->defs[d->live_until];
 
             if (until->start != INT_MAX) {
@@ -441,7 +422,7 @@ static void fence(Ctx* restrict ctx, TB_Label bb) {
 }
 
 // Codegen through here is done in phases
-static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_FeatureSet* features, uint8_t* out, size_t out_capacity, size_t local_thread_id) {
+static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_FeatureSet* features, uint8_t* out, size_t out_capacity) {
     TB_TemporaryStorage* tls = tb_tls_allocate();
     tb_function_print(f, tb_default_print_callback, stdout, false);
 
@@ -456,14 +437,6 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
             .capacity = out_capacity,
         }
     };
-
-    // Setup restore point so the codegen can safely exit
-    int result_code = setjmp(ctx->restore_point);
-    if (result_code != 0) {
-        // we had an error
-        arena_clear(&tb__arena);
-        return (TB_FunctionOutput){ .result = result_code };
-    }
 
     ctx->free_regs[0] = set_create(16);
     ctx->free_regs[1] = set_create(16);
@@ -547,7 +520,7 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
     //   fixed and which need allocation. For now regalloc is handled
     //   immediately but in theory it could be delayed until all selection
     //   is done.
-    ctx->emit_asm = true;
+    ctx->emit.emit_asm = true;
     CUIK_TIMED_BLOCK("isel") FOREACH_REVERSE_N(i, 0, walk.count) {
         TB_Label bb = walk.traversal[i];
 
@@ -595,12 +568,6 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
 
                 ASM { printf("L%d:\n", bb); }
                 last = bb;
-            }
-
-            // mark fallthrough
-            ctx->fallthrough = -1;
-            if (seq->next && seq->next->label != bb) {
-                ctx->fallthrough = seq->next->label;
             }
 
             TB_Node* n = seq->node;

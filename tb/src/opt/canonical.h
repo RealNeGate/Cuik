@@ -136,12 +136,12 @@ static bool simplify_pointers(TB_Function* f, TB_Node* n) {
                 // success!
                 OPTIMIZER_LOG(n, "folded constant array access");
 
-                tb_todo();
-                /* n->type = TB_MEMBER_ACCESS;
+                /*tb_todo();
+                n->type = TB_MEMBER_ACCESS;
                 n->inputs[0] = base;
                 n->member_access.base = base_reg;
-                n->member_access.offset = res; */
-                return true;
+                n->member_access.offset = res;
+                return true;*/
             }
         } else if (tb_node_is_constant_zero(index)) {
             OPTIMIZER_LOG(n, "elided array access to first element");

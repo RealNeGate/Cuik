@@ -147,9 +147,9 @@ TB_API bool tb_module_compile_function(TB_Module* m, TB_Function* f, TB_ISelMode
         size_t local_capacity = region->capacity - region->size;
 
         if (isel_mode == TB_ISEL_COMPLEX) {
-            *func_out = code_gen->complex_path(f, &m->features, local_buffer, local_capacity, id);
+            *func_out = code_gen->complex_path(f, &m->features, local_buffer, local_capacity);
         } else {
-            *func_out = code_gen->fast_path(f, &m->features, local_buffer, local_capacity, id);
+            *func_out = code_gen->fast_path(f, &m->features, local_buffer, local_capacity);
         }
     }
 

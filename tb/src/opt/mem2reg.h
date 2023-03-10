@@ -476,24 +476,30 @@ bool mem2reg(TB_Function* f, TB_TemporaryStorage* tls) {
                 TB_Node* value = c.current_def[(var * f->bb_count) + bb];
                 TB_DataType dt = value->dt;
 
-                FOREACH_N(k, 0, df.count[bb]) {
-                    TB_Label l = df._[bb][k];
-                    if (!set_first_time(&has_already, l)) continue;
+                Set* frontier = &df._[bb];
+                size_t n = (frontier->capacity + 63) / 64;
+                FOREACH_N(k, 0, n) if (frontier->data[k]) {
+                    uint64_t bits = frontier->data[k];
 
-                    TB_Node* phi_reg = c.current_def[(var * f->bb_count) + l];
-                    if (phi_reg == NULL) {
-                        phi_reg = new_phi(&c, f, var, l, dt);
-                    } else if (phi_reg->type != TB_PHI) {
-                        TB_Node* old_reg = phi_reg;
-                        phi_reg = new_phi(&c, f, var, l, dt);
-                        add_phi_operand(&c, f, phi_reg, l, old_reg);
-                    }
+                    FOREACH_N(b, 0, 64) if (bits & (1ull << b)) {
+                        TB_Label l = k*64 + b;
+                        if (!set_first_time(&has_already, l)) continue;
 
-                    c.current_def[(var * f->bb_count) + l] = phi_reg;
-                    add_phi_operand(&c, f, phi_reg, bb, value);
+                        TB_Node* phi_reg = c.current_def[(var * f->bb_count) + l];
+                        if (phi_reg == NULL) {
+                            phi_reg = new_phi(&c, f, var, l, dt);
+                        } else if (phi_reg->type != TB_PHI) {
+                            TB_Node* old_reg = phi_reg;
+                            phi_reg = new_phi(&c, f, var, l, dt);
+                            add_phi_operand(&c, f, phi_reg, l, old_reg);
+                        }
 
-                    if (set_first_time(&ever_worked, l)) {
-                        queue[queue_count++] = l;
+                        c.current_def[(var * f->bb_count) + l] = phi_reg;
+                        add_phi_operand(&c, f, phi_reg, bb, value);
+
+                        if (set_first_time(&ever_worked, l)) {
+                            queue[queue_count++] = l;
+                        }
                     }
                 }
 

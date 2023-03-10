@@ -11,22 +11,13 @@ enum {
 };
 
 typedef enum X86_InstType {
-    // mov    lea    add
-    X86_FIRST_INST2    = 0,
-    // movps    ucomiss
-    X86_FIRST_INST2SSE = 256,
-    // call [rcx]     div
-    X86_FIRST_UNARY    = 0x1000,
-
-
     // magic instructions
     X86_INST_JMP = -1,
     X86_INST_JCC = -2,
-    X86_INST_RET = -3,
     //   dst = COPY src
-    X86_INST_COPY = -4,
-    X86_INST_MOVE = -5,
-    X86_INST_CALL_SYM = -6,
+    X86_INST_COPY = -3,
+    X86_INST_MOVE = -4,
+    X86_INST_CALL_SYM = -5,
 } X86_InstType;
 
 // for memory operands imm[0] is two fields:
@@ -79,15 +70,6 @@ static Inst inst_jmp(int target) {
     };
 }
 
-static Inst inst_ret(TB_DataType dt, int src) {
-    return (Inst){
-        .type = X86_INST_RET,
-        .layout = X86_OP_R,
-        .data_type = dt,
-        .regs = { -1, src }
-    };
-}
-
 static Inst inst_move(TB_DataType dt, int lhs, int rhs) {
     return (Inst){
         .type = X86_INST_MOVE,
@@ -118,7 +100,7 @@ static Inst inst_copy(TB_DataType dt, int lhs, int rhs) {
 
 static Inst inst_rr(int op, TB_DataType dt, int dst, int lhs, int rhs) {
     return (Inst){
-        .type = X86_FIRST_INST2 + op,
+        .type = op,
         .layout = X86_OP_RR,
         .data_type = dt,
         .regs = { dst, lhs, rhs }
@@ -127,7 +109,7 @@ static Inst inst_rr(int op, TB_DataType dt, int dst, int lhs, int rhs) {
 
 static Inst inst_ri(int op, TB_DataType dt, int dst, int lhs, int32_t imm) {
     return (Inst){
-        .type = X86_FIRST_INST2 + op,
+        .type = op,
         .layout = X86_OP_RI,
         .data_type = dt,
         .regs = { dst, lhs },
@@ -137,7 +119,7 @@ static Inst inst_ri(int op, TB_DataType dt, int dst, int lhs, int32_t imm) {
 
 static Inst inst_r(int op, TB_DataType dt, int dst, int src) {
     return (Inst){
-        .type = X86_FIRST_INST2 + op,
+        .type = op,
         .layout = X86_OP_R,
         .data_type = dt,
         .regs = { dst, src },
@@ -146,7 +128,7 @@ static Inst inst_r(int op, TB_DataType dt, int dst, int src) {
 
 static Inst inst_i(int op, TB_DataType dt, int dst, int32_t imm) {
     return (Inst){
-        .type = X86_FIRST_INST2 + op,
+        .type = op,
         .layout = X86_OP_I,
         .data_type = dt,
         .regs = { dst },
@@ -156,7 +138,7 @@ static Inst inst_i(int op, TB_DataType dt, int dst, int32_t imm) {
 
 static Inst inst_m(int op, TB_DataType dt, int dst, int base, int index, Scale scale, int32_t disp) {
     return (Inst){
-        .type = X86_FIRST_INST2 + op,
+        .type = op,
         .layout = X86_OP_M,
         .data_type = dt,
         .regs = { dst, 0, base, index },
@@ -166,7 +148,7 @@ static Inst inst_m(int op, TB_DataType dt, int dst, int base, int index, Scale s
 
 static Inst inst_mr(int op, TB_DataType dt, int base, int index, Scale scale, int32_t disp, int rhs) {
     return (Inst){
-        .type = X86_FIRST_INST2 + op,
+        .type = op,
         .layout = X86_OP_MR,
         .data_type = dt,
         .regs = { -1, rhs, base, index },
@@ -367,8 +349,8 @@ static int isel(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n) {
         case TB_XOR:
         case TB_ADD:
         case TB_SUB: {
-            const static Inst2Type ops[]  = { AND, OR, XOR, ADD, SUB };
-            Inst2Type op = ops[type - TB_AND];
+            const static InstType ops[] = { AND, OR, XOR, ADD, SUB };
+            InstType op = ops[type - TB_AND];
 
             dst = DEF(n, REG_CLASS_GPR);
 
@@ -391,7 +373,13 @@ static int isel(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n) {
                 ctx->defs[src_vreg].hint = RAX;
             }
 
-            SUBMIT(inst_ret(n->inputs[0]->dt, USE(src_vreg)));
+            // we ain't gotta worry about regalloc here, we dippin
+            int fake_dst = DEF_FORCED(n, REG_CLASS_GPR, RAX, -1);
+            SUBMIT(inst_copy(n->inputs[0]->dt, fake_dst, USE(src_vreg)));
+
+            if (ctx->fallthrough != -1) {
+                SUBMIT(inst_jmp(-1));
+            }
             break;
         }
 
@@ -430,7 +418,7 @@ static int isel(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n) {
             if (try_tile(ctx, src)) {
                 // movsx dst, [src]
                 Inst inst = isel_load(ctx, src, dst);
-                inst.type = X86_FIRST_INST2 + op;
+                inst.type = op;
                 SUBMIT(inst);
             } else {
                 // movsx dst, src
@@ -545,29 +533,10 @@ static int8_t resolve_use(Ctx* restrict ctx, int x) {
     return x;
 }
 
-static void inst2_print(Ctx* restrict ctx, Inst2Type op, Val* dst, Val* src, TB_DataType dt) {
-    INST2(op, dst, src, dt);
+static void inst2_print(Ctx* restrict ctx, InstType type, Val* dst, Val* src, TB_DataType dt) {
+    INST2(type, dst, src, dt);
     ASM {
-        #define A(x) case x: printf("  " #x " "); break
-        switch (op) {
-            A(ADD);
-            A(AND);
-            A(OR);
-            A(SUB);
-            A(XOR);
-            A(CMP);
-            A(MOV);
-            A(LEA);
-
-            A(MOVSXB);
-            A(MOVSXW);
-            A(MOVSXD);
-            A(MOVZXB);
-            A(MOVZXW);
-            default: tb_todo();
-        }
-        #undef A
-
+        printf("  %s ", inst_table[type].mnemonic);
         print_operand(dst);
         printf(", ");
         print_operand(src);
@@ -575,19 +544,10 @@ static void inst2_print(Ctx* restrict ctx, Inst2Type op, Val* dst, Val* src, TB_
     }
 }
 
-static void inst1_print(Ctx* restrict ctx, int op, Val* src) {
-    INST1(op, src);
+static void inst1_print(Ctx* restrict ctx, int type, Val* src) {
+    INST1(type, src);
     ASM {
-        #define A(x) case x: printf("  " #x " "); break
-        switch (op) {
-            A(IDIV);
-            A(DIV);
-            A(NOT);
-            A(NEG);
-            default: tb_todo();
-        }
-        #undef A
-
+        printf("  %s ", inst_table[type].mnemonic);
         print_operand(src);
         printf("\n");
     }
@@ -601,7 +561,8 @@ static void emit_sequence(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n)
         if (inst->type == X86_INST_JMP) {
             JMP(inst->imm[0]);
             ASM {
-                printf("  JMP L%zu\n", inst->imm[0]);
+                if (inst->imm[0] == -1) printf("  JMP .ret_jmp\n");
+                else printf("  JMP L%zu\n", inst->imm[0]);
             }
             continue;
         } else if (inst->type == X86_INST_JCC) {
@@ -690,37 +651,27 @@ static void emit_sequence(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n)
             if (!is_value_match(&ops[0], &ops[1])) {
                 inst2_print(ctx, MOV, &ops[0], &ops[1], inst->data_type);
             }
-        } else if (inst->type == X86_INST_RET) {
-            // mov src into RAX
-            ops[0] = val_gpr(TB_TYPE_I64, RAX);
-            if (ops[1].reg != RAX) {
-                inst2_print(ctx, MOV, &ops[0], &ops[1], inst->data_type);
-            }
-
-            if (ctx->fallthrough != -1) {
-                ret_jmp(&ctx->emit);
-                ASM {
-                    printf("  JMP .ret\n");
-                }
-            }
-        } else if (inst->type >= X86_FIRST_UNARY) {
+        } else if (op_count == 1) {
             if (!is_value_match(&ops[0], &ops[1])) {
                 inst2_print(ctx, MOV, &ops[0], &ops[1], inst->data_type);
             }
 
             ops[0].dt = inst->data_type;
             inst1_print(ctx, inst->type, &ops[0]);
-        } else if (inst->type >= X86_FIRST_INST2) {
+        } else if (op_count == 2) {
             if (!has_def) {
-                inst2_print(ctx, (Inst2Type) inst->type, &ops[1], &ops[2], inst->data_type);
-            } else if (op_count == 2) {
-                inst2_print(ctx, (Inst2Type) inst->type, &ops[0], &ops[1], inst->data_type);
+                inst2_print(ctx, (InstType) inst->type, &ops[1], &ops[2], inst->data_type);
             } else {
-                assert(op_count == 3);
+                inst2_print(ctx, (InstType) inst->type, &ops[0], &ops[1], inst->data_type);
+            }
+        } else if (op_count == 3) {
+            if (!has_def) {
+                inst2_print(ctx, (InstType) inst->type, &ops[1], &ops[2], inst->data_type);
+            } else {
                 if (ops[0].reg != ops[1].reg) {
                     inst2_print(ctx, MOV, &ops[0], &ops[1], inst->data_type);
                 }
-                inst2_print(ctx, (Inst2Type) inst->type, &ops[0], &ops[2], inst->data_type);
+                inst2_print(ctx, (InstType) inst->type, &ops[0], &ops[2], inst->data_type);
             }
         } else {
             tb_todo();

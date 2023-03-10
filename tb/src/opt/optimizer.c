@@ -58,40 +58,46 @@ static void dce(TB_Function* f) {
 }
 
 static void canonicalize(TB_Function* f) {
-    TB_FOR_BASIC_BLOCK(bb, f) {
-        TB_FOR_NODE(n, f, bb) {
-            const_fold(f, bb, n);
-            simplify_cmp(f, n);
-            // reassoc(f, n);
-            simplify_pointers(f, n);
+    CUIK_TIMED_BLOCK_ARGS("Canonical", f->super.name) {
+        TB_FOR_BASIC_BLOCK(bb, f) {
+            TB_FOR_NODE(n, f, bb) {
+                const_fold(f, bb, n);
+                simplify_cmp(f, n);
+                // reassoc(f, n);
+                simplify_pointers(f, n);
 
-            // check if all paths are identical
-            if (n->type == TB_PHI) {
-                bool success = true;
-                FOREACH_N(i, 1, n->input_count) {
-                    if (n->inputs[0] != n->inputs[i]) {
-                        success = false;
-                        break;
+                // check if all paths are identical
+                if (n->type == TB_PHI) {
+                    bool success = true;
+                    FOREACH_N(i, 1, n->input_count) {
+                        if (n->inputs[0] != n->inputs[i]) {
+                            success = false;
+                            break;
+                        }
                     }
-                }
 
-                if (success) {
-                    tb_transmute_to_pass(n, n->inputs[0]);
+                    if (success) {
+                        tb_transmute_to_pass(n, n->inputs[0]);
+                    }
                 }
             }
         }
     }
 
-    PassCtx ctx = { 0 };
-    TB_FOR_BASIC_BLOCK(bb, f) {
-        TB_FOR_NODE(r, f, bb) {
-            handle_pass(f, &ctx, bb, r);
+    CUIK_TIMED_BLOCK_ARGS("PassRemove", f->super.name) {
+        PassCtx ctx = { 0 };
+        TB_FOR_BASIC_BLOCK(bb, f) {
+            TB_FOR_NODE(r, f, bb) {
+                handle_pass(f, &ctx, bb, r);
+            }
         }
+        nl_map_free(ctx.def_table);
     }
-    nl_map_free(ctx.def_table);
 
     // kill any unused regs
-    dce(f);
+    CUIK_TIMED_BLOCK_ARGS("DCE", f->super.name) {
+        dce(f);
+    }
 }
 
 static void schedule_function_level_opts(TB_Module* m, TB_Function* f, size_t pass_count, const TB_Pass* passes[]) {
@@ -101,7 +107,9 @@ static void schedule_function_level_opts(TB_Module* m, TB_Function* f, size_t pa
     FOREACH_N(i, 0, pass_count) {
         canonicalize(f);
 
-        passes[i]->func_run(f, tls);
+        CUIK_TIMED_BLOCK_ARGS(passes[i]->name, f->super.name) {
+            passes[i]->func_run(f, tls);
+        }
     }
 
     // just in case

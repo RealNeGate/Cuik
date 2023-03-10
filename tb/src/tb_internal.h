@@ -175,6 +175,10 @@ typedef struct TB_PrototypeParam {
     TB_DebugType* debug_type;
 } TB_PrototypeParam;
 
+struct TB_DominanceFrontiers {
+    Set* _;
+};
+
 // function prototypes are stored
 // in streams as inplace arrays:
 //
@@ -473,8 +477,8 @@ typedef struct {
     // NULLable if doesn't apply
     void (*emit_win64eh_unwind_info)(TB_Emitter* e, TB_FunctionOutput* out_f, uint64_t saved, uint64_t stack_usage);
 
-    TB_FunctionOutput (*fast_path)(TB_Function* restrict f, const TB_FeatureSet* features, uint8_t* out, size_t out_capacity, size_t local_thread_id);
-    TB_FunctionOutput (*complex_path)(TB_Function* restrict f, const TB_FeatureSet* features, uint8_t* out, size_t out_capacity, size_t local_thread_id);
+    TB_FunctionOutput (*fast_path)(TB_Function* restrict f, const TB_FeatureSet* features, uint8_t* out, size_t out_capacity);
+    TB_FunctionOutput (*complex_path)(TB_Function* restrict f, const TB_FeatureSet* features, uint8_t* out, size_t out_capacity);
 } ICodeGen;
 
 // All debug formats i know of boil down to adding some extra sections to the object file

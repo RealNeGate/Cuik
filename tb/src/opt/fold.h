@@ -354,7 +354,7 @@ static bool const_fold(TB_Function* f, TB_Label bb, TB_Node* n) {
                                 OPTIMIZER_LOG(n, "converted power-of-two multiply into left shift");
 
                                 // It's a power of two, swap in a left-shift
-                                tb_todo();
+                                // tb_todo();
                                 /* TB_Node* new_op = tb_alloc_node(f, TB_INTEGER_CONST, dt, 0, sizeof(TB_NodeInt) + sizeof(uint64_t));
                                 TB_NODE_GET_EXTRA_T(new_op, TB_NodeInt)->words[0] = log2;
 

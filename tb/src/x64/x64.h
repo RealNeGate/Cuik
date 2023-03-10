@@ -58,10 +58,7 @@ typedef enum Inst2FPFlags {
 
 typedef struct Val {
     uint8_t type;
-    bool is_spill : 1;
-    bool is_ref : 1;
     TB_DataType dt;
-    TB_Node* fix_site;
 
     union {
         int reg;
@@ -90,19 +87,22 @@ static_assert(offsetof(Val, reg) == offsetof(Val, xmm), "Val::reg and Val::xmm m
 static_assert(offsetof(Val, global.is_rvalue) == offsetof(Val, mem.is_rvalue), "Val::mem.is_rvalue and Val::global.is_rvalue must alias!");
 
 typedef enum Inst2Type {
+    // Nullary
+    RET,
+    // Unary
+    NOT, NEG, DIV, IDIV, CALL_RM,
     // Integer data processing
-    ADD, AND, OR, SUB, XOR, CMP, MOV,
-    // weird ones
+    ADD, OR, AND, SUB, XOR, CMP, MOV,
+    // Misc interger ops
     TEST, LEA, IMUL, XCHG, XADD,
     // casts
-    MOVSXB, MOVSXW, MOVSXD, MOVZXB, MOVZXW
-} Inst2Type;
+    MOVSXB, MOVSXW, MOVSXD, MOVZXB, MOVZXW,
 
-typedef enum Inst2FPType {
+    // SSE operations
     FP_MOV, FP_ADD, FP_SUB, FP_MUL, FP_DIV, FP_CMP, FP_UCOMI,
     FP_SQRT, FP_RSQRT, FP_AND, FP_OR, FP_XOR,
     FP_CVT, // cvtss2sd or cvtsd2ss
-} Inst2FPType;
+} InstType;
 
 typedef enum ExtMode {
     // Normal
@@ -116,54 +116,81 @@ typedef enum ExtMode {
     EXT_DEF2
 } ExtMode;
 
-// Describes what general 2 operand instructions are like
-typedef struct Inst2 {
+typedef struct InstDesc {
     uint8_t op;
 
-    // IMMEDIATES
+    // IMMEDIATES (or unary instructions)
     uint8_t op_i;
     uint8_t rx_i;
 
     ExtMode ext : 8;
-} Inst2;
+
+    const char* mnemonic;
+} InstDesc;
 
 static const GPR WIN64_GPR_PARAMETERS[4] = { RCX, RDX, R8, R9 };
 static const GPR SYSV_GPR_PARAMETERS[6] = { RDI, RSI, RDX, RCX, R8, R9 };
 
-typedef enum Inst1 {
-    // 0xF7
-    NOT  = 0xF702,
-    NEG  = 0xF703,
-    DIV  = 0xF706,
-    IDIV = 0xF707,
+#define NULLARY_OP(name, op) [name] = { (op), .mnemonic = #name }
+#define UNARY_OP(name, op, rx) [name] = { .op_i = (op), .rx_i = (rx), .mnemonic = #name }
+#define BINARY_OP(name, op, op_i, rx_i) [name] = { (op), (op_i), (rx_i), .mnemonic = #name }
+#define BINARY_OP2(name, op) [name] = { (op), .mnemonic = #name }
+#define BINARY_OP_DEF(name, op) [name] = { (op), .ext = EXT_DEF, .mnemonic = #name }
+#define BINARY_OP_DEF2(name, op) [name] = { (op), .ext = EXT_DEF2, .mnemonic = #name }
+static const InstDesc inst_table[] = {
+    // nullary
+    NULLARY_OP(RET,   0xC3),
 
-    // 0xFF
-    CALL_RM = 0xFF02
-} Inst1;
+    // unary ops
+    UNARY_OP(NOT,     0xF7, 0x02),
+    UNARY_OP(NEG,     0xF7, 0x03),
+    UNARY_OP(DIV,     0xF7, 0x06),
+    UNARY_OP(IDIV,    0xF7, 0x07),
+    UNARY_OP(CALL_RM, 0xFF, 0x02),
 
-static const Inst2 inst2_tbl[] = {
-    [ADD]  = { 0x00, 0x80, 0x00 },
-    [AND]  = { 0x20, 0x80, 0x04 },
-    [OR]   = { 0x08, 0x80, 0x01 },
-    [SUB]  = { 0x28, 0x80, 0x05 },
-    [XOR]  = { 0x30, 0x80, 0x06 },
-    [CMP]  = { 0x38, 0x80, 0x07 },
-    [MOV]  = { 0x88, 0xC6, 0x00 },
-    [TEST] = { 0x84, 0xF6, 0x00 },
+    // binary ops
+    BINARY_OP(ADD,  0x00, 0x80, 0x00),
+    BINARY_OP(OR,   0x08, 0x80, 0x01),
+    BINARY_OP(AND,  0x20, 0x80, 0x04),
+    BINARY_OP(SUB,  0x28, 0x80, 0x05),
+    BINARY_OP(XOR,  0x30, 0x80, 0x06),
+    BINARY_OP(CMP,  0x38, 0x80, 0x07),
+    BINARY_OP(MOV,  0x88, 0xC6, 0x00),
+    BINARY_OP(TEST, 0x84, 0xF6, 0x00),
 
-    [XCHG] = { 0x86 },
-    [XADD] = { 0xC0, .ext = EXT_DEF },
-    [LEA]  = { 0x8D },
+    BINARY_OP2(XCHG, 0x86),
+    BINARY_OP2(LEA,  0x8D),
 
-    [IMUL] = { 0xAF, .ext = EXT_DEF },
+    BINARY_OP_DEF(XADD, 0xC0),
+    BINARY_OP_DEF(IMUL, 0xAF),
 
-    [MOVSXB] = { 0xBE, .ext = EXT_DEF2 },
-    [MOVSXW] = { 0xBF, .ext = EXT_DEF2 },
-    [MOVSXD] = { 0x63, .ext = EXT_NONE },
+    BINARY_OP_DEF2(MOVSXB, 0xBE),
+    BINARY_OP_DEF2(MOVSXW, 0xBF),
+    BINARY_OP2(MOVSXD, 0x63),
 
-    [MOVZXB] = { 0xB6, .ext = EXT_DEF2 },
-    [MOVZXW] = { 0xB7, .ext = EXT_DEF2 }
+    BINARY_OP_DEF2(MOVZXB, 0xB6),
+    BINARY_OP_DEF2(MOVZXW, 0xB7),
+
+    BINARY_OP2(FP_MOV,   0x10),
+    BINARY_OP2(FP_ADD,   0x58),
+    BINARY_OP2(FP_MUL,   0x59),
+    BINARY_OP2(FP_SUB,   0x5C),
+    BINARY_OP2(FP_DIV,   0x5E),
+    BINARY_OP2(FP_CMP,   0xC2),
+    BINARY_OP2(FP_UCOMI, 0x2E),
+    BINARY_OP2(FP_CVT,   0x5A),
+    BINARY_OP2(FP_SQRT,  0x51),
+    BINARY_OP2(FP_RSQRT, 0x52),
+    BINARY_OP2(FP_AND,   0x54),
+    BINARY_OP2(FP_OR,    0x56),
+    BINARY_OP2(FP_XOR,   0x57),
 };
+#undef NULLARY_OP
+#undef UNARY_OP
+#undef BINARY_OP
+#undef BINARY_OP2
+#undef BINARY_OP_DEF
+#undef BINARY_OP_DEF2
 
 // NOTE(NeGate): This is for Win64, we can handle SysV later
 #define WIN64_ABI_CALLER_SAVED ((1u << RAX) | (1u << RCX) | (1u << RDX) | (1u << R8) | (1u << R9) | (1u << R10) | (1u << R11))

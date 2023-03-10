@@ -45,12 +45,23 @@ static void emit_memory_operand(TB_CGEmitter* restrict e, uint8_t rx, const Val*
     }
 }
 
+static void inst0(TB_CGEmitter* restrict e, InstType type) {
+    assert(type < COUNTOF(inst_table));
+    const InstDesc* restrict inst = &inst_table[type];
+
+    EMIT1(e, inst->op);
+}
+
 // cannot generate patches with f being NULL
-static void inst1(TB_CGEmitter* restrict e, Inst1 op, const Val* r) {
+static void inst1(TB_CGEmitter* restrict e, InstType type, const Val* r) {
+    assert(type < COUNTOF(inst_table));
+    const InstDesc* restrict inst = &inst_table[type];
+
+    uint8_t op = inst->op_i, rx = inst->rx_i;
     if (r->type == VAL_GPR) {
         EMIT1(e, rex(true, 0x00, r->gpr, 0x00));
-        EMIT1(e, (op >> 8) & 0xFF);
-        EMIT1(e, mod_rx_rm(MOD_DIRECT, op & 0xFF, r->gpr));
+        EMIT1(e, op);
+        EMIT1(e, mod_rx_rm(MOD_DIRECT, rx, r->gpr));
     } else if (r->type == VAL_MEM) {
         GPR base = r->mem.base;
         GPR index = r->mem.index;
@@ -60,16 +71,18 @@ static void inst1(TB_CGEmitter* restrict e, Inst1 op, const Val* r) {
         bool needs_index = (index != GPR_NONE) || (base & 7) == RSP;
 
         EMIT1(e, rex(true, 0x00, base, index != GPR_NONE ? index : 0));
-        EMIT1(e, (op >> 8) & 0xFF);
+        EMIT1(e, op);
 
         // If it needs an index, it'll put RSP into the base slot
         // and write the real base into the SIB
         uint8_t mod = MOD_INDIRECT_DISP32;
-        if (disp == 0) mod = MOD_INDIRECT_DISP8;
-        else if (disp == (int8_t)disp)
+        if (disp == 0) {
             mod = MOD_INDIRECT_DISP8;
+        } else if (disp == (int8_t)disp) {
+            mod = MOD_INDIRECT_DISP8;
+        }
 
-        EMIT1(e, mod_rx_rm(mod, op & 0xFF, needs_index ? RSP : base));
+        EMIT1(e, mod_rx_rm(mod, rx, needs_index ? RSP : base));
         if (needs_index) {
             EMIT1(e, mod_rx_rm(scale, (base & 7) == RSP ? RSP : index, base));
         }
@@ -77,10 +90,8 @@ static void inst1(TB_CGEmitter* restrict e, Inst1 op, const Val* r) {
         if (mod == MOD_INDIRECT_DISP8) EMIT1(e, (int8_t)disp);
         else if (mod == MOD_INDIRECT_DISP32) EMIT4(e, (int32_t)disp);
     } else if (r->type == VAL_GLOBAL) {
-        uint8_t rx = (op & 0xFF);
-
         EMIT1(e, 0x48); // rex.w
-        EMIT1(e, (op >> 8) & 0xFF);
+        EMIT1(e, op);
         EMIT1(e, ((rx & 7) << 3) | RBP);
         EMIT4(e, r->global.disp);
 
@@ -90,14 +101,14 @@ static void inst1(TB_CGEmitter* restrict e, Inst1 op, const Val* r) {
     }
 }
 
-static void inst2(TB_CGEmitter* restrict e, Inst2Type op, const Val* a, const Val* b, TB_DataType dt) {
-    assert(op < (sizeof(inst2_tbl) / sizeof(inst2_tbl[0])));
+static void inst2(TB_CGEmitter* restrict e, InstType type, const Val* a, const Val* b, TB_DataType dt) {
     assert(dt.type == TB_INT || dt.type == TB_PTR);
 
     int bits_in_type = dt.type == TB_PTR ? 64 : dt.data;
     assert(bits_in_type == 8 || bits_in_type == 16 || bits_in_type == 32 || bits_in_type == 64);
 
-    const Inst2* inst = &inst2_tbl[op];
+    assert(type < COUNTOF(inst_table));
+    const InstDesc* restrict inst = &inst_table[type];
 
     bool dir = b->type == VAL_MEM || b->type == VAL_GLOBAL;
     if (dir || inst->op == 0x63 || inst->op == 0xAF || inst->ext == EXT_DEF2) {
@@ -162,7 +173,7 @@ static void inst2(TB_CGEmitter* restrict e, Inst2Type op, const Val* a, const Va
         // Opcode
         if (inst->ext == EXT_DEF || inst->ext == EXT_DEF2) {
             // DEF instructions can only be 32bit and 64bit... maybe?
-            if (op != XADD) sz = 0;
+            if (type != XADD) sz = 0;
             EMIT1(e, 0x0F);
         }
 
@@ -212,25 +223,12 @@ static void inst2(TB_CGEmitter* restrict e, Inst2Type op, const Val* a, const Va
     }
 }
 
-static void inst2sse(TB_CGEmitter* restrict e, Inst2FPType op, const Val* a, const Val* b, uint8_t flags) {
-    const static uint8_t OPCODES[] = {
-        [FP_MOV]   = 0x10,
-        [FP_ADD]   = 0x58,
-        [FP_MUL]   = 0x59,
-        [FP_SUB]   = 0x5C,
-        [FP_DIV]   = 0x5E,
-        [FP_CMP]   = 0xC2,
-        [FP_UCOMI] = 0x2E,
-        [FP_CVT]   = 0x5A,
-        [FP_SQRT]  = 0x51,
-        [FP_RSQRT] = 0x52,
-        [FP_AND]   = 0x54,
-        [FP_OR]    = 0x56,
-        [FP_XOR]   = 0x57
-    };
+static void inst2sse(TB_CGEmitter* restrict e, InstType type, const Val* a, const Val* b, uint8_t flags) {
+    assert(type < COUNTOF(inst_table));
+    const InstDesc* restrict inst = &inst_table[type];
 
     // most SSE instructions (that aren't mov__) are mem src only
-    bool supports_mem_dst = (op == FP_MOV);
+    bool supports_mem_dst = (type == FP_MOV);
     bool dir = is_value_mem(a);
 
     if (supports_mem_dst && dir) {
@@ -252,7 +250,7 @@ static void inst2sse(TB_CGEmitter* restrict e, Inst2FPType op, const Val* a, con
         tb_todo();
     }
 
-    if ((flags & INST2FP_PACKED) == 0 && op != FP_UCOMI) {
+    if ((flags & INST2FP_PACKED) == 0 && type != FP_UCOMI) {
         EMIT1(e, flags & INST2FP_DOUBLE ? 0xF2 : 0xF3);
     } else if (flags & INST2FP_DOUBLE) {
         // packed double
@@ -265,8 +263,7 @@ static void inst2sse(TB_CGEmitter* restrict e, Inst2FPType op, const Val* a, con
 
     // extension prefix
     EMIT1(e, 0x0F);
-
-    EMIT1(e, OPCODES[op] + (supports_mem_dst ? dir : 0));
+    EMIT1(e, inst->op + (supports_mem_dst ? dir : 0));
     emit_memory_operand(e, rx, b);
 }
 
@@ -279,15 +276,11 @@ static void jcc(TB_CGEmitter* restrict e, Cond cc, int label) {
 }
 
 static void jmp(TB_CGEmitter* restrict e, int label) {
-    e->label_patches[e->label_patch_count++] = (LabelPatch) { .pos = GET_CODE_POS(e) + 1, .target_lbl = label };
-
-    EMIT1(e, 0xE9);
-    EMIT4(e, 0x0);
-}
-
-// jmp .return
-static void ret_jmp(TB_CGEmitter* restrict e) {
-    e->ret_patches[e->ret_patch_count++] = GET_CODE_POS(e) + 1;
+    if (label < 0) {
+        e->ret_patches[e->ret_patch_count++] = GET_CODE_POS(e) + 1;
+    } else {
+        e->label_patches[e->label_patch_count++] = (LabelPatch) { .pos = GET_CODE_POS(e) + 1, .target_lbl = label };
+    }
 
     EMIT1(e, 0xE9);
     EMIT4(e, 0x0);

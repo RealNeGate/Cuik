@@ -660,9 +660,11 @@ CompilationUnit* cuik_driver_compile(Cuik_IThreadpool* restrict thread_pool, Cui
         }
 
         if (args->ir) {
-            TB_FOR_FUNCTIONS(f, mod) {
-                tb_function_print(f, tb_default_print_callback, stdout, false);
-                printf("\n\n");
+            CUIK_TIMED_BLOCK("Print") {
+                TB_FOR_FUNCTIONS(f, mod) {
+                    tb_function_print(f, tb_default_print_callback, stdout, false);
+                    printf("\n\n");
+                }
             }
 
             goto cleanup_tb;

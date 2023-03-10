@@ -122,22 +122,22 @@ TB_API TB_Predeccesors tb_get_predeccesors(TB_Function* f) {
 
 TB_API TB_DominanceFrontiers tb_get_dominance_frontiers(TB_Function* f, TB_Predeccesors p, const TB_Label* doms) {
     TB_DominanceFrontiers df = { 0 };
-    df.count = tb_platform_heap_alloc(f->bb_count * sizeof(int));
-    df._ = tb_platform_heap_alloc(f->bb_count * sizeof(TB_Label*));
+    df._ = tb_platform_heap_alloc(f->bb_count * sizeof(Set));
 
-    memset(df.count, 0, f->bb_count * sizeof(int));
-    memset(df._, 0, f->bb_count * sizeof(TB_Label*));
-
+    memset(df._, 0, f->bb_count * sizeof(Set));
     FOREACH_N(bb, 0, f->bb_count) {
         if (p.count[bb] >= 2) {
             FOREACH_N(k, 0, p.count[bb]) {
                 TB_Label runner = p.preds[bb][k];
-                while (runner != doms[bb]) {
-                    // add to frontier
-                    size_t i = df.count[runner]++;
-                    df._[runner] = tb_platform_heap_realloc(df._[runner], (i + 1) * sizeof(TB_Label));
-                    df._[runner][i] = bb;
+                while (runner != 0 && runner != doms[bb]) {
+                    // we lazily generate sets to avoid memory waste
+                    if (df._[runner].data == NULL) {
+                        df._[runner] = set_create(f->bb_count);
+                        assert(df._[runner].data);
+                    }
 
+                    // add to frontier set
+                    set_put(&df._[runner], bb);
                     runner = doms[runner];
                 }
             }
@@ -176,11 +176,10 @@ TB_API TB_DominanceFrontiers tb_get_dominance_frontiers(TB_Function* f, TB_Prede
 
 TB_API void tb_free_dominance_frontiers(TB_Function* f, TB_DominanceFrontiers* frontiers) {
     FOREACH_N(bb, 0, f->bb_count) {
-        tb_platform_heap_free(frontiers->_[bb]);
+        set_free(&frontiers->_[bb]);
     }
 
     tb_platform_heap_free(frontiers->_);
-    tb_platform_heap_free(frontiers->count);
 }
 
 // https://www.cs.rice.edu/~keith/EMBED/dom.pdf
