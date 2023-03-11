@@ -293,7 +293,7 @@ static void irgen(Cuik_IThreadpool* restrict thread_pool, Cuik_CompilerArgs* res
         if (thread_pool != NULL) {
             #if CUIK_ALLOW_THREADS
             size_t task_capacity = 0;
-            FOR_EACH_TU(tu, cu) {
+            CUIK_FOR_EACH_TU(tu, cu) {
                 if (cuik_get_entrypoint_status(tu) == CUIK_ENTRYPOINT_WINMAIN) {
                     *subsystem_windows = true;
                 }
@@ -306,7 +306,7 @@ static void irgen(Cuik_IThreadpool* restrict thread_pool, Cuik_CompilerArgs* res
             atomic_size_t tasks_remaining = task_capacity;
 
             size_t task_count = 0;
-            FOR_EACH_TU(tu, cu) {
+            CUIK_FOR_EACH_TU(tu, cu) {
                 size_t top_level_count = cuik_num_of_top_level_stmts(tu);
                 Stmt** top_level = cuik_get_top_level_stmts(tu);
                 for (size_t i = 0; i < top_level_count; i += 8192) {
@@ -337,7 +337,7 @@ static void irgen(Cuik_IThreadpool* restrict thread_pool, Cuik_CompilerArgs* res
             #endif
             // free(tasks);
         } else {
-            FOR_EACH_TU(tu, cu) {
+            CUIK_FOR_EACH_TU(tu, cu) {
                 if (cuik_get_entrypoint_status(tu) == CUIK_ENTRYPOINT_WINMAIN) {
                     *subsystem_windows = true;
                 }
@@ -423,7 +423,9 @@ static bool export_output(Cuik_CompilerArgs* restrict args, TB_Module* mod, cons
     );
 
     if (args->based && (args->flavor == TB_FLAVOR_SHARED || args->flavor == TB_FLAVOR_EXECUTABLE)) {
-        fprintf(stderr, "LINK %s\n", output_name);
+        if (!args->silent_progress) {
+            fprintf(stderr, "LINK %s\n", output_name);
+        }
 
         CUIK_TIMED_BLOCK("Export linked") {
             // TB_ExecutableType exe = tb_system_executable_format((TB_System) sys);
@@ -543,7 +545,10 @@ static bool export_output(Cuik_CompilerArgs* restrict args, TB_Module* mod, cons
         }
 
         // This uses the system linker which isn't fun
-        fprintf(stderr, "LINK %s\n", output_path);
+        if (!args->silent_progress) {
+            fprintf(stderr, "LINK %s\n", output_path);
+        }
+
         CUIK_TIMED_BLOCK("linker") {
             Cuik_Linker l = gimme_linker(args, subsystem_windows);
 
@@ -588,7 +593,9 @@ CompilationUnit* cuik_driver_compile(Cuik_IThreadpool* restrict thread_pool, Cui
         if (thread_pool) futex_wait_eq(&remaining, 0);
 
         for (size_t i = 0; i < tu_count; i++) {
-            fprintf(stderr, "[%zu/%zu] CC %s\n", i+1, tu_count, args->sources[i]);
+            if (!args->silent_progress) {
+                fprintf(stderr, "[%zu/%zu] CC %s\n", i+1, tu_count, args->sources[i]);
+            }
 
             if (stuff.preprocessors[i]) {
                 TokenStream* tokens = cuikpp_get_token_stream(stuff.preprocessors[i]);
@@ -624,7 +631,7 @@ CompilationUnit* cuik_driver_compile(Cuik_IThreadpool* restrict thread_pool, Cui
     if (args->types) return cu;
 
     if (args->ast) {
-        FOR_EACH_TU(tu, cu) {
+        CUIK_FOR_EACH_TU(tu, cu) {
             cuik_dump_translation_unit(stdout, tu, true);
         }
         return cu;

@@ -86,10 +86,11 @@ CUIK_API void cuik_free_thread_resources(void);
 ////////////////////////////////////////////
 // Compilation unit management
 ////////////////////////////////////////////
-#define FOR_EACH_TU(it, cu) for (TranslationUnit* it = (cu)->head; it; it = cuik_next_translation_unit(it))
+#define CUIK_FOR_EACH_TU(it, cu) for (TranslationUnit* it = cuik_first_translation_unit(cu); it; it = cuik_next_translation_unit(it))
 
 // if the translation units are in a compilation unit you can walk this chain of pointers
 // to read them
+CUIK_API TranslationUnit* cuik_first_translation_unit(CompilationUnit* restrict cu);
 CUIK_API TranslationUnit* cuik_next_translation_unit(TranslationUnit* restrict tu);
 
 CUIK_API CompilationUnit* cuik_create_compilation_unit(void);

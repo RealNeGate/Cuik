@@ -49,6 +49,7 @@ struct Cuik_CompilerArgs {
     bool preprocess    : 1;
     bool think         : 1;
     bool based         : 1;
+    bool silent_progress : 1;
 };
 
 // consumes text argument and fills the relevant values in the Cuik_CompilerArgs.

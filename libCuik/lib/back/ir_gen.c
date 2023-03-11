@@ -1,7 +1,6 @@
 #ifdef CUIK_USE_TB
 #include "ir_gen.h"
 #include <futex.h>
-#include <compilation_unit.h>
 #include <targets/targets.h>
 
 atomic_flag irgen_defined_tls_index;
@@ -1938,7 +1937,7 @@ void cuikcg_allocate_ir(CompilationUnit* restrict cu, Cuik_IThreadpool* restrict
 
     Futex remaining = 0;
     size_t ordinal = 0;
-    FOR_EACH_TU(tu, cu) {
+    CUIK_FOR_EACH_TU(tu, cu) {
         size_t count = dyn_array_length(tu->top_level_stmts);
         remaining += (count + (BATCH_SIZE - 1)) / BATCH_SIZE;
 

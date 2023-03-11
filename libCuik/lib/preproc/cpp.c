@@ -158,7 +158,10 @@ const char* cuikpp_get_main_file(TokenStream* tokens) {
 bool cuikpp_is_in_main_file(TokenStream* tokens, SourceLoc loc) {
     // TODO(NeGate): macros can be in the main file, we should be walking the macro
     // trace to check for that
-    assert((loc.raw & SourceLoc_IsMacro) == 0 && "TODO: support macro in cuikpp_is_in_main_file");
+    // assert((loc.raw & SourceLoc_IsMacro) == 0 && "TODO: support macro in cuikpp_is_in_main_file");
+    if (loc.raw & SourceLoc_IsMacro) {
+        return false;
+    }
 
     Cuik_File* f = &tokens->files[loc.raw >> SourceLoc_FilePosBits];
     return f->filename == tokens->filepath;

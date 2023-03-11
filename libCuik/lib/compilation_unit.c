@@ -18,6 +18,10 @@ CUIK_API void cuik_unlock_compilation_unit(CompilationUnit* restrict cu) {
     mtx_unlock(&cu->lock);
 }
 
+CUIK_API TranslationUnit* cuik_first_translation_unit(CompilationUnit* restrict cu) {
+    return cu->head;
+}
+
 CUIK_API void cuik_add_to_compilation_unit(CompilationUnit* restrict cu, TranslationUnit* restrict tu) {
     assert(tu->next == NULL && "somehow the TU is already attached to something...");
     cuik_lock_compilation_unit(cu);
@@ -53,7 +57,7 @@ CUIK_API size_t cuik_num_of_translation_units_in_compilation_unit(CompilationUni
 
 CUIK_API void cuik_internal_link_compilation_unit(CompilationUnit* restrict cu, Cuik_IThreadpool* restrict thread_pool, int debug_info_level) {
     CUIK_TIMED_BLOCK("internal link") {
-        FOR_EACH_TU(tu, cu) {
+        CUIK_FOR_EACH_TU(tu, cu) {
             size_t count = dyn_array_length(tu->top_level_stmts);
             tu->has_tb_debug_info = debug_info_level;
 
