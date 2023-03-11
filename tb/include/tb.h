@@ -1278,8 +1278,8 @@ extern "C" {
     ////////////////////////////////
     // Transformation pass library
     ////////////////////////////////
-    TB_API const TB_Pass tb_opt_hoist_locals;
     TB_API const TB_Pass tb_opt_merge_rets;
+    TB_API const TB_Pass tb_opt_libcalls;
     TB_API const TB_Pass tb_opt_mem2reg;
 
     ////////////////////////////////

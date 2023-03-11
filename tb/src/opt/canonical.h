@@ -1,5 +1,5 @@
 #define NL_MAP_IMPL
-#include "../hash_map.h"
+#include <hash_map.h>
 
 typedef struct {
     NL_Map(TB_Node*, TB_Node*) def_table;

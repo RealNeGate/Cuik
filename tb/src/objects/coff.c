@@ -198,7 +198,7 @@ TB_API TB_Exports tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
     size_t string_table_size = 4;
     size_t string_table_pos = output_size;
     CUIK_TIMED_BLOCK("StringTblLayout") {
-        TB_FOR_FUNCTIONS(f, m) if (f->super.name) {
+        TB_FOR_FUNCTIONS(f, m) if (f->super.name && f->output) {
             size_t name_len = strlen(f->super.name);
             if (name_len >= 8) string_table_size += name_len + 1;
         }
@@ -368,6 +368,7 @@ TB_API TB_Exports tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
         }
 
         // write symbols
+        assert(write_pos == header.symbol_table);
         size_t symbol_count = 1;
         dyn_array_for(i, sections) {
             COFF_Symbol s = {
@@ -381,6 +382,28 @@ TB_API TB_Exports tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
             COFF_AuxSectionSymbol aux = {
                 .length = sections[i]->total_size,
                 .reloc_count = sections[i]->reloc_count,
+                .number = symbol_count,
+            };
+            WRITE(&aux, sizeof(aux));
+            symbol_count++;
+        }
+
+        FOREACH_N(i, 0, debug_sections.length) {
+            COFF_Symbol s = {
+                .section_number = symbol_count,
+                .storage_class = IMAGE_SYM_CLASS_STATIC,
+                .aux_symbols_count = 1
+            };
+
+            int l = debug_sections.data[i].name.length;
+            if (l > 8) l = 8;
+            strncpy((char*) s.short_name, (const char*) debug_sections.data[i].name.data, l);
+
+            WRITE(&s, sizeof(s));
+
+            COFF_AuxSectionSymbol aux = {
+                .length = debug_sections.data[i].raw_data.length,
+                .reloc_count = debug_sections.data[i].relocation_count,
                 .number = symbol_count,
             };
             WRITE(&aux, sizeof(aux));

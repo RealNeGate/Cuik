@@ -18,6 +18,7 @@ typedef struct TB_Pass {
 #include "canonical.h"
 #include "merge_ret.h"
 #include "mem2reg.h"
+#include "libcalls.h"
 
 typedef struct {
     NL_Map(TB_Node*, char) marked;

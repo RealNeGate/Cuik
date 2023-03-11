@@ -53,7 +53,7 @@ static void inst0(TB_CGEmitter* restrict e, InstType type) {
 }
 
 // cannot generate patches with f being NULL
-static void inst1(TB_CGEmitter* restrict e, InstType type, const Val* r) {
+static void inst1(TB_CGEmitter* restrict e, InstType type, const Val* r, X86_DataType dt) {
     assert(type < COUNTOF(inst_table));
     const InstDesc* restrict inst = &inst_table[type];
 
@@ -101,14 +101,12 @@ static void inst1(TB_CGEmitter* restrict e, InstType type, const Val* r) {
     }
 }
 
-static void inst2(TB_CGEmitter* restrict e, InstType type, const Val* a, const Val* b, TB_DataType dt) {
-    assert(dt.type == TB_INT || dt.type == TB_PTR);
-
-    int bits_in_type = dt.type == TB_PTR ? 64 : dt.data;
-    assert(bits_in_type == 8 || bits_in_type == 16 || bits_in_type == 32 || bits_in_type == 64);
-
+static void inst2(TB_CGEmitter* restrict e, InstType type, const Val* a, const Val* b, X86_DataType dt) {
+    assert(dt >= X86_TYPE_BYTE && dt <= X86_TYPE_QWORD);
     assert(type < COUNTOF(inst_table));
+
     const InstDesc* restrict inst = &inst_table[type];
+    assert(inst->ext == EXT_NONE || inst->ext == EXT_DEF || inst->ext == EXT_DEF2);
 
     bool dir = b->type == VAL_MEM || b->type == VAL_GLOBAL;
     if (dir || inst->op == 0x63 || inst->op == 0xAF || inst->ext == EXT_DEF2) {
@@ -116,110 +114,97 @@ static void inst2(TB_CGEmitter* restrict e, InstType type, const Val* a, const V
     }
 
     // operand size
-    uint8_t sz = (bits_in_type != 8);
+    bool sz = (dt != X86_TYPE_BYTE);
 
     // uses an immediate value that works as
     // a sign extended 8 bit number
-    bool short_imm = (bits_in_type != 8 && b->type == VAL_IMM && b->imm == (int8_t)b->imm && inst->op_i == 0x80);
+    bool short_imm = (sz && b->type == VAL_IMM && b->imm == (int8_t)b->imm && inst->op_i == 0x80);
 
-    // All instructions that go through here are
-    // based on the ModRxRm encoding so we do need
-    // an RX and an RM (base, index, shift, disp)
+    // the destination can only be a GPR, no direction flag
+    bool is_gpr_only_dst = (inst->op & 1);
+    bool dir_flag = (dir != is_gpr_only_dst);
+
+    // Address size prefix
+    if (dt == X86_TYPE_WORD && inst->ext != EXT_DEF2) {
+        EMIT1(e, 0x66);
+    }
+
+    assert((b->type == VAL_GPR || b->type == VAL_IMM) && "secondary operand is invalid!");
+    uint8_t rx = (b->type == VAL_GPR) ? b->gpr : inst->rx_i;
+
+    // REX PREFIX
+    //  0 1 0 0 W R X B
+    //          ^ ^ ^ ^
+    //          | | | 4th bit on base.
+    //          | | 4th bit on index.
+    //          | 4th bit on rx.
+    //          is 64bit?
     uint8_t base = 0;
-    uint8_t rx = 0xFF;
-    if (inst->ext == EXT_NONE || inst->ext == EXT_DEF || inst->ext == EXT_DEF2) {
-        // the destination can only be a GPR, no direction flag
-        bool is_gpr_only_dst = (inst->op & 1);
-        bool dir_flag = (dir != is_gpr_only_dst);
+    uint8_t rex_prefix = 0x40 | (dt == X86_TYPE_QWORD ? 8 : 0);
+    switch (a->type) {
+        case VAL_GPR:    base = a->gpr;      break;
+        case VAL_GLOBAL: base = RBP;         break;
 
-        // Address size prefix
-        if (bits_in_type == 16 && inst->ext != EXT_DEF2) {
-            EMIT1(e, 0x66);
+        case VAL_MEM:
+        base = a->mem.base;
+        if (a->mem.index != GPR_NONE) {
+            rex_prefix |= ((a->mem.index >> 3) << 1);
         }
+        break;
 
-        // RX
-        if (b->type == VAL_GPR) rx = b->gpr;
-        else if (b->type == VAL_IMM) rx = inst->rx_i;
-        else tb_unreachable();
+        default:         tb_unreachable();
+    }
 
-        // RM & REX
-        bool is_64bit = (bits_in_type == 64);
-        if (a->type == VAL_GPR) {
-            base = a->gpr;
+    rex_prefix |= (base >> 3);
+    rex_prefix |= (rx >> 3) << 2;
 
-            if (base >= 8 || rx >= 8 || is_64bit) {
-                EMIT1(e, rex(is_64bit, rx, base, 0));
-            } else if (bits_in_type == 8 && (base >= 4 || rx >= 4)) {
-                EMIT1(e, rex(false, rx, base, 0));
-            }
-        } else if (a->type == VAL_MEM) {
-            base = a->mem.base;
+    // if the REX stays as 0x40 then it's default and doesn't need
+    // to be here.
+    if (rex_prefix != 0x40) EMIT1(e, rex_prefix);
 
-            uint8_t rex_index = (a->mem.index != GPR_NONE ? a->mem.index : 0);
-            if (base >= 8 || rx >= 8 || rex_index >= 8 || is_64bit) {
-                EMIT1(e, rex(is_64bit, rx, base, rex_index));
-            } else if (bits_in_type == 8 && (base >= 4 || rx >= 4 || rex_index >= 4)) {
-                EMIT1(e, rex(false, rx, base, 0));
-            }
-        } else if (a->type == VAL_GLOBAL) {
-            base = RBP;
-            if (rx >= 8 || is_64bit) {
-                EMIT1(e, rex(is_64bit, rx, base, 0));
-            } else if (bits_in_type == 8) {
-                EMIT1(e, rex(false, rx, base, 0));
-            }
-        } else tb_unreachable();
+    // Opcode
+    if (inst->ext == EXT_DEF || inst->ext == EXT_DEF2) {
+        // DEF instructions can only be 32bit and 64bit... maybe?
+        if (type != XADD) sz = 0;
+        EMIT1(e, 0x0F);
+    }
 
-        // Opcode
-        if (inst->ext == EXT_DEF || inst->ext == EXT_DEF2) {
-            // DEF instructions can only be 32bit and 64bit... maybe?
-            if (type != XADD) sz = 0;
-            EMIT1(e, 0x0F);
-        }
+    // Immediates have a custom opcode
+    assert((b->type != VAL_IMM || inst->op_i != 0 || inst->rx_i != 0) && "no immediate variant of instruction");
+    uint8_t opcode = b->type == VAL_IMM ? inst->op_i : inst->op;
 
-        if (b->type == VAL_IMM && inst->op_i == 0 && inst->rx_i == 0) {
-            // No immediate version
-            tb_unreachable();
-        }
+    // bottom bit usually means size, 0 for 8bit, 1 for everything else.
+    opcode |= sz;
 
-        // Immediates have a custom opcode
-        uint8_t opcode = b->type == VAL_IMM ? inst->op_i : inst->op;
-        if (short_imm) opcode |= 2;
+    // you can't actually be flipped in the immediates because it would mean
+    // you're storing into an immediate so they reuse that direction bit for size.
+    opcode |= dir_flag << 1;
+    opcode |= short_imm << 1;
+    EMIT1(e, opcode);
 
-        EMIT1(e, opcode | sz | (dir_flag ? 2 : 0));
-    } else tb_unreachable();
-
-    // We forgot a case!
-    assert(rx != 0xFF);
     emit_memory_operand(e, rx, a);
+    // BTW memory displacements go before immediates
+    ptrdiff_t disp_patch = e->count - 4;
 
     if (b->type == VAL_IMM) {
-        if (bits_in_type <= 8 || short_imm) {
-            if (a->type == VAL_GLOBAL) {
-                RELOC4(e, e->count - 4, -1);
-            }
-
+        if (dt == X86_TYPE_BYTE || short_imm) {
             if (short_imm) {
                 assert(b->imm == (int8_t)b->imm);
             }
 
             EMIT1(e, (int8_t)b->imm);
-        } else if (bits_in_type <= 16) {
-            if (a->type == VAL_GLOBAL) {
-                RELOC4(e, e->count - 4, -2);
-            }
-
+        } else if (dt == X86_TYPE_WORD) {
             uint32_t imm = b->imm;
             assert((imm & 0xFFFF0000) == 0xFFFF0000 || (imm & 0xFFFF0000) == 0);
 
             EMIT2(e, imm);
         } else {
-            if (a->type == VAL_GLOBAL) {
-                RELOC4(e, e->count - 4, -4);
-            }
-
             EMIT4(e, (int32_t)b->imm);
         }
+    }
+
+    if (a->type == VAL_GLOBAL) {
+        RELOC4(e, disp_patch, disp_patch - e->count);
     }
 }
 

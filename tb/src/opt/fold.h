@@ -368,6 +368,16 @@ static bool const_fold(TB_Function* f, TB_Label bb, TB_Node* n) {
                                 n->i_arith = (struct TB_NodeIArith) { .a = a - f->nodes, .b = new_op };
                                 return true; */
                             }
+                        } else if (n->type == TB_UDIV|| n->type == TB_SDIV) {
+                            // (div a N) => a >> log2(N) where N is a power of two
+                            uint64_t log2 = tb_ffs(bi->words[0]) - 1;
+                            if (bi->words[0] == (UINT64_C(1) << log2)) {
+                                n->type = (n->type == TB_UDIV) ? TB_SHR : TB_SAR;
+
+                                // create log2(N) node
+                                TB_Node* log2_n = tb_create_int(f, bb, n->dt, log2);
+                                n->inputs[1] = log2_n;
+                            }
                         } else if (n->type == TB_UMOD || n->type == TB_SMOD) {
                             // (mod a N) => (and a N-1) where N is a power of two
                             uint64_t mask = bi->words[0];

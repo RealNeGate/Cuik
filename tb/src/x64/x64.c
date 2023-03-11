@@ -42,7 +42,7 @@ typedef enum X86_OperandLayout {
 typedef struct Inst {
     X86_InstType type;
     X86_OperandLayout layout;
-    TB_DataType data_type;
+    X86_DataType data_type;
 
     // virtual registers (-1 means none, -2 and lower is VREGs, 0+ is normal registers)
     //
@@ -52,6 +52,31 @@ typedef struct Inst {
 } Inst;
 
 #include "generic_cg.h"
+
+// *out_mask of 0 means no mask
+static X86_DataType legalize_int(TB_DataType dt, uint64_t* out_mask) {
+    assert(dt.type == TB_INT || dt.type == TB_PTR);
+    if (dt.type == TB_PTR) return *out_mask = 0, X86_TYPE_QWORD;
+
+    X86_DataType t = X86_TYPE_NONE;
+    int bits = 0;
+
+    if (dt.data <= 8) bits = 8, t = X86_TYPE_BYTE;
+    else if (dt.data <= 16) bits = 16, t = X86_TYPE_WORD;
+    else if (dt.data <= 32) bits = 32, t = X86_TYPE_DWORD;
+    else if (dt.data <= 64) bits = 64, t = X86_TYPE_QWORD;
+
+    assert(bits != 0 && "TODO: large int support");
+    uint64_t mask = ~UINT64_C(0) >> (64 - dt.data);
+
+    *out_mask = (dt.data == bits) ? 0 : mask;
+    return t;
+}
+
+static X86_DataType legalize_int2(TB_DataType dt) {
+    uint64_t m;
+    return legalize_int(dt, &m);
+}
 
 #define SUBMIT(i) (seq->insts[seq->inst_count++] = (i))
 static Inst inst_jcc(int target, Cond cc) {
@@ -74,7 +99,7 @@ static Inst inst_move(TB_DataType dt, int lhs, int rhs) {
     return (Inst){
         .type = X86_INST_MOVE,
         .layout = X86_OP_RR,
-        .data_type = dt,
+        .data_type = legalize_int2(dt),
         .regs = { 0, lhs, rhs }
     };
 }
@@ -83,7 +108,7 @@ static Inst inst_call_sym(TB_DataType dt, int dst, const TB_Symbol* sym) {
     return (Inst){
         .type = X86_INST_CALL_SYM,
         .layout = X86_OP_L,
-        .data_type = dt,
+        .data_type = legalize_int2(dt),
         .regs = { dst },
         .imm[0] = (uintptr_t) sym,
     };
@@ -93,7 +118,7 @@ static Inst inst_copy(TB_DataType dt, int lhs, int rhs) {
     return (Inst){
         .type = X86_INST_COPY,
         .layout = X86_OP_RR,
-        .data_type = dt,
+        .data_type = legalize_int2(dt),
         .regs = { lhs, rhs }
     };
 }
@@ -102,7 +127,7 @@ static Inst inst_rr(int op, TB_DataType dt, int dst, int lhs, int rhs) {
     return (Inst){
         .type = op,
         .layout = X86_OP_RR,
-        .data_type = dt,
+        .data_type = legalize_int2(dt),
         .regs = { dst, lhs, rhs }
     };
 }
@@ -111,7 +136,7 @@ static Inst inst_ri(int op, TB_DataType dt, int dst, int lhs, int32_t imm) {
     return (Inst){
         .type = op,
         .layout = X86_OP_RI,
-        .data_type = dt,
+        .data_type = legalize_int2(dt),
         .regs = { dst, lhs },
         .imm[0] = imm,
     };
@@ -121,7 +146,7 @@ static Inst inst_r(int op, TB_DataType dt, int dst, int src) {
     return (Inst){
         .type = op,
         .layout = X86_OP_R,
-        .data_type = dt,
+        .data_type = legalize_int2(dt),
         .regs = { dst, src },
     };
 }
@@ -130,7 +155,7 @@ static Inst inst_i(int op, TB_DataType dt, int dst, int32_t imm) {
     return (Inst){
         .type = op,
         .layout = X86_OP_I,
-        .data_type = dt,
+        .data_type = legalize_int2(dt),
         .regs = { dst },
         .imm[0] = imm,
     };
@@ -140,7 +165,7 @@ static Inst inst_m(int op, TB_DataType dt, int dst, int base, int index, Scale s
     return (Inst){
         .type = op,
         .layout = X86_OP_M,
-        .data_type = dt,
+        .data_type = legalize_int2(dt),
         .regs = { dst, 0, base, index },
         .imm[0] = ((uint64_t) scale << 32u) | ((uint64_t) disp)
     };
@@ -150,7 +175,7 @@ static Inst inst_mr(int op, TB_DataType dt, int base, int index, Scale scale, in
     return (Inst){
         .type = op,
         .layout = X86_OP_MR,
-        .data_type = dt,
+        .data_type = legalize_int2(dt),
         .regs = { -1, rhs, base, index },
         .imm[0] = ((uint64_t) scale << 32u) | ((uint64_t) disp)
     };
@@ -158,26 +183,6 @@ static Inst inst_mr(int op, TB_DataType dt, int base, int index, Scale scale, in
 
 static int classify_reg_class(TB_DataType dt) {
     return dt.type == TB_FLOAT ? REG_CLASS_XMM : REG_CLASS_GPR;
-}
-
-// *out_mask of 0 means no mask
-static TB_DataType legalize_int(TB_DataType dt, uint64_t* out_mask) {
-    assert(dt.type == TB_INT || dt.type == TB_PTR);
-    if (dt.type == TB_PTR) return *out_mask = 0, TB_TYPE_I64;
-
-    TB_DataType t = TB_TYPE_VOID;
-    int bits = 0;
-
-    if (dt.data <= 8) bits = 8, t = TB_TYPE_I8;
-    else if (dt.data <= 16) bits = 16, t = TB_TYPE_I16;
-    else if (dt.data <= 32) bits = 32, t = TB_TYPE_I32;
-    else if (dt.data <= 64) bits = 64, t = TB_TYPE_I64;
-
-    assert(bits != 0 && "TODO: large int support");
-    uint64_t mask = ~UINT64_C(0) >> (64 - dt.data);
-
-    *out_mask = (dt.data == bits) ? 0 : mask;
-    return t;
 }
 
 static void print_operand(Val* v) {
@@ -190,39 +195,6 @@ static void print_operand(Val* v) {
         }
         default: tb_todo();
     }
-}
-
-static Val spill_to_stack_slot(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n, Val* src) {
-    if (src && src->type == VAL_MEM && src->mem.base == RBP) {
-        return *src;
-    }
-
-    Val dst;
-    if (n->type == TB_PARAM) {
-        int id = TB_NODE_GET_EXTRA_T(n, TB_NodeParam)->id;
-
-        // TODO(NeGate): this is win64 specific... maybe?
-        dst = val_stack(TB_TYPE_PTR, 16 + (id * 8));
-    } else {
-        // allocate new stack slot
-        int pos = STACK_ALLOC(8, 8);
-        dst = val_stack(TB_TYPE_PTR, pos);
-        dst.mem.is_rvalue = true;
-    }
-
-    if (src != NULL) {
-        INST2(!is_lvalue(src) ? MOV : LEA, &dst, src, n->dt);
-        ASM {
-            printf("  MOV ");
-            print_operand(&dst);
-            printf(", ");
-            print_operand(src);
-
-            printf(" \x1b[32m# spill r%d\x1b[0m\n", NAME(n));
-        }
-    }
-
-    return dst;
 }
 
 static bool try_for_imm32(Ctx* restrict ctx, TB_Node* n, int32_t* out_x) {
@@ -295,6 +267,8 @@ static int isel(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n) {
     int dst = -1;
 
     switch (type) {
+        case TB_LINE_INFO: break;
+
         case TB_PARAM: {
             int id = TB_NODE_GET_EXTRA_T(n, TB_NodeParam)->id;
             if (id >= 4) {
@@ -533,7 +507,7 @@ static int8_t resolve_use(Ctx* restrict ctx, int x) {
     return x;
 }
 
-static void inst2_print(Ctx* restrict ctx, InstType type, Val* dst, Val* src, TB_DataType dt) {
+static void inst2_print(Ctx* restrict ctx, InstType type, Val* dst, Val* src, X86_DataType dt) {
     INST2(type, dst, src, dt);
     ASM {
         printf("  %s ", inst_table[type].mnemonic);
@@ -544,8 +518,8 @@ static void inst2_print(Ctx* restrict ctx, InstType type, Val* dst, Val* src, TB
     }
 }
 
-static void inst1_print(Ctx* restrict ctx, int type, Val* src) {
-    INST1(type, src);
+static void inst1_print(Ctx* restrict ctx, int type, Val* src, X86_DataType dt) {
+    INST1(type, src, dt);
     ASM {
         printf("  %s ", inst_table[type].mnemonic);
         print_operand(src);
@@ -656,8 +630,7 @@ static void emit_sequence(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n)
                 inst2_print(ctx, MOV, &ops[0], &ops[1], inst->data_type);
             }
 
-            ops[0].dt = inst->data_type;
-            inst1_print(ctx, inst->type, &ops[0]);
+            inst1_print(ctx, inst->type, &ops[0], inst->data_type);
         } else if (op_count == 2) {
             if (!has_def) {
                 inst2_print(ctx, (InstType) inst->type, &ops[1], &ops[2], inst->data_type);

@@ -44,6 +44,27 @@ typedef enum {
     SCALE_X1, SCALE_X2, SCALE_X4, SCALE_X8
 } Scale;
 
+typedef enum X86_DataType {
+    X86_TYPE_NONE = 0,
+
+    X86_TYPE_BYTE,    // 1
+    X86_TYPE_WORD,    // 2
+    X86_TYPE_DWORD,   // 4
+    X86_TYPE_QWORD,   // 8
+
+    X86_TYPE_PBYTE,   // int8 x 16 = 16
+    X86_TYPE_PWORD,   // int16 x 8 = 16
+    X86_TYPE_PDWORD,  // int32 x 4 = 16
+    X86_TYPE_PQWORD,  // int64 x 2 = 16
+
+    X86_TYPE_SSE_SS,  // float32 x 1 = 4
+    X86_TYPE_SSE_SD,  // float64 x 1 = 8
+    X86_TYPE_SSE_PS,  // float32 x 4 = 16
+    X86_TYPE_SSE_PD,  // float64 x 2 = 16
+
+    X86_TYPE_XMMWORD, // the generic idea of them
+} X86_DataType;
+
 enum {
     MOD_INDIRECT        = 0, // [rax]
     MOD_INDIRECT_DISP8  = 1, // [rax + disp8]
@@ -93,6 +114,8 @@ typedef enum Inst2Type {
     NOT, NEG, DIV, IDIV, CALL_RM,
     // Integer data processing
     ADD, OR, AND, SUB, XOR, CMP, MOV,
+    // Cooler integer ops
+    SHL, SHR, SAR,
     // Misc interger ops
     TEST, LEA, IMUL, XCHG, XADD,
     // casts
@@ -133,57 +156,57 @@ static const GPR SYSV_GPR_PARAMETERS[6] = { RDI, RSI, RDX, RCX, R8, R9 };
 
 #define NULLARY_OP(name, op) [name] = { (op), .mnemonic = #name }
 #define UNARY_OP(name, op, rx) [name] = { .op_i = (op), .rx_i = (rx), .mnemonic = #name }
+#define UNARY_OP2(name, op, op_i, rx_i) [name] = { (op), (op_i), (rx_i), .mnemonic = #name }
 #define BINARY_OP(name, op, op_i, rx_i) [name] = { (op), (op_i), (rx_i), .mnemonic = #name }
 #define BINARY_OP2(name, op) [name] = { (op), .mnemonic = #name }
 #define BINARY_OP_DEF(name, op) [name] = { (op), .ext = EXT_DEF, .mnemonic = #name }
 #define BINARY_OP_DEF2(name, op) [name] = { (op), .ext = EXT_DEF2, .mnemonic = #name }
 static const InstDesc inst_table[] = {
     // nullary
-    NULLARY_OP(RET,   0xC3),
-
+    NULLARY_OP(RET,        0xC3),
     // unary ops
-    UNARY_OP(NOT,     0xF7, 0x02),
-    UNARY_OP(NEG,     0xF7, 0x03),
-    UNARY_OP(DIV,     0xF7, 0x06),
-    UNARY_OP(IDIV,    0xF7, 0x07),
-    UNARY_OP(CALL_RM, 0xFF, 0x02),
-
-    // binary ops
-    BINARY_OP(ADD,  0x00, 0x80, 0x00),
-    BINARY_OP(OR,   0x08, 0x80, 0x01),
-    BINARY_OP(AND,  0x20, 0x80, 0x04),
-    BINARY_OP(SUB,  0x28, 0x80, 0x05),
-    BINARY_OP(XOR,  0x30, 0x80, 0x06),
-    BINARY_OP(CMP,  0x38, 0x80, 0x07),
-    BINARY_OP(MOV,  0x88, 0xC6, 0x00),
-    BINARY_OP(TEST, 0x84, 0xF6, 0x00),
-
-    BINARY_OP2(XCHG, 0x86),
-    BINARY_OP2(LEA,  0x8D),
-
-    BINARY_OP_DEF(XADD, 0xC0),
-    BINARY_OP_DEF(IMUL, 0xAF),
-
+    UNARY_OP(NOT,          0xF7, 0x02),
+    UNARY_OP(NEG,          0xF7, 0x03),
+    UNARY_OP(DIV,          0xF7, 0x06),
+    UNARY_OP(IDIV,         0xF7, 0x07),
+    UNARY_OP(CALL_RM,      0xFF, 0x02),
+    // unary ops (the normal op is for CL use, imm is imm8)
+    UNARY_OP2(SHL,         0xD2, 0xC0, 0x04),
+    UNARY_OP2(SHR,         0xD2, 0xC0, 0x05),
+    UNARY_OP2(SAR,         0xD2, 0xC0, 0x07),
+    // regular integer binops
+    BINARY_OP(ADD,         0x00, 0x80, 0x00),
+    BINARY_OP(OR,          0x08, 0x80, 0x01),
+    BINARY_OP(AND,         0x20, 0x80, 0x04),
+    BINARY_OP(SUB,         0x28, 0x80, 0x05),
+    BINARY_OP(XOR,         0x30, 0x80, 0x06),
+    BINARY_OP(CMP,         0x38, 0x80, 0x07),
+    BINARY_OP(MOV,         0x88, 0xC6, 0x00),
+    BINARY_OP(TEST,        0x84, 0xF6, 0x00),
+    // misc integer ops
+    BINARY_OP2(XCHG,       0x86),
+    BINARY_OP2(LEA,        0x8D),
+    BINARY_OP_DEF(XADD,    0xC0),
+    BINARY_OP_DEF(IMUL,    0xAF),
     BINARY_OP_DEF2(MOVSXB, 0xBE),
     BINARY_OP_DEF2(MOVSXW, 0xBF),
-    BINARY_OP2(MOVSXD, 0x63),
-
+    BINARY_OP2(MOVSXD,     0x63),
     BINARY_OP_DEF2(MOVZXB, 0xB6),
     BINARY_OP_DEF2(MOVZXW, 0xB7),
-
-    BINARY_OP2(FP_MOV,   0x10),
-    BINARY_OP2(FP_ADD,   0x58),
-    BINARY_OP2(FP_MUL,   0x59),
-    BINARY_OP2(FP_SUB,   0x5C),
-    BINARY_OP2(FP_DIV,   0x5E),
-    BINARY_OP2(FP_CMP,   0xC2),
-    BINARY_OP2(FP_UCOMI, 0x2E),
-    BINARY_OP2(FP_CVT,   0x5A),
-    BINARY_OP2(FP_SQRT,  0x51),
-    BINARY_OP2(FP_RSQRT, 0x52),
-    BINARY_OP2(FP_AND,   0x54),
-    BINARY_OP2(FP_OR,    0x56),
-    BINARY_OP2(FP_XOR,   0x57),
+    // SSE binops
+    BINARY_OP2(FP_MOV,     0x10),
+    BINARY_OP2(FP_ADD,     0x58),
+    BINARY_OP2(FP_MUL,     0x59),
+    BINARY_OP2(FP_SUB,     0x5C),
+    BINARY_OP2(FP_DIV,     0x5E),
+    BINARY_OP2(FP_CMP,     0xC2),
+    BINARY_OP2(FP_UCOMI,   0x2E),
+    BINARY_OP2(FP_CVT,     0x5A),
+    BINARY_OP2(FP_SQRT,    0x51),
+    BINARY_OP2(FP_RSQRT,   0x52),
+    BINARY_OP2(FP_AND,     0x54),
+    BINARY_OP2(FP_OR,      0x56),
+    BINARY_OP2(FP_XOR,     0x57),
 };
 #undef NULLARY_OP
 #undef UNARY_OP
@@ -301,7 +324,7 @@ static const char* COND_NAMES[] = {
 
 // shorthand macros
 #define STACK_ALLOC(size, align) (ctx->stack_usage = align_up(ctx->stack_usage + (size), align), - ctx->stack_usage)
-#define INST1(op, a)              inst1(&ctx->emit, op, a)
+#define INST1(op, a, dt)          inst1(&ctx->emit, op, a, dt)
 #define INST2(op, a, b, dt)       inst2(&ctx->emit, op, a, b, dt)
 #define INST2SSE(op, a, b, flags) inst2sse(&ctx->emit, op, a, b, flags)
 #define JCC(cc, label)            jcc(&ctx->emit, cc, label)

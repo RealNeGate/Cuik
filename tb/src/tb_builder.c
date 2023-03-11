@@ -111,9 +111,15 @@ void tb_insert_node(TB_Function* f, TB_Label bb, TB_Node* a, TB_Node* b) {
         f->bbs[bb].end = b;
     }
 
-    TB_Node* a_next = a->next;
-    a->next = b;
-    b->next = a_next;
+    if (a == NULL) {
+        TB_Node* old_start = f->bbs[bb].start;
+        b->next = old_start;
+        f->bbs[bb].start = b;
+    } else {
+        TB_Node* a_next = a->next;
+        a->next = b;
+        b->next = a_next;
+    }
 }
 
 static TB_Node* tb_insert_at_end(TB_Function* f, TB_Node* n) {
@@ -303,7 +309,14 @@ TB_API TB_Node* tb_inst_poison(TB_Function* f) {
 TB_API void tb_inst_loc(TB_Function* f, TB_FileID file, int line) {
     tb_assume(line >= 0);
 
-    TB_Node* n = tb_alloc_at_end(f, TB_LINE_INFO, TB_TYPE_VOID, 1, 0);
+    // check if we just followed a line info node
+    TB_BasicBlock* bb = &f->bbs[f->current_label];
+    TB_Node* n = NULL;
+    if (bb->end != NULL && bb->end->type == TB_LINE_INFO) {
+        n = bb->end;
+    } else {
+        n = tb_alloc_at_end(f, TB_LINE_INFO, TB_TYPE_VOID, 0, sizeof(TB_NodeLine));
+    }
     TB_NODE_SET_EXTRA(n, TB_NodeLine, .file = file, .line = line);
 }
 

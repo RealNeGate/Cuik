@@ -36,7 +36,7 @@
 #include "tb_platform.h"
 #include "bigint/BigInt.h"
 #include "dyn_array.h"
-#include "hash_map.h"
+#include <hash_map.h>
 #include "builtins.h"
 #include "pool.h"
 
@@ -692,6 +692,7 @@ TB_Node* tb_alloc_node(TB_Function* f, int type, TB_DataType dt, int input_count
 TB_Node* tb_alloc_at_end(TB_Function* f, int type, TB_DataType dt, int input_count, size_t extra);
 void tb_insert_node(TB_Function* f, TB_Label bb, TB_Node* a, TB_Node* b);
 
+TB_Node* tb_create_int(TB_Function* f, TB_Label bb, TB_DataType dt, uint64_t word);
 void tb_transmute_to_pass(TB_Node* n, TB_Node* point_to);
 void tb_transmute_to_poison(TB_Node* n);
 uint64_t* tb_transmute_to_int(TB_Function* f, TB_Label bb, TB_Node* n, int num_words);

@@ -6,6 +6,16 @@ size_t tb_node_get_expected(TB_Node* n) {
     return sizeof(TB_Node) + (n->input_count * sizeof(TB_Node*)) + n->extra_count;
 }
 
+TB_Node* tb_create_int(TB_Function* f, TB_Label bb, TB_DataType dt, uint64_t word) {
+    TB_Node* n = tb_alloc_node(f, TB_INTEGER_CONST, dt, 0, sizeof(TB_NodeInt) + sizeof(uint64_t));
+    TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
+    i->num_words = 1;
+    i->words[0] = word;
+    tb_insert_node(f, bb, tb_node_get_first_insertion_point(f, bb), n);
+
+    return n;
+}
+
 uint64_t* tb_transmute_to_int(TB_Function* f, TB_Label bb, TB_Node* n, int num_words) {
     TB_Node* new_n = tb_alloc_node(f, TB_INTEGER_CONST, n->dt, 0, sizeof(TB_NodeInt) + (num_words * sizeof(uint64_t)));
     TB_NodeInt* i = TB_NODE_GET_EXTRA(new_n);

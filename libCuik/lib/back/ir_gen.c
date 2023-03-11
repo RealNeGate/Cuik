@@ -452,6 +452,7 @@ static void gen_global_initializer(TranslationUnit* tu, TB_Global* g, Cuik_Type*
             Expr* base = initial->unary_op.src;
             while (base->op == EXPR_SUBSCRIPT) {
                 uint64_t stride = cuik_canonical_type(base->type)->size;
+                if (stride == 0) stride = 1;
 
                 Expr* index_expr = cuik__optimize_ast(NULL, base->subscript.index);
                 assert(index_expr->op == EXPR_INT && "could not resolve as constant initializer");
@@ -850,6 +851,8 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
             TB_Node* index = irgen_as_rvalue(tu, func, e->subscript.index);
 
             int stride = cuik_canonical_type(e->type)->size;
+            if (stride == 0) stride = 1;
+
             return (IRVal){
                 .value_type = LVALUE,
                 .reg = tb_inst_array_access(func, base, index, stride),
