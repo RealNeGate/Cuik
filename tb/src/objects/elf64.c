@@ -336,7 +336,8 @@ TB_API TB_Exports tb_elf64obj_write_output(TB_Module* m, const IDebugFormat* dbg
                     if (p->target->tag == TB_SYMBOL_EXTERNAL) {
                         Elf64_Rela rela = {
                             .r_offset = actual_pos,
-                            .r_info   = ELF64_R_INFO(symbol_id, p->is_function ? R_X86_64_PLT32 : R_X86_64_GOTPCREL),
+                            // check when we should prefer R_X86_64_GOTPCREL
+                            .r_info   = ELF64_R_INFO(symbol_id, R_X86_64_PLT32),
                             .r_addend = -4
                         };
                         TB_FIXED_ARRAY_APPEND(relocs, rela);

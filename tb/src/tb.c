@@ -551,12 +551,12 @@ void tb_tls_restore(TB_TemporaryStorage* store, void* ptr) {
     store->used = i;
 }
 
-void tb_emit_symbol_patch(TB_Module* m, TB_Function* source, const TB_Symbol* target, size_t pos, bool is_function) {
+void tb_emit_symbol_patch(TB_Module* m, TB_Function* source, const TB_Symbol* target, size_t pos) {
     int id = tb__get_local_tid();
     assert(id < TB_MAX_THREADS);
     assert(pos == (uint32_t)pos);
 
-    TB_SymbolPatch p = { .source = source, .target = target, .is_function = is_function, .pos = pos };
+    TB_SymbolPatch p = { .source = source, .target = target, .pos = pos };
     dyn_array_put(m->thread_info[id].symbol_patches, p);
 }
 

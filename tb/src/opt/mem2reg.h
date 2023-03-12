@@ -343,8 +343,8 @@ bool mem2reg(TB_Function* f, TB_TemporaryStorage* tls) {
 
                 switch (coherence) {
                     case COHERENCY_GOOD: {
-                        *((TB_Node**)tb_tls_push(tls, sizeof(TB_Node*))) = n;
-                        to_promote_count++;
+                        tb_tls_push(tls, sizeof(TB_Node*));
+                        to_promote[to_promote_count++] = n;
 
                         n->dt = dt;
 

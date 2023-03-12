@@ -199,7 +199,7 @@ void append_object(TB_Linker* l, TB_Slice obj_name, TB_ObjectFile* obj) {
 
         p->order = order;
         p->flags = 1;
-        p->vsize = s->virtual_size;
+        // p->vsize = s->virtual_size;
 
         if (s->name.length == 5 && memcmp(s->name.data, ".text", 5) == 0) {
             text_piece = p;
@@ -929,6 +929,7 @@ static bool finalize_sections(TB_Linker* l) {
                 gc_mark(l, p->module->text.piece);
                 gc_mark(l, p->module->data.piece);
                 gc_mark(l, p->module->rdata.piece);
+                gc_mark(l, p->module->tls.piece);
             }
 
             // mark any kid symbols

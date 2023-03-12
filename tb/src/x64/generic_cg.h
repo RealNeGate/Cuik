@@ -107,7 +107,7 @@ typedef struct Ctx {
     ValueDesc* values;
 } Ctx;
 
-#if 1
+#if 0
 #define ASM if (ctx->emit.emit_asm)
 #else
 #define ASM if (0)
@@ -205,6 +205,11 @@ static int* get_val(Ctx* restrict ctx, TB_Node* n) {
             return &ctx->values[i].val;
         }
     }
+}
+
+static bool fits_into_int8(uint64_t x) {
+    int8_t y = x & 0xFFFFFFFF;
+    return (int64_t)y == x;
 }
 
 static bool fits_into_int32(uint64_t x) {
@@ -424,7 +429,7 @@ static void fence(Ctx* restrict ctx, TB_Label bb) {
 // Codegen through here is done in phases
 static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_FeatureSet* features, uint8_t* out, size_t out_capacity) {
     TB_TemporaryStorage* tls = tb_tls_allocate();
-    tb_function_print(f, tb_default_print_callback, stdout, false);
+    // tb_function_print(f, tb_default_print_callback, stdout, false);
 
     Ctx* restrict ctx = arena_alloc(&tb__arena, sizeof(Ctx), _Alignof(Ctx));
     *ctx = (Ctx){

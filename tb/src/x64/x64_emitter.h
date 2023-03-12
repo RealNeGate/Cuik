@@ -39,7 +39,7 @@ static void emit_memory_operand(TB_CGEmitter* restrict e, uint8_t rx, const Val*
         EMIT1(e, ((rx & 7) << 3) | RBP);
         EMIT4(e, a->global.disp);
 
-        tb_emit_symbol_patch(e->f->super.module, e->f, (TB_Symbol*) a->global.g, e->count - 4, false);
+        tb_emit_symbol_patch(e->f->super.module, e->f, a->global.s, e->count - 4);
     } else {
         tb_unreachable();
     }
@@ -90,12 +90,39 @@ static void inst1(TB_CGEmitter* restrict e, InstType type, const Val* r, X86_Dat
         if (mod == MOD_INDIRECT_DISP8) EMIT1(e, (int8_t)disp);
         else if (mod == MOD_INDIRECT_DISP32) EMIT4(e, (int32_t)disp);
     } else if (r->type == VAL_GLOBAL) {
-        EMIT1(e, 0x48); // rex.w
-        EMIT1(e, op);
-        EMIT1(e, ((rx & 7) << 3) | RBP);
-        EMIT4(e, r->global.disp);
+        if (inst->op) {
+            // this is a unary instruction with a REL32 variant
+            EMIT1(e, inst->op);
+            EMIT4(e, 0);
+        } else {
+            EMIT1(e, 0x48); // rex.w
+            EMIT1(e, op);
+            EMIT1(e, ((rx & 7) << 3) | RBP);
+            EMIT4(e, r->global.disp);
+        }
 
-        tb_emit_symbol_patch(e->f->super.module, e->f, (TB_Symbol*) r->global.g, e->count - 4, false);
+        tb_emit_symbol_patch(e->f->super.module, e->f, r->global.s, e->count - 4);
+    } else if (r->type == VAL_LABEL) {
+        if (inst->op) {
+            if (r->label < 0) {
+                e->ret_patches[e->ret_patch_count++] = GET_CODE_POS(e) + 1;
+            } else {
+                e->label_patches[e->label_patch_count++] = (LabelPatch) { .pos = GET_CODE_POS(e) + 1, .target_lbl = r->label };
+            }
+
+            EMIT1(e, inst->op);
+            EMIT4(e, 0);
+        } else {
+            if (r->label < 0) {
+                e->ret_patches[e->ret_patch_count++] = GET_CODE_POS(e) + 2;
+            } else {
+                e->label_patches[e->label_patch_count++] = (LabelPatch) { .pos = GET_CODE_POS(e) + 2, .target_lbl = r->label };
+            }
+
+            EMIT1(e, inst->op_i);
+            EMIT1(e, inst->rx_i);
+            EMIT4(e, 0);
+        }
     } else {
         tb_unreachable();
     }
@@ -106,7 +133,6 @@ static void inst2(TB_CGEmitter* restrict e, InstType type, const Val* a, const V
     assert(type < COUNTOF(inst_table));
 
     const InstDesc* restrict inst = &inst_table[type];
-    assert(inst->ext == EXT_NONE || inst->ext == EXT_DEF || inst->ext == EXT_DEF2);
 
     bool dir = b->type == VAL_MEM || b->type == VAL_GLOBAL;
     if (dir || inst->op == 0x63 || inst->op == 0xAF || inst->ext == EXT_DEF2) {
@@ -131,6 +157,10 @@ static void inst2(TB_CGEmitter* restrict e, InstType type, const Val* a, const V
 
     assert((b->type == VAL_GPR || b->type == VAL_IMM) && "secondary operand is invalid!");
     uint8_t rx = (b->type == VAL_GPR) ? b->gpr : inst->rx_i;
+    if (inst->ext == EXT_CL) {
+        assert(b->type == VAL_IMM || (b->type == VAL_GPR && b->gpr == RCX));
+        rx = inst->rx_i;
+    }
 
     // REX PREFIX
     //  0 1 0 0 W R X B
@@ -208,13 +238,16 @@ static void inst2(TB_CGEmitter* restrict e, InstType type, const Val* a, const V
     }
 }
 
-static void inst2sse(TB_CGEmitter* restrict e, InstType type, const Val* a, const Val* b, uint8_t flags) {
+static void inst2sse(TB_CGEmitter* restrict e, InstType type, const Val* a, const Val* b, X86_DataType dt) {
     assert(type < COUNTOF(inst_table));
     const InstDesc* restrict inst = &inst_table[type];
 
     // most SSE instructions (that aren't mov__) are mem src only
     bool supports_mem_dst = (type == FP_MOV);
     bool dir = is_value_mem(a);
+
+    bool packed = (dt == X86_TYPE_SSE_PS || dt == X86_TYPE_SSE_PD);
+    bool is_double = (dt == X86_TYPE_SSE_PD || dt == X86_TYPE_SSE_SD);
 
     if (supports_mem_dst && dir) {
         tb_swap(const Val*, a, b);
@@ -235,9 +268,9 @@ static void inst2sse(TB_CGEmitter* restrict e, InstType type, const Val* a, cons
         tb_todo();
     }
 
-    if ((flags & INST2FP_PACKED) == 0 && type != FP_UCOMI) {
-        EMIT1(e, flags & INST2FP_DOUBLE ? 0xF2 : 0xF3);
-    } else if (flags & INST2FP_DOUBLE) {
+    if (!packed && type != FP_UCOMI) {
+        EMIT1(e, is_double ? 0xF2 : 0xF3);
+    } else if (is_double) {
         // packed double
         EMIT1(e, 0x66);
     }
@@ -250,23 +283,4 @@ static void inst2sse(TB_CGEmitter* restrict e, InstType type, const Val* a, cons
     EMIT1(e, 0x0F);
     EMIT1(e, inst->op + (supports_mem_dst ? dir : 0));
     emit_memory_operand(e, rx, b);
-}
-
-static void jcc(TB_CGEmitter* restrict e, Cond cc, int label) {
-    e->label_patches[e->label_patch_count++] = (LabelPatch) { .pos = GET_CODE_POS(e) + 2, .target_lbl = label };
-
-    EMIT1(e, 0x0F);
-    EMIT1(e, 0x80 + (uint8_t)cc);
-    EMIT4(e, 0x0);
-}
-
-static void jmp(TB_CGEmitter* restrict e, int label) {
-    if (label < 0) {
-        e->ret_patches[e->ret_patch_count++] = GET_CODE_POS(e) + 1;
-    } else {
-        e->label_patches[e->label_patch_count++] = (LabelPatch) { .pos = GET_CODE_POS(e) + 1, .target_lbl = label };
-    }
-
-    EMIT1(e, 0xE9);
-    EMIT4(e, 0x0);
 }

@@ -11,13 +11,9 @@ enum {
 };
 
 typedef enum X86_InstType {
-    // magic instructions
-    X86_INST_JMP = -1,
-    X86_INST_JCC = -2,
     //   dst = COPY src
     X86_INST_COPY = -3,
     X86_INST_MOVE = -4,
-    X86_INST_CALL_SYM = -5,
 } X86_InstType;
 
 // for memory operands imm[0] is two fields:
@@ -25,6 +21,8 @@ typedef enum X86_InstType {
 typedef enum X86_OperandLayout {
     // label
     X86_OP_L,
+    // global
+    X86_OP_G,
 
     // integer unary
     X86_OP_R,
@@ -40,7 +38,7 @@ typedef enum X86_OperandLayout {
 } X86_OperandLayout;
 
 typedef struct Inst {
-    X86_InstType type;
+    InstType type;
     X86_OperandLayout layout;
     X86_DataType data_type;
 
@@ -81,33 +79,35 @@ static X86_DataType legalize_int2(TB_DataType dt) {
 #define SUBMIT(i) (seq->insts[seq->inst_count++] = (i))
 static Inst inst_jcc(int target, Cond cc) {
     return (Inst){
-        .type = X86_INST_JCC,
+        .type = JO + cc,
         .layout = X86_OP_L,
+        .regs   = { -1 },
         .imm = { target, cc }
     };
 }
 
 static Inst inst_jmp(int target) {
     return (Inst){
-        .type = X86_INST_JMP,
+        .type = JMP,
         .layout = X86_OP_L,
+        .regs   = { -1 },
         .imm[0] = target
     };
 }
 
 static Inst inst_move(TB_DataType dt, int lhs, int rhs) {
     return (Inst){
-        .type = X86_INST_MOVE,
+        .type = (int)X86_INST_MOVE,
         .layout = X86_OP_RR,
         .data_type = legalize_int2(dt),
-        .regs = { 0, lhs, rhs }
+        .regs = { -1, lhs, rhs }
     };
 }
 
-static Inst inst_call_sym(TB_DataType dt, int dst, const TB_Symbol* sym) {
+static Inst inst_call(TB_DataType dt, int dst, const TB_Symbol* sym) {
     return (Inst){
-        .type = X86_INST_CALL_SYM,
-        .layout = X86_OP_L,
+        .type = CALL,
+        .layout = X86_OP_G,
         .data_type = legalize_int2(dt),
         .regs = { dst },
         .imm[0] = (uintptr_t) sym,
@@ -116,7 +116,7 @@ static Inst inst_call_sym(TB_DataType dt, int dst, const TB_Symbol* sym) {
 
 static Inst inst_copy(TB_DataType dt, int lhs, int rhs) {
     return (Inst){
-        .type = X86_INST_COPY,
+        .type = (int) X86_INST_COPY,
         .layout = X86_OP_RR,
         .data_type = legalize_int2(dt),
         .regs = { lhs, rhs }
@@ -193,8 +193,30 @@ static void print_operand(Val* v) {
             printf("[%s + %d]", GPR_NAMES[v->mem.base], v->mem.disp);
             break;
         }
+        case VAL_GLOBAL: {
+            const TB_Symbol* target = v->global.s;
+            printf("[%s + %d]", target->name, v->global.disp);
+            break;
+        }
+        case VAL_LABEL: {
+            if (v->label == -1) printf(".ret_jmp\n");
+            else printf("L%d\n", v->label);
+            break;
+        }
         default: tb_todo();
     }
+}
+
+static bool try_for_imm8(Ctx* restrict ctx, TB_Node* n, int32_t* out_x) {
+    if (n->type == TB_INTEGER_CONST && try_tile(ctx, n)) {
+        TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
+        if (i->num_words == 1 && fits_into_int8(i->words[0])) {
+            *out_x = i->words[0];
+            return true;
+        }
+    }
+
+    return false;
 }
 
 static bool try_for_imm32(Ctx* restrict ctx, TB_Node* n, int32_t* out_x) {
@@ -340,6 +362,30 @@ static int isel(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n) {
             break;
         }
 
+        case TB_SHL:
+        case TB_SHR:
+        case TB_SAR: {
+            const static InstType ops[] = { SHL, SHR, SAR };
+            InstType op = ops[type - TB_SHL];
+
+            dst = DEF(n, REG_CLASS_GPR);
+
+            int32_t x;
+            if (try_for_imm8(ctx, n->inputs[1], &x)) {
+                int lhs = ISEL(n->inputs[0]);
+                SUBMIT(inst_ri(op, n->dt, dst, lhs, x));
+            } else {
+                // the shift operations need their right hand side in CL (RCX's low 8bit)
+                int lhs = ISEL(n->inputs[0]);
+                int rhs = ISEL(n->inputs[1]); // TODO(NeGate): hint into RCX
+
+                int cl = DEF_FORCED(n, REG_CLASS_GPR, RCX, dst);
+                SUBMIT(inst_copy(n->dt, cl, rhs));
+                SUBMIT(inst_rr(op, n->dt, dst, lhs, RCX));
+            }
+            break;
+        }
+
         case TB_RET: {
             // hint input to be RAX
             int src_vreg = isel(ctx, seq, n->inputs[0]);
@@ -375,27 +421,31 @@ static int isel(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n) {
             }
             break;
         }
-        case TB_SIGN_EXT: {
+
+        case TB_INT2PTR:
+        case TB_SIGN_EXT:
+        case TB_ZERO_EXT: {
             TB_Node* src = n->inputs[0];
 
-            int bits_in_type = src->dt.type == TB_PTR ? 64 : src->dt.data;
+            TB_DataType src_dt = src->dt;
+            bool sign_ext = (type == TB_SIGN_EXT);
+
+            int bits_in_type = src_dt.type == TB_PTR ? 64 : src_dt.data;
             int op = MOV;
             switch (bits_in_type) {
                 case 64: op = MOV; break;
-                case 32: op = MOVSXD; break;
-                case 16: op = MOVSXW; break;
-                case 8:  op = MOVSXB; break;
+                case 32: op = sign_ext ? MOVSXD : MOV; break;
+                case 16: op = sign_ext ? MOVSXW : MOVZXW; break;
+                case 8:  op = sign_ext ? MOVSXB : MOVZXB; break;
                 default: tb_todo();
             }
 
             dst = DEF(n, REG_CLASS_GPR);
-            if (try_tile(ctx, src)) {
-                // movsx dst, [src]
+            if (src->type == TB_LOAD && try_tile(ctx, src)) {
                 Inst inst = isel_load(ctx, src, dst);
                 inst.type = op;
                 SUBMIT(inst);
             } else {
-                // movsx dst, src
                 SUBMIT(inst_r(op, n->dt, dst, ISEL(n->inputs[0])));
             }
             break;
@@ -473,7 +523,7 @@ static int isel(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n) {
             } else {
                 if (try_tile(ctx, n->inputs[0]) && n->inputs[0]->type == TB_GET_SYMBOL_ADDRESS) {
                     TB_NodeSymbol* s = TB_NODE_GET_EXTRA(n->inputs[0]);
-                    SUBMIT(inst_call_sym(n->dt, fake_dst, s->sym));
+                    SUBMIT(inst_call(n->dt, fake_dst, s->sym));
                 } else {
                     __debugbreak();
                 }
@@ -532,32 +582,6 @@ static void emit_sequence(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n)
     FOREACH_N(i, 0, seq->inst_count) {
         Inst* restrict inst = &seq->insts[i];
 
-        if (inst->type == X86_INST_JMP) {
-            JMP(inst->imm[0]);
-            ASM {
-                if (inst->imm[0] == -1) printf("  JMP .ret_jmp\n");
-                else printf("  JMP L%zu\n", inst->imm[0]);
-            }
-            continue;
-        } else if (inst->type == X86_INST_JCC) {
-            JCC(inst->imm[1], inst->imm[0]);
-            ASM {
-                printf("  J%s L%zu\n", COND_NAMES[inst->imm[1]], inst->imm[0]);
-            }
-            continue;
-        } else if (inst->type == X86_INST_CALL_SYM) {
-            const TB_Symbol* target = (const TB_Symbol*) (uintptr_t) inst->imm[0];
-
-            tb_emit_symbol_patch(ctx->module, ctx->f, target, GET_CODE_POS(&ctx->emit) + 1, true);
-
-            // CALL rel32
-            EMIT1(&ctx->emit, 0xE8), EMIT4(&ctx->emit, 0x0);
-            ASM {
-                printf("  CALL %s\n", target->name);
-            }
-            continue;
-        }
-
         bool has_def = false;
         if (inst->regs[0] >= 0) {
             ops[0] = val_gpr(TB_TYPE_I64, resolve_def(ctx, inst->regs[0]));
@@ -581,6 +605,16 @@ static void emit_sequence(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n)
             case X86_OP_I: {
                 ops[1] = val_imm(TB_TYPE_I64, inst->imm[0]);
                 op_count = 2;
+                break;
+            }
+            case X86_OP_G: {
+                ops[0] = val_global((TB_Symbol*) (uintptr_t) inst->imm[0]);
+                op_count = 1;
+                break;
+            }
+            case X86_OP_L: {
+                ops[0] = val_label(TB_TYPE_I64, inst->imm[0]);
+                op_count = 1;
                 break;
             }
             case X86_OP_RR: {
@@ -626,7 +660,7 @@ static void emit_sequence(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n)
                 inst2_print(ctx, MOV, &ops[0], &ops[1], inst->data_type);
             }
         } else if (op_count == 1) {
-            if (!is_value_match(&ops[0], &ops[1])) {
+            if (has_def && !is_value_match(&ops[0], &ops[1])) {
                 inst2_print(ctx, MOV, &ops[0], &ops[1], inst->data_type);
             }
 

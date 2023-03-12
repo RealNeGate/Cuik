@@ -37,7 +37,7 @@ typedef enum {
 } XMM;
 
 typedef enum {
-    VAL_NONE, VAL_FLAGS, VAL_GPR, VAL_XMM, VAL_IMM, VAL_MEM, VAL_GLOBAL
+    VAL_NONE, VAL_FLAGS, VAL_GPR, VAL_XMM, VAL_IMM, VAL_MEM, VAL_GLOBAL, VAL_LABEL
 } ValType;
 
 typedef enum {
@@ -97,10 +97,11 @@ typedef struct Val {
         struct {
             // this should alias with mem.is_rvalue
             bool is_rvalue;
-            const TB_Global* g;
             int16_t disp;
+            const TB_Symbol* s;
         } global;
         int32_t imm;
+        int32_t label;
     };
 } Val;
 static_assert(offsetof(Val, reg) == offsetof(Val, gpr), "Val::reg and Val::gpr must alias!");
@@ -110,8 +111,11 @@ static_assert(offsetof(Val, global.is_rvalue) == offsetof(Val, mem.is_rvalue), "
 typedef enum Inst2Type {
     // Nullary
     RET,
+    // Control flow
+    JO, JNO, JB, JNB, JE, JNE, JBE, JA,
+    JS, JNS, JP, JNP, JL, JGE, JLE, JG,
     // Unary
-    NOT, NEG, DIV, IDIV, CALL_RM,
+    NOT, NEG, DIV, IDIV, JMP, CALL,
     // Integer data processing
     ADD, OR, AND, SUB, XOR, CMP, MOV,
     // Cooler integer ops
@@ -136,7 +140,10 @@ typedef enum ExtMode {
 
     // same as DEF but for MOVZX and MOVSX
     // these are forced as always load.
-    EXT_DEF2
+    EXT_DEF2,
+
+    // implicit CL, used by the shift ops
+    EXT_CL,
 } ExtMode;
 
 typedef struct InstDesc {
@@ -159,21 +166,42 @@ static const GPR SYSV_GPR_PARAMETERS[6] = { RDI, RSI, RDX, RCX, R8, R9 };
 #define UNARY_OP2(name, op, op_i, rx_i) [name] = { (op), (op_i), (rx_i), .mnemonic = #name }
 #define BINARY_OP(name, op, op_i, rx_i) [name] = { (op), (op_i), (rx_i), .mnemonic = #name }
 #define BINARY_OP2(name, op) [name] = { (op), .mnemonic = #name }
+#define BINARY_OP_CL(name, op, op_i, rx_i) [name] = { (op), (op_i), (rx_i), .ext = EXT_CL, .mnemonic = #name }
 #define BINARY_OP_DEF(name, op) [name] = { (op), .ext = EXT_DEF, .mnemonic = #name }
 #define BINARY_OP_DEF2(name, op) [name] = { (op), .ext = EXT_DEF2, .mnemonic = #name }
 static const InstDesc inst_table[] = {
     // nullary
     NULLARY_OP(RET,        0xC3),
     // unary ops
-    UNARY_OP(NOT,          0xF7, 0x02),
-    UNARY_OP(NEG,          0xF7, 0x03),
-    UNARY_OP(DIV,          0xF7, 0x06),
-    UNARY_OP(IDIV,         0xF7, 0x07),
-    UNARY_OP(CALL_RM,      0xFF, 0x02),
-    // unary ops (the normal op is for CL use, imm is imm8)
-    UNARY_OP2(SHL,         0xD2, 0xC0, 0x04),
-    UNARY_OP2(SHR,         0xD2, 0xC0, 0x05),
-    UNARY_OP2(SAR,         0xD2, 0xC0, 0x07),
+    UNARY_OP(NOT,                0xF7, 0x02),
+    UNARY_OP(NEG,                0xF7, 0x03),
+    UNARY_OP(DIV,                0xF7, 0x06),
+    UNARY_OP(IDIV,               0xF7, 0x07),
+    UNARY_OP2(CALL,        0xE8, 0xFF, 0x02),
+    UNARY_OP2(JMP,         0xE9, 0xFF, 0x04),
+    // these are used via label but don't have an opcode for it so
+    // they resort to using op_i and rx_i as the first two bytes followed
+    // by a REL32.
+    UNARY_OP(JO,           0x0F, 0x80),
+    UNARY_OP(JNO,          0x0F, 0x81),
+    UNARY_OP(JB,           0x0F, 0x82),
+    UNARY_OP(JNB,          0x0F, 0x83),
+    UNARY_OP(JE,           0x0F, 0x84),
+    UNARY_OP(JNE,          0x0F, 0x85),
+    UNARY_OP(JBE,          0x0F, 0x86),
+    UNARY_OP(JA,           0x0F, 0x87),
+    UNARY_OP(JS,           0x0F, 0x88),
+    UNARY_OP(JNS,          0x0F, 0x89),
+    UNARY_OP(JP,           0x0F, 0x8A),
+    UNARY_OP(JNP,          0x0F, 0x8B),
+    UNARY_OP(JL,           0x0F, 0x8C),
+    UNARY_OP(JGE,          0x0F, 0x8D),
+    UNARY_OP(JLE,          0x0F, 0x8E),
+    UNARY_OP(JG,           0x0F, 0x8F),
+    // binary ops but they have an implicit CL on the righthand side
+    BINARY_OP_CL(SHL,         0xD2, 0xC0, 0x04),
+    BINARY_OP_CL(SHR,         0xD2, 0xC0, 0x05),
+    BINARY_OP_CL(SAR,         0xD2, 0xC0, 0x07),
     // regular integer binops
     BINARY_OP(ADD,         0x00, 0x80, 0x00),
     BINARY_OP(OR,          0x08, 0x80, 0x01),
@@ -238,12 +266,16 @@ inline static Val val_flags(Cond c) {
     return (Val) { .type = VAL_FLAGS, .dt = TB_TYPE_BOOL, .cond = c };
 }
 
-inline static Val val_global(const TB_Global* g) {
-    return (Val) { .type = VAL_GLOBAL, .dt = TB_TYPE_PTR, .global.is_rvalue = false, .global.g = g };
+inline static Val val_global(const TB_Symbol* s) {
+    return (Val) { .type = VAL_GLOBAL, .dt = TB_TYPE_PTR, .global.is_rvalue = false, .global.s = s };
 }
 
 inline static Val val_imm(TB_DataType dt, int32_t imm) {
     return (Val) { .type = VAL_IMM, .dt = dt, .imm = imm };
+}
+
+inline static Val val_label(TB_DataType dt, int32_t l) {
+    return (Val) { .type = VAL_LABEL, .dt = dt, .label = l };
 }
 
 inline static Val val_stack(TB_DataType dt, int s) {
@@ -326,7 +358,4 @@ static const char* COND_NAMES[] = {
 #define STACK_ALLOC(size, align) (ctx->stack_usage = align_up(ctx->stack_usage + (size), align), - ctx->stack_usage)
 #define INST1(op, a, dt)          inst1(&ctx->emit, op, a, dt)
 #define INST2(op, a, b, dt)       inst2(&ctx->emit, op, a, b, dt)
-#define INST2SSE(op, a, b, flags) inst2sse(&ctx->emit, op, a, b, flags)
-#define JCC(cc, label)            jcc(&ctx->emit, cc, label)
-#define JMP(label)                jmp(&ctx->emit, label)
-#define RET_JMP()                 ret_jmp(&ctx->emit)
+#define INST2SSE(op, a, b, dt)    inst2sse(&ctx->emit, op, a, b, dt)

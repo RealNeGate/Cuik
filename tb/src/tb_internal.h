@@ -122,7 +122,6 @@ struct { size_t cap, count; T* elems; }
 typedef struct TB_SymbolPatch {
     TB_Function* source;
     uint32_t pos; // relative to the start of the function body
-    bool is_function;
     const TB_Symbol* target;
 } TB_SymbolPatch;
 
@@ -723,7 +722,7 @@ TB_Label* tb_calculate_immediate_predeccessors(TB_Function* f, TB_TemporaryStora
 TB_Predeccesors tb_get_temp_predeccesors(TB_Function* f, TB_TemporaryStorage* tls);
 void tb_free_temp_predeccesors(TB_TemporaryStorage* tls, TB_Predeccesors preds);
 
-void tb_emit_symbol_patch(TB_Module* m, TB_Function* source, const TB_Symbol* target, size_t pos, bool is_function);
+void tb_emit_symbol_patch(TB_Module* m, TB_Function* source, const TB_Symbol* target, size_t pos);
 
 TB_Reg* tb_vla_reserve(TB_Function* f, size_t count);
 
