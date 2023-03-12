@@ -2,6 +2,7 @@
 #include <string.h>
 #include <stdint.h>
 
+#if 0
 int do_stuff(int a, int b, int c) {
     int d = b + a;
     int e = b & c;
@@ -58,7 +59,9 @@ int without_restrict(int const* const x, int* y) {
 
     return 1;
 }
+#endif
 
+#if 1
 // murmur3 32-bit without UB unaligned accesses
 // https://github.com/demetri/scribbles/blob/master/hashing/ub_aware_hash_functions.c
 uint32_t hash_ident(const void* key, size_t len) {
@@ -67,6 +70,9 @@ uint32_t hash_ident(const void* key, size_t len) {
     // main body, work on 32-bit blocks at a time
     for (size_t i=0;i<len/4;i++) {
         uint32_t k;
+        // convert into normal loads and stores which can be mem2reg'd:
+        //   tmp = load &key[i * 4] (1 align)
+        //   store k, tmp           (1 align)
         memcpy(&k, &key[i * 4], sizeof(k));
 
         k *= 0xcc9e2d51;
@@ -91,3 +97,4 @@ uint32_t hash_ident(const void* key, size_t len) {
     h = (h ^ (h >> 13))*0xc2b2ae35;
     return (h ^ (h >> 16));
 }
+#endif
