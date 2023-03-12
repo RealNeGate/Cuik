@@ -69,11 +69,11 @@ uint32_t hash_ident(const void* key, size_t len) {
 
     // main body, work on 32-bit blocks at a time
     for (size_t i=0;i<len/4;i++) {
-        uint32_t k;
+        uint32_t k = *(uint32_t*) &key[i * 4];
         // convert into normal loads and stores which can be mem2reg'd:
         //   tmp = load &key[i * 4] (1 align)
         //   store k, tmp           (1 align)
-        memcpy(&k, &key[i * 4], sizeof(k));
+        // memcpy(&k, &key[i * 4], sizeof(k));
 
         k *= 0xcc9e2d51;
         k = ((k << 15) | (k >> 17))*0x1b873593;
