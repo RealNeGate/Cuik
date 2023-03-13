@@ -30,9 +30,9 @@ static bool parse_decl_or_expr2(Cuik_Parser* parser, TokenStream* restrict s, si
         while (!tokens_eof(s)) {
             size_t start_decl_token = s->list.current;
             Decl decl = parse_declarator2(parser, s, type, false);
-            if (decl.name == NULL) {
+            /*if (decl.name == NULL) {
                 diag_warn(s, decl.loc, "Declaration has no name");
-            }
+            }*/
 
             // Convert into statement
             Stmt* n = alloc_stmt();
