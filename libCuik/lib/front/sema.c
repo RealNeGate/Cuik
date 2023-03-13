@@ -1,8 +1,7 @@
 #include "sema.h"
 
-#include <back/ir_gen.h>
-#include <stdarg.h>
-#include <targets/targets.h>
+#include "../back/ir_gen.h"
+#include "../targets/targets.h"
 
 #define SEMA_MUNCH_SIZE (131072)
 

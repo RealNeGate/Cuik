@@ -18,7 +18,7 @@ args.mimalloc = False
 source_patterns = ["lib/libcuik.c"]
 
 ninja = open('build.ninja', 'w')
-cflags = "-g -I ../common/ -I include -I lib -I deps -Wall -Werror -Wno-unused-function -Wno-unused-variable"
+cflags = "-g -I ../common/ -I include -I deps -Wall -Werror -Wno-unused-function -Wno-unused-variable"
 cflags += " -DCUIK_ALLOW_THREADS"
 
 if args.mimalloc: cflags += " -DCUIK_USE_MIMALLOC -I ../mimalloc/include"

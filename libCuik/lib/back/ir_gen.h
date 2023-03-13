@@ -4,7 +4,7 @@
 #include <arena.h>
 #include <common.h>
 #include <threads.h>
-#include <front/parser.h>
+#include "../front/parser.h"
 
 #include <tb.h>
 

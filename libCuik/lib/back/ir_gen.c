@@ -1,7 +1,7 @@
 #ifdef CUIK_USE_TB
 #include "ir_gen.h"
 #include <futex.h>
-#include <targets/targets.h>
+#include "../targets/targets.h"
 
 atomic_flag irgen_defined_tls_index;
 

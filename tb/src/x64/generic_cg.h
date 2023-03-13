@@ -172,14 +172,14 @@ static int put_def(Ctx* restrict ctx, TB_Node* n, int reg_class) {
 #define DEF_HINTED(n, rg, hint) put_def_hinted(ctx, n, rg, hint)
 static int put_def_hinted(Ctx* restrict ctx, TB_Node* n, int reg_class, int hint) {
     int i = dyn_array_length(ctx->defs);
-    dyn_array_put(ctx->defs, (Def){ .node = n, .start = INT_MAX, .reg_class = reg_class, .reg = -1, .hint = hint });
+    dyn_array_put(ctx->defs, (Def){ .node = n, .start = INT_MAX, .end = INT_MIN, .reg_class = reg_class, .reg = -1, .hint = hint });
     return i;
 }
 
 #define DEF_FORCED(n, rg, reg, live_until) put_def_forced(ctx, n, rg, reg, live_until)
 static int put_def_forced(Ctx* restrict ctx, TB_Node* n, int reg_class, int reg, int live_until) {
     int i = dyn_array_length(ctx->defs);
-    dyn_array_put(ctx->defs, (Def){ .node = n, .start = INT_MAX, .reg_class = reg_class, .reg = reg, .live_until = live_until });
+    dyn_array_put(ctx->defs, (Def){ .node = n, .start = INT_MAX, .end = INT_MIN, .reg_class = reg_class, .reg = reg, .live_until = live_until });
     return i;
 }
 
@@ -288,10 +288,10 @@ static void phi_edge(TB_Function* f, Ctx* restrict ctx, Sequence* restrict seq, 
 // Linear scan reg allocation
 ////////////////////////////////
 static int compare_defs(const void* a, const void* b) {
-    Def* aa = *(Def**) a;
-    Def* bb = *(Def**) b;
+    int as = (*(Def**) a)->start;
+    int bs = (*(Def**) b)->start;
 
-    return aa->start - bb->start;
+    return as - bs;
 }
 
 static void linear_scan(Ctx* restrict ctx, TB_Function* f, size_t node_count) {
@@ -310,9 +310,12 @@ static void linear_scan(Ctx* restrict ctx, TB_Function* f, size_t node_count) {
             }
 
             // mark users
+            printf("t = %d\n", timeline);
             FOREACH_N(j, 1, 4) if (inst->regs[j] < -1) {
                 Def* d = &ctx->defs[-inst->regs[j] - 2];
-                d->end = timeline;
+
+                if (timeline < d->start) d->start = timeline;
+                if (timeline > d->end) d->end = timeline;
             }
 
             timeline++;
@@ -338,7 +341,7 @@ static void linear_scan(Ctx* restrict ctx, TB_Function* f, size_t node_count) {
 
     FOREACH_N(i, 0, def_count) {
         Def* d = sorted[i];
-        int time = (d->start != INT_MAX ? d->start : 0);
+        int time = d->start;
 
         ASM {
             printf("  \x1b[32m# D%zu t=[%d,%d) ", sorted[i] - ctx->defs, time, d->end);
@@ -573,6 +576,10 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
 
                 ASM { printf("L%d:\n", bb); }
                 last = bb;
+            }
+
+            if (seq->inst_count == 0) {
+                continue;
             }
 
             TB_Node* n = seq->node;

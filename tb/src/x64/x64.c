@@ -125,6 +125,7 @@ static Inst inst_copy(TB_DataType dt, int lhs, int rhs) {
 }
 
 static Inst inst_rr(int op, TB_DataType dt, int dst, int lhs, int rhs) {
+    assert(lhs != -1);
     return (Inst){
         .type = op,
         .layout = X86_OP_RR,
@@ -198,12 +199,20 @@ static int classify_reg_class(TB_DataType dt) {
 
 static void print_operand(Val* v) {
     switch (v->type) {
-        case VAL_GPR: assert(v->reg < 16); printf("%s", GPR_NAMES[v->reg]); break;
+        case VAL_GPR: {
+            assert(v->reg >= 0 && v->reg < 16);
+            printf("%s", GPR_NAMES[v->reg]);
+            break;
+        }
         case VAL_XMM: printf("XMM%d", v->reg); break;
         case VAL_IMM: printf("%d", v->imm); break;
         case VAL_ABS: printf("%#llx", v->abs); break;
         case VAL_MEM: {
-            printf("[%s + %d]", GPR_NAMES[v->reg], v->imm);
+            if (v->index == -1) {
+                printf("[%s + %d]", GPR_NAMES[v->reg], v->imm);
+            } else {
+                printf("[%s + %s*%d + %d]", GPR_NAMES[v->reg], GPR_NAMES[v->index], 1u << v->scale, v->imm);
+            }
             break;
         }
         case VAL_GLOBAL: {
@@ -405,13 +414,10 @@ static int isel(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n) {
             int scaled_index = DEF(n, REG_CLASS_GPR);
 
             uint8_t stride_as_shift = 0;
-            // bool written_to_dst = false;
             if (tb_is_power_of_two(stride)) {
                 stride_as_shift = tb_ffs(stride) - 1;
 
                 if (stride_as_shift > 3) {
-                    // written_to_dst = true;
-
                     int index = ISEL(index_n);
                     SUBMIT(inst_ri(SHL, n->dt, scaled_index, index, stride_as_shift));
                 }
@@ -420,7 +426,7 @@ static int isel(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n) {
             }
 
             int base = ISEL(base_n);
-            SUBMIT(inst_ri(ADD, n->dt, dst, USE(scaled_index), base));
+            SUBMIT(inst_rr(ADD, n->dt, dst, USE(scaled_index), base));
             break;
         }
 
@@ -614,10 +620,11 @@ static int isel(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n) {
             break;
         }
 
-        case TB_NULL:
         case TB_PHI:
+        dst = DEF(n, classify_reg_class(n->dt));
         break;
 
+        case TB_NULL: break;
         default: tb_todo();
     }
 

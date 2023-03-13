@@ -251,6 +251,7 @@ TB_API TB_Exports tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
             COFF_SectionHeader header = {
                 .characteristics = COFF_CHARACTERISTICS_DEBUG,
                 .raw_data_size = debug_sections.data[i].raw_data.length,
+                .raw_data_pos = debug_sections.data[i].virtual_address,
                 .pointer_to_reloc = (uintptr_t) debug_sections.data[i].user_data
             };
 

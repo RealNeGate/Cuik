@@ -1,10 +1,11 @@
 #pragma once
 #include <common.h>
-#include <preproc/lexer.h>
 #include <arena.h>
 
+#include "../preproc/lexer.h"
+
 #ifdef CUIK_USE_TB
-#include <back/ir_gen.h>
+#include "../back/ir_gen.h"
 #endif
 
 enum {

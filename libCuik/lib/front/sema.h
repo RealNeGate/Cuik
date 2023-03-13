@@ -2,7 +2,7 @@
 #include <common.h>
 #include <arena.h>
 
-#include <front/parser.h>
+#include "parser.h"
 
 extern atomic_int sema_error_count;
 extern thread_local bool in_the_semantic_phase;

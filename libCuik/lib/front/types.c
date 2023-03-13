@@ -1,6 +1,6 @@
 #include <threads.h>
 #include "parser.h"
-#include <targets/targets.h>
+#include "../targets/targets.h"
 
 Cuik_Type cuik__builtin_void = { KIND_VOID,  0, 0, .is_complete = true };
 Cuik_Type cuik__builtin_bool = { KIND_BOOL,  1, 1, .is_complete = true };

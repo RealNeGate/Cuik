@@ -6,7 +6,7 @@
 //
 //   - ugly ass code
 #include "parser.h"
-#include <targets/targets.h>
+#include "../targets/targets.h"
 
 // winnt.h loves including garbage
 #undef VOID

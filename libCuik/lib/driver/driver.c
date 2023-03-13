@@ -3,10 +3,11 @@
 #include <futex.h>
 #include <arena.h>
 #include <threads.h>
-#include "targets/targets.h"
 #include "driver_fs.h"
 #include "driver_opts.h"
 #include "driver_arg_parse.h"
+
+#include "../targets/targets.h"
 #include "../front/parser.h"
 
 #ifdef CUIK_ALLOW_THREADS

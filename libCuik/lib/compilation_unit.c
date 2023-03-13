@@ -1,8 +1,9 @@
 #include <common.h>
 #include <cuik.h>
 #include <threads.h>
-#include <front/parser.h>
 #include <futex.h>
+
+#include "front/parser.h"
 
 CUIK_API CompilationUnit* cuik_create_compilation_unit(void) {
     CompilationUnit* cu = cuik_calloc(1, sizeof(CompilationUnit));

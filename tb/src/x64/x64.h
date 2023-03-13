@@ -201,7 +201,7 @@ static const InstDesc inst_table[] = {
     BINARY_OP(MOV,         0x88, 0xC6, 0x00),
     BINARY_OP(TEST,        0x84, 0xF6, 0x00),
     // misc integer ops
-    BINARY_OP2(MOVABS,     0xB0),
+    BINARY_OP2(MOVABS,     0xB8),
     BINARY_OP2(XCHG,       0x86),
     BINARY_OP2(LEA,        0x8D),
     BINARY_OP_DEF(XADD,    0xC0),
