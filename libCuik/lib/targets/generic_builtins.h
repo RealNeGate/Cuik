@@ -14,7 +14,7 @@
 //   .   variadic parameters
 //
 // gcc/clang
-X(__builtin_expect, "vb")
+X(__builtin_expect, "bb")
 X(__builtin_trap, "vv")
 X(__builtin_clz, "ii")
 X(__builtin_mul_overflow, "v.")

@@ -1,4 +1,4 @@
-#include <front/atoms.h>
+#include "../front/atoms.h"
 
 typedef struct InternalFile InternalFile;
 struct InternalFile {

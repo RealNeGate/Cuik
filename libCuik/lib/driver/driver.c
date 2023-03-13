@@ -55,6 +55,10 @@ static void dump_tokens(FILE* out_file, TokenStream* s) {
             last_line = r.line;
         }
 
+        if (t->type == TOKEN_STRING_WIDE_SINGLE_QUOTE || t->type == TOKEN_STRING_WIDE_DOUBLE_QUOTE) {
+            fprintf(out_file, "L");
+        }
+
         fprintf(out_file, "%.*s ", (int) t->content.length, t->content.data);
     }
 }
@@ -149,7 +153,7 @@ static void preproc_file(void* arg) {
     }
 
     // dispose the preprocessor crap since we didn't need it
-    if (args->test_preproc) {
+    if (args->preprocess || args->test_preproc) {
         futex_dec(job->remaining);
         return;
     }
