@@ -18,10 +18,6 @@
 #include <x86intrin.h>
 #endif
 
-#define NL_STRING_MAP_IMPL
-#define NL_STRING_MAP_INLINE
-#include <string_map.h>
-
 typedef struct TokenNode TokenNode;
 struct TokenNode {
     TokenNode* next;
@@ -34,7 +30,6 @@ typedef struct {
 } TokenList;
 
 // GOD I HATE FORWARD DECLARATIONS
-static uint32_t hash_ident(const void* key, size_t len);
 static bool is_defined(Cuik_CPP* restrict c, const unsigned char* start, size_t length);
 static void expect(TokenArray* restrict in, char ch);
 static intmax_t eval(Cuik_CPP* restrict c, TokenArray* restrict in);

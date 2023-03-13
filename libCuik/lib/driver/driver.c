@@ -7,7 +7,6 @@
 #include "driver_fs.h"
 #include "driver_opts.h"
 #include "driver_arg_parse.h"
-#include <file_map.h>
 #include "../front/parser.h"
 
 #ifdef CUIK_ALLOW_THREADS

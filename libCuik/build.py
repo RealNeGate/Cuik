@@ -15,16 +15,7 @@ parser.add_argument('-autospall', action='store_true', help='instrument code wit
 args = parser.parse_args()
 args.mimalloc = False
 
-source_patterns = [
-	"lib/*.c",
-	"lib/driver/*.c",
-	"lib/preproc/*.c",
-	"lib/front/*.c",
-	"lib/targets/*.c",
-	"lib/zip/*.c",
-	"lib/back/ir_gen.c",
-	"lib/back/linker.c"
-]
+source_patterns = ["lib/libcuik.c"]
 
 ninja = open('build.ninja', 'w')
 cflags = "-g -I ../common/ -I include -I lib -I deps -Wall -Werror -Wno-unused-function -Wno-unused-variable"

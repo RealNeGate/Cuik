@@ -1,7 +1,7 @@
 
 static size_t insert_symtab(Cuik_CPP* ctx, size_t len, const char* key) {
     uint32_t mask = (1u << ctx->macros.exp) - 1;
-    uint32_t hash = hash_ident((const unsigned char*) key, len);
+    uint32_t hash = murmur3_32((const unsigned char*) key, len);
     for (size_t i = hash;;) {
         // hash table lookup
         uint32_t step = (hash >> (32 - ctx->macros.exp)) | 1;
@@ -86,7 +86,7 @@ bool cuikpp_undef_cstr(Cuik_CPP* ctx, const char* key) {
 
 bool cuikpp_undef(Cuik_CPP* ctx, size_t keylen, const char* key) {
     uint32_t mask = (1u << ctx->macros.exp) - 1;
-    uint32_t hash = hash_ident(key, keylen);
+    uint32_t hash = murmur3_32(key, keylen);
     for (size_t i = hash;;) {
         // hash table lookup
         uint32_t step = (hash >> (32 - ctx->macros.exp)) | 1;
@@ -105,39 +105,6 @@ bool cuikpp_undef(Cuik_CPP* ctx, size_t keylen, const char* key) {
     }
 
     return false;
-}
-
-// murmur3 32-bit without UB unaligned accesses
-// https://github.com/demetri/scribbles/blob/master/hashing/ub_aware_hash_functions.c
-static uint32_t hash_ident(const void* key, size_t len) {
-    uint32_t h = 0;
-
-    // main body, work on 32-bit blocks at a time
-    for (size_t i=0;i<len/4;i++) {
-        uint32_t k;
-        memcpy(&k, &key[i * 4], sizeof(k));
-
-        k *= 0xcc9e2d51;
-        k = ((k << 15) | (k >> 17))*0x1b873593;
-        h = (((h^k) << 13) | ((h^k) >> 19))*5 + 0xe6546b64;
-    }
-
-    // load/mix up to 3 remaining tail bytes into a tail block
-    uint32_t t = 0;
-    const uint8_t *tail = ((const uint8_t*) key) + 4*(len/4);
-    switch(len & 3) {
-        case 3: t ^= tail[2] << 16;
-        case 2: t ^= tail[1] <<  8;
-        case 1: {
-            t ^= tail[0] <<  0;
-            h ^= ((0xcc9e2d51*t << 15) | (0xcc9e2d51*t >> 17))*0x1b873593;
-        }
-    }
-
-    // finalization mix, including key length
-    h = ((h^len) ^ ((h^len) >> 16))*0x85ebca6b;
-    h = (h ^ (h >> 13))*0xc2b2ae35;
-    return (h ^ (h >> 16));
 }
 
 // 16byte based compare
@@ -174,7 +141,7 @@ static bool find_define(Cuik_CPP* restrict ctx, size_t* out_index, const unsigne
 
     bool found = false;
     uint32_t mask = (1u << ctx->macros.exp) - 1;
-    uint32_t hash = hash_ident(start, length);
+    uint32_t hash = murmur3_32(start, length);
     for (size_t i = hash;;) {
         // hash table lookup
         uint32_t step = (hash >> (32 - ctx->macros.exp)) | 1;

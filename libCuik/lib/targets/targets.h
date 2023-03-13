@@ -2,7 +2,6 @@
 #include <common.h>
 #include <preproc/lexer.h>
 #include <arena.h>
-#include <front/parser.h>
 
 #ifdef CUIK_USE_TB
 #include <back/ir_gen.h>

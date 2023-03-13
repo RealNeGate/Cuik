@@ -5,9 +5,6 @@
 //   statement, basically just find the semicolon and head out :p
 //
 //   - ugly ass code
-//
-//   - make the expect(...) code be a little smarter, if it knows that it's expecting
-//   a token for a specific operation... tell the user
 #include "parser.h"
 #include "../pp_map.h"
 #include <targets/targets.h>
@@ -71,7 +68,6 @@ thread_local static Expr* symbol_chain_current;
 thread_local static Arena local_ast_arena;
 thread_local static bool out_of_order_mode;
 
-static void expect(TranslationUnit* tu, TokenStream* restrict s, char ch);
 static bool expect_char(TokenStream* restrict s, char ch);
 static bool expect_closing_paren(TokenStream* restrict s, SourceLoc opening);
 static bool expect_with_reason(TokenStream* restrict s, char ch, const char* reason);
@@ -623,17 +619,6 @@ static _Noreturn void generic_error(TranslationUnit* tu, TokenStream* restrict s
 
     report(REPORT_ERROR, s, loc, msg);
     abort();
-}
-
-static void expect(TranslationUnit* tu, TokenStream* restrict s, char ch) {
-    if (tokens_get(s)->type != ch) {
-        Token* t = tokens_get(s);
-        SourceLoc loc = tokens_get_location(s);
-
-        diag_err(s, (SourceRange){ loc, loc }, "expected '%c', got '%.*s'", ch, (int)t->content.length, t->content.data);
-    } else {
-        tokens_next(s);
-    }
 }
 
 static bool expect_closing_paren(TokenStream* restrict s, SourceLoc opening) {

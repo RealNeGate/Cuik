@@ -1,10 +1,10 @@
 #if _WIN32
 #include "common.h"
-
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-
 #include <time.h>
+
+// because we undef'd it earlier
+#define VOID void
+#define TokenStream FuckYouWindows
 #include <DbgHelp.h>
 #pragma comment(lib, "Dbghelp.lib")
 
