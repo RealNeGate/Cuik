@@ -1,4 +1,3 @@
-
 #pragma once
 
 #define DECIMAL_DIG      10

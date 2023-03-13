@@ -6,7 +6,6 @@
 //
 //   - ugly ass code
 #include "parser.h"
-#include "../pp_map.h"
 #include <targets/targets.h>
 
 // winnt.h loves including garbage
@@ -66,7 +65,6 @@ thread_local static Expr* symbol_chain_current;
 // we allocate nodes from here but once the threaded parsing stuff is complete we'll stitch this
 // to the original AST arena so that it may be freed later
 thread_local static Arena local_ast_arena;
-thread_local static bool out_of_order_mode;
 
 static bool expect_char(TokenStream* restrict s, char ch);
 static bool expect_closing_paren(TokenStream* restrict s, SourceLoc opening);
@@ -86,11 +84,8 @@ static Decl parse_declarator(TranslationUnit* restrict tu, TokenStream* restrict
 // It's like parse_expr but it doesn't do anything with comma operators to avoid
 // parsing issues.
 static Expr* parse_initializer(TranslationUnit* tu, TokenStream* restrict s, Cuik_QualType type);
-
 static bool is_typename(Cuik_GlobalSymbols* syms, TokenStream* restrict s);
-
 static _Noreturn void generic_error(TranslationUnit* tu, TokenStream* restrict s, const char* msg);
-
 static int type_cycles_dfs(TokenStream* restrict s, Cuik_Type* type);
 
 // Usage:

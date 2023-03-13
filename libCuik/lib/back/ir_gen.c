@@ -1467,13 +1467,15 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
 
                 TB_ModuleSection* section = get_variable_storage(tu->ir_mod, &attrs, s->decl.type.raw & CUIK_QUAL_CONST);
 
-                int max_tb_objects;
-                if (s->decl.initial->op == EXPR_ADDR) {
-                    max_tb_objects = 2;
-                } else if (s->decl.initial->op == EXPR_INITIALIZER) {
-                    max_tb_objects = count_max_tb_init_objects(s->decl.initial->init.root);
-                } else {
-                    max_tb_objects = 1;
+                int max_tb_objects = 0;
+                if (s->decl.initial) {
+                    if (s->decl.initial->op == EXPR_ADDR) {
+                        max_tb_objects = 2;
+                    } else if (s->decl.initial->op == EXPR_INITIALIZER) {
+                        max_tb_objects = count_max_tb_init_objects(s->decl.initial->init.root);
+                    } else {
+                        max_tb_objects = 1;
+                    }
                 }
 
                 tb_global_set_storage(tu->ir_mod, section, g, type->size, type->align, max_tb_objects);

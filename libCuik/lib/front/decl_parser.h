@@ -1292,20 +1292,6 @@ static Decl parse_declarator2(Cuik_Parser* restrict parser, TokenStream* restric
         s->list.current = nested_end;
     }
 
-    // disambiguate
-    #if 0
-    bool is_nested_declarator = tokens_get(s)->type == '(';
-    if (!out_of_order_mode && is_nested_declarator && is_abstract) {
-        tokens_next(s);
-
-        if (is_typename(&tu->globals, s)) {
-            is_nested_declarator = false;
-        }
-
-        tokens_prev(s);
-    }
-    #endif
-
     SourceLoc end_loc = tokens_get_last_location(s);
     return (Decl){ type, name, { start_loc, end_loc } };
 }
