@@ -28,6 +28,7 @@ typedef enum X86_OperandLayout {
     X86_OP_R,
     X86_OP_M,
     X86_OP_I,
+    X86_OP_A,
 
     // integer binary ops
     X86_OP_RR,
@@ -161,6 +162,16 @@ static Inst inst_i(int op, TB_DataType dt, int dst, int32_t imm) {
     };
 }
 
+static Inst inst_i64(int op, TB_DataType dt, int dst, uint64_t imm) {
+    return (Inst){
+        .type = op,
+        .layout = X86_OP_A,
+        .data_type = legalize_int2(dt),
+        .regs = { dst },
+        .imm = { imm & 0xFFFFFFFF, imm >> 32ull }
+    };
+}
+
 static Inst inst_m(int op, TB_DataType dt, int dst, int base, int index, Scale scale, int32_t disp) {
     return (Inst){
         .type = op,
@@ -187,20 +198,22 @@ static int classify_reg_class(TB_DataType dt) {
 
 static void print_operand(Val* v) {
     switch (v->type) {
-        case VAL_GPR: printf("%s", GPR_NAMES[v->reg]); break;
+        case VAL_GPR: assert(v->reg < 16); printf("%s", GPR_NAMES[v->reg]); break;
+        case VAL_XMM: printf("XMM%d", v->reg); break;
         case VAL_IMM: printf("%d", v->imm); break;
+        case VAL_ABS: printf("%#llx", v->abs); break;
         case VAL_MEM: {
-            printf("[%s + %d]", GPR_NAMES[v->mem.base], v->mem.disp);
+            printf("[%s + %d]", GPR_NAMES[v->reg], v->imm);
             break;
         }
         case VAL_GLOBAL: {
-            const TB_Symbol* target = v->global.s;
-            printf("[%s + %d]", target->name, v->global.disp);
+            const TB_Symbol* target = v->symbol;
+            printf("[%s + %d]", target->name, v->imm);
             break;
         }
         case VAL_LABEL: {
-            if (v->label == -1) printf(".ret_jmp\n");
-            else printf("L%d\n", v->label);
+            if (v->imm == -1) printf(".ret_jmp");
+            else printf("L%d", v->imm);
             break;
         }
         default: tb_todo();
@@ -231,7 +244,7 @@ static bool try_for_imm32(Ctx* restrict ctx, TB_Node* n, int32_t* out_x) {
     return false;
 }
 
-static Inst isel_load(Ctx* restrict ctx, TB_Node* n, int dst) {
+static Inst isel_load(Ctx* restrict ctx, Sequence* seq, TB_Node* n, int dst) {
     if (n->inputs[0]->type == TB_LOCAL) {
         ptrdiff_t search = nl_map_get(ctx->stack_slots, n->inputs[0]);
         assert(search >= 0);
@@ -239,7 +252,8 @@ static Inst isel_load(Ctx* restrict ctx, TB_Node* n, int dst) {
         return inst_m(MOV, n->dt, dst, RBP, GPR_NONE, SCALE_X1, ctx->stack_slots[search].v);
     }
 
-    return inst_m(MOV, n->dt, dst, USE_VAL(n->inputs[0]), GPR_NONE, SCALE_X1, 0);
+    int base = ISEL(n->inputs[0]);
+    return inst_m(MOV, n->dt, dst, base, GPR_NONE, SCALE_X1, 0);
 }
 
 static Cond isel_cmp(Ctx* restrict ctx, Sequence* seq, TB_Node* n) {
@@ -304,6 +318,7 @@ static int isel(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n) {
             }
             break;
         }
+
         case TB_LOCAL: {
             ptrdiff_t search = nl_map_get(ctx->stack_slots, n);
             if (search >= 0) {
@@ -323,10 +338,15 @@ static int isel(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n) {
             TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
             assert(i->num_words == 1);
 
-            uint64_t x = i->words[0];
-            assert(fits_into_int32(x));
-
             dst = DEF(n, REG_CLASS_GPR);
+
+            uint64_t x = i->words[0];
+            if (!fits_into_int32(x)) {
+                // movabs reg, imm64
+                SUBMIT(inst_i64(MOVABS, n->dt, dst, x));
+                break;
+            }
+
             SUBMIT(inst_i(MOV, n->dt, dst, x));
             break;
         }
@@ -359,6 +379,48 @@ static int isel(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n) {
                 int rhs = ISEL(n->inputs[1]);
                 SUBMIT(inst_rr(op, n->dt, dst, lhs, rhs));
             }
+            break;
+        }
+        case TB_MUL: {
+            dst = DEF(n, REG_CLASS_GPR);
+
+            int lhs = ISEL(n->inputs[0]);
+            int rhs = ISEL(n->inputs[1]);
+            SUBMIT(inst_rr(IMUL, n->dt, dst, lhs, rhs));
+            break;
+        }
+
+        case TB_ARRAY_ACCESS: {
+            dst = DEF(n, REG_CLASS_GPR);
+
+            int64_t stride = TB_NODE_GET_EXTRA_T(n, TB_NodeArray)->stride;
+            TB_Node* base_n = n->inputs[0];
+            TB_Node* index_n = n->inputs[1];
+
+            // we resolve the index then add the base
+            //
+            // if it's an LEA index*stride
+            // then stride > 0, if not it's free
+            // do think of it however
+            int scaled_index = DEF(n, REG_CLASS_GPR);
+
+            uint8_t stride_as_shift = 0;
+            // bool written_to_dst = false;
+            if (tb_is_power_of_two(stride)) {
+                stride_as_shift = tb_ffs(stride) - 1;
+
+                if (stride_as_shift > 3) {
+                    // written_to_dst = true;
+
+                    int index = ISEL(index_n);
+                    SUBMIT(inst_ri(SHL, n->dt, scaled_index, index, stride_as_shift));
+                }
+            } else {
+                tb_todo();
+            }
+
+            int base = ISEL(base_n);
+            SUBMIT(inst_ri(ADD, n->dt, dst, USE(scaled_index), base));
             break;
         }
 
@@ -405,7 +467,7 @@ static int isel(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n) {
 
         case TB_LOAD: {
             dst = DEF(n, REG_CLASS_GPR);
-            SUBMIT(isel_load(ctx, n, dst));
+            SUBMIT(isel_load(ctx, seq, n, dst));
             break;
         }
         case TB_STORE: {
@@ -417,7 +479,8 @@ static int isel(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n) {
 
                 SUBMIT(inst_mr(MOV, n->dt, RBP, GPR_NONE, SCALE_X1, ctx->stack_slots[search].v, src));
             } else {
-                SUBMIT(inst_mr(MOV, n->dt, ISEL(n->inputs[0]), GPR_NONE, SCALE_X1, 0, src));
+                int addr = ISEL(n->inputs[0]);
+                SUBMIT(inst_mr(MOV, n->dt, addr, GPR_NONE, SCALE_X1, 0, src));
             }
             break;
         }
@@ -442,12 +505,21 @@ static int isel(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n) {
 
             dst = DEF(n, REG_CLASS_GPR);
             if (src->type == TB_LOAD && try_tile(ctx, src)) {
-                Inst inst = isel_load(ctx, src, dst);
+                Inst inst = isel_load(ctx, seq, src, dst);
                 inst.type = op;
                 SUBMIT(inst);
             } else {
-                SUBMIT(inst_r(op, n->dt, dst, ISEL(n->inputs[0])));
+                int src = ISEL(n->inputs[0]);
+                SUBMIT(inst_r(op, n->dt, dst, src));
             }
+            break;
+        }
+        case TB_PTR2INT:
+        case TB_TRUNCATE: {
+            int src = ISEL(n->inputs[0]);
+            dst = DEF(n, REG_CLASS_GPR);
+
+            SUBMIT(inst_copy(n->dt, dst, src));
             break;
         }
 
@@ -467,7 +539,16 @@ static int isel(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n) {
                     SUBMIT(inst_jmp(br->default_label));
                 }
             } else {
-                tb_todo();
+                int key = USE(ISEL(n->inputs[0]));
+
+                FOREACH_N(i, 0, br->count) {
+                    SUBMIT(inst_i(CMP, n->dt, key, br->targets[i].key));
+                    SUBMIT(inst_jcc(br->targets[i].value, E));
+                }
+                SUBMIT(inst_jmp(br->default_label));
+
+                // switch-like branch
+                // tb_todo();
             }
             break;
         }
@@ -558,7 +639,6 @@ static int8_t resolve_use(Ctx* restrict ctx, int x) {
 }
 
 static void inst2_print(Ctx* restrict ctx, InstType type, Val* dst, Val* src, X86_DataType dt) {
-    INST2(type, dst, src, dt);
     ASM {
         printf("  %s ", inst_table[type].mnemonic);
         print_operand(dst);
@@ -566,15 +646,16 @@ static void inst2_print(Ctx* restrict ctx, InstType type, Val* dst, Val* src, X8
         print_operand(src);
         printf("\n");
     }
+    INST2(type, dst, src, dt);
 }
 
 static void inst1_print(Ctx* restrict ctx, int type, Val* src, X86_DataType dt) {
-    INST1(type, src, dt);
     ASM {
         printf("  %s ", inst_table[type].mnemonic);
         print_operand(src);
         printf("\n");
     }
+    INST1(type, src, dt);
 }
 
 static void emit_sequence(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n) {
@@ -584,7 +665,7 @@ static void emit_sequence(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n)
 
         bool has_def = false;
         if (inst->regs[0] >= 0) {
-            ops[0] = val_gpr(TB_TYPE_I64, resolve_def(ctx, inst->regs[0]));
+            ops[0] = val_gpr(resolve_def(ctx, inst->regs[0]));
             has_def = true;
         }
 
@@ -598,12 +679,17 @@ static void emit_sequence(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n)
         int op_count = 0;
         switch (inst->layout) {
             case X86_OP_R: {
-                ops[1] = val_gpr(TB_TYPE_I64, regs[1]);
+                ops[1] = val_gpr(regs[1]);
                 op_count = 2;
                 break;
             }
             case X86_OP_I: {
-                ops[1] = val_imm(TB_TYPE_I64, inst->imm[0]);
+                ops[1] = val_imm(inst->imm[0]);
+                op_count = 2;
+                break;
+            }
+            case X86_OP_A: {
+                ops[1] = val_abs((inst->imm[1] << 32) | inst->imm[0]);
                 op_count = 2;
                 break;
             }
@@ -613,19 +699,19 @@ static void emit_sequence(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n)
                 break;
             }
             case X86_OP_L: {
-                ops[0] = val_label(TB_TYPE_I64, inst->imm[0]);
+                ops[0] = val_label(inst->imm[0]);
                 op_count = 1;
                 break;
             }
             case X86_OP_RR: {
-                ops[1] = val_gpr(TB_TYPE_I64, regs[1]);
-                ops[2] = val_gpr(TB_TYPE_I64, regs[2]);
+                ops[1] = val_gpr(regs[1]);
+                ops[2] = val_gpr(regs[2]);
                 op_count = 3;
                 break;
             }
             case X86_OP_RI: {
-                ops[1] = val_gpr(TB_TYPE_I64, regs[1]);
-                ops[2] = val_imm(TB_TYPE_I64, inst->imm[0]);
+                ops[1] = val_gpr(regs[1]);
+                ops[2] = val_imm(inst->imm[0]);
                 op_count = 3;
                 break;
             }
@@ -633,8 +719,7 @@ static void emit_sequence(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n)
                 Scale scale = (inst->imm[0] >> 32);
                 int32_t disp = inst->imm[0] & 0xFFFFFFFF;
 
-                ops[1] = val_base_index(TB_TYPE_I64, regs[2], regs[3], scale);
-                ops[1].mem.disp = disp;
+                ops[1] = val_base_index_disp(regs[2], regs[3], scale, disp);
                 op_count = 2;
                 break;
             }
@@ -642,9 +727,8 @@ static void emit_sequence(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n)
                 Scale scale = (inst->imm[0] >> 32);
                 int32_t disp = inst->imm[0] & 0xFFFFFFFF;
 
-                ops[1] = val_base_index(TB_TYPE_I64, regs[2], regs[3], scale);
-                ops[1].mem.disp = disp;
-                ops[2] = val_gpr(TB_TYPE_I64, regs[1]);
+                ops[1] = val_base_index_disp(regs[2], regs[3], scale, disp);
+                ops[2] = val_gpr(regs[1]);
                 op_count = 3;
                 break;
             }

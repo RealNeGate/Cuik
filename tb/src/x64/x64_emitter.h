@@ -10,12 +10,11 @@ static uint8_t rex(bool is_64bit, uint8_t rx, uint8_t base, uint8_t index) {
 static void emit_memory_operand(TB_CGEmitter* restrict e, uint8_t rx, const Val* restrict a) {
     // Operand encoding
     if (a->type == VAL_GPR || a->type == VAL_XMM) {
-        EMIT1(e, mod_rx_rm(MOD_DIRECT, rx, a->gpr));
+        EMIT1(e, mod_rx_rm(MOD_DIRECT, rx, a->reg));
     } else if (a->type == VAL_MEM) {
-        GPR base = a->mem.base;
-        GPR index = a->mem.index;
-        uint8_t scale = a->mem.scale;
-        int32_t disp  = a->mem.disp;
+        GPR base = a->reg, index = a->index;
+        Scale scale = a->scale;
+        int32_t disp  = a->imm;
 
         bool needs_index = (index != GPR_NONE) || (base & 7) == RSP;
 
@@ -37,9 +36,9 @@ static void emit_memory_operand(TB_CGEmitter* restrict e, uint8_t rx, const Val*
         }
     } else if (a->type == VAL_GLOBAL) {
         EMIT1(e, ((rx & 7) << 3) | RBP);
-        EMIT4(e, a->global.disp);
+        EMIT4(e, a->imm);
 
-        tb_emit_symbol_patch(e->f->super.module, e->f, a->global.s, e->count - 4);
+        tb_emit_symbol_patch(e->f->super.module, e->f, a->symbol, e->count - 4);
     } else {
         tb_unreachable();
     }
@@ -59,14 +58,13 @@ static void inst1(TB_CGEmitter* restrict e, InstType type, const Val* r, X86_Dat
 
     uint8_t op = inst->op_i, rx = inst->rx_i;
     if (r->type == VAL_GPR) {
-        EMIT1(e, rex(true, 0x00, r->gpr, 0x00));
+        EMIT1(e, rex(true, 0x00, r->reg, 0x00));
         EMIT1(e, op);
-        EMIT1(e, mod_rx_rm(MOD_DIRECT, rx, r->gpr));
+        EMIT1(e, mod_rx_rm(MOD_DIRECT, rx, r->reg));
     } else if (r->type == VAL_MEM) {
-        GPR base = r->mem.base;
-        GPR index = r->mem.index;
-        uint8_t scale = r->mem.scale;
-        int32_t disp  = r->mem.disp;
+        GPR base = r->reg, index = r->index;
+        Scale scale = r->scale;
+        int32_t disp  = r->imm;
 
         bool needs_index = (index != GPR_NONE) || (base & 7) == RSP;
 
@@ -98,30 +96,25 @@ static void inst1(TB_CGEmitter* restrict e, InstType type, const Val* r, X86_Dat
             EMIT1(e, 0x48); // rex.w
             EMIT1(e, op);
             EMIT1(e, ((rx & 7) << 3) | RBP);
-            EMIT4(e, r->global.disp);
+            EMIT4(e, r->imm);
         }
 
-        tb_emit_symbol_patch(e->f->super.module, e->f, r->global.s, e->count - 4);
+        tb_emit_symbol_patch(e->f->super.module, e->f, r->symbol, e->count - 4);
     } else if (r->type == VAL_LABEL) {
         if (inst->op) {
-            if (r->label < 0) {
-                e->ret_patches[e->ret_patch_count++] = GET_CODE_POS(e) + 1;
-            } else {
-                e->label_patches[e->label_patch_count++] = (LabelPatch) { .pos = GET_CODE_POS(e) + 1, .target_lbl = r->label };
-            }
-
             EMIT1(e, inst->op);
             EMIT4(e, 0);
         } else {
-            if (r->label < 0) {
-                e->ret_patches[e->ret_patch_count++] = GET_CODE_POS(e) + 2;
-            } else {
-                e->label_patches[e->label_patch_count++] = (LabelPatch) { .pos = GET_CODE_POS(e) + 2, .target_lbl = r->label };
-            }
-
             EMIT1(e, inst->op_i);
             EMIT1(e, inst->rx_i);
             EMIT4(e, 0);
+        }
+
+        int label = r->imm;
+        if (label < 0) {
+            e->ret_patches[e->ret_patch_count++] = GET_CODE_POS(e) - 4;
+        } else {
+            e->label_patches[e->label_patch_count++] = (LabelPatch) { .pos = GET_CODE_POS(e) - 4, .target_lbl = label };
         }
     } else {
         tb_unreachable();
@@ -133,6 +126,14 @@ static void inst2(TB_CGEmitter* restrict e, InstType type, const Val* a, const V
     assert(type < COUNTOF(inst_table));
 
     const InstDesc* restrict inst = &inst_table[type];
+    if (type == MOVABS) {
+        assert(a->type == VAL_GPR && b->type == VAL_ABS);
+
+        EMIT1(e, rex(true, a->reg, 0, 0));
+        EMIT1(e, inst->op + (a->reg & 0b111));
+        EMIT8(e, b->abs);
+        return;
+    }
 
     bool dir = b->type == VAL_MEM || b->type == VAL_GLOBAL;
     if (dir || inst->op == 0x63 || inst->op == 0xAF || inst->ext == EXT_DEF2) {
@@ -156,11 +157,6 @@ static void inst2(TB_CGEmitter* restrict e, InstType type, const Val* a, const V
     }
 
     assert((b->type == VAL_GPR || b->type == VAL_IMM) && "secondary operand is invalid!");
-    uint8_t rx = (b->type == VAL_GPR) ? b->gpr : inst->rx_i;
-    if (inst->ext == EXT_CL) {
-        assert(b->type == VAL_IMM || (b->type == VAL_GPR && b->gpr == RCX));
-        rx = inst->rx_i;
-    }
 
     // REX PREFIX
     //  0 1 0 0 W R X B
@@ -171,18 +167,22 @@ static void inst2(TB_CGEmitter* restrict e, InstType type, const Val* a, const V
     //          is 64bit?
     uint8_t base = 0;
     uint8_t rex_prefix = 0x40 | (dt == X86_TYPE_QWORD ? 8 : 0);
-    switch (a->type) {
-        case VAL_GPR:    base = a->gpr;      break;
-        case VAL_GLOBAL: base = RBP;         break;
+    if (a->type == VAL_MEM || a->type == VAL_GPR) {
+        base = a->reg;
+    } else {
+        base = RBP;
+    }
 
-        case VAL_MEM:
-        base = a->mem.base;
-        if (a->mem.index != GPR_NONE) {
-            rex_prefix |= ((a->mem.index >> 3) << 1);
-        }
-        break;
+    if (a->type == VAL_MEM && a->index != GPR_NONE) {
+        rex_prefix |= ((a->index >> 3) << 1);
+    }
 
-        default:         tb_unreachable();
+    uint8_t rx = (b->type == VAL_GPR) ? b->reg : inst->rx_i;
+    if (inst->ext == EXT_CL) {
+        assert(b->type == VAL_IMM || (b->type == VAL_GPR && b->reg == RCX));
+
+        dt = X86_TYPE_BYTE;
+        rx = inst->rx_i;
     }
 
     rex_prefix |= (base >> 3);
@@ -253,13 +253,13 @@ static void inst2sse(TB_CGEmitter* restrict e, InstType type, const Val* a, cons
         tb_swap(const Val*, a, b);
     }
 
-    uint8_t rx = a->xmm;
+    uint8_t rx = a->reg;
     uint8_t base, index;
     if (b->type == VAL_MEM) {
-        base  = b->mem.base;
-        index = b->mem.index != GPR_NONE ? b->mem.index : 0;
+        base  = b->reg;
+        index = b->index != GPR_NONE ? b->index : 0;
     } else if (b->type == VAL_XMM) {
-        base  = b->xmm;
+        base  = b->reg;
         index = 0;
     } else if (b->type == VAL_GLOBAL) {
         base  = 0;

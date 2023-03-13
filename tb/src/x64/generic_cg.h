@@ -56,7 +56,7 @@ typedef struct Sequence {
     TB_Node* node;
 
     int inst_count, label;
-    Inst insts[4];
+    Inst insts[16];
 } Sequence;
 
 typedef struct Def {
@@ -107,7 +107,7 @@ typedef struct Ctx {
     ValueDesc* values;
 } Ctx;
 
-#if 0
+#if 1
 #define ASM if (ctx->emit.emit_asm)
 #else
 #define ASM if (0)
@@ -278,7 +278,7 @@ static void phi_edge(TB_Function* f, Ctx* restrict ctx, Sequence* restrict seq, 
         TB_NodePhi* phi = TB_NODE_GET_EXTRA(n);
         FOREACH_N(i, 0, n->input_count) if (phi->labels[i] == src) {
             int src = ISEL(n->inputs[i]);
-            copy_value(ctx, seq, *dst_vreg, src, n->dt);
+            copy_value(ctx, seq, USE(*dst_vreg), src, n->dt);
             break;
         }
     }
@@ -429,7 +429,7 @@ static void fence(Ctx* restrict ctx, TB_Label bb) {
 // Codegen through here is done in phases
 static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_FeatureSet* features, uint8_t* out, size_t out_capacity) {
     TB_TemporaryStorage* tls = tb_tls_allocate();
-    // tb_function_print(f, tb_default_print_callback, stdout, false);
+    tb_function_print(f, tb_default_print_callback, stdout, false);
 
     Ctx* restrict ctx = arena_alloc(&tb__arena, sizeof(Ctx), _Alignof(Ctx));
     *ctx = (Ctx){

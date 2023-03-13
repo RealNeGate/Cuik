@@ -37,7 +37,7 @@ typedef enum {
 } XMM;
 
 typedef enum {
-    VAL_NONE, VAL_FLAGS, VAL_GPR, VAL_XMM, VAL_IMM, VAL_MEM, VAL_GLOBAL, VAL_LABEL
+    VAL_NONE, VAL_FLAGS, VAL_GPR, VAL_XMM, VAL_IMM, VAL_MEM, VAL_GLOBAL, VAL_ABS, VAL_LABEL
 } ValType;
 
 typedef enum {
@@ -78,39 +78,28 @@ typedef enum Inst2FPFlags {
 } Inst2FPFlags;
 
 typedef struct Val {
-    uint8_t type;
-    TB_DataType dt;
+    int8_t type;
+
+    // if VAL_MEM then this is the base
+    int8_t reg;
+
+    // used by VAL_MEM and VAL_GLOBAL
+    int8_t index, scale;
+
+    // memory displacement, label or signed immediate
+    int32_t imm;
 
     union {
-        int reg;
-        GPR gpr;
-        XMM xmm;
-
-        Cond cond;
-        struct {
-            bool is_rvalue;
-            GPR base : 8;
-            GPR index : 8;
-            Scale scale : 8;
-            int32_t disp;
-        } mem;
-        struct {
-            // this should alias with mem.is_rvalue
-            bool is_rvalue;
-            int16_t disp;
-            const TB_Symbol* s;
-        } global;
-        int32_t imm;
-        int32_t label;
+        // for VAL_ABS this is used
+        uint64_t abs;
+        // for VAL_GLOBAL this is used as the base
+        const TB_Symbol* symbol;
     };
 } Val;
-static_assert(offsetof(Val, reg) == offsetof(Val, gpr), "Val::reg and Val::gpr must alias!");
-static_assert(offsetof(Val, reg) == offsetof(Val, xmm), "Val::reg and Val::xmm must alias!");
-static_assert(offsetof(Val, global.is_rvalue) == offsetof(Val, mem.is_rvalue), "Val::mem.is_rvalue and Val::global.is_rvalue must alias!");
 
 typedef enum Inst2Type {
     // Nullary
-    RET,
+    RET, INT3,
     // Control flow
     JO, JNO, JB, JNB, JE, JNE, JBE, JA,
     JS, JNS, JP, JNP, JL, JGE, JLE, JG,
@@ -121,10 +110,9 @@ typedef enum Inst2Type {
     // Cooler integer ops
     SHL, SHR, SAR,
     // Misc interger ops
-    TEST, LEA, IMUL, XCHG, XADD,
+    MOVABS, TEST, LEA, IMUL, XCHG, XADD,
     // casts
     MOVSXB, MOVSXW, MOVSXD, MOVZXB, MOVZXW,
-
     // SSE operations
     FP_MOV, FP_ADD, FP_SUB, FP_MUL, FP_DIV, FP_CMP, FP_UCOMI,
     FP_SQRT, FP_RSQRT, FP_AND, FP_OR, FP_XOR,
@@ -172,6 +160,7 @@ static const GPR SYSV_GPR_PARAMETERS[6] = { RDI, RSI, RDX, RCX, R8, R9 };
 static const InstDesc inst_table[] = {
     // nullary
     NULLARY_OP(RET,        0xC3),
+    NULLARY_OP(INT3,       0xCC),
     // unary ops
     UNARY_OP(NOT,                0xF7, 0x02),
     UNARY_OP(NEG,                0xF7, 0x03),
@@ -199,9 +188,9 @@ static const InstDesc inst_table[] = {
     UNARY_OP(JLE,          0x0F, 0x8E),
     UNARY_OP(JG,           0x0F, 0x8F),
     // binary ops but they have an implicit CL on the righthand side
-    BINARY_OP_CL(SHL,         0xD2, 0xC0, 0x04),
-    BINARY_OP_CL(SHR,         0xD2, 0xC0, 0x05),
-    BINARY_OP_CL(SAR,         0xD2, 0xC0, 0x07),
+    BINARY_OP_CL(SHL,      0xD2, 0xC0, 0x04),
+    BINARY_OP_CL(SHR,      0xD2, 0xC0, 0x05),
+    BINARY_OP_CL(SAR,      0xD2, 0xC0, 0x07),
     // regular integer binops
     BINARY_OP(ADD,         0x00, 0x80, 0x00),
     BINARY_OP(OR,          0x08, 0x80, 0x01),
@@ -212,6 +201,7 @@ static const InstDesc inst_table[] = {
     BINARY_OP(MOV,         0x88, 0xC6, 0x00),
     BINARY_OP(TEST,        0x84, 0xF6, 0x00),
     // misc integer ops
+    BINARY_OP2(MOVABS,     0xB0),
     BINARY_OP2(XCHG,       0x86),
     BINARY_OP2(LEA,        0x8D),
     BINARY_OP_DEF(XADD,    0xC0),
@@ -253,69 +243,50 @@ static const InstDesc inst_table[] = {
 #define SYSCALL_ABI_CALLER_SAVED ((1u << RDI) | (1u << RSI) | (1u << RDX) | (1u << R10) | (1u << R8) | (1u << R9) | (1u << RAX) | (1u << R11))
 #define SYSCALL_ABI_CALLEE_SAVED ~SYSCALL_ABI_CALLER_SAVED
 
-// GPRs can only ever be scalar
-inline static Val val_gpr(TB_DataType dt, GPR g) {
-    return (Val) { .type = VAL_GPR, .dt = dt, .gpr = g };
+inline static Val val_gpr(GPR g) {
+    return (Val) { .type = VAL_GPR, .reg = g };
 }
 
-inline static Val val_xmm(TB_DataType dt, XMM x) {
-    return (Val) { .type = VAL_XMM, .dt = dt, .xmm = x };
+inline static Val val_xmm(XMM x) {
+    return (Val) { .type = VAL_XMM, .reg = x };
 }
 
 inline static Val val_flags(Cond c) {
-    return (Val) { .type = VAL_FLAGS, .dt = TB_TYPE_BOOL, .cond = c };
+    return (Val) { .type = VAL_FLAGS, .reg = c };
 }
 
 inline static Val val_global(const TB_Symbol* s) {
-    return (Val) { .type = VAL_GLOBAL, .dt = TB_TYPE_PTR, .global.is_rvalue = false, .global.s = s };
+    return (Val) { .type = VAL_GLOBAL, .symbol = s };
 }
 
-inline static Val val_imm(TB_DataType dt, int32_t imm) {
-    return (Val) { .type = VAL_IMM, .dt = dt, .imm = imm };
+inline static Val val_imm(int32_t imm) {
+    return (Val) { .type = VAL_IMM, .imm = imm };
 }
 
-inline static Val val_label(TB_DataType dt, int32_t l) {
-    return (Val) { .type = VAL_LABEL, .dt = dt, .label = l };
+inline static Val val_abs(uint64_t abs) {
+    return (Val) { .type = VAL_ABS, .abs = abs };
 }
 
-inline static Val val_stack(TB_DataType dt, int s) {
+inline static Val val_label(int32_t l) {
+    return (Val) { .type = VAL_LABEL, .imm = l };
+}
+
+inline static Val val_stack(int s) {
     return (Val) {
-        .type = VAL_MEM,
-        .dt = dt,
-        .mem = { .base = RBP, .index = GPR_NONE, .scale = SCALE_X1, .disp = s }
+        .type = VAL_MEM, .reg = RBP, .index = GPR_NONE, .scale = SCALE_X1, .imm = s
     };
 }
 
-inline static Val val_base_disp(TB_DataType dt, GPR b, int d) {
+inline static Val val_base_disp(GPR b, int d) {
     return (Val) {
-        .type = VAL_MEM,
-        .dt = dt,
-        .mem = { .base = b, .index = GPR_NONE, .scale = SCALE_X1, .disp = d }
+        .type = VAL_MEM, .reg = b, .index = GPR_NONE, .scale = SCALE_X1, .imm = d
     };
 }
 
-inline static Val val_base_index(TB_DataType dt, GPR b, GPR i, Scale s) {
+inline static Val val_base_index_disp(GPR b, GPR i, Scale s, int d) {
     return (Val) {
-        .type = VAL_MEM,
-        .dt = dt,
-        .mem = { .base = b, .index = i, .scale = s }
+        .type = VAL_MEM, .reg = b, .index = i, .scale = SCALE_X1, .imm = d
     };
-}
-
-inline static Val val_base_index_disp(TB_DataType dt, GPR b, GPR i, Scale s, int d) {
-    return (Val) {
-        .type = VAL_MEM,
-        .dt = dt,
-        .mem = { .base = b, .index = i, .scale = s, .disp = d }
-    };
-}
-
-inline static bool is_lvalue(const Val* v) {
-    return (v->type == VAL_MEM || v->type == VAL_GLOBAL) && !v->mem.is_rvalue;
-}
-
-inline static bool is_rvalue(const Val* v) {
-    return (v->type == VAL_MEM || v->type == VAL_GLOBAL) && v->mem.is_rvalue;
 }
 
 inline static bool is_value_mem(const Val* v) {
@@ -325,19 +296,19 @@ inline static bool is_value_mem(const Val* v) {
 inline static bool is_value_gpr(const Val* v, GPR g) {
     if (v->type != VAL_GPR) return false;
 
-    return (v->gpr == g);
+    return (v->reg == g);
 }
 
 inline static bool is_value_xmm(const Val* v, XMM x) {
     if (v->type != VAL_XMM) return false;
 
-    return (v->xmm == x);
+    return (v->reg == x);
 }
 
 inline static bool is_value_match(const Val* a, const Val* b) {
     if (a->type != b->type) return false;
 
-    if (a->type == VAL_GPR) return a->gpr == b->gpr;
+    if (a->type == VAL_GPR) return a->reg == b->reg;
     else return false;
 }
 

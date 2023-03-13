@@ -51,6 +51,10 @@ long long fh(int* value) {
 
 int main() {}
 
+long long fi(int* value) {
+    return *value << 2;
+}
+
 int without_restrict(int const* const x, int* y) {
     if(*x == 0) {
         *y = 1;
