@@ -65,6 +65,25 @@ int without_restrict(int const* const x, int* y) {
 }
 #endif
 
+/*uint32_t test(const void* key, size_t len) {
+    uint32_t h = 0;
+
+    // main body, work on 32-bit blocks at a time
+    for (size_t i=0;i<len/4;i++) {
+        uint32_t k = *(uint32_t*) &key[i * 4];
+        // convert into normal loads and stores which can be mem2reg'd:
+        //   tmp = load &key[i * 4] (1 align)
+        //   store k, tmp           (1 align)
+        // memcpy(&k, &key[i * 4], sizeof(k));
+
+        k *= 0xcc9e2d51;
+        k = ((k << 15) | (k >> 17))*0x1b873593;
+        h = (((h^k) << 13) | ((h^k) >> 19))*5 + 0xe6546b64;
+    }
+
+    return h;
+}*/
+
 #if 1
 // murmur3 32-bit without UB unaligned accesses
 // https://github.com/demetri/scribbles/blob/master/hashing/ub_aware_hash_functions.c

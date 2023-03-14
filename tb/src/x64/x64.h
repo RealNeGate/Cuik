@@ -97,7 +97,7 @@ typedef struct Val {
     };
 } Val;
 
-typedef enum Inst2Type {
+typedef enum InstType {
     // Nullary
     RET, INT3,
     // Control flow
@@ -285,7 +285,7 @@ inline static Val val_base_disp(GPR b, int d) {
 
 inline static Val val_base_index_disp(GPR b, GPR i, Scale s, int d) {
     return (Val) {
-        .type = VAL_MEM, .reg = b, .index = i, .scale = SCALE_X1, .imm = d
+        .type = VAL_MEM, .reg = b, .index = i, .scale = s, .imm = d
     };
 }
 

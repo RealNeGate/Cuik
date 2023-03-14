@@ -59,6 +59,18 @@ typedef struct Sequence {
     Inst insts[16];
 } Sequence;
 
+typedef struct MachineBB {
+    Sequence* first;
+
+    // on the timeline/slot indices
+    int start, end;
+
+    // local live sets
+    Set gen, kill;
+    // global
+    Set live_in, live_out;
+} MachineBB;
+
 typedef struct Def {
     TB_Node* node;
 
@@ -222,7 +234,7 @@ static bool should_tile(TB_Node* n);
 static int isel(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n);
 static void emit_sequence(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n);
 static void patch_local_labels(Ctx* restrict ctx);
-static void copy_value(Ctx* restrict ctx, Sequence* seq, int dst, int src, TB_DataType dt);
+static void copy_value(Ctx* restrict ctx, Sequence* seq, TB_Node* phi, int dst, TB_Node* src, TB_DataType dt);
 
 #define ISEL(n) USE(isel(ctx, seq, n))
 
@@ -277,8 +289,7 @@ static void phi_edge(TB_Function* f, Ctx* restrict ctx, Sequence* restrict seq, 
         // handle phis
         TB_NodePhi* phi = TB_NODE_GET_EXTRA(n);
         FOREACH_N(i, 0, n->input_count) if (phi->labels[i] == src) {
-            int src = ISEL(n->inputs[i]);
-            copy_value(ctx, seq, USE(*dst_vreg), src, n->dt);
+            copy_value(ctx, seq, n, USE(*dst_vreg), n->inputs[i], n->dt);
             break;
         }
     }
@@ -294,36 +305,184 @@ static int compare_defs(const void* a, const void* b) {
     return as - bs;
 }
 
-static void linear_scan(Ctx* restrict ctx, TB_Function* f, size_t node_count) {
+static void add_range(Ctx* restrict ctx, Def* restrict d, int start, int end) {
+    assert(start <= end);
+
+    if (start < d->start) d->start = start;
+    if (end < d->start) d->start = end;
+
+    // max
+    if (start > d->end) d->end = start;
+    if (end > d->end) d->end = end;
+}
+
+static void reverse_bb_walk(Ctx* restrict ctx, TB_Function* f, MachineBB* bb, Sequence* seq) {
+    Sequence* next = seq->next;
+    if (next && next->label == seq->label) {
+        reverse_bb_walk(ctx, f, bb, next);
+    }
+
+    FOREACH_REVERSE_N(i, 0, seq->inst_count) {
+        Inst* restrict inst = &seq->insts[i];
+
+        // mark def
+        if (inst->regs[0] >= 0) {
+            Def* d = &ctx->defs[inst->regs[0]];
+
+            if (d->start >= 0) {
+                d->start = inst->time;
+                if (d->end == INT_MIN) d->end = inst->time;
+            }
+        }
+
+        // mark users
+        FOREACH_N(j, 1, 4) if (inst->regs[j] < -1) {
+            Def* d = &ctx->defs[-inst->regs[j] - 2];
+
+            add_range(ctx, d, bb->start, inst->time + (j == 1 ? 0 : 1));
+        }
+    }
+}
+
+static void linear_scan(Ctx* restrict ctx, TB_Function* f, TB_PostorderWalk* walk, size_t node_count) {
+    size_t def_count = dyn_array_length(ctx->defs);
+
     // generate live intervals for virtual registers
-    int timeline = 0;
-    for (Sequence* seq = ctx->first; seq; seq = seq->next) {
-        FOREACH_N(i, 0, seq->inst_count) {
-            Inst* restrict inst = &seq->insts[i];
+    CUIK_TIMED_BLOCK("build intervals") {
+        // find BB boundaries in sequences
+        MachineBB* seq_bb = ARENA_ARR_ALLOC(&tb__arena, f->bb_count, MachineBB);
 
-            // mark def
-            if (inst->regs[0] >= 0) {
-                Def* d = &ctx->defs[inst->regs[0]];
+        FOREACH_N(bb, 0, f->bb_count) {
+            seq_bb[bb] = (MachineBB){
+                .gen = set_create(def_count), .kill = set_create(def_count),
+                .live_in = set_create(def_count), .live_out = set_create(def_count)
+            };
+        }
 
-                if (timeline < d->start) d->start = timeline;
-                if (timeline > d->end) d->end = timeline;
+        // generate local live sets
+        if (ctx->first) {
+            Set copy_init = set_create(def_count);
+
+            Sequence* seq = ctx->first;
+            seq_bb[seq->label].first = seq;
+            seq_bb[seq->label].start = 0;
+
+            int last_bb = seq->label, timeline = 0;
+            for (; seq; seq = seq->next) {
+                TB_Label bb = seq->label;
+                if (last_bb != bb) {
+                    seq_bb[last_bb].end = timeline;
+                    last_bb = bb;
+                    timeline += 2; // reserved two extra spaces at the end of the BB
+
+                    seq_bb[bb].first = seq->next;
+                    seq_bb[bb].start = timeline;
+                }
+
+                Set* gen = &seq_bb[bb].gen;
+                Set* kill = &seq_bb[bb].kill;
+
+                FOREACH_N(i, 0, seq->inst_count) {
+                    Inst* restrict inst = &seq->insts[i];
+                    inst->time = timeline;
+
+                    if (inst->type == X86_INST_MOVE) {
+                        assert(inst->regs[1] < -1);
+                        int di = -inst->regs[1] - 2;
+
+                        if (!set_get(&copy_init, di)) {
+                            set_put(&copy_init, di);
+
+                            inst->type = (int) X86_INST_COPY;
+                            inst->regs[0] = USE(inst->regs[1]);
+                            inst->regs[1] = inst->regs[2];
+                            inst->regs[2] = 0;
+                        }
+                    }
+
+                    FOREACH_N(j, 1, 4) if (inst->regs[j] < -1) {
+                        int di = -inst->regs[j] - 2;
+                        if (!set_get(kill, di)) {
+                            set_put(gen, di);
+                        }
+                    }
+
+                    if (inst->regs[0] >= 0) {
+                        set_put(kill, inst->regs[0]);
+                    }
+
+                    timeline += 2;
+                }
             }
 
-            // mark users
-            printf("t = %d\n", timeline);
-            FOREACH_N(j, 1, 4) if (inst->regs[j] < -1) {
-                Def* d = &ctx->defs[-inst->regs[j] - 2];
+            seq_bb[last_bb].end = timeline;
+            set_free(&copy_init);
+        }
 
-                if (timeline < d->start) d->start = timeline;
-                if (timeline > d->end) d->end = timeline;
+        // generate global live sets
+        bool changes;
+        do {
+            changes = false;
+
+            FOREACH_REVERSE_N(bb, 0, f->bb_count) {
+                set_clear(&seq_bb[bb].live_out);
+
+                // walk all successors
+                TB_Node* end = f->bbs[bb].end;
+                if (end->type == TB_BRANCH) {
+                    TB_NodeBranch* br = TB_NODE_GET_EXTRA(end);
+                    FOREACH_N(i, 0, br->count) {
+                        // union with successor's lives
+                        TB_Label succ = br->targets[i].value;
+                        set_union(&seq_bb[bb].live_out, &seq_bb[succ].live_in);
+                    }
+
+                    set_union(&seq_bb[bb].live_out, &seq_bb[br->default_label].live_in);
+                }
+
+                Set* live_in = &seq_bb[bb].live_in;
+                Set* live_out = &seq_bb[bb].live_out;
+                Set* kill = &seq_bb[bb].kill;
+                Set* gen = &seq_bb[bb].gen;
+
+                // live_in = (live_out - live_kill) U live_gen
+                FOREACH_N(i, 0, (def_count + 63) / 64) {
+                    uint64_t new = (live_out->data[i] & ~kill->data[i]) | gen->data[i];
+
+                    changes |= (live_in->data[i] != new);
+                    live_in->data[i] = new;
+                }
+            }
+        } while (changes);
+
+        // this is a reverse BB walk
+        FOREACH_N(i, 0, walk->count) {
+            TB_Label bb = walk->traversal[i];
+
+            int bb_start = seq_bb[bb].start;
+            int bb_end = seq_bb[bb].end + 2;
+
+            // for anything that's live out, add the entire range
+            Set* live_in = &seq_bb[bb].live_in;
+            Set* live_out = &seq_bb[bb].live_out;
+            FOREACH_N(i, 0, (def_count + 63) / 64) {
+                uint64_t bits = live_in->data[i] & live_out->data[i];
+                if (bits == 0) continue;
+
+                FOREACH_N(j, 0, 64) if (bits & (1ull << j)) {
+                    size_t k = (i*64) + j;
+                    add_range(ctx, &ctx->defs[k], bb_start, bb_end);
+                }
             }
 
-            timeline++;
+            // for all instruction in BB (in reverse), add ranges
+            if (seq_bb[bb].first) {
+                reverse_bb_walk(ctx, f, &seq_bb[bb], seq_bb[bb].first);
+            }
         }
     }
 
     // sort by starting point
-    size_t def_count = dyn_array_length(ctx->defs);
     Def** sorted = tb_platform_heap_alloc(def_count * sizeof(Def*));
     FOREACH_N(i, 0, def_count) {
         Def* d = &ctx->defs[i];
@@ -331,7 +490,7 @@ static void linear_scan(Ctx* restrict ctx, TB_Function* f, size_t node_count) {
             Def* until = &ctx->defs[d->live_until];
 
             if (until->start != INT_MAX) {
-                d->end = until->start;
+                add_range(ctx, d, until->start, until->start);
             }
         }
 
@@ -421,9 +580,11 @@ static void append_sequence(Ctx* restrict ctx, Sequence* seq) {
 }
 
 static void fence(Ctx* restrict ctx, TB_Label bb) {
-    FOREACH_REVERSE_N(i, 0, dyn_array_length(ctx->in_bound)) {
-        Sequence* seq = alloc_sequence(bb, ctx->in_bound[i]);
-        isel(ctx, seq, ctx->in_bound[i]);
+    while (dyn_array_length(ctx->in_bound)) {
+        TB_Node* n = dyn_array_pop(ctx->in_bound);
+
+        Sequence* seq = alloc_sequence(bb, n);
+        isel(ctx, seq, n);
         append_sequence(ctx, seq);
     }
     dyn_array_clear(ctx->in_bound);
@@ -563,7 +724,7 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
     }
 
     CUIK_TIMED_BLOCK("linear scan") {
-        linear_scan(ctx, f, counter);
+        linear_scan(ctx, f, &walk, counter);
     }
 
     CUIK_TIMED_BLOCK("emit sequences") {

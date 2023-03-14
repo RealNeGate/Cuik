@@ -42,6 +42,7 @@ typedef struct Inst {
     InstType type;
     X86_OperandLayout layout;
     X86_DataType data_type;
+    int time;
 
     // virtual registers (-1 means none, -2 and lower is VREGs, 0+ is normal registers)
     //
@@ -230,7 +231,9 @@ static void print_operand(Val* v) {
 }
 
 static bool try_for_imm8(Ctx* restrict ctx, TB_Node* n, int32_t* out_x) {
-    if (n->type == TB_INTEGER_CONST && try_tile(ctx, n)) {
+    if (n->type == TB_INTEGER_CONST) {
+        try_tile(ctx, n);
+
         TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
         if (i->num_words == 1 && fits_into_int8(i->words[0])) {
             *out_x = i->words[0];
@@ -242,7 +245,9 @@ static bool try_for_imm8(Ctx* restrict ctx, TB_Node* n, int32_t* out_x) {
 }
 
 static bool try_for_imm32(Ctx* restrict ctx, TB_Node* n, int32_t* out_x) {
-    if (n->type == TB_INTEGER_CONST && try_tile(ctx, n)) {
+    if (n->type == TB_INTEGER_CONST) {
+        try_tile(ctx, n);
+
         TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
         if (i->num_words == 1 && fits_into_int32(i->words[0])) {
             *out_x = i->words[0];
@@ -253,8 +258,65 @@ static bool try_for_imm32(Ctx* restrict ctx, TB_Node* n, int32_t* out_x) {
     return false;
 }
 
+static Inst isel_array(Ctx* restrict ctx, Sequence* seq, TB_Node* n, int dst) {
+    int64_t stride = TB_NODE_GET_EXTRA_T(n, TB_NodeArray)->stride;
+    TB_Node* base_n = n->inputs[0];
+    TB_Node* index_n = n->inputs[1];
+
+    if (index_n->type == TB_INTEGER_CONST) {
+        TB_NodeInt* i = TB_NODE_GET_EXTRA(index_n);
+        if (i->num_words == 1 && fits_into_int32(i->words[0] * stride)) {
+            try_tile(ctx, index_n);
+
+            int32_t disp = i->words[0] * stride;
+            int base = ISEL(base_n);
+
+            return inst_m(LEA, n->dt, dst, base, GPR_NONE, 0, disp);
+        }
+    }
+
+    // we resolve the index then add the base
+    //
+    // if it's an LEA index*stride
+    // then stride > 0, if not it's free
+    // do think of it however
+    int scaled_index = DEF(n, REG_CLASS_GPR);
+
+    uint8_t stride_as_shift = 0;
+    bool scaled_already = false;
+    if (tb_is_power_of_two(stride)) {
+        stride_as_shift = tb_ffs(stride) - 1;
+
+        if (stride_as_shift > 3) {
+            scaled_already = true;
+
+            int index = ISEL(index_n);
+            SUBMIT(inst_ri(SHL, n->dt, scaled_index, index, stride_as_shift));
+        } else {
+            scaled_index = ISEL(index_n);
+        }
+    } else {
+        tb_todo();
+    }
+
+    int base = ISEL(base_n);
+    if (!scaled_already) {
+        return inst_m(LEA, n->dt, dst, base, scaled_index, stride_as_shift, 0);
+    } else {
+        return inst_rr(ADD, n->dt, dst, USE(scaled_index), base);
+    }
+}
+
 static Inst isel_load(Ctx* restrict ctx, Sequence* seq, TB_Node* n, int dst) {
-    if (n->inputs[0]->type == TB_LOCAL) {
+    if (n->inputs[0]->type == TB_ARRAY_ACCESS && try_tile(ctx, n->inputs[0])) {
+        Inst inst = isel_array(ctx, seq, n->inputs[0], dst);
+        if (inst.type == LEA) {
+            inst.type = MOV;
+            return inst;
+        } else {
+            return inst_m(MOV, n->dt, dst, dst, GPR_NONE, SCALE_X1, 0);
+        }
+    } else if (n->inputs[0]->type == TB_LOCAL) {
         ptrdiff_t search = nl_map_get(ctx->stack_slots, n->inputs[0]);
         assert(search >= 0);
 
@@ -322,6 +384,7 @@ static int isel(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n) {
             } else {
                 // copy from parameter
                 dst = DEF_HINTED(n, REG_CLASS_GPR, WIN64_GPR_PARAMETERS[id]);
+                ctx->defs[dst].start = -(id + 1);
 
                 SUBMIT(inst_copy(n->dt, dst, WIN64_GPR_PARAMETERS[id]));
             }
@@ -402,31 +465,8 @@ static int isel(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n) {
         case TB_ARRAY_ACCESS: {
             dst = DEF(n, REG_CLASS_GPR);
 
-            int64_t stride = TB_NODE_GET_EXTRA_T(n, TB_NodeArray)->stride;
-            TB_Node* base_n = n->inputs[0];
-            TB_Node* index_n = n->inputs[1];
-
-            // we resolve the index then add the base
-            //
-            // if it's an LEA index*stride
-            // then stride > 0, if not it's free
-            // do think of it however
-            int scaled_index = DEF(n, REG_CLASS_GPR);
-
-            uint8_t stride_as_shift = 0;
-            if (tb_is_power_of_two(stride)) {
-                stride_as_shift = tb_ffs(stride) - 1;
-
-                if (stride_as_shift > 3) {
-                    int index = ISEL(index_n);
-                    SUBMIT(inst_ri(SHL, n->dt, scaled_index, index, stride_as_shift));
-                }
-            } else {
-                tb_todo();
-            }
-
-            int base = ISEL(base_n);
-            SUBMIT(inst_rr(ADD, n->dt, dst, USE(scaled_index), base));
+            Inst inst = isel_array(ctx, seq, n, dst);
+            SUBMIT(inst);
             break;
         }
 
@@ -473,7 +513,9 @@ static int isel(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n) {
 
         case TB_LOAD: {
             dst = DEF(n, REG_CLASS_GPR);
-            SUBMIT(isel_load(ctx, seq, n, dst));
+
+            Inst ld = isel_load(ctx, seq, n, dst);
+            SUBMIT(ld);
             break;
         }
         case TB_STORE: {
@@ -632,8 +674,22 @@ static int isel(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n) {
     return dst;
 }
 
-static void copy_value(Ctx* restrict ctx, Sequence* seq, int dst, int src, TB_DataType dt) {
-    SUBMIT(inst_move(dt, dst, src));
+static void copy_value(Ctx* restrict ctx, Sequence* seq, TB_Node* phi, int dst, TB_Node* src, TB_DataType dt) {
+    if (src->type == TB_ADD && try_tile(ctx, src)) {
+        if (src->inputs[0] == phi && try_tile(ctx, src->inputs[1])) {
+            int32_t x;
+            if (try_for_imm32(ctx, src->inputs[1], &x)) {
+                SUBMIT(inst_ri(ADD, dt, dst, USE(dst), x));
+            } else {
+                int other = ISEL(src->inputs[1]);
+                SUBMIT(inst_rr(ADD, dt, dst, USE(dst), other));
+            }
+            return;
+        }
+    }
+
+    int src_v = ISEL(src);
+    SUBMIT(inst_move(dt, dst, src_v));
 }
 
 static int8_t resolve_def(Ctx* restrict ctx, int x) {
@@ -766,7 +822,7 @@ static void emit_sequence(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n)
             if (!has_def) {
                 inst2_print(ctx, (InstType) inst->type, &ops[1], &ops[2], inst->data_type);
             } else {
-                if (ops[0].reg != ops[1].reg) {
+                if (ops[0].type == VAL_GPR && ops[1].type == VAL_GPR && ops[0].reg != ops[1].reg) {
                     inst2_print(ctx, MOV, &ops[0], &ops[1], inst->data_type);
                 }
                 inst2_print(ctx, (InstType) inst->type, &ops[0], &ops[2], inst->data_type);

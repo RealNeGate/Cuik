@@ -40,16 +40,27 @@ inline static void set_clear(Set* s) {
     memset(s->data, 0, ((s->capacity + 63) / 64) * sizeof(uint64_t));
 }
 
-inline static void set_union(Set* dst, Set* src) {
-    assert(dst->capacity == src->capacity);
-    FOREACH_N(i, 0, dst->capacity) {
-        dst->data[i] |= src->data[i];
+// return true if changes
+inline static bool set_union(Set* dst, Set* src) {
+    assert(dst->capacity >= src->capacity);
+    size_t n = (src->capacity + 63) / 64;
+
+    uint64_t changes = 0;
+    FOREACH_N(i, 0, n) {
+        uint64_t old = dst->data[i];
+        uint64_t new = old | src->data[i];
+
+        dst->data[i] = new;
+        changes |= (old ^ new);
     }
+    return changes;
 }
 
 inline static bool set_equals(Set* dst, Set* src) {
     assert(dst->capacity == src->capacity);
-    FOREACH_N(i, 0, dst->capacity) {
+    size_t n = (dst->capacity + 63) / 64;
+
+    FOREACH_N(i, 0, n) {
         if (dst->data[i] != src->data[i]) return false;
     }
 
@@ -65,7 +76,7 @@ inline static size_t set_popcount(Set* s) {
     size_t n = (s->capacity + 63) / 64;
 
     size_t sum = 0;
-    for (size_t i = 0; i < n; i++) {
+    FOREACH_N(i, 0, n) {
         sum += tb_popcount64(s->data[i]);
     }
 
