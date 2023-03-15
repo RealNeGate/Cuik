@@ -104,7 +104,7 @@ Cuik_CPP* cuik_driver_preprocess(const char* filepath, const Cuik_CompilerArgs* 
     }
 
     // run the preprocessor
-    if (cuikpp_default_run(cpp) == CUIKPP_ERROR) {
+    if (cuikpp_run(cpp, cuikpp_locate_file, cuikpp_default_fs, NULL) == CUIKPP_ERROR) {
         cuikdg_dump_to_file(cuikpp_get_token_stream(cpp), stderr);
         cuikpp_free(cpp);
         return NULL;

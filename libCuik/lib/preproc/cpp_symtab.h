@@ -159,8 +159,8 @@ static bool find_define(Cuik_CPP* restrict ctx, size_t* out_index, const unsigne
 
     #if CUIK__CPP_STATS
     uint64_t end_ns = cuik_time_in_nanos();
-    c->total_define_access_time += (end_ns - start_ns);
-    c->total_define_accesses += 1;
+    ctx->total_define_access_time += (end_ns - start_ns);
+    ctx->total_define_accesses += 1;
     #endif
     return found;
 }

@@ -19,13 +19,21 @@ typedef struct {
     SourceLoc loc;
 } MacroDef;
 
+struct CPPTask {
+    char filename[MAX_PATH];
+};
+
 struct Cuik_CPP {
+    // file system stuff
+    Cuikpp_LocateFile* locate;
+    Cuikpp_GetFile* fs;
+    void* user_data;
+
     // used to store macro expansion results
     size_t the_shtuffs_size;
     unsigned char* the_shtuffs;
 
     TokenStream tokens;
-    TokenArray scratch_list;
 
     // powers __COUNTER__
     int unique_counter;
@@ -59,6 +67,10 @@ struct Cuik_CPP {
     uint64_t total_define_access_time;
     uint64_t total_define_accesses;
     #endif
+
+    // task pool
+    _Atomic uint64_t task_busy, task_done;
+    CPPTask tasks[64];
 
     // NL_Strmap(int)
     int* include_once;

@@ -13,6 +13,7 @@
 #include "lexer.h"
 #include <setjmp.h>
 #include <sys/stat.h>
+#include <futex.h>
 
 #if USE_INTRIN
 #include <x86intrin.h>
@@ -44,13 +45,16 @@ static void print_token_stream(TokenArray* in, size_t start, size_t end);
 
 static TokenNode* expand(Cuik_CPP* restrict c, TokenNode* restrict head, uint32_t parent_macro, TokenArray* rest);
 static TokenList expand_ident(Cuik_CPP* restrict c, TokenArray* in, TokenNode* head, uint32_t parent_macro, TokenArray* rest);
+static bool locate_file(Cuik_CPP* ctx, bool is_system, const char* dir, const char* og_path, char canonical[FILENAME_MAX]);
+
+static char* alloc_directory_path(const char* filepath);
+static void compute_line_map(TokenStream* s, bool is_system, int depth, SourceLoc include_site, const char* filename, char* data, size_t length);
 
 #define MAX_CPP_STACK_DEPTH 1024
 
 typedef struct CPPStackSlot {
     const char* filepath;
     const char* directory;
-    uint64_t start_time;
 
     uint32_t file_id;
     SourceLoc loc; // location of the #include
@@ -429,307 +433,233 @@ static void compute_line_map(TokenStream* s, bool is_system, int depth, SourceLo
     } while (i < length);
 }
 
-Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
-    assert(ctx->stack_ptr > 0);
-    CPPStackSlot* restrict slot = &ctx->stack[ctx->stack_ptr - 1];
+#if 0
+static CPPTask* alloc_cpp_task(Cuik_CPP* ctx) {
+    uint64_t old, free_bit;
+    do {
+        old = ctx->task_busy;
 
-    // we know the filepath but haven't resolved it yet
-    if (ctx->state1 == CUIK__CPP_FIRST_FILE) {
-        ////////////////////////////////
-        // first file doesn't need to check include paths
-        ////////////////////////////////
-        // state2 just means
-        //  0 ask for file
-        //  1 get a file and initialize it
-        ////////////////////////////////
-        switch (ctx->state2++) {
-            // ask to get file
-            case 0: {
-                slot->start_time = cuik_time_in_nanos();
-                slot->include_guard = (struct CPPIncludeGuard){ 0 };
+        // find empty slot we can reserve
+        free_bit = old != 0 ? tb_ffs64(~old) - 1 : 0;
 
-                if (cuikperf_is_active()) {
-                    cuikperf_region_start(cuik_time_in_nanos(), "preprocess", slot->filepath);
-                }
+        // don't continue until we successfully commit
+    } while (!atomic_compare_exchange_strong(&threadpool->queue, &old, old | (1ull << free_bit)));
 
-                packet->tag = CUIKPP_PACKET_GET_FILE;
-                packet->file.input_path = slot->filepath;
-                packet->file.is_primary = true;
-                packet->file.length = 0;
-                packet->file.data = NULL;
-                return CUIKPP_CONTINUE;
-            }
+    return free_bit;
+}
+#endif
 
-            // get back a file
-            case 1: {
-                if (packet->file.length == 0) {
-                    fprintf(stderr, "\x1b[31merror\x1b[0m: file doesn't exist.\n");
-                    return CUIKPP_ERROR;
-                }
+void cuikpp_task_done(CPPTask* restrict t) {
+    __debugbreak();
+}
 
-                #if CUIK__CPP_STATS
-                ctx->total_io_time += (cuik_time_in_nanos() - slot->start_time);
-                ctx->total_files_read += 1;
-                #endif
-
-                // initialize the lexer in the stack slot & record the file entry
-                slot->file_id = dyn_array_length(ctx->tokens.files);
-                CUIK_TIMED_BLOCK("convert_to_token_list") {
-                    slot->tokens = convert_to_token_list(ctx, dyn_array_length(ctx->tokens.files), packet->file.length, packet->file.data);
-                }
-                compute_line_map(&ctx->tokens, false, 0, (SourceLoc){ 0 }, packet->file.input_path, packet->file.data, packet->file.length);
-
-                // we finished resolving
-                ctx->state1 = CUIK__CPP_NONE;
-
-                // continue along to the actual preprocessing now
-                #ifdef CPP_DBG
-                cppdbg__break();
-                #endif /* CPP_DBG */
-                break;
-            }
-
-            default:
-            __builtin_unreachable();
-            break;
+static bool locate_file(Cuik_CPP* ctx, bool is_system, const char* dir, const char* og_path, char canonical[FILENAME_MAX]) {
+    char path[FILENAME_MAX];
+    if (!is_system) {
+        sprintf_s(path, FILENAME_MAX, "%s%s", dir, og_path);
+        if (ctx->locate(ctx->user_data, path, canonical)) {
+            return true;
         }
-    } else if (ctx->state1 == CUIK__CPP_USR_INCLUDE || ctx->state1 == CUIK__CPP_LIB_INCLUDE) {
-        ////////////////////////////////
-        // include paths need to query all the search paths
-        // and also canonicalize the filepath
-        ////////////////////////////////
-        // state2 just means
-        //  0   is local include
-        //  1+i is search path include
-        //  n   is local include (only run for LIB_INCLUDE)
-        ////////////////////////////////
-        assert(packet->tag == CUIKPP_PACKET_QUERY_FILE);
-        if (!packet->query.found) {
-            #if CUIK__CPP_STATS
-            ctx->total_fstats += 1;
-            #endif
-
-            // we didn't find a match
-            ctx->state2 += 1;
-            int index = ctx->state2 - 1;
-
-            int endpoint = dyn_array_length(ctx->system_include_dirs);
-            if (index == endpoint) {
-                assert(ctx->stack_ptr > 1);
-                CPPStackSlot* restrict prev_slot = &ctx->stack[ctx->stack_ptr - 2];
-
-                SourceRange loc = get_token_range(&prev_slot->tokens.tokens[prev_slot->tokens.current]);
-                diag_err(&ctx->tokens, loc, "could not find file: %s", slot->filepath);
-                return CUIKPP_ERROR;
-            }
-
-            // ask for the next filepath
-            // it's ok this const removal is based
-            char* path = (char*) packet->query.input_path;
-            sprintf_s(path, FILENAME_MAX, "%s%s", ctx->system_include_dirs[index].name, slot->filepath);
-
-            packet->query.found = false;
-            return CUIKPP_CONTINUE;
-        }
-
-        const char* filepath = packet->file.input_path;
-        ctx->included_system_header = ctx->system_include_dirs[ctx->state2].is_system;
-
-        packet->tag = CUIKPP_PACKET_CANONICALIZE;
-        packet->canonicalize.input_path = filepath;
-        packet->canonicalize.output_path = arena_alloc(&thread_arena, FILENAME_MAX, 1);
-
-        // we finished resolving
-        ctx->state1 = CUIK__CPP_CANONICALIZE;
-        return CUIKPP_CONTINUE;
-    } else if (ctx->state1 == CUIK__CPP_CANONICALIZE) {
-        const char* filepath = packet->canonicalize.output_path;
-
-        ptrdiff_t search = nl_strmap_get_cstr(ctx->include_once, filepath);
-        if (search < 0) {
-            // for (int i = 0; i < ctx->stack_ptr; i++) printf("  ");
-            // printf("%s\n", filepath);
-
-            // identify directory path
-            char* slash = strrchr(filepath, '/');
-            if (!slash) slash = strrchr(filepath, '\\');
-
-            char* new_dir = NULL;
-            if (slash) {
-                size_t slash_pos = slash - filepath;
-
-                new_dir = arena_alloc(&thread_arena, slash_pos + 2, 1);
-                memcpy(new_dir, filepath, slash_pos);
-                new_dir[slash_pos] = '/';
-                new_dir[slash_pos + 1] = 0;
-            } else {
-                new_dir = arena_alloc(&thread_arena, 2, 1);
-                new_dir[0] = '/';
-                new_dir[1] = 0;
-            }
-
-            // restore the shtuffs (the value is the filename from the original include code)
-            trim_the_shtuffs(ctx, (void*) slot->filepath);
-
-            slot->filepath = filepath;
-            slot->directory = new_dir;
-
-            ctx->state1 = CUIK__CPP_GET_FILE;
-
-            packet->tag = CUIKPP_PACKET_GET_FILE;
-            packet->file.input_path = filepath;
-            packet->file.length = 0;
-            packet->file.data = NULL;
-            packet->file.is_primary = false;
-
-            // fprintf(stderr, "PRAGMA ONCE DONT GOT IT %s\n", filepath);
-            return CUIKPP_CONTINUE;
-        } else {
-            // fprintf(stderr, "\x1b[36mPRAGMA ONCE GOT IT %s\x1b[0m\n", filepath);
-        }
-
-        // revert since it's only allowed to include once and we already did it
-        // then just continue
-        ctx->stack_ptr -= 1;
-        slot = &ctx->stack[ctx->stack_ptr - 1];
-    } else if (ctx->state1 == CUIK__CPP_GET_FILE) {
-        const char* filepath = packet->file.input_path;
-        if (cuikperf_is_active()) {
-            cuikperf_region_start(cuik_time_in_nanos(), "preprocess", filepath);
-        }
-
-        #if CUIK__CPP_STATS
-        ctx->total_io_time += (cuik_time_in_nanos() - slot->start_time);
-        ctx->total_files_read += 1;
-        #endif
-
-        // initialize the file & lexer in the stack slot
-        slot->include_guard = (struct CPPIncludeGuard){ 0 };
-        // initialize the lexer in the stack slot & record file entry
-        slot->file_id = dyn_array_length(ctx->tokens.files);
-        CUIK_TIMED_BLOCK("convert_to_token_list") {
-            slot->tokens = convert_to_token_list(ctx, dyn_array_length(ctx->tokens.files), packet->file.length, packet->file.data);
-        }
-        compute_line_map(&ctx->tokens, ctx->included_system_header, ctx->stack_ptr - 1, slot->loc, packet->file.input_path, packet->file.data, packet->file.length);
-
-        // we finished resolving
-        ctx->state1 = CUIK__CPP_NONE;
-
-        // continue along to the actual preprocessing now
     }
 
-    TokenArray* restrict in = &slot->tokens;
+    dyn_array_for(i, ctx->system_include_dirs) {
+        sprintf_s(path, FILENAME_MAX, "%s%s", ctx->system_include_dirs[i].name, og_path);
+
+        if (ctx->locate(ctx->user_data, path, canonical)) {
+            return true;
+        }
+    }
+
+    if (is_system) {
+        sprintf_s(path, FILENAME_MAX, "%s%s", dir, og_path);
+        if (ctx->locate(ctx->user_data, path, canonical)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static char* alloc_directory_path(const char* filepath) {
+    // identify directory path
+    char* slash = strrchr(filepath, '/');
+    if (!slash) slash = strrchr(filepath, '\\');
+
+    char* new_dir = NULL;
+    if (slash) {
+        size_t slash_pos = slash - filepath;
+
+        char* new_dir = arena_alloc(&thread_arena, slash_pos + 2, 1);
+        memcpy(new_dir, filepath, slash_pos);
+        new_dir[slash_pos] = '/';
+        new_dir[slash_pos + 1] = 0;
+        return new_dir;
+    } else {
+        char* new_dir = arena_alloc(&thread_arena, 2, 1);
+        new_dir[0] = '/';
+        new_dir[1] = 0;
+        return new_dir;
+    }
+}
+
+Cuikpp_Status cuikpp_run(Cuik_CPP* ctx, Cuikpp_LocateFile* locate, Cuikpp_GetFile* fs, void* user_data) {
+    assert(ctx->stack_ptr > 0);
+    ctx->user_data = user_data;
+    ctx->fs = fs;
+    ctx->locate = locate;
+
+    CPPStackSlot* restrict slot = &ctx->stack[ctx->stack_ptr - 1];
+
+    ////////////////////////////////
+    // first file doesn't need to check include paths
+    ////////////////////////////////
+    slot->include_guard = (struct CPPIncludeGuard){ 0 };
+
+    #if CUIK__CPP_STATS
+    uint64_t start_time = cuik_time_in_nanos();
+    #endif
+
+    Cuik_FileResult main_file;
+    if (!fs(user_data, slot->filepath, &main_file)) {
+        fprintf(stderr, "\x1b[31merror\x1b[0m: file doesn't exist.\n");
+        return CUIKPP_ERROR;
+    }
+
+    #if CUIK__CPP_STATS
+    ctx->total_io_time += (cuik_time_in_nanos() - start_time);
+    ctx->total_files_read += 1;
+    #endif
+
+    // initialize the lexer in the stack slot & record the file entry
+    slot->file_id = dyn_array_length(ctx->tokens.files);
+    CUIK_TIMED_BLOCK("convert_to_token_list") {
+        slot->tokens = convert_to_token_list(ctx, dyn_array_length(ctx->tokens.files), main_file.length, main_file.data);
+    }
+    compute_line_map(&ctx->tokens, false, 0, (SourceLoc){ 0 }, slot->filepath, main_file.data, main_file.length);
+
+    // continue along to the actual preprocessing now
+    #ifdef CPP_DBG
+    cppdbg__break();
+    #endif /* CPP_DBG */
+
+    if (cuikperf_is_active()) {
+        cuikperf_region_start(cuik_time_in_nanos(), "preprocess", slot->filepath);
+    }
+
     TokenStream* restrict s = &ctx->tokens;
+    for (;;) yield: {
+        slot = &ctx->stack[ctx->stack_ptr - 1];
 
-    for (;;) {
-        // Hot code, just copying tokens over
-        Token first;
+        TokenArray* restrict in = &slot->tokens;
         for (;;) {
-            if (at_token_list_end(in)) goto pop_stack;
+            // Hot code, just copying tokens over
+            Token first;
+            for (;;) {
+                if (at_token_list_end(in)) goto pop_stack;
 
-            if (slot->include_guard.status == INCLUDE_GUARD_EXPECTING_NOTHING) {
-                slot->include_guard.status = INCLUDE_GUARD_INVALID;
-            }
+                if (slot->include_guard.status == INCLUDE_GUARD_EXPECTING_NOTHING) {
+                    slot->include_guard.status = INCLUDE_GUARD_INVALID;
+                }
 
-            first = consume(in);
-            if (first.type == TOKEN_IDENTIFIER) {
-                // check if it's actually a macro, if not categorize it if it's a keyword
-                if (!is_defined(ctx, first.content.data, first.content.length)) {
-                    // FAST PATH
-                    first.type = classify_ident(first.content.data, first.content.length);
-                    dyn_array_put(s->list.tokens, first);
-                } else {
-                    in->current -= 1;
+                first = consume(in);
+                if (first.type == TOKEN_IDENTIFIER) {
+                    // check if it's actually a macro, if not categorize it if it's a keyword
+                    if (!is_defined(ctx, first.content.data, first.content.length)) {
+                        // FAST PATH
+                        first.type = classify_ident(first.content.data, first.content.length);
+                        dyn_array_put(s->list.tokens, first);
+                    } else {
+                        in->current -= 1;
 
-                    // SLOW PATH BECAUSE IT NEEDS TO SPAWN POSSIBLY METRIC SHIT LOADS
-                    // OF TOKENS AND EXPAND WITH THE AVERAGE C PREPROCESSOR SPOOKIES
-                    CUIK_TIMED_BLOCK("expand_ident") {
-                        if (expand_builtin_idents(ctx, &first)) {
-                            dyn_array_put(s->list.tokens, first);
-                        } else {
-                            void* savepoint = tls_save();
+                        // SLOW PATH BECAUSE IT NEEDS TO SPAWN POSSIBLY METRIC SHIT LOADS
+                        // OF TOKENS AND EXPAND WITH THE AVERAGE C PREPROCESSOR SPOOKIES
+                        CUIK_TIMED_BLOCK("expand_ident") {
+                            if (expand_builtin_idents(ctx, &first)) {
+                                dyn_array_put(s->list.tokens, first);
+                            } else {
+                                void* savepoint = tls_save();
 
-                            TokenList l = expand_ident(ctx, in, NULL, 0, NULL);
-                            for (TokenNode* n = l.head; n != l.tail; n = n->next) {
-                                Token* restrict t = &n->t;
-                                if (t->type == 0) {
-                                    continue;
-                                } else if (t->type == TOKEN_IDENTIFIER) {
-                                    t->type = classify_ident(t->content.data, t->content.length);
+                                TokenList l = expand_ident(ctx, in, NULL, 0, NULL);
+                                for (TokenNode* n = l.head; n != l.tail; n = n->next) {
+                                    Token* restrict t = &n->t;
+                                    if (t->type == 0) {
+                                        continue;
+                                    } else if (t->type == TOKEN_IDENTIFIER) {
+                                        t->type = classify_ident(t->content.data, t->content.length);
+                                    }
+
+                                    dyn_array_put(s->list.tokens, *t);
                                 }
 
-                                dyn_array_put(s->list.tokens, *t);
+                                tls_restore(savepoint);
                             }
-
-                            tls_restore(savepoint);
                         }
                     }
+                } else if (first.type == TOKEN_HASH) {
+                    // slow path
+                    break;
+                } else {
+                    dyn_array_put(s->list.tokens, first);
                 }
-            } else if (first.type == TOKEN_HASH) {
-                // slow path
+            }
+
+            // Slow code, defines
+            DirectiveResult result = DIRECTIVE_UNKNOWN;
+            String directive = consume(in).content;
+
+            // shorthand for calling the directives in cpp_directive.h
+            #define MATCH(str)                                         \
+            if (memcmp(directive.data, #str, sizeof(#str) - 1) == 0) { \
+                result = cpp__ ## str(ctx, slot, in);                  \
+                break;                                                 \
+            }
+
+            // all the directives go here
+            switch (directive.length) {
+                case 2:
+                MATCH(if);
                 break;
-            } else {
-                dyn_array_put(s->list.tokens, first);
+
+                case 4:
+                MATCH(elif);
+                MATCH(else);
+                break;
+
+                case 5:
+                MATCH(undef);
+                MATCH(error);
+                MATCH(ifdef);
+                MATCH(endif);
+                break;
+
+                case 6:
+                MATCH(define);
+                MATCH(pragma);
+                MATCH(ifndef);
+                break;
+
+                case 7:
+                MATCH(include);
+                MATCH(warning);
+                MATCH(version);
+                break;
+
+                case 9:
+                MATCH(extension);
+                break;
+            }
+            #undef MATCH
+
+            if (result == DIRECTIVE_YIELD) {
+                goto yield;
+            } else if (result == DIRECTIVE_ERROR) {
+                return CUIKPP_ERROR;
+            } else if (result == DIRECTIVE_UNKNOWN) {
+                SourceRange r = { first.location, get_end_location(&in->tokens[in->current - 1]) };
+                diag_err(s, r, "unknown directive %_S", directive);
+                return CUIKPP_ERROR;
             }
         }
-
-        // Slow code, defines
-        DirectiveResult result = DIRECTIVE_UNKNOWN;
-        String directive = consume(in).content;
-
-        // shorthand for calling the directives in cpp_directive.h
-        #define MATCH(str)                                         \
-        if (memcmp(directive.data, #str, sizeof(#str) - 1) == 0) { \
-            result = cpp__ ## str(ctx, slot, in, packet);          \
-            break;                                                 \
-        }
-
-        // all the directives go here
-        switch (directive.length) {
-            case 2:
-            MATCH(if);
-            break;
-
-            case 4:
-            MATCH(elif);
-            MATCH(else);
-            break;
-
-            case 5:
-            MATCH(undef);
-            MATCH(error);
-            MATCH(ifdef);
-            MATCH(endif);
-            break;
-
-            case 6:
-            MATCH(define);
-            MATCH(pragma);
-            MATCH(ifndef);
-            break;
-
-            case 7:
-            MATCH(include);
-            MATCH(warning);
-            MATCH(version);
-            break;
-
-            case 9:
-            MATCH(extension);
-            break;
-        }
-        #undef MATCH
-
-        if (result == DIRECTIVE_ERROR) {
-            return CUIKPP_ERROR;
-        } else if (result == DIRECTIVE_YIELD) {
-            return CUIKPP_CONTINUE;
-        } else if (result == DIRECTIVE_UNKNOWN) {
-            SourceRange r = { first.location, get_end_location(&in->tokens[in->current - 1]) };
-            diag_err(s, r, "unknown directive %_S", directive);
-            return CUIKPP_ERROR;
-        }
-        continue;
 
         // this is called when we're done with a specific file
         pop_stack:
@@ -756,21 +686,6 @@ Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
             s->list.current = 0;
             return CUIKPP_DONE;
         }
-
-        // step out of this file into the previous one
-        slot = &ctx->stack[ctx->stack_ptr - 1];
-        in = &slot->tokens;
-        continue;
-    }
-}
-
-Cuikpp_Status cuikpp_default_run(Cuik_CPP* ctx) {
-    Cuikpp_Packet packet;
-    for (;;) {
-        Cuikpp_Status status = cuikpp_next(ctx, &packet);
-        if (status != CUIKPP_CONTINUE) return status;
-
-        cuikpp_default_packet_handler(ctx, &packet);
     }
 }
 
