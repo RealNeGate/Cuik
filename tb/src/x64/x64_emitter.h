@@ -44,10 +44,11 @@ static void emit_memory_operand(TB_CGEmitter* restrict e, uint8_t rx, const Val*
     }
 }
 
-static void inst0(TB_CGEmitter* restrict e, InstType type) {
+static void inst0(TB_CGEmitter* restrict e, InstType type, X86_DataType dt) {
     assert(type < COUNTOF(inst_table));
     const InstDesc* restrict inst = &inst_table[type];
 
+    if (dt == X86_TYPE_QWORD) EMIT1(e, 0x48);
     EMIT1(e, inst->op);
 }
 
@@ -91,14 +92,13 @@ static void inst1(TB_CGEmitter* restrict e, InstType type, const Val* r, X86_Dat
         if (inst->op) {
             // this is a unary instruction with a REL32 variant
             EMIT1(e, inst->op);
-            EMIT4(e, 0);
         } else {
             EMIT1(e, 0x48); // rex.w
             EMIT1(e, op);
             EMIT1(e, ((rx & 7) << 3) | RBP);
-            EMIT4(e, r->imm);
         }
 
+        EMIT4(e, r->imm);
         tb_emit_symbol_patch(e->f->super.module, e->f, r->symbol, e->count - 4);
     } else if (r->type == VAL_LABEL) {
         if (inst->op) {

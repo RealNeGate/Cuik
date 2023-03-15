@@ -52,14 +52,21 @@ TB_API const char* tb_node_get_name(TB_Node* n) {
         case TB_PARAM: return "param";
         case TB_LOCAL: return "local";
 
+        case TB_VA_START: return "vastart";
+
         case TB_POISON: return "poison";
         case TB_INTEGER_CONST: return "int";
+        case TB_FLOAT32_CONST: return "float32";
+        case TB_FLOAT64_CONST: return "float64";
 
         case TB_PASS: return "pass";
         case TB_PHI: return "phi";
 
         case TB_ARRAY_ACCESS: return "array";
         case TB_MEMBER_ACCESS: return "member";
+
+        case TB_PTR2INT: return "ptr2int";
+        case TB_INT2PTR: return "int2ptr";
 
         case TB_MEMSET: return "memset";
         case TB_MEMCPY: return "memcpy";

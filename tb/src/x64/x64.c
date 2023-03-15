@@ -1,5 +1,6 @@
 #include "../x64/x64.h"
 #include "../x64/x64_emitter.h"
+#include "../objects/win64eh.h"
 
 enum {
     CG_REGISTER_CLASSES = 2
@@ -19,6 +20,8 @@ typedef enum X86_InstType {
 // for memory operands imm[0] is two fields:
 //   top 32bits is scale, bottom 32bits is displacement
 typedef enum X86_OperandLayout {
+    X86_OP_NONE,
+
     // label
     X86_OP_L,
     // global
@@ -97,6 +100,14 @@ static Inst inst_jmp(int target) {
     };
 }
 
+static Inst inst_u(int op, TB_DataType dt) {
+    return (Inst){
+        .type = op,
+        .layout = X86_OP_NONE,
+        .data_type = legalize_int2(dt),
+    };
+}
+
 static Inst inst_move(TB_DataType dt, int lhs, int rhs) {
     return (Inst){
         .type = (int)X86_INST_MOVE,
@@ -109,6 +120,16 @@ static Inst inst_move(TB_DataType dt, int lhs, int rhs) {
 static Inst inst_call(TB_DataType dt, int dst, const TB_Symbol* sym) {
     return (Inst){
         .type = CALL,
+        .layout = X86_OP_G,
+        .data_type = legalize_int2(dt),
+        .regs = { dst },
+        .imm[0] = (uintptr_t) sym,
+    };
+}
+
+static Inst inst_g(int op, TB_DataType dt, int dst, const TB_Symbol* sym) {
+    return (Inst){
+        .type = op,
         .layout = X86_OP_G,
         .data_type = legalize_int2(dt),
         .regs = { dst },
@@ -405,6 +426,13 @@ static int isel(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n) {
             }
             break;
         }
+        case TB_GET_SYMBOL_ADDRESS: {
+            dst = DEF(n, REG_CLASS_GPR);
+
+            TB_NodeSymbol* s = TB_NODE_GET_EXTRA(n);
+            SUBMIT(inst_g(LEA, n->dt, dst, s->sym));
+            break;
+        }
 
         case TB_INTEGER_CONST: {
             TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
@@ -461,15 +489,38 @@ static int isel(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n) {
             SUBMIT(inst_rr(IMUL, n->dt, dst, lhs, rhs));
             break;
         }
+        case TB_UDIV:
+        case TB_SDIV:
+        case TB_UMOD:
+        case TB_SMOD: {
+            bool is_signed = (type == TB_SDIV || type == TB_SMOD);
+            bool is_div    = (type == TB_UDIV || type == TB_SDIV);
 
-        case TB_ARRAY_ACCESS: {
+            // TODO(NeGate): hint into RAX
+            int lhs = ISEL(n->inputs[0]);
+            int rhs = ISEL(n->inputs[1]);
+
             dst = DEF(n, REG_CLASS_GPR);
 
-            Inst inst = isel_array(ctx, seq, n, dst);
-            SUBMIT(inst);
+            // mov rax, lhs
+            int rax = DEF_FORCED(n, REG_CLASS_GPR, RAX, dst);
+            SUBMIT(inst_copy(n->dt, rax, lhs));
+
+            // if signed:
+            //   cqo/cdq (sign extend RAX into RDX)
+            // else:
+            //   xor rdx, rdx
+            int rdx = DEF_FORCED(n, REG_CLASS_GPR, RDX, dst);
+            if (is_signed) {
+                SUBMIT(inst_u(CAST, n->dt));
+            } else {
+                SUBMIT(inst_i(MOV, n->dt, rdx, 0));
+            }
+
+            SUBMIT(inst_r(is_signed ? IDIV : DIV, n->dt, -1, rhs));
+            SUBMIT(inst_copy(n->dt, dst, USE(is_div ? rax : rdx)));
             break;
         }
-
         case TB_SHL:
         case TB_SHR:
         case TB_SAR: {
@@ -491,6 +542,31 @@ static int isel(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n) {
                 SUBMIT(inst_copy(n->dt, cl, rhs));
                 SUBMIT(inst_rr(op, n->dt, dst, lhs, RCX));
             }
+            break;
+        }
+
+        case TB_VA_START: {
+            assert(ctx->module->target_abi == TB_ABI_WIN64 && "How does va_start even work on SysV?");
+
+            // on Win64 va_start just means whatever is one parameter away from
+            // the parameter you give it (plus in Win64 the parameters in the stack
+            // are 8bytes, no fanciness like in SysV):
+            // void printf(const char* fmt, ...) {
+            //     va_list args;
+            //     va_start(args, fmt); // args = ((char*) &fmt) + 8;
+            //     ...
+            // }
+            dst = DEF(n, REG_CLASS_GPR);
+            int src = ISEL(n->inputs[0]);
+
+            SUBMIT(inst_ri(ADD, n->dt, dst, src, 8));
+            break;
+        }
+        case TB_ARRAY_ACCESS: {
+            dst = DEF(n, REG_CLASS_GPR);
+
+            Inst inst = isel_array(ctx, seq, n, dst);
+            SUBMIT(inst);
             break;
         }
 
@@ -642,7 +718,7 @@ static int isel(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n) {
 
                         SUBMIT(inst_copy(param->dt, param_def, src));
                     } else {
-                        tb_todo();
+                        SUBMIT(inst_m(MOV, n->dt, dst, RSP, GPR_NONE, SCALE_X1, 8 + (i * 8)));
                     }
                 }
             }
@@ -652,7 +728,7 @@ static int isel(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n) {
             } else {
                 if (try_tile(ctx, n->inputs[0]) && n->inputs[0]->type == TB_GET_SYMBOL_ADDRESS) {
                     TB_NodeSymbol* s = TB_NODE_GET_EXTRA(n->inputs[0]);
-                    SUBMIT(inst_call(n->dt, fake_dst, s->sym));
+                    SUBMIT(inst_call(n->dt, -1, s->sym));
                 } else {
                     __debugbreak();
                 }
@@ -741,6 +817,10 @@ static void emit_sequence(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n)
         // convert into normie operands
         int op_count = 0;
         switch (inst->layout) {
+            case X86_OP_NONE: {
+                op_count = 0;
+                break;
+            }
             case X86_OP_R: {
                 ops[1] = val_gpr(regs[1]);
                 op_count = 2;
@@ -757,12 +837,12 @@ static void emit_sequence(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n)
                 break;
             }
             case X86_OP_G: {
-                ops[0] = val_global((TB_Symbol*) (uintptr_t) inst->imm[0]);
-                op_count = 1;
+                ops[1] = val_global((TB_Symbol*) (uintptr_t) inst->imm[0]);
+                op_count = has_def ? 2 : 1;
                 break;
             }
             case X86_OP_L: {
-                ops[0] = val_label(inst->imm[0]);
+                ops[1] = val_label(inst->imm[0]);
                 op_count = 1;
                 break;
             }
@@ -806,12 +886,16 @@ static void emit_sequence(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n)
             if (!is_value_match(&ops[0], &ops[1])) {
                 inst2_print(ctx, MOV, &ops[0], &ops[1], inst->data_type);
             }
+        } else if (op_count == 0) {
+            INST0(inst->type, inst->data_type);
         } else if (op_count == 1) {
-            if (has_def && !is_value_match(&ops[0], &ops[1])) {
+            if (!has_def) {
+                inst1_print(ctx, inst->type, &ops[1], inst->data_type);
+            } else if (!is_value_match(&ops[0], &ops[1])) {
                 inst2_print(ctx, MOV, &ops[0], &ops[1], inst->data_type);
+            } else {
+                inst1_print(ctx, inst->type, &ops[0], inst->data_type);
             }
-
-            inst1_print(ctx, inst->type, &ops[0], inst->data_type);
         } else if (op_count == 2) {
             if (!has_def) {
                 inst2_print(ctx, (InstType) inst->type, &ops[1], &ops[2], inst->data_type);
@@ -851,13 +935,160 @@ static void patch_local_labels(Ctx* restrict ctx) {
     }
 }
 
+static void emit_win64eh_unwind_info(TB_Emitter* e, TB_FunctionOutput* out_f, uint64_t saved, uint64_t stack_usage) {
+    size_t patch_pos = e->count;
+    UnwindInfo unwind = {
+        .version = 1,
+        .flags = UNWIND_FLAG_EHANDLER,
+        .prolog_length = out_f->prologue_length,
+        .code_count = 0,
+        .frame_register = RBP,
+        .frame_offset = 0,
+    };
+    tb_outs(e, sizeof(UnwindInfo), &unwind);
+
+    size_t code_count = 0;
+    if (stack_usage == 8) {
+        // no real prologue
+    } else {
+        UnwindCode codes[] = {
+            // sub rsp, stack_usage
+            { .code_offset = 8, .unwind_op = UNWIND_OP_ALLOC_SMALL, .op_info = (stack_usage / 8) - 1 },
+            // mov rbp, rsp
+            { .code_offset = 4, .unwind_op = UNWIND_OP_SET_FPREG, .op_info = 0 },
+            // push rbp
+            { .code_offset = 1, .unwind_op = UNWIND_OP_PUSH_NONVOL, .op_info = RBP },
+        };
+        tb_outs(e, sizeof(codes), codes);
+        code_count += 3;
+    }
+
+    tb_patch1b(e, patch_pos + offsetof(UnwindInfo, code_count), code_count);
+}
+
 static size_t emit_prologue(uint8_t* out, uint64_t saved, uint64_t stack_usage) {
-    return 0;
+    // align the stack correctly
+    if ((tb_popcount(saved & 0xFFFF) & 1) == 0) stack_usage += 8;
+    // If the stack usage is zero we don't need a prologue
+    if (stack_usage == 8) return 0;
+
+    size_t used = 0;
+
+    // push rbp
+    out[used++] = 0x50 + RBP;
+
+    // mov rbp, rsp
+    out[used++] = rex(true, RSP, RBP, 0);
+    out[used++] = 0x89;
+    out[used++] = mod_rx_rm(MOD_DIRECT, RSP, RBP);
+
+    // push rXX
+    for (size_t i = 0; i < 16; i++)
+        if (saved & (1ull << i)) {
+        if (i < 8) {
+            out[used++] = 0x50 + i;
+        } else {
+            out[used++] = 0x41;
+            out[used++] = 0x50 + (i & 0b111);
+        }
+    }
+
+    if (stack_usage == (int8_t)stack_usage) {
+        // sub rsp, stack_usage
+        out[used++] = rex(true, 0x00, RSP, 0);
+        out[used++] = 0x83;
+        out[used++] = mod_rx_rm(MOD_DIRECT, 0x05, RSP);
+        out[used++] = stack_usage;
+    } else {
+        // sub rsp, stack_usage
+        out[used++] = rex(true, 0x00, RSP, 0);
+        out[used++] = 0x81;
+        out[used++] = mod_rx_rm(MOD_DIRECT, 0x05, RSP);
+        *((uint32_t*)&out[used]) = stack_usage;
+        used += 4;
+    }
+
+    // save XMMs
+    int tally = stack_usage & ~15u;
+    for (size_t i = 0; i < 16; i++) {
+        if (saved & (1ull << (i + 16))) {
+            if (i >= 8) {
+                out[used++] = rex(false, i, 0, 0);
+            }
+
+            // movaps [rbp - (A * 16)], xmmI
+            out[used++] = 0x0F;
+            out[used++] = 0x29;
+            out[used++] = mod_rx_rm(MOD_INDIRECT_DISP32, i, RBP);
+
+            *((uint32_t*)&out[used]) = -tally;
+            used += 4;
+
+            tally -= 16;
+        }
+    }
+
+    return used;
 }
 
 static size_t emit_epilogue(uint8_t* out, uint64_t saved, uint64_t stack_usage) {
-    out[0] = 0xC3;
-    return 1;
+    // align the stack correctly
+    if ((tb_popcount(saved & 0xFFFF) & 1) == 0) stack_usage += 8;
+
+    // if the stack isn't used then just return
+    if (stack_usage == 8) {
+        out[0] = 0xC3;
+        return 1;
+    }
+
+    size_t used = 0;
+
+    // reload XMMs
+    int tally = stack_usage & ~15u;
+    for (size_t i = 0; i < 16; i++) {
+        if (saved & (1ull << (i + 16))) {
+            if (i >= 8) { out[used++] = rex(false, i, 0, 0); }
+
+            // movaps xmmI, [rsp + (A * 16)]
+            out[used++] = 0x0F;
+            out[used++] = 0x28;
+            out[used++] = mod_rx_rm(MOD_INDIRECT_DISP32, i, RBP);
+
+            *((uint32_t*)&out[used]) = -tally;
+            used += 4;
+
+            tally -= 16;
+        }
+    }
+
+    // add rsp, N
+    if (stack_usage == (int8_t)stack_usage) {
+        out[used++] = rex(true, 0x00, RSP, 0);
+        out[used++] = 0x83;
+        out[used++] = mod_rx_rm(MOD_DIRECT, 0x00, RSP);
+        out[used++] = (int8_t)stack_usage;
+    } else {
+        out[used++] = rex(true, 0x00, RSP, 0);
+        out[used++] = 0x81;
+        out[used++] = mod_rx_rm(MOD_DIRECT, 0x00, RSP);
+        *((uint32_t*)&out[used]) = stack_usage;
+        used += 4;
+    }
+
+    // pop gpr
+    for (size_t i = 16; i--;)
+        if (saved & (1ull << i)) {
+        if (i < 8) {
+            out[used++] = 0x58 + i;
+        } else {
+            out[used++] = 0x41;
+            out[used++] = 0x58 + (i & 0b111);
+        }
+    }
+
+    out[used++] = 0x58 + RBP;
+    out[used++] = 0xC3;
+    return used;
 }
 
 static size_t emit_call_patches(TB_Module* restrict m) {
@@ -894,6 +1125,7 @@ ICodeGen tb__x64_codegen = {
     .minimum_addressable_size = 8,
     .pointer_size = 64,
 
+    .emit_win64eh_unwind_info = emit_win64eh_unwind_info,
     .emit_call_patches  = emit_call_patches,
     .get_data_type_size = get_data_type_size,
     .emit_prologue      = emit_prologue,

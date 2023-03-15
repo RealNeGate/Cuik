@@ -1,6 +1,7 @@
 #include <stddef.h>
 #include <string.h>
 #include <stdint.h>
+#include <stdio.h>
 
 #if 0
 int do_stuff(int a, int b, int c) {
@@ -49,8 +50,6 @@ long long fh(int* value) {
     return fe(10);
 }
 
-int main() {}
-
 long long fi(int* value) {
     return *value << 2;
 }
@@ -64,6 +63,10 @@ int without_restrict(int const* const x, int* y) {
     return 1;
 }
 #endif
+
+int main() {
+    printf("Hello, World!\n");
+}
 
 /*uint32_t test(const void* key, size_t len) {
     uint32_t h = 0;

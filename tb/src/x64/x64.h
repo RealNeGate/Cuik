@@ -99,7 +99,7 @@ typedef struct Val {
 
 typedef enum InstType {
     // Nullary
-    RET, INT3,
+    RET, INT3, CAST,
     // Control flow
     JO, JNO, JB, JNB, JE, JNE, JBE, JA,
     JS, JNS, JP, JNP, JL, JGE, JLE, JG,
@@ -161,6 +161,7 @@ static const InstDesc inst_table[] = {
     // nullary
     NULLARY_OP(RET,        0xC3),
     NULLARY_OP(INT3,       0xCC),
+    NULLARY_OP(CAST,       0x99),
     // unary ops
     UNARY_OP(NOT,                0xF7, 0x02),
     UNARY_OP(NEG,                0xF7, 0x03),
@@ -327,6 +328,7 @@ static const char* COND_NAMES[] = {
 
 // shorthand macros
 #define STACK_ALLOC(size, align) (ctx->stack_usage = align_up(ctx->stack_usage + (size), align), - ctx->stack_usage)
+#define INST0(op, dt)             inst0(&ctx->emit, op, dt)
 #define INST1(op, a, dt)          inst1(&ctx->emit, op, a, dt)
 #define INST2(op, a, b, dt)       inst2(&ctx->emit, op, a, b, dt)
 #define INST2SSE(op, a, b, dt)    inst2sse(&ctx->emit, op, a, b, dt)

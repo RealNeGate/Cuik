@@ -184,7 +184,7 @@ static bool implicit_conversion(TranslationUnit* tu, Cuik_QualType qsrc, Cuik_Qu
     }
 
     if (!type_compatible(tu, src, dst, src_e)) {
-        diag_err(&tu->tokens, src_e->loc, "could not implicitly convert type %!T into %!T", src, dst);
+        diag_err(&tu->tokens, src_e->loc, "can't implicitly convert type %!T into %!T", src, dst);
         return false;
     }
 
