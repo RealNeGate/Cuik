@@ -7,14 +7,13 @@
 typedef enum ArgType {
     ARG_NONE = 0,
 
-    #define X(name, short, long, has_args, msg) ARG_ ## name,
+    #define X(name, short, has_args, msg) ARG_ ## name,
     #include "driver_args.h"
 } ArgType;
 
 typedef struct {
     ArgType type;
     const char* alias; // -a
-    const char* name;  // --name
     bool has_arg;
     const char* desc;
 } ArgDesc;
@@ -27,7 +26,7 @@ typedef struct Arg {
 static const char* arg_is_set = "set";
 
 static const ArgDesc arg_descs[] = {
-    #define X(name, short, long, has_args, msg) { ARG_ ## name, short, long, has_args, msg },
+    #define X(name, short, has_args, msg) { ARG_ ## name, short, has_args, msg },
     #include "driver_args.h"
 };
 enum { ARG_DESC_COUNT = sizeof(arg_descs) / sizeof(arg_descs[0]) };
@@ -56,19 +55,7 @@ static void print_help(void) {
     for (int i = 0; i < ARG_DESC_COUNT; i++) {
         printf("    ");
 
-        size_t len = 0;
-        if (arg_descs[i].alias) {
-            len += printf("-%s", arg_descs[i].alias);
-        }
-
-        if (arg_descs[i].name) {
-            if (len > 0) {
-                len += printf(", ");
-            }
-
-            len += printf("--%s", arg_descs[i].name);
-        }
-
+        size_t len = printf("-%s", arg_descs[i].alias);
         if (arg_descs[i].has_arg) {
             len += printf(" <value>");
         }
@@ -80,20 +67,11 @@ static void print_help(void) {
     printf("\n");
 }
 
-static const ArgDesc* find_arg_desc(const char* arg, bool is_long_name) {
-    if (is_long_name) {
-        for (size_t i = 0; i < ARG_DESC_COUNT; i++) {
-            const char* n = arg_descs[i].name;
-            if (n && strncmp(arg, n, strlen(n)) == 0) {
-                return &arg_descs[i];
-            }
-        }
-    } else {
-        for (size_t i = 0; i < ARG_DESC_COUNT; i++) {
-            const char* n = arg_descs[i].alias;
-            if (n && strncmp(arg, n, strlen(n)) == 0) {
-                return &arg_descs[i];
-            }
+static const ArgDesc* find_arg_desc(const char* arg) {
+    for (size_t i = 0; i < ARG_DESC_COUNT; i++) {
+        const char* n = arg_descs[i].alias;
+        if (n && strncmp(arg, n, strlen(n)) == 0) {
+            return &arg_descs[i];
         }
     }
 
@@ -106,10 +84,7 @@ static Arg read_arg(int* out_arg_length, int argc, const char* argv[]) {
     const char* first = argv[0];
     if (first[0] != '-') return A(1, ARG_NONE, first);
 
-    // check for equals
-    bool is_long_name = (first[1] == '-');
-    const char* equals = strchr(first, '=');
-    const ArgDesc* desc = find_arg_desc(&first[is_long_name ? 2 : 1], is_long_name);
+    const ArgDesc* desc = find_arg_desc(first + 1);
     if (desc == NULL) {
         // could not find an option
         fprintf(stderr, "error: could not find match for %s\n", first);
@@ -117,13 +92,10 @@ static Arg read_arg(int* out_arg_length, int argc, const char* argv[]) {
     }
 
     if (!desc->has_arg) return A(1, desc->type, arg_is_set);
-    if (is_long_name) {
-        if (equals != NULL) return A(1, desc->type, equals + 1);
-    } else {
-        size_t alias_len = strlen(desc->alias);
-        if (strlen(first) - 1 > alias_len) {
-            return A(1, desc->type, first + 1 + alias_len);
-        }
+
+    size_t alias_len = strlen(desc->alias);
+    if (strlen(first) - 1 > alias_len) {
+        return A(1, desc->type, first + 1 + alias_len);
     }
 
     if (argc >= 1) return A(2, desc->type, argv[1]);
