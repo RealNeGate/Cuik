@@ -501,16 +501,17 @@ static int isel(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n) {
             int rhs = ISEL(n->inputs[1]);
 
             dst = DEF(n, REG_CLASS_GPR);
+            int fake_dst = DEF(n, REG_CLASS_GPR);
 
             // mov rax, lhs
-            int rax = DEF_FORCED(n, REG_CLASS_GPR, RAX, dst);
+            int rax = DEF_FORCED(n, REG_CLASS_GPR, RAX, fake_dst);
             SUBMIT(inst_copy(n->dt, rax, lhs));
 
             // if signed:
             //   cqo/cdq (sign extend RAX into RDX)
             // else:
             //   xor rdx, rdx
-            int rdx = DEF_FORCED(n, REG_CLASS_GPR, RDX, dst);
+            int rdx = DEF_FORCED(n, REG_CLASS_GPR, RDX, fake_dst);
             if (is_signed) {
                 SUBMIT(inst_u(CAST, n->dt));
             } else {
@@ -518,7 +519,8 @@ static int isel(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n) {
             }
 
             SUBMIT(inst_r(is_signed ? IDIV : DIV, n->dt, -1, rhs));
-            SUBMIT(inst_copy(n->dt, dst, USE(is_div ? rax : rdx)));
+            SUBMIT(inst_copy(n->dt, fake_dst, USE(is_div ? rax : rdx)));
+            SUBMIT(inst_copy(n->dt, dst, USE(fake_dst)));
             break;
         }
         case TB_SHL:
@@ -534,13 +536,16 @@ static int isel(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n) {
                 int lhs = ISEL(n->inputs[0]);
                 SUBMIT(inst_ri(op, n->dt, dst, lhs, x));
             } else {
+                int fake_dst = DEF(n, REG_CLASS_GPR);
+
                 // the shift operations need their right hand side in CL (RCX's low 8bit)
                 int lhs = ISEL(n->inputs[0]);
                 int rhs = ISEL(n->inputs[1]); // TODO(NeGate): hint into RCX
 
-                int cl = DEF_FORCED(n, REG_CLASS_GPR, RCX, dst);
+                int cl = DEF_FORCED(n, REG_CLASS_GPR, RCX, fake_dst);
                 SUBMIT(inst_copy(n->dt, cl, rhs));
-                SUBMIT(inst_rr(op, n->dt, dst, lhs, RCX));
+                SUBMIT(inst_rr(op, n->dt, fake_dst, lhs, RCX));
+                SUBMIT(inst_copy(n->dt, dst, USE(fake_dst)));
             }
             break;
         }
@@ -571,15 +576,17 @@ static int isel(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n) {
         }
 
         case TB_RET: {
-            // hint input to be RAX
-            int src_vreg = isel(ctx, seq, n->inputs[0]);
-            if (ctx->defs[src_vreg].hint < 0) {
-                ctx->defs[src_vreg].hint = RAX;
-            }
+            if (n->inputs[0] != NULL) {
+                // hint input to be RAX
+                int src_vreg = isel(ctx, seq, n->inputs[0]);
+                if (ctx->defs[src_vreg].hint < 0) {
+                    ctx->defs[src_vreg].hint = RAX;
+                }
 
-            // we ain't gotta worry about regalloc here, we dippin
-            int fake_dst = DEF_FORCED(n, REG_CLASS_GPR, RAX, -1);
-            SUBMIT(inst_copy(n->inputs[0]->dt, fake_dst, USE(src_vreg)));
+                // we ain't gotta worry about regalloc here, we dippin
+                int fake_dst = DEF_FORCED(n, REG_CLASS_GPR, RAX, -1);
+                SUBMIT(inst_copy(n->inputs[0]->dt, fake_dst, USE(src_vreg)));
+            }
 
             if (ctx->fallthrough != -1) {
                 SUBMIT(inst_jmp(-1));
@@ -702,7 +709,7 @@ static int isel(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n) {
 
             // generate clones of each parameter which live until the CALL instruction executes
             dst = DEF_HINTED(n, REG_CLASS_GPR, RAX);
-            int fake_dst = DEF_FORCED(n, REG_CLASS_GPR, RAX, dst);
+            int fake_dst = DEF_FORCED(n, REG_CLASS_GPR, RAX, -1);
 
             FOREACH_N(i, 1, n->input_count) {
                 TB_Node* param = n->inputs[i];
@@ -711,14 +718,18 @@ static int isel(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n) {
                 if (TB_IS_FLOAT_TYPE(param_dt) || param_dt.width) {
                     tb_todo();
                 } else {
-                    int src = ISEL(param);
+                    int src = isel(ctx, seq, param);
 
                     if (i - 1 < desc->gpr_count) {
-                        int param_def = DEF_FORCED(param, REG_CLASS_GPR, desc->gprs[i - 1], fake_dst);
+                        // hint src into GPR
+                        if (ctx->defs[src].hint < 0) {
+                            ctx->defs[src].hint = desc->gprs[i - 1];
+                        }
 
-                        SUBMIT(inst_copy(param->dt, param_def, src));
+                        int param_def = DEF_FORCED(param, REG_CLASS_GPR, desc->gprs[i - 1], dst);
+                        SUBMIT(inst_copy(param->dt, param_def, USE(src)));
                     } else {
-                        SUBMIT(inst_m(MOV, n->dt, dst, RSP, GPR_NONE, SCALE_X1, 8 + (i * 8)));
+                        SUBMIT(inst_mr(MOV, n->dt, RSP, GPR_NONE, SCALE_X1, 8 + (i * 8), src));
                     }
                 }
             }
@@ -899,7 +910,7 @@ static void emit_sequence(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n)
         } else if (op_count == 2) {
             if (!has_def) {
                 inst2_print(ctx, (InstType) inst->type, &ops[1], &ops[2], inst->data_type);
-            } else {
+            } else if (inst->type != MOV || (inst->type == MOV && !is_value_match(&ops[0], &ops[1]))) {
                 inst2_print(ctx, (InstType) inst->type, &ops[0], &ops[1], inst->data_type);
             }
         } else if (op_count == 3) {
@@ -919,6 +930,13 @@ static void emit_sequence(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n)
     if (n == NULL) {
         return;
     }
+}
+
+static void resolve_stack_usage(Ctx* restrict ctx, size_t caller_usage) {
+    size_t usage = ctx->stack_usage + (caller_usage * 8);
+
+    // Align stack usage to 16bytes and add 8 bytes for the return address
+    ctx->stack_usage = align_up(usage + 8, 16) + 8;
 }
 
 static void patch_local_labels(Ctx* restrict ctx) {

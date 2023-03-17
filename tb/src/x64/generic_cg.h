@@ -234,6 +234,7 @@ static bool should_tile(TB_Node* n);
 static int isel(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n);
 static void emit_sequence(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n);
 static void patch_local_labels(Ctx* restrict ctx);
+static void resolve_stack_usage(Ctx* restrict ctx, size_t caller_usage);
 static void copy_value(Ctx* restrict ctx, Sequence* seq, TB_Node* phi, int dst, TB_Node* src, TB_DataType dt);
 
 #define ISEL(n) USE(isel(ctx, seq, n))
@@ -488,10 +489,7 @@ static void linear_scan(Ctx* restrict ctx, TB_Function* f, TB_PostorderWalk* wal
         Def* d = &ctx->defs[i];
         if (d->reg >= 0 && d->live_until >= 0) {
             Def* until = &ctx->defs[d->live_until];
-
-            if (until->start != INT_MAX) {
-                add_range(ctx, d, until->start, until->start);
-            }
+            add_range(ctx, d, until->end, until->end);
         }
 
         sorted[i] = d;
@@ -770,6 +768,8 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
         printf(".ret:\n");
     }
 
+    resolve_stack_usage(ctx, caller_usage);
+
     //  Label patching: we make sure any local labels
     patch_local_labels(ctx);
 
@@ -778,7 +778,7 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
         .linkage = f->linkage,
         .code = ctx->emit.data,
         .code_size = ctx->emit.count,
-        // .stack_usage = ctx->stack_usage,
+        .stack_usage = ctx->stack_usage,
         // .prologue_epilogue_metadata = ctx->regs_to_save[0],
         // .stack_slots = ctx->stack_slots
     };

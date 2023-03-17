@@ -483,7 +483,28 @@ TB_API TB_Node* tb_inst_bswap(TB_Function* f, TB_Node* src) {
 }
 
 TB_API TB_Node* tb_inst_clz(TB_Function* f, TB_Node* src) {
-    TB_Node* n = tb_alloc_at_end(f, TB_CLZ, src->dt, 1, 0);
+    tb_assume(TB_IS_INTEGER_TYPE(src->dt));
+    uint64_t bits = tb_ffs(src->dt.data) - 1;
+
+    TB_Node* n = tb_alloc_at_end(f, TB_CLZ, TB_TYPE_INTN(bits), 1, 0);
+    n->inputs[0] = src;
+    return n;
+}
+
+TB_API TB_Node* tb_inst_ctz(TB_Function* f, TB_Node* src) {
+    tb_assume(TB_IS_INTEGER_TYPE(src->dt));
+    uint64_t bits = tb_ffs(src->dt.data) - 1;
+
+    TB_Node* n = tb_alloc_at_end(f, TB_CTZ, TB_TYPE_INTN(bits), 1, 0);
+    n->inputs[0] = src;
+    return n;
+}
+
+TB_API TB_Node* tb_inst_popcount(TB_Function* f, TB_Node* src) {
+    tb_assume(TB_IS_INTEGER_TYPE(src->dt));
+    uint64_t bits = tb_ffs(src->dt.data) - 1;
+
+    TB_Node* n = tb_alloc_at_end(f, TB_POPCNT, TB_TYPE_INTN(bits), 1, 0);
     n->inputs[0] = src;
     return n;
 }

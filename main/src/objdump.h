@@ -1,7 +1,4 @@
 
-// hacky but i dont care
-#include <file_map.h>
-
 int run_objdump(int argc, const char** argv) {
     if (argc < 1) {
         fprintf(stderr, "\x1b[31merror\x1b[0m: no input files!\n");

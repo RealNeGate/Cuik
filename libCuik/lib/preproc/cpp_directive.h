@@ -169,8 +169,9 @@ static DirectiveResult cpp__include(Cuik_CPP* restrict ctx, CPPStackSlot* restri
     }
 
     // find canonical filesystem path
+    bool is_system;
     char canonical[FILENAME_MAX];
-    if (!locate_file(ctx, is_lib_include, slot->directory, filename, canonical)) {
+    if (!locate_file(ctx, is_lib_include, slot->directory, filename, canonical, &is_system)) {
         SourceRange loc = get_token_range(&in->tokens[in->current]);
         diag_err(&ctx->tokens, loc, "couldn't find file: %s", filename);
         return DIRECTIVE_ERROR;
@@ -216,7 +217,7 @@ static DirectiveResult cpp__include(Cuik_CPP* restrict ctx, CPPStackSlot* restri
     CUIK_TIMED_BLOCK("convert_to_token_list") {
         new_slot->tokens = convert_to_token_list(ctx, dyn_array_length(ctx->tokens.files), next_file.length, next_file.data);
     }
-    compute_line_map(&ctx->tokens, ctx->included_system_header, ctx->stack_ptr - 1, new_slot->loc, alloced_filepath, next_file.data, next_file.length);
+    compute_line_map(&ctx->tokens, is_system, ctx->stack_ptr - 1, new_slot->loc, alloced_filepath, next_file.data, next_file.length);
 
     if (cuikperf_is_active()) {
         cuikperf_region_start(cuik_time_in_nanos(), "preprocess", filename);

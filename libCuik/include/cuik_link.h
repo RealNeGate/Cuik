@@ -18,7 +18,7 @@ CUIK_API bool cuiklink_init(Cuik_Linker* l);
 CUIK_API void cuiklink_deinit(Cuik_Linker* l);
 
 // uses the system library paths located by cuik_find_system_deps
-CUIK_API void cuiklink_apply_toolchain_libs(Cuik_Linker* l, Cuik_CompilerArgs* args);
+CUIK_API void cuiklink_apply_toolchain_libs(Cuik_Linker* l, Cuik_DriverArgs* args);
 
 // Adds a directory to the library searches
 CUIK_API void cuiklink_add_libpath(Cuik_Linker* l, const char* filepath);
@@ -30,4 +30,4 @@ CUIK_API void cuiklink_add_input_file(Cuik_Linker* l, const char* filepath);
 CUIK_API bool cuiklink_find_library(Cuik_Linker* l, char output[FILENAME_MAX], const char* filepath);
 
 // return true if it succeeds
-CUIK_API bool cuiklink_invoke(Cuik_Linker* l, Cuik_CompilerArgs* args, const char* output, const char* filename);
+CUIK_API bool cuiklink_invoke(Cuik_Linker* l, Cuik_DriverArgs* args, const char* output, const char* filename);

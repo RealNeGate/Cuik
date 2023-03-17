@@ -45,7 +45,7 @@ static void print_token_stream(TokenArray* in, size_t start, size_t end);
 
 static TokenNode* expand(Cuik_CPP* restrict c, TokenNode* restrict head, uint32_t parent_macro, TokenArray* rest);
 static TokenList expand_ident(Cuik_CPP* restrict c, TokenArray* in, TokenNode* head, uint32_t parent_macro, TokenArray* rest);
-static bool locate_file(Cuik_CPP* ctx, bool is_system, const char* dir, const char* og_path, char canonical[FILENAME_MAX]);
+static bool locate_file(Cuik_CPP* ctx, bool search_lib_first, const char* dir, const char* og_path, char canonical[FILENAME_MAX], bool* is_system);
 
 static char* alloc_directory_path(const char* filepath);
 static void compute_line_map(TokenStream* s, bool is_system, int depth, SourceLoc include_site, const char* filename, char* data, size_t length);
@@ -453,11 +453,12 @@ void cuikpp_task_done(CPPTask* restrict t) {
     __debugbreak();
 }
 
-static bool locate_file(Cuik_CPP* ctx, bool is_system, const char* dir, const char* og_path, char canonical[FILENAME_MAX]) {
+static bool locate_file(Cuik_CPP* ctx, bool search_lib_first, const char* dir, const char* og_path, char canonical[FILENAME_MAX], bool* is_system) {
     char path[FILENAME_MAX];
-    if (!is_system) {
+    if (!search_lib_first) {
         sprintf_s(path, FILENAME_MAX, "%s%s", dir, og_path);
         if (ctx->locate(ctx->user_data, path, canonical)) {
+            *is_system = false;
             return true;
         }
     }
@@ -466,13 +467,15 @@ static bool locate_file(Cuik_CPP* ctx, bool is_system, const char* dir, const ch
         sprintf_s(path, FILENAME_MAX, "%s%s", ctx->system_include_dirs[i].name, og_path);
 
         if (ctx->locate(ctx->user_data, path, canonical)) {
+            *is_system = ctx->system_include_dirs[i].is_system;
             return true;
         }
     }
 
-    if (is_system) {
+    if (search_lib_first) {
         sprintf_s(path, FILENAME_MAX, "%s%s", dir, og_path);
         if (ctx->locate(ctx->user_data, path, canonical)) {
+            *is_system = false;
             return true;
         }
     }

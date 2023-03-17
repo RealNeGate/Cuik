@@ -13,7 +13,7 @@ int sprintf_s(char* buffer, size_t len, const char* format, ...);
 typedef struct CompilationUnit CompilationUnit;
 typedef struct TranslationUnit TranslationUnit;
 typedef struct Cuik_Toolchain Cuik_Toolchain;
-typedef struct Cuik_CompilerArgs Cuik_CompilerArgs;
+typedef struct Cuik_DriverArgs Cuik_DriverArgs;
 
 ////////////////////////////////////////////
 // Interfaces

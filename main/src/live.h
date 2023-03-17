@@ -20,7 +20,7 @@ static uint64_t get_last_write_time(const char* filepath) {
 
 // currently we only support modifying the main file when the live loop is active
 // it'll return true when it changes happen, it returns false once the user asks to quit.
-static bool live_compile_watch(LiveCompiler* l, Cuik_CompilerArgs* args) {
+static bool live_compile_watch(LiveCompiler* l, Cuik_DriverArgs* args) {
     if (dyn_array_length(args->sources) > 1) {
         printf("TODO: live compile does not support multiple files yet!");
         return false;
@@ -56,7 +56,7 @@ static uint64_t get_last_write_time(const char* filepath) {
     return 0;
 }
 
-static bool live_compile_watch(LiveCompiler* l, Cuik_CompilerArgs* args) {
+static bool live_compile_watch(LiveCompiler* l, Cuik_DriverArgs* args) {
     if (dyn_array_length(args->sources) > 1) {
         printf("TODO: live compile does not support multiple files yet!");
         return false;

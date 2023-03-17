@@ -44,7 +44,7 @@ Cuik_Target* cuik_target_host(void) {
     #endif
 }
 
-void cuik_set_standard_defines(Cuik_CPP* cpp, const Cuik_CompilerArgs* args) {
+void cuik_set_standard_defines(Cuik_CPP* cpp, const Cuik_DriverArgs* args) {
     // DO NOT REMOVE THESE, IF THEY'RE MISSING THE PREPROCESSOR WILL NOT DETECT THEM
     cuikpp_define_empty_cstr(cpp, "__FILE__");
     cuikpp_define_empty_cstr(cpp, "L__FILE__");

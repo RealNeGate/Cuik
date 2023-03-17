@@ -13,7 +13,7 @@ static bool str_ends_with(const char* cstr, const char* postfix) {
 }
 
 // handles the **.c *.c type stuff
-static void filtered_append(Cuik_CompilerArgs* args, const char* path, bool recursive) {
+static void filtered_append(Cuik_DriverArgs* args, const char* path, bool recursive) {
     const char* slash = path;
     for (const char* p = path; *p; p++) {
         if (*p == '/' || *p == '\\') {
@@ -72,7 +72,7 @@ static void filtered_append(Cuik_CompilerArgs* args, const char* path, bool recu
     #endif
 }
 
-static void append_input_path(Cuik_CompilerArgs* args, const char* path) {
+static void append_input_path(Cuik_DriverArgs* args, const char* path) {
     // we don't check this very well because we're based
     const char* star = NULL;
     for (const char* p = path; *p; p++) {

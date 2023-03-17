@@ -1626,7 +1626,6 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
             }
 
             fallthrough_label(func, header);
-            // tb_inst_goto(func, header);
             tb_inst_set_label(func, exit);
             break;
         }

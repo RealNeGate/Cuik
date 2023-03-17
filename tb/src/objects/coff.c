@@ -485,7 +485,7 @@ TB_API TB_Exports tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
                     memcpy(sym.short_name, g->super.name, name_len + 1);
                 }
             } else {
-                snprintf((char*) sym.short_name, 8, "$%07zu", g->super.symbol_id);
+                snprintf((char*) sym.short_name, 8, "$%06zu", g->super.symbol_id);
             }
 
             WRITE(&sym, sizeof(sym));

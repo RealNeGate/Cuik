@@ -7,7 +7,6 @@ X(UNDEF,       "U",        true,  "undefines a macro before compiling")
 X(INCLUDE,     "I",        true,  "add directory to the include searches")
 X(PPTEST,      "Pp",       false, "test preprocessor")
 X(PP,          "P",        false, "print preprocessor output to stdout")
-X(PPREPL,      "xp",       false, "enables the preprocessor REPL environment")
 // parser
 X(LANG,        "lang",     false, "choose the language (c11, c23, glsl)")
 X(AST,         "ast",      false, "print AST into stdout")

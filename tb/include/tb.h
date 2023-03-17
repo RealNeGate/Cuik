@@ -143,17 +143,15 @@ extern "C" {
 
     typedef union TB_DataType {
         struct {
-            uint16_t type  : 2;
+            uint8_t type;
             // 2^N where N is the width value.
             // Only integers and floats can be wide.
-            uint16_t width : 3;
-
+            uint16_t width;
             // for integers it's the bitwidth
-            uint16_t data  : 11;
+            uint16_t data;
         };
-        uint16_t raw;
+        uint32_t raw;
     } TB_DataType;
-    static_assert(sizeof(TB_DataType) == sizeof(uint16_t), "TB_DataType isn't 16bits...");
 
     // classify data types
     #define TB_IS_VOID_TYPE(x)     ((x).type == TB_INT && (x).data == 0)
@@ -388,9 +386,9 @@ extern "C" {
     typedef struct TB_Node TB_Node;
     struct TB_Node {
         TB_NodeType type;
-        uint16_t input_count; // number of node inputs
-        uint8_t extra_count; // number of bytes for extra operand data
         TB_DataType dt;
+        uint16_t input_count; // number of node inputs
+        uint16_t extra_count; // number of bytes for extra operand data
 
         TB_Node*    next;
         TB_Attrib*  first_attrib;
@@ -827,6 +825,8 @@ extern "C" {
     #define TB_TYPE_F64     TB_DataType{ { TB_FLOAT, 0, TB_FLT_64 } }
     #define TB_TYPE_BOOL    TB_DataType{ { TB_INT,   0, 1 } }
     #define TB_TYPE_PTR     TB_DataType{ { TB_PTR,   0, 0 } }
+
+    #define TB_TYPE_INTN(N) TB_DataType{ { TB_INT,   0, (N) } }
     #define TB_TYPE_PTRN(N) TB_DataType{ { TB_PTR,   0, (N) } }
 
     #else
@@ -840,6 +840,7 @@ extern "C" {
     #define TB_TYPE_F64  (TB_DataType){ { TB_FLOAT, 0, TB_FLT_64 } }
     #define TB_TYPE_BOOL (TB_DataType){ { TB_INT,   0, 1 } }
     #define TB_TYPE_PTR  (TB_DataType){ { TB_PTR,   0, 0 } }
+    #define TB_TYPE_INTN(N) (TB_DataType){ { TB_INT,  0, (N) } }
     #define TB_TYPE_PTRN(N) (TB_DataType){ { TB_PTR,  0, (N) } }
 
     #endif

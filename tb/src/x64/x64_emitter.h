@@ -215,7 +215,6 @@ static void inst2(TB_CGEmitter* restrict e, InstType type, const Val* a, const V
     emit_memory_operand(e, rx, a);
     // BTW memory displacements go before immediates
     ptrdiff_t disp_patch = e->count - 4;
-
     if (b->type == VAL_IMM) {
         if (dt == X86_TYPE_BYTE || short_imm) {
             if (short_imm) {
@@ -233,8 +232,8 @@ static void inst2(TB_CGEmitter* restrict e, InstType type, const Val* a, const V
         }
     }
 
-    if (a->type == VAL_GLOBAL) {
-        RELOC4(e, disp_patch, disp_patch - e->count);
+    if (a->type == VAL_GLOBAL && disp_patch + 4 != e->count) {
+        RELOC4(e, disp_patch, (disp_patch + 4) - e->count);
     }
 }
 

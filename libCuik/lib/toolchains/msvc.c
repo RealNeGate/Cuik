@@ -475,7 +475,7 @@ void find_visual_studio_by_fighting_through_microsoft_craziness(Cuik_WindowsTool
     // If we get here, we failed to find anything.
 }
 
-static void add_libraries(void* ctx, const Cuik_CompilerArgs* args, Cuik_Linker* l) {
+static void add_libraries(void* ctx, const Cuik_DriverArgs* args, Cuik_Linker* l) {
     Cuik_WindowsToolchain* t = ctx;
 
     cuiklink_add_libpathf(l, "%S", t->vs_library_path);
@@ -483,7 +483,7 @@ static void add_libraries(void* ctx, const Cuik_CompilerArgs* args, Cuik_Linker*
     cuiklink_add_libpathf(l, "%S\\ucrt\\x64", t->windows_sdk_root);
 }
 
-static void set_preprocessor(void* ctx, const Cuik_CompilerArgs* args, Cuik_CPP* cpp) {
+static void set_preprocessor(void* ctx, const Cuik_DriverArgs* args, Cuik_CPP* cpp) {
     Cuik_WindowsToolchain* t = ctx;
 
     cuikpp_add_include_directoryf(cpp, true, "%S\\um\\",      t->windows_sdk_include);
@@ -534,7 +534,7 @@ static void set_preprocessor(void* ctx, const Cuik_CompilerArgs* args, Cuik_CPP*
     cuikpp_define_empty_cstr(cpp, "__ptr64");
 }
 
-static bool invoke_link(void* ctx, const Cuik_CompilerArgs* args, Cuik_Linker* linker, const char* output, const char* filename) {
+static bool invoke_link(void* ctx, const Cuik_DriverArgs* args, Cuik_Linker* linker, const char* output, const char* filename) {
     enum { CMD_LINE_MAX = 4096 };
     Cuik_WindowsToolchain* t = ctx;
 

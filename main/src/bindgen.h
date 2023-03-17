@@ -98,7 +98,7 @@ static void print_odin_type(Cuik_Type* type, int depth, bool top) {
     }
 }
 
-static bool is_in_sources(const Cuik_CompilerArgs* args, const char* name) {
+static bool is_in_sources(const Cuik_DriverArgs* args, const char* name) {
     dyn_array_for(i, args->sources) {
         if (strcmp(args->sources[i], name) == 0) {
             return true;
@@ -111,13 +111,13 @@ static bool is_in_sources(const Cuik_CompilerArgs* args, const char* name) {
 int run_bindgen(int argc, const char** argv) {
     cuik_init();
 
-    Cuik_CompilerArgs args = {
+    Cuik_DriverArgs args = {
         .version = CUIK_VERSION_C23,
         .target = cuik_target_host(),
         .toolchain = cuik_toolchain_host(),
         .flavor = TB_FLAVOR_EXECUTABLE,
     };
-    cuik_parse_args(&args, argc, argv);
+    cuik_parse_driver_args(&args, argc, argv);
 
     // we just want to type check
     args.types = true;

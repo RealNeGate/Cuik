@@ -13,37 +13,54 @@
 #include "spall_perf.h"
 #include "live.h"
 
+// hacky but i dont care
+#include <file_map.h>
+
 #include "objdump.h"
 #include "bindgen.h"
+#include "link.h"
 
 // #define STB_LEAKCHECK_IMPLEMENTATION
 // #include <stb_leakcheck.h>
 
 int main(int argc, const char** argv) {
-    // Cuik can be opened as a OBJ file parser
-    if (argc >= 2 && strcmp(argv[1], "-objdump") == 0) {
-        return run_objdump(argc - 2, argv + 2);
-    } else if (argc >= 2 && strcmp(argv[1], "-bindgen") == 0) {
-        return run_bindgen(argc - 2, argv + 2);
-    }
-
-    cuik_init();
-    // setlocale(LC_ALL, ".UTF8");
-
     #ifdef CUIK_USE_SPALL_AUTO
     spall_auto_init("perf.spall");
     spall_auto_thread_init(1, 1ull<<28ull);
     #endif
 
-    Cuik_CompilerArgs args = {
+    // Cuik can be opened as a OBJ file parser
+    int status = EXIT_SUCCESS;
+    if (argc >= 2) {
+        if (strcmp(argv[1], "-objdump") == 0) {
+            status = run_objdump(argc - 2, argv + 2);
+        } else if (strcmp(argv[1], "-link") == 0) {
+            status = run_link(argc - 2, argv + 2);
+        } else if (strcmp(argv[1], "-bindgen") == 0) {
+            status = run_bindgen(argc - 2, argv + 2);
+        }
+
+        #ifdef CUIK_USE_SPALL_AUTO
+        spall_auto_thread_quit();
+        spall_auto_quit();
+        #endif
+
+        return status;
+    }
+
+    cuik_init();
+
+    Cuik_DriverArgs args = {
         .version = CUIK_VERSION_C23,
         .target = cuik_target_host(),
         .toolchain = cuik_toolchain_host(),
         .flavor = TB_FLAVOR_EXECUTABLE,
     };
-    cuik_parse_args(&args, argc - 1, argv + 1);
 
-    int status = EXIT_SUCCESS;
+    if (!cuik_parse_driver_args(&args, argc - 1, argv + 1)) {
+        return EXIT_SUCCESS;
+    }
+
     if (dyn_array_length(args.sources) == 0) {
         fprintf(stderr, "error: no input files!\n");
         status = EXIT_FAILURE;
@@ -126,7 +143,7 @@ int main(int argc, const char** argv) {
     #endif
 
     if (args.time) cuikperf_stop();
-    cuik_free_args(&args);
+    cuik_free_driver_args(&args);
 
     done:
     #ifdef CUIK_USE_SPALL_AUTO

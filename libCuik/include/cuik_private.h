@@ -37,7 +37,6 @@ struct Cuik_CPP {
 
     // powers __COUNTER__
     int unique_counter;
-    bool included_system_header;
 
     // we got a little state machine design
     // to emulate some bootleg coroutines :P
@@ -69,8 +68,8 @@ struct Cuik_CPP {
     #endif
 
     // task pool
-    _Atomic uint64_t task_busy, task_done;
-    CPPTask tasks[64];
+    // _Atomic uint64_t task_busy, task_done;
+    // CPPTask tasks[64];
 
     // NL_Strmap(int)
     int* include_once;
