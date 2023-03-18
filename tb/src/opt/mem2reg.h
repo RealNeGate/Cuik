@@ -173,17 +173,19 @@ static void ssa_rename(Mem2Reg_Ctx* c, TB_Function* f, TB_Label bb, DynArray(TB_
 
     // replace phi arguments on successor
     TB_Node* end = f->bbs[bb].end;
-    if (end->type == TB_NULL || end->type == TB_RET || end->type == TB_TRAP || end->type == TB_UNREACHABLE) {
-        /* RET can't do shit in this context */
-    } else if (end->type == TB_BRANCH) {
-        TB_NodeBranch* br = TB_NODE_GET_EXTRA(end);
-        ssa_replace_phi_arg(c, f, bb, br->default_label, stack);
+    if (end) {
+        if (end->type == TB_NULL || end->type == TB_RET || end->type == TB_TRAP || end->type == TB_UNREACHABLE) {
+            /* RET can't do shit in this context */
+        } else if (end->type == TB_BRANCH) {
+            TB_NodeBranch* br = TB_NODE_GET_EXTRA(end);
+            ssa_replace_phi_arg(c, f, bb, br->default_label, stack);
 
-        FOREACH_REVERSE_N(i, 0, br->count) {
-            ssa_replace_phi_arg(c, f, bb, br->targets[i].value, stack);
+            FOREACH_REVERSE_N(i, 0, br->count) {
+                ssa_replace_phi_arg(c, f, bb, br->targets[i].value, stack);
+            }
+        } else {
+            tb_todo();
         }
-    } else {
-        tb_todo();
     }
 
     // for each successor s of the BB in the dominator

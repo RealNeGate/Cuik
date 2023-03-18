@@ -113,15 +113,18 @@ CUIK_API void cuik_parse_args(Cuik_Arguments* restrict args, int argc, const cha
             continue;
         }
 
+        size_t alias_len = strlen(arg_descs[type].alias);
         const ArgDesc* desc = &arg_descs[type];
         if (desc->has_arg) {
             if (i + 1 >= argc) {
                 fprintf(stderr, "\x1b[31merror\x1b[0m: expected argument after %s\n", first);
                 continue;
+            } else if (first[alias_len + 1] != 0) {
+                insert_arg(args, type)->value = first + alias_len + 1;
+            } else {
+                insert_arg(args, type)->value = argv[i + 1];
+                i += 1;
             }
-
-            insert_arg(args, type)->value = argv[i + 1];
-            i += 1;
         } else {
             insert_arg(args, type)->value = arg_is_set;
         }

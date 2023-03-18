@@ -284,7 +284,29 @@ static bool const_fold(TB_Function* f, TB_Label bb, TB_Node* n) {
                     return true;
                 }
             } else if (n->dt.type == TB_INT && b->type == TB_INTEGER_CONST) {
-                if (a->type == TB_INTEGER_CONST && n->type >= TB_AND && n->type <= TB_MUL) {
+                if (a->type == TB_INTEGER_CONST && n->type >= TB_CMP_EQ && n->type <= TB_CMP_ULE) {
+                    TB_NodeTypeEnum type = n->type;
+
+                    // fully fold
+                    TB_NodeInt* ai = TB_NODE_GET_EXTRA(a);
+                    TB_NodeInt* bi = TB_NODE_GET_EXTRA(b);
+                    assert(ai->num_words == bi->num_words);
+
+                    BigInt_t *a_words = ai->words, *b_words = bi->words;
+
+                    size_t num_words = ai->num_words;
+                    BigInt_t* words = tb_transmute_to_int(f, bb, n, 1);
+                    bool result = false;
+                    switch (type) {
+                        case TB_CMP_EQ:  result = BigInt_cmp(num_words, a_words, b_words) == 0; break;
+                        case TB_CMP_NE:  result = BigInt_cmp(num_words, a_words, b_words) != 0; break;
+                        case TB_CMP_ULT: result = BigInt_cmp(num_words, a_words, b_words) <  0; break;
+                        case TB_CMP_ULE: result = BigInt_cmp(num_words, a_words, b_words) <= 0; break;
+                        default: goto fail;
+                    }
+
+                    words[0] = result;
+                } else if (a->type == TB_INTEGER_CONST && n->type >= TB_AND && n->type <= TB_MUL) {
                     // fully fold
                     TB_NodeInt* ai = TB_NODE_GET_EXTRA(a);
                     TB_NodeInt* bi = TB_NODE_GET_EXTRA(b);
@@ -295,12 +317,12 @@ static bool const_fold(TB_Function* f, TB_Label bb, TB_Node* n) {
                     size_t num_words = ai->num_words;
                     BigInt_t* words = tb_transmute_to_int(f, bb, n, ai->num_words);
                     switch (n->type) {
-                        case TB_AND: BigInt_and(num_words, a_words, b_words, words); break;
-                        case TB_OR:  BigInt_or(num_words, a_words, b_words, words); break;
-                        case TB_XOR: BigInt_xor(num_words, a_words, b_words, words); break;
-                        case TB_ADD: BigInt_add(num_words, a_words, num_words, b_words, num_words, words); break;
-                        case TB_SUB: BigInt_sub(num_words, a_words, num_words, b_words, num_words, words); break;
-                        case TB_MUL: BigInt_mul_basic(num_words, a_words, b_words, words); break;
+                        case TB_AND:    BigInt_and(num_words, a_words, b_words, words); break;
+                        case TB_OR:     BigInt_or(num_words, a_words, b_words, words); break;
+                        case TB_XOR:    BigInt_xor(num_words, a_words, b_words, words); break;
+                        case TB_ADD:    BigInt_add(num_words, a_words, num_words, b_words, num_words, words); break;
+                        case TB_SUB:    BigInt_sub(num_words, a_words, num_words, b_words, num_words, words); break;
+                        case TB_MUL:    BigInt_mul_basic(num_words, a_words, b_words, words); break;
                         default: goto fail;
                     }
 

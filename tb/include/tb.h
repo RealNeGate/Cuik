@@ -146,7 +146,7 @@ extern "C" {
             uint8_t type;
             // 2^N where N is the width value.
             // Only integers and floats can be wide.
-            uint16_t width;
+            uint8_t width;
             // for integers it's the bitwidth
             uint16_t data;
         };
@@ -273,10 +273,10 @@ extern "C" {
         /* Comparisons */
         TB_CMP_EQ,
         TB_CMP_NE,
-        TB_CMP_SLT,
-        TB_CMP_SLE,
         TB_CMP_ULT,
         TB_CMP_ULE,
+        TB_CMP_SLT,
+        TB_CMP_SLE,
         TB_CMP_FLT,
         TB_CMP_FLE,
 

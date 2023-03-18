@@ -230,7 +230,6 @@ static bool fits_into_int32(uint64_t x) {
 }
 
 static int classify_reg_class(TB_DataType dt);
-static bool should_tile(TB_Node* n);
 static int isel(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n);
 static void emit_sequence(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n);
 static void patch_local_labels(Ctx* restrict ctx);
@@ -430,7 +429,7 @@ static void linear_scan(Ctx* restrict ctx, TB_Function* f, TB_PostorderWalk* wal
 
                 // walk all successors
                 TB_Node* end = f->bbs[bb].end;
-                if (end->type == TB_BRANCH) {
+                if (end && end->type == TB_BRANCH) {
                     TB_NodeBranch* br = TB_NODE_GET_EXTRA(end);
                     FOREACH_N(i, 0, br->count) {
                         // union with successor's lives

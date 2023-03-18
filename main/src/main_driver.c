@@ -33,19 +33,12 @@ int main(int argc, const char** argv) {
     int status = EXIT_SUCCESS;
     if (argc >= 2) {
         if (strcmp(argv[1], "-objdump") == 0) {
-            status = run_objdump(argc - 2, argv + 2);
+            return run_objdump(argc - 2, argv + 2);
         } else if (strcmp(argv[1], "-link") == 0) {
-            status = run_link(argc - 2, argv + 2);
+            return run_link(argc - 2, argv + 2);
         } else if (strcmp(argv[1], "-bindgen") == 0) {
-            status = run_bindgen(argc - 2, argv + 2);
+            return run_bindgen(argc - 2, argv + 2);
         }
-
-        #ifdef CUIK_USE_SPALL_AUTO
-        spall_auto_thread_quit();
-        spall_auto_quit();
-        #endif
-
-        return status;
     }
 
     cuik_init();

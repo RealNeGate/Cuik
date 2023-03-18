@@ -67,8 +67,29 @@ static void canonicalize(TB_Function* f) {
                 // reassoc(f, n);
                 simplify_pointers(f, n);
 
-                // check if all paths are identical
-                if (n->type == TB_PHI) {
+                if (n->type == TB_BRANCH && n->inputs[0] && n->inputs[0]->type == TB_INTEGER_CONST) {
+                    // check for dead paths
+                    TB_Node* key_n = n->inputs[0];
+                    TB_NodeInt* key = TB_NODE_GET_EXTRA(key_n);
+                    TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
+
+                    if (key->num_words == 1) {
+                        FOREACH_N(i, 0, br->count) {
+                            if (key->words[0] == br->targets[i].key) {
+                                key_n->extra_count = sizeof(TB_NodeBranch);
+                                br->count = 0;
+                                br->default_label = br->targets[i].value;
+                                goto done;
+                            }
+                        }
+
+                        key_n->extra_count = sizeof(TB_NodeBranch);
+                        br->count = 0;
+                    }
+
+                    done:;
+                } else if (n->type == TB_PHI) {
+                    // check if all paths are identical
                     bool success = true;
                     FOREACH_N(i, 1, n->input_count) {
                         if (n->inputs[0] != n->inputs[i]) {
@@ -85,14 +106,34 @@ static void canonicalize(TB_Function* f) {
         }
     }
 
+    Set bb_mark = set_create_in_arena(&tb__arena, f->bb_count);
+    set_put(&bb_mark, 0);
+
     CUIK_TIMED_BLOCK_ARGS("PassRemove", f->super.name) {
         PassCtx ctx = { 0 };
         TB_FOR_BASIC_BLOCK(bb, f) {
             TB_FOR_NODE(r, f, bb) {
                 handle_pass(f, &ctx, bb, r);
             }
+
+            // mark successors
+            if (f->bbs[bb].end && f->bbs[bb].end->type == TB_BRANCH) {
+                TB_Node* end = f->bbs[bb].end;
+                TB_NodeBranch* br = TB_NODE_GET_EXTRA(end);
+
+                FOREACH_N(i, 0, br->count) {
+                    set_put(&bb_mark, br->targets[i].value);
+                }
+
+                set_put(&bb_mark, br->default_label);
+            }
         }
         nl_map_free(ctx.def_table);
+    }
+
+    TB_FOR_BASIC_BLOCK(bb, f) if (!set_get(&bb_mark, bb)) {
+        // mark block as gone
+        f->bbs[bb] = (TB_BasicBlock){ 0 };
     }
 
     // kill any unused regs
@@ -111,10 +152,13 @@ static void schedule_function_level_opts(TB_Module* m, TB_Function* f, size_t pa
         CUIK_TIMED_BLOCK_ARGS(passes[i]->name, f->super.name) {
             passes[i]->func_run(f, tls);
         }
+
+        arena_clear(&tb__arena);
     }
 
     // just in case
     canonicalize(f);
+    arena_clear(&tb__arena);
 }
 
 TB_API void tb_module_optimize(TB_Module* m, size_t pass_count, const TB_Pass* passes[]) {

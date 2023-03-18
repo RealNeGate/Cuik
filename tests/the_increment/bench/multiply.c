@@ -3,13 +3,13 @@
 
 /*int bar(void) {
     return 16 + -3;
-}*/
+}
 
-/*int baz(int x, int y) {
+int baz(int x, int y) {
     return (x ? 16 + x : 8 + x) * y;
-}*/
+}
 
-/*int64_t foo() {
+int64_t foo() {
     return -((short) 101);
 }*/
 
@@ -28,11 +28,11 @@ int regalloc(int a, int b, int c) {
         sum += x * y * m * i * i;
     }
     return sum;
-}
+}*/
 
 int m(int x, int a, int d) {
     int b, c, e;
-    if(x > 0) {
+    if(0) {
         e = 0;
         c = d;
     } else {
@@ -41,4 +41,4 @@ int m(int x, int a, int d) {
         e = b;
     }
     return e + c;
-}*/
+}
