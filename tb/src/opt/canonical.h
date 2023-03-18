@@ -5,11 +5,13 @@ typedef struct {
     NL_Map(TB_Node*, TB_Node*) def_table;
 } PassCtx;
 
-static void handle_pass(TB_Function* f, PassCtx* ctx, TB_Label bb, TB_Node* n) {
+static bool handle_pass(TB_Function* f, PassCtx* ctx, TB_Label bb, TB_Node* n) {
+    bool changes = false;
     TB_FOR_INPUT_IN_NODE(in, n) {
         ptrdiff_t search = nl_map_get(ctx->def_table, *in);
         if (search >= 0) {
             *in = ctx->def_table[search].v;
+            changes = true;
         }
     }
 
@@ -34,8 +36,11 @@ static void handle_pass(TB_Function* f, PassCtx* ctx, TB_Label bb, TB_Node* n) {
             f->bbs[bb].end = tb_node_get_previous(f, f->bbs[bb].end);
         }
 
+        changes = true;
         TB_KILL_NODE(n);
     }
+
+    return changes;
 }
 
 static bool simplify_cmp(TB_Function* f, TB_Node* n) {
@@ -96,7 +101,7 @@ static bool simplify_cmp(TB_Function* f, TB_Node* n) {
     return false;
 }
 
-static bool simplify_pointers(TB_Function* f, TB_Node* n) {
+static bool simplify_pointers(TB_Function* f, TB_Label bb, TB_Node* n) {
     TB_NodeTypeEnum type = n->type;
 
     if (type == TB_MEMBER_ACCESS) {
@@ -183,29 +188,20 @@ static bool simplify_pointers(TB_Function* f, TB_Node* n) {
 
                 if (res < UINT32_MAX) {
                     OPTIMIZER_LOG(n, "converted add into member access");
-                    tb_todo();
 
-                    #if 0
-                    TB_Label bb2 = tb_find_label_from_reg(f, n->inputs[1]);
-                    TB_Reg new_array_reg = tb_insert_node(f, bb2, n->inputs[1]);
+                    TB_Node* member = tb_alloc_node(f, TB_MEMBER_ACCESS, TB_TYPE_PTR, 1, sizeof(TB_NodeMember));
+                    member->inputs[0] = base;
+                    TB_NODE_GET_EXTRA_T(member, TB_NodeMember)->offset = res;
+                    tb_insert_node(f, bb, n, member);
 
-                    TB_Reg a = n->inputs[0];
-                    TB_Reg b = index->i_arith.a;
+                    TB_Node* new_n = tb_alloc_node(f, TB_ARRAY_ACCESS, TB_TYPE_PTR, 2, sizeof(TB_NodeArray));
+                    new_n->inputs[0] = base;
+                    new_n->inputs[1] = index->inputs[0];
+                    TB_NODE_GET_EXTRA_T(new_n, TB_NodeArray)->stride = stride;
+                    tb_insert_node(f, bb, member, new_n);
 
-                    n = &f->nodes[r];
-                    n->type = TB_MEMBER_ACCESS;
-                    n->dt = TB_TYPE_PTR;
-                    n->member_access.base = new_array_reg;
-                    n->member_access.offset = potential_constant->integer.single_word * c;
-
-                    TB_Node* new_array = &f->nodes[new_array_reg];
-                    new_array->type = TB_ARRAY_ACCESS;
-                    new_array->dt = TB_TYPE_PTR;
-                    new_array->array_access.base = a;
-                    new_array->array_access.index = b;
-                    new_array->array_access.stride = c;
+                    tb_transmute_to_pass(n, new_n);
                     return true;
-                    #endif
                 }
             }
         }

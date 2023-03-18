@@ -715,7 +715,7 @@ typedef struct {
 } TB_UseCount;
 
 void tb_function_calculate_use_count(const TB_Function* f, TB_UseCount* use_count);
-size_t tb_node_get_expected(TB_Node* n);
+size_t tb_node_get_expected_size(TB_Node* n);
 
 // if tls is NULL then the return value is heap allocated
 TB_Label* tb_calculate_immediate_predeccessors(TB_Function* f, TB_TemporaryStorage* tls, TB_Label l, int* dst_count);

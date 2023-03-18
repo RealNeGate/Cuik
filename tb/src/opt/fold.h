@@ -406,20 +406,10 @@ static bool const_fold(TB_Function* f, TB_Label bb, TB_Node* n) {
                             if (tb_is_power_of_two(mask)) {
                                 OPTIMIZER_LOG(n, "converted modulo into AND with constant mask");
 
-                                tb_todo();
-                                // generate mask
-                                /* TB_Reg extra_reg = tb_function_insert_after(f, bb, ar);
-                                TB_Node* extra = &f->nodes[extra_reg];
-                                extra->type = TB_INTEGER_CONST;
-                                extra->dt = n->dt;
-                                extra->integer.num_words = 1;
-                                extra->integer.single_word = mask - 1;
-
-                                // new AND operation to replace old MOD
-                                n = &f->nodes[r];
+                                TB_Node* mask_n = tb_create_int(f, bb, n->dt, mask - 1);
                                 n->type = TB_AND;
-                                n->i_arith.b = extra_reg;
-                                return true; */
+                                n->inputs[1] = mask_n;
+                                return true;
                             }
                         }
                     }

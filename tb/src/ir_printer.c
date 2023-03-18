@@ -86,6 +86,8 @@ TB_API const char* tb_node_get_name(TB_Node* n) {
         case TB_CMP_FLT: return "cmp.lt";
         case TB_CMP_FLE: return "cmp.le";
 
+        case TB_NEG: return "neg";
+        case TB_NOT: return "not";
         case TB_AND: return "and";
         case TB_OR: return "or";
         case TB_XOR: return "xor";
@@ -99,7 +101,6 @@ TB_API const char* tb_node_get_name(TB_Node* n) {
         case TB_SHL: return "shl";
         case TB_SHR: return "shr";
         case TB_SAR: return "sar";
-        case TB_NOT: return "not";
 
         case TB_LOAD: return "load";
         case TB_STORE: return "store";

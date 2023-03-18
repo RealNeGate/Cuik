@@ -59,87 +59,96 @@ static void dce(TB_Function* f) {
 }
 
 static void canonicalize(TB_Function* f) {
-    CUIK_TIMED_BLOCK_ARGS("Canonical", f->super.name) {
-        TB_FOR_BASIC_BLOCK(bb, f) {
-            TB_FOR_NODE(n, f, bb) {
-                const_fold(f, bb, n);
-                simplify_cmp(f, n);
-                // reassoc(f, n);
-                simplify_pointers(f, n);
+    // tb_function_print(f, tb_default_print_callback, stdout, false);
+    bool changes;
+    do {
+        changes = false;
 
-                if (n->type == TB_BRANCH && n->inputs[0] && n->inputs[0]->type == TB_INTEGER_CONST) {
-                    // check for dead paths
-                    TB_Node* key_n = n->inputs[0];
-                    TB_NodeInt* key = TB_NODE_GET_EXTRA(key_n);
-                    TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
+        CUIK_TIMED_BLOCK_ARGS("Canonical", f->super.name) {
+            TB_FOR_BASIC_BLOCK(bb, f) {
+                TB_FOR_NODE(n, f, bb) {
+                    // reassoc(f, n);
+                    const_fold(f, bb, n);
+                    simplify_cmp(f, n);
+                    simplify_pointers(f, bb, n);
 
-                    if (key->num_words == 1) {
-                        FOREACH_N(i, 0, br->count) {
-                            if (key->words[0] == br->targets[i].key) {
-                                key_n->extra_count = sizeof(TB_NodeBranch);
-                                br->count = 0;
-                                br->default_label = br->targets[i].value;
-                                goto done;
+                    if (n->type == TB_BRANCH && n->inputs[0] && n->inputs[0]->type == TB_INTEGER_CONST) {
+                        // check for dead paths
+                        TB_Node* key_n = n->inputs[0];
+                        TB_NodeInt* key = TB_NODE_GET_EXTRA(key_n);
+                        TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
+
+                        if (key->num_words == 1) {
+                            FOREACH_N(i, 0, br->count) {
+                                if (key->words[0] == br->targets[i].key) {
+                                    key_n->extra_count = sizeof(TB_NodeBranch);
+                                    n->inputs[0] = NULL;
+                                    br->count = 0;
+                                    br->default_label = br->targets[i].value;
+                                    goto done;
+                                }
+                            }
+
+                            // keep only default label
+                            n->inputs[0] = NULL;
+                            key_n->extra_count = sizeof(TB_NodeBranch);
+                            br->count = 0;
+                        }
+
+                        done:;
+                    } else if (n->type == TB_PHI) {
+                        // check if all paths are identical
+                        bool success = true;
+                        FOREACH_N(i, 1, n->input_count) {
+                            if (n->inputs[0] != n->inputs[i]) {
+                                success = false;
+                                break;
                             }
                         }
 
-                        key_n->extra_count = sizeof(TB_NodeBranch);
-                        br->count = 0;
-                    }
-
-                    done:;
-                } else if (n->type == TB_PHI) {
-                    // check if all paths are identical
-                    bool success = true;
-                    FOREACH_N(i, 1, n->input_count) {
-                        if (n->inputs[0] != n->inputs[i]) {
-                            success = false;
-                            break;
+                        if (success) {
+                            tb_transmute_to_pass(n, n->inputs[0]);
                         }
                     }
+                }
+            }
+        }
 
-                    if (success) {
-                        tb_transmute_to_pass(n, n->inputs[0]);
+        Set bb_mark = set_create_in_arena(&tb__arena, f->bb_count);
+        set_put(&bb_mark, 0);
+
+        CUIK_TIMED_BLOCK_ARGS("PassRemove", f->super.name) {
+            PassCtx ctx = { 0 };
+            TB_FOR_BASIC_BLOCK(bb, f) {
+                TB_FOR_NODE(r, f, bb) {
+                    changes |= handle_pass(f, &ctx, bb, r);
+                }
+
+                // mark successors
+                if (f->bbs[bb].end && f->bbs[bb].end->type == TB_BRANCH) {
+                    TB_Node* end = f->bbs[bb].end;
+                    TB_NodeBranch* br = TB_NODE_GET_EXTRA(end);
+
+                    FOREACH_N(i, 0, br->count) {
+                        set_put(&bb_mark, br->targets[i].value);
                     }
+
+                    set_put(&bb_mark, br->default_label);
                 }
             }
+            nl_map_free(ctx.def_table);
         }
-    }
 
-    Set bb_mark = set_create_in_arena(&tb__arena, f->bb_count);
-    set_put(&bb_mark, 0);
-
-    CUIK_TIMED_BLOCK_ARGS("PassRemove", f->super.name) {
-        PassCtx ctx = { 0 };
-        TB_FOR_BASIC_BLOCK(bb, f) {
-            TB_FOR_NODE(r, f, bb) {
-                handle_pass(f, &ctx, bb, r);
-            }
-
-            // mark successors
-            if (f->bbs[bb].end && f->bbs[bb].end->type == TB_BRANCH) {
-                TB_Node* end = f->bbs[bb].end;
-                TB_NodeBranch* br = TB_NODE_GET_EXTRA(end);
-
-                FOREACH_N(i, 0, br->count) {
-                    set_put(&bb_mark, br->targets[i].value);
-                }
-
-                set_put(&bb_mark, br->default_label);
-            }
+        TB_FOR_BASIC_BLOCK(bb, f) if (!set_get(&bb_mark, bb)) {
+            // mark block as gone
+            f->bbs[bb] = (TB_BasicBlock){ 0 };
         }
-        nl_map_free(ctx.def_table);
-    }
 
-    TB_FOR_BASIC_BLOCK(bb, f) if (!set_get(&bb_mark, bb)) {
-        // mark block as gone
-        f->bbs[bb] = (TB_BasicBlock){ 0 };
-    }
-
-    // kill any unused regs
-    CUIK_TIMED_BLOCK_ARGS("DCE", f->super.name) {
-        dce(f);
-    }
+        // kill any unused regs
+        CUIK_TIMED_BLOCK_ARGS("DCE", f->super.name) {
+            dce(f);
+        }
+    } while (changes);
 }
 
 static void schedule_function_level_opts(TB_Module* m, TB_Function* f, size_t pass_count, const TB_Pass* passes[]) {

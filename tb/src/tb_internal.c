@@ -2,7 +2,7 @@
 #define NL_HASH_MAP_INLINE
 #include "tb_internal.h"
 
-size_t tb_node_get_expected(TB_Node* n) {
+size_t tb_node_get_expected_size(TB_Node* n) {
     return sizeof(TB_Node) + (n->input_count * sizeof(TB_Node*)) + n->extra_count;
 }
 
