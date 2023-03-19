@@ -82,7 +82,7 @@ static uint64_t hash_with_len(const void* data, size_t len) {
     return h;
 }
 
-TknType classify_ident(const unsigned char* restrict str, size_t len) {
+static TknType classify_ident(const unsigned char* restrict str, size_t len) {
     // Auto-generated with this small C program (MAKE SURE TO UPDATE THE
     // KEYWORDS ARRAY AND TOKEN TYPES)
     //
@@ -196,7 +196,7 @@ static unsigned char* slow_identifier_lexing(Lexer* restrict l, unsigned char* c
 // NOTE(NeGate): The input string has a fat null terminator of 16bytes to allow
 // for some optimizations overall, one of the important ones is being able to read
 // a whole 16byte SIMD register at once for any SIMD optimizations.
-Token lexer_read(Lexer* restrict l) {
+static Token lexer_read(Lexer* restrict l) {
     unsigned char* current = l->current;
     Token t = { 0 };
 
@@ -420,7 +420,7 @@ Token lexer_read(Lexer* restrict l) {
     return t;
 }
 
-uint64_t parse_int(size_t len, const char* str, Cuik_IntSuffix* out_suffix) {
+static uint64_t parse_int(size_t len, const char* str, Cuik_IntSuffix* out_suffix) {
     char* end;
     uint64_t i = strtoull(str, &end, 0);
 
@@ -474,7 +474,7 @@ uint64_t parse_int(size_t len, const char* str, Cuik_IntSuffix* out_suffix) {
     return i;
 }
 
-ptrdiff_t parse_char(size_t len, const char* str, int* output) {
+static ptrdiff_t parse_char(size_t len, const char* str, int* output) {
     if (str[0] != '\\') {
         *output = str[0];
         return 1;
