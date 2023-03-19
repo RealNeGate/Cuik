@@ -1,3 +1,4 @@
+#if 0
 #include "../codegen/emitter.h"
 #include "../tb_internal.h"
 
@@ -144,4 +145,5 @@ ICodeGen tb__wasm32_codegen = {
 };
 #if _MSC_VER
 _Pragma("warning (pop)")
+#endif
 #endif

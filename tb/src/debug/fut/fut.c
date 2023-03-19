@@ -1,3 +1,4 @@
+#if 0
 #include "../../tb_internal.h"
 
 // builtin primitives (the custom types start at 0x100)
@@ -170,3 +171,4 @@ IDebugFormat tb__fut_debug_format = {
     fut_number_of_debug_sections,
     fut_generate_debug_info
 };
+#endif
