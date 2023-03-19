@@ -2,35 +2,45 @@ import glob
 import os
 import platform
 import subprocess
+import argparse
 from pathlib import Path
 
-# Config
-optimize = False
-use_tb = True
-use_libcuik = True
-use_main_driver = True
-use_asan = False
-use_mimalloc = True
+parser = argparse.ArgumentParser(description='Compiles Cuik + friends')
+parser.add_argument('-opt', action='store_true', help='optimize output')
+parser.add_argument('-driver', action='store_true', help='compile main driver')
+parser.add_argument('-libcuik', action='store_true', help='compile libCuik')
+parser.add_argument('-tb', action='store_true', help='compiles TB')
+parser.add_argument('-asan', action='store_true', help='compile with ASAN')
+parser.add_argument('-autospall', action='store_true', help='instrument code with SpallAuto')
+
+args = parser.parse_args()
+mimalloc = True
+
+if args.driver:
+	args.tb = True
+	args.libcuik = True
 
 # Figure out C and linker flags
 cflags = "-g -msse4 -Wall -Werror -Wno-unused -I common -DCUIK_ALLOW_THREADS"
 
-if use_libcuik:  cflags += " -I libCuik/include"
-if use_mimalloc: cflags += " -DCUIK_USE_MIMALLOC -I mimalloc/include"
-if use_tb:       cflags += " -I tb/include -DCUIK_USE_TB"
-if use_asan:     cflags += " -fsanitize=address"
-if optimize:     cflags += " -O2 -DNDEBUG"
+if mimalloc:       cflags += " -DCUIK_USE_MIMALLOC -I mimalloc/include"
+if args.libcuik:   cflags += " -I libCuik/include"
+if args.tb:        cflags += " -DCUIK_USE_TB -I tb/include"
+if args.asan:      cflags += " -fsanitize=address"
+if args.opt:       cflags += " -O2 -DNDEBUG"
+if args.autospall: cflags += " -DCUIK_USE_SPALL_AUTO -finstrument-functions-after-inlining"
 
 system = platform.system()
 if system == "Windows":
 	ld = "lld-link"
-	ldflags = "-debug -defaultlib:libcmt -defaultlib:oldnames"
+	ldflags = "/defaultlib:libcmt /defaultlib:oldnames"
 	lib_ext = ".lib"
 	exe_ext = ".exe"
 	cflags += " -I c11threads -D_CRT_SECURE_NO_WARNINGS"
 elif system == "Darwin":
 	ld = "lld.ld"
-	exe_ext = "-g -lc"
+	ld_flags = "-g -lc"
+	exe_ext = ""
 	lib_ext = ".a"
 	cflags += " -I c11threads -Wno-deprecated-declarations"
 else:
@@ -42,8 +52,8 @@ else:
 sources = []
 sources.append("common/common.c")
 
-if use_libcuik:         sources.append("libCuik/lib/libcuik.c")
-if use_mimalloc:        sources.append("mimalloc/src/static.c")
+if args.libcuik: sources.append("libCuik/lib/libcuik.c")
+if mimalloc:     sources.append("mimalloc/src/static.c")
 
 if system == "Windows":
 	sources.append("c11threads/threads_msvc.c")
@@ -53,12 +63,12 @@ if system == "Windows":
 if system == "Darwin":
 	sources.append("c11threads/threads_posix.c")
 
-if use_tb:
+if args.tb:
 	for path in Path("tb/src").rglob("*.c"):
 		sources.append(str(path))
 
 # main driver
-if use_main_driver:
+if args.driver:
 	sources.append("main/src/main_driver.c")
 
 # generate ninja file
@@ -78,8 +88,7 @@ rule link
   description = LINK $out
 
 rule meta_cc
-  depfile = $out.d
-  command = clang $in -MD -MF $out.d -o $out
+  command = clang $in -o $out
   description = CC $in $out
 
 rule lexgen
