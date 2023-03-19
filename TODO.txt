@@ -1,3 +1,0 @@
-
-* We've got a variety of exposed type names which don't have the `Cuik_` prefix
-  and I don't really like that.

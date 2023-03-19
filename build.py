@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import glob
 import os
 import platform
@@ -57,8 +58,9 @@ if mimalloc:     sources.append("mimalloc/src/static.c")
 
 if system == "Windows":
 	sources.append("c11threads/threads_msvc.c")
-	sources.append("libCuik/lib/toolchains/msvc.c")
-	sources.append("libCuik/lib/back/microsoft_craziness.c")
+	if args.libcuik:
+		sources.append("libCuik/lib/toolchains/msvc.c")
+		sources.append("libCuik/lib/back/microsoft_craziness.c")
 
 if system == "Darwin":
 	sources.append("c11threads/threads_posix.c")
@@ -105,20 +107,36 @@ rule embed_cc
 
 """)
 
+if system == "Windows":
+	ninja.write("""
+rule lib
+  command = lib /nologo $in /out:$out
+  description = LIB $out
+
+""")
+else:
+	ninja.write("""
+rule lib
+  command = ar -rcs $out $in
+  description = AR $out
+
+""")
+
 # lexer generator metaprogram
-ninja.write(f"build lexgen{exe_ext}: meta_cc libCuik/meta/lexgen.c\n")
-ninja.write(f"build libCuik/lib/preproc/dfa.h: lexgen lexgen{exe_ext} libCuik/meta/lexgen.c\n")
+if args.libcuik:
+	ninja.write(f"build lexgen{exe_ext}: meta_cc libCuik/meta/lexgen.c\n")
+	ninja.write(f"build libCuik/lib/preproc/dfa.h: lexgen lexgen{exe_ext} libCuik/meta/lexgen.c\n")
 
-# package freestanding headers into C file
-freestanding_headers = ""
-for f in glob.glob("crt/include/*.h"):
-	freestanding_headers += ' ' + f.replace('\\', '/')
+	# package freestanding headers into C file
+	freestanding_headers = ""
+	for f in glob.glob("crt/include/*.h"):
+		freestanding_headers += ' ' + f.replace('\\', '/')
 
-ninja.write(f"build hexembed{exe_ext}: meta_cc libCuik/meta/hexembed.c\n")
-ninja.write(f"build libCuik/freestanding.c: embed_files hexembed{exe_ext} {freestanding_headers}\n")
+	ninja.write(f"build hexembed{exe_ext}: meta_cc libCuik/meta/hexembed.c\n")
+	ninja.write(f"build libCuik/freestanding.c: embed_files hexembed{exe_ext} {freestanding_headers}\n")
 
-ninja.write("build bin/freestanding.o: embed_cc libCuik/freestanding.c\n")
-objs.append("bin/freestanding.o")
+	ninja.write("build bin/freestanding.o: embed_cc libCuik/freestanding.c\n")
+	objs.append("bin/freestanding.o")
 
 for pattern in sources:
 	for f in glob.glob(pattern):
@@ -127,7 +145,14 @@ for pattern in sources:
 		ninja.write(f"build bin/{obj}: cc {f}\n")
 		objs.append("bin/"+obj)
 
-ninja.write(f"build cuik{exe_ext}: link {' '.join(objs)}\n")
+# compile final executable (or library)
+if not args.driver and args.libcuik:
+	ninja.write(f"build libcuik{lib_ext}: lib {' '.join(objs)}\n")
+elif not args.driver and args.tb:
+	ninja.write(f"build tb{lib_ext}: lib {' '.join(objs)}\n")
+else:
+	ninja.write(f"build cuik{exe_ext}: link {' '.join(objs)}\n")
+
 ninja.close()
 
 exit(subprocess.call(['ninja']))
