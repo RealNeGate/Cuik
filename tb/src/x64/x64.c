@@ -117,6 +117,14 @@ static Inst inst_move(TB_DataType dt, int lhs, int rhs) {
     };
 }
 
+static Inst inst_syscall(void) {
+    return (Inst){
+        .type = SYSCALL,
+        .layout = X86_OP_NONE,
+        .data_type = X86_TYPE_NONE,
+    };
+}
+
 static Inst inst_call(TB_DataType dt, int dst, const TB_Symbol* sym) {
     return (Inst){
         .type = CALL,
@@ -684,6 +692,7 @@ static int isel(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n) {
             break;
         }
 
+        case TB_SCALL:
         case TB_CALL: {
             static const struct ParamDescriptor {
                 int gpr_count;
@@ -735,7 +744,9 @@ static int isel(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n) {
             }
 
             if (type == TB_SCALL) {
-                __debugbreak();
+                int num = ISEL(n->inputs[0]);
+                SUBMIT(inst_copy(n->dt, fake_dst, num));
+                SUBMIT(inst_syscall());
             } else {
                 if (try_tile(ctx, n->inputs[0]) && n->inputs[0]->type == TB_GET_SYMBOL_ADDRESS) {
                     TB_NodeSymbol* s = TB_NODE_GET_EXTRA(n->inputs[0]);
@@ -899,6 +910,7 @@ static void emit_sequence(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n)
             }
         } else if (op_count == 0) {
             INST0(inst->type, inst->data_type);
+            printf("  %s\n", inst_table[inst->type].mnemonic);
         } else if (op_count == 1) {
             if (!has_def) {
                 inst1_print(ctx, inst->type, &ops[1], inst->data_type);

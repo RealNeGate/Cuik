@@ -25,17 +25,6 @@ const static uint8_t dos_stub[] = {
     0x6d,0x6f,0x64,0x65,0x2e,0x24,0x00,0x00
 };
 
-static TB_Slice as_filename(TB_Slice s) {
-    size_t last = 0;
-    FOREACH_N(i, 0, s.length) {
-        if (s.data[i] == '/' || s.data[i] == '\\') {
-            last = i+1;
-        }
-    }
-
-    return (TB_Slice){ s.length - last, s.data + last };
-}
-
 static int symbol_cmp(const void* a, const void* b) {
     const TB_ObjectSymbol* sym_a = (const TB_ObjectSymbol*)a;
     const TB_ObjectSymbol* sym_b = (const TB_ObjectSymbol*)b;
@@ -886,182 +875,61 @@ static void init(TB_Linker* l) {
     add_abs("__guard_eh_cont_table");
 }
 
-static int compare_linker_sections(const void* a, const void* b) {
-    const TB_LinkerSectionPiece* sec_a = *(const TB_LinkerSectionPiece**) a;
-    const TB_LinkerSectionPiece* sec_b = *(const TB_LinkerSectionPiece**) b;
+static void gc_mark(TB_Linker* l, TB_LinkerSectionPiece* p) {
+    if (p == NULL || p->size == 0 || (p->flags & TB_LINKER_PIECE_LIVE) || (p->parent->generic_flags & TB_LINKER_SECTION_DISCARD)) {
+        return;
+    }
 
-    return sec_a->order - sec_b->order;
-}
+    p->flags |= TB_LINKER_PIECE_LIVE;
 
-// returns true if it should
-static bool gc_mark(TB_Linker* l, TB_LinkerSectionPiece* kid) {
-    if (kid == NULL) return false;
-    if (kid->size == 0) return false;
-    if (kid->flags & TB_LINKER_PIECE_LIVE) return false;
-    if (kid->parent->generic_flags & TB_LINKER_SECTION_DISCARD) return false;
+    // mark module content
+    if (p->module) {
+        gc_mark(l, p->module->text.piece);
+        gc_mark(l, p->module->data.piece);
+        gc_mark(l, p->module->rdata.piece);
+        gc_mark(l, p->module->tls.piece);
+    }
 
-    kid->flags |= TB_LINKER_PIECE_LIVE;
-    return true;
+    // mark any kid symbols
+    for (TB_LinkerSymbol* sym = p->first_sym; sym != NULL; sym = sym->next) {
+        gc_mark(l, tb__get_piece(l, sym));
+    }
+
+    // mark any relocations
+    dyn_array_for(i, p->abs_refs) {
+        TB_LinkerRelocAbs* r = &p->abs_refs[i].info->absolutes[p->abs_refs[i].index];
+
+        // resolve symbol
+        r->target = resolve_sym(l, r->target, r->name, r->alt, r->obj_file);
+        gc_mark(l, tb__get_piece(l, r->target));
+    }
+
+    dyn_array_for(i, p->rel_refs) {
+        TB_LinkerRelocRel* r = &p->rel_refs[i].info->relatives[p->rel_refs[i].index];
+
+        // resolve symbol
+        r->target = resolve_sym(l, r->target, r->name, r->alt, r->obj_file);
+        gc_mark(l, tb__get_piece(l, r->target));
+    }
+
+    if (p->associate) {
+        gc_mark(l, p->associate);
+    }
 }
 
 // this will resolve the sections, GC any pieces which aren't used and
 // resolve symbols.
-static bool finalize_sections(TB_Linker* l) {
+static bool garbage_collect(TB_Linker* l) {
     CUIK_TIMED_BLOCK("GC sections") {
-        DynArray(TB_LinkerSectionPiece*) stack = NULL;
-
         // mark roots
         TB_LinkerSectionPiece* entry = tb__get_piece(l, tb__find_symbol_cstr(&l->symtab, "mainCRTStartup"));
-        if (entry) dyn_array_put(stack, entry);
+        gc_mark(l, entry);
 
         entry = tb__get_piece(l, tb__find_symbol_cstr(&l->symtab, "_tls_used"));
-        if (entry) dyn_array_put(stack, entry);
+        gc_mark(l, entry);
 
         entry = tb__get_piece(l, tb__find_symbol_cstr(&l->symtab, "_load_config_used"));
-        if (entry) dyn_array_put(stack, entry);
-
-        // mark
-        while (dyn_array_length(stack)) {
-            TB_LinkerSectionPiece* p = dyn_array_pop(stack);
-
-            // mark module content
-            if (p->module) {
-                gc_mark(l, p->module->text.piece);
-                gc_mark(l, p->module->data.piece);
-                gc_mark(l, p->module->rdata.piece);
-                gc_mark(l, p->module->tls.piece);
-            }
-
-            // mark any kid symbols
-            for (TB_LinkerSymbol* sym = p->first_sym; sym != NULL; sym = sym->next) {
-                TB_LinkerSectionPiece* kid = tb__get_piece(l, sym);
-                if (gc_mark(l, kid)) dyn_array_put(stack, kid);
-            }
-
-            // mark any relocations
-            dyn_array_for(i, p->abs_refs) {
-                TB_LinkerRelocAbs* r = &p->abs_refs[i].info->absolutes[p->abs_refs[i].index];
-
-                // resolve symbol
-                r->target = resolve_sym(l, r->target, r->name, r->alt, r->obj_file);
-
-                TB_LinkerSectionPiece* kid = tb__get_piece(l, r->target);
-                if (gc_mark(l, kid)) dyn_array_put(stack, kid);
-            }
-
-            dyn_array_for(i, p->rel_refs) {
-                TB_LinkerRelocRel* r = &p->rel_refs[i].info->relatives[p->rel_refs[i].index];
-
-                // resolve symbol
-                r->target = resolve_sym(l, r->target, r->name, r->alt, r->obj_file);
-
-                TB_LinkerSectionPiece* kid = tb__get_piece(l, r->target);
-                if (gc_mark(l, kid)) dyn_array_put(stack, kid);
-            }
-
-            if (p->associate && gc_mark(l, p->associate)) {
-                dyn_array_put(stack, p->associate);
-            }
-        }
-
-        dyn_array_destroy(stack);
-    }
-
-    if (nl_strmap_get_load(l->unresolved_symbols)) {
-        nl_strmap_for(i, l->unresolved_symbols) {
-            TB_UnresolvedSymbol* u = l->unresolved_symbols[i];
-
-            fprintf(stderr, "\x1b[31merror\x1b[0m: unresolved external: %.*s\n", (int) u->name.length, u->name.data);
-            size_t i = 0;
-            for (; u && i < 5; u = u->next, i++) {
-                if (u->reloc & 0x80000000) {
-                    fprintf(stderr, "  in <tb-module %d>\n", u->reloc & 0x7FFFFFFF);
-                } else {
-                    TB_Slice ar_name = as_filename(l->object_files[u->reloc]->ar_name);
-                    TB_Slice obj_name = as_filename(l->object_files[u->reloc]->name);
-
-                    if (ar_name.length) {
-                        fprintf(stderr, "  in %.*s(%.*s)\n", (int) ar_name.length, ar_name.data, (int) obj_name.length, obj_name.data);
-                    } else {
-                        fprintf(stderr, "  in %.*s\n", (int) obj_name.length, obj_name.data);
-                    }
-                }
-            }
-
-            if (u) {
-                // count the rest
-                while (u) u = u->next, i++;
-
-                fprintf(stderr, "  ...and %llu more...\n", i - 5);
-            }
-            fprintf(stderr, "\n");
-        }
-
-        nl_strmap_free(l->unresolved_symbols);
-        return false;
-    }
-
-    CUIK_TIMED_BLOCK("sort sections") {
-        TB_LinkerSectionPiece** array_form = NULL;
-        size_t num = 0;
-
-        nl_strmap_for(i, l->sections) {
-            TB_LinkerSection* s = l->sections[i];
-            if (s->generic_flags & TB_LINKER_SECTION_DISCARD) continue;
-
-            size_t piece_count = s->piece_count;
-
-            ////////////////////////////////
-            // Sort sections
-            ////////////////////////////////
-            // convert into array
-            size_t j = 0;
-            CUIK_TIMED_BLOCK("convert to array") {
-                assert(s->piece_count != 0);
-                array_form = tb_platform_heap_realloc(array_form, piece_count * sizeof(TB_LinkerSectionPiece*));
-
-                for (TB_LinkerSectionPiece* p = s->first; p != NULL; p = p->next) {
-                    if (p->size != 0 && (p->flags & TB_LINKER_PIECE_LIVE)) {
-                        array_form[j++] = p;
-                    }
-                }
-                // fprintf(stderr, "%.*s: %zu -> %zu\n", (int) s->name.length, s->name.data, piece_count, j);
-                piece_count = j;
-            }
-
-            if (piece_count == 0) {
-                s->generic_flags |= TB_LINKER_SECTION_DISCARD;
-                continue;
-            }
-
-            // sort
-            CUIK_TIMED_BLOCK("sort section") {
-                qsort(array_form, piece_count, sizeof(TB_LinkerSectionPiece*), compare_linker_sections);
-            }
-
-            // convert back into linked list
-            CUIK_TIMED_BLOCK("convert into list") {
-                array_form[0]->offset = 0;
-
-                size_t offset = array_form[0]->size;
-                for (j = 1; j < piece_count; j++) {
-                    array_form[j]->offset = offset;
-                    offset += array_form[j]->size;
-
-                    array_form[j-1]->next = array_form[j];
-                }
-                s->total_size = offset;
-
-                s->first = array_form[0];
-                s->last = array_form[piece_count - 1];
-                s->piece_count = piece_count;
-
-                array_form[piece_count - 1]->next = NULL;
-            }
-
-            s->number = num++;
-        }
-        tb_platform_heap_free(array_form);
+        gc_mark(l, entry);
     }
 
     return true;
@@ -1101,7 +969,9 @@ static TB_Exports export(TB_Linker* l) {
     tb__merge_sections(l, tb__find_section(l, ".idata", IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA), rdata);
     tb__merge_sections(l, tb__find_section(l, ".xdata", IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA), rdata);
 
-    if (!finalize_sections(l)) {
+    garbage_collect(l);
+
+    if (!tb__finalize_sections(l)) {
         return (TB_Exports){ 0 };
     }
 

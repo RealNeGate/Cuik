@@ -49,7 +49,13 @@ static void inst0(TB_CGEmitter* restrict e, InstType type, X86_DataType dt) {
     const InstDesc* restrict inst = &inst_table[type];
 
     if (dt == X86_TYPE_QWORD) EMIT1(e, 0x48);
-    EMIT1(e, inst->op);
+
+    if (inst->op) {
+        EMIT1(e, inst->op);
+    } else {
+        EMIT1(e, inst->op_i);
+        EMIT1(e, inst->rx_i);
+    }
 }
 
 // cannot generate patches with f being NULL

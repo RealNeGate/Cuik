@@ -33,7 +33,7 @@ if args.autospall: cflags += " -DCUIK_USE_SPALL_AUTO -finstrument-functions-afte
 system = platform.system()
 if system == "Windows":
 	ld = "lld-link"
-	ldflags = "/defaultlib:libcmt /defaultlib:oldnames"
+	ldflags = "/debug /defaultlib:libcmt /defaultlib:oldnames"
 	lib_ext = ".lib"
 	exe_ext = ".exe"
 	cflags += " -I c11threads -D_CRT_SECURE_NO_WARNINGS"

@@ -300,3 +300,6 @@ TB_LinkerSectionPiece* tb__append_piece(TB_LinkerSection* section, int kind, siz
 size_t tb__pad_file(uint8_t* output, size_t write_pos, char pad, size_t align);
 void tb__apply_module_relocs(TB_Linker* l, TB_Module* m, uint8_t* output);
 size_t tb__apply_section_contents(TB_Linker* l, uint8_t* output, size_t write_pos, TB_LinkerSection* text, TB_LinkerSection* data, TB_LinkerSection* rdata, size_t section_alignment, size_t image_base);
+
+// do layouting (requires GC step to complete)
+bool tb__finalize_sections(TB_Linker* l);

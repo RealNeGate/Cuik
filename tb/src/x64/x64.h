@@ -99,7 +99,7 @@ typedef struct Val {
 
 typedef enum InstType {
     // Nullary
-    RET, INT3, CAST,
+    RET, INT3, CAST, SYSCALL,
     // Control flow
     JO, JNO, JB, JNB, JE, JNE, JBE, JA,
     JS, JNS, JP, JNP, JL, JGE, JLE, JG,
@@ -150,6 +150,7 @@ static const GPR WIN64_GPR_PARAMETERS[4] = { RCX, RDX, R8, R9 };
 static const GPR SYSV_GPR_PARAMETERS[6] = { RDI, RSI, RDX, RCX, R8, R9 };
 
 #define NULLARY_OP(name, op) [name] = { (op), .mnemonic = #name }
+#define NULLARY_OP2(name, op, rx) [name] = { .op_i = (op), .rx_i = (rx), .mnemonic = #name }
 #define UNARY_OP(name, op, rx) [name] = { .op_i = (op), .rx_i = (rx), .mnemonic = #name }
 #define UNARY_OP2(name, op, op_i, rx_i) [name] = { (op), (op_i), (rx_i), .mnemonic = #name }
 #define BINARY_OP(name, op, op_i, rx_i) [name] = { (op), (op_i), (rx_i), .mnemonic = #name }
@@ -162,6 +163,7 @@ static const InstDesc inst_table[] = {
     NULLARY_OP(RET,        0xC3),
     NULLARY_OP(INT3,       0xCC),
     NULLARY_OP(CAST,       0x99),
+    NULLARY_OP2(SYSCALL,         0x0F, 0x05),
     // unary ops
     UNARY_OP(NOT,                0xF7, 0x02),
     UNARY_OP(NEG,                0xF7, 0x03),
