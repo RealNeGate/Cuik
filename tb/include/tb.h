@@ -75,27 +75,26 @@ extern "C" {
         TB_STDCALL
     } TB_CallingConv;
 
+    typedef enum TB_FeatureSet_X64 {
+        TB_FEATURE_X64_SSE3   = (1u << 0u),
+        TB_FEATURE_X64_SSE41  = (1u << 0u),
+        TB_FEATURE_X64_SSE42  = (1u << 0u),
+
+        TB_FEATURE_X64_POPCNT = (1u << 0u),
+        TB_FEATURE_X64_LZCNT  = (1u << 0u),
+
+        TB_FEATURE_X64_CLMUL  = (1u << 0u),
+        TB_FEATURE_X64_F16C   = (1u << 0u),
+
+        TB_FEATURE_X64_BMI1   = (1u << 0u),
+        TB_FEATURE_X64_BMI2   = (1u << 0u),
+
+        TB_FEATURE_X64_AVX    = (1u << 0u),
+        TB_FEATURE_X64_AVX2   = (1u << 0u),
+    } TB_FeatureSet_X64;
+
     typedef struct TB_FeatureSet {
-        struct {
-            bool sse3 : 1;
-
-            bool popcnt : 1;
-            bool lzcnt : 1;
-            bool sse41 : 1;
-            bool sse42 : 1;
-
-            bool clmul : 1;
-            bool f16c : 1;
-
-            bool bmi1 : 1;
-            bool bmi2 : 1;
-
-            bool avx : 1;
-            bool avx2 : 1;
-        } x64;
-        struct {
-            bool bf16 : 1;
-        } aarch64;
+        TB_FeatureSet_X64 x64;
     } TB_FeatureSet;
 
     typedef enum TB_BranchHint {
