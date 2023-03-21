@@ -99,7 +99,7 @@ typedef struct Val {
 
 typedef enum InstType {
     // Nullary
-    RET, INT3, CAST, SYSCALL,
+    RET, INT3, CAST, SYSCALL, RDTSC,
     // Control flow
     JO, JNO, JB, JNB, JE, JNE, JBE, JA,
     JS, JNS, JP, JNP, JL, JGE, JLE, JG,
@@ -164,6 +164,7 @@ static const InstDesc inst_table[] = {
     NULLARY_OP(INT3,       0xCC),
     NULLARY_OP(CAST,       0x99),
     NULLARY_OP2(SYSCALL,         0x0F, 0x05),
+    NULLARY_OP2(RDTSC,           0x0F, 0x31),
     // unary ops
     UNARY_OP(NOT,                0xF7, 0x02),
     UNARY_OP(NEG,                0xF7, 0x03),

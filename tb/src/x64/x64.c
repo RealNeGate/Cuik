@@ -41,7 +41,10 @@ typedef enum X86_OperandLayout {
     X86_OP_MR,
 } X86_OperandLayout;
 
-typedef struct Inst {
+typedef struct Inst Inst;
+struct Inst {
+    Inst* next;
+
     InstType type;
     X86_OperandLayout layout;
     X86_DataType data_type;
@@ -52,7 +55,14 @@ typedef struct Inst {
     //   regs[0] is a destination
     int regs[4];
     uint64_t imm[2];
-} Inst;
+};
+
+typedef struct {
+    TB_DataType dt;
+
+    int old;
+    int stack_pos;
+} Reload;
 
 #include "generic_cg.h"
 
@@ -81,7 +91,6 @@ static X86_DataType legalize_int2(TB_DataType dt) {
     return legalize_int(dt, &m);
 }
 
-#define SUBMIT(i) (seq->insts[seq->inst_count++] = (i))
 static Inst inst_jcc(int target, Cond cc) {
     return (Inst){
         .type = JO + cc,
@@ -117,9 +126,9 @@ static Inst inst_move(TB_DataType dt, int lhs, int rhs) {
     };
 }
 
-static Inst inst_syscall(void) {
+static Inst inst_nullary(int op) {
     return (Inst){
-        .type = SYSCALL,
+        .type = op,
         .layout = X86_OP_NONE,
         .data_type = X86_TYPE_NONE,
     };
@@ -287,7 +296,7 @@ static bool try_for_imm32(Ctx* restrict ctx, TB_Node* n, int32_t* out_x) {
     return false;
 }
 
-static Inst isel_array(Ctx* restrict ctx, Sequence* seq, TB_Node* n, int dst) {
+static Inst isel_array(Ctx* restrict ctx, TB_Node* n, int dst) {
     int64_t stride = TB_NODE_GET_EXTRA_T(n, TB_NodeArray)->stride;
     TB_Node* base_n = n->inputs[0];
     TB_Node* index_n = n->inputs[1];
@@ -336,9 +345,9 @@ static Inst isel_array(Ctx* restrict ctx, Sequence* seq, TB_Node* n, int dst) {
     }
 }
 
-static Inst isel_load(Ctx* restrict ctx, Sequence* seq, TB_Node* n, int dst) {
+static Inst isel_load(Ctx* restrict ctx, TB_Node* n, int dst) {
     if (n->inputs[0]->type == TB_ARRAY_ACCESS && try_tile(ctx, n->inputs[0])) {
-        Inst inst = isel_array(ctx, seq, n->inputs[0], dst);
+        Inst inst = isel_array(ctx, n->inputs[0], dst);
         if (inst.type == LEA) {
             inst.type = MOV;
             return inst;
@@ -356,7 +365,7 @@ static Inst isel_load(Ctx* restrict ctx, Sequence* seq, TB_Node* n, int dst) {
     return inst_m(MOV, n->dt, dst, base, GPR_NONE, SCALE_X1, 0);
 }
 
-static Cond isel_cmp(Ctx* restrict ctx, Sequence* seq, TB_Node* n) {
+static Cond isel_cmp(Ctx* restrict ctx, TB_Node* n) {
     if (try_tile(ctx, n) && n->type >= TB_CMP_EQ && n->type <= TB_CMP_FLE) {
         TB_DataType cmp_dt = TB_NODE_GET_EXTRA_T(n, TB_NodeCompare)->cmp_dt;
         assert(cmp_dt.width == 0 && "TODO: Implement vector compares");
@@ -391,7 +400,7 @@ static Cond isel_cmp(Ctx* restrict ctx, Sequence* seq, TB_Node* n) {
     return NE;
 }
 
-static int isel(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n) {
+static int isel(Ctx* restrict ctx, TB_Node* n) {
     int current_val = GET_VAL(n);
     if (current_val >= 0) {
         return current_val;
@@ -578,7 +587,7 @@ static int isel(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n) {
         case TB_ARRAY_ACCESS: {
             dst = DEF(n, REG_CLASS_GPR);
 
-            Inst inst = isel_array(ctx, seq, n, dst);
+            Inst inst = isel_array(ctx, n, dst);
             SUBMIT(inst);
             break;
         }
@@ -586,7 +595,7 @@ static int isel(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n) {
         case TB_RET: {
             if (n->inputs[0] != NULL) {
                 // hint input to be RAX
-                int src_vreg = isel(ctx, seq, n->inputs[0]);
+                int src_vreg = isel(ctx, n->inputs[0]);
                 if (ctx->defs[src_vreg].hint < 0) {
                     ctx->defs[src_vreg].hint = RAX;
                 }
@@ -605,7 +614,7 @@ static int isel(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n) {
         case TB_LOAD: {
             dst = DEF(n, REG_CLASS_GPR);
 
-            Inst ld = isel_load(ctx, seq, n, dst);
+            Inst ld = isel_load(ctx, n, dst);
             SUBMIT(ld);
             break;
         }
@@ -644,7 +653,7 @@ static int isel(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n) {
 
             dst = DEF(n, REG_CLASS_GPR);
             if (src->type == TB_LOAD && try_tile(ctx, src)) {
-                Inst inst = isel_load(ctx, seq, src, dst);
+                Inst inst = isel_load(ctx, src, dst);
                 inst.type = op;
                 SUBMIT(inst);
             } else {
@@ -671,7 +680,7 @@ static int isel(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n) {
                 }
             } else if (br->count == 1) {
                 // if-like branch
-                Cond cc = isel_cmp(ctx, seq, n->inputs[0]);
+                Cond cc = isel_cmp(ctx, n->inputs[0]);
 
                 SUBMIT(inst_jcc(br->targets[0].value, cc));
                 if (ctx->fallthrough != br->default_label) {
@@ -719,6 +728,7 @@ static int isel(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n) {
             // generate clones of each parameter which live until the CALL instruction executes
             dst = DEF_HINTED(n, REG_CLASS_GPR, RAX);
             int fake_dst = DEF_FORCED(n, REG_CLASS_GPR, RAX, -1);
+            uint32_t caller_saved_gprs = desc->caller_saved_gprs;
 
             FOREACH_N(i, 1, n->input_count) {
                 TB_Node* param = n->inputs[i];
@@ -727,26 +737,42 @@ static int isel(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n) {
                 if (TB_IS_FLOAT_TYPE(param_dt) || param_dt.width) {
                     tb_todo();
                 } else {
-                    int src = isel(ctx, seq, param);
+                    int src = isel(ctx, param);
 
                     if (i - 1 < desc->gpr_count) {
                         // hint src into GPR
+                        GPR target_gpr = desc->gprs[i - 1];
                         if (ctx->defs[src].hint < 0) {
-                            ctx->defs[src].hint = desc->gprs[i - 1];
+                            ctx->defs[src].hint = target_gpr;
                         }
 
-                        int param_def = DEF_FORCED(param, REG_CLASS_GPR, desc->gprs[i - 1], dst);
+                        int param_def = DEF_FORCED(param, REG_CLASS_GPR, target_gpr, dst);
                         SUBMIT(inst_copy(param->dt, param_def, USE(src)));
+
+                        caller_saved_gprs &= ~(1u << target_gpr);
                     } else {
                         SUBMIT(inst_mr(MOV, n->dt, RSP, GPR_NONE, SCALE_X1, 8 + (i * 8), src));
                     }
                 }
             }
 
+            size_t clobber_cap = tb_popcount(caller_saved_gprs);
+            Clobbers* clobbers = arena_alloc(&tb__arena, sizeof(Clobbers) + (clobber_cap * sizeof(MachineReg)), _Alignof(Clobbers));
+
+            // mark all the clobbers
+            size_t clobber_count = 0;
+            FOREACH_N(i, 0, 16) if (caller_saved_gprs & (1u << i)) {
+                clobbers->_[clobber_count++] = (MachineReg){ REG_CLASS_GPR, i };
+            }
+
+            assert(clobber_count == clobber_cap);
+            clobbers->count = clobber_count;
+            ctx->defs[fake_dst].clobbers = clobbers;
+
             if (type == TB_SCALL) {
                 int num = ISEL(n->inputs[0]);
                 SUBMIT(inst_copy(n->dt, fake_dst, num));
-                SUBMIT(inst_syscall());
+                SUBMIT(inst_nullary(SYSCALL));
             } else {
                 if (try_tile(ctx, n->inputs[0]) && n->inputs[0]->type == TB_GET_SYMBOL_ADDRESS) {
                     TB_NodeSymbol* s = TB_NODE_GET_EXTRA(n->inputs[0]);
@@ -764,6 +790,12 @@ static int isel(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n) {
         dst = DEF(n, classify_reg_class(n->dt));
         break;
 
+        // x86 intrinsics
+        /*case TB_X86INTRIN_RDTSC: {
+            SUBMIT(inst_nullary(RDTSC));
+            break;
+        }*/
+
         case TB_NULL: break;
         default: tb_todo();
     }
@@ -772,7 +804,7 @@ static int isel(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n) {
     return dst;
 }
 
-static void copy_value(Ctx* restrict ctx, Sequence* seq, TB_Node* phi, int dst, TB_Node* src, TB_DataType dt) {
+static void copy_value(Ctx* restrict ctx, TB_Node* phi, int dst, TB_Node* src, TB_DataType dt) {
     if (src->type == TB_ADD && try_tile(ctx, src)) {
         if (src->inputs[0] == phi && try_tile(ctx, src->inputs[1])) {
             int32_t x;
@@ -788,6 +820,23 @@ static void copy_value(Ctx* restrict ctx, Sequence* seq, TB_Node* phi, int dst, 
 
     int src_v = ISEL(src);
     SUBMIT(inst_move(dt, dst, src_v));
+}
+
+static void spill(Ctx* restrict ctx, Inst* basepoint, Reload* r) {
+    Inst* new_inst = ARENA_ALLOC(&tb__arena, Inst);
+    r->stack_pos = STACK_ALLOC(8, 8);
+
+    *new_inst = inst_mr(MOV, r->dt, RBP, GPR_NONE, SCALE_X1, r->stack_pos, USE(r->old));
+    new_inst->next = basepoint->next;
+    basepoint->next = new_inst;
+}
+
+static void reload(Ctx* restrict ctx, Inst* basepoint, Reload* r) {
+    Inst* new_inst = ARENA_ALLOC(&tb__arena, Inst);
+
+    *new_inst = inst_m(MOV, r->dt, r->old, RBP, GPR_NONE, SCALE_X1, r->stack_pos);
+    new_inst->next = basepoint->next;
+    basepoint->next = new_inst;
 }
 
 static int8_t resolve_def(Ctx* restrict ctx, int x) {
@@ -819,10 +868,26 @@ static void inst1_print(Ctx* restrict ctx, int type, Val* src, X86_DataType dt) 
     INST1(type, src, dt);
 }
 
-static void emit_sequence(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n) {
+static void emit_code(Ctx* restrict ctx) {
+    /*if (n->type == TB_LINE_INFO) {
+        TB_NodeLine* l = TB_NODE_GET_EXTRA(n);
+        f->lines[f->line_count++] = (TB_Line) {
+            .file = l->file,
+            .line = l->line,
+            .pos = GET_CODE_POS(&ctx->emit)
+        };
+        continue;
+    }*/
+
     Val ops[4];
-    FOREACH_N(i, 0, seq->inst_count) {
-        Inst* restrict inst = &seq->insts[i];
+    for (Inst* restrict inst = ctx->first; inst; inst = inst->next) {
+        if (inst->type == INST_LABEL) {
+            TB_Label bb = inst->imm[0];
+            ctx->emit.labels[bb] = GET_CODE_POS(&ctx->emit);
+
+            ASM printf("L%d:\n", bb);
+            continue;
+        }
 
         bool has_def = false;
         if (inst->regs[0] >= 0) {
@@ -937,10 +1002,6 @@ static void emit_sequence(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n)
         } else {
             tb_todo();
         }
-    }
-
-    if (n == NULL) {
-        return;
     }
 }
 
