@@ -77,20 +77,20 @@ extern "C" {
 
     typedef enum TB_FeatureSet_X64 {
         TB_FEATURE_X64_SSE3   = (1u << 0u),
-        TB_FEATURE_X64_SSE41  = (1u << 0u),
-        TB_FEATURE_X64_SSE42  = (1u << 0u),
+        TB_FEATURE_X64_SSE41  = (1u << 1u),
+        TB_FEATURE_X64_SSE42  = (1u << 2u),
 
-        TB_FEATURE_X64_POPCNT = (1u << 0u),
-        TB_FEATURE_X64_LZCNT  = (1u << 0u),
+        TB_FEATURE_X64_POPCNT = (1u << 3u),
+        TB_FEATURE_X64_LZCNT  = (1u << 4u),
 
-        TB_FEATURE_X64_CLMUL  = (1u << 0u),
-        TB_FEATURE_X64_F16C   = (1u << 0u),
+        TB_FEATURE_X64_CLMUL  = (1u << 5u),
+        TB_FEATURE_X64_F16C   = (1u << 6u),
 
-        TB_FEATURE_X64_BMI1   = (1u << 0u),
-        TB_FEATURE_X64_BMI2   = (1u << 0u),
+        TB_FEATURE_X64_BMI1   = (1u << 7u),
+        TB_FEATURE_X64_BMI2   = (1u << 8u),
 
-        TB_FEATURE_X64_AVX    = (1u << 0u),
-        TB_FEATURE_X64_AVX2   = (1u << 0u),
+        TB_FEATURE_X64_AVX    = (1u << 9u),
+        TB_FEATURE_X64_AVX2   = (1u << 10u),
     } TB_FeatureSet_X64;
 
     typedef struct TB_FeatureSet {
