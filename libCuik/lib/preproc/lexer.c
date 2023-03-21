@@ -222,7 +222,7 @@ static Token lexer_read(Lexer* restrict l) {
             current += 1;
             #else
             // SIMD space skip
-            __m128i chars = _mm_loadu_si128((__m128i*)current);
+            __m128i chars = _mm_loadu_si128((__m128i*) current);
             int len = __builtin_ffs(~_mm_movemask_epi8(_mm_cmpeq_epi8(chars, _mm_set1_epi8(' '))));
             current += len - 1;
             #endif

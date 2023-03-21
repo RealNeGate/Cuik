@@ -33,8 +33,11 @@ if args.autospall: cflags += " -DCUIK_USE_SPALL_AUTO -finstrument-functions-afte
 
 system = platform.system()
 if system == "Windows":
-	ld = "lld-link"
-	ldflags = "/debug /defaultlib:libcmt /defaultlib:oldnames"
+	ld = "clang"
+	ldflags = "-g"
+
+	if args.asan: ld += " -fsanitize=address"
+
 	lib_ext = ".lib"
 	exe_ext = ".exe"
 	cflags += " -I c11threads -D_CRT_SECURE_NO_WARNINGS"
@@ -86,7 +89,7 @@ rule cc
   description = CC $in $out
 
 rule link
-  command = {ld} $in $ldflags /out:$out
+  command = {ld} $in $ldflags -o $out
   description = LINK $out
 
 rule meta_cc
