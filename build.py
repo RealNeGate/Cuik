@@ -6,22 +6,29 @@ import subprocess
 import argparse
 from pathlib import Path
 
+# the inspector uses Raylib, be sure to change this path if you're gonna use it
+raylib_path = "C:/raylib"
+
 parser = argparse.ArgumentParser(description='Compiles Cuik + friends')
 parser.add_argument('-opt', action='store_true', help='optimize output')
 parser.add_argument('-driver', action='store_true', help='compile main driver')
+parser.add_argument('-inspector', action='store_true', help='compile inspector')
 parser.add_argument('-libcuik', action='store_true', help='compile libCuik')
 parser.add_argument('-tb', action='store_true', help='compiles TB')
 parser.add_argument('-asan', action='store_true', help='compile with ASAN')
 parser.add_argument('-autospall', action='store_true', help='instrument code with SpallAuto')
 
 args = parser.parse_args()
+args.driver = True
+
 mimalloc = True
 
-if args.driver:
+if args.inspector or args.driver:
 	args.tb = True
 	args.libcuik = True
 
 # Figure out C and linker flags
+ldflags = ""
 cflags = "-g -msse4 -Wall -Werror -Wno-unused -I common -DCUIK_ALLOW_THREADS"
 
 if mimalloc:       cflags += " -DCUIK_USE_MIMALLOC -I mimalloc/include"
@@ -31,10 +38,14 @@ if args.asan:      cflags += " -fsanitize=address"
 if args.opt:       cflags += " -O2 -DNDEBUG"
 if args.autospall: cflags += " -DCUIK_USE_SPALL_AUTO -finstrument-functions-after-inlining"
 
+if args.inspector:
+	cflags += f" -I {raylib_path}/include"
+	ldflags += f" {raylib_path}/lib/raylib.lib -Xlinker /nodefaultlib:libcmt"
+
 system = platform.system()
 if system == "Windows":
 	ld = "clang"
-	ldflags = "-g"
+	ldflags += " -g"
 
 	if args.asan: ld += " -fsanitize=address"
 
@@ -43,13 +54,13 @@ if system == "Windows":
 	cflags += " -I c11threads -D_CRT_SECURE_NO_WARNINGS"
 elif system == "Darwin":
 	ld = "lld.ld"
-	ld_flags = "-g -lc"
+	ld_flags += " -g -lc"
 	exe_ext = ""
 	lib_ext = ".a"
 	cflags += " -I c11threads -Wno-deprecated-declarations"
 else:
 	ld = "ld.lld"
-	ldflags = "-g -lc -lm -lthreads"
+	ldflags += " -g -lc -lm -lthreads"
 	exe_ext = ""
 	lib_ext = ".a"
 
@@ -71,6 +82,9 @@ if system == "Darwin":
 if args.tb:
 	for path in Path("tb/src").rglob("*.c"):
 		sources.append(str(path))
+
+if args.inspector:
+	sources.append("inspector/main.c")
 
 # main driver
 if args.driver:
@@ -149,7 +163,9 @@ for pattern in sources:
 		objs.append("bin/"+obj)
 
 # compile final executable (or library)
-if not args.driver and args.libcuik:
+if args.inspector:
+	ninja.write(f"build inspector{exe_ext}: link {' '.join(objs)}\n")
+elif not args.driver and args.libcuik:
 	ninja.write(f"build libcuik{lib_ext}: lib {' '.join(objs)}\n")
 elif not args.driver and args.tb:
 	ninja.write(f"build tb{lib_ext}: lib {' '.join(objs)}\n")

@@ -567,7 +567,7 @@ static bool export_output(Cuik_DriverArgs* restrict args, TB_Module* mod, const 
     }
 }
 
-CUIK_API CompilationUnit* cuik_driver_compile(Cuik_IThreadpool* restrict thread_pool, Cuik_DriverArgs* restrict args, bool destroy_cu_after_ir) {
+CUIK_API CompilationUnit* cuik_driver_compile(Cuik_IThreadpool* restrict thread_pool, Cuik_DriverArgs* restrict args, bool destroy_cu_after_ir, bool destroy_ir) {
     _Atomic int parse_errors = 0;
 
     CompilationUnit* cu = cuik_create_compilation_unit();
@@ -680,6 +680,11 @@ CUIK_API CompilationUnit* cuik_driver_compile(Cuik_IThreadpool* restrict thread_
         }
 
         if (args->ir) {
+            cu->ir_mod = mod;
+            return cu;
+        }
+
+        if (args->emit_ir) {
             CUIK_TIMED_BLOCK("Print") {
                 TB_FOR_FUNCTIONS(f, mod) {
                     tb_function_print(f, tb_default_print_callback, stdout, false);
@@ -720,8 +725,10 @@ CUIK_API CompilationUnit* cuik_driver_compile(Cuik_IThreadpool* restrict thread_
     }
 
     cleanup_tb:
-    tb_free_thread_resources();
-    tb_module_destroy(mod);
+    if (destroy_ir) {
+        tb_free_thread_resources();
+        tb_module_destroy(mod);
+    }
     return cu;
 
     error:

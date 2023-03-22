@@ -116,12 +116,12 @@ int main(int argc, const char** argv) {
             printf("\x1b[2J");
             printf("OUTPUT OF %s:\n", args.sources[0]);
 
-            cuik_destroy_compilation_unit(cuik_driver_compile(tp, &args, true));
+            cuik_destroy_compilation_unit(cuik_driver_compile(tp, &args, true, true));
         } while (live_compile_watch(&l, &args));
     } else {
         uint64_t start_time = args.verbose ? cuik_time_in_nanos() : 0;
 
-        CompilationUnit* cu = cuik_driver_compile(tp, &args, true);
+        CompilationUnit* cu = cuik_driver_compile(tp, &args, true, true);
         status = (cu ? 0 : 1);
         cuik_destroy_compilation_unit(cu);
 

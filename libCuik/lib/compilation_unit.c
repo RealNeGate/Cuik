@@ -23,6 +23,12 @@ CUIK_API TranslationUnit* cuik_first_translation_unit(CompilationUnit* restrict 
     return cu->head;
 }
 
+#ifdef CUIK_USE_TB
+CUIK_API TB_Module* cuik_compilation_unit_tb_module(CompilationUnit* restrict cu) {
+    return cu->ir_mod;
+}
+#endif
+
 CUIK_API void cuik_add_to_compilation_unit(CompilationUnit* restrict cu, TranslationUnit* restrict tu) {
     assert(tu->next == NULL && "somehow the TU is already attached to something...");
     cuik_lock_compilation_unit(cu);

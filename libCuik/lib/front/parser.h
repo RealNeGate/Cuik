@@ -158,6 +158,10 @@ struct CompilationUnit {
     mtx_t lock;
     size_t count;
 
+    #ifdef CUIK_USE_TB
+    TB_Module* ir_mod;
+    #endif
+
     NL_Strmap(Stmt*) export_table;
 
     // linked list of all TUs referenced
