@@ -90,7 +90,8 @@ typedef struct Def {
     int start, end;
 
     // regalloc
-    int reg_class, reg, hint;
+    int16_t complete, hint;
+    int16_t reg_class, reg;
 
     // when we preallocate a definition we
     // specify here which definition must
@@ -562,8 +563,9 @@ static bool check_if_used(Ctx* restrict ctx, Inst* inst, int def_i, int n) {
 
 static size_t choose_best_split(Ctx* restrict ctx, TB_Function* f, Inst* inst, int time) {
     FOREACH_REVERSE_N(i, 0, ctx->active_count) {
-        Def* k = &ctx->defs[ctx->active[i]];
-        if (k->reg >= 0 && !check_if_used(ctx, inst, k - ctx->defs, 2)) {
+        DefIndex di = ctx->active[i];
+
+        if (ctx->defs[di].reg >= 0 && !check_if_used(ctx, inst, di, 3)) {
             return i;
         }
     }
@@ -588,11 +590,10 @@ static Inst* insert_reload_site(Ctx* restrict ctx, TB_Function* f, Inst* inst, s
     return NULL;
 }
 
-static Inst* find_inst_at_time(Ctx* restrict ctx, TB_Function* f, int time, Inst** prev_inst) {
-    Inst *prev = NULL, *prev2 = NULL;
-    for (Inst* inst = ctx->first; inst; prev2 = prev, prev = inst, inst = inst->next) {
+static Inst* find_inst_at_time(Ctx* restrict ctx, TB_Function* f, int time) {
+    Inst* prev = NULL;
+    for (Inst* inst = ctx->first; inst; prev = inst, inst = inst->next) {
         if (inst->time >= time) {
-            *prev_inst = prev2;
             return prev;
         }
     }
@@ -600,58 +601,68 @@ static Inst* find_inst_at_time(Ctx* restrict ctx, TB_Function* f, int time, Inst
     return NULL;
 }
 
-static ptrdiff_t spill_register(Ctx* restrict ctx, TB_Function* f, DefIndex* sorted, size_t* sorted_count, DefIndex di, int time) {
-    // spill to make room
-    Inst* prev_inst;
-    Inst* inst = find_inst_at_time(ctx, f, time, &prev_inst);
-
-    Inst* test = ctx->first;
-    while (test) test = test->next;
-
-    // choose who to spill?
-    size_t split_i = choose_best_split(ctx, f, inst, time);
+static ptrdiff_t spill_register(Ctx* restrict ctx, TB_Function* f, DefIndex* sorted, DefIndex di, int time, Inst* spill_inst, size_t split_i) {
     size_t split_def = ctx->active[split_i];
 
     // insert spill
     Reload r = { TB_TYPE_I64, split_def };
-    spill(ctx, inst, &r);
+    spill(ctx, spill_inst, &r);
 
     // reload before next use (or BB end, whichever comes first)
-    Inst* reload_inst = insert_reload_site(ctx, f, inst->next, split_def);
+    Inst* reload_inst = insert_reload_site(ctx, f, spill_inst->next, split_def);
     if (reload_inst) {
         reload(ctx, reload_inst, &r);
     } else {
         ASM printf("  \x1b[32m#   lasts past BB\x1b[0m\n");
 
         // keep spilled and generate reloads on the first use in any BB
-        DefIndex reload_def = -1;
-        for (; inst; inst = inst->next) {
+        DefIndex reload_def = split_def;
+
+        Inst *inst = spill_inst->next, *prev_inst = spill_inst;
+        for (; inst; prev_inst = inst, inst = inst->next) {
             if (inst->type == INST_LABEL) reload_def = -1;
 
             // if it's used, refer to reload
-            FOREACH_N(j, 1, 4) if (inst->regs[j] == USE(di)) {
+            FOREACH_REVERSE_N(j, 1, 4) if (inst->regs[j] == USE(split_i)) {
                 if (reload_def < 0) {
-                    // spin up new def
-                    int t = inst->time;
-                    dyn_array_put(ctx->defs, (Def){ .start = t, .end = t, .reg = -1 });
-                    reload_def = dyn_array_length(ctx->defs) - 1;
+                    if (inst->type == X86_INST_MOVE && j == 1) {
+                        r.old = inst->regs[1];
+                        spill(ctx, inst, &r);
+                        continue;
+                    } else {
+                        // spin up new def
+                        int t = inst->time;
+                        dyn_array_put(ctx->defs, (Def){ .start = t, .end = t, .reg = -1 });
+                        reload_def = dyn_array_length(ctx->defs) - 1;
 
-                    // insert into sort
-                    insert_sorted_def(ctx, sorted, *sorted_count, t, reload_def);
-                    (*sorted_count) += 1;
+                        // insert into sort
+                        insert_sorted_def(ctx, sorted, reload_def, t, reload_def);
 
-                    // generate reload before this instruction
-                    r.old = reload_def;
-                    reload(ctx, prev_inst, &r);
+                        // generate reload before this instruction
+                        assert(prev_inst);
+                        r.old = reload_def;
+                        reload(ctx, prev_inst, &r);
+                    }
                 }
 
                 inst->regs[j] = USE(reload_def);
                 ctx->defs[reload_def].end = inst->time + 1;
             }
+
+            // we need to writeback into the spill slot
+            if (inst->regs[0] == split_i && reload_def != split_def) {
+                // spill and discard our reload spot (if applies)
+                r.old = inst->regs[0];
+                spill(ctx, inst, &r);
+                reload_def = -1;
+
+                // skip this instruction to avoid infinite spills
+                prev_inst = inst, inst = inst->next;
+            }
         }
     }
 
-    ptrdiff_t reg_num = ctx->defs[ctx->active[split_i]].reg;
+    ptrdiff_t reg_num = ctx->defs[split_def].reg;
     remove_active(ctx, split_i);
 
     ASM printf("  \x1b[32m#   spill D%zu\x1b[0m\n", split_def);
@@ -660,15 +671,14 @@ static ptrdiff_t spill_register(Ctx* restrict ctx, TB_Function* f, DefIndex* sor
 
 static void linear_scan(Ctx* restrict ctx, TB_Function* f, DefIndex* sorted, size_t node_count) {
     // actual perform linear scan
-    size_t sorted_count = dyn_array_length(ctx->defs);
-
-    for (size_t i = 0; i < sorted_count; i++) {
+    for (size_t i = 0; i < dyn_array_length(ctx->defs); i++) {
         DefIndex di = sorted[i];
         Def* d = &ctx->defs[di];
-        int time = d->start;
+        if (d->complete) continue;
 
+        int time = d->start;
         ASM {
-            printf("  \x1b[32m# D%zu t=[%d,%d) ", i, time, d->end);
+            printf("  \x1b[32m# D%zu t=[%d,%d) ", di, time, d->end);
             if (d->node) printf("r%d", NAME(d->node));
             printf("\x1b[0m\n");
         }
@@ -693,7 +703,21 @@ static void linear_scan(Ctx* restrict ctx, TB_Function* f, DefIndex* sorted, siz
         if (d->reg >= 0) {
             if (set_get(&ctx->free_regs[d->reg_class], d->reg)) {
                 // spill previous user until the end of the definition's lifetime
-                tb_todo();
+                size_t split_i = 0;
+                for (; split_i < ctx->active_count; split_i++) {
+                    Def* k = &ctx->defs[ctx->active[split_i]];
+                    if (k->reg_class == d->reg_class && k->reg == d->reg) break;
+                }
+                assert(split_i < ctx->active_count);
+
+                Inst* spill_inst = find_inst_at_time(ctx, f, time);
+                reg_num = spill_register(ctx, f, sorted, di, time, spill_inst, split_i);
+
+                // we need to re-eval this element because something got inserted into this slot
+                if (di != sorted[i]) {
+                    i -= 1;
+                }
+                d = &ctx->defs[di];
             }
 
             reg_num = d->reg;
@@ -705,7 +729,17 @@ static void linear_scan(Ctx* restrict ctx, TB_Function* f, DefIndex* sorted, siz
             reg_num = set_pop_any(&ctx->free_regs[d->reg_class]);
 
             if (reg_num < 0) {
-                reg_num = spill_register(ctx, f, sorted, &sorted_count, di, time);
+                // choose who to spill
+                Inst* spill_inst = find_inst_at_time(ctx, f, time);
+                size_t split_i = choose_best_split(ctx, f, spill_inst, time);
+
+                reg_num = spill_register(ctx, f, sorted, di, time, spill_inst, split_i);
+
+                // we need to re-eval this element because something got inserted into this slot
+                if (di != sorted[i]) {
+                    i -= 1;
+                }
+                d = &ctx->defs[di];
             }
 
             ASM printf("  \x1b[32m#   assign %s\x1b[0m\n", GPR_NAMES[reg_num]);
@@ -713,6 +747,7 @@ static void linear_scan(Ctx* restrict ctx, TB_Function* f, DefIndex* sorted, siz
 
         set_put(&ctx->free_regs[d->reg_class], reg_num);
         add_active(ctx, di);
+        d->complete = true;
         d->reg = reg_num;
     }
 }
@@ -867,7 +902,6 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
         emit_code(ctx);
     }
 
-    // __debugbreak();
     ASM printf(".ret:\n");
 
     resolve_stack_usage(ctx, caller_usage);

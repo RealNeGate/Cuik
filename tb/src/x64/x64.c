@@ -823,18 +823,28 @@ static void copy_value(Ctx* restrict ctx, TB_Node* phi, int dst, TB_Node* src, T
 }
 
 static void spill(Ctx* restrict ctx, Inst* basepoint, Reload* r) {
+    // allocate stack slot
+    if (r->stack_pos == 0) {
+        r->stack_pos = STACK_ALLOC(8, 8);
+    }
+
+    printf("Spill! %d\n", r->stack_pos);
+
+    // write out
     Inst* new_inst = ARENA_ALLOC(&tb__arena, Inst);
-    r->stack_pos = STACK_ALLOC(8, 8);
 
     *new_inst = inst_mr(MOV, r->dt, RBP, GPR_NONE, SCALE_X1, r->stack_pos, USE(r->old));
+    new_inst->time = basepoint->time + 1;
     new_inst->next = basepoint->next;
     basepoint->next = new_inst;
 }
 
 static void reload(Ctx* restrict ctx, Inst* basepoint, Reload* r) {
     Inst* new_inst = ARENA_ALLOC(&tb__arena, Inst);
+    printf("Reload! %d\n", r->stack_pos);
 
     *new_inst = inst_m(MOV, r->dt, r->old, RBP, GPR_NONE, SCALE_X1, r->stack_pos);
+    new_inst->time = basepoint->time + 1;
     new_inst->next = basepoint->next;
     basepoint->next = new_inst;
 }
