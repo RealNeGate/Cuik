@@ -127,7 +127,7 @@ static void tb_print_node(TB_Function* f, TB_PrinterCtx* ctx, TB_PrintCallback c
         P(".");
     }
 
-    printf("%s ", tb_node_get_name(n));
+    P("%s ", tb_node_get_name(n));
 
     FOREACH_N(i, 0, n->input_count) {
         if (i) P(", ");
