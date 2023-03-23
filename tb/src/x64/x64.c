@@ -513,27 +513,27 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             bool is_signed = (type == TB_SDIV || type == TB_SMOD);
             bool is_div    = (type == TB_UDIV || type == TB_SDIV);
 
-            // TODO(NeGate): hint into RAX
-            int lhs = ISEL(n->inputs[0]);
-            int rhs = ISEL(n->inputs[1]);
-
-            dst = DEF(n, REG_CLASS_GPR);
             int fake_dst = DEF(n, REG_CLASS_GPR);
-
-            // mov rax, lhs
-            int rax = DEF_FORCED(n, REG_CLASS_GPR, RAX, fake_dst);
-            SUBMIT(inst_copy(n->dt, rax, lhs));
-
+            int rdx = DEF_FORCED(n, REG_CLASS_GPR, RDX, fake_dst);
             // if signed:
             //   cqo/cdq (sign extend RAX into RDX)
             // else:
             //   xor rdx, rdx
-            int rdx = DEF_FORCED(n, REG_CLASS_GPR, RDX, fake_dst);
             if (is_signed) {
                 SUBMIT(inst_u(CAST, n->dt));
             } else {
                 SUBMIT(inst_i(MOV, n->dt, rdx, 0));
             }
+
+            // TODO(NeGate): hint into RAX
+            int lhs = ISEL(n->inputs[0]);
+            int rhs = ISEL(n->inputs[1]);
+
+            dst = DEF(n, REG_CLASS_GPR);
+
+            // mov rax, lhs
+            int rax = DEF_FORCED(n, REG_CLASS_GPR, RAX, fake_dst);
+            SUBMIT(inst_copy(n->dt, rax, lhs));
 
             SUBMIT(inst_r(is_signed ? IDIV : DIV, n->dt, -1, rhs));
             SUBMIT(inst_copy(n->dt, fake_dst, USE(is_div ? rax : rdx)));
@@ -640,8 +640,30 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
 
             TB_DataType src_dt = src->dt;
             bool sign_ext = (type == TB_SIGN_EXT);
-
             int bits_in_type = src_dt.type == TB_PTR ? 64 : src_dt.data;
+
+            dst = DEF(n, REG_CLASS_GPR);
+
+            TB_NodeInt* i = TB_NODE_GET_EXTRA(src);
+            if (i->num_words == 1 && fits_into_int32(i->words[0])) {
+                #define MASK_UPTO(pos) (~UINT64_C(0) >> (64 - pos))
+
+                uint64_t src = i->words[0];
+                uint64_t sign_bit = (src >> (bits_in_type - 1)) & 1;
+                uint64_t mask = MASK_UPTO(64) & ~MASK_UPTO(bits_in_type);
+
+                src = (src & ~mask) | (sign_bit ? mask : 0);
+                if (!fits_into_int32(src)) {
+                    // movabs reg, imm64
+                    SUBMIT(inst_i64(MOVABS, n->dt, dst, src));
+                } else {
+                    SUBMIT(inst_i(MOV, n->dt, dst, src));
+                }
+
+                return dst;
+                #undef MASK_UPTO
+            }
+
             int op = MOV;
             switch (bits_in_type) {
                 case 64: op = MOV; break;
@@ -651,7 +673,6 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
                 default: tb_todo();
             }
 
-            dst = DEF(n, REG_CLASS_GPR);
             if (src->type == TB_LOAD && try_tile(ctx, src)) {
                 Inst inst = isel_load(ctx, src, dst);
                 inst.type = op;
@@ -675,6 +696,8 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
 
             if (br->count == 0) {
+                fence(ctx);
+
                 if (ctx->fallthrough != br->default_label) {
                     SUBMIT(inst_jmp(br->default_label));
                 }
@@ -682,12 +705,16 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
                 // if-like branch
                 Cond cc = isel_cmp(ctx, n->inputs[0]);
 
+                fence(ctx);
+
                 SUBMIT(inst_jcc(br->targets[0].value, cc));
                 if (ctx->fallthrough != br->default_label) {
                     SUBMIT(inst_jmp(br->default_label));
                 }
             } else {
                 int key = USE(ISEL(n->inputs[0]));
+
+                fence(ctx);
 
                 FOREACH_N(i, 0, br->count) {
                     SUBMIT(inst_i(CMP, n->dt, key, br->targets[i].key));
@@ -828,8 +855,6 @@ static void spill(Ctx* restrict ctx, Inst* basepoint, Reload* r) {
         r->stack_pos = STACK_ALLOC(8, 8);
     }
 
-    printf("Spill! %d\n", r->stack_pos);
-
     // write out
     Inst* new_inst = ARENA_ALLOC(&tb__arena, Inst);
 
@@ -841,7 +866,6 @@ static void spill(Ctx* restrict ctx, Inst* basepoint, Reload* r) {
 
 static void reload(Ctx* restrict ctx, Inst* basepoint, Reload* r) {
     Inst* new_inst = ARENA_ALLOC(&tb__arena, Inst);
-    printf("Reload! %d\n", r->stack_pos);
 
     *new_inst = inst_m(MOV, r->dt, r->old, RBP, GPR_NONE, SCALE_X1, r->stack_pos);
     new_inst->time = basepoint->time + 1;
@@ -920,7 +944,7 @@ static void emit_code(Ctx* restrict ctx) {
             }
             case X86_OP_R: {
                 ops[1] = val_gpr(regs[1]);
-                op_count = 2;
+                op_count = has_def ? 2 : 1;
                 break;
             }
             case X86_OP_I: {
@@ -995,9 +1019,7 @@ static void emit_code(Ctx* restrict ctx) {
                 inst1_print(ctx, inst->type, &ops[0], inst->data_type);
             }
         } else if (op_count == 2) {
-            if (!has_def) {
-                inst2_print(ctx, (InstType) inst->type, &ops[1], &ops[2], inst->data_type);
-            } else if (inst->type != MOV || (inst->type == MOV && !is_value_match(&ops[0], &ops[1]))) {
+            if (inst->type != MOV || (inst->type == MOV && !is_value_match(&ops[0], &ops[1]))) {
                 inst2_print(ctx, (InstType) inst->type, &ops[0], &ops[1], inst->data_type);
             }
         } else if (op_count == 3) {

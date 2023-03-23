@@ -1,7 +1,12 @@
 void type_layout2(Cuik_Parser* parser, Cuik_Type* type, bool needs_complete);
 
 static bool expect_char(TokenStream* restrict s, char ch) {
-    if (tokens_get(s)->type != ch) {
+    if (tokens_eof(s)) {
+        tokens_prev(s);
+
+        diag_err(s, tokens_get_range(s), "expected '%c', got end-of-file", ch);
+        return false;
+    } else if (tokens_get(s)->type != ch) {
         diag_err(s, tokens_get_range(s), "expected '%c', got '%!S'", ch, tokens_get(s)->content);
         return false;
     } else {

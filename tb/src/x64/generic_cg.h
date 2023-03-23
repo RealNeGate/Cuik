@@ -623,15 +623,17 @@ static ptrdiff_t spill_register(Ctx* restrict ctx, TB_Function* f, DefIndex* sor
             if (inst->type == INST_LABEL) reload_def = -1;
 
             // if it's used, refer to reload
-            FOREACH_REVERSE_N(j, 1, 4) if (inst->regs[j] == USE(split_i)) {
+            bool skip_next = false;
+            FOREACH_REVERSE_N(j, 1, 4) if (inst->regs[j] == USE(split_def)) {
                 if (reload_def < 0) {
                     if (inst->type == X86_INST_MOVE && j == 1) {
-                        r.old = inst->regs[1];
+                        skip_next = true;
+                        r.old = split_def;
                         spill(ctx, inst, &r);
                         continue;
                     } else {
                         // spin up new def
-                        int t = inst->time;
+                        int t = prev_inst->time + 1;
                         dyn_array_put(ctx->defs, (Def){ .start = t, .end = t, .reg = -1 });
                         reload_def = dyn_array_length(ctx->defs) - 1;
 
@@ -655,7 +657,10 @@ static ptrdiff_t spill_register(Ctx* restrict ctx, TB_Function* f, DefIndex* sor
                 r.old = inst->regs[0];
                 spill(ctx, inst, &r);
                 reload_def = -1;
+                skip_next = true;
+            }
 
+            if (skip_next) {
                 // skip this instruction to avoid infinite spills
                 prev_inst = inst, inst = inst->next;
             }
@@ -702,6 +707,8 @@ static void linear_scan(Ctx* restrict ctx, TB_Function* f, DefIndex* sorted, siz
         ptrdiff_t reg_num = -1;
         if (d->reg >= 0) {
             if (set_get(&ctx->free_regs[d->reg_class], d->reg)) {
+                ASM printf("  \x1b[32m#   evict %s\x1b[0m\n", GPR_NAMES[d->reg]);
+
                 // spill previous user until the end of the definition's lifetime
                 size_t split_i = 0;
                 for (; split_i < ctx->active_count; split_i++) {
@@ -750,6 +757,15 @@ static void linear_scan(Ctx* restrict ctx, TB_Function* f, DefIndex* sorted, siz
         d->complete = true;
         d->reg = reg_num;
     }
+}
+
+static void fence(Ctx* restrict ctx) {
+    // insert compiler fence to handle any leftover in_bounds
+    while (dyn_array_length(ctx->in_bound)) {
+        TB_Node* n = dyn_array_pop(ctx->in_bound);
+        isel(ctx, n);
+    }
+    dyn_array_clear(ctx->in_bound);
 }
 
 // Codegen through here is done in phases
@@ -879,12 +895,9 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
 
             isel(ctx, n);
 
-            // insert compiler fence to handle any leftover in_bounds
-            while (dyn_array_length(ctx->in_bound)) {
-                TB_Node* n = dyn_array_pop(ctx->in_bound);
-                isel(ctx, n);
+            if (n->type != TB_BRANCH) {
+                fence(ctx);
             }
-            dyn_array_clear(ctx->in_bound);
         }
     }
 
