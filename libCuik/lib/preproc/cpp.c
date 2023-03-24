@@ -36,6 +36,7 @@ static void expect(TokenArray* restrict in, char ch);
 static intmax_t eval(Cuik_CPP* restrict c, TokenArray* restrict in);
 
 static void* gimme_the_shtuffs(Cuik_CPP* restrict c, size_t len);
+static void* gimme_the_shtuffs_fill(Cuik_CPP* restrict c, const char* str);
 static void trim_the_shtuffs(Cuik_CPP* restrict c, void* new_top);
 
 static bool push_scope(Cuik_CPP* restrict ctx, TokenArray* restrict in, bool initial);
@@ -633,6 +634,7 @@ Cuikpp_Status cuikpp_run(Cuik_CPP* ctx, Cuikpp_LocateFile* locate, Cuikpp_GetFil
                 MATCH(error);
                 MATCH(ifdef);
                 MATCH(endif);
+                MATCH(embed);
                 break;
 
                 case 6:
@@ -732,6 +734,20 @@ static void* gimme_the_shtuffs(Cuik_CPP* restrict c, size_t len) {
         abort();
     }
 
+    return allocation;
+}
+
+static void* gimme_the_shtuffs_fill(Cuik_CPP* restrict c, const char* str) {
+    size_t len = strlen(str) + 1;
+    unsigned char* allocation = c->the_shtuffs + c->the_shtuffs_size;
+
+    c->the_shtuffs_size += len;
+    if (c->the_shtuffs_size >= THE_SHTUFFS_SIZE) {
+        printf("Preprocessor: out of memory!\n");
+        abort();
+    }
+
+    memcpy(allocation, str, len);
     return allocation;
 }
 

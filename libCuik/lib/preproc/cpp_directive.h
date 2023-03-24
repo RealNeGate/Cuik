@@ -389,6 +389,95 @@ static DirectiveResult cpp__endif(Cuik_CPP* restrict ctx, CPPStackSlot* restrict
     return pop_scope(ctx, in) ? DIRECTIVE_SUCCESS : DIRECTIVE_ERROR;
 }
 
+static DirectiveResult cpp__embed(Cuik_CPP* restrict ctx, CPPStackSlot* restrict slot, TokenArray* restrict in) {
+    TokenStream* restrict s = &ctx->tokens;
+    SourceLoc loc = peek(in).location;
+
+    char* filename = gimme_the_shtuffs(ctx, MAX_PATH);
+    bool is_lib_include = false;
+
+    // Evaluate
+    size_t savepoint = in->current;
+    Token t = consume(in);
+    if (t.type == '<') {
+        is_lib_include = true;
+        size_t len = 0;
+
+        // Hacky but mostly works
+        for (;;) {
+            t = peek(in);
+            if (t.type == '>') break;
+
+            in->current += 1;
+            if (len + t.content.length > MAX_PATH) {
+                diag_err(&ctx->tokens, (SourceRange){ loc, loc }, "filename too long!");
+                return DIRECTIVE_ERROR;
+            }
+
+            memcpy(&filename[len], t.content.data, t.content.length);
+            len += t.content.length;
+        }
+
+        // slap that null terminator on it like a boss bitch
+        filename[len] = '\0';
+
+        t = consume(in);
+        if (t.type != '>') {
+            diag_err(&ctx->tokens, get_token_range(&t), "expected '>' for #include");
+            return DIRECTIVE_ERROR;
+        }
+    } else if (t.type == TOKEN_STRING_DOUBLE_QUOTE) {
+        size_t len = t.content.length - 2;
+        if (len > MAX_PATH) {
+            diag_err(&ctx->tokens, (SourceRange){ loc, loc }, "filename too long!");
+            return DIRECTIVE_ERROR;
+        }
+
+        memcpy(filename, t.content.data + 1, len);
+        filename[len] = '\0';
+    } else {
+        diag_err(&ctx->tokens, (SourceRange){ loc, loc }, "expected file path!");
+    }
+
+    // find canonical filesystem path
+    bool is_system;
+    char canonical[FILENAME_MAX];
+    if (!locate_file(ctx, is_lib_include, slot->directory, filename, canonical, &is_system)) {
+        SourceRange loc = get_token_range(&in->tokens[in->current]);
+        diag_err(&ctx->tokens, loc, "couldn't find file: %s", filename);
+        return DIRECTIVE_ERROR;
+    }
+
+    char* alloced_filepath = arena_alloc(&thread_arena, FILENAME_MAX + 16, 16);
+    size_t token_len = snprintf(alloced_filepath, FILENAME_MAX, "\"%s\"", canonical);
+
+    // convert #embed path => _Embed(path)
+    unsigned char* str = gimme_the_shtuffs_fill(ctx, "_Embed");
+    t = (Token){ TOKEN_KW_Embed, false, false, loc, { 7, str } };
+    dyn_array_put(s->list.tokens, t);
+
+    str = gimme_the_shtuffs_fill(ctx, "(");
+    t = (Token){ '(', false, false, loc, { 1, str } };
+    dyn_array_put(s->list.tokens, t);
+
+    Cuik_FileResult next_file;
+    if (!ctx->fs(ctx->user_data, canonical, &next_file)) {
+        fprintf(stderr, "\x1b[31merror\x1b[0m: file doesn't exist.\n");
+        return DIRECTIVE_ERROR;
+    }
+
+    t = (Token){ TOKEN_MAGIC_EMBED_STRING, false, false, loc };
+    t.content.length = next_file.length;
+    t.content.data = (const unsigned char*) next_file.data;
+    dyn_array_put(s->list.tokens, t);
+
+    str = gimme_the_shtuffs_fill(ctx, ")");
+    t = (Token){ ')', false, false, loc, { 1, str } };
+    dyn_array_put(s->list.tokens, t);
+
+    return DIRECTIVE_SUCCESS;
+}
+
 static DirectiveResult cpp__undef(Cuik_CPP* restrict ctx, CPPStackSlot* restrict slot, TokenArray* restrict in) {
     Token key = consume(in);
     if (key.type != TOKEN_IDENTIFIER) {

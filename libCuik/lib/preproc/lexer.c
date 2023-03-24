@@ -55,6 +55,7 @@ static const char keywords[][16] = {
     "_Atomic",
     "_Bool",
     "_Complex",
+    "_Embed",
     "_Generic",
     "_Imaginary",
     "_Pragma",
@@ -97,10 +98,11 @@ static TknType classify_ident(const unsigned char* restrict str, size_t len) {
         [12] = 24 /* sizeof */, [234] = 25 /* static */, [43] = 26 /* struct */, [72] = 27 /* switch */,
         [137] = 28 /* typedef */, [232] = 29 /* union */, [93] = 30 /* unsigned */, [10] = 31 /* void */,
         [155] = 32 /* volatile */, [44] = 33 /* while */, [91] = 34 /* _Alignas */, [15] = 35 /* _Alignof */,
-        [131] = 36 /* _Atomic */, [36] = 37 /* _Bool */, [118] = 38 /* _Complex */, [60] = 39 /* _Generic */,
-        [185] = 40 /* _Imaginary */, [121] = 41 /* _Pragma */, [240] = 42 /* _Noreturn */, [144] = 43 /* _Static_assert */,
-        [174] = 44 /* _Thread_local */, [130] = 45 /* _Typeof */, [150] = 46 /* _Vector */, [61] = 47 /* __asm__ */,
-        [125] = 48 /* __attribute__ */, [22] = 49 /* __cdecl */, [181] = 50 /* __stdcall */, [235] = 51 /* __declspec */,
+        [131] = 36 /* _Atomic */, [36] = 37 /* _Bool */, [118] = 38 /* _Complex */, [47] = 39 /* _Embed */,
+        [60] = 40 /* _Generic */, [185] = 41 /* _Imaginary */, [121] = 42 /* _Pragma */, [240] = 43 /* _Noreturn */,
+        [144] = 44 /* _Static_assert */, [174] = 45 /* _Thread_local */, [130] = 46 /* _Typeof */, [150] = 47 /* _Vector */,
+        [61] = 48 /* __asm__ */, [125] = 49 /* __attribute__ */, [22] = 50 /* __cdecl */, [181] = 51 /* __stdcall */,
+        [235] = 52 /* __declspec */,
     };
     size_t v = (hash_with_len(str, len) * PERFECT_HASH_SEED) >> 56;
     v = values[v];

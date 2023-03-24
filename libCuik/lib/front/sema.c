@@ -452,16 +452,22 @@ static int walk_initializer_layer(TranslationUnit* tu, Cuik_Type* parent, int ba
             // TODO(NeGate): we might wanna fold the expression to have constant expressions
             // node->expr = e;
 
-            // zero is allowed for everything, so don't do the normal checks in that case
-            if (!(e->op == EXPR_INT && e->int_num.num == 0)) {
+            if ((e->op == EXPR_STR  && cuik_canonical_type(node->type)->kind == KIND_CHAR) ||
+                (e->op == EXPR_WSTR && cuik_canonical_type(node->type)->kind == KIND_SHORT)) {
+                // { "hello" } can be used when the initializer is an array because reasons
+                e->cast_type = node->type = e->type;
+            } else if (!(e->op == EXPR_INT && e->int_num.num == 0)) {
+                // zero is allowed for everything, so don't do the normal checks in that case
+                //
                 // it throws it's own errors and we don't really need
                 // any complex recovery for it since it'll exit at the
                 // end of type checking so it's not like the error will
                 // spread well
                 implicit_conversion(tu, expr_type, node->type, e);
+                e->cast_type = node->type;
+            } else {
+                e->cast_type = node->type;
             }
-
-            e->cast_type = node->type;
         }
     } else {
         // compound literals can be used on both scalars and aggregates.
@@ -510,7 +516,14 @@ static size_t sema_infer_initializer_array_count(TranslationUnit* tu, InitNode* 
             cursor = n->start + n->count;
             if (cursor > max) max = cursor;
         } else if (n->mode == INIT_NONE) {
-            cursor++;
+            Expr* e = n->expr;
+            if (e->op == EXPR_STR || e->op == EXPR_WSTR) {
+                Cuik_Type* src = cuik_canonical_type(cuik__sema_expr(tu, e));
+                cursor += src->array_count;
+            } else {
+                cursor++;
+            }
+
             if (cursor > max) max = cursor;
         }
     }

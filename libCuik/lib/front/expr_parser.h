@@ -445,6 +445,28 @@ static Expr* parse_primary_expr(Cuik_Parser* parser, TokenStream* restrict s) {
             break;
         }
 
+        case TOKEN_KW_Embed: {
+            tokens_next(s);
+
+            SourceLoc opening_loc = tokens_get_location(s);
+            expect_char(s, '(');
+
+            String content = tokens_get(s)->content;
+            tokens_next(s);
+
+            *e = (Expr){
+                .op = EXPR_STR,
+                .str = {
+                    content.data,
+                    content.data + content.length,
+                }
+            };
+
+            expect_closing_paren(s, opening_loc);
+            tokens_prev(s);
+            break;
+        }
+
         case TOKEN_STRING_DOUBLE_QUOTE:
         case TOKEN_STRING_WIDE_DOUBLE_QUOTE: {
             bool is_wide = (tokens_get(s)->type == TOKEN_STRING_WIDE_DOUBLE_QUOTE);
