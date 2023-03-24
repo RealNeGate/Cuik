@@ -31,7 +31,7 @@ if args.inspector or args.driver:
 ldflags = ""
 cflags = "-g -msse4 -Wall -Werror -Wno-unused -I common -DCUIK_ALLOW_THREADS"
 
-if mimalloc:       cflags += " -DCUIK_USE_MIMALLOC -I mimalloc/include"
+if mimalloc:       cflags += " -DTB_USE_MIMALLOC -DCUIK_USE_MIMALLOC -I mimalloc/include"
 if args.libcuik:   cflags += " -I libCuik/include"
 if args.tb:        cflags += " -DCUIK_USE_TB -I tb/include"
 if args.asan:      cflags += " -fsanitize=address"
