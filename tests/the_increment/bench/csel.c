@@ -62,13 +62,12 @@ int without_restrict(int const* const x, int* y) {
 
     return 1;
 }
-#endif
 
 int main() {
     printf("Hello, World!\n");
 }
 
-/*uint32_t test(const void* key, size_t len) {
+uint32_t test(const void* key, size_t len) {
     uint32_t h = 0;
 
     // main body, work on 32-bit blocks at a time
@@ -84,8 +83,12 @@ int main() {
         h = (((h^k) << 13) | ((h^k) >> 19))*5 + 0xe6546b64;
     }
 
-    return h;
-}*/
+    // finalization mix, including key length
+    h = ((h^len) ^ ((h^len) >> 16))*0x85ebca6b;
+    h = (h ^ (h >> 13))*0xc2b2ae35;
+    return (h ^ (h >> 16));
+}
+#endif
 
 #if 1
 // murmur3 32-bit without UB unaligned accesses

@@ -418,10 +418,10 @@ static DefIndex* liveness(Ctx* restrict ctx, TB_Function* f, TB_PostorderWalk* w
         // initial label
         assert(inst->type == INST_LABEL);
         seq_bb[0].first = inst;
-        seq_bb[0].start = 0;
+        seq_bb[0].start = 2;
         inst = inst->next;
 
-        int bb = 0, timeline = 0;
+        int bb = 0, timeline = 2;
         for (; inst; inst = inst->next) {
             if (inst->type == INST_LABEL) {
                 seq_bb[bb].end = timeline;
@@ -436,6 +436,7 @@ static DefIndex* liveness(Ctx* restrict ctx, TB_Function* f, TB_PostorderWalk* w
             Set* kill = &seq_bb[bb].kill;
 
             inst->time = timeline;
+            timeline += 2;
 
             // convert initial move into copy
             if (inst->type == X86_INST_MOVE) {
@@ -462,8 +463,6 @@ static DefIndex* liveness(Ctx* restrict ctx, TB_Function* f, TB_PostorderWalk* w
             if (inst->regs[0] >= 0) {
                 set_put(kill, inst->regs[0]);
             }
-
-            timeline += 2;
         }
 
         seq_bb[bb].end = timeline;
@@ -789,7 +788,7 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
     ctx->free_regs[1] = set_create(16);
 
     set_put(&ctx->free_regs[0], RBP), set_put(&ctx->free_regs[0], RSP);
-    FOREACH_N(i, 8, 16) set_put(&ctx->free_regs[0], i);
+    // FOREACH_N(i, 8, 16) set_put(&ctx->free_regs[0], i);
 
     // BB scheduling:
     //   we run through BBs in a reverse postorder walk, currently
@@ -878,7 +877,7 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
         TB_FOR_NODE(n, f, bb) if (n->type != TB_NULL) {
             // build up tile
             NodeMeta* m = get_meta(ctx, n);
-            if (m->user_count <= 1 && tb_is_expr_like(n)) {
+            if (m->user_count <= 1 && tb_is_expr_like(n) && n->type != TB_LOCAL) {
                 if (m->user_count == 1) dyn_array_put(ctx->in_bound, n);
                 continue;
             }

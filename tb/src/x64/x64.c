@@ -422,8 +422,8 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             } else {
                 // copy from parameter
                 dst = DEF_HINTED(n, REG_CLASS_GPR, WIN64_GPR_PARAMETERS[id]);
-                ctx->defs[dst].start = -(id + 1);
 
+                ctx->defs[dst].start = -100 + id;
                 SUBMIT(inst_copy(n->dt, dst, WIN64_GPR_PARAMETERS[id]));
             }
             break;
