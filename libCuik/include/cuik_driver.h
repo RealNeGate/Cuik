@@ -49,7 +49,6 @@ struct Cuik_DriverArgs {
     bool preprocess      : 1;
     bool think           : 1;
     bool based           : 1;
-    bool silent_progress : 1;
 };
 
 typedef struct Cuik_Arg Cuik_Arg;

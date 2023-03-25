@@ -121,6 +121,7 @@ typedef struct {
     Cuik_IThreadpool* thread_pool;
     Cuik_DriverArgs* args;
     Cuik_CPP** preprocessors;
+    mtx_t lock;
 } SharedDriverState;
 
 typedef struct {
@@ -141,6 +142,20 @@ static void dump_errors(TokenStream* tokens) {
     if (r) fprintf(stderr, "failed with %d errors...\n", r);
 }
 
+static void complete_job(CompilerJob* restrict job) {
+    futex_dec(job->remaining);
+
+    Cuik_DriverArgs* restrict args = job->stuff->args;
+    if (args->verbose) {
+        size_t tu_count = dyn_array_length(args->sources);
+        size_t done = tu_count - *job->remaining;
+
+        mtx_lock(&job->stuff->lock);
+        fprintf(stderr, "[%zu/%zu] CC %s\n", done, tu_count, args->sources[job->input_i]);
+        mtx_unlock(&job->stuff->lock);
+    }
+}
+
 static void compile_file(void* arg);
 static void preproc_file(void* arg) {
     CompilerJob* restrict job = arg;
@@ -155,7 +170,7 @@ static void preproc_file(void* arg) {
 
     // dispose the preprocessor crap since we didn't need it
     if (args->preprocess || args->test_preproc) {
-        futex_dec(job->remaining);
+        complete_job(job);
         return;
     }
 
@@ -178,8 +193,8 @@ static void compile_file(void* arg) {
         result = cuikparse_run(args->version, tokens, args->target, false);
 
         if (result.error_count > 0) {
-            futex_dec(job->remaining);
             *job->errors += 1;
+            complete_job(job);
             return;
         }
     }
@@ -196,14 +211,14 @@ static void compile_file(void* arg) {
 
     TranslationUnit* tu = result.tu;
     if (cuiksema_run(tu, NULL) > 0) {
-        futex_dec(job->remaining);
         *job->errors += 1;
+        complete_job(job);
         return;
     }
 
     cuik_set_translation_unit_user_data(tu, job->cpp);
     cuik_add_to_compilation_unit(cu, result.tu);
-    futex_dec(job->remaining);
+    complete_job(job);
 }
 
 typedef struct {
@@ -386,8 +401,6 @@ static void codegen(Cuik_IThreadpool* restrict thread_pool, Cuik_DriverArgs* res
             tb_module_compile_function(mod, f, TB_ISEL_FAST);
         }
     }
-
-    if (args->verbose) printf("  IRGen: %zu functions compiled\n", tb_module_get_function_count(mod));
 }
 
 static Cuik_Linker gimme_linker(Cuik_DriverArgs* restrict args, bool subsystem_windows) {
@@ -427,8 +440,8 @@ static bool export_output(Cuik_DriverArgs* restrict args, TB_Module* mod, const 
     );
 
     if (args->based && (args->flavor == TB_FLAVOR_SHARED || args->flavor == TB_FLAVOR_EXECUTABLE)) {
-        if (!args->silent_progress) {
-            fprintf(stderr, "LINK %s\n", output_name);
+        if (args->verbose) {
+            fprintf(stderr, "[1/1] LINK %s\n", output_name);
         }
 
         CUIK_TIMED_BLOCK("Export linked") {
@@ -549,8 +562,8 @@ static bool export_output(Cuik_DriverArgs* restrict args, TB_Module* mod, const 
         }
 
         // This uses the system linker which isn't fun
-        if (!args->silent_progress) {
-            fprintf(stderr, "LINK %s\n", output_path);
+        if (args->verbose) {
+            fprintf(stderr, "[1/1] LINK %s\n", output_path);
         }
 
         CUIK_TIMED_BLOCK("linker") {
@@ -570,11 +583,14 @@ static bool export_output(Cuik_DriverArgs* restrict args, TB_Module* mod, const 
 CUIK_API CompilationUnit* cuik_driver_compile(Cuik_IThreadpool* restrict thread_pool, Cuik_DriverArgs* restrict args, bool destroy_cu_after_ir, bool destroy_ir) {
     _Atomic int parse_errors = 0;
 
-    CompilationUnit* cu = cuik_create_compilation_unit();
-    SharedDriverState stuff = { cu, thread_pool, args };
     size_t tu_count = dyn_array_length(args->sources);
+    CompilationUnit* cu = cuik_create_compilation_unit();
+
+    SharedDriverState stuff = { cu, thread_pool, args };
+    mtx_init(&stuff.lock, mtx_plain);
+
     CUIK_TIMED_BLOCK("Frontend") {
-        Futex remaining = dyn_array_length(args->sources);
+        Futex remaining = tu_count;
         stuff.preprocessors = cuik_malloc(dyn_array_length(args->sources) * sizeof(Cuik_CPP*));
 
         dyn_array_for(i, args->sources) {
@@ -594,13 +610,11 @@ CUIK_API CompilationUnit* cuik_driver_compile(Cuik_IThreadpool* restrict thread_
             }
         }
 
-        if (thread_pool) futex_wait_eq(&remaining, 0);
+        if (thread_pool) {
+            futex_wait_eq(&remaining, 0);
+        }
 
         for (size_t i = 0; i < tu_count; i++) {
-            if (!args->silent_progress) {
-                fprintf(stderr, "[%zu/%zu] CC %s\n", i+1, tu_count, args->sources[i]);
-            }
-
             if (stuff.preprocessors[i]) {
                 TokenStream* tokens = cuikpp_get_token_stream(stuff.preprocessors[i]);
                 if (tokens) {
@@ -711,16 +725,17 @@ CUIK_API CompilationUnit* cuik_driver_compile(Cuik_IThreadpool* restrict thread_
     // Running executable
     ////////////////////////////////
     if (args->run) {
+        printf("[1/1] RUN %s\n", output_path);
+
         #ifdef _WIN32
         for (char* s = output_path; *s; s++) {
             if (*s == '/') *s = '\\';
         }
         #endif
 
-        printf("\n\nRunning: %s...\n", output_path);
         int exit_code = system(output_path);
 
-        printf("Exit code: %d\n", exit_code);
+        printf("\n\nExit code: %d\n", exit_code);
         if (exit_code) goto error;
     }
 

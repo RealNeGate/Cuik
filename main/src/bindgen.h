@@ -121,7 +121,6 @@ int run_bindgen(int argc, const char** argv) {
 
     // we just want to type check
     args.types = true;
-    args.silent_progress = true;
 
     CompilationUnit* cu = cuik_driver_compile(NULL, &args, true, true);
 

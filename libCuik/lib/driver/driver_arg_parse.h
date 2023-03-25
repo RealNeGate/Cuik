@@ -232,7 +232,7 @@ CUIK_API bool cuik_args_to_driver(Cuik_DriverArgs* comp_args, Cuik_Arguments* re
         SYSTEM_INFO sysinfo;
         GetSystemInfo(&sysinfo);
 
-        int n = (sysinfo.dwNumberOfProcessors / 2) - 1;
+        int n = sysinfo.dwNumberOfProcessors - 1;
         comp_args->threads = (n < 1 ? 1 : n);
         #else
         assert(0 && "TODO(NeGate): implement core count detection on this platform");
