@@ -53,6 +53,7 @@ TB_API const char* tb_node_get_name(TB_Node* n) {
         case TB_LOCAL: return "local";
 
         case TB_VA_START: return "vastart";
+        case TB_DEBUGBREAK: return "dbgbrk";
 
         case TB_POISON: return "poison";
         case TB_INTEGER_CONST: return "int";

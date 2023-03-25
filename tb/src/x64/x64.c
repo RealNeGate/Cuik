@@ -431,7 +431,9 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
 
         case TB_LOCAL: {
             ptrdiff_t search = nl_map_get(ctx->stack_slots, n);
-            if (search >= 0) {
+            if (ctx->in_fence) {
+                // we don't need to resolve it if no one's using this
+            } else if (search >= 0) {
                 // get address
                 dst = DEF(n, REG_CLASS_GPR);
                 SUBMIT(inst_m(LEA, n->dt, dst, RBP, GPR_NONE, SCALE_X1, ctx->stack_slots[search].v));
@@ -461,10 +463,9 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             if (!fits_into_int32(x)) {
                 // movabs reg, imm64
                 SUBMIT(inst_i64(MOVABS, n->dt, dst, x));
-                break;
+            } else {
+                SUBMIT(inst_i(MOV, n->dt, dst, x));
             }
-
-            SUBMIT(inst_i(MOV, n->dt, dst, x));
             break;
         }
 
@@ -621,6 +622,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
         case TB_STORE: {
             int src = ISEL(n->inputs[1]);
 
+            Inst inst;
             if (n->inputs[0]->type == TB_LOCAL) {
                 ptrdiff_t search = nl_map_get(ctx->stack_slots, n->inputs[0]);
                 assert(search >= 0);
@@ -647,6 +649,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             TB_NodeInt* i = TB_NODE_GET_EXTRA(src);
             if (i->num_words == 1 && fits_into_int32(i->words[0])) {
                 #define MASK_UPTO(pos) (~UINT64_C(0) >> (64 - pos))
+                try_tile(ctx, src);
 
                 uint64_t src = i->words[0];
                 uint64_t sign_bit = (src >> (bits_in_type - 1)) & 1;
@@ -778,7 +781,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
 
                         caller_saved_gprs &= ~(1u << target_gpr);
                     } else {
-                        SUBMIT(inst_mr(MOV, n->dt, RSP, GPR_NONE, SCALE_X1, 8 + (i * 8), src));
+                        SUBMIT(inst_mr(MOV, n->dt, RSP, GPR_NONE, SCALE_X1, (i - 1) * 8, USE(src)));
                     }
                 }
             }
@@ -818,6 +821,11 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
         break;
 
         // x86 intrinsics
+        case TB_DEBUGBREAK: {
+            SUBMIT(inst_nullary(INT3));
+            break;
+        }
+
         /*case TB_X86INTRIN_RDTSC: {
             SUBMIT(inst_nullary(RDTSC));
             break;
@@ -829,6 +837,47 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
 
     GET_VAL(n) = dst;
     return dst;
+}
+
+static void abi_prepare(Ctx* restrict ctx, TB_Function* f) {
+    bool has_param_slots = false;
+    TB_FOR_NODE(n, f, 0) if (n->type == TB_STORE) {
+        // handle parameter storage, the first few parameters have reserved space for them
+        // in Win64.
+        if (n->inputs[0]->type == TB_LOCAL && n->inputs[1]->type == TB_PARAM && get_meta(ctx, n->inputs[1])) {
+            TB_NodeParam* p = TB_NODE_GET_EXTRA(n->inputs[1]);
+
+            int pos = 16 + (p->id * 8);
+            nl_map_put(ctx->stack_slots, n->inputs[0], pos);
+
+            has_param_slots = true;
+        }
+    }
+
+    const TB_FunctionPrototype* restrict proto = f->prototype;
+    if (has_param_slots) {
+        ctx->stack_usage += 16 + (proto->param_count * 8);
+    }
+
+    if (proto->has_varargs) {
+        bool is_sysv = (ctx->target_abi == TB_ABI_SYSTEMV);
+        const GPR* parameter_gprs = is_sysv ? SYSV_GPR_PARAMETERS : WIN64_GPR_PARAMETERS;
+
+        // spill the rest of the parameters (assumes they're all in the GPRs)
+        size_t gpr_count = is_sysv ? 6 : 4;
+        size_t extra_param_count = proto->param_count > gpr_count ? 0 : gpr_count - proto->param_count;
+
+        FOREACH_N(i, 0, extra_param_count) {
+            size_t param_num = proto->param_count + i;
+
+            int dst_pos = 16 + (param_num * 8);
+            GPR src = parameter_gprs[param_num];
+
+            SUBMIT(inst_mr(MOV, TB_TYPE_I64, RBP, GPR_NONE, SCALE_X1, dst_pos, src));
+        }
+
+        ctx->stack_usage += (extra_param_count * 8);
+    }
 }
 
 static void copy_value(Ctx* restrict ctx, TB_Node* phi, int dst, TB_Node* src, TB_DataType dt) {
@@ -1041,7 +1090,7 @@ static void resolve_stack_usage(Ctx* restrict ctx, size_t caller_usage) {
     size_t usage = ctx->stack_usage + (caller_usage * 8);
 
     // Align stack usage to 16bytes and add 8 bytes for the return address
-    ctx->stack_usage = align_up(usage + 8, 16) + 8;
+    ctx->stack_usage = align_up(usage, 16) + 8;
 }
 
 static void patch_local_labels(Ctx* restrict ctx) {

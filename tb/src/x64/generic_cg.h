@@ -120,6 +120,7 @@ typedef struct Ctx {
     size_t meta_count, meta_exp;
     NodeMeta* meta;
 
+    bool in_fence;
     TB_Label fallthrough;
 
     // Stack
@@ -248,6 +249,7 @@ static bool fits_into_int32(uint64_t x) {
 }
 
 static int classify_reg_class(TB_DataType dt);
+static void abi_prepare(Ctx* restrict ctx, TB_Function* f);
 static int isel(Ctx* restrict ctx, TB_Node* n);
 static void emit_code(Ctx* restrict ctx);
 static void patch_local_labels(Ctx* restrict ctx);
@@ -760,11 +762,13 @@ static void linear_scan(Ctx* restrict ctx, TB_Function* f, DefIndex* sorted, siz
 
 static void fence(Ctx* restrict ctx) {
     // insert compiler fence to handle any leftover in_bounds
+    ctx->in_fence = true;
     while (dyn_array_length(ctx->in_bound)) {
         TB_Node* n = dyn_array_pop(ctx->in_bound);
         isel(ctx, n);
     }
     dyn_array_clear(ctx->in_bound);
+    ctx->in_fence = false;
 }
 
 // Codegen through here is done in phases
@@ -866,13 +870,18 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
     //   fixed and which need allocation. For now regalloc is handled
     //   immediately but in theory it could be delayed until all selection
     //   is done.
+    SUBMIT(inst_label(0));
+    abi_prepare(ctx, f);
+
     ctx->emit.emit_asm = true;
     CUIK_TIMED_BLOCK("isel") FOREACH_REVERSE_N(i, 0, walk.count) {
         TB_Label bb = walk.traversal[i];
 
         // mark fallthrough
         ctx->fallthrough = (i > 0 ? walk.traversal[i - 1] : -1);
-        SUBMIT(inst_label(bb));
+        if (bb) {
+            SUBMIT(inst_label(bb));
+        }
 
         TB_FOR_NODE(n, f, bb) if (n->type != TB_NULL) {
             // build up tile
@@ -892,7 +901,9 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
                 phi_edge(f, ctx, bb, br->default_label);
             }
 
-            isel(ctx, n);
+            if (n->type != TB_LOCAL || nl_map_get(ctx->stack_slots, n) < 0) {
+                isel(ctx, n);
+            }
 
             if (n->type != TB_BRANCH) {
                 fence(ctx);
@@ -932,6 +943,7 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
     };
 
     arena_clear(&tb__arena);
+    nl_map_free(ctx->stack_slots);
     // __debugbreak();
     return func_out;
 }
