@@ -1243,6 +1243,7 @@ extern "C" {
     TB_API void tb_inst_goto(TB_Function* f, TB_Label id);
     TB_API void tb_inst_if(TB_Function* f, TB_Node* cond, TB_Label if_true, TB_Label if_false);
     TB_API void tb_inst_branch(TB_Function* f, TB_DataType dt, TB_Node* key, TB_Label default_label, size_t entry_count, const TB_SwitchEntry* entries);
+
     TB_API void tb_inst_ret(TB_Function* f, TB_Node* value);
 
     ////////////////////////////////
@@ -1303,6 +1304,7 @@ extern "C" {
     TB_API TB_Node* tb_node_get_first_insertion_point(TB_Function* f, TB_Label bb);
     TB_API int tb_function_get_label_count(TB_Function* f);
 
+    TB_API bool tb_node_is_constant_non_zero(TB_Node* n);
     TB_API bool tb_node_is_constant_zero(TB_Node* n);
 
     ////////////////////////////////

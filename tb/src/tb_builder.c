@@ -832,15 +832,19 @@ TB_API void tb_inst_goto(TB_Function* f, TB_Label id) {
 }
 
 TB_API void tb_inst_if(TB_Function* f, TB_Node* cond, TB_Label if_true, TB_Label if_false) {
-    assert(cond);
+    if (cond->type == TB_INTEGER_CONST && TB_NODE_GET_EXTRA_T(cond, TB_NodeInt)->num_words == 1) {
+        // peephole
+        TB_NodeInt* i = TB_NODE_GET_EXTRA(cond);
+        tb_inst_goto(f, i->words[0] ? if_true : if_false);
+    } else {
+        TB_Node* n = tb_alloc_at_end(f, TB_BRANCH, TB_TYPE_VOID, 1, sizeof(TB_NodeBranch) + sizeof(TB_SwitchEntry));
+        n->inputs[0] = cond;
 
-    TB_Node* n = tb_alloc_at_end(f, TB_BRANCH, TB_TYPE_VOID, 1, sizeof(TB_NodeBranch) + sizeof(TB_SwitchEntry));
-    n->inputs[0] = cond;
-
-    TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
-    br->count = 1;
-    br->default_label = if_true;
-    br->targets[0] = (TB_SwitchEntry){ .value = if_false };
+        TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
+        br->count = 1;
+        br->default_label = if_true;
+        br->targets[0] = (TB_SwitchEntry){ .value = if_false };
+    }
 }
 
 static int switch_entry_cmp(const void* a, const void* b) {

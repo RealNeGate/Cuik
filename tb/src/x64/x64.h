@@ -105,6 +105,8 @@ typedef enum InstType {
     JS, JNS, JP, JNP, JL, JGE, JLE, JG,
     // Unary
     NOT, NEG, DIV, IDIV, JMP, CALL,
+    SETO, SETNO, SETB, SETNB, SETE, SETNE, SETBE, SETA,
+    SETS, SETNS, SETP, SETNP, SETL, SETGE, SETLE, SETG,
     // Integer data processing
     ADD, OR, AND, SUB, XOR, CMP, MOV,
     // Cooler integer ops
@@ -191,6 +193,23 @@ static const InstDesc inst_table[] = {
     UNARY_OP(JGE,          0x0F, 0x8D),
     UNARY_OP(JLE,          0x0F, 0x8E),
     UNARY_OP(JG,           0x0F, 0x8F),
+    // SETcc
+    UNARY_OP(SETO,         0x0F, 0x90),
+    UNARY_OP(SETNO,        0x0F, 0x91),
+    UNARY_OP(SETB,         0x0F, 0x92),
+    UNARY_OP(SETNB,        0x0F, 0x93),
+    UNARY_OP(SETE,         0x0F, 0x94),
+    UNARY_OP(SETNE,        0x0F, 0x95),
+    UNARY_OP(SETBE,        0x0F, 0x96),
+    UNARY_OP(SETA,         0x0F, 0x97),
+    UNARY_OP(SETS,         0x0F, 0x98),
+    UNARY_OP(SETNS,        0x0F, 0x99),
+    UNARY_OP(SETP,         0x0F, 0x9A),
+    UNARY_OP(SETNP,        0x0F, 0x9B),
+    UNARY_OP(SETL,         0x0F, 0x9C),
+    UNARY_OP(SETGE,        0x0F, 0x9D),
+    UNARY_OP(SETLE,        0x0F, 0x9E),
+    UNARY_OP(SETG,         0x0F, 0x9F),
     // binary ops but they have an implicit CL on the righthand side
     BINARY_OP_CL(SHL,      0xD2, 0xC0, 0x04),
     BINARY_OP_CL(SHR,      0xD2, 0xC0, 0x05),

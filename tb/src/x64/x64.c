@@ -96,7 +96,16 @@ static Inst inst_jcc(int target, Cond cc) {
         .type = JO + cc,
         .layout = X86_OP_L,
         .regs   = { -1 },
-        .imm = { target, cc }
+        .imm = { target }
+    };
+}
+
+static Inst inst_setcc(Cond cc, int src) {
+    return (Inst){
+        .type = SETO + cc,
+        .layout = X86_OP_R,
+        .regs   = { -1, src },
+        .imm = { 0 }
     };
 }
 
@@ -366,7 +375,7 @@ static Inst isel_load(Ctx* restrict ctx, TB_Node* n, int dst) {
 }
 
 static Cond isel_cmp(Ctx* restrict ctx, TB_Node* n) {
-    if (try_tile(ctx, n) && n->type >= TB_CMP_EQ && n->type <= TB_CMP_FLE) {
+    if (n->type >= TB_CMP_EQ && n->type <= TB_CMP_FLE) {
         TB_DataType cmp_dt = TB_NODE_GET_EXTRA_T(n, TB_NodeCompare)->cmp_dt;
         assert(cmp_dt.width == 0 && "TODO: Implement vector compares");
         assert(!TB_IS_FLOAT_TYPE(cmp_dt) && "TODO");
@@ -565,6 +574,23 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
                 SUBMIT(inst_rr(op, n->dt, fake_dst, lhs, RCX));
                 SUBMIT(inst_copy(n->dt, dst, USE(fake_dst)));
             }
+            break;
+        }
+
+        case TB_CMP_EQ:
+        case TB_CMP_NE:
+        case TB_CMP_SLT:
+        case TB_CMP_SLE:
+        case TB_CMP_ULT:
+        case TB_CMP_ULE:
+        case TB_CMP_FLT:
+        case TB_CMP_FLE: {
+            dst = DEF(n, REG_CLASS_GPR);
+            SUBMIT(inst_i(MOV, n->dt, dst, 0));
+
+            // use SETcc to convert into integer
+            Cond cc = isel_cmp(ctx, n);
+            SUBMIT(inst_setcc(cc, USE(dst)));
             break;
         }
 

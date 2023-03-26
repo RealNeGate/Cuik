@@ -67,7 +67,13 @@ static void inst1(TB_CGEmitter* restrict e, InstType type, const Val* r, X86_Dat
     if (r->type == VAL_GPR) {
         EMIT1(e, rex(true, 0x00, r->reg, 0x00));
         EMIT1(e, op);
-        EMIT1(e, mod_rx_rm(MOD_DIRECT, rx, r->reg));
+        if (type >= SETO && type <= SETG) {
+            // SETcc isn't dealing in weird immediates, it just neglects the rx
+            EMIT1(e, rx);
+            EMIT1(e, mod_rx_rm(MOD_DIRECT, 0, r->reg));
+        } else {
+            EMIT1(e, mod_rx_rm(MOD_DIRECT, rx, r->reg));
+        }
     } else if (r->type == VAL_MEM) {
         GPR base = r->reg, index = r->index;
         Scale scale = r->scale;

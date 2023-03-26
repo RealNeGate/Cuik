@@ -124,7 +124,11 @@ static TB_Node* cast_reg(TB_Function* func, TB_Node* reg, const Cuik_Type* src, 
             comparand = tb_inst_uint(func, dt, 0);
         }
 
-        reg = tb_inst_cmp_ne(func, reg, comparand);
+        if (dt.type == TB_INT && tb_node_is_constant_zero(reg)) {
+            reg = tb_inst_uint(func, TB_TYPE_BOOL, 0);
+        } else {
+            reg = tb_inst_cmp_ne(func, reg, comparand);
+        }
     } else if (src->kind == KIND_BOOL && cuik_type_is_integer(dst)) {
         reg = tb_inst_zxt(func, reg, ctype_to_tbtype(dst));
     } else if (cuik_type_is_integer(src) && dst->kind == KIND_FUNC) {
@@ -680,12 +684,19 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
             }
         }
         case EXPR_LOGICAL_NOT: {
-            TB_Node* reg = irgen_as_rvalue(tu, func, e->unary_op.src);
-            TB_DataType dt = reg->dt;
+            // !!x => x
+            if (e->unary_op.src->op == EXPR_LOGICAL_NOT) {
+                TB_Node* src = irgen_as_rvalue(tu, func, e->unary_op.src->unary_op.src);
+                return (IRVal){
+                    .value_type = RVALUE,
+                    .reg = tb_inst_cmp_ne(func, src, tb_inst_uint(func, src->dt, 0)),
+                };
+            }
 
+            TB_Node* src = irgen_as_rvalue(tu, func, e->unary_op.src);
             return (IRVal){
                 .value_type = RVALUE,
-                .reg = tb_inst_cmp_eq(func, reg, tb_inst_uint(func, dt, 0)),
+                .reg = tb_inst_cmp_eq(func, src, tb_inst_uint(func, src->dt, 0)),
             };
         }
         case EXPR_NOT: {
@@ -1353,6 +1364,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
                 TB_Label if_false = tb_basic_block_create(func);
                 TB_Label exit = tb_basic_block_create(func);
 
+                // Cast to bool
                 tb_inst_if(func, cond, if_true, if_false);
 
                 TB_Node* true_val;
