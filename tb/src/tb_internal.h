@@ -636,6 +636,7 @@ void tb_out8b(TB_Emitter* o, uint64_t i);
 void tb_patch1b(TB_Emitter* o, uint32_t pos, uint8_t i);
 void tb_patch2b(TB_Emitter* o, uint32_t pos, uint16_t i);
 void tb_patch4b(TB_Emitter* o, uint32_t pos, uint32_t i);
+void tb_patch8b(TB_Emitter* o, uint32_t pos, uint64_t i);
 
 uint8_t  tb_get1b(TB_Emitter* o, uint32_t pos);
 uint16_t tb_get2b(TB_Emitter* o, uint32_t pos);

@@ -666,6 +666,10 @@ void tb_patch4b(TB_Emitter* o, uint32_t pos, uint32_t i) {
     *((uint32_t*)&o->data[pos]) = i;
 }
 
+void tb_patch8b(TB_Emitter* o, uint32_t pos, uint64_t i) {
+    *((uint64_t*)&o->data[pos]) = i;
+}
+
 uint8_t tb_get1b(TB_Emitter* o, uint32_t pos) {
     return *((uint8_t*)&o->data[pos]);
 }
