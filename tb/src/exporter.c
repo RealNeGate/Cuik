@@ -63,6 +63,17 @@ static int compare_symbols(const void* a, const void* b) {
     return sym_a->ordinal - sym_b->ordinal;
 }
 
+static int compare_functions(const void* a, const void* b) {
+    const TB_Function* sym_a = *(const TB_Function**) a;
+    const TB_Function* sym_b = *(const TB_Function**) b;
+
+    // comdat functions are pushed to the end
+    int diff = sym_a->comdat.type - sym_b->comdat.type;
+    if (diff) return diff;
+
+    return sym_a->super.ordinal - sym_b->super.ordinal;
+}
+
 TB_API void tb_module_layout_sections(TB_Module* m) {
     // text section is special because it holds code
     TB_Symbol** array_form = NULL;
@@ -75,26 +86,17 @@ TB_API void tb_module_layout_sections(TB_Module* m) {
 
             size_t i = 0;
             CUIK_TIMED_BLOCK("convert to array") {
-                if (tag == TB_SYMBOL_FUNCTION) {
-                    // comdat functions are pushed to the end
-                    for (TB_Symbol* s = m->first_symbol_of_tag[tag]; s != NULL; s = s->next) {
-                        if (((TB_Function*) s)->comdat.type != TB_COMDAT_NONE) {
-                            s->ordinal += 0x10000000;
-                        }
-
-                        array_form[i++] = s;
-                    }
-                } else {
-                    for (TB_Symbol* s = m->first_symbol_of_tag[tag]; s != NULL; s = s->next) {
-                        array_form[i++] = s;
-                    }
+                for (TB_Symbol* s = m->first_symbol_of_tag[tag]; s != NULL; s = s->next) {
+                    array_form[i++] = s;
                 }
                 assert(i == m->symbol_count[tag]);
             }
 
-            CUIK_TIMED_BLOCK("sort by ordinal") {
-                qsort(array_form, i, sizeof(TB_Symbol*), compare_symbols);
-            }
+            // functions have special rules on ordering but other than that, ordinals go brr
+            CUIK_TIMED_BLOCK("sort by ordinal") qsort(
+                array_form, i, sizeof(TB_Symbol*),
+                tag == TB_SYMBOL_FUNCTION ? compare_functions : compare_symbols
+            );
 
             CUIK_TIMED_BLOCK("convert back to list") {
                 m->first_symbol_of_tag[tag] = array_form[0];
