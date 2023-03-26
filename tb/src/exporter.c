@@ -70,12 +70,24 @@ TB_API void tb_module_layout_sections(TB_Module* m) {
         if (m->symbol_count[tag] < 1) continue;
 
         CUIK_TIMED_BLOCK("sort") {
-            array_form = tb_platform_heap_realloc(array_form, m->symbol_count[tag] * sizeof(TB_Symbol*));
+            size_t count = m->symbol_count[tag];
+            array_form = tb_platform_heap_realloc(array_form, count * sizeof(TB_Symbol*));
 
             size_t i = 0;
             CUIK_TIMED_BLOCK("convert to array") {
-                for (TB_Symbol* s = m->first_symbol_of_tag[tag]; s != NULL; s = s->next) {
-                    array_form[i++] = s;
+                if (tag == TB_SYMBOL_FUNCTION) {
+                    // comdat functions are pushed to the end
+                    for (TB_Symbol* s = m->first_symbol_of_tag[tag]; s != NULL; s = s->next) {
+                        if (((TB_Function*) s)->comdat.type != TB_COMDAT_NONE) {
+                            s->ordinal += 0x10000000;
+                        }
+
+                        array_form[i++] = s;
+                    }
+                } else {
+                    for (TB_Symbol* s = m->first_symbol_of_tag[tag]; s != NULL; s = s->next) {
+                        array_form[i++] = s;
+                    }
                 }
                 assert(i == m->symbol_count[tag]);
             }
@@ -98,16 +110,26 @@ TB_API void tb_module_layout_sections(TB_Module* m) {
     tb_platform_heap_free(array_form);
 
     CUIK_TIMED_BLOCK("layout code") {
-        size_t offset = 0;
+        size_t offset = 0, comdat = 0, comdat_count = 0, comdat_relocs = 0;
         TB_FOR_FUNCTIONS(f, m) {
             TB_FunctionOutput* out_f = f->output;
             if (out_f != NULL) {
                 out_f->code_pos = offset;
                 offset += out_f->code_size;
+
+                if (f->comdat.type != TB_COMDAT_NONE) {
+                    comdat += out_f->code_size;
+                    comdat_relocs += f->patch_count;
+                    comdat_count++;
+                }
             }
         }
 
+        m->comdat_function_count = comdat_count;
+
         m->text.total_size = offset;
+        m->text.total_comdat = comdat;
+        m->text.total_comdat_relocs = comdat_relocs;
         m->text.laid_out = true;
     }
 

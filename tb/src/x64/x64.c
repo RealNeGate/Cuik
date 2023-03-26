@@ -781,7 +781,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
 
                         caller_saved_gprs &= ~(1u << target_gpr);
                     } else {
-                        SUBMIT(inst_mr(MOV, n->dt, RSP, GPR_NONE, SCALE_X1, (i - 1) * 8, USE(src)));
+                        SUBMIT(inst_mr(MOV, param->dt, RSP, GPR_NONE, SCALE_X1, (i - 1) * 8, USE(src)));
                     }
                 }
             }
@@ -1265,26 +1265,29 @@ static size_t emit_epilogue(uint8_t* out, uint64_t saved, uint64_t stack_usage) 
 
 static size_t emit_call_patches(TB_Module* restrict m) {
     size_t r = 0;
-    FOREACH_N(i, 0, m->max_threads) {
-        TB_SymbolPatch* patches = m->thread_info[i].symbol_patches;
-
-        dyn_array_for(j, patches) {
-            TB_SymbolPatch* patch = &patches[j];
-
+    TB_FOR_FUNCTIONS(f, m) {
+        for (TB_SymbolPatch* patch = f->last_patch; patch; patch = patch->prev) {
             if (patch->target->tag == TB_SYMBOL_FUNCTION) {
-                TB_FunctionOutput* out_f = patch->source->output;
-                assert(out_f && "Patch cannot be applied to function with no compiled output");
+                // you can't do relocations across COMDAT sections
+                if (&patch->source->super == patch->target || (!tb_symbol_is_comdat(&patch->source->super) && !tb_symbol_is_comdat(patch->target))) {
+                    TB_FunctionOutput* out_f = patch->source->output;
+                    assert(out_f && "Patch cannot be applied to function with no compiled output");
 
-                // x64 thinks of relative addresses as being relative
-                // to the end of the instruction or in this case just
-                // 4 bytes ahead hence the +4.
-                size_t actual_pos = out_f->code_pos + out_f->prologue_length + patch->pos + 4;
+                    // x64 thinks of relative addresses as being relative
+                    // to the end of the instruction or in this case just
+                    // 4 bytes ahead hence the +4.
+                    size_t actual_pos = out_f->code_pos + out_f->prologue_length + patch->pos + 4;
 
-                uint32_t p = ((TB_Function*) patch->target)->output->code_pos - actual_pos;
-                memcpy(&out_f->code[out_f->prologue_length + patch->pos], &p, sizeof(uint32_t));
-                r += 1;
+                    uint32_t p = ((TB_Function*) patch->target)->output->code_pos - actual_pos;
+                    memcpy(&out_f->code[out_f->prologue_length + patch->pos], &p, sizeof(uint32_t));
+
+                    r += 1;
+                    patch->internal = true;
+                }
             }
         }
+
+        m->text.reloc_count += f->patch_count;
     }
 
     return r;

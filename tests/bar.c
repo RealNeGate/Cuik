@@ -15,6 +15,6 @@ int main(int argc, char** argv) {
     assert(program[3] == 'F');*/
 
     const char* p = program;
-    // printf("%s", p);
+    printf("%s", p);
     return 0;
 }

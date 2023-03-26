@@ -103,7 +103,10 @@ TB_API TB_Exports tb_elf64obj_write_output(TB_Module* m, const IDebugFormat* dbg
 
     // all the nonlocal function symbols
     // uint32_t last_nonlocal_global_id = unique_id_counter;
+    size_t text_reloc_count = 0;
     TB_FOR_FUNCTIONS(f, m) {
+        text_reloc_count += f->patch_count;
+
         if (f->linkage == TB_LINKAGE_PUBLIC) {
             f->compiled_symbol_id = unique_id_counter;
             unique_id_counter += 1;
@@ -224,10 +227,7 @@ TB_API TB_Exports tb_elf64obj_write_output(TB_Module* m, const IDebugFormat* dbg
     // Target specific: resolve internal call patches
     size_t local_patch_count = code_gen->emit_call_patches(m);
 
-    FOREACH_N(i, 0, m->max_threads) {
-        sections[S_TEXT_REL].sh_size += dyn_array_length(m->thread_info[i].symbol_patches) * sizeof(Elf64_Rela);
-        // sections[S_TEXT_REL].sh_size += dyn_array_length(m->thread_info[i].const_patches) * sizeof(Elf64_Rela);
-    }
+    sections[S_TEXT_REL].sh_size = text_reloc_count * sizeof(Elf64_Rela);
     sections[S_TEXT_REL].sh_size -= local_patch_count * sizeof(Elf64_Rela);
 
     FOREACH_N(t, 0, m->max_threads) {
@@ -324,9 +324,8 @@ TB_API TB_Exports tb_elf64obj_write_output(TB_Module* m, const IDebugFormat* dbg
                 .elems = (Elf64_Rela*) &output[sections[S_TEXT_REL].sh_offset]
             };
 
-            FOREACH_N(i, 0, m->max_threads) {
-                dyn_array_for(j, m->thread_info[i].symbol_patches) {
-                    TB_SymbolPatch* p = &m->thread_info[i].symbol_patches[j];
+            TB_FOR_FUNCTIONS(f, m) if (f->super.name && f->output) {
+                for (TB_SymbolPatch* p = f->last_patch; p; p = p->prev) {
                     size_t symbol_id = p->target->symbol_id;
                     assert(symbol_id != 0);
 

@@ -119,11 +119,16 @@ struct { size_t cap, count; T* elems; }
 #undef TB_FOR_EXTERNALS
 #define TB_FOR_EXTERNALS(it, m) for (TB_External* it = (TB_External*) m->first_symbol_of_tag[TB_SYMBOL_EXTERNAL]; it != NULL; it = (TB_External*) it->super.next)
 
-typedef struct TB_SymbolPatch {
+// i love my linked lists don't i?
+typedef struct TB_SymbolPatch TB_SymbolPatch;
+struct TB_SymbolPatch {
+    TB_SymbolPatch* prev;
+
     TB_Function* source;
-    uint32_t pos; // relative to the start of the function body
+    uint32_t pos;  // relative to the start of the function body
+    bool internal; // handled already by the code gen's emit_call_patches
     const TB_Symbol* target;
-} TB_SymbolPatch;
+};
 
 typedef struct TB_File {
     char* path;
@@ -283,6 +288,11 @@ typedef struct TB_StackSlot {
     TB_DebugType* storage_type;
 } TB_StackSlot;
 
+typedef struct TB_Comdat {
+    TB_ComdatType type;
+    uint32_t reloc_count;
+} TB_Comdat;
+
 typedef struct TB_FunctionOutput {
     TB_Linkage linkage;
     int result;
@@ -326,6 +336,7 @@ struct TB_Function {
 
     const TB_FunctionPrototype* prototype;
     TB_Linkage linkage;
+    TB_Comdat comdat;
 
     // Parameter acceleration structure
     TB_Node** params;
@@ -353,6 +364,11 @@ struct TB_Function {
     };
 
     TB_FunctionOutput* output;
+
+    // Relocations
+    uint32_t patch_pos;
+    uint32_t patch_count;
+    TB_SymbolPatch* last_patch;
 };
 
 typedef struct {
@@ -387,6 +403,9 @@ struct TB_ModuleSection {
     uint32_t reloc_count;
     uint32_t reloc_pos;
 
+    uint32_t total_comdat_relocs;
+    uint32_t total_comdat;
+
     bool laid_out;
 
     // this is all the globals within the section
@@ -415,6 +434,7 @@ struct TB_Module {
     tb_atomic_size_t prototypes_arena_size;
     uint64_t* prototypes_arena;
 
+    size_t comdat_function_count; // compiled function count
     tb_atomic_size_t compiled_function_count;
 
     // symbol table
@@ -426,8 +446,6 @@ struct TB_Module {
         Pool(TB_DebugType) debug_types;
         Pool(TB_Global) globals;
         Pool(TB_External) externals;
-
-        DynArray(TB_SymbolPatch) symbol_patches;
     } thread_info[TB_MAX_THREADS];
 
     DynArray(TB_File) files;

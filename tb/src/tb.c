@@ -28,6 +28,10 @@ int tb__get_local_tid(void) {
     return tid - 1;
 }
 
+bool tb_symbol_is_comdat(const TB_Symbol* s) {
+    return s->tag == TB_SYMBOL_FUNCTION && ((const TB_Function*) s)->comdat.type != TB_COMDAT_NONE;
+}
+
 char* tb__arena_strdup(TB_Module* m, const char* src) {
     if (src == NULL) return NULL;
 
@@ -105,11 +109,6 @@ TB_API TB_Module* tb_module_create(TB_Arch arch, TB_System sys, const TB_Feature
     }
 
     dyn_array_put(m->files, (TB_File){ 0 });
-
-    FOREACH_N(i, 0, TB_MAX_THREADS) {
-        // m->thread_info[i].const_patches  = dyn_array_create(TB_ConstPoolPatch, 4096);
-        m->thread_info[i].symbol_patches = dyn_array_create(TB_SymbolPatch, 4096);
-    }
 
     // we start a little off the start just because
     mtx_init(&m->lock, mtx_plain);
@@ -231,8 +230,6 @@ TB_API void tb_module_destroy(TB_Module* m) {
         pool_destroy(m->thread_info[i].globals);
         pool_destroy(m->thread_info[i].externals);
         pool_destroy(m->thread_info[i].debug_types);
-
-        dyn_array_destroy(m->thread_info[i].symbol_patches);
     }
 
     tb_platform_vfree(m->prototypes_arena, PROTOTYPES_ARENA_SIZE * sizeof(uint64_t));
@@ -303,7 +300,7 @@ TB_API void tb_symbol_set_ordinal(TB_Symbol* s, int ordinal) {
     s->ordinal = ordinal;
 }
 
-TB_API TB_Function* tb_function_create(TB_Module* m, const char* name, TB_Linkage linkage) {
+TB_API TB_Function* tb_function_create(TB_Module* m, const char* name, TB_Linkage linkage, TB_ComdatType comdat) {
     TB_Function* f = (TB_Function*) tb_symbol_alloc(m, TB_SYMBOL_FUNCTION, name, sizeof(TB_Function));
     f->linkage = linkage;
 
@@ -311,6 +308,7 @@ TB_API TB_Function* tb_function_create(TB_Module* m, const char* name, TB_Linkag
     f->bb_count = 1;
     f->bbs = tb_platform_heap_alloc(f->bb_capacity * sizeof(TB_BasicBlock));
     f->bbs[0] = (TB_BasicBlock){ 0 };
+    f->comdat.type = comdat;
     return f;
 }
 
@@ -556,8 +554,10 @@ void tb_emit_symbol_patch(TB_Module* m, TB_Function* source, const TB_Symbol* ta
     assert(id < TB_MAX_THREADS);
     assert(pos == (uint32_t)pos);
 
-    TB_SymbolPatch p = { .source = source, .target = target, .pos = pos };
-    dyn_array_put(m->thread_info[id].symbol_patches, p);
+    TB_SymbolPatch* p = ARENA_ALLOC(&m->arena, TB_SymbolPatch);
+    *p = (TB_SymbolPatch){ .prev = source->last_patch, .source = source, .target = target, .pos = pos };
+    source->last_patch = p;
+    source->patch_count += 1;
 }
 
 //

@@ -465,13 +465,11 @@ void tb__apply_module_relocs(TB_Linker* l, TB_Module* m, uint8_t* output) {
     // TB_LinkerSection* rdata = tb__find_section(l, ".rdata", IMAGE_SCN_MEM_READ  | IMAGE_SCN_CNT_INITIALIZED_DATA);
 
     uint64_t trampoline_rva = text->address + l->trampoline_pos;
-    FOREACH_N(i, 0, m->max_threads) {
-        uint64_t text_piece_rva = text->address + m->text.piece->offset;
-        uint64_t text_piece_file = text->offset + m->text.piece->offset;
+    uint64_t text_piece_rva = text->address + m->text.piece->offset;
+    uint64_t text_piece_file = text->offset + m->text.piece->offset;
 
-        FOREACH_N(j, 0, dyn_array_length(m->thread_info[i].symbol_patches)) {
-            TB_SymbolPatch* patch = &m->thread_info[i].symbol_patches[j];
-
+    TB_FOR_FUNCTIONS(f, m) {
+        for (TB_SymbolPatch* patch = f->last_patch; patch; patch = patch->prev) {
             if (patch->target->tag == TB_SYMBOL_EXTERNAL) {
                 TB_FunctionOutput* out_f = patch->source->output;
                 size_t actual_pos = text_piece_rva + out_f->code_pos + out_f->prologue_length + patch->pos + 4;
@@ -507,22 +505,6 @@ void tb__apply_module_relocs(TB_Linker* l, TB_Module* m, uint8_t* output) {
                 tb_todo();
             }
         }
-
-        /*if (m->linker.rdata) {
-            uint64_t rdata_piece_rva = rdata->address + m->linker.rdata->offset;
-
-            FOREACH_N(j, 0, dyn_array_length(m->thread_info[i].const_patches)) {
-                TB_ConstPoolPatch* patch = &m->thread_info[i].const_patches[j];
-                TB_FunctionOutput* out_f = patch->source->output;
-
-                size_t actual_pos = text_piece_rva + out_f->code_pos + out_f->prologue_length + patch->pos + 4;
-                int32_t* dst = (int32_t*) &output[text_piece_file + out_f->code_pos + out_f->prologue_length + patch->pos];
-
-                // relocations add not replace
-                (*dst) += (rdata_piece_rva - actual_pos);
-            }
-        }
-        tb_todo();*/
     }
 }
 

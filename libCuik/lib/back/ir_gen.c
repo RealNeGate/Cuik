@@ -1886,22 +1886,8 @@ static void ir_alloc_task(void* task) {
                 TB_FunctionPrototype* proto = t.tu->target->create_prototype(t.tu, cuik_canonical_type(s->decl.type));
                 TB_Linkage linkage = s->decl.attrs.is_static ? TB_LINKAGE_PRIVATE : TB_LINKAGE_PUBLIC;
 
-                // TODO(NeGate): Fix this up because it's possibly wrong, essentially
-                // inline linkage means all the definitions must match which isn't
-                // necessarily the same as static where they all can share a name but
-                // are different and internal.
-                TB_Function* func;
-                const char* name = s->decl.name;
-                if (s->decl.attrs.is_inline) {
-                    linkage = TB_LINKAGE_PRIVATE;
-
-                    char temp[1024];
-                    snprintf(temp, 1024, "_K%d_%s", t.tu->id_gen++, name ? name : "<unnamed>");
-
-                    func = tb_function_create(t.tu->ir_mod, temp, linkage);
-                } else {
-                    func = tb_function_create(t.tu->ir_mod, name, linkage);
-                }
+                TB_ComdatType comdat = s->decl.attrs.is_inline ? TB_COMDAT_MATCH_ANY : TB_COMDAT_NONE;
+                TB_Function* func = tb_function_create(t.tu->ir_mod, s->decl.name, linkage, comdat);
 
                 tb_symbol_set_ordinal((TB_Symbol*) func, t.ordinal_base + i);
                 tb_function_set_prototype(func, proto);

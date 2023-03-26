@@ -108,6 +108,12 @@ extern "C" {
         TB_LINKAGE_PRIVATE
     } TB_Linkage;
 
+    typedef enum {
+        TB_COMDAT_NONE,
+
+        TB_COMDAT_MATCH_ANY,
+    } TB_ComdatType;
+
     typedef enum TB_MemoryOrder {
         TB_MEM_ORDER_RELAXED,
         TB_MEM_ORDER_CONSUME,
@@ -1055,6 +1061,8 @@ extern "C" {
     ////////////////////////////////
     // Symbols
     ////////////////////////////////
+    TB_API bool tb_symbol_is_comdat(const TB_Symbol* s);
+
     // returns NULL if the tag doesn't match
     TB_API TB_Function* tb_symbol_as_function(TB_Symbol* s);
     TB_API TB_External* tb_symbol_as_external(TB_Symbol* s);
@@ -1073,7 +1081,7 @@ extern "C" {
     TB_API TB_DataType tb_vector_type(TB_DataTypeEnum type, int width);
 
     // if section is NULL, default to .text
-    TB_API TB_Function* tb_function_create(TB_Module* m, const char* name, TB_Linkage linkage);
+    TB_API TB_Function* tb_function_create(TB_Module* m, const char* name, TB_Linkage linkage, TB_ComdatType comdat);
 
     TB_API void* tb_function_get_jit_pos(TB_Function* f);
 
