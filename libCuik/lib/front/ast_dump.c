@@ -13,7 +13,7 @@ void cuik_dump_expr(FILE* stream, Expr* e, int depth) {
         // qual_type_as_string(sizeof(temp_string0), temp_string0, e->type);
         qual_type_as_string(sizeof(temp_string1), temp_string1, e->cast_type);
 
-        if (e->op != EXPR_CAST && cuik_canonical_type(e->cast_type)->kind != KIND_VOID) {
+        if (e->op != EXPR_CAST && e->cast_type.raw && cuik_canonical_type(e->cast_type)->kind != KIND_VOID) {
             // we don't wanna place implicit casts to void, it's weird
             printf("implicit-cast %s\n", temp_string1);
             depth++;
@@ -143,7 +143,7 @@ static void dump_expr(FILE* stream, Expr* restrict e, int depth, bool last_node)
         qual_type_as_string(sizeof(temp_string0), temp_string0, e->type);
         qual_type_as_string(sizeof(temp_string1), temp_string1, e->cast_type);
 
-        if (e->op != EXPR_CAST && cuik_canonical_type(e->cast_type)->kind != KIND_VOID) {
+        if (e->op != EXPR_CAST && e->cast_type.raw && cuik_canonical_type(e->cast_type)->kind != KIND_VOID) {
             // we don't wanna place implicit casts to void, it's weird
             fprintf(stream, "ImplicitCast '%s' -> '%s'\n", temp_string0, temp_string1);
 

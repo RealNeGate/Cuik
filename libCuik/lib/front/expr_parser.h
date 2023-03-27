@@ -454,8 +454,11 @@ static Expr* parse_primary_expr(Cuik_Parser* parser, TokenStream* restrict s) {
             String content = tokens_get(s)->content;
             tokens_next(s);
 
+            Cuik_QualType char_type = cuik_uncanonical_type(&parser->target->signed_ints[CUIK_BUILTIN_CHAR]);
             *e = (Expr){
                 .op = EXPR_STR,
+                .type = cuik_uncanonical_type(cuik__new_array(&parser->types, char_type, content.length)),
+                .has_visited = true,
                 .str = {
                     content.data,
                     content.data + content.length,

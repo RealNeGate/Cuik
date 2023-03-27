@@ -83,11 +83,23 @@ TB_API TB_Exports tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
     size_t normal_function_count = m->compiled_function_count - m->comdat_function_count;
 
     // .pdata and .xdata
-    /*bool has_unwind_info = false;
-    if (section_count > 0 && sections[0] == &m->text) {
-        section_count += 2;
-        has_unwind_info = true;
-    }*/
+    size_t xdata_section_num = section_count*2 + 2;
+    section_count += 2;
+
+    TB_Emitter xdata = { 0 };
+    const ICodeGen* restrict code_gen = tb__find_code_generator(m);
+    if (code_gen->emit_win64eh_unwind_info) {
+        TB_FOR_FUNCTIONS(f, m) {
+            TB_FunctionOutput* out_f = f->output;
+
+            if (out_f != NULL) {
+                out_f->unwind_info = xdata.count;
+                code_gen->emit_win64eh_unwind_info(&xdata, out_f, out_f->prologue_epilogue_metadata, out_f->stack_usage);
+            }
+        }
+    } else {
+        tb_panic("write_xdata_section: emit_win64eh_unwind_info is required.");
+    }
 
     // mark each with a unique id
     size_t unique_id_counter = section_count * 2;
@@ -136,7 +148,6 @@ TB_API TB_Exports tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
         output_size += sections[i]->total_size;
     }
 
-    const ICodeGen* restrict code_gen = tb__find_code_generator(m);
     TB_SectionGroup debug_sections = { 0 };
     if (dbg) {
         debug_sections = dbg->generate_debug_info(m, tls, code_gen, "fallback.obj");
@@ -146,6 +157,14 @@ TB_API TB_Exports tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
         debug_sections.data[i].virtual_address = output_size;
         output_size += debug_sections.data[i].raw_data.length;
     }
+
+    // pdata + xdata
+    size_t pdata_patch_count = m->compiled_function_count * 3;
+    size_t pdata_pos = output_size, pdata_size = pdata_patch_count * sizeof(uint32_t);
+    output_size += pdata_size;
+
+    size_t xdata_pos = output_size;
+    output_size += xdata.count;
 
     // calculate relocation layout
     dyn_array_for(i, sections) {
@@ -198,6 +217,9 @@ TB_API TB_Exports tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
     TB_FOR_FUNCTIONS(f, m) if (f->output && f->comdat.type != TB_COMDAT_NONE) {
         output_size += f->comdat.reloc_count * sizeof(COFF_ImageReloc);
     }
+
+    size_t pdata_patch_pos = output_size;
+    output_size += pdata_patch_count * sizeof(COFF_ImageReloc);
 
     header.symbol_table = output_size;
     output_size += header.symbol_count * sizeof(COFF_Symbol);
@@ -282,6 +304,21 @@ TB_API TB_Exports tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
             WRITE(&header, sizeof(header));
         }
 
+        // pdata then xdata
+        FOREACH_N(i, 0, 2) {
+            COFF_SectionHeader header = {
+                .characteristics = COFF_CHARACTERISTICS_RODATA,
+                .raw_data_size = i ? xdata.count : pdata_size,
+                .raw_data_pos = i ? xdata_pos : pdata_pos,
+                .pointer_to_reloc = i ? 0 : pdata_patch_pos,
+                .num_reloc = i ? 0 : pdata_patch_count,
+            };
+            strncpy(header.name, i ? ".xdata" : ".pdata", 8);
+
+            assert(pdata_patch_count < 0xFFFF);
+            WRITE(&header, sizeof(header));
+        }
+
         TB_FOR_FUNCTIONS(f, m) if (f->output && f->comdat.type != TB_COMDAT_NONE) {
             COFF_SectionHeader header = {
                 .characteristics = m->text.flags | IMAGE_SCN_LNK_COMDAT,
@@ -314,6 +351,26 @@ TB_API TB_Exports tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
 
             memcpy(&output[write_pos], debug_sections.data[i].raw_data.data, debug_sections.data[i].raw_data.length);
             write_pos += debug_sections.data[i].raw_data.length;
+        }
+
+        // write pdata & xdata
+        {
+            uint32_t* pdata = (uint32_t*) &output[write_pos];
+            write_pos += pdata_patch_count * sizeof(uint32_t);
+
+            size_t j = 0;
+            TB_FOR_FUNCTIONS(f, m) if (f->super.name && f->output) {
+                TB_FunctionOutput* out_f = f->output;
+                uint32_t pos = f->comdat.type != TB_COMDAT_NONE ? 0 : out_f->code_pos;
+
+                pdata[j+0] = pos;
+                pdata[j+1] = pos + out_f->code_size;
+                pdata[j+2] = out_f->unwind_info;
+                j += 3;
+            }
+
+            memcpy(&output[write_pos], xdata.data, xdata.count);
+            write_pos += xdata.count;
         }
 
         // write relocations
@@ -394,6 +451,39 @@ TB_API TB_Exports tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
             }
         }
 
+        // write pdata & xdata
+        {
+            assert(write_pos == pdata_patch_pos);
+            COFF_ImageReloc* relocs = (COFF_ImageReloc*) &output[write_pos];
+            write_pos += pdata_patch_count * sizeof(COFF_ImageReloc);
+
+            size_t j = 0;
+            TB_FOR_FUNCTIONS(f, m) if (f->super.name && f->output) {
+                TB_FunctionOutput* out_f = f->output;
+                uint32_t sym = f->super.symbol_id;
+                uint32_t pos = f->comdat.type != TB_COMDAT_NONE ? 0 : out_f->code_pos;
+
+                relocs[j + 0] = (COFF_ImageReloc){
+                    .Type = IMAGE_REL_AMD64_ADDR32NB,
+                    .SymbolTableIndex = sym,
+                    .VirtualAddress = j * 4
+                };
+
+                relocs[j + 1] = (COFF_ImageReloc){
+                    .Type = IMAGE_REL_AMD64_ADDR32NB,
+                    .SymbolTableIndex = sym,
+                    .VirtualAddress = (j * 4) + 4
+                };
+
+                relocs[j + 2] = (COFF_ImageReloc){
+                    .Type = IMAGE_REL_AMD64_ADDR32NB,
+                    .SymbolTableIndex = xdata_section_num, // xdata section
+                    .VirtualAddress = (j * 4) + 8
+                };
+                j += 3;
+            }
+        }
+
         // write symbols
         assert(write_pos == header.symbol_table);
         size_t symbol_count = 1;
@@ -431,6 +521,24 @@ TB_API TB_Exports tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
             COFF_AuxSectionSymbol aux = {
                 .length = debug_sections.data[i].raw_data.length,
                 .reloc_count = debug_sections.data[i].relocation_count,
+                .number = symbol_count,
+            };
+            WRITE(&aux, sizeof(aux));
+            symbol_count++;
+        }
+
+        FOREACH_N(i, 0, 2) {
+            COFF_Symbol s = {
+                .section_number = symbol_count,
+                .storage_class = IMAGE_SYM_CLASS_STATIC,
+                .aux_symbols_count = 1
+            };
+            strncpy((char*) s.short_name, i ? ".xdata" : ".pdata", 8);
+            WRITE(&s, sizeof(s));
+
+            COFF_AuxSectionSymbol aux = {
+                .length = i ? xdata.count : pdata_size,
+                .reloc_count = i ? 0 : pdata_patch_count,
                 .number = symbol_count,
             };
             WRITE(&aux, sizeof(aux));
