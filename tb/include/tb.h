@@ -814,8 +814,6 @@ extern "C" {
         TB_EXECUTABLE_ELF,
     } TB_ExecutableType;
 
-    typedef struct TB_ModuleExporter TB_ModuleExporter;
-
     // *******************************
     // Public macros
     // *******************************
@@ -882,7 +880,6 @@ extern "C" {
     // You don't need to manually call this unless you want to resolve locations before
     // exporting.
     TB_API void tb_module_layout_sections(TB_Module* m);
-    TB_API void tb_module_export_bytecode(TB_Module* m);
 
     ////////////////////////////////
     // Exporter
@@ -905,6 +902,8 @@ extern "C" {
 
     TB_API TB_Exports tb_module_object_export(TB_Module* m, TB_DebugFormat debug_fmt);
     TB_API void tb_exporter_free(TB_Exports exports);
+
+    TB_API TB_Exports tb_module_export_bytecode(TB_Module* m);
 
     ////////////////////////////////
     // Linker exporter

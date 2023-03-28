@@ -2,9 +2,9 @@
 // COFF, ELF is a bitch.
 #include "elf64.h"
 
-struct TB_ModuleExporter {
+typedef struct TB_ModuleExporter {
     size_t write_pos;
-};
+} TB_ModuleExporter;
 
 static void put_symbol(TB_Emitter* strtbl, TB_Emitter* stab, const char* name, uint8_t sym_info, Elf64_Half section_index, Elf64_Addr value, Elf64_Xword size) {
     // Fill up the symbol's string table

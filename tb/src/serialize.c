@@ -13,8 +13,7 @@ static uint32_t emit_node(SerializeCtx* ctx, TB_Node* n) {
     return tb_outs(&ctx->nodes, tb_node_get_expected_size(n), n);
 }
 
-// Serialize
-void tb_module_export_bytecode(TB_Module* m, TB_Function* f) {
+static void emit_function(TB_Function* f) {
     SerializeCtx ctx = { 0 };
 
     // we just walk all nodes and lay them out however
@@ -35,4 +34,15 @@ void tb_module_export_bytecode(TB_Module* m, TB_Function* f) {
     TB_FOR_BASIC_BLOCK(bb, f) {
 
     }
+}
+
+// Serialize
+TB_Exports tb_module_export_bytecode(TB_Module* m) {
+    TB_FOR_FUNCTIONS(f, m) {
+
+        // emits bytecode
+        emit_function(f);
+    }
+
+    return (TB_Exports){ 0 };
 }

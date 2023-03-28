@@ -1,34 +1,5 @@
 #include "coff.h"
 
-// my section numbers in TB_ModuleExporterCOFF.sections
-enum {
-    S_TEXT,
-    S_RDATA,
-    S_DATA,
-    S_PDATA,
-    S_XDATA,
-    S_TLS,
-    S_MAX
-};
-
-struct TB_ModuleExporter {
-    const ICodeGen* code_gen;
-    size_t write_pos;
-
-    // String table array, stores the strings which will be put
-    // into the string table
-    uint32_t string_table_length;
-    uint32_t string_table_mark;
-    uint32_t string_table_cap;
-    char** string_table;
-
-    size_t string_table_pos;
-    size_t tls_section_num;
-
-    TB_SectionGroup debug_sections;
-    COFF_SectionHeader* debug_section_headers;
-};
-
 static int compare_relocs(const void* a, const void* b) {
     const COFF_ImageReloc* aa = (const COFF_ImageReloc*) a;
     const COFF_ImageReloc* bb = (const COFF_ImageReloc*) b;
@@ -48,12 +19,6 @@ static COFF_AuxSectionSymbol section_aux_sym(COFF_SectionHeader* s, int num) {
         .reloc_count = s->num_reloc,
         .number = num,
     };
-}
-
-static size_t append_section_sym(COFF_SymbolUnion* symbols, size_t count, COFF_SectionHeader* section, const char* name, int sc) {
-    symbols[count + 0].s = section_sym(name, (count / 2) + 1, sc);
-    symbols[count + 1].a = section_aux_sym(section, (count / 2) + 1);
-    return count + 2;
 }
 
 #define APPEND_SECTION(sec) if (sec.total_size) { dyn_array_put(sections, &sec); }
