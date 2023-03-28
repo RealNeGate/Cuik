@@ -98,163 +98,47 @@ typedef struct Val {
 } Val;
 
 typedef enum InstType {
-    // Nullary
-    RET, INT3, CAST, SYSCALL, RDTSC,
-    // Control flow
-    JO, JNO, JB, JNB, JE, JNE, JBE, JA,
-    JS, JNS, JP, JNP, JL, JGE, JLE, JG,
-    // Unary
-    NOT, NEG, DIV, IDIV, JMP, CALL,
-    SETO, SETNO, SETB, SETNB, SETE, SETNE, SETBE, SETA,
-    SETS, SETNS, SETP, SETNP, SETL, SETGE, SETLE, SETG,
-    // Integer data processing
-    ADD, OR, AND, SUB, XOR, CMP, MOV,
-    // Cooler integer ops
-    SHL, SHR, SAR,
-    // Misc interger ops
-    MOVABS, TEST, LEA, IMUL, XCHG, XADD,
-    // casts
-    MOVSXB, MOVSXW, MOVSXD, MOVZXB, MOVZXW,
-    // SSE operations
-    FP_MOV, FP_ADD, FP_SUB, FP_MUL, FP_DIV, FP_CMP, FP_UCOMI,
-    FP_SQRT, FP_RSQRT, FP_AND, FP_OR, FP_XOR,
-    FP_CVT, // cvtss2sd or cvtsd2ss
+    #define X(a, ...) a,
+    #include "x64_insts.inc"
 } InstType;
 
-typedef enum ExtMode {
-    // Normal
-    EXT_NONE,
+// EXT variations use a 0F before the opcode
+typedef enum {
+    // Nullary
+    INST_BYTE,
+    INST_BYTE_EXT,
+    // Unary
+    INST_UNARY,
+    INST_UNARY_EXT, // 0F
+    // Binop
+    INST_BINOP,
+    INST_BINOP_PLUS, // +r
+    INST_BINOP_EXT,  // 0F
+    INST_BINOP_EXT2, // 0F (movzx, movsx)
+    INST_BINOP_CL, // implicit CL, used by the shift ops
 
-    // DEF instructions have a 0F prefix
-    EXT_DEF,
-
-    // same as DEF but for MOVZX and MOVSX
-    // these are forced as always load.
-    EXT_DEF2,
-
-    // implicit CL, used by the shift ops
-    EXT_CL,
-} ExtMode;
+    // SSE
+    INST_BINOP_SSE,
+} InstCategory;
 
 typedef struct InstDesc {
+    const char* mnemonic;
+    uint8_t cat;
+
     uint8_t op;
 
     // IMMEDIATES (or unary instructions)
     uint8_t op_i;
     uint8_t rx_i;
-
-    ExtMode ext : 8;
-
-    const char* mnemonic;
 } InstDesc;
 
 static const GPR WIN64_GPR_PARAMETERS[4] = { RCX, RDX, R8, R9 };
 static const GPR SYSV_GPR_PARAMETERS[6] = { RDI, RSI, RDX, RCX, R8, R9 };
 
-#define NULLARY_OP(name, op) [name] = { (op), .mnemonic = #name }
-#define NULLARY_OP2(name, op, rx) [name] = { .op_i = (op), .rx_i = (rx), .mnemonic = #name }
-#define UNARY_OP(name, op, rx) [name] = { .op_i = (op), .rx_i = (rx), .mnemonic = #name }
-#define UNARY_OP2(name, op, op_i, rx_i) [name] = { (op), (op_i), (rx_i), .mnemonic = #name }
-#define BINARY_OP(name, op, op_i, rx_i) [name] = { (op), (op_i), (rx_i), .mnemonic = #name }
-#define BINARY_OP2(name, op) [name] = { (op), .mnemonic = #name }
-#define BINARY_OP_CL(name, op, op_i, rx_i) [name] = { (op), (op_i), (rx_i), .ext = EXT_CL, .mnemonic = #name }
-#define BINARY_OP_DEF(name, op) [name] = { (op), .ext = EXT_DEF, .mnemonic = #name }
-#define BINARY_OP_DEF2(name, op) [name] = { (op), .ext = EXT_DEF2, .mnemonic = #name }
 static const InstDesc inst_table[] = {
-    // nullary
-    NULLARY_OP(RET,        0xC3),
-    NULLARY_OP(INT3,       0xCC),
-    NULLARY_OP(CAST,       0x99),
-    NULLARY_OP2(SYSCALL,         0x0F, 0x05),
-    NULLARY_OP2(RDTSC,           0x0F, 0x31),
-    // unary ops
-    UNARY_OP(NOT,                0xF7, 0x02),
-    UNARY_OP(NEG,                0xF7, 0x03),
-    UNARY_OP(DIV,                0xF7, 0x06),
-    UNARY_OP(IDIV,               0xF7, 0x07),
-    UNARY_OP2(CALL,        0xE8, 0xFF, 0x02),
-    UNARY_OP2(JMP,         0xE9, 0xFF, 0x04),
-    // these are used via label but don't have an opcode for it so
-    // they resort to using op_i and rx_i as the first two bytes followed
-    // by a REL32.
-    UNARY_OP(JO,           0x0F, 0x80),
-    UNARY_OP(JNO,          0x0F, 0x81),
-    UNARY_OP(JB,           0x0F, 0x82),
-    UNARY_OP(JNB,          0x0F, 0x83),
-    UNARY_OP(JE,           0x0F, 0x84),
-    UNARY_OP(JNE,          0x0F, 0x85),
-    UNARY_OP(JBE,          0x0F, 0x86),
-    UNARY_OP(JA,           0x0F, 0x87),
-    UNARY_OP(JS,           0x0F, 0x88),
-    UNARY_OP(JNS,          0x0F, 0x89),
-    UNARY_OP(JP,           0x0F, 0x8A),
-    UNARY_OP(JNP,          0x0F, 0x8B),
-    UNARY_OP(JL,           0x0F, 0x8C),
-    UNARY_OP(JGE,          0x0F, 0x8D),
-    UNARY_OP(JLE,          0x0F, 0x8E),
-    UNARY_OP(JG,           0x0F, 0x8F),
-    // SETcc
-    UNARY_OP(SETO,         0x0F, 0x90),
-    UNARY_OP(SETNO,        0x0F, 0x91),
-    UNARY_OP(SETB,         0x0F, 0x92),
-    UNARY_OP(SETNB,        0x0F, 0x93),
-    UNARY_OP(SETE,         0x0F, 0x94),
-    UNARY_OP(SETNE,        0x0F, 0x95),
-    UNARY_OP(SETBE,        0x0F, 0x96),
-    UNARY_OP(SETA,         0x0F, 0x97),
-    UNARY_OP(SETS,         0x0F, 0x98),
-    UNARY_OP(SETNS,        0x0F, 0x99),
-    UNARY_OP(SETP,         0x0F, 0x9A),
-    UNARY_OP(SETNP,        0x0F, 0x9B),
-    UNARY_OP(SETL,         0x0F, 0x9C),
-    UNARY_OP(SETGE,        0x0F, 0x9D),
-    UNARY_OP(SETLE,        0x0F, 0x9E),
-    UNARY_OP(SETG,         0x0F, 0x9F),
-    // binary ops but they have an implicit CL on the righthand side
-    BINARY_OP_CL(SHL,      0xD2, 0xC0, 0x04),
-    BINARY_OP_CL(SHR,      0xD2, 0xC0, 0x05),
-    BINARY_OP_CL(SAR,      0xD2, 0xC0, 0x07),
-    // regular integer binops
-    BINARY_OP(ADD,         0x00, 0x80, 0x00),
-    BINARY_OP(OR,          0x08, 0x80, 0x01),
-    BINARY_OP(AND,         0x20, 0x80, 0x04),
-    BINARY_OP(SUB,         0x28, 0x80, 0x05),
-    BINARY_OP(XOR,         0x30, 0x80, 0x06),
-    BINARY_OP(CMP,         0x38, 0x80, 0x07),
-    BINARY_OP(MOV,         0x88, 0xC6, 0x00),
-    BINARY_OP(TEST,        0x84, 0xF6, 0x00),
-    // misc integer ops
-    BINARY_OP2(MOVABS,     0xB8),
-    BINARY_OP2(XCHG,       0x86),
-    BINARY_OP2(LEA,        0x8D),
-    BINARY_OP_DEF(XADD,    0xC0),
-    BINARY_OP_DEF(IMUL,    0xAF),
-    BINARY_OP_DEF2(MOVSXB, 0xBE),
-    BINARY_OP_DEF2(MOVSXW, 0xBF),
-    BINARY_OP2(MOVSXD,     0x63),
-    BINARY_OP_DEF2(MOVZXB, 0xB6),
-    BINARY_OP_DEF2(MOVZXW, 0xB7),
-    // SSE binops
-    BINARY_OP2(FP_MOV,     0x10),
-    BINARY_OP2(FP_ADD,     0x58),
-    BINARY_OP2(FP_MUL,     0x59),
-    BINARY_OP2(FP_SUB,     0x5C),
-    BINARY_OP2(FP_DIV,     0x5E),
-    BINARY_OP2(FP_CMP,     0xC2),
-    BINARY_OP2(FP_UCOMI,   0x2E),
-    BINARY_OP2(FP_CVT,     0x5A),
-    BINARY_OP2(FP_SQRT,    0x51),
-    BINARY_OP2(FP_RSQRT,   0x52),
-    BINARY_OP2(FP_AND,     0x54),
-    BINARY_OP2(FP_OR,      0x56),
-    BINARY_OP2(FP_XOR,     0x57),
+    #define X(a, b, c, ...) [a] = { .mnemonic = b, .cat = INST_ ## c, __VA_ARGS__ },
+    #include "x64_insts.inc"
 };
-#undef NULLARY_OP
-#undef UNARY_OP
-#undef BINARY_OP
-#undef BINARY_OP2
-#undef BINARY_OP_DEF
-#undef BINARY_OP_DEF2
 
 // NOTE(NeGate): This is for Win64, we can handle SysV later
 #define WIN64_ABI_CALLER_SAVED ((1u << RAX) | (1u << RCX) | (1u << RDX) | (1u << R8) | (1u << R9) | (1u << R10) | (1u << R11))

@@ -148,7 +148,7 @@ static void inst2(TB_CGEmitter* restrict e, InstType type, const Val* a, const V
     }
 
     bool dir = b->type == VAL_MEM || b->type == VAL_GLOBAL;
-    if (dir || inst->op == 0x63 || inst->op == 0xAF || inst->ext == EXT_DEF2) {
+    if (dir || inst->op == 0x63 || inst->op == 0xAF || inst->cat == INST_BINOP_EXT2) {
         tb_swap(const Val*, a, b);
     }
 
@@ -164,7 +164,7 @@ static void inst2(TB_CGEmitter* restrict e, InstType type, const Val* a, const V
     bool dir_flag = (dir != is_gpr_only_dst);
 
     // Address size prefix
-    if (dt == X86_TYPE_WORD && inst->ext != EXT_DEF2) {
+    if (dt == X86_TYPE_WORD && inst->cat != INST_BINOP_EXT2) {
         EMIT1(e, 0x66);
     }
 
@@ -190,7 +190,7 @@ static void inst2(TB_CGEmitter* restrict e, InstType type, const Val* a, const V
     }
 
     uint8_t rx = (b->type == VAL_GPR) ? b->reg : inst->rx_i;
-    if (inst->ext == EXT_CL) {
+    if (inst->cat == INST_BINOP_CL) {
         assert(b->type == VAL_IMM || (b->type == VAL_GPR && b->reg == RCX));
 
         dt = X86_TYPE_BYTE;
@@ -205,7 +205,7 @@ static void inst2(TB_CGEmitter* restrict e, InstType type, const Val* a, const V
     if (rex_prefix != 0x40) EMIT1(e, rex_prefix);
 
     // Opcode
-    if (inst->ext == EXT_DEF || inst->ext == EXT_DEF2) {
+    if (inst->cat == INST_BINOP_EXT || inst->cat == INST_BINOP_EXT2) {
         // DEF instructions can only be 32bit and 64bit... maybe?
         if (type != XADD) sz = 0;
         EMIT1(e, 0x0F);
