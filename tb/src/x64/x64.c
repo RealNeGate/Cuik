@@ -386,7 +386,11 @@ static Cond isel_cmp(Ctx* restrict ctx, TB_Node* n) {
         int32_t x;
         int lhs = ISEL(n->inputs[0]);
         if (try_for_imm32(ctx, n->inputs[1], &x)) {
-            SUBMIT(inst_ri(CMP, cmp_dt, -1, lhs, x));
+            if (x == 0 && (n->type == TB_CMP_EQ || n->type == TB_CMP_NE)) {
+                SUBMIT(inst_rr(TEST, n->dt, -1, lhs, lhs));
+            } else {
+                SUBMIT(inst_ri(CMP, cmp_dt, -1, lhs, x));
+            }
         } else {
             int rhs = ISEL(n->inputs[1]);
             SUBMIT(inst_rr(CMP, cmp_dt, -1, lhs, rhs));

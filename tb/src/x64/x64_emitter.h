@@ -7,6 +7,9 @@ static uint8_t rex(bool is_64bit, uint8_t rx, uint8_t base, uint8_t index) {
     return 0x40 | (is_64bit ? 8 : 0) | (base >> 3) | ((index >> 3) << 1) | ((rx >> 3) << 2);
 }
 
+// emits 0F if (inst->cat == a) is true
+#define EXT_OP(a) ((inst->cat == a) ? EMIT1(e, 0x0F) : 0)
+
 static void emit_memory_operand(TB_CGEmitter* restrict e, uint8_t rx, const Val* restrict a) {
     // Operand encoding
     if (a->type == VAL_GPR || a->type == VAL_XMM) {
@@ -49,6 +52,7 @@ static void inst0(TB_CGEmitter* restrict e, InstType type, X86_DataType dt) {
     const InstDesc* restrict inst = &inst_table[type];
 
     if (dt == X86_TYPE_QWORD) EMIT1(e, 0x48);
+    EXT_OP(inst->cat == INST_BYTE_EXT);
 
     if (inst->op) {
         EMIT1(e, inst->op);
@@ -62,18 +66,16 @@ static void inst0(TB_CGEmitter* restrict e, InstType type, X86_DataType dt) {
 static void inst1(TB_CGEmitter* restrict e, InstType type, const Val* r, X86_DataType dt) {
     assert(type < COUNTOF(inst_table));
     const InstDesc* restrict inst = &inst_table[type];
+    bool is_rexw = (dt == X86_TYPE_QWORD);
 
     uint8_t op = inst->op_i, rx = inst->rx_i;
     if (r->type == VAL_GPR) {
-        EMIT1(e, rex(true, 0x00, r->reg, 0x00));
-        EMIT1(e, op);
-        if (type >= SETO && type <= SETG) {
-            // SETcc isn't dealing in weird immediates, it just neglects the rx
-            EMIT1(e, rx);
-            EMIT1(e, mod_rx_rm(MOD_DIRECT, 0, r->reg));
-        } else {
-            EMIT1(e, mod_rx_rm(MOD_DIRECT, rx, r->reg));
+        if (is_rexw || r->reg >= 8) {
+            EMIT1(e, rex(true, 0x00, r->reg, 0x00));
         }
+        EXT_OP(INST_UNARY_EXT);
+        EMIT1(e, op ? op : inst->op);
+        EMIT1(e, mod_rx_rm(MOD_DIRECT, rx, r->reg));
     } else if (r->type == VAL_MEM) {
         GPR base = r->reg, index = r->index;
         Scale scale = r->scale;
@@ -81,7 +83,8 @@ static void inst1(TB_CGEmitter* restrict e, InstType type, const Val* r, X86_Dat
 
         bool needs_index = (index != GPR_NONE) || (base & 7) == RSP;
 
-        EMIT1(e, rex(true, 0x00, base, index != GPR_NONE ? index : 0));
+        EMIT1(e, rex(is_rexw, 0x00, base, index != GPR_NONE ? index : 0));
+        EXT_OP(INST_UNARY_EXT);
         EMIT1(e, op);
 
         // If it needs an index, it'll put RSP into the base slot
@@ -103,9 +106,11 @@ static void inst1(TB_CGEmitter* restrict e, InstType type, const Val* r, X86_Dat
     } else if (r->type == VAL_GLOBAL) {
         if (inst->op) {
             // this is a unary instruction with a REL32 variant
+            EXT_OP(INST_UNARY_EXT);
             EMIT1(e, inst->op);
         } else {
-            EMIT1(e, 0x48); // rex.w
+            if (is_rexw) EMIT1(e, 0x48);
+            EXT_OP(INST_UNARY_EXT);
             EMIT1(e, op);
             EMIT1(e, ((rx & 7) << 3) | RBP);
         }
@@ -113,14 +118,9 @@ static void inst1(TB_CGEmitter* restrict e, InstType type, const Val* r, X86_Dat
         EMIT4(e, r->imm);
         tb_emit_symbol_patch(e->f->super.module, e->f, r->symbol, e->count - 4);
     } else if (r->type == VAL_LABEL) {
-        if (inst->op) {
-            EMIT1(e, inst->op);
-            EMIT4(e, 0);
-        } else {
-            EMIT1(e, inst->op_i);
-            EMIT1(e, inst->rx_i);
-            EMIT4(e, 0);
-        }
+        EXT_OP(INST_UNARY_EXT);
+        EMIT1(e, inst->op);
+        EMIT4(e, 0);
 
         int label = r->imm;
         if (label < 0) {
