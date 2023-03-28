@@ -1,15 +1,6 @@
 #include <cuik.h>
 #include <dyn_array.h>
 
-#if CUIK_ALLOW_THREADS
-#include <threads.h>
-#include <stdatomic.h>
-
-#define THREADPOOL_IMPL
-#define HAS_CUIK_CLASS
-#include "threadpool.h"
-#endif
-
 #include "spall_perf.h"
 #include "live.h"
 
@@ -19,6 +10,10 @@
 #include "objdump.h"
 #include "bindgen.h"
 #include "link.h"
+
+#if CUIK_ALLOW_THREADS
+#include <threads.h>
+#endif
 
 // #define STB_LEAKCHECK_IMPLEMENTATION
 // #include <stb_leakcheck.h>
@@ -100,13 +95,12 @@ int main(int argc, const char** argv) {
     }
 
     // spin up worker threads
-    Cuik_IThreadpool *tp = NULL, __tp;
+    Cuik_IThreadpool* tp = NULL;
     #if CUIK_ALLOW_THREADS
     if (args.threads > 1) {
         if (args.verbose) printf("Starting with %d threads...\n", args.threads);
 
-        __tp = threadpool_create_class(args.threads - 1, 4096);
-        tp = &__tp;
+        tp = cuik_threadpool_create(args.threads - 1, 4096);
     }
     #endif
 
@@ -132,7 +126,7 @@ int main(int argc, const char** argv) {
     }
 
     #if CUIK_ALLOW_THREADS
-    threadpool_destroy_class(tp);
+    cuik_threadpool_destroy(tp);
     #endif
 
     if (args.time) cuikperf_stop();

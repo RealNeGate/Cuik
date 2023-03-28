@@ -18,10 +18,8 @@ typedef struct Cuik_DriverArgs Cuik_DriverArgs;
 ////////////////////////////////////////////
 // Interfaces
 ////////////////////////////////////////////
+// fellas... is it ok to OOP? just this once?
 typedef struct Cuik_IThreadpool {
-    // fed into the member functions here
-    void* user_data;
-
     // runs the function fn with arg as the parameter on a thread.
     //   arg_size from Cuik is always going to be less than 64bytes
     void (*submit)(void* user_data, void fn(void*), size_t arg_size, void* arg);
@@ -31,7 +29,7 @@ typedef struct Cuik_IThreadpool {
 } Cuik_IThreadpool;
 
 // for doing calls on the interfaces
-#define CUIK_CALL(object, action, ...) ((object)->action((object)->user_data, ##__VA_ARGS__))
+#define CUIK_CALL(object, action, ...) ((object)->action((object) + 1, ##__VA_ARGS__))
 
 ////////////////////////////////////////////
 // Target descriptor
@@ -82,6 +80,11 @@ CUIK_API void cuik_init(void);
 
 // This should be called before exiting
 CUIK_API void cuik_free_thread_resources(void);
+
+#ifdef CUIK_ALLOW_THREADS
+Cuik_IThreadpool* cuik_threadpool_create(int threads, int workqueue_size);
+void cuik_threadpool_destroy(Cuik_IThreadpool* thread_pool);
+#endif
 
 ////////////////////////////////////////////
 // Compilation unit management

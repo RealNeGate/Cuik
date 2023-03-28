@@ -11,6 +11,10 @@
 #include "spall.h"
 #endif
 
+#ifdef _WIN32
+__declspec(dllimport) unsigned long GetCurrentThreadId(void);
+#endif
+
 static SpallProfile ctx;
 static _Thread_local SpallBuffer muh_buffer;
 

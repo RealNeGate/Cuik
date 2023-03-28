@@ -3,15 +3,6 @@
 #include "../back/ir_gen.h"
 #include "../targets/targets.h"
 
-#define SEMA_MUNCH_SIZE (131072)
-
-typedef struct {
-    // shared state, every run of sema_task will decrement this by one
-    atomic_size_t* tasks_remaining;
-    size_t start, end;
-    TranslationUnit* tu;
-} SemaTaskInfo;
-
 // when you're not in the semantic phase, we don't
 // rewrite the contents of the DOT and ARROW exprs
 // because it may screw with things
@@ -1630,21 +1621,6 @@ static void sema_mark_children(TranslationUnit* tu, Expr* restrict e) {
     }
 }
 
-static void sema_task(void* arg) {
-    SemaTaskInfo task = *((SemaTaskInfo*)arg);
-
-    CUIK_TIMED_BLOCK("sema") {
-        in_the_semantic_phase = true;
-
-        for (size_t i = task.start; i < task.end; i++) {
-            sema_top_level(task.tu, task.tu->top_level_stmts[i]);
-        }
-
-        in_the_semantic_phase = false;
-        *task.tasks_remaining -= 1;
-    }
-}
-
 int cuiksema_run(TranslationUnit* restrict tu, Cuik_IThreadpool* restrict thread_pool) {
     size_t count = dyn_array_length(tu->top_level_stmts);
 
@@ -1667,37 +1643,13 @@ int cuiksema_run(TranslationUnit* restrict tu, Cuik_IThreadpool* restrict thread
     }
 
     // go through all top level statements and type check
+    // NOTE(NeGate): we can multithread this... it's not helpful tho
     CUIK_TIMED_BLOCK("sema: type check") {
-        if (thread_pool != NULL) {
-            // disabled until we change the tables to arenas
-            size_t padded = (count + (SEMA_MUNCH_SIZE - 1)) & ~(SEMA_MUNCH_SIZE - 1);
-
-            // passed to the threads to identify when things are done
-            atomic_size_t tasks_remaining = (count + (SEMA_MUNCH_SIZE - 1)) / SEMA_MUNCH_SIZE;
-
-            for (size_t i = 0; i < padded; i += SEMA_MUNCH_SIZE) {
-                size_t limit = i + SEMA_MUNCH_SIZE;
-                if (limit > count) limit = count;
-
-                SemaTaskInfo t = {
-                    .tasks_remaining = &tasks_remaining,
-                    .start = i,
-                    .end = limit,
-                    .tu = tu
-                };
-                CUIK_CALL(thread_pool, submit, sema_task, sizeof(t), &t);
-            }
-
-            while (tasks_remaining != 0) {
-                thrd_yield();
-            }
-        } else {
-            in_the_semantic_phase = true;
-            for (size_t i = 0; i < count; i++) {
-                sema_top_level(tu, tu->top_level_stmts[i]);
-            }
-            in_the_semantic_phase = false;
+        in_the_semantic_phase = true;
+        for (size_t i = 0; i < count; i++) {
+            sema_top_level(tu, tu->top_level_stmts[i]);
         }
+        in_the_semantic_phase = false;
     }
 
     return cuikdg_error_count(&tu->tokens);

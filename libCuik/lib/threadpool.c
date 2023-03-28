@@ -1,36 +1,3 @@
-#ifndef THREADPOOL_H
-#define THREADPOOL_H
-
-#include <stdbool.h>
-#include <stdint.h>
-#include <stdlib.h>
-
-typedef struct threadpool_t threadpool_t;
-typedef void work_routine(void*);
-
-typedef struct {
-    work_routine* fn;
-    char arg[56];
-} work_t;
-
-threadpool_t* threadpool_create(size_t worker_count, size_t workqueue_size);
-void threadpool_submit(threadpool_t* threadpool, work_routine fn, size_t arg_size, void* arg);
-void threadpool_wait(threadpool_t* threadpool);
-void threadpool_work_one_job(threadpool_t* threadpool);
-void threadpool_work_while_wait(threadpool_t* threadpool);
-void threadpool_free(threadpool_t* threadpool);
-int threadpool_get_thread_count(threadpool_t* threadpool);
-
-// Kinda OOP-y but i don't care, we can use callbacks as a treat.
-#ifdef HAS_CUIK_CLASS
-Cuik_IThreadpool threadpool_create_class(int threads, int workqueue_size);
-#endif /* HAS_CUIK_CLASS */
-#endif /* THREADPOOL_H */
-
-
-
-// https://github.com/skeeto/scratch/blob/master/misc/queue.c
-#ifdef THREADPOOL_IMPL
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -52,12 +19,22 @@ extern void tb_free_thread_resources(void);
 extern void spallperf__start_thread(void);
 extern void spallperf__stop_thread(void);
 
-typedef _Atomic uint32_t atomic_uint32_t;
-
 // 1 << QEXP is the size of the queue per thread
 #define QEXP 6
 
-struct threadpool_t {
+typedef _Atomic uint32_t atomic_uint32_t;
+typedef void work_routine(void*);
+
+typedef struct {
+    work_routine* fn;
+    char arg[56];
+} work_t;
+
+// Inspired by:
+//   https://github.com/skeeto/scratch/blob/master/misc/queue.c
+typedef struct {
+    Cuik_IThreadpool super;
+
     atomic_bool running;
 
     // this skeeto guy is kinda sick wit it
@@ -73,7 +50,7 @@ struct threadpool_t {
     #else
     sem_t sem;
     #endif
-};
+} threadpool_t;
 
 static work_t* ask_for_work(threadpool_t* threadpool, uint32_t* save) {
     uint32_t r = *save = threadpool->queue;
@@ -103,9 +80,9 @@ static bool do_work(threadpool_t* threadpool) {
     return false;
 }
 
-static int threadpool_thread(void* arg) {
+static int thread_func(void* arg) {
     threadpool_t* threadpool = arg;
-    spallperf__start_thread();
+    // spallperf__start_thread();
 
     CUIK_TIMED_BLOCK("thread") {
         while (threadpool->running) {
@@ -119,46 +96,10 @@ static int threadpool_thread(void* arg) {
         }
     }
 
-    spallperf__stop_thread();
-    tb_free_thread_resources();
-    cuik_free_thread_resources();
+    // spallperf__stop_thread();
+    // tb_free_thread_resources();
+    // cuik_free_thread_resources();
     return 0;
-}
-
-threadpool_t* threadpool_create(size_t worker_count, size_t workqueue_size) {
-    if (worker_count == 0 || workqueue_size == 0) {
-        return NULL;
-    }
-
-    if ((workqueue_size & (workqueue_size - 1)) != 0) {
-        return NULL;
-    }
-
-    threadpool_t* threadpool = malloc(sizeof(threadpool_t));
-    *threadpool = (threadpool_t){ 0 };
-
-    threadpool->work = malloc(workqueue_size * sizeof(work_t));
-    threadpool->threads = malloc(worker_count * sizeof(thrd_t));
-    threadpool->thread_count = worker_count;
-    threadpool->running = true;
-
-    #if _WIN32
-    threadpool->sem = CreateSemaphoreExA(0, worker_count, worker_count, 0, 0, SEMAPHORE_ALL_ACCESS);
-    #else
-    if (sem_init(&threadpool->sem, 0 /* shared between threads */, worker_count) != 0) {
-        fprintf(stderr, "error: could not create semaphore!\n");
-        return NULL;
-    }
-    #endif
-
-    for (int i = 0; i < worker_count; i++) {
-        if (thrd_create(&threadpool->threads[i], threadpool_thread, threadpool) != thrd_success) {
-            fprintf(stderr, "error: could not create worker threads!\n");
-            return NULL;
-        }
-    }
-
-    return threadpool;
 }
 
 void threadpool_submit(threadpool_t* threadpool, work_routine fn, size_t arg_size, void* arg) {
@@ -215,38 +156,12 @@ void threadpool_wait(threadpool_t* threadpool) {
 }
 
 void threadpool_free(threadpool_t* threadpool) {
-    threadpool->running = false;
-
-    #ifdef _WIN32
-    ReleaseSemaphore(threadpool->sem, threadpool->thread_count, 0);
-    WaitForMultipleObjects(threadpool->thread_count, threadpool->threads, TRUE, INFINITE);
-
-    for (int i = 0; i < threadpool->thread_count; i++) {
-        thrd_join(threadpool->threads[i], NULL);
-    }
-    CloseHandle(threadpool->sem);
-    #else
-    for (int i = 0; i < threadpool->thread_count; i++) {
-        thrd_join(threadpool->threads[i], NULL);
-    }
-
-    // wake everyone
-    for (size_t i = 0; i < threadpool->thread_count; i++) {
-        sem_post(&threadpool->sem);
-    }
-    sem_destroy(&threadpool->sem);
-    #endif
-
-    free(threadpool->threads);
-    free(threadpool->work);
-    free(threadpool);
 }
 
 int threadpool_get_thread_count(threadpool_t* threadpool) {
     return threadpool->thread_count;
 }
 
-#ifdef HAS_CUIK_CLASS
 static void threadpool__submit(void* user_data, void fn(void*), size_t arg_size, void* arg) {
     threadpool_submit((threadpool_t*) user_data, fn, arg_size, arg);
 }
@@ -255,17 +170,71 @@ static void threadpool__work_one_job(void* user_data) {
     threadpool_work_one_job((threadpool_t*) user_data);
 }
 
-Cuik_IThreadpool threadpool_create_class(int worker_count, int workqueue_size) {
-    threadpool_t* tp = threadpool_create(worker_count, workqueue_size);
-    return (Cuik_IThreadpool){
-        .user_data = tp,
-        .submit = threadpool__submit,
-        .work_one_job = threadpool__work_one_job
-    };
+Cuik_IThreadpool* cuik_threadpool_create(int worker_count, int workqueue_size) {
+    if (worker_count == 0 || workqueue_size == 0) {
+        return NULL;
+    }
+
+    if ((workqueue_size & (workqueue_size - 1)) != 0) {
+        return NULL;
+    }
+
+    threadpool_t* tp = cuik_calloc(1, sizeof(threadpool_t));
+    tp->super.submit = threadpool__submit;
+    tp->super.work_one_job = threadpool__work_one_job;
+    tp->work = malloc(workqueue_size * sizeof(work_t));
+    tp->threads = malloc(worker_count * sizeof(thrd_t));
+    tp->thread_count = worker_count;
+    tp->running = true;
+
+    #if _WIN32
+    tp->sem = CreateSemaphoreExA(0, worker_count, worker_count, 0, 0, SEMAPHORE_ALL_ACCESS);
+    #else
+    if (sem_init(&tp->sem, 0 /* shared between threads */, worker_count) != 0) {
+        fprintf(stderr, "error: could not create semaphore!\n");
+        return NULL;
+    }
+    #endif
+
+    for (int i = 0; i < worker_count; i++) {
+        if (thrd_create(&tp->threads[i], thread_func, tp) != thrd_success) {
+            fprintf(stderr, "error: could not create worker threads!\n");
+            return NULL;
+        }
+    }
+
+    return &tp->super;
 }
 
-void threadpool_destroy_class(Cuik_IThreadpool* thread_pool) {
-    if (thread_pool) threadpool_free(thread_pool->user_data);
+void cuik_threadpool_destroy(Cuik_IThreadpool* thread_pool) {
+    if (thread_pool == NULL) {
+        return;
+    }
+
+    threadpool_t* tp = (threadpool_t*) thread_pool;
+    tp->running = false;
+
+    #ifdef _WIN32
+    ReleaseSemaphore(tp->sem, tp->thread_count, 0);
+    WaitForMultipleObjects(tp->thread_count, tp->threads, TRUE, INFINITE);
+
+    for (int i = 0; i < tp->thread_count; i++) {
+        thrd_join(tp->threads[i], NULL);
+    }
+    CloseHandle(tp->sem);
+    #else
+    for (int i = 0; i < tp->thread_count; i++) {
+        thrd_join(tp->threads[i], NULL);
+    }
+
+    // wake everyone
+    for (size_t i = 0; i < tp->thread_count; i++) {
+        sem_post(&tp->sem);
+    }
+    sem_destroy(&tp->sem);
+    #endif
+
+    cuik_free(tp->threads);
+    cuik_free(tp->work);
+    cuik_free(tp);
 }
-#endif /* HAS_CUIK_CLASS */
-#endif /* THREADPOOL_IMPL */
