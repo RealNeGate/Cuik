@@ -3,7 +3,7 @@
 
 int main(int argc, char** argv) {
     static const char program[] = {
-        #embed "hello_linux"
+        #embed "bar.c"
     };
 
     _Static_assert((sizeof(program) / sizeof(*program)) >= 4,

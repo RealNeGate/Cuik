@@ -88,7 +88,7 @@ if args.inspector:
 
 # main driver
 if args.driver:
-	sources.append("main/src/main_driver.c")
+	sources.append("main/*.c")
 
 # generate ninja file
 objs = []
