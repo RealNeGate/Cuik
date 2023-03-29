@@ -27,6 +27,8 @@ void cuik__vfree(void* ptr, size_t size) {
 }
 
 void* arena_alloc(Arena* arena, size_t size, size_t align) {
+    if (size == 0) return NULL;
+
     // alignment must be a power of two
     size_t align_mask = align - 1;
 
@@ -108,8 +110,14 @@ void arena_trim(Arena* arena) {
 }
 
 void arena_append(Arena* arena, Arena* other) {
-    if (arena->top != NULL && other != NULL) {
-        arena->top->next = other->base;
+    if (arena->top) {
+        if (other != NULL) {
+            arena->top->next = other->base;
+            arena->top = other->top;
+        }
+    } else {
+        // attach to start
+        arena->base = other->base;
         arena->top = other->top;
     }
 }

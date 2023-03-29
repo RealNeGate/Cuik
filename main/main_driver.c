@@ -105,18 +105,26 @@ int main(int argc, const char** argv) {
     #endif
 
     if (args.live) {
-        LiveCompiler l;
+        for (;;) {
+            CompilationUnit* cu;
+            cuik_driver_compile(tp, &args, true, true, &cu);
+            cuik_destroy_compilation_unit(cu);
+        }
+
+        /*LiveCompiler l;
         do {
             printf("\x1b[2J");
             printf("OUTPUT OF %s:\n", args.sources[0]);
 
-            cuik_destroy_compilation_unit(cuik_driver_compile(tp, &args, true, true));
-        } while (live_compile_watch(&l, &args));
+            CompilationUnit* cu;
+            cuik_driver_compile(tp, &args, true, true, &cu);
+            cuik_destroy_compilation_unit(cu);
+        } while (live_compile_watch(&l, &args));*/
     } else {
         uint64_t start_time = args.verbose ? cuik_time_in_nanos() : 0;
 
-        CompilationUnit* cu = cuik_driver_compile(tp, &args, true, true);
-        status = (cu ? 0 : 1);
+        CompilationUnit* cu;
+        status = !cuik_driver_compile(tp, &args, true, true, &cu);
         cuik_destroy_compilation_unit(cu);
 
         if (args.verbose) {

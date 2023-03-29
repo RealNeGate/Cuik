@@ -192,8 +192,16 @@ TB_API void tb_module_kill_symbol(TB_Module* m, TB_Symbol* sym) {
         case TB_SYMBOL_FUNCTION: {
             TB_Function* f = (TB_Function*) sym;
 
+            // free node arena
+            TB_NodePage* p = f->head;
+            while (p) {
+                TB_NodePage* next = p->next;
+                tb_platform_heap_free(p);
+                p = next;
+            }
+
             tb_platform_heap_free(f->bbs);
-            // tb_todo(); // free node arena
+            tb_platform_heap_free(f->params);
             break;
         }
         case TB_SYMBOL_EXTERNAL: break;

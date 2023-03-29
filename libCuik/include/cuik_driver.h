@@ -80,7 +80,7 @@ CUIK_API bool cuik_driver_get_output_name(Cuik_DriverArgs* args, int len, char p
 CUIK_API void cuik_set_standard_defines(Cuik_CPP* cpp, const Cuik_DriverArgs* args);
 
 CUIK_API Cuik_CPP* cuik_driver_preprocess(const char* filepath, const Cuik_DriverArgs* args, bool should_finalize);
-CUIK_API CompilationUnit* cuik_driver_compile(Cuik_IThreadpool* restrict thread_pool, Cuik_DriverArgs* restrict args, bool destroy_cu_after_ir, bool destroy_ir);
+CUIK_API bool cuik_driver_compile(Cuik_IThreadpool* restrict thread_pool, Cuik_DriverArgs* restrict args, bool destroy_cu_after_ir, bool destroy_ir, CompilationUnit** out_cu);
 
 #ifdef CUIK_USE_TB
 CUIK_API void cuik_apply_tb_toolchain_libs(TB_Linker* l);

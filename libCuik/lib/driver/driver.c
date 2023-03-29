@@ -580,7 +580,24 @@ static bool export_output(Cuik_DriverArgs* restrict args, TB_Module* mod, const 
     }
 }
 
-CUIK_API CompilationUnit* cuik_driver_compile(Cuik_IThreadpool* restrict thread_pool, Cuik_DriverArgs* restrict args, bool destroy_cu_after_ir, bool destroy_ir) {
+static void free_preprocs(SharedDriverState* restrict stuff, size_t tu_count) {
+    if (stuff->preprocessors == NULL) return;
+
+    for (size_t i = 0; i < tu_count; i++) {
+        if (stuff->preprocessors[i]) {
+            TokenStream* tokens = cuikpp_get_token_stream(stuff->preprocessors[i]);
+            if (tokens) {
+                cuiklex_free_tokens(tokens);
+                cuikpp_free(stuff->preprocessors[i]);
+            }
+        }
+    }
+
+    cuik_free(stuff->preprocessors);
+    stuff->preprocessors = NULL;
+}
+
+CUIK_API bool cuik_driver_compile(Cuik_IThreadpool* restrict thread_pool, Cuik_DriverArgs* restrict args, bool destroy_cu_after_ir, bool destroy_ir, CompilationUnit** out_cu) {
     _Atomic int parse_errors = 0;
 
     size_t tu_count = dyn_array_length(args->sources);
@@ -638,7 +655,11 @@ CUIK_API CompilationUnit* cuik_driver_compile(Cuik_IThreadpool* restrict thread_
     }
 
     if (parse_errors > 0) goto error;
-    if (args->preprocess || args->test_preproc) return cu;
+    if (args->preprocess || args->test_preproc) {
+        free_preprocs(&stuff, tu_count);
+        *out_cu = cu;
+        return true;
+    }
 
     CUIK_TIMED_BLOCK("internal link") {
         cuik_internal_link_compilation_unit(cu, thread_pool, args->debug_info);
@@ -648,20 +669,24 @@ CUIK_API CompilationUnit* cuik_driver_compile(Cuik_IThreadpool* restrict thread_
     CUIK_TIMED_BLOCK("allocate IR") {
         TB_FeatureSet features = { 0 };
         mod = tb_module_create(
-            args->target->arch, (TB_System) cuik_get_target_system(args->target), &features, false
+            args->target->arch, (TB_System) cuik_get_target_system(args->target), &features, args->run
         );
 
         cuikcg_allocate_ir(cu, thread_pool, mod);
     }
 
-    if (args->syntax_only) return cu;
-    if (args->types) return cu;
+    if (args->syntax_only || args->types) {
+        *out_cu = cu;
+        return true;
+    }
 
     if (args->ast) {
         CUIK_FOR_EACH_TU(tu, cu) {
             cuik_dump_translation_unit(stdout, tu, true);
         }
-        return cu;
+
+        *out_cu = cu;
+        return true;
     }
 
     ////////////////////////////////
@@ -670,17 +695,7 @@ CUIK_API CompilationUnit* cuik_driver_compile(Cuik_IThreadpool* restrict thread_
     bool subsystem_windows;
     CUIK_TIMED_BLOCK("Backend") {
         irgen(thread_pool, args, cu, mod, &subsystem_windows);
-
-        for (size_t i = 0; i < tu_count; i++) {
-            if (stuff.preprocessors[i]) {
-                TokenStream* tokens = cuikpp_get_token_stream(stuff.preprocessors[i]);
-                if (tokens) {
-                    cuiklex_free_tokens(tokens);
-                    cuikpp_free(stuff.preprocessors[i]);
-                }
-            }
-        }
-        cuik_free(stuff.preprocessors);
+        free_preprocs(&stuff, tu_count);
 
         if (destroy_cu_after_ir) {
             cuik_destroy_compilation_unit(cu);
@@ -695,7 +710,8 @@ CUIK_API CompilationUnit* cuik_driver_compile(Cuik_IThreadpool* restrict thread_
 
         if (args->ir) {
             cu->ir_mod = mod;
-            return cu;
+            *out_cu = cu;
+            return true;
         }
 
         if (args->emit_ir) {
@@ -717,26 +733,26 @@ CUIK_API CompilationUnit* cuik_driver_compile(Cuik_IThreadpool* restrict thread_
     char output_path[FILENAME_MAX];
     cuik_driver_get_output_name(args, FILENAME_MAX, output_path);
 
-    if (!export_output(args, mod, output_path, subsystem_windows)) {
-        goto error;
-    }
-
     ////////////////////////////////
     // Running executable
     ////////////////////////////////
     if (args->run) {
         printf("[1/1] RUN %s\n", output_path);
 
-        #ifdef _WIN32
-        for (char* s = output_path; *s; s++) {
-            if (*s == '/') *s = '\\';
+        // implement Cuik JIT
+        TB_JITContext* jit = tb_module_begin_jit(mod, 0);
+        void* a = NULL;
+        TB_FOR_FUNCTIONS(f, mod) {
+            a = tb_module_apply_function(jit, f);
         }
-        #endif
+        tb_module_ready_jit(jit);
 
-        int exit_code = system(output_path);
+        int x = ((int(*)(void)) a)();
+        printf("Test = %d\n", x);
 
-        printf("\n\nExit code: %d\n", exit_code);
-        if (exit_code) goto error;
+        tb_module_end_jit(jit);
+    } else {
+        export_output(args, mod, output_path, subsystem_windows);
     }
 
     cleanup_tb:
@@ -744,11 +760,15 @@ CUIK_API CompilationUnit* cuik_driver_compile(Cuik_IThreadpool* restrict thread_
         tb_free_thread_resources();
         tb_module_destroy(mod);
     }
-    return cu;
+
+    *out_cu = destroy_cu_after_ir ? NULL : cu;
+    return true;
 
     error:
+    free_preprocs(&stuff, tu_count);
     cuik_destroy_compilation_unit(cu);
-    return NULL;
+    *out_cu = NULL;
+    return false;
 }
 
 bool cuik_driver_get_output_name(Cuik_DriverArgs* args, int cap, char path[]) {

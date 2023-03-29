@@ -122,7 +122,11 @@ int run_bindgen(int argc, const char** argv) {
     // we just want to type check
     args.types = true;
 
-    CompilationUnit* cu = cuik_driver_compile(NULL, &args, true, true);
+    CompilationUnit* cu;
+    if (!cuik_driver_compile(NULL, &args, true, true, &cu)) {
+        fprintf(stderr, "damn...\n");
+        return 1;
+    }
 
     printf("package mylib\n\nimport \"core:c\"\n\n");
     CUIK_FOR_EACH_TU(tu, cu) {

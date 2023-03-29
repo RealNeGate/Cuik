@@ -780,6 +780,9 @@ extern "C" {
 
     // passing 0 to jit_heap_capacity will default to 4MiB
     TB_API TB_JITContext* tb_module_begin_jit(TB_Module* m, size_t jit_heap_capacity);
+    TB_API void* tb_module_apply_function(TB_JITContext* jit, TB_Function* f);
+    // fixes page permissions, applies missing relocations
+    TB_API void tb_module_ready_jit(TB_JITContext* jit);
     TB_API void tb_module_end_jit(TB_JITContext* jit);
 
     #define TB_FOR_FUNCTIONS(it, module) for (TB_Function* it = tb_first_function(module); it != NULL; it = tb_next_function(it))

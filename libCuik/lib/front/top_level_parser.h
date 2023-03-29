@@ -483,6 +483,8 @@ Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict 
 
         mtx_init(&parser.tu->arena_mutex, mtx_plain);
         check_for_entry(parser.tu, &parser.globals);
+        arena_append(&parser.tu->ast_arena, &local_ast_arena);
+        local_ast_arena = (Arena){ 0 };
         return (Cuik_ParseResult){ .tu = parser.tu, .imports = parser.import_libs };
     }
 
@@ -571,8 +573,9 @@ Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict 
 
         quit_phase2:;
     }
-    THROW_IF_ERROR();
+    dyn_array_destroy(pending_exprs);
     dyn_array_destroy(parser.static_assertions);
+    THROW_IF_ERROR();
 
     CUIK_TIMED_BLOCK("phase 3") {
         // we might have added types in phase2, update accordingly
@@ -651,6 +654,9 @@ Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict 
     THROW_IF_ERROR();
 
     check_for_entry(parser.tu, &parser.globals);
+    arena_append(&parser.tu->ast_arena, &local_ast_arena);
+    local_ast_arena = (Arena){ 0 };
+
     parser.tokens.diag->parser = NULL;
     return (Cuik_ParseResult){ .tu = parser.tu, .imports = parser.import_libs };
 }

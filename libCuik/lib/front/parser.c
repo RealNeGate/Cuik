@@ -566,6 +566,7 @@ void* cuik_get_translation_unit_user_data(TranslationUnit* restrict tu) {
 void cuik_destroy_translation_unit(TranslationUnit* restrict tu) {
     dyn_array_destroy(tu->top_level_stmts);
 
+    nl_strmap_free(tu->globals.symbols);
     arena_free(&tu->ast_arena);
     free_type_table(&tu->types);
     mtx_destroy(&tu->arena_mutex);

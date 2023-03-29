@@ -44,18 +44,21 @@ CUIK_API void cuik_add_to_compilation_unit(CompilationUnit* restrict cu, Transla
 }
 
 CUIK_API void cuik_destroy_compilation_unit(CompilationUnit* restrict cu) {
-    if (cu) {
-        // walk all the TUs and free them (if they're not freed already)
-        TranslationUnit* tu = cu->head;
-        while (tu != NULL) {
-            TranslationUnit* next = tu->next;
-            cuik_destroy_translation_unit(tu);
-            tu = next;
-        }
-
-        mtx_destroy(&cu->lock);
-        *cu = (CompilationUnit){0};
+    if (cu == NULL) {
+        return;
     }
+
+    // walk all the TUs and free them (if they're not freed already)
+    TranslationUnit* tu = cu->head;
+    while (tu != NULL) {
+        TranslationUnit* next = tu->next;
+        cuik_destroy_translation_unit(tu);
+        tu = next;
+    }
+
+    nl_strmap_free(cu->export_table);
+    mtx_destroy(&cu->lock);
+    cuik_free(cu);
 }
 
 CUIK_API size_t cuik_num_of_translation_units_in_compilation_unit(CompilationUnit* restrict cu) {
