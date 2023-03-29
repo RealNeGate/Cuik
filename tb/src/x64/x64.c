@@ -982,16 +982,6 @@ static void inst1_print(Ctx* restrict ctx, int type, Val* src, X86_DataType dt) 
 }
 
 static void emit_code(Ctx* restrict ctx) {
-    /*if (n->type == TB_LINE_INFO) {
-        TB_NodeLine* l = TB_NODE_GET_EXTRA(n);
-        f->lines[f->line_count++] = (TB_Line) {
-            .file = l->file,
-            .line = l->line,
-            .pos = GET_CODE_POS(&ctx->emit)
-        };
-        continue;
-    }*/
-
     Val ops[4];
     for (Inst* restrict inst = ctx->first; inst; inst = inst->next) {
         if (inst->type == INST_LABEL) {
@@ -999,6 +989,14 @@ static void emit_code(Ctx* restrict ctx) {
             ctx->emit.labels[bb] = GET_CODE_POS(&ctx->emit);
 
             ASM printf("L%d:\n", bb);
+            continue;
+        } else if (inst->type == INST_LINE) {
+            TB_Function* f = ctx->f;
+            f->lines[f->line_count++] = (TB_Line) {
+                .file = inst->imm[0],
+                .line = inst->imm[1],
+                .pos = GET_CODE_POS(&ctx->emit)
+            };
             continue;
         }
 

@@ -9,6 +9,7 @@ enum {
 
 enum {
     INST_LABEL = -1,
+    INST_LINE  = -2,
 };
 
 static void get_data_type_size(TB_DataType dt, TB_CharUnits* out_size, TB_CharUnits* out_align) {
@@ -315,6 +316,14 @@ static Inst inst_label(int l) {
         .type = INST_LABEL,
         .layout = X86_OP_NONE,
         .imm = { l }
+    };
+}
+
+static Inst inst_line(TB_FileID file, int line) {
+    return (Inst){
+        .type = INST_LINE,
+        .layout = X86_OP_NONE,
+        .imm = { file, line }
     };
 }
 
@@ -884,6 +893,11 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
         }
 
         TB_FOR_NODE(n, f, bb) if (n->type != TB_NULL) {
+            if (n->type == TB_LINE_INFO) {
+                TB_NodeLine* l = TB_NODE_GET_EXTRA(n);
+                SUBMIT(inst_line(l->file, l->line));
+            }
+
             // build up tile
             NodeMeta* m = get_meta(ctx, n);
             if (m->user_count <= 1 && tb_is_expr_like(n) && n->type != TB_LOCAL) {
@@ -931,6 +945,10 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
 
     //  Label patching: we make sure any local labels
     patch_local_labels(ctx);
+
+    if (f->line_count > 0) {
+        f->lines[0].pos = 0;
+    }
 
     // we're done, clean up
     TB_FunctionOutput func_out = {
