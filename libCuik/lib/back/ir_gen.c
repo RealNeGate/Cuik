@@ -126,6 +126,8 @@ static TB_Node* cast_reg(TB_Function* func, TB_Node* reg, const Cuik_Type* src, 
 
         if (dt.type == TB_INT && tb_node_is_constant_zero(reg)) {
             reg = tb_inst_uint(func, TB_TYPE_BOOL, 0);
+        } else if (dt.type == TB_INT && tb_node_is_constant_non_zero(reg)) {
+            reg = tb_inst_uint(func, TB_TYPE_BOOL, 1);
         } else {
             reg = tb_inst_cmp_ne(func, reg, comparand);
         }

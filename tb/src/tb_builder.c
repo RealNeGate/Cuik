@@ -19,6 +19,23 @@ TB_API bool tb_node_is_constant_int(TB_Function* f, TB_Node* n, uint64_t imm) {
     return false;
 }
 
+TB_API bool tb_node_is_constant_non_zero(TB_Node* n) {
+    TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
+    if (n->type == TB_INTEGER_CONST) {
+        if (i->num_words == 1) {
+            if (i->words[0] != 0) {
+                return true;
+            }
+        } else {
+            if (!BigInt_is_zero(i->num_words, i->words)) {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
 TB_API bool tb_node_is_constant_zero(TB_Node* n) {
     TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
     if (n->type == TB_INTEGER_CONST) {

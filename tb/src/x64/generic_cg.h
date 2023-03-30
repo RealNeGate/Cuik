@@ -368,7 +368,7 @@ static int compare_defs(void* ctx, const void* a, const void* b) {
     int as = defs[*(DefIndex*) a].start;
     int bs = defs[*(DefIndex*) b].start;
 
-    return as - bs;
+    return (as > bs) - (as < bs);
 }
 
 static void add_range(Ctx* restrict ctx, Def* restrict d, int start, int end) {
@@ -680,8 +680,27 @@ static ptrdiff_t spill_register(Ctx* restrict ctx, TB_Function* f, DefIndex* sor
     ptrdiff_t reg_num = ctx->defs[split_def].reg;
     remove_active(ctx, split_i);
 
-    ASM printf("  \x1b[32m#   spill D%zu\x1b[0m\n", split_def);
     return reg_num;
+}
+
+static bool evict(Ctx* restrict ctx, TB_Function* f, DefIndex di, int reg_class, int reg, DefIndex* sorted, size_t node_count, int time) {
+    if (!set_get(&ctx->free_regs[reg_class], reg)) {
+        return false;
+    }
+
+    ASM printf("  \x1b[32m#   evict %s\x1b[0m\n", GPR_NAMES[reg]);
+
+    // spill previous user until the end of the definition's lifetime
+    size_t split_i = 0;
+    for (; split_i < ctx->active_count; split_i++) {
+        Def* k = &ctx->defs[ctx->active[split_i]];
+        if (k->reg_class == reg_class && k->reg == reg) break;
+    }
+    assert(split_i < ctx->active_count);
+
+    Inst* spill_inst = find_inst_at_time(ctx, f, time);
+    spill_register(ctx, f, sorted, di, time, spill_inst, split_i);
+    return true;
 }
 
 static void linear_scan(Ctx* restrict ctx, TB_Function* f, DefIndex* sorted, size_t node_count) {
@@ -698,6 +717,7 @@ static void linear_scan(Ctx* restrict ctx, TB_Function* f, DefIndex* sorted, siz
             printf("\x1b[0m\n");
         }
 
+        // expire old intervals
         for (size_t j = 0; j < ctx->active_count;) {
             Def* k = &ctx->defs[ctx->active[j]];
             if (k->end > time) break;
@@ -713,23 +733,23 @@ static void linear_scan(Ctx* restrict ctx, TB_Function* f, DefIndex* sorted, siz
             }
         }
 
+        // clobber anything before we continue
+        if (d->clobbers) {
+            FOREACH_N(i, 0, d->clobbers->count) {
+                evict(ctx, f, di, d->clobbers->_[i].class, d->clobbers->_[i].num, sorted, node_count, time);
+            }
+
+            // we need to re-eval this element because something got inserted into this slot
+            if (di != sorted[i]) {
+                i -= 1;
+            }
+            d = &ctx->defs[di];
+        }
+
         // find register for current
         ptrdiff_t reg_num = -1;
         if (d->reg >= 0) {
-            if (set_get(&ctx->free_regs[d->reg_class], d->reg)) {
-                ASM printf("  \x1b[32m#   evict %s\x1b[0m\n", GPR_NAMES[d->reg]);
-
-                // spill previous user until the end of the definition's lifetime
-                size_t split_i = 0;
-                for (; split_i < ctx->active_count; split_i++) {
-                    Def* k = &ctx->defs[ctx->active[split_i]];
-                    if (k->reg_class == d->reg_class && k->reg == d->reg) break;
-                }
-                assert(split_i < ctx->active_count);
-
-                Inst* spill_inst = find_inst_at_time(ctx, f, time);
-                reg_num = spill_register(ctx, f, sorted, di, time, spill_inst, split_i);
-
+            if (evict(ctx, f, di, d->reg_class, d->reg, sorted, node_count, time)) {
                 // we need to re-eval this element because something got inserted into this slot
                 if (di != sorted[i]) {
                     i -= 1;
@@ -848,7 +868,9 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
     memset(ctx->values, 0, values_cap * sizeof(ValueDesc));
 
     CUIK_TIMED_BLOCK("liveness analysis") {
-        TB_FOR_BASIC_BLOCK(bb, f) {
+        FOREACH_REVERSE_N(i, 0, walk.count) {
+            TB_Label bb = walk.traversal[i];
+
             TB_FOR_NODE(n, f, bb) if (n->type != TB_NULL) {
                 if (n->type == TB_BRANCH) {
                     label_patch_count += 1 + TB_NODE_GET_EXTRA_T(n, TB_NodeBranch)->count;
