@@ -383,6 +383,23 @@ static Inst isel_load(Ctx* restrict ctx, TB_Node* n, int dst) {
     return inst_m(MOV, n->dt, dst, base, GPR_NONE, SCALE_X1, 0);
 }
 
+static Inst isel_store(Ctx* restrict ctx, TB_DataType dt, TB_Node* addr, int src) {
+    if (addr->type == TB_LOCAL) {
+        ptrdiff_t search = nl_map_get(ctx->stack_slots, addr);
+        assert(search >= 0);
+
+        return inst_mr(MOV, dt, RBP, GPR_NONE, SCALE_X1, ctx->stack_slots[search].v, src);
+    } else if (addr->type == TB_MEMBER_ACCESS && try_tile(ctx, addr)) {
+        Inst inst = isel_store(ctx, dt, addr->inputs[0], src);
+        inst.imm[0] += TB_NODE_GET_EXTRA_T(addr, TB_NodeMember)->offset;
+
+        return inst;
+    }
+
+    int base = ISEL(addr);
+    return inst_mr(MOV, dt, base, GPR_NONE, SCALE_X1, 0, src);
+}
+
 static Cond isel_cmp(Ctx* restrict ctx, TB_Node* n) {
     if (n->type >= TB_CMP_EQ && n->type <= TB_CMP_FLE) {
         TB_DataType cmp_dt = TB_NODE_GET_EXTRA_T(n, TB_NodeCompare)->cmp_dt;
@@ -456,9 +473,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
 
         case TB_LOCAL: {
             ptrdiff_t search = nl_map_get(ctx->stack_slots, n);
-            if (ctx->in_fence) {
-                // we don't need to resolve it if no one's using this
-            } else if (search >= 0) {
+            if (search >= 0) {
                 // get address
                 dst = DEF(n, REG_CLASS_GPR);
                 SUBMIT(inst_m(LEA, n->dt, dst, RBP, GPR_NONE, SCALE_X1, ctx->stack_slots[search].v));
@@ -672,16 +687,8 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
         case TB_STORE: {
             int src = ISEL(n->inputs[1]);
 
-            Inst inst;
-            if (n->inputs[0]->type == TB_LOCAL) {
-                ptrdiff_t search = nl_map_get(ctx->stack_slots, n->inputs[0]);
-                assert(search >= 0);
-
-                SUBMIT(inst_mr(MOV, n->dt, RBP, GPR_NONE, SCALE_X1, ctx->stack_slots[search].v, src));
-            } else {
-                int addr = ISEL(n->inputs[0]);
-                SUBMIT(inst_mr(MOV, n->dt, addr, GPR_NONE, SCALE_X1, 0, src));
-            }
+            Inst st = isel_store(ctx, n->dt, n->inputs[0], src);
+            SUBMIT(st);
             break;
         }
 
@@ -756,8 +763,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
                 }
             } else if (br->count == 1) {
                 // if-like branch
-                Cond cc = isel_cmp(ctx, n->inputs[0]);
-
+                Cond cc = isel_cmp(ctx, n->inputs[0]) ^ 1;
                 fence(ctx);
 
                 SUBMIT(inst_jcc(br->targets[0].value, cc));
@@ -873,19 +879,31 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             int rdi = DEF_FORCED(n, REG_CLASS_GPR, RDI, rax);
             int rcx = DEF_FORCED(n, REG_CLASS_GPR, RCX, rax);
 
+            // clobber inputs
+            Clobbers* clobbers = arena_alloc(&tb__arena, sizeof(Clobbers) + (3 * sizeof(MachineReg)), _Alignof(Clobbers));
+            clobbers->count = 3;
+            clobbers->_[0] = (MachineReg){ REG_CLASS_GPR, RDI };
+            clobbers->_[1] = (MachineReg){ REG_CLASS_GPR, RCX };
+            clobbers->_[2] = (MachineReg){ REG_CLASS_GPR, RAX };
+            ctx->defs[rax].clobbers = clobbers;
+
             // rep stosb
             //   mov rdi, ADDRESS
-            int addr = ISEL(n->inputs[0]);
-            SUBMIT(inst_copy(n->dt, rdi, addr));
+            int addr = isel(ctx, n->inputs[0]);
+            hint(ctx, addr, RDI);
+            SUBMIT(inst_copy(n->dt, rdi, USE(addr)));
             //   mov rcx, SIZE
-            int size = ISEL(n->inputs[2]);
-            SUBMIT(inst_copy(n->dt, rcx, size));
+            int size = isel(ctx, n->inputs[2]);
+            hint(ctx, size, RCX);
+            SUBMIT(inst_copy(n->dt, rcx, USE(size)));
             //   xor rax, rax
-            int src = ISEL(n->inputs[1]);
-            SUBMIT(inst_copy(n->dt, rax, src));
+            int src = isel(ctx, n->inputs[1]);
+            hint(ctx, src, RAX);
+            SUBMIT(inst_copy(n->dt, rax, USE(src)));
             //   rep stosb
-            EMIT1(&ctx->emit, 0xF3);
-            EMIT1(&ctx->emit, 0xAA);
+            Inst i = inst_nullary(STOSB);
+            i.prefix |= INST_REP;
+            SUBMIT(i);
             break;
         }
 
@@ -908,12 +926,15 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
         default: tb_todo();
     }
 
-    GET_VAL(n) = dst;
+    if (n->type != TB_LOCAL) {
+        GET_VAL(n) = dst;
+    }
     return dst;
 }
 
 static void abi_prepare(Ctx* restrict ctx, TB_Function* f) {
     bool has_param_slots = false;
+    const TB_FunctionPrototype* restrict proto = f->prototype;
     TB_FOR_NODE(n, f, 0) if (n->type == TB_STORE) {
         // handle parameter storage, the first few parameters have reserved space for them
         // in Win64.
@@ -927,7 +948,6 @@ static void abi_prepare(Ctx* restrict ctx, TB_Function* f) {
         }
     }
 
-    const TB_FunctionPrototype* restrict proto = f->prototype;
     if (has_param_slots) {
         ctx->stack_usage += 16 + (proto->param_count * 8);
     }

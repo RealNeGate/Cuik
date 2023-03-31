@@ -132,7 +132,7 @@ typedef struct Ctx {
     DefIndex* active;
     size_t active_count;
 
-    Set free_regs[CG_REGISTER_CLASSES];
+    Set used_regs[CG_REGISTER_CLASSES];
 
     // current value table
     size_t values_count, values_exp;
@@ -548,7 +548,7 @@ static DefIndex* liveness(Ctx* restrict ctx, TB_Function* f, TB_PostorderWalk* w
         Def* d = &ctx->defs[i];
         if (d->reg >= 0 && d->live_until >= 0) {
             Def* until = &ctx->defs[d->live_until];
-            add_range(ctx, d, until->end, until->end);
+            add_range(ctx, d, until->start, until->start);
         }
 
         sorted[i] = i;
@@ -614,77 +614,84 @@ static Inst* find_inst_at_time(Ctx* restrict ctx, TB_Function* f, int time) {
 static ptrdiff_t spill_register(Ctx* restrict ctx, TB_Function* f, DefIndex* sorted, DefIndex di, int time, Inst* spill_inst, size_t split_i) {
     size_t split_def = ctx->active[split_i];
 
+    int reg_class = ctx->defs[split_def].reg_class;
+    int reg_num = ctx->defs[split_def].reg;
+
     // insert spill
     Reload r = { TB_TYPE_I64, split_def };
     spill(ctx, spill_inst, &r);
 
-    // reload before next use (or BB end, whichever comes first)
-    Inst* reload_inst = insert_reload_site(ctx, f, spill_inst->next, split_def);
-    if (reload_inst) {
-        reload(ctx, reload_inst, &r);
-    } else {
-        ASM printf("  \x1b[32m#   lasts past BB\x1b[0m\n");
+    // keep spilled and generate reloads on the first use in any BB
+    DefIndex reload_def = split_def;
+    int endpoint = ctx->defs[split_def].end;
 
-        // keep spilled and generate reloads on the first use in any BB
-        DefIndex reload_def = split_def;
+    Inst *inst = spill_inst->next, *prev_inst = spill_inst;
+    for (; inst; prev_inst = inst, inst = inst->next) {
+        if (inst->type == INST_LABEL) reload_def = -1;
+        if (inst->time > endpoint) break;
 
-        Inst *inst = spill_inst->next, *prev_inst = spill_inst;
-        for (; inst; prev_inst = inst, inst = inst->next) {
-            if (inst->type == INST_LABEL) reload_def = -1;
+        // if it's used, refer to reload
+        bool skip_next = false;
+        FOREACH_REVERSE_N(j, 1, 4) if (inst->regs[j] == USE(split_def)) {
+            if (reload_def < 0) {
+                if (inst->type == X86_INST_MOVE && j == 1) {
+                    skip_next = true;
+                    r.old = split_def;
+                    spill(ctx, inst, &r);
+                    continue;
+                } else {
+                    // spin up new def
+                    int t = prev_inst->time + 1;
+                    dyn_array_put(ctx->defs, (Def){ .start = t, .end = t, .reg = -1, .hint = reg_num });
+                    reload_def = dyn_array_length(ctx->defs) - 1;
 
-            // if it's used, refer to reload
-            bool skip_next = false;
-            FOREACH_REVERSE_N(j, 1, 4) if (inst->regs[j] == USE(split_def)) {
-                if (reload_def < 0) {
-                    if (inst->type == X86_INST_MOVE && j == 1) {
-                        skip_next = true;
-                        r.old = split_def;
-                        spill(ctx, inst, &r);
-                        continue;
-                    } else {
-                        // spin up new def
-                        int t = prev_inst->time + 1;
-                        dyn_array_put(ctx->defs, (Def){ .start = t, .end = t, .reg = -1 });
-                        reload_def = dyn_array_length(ctx->defs) - 1;
+                    // insert into sort
+                    insert_sorted_def(ctx, sorted, reload_def, t, reload_def);
 
-                        // insert into sort
-                        insert_sorted_def(ctx, sorted, reload_def, t, reload_def);
-
-                        // generate reload before this instruction
-                        assert(prev_inst);
-                        r.old = reload_def;
-                        reload(ctx, prev_inst, &r);
-                    }
+                    // generate reload before this instruction
+                    assert(prev_inst);
+                    r.old = reload_def;
+                    reload(ctx, prev_inst, &r);
                 }
-
-                inst->regs[j] = USE(reload_def);
-                ctx->defs[reload_def].end = inst->time + 1;
             }
 
-            // we need to writeback into the spill slot
-            if (inst->regs[0] == split_i && reload_def != split_def) {
-                // spill and discard our reload spot (if applies)
-                r.old = inst->regs[0];
-                spill(ctx, inst, &r);
-                reload_def = -1;
-                skip_next = true;
-            }
+            inst->regs[j] = USE(reload_def);
+            ctx->defs[reload_def].end = inst->time + (j == 1 ? 0 : 1);
+        }
 
-            if (skip_next) {
-                // skip this instruction to avoid infinite spills
-                prev_inst = inst, inst = inst->next;
+        if (inst->regs[0] == split_i && reload_def != split_def) {
+            // spill and discard our reload spot (if applies)
+            r.old = inst->regs[0];
+            spill(ctx, inst, &r);
+            reload_def = -1;
+            skip_next = true;
+        }
+
+        // if we're in the clobber list, invalidate the reload_def
+        if (inst->regs[0] >= 0 && ctx->defs[inst->regs[0]].clobbers) {
+            Clobbers* clobbers = ctx->defs[inst->regs[0]].clobbers;
+
+            FOREACH_N(i, 0, clobbers->count) {
+                if (clobbers->_[i].class == reg_class && clobbers->_[i].num == reg_num) {
+                    reload_def = -1;
+                    break;
+                }
             }
+        }
+
+        if (skip_next) {
+            // skip this instruction to avoid infinite spills
+            prev_inst = inst, inst = inst->next;
         }
     }
 
-    ptrdiff_t reg_num = ctx->defs[split_def].reg;
+    set_remove(&ctx->used_regs[reg_class], reg_num);
     remove_active(ctx, split_i);
-
     return reg_num;
 }
 
 static bool evict(Ctx* restrict ctx, TB_Function* f, DefIndex di, int reg_class, int reg, DefIndex* sorted, size_t node_count, int time) {
-    if (!set_get(&ctx->free_regs[reg_class], reg)) {
+    if (!set_get(&ctx->used_regs[reg_class], reg)) {
         return false;
     }
 
@@ -726,7 +733,7 @@ static void linear_scan(Ctx* restrict ctx, TB_Function* f, DefIndex* sorted, siz
                 // move from active to handled
                 ASM printf("  \x1b[32m#   free %s\x1b[0m\n", GPR_NAMES[k->reg]);
 
-                set_remove(&ctx->free_regs[k->reg_class], k->reg);
+                set_remove(&ctx->used_regs[k->reg_class], k->reg);
                 remove_active(ctx, j);
             } else {
                 j++;
@@ -759,11 +766,11 @@ static void linear_scan(Ctx* restrict ctx, TB_Function* f, DefIndex* sorted, siz
 
             reg_num = d->reg;
             ASM printf("  \x1b[32m#   forced assign %s\x1b[0m\n", GPR_NAMES[reg_num]);
-        } else if (d->hint >= 0 && !set_get(&ctx->free_regs[d->reg_class], d->hint)) {
+        } else if (d->hint >= 0 && !set_get(&ctx->used_regs[d->reg_class], d->hint)) {
             reg_num = d->hint;
             ASM printf("  \x1b[32m#   hinted assign %s\x1b[0m\n", GPR_NAMES[reg_num]);
         } else {
-            reg_num = set_pop_any(&ctx->free_regs[d->reg_class]);
+            reg_num = set_pop_any(&ctx->used_regs[d->reg_class]);
 
             if (reg_num < 0) {
                 // choose who to spill
@@ -782,10 +789,16 @@ static void linear_scan(Ctx* restrict ctx, TB_Function* f, DefIndex* sorted, siz
             ASM printf("  \x1b[32m#   assign %s\x1b[0m\n", GPR_NAMES[reg_num]);
         }
 
-        set_put(&ctx->free_regs[d->reg_class], reg_num);
+        set_put(&ctx->used_regs[d->reg_class], reg_num);
         add_active(ctx, di);
         d->complete = true;
         d->reg = reg_num;
+    }
+}
+
+static void hint(Ctx* restrict ctx, DefIndex di, int reg) {
+    if (ctx->defs[di].hint < 0) {
+        ctx->defs[di].hint = reg;
     }
 }
 
@@ -817,11 +830,11 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
         }
     };
 
-    ctx->free_regs[0] = set_create(16);
-    ctx->free_regs[1] = set_create(16);
+    ctx->used_regs[0] = set_create(16);
+    ctx->used_regs[1] = set_create(16);
 
-    set_put(&ctx->free_regs[0], RBP), set_put(&ctx->free_regs[0], RSP);
-    // FOREACH_N(i, 8, 16) set_put(&ctx->free_regs[0], i);
+    set_put(&ctx->used_regs[0], RBP), set_put(&ctx->used_regs[0], RSP);
+    // FOREACH_N(i, 8, 16) set_put(&ctx->used_regs[0], i);
 
     // BB scheduling:
     //   we run through BBs in a reverse postorder walk, currently

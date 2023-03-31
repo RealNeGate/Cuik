@@ -24,7 +24,6 @@ int main(int argc, const char** argv) {
     spall_auto_thread_init(1, 1ull<<28ull);
     #endif
 
-    // Cuik can be opened as a OBJ file parser
     int status = EXIT_SUCCESS;
     if (argc >= 2) {
         if (strcmp(argv[1], "-objdump") == 0) {
@@ -39,10 +38,10 @@ int main(int argc, const char** argv) {
     cuik_init();
 
     Cuik_DriverArgs args = {
-        .version = CUIK_VERSION_C23,
-        .target = cuik_target_host(),
+        .version   = CUIK_VERSION_C23,
+        .target    = cuik_target_host(),
         .toolchain = cuik_toolchain_host(),
-        .flavor = TB_FLAVOR_EXECUTABLE,
+        .flavor    = TB_FLAVOR_EXECUTABLE,
     };
 
     if (!cuik_parse_driver_args(&args, argc - 1, argv + 1)) {

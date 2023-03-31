@@ -52,7 +52,7 @@ static void inst0(TB_CGEmitter* restrict e, InstType type, X86_DataType dt) {
     const InstDesc* restrict inst = &inst_table[type];
 
     if (dt == X86_TYPE_QWORD) EMIT1(e, 0x48);
-    EXT_OP(inst->cat == INST_BYTE_EXT);
+    EXT_OP(INST_BYTE_EXT);
 
     if (inst->op) {
         EMIT1(e, inst->op);
