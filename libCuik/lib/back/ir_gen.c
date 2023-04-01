@@ -821,14 +821,21 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
             //
             // NOTE(NeGate): Could have been resized in the parameter's irgen_expr
             // so we reload the pointer.
-            IRVal func_ptr = irgen_expr(tu, func, e->call.target);
+            TB_Node* target = irgen_as_rvalue(tu, func, e->call.target);
 
-            TB_DataType dt = ctype_to_tbtype(return_type);
-            if (is_aggregate_return) dt = TB_TYPE_VOID;
+            TB_FunctionPrototype* call_prototype = NULL;
+            if (target->type == TB_GET_SYMBOL_ADDRESS) {
+                // either use the function call's prototype
+                TB_Function* target_func = tb_symbol_as_function(TB_NODE_GET_EXTRA_T(target, TB_NodeSymbol)->sym);
+                if (target_func) call_prototype = tb_function_get_prototype(target_func);
+            }
 
-            TB_Node* target_reg = cvt2rval(tu, func, func_ptr, e->call.target);
-            TB_Node* r = tb_inst_call(func, dt, target_reg, real_arg_count, ir_args);
+            if (call_prototype == NULL) {
+                // generate custom prototype for function type
+                call_prototype = tu->target->create_prototype(tu, func_type);
+            }
 
+            TB_MultiOutput out = tb_inst_call(func, call_prototype, target, real_arg_count, ir_args);
             if (is_aggregate_return) {
                 TB_Node* result = ir_args[0];
                 tls_restore(ir_args);
@@ -837,26 +844,27 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
                     .value_type = LVALUE,
                     .reg = result,
                 };
+            } else if (out.count > 1) {
+                assert(0 && "TODO: multiple return ABI stuff");
             } else {
                 tls_restore(ir_args);
+                TB_Node* ret = out.single;
 
                 if (return_type->kind == KIND_STRUCT || return_type->kind == KIND_UNION) {
-                    TB_DataType dt = r->dt;
-
                     // spawn a lil temporary
                     TB_Node* addr = tb_inst_local(func, return_type->size, return_type->align);
-                    tb_inst_store(func, dt, addr, r, return_type->align, false);
+                    tb_inst_store(func, ret->dt, addr, ret, return_type->align, false);
 
                     return (IRVal){
                         .value_type = LVALUE,
                         .reg = addr,
                     };
+                } else {
+                    return (IRVal){
+                        .value_type = RVALUE,
+                        .reg = ret,
+                    };
                 }
-
-                return (IRVal){
-                    .value_type = RVALUE,
-                    .reg = r,
-                };
             }
         }
         case EXPR_SUBSCRIPT: {
@@ -1564,7 +1572,7 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
                     TB_Node* size_reg = tb_inst_uint(func, TB_TYPE_I64, size);
 
                     tb_inst_memcpy(func, dst_address, v.reg, size_reg, align, false);
-                    tb_inst_ret(func, TB_NULL_REG);
+                    tb_inst_ret(func, 0, NULL);
                 } else {
                     IRVal v = irgen_expr(tu, func, e);
                     TB_Node* r = TB_NULL_REG;
@@ -1582,10 +1590,11 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
 
                     // if it wasn't set before, resolve it now
                     if (r == TB_NULL_REG) r = cvt2rval(tu, func, v, e);
-                    tb_inst_ret(func, r);
+
+                    tb_inst_ret(func, 1, &r);
                 }
             } else {
-                tb_inst_ret(func, TB_NULL_REG);
+                tb_inst_ret(func, 0, NULL);
             }
             break;
         }
@@ -1844,9 +1853,10 @@ TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, Stmt* re
         TB_Label last = tb_inst_get_label(func);
         if (!tb_basic_block_is_complete(func, last)) {
             if (cstr_equals(s->decl.name, "main")) {
-                tb_inst_ret(func, tb_inst_uint(func, TB_TYPE_I32, 0));
+                TB_Node* exit_status = tb_inst_uint(func, TB_TYPE_I32, 0);
+                tb_inst_ret(func, 1, &exit_status);
             } else {
-                tb_inst_ret(func, TB_NULL_REG);
+                tb_inst_ret(func, 0, NULL);
             }
         }
 

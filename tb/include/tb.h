@@ -139,6 +139,8 @@ extern "C" {
         // Pointers
         //   ptr(0-2047)
         TB_PTR,
+        // Tuples, these cannot be used in memory ops, just accessed via projections
+        TB_TUPLE,
     } TB_DataTypeEnum;
 
     typedef enum TB_FloatFormat {
@@ -172,6 +174,9 @@ extern "C" {
 
     typedef enum TB_NodeTypeEnum {
         TB_NULL = 0,
+
+        /* projection */
+        TB_PROJ,
 
         /* metadata */
         TB_LINE_INFO,
@@ -402,6 +407,8 @@ extern "C" {
         TB_Node* inputs[/* input_count */];
     };
 
+    #define TB_KILL_NODE(n) ((n)->type = TB_NULL)
+
     // These are the extra data in specific nodes
     #define TB_NODE_GET_EXTRA(n)         ((void*) &n->inputs[n->input_count])
     #define TB_NODE_GET_EXTRA_T(n, T)    ((T*) &n->inputs[n->input_count])
@@ -418,6 +425,10 @@ extern "C" {
         uint32_t id;
         TB_CharUnits size;
     } TB_NodeParam;
+
+    typedef struct { // TB_PROJ
+        int index;
+    } TB_NodeProj;
 
     typedef struct { // TB_INT
         uint64_t num_words;
@@ -463,7 +474,7 @@ extern "C" {
     } TB_NodeMember;
 
     typedef struct {
-        const TB_Symbol* sym;
+        TB_Symbol* sym;
     } TB_NodeSymbol;
 
     typedef struct {
@@ -476,15 +487,29 @@ extern "C" {
     } TB_NodePhi;
 
     typedef struct {
+        TB_FunctionPrototype* proto;
+        TB_Node* projs[];
+    } TB_NodeCall;
+
+    typedef struct {
         TB_Label label;
         TB_Node* val;
     } TB_PhiInput;
 
+    typedef struct TB_MultiOutput {
+        size_t count;
+        union {
+            // count = 1
+            TB_Node* single;
+            // count > 1
+            TB_Node** multiple;
+        };
+    } TB_MultiOutput;
+    #define TB_MULTI_OUTPUT(o) ((o).count > 1 ? (o).multiple : &(o).single)
+
     typedef struct TB_BasicBlock {
         TB_Node *start, *end;
     } TB_BasicBlock;
-
-    #define TB_KILL_NODE(n) ((n)->type = TB_NULL)
 
     typedef struct TB_Loop {
         // refers to another entry in TB_LoopInfo... unless it's -1
@@ -665,6 +690,7 @@ extern "C" {
     // *******************************
     #ifdef __cplusplus
 
+    #define TB_TYPE_TUPLE   TB_DataType{ { TB_TUPLE } }
     #define TB_TYPE_VOID    TB_DataType{ { TB_INT,   0, 0 } }
     #define TB_TYPE_I8      TB_DataType{ { TB_INT,   0, 8 } }
     #define TB_TYPE_I16     TB_DataType{ { TB_INT,   0, 16 } }
@@ -680,6 +706,7 @@ extern "C" {
 
     #else
 
+    #define TB_TYPE_TUPLE (TB_DataType){ { TB_TUPLE } }
     #define TB_TYPE_VOID (TB_DataType){ { TB_INT,   0, 0 } }
     #define TB_TYPE_I8   (TB_DataType){ { TB_INT,   0, 8 } }
     #define TB_TYPE_I16  (TB_DataType){ { TB_INT,   0, 16 } }
@@ -809,19 +836,31 @@ extern "C" {
     ////////////////////////////////
     // Function Prototypes
     ////////////////////////////////
-    // creates a function prototype used to define a function's parameters and
-    // return type.
+    typedef struct TB_PrototypeParam {
+        TB_DataType dt;
+        TB_DebugType* debug_type;
+
+        // does not apply for returns
+        char* name;
+    } TB_PrototypeParam;
+
+    struct TB_FunctionPrototype {
+        // header
+        TB_CallingConv call_conv;
+        uint16_t return_count, param_count;
+        bool has_varargs;
+
+        // params are directly followed by returns
+        TB_PrototypeParam params[];
+    };
+    #define TB_PROTOTYPE_RETURNS(p) ((p)->params + (p)->param_count)
+
+    // creates a function prototype used to define a function's parameters and returns.
     //
     // function prototypes do not get freed individually and last for the entire run
     // of the backend, they can also be reused for multiple functions which have
     // matching signatures.
-    TB_API TB_FunctionPrototype* tb_prototype_create(TB_Module* m, TB_CallingConv conv, TB_DataType return_dt, TB_DebugType* return_type, int num_params, bool has_varargs);
-
-    // adds a parameter to the function prototype, TB doesn't support struct
-    // parameters so the frontend must lower them to pointers or any other type
-    // depending on their preferred ABI.
-    TB_API void tb_prototype_add_param(TB_Module* m, TB_FunctionPrototype* p, TB_DataType dt);
-    TB_API void tb_prototype_add_param_named(TB_Module* m, TB_FunctionPrototype* p, TB_DataType dt, const char* name, TB_DebugType* debug_type);
+    TB_API TB_FunctionPrototype* tb_prototype_create(TB_Module* m, TB_CallingConv cc, size_t param_count, const TB_PrototypeParam* params, size_t return_count, const TB_PrototypeParam* returns, bool has_varargs);
 
     ////////////////////////////////
     // Globals
@@ -902,8 +941,8 @@ extern "C" {
     TB_API void tb_symbol_set_name(TB_Symbol* s, const char* name);
     TB_API const char* tb_symbol_get_name(TB_Symbol* s);
 
-    TB_API void tb_function_set_prototype(TB_Function* f, const TB_FunctionPrototype* p);
-    TB_API const TB_FunctionPrototype* tb_function_get_prototype(TB_Function* f);
+    TB_API void tb_function_set_prototype(TB_Function* f, TB_FunctionPrototype* p);
+    TB_API TB_FunctionPrototype* tb_function_get_prototype(TB_Function* f);
 
     TB_API TB_Label tb_basic_block_create(TB_Function* f);
     TB_API bool tb_basic_block_is_complete(TB_Function* f, TB_Label bb);
@@ -962,7 +1001,7 @@ extern "C" {
     // where base is a pointer
     TB_API TB_Node* tb_inst_member_access(TB_Function* f, TB_Node* base, int64_t offset);
 
-    TB_API TB_Node* tb_inst_get_symbol_address(TB_Function* f, const TB_Symbol* target);
+    TB_API TB_Node* tb_inst_get_symbol_address(TB_Function* f, TB_Symbol* target);
 
     // Performs a conditional select between two values, if the operation is
     // performed wide then the cond is expected to be the same type as a and b where
@@ -1050,14 +1089,14 @@ extern "C" {
 
     // Control flow
     TB_API TB_Node* tb_inst_syscall(TB_Function* f, TB_DataType dt, TB_Node* syscall_num, size_t param_count, TB_Node** params);
-    TB_API TB_Node* tb_inst_call(TB_Function* f, TB_DataType dt, TB_Node* target, size_t param_count, TB_Node** params);
+    TB_API TB_MultiOutput tb_inst_call(TB_Function* f, TB_FunctionPrototype* proto, TB_Node* target, size_t param_count, TB_Node** params);
 
     TB_API TB_Node* tb_inst_phi2(TB_Function* f, TB_Label a_label, TB_Node* a, TB_Label b_label, TB_Node* b);
     TB_API void tb_inst_goto(TB_Function* f, TB_Label id);
     TB_API void tb_inst_if(TB_Function* f, TB_Node* cond, TB_Label if_true, TB_Label if_false);
     TB_API void tb_inst_branch(TB_Function* f, TB_DataType dt, TB_Node* key, TB_Label default_label, size_t entry_count, const TB_SwitchEntry* entries);
 
-    TB_API void tb_inst_ret(TB_Function* f, TB_Node* value);
+    TB_API void tb_inst_ret(TB_Function* f, size_t count, TB_Node** values);
 
     ////////////////////////////////
     // Optimizer

@@ -659,7 +659,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
         }
 
         case TB_RET: {
-            if (n->inputs[0] != NULL) {
+            if (n->input_count == 1) {
                 // hint input to be RAX
                 int src_vreg = isel(ctx, n->inputs[0]);
                 if (ctx->defs[src_vreg].hint < 0) {
@@ -863,13 +863,19 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
                     TB_NodeSymbol* s = TB_NODE_GET_EXTRA(n->inputs[0]);
                     SUBMIT(inst_call(n->dt, fake_dst, s->sym));
                 } else {
-                    __debugbreak();
+                    tb_todo();
                 }
             }
 
-            if (get_meta(ctx, n)->user_count > 0) {
-                dst = DEF_HINTED(n, REG_CLASS_GPR, RAX);
-                SUBMIT(inst_copy(n->dt, dst, USE(fake_dst)));
+            TB_NodeCall* c = TB_NODE_GET_EXTRA(n);
+            if (n->extra_count > sizeof(TB_NodeCall)) {
+                // multiple returns must fill up the projections
+                tb_todo();
+            } else {
+                if (get_meta(ctx, n)->user_count > 0) {
+                    dst = DEF_HINTED(n, REG_CLASS_GPR, RAX);
+                    SUBMIT(inst_copy(n->dt, dst, USE(fake_dst)));
+                }
             }
             break;
         }

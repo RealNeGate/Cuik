@@ -25,7 +25,7 @@ typedef struct IRVal {
 
     union {
         TB_Node* reg;
-        const TB_Symbol* sym;
+        TB_Symbol* sym;
         struct {
             TB_Node* reg;
 

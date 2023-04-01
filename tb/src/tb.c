@@ -102,12 +102,6 @@ TB_API TB_Module* tb_module_create(TB_Arch arch, TB_System sys, const TB_Feature
         m->features = *features;
     }
 
-    m->prototypes_arena = tb_platform_valloc(PROTOTYPES_ARENA_SIZE * sizeof(uint64_t));
-    if (m->prototypes_arena == NULL) {
-        fprintf(stderr, "tb_module_create: Out of memory!\n");
-        return NULL;
-    }
-
     dyn_array_put(m->files, (TB_File){ 0 });
 
     // we start a little off the start just because
@@ -229,18 +223,11 @@ TB_API void tb_module_destroy(TB_Module* m) {
         }
     }
 
-    if (m->jit_region) {
-        tb_platform_vfree(m->jit_region, m->jit_region_size);
-        m->jit_region = NULL;
-    }
-
     FOREACH_N(i, 0, m->max_threads) {
         pool_destroy(m->thread_info[i].globals);
         pool_destroy(m->thread_info[i].externals);
         pool_destroy(m->thread_info[i].debug_types);
     }
-
-    tb_platform_vfree(m->prototypes_arena, PROTOTYPES_ARENA_SIZE * sizeof(uint64_t));
 
     dyn_array_destroy(m->files);
     tb_platform_heap_free(m);
@@ -273,35 +260,20 @@ TB_API TB_FileID tb_file_create(TB_Module* m, const char* path) {
     return id;
 }
 
-TB_API TB_FunctionPrototype* tb_prototype_create(TB_Module* m, TB_CallingConv conv, TB_DataType return_dt, TB_DebugType* return_type, int num_params, bool has_varargs) {
-    assert(num_params == (uint32_t)num_params);
+TB_API TB_FunctionPrototype* tb_prototype_create(TB_Module* m, TB_CallingConv cc, size_t param_count, const TB_PrototypeParam* params, size_t return_count, const TB_PrototypeParam* returns, bool has_varargs) {
+    size_t size = sizeof(TB_FunctionPrototype) + ((param_count + return_count) * sizeof(TB_PrototypeParam));
 
-    size_t space_needed = (sizeof(TB_FunctionPrototype) + (sizeof(uint64_t) - 1)) / sizeof(uint64_t);
-    space_needed += ((num_params * sizeof(TB_PrototypeParam)) + (sizeof(uint64_t) - 1)) / sizeof(uint64_t);
+    mtx_lock(&m->lock);
+    TB_FunctionPrototype* p = arena_alloc(&m->arena, size, _Alignof(TB_FunctionPrototype));
+    mtx_unlock(&m->lock);
 
-    size_t len = tb_atomic_size_add(&m->prototypes_arena_size, space_needed);
-    if (len + space_needed >= PROTOTYPES_ARENA_SIZE) {
-        tb_panic("Prototype arena: out of memory!\n");
-    }
-
-    TB_FunctionPrototype* p = (TB_FunctionPrototype*)&m->prototypes_arena[len];
-    p->call_conv = conv;
-    p->param_capacity = num_params;
-    p->param_count = 0;
-    p->return_dt = return_dt;
-    p->return_type = return_type;
+    p->call_conv = cc;
+    p->return_count = return_count;
+    p->param_count = param_count;
     p->has_varargs = has_varargs;
+    memcpy(p->params, params, param_count * sizeof(TB_PrototypeParam));
+    memcpy(p->params + param_count, returns, return_count * sizeof(TB_PrototypeParam));
     return p;
-}
-
-TB_API void tb_prototype_add_param(TB_Module* m, TB_FunctionPrototype* p, TB_DataType dt) {
-    assert(p->param_count + 1 <= p->param_capacity);
-    p->params[p->param_count++] = (TB_PrototypeParam){ dt };
-}
-
-TB_API void tb_prototype_add_param_named(TB_Module* m, TB_FunctionPrototype* p, TB_DataType dt, const char* name, TB_DebugType* debug_type) {
-    assert(p->param_count + 1 <= p->param_capacity);
-    p->params[p->param_count++] = (TB_PrototypeParam){ dt, tb__arena_strdup(m, name), debug_type };
 }
 
 TB_API void tb_symbol_set_ordinal(TB_Symbol* s, int ordinal) {
@@ -328,7 +300,7 @@ TB_API const char* tb_symbol_get_name(TB_Symbol* s) {
     return s->name;
 }
 
-TB_API void tb_function_set_prototype(TB_Function* f, const TB_FunctionPrototype* p) {
+TB_API void tb_function_set_prototype(TB_Function* f, TB_FunctionPrototype* p) {
     assert(f->prototype == NULL);
     const ICodeGen* restrict code_gen = tb__find_code_generator(f->super.module);
 
@@ -354,7 +326,7 @@ TB_API void tb_function_set_prototype(TB_Function* f, const TB_FunctionPrototype
     f->prototype = p;
 }
 
-TB_API const TB_FunctionPrototype* tb_function_get_prototype(TB_Function* f) {
+TB_API TB_FunctionPrototype* tb_function_get_prototype(TB_Function* f) {
     return f->prototype;
 }
 

@@ -68,60 +68,55 @@ void target_generic_set_defines(Cuik_CPP* cpp, Cuik_System sys, bool is_64bit, b
 
 #ifdef CUIK_USE_TB
 TB_FunctionPrototype* target_generic_create_prototype(ShouldPassViaReg fn, TranslationUnit* tu, Cuik_Type* type) {
-    // decide if return value is aggregate
     TB_Module* m = tu->ir_mod;
+
+    // decide if return value is aggregate
     bool is_aggregate_return = !fn(tu, cuik_canonical_type(type->func.return_type));
+
+    // return type
+    TB_PrototypeParam ret = { TB_TYPE_PTR };
+    if (!is_aggregate_return) {
+        ret.dt = ctype_to_tbtype(cuik_canonical_type(type->func.return_type));
+        if (tu->has_tb_debug_info) {
+            ret.debug_type = cuik__as_tb_debug_type(m, cuik_canonical_type(type->func.return_type));
+        }
+    }
 
     // parameters
     Param* param_list = type->func.param_list;
     size_t param_count = type->func.param_count;
+    TB_PrototypeParam* params = tls_push((is_aggregate_return + param_count) * sizeof(TB_PrototypeParam));
 
-    // estimate parameter count
-    size_t real_param_count = (is_aggregate_return ? 1 : 0) + param_count;
-
-    TB_DataType return_dt = TB_TYPE_PTR;
-    if (!is_aggregate_return) return_dt = ctype_to_tbtype(cuik_canonical_type(type->func.return_type));
-
-    TB_DebugType* ret_type = NULL;
-    if (tu->has_tb_debug_info && !is_aggregate_return) {
-        ret_type = cuik__as_tb_debug_type(m, cuik_canonical_type(type->func.return_type));
-    }
-
-    TB_FunctionPrototype* proto = tb_prototype_create(tu->ir_mod, TB_STDCALL, return_dt, ret_type, real_param_count, type->func.has_varargs);
+    size_t j = 0;
     if (is_aggregate_return) {
+        TB_PrototypeParam p = { TB_TYPE_PTR };
+
         if (tu->has_tb_debug_info) {
-            // it's a pointer to the debug type here
             TB_DebugType* dbg_type = cuik__as_tb_debug_type(m, cuik_canonical_type(type->func.return_type));
-            tb_prototype_add_param_named(tu->ir_mod, proto, TB_TYPE_PTR, "$retval", tb_debug_create_ptr(m, dbg_type));
-        } else {
-            tb_prototype_add_param(tu->ir_mod, proto, TB_TYPE_PTR);
+            p.debug_type = tb_debug_create_ptr(m, dbg_type);
+            p.name = "$ret";
         }
+
+        params[j++] = p;
     }
 
     for (size_t i = 0; i < param_count; i++) {
-        Param* p = &param_list[i];
-        Cuik_Type* type = cuik_canonical_type(p->type);
+        Cuik_Type* type = cuik_canonical_type(param_list[i].type);
 
-        if (fn(tu, type)) {
-            TB_DataType dt = ctype_to_tbtype(type);
+        TB_PrototypeParam p = { 0 };
+        p.dt = fn(tu, type) ? ctype_to_tbtype(type) : TB_TYPE_PTR;
 
-            assert(dt.width < 8);
-            if (tu->has_tb_debug_info && p->name) {
-                tb_prototype_add_param_named(tu->ir_mod, proto, dt, p->name, cuik__as_tb_debug_type(tu->ir_mod, type));
-            } else {
-                tb_prototype_add_param(tu->ir_mod, proto, dt);
-            }
-        } else {
-            if (tu->has_tb_debug_info && p->name) {
-                TB_DebugType* dbg_type = cuik__as_tb_debug_type(tu->ir_mod, type);
-                tb_prototype_add_param_named(tu->ir_mod, proto, TB_TYPE_PTR, p->name, tb_debug_create_ptr(m, dbg_type));
-            } else {
-                tb_prototype_add_param(tu->ir_mod, proto, TB_TYPE_PTR);
-            }
+        // NOTE(NeGate): we're expecting the parameter name to live until the TB export stage...
+        // it's in the atoms arena so maybe that's ok?
+        if (tu->has_tb_debug_info && param_list[i].name) {
+            p.debug_type = cuik__as_tb_debug_type(tu->ir_mod, type);
+            p.name = param_list[i].name;
         }
+
+        params[j++] = p;
     }
 
-    return proto;
+    return tb_prototype_create(tu->ir_mod, TB_STDCALL, is_aggregate_return + param_count, params, 1, &ret, type->func.has_varargs);
 }
 
 int target_generic_pass_parameter(ShouldPassViaReg fn, TranslationUnit* tu, TB_Function* func, Expr* e, bool is_vararg, TB_Node** out_param) {

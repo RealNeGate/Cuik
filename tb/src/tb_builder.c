@@ -443,7 +443,7 @@ TB_API TB_Node* tb_inst_member_access(TB_Function* f, TB_Node* base, int64_t off
     return n;
 }
 
-TB_API TB_Node* tb_inst_get_symbol_address(TB_Function* f, const TB_Symbol* target) {
+TB_API TB_Node* tb_inst_get_symbol_address(TB_Function* f, TB_Symbol* target) {
     assert(target != NULL);
 
     TB_Node* n = tb_alloc_at_end(f, TB_GET_SYMBOL_ADDRESS, TB_TYPE_PTR, 0, sizeof(TB_NodeSymbol));
@@ -458,11 +458,30 @@ TB_API TB_Node* tb_inst_syscall(TB_Function* f, TB_DataType dt, TB_Node* syscall
     return n;
 }
 
-TB_API TB_Node* tb_inst_call(TB_Function* f, TB_DataType dt, TB_Node* target, size_t param_count, TB_Node** params) {
-    TB_Node* n = tb_alloc_at_end(f, TB_CALL, dt, 1 + param_count, 0);
+TB_API TB_MultiOutput tb_inst_call(TB_Function* f, TB_FunctionPrototype* proto, TB_Node* target, size_t param_count, TB_Node** params) {
+    size_t proj_count = proto->return_count > 1 ? proto->return_count : 0;
+    TB_DataType dt = proj_count ? TB_TYPE_TUPLE : TB_PROTOTYPE_RETURNS(proto)->dt;
+
+    TB_Node* n = tb_alloc_at_end(f, TB_CALL, dt, 1 + param_count, sizeof(TB_NodeCall) + (sizeof(TB_Node*)*proj_count));
     n->inputs[0] = target;
     memcpy(n->inputs + 1, params, param_count * sizeof(TB_Node*));
-    return n;
+
+    TB_NodeCall* c = TB_NODE_GET_EXTRA(n);
+    c->proto = proto;
+
+    if (proto->return_count > 1) {
+        // create projections
+        TB_PrototypeParam* rets = TB_PROTOTYPE_RETURNS(proto);
+        FOREACH_N(i, 0, proto->return_count) {
+            TB_Node* proj = tb_alloc_at_end(f, TB_PROJ, rets[i].dt, 1, sizeof(TB_NodeProj));
+            proj->inputs[0] = n;
+            TB_NODE_SET_EXTRA(n, TB_NodeProj, .index = i);
+        }
+
+        return (TB_MultiOutput){ .count = proto->return_count, .multiple = c->projs };
+    } else {
+        return (TB_MultiOutput){ .count = proto->return_count, .single = n };
+    }
 }
 
 TB_API void tb_inst_memset(TB_Function* f, TB_Node* dst, TB_Node* val, TB_Node* size, TB_CharUnits align, bool is_volatile) {
@@ -887,7 +906,7 @@ TB_API void tb_inst_branch(TB_Function* f, TB_DataType dt, TB_Node* key, TB_Labe
     }
 }
 
-TB_API void tb_inst_ret(TB_Function* f, TB_Node* value) {
-    TB_Node* n = tb_alloc_at_end(f, TB_RET, TB_TYPE_VOID, 1, 0);
-    n->inputs[0] = value;
+TB_API void tb_inst_ret(TB_Function* f, size_t count, TB_Node** values) {
+    TB_Node* n = tb_alloc_at_end(f, TB_RET, TB_TYPE_VOID, count, 0);
+    if (count) memcpy(n->inputs, values, count * sizeof(TB_Node*));
 }

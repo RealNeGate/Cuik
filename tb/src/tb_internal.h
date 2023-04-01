@@ -86,7 +86,6 @@ size_t tb_atomic_size_store(size_t* dst, size_t src);
 void* tb_atomic_ptr_exchange(void** address, void* new_value);
 bool tb_atomic_ptr_cmpxchg(void** address, void* old_value, void* new_value);
 
-#define PROTOTYPES_ARENA_SIZE   (32u << 20u)
 #define CODE_REGION_BUFFER_SIZE (256 * 1024 * 1024)
 
 typedef struct TB_Emitter {
@@ -173,33 +172,8 @@ struct TB_Global {
     TB_InitObj* objects;
 };
 
-typedef struct TB_PrototypeParam {
-    TB_DataType dt;
-    char* name;
-    TB_DebugType* debug_type;
-} TB_PrototypeParam;
-
 struct TB_DominanceFrontiers {
     Set* _;
-};
-
-// function prototypes are stored
-// in streams as inplace arrays:
-//
-// PROTOTYPE0, arg0, arg1, PROTOTYPE1, arg0, arg1
-struct TB_FunctionPrototype {
-    // header
-    TB_CallingConv call_conv;
-
-    short param_capacity;
-    short param_count;
-
-    TB_DataType return_dt;
-    TB_DebugType* return_type;
-    bool has_varargs;
-
-    // payload
-    TB_PrototypeParam params[];
 };
 
 struct TB_DebugType {
@@ -334,7 +308,7 @@ struct TB_NodePage {
 struct TB_Function {
     TB_Symbol super;
 
-    const TB_FunctionPrototype* prototype;
+    TB_FunctionPrototype* prototype;
     TB_Linkage linkage;
     TB_Comdat comdat;
 
@@ -430,10 +404,6 @@ struct TB_Module {
     // of a _tls_index
     TB_Symbol* tls_index_extern;
 
-    // Convert this into a dynamic memory arena... maybe
-    tb_atomic_size_t prototypes_arena_size;
-    uint64_t* prototypes_arena;
-
     size_t comdat_function_count; // compiled function count
     tb_atomic_size_t compiled_function_count;
 
@@ -453,10 +423,6 @@ struct TB_Module {
     // Common sections
     // TODO(NeGate): custom sections
     TB_ModuleSection text, data, rdata, tls;
-
-    // JIT
-    void* jit_region;
-    size_t jit_region_size;
 
     // The code is stored into giant buffers
     // there's on per code gen thread so that
