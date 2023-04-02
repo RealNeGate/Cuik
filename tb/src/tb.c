@@ -1,6 +1,5 @@
 #include "tb_internal.h"
 #include "host.h"
-#include "coroutine.h"
 
 thread_local Arena tb__arena;
 
