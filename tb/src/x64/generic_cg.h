@@ -315,6 +315,7 @@ static Inst inst_label(int l) {
     return (Inst){
         .type = INST_LABEL,
         .layout = X86_OP_NONE,
+        .regs = { -1 },
         .imm = { l }
     };
 }

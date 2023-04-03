@@ -370,6 +370,7 @@ struct TB_ModuleSection {
 
     // export-specific
     uint32_t flags;
+    uint32_t name_pos;
 
     // this isn't computed until export time
     uint32_t raw_data_pos;
@@ -690,6 +691,8 @@ uint64_t* tb_transmute_to_int(TB_Function* f, TB_Label bb, TB_Node* n, int num_w
 size_t tb_helper_write_text_section(size_t write_pos, TB_Module* m, uint8_t* output, uint32_t pos);
 size_t tb_helper_write_section(TB_Module* m, size_t write_pos, TB_ModuleSection* section, uint8_t* output, uint32_t pos);
 size_t tb_helper_get_text_section_layout(TB_Module* m, size_t symbol_id_start);
+
+size_t tb__layout_relocations(TB_Module* m, DynArray(TB_ModuleSection*) sections, const ICodeGen* restrict code_gen, size_t output_size, size_t reloc_size, bool sizing);
 
 ////////////////////////////////
 // ANALYSIS

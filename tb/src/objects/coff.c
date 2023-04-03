@@ -132,46 +132,7 @@ TB_API TB_Exports tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
     output_size += xdata.count;
 
     // calculate relocation layout
-    dyn_array_for(i, sections) {
-        size_t reloc_count = 0;
-        switch (sections[i]->kind) {
-            case TB_MODULE_SECTION_TEXT:
-            // emit_call_patches will also give us the reloc_count
-            size_t locals = code_gen->emit_call_patches(m);
-            reloc_count = sections[i]->reloc_count;
-            reloc_count -= locals;
-            reloc_count -= sections[i]->total_comdat_relocs;
-            break;
-
-            case TB_MODULE_SECTION_DATA:
-            case TB_MODULE_SECTION_TLS:
-            dyn_array_for(j, sections[i]->globals) {
-                TB_Global* restrict g = sections[i]->globals[j];
-                FOREACH_N(k, 0, g->obj_count) {
-                    reloc_count += (g->objects[k].type == TB_INIT_OBJ_RELOC);
-                }
-            }
-            break;
-
-            default:
-            tb_todo();
-            break;
-        }
-        sections[i]->reloc_count = reloc_count;
-        sections[i]->reloc_pos = output_size;
-
-        output_size += reloc_count * sizeof(COFF_ImageReloc);
-
-        if (sections[i]->total_comdat_relocs) {
-            TB_FOR_FUNCTIONS(f, m) if (f->super.name && f->output) {
-                f->patch_pos = output_size;
-
-                for (TB_SymbolPatch* p = f->last_patch; p; p = p->prev) {
-                    if (!p->internal) output_size += sizeof(COFF_ImageReloc);
-                }
-            }
-        }
-    }
+    output_size = tb__layout_relocations(m, sections, code_gen, output_size, sizeof(COFF_ImageReloc), false);
 
     FOREACH_N(i, 0, debug_sections.length) {
         size_t reloc_count = debug_sections.data[i].relocation_count;

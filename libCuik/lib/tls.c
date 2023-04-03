@@ -46,7 +46,7 @@ void* tls_pop(size_t size) {
     return &temp_storage->data[temp_storage->used];
 }
 
-void* tls_save() {
+void* tls_save(void) {
     assert(sizeof(TemporaryStorage) + temp_storage->used);
 
     //size_t align_mask = sizeof(max_align_t) - 1;

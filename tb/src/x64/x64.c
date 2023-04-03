@@ -132,6 +132,7 @@ static Inst inst_u(int op, TB_DataType dt) {
         .type = op,
         .layout = X86_OP_NONE,
         .data_type = legalize_int2(dt),
+        .regs = { -1 },
     };
 }
 
@@ -149,6 +150,7 @@ static Inst inst_nullary(int op) {
         .type = op,
         .layout = X86_OP_NONE,
         .data_type = X86_TYPE_NONE,
+        .regs = { -1 },
     };
 }
 

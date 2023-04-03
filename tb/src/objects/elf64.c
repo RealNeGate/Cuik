@@ -26,17 +26,158 @@ static void put_symbol(TB_Emitter* strtbl, TB_Emitter* stab, const char* name, u
     tb_outs(stab, sizeof(Elf64_Sym), (uint8_t*)&sym);
 }
 
-#define WRITE(data, length_) write_data(&e, output, length_, data)
-static void write_data(TB_ModuleExporter* restrict e, uint8_t* restrict output, size_t length, const void* data) {
-    memcpy(output + e->write_pos, data, length);
-    e->write_pos += length;
+#define APPEND_SECTION(sec) if (sec.total_size) { dyn_array_put(sections, &sec); }
+#define WRITE(data, size) (memcpy(&output[write_pos], data, size), write_pos += (size))
+TB_API TB_Exports tb_elf64obj_write_output(TB_Module* m, const IDebugFormat* dbg) {
+    CUIK_TIMED_BLOCK("layout section") {
+        tb_module_layout_sections(m);
+    }
+
+    const ICodeGen* restrict code_gen = tb__find_code_generator(m);
+
+    uint16_t machine = 0;
+    switch (m->target_arch) {
+        case TB_ARCH_X86_64: machine = EM_X86_64; break;
+        case TB_ARCH_AARCH64: machine = EM_AARCH64; break;
+        default: tb_todo();
+    }
+
+    TB_Emitter strtbl = { 0 };
+    tb_out_reserve(&strtbl, 1024);
+    tb_out1b(&strtbl, 0); // null string in the table
+
+    Elf64_Ehdr header = {
+        .e_ident = {
+            [EI_MAG0]       = 0x7F, // magic number
+            [EI_MAG1]       = 'E',
+            [EI_MAG2]       = 'L',
+            [EI_MAG3]       = 'F',
+            [EI_CLASS]      = 2, // 64bit ELF file
+            [EI_DATA]       = 1, // little-endian
+            [EI_VERSION]    = 1, // 1.0
+            [EI_OSABI]      = 0,
+            [EI_ABIVERSION] = 0
+        },
+        .e_type = ET_REL, // relocatable
+        .e_version = 1,
+        .e_machine = machine,
+        .e_entry = 0,
+
+        // section headers go at the end of the file
+        // and are filed in later.
+        .e_shoff = 0,
+        .e_flags = 0,
+
+        .e_ehsize = sizeof(Elf64_Ehdr),
+
+        .e_shentsize = sizeof(Elf64_Shdr),
+        .e_shstrndx  = 1,
+    };
+
+    // accumulate all sections
+    DynArray(TB_ModuleSection*) sections = NULL;
+    APPEND_SECTION(m->text);
+    APPEND_SECTION(m->data);
+    APPEND_SECTION(m->rdata);
+    APPEND_SECTION(m->tls);
+
+    int dbg_section_count = (dbg ? dbg->number_of_debug_sections(m) : 0);
+    int section_count = 1 + dyn_array_length(sections) + dbg_section_count;
+
+    // calculate relocation layout
+    size_t output_size = sizeof(Elf64_Ehdr);
+    dyn_array_for(i, sections) {
+        sections[i]->section_num = 1 + i;
+        sections[i]->raw_data_pos = output_size;
+        output_size += sections[i]->total_size;
+    }
+
+    // each section with relocations needs a matching .rel section
+    output_size = tb__layout_relocations(m, sections, code_gen, output_size, sizeof(Elf64_Rela), false);
+    dyn_array_for(i, sections) {
+        if (sections[i]->reloc_count > 0) {
+            section_count += 1;
+            tb_outs(&strtbl, 5, ".rela");
+        }
+        sections[i]->name_pos = tb_outstr_nul_UNSAFE(&strtbl, sections[i]->name);
+    }
+
+    Elf64_Shdr strtab = {
+        .sh_name = tb_outstr_nul_UNSAFE(&strtbl, ".strtab"),
+        .sh_type = SHT_STRTAB,
+        .sh_flags = 0,
+        .sh_addralign = 1,
+        .sh_size = strtbl.count,
+        .sh_offset = output_size,
+    };
+    output_size += strtbl.count;
+
+    header.e_shoff = output_size;
+    header.e_shnum = section_count + 1;
+    // sections plus the NULL section at the start
+    output_size += (1 + section_count) * sizeof(Elf64_Shdr);
+
+    ////////////////////////////////
+    // write output
+    ////////////////////////////////
+    size_t write_pos = 0;
+    uint8_t* restrict output = tb_platform_heap_alloc(output_size);
+
+    WRITE(&header, sizeof(header));
+
+    // write section content
+    dyn_array_for(i, sections) {
+        write_pos = tb_helper_write_section(m, write_pos, sections[i], output, sections[i]->raw_data_pos);
+    }
+
+    // write relocation arrays
+    dyn_array_for(i, sections) if (sections[i]->reloc_count > 0) {
+        assert(sections[i]->reloc_pos == write_pos);
+        Elf64_Rela* rels = (Elf64_Rela*) &output[write_pos];
+
+        // a
+
+        write_pos += sections[i]->reloc_count * sizeof(Elf64_Rela);
+    }
+
+    WRITE(strtbl.data, strtbl.count);
+
+    // write section header
+    memset(&output[write_pos], 0, sizeof(Elf64_Shdr)), write_pos += sizeof(Elf64_Shdr);
+    WRITE(&strtab, sizeof(strtab));
+    dyn_array_for(i, sections) {
+        Elf64_Shdr sec = {
+            .sh_name = sections[i]->name_pos,
+            .sh_type = SHT_PROGBITS,
+            .sh_flags = SHF_ALLOC | ((sections[i] == &m->text) ? SHF_EXECINSTR : SHF_WRITE),
+            .sh_addralign = 16,
+            .sh_size = sections[i]->total_size,
+            .sh_offset = sections[i]->raw_data_pos,
+        };
+        WRITE(&sec, sizeof(sec));
+    }
+
+    dyn_array_for(i, sections) if (sections[i]->reloc_count) {
+        Elf64_Shdr sec = {
+            .sh_name = sections[i]->name_pos - 5,
+            .sh_type = SHT_RELA,
+            .sh_flags = SHF_INFO_LINK,
+            .sh_addralign = 16,
+            .sh_info = 1 + i,
+            .sh_size = sections[i]->reloc_count * sizeof(Elf64_Rela),
+            .sh_offset = sections[i]->reloc_pos,
+            .sh_entsize = sizeof(Elf64_Rela)
+        };
+        WRITE(&sec, sizeof(sec));
+    }
+
+    __debugbreak();
+
+    assert(write_pos == output_size);
+    return (TB_Exports){ .count = 1, .files = { { output_size, output } } };
 }
 
-static void zero_data(TB_ModuleExporter* restrict e, uint8_t* restrict output, size_t length) {
-    memset(output + e->write_pos, 0, length);
-    e->write_pos += length;
-}
-
+#if 0
 TB_API TB_Exports tb_elf64obj_write_output(TB_Module* m, const IDebugFormat* dbg) {
     // used by the sections array
     enum {
@@ -442,3 +583,4 @@ TB_API TB_Exports tb_elf64obj_write_output(TB_Module* m, const IDebugFormat* dbg
 
     return (TB_Exports){ .count = 1, .files = { { output_size, output } } };
 }
+#endif

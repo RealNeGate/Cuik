@@ -483,6 +483,7 @@ extern "C" {
     } TB_NodeAtomic;
 
     typedef struct {
+        int unused;
         TB_Label labels[];
     } TB_NodePhi;
 

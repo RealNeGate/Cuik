@@ -19,7 +19,7 @@ parser.add_argument('-asan', action='store_true', help='compile with ASAN')
 parser.add_argument('-autospall', action='store_true', help='instrument code with SpallAuto')
 
 args = parser.parse_args()
-# args.driver = True
+args.driver = True
 
 mimalloc = True
 
@@ -29,10 +29,10 @@ if args.inspector or args.driver:
 
 # Figure out C and linker flags
 ldflags = ""
-cflags = "-g -msse4 -Wall -Werror -Wno-unused -I common -DCUIK_ALLOW_THREADS"
+cflags = "-g -msse4 -Wall -Werror -Wno-unused -I common -DCUIK_ALLOW_THREADS -D_MT -U_DLL"
 
 if mimalloc:       cflags += " -DTB_USE_MIMALLOC -DCUIK_USE_MIMALLOC -I mimalloc/include"
-if args.libcuik:   cflags += " -I libCuik/include"
+if args.libcuik:   cflags += " -I libCuik/include -DMINIZ_NO_MALLOC"
 if args.tb:        cflags += " -DCUIK_USE_TB -I tb/include"
 if args.asan:      cflags += " -fsanitize=address"
 if args.opt:       cflags += " -O2 -DNDEBUG"
@@ -40,12 +40,12 @@ if args.autospall: cflags += " -DCUIK_USE_SPALL_AUTO -finstrument-functions-afte
 
 if args.inspector:
 	cflags += f" -I {raylib_path}/include"
-	ldflags += f" {raylib_path}/lib/raylib.lib -Xlinker /nodefaultlib:libcmt"
+	ldflags += f" {raylib_path}/lib/raylib.lib /nodefaultlib:libcmt"
 
 system = platform.system()
 if system == "Windows":
-	ld = "clang"
-	ldflags += " -g"
+	ld = "lld-link"
+	ldflags += " -debug kernel32.lib msvcrt.lib libcmt.lib"
 
 	if args.asan: ld += " -fsanitize=address"
 
@@ -102,10 +102,6 @@ rule cc
   command = clang $in $cflags -MD -MF $out.d -c -o $out
   description = CC $in $out
 
-rule link
-  command = {ld} $in $ldflags -o $out
-  description = LINK $out
-
 rule meta_cc
   command = clang $in -o $out
   description = CC $in $out
@@ -125,14 +121,22 @@ rule embed_cc
 """)
 
 if system == "Windows":
-	ninja.write("""
+	ninja.write(f"""
+rule link
+  command = {ld} $in $ldflags /out:$out
+  description = LINK $out
+
 rule lib
   command = lib /nologo $in /out:$out
   description = LIB $out
 
 """)
 else:
-	ninja.write("""
+	ninja.write(f"""
+rule link
+  command = {ld} $in $ldflags -o $out
+  description = LINK $out
+
 rule lib
   command = ar -rcs $out $in
   description = AR $out
