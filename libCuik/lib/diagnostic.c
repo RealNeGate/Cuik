@@ -364,6 +364,7 @@ void diag_writer_highlight(DiagWriter* writer, SourceRange loc) {
     diag_writer_write_upto(writer, start_pos);
     //printf("\x1b[7m");
     //diag_writer_write_upto(writer, start_pos + tkn_len);
+    for (size_t i = 0; i < start_pos; i++) sprintfcb(tokens->diag, " ");
     sprintfcb(tokens->diag, "\x1b[32m^");
     for (size_t i = 1; i < tkn_len; i++) sprintfcb(tokens->diag, "~");
     writer->cursor = start_pos + tkn_len;

@@ -121,7 +121,7 @@ static bool parse_decl_or_expr2(Cuik_Parser* parser, TokenStream* restrict s, si
             // error recovery, skip until ;
             while (!tokens_eof(s) && tokens_get(s)->type != ';') tokens_next(s);
             return PARSE_WIT_ERRORS;
-        } else if (!expect_with_reason(s, ';', "ex2pression")) {
+        } else if (!expect_with_reason(s, ';', "expression")) {
             return PARSE_WIT_ERRORS;
         }
         return true;

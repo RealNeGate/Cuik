@@ -205,7 +205,7 @@ CUIK_API bool cuik_args_to_driver(Cuik_DriverArgs* comp_args, Cuik_Arguments* re
     }
 
     Cuik_Arg* subsystem = args->_[ARG_SUBSYSTEM];
-    if (lang) {
+    if (subsystem) {
         if (strcmp(subsystem->value, "windows") == 0) comp_args->subsystem = TB_WIN_SUBSYSTEM_WINDOWS;
         else if (strcmp(subsystem->value, "console") == 0) comp_args->subsystem = TB_WIN_SUBSYSTEM_CONSOLE;
         else if (strcmp(subsystem->value, "efi") == 0) comp_args->subsystem = TB_WIN_SUBSYSTEM_EFI_APP;

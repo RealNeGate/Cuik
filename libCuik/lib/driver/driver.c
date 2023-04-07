@@ -424,6 +424,18 @@ static Cuik_Linker gimme_linker(Cuik_DriverArgs* restrict args) {
     return l;
 }
 
+static bool has_file_ext(const char* path) {
+    const char* last_slash = path;
+    bool has_ext = false;
+    for (; *path; path++) {
+        if (*path == '/') last_slash = path, has_ext = false;
+        if (*path == '\\') last_slash = path, has_ext = false;
+        if (*path == '.') has_ext = true;
+    }
+
+    return has_ext;
+}
+
 static bool export_output(Cuik_DriverArgs* restrict args, TB_Module* mod, const char* output_path) {
     // TODO(NeGate): do a smarter system (just default to whatever the different platforms like)
     TB_DebugFormat debug_fmt = (args->debug_info ? TB_DEBUGFMT_CODEVIEW : TB_DEBUGFMT_NONE);
@@ -431,10 +443,12 @@ static bool export_output(Cuik_DriverArgs* restrict args, TB_Module* mod, const 
     Cuik_System sys = cuik_get_target_system(args->target);
 
     char output_name[FILENAME_MAX];
-    sprintf_s(
-        output_name, FILENAME_MAX, "%s%s", output_path,
-        cuik_get_target_system(args->target) == CUIK_SYSTEM_WINDOWS ? ".exe" : ""
-    );
+    if (!has_file_ext(output_path) && cuik_get_target_system(args->target) == CUIK_SYSTEM_WINDOWS) {
+        // insert file extension
+        sprintf_s(output_name, FILENAME_MAX, "%s.exe", output_path);
+    } else {
+        strcpy_s(output_name, FILENAME_MAX, output_path);
+    }
 
     if (args->based && (args->flavor == TB_FLAVOR_SHARED || args->flavor == TB_FLAVOR_EXECUTABLE)) {
         if (args->verbose) {
@@ -501,6 +515,10 @@ static bool export_output(Cuik_DriverArgs* restrict args, TB_Module* mod, const 
 
             if (args->entrypoint) {
                 tb_linker_set_entrypoint(l, args->entrypoint);
+            }
+
+            if (args->subsystem) {
+                tb_linker_set_subsystem(l, args->subsystem);
             }
 
             TB_Exports exports = tb_linker_export(l);
@@ -778,31 +796,12 @@ bool cuik_driver_get_output_name(Cuik_DriverArgs* args, int cap, char path[]) {
         return true;
     }
 
-    const char* filename = args->output_name ? args->output_name : args->sources[0];
-    const char* ext = strrchr(filename, '.');
-    size_t len = ext ? (ext - filename) : strlen(filename);
-
-    if (filename[len - 1] == '/' || filename[len - 1] == '\\') {
-        const char* slash = strrchr(args->sources[0], '/');
-        if (!slash) slash = strrchr(args->sources[0], '\\');
-
-        if (!slash) slash = args->sources[0];
-        else slash += 1; // skip the slash
-
-        size_t total = strlen(slash)+len+1;
-        if (total > cap) {
-            return false;
-        }
-
-        snprintf(path, total, "%.*s%s", (int)len, filename, slash);
-        return true;
+    size_t len = strlen(args->output_name);
+    if (args->output_name && (args->output_name[len - 1] == '/' || args->output_name[len - 1] == '\\')) {
+        int r = snprintf(path, cap, "%s%s", args->output_name, args->sources[0]);
+        return r >= 0 && r < cap;
     } else {
-        if (len >= cap) {
-            return false;
-        }
-
-        memcpy(path, filename, len);
-        path[len] = '\0';
+        strcpy_s(path, cap, args->output_name ? args->output_name : args->sources[0]);
         return true;
     }
 }

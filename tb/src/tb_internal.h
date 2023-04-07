@@ -425,6 +425,9 @@ struct TB_Module {
     // TODO(NeGate): custom sections
     TB_ModuleSection text, data, rdata, tls;
 
+    // windows specific lol
+    TB_LinkerSectionPiece* xdata;
+
     // The code is stored into giant buffers
     // there's on per code gen thread so that
     // each can work at the same time without

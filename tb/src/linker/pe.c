@@ -452,6 +452,7 @@ static void append_module(TB_Linker* l, TB_Module* m) {
 
                 if (out_f != NULL) out_f->unwind_info += x->offset;
             }
+            m->xdata = x;
         }
 
         TB_LinkerSection* pdata = tb__find_or_create_section(l, ".pdata", IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA);
@@ -851,6 +852,7 @@ static void* gen_reloc_section(TB_Linker* l) {
 #define CSTRING(str) { sizeof(str)-1, (const uint8_t*) str }
 static void init(TB_Linker* l) {
     l->entrypoint = "mainCRTStartup";
+    l->subsystem = TB_WIN_SUBSYSTEM_CONSOLE;
 
     tb__append_symbol(&l->symtab, &(TB_LinkerSymbol){
             .name = CSTRING("__ImageBase"),
@@ -1070,6 +1072,16 @@ static TB_Exports export(TB_Linker* l) {
         .flags = 0x2 | 0x0020 /* executable, >2GB */
     };
 
+    if (l->subsystem == TB_WIN_SUBSYSTEM_EFI_APP) {
+        header.flags |= 0x2000; // DLL
+    }
+
+    static const uint32_t subsys[] = {
+        [TB_WIN_SUBSYSTEM_WINDOWS] = IMAGE_SUBSYSTEM_WINDOWS_GUI,
+        [TB_WIN_SUBSYSTEM_CONSOLE] = IMAGE_SUBSYSTEM_WINDOWS_CUI,
+        [TB_WIN_SUBSYSTEM_EFI_APP] = IMAGE_SUBSYSTEM_EFI_APPLICATION,
+    };
+
     PE_OptionalHeader64 opt_header = {
         .magic = 0x20b,
         .section_alignment = 0x1000,
@@ -1081,17 +1093,9 @@ static TB_Exports export(TB_Linker* l) {
         .size_of_initialized_data = pe_init_size,
         .size_of_uninitialized_data = pe_uninit_size,
 
-        // 6.0
-        .major_os_ver = 6,
-        .minor_os_ver = 0,
-
-        // 6.0
-        .major_subsystem_ver = 6,
-        .minor_subsystem_ver = 0,
-
         .size_of_image = virt_addr,
         .size_of_headers = (size_of_headers + 0x1FF) & ~0x1FF,
-        .subsystem = IMAGE_SUBSYSTEM_WINDOWS_CUI,
+        .subsystem = subsys[l->subsystem],
         .dll_characteristics = 0x40 | 0x20 | 0x0100 | 0x8000, /* dynamic base, high entropy, nx compat, terminal server aware */
 
         .size_of_stack_reserve = 2 << 20,
@@ -1103,6 +1107,13 @@ static TB_Exports export(TB_Linker* l) {
             [IMAGE_DIRECTORY_ENTRY_IAT] = iat_dir,
         }
     };
+
+    if (l->subsystem != TB_WIN_SUBSYSTEM_EFI_APP) {
+        opt_header.major_os_ver = 6;
+        opt_header.minor_os_ver = 0;
+        opt_header.major_subsystem_ver = 6;
+        opt_header.minor_subsystem_ver = 0;
+    }
 
     TB_LinkerSymbol* tls_used_sym = tb__find_symbol_cstr(&l->symtab, "_tls_used");
     if (tls_used_sym) {

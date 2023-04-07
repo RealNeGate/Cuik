@@ -31,6 +31,10 @@ TB_API TB_Linker* tb_linker_create(TB_ExecutableType exe, TB_Arch arch) {
     return l;
 }
 
+TB_API void tb_linker_set_subsystem(TB_Linker* l, TB_WindowsSubsystem subsystem) {
+    l->subsystem = subsystem;
+}
+
 TB_API void tb_linker_set_entrypoint(TB_Linker* l, const char* name) {
     l->entrypoint = name;
 }
@@ -217,7 +221,7 @@ size_t tb__apply_section_contents(TB_Linker* l, uint8_t* output, size_t write_po
                     uint32_t* p_out32 = (uint32_t*) p_out;
 
                     uint32_t text_rva = text->address + m->text.piece->offset;
-                    uint32_t rdata_rva = rdata->address + m->rdata.piece->offset;
+                    uint32_t rdata_rva = m->xdata->parent->address + m->xdata->offset;
 
                     TB_FOR_FUNCTIONS(f, m) {
                         TB_FunctionOutput* out_f = f->output;

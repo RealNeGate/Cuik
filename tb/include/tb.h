@@ -801,6 +801,9 @@ extern "C" {
     TB_API TB_Exports tb_linker_export(TB_Linker* l);
     TB_API void tb_linker_destroy(TB_Linker* l);
 
+    // windows only
+    TB_API void tb_linker_set_subsystem(TB_Linker* l, TB_WindowsSubsystem subsystem);
+
     TB_API void tb_linker_set_entrypoint(TB_Linker* l, const char* name);
 
     // Links compiled module into output

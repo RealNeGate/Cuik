@@ -245,7 +245,9 @@ struct TB_UnresolvedSymbol {
 
 typedef struct TB_Linker {
     TB_Arch target_arch;
+
     const char* entrypoint;
+    TB_WindowsSubsystem subsystem;
 
     NL_Strmap(TB_LinkerSection*) sections;
 
