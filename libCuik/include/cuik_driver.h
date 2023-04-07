@@ -24,6 +24,7 @@ struct Cuik_DriverArgs {
 
     int threads, opt_level;
     const char* output_name;
+    const char* entrypoint;
 
     void* diag_userdata;
     Cuik_DiagCallback diag_callback;
@@ -32,6 +33,8 @@ struct Cuik_DriverArgs {
     DynArray(char*) includes;
     DynArray(char*) libraries;
     DynArray(char*) defines;
+
+    TB_WindowsSubsystem subsystem;
 
     bool ir              : 1;
     bool emit_ir         : 1;

@@ -538,11 +538,18 @@ static bool invoke_link(void* ctx, const Cuik_DriverArgs* args, Cuik_Linker* lin
     enum { CMD_LINE_MAX = 4096 };
     Cuik_WindowsToolchain* t = ctx;
 
+    static const wchar_t* subsystem_option[] = {
+        [TB_WIN_SUBSYSTEM_UNKNOWN] = L"",
+        [TB_WIN_SUBSYSTEM_WINDOWS] = L"/subsystem:windows ",
+        [TB_WIN_SUBSYSTEM_CONSOLE] = L"/subsystem:console ",
+        [TB_WIN_SUBSYSTEM_EFI_APP] = L"/subsystem:efi_application",
+    };
+
     wchar_t cmd_line[CMD_LINE_MAX];
     int cmd_line_len = swprintf(cmd_line, CMD_LINE_MAX,
-        L"%sbin\\Hostx64\\x64\\link.exe /nologo /machine:amd64 "
-        "/subsystem:%s /debug:%S /pdb:%S.pdb /out:%S /incremental:no ",
-        t->vc_tools_install, linker->subsystem_windows ? L"windows" : L"console",
+        L"%sbin\\Hostx64\\x64\\link.exe /nologo /machine:amd64 %s"
+        "/debug:%S /pdb:%S.pdb /out:%S /incremental:no ",
+        t->vc_tools_install, subsystem_option[args->subsystem],
         args->debug_info ? "full" : "none", filename, output
     );
 

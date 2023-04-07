@@ -67,6 +67,8 @@ struct TB_LinkerSection {
     uint32_t flags;
     uint32_t number;
 
+    uint32_t name_pos;
+
     size_t address; // usually a relative virtual address.
     size_t offset;  // in the file.
 
@@ -243,6 +245,7 @@ struct TB_UnresolvedSymbol {
 
 typedef struct TB_Linker {
     TB_Arch target_arch;
+    const char* entrypoint;
 
     NL_Strmap(TB_LinkerSection*) sections;
 

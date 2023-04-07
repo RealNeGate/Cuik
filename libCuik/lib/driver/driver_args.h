@@ -23,6 +23,8 @@ X(DEBUG,       "g",        false, "compile with debug information")
 X(NOLIBC,      "nostdlib", false, "don't include and link against the default CRT")
 X(LIB,         "l",        true,  "add library name to the linking")
 X(BASED,       "based",    false, "use the TB linker (EXPERIMENTAL)")
+X(SUBSYSTEM,   "subsystem",true,  "set windows subsystem (windows only... of course)")
+X(ENTRY,       "e",        true,  "set entrypoint")
 // misc
 X(TARGET,      "target",   true,  "change the target system and arch")
 X(THREADS,     "j",        false, "enabled multithreaded compilation")

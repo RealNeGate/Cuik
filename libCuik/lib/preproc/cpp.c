@@ -525,7 +525,7 @@ Cuikpp_Status cuikpp_run(Cuik_CPP* ctx, Cuikpp_LocateFile* locate, Cuikpp_GetFil
 
     Cuik_FileResult main_file;
     if (!fs(user_data, slot->filepath, &main_file)) {
-        fprintf(stderr, "\x1b[31merror\x1b[0m: file doesn't exist.\n");
+        fprintf(stderr, "\x1b[31merror\x1b[0m: file \"%s\" doesn't exist.\n", slot->filepath);
         return CUIKPP_ERROR;
     }
 

@@ -1867,7 +1867,10 @@ TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, Stmt* re
 
         TB_ModuleSection* section = get_variable_storage(tu->ir_mod, &s->decl.attrs, s->decl.type.raw & CUIK_QUAL_CONST);
         int max_tb_objects;
-        if (s->decl.initial->op == EXPR_ADDR) {
+        if (s->decl.initial == NULL) {
+            tb_global_set_storage(tu->ir_mod, section, (TB_Global*) s->backing.s, type->size, type->align, 0);
+            return s->backing.s;
+        } else if (s->decl.initial->op == EXPR_ADDR) {
             max_tb_objects = 2;
         } else if (s->decl.initial->op == EXPR_INITIALIZER) {
             max_tb_objects = count_max_tb_init_objects(s->decl.initial->init.root);

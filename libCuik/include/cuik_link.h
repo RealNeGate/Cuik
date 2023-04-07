@@ -7,8 +7,6 @@
 // This is a wrapper over the system linker, eventually TB will be capable of
 // this job but until then...
 typedef struct Cuik_Linker {
-    bool subsystem_windows;
-
     DynArray(char*) inputs;
     DynArray(char*) libpaths;
 } Cuik_Linker;

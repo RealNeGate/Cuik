@@ -850,6 +850,8 @@ static void* gen_reloc_section(TB_Linker* l) {
 
 #define CSTRING(str) { sizeof(str)-1, (const uint8_t*) str }
 static void init(TB_Linker* l) {
+    l->entrypoint = "mainCRTStartup";
+
     tb__append_symbol(&l->symtab, &(TB_LinkerSymbol){
             .name = CSTRING("__ImageBase"),
             .tag = TB_LINKER_SYMBOL_IMAGEBASE,
@@ -922,7 +924,7 @@ static void gc_mark(TB_Linker* l, TB_LinkerSectionPiece* p) {
 static bool garbage_collect(TB_Linker* l) {
     CUIK_TIMED_BLOCK("GC sections") {
         // mark roots
-        TB_LinkerSectionPiece* entry = tb__get_piece(l, tb__find_symbol_cstr(&l->symtab, "mainCRTStartup"));
+        TB_LinkerSectionPiece* entry = tb__get_piece(l, tb__find_symbol_cstr(&l->symtab, l->entrypoint));
         gc_mark(l, entry);
 
         entry = tb__get_piece(l, tb__find_symbol_cstr(&l->symtab, "_tls_used"));
@@ -1127,7 +1129,7 @@ static TB_Exports export(TB_Linker* l) {
         opt_header.base_of_code = text->address;
         opt_header.size_of_code = align_up(text->total_size, 4096);
 
-        TB_LinkerSymbol* sym = tb__find_symbol_cstr(&l->symtab, "mainCRTStartup");
+        TB_LinkerSymbol* sym = tb__find_symbol_cstr(&l->symtab, l->entrypoint);
         if (sym) {
             if (sym->tag == TB_LINKER_SYMBOL_NORMAL) {
                 opt_header.entrypoint = text->address + sym->normal.piece->offset + sym->normal.secrel;

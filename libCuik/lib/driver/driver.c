@@ -305,16 +305,14 @@ static void codegen_job(void* arg) {
     futex_dec(task.remaining);
 }
 
-static void irgen(Cuik_IThreadpool* restrict thread_pool, Cuik_DriverArgs* restrict args, CompilationUnit* restrict cu, TB_Module* mod, bool* subsystem_windows) {
-    *subsystem_windows = false;
-
+static void irgen(Cuik_IThreadpool* restrict thread_pool, Cuik_DriverArgs* restrict args, CompilationUnit* restrict cu, TB_Module* mod) {
     CUIK_TIMED_BLOCK("IRGen") {
         if (thread_pool != NULL) {
             #if CUIK_ALLOW_THREADS
             size_t task_capacity = 0;
             CUIK_FOR_EACH_TU(tu, cu) {
-                if (cuik_get_entrypoint_status(tu) == CUIK_ENTRYPOINT_WINMAIN) {
-                    *subsystem_windows = true;
+                if (cuik_get_entrypoint_status(tu) == CUIK_ENTRYPOINT_WINMAIN && args->subsystem == TB_WIN_SUBSYSTEM_UNKNOWN) {
+                    args->subsystem = TB_WIN_SUBSYSTEM_WINDOWS;
                 }
 
                 size_t c = cuik_num_of_top_level_stmts(tu);
@@ -357,8 +355,8 @@ static void irgen(Cuik_IThreadpool* restrict thread_pool, Cuik_DriverArgs* restr
             // free(tasks);
         } else {
             CUIK_FOR_EACH_TU(tu, cu) {
-                if (cuik_get_entrypoint_status(tu) == CUIK_ENTRYPOINT_WINMAIN) {
-                    *subsystem_windows = true;
+                if (cuik_get_entrypoint_status(tu) == CUIK_ENTRYPOINT_WINMAIN && args->subsystem == TB_WIN_SUBSYSTEM_UNKNOWN) {
+                    args->subsystem = TB_WIN_SUBSYSTEM_WINDOWS;
                 }
 
                 size_t c = cuik_num_of_top_level_stmts(tu);
@@ -403,8 +401,8 @@ static void codegen(Cuik_IThreadpool* restrict thread_pool, Cuik_DriverArgs* res
     }
 }
 
-static Cuik_Linker gimme_linker(Cuik_DriverArgs* restrict args, bool subsystem_windows) {
-    Cuik_Linker l = { .subsystem_windows = subsystem_windows };
+static Cuik_Linker gimme_linker(Cuik_DriverArgs* restrict args) {
+    Cuik_Linker l = { 0 };
 
     // Add system libpaths
     cuiklink_apply_toolchain_libs(&l, args);
@@ -426,12 +424,11 @@ static Cuik_Linker gimme_linker(Cuik_DriverArgs* restrict args, bool subsystem_w
     return l;
 }
 
-static bool export_output(Cuik_DriverArgs* restrict args, TB_Module* mod, const char* output_path, bool subsystem_windows) {
+static bool export_output(Cuik_DriverArgs* restrict args, TB_Module* mod, const char* output_path) {
     // TODO(NeGate): do a smarter system (just default to whatever the different platforms like)
     TB_DebugFormat debug_fmt = (args->debug_info ? TB_DEBUGFMT_CODEVIEW : TB_DEBUGFMT_NONE);
 
     Cuik_System sys = cuik_get_target_system(args->target);
-    bool is_windows = (sys == CUIK_SYSTEM_WINDOWS);
 
     char output_name[FILENAME_MAX];
     sprintf_s(
@@ -464,7 +461,7 @@ static bool export_output(Cuik_DriverArgs* restrict args, TB_Module* mod, const 
 
             // locate libraries and feed them into TB... in theory this process
             // can be somewhat multithreaded so we might wanna consider that.
-            Cuik_Linker tmp_linker = gimme_linker(args, subsystem_windows);
+            Cuik_Linker tmp_linker = gimme_linker(args);
             char path[FILENAME_MAX];
             dyn_array_for(i, tmp_linker.inputs) {
                 CUIK_TIMED_BLOCK(tmp_linker.inputs[i]) {
@@ -500,6 +497,10 @@ static bool export_output(Cuik_DriverArgs* restrict args, TB_Module* mod, const 
 
             CUIK_TIMED_BLOCK("tb_linker_append_module") {
                 tb_linker_append_module(l, mod);
+            }
+
+            if (args->entrypoint) {
+                tb_linker_set_entrypoint(l, args->entrypoint);
             }
 
             TB_Exports exports = tb_linker_export(l);
@@ -567,7 +568,7 @@ static bool export_output(Cuik_DriverArgs* restrict args, TB_Module* mod, const 
         }
 
         CUIK_TIMED_BLOCK("linker") {
-            Cuik_Linker l = gimme_linker(args, subsystem_windows);
+            Cuik_Linker l = gimme_linker(args);
 
             // Add Cuik object
             cuiklink_add_input_file(&l, obj_output_path);
@@ -692,9 +693,8 @@ CUIK_API bool cuik_driver_compile(Cuik_IThreadpool* restrict thread_pool, Cuik_D
     ////////////////////////////////
     // backend work
     ////////////////////////////////
-    bool subsystem_windows;
     CUIK_TIMED_BLOCK("Backend") {
-        irgen(thread_pool, args, cu, mod, &subsystem_windows);
+        irgen(thread_pool, args, cu, mod);
         free_preprocs(&stuff, tu_count);
 
         if (destroy_cu_after_ir) {
@@ -752,7 +752,7 @@ CUIK_API bool cuik_driver_compile(Cuik_IThreadpool* restrict thread_pool, Cuik_D
 
         tb_module_end_jit(jit);
     } else {
-        export_output(args, mod, output_path, subsystem_windows);
+        export_output(args, mod, output_path);
     }
 
     cleanup_tb:

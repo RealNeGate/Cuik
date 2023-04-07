@@ -31,6 +31,10 @@ TB_API TB_Linker* tb_linker_create(TB_ExecutableType exe, TB_Arch arch) {
     return l;
 }
 
+TB_API void tb_linker_set_entrypoint(TB_Linker* l, const char* name) {
+    l->entrypoint = name;
+}
+
 TB_API void tb_linker_append_object(TB_Linker* l, TB_Slice obj_name, TB_ObjectFile* obj) {
     l->vtbl.append_object(l, obj_name, obj);
 }

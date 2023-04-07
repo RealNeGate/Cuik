@@ -54,6 +54,14 @@ extern "C" {
         TB_SYSTEM_MAX,
     } TB_System;
 
+    typedef enum TB_WindowsSubsystem {
+        TB_WIN_SUBSYSTEM_UNKNOWN,
+
+        TB_WIN_SUBSYSTEM_WINDOWS,
+        TB_WIN_SUBSYSTEM_CONSOLE,
+        TB_WIN_SUBSYSTEM_EFI_APP,
+    } TB_WindowsSubsystem;
+
     typedef enum TB_ABI {
         // Used on 64bit Windows platforms
         TB_ABI_WIN64,
@@ -792,6 +800,8 @@ extern "C" {
     TB_API TB_Linker* tb_linker_create(TB_ExecutableType type, TB_Arch arch);
     TB_API TB_Exports tb_linker_export(TB_Linker* l);
     TB_API void tb_linker_destroy(TB_Linker* l);
+
+    TB_API void tb_linker_set_entrypoint(TB_Linker* l, const char* name);
 
     // Links compiled module into output
     TB_API void tb_linker_append_module(TB_Linker* l, TB_Module* m);

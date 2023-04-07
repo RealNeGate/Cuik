@@ -120,6 +120,7 @@ CUIK_API void cuik_parse_args(Cuik_Arguments* restrict args, int argc, const cha
                 insert_arg(args, type)->value = first + alias_len + 1;
             } else if (i + 1 >= argc) {
                 fprintf(stderr, "\x1b[31merror\x1b[0m: expected argument after %s\n", first);
+                insert_arg(args, type)->value = arg_is_set;
                 continue;
             } else {
                 insert_arg(args, type)->value = argv[i + 1];
@@ -194,13 +195,29 @@ CUIK_API bool cuik_args_to_driver(Cuik_DriverArgs* comp_args, Cuik_Arguments* re
 
     Cuik_Arg* lang = args->_[ARG_LANG];
     if (lang) {
-        if (strcmp(lang->value, "c11")) comp_args->version = CUIK_VERSION_C11;
-        else if (strcmp(lang->value, "c23")) comp_args->version = CUIK_VERSION_C23;
-        else if (strcmp(lang->value, "glsl")) comp_args->version = CUIK_VERSION_GLSL;
+        if (strcmp(lang->value, "c11") == 0) comp_args->version = CUIK_VERSION_C11;
+        else if (strcmp(lang->value, "c23") == 0) comp_args->version = CUIK_VERSION_C23;
+        else if (strcmp(lang->value, "glsl") == 0) comp_args->version = CUIK_VERSION_GLSL;
         else {
             fprintf(stderr, "unknown compiler version: %s\n", lang->value);
             fprintf(stderr, "supported languages: c11, c23, glsl\n");
         }
+    }
+
+    Cuik_Arg* subsystem = args->_[ARG_SUBSYSTEM];
+    if (lang) {
+        if (strcmp(subsystem->value, "windows") == 0) comp_args->subsystem = TB_WIN_SUBSYSTEM_WINDOWS;
+        else if (strcmp(subsystem->value, "console") == 0) comp_args->subsystem = TB_WIN_SUBSYSTEM_CONSOLE;
+        else if (strcmp(subsystem->value, "efi") == 0) comp_args->subsystem = TB_WIN_SUBSYSTEM_EFI_APP;
+        else {
+            fprintf(stderr, "unknown subsystem: %s\n", subsystem->value);
+            fprintf(stderr, "supported: windows, console, efi\n");
+        }
+    }
+
+    Cuik_Arg* entry = args->_[ARG_ENTRY];
+    if (entry) {
+        comp_args->entrypoint = entry->value;
     }
 
     Cuik_Arg* target = args->_[ARG_TARGET];

@@ -865,7 +865,9 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
                     TB_NodeSymbol* s = TB_NODE_GET_EXTRA(n->inputs[0]);
                     SUBMIT(inst_call(n->dt, fake_dst, s->sym));
                 } else {
-                    tb_todo();
+                    int call_target = ISEL(n->inputs[0]);
+
+                    SUBMIT(inst_r(CALL, n->dt, fake_dst, call_target));
                 }
             }
 

@@ -3,7 +3,7 @@
 #include "../objects/elf64.h"
 
 static void init(TB_Linker* l) {
-    // implement this
+    l->entrypoint = "_start";
 }
 
 static void append_object(TB_Linker* l, TB_Slice obj_name, TB_ObjectFile* obj) {
@@ -116,7 +116,8 @@ static void gc_mark(TB_Linker* l, TB_LinkerSectionPiece* p) {
 static TB_Exports export(TB_Linker* l) {
     CUIK_TIMED_BLOCK("GC sections") {
         // mark roots
-        TB_LinkerSectionPiece* entry = tb__get_piece(l, tb__find_symbol_cstr(&l->symtab, "_start"));
+        TB_LinkerSymbol* sym = tb__find_symbol_cstr(&l->symtab, l->entrypoint);
+        TB_LinkerSectionPiece* entry = tb__get_piece(l, sym);
         gc_mark(l, entry);
     }
 
@@ -124,16 +125,37 @@ static TB_Exports export(TB_Linker* l) {
         return (TB_Exports){ 0 };
     }
 
+    TB_Emitter strtbl = { 0 };
+    tb_out_reserve(&strtbl, 1024);
+    tb_out1b(&strtbl, 0); // null string in the table
+
     size_t final_section_count = 0;
     nl_strmap_for(i, l->sections) {
-        final_section_count += (l->sections[i]->generic_flags & TB_LINKER_SECTION_DISCARD) == 0;
+        if (l->sections[i]->generic_flags & TB_LINKER_SECTION_DISCARD) continue;
+
+        // reserve space for names
+        NL_Slice name = l->sections[i]->name;
+        l->sections[i]->name_pos = tb_outs(&strtbl, name.length + 1, name.data);
+        tb_out1b_UNSAFE(&strtbl, 0);
+
+        // we're keeping it for export
+        final_section_count += 1;
     }
 
+    Elf64_Shdr strtab = {
+        .sh_name = tb_outstr_nul_UNSAFE(&strtbl, ".strtab"),
+        .sh_type = SHT_STRTAB,
+        .sh_flags = 0,
+        .sh_addralign = 1,
+        .sh_size = strtbl.count,
+    };
+
     size_t size_of_headers = sizeof(Elf64_Ehdr)
-        + (final_section_count * sizeof(Elf64_Phdr));
+        + (final_section_count * sizeof(Elf64_Phdr))
+        + ((2+final_section_count) * sizeof(Elf64_Shdr));
 
     size_t section_content_size = 0;
-    uint64_t virt_addr = size_of_headers; // align_up(size_of_headers, 4096);
+    uint64_t virt_addr = size_of_headers;
     CUIK_TIMED_BLOCK("layout sections") {
         nl_strmap_for(i, l->sections) {
             TB_LinkerSection* s = l->sections[i];
@@ -144,8 +166,12 @@ static TB_Exports export(TB_Linker* l) {
 
             s->address = virt_addr;
             virt_addr += s->total_size;
+            // virt_addr = align_up(virt_addr + s->total_size, 4096);
         }
     }
+
+    strtab.sh_offset = size_of_headers + section_content_size;
+    section_content_size += strtbl.count;
 
     uint16_t machine = 0;
     switch (l->target_arch) {
@@ -174,18 +200,23 @@ static TB_Exports export(TB_Linker* l) {
         .e_machine = machine,
         .e_entry = 0,
 
-        .e_phoff = sizeof(Elf64_Ehdr),
         .e_flags = 0,
 
         .e_ehsize = sizeof(Elf64_Ehdr),
 
         .e_phentsize = sizeof(Elf64_Phdr),
+        .e_phoff     = sizeof(Elf64_Ehdr),
         .e_phnum     = final_section_count,
+
+        .e_shoff = sizeof(Elf64_Ehdr) + (sizeof(Elf64_Phdr) * final_section_count),
+        .e_shentsize = sizeof(Elf64_Shdr),
+        .e_shnum = final_section_count + 2,
+        .e_shstrndx  = 1,
     };
 
     // text section crap
-    TB_LinkerSection* text  = tb__find_section(l, ".text", PF_X | PF_R);
-    TB_LinkerSymbol* sym = tb__find_symbol_cstr(&l->symtab, "_start");
+    TB_LinkerSection* text = tb__find_section(l, ".text", PF_X | PF_R);
+    TB_LinkerSymbol* sym = tb__find_symbol_cstr(&l->symtab, l->entrypoint);
     if (text && sym) {
         if (sym->tag == TB_LINKER_SYMBOL_NORMAL) {
             header.e_entry = text->address + sym->normal.piece->offset + sym->normal.secrel;
@@ -199,7 +230,7 @@ static TB_Exports export(TB_Linker* l) {
     }
     WRITE(&header, sizeof(header));
 
-    // write section headers
+    // write program headers
     nl_strmap_for(i, l->sections) {
         TB_LinkerSection* s = l->sections[i];
         Elf64_Phdr sec = {
@@ -214,10 +245,29 @@ static TB_Exports export(TB_Linker* l) {
         WRITE(&sec, sizeof(sec));
     }
 
+    // write section headers
+    memset(&output[write_pos], 0, sizeof(Elf64_Shdr)), write_pos += sizeof(Elf64_Shdr);
+    WRITE(&strtab, sizeof(strtab));
+    nl_strmap_for(i, l->sections) {
+        TB_LinkerSection* s = l->sections[i];
+        Elf64_Shdr sec = {
+            .sh_name = s->name_pos,
+            .sh_type = SHT_PROGBITS,
+            .sh_flags = SHF_ALLOC | ((s->flags & PF_X) ? SHF_EXECINSTR : 0) | ((s->flags & PF_W) ? SHF_WRITE : 0),
+            .sh_addralign = 1,
+            .sh_size = s->total_size,
+            .sh_addr = s->address,
+            .sh_offset = s->offset,
+        };
+        WRITE(&sec, sizeof(sec));
+    }
+
     TB_LinkerSection* data  = tb__find_section(l, ".data", PF_W | PF_R);
     TB_LinkerSection* rdata = tb__find_section(l, ".rdata", PF_R);
 
+    // write section contents
     write_pos = tb__apply_section_contents(l, output, write_pos, text, data, rdata, 1, 0);
+    WRITE(strtbl.data, strtbl.count);
     assert(write_pos == output_size);
 
     // TODO(NeGate): multithread this too
