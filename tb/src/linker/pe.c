@@ -186,6 +186,7 @@ void append_object(TB_Linker* l, TB_Slice obj_name, TB_ObjectFile* obj) {
         TB_LinkerSectionPiece* p = tb__append_piece(ls, PIECE_NORMAL, s->raw_data.length, raw_data, NULL);
         s->user_data = p;
 
+        p->obj = obj;
         p->order = order;
         p->flags = 1;
         // p->vsize = s->virtual_size;
@@ -887,7 +888,7 @@ static void gc_mark(TB_Linker* l, TB_LinkerSectionPiece* p) {
     p->flags |= TB_LINKER_PIECE_LIVE;
 
     // mark module content
-    if (p->module) {
+    if (p->kind == PIECE_MODULE_SECTION && p->module != NULL) {
         gc_mark(l, p->module->text.piece);
         gc_mark(l, p->module->data.piece);
         gc_mark(l, p->module->rdata.piece);

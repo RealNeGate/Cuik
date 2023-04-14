@@ -796,13 +796,18 @@ bool cuik_driver_get_output_name(Cuik_DriverArgs* args, int cap, char path[]) {
         return true;
     }
 
-    size_t len = args->output_name ? strlen(args->output_name) : 0;
-    if (args->output_name && (args->output_name[len - 1] == '/' || args->output_name[len - 1] == '\\')) {
-        int r = snprintf(path, cap, "%s%s", args->output_name, args->sources[0]);
+    if (args->output_name) {
+        // raw copy
+        int r = snprintf(path, cap, "%s", args->output_name);
         return r >= 0 && r < cap;
     } else {
-        strcpy_s(path, cap, args->output_name ? args->output_name : args->sources[0]);
-        return true;
+        const char* filename = args->sources[0];
+
+        const char* ext = strrchr(filename, '.');
+        size_t len = ext ? (ext - filename) : strlen(filename);
+
+        int r = snprintf(path, cap, "%.*s", (int)len, filename);
+        return r >= 0 && r < cap;
     }
 }
 

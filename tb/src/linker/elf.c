@@ -78,7 +78,7 @@ static void gc_mark(TB_Linker* l, TB_LinkerSectionPiece* p) {
     p->flags |= TB_LINKER_PIECE_LIVE;
 
     // mark module content
-    if (p->module) {
+    if (p->kind == PIECE_MODULE_SECTION && p->module != NULL) {
         gc_mark(l, p->module->text.piece);
         gc_mark(l, p->module->data.piece);
         gc_mark(l, p->module->rdata.piece);

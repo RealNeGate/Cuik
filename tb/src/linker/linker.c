@@ -59,6 +59,16 @@ TB_API void tb_linker_destroy(TB_Linker* l) {
     tb_platform_heap_free(l);
 }
 
+TB_Slice tb__get_piece_name(TB_LinkerSectionPiece* restrict p) {
+    switch (p->kind) {
+        case PIECE_NORMAL: return p->obj->name;
+        case PIECE_MODULE_SECTION: return (TB_Slice){ sizeof("<tb module>")-1, (const uint8_t*) "<tb module>" };
+        case PIECE_PDATA: return (TB_Slice){ sizeof(".pdata")-1, (const uint8_t*) ".pdata" };
+        case PIECE_RELOC: return (TB_Slice){ sizeof(".reloc")-1, (const uint8_t*) ".reloc" };
+        default: tb_todo();
+    }
+}
+
 TB_LinkerSectionPiece* tb__get_piece(TB_Linker* l, TB_LinkerSymbol* restrict sym) {
     if (sym && (sym->tag == TB_LINKER_SYMBOL_NORMAL || sym->tag == TB_LINKER_SYMBOL_TB)) {
         return sym->normal.piece;

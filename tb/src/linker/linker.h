@@ -36,7 +36,10 @@ struct TB_LinkerSectionPiece {
         PIECE_RELOC,
     } kind;
 
-    TB_Module* module;
+    union {
+        TB_Module* module;
+        TB_ObjectFile* obj;
+    };
     TB_LinkerSection* parent;
 
     TB_LinkerSymbol* first_sym;
@@ -282,6 +285,8 @@ TB_UnresolvedSymbol* tb__unresolved_symbol(TB_Linker* l, TB_Slice name);
 TB_LinkerSectionPiece* tb__get_piece(TB_Linker* l, TB_LinkerSymbol* restrict sym);
 
 // TB helpers
+TB_Slice tb__get_piece_name(TB_LinkerSectionPiece* restrict p);
+
 size_t tb__get_symbol_pos(TB_Symbol* s);
 void tb__append_module_section(TB_Linker* l, TB_Module* m, TB_ModuleSection* section, const char* name, uint32_t flags);
 
