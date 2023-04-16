@@ -3,6 +3,8 @@
 #include "../objects/coff.h"
 #include "../objects/lib_parse.h"
 
+#include <ctype.h>
+
 typedef struct {
     uint16_t page_rva;
     uint16_t block_size; // includes the header

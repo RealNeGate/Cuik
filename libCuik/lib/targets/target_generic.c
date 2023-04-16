@@ -419,7 +419,7 @@ Cuik_Type* target_generic_type_check_builtin(TranslationUnit* tu, Expr* e, const
                 goto failure;
             }
 
-            Cuik_Type* cast_type = (i == 2) ? new_pointer(tu, cuik_uncanonical_type(type)) : type;
+            Cuik_Type* cast_type = (i == 2) ? cuik__new_pointer(&tu->types, cuik_uncanonical_type(type)) : type;
             args[i]->cast_type = cuik_uncanonical_type(cast_type);
         }
 
@@ -437,7 +437,7 @@ Cuik_Type* target_generic_type_check_builtin(TranslationUnit* tu, Expr* e, const
         }
 
         // only type check the first param
-        args[0]->cast_type = new_pointer(tu, cuik_uncanonical_type(&cuik__builtin_char));
+        args[0]->cast_type = cuik__new_pointer(&tu->types, cuik_uncanonical_type(&cuik__builtin_char));
         cuik__type_check_args(tu, e, 1, args);
 
         // second is completely generic so long as it's a parameter
@@ -521,7 +521,7 @@ Cuik_Type* target_generic_type_check_builtin(TranslationUnit* tu, Expr* e, const
         }
 
         // fn(long* obj, long val)
-        args[0]->cast_type = new_pointer(tu, cuik_uncanonical_type(&cuik__builtin_int));
+        args[0]->cast_type = cuik__new_pointer(&tu->types, cuik_uncanonical_type(&cuik__builtin_int));
         args[1]->cast_type = &cuik__builtin_int;
 
         cuik__type_check_args(tu, e, arg_count, args);
@@ -532,7 +532,7 @@ Cuik_Type* target_generic_type_check_builtin(TranslationUnit* tu, Expr* e, const
         }
 
         // fn(long* obj, long exchange, long comparand)
-        args[0]->cast_type = new_pointer(tu, cuik_uncanonical_type(&cuik__builtin_in));
+        args[0]->cast_type = cuik__new_pointer(&tu->types, cuik_uncanonical_type(&cuik__builtin_in));
         args[1]->cast_type = &cuik__builtin_int;
         args[2]->cast_type = &cuik__builtin_int;
 

@@ -347,10 +347,11 @@ static bool const_fold(TB_Function* f, TB_Label bb, TB_Node* n) {
                             tb_transmute_to_pass(n, a);
                             return true;
 
-                            case TB_MUL: case TB_AND:
-                            uint64_t* words = tb_transmute_to_int(f, bb, n, 1);
-                            words[0] = 0;
-                            return true;
+                            case TB_MUL: case TB_AND: {
+                                uint64_t* words = tb_transmute_to_int(f, bb, n, 1);
+                                words[0] = 0;
+                                return true;
+                            }
 
                             case TB_SDIV: case TB_UDIV:
                             tb_transmute_to_poison(n);

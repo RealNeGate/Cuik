@@ -19,7 +19,6 @@ int run_link(int argc, const char** argv) {
         }
     }
 
-    __debugbreak();
     TB_Linker* l = tb_linker_create(TB_EXECUTABLE_PE, TB_ARCH_X86_64);
 
     int errors = 0;
