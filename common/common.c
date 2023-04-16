@@ -147,7 +147,7 @@ void futex_signal(Futex* addr) {
     int ret = syscall(SYS_futex, addr, FUTEX_WAKE | FUTEX_PRIVATE_FLAG, 1, NULL, NULL, 0);
     if (ret == -1) {
         perror("Futex wake");
-        __debugbreak();
+        __builtin_trap();
     }
 }
 
@@ -155,7 +155,7 @@ void futex_broadcast(Futex* addr) {
     int ret = syscall(SYS_futex, addr, FUTEX_WAKE | FUTEX_PRIVATE_FLAG, INT32_MAX, NULL, NULL, 0);
     if (ret == -1) {
         perror("Futex wake");
-        __debugbreak();
+        __builtin_trap();
     }
 }
 
@@ -178,6 +178,8 @@ void futex_wait(Futex* addr, Futex val) {
 }
 
 #elif defined(__APPLE__)
+
+#include <errno.h>
 
 enum {
     UL_COMPARE_AND_WAIT = 0x00000001,
@@ -203,11 +205,11 @@ void futex_signal(Futex* addr) {
             return;
         }
         printf("futex wake fail?\n");
-        __debugbreak();
+        __builtin_trap();
     }
 }
 
-void _tpool_broadcast(TPool_Futex *addr) {
+void _tpool_broadcast(Futex* addr) {
     for (;;) {
         int ret = __ulock_wake(UL_COMPARE_AND_WAIT | ULF_NO_ERRNO | ULF_WAKE_ALL, addr, 0);
         if (ret >= 0) {
@@ -221,7 +223,7 @@ void _tpool_broadcast(TPool_Futex *addr) {
             return;
         }
         printf("futex wake fail?\n");
-        __debugbreak();
+        __builtin_trap();
     }
 }
 
