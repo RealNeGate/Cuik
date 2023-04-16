@@ -54,7 +54,8 @@ if system == "Windows":
 	cflags += " -I c11threads -D_CRT_SECURE_NO_WARNINGS"
 elif system == "Darwin":
 	ld = "lld.ld"
-	ld_flags += " -g -lc"
+	ldflags += " -g -lc"
+
 	exe_ext = ""
 	lib_ext = ".a"
 	cflags += " -I c11threads -Wno-deprecated-declarations"
@@ -107,7 +108,7 @@ rule meta_cc
   description = CC $in $out
 
 rule lexgen
-  command = lexgen{exe_ext} $out
+  command = ./lexgen{exe_ext} $out
   description = LEXGEN
 
 rule embed_files

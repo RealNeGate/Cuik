@@ -73,6 +73,7 @@ preprocessed.c
 project.4coder
 *.cache
 libCuik/freestanding.c
+libCuik/lib/preproc/dfa.h
 tests/golden/tmp.txt
 tests/golden/tmp2.txt
 build.ninja
