@@ -182,13 +182,14 @@ size_t tb__layout_relocations(TB_Module* m, DynArray(TB_ModuleSection*) sections
     dyn_array_for(i, sections) {
         size_t reloc_count = 0;
         switch (sections[i]->kind) {
-            case TB_MODULE_SECTION_TEXT:
-            // emit_call_patches will also give us the reloc_count
-            size_t locals = code_gen->emit_call_patches(m);
-            reloc_count = sections[i]->reloc_count;
-            reloc_count -= locals;
-            reloc_count -= sections[i]->total_comdat_relocs;
-            break;
+            case TB_MODULE_SECTION_TEXT: {
+                // emit_call_patches will also give us the reloc_count
+                size_t locals = code_gen->emit_call_patches(m);
+                reloc_count = sections[i]->reloc_count;
+                reloc_count -= locals;
+                reloc_count -= sections[i]->total_comdat_relocs;
+                break;
+            }
 
             case TB_MODULE_SECTION_DATA:
             case TB_MODULE_SECTION_TLS:

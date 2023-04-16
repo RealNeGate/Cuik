@@ -1,12 +1,13 @@
 // Halfway through implementing this ELF64 exporter i realized that my new best friend is
 // COFF, ELF is a bitch.
-#include "elf64.h"
+#include "../tb_internal.h"
+#include <tb_elf.h>
 
 typedef struct TB_ModuleExporter {
     size_t write_pos;
 } TB_ModuleExporter;
 
-static void put_symbol(TB_Emitter* strtbl, TB_Emitter* stab, const char* name, uint8_t sym_info, Elf64_Half section_index, Elf64_Addr value, Elf64_Xword size) {
+static void put_symbol(TB_Emitter* strtbl, TB_Emitter* stab, const char* name, uint8_t sym_info, uint16_t section_index, uint64_t value, uint64_t size) {
     // Fill up the symbol's string table
     size_t name_len = strlen(name);
     size_t name_pos = strtbl->count;
@@ -15,15 +16,15 @@ static void put_symbol(TB_Emitter* strtbl, TB_Emitter* stab, const char* name, u
     tb_outs_UNSAFE(strtbl, name_len + 1, (uint8_t*)name);
 
     // Emit symbol
-    Elf64_Sym sym = {
-        .st_name  = name_pos,
-        .st_info  = sym_info,
-        .st_shndx = section_index,
-        .st_value = value,
-        .st_size  = size
+    TB_Elf64_Sym sym = {
+        .name  = name_pos,
+        .info  = sym_info,
+        .shndx = section_index,
+        .value = value,
+        .size  = size
     };
 
-    tb_outs(stab, sizeof(Elf64_Sym), (uint8_t*)&sym);
+    tb_outs(stab, sizeof(sym), (uint8_t*)&sym);
 }
 
 #define APPEND_SECTION(sec) if (sec.total_size) { dyn_array_put(sections, &sec); }
@@ -46,8 +47,8 @@ TB_API TB_Exports tb_elf64obj_write_output(TB_Module* m, const IDebugFormat* dbg
     tb_out_reserve(&strtbl, 1024);
     tb_out1b(&strtbl, 0); // null string in the table
 
-    Elf64_Ehdr header = {
-        .e_ident = {
+    TB_Elf64_Ehdr header = {
+        .ident = {
             [EI_MAG0]       = 0x7F, // magic number
             [EI_MAG1]       = 'E',
             [EI_MAG2]       = 'L',
@@ -58,20 +59,20 @@ TB_API TB_Exports tb_elf64obj_write_output(TB_Module* m, const IDebugFormat* dbg
             [EI_OSABI]      = 0,
             [EI_ABIVERSION] = 0
         },
-        .e_type = ET_REL, // relocatable
-        .e_version = 1,
-        .e_machine = machine,
-        .e_entry = 0,
+        .type = ET_REL, // relocatable
+        .version = 1,
+        .machine = machine,
+        .entry = 0,
 
         // section headers go at the end of the file
         // and are filed in later.
-        .e_shoff = 0,
-        .e_flags = 0,
+        .shoff = 0,
+        .flags = 0,
 
-        .e_ehsize = sizeof(Elf64_Ehdr),
+        .ehsize = sizeof(TB_Elf64_Ehdr),
 
-        .e_shentsize = sizeof(Elf64_Shdr),
-        .e_shstrndx  = 1,
+        .shentsize = sizeof(TB_Elf64_Shdr),
+        .shstrndx  = 1,
     };
 
     // accumulate all sections
@@ -85,7 +86,7 @@ TB_API TB_Exports tb_elf64obj_write_output(TB_Module* m, const IDebugFormat* dbg
     int section_count = 1 + dyn_array_length(sections) + dbg_section_count;
 
     // calculate relocation layout
-    size_t output_size = sizeof(Elf64_Ehdr);
+    size_t output_size = sizeof(TB_Elf64_Ehdr);
     dyn_array_for(i, sections) {
         sections[i]->section_num = 1 + i;
         sections[i]->raw_data_pos = output_size;
@@ -93,7 +94,7 @@ TB_API TB_Exports tb_elf64obj_write_output(TB_Module* m, const IDebugFormat* dbg
     }
 
     // each section with relocations needs a matching .rel section
-    output_size = tb__layout_relocations(m, sections, code_gen, output_size, sizeof(Elf64_Rela), false);
+    output_size = tb__layout_relocations(m, sections, code_gen, output_size, sizeof(TB_Elf64_Rela), false);
     dyn_array_for(i, sections) {
         if (sections[i]->reloc_count > 0) {
             section_count += 1;
@@ -102,20 +103,20 @@ TB_API TB_Exports tb_elf64obj_write_output(TB_Module* m, const IDebugFormat* dbg
         sections[i]->name_pos = tb_outstr_nul_UNSAFE(&strtbl, sections[i]->name);
     }
 
-    Elf64_Shdr strtab = {
-        .sh_name = tb_outstr_nul_UNSAFE(&strtbl, ".strtab"),
-        .sh_type = SHT_STRTAB,
-        .sh_flags = 0,
-        .sh_addralign = 1,
-        .sh_size = strtbl.count,
-        .sh_offset = output_size,
+    TB_Elf64_Shdr strtab = {
+        .name = tb_outstr_nul_UNSAFE(&strtbl, ".strtab"),
+        .type = SHT_STRTAB,
+        .flags = 0,
+        .addralign = 1,
+        .size = strtbl.count,
+        .offset = output_size,
     };
     output_size += strtbl.count;
 
-    header.e_shoff = output_size;
-    header.e_shnum = section_count + 1;
+    header.shoff = output_size;
+    header.shnum = section_count + 1;
     // sections plus the NULL section at the start
-    output_size += (1 + section_count) * sizeof(Elf64_Shdr);
+    output_size += (1 + section_count) * sizeof(TB_Elf64_Shdr);
 
     ////////////////////////////////
     // write output
@@ -133,45 +134,45 @@ TB_API TB_Exports tb_elf64obj_write_output(TB_Module* m, const IDebugFormat* dbg
     // write relocation arrays
     dyn_array_for(i, sections) if (sections[i]->reloc_count > 0) {
         assert(sections[i]->reloc_pos == write_pos);
-        Elf64_Rela* rels = (Elf64_Rela*) &output[write_pos];
+        TB_Elf64_Rela* rels = (TB_Elf64_Rela*) &output[write_pos];
 
         // a
 
-        write_pos += sections[i]->reloc_count * sizeof(Elf64_Rela);
+        write_pos += sections[i]->reloc_count * sizeof(TB_Elf64_Rela);
     }
 
     WRITE(strtbl.data, strtbl.count);
 
     // write section header
-    memset(&output[write_pos], 0, sizeof(Elf64_Shdr)), write_pos += sizeof(Elf64_Shdr);
+    memset(&output[write_pos], 0, sizeof(TB_Elf64_Shdr)), write_pos += sizeof(TB_Elf64_Shdr);
     WRITE(&strtab, sizeof(strtab));
     dyn_array_for(i, sections) {
-        Elf64_Shdr sec = {
-            .sh_name = sections[i]->name_pos,
-            .sh_type = SHT_PROGBITS,
-            .sh_flags = SHF_ALLOC | ((sections[i] == &m->text) ? SHF_EXECINSTR : SHF_WRITE),
-            .sh_addralign = 16,
-            .sh_size = sections[i]->total_size,
-            .sh_offset = sections[i]->raw_data_pos,
+        TB_Elf64_Shdr sec = {
+            .name = sections[i]->name_pos,
+            .type = SHT_PROGBITS,
+            .flags = SHF_ALLOC | ((sections[i] == &m->text) ? SHF_EXECINSTR : SHF_WRITE),
+            .addralign = 16,
+            .size = sections[i]->total_size,
+            .offset = sections[i]->raw_data_pos,
         };
         WRITE(&sec, sizeof(sec));
     }
 
     dyn_array_for(i, sections) if (sections[i]->reloc_count) {
-        Elf64_Shdr sec = {
-            .sh_name = sections[i]->name_pos - 5,
-            .sh_type = SHT_RELA,
-            .sh_flags = SHF_INFO_LINK,
-            .sh_addralign = 16,
-            .sh_info = 1 + i,
-            .sh_size = sections[i]->reloc_count * sizeof(Elf64_Rela),
-            .sh_offset = sections[i]->reloc_pos,
-            .sh_entsize = sizeof(Elf64_Rela)
+        TB_Elf64_Shdr sec = {
+            .name = sections[i]->name_pos - 5,
+            .type = SHT_RELA,
+            .flags = SHF_INFO_LINK,
+            .addralign = 16,
+            .info = 1 + i,
+            .size = sections[i]->reloc_count * sizeof(TB_Elf64_Rela),
+            .offset = sections[i]->reloc_pos,
+            .entsize = sizeof(TB_Elf64_Rela)
         };
         WRITE(&sec, sizeof(sec));
     }
 
-    __debugbreak();
+    tb_todo();
 
     assert(write_pos == output_size);
     return (TB_Exports){ .count = 1, .files = { { output_size, output } } };

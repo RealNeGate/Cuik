@@ -1,6 +1,6 @@
 #define NL_STRING_MAP_IMPL
 #include "linker.h"
-#include "../objects/elf64.h"
+#include <tb_elf.h>
 
 static void init(TB_Linker* l) {
     l->entrypoint = "_start";
@@ -142,17 +142,17 @@ static TB_Exports export(TB_Linker* l) {
         final_section_count += 1;
     }
 
-    Elf64_Shdr strtab = {
-        .sh_name = tb_outstr_nul_UNSAFE(&strtbl, ".strtab"),
-        .sh_type = SHT_STRTAB,
-        .sh_flags = 0,
-        .sh_addralign = 1,
-        .sh_size = strtbl.count,
+    TB_Elf64_Shdr strtab = {
+        .name = tb_outstr_nul_UNSAFE(&strtbl, ".strtab"),
+        .type = SHT_STRTAB,
+        .flags = 0,
+        .addralign = 1,
+        .size = strtbl.count,
     };
 
-    size_t size_of_headers = sizeof(Elf64_Ehdr)
-        + (final_section_count * sizeof(Elf64_Phdr))
-        + ((2+final_section_count) * sizeof(Elf64_Shdr));
+    size_t size_of_headers = sizeof(TB_Elf64_Ehdr)
+        + (final_section_count * sizeof(TB_Elf64_Phdr))
+        + ((2+final_section_count) * sizeof(TB_Elf64_Shdr));
 
     size_t section_content_size = 0;
     uint64_t virt_addr = size_of_headers;
@@ -170,7 +170,7 @@ static TB_Exports export(TB_Linker* l) {
         }
     }
 
-    strtab.sh_offset = size_of_headers + section_content_size;
+    strtab.offset = size_of_headers + section_content_size;
     section_content_size += strtbl.count;
 
     uint16_t machine = 0;
@@ -183,8 +183,8 @@ static TB_Exports export(TB_Linker* l) {
     size_t output_size = size_of_headers + section_content_size;
     size_t write_pos = 0;
     uint8_t* restrict output = tb_platform_heap_alloc(output_size);
-    Elf64_Ehdr header = {
-        .e_ident = {
+    TB_Elf64_Ehdr header = {
+        .ident = {
             [EI_MAG0]       = 0x7F, // magic number
             [EI_MAG1]       = 'E',
             [EI_MAG2]       = 'L',
@@ -195,23 +195,23 @@ static TB_Exports export(TB_Linker* l) {
             [EI_OSABI]      = 0,
             [EI_ABIVERSION] = 0
         },
-        .e_type = ET_EXEC, // executable
-        .e_version = 1,
-        .e_machine = machine,
-        .e_entry = 0,
+        .type = ET_EXEC, // executable
+        .version = 1,
+        .machine = machine,
+        .entry = 0,
 
-        .e_flags = 0,
+        .flags = 0,
 
-        .e_ehsize = sizeof(Elf64_Ehdr),
+        .ehsize = sizeof(TB_Elf64_Ehdr),
 
-        .e_phentsize = sizeof(Elf64_Phdr),
-        .e_phoff     = sizeof(Elf64_Ehdr),
-        .e_phnum     = final_section_count,
+        .phentsize = sizeof(TB_Elf64_Phdr),
+        .phoff     = sizeof(TB_Elf64_Ehdr),
+        .phnum     = final_section_count,
 
-        .e_shoff = sizeof(Elf64_Ehdr) + (sizeof(Elf64_Phdr) * final_section_count),
-        .e_shentsize = sizeof(Elf64_Shdr),
-        .e_shnum = final_section_count + 2,
-        .e_shstrndx  = 1,
+        .shoff = sizeof(TB_Elf64_Ehdr) + (sizeof(TB_Elf64_Phdr) * final_section_count),
+        .shentsize = sizeof(TB_Elf64_Shdr),
+        .shnum = final_section_count + 2,
+        .shstrndx  = 1,
     };
 
     // text section crap
@@ -219,9 +219,9 @@ static TB_Exports export(TB_Linker* l) {
     TB_LinkerSymbol* sym = tb__find_symbol_cstr(&l->symtab, l->entrypoint);
     if (text && sym) {
         if (sym->tag == TB_LINKER_SYMBOL_NORMAL) {
-            header.e_entry = text->address + sym->normal.piece->offset + sym->normal.secrel;
+            header.entry = text->address + sym->normal.piece->offset + sym->normal.secrel;
         } else if (sym->tag == TB_LINKER_SYMBOL_TB) {
-            header.e_entry = text->address + sym->tb.piece->offset + tb__get_symbol_pos(sym->tb.sym);
+            header.entry = text->address + sym->tb.piece->offset + tb__get_symbol_pos(sym->tb.sym);
         } else {
             tb_todo();
         }
@@ -233,31 +233,31 @@ static TB_Exports export(TB_Linker* l) {
     // write program headers
     nl_strmap_for(i, l->sections) {
         TB_LinkerSection* s = l->sections[i];
-        Elf64_Phdr sec = {
-            .p_type   = PT_LOAD,
-            .p_flags  = s->flags,
-            .p_offset = s->offset,
-            .p_vaddr  = s->address,
-            .p_filesz = s->total_size,
-            .p_memsz  = s->total_size,
-            .p_align  = 1,
+        TB_Elf64_Phdr sec = {
+            .type   = PT_LOAD,
+            .flags  = s->flags,
+            .offset = s->offset,
+            .vaddr  = s->address,
+            .filesz = s->total_size,
+            .memsz  = s->total_size,
+            .align  = 1,
         };
         WRITE(&sec, sizeof(sec));
     }
 
     // write section headers
-    memset(&output[write_pos], 0, sizeof(Elf64_Shdr)), write_pos += sizeof(Elf64_Shdr);
+    memset(&output[write_pos], 0, sizeof(TB_Elf64_Shdr)), write_pos += sizeof(TB_Elf64_Shdr);
     WRITE(&strtab, sizeof(strtab));
     nl_strmap_for(i, l->sections) {
         TB_LinkerSection* s = l->sections[i];
-        Elf64_Shdr sec = {
-            .sh_name = s->name_pos,
-            .sh_type = SHT_PROGBITS,
-            .sh_flags = SHF_ALLOC | ((s->flags & PF_X) ? SHF_EXECINSTR : 0) | ((s->flags & PF_W) ? SHF_WRITE : 0),
-            .sh_addralign = 1,
-            .sh_size = s->total_size,
-            .sh_addr = s->address,
-            .sh_offset = s->offset,
+        TB_Elf64_Shdr sec = {
+            .name = s->name_pos,
+            .type = SHT_PROGBITS,
+            .flags = SHF_ALLOC | ((s->flags & PF_X) ? SHF_EXECINSTR : 0) | ((s->flags & PF_W) ? SHF_WRITE : 0),
+            .addralign = 1,
+            .size = s->total_size,
+            .addr = s->address,
+            .offset = s->offset,
         };
         WRITE(&sec, sizeof(sec));
     }

@@ -28,7 +28,7 @@ static void emit_function(TB_Function* f) {
         }
     }
 
-    __debugbreak();
+    tb_todo();
 
     // generate basic block listing
     TB_FOR_BASIC_BLOCK(bb, f) {

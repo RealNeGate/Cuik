@@ -1,4 +1,7 @@
-#include "../tb_internal.h"
+#ifndef TB_ELF_H
+#define TB_ELF_H
+
+#include <stdint.h>
 
 #define EI_MAG0       0
 #define EI_MAG1       1
@@ -76,15 +79,6 @@
 #define R_X86_64_PLT32    4
 #define R_X86_64_GOTPCREL 9
 
-typedef uint64_t Elf64_Addr;
-typedef uint16_t Elf64_Half;
-typedef uint64_t Elf64_Off;
-typedef int32_t  Elf64_Sword;
-typedef int64_t  Elf64_Sxword;
-typedef uint32_t Elf64_Word;
-typedef uint64_t Elf64_Lword;
-typedef uint64_t Elf64_Xword;
-
 // ST_TYPE
 #define ELF64_STT_NOTYPE  0
 #define ELF64_STT_OBJECT  1
@@ -102,73 +96,73 @@ typedef uint64_t Elf64_Xword;
 
 #define ELF64_ST_INFO(b, t) (((b) << 4) | ((t) & 0xF))
 
-// http://web.mit.edu/freebsd/head/sys/sys/elf64.h
-// https://cirosantilli.com/elf-hello-world#minimal-elf-file
-// https://en.wikipedia.org/wiki/Executable_and_Linkable_Format
-#define EI_NIDENT 16
-
 #define ELF64_R_SYM(i)     ((i) >> 32u)
 #define ELF64_R_TYPE(i)    ((i)&0xffffffffULL)
 #define ELF64_R_INFO(s, t) (((uint64_t)(s) << 32ULL) + ((uint64_t)(t) & 0xffffffffULL))
 
+// http://web.mit.edu/freebsd/head/sys/sys/elf64.h
+// https://cirosantilli.com/elf-hello-world#minimal-elf-file
+// https://en.wikipedia.org/wiki/Executable_and_Linkable_Format
 typedef struct {
-    unsigned char e_ident[EI_NIDENT];
-    Elf64_Half    e_type;
-    Elf64_Half    e_machine;
-    Elf64_Word    e_version;
-    Elf64_Addr    e_entry;
-    Elf64_Off     e_phoff;
-    Elf64_Off     e_shoff;
-    Elf64_Word    e_flags;
-    Elf64_Half    e_ehsize;
-    Elf64_Half    e_phentsize;
-    Elf64_Half    e_phnum;
-    Elf64_Half    e_shentsize;
-    Elf64_Half    e_shnum;
-    Elf64_Half    e_shstrndx;
-} Elf64_Ehdr;
+    uint8_t  ident[16];
+    uint16_t type;
+    uint16_t machine;
+    uint32_t version;
+    uint64_t entry;
+    uint64_t phoff;
+    uint64_t shoff;
+    uint32_t flags;
+    uint16_t ehsize;
+    uint16_t phentsize;
+    uint16_t phnum;
+    uint16_t shentsize;
+    uint16_t shnum;
+    uint16_t shstrndx;
+} TB_Elf64_Ehdr;
 
 typedef struct {
-    Elf64_Word  sh_name;
-    Elf64_Word  sh_type;
-    Elf64_Xword sh_flags;
-    Elf64_Addr  sh_addr;
-    Elf64_Off   sh_offset;
-    Elf64_Xword sh_size;
-    Elf64_Word  sh_link;
-    Elf64_Word  sh_info;
-    Elf64_Xword sh_addralign;
-    Elf64_Xword sh_entsize;
-} Elf64_Shdr;
+    uint32_t name;
+    uint32_t type;
+    uint64_t flags;
+    uint64_t addr;
+    uint64_t offset;
+    uint64_t size;
+    uint32_t link;
+    uint32_t info;
+    uint64_t addralign;
+    uint64_t entsize;
+} TB_Elf64_Shdr;
 
 // Segment header for ELF64.
 typedef struct {
-    Elf64_Word  p_type;   // Type of segment
-    Elf64_Word  p_flags;  // Segment flags
-    Elf64_Off   p_offset; // File offset where segment is located, in bytes
-    Elf64_Addr  p_vaddr;  // Virtual address of beginning of segment
-    Elf64_Addr  p_paddr;  // Physical addr of beginning of segment (OS-specific)
-    Elf64_Xword p_filesz; // Num. of bytes in file image of segment (may be zero)
-    Elf64_Xword p_memsz;  // Num. of bytes in mem image of segment (may be zero)
-    Elf64_Xword p_align;  // Segment alignment constraint
-} Elf64_Phdr;
+    uint32_t type;   // Type of segment
+    uint32_t flags;  // Segment flags
+    uint64_t offset; // File offset where segment is located, in bytes
+    uint64_t vaddr;  // Virtual address of beginning of segment
+    uint64_t paddr;  // Physical addr of beginning of segment (OS-specific)
+    uint64_t filesz; // Num. of bytes in file image of segment (may be zero)
+    uint64_t memsz;  // Num. of bytes in mem image of segment (may be zero)
+    uint64_t align;  // Segment alignment constraint
+} TB_Elf64_Phdr;
 
 typedef struct {
-    Elf64_Word    st_name;
-    unsigned char st_info;
-    unsigned char st_other;
-    Elf64_Half    st_shndx;
-    Elf64_Addr    st_value;
-    Elf64_Xword   st_size;
-} Elf64_Sym;
+    uint32_t name;
+    uint8_t  info;
+    uint8_t  other;
+    uint16_t shndx;
+    uint64_t value;
+    uint64_t size;
+} TB_Elf64_Sym;
 
 typedef struct {
-    Elf64_Addr   r_offset;
-    Elf64_Xword  r_info;
-    Elf64_Sxword r_addend;
-} Elf64_Rela;
+    uint64_t offset;
+    uint64_t info;
+    int64_t  addend;
+} TB_Elf64_Rela;
 
 typedef struct {
-    Elf64_Addr  r_offset;
-    Elf64_Xword r_info;
-} Elf64_Rel;
+    uint64_t offset;
+    uint64_t info;
+} TB_Elf64_Rel;
+
+#endif /* TB_ELF_H */
