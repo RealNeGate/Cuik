@@ -149,6 +149,8 @@ extern "C" {
         TB_PTR,
         // Tuples, these cannot be used in memory ops, just accessed via projections
         TB_TUPLE,
+        // Control flow
+        TB_CONTROL,
     } TB_DataTypeEnum;
 
     typedef enum TB_FloatFormat {
@@ -855,7 +857,7 @@ extern "C" {
         TB_DebugType* debug_type;
 
         // does not apply for returns
-        char* name;
+        const char* name;
     } TB_PrototypeParam;
 
     struct TB_FunctionPrototype {

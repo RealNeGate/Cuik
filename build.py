@@ -19,7 +19,8 @@ parser.add_argument('-asan', action='store_true', help='compile with ASAN')
 parser.add_argument('-autospall', action='store_true', help='instrument code with SpallAuto')
 
 args = parser.parse_args()
-args.driver = True
+# args.inspector = True
+args.driver = False
 
 mimalloc = True
 
