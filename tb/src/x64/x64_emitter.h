@@ -47,11 +47,11 @@ static void emit_memory_operand(TB_CGEmitter* restrict e, uint8_t rx, const Val*
     }
 }
 
-static void inst0(TB_CGEmitter* restrict e, InstType type, X86_DataType dt) {
+static void inst0(TB_CGEmitter* restrict e, InstType type, TB_X86_DataType dt) {
     assert(type < COUNTOF(inst_table));
     const InstDesc* restrict inst = &inst_table[type];
 
-    if (dt == X86_TYPE_QWORD) EMIT1(e, 0x48);
+    if (dt == TB_X86_TYPE_QWORD) EMIT1(e, 0x48);
     EXT_OP(INST_BYTE_EXT);
 
     if (inst->op) {
@@ -63,10 +63,10 @@ static void inst0(TB_CGEmitter* restrict e, InstType type, X86_DataType dt) {
 }
 
 // cannot generate patches with f being NULL
-static void inst1(TB_CGEmitter* restrict e, InstType type, const Val* r, X86_DataType dt) {
+static void inst1(TB_CGEmitter* restrict e, InstType type, const Val* r, TB_X86_DataType dt) {
     assert(type < COUNTOF(inst_table));
     const InstDesc* restrict inst = &inst_table[type];
-    bool is_rexw = (dt == X86_TYPE_QWORD);
+    bool is_rexw = (dt == TB_X86_TYPE_QWORD);
 
     uint8_t op = inst->op_i, rx = inst->rx_i;
     if (r->type == VAL_GPR) {
@@ -133,8 +133,8 @@ static void inst1(TB_CGEmitter* restrict e, InstType type, const Val* r, X86_Dat
     }
 }
 
-static void inst2(TB_CGEmitter* restrict e, InstType type, const Val* a, const Val* b, X86_DataType dt) {
-    assert(dt >= X86_TYPE_BYTE && dt <= X86_TYPE_QWORD);
+static void inst2(TB_CGEmitter* restrict e, InstType type, const Val* a, const Val* b, TB_X86_DataType dt) {
+    assert(dt >= TB_X86_TYPE_BYTE && dt <= TB_X86_TYPE_QWORD);
     assert(type < COUNTOF(inst_table));
 
     const InstDesc* restrict inst = &inst_table[type];
@@ -153,7 +153,7 @@ static void inst2(TB_CGEmitter* restrict e, InstType type, const Val* a, const V
     }
 
     // operand size
-    bool sz = (dt != X86_TYPE_BYTE);
+    bool sz = (dt != TB_X86_TYPE_BYTE);
 
     // uses an immediate value that works as
     // a sign extended 8 bit number
@@ -164,7 +164,7 @@ static void inst2(TB_CGEmitter* restrict e, InstType type, const Val* a, const V
     bool dir_flag = (dir != is_gpr_only_dst);
 
     // Address size prefix
-    if (dt == X86_TYPE_WORD && inst->cat != INST_BINOP_EXT2) {
+    if (dt == TB_X86_TYPE_WORD && inst->cat != INST_BINOP_EXT2) {
         EMIT1(e, 0x66);
     }
 
@@ -178,7 +178,7 @@ static void inst2(TB_CGEmitter* restrict e, InstType type, const Val* a, const V
     //          | 4th bit on rx.
     //          is 64bit?
     uint8_t base = 0;
-    uint8_t rex_prefix = 0x40 | (dt == X86_TYPE_QWORD ? 8 : 0);
+    uint8_t rex_prefix = 0x40 | (dt == TB_X86_TYPE_QWORD ? 8 : 0);
     if (a->type == VAL_MEM || a->type == VAL_GPR) {
         base = a->reg;
     } else {
@@ -193,7 +193,7 @@ static void inst2(TB_CGEmitter* restrict e, InstType type, const Val* a, const V
     if (inst->cat == INST_BINOP_CL) {
         assert(b->type == VAL_IMM || (b->type == VAL_GPR && b->reg == RCX));
 
-        dt = X86_TYPE_BYTE;
+        dt = TB_X86_TYPE_BYTE;
         rx = inst->rx_i;
     }
 
@@ -228,13 +228,13 @@ static void inst2(TB_CGEmitter* restrict e, InstType type, const Val* a, const V
     // BTW memory displacements go before immediates
     ptrdiff_t disp_patch = e->count - 4;
     if (b->type == VAL_IMM) {
-        if (dt == X86_TYPE_BYTE || short_imm) {
+        if (dt == TB_X86_TYPE_BYTE || short_imm) {
             if (short_imm) {
                 assert(b->imm == (int8_t)b->imm);
             }
 
             EMIT1(e, (int8_t)b->imm);
-        } else if (dt == X86_TYPE_WORD) {
+        } else if (dt == TB_X86_TYPE_WORD) {
             uint32_t imm = b->imm;
             assert((imm & 0xFFFF0000) == 0xFFFF0000 || (imm & 0xFFFF0000) == 0);
 
@@ -249,7 +249,7 @@ static void inst2(TB_CGEmitter* restrict e, InstType type, const Val* a, const V
     }
 }
 
-static void inst2sse(TB_CGEmitter* restrict e, InstType type, const Val* a, const Val* b, X86_DataType dt) {
+static void inst2sse(TB_CGEmitter* restrict e, InstType type, const Val* a, const Val* b, TB_X86_DataType dt) {
     assert(type < COUNTOF(inst_table));
     const InstDesc* restrict inst = &inst_table[type];
 
@@ -257,8 +257,8 @@ static void inst2sse(TB_CGEmitter* restrict e, InstType type, const Val* a, cons
     bool supports_mem_dst = (type == FP_MOV);
     bool dir = is_value_mem(a);
 
-    bool packed = (dt == X86_TYPE_SSE_PS || dt == X86_TYPE_SSE_PD);
-    bool is_double = (dt == X86_TYPE_SSE_PD || dt == X86_TYPE_SSE_SD);
+    bool packed = (dt == TB_X86_TYPE_SSE_PS || dt == TB_X86_TYPE_SSE_PD);
+    bool is_double = (dt == TB_X86_TYPE_SSE_PD || dt == TB_X86_TYPE_SSE_SD);
 
     if (supports_mem_dst && dir) {
         tb_swap(const Val*, a, b);

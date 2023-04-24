@@ -398,7 +398,7 @@ static bool const_fold(TB_Function* f, TB_Label bb, TB_Node* n) {
                                 n->type = (n->type == TB_UDIV) ? TB_SHR : TB_SAR;
 
                                 // create log2(N) node
-                                TB_Node* log2_n = tb_create_int(f, bb, n->dt, log2);
+                                TB_Node* log2_n = tb_inst_uint(f, n->dt, log2);
                                 n->inputs[1] = log2_n;
                             }
                         } else if (n->type == TB_UMOD || n->type == TB_SMOD) {
@@ -407,7 +407,7 @@ static bool const_fold(TB_Function* f, TB_Label bb, TB_Node* n) {
                             if (tb_is_power_of_two(mask)) {
                                 OPTIMIZER_LOG(n, "converted modulo into AND with constant mask");
 
-                                TB_Node* mask_n = tb_create_int(f, bb, n->dt, mask - 1);
+                                TB_Node* mask_n = tb_inst_uint(f, n->dt, mask - 1);
                                 n->type = TB_AND;
                                 n->inputs[1] = mask_n;
                                 return true;

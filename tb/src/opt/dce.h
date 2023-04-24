@@ -1,55 +1,33 @@
-TB_API bool tb_is_expr_like(TB_Node* n) {
+TB_API bool tb_has_effects(TB_Node* n) {
     switch (n->type) {
-        case TB_GET_SYMBOL_ADDRESS:
-        case TB_INTEGER_CONST:
-        case TB_ARRAY_ACCESS:
-        case TB_MEMBER_ACCESS:
-        case TB_BITCAST:
-        case TB_FLOAT32_CONST:
-        case TB_FLOAT64_CONST:
-        case TB_INT2PTR:
-        case TB_PTR2INT:
-        case TB_INT2FLOAT:
-        case TB_FLOAT2INT:
-        case TB_FLOAT_EXT:
-        case TB_SIGN_EXT:
-        case TB_ZERO_EXT:
-        case TB_TRUNCATE:
-        case TB_LOCAL:
-        case TB_PASS:
-        case TB_NOT:
-        case TB_NEG:
-        case TB_AND:
-        case TB_OR:
-        case TB_XOR:
-        case TB_ADD:
-        case TB_SUB:
-        case TB_MUL:
-        case TB_SDIV:
-        case TB_UDIV:
-        case TB_SHL:
-        case TB_SHR:
-        case TB_SAR:
-        case TB_FADD:
-        case TB_FSUB:
-        case TB_FMUL:
-        case TB_FDIV:
-        case TB_CMP_EQ:
-        case TB_CMP_NE:
-        case TB_CMP_SLT:
-        case TB_CMP_SLE:
-        case TB_CMP_ULT:
-        case TB_CMP_ULE:
-        case TB_CMP_FLT:
-        case TB_CMP_FLE:
+        case TB_LOAD:
+        return TB_NODE_GET_EXTRA_T(n, TB_NodeMemAccess)->is_volatile;
+
+        // memory effects
+        case TB_STORE:
+        case TB_ATOMIC_LOAD:
+        case TB_ATOMIC_XCHG:
+        case TB_ATOMIC_ADD:
+        case TB_ATOMIC_SUB:
+        case TB_ATOMIC_AND:
+        case TB_ATOMIC_XOR:
+        case TB_ATOMIC_OR:
+        case TB_ATOMIC_CLEAR:
+        case TB_ATOMIC_TEST_AND_SET:
         return true;
 
-        case TB_LOAD:
-        case TB_ATOMIC_LOAD:
-        if (!TB_NODE_GET_EXTRA_T(n, TB_NodeMemAccess)->is_volatile) {
-            return true;
-        }
-        return false;
+        case TB_PROJ:
+        return n->dt.type == TB_CONTROL;
+
+        // control flow
+        case TB_BRANCH:
+        case TB_RET:
+        case TB_REGION:
+        case TB_UNREACHABLE:
+        case TB_TRAP:
+        case TB_SCALL:
+        case TB_CALL:
+        return true;
 
         default:
         return false;

@@ -1,6 +1,7 @@
 #pragma once
 #include "../codegen/emitter.h"
 #include "../tb_internal.h"
+#include <tb_x64.h>
 
 #define TB_TEMP_REG INT_MAX
 
@@ -43,27 +44,6 @@ typedef enum {
 typedef enum {
     SCALE_X1, SCALE_X2, SCALE_X4, SCALE_X8
 } Scale;
-
-typedef enum X86_DataType {
-    X86_TYPE_NONE = 0,
-
-    X86_TYPE_BYTE,    // 1
-    X86_TYPE_WORD,    // 2
-    X86_TYPE_DWORD,   // 4
-    X86_TYPE_QWORD,   // 8
-
-    X86_TYPE_PBYTE,   // int8 x 16 = 16
-    X86_TYPE_PWORD,   // int16 x 8 = 16
-    X86_TYPE_PDWORD,  // int32 x 4 = 16
-    X86_TYPE_PQWORD,  // int64 x 2 = 16
-
-    X86_TYPE_SSE_SS,  // float32 x 1 = 4
-    X86_TYPE_SSE_SD,  // float64 x 1 = 8
-    X86_TYPE_SSE_PS,  // float32 x 4 = 16
-    X86_TYPE_SSE_PD,  // float64 x 2 = 16
-
-    X86_TYPE_XMMWORD, // the generic idea of them
-} X86_DataType;
 
 enum {
     MOD_INDIRECT        = 0, // [rax]

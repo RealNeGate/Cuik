@@ -149,7 +149,7 @@ extern "C" {
         TB_PTR,
         // Tuples, these cannot be used in memory ops, just accessed via projections
         TB_TUPLE,
-        // Control flow
+        // represents control flow as a kind of data
         TB_CONTROL,
     } TB_DataTypeEnum;
 
@@ -185,23 +185,30 @@ extern "C" {
     typedef enum TB_NodeTypeEnum {
         TB_NULL = 0,
 
-        /* projection */
+        TB_RETURN, // fn(r: region, x: data)
+
+        // only one per function
+        TB_START, // fn()
+
+        // regions represent the begining of BBs
+        TB_REGION, // fn(preds: []region)
+
+        // projection
         TB_PROJ,
 
-        /* metadata */
+        // metadata
         TB_LINE_INFO,
         TB_KEEPALIVE,
 
-        TB_CALL,  /* normal call */
-        TB_SCALL, /* system call */
+        TB_CALL,  // normal call
+        TB_SCALL, // system call
 
-        /* Memory operations */
-        TB_STORE,
-
+        // Memory operations
+        TB_STORE, // fn(r: control, addr: data, src: data)
         TB_MEMCPY,
         TB_MEMSET,
 
-        /* Atomics */
+        // Atomics
         TB_ATOMIC_TEST_AND_SET,
         TB_ATOMIC_CLEAR,
 
@@ -213,11 +220,10 @@ extern "C" {
         TB_ATOMIC_XOR,
         TB_ATOMIC_OR,
 
-        TB_ATOMIC_CMPXCHG, /* These are always bundled together */
-        TB_ATOMIC_CMPXCHG2,
+        TB_ATOMIC_CMPXCHG,
         TB_DEBUGBREAK,
 
-        /* Terminators */
+        // Terminators
         TB_BRANCH,
         TB_RET,
         TB_UNREACHABLE,
@@ -225,24 +231,23 @@ extern "C" {
 
         TB_POISON,
 
-        /* Load */
+        // Load
         TB_LOAD,
 
-        /* Pointers */
+        // Pointers
         TB_LOCAL,
 
-        TB_PARAM,
         TB_GET_SYMBOL_ADDRESS,
 
         TB_MEMBER_ACCESS,
         TB_ARRAY_ACCESS,
 
-        /* Immediates */
+        // Immediates
         TB_INTEGER_CONST,
         TB_FLOAT32_CONST,
         TB_FLOAT64_CONST,
 
-        /* Conversions */
+        // Conversions
         TB_TRUNCATE,
         TB_FLOAT_EXT,
         TB_SIGN_EXT,
@@ -255,20 +260,20 @@ extern "C" {
         TB_FLOAT2INT,
         TB_BITCAST,
 
-        /* Select */
+        // Select
         TB_SELECT,
 
-        /* Bitmagic */
+        // Bitmagic
         TB_BSWAP,
         TB_CLZ,
         TB_CTZ,
         TB_POPCNT,
 
-        /* Unary operations */
+        // Unary operations
         TB_NOT,
         TB_NEG,
 
-        /* Integer arithmatic */
+        // Integer arithmatic
         TB_AND,
         TB_OR,
         TB_XOR,
@@ -284,13 +289,13 @@ extern "C" {
         TB_UMOD,
         TB_SMOD,
 
-        /* Float arithmatic */
+        // Float arithmatic
         TB_FADD,
         TB_FSUB,
         TB_FMUL,
         TB_FDIV,
 
-        /* Comparisons */
+        // Comparisons
         TB_CMP_EQ,
         TB_CMP_NE,
         TB_CMP_ULT,
@@ -301,7 +306,7 @@ extern "C" {
         TB_CMP_FLE,
 
         // PHI
-        TB_PHI,
+        TB_PHI, // fn(r: region, x: []data)
 
         // NOTE(NeGate): only used internally, if you
         // see one in normal IR things went wrong in
@@ -324,11 +329,6 @@ extern "C" {
     #define TB_IS_NODE_TERMINATOR(type)  ((type) >= TB_BRANCH && (type) <= TB_TRAP)
 
     typedef int TB_Label;
-
-    typedef struct {
-        int64_t  key;
-        TB_Label value;
-    } TB_SwitchEntry;
 
     // just represents some region of bytes, usually in file parsing crap
     typedef struct {
@@ -410,31 +410,24 @@ extern "C" {
         uint16_t input_count; // number of node inputs
         uint16_t extra_count; // number of bytes for extra operand data
 
-        TB_Node*    next;
-        TB_Attrib*  first_attrib;
+        TB_Attrib* first_attrib;
+        TB_Node** inputs;
 
-        // input list
-        TB_Node* inputs[/* input_count */];
+        char extra[];
     };
 
     #define TB_KILL_NODE(n) ((n)->type = TB_NULL)
 
     // These are the extra data in specific nodes
-    #define TB_NODE_GET_EXTRA(n)         ((void*) &n->inputs[n->input_count])
-    #define TB_NODE_GET_EXTRA_T(n, T)    ((T*) &n->inputs[n->input_count])
-    #define TB_NODE_SET_EXTRA(n, T, ...) (*((T*) &n->inputs[n->input_count]) = (T){ __VA_ARGS__ })
+    #define TB_NODE_GET_EXTRA(n)         ((void*) n->extra)
+    #define TB_NODE_GET_EXTRA_T(n, T)    ((T*) (n)->extra)
+    #define TB_NODE_SET_EXTRA(n, T, ...) (*((T*) (n)->extra) = (T){ __VA_ARGS__ })
 
     // this represents switch (many targets), if (one target) and goto (only default) logic.
     typedef struct { // TB_BRANCH
-        uint32_t count;
-        TB_Label default_label;
-        TB_SwitchEntry targets[/* input_count */];
+        size_t count;
+        int64_t keys[/* input_count - 1 */];
     } TB_NodeBranch;
-
-    typedef struct { // TB_PARAM
-        uint32_t id;
-        TB_CharUnits size;
-    } TB_NodeParam;
 
     typedef struct { // TB_PROJ
         int index;
@@ -493,14 +486,18 @@ extern "C" {
     } TB_NodeAtomic;
 
     typedef struct {
-        int unused;
-        TB_Label labels[];
-    } TB_NodePhi;
-
-    typedef struct {
         TB_FunctionPrototype* proto;
         TB_Node* projs[];
     } TB_NodeCall;
+
+    typedef struct {
+        int unused;
+        TB_Node* projs[];
+    } TB_NodeStart;
+
+    typedef struct {
+        TB_Node* next_return;
+    } TB_NodeReturn;
 
     typedef struct {
         TB_Label label;
@@ -518,32 +515,23 @@ extern "C" {
     } TB_MultiOutput;
     #define TB_MULTI_OUTPUT(o) ((o).count > 1 ? (o).multiple : &(o).single)
 
-    typedef struct TB_BasicBlock {
-        TB_Node *start, *end;
-    } TB_BasicBlock;
+    typedef struct {
+        int64_t key;
+        TB_Node* value;
+    } TB_SwitchEntry;
 
     typedef struct TB_Loop {
         // refers to another entry in TB_LoopInfo... unless it's -1
         ptrdiff_t parent_loop;
 
-        TB_Label header;
-        TB_Label backedge;
-
-        size_t body_count;
-        TB_Label* body;
+        TB_Node* header;
+        TB_Node* backedge;
     } TB_Loop;
 
     typedef struct TB_LoopInfo {
         size_t count;
         TB_Loop* loops;
     } TB_LoopInfo;
-
-    typedef struct TB_Predeccesors {
-        int* count;
-        TB_Label** preds;
-    } TB_Predeccesors;
-
-    typedef struct TB_DominanceFrontiers TB_DominanceFrontiers;
 
     typedef enum {
         TB_OBJECT_RELOC_NONE, // how?
@@ -702,6 +690,7 @@ extern "C" {
     #ifdef __cplusplus
 
     #define TB_TYPE_TUPLE   TB_DataType{ { TB_TUPLE } }
+    #define TB_TYPE_CONTROL TB_DataType{ { TB_CONTROL } }
     #define TB_TYPE_VOID    TB_DataType{ { TB_INT,   0, 0 } }
     #define TB_TYPE_I8      TB_DataType{ { TB_INT,   0, 8 } }
     #define TB_TYPE_I16     TB_DataType{ { TB_INT,   0, 16 } }
@@ -717,16 +706,17 @@ extern "C" {
 
     #else
 
-    #define TB_TYPE_TUPLE (TB_DataType){ { TB_TUPLE } }
-    #define TB_TYPE_VOID (TB_DataType){ { TB_INT,   0, 0 } }
-    #define TB_TYPE_I8   (TB_DataType){ { TB_INT,   0, 8 } }
-    #define TB_TYPE_I16  (TB_DataType){ { TB_INT,   0, 16 } }
-    #define TB_TYPE_I32  (TB_DataType){ { TB_INT,   0, 32 } }
-    #define TB_TYPE_I64  (TB_DataType){ { TB_INT,   0, 64 } }
-    #define TB_TYPE_F32  (TB_DataType){ { TB_FLOAT, 0, TB_FLT_32 } }
-    #define TB_TYPE_F64  (TB_DataType){ { TB_FLOAT, 0, TB_FLT_64 } }
-    #define TB_TYPE_BOOL (TB_DataType){ { TB_INT,   0, 1 } }
-    #define TB_TYPE_PTR  (TB_DataType){ { TB_PTR,   0, 0 } }
+    #define TB_TYPE_TUPLE   (TB_DataType){ { TB_TUPLE } }
+    #define TB_TYPE_CONTROL (TB_DataType){ { TB_CONTROL } }
+    #define TB_TYPE_VOID    (TB_DataType){ { TB_INT,   0, 0 } }
+    #define TB_TYPE_I8      (TB_DataType){ { TB_INT,   0, 8 } }
+    #define TB_TYPE_I16     (TB_DataType){ { TB_INT,   0, 16 } }
+    #define TB_TYPE_I32     (TB_DataType){ { TB_INT,   0, 32 } }
+    #define TB_TYPE_I64     (TB_DataType){ { TB_INT,   0, 64 } }
+    #define TB_TYPE_F32     (TB_DataType){ { TB_FLOAT, 0, TB_FLT_32 } }
+    #define TB_TYPE_F64     (TB_DataType){ { TB_FLOAT, 0, TB_FLT_64 } }
+    #define TB_TYPE_BOOL    (TB_DataType){ { TB_INT,   0, 1 } }
+    #define TB_TYPE_PTR     (TB_DataType){ { TB_PTR,   0, 0 } }
     #define TB_TYPE_INTN(N) (TB_DataType){ { TB_INT,  0, (N) } }
     #define TB_TYPE_PTRN(N) (TB_DataType){ { TB_PTR,  0, (N) } }
 
@@ -921,8 +911,6 @@ extern "C" {
     ////////////////////////////////
     // IR access
     ////////////////////////////////
-    // #define TB_FOR_BASIC_BLOCK(it, f) for (TB_BBIter it = { 0 }; tb_next_bb(f, &it);)
-
     // it is an index to the input
     #define TB_FOR_INPUT_IN_NODE(it, parent) for (TB_Node **it = parent->inputs, **__end = it + (parent)->input_count; it != __end; it++)
 
@@ -960,16 +948,14 @@ extern "C" {
     TB_API void tb_function_set_prototype(TB_Function* f, TB_FunctionPrototype* p);
     TB_API TB_FunctionPrototype* tb_function_get_prototype(TB_Function* f);
 
-    TB_API TB_Label tb_basic_block_create(TB_Function* f);
-    TB_API bool tb_basic_block_is_complete(TB_Function* f, TB_Label bb);
-
-    TB_API TB_Label tb_inst_get_label(TB_Function* f);
-    TB_API void tb_inst_set_label(TB_Function* f, TB_Label l);
-
-    TB_API void tb_function_print(TB_Function* f, TB_PrintCallback callback, void* user_data, bool display_nops);
+    TB_API void tb_function_print(TB_Function* f, TB_PrintCallback callback, void* user_data);
     TB_API void tb_function_free(TB_Function* f);
 
+    TB_API void tb_inst_set_control(TB_Function* f, TB_Node* control);
+    TB_API TB_Node* tb_inst_get_control(TB_Function* f);
+
     TB_API void tb_inst_loc(TB_Function* f, TB_FileID file, int line);
+    TB_API TB_Node* tb_inst_region(TB_Function* f);
 
     TB_API void tb_inst_unreachable(TB_Function* f);
     TB_API void tb_inst_debugbreak(TB_Function* f);
@@ -1107,10 +1093,10 @@ extern "C" {
     TB_API TB_Node* tb_inst_syscall(TB_Function* f, TB_DataType dt, TB_Node* syscall_num, size_t param_count, TB_Node** params);
     TB_API TB_MultiOutput tb_inst_call(TB_Function* f, TB_FunctionPrototype* proto, TB_Node* target, size_t param_count, TB_Node** params);
 
-    TB_API TB_Node* tb_inst_phi2(TB_Function* f, TB_Label a_label, TB_Node* a, TB_Label b_label, TB_Node* b);
-    TB_API void tb_inst_goto(TB_Function* f, TB_Label id);
-    TB_API void tb_inst_if(TB_Function* f, TB_Node* cond, TB_Label if_true, TB_Label if_false);
-    TB_API void tb_inst_branch(TB_Function* f, TB_DataType dt, TB_Node* key, TB_Label default_label, size_t entry_count, const TB_SwitchEntry* entries);
+    TB_API TB_Node* tb_inst_phi2(TB_Function* f, TB_Node* a, TB_Node* b);
+    TB_API void tb_inst_goto(TB_Function* f, TB_Node* target);
+    TB_API void tb_inst_if(TB_Function* f, TB_Node* cond, TB_Node* true_case, TB_Node* false_case);
+    TB_API void tb_inst_branch(TB_Function* f, TB_DataType dt, TB_Node* key, TB_Node* default_case, size_t entry_count, const TB_SwitchEntry* keys);
 
     TB_API void tb_inst_ret(TB_Function* f, size_t count, TB_Node** values);
 
@@ -1121,36 +1107,6 @@ extern "C" {
 
     // Applies optimizations to the entire module
     TB_API void tb_module_optimize(TB_Module* m, size_t pass_count, const TB_Pass* passes[]);
-
-    // analysis
-    TB_API TB_Predeccesors tb_get_predeccesors(TB_Function* f);
-    TB_API TB_DominanceFrontiers tb_get_dominance_frontiers(TB_Function* f, TB_Predeccesors p, const TB_Label* doms);
-    TB_API void tb_free_dominance_frontiers(TB_Function* f, TB_DominanceFrontiers* frontiers);
-
-    typedef struct {
-        size_t count;
-
-        // max size is label_count
-        TB_Label* traversal;
-
-        // NOTE: you can free visited once the postorder calculation is complete
-        // max size is label_count
-        bool* visited;
-    } TB_PostorderWalk;
-
-    // Allocates from the heap and requires freeing with tb_function_free_postorder
-    TB_API TB_PostorderWalk tb_function_get_postorder(TB_Function* f);
-    TB_API void tb_function_free_postorder(TB_PostorderWalk* walk);
-
-    // Doesn't allocate memory for you
-    TB_API void tb_function_get_postorder_explicit(TB_Function* f, TB_PostorderWalk* walk);
-
-    // if out_doms is NULL it'll only return the dominator array length (it's just the label count really)
-    TB_API size_t tb_get_dominators(TB_Function* f, TB_Predeccesors p, TB_Label* out_doms);
-    TB_API bool tb_is_dominated_by(TB_Label* doms, TB_Label expected_dom, TB_Label bb);
-
-    TB_API TB_LoopInfo tb_get_loop_info(TB_Function* f, TB_Predeccesors preds, TB_Label* doms);
-    TB_API void tb_free_loop_info(TB_LoopInfo loops);
 
     ////////////////////////////////
     // Transformation pass library
@@ -1164,13 +1120,7 @@ extern "C" {
     ////////////////////////////////
     TB_API const char* tb_node_get_name(TB_Node* n);
 
-    TB_API bool tb_is_expr_like(TB_Node* n);
-
-    TB_API TB_Node* tb_node_get_last_register(TB_Function* f);
-    TB_API TB_Node* tb_node_get_previous(TB_Function* f, TB_Node* at);
-
-    TB_API TB_Node* tb_node_get_first_insertion_point(TB_Function* f, TB_Label bb);
-    TB_API int tb_function_get_label_count(TB_Function* f);
+    TB_API bool tb_has_effects(TB_Node* n);
 
     TB_API bool tb_node_is_constant_non_zero(TB_Node* n);
     TB_API bool tb_node_is_constant_zero(TB_Node* n);

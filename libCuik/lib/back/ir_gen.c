@@ -14,11 +14,13 @@ static thread_local const char* function_name;
 // For aggregate returns
 static _Thread_local TB_Node* return_value_address;
 
-static void fallthrough_label(TB_Function* func, TB_Label target) {
-    if (!tb_basic_block_is_complete(func, tb_inst_get_label(func))) {
+static void fallthrough_label(TB_Function* func, TB_Node* target) {
+    TB_Node* curr = tb_inst_get_control(func);
+    if (curr != NULL) {
         tb_inst_goto(func, target);
     }
-    tb_inst_set_label(func, target);
+
+    tb_inst_set_control(func, target);
 }
 
 TB_DebugType* cuik__as_tb_debug_type(TB_Module* mod, Cuik_Type* t) {
@@ -178,18 +180,20 @@ static TB_Node* cvt2rval(TranslationUnit* tu, TB_Function* func, const IRVal v, 
             break;
         }
         case RVALUE_PHI: {
-            TB_Label merger = tb_basic_block_create(func);
+            TB_Node* merger = tb_inst_region(func);
 
             fallthrough_label(func, v.phi.if_true);
+            tb_inst_goto(func, merger);
+
+            tb_inst_set_control(func, v.phi.if_false);
+            tb_inst_goto(func, merger);
+
             TB_Node* one = tb_inst_bool(func, true);
-            tb_inst_goto(func, merger);
-
-            tb_inst_set_label(func, v.phi.if_false);
             TB_Node* zero = tb_inst_bool(func, false);
-            tb_inst_goto(func, merger);
 
-            tb_inst_set_label(func, merger);
-            reg = tb_inst_phi2(func, v.phi.if_true, one, v.phi.if_false, zero);
+            tb_inst_set_control(func, merger);
+            // we're expecting the predecessors to be ordered as FALSE then TRUE
+            reg = tb_inst_phi2(func, zero, one);
             break;
         }
         case LVALUE: {
@@ -483,9 +487,9 @@ static void gen_global_initializer(TranslationUnit* tu, TB_Global* g, Cuik_Type*
 }
 
 static void insert_label(TB_Function* func) {
-    TB_Label last = tb_inst_get_label(func);
-    if (tb_basic_block_is_complete(func, last)) {
-        tb_inst_set_label(func, tb_basic_block_create(func));
+    TB_Node* last = tb_inst_get_control(func);
+    if (last == NULL) {
+        tb_inst_set_control(func, tb_inst_region(func));
     }
 }
 
@@ -590,13 +594,13 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
 
             Cuik_Type* type = cuik_canonical_type(stmt->decl.type);
             if (stmt->op == STMT_LABEL) {
-                if (stmt->backing.l == 0) {
-                    stmt->backing.l = tb_basic_block_create(func);
+                if (stmt->backing.r == NULL) {
+                    stmt->backing.r = tb_inst_region(func);
                 }
 
                 return (IRVal){
                     .value_type = LVALUE_LABEL,
-                    .label = stmt->backing.l,
+                    .reg = stmt->backing.r,
                 };
             } else if (stmt->op == STMT_FUNC_DECL) {
                 return (IRVal){
@@ -966,32 +970,32 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
             //          if (a) { goto true    } else { goto try_rhs }
             // try_rhs: if (b) { goto true    } else { goto false }
             bool is_and = (e->op == EXPR_LOGICAL_AND);
-            TB_Label try_rhs_lbl = tb_basic_block_create(func);
+            TB_Node* try_rhs_lbl = tb_inst_region(func);
 
             // Eval first operand
             IRVal a = irgen_expr(tu, func, e->bin_op.left);
 
-            TB_Label true_lbl, false_lbl;
+            TB_Node *true_lbl, *false_lbl;
             if (a.value_type == RVALUE_PHI) {
                 // chain with previous phi.
                 // OR  chains on false,
                 // AND chains on true
                 if (is_and) {
-                    tb_inst_set_label(func, a.phi.if_true);
+                    tb_inst_set_control(func, a.phi.if_true);
                     tb_inst_goto(func, try_rhs_lbl);
 
-                    true_lbl = tb_basic_block_create(func);
+                    true_lbl = tb_inst_region(func);
                     false_lbl = a.phi.if_false;
                 } else {
-                    tb_inst_set_label(func, a.phi.if_false);
+                    tb_inst_set_control(func, a.phi.if_false);
                     tb_inst_goto(func, try_rhs_lbl);
 
                     true_lbl = a.phi.if_true;
-                    false_lbl = tb_basic_block_create(func);
+                    false_lbl = tb_inst_region(func);
                 }
             } else {
-                true_lbl = tb_basic_block_create(func);
-                false_lbl = tb_basic_block_create(func);
+                true_lbl = tb_inst_region(func);
+                false_lbl = tb_inst_region(func);
 
                 TB_Node* a_reg = cvt2rval(tu, func, a, e->bin_op.left);
                 if (is_and) {
@@ -1002,7 +1006,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
             }
 
             // Eval second operand
-            tb_inst_set_label(func, try_rhs_lbl);
+            tb_inst_set_control(func, try_rhs_lbl);
 
             TB_Node* b = irgen_as_rvalue(tu, func, e->bin_op.right);
             tb_inst_if(func, b, true_lbl, false_lbl);
@@ -1370,35 +1374,35 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
             case EXPR_TERNARY: {
                 TB_Node* cond = irgen_as_rvalue(tu, func, e->ternary_op.left);
 
-                TB_Label if_true = tb_basic_block_create(func);
-                TB_Label if_false = tb_basic_block_create(func);
-                TB_Label exit = tb_basic_block_create(func);
+                TB_Node* if_true = tb_inst_region(func);
+                TB_Node* if_false = tb_inst_region(func);
+                TB_Node* exit = tb_inst_region(func);
 
                 // Cast to bool
                 tb_inst_if(func, cond, if_true, if_false);
 
                 TB_Node* true_val;
                 {
-                    tb_inst_set_label(func, if_true);
+                    tb_inst_set_control(func, if_true);
 
                     true_val = irgen_as_rvalue(tu, func, e->ternary_op.middle);
-                    if_true = tb_inst_get_label(func);
+                    if_true = tb_inst_get_control(func);
                     tb_inst_goto(func, exit);
                 }
 
                 TB_Node* false_val;
                 {
-                    tb_inst_set_label(func, if_false);
+                    tb_inst_set_control(func, if_false);
 
                     false_val = irgen_as_rvalue(tu, func, e->ternary_op.right);
-                    if_false = tb_inst_get_label(func);
+                    if_false = tb_inst_get_control(func);
                     tb_inst_goto(func, exit);
                 }
-                tb_inst_set_label(func, exit);
+                tb_inst_set_control(func, exit);
 
                 return (IRVal){
                     .value_type = RVALUE,
-                    .reg = tb_inst_phi2(func, if_true, true_val, if_false, false_val),
+                    .reg = tb_inst_phi2(func, false_val, true_val),
                 };
             }
 
@@ -1438,18 +1442,18 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
             break;
         }
         case STMT_LABEL: {
-            if (s->backing.l == 0) {
-                s->backing.l = tb_basic_block_create(func);
+            if (s->backing.r == 0) {
+                s->backing.r = tb_inst_region(func);
             }
 
-            fallthrough_label(func, s->backing.l);
+            fallthrough_label(func, s->backing.r);
             break;
         }
         case STMT_GOTO: {
             IRVal target = irgen_expr(tu, func, s->goto_.target);
 
             if (target.value_type == LVALUE_LABEL) {
-                tb_inst_goto(func, target.label);
+                tb_inst_goto(func, target.reg);
             } else {
                 // TODO(NeGate): Handle computed goto case
                 abort();
@@ -1601,22 +1605,22 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
         case STMT_IF: {
             TB_Node* cond = irgen_as_rvalue(tu, func, s->if_.cond);
 
-            TB_Label if_true = tb_basic_block_create(func);
-            TB_Label if_false = tb_basic_block_create(func);
+            TB_Node* if_true = tb_inst_region(func);
+            TB_Node* if_false = tb_inst_region(func);
 
             // Cast to bool
             tb_inst_if(func, cond, if_true, if_false);
 
-            tb_inst_set_label(func, if_true);
+            tb_inst_set_control(func, if_true);
             irgen_stmt(tu, func, s->if_.body);
 
             if (s->if_.next) {
-                TB_Label exit = tb_basic_block_create(func);
-                if (!tb_basic_block_is_complete(func, tb_inst_get_label(func))) {
+                TB_Node* exit = tb_inst_region(func);
+                if (tb_inst_get_control(func) != NULL) {
                     tb_inst_goto(func, exit);
                 }
 
-                tb_inst_set_label(func, if_false);
+                tb_inst_set_control(func, if_false);
                 irgen_stmt(tu, func, s->if_.next);
 
                 fallthrough_label(func, exit);
@@ -1626,10 +1630,10 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
             break;
         }
         case STMT_WHILE: {
-            TB_Label header = tb_basic_block_create(func);
-            TB_Label body = tb_basic_block_create(func);
-            TB_Label exit = tb_basic_block_create(func);
-            s->backing.l = exit;
+            TB_Node* header = tb_inst_region(func);
+            TB_Node* body = tb_inst_region(func);
+            TB_Node* exit = tb_inst_region(func);
+            s->backing.r = exit;
 
             // NOTE(NeGate): this is hacky but as long as it doesn't
             // break we should be good... what am i saying im the
@@ -1642,25 +1646,22 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
             TB_Node* cond = irgen_as_rvalue(tu, func, s->while_.cond);
             tb_inst_if(func, cond, body, exit);
 
-            tb_inst_set_label(func, body);
+            tb_inst_set_control(func, body);
             if (s->while_.body) {
                 emit_location(tu, func, s->while_.body->loc.start);
                 irgen_stmt(tu, func, s->while_.body);
             }
 
             fallthrough_label(func, header);
-            tb_inst_set_label(func, exit);
+            tb_inst_set_control(func, exit);
             break;
         }
         case STMT_DO_WHILE: {
-            TB_Label body = tb_basic_block_create(func);
-            TB_Label exit = tb_basic_block_create(func);
+            TB_Node* body = tb_inst_region(func);
+            TB_Node* exit = tb_inst_region(func);
 
-            // NOTE(NeGate): this is hacky but as long as it doesn't
-            // break we should be good... what am i saying im the
-            // developer of TB :p
-            assert(body == exit - 1);
-            s->backing.l = exit;
+            s->backing.loop[0] = body;
+            s->backing.loop[1] = exit;
 
             fallthrough_label(func, body);
             if (s->do_while.body) {
@@ -1672,22 +1673,17 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
 
             TB_Node* cond = irgen_as_rvalue(tu, func, s->do_while.cond);
             tb_inst_if(func, cond, body, exit);
-            tb_inst_set_label(func, exit);
+            tb_inst_set_control(func, exit);
             break;
         }
         case STMT_FOR: {
-            TB_Label header = tb_basic_block_create(func);
-            TB_Label body = tb_basic_block_create(func);
-            TB_Label next = tb_basic_block_create(func);
-            TB_Label exit = tb_basic_block_create(func);
-            s->backing.l = exit;
+            TB_Node* header = tb_inst_region(func);
+            TB_Node* body = tb_inst_region(func);
+            TB_Node* next = tb_inst_region(func);
+            TB_Node* exit = tb_inst_region(func);
 
-            // NOTE(NeGate): this is hacky but as long as it doesn't
-            // break we should be good... what am i saying im the
-            // developer of TB :p
-            // essentially we can store both the header and exit labels
-            // implicitly as one if they're next to each other
-            assert(next == exit - 1);
+            s->backing.loop[0] = next;
+            s->backing.loop[1] = exit;
 
             if (s->for_.first) {
                 emit_location(tu, func, s->for_.first->loc.start);
@@ -1703,7 +1699,7 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
                 tb_inst_goto(func, body);
             }
 
-            tb_inst_set_label(func, body);
+            tb_inst_set_control(func, body);
             irgen_stmt(tu, func, s->for_.body);
 
             if (s->for_.next) {
@@ -1712,40 +1708,33 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
                 irgen_expr(tu, func, s->for_.next);
             }
 
-            if (!tb_basic_block_is_complete(func, tb_inst_get_label(func))) {
+            if (tb_inst_get_control(func) != NULL) {
                 tb_inst_goto(func, header);
             }
-            tb_inst_set_label(func, exit);
+            tb_inst_set_control(func, exit);
             break;
         }
         case STMT_CONTINUE: {
-            // this is really hacky but we always store the loop header label one
-            // behind the exit label in terms of IDs.
-            if (s->continue_.target->op == STMT_WHILE) {
-                tb_inst_goto(func, s->continue_.target->backing.l - 2);
-            } else {
-                tb_inst_goto(func, s->continue_.target->backing.l - 1);
-            }
+            tb_inst_goto(func, s->continue_.target->backing.loop[0]);
             break;
         }
         case STMT_BREAK: {
-            tb_inst_goto(func, s->break_.target->backing.l);
+            tb_inst_goto(func, s->break_.target->backing.loop[1]);
             break;
         }
         case STMT_DEFAULT: {
-            assert(s->backing.l);
-            fallthrough_label(func, s->backing.l);
+            fallthrough_label(func, s->backing.r);
             irgen_stmt(tu, func, s->default_.body);
             break;
         }
         case STMT_CASE: {
-            assert(s->backing.l);
+            assert(s->backing.r);
             while (s->case_.body && s->case_.body->op == STMT_CASE) {
-                fallthrough_label(func, s->backing.l);
+                fallthrough_label(func, s->backing.r);
                 s = s->case_.body;
             }
 
-            fallthrough_label(func, s->backing.l);
+            fallthrough_label(func, s->backing.r);
             irgen_stmt(tu, func, s->case_.body);
             break;
         }
@@ -1755,13 +1744,13 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
             size_t entry_count = 0;
             TB_SwitchEntry* entries = tls_save();
 
-            TB_Label default_label = 0;
+            TB_Node* default_label = 0;
             while (head) {
                 // reserve label
                 assert(head->op == STMT_CASE || head->op == STMT_DEFAULT);
 
-                TB_Label label = tb_basic_block_create(func);
-                head->backing.l = label;
+                TB_Node* label = tb_inst_region(func);
+                head->backing.r = label;
 
                 if (head->op == STMT_CASE) {
                     assert(head->case_.key < UINT32_MAX);
@@ -1777,8 +1766,8 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
                 } else assert(0);
             }
 
-            TB_Label break_label = tb_basic_block_create(func);
-            s->backing.l = break_label;
+            TB_Node* break_label = tb_inst_region(func);
+            s->backing.r = break_label;
 
             // default to fallthrough
             if (!default_label) {
@@ -1789,7 +1778,7 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
 
             tb_inst_branch(func, key->dt, key, default_label, entry_count, entries);
 
-            tb_inst_set_label(func, tb_basic_block_create(func));
+            tb_inst_set_control(func, tb_inst_region(func));
             irgen_stmt(tu, func, s->switch_.body);
 
             fallthrough_label(func, break_label);
@@ -1850,8 +1839,7 @@ TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, Stmt* re
         }
 
         // append return if none exists
-        TB_Label last = tb_inst_get_label(func);
-        if (!tb_basic_block_is_complete(func, last)) {
+        if (tb_inst_get_control(func) != NULL) {
             if (cstr_equals(s->decl.name, "main")) {
                 TB_Node* exit_status = tb_inst_uint(func, TB_TYPE_I32, 0);
                 tb_inst_ret(func, 1, &exit_status);

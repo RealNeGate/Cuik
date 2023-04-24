@@ -25,16 +25,8 @@ static bool handle_pass(TB_Function* f, PassCtx* ctx, TB_Label bb, TB_Node* n) {
             pointee = ctx->def_table[search].v;
         }
 
+        assert(!tb_has_effects(pointee));
         nl_map_put(ctx->def_table, n, pointee);
-
-        // if it matches find, then remove find from the basic block
-        if (f->bbs[bb].start == n) {
-            f->bbs[bb].start = f->bbs[bb].start->next;
-        }
-
-        if (f->bbs[bb].end == n) {
-            f->bbs[bb].end = tb_node_get_previous(f, f->bbs[bb].end);
-        }
 
         changes = true;
         TB_KILL_NODE(n);

@@ -67,18 +67,7 @@ void push_val(WasmCtx* restrict ctx, TB_Reg r) {
 
 TB_FunctionOutput wasm_fast_compile_function(TB_Function* restrict f, const TB_FeatureSet* features, uint8_t* out, size_t out_capacity, size_t local_thread_id) {
     s_local_thread_id = local_thread_id;
-
-    TB_TemporaryStorage* tls = tb_tls_allocate();
-    int* use_count = tb_tls_push(tls, f->node_count * sizeof(WasmVal));
     WasmCtx ctx = { .vals = (WasmVal*) use_count };
-
-    TB_UseCount use_count = { 0 };
-    tb_function_calculate_use_count(f, &use_count);
-
-    FOREACH_REVERSE_N(i, 0, f->node_count) {
-        ctx.vals[i].users_left = use_count[i];
-        ctx.vals[i].local_slot = -1;
-    }
 
     // Evaluate basic blocks
     TB_FOR_BASIC_BLOCK(bb, f) {

@@ -402,7 +402,7 @@ struct Stmt {
         union {
             #ifdef CUIK_USE_TB
             TB_Node* r;
-            TB_Label l;
+            TB_Node* loop[2];
             TB_Function* f;
             TB_Symbol* s;
             TB_Global* g;

@@ -12,6 +12,7 @@ raylib_path = "C:/raylib"
 parser = argparse.ArgumentParser(description='Compiles Cuik + friends')
 parser.add_argument('-opt', action='store_true', help='optimize output')
 parser.add_argument('-driver', action='store_true', help='compile main driver')
+parser.add_argument('-playground', action='store_true', help='compile TB playground')
 parser.add_argument('-inspector', action='store_true', help='compile inspector')
 parser.add_argument('-libcuik', action='store_true', help='compile libCuik')
 parser.add_argument('-tb', action='store_true', help='compiles TB')
@@ -20,13 +21,18 @@ parser.add_argument('-autospall', action='store_true', help='instrument code wit
 
 args = parser.parse_args()
 # args.inspector = True
-args.driver = False
+args.driver = True
+# args.libcuik = False
+# args.playground = True
 
 mimalloc = True
 
 if args.inspector or args.driver:
 	args.tb = True
 	args.libcuik = True
+
+if args.playground:
+	args.tb = True
 
 # Figure out C and linker flags
 ldflags = ""
@@ -82,11 +88,23 @@ if system == "Darwin":
 	sources.append("c11threads/threads_posix.c")
 
 if args.tb:
-	for path in Path("tb/src").rglob("*.c"):
-		sources.append(str(path))
+	sources.append("tb/src/*.c")
+	sources.append("tb/src/bigint/*.c")
+	sources.append("tb/src/system/*.c")
+	sources.append("tb/src/opt/*.c")
+	sources.append("tb/src/linker/*.c")
+	sources.append("tb/src/objects/*.c")
+	sources.append("tb/src/jit/*.c")
+	sources.append("tb/src/x64/*.c")
+#	for path in Path("tb/src").rglob("*.c"):
+#		sources.append(str(path))
 
 if args.inspector:
 	sources.append("inspector/main.c")
+
+# playground
+if args.playground:
+	sources.append("playground/*.c")
 
 # main driver
 if args.driver:
@@ -169,14 +187,14 @@ for pattern in sources:
 		objs.append("bin/"+obj)
 
 # compile final executable (or library)
-if args.inspector:
-	ninja.write(f"build inspector{exe_ext}: link {' '.join(objs)}\n")
-elif not args.driver and args.libcuik:
-	ninja.write(f"build libcuik{lib_ext}: lib {' '.join(objs)}\n")
-elif not args.driver and args.tb:
-	ninja.write(f"build tb{lib_ext}: lib {' '.join(objs)}\n")
-else:
+if args.driver or args.playground:
 	ninja.write(f"build cuik{exe_ext}: link {' '.join(objs)}\n")
+elif args.inspector:
+	ninja.write(f"build inspector{exe_ext}: link {' '.join(objs)}\n")
+elif args.libcuik:
+	ninja.write(f"build libcuik{lib_ext}: lib {' '.join(objs)}\n")
+elif args.tb:
+	ninja.write(f"build tb{lib_ext}: lib {' '.join(objs)}\n")
 
 ninja.close()
 

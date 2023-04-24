@@ -192,9 +192,6 @@ TB_API void tb_module_kill_symbol(TB_Module* m, TB_Symbol* sym) {
                 tb_platform_heap_free(p);
                 p = next;
             }
-
-            tb_platform_heap_free(f->bbs);
-            tb_platform_heap_free(f->params);
             break;
         }
         case TB_SYMBOL_EXTERNAL: break;
@@ -282,12 +279,8 @@ TB_API void tb_symbol_set_ordinal(TB_Symbol* s, int ordinal) {
 TB_API TB_Function* tb_function_create(TB_Module* m, const char* name, TB_Linkage linkage, TB_ComdatType comdat) {
     TB_Function* f = (TB_Function*) tb_symbol_alloc(m, TB_SYMBOL_FUNCTION, name, sizeof(TB_Function));
     f->linkage = linkage;
-
-    f->bb_capacity = 4;
-    f->bb_count = 1;
-    f->bbs = tb_platform_heap_alloc(f->bb_capacity * sizeof(TB_BasicBlock));
-    f->bbs[0] = (TB_BasicBlock){ 0 };
     f->comdat.type = comdat;
+
     return f;
 }
 
@@ -304,22 +297,22 @@ TB_API void tb_function_set_prototype(TB_Function* f, TB_FunctionPrototype* p) {
     const ICodeGen* restrict code_gen = tb__find_code_generator(f->super.module);
 
     size_t param_count = p->param_count;
-    f->params = tb_platform_heap_realloc(f->params, sizeof(TB_Node*) * param_count);
-    if (param_count > 0 && f->params == NULL) {
-        tb_panic("tb_function_set_prototype: Out of memory!");
-    }
+    size_t extra_size = sizeof(TB_NodeStart) + (param_count * sizeof(TB_Node*));
 
-    f->current_label = 0;
+    f->active_control_node = f->start_node = tb_alloc_node(f, TB_START, TB_TYPE_TUPLE, 0, extra_size);
+    TB_NodeStart* start = TB_NODE_GET_EXTRA(f->start_node);
+
+    // create parameter projections
+    TB_PrototypeParam* rets = TB_PROTOTYPE_RETURNS(p);
     FOREACH_N(i, 0, param_count) {
         TB_DataType dt = p->params[i].dt;
-        TB_CharUnits size, align;
-        code_gen->get_data_type_size(dt, &size, &align);
 
-        TB_Node* n = tb_alloc_at_end(f, TB_PARAM, dt, 0, sizeof(TB_NodeParam));
-        TB_NODE_SET_EXTRA(n, TB_NodeParam, .id = i, .size = size);
+        TB_Node* proj = tb_alloc_node(f, TB_PROJ, dt, 1, sizeof(TB_NodeProj));
+        proj->inputs[0] = f->start_node;
+        TB_NODE_SET_EXTRA(proj, TB_NodeProj, .index = i);
 
         // fill in acceleration structure
-        f->params[i] = n;
+        start->projs[i] = proj;
     }
 
     f->prototype = p;

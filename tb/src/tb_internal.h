@@ -118,6 +118,8 @@ struct { size_t cap, count; T* elems; }
 #undef TB_FOR_EXTERNALS
 #define TB_FOR_EXTERNALS(it, m) for (TB_External* it = (TB_External*) m->first_symbol_of_tag[TB_SYMBOL_EXTERNAL]; it != NULL; it = (TB_External*) it->super.next)
 
+#define TB_FOR_RETURNS(it, f) for (TB_Node* n = f->first_return; n != NULL; n = TB_NODE_GET_EXTRA_T(n, TB_NodeReturn)->next_return)
+
 // i love my linked lists don't i?
 typedef struct TB_SymbolPatch TB_SymbolPatch;
 struct TB_SymbolPatch {
@@ -170,10 +172,6 @@ struct TB_Global {
     // contents
     uint32_t obj_count, obj_capacity;
     TB_InitObj* objects;
-};
-
-struct TB_DominanceFrontiers {
-    Set* _;
 };
 
 struct TB_DebugType {
@@ -312,20 +310,17 @@ struct TB_Function {
     TB_Linkage linkage;
     TB_Comdat comdat;
 
-    // Parameter acceleration structure
-    TB_Node** params;
+    TB_Node* start_node;
+    TB_Node* active_control_node;
 
-    // Basic block array (also makes up the CFG as an implicit graph)
-    size_t bb_capacity, bb_count;
-    TB_BasicBlock* bbs;
+    // refers to one of the returns, each will store a pointer to
+    // the next creating a linked list
+    TB_Node* first_return;
 
     // Nodes allocator (micro block alloc)
+    size_t control_node_count;
     size_t node_count;
     TB_NodePage *head, *tail;
-
-    // Used by the IR building
-    TB_Reg last_reg;
-    TB_Reg current_label;
 
     // Part of the debug info
     size_t line_count;
@@ -613,8 +608,40 @@ uint16_t tb_get2b(TB_Emitter* o, uint32_t pos);
 uint32_t tb_get4b(TB_Emitter* o, uint32_t pos);
 
 ////////////////////////////////
+// CFG analysis
+////////////////////////////////
+typedef NL_Map(TB_Node*, TB_Node*) TB_Dominators;
+typedef NL_Map(TB_Node*, char) TB_FrontierSet;
+typedef NL_Map(TB_Node*, TB_FrontierSet) TB_DominanceFrontiers;
+
+typedef struct {
+    TB_Node* start;
+    TB_Node* end;
+} TB_BasicBlock;
+
+typedef struct {
+    size_t count;
+    TB_BasicBlock* traversal;
+
+    NL_Map(TB_Node*, char) visited;
+} TB_PostorderWalk;
+
+////////////////////////////////
 // IR ANALYSIS
 ////////////////////////////////
+#if 0
+// if out_doms is NULL it'll only return the dominator array length (it's just the label count really)
+TB_API size_t tb_get_dominators(TB_Function* f, TB_Predeccesors p, TB_Label* out_doms);
+TB_API bool tb_is_dominated_by(TB_Label* doms, TB_Label expected_dom, TB_Label bb);
+
+TB_API TB_LoopInfo tb_get_loop_info(TB_Function* f, TB_Predeccesors preds, TB_Label* doms);
+TB_API void tb_free_loop_info(TB_LoopInfo loops);
+#endif
+
+// Allocates from the heap and requires freeing with tb_function_free_postorder
+TB_API TB_PostorderWalk tb_function_get_postorder(TB_Function* f);
+TB_API void tb_function_free_postorder(TB_PostorderWalk* walk);
+
 TB_Label tb_find_label_from_reg(TB_Function* f, TB_Node* target);
 void tb_function_find_replace_reg(TB_Function* f, TB_Node* find, TB_Node* replace);
 
@@ -680,10 +707,8 @@ void cuikperf_region_end(void);
 #endif
 
 TB_Node* tb_alloc_node(TB_Function* f, int type, TB_DataType dt, int input_count, size_t extra);
-TB_Node* tb_alloc_at_end(TB_Function* f, int type, TB_DataType dt, int input_count, size_t extra);
 void tb_insert_node(TB_Function* f, TB_Label bb, TB_Node* a, TB_Node* b);
 
-TB_Node* tb_create_int(TB_Function* f, TB_Label bb, TB_DataType dt, uint64_t word);
 void tb_transmute_to_pass(TB_Node* n, TB_Node* point_to);
 void tb_transmute_to_poison(TB_Node* n);
 uint64_t* tb_transmute_to_int(TB_Function* f, TB_Label bb, TB_Node* n, int num_words);
@@ -703,18 +728,6 @@ size_t tb__layout_relocations(TB_Module* m, DynArray(TB_ModuleSection*) sections
 int tb__get_local_tid(void);
 TB_Symbol* tb_symbol_alloc(TB_Module* m, enum TB_SymbolTag tag, const char* name, size_t size);
 void tb_symbol_append(TB_Module* m, TB_Symbol* s);
-
-typedef struct {
-    NL_Map(TB_Node*, int) use_count;
-} TB_UseCount;
-
-void tb_function_calculate_use_count(const TB_Function* f, TB_UseCount* use_count);
-size_t tb_node_get_expected_size(TB_Node* n);
-
-// if tls is NULL then the return value is heap allocated
-TB_Label* tb_calculate_immediate_predeccessors(TB_Function* f, TB_TemporaryStorage* tls, TB_Label l, int* dst_count);
-TB_Predeccesors tb_get_temp_predeccesors(TB_Function* f, TB_TemporaryStorage* tls);
-void tb_free_temp_predeccesors(TB_TemporaryStorage* tls, TB_Predeccesors preds);
 
 void tb_emit_symbol_patch(TB_Module* m, TB_Function* source, const TB_Symbol* target, size_t pos);
 

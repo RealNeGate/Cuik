@@ -735,7 +735,7 @@ CUIK_API bool cuik_driver_compile(Cuik_IThreadpool* restrict thread_pool, Cuik_D
         if (args->emit_ir) {
             CUIK_TIMED_BLOCK("Print") {
                 TB_FOR_FUNCTIONS(f, mod) {
-                    tb_function_print(f, tb_default_print_callback, stdout, false);
+                    tb_function_print(f, tb_default_print_callback, stdout);
                     printf("\n\n");
                 }
             }

@@ -8,48 +8,15 @@ TB_API void tb_default_print_callback(void* user_data, const char* fmt, ...) {
     va_end(ap);
 }
 
-#define P(...) callback(user_data, __VA_ARGS__)
-static void tb_print_type(TB_DataType dt, TB_PrintCallback callback, void* user_data) {
-    assert(dt.width < 8 && "Vector width too big!");
-
-    switch (dt.type) {
-        case TB_INT: {
-            if (dt.data == 0) P("void");
-            else P("i%d", dt.data);
-            break;
-        }
-        case TB_PTR: {
-            if (dt.data == 0) P("ptr");
-            else P("ptr%d", dt.data);
-            break;
-        }
-        case TB_FLOAT: {
-            if (dt.data == TB_FLT_32) P("f32");
-            if (dt.data == TB_FLT_64) P("f64");
-            break;
-        }
-        default: tb_todo();
-    }
-}
-
-typedef struct {
-    NL_Map(TB_Node*, int) ordinals;
-    int count;
-} TB_PrinterCtx;
-
-// just a unique identifier for printing
-#define NAME(n) get_name(ctx, n)
-static int get_name(TB_PrinterCtx* ctx, TB_Node* n) {
-    ptrdiff_t search = nl_map_get(ctx->ordinals, n);
-    assert(search >= 0);
-    return ctx->ordinals[search].v;
-}
-
 TB_API const char* tb_node_get_name(TB_Node* n) {
     switch (n->type) {
         case TB_LINE_INFO: return "line";
 
-        case TB_PARAM: return "param";
+        case TB_START:  return "start";
+        case TB_RET:    return "ret";
+        case TB_PROJ:   return "proj";
+        case TB_REGION: return "region";
+
         case TB_LOCAL: return "local";
 
         case TB_VA_START: return "vastart";
@@ -109,9 +76,62 @@ TB_API const char* tb_node_get_name(TB_Node* n) {
         case TB_CALL: return "call";
         case TB_SCALL: return "syscall";
         case TB_BRANCH: return "br";
-        case TB_RET: return "ret";
 
         default: tb_todo();return "(unknown)";
+    }
+}
+
+typedef struct {
+    NL_Map(TB_Node*, char) visited;
+    NL_Map(TB_Node*, int) ordinals;
+    int count;
+} TB_PrinterCtx;
+
+// returns true if it's the first time
+static bool visit(TB_PrinterCtx* ctx, TB_Node* n) {
+    ptrdiff_t search = nl_map_get(ctx->visited, n);
+    if (search < 0) {
+        nl_map_put(ctx->visited, n, 0);
+        return true;
+    }
+
+    return false;
+}
+
+// just a unique identifier for printing
+#define P(...) callback(user_data, __VA_ARGS__)
+#define NAME(n) get_name(ctx, n)
+static int get_name(TB_PrinterCtx* ctx, TB_Node* n) {
+    ptrdiff_t search = nl_map_get(ctx->ordinals, n);
+    if (search < 0) {
+        nl_map_put(ctx->ordinals, n, ctx->count);
+        return ctx->count++;
+    }
+
+    return ctx->ordinals[search].v;
+}
+
+#if 0
+static void tb_print_type(TB_DataType dt, TB_PrintCallback callback, void* user_data) {
+    assert(dt.width < 8 && "Vector width too big!");
+
+    switch (dt.type) {
+        case TB_INT: {
+            if (dt.data == 0) P("void");
+            else P("i%d", dt.data);
+            break;
+        }
+        case TB_PTR: {
+            if (dt.data == 0) P("ptr");
+            else P("ptr%d", dt.data);
+            break;
+        }
+        case TB_FLOAT: {
+            if (dt.data == TB_FLT_32) P("f32");
+            if (dt.data == TB_FLT_64) P("f64");
+            break;
+        }
+        default: tb_todo();
     }
 }
 
@@ -208,27 +228,63 @@ static void tb_print_node(TB_Function* f, TB_PrinterCtx* ctx, TB_PrintCallback c
         }
     }
 }
+#endif
 
-TB_API void tb_function_print(TB_Function* f, TB_PrintCallback callback, void* user_data, bool display_nops) {
-    P("%s:\n", f->super.name);
-    TB_PrinterCtx ctx = { 0 };
-
-    TB_FOR_BASIC_BLOCK(bb, f) {
-        TB_FOR_NODE(n, f, bb) {
-            int i = ctx.count++;
-            nl_map_put(ctx.ordinals, n, i);
-        }
+static int tb_print_node(TB_Function* f, TB_PrinterCtx* ctx, TB_PrintCallback callback, void* user_data, TB_Node* restrict n) {
+    int id = get_name(ctx, n);
+    if (!visit(ctx, n)) {
+        return id;
     }
 
-    TB_FOR_BASIC_BLOCK(bb, f) {
-        if (f->bbs[bb].start == 0) continue;
-        P("L%d:\n", bb);
+    P("  r%d [label=\"%s ", id, tb_node_get_name(n));
+    switch (n->type) {
+        case TB_INTEGER_CONST: {
+            TB_NodeInt* num = TB_NODE_GET_EXTRA(n);
 
-        TB_FOR_NODE(n, f, bb) {
-            if (!display_nops && n->type == TB_NULL) continue;
+            if (num->num_words == 1) {
+                P("%"PRIu64, num->words[0]);
+            } else {
+                P("0x");
+                FOREACH_N(i, 0, num->num_words) {
+                    if (num) P("'");
+                    P("%016"PRIx64, num->words[i]);
+                }
+            }
+            break;
+        }
 
-            tb_print_node(f, &ctx, callback, user_data, n);
+        default: break;
+    }
+    P("\"];\n");
+
+    FOREACH_N(i, 0, n->input_count) if (n->inputs[i]) {
+        int kid = tb_print_node(f, ctx, callback, user_data, n->inputs[i]);
+        P("  r%d -> r%d", id, kid);
+
+        if (n->type == TB_REGION ||
+            (n->type == TB_PROJ && n->dt.type == TB_CONTROL) ||
+            (i == 0 && n->type == TB_LOAD) ||
+            (i == 0 && tb_has_effects(n))) {
+            P(" [color=\"red\"]");
+        }
+
+        if (n->type == TB_PROJ) {
+            P(" [label=\"%d\"];\n", TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index);
+        } else {
             P("\n");
         }
     }
+
+    return id;
+}
+
+TB_API void tb_function_print(TB_Function* f, TB_PrintCallback callback, void* user_data) {
+    P("digraph %s {\n  rankdir=\"BT\"\n", f->super.name);
+    TB_PrinterCtx ctx = { 0 };
+
+    TB_FOR_RETURNS(n, f) {
+        tb_print_node(f, &ctx, callback, user_data, n);
+    }
+
+    P("}\n\n");
 }

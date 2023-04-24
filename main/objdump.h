@@ -1,5 +1,12 @@
+#include <tb_x64.h>
 
 int run_objdump(int argc, const char** argv) {
+    #ifdef _WIN32
+    int _setmode(int, int);
+    _setmode(0, 0x8000);
+    _setmode(1, 0x8000);
+    #endif
+
     if (argc < 1) {
         fprintf(stderr, "\x1b[31merror\x1b[0m: no input files!\n");
         return EXIT_FAILURE;
@@ -22,7 +29,6 @@ int run_objdump(int argc, const char** argv) {
     printf("Idx Name          Size     Address          Type\n");
     for (size_t i = 0; i < file->section_count; i++) {
         TB_ObjectSection* s = &file->sections[i];
-        (void)s;
 
         char name[9];
         int len = s->name.length > 8 ? 8 : s->name.length;
@@ -80,5 +86,63 @@ int run_objdump(int argc, const char** argv) {
     }
 
     printf("\n");
+
+    // print disassembly
+    for (size_t i = 0; i < file->section_count; i++) {
+        TB_ObjectSection* s = &file->sections[i];
+
+        size_t size = s->raw_data.length;
+        if (size == 0) {
+            printf("~~empty~~\n\n");
+            continue;
+        }
+
+        const uint8_t* data = s->raw_data.data;
+        if (s->flags & TB_COFF_SECTION_CODE) {
+            // dump assembly
+            size_t current = 0;
+            while (current < size) {
+                TB_X86_Inst inst = tb_x86_disasm(size - current, &data[current]);
+                if (inst.type >= 0) {
+                    __debugbreak();
+                }
+
+                current += inst.length;
+            }
+        } else {
+            // dump raw data
+            printf("DUMP: %.*s\n  ", (int) s->name.length, s->name.data);
+
+            size_t j = 0;
+            for (; j < size; j++) {
+                printf("%02x ", data[j]);
+                if ((j+1) % 16 == 0) {
+                    char tmp[16];
+                    for (size_t k = 0; k < 16; k++) {
+                        uint8_t ch = data[j - 16 + k];
+                        tmp[k] = ch < 32 ? '.' : ch;
+                    }
+
+                    printf("  %.*s\n  ", 16, tmp);
+                }
+            }
+
+            int remaining = size % 16;
+            if (remaining > 0 && remaining < 16) {
+                printf("%*s", (16 - remaining) * 3, "");
+
+                char tmp[16];
+                for (size_t k = 0; k < remaining; k++) {
+                    uint8_t ch = data[j - remaining + k];
+                    tmp[k] = ch < 32 ? '.' : ch;
+                }
+
+                printf("  %.*s\n\n", remaining, tmp);
+            } else {
+                printf("\n");
+            }
+        }
+    }
+
     return 0;
 }

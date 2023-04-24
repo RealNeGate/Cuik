@@ -56,7 +56,7 @@ struct Inst {
     InstType type : 16;
 
     X86_OperandLayout layout;
-    X86_DataType data_type;
+    TB_X86_DataType data_type;
     int time;
 
     // virtual registers (-1 means none, -2 and lower is VREGs, 0+ is normal registers)
@@ -76,17 +76,17 @@ typedef struct {
 #include "generic_cg.h"
 
 // *out_mask of 0 means no mask
-static X86_DataType legalize_int(TB_DataType dt, uint64_t* out_mask) {
+static TB_X86_DataType legalize_int(TB_DataType dt, uint64_t* out_mask) {
     assert(dt.type == TB_INT || dt.type == TB_PTR);
-    if (dt.type == TB_PTR) return *out_mask = 0, X86_TYPE_QWORD;
+    if (dt.type == TB_PTR) return *out_mask = 0, TB_X86_TYPE_QWORD;
 
-    X86_DataType t = X86_TYPE_NONE;
+    TB_X86_DataType t = TB_X86_TYPE_NONE;
     int bits = 0;
 
-    if (dt.data <= 8) bits = 8, t = X86_TYPE_BYTE;
-    else if (dt.data <= 16) bits = 16, t = X86_TYPE_WORD;
-    else if (dt.data <= 32) bits = 32, t = X86_TYPE_DWORD;
-    else if (dt.data <= 64) bits = 64, t = X86_TYPE_QWORD;
+    if (dt.data <= 8) bits = 8, t = TB_X86_TYPE_BYTE;
+    else if (dt.data <= 16) bits = 16, t = TB_X86_TYPE_WORD;
+    else if (dt.data <= 32) bits = 32, t = TB_X86_TYPE_DWORD;
+    else if (dt.data <= 64) bits = 64, t = TB_X86_TYPE_QWORD;
 
     assert(bits != 0 && "TODO: large int support");
     uint64_t mask = ~UINT64_C(0) >> (64 - dt.data);
@@ -95,7 +95,7 @@ static X86_DataType legalize_int(TB_DataType dt, uint64_t* out_mask) {
     return t;
 }
 
-static X86_DataType legalize_int2(TB_DataType dt) {
+static TB_X86_DataType legalize_int2(TB_DataType dt) {
     uint64_t m;
     return legalize_int(dt, &m);
 }
@@ -149,7 +149,7 @@ static Inst inst_nullary(int op) {
     return (Inst){
         .type = op,
         .layout = X86_OP_NONE,
-        .data_type = X86_TYPE_NONE,
+        .data_type = TB_X86_TYPE_NONE,
         .regs = { -1 },
     };
 }
@@ -366,22 +366,24 @@ static Inst isel_array(Ctx* restrict ctx, TB_Node* n, int dst) {
 }
 
 static Inst isel_load(Ctx* restrict ctx, TB_Node* n, int dst) {
-    if (n->inputs[0]->type == TB_ARRAY_ACCESS && try_tile(ctx, n->inputs[0])) {
-        Inst inst = isel_array(ctx, n->inputs[0], dst);
+    TB_Node* addr = n->inputs[1];
+
+    if (addr->type == TB_ARRAY_ACCESS && try_tile(ctx, addr)) {
+        Inst inst = isel_array(ctx, addr, dst);
         if (inst.type == LEA) {
             inst.type = MOV;
             return inst;
         } else {
             return inst_m(MOV, n->dt, dst, dst, GPR_NONE, SCALE_X1, 0);
         }
-    } else if (n->inputs[0]->type == TB_LOCAL) {
-        ptrdiff_t search = nl_map_get(ctx->stack_slots, n->inputs[0]);
+    } else if (addr->type == TB_LOCAL) {
+        ptrdiff_t search = nl_map_get(ctx->stack_slots, addr);
         assert(search >= 0);
 
         return inst_m(MOV, n->dt, dst, RBP, GPR_NONE, SCALE_X1, ctx->stack_slots[search].v);
     }
 
-    int base = ISEL(n->inputs[0]);
+    int base = ISEL(addr);
     return inst_m(MOV, n->dt, dst, base, GPR_NONE, SCALE_X1, 0);
 }
 
@@ -687,9 +689,9 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             break;
         }
         case TB_STORE: {
-            int src = ISEL(n->inputs[1]);
+            int src = ISEL(n->inputs[2]);
 
-            Inst st = isel_store(ctx, n->dt, n->inputs[0], src);
+            Inst st = isel_store(ctx, n->dt, n->inputs[1], src);
             SUBMIT(st);
             break;
         }
@@ -811,6 +813,12 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             const struct ParamDescriptor* restrict desc = &param_descs[is_sysv ? 1 : 0];
             if (type == TB_SCALL) {
                 desc = &param_descs[2];
+            }
+
+            // system calls don't count, we track this for ABI
+            // and stack allocation purposes.
+            if (ctx->caller_usage < n->input_count) {
+                ctx->caller_usage = n->input_count;
             }
 
             // generate clones of each parameter which live until the CALL instruction executes
@@ -1036,7 +1044,7 @@ static int8_t resolve_use(Ctx* restrict ctx, int x) {
     return x;
 }
 
-static void inst2_print(Ctx* restrict ctx, InstType type, Val* dst, Val* src, X86_DataType dt) {
+static void inst2_print(Ctx* restrict ctx, InstType type, Val* dst, Val* src, TB_X86_DataType dt) {
     ASM {
         printf("  %s ", inst_table[type].mnemonic);
         print_operand(dst);
@@ -1047,7 +1055,7 @@ static void inst2_print(Ctx* restrict ctx, InstType type, Val* dst, Val* src, X8
     INST2(type, dst, src, dt);
 }
 
-static void inst1_print(Ctx* restrict ctx, int type, Val* src, X86_DataType dt) {
+static void inst1_print(Ctx* restrict ctx, int type, Val* src, TB_X86_DataType dt) {
     ASM {
         printf("  %s ", inst_table[type].mnemonic);
         print_operand(src);
@@ -1401,9 +1409,6 @@ static size_t emit_call_patches(TB_Module* restrict m) {
     return r;
 }
 
-#if _MSC_VER
-_Pragma("warning (push)") _Pragma("warning (disable: 4028)")
-#endif
 ICodeGen tb__x64_codegen = {
     .minimum_addressable_size = 8,
     .pointer_size = 64,
@@ -1413,10 +1418,6 @@ ICodeGen tb__x64_codegen = {
     .get_data_type_size = get_data_type_size,
     .emit_prologue      = emit_prologue,
     .emit_epilogue      = emit_epilogue,
-
-    .fast_path = compile_function,
-    //.complex_path = x64_complex_compile_function
+    .fast_path          = compile_function,
+    //.complex_path     = x64_complex_compile_function
 };
-#if _MSC_VER
-_Pragma("warning (pop)")
-#endif

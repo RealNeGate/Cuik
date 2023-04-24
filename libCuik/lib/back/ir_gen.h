@@ -33,10 +33,9 @@ typedef struct IRVal {
             short width;
         } bits;
         struct {
-            TB_Label if_true;
-            TB_Label if_false;
+            TB_Node* if_true;
+            TB_Node* if_false;
         } phi;
-        TB_Label label;
     };
 } IRVal;
 

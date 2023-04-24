@@ -10,6 +10,9 @@ typedef enum {
     COHERENCY_VOLATILE
 } Coherency;
 
+// Region -> Value
+typedef NL_Map(TB_Node*, TB_Node*) Mem2Reg_Def;
+
 typedef struct Mem2Reg_Ctx {
     TB_TemporaryStorage* tls;
     TB_Function* f;
@@ -17,15 +20,14 @@ typedef struct Mem2Reg_Ctx {
 
     // Stack slots we're going to convert into
     // SSA form
-    size_t  to_promote_count;
+    size_t to_promote_count;
     TB_Node** to_promote;
 
-    // [to_promote_count][bb_count]
-    TB_Node** current_def;
+    // [to_promote_count]
+    Mem2Reg_Def* defs;
 
-    TB_Predeccesors preds;
-    // [bb_count]
-    TB_Label* doms;
+    TB_PostorderWalk order;
+    TB_Dominators doms;
 } Mem2Reg_Ctx;
 
 static int bits_in_data_type(int pointer_size, TB_DataType dt);
@@ -42,24 +44,15 @@ static int get_variable_id(Mem2Reg_Ctx* restrict c, TB_Node* r) {
 
 // This doesn't really generate a PHI node, it just produces a NULL node which will
 // be mutated into a PHI node by the rest of the code.
-static TB_Node* new_phi(Mem2Reg_Ctx* restrict c, TB_Function* f, int var, TB_Label block, TB_DataType dt) {
-    size_t pred_count = c->preds.count[block];
-
-    // phi nodes need to be allocated at the top of a BB
-    TB_Node* n = tb_alloc_node(f, TB_PHI, dt, pred_count, sizeof(TB_NodePhi) + (pred_count * sizeof(TB_Label)));
-    TB_NodePhi* phi = TB_NODE_GET_EXTRA(n);
-    tb_insert_node(f, block, tb_node_get_first_insertion_point(f, block), n);
-
-    // we're putting placeholder -1 here
-    FOREACH_N(i, 0, pred_count) {
-        phi->labels[i] = c->preds.preds[block][i];
-    }
+static TB_Node* new_phi(Mem2Reg_Ctx* restrict c, TB_Function* f, int var, TB_Node* block, TB_DataType dt) {
+    TB_Node* n = tb_alloc_node(f, TB_PHI, dt, 1 + block->input_count, 0);
+    n->inputs[0] = block;
 
     OPTIMIZER_LOG(n, "Insert new PHI node (in L%d)", block);
     return n;
 }
 
-static void add_phi_operand(Mem2Reg_Ctx* restrict c, TB_Function* f, TB_Node* phi_node, TB_Label label, TB_Node* node) {
+static void add_phi_operand(Mem2Reg_Ctx* restrict c, TB_Function* f, TB_Node* phi_node, TB_Node* bb, TB_Node* node) {
     // we're using NULL nodes as the baseline PHI0
     if (phi_node == node) {
         return;
@@ -71,12 +64,13 @@ static void add_phi_operand(Mem2Reg_Ctx* restrict c, TB_Function* f, TB_Node* ph
     }
 
     assert(phi_node->type == TB_PHI);
+    TB_Node* phi_region = phi_node->inputs[0];
     OPTIMIZER_LOG(phi_node, "  adding r%d to PHI", reg);
 
-    TB_NodePhi* phi = TB_NODE_GET_EXTRA(phi_node);
-    FOREACH_N(i, 0, phi_node->input_count) {
-        if (phi->labels[i] == label) {
-            phi_node->inputs[i] = node;
+    // the slot to fill is based on the predecessor list of the region
+    FOREACH_N(i, 0, bb->input_count) {
+        if (phi_region->inputs[i] == bb) {
+            phi_node->inputs[i+1] = node;
             return;
         }
     }
@@ -84,13 +78,13 @@ static void add_phi_operand(Mem2Reg_Ctx* restrict c, TB_Function* f, TB_Node* ph
     // tb_unreachable();
 }
 
-static void write_variable(Mem2Reg_Ctx* c, int var, TB_Label block, TB_Node* value) {
-    c->current_def[(var * c->bb_count) + block] = value;
+static void write_variable(Mem2Reg_Ctx* c, int var, TB_Node* block, TB_Node* value) {
+    nl_map_put(c->defs[var], block, value);
 }
 
-static void ssa_replace_phi_arg(Mem2Reg_Ctx* c, TB_Function* f, TB_Label bb, TB_Label dst, DynArray(TB_Node*)* stack) {
+static void ssa_replace_phi_arg(Mem2Reg_Ctx* c, TB_Function* f, TB_Node* bb, TB_Node* dst, DynArray(TB_Node*)* stack) {
     FOREACH_N(var, 0, c->to_promote_count) {
-        TB_Node* phi_reg = c->current_def[(var * f->bb_count) + dst];
+        TB_Node* phi_reg = nl_map_get_checked(c->defs[var], dst);
         if (phi_reg == NULL || phi_reg->type != TB_PHI) continue;
 
         TB_Node* top;
@@ -111,9 +105,8 @@ static void ssa_replace_phi_arg(Mem2Reg_Ctx* c, TB_Function* f, TB_Label bb, TB_
         }
 
         bool found = false;
-        TB_NodePhi* phi = TB_NODE_GET_EXTRA(phi_reg);
         FOREACH_N(j, 0, phi_reg->input_count) {
-            if (phi->labels[j] == bb) {
+            if (dst->inputs[j] == bb) {
                 // try to replace
                 phi_reg->inputs[j] = top;
                 found = true;
@@ -127,11 +120,11 @@ static void ssa_replace_phi_arg(Mem2Reg_Ctx* c, TB_Function* f, TB_Label bb, TB_
     }
 }
 
-static void ssa_rename(Mem2Reg_Ctx* c, TB_Function* f, TB_Label bb, DynArray(TB_Node*)* stack) {
+static void ssa_rename(Mem2Reg_Ctx* c, TB_Function* f, TB_Node* bb, DynArray(TB_Node*)* stack) {
     // push phi nodes
     size_t* old_len = tb_tls_push(c->tls, sizeof(size_t) * f->bb_count);
     FOREACH_N(var, 0, c->to_promote_count) {
-        TB_Node* value = c->current_def[(var * f->bb_count) + bb];
+        TB_Node* value = nl_map_get_checked(c->defs[var], bb);
         if (value && value->type == TB_PHI) {
             dyn_array_put(stack[var], value);
         }
@@ -393,14 +386,14 @@ bool mem2reg(TB_Function* f, TB_TemporaryStorage* tls) {
     c.to_promote = to_promote;
 
     c.bb_count = f->bb_count;
-    c.current_def = tb_tls_push(tls, to_promote_count * c.bb_count * sizeof(TB_Node*));
-    memset(c.current_def, 0, to_promote_count * c.bb_count * sizeof(TB_Node*));
+    c.defs = tb_tls_push(tls, to_promote_count * sizeof(Mem2Reg_Def));
+    memset(c.defs, 0, to_promote_count * sizeof(Mem2Reg_Def));
 
     // Calculate all the immediate predecessors
     c.preds = tb_get_temp_predeccesors(f, tls);
 
     // find dominators
-    c.doms = tb_tls_push(tls, f->bb_count * sizeof(TB_Label));
+    c.doms = tb_tls_push(tls, f->bb_count * sizeof(TB_Node*));
     tb_get_dominators(f, c.preds, c.doms);
 
     TB_DominanceFrontiers df = tb_get_dominance_frontiers(f, c.preds, c.doms);
@@ -452,7 +445,7 @@ bool mem2reg(TB_Function* f, TB_TemporaryStorage* tls) {
 
     // for each global name we'll insert phi nodes
     size_t queue_count;
-    TB_Label* queue = tb_tls_push(tls, f->bb_count * sizeof(TB_Label));
+    TB_Node** queue = tb_tls_push(tls, f->bb_count * sizeof(TB_Node*));
     Set ever_worked = set_create(f->bb_count);
     Set has_already = set_create(f->bb_count);
 
@@ -462,7 +455,7 @@ bool mem2reg(TB_Function* f, TB_TemporaryStorage* tls) {
         queue_count = 0;
 
         FOREACH_N(bb, 0, f->bb_count) {
-            TB_Node* r = c.current_def[(var * f->bb_count) + bb];
+            TB_Node* r = nl_map_get_checked(c.defs[var], bb);
             if (r != 0) {
                 set_put(&ever_worked, bb);
                 queue[queue_count++] = bb;
@@ -474,8 +467,8 @@ bool mem2reg(TB_Function* f, TB_TemporaryStorage* tls) {
             // insert phi per dominance of the blocks it's defined in
             size_t i = 0;
             while (i < queue_count) {
-                TB_Label bb = queue[i];
-                TB_Node* value = c.current_def[(var * f->bb_count) + bb];
+                TB_Node* bb = queue[i];
+                TB_Node* value = nl_map_get_checked(c.defs[var], bb);
                 TB_DataType dt = value->dt;
 
                 Set* frontier = &df._[bb];
@@ -484,7 +477,7 @@ bool mem2reg(TB_Function* f, TB_TemporaryStorage* tls) {
                     uint64_t bits = frontier->data[k];
 
                     FOREACH_N(b, 0, 64) if (bits & (1ull << b)) {
-                        TB_Label l = k*64 + b;
+                        TB_Node* l = k*64 + b;
                         if (!set_first_time(&has_already, l)) continue;
 
                         TB_Node* phi_reg = c.current_def[(var * f->bb_count) + l];

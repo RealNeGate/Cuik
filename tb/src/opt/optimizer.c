@@ -16,20 +16,25 @@ typedef struct TB_Pass {
 #include "dce.h"
 #include "fold.h"
 #include "canonical.h"
-#include "merge_ret.h"
-#include "mem2reg.h"
-#include "libcalls.h"
+// #include "mem2reg.h"
+// #include "libcalls.h"
 
 typedef struct {
     NL_Map(TB_Node*, char) marked;
 } DCE;
 
 static void dce_mark(TB_Function* f, DCE* dce, TB_Node* n) {
+    if (n->type == TB_BRANCH || n->type == TB_RET) {
+        n = n->inputs[0];
+    }
+
     ptrdiff_t search = nl_map_get(dce->marked, n);
-    if (search >= 0) return;
+    if (search >= 0) {
+        return;
+    }
 
+    assert(n->type == TB_REGION);
     nl_map_put(dce->marked, n, 1);
-
     TB_FOR_INPUT_IN_NODE(in, n) if (*in) {
         dce_mark(f, dce, *in);
     }
@@ -38,14 +43,12 @@ static void dce_mark(TB_Function* f, DCE* dce, TB_Node* n) {
 static void dce(TB_Function* f) {
     // mark roots
     DCE dce = { 0 };
-    TB_FOR_BASIC_BLOCK(bb, f) {
-        TB_FOR_NODE(r, f, bb) {
-            if (!tb_is_expr_like(r)) dce_mark(f, &dce, r);
-        }
+    TB_FOR_RETURNS(n, f) {
+        dce_mark(f, &dce, n);
     }
 
     // sweep
-    TB_FOR_BASIC_BLOCK(bb, f) {
+    /*TB_FOR_BASIC_BLOCK(bb, f) {
         TB_Node* n = f->bbs[bb].start;
         for (; n != NULL; n = n->next) {
             ptrdiff_t search = nl_map_get(dce.marked, n);
@@ -54,11 +57,12 @@ static void dce(TB_Function* f) {
                 TB_KILL_NODE(n);
             }
         }
-    }
+    }*/
     nl_map_free(dce.marked);
 }
 
 static void canonicalize(TB_Function* f) {
+    #if 0
     // tb_function_print(f, tb_default_print_callback, stdout, false);
     bool changes;
     do {
@@ -149,6 +153,7 @@ static void canonicalize(TB_Function* f) {
             dce(f);
         }
     } while (changes);
+    #endif
 }
 
 static void schedule_function_level_opts(TB_Module* m, TB_Function* f, size_t pass_count, const TB_Pass* passes[]) {

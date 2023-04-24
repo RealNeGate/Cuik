@@ -32,6 +32,8 @@
 /////////////////////////////////////////////////
 // public macros
 /////////////////////////////////////////////////
+#define nl_map_create(map, initial_cap) ((map) = ((void*) nl_map__alloc(initial_cap, sizeof(*map))->kv_table))
+
 #define nl_map_put(map, key, value)                                                  \
 do {                                                                                 \
     NL_MapInsert ins__ = nl_map__insert((map), sizeof(*(map)), sizeof(key), &(key)); \
@@ -42,7 +44,7 @@ do {                                                                            
 #define nl_map_get(map, key) \
 ((map) != NULL ? nl_map__get(((NL_MapHeader*)(map)) - 1, sizeof(*map), sizeof(key), &(key)) : -1)
 
-#define nl_map_get_checked(map, key) (&(map)[nl_map__check(nl_map_get(map, key))].v)
+#define nl_map_get_checked(map, key) ((map)[nl_map__check(nl_map_get(map, key))].v)
 
 #define nl_map_free(map) \
 do {                                              \
@@ -56,8 +58,7 @@ do {                                              \
 // internals
 /////////////////////////////////////////////////
 #define nl_map__get_header(map) (((NL_MapHeader*)(map)) - 1)
-
-#define NL_MAP_BUCKET_SIZE 16
+#define nl_map_get_capacity(map) (1ull << nl_map__get_header(map)->exp)
 
 typedef struct {
     void* new_map;
@@ -67,12 +68,13 @@ typedef struct {
 // behind the array the user manages there's some
 // information about the rest of the string map
 typedef struct {
-    size_t size;
-    uint8_t* buckets; // number of entries in the bucket
+    size_t count;
+    size_t exp;
     char kv_table[];
 } NL_MapHeader;
 
 #ifndef NL_HASH_MAP_INLINE
+NL_HASH_MAP_API NL_MapHeader* nl_map__alloc(size_t cap, size_t entry_size);
 NL_HASH_MAP_API NL_MapInsert nl_map__insert(void* map, size_t entry_size, size_t key_size, const void* key);
 NL_HASH_MAP_API ptrdiff_t nl_map__get(NL_MapHeader* restrict table, size_t entry_size, size_t key_size, const void* key);
 NL_HASH_MAP_API void nl_map__free(NL_MapHeader* restrict table);
@@ -98,133 +100,91 @@ inline static uint32_t nl_map__raw_hash(size_t len, const void *key) {
     return h;
 }
 
-inline static uint32_t nl_map__hash(size_t len, const void *key, size_t modulo) {
-    assert((modulo & (modulo - 1)) == 0 && "modulo is not a power-of-two");
-    // return nl_map__raw_hash(len, key) & (modulo - 1);
-
-    uint32_t shift = (uint32_t) __builtin_clz(modulo - 1);
-    return nl_map__raw_hash(len, key) >> shift;
-}
-
 NL_HASH_MAP_API void nl_map__free(NL_MapHeader* restrict table) {
-    NL_FREE(table->buckets);
     NL_FREE(table);
 }
 
-NL_HASH_MAP_API NL_MapHeader* nl_map__alloc(size_t size, size_t entry_size) {
-    assert((size & (size - 1)) == 0 && "size is not a power-of-two");
+NL_HASH_MAP_API NL_MapHeader* nl_map__alloc(size_t cap, size_t entry_size) {
+    // next power of two
+    #if defined(_MSC_VER) && !defined(__clang__)
+    size_t exp = 64 - _lzcnt_u64(cap - 1);
+    #else
+    size_t exp = 64 - __builtin_clzll(cap - 1);
+    #endif
 
-    NL_MapHeader* table = NL_MALLOC(sizeof(NL_MapHeader) + (size * entry_size));
-    table->size = size;
-    table->buckets = NL_CALLOC(size / NL_MAP_BUCKET_SIZE, sizeof(uint8_t));
+    cap = (cap == 1 ? 1 : 1 << exp);
+
+    NL_MapHeader* table = NL_CALLOC(1, sizeof(NL_MapHeader) + (cap * entry_size));
+    table->exp = exp;
+    table->count = 0;
     return table;
 }
 
-// FOR DEBUG PURPOSES ONLY
-/*static void nl_map__dump(NL_MapHeader* restrict table, size_t entry_size) {
-    printf("Table: %p\n", table);
-    size_t bucket_count = table->size / NL_MAP_BUCKET_SIZE;
-    for (size_t i = 0; i < bucket_count; i++) {
-        size_t bucket_entries = table->buckets[i];
-
-        for (size_t j = 0; j < bucket_entries; j++) {
-            size_t slot = (i * NL_MAP_BUCKET_SIZE) + j;
-            uint32_t* kv = (uint32_t*) &table->kv_table[slot * entry_size];
-
-            printf("  [%d] = %d\n", kv[0], kv[1]);
+static bool nl_map__is_zero(const char* ptr, size_t size) {
+    // we're almost exclusively using this code for pointer keys
+    if (size == sizeof(void*)) {
+        return *((uintptr_t*) ptr) == 0;
+    } else {
+        for (size_t i = 0; i < size; i++) {
+            if (ptr[i] != 0) return false;
         }
+
+        return true;
     }
-}*/
-
-static NL_MapHeader* nl_map__resize(NL_MapHeader* table, size_t entry_size, size_t key_size) {
-    // remake & rehash... probably really slow...
-    size_t old_size = table->size;
-    size_t new_size = old_size * 2;
-
-    // printf("Resize %zu -> %zu...\n", old_size, new_size);
-    NL_MapHeader* new_table = nl_map__alloc(new_size, entry_size);
-
-    // go per bucket and relocate them
-    size_t old_bucket_count = old_size / NL_MAP_BUCKET_SIZE;
-    for (size_t i = 0; i < old_bucket_count; i++) {
-        size_t bucket_entries = table->buckets[i];
-
-        for (size_t j = 0; j < bucket_entries; j++) {
-            size_t old_slot = (i * NL_MAP_BUCKET_SIZE) + j;
-            const char* entry = &table->kv_table[old_slot * entry_size];
-
-            // rehash
-            size_t new_bucket_index = nl_map__hash(key_size, entry, new_size / NL_MAP_BUCKET_SIZE);
-            size_t k = new_table->buckets[new_bucket_index]++;
-            assert(k < NL_MAP_BUCKET_SIZE);
-
-            // move entry
-            // const uint32_t* kv = (const uint32_t*) entry;
-            // printf("REHASH [%d] => [%d] (%zd %x)\n", kv[0], kv[1], new_bucket_index, nl_map__raw_hash(key_size, entry));
-
-            size_t new_slot = (new_bucket_index * NL_MAP_BUCKET_SIZE) + k;
-            memcpy(&new_table->kv_table[new_slot * entry_size], entry, entry_size);
-        }
-    }
-
-    nl_map__free(table);
-    return new_table;
 }
 
 NL_HASH_MAP_API NL_MapInsert nl_map__insert(void* map, size_t entry_size, size_t key_size, const void* key) {
     NL_MapHeader* table;
     if (map == NULL) {
-        table = nl_map__alloc(4096, entry_size);
+        table = nl_map__alloc(256, entry_size);
         map = table->kv_table;
     } else {
         table = ((NL_MapHeader*)map) - 1;
     }
 
-    size_t bucket = nl_map__hash(key_size, key, table->size / NL_MAP_BUCKET_SIZE);
-    size_t bucket_entries = table->buckets[bucket];
-
-    // try to rehash once we hit the threshold (load factor of 75%)
-    size_t threshold = (NL_MAP_BUCKET_SIZE * 3) / 4;
-    if (bucket_entries >= threshold) {
-        table = nl_map__resize(table, entry_size, key_size);
-        map = table->kv_table;
-
-        // rehash new entry
-        bucket = nl_map__hash(key_size, key, table->size / NL_MAP_BUCKET_SIZE);
-        bucket_entries = table->buckets[bucket];
+    uint32_t cap = 1ull << table->exp;
+    if (table->count >= (cap * 4) / 3) {
+        // past 75% load... resize
+        __debugbreak();
     }
 
-    // check for duplicate first
-    for (size_t i = 0; i < bucket_entries; i++) {
-        size_t slot = (bucket * NL_MAP_BUCKET_SIZE) + i;
-        void* key_at_slot = &table->kv_table[slot * entry_size];
+    uint32_t exp = table->exp;
+    uint32_t mask = (1 << table->exp) - 1;
+    uint32_t hash = nl_map__raw_hash(key_size, key);
 
-        if (memcmp(key_at_slot, key, key_size) == 0) {
-            return (NL_MapInsert){ map, slot };
+    for (size_t i = hash;;) {
+        // hash table lookup
+        uint32_t step = (hash >> (32 - exp)) | 1;
+        i = (i + step) & mask;
+
+        void* slot_entry = &table->kv_table[i * entry_size];
+        if (nl_map__is_zero(slot_entry, key_size)) {
+            table->count++;
+            memcpy(slot_entry, key, key_size);
+            return (NL_MapInsert){ map, i };
+        } else if (memcmp(slot_entry, key, key_size) == 0) {
+            return (NL_MapInsert){ map, i };
         }
     }
-
-    size_t index = table->buckets[bucket]++;
-    size_t slot = (bucket * NL_MAP_BUCKET_SIZE) + index;
-
-    memcpy(&table->kv_table[slot * entry_size], key, key_size);
-    return (NL_MapInsert){ map, slot };
 }
 
 NL_HASH_MAP_API ptrdiff_t nl_map__get(NL_MapHeader* restrict table, size_t entry_size, size_t key_size, const void* key) {
-    size_t bucket = nl_map__hash(key_size, key, table->size / NL_MAP_BUCKET_SIZE);
-    size_t bucket_entries = table->buckets[bucket];
+    uint32_t exp = table->exp;
+    uint32_t mask = (1 << table->exp) - 1;
+    uint32_t hash = nl_map__raw_hash(key_size, key);
 
-    for (size_t i = 0; i < bucket_entries; i++) {
-        size_t slot = (bucket * NL_MAP_BUCKET_SIZE) + i;
-        void* slot_entry = &table->kv_table[slot * entry_size];
+    for (size_t i = hash;;) {
+        // hash table lookup
+        uint32_t step = (hash >> (32 - exp)) | 1;
+        i = (i + step) & mask;
 
-        if (memcmp(slot_entry, key, key_size) == 0) {
-            return slot;
+        void* slot_entry = &table->kv_table[i * entry_size];
+        if (nl_map__is_zero(slot_entry, key_size)) {
+            return -1;
+        } else if (memcmp(slot_entry, key, key_size) == 0) {
+            return i;
         }
     }
-
-    return -1;
 }
 
 #endif /* NL_HASH_MAP_IMPL */

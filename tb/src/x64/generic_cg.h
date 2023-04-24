@@ -78,6 +78,10 @@ typedef struct MachineReg {
     uint8_t class, num;
 } MachineReg;
 
+typedef struct ValueRef {
+    int user_count, value;
+} ValueRef;
+
 typedef struct Clobbers {
     int count;
     MachineReg _[];
@@ -103,12 +107,15 @@ typedef struct Def {
     Clobbers* clobbers;
 } Def;
 
-typedef struct Ctx {
+typedef struct {
     TB_CGEmitter emit;
 
     TB_Module* module;
     TB_Function* f;
     TB_ABI target_abi;
+
+    int caller_usage;
+    TB_PostorderWalk order;
 
     // machine output sequences
     Inst *first, *last;
@@ -116,13 +123,6 @@ typedef struct Ctx {
     DynArray(Reload) reloads;
     DynArray(TB_Node*) in_bound;
     MachineBB* seq_bb;
-
-    // hash map
-    size_t meta_count, meta_exp;
-    NodeMeta* meta;
-
-    bool in_fence;
-    TB_Label fallthrough;
 
     // Stack
     uint32_t stack_usage;
@@ -135,8 +135,7 @@ typedef struct Ctx {
     Set used_regs[CG_REGISTER_CLASSES];
 
     // current value table
-    size_t values_count, values_exp;
-    ValueDesc* values;
+    NL_Map(TB_Node*, ValueRef) values;
 } Ctx;
 
 #if 1
@@ -144,46 +143,6 @@ typedef struct Ctx {
 #else
 #define ASM if (0)
 #endif
-
-#define NAME(n) (get_meta(ctx, n)->t)
-static NodeMeta* get_meta(Ctx* restrict ctx, TB_Node* n) {
-    uint32_t hash = (((uintptr_t) n) * 11400714819323198485llu) >> 32u;
-
-    for (size_t i = hash;;) {
-        // hash table lookup
-        uint32_t mask = (1 << ctx->meta_exp) - 1;
-        uint32_t step = (hash >> (32 - ctx->meta_exp)) | 1;
-        i = (i + step) & mask;
-
-        if (ctx->meta[i].key == NULL) {
-            return NULL;
-        } else if (ctx->meta[i].key == n) {
-            return &ctx->meta[i];
-        }
-    }
-}
-
-static void put_meta(Ctx* restrict ctx, TB_Node* n, int ordinal) {
-    uint32_t hash = (((uintptr_t) n) * 11400714819323198485llu) >> 32u;
-
-    for (size_t i = hash;;) {
-        // hash table lookup
-        uint32_t mask = (1 << ctx->meta_exp) - 1;
-        uint32_t step = (hash >> (32 - ctx->meta_exp)) | 1;
-        i = (i + step) & mask;
-
-        if (ctx->meta[i].key == NULL) {
-            assert(ctx->meta_count + 1 < (1u << ctx->meta_exp));
-
-            // new slot
-            ctx->meta_count++;
-            ctx->meta[i] = (NodeMeta){ .key = n, .t = ordinal };
-            return;
-        } else if (ctx->meta[i].key == n) {
-            assert(0 && "Huh?");
-        }
-    }
-}
 
 static bool try_tile(Ctx* restrict ctx, TB_Node* n) {
     dyn_array_for(i, ctx->in_bound) if (ctx->in_bound[i] == n) {
@@ -215,29 +174,8 @@ static int put_def_forced(Ctx* restrict ctx, TB_Node* n, int reg_class, int reg,
     return i;
 }
 
-#define GET_VAL(n) (*get_val(ctx, n))
-static int* get_val(Ctx* restrict ctx, TB_Node* n) {
-    uint32_t hash = (((uintptr_t) n) * 11400714819323198485llu) >> 32u;
-
-    for (size_t i = hash;;) {
-        // hash table lookup
-        uint32_t mask = (1 << ctx->values_exp) - 1;
-        uint32_t step = (hash >> (32 - ctx->values_exp)) | 1;
-        i = (i + step) & mask;
-
-        if (ctx->values[i].key == NULL) {
-            assert(ctx->values_count + 1 < (1u << ctx->values_exp));
-
-            // new slot
-            ctx->values_count++;
-            ctx->values[i].key = n;
-            ctx->values[i].val = -1;
-            return &ctx->values[i].val;
-        } else if (ctx->values[i].key == n) {
-            return &ctx->values[i].val;
-        }
-    }
-}
+#define GET_VAL(n) nl_map_get_checked(ctx->values, n).value
+#define USER_COUNT(n) nl_map_get_checked(ctx->values, n).user_count
 
 static bool fits_into_int8(uint64_t x) {
     int8_t y = x & 0xFFFFFFFF;
@@ -412,9 +350,9 @@ static DefIndex* liveness(Ctx* restrict ctx, TB_Function* f, TB_PostorderWalk* w
     size_t def_count = dyn_array_length(ctx->defs);
 
     // find BB boundaries in sequences
-    MachineBB* seq_bb = ARENA_ARR_ALLOC(&tb__arena, f->bb_count, MachineBB);
+    MachineBB* seq_bb = ARENA_ARR_ALLOC(&tb__arena, ctx->order.count, MachineBB);
 
-    FOREACH_N(bb, 0, f->bb_count) {
+    FOREACH_N(bb, 0, ctx->order.count) {
         seq_bb[bb] = (MachineBB){
             .gen = set_create(def_count), .kill = set_create(def_count),
             .live_in = set_create(def_count), .live_out = set_create(def_count)
@@ -486,11 +424,11 @@ static DefIndex* liveness(Ctx* restrict ctx, TB_Function* f, TB_PostorderWalk* w
     do {
         changes = false;
 
-        FOREACH_REVERSE_N(bb, 0, f->bb_count) {
+        FOREACH_REVERSE_N(bb, 0, ctx->traversal.count) {
             set_clear(&seq_bb[bb].live_out);
 
             // walk all successors
-            TB_Node* end = f->bbs[bb].end;
+            TB_Node* end = ctx->traversal[bb].end;
             if (end && end->type == TB_BRANCH) {
                 TB_NodeBranch* br = TB_NODE_GET_EXTRA(end);
                 FOREACH_N(i, 0, br->count) {
@@ -509,10 +447,10 @@ static DefIndex* liveness(Ctx* restrict ctx, TB_Function* f, TB_PostorderWalk* w
 
             // live_in = (live_out - live_kill) U live_gen
             FOREACH_N(i, 0, (def_count + 63) / 64) {
-                uint64_t new = (live_out->data[i] & ~kill->data[i]) | gen->data[i];
+                uint64_t new_val = (live_out->data[i] & ~kill->data[i]) | gen->data[i];
 
-                changes |= (live_in->data[i] != new);
-                live_in->data[i] = new;
+                changes |= (live_in->data[i] != new_val);
+                live_in->data[i] = new_val;
             }
         }
     } while (changes);
@@ -814,13 +752,24 @@ static void fence(Ctx* restrict ctx) {
     ctx->in_fence = false;
 }
 
+static void mark_users(Ctx* restrict ctx, TB_Node* n) {
+    TB_FOR_INPUT_IN_NODE(in, n) if (*in) {
+        ptrdiff_t search = nl_map_get(ctx->values, *in);
+        if (search >= 0) {
+            ctx->values[search].user_count++;
+        } else {
+            ValueRef v = { .user_count = 1 };
+            nl_map_put(ctx->values, *in, v);
+        }
+    }
+}
+
 // Codegen through here is done in phases
 static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_FeatureSet* features, uint8_t* out, size_t out_capacity) {
     TB_TemporaryStorage* tls = tb_tls_allocate();
-    tb_function_print(f, tb_default_print_callback, stdout, false);
+    tb_function_print(f, tb_default_print_callback, stdout);
 
-    Ctx* restrict ctx = arena_alloc(&tb__arena, sizeof(Ctx), _Alignof(Ctx));
-    *ctx = (Ctx){
+    Ctx ctx = {
         .module = f->super.module,
         .f = f,
         .target_abi = f->super.module->target_abi,
@@ -831,40 +780,35 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
         }
     };
 
-    ctx->used_regs[0] = set_create(16);
-    ctx->used_regs[1] = set_create(16);
+    ctx.used_regs[0] = set_create(16);
+    ctx.used_regs[1] = set_create(16);
 
-    set_put(&ctx->used_regs[0], RBP), set_put(&ctx->used_regs[0], RSP);
-    // FOREACH_N(i, 8, 16) set_put(&ctx->used_regs[0], i);
+    set_put(&ctx.used_regs[0], RBP), set_put(&ctx.used_regs[0], RSP);
+    // FOREACH_N(i, 8, 16) set_put(&ctx.used_regs[0], i);
 
     // BB scheduling:
     //   we run through BBs in a reverse postorder walk, currently
     //   there's no reodering based on branch weights (since we don't
     //   do those but if we did that would go here.
-    TB_PostorderWalk walk = {
-        .visited = tb_tls_push(tls, f->bb_count * sizeof(bool)),
-        .traversal = tb_tls_push(tls, f->bb_count * sizeof(TB_Node*)),
-    };
-    tb_function_get_postorder_explicit(f, &walk);
-    assert(walk.traversal[walk.count - 1] == 0 && "Codegen must always schedule entry BB first");
+    ctx.order = tb_function_get_postorder(f);
+    assert(order.traversal[order.count - 1].start == f->start_node && "Codegen must always schedule entry BB first");
 
     // Live intervals:
     //   We compute this for register allocation along
     //   with the "ordinals" which act as our timeline.
-    ctx->meta_exp = estimate_hash_map_size(f->node_count);
-    size_t meta_cap = (1u << ctx->meta_exp);
+    nl_map_create(ctx.values, f->node_count);
 
-    ctx->meta = arena_alloc(&tb__arena, meta_cap * sizeof(NodeMeta), _Alignof(NodeMeta));
-    memset(ctx->meta, 0, meta_cap * sizeof(NodeMeta));
+    int label_patch_count = 0, return_count = 0;
+    int caller_usage = 0, line_count = 0;
+    FOREACH_REVERSE_N(i, 0, ctx.order.count) {
+        TB_Node* n = ctx.order.traversal[i].end;
 
-    int counter = 0, label_patch_count = 0, return_count = 0, caller_usage = 0, line_count = 0;
-    FOREACH_REVERSE_N(i, 0, walk.count) {
-        TB_Label bb = walk.traversal[i];
+        // walk the basic block backwards
+        for (;;) {
+            mark_users(ctx, n->inputs[0]);
 
-        TB_FOR_NODE(n, f, bb) if (1) {
-            put_meta(ctx, n, counter++);
-
-            line_count += (n->type == TB_LINE_INFO);
+            if (n->input_count == 0 || n->inputs[0]->type == TB_REGION) break;
+            n = n->inputs[0];
         }
     }
 
@@ -873,17 +817,11 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
     f->lines = ARENA_ARR_ALLOC(&f->super.module->arena, line_count, TB_Line);
     mtx_unlock(&f->super.module->lock);
 
-    // allocate values map and active, for linear scan
-    ctx->values_exp = estimate_hash_map_size(counter);
-    size_t values_cap = (1u << ctx->values_exp);
-
-    ctx->values = arena_alloc(&tb__arena, values_cap * sizeof(ValueDesc), _Alignof(ValueDesc));
-    ctx->active = arena_alloc(&tb__arena, counter * sizeof(TB_Node*), _Alignof(TB_Node*));
-    memset(ctx->values, 0, values_cap * sizeof(ValueDesc));
+    ctx.active = arena_alloc(&tb__arena, counter * sizeof(DefIndex), _Alignof(DefIndex));
 
     CUIK_TIMED_BLOCK("liveness analysis") {
-        FOREACH_REVERSE_N(i, 0, walk.count) {
-            TB_Label bb = walk.traversal[i];
+        FOREACH_REVERSE_N(i, 0, ctx.order.count) {
+            TB_Node* bb = ctx.order.traversal[i].start;
 
             TB_FOR_NODE(n, f, bb) if (n->type != TB_NULL) {
                 if (n->type == TB_BRANCH) {
@@ -891,24 +829,23 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
                 } else if (n->type == TB_RET) {
                     return_count += 1;
                 } else if (n->type == TB_CALL) {
-                    // system calls don't count, we track this for ABI
-                    // and stack allocation purposes.
-                    if (caller_usage < n->input_count) {
-                        caller_usage = n->input_count;
-                    }
                 }
 
                 TB_FOR_INPUT_IN_NODE(in, n) if (*in) {
-                    get_meta(ctx, *in)->user_count++;
+                    ptrdiff_t search = nl_map_get(ctx.values, *in);
+                    if (search >= 0) {
+                        ctx.values[search].user_count++;
+                    } else {
+                        ValueRef v = { .user_count = 1 };
+                        nl_map_put(ctx.values, *in, v);
+                    }
                 }
             }
         }
     }
 
     // allocate more stuff now that we've run stats on the IR
-    ctx->emit.labels = ARENA_ARR_ALLOC(&tb__arena, f->bb_count, uint32_t);
-    ctx->emit.label_patches = ARENA_ARR_ALLOC(&tb__arena, label_patch_count, LabelPatch);
-    ctx->emit.ret_patches = ARENA_ARR_ALLOC(&tb__arena, return_count, ReturnPatch);
+    ctx.emit.labels = ARENA_ARR_ALLOC(&tb__arena, f->bb_count, uint32_t);
 
     // Instruction selection:
     //   we just decide which instructions to emit, which operands are
@@ -918,12 +855,12 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
     SUBMIT(inst_label(0));
     abi_prepare(ctx, f);
 
-    ctx->emit.emit_asm = true;
+    ctx.emit.emit_asm = true;
     CUIK_TIMED_BLOCK("isel") FOREACH_REVERSE_N(i, 0, walk.count) {
         TB_Label bb = walk.traversal[i];
 
         // mark fallthrough
-        ctx->fallthrough = (i > 0 ? walk.traversal[i - 1] : -1);
+        ctx.fallthrough = (i > 0 ? walk.traversal[i - 1] : -1);
         if (bb) {
             SUBMIT(inst_label(bb));
         }
@@ -937,7 +874,7 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
             // build up tile
             NodeMeta* m = get_meta(ctx, n);
             if (m->user_count <= 1 && tb_is_expr_like(n) && n->type != TB_LOCAL) {
-                if (m->user_count == 1) dyn_array_put(ctx->in_bound, n);
+                if (m->user_count == 1) dyn_array_put(ctx.in_bound, n);
                 continue;
             }
 
@@ -951,7 +888,7 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
                 phi_edge(f, ctx, bb, br->default_label);
             }
 
-            if (n->type != TB_LOCAL || nl_map_get(ctx->stack_slots, n) < 0) {
+            if (n->type != TB_LOCAL || nl_map_get(ctx.stack_slots, n) < 0) {
                 isel(ctx, n);
             }
 
@@ -989,15 +926,15 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
     // we're done, clean up
     TB_FunctionOutput func_out = {
         .linkage = f->linkage,
-        .code = ctx->emit.data,
-        .code_size = ctx->emit.count,
-        .stack_usage = ctx->stack_usage,
-        // .prologue_epilogue_metadata = ctx->regs_to_save[0],
-        // .stack_slots = ctx->stack_slots
+        .code = ctx.emit.data,
+        .code_size = ctx.emit.count,
+        .stack_usage = ctx.stack_usage,
+        // .prologue_epilogue_metadata = ctx.regs_to_save[0],
+        // .stack_slots = ctx.stack_slots
     };
 
     arena_clear(&tb__arena);
-    nl_map_free(ctx->stack_slots);
+    nl_map_free(ctx.stack_slots);
     // __debugbreak();
     return func_out;
 }

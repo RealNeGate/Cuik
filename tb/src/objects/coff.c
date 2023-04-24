@@ -213,9 +213,9 @@ TB_API TB_Exports tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
                 .pointer_to_reloc = (uintptr_t) debug_sections.data[i].user_data
             };
 
-            if (dbg == &tb__codeview_debug_format) {
+            /*if (dbg == &tb__codeview_debug_format) {
                 header.characteristics |= IMAGE_SCN_MEM_DISCARDABLE;
-            }
+            }*/
 
             TB_Slice name = debug_sections.data[i].name;
             assert(name.length <= 8);
