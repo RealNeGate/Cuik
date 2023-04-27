@@ -629,21 +629,11 @@ typedef struct {
 ////////////////////////////////
 // IR ANALYSIS
 ////////////////////////////////
-#if 0
-// if out_doms is NULL it'll only return the dominator array length (it's just the label count really)
-TB_API size_t tb_get_dominators(TB_Function* f, TB_Predeccesors p, TB_Label* out_doms);
-TB_API bool tb_is_dominated_by(TB_Label* doms, TB_Label expected_dom, TB_Label bb);
-
-TB_API TB_LoopInfo tb_get_loop_info(TB_Function* f, TB_Predeccesors preds, TB_Label* doms);
-TB_API void tb_free_loop_info(TB_LoopInfo loops);
-#endif
+TB_API void tb_compute_successors(TB_Function* f, TB_TemporaryStorage* tls, TB_PostorderWalk order);
 
 // Allocates from the heap and requires freeing with tb_function_free_postorder
 TB_API TB_PostorderWalk tb_function_get_postorder(TB_Function* f);
 TB_API void tb_function_free_postorder(TB_PostorderWalk* walk);
-
-TB_Label tb_find_label_from_reg(TB_Function* f, TB_Node* target);
-void tb_function_find_replace_reg(TB_Function* f, TB_Node* find, TB_Node* replace);
 
 inline static uint64_t align_up(uint64_t a, uint64_t b) {
     return a + (b - (a % b)) % b;

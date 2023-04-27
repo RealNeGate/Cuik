@@ -100,12 +100,12 @@ static TB_X86_DataType legalize_int2(TB_DataType dt) {
     return legalize_int(dt, &m);
 }
 
-static Inst inst_jcc(int target, Cond cc) {
+static Inst inst_jcc(TB_Node* target, Cond cc) {
     return (Inst){
         .type = JO + cc,
         .layout = X86_OP_L,
         .regs   = { -1 },
-        .imm = { target }
+        .imm = { (uintptr_t) target }
     };
 }
 
@@ -118,12 +118,12 @@ static Inst inst_setcc(Cond cc, int src) {
     };
 }
 
-static Inst inst_jmp(int target) {
+static Inst inst_jmp(TB_Node* target) {
     return (Inst){
         .type = JMP,
         .layout = X86_OP_L,
         .regs   = { -1 },
-        .imm[0] = target
+        .imm[0] = (uintptr_t) target
     };
 }
 
@@ -452,27 +452,81 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
         return current_val;
     }
 
-    try_tile(ctx, n);
-
     TB_NodeTypeEnum type = n->type;
     int dst = -1;
 
     switch (type) {
         case TB_LINE_INFO: break;
 
-        case TB_PARAM: {
-            int id = TB_NODE_GET_EXTRA_T(n, TB_NodeParam)->id;
-            if (id >= 4) {
-                // return val_stack(TB_TYPE_PTR, 16 + (id * 8));
-                tb_todo();
-            } else {
-                // copy from parameter
-                dst = DEF_HINTED(n, REG_CLASS_GPR, WIN64_GPR_PARAMETERS[id]);
+        case TB_START: {
+            TB_NodeStart* start = TB_NODE_GET_EXTRA(n);
+            const TB_FunctionPrototype* restrict proto = ctx->f->prototype;
 
-                ctx->defs[dst].start = -100 + id;
-                SUBMIT(inst_copy(n->dt, dst, WIN64_GPR_PARAMETERS[id]));
+            // Handle known parameters
+            FOREACH_N(i, 0, proto->param_count) {
+                TB_Node* proj = start->projs[i];
+
+                // copy from parameter
+                int v = DEF_HINTED(proj, REG_CLASS_GPR, WIN64_GPR_PARAMETERS[i]);
+                ctx->defs[v].start = -100 + i;
+                SUBMIT(inst_copy(proj->dt, v, WIN64_GPR_PARAMETERS[i]));
+
+                GET_VAL(proj) = v;
             }
-            break;
+
+            // walk the entry to find any parameter stack slots
+            bool has_param_slots = false;
+            for (;;) {
+                if (n->type == TB_STORE && n->inputs[0]->type == TB_START) {
+                    // handle parameter storage, the first few parameters
+                    // have reserved space for them in Win64.
+                    if (n->inputs[1]->type == TB_LOCAL &&
+                        n->inputs[2]->type == TB_PROJ &&
+                        n->inputs[2]->inputs[0]->type == TB_START &&
+                        USER_COUNT(n->inputs[2]) == 1) {
+                        TB_NodeProj* p = TB_NODE_GET_EXTRA(n->inputs[2]);
+
+                        int pos = 16 + (p->index * 8);
+                        nl_map_put(ctx->stack_slots, n->inputs[1], pos);
+
+                        has_param_slots = true;
+                    }
+                }
+
+                // previous in control
+                if (n->input_count == 0 || n->inputs[0]->type == TB_REGION) break;
+                n = n->inputs[0];
+            }
+
+            if (has_param_slots) {
+                ctx->stack_usage += 16 + (proto->param_count * 8);
+            }
+
+            if (proto->has_varargs) {
+                bool is_sysv = (ctx->target_abi == TB_ABI_SYSTEMV);
+                const GPR* parameter_gprs = is_sysv ? SYSV_GPR_PARAMETERS : WIN64_GPR_PARAMETERS;
+
+                // spill the rest of the parameters (assumes they're all in the GPRs)
+                size_t gpr_count = is_sysv ? 6 : 4;
+                size_t extra_param_count = proto->param_count > gpr_count ? 0 : gpr_count - proto->param_count;
+
+                FOREACH_N(i, 0, extra_param_count) {
+                    size_t param_num = proto->param_count + i;
+
+                    int dst_pos = 16 + (param_num * 8);
+                    GPR src = parameter_gprs[param_num];
+
+                    SUBMIT(inst_mr(MOV, TB_TYPE_I64, RBP, GPR_NONE, SCALE_X1, dst_pos, src));
+                }
+
+                ctx->stack_usage += (extra_param_count * 8);
+            }
+
+            // Handle unknown parameters (if we have varargs)
+            if (proto->has_varargs) {
+                tb_todo();
+            }
+            return 0;
         }
 
         case TB_LOCAL: {
@@ -675,9 +729,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
                 SUBMIT(inst_copy(n->inputs[0]->dt, fake_dst, USE(src_vreg)));
             }
 
-            if (ctx->fallthrough != -1) {
-                SUBMIT(inst_jmp(-1));
-            }
+            SUBMIT(inst_jmp(NULL));
             break;
         }
 
@@ -758,32 +810,26 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
 
         case TB_BRANCH: {
             TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
+            TB_Node** succ = br->succ;
 
             if (br->count == 0) {
-                fence(ctx);
-
-                if (ctx->fallthrough != br->default_label) {
-                    SUBMIT(inst_jmp(br->default_label));
-                }
+                SUBMIT(inst_jmp(succ[0]));
             } else if (br->count == 1) {
                 // if-like branch
-                Cond cc = isel_cmp(ctx, n->inputs[0]) ^ 1;
-                fence(ctx);
+                int key = USE(ISEL(n->inputs[0]));
+                // Cond cc = isel_cmp(ctx, n->inputs[0]) ^ 1;
 
-                SUBMIT(inst_jcc(br->targets[0].value, cc));
-                if (ctx->fallthrough != br->default_label) {
-                    SUBMIT(inst_jmp(br->default_label));
-                }
+                SUBMIT(inst_i(CMP, n->dt, key, br->keys[0]));
+                SUBMIT(inst_jcc(succ[1], E));
+                SUBMIT(inst_jmp(succ[0]));
             } else {
                 int key = USE(ISEL(n->inputs[0]));
 
-                fence(ctx);
-
                 FOREACH_N(i, 0, br->count) {
-                    SUBMIT(inst_i(CMP, n->dt, key, br->targets[i].key));
-                    SUBMIT(inst_jcc(br->targets[i].value, E));
+                    SUBMIT(inst_i(CMP, n->dt, key, br->keys[i]));
+                    SUBMIT(inst_jcc(succ[1+i], E));
                 }
-                SUBMIT(inst_jmp(br->default_label));
+                SUBMIT(inst_jmp(succ[0]));
 
                 // switch-like branch
                 // tb_todo();
@@ -884,7 +930,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
                 // multiple returns must fill up the projections
                 tb_todo();
             } else {
-                if (get_meta(ctx, n)->user_count > 0) {
+                if (USER_COUNT(n) > 0) {
                     dst = DEF_HINTED(n, REG_CLASS_GPR, RAX);
                     SUBMIT(inst_copy(n->dt, dst, USE(fake_dst)));
                 }
@@ -948,47 +994,6 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
         GET_VAL(n) = dst;
     }
     return dst;
-}
-
-static void abi_prepare(Ctx* restrict ctx, TB_Function* f) {
-    bool has_param_slots = false;
-    const TB_FunctionPrototype* restrict proto = f->prototype;
-    TB_FOR_NODE(n, f, 0) if (n->type == TB_STORE) {
-        // handle parameter storage, the first few parameters have reserved space for them
-        // in Win64.
-        if (n->inputs[0]->type == TB_LOCAL && n->inputs[1]->type == TB_PARAM && get_meta(ctx, n->inputs[1])) {
-            TB_NodeParam* p = TB_NODE_GET_EXTRA(n->inputs[1]);
-
-            int pos = 16 + (p->id * 8);
-            nl_map_put(ctx->stack_slots, n->inputs[0], pos);
-
-            has_param_slots = true;
-        }
-    }
-
-    if (has_param_slots) {
-        ctx->stack_usage += 16 + (proto->param_count * 8);
-    }
-
-    if (proto->has_varargs) {
-        bool is_sysv = (ctx->target_abi == TB_ABI_SYSTEMV);
-        const GPR* parameter_gprs = is_sysv ? SYSV_GPR_PARAMETERS : WIN64_GPR_PARAMETERS;
-
-        // spill the rest of the parameters (assumes they're all in the GPRs)
-        size_t gpr_count = is_sysv ? 6 : 4;
-        size_t extra_param_count = proto->param_count > gpr_count ? 0 : gpr_count - proto->param_count;
-
-        FOREACH_N(i, 0, extra_param_count) {
-            size_t param_num = proto->param_count + i;
-
-            int dst_pos = 16 + (param_num * 8);
-            GPR src = parameter_gprs[param_num];
-
-            SUBMIT(inst_mr(MOV, TB_TYPE_I64, RBP, GPR_NONE, SCALE_X1, dst_pos, src));
-        }
-
-        ctx->stack_usage += (extra_param_count * 8);
-    }
 }
 
 static void copy_value(Ctx* restrict ctx, TB_Node* phi, int dst, TB_Node* src, TB_DataType dt) {
@@ -1069,7 +1074,8 @@ static void emit_code(Ctx* restrict ctx) {
     for (Inst* restrict inst = ctx->first; inst; inst = inst->next) {
         if (inst->type == INST_LABEL) {
             TB_Label bb = inst->imm[0];
-            ctx->emit.labels[bb] = GET_CODE_POS(&ctx->emit);
+            uint32_t pos = GET_CODE_POS(&ctx->emit);
+            nl_map_put(ctx->emit.labels, bb, pos);
 
             ASM printf("L%d:\n", bb);
             continue;
@@ -1210,17 +1216,7 @@ static void resolve_stack_usage(Ctx* restrict ctx, size_t caller_usage) {
 }
 
 static void patch_local_labels(Ctx* restrict ctx) {
-    FOREACH_N(i, 0, ctx->emit.ret_patch_count) {
-        uint32_t pos = ctx->emit.ret_patches[i];
-        PATCH4(&ctx->emit, pos, GET_CODE_POS(&ctx->emit) - (pos + 4));
-    }
-
-    FOREACH_N(i, 0, ctx->emit.label_patch_count) {
-        uint32_t pos = ctx->emit.label_patches[i].pos;
-        uint32_t target_lbl = ctx->emit.label_patches[i].target_lbl;
-
-        PATCH4(&ctx->emit, pos, ctx->emit.labels[target_lbl] - (pos + 4));
-    }
+    tb_resolve_rel32(&ctx->emit, &ctx->emit.return_label, GET_CODE_POS(&ctx->emit));
 }
 
 static void emit_win64eh_unwind_info(TB_Emitter* e, TB_FunctionOutput* out_f, uint64_t saved, uint64_t stack_usage) {

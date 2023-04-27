@@ -25,7 +25,7 @@ typedef struct {
     size_t count, capacity;
     uint8_t* data;
 
-    uint32_t* labels;
+    NL_Map(TB_Node*, uint32_t) labels;
     uint32_t return_label;
 
     // LabelPatch* label_patches;
@@ -42,17 +42,18 @@ typedef struct {
 #define GET_CODE_POS(e) ((e)->count)
 
 static void tb_emit_rel32(TB_CGEmitter* restrict e, uint32_t* head, uint32_t pos) {
+    uint32_t curr = *head;
     if (curr & 0x80000000) {
         // the label target is resolved, we need to do the relocation now
         uint32_t target = curr & 0x7FFFFFFF;
         PATCH4(e, pos, target - (pos + 4));
     } else {
-        PATCH4(e, pos, *head);
+        PATCH4(e, pos, curr);
         *head = pos;
     }
 }
 
-static void tb_resolve_rel32_chain(TB_CGEmitter* restrict e, uint32_t* head. uint32_t target) {
+static void tb_resolve_rel32(TB_CGEmitter* restrict e, uint32_t* head, uint32_t target) {
     // walk previous relocations
     uint32_t curr = *head;
     while (curr != 0 && (curr & 0x80000000) == 0) {

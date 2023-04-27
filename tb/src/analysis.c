@@ -21,13 +21,13 @@ static void postorder(TB_Function* f, TB_PostorderWalk* ctx, TB_Node* n) {
 
     nl_map_put(ctx->visited, n, 0);
 
-    // walk control edges (aka predecessors)
-    FOREACH_N(i, 0, n->input_count) {
-        postorder(f, ctx, n->inputs[i]);
-    }
-
     bb.start = n;
     ctx->traversal[ctx->count++] = bb;
+
+    // walk control edges (aka predecessors)
+    FOREACH_REVERSE_N(i, 0, n->input_count) {
+        postorder(f, ctx, n->inputs[i]);
+    }
 }
 
 TB_API TB_PostorderWalk tb_function_get_postorder(TB_Function* f) {
@@ -144,6 +144,50 @@ TB_API TB_Dominators tb_get_dominators(TB_Function* f) {
     }
 
     return doms;
+}
+
+static TB_Node* tb_get_parent_region(TB_Node* n) {
+    if (!tb_has_effects(n)) {
+        return NULL;
+    }
+
+    while (n->type != TB_REGION && n->type != TB_START) {
+        assert(tb_has_effects(n));
+        n = n->inputs[0];
+    }
+
+    return n;
+}
+
+TB_API void tb_compute_successors(TB_Function* f, TB_TemporaryStorage* tls, TB_PostorderWalk order) {
+    FOREACH_N(i, 0, order.count) {
+        TB_Node* end = order.traversal[i].end;
+        if (end->type == TB_PROJ) {
+            end = end->inputs[0];
+        }
+
+        if (end->type == TB_BRANCH) {
+            TB_NodeBranch* br = TB_NODE_GET_EXTRA(end);
+            br->succ = tb_platform_heap_alloc(br->count * sizeof(TB_Node*));
+        }
+    }
+
+    FOREACH_N(i, 0, order.count) {
+        TB_Node* bb = order.traversal[i].start;
+
+        FOREACH_N(j, 0, bb->input_count) {
+            // attach successor to region
+            TB_Node* pred = bb->inputs[i];
+            int index = 0;
+            if (pred->type == TB_PROJ) {
+                index = TB_NODE_GET_EXTRA_T(pred, TB_NodeProj)->index;
+                pred = pred->inputs[0];
+            }
+
+            TB_NodeBranch* br = TB_NODE_GET_EXTRA(pred);
+            br->succ[index] = bb;
+        }
+    }
 }
 
 TB_API bool tb_is_dominated_by(TB_Dominators doms, TB_Node* expected_dom, TB_Node* bb) {

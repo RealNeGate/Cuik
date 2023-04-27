@@ -25,6 +25,26 @@ static void dyn_array_internal_destroy(void* ptr) {
     }
 }
 
+static void* dyn_array_internal_reserve2(void* ptr, size_t type_size, size_t min_size) {
+    if (ptr == NULL) {
+        return dyn_array_internal_create(type_size, INITIAL_CAP);
+    }
+
+    DynArrayHeader* header = ((DynArrayHeader*)ptr) - 1;
+    if (min_size > header->capacity) {
+        header->capacity = min_size;
+        DynArrayHeader* new_ptr = cuik_realloc(header, sizeof(DynArrayHeader) + (type_size * header->capacity));
+        if (!new_ptr) {
+            fprintf(stderr, "error: out of memory!");
+            abort();
+        }
+
+        return &new_ptr->data[0];
+    }
+
+    return ptr;
+}
+
 static void* dyn_array_internal_reserve(void* ptr, size_t type_size, size_t extra) {
     if (ptr == NULL) {
         return dyn_array_internal_create(type_size, INITIAL_CAP);
@@ -64,6 +84,12 @@ do {                                                        \
     arr = dyn_array_internal_reserve(arr, sizeof(*arr), 1); \
     DynArrayHeader* header = ((DynArrayHeader*)arr) - 1;    \
     arr[header->size++] = __VA_ARGS__;                      \
+} while (0)
+
+#define dyn_array_insert(arr, at, ...)                        \
+do {                                                          \
+    arr = dyn_array_internal_reserve2(arr, sizeof(*arr), at); \
+    arr[at] = __VA_ARGS__;                                    \
 } while (0)
 
 #define dyn_array_put_uninit(arr, extra)                         \

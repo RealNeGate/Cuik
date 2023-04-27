@@ -426,6 +426,10 @@ extern "C" {
     // this represents switch (many targets), if (one target) and goto (only default) logic.
     typedef struct { // TB_BRANCH
         size_t count;
+
+        // for internal use only... for now
+        TB_Node** succ;
+
         int64_t keys[/* input_count - 1 */];
     } TB_NodeBranch;
 

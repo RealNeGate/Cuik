@@ -426,9 +426,12 @@ TB_API TB_Node* tb_inst_get_symbol_address(TB_Function* f, TB_Symbol* target) {
 }
 
 TB_API TB_Node* tb_inst_syscall(TB_Function* f, TB_DataType dt, TB_Node* syscall_num, size_t param_count, TB_Node** params) {
-    TB_Node* n = tb_alloc_node(f, TB_SCALL, dt, 1 + param_count, 0);
-    n->inputs[0] = syscall_num;
-    memcpy(n->inputs + 1, params, param_count * sizeof(TB_Node*));
+    TB_Node* n = tb_alloc_node(f, TB_SCALL, dt, 2 + param_count, 0);
+    n->inputs[0] = f->active_control_node;
+    n->inputs[1] = syscall_num;
+    memcpy(n->inputs + 2, params, param_count * sizeof(TB_Node*));
+
+    f->active_control_node = n;
     return n;
 }
 
@@ -437,8 +440,10 @@ TB_API TB_MultiOutput tb_inst_call(TB_Function* f, TB_FunctionPrototype* proto, 
     TB_DataType dt = proj_count ? TB_TYPE_TUPLE : TB_PROTOTYPE_RETURNS(proto)->dt;
 
     TB_Node* n = tb_alloc_node(f, TB_CALL, dt, 1 + param_count, sizeof(TB_NodeCall) + (sizeof(TB_Node*)*proj_count));
-    n->inputs[0] = target;
-    memcpy(n->inputs + 1, params, param_count * sizeof(TB_Node*));
+    n->inputs[0] = f->active_control_node;
+    n->inputs[1] = target;
+    memcpy(n->inputs + 2, params, param_count * sizeof(TB_Node*));
+    f->active_control_node = n;
 
     TB_NodeCall* c = TB_NODE_GET_EXTRA(n);
     c->proto = proto;
@@ -468,6 +473,8 @@ TB_API void tb_inst_memset(TB_Function* f, TB_Node* dst, TB_Node* val, TB_Node* 
     n->inputs[2] = val;
     n->inputs[3] = size;
     TB_NODE_SET_EXTRA(n, TB_NodeMemAccess, .align = align, .is_volatile = is_volatile);
+
+    f->active_control_node = n;
 }
 
 TB_API void tb_inst_memcpy(TB_Function* f, TB_Node* dst, TB_Node* val, TB_Node* size, TB_CharUnits align, bool is_volatile) {
@@ -842,12 +849,13 @@ static void add_region_pred(TB_Function* f, TB_Node* n, TB_Node* pred) {
     // detach old predecessor list, make bigger one
     assert(n->type == TB_REGION);
 
-    size_t old_count = n->input_count++;
-    TB_Node** new_inputs = alloc_from_node_arena(f, n->input_count * sizeof(TB_Node*));
+    size_t old_count = n->input_count;
+    TB_Node** new_inputs = alloc_from_node_arena(f, (old_count + 1) * sizeof(TB_Node*));
     memcpy(new_inputs, n->inputs, old_count * sizeof(TB_Node*));
     new_inputs[old_count] = pred;
 
     n->inputs = new_inputs;
+    n->input_count = old_count + 1;
 }
 
 TB_API void tb_inst_goto(TB_Function* f, TB_Node* target) {
@@ -890,13 +898,15 @@ TB_API void tb_inst_if(TB_Function* f, TB_Node* cond, TB_Node* if_true, TB_Node*
         }
 
         TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
-        br->count = 1;
+        br->count = 2;
         br->keys[0] = 0;
         f->active_control_node = NULL;
     }
 }
 
 TB_API void tb_inst_branch(TB_Function* f, TB_DataType dt, TB_Node* key, TB_Node* default_label, size_t entry_count, const TB_SwitchEntry* entries) {
+    __debugbreak();
+
     TB_Node* n = tb_alloc_node(f, TB_BRANCH, TB_TYPE_VOID, entry_count + 3, sizeof(TB_NodeBranch) + (entry_count * sizeof(TB_SwitchEntry)));
     n->inputs[0] = f->active_control_node; // control edge
     n->inputs[1] = key;

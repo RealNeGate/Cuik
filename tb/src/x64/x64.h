@@ -66,7 +66,7 @@ typedef struct Val {
     // used by VAL_MEM and VAL_GLOBAL
     int8_t index, scale;
 
-    // memory displacement, label or signed immediate
+    // memory displacement or signed immediate
     int32_t imm;
 
     union {
@@ -74,6 +74,8 @@ typedef struct Val {
         uint64_t abs;
         // for VAL_GLOBAL this is used as the base
         const TB_Symbol* symbol;
+        // for VAL_LABEL
+        TB_Node* target;
     };
 } Val;
 

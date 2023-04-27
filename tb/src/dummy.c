@@ -223,28 +223,6 @@ static ValueRef isel(Ctx* restrict ctx, TB_Node* n) {
     }
 
     switch (n->type) {
-        case TB_START: {
-            TB_NodeStart* start = TB_NODE_GET_EXTRA(n);
-            const TB_FunctionPrototype* restrict proto = ctx->f->prototype;
-
-            // Handle known parameters
-            FOREACH_N(i, 0, proto->param_count) {
-                TB_Node* proj = start->projs[i];
-
-                // copy from parameter
-                ValueRef v = DEF_HINTED(proj, REG_CLASS_GPR, WIN64_GPR_PARAMETERS[i]);
-                ctx->defs[v].start = -100 + i;
-                SUBMIT(inst_copy(proj->dt, v, WIN64_GPR_PARAMETERS[i]));
-
-                nl_map_put(ctx->values, proj, v);
-            }
-
-            // Handle unknown parameters (if we have varargs)
-            if (proto->has_varargs) {
-                tb_todo();
-            }
-            return 0;
-        }
 
         case TB_LOCAL: {
             return 0;
