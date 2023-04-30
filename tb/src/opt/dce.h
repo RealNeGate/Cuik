@@ -5,6 +5,8 @@ TB_API bool tb_has_effects(TB_Node* n) {
 
         // memory effects
         case TB_STORE:
+        case TB_MEMCPY:
+        case TB_MEMSET:
         case TB_ATOMIC_LOAD:
         case TB_ATOMIC_XCHG:
         case TB_ATOMIC_ADD:
@@ -24,6 +26,7 @@ TB_API bool tb_has_effects(TB_Node* n) {
         case TB_RET:
         case TB_REGION:
         case TB_UNREACHABLE:
+        case TB_DEBUGBREAK:
         case TB_TRAP:
         case TB_SCALL:
         case TB_CALL:

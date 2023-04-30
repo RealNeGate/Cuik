@@ -57,8 +57,9 @@ static void tb_resolve_rel32(TB_CGEmitter* restrict e, uint32_t* head, uint32_t 
     // walk previous relocations
     uint32_t curr = *head;
     while (curr != 0 && (curr & 0x80000000) == 0) {
+        uint32_t next = *((uint32_t*) &e->data[curr]);
         PATCH4(e, curr, target - (curr + 4));
-        curr = *((uint32_t*) &e->data[curr]);
+        curr = next;
     }
 
     // store the target and mark it as resolved

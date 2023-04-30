@@ -118,8 +118,6 @@ struct { size_t cap, count; T* elems; }
 #undef TB_FOR_EXTERNALS
 #define TB_FOR_EXTERNALS(it, m) for (TB_External* it = (TB_External*) m->first_symbol_of_tag[TB_SYMBOL_EXTERNAL]; it != NULL; it = (TB_External*) it->super.next)
 
-#define TB_FOR_RETURNS(it, f) for (TB_Node* n = f->first_return; n != NULL; n = TB_NODE_GET_EXTRA_T(n, TB_NodeReturn)->next_return)
-
 // i love my linked lists don't i?
 typedef struct TB_SymbolPatch TB_SymbolPatch;
 struct TB_SymbolPatch {
@@ -615,13 +613,8 @@ typedef NL_Map(TB_Node*, char) TB_FrontierSet;
 typedef NL_Map(TB_Node*, TB_FrontierSet) TB_DominanceFrontiers;
 
 typedef struct {
-    TB_Node* start;
-    TB_Node* end;
-} TB_BasicBlock;
-
-typedef struct {
     size_t count;
-    TB_BasicBlock* traversal;
+    TB_Node** traversal;
 
     NL_Map(TB_Node*, char) visited;
 } TB_PostorderWalk;
@@ -629,8 +622,6 @@ typedef struct {
 ////////////////////////////////
 // IR ANALYSIS
 ////////////////////////////////
-TB_API void tb_compute_successors(TB_Function* f, TB_TemporaryStorage* tls, TB_PostorderWalk order);
-
 // Allocates from the heap and requires freeing with tb_function_free_postorder
 TB_API TB_PostorderWalk tb_function_get_postorder(TB_Function* f);
 TB_API void tb_function_free_postorder(TB_PostorderWalk* walk);

@@ -428,20 +428,17 @@ static DefIndex* liveness(Ctx* restrict ctx, TB_Function* f) {
         changes = false;
 
         FOREACH_REVERSE_N(i, 0, ctx->order.count) {
-            TB_Node* bb = ctx->order.traversal[i].start;
+            TB_Node* bb = ctx->order.traversal[i];
+            TB_NodeRegion* r = TB_NODE_GET_EXTRA(bb);
             MachineBB* mbb = &nl_map_get_checked(seq_bb, bb);
 
             set_clear(&mbb->live_out);
 
             // walk all successors
-            TB_Node* end = ctx->order.traversal[i].end;
-            if (end && end->type == TB_BRANCH) {
-                TB_NodeBranch* br = TB_NODE_GET_EXTRA(end);
-                FOREACH_N(i, 0, dyn_array_length(br->succ)) {
-                    // union with successor's lives
-                    MachineBB* succ = &nl_map_get_checked(seq_bb, br->succ[i]);
-                    set_union(&mbb->live_out, &succ->live_in);
-                }
+            FOREACH_N(i, 0, r->succ_count) {
+                // union with successor's lives
+                MachineBB* succ = &nl_map_get_checked(seq_bb, r->succ[i]);
+                set_union(&mbb->live_out, &succ->live_in);
             }
 
             Set* restrict live_in = &mbb->live_in;
@@ -460,7 +457,7 @@ static DefIndex* liveness(Ctx* restrict ctx, TB_Function* f) {
     } while (changes);
 
     FOREACH_N(i, 0, ctx->order.count) {
-        TB_Node* bb = ctx->order.traversal[i].start;
+        TB_Node* bb = ctx->order.traversal[i];
         MachineBB* mbb = &nl_map_get_checked(seq_bb, bb);
 
         int bb_start = mbb->start;
@@ -746,19 +743,23 @@ static void hint(Ctx* restrict ctx, DefIndex di, int reg) {
 }
 
 static void mark_users(Ctx* restrict ctx, TB_Node* n) {
-    TB_FOR_INPUT_IN_NODE(in, n) if (*in) {
-        ptrdiff_t search = nl_map_get(ctx->values, *in);
-        if (search >= 0) {
-            ctx->values[search].v.user_count++;
-        } else {
-            ValueRef v = { .user_count = 1 };
-            nl_map_put(ctx->values, *in, v);
+    ptrdiff_t search = nl_map_get(ctx->values, n);
+    if (search >= 0) {
+        ctx->values[search].v.user_count++;
+    } else {
+        ValueRef v = { .value = -1, .user_count = 1 };
+        nl_map_put(ctx->values, n, v);
+    }
+
+    if (n->type != TB_START && n->type != TB_REGION && n->type != TB_PHI) {
+        TB_FOR_INPUT_IN_NODE(in, n) if (*in) {
+            mark_users(ctx, *in);
         }
     }
 }
 
 static void schedule_effect(Ctx* restrict ctx, TB_Node* parent, TB_Node* n) {
-    if (n->input_count > 0 && n->inputs[0]->type != TB_REGION) {
+    if (n->type != TB_REGION && n->type != TB_START) {
         schedule_effect(ctx, parent, n->inputs[0]);
     }
 
@@ -770,13 +771,13 @@ static void schedule_effect(Ctx* restrict ctx, TB_Node* parent, TB_Node* n) {
     // Handle branch edges
     if (n->type == TB_BRANCH) {
         // copy out from active phi-edges
-        TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
-        FOREACH_N(i, 0, br->count) {
-            phi_edge(ctx, parent, br->succ[i]);
+        TB_NodeRegion* r = TB_NODE_GET_EXTRA(parent);
+        FOREACH_N(i, 0, r->succ_count) {
+            phi_edge(ctx, parent, r->succ[i]);
         }
     }
 
-    if (n->type != TB_LOCAL || nl_map_get(ctx->stack_slots, n) < 0) {
+    if (n->type != TB_PROJ && (n->type != TB_LOCAL || nl_map_get(ctx->stack_slots, n) < 0)) {
         isel(ctx, n);
     }
 }
@@ -808,9 +809,7 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
     //   there's no reodering based on branch weights (since we don't
     //   do those but if we did that would go here.
     ctx.order = tb_function_get_postorder(f);
-    assert(ctx.order.traversal[ctx.order.count - 1].start == f->start_node && "Codegen must always schedule entry BB first");
-
-    tb_compute_successors(f, tls, ctx.order);
+    assert(ctx.order.traversal[ctx.order.count - 1] == f->start_node && "Codegen must always schedule entry BB first");
 
     // Live intervals:
     //   We compute this for register allocation along
@@ -818,13 +817,12 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
     nl_map_create(ctx.values, f->node_count);
 
     FOREACH_REVERSE_N(i, 0, ctx.order.count) {
-        TB_Node* n = ctx.order.traversal[i].end;
+        TB_Node* bb = ctx.order.traversal[i];
+        TB_Node* n = TB_NODE_GET_EXTRA_T(bb, TB_NodeRegion)->end;
 
         // walk the basic block backwards
-        for (;;) {
-            mark_users(&ctx, n->inputs[0]);
-
-            if (n->input_count == 0 || n->inputs[0]->type == TB_REGION) break;
+        while (n->type != TB_START && n->type != TB_REGION) {
+            mark_users(&ctx, n);
             n = n->inputs[0];
         }
     }
@@ -845,11 +843,10 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
     //   fixed and which need allocation. For now regalloc is handled
     //   immediately but in theory it could be delayed until all selection
     //   is done.
-    append_inst(&ctx, inst_label(f->start_node));
-
     ctx.emit.emit_asm = true;
     CUIK_TIMED_BLOCK("isel") FOREACH_REVERSE_N(i, 0, ctx.order.count) {
-        TB_Node* bb = ctx.order.traversal[i].start;
+        TB_Node* bb = ctx.order.traversal[i];
+        nl_map_put(ctx.emit.labels, bb, 0);
 
         // mark fallthrough
         ctx.fallthrough = NULL;
@@ -857,7 +854,8 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
             append_inst(&ctx, inst_label(bb));
         }
 
-        schedule_effect(&ctx, bb, ctx.order.traversal[i].end);
+        TB_Node* end = TB_NODE_GET_EXTRA_T(bb, TB_NodeRegion)->end;
+        schedule_effect(&ctx, bb, end);
     }
 
     DefIndex* sorted = NULL;
@@ -897,8 +895,10 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
         // .stack_slots = ctx.stack_slots
     };
 
+    tb_function_free_postorder(&ctx.order);
     arena_clear(&tb__arena);
     nl_map_free(ctx.stack_slots);
+
     // __debugbreak();
     return func_out;
 }

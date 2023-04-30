@@ -8,12 +8,6 @@ typedef struct {
 
 // we'll be walking backwards from the end node
 static void postorder(TB_Function* f, TB_PostorderWalk* ctx, TB_Node* n) {
-    TB_BasicBlock bb = { .end = n };
-    while (n->type != TB_REGION && n->type != TB_START) {
-        assert(tb_has_effects(n));
-        n = n->inputs[0];
-    }
-
     ptrdiff_t search = nl_map_get(ctx->visited, n);
     if (search >= 0) {
         return;
@@ -21,13 +15,14 @@ static void postorder(TB_Function* f, TB_PostorderWalk* ctx, TB_Node* n) {
 
     nl_map_put(ctx->visited, n, 0);
 
-    bb.start = n;
-    ctx->traversal[ctx->count++] = bb;
-
     // walk control edges (aka predecessors)
-    FOREACH_REVERSE_N(i, 0, n->input_count) {
-        postorder(f, ctx, n->inputs[i]);
+    TB_NodeRegion* r = TB_NODE_GET_EXTRA(n);
+    FOREACH_N(i, 0, r->succ_count) {
+        postorder(f, ctx, r->succ[i]);
     }
+
+    assert(ctx->count < f->control_node_count);
+    ctx->traversal[ctx->count++] = n;
 }
 
 TB_API TB_PostorderWalk tb_function_get_postorder(TB_Function* f) {
@@ -35,21 +30,19 @@ TB_API TB_PostorderWalk tb_function_get_postorder(TB_Function* f) {
         .traversal = tb_platform_heap_alloc(f->control_node_count * sizeof(TB_Node*))
     };
 
-    TB_FOR_RETURNS(n, f) {
-        postorder(f, &walk, n);
-    }
-
+    nl_map_create(walk.visited, f->control_node_count);
+    postorder(f, &walk, f->start_node);
     nl_map_free(walk.visited);
     return walk;
 }
 
 TB_API void tb_function_free_postorder(TB_PostorderWalk* walk) {
-    nl_map_free(walk->traversal);
+    tb_platform_heap_free(walk->traversal);
 }
 
 static int find_traversal_index(DomContext* ctx, TB_Node* bb) {
     FOREACH_N(i, 0, ctx->order.count) {
-        if (ctx->order.traversal[i].start == bb) return i;
+        if (ctx->order.traversal[i] == bb) return i;
     }
 
     tb_todo();
@@ -58,8 +51,8 @@ static int find_traversal_index(DomContext* ctx, TB_Node* bb) {
 TB_API TB_DominanceFrontiers tb_get_dominance_frontiers(TB_Function* f, TB_Dominators doms, const TB_PostorderWalk* order) {
     TB_DominanceFrontiers df = NULL;
 
-    FOREACH_N(i, 0, order->count) {
-        TB_Node* bb = order->traversal[i].start;
+    FOREACH_REVERSE_N(i, 0, order->count) {
+        TB_Node* bb = order->traversal[i];
 
         if (bb->input_count >= 2) {
             FOREACH_N(k, 0, bb->input_count) {
@@ -102,7 +95,7 @@ TB_API TB_Dominators tb_get_dominators(TB_Function* f) {
 
         // for all nodes, b, in reverse postorder (except start node)
         FOREACH_REVERSE_N(i, 0, ctx.order.count - 1) {
-            TB_Node* b = ctx.order.traversal[i].start;
+            TB_Node* b = ctx.order.traversal[i];
             TB_Node* new_idom = b->inputs[0];
 
             // for all other predecessors, p, of b
@@ -129,7 +122,7 @@ TB_API TB_Dominators tb_get_dominators(TB_Function* f) {
                         }
                     }
 
-                    new_idom = ctx.order.traversal[a].start;
+                    new_idom = ctx.order.traversal[a];
                 }
             }
 
@@ -146,7 +139,7 @@ TB_API TB_Dominators tb_get_dominators(TB_Function* f) {
     return doms;
 }
 
-static TB_Node* tb_get_parent_region(TB_Node* n) {
+TB_API TB_Node* tb_get_parent_region(TB_Node* n) {
     if (!tb_has_effects(n)) {
         return NULL;
     }
@@ -157,37 +150,6 @@ static TB_Node* tb_get_parent_region(TB_Node* n) {
     }
 
     return n;
-}
-
-TB_API void tb_compute_successors(TB_Function* f, TB_TemporaryStorage* tls, TB_PostorderWalk order) {
-    FOREACH_N(i, 0, order.count) {
-        TB_Node* end = order.traversal[i].end;
-        if (end->type == TB_PROJ) {
-            end = end->inputs[0];
-        }
-
-        if (end->type == TB_BRANCH) {
-            TB_NodeBranch* br = TB_NODE_GET_EXTRA(end);
-            br->succ = tb_platform_heap_alloc(br->count * sizeof(TB_Node*));
-        }
-    }
-
-    FOREACH_N(i, 0, order.count) {
-        TB_Node* bb = order.traversal[i].start;
-
-        FOREACH_N(j, 0, bb->input_count) {
-            // attach successor to region
-            TB_Node* pred = bb->inputs[i];
-            int index = 0;
-            if (pred->type == TB_PROJ) {
-                index = TB_NODE_GET_EXTRA_T(pred, TB_NodeProj)->index;
-                pred = pred->inputs[0];
-            }
-
-            TB_NodeBranch* br = TB_NODE_GET_EXTRA(pred);
-            br->succ[index] = bb;
-        }
-    }
 }
 
 TB_API bool tb_is_dominated_by(TB_Dominators doms, TB_Node* expected_dom, TB_Node* bb) {
@@ -205,7 +167,7 @@ TB_API TB_LoopInfo tb_get_loop_info(TB_Function* f, TB_PostorderWalk order, TB_D
     // Find loops
     DynArray(TB_Loop) loops = dyn_array_create(TB_Loop, 64);
     FOREACH_N(i, 0, order.count) {
-        TB_Node* bb = order.traversal[i].start;
+        TB_Node* bb = order.traversal[i];
 
         TB_Node* backedge = NULL;
         FOREACH_N(j, 0, bb->input_count) {

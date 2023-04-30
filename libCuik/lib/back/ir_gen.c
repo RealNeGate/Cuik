@@ -1633,14 +1633,9 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
             TB_Node* header = tb_inst_region(func);
             TB_Node* body = tb_inst_region(func);
             TB_Node* exit = tb_inst_region(func);
-            s->backing.r = exit;
 
-            // NOTE(NeGate): this is hacky but as long as it doesn't
-            // break we should be good... what am i saying im the
-            // developer of TB :p
-            // essentially we can store both the header and exit labels
-            // implicitly as one if they're next to each other
-            assert(header == exit - 2);
+            s->backing.loop[0] = header;
+            s->backing.loop[1] = exit;
             fallthrough_label(func, header);
 
             TB_Node* cond = irgen_as_rvalue(tu, func, s->while_.cond);

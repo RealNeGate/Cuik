@@ -19,48 +19,6 @@ typedef struct TB_Pass {
 // #include "mem2reg.h"
 // #include "libcalls.h"
 
-typedef struct {
-    NL_Map(TB_Node*, char) marked;
-} DCE;
-
-static void dce_mark(TB_Function* f, DCE* dce, TB_Node* n) {
-    if (n->type == TB_BRANCH || n->type == TB_RET) {
-        n = n->inputs[0];
-    }
-
-    ptrdiff_t search = nl_map_get(dce->marked, n);
-    if (search >= 0) {
-        return;
-    }
-
-    assert(n->type == TB_REGION);
-    nl_map_put(dce->marked, n, 1);
-    TB_FOR_INPUT_IN_NODE(in, n) if (*in) {
-        dce_mark(f, dce, *in);
-    }
-}
-
-static void dce(TB_Function* f) {
-    // mark roots
-    DCE dce = { 0 };
-    TB_FOR_RETURNS(n, f) {
-        dce_mark(f, &dce, n);
-    }
-
-    // sweep
-    /*TB_FOR_BASIC_BLOCK(bb, f) {
-        TB_Node* n = f->bbs[bb].start;
-        for (; n != NULL; n = n->next) {
-            ptrdiff_t search = nl_map_get(dce.marked, n);
-
-            if (search < 0 && tb_is_expr_like(n)) {
-                TB_KILL_NODE(n);
-            }
-        }
-    }*/
-    nl_map_free(dce.marked);
-}
-
 static void canonicalize(TB_Function* f) {
     #if 0
     // tb_function_print(f, tb_default_print_callback, stdout, false);
@@ -118,39 +76,14 @@ static void canonicalize(TB_Function* f) {
             }
         }
 
-        Set bb_mark = set_create_in_arena(&tb__arena, f->bb_count);
-        set_put(&bb_mark, 0);
-
         CUIK_TIMED_BLOCK_ARGS("PassRemove", f->super.name) {
             PassCtx ctx = { 0 };
             TB_FOR_BASIC_BLOCK(bb, f) {
                 TB_FOR_NODE(r, f, bb) {
                     changes |= handle_pass(f, &ctx, bb, r);
                 }
-
-                // mark successors
-                if (f->bbs[bb].end && f->bbs[bb].end->type == TB_BRANCH) {
-                    TB_Node* end = f->bbs[bb].end;
-                    TB_NodeBranch* br = TB_NODE_GET_EXTRA(end);
-
-                    FOREACH_N(i, 0, br->count) {
-                        set_put(&bb_mark, br->targets[i].value);
-                    }
-
-                    set_put(&bb_mark, br->default_label);
-                }
             }
             nl_map_free(ctx.def_table);
-        }
-
-        TB_FOR_BASIC_BLOCK(bb, f) if (!set_get(&bb_mark, bb)) {
-            // mark block as gone
-            f->bbs[bb] = (TB_BasicBlock){ 0 };
-        }
-
-        // kill any unused regs
-        CUIK_TIMED_BLOCK_ARGS("DCE", f->super.name) {
-            dce(f);
         }
     } while (changes);
     #endif

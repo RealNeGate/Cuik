@@ -156,8 +156,8 @@ inline static Val val_abs(uint64_t abs) {
     return (Val) { .type = VAL_ABS, .abs = abs };
 }
 
-inline static Val val_label(int32_t l) {
-    return (Val) { .type = VAL_LABEL, .imm = l };
+inline static Val val_label(TB_Node* target) {
+    return (Val) { .type = VAL_LABEL, .target = target };
 }
 
 inline static Val val_stack(int s) {

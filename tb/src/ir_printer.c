@@ -261,10 +261,7 @@ static int tb_print_node(TB_Function* f, TB_PrinterCtx* ctx, TB_PrintCallback ca
         int kid = tb_print_node(f, ctx, callback, user_data, n->inputs[i]);
         P("  r%d -> r%d", id, kid);
 
-        if (n->type == TB_REGION ||
-            (n->type == TB_PROJ && n->dt.type == TB_CONTROL) ||
-            (i == 0 && n->type == TB_LOAD) ||
-            (i == 0 && tb_has_effects(n))) {
+        if ((n->type == TB_PROJ && n->dt.type == TB_CONTROL) || (i == 0 && tb_has_effects(n))) {
             P(" [color=\"red\"]");
         }
 
@@ -275,6 +272,15 @@ static int tb_print_node(TB_Function* f, TB_PrinterCtx* ctx, TB_PrintCallback ca
         }
     }
 
+    if (n->type == TB_START || n->type == TB_REGION) {
+        TB_NodeRegion* r = TB_NODE_GET_EXTRA(n);
+        FOREACH_N(i, 0, r->succ_count) {
+            tb_print_node(f, ctx, callback, user_data, r->succ[i]);
+        }
+
+        tb_print_node(f, ctx, callback, user_data, r->end);
+    }
+
     return id;
 }
 
@@ -282,9 +288,6 @@ TB_API void tb_function_print(TB_Function* f, TB_PrintCallback callback, void* u
     P("digraph %s {\n  rankdir=\"BT\"\n", f->super.name);
     TB_PrinterCtx ctx = { 0 };
 
-    TB_FOR_RETURNS(n, f) {
-        tb_print_node(f, &ctx, callback, user_data, n);
-    }
-
+    tb_print_node(f, &ctx, callback, user_data, f->start_node);
     P("}\n\n");
 }

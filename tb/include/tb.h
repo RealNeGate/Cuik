@@ -425,11 +425,6 @@ extern "C" {
 
     // this represents switch (many targets), if (one target) and goto (only default) logic.
     typedef struct { // TB_BRANCH
-        size_t count;
-
-        // for internal use only... for now
-        TB_Node** succ;
-
         int64_t keys[/* input_count - 1 */];
     } TB_NodeBranch;
 
@@ -495,13 +490,13 @@ extern "C" {
     } TB_NodeCall;
 
     typedef struct {
-        int unused;
-        TB_Node* projs[];
-    } TB_NodeStart;
+        TB_Node* end;
 
-    typedef struct {
-        TB_Node* next_return;
-    } TB_NodeReturn;
+        size_t succ_count;
+        TB_Node** succ;
+
+        TB_Node* projs[];
+    } TB_NodeRegion;
 
     typedef struct {
         TB_Label label;
@@ -1124,6 +1119,7 @@ extern "C" {
     ////////////////////////////////
     TB_API const char* tb_node_get_name(TB_Node* n);
 
+    TB_API TB_Node* tb_get_parent_region(TB_Node* n);
     TB_API bool tb_has_effects(TB_Node* n);
 
     TB_API bool tb_node_is_constant_non_zero(TB_Node* n);

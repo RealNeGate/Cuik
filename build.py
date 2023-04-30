@@ -88,16 +88,8 @@ if system == "Darwin":
 	sources.append("c11threads/threads_posix.c")
 
 if args.tb:
-	sources.append("tb/src/*.c")
-	sources.append("tb/src/bigint/*.c")
-	sources.append("tb/src/system/*.c")
-	sources.append("tb/src/opt/*.c")
-	sources.append("tb/src/linker/*.c")
-	sources.append("tb/src/objects/*.c")
-	sources.append("tb/src/jit/*.c")
-	sources.append("tb/src/x64/*.c")
-#	for path in Path("tb/src").rglob("*.c"):
-#		sources.append(str(path))
+	for path in Path("tb/src").rglob("*.c"):
+		sources.append(str(path))
 
 if args.inspector:
 	sources.append("inspector/main.c")

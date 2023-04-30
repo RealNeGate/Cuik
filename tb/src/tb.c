@@ -280,7 +280,6 @@ TB_API TB_Function* tb_function_create(TB_Module* m, const char* name, TB_Linkag
     TB_Function* f = (TB_Function*) tb_symbol_alloc(m, TB_SYMBOL_FUNCTION, name, sizeof(TB_Function));
     f->linkage = linkage;
     f->comdat.type = comdat;
-
     return f;
 }
 
@@ -297,10 +296,14 @@ TB_API void tb_function_set_prototype(TB_Function* f, TB_FunctionPrototype* p) {
     const ICodeGen* restrict code_gen = tb__find_code_generator(f->super.module);
 
     size_t param_count = p->param_count;
-    size_t extra_size = sizeof(TB_NodeStart) + (param_count * sizeof(TB_Node*));
+    size_t extra_size = sizeof(TB_NodeRegion) + (param_count * sizeof(TB_Node*));
 
+    f->control_node_count = 1;
     f->active_control_node = f->start_node = tb_alloc_node(f, TB_START, TB_TYPE_TUPLE, 0, extra_size);
-    TB_NodeStart* start = TB_NODE_GET_EXTRA(f->start_node);
+
+    TB_NodeRegion* start = TB_NODE_GET_EXTRA(f->start_node);
+    start->succ_count = 0;
+    start->succ = NULL;
 
     // create parameter projections
     TB_PrototypeParam* rets = TB_PROTOTYPE_RETURNS(p);

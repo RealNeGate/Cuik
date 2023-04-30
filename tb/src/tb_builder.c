@@ -95,6 +95,7 @@ static void* alloc_from_node_arena(TB_Function* f, size_t necessary_size) {
         f->tail->used += necessary_size;
         return dst;
     }
+    // return tb_platform_heap_alloc(necessary_size);
 }
 
 TB_Node* tb_alloc_node(TB_Function* f, int type, TB_DataType dt, int input_count, size_t extra) {
@@ -237,7 +238,7 @@ TB_API TB_Node* tb_inst_bitcast(TB_Function* f, TB_Node* src, TB_DataType dt) {
 
 TB_API TB_Node* tb_inst_param(TB_Function* f, int param_id) {
     tb_assume(param_id < f->prototype->param_count);
-    return TB_NODE_GET_EXTRA_T(f->start_node, TB_NodeStart)->projs[param_id];
+    return TB_NODE_GET_EXTRA_T(f->start_node, TB_NodeRegion)->projs[param_id];
 }
 
 TB_API TB_Node* tb_inst_param_addr(TB_Function* f, int param_id) {
@@ -256,7 +257,7 @@ TB_API TB_Node* tb_inst_param_addr(TB_Function* f, int param_id) {
     TB_NODE_SET_EXTRA(n, TB_NodeLocal, .size = size, .align = align);
 
     TB_Node* n2 = tb_alloc_node(f, TB_STORE, param->dt, 3, sizeof(TB_NodeMemAccess));
-    n2->inputs[0] = f->start_node; // control edge
+    n2->inputs[0] = f->active_control_node; // control edge
     n2->inputs[1] = n;
     n2->inputs[2] = param;
     TB_NODE_SET_EXTRA(n2, TB_NodeMemAccess, .align = align);
@@ -439,7 +440,7 @@ TB_API TB_MultiOutput tb_inst_call(TB_Function* f, TB_FunctionPrototype* proto, 
     size_t proj_count = proto->return_count > 1 ? proto->return_count : 0;
     TB_DataType dt = proj_count ? TB_TYPE_TUPLE : TB_PROTOTYPE_RETURNS(proto)->dt;
 
-    TB_Node* n = tb_alloc_node(f, TB_CALL, dt, 1 + param_count, sizeof(TB_NodeCall) + (sizeof(TB_Node*)*proj_count));
+    TB_Node* n = tb_alloc_node(f, TB_CALL, dt, 2 + param_count, sizeof(TB_NodeCall) + (sizeof(TB_Node*)*proj_count));
     n->inputs[0] = f->active_control_node;
     n->inputs[1] = target;
     memcpy(n->inputs + 2, params, param_count * sizeof(TB_Node*));
@@ -842,7 +843,7 @@ TB_API TB_Node* tb_inst_phi2(TB_Function* f, TB_Node* a, TB_Node* b) {
 }
 
 TB_API TB_Node* tb_inst_region(TB_Function* f) {
-    return tb_alloc_node(f, TB_REGION, TB_TYPE_VOID, 0, 0);
+    return tb_alloc_node(f, TB_REGION, TB_TYPE_VOID, 0, sizeof(TB_NodeRegion));
 }
 
 static void add_region_pred(TB_Function* f, TB_Node* n, TB_Node* pred) {
@@ -858,10 +859,21 @@ static void add_region_pred(TB_Function* f, TB_Node* n, TB_Node* pred) {
     n->input_count = old_count + 1;
 }
 
+static TB_Node** add_successors(TB_Function* f, TB_Node* terminator, size_t count) {
+    TB_NodeRegion* bb = TB_NODE_GET_EXTRA(tb_get_parent_region(f->active_control_node));
+    bb->end = terminator;
+    bb->succ_count = count;
+    bb->succ = alloc_from_node_arena(f, count * sizeof(TB_Node*));
+    return bb->succ;
+}
+
 TB_API void tb_inst_goto(TB_Function* f, TB_Node* target) {
     TB_Node* n = tb_alloc_node(f, TB_BRANCH, TB_TYPE_VOID, 2, sizeof(TB_NodeBranch));
     n->inputs[0] = f->active_control_node; // control edge
     n->inputs[1] = NULL;
+
+    TB_Node** succ = add_successors(f, n, 1);
+    succ[0] = target;
     f->active_control_node = NULL;
 
     {
@@ -871,9 +883,6 @@ TB_API void tb_inst_goto(TB_Function* f, TB_Node* target) {
 
         add_region_pred(f, target, proj);
     }
-
-    TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
-    br->count = 1;
 }
 
 TB_API void tb_inst_if(TB_Function* f, TB_Node* cond, TB_Node* if_true, TB_Node* if_false) {
@@ -898,8 +907,11 @@ TB_API void tb_inst_if(TB_Function* f, TB_Node* cond, TB_Node* if_true, TB_Node*
         }
 
         TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
-        br->count = 2;
         br->keys[0] = 0;
+
+        TB_Node** succ = add_successors(f, n, 2);
+        succ[0] = if_true;
+        succ[1] = if_false;
         f->active_control_node = NULL;
     }
 }
@@ -930,14 +942,13 @@ TB_API void tb_inst_branch(TB_Function* f, TB_DataType dt, TB_Node* key, TB_Node
 }
 
 TB_API void tb_inst_ret(TB_Function* f, size_t count, TB_Node** values) {
-    TB_Node* n = tb_alloc_node(f, TB_RET, TB_TYPE_VOID, 1 + count, sizeof(TB_NodeReturn));
+    TB_Node* n = tb_alloc_node(f, TB_RET, TB_TYPE_VOID, 1 + count, 0);
     n->inputs[0] = f->active_control_node;
     if (count > 0) {
         memcpy(n->inputs + 1, values, count * sizeof(TB_Node*));
     }
 
-    // attach
-    TB_NODE_SET_EXTRA(n, TB_NodeReturn, .next_return = f->first_return);
-    f->first_return = n;
+    TB_Node* bb = tb_get_parent_region(f->active_control_node);
+    TB_NODE_GET_EXTRA_T(bb, TB_NodeRegion)->end = n;
     f->active_control_node = NULL;
 }
