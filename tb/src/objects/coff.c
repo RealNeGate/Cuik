@@ -243,7 +243,11 @@ TB_API TB_Exports tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
             };
             strncpy(header.name, i ? ".xdata" : ".pdata", 8);
 
-            assert(pdata_patch_count < 0xFFFF);
+            if (i == 0 && pdata_patch_count >= 0xFFFF) {
+                header.num_reloc = 0xFFFF;
+                header.characteristics |= IMAGE_SCN_LNK_NRELOC_OVFL;
+            }
+
             WRITE(&header, sizeof(header));
         }
 
@@ -386,6 +390,12 @@ TB_API TB_Exports tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
             write_pos += pdata_patch_count * sizeof(COFF_ImageReloc);
 
             size_t j = 0;
+            if (pdata_patch_count >= 0xFFFF) {
+                relocs[j++] = (COFF_ImageReloc){
+                    .VirtualAddress = pdata_patch_count
+                };
+            }
+
             TB_FOR_FUNCTIONS(f, m) if (f->super.name && f->output) {
                 TB_FunctionOutput* out_f = f->output;
                 uint32_t sym = f->super.symbol_id;

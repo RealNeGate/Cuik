@@ -78,9 +78,7 @@ typedef struct MachineReg {
     uint8_t class, num;
 } MachineReg;
 
-typedef struct ValueRef {
-    int user_count, value;
-} ValueRef;
+typedef int ValueRef;
 
 typedef struct Clobbers {
     int count;
@@ -148,10 +146,6 @@ typedef struct {
 #define ASM if (0)
 #endif
 
-static bool try_tile(Ctx* restrict ctx, TB_Node* n) {
-    return nl_map_get_checked(ctx->values, n).user_count == 1;
-}
-
 #define DEF(n, rg) put_def(ctx, n, rg)
 static int put_def(Ctx* restrict ctx, TB_Node* n, int reg_class) {
     int i = dyn_array_length(ctx->defs);
@@ -173,8 +167,7 @@ static int put_def_forced(Ctx* restrict ctx, TB_Node* n, int reg_class, int reg,
     return i;
 }
 
-#define GET_VAL(n) nl_map_get_checked(ctx->values, n).value
-#define USER_COUNT(n) nl_map_get_checked(ctx->values, n).user_count
+#define GET_VAL(n) nl_map_get_checked(ctx->values, n)
 
 static bool fits_into_int8(uint64_t x) {
     int8_t y = x & 0xFFFFFFFF;
@@ -742,20 +735,8 @@ static void hint(Ctx* restrict ctx, DefIndex di, int reg) {
     }
 }
 
-static void mark_users(Ctx* restrict ctx, TB_Node* n) {
-    ptrdiff_t search = nl_map_get(ctx->values, n);
-    if (search >= 0) {
-        ctx->values[search].v.user_count++;
-    } else {
-        ValueRef v = { .value = -1, .user_count = 1 };
-        nl_map_put(ctx->values, n, v);
-    }
-
-    if (n->type != TB_START && n->type != TB_REGION && n->type != TB_PHI) {
-        TB_FOR_INPUT_IN_NODE(in, n) if (*in) {
-            mark_users(ctx, *in);
-        }
-    }
+static bool try_tile(Ctx* restrict ctx, TB_Node* n) {
+    return nl_map_get(ctx->values, n) < 0;
 }
 
 static void schedule_effect(Ctx* restrict ctx, TB_Node* parent, TB_Node* n) {
@@ -785,7 +766,6 @@ static void schedule_effect(Ctx* restrict ctx, TB_Node* parent, TB_Node* n) {
 // Codegen through here is done in phases
 static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_FeatureSet* features, uint8_t* out, size_t out_capacity) {
     TB_TemporaryStorage* tls = tb_tls_allocate();
-    tb_function_print(f, tb_default_print_callback, stdout);
 
     Ctx ctx = {
         .module = f->super.module,
@@ -797,6 +777,11 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
             .capacity = out_capacity,
         }
     };
+
+    ctx.emit.emit_asm = false;
+    if (ctx.emit.emit_asm) {
+        tb_function_print(f, tb_default_print_callback, stdout);
+    }
 
     ctx.used_regs[0] = set_create(16);
     ctx.used_regs[1] = set_create(16);
@@ -816,17 +801,6 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
     //   with the "ordinals" which act as our timeline.
     nl_map_create(ctx.values, f->node_count);
 
-    FOREACH_REVERSE_N(i, 0, ctx.order.count) {
-        TB_Node* bb = ctx.order.traversal[i];
-        TB_Node* n = TB_NODE_GET_EXTRA_T(bb, TB_NodeRegion)->end;
-
-        // walk the basic block backwards
-        while (n->type != TB_START && n->type != TB_REGION) {
-            mark_users(&ctx, n);
-            n = n->inputs[0];
-        }
-    }
-
     /*mtx_lock(&f->super.module->lock);
     f->line_count = 0;
     f->lines = ARENA_ARR_ALLOC(&f->super.module->arena, line_count, TB_Line);
@@ -843,7 +817,6 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
     //   fixed and which need allocation. For now regalloc is handled
     //   immediately but in theory it could be delayed until all selection
     //   is done.
-    ctx.emit.emit_asm = true;
     CUIK_TIMED_BLOCK("isel") FOREACH_REVERSE_N(i, 0, ctx.order.count) {
         TB_Node* bb = ctx.order.traversal[i];
         nl_map_put(ctx.emit.labels, bb, 0);

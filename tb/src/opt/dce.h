@@ -22,9 +22,10 @@ TB_API bool tb_has_effects(TB_Node* n) {
         return n->dt.type == TB_CONTROL;
 
         // control flow
+        case TB_START:
+        case TB_REGION:
         case TB_BRANCH:
         case TB_RET:
-        case TB_REGION:
         case TB_UNREACHABLE:
         case TB_DEBUGBREAK:
         case TB_TRAP:

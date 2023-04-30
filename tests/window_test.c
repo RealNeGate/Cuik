@@ -9,8 +9,6 @@
 int main(int argc, char** argv, char** env) {
     const char* name = "Hello, World!";
 
-    __debugbreak();
-
     WNDCLASSA wc = { 0 };
     wc.hInstance = GetModuleHandleA(NULL);
     wc.lpfnWndProc = main_wnd_proc;

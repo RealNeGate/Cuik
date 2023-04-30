@@ -456,9 +456,9 @@ static Cond isel_cmp(Ctx* restrict ctx, TB_Node* n) {
 }
 
 static int isel(Ctx* restrict ctx, TB_Node* n) {
-    int val = GET_VAL(n);
-    if (val >= 0) {
-        return val;
+    ptrdiff_t search = nl_map_get(ctx->values, n);
+    if (search >= 0) {
+        return ctx->values[search].v;
     }
 
     TB_NodeTypeEnum type = n->type;
@@ -481,10 +481,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
                 ctx->defs[v].start = -100 + i;
                 SUBMIT(inst_copy(proj->dt, v, WIN64_GPR_PARAMETERS[i]));
 
-                ptrdiff_t search = nl_map_get(ctx->values, proj);
-                if (search >= 0) {
-                    ctx->values[search].v.value = v;
-                }
+                nl_map_put(ctx->values, proj, v);
             }
 
             // walk the entry to find any parameter stack slots
@@ -947,10 +944,8 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
                 // multiple returns must fill up the projections
                 tb_todo();
             } else {
-                if (USER_COUNT(n) > 0) {
-                    dst = DEF_HINTED(n, REG_CLASS_GPR, RAX);
-                    SUBMIT(inst_copy(n->dt, dst, USE(fake_dst)));
-                }
+                dst = DEF_HINTED(n, REG_CLASS_GPR, RAX);
+                SUBMIT(inst_copy(n->dt, dst, USE(fake_dst)));
             }
             break;
         }
@@ -1008,7 +1003,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
     }
 
     if (n->type != TB_LOCAL) {
-        GET_VAL(n) = dst;
+        nl_map_put(ctx->values, n, dst);
     }
     return dst;
 }
