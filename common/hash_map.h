@@ -105,6 +105,9 @@ NL_HASH_MAP_API void nl_map__free(NL_MapHeader* restrict table) {
 }
 
 NL_HASH_MAP_API NL_MapHeader* nl_map__alloc(size_t cap, size_t entry_size) {
+    cap = (cap * 4) / 3;
+    if (cap < 4) cap = 4;
+
     // next power of two
     #if defined(_MSC_VER) && !defined(__clang__)
     size_t exp = 64 - _lzcnt_u64(cap - 1);

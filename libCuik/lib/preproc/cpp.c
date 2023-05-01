@@ -536,9 +536,7 @@ Cuikpp_Status cuikpp_run(Cuik_CPP* ctx, Cuikpp_LocateFile* locate, Cuikpp_GetFil
 
     // initialize the lexer in the stack slot & record the file entry
     slot->file_id = dyn_array_length(ctx->tokens.files);
-    CUIK_TIMED_BLOCK("convert_to_token_list") {
-        slot->tokens = convert_to_token_list(ctx, dyn_array_length(ctx->tokens.files), main_file.length, main_file.data);
-    }
+    slot->tokens = convert_to_token_list(ctx, dyn_array_length(ctx->tokens.files), main_file.length, main_file.data);
     compute_line_map(&ctx->tokens, false, 0, (SourceLoc){ 0 }, slot->filepath, main_file.data, main_file.length);
 
     // continue along to the actual preprocessing now
@@ -577,26 +575,24 @@ Cuikpp_Status cuikpp_run(Cuik_CPP* ctx, Cuikpp_LocateFile* locate, Cuikpp_GetFil
 
                         // SLOW PATH BECAUSE IT NEEDS TO SPAWN POSSIBLY METRIC SHIT LOADS
                         // OF TOKENS AND EXPAND WITH THE AVERAGE C PREPROCESSOR SPOOKIES
-                        CUIK_TIMED_BLOCK("expand_ident") {
-                            if (expand_builtin_idents(ctx, &first)) {
-                                dyn_array_put(s->list.tokens, first);
-                            } else {
-                                void* savepoint = tls_save();
+                        if (expand_builtin_idents(ctx, &first)) {
+                            dyn_array_put(s->list.tokens, first);
+                        } else {
+                            void* savepoint = tls_save();
 
-                                TokenList l = expand_ident(ctx, in, NULL, 0, NULL);
-                                for (TokenNode* n = l.head; n != l.tail; n = n->next) {
-                                    Token* restrict t = &n->t;
-                                    if (t->type == 0) {
-                                        continue;
-                                    } else if (t->type == TOKEN_IDENTIFIER) {
-                                        t->type = classify_ident(t->content.data, t->content.length);
-                                    }
-
-                                    dyn_array_put(s->list.tokens, *t);
+                            TokenList l = expand_ident(ctx, in, NULL, 0, NULL);
+                            for (TokenNode* n = l.head; n != l.tail; n = n->next) {
+                                Token* restrict t = &n->t;
+                                if (t->type == 0) {
+                                    continue;
+                                } else if (t->type == TOKEN_IDENTIFIER) {
+                                    t->type = classify_ident(t->content.data, t->content.length);
                                 }
 
-                                tls_restore(savepoint);
+                                dyn_array_put(s->list.tokens, *t);
                             }
+
+                            tls_restore(savepoint);
                         }
                     }
                 } else if (first.type == TOKEN_HASH) {

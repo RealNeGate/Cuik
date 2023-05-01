@@ -422,7 +422,7 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
 
                 if (!expect_char(s, ',')) return CUIK_QUAL_TYPE_NULL;
 
-                intmax_t count = parse_const_expr2(parser, s);
+                intmax_t count = parse_const_expr(parser, s);
 
                 if (count <= 0) {
                     diag_err(s, loc, "_Vector types must have a positive width");
@@ -597,7 +597,7 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                                     break;
                                 }
                             } else {
-                                cursor = parse_const_expr2(parser, s);
+                                cursor = parse_const_expr(parser, s);
                             }
                         }
 
@@ -810,7 +810,7 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                                 // TODO(NeGate): implement new constant expression eval
                                 member->is_bitfield = true;
                                 member->bit_offset = 0;
-                                member->bit_width = parse_const_expr2(parser, s);
+                                member->bit_width = parse_const_expr(parser, s);
                             }
 
                             if (tokens_get(s)->type == ',') {
@@ -1195,7 +1195,7 @@ static Cuik_QualType parse_type_suffix2(Cuik_Parser* restrict parser, TokenStrea
                     tokens_next(s);
                     expect_char(s, ']');
                 } else {
-                    count = parse_const_expr2(parser, s);
+                    count = parse_const_expr(parser, s);
                     expect_char(s, ']');
                 }
 

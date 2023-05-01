@@ -104,7 +104,7 @@ static bool parse_decl_or_expr2(Cuik_Parser* parser, TokenStream* restrict s, si
     } else {
         Stmt* n = alloc_stmt();
         size_t start_tkn = s->list.current; // used for error recovery
-        Expr* expr = parse_expr_(parser, s);
+        Expr* expr = parse_expr(parser, s);
 
         n->op = STMT_EXPR;
         n->loc = expr->loc;
@@ -184,7 +184,7 @@ static ParseResult parse_stmt_or_expr2(Cuik_Parser* parser, TokenStream* restric
             Stmt* n = alloc_stmt();
             size_t start_tkn = s->list.current; // used for error recovery
 
-            Expr* expr = parse_expr_(parser, s);
+            Expr* expr = parse_expr(parser, s);
             n->op = STMT_EXPR;
             n->loc = expr->loc;
             n->expr = (struct StmtExpr){ .expr = expr };
@@ -210,7 +210,7 @@ static Stmt* parse_stmt2(Cuik_Parser* parser, TokenStream* restrict s) {
         tokens_next(s);
         expect_char(s, '(');
 
-        intmax_t condition = parse_const_expr2(parser, s);
+        intmax_t condition = parse_const_expr(parser, s);
         SourceLoc end = tokens_get_last_location(s);
 
         if (tokens_get(s)->type == ',') {
@@ -249,7 +249,7 @@ static Stmt* parse_stmt2(Cuik_Parser* parser, TokenStream* restrict s) {
 
         Expr* e = 0;
         if (tokens_get(s)->type != ';') {
-            e = parse_expr_(parser, s);
+            e = parse_expr(parser, s);
         }
 
         n->op = STMT_RETURN;
@@ -266,7 +266,7 @@ static Stmt* parse_stmt2(Cuik_Parser* parser, TokenStream* restrict s) {
                 SourceLoc opening_loc = tokens_get_location(s);
                 expect_char(s, '(');
 
-                cond = parse_expr_(parser, s);
+                cond = parse_expr(parser, s);
 
                 expect_closing_paren(s, opening_loc);
             }
@@ -298,7 +298,7 @@ static Stmt* parse_stmt2(Cuik_Parser* parser, TokenStream* restrict s) {
 
         LOCAL_SCOPE {
             expect_char(s, '(');
-            Expr* cond = parse_expr_(parser, s);
+            Expr* cond = parse_expr(parser, s);
             expect_char(s, ')');
 
             n->op = STMT_SWITCH;
@@ -325,11 +325,11 @@ static Stmt* parse_stmt2(Cuik_Parser* parser, TokenStream* restrict s) {
         Stmt* top = n;
         top->op = STMT_CASE;
 
-        intmax_t key = parse_const_expr2(parser, s);
+        intmax_t key = parse_const_expr(parser, s);
         if (tokens_get(s)->type == TOKEN_TRIPLE_DOT) {
             // GNU extension, case ranges
             tokens_next(s);
-            intmax_t key_max = parse_const_expr2(parser, s);
+            intmax_t key_max = parse_const_expr(parser, s);
             expect_with_reason(s, ':', "case");
 
             assert(key_max > key);
@@ -412,7 +412,7 @@ static Stmt* parse_stmt2(Cuik_Parser* parser, TokenStream* restrict s) {
 
         LOCAL_SCOPE {
             expect_char(s, '(');
-            Expr* cond = parse_expr_(parser, s);
+            Expr* cond = parse_expr(parser, s);
             expect_char(s, ')');
 
             // Push this as a breakable statement
@@ -474,7 +474,7 @@ static Stmt* parse_stmt2(Cuik_Parser* parser, TokenStream* restrict s) {
                 /* nothing */
                 tokens_next(s);
             } else {
-                cond = parse_expr_(parser, s);
+                cond = parse_expr(parser, s);
                 expect_char(s, ';');
             }
 
@@ -483,7 +483,7 @@ static Stmt* parse_stmt2(Cuik_Parser* parser, TokenStream* restrict s) {
                 /* nothing */
                 tokens_next(s);
             } else {
-                next = parse_expr_(parser, s);
+                next = parse_expr(parser, s);
                 expect_char(s, ')');
             }
 
@@ -537,7 +537,7 @@ static Stmt* parse_stmt2(Cuik_Parser* parser, TokenStream* restrict s) {
 
             expect_char(s, '(');
 
-            Expr* cond = parse_expr_(parser, s);
+            Expr* cond = parse_expr(parser, s);
 
             expect_char(s, ')');
             expect_char(s, ';');

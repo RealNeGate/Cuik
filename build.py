@@ -51,24 +51,26 @@ if args.inspector:
 
 system = platform.system()
 if system == "Windows":
-	ld = "lld-link"
-	ldflags += " -debug kernel32.lib msvcrt.lib libcmt.lib"
-
-	if args.asan: ld += " -fsanitize=address"
+	if args.asan:
+		ld = "clang -fuse-ld=lld-link -fsanitize=address"
+		ldflags += " -o "
+	else:
+		ld = "lld-link"
+		ldflags += " -debug kernel32.lib msvcrt.lib libcmt.lib -out:"
 
 	lib_ext = ".lib"
 	exe_ext = ".exe"
 	cflags += " -I c11threads -D_CRT_SECURE_NO_WARNINGS"
 elif system == "Darwin":
 	ld = "lld.ld"
-	ldflags += " -g -lc"
+	ldflags += " -g -lc -o"
 
 	exe_ext = ""
 	lib_ext = ".a"
 	cflags += " -I c11threads -Wno-deprecated-declarations"
 else:
 	ld = "ld.lld"
-	ldflags += " -g -lc -lm -lthreads"
+	ldflags += " -g -lc -lm -lthreads -o "
 	exe_ext = ""
 	lib_ext = ".a"
 
@@ -132,10 +134,11 @@ rule embed_cc
 
 """)
 
+# the end of ldflags should define the out flag
 if system == "Windows":
 	ninja.write(f"""
 rule link
-  command = {ld} $in $ldflags /out:$out
+  command = {ld} $in $ldflags$out
   description = LINK $out
 
 rule lib
@@ -146,7 +149,7 @@ rule lib
 else:
 	ninja.write(f"""
 rule link
-  command = {ld} $in $ldflags -o $out
+  command = {ld} $in $ldflags$out
   description = LINK $out
 
 rule lib

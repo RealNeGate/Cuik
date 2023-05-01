@@ -375,7 +375,7 @@ static void resolve_pending_exprs(Cuik_Parser* parser) {
                     align = new_align->align;
                 }
             } else {
-                intmax_t new_align = parse_const_expr2(parser, &mini_lex);
+                intmax_t new_align = parse_const_expr(parser, &mini_lex);
                 if (new_align == 0) {
                     diag_err(&mini_lex, type->loc, "_Alignas cannot be applied with 0 alignment", new_align);
                 } else if (new_align >= INT16_MAX) {
@@ -388,7 +388,7 @@ static void resolve_pending_exprs(Cuik_Parser* parser) {
             assert(align != 0);
             type->align = align;
         } else if (pending_exprs[i].mode == PENDING_BITWIDTH) {
-            intmax_t result = parse_const_expr2(parser, &mini_lex);
+            intmax_t result = parse_const_expr(parser, &mini_lex);
             *pending_exprs[i].dst = result;
         }
     }
@@ -416,7 +416,6 @@ Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict 
     if (version == CUIK_VERSION_GLSL) {
         diag_err(s, tokens_get_range(s), "TODO");
         return (Cuik_ParseResult){ 1 };
-        // return cuikparse_run_glsl(version, s, target);
     }
 
     tls_init();

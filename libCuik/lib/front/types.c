@@ -16,79 +16,76 @@ Cuik_TypeTable init_type_table(Cuik_Target* target) {
     t.target = target;
     t.exp = 16;
     t.table = cuik__valloc((1u << t.exp) * sizeof(Cuik_Type*));
-    mtx_init(&t.mutex, mtx_plain);
     return t;
 }
 
 void free_type_table(Cuik_TypeTable* types) {
     cuik__vfree(types->table, (1u << types->exp) * sizeof(Cuik_Type*));
-    mtx_destroy(&types->mutex);
 }
 
 // this is used for primitives types such that they're not allocating new slots
 static void type_insert(Cuik_TypeTable* types, Cuik_Type* src) {
-    assert(((uintptr_t)src & CUIK_QUAL_FLAG_BITS) == 0);
-    mtx_lock(&types->mutex);
+    CUIK_TIMED_BLOCK("type_insert") {
+        assert(((uintptr_t)src & CUIK_QUAL_FLAG_BITS) == 0);
 
-    // check for interning
-    uint32_t mask = (1 << types->exp) - 1;
-    uint32_t hash = murmur3_32(src, sizeof(Cuik_Type));
-    for (size_t i = hash;;) {
-        // hash table lookup
-        uint32_t step = (hash >> (32 - types->exp)) | 1;
-        i = (i + step) & mask;
+        // check for interning
+        uint32_t mask = (1 << types->exp) - 1;
+        uint32_t hash = murmur3_32(src, sizeof(Cuik_Type));
+        for (size_t i = hash;;) {
+            // hash table lookup
+            uint32_t step = (hash >> (32 - types->exp)) | 1;
+            i = (i + step) & mask;
 
-        if (types->table[i] == NULL) {
-            // empty slot
-            assert(types->count <= mask && "how tf did you run out now?");
+            if (types->table[i] == NULL) {
+                // empty slot
+                assert(types->count <= mask && "how tf did you run out now?");
 
-            types->count++;
-            types->table[i] = src;
-            break;
-        } else if (memcmp(src, types->table[i], sizeof(Cuik_Type)) == 0) {
-            types->table[i] = src;
-            break;
+                types->count++;
+                types->table[i] = src;
+                break;
+            } else if (memcmp(src, types->table[i], sizeof(Cuik_Type)) == 0) {
+                types->table[i] = src;
+                break;
+            }
         }
     }
-
-    mtx_unlock(&types->mutex);
 }
 
 static Cuik_Type* type_intern(Cuik_TypeTable* types, const Cuik_Type* src) {
-    mtx_lock(&types->mutex);
-
-    // check for interning
-    uint32_t mask = (1 << types->exp) - 1;
-    uint32_t hash = murmur3_32(src, sizeof(Cuik_Type));
-
     Cuik_Type* result = NULL;
-    for (size_t i = hash;;) {
-        // hash table lookup
-        uint32_t step = (hash >> (32 - types->exp)) | 1;
-        i = (i + step) & mask;
 
-        if (types->table[i] == NULL) {
-            // empty slot
-            if (types->count > mask) {
-                printf("Type arena: out of memory!\n");
-                abort();
+    CUIK_TIMED_BLOCK("type_intern") {
+        // check for interning
+        uint32_t mask = (1 << types->exp) - 1;
+        uint32_t hash = murmur3_32(src, sizeof(Cuik_Type));
+
+        for (size_t i = hash;;) {
+            // hash table lookup
+            uint32_t step = (hash >> (32 - types->exp)) | 1;
+            i = (i + step) & mask;
+
+            if (types->table[i] == NULL) {
+                // empty slot
+                if (types->count > mask) {
+                    printf("Type arena: out of memory!\n");
+                    abort();
+                }
+
+                result = arena_alloc(&local_ast_arena, sizeof(Cuik_Type), 16);
+                *result = *src;
+
+                assert(((uintptr_t)result & CUIK_QUAL_FLAG_BITS) == 0);
+
+                types->count++;
+                types->table[i] = result;
+                break;
+            } else if (memcmp(src, types->table[i], sizeof(Cuik_Type)) == 0) {
+                result = types->table[i];
+                break;
             }
-
-            result = arena_alloc(&local_ast_arena, sizeof(Cuik_Type), 16);
-            *result = *src;
-
-            assert(((uintptr_t)result & CUIK_QUAL_FLAG_BITS) == 0);
-
-            types->count++;
-            types->table[i] = result;
-            break;
-        } else if (memcmp(src, types->table[i], sizeof(Cuik_Type)) == 0) {
-            result = types->table[i];
-            break;
         }
     }
 
-    mtx_unlock(&types->mutex);
     return result;
 }
 

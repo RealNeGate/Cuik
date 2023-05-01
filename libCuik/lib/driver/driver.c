@@ -257,24 +257,6 @@ static void irgen_job(void* arg) {
                 }
             }
 
-            /*TB_Function* func = tb_symbol_as_function(sym);
-            if (func != NULL && task.opt_level == 0) {
-                CUIK_TIMED_BLOCK_ARGS("Canonicalize", name) {
-                    for (size_t j = 0; j < PASS_COUNT; j++) {
-                        CUIK_TIMED_BLOCK_ARGS(passes[j].name, name) {
-                            passes[j].func_run(func);
-                        }
-                    }
-
-                    #ifndef NDEBUG
-                    int error_count = tb_function_validate(func);
-                    if (error_count > 0) {
-                        fprintf(stderr, "TB validator failed with %d error%s!\n", error_count, error_count ? "s" : "");
-                        abort();
-                    }
-                    #endif
-                }
-            }*/
             i += 1;
         }
     }
@@ -713,10 +695,15 @@ CUIK_API bool cuik_driver_compile(Cuik_IThreadpool* restrict thread_pool, Cuik_D
     ////////////////////////////////
     CUIK_TIMED_BLOCK("Backend") {
         irgen(thread_pool, args, cu, mod);
-        free_preprocs(&stuff, tu_count);
+
+        CUIK_TIMED_BLOCK("free preprocessors") {
+            free_preprocs(&stuff, tu_count);
+        }
 
         if (destroy_cu_after_ir) {
-            cuik_destroy_compilation_unit(cu);
+            CUIK_TIMED_BLOCK("free CU") {
+                cuik_destroy_compilation_unit(cu);
+            }
         }
 
         if (args->opt_level >= 1) {

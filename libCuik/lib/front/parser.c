@@ -257,7 +257,6 @@ static Cuik_Type* find_tag(Cuik_Parser* restrict parser, const char* name, bool*
 
 #include "expr_parser.h"
 #include "decl_parser.h"
-#include "glsl_parser.h"
 #include "stmt_parser.h"
 #include "top_level_parser.h"
 #include "ast_optimizer.h"
@@ -389,7 +388,7 @@ void type_layout2(Cuik_Parser* parser, Cuik_Type* type) {
             // run mini parser for array count
             TokenStream mini_lex = parser->tokens;
             mini_lex.list.current = type->array_count_lexer_pos;
-            type->array_count = parse_const_expr2(parser, &mini_lex);
+            type->array_count = parse_const_expr(parser, &mini_lex);
             expect_char(&mini_lex, ']');
         }
 
@@ -425,7 +424,7 @@ void type_layout2(Cuik_Parser* parser, Cuik_Type* type) {
                 TokenStream mini_lex = parser->tokens;
                 mini_lex.list.current = type->enumerator.entries[i].lexer_pos;
 
-                cursor = parse_const_expr2(parser, &mini_lex);
+                cursor = parse_const_expr(parser, &mini_lex);
                 type->enumerator.entries[i].lexer_pos = 0;
             }
 

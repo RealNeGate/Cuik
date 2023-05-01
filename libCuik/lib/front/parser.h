@@ -91,8 +91,6 @@ struct Cuik_GlobalSymbols {
 
 typedef struct Cuik_TypeTable {
     Cuik_Target* target;
-
-    mtx_t mutex;
     Arena* arena;
 
     // we're hash-consing our types to avoid duplicates all over the place

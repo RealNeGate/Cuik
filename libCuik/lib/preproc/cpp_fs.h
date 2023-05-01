@@ -303,9 +303,7 @@ CUIK_API bool cuikpp_default_fs(void* user_data, const char* og_path, Cuik_FileR
                 }
 
                 zip_entry_close(zip);
-                CUIK_TIMED_BLOCK("cuiklex_canonicalize") {
-                    cuiklex_canonicalize(size, buf);
-                }
+                cuiklex_canonicalize(size, buf);
 
                 out_result->length = size;
                 out_result->data = buf;
@@ -315,18 +313,13 @@ CUIK_API bool cuikpp_default_fs(void* user_data, const char* og_path, Cuik_FileR
         }
     }
 
-    LoadResult file;
-    CUIK_TIMED_BLOCK("get_file") {
-        file = get_file(og_path);
-    }
+    LoadResult file = get_file(og_path);
 
     if (!file.found) {
         return false;
     }
 
-    CUIK_TIMED_BLOCK("cuiklex_canonicalize") {
-        cuiklex_canonicalize(file.length, file.data);
-    }
+    cuiklex_canonicalize(file.length, file.data);
 
     out_result->length = file.length;
     out_result->data = file.data;

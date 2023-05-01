@@ -7,12 +7,12 @@
 // This file is included into parser.h, it's parser of the parser module and is
 // completely static
 static Cuik_QualType parse_typename2(Cuik_Parser* restrict parser, TokenStream* restrict s);
-static Expr* parse_expr_(Cuik_Parser* restrict parser, TokenStream* restrict s);
+static Expr* parse_expr(Cuik_Parser* restrict parser, TokenStream* restrict s);
 static Expr* parse_cast(Cuik_Parser* restrict parser, TokenStream* restrict s);
 static Expr* parse_unary(Cuik_Parser* restrict parser, TokenStream* restrict s);
 static Expr* parse_assignment(Cuik_Parser* restrict parser, TokenStream* restrict s);
 static Expr* parse_initializer2(Cuik_Parser* restrict parser, TokenStream* restrict s, Cuik_QualType type);
-static intmax_t parse_const_expr2(Cuik_Parser* parser, TokenStream* restrict s);
+static intmax_t parse_const_expr(Cuik_Parser* parser, TokenStream* restrict s);
 
 typedef struct {
     char prec;
@@ -96,7 +96,7 @@ static InitNode* parse_initializer_member2(Cuik_Parser* parser, TokenStream* res
             SourceLoc loc = tokens_get_location(s);
             tokens_next(s);
 
-            intmax_t start = parse_const_expr2(parser, s);
+            intmax_t start = parse_const_expr(parser, s);
             if (start < 0) {
                 // TODO(NeGate): Error messages
                 diag_err(s, tokens_get_range(s), "array initializer range is broken.");
@@ -107,7 +107,7 @@ static InitNode* parse_initializer_member2(Cuik_Parser* parser, TokenStream* res
             if (tokens_get(s)->type == TOKEN_TRIPLE_DOT) {
                 tokens_next(s);
 
-                count = parse_const_expr2(parser, s) - start;
+                count = parse_const_expr(parser, s) - start;
                 if (count <= 1) {
                     // TODO(NeGate): Error messages
                     diag_err(s, tokens_get_range(s), "array initializer range is broken.");
@@ -283,7 +283,7 @@ static Expr* parse_primary_expr(Cuik_Parser* parser, TokenStream* restrict s) {
         SourceLoc start_loc = tokens_get_location(s);
         tokens_next(s);
 
-        Expr* e = parse_expr_(parser, s);
+        Expr* e = parse_expr(parser, s);
         expect_closing_paren(s, start_loc);
 
         e->has_parens = true;
@@ -605,7 +605,7 @@ static Expr* parse_postfix(Cuik_Parser* restrict parser, TokenStream* restrict s
             e = alloc_expr();
 
             tokens_next(s);
-            Expr* index = parse_expr_(parser, s);
+            Expr* index = parse_expr(parser, s);
             expect_char(s, ']');
 
             SourceLoc end_loc = tokens_get_last_location(s);
@@ -900,7 +900,7 @@ static Expr* parse_ternary(Cuik_Parser* restrict parser, TokenStream* restrict s
     if (tokens_get(s)->type == '?') {
         tokens_next(s);
 
-        Expr* mhs = parse_expr_(parser, s);
+        Expr* mhs = parse_expr(parser, s);
         expect_char(s, ':');
         Expr* rhs = parse_ternary(parser, s);
 
@@ -960,7 +960,7 @@ static Expr* parse_assignment(Cuik_Parser* restrict parser, TokenStream* restric
     return e;
 }
 
-static Expr* parse_expr_(Cuik_Parser* restrict parser, TokenStream* restrict s) {
+static Expr* parse_expr(Cuik_Parser* restrict parser, TokenStream* restrict s) {
     if (tokens_get(s)->type == TOKEN_KW_Pragma) {
         tokens_next(s);
 
@@ -997,7 +997,7 @@ static Expr* parse_expr_(Cuik_Parser* restrict parser, TokenStream* restrict s) 
     return lhs;
 }
 
-static intmax_t parse_const_expr2(Cuik_Parser* parser, TokenStream* restrict s) {
+static intmax_t parse_const_expr(Cuik_Parser* parser, TokenStream* restrict s) {
     Expr* folded = cuik__optimize_ast(parser, parse_assignment(parser, s));
     if (folded->op != EXPR_INT) {
         diag_err(s, folded->loc, "could not parse expression as constant.");
