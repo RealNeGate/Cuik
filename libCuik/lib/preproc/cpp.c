@@ -434,26 +434,6 @@ static void compute_line_map(TokenStream* s, bool is_system, int depth, SourceLo
     } while (i < length);
 }
 
-#if 0
-static CPPTask* alloc_cpp_task(Cuik_CPP* ctx) {
-    uint64_t old, free_bit;
-    do {
-        old = ctx->task_busy;
-
-        // find empty slot we can reserve
-        free_bit = old != 0 ? tb_ffs64(~old) - 1 : 0;
-
-        // don't continue until we successfully commit
-    } while (!atomic_compare_exchange_strong(&threadpool->queue, &old, old | (1ull << free_bit)));
-
-    return free_bit;
-}
-#endif
-
-void cuikpp_task_done(CPPTask* restrict t) {
-    __debugbreak();
-}
-
 static bool locate_file(Cuik_CPP* ctx, bool search_lib_first, const char* dir, const char* og_path, char canonical[FILENAME_MAX], bool* is_system) {
     char path[FILENAME_MAX];
     if (!search_lib_first) {
