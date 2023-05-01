@@ -132,6 +132,7 @@ Cuik_Target* cuik_target_x64(Cuik_System system, Cuik_Environment env) {
         .system = system,
 
         .int_bits = { 8, 16, 32, 64, 64 },
+        .pointer_byte_size = 8,
 
         #ifdef CUIK_USE_TB
         .arch = TB_ARCH_X86_64,

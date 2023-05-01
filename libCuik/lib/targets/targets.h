@@ -37,6 +37,9 @@ struct Cuik_Target {
     // this is size_t and ptrdiff_t
     Cuik_Type *size_type, *ptrdiff_type;
 
+    // this is used for uintptr_t, intptr_t and pointer types
+    size_t pointer_byte_size;
+
     // initializes some target specific macro defines
     void (*set_defines)(const Cuik_Target* self, Cuik_CPP* cpp);
 

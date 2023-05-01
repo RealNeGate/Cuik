@@ -1190,7 +1190,7 @@ static void emit_code(Ctx* restrict ctx) {
             }
         } else if (op_count == 0) {
             INST0(inst->type, inst->data_type);
-            printf("  %s\n", inst_table[inst->type].mnemonic);
+            ASM printf("  %s\n", inst_table[inst->type].mnemonic);
         } else if (op_count == 1) {
             if (!has_def) {
                 inst1_print(ctx, inst->type, &ops[1], inst->data_type);

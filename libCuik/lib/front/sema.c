@@ -384,7 +384,7 @@ static int walk_initializer_layer(TranslationUnit* tu, Cuik_Type* parent, int ba
 
     // sometimes this is just not resolved yet?
     if (type->size == 0) {
-        type_layout(tu, type, true);
+        type_layout(tu, type);
     }
 
     uint32_t pos = base_offset + relative_offset;
@@ -533,7 +533,7 @@ static void walk_initializer_for_sema(TranslationUnit* tu, Cuik_Type* type, Init
 
     if (type->array_count == 0) {
         type->array_count = max_cursor;
-        type_layout(tu, type, true);
+        type_layout(tu, type);
     }
 }
 
@@ -624,7 +624,7 @@ Member* sema_resolve_member_access(TranslationUnit* tu, Expr* restrict e, uint32
     }
 
     if (record_type->size == 0) {
-        type_layout(tu, record_type, true);
+        type_layout(tu, record_type);
 
         if (record_type->size == 0) {
             diag_err(&tu->tokens, e->loc, "Cannot access members in incomplete type");

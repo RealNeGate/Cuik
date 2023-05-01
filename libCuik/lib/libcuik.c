@@ -19,9 +19,9 @@
 // Parser
 #include "front/ast_dump.c"
 #include "front/atoms.c"
+#include "front/types.c"
 #include "front/parser.c"
 #include "front/sema.c"
-#include "front/types.c"
 #include "front/visitors.c"
 
 // Targets

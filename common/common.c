@@ -40,8 +40,9 @@ void* arena_alloc(Arena* arena, size_t size, size_t align) {
 
     void* ptr;
     if (arena->top && arena->top->used + size + align < ARENA_SEGMENT_SIZE - sizeof(ArenaSegment)) {
+        arena->top->used = (arena->top->used + align_mask) & ~align_mask;
         ptr = &arena->top->data[arena->top->used];
-        arena->top->used = (arena->top->used + size + align_mask) & ~align_mask;
+        arena->top->used += size;
     } else if (arena->top == NULL || arena->top->next == NULL) {
         // Add new page
         ArenaSegment* s = cuik__valloc(ARENA_SEGMENT_SIZE);

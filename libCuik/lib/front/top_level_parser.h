@@ -1,5 +1,3 @@
-void type_layout2(Cuik_Parser* parser, Cuik_Type* type, bool needs_complete);
-
 static bool expect_char(TokenStream* restrict s, char ch) {
     if (tokens_eof(s)) {
         tokens_prev(s);
@@ -422,15 +420,18 @@ Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict 
     }
 
     tls_init();
+    assert(target->pointer_byte_size == 8 && "other sized pointers aren't really supported yet");
 
     int r;
     Cuik_Parser parser = { 0 };
     parser.version = version;
     parser.tokens = *s;
     parser.target = target;
+    parser.pointer_byte_size = target->pointer_byte_size;
     parser.static_assertions = dyn_array_create(int, 2048);
     parser.local_static_storage_decls = dyn_array_create(Stmt*, 64);
     parser.types = init_type_table(target);
+    parser.types.arena = &parser.tu->ast_arena;
 
     // just a shorthand so it's faster to grab
     parser.default_int = (Cuik_Type*) &target->signed_ints[CUIK_BUILTIN_INT];
@@ -504,18 +505,12 @@ Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict 
         };
         mtx_init(&parser.tu->arena_mutex, mtx_plain);
 
-        CUIK_FOR_TYPES(type, parser.types) {
+        size_t type_cap = 1ull << parser.types.exp;
+        for (size_t i = 0; i < type_cap; i++) if (parser.types.table[i]) {
+            Cuik_Type* type = parser.types.table[i];
+
             if (type->kind == KIND_PLACEHOLDER) {
                 diag_err(s, type->loc, "could not find type '%s'!", type->placeholder.name);
-            }
-        }
-
-        if (cuikdg_error_count(s)) break;
-
-        CUIK_FOR_TYPES(type, parser.types) {
-            if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
-                // if cycles... quit lmao
-                if (type_cycles_dfs(s, type)) goto quit_phase2;
             }
         }
 
@@ -554,12 +549,12 @@ Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict 
 
         // do record layouts and shi
         resolve_pending_exprs(&parser);
-        CUIK_FOR_TYPES(type, parser.types) {
+
+        for (size_t i = 0; i < type_cap; i++) if (parser.types.table[i]) {
+            Cuik_Type* type = parser.types.table[i];
             assert(type->align != -1);
 
-            if (type->size == 0 || !type->is_complete) {
-                type_layout2(&parser, type, true);
-            }
+            type_layout2(&parser, type);
         }
 
         // constant fold any global expressions

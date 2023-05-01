@@ -89,31 +89,16 @@ struct Cuik_GlobalSymbols {
     NL_Strmap(Symbol) symbols;
 };
 
-typedef struct Cuik_TypeTableSegment Cuik_TypeTableSegment;
-struct Cuik_TypeTableSegment {
-    size_t count;
-    Cuik_TypeTableSegment* next;
-    Cuik_Type _[];
-};
-
-enum {
-    CUIK_TYPE_TABLE_SEGMENT_COUNT = ((16 * 1024 * 1024) - sizeof(Cuik_TypeTableSegment)) / sizeof(Cuik_Type)
-};
-
 typedef struct Cuik_TypeTable {
     Cuik_Target* target;
 
-    // This is where we allocate all our Cuik_Types, well in theory they can
-    // be allocated anywhere but the parser will use the arena for performance
-    // and maintainability reasons.
     mtx_t mutex;
-    Cuik_TypeTableSegment* base;
-    Cuik_TypeTableSegment* top;
-} Cuik_TypeTable;
+    Arena* arena;
 
-#define CUIK_FOR_TYPES(it, types) \
-for (Cuik_TypeTableSegment* _a_ = (types).base; _a_ != NULL; _a_ = _a_->next) \
-for (Cuik_Type *it = _a_->_, *_end_ = &it[_a_->count]; it != _end_; it++)
+    // we're hash-consing our types to avoid duplicates all over the place
+    size_t exp, count;
+    Cuik_Type** table;
+} Cuik_TypeTable;
 
 struct TranslationUnit {
     // circular references amirite...
@@ -181,24 +166,14 @@ Cuik_Type* new_aligned_type(Cuik_TypeTable* types, Cuik_Type* base);
 Cuik_Type* get_common_type(Cuik_TypeTable* types, Cuik_Type* ty1, Cuik_Type* ty2);
 bool type_equal(Cuik_Type* a, Cuik_Type* b);
 
-Cuik_Type* cuik__new_blank_type(Cuik_TypeTable* types);
-Cuik_Type* cuik__new_enum(Cuik_TypeTable* types);
-Cuik_Type* cuik__new_typeof(Cuik_TypeTable* types, Expr* src);
-Cuik_Type* cuik__new_record(Cuik_TypeTable* types, bool is_union);
-Cuik_Type* cuik__new_vector(Cuik_TypeTable* types, Cuik_QualType base, int count);
-Cuik_Type* cuik__new_func(Cuik_TypeTable* types);
-Cuik_Type* cuik__new_pointer(Cuik_TypeTable* types, Cuik_QualType base);
-Cuik_Type* cuik__new_array(Cuik_TypeTable* types, Cuik_QualType base, int count);
-
 #define new_pointer(tu, base) cuik__new_pointer(&tu->types, base)
 
 // TODO(NeGate): merge these soon
 #define qual_type_as_string(max_len, buffer, type) type_as_string(max_len, buffer, cuik_canonical_type(type))
 size_t type_as_string(size_t max_len, char* buffer, Cuik_Type* type);
 
-// is needs_complete is false then the size and alignment don't need to be non-zero
-void type_layout(TranslationUnit* restrict tu, Cuik_Type* type, bool needs_complete);
-void type_layout2(Cuik_Parser* restrict parser, Cuik_Type* type, bool needs_complete);
+void type_layout(TranslationUnit* restrict tu, Cuik_Type* type);
+void type_layout2(Cuik_Parser* restrict parser, Cuik_Type* type);
 
 bool const_eval_try_offsetof_hack(Cuik_Parser* restrict parser, const Expr* e, uint64_t* out);
 

@@ -177,4 +177,3 @@ TB_API void tb_module_end_jit(TB_JITContext* jit) {
     tb_platform_vfree(jit->heap.block, jit->heap.capacity);
     tb_platform_heap_free(jit);
 }
-

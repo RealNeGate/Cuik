@@ -154,7 +154,6 @@ struct Cuik_Type {
 
     // used by cycle checking
     bool is_complete : 1;
-    bool is_visited  : 1;
     bool is_progress : 1;
 
     union {
@@ -192,7 +191,7 @@ struct Cuik_Type {
         } func;
 
         // Structs/Unions
-        struct {
+        struct Cuik_TypeRecord {
             Atom name;
 
             int kid_count;
@@ -212,7 +211,7 @@ struct Cuik_Type {
             Cuik_Type* base;
         } vector_;
 
-        // Cuik_Typeof
+        // Typeof
         struct {
             Expr* src;
         } typeof_;
