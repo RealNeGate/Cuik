@@ -344,6 +344,19 @@ static bool expand_builtin_idents(Cuik_CPP* restrict c, Token* t) {
     }
 }
 
+static TokenNode* get_previous_link(TokenNode* head, TokenNode* curr) {
+    // no previous
+    if (head == curr) {
+        return NULL;
+    }
+
+    while (head->next != curr) {
+        head = head->next;
+    }
+
+    return head;
+}
+
 // parse function macros where def_lex is the lexer for the macro definition
 // TODO(NeGate): redo the error messages here
 #define NEXT_TOKEN() (curr = curr->next, curr->t)
@@ -439,19 +452,19 @@ static bool subst(Cuik_CPP* restrict c, TokenNode* head, const uint8_t* subst_st
                 // FOO JOINED                 BAR
                 prev->t = joined;
                 prev->next = curr->next;
-                curr = prev;
+
+                curr = prev, prev = get_previous_link(head, curr);
+                curr->t.location = t.location;
             }
 
-            if (joined.type == TOKEN_IDENTIFIER) {
-                prev->t.location = t.location;
-
-                if (expand_builtin_idents(c, &prev->t)) {
+            /*if (joined.type == TOKEN_IDENTIFIER) {
+                if (expand_builtin_idents(c, &curr->t)) {
                     // expand_builtin_idents did some work
                 } else if (is_defined(c, joined.content.data, joined.content.length)) {
                     // replace *curr with newest expansion
-                    TokenNode* old_next = prev->next;
+                    TokenNode* old_next = curr->next;
 
-                    TokenList list = expand_ident(c, NULL, prev, macro_id, NULL);
+                    TokenList list = expand_ident(c, NULL, curr, macro_id, NULL);
                     TokenNode* new_tail = list.head;
                     while (new_tail->next) new_tail = new_tail->next;
 
@@ -459,7 +472,7 @@ static bool subst(Cuik_CPP* restrict c, TokenNode* head, const uint8_t* subst_st
                     *curr = *list.head;
                     curr = new_tail;
                 }
-            }
+            }*/
 
             // Copy over any of the extra tokens
             for (;;) {
@@ -470,7 +483,7 @@ static bool subst(Cuik_CPP* restrict c, TokenNode* head, const uint8_t* subst_st
                 __debugbreak();
             }
 
-            curr = curr->next;
+            prev = curr, curr = curr->next;
             continue;
         } else if (t.type == TOKEN_IDENTIFIER) {
             if (t.content.data[0] == '_' && string_equals_cstr(&t.content, "__VA_ARGS__")) {
@@ -773,6 +786,12 @@ static TokenList expand_ident(Cuik_CPP* restrict c, TokenArray* in, TokenNode* h
 
                 Lexer args_lexer = { 0, (unsigned char*) args, (unsigned char*) args };
                 if (!parse_params(c, &arglist, &args_lexer)) goto done;
+
+                /*printf("FUNCTION MACRO: %.*s    %.*s\n\n", (int)t.content.length, t.content.data, (int)def.length, def.data);
+                for (size_t i = 0; i < arglist.key_count; i++) {
+                    printf("  %.*s = %.*s\n", (int) arglist.keys[i].length, arglist.keys[i].data, (int) arglist.values[i].content.length, arglist.values[i].content.data);
+                }
+                printf("\n");*/
 
                 #ifdef CPP_DBG
                 int dbgmod = 0;
