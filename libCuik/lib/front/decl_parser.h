@@ -906,8 +906,12 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                         *type = (Cuik_Type){
                             .kind = KIND_PLACEHOLDER,
                             .loc = get_token_range(t),
-                            .record = { name }
+                            .placeholder = { name },
                         };
+
+                        // insert into placeholder list (we'll use this to check for unresolved types later)
+                        type->placeholder.next = parser->first_placeholder;
+                        parser->first_placeholder = type;
 
                         Symbol sym = {
                             .name = name,

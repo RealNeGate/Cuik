@@ -143,7 +143,6 @@ struct Cuik_Type {
     int align; // _Alignof
     SourceRange loc;
 
-    Cuik_Type* based;
     Atom also_known_as;
 
     #ifdef CUIK_USE_TB
@@ -218,6 +217,9 @@ struct Cuik_Type {
 
         struct {
             Atom name;
+
+            // if non-NULL we've got a linked list to walk :)
+            Cuik_Type* next;
         } placeholder;
     };
 } __attribute__((aligned(16)));

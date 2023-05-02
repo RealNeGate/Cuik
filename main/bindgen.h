@@ -9,8 +9,6 @@ static NL_Strmap(int) already_defined;
 static NL_Map(Cuik_Type*, Atom) typedefs;
 
 static void print_odin_type(Cuik_Type* type, int depth, bool top) {
-    // while (type->based) type = type->based;
-
     if (!top) {
         ptrdiff_t search = nl_map_get(typedefs, type);
         if (search >= 0) {
@@ -146,8 +144,6 @@ int run_bindgen(int argc, const char** argv) {
 
             Atom name = stmts[i]->decl.name;
             Cuik_Type* type = cuik_canonical_type(stmts[i]->decl.type);
-
-            while (type->based) type = type->based;
 
             if (stmts[i]->decl.attrs.is_typedef) {
                 ptrdiff_t search = nl_strmap_get_cstr(already_defined, name);

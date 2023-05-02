@@ -320,7 +320,7 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
 
                 if (attr.is_typedef) {
                     // replace placeholder with actual entry
-                    memcpy(placeholder_space, cuik_canonical_type(decl.type), sizeof(Cuik_Type));
+                    *placeholder_space = *cuik_canonical_type(decl.type);
                     placeholder_space->also_known_as = decl.name;
                 }
             }
@@ -504,10 +504,8 @@ Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict 
         };
         mtx_init(&parser.tu->arena_mutex, mtx_plain);
 
-        size_t type_cap = 1ull << parser.types.exp;
-        for (size_t i = 0; i < type_cap; i++) if (parser.types.table[i]) {
-            Cuik_Type* type = parser.types.table[i];
-
+        // check if any previous placeholders are still placeholders
+        for (Cuik_Type* type = parser.first_placeholder; type != NULL; type = type->placeholder.next) {
             if (type->kind == KIND_PLACEHOLDER) {
                 diag_err(s, type->loc, "could not find type '%s'!", type->placeholder.name);
             }
@@ -549,6 +547,7 @@ Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict 
         // do record layouts and shi
         resolve_pending_exprs(&parser);
 
+        size_t type_cap = 1ull << parser.types.exp;
         for (size_t i = 0; i < type_cap; i++) if (parser.types.table[i]) {
             Cuik_Type* type = parser.types.table[i];
             assert(type->align != -1);

@@ -196,6 +196,7 @@ struct Cuik_Parser {
 
     DynArray(Stmt*) top_level_stmts;
     Cuik_TypeTable types;
+    Cuik_Type* first_placeholder;
     Cuik_GlobalSymbols globals;
 
     NL_Strmap(Diag_UnresolvedSymbol*) unresolved_symbols;

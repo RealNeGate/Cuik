@@ -221,9 +221,6 @@ bool type_equal(Cuik_Type* ty1, Cuik_Type* ty2) {
 
         return true;
     } else if (ty1->kind == KIND_STRUCT || ty2->kind == KIND_UNION) {
-        while (ty1->based != NULL) ty1 = ty1->based;
-        while (ty2->based != NULL) ty2 = ty2->based;
-
         return (ty1 == ty2);
     } else if (ty1->kind == KIND_PTR) {
         return type_equal(cuik_canonical_type(ty1->ptr_to), cuik_canonical_type(ty2->ptr_to));
