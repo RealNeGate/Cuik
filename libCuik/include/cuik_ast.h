@@ -195,6 +195,9 @@ struct Cuik_Type {
 
             int kid_count;
             Member* kids;
+
+            // this is the one used in type comparisons
+            Cuik_Type* nominal;
         } record;
 
         // Enumerators

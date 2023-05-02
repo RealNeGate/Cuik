@@ -194,6 +194,19 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
             assert(!CUIK_QUAL_TYPE_IS_NULL(decl.type));
             old_def = sym = find_global_symbol(&parser->globals, decl.name);
             if (old_def == NULL) {
+                if (attr.is_typedef) {
+                    Cuik_Type* t = cuik_canonical_type(decl.type);
+                    if (t->also_known_as) {
+                        // clone but preserve flags
+                        decl.type = cuik_make_qual_type(
+                            type_clone(&parser->types, t, decl.name),
+                            cuik_get_quals(decl.type)
+                        );
+                    } else {
+                        t->also_known_as = decl.name;
+                    }
+                }
+
                 ptrdiff_t sym_index = nl_strmap_puti_cstr(parser->globals.symbols, decl.name);
                 sym = &parser->globals.symbols[sym_index];
                 *sym = (Symbol){
@@ -319,9 +332,16 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
                 }
 
                 if (attr.is_typedef) {
+                    Cuik_Type* src = cuik_canonical_type(decl.type);
+                    Cuik_Type* nominal = (src->kind == KIND_STRUCT || src->kind == KIND_UNION) ? src->record.nominal : NULL;
+
                     // replace placeholder with actual entry
-                    *placeholder_space = *cuik_canonical_type(decl.type);
+                    *placeholder_space = *src;
                     placeholder_space->also_known_as = decl.name;
+
+                    if (nominal != NULL) {
+                        placeholder_space->record.nominal = nominal;
+                    }
                 }
             }
 

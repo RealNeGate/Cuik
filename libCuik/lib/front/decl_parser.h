@@ -834,7 +834,7 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                     }
 
                     type->record = (struct Cuik_TypeRecord){
-                        name, member_count, permanent_store
+                        name, member_count, permanent_store, type
                     };
 
                     if (!parser->is_in_global_scope) {
@@ -858,7 +858,7 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                         *type = (Cuik_Type){
                             .kind = is_union ? KIND_UNION : KIND_STRUCT,
                             .loc = record_loc,
-                            .record = { name }
+                            .record = { name, .nominal = type }
                         };
 
                         if (parser->is_in_global_scope) {
@@ -902,12 +902,11 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                         counter += OTHER;
                     } else {
                         // add placeholder
-                        type = type_placeholder(&parser->types);
-                        *type = (Cuik_Type){
-                            .kind = KIND_PLACEHOLDER,
-                            .loc = get_token_range(t),
-                            .placeholder = { name },
-                        };
+                        type = TYPE_INTERN(&(Cuik_Type){
+                                .kind = KIND_PLACEHOLDER,
+                                .loc = get_token_range(t),
+                                .placeholder = { name },
+                            });
 
                         // insert into placeholder list (we'll use this to check for unresolved types later)
                         type->placeholder.next = parser->first_placeholder;
@@ -916,11 +915,9 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                         Symbol sym = {
                             .name = name,
                             .type = cuik_uncanonical_type(type),
-                            .loc = get_token_range(t),
+                            .loc = type->loc,
                             .storage_class = STORAGE_TYPEDEF,
                         };
-                        type->loc = sym.loc;
-                        type->placeholder.name = name;
                         counter += OTHER;
 
                         nl_strmap_put_cstr(parser->globals.symbols, name, sym);

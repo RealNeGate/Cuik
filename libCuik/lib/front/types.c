@@ -61,7 +61,8 @@ static Cuik_Type* type_intern(Cuik_TypeTable* types, const Cuik_Type* src) {
         uint32_t step = (hash >> (32 - types->exp)) | 1;
         i = (i + step) & mask;
 
-        if (types->table[i] == NULL) {
+        Cuik_Type* entry = types->table[i];
+        if (entry == NULL) {
             // empty slot
             if (types->count > mask) {
                 printf("Type arena: out of memory!\n");
@@ -76,7 +77,10 @@ static Cuik_Type* type_intern(Cuik_TypeTable* types, const Cuik_Type* src) {
             types->count++;
             types->table[i] = result;
             break;
-        } else if (memcmp(src, types->table[i], sizeof(Cuik_Type)) == 0) {
+        } else if (src->kind == KIND_PLACEHOLDER && entry->kind == KIND_PLACEHOLDER && src->placeholder.name == entry->placeholder.name) {
+            result = types->table[i];
+            break;
+        } else if (memcmp(src, entry, sizeof(Cuik_Type)) == 0) {
             result = types->table[i];
             break;
         }
@@ -88,6 +92,16 @@ static Cuik_Type* type_intern(Cuik_TypeTable* types, const Cuik_Type* src) {
 // this isn't placed into the type table just yet, it will be later on via type_insert
 static Cuik_Type* type_placeholder(Cuik_TypeTable* types) {
     return arena_alloc(&local_ast_arena, sizeof(Cuik_Type), 16);
+}
+
+static Cuik_Type* type_clone(Cuik_TypeTable* types, const Cuik_Type* src, Atom new_name) {
+    Cuik_Type cloned = *src;
+    cloned.also_known_as = new_name;
+    if (src->kind == KIND_STRUCT || src->kind == KIND_UNION) {
+        cloned.record.nominal = src->record.nominal;
+    }
+
+    return type_intern(types, &cloned);
 }
 
 Cuik_Type* cuik__new_pointer(Cuik_TypeTable* types, Cuik_QualType base) {
@@ -221,7 +235,7 @@ bool type_equal(Cuik_Type* ty1, Cuik_Type* ty2) {
 
         return true;
     } else if (ty1->kind == KIND_STRUCT || ty2->kind == KIND_UNION) {
-        return (ty1 == ty2);
+        return (ty1->record.nominal == ty2->record.nominal);
     } else if (ty1->kind == KIND_PTR) {
         return type_equal(cuik_canonical_type(ty1->ptr_to), cuik_canonical_type(ty2->ptr_to));
     }
