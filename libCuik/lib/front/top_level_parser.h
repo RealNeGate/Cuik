@@ -196,7 +196,7 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
             if (old_def == NULL) {
                 if (attr.is_typedef) {
                     Cuik_Type* t = cuik_canonical_type(decl.type);
-                    if (t->also_known_as) {
+                    if (t->also_known_as != decl.name) {
                         // clone but preserve flags
                         decl.type = cuik_make_qual_type(
                             type_clone(&parser->types, t, decl.name),
