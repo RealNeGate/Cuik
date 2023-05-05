@@ -104,11 +104,11 @@ static void* tb_jitheap_alloc_region(TB_JITHeap* c, size_t s, TB_MemProtect prot
         uint64_t bits = bitmap[j];
 
         size_t k = bits ? tb_ffs64(~bits) - 1 : 0;
-        if (k + block_count >= 64) {
+        if (k + block_count > 64) {
             // goes across uint64 chunks
             tb_todo();
         } else {
-            uint64_t mask = ((1u << block_count) - 1) << k;
+            uint64_t mask = ((1ull << block_count) - 1) << k;
             if ((bits & mask) == 0) {
                 // it's free
                 bitmap[j] |= mask;
@@ -137,6 +137,22 @@ void tb_jitheap_free_region(TB_JITHeap* c, void* ptr, size_t s) {
     c->slabs[slab_id].used_bitmap[bitmap_id] &= ~mask;
 }
 
+static void* get_proc(const char* name) {
+    static HMODULE kernel32, user32, gdi32;
+    if (user32 == NULL) {
+        kernel32 = LoadLibrary("kernel32.dll");
+        user32   = LoadLibrary("user32.dll");
+        gdi32    = LoadLibrary("gdi32.dll");
+    }
+
+    void* addr = GetProcAddress(NULL, name);
+    if (addr == NULL) addr = GetProcAddress(kernel32, name);
+    if (addr == NULL) addr = GetProcAddress(user32, name);
+    if (addr == NULL) addr = GetProcAddress(gdi32, name);
+
+    return addr;
+}
+
 TB_API void* tb_module_apply_function(TB_JITContext* jit, TB_Function* f) {
     TB_FunctionOutput* out_f = f->output;
 
@@ -150,7 +166,9 @@ TB_API void* tb_module_apply_function(TB_JITContext* jit, TB_Function* f) {
 
         size_t actual_pos = out_f->prologue_length + p->pos;
         if (p->target->tag == TB_SYMBOL_FUNCTION || p->target->tag == TB_SYMBOL_EXTERNAL) {
-            void* addr = GetProcAddress(NULL, p->target->name);
+            void* addr = get_proc(p->target->name);
+            printf("JIT: loaded %s (%p)\n", p->target->name, addr);
+
             ptrdiff_t rel = (intptr_t)addr - (intptr_t)dst;
             int32_t rel32 = rel;
             if (rel == rel32) {
@@ -176,6 +194,7 @@ TB_API void* tb_module_apply_function(TB_JITContext* jit, TB_Function* f) {
             TB_Global* g = (TB_Global*) p->target;
             if (g->address == NULL) {
                 // lazy init globals
+                printf("JIT: lazy init global %s\n", p->target->name ? p->target->name : "<unnamed>");
                 tb_module_apply_global(jit, g);
             }
 

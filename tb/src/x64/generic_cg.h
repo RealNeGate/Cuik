@@ -553,9 +553,10 @@ static ptrdiff_t spill_register(Ctx* restrict ctx, TB_Function* f, DefIndex* sor
     // insert spill
     Reload r = { TB_TYPE_I64, split_def };
     spill(ctx, spill_inst, &r);
+    spill_inst = spill_inst->next;
 
     // keep spilled and generate reloads on the first use in any BB
-    DefIndex reload_def = split_def;
+    DefIndex reload_def = -1;
     int endpoint = ctx->defs[split_def].end;
 
     Inst *inst = spill_inst->next, *prev_inst = spill_inst;
@@ -779,9 +780,9 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
     };
 
     ctx.emit.emit_asm = false;
-    if (ctx.emit.emit_asm) {
+    /*if (ctx.emit.emit_asm) {
         tb_function_print(f, tb_default_print_callback, stdout);
-    }
+    }*/
 
     ctx.used_regs[0] = set_create(16);
     ctx.used_regs[1] = set_create(16);

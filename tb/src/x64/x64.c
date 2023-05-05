@@ -15,6 +15,7 @@ typedef enum X86_InstType {
     //   dst = COPY src
     X86_INST_COPY = -3,
     X86_INST_MOVE = -4,
+    X86_INST_USE  = -5,
 } X86_InstType;
 
 // for memory operands imm[0] is two fields:
@@ -142,6 +143,15 @@ static Inst inst_move(TB_DataType dt, int lhs, int rhs) {
         .layout = X86_OP_RR,
         .data_type = legalize_int2(dt),
         .regs = { -1, lhs, rhs }
+    };
+}
+
+static Inst inst_use(int src) {
+    return (Inst){
+        .type = (int)X86_INST_USE,
+        .layout = X86_OP_NONE,
+        .data_type = TB_X86_TYPE_NONE,
+        .regs = { src },
     };
 }
 
@@ -612,6 +622,17 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
 
             int fake_dst = DEF(n, REG_CLASS_GPR);
             int rdx = DEF_FORCED(n, REG_CLASS_GPR, RDX, fake_dst);
+
+            // TODO(NeGate): hint into RAX
+            SUBMIT(inst_use(rdx));
+
+            // mov rax, lhs
+            int lhs = ISEL(n->inputs[0]);
+            int rax = DEF_FORCED(n, REG_CLASS_GPR, RAX, fake_dst);
+            SUBMIT(inst_copy(n->dt, rax, lhs));
+
+            int rhs = ISEL(n->inputs[1]);
+
             // if signed:
             //   cqo/cdq (sign extend RAX into RDX)
             // else:
@@ -621,19 +642,10 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             } else {
                 SUBMIT(inst_i(MOV, n->dt, rdx, 0));
             }
-
-            // TODO(NeGate): hint into RAX
-            int lhs = ISEL(n->inputs[0]);
-            int rhs = ISEL(n->inputs[1]);
-
-            dst = DEF(n, REG_CLASS_GPR);
-
-            // mov rax, lhs
-            int rax = DEF_FORCED(n, REG_CLASS_GPR, RAX, fake_dst);
-            SUBMIT(inst_copy(n->dt, rax, lhs));
-
             SUBMIT(inst_r(is_signed ? IDIV : DIV, n->dt, -1, rhs));
             SUBMIT(inst_copy(n->dt, fake_dst, USE(is_div ? rax : rdx)));
+
+            dst = DEF(n, REG_CLASS_GPR);
             SUBMIT(inst_copy(n->dt, dst, USE(fake_dst)));
             break;
         }
@@ -1094,6 +1106,8 @@ static void emit_code(Ctx* restrict ctx) {
                 .line = inst->imm[1],
                 .pos = GET_CODE_POS(&ctx->emit)
             };
+            continue;
+        } else if (inst->type == X86_INST_USE) {
             continue;
         }
 

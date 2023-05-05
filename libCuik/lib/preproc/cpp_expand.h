@@ -722,8 +722,20 @@ static TokenList expand_ident(Cuik_CPP* restrict c, TokenArray* in, TokenNode* h
             }
             #endif /* CPP_DBG */
 
+            // if the next token is a parenthesis, allow the expansion to see it
+            if (end && end->t.type == '(') {
+                TokenNode* curr = list.head;
+                while (curr->next != NULL) curr = curr->next;
+
+                curr->next = end;
+                end = NULL;
+            }
+
             // attach to complete tokens list
             expand(c, list.head, macro_id, in ? in : rest);
+            unhide_macro(c, def_i, hidden);
+
+            head = attach_to_list(head, end, list, &t.content);
 
             #ifdef CPP_DBG
             if (dbgmod == 1) {
@@ -732,9 +744,6 @@ static TokenList expand_ident(Cuik_CPP* restrict c, TokenArray* in, TokenNode* h
                 dbgmod = cppdbg__break();
             }
             #endif /* CPP_DBG */
-
-            unhide_macro(c, def_i, hidden);
-            head = attach_to_list(head, end, list, &t.content);
         } else {
             TknType peeked = 0;
             if (in) {
