@@ -44,7 +44,7 @@ static bool pop_scope(Cuik_CPP* restrict ctx, TokenArray* restrict in);
 
 static void print_token_stream(TokenArray* in, size_t start, size_t end);
 
-static TokenNode* expand(Cuik_CPP* restrict c, TokenNode* restrict head, uint32_t parent_macro, TokenArray* rest);
+static void expand(Cuik_CPP* restrict c, TokenNode* restrict head, uint32_t parent_macro, TokenArray* rest);
 static TokenList expand_ident(Cuik_CPP* restrict c, TokenArray* in, TokenNode* head, uint32_t parent_macro, TokenArray* rest);
 static bool locate_file(Cuik_CPP* ctx, bool search_lib_first, const char* dir, const char* og_path, char canonical[FILENAME_MAX], bool* is_system);
 

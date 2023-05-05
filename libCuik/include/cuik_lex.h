@@ -290,6 +290,7 @@ CUIK_API size_t cuikpp_get_include_dir_count(Cuik_CPP* ctx);
 // C preprocessor pretty printer
 ////////////////////////////////
 CUIK_API void cuikpp_dump_defines(Cuik_CPP* ctx);
+CUIK_API void cuikpp_dump_tokens(TokenStream* s);
 
 ////////////////////////////////
 // Diagnostic engine

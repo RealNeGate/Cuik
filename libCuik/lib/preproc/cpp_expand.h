@@ -457,23 +457,6 @@ static bool subst(Cuik_CPP* restrict c, TokenNode* head, const uint8_t* subst_st
                 curr->t.location = t.location;
             }
 
-            /*if (joined.type == TOKEN_IDENTIFIER) {
-                if (expand_builtin_idents(c, &curr->t)) {
-                    // expand_builtin_idents did some work
-                } else if (is_defined(c, joined.content.data, joined.content.length)) {
-                    // replace *curr with newest expansion
-                    TokenNode* old_next = curr->next;
-
-                    TokenList list = expand_ident(c, NULL, curr, macro_id, NULL);
-                    TokenNode* new_tail = list.head;
-                    while (new_tail->next) new_tail = new_tail->next;
-
-                    new_tail->next = old_next;
-                    *curr = *list.head;
-                    curr = new_tail;
-                }
-            }*/
-
             // Copy over any of the extra tokens
             for (;;) {
                 Token t = lexer_read(&scratch);
@@ -622,6 +605,26 @@ static void skip_nodes(TokenNode* head, TokenNode* tail) {
     head->next = tail;
 }
 
+static TokenNode* attach_to_list(TokenNode* head, TokenNode* end, TokenList list, const String* macro_name) {
+    // attach to complete tokens list
+    if (head == NULL) {
+        head = list.head;
+    }
+
+    TokenNode* new_tail = list.head;
+    while (new_tail->next) {
+        if (new_tail->t.type == TOKEN_IDENTIFIER && string_equals(&new_tail->t.content, macro_name)) {
+            new_tail->t.expanded = true;
+        }
+
+        new_tail = new_tail->next;
+    }
+    new_tail->next = end;
+    *head = *list.head;
+
+    return head;
+}
+
 // return.head is the start of the new output stream segment
 // return.tail is the input stream's new position
 static TokenList expand_ident(Cuik_CPP* restrict c, TokenArray* in, TokenNode* head, uint32_t parent_macro, TokenArray* rest) {
@@ -667,8 +670,9 @@ static TokenList expand_ident(Cuik_CPP* restrict c, TokenArray* in, TokenNode* h
         const unsigned char* args = c->macros.keys[def_i].data + c->macros.keys[def_i].length;
 
         if (*args != '(') {
-            // object-like macro
-            // We dont need to parse this part if it expands into nothing
+            // object-like macro:
+            //   we dont need to parse this part
+            //   if it expands into nothing
             if (def.length == 0) {
                 if (head) {
                     head->t.type = 0;
@@ -718,34 +722,19 @@ static TokenList expand_ident(Cuik_CPP* restrict c, TokenArray* in, TokenNode* h
             }
             #endif /* CPP_DBG */
 
-            expand(c, list.head, macro_id, in);
+            // attach to complete tokens list
+            expand(c, list.head, macro_id, in ? in : rest);
 
             #ifdef CPP_DBG
             if (dbgmod == 1) {
                 printf("Expansion:\n");
-                dump(list.head);
+                dump(head);
                 dbgmod = cppdbg__break();
             }
             #endif /* CPP_DBG */
 
             unhide_macro(c, def_i, hidden);
-
-            // attach to complete tokens list
-            if (head == NULL) {
-                head = list.head;
-            }
-
-            TokenNode* new_tail = list.head;
-            while (new_tail->next) {
-                if (new_tail->t.type == TOKEN_IDENTIFIER && string_equals(&new_tail->t.content, &t.content)) {
-                    new_tail->t.expanded = true;
-                }
-
-                new_tail = new_tail->next;
-            }
-
-            new_tail->next = end;
-            *head = *list.head;
+            head = attach_to_list(head, end, list, &t.content);
         } else {
             TknType peeked = 0;
             if (in) {
@@ -805,11 +794,6 @@ static TokenList expand_ident(Cuik_CPP* restrict c, TokenArray* in, TokenNode* h
                 }
                 #endif /* CPP_DBG */
 
-                int foo = 0;
-                if (foo) {
-                    dump(list.head);
-                }
-
                 // replace arguments and perform concats
                 subst(c, list.head, list.start, &arglist, macro_id);
 
@@ -822,7 +806,7 @@ static TokenList expand_ident(Cuik_CPP* restrict c, TokenArray* in, TokenNode* h
                 #endif /* CPP_DBG */
 
                 size_t hidden = hide_macro(c, def_i);
-                expand(c, list.head, macro_id, in);
+                expand(c, list.head, macro_id, in ? in : rest);
 
                 #ifdef CPP_DBG
                 if (dbgmod == 1) {
@@ -833,22 +817,7 @@ static TokenList expand_ident(Cuik_CPP* restrict c, TokenArray* in, TokenNode* h
                 #endif /* CPP_DBG */
 
                 unhide_macro(c, def_i, hidden);
-
-                // attach to complete tokens list
-                if (head == NULL) {
-                    head = list.head;
-                }
-
-                TokenNode* new_tail = list.head;
-                while (new_tail->next) {
-                    if (new_tail->t.type == TOKEN_IDENTIFIER && string_equals(&new_tail->t.content, &t.content)) {
-                        new_tail->t.expanded = true;
-                    }
-
-                    new_tail = new_tail->next;
-                }
-                new_tail->next = end;
-                *head = *list.head;
+                head = attach_to_list(head, end, list, &t.content);
             }
         }
     }
@@ -863,10 +832,10 @@ static TokenList expand_ident(Cuik_CPP* restrict c, TokenArray* in, TokenNode* h
     return (TokenList){ .head = head, .tail = end };
 }
 
-static TokenNode* expand(Cuik_CPP* restrict c, TokenNode* restrict head, uint32_t parent_macro, TokenArray* rest) {
+static void expand(Cuik_CPP* restrict c, TokenNode* restrict head, uint32_t parent_macro, TokenArray* rest) {
     int depth = 0;
 
-    TokenNode* curr = head;
+    TokenNode *curr = head;
     while (curr != NULL) {
         TokenNode* savepoint = curr;
         Token* restrict t = &curr->t;
@@ -893,6 +862,4 @@ static TokenNode* expand(Cuik_CPP* restrict c, TokenNode* restrict head, uint32_
             depth--;
         }
     }
-
-    return curr;
 }

@@ -19,7 +19,7 @@ enum {
     TB_TASK_BATCH_SIZE = 8192,
 };
 
-static void dump_tokens(FILE* out_file, TokenStream* s) {
+void cuikpp_dump_tokens(TokenStream* s) {
     const char* last_file = NULL;
     int last_line = 0;
 
@@ -47,24 +47,25 @@ static void dump_tokens(FILE* out_file, TokenStream* s) {
             }
             *out++ = '\0';
 
-            fprintf(out_file, "\n#line %d \"%s\"\t", r.line, str);
+            printf("\n#line %d \"%s\"\t", r.line, str);
             last_file = r.file->filename;
         }
 
         if (last_line != r.line) {
-            fprintf(out_file, "\n/* line %3d */\t", r.line);
+            printf("\n/* line %3d */\t", r.line);
             last_line = r.line;
         }
 
         if (t->type == TOKEN_STRING_WIDE_SINGLE_QUOTE || t->type == TOKEN_STRING_WIDE_DOUBLE_QUOTE) {
-            fprintf(out_file, "L");
+            printf("L");
         }
 
-        fprintf(out_file, "%.*s ", (int) t->content.length, t->content.data);
+        printf("%.*s ", (int) t->content.length, t->content.data);
     }
+    printf("\n");
 }
 
-CUIK_API void cuik_free_driver_args(Cuik_DriverArgs* args) {
+void cuik_free_driver_args(Cuik_DriverArgs* args) {
     dyn_array_for(i, args->sources) cuik_free(args->sources[i]);
     dyn_array_for(i, args->includes) cuik_free(args->includes[i]);
     dyn_array_for(i, args->libraries) cuik_free(args->libraries[i]);
@@ -680,7 +681,7 @@ CUIK_API bool cuik_driver_compile(Cuik_IThreadpool* restrict thread_pool, Cuik_D
                     dump_errors(tokens);
 
                     if (args->preprocess) {
-                        dump_tokens(stdout, tokens);
+                        cuikpp_dump_tokens(tokens);
                     }
 
                     // print dependencies
