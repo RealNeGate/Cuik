@@ -10,9 +10,9 @@ from pathlib import Path
 raylib_path = "C:/raylib"
 
 parser = argparse.ArgumentParser(description='Compiles Cuik + friends')
+parser.add_argument('-shared', action='store_true', help='build libCuik as shared object')
 parser.add_argument('-opt', action='store_true', help='optimize output')
 parser.add_argument('-driver', action='store_true', help='compile main driver')
-parser.add_argument('-playground', action='store_true', help='compile TB playground')
 parser.add_argument('-inspector', action='store_true', help='compile inspector')
 parser.add_argument('-libcuik', action='store_true', help='compile libCuik')
 parser.add_argument('-tb', action='store_true', help='compiles TB')
@@ -20,19 +20,18 @@ parser.add_argument('-asan', action='store_true', help='compile with ASAN')
 parser.add_argument('-autospall', action='store_true', help='instrument code with SpallAuto')
 
 args = parser.parse_args()
-# args.inspector = True
 args.driver = True
-# args.libcuik = False
-# args.playground = True
+
+# Compile libcuik dll
+# args.shared = True
+# args.libcuik = True
+# args.tb = True
 
 mimalloc = True
 
 if args.inspector or args.driver:
 	args.tb = True
 	args.libcuik = True
-
-if args.playground:
-	args.tb = True
 
 # Figure out C and linker flags
 ldflags = ""
@@ -43,6 +42,7 @@ if args.libcuik:   cflags += " -I libCuik/include -DMINIZ_NO_MALLOC"
 if args.tb:        cflags += " -DCUIK_USE_TB -I tb/include"
 if args.asan:      cflags += " -fsanitize=address"
 if args.opt:       cflags += " -O2 -DNDEBUG"
+if args.shared:    cflags += " -DCUIK_DLL -DTB_DLL"
 if args.autospall: cflags += " -DCUIK_USE_SPALL_AUTO -finstrument-functions-after-inlining"
 
 if args.inspector:
@@ -51,6 +51,9 @@ if args.inspector:
 
 system = platform.system()
 if system == "Windows":
+	if args.shared:
+		ldflags += " -dll "
+
 	if args.asan:
 		ld = "clang -fuse-ld=lld-link -fsanitize=address"
 		ldflags += " -o "
@@ -60,6 +63,7 @@ if system == "Windows":
 
 	lib_ext = ".lib"
 	exe_ext = ".exe"
+	dll_ext = ".dll"
 	cflags += " -I c11threads -D_CRT_SECURE_NO_WARNINGS"
 elif system == "Darwin":
 	ld = "lld.ld"
@@ -67,12 +71,14 @@ elif system == "Darwin":
 
 	exe_ext = ""
 	lib_ext = ".a"
+	dll_ext = ".so"
 	cflags += " -I c11threads -Wno-deprecated-declarations"
 else:
 	ld = "ld.lld"
 	ldflags += " -g -lc -lm -lthreads -o "
 	exe_ext = ""
 	lib_ext = ".a"
+	dll_ext = ".so"
 
 sources = []
 sources.append("common/common.c")
@@ -95,10 +101,6 @@ if args.tb:
 
 if args.inspector:
 	sources.append("inspector/main.c")
-
-# playground
-if args.playground:
-	sources.append("playground/*.c")
 
 # main driver
 if args.driver:
@@ -182,8 +184,9 @@ for pattern in sources:
 		objs.append("bin/"+obj)
 
 # compile final executable (or library)
-if args.driver or args.playground:
-	ninja.write(f"build cuik{exe_ext}: link {' '.join(objs)}\n")
+if args.driver or args.shared:
+	ext = dll_ext if (args.shared) else exe_ext
+	ninja.write(f"build cuik{ext}: link {' '.join(objs)}\n")
 elif args.inspector:
 	ninja.write(f"build inspector{exe_ext}: link {' '.join(objs)}\n")
 elif args.libcuik:

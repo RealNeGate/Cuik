@@ -69,8 +69,8 @@ typedef enum Cuik_TypeKind {
     KIND_UNION,
     KIND_VECTOR,
 
-    // __declspec(align(N)) or _Alignas(N)
-    KIND_ALIGNED,
+    // used when the type isn't resolved so we shouldn't clone it just yet
+    KIND_CLONE,
 
     // these are inferred as typedefs but don't map to anything yet
     KIND_PLACEHOLDER,
@@ -170,8 +170,8 @@ struct Cuik_Type {
         };
 
         struct {
-            Cuik_Type* base;
-        } aligned_on;
+            Cuik_Type* of;
+        } clone;
 
         // Pointers
         struct {
@@ -702,6 +702,8 @@ static Cuik_QualType cuik_get_direct_type(Cuik_QualType type, int* level) {
     if (level != NULL) *level = l;
     return type;
 }
+
+CUIK_API const char* cuik_stmt_decl_name(Stmt* stmt);
 
 ////////////////////////////////////////////
 // Type checker

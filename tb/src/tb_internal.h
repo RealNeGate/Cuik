@@ -161,6 +161,7 @@ struct TB_Global {
     TB_Linkage linkage;
 
     // layout stuff
+    void* address; // JIT-only
     uint32_t pos;
     TB_CharUnits size, align;
 

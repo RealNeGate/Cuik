@@ -22,6 +22,11 @@ static bool is_constant_zero(TranslationUnit* tu, const Expr* e) {
     return e->op == EXPR_INT && e->int_num.num == 0;
 }
 
+const char* cuik_stmt_decl_name(Stmt* stmt) {
+    assert(stmt->op == STMT_DECL || stmt->op == STMT_FUNC_DECL || stmt->op == STMT_GLOBAL_DECL);
+    return stmt->decl.name;
+}
+
 // doesn't do implicit casts
 bool type_very_compatible(TranslationUnit* tu, Cuik_Type* src, Cuik_Type* dst) {
     if (src == dst) return true;
@@ -508,7 +513,7 @@ static size_t sema_infer_initializer_array_count(TranslationUnit* tu, InitNode* 
             if (cursor > max) max = cursor;
         } else if (n->mode == INIT_NONE) {
             Expr* e = n->expr;
-            if (e->op == EXPR_STR || e->op == EXPR_WSTR) {
+            if (e != NULL && (e->op == EXPR_STR || e->op == EXPR_WSTR)) {
                 Cuik_Type* src = cuik_canonical_type(cuik__sema_expr(tu, e));
                 cursor += src->array_count;
             } else {
@@ -1381,7 +1386,7 @@ void sema_stmt(TranslationUnit* tu, Stmt* restrict s) {
             if (!is_scalar_type(tu, cond_type)) {
                 type_as_string(sizeof(temp_string0), temp_string0, cond_type);
 
-                diag_err(&tu->tokens, s->loc, "Could not convert type %s into boolean.", temp_string0);
+                diag_err(&tu->tokens, s->if_.cond->loc, "Could not convert type %s into boolean.", temp_string0);
             }
             s->if_.cond->cast_type = cuik_uncanonical_type(&cuik__builtin_bool);
 

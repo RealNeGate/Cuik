@@ -51,7 +51,9 @@ static bool locate_file(Cuik_CPP* ctx, bool search_lib_first, const char* dir, c
 static char* alloc_directory_path(const char* filepath);
 static void compute_line_map(TokenStream* s, bool is_system, int depth, SourceLoc include_site, const char* filename, char* data, size_t length);
 
-#define MAX_CPP_STACK_DEPTH 1024
+enum {
+    MAX_CPP_STACK_DEPTH = 1024,
+};
 
 typedef struct CPPStackSlot {
     const char* filepath;
@@ -140,6 +142,10 @@ static String get_token_as_string(TokenStream* restrict in) {
     return tokens_get(in)->content;
 }
 
+// this is used when NULL is passed into the cuikpp_make filepath, it makes it
+// easy to check for empty string which aren't NULL.
+static const char MAGIC_EMPTY_STRING[] = "";
+
 // include this if you want to enable the preprocessor debugger
 // #include "cpp_dbg.h"
 
@@ -167,13 +173,15 @@ bool cuikpp_is_in_main_file(TokenStream* tokens, SourceLoc loc) {
     return f->filename == tokens->filepath;
 }
 
-Cuik_CPP* cuikpp_make(const char filepath[FILENAME_MAX], Cuik_DiagCallback callback, void* userdata) {
-    if (filepath == NULL) {
-        filepath = "";
-    }
+Cuik_CPP* cuikpp_make(const Cuik_CPPDesc* desc) {
+    const char* filepath = desc->filepath ? desc->filepath : MAGIC_EMPTY_STRING;
 
     Cuik_CPP* ctx = cuik_malloc(sizeof(Cuik_CPP));
     *ctx = (Cuik_CPP){
+        .locate    = desc->locate,
+        .fs        = desc->fs,
+        .user_data = desc->fs_data,
+
         .stack = cuik__valloc(MAX_CPP_STACK_DEPTH * sizeof(CPPStackSlot)),
         .macros = {
             .exp = 24,
@@ -201,7 +209,7 @@ Cuik_CPP* cuikpp_make(const char filepath[FILENAME_MAX], Cuik_DiagCallback callb
         directory[0] = '\0';
     }
 
-    ctx->tokens.diag = cuikdg_make(callback, userdata);
+    ctx->tokens.diag = cuikdg_make(desc->diag, desc->diag_data);
     ctx->tokens.filepath = filepath;
     ctx->tokens.list.tokens = dyn_array_create(Token, 4096);
     ctx->tokens.invokes = dyn_array_create(MacroInvoke, 4096);
@@ -486,12 +494,8 @@ static char* alloc_directory_path(const char* filepath) {
     }
 }
 
-Cuikpp_Status cuikpp_run(Cuik_CPP* ctx, Cuikpp_LocateFile* locate, Cuikpp_GetFile* fs, void* user_data) {
+Cuikpp_Status cuikpp_run(Cuik_CPP* restrict ctx) {
     assert(ctx->stack_ptr > 0);
-    ctx->user_data = user_data;
-    ctx->fs = fs;
-    ctx->locate = locate;
-
     CPPStackSlot* restrict slot = &ctx->stack[ctx->stack_ptr - 1];
 
     ////////////////////////////////
@@ -504,7 +508,7 @@ Cuikpp_Status cuikpp_run(Cuik_CPP* ctx, Cuikpp_LocateFile* locate, Cuikpp_GetFil
     #endif
 
     Cuik_FileResult main_file;
-    if (!fs(user_data, slot->filepath, &main_file)) {
+    if (!ctx->fs(ctx->user_data, slot->filepath, &main_file)) {
         fprintf(stderr, "\x1b[31merror\x1b[0m: file \"%s\" doesn't exist.\n", slot->filepath);
         return CUIKPP_ERROR;
     }

@@ -511,6 +511,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
                 ctx->stack_usage += 16 + (proto->param_count * 8);
             }
 
+            // Handle unknown parameters (if we have varargs)
             if (proto->has_varargs) {
                 bool is_sysv = (ctx->target_abi == TB_ABI_SYSTEMV);
                 const GPR* parameter_gprs = is_sysv ? SYSV_GPR_PARAMETERS : WIN64_GPR_PARAMETERS;
@@ -529,11 +530,6 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
                 }
 
                 ctx->stack_usage += (extra_param_count * 8);
-            }
-
-            // Handle unknown parameters (if we have varargs)
-            if (proto->has_varargs) {
-                tb_todo();
             }
             return 0;
         }

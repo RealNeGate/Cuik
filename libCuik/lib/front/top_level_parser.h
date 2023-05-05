@@ -305,7 +305,18 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
 
                 Cuik_Type* placeholder_space = cuik_canonical_type(old_def->type);
                 Cuik_Type* decl_type = cuik_canonical_type(decl.type);
-                if (placeholder_space->kind != KIND_PLACEHOLDER && !type_equal(decl_type, placeholder_space)) {
+
+                {
+                    // mark potential conflict, we'll handle it once we have more context
+                    TypeConflict* c = ARENA_ALLOC(&local_ast_arena, TypeConflict);
+                    c->old_def = old_def;
+                    c->new_def = sym;
+                    // insert
+                    c->next = parser->first_conflict;
+                    parser->first_conflict = c;
+                }
+
+                /*if (placeholder_space->kind != KIND_PLACEHOLDER && !type_equal(decl_type, placeholder_space)) {
                     Cuik_Type *t1 = placeholder_space, *t2 = decl_type;
                     // only deref if both can
                     while (t1->kind == t2->kind && t1->kind == KIND_PTR) {
@@ -329,7 +340,7 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
                         diag_err(s, decl.loc, "declaration incompatible with previous declaration");
                         diag_note(s, old_def->loc, "see here");
                     }
-                }
+                }*/
 
                 if (attr.is_typedef) {
                     Cuik_Type* src = cuik_canonical_type(decl.type);

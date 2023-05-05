@@ -82,8 +82,8 @@ CUIK_API void cuik_init(void);
 CUIK_API void cuik_free_thread_resources(void);
 
 #ifdef CUIK_ALLOW_THREADS
-Cuik_IThreadpool* cuik_threadpool_create(int threads, int workqueue_size);
-void cuik_threadpool_destroy(Cuik_IThreadpool* thread_pool);
+CUIK_API Cuik_IThreadpool* cuik_threadpool_create(int threads, int workqueue_size);
+CUIK_API void cuik_threadpool_destroy(Cuik_IThreadpool* thread_pool);
 #endif
 
 ////////////////////////////////////////////

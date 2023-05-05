@@ -1926,7 +1926,9 @@ static void ir_alloc_task(void* task) {
             }
         }
 
-        futex_dec(t.remaining);
+        if (t.remaining != NULL) {
+            futex_dec(t.remaining);
+        }
     }
 }
 
@@ -1967,6 +1969,39 @@ void cuikcg_allocate_ir(CompilationUnit* restrict cu, Cuik_IThreadpool* restrict
     }
 
     if (thread_pool) futex_wait_eq(&remaining, 0);
+}
+
+void cuikcg_allocate_ir2(TranslationUnit* tu, TB_Module* m) {
+    size_t count = dyn_array_length(tu->top_level_stmts);
+    tu->ir_mod = m;
+
+    for (size_t i = 0; i < count; i++) {
+        Stmt* s = tu->top_level_stmts[i];
+        const char* name = s->decl.name;
+
+        if (s->op == STMT_FUNC_DECL) {
+            if (s->decl.attrs.is_static || s->decl.attrs.is_inline) {
+                if (!s->decl.attrs.is_used) continue;
+            }
+
+            s->flags |= STMT_FLAGS_HAS_IR_BACKING;
+        } else if (s->op == STMT_GLOBAL_DECL || s->op == STMT_DECL) {
+            if (!s->decl.attrs.is_static  && !s->decl.attrs.is_extern &&
+                !s->decl.attrs.is_typedef && !s->decl.attrs.is_inline &&
+                s->decl.name && cuik_canonical_type(s->decl.type)->kind != KIND_FUNC) {
+                // only enter one of them and whichever goes in, will have IR backing
+                s->flags |= STMT_FLAGS_HAS_IR_BACKING;
+            }
+        }
+    }
+
+    IRAllocTask t = {
+        .mod = m,
+        .tu = tu,
+        .stmts = tu->top_level_stmts,
+        .count = count,
+    };
+    ir_alloc_task(&t);
 }
 
 #endif /* CUIK_USE_TB */

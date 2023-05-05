@@ -1,6 +1,9 @@
 #include "../tb_internal.h"
 #include "../host.h"
 
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+
 size_t tb_helper_write_text_section(size_t write_pos, TB_Module* m, uint8_t* output, uint32_t pos);
 size_t tb_helper_write_data_section(size_t write_pos, TB_Module* m, uint8_t* output, uint32_t pos);
 size_t tb_helper_write_rodata_section(size_t write_pos, TB_Module* m, uint8_t* output, uint32_t pos);
@@ -110,7 +113,7 @@ static void* tb_jitheap_alloc_region(TB_JITHeap* c, size_t s, TB_MemProtect prot
                 // it's free
                 bitmap[j] |= mask;
 
-                printf("Allocated to [%zu][%zu]\n", i, j*64 + k);
+                // printf("Allocated to [%zu][%zu]\n", i, j*64 + k);
                 return c->block + (i * SLAB_SIZE) + (j * 64 * BITMAP_GRANULARITY) + (k * BITMAP_GRANULARITY);
             }
         }
@@ -137,14 +140,91 @@ void tb_jitheap_free_region(TB_JITHeap* c, void* ptr, size_t s) {
 TB_API void* tb_module_apply_function(TB_JITContext* jit, TB_Function* f) {
     TB_FunctionOutput* out_f = f->output;
 
+    HINSTANCE crt_dll;
+    GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, NULL, &crt_dll);
+
     // copy machine code
-    void* dst = tb_jitheap_alloc_region(&jit->heap, out_f->code_size, TB_PAGE_READEXECUTE);
+    char* dst = tb_jitheap_alloc_region(&jit->heap, out_f->code_size, TB_PAGE_READEXECUTE);
     memcpy(dst, out_f->code, out_f->code_size);
 
     // apply relocations, any leftovers are mapped to thunks
-    // __debugbreak();
+    for (TB_SymbolPatch* p = f->last_patch; p; p = p->prev) {
+        if (p->internal) continue;
 
+        size_t actual_pos = out_f->prologue_length + p->pos;
+        if (p->target->tag == TB_SYMBOL_FUNCTION || p->target->tag == TB_SYMBOL_EXTERNAL) {
+            void* addr = GetProcAddress(crt_dll, p->target->name);
+            ptrdiff_t rel = (intptr_t)addr - (intptr_t)dst;
+            int32_t rel32 = rel;
+            if (rel == rel32) {
+                memcpy(dst + actual_pos, &rel32, sizeof(ptrdiff_t));
+            } else {
+                // generate thunk to make far call
+                char* thunk = tb_jitheap_alloc_region(&jit->heap, 6 + sizeof(void*), TB_PAGE_READEXECUTE);
+                thunk[0] = 0xFF; // JMP addr
+                thunk[1] = 0x25;
+                thunk[2] = 0x00;
+                thunk[3] = 0x00;
+                thunk[4] = 0x00;
+                thunk[5] = 0x00;
+
+                // write final address into the thunk
+                memcpy(thunk + 6, &addr, sizeof(void*));
+
+                int32_t* patch = (int32_t*) &dst[actual_pos];
+                int32_t rel32 = (intptr_t)thunk - ((intptr_t)patch + 4);
+                *patch += rel32;
+            }
+        } else if (p->target->tag == TB_SYMBOL_GLOBAL) {
+            TB_Global* g = (TB_Global*) p->target;
+            if (g->address == NULL) {
+                // lazy init globals
+                tb_module_apply_global(jit, g);
+            }
+
+            int32_t* patch = (int32_t*) &dst[actual_pos];
+            int32_t rel32 = (intptr_t)g->address - ((intptr_t)patch + 4);
+            *patch += rel32;
+        } else {
+            tb_todo();
+        }
+    }
+
+    f->compiled_pos = dst;
     return dst;
+}
+
+static void* get_symbol_address(const TB_Symbol* s) {
+    if (s->tag == TB_SYMBOL_GLOBAL) {
+        return ((TB_Global*) s)->address;
+    } else if (s->tag == TB_SYMBOL_FUNCTION) {
+        return ((TB_Function*) s)->compiled_pos;
+    } else {
+        tb_todo();
+    }
+}
+
+TB_API void* tb_module_apply_global(TB_JITContext* jit, TB_Global* g) {
+    char* data = tb_jitheap_alloc_region(&jit->heap, g->size, TB_PAGE_READEXECUTE);
+
+    memset(data, 0, g->size);
+    FOREACH_N(k, 0, g->obj_count) {
+        if (g->objects[k].type == TB_INIT_OBJ_REGION) {
+            memcpy(&data[g->objects[k].offset], g->objects[k].region.ptr, g->objects[k].region.size);
+        }
+    }
+
+    FOREACH_N(k, 0, g->obj_count) {
+        if (g->objects[k].type == TB_INIT_OBJ_RELOC) {
+            uintptr_t addr = (uintptr_t) get_symbol_address(g->objects[k].reloc);
+
+            uintptr_t* dst = (uintptr_t*) &data[g->objects[k].offset];
+            *dst += addr;
+        }
+    }
+
+    g->address = data;
+    return data;
 }
 
 TB_API void tb_module_ready_jit(TB_JITContext* jit) {

@@ -173,6 +173,12 @@ static size_t skip_expression_in_enum(TokenStream* restrict s, TknType* out_term
     return saved;
 }
 
+// potential typedef conflicts
+typedef struct TypeConflict {
+    struct TypeConflict* next;
+    Symbol *old_def, *new_def;
+} TypeConflict;
+
 struct Cuik_Parser {
     Cuik_ParseVersion version;
     TokenStream tokens;
@@ -196,8 +202,10 @@ struct Cuik_Parser {
 
     DynArray(Stmt*) top_level_stmts;
     Cuik_TypeTable types;
-    Cuik_Type* first_placeholder;
     Cuik_GlobalSymbols globals;
+
+    Cuik_Type* first_placeholder;
+    TypeConflict* first_conflict;
 
     NL_Strmap(Diag_UnresolvedSymbol*) unresolved_symbols;
 
@@ -384,7 +392,13 @@ void type_layout2(Cuik_Parser* parser, Cuik_Type* type) {
 
     type->is_progress = true;
 
-    if (type->kind == KIND_ARRAY) {
+    if (type->kind == KIND_CLONE) {
+        type_layout2(parser, type->clone.of);
+
+        Atom name = type->also_known_as;
+        *type = *type->clone.of;
+        type->also_known_as = name;
+    } else if (type->kind == KIND_ARRAY) {
         if (type->array_count_lexer_pos) {
             // run mini parser for array count
             TokenStream mini_lex = parser->tokens;

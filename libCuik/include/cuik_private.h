@@ -21,8 +21,8 @@ typedef struct {
 
 struct Cuik_CPP {
     // file system stuff
-    Cuikpp_LocateFile* locate;
-    Cuikpp_GetFile* fs;
+    Cuikpp_LocateFile locate;
+    Cuikpp_GetFile fs;
     void* user_data;
 
     // used to store macro expansion results

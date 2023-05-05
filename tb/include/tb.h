@@ -15,7 +15,15 @@
 #define TB_VERSION_MINOR 2
 #define TB_VERSION_PATCH 0
 
-#define TB_API extern
+#ifdef TB_DLL
+#  ifdef TB_IMPORT_DLL
+#    define TB_API __declspec(dllimport)
+#  else
+#    define TB_API __declspec(dllexport)
+#  endif
+#else
+#  define TB_API
+#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -813,6 +821,7 @@ extern "C" {
     // passing 0 to jit_heap_capacity will default to 4MiB
     TB_API TB_JITContext* tb_module_begin_jit(TB_Module* m, size_t jit_heap_capacity);
     TB_API void* tb_module_apply_function(TB_JITContext* jit, TB_Function* f);
+    TB_API void* tb_module_apply_global(TB_JITContext* jit, TB_Global* g);
     // fixes page permissions, applies missing relocations
     TB_API void tb_module_ready_jit(TB_JITContext* jit);
     TB_API void tb_module_end_jit(TB_JITContext* jit);
@@ -1102,7 +1111,16 @@ extern "C" {
     ////////////////////////////////
     // Optimizer
     ////////////////////////////////
-    typedef struct TB_Pass TB_Pass;
+    typedef struct TB_Pass {
+        // it's either a module-level pass or function-level
+        bool is_module;
+        const char* name;
+
+        union {
+            bool(*func_run)(TB_Function* f);
+            bool(*mod_run)(TB_Module* m);
+        };
+    } TB_Pass;
 
     // Applies optimizations to the entire module
     TB_API void tb_module_optimize(TB_Module* m, size_t pass_count, const TB_Pass* passes[]);
@@ -1110,9 +1128,9 @@ extern "C" {
     ////////////////////////////////
     // Transformation pass library
     ////////////////////////////////
-    TB_API const TB_Pass tb_opt_merge_rets;
-    TB_API const TB_Pass tb_opt_libcalls;
-    TB_API const TB_Pass tb_opt_mem2reg;
+    extern TB_API const TB_Pass tb_opt_merge_rets;
+    extern TB_API const TB_Pass tb_opt_libcalls;
+    extern TB_API const TB_Pass tb_opt_mem2reg;
 
     ////////////////////////////////
     // IR access

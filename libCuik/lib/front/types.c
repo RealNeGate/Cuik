@@ -94,7 +94,18 @@ static Cuik_Type* type_placeholder(Cuik_TypeTable* types) {
     return arena_alloc(&local_ast_arena, sizeof(Cuik_Type), 16);
 }
 
-static Cuik_Type* type_clone(Cuik_TypeTable* types, const Cuik_Type* src, Atom new_name) {
+static Cuik_Type* type_clone(Cuik_TypeTable* types, Cuik_Type* src, Atom new_name) {
+    if (!src->is_complete) {
+        Cuik_Type cloned = {
+            .kind = KIND_CLONE,
+            .loc = src->loc,
+            .also_known_as = new_name,
+            .clone.of = src
+        };
+
+        return type_intern(types, &cloned);
+    }
+
     Cuik_Type cloned = *src;
     cloned.also_known_as = new_name;
     if (src->kind == KIND_STRUCT || src->kind == KIND_UNION) {

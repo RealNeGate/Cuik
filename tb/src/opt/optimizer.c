@@ -1,17 +1,6 @@
 #include "../tb_internal.h"
 #include <stdarg.h>
 
-typedef struct TB_Pass {
-    // it's either a module-level pass or function-level
-    bool is_module;
-    const char* name;
-
-    union {
-        bool(*func_run)(TB_Function* f, TB_TemporaryStorage* tls);
-        bool(*mod_run)(TB_Module* m);
-    };
-} TB_Pass;
-
 // unity build with all the passes
 #include "dce.h"
 #include "fold.h"
@@ -97,7 +86,7 @@ static void schedule_function_level_opts(TB_Module* m, TB_Function* f, size_t pa
         canonicalize(f);
 
         CUIK_TIMED_BLOCK_ARGS(passes[i]->name, f->super.name) {
-            passes[i]->func_run(f, tls);
+            passes[i]->func_run(f);
         }
 
         arena_clear(&tb__arena);

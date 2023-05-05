@@ -156,8 +156,29 @@ CUIK_API Cuik_File* cuikpp_next_file(Cuik_CPP* ctx, Cuik_File* f);
 ////////////////////////////////
 // Preprocessor module
 ////////////////////////////////
+typedef struct Cuik_FileResult {
+    size_t length;
+    char* data;
+} Cuik_FileResult;
+
+// returns true if it found the file, it'll also return the canonical name
+typedef bool (*Cuikpp_LocateFile)(void* user_data, const char* input_path, char output_path[]);
+typedef bool (*Cuikpp_GetFile)(void* user_data, const char* input_path, Cuik_FileResult* out_result);
+
+typedef struct {
+    const char* filepath;
+
+    // some callbacks :P
+    void* diag_data;
+    Cuik_DiagCallback diag;
+
+    void* fs_data;
+    Cuikpp_LocateFile locate;
+    Cuikpp_GetFile fs;
+} Cuik_CPPDesc;
+
 // Initialize preprocessor, allocates memory which needs to be freed via cuikpp_free
-CUIK_API Cuik_CPP* cuikpp_make(const char filepath[FILENAME_MAX], Cuik_DiagCallback callback, void* userdata);
+CUIK_API Cuik_CPP* cuikpp_make(const Cuik_CPPDesc* restrict desc);
 
 // NOTE: it doesn't own the memory for the files it may have used
 // and thus you must free them, this can be done by iterating over
@@ -177,9 +198,6 @@ CUIK_API size_t cuikpp_get_token_count(TokenStream* restrict s);
 
 CUIK_API Cuik_File* cuikpp_get_files(TokenStream* restrict s);
 CUIK_API size_t cuikpp_get_file_count(TokenStream* restrict s);
-
-typedef struct CPPTask CPPTask;
-CUIK_API void cuikpp_task_done(CPPTask* restrict t);
 
 ////////////////////////////////
 // Line info
@@ -201,15 +219,6 @@ CUIK_API MacroInvoke* cuikpp_find_macro(TokenStream* tokens, SourceLoc loc);
 ////////////////////////////////
 // Preprocessor callback
 ////////////////////////////////
-typedef struct Cuik_FileResult {
-    size_t length;
-    char* data;
-} Cuik_FileResult;
-
-// returns true if it found the file, it'll also return the canonical name
-typedef bool Cuikpp_LocateFile(void* user_data, const char* input_path, char output_path[]);
-typedef bool Cuikpp_GetFile(void* user_data, const char* input_path, Cuik_FileResult* out_result);
-
 typedef enum {
     CUIKPP_CONTINUE,
     CUIKPP_DONE,
@@ -233,7 +242,7 @@ CUIK_API bool cuikpp_locate_file(void* user_data, const char* input_path, char o
 CUIK_API bool cuikpp_default_fs(void* user_data, const char* input_path, Cuik_FileResult* out_result);
 
 // Returns entire preprocessor on input state
-CUIK_API Cuikpp_Status cuikpp_run(Cuik_CPP* ctx, Cuikpp_LocateFile* locate, Cuikpp_GetFile* fs, void* user_data);
+CUIK_API Cuikpp_Status cuikpp_run(Cuik_CPP* restrict ctx);
 
 // is the source location in the source file (none of the includes)
 CUIK_API bool cuikpp_is_in_main_file(TokenStream* tokens, SourceLoc loc);
@@ -298,3 +307,4 @@ CUIK_API void diag_warn(TokenStream* tokens, SourceRange loc, const char* fmt, .
 CUIK_API void diag_err(TokenStream* tokens, SourceRange loc, const char* fmt, ...);
 
 CUIK_API void cuikdg_dump_to_file(TokenStream* tokens, FILE* out);
+CUIK_API void cuikdg_dump_to_stderr(TokenStream* tokens);

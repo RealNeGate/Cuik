@@ -76,12 +76,7 @@ CUIK_API void cuik_free_driver_args(Cuik_DriverArgs* args) {
     dyn_array_destroy(args->defines);
 }
 
-CUIK_API Cuik_CPP* cuik_driver_preprocess(const char* filepath, const Cuik_DriverArgs* args, bool should_finalize) {
-    Cuik_CPP* cpp = NULL;
-    CUIK_TIMED_BLOCK("cuikpp_init") {
-        cpp = cuikpp_make(filepath, args->diag_callback, args->diag_userdata);
-    }
-
+static bool run_cpp(Cuik_CPP* cpp, const Cuik_DriverArgs* args, bool should_finalize) {
     cuik_set_standard_defines(cpp, args);
     dyn_array_for(i, args->includes) {
         cuikpp_add_include_directory(cpp, false, args->includes[i]);
@@ -104,16 +99,62 @@ CUIK_API Cuik_CPP* cuik_driver_preprocess(const char* filepath, const Cuik_Drive
     }
 
     // run the preprocessor
-    if (cuikpp_run(cpp, cuikpp_locate_file, cuikpp_default_fs, NULL) == CUIKPP_ERROR) {
+    if (cuikpp_run(cpp) == CUIKPP_ERROR) {
         cuikdg_dump_to_file(cuikpp_get_token_stream(cpp), stderr);
         cuikpp_free(cpp);
-        return NULL;
+        return false;
     }
 
     if (should_finalize) {
         cuikpp_finalize(cpp);
     }
-    return cpp;
+
+    return true;
+}
+
+CUIK_API Cuik_CPP* cuik_driver_preprocess(const char* filepath, const Cuik_DriverArgs* args, bool should_finalize) {
+    Cuik_CPP* cpp = NULL;
+    CUIK_TIMED_BLOCK("cuikpp_make") {
+        cpp = cuikpp_make(&(Cuik_CPPDesc){
+                .filepath      = filepath,
+                .locate        = cuikpp_locate_file,
+                .fs            = cuikpp_default_fs,
+                .diag_data     = args->diag_userdata,
+                .diag          = args->diag_callback,
+            });
+    }
+
+    return run_cpp(cpp, args, should_finalize) ? cpp : NULL;
+}
+
+CUIK_API Cuik_CPP* cuik_driver_preprocess_str(String source, const Cuik_DriverArgs* args, bool should_finalize) {
+    Cuik_CPP* cpp = NULL;
+    CUIK_TIMED_BLOCK("cuikpp_make") {
+        cpp = cuikpp_make(&(Cuik_CPPDesc){
+                .fs_data       = &source,
+                .locate        = cuikpp_locate_file,
+                .fs            = cuikpp_default_fs,
+                .diag_data     = args->diag_userdata,
+                .diag          = args->diag_callback,
+            });
+    }
+
+    return run_cpp(cpp, args, should_finalize) ? cpp : NULL;
+}
+
+CUIK_API Cuik_CPP* cuik_driver_preprocess_cstr(const char* source, const Cuik_DriverArgs* args, bool should_finalize) {
+    Cuik_CPP* cpp = NULL;
+    CUIK_TIMED_BLOCK("cuikpp_make") {
+        cpp = cuikpp_make(&(Cuik_CPPDesc){
+                .fs_data       = &(String){ strlen(source), (const unsigned char*) source },
+                .locate        = cuikpp_locate_file,
+                .fs            = cuikpp_default_fs,
+                .diag_data     = args->diag_userdata,
+                .diag          = args->diag_callback,
+            });
+    }
+
+    return run_cpp(cpp, args, should_finalize) ? cpp : NULL;
 }
 
 typedef struct {

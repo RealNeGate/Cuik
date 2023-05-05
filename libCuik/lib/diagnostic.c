@@ -126,6 +126,10 @@ Cuik_Parser* cuikdg_get_parser(Cuik_Diagnostics* diag) {
     return diag->parser;
 }
 
+CUIK_API void cuikdg_dump_to_stderr(TokenStream* tokens) {
+    cuikdg_dump_to_file(tokens, stderr);
+}
+
 CUIK_API void cuikdg_dump_to_file(TokenStream* tokens, FILE* out) {
     Arena* arena = &tokens->diag->buffer;
     for (ArenaSegment* s = arena->base; s != NULL; s = s->next) {

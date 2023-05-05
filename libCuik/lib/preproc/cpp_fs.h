@@ -274,7 +274,22 @@ CUIK_API bool cuikpp_locate_file(void* user_data, const char* input_path, char o
 
 CUIK_API bool cuikpp_default_fs(void* user_data, const char* og_path, Cuik_FileResult* out_result) {
     // check if it's in the freestanding header directory
-    if (strncmp(og_path, "$cuik", 5) == 0 && (og_path[5] == '/' || og_path[5] == '\\')) {
+    if (og_path == MAGIC_EMPTY_STRING) {
+        if (user_data == NULL) return false;
+
+        String source = *(String*) user_data;
+
+        // allocate proper buffer for source
+        char* buffer = cuik__valloc(source.length + 16);
+        memcpy(buffer, source.data, source.length);
+        memset(buffer + source.length, 0, 16);
+
+        cuiklex_canonicalize(source.length, buffer);
+
+        out_result->length = source.length;
+        out_result->data = buffer;
+        return true;
+    } else if (strncmp(og_path, "$cuik", 5) == 0 && (og_path[5] == '/' || og_path[5] == '\\')) {
         InternalFile* f = find_internal_file(og_path + 6);
         if (!f) return false;
 
@@ -314,12 +329,9 @@ CUIK_API bool cuikpp_default_fs(void* user_data, const char* og_path, Cuik_FileR
     }
 
     LoadResult file = get_file(og_path);
-
     if (!file.found) {
         return false;
     }
-
-    cuiklex_canonicalize(file.length, file.data);
 
     out_result->length = file.length;
     out_result->data = file.data;

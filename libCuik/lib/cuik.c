@@ -14,7 +14,7 @@ void init_timer_system(void);
 
 thread_local Arena thread_arena;
 
-void cuik_init(void) {
+CUIK_API void cuik_init(void) {
     #if _WIN32
     // Enable ANSI/VT sequences on windows
     HANDLE output_handle = GetStdHandle(STD_OUTPUT_HANDLE);

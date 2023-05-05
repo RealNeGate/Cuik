@@ -701,7 +701,9 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                     tokens_next(s);
 
                     bool in_scope;
-                    type = name ? find_tag(parser, (char*) name, &in_scope) : 0;
+                    Cuik_Type* old_type = name ? find_tag(parser, (char*) name, &in_scope) : 0;
+
+                    type = old_type;
                     if (type) {
                         // can't re-complete a enum
                         size_t count = type->enumerator.count;
@@ -746,8 +748,6 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                             }
                         }
                     }
-
-                    type->loc = record_loc;
 
                     size_t member_count = 0;
                     Member* members = tls_save();
