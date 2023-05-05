@@ -140,9 +140,6 @@ void tb_jitheap_free_region(TB_JITHeap* c, void* ptr, size_t s) {
 TB_API void* tb_module_apply_function(TB_JITContext* jit, TB_Function* f) {
     TB_FunctionOutput* out_f = f->output;
 
-    HINSTANCE crt_dll;
-    GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, NULL, &crt_dll);
-
     // copy machine code
     char* dst = tb_jitheap_alloc_region(&jit->heap, out_f->code_size, TB_PAGE_READEXECUTE);
     memcpy(dst, out_f->code, out_f->code_size);
@@ -153,7 +150,7 @@ TB_API void* tb_module_apply_function(TB_JITContext* jit, TB_Function* f) {
 
         size_t actual_pos = out_f->prologue_length + p->pos;
         if (p->target->tag == TB_SYMBOL_FUNCTION || p->target->tag == TB_SYMBOL_EXTERNAL) {
-            void* addr = GetProcAddress(crt_dll, p->target->name);
+            void* addr = GetProcAddress(NULL, p->target->name);
             ptrdiff_t rel = (intptr_t)addr - (intptr_t)dst;
             int32_t rel32 = rel;
             if (rel == rel32) {
@@ -161,7 +158,7 @@ TB_API void* tb_module_apply_function(TB_JITContext* jit, TB_Function* f) {
             } else {
                 // generate thunk to make far call
                 char* thunk = tb_jitheap_alloc_region(&jit->heap, 6 + sizeof(void*), TB_PAGE_READEXECUTE);
-                thunk[0] = 0xFF; // JMP addr
+                thunk[0] = 0xFF; // jmp qword [rip]
                 thunk[1] = 0x25;
                 thunk[2] = 0x00;
                 thunk[3] = 0x00;

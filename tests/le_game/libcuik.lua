@@ -1,3 +1,5 @@
+local t = {}
+
 local ffi = require("ffi")
 local cuik_dll = ffi.load(ffi.os == "Windows" and "cuik.dll" or "cuik.so")
 
@@ -245,7 +247,7 @@ void tb_module_ready_jit(TB_JITContext* jit);
 void tb_module_end_jit(TB_JITContext* jit);
 ]]
 
-local args = ffi.new("Cuik_DriverArgs", {
+t.args = ffi.new("Cuik_DriverArgs", {
 	version = cuik_dll.CUIK_VERSION_C23,
 	target = cuik_dll.cuik_target_host(),
 	toolchain = cuik_dll.cuik_toolchain_host(),
@@ -264,7 +266,7 @@ local function compile_internal(cpp)
 
 	-- parse into AST
 	local tokens = cuik_dll.cuikpp_get_token_stream(cpp)
-	local parse_result = cuik_dll.cuikparse_run(args.version, tokens, args.target, false)
+	local parse_result = cuik_dll.cuikparse_run(t.args.version, tokens, t.args.target, false)
 	if parse_result.error_count > 0 then
 		cuik_dll.cuikdg_dump_to_stderr(tokens)
 		print("Yikes... parsing failed!")
@@ -308,37 +310,12 @@ local function compile_internal(cpp)
 	return result
 end
 
-function compile(source)
-	return compile_internal(cuik_dll.cuik_driver_preprocess_cstr(source, args, true))
+function t.compile(source)
+	return compile_internal(cuik_dll.cuik_driver_preprocess_cstr(source, t.args, true))
 end
 
-function compile_file(path)
-	return compile_internal(cuik_dll.cuik_driver_preprocess(path, args, true))
+function t.compile_file(path)
+	return compile_internal(cuik_dll.cuik_driver_preprocess(path, t.args, true))
 end
 
-test = compile[[
-
-#define _NO_CRT_STDIO_INLINE
-#include <stdio.h>
-
-int foo() {
-    printf("%d\n", 20);
-    return 16;
-}
-
-]]
-
-test.foo()
-
-
-
-
--- get the libcuik shit working *enough*
--- game project: semi top-down
---     + village
---     + sword
---     + forest
---     + we go in cave
---     + we stab
---     + we beat boss
---     + we win
+return t
