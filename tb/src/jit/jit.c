@@ -71,11 +71,33 @@ static void tb_jitheap_unlock(TB_JITHeap* c, void* ptr, size_t size) {
     }
 }
 
+static bool bitscan_n_set(uint64_t* bitmap, uint64_t block_count, size_t* out_i) {
+    uint64_t bits = *bitmap;
+    size_t k = bits ? tb_ffs64(~bits) - 1 : 0;
+    while (k + block_count <= 64) {
+        uint64_t mask = ((1ull << block_count) - 1) << k;
+        if ((bits & mask) == 0) {
+            *bitmap |= mask;
+            *out_i = k;
+            return true;
+        }
+
+        __debugbreak(); // TODO: untested
+
+        uint64_t sub = bits >> k; // new subsection of the bits we're scanning
+        k += sub ? tb_ffs64(~sub) - 1 : 0;
+    }
+
+    return false;
+}
+
 // locks memory it allocates
-static void* tb_jitheap_alloc_region(TB_JITHeap* c, size_t s, TB_MemProtect protect) {
+static void* tb_jitheap_alloc_region(TB_JITHeap* c, size_t size, TB_MemProtect protect) {
     // align to alloc granularity
-    size_t block_count = (s + 15) / 16;
+    size_t block_count = (size + 15) / 16;
     assert(block_count < 64 && "TODO: support bigger allocations");
+
+    // printf("JIT: allocate %zu blocks\n", block_count);
 
     FOREACH_N(i, 0, c->slab_count) {
         Slab* restrict s = &c->slabs[i];
@@ -94,29 +116,38 @@ static void* tb_jitheap_alloc_region(TB_JITHeap* c, size_t s, TB_MemProtect prot
 
         // find first free slot
         uint64_t* bitmap = s->used_bitmap;
+        size_t bitmap_count = (block_count + 63) / 64;
+
         size_t j = 0;
         for (; j < USED_BITMAP_COUNT; j++) {
             if (bitmap[j] != UINT64_MAX) break;
         }
 
-        // find empty bit
+        // find empty bit sequence
         assert(j != USED_BITMAP_COUNT);
         uint64_t bits = bitmap[j];
 
-        size_t k = bits ? tb_ffs64(~bits) - 1 : 0;
-        if (k + block_count > 64) {
-            // goes across uint64 chunks
-            tb_todo();
-        } else {
-            uint64_t mask = ((1ull << block_count) - 1) << k;
-            if ((bits & mask) == 0) {
-                // it's free
-                bitmap[j] |= mask;
+        size_t k;
+        if (bitscan_n_set(&bitmap[j], block_count, &k)) {
+            // printf("  alloc [%zu][%zu][%zu-%zu]\n", i, j, k, k+block_count-1);
+            return c->block + (i * SLAB_SIZE) + (j * 64 * BITMAP_GRANULARITY) + (k * BITMAP_GRANULARITY);
+        }
 
-                // printf("Allocated to [%zu][%zu]\n", i, j*64 + k);
+        if (bitmap_count == 1) {
+            // bitmap was too fragmented to fit something "small"
+            j += 1; // skip current block (we can't use it)
+
+            for (; j < USED_BITMAP_COUNT; j++) {
+                if (bitmap[j] != UINT64_MAX) break;
+            }
+
+            if (bitscan_n_set(&bitmap[j], block_count, &k)) {
+                // printf("  alloc [%zu][%zu][%zu-%zu]\n", i, j, k, k+block_count-1);
                 return c->block + (i * SLAB_SIZE) + (j * 64 * BITMAP_GRANULARITY) + (k * BITMAP_GRANULARITY);
             }
         }
+
+        tb_todo();
     }
 
     return NULL;
@@ -167,7 +198,7 @@ TB_API void* tb_module_apply_function(TB_JITContext* jit, TB_Function* f) {
         size_t actual_pos = out_f->prologue_length + p->pos;
         if (p->target->tag == TB_SYMBOL_FUNCTION || p->target->tag == TB_SYMBOL_EXTERNAL) {
             void* addr = get_proc(p->target->name);
-            printf("JIT: loaded %s (%p)\n", p->target->name, addr);
+            // printf("JIT: loaded %s (%p)\n", p->target->name, addr);
 
             ptrdiff_t rel = (intptr_t)addr - (intptr_t)dst;
             int32_t rel32 = rel;
@@ -194,7 +225,7 @@ TB_API void* tb_module_apply_function(TB_JITContext* jit, TB_Function* f) {
             TB_Global* g = (TB_Global*) p->target;
             if (g->address == NULL) {
                 // lazy init globals
-                printf("JIT: lazy init global %s\n", p->target->name ? p->target->name : "<unnamed>");
+                // printf("JIT: lazy init global %s\n", p->target->name ? p->target->name : "<unnamed>");
                 tb_module_apply_global(jit, g);
             }
 

@@ -134,6 +134,7 @@ typedef struct {
     DefIndex* active;
     size_t active_count;
 
+    uint64_t regs_to_save;
     Set used_regs[CG_REGISTER_CLASSES];
 
     // current value table
@@ -181,6 +182,7 @@ static bool fits_into_int32(uint64_t x) {
 
 static int classify_reg_class(TB_DataType dt);
 static int isel(Ctx* restrict ctx, TB_Node* n);
+static void gonna_use_reg(Ctx* restrict ctx, int reg_class, int reg_num);
 static void emit_code(Ctx* restrict ctx);
 static void patch_local_labels(Ctx* restrict ctx);
 static void resolve_stack_usage(Ctx* restrict ctx, size_t caller_usage);
@@ -723,6 +725,8 @@ static void linear_scan(Ctx* restrict ctx, TB_Function* f, DefIndex* sorted) {
             ASM printf("  \x1b[32m#   assign %s\x1b[0m\n", GPR_NAMES[reg_num]);
         }
 
+        gonna_use_reg(ctx, d->reg_class, reg_num);
+
         set_put(&ctx->used_regs[d->reg_class], reg_num);
         add_active(ctx, di);
         d->complete = true;
@@ -865,7 +869,7 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
         .code = ctx.emit.data,
         .code_size = ctx.emit.count,
         .stack_usage = ctx.stack_usage,
-        // .prologue_epilogue_metadata = ctx.regs_to_save[0],
+        .prologue_epilogue_metadata = ctx.regs_to_save,
         // .stack_slots = ctx.stack_slots
     };
 

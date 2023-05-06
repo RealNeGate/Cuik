@@ -704,6 +704,7 @@ static Cuik_QualType cuik_get_direct_type(Cuik_QualType type, int* level) {
 }
 
 CUIK_API const char* cuik_stmt_decl_name(Stmt* stmt);
+CUIK_API Cuik_Type* cuik_stmt_decl_type(Stmt* stmt);
 
 ////////////////////////////////////////////
 // Type checker

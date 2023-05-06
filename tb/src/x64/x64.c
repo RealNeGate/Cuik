@@ -465,6 +465,12 @@ static Cond isel_cmp(Ctx* restrict ctx, TB_Node* n) {
     return NE;
 }
 
+static void gonna_use_reg(Ctx* restrict ctx, int reg_class, int reg_num) {
+    // mark register as to be saved
+    bool is_sysv = (ctx->target_abi == TB_ABI_SYSTEMV);
+    ctx->regs_to_save |= (1u << reg_num) & (is_sysv ? SYSV_ABI_CALLEE_SAVED : WIN64_ABI_CALLEE_SAVED);
+}
+
 static int isel(Ctx* restrict ctx, TB_Node* n) {
     ptrdiff_t search = nl_map_get(ctx->values, n);
     if (search >= 0) {
