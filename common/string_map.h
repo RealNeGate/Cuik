@@ -138,7 +138,7 @@ typedef struct {
 } NL_StrmapHeader;
 
 #ifndef NL_STRING_MAP_INLINE
-NL_API NL_Strmap__Insert nl_strmap__insert(void* map, NL_Slice key, size_t value_type_size);
+NL_API NL_StrmapInsert nl_strmap__insert(void* map, NL_Slice key, size_t value_type_size);
 NL_API ptrdiff_t nl_strmap__insert2(void** map, NL_Slice key, size_t value_type_size);
 NL_API ptrdiff_t nl_strmap__get(NL_StrmapHeader* restrict table, NL_Slice key);
 NL_API void nl_strmap__clear(NL_StrmapHeader* restrict table);

@@ -69,8 +69,8 @@ typedef enum Cuik_TypeKind {
     KIND_UNION,
     KIND_VECTOR,
 
-    // __declspec(align(N)) or _Alignas(N)
-    KIND_ALIGNED,
+    // used when the type isn't resolved so we shouldn't clone it just yet
+    KIND_CLONE,
 
     // these are inferred as typedefs but don't map to anything yet
     KIND_PLACEHOLDER,
@@ -143,7 +143,6 @@ struct Cuik_Type {
     int align; // _Alignof
     SourceRange loc;
 
-    Cuik_Type* based;
     Atom also_known_as;
 
     #ifdef CUIK_USE_TB
@@ -154,7 +153,6 @@ struct Cuik_Type {
 
     // used by cycle checking
     bool is_complete : 1;
-    bool is_visited  : 1;
     bool is_progress : 1;
 
     union {
@@ -172,8 +170,8 @@ struct Cuik_Type {
         };
 
         struct {
-            Cuik_Type* base;
-        } aligned_on;
+            Cuik_Type* of;
+        } clone;
 
         // Pointers
         struct {
@@ -192,11 +190,14 @@ struct Cuik_Type {
         } func;
 
         // Structs/Unions
-        struct {
+        struct Cuik_TypeRecord {
             Atom name;
 
             int kid_count;
             Member* kids;
+
+            // this is the one used in type comparisons
+            Cuik_Type* nominal;
         } record;
 
         // Enumerators
@@ -212,13 +213,16 @@ struct Cuik_Type {
             Cuik_Type* base;
         } vector_;
 
-        // Cuik_Typeof
+        // Typeof
         struct {
             Expr* src;
         } typeof_;
 
         struct {
             Atom name;
+
+            // if non-NULL we've got a linked list to walk :)
+            Cuik_Type* next;
         } placeholder;
     };
 } __attribute__((aligned(16)));
@@ -401,8 +405,8 @@ struct Stmt {
         // Used by the backend for backend-y things
         union {
             #ifdef CUIK_USE_TB
-            TB_Reg r;
-            TB_Label l;
+            TB_Node* r;
+            TB_Node* loop[2];
             TB_Function* f;
             TB_Symbol* s;
             TB_Global* g;
@@ -698,6 +702,9 @@ static Cuik_QualType cuik_get_direct_type(Cuik_QualType type, int* level) {
     if (level != NULL) *level = l;
     return type;
 }
+
+CUIK_API const char* cuik_stmt_decl_name(Stmt* stmt);
+CUIK_API Cuik_Type* cuik_stmt_decl_type(Stmt* stmt);
 
 ////////////////////////////////////////////
 // Type checker

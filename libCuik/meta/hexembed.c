@@ -6,10 +6,15 @@
 #include <stdlib.h>
 #include <string.h>
 
-int main(int argc, char *argv[]) {
-    if (argc < 3) {printf("Usage:\n\thexembed <output> <filename>\n"); return 1;}
+#define OUTPUT_PATH "libCuik/freestanding.c"
 
-    FILE* out = fopen(argv[1], "wb");
+int main(int argc, char *argv[]) {
+    if (argc < 2) {
+        printf("Usage:\n\thexembed <inputs>\n");
+        return 1;
+    }
+
+    FILE* out = fopen(OUTPUT_PATH, "wb");
     fprintf(out, "typedef struct InternalFile InternalFile;\n");
     fprintf(out, "struct InternalFile {\n");
     fprintf(out, "    InternalFile* next;\n");
@@ -18,7 +23,7 @@ int main(int argc, char *argv[]) {
     fprintf(out, "    char data[];\n");
     fprintf(out, "};\n");
 
-    for (int i = 2; i < argc; i++) {
+    for (int i = 1; i < argc; i++) {
         const char *fname = argv[i];
         FILE *fp = fopen(fname, "rb");
         if (!fp) {
@@ -36,7 +41,7 @@ int main(int argc, char *argv[]) {
         memset(b+fsize, 0, 16);
         fclose(fp);
 
-        int file_index = i - 2;
+        int file_index = i - 1;
         fprintf(out, "InternalFile cuik__ifiles%d = {\n", file_index);
         if (file_index) {
             fprintf(out, "    .next = &cuik__ifiles%d,\n", file_index - 1);
@@ -50,7 +55,7 @@ int main(int argc, char *argv[]) {
         fprintf(out, "\n    }\n};\n\n");
         free(b);
     }
-    fprintf(out, "InternalFile* cuik__ifiles_root = &cuik__ifiles%d;\n", argc-3);
+    fprintf(out, "InternalFile* cuik__ifiles_root = &cuik__ifiles%d;\n", argc-2);
     fclose(out);
     return 0;
 }

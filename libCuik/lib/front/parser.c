@@ -5,12 +5,8 @@
 //   statement, basically just find the semicolon and head out :p
 //
 //   - ugly ass code
-//
-//   - make the expect(...) code be a little smarter, if it knows that it's expecting
-//   a token for a specific operation... tell the user
 #include "parser.h"
-#include "../pp_map.h"
-#include <targets/targets.h>
+#include "../targets/targets.h"
 
 // winnt.h loves including garbage
 #undef VOID
@@ -66,12 +62,6 @@ thread_local static Stmt* current_continuable;
 thread_local static Expr* symbol_chain_start;
 thread_local static Expr* symbol_chain_current;
 
-// we allocate nodes from here but once the threaded parsing stuff is complete we'll stitch this
-// to the original AST arena so that it may be freed later
-thread_local static Arena local_ast_arena;
-thread_local static bool out_of_order_mode;
-
-static void expect(TranslationUnit* tu, TokenStream* restrict s, char ch);
 static bool expect_char(TokenStream* restrict s, char ch);
 static bool expect_closing_paren(TokenStream* restrict s, SourceLoc opening);
 static bool expect_with_reason(TokenStream* restrict s, char ch, const char* reason);
@@ -90,12 +80,8 @@ static Decl parse_declarator(TranslationUnit* restrict tu, TokenStream* restrict
 // It's like parse_expr but it doesn't do anything with comma operators to avoid
 // parsing issues.
 static Expr* parse_initializer(TranslationUnit* tu, TokenStream* restrict s, Cuik_QualType type);
-
 static bool is_typename(Cuik_GlobalSymbols* syms, TokenStream* restrict s);
-
 static _Noreturn void generic_error(TranslationUnit* tu, TokenStream* restrict s, const char* msg);
-
-static int type_cycles_dfs(TokenStream* restrict s, Cuik_Type* type);
 
 // Usage:
 //  LOCAL_SCOPE {
@@ -187,6 +173,12 @@ static size_t skip_expression_in_enum(TokenStream* restrict s, TknType* out_term
     return saved;
 }
 
+// potential typedef conflicts
+typedef struct TypeConflict {
+    struct TypeConflict* next;
+    Symbol *old_def, *new_def;
+} TypeConflict;
+
 struct Cuik_Parser {
     Cuik_ParseVersion version;
     TokenStream tokens;
@@ -195,6 +187,7 @@ struct Cuik_Parser {
     // this refers to the `int` type, it comes from the target
     // but it's more convenient to access it from here.
     Cuik_Type* default_int;
+    int pointer_byte_size;
 
     //  generated from #pragma comment(lib, "somelib.lib")
     // it's a linked list
@@ -210,6 +203,9 @@ struct Cuik_Parser {
     DynArray(Stmt*) top_level_stmts;
     Cuik_TypeTable types;
     Cuik_GlobalSymbols globals;
+
+    Cuik_Type* first_placeholder;
+    TypeConflict* first_conflict;
 
     NL_Strmap(Diag_UnresolvedSymbol*) unresolved_symbols;
 
@@ -265,56 +261,17 @@ static Cuik_Type* find_tag(Cuik_Parser* restrict parser, const char* name, bool*
 }
 
 #define THROW_IF_ERROR() if ((r = cuikdg_error_count(s)) > 0) return (Cuik_ParseResult){ r };
+#define TYPE_INSERT(...) type_insert(&parser->types, __VA_ARGS__)
+#define TYPE_INTERN(...) type_intern(&parser->types, __VA_ARGS__)
+
 #include "expr_parser.h"
 #include "decl_parser.h"
-#include "glsl_parser.h"
 #include "stmt_parser.h"
 #include "top_level_parser.h"
 #include "ast_optimizer.h"
 
-// 0 no cycles
-// 1 cycles
-// 2 cycles and we gave an error msg
-static int type_cycles_dfs(TokenStream* restrict s, Cuik_Type* type) {
-    // non-record types are always finished :P
-    if (type->kind != KIND_STRUCT && type->kind != KIND_UNION) {
-        return 0;
-    }
-
-    if (type->is_complete) {
-        return 0;
-    }
-
-    // if (visited[o]) return true
-    if (type->is_visited) {
-        return 1;
-    }
-
-    type->is_visited = true;
-
-    // for each m in members
-    //   if (dfs(m)) return true
-    for (size_t i = 0; i < type->record.kid_count; i++) {
-        int c = type_cycles_dfs(s, cuik_canonical_type(type->record.kids[i].type));
-        if (c) {
-            // we already gave an error message, don't be redundant
-            if (c != 2) {
-                const char* name = type->record.name ? (const char*)type->record.name : "<unnamed>";
-
-                diag_err(s, type->loc, "type %s has cycles", name);
-                diag_note(s, type->record.kids[i].loc, "see here");
-            }
-
-            return 2;
-        }
-    }
-
-    type->is_complete = true;
-    return 0;
-}
-
-void type_layout(TranslationUnit* restrict tu, Cuik_Type* type, bool needs_complete) {
-    if (type->kind == KIND_VOID || type->size != 0) return;
+void type_layout(TranslationUnit* restrict tu, Cuik_Type* type) {
+    if (type->is_complete) return;
     if (type->is_progress) {
         diag_err(&tu->tokens, type->loc, "Type has a circular dependency");
         return;
@@ -330,7 +287,7 @@ void type_layout(TranslationUnit* restrict tu, Cuik_Type* type, bool needs_compl
         // layout crap
         if (type->array_count != 0) {
             if (cuik_canonical_type(type->array_of)->size == 0) {
-                type_layout(tu, cuik_canonical_type(type->array_of), true);
+                type_layout(tu, cuik_canonical_type(type->array_of));
             }
 
             if (cuik_canonical_type(type->array_of)->size == 0) {
@@ -369,7 +326,7 @@ void type_layout(TranslationUnit* restrict tu, Cuik_Type* type, bool needs_compl
             if (cuik_canonical_type(member->type)->kind == KIND_FUNC) {
                 diag_err(&tu->tokens, type->loc, "cannot put function types into a struct, try a function pointer");
             } else {
-                type_layout(tu, cuik_canonical_type(member->type), true);
+                type_layout(tu, cuik_canonical_type(member->type));
             }
 
             Cuik_Type* member_type = cuik_canonical_type(member->type);
@@ -426,8 +383,8 @@ void type_layout(TranslationUnit* restrict tu, Cuik_Type* type, bool needs_compl
     type->is_progress = false;
 }
 
-void type_layout2(Cuik_Parser* parser, Cuik_Type* type, bool needs_complete) {
-    if (type->kind == KIND_VOID || type->size != 0) return;
+void type_layout2(Cuik_Parser* parser, Cuik_Type* type) {
+    if (type->is_complete) return;
     if (type->is_progress) {
         diag_err(&parser->tokens, type->loc, "Type has a circular dependency");
         return;
@@ -435,19 +392,25 @@ void type_layout2(Cuik_Parser* parser, Cuik_Type* type, bool needs_complete) {
 
     type->is_progress = true;
 
-    if (type->kind == KIND_ARRAY) {
+    if (type->kind == KIND_CLONE) {
+        type_layout2(parser, type->clone.of);
+
+        Atom name = type->also_known_as;
+        *type = *type->clone.of;
+        type->also_known_as = name;
+    } else if (type->kind == KIND_ARRAY) {
         if (type->array_count_lexer_pos) {
             // run mini parser for array count
             TokenStream mini_lex = parser->tokens;
             mini_lex.list.current = type->array_count_lexer_pos;
-            type->array_count = parse_const_expr2(parser, &mini_lex);
+            type->array_count = parse_const_expr(parser, &mini_lex);
             expect_char(&mini_lex, ']');
         }
 
         // layout crap
         if (type->array_count != 0) {
             if (cuik_canonical_type(type->array_of)->size == 0) {
-                type_layout2(parser, cuik_canonical_type(type->array_of), true);
+                type_layout2(parser, cuik_canonical_type(type->array_of));
             }
 
             if (cuik_canonical_type(type->array_of)->size == 0) {
@@ -476,7 +439,7 @@ void type_layout2(Cuik_Parser* parser, Cuik_Type* type, bool needs_complete) {
                 TokenStream mini_lex = parser->tokens;
                 mini_lex.list.current = type->enumerator.entries[i].lexer_pos;
 
-                cursor = parse_const_expr2(parser, &mini_lex);
+                cursor = parse_const_expr(parser, &mini_lex);
                 type->enumerator.entries[i].lexer_pos = 0;
             }
 
@@ -505,7 +468,7 @@ void type_layout2(Cuik_Parser* parser, Cuik_Type* type, bool needs_complete) {
             if (cuik_canonical_type(member->type)->kind == KIND_FUNC) {
                 diag_err(&parser->tokens, type->loc, "cannot put function types into a struct, try a function pointer");
             } else {
-                type_layout2(parser, cuik_canonical_type(member->type), true);
+                type_layout2(parser, cuik_canonical_type(member->type));
             }
 
             Cuik_Type* member_type = cuik_canonical_type(member->type);
@@ -575,6 +538,7 @@ void* cuik_get_translation_unit_user_data(TranslationUnit* restrict tu) {
 void cuik_destroy_translation_unit(TranslationUnit* restrict tu) {
     dyn_array_destroy(tu->top_level_stmts);
 
+    nl_strmap_free(tu->globals.symbols);
     arena_free(&tu->ast_arena);
     free_type_table(&tu->types);
     mtx_destroy(&tu->arena_mutex);
@@ -623,17 +587,6 @@ static _Noreturn void generic_error(TranslationUnit* tu, TokenStream* restrict s
 
     report(REPORT_ERROR, s, loc, msg);
     abort();
-}
-
-static void expect(TranslationUnit* tu, TokenStream* restrict s, char ch) {
-    if (tokens_get(s)->type != ch) {
-        Token* t = tokens_get(s);
-        SourceLoc loc = tokens_get_location(s);
-
-        diag_err(s, (SourceRange){ loc, loc }, "expected '%c', got '%.*s'", ch, (int)t->content.length, t->content.data);
-    } else {
-        tokens_next(s);
-    }
 }
 
 static bool expect_closing_paren(TokenStream* restrict s, SourceLoc opening) {

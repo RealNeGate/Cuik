@@ -1,6 +1,4 @@
-#include <zip/zip.h>
-#include <front/atoms.h>
-#include <file_map.h>
+#include "../front/atoms.h"
 
 typedef struct InternalFile InternalFile;
 struct InternalFile {
@@ -134,7 +132,7 @@ static uint32_t fnv1a(size_t len, const void *key) {
 static struct R_get_file_in_zip {
     OpenZipFile* zip;
     int index;
-} get_file_in_zip(Cuikpp_Packet* packet, const char* og_path, const char* path) {
+} get_file_in_zip(const char* og_path, const char* path) {
     // we do a little trolling... essentially the windows file system is SOOOO BADD
     // that using a fucking ZIP file to store my stuff is not even that bad of an idea.
     char tmp[FILENAME_MAX];
@@ -169,7 +167,6 @@ static struct R_get_file_in_zip {
             open_zip->file_map = open_file_map(open_zip->path);
             open_zip->zip = zip_stream_open(open_zip->file_map.data, open_zip->file_map.size, 0, 'r');
             if (open_zip->zip == NULL) {
-                packet->query.found = false;
                 return (struct R_get_file_in_zip){ .index = -1 };
             }
         }
@@ -220,107 +217,6 @@ InternalFile* find_internal_file(const char* name) {
     return NULL;
 }
 
-// cache is NULLable and if so it won't use it
-bool cuikpp_default_packet_handler(Cuik_CPP* ctx, Cuikpp_Packet* packet) {
-    if (packet->tag == CUIKPP_PACKET_GET_FILE) {
-        const char* og_path = packet->file.input_path;
-
-        // check if it's in the freestanding header directory
-        if (strncmp(og_path, "$cuik", 5) == 0 && (og_path[5] == '/' || og_path[5] == '\\')) {
-            InternalFile* f = find_internal_file(og_path + 6);
-            if (f) {
-                packet->file.length = f->size;
-                packet->file.data = f->data;
-                return true;
-            }
-        }
-
-        const char* path = og_path;
-        while (*path) {
-            PathPieceType t;
-            path = read_path(&t, path);
-
-            if (t == PATH_ZIP) {
-                CUIK_TIMED_BLOCK("zip_read") {
-                    struct R_get_file_in_zip r = get_file_in_zip(packet, og_path, path);
-                    assert(r.index >= 0);
-
-                    struct zip_t* zip = r.zip->zip;
-                    zip_entry_openbyindex(zip, r.index);
-
-                    size_t size = zip_entry_size(zip);
-                    void* buf = cuik__valloc(size + 16);
-                    CUIK_TIMED_BLOCK("zip_entry_noallocread") {
-                        zip_entry_noallocread(zip, (void*) buf, size);
-                    }
-
-                    zip_entry_close(zip);
-                    CUIK_TIMED_BLOCK("cuiklex_canonicalize") {
-                        cuiklex_canonicalize(size, buf);
-                    }
-                    packet->file.length = size;
-                    packet->file.data = buf;
-                }
-
-                return true;
-            }
-        }
-
-        LoadResult file;
-        CUIK_TIMED_BLOCK("get_file") {
-            file = get_file(packet->file.input_path);
-        }
-
-        CUIK_TIMED_BLOCK("cuiklex_canonicalize") {
-            cuiklex_canonicalize(file.length, file.data);
-        }
-
-        packet->file.length = file.length;
-        packet->file.data = file.data;
-        return true;
-    } else if (packet->tag == CUIKPP_PACKET_QUERY_FILE) {
-        const char* og_path = packet->file.input_path;
-
-        // check if it's in the freestanding header directory
-        if (strncmp(og_path, "$cuik", 5) == 0 && (og_path[5] == '/' || og_path[5] == '\\')) {
-            const InternalFile* f = find_internal_file(og_path + 6);
-            packet->query.found = (f != NULL);
-            return true;
-        }
-
-        // find out if the path has a zip in it
-        // TODO(NeGate): we don't handle recursive zips yet, pl0x fix
-        const char* path = og_path;
-        while (*path) {
-            PathPieceType t;
-            path = read_path(&t, path);
-            if (t == PATH_ZIP) {
-                packet->query.found = (get_file_in_zip(packet, og_path, path).index >= 0);
-                return true;
-            }
-        }
-
-        #ifdef _WIN32
-        packet->query.found = (GetFileAttributesA(packet->query.input_path) != INVALID_FILE_ATTRIBUTES);
-        #else
-        struct stat buffer;
-        packet->query.found = (stat(packet->query.input_path, &buffer) == 0);
-        #endif
-
-        return true;
-    } else if (packet->tag == CUIKPP_PACKET_CANONICALIZE) {
-        const char* og_path = packet->canonicalize.input_path;
-        if (strncmp(og_path, "$cuik", 5) == 0 && (og_path[5] == '/' || og_path[5] == '\\')) {
-            strcpy(packet->canonicalize.output_path, og_path);
-            return true;
-        }
-
-        return cuik_canonicalize_path(packet->canonicalize.output_path, og_path);
-    } else {
-        return false;
-    }
-}
-
 bool cuik_canonicalize_path(char output[FILENAME_MAX], const char* input) {
     #ifdef _WIN32
     char* filepart;
@@ -342,6 +238,104 @@ bool cuik_canonicalize_path(char output[FILENAME_MAX], const char* input) {
     #else
     return realpath(input, output) != NULL;
     #endif
+}
+
+CUIK_API bool cuikpp_locate_file(void* user_data, const char* input_path, char output_path[]) {
+    if (strncmp(input_path, "$cuik", 5) == 0 && (input_path[5] == '/' || input_path[5] == '\\')) {
+        InternalFile* f = find_internal_file(input_path + 6);
+        if (f) {
+            strncpy(output_path, input_path, FILENAME_MAX);
+            return true;
+        } else {
+            return false;
+        }
+    }
+
+    const char* path = input_path;
+    while (*path) {
+        PathPieceType t;
+        path = read_path(&t, path);
+        if (t == PATH_ZIP) {
+            strncpy(output_path, input_path, FILENAME_MAX);
+            return get_file_in_zip(input_path, path).index >= 0;
+        }
+    }
+
+    #ifdef _WIN32
+    bool found = GetFileAttributesA(input_path) != INVALID_FILE_ATTRIBUTES;
+    #else
+    struct stat buffer;
+    bool found = stat(input_path, &buffer) == 0;
+    #endif
+
+    if (found) cuik_canonicalize_path(output_path, input_path);
+    return found;
+}
+
+CUIK_API bool cuikpp_default_fs(void* user_data, const char* og_path, Cuik_FileResult* out_result) {
+    // check if it's in the freestanding header directory
+    if (og_path == MAGIC_EMPTY_STRING) {
+        if (user_data == NULL) return false;
+
+        String source = *(String*) user_data;
+
+        // allocate proper buffer for source
+        char* buffer = cuik__valloc(source.length + 16);
+        memcpy(buffer, source.data, source.length);
+        memset(buffer + source.length, 0, 16);
+
+        cuiklex_canonicalize(source.length, buffer);
+
+        out_result->length = source.length;
+        out_result->data = buffer;
+        return true;
+    } else if (strncmp(og_path, "$cuik", 5) == 0 && (og_path[5] == '/' || og_path[5] == '\\')) {
+        InternalFile* f = find_internal_file(og_path + 6);
+        if (!f) return false;
+
+        out_result->length = f->size;
+        out_result->data = f->data;
+        return true;
+    }
+
+    const char* path = og_path;
+    while (*path) {
+        PathPieceType t;
+        path = read_path(&t, path);
+
+        if (t == PATH_ZIP) {
+            CUIK_TIMED_BLOCK("zip_read") {
+                struct R_get_file_in_zip r = get_file_in_zip(og_path, path);
+                assert(r.index >= 0);
+
+                struct zip_t* zip = r.zip->zip;
+                zip_entry_openbyindex(zip, r.index);
+
+                size_t size = zip_entry_size(zip);
+                void* buf = cuik__valloc(size + 16);
+                CUIK_TIMED_BLOCK("zip_entry_noallocread") {
+                    zip_entry_noallocread(zip, (void*) buf, size);
+                }
+
+                zip_entry_close(zip);
+                cuiklex_canonicalize(size, buf);
+
+                out_result->length = size;
+                out_result->data = buf;
+            }
+
+            return true;
+        }
+    }
+
+    LoadResult file = get_file(og_path);
+    if (!file.found) {
+        return false;
+    }
+
+    out_result->length = file.length;
+    out_result->data = file.data;
+    return true;
 }
 
 void cuiklex_canonicalize(size_t length, char* data) {

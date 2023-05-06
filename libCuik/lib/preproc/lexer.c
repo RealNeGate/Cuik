@@ -55,6 +55,7 @@ static const char keywords[][16] = {
     "_Atomic",
     "_Bool",
     "_Complex",
+    "_Embed",
     "_Generic",
     "_Imaginary",
     "_Pragma",
@@ -82,7 +83,7 @@ static uint64_t hash_with_len(const void* data, size_t len) {
     return h;
 }
 
-TknType classify_ident(const unsigned char* restrict str, size_t len) {
+static TknType classify_ident(const unsigned char* restrict str, size_t len) {
     // Auto-generated with this small C program (MAKE SURE TO UPDATE THE
     // KEYWORDS ARRAY AND TOKEN TYPES)
     //
@@ -97,10 +98,11 @@ TknType classify_ident(const unsigned char* restrict str, size_t len) {
         [12] = 24 /* sizeof */, [234] = 25 /* static */, [43] = 26 /* struct */, [72] = 27 /* switch */,
         [137] = 28 /* typedef */, [232] = 29 /* union */, [93] = 30 /* unsigned */, [10] = 31 /* void */,
         [155] = 32 /* volatile */, [44] = 33 /* while */, [91] = 34 /* _Alignas */, [15] = 35 /* _Alignof */,
-        [131] = 36 /* _Atomic */, [36] = 37 /* _Bool */, [118] = 38 /* _Complex */, [60] = 39 /* _Generic */,
-        [185] = 40 /* _Imaginary */, [121] = 41 /* _Pragma */, [240] = 42 /* _Noreturn */, [144] = 43 /* _Static_assert */,
-        [174] = 44 /* _Thread_local */, [130] = 45 /* _Typeof */, [150] = 46 /* _Vector */, [61] = 47 /* __asm__ */,
-        [125] = 48 /* __attribute__ */, [22] = 49 /* __cdecl */, [181] = 50 /* __stdcall */, [235] = 51 /* __declspec */,
+        [131] = 36 /* _Atomic */, [36] = 37 /* _Bool */, [118] = 38 /* _Complex */, [47] = 39 /* _Embed */,
+        [60] = 40 /* _Generic */, [185] = 41 /* _Imaginary */, [121] = 42 /* _Pragma */, [240] = 43 /* _Noreturn */,
+        [144] = 44 /* _Static_assert */, [174] = 45 /* _Thread_local */, [130] = 46 /* _Typeof */, [150] = 47 /* _Vector */,
+        [61] = 48 /* __asm__ */, [125] = 49 /* __attribute__ */, [22] = 50 /* __cdecl */, [181] = 51 /* __stdcall */,
+        [235] = 52 /* __declspec */,
     };
     size_t v = (hash_with_len(str, len) * PERFECT_HASH_SEED) >> 56;
     v = values[v];
@@ -196,7 +198,7 @@ static unsigned char* slow_identifier_lexing(Lexer* restrict l, unsigned char* c
 // NOTE(NeGate): The input string has a fat null terminator of 16bytes to allow
 // for some optimizations overall, one of the important ones is being able to read
 // a whole 16byte SIMD register at once for any SIMD optimizations.
-Token lexer_read(Lexer* restrict l) {
+static Token lexer_read(Lexer* restrict l) {
     unsigned char* current = l->current;
     Token t = { 0 };
 
@@ -222,7 +224,7 @@ Token lexer_read(Lexer* restrict l) {
             current += 1;
             #else
             // SIMD space skip
-            __m128i chars = _mm_loadu_si128((__m128i*)current);
+            __m128i chars = _mm_loadu_si128((__m128i*) current);
             int len = __builtin_ffs(~_mm_movemask_epi8(_mm_cmpeq_epi8(chars, _mm_set1_epi8(' '))));
             current += len - 1;
             #endif
@@ -337,7 +339,6 @@ Token lexer_read(Lexer* restrict l) {
         case DFA_STRING: {
             char quote_type = current[-1];
 
-            #if !USE_INTRIN
             for (; *current && *current != quote_type; current++) {
                 // skip escape codes
                 if (*current == '\\') {
@@ -350,35 +351,6 @@ Token lexer_read(Lexer* restrict l) {
             }
 
             current += 1;
-            #else
-            __m128i pattern = _mm_set1_epi8(quote_type);
-
-            do {
-                __m128i bytes = _mm_loadu_si128((__m128i*)current);
-
-                // strings either end at the quote or are cut off early via a
-                // newline unless you put a backslash-newline joiner.
-                __m128i test_quote = _mm_cmpeq_epi8(bytes, pattern);
-                __m128i test_newline = _mm_cmpeq_epi8(bytes, _mm_set1_epi8('\n'));
-                __m128i test = _mm_or_si128(test_quote, test_newline);
-                int len = __builtin_ffs(_mm_movemask_epi8(test));
-
-                if (len) {
-                    current += len;
-
-                    // backslash join
-                    if (current[-1] == '\n' && current[-2] == '\\') continue;
-
-                    // escape + quote like \"
-                    if (current[-1] == quote_type && current[-2] == '\\' && current[-3] != '\\') continue;
-
-                    break;
-                } else {
-                    current += 16;
-                }
-            } while (*current);
-            #endif
-
             t.type = quote_type;
 
             if (start[0] == 'L') {
@@ -450,7 +422,7 @@ Token lexer_read(Lexer* restrict l) {
     return t;
 }
 
-uint64_t parse_int(size_t len, const char* str, Cuik_IntSuffix* out_suffix) {
+static uint64_t parse_int(size_t len, const char* str, Cuik_IntSuffix* out_suffix) {
     char* end;
     uint64_t i = strtoull(str, &end, 0);
 
@@ -504,7 +476,7 @@ uint64_t parse_int(size_t len, const char* str, Cuik_IntSuffix* out_suffix) {
     return i;
 }
 
-ptrdiff_t parse_char(size_t len, const char* str, int* output) {
+static ptrdiff_t parse_char(size_t len, const char* str, int* output) {
     if (str[0] != '\\') {
         *output = str[0];
         return 1;

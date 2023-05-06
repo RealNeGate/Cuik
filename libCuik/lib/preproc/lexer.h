@@ -54,6 +54,10 @@ typedef enum TknType {
     TOKEN_IDENTIFIER = 256,
     TOKEN_INTEGER,
     TOKEN_FLOAT,
+
+    // it's like a string literal but no quotes
+    TOKEN_MAGIC_EMBED_STRING,
+
     TOKEN_TRIPLE_DOT = TKN3('.', '.', '.'),
 
     TOKEN_INVALID,
@@ -130,6 +134,7 @@ typedef enum TknType {
     TOKEN_KW_Atomic,
     TOKEN_KW_Bool,
     TOKEN_KW_Complex,
+    TOKEN_KW_Embed,
     TOKEN_KW_Generic,
     TOKEN_KW_Imaginary,
     TOKEN_KW_Pragma,

@@ -25,7 +25,7 @@ void x64_emit_win64eh_unwind_info(TB_Emitter* e, TB_FunctionOutput* out_f, uint6
             { .code_offset = 1, .unwind_op = UNWIND_OP_PUSH_NONVOL, .op_info = RBP },
         };
         tb_outs(e, sizeof(codes), codes);
-        code_count += 3;
+        code_count += 1;
     }
 
     tb_patch1b(e, patch_pos + offsetof(UnwindInfo, code_count), code_count);

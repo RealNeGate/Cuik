@@ -1,81 +1,123 @@
 #include <threads.h>
 #include "parser.h"
-#include <targets/targets.h>
+#include "../targets/targets.h"
 
 Cuik_Type cuik__builtin_void = { KIND_VOID,  0, 0, .is_complete = true };
 Cuik_Type cuik__builtin_bool = { KIND_BOOL,  1, 1, .is_complete = true };
 Cuik_Type cuik__builtin_float  = { KIND_FLOAT,  4, 4, .is_complete = true };
 Cuik_Type cuik__builtin_double = { KIND_DOUBLE, 8, 8, .is_complete = true };
 
+// we allocate nodes from here but once the threaded parsing stuff is complete we'll stitch this
+// to the original AST arena so that it may be freed later
+thread_local static Arena local_ast_arena;
+
 Cuik_TypeTable init_type_table(Cuik_Target* target) {
     Cuik_TypeTable t = { 0 };
     t.target = target;
-    mtx_init(&t.mutex, mtx_plain);
+    t.exp = 16;
+    t.table = cuik__valloc((1u << t.exp) * sizeof(Cuik_Type*));
     return t;
 }
 
 void free_type_table(Cuik_TypeTable* types) {
-    Cuik_TypeTableSegment* s = types->base;
-    while (s != NULL) {
-        Cuik_TypeTableSegment* next = s->next;
-        cuik__vfree(s, sizeof(Cuik_TypeTableSegment) + (sizeof(Cuik_Type) * CUIK_TYPE_TABLE_SEGMENT_COUNT));
-        s = next;
-    }
-
-    types->base = types->top = NULL;
+    cuik__vfree(types->table, (1u << types->exp) * sizeof(Cuik_Type*));
 }
 
-static Cuik_Type* alloc_type(Cuik_TypeTable* types, const Cuik_Type* src) {
-    Cuik_Type* t = NULL;
-    mtx_lock(&types->mutex);
-    Cuik_TypeTableSegment* top = types->top;
-    if (top != NULL && top->count < CUIK_TYPE_TABLE_SEGMENT_COUNT) {
-        t = &top->_[top->count++];
-    } else {
-        Cuik_TypeTableSegment* s = cuik__valloc(sizeof(Cuik_TypeTableSegment) + (sizeof(Cuik_Type) * CUIK_TYPE_TABLE_SEGMENT_COUNT));
-        s->count = 1;
+// this is used for primitives types such that they're not allocating new slots
+static void type_insert(Cuik_TypeTable* types, Cuik_Type* src) {
+    assert(((uintptr_t)src & CUIK_QUAL_FLAG_BITS) == 0);
 
-        // Insert to top of nodes
-        if (types->top) {
-            types->top->next = s;
-        } else {
-            types->base = s;
+    // check for interning
+    uint32_t mask = (1 << types->exp) - 1;
+    uint32_t hash = murmur3_32(src, sizeof(Cuik_Type));
+    for (size_t i = hash;;) {
+        // hash table lookup
+        uint32_t step = (hash >> (32 - types->exp)) | 1;
+        i = (i + step) & mask;
+
+        if (types->table[i] == NULL) {
+            // empty slot
+            assert(types->count <= mask && "how tf did you run out now?");
+
+            types->count++;
+            types->table[i] = src;
+            break;
+        } else if (memcmp(src, types->table[i], sizeof(Cuik_Type)) == 0) {
+            types->table[i] = src;
+            break;
         }
-        types->top = s;
-        t = &s->_[0];
     }
-    mtx_unlock(&types->mutex);
-
-    memcpy(t, src, sizeof(Cuik_Type));
-    return t;
 }
 
-Cuik_Type* cuik__new_enum(Cuik_TypeTable* types) {
-    return alloc_type(types, &(Cuik_Type){
-            .kind = KIND_ENUM,
-        });
+static Cuik_Type* type_intern(Cuik_TypeTable* types, const Cuik_Type* src) {
+    Cuik_Type* result = NULL;
+
+    // check for interning
+    uint32_t mask = (1 << types->exp) - 1;
+    uint32_t hash = murmur3_32(src, sizeof(Cuik_Type));
+
+    for (size_t i = hash;;) {
+        // hash table lookup
+        uint32_t step = (hash >> (32 - types->exp)) | 1;
+        i = (i + step) & mask;
+
+        Cuik_Type* entry = types->table[i];
+        if (entry == NULL) {
+            // empty slot
+            if (types->count > mask) {
+                printf("Type arena: out of memory!\n");
+                abort();
+            }
+
+            result = arena_alloc(&local_ast_arena, sizeof(Cuik_Type), 16);
+            *result = *src;
+
+            assert(((uintptr_t)result & CUIK_QUAL_FLAG_BITS) == 0);
+
+            types->count++;
+            types->table[i] = result;
+            break;
+        } else if (src->kind == KIND_PLACEHOLDER && entry->kind == KIND_PLACEHOLDER && src->placeholder.name == entry->placeholder.name) {
+            result = types->table[i];
+            break;
+        } else if (memcmp(src, entry, sizeof(Cuik_Type)) == 0) {
+            result = types->table[i];
+            break;
+        }
+    }
+
+    return result;
 }
 
-Cuik_Type* cuik__new_func(Cuik_TypeTable* types) {
-    return alloc_type(types, &(Cuik_Type){
-            .kind = KIND_FUNC,
-            .size = 1,
-            .align = 1,
-        });
+// this isn't placed into the type table just yet, it will be later on via type_insert
+static Cuik_Type* type_placeholder(Cuik_TypeTable* types) {
+    return arena_alloc(&local_ast_arena, sizeof(Cuik_Type), 16);
 }
 
-Cuik_Type* new_aligned_type(Cuik_TypeTable* types, Cuik_Type* base) {
-    return alloc_type(types, base);
-}
+static Cuik_Type* type_clone(Cuik_TypeTable* types, Cuik_Type* src, Atom new_name) {
+    if (!src->is_complete) {
+        Cuik_Type cloned = {
+            .kind = KIND_CLONE,
+            .loc = src->loc,
+            .also_known_as = new_name,
+            .clone.of = src
+        };
 
-Cuik_Type* cuik__new_record(Cuik_TypeTable* types, bool is_union) {
-    return alloc_type(types, &(Cuik_Type){
-            .kind = is_union ? KIND_UNION : KIND_STRUCT,
-        });
+        return type_intern(types, &cloned);
+    }
+
+    Cuik_Type cloned = *src;
+    cloned.also_known_as = new_name;
+    if (src->kind == KIND_STRUCT || src->kind == KIND_UNION) {
+        cloned.record.nominal = src->record.nominal;
+    }
+
+    return type_intern(types, &cloned);
 }
 
 Cuik_Type* cuik__new_pointer(Cuik_TypeTable* types, Cuik_QualType base) {
-    return alloc_type(types, &(Cuik_Type){
+    // TODO(NeGate): this code depends on pointers being 8bytes, plz stop doing that
+    return type_intern(types, &(Cuik_Type){
             .kind = KIND_PTR,
             .size = 8,
             .align = 8,
@@ -84,25 +126,11 @@ Cuik_Type* cuik__new_pointer(Cuik_TypeTable* types, Cuik_QualType base) {
         });
 }
 
-Cuik_Type* cuik__new_typeof(Cuik_TypeTable* types, Expr* src) {
-    return alloc_type(types, &(Cuik_Type){
-            .kind = KIND_TYPEOF,
-
-            // ideally if you try using these it'll crash because things
-            // do sanity checks on align, hopefully none trigger because
-            // we resolve it properly.
-            .size = 0,
-            .align = 0,
-
-            .typeof_.src = src,
-        });
-}
-
 Cuik_Type* cuik__new_array(Cuik_TypeTable* types, Cuik_QualType base, int count) {
     Cuik_Type* canon = cuik_canonical_type(base);
     if (count == 0) {
         // these zero-sized arrays don't actually care about incomplete element types
-        return alloc_type(types, &(Cuik_Type){
+        return type_intern(types, &(Cuik_Type){
                 .kind = KIND_ARRAY,
                 .size = 0,
                 .align = canon->align,
@@ -120,7 +148,7 @@ Cuik_Type* cuik__new_array(Cuik_TypeTable* types, Cuik_QualType base, int count)
     }
 
     assert(align != 0);
-    return alloc_type(types, &(Cuik_Type){
+    return type_intern(types, &(Cuik_Type){
             .kind = KIND_ARRAY,
             .size = dst,
             .align = align,
@@ -131,7 +159,7 @@ Cuik_Type* cuik__new_array(Cuik_TypeTable* types, Cuik_QualType base, int count)
 }
 
 Cuik_Type* cuik__new_vector(Cuik_TypeTable* types, Cuik_QualType base, int count) {
-    return alloc_type(types, &(Cuik_Type){
+    return type_intern(types, &(Cuik_Type){
             .kind = KIND_VECTOR,
             .size = 0,
             .align = cuik_canonical_type(base)->align,
@@ -139,10 +167,6 @@ Cuik_Type* cuik__new_vector(Cuik_TypeTable* types, Cuik_QualType base, int count
             .array_of = base,
             .array_count = 0,
         });
-}
-
-Cuik_Type* cuik__new_blank_type(Cuik_TypeTable* types) {
-    return alloc_type(types, &(Cuik_Type){ .kind = KIND_PLACEHOLDER });
 }
 
 // https://github.com/rui314/chibicc/blob/main/type.c
@@ -222,10 +246,7 @@ bool type_equal(Cuik_Type* ty1, Cuik_Type* ty2) {
 
         return true;
     } else if (ty1->kind == KIND_STRUCT || ty2->kind == KIND_UNION) {
-        while (ty1->based != NULL) ty1 = ty1->based;
-        while (ty2->based != NULL) ty2 = ty2->based;
-
-        return (ty1 == ty2);
+        return (ty1->record.nominal == ty2->record.nominal);
     } else if (ty1->kind == KIND_PTR) {
         return type_equal(cuik_canonical_type(ty1->ptr_to), cuik_canonical_type(ty2->ptr_to));
     }

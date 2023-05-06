@@ -247,7 +247,7 @@ bool win8_best(wchar_t *short_name, Version_Data *data) {
     return true;
 }
 
-void find_windows_kit_root(Cuik_WindowsToolchain* result) {
+bool find_windows_kit_root(Cuik_WindowsToolchain* result) {
     // Information about the Windows 10 and Windows 8 development kits
     // is stored in the same place in the registry. We open a key
     // to that place, first checking preferntially for a Windows 10 kit,
@@ -255,7 +255,7 @@ void find_windows_kit_root(Cuik_WindowsToolchain* result) {
     HKEY main_key;
     LSTATUS rc = RegOpenKeyExA(HKEY_LOCAL_MACHINE, "SOFTWARE\\Microsoft\\Windows Kits\\Installed Roots",
         0, KEY_QUERY_VALUE | KEY_ENUMERATE_SUB_KEYS, &main_key);
-    if (rc != S_OK) return;
+    if (rc != S_OK) return false;
 
     // Look for a Windows 10 entry.
     wchar_t *windows10_root = find_windows_kit_root_with_key(main_key, L"KitsRoot10");
@@ -277,7 +277,7 @@ void find_windows_kit_root(Cuik_WindowsToolchain* result) {
 
             cuik_free(windows10_root);
             RegCloseKey(main_key);
-            return;
+            return true;
         }
 
     }
@@ -303,7 +303,7 @@ void find_windows_kit_root(Cuik_WindowsToolchain* result) {
             cuik_free(windows10_root);
             cuik_free(windows8_root);
             RegCloseKey(main_key);
-            return;
+            return true;
         }
     }
 
@@ -311,6 +311,7 @@ void find_windows_kit_root(Cuik_WindowsToolchain* result) {
     cuik_free(windows10_root);
     cuik_free(windows8_root);
     RegCloseKey(main_key);
+    return false;
 }
 
 bool find_visual_studio_2017_by_fighting_through_microsoft_craziness(Cuik_WindowsToolchain *result) {
@@ -474,7 +475,7 @@ void find_visual_studio_by_fighting_through_microsoft_craziness(Cuik_WindowsTool
     // If we get here, we failed to find anything.
 }
 
-static void add_libraries(void* ctx, const Cuik_CompilerArgs* args, Cuik_Linker* l) {
+static void add_libraries(void* ctx, const Cuik_DriverArgs* args, Cuik_Linker* l) {
     Cuik_WindowsToolchain* t = ctx;
 
     cuiklink_add_libpathf(l, "%S", t->vs_library_path);
@@ -482,7 +483,7 @@ static void add_libraries(void* ctx, const Cuik_CompilerArgs* args, Cuik_Linker*
     cuiklink_add_libpathf(l, "%S\\ucrt\\x64", t->windows_sdk_root);
 }
 
-static void set_preprocessor(void* ctx, const Cuik_CompilerArgs* args, Cuik_CPP* cpp) {
+static void set_preprocessor(void* ctx, const Cuik_DriverArgs* args, Cuik_CPP* cpp) {
     Cuik_WindowsToolchain* t = ctx;
 
     cuikpp_add_include_directoryf(cpp, true, "%S\\um\\",      t->windows_sdk_include);
@@ -533,15 +534,22 @@ static void set_preprocessor(void* ctx, const Cuik_CompilerArgs* args, Cuik_CPP*
     cuikpp_define_empty_cstr(cpp, "__ptr64");
 }
 
-static bool invoke_link(void* ctx, const Cuik_CompilerArgs* args, Cuik_Linker* linker, const char* output, const char* filename) {
+static bool invoke_link(void* ctx, const Cuik_DriverArgs* args, Cuik_Linker* linker, const char* output, const char* filename) {
     enum { CMD_LINE_MAX = 4096 };
     Cuik_WindowsToolchain* t = ctx;
 
+    static const wchar_t* subsystem_option[] = {
+        [TB_WIN_SUBSYSTEM_UNKNOWN] = L"",
+        [TB_WIN_SUBSYSTEM_WINDOWS] = L"/subsystem:windows ",
+        [TB_WIN_SUBSYSTEM_CONSOLE] = L"/subsystem:console ",
+        [TB_WIN_SUBSYSTEM_EFI_APP] = L"/subsystem:efi_application",
+    };
+
     wchar_t cmd_line[CMD_LINE_MAX];
     int cmd_line_len = swprintf(cmd_line, CMD_LINE_MAX,
-        L"%sbin\\Hostx64\\x64\\link.exe /nologo /machine:amd64 "
-        "/subsystem:%s /debug:%S /pdb:%S.pdb /out:%S /incremental:no ",
-        t->vc_tools_install, linker->subsystem_windows ? L"windows" : L"console",
+        L"%sbin\\Hostx64\\x64\\link.exe /nologo /machine:amd64 %s"
+        "/debug:%S /pdb:%S.pdb /out:%S /incremental:no ",
+        t->vc_tools_install, subsystem_option[args->subsystem],
         args->debug_info ? "full" : "none", filename, output
     );
 
@@ -594,11 +602,37 @@ static bool invoke_link(void* ctx, const Cuik_CompilerArgs* args, Cuik_Linker* l
     return false;
 }
 
+// tries to walk about `steps` slashes in the filepath and return the pointer to said
+// slash, if it can't reach then it'll return NULL
+static const wchar_t* step_out_dir(const wchar_t* path, int steps) {
+    int slashes_hit = 0;
+    const wchar_t* end = path + wcslen(path);
+
+    while (slashes_hit != steps && end-- != path) {
+        if (*end == '/') slashes_hit++;
+        else if (*end == '\\') slashes_hit++;
+    }
+
+    return (slashes_hit == steps) ? end : NULL;
+}
+
 Cuik_Toolchain cuik_toolchain_msvc(void) {
     Cuik_WindowsToolchain* result = cuik_malloc(sizeof(Cuik_WindowsToolchain));
     result->vc_tools_install[0] = 0;
 
-    find_windows_kit_root(result);
+    if (!find_windows_kit_root(result)) {
+        // when installing from the mmozeiko's portable MSVC script, the registry doesn't
+        // get setup so we search for the windows kit via environment variables.
+        wchar_t* sdk_libs = _wgetenv(L"SDK_LIBS");
+        if (sdk_libs != NULL) {
+            result->windows_sdk_version = 10;
+
+            wcsncpy(result->windows_sdk_include, _wgetenv(L"SDK_INCLUDE"), MAX_PATH);
+            wcsncpy(result->windows_sdk_root, _wgetenv(L"SDK_LIBS"), MAX_PATH);
+        } else {
+            fprintf(stderr, "warning: could not locate windows SDK\n");
+        }
+    }
 
     wchar_t* vc_tools_install = _wgetenv(L"VCToolsInstallDir");
     if (vc_tools_install != NULL) {

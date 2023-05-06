@@ -1,6 +1,7 @@
 #pragma once
 #include "../codegen/emitter.h"
 #include "../tb_internal.h"
+#include <tb_x64.h>
 
 #define TB_TEMP_REG INT_MAX
 
@@ -37,7 +38,7 @@ typedef enum {
 } XMM;
 
 typedef enum {
-    VAL_NONE, VAL_FLAGS, VAL_GPR, VAL_XMM, VAL_IMM, VAL_MEM, VAL_GLOBAL
+    VAL_NONE, VAL_FLAGS, VAL_GPR, VAL_XMM, VAL_IMM, VAL_MEM, VAL_GLOBAL, VAL_ABS, VAL_LABEL
 } ValType;
 
 typedef enum {
@@ -57,112 +58,68 @@ typedef enum Inst2FPFlags {
 } Inst2FPFlags;
 
 typedef struct Val {
-    uint8_t type;
-    bool is_spill : 1;
-    bool is_ref : 1;
-    TB_DataType dt;
-    TB_Reg r;
+    int8_t type;
+
+    // if VAL_MEM then this is the base
+    int8_t reg;
+
+    // used by VAL_MEM and VAL_GLOBAL
+    int8_t index, scale;
+
+    // memory displacement or signed immediate
+    int32_t imm;
 
     union {
-        int reg;
-        GPR gpr;
-        XMM xmm;
-
-        Cond cond;
-        struct {
-            bool is_rvalue;
-            GPR base : 8;
-            GPR index : 8;
-            Scale scale : 8;
-            int32_t disp;
-        } mem;
-        struct {
-            // this should alias with mem.is_rvalue
-            bool is_rvalue;
-            const TB_Global* g;
-            int16_t disp;
-        } global;
-        int32_t imm;
+        // for VAL_ABS this is used
+        uint64_t abs;
+        // for VAL_GLOBAL this is used as the base
+        const TB_Symbol* symbol;
+        // for VAL_LABEL
+        TB_Node* target;
     };
 } Val;
-static_assert(offsetof(Val, reg) == offsetof(Val, gpr), "Val::reg and Val::gpr must alias!");
-static_assert(offsetof(Val, reg) == offsetof(Val, xmm), "Val::reg and Val::xmm must alias!");
-static_assert(offsetof(Val, global.is_rvalue) == offsetof(Val, mem.is_rvalue), "Val::mem.is_rvalue and Val::global.is_rvalue must alias!");
 
-typedef enum Inst2Type {
-    // Integer data processing
-    ADD, AND, OR, SUB, XOR, CMP, MOV,
-    // weird ones
-    TEST, LEA, IMUL, XCHG, XADD,
-    // casts
-    MOVSXB, MOVSXW, MOVSXD, MOVZXB, MOVZXW
-} Inst2Type;
+typedef enum InstType {
+    #define X(a, ...) a,
+    #include "x64_insts.inc"
+} InstType;
 
-typedef enum Inst2FPType {
-    FP_MOV, FP_ADD, FP_SUB, FP_MUL, FP_DIV, FP_CMP, FP_UCOMI,
-    FP_SQRT, FP_RSQRT, FP_AND, FP_OR, FP_XOR,
-    FP_CVT, // cvtss2sd or cvtsd2ss
-} Inst2FPType;
+// EXT variations use a 0F before the opcode
+typedef enum {
+    // Nullary
+    INST_BYTE,
+    INST_BYTE_EXT,
+    // Unary
+    INST_UNARY,
+    INST_UNARY_EXT, // 0F
+    // Binop
+    INST_BINOP,
+    INST_BINOP_PLUS, // +r
+    INST_BINOP_EXT,  // 0F
+    INST_BINOP_EXT2, // 0F (movzx, movsx)
+    INST_BINOP_CL, // implicit CL, used by the shift ops
 
-typedef enum ExtMode {
-    // Normal
-    EXT_NONE,
+    // SSE
+    INST_BINOP_SSE,
+} InstCategory;
 
-    // DEF instructions have a 0F prefix
-    EXT_DEF,
+typedef struct InstDesc {
+    const char* mnemonic;
+    uint8_t cat;
 
-    // same as DEF but for MOVZX and MOVSX
-    // these are forced as always load.
-    EXT_DEF2
-} ExtMode;
-
-// Describes what general 2 operand instructions are like
-typedef struct Inst2 {
     uint8_t op;
 
-    // IMMEDIATES
+    // IMMEDIATES (or unary instructions)
     uint8_t op_i;
     uint8_t rx_i;
-
-    ExtMode ext : 8;
-} Inst2;
+} InstDesc;
 
 static const GPR WIN64_GPR_PARAMETERS[4] = { RCX, RDX, R8, R9 };
 static const GPR SYSV_GPR_PARAMETERS[6] = { RDI, RSI, RDX, RCX, R8, R9 };
 
-typedef enum Inst1 {
-    // 0xF7
-    NOT  = 0xF702,
-    NEG  = 0xF703,
-    DIV  = 0xF706,
-    IDIV = 0xF707,
-
-    // 0xFF
-    CALL_RM = 0xFF02
-} Inst1;
-
-static const Inst2 inst2_tbl[] = {
-    [ADD]  = { 0x00, 0x80, 0x00 },
-    [AND]  = { 0x20, 0x80, 0x04 },
-    [OR]   = { 0x08, 0x80, 0x01 },
-    [SUB]  = { 0x28, 0x80, 0x05 },
-    [XOR]  = { 0x30, 0x80, 0x06 },
-    [CMP]  = { 0x38, 0x80, 0x07 },
-    [MOV]  = { 0x88, 0xC6, 0x00 },
-    [TEST] = { 0x84, 0xF6, 0x00 },
-
-    [XCHG] = { 0x86 },
-    [XADD] = { 0xC0, .ext = EXT_DEF },
-    [LEA]  = { 0x8D },
-
-    [IMUL] = { 0xAF, .ext = EXT_DEF },
-
-    [MOVSXB] = { 0xBE, .ext = EXT_DEF2 },
-    [MOVSXW] = { 0xBF, .ext = EXT_DEF2 },
-    [MOVSXD] = { 0x63, .ext = EXT_NONE },
-
-    [MOVZXB] = { 0xB6, .ext = EXT_DEF2 },
-    [MOVZXW] = { 0xB7, .ext = EXT_DEF2 }
+static const InstDesc inst_table[] = {
+    #define X(a, b, c, ...) [a] = { .mnemonic = b, .cat = INST_ ## c, __VA_ARGS__ },
+    #include "x64_insts.inc"
 };
 
 // NOTE(NeGate): This is for Win64, we can handle SysV later
@@ -175,65 +132,50 @@ static const Inst2 inst2_tbl[] = {
 #define SYSCALL_ABI_CALLER_SAVED ((1u << RDI) | (1u << RSI) | (1u << RDX) | (1u << R10) | (1u << R8) | (1u << R9) | (1u << RAX) | (1u << R11))
 #define SYSCALL_ABI_CALLEE_SAVED ~SYSCALL_ABI_CALLER_SAVED
 
-// GPRs can only ever be scalar
-inline static Val val_gpr(TB_DataType dt, GPR g) {
-    return (Val) { .type = VAL_GPR, .dt = dt, .gpr = g };
+inline static Val val_gpr(GPR g) {
+    return (Val) { .type = VAL_GPR, .reg = g };
 }
 
-inline static Val val_xmm(TB_DataType dt, XMM x) {
-    return (Val) { .type = VAL_XMM, .dt = dt, .xmm = x };
+inline static Val val_xmm(XMM x) {
+    return (Val) { .type = VAL_XMM, .reg = x };
 }
 
 inline static Val val_flags(Cond c) {
-    return (Val) { .type = VAL_FLAGS, .dt = TB_TYPE_BOOL, .cond = c };
+    return (Val) { .type = VAL_FLAGS, .reg = c };
 }
 
-inline static Val val_global(const TB_Global* g) {
-    return (Val) { .type = VAL_GLOBAL, .dt = TB_TYPE_PTR, .global.is_rvalue = false, .global.g = g };
+inline static Val val_global(const TB_Symbol* s) {
+    return (Val) { .type = VAL_GLOBAL, .symbol = s };
 }
 
-inline static Val val_imm(TB_DataType dt, int32_t imm) {
-    return (Val) { .type = VAL_IMM, .dt = dt, .imm = imm };
+inline static Val val_imm(int32_t imm) {
+    return (Val) { .type = VAL_IMM, .imm = imm };
 }
 
-inline static Val val_stack(TB_DataType dt, int s) {
+inline static Val val_abs(uint64_t abs) {
+    return (Val) { .type = VAL_ABS, .abs = abs };
+}
+
+inline static Val val_label(TB_Node* target) {
+    return (Val) { .type = VAL_LABEL, .target = target };
+}
+
+inline static Val val_stack(int s) {
     return (Val) {
-        .type = VAL_MEM,
-        .dt = dt,
-        .mem = { .base = RBP, .index = GPR_NONE, .scale = SCALE_X1, .disp = s }
+        .type = VAL_MEM, .reg = RBP, .index = GPR_NONE, .scale = SCALE_X1, .imm = s
     };
 }
 
-inline static Val val_base_disp(TB_DataType dt, GPR b, int d) {
+inline static Val val_base_disp(GPR b, int d) {
     return (Val) {
-        .type = VAL_MEM,
-        .dt = dt,
-        .mem = { .base = b, .index = GPR_NONE, .scale = SCALE_X1, .disp = d }
+        .type = VAL_MEM, .reg = b, .index = GPR_NONE, .scale = SCALE_X1, .imm = d
     };
 }
 
-inline static Val val_base_index(TB_DataType dt, GPR b, GPR i, Scale s) {
+inline static Val val_base_index_disp(GPR b, GPR i, Scale s, int d) {
     return (Val) {
-        .type = VAL_MEM,
-        .dt = dt,
-        .mem = { .base = b, .index = i, .scale = s }
+        .type = VAL_MEM, .reg = b, .index = i, .scale = s, .imm = d
     };
-}
-
-inline static Val val_base_index_disp(TB_DataType dt, GPR b, GPR i, Scale s, int d) {
-    return (Val) {
-        .type = VAL_MEM,
-        .dt = dt,
-        .mem = { .base = b, .index = i, .scale = s, .disp = d }
-    };
-}
-
-inline static bool is_lvalue(const Val* v) {
-    return (v->type == VAL_MEM || v->type == VAL_GLOBAL) && !v->mem.is_rvalue;
-}
-
-inline static bool is_rvalue(const Val* v) {
-    return (v->type == VAL_MEM || v->type == VAL_GLOBAL) && v->mem.is_rvalue;
 }
 
 inline static bool is_value_mem(const Val* v) {
@@ -243,38 +185,38 @@ inline static bool is_value_mem(const Val* v) {
 inline static bool is_value_gpr(const Val* v, GPR g) {
     if (v->type != VAL_GPR) return false;
 
-    return (v->gpr == g);
+    return (v->reg == g);
 }
 
 inline static bool is_value_xmm(const Val* v, XMM x) {
     if (v->type != VAL_XMM) return false;
 
-    return (v->xmm == x);
+    return (v->reg == x);
 }
 
 inline static bool is_value_match(const Val* a, const Val* b) {
     if (a->type != b->type) return false;
 
-    if (a->type == VAL_GPR) return a->gpr == b->gpr;
+    if (a->type == VAL_GPR) return a->reg == b->reg;
     else return false;
 }
-
-static int get_data_type_size(const TB_DataType dt);
 
 #ifdef __GNUC__
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-variable"
 #endif
 static const char* GPR_NAMES[] = { "RAX", "RCX", "RDX", "RBX", "RSP", "RBP", "RSI", "RDI", "R8",  "R9", "R10", "R11", "R12", "R13", "R14", "R15" };
+static const char* COND_NAMES[] = {
+    "O", "NO", "B", "NB", "E", "NE", "BE", "A",
+    "S", "NS", "P", "NP", "L", "GE", "LE", "G"
+};
 #ifdef __GNUC__
 #pragma GCC diagnostic pop
 #endif
 
 // shorthand macros
 #define STACK_ALLOC(size, align) (ctx->stack_usage = align_up(ctx->stack_usage + (size), align), - ctx->stack_usage)
-#define INST1(op, a)              inst1(&ctx->emit, op, a)
+#define INST0(op, dt)             inst0(&ctx->emit, op, dt)
+#define INST1(op, a, dt)          inst1(&ctx->emit, op, a, dt)
 #define INST2(op, a, b, dt)       inst2(&ctx->emit, op, a, b, dt)
-#define INST2SSE(op, a, b, flags) inst2sse(&ctx->emit, op, a, b, flags)
-#define JCC(cc, label)            jcc(&ctx->emit, cc, label)
-#define JMP(label)                jmp(&ctx->emit, label)
-#define RET_JMP()                 ret_jmp(&ctx->emit)
+#define INST2SSE(op, a, b, dt)    inst2sse(&ctx->emit, op, a, b, dt)

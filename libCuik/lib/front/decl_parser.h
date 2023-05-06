@@ -422,7 +422,7 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
 
                 if (!expect_char(s, ',')) return CUIK_QUAL_TYPE_NULL;
 
-                intmax_t count = parse_const_expr2(parser, s);
+                intmax_t count = parse_const_expr(parser, s);
 
                 if (count <= 0) {
                     diag_err(s, loc, "_Vector types must have a positive width");
@@ -500,8 +500,9 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                     } else {
                         // we don't particularly resolve typeof for expressions immediately.
                         // instead we just wait until all symbols are resolved properly
-                        Expr* src = NULL; // parse_expr(tu, s);
-                        type = cuik__new_typeof(&parser->types, src);
+                        // Expr* src = NULL; // parse_expr(tu, s);
+                        // type = cuik__new_typeof(&parser->types, src);
+                        abort();
                     }
 
                     if (!expect_closing_paren(s, opening_loc)) {
@@ -541,9 +542,9 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                                 break;
                             }
 
-                            type = cuik__new_enum(&parser->types);
-                            type->is_complete = false;
-                            type->enumerator.name = name;
+                            type = type_placeholder(&parser->types);
+                            *type = (Cuik_Type){ .kind = KIND_ENUM, .enumerator = { name } };
+
                             if (scope.tag_count + 1 >= MAX_LOCAL_TAGS) {
                                 diag_err(s, tokens_get_range(s), "too many tags in local scopes (%d)", MAX_LOCAL_TAGS);
                             } else {
@@ -551,9 +552,8 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                             }
                         }
                     } else {
-                        type = cuik__new_enum(&parser->types);
-                        type->is_complete = false;
-                        type->enumerator.name = name;
+                        type = type_placeholder(&parser->types);
+                        *type = (Cuik_Type){ .kind = KIND_ENUM, .enumerator = { name } };
 
                         if (name) {
                             if (parser->is_in_global_scope) {
@@ -573,10 +573,6 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
 
                     size_t count = 0;
                     EnumEntry* start = tls_save();
-
-                    // in global scope we delay resolving the enumerator values which is kinda problematic since
-                    type->enumerator.entries = start;
-                    type->enumerator.count = 0;
 
                     while (tokens_get(s)->type != '}') {
                         // parse name
@@ -601,7 +597,7 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                                     break;
                                 }
                             } else {
-                                cursor = parse_const_expr2(parser, s);
+                                cursor = parse_const_expr(parser, s);
                             }
                         }
 
@@ -636,22 +632,20 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                     tokens_prev(s);
 
                     // move to more permanent storage
-                    EnumEntry* permanent_store = arena_alloc(&local_ast_arena, count * sizeof(EnumEntry), _Alignof(EnumEntry));
-                    memcpy(permanent_store, start, count * sizeof(EnumEntry));
+                    if (count > 0) {
+                        EnumEntry* permanent_store = arena_alloc(&local_ast_arena, count * sizeof(EnumEntry), _Alignof(EnumEntry));
+                        memcpy(permanent_store, start, count * sizeof(EnumEntry));
+
+                        type->enumerator.count = count;
+                        type->enumerator.entries = permanent_store;
+                    }
                     tls_restore(start);
 
-                    type->enumerator.entries = permanent_store;
-                    type->enumerator.count = count;
-
-                    if (parser->is_in_global_scope) {
-                        type->is_complete = false;
-                        type->size = 0;
-                        type->align = 0;
-                    } else {
-                        type->is_complete = true;
-                        type->size = type->align = 4;
-                        type_layout2(parser, type, true);
+                    if (!parser->is_in_global_scope) {
+                        type_layout2(parser, type);
                     }
+
+                    TYPE_INSERT(type);
                 } else {
                     if (name == NULL) {
                         diag_err(s, tokens_get_range(s), "expected { after enum declaration");
@@ -660,10 +654,9 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
 
                     bool in_scope;
                     type = find_tag(parser, (char*)name, &in_scope);
-                    if (!type) {
-                        type = cuik__new_enum(&parser->types);
-                        type->record.name = name;
-                        type->is_complete = false;
+                    if (type == NULL) {
+                        type = type_placeholder(&parser->types);
+                        *type = (Cuik_Type){ .kind = KIND_ENUM, .enumerator = { name } };
 
                         if (parser->is_in_global_scope) {
                             nl_strmap_put_cstr(parser->globals.tags, name, type);
@@ -708,7 +701,9 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                     tokens_next(s);
 
                     bool in_scope;
-                    type = name ? find_tag(parser, (char*) name, &in_scope) : 0;
+                    Cuik_Type* old_type = name ? find_tag(parser, (char*) name, &in_scope) : 0;
+
+                    type = old_type;
                     if (type) {
                         // can't re-complete a enum
                         size_t count = type->enumerator.count;
@@ -719,9 +714,13 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                                 break;
                             }
 
-                            type = cuik__new_record(&parser->types, is_union);
-                            type->is_complete = false;
-                            type->record.name = name;
+                            type = type_placeholder(&parser->types);
+                            *type = (Cuik_Type){
+                                .kind = is_union ? KIND_UNION : KIND_STRUCT,
+                                .loc = record_loc,
+                                .record = { name }
+                            };
+
                             if (scope.tag_count + 1 >= MAX_LOCAL_TAGS) {
                                 diag_err(s, tokens_get_range(s), "too many tags in local scopes (%d)", MAX_LOCAL_TAGS);
                             } else {
@@ -729,9 +728,12 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                             }
                         }
                     } else {
-                        type = cuik__new_record(&parser->types, is_union);
-                        type->is_complete = false;
-                        type->record.name = name;
+                        type = type_placeholder(&parser->types);
+                        *type = (Cuik_Type){
+                            .kind = is_union ? KIND_UNION : KIND_STRUCT,
+                            .loc = record_loc,
+                            .record = { name }
+                        };
 
                         // can't forward decl unnamed records so we don't track it
                         if (name) {
@@ -746,8 +748,6 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                             }
                         }
                     }
-
-                    type->loc = record_loc;
 
                     size_t member_count = 0;
                     Member* members = tls_save();
@@ -810,10 +810,9 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                                 // TODO(NeGate): implement new constant expression eval
                                 member->is_bitfield = true;
                                 member->bit_offset = 0;
-                                member->bit_width = parse_const_expr2(parser, s);
+                                member->bit_width = parse_const_expr(parser, s);
                             }
 
-                            // i just wanted to logically split this from the top stuff, this is a breather comment
                             if (tokens_get(s)->type == ',') {
                                 tokens_next(s);
                                 continue;
@@ -828,19 +827,21 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                     tokens_prev(s);
 
                     // put members into more permanent storage
-                    Member* permanent_store = arena_alloc(&local_ast_arena, member_count * sizeof(Member), _Alignof(Member));
-                    memcpy(permanent_store, members, member_count * sizeof(Member));
-
-                    type->align = 0;
-                    type->size = 0;
-
-                    type->record.kids = permanent_store;
-                    type->record.kid_count = member_count;
-
-                    if (!parser->is_in_global_scope) {
-                        type_layout2(parser, type, true);
+                    Member* permanent_store = NULL;
+                    if (member_count > 0) {
+                        permanent_store = arena_alloc(&local_ast_arena, member_count * sizeof(Member), _Alignof(Member));
+                        memcpy(permanent_store, members, member_count * sizeof(Member));
                     }
 
+                    type->record = (struct Cuik_TypeRecord){
+                        name, member_count, permanent_store, type
+                    };
+
+                    if (!parser->is_in_global_scope) {
+                        type_layout2(parser, type);
+                    }
+
+                    TYPE_INSERT(type);
                     tls_restore(members);
                 } else {
                     // refers to a complete version of the record (which may or may not be ready yet)
@@ -853,10 +854,12 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                     bool in_scope;
                     type = find_tag(parser, (const char*)name, &in_scope);
                     if (type == NULL) {
-                        type = cuik__new_record(&parser->types, is_union);
-                        type->loc = record_loc;
-                        type->record.name = name;
-                        type->is_complete = false;
+                        type = type_placeholder(&parser->types);
+                        *type = (Cuik_Type){
+                            .kind = is_union ? KIND_UNION : KIND_STRUCT,
+                            .loc = record_loc,
+                            .record = { name, .nominal = type }
+                        };
 
                         if (parser->is_in_global_scope) {
                             nl_strmap_put_cstr(parser->globals.tags, name, type);
@@ -899,15 +902,22 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                         counter += OTHER;
                     } else {
                         // add placeholder
-                        type = cuik__new_blank_type(&parser->types);
+                        type = TYPE_INTERN(&(Cuik_Type){
+                                .kind = KIND_PLACEHOLDER,
+                                .loc = get_token_range(t),
+                                .placeholder = { name },
+                            });
+
+                        // insert into placeholder list (we'll use this to check for unresolved types later)
+                        type->placeholder.next = parser->first_placeholder;
+                        parser->first_placeholder = type;
+
                         Symbol sym = {
                             .name = name,
                             .type = cuik_uncanonical_type(type),
-                            .loc = get_token_range(t),
+                            .loc = type->loc,
                             .storage_class = STORAGE_TYPEDEF,
                         };
-                        type->loc = sym.loc;
-                        type->placeholder.name = name;
                         counter += OTHER;
 
                         nl_strmap_put_cstr(parser->globals.symbols, name, sym);
@@ -1025,17 +1035,14 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
         }
 
         // clone it since we need to modify it
-        Cuik_Type* new_type = cuik__new_blank_type(&parser->types);
-        *new_type = *type;
-        new_type->loc = loc;
+        Cuik_Type new_type = *type;
+        new_type.loc = loc;
+        new_type.align = alignas_pending_expr ? -1 : forced_align;
+        type = TYPE_INTERN(&new_type);
 
-        if (forced_align) {
-            new_type->align = forced_align;
-        } else if (alignas_pending_expr != NULL) {
-            new_type->align = -1;
-            alignas_pending_expr->dst = &new_type->align;
+        if (new_type.align < 0) {
+            alignas_pending_expr->dst = &type->align;
         }
-        type = new_type;
     }
 
     return cuik_make_qual_type((Cuik_Type*) type, quals);
@@ -1052,22 +1059,25 @@ static Cuik_QualType parse_typename2(Cuik_Parser* restrict parser, TokenStream* 
 static Cuik_QualType parse_type_suffix2(Cuik_Parser* restrict parser, TokenStream* restrict s, Cuik_QualType type) {
     Token* t = tokens_get(s);
     if (t->type == '(') {
-        // function call
+        // function type
         // void foo(int x)
         //         ^^^^^^^
         SourceLoc opening_loc = tokens_get_location(s);
         tokens_next(s);
-
-        Cuik_Type* t = cuik__new_func(&parser->types);
-        t->func.return_type = type;
 
         if (tokens_get(s)->type == TOKEN_KW_void && tokens_peek(s)->type == ')') {
             // this is required pre-C23 to say no parameters (empty parens meant undefined)
             tokens_next(s);
             tokens_next(s);
 
-            t->func.param_list = 0;
-            t->func.param_count = 0;
+            Cuik_Type t = {
+                .kind  = KIND_FUNC,
+                .is_complete = true,
+                .size  = 1,
+                .align = 1,
+                .func = { .return_type = type },
+            };
+            type = cuik_uncanonical_type(TYPE_INTERN(&t));
         } else {
             size_t param_count = 0;
             Param* params = tls_save();
@@ -1117,31 +1127,34 @@ static Cuik_QualType parse_type_suffix2(Cuik_Parser* restrict parser, TokenStrea
             }
             expect_closing_paren(s, opening_loc);
 
-            // while (skip_over_declspec(s)) {}
-
             // Allocate some more permanent storage
-            Param* permanent_store = arena_alloc(&local_ast_arena, param_count * sizeof(Param), _Alignof(Param));
-            memcpy(permanent_store, params, param_count * sizeof(Param));
-
-            t->func.param_list = permanent_store;
-            t->func.param_count = param_count;
+            Param* permanent_store = NULL;
+            if (param_count > 0) {
+                permanent_store = arena_alloc(&local_ast_arena, param_count * sizeof(Param), _Alignof(Param));
+                memcpy(permanent_store, params, param_count * sizeof(Param));
+            }
 
             // Before C23 empty parameter lists mean undefined set of parameters
             // we're gonna stick with that for now...
-            if (parser->version < CUIK_VERSION_C23) {
-                t->func.has_varargs = (param_count == 0 || has_varargs);
-            } else {
-                t->func.has_varargs = has_varargs;
+            if (parser->version < CUIK_VERSION_C23 && param_count == 0) {
+                has_varargs = true;
             }
 
+            Cuik_Type t = {
+                .kind  = KIND_FUNC,
+                .is_complete = !parser->is_in_global_scope,
+                .size  = 1,
+                .align = 1,
+                .func = {
+                    .return_type = type,
+                    .param_list = permanent_store,
+                    .param_count = param_count,
+                    .has_varargs = has_varargs
+                }
+            };
+            type = cuik_uncanonical_type(TYPE_INTERN(&t));
             tls_restore(params);
         }
-
-        if (!parser->is_in_global_scope) {
-            t->is_complete = true;
-        }
-
-        type = cuik_uncanonical_type(t);
     } else if (t->type == '[') {
         // array
         // int bar[8 * 8]
@@ -1183,7 +1196,7 @@ static Cuik_QualType parse_type_suffix2(Cuik_Parser* restrict parser, TokenStrea
                     tokens_next(s);
                     expect_char(s, ']');
                 } else {
-                    count = parse_const_expr2(parser, s);
+                    count = parse_const_expr(parser, s);
                     expect_char(s, ']');
                 }
 
@@ -1233,6 +1246,7 @@ static Decl parse_declarator2(Cuik_Parser* restrict parser, TokenStream* restric
 
         if (tokens_get(s)->type == '*') {
             tokens_next(s);
+
             type = cuik_uncanonical_type(cuik__new_pointer(&parser->types, type));
         } else {
             break;
@@ -1291,20 +1305,6 @@ static Decl parse_declarator2(Cuik_Parser* restrict parser, TokenStream* restric
 
         s->list.current = nested_end;
     }
-
-    // disambiguate
-    #if 0
-    bool is_nested_declarator = tokens_get(s)->type == '(';
-    if (!out_of_order_mode && is_nested_declarator && is_abstract) {
-        tokens_next(s);
-
-        if (is_typename(&tu->globals, s)) {
-            is_nested_declarator = false;
-        }
-
-        tokens_prev(s);
-    }
-    #endif
 
     SourceLoc end_loc = tokens_get_last_location(s);
     return (Decl){ type, name, { start_loc, end_loc } };

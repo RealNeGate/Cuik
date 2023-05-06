@@ -1,6 +1,6 @@
 #ifdef CUIK_USE_TB
 #include "targets.h"
-#include <front/sema.h>
+#include "../front/sema.h"
 
 // two simple temporary buffers to represent type_as_string results
 static thread_local char temp_string0[1024], temp_string1[1024];
@@ -65,6 +65,170 @@ void target_generic_set_defines(Cuik_CPP* cpp, Cuik_System sys, bool is_64bit, b
     cuikpp_define_cstr(cpp, "__CUIK_ATOMIC_LLONG_LOCK_FREE", "1");
     cuikpp_define_cstr(cpp, "__CUIK_ATOMIC_POINTER_LOCK_FREE", "1");
 }
+
+#ifdef CUIK_USE_TB
+TB_FunctionPrototype* target_generic_create_prototype(ShouldPassViaReg fn, TranslationUnit* tu, Cuik_Type* type) {
+    TB_Module* m = tu->ir_mod;
+
+    // decide if return value is aggregate
+    bool is_aggregate_return = !fn(tu, cuik_canonical_type(type->func.return_type));
+
+    // return type
+    TB_PrototypeParam ret = { TB_TYPE_PTR };
+    if (!is_aggregate_return) {
+        ret.dt = ctype_to_tbtype(cuik_canonical_type(type->func.return_type));
+        if (tu->has_tb_debug_info) {
+            ret.debug_type = cuik__as_tb_debug_type(m, cuik_canonical_type(type->func.return_type));
+        }
+    }
+
+    // parameters
+    Param* param_list = type->func.param_list;
+    size_t param_count = type->func.param_count;
+    TB_PrototypeParam* params = tls_push((is_aggregate_return + param_count) * sizeof(TB_PrototypeParam));
+
+    size_t j = 0;
+    if (is_aggregate_return) {
+        TB_PrototypeParam p = { TB_TYPE_PTR };
+
+        if (tu->has_tb_debug_info) {
+            TB_DebugType* dbg_type = cuik__as_tb_debug_type(m, cuik_canonical_type(type->func.return_type));
+            p.debug_type = tb_debug_create_ptr(m, dbg_type);
+            p.name = "$ret";
+        }
+
+        params[j++] = p;
+    }
+
+    for (size_t i = 0; i < param_count; i++) {
+        Cuik_Type* type = cuik_canonical_type(param_list[i].type);
+
+        TB_PrototypeParam p = { 0 };
+        p.dt = fn(tu, type) ? ctype_to_tbtype(type) : TB_TYPE_PTR;
+
+        // NOTE(NeGate): we're expecting the parameter name to live until the TB export stage...
+        // it's in the atoms arena so maybe that's ok?
+        if (tu->has_tb_debug_info && param_list[i].name) {
+            p.debug_type = cuik__as_tb_debug_type(tu->ir_mod, type);
+            p.name = param_list[i].name;
+        }
+
+        params[j++] = p;
+    }
+
+    return tb_prototype_create(tu->ir_mod, TB_STDCALL, is_aggregate_return + param_count, params, 1, &ret, type->func.has_varargs);
+}
+
+int target_generic_pass_parameter(ShouldPassViaReg fn, TranslationUnit* tu, TB_Function* func, Expr* e, bool is_vararg, TB_Node** out_param) {
+    Cuik_Type* arg_type = cuik_canonical_type(e->type);
+    bool is_volatile = CUIK_QUAL_TYPE_HAS(e->type, CUIK_QUAL_VOLATILE);
+
+    if (!fn(tu, arg_type)) {
+        // const pass-by-value is considered as a const ref
+        // since it doesn't mutate
+        IRVal arg = irgen_expr(tu, func, e);
+        TB_Node* arg_addr = TB_NULL_REG;
+        switch (arg.value_type) {
+            case LVALUE:
+            arg_addr = arg.reg;
+            break;
+            case LVALUE_SYMBOL:
+            arg_addr = tb_inst_get_symbol_address(func, arg.sym);
+            break;
+            case RVALUE: {
+                // spawn a lil temporary
+                TB_CharUnits size = arg_type->size;
+                TB_CharUnits align = arg_type->align;
+                TB_DataType dt = arg.reg->dt;
+
+                arg_addr = tb_inst_local(func, size, align);
+                tb_inst_store(func, dt, arg_addr, arg.reg, align, is_volatile);
+                break;
+            }
+            default:
+            break;
+        }
+        assert(arg_addr);
+
+        // TODO(NeGate): we might wanna define some TB instruction
+        // for killing locals since some have really limited lifetimes
+        TB_CharUnits size = arg_type->size;
+        TB_CharUnits align = arg_type->align;
+
+        if (0 /* arg_type->is_const */) {
+            out_param[0] = arg_addr;
+        } else {
+            TB_Node* temp_slot = tb_inst_local(func, size, align);
+            TB_Node* size_reg = tb_inst_uint(func, TB_TYPE_I64, size);
+
+            tb_inst_memcpy(func, temp_slot, arg_addr, size_reg, align, is_volatile);
+
+            out_param[0] = temp_slot;
+        }
+
+        return 1;
+    } else {
+        if (arg_type->kind == KIND_STRUCT || arg_type->kind == KIND_UNION) {
+            // Convert aggregate into TB scalar
+            IRVal arg = irgen_expr(tu, func, e);
+            TB_Node* arg_addr = TB_NULL_REG;
+            switch (arg.value_type) {
+                case LVALUE:
+                arg_addr = arg.reg;
+                break;
+                case LVALUE_SYMBOL:
+                arg_addr = tb_inst_get_symbol_address(func, arg.sym);
+                break;
+                case RVALUE: {
+                    // spawn a lil temporary
+                    TB_CharUnits size = arg_type->size;
+                    TB_CharUnits align = arg_type->align;
+                    TB_DataType dt = arg.reg->dt;
+
+                    arg_addr = tb_inst_local(func, size, align);
+                    tb_inst_store(func, dt, arg_addr, arg.reg, align, is_volatile);
+                    break;
+                }
+                default:
+                break;
+            }
+            assert(arg_addr);
+
+            TB_DataType dt = TB_TYPE_VOID;
+            switch (arg_type->size) {
+                case 1:
+                dt = TB_TYPE_I8;
+                break;
+                case 2:
+                dt = TB_TYPE_I16;
+                break;
+                case 4:
+                dt = TB_TYPE_I32;
+                break;
+                case 8:
+                dt = TB_TYPE_I64;
+                break;
+                default:
+                break;
+            }
+
+            out_param[0] = tb_inst_load(func, dt, arg_addr, arg_type->align, is_volatile);
+            return 1;
+        } else {
+            TB_Node* arg = irgen_as_rvalue(tu, func, e);
+            TB_DataType dt = arg->dt;
+
+            if (is_vararg && dt.type == TB_FLOAT && dt.data == TB_FLT_64 && dt.width == 0) {
+                // convert any float variadic arguments into integers
+                arg = tb_inst_bitcast(func, arg, TB_TYPE_I64);
+            }
+
+            out_param[0] = arg;
+            return 1;
+        }
+    }
+}
+#endif
 
 // returns the pointer's base type for whatever expression was resolved
 static Cuik_Type* expect_pointer(TranslationUnit* tu, Expr* e, Expr* arg) {
@@ -255,7 +419,7 @@ Cuik_Type* target_generic_type_check_builtin(TranslationUnit* tu, Expr* e, const
                 goto failure;
             }
 
-            Cuik_Type* cast_type = (i == 2) ? new_pointer(tu, cuik_uncanonical_type(type)) : type;
+            Cuik_Type* cast_type = (i == 2) ? cuik__new_pointer(&tu->types, cuik_uncanonical_type(type)) : type;
             args[i]->cast_type = cuik_uncanonical_type(cast_type);
         }
 
@@ -273,7 +437,7 @@ Cuik_Type* target_generic_type_check_builtin(TranslationUnit* tu, Expr* e, const
         }
 
         // only type check the first param
-        args[0]->cast_type = new_pointer(tu, cuik_uncanonical_type(&cuik__builtin_char));
+        args[0]->cast_type = cuik__new_pointer(&tu->types, cuik_uncanonical_type(&cuik__builtin_char));
         cuik__type_check_args(tu, e, 1, args);
 
         // second is completely generic so long as it's a parameter
@@ -357,7 +521,7 @@ Cuik_Type* target_generic_type_check_builtin(TranslationUnit* tu, Expr* e, const
         }
 
         // fn(long* obj, long val)
-        args[0]->cast_type = new_pointer(tu, cuik_uncanonical_type(&cuik__builtin_int));
+        args[0]->cast_type = cuik__new_pointer(&tu->types, cuik_uncanonical_type(&cuik__builtin_int));
         args[1]->cast_type = &cuik__builtin_int;
 
         cuik__type_check_args(tu, e, arg_count, args);
@@ -368,7 +532,7 @@ Cuik_Type* target_generic_type_check_builtin(TranslationUnit* tu, Expr* e, const
         }
 
         // fn(long* obj, long exchange, long comparand)
-        args[0]->cast_type = new_pointer(tu, cuik_uncanonical_type(&cuik__builtin_in));
+        args[0]->cast_type = cuik__new_pointer(&tu->types, cuik_uncanonical_type(&cuik__builtin_in));
         args[1]->cast_type = &cuik__builtin_int;
         args[2]->cast_type = &cuik__builtin_int;
 
@@ -383,31 +547,31 @@ Cuik_Type* target_generic_type_check_builtin(TranslationUnit* tu, Expr* e, const
 #define ZZZ(x) (BuiltinResult){ x }
 BuiltinResult target_generic_compile_builtin(TranslationUnit* tu, TB_Function* func, const char* name, int arg_count, Expr** args) {
     if (strcmp(name, "_InterlockedExchange") == 0) {
-        TB_Reg dst = irgen_as_rvalue(tu, func, args[0]);
-        TB_Reg src = irgen_as_rvalue(tu, func, args[1]);
+        TB_Node* dst = irgen_as_rvalue(tu, func, args[0]);
+        TB_Node* src = irgen_as_rvalue(tu, func, args[1]);
 
         return ZZZ(tb_inst_atomic_xchg(func, dst, src, TB_MEM_ORDER_SEQ_CST));
     } else if (strcmp(name, "__c11_atomic_compare_exchange_strong") == 0) {
-        TB_Reg addr = irgen_as_rvalue(tu, func, args[0]);
-        TB_Reg comparand = irgen_as_rvalue(tu, func, args[1]);
-        TB_Reg exchange = irgen_as_rvalue(tu, func, args[2]);
+        TB_Node* addr = irgen_as_rvalue(tu, func, args[0]);
+        TB_Node* comparand = irgen_as_rvalue(tu, func, args[1]);
+        TB_Node* exchange = irgen_as_rvalue(tu, func, args[2]);
 
         Cuik_Type* cast_type = cuik_canonical_type(args[1]->cast_type);
         assert(cast_type->kind == KIND_PTR);
         Cuik_Type* ty = cuik_canonical_type(cast_type->ptr_to);
 
         // for odd reasons C11 compare exchange uses a pointer for the comparand
-        comparand = tb_inst_load(func, ctype_to_tbtype(ty), comparand, ty->align);
+        comparand = tb_inst_load(func, ctype_to_tbtype(ty), comparand, ty->align, false);
 
-        TB_CmpXchgResult r = tb_inst_atomic_cmpxchg(func, addr, comparand, exchange, TB_MEM_ORDER_SEQ_CST, TB_MEM_ORDER_SEQ_CST);
-        return ZZZ(r.old_value);
+        TB_Node* r = tb_inst_atomic_cmpxchg(func, addr, comparand, exchange, TB_MEM_ORDER_SEQ_CST, TB_MEM_ORDER_SEQ_CST);
+        return ZZZ(r);
     } else if (strcmp(name, "_InterlockedCompareExchange") == 0) {
-        TB_Reg addr = irgen_as_rvalue(tu, func, args[0]);
-        TB_Reg exchange = irgen_as_rvalue(tu, func, args[1]);
-        TB_Reg comparand = irgen_as_rvalue(tu, func, args[2]);
+        TB_Node* addr = irgen_as_rvalue(tu, func, args[0]);
+        TB_Node* exchange = irgen_as_rvalue(tu, func, args[1]);
+        TB_Node* comparand = irgen_as_rvalue(tu, func, args[2]);
 
-        TB_CmpXchgResult r = tb_inst_atomic_cmpxchg(func, addr, comparand, exchange, TB_MEM_ORDER_SEQ_CST, TB_MEM_ORDER_SEQ_CST);
-        return ZZZ(r.old_value);
+        TB_Node* r = tb_inst_atomic_cmpxchg(func, addr, comparand, exchange, TB_MEM_ORDER_SEQ_CST, TB_MEM_ORDER_SEQ_CST);
+        return ZZZ(r);
     } else if (strcmp(name, "__c11_atomic_thread_fence") == 0) {
         printf("TODO __c11_atomic_thread_fence!");
         abort();
@@ -415,19 +579,19 @@ BuiltinResult target_generic_compile_builtin(TranslationUnit* tu, TB_Function* f
         printf("TODO __c11_atomic_signal_fence!");
         abort();
     } else if (strcmp(name, "_byteswap_ulong") == 0) {
-        TB_Reg src = irgen_as_rvalue(tu, func, args[0]);
+        TB_Node* src = irgen_as_rvalue(tu, func, args[0]);
         return ZZZ(tb_inst_bswap(func, src));
     } else if (strcmp(name, "__builtin_clz") == 0) {
-        TB_Reg src = irgen_as_rvalue(tu, func, args[0]);
+        TB_Node* src = irgen_as_rvalue(tu, func, args[0]);
         return ZZZ(tb_inst_clz(func, src));
     } else if (strcmp(name, "__c11_atomic_exchange") == 0) {
-        TB_Reg dst = irgen_as_rvalue(tu, func, args[0]);
-        TB_Reg src = irgen_as_rvalue(tu, func, args[1]);
+        TB_Node* dst = irgen_as_rvalue(tu, func, args[0]);
+        TB_Node* src = irgen_as_rvalue(tu, func, args[1]);
         int order = get_memory_order_val(args[2]);
 
         return ZZZ(tb_inst_atomic_xchg(func, dst, src, order));
     } else if (strcmp(name, "__c11_atomic_load") == 0) {
-        TB_Reg addr = irgen_as_rvalue(tu, func, args[0]);
+        TB_Node* addr = irgen_as_rvalue(tu, func, args[0]);
 
         Cuik_Type* cast_type = cuik_canonical_type(args[0]->cast_type);
         assert(cast_type->kind == KIND_PTR);
@@ -436,14 +600,14 @@ BuiltinResult target_generic_compile_builtin(TranslationUnit* tu, TB_Function* f
 
         return ZZZ(tb_inst_atomic_load(func, addr, dt, order));
     } else if (strcmp(name, "__c11_atomic_fetch_add") == 0) {
-        TB_Reg dst = irgen_as_rvalue(tu, func, args[0]);
-        TB_Reg src = irgen_as_rvalue(tu, func, args[1]);
+        TB_Node* dst = irgen_as_rvalue(tu, func, args[0]);
+        TB_Node* src = irgen_as_rvalue(tu, func, args[1]);
         int order = get_memory_order_val(args[2]);
 
         return ZZZ(tb_inst_atomic_add(func, dst, src, order));
     } else if (strcmp(name, "__c11_atomic_fetch_sub") == 0) {
-        TB_Reg dst = irgen_as_rvalue(tu, func, args[0]);
-        TB_Reg src = irgen_as_rvalue(tu, func, args[1]);
+        TB_Node* dst = irgen_as_rvalue(tu, func, args[0]);
+        TB_Node* src = irgen_as_rvalue(tu, func, args[1]);
         int order = get_memory_order_val(args[2]);
 
         return ZZZ(tb_inst_atomic_sub(func, dst, src, order));
@@ -451,45 +615,45 @@ BuiltinResult target_generic_compile_builtin(TranslationUnit* tu, TB_Function* f
         Cuik_Type* type = cuik_canonical_type(args[0]->cast_type);
         TB_DataType dt = ctype_to_tbtype(type);
 
-        TB_Reg a = irgen_as_rvalue(tu, func, args[0]);
-        TB_Reg b = irgen_as_rvalue(tu, func, args[1]);
-        TB_Reg c = irgen_as_rvalue(tu, func, args[2]);
+        TB_Node* a = irgen_as_rvalue(tu, func, args[0]);
+        TB_Node* b = irgen_as_rvalue(tu, func, args[1]);
+        TB_Node* c = irgen_as_rvalue(tu, func, args[2]);
 
-        TB_Reg result = tb_inst_mul(func, a, b, 0);
-        tb_inst_store(func, dt, c, result, type->align);
+        TB_Node* result = tb_inst_mul(func, a, b, 0);
+        tb_inst_store(func, dt, c, result, type->align, false);
 
         return ZZZ(tb_inst_cmp_ilt(func, result, a, false));
     } else if (strcmp(name, "__builtin_unreachable") == 0) {
         tb_inst_unreachable(func);
-        tb_inst_set_label(func, tb_basic_block_create(func));
+        tb_inst_set_control(func, tb_inst_region(func));
         return ZZZ(TB_NULL_REG);
     } else if (strcmp(name, "__builtin_expect") == 0) {
-        TB_Reg dst = irgen_as_rvalue(tu, func, args[0]);
+        TB_Node* dst = irgen_as_rvalue(tu, func, args[0]);
         return ZZZ(dst);
     } else if (strcmp(name, "__builtin_trap") == 0) {
         tb_inst_trap(func);
-        tb_inst_set_label(func, tb_basic_block_create(func));
+        tb_inst_set_control(func, tb_inst_region(func));
         return ZZZ(TB_NULL_REG);
     } else if (strcmp(name, "__builtin_syscall") == 0) {
-        TB_Reg num = irgen_as_rvalue(tu, func, args[0]);
-        TB_Reg* arg_regs = tls_push((arg_count - 1) * sizeof(TB_Reg));
+        TB_Node* num = irgen_as_rvalue(tu, func, args[0]);
+        TB_Node** arg_regs = tls_push((arg_count - 1) * sizeof(TB_Node*));
         for (size_t i = 1; i < arg_count; i++) {
             arg_regs[i - 1] = irgen_as_rvalue(tu, func, args[i]);
         }
 
-        TB_Reg result = tb_inst_syscall(func, TB_TYPE_I64, num, arg_count - 1, arg_regs);
+        TB_Node* result = tb_inst_syscall(func, TB_TYPE_I64, num, arg_count - 1, arg_regs);
         tls_restore(arg_regs);
 
         return ZZZ(result);
     } else if (strcmp(name, "__assume") == 0) {
-        TB_Reg cond = irgen_as_rvalue(tu, func, args[0]);
-        TB_Label no_reach = tb_basic_block_create(func);
-        TB_Label skip = tb_basic_block_create(func);
+        TB_Node* cond = irgen_as_rvalue(tu, func, args[0]);
+        TB_Node* no_reach = tb_inst_region(func);
+        TB_Node* skip = tb_inst_region(func);
 
         tb_inst_if(func, cond, skip, no_reach);
-        tb_inst_set_label(func, no_reach);
+        tb_inst_set_control(func, no_reach);
         tb_inst_unreachable(func);
-        tb_inst_set_label(func, skip);
+        tb_inst_set_control(func, skip);
 
         return ZZZ(TB_NULL_REG);
     } else if (strcmp(name, "__debugbreak") == 0) {
@@ -499,11 +663,11 @@ BuiltinResult target_generic_compile_builtin(TranslationUnit* tu, TB_Function* f
         // TODO(NeGate): Remove this later because it will emotionally damage our optimizer.
         // the issue is that it blatantly accesses out of bounds and we should probably just
         // have a node for va_start in the backend instead.
-        TB_Reg dst = irgen_as_rvalue(tu, func, args[0]);
+        TB_Node* dst = irgen_as_rvalue(tu, func, args[0]);
         IRVal src = irgen_expr(tu, func, args[1]);
         assert(src.value_type == LVALUE);
 
-        tb_inst_store(func, TB_TYPE_PTR, dst, tb_inst_va_start(func, src.reg), 8);
+        tb_inst_store(func, TB_TYPE_PTR, dst, tb_inst_va_start(func, src.reg), 8, false);
         return ZZZ(TB_NULL_REG);
     } else if (strcmp(name, "_umul128") == 0) {
         fprintf(stderr, "TODO _umul128\n");

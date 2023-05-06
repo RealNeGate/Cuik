@@ -1,4 +1,4 @@
-#include <front/sema.h>
+#include "../front/sema.h"
 
 #define SWITCH_ITER switch (it->index_++)
 #define CASE_YIELD(k, v) case k: return (it->stmt = (v), true);

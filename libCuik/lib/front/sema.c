@@ -1,17 +1,7 @@
 #include "sema.h"
 
-#include <back/ir_gen.h>
-#include <stdarg.h>
-#include <targets/targets.h>
-
-#define SEMA_MUNCH_SIZE (131072)
-
-typedef struct {
-    // shared state, every run of sema_task will decrement this by one
-    atomic_size_t* tasks_remaining;
-    size_t start, end;
-    TranslationUnit* tu;
-} SemaTaskInfo;
+#include "../back/ir_gen.h"
+#include "../targets/targets.h"
 
 // when you're not in the semantic phase, we don't
 // rewrite the contents of the DOT and ARROW exprs
@@ -30,6 +20,16 @@ static bool is_scalar_type(TranslationUnit* tu, Cuik_Type* type) {
 
 static bool is_constant_zero(TranslationUnit* tu, const Expr* e) {
     return e->op == EXPR_INT && e->int_num.num == 0;
+}
+
+const char* cuik_stmt_decl_name(Stmt* stmt) {
+    assert(stmt->op == STMT_DECL || stmt->op == STMT_FUNC_DECL || stmt->op == STMT_GLOBAL_DECL);
+    return stmt->decl.name;
+}
+
+Cuik_Type* cuik_stmt_decl_type(Stmt* stmt) {
+    assert(stmt->op == STMT_DECL || stmt->op == STMT_FUNC_DECL || stmt->op == STMT_GLOBAL_DECL);
+    return cuik_canonical_type(stmt->decl.type);
 }
 
 // doesn't do implicit casts
@@ -185,7 +185,7 @@ static bool implicit_conversion(TranslationUnit* tu, Cuik_QualType qsrc, Cuik_Qu
     }
 
     if (!type_compatible(tu, src, dst, src_e)) {
-        diag_err(&tu->tokens, src_e->loc, "could not implicitly convert type %!T into %!T", src, dst);
+        diag_err(&tu->tokens, src_e->loc, "can't implicitly convert type %!T into %!T", src, dst);
         return false;
     }
 
@@ -394,7 +394,7 @@ static int walk_initializer_layer(TranslationUnit* tu, Cuik_Type* parent, int ba
 
     // sometimes this is just not resolved yet?
     if (type->size == 0) {
-        type_layout(tu, type, true);
+        type_layout(tu, type);
     }
 
     uint32_t pos = base_offset + relative_offset;
@@ -428,7 +428,11 @@ static int walk_initializer_layer(TranslationUnit* tu, Cuik_Type* parent, int ba
                     if (expr_type->kind == KIND_ARRAY && type->kind == KIND_ARRAY &&
                         type_equal(cuik_canonical_type(expr_type->array_of), cuik_canonical_type(type->array_of))) {
                         // check if it fits properly
-                        if (expr_type->array_count > type->array_count) {
+                        if (expr_type->array_count == type->array_count + 1) {
+                            // we chop off the null terminator
+                            e->str.end -= (e->op == EXPR_STR ? 1 : 2);
+                            expr_type->array_count = type->array_count;
+                        } else if (expr_type->array_count > type->array_count) {
                             diag_err(&tu->tokens, e->loc, "initializer-string too big for the initializer (%d elements out of %d)", expr_type->array_count, type->array_count);
                         }
                     } else {
@@ -449,16 +453,22 @@ static int walk_initializer_layer(TranslationUnit* tu, Cuik_Type* parent, int ba
             // TODO(NeGate): we might wanna fold the expression to have constant expressions
             // node->expr = e;
 
-            // zero is allowed for everything, so don't do the normal checks in that case
-            if (!(e->op == EXPR_INT && e->int_num.num == 0)) {
+            if ((e->op == EXPR_STR  && cuik_canonical_type(node->type)->kind == KIND_CHAR) ||
+                (e->op == EXPR_WSTR && cuik_canonical_type(node->type)->kind == KIND_SHORT)) {
+                // { "hello" } can be used when the initializer is an array because reasons
+                e->cast_type = node->type = e->type;
+            } else if (!(e->op == EXPR_INT && e->int_num.num == 0)) {
+                // zero is allowed for everything, so don't do the normal checks in that case
+                //
                 // it throws it's own errors and we don't really need
                 // any complex recovery for it since it'll exit at the
                 // end of type checking so it's not like the error will
                 // spread well
                 implicit_conversion(tu, expr_type, node->type, e);
+                e->cast_type = node->type;
+            } else {
+                e->cast_type = node->type;
             }
-
-            e->cast_type = node->type;
         }
     } else {
         // compound literals can be used on both scalars and aggregates.
@@ -507,7 +517,14 @@ static size_t sema_infer_initializer_array_count(TranslationUnit* tu, InitNode* 
             cursor = n->start + n->count;
             if (cursor > max) max = cursor;
         } else if (n->mode == INIT_NONE) {
-            cursor++;
+            Expr* e = n->expr;
+            if (e != NULL && (e->op == EXPR_STR || e->op == EXPR_WSTR)) {
+                Cuik_Type* src = cuik_canonical_type(cuik__sema_expr(tu, e));
+                cursor += src->array_count;
+            } else {
+                cursor++;
+            }
+
             if (cursor > max) max = cursor;
         }
     }
@@ -526,7 +543,7 @@ static void walk_initializer_for_sema(TranslationUnit* tu, Cuik_Type* type, Init
 
     if (type->array_count == 0) {
         type->array_count = max_cursor;
-        type_layout(tu, type, true);
+        type_layout(tu, type);
     }
 }
 
@@ -617,7 +634,7 @@ Member* sema_resolve_member_access(TranslationUnit* tu, Expr* restrict e, uint32
     }
 
     if (record_type->size == 0) {
-        type_layout(tu, record_type, true);
+        type_layout(tu, record_type);
 
         if (record_type->size == 0) {
             diag_err(&tu->tokens, e->loc, "Cannot access members in incomplete type");
@@ -1374,7 +1391,7 @@ void sema_stmt(TranslationUnit* tu, Stmt* restrict s) {
             if (!is_scalar_type(tu, cond_type)) {
                 type_as_string(sizeof(temp_string0), temp_string0, cond_type);
 
-                diag_err(&tu->tokens, s->loc, "Could not convert type %s into boolean.", temp_string0);
+                diag_err(&tu->tokens, s->if_.cond->loc, "Could not convert type %s into boolean.", temp_string0);
             }
             s->if_.cond->cast_type = cuik_uncanonical_type(&cuik__builtin_bool);
 
@@ -1614,21 +1631,6 @@ static void sema_mark_children(TranslationUnit* tu, Expr* restrict e) {
     }
 }
 
-static void sema_task(void* arg) {
-    SemaTaskInfo task = *((SemaTaskInfo*)arg);
-
-    CUIK_TIMED_BLOCK("sema") {
-        in_the_semantic_phase = true;
-
-        for (size_t i = task.start; i < task.end; i++) {
-            sema_top_level(task.tu, task.tu->top_level_stmts[i]);
-        }
-
-        in_the_semantic_phase = false;
-        *task.tasks_remaining -= 1;
-    }
-}
-
 int cuiksema_run(TranslationUnit* restrict tu, Cuik_IThreadpool* restrict thread_pool) {
     size_t count = dyn_array_length(tu->top_level_stmts);
 
@@ -1651,37 +1653,13 @@ int cuiksema_run(TranslationUnit* restrict tu, Cuik_IThreadpool* restrict thread
     }
 
     // go through all top level statements and type check
+    // NOTE(NeGate): we can multithread this... it's not helpful tho
     CUIK_TIMED_BLOCK("sema: type check") {
-        if (thread_pool != NULL) {
-            // disabled until we change the tables to arenas
-            size_t padded = (count + (SEMA_MUNCH_SIZE - 1)) & ~(SEMA_MUNCH_SIZE - 1);
-
-            // passed to the threads to identify when things are done
-            atomic_size_t tasks_remaining = (count + (SEMA_MUNCH_SIZE - 1)) / SEMA_MUNCH_SIZE;
-
-            for (size_t i = 0; i < padded; i += SEMA_MUNCH_SIZE) {
-                size_t limit = i + SEMA_MUNCH_SIZE;
-                if (limit > count) limit = count;
-
-                SemaTaskInfo t = {
-                    .tasks_remaining = &tasks_remaining,
-                    .start = i,
-                    .end = limit,
-                    .tu = tu
-                };
-                CUIK_CALL(thread_pool, submit, sema_task, sizeof(t), &t);
-            }
-
-            while (tasks_remaining != 0) {
-                thrd_yield();
-            }
-        } else {
-            in_the_semantic_phase = true;
-            for (size_t i = 0; i < count; i++) {
-                sema_top_level(tu, tu->top_level_stmts[i]);
-            }
-            in_the_semantic_phase = false;
+        in_the_semantic_phase = true;
+        for (size_t i = 0; i < count; i++) {
+            sema_top_level(tu, tu->top_level_stmts[i]);
         }
+        in_the_semantic_phase = false;
     }
 
     return cuikdg_error_count(&tu->tokens);

@@ -1,9 +1,9 @@
 #include "macho.h"
 
-struct TB_ModuleExporter {
+typedef struct TB_ModuleExporter {
     const ICodeGen* code_gen;
     size_t write_pos;
-};
+} TB_ModuleExporter;
 
 #define WRITE(data, length_) write_data(e, output, length_, data)
 static void write_data(TB_ModuleExporter* e, uint8_t* output, size_t length, const void* data) {
@@ -20,8 +20,9 @@ TB_API TB_Exports tb_macho_write_output(TB_Module* m, const IDebugFormat* dbg) {
     //TB_TemporaryStorage* tls = tb_tls_allocate();
     TB_Emitter string_table = { 0 };
 
-    // function layout
-    size_t text_section_size = tb_helper_get_text_section_layout(m, 0);
+    CUIK_TIMED_BLOCK("layout section") {
+        tb_module_layout_sections(m);
+    }
 
     // segments
     MO_Section64 sections[] = {
@@ -29,7 +30,7 @@ TB_API TB_Exports tb_macho_write_output(TB_Module* m, const IDebugFormat* dbg) {
             .sectname = { "__text" },
             .segname  = { "__TEXT" },
             .align    = 2,
-            .size     = text_section_size,
+            .size     = m->text.total_size,
             .flags    = S_ATTR_PURE_INSTRUCTIONS | S_ATTR_SOME_INSTRUCTIONS
         }
     };
@@ -47,14 +48,14 @@ TB_API TB_Exports tb_macho_write_output(TB_Module* m, const IDebugFormat* dbg) {
         },
         .segname = { "__TEXT" },
         .nsects = NUMBER_OF_SECTIONS,
-        .vmsize = text_section_size,
+        .vmsize = m->text.total_size,
         .fileoff = output_size,
-        .filesize = text_section_size
+        .filesize = m->text.total_size
     };
 
     // layout section data
     sections[0].offset = output_size;
-    output_size += text_section_size;
+    output_size += m->text.total_size;
 
     // generate symbol table
     MO_SymtabCmd symtab_cmd = {
@@ -112,7 +113,7 @@ TB_API TB_Exports tb_macho_write_output(TB_Module* m, const IDebugFormat* dbg) {
     WRITE(&segment_cmd, sizeof(segment_cmd));
     WRITE(&sections, sizeof(MO_Section64) * NUMBER_OF_SECTIONS);
 
-    e->write_pos = tb_helper_write_text_section(e->write_pos, m, output, sections[0].offset);
+    e->write_pos = tb_helper_write_section(m, e->write_pos, &m->text, output, sections[0].offset);
 
     // emit section contents
     FOREACH_N(i, 0, NUMBER_OF_SECTIONS) {

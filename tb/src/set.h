@@ -1,5 +1,4 @@
 #pragma once
-#include "tb_internal.h"
 #include <stdbool.h>
 #include <stdlib.h>
 #include <stddef.h>
@@ -12,6 +11,16 @@ typedef struct Set {
     size_t capacity;
     uint64_t* data;
 } Set;
+
+inline static Set set_create_in_arena(Arena* arena, size_t cap) {
+    void* ptr = arena_alloc(arena, ((cap + 63) / 64) * sizeof(uint64_t), _Alignof(uint64_t));
+    memset(ptr, 0, ((cap + 63) / 64) * sizeof(uint64_t));
+
+    return (Set){
+        .capacity = cap,
+        .data = ptr,
+    };
+}
 
 inline static Set set_create(size_t cap) {
     void* ptr = tb_platform_heap_alloc(((cap + 63) / 64) * sizeof(uint64_t));
@@ -31,9 +40,43 @@ inline static void set_clear(Set* s) {
     memset(s->data, 0, ((s->capacity + 63) / 64) * sizeof(uint64_t));
 }
 
+// return true if changes
+inline static bool set_union(Set* dst, Set* src) {
+    assert(dst->capacity >= src->capacity);
+    size_t n = (src->capacity + 63) / 64;
+
+    uint64_t changes = 0;
+    FOREACH_N(i, 0, n) {
+        uint64_t old = dst->data[i];
+        uint64_t new = old | src->data[i];
+
+        dst->data[i] = new;
+        changes |= (old ^ new);
+    }
+    return changes;
+}
+
+inline static bool set_equals(Set* dst, Set* src) {
+    assert(dst->capacity == src->capacity);
+    size_t n = (dst->capacity + 63) / 64;
+
+    FOREACH_N(i, 0, n) {
+        if (dst->data[i] != src->data[i]) return false;
+    }
+
+    return true;
+}
+
+inline static void set_copy(Set* dst, Set* src) {
+    assert(dst->capacity >= src->capacity);
+    memcpy(dst->data, src->data, ((src->capacity + 63) / 64) * sizeof(uint64_t));
+}
+
 inline static size_t set_popcount(Set* s) {
+    size_t n = (s->capacity + 63) / 64;
+
     size_t sum = 0;
-    for (size_t i = 0; i < s->capacity; i++) {
+    FOREACH_N(i, 0, n) {
         sum += tb_popcount64(s->data[i]);
     }
 

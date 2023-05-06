@@ -1,11 +1,11 @@
 #if _WIN32
 #include "common.h"
-
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-
-#include <DbgHelp.h>
 #include <time.h>
+
+// because we undef'd it earlier
+#define VOID void
+#define TokenStream FuckYouWindows
+#include <DbgHelp.h>
 #pragma comment(lib, "Dbghelp.lib")
 
 #include <threads.h>
@@ -44,20 +44,13 @@ static LONG WINAPI unhandled_exception_handler(PEXCEPTION_POINTERS exception_ptr
     return EXCEPTION_CONTINUE_SEARCH;
 }
 
-void hook_crash_handler() {
+void hook_crash_handler(void) {
     mtx_init(&crash_mutex, mtx_plain);
     SetUnhandledExceptionFilter(unhandled_exception_handler);
-
-    #if 0
-    ULONG_PTR low, high;
-    GetCurrentThreadStackLimits(&low, &high);
-
-    printf("%f MiB\n", (high-low) / 1048576.0f);
-    #endif
 }
 
 #else
 // #error "Implement crash handler on this platform"
-void hook_crash_handler() {
+void hook_crash_handler(void) {
 }
 #endif

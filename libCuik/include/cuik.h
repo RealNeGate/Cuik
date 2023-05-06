@@ -13,15 +13,13 @@ int sprintf_s(char* buffer, size_t len, const char* format, ...);
 typedef struct CompilationUnit CompilationUnit;
 typedef struct TranslationUnit TranslationUnit;
 typedef struct Cuik_Toolchain Cuik_Toolchain;
-typedef struct Cuik_CompilerArgs Cuik_CompilerArgs;
+typedef struct Cuik_DriverArgs Cuik_DriverArgs;
 
 ////////////////////////////////////////////
 // Interfaces
 ////////////////////////////////////////////
+// fellas... is it ok to OOP? just this once?
 typedef struct Cuik_IThreadpool {
-    // fed into the member functions here
-    void* user_data;
-
     // runs the function fn with arg as the parameter on a thread.
     //   arg_size from Cuik is always going to be less than 64bytes
     void (*submit)(void* user_data, void fn(void*), size_t arg_size, void* arg);
@@ -31,7 +29,7 @@ typedef struct Cuik_IThreadpool {
 } Cuik_IThreadpool;
 
 // for doing calls on the interfaces
-#define CUIK_CALL(object, action, ...) ((object)->action((object)->user_data, ##__VA_ARGS__))
+#define CUIK_CALL(object, action, ...) ((object)->action((object) + 1, ##__VA_ARGS__))
 
 ////////////////////////////////////////////
 // Target descriptor
@@ -83,13 +81,19 @@ CUIK_API void cuik_init(void);
 // This should be called before exiting
 CUIK_API void cuik_free_thread_resources(void);
 
+#ifdef CUIK_ALLOW_THREADS
+CUIK_API Cuik_IThreadpool* cuik_threadpool_create(int threads, int workqueue_size);
+CUIK_API void cuik_threadpool_destroy(Cuik_IThreadpool* thread_pool);
+#endif
+
 ////////////////////////////////////////////
 // Compilation unit management
 ////////////////////////////////////////////
-#define FOR_EACH_TU(it, cu) for (TranslationUnit* it = (cu)->head; it; it = cuik_next_translation_unit(it))
+#define CUIK_FOR_EACH_TU(it, cu) for (TranslationUnit* it = cuik_first_translation_unit(cu); it; it = cuik_next_translation_unit(it))
 
 // if the translation units are in a compilation unit you can walk this chain of pointers
 // to read them
+CUIK_API TranslationUnit* cuik_first_translation_unit(CompilationUnit* restrict cu);
 CUIK_API TranslationUnit* cuik_next_translation_unit(TranslationUnit* restrict tu);
 
 CUIK_API CompilationUnit* cuik_create_compilation_unit(void);
@@ -98,6 +102,7 @@ CUIK_API void cuik_unlock_compilation_unit(CompilationUnit* restrict cu);
 CUIK_API void cuik_add_to_compilation_unit(CompilationUnit* restrict cu, TranslationUnit* restrict tu);
 CUIK_API void cuik_destroy_compilation_unit(CompilationUnit* restrict cu);
 CUIK_API size_t cuik_num_of_translation_units_in_compilation_unit(CompilationUnit* restrict cu);
+CUIK_API TB_Module* cuik_compilation_unit_tb_module(CompilationUnit* restrict cu);
 
 // currently there's only two levels:
 //   0 no debug info

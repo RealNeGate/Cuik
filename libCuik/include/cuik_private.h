@@ -20,16 +20,19 @@ typedef struct {
 } MacroDef;
 
 struct Cuik_CPP {
+    // file system stuff
+    Cuikpp_LocateFile locate;
+    Cuikpp_GetFile fs;
+    void* user_data;
+
     // used to store macro expansion results
     size_t the_shtuffs_size;
     unsigned char* the_shtuffs;
 
     TokenStream tokens;
-    TokenArray scratch_list;
 
     // powers __COUNTER__
     int unique_counter;
-    bool included_system_header;
 
     // we got a little state machine design
     // to emulate some bootleg coroutines :P

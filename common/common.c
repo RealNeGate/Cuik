@@ -3,7 +3,32 @@
 #include "futex.h"
 #include <stdatomic.h>
 
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#endif
+
+void* cuik__valloc(size_t size) {
+    #ifdef _WIN32
+    return VirtualAlloc(NULL, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+    #else
+    return mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    #endif
+}
+
+void cuik__vfree(void* ptr, size_t size) {
+    #ifdef _WIN32
+    VirtualFree(ptr, 0, MEM_RESET);
+    #else
+    munmap(ptr, size);
+    #endif
+}
+
 void* arena_alloc(Arena* arena, size_t size, size_t align) {
+    if (size == 0) return NULL;
+
     // alignment must be a power of two
     size_t align_mask = align - 1;
 
@@ -15,8 +40,9 @@ void* arena_alloc(Arena* arena, size_t size, size_t align) {
 
     void* ptr;
     if (arena->top && arena->top->used + size + align < ARENA_SEGMENT_SIZE - sizeof(ArenaSegment)) {
+        arena->top->used = (arena->top->used + align_mask) & ~align_mask;
         ptr = &arena->top->data[arena->top->used];
-        arena->top->used = (arena->top->used + size + align_mask) & ~align_mask;
+        arena->top->used += size;
     } else if (arena->top == NULL || arena->top->next == NULL) {
         // Add new page
         ArenaSegment* s = cuik__valloc(ARENA_SEGMENT_SIZE);
@@ -85,8 +111,14 @@ void arena_trim(Arena* arena) {
 }
 
 void arena_append(Arena* arena, Arena* other) {
-    if (arena->top != NULL && other != NULL) {
-        arena->top->next = other->base;
+    if (arena->top) {
+        if (other != NULL) {
+            arena->top->next = other->base;
+            arena->top = other->top;
+        }
+    } else {
+        // attach to start
+        arena->base = other->base;
         arena->top = other->top;
     }
 }
@@ -116,7 +148,7 @@ void futex_signal(Futex* addr) {
     int ret = syscall(SYS_futex, addr, FUTEX_WAKE | FUTEX_PRIVATE_FLAG, 1, NULL, NULL, 0);
     if (ret == -1) {
         perror("Futex wake");
-        __debugbreak();
+        __builtin_trap();
     }
 }
 
@@ -124,7 +156,7 @@ void futex_broadcast(Futex* addr) {
     int ret = syscall(SYS_futex, addr, FUTEX_WAKE | FUTEX_PRIVATE_FLAG, INT32_MAX, NULL, NULL, 0);
     if (ret == -1) {
         perror("Futex wake");
-        __debugbreak();
+        __builtin_trap();
     }
 }
 
@@ -147,6 +179,8 @@ void futex_wait(Futex* addr, Futex val) {
 }
 
 #elif defined(__APPLE__)
+
+#include <errno.h>
 
 enum {
     UL_COMPARE_AND_WAIT = 0x00000001,
@@ -172,11 +206,11 @@ void futex_signal(Futex* addr) {
             return;
         }
         printf("futex wake fail?\n");
-        __debugbreak();
+        __builtin_trap();
     }
 }
 
-void _tpool_broadcast(TPool_Futex *addr) {
+void _tpool_broadcast(Futex* addr) {
     for (;;) {
         int ret = __ulock_wake(UL_COMPARE_AND_WAIT | ULF_NO_ERRNO | ULF_WAKE_ALL, addr, 0);
         if (ret >= 0) {
@@ -190,7 +224,7 @@ void _tpool_broadcast(TPool_Futex *addr) {
             return;
         }
         printf("futex wake fail?\n");
-        __debugbreak();
+        __builtin_trap();
     }
 }
 

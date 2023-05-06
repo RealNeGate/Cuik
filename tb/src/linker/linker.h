@@ -28,19 +28,18 @@ struct TB_LinkerSectionPiece {
     enum {
         // write the data buffer in this struct
         PIECE_NORMAL,
-        // Write the TB module's text section
-        PIECE_TEXT,
-        // Write the TB module's data section
-        PIECE_DATA,
-        // Write the TB module's rdata section
-        PIECE_RDATA,
+        // Write TB_ModuleSection
+        PIECE_MODULE_SECTION,
         // Write the TB module's pdata section
         PIECE_PDATA,
         // Write the TB module's reloc section
         PIECE_RELOC,
     } kind;
 
-    TB_Module* module;
+    union {
+        TB_Module* module;
+        TB_ObjectFile* obj;
+    };
     TB_LinkerSection* parent;
 
     TB_LinkerSymbol* first_sym;
@@ -70,6 +69,8 @@ struct TB_LinkerSection {
     TB_LinkerSectionFlags generic_flags;
     uint32_t flags;
     uint32_t number;
+
+    uint32_t name_pos;
 
     size_t address; // usually a relative virtual address.
     size_t offset;  // in the file.
@@ -248,6 +249,9 @@ struct TB_UnresolvedSymbol {
 typedef struct TB_Linker {
     TB_Arch target_arch;
 
+    const char* entrypoint;
+    TB_WindowsSubsystem subsystem;
+
     NL_Strmap(TB_LinkerSection*) sections;
 
     // for relocations
@@ -281,8 +285,10 @@ TB_UnresolvedSymbol* tb__unresolved_symbol(TB_Linker* l, TB_Slice name);
 TB_LinkerSectionPiece* tb__get_piece(TB_Linker* l, TB_LinkerSymbol* restrict sym);
 
 // TB helpers
+TB_Slice tb__get_piece_name(TB_LinkerSectionPiece* restrict p);
+
 size_t tb__get_symbol_pos(TB_Symbol* s);
-size_t tb__layout_text_section(TB_Module* m);
+void tb__append_module_section(TB_Linker* l, TB_Module* m, TB_ModuleSection* section, const char* name, uint32_t flags);
 
 ImportThunk* tb__find_or_create_import(TB_Linker* l, TB_LinkerSymbol* restrict sym);
 
@@ -304,3 +310,6 @@ TB_LinkerSectionPiece* tb__append_piece(TB_LinkerSection* section, int kind, siz
 size_t tb__pad_file(uint8_t* output, size_t write_pos, char pad, size_t align);
 void tb__apply_module_relocs(TB_Linker* l, TB_Module* m, uint8_t* output);
 size_t tb__apply_section_contents(TB_Linker* l, uint8_t* output, size_t write_pos, TB_LinkerSection* text, TB_LinkerSection* data, TB_LinkerSection* rdata, size_t section_alignment, size_t image_base);
+
+// do layouting (requires GC step to complete)
+bool tb__finalize_sections(TB_Linker* l);

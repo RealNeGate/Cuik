@@ -3,7 +3,17 @@
 #pragma once
 #include <setjmp.h>
 
-#ifdef TB_USE_MIMALLOC
+#if 0
+void* guard_malloc(size_t size);
+void* guard_realloc(void* ptr, size_t size);
+void guard_free(void* ptr);
+
+// adds guard pages so we segfault from accessing out of bounds
+#define tb_platform_heap_alloc(size) guard_malloc(size)
+#define tb_platform_heap_realloc(ptr, size) guard_realloc(ptr, size)
+#define tb_platform_heap_free(ptr) guard_free(ptr)
+
+#elif defined(TB_USE_MIMALLOC)
 #include <mimalloc.h>
 
 #define tb_platform_heap_alloc(size) mi_malloc(size)
@@ -30,12 +40,3 @@ typedef enum {
 void* tb_platform_valloc(size_t size);
 void  tb_platform_vfree(void* ptr, size_t size);
 bool  tb_platform_vprotect(void* ptr, size_t size, TB_MemProtect prot);
-
-////////////////////////////////
-// General Heap allocator
-////////////////////////////////
-// This is used for reallocatable and smaller allocations
-// compared to the large scale arenas.
-void* tb_platform_heap_alloc(size_t size);
-void* tb_platform_heap_realloc(void* ptr, size_t size);
-void  tb_platform_heap_free(void* ptr);

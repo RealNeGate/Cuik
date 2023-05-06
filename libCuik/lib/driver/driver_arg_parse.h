@@ -7,27 +7,20 @@
 typedef enum ArgType {
     ARG_NONE = 0,
 
-    #define X(name, short, long, has_args, msg) ARG_ ## name,
+    #define X(name, short, has_args, msg) ARG_ ## name,
     #include "driver_args.h"
 } ArgType;
 
 typedef struct {
-    ArgType type;
     const char* alias; // -a
-    const char* name;  // --name
     bool has_arg;
     const char* desc;
 } ArgDesc;
 
-typedef struct Arg {
-    ArgType key;
-    const char* value;
-} Arg;
-
 static const char* arg_is_set = "set";
 
 static const ArgDesc arg_descs[] = {
-    #define X(name, short, long, has_args, msg) { ARG_ ## name, short, long, has_args, msg },
+    #define X(name, short, has_args, msg) [ARG_ ## name] = { short, has_args, msg },
     #include "driver_args.h"
 };
 enum { ARG_DESC_COUNT = sizeof(arg_descs) / sizeof(arg_descs[0]) };
@@ -44,10 +37,17 @@ static TargetOption target_options[] = {
     { "x64_windows_msvc",         cuik_target_x64,       CUIK_SYSTEM_WINDOWS,     CUIK_ENV_MSVC },
     { "x64_macos_gnu",            cuik_target_x64,       CUIK_SYSTEM_MACOS,       CUIK_ENV_GNU  },
     { "x64_linux_gnu",            cuik_target_x64,       CUIK_SYSTEM_LINUX,       CUIK_ENV_GNU  },
-    { "aarch64_windows_msvc",     cuik_target_aarch64,   CUIK_SYSTEM_WINDOWS,     CUIK_ENV_MSVC },
-    { "wasm32",                   cuik_target_wasm,      CUIK_SYSTEM_WEB,         CUIK_ENV_GNU  },
 };
 enum { TARGET_OPTION_COUNT = sizeof(target_options) / sizeof(target_options[0]) };
+
+struct Cuik_Arguments {
+    Arena arena;
+
+    // _[0] is for non-flag arguments
+    Cuik_Arg* _[ARG_DESC_COUNT];
+};
+
+#define FOR_ARGS(a, arg_i) for (Cuik_Arg* a = args->_[arg_i]; a; a = a->prev)
 
 static void print_help(void) {
     printf("OVERVIEW: Cuik C compiler\n\n");
@@ -55,22 +55,10 @@ static void print_help(void) {
     printf("OPTIONS:\n");
 
     size_t split = 24;
-    for (int i = 0; i < ARG_DESC_COUNT; i++) {
+    for (int i = 1; i < ARG_DESC_COUNT; i++) {
         printf("    ");
 
-        size_t len = 0;
-        if (arg_descs[i].alias) {
-            len += printf("-%s", arg_descs[i].alias);
-        }
-
-        if (arg_descs[i].name) {
-            if (len > 0) {
-                len += printf(", ");
-            }
-
-            len += printf("--%s", arg_descs[i].name);
-        }
-
+        size_t len = printf("-%s", arg_descs[i].alias);
         if (arg_descs[i].has_arg) {
             len += printf(" <value>");
         }
@@ -82,186 +70,216 @@ static void print_help(void) {
     printf("\n");
 }
 
-static const ArgDesc* find_arg_desc(const char* arg, bool is_long_name) {
-    if (is_long_name) {
-        for (size_t i = 0; i < ARG_DESC_COUNT; i++) {
-            const char* n = arg_descs[i].name;
-            if (n && strncmp(arg, n, strlen(n)) == 0) {
-                return &arg_descs[i];
-            }
-        }
-    } else {
-        for (size_t i = 0; i < ARG_DESC_COUNT; i++) {
-            const char* n = arg_descs[i].alias;
-            if (n && strncmp(arg, n, strlen(n)) == 0) {
-                return &arg_descs[i];
-            }
-        }
-    }
-
-    return NULL;
-}
-
-#define A(x, y, z) (*out_arg_length = (x), (Arg){ (y), (z) })
-static Arg read_arg(int* out_arg_length, int argc, const char* argv[]) {
-    // identify argument kind
-    const char* first = argv[0];
-    if (first[0] != '-') return A(1, ARG_NONE, first);
-
-    // check for equals
-    bool is_long_name = (first[1] == '-');
-    const char* equals = strchr(first, '=');
-    const ArgDesc* desc = find_arg_desc(&first[is_long_name ? 2 : 1], is_long_name);
-    if (desc == NULL) {
-        // could not find an option
-        fprintf(stderr, "error: could not find match for %s\n", first);
-        return A(1, ARG_NONE, NULL);
-    }
-
-    if (!desc->has_arg) return A(1, desc->type, arg_is_set);
-    if (is_long_name) {
-        if (equals != NULL) return A(1, desc->type, equals + 1);
-    } else {
-        size_t alias_len = strlen(desc->alias);
-        if (strlen(first) - 1 > alias_len) {
-            return A(1, desc->type, first + 1 + alias_len);
-        }
-    }
-
-    if (argc >= 1) return A(2, desc->type, argv[1]);
-
-    fprintf(stderr, "error: no argument after %s\n", first);
-    return A(1, ARG_NONE, NULL);
-}
-#undef A
-
-int cuik_parse_arg(Cuik_CompilerArgs* args, int argc, const char* argv[]) {
-    int i;
-    Arg arg = read_arg(&i, argc, argv);
-    switch (arg.key) {
-        case ARG_NONE: {
-            if (arg.value == NULL) return i;
-
-            append_input_path(args, arg.value);
-            break;
-        }
-        case ARG_DEFINE: {
-            dyn_array_put(args->defines, cuik_strdup(arg.value));
-            break;
-        }
-        case ARG_INCLUDE: {
-            // resolve a fullpath
-            char* newstr = cuik_malloc(FILENAME_MAX);
-            if (cuik_canonicalize_path(newstr, arg.value)) {
-                size_t end = strlen(newstr);
-
-                if (newstr[end - 1] != '\\' && newstr[end - 1] != '/') {
-                    assert(end+2 < FILENAME_MAX);
-                    #ifdef _WIN32
-                    newstr[end] = '\\';
-                    #else
-                    newstr[end] = '/';
-                    #endif
-                    newstr[end+1] = '\0';
-                }
-
-                dyn_array_put(args->includes, newstr);
-            } else {
-                fprintf(stderr, "error: could not resolve include: %s\n", arg.value);
-                return EXIT_FAILURE;
-            }
-            break;
-        }
-        case ARG_LIB: {
-            char* newstr = cuik_strdup(arg.value);
-
-            char* ctx;
-            char* a = strtok_r(newstr, ",", &ctx);
-            while (a != NULL) {
-                dyn_array_put(args->libraries, a);
-                a = strtok_r(NULL, ",", &ctx);
-            }
-            break;
-        }
-        case ARG_TARGET: {
-            bool success = false;
-            for (size_t i = 0; i < TARGET_OPTION_COUNT; i++) {
-                if (strcmp(arg.value, target_options[i].key) == 0) {
-                    TargetOption* o = &target_options[i];
-                    args->target = o->target(o->system, o->env);
-                    success = true;
-                    break;
-                }
-            }
-
-            if (!success) {
-                fprintf(stderr, "unknown target: %s\n", arg.value);
-                fprintf(stderr, "Supported targets:\n");
-                for (size_t i = 0; i < TARGET_OPTION_COUNT; i++) {
-                    fprintf(stderr, "    %s\n", target_options[i].key);
-                }
-                fprintf(stderr, "\n");
-            }
-            break;
-        }
-        case ARG_LANG: {
-            if (strcmp(arg.value, "c11")) args->verbose = CUIK_VERSION_C11;
-            else if (strcmp(arg.value, "c23")) args->verbose = CUIK_VERSION_C23;
-            else if (strcmp(arg.value, "glsl")) args->verbose = CUIK_VERSION_GLSL;
-            else {
-                fprintf(stderr, "unknown compiler version: %s\n", arg.value);
-                fprintf(stderr, "supported languages: c11, c23, glsl\n");
-            }
-            break;
-        }
-        case ARG_OPTLVL: args->opt_level = atoi(arg.value); break;
-        case ARG_OUTPUT: args->output_name = arg.value; break;
-        case ARG_OBJECT: args->flavor = TB_FLAVOR_OBJECT; break;
-        case ARG_PP: args->preprocess = true; break;
-        case ARG_PPTEST: args->test_preproc = true; break;
-        case ARG_RUN: args->run = true; break;
-        case ARG_LIVE: args->live = true; break;
-        case ARG_PPREPL: args->pprepl = true; break;
-        case ARG_AST: args->ast = true; break;
-        case ARG_ASSEMBLY: args->flavor = TB_FLAVOR_ASSEMBLY; break;
-        case ARG_SYNTAX: args->syntax_only = true; break;
-        case ARG_VERBOSE: args->verbose = true; break;
-        case ARG_THINK: args->think = true; break;
-        case ARG_BASED: args->based = true; break;
-        case ARG_TIME: args->time = true; break;
-        case ARG_DEBUG: args->debug_info = true; break;
-        case ARG_EMITIR: args->ir = true; break;
-        case ARG_NOLIBC: args->nocrt = true; break;
-        case ARG_HELP: {
-            print_help();
+static size_t find_arg_desc(const char* arg) {
+    for (size_t i = 1; i < ARG_DESC_COUNT; i++) {
+        const char* n = arg_descs[i].alias;
+        if (n && strncmp(arg, n, strlen(n)) == 0) {
             return i;
         }
+    }
 
-        case ARG_THREADS:
+    return 0;
+}
+
+static Cuik_Arg* insert_arg(Cuik_Arguments* restrict args, int slot) {
+    Cuik_Arg* new_arg = ARENA_ALLOC(&args->arena, Cuik_Arg);
+    new_arg->prev = args->_[slot];
+    args->_[slot] = new_arg;
+    return new_arg;
+}
+
+CUIK_API Cuik_Arguments* cuik_alloc_args(void) {
+    return cuik_calloc(1, sizeof(Cuik_Arguments));
+}
+
+CUIK_API void cuik_free_args(Cuik_Arguments* args) {
+    cuik_free(args);
+}
+
+CUIK_API void cuik_parse_args(Cuik_Arguments* restrict args, int argc, const char* argv[]) {
+    for (int i = 0; i < argc; i++) {
+        const char* first = argv[i];
+
+        // non-flag argument
+        if (first[0] != '-') {
+            insert_arg(args, 0)->value = first;
+            continue;
+        }
+
+        // flags
+        size_t type = find_arg_desc(first + 1);
+        if (type == 0) {
+            fprintf(stderr, "\x1b[31merror\x1b[0m: could not find match for %s\n", first);
+            continue;
+        }
+
+        size_t alias_len = strlen(arg_descs[type].alias);
+        const ArgDesc* desc = &arg_descs[type];
+        if (desc->has_arg) {
+            if (first[alias_len + 1] != 0) {
+                insert_arg(args, type)->value = first + alias_len + 1;
+            } else if (i + 1 >= argc) {
+                fprintf(stderr, "\x1b[31merror\x1b[0m: expected argument after %s\n", first);
+                insert_arg(args, type)->value = arg_is_set;
+                continue;
+            } else {
+                insert_arg(args, type)->value = argv[i + 1];
+                i += 1;
+            }
+        } else {
+            insert_arg(args, type)->value = arg_is_set;
+        }
+    }
+}
+
+CUIK_API bool cuik_parse_driver_args(Cuik_DriverArgs* comp_args, int argc, const char* argv[]) {
+    Cuik_Arguments* args = cuik_alloc_args();
+    cuik_parse_args(args, argc, argv);
+
+    bool result = cuik_args_to_driver(comp_args, args);
+    cuik_free_args(args);
+    return result;
+}
+
+#define TOGGLE(a, b) if (args->_[a]) { comp_args->b = true; }
+CUIK_API bool cuik_args_to_driver(Cuik_DriverArgs* comp_args, Cuik_Arguments* restrict args) {
+    if (args->_[ARG_HELP]) {
+        print_help();
+        return false;
+    }
+
+    if (args->_[ARG_OUTPUT]) {
+        comp_args->output_name = cuik_strdup(args->_[ARG_OUTPUT]->value);
+    }
+
+    FOR_ARGS(a, 0) {
+        append_input_path(comp_args, a->value);
+    }
+
+    FOR_ARGS(a, ARG_DEFINE) {
+        dyn_array_put(comp_args->defines, cuik_strdup(a->value));
+    }
+
+    FOR_ARGS(a, ARG_INCLUDE) {
+        // resolve a fullpath
+        char* newstr = cuik_malloc(FILENAME_MAX);
+        if (cuik_canonicalize_path(newstr, a->value)) {
+            size_t end = strlen(newstr);
+
+            if (newstr[end - 1] != '\\' && newstr[end - 1] != '/') {
+                assert(end+2 < FILENAME_MAX);
+                #ifdef _WIN32
+                newstr[end] = '\\';
+                #else
+                newstr[end] = '/';
+                #endif
+                newstr[end+1] = '\0';
+            }
+
+            dyn_array_put(comp_args->includes, newstr);
+        } else {
+            fprintf(stderr, "error: could not resolve include: %s\n", a->value);
+        }
+    }
+
+    FOR_ARGS(a, ARG_LIB) {
+        char* newstr = cuik_strdup(a->value);
+
+        char* ctx;
+        char* a = strtok_r(newstr, ",", &ctx);
+        while (a != NULL) {
+            dyn_array_put(comp_args->libraries, a);
+            a = strtok_r(NULL, ",", &ctx);
+        }
+    }
+
+    Cuik_Arg* lang = args->_[ARG_LANG];
+    if (lang) {
+        if (strcmp(lang->value, "c11") == 0) comp_args->version = CUIK_VERSION_C11;
+        else if (strcmp(lang->value, "c23") == 0) comp_args->version = CUIK_VERSION_C23;
+        else if (strcmp(lang->value, "glsl") == 0) comp_args->version = CUIK_VERSION_GLSL;
+        else {
+            fprintf(stderr, "unknown compiler version: %s\n", lang->value);
+            fprintf(stderr, "supported languages: c11, c23, glsl\n");
+        }
+    }
+
+    Cuik_Arg* subsystem = args->_[ARG_SUBSYSTEM];
+    if (subsystem) {
+        if (strcmp(subsystem->value, "windows") == 0) comp_args->subsystem = TB_WIN_SUBSYSTEM_WINDOWS;
+        else if (strcmp(subsystem->value, "console") == 0) comp_args->subsystem = TB_WIN_SUBSYSTEM_CONSOLE;
+        else if (strcmp(subsystem->value, "efi") == 0) comp_args->subsystem = TB_WIN_SUBSYSTEM_EFI_APP;
+        else {
+            fprintf(stderr, "unknown subsystem: %s\n", subsystem->value);
+            fprintf(stderr, "supported: windows, console, efi\n");
+        }
+    }
+
+    Cuik_Arg* entry = args->_[ARG_ENTRY];
+    if (entry) {
+        comp_args->entrypoint = entry->value;
+    }
+
+    Cuik_Arg* target = args->_[ARG_TARGET];
+    if (target) {
+        bool success = false;
+        for (size_t i = 0; i < TARGET_OPTION_COUNT; i++) {
+            if (strcmp(target->value, target_options[i].key) == 0) {
+                TargetOption* o = &target_options[i];
+                comp_args->target = o->target(o->system, o->env);
+                success = true;
+                break;
+            }
+        }
+
+        if (!success) {
+            fprintf(stderr, "unknown target: %s\n", target->value);
+            fprintf(stderr, "Supported targets:\n");
+            for (size_t i = 0; i < TARGET_OPTION_COUNT; i++) {
+                fprintf(stderr, "    %s\n", target_options[i].key);
+            }
+            fprintf(stderr, "\n");
+        }
+    }
+
+    Cuik_Arg* threads = args->_[ARG_THREADS];
+    if (threads) {
         #ifdef CUIK_ALLOW_THREADS
         #ifdef _WIN32
         SYSTEM_INFO sysinfo;
         GetSystemInfo(&sysinfo);
 
-        int n = (sysinfo.dwNumberOfProcessors / 2) - 1;
-        args->threads = (n < 1 ? 1 : n);
+        int n = sysinfo.dwNumberOfProcessors - 1;
+        comp_args->threads = (n < 1 ? 1 : n);
         #else
         assert(0 && "TODO(NeGate): implement core count detection on this platform");
-        args->threads = 1;
+        comp_args->threads = 1;
         #endif
         #else
         printf("warning: Cuik was not built with threading support, this option will be ignored.\n");
         #endif
-        break;
-
-        default: break;
     }
 
-    return i;
-}
+    if (args->_[ARG_OBJECT]) comp_args->flavor = TB_FLAVOR_OBJECT;
+    if (args->_[ARG_ASSEMBLY]) comp_args->flavor = TB_FLAVOR_ASSEMBLY;
 
-void cuik_parse_args(Cuik_CompilerArgs* args, int argc, const char* argv[]) {
-    for (int i = 0; i < argc;) {
-        i += cuik_parse_arg(args, argc - i, argv + i);
+    if (args->_[ARG_OPTLVL]) {
+        comp_args->opt_level = atoi(args->_[ARG_OPTLVL]->value);
     }
+
+    TOGGLE(ARG_PP, preprocess);
+    TOGGLE(ARG_PPTEST, test_preproc);
+    TOGGLE(ARG_RUN, run);
+    TOGGLE(ARG_LIVE, live);
+    TOGGLE(ARG_AST, ast);
+    TOGGLE(ARG_SYNTAX, syntax_only);
+    TOGGLE(ARG_VERBOSE, verbose);
+    TOGGLE(ARG_THINK, think);
+    TOGGLE(ARG_BASED, based);
+    TOGGLE(ARG_TIME, time);
+    TOGGLE(ARG_DEBUG, debug_info);
+    TOGGLE(ARG_EMITIR, emit_ir);
+    TOGGLE(ARG_NOLIBC, nocrt);
+    return true;
 }
+#undef TOGGLE

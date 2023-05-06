@@ -1,10 +1,10 @@
 #include "coff.h"
 #include "../codegen/emitter.h"
 
-struct TB_ModuleExporter {
+typedef struct TB_ModuleExporter {
     const ICodeGen* code_gen;
     size_t write_pos;
-};
+} TB_ModuleExporter;
 
 #define WRITE(data, length_) write_data(e, output, length_, data)
 static void write_data(TB_ModuleExporter* e, uint8_t* output, size_t length, const void* data) {

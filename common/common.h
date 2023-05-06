@@ -76,7 +76,7 @@ void tls_init(void);
 void tls_reset(void);
 void* tls_push(size_t size);
 void* tls_pop(size_t size);
-void* tls_save();
+void* tls_save(void);
 void tls_restore(void* p);
 
 void* cuik__valloc(size_t sz);

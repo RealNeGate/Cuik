@@ -36,11 +36,19 @@
 #include "tb_platform.h"
 #include "bigint/BigInt.h"
 #include "dyn_array.h"
-#include "set.h"
+#include <hash_map.h>
 #include "builtins.h"
 #include "pool.h"
 
+#define FOREACH_N(it, start, end) \
+for (ptrdiff_t it = (start), end__ = (end); it < end__; ++it)
+
+#define FOREACH_REVERSE_N(it, start, end) \
+for (ptrdiff_t it = (end), start__ = (start); (it--) > start__;)
+
 #include <arena.h>
+#include "set.h"
+
 #include <threads.h>
 
 // ***********************************
@@ -78,7 +86,6 @@ size_t tb_atomic_size_store(size_t* dst, size_t src);
 void* tb_atomic_ptr_exchange(void** address, void* new_value);
 bool tb_atomic_ptr_cmpxchg(void** address, void* old_value, void* new_value);
 
-#define PROTOTYPES_ARENA_SIZE   (32u << 20u)
 #define CODE_REGION_BUFFER_SIZE (256 * 1024 * 1024)
 
 typedef struct TB_Emitter {
@@ -95,40 +102,32 @@ struct { size_t cap, count; T* elems; }
 #define TB_DATA_TYPE_EQUALS(a, b) ((a).raw == (b).raw)
 #define TB_DT_EQUALS(a, b) ((a).raw == (b).raw)
 
-#ifdef TB_FOR_BASIC_BLOCK
 #undef TB_FOR_BASIC_BLOCK
-
-// simple optimization of it within the TB code
-// since we have access to the structures
 #define TB_FOR_BASIC_BLOCK(it, f) for (TB_Label it = 0; it < f->bb_count; it++)
-#endif
 
-#define TB_FOR_NODE(it, f, bb) for (TB_Reg it = f->bbs[bb].start; it != 0; it = f->nodes[it].next)
-#define TB_FOR_NODE_AFTER(it, f, first) for (TB_Reg it = f->nodes[reg].start; it != 0; it = f->nodes[it].next)
+#define TB_FOR_NODE(it, f, bb) for (TB_Node* it = f->bbs[bb].start; it != 0; it = it->next)
 
 #define TB_FOR_SYMBOL_WITH_TAG(it, m, tag) for (TB_Symbol* it = m->first_symbol_of_tag[tag]; it != NULL; it = it->next)
 
 #undef TB_FOR_FUNCTIONS
 #define TB_FOR_FUNCTIONS(it, m) for (TB_Function* it = (TB_Function*) m->first_symbol_of_tag[TB_SYMBOL_FUNCTION]; it != NULL; it = (TB_Function*) it->super.next)
 
-#define TB_FOR_GLOBALS(it, m) FOREACH_N(_it_, 0, m->max_threads) pool_for(TB_Global, it, m->thread_info[_it_].globals)
+#undef TB_FOR_GLOBALS
+#define TB_FOR_GLOBALS(it, m) for (TB_Global* it = (TB_Global*) m->first_symbol_of_tag[TB_SYMBOL_GLOBAL]; it != NULL; it = (TB_Global*) it->super.next)
 
-typedef struct TB_ConstPoolPatch {
+#undef TB_FOR_EXTERNALS
+#define TB_FOR_EXTERNALS(it, m) for (TB_External* it = (TB_External*) m->first_symbol_of_tag[TB_SYMBOL_EXTERNAL]; it != NULL; it = (TB_External*) it->super.next)
+
+// i love my linked lists don't i?
+typedef struct TB_SymbolPatch TB_SymbolPatch;
+struct TB_SymbolPatch {
+    TB_SymbolPatch* prev;
+
     TB_Function* source;
-    uint32_t pos; // relative to the start of the function body
-
-    size_t rdata_pos;
-
-    size_t length;
-    const void* data;
-} TB_ConstPoolPatch;
-
-typedef struct TB_SymbolPatch {
-    TB_Function* source;
-    uint32_t pos; // relative to the start of the function body
-    bool is_function;
+    uint32_t pos;  // relative to the start of the function body
+    bool internal; // handled already by the code gen's emit_call_patches
     const TB_Symbol* target;
-} TB_SymbolPatch;
+};
 
 typedef struct TB_File {
     char* path;
@@ -137,42 +136,6 @@ typedef struct TB_File {
 struct TB_External {
     TB_Symbol super;
     TB_ExternalType type;
-};
-
-struct TB_Global {
-    TB_Symbol super;
-
-    TB_DebugType* dbg_type;
-    TB_Linkage linkage;
-    TB_StorageClass storage;
-
-    TB_Initializer* init;
-    uint32_t pos;
-};
-
-typedef struct TB_PrototypeParam {
-    TB_DataType dt;
-    char* name;
-    TB_DebugType* debug_type;
-} TB_PrototypeParam;
-
-// function prototypes are stored
-// in streams as inplace arrays:
-//
-// PROTOTYPE0, arg0, arg1, PROTOTYPE1, arg0, arg1
-struct TB_FunctionPrototype {
-    // header
-    TB_CallingConv call_conv;
-
-    short param_capacity;
-    short param_count;
-
-    TB_DataType return_dt;
-    TB_DebugType* return_type;
-    bool has_varargs;
-
-    // payload
-    TB_PrototypeParam params[];
 };
 
 typedef struct TB_InitObj {
@@ -191,14 +154,23 @@ typedef struct TB_InitObj {
     };
 } TB_InitObj;
 
-struct TB_Initializer {
-    // header
-    TB_CharUnits size, align;
-    uint32_t obj_capacity;
-    uint32_t obj_count;
+struct TB_Global {
+    TB_Symbol super;
 
-    // payload
-    TB_InitObj objects[];
+    TB_ModuleSection* parent;
+    TB_Linkage linkage;
+
+    // layout stuff
+    void* address; // JIT-only
+    uint32_t pos;
+    TB_CharUnits size, align;
+
+    // debug info
+    TB_DebugType* dbg_type;
+
+    // contents
+    uint32_t obj_count, obj_capacity;
+    TB_InitObj* objects;
 };
 
 struct TB_DebugType {
@@ -287,6 +259,11 @@ typedef struct TB_StackSlot {
     TB_DebugType* storage_type;
 } TB_StackSlot;
 
+typedef struct TB_Comdat {
+    TB_ComdatType type;
+    uint32_t reloc_count;
+} TB_Comdat;
+
 typedef struct TB_FunctionOutput {
     TB_Linkage linkage;
     int result;
@@ -312,41 +289,37 @@ typedef struct TB_FunctionOutput {
     DynArray(TB_StackSlot) stack_slots;
 } TB_FunctionOutput;
 
+// usually 1024 byte regions
+typedef struct TB_NodePage TB_NodePage;
+
+enum {
+    TB_NODE_PAGE_GENERAL_CAP = 1024 - (sizeof(TB_NodePage*) + sizeof(size_t[2])),
+};
+
+struct TB_NodePage {
+    TB_NodePage* next;
+    size_t used, cap;
+    char data[];
+};
+
 struct TB_Function {
     TB_Symbol super;
 
-    const TB_FunctionPrototype* prototype;
+    TB_FunctionPrototype* prototype;
     TB_Linkage linkage;
+    TB_Comdat comdat;
 
-    // Parameter acceleration structure
-    TB_Reg* params;
+    TB_Node* start_node;
+    TB_Node* active_control_node;
 
-    // Basic block array (also makes up the CFG as an implicit graph)
-    size_t bb_capacity, bb_count;
-    TB_BasicBlock* bbs;
+    // refers to one of the returns, each will store a pointer to
+    // the next creating a linked list
+    TB_Node* first_return;
 
-    // Nodes array
-    TB_Reg node_capacity, node_count;
-    TB_Node* nodes;
-
-    // Used by the IR building
-    TB_Reg last_reg;
-    TB_Reg current_label;
-
-    // Used by nodes which have variable
-    // length arguments like PHI and CALL.
-    // SWITCH has arguments here too but they
-    // are two slots each
-    struct {
-        size_t capacity;
-        size_t count;
-        TB_Reg* data;
-    } vla;
-
-    // Attribute pool
-    size_t attrib_pool_capacity;
-    size_t attrib_pool_count;
-    TB_Attrib* attrib_pool;
+    // Nodes allocator (micro block alloc)
+    size_t control_node_count;
+    size_t node_count;
+    TB_NodePage *head, *tail;
 
     // Part of the debug info
     size_t line_count;
@@ -359,18 +332,54 @@ struct TB_Function {
     };
 
     TB_FunctionOutput* output;
-};
 
-typedef struct {
-    uint32_t func_id;
-    uint32_t label_id;
-    uint32_t pos; // relative to the start of the function
-} TB_LabelSymbol;
+    // Relocations
+    uint32_t patch_pos;
+    uint32_t patch_count;
+    TB_SymbolPatch* last_patch;
+};
 
 typedef struct {
     size_t capacity, size;
     uint8_t data[CODE_REGION_BUFFER_SIZE - sizeof(size_t)];
 } TB_CodeRegion;
+
+typedef enum {
+    // stores globals
+    TB_MODULE_SECTION_DATA,
+
+    // data but it's thread local
+    TB_MODULE_SECTION_TLS,
+
+    // holds all the code (no globals)
+    TB_MODULE_SECTION_TEXT,
+} TB_ModuleSectionKind;
+
+struct TB_ModuleSection {
+    char* name;
+    TB_LinkerSectionPiece* piece;
+
+    int section_num;
+    TB_ModuleSectionKind kind;
+
+    // export-specific
+    uint32_t flags;
+    uint32_t name_pos;
+
+    // this isn't computed until export time
+    uint32_t raw_data_pos;
+    uint32_t total_size;
+    uint32_t reloc_count;
+    uint32_t reloc_pos;
+
+    uint32_t total_comdat_relocs;
+    uint32_t total_comdat;
+
+    bool laid_out;
+
+    // this is all the globals within the section
+    DynArray(TB_Global*) globals;
+};
 
 struct TB_Module {
     int max_threads;
@@ -390,10 +399,7 @@ struct TB_Module {
     // of a _tls_index
     TB_Symbol* tls_index_extern;
 
-    // Convert this into a dynamic memory arena... maybe
-    tb_atomic_size_t prototypes_arena_size;
-    uint64_t* prototypes_arena;
-
+    size_t comdat_function_count; // compiled function count
     tb_atomic_size_t compiled_function_count;
 
     // symbol table
@@ -405,26 +411,16 @@ struct TB_Module {
         Pool(TB_DebugType) debug_types;
         Pool(TB_Global) globals;
         Pool(TB_External) externals;
-
-        DynArray(TB_ConstPoolPatch) const_patches;
-        DynArray(TB_SymbolPatch) symbol_patches;
     } thread_info[TB_MAX_THREADS];
 
     DynArray(TB_File) files;
 
-    // Linker
-    struct {
-        TB_LinkerSectionPiece *text, *data, *rdata;
-    } linker;
+    // Common sections
+    // TODO(NeGate): custom sections
+    TB_ModuleSection text, data, rdata, tls;
 
-    // JIT
-    void* jit_region;
-    size_t jit_region_size;
-
-    // we need to keep track of these for layout reasons
-    tb_atomic_size_t data_region_size;
-    tb_atomic_size_t rdata_region_size;
-    tb_atomic_size_t tls_region_size;
+    // windows specific lol
+    TB_LinkerSectionPiece* xdata;
 
     // The code is stored into giant buffers
     // there's on per code gen thread so that
@@ -462,8 +458,8 @@ typedef struct {
     // NULLable if doesn't apply
     void (*emit_win64eh_unwind_info)(TB_Emitter* e, TB_FunctionOutput* out_f, uint64_t saved, uint64_t stack_usage);
 
-    TB_FunctionOutput (*fast_path)(TB_Function* restrict f, const TB_FeatureSet* features, uint8_t* out, size_t out_capacity, size_t local_thread_id);
-    TB_FunctionOutput (*complex_path)(TB_Function* restrict f, const TB_FeatureSet* features, uint8_t* out, size_t out_capacity, size_t local_thread_id);
+    TB_FunctionOutput (*fast_path)(TB_Function* restrict f, const TB_FeatureSet* features, uint8_t* out, size_t out_capacity);
+    TB_FunctionOutput (*complex_path)(TB_Function* restrict f, const TB_FeatureSet* features, uint8_t* out, size_t out_capacity);
 } ICodeGen;
 
 // All debug formats i know of boil down to adding some extra sections to the object file
@@ -555,12 +551,6 @@ do {                                      \
 #define CONCAT(x, y) CONCAT_(x, y)
 #endif
 
-#define FOREACH_N(it, start, end) \
-for (ptrdiff_t it = (start), end__ = (end); it < end__; ++it)
-
-#define FOREACH_REVERSE_N(it, start, end) \
-for (ptrdiff_t it = (end), start__ = (start); (it--) > start__;)
-
 // sometimes you just gotta do it to em'
 // imagine i++ but like i++y (more like ((i += y) - y)) or something idk
 inline static size_t tb_post_inc(size_t* a, size_t b) {
@@ -591,12 +581,14 @@ size_t tb_out_get_pos(TB_Emitter* o, void* p);
 
 // Adds null terminator onto the end and returns the starting position of the string
 size_t tb_outstr_nul_UNSAFE(TB_Emitter* o, const char* str);
+size_t tb_outstr_nul(TB_Emitter* o, const char* str);
 
 void tb_out1b_UNSAFE(TB_Emitter* o, uint8_t i);
 void tb_out4b_UNSAFE(TB_Emitter* o, uint32_t i);
 void tb_outstr_UNSAFE(TB_Emitter* o, const char* str);
 void tb_outs_UNSAFE(TB_Emitter* o, size_t len, const void* str);
-void tb_outs(TB_Emitter* o, size_t len, const void* str);
+size_t tb_outs(TB_Emitter* o, size_t len, const void* str);
+void* tb_out_get(TB_Emitter* o, size_t pos);
 
 // fills region with zeros
 void tb_out_zero(TB_Emitter* o, size_t len);
@@ -608,34 +600,32 @@ void tb_out8b(TB_Emitter* o, uint64_t i);
 void tb_patch1b(TB_Emitter* o, uint32_t pos, uint8_t i);
 void tb_patch2b(TB_Emitter* o, uint32_t pos, uint16_t i);
 void tb_patch4b(TB_Emitter* o, uint32_t pos, uint32_t i);
+void tb_patch8b(TB_Emitter* o, uint32_t pos, uint64_t i);
 
 uint8_t  tb_get1b(TB_Emitter* o, uint32_t pos);
 uint16_t tb_get2b(TB_Emitter* o, uint32_t pos);
 uint32_t tb_get4b(TB_Emitter* o, uint32_t pos);
 
 ////////////////////////////////
+// CFG analysis
+////////////////////////////////
+typedef NL_Map(TB_Node*, TB_Node*) TB_Dominators;
+typedef NL_Map(TB_Node*, char) TB_FrontierSet;
+typedef NL_Map(TB_Node*, TB_FrontierSet) TB_DominanceFrontiers;
+
+typedef struct {
+    size_t count;
+    TB_Node** traversal;
+
+    NL_Map(TB_Node*, char) visited;
+} TB_PostorderWalk;
+
+////////////////////////////////
 // IR ANALYSIS
 ////////////////////////////////
-TB_Label tb_find_label_from_reg(TB_Function* f, TB_Reg target);
-TB_Reg tb_find_first_use(const TB_Function* f, TB_Reg find, size_t start, size_t end);
-void tb_function_find_replace_reg(TB_Function* f, TB_Reg find, TB_Reg replace);
-size_t tb_count_uses(const TB_Function* f, TB_Reg find, size_t start, size_t end);
-void tb_function_reserve_nodes(TB_Function* f, size_t extra);
-TB_Reg tb_insert_copy_ops(TB_Function* f, const TB_Reg* params, TB_Reg at, const TB_Function* src_func, TB_Reg src_base, int count);
-TB_Reg tb_function_insert_before(TB_Function* f, TB_Reg at);
-TB_Reg tb_function_insert_after(TB_Function* f, TB_Label bb, TB_Reg at);
-
-inline static void tb_murder_node(TB_Function* f, TB_Node* n) {
-    n->type = TB_NULL;
-}
-
-inline static void tb_murder_reg(TB_Function* f, TB_Reg r) {
-    f->nodes[r].type = TB_NULL;
-}
-
-inline static void tb_kill_op(TB_Function* f, TB_Reg at) {
-    f->nodes[at].type = TB_NULL;
-}
+// Allocates from the heap and requires freeing with tb_function_free_postorder
+TB_API TB_PostorderWalk tb_function_get_postorder(TB_Function* f);
+TB_API void tb_function_free_postorder(TB_PostorderWalk* walk);
 
 inline static uint64_t align_up(uint64_t a, uint64_t b) {
     return a + (b - (a % b)) % b;
@@ -676,32 +666,43 @@ inline static bool tb_next_biggest(int* result, int v, size_t n, const int* arr)
 #if 1
 #define OPTIMIZER_LOG(at, ...) ((void) (at))
 #else
-#define OPTIMIZER_LOG(at, ...)                       \
-do {                                                 \
-    printf("%s:r%d: ", f->super.name, (TB_Reg)(at)); \
-    printf(__VA_ARGS__);                             \
-    printf(" (part of %s)\n", __FUNCTION__);         \
+#define OPTIMIZER_LOG(at, ...)               \
+do {                                         \
+    printf("%s:%p: ", f->super.name, (at));  \
+    printf(__VA_ARGS__);                     \
+    printf(" (part of %s)\n", __FUNCTION__); \
 } while (0)
 #endif
 
 #define CALL_NODE_PARAM_COUNT(n) (n->call.param_end - n->call.param_start)
 
-#if 1
+#if 0
 uint64_t cuik_time_in_nanos(void);
 void cuikperf_region_start(uint64_t now, const char* fmt, const char* extra);
 void cuikperf_region_end(void);
 
 #define CUIK_TIMED_BLOCK(label) for (uint64_t __i = (cuikperf_region_start(cuik_time_in_nanos(), label, NULL), 0); __i < 1; __i++, cuikperf_region_end())
 #define CUIK_TIMED_BLOCK_ARGS(label, extra) for (uint64_t __i = (cuikperf_region_start(cuik_time_in_nanos(), label, extra), 0); __i < 1; __i++, cuikperf_region_end())
+#else
+#define CUIK_TIMED_BLOCK(label)
+#define CUIK_TIMED_BLOCK_ARGS(label, extra)
 #endif
+
+TB_Node* tb_alloc_node(TB_Function* f, int type, TB_DataType dt, int input_count, size_t extra);
+void tb_insert_node(TB_Function* f, TB_Label bb, TB_Node* a, TB_Node* b);
+
+void tb_transmute_to_pass(TB_Node* n, TB_Node* point_to);
+void tb_transmute_to_poison(TB_Node* n);
+uint64_t* tb_transmute_to_int(TB_Function* f, TB_Label bb, TB_Node* n, int num_words);
 
 ////////////////////////////////
 // EXPORTER HELPER
 ////////////////////////////////
 size_t tb_helper_write_text_section(size_t write_pos, TB_Module* m, uint8_t* output, uint32_t pos);
-size_t tb_helper_write_data_section(size_t write_pos, TB_Module* m, uint8_t* output, uint32_t pos);
-size_t tb_helper_write_rodata_section(size_t write_pos, TB_Module* m, uint8_t* output, uint32_t pos);
+size_t tb_helper_write_section(TB_Module* m, size_t write_pos, TB_ModuleSection* section, uint8_t* output, uint32_t pos);
 size_t tb_helper_get_text_section_layout(TB_Module* m, size_t symbol_id_start);
+
+size_t tb__layout_relocations(TB_Module* m, DynArray(TB_ModuleSection*) sections, const ICodeGen* restrict code_gen, size_t output_size, size_t reloc_size, bool sizing);
 
 ////////////////////////////////
 // ANALYSIS
@@ -710,18 +711,7 @@ int tb__get_local_tid(void);
 TB_Symbol* tb_symbol_alloc(TB_Module* m, enum TB_SymbolTag tag, const char* name, size_t size);
 void tb_symbol_append(TB_Module* m, TB_Symbol* s);
 
-// TODO(NeGate): refactor this stuff such that it starts with two underscores, it makes
-// it more clear that these are TB private
-void tb_function_calculate_use_count(const TB_Function* f, int use_count[]);
-int tb_function_find_uses_of_node(const TB_Function* f, TB_Reg def, TB_Reg uses[]);
-
-// if tls is NULL then the return value is heap allocated
-TB_Label* tb_calculate_immediate_predeccessors(TB_Function* f, TB_TemporaryStorage* tls, TB_Label l, int* dst_count);
-TB_Predeccesors tb_get_temp_predeccesors(TB_Function* f, TB_TemporaryStorage* tls);
-void tb_free_temp_predeccesors(TB_TemporaryStorage* tls, TB_Predeccesors preds);
-
-uint32_t tb_emit_const_patch(TB_Module* m, TB_Function* source, size_t pos, const void* ptr,size_t len, size_t local_thread_id);
-void tb_emit_symbol_patch(TB_Module* m, TB_Function* source, const TB_Symbol* target, size_t pos, bool is_function, size_t local_thread_id);
+void tb_emit_symbol_patch(TB_Module* m, TB_Function* source, const TB_Symbol* target, size_t pos);
 
 TB_Reg* tb_vla_reserve(TB_Function* f, size_t count);
 
@@ -744,7 +734,6 @@ extern thread_local Arena tb__arena;
 
 // NOTE(NeGate): Place all the codegen interfaces down here
 extern ICodeGen tb__x64_codegen;
-extern ICodeGen tb__x64v2_codegen;
 extern ICodeGen tb__aarch64_codegen;
 extern ICodeGen tb__wasm32_codegen;
 

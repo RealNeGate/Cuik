@@ -18,9 +18,10 @@ typedef long long          intptr_t;
 typedef unsigned long long uintptr_t;
 
 #ifdef _WIN32
-typedef short wchar_t;
+typedef unsigned short wchar_t;
 #else
 typedef int   wchar_t;
 #endif
 
 #define offsetof(s,m) ((size_t)&(((s*)0)->m))
+// #define offsetof(s,m) __builtin_offsetof(s,m)

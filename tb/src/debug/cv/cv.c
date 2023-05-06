@@ -1,4 +1,4 @@
-#include "../../objects/coff.h"
+#include "../../tb_internal.h"
 #include "cv.h"
 
 // constant sized "hash map" which is used to
@@ -24,7 +24,7 @@ static void md5sum_file(uint8_t out_bytes[16], const char* filepath) {
     }
 
     size_t len  = file_stats.st_size;
-    unsigned char* data = tb_platform_heap_alloc(len + 17);
+    unsigned char* data = tb_platform_heap_alloc(len + 1);
 
     fseek(file, 0, SEEK_SET);
     fread(data, 1, len, file);
@@ -375,6 +375,8 @@ static TB_SectionGroup codeview_generate_debug_info(TB_Module* m, TB_TemporarySt
         FOREACH_N(i, 0, m->max_threads) {
             pool_for(TB_Global, g, m->thread_info[i].globals) {
                 const char* name = g->super.name;
+                if (name == NULL) continue;
+
                 size_t name_len = strlen(g->super.name) + 1;
                 CV_TypeIndex type = g->dbg_type ? convert_to_codeview_type(&builder, g->dbg_type) : T_VOID;
 
@@ -430,8 +432,14 @@ static TB_SectionGroup codeview_generate_debug_info(TB_Module* m, TB_TemporarySt
                 CV_TypeIndex arg_list = tb_codeview_builder_add_arg_list(&builder, proto->param_count, params, proto->has_varargs);
                 tb_tls_restore(tls, params);
 
+                // Create return type... if it's multiple returns use a struct
+                CV_TypeIndex return_type = T_VOID;
+                if (proto->return_count) {
+                    const TB_PrototypeParam* ret = &TB_PROTOTYPE_RETURNS(proto)[0];
+                    return_type = ret->debug_type ? convert_to_codeview_type(&builder, ret->debug_type) : get_codeview_type(ret->dt);
+                }
+
                 // Create the procedure type
-                CV_TypeIndex return_type = proto->return_type ? convert_to_codeview_type(&builder, proto->return_type) : get_codeview_type(proto->return_dt);
                 CV_TypeIndex proc = tb_codeview_builder_add_procedure(&builder, return_type, arg_list, proto->param_count);
 
                 // Create the function ID type... which is somehow different from the procedure...
@@ -491,9 +499,9 @@ static TB_SectionGroup codeview_generate_debug_info(TB_Module* m, TB_TemporarySt
                     TB_DebugType* type = out_f->stack_slots[j].storage_type;
 
                     const char* var_name = out_f->stack_slots[j].name;
-                    size_t var_name_len = strlen(var_name);
-                    assert(var_name != NULL);
+                    if (var_name == NULL) continue;
 
+                    size_t var_name_len = strlen(var_name);
                     uint32_t type_index = convert_to_codeview_type(&builder, type);
 
                     // define S_REGREL32

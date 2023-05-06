@@ -1,7 +1,10 @@
-void type_layout2(Cuik_Parser* parser, Cuik_Type* type, bool needs_complete);
-
 static bool expect_char(TokenStream* restrict s, char ch) {
-    if (tokens_get(s)->type != ch) {
+    if (tokens_eof(s)) {
+        tokens_prev(s);
+
+        diag_err(s, tokens_get_range(s), "expected '%c', got end-of-file", ch);
+        return false;
+    } else if (tokens_get(s)->type != ch) {
         diag_err(s, tokens_get_range(s), "expected '%c', got '%!S'", ch, tokens_get(s)->content);
         return false;
     } else {
@@ -191,6 +194,19 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
             assert(!CUIK_QUAL_TYPE_IS_NULL(decl.type));
             old_def = sym = find_global_symbol(&parser->globals, decl.name);
             if (old_def == NULL) {
+                if (attr.is_typedef) {
+                    Cuik_Type* t = cuik_canonical_type(decl.type);
+                    if (t->also_known_as != decl.name) {
+                        // clone but preserve flags
+                        decl.type = cuik_make_qual_type(
+                            type_clone(&parser->types, t, decl.name),
+                            cuik_get_quals(decl.type)
+                        );
+                    } else {
+                        t->also_known_as = decl.name;
+                    }
+                }
+
                 ptrdiff_t sym_index = nl_strmap_puti_cstr(parser->globals.symbols, decl.name);
                 sym = &parser->globals.symbols[sym_index];
                 *sym = (Symbol){
@@ -289,7 +305,18 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
 
                 Cuik_Type* placeholder_space = cuik_canonical_type(old_def->type);
                 Cuik_Type* decl_type = cuik_canonical_type(decl.type);
-                if (placeholder_space->kind != KIND_PLACEHOLDER && !type_equal(decl_type, placeholder_space)) {
+
+                {
+                    // mark potential conflict, we'll handle it once we have more context
+                    TypeConflict* c = ARENA_ALLOC(&local_ast_arena, TypeConflict);
+                    c->old_def = old_def;
+                    c->new_def = sym;
+                    // insert
+                    c->next = parser->first_conflict;
+                    parser->first_conflict = c;
+                }
+
+                /*if (placeholder_space->kind != KIND_PLACEHOLDER && !type_equal(decl_type, placeholder_space)) {
                     Cuik_Type *t1 = placeholder_space, *t2 = decl_type;
                     // only deref if both can
                     while (t1->kind == t2->kind && t1->kind == KIND_PTR) {
@@ -313,12 +340,19 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
                         diag_err(s, decl.loc, "declaration incompatible with previous declaration");
                         diag_note(s, old_def->loc, "see here");
                     }
-                }
+                }*/
 
                 if (attr.is_typedef) {
+                    Cuik_Type* src = cuik_canonical_type(decl.type);
+                    Cuik_Type* nominal = (src->kind == KIND_STRUCT || src->kind == KIND_UNION) ? src->record.nominal : NULL;
+
                     // replace placeholder with actual entry
-                    memcpy(placeholder_space, cuik_canonical_type(decl.type), sizeof(Cuik_Type));
+                    *placeholder_space = *src;
                     placeholder_space->also_known_as = decl.name;
+
+                    if (nominal != NULL) {
+                        placeholder_space->record.nominal = nominal;
+                    }
                 }
             }
 
@@ -372,7 +406,7 @@ static void resolve_pending_exprs(Cuik_Parser* parser) {
                     align = new_align->align;
                 }
             } else {
-                intmax_t new_align = parse_const_expr2(parser, &mini_lex);
+                intmax_t new_align = parse_const_expr(parser, &mini_lex);
                 if (new_align == 0) {
                     diag_err(&mini_lex, type->loc, "_Alignas cannot be applied with 0 alignment", new_align);
                 } else if (new_align >= INT16_MAX) {
@@ -385,7 +419,7 @@ static void resolve_pending_exprs(Cuik_Parser* parser) {
             assert(align != 0);
             type->align = align;
         } else if (pending_exprs[i].mode == PENDING_BITWIDTH) {
-            intmax_t result = parse_const_expr2(parser, &mini_lex);
+            intmax_t result = parse_const_expr(parser, &mini_lex);
             *pending_exprs[i].dst = result;
         }
     }
@@ -413,19 +447,21 @@ Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict 
     if (version == CUIK_VERSION_GLSL) {
         diag_err(s, tokens_get_range(s), "TODO");
         return (Cuik_ParseResult){ 1 };
-        // return cuikparse_run_glsl(version, s, target);
     }
 
     tls_init();
+    assert(target->pointer_byte_size == 8 && "other sized pointers aren't really supported yet");
 
     int r;
     Cuik_Parser parser = { 0 };
     parser.version = version;
     parser.tokens = *s;
     parser.target = target;
+    parser.pointer_byte_size = target->pointer_byte_size;
     parser.static_assertions = dyn_array_create(int, 2048);
     parser.local_static_storage_decls = dyn_array_create(Stmt*, 64);
     parser.types = init_type_table(target);
+    parser.types.arena = &parser.tu->ast_arena;
 
     // just a shorthand so it's faster to grab
     parser.default_int = (Cuik_Type*) &target->signed_ints[CUIK_BUILTIN_INT];
@@ -478,6 +514,8 @@ Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict 
 
         mtx_init(&parser.tu->arena_mutex, mtx_plain);
         check_for_entry(parser.tu, &parser.globals);
+        arena_append(&parser.tu->ast_arena, &local_ast_arena);
+        local_ast_arena = (Arena){ 0 };
         return (Cuik_ParseResult){ .tu = parser.tu, .imports = parser.import_libs };
     }
 
@@ -497,18 +535,10 @@ Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict 
         };
         mtx_init(&parser.tu->arena_mutex, mtx_plain);
 
-        CUIK_FOR_TYPES(type, parser.types) {
+        // check if any previous placeholders are still placeholders
+        for (Cuik_Type* type = parser.first_placeholder; type != NULL; type = type->placeholder.next) {
             if (type->kind == KIND_PLACEHOLDER) {
                 diag_err(s, type->loc, "could not find type '%s'!", type->placeholder.name);
-            }
-        }
-
-        if (cuikdg_error_count(s)) break;
-
-        CUIK_FOR_TYPES(type, parser.types) {
-            if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
-                // if cycles... quit lmao
-                if (type_cycles_dfs(s, type)) goto quit_phase2;
             }
         }
 
@@ -547,12 +577,13 @@ Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict 
 
         // do record layouts and shi
         resolve_pending_exprs(&parser);
-        CUIK_FOR_TYPES(type, parser.types) {
+
+        size_t type_cap = 1ull << parser.types.exp;
+        for (size_t i = 0; i < type_cap; i++) if (parser.types.table[i]) {
+            Cuik_Type* type = parser.types.table[i];
             assert(type->align != -1);
 
-            if (type->size == 0 || !type->is_complete) {
-                type_layout2(&parser, type, true);
-            }
+            type_layout2(&parser, type);
         }
 
         // constant fold any global expressions
@@ -566,8 +597,9 @@ Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict 
 
         quit_phase2:;
     }
-    THROW_IF_ERROR();
+    dyn_array_destroy(pending_exprs);
     dyn_array_destroy(parser.static_assertions);
+    THROW_IF_ERROR();
 
     CUIK_TIMED_BLOCK("phase 3") {
         // we might have added types in phase2, update accordingly
@@ -646,6 +678,9 @@ Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict 
     THROW_IF_ERROR();
 
     check_for_entry(parser.tu, &parser.globals);
+    arena_append(&parser.tu->ast_arena, &local_ast_arena);
+    local_ast_arena = (Arena){ 0 };
+
     parser.tokens.diag->parser = NULL;
     return (Cuik_ParseResult){ .tu = parser.tu, .imports = parser.import_libs };
 }

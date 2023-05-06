@@ -1,3 +1,4 @@
+#if 0
 // NOTE(NeGate): THIS IS VERY INCOMPLETE
 #include "../tb_internal.h"
 #include "../codegen/emitter.h"
@@ -32,81 +33,48 @@ typedef struct {
     uint8_t shift;
 } Immediate;
 
+typedef enum ValType {
+    VAL_NONE,
+    VAL_FLAGS,
+    VAL_GPR,
+    VAL_FPR,
+    VAL_IMM,
+    VAL_MEM,
+    VAL_GLOBAL,
+} ValType;
+
 typedef struct {
-    enum {
-        VAL_NONE,
-        VAL_FLAGS,
-        VAL_GPR,
-        VAL_FPR,
-        VAL_IMM,
-        VAL_MEM,
-        VAL_GLOBAL,
-    } type : 8;
-    bool is_spill : 1;
-    bool is_ref : 1;
-    TB_DataType dt;
-    TB_Reg r;
+    int8_t type;
+
+    // if VAL_MEM then this is the base
+    int8_t reg;
+
+    uint8_t base;
 
     union {
-        uint64_t num;
 
         int reg;
         GPR gpr;
         uint8_t fpr;
         struct {
             bool is_rvalue;
-            uint8_t base;
             int32_t disp;
         } mem;
+
+        int32_t disp;
+        uint64_t num;
     };
 } Val;
 
-static void jmp(TB_CGEmitter* restrict e, int label);
-static void ret_jmp(TB_CGEmitter* restrict e);
-
-#define GAD_EXTRA_CTX {}
-#define GAD_FN(name) aarch64_ ## name
-#define GAD_NUM_REG_FAMILIES 2
-#define GAD_MAKE_STACK_SLOT(ctx, f, r_, pos) (Val){ VAL_MEM, .r = (r_), .mem = { SP, (pos) } }
-#define GAD_VAL Val
-#include "../codegen/generic_addrdesc.h"
+#include "../x64/generic_cg.h"
 #include "aarch64_emitter.h"
 
-static GAD_VAL aarch64_phi_alloc(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
-    return GAD_FN(regalloc)(ctx, f, r, AARCH64_REG_CLASS_GPR);
+static int classify_reg_class(TB_DataType dt) {
+
 }
 
-static GAD_VAL aarch64_cond_to_reg(Ctx* restrict ctx, TB_Function* f, TB_Reg r, int cc) {
-    tb_todo();
-    return (GAD_VAL){ 0 };
-}
-
-static void aarch64_spill(Ctx* restrict ctx, TB_Function* f, GAD_VAL* dst_val, GAD_VAL* src_val, TB_Reg r) {
-    tb_todo();
-}
-
-static void aarch64_move(Ctx* restrict ctx, TB_Function* f, TB_Reg dst, TB_Reg src) {
-    tb_todo();
-}
-
-static void aarch64_store(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
-    tb_todo();
-}
-
-static void aarch64_call(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
-    tb_todo();
-}
-
-static void aarch64_misc_op(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
-    tb_todo();
-}
-
-static void aarch64_mem_op(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
-    tb_todo();
-}
-
-static GAD_VAL aarch64_eval(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
-    TB_Node* restrict n = &f->nodes[r];
+static int isel(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n) {
+    /*TB_Node* restrict n = &f->nodes[r];
     TB_NodeTypeEnum type = n->type;
 
     switch (type) {
@@ -140,15 +108,27 @@ static GAD_VAL aarch64_eval(Ctx* restrict ctx, TB_Function* f, TB_Reg r) {
         default:
         tb_todo();
         return (GAD_VAL){ 0 };
-    }
+    }*/
+}
+
+static void emit_sequence(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n) {
+    assert(seq->inst_count == 0 && "TODO");
+}
+
+static void patch_local_labels(Ctx* restrict ctx) {
+
+}
+
+static void resolve_stack_usage(Ctx* restrict ctx, size_t caller_usage) {
+    tb_todo();
+}
+
+static void copy_value(Ctx* restrict ctx, Sequence* seq, TB_Node* phi, int dst, TB_Node* src, TB_DataType dt) {
+    tb_todo();
 }
 
 static size_t aarch64_emit_call_patches(TB_Module* restrict m) {
     return 0;
-}
-
-static void aarch64_barrier(Ctx* restrict ctx, TB_Function* f, TB_Label bb, TB_Reg except, int split) {
-    tb_todo();
 }
 
 static void aarch64_return(Ctx* restrict ctx, TB_Function* f, TB_Node* restrict n) {
@@ -167,34 +147,6 @@ static void aarch64_goto(Ctx* restrict ctx, TB_Label label) {
 static void aarch64_ret_jmp(Ctx* restrict ctx) {
     ctx->emit.ret_patches[ctx->emit.ret_patch_count++] = GET_CODE_POS(&ctx->emit);
     EMIT4(&ctx->emit, (0b101 << 25));
-}
-
-static void GAD_FN(resolve_params)(Ctx* restrict ctx, TB_Function* f, GAD_VAL* values) {
-    const TB_FunctionPrototype* restrict proto = f->prototype;
-
-    size_t param_count = proto->param_count;
-    assert(param_count == 0);
-}
-
-static void GAD_FN(branch_if)(Ctx* restrict ctx, TB_Function* f, TB_Reg cond, TB_Label if_true, TB_Label if_false, TB_Reg fallthrough) {
-    tb_todo();
-}
-
-static void GAD_FN(branch_jumptable)(Ctx* restrict ctx, TB_Function* f, TB_Reg r, uint64_t min, uint64_t max, size_t entry_count, TB_SwitchEntry* entries, TB_Label default_label) {
-    tb_todo();
-}
-
-static void GAD_FN(resolve_stack_slot)(Ctx* restrict ctx, TB_Function* f, TB_Node* restrict n) {
-    tb_todo();
-}
-
-static size_t GAD_FN(resolve_stack_usage)(Ctx* restrict ctx, TB_Function* f, size_t stack_usage, size_t caller_usage) {
-    // tb_todo();
-    return 0;
-}
-
-static void GAD_FN(resolve_local_patches)(Ctx* restrict ctx, TB_Function* f) {
-    // tb_todo();
 }
 
 static size_t aarch64_emit_prologue(uint8_t* out, uint64_t saved, uint64_t stack_usage) {
@@ -262,4 +214,5 @@ ICodeGen tb__aarch64_codegen = {
 };
 #if _MSC_VER
 _Pragma("warning (pop)")
+#endif
 #endif

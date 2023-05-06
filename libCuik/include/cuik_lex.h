@@ -156,8 +156,29 @@ CUIK_API Cuik_File* cuikpp_next_file(Cuik_CPP* ctx, Cuik_File* f);
 ////////////////////////////////
 // Preprocessor module
 ////////////////////////////////
+typedef struct Cuik_FileResult {
+    size_t length;
+    char* data;
+} Cuik_FileResult;
+
+// returns true if it found the file, it'll also return the canonical name
+typedef bool (*Cuikpp_LocateFile)(void* user_data, const char* input_path, char output_path[]);
+typedef bool (*Cuikpp_GetFile)(void* user_data, const char* input_path, Cuik_FileResult* out_result);
+
+typedef struct {
+    const char* filepath;
+
+    // some callbacks :P
+    void* diag_data;
+    Cuik_DiagCallback diag;
+
+    void* fs_data;
+    Cuikpp_LocateFile locate;
+    Cuikpp_GetFile fs;
+} Cuik_CPPDesc;
+
 // Initialize preprocessor, allocates memory which needs to be freed via cuikpp_free
-CUIK_API Cuik_CPP* cuikpp_make(const char filepath[FILENAME_MAX], Cuik_DiagCallback callback, void* userdata);
+CUIK_API Cuik_CPP* cuikpp_make(const Cuik_CPPDesc* restrict desc);
 
 // NOTE: it doesn't own the memory for the files it may have used
 // and thus you must free them, this can be done by iterating over
@@ -196,51 +217,8 @@ CUIK_API Cuik_File* cuikpp_find_file(TokenStream* tokens, SourceLoc loc);
 CUIK_API MacroInvoke* cuikpp_find_macro(TokenStream* tokens, SourceLoc loc);
 
 ////////////////////////////////
-// Preprocessor coroutine
+// Preprocessor callback
 ////////////////////////////////
-typedef struct Cuikpp_Packet {
-    enum {
-        CUIKPP_PACKET_NONE,
-        CUIKPP_PACKET_GET_FILE,
-        CUIKPP_PACKET_QUERY_FILE,
-        CUIKPP_PACKET_CANONICALIZE,
-    } tag;
-    union {
-        // in case of GET_FILE:
-        //   read a file from input_path and pass back a mutable buffer of the contents.
-        struct {
-            // input
-            const char* input_path;
-            bool is_primary;
-
-            // output
-            size_t length;
-            char* data;
-        } file;
-        // in case of QUERY_FILE:
-        //   found is set true if you found a file at 'input_path'
-        //
-        struct {
-            // input
-            const char* input_path;
-
-            // output
-            bool found;
-        } query;
-        // in case of CANONICALIZE:
-        //   convert the filepath 'input_path' into a new filepath which is
-        //   absolute, note that 'output_path' has the memory provided for you
-        //   and is FILENAME_MAX chars long.
-        struct {
-            // input
-            const char* input_path;
-
-            // output
-            char* output_path;
-        } canonicalize;
-    };
-} Cuikpp_Packet;
-
 typedef enum {
     CUIKPP_CONTINUE,
     CUIKPP_DONE,
@@ -260,19 +238,11 @@ CUIK_API void cuiklex_canonicalize(size_t length, char* data);
 // returns true on success
 CUIK_API bool cuik_canonicalize_path(char output[FILENAME_MAX], const char* input);
 
-// Iterates through all the cuikpp_next calls using cuikpp_default_packet_handler
-// and returns the final status.
-CUIK_API Cuikpp_Status cuikpp_default_run(Cuik_CPP* ctx);
+CUIK_API bool cuikpp_locate_file(void* user_data, const char* input_path, char output_path[]);
+CUIK_API bool cuikpp_default_fs(void* user_data, const char* input_path, Cuik_FileResult* out_result);
 
-// Keep iterating through this and filling in the packets accordingly to preprocess a file.
-// returns CUIKPP_CONTINUE if it needs to keep running
-CUIK_API Cuikpp_Status cuikpp_next(Cuik_CPP* ctx, Cuikpp_Packet* packet);
-
-// Handles the default behavior of the packet written by cuikpp_next, if cache is NULL then
-// it's unused.
-//
-// returns true if it succeeded in whatever packet handling (loading the file correctly)
-CUIK_API bool cuikpp_default_packet_handler(Cuik_CPP* ctx, Cuikpp_Packet* packet);
+// Returns entire preprocessor on input state
+CUIK_API Cuikpp_Status cuikpp_run(Cuik_CPP* restrict ctx);
 
 // is the source location in the source file (none of the includes)
 CUIK_API bool cuikpp_is_in_main_file(TokenStream* tokens, SourceLoc loc);
@@ -320,6 +290,7 @@ CUIK_API size_t cuikpp_get_include_dir_count(Cuik_CPP* ctx);
 // C preprocessor pretty printer
 ////////////////////////////////
 CUIK_API void cuikpp_dump_defines(Cuik_CPP* ctx);
+CUIK_API void cuikpp_dump_tokens(TokenStream* s);
 
 ////////////////////////////////
 // Diagnostic engine
@@ -337,3 +308,4 @@ CUIK_API void diag_warn(TokenStream* tokens, SourceRange loc, const char* fmt, .
 CUIK_API void diag_err(TokenStream* tokens, SourceRange loc, const char* fmt, ...);
 
 CUIK_API void cuikdg_dump_to_file(TokenStream* tokens, FILE* out);
+CUIK_API void cuikdg_dump_to_stderr(TokenStream* tokens);

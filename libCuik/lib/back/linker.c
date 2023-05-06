@@ -15,7 +15,7 @@ void cuiklink_deinit(Cuik_Linker* l) {
     dyn_array_destroy(l->libpaths);
 }
 
-void cuiklink_apply_toolchain_libs(Cuik_Linker* l, Cuik_CompilerArgs* args) {
+void cuiklink_apply_toolchain_libs(Cuik_Linker* l, Cuik_DriverArgs* args) {
     args->toolchain.add_libraries(args->toolchain.ctx, args, l);
 }
 
@@ -60,6 +60,6 @@ bool cuiklink_find_library(Cuik_Linker* l, char output[FILENAME_MAX], const char
     return false;
 }
 
-bool cuiklink_invoke(Cuik_Linker* l, Cuik_CompilerArgs* args, const char* output_file, const char* filename) {
+bool cuiklink_invoke(Cuik_Linker* l, Cuik_DriverArgs* args, const char* output_file, const char* filename) {
     return args->toolchain.invoke_link(args->toolchain.ctx, args, l, output_file, filename);
 }
