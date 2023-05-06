@@ -73,6 +73,7 @@ It can currently compile programs using the subset of C it currently supports bu
 ## What's in progress right now?
 
 I'm working on self hosting which means I'm mostly bug fixing, I started on the EXE exporting stuff for TB so we can probably expect linkerless compiles stable soon.
+I'm doing most work in the `refactor` branch for now with a variety of changes.
 
 ## File structure
 
