@@ -20,16 +20,12 @@ parser.add_argument('-asan', action='store_true', help='compile with ASAN')
 parser.add_argument('-autospall', action='store_true', help='instrument code with SpallAuto')
 
 args = parser.parse_args()
-# args.driver = True
-
-# Compile libcuik dll
-args.shared = True
-args.libcuik = True
-args.tb = True
+args.driver = True
+# args.shared = True
 
 mimalloc = True
 
-if args.inspector or args.driver:
+if args.inspector or args.driver or args.shared:
 	args.tb = True
 	args.libcuik = True
 
