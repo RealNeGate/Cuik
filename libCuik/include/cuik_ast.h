@@ -379,9 +379,7 @@ typedef enum ExprOp {
 
     EXPR_SIZEOF_T, // on type
     EXPR_SIZEOF,   // on expr
-
-    EXPR_ALIGNOF_T, // on type
-    EXPR_ALIGNOF,   // on expr
+    EXPR_ALIGNOF_T,// on type
 
     EXPR_PRE_INC,
     EXPR_PRE_DEC,
@@ -607,7 +605,7 @@ struct Expr {
         struct {
             Cuik_QualType type;
         } x_of_type;
-        // either sizeof(expr) or _Alignof(expr)
+        // either sizeof(expr)
         struct {
             Expr* expr;
         } x_of_expr;

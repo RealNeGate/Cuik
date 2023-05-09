@@ -88,12 +88,6 @@ typedef enum TknType {
     TOKEN_INCREMENT         = TKN2('+', '+'),
     TOKEN_DECREMENT         = TKN2('-', '-'),
 
-    // this is hacky because ! is a single char
-    // token (sometimes used in !=) but this way
-    // it can share more rules with the rest of the
-    // tokens (less cases in the lexer).
-    TOKEN_DOUBLE_EXCLAMATION = TKN2('!', '!'),
-
     // Keywords (they start far higher up to avoid problems)
     TOKEN_KW_auto = 0x10000000,
     TOKEN_KW_break,

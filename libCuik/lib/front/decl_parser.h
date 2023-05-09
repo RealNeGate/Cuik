@@ -642,7 +642,7 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                     tls_restore(start);
 
                     if (!parser->is_in_global_scope) {
-                        type_layout2(parser, type);
+                        type_layout2(parser, &parser->tokens, type);
                     }
 
                     TYPE_INSERT(type);
@@ -838,7 +838,7 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                     };
 
                     if (!parser->is_in_global_scope) {
-                        type_layout2(parser, type);
+                        type_layout2(parser, &parser->tokens, type);
                     }
 
                     TYPE_INSERT(type);

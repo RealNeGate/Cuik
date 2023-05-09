@@ -115,7 +115,7 @@ Expr* cuik__optimize_ast(Cuik_Parser* restrict parser, Expr* e) {
     switch (e->op) {
         case EXPR_ENUM: {
             if (e->enum_val.num->lexer_pos != 0) {
-                type_layout2(parser, cuik_canonical_type(e->type));
+                type_layout2(parser, &parser->tokens, cuik_canonical_type(e->type));
             }
             int64_t v = e->enum_val.num->value;
 
@@ -160,7 +160,7 @@ Expr* cuik__optimize_ast(Cuik_Parser* restrict parser, Expr* e) {
         case EXPR_SIZEOF: {
             Cuik_Type* src = cuik_canonical_type(cuik__sema_expr(parser->tu, e->x_of_expr.expr));
             if (src->size == 0) {
-                type_layout2(parser, src);
+                type_layout2(parser, &parser->tokens, src);
 
                 if (src->size == 0) {
                     diag_err(&parser->tokens, e->loc, "Could not resolve type of expression");
@@ -172,25 +172,10 @@ Expr* cuik__optimize_ast(Cuik_Parser* restrict parser, Expr* e) {
             e->int_num.num = src->size;
             break;
         }
-        case EXPR_ALIGNOF: {
-            Cuik_Type* src = cuik_canonical_type(cuik__sema_expr(parser->tu, e->x_of_expr.expr));
-            if (src->size == 0) {
-                type_layout2(parser, src);
-
-                if (src->size == 0) {
-                    diag_err(&parser->tokens, e->loc, "Could not resolve type of expression");
-                }
-            }
-
-            e->op = EXPR_INT;
-            e->int_num.suffix = INT_SUFFIX_ULL;
-            e->int_num.num = src->align;
-            break;
-        }
         case EXPR_SIZEOF_T: {
             Cuik_Type* src = cuik_canonical_type(e->x_of_type.type);
             if (src->size == 0) {
-                type_layout2(parser, src);
+                type_layout2(parser, &parser->tokens, src);
 
                 if (src->size == 0) {
                     diag_err(&parser->tokens, e->loc, "Could not resolve type");
@@ -205,7 +190,7 @@ Expr* cuik__optimize_ast(Cuik_Parser* restrict parser, Expr* e) {
         case EXPR_ALIGNOF_T: {
             Cuik_Type* src = cuik_canonical_type(e->x_of_type.type);
             if (src->size == 0) {
-                type_layout2(parser, src);
+                type_layout2(parser, &parser->tokens, src);
 
                 if (src->size == 0) {
                     diag_err(&parser->tokens, e->loc, "could not resolve type");

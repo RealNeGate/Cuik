@@ -583,7 +583,7 @@ Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict 
             Cuik_Type* type = parser.types.table[i];
             assert(type->align != -1);
 
-            type_layout2(&parser, type);
+            type_layout2(&parser, &parser.tokens, type);
         }
 
         // constant fold any global expressions

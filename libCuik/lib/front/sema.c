@@ -394,7 +394,7 @@ static int walk_initializer_layer(TranslationUnit* tu, Cuik_Type* parent, int ba
 
     // sometimes this is just not resolved yet?
     if (type->size == 0) {
-        type_layout(tu, type);
+        type_layout2(NULL, &tu->tokens, type);
     }
 
     uint32_t pos = base_offset + relative_offset;
@@ -543,7 +543,7 @@ static void walk_initializer_for_sema(TranslationUnit* tu, Cuik_Type* type, Init
 
     if (type->array_count == 0) {
         type->array_count = max_cursor;
-        type_layout(tu, type);
+        type_layout2(NULL, &tu->tokens, type);
     }
 }
 
@@ -634,7 +634,7 @@ Member* sema_resolve_member_access(TranslationUnit* tu, Expr* restrict e, uint32
     }
 
     if (record_type->size == 0) {
-        type_layout(tu, record_type);
+        type_layout2(NULL, &tu->tokens, record_type);
 
         if (record_type->size == 0) {
             diag_err(&tu->tokens, e->loc, "Cannot access members in incomplete type");
@@ -804,17 +804,6 @@ Cuik_QualType cuik__sema_expr(TranslationUnit* tu, Expr* restrict e) {
             };
             return e->type;
         }
-        case EXPR_ALIGNOF: {
-            Cuik_Type* src = cuik_canonical_type(cuik__sema_expr(tu, e->x_of_expr.expr));
-
-            //assert(src->align && "Something went wrong...");
-            *e = (Expr){
-                .op = EXPR_INT,
-                .type = cuik_uncanonical_type(tu->target->size_type),
-                .int_num = { src->align, INT_SUFFIX_ULL }
-            };
-            return e->type;
-        }
         case EXPR_SIZEOF_T: {
             Cuik_Type* t = cuik_canonical_type(e->x_of_type.type);
             try_resolve_typeof(tu, t);
@@ -850,6 +839,10 @@ Cuik_QualType cuik__sema_expr(TranslationUnit* tu, Expr* restrict e) {
         case EXPR_INITIALIZER: {
             Cuik_Type* t = cuik_canonical_type(e->init.type);
             try_resolve_typeof(tu, t);
+
+            if (!cuik_canonical_type(t->array_of)->is_complete) {
+                type_layout2(NULL, &tu->tokens, cuik_canonical_type(t->array_of));
+            }
 
             if (t->kind == KIND_ARRAY) {
                 int old_array_count = t->array_count;

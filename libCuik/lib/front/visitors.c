@@ -89,7 +89,6 @@ bool cuik_next_expr_kid(Cuik_ExprIter* it) {
         case EXPR_STR:
         case EXPR_WSTR:
         case EXPR_SIZEOF:
-        case EXPR_ALIGNOF:
         case EXPR_SIZEOF_T:
         case EXPR_ALIGNOF_T:
         case EXPR_FUNCTION:
