@@ -31,11 +31,11 @@ typedef enum {
 } TB_X86_InstFlags;
 
 typedef enum {
-	TB_X86_SEGMENT_DEFAULT = 0,
+    TB_X86_SEGMENT_DEFAULT = 0,
 
-	TB_X86_SEGMENT_ES, TB_X86_SEGMENT_CS,
-	TB_X86_SEGMENT_SS, TB_X86_SEGMENT_DS,
-	TB_X86_SEGMENT_GS, TB_X86_SEGMENT_FS,
+    TB_X86_SEGMENT_ES, TB_X86_SEGMENT_CS,
+    TB_X86_SEGMENT_SS, TB_X86_SEGMENT_DS,
+    TB_X86_SEGMENT_GS, TB_X86_SEGMENT_FS,
 } TB_X86_Segment;
 
 typedef enum {
@@ -64,7 +64,6 @@ typedef struct {
 
     // registers (there's 4 max taking up 4bit slots each)
     uint16_t regs;
-
     uint8_t flags;
 
     // bitpacking amirite

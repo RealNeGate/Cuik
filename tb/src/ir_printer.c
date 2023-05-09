@@ -70,6 +70,11 @@ TB_API const char* tb_node_get_name(TB_Node* n) {
         case TB_SHR: return "shr";
         case TB_SAR: return "sar";
 
+        case TB_FADD: return "fadd";
+        case TB_FSUB: return "fsub";
+        case TB_FMUL: return "fmul";
+        case TB_FDIV: return "fdiv";
+
         case TB_LOAD: return "load";
         case TB_STORE: return "store";
 

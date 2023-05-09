@@ -197,8 +197,7 @@ inline static bool is_value_xmm(const Val* v, XMM x) {
 inline static bool is_value_match(const Val* a, const Val* b) {
     if (a->type != b->type) return false;
 
-    if (a->type == VAL_GPR) return a->reg == b->reg;
-    else return false;
+    return (a->type == VAL_GPR || a->type == VAL_XMM) ? a->reg == b->reg : false;
 }
 
 #ifdef __GNUC__
@@ -206,6 +205,7 @@ inline static bool is_value_match(const Val* a, const Val* b) {
 #pragma GCC diagnostic ignored "-Wunused-variable"
 #endif
 static const char* GPR_NAMES[] = { "RAX", "RCX", "RDX", "RBX", "RSP", "RBP", "RSI", "RDI", "R8",  "R9", "R10", "R11", "R12", "R13", "R14", "R15" };
+static const char* XMM_NAMES[] = { "XMM0", "XMM1", "XMM2", "XMM3", "XMM4", "XMM5", "XMM6", "XMM7", "XMM8",  "XMM9", "XMM10", "XMM11", "XMM12", "XMM13", "XMM14", "XMM15" };
 static const char* COND_NAMES[] = {
     "O", "NO", "B", "NB", "E", "NE", "BE", "A",
     "S", "NS", "P", "NP", "L", "GE", "LE", "G"

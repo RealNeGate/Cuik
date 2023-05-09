@@ -27,9 +27,9 @@ const char* cuik_stmt_decl_name(Stmt* stmt) {
     return stmt->decl.name;
 }
 
-Cuik_Type* cuik_stmt_decl_type(Stmt* stmt) {
+Cuik_QualType cuik_stmt_decl_type(Stmt* stmt) {
     assert(stmt->op == STMT_DECL || stmt->op == STMT_FUNC_DECL || stmt->op == STMT_GLOBAL_DECL);
-    return cuik_canonical_type(stmt->decl.type);
+    return stmt->decl.type;
 }
 
 // doesn't do implicit casts

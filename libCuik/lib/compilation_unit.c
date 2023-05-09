@@ -86,9 +86,7 @@ CUIK_API void cuik_internal_link_compilation_unit(CompilationUnit* restrict cu, 
 
                     s->flags |= STMT_FLAGS_HAS_IR_BACKING;
                 } else if (s->op == STMT_GLOBAL_DECL || s->op == STMT_DECL) {
-                    if (!s->decl.attrs.is_static  && !s->decl.attrs.is_extern &&
-                        !s->decl.attrs.is_typedef && !s->decl.attrs.is_inline &&
-                        s->decl.name && cuik_canonical_type(s->decl.type)->kind != KIND_FUNC) {
+                    if (!s->decl.attrs.is_extern && !s->decl.attrs.is_typedef && s->decl.name && cuik_canonical_type(s->decl.type)->kind != KIND_FUNC) {
                         ptrdiff_t search = nl_strmap_get_cstr(cu->export_table, name);
 
                         // only enter one of them and whichever goes in, will have IR backing

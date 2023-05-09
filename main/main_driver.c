@@ -37,17 +37,6 @@ int main(int argc, const char** argv) {
 
     cuik_init();
 
-    #if 1
-    // Cuik compile-string playground
-    Cuik_DriverArgs args = {
-        .version = CUIK_VERSION_C23,
-        .target = cuik_target_host(),
-        .toolchain = cuik_toolchain_host(),
-        .flavor = TB_FLAVOR_EXECUTABLE,
-    };
-    Cuik_CPP* cpp = cuik_driver_preprocess_cstr("int foo() { return 16 }", &args, true);
-
-    #else
     Cuik_DriverArgs args = {
         .version   = CUIK_VERSION_C23,
         .target    = cuik_target_host(),
@@ -152,5 +141,4 @@ int main(int argc, const char** argv) {
 
     // stb_leakcheck_dumpmem();
     return status;
-    #endif
 }

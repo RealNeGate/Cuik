@@ -101,6 +101,30 @@ static TB_X86_DataType legalize_int2(TB_DataType dt) {
     return legalize_int(dt, &m);
 }
 
+static TB_X86_DataType legalize_float(TB_DataType dt) {
+    assert(dt.type == TB_FLOAT);
+    TB_X86_DataType t = (dt.data == TB_FLT_64 ? TB_X86_TYPE_SSE_SD : TB_X86_TYPE_SSE_SS);
+
+    if (dt.data == TB_FLT_64) {
+        assert(dt.width == 0 || dt.width == 1);
+    } else if (dt.data == TB_FLT_32) {
+        assert(dt.width == 0 || dt.width == 2);
+    } else {
+        tb_unreachable();
+    }
+
+    return t + (dt.width ? 2 : 0);
+}
+
+static TB_X86_DataType legalize(TB_DataType dt) {
+    if (dt.type == TB_FLOAT) {
+        return legalize_float(dt);
+    } else {
+        uint64_t m;
+        return legalize_int(dt, &m);
+    }
+}
+
 static Inst inst_jcc(TB_Node* target, Cond cc) {
     return (Inst){
         .type = JO + cc,
@@ -132,7 +156,7 @@ static Inst inst_u(int op, TB_DataType dt) {
     return (Inst){
         .type = op,
         .layout = X86_OP_NONE,
-        .data_type = legalize_int2(dt),
+        .data_type = legalize(dt),
         .regs = { -1 },
     };
 }
@@ -141,7 +165,7 @@ static Inst inst_move(TB_DataType dt, int lhs, int rhs) {
     return (Inst){
         .type = (int)X86_INST_MOVE,
         .layout = X86_OP_RR,
-        .data_type = legalize_int2(dt),
+        .data_type = legalize(dt),
         .regs = { -1, lhs, rhs }
     };
 }
@@ -168,7 +192,7 @@ static Inst inst_call(TB_DataType dt, int dst, const TB_Symbol* sym) {
     return (Inst){
         .type = CALL,
         .layout = X86_OP_G,
-        .data_type = legalize_int2(dt),
+        .data_type = legalize(dt),
         .regs = { dst },
         .imm[0] = (uintptr_t) sym,
     };
@@ -178,7 +202,7 @@ static Inst inst_g(int op, TB_DataType dt, int dst, const TB_Symbol* sym) {
     return (Inst){
         .type = op,
         .layout = X86_OP_G,
-        .data_type = legalize_int2(dt),
+        .data_type = legalize(dt),
         .regs = { dst },
         .imm[0] = (uintptr_t) sym,
     };
@@ -188,7 +212,7 @@ static Inst inst_copy(TB_DataType dt, int lhs, int rhs) {
     return (Inst){
         .type = (int) X86_INST_COPY,
         .layout = X86_OP_RR,
-        .data_type = legalize_int2(dt),
+        .data_type = legalize(dt),
         .regs = { lhs, rhs }
     };
 }
@@ -198,7 +222,7 @@ static Inst inst_rr(int op, TB_DataType dt, int dst, int lhs, int rhs) {
     return (Inst){
         .type = op,
         .layout = X86_OP_RR,
-        .data_type = legalize_int2(dt),
+        .data_type = legalize(dt),
         .regs = { dst, lhs, rhs }
     };
 }
@@ -207,7 +231,7 @@ static Inst inst_ri(int op, TB_DataType dt, int dst, int lhs, int32_t imm) {
     return (Inst){
         .type = op,
         .layout = X86_OP_RI,
-        .data_type = legalize_int2(dt),
+        .data_type = legalize(dt),
         .regs = { dst, lhs },
         .imm[0] = imm,
     };
@@ -217,7 +241,7 @@ static Inst inst_r(int op, TB_DataType dt, int dst, int src) {
     return (Inst){
         .type = op,
         .layout = X86_OP_R,
-        .data_type = legalize_int2(dt),
+        .data_type = legalize(dt),
         .regs = { dst, src },
     };
 }
@@ -226,7 +250,7 @@ static Inst inst_i(int op, TB_DataType dt, int dst, int32_t imm) {
     return (Inst){
         .type = op,
         .layout = X86_OP_I,
-        .data_type = legalize_int2(dt),
+        .data_type = legalize(dt),
         .regs = { dst },
         .imm[0] = imm,
     };
@@ -236,7 +260,7 @@ static Inst inst_i64(int op, TB_DataType dt, int dst, uint64_t imm) {
     return (Inst){
         .type = op,
         .layout = X86_OP_A,
-        .data_type = legalize_int2(dt),
+        .data_type = legalize(dt),
         .regs = { dst },
         .imm = { imm & 0xFFFFFFFF, imm >> 32ull }
     };
@@ -246,7 +270,7 @@ static Inst inst_m(int op, TB_DataType dt, int dst, int base, int index, Scale s
     return (Inst){
         .type = op,
         .layout = X86_OP_M,
-        .data_type = legalize_int2(dt),
+        .data_type = legalize(dt),
         .regs = { dst, 0, base, index },
         .imm[0] = ((uint64_t) scale << 32u) | ((uint64_t) disp)
     };
@@ -256,7 +280,7 @@ static Inst inst_mr(int op, TB_DataType dt, int base, int index, Scale scale, in
     return (Inst){
         .type = op,
         .layout = X86_OP_MR,
-        .data_type = legalize_int2(dt),
+        .data_type = legalize(dt),
         .regs = { -1, rhs, base, index },
         .imm[0] = ((uint64_t) scale << 32u) | ((uint64_t) disp)
     };
@@ -314,8 +338,6 @@ static bool try_for_imm8(Ctx* restrict ctx, TB_Node* n, int32_t* out_x) {
 
 static bool try_for_imm32(Ctx* restrict ctx, TB_Node* n, int32_t* out_x) {
     if (n->type == TB_INTEGER_CONST) {
-        try_tile(ctx, n);
-
         TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
         if (i->num_words == 1 && fits_into_int32(i->words[0])) {
             *out_x = i->words[0];
@@ -347,8 +369,6 @@ static Inst isel_array(Ctx* restrict ctx, TB_Node* n, int dst) {
     if (index_n->type == TB_INTEGER_CONST) {
         TB_NodeInt* i = TB_NODE_GET_EXTRA(index_n);
         if (i->num_words == 1 && fits_into_int32(i->words[0] * stride)) {
-            try_tile(ctx, index_n);
-
             int32_t disp = i->words[0] * stride;
             int base = ISEL(base_n);
 
@@ -389,29 +409,32 @@ static Inst isel_array(Ctx* restrict ctx, TB_Node* n, int dst) {
 }
 
 static Inst isel_load(Ctx* restrict ctx, TB_Node* n, int dst) {
+    InstType i = n->dt.type == TB_FLOAT ? FP_MOV : MOV;
     TB_Node* addr = n->inputs[1];
 
     if (addr->type == TB_ARRAY_ACCESS && try_tile(ctx, addr)) {
         Inst inst = isel_array(ctx, addr, dst);
         if (inst.type == LEA) {
-            inst.type = MOV;
+            inst.type = i;
             return inst;
         } else {
-            return inst_m(MOV, n->dt, dst, dst, GPR_NONE, SCALE_X1, 0);
+            return inst_m(i, n->dt, dst, dst, GPR_NONE, SCALE_X1, 0);
         }
     } else if (addr->type == TB_LOCAL) {
         int pos = get_stack_slot(ctx, addr);
-        return inst_m(MOV, n->dt, dst, RBP, GPR_NONE, SCALE_X1, pos);
+        return inst_m(i, n->dt, dst, RBP, GPR_NONE, SCALE_X1, pos);
     }
 
     int base = ISEL(addr);
-    return inst_m(MOV, n->dt, dst, base, GPR_NONE, SCALE_X1, 0);
+    return inst_m(i, n->dt, dst, base, GPR_NONE, SCALE_X1, 0);
 }
 
 static Inst isel_store(Ctx* restrict ctx, TB_DataType dt, TB_Node* addr, int src) {
+    InstType i = dt.type == TB_FLOAT ? FP_MOV : MOV;
+
     if (addr->type == TB_LOCAL) {
         int pos = get_stack_slot(ctx, addr);
-        return inst_mr(MOV, dt, RBP, GPR_NONE, SCALE_X1, pos, src);
+        return inst_mr(i, dt, RBP, GPR_NONE, SCALE_X1, pos, src);
     } else if (addr->type == TB_MEMBER_ACCESS && try_tile(ctx, addr)) {
         Inst inst = isel_store(ctx, dt, addr->inputs[0], src);
         inst.imm[0] += TB_NODE_GET_EXTRA_T(addr, TB_NodeMember)->offset;
@@ -420,15 +443,15 @@ static Inst isel_store(Ctx* restrict ctx, TB_DataType dt, TB_Node* addr, int src
     }
 
     int base = ISEL(addr);
-    return inst_mr(MOV, dt, base, GPR_NONE, SCALE_X1, 0, src);
+    return inst_mr(i, dt, base, GPR_NONE, SCALE_X1, 0, src);
 }
 
 static Cond isel_cmp(Ctx* restrict ctx, TB_Node* n) {
+    TB_DataType cmp_dt = TB_NODE_GET_EXTRA_T(n, TB_NodeCompare)->cmp_dt;
+    assert(cmp_dt.width == 0 && "TODO: Implement vector compares");
+
     if (n->type >= TB_CMP_EQ && n->type <= TB_CMP_FLE) {
-        TB_DataType cmp_dt = TB_NODE_GET_EXTRA_T(n, TB_NodeCompare)->cmp_dt;
-        assert(cmp_dt.width == 0 && "TODO: Implement vector compares");
         assert(!TB_IS_FLOAT_TYPE(cmp_dt) && "TODO");
-        try_tile(ctx, n);
 
         Cond cc = -1;
         bool invert = false;
@@ -436,10 +459,8 @@ static Cond isel_cmp(Ctx* restrict ctx, TB_Node* n) {
         int32_t x;
         int lhs = ISEL(n->inputs[0]);
         if (try_for_imm32(ctx, n->inputs[1], &x)) {
-            try_tile(ctx, n->inputs[1]);
-
             if (x == 0 && (n->type == TB_CMP_EQ || n->type == TB_CMP_NE)) {
-                SUBMIT(inst_rr(TEST, n->dt, -1, lhs, lhs));
+                SUBMIT(inst_rr(TEST, cmp_dt, -1, lhs, lhs));
             } else {
                 SUBMIT(inst_ri(CMP, cmp_dt, -1, lhs, x));
             }
@@ -461,14 +482,16 @@ static Cond isel_cmp(Ctx* restrict ctx, TB_Node* n) {
     }
 
     int src = ISEL(n);
-    SUBMIT(inst_rr(TEST, n->dt, -1, src, src));
+    SUBMIT(inst_rr(TEST, cmp_dt, -1, src, src));
     return NE;
 }
 
 static void gonna_use_reg(Ctx* restrict ctx, int reg_class, int reg_num) {
     // mark register as to be saved
-    bool is_sysv = (ctx->target_abi == TB_ABI_SYSTEMV);
-    ctx->regs_to_save |= (1u << reg_num) & (is_sysv ? SYSV_ABI_CALLEE_SAVED : WIN64_ABI_CALLEE_SAVED);
+    if (reg_class == REG_CLASS_GPR) {
+        bool is_sysv = (ctx->target_abi == TB_ABI_SYSTEMV);
+        ctx->regs_to_save |= (1u << reg_num) & (is_sysv ? SYSV_ABI_CALLEE_SAVED : WIN64_ABI_CALLEE_SAVED);
+    }
 }
 
 static int isel(Ctx* restrict ctx, TB_Node* n) {
@@ -487,17 +510,29 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
         case TB_START: {
             TB_NodeRegion* start = TB_NODE_GET_EXTRA(n);
             const TB_FunctionPrototype* restrict proto = ctx->f->prototype;
+            bool is_sysv = (ctx->target_abi == TB_ABI_SYSTEMV);
 
             // Handle known parameters
             FOREACH_N(i, 0, proto->param_count) {
                 TB_Node* proj = start->projs[i];
 
                 // copy from parameter
-                int v = DEF_HINTED(proj, REG_CLASS_GPR, WIN64_GPR_PARAMETERS[i]);
-                ctx->defs[v].start = -100 + i;
-                SUBMIT(inst_copy(proj->dt, v, WIN64_GPR_PARAMETERS[i]));
+                int reg_class = (proj->dt.type == TB_FLOAT ? REG_CLASS_XMM : REG_CLASS_GPR);
+                int v = -1;
 
-                nl_map_put(ctx->values, proj, v);
+                if (is_sysv) {
+                    tb_todo();
+                } else {
+                    if (i < 4) {
+                        int reg_num = (proj->dt.type == TB_FLOAT ? i : WIN64_GPR_PARAMETERS[i]);
+
+                        v = DEF_HINTED(proj, reg_class, reg_num);
+                        ctx->defs[v].start = -100 + i;
+                        SUBMIT(inst_copy(proj->dt, v, reg_num));
+
+                        nl_map_put(ctx->values, proj, v);
+                    }
+                }
             }
 
             // walk the entry to find any parameter stack slots
@@ -525,11 +560,12 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
 
             if (has_param_slots) {
                 ctx->stack_usage += 16 + (proto->param_count * 8);
+            } else {
+                ctx->stack_usage += 16;
             }
 
             // Handle unknown parameters (if we have varargs)
             if (proto->has_varargs) {
-                bool is_sysv = (ctx->target_abi == TB_ABI_SYSTEMV);
                 const GPR* parameter_gprs = is_sysv ? SYSV_GPR_PARAMETERS : WIN64_GPR_PARAMETERS;
 
                 // spill the rest of the parameters (assumes they're all in the GPRs)
@@ -578,6 +614,65 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             } else {
                 SUBMIT(inst_i(MOV, n->dt, dst, x));
             }
+            break;
+        }
+        case TB_FLOAT32_CONST: {
+            assert(n->dt.type == TB_FLOAT && n->dt.width == 0);
+            uint32_t imm = (Cvt_F32U32) { .f = TB_NODE_GET_EXTRA_T(n, TB_NodeFloat32)->value }.i;
+
+            dst = DEF(n, REG_CLASS_XMM);
+            if (imm == 0) {
+                // xor
+                Inst inst = {
+                    .type = FP_XOR,
+                    .layout = X86_OP_RR,
+                    .data_type = TB_X86_TYPE_SSE_PS,
+                    .regs = { dst, USE(dst), USE(dst) }
+                };
+                SUBMIT(inst);
+            } else {
+                TB_Module* mod = ctx->module;
+                TB_Global* g = tb_global_create(mod, NULL, NULL, TB_LINKAGE_PRIVATE);
+                tb_global_set_storage(mod, &mod->rdata, g, sizeof(float), sizeof(float), 1);
+
+                char* buffer = tb_global_add_region(mod, g, 0, sizeof(float));
+                memcpy(buffer, &imm, sizeof(float));
+
+                SUBMIT(inst_g(FP_MOV, n->dt, dst, (TB_Symbol*) g));
+            }
+            break;
+        }
+        case TB_FLOAT64_CONST: {
+            assert(n->dt.type == TB_FLOAT && n->dt.width == 0);
+            uint64_t imm = (Cvt_F64U64) { .f = TB_NODE_GET_EXTRA_T(n, TB_NodeFloat64)->value }.i;
+
+            dst = DEF(n, REG_CLASS_XMM);
+            if (imm == 0) {
+                // xor
+                Inst inst = {
+                    .type = FP_XOR,
+                    .layout = X86_OP_RR,
+                    .data_type = TB_X86_TYPE_SSE_PS,
+                    .regs = { dst, USE(dst), USE(dst) }
+                };
+                SUBMIT(inst);
+            } else {
+                TB_Module* mod = ctx->module;
+                TB_Global* g = tb_global_create(mod, NULL, NULL, TB_LINKAGE_PRIVATE);
+                tb_global_set_storage(mod, &mod->rdata, g, sizeof(double), sizeof(double), 1);
+
+                char* buffer = tb_global_add_region(mod, g, 0, sizeof(double));
+                memcpy(buffer, &imm, sizeof(double));
+
+                SUBMIT(inst_g(FP_MOV, n->dt, dst, (TB_Symbol*) g));
+            }
+            break;
+        }
+        case TB_FLOAT_EXT: {
+            dst = DEF(n, REG_CLASS_XMM);
+
+            int src = ISEL(n->inputs[0]);
+            SUBMIT(inst_r(FP_CVT, n->inputs[0]->dt, dst, src));
             break;
         }
 
@@ -699,6 +794,19 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             break;
         }
 
+        case TB_FADD:
+        case TB_FSUB:
+        case TB_FMUL:
+        case TB_FDIV: {
+            const static InstType ops[] = { FP_ADD, FP_SUB, FP_MUL, FP_DIV };
+            dst = DEF(n, REG_CLASS_XMM);
+
+            int lhs = ISEL(n->inputs[0]);
+            int rhs = ISEL(n->inputs[1]);
+            SUBMIT(inst_rr(ops[type - TB_FADD], n->dt, dst, lhs, rhs));
+            break;
+        }
+
         case TB_VA_START: {
             assert(ctx->module->target_abi == TB_ABI_WIN64 && "How does va_start even work on SysV?");
 
@@ -752,7 +860,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
         }
 
         case TB_LOAD: {
-            dst = DEF(n, REG_CLASS_GPR);
+            dst = DEF(n, n->dt.type == TB_FLOAT ? REG_CLASS_XMM : REG_CLASS_GPR);
 
             Inst ld = isel_load(ctx, n, dst);
             SUBMIT(ld);
@@ -780,7 +888,6 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             TB_NodeInt* i = TB_NODE_GET_EXTRA(src);
             if (i->num_words == 1 && fits_into_int32(i->words[0])) {
                 #define MASK_UPTO(pos) (~UINT64_C(0) >> (64 - pos))
-                try_tile(ctx, src);
 
                 uint64_t src = i->words[0];
                 uint64_t sign_bit = (src >> (bits_in_type - 1)) & 1;
@@ -819,6 +926,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
         }
         case TB_PTR2INT:
         case TB_TRUNCATE: {
+            assert(n->dt.type != TB_FLOAT);
             int src = ISEL(n->inputs[0]);
             dst = DEF(n, REG_CLASS_GPR);
 
@@ -898,15 +1006,27 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             int fake_dst = DEF_FORCED(n, REG_CLASS_GPR, RAX, -1);
             uint32_t caller_saved_gprs = desc->caller_saved_gprs;
 
+            size_t xmms_used = 0;
             FOREACH_N(i, 2, n->input_count) {
                 TB_Node* param = n->inputs[i];
                 TB_DataType param_dt = param->dt;
 
-                if (TB_IS_FLOAT_TYPE(param_dt) || param_dt.width) {
-                    tb_todo();
-                } else {
-                    int src = isel(ctx, param);
+                int src = isel(ctx, param);
 
+                if (TB_IS_FLOAT_TYPE(param_dt) || param_dt.width) {
+                    if (i - 2 < desc->gpr_count) {
+                        // hint src into XMM
+                        XMM target_xmm = i - 2;
+                        if (ctx->defs[src].hint < 0) {
+                            ctx->defs[src].hint = target_xmm;
+                        }
+
+                        int param_def = DEF_FORCED(param, REG_CLASS_XMM, target_xmm, fake_dst);
+                        SUBMIT(inst_copy(param->dt, param_def, USE(src)));
+                    } else {
+                        SUBMIT(inst_mr(FP_MOV, param->dt, RSP, GPR_NONE, SCALE_X1, (i - 2) * 8, USE(src)));
+                    }
+                } else {
                     if (i - 2 < desc->gpr_count) {
                         // hint src into GPR
                         GPR target_gpr = desc->gprs[i - 2];
@@ -916,8 +1036,6 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
 
                         int param_def = DEF_FORCED(param, REG_CLASS_GPR, target_gpr, fake_dst);
                         SUBMIT(inst_copy(param->dt, param_def, USE(src)));
-
-                        // caller_saved_gprs &= ~(1u << target_gpr);
                     } else {
                         SUBMIT(inst_mr(MOV, param->dt, RSP, GPR_NONE, SCALE_X1, (i - 2) * 8, USE(src)));
                     }
@@ -1077,13 +1195,24 @@ static int8_t resolve_use(Ctx* restrict ctx, int x) {
 
 static void inst2_print(Ctx* restrict ctx, InstType type, Val* dst, Val* src, TB_X86_DataType dt) {
     ASM {
-        printf("  %s ", inst_table[type].mnemonic);
+        printf("  %s", inst_table[type].mnemonic);
+        if (dt >= TB_X86_TYPE_SSE_SS && dt <= TB_X86_TYPE_SSE_PD) {
+            static const char suffixes[4][3] = { "ss", "sd", "ps", "pd" };
+            printf("%s ", suffixes[dt - TB_X86_TYPE_SSE_SS]);
+        } else {
+            printf(" ");
+        }
         print_operand(dst);
         printf(", ");
         print_operand(src);
         printf("\n");
     }
-    INST2(type, dst, src, dt);
+
+    if (dt >= TB_X86_TYPE_SSE_SS && dt <= TB_X86_TYPE_SSE_PD) {
+        INST2SSE(type, dst, src, dt);
+    } else {
+        INST2(type, dst, src, dt);
+    }
 }
 
 static void inst1_print(Ctx* restrict ctx, int type, Val* src, TB_X86_DataType dt) {
@@ -1193,16 +1322,23 @@ static void emit_code(Ctx* restrict ctx) {
             default: tb_todo();
         }
 
+        bool is_fp = (inst->data_type >= TB_X86_TYPE_SSE_SS && inst->data_type <= TB_X86_TYPE_SSE_PD);
+        if (is_fp) {
+            FOREACH_N(j, 0, op_count) {
+                if (ops[j].type == VAL_GPR) ops[j].type = VAL_XMM;
+            }
+        }
+
         // TODO(NeGate): this can potentially place the prefix too early
         if (inst->prefix & INST_REP) EMIT1(&ctx->emit, 0xF3);
 
         if (inst->type == X86_INST_MOVE) {
             if (!is_value_match(&ops[1], &ops[2])) {
-                inst2_print(ctx, MOV, &ops[1], &ops[2], inst->data_type);
+                inst2_print(ctx, is_fp ? FP_MOV : MOV, &ops[1], &ops[2], inst->data_type);
             }
         } else if (inst->type == X86_INST_COPY) {
             if (!is_value_match(&ops[0], &ops[1])) {
-                inst2_print(ctx, MOV, &ops[0], &ops[1], inst->data_type);
+                inst2_print(ctx, is_fp ? FP_MOV : MOV, &ops[0], &ops[1], inst->data_type);
             }
         } else if (op_count == 0) {
             INST0(inst->type, inst->data_type);
@@ -1225,7 +1361,7 @@ static void emit_code(Ctx* restrict ctx) {
             if (!has_def) {
                 inst2_print(ctx, (InstType) inst->type, &ops[1], &ops[2], inst->data_type);
             } else {
-                if (ops[0].type == VAL_GPR && ops[1].type == VAL_GPR && ops[0].reg != ops[1].reg) {
+                if (!is_value_match(&ops[0], &ops[1])) {
                     inst2_print(ctx, MOV, &ops[0], &ops[1], inst->data_type);
                 }
                 inst2_print(ctx, (InstType) inst->type, &ops[0], &ops[2], inst->data_type);
@@ -1239,8 +1375,21 @@ static void emit_code(Ctx* restrict ctx) {
 static void resolve_stack_usage(Ctx* restrict ctx, size_t caller_usage) {
     size_t usage = ctx->stack_usage + (caller_usage * 8);
 
-    // Align stack usage to 16bytes and add 8 bytes for the return address
-    ctx->stack_usage = align_up(usage, 16) + 8;
+    // Align stack usage to 16bytes
+    ctx->stack_usage = align_up(usage, 16);
+
+    int callee_saves = tb_popcount(ctx->regs_to_save & 0xFFFF);
+    if (ctx->stack_usage > 0) {
+        callee_saves += 1; // RBP is pushed
+    }
+
+    if ((callee_saves % 2) == 0) {
+        if (ctx->stack_usage) {
+            ctx->stack_usage += 8;
+        } else {
+            ctx->regs_to_save |= (1ull << 63ull); // push dummy for alignment
+        }
+    }
 }
 
 static void patch_local_labels(Ctx* restrict ctx) {
@@ -1279,24 +1428,20 @@ static void emit_win64eh_unwind_info(TB_Emitter* e, TB_FunctionOutput* out_f, ui
 }
 
 static size_t emit_prologue(uint8_t* out, uint64_t saved, uint64_t stack_usage) {
-    // align the stack correctly
-    if ((tb_popcount(saved & 0xFFFF) & 1) == 0) stack_usage += 8;
-    // If the stack usage is zero we don't need a prologue
-    if (stack_usage == 8) return 0;
-
     size_t used = 0;
 
     // push rbp
-    out[used++] = 0x50 + RBP;
+    if (stack_usage > 0) {
+        out[used++] = 0x50 + RBP;
 
-    // mov rbp, rsp
-    out[used++] = rex(true, RSP, RBP, 0);
-    out[used++] = 0x89;
-    out[used++] = mod_rx_rm(MOD_DIRECT, RSP, RBP);
+        // mov rbp, rsp
+        out[used++] = rex(true, RSP, RBP, 0);
+        out[used++] = 0x89;
+        out[used++] = mod_rx_rm(MOD_DIRECT, RSP, RBP);
+    }
 
     // push rXX
-    for (size_t i = 0; i < 16; i++)
-        if (saved & (1ull << i)) {
+    FOREACH_N(i, 0, 16) if (saved & (1ull << i)) {
         if (i < 8) {
             out[used++] = 0x50 + i;
         } else {
@@ -1305,19 +1450,26 @@ static size_t emit_prologue(uint8_t* out, uint64_t saved, uint64_t stack_usage) 
         }
     }
 
-    if (stack_usage == (int8_t)stack_usage) {
-        // sub rsp, stack_usage
-        out[used++] = rex(true, 0x00, RSP, 0);
-        out[used++] = 0x83;
-        out[used++] = mod_rx_rm(MOD_DIRECT, 0x05, RSP);
-        out[used++] = stack_usage;
-    } else {
-        // sub rsp, stack_usage
-        out[used++] = rex(true, 0x00, RSP, 0);
-        out[used++] = 0x81;
-        out[used++] = mod_rx_rm(MOD_DIRECT, 0x05, RSP);
-        *((uint32_t*)&out[used]) = stack_usage;
-        used += 4;
+    // push dummy reg
+    if (saved & (1ull << 63ull)) {
+        out[used++] = 0x50 + RAX; // PUSH RAX
+    }
+
+    if (stack_usage > 0) {
+        if (stack_usage == (int8_t)stack_usage) {
+            // sub rsp, stack_usage
+            out[used++] = rex(true, 0x00, RSP, 0);
+            out[used++] = 0x83;
+            out[used++] = mod_rx_rm(MOD_DIRECT, 0x05, RSP);
+            out[used++] = stack_usage;
+        } else {
+            // sub rsp, stack_usage
+            out[used++] = rex(true, 0x00, RSP, 0);
+            out[used++] = 0x81;
+            out[used++] = mod_rx_rm(MOD_DIRECT, 0x05, RSP);
+            *((uint32_t*)&out[used]) = stack_usage;
+            used += 4;
+        }
     }
 
     // save XMMs
@@ -1344,15 +1496,6 @@ static size_t emit_prologue(uint8_t* out, uint64_t saved, uint64_t stack_usage) 
 }
 
 static size_t emit_epilogue(uint8_t* out, uint64_t saved, uint64_t stack_usage) {
-    // align the stack correctly
-    if ((tb_popcount(saved & 0xFFFF) & 1) == 0) stack_usage += 8;
-
-    // if the stack isn't used then just return
-    if (stack_usage == 8) {
-        out[0] = 0xC3;
-        return 1;
-    }
-
     size_t used = 0;
 
     // reload XMMs
@@ -1374,22 +1517,28 @@ static size_t emit_epilogue(uint8_t* out, uint64_t saved, uint64_t stack_usage) 
     }
 
     // add rsp, N
-    if (stack_usage == (int8_t)stack_usage) {
-        out[used++] = rex(true, 0x00, RSP, 0);
-        out[used++] = 0x83;
-        out[used++] = mod_rx_rm(MOD_DIRECT, 0x00, RSP);
-        out[used++] = (int8_t)stack_usage;
-    } else {
-        out[used++] = rex(true, 0x00, RSP, 0);
-        out[used++] = 0x81;
-        out[used++] = mod_rx_rm(MOD_DIRECT, 0x00, RSP);
-        *((uint32_t*)&out[used]) = stack_usage;
-        used += 4;
+    if (stack_usage > 0) {
+        if (stack_usage == (int8_t)stack_usage) {
+            out[used++] = rex(true, 0x00, RSP, 0);
+            out[used++] = 0x83;
+            out[used++] = mod_rx_rm(MOD_DIRECT, 0x00, RSP);
+            out[used++] = (int8_t)stack_usage;
+        } else {
+            out[used++] = rex(true, 0x00, RSP, 0);
+            out[used++] = 0x81;
+            out[used++] = mod_rx_rm(MOD_DIRECT, 0x00, RSP);
+            *((uint32_t*)&out[used]) = stack_usage;
+            used += 4;
+        }
+    }
+
+    // pop dummy register, it doesn't matter which it is as long as it's caller saved
+    if (saved & (1ull << 63ull)) {
+        out[used++] = 0x58 + RCX; // POP RCX
     }
 
     // pop gpr
-    for (size_t i = 16; i--;)
-        if (saved & (1ull << i)) {
+    FOREACH_REVERSE_N(i, 0, 16) if (saved & (1ull << i)) {
         if (i < 8) {
             out[used++] = 0x58 + i;
         } else {
@@ -1398,7 +1547,10 @@ static size_t emit_epilogue(uint8_t* out, uint64_t saved, uint64_t stack_usage) 
         }
     }
 
-    out[used++] = 0x58 + RBP;
+    if (stack_usage > 0) {
+        out[used++] = 0x58 + RBP;
+    }
+
     out[used++] = 0xC3;
     return used;
 }

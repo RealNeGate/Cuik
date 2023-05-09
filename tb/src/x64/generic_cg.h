@@ -626,12 +626,16 @@ static ptrdiff_t spill_register(Ctx* restrict ctx, TB_Function* f, DefIndex* sor
     return reg_num;
 }
 
+static const char* reg_name(int rg, int num) {
+    return (rg == REG_CLASS_XMM ? XMM_NAMES : GPR_NAMES)[num];
+}
+
 static bool evict(Ctx* restrict ctx, TB_Function* f, DefIndex di, int reg_class, int reg, DefIndex* sorted, int time) {
     if (!set_get(&ctx->used_regs[reg_class], reg)) {
         return false;
     }
 
-    ASM printf("  \x1b[32m#   evict %s\x1b[0m\n", GPR_NAMES[reg]);
+    ASM printf("  \x1b[32m#   evict %s\x1b[0m\n", reg_name(reg_class, reg));
 
     // spill previous user until the end of the definition's lifetime
     size_t split_i = 0;
@@ -667,7 +671,7 @@ static void linear_scan(Ctx* restrict ctx, TB_Function* f, DefIndex* sorted) {
 
             if (k->reg >= 0) {
                 // move from active to handled
-                ASM printf("  \x1b[32m#   free %s\x1b[0m\n", GPR_NAMES[k->reg]);
+                ASM printf("  \x1b[32m#   free %s\x1b[0m\n", reg_name(k->reg_class, k->reg));
 
                 set_remove(&ctx->used_regs[k->reg_class], k->reg);
                 remove_active(ctx, j);
@@ -701,10 +705,10 @@ static void linear_scan(Ctx* restrict ctx, TB_Function* f, DefIndex* sorted) {
             }
 
             reg_num = d->reg;
-            ASM printf("  \x1b[32m#   forced assign %s\x1b[0m\n", GPR_NAMES[reg_num]);
+            ASM printf("  \x1b[32m#   forced assign %s\x1b[0m\n", reg_name(d->reg_class, reg_num));
         } else if (d->hint >= 0 && !set_get(&ctx->used_regs[d->reg_class], d->hint)) {
             reg_num = d->hint;
-            ASM printf("  \x1b[32m#   hinted assign %s\x1b[0m\n", GPR_NAMES[reg_num]);
+            ASM printf("  \x1b[32m#   hinted assign %s\x1b[0m\n", reg_name(d->reg_class, reg_num));
         } else {
             reg_num = set_pop_any(&ctx->used_regs[d->reg_class]);
 
@@ -722,7 +726,7 @@ static void linear_scan(Ctx* restrict ctx, TB_Function* f, DefIndex* sorted) {
                 d = &ctx->defs[di];
             }
 
-            ASM printf("  \x1b[32m#   assign %s\x1b[0m\n", GPR_NAMES[reg_num]);
+            ASM printf("  \x1b[32m#   assign %s\x1b[0m\n", reg_name(d->reg_class, reg_num));
         }
 
         gonna_use_reg(ctx, d->reg_class, reg_num);
@@ -783,8 +787,8 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
         }
     };
 
-    ctx.emit.emit_asm = false;
-    /*if (ctx.emit.emit_asm) {
+    /*ctx.emit.emit_asm = true;
+    if (ctx.emit.emit_asm) {
         tb_function_print(f, tb_default_print_callback, stdout);
     }*/
 
