@@ -1,18 +1,3 @@
-static bool expect_char(TokenStream* restrict s, char ch) {
-    if (tokens_eof(s)) {
-        tokens_prev(s);
-
-        diag_err(s, tokens_get_range(s), "expected '%c', got end-of-file", ch);
-        return false;
-    } else if (tokens_get(s)->type != ch) {
-        diag_err(s, tokens_get_range(s), "expected '%c', got '%!S'", ch, tokens_get(s)->content);
-        return false;
-    } else {
-        tokens_next(s);
-        return true;
-    }
-}
-
 static ParseResult parse_pragma(Cuik_Parser* restrict parser, TokenStream* restrict s) {
     if (tokens_get(s)->type != TOKEN_KW_Pragma) {
         return NO_PARSE;
@@ -444,10 +429,6 @@ static void check_for_entry(TranslationUnit* restrict tu, Cuik_GlobalSymbols* re
 
 Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cuik_Target* target, bool only_code_index) {
     assert(s != NULL);
-    if (version == CUIK_VERSION_GLSL) {
-        diag_err(s, tokens_get_range(s), "TODO");
-        return (Cuik_ParseResult){ 1 };
-    }
 
     tls_init();
     assert(target->pointer_byte_size == 8 && "other sized pointers aren't really supported yet");
@@ -469,13 +450,17 @@ Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cu
     parser.top_level_stmts = dyn_array_create(Stmt*, 1024);
     parser.tokens.diag->parser = &parser;
 
+    if (parser.version == CUIK_VERSION_GLSL) {
+        #define X(name) parser.glsl.name = atoms_putc(#name);
+        #include "glsl_keywords.h"
+    }
+
     if (pending_exprs) {
         dyn_array_clear(pending_exprs);
     } else {
         pending_exprs = dyn_array_create(PendingExpr, 1024);
     }
 
-    // Normal C parsing
     // Phase 1: resolve all top level statements
     CUIK_TIMED_BLOCK("phase 1") {
         while (!tokens_eof(s)) {
@@ -489,7 +474,11 @@ Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cu
             // even if we don't detect a known typename (since it can be inferred to be a typedef),
             // this allows us to skim the top level and do out-of-order declarations or generate
             // a summary of the symbol table.
-            if (parse_decl(&parser, s) != 0) continue;
+            if (parser.version != CUIK_VERSION_GLSL) {
+                if (parse_decl(&parser, s) != 0) continue;
+            } else {
+                if (parse_decl_glsl(&parser, s) != 0) continue;
+            }
 
             diag_err(s, tokens_get_range(s), "could not parse top level statement");
             tokens_next(s);

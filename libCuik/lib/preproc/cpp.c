@@ -208,6 +208,7 @@ Cuik_CPP* cuikpp_make(const Cuik_CPPDesc* desc) {
 
     Cuik_CPP* ctx = cuik_malloc(sizeof(Cuik_CPP));
     *ctx = (Cuik_CPP){
+        .version   = desc->version,
         .locate    = desc->locate,
         .fs        = desc->fs,
         .user_data = desc->fs_data,

@@ -44,6 +44,20 @@ Atom atoms_put(size_t len, const unsigned char* str) {
     }
 }
 
-Atom atoms_putc(const unsigned char* str) {
-    return atoms_put(strlen((const char*)str), str);
+Atom atoms_putc(const char* str) {
+    return atoms_put(strlen(str), (const unsigned char*) str);
+}
+
+Atom atoms_putuc(const unsigned char* str) {
+    return atoms_put(strlen((const char*) str), str);
+}
+
+Atom atoms_eat_token(TokenStream* restrict s) {
+    Token* t = tokens_get(s);
+    if (t->type != TOKEN_IDENTIFIER) {
+        return NULL;
+    }
+
+    tokens_next(s);
+    return atoms_put(t->content.length, t->content.data);
 }

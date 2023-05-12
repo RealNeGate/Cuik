@@ -8,7 +8,7 @@ X(INCLUDE,     "I",        true,  "add directory to the include searches")
 X(PPTEST,      "Pp",       false, "test preprocessor")
 X(PP,          "P",        false, "print preprocessor output to stdout")
 // parser
-X(LANG,        "lang",     false, "choose the language (c11, c23, glsl)")
+X(LANG,        "lang",     true,  "choose the language (c11, c23, glsl)")
 X(AST,         "ast",      false, "print AST into stdout")
 X(SYNTAX,      "xe",       false, "type check only")
 // optimizer

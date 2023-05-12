@@ -228,6 +228,42 @@ struct Cuik_Type {
 } __attribute__((aligned(16)));
 _Static_assert(_Alignof(Cuik_Type) == 16, "we need 16byte alignment for Cuik_QualType");
 
+typedef enum {
+    CUIK_GLSL_QUALS_IN,
+    CUIK_GLSL_QUALS_INOUT,
+    CUIK_GLSL_QUALS_OUT,
+} Cuik_GlslStorageQualifier;
+
+typedef enum {
+    CUIK_GLSL_QUALS_COHERENT  = 1,
+    CUIK_GLSL_QUALS_VOLATILE  = 2,
+    CUIK_GLSL_QUALS_RESTRICT  = 4,
+    CUIK_GLSL_QUALS_READONLY  = 8,
+    CUIK_GLSL_QUALS_WRITEONLY = 16,
+} Cuik_GlslMemQuals;
+
+typedef enum {
+    CUIK_GLSL_PRECISION_LOWP,
+    CUIK_GLSL_PRECISION_MEDIUMP,
+    CUIK_GLSL_PRECISION_HIGHP,
+} Cuik_GlslPrecision;
+
+typedef enum {
+    CUIK_GLSL_STD140,
+    CUIK_GLSL_STD430,
+} Cuik_GlslLayout;
+
+typedef struct {
+    Cuik_GlslMemQuals mem;
+    Cuik_GlslStorageQualifier storage;
+
+    // layout qualifier
+    Cuik_GlslLayout layout;
+    int binding;
+    int location;
+    int offset;
+} Cuik_GlslQuals;
+
 // designated initializer member
 // .x = 5
 // [4] = 6
@@ -462,9 +498,13 @@ struct Stmt {
             Cuik_QualType type;
             Atom name;
 
-            // acceleration structure for scrubbing for symbols
-            // it's a linked list
-            Expr* first_symbol;
+            union {
+                Cuik_GlslQuals* glsl_quals;
+
+                // acceleration structure for scrubbing for symbols
+                // it's a linked list
+                Expr* first_symbol;
+            };
 
             // NOTE(NeGate): This represents a stmtindex if it's a
             // FUNC_DECL
@@ -655,6 +695,10 @@ static bool cuik_type_can_deref(const Cuik_Type* t) { return t->kind == KIND_PTR
 #define CUIK_QUAL_TYPE_IS_NULL(a)  ((a).raw == 0)
 #define CUIK_QUAL_TYPE_HAS(a, b)   (((a).raw & (b)) != 0)
 #define CUIK_QUAL_TYPE_ONLY(a, b)  (((a).raw & (b)) == (b))
+
+static Cuik_GlslQuals* cuik_get_glsl_quals(Stmt* s) {
+    return (s->op == STMT_DECL || s->op == STMT_GLOBAL_DECL) ? s->decl.glsl_quals : NULL;
+}
 
 static Cuik_QualType cuik_make_qual_type(Cuik_Type* t, Cuik_Qualifiers quals) {
     uintptr_t p = (uintptr_t) t;

@@ -207,6 +207,13 @@ struct Cuik_Parser {
     Cuik_Type* first_placeholder;
     TypeConflict* first_conflict;
 
+    struct {
+        // these are unique entries in the string interner so
+        // we can cache it here
+        #define X(name) Atom name;
+        #include "glsl_keywords.h"
+    } glsl;
+
     NL_Strmap(Diag_UnresolvedSymbol*) unresolved_symbols;
 
     // Once top-level parsing is complete we'll compute the TU (which stores
@@ -260,6 +267,21 @@ static Cuik_Type* find_tag(Cuik_Parser* restrict parser, const char* name, bool*
     return (search >= 0) ? syms->tags[search] : NULL;
 }
 
+static bool expect_char(TokenStream* restrict s, char ch) {
+    if (tokens_eof(s)) {
+        tokens_prev(s);
+
+        diag_err(s, tokens_get_range(s), "expected '%c', got end-of-file", ch);
+        return false;
+    } else if (tokens_get(s)->type != ch) {
+        diag_err(s, tokens_get_range(s), "expected '%c', got '%!S'", ch, tokens_get(s)->content);
+        return false;
+    } else {
+        tokens_next(s);
+        return true;
+    }
+}
+
 #define THROW_IF_ERROR() if ((r = cuikdg_error_count(s)) > 0) return (Cuik_ParseResult){ r };
 #define TYPE_INSERT(...) type_insert(&parser->types, __VA_ARGS__)
 #define TYPE_INTERN(...) type_intern(&parser->types, __VA_ARGS__)
@@ -267,6 +289,7 @@ static Cuik_Type* find_tag(Cuik_Parser* restrict parser, const char* name, bool*
 #include "expr_parser.h"
 #include "decl_parser.h"
 #include "stmt_parser.h"
+#include "glsl_parser.h"
 #include "top_level_parser.h"
 #include "ast_optimizer.h"
 

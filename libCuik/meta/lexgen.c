@@ -180,6 +180,23 @@ static uint64_t chars_pattern(uint64_t old, uint64_t new, const char* str) {
 }
 
 int main(int argc, char** argv) {
+    FILE* file = fopen("libCuik/lib/preproc/keywords.h", "wb");
+    for (int i = 0; i < num_keywords; i++) {
+        const char* base = keywords[i];
+        while (*base == '_') base++;
+
+        int len = strlen(base);
+        while (base[len - 1] == '_') len--;
+
+        fprintf(file, "TOKEN_KW_%.*s", len, base);
+        if (i == 0) {
+            fprintf(file, " = 0x10000000,\n");
+        } else {
+            fprintf(file, ",\n");
+        }
+    }
+    fclose(file);
+
     int ident = ns();
     RANGE(0, ident, "AZ", "az", "_", "$", "\x80\xFF", "\\");
     RANGE(ident, ident, "AZ", "az", "_", "$", "09", "\x80\xFF", "\\");
@@ -243,9 +260,13 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    FILE* file = fopen("libCuik/lib/preproc/dfa.h", "wb");
+    file = fopen("libCuik/lib/preproc/dfa.h", "wb");
     run_keyword_tablegen(file);
-    fprintf(file, "\n\n");
+    fprintf(file, "\nstatic const char keywords[][16] = {\n");
+    for (int i = 0; i < num_keywords; i++) {
+        fprintf(file, "    \"%s\",\n", keywords[i]);
+    }
+    fprintf(file, "};\n\n");
     fprintf(file, "enum {\n");
     fprintf(file, "    DFA_IDENTIFIER   = %d,\n", ident);
     fprintf(file, "    DFA_NUMBER       = %d,\n", num);

@@ -1,0 +1,373 @@
+variable_identifier ::= IDENTIFIER
+
+primary_expression ::= variable_identifier
+                     | INT_CONSTANT
+                     | UINT_CONSTANT
+                     | FLOAT_CONSTANT
+                     | BOOL_CONSTANT
+                     | DOUBLE_CONSTANT
+                     | LEFT_PAREN expression RIGHT_PAREN
+
+
+
+
+variable_identifier :
+IDENTIFIER
+primary_expression :
+variable_identifier
+INTCONSTANT
+UINTCONSTANT
+FLOATCONSTANT
+BOOLCONSTANT
+DOUBLECONSTANT
+LEFT_PAREN expression RIGHT_PAREN
+postfix_expression :
+primary_expression
+postfix_expression LEFT_BRACKET integer_expression RIGHT_BRACKET
+function_call
+postfix_expression DOT FIELD_SELECTION
+postfix_expression INC_OP
+postfix_expression DEC_OP
+integer_expression :
+expression
+function_call :
+function_call_or_method
+function_call_or_method :
+function_call_generic
+function_call_generic :
+function_call_header_with_parameters RIGHT_PAREN
+function_call_header_no_parameters RIGHT_PAREN
+function_call_header_no_parameters :
+function_call_header VOID
+function_call_header
+function_call_header_with_parameters :
+function_call_header assignment_expression
+function_call_header_with_parameters COMMA assignment_expression
+function_call_header :
+function_identifier LEFT_PAREN
+function_identifier :
+type_specifier
+postfix_expression
+unary_expression :
+postfix_expression
+INC_OP unary_expression
+DEC_OP unary_expression
+unary_operator unary_expression
+unary_operator :
+PLUS
+DASH
+BANG
+TILDE
+multiplicative_expression :
+unary_expression
+multiplicative_expression STAR unary_expression
+multiplicative_expression SLASH unary_expression
+multiplicative_expression PERCENT unary_expression
+additive_expression :
+multiplicative_expression
+additive_expression PLUS multiplicative_expression
+additive_expression DASH multiplicative_expression
+shift_expression :
+additive_expression
+shift_expression LEFT_OP additive_expression
+shift_expression RIGHT_OP additive_expression
+relational_expression :
+shift_expression
+relational_expression LEFT_ANGLE shift_expression
+relational_expression RIGHT_ANGLE shift_expression
+relational_expression LE_OP shift_expression
+relational_expression GE_OP shift_expression
+equality_expression :
+relational_expression
+equality_expression EQ_OP relational_expression
+equality_expression NE_OP relational_expression
+and_expression :
+equality_expression
+and_expression AMPERSAND equality_expression
+exclusive_or_expression :
+and_expression
+exclusive_or_expression CARET and_expression
+inclusive_or_expression :
+exclusive_or_expression
+inclusive_or_expression VERTICAL_BAR exclusive_or_expression
+logical_and_expression :
+inclusive_or_expression
+logical_and_expression AND_OP inclusive_or_expression
+logical_xor_expression :
+logical_and_expression
+logical_xor_expression XOR_OP logical_and_expression
+logical_or_expression :
+logical_xor_expression
+logical_or_expression OR_OP logical_xor_expression
+conditional_expression :
+logical_or_expression
+logical_or_expression QUESTION expression COLON assignment_expression
+assignment_expression :
+conditional_expression
+unary_expression assignment_operator assignment_expression
+
+assignment_operator ::= EQUAL
+                      | MUL_ASSIGN
+                      | DIV_ASSIGN
+                      | MOD_ASSIGN
+                      | ADD_ASSIGN
+                      | SUB_ASSIGN
+                      | LEFT_ASSIGN
+                      | RIGHT_ASSIGN
+                      | AND_ASSIGN
+                      | XOR_ASSIGN
+                      | OR_ASSIGN
+
+expression ::= assignment_expression (',' assignment_expression)*
+constant_expression ::= conditional_expression
+
+declaration ::= function_prototype ';'
+              | init_declarator_list ';'
+              | array_specifier ';'
+              | 'precision' precision_qualifier type_specifier ';'
+              | type_qualifier IDENTIFIER '{' struct_declaration_list '}' (';' | IDENTIFIER ';'?)
+              | type_qualifier (IDENTIFIER (',' IDENTIFIER)*)? ';'
+
+declarator               ::= IDENTIFIER array_specifier? ('=' initializer)?
+init_declarator_list     ::= fully_specified_type (declarator (',' declarator)*)?
+
+identifier_list ::= (',' IDENTIFIER)+
+function_prototype ::= function_declarator ')'
+function_declarator :
+function_header
+function_header_with_parameters
+function_header_with_parameters :
+function_header parameter_declaration
+function_header_with_parameters COMMA parameter_declaration
+function_header :
+fully_specified_type IDENTIFIER LEFT_PAREN
+parameter_declarator :
+type_specifier IDENTIFIER
+type_specifier IDENTIFIER array_specifier
+parameter_declaration :
+type_qualifier parameter_declarator
+parameter_declarator
+type_qualifier parameter_type_specifier
+parameter_type_specifier
+parameter_type_specifier :
+type_specifier
+
+fully_specified_type     ::= type_qualifier? type_specifier
+
+precise_qualifier        ::= 'precise'
+invariant_qualifier      ::= 'invariant'
+interpolation_qualifier  ::= 'smooth' | 'flat' | 'noperspective'
+
+layout_qualifier         ::= 'layout' '(' layout_qualifier_id_list ')'
+layout_qualifier_id_list ::= layout_qualifier_id (',' layout_qualifier_id)*
+layout_qualifier_id      ::= IDENTIFIER ('=' constant_expression)? | 'shared'
+
+type_qualifier           ::= single_type_qualifier+
+single_type_qualifier    ::= storage_qualifier
+                           | layout_qualifier
+                           | precision_qualifier
+                           | interpolation_qualifier
+                           | invariant_qualifier
+                           | precise_qualifier
+
+storage_qualifier ::= 'const'
+                    | 'in'
+                    | 'out'
+                    | 'inout'
+                    | 'centroid'
+                    | 'patch'
+                    | 'sample'
+                    | 'uniform'
+                    | 'buffer'
+                    | 'shared'
+                    | 'coherent'
+                    | 'volatile'
+                    | 'restrict'
+                    | 'readonly'
+                    | 'writeonly'
+                    | 'subroutine' ('(' type_name_list ')')?
+
+type_name_list  ::= TYPE_NAME (',' TYPE_NAME)*
+type_specifier  ::= type_specifier_nonarray array_specifier?
+array_specifier ::= ('[' conditional_expression? ']')+
+
+type_specifier_nonarray :
+VOID
+FLOAT
+DOUBLE
+INT
+UINT
+BOOL
+VEC2
+VEC3
+VEC4
+DVEC2
+DVEC3
+DVEC4
+BVEC2
+BVEC3
+BVEC4
+IVEC2
+IVEC3
+IVEC4
+UVEC2
+UVEC3
+UVEC4
+MAT2
+MAT3
+MAT4
+MAT2X2
+MAT2X3
+MAT2X4
+MAT3X2
+MAT3X3
+MAT3X4
+MAT4X2
+MAT4X3
+MAT4X4
+DMAT2
+DMAT3
+DMAT4
+DMAT2X2
+DMAT2X3
+DMAT2X4
+DMAT3X2
+DMAT3X3
+DMAT3X4
+DMAT4X2
+DMAT4X3
+DMAT4X4
+ATOMIC_UINT
+SAMPLER2D
+SAMPLER3D
+SAMPLERCUBE
+SAMPLER2DSHADOW
+SAMPLERCUBESHADOW
+SAMPLER2DARRAY
+SAMPLER2DARRAYSHADOW
+SAMPLERCUBEARRAY
+SAMPLERCUBEARRAYSHADOW
+ISAMPLER2D
+ISAMPLER3D
+ISAMPLERCUBE
+ISAMPLER2DARRAY
+ISAMPLERCUBEARRAY
+USAMPLER2D
+USAMPLER3D
+USAMPLERCUBE
+USAMPLER2DARRAY
+USAMPLERCUBEARRAY
+SAMPLER1D
+SAMPLER1DSHADOW
+SAMPLER1DARRAY
+SAMPLER1DARRAYSHADOW
+ISAMPLER1D
+ISAMPLER1DARRAY
+USAMPLER1D
+USAMPLER1DARRAY
+SAMPLER2DRECT
+SAMPLER2DRECTSHADOW
+ISAMPLER2DRECT
+USAMPLER2DRECT
+SAMPLERBUFFER
+ISAMPLERBUFFER
+USAMPLERBUFFER
+SAMPLER2DMS
+ISAMPLER2DMS
+USAMPLER2DMS
+SAMPLER2DMSARRAY
+ISAMPLER2DMSARRAY
+USAMPLER2DMSARRAY
+IMAGE2D
+IIMAGE2D
+UIMAGE2D
+IMAGE3D
+IIMAGE3D
+UIMAGE3D
+IMAGECUBE
+IIMAGECUBE
+UIMAGECUBE
+IMAGEBUFFER
+IIMAGEBUFFER
+UIMAGEBUFFER
+IMAGE1D
+IIMAGE1D
+UIMAGE1D
+IMAGE1DARRAY
+IIMAGE1DARRAY
+UIMAGE1DARRAY
+IMAGE2DRECT
+IIMAGE2DRECT
+UIMAGE2DRECT
+IMAGE2DARRAY
+IIMAGE2DARRAY
+UIMAGE2DARRAY
+IMAGECUBEARRAY
+IIMAGECUBEARRAY
+UIMAGECUBEARRAY
+IMAGE2DMS
+IIMAGE2DMS
+UIMAGE2DMS
+IMAGE2DMSARRAY
+IIMAGE2DMSARRAY
+UIMAGE2DMSARRAY
+struct_specifier
+TYPE_NAME
+precision_qualifier :
+HIGH_PRECISION
+MEDIUM_PRECISION
+LOW_PRECISION
+struct_specifier :
+STRUCT IDENTIFIER LEFT_BRACE struct_declaration_list RIGHT_BRACE
+STRUCT LEFT_BRACE struct_declaration_list RIGHT_BRACE
+struct_declaration_list :
+struct_declaration
+struct_declaration_list struct_declaration
+struct_declaration :
+type_specifier struct_declarator_list SEMICOLON
+type_qualifier type_specifier struct_declarator_list SEMICOLON
+struct_declarator_list :
+struct_declarator
+struct_declarator_list COMMA struct_declarator
+struct_declarator :
+IDENTIFIER
+IDENTIFIER array_specifier
+
+initializer ::= assignment_expression
+              | '{' initializer_list* ','? '}'
+
+initializer_list ::= initializer (',' initializer)*
+declaration_statement ::= declaration
+
+statement        ::= compound_statement | simple_statement
+simple_statement ::= declaration_statement
+                   | expression_statement
+                   | selection_statement
+                   | switch_statement
+                   | case_label
+                   | iteration_statement
+                   | jump_statement
+
+compound_statement   ::= '{' statement* '}'
+expression_statement ::= expression? ';'
+condition            ::= expression | fully_specified_type IDENTIFIER '=' initializer
+selection_statement  ::= 'if' '(' expression ')' statement ('else' statement)?
+switch_statement     ::= 'switch' '(' expression ')' '{' statement* '}'
+case_label           ::= 'case' expression ':' | 'default' ':'
+# while & for loop body doesn't make a new scope
+iteration_statement  ::= 'while' '(' condition ')' statement
+                       | 'for'   '(' for_init_statement for_rest_statement ')' statement
+                       | 'do' statement 'while' '(' expression ')' ';'
+
+for_init_statement ::= expression_statement | declaration_statement
+for_rest_statement ::= condition? ';' expression?
+
+# discard fragment shader only
+jump_statement ::= ('continue' | 'break' | 'return' expression? | 'discard') ';'
+
+# top level
+translation_unit     ::= external_declaration+
+external_declaration ::= function_definition | declaration | ';'
+
+# function body doesn't make a new scope
+function_definition  ::= function_prototype compound_statement
