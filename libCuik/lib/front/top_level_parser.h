@@ -442,7 +442,7 @@ static void check_for_entry(TranslationUnit* restrict tu, Cuik_GlobalSymbols* re
     }
 }
 
-Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict s, Cuik_Target* target, bool only_code_index) {
+Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cuik_Target* target, bool only_code_index) {
     assert(s != NULL);
     if (version == CUIK_VERSION_GLSL) {
         diag_err(s, tokens_get_range(s), "TODO");

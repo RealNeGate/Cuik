@@ -395,8 +395,10 @@ TB_API TB_ModuleSection* tb_module_get_tls(TB_Module* m) {
     return &m->tls;
 }
 
-TB_API void tb_module_set_tls_index(TB_Module* m, TB_Symbol* e) {
-    m->tls_index_extern = e;
+TB_API void tb_module_set_tls_index(TB_Module* m, const char* name) {
+    if (tb_atomic_int_cmpxchg(&m->is_tls_defined, 0, 1)) {
+        m->tls_index_extern = (TB_Symbol*) tb_extern_create(m, "_tls_index", TB_EXTERNAL_SO_LOCAL);
+    }
 }
 
 TB_API void tb_symbol_bind_ptr(TB_Symbol* s, void* ptr) {

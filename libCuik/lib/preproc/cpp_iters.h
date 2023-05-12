@@ -1,24 +1,24 @@
 
 CUIK_API void cuikpp_add_include_directory(Cuik_CPP* ctx, bool is_system, const char dir[]) {
-    Cuik_IncludeDir idir = { is_system, cuik_strdup(dir) };
-    dyn_array_put(ctx->system_include_dirs, idir);
+    Cuik_IncludeDir d = { is_system, gimme_the_shtuffs(ctx, sizeof(Cuik_Path)) };
+    cuik_path_set(d.path, dir);
+    dyn_array_put(ctx->system_include_dirs, d);
 }
 
 CUIK_API void cuikpp_add_include_directoryf(Cuik_CPP* ctx, bool is_system, const char* fmt, ...) {
-    char* out = cuik_malloc(FILENAME_MAX);
+    Cuik_IncludeDir d = { is_system, gimme_the_shtuffs(ctx, sizeof(Cuik_Path)) };
 
     va_list ap;
     va_start(ap, fmt);
-    vsnprintf(out, FILENAME_MAX, fmt, ap);
+    d.path->length = vsnprintf(d.path->data, FILENAME_MAX, fmt, ap);
     va_end(ap);
 
-    Cuik_IncludeDir idir = { is_system, out };
-    dyn_array_put(ctx->system_include_dirs, idir);
+    dyn_array_put(ctx->system_include_dirs, d);
 }
 
 CUIK_API bool cuikpp_find_include_include(Cuik_CPP* ctx, char output[FILENAME_MAX], const char* path) {
     dyn_array_for(i, ctx->system_include_dirs) {
-        sprintf_s(output, FILENAME_MAX, "%s%s", ctx->system_include_dirs[i].name, path);
+        sprintf_s(output, FILENAME_MAX, "%s%s", ctx->system_include_dirs[i].path->data, path);
         FILE* f = fopen(output, "r");
         if (f != NULL) {
             fclose(f);

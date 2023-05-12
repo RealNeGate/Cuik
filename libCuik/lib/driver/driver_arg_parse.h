@@ -44,6 +44,7 @@ struct Cuik_Arguments {
     Arena arena;
 
     // _[0] is for non-flag arguments
+    size_t count[ARG_DESC_COUNT];
     Cuik_Arg* _[ARG_DESC_COUNT];
 };
 
@@ -85,6 +86,7 @@ static Cuik_Arg* insert_arg(Cuik_Arguments* restrict args, int slot) {
     Cuik_Arg* new_arg = ARENA_ALLOC(&args->arena, Cuik_Arg);
     new_arg->prev = args->_[slot];
     args->_[slot] = new_arg;
+    args->count[slot] += 1;
     return new_arg;
 }
 
@@ -162,18 +164,13 @@ CUIK_API bool cuik_args_to_driver(Cuik_DriverArgs* comp_args, Cuik_Arguments* re
 
     FOR_ARGS(a, ARG_INCLUDE) {
         // resolve a fullpath
-        char* newstr = cuik_malloc(FILENAME_MAX);
+        Cuik_Path* newstr = cuik_malloc(sizeof(Cuik_Path));
         if (cuik_canonicalize_path(newstr, a->value)) {
-            size_t end = strlen(newstr);
-
-            if (newstr[end - 1] != '\\' && newstr[end - 1] != '/') {
+            size_t end = newstr->length;
+            if (newstr->data[end - 1] != '\\' && newstr->data[end - 1] != '/') {
                 assert(end+2 < FILENAME_MAX);
-                #ifdef _WIN32
-                newstr[end] = '\\';
-                #else
-                newstr[end] = '/';
-                #endif
-                newstr[end+1] = '\0';
+                newstr->data[end] = CUIK_PATH_SLASH_SEP;
+                newstr->data[end+1] = '\0';
             }
 
             dyn_array_put(comp_args->includes, newstr);
@@ -186,10 +183,13 @@ CUIK_API bool cuik_args_to_driver(Cuik_DriverArgs* comp_args, Cuik_Arguments* re
         char* newstr = cuik_strdup(a->value);
 
         char* ctx;
-        char* a = strtok_r(newstr, ",", &ctx);
+        char* arg = strtok_r(newstr, ",", &ctx);
         while (a != NULL) {
-            dyn_array_put(comp_args->libraries, a);
-            a = strtok_r(NULL, ",", &ctx);
+            Cuik_Path* p = cuik_malloc(sizeof(Cuik_Path));
+            cuik_path_set(p, arg);
+
+            dyn_array_put(comp_args->libraries, p);
+            arg = strtok_r(NULL, ",", &ctx);
         }
     }
 

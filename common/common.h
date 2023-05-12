@@ -68,10 +68,6 @@ do {                  \
     b = temp;         \
 } while (0)
 
-#ifndef MAX_PATH
-#define MAX_PATH 260
-#endif
-
 void tls_init(void);
 void tls_reset(void);
 void* tls_push(size_t size);

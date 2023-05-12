@@ -98,7 +98,7 @@ static void print_odin_type(Cuik_Type* type, int depth, bool top) {
 
 static bool is_in_sources(const Cuik_DriverArgs* args, const char* name) {
     dyn_array_for(i, args->sources) {
-        if (strcmp(args->sources[i], name) == 0) {
+        if (strcmp(args->sources[i]->data, name) == 0) {
             return true;
         }
     }

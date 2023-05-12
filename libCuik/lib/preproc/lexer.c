@@ -68,10 +68,15 @@ static const char keywords[][16] = {
     "__attribute__",
     "__cdecl",
     "__stdcall",
-    "__declspec"
+    "__declspec",
+
+    // GLSL keywords
+    "layout",
+    "in",
+    "out",
+    "inout",
 };
 
-#define PERFECT_HASH_SEED 13751172963623158798ULL
 static uint64_t hash_with_len(const void* data, size_t len) {
     const uint8_t* p = data;
     uint64_t h = 0;
@@ -83,29 +88,14 @@ static uint64_t hash_with_len(const void* data, size_t len) {
     return h;
 }
 
-static TknType classify_ident(const unsigned char* restrict str, size_t len) {
-    // Auto-generated with this small C program (MAKE SURE TO UPDATE THE
-    // KEYWORDS ARRAY AND TOKEN TYPES)
-    //
-    // https://gist.github.com/RealNeGate/397db4aaace43e0499dc8f7b429ccc17
-    static const uint8_t values[256] = {
-        [77] = 0 /* auto */, [194] = 1 /* break */, [31] = 2 /* case */, [5] = 3 /* char */,
-        [224] = 4 /* const */, [34] = 5 /* continue */, [132] = 6 /* default */, [76] = 7 /* do */,
-        [160] = 8 /* double */, [216] = 9 /* else */, [102] = 10 /* enum */, [247] = 11 /* extern */,
-        [250] = 12 /* float */, [153] = 13 /* for */, [71] = 14 /* goto */, [173] = 15 /* if */,
-        [85] = 16 /* inline */, [39] = 17 /* int */, [74] = 18 /* long */, [17] = 19 /* register */,
-        [128] = 20 /* restrict */, [157] = 21 /* return */, [117] = 22 /* short */, [243] = 23 /* signed */,
-        [12] = 24 /* sizeof */, [234] = 25 /* static */, [43] = 26 /* struct */, [72] = 27 /* switch */,
-        [137] = 28 /* typedef */, [232] = 29 /* union */, [93] = 30 /* unsigned */, [10] = 31 /* void */,
-        [155] = 32 /* volatile */, [44] = 33 /* while */, [91] = 34 /* _Alignas */, [15] = 35 /* _Alignof */,
-        [131] = 36 /* _Atomic */, [36] = 37 /* _Bool */, [118] = 38 /* _Complex */, [47] = 39 /* _Embed */,
-        [60] = 40 /* _Generic */, [185] = 41 /* _Imaginary */, [121] = 42 /* _Pragma */, [240] = 43 /* _Noreturn */,
-        [144] = 44 /* _Static_assert */, [174] = 45 /* _Thread_local */, [130] = 46 /* _Typeof */, [150] = 47 /* _Vector */,
-        [61] = 48 /* __asm__ */, [125] = 49 /* __attribute__ */, [22] = 50 /* __cdecl */, [181] = 51 /* __stdcall */,
-        [235] = 52 /* __declspec */,
-    };
+static TknType classify_ident(const unsigned char* restrict str, size_t len, bool is_glsl) {
+    // Auto-generated with lexgen.c
     size_t v = (hash_with_len(str, len) * PERFECT_HASH_SEED) >> 56;
-    v = values[v];
+    v = keywords_table[v];
+
+    if (!is_glsl && v >= FIRST_GLSL_KEYWORD - 0x10000000) {
+        return TOKEN_IDENTIFIER;
+    }
 
     // VERIFY
     #if USE_INTRIN && CUIK__IS_X64

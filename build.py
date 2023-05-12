@@ -86,6 +86,8 @@ if system == "Windows":
 	sources.append("c11threads/threads_msvc.c")
 	if args.libcuik:
 		sources.append("libCuik/lib/toolchains/msvc.c")
+		sources.append("libCuik/lib/toolchains/gnu.c")
+		sources.append("libCuik/lib/toolchains/darwin.c")
 		sources.append("libCuik/lib/back/microsoft_craziness.c")
 
 if system == "Darwin":
@@ -119,7 +121,7 @@ rule meta_cc
   description = CC $in $out
 
 rule lexgen
-  command = ./lexgen{exe_ext} $out
+  command = ./lexgen{exe_ext}
   description = LEXGEN
 
 rule embed_files

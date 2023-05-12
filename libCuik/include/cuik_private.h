@@ -20,6 +20,8 @@ typedef struct {
 } MacroDef;
 
 struct Cuik_CPP {
+    Cuik_Version version;
+
     // file system stuff
     Cuikpp_LocateFile locate;
     Cuikpp_GetFile fs;

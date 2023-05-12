@@ -3,6 +3,7 @@
 #include "str.c"
 #include "timer.c"
 #include "hash.c"
+#include "path.c"
 
 #define NL_STRING_MAP_IMPL
 #define NL_STRING_MAP_INLINE

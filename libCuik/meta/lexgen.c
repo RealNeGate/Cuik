@@ -1,35 +1,159 @@
 #define _CRT_SECURE_NO_WARNINGS
 #include <stdlib.h>
 #include <stdio.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stddef.h>
 #include <string.h>
 
+static const char keywords[][16] = {
+    "auto",
+    "break",
+    "case",
+    "char",
+    "const",
+    "continue",
+    "default",
+    "do",
+    "double",
+    "else",
+    "enum",
+    "extern",
+    "float",
+    "for",
+    "goto",
+    "if",
+    "inline",
+    "int",
+    "long",
+    "register",
+    "restrict",
+    "return",
+    "short",
+    "signed",
+    "sizeof",
+    "static",
+    "struct",
+    "switch",
+    "typedef",
+    "union",
+    "unsigned",
+    "void",
+    "volatile",
+    "while",
+    "_Alignas",
+    "_Alignof",
+    "_Atomic",
+    "_Bool",
+    "_Complex",
+    "_Embed",
+    "_Generic",
+    "_Imaginary",
+    "_Pragma",
+    "_Noreturn",
+    "_Static_assert",
+    "_Thread_local",
+    "_Typeof",
+    "_Vector",
+    "__asm__",
+    "__attribute__",
+    "__cdecl",
+    "__stdcall",
+    "__declspec",
+
+    // GLSL keywords
+    "layout",
+    "in",
+    "out",
+    "inout",
+};
+
+enum { num_keywords = sizeof(keywords) / sizeof(*keywords) };
+uint64_t signatures[num_keywords];
+
+uint64_t rand64(void) {
+    uint64_t x = rand();
+    x |= ((uint64_t) rand() << 16ull);
+    x |= ((uint64_t) rand() << 32ull);
+    x |= ((uint64_t) rand() << 48ull);
+    return x;
+}
+
+int check(uint64_t a, uint8_t max_collisions) {
+    uint8_t slot[256] = { 0 };
+    for (int i = 0; i < num_keywords; i++) {
+        uint8_t hash = (uint8_t)((a * signatures[i]) >> 56);
+        if (slot[hash] > max_collisions) return 0;
+        slot[hash]++;
+    }
+    return 1;
+}
+
+bool run_keyword_tablegen(FILE* f) {
+    srand(69);
+    for (int i = 0; i < num_keywords; i++) {
+        const char *keyword = keywords[i];
+        size_t keyword_len = strlen(keyword);
+        uint64_t signature = 0;
+        // The 7 high bytes of the signature are characters 0, 2, 4, etc.
+        for (int j = 0; j < keyword_len && j < 7; j++) {
+            signature = (uint8_t)keyword[j] + signature * 256;
+        }
+
+        // The low byte of the signature is the length.
+        signature = keyword_len + signature * 256;
+
+        for (int j = 0; j < i; j++) {
+            if (signatures[j] == signature) {
+                fprintf(f, "Signature collision.\n");
+                exit(1);
+            }
+        }
+
+        signatures[i] = signature;
+    }
+
+    // try to figure out a good hash
+    uint64_t max_iterations = 1ull << 40;
+    uint8_t max_collisions = 0;
+    for (uint64_t i = 0; i < max_iterations; i++) {
+        uint64_t a = rand64();
+        if (!check(a, max_collisions)) continue;
+
+        fprintf(f, "// a = %llu (%d keywords, %llu tries)\n", a, num_keywords, i);
+        fprintf(f, "#define PERFECT_HASH_SEED %lluULL\n", a);
+        fprintf(f, "static const uint8_t keywords_table[256] = {\n");
+        for (int i = 0; i < num_keywords;) {
+            int end = i + 4;
+
+            fprintf(f, "    ");
+            for (; i < end && i < num_keywords; i++) {
+                uint8_t hash = (uint8_t)((a * signatures[i]) >> 56);
+                fprintf(f, "[%d] = %d /* %s */, ", hash, i, keywords[i]);
+            }
+            fprintf(f, "\n");
+        }
+        fprintf(f, "};\n");
+
+        /*for (int i = 0; i < num_keywords; i++) {
+            const char* str = keywords[i];
+            while (*str == '_') str++;
+
+            printf("    TOKEN_KW_%s,\n", str);
+        }*/
+
+        return true;
+    }
+
+    printf("No hash function with max %d collisions found.\n", max_collisions);
+    return false;
+}
+
 static uint8_t table[256][32];
-
-static void emit_range(uint64_t min, uint64_t max, uint64_t old, uint64_t next) {
-    for (size_t i = min; i <= max; i++) {
-        table[i][old] = next;
-    }
-}
-
-static void emit_chars(const char* str, uint64_t old, uint64_t next) {
-    for (; *str; str++) {
-        table[(unsigned char) *str][old] = next;
-    }
-}
-
-static void emit_all_chars(const char* str, uint64_t old, uint64_t next) {
-    for (size_t i = 0; i < 256; i++) {
-        table[i][old] = next;
-    }
-}
 
 // new state
 static int table_id_counter = 1;
-static int ns(void) {
-    return table_id_counter++;
-}
+static int ns(void) { return table_id_counter++; }
 
 #define RANGE(old, new, ...) range_pattern(old, new, sizeof((const char*[]){ __VA_ARGS__ }) / sizeof(const char*), (const char*[]){ __VA_ARGS__ })
 static uint64_t range_pattern(uint64_t old, uint64_t new, int c, const char* ranges[]) {
@@ -49,16 +173,13 @@ static uint64_t range_pattern(uint64_t old, uint64_t new, int c, const char* ran
 
 #define CHARS(old, new, ...) chars_pattern(old, new, __VA_ARGS__)
 static uint64_t chars_pattern(uint64_t old, uint64_t new, const char* str) {
-    emit_chars(str, old, new);
+    for (; *str; str++) {
+        table[(unsigned char) *str][old] = new;
+    }
     return new;
 }
 
 int main(int argc, char** argv) {
-    if (argc <= 1) {
-        fprintf(stderr, "requires output path!\n");
-        return 1;
-    }
-
     int ident = ns();
     RANGE(0, ident, "AZ", "az", "_", "$", "\x80\xFF", "\\");
     RANGE(ident, ident, "AZ", "az", "_", "$", "09", "\x80\xFF", "\\");
@@ -122,8 +243,9 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    // printf("%d\n", table_id_counter);
-    FILE* file = fopen(argv[1], "wb");
+    FILE* file = fopen("libCuik/lib/preproc/dfa.h", "wb");
+    run_keyword_tablegen(file);
+    fprintf(file, "\n\n");
     fprintf(file, "enum {\n");
     fprintf(file, "    DFA_IDENTIFIER   = %d,\n", ident);
     fprintf(file, "    DFA_NUMBER       = %d,\n", num);

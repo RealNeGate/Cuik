@@ -1,6 +1,12 @@
 #pragma once
 #include "cuik_prelude.h"
 
+#if _WIN32
+#define CUIK_PATH_SLASH_SEP '\\'
+#else
+#define CUIK_PATH_SLASH_SEP '/'
+#endif
+
 enum {
     SourceLoc_IsMacro          = 1u << 31u,
 
@@ -33,6 +39,29 @@ typedef struct String {
     size_t length;
     const unsigned char* data;
 } String;
+
+typedef struct {
+    uint16_t length;
+    char data[FILENAME_MAX];
+} Cuik_Path;
+
+typedef enum Cuik_ExtensionFlags {
+    CUIK_EXTENSIONS_MSVC  = (1u << 0u),
+    CUIK_EXTENSIONS_CLANG = (1u << 1u),
+    CUIK_EXTENSIONS_GCC   = (1u << 2u),
+    CUIK_EXTENSIONS_CUIK  = (1u << 3u),
+} Cuik_ExtensionFlags;
+
+typedef enum Cuik_Version {
+    // C language
+    CUIK_VERSION_C89,
+    CUIK_VERSION_C99,
+    CUIK_VERSION_C11,
+    CUIK_VERSION_C23,
+
+    // GL shading language
+    CUIK_VERSION_GLSL,
+} Cuik_Version;
 
 typedef enum Cuik_IntSuffix {
     //                u   l   l
@@ -130,6 +159,13 @@ typedef struct Cuik_FileLoc {
     uint32_t pos; // in bytes
 } Cuik_FileLoc;
 
+bool cuik_path_set_dir(Cuik_Path* restrict dst, const char* src);
+bool cuik_path_set(Cuik_Path* restrict dst, const char* src);
+bool cuik_path_append(Cuik_Path* restrict dst, const Cuik_Path* restrict a, size_t b_len, const char b[]);
+
+bool cuik_path_is_in(const Cuik_Path* restrict dst, const char* src);
+bool cuik_path_has_ext(const Cuik_Path* restrict dst, const char* ext);
+
 // Used to make iterators for the define list, for example:
 //
 // Cuik_DefineIter it = cuikpp_first_define(cpp);
@@ -162,11 +198,12 @@ typedef struct Cuik_FileResult {
 } Cuik_FileResult;
 
 // returns true if it found the file, it'll also return the canonical name
-typedef bool (*Cuikpp_LocateFile)(void* user_data, const char* input_path, char output_path[]);
-typedef bool (*Cuikpp_GetFile)(void* user_data, const char* input_path, Cuik_FileResult* out_result);
+typedef bool (*Cuikpp_LocateFile)(void* user_data, const Cuik_Path* restrict input, Cuik_Path* output);
+typedef bool (*Cuikpp_GetFile)(void* user_data, const Cuik_Path* restrict input, Cuik_FileResult* out_result);
 
 typedef struct {
     const char* filepath;
+    Cuik_Version version;
 
     // some callbacks :P
     void* diag_data;
@@ -236,10 +273,10 @@ CUIK_API void cuiklex_canonicalize(size_t length, char* data);
 // NOTE: it doesn't guarentee the paths map to existing files.
 //
 // returns true on success
-CUIK_API bool cuik_canonicalize_path(char output[FILENAME_MAX], const char* input);
+CUIK_API bool cuik_canonicalize_path(Cuik_Path* restrict output, const char* input);
 
-CUIK_API bool cuikpp_locate_file(void* user_data, const char* input_path, char output_path[]);
-CUIK_API bool cuikpp_default_fs(void* user_data, const char* input_path, Cuik_FileResult* out_result);
+bool cuikpp_locate_file(void* user_data, const Cuik_Path* restrict input, Cuik_Path* output);
+CUIK_API bool cuikpp_default_fs(void* user_data, const Cuik_Path* restrict input, Cuik_FileResult* out_result);
 
 // Returns entire preprocessor on input state
 CUIK_API Cuikpp_Status cuikpp_run(Cuik_CPP* restrict ctx);
@@ -280,7 +317,7 @@ CUIK_API bool cuikpp_find_include_include(Cuik_CPP* ctx, char output[FILENAME_MA
 
 typedef struct {
     bool is_system;
-    char* name;
+    Cuik_Path* path;
 } Cuik_IncludeDir;
 
 CUIK_API Cuik_IncludeDir* cuikpp_get_include_dirs(Cuik_CPP* ctx);

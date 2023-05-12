@@ -5,30 +5,12 @@
 #pragma once
 #include "cuik_prelude.h"
 
-typedef enum Cuik_ExtensionFlags {
-    CUIK_EXTENSIONS_MSVC  = (1u << 0u),
-    CUIK_EXTENSIONS_CLANG = (1u << 1u),
-    CUIK_EXTENSIONS_GCC   = (1u << 2u),
-    CUIK_EXTENSIONS_CUIK  = (1u << 3u),
-} Cuik_ExtensionFlags;
-
 typedef struct Cuik_Warnings {
     // implicitly converting between types and losing information
     bool data_loss : 1;
     bool unused_decls : 1;
     bool unused_funcs : 1;
 } Cuik_Warnings;
-
-typedef enum Cuik_ParseVersion {
-    // C language
-    CUIK_VERSION_C89,
-    CUIK_VERSION_C99,
-    CUIK_VERSION_C11,
-    CUIK_VERSION_C23,
-
-    // GL shading language
-    CUIK_VERSION_GLSL,
-} Cuik_ParseVersion;
 
 typedef enum Cuik_Entrypoint {
     CUIK_ENTRYPOINT_NONE,
@@ -54,7 +36,7 @@ typedef struct Cuik_ParseResult {
     Cuik_ImportRequest* imports; // linked list of imported libs.
 } Cuik_ParseResult;
 
-CUIK_API Cuik_ParseResult cuikparse_run(Cuik_ParseVersion version, TokenStream* restrict s, Cuik_Target* target, bool only_code_index);
+CUIK_API Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cuik_Target* target, bool only_code_index);
 
 // sets the user data field, returns the old value
 CUIK_API void* cuik_set_translation_unit_user_data(TranslationUnit* restrict tu, void* ud);

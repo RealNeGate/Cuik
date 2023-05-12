@@ -78,6 +78,7 @@ typedef size_t tb_atomic_size_t;
 int tb_atomic_int_load(int* dst);
 int tb_atomic_int_add(int* dst, int src);
 int tb_atomic_int_store(int* dst, int src);
+bool tb_atomic_int_cmpxchg(int* address, int old_value, int new_value);
 
 size_t tb_atomic_size_load(size_t* dst);
 size_t tb_atomic_size_add(size_t* dst, size_t src);
@@ -384,6 +385,8 @@ struct TB_ModuleSection {
 struct TB_Module {
     int max_threads;
     bool is_jit;
+
+    tb_atomic_int is_tls_defined;
 
     // we have a global lock since the arena can be accessed
     // from any thread.

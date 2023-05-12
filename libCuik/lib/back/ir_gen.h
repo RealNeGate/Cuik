@@ -8,8 +8,6 @@
 
 #include <tb.h>
 
-extern atomic_flag irgen_defined_tls_index;
-
 typedef enum IRValType {
     RVALUE,
     RVALUE_PHI,
@@ -76,7 +74,6 @@ static TB_DataType ctype_to_tbtype(const Cuik_Type* t) {
     }
 }
 
-_Noreturn void internal_error(const char* fmt, ...);
 int count_max_tb_init_objects(InitNode* root_node);
 TB_DebugType* cuik__as_tb_debug_type(TB_Module* mod, Cuik_Type* t);
 

@@ -142,7 +142,15 @@ typedef enum TknType {
     TOKEN_KW_cdecl,
     TOKEN_KW_stdcall,
     TOKEN_KW_declspec,
+    TOKEN_KW_layout,
+    TOKEN_KW_in,
+    TOKEN_KW_out,
+    TOKEN_KW_inout,
 } TknType;
+
+enum {
+    FIRST_GLSL_KEYWORD = TOKEN_KW_layout
+};
 
 #undef TKN2
 #undef TKN3
@@ -160,7 +168,7 @@ Token lexer_read(Lexer* restrict l);
 
 ptrdiff_t parse_char(size_t len, const char* str, int* output);
 uint64_t parse_int(size_t len, const char* str, Cuik_IntSuffix* out_suffix);
-TknType classify_ident(const unsigned char* restrict str, size_t len);
+TknType classify_ident(const unsigned char* restrict str, size_t len, bool is_glsl);
 
 static SourceLoc offset_source_loc(SourceLoc loc, uint32_t offset) {
     return (SourceLoc){ loc.raw + offset };

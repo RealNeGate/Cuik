@@ -107,7 +107,7 @@ int main(int argc, const char** argv) {
         LiveCompiler l;
         do {
             printf("\x1b[2J");
-            printf("OUTPUT OF %s:\n", args.sources[0]);
+            printf("OUTPUT OF %s:\n", args.sources[0]->data);
 
             CompilationUnit* cu;
             cuik_driver_compile(tp, &args, true, true, &cu);

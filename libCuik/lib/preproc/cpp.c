@@ -30,6 +30,11 @@ typedef struct {
     TokenNode *head, *tail;
 } TokenList;
 
+typedef enum {
+    LOCATE_FOUND  = 1,
+    LOCATE_SYSTEM = 2,
+} LocateResult;
+
 // GOD I HATE FORWARD DECLARATIONS
 static bool is_defined(Cuik_CPP* restrict c, const unsigned char* start, size_t length);
 static void expect(TokenArray* restrict in, char ch);
@@ -46,9 +51,8 @@ static void print_token_stream(TokenArray* in, size_t start, size_t end);
 
 static void expand(Cuik_CPP* restrict c, TokenNode* restrict head, uint32_t parent_macro, TokenArray* rest);
 static TokenList expand_ident(Cuik_CPP* restrict c, TokenArray* in, TokenNode* head, uint32_t parent_macro, TokenArray* rest);
-static bool locate_file(Cuik_CPP* ctx, bool search_lib_first, const char* dir, const char* og_path, char canonical[FILENAME_MAX], bool* is_system);
 
-static char* alloc_directory_path(const char* filepath);
+static Cuik_Path* alloc_directory_path(const char* filepath);
 static void compute_line_map(TokenStream* s, bool is_system, int depth, SourceLoc include_site, const char* filename, char* data, size_t length);
 
 enum {
@@ -56,8 +60,8 @@ enum {
 };
 
 typedef struct CPPStackSlot {
-    const char* filepath;
-    const char* directory;
+    Cuik_Path* filepath;
+    Cuik_Path* directory;
 
     uint32_t file_id;
     SourceLoc loc; // location of the #include
@@ -142,6 +146,32 @@ static String get_token_as_string(TokenStream* restrict in) {
     return tokens_get(in)->content;
 }
 
+static LocateResult locate_file(Cuik_CPP* ctx, bool search_lib_first, const Cuik_Path* restrict dir, const char* og_path, Cuik_Path* restrict canonical) {
+    size_t og_path_len = strlen(og_path);
+
+    Cuik_Path tmp;
+    if (!search_lib_first &&
+        cuik_path_append(&tmp, dir, og_path_len, og_path) &&
+        ctx->locate(ctx->user_data, &tmp, canonical)) {
+        return LOCATE_FOUND;
+    }
+
+    dyn_array_for(i, ctx->system_include_dirs) {
+        if (cuik_path_append(&tmp, ctx->system_include_dirs[i].path, og_path_len, og_path) &&
+            ctx->locate(ctx->user_data, &tmp, canonical)) {
+            return LOCATE_FOUND | (ctx->system_include_dirs[i].is_system << 1);
+        }
+    }
+
+    if (search_lib_first &&
+        cuik_path_append(&tmp, dir, og_path_len, og_path) &&
+        ctx->locate(ctx->user_data, &tmp, canonical)) {
+        return LOCATE_FOUND;
+    }
+
+    return false;
+}
+
 // this is used when NULL is passed into the cuikpp_make filepath, it makes it
 // easy to check for empty string which aren't NULL.
 static const char MAGIC_EMPTY_STRING[] = "";
@@ -193,21 +223,6 @@ Cuik_CPP* cuikpp_make(const Cuik_CPPDesc* desc) {
 
     // initialize dynamic arrays
     ctx->system_include_dirs = dyn_array_create(char*, 64);
-    ctx->stack_ptr = 1;
-
-    char* slash = strrchr(filepath, '\\');
-    if (!slash) slash = strrchr(filepath, '/');
-
-    char* directory = gimme_the_shtuffs(ctx, FILENAME_MAX);
-    if (slash) {
-        #if _WIN32
-        sprintf_s(directory, FILENAME_MAX, "%.*s\\", (int)(slash - filepath), filepath);
-        #else
-        snprintf(directory, FILENAME_MAX, "%.*s/", (int)(slash - filepath), filepath);
-        #endif
-    } else {
-        directory[0] = '\0';
-    }
 
     ctx->tokens.diag = cuikdg_make(desc->diag, desc->diag_data);
     ctx->tokens.filepath = filepath;
@@ -223,10 +238,16 @@ Cuik_CPP* cuikpp_make(const Cuik_CPPDesc* desc) {
     tls_init();
 
     ctx->state1 = CUIK__CPP_FIRST_FILE;
-    ctx->stack[0] = (CPPStackSlot){
-        .filepath = filepath,
-        .directory = directory,
-    };
+
+    {
+        ctx->stack_ptr = 1;
+        ctx->stack[0] = (CPPStackSlot){ 0 };
+        ctx->stack[0].filepath = gimme_the_shtuffs(ctx, sizeof(Cuik_Path));
+        ctx->stack[0].directory = gimme_the_shtuffs(ctx, sizeof(Cuik_Path));
+        cuik_path_set(ctx->stack[0].filepath, filepath);
+        cuik_path_set_dir(ctx->stack[0].directory, filepath);
+    }
+
     return ctx;
 }
 
@@ -287,9 +308,6 @@ void cuikpp_finalize(Cuik_CPP* ctx) {
 }
 
 void cuikpp_free(Cuik_CPP* ctx) {
-    dyn_array_for(i, ctx->system_include_dirs) {
-        cuik_free(ctx->system_include_dirs[i].name);
-    }
     dyn_array_destroy(ctx->system_include_dirs);
 
     if (ctx->macros.keys) {
@@ -442,56 +460,10 @@ static void compute_line_map(TokenStream* s, bool is_system, int depth, SourceLo
     } while (i < length);
 }
 
-static bool locate_file(Cuik_CPP* ctx, bool search_lib_first, const char* dir, const char* og_path, char canonical[FILENAME_MAX], bool* is_system) {
-    char path[FILENAME_MAX];
-    if (!search_lib_first) {
-        sprintf_s(path, FILENAME_MAX, "%s%s", dir, og_path);
-        if (ctx->locate(ctx->user_data, path, canonical)) {
-            *is_system = false;
-            return true;
-        }
-    }
-
-    dyn_array_for(i, ctx->system_include_dirs) {
-        sprintf_s(path, FILENAME_MAX, "%s%s", ctx->system_include_dirs[i].name, og_path);
-
-        if (ctx->locate(ctx->user_data, path, canonical)) {
-            *is_system = ctx->system_include_dirs[i].is_system;
-            return true;
-        }
-    }
-
-    if (search_lib_first) {
-        sprintf_s(path, FILENAME_MAX, "%s%s", dir, og_path);
-        if (ctx->locate(ctx->user_data, path, canonical)) {
-            *is_system = false;
-            return true;
-        }
-    }
-
-    return false;
-}
-
-static char* alloc_directory_path(const char* filepath) {
-    // identify directory path
-    char* slash = strrchr(filepath, '/');
-    if (!slash) slash = strrchr(filepath, '\\');
-
-    char* new_dir = NULL;
-    if (slash) {
-        size_t slash_pos = slash - filepath;
-
-        char* new_dir = arena_alloc(&thread_arena, slash_pos + 2, 1);
-        memcpy(new_dir, filepath, slash_pos);
-        new_dir[slash_pos] = '/';
-        new_dir[slash_pos + 1] = 0;
-        return new_dir;
-    } else {
-        char* new_dir = arena_alloc(&thread_arena, 2, 1);
-        new_dir[0] = '/';
-        new_dir[1] = 0;
-        return new_dir;
-    }
+static Cuik_Path* alloc_directory_path(const char* filepath) {
+    Cuik_Path* new_dir = ARENA_ALLOC(&thread_arena, Cuik_Path);
+    cuik_path_set_dir(new_dir, filepath);
+    return new_dir;
 }
 
 Cuikpp_Status cuikpp_run(Cuik_CPP* restrict ctx) {
@@ -509,7 +481,7 @@ Cuikpp_Status cuikpp_run(Cuik_CPP* restrict ctx) {
 
     Cuik_FileResult main_file;
     if (!ctx->fs(ctx->user_data, slot->filepath, &main_file)) {
-        fprintf(stderr, "\x1b[31merror\x1b[0m: file \"%s\" doesn't exist.\n", slot->filepath);
+        fprintf(stderr, "\x1b[31merror\x1b[0m: file \"%s\" doesn't exist.\n", slot->filepath->data);
         return CUIKPP_ERROR;
     }
 
@@ -521,7 +493,7 @@ Cuikpp_Status cuikpp_run(Cuik_CPP* restrict ctx) {
     // initialize the lexer in the stack slot & record the file entry
     slot->file_id = dyn_array_length(ctx->tokens.files);
     slot->tokens = convert_to_token_list(ctx, dyn_array_length(ctx->tokens.files), main_file.length, main_file.data);
-    compute_line_map(&ctx->tokens, false, 0, (SourceLoc){ 0 }, slot->filepath, main_file.data, main_file.length);
+    compute_line_map(&ctx->tokens, false, 0, (SourceLoc){ 0 }, slot->filepath->data, main_file.data, main_file.length);
 
     // continue along to the actual preprocessing now
     #ifdef CPP_DBG
@@ -529,7 +501,7 @@ Cuikpp_Status cuikpp_run(Cuik_CPP* restrict ctx) {
     #endif /* CPP_DBG */
 
     if (cuikperf_is_active()) {
-        cuikperf_region_start(cuik_time_in_nanos(), "preprocess", slot->filepath);
+        cuikperf_region_start(cuik_time_in_nanos(), "preprocess", slot->filepath->data);
     }
 
     TokenStream* restrict s = &ctx->tokens;
@@ -549,10 +521,12 @@ Cuikpp_Status cuikpp_run(Cuik_CPP* restrict ctx) {
 
                 first = consume(in);
                 if (first.type == TOKEN_IDENTIFIER) {
+                    bool is_glsl = ctx->version == CUIK_VERSION_GLSL;
+
                     // check if it's actually a macro, if not categorize it if it's a keyword
                     if (!is_defined(ctx, first.content.data, first.content.length)) {
                         // FAST PATH
-                        first.type = classify_ident(first.content.data, first.content.length);
+                        first.type = classify_ident(first.content.data, first.content.length, is_glsl);
                         dyn_array_put(s->list.tokens, first);
                     } else {
                         in->current -= 1;
@@ -570,7 +544,7 @@ Cuikpp_Status cuikpp_run(Cuik_CPP* restrict ctx) {
                                 if (t->type == 0) {
                                     continue;
                                 } else if (t->type == TOKEN_IDENTIFIER) {
-                                    t->type = classify_ident(t->content.data, t->content.length);
+                                    t->type = classify_ident(t->content.data, t->content.length, is_glsl);
                                 }
 
                                 dyn_array_put(s->list.tokens, *t);
@@ -652,7 +626,7 @@ Cuikpp_Status cuikpp_run(Cuik_CPP* restrict ctx) {
 
         if (slot->include_guard.status == INCLUDE_GUARD_EXPECTING_NOTHING) {
             // the file is practically pragma once
-            nl_strmap_put_cstr(ctx->include_once, (const char*) slot->filepath, 0);
+            nl_strmap_put_cstr(ctx->include_once, slot->filepath->data, 0);
         }
 
         // write out profile entry

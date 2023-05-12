@@ -756,7 +756,7 @@ extern "C" {
     // When targetting windows & thread local storage, you'll need to bind a tls index
     // which is usually just a global that the runtime support has initialized, if you
     // dont and the tls_index is used, it'll crash
-    TB_API void tb_module_set_tls_index(TB_Module* m, TB_Symbol* e);
+    TB_API void tb_module_set_tls_index(TB_Module* m, const char* name);
 
     // You don't need to manually call this unless you want to resolve locations before
     // exporting.

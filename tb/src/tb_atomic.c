@@ -19,6 +19,10 @@ int tb_atomic_int_store(int* dst, int src) {
     return InterlockedExchange((long*)dst, src);
 }
 
+bool tb_atomic_int_cmpxchg(int* address, int old_value, int new_value) {
+    return _InterlockedCompareExchange((volatile long*) address, new_value, old_value) == new_value;
+}
+
 size_t tb_atomic_size_load(size_t* dst) {
     return InterlockedOr64((LONG64*)dst, 0);
 }
@@ -53,6 +57,10 @@ int tb_atomic_int_add(int* dst, int src) {
 
 int tb_atomic_int_store(int* dst, int src) {
     return atomic_exchange((atomic_int*) dst, src);
+}
+
+bool tb_atomic_int_cmpxchg(int* address, int old_value, int new_value) {
+    return atomic_compare_exchange_strong((_Atomic(int)*) address, &old_value, new_value);
 }
 
 size_t tb_atomic_size_load(size_t* dst) {

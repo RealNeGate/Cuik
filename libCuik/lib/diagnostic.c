@@ -28,42 +28,8 @@ static const char* report_names[] = {
 size_t type_as_string(size_t max_len, char* buffer, Cuik_Type* type);
 
 static char* sprintf_callback(const char* buf, void* user, int len) {
-    assert(len < sizeof(ArenaSegment) - ARENA_SEGMENT_SIZE);
-
-    Arena* arena = user;
-    ArenaSegment* top = arena->top;
-    if (top && top->used + len <= sizeof(ArenaSegment) - ARENA_SEGMENT_SIZE) {
-        // single segment
-        memcpy(&top->data[top->used], buf, len);
-        top->used += len;
-    } else {
-        size_t first_segment_size = 0;
-        if (top) {
-            first_segment_size = (sizeof(ArenaSegment) - ARENA_SEGMENT_SIZE) - (top->used + len);
-
-            memcpy(&top->data[top->used], buf, first_segment_size);
-            top->used += first_segment_size;
-        }
-
-        ArenaSegment* s = cuik__valloc(ARENA_SEGMENT_SIZE);
-        if (!s) {
-            fprintf(stderr, "error: arena is out of memory!\n");
-            exit(2);
-        }
-
-        s->next = NULL;
-        s->used = len - first_segment_size;
-        s->capacity = ARENA_SEGMENT_SIZE;
-        s->_pad = 0;
-
-        memcpy(s->data, buf + first_segment_size, len - first_segment_size);
-
-        // Insert to top of nodes
-        if (arena->top) arena->top->next = s;
-        else arena->base = s;
-        arena->top = s;
-    }
-
+    void* dst = arena_alloc(user, len, 1);
+    memcpy(dst, buf, len);
     return NULL;
 }
 

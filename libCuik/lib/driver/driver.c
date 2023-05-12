@@ -60,6 +60,12 @@ void cuikpp_dump_tokens(TokenStream* s) {
             printf("L");
         }
 
+        /*if (t->type >= TOKEN_KW_auto) {
+            printf("\x1b[33m%.*s\x1b[0m ", (int) t->content.length, t->content.data);
+        } else {
+            printf("%.*s ", (int) t->content.length, t->content.data);
+        }*/
+
         printf("%.*s ", (int) t->content.length, t->content.data);
     }
     printf("\n");
@@ -80,7 +86,7 @@ void cuik_free_driver_args(Cuik_DriverArgs* args) {
 static bool run_cpp(Cuik_CPP* cpp, const Cuik_DriverArgs* args, bool should_finalize) {
     cuik_set_standard_defines(cpp, args);
     dyn_array_for(i, args->includes) {
-        cuikpp_add_include_directory(cpp, false, args->includes[i]);
+        cuikpp_add_include_directory(cpp, false, args->includes[i]->data);
     }
 
     dyn_array_for(i, args->defines) {
@@ -117,6 +123,7 @@ CUIK_API Cuik_CPP* cuik_driver_preprocess(const char* filepath, const Cuik_Drive
     Cuik_CPP* cpp = NULL;
     CUIK_TIMED_BLOCK("cuikpp_make") {
         cpp = cuikpp_make(&(Cuik_CPPDesc){
+                .version       = args->version,
                 .filepath      = filepath,
                 .locate        = cuikpp_locate_file,
                 .fs            = cuikpp_default_fs,
@@ -132,6 +139,7 @@ CUIK_API Cuik_CPP* cuik_driver_preprocess_str(String source, const Cuik_DriverAr
     Cuik_CPP* cpp = NULL;
     CUIK_TIMED_BLOCK("cuikpp_make") {
         cpp = cuikpp_make(&(Cuik_CPPDesc){
+                .version       = args->version,
                 .fs_data       = &source,
                 .locate        = cuikpp_locate_file,
                 .fs            = cuikpp_default_fs,
@@ -147,6 +155,7 @@ CUIK_API Cuik_CPP* cuik_driver_preprocess_cstr(const char* source, const Cuik_Dr
     Cuik_CPP* cpp = NULL;
     CUIK_TIMED_BLOCK("cuikpp_make") {
         cpp = cuikpp_make(&(Cuik_CPPDesc){
+                .version       = args->version,
                 .fs_data       = &(String){ strlen(source), (const unsigned char*) source },
                 .locate        = cuikpp_locate_file,
                 .fs            = cuikpp_default_fs,
@@ -193,7 +202,7 @@ static void complete_job(CompilerJob* restrict job) {
         size_t done = tu_count - *job->remaining;
 
         mtx_lock(&job->stuff->lock);
-        fprintf(stderr, "[%zu/%zu] CC %s\n", done, tu_count, args->sources[job->input_i]);
+        fprintf(stderr, "[%zu/%zu] CC %s\n", done, tu_count, args->sources[job->input_i]->data);
         mtx_unlock(&job->stuff->lock);
     }
 }
@@ -246,7 +255,9 @@ static void compile_file(void* arg) {
     if (imports != NULL) {
         cuik_lock_compilation_unit(cu);
         for (; imports != NULL; imports = imports->next) {
-            dyn_array_put(job->stuff->args->libraries, cuik_strdup(imports->lib_name));
+            Cuik_Path* p = cuik_malloc(sizeof(Cuik_Path));
+            cuik_path_set(p, imports->lib_name);
+            dyn_array_put(job->stuff->args->libraries, p);
         }
         cuik_unlock_compilation_unit(cu);
     }
@@ -433,7 +444,7 @@ static Cuik_Linker gimme_linker(Cuik_DriverArgs* restrict args) {
 
     // Add input libraries
     dyn_array_for(i, args->libraries) {
-        cuiklink_add_input_file(&l, args->libraries[i]);
+        cuiklink_add_input_file(&l, args->libraries[i]->data);
     }
 
     if (!args->nocrt) {
@@ -658,7 +669,7 @@ CUIK_API bool cuik_driver_compile(Cuik_IThreadpool* restrict thread_pool, Cuik_D
                 .stuff = &stuff,
 
                 .input_i = i,
-                .input = args->sources[i],
+                .input = args->sources[i]->data,
                 .errors = &parse_errors,
                 .remaining = &remaining,
             };
@@ -830,7 +841,7 @@ bool cuik_driver_get_output_name(Cuik_DriverArgs* args, int cap, char path[]) {
         int r = snprintf(path, cap, "%s", args->output_name);
         return r >= 0 && r < cap;
     } else {
-        const char* filename = args->sources[0];
+        const char* filename = args->sources[0]->data;
 
         const char* ext = strrchr(filename, '.');
         size_t len = ext ? (ext - filename) : strlen(filename);

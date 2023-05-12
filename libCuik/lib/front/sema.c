@@ -840,11 +840,11 @@ Cuik_QualType cuik__sema_expr(TranslationUnit* tu, Expr* restrict e) {
             Cuik_Type* t = cuik_canonical_type(e->init.type);
             try_resolve_typeof(tu, t);
 
-            if (!cuik_canonical_type(t->array_of)->is_complete) {
-                type_layout2(NULL, &tu->tokens, cuik_canonical_type(t->array_of));
-            }
-
             if (t->kind == KIND_ARRAY) {
+                if (!cuik_canonical_type(t->array_of)->is_complete) {
+                    type_layout2(NULL, &tu->tokens, cuik_canonical_type(t->array_of));
+                }
+
                 int old_array_count = t->array_count;
                 int new_array_count = sema_infer_initializer_array_count(tu, e->init.root);
 

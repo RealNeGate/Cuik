@@ -16,7 +16,7 @@ struct Cuik_Toolchain {
 };
 
 struct Cuik_DriverArgs {
-    Cuik_ParseVersion version;
+    Cuik_Version version;
     TB_OutputFlavor flavor;
 
     Cuik_Target* target;
@@ -29,9 +29,9 @@ struct Cuik_DriverArgs {
     void* diag_userdata;
     Cuik_DiagCallback diag_callback;
 
-    DynArray(char*) sources;
-    DynArray(char*) includes;
-    DynArray(char*) libraries;
+    DynArray(Cuik_Path*) sources;
+    DynArray(Cuik_Path*) includes;
+    DynArray(Cuik_Path*) libraries;
     DynArray(char*) defines;
 
     TB_WindowsSubsystem subsystem;

@@ -3,8 +3,6 @@
 #include <futex.h>
 #include "../targets/targets.h"
 
-atomic_flag irgen_defined_tls_index;
-
 // Maps param_num -> TB_Node*
 static thread_local TB_Node** parameter_map;
 
@@ -1507,8 +1505,8 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
                 tb_global_set_storage(tu->ir_mod, section, g, type->size, type->align, max_tb_objects);
                 gen_global_initializer(tu, g, type, s->decl.initial, 0);
 
-                if (attrs.is_tls && !atomic_flag_test_and_set(&irgen_defined_tls_index)) {
-                    tb_module_set_tls_index(tu->ir_mod, (TB_Symbol*) tb_extern_create(tu->ir_mod, "_tls_index", TB_EXTERNAL_SO_LOCAL));
+                if (attrs.is_tls) {
+                    tb_module_set_tls_index(tu->ir_mod, "_tls_index");
                 }
 
                 s->backing.g = g;
@@ -1910,8 +1908,8 @@ static void ir_alloc_task(void* task) {
                 const char* name = s->decl.name;
                 if (!is_external_sym) {
                     // if we have a TB module, fill it up with declarations
-                    if (s->decl.attrs.is_tls && !atomic_flag_test_and_set(&irgen_defined_tls_index)) {
-                        tb_module_set_tls_index(t.tu->ir_mod, (TB_Symbol*) tb_extern_create(t.tu->ir_mod, "_tls_index", TB_EXTERNAL_SO_LOCAL));
+                    if (s->decl.attrs.is_tls) {
+                        tb_module_set_tls_index(t.tu->ir_mod, "_tls_index");
                     }
 
                     TB_Linkage linkage = s->decl.attrs.is_static ? TB_LINKAGE_PRIVATE : TB_LINKAGE_PUBLIC;

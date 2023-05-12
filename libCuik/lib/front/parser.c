@@ -180,7 +180,7 @@ typedef struct TypeConflict {
 } TypeConflict;
 
 struct Cuik_Parser {
-    Cuik_ParseVersion version;
+    Cuik_Version version;
     TokenStream tokens;
 
     const Cuik_Target* target;
