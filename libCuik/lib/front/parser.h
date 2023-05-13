@@ -110,6 +110,8 @@ struct TranslationUnit {
     TB_Module* ir_mod;
     #endif
 
+    Cuik_Version version;
+
     const char* filepath;
     Cuik_Target* target;
     const Cuik_Warnings* warnings;

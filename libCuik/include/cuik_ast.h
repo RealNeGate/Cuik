@@ -262,9 +262,18 @@ typedef enum {
 } Cuik_GlslInterpolation;
 
 typedef enum {
-    CUIK_GLSL_STD140,
-    CUIK_GLSL_STD430,
+    CUIK_GLSL_LAYOUT_UNKNOWN,
+    CUIK_GLSL_LAYOUT_140,
+    CUIK_GLSL_LAYOUT_430,
 } Cuik_GlslLayout;
+
+typedef enum {
+    CUIK_GLSL_SWIZZLE_UNKNOWN,
+
+    CUIK_GLSL_SWIZZLE_XYZW,
+    CUIK_GLSL_SWIZZLE_STUV,
+    CUIK_GLSL_SWIZZLE_RGBA,
+} Cuik_GlslSwizzle;
 
 typedef struct {
     Cuik_GlslMemQuals mem;
@@ -348,6 +357,7 @@ typedef enum StmtOp {
 
     STMT_BREAK,
     STMT_CONTINUE,
+    STMT_DISCARD,
 
     STMT_RETURN
 } StmtOp;
@@ -429,6 +439,8 @@ typedef enum ExprOp {
     EXPR_DOT_R,
     EXPR_ARROW_R,
     EXPR_CALL,
+
+    EXPR_SWIZZLE, // GLSL stuff, .xyxy
 
     EXPR_SIZEOF_T, // on type
     EXPR_SIZEOF,   // on expr
@@ -673,6 +685,12 @@ struct Expr {
         struct {
             Stmt* src;
         } func;
+        struct {
+            Expr* base;
+
+            uint8_t len;
+            uint8_t indices[4];
+        } swizzle;
 
         int char_lit;
         double float_num;
@@ -706,6 +724,14 @@ static bool cuik_type_is_aggregate(const Cuik_Type* t) { return t->kind >= KIND_
 static bool cuik_type_is_arithmatic(const Cuik_Type* t) { return t->kind >= KIND_BOOL && t->kind <= KIND_FUNC; }
 
 static bool cuik_type_can_deref(const Cuik_Type* t) { return t->kind == KIND_PTR || t->kind == KIND_ARRAY; }
+
+static bool cuik_type_can_swizzle(const Cuik_Type* t) {
+    if (t->kind == KIND_VECTOR && t->vector.base->kind != KIND_VECTOR && cuik_type_can_swizzle(t->vector.base)) {
+        return true;
+    }
+
+    return t->kind == KIND_INT || t->kind == KIND_FLOAT || t->kind == KIND_DOUBLE;
+}
 
 // takes in Cuik_QualType
 #define CUIK_QUAL_TYPE_NULL        (Cuik_QualType){ 0 }

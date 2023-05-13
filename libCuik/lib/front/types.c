@@ -159,23 +159,25 @@ Cuik_Type* cuik__new_array(Cuik_TypeTable* types, Cuik_QualType base, int count)
 }
 
 Cuik_Type* cuik__new_vector(Cuik_TypeTable* types, Cuik_QualType base, int count) {
-    return type_intern(types, &(Cuik_Type){
-            .kind = KIND_VECTOR,
-            .size = cuik_canonical_type(base)->size * count,
-            .align = cuik_canonical_type(base)->align,
-            .is_complete = true,
-            .vector = { .base = cuik_canonical_type(base), .count = count }
-        });
+    Cuik_Type t = { 0 };
+    t.kind = KIND_VECTOR;
+    t.size = cuik_canonical_type(base)->size * count;
+    t.align = cuik_canonical_type(base)->align;
+    t.is_complete = true;
+    t.vector.base = cuik_canonical_type(base);
+    t.vector.count = count;
+    return type_intern(types, &t);
 }
 
 Cuik_Type* cuik__new_vector2(Cuik_TypeTable* types, Cuik_Type* base, int count) {
-    return type_intern(types, &(Cuik_Type){
-            .kind = KIND_VECTOR,
-            .size = base->size * count,
-            .align = base->align,
-            .is_complete = true,
-            .vector = { .base = base, .count = count }
-        });
+    Cuik_Type t = { 0 };
+    t.kind = KIND_VECTOR,
+    t.size = base->size * count,
+    t.align = base->align,
+    t.is_complete = true,
+    t.vector.base = base;
+    t.vector.count = count;
+    return type_intern(types, &t);
 }
 
 // https://github.com/rui314/chibicc/blob/main/type.c

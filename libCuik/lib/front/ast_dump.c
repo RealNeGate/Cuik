@@ -495,6 +495,24 @@ static void dump_expr(FILE* stream, Expr* restrict e, int depth, bool last_node)
             dump_expr(stream, e->bin_op.right, depth + 1, true);
             break;
         }
+        case EXPR_CONSTRUCTOR: {
+            qual_type_as_string(sizeof(temp_string0), temp_string0, e->type);
+
+            fprintf(stream, "Constructor '%s'\n", temp_string0);
+            break;
+        }
+        case EXPR_SWIZZLE: {
+            qual_type_as_string(sizeof(temp_string0), temp_string0, e->type);
+
+            fprintf(stream, "Swizzle '%s' [ ", temp_string0);
+            for (int i = 0; i < e->swizzle.len; i++) {
+                fprintf(stream, "%d ", e->swizzle.indices[i]);
+            }
+            fprintf(stream, "]\n");
+
+            dump_expr(stream, e->swizzle.base, depth + 1, true);
+            break;
+        }
         default:
         abort();
     }
@@ -515,7 +533,34 @@ static void dump_stmt(FILE* stream, Stmt* restrict s, int depth, bool last_node)
                 fprintf(stream, "TypedefDecl %s '%s'\n", s->decl.name, temp_string0);
             } else {
                 if (s->decl.name != NULL) {
-                    fprintf(stream, "VarDecl %s '%s'\n", s->decl.name, temp_string0);
+                    fprintf(stream, "VarDecl %s '%s'", s->decl.name, temp_string0);
+
+                    if (s->decl.glsl_quals != NULL) {
+                        Cuik_GlslQuals* g = s->decl.glsl_quals;
+
+                        fprintf(stream, " [ ");
+
+                        switch (g->storage) {
+                            case CUIK_GLSL_STORAGE_IN: fprintf(stream, "in "); break;
+                            case CUIK_GLSL_STORAGE_OUT: fprintf(stream, "out "); break;
+                            case CUIK_GLSL_STORAGE_INOUT: fprintf(stream, "inout "); break;
+                            case CUIK_GLSL_STORAGE_BUFFER: fprintf(stream, "buffer "); break;
+                            case CUIK_GLSL_STORAGE_UNIFORM: fprintf(stream, "uniform "); break;
+                            default: break;
+                        }
+
+                        if (g->layout != CUIK_GLSL_LAYOUT_UNKNOWN) {
+                            fprintf(stream, "%s ", g->layout == CUIK_GLSL_LAYOUT_140 ? "std140" : "std430");
+
+                            if (g->binding >= 0)  fprintf(stream, "binding=%d ", g->binding);
+                            if (g->location >= 0) fprintf(stream, "location=%d ", g->location);
+                            if (g->offset >= 0) fprintf(stream, "offset=%d ", g->offset);
+                        }
+
+                        fprintf(stream, "]\n");
+                    } else {
+                        fprintf(stream, "\n");
+                    }
                 } else {
                     fprintf(stream, "UnnamedVarDecl '%s'\n", temp_string0);
                 }

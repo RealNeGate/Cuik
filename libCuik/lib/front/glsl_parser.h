@@ -36,6 +36,12 @@ static Cuik_GlslQuals* parse_glsl_qualifiers(Cuik_Parser* restrict parser, Token
             case TOKEN_KW_layout: {
                 tokens_next(s);
 
+                // default to std140, this also tells later systems we even have a layout qualifier
+                glsl->layout = CUIK_GLSL_LAYOUT_140;
+                glsl->binding  = -1;
+                glsl->location = -1;
+                glsl->offset   = -1;
+
                 SourceLoc opening_loc = tokens_get_location(s);
                 if (!expect_char(s, '(')) goto done;
 

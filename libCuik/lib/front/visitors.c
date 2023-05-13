@@ -14,6 +14,7 @@ bool cuik_next_stmt_kid(Cuik_StmtIter* it) {
         case STMT_LABEL:
         case STMT_GOTO:
         case STMT_EXPR:
+        case STMT_DISCARD:
         case STMT_RETURN:
         case STMT_CONTINUE:
         case STMT_BREAK:

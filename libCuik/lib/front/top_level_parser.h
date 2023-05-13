@@ -488,20 +488,21 @@ Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cu
     }
     THROW_IF_ERROR();
 
-    if (only_code_index) {
-        // convert to translation unit
-        parser.tu = cuik_malloc(sizeof(TranslationUnit));
-        *parser.tu = (TranslationUnit){
-            .filepath = s->filepath,
-            .warnings = &DEFAULT_WARNINGS,
-            .target = target,
-            .tokens = *s,
-            .top_level_stmts = parser.top_level_stmts,
-            .types = parser.types,
-            .globals = parser.globals,
-        };
+    // convert to translation unit
+    parser.tu = cuik_malloc(sizeof(TranslationUnit));
+    *parser.tu = (TranslationUnit){
+        .filepath = s->filepath,
+        .version = parser.version,
+        .warnings = &DEFAULT_WARNINGS,
+        .target = target,
+        .tokens = *s,
+        .top_level_stmts = parser.top_level_stmts,
+        .types = parser.types,
+        .globals = parser.globals,
+    };
+    mtx_init(&parser.tu->arena_mutex, mtx_plain);
 
-        mtx_init(&parser.tu->arena_mutex, mtx_plain);
+    if (only_code_index) {
         check_for_entry(parser.tu, &parser.globals);
         arena_append(&parser.tu->ast_arena, &local_ast_arena);
         local_ast_arena = (Arena){ 0 };
@@ -511,19 +512,6 @@ Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cu
     // Phase 2: resolve top level types, layout records and
     // anything else so that we have a complete global symbol table
     CUIK_TIMED_BLOCK("phase 2") {
-        // convert to translation unit
-        parser.tu = cuik_malloc(sizeof(TranslationUnit));
-        *parser.tu = (TranslationUnit){
-            .filepath = s->filepath,
-            .warnings = &DEFAULT_WARNINGS,
-            .target = target,
-            .tokens = *s,
-            .top_level_stmts = parser.top_level_stmts,
-            .types = parser.types,
-            .globals = parser.globals,
-        };
-        mtx_init(&parser.tu->arena_mutex, mtx_plain);
-
         // check if any previous placeholders are still placeholders
         for (Cuik_Type* type = parser.first_placeholder; type != NULL; type = type->placeholder.next) {
             if (type->kind == KIND_PLACEHOLDER) {

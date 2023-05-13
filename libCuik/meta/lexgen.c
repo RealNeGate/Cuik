@@ -62,6 +62,7 @@ static const char keywords[][16] = {
     "__declspec",
 
     // GLSL keywords
+    "discard",
     "layout",
     "in",
     "out",

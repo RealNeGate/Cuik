@@ -394,6 +394,15 @@ static Stmt* parse_stmt2(Cuik_Parser* parser, TokenStream* restrict s) {
         n->break_ = (struct StmtBreak){
             .target = current_breakable,
         };
+    } else if (peek == TOKEN_KW_discard) {
+        if (parser->version != CUIK_VERSION_GLSL) {
+            diag_err(s, tokens_get_range(s), "Cannot use discard outside of GLSL");
+        }
+
+        tokens_next(s);
+        expect_with_reason(s, ';', "discard");
+
+        n->op = STMT_DISCARD;
     } else if (peek == TOKEN_KW_continue) {
         // TODO(NeGate): error messages
         n = alloc_stmt();

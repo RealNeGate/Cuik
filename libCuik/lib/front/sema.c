@@ -1028,6 +1028,34 @@ Cuik_QualType cuik__sema_expr(TranslationUnit* tu, Expr* restrict e) {
                 );
 
                 return (e->type = cuik_uncanonical_type(ty ? ty : &cuik__builtin_void));
+            } else if (e->call.target->op == EXPR_CONSTRUCTOR) {
+                Cuik_Type* src = cuik_canonical_type(cuik__sema_expr(tu, e->call.target));
+
+                Cuik_Type* vector_base = src->kind == KIND_VECTOR ? src->vector.base  : src;
+                size_t vector_width    = src->kind == KIND_VECTOR ? src->vector.count : 1;
+
+                Expr** args = e->call.param_start;
+                int arg_count = e->call.param_count;
+
+                // you can construct the vector from an arbitrary set of smaller vectors
+                size_t components_done = 0;
+                for (size_t i = 0; i < arg_count; i++) {
+                    Cuik_Type* arg_type = cuik_canonical_type(cuik__sema_expr(tu, args[i]));
+
+                    Cuik_Type* arg_vector_base = arg_type->kind == KIND_VECTOR ? arg_type->vector.base  : arg_type;
+                    size_t arg_vector_width    = arg_type->kind == KIND_VECTOR ? arg_type->vector.count : 1;
+
+                    implicit_conversion(tu, cuik_uncanonical_type(arg_vector_base), cuik_uncanonical_type(vector_base), args[i]);
+
+                    components_done += arg_vector_width;
+                    if (components_done > vector_width) {
+                        diag_err(&tu->tokens, args[i]->loc, "Too many arguments (expected %d components, got %d)", vector_width, components_done);
+                    }
+
+                    args[i]->cast_type = args[i]->type;
+                }
+
+                return (e->type = cuik_uncanonical_type(src));
             }
 
             // Call function
@@ -1132,6 +1160,73 @@ Cuik_QualType cuik__sema_expr(TranslationUnit* tu, Expr* restrict e) {
         }
         case EXPR_DOT:
         case EXPR_ARROW: {
+            if (e->op == EXPR_DOT && tu->version == CUIK_VERSION_GLSL) {
+                Cuik_Type* base = cuik_canonical_type(cuik__sema_expr(tu, e->dot_arrow.base));
+
+                if (cuik_type_can_swizzle(base)) {
+                    Cuik_Type* vector_base = base->kind == KIND_VECTOR ? base->vector.base  : base;
+                    size_t vector_width    = base->kind == KIND_VECTOR ? base->vector.count : 1;
+
+                    const char* name = (const char*) e->dot_arrow.name;
+                    size_t len = strlen(name);
+
+                    // early out if there's too many elements
+                    if (len > 4) {
+                        diag_err(&tu->tokens, e->loc, "too many elements in swizzle");
+                    }
+
+                    e->op = EXPR_SWIZZLE;
+                    e->swizzle.base = e->dot_arrow.base;
+                    e->type = cuik_uncanonical_type(cuik__new_vector2(&tu->types, vector_base, len));
+                    e->swizzle.len = len;
+
+                    Cuik_GlslSwizzle swizzle = CUIK_GLSL_SWIZZLE_UNKNOWN;
+                    for (size_t i = 0; i < len; i++) {
+                        int val = -1;
+                        Cuik_GlslSwizzle s = CUIK_GLSL_SWIZZLE_UNKNOWN;
+
+                        switch (name[i]) {
+                            case 'r': val = 0, s = CUIK_GLSL_SWIZZLE_RGBA; break;
+                            case 'g': val = 1, s = CUIK_GLSL_SWIZZLE_RGBA; break;
+                            case 'b': val = 2, s = CUIK_GLSL_SWIZZLE_RGBA; break;
+                            case 'a': val = 3, s = CUIK_GLSL_SWIZZLE_RGBA; break;
+
+                            case 'x': val = 0, s = CUIK_GLSL_SWIZZLE_XYZW; break;
+                            case 'y': val = 1, s = CUIK_GLSL_SWIZZLE_XYZW; break;
+                            case 'z': val = 2, s = CUIK_GLSL_SWIZZLE_XYZW; break;
+                            case 'w': val = 3, s = CUIK_GLSL_SWIZZLE_XYZW; break;
+
+                            case 's': val = 0, s = CUIK_GLSL_SWIZZLE_STUV; break;
+                            case 't': val = 1, s = CUIK_GLSL_SWIZZLE_STUV; break;
+                            case 'u': val = 2, s = CUIK_GLSL_SWIZZLE_STUV; break;
+                            case 'v': val = 3, s = CUIK_GLSL_SWIZZLE_STUV; break;
+                        }
+
+                        e->swizzle.indices[i] = val;
+
+                        // validating input
+                        if (val >= vector_width) {
+                            diag_err(&tu->tokens, e->loc, "swizzle element '%c' out of bounds (%d components)", name[i], vector_width);
+                            continue;
+                        }
+
+                        if (swizzle != CUIK_GLSL_SWIZZLE_UNKNOWN && swizzle != s) {
+                            diag_err(&tu->tokens, e->loc, "mismatched swizzle style with '%c' and '%c'", name[i], name[i - 1]);
+                            continue;
+                        }
+
+                        if (s == CUIK_GLSL_SWIZZLE_UNKNOWN) {
+                            diag_err(&tu->tokens, e->loc, "unknown swizzle element '%c' (possible options: rgba, xyzw, stuv)", name[i]);
+                            continue;
+                        }
+
+                        swizzle = s;
+                    }
+
+                    return e->type;
+                }
+            }
+
             uint32_t offset = 0;
             Member* m = sema_resolve_member_access(tu, e, &offset);
             if (m != NULL) {
@@ -1201,6 +1296,23 @@ Cuik_QualType cuik__sema_expr(TranslationUnit* tu, Expr* restrict e) {
                     return (e->type = cuik_uncanonical_type(lhs));
                 }
             } else {
+                // binary operators on vectors
+                if (lhs->kind == KIND_VECTOR || rhs->kind == KIND_VECTOR) {
+                    if (rhs->kind == KIND_VECTOR) {
+                        SWAP(Cuik_Type*, lhs, rhs);
+                    }
+
+                    // we can do binop(vecN, scalar) or binop(vecN, vecN)
+                    if (rhs->kind == KIND_VECTOR && lhs->vector.count != rhs->vector.count) {
+                        diag_err(&tu->tokens, e->loc, "cannot apply binary operator to %!T and %!T", lhs, rhs);
+                    }
+
+                    Cuik_QualType type = cuik_uncanonical_type(lhs);
+                    e->bin_op.left->cast_type = type;
+                    e->bin_op.right->cast_type = type;
+                    return (e->type = type);
+                }
+
                 if (!(lhs->kind >= KIND_BOOL && lhs->kind <= KIND_DOUBLE && rhs->kind >= KIND_BOOL && rhs->kind <= KIND_DOUBLE)) {
                     diag_err(&tu->tokens, e->loc, "cannot apply binary operator to %!T and %!T", lhs, rhs);
                     return (e->type = cuik_uncanonical_type(&cuik__builtin_void));
@@ -1310,6 +1422,7 @@ void sema_stmt(TranslationUnit* tu, Stmt* restrict s) {
                     if (kid->op == STMT_RETURN ||
                         kid->op == STMT_GOTO ||
                         kid->op == STMT_BREAK ||
+                        kid->op == STMT_DISCARD ||
                         kid->op == STMT_CONTINUE) {
                         killer = kid;
                     }
@@ -1469,6 +1582,7 @@ void sema_stmt(TranslationUnit* tu, Stmt* restrict s) {
             sema_stmt(tu, s->default_.body);
             break;
         }
+        case STMT_DISCARD:
         case STMT_CONTINUE:
         case STMT_BREAK: {
             break;
