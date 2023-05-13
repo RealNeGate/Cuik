@@ -211,7 +211,7 @@ struct Cuik_Type {
         struct {
             int count;
             Cuik_Type* base;
-        } vector_;
+        } vector;
 
         // Typeof
         struct {
@@ -229,10 +229,17 @@ struct Cuik_Type {
 _Static_assert(_Alignof(Cuik_Type) == 16, "we need 16byte alignment for Cuik_QualType");
 
 typedef enum {
-    CUIK_GLSL_QUALS_IN,
-    CUIK_GLSL_QUALS_INOUT,
-    CUIK_GLSL_QUALS_OUT,
-} Cuik_GlslStorageQualifier;
+    CUIK_GLSL_STORAGE_UNKNOWN,
+    CUIK_GLSL_STORAGE_IN,
+    CUIK_GLSL_STORAGE_INOUT,
+    CUIK_GLSL_STORAGE_OUT,
+
+    // constant buffers
+    CUIK_GLSL_STORAGE_UNIFORM,
+
+    // storage buffers
+    CUIK_GLSL_STORAGE_BUFFER,
+} Cuik_GlslStorageQuals;
 
 typedef enum {
     CUIK_GLSL_QUALS_COHERENT  = 1,
@@ -249,13 +256,22 @@ typedef enum {
 } Cuik_GlslPrecision;
 
 typedef enum {
+    CUIK_GLSL_FLAT,
+    CUIK_GLSL_SMOOTH,
+    CUIK_GLSL_NOPERSPECTIVE,
+} Cuik_GlslInterpolation;
+
+typedef enum {
     CUIK_GLSL_STD140,
     CUIK_GLSL_STD430,
 } Cuik_GlslLayout;
 
 typedef struct {
     Cuik_GlslMemQuals mem;
-    Cuik_GlslStorageQualifier storage;
+    Cuik_GlslStorageQuals storage;
+    Cuik_GlslInterpolation interp;
+
+    bool flat;
 
     // layout qualifier
     Cuik_GlslLayout layout;
@@ -352,6 +368,7 @@ typedef enum ExprOp {
     EXPR_BUILTIN_SYMBOL,
     EXPR_UNKNOWN_SYMBOL,
     EXPR_SYMBOL,
+    EXPR_CONSTRUCTOR,
     EXPR_GENERIC, // C11's _Generic
     EXPR_VA_ARG,
 
@@ -497,14 +514,11 @@ struct Stmt {
         struct StmtDecl {
             Cuik_QualType type;
             Atom name;
+            Cuik_GlslQuals* glsl_quals;
 
-            union {
-                Cuik_GlslQuals* glsl_quals;
-
-                // acceleration structure for scrubbing for symbols
-                // it's a linked list
-                Expr* first_symbol;
-            };
+            // acceleration structure for scrubbing for symbols
+            // it's a linked list
+            Expr* first_symbol;
 
             // NOTE(NeGate): This represents a stmtindex if it's a
             // FUNC_DECL
@@ -613,6 +627,9 @@ struct Expr {
             Expr* src;
         } unary_op;
         struct {
+            Cuik_Type* type;
+        } constructor;
+        struct {
             Expr* controlling_expr;
 
             // if case_count == 0, then controlling_expr is the matched expression
@@ -695,10 +712,6 @@ static bool cuik_type_can_deref(const Cuik_Type* t) { return t->kind == KIND_PTR
 #define CUIK_QUAL_TYPE_IS_NULL(a)  ((a).raw == 0)
 #define CUIK_QUAL_TYPE_HAS(a, b)   (((a).raw & (b)) != 0)
 #define CUIK_QUAL_TYPE_ONLY(a, b)  (((a).raw & (b)) == (b))
-
-static Cuik_GlslQuals* cuik_get_glsl_quals(Stmt* s) {
-    return (s->op == STMT_DECL || s->op == STMT_GLOBAL_DECL) ? s->decl.glsl_quals : NULL;
-}
 
 static Cuik_QualType cuik_make_qual_type(Cuik_Type* t, Cuik_Qualifiers quals) {
     uintptr_t p = (uintptr_t) t;

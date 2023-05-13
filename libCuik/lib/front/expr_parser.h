@@ -603,8 +603,26 @@ static Expr* parse_postfix(Cuik_Parser* restrict parser, TokenStream* restrict s
 
     normal_path:
     start_loc = tokens_get_location(s);
+
+    bool use_constructor = false;
     if (e == NULL) {
-        e = parse_primary_expr(parser, s);
+        if (parser->version == CUIK_VERSION_GLSL && is_typename(&parser->globals, s)) {
+            Cuik_Type* type = parse_glsl_type(parser, s);
+            SourceLoc end_loc = tokens_get_last_location(s);
+
+            e = alloc_expr();
+            *e = (Expr){
+                .op = EXPR_CONSTRUCTOR,
+                .loc = { start_loc, end_loc },
+                .constructor = { type },
+            };
+
+            if (tokens_get(s)->type != '(') {
+                diag_err(s, e->loc, "Expected parenthesis after constructor name");
+            }
+        } else {
+            e = parse_primary_expr(parser, s);
+        }
     }
 
     // after any of the: [] () . ->
@@ -620,12 +638,15 @@ static Expr* parse_postfix(Cuik_Parser* restrict parser, TokenStream* restrict s
             expect_char(s, ']');
 
             SourceLoc end_loc = tokens_get_last_location(s);
-
             *e = (Expr){
                 .op = EXPR_SUBSCRIPT,
                 .loc = { start_loc, end_loc },
                 .subscript = { base, index },
             };
+
+            if (use_constructor) {
+                diag_err(s, e->loc, "Cannot get element of type");
+            }
             goto try_again;
         }
 
@@ -650,6 +671,9 @@ static Expr* parse_postfix(Cuik_Parser* restrict parser, TokenStream* restrict s
                 .dot_arrow = { .base = base, .name = name },
             };
 
+            if (use_constructor) {
+                diag_err(s, e->loc, "Cannot get member of type");
+            }
             goto try_again;
         }
 
@@ -673,6 +697,9 @@ static Expr* parse_postfix(Cuik_Parser* restrict parser, TokenStream* restrict s
                 .dot_arrow = { .base = base, .name = name },
             };
 
+            if (use_constructor) {
+                diag_err(s, e->loc, "Cannot get member of type");
+            }
             goto try_again;
         }
 
@@ -731,6 +758,10 @@ static Expr* parse_postfix(Cuik_Parser* restrict parser, TokenStream* restrict s
                 .loc = { start_loc, end_loc },
                 .unary_op.src = src,
             };
+
+            if (use_constructor) {
+                diag_err(s, e->loc, "Cannot increment or decrement type");
+            }
             goto try_again;
         }
 

@@ -17,12 +17,12 @@
 
 static uint64_t hash_with_len(const void* data, size_t len) {
     const uint8_t* p = data;
-    uint64_t h = 0;
+    uint64_t h = 0xcbf29ce484222325ull;
     for (size_t j = 0; j < len && j < 7; j++) {
-        h = p[j] + h*256;
+        h = (p[j] ^ h) * 0x100000001b3ull;
     }
     // The low byte of the signature is the length.
-    h = len + h*256;
+    h = (len ^ h) * 0x100000001b3ull;
     return h;
 }
 

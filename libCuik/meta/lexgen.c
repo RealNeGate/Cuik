@@ -66,6 +66,24 @@ static const char keywords[][16] = {
     "in",
     "out",
     "inout",
+    "uint",
+    "buffer",
+    "uniform",
+    "flat",
+    "smooth",
+    "noperspective",
+    "vec2",
+    "vec3",
+    "vec4",
+    "ivec2",
+    "ivec3",
+    "ivec4",
+    "uvec2",
+    "uvec3",
+    "uvec4",
+    "dvec2",
+    "dvec3",
+    "dvec4",
 };
 
 enum { num_keywords = sizeof(keywords) / sizeof(*keywords) };
@@ -90,18 +108,19 @@ int check(uint64_t a, uint8_t max_collisions) {
 }
 
 bool run_keyword_tablegen(FILE* f) {
-    srand(69);
+    srand(0);
+
     for (int i = 0; i < num_keywords; i++) {
         const char *keyword = keywords[i];
         size_t keyword_len = strlen(keyword);
-        uint64_t signature = 0;
+        uint64_t signature = 0xcbf29ce484222325ull;
         // The 7 high bytes of the signature are characters 0, 2, 4, etc.
         for (int j = 0; j < keyword_len && j < 7; j++) {
-            signature = (uint8_t)keyword[j] + signature * 256;
+            signature = ((uint8_t)keyword[j] ^ signature) * 0x100000001b3ull;
         }
 
         // The low byte of the signature is the length.
-        signature = keyword_len + signature * 256;
+        signature = (signature ^ keyword_len) * 0x100000001b3ull;
 
         for (int j = 0; j < i; j++) {
             if (signatures[j] == signature) {
@@ -114,10 +133,11 @@ bool run_keyword_tablegen(FILE* f) {
     }
 
     // try to figure out a good hash
-    uint64_t max_iterations = 1ull << 40;
+    uint64_t max_iterations = 1ull << 24;
     uint8_t max_collisions = 0;
+    uint64_t a;
     for (uint64_t i = 0; i < max_iterations; i++) {
-        uint64_t a = rand64();
+        a = rand64();
         if (!check(a, max_collisions)) continue;
 
         fprintf(f, "// a = %llu (%d keywords, %llu tries)\n", a, num_keywords, i);
@@ -146,6 +166,9 @@ bool run_keyword_tablegen(FILE* f) {
     }
 
     printf("No hash function with max %d collisions found.\n", max_collisions);
+    /*for (int i = 0; i < num_keywords; i++) {
+        printf("  %016llx    %s\n", signatures[i], keywords[i]);
+    }*/
     return false;
 }
 

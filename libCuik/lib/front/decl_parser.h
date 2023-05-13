@@ -3,6 +3,7 @@
 ////////////////////////////////
 static Decl parse_declarator2(Cuik_Parser* restrict parser, TokenStream* restrict s, Cuik_QualType type, bool is_abstract);
 static Cuik_QualType parse_typename2(Cuik_Parser* restrict parser, TokenStream* restrict s);
+static Decl parse_declarator_glsl(Cuik_Parser* restrict parser, TokenStream* restrict s, Cuik_QualType type, bool is_abstract);
 
 static Cuik_Attribute* parse_attributes(TokenStream* restrict s, Cuik_Attribute* last) {
     for (;;) {
@@ -131,6 +132,22 @@ static bool is_typename(Cuik_GlobalSymbols* restrict syms, TokenStream* restrict
         case TOKEN_KW_Atomic:
         case TOKEN_KW_auto:
         case TOKEN_KW_Typeof:
+        return true;
+
+        // GLSL specific types, they'll only be recognized in GLSL contexts so
+        // we don't need to version check
+        case TOKEN_KW_vec2:
+        case TOKEN_KW_vec3:
+        case TOKEN_KW_vec4:
+        case TOKEN_KW_dvec2:
+        case TOKEN_KW_dvec3:
+        case TOKEN_KW_dvec4:
+        case TOKEN_KW_uvec2:
+        case TOKEN_KW_uvec3:
+        case TOKEN_KW_uvec4:
+        case TOKEN_KW_ivec2:
+        case TOKEN_KW_ivec3:
+        case TOKEN_KW_ivec4:
         return true;
 
         case TOKEN_IDENTIFIER: {
@@ -1049,11 +1066,16 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
 }
 
 static Cuik_QualType parse_typename2(Cuik_Parser* restrict parser, TokenStream* restrict s) {
-    // TODO(NeGate): Check if attributes are set, they shouldn't
-    // be in this context.
-    Attribs attr = { 0 };
-    Cuik_QualType type = parse_declspec2(parser, s, &attr);
-    return parse_declarator2(parser, s, type, true).type;
+    if (parser->version != CUIK_VERSION_GLSL) {
+        // TODO(NeGate): Check if attributes are set, they shouldn't
+        // be in this context.
+        Attribs attr = { 0 };
+        Cuik_QualType type = parse_declspec2(parser, s, &attr);
+        return parse_declarator2(parser, s, type, true).type;
+    } else {
+        Cuik_QualType type = cuik_uncanonical_type(parse_glsl_type(parser, s));
+        return parse_declarator_glsl(parser, s, type, true).type;
+    }
 }
 
 static Cuik_QualType parse_type_suffix2(Cuik_Parser* restrict parser, TokenStream* restrict s, Cuik_QualType type) {
@@ -1230,6 +1252,25 @@ static Cuik_QualType parse_type_suffix2(Cuik_Parser* restrict parser, TokenStrea
     }
 
     return type;
+}
+
+static Decl parse_declarator_glsl(Cuik_Parser* restrict parser, TokenStream* restrict s, Cuik_QualType type, bool is_abstract) {
+    assert(!CUIK_QUAL_TYPE_IS_NULL(type));
+    SourceLoc start_loc = tokens_get_location(s);
+
+    Atom name = NULL;
+    Token* t = tokens_get(s);
+    if (!is_abstract && t->type == TOKEN_IDENTIFIER) {
+        // simple name
+        name = atoms_put(t->content.length, t->content.data);
+        tokens_next(s);
+    }
+
+    // Handle suffixes like [] or ()
+    type = parse_type_suffix2(parser, s, type);
+
+    SourceLoc end_loc = tokens_get_last_location(s);
+    return (Decl){ type, name, { start_loc, end_loc } };
 }
 
 // declarator:

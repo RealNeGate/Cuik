@@ -282,6 +282,10 @@ static bool expect_char(TokenStream* restrict s, char ch) {
     }
 }
 
+// in glsl_parser.h
+static Cuik_Type* parse_glsl_type(Cuik_Parser* restrict parser, TokenStream* restrict s);
+static Cuik_GlslQuals* parse_glsl_qualifiers(Cuik_Parser* restrict parser, TokenStream* restrict s, Cuik_Qualifiers* quals);
+
 #define THROW_IF_ERROR() if ((r = cuikdg_error_count(s)) > 0) return (Cuik_ParseResult){ r };
 #define TYPE_INSERT(...) type_insert(&parser->types, __VA_ARGS__)
 #define TYPE_INTERN(...) type_intern(&parser->types, __VA_ARGS__)

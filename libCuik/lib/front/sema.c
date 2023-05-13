@@ -740,6 +740,9 @@ Cuik_QualType cuik__sema_expr(TranslationUnit* tu, Expr* restrict e) {
         case EXPR_WCHAR: {
             return (e->type = cuik_uncanonical_type(&tu->target->signed_ints[CUIK_BUILTIN_SHORT]));
         }
+        case EXPR_CONSTRUCTOR: {
+            return (e->type = cuik_uncanonical_type(e->constructor.type));
+        }
         case EXPR_WSTR: {
             const char* in = (const char*)(e->str.start + 1);
             size_t len = ((const char*)e->str.end - 1) - in;

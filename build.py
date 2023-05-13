@@ -161,7 +161,7 @@ rule lib
 # lexer generator metaprogram
 if args.libcuik:
 	ninja.write(f"build lexgen{exe_ext}: meta_cc libCuik/meta/lexgen.c\n")
-	ninja.write(f"build libCuik/lib/preproc/dfa.h: lexgen lexgen{exe_ext} libCuik/meta/lexgen.c\n")
+	ninja.write(f"build libCuik/lib/preproc/keywords.h libCuik/lib/preproc/dfa.h: lexgen lexgen{exe_ext} libCuik/meta/lexgen.c\n")
 
 	# package freestanding headers into C file
 	freestanding_headers = ""

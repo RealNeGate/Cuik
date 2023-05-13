@@ -161,11 +161,20 @@ Cuik_Type* cuik__new_array(Cuik_TypeTable* types, Cuik_QualType base, int count)
 Cuik_Type* cuik__new_vector(Cuik_TypeTable* types, Cuik_QualType base, int count) {
     return type_intern(types, &(Cuik_Type){
             .kind = KIND_VECTOR,
-            .size = 0,
+            .size = cuik_canonical_type(base)->size * count,
             .align = cuik_canonical_type(base)->align,
             .is_complete = true,
-            .array_of = base,
-            .array_count = 0,
+            .vector = { .base = cuik_canonical_type(base), .count = count }
+        });
+}
+
+Cuik_Type* cuik__new_vector2(Cuik_TypeTable* types, Cuik_Type* base, int count) {
+    return type_intern(types, &(Cuik_Type){
+            .kind = KIND_VECTOR,
+            .size = base->size * count,
+            .align = base->align,
+            .is_complete = true,
+            .vector = { .base = base, .count = count }
         });
 }
 
@@ -345,6 +354,16 @@ size_t type_as_string(size_t max_len, char* buffer, Cuik_Type* type) {
         case KIND_PTR: {
             i += type_as_string(max_len - i, &buffer[i], cuik_canonical_type(type->ptr_to));
             buffer[i++] = '*';
+            break;
+        }
+        case KIND_VECTOR: {
+            Cuik_Type* base = type->vector.base;
+            switch (base->kind) {
+                case KIND_INT:    i += snprintf(&buffer[i], max_len - i, "%cvec%d", base->is_unsigned ? 'u' : 'i', type->vector.count); break;
+                case KIND_FLOAT:  i += snprintf(&buffer[i], max_len - i, "vec%d", type->vector.count); break;
+                case KIND_DOUBLE: i += snprintf(&buffer[i], max_len - i, "dvec%d", type->vector.count); break;
+                default: assert(0 && "TODO");
+            }
             break;
         }
         case KIND_ARRAY: {
