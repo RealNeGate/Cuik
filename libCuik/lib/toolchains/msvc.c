@@ -460,7 +460,7 @@ void find_visual_studio_by_fighting_through_microsoft_craziness(Cuik_WindowsTool
         cuik_free(vcruntime_filename);
 
         if (vcruntime_exists) {
-            swprintf(result->vs_exe_path, MAX_PATH, L"%SVC\\bin\\amd64", buffer);
+            swprintf(result->vs_exe_path, MAX_PATH, L"%SVC\\bin\\amd64\\", buffer);
 
             cuik_free(buffer);
             RegCloseKey(vs7_key);
@@ -481,6 +481,19 @@ static void add_libraries(void* ctx, const Cuik_DriverArgs* args, Cuik_Linker* l
     cuiklink_add_libpathf(l, "%S", t->vs_library_path);
     cuiklink_add_libpathf(l, "%S\\um\\x64", t->windows_sdk_root);
     cuiklink_add_libpathf(l, "%S\\ucrt\\x64", t->windows_sdk_root);
+}
+
+static void print_verbose(void* ctx, const Cuik_DriverArgs* args) {
+    Cuik_WindowsToolchain* t = ctx;
+
+    printf("Includes:\n");
+    printf("  %S\\um\n",      t->windows_sdk_include);
+    printf("  %S\\shared\n",  t->windows_sdk_include);
+    printf("  %S\n",            t->vs_include_path);
+    if (!args->nocrt) {
+        printf("  %S\\ucrt\n", t->windows_sdk_include);
+    }
+    printf("\n");
 }
 
 static void set_preprocessor(void* ctx, const Cuik_DriverArgs* args, Cuik_CPP* cpp) {
@@ -637,9 +650,9 @@ Cuik_Toolchain cuik_toolchain_msvc(void) {
     wchar_t* vc_tools_install = _wgetenv(L"VCToolsInstallDir");
     if (vc_tools_install != NULL) {
         wcsncpy(result->vc_tools_install, vc_tools_install, MAX_PATH);
-        swprintf(result->vs_include_path, MAX_PATH, L"%s\\include\\", vc_tools_install);
+        swprintf(result->vs_include_path, MAX_PATH, L"%sinclude\\", vc_tools_install);
         swprintf(result->vs_library_path, MAX_PATH, L"%slib\\x64\\", vc_tools_install);
-        swprintf(result->vs_exe_path, MAX_PATH, L"%sVC\\bin\\amd64", vc_tools_install);
+        swprintf(result->vs_exe_path, MAX_PATH, L"%sVC\\bin\\amd64\\", vc_tools_install);
     } else {
         find_visual_studio_by_fighting_through_microsoft_craziness(result);
     }
@@ -648,6 +661,7 @@ Cuik_Toolchain cuik_toolchain_msvc(void) {
         .ctx = result,
         .set_preprocessor = set_preprocessor,
         .add_libraries = add_libraries,
-        .invoke_link = invoke_link
+        .invoke_link = invoke_link,
+        .print_verbose = print_verbose,
     };
 }

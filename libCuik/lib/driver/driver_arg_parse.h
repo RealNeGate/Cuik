@@ -280,6 +280,11 @@ CUIK_API bool cuik_args_to_driver(Cuik_DriverArgs* comp_args, Cuik_Arguments* re
     TOGGLE(ARG_DEBUG, debug_info);
     TOGGLE(ARG_EMITIR, emit_ir);
     TOGGLE(ARG_NOLIBC, nocrt);
+
+    if (comp_args->verbose) {
+        comp_args->toolchain.print_verbose(comp_args->toolchain.ctx, comp_args);
+    }
+
     return true;
 }
 #undef TOGGLE
