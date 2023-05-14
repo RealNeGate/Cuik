@@ -24,66 +24,27 @@ static void* profiler_userdata;
 
 #ifdef CUIK__IS_X64
 #ifdef _WIN32
-double get_rdtsc_multiplier(void) {
-    // Cache the answer so that multiple calls never take the slow path more than once
-    static double multiplier = 0;
-    if (multiplier) {
-        return multiplier;
-    }
+double get_rdtsc_freq(void) {
+    // Get time before sleep
+    uint64_t qpc_begin = 0; QueryPerformanceCounter((LARGE_INTEGER *)&qpc_begin);
+    uint64_t tsc_begin = __rdtsc();
 
-    uint64_t tsc_freq = 0;
+    Sleep(2);
 
-    // Fast path: Load kernel-mapped memory page
-    HMODULE ntdll = LoadLibraryA("ntdll.dll");
-    if (ntdll) {
+    // Get time after sleep
+    uint64_t qpc_end = qpc_begin + 1; QueryPerformanceCounter((LARGE_INTEGER *)&qpc_end);
+    uint64_t tsc_end = __rdtsc();
 
-        int (*NtQuerySystemInformation)(int, void *, unsigned int, unsigned int *) =
-        (int (*)(int, void *, unsigned int, unsigned int *))GetProcAddress(ntdll, "NtQuerySystemInformation");
-        if (NtQuerySystemInformation) {
-
-            volatile uint64_t *hypervisor_shared_page = NULL;
-            unsigned int size = 0;
-
-            // SystemHypervisorSharedPageInformation == 0xc5
-            int result = (NtQuerySystemInformation)(0xc5, (void *)&hypervisor_shared_page, sizeof(hypervisor_shared_page), &size);
-
-            // success
-            if (size == sizeof(hypervisor_shared_page) && result >= 0) {
-                // docs say ReferenceTime = ((VirtualTsc * TscScale) >> 64)
-                //      set ReferenceTime = 10000000 = 1 second @ 10MHz, solve for VirtualTsc
-                //       =>    VirtualTsc = 10000000 / (TscScale >> 64)
-                tsc_freq = (10000000ull << 32) / (hypervisor_shared_page[1] >> 32);
-                // If your build configuration supports 128 bit arithmetic, do this:
-                // tsc_freq = ((unsigned __int128)10000000ull << (unsigned __int128)64ull) / hypervisor_shared_page[1];
-            }
-        }
-        FreeLibrary(ntdll);
-    }
-
-    // Slow path
-    if (!tsc_freq) {
-        // Get time before sleep
-        uint64_t qpc_begin = 0; QueryPerformanceCounter((LARGE_INTEGER *)&qpc_begin);
-        uint64_t tsc_begin = __rdtsc();
-
-        Sleep(2);
-
-        // Get time after sleep
-        uint64_t qpc_end = qpc_begin + 1; QueryPerformanceCounter((LARGE_INTEGER *)&qpc_end);
-        uint64_t tsc_end = __rdtsc();
-
-        // Do the math to extrapolate the RDTSC ticks elapsed in 1 second
-        uint64_t qpc_freq = 0; QueryPerformanceFrequency((LARGE_INTEGER *)&qpc_freq);
-        tsc_freq = (tsc_end - tsc_begin) * qpc_freq / (qpc_end - qpc_begin);
-    }
+    // Do the math to extrapolate the RDTSC ticks elapsed in 1 second
+    uint64_t qpc_freq = 0; QueryPerformanceFrequency((LARGE_INTEGER *)&qpc_freq);
+    uint64_t tsc_freq = (tsc_end - tsc_begin) * qpc_freq / (qpc_end - qpc_begin);
 
     // Failure case
     if (!tsc_freq) {
         tsc_freq = 1000000000;
     }
 
-    multiplier = 1000000.0 / (double)tsc_freq;
-    return multiplier;
+    return 1000000.0 / (double)tsc_freq;
 }
 #else
 #include <sys/mman.h>
@@ -92,14 +53,7 @@ double get_rdtsc_multiplier(void) {
 #include <unistd.h>
 #include <x86intrin.h>
 
-static inline uint64_t get_rdtsc_freq(void) {
-
-    // Cache the answer so that multiple calls never take the slow path more than once
-    static uint64_t tsc_freq = 0;
-    if (tsc_freq) {
-        return tsc_freq;
-    }
-
+static inline double get_rdtsc_freq(void) {
     // Fast path: Load kernel-mapped memory page
     struct perf_event_attr pe = {0};
     pe.type = PERF_TYPE_HARDWARE;
@@ -152,14 +106,14 @@ static inline uint64_t get_rdtsc_freq(void) {
         tsc_freq = 1000000000;
     }
 
-    return tsc_freq;
+    return 1000000.0 / (double)tsc_freq;
 }
 #endif
 #endif
 
 void init_timer_system(void) {
     #if defined(_AMD64_) || defined(__amd64__)
-    rdtsc_freq = get_rdtsc_multiplier() / 1000000.0;
+    rdtsc_freq = get_rdtsc_freq() / 1000000.0;
     timer_start = __rdtsc();
     #endif
 }
