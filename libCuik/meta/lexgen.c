@@ -112,25 +112,25 @@ bool run_keyword_tablegen(FILE* f) {
     srand(0);
 
     for (int i = 0; i < num_keywords; i++) {
-        const char *keyword = keywords[i];
-        size_t keyword_len = strlen(keyword);
-        uint64_t signature = 0xcbf29ce484222325ull;
-        // The 7 high bytes of the signature are characters 0, 2, 4, etc.
-        for (int j = 0; j < keyword_len && j < 7; j++) {
-            signature = ((uint8_t)keyword[j] ^ signature) * 0x100000001b3ull;
+        const uint8_t *keyword = (const uint8_t*) keywords[i];
+        size_t keyword_len = strlen(keywords[i]);
+
+        uint64_t h = 0;
+        for (size_t i = 0; i < keyword_len; i++) {
+            h = (h << 5) + keyword[i];
+            uint64_t g = h & 0xf0000000;
+
+            if (g != 0) h = (h ^ (g >> 24)) ^ g;
         }
 
-        // The low byte of the signature is the length.
-        signature = (signature ^ keyword_len) * 0x100000001b3ull;
-
         for (int j = 0; j < i; j++) {
-            if (signatures[j] == signature) {
+            if (signatures[j] == h) {
                 fprintf(f, "Signature collision.\n");
                 exit(1);
             }
         }
 
-        signatures[i] = signature;
+        signatures[i] = h;
     }
 
     // try to figure out a good hash

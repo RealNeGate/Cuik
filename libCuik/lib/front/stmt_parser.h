@@ -18,8 +18,20 @@ static bool parse_decl_or_expr2(Cuik_Parser* parser, TokenStream* restrict s, si
         tokens_next(s);
         return true;
     } else if (is_typename(&parser->globals, s)) {
+        bool is_glsl = parser->version == CUIK_VERSION_GLSL;
+
+        Cuik_GlslQuals* glsl = NULL;
+        Cuik_QualType type = CUIK_QUAL_TYPE_NULL;
+
         Attribs attr = { 0 };
-        Cuik_QualType type = parse_declspec2(parser, s, &attr);
+        if (is_glsl) {
+            Cuik_Qualifiers quals = 0;
+            glsl = parse_glsl_qualifiers(parser, s, &quals);
+            type = cuik_make_qual_type(parse_glsl_type(parser, s), quals);
+        } else {
+            type = parse_declspec2(parser, s, &attr);
+        }
+
         if (CUIK_QUAL_TYPE_IS_NULL(type)) {
             diag_err(s, (SourceRange){ loc, tokens_get_last_location(s) }, "could not parse base type.");
             tokens_next(s);
@@ -27,12 +39,10 @@ static bool parse_decl_or_expr2(Cuik_Parser* parser, TokenStream* restrict s, si
             type = cuik_uncanonical_type(parser->default_int);
         }
 
-        while (!tokens_eof(s)) {
-            size_t start_decl_token = s->list.current;
-            Decl decl = parse_declarator2(parser, s, type, false);
-            /*if (decl.name == NULL) {
-                diag_warn(s, decl.loc, "Declaration has no name");
-            }*/
+        while (!tokens_eof(s) && tokens_get(s)->type != ';') {
+            Decl decl = is_glsl
+                ? parse_declarator_glsl(parser, s, type, false)
+                : parse_declarator2(parser, s, type, false);
 
             // Convert into statement
             Stmt* n = alloc_stmt();
@@ -91,15 +101,15 @@ static bool parse_decl_or_expr2(Cuik_Parser* parser, TokenStream* restrict s, si
             }
             n->decl.initial = e;
 
-            if (tokens_get(s)->type == ';') {
-                tokens_next(s);
-                break;
-            } else if (tokens_get(s)->type == ',') {
+            if (tokens_get(s)->type == ',') {
                 tokens_next(s);
                 continue;
+            } else {
+                break;
             }
         }
 
+        expect_char(s, ';');
         return true;
     } else {
         Stmt* n = alloc_stmt();
