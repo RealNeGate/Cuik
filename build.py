@@ -169,7 +169,11 @@ if args.libcuik:
 		freestanding_headers += ' ' + f.replace('\\', '/')
 
 	ninja.write(f"build hexembed{exe_ext}: meta_cc libCuik/meta/hexembed.c\n")
-	ninja.write(f"build libCuik/freestanding.c: embed_files hexembed{exe_ext} {freestanding_headers}\n")
+
+	if system == "Windows":
+		ninja.write(f"build libCuik/freestanding.c: embed_files hexembed{exe_ext} {freestanding_headers}\n")
+	else:
+		ninja.write(f"build libCuik/freestanding.c: embed_files ./hexembed{exe_ext} {freestanding_headers}\n")
 
 	ninja.write("build bin/freestanding.o: embed_cc libCuik/freestanding.c\n")
 	objs.append("bin/freestanding.o")
