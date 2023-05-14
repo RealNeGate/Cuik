@@ -15,6 +15,7 @@ int main(int argc, char *argv[]) {
     }
 
     FILE* out = fopen(OUTPUT_PATH, "wb");
+    fprintf(out, "#include <stddef.h>\n\n");
     fprintf(out, "typedef struct InternalFile InternalFile;\n");
     fprintf(out, "struct InternalFile {\n");
     fprintf(out, "    InternalFile* next;\n");
