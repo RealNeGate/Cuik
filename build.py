@@ -124,10 +124,6 @@ rule lexgen
   command = ./lexgen{exe_ext}
   description = LEXGEN
 
-rule embed_files
-  command = $in
-  description = EMBED
-
 rule embed_cc
   command = clang $in -c -o $out
   description = CC $in $out
@@ -137,6 +133,10 @@ rule embed_cc
 # the end of ldflags should define the out flag
 if system == "Windows":
 	ninja.write(f"""
+rule embed_files
+  command = $in
+  description = EMBED
+
 rule link
   command = {ld} $in $ldflags$out
   description = LINK $out
@@ -148,6 +148,10 @@ rule lib
 """)
 else:
 	ninja.write(f"""
+rule embed_files
+  command = ./$in
+  description = EMBED
+
 rule link
   command = {ld} $in $ldflags$out
   description = LINK $out
@@ -169,11 +173,7 @@ if args.libcuik:
 		freestanding_headers += ' ' + f.replace('\\', '/')
 
 	ninja.write(f"build hexembed{exe_ext}: meta_cc libCuik/meta/hexembed.c\n")
-
-	if system == "Windows":
-		ninja.write(f"build libCuik/freestanding.c: embed_files hexembed{exe_ext} {freestanding_headers}\n")
-	else:
-		ninja.write(f"build libCuik/freestanding.c: embed_files ./hexembed{exe_ext} {freestanding_headers}\n")
+	ninja.write(f"build libCuik/freestanding.c: embed_files hexembed{exe_ext} {freestanding_headers}\n")
 
 	ninja.write("build bin/freestanding.o: embed_cc libCuik/freestanding.c\n")
 	objs.append("bin/freestanding.o")
