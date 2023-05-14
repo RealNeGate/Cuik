@@ -20,5 +20,5 @@ void main() {
     tex = vTex;
     gl_Position = vec4((vPosition * uViewport) - 1.0, 0.0, 1.0);
 
-    vec3 a = 1.0f.xxx;
+    vec3 a = 1.0f .xxx;
 }
