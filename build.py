@@ -178,7 +178,7 @@ for pattern in sources:
 	for f in glob.glob(pattern):
 		f = f.replace('\\', '/')
 		obj = os.path.basename(f).replace('.c', '.o')
-		ninja.write(f"build bin/{obj}: cc {f}\n")
+		ninja.write(f"build bin/{obj}: cc {f} | libCuik/lib/preproc/keywords.h libCuik/lib/preproc/dfa.h\n")
 		objs.append("bin/"+obj)
 
 # compile final executable (or library)
