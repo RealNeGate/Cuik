@@ -11,7 +11,7 @@ jobs:
       - name: Download Submodules
         run: git submodule update --init --recursive
 
-      - name: Build TB
+      - name: Build Cuik
         shell: cmd
         run: |
           call "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\VC\Auxiliary\Build\vcvars64.bat
@@ -40,7 +40,7 @@ jobs:
       - name: Download Submodules
         run: git submodule update --init --recursive
 
-      - name: Build TB
+      - name: Build Cuik
         run: python3 build.py -opt
         timeout-minutes: 10
 

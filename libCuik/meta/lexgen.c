@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <string.h>
+#include <inttypes.h>
 
 static const char keywords[][16] = {
     "auto",
@@ -141,8 +142,8 @@ bool run_keyword_tablegen(FILE* f) {
         a = rand64();
         if (!check(a, max_collisions)) continue;
 
-        fprintf(f, "// a = %llu (%d keywords, %llu tries)\n", a, num_keywords, i);
-        fprintf(f, "#define PERFECT_HASH_SEED %lluULL\n", a);
+        fprintf(f, "// a = %"PRIu64" (%d keywords, %"PRIu64" tries)\n", a, num_keywords, i);
+        fprintf(f, "#define PERFECT_HASH_SEED %"PRIu64"ULL\n", a);
         fprintf(f, "static const uint8_t keywords_table[256] = {\n");
         for (int i = 0; i < num_keywords;) {
             int end = i + 4;

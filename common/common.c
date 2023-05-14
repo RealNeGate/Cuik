@@ -166,7 +166,7 @@ void futex_wait(Futex* addr, Futex val) {
         if (ret == -1) {
             if (errno != EAGAIN) {
                 perror("Futex wait");
-                __debugbreak();
+                __builtin_trap();
             } else {
                 return;
             }
