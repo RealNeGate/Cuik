@@ -118,6 +118,10 @@ TB_Node* tb_alloc_node(TB_Function* f, int type, TB_DataType dt, int input_count
         n->inputs = NULL;
     }
 
+    if (n->extra_count > 0) {
+        memset(n->extra, 0, n->extra_count);
+    }
+
     return n;
 }
 
