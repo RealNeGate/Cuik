@@ -162,7 +162,7 @@ int threadpool_get_thread_count(threadpool_t* threadpool) {
     return threadpool->thread_count;
 }
 
-static void threadpool__submit(void* user_data, void fn(void*), size_t arg_size, void* arg) {
+static void threadpool__submit(void* user_data, Cuik_TaskFn fn, size_t arg_size, void* arg) {
     threadpool_submit((threadpool_t*) user_data, fn, arg_size, arg);
 }
 

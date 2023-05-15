@@ -298,13 +298,13 @@ static Cuik_GlslQuals* parse_glsl_qualifiers(Cuik_Parser* restrict parser, Token
 #include "ast_optimizer.h"
 
 void type_layout2(Cuik_Parser* restrict parser, TokenStream* restrict tokens, Cuik_Type* type) {
-    if (type->is_complete) return;
-    if (type->is_progress) {
+    if (CUIK_TYPE_IS_COMPLETE(type)) return;
+    if (CUIK_TYPE_IS_PROGRESS(type)) {
         diag_err(tokens, type->loc, "Type has a circular dependency");
         return;
     }
 
-    type->is_progress = true;
+    type->flags |= CUIK_TYPE_FLAG_PROGRESS;
 
     if (type->kind == KIND_CLONE) {
         type_layout2(parser, tokens, type->clone.of);
@@ -313,29 +313,29 @@ void type_layout2(Cuik_Parser* restrict parser, TokenStream* restrict tokens, Cu
         *type = *type->clone.of;
         type->also_known_as = name;
     } else if (type->kind == KIND_ARRAY) {
-        if (type->array_count_lexer_pos) {
+        if (type->array.count_lexer_pos) {
             assert(parser != NULL && "Parserless type checker!!!");
 
             // run mini parser for array count
             TokenStream mini_lex = *tokens;
-            mini_lex.list.current = type->array_count_lexer_pos;
-            type->array_count = parse_const_expr(parser, &mini_lex);
+            mini_lex.list.current = type->array.count_lexer_pos;
+            type->array.count = parse_const_expr(parser, &mini_lex);
             expect_char(&mini_lex, ']');
         }
 
         // layout crap
-        if (type->array_count != 0) {
-            if (cuik_canonical_type(type->array_of)->size == 0) {
-                type_layout2(parser, tokens, cuik_canonical_type(type->array_of));
+        if (type->array.count != 0) {
+            if (cuik_canonical_type(type->array.of)->size == 0) {
+                type_layout2(parser, tokens, cuik_canonical_type(type->array.of));
             }
 
-            if (cuik_canonical_type(type->array_of)->size == 0) {
+            if (cuik_canonical_type(type->array.of)->size == 0) {
                 diag_err(tokens, type->loc, "could not resolve type (ICE)");
                 return;
             }
         }
 
-        uint64_t result = cuik_canonical_type(type->array_of)->size * type->array_count;
+        uint64_t result = cuik_canonical_type(type->array.of)->size * type->array.count;
 
         // size checks
         if (result >= INT32_MAX) {
@@ -343,7 +343,7 @@ void type_layout2(Cuik_Parser* restrict parser, TokenStream* restrict tokens, Cu
         }
 
         type->size = result;
-        type->align = cuik_canonical_type(type->array_of)->align;
+        type->align = cuik_canonical_type(type->array.of)->align;
     } else if (type->kind == KIND_ENUM) {
         int cursor = 0;
         // if (type->enumerator.name && strcmp(type->enumerator.name, "D3D_DRIVER_TYPE") == 0) __debugbreak();
@@ -437,8 +437,8 @@ void type_layout2(Cuik_Parser* restrict parser, TokenStream* restrict tokens, Cu
         type->size = offset;
     }
 
-    type->is_complete = true;
-    type->is_progress = false;
+    type->flags |= CUIK_TYPE_FLAG_COMPLETE;
+    type->flags &= ~CUIK_TYPE_FLAG_PROGRESS;
 }
 
 void* cuik_set_translation_unit_user_data(TranslationUnit* restrict tu, void* ud) {

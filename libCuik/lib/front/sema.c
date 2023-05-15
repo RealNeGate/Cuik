@@ -56,10 +56,10 @@ bool type_very_compatible(TranslationUnit* tu, Cuik_Type* src, Cuik_Type* dst) {
         return type_equal(src, dst);
 
         case KIND_ARRAY:
-        if (!type_very_compatible(tu, cuik_canonical_type(src->array_of), cuik_canonical_type(dst->array_of))) {
+        if (!type_very_compatible(tu, cuik_canonical_type(src->array.of), cuik_canonical_type(dst->array.of))) {
             return false;
         }
-        return src->array_count == dst->array_count;
+        return src->array.count == dst->array.count;
 
         default:
         return true;
@@ -78,7 +78,7 @@ bool type_compatible(TranslationUnit* tu, Cuik_Type* src, Cuik_Type* dst, Expr* 
 
     // implictly convert arrays into pointers
     if (src->kind == KIND_ARRAY && dst->kind == KIND_PTR) {
-        src = cuik__new_pointer(&tu->types, src->array_of);
+        src = cuik__new_pointer(&tu->types, src->array.of);
     }
 
     if (src->kind != dst->kind) {
@@ -160,7 +160,7 @@ static bool implicit_conversion(TranslationUnit* tu, Cuik_QualType qsrc, Cuik_Qu
     if (dst->kind == KIND_FUNC) {
         dst = cuik__new_pointer(&tu->types, cuik_uncanonical_type(dst));
     } else if (dst->kind == KIND_ARRAY) {
-        dst = cuik__new_pointer(&tu->types, dst->array_of);
+        dst = cuik__new_pointer(&tu->types, dst->array.of);
     }
 
     if (tu->warnings->data_loss) {
@@ -257,7 +257,7 @@ static int compute_initializer_bounds(Cuik_Type* type) {
         }
 
         case KIND_ARRAY:
-        return type->array_count;
+        return type->array.count;
 
         default:
         return 1;
@@ -354,7 +354,7 @@ static int walk_initializer_layer(TranslationUnit* tu, Cuik_Type* parent, int ba
             return 0;
         }
 
-        type = cuik_canonical_type(parent->array_of);
+        type = cuik_canonical_type(parent->array.of);
         relative_offset = node->start * type->size;
         *cursor = node->start + node->count;
     } else {
@@ -381,7 +381,7 @@ static int walk_initializer_layer(TranslationUnit* tu, Cuik_Type* parent, int ba
             relative_offset = search.offset;
             *cursor = search.next_index;
         } else if (parent->kind == KIND_ARRAY) {
-            type = cuik_canonical_type(parent->array_of);
+            type = cuik_canonical_type(parent->array.of);
             relative_offset = (*cursor - 1) * type->size;
         } else {
             type = parent;
@@ -426,17 +426,17 @@ static int walk_initializer_layer(TranslationUnit* tu, Cuik_Type* parent, int ba
                     Cuik_Type* expr_type = sema_expr(tu, e);
 
                     if (expr_type->kind == KIND_ARRAY && type->kind == KIND_ARRAY &&
-                        type_equal(cuik_canonical_type(expr_type->array_of), cuik_canonical_type(type->array_of))) {
+                        type_equal(cuik_canonical_type(expr_type->array.of), cuik_canonical_type(type->array.of))) {
                         // check if it fits properly
-                        if (expr_type->array_count == type->array_count + 1) {
+                        if (expr_type->array.count == type->array.count + 1) {
                             // we chop off the null terminator
                             e->str.end -= (e->op == EXPR_STR ? 1 : 2);
-                            expr_type->array_count = type->array_count;
-                        } else if (expr_type->array_count > type->array_count) {
-                            diag_err(&tu->tokens, e->loc, "initializer-string too big for the initializer (%d elements out of %d)", expr_type->array_count, type->array_count);
+                            expr_type->array.count = type->array.count;
+                        } else if (expr_type->array.count > type->array.count) {
+                            diag_err(&tu->tokens, e->loc, "initializer-string too big for the initializer (%d elements out of %d)", expr_type->array.count, type->array.count);
                         }
                     } else {
-                        type_as_string(sizeof(temp_string0), temp_string0, cuik_canonical_type(type->array_of));
+                        type_as_string(sizeof(temp_string0), temp_string0, cuik_canonical_type(type->array.of));
                         diag_err(&tu->tokens, e->loc, "Could not use %sinitializer-string on array of %s", (node->expr->op == EXPR_WSTR) ? "wide " : "", temp_string0);
                     }
                 }
@@ -520,7 +520,7 @@ static size_t sema_infer_initializer_array_count(TranslationUnit* tu, InitNode* 
             Expr* e = n->expr;
             if (e != NULL && (e->op == EXPR_STR || e->op == EXPR_WSTR)) {
                 Cuik_Type* src = cuik_canonical_type(cuik__sema_expr(tu, e));
-                cursor += src->array_count;
+                cursor += src->array.count;
             } else {
                 cursor++;
             }
@@ -541,8 +541,8 @@ static void walk_initializer_for_sema(TranslationUnit* tu, Cuik_Type* type, Init
         n = n->next;
     }
 
-    if (type->array_count == 0) {
-        type->array_count = max_cursor;
+    if (type->array.count == 0) {
+        type->array.count = max_cursor;
         type_layout2(NULL, &tu->tokens, type);
     }
 }
@@ -844,11 +844,11 @@ Cuik_QualType cuik__sema_expr(TranslationUnit* tu, Expr* restrict e) {
             try_resolve_typeof(tu, t);
 
             if (t->kind == KIND_ARRAY) {
-                if (!cuik_canonical_type(t->array_of)->is_complete) {
-                    type_layout2(NULL, &tu->tokens, cuik_canonical_type(t->array_of));
+                if (!CUIK_TYPE_IS_COMPLETE(cuik_canonical_type(t->array.of))) {
+                    type_layout2(NULL, &tu->tokens, cuik_canonical_type(t->array.of));
                 }
 
-                int old_array_count = t->array_count;
+                int old_array_count = t->array.count;
                 int new_array_count = sema_infer_initializer_array_count(tu, e->init.root);
 
                 // if it's 0, then it's unsized and anything goes
@@ -858,7 +858,7 @@ Cuik_QualType cuik__sema_expr(TranslationUnit* tu, Expr* restrict e) {
                         diag_err(&tu->tokens, e->loc, "Array cannot fit into declaration (needs %d, got %d)", old_array_count, new_array_count);
                     }
                 } else {
-                    t = cuik__new_array(&tu->types, t->array_of, new_array_count);
+                    t = cuik__new_array(&tu->types, t->array.of, new_array_count);
                     e->init.type = cuik_make_qual_type(t, cuik_get_quals(e->init.type));
                 }
             }
@@ -914,7 +914,7 @@ Cuik_QualType cuik__sema_expr(TranslationUnit* tu, Expr* restrict e) {
 
                     // this is the only *current* example where something sets
                     // it's own cast_type it's an exception to the rules.
-                    e->cast_type = cuik_uncanonical_type(cuik__new_pointer(&tu->types, type->array_of));
+                    e->cast_type = cuik_uncanonical_type(cuik__new_pointer(&tu->types, type->array.of));
                 }
 
                 return (e->type = sym->decl.type);
@@ -932,7 +932,7 @@ Cuik_QualType cuik__sema_expr(TranslationUnit* tu, Expr* restrict e) {
             // _Generic's controlling expression does rvalue conversions so
             // an array is treated as a pointer not an array
             if (src->kind == KIND_ARRAY) {
-                src = cuik__new_pointer(&tu->types, src->array_of);
+                src = cuik__new_pointer(&tu->types, src->array.of);
             } else if (src->kind == KIND_FUNC) {
                 src = cuik__new_pointer(&tu->types, cuik_uncanonical_type(src));
             }
@@ -987,7 +987,7 @@ Cuik_QualType cuik__sema_expr(TranslationUnit* tu, Expr* restrict e) {
             }
 
             if (base->kind == KIND_ARRAY) {
-                base = cuik__new_pointer(&tu->types, base->array_of);
+                base = cuik__new_pointer(&tu->types, base->array.of);
             }
 
             if (base->kind != KIND_PTR) {
@@ -1008,7 +1008,7 @@ Cuik_QualType cuik__sema_expr(TranslationUnit* tu, Expr* restrict e) {
             if (base_canon->kind == KIND_PTR) {
                 return (e->type = base_canon->ptr_to);
             } else if (base_canon->kind == KIND_ARRAY) {
-                return (e->type = base_canon->array_of);
+                return (e->type = base_canon->array.of);
             } else {
                 diag_err(&tu->tokens, e->loc, "Cannot dereference from non-pointer and non-array type %!T", base);
                 return (e->type = cuik_uncanonical_type(&cuik__builtin_void));
@@ -1450,8 +1450,8 @@ void sema_stmt(TranslationUnit* tu, Stmt* restrict s) {
                 if (e->op == EXPR_INITIALIZER) {
                     // Auto-detect array count from initializer
                     if (decl_type->kind == KIND_ARRAY && expr_type->kind == KIND_ARRAY) {
-                        if (decl_type->array_count != 0 && decl_type->array_count < expr_type->array_count) {
-                            diag_err(&tu->tokens, s->loc, "array initializer does not fit into declaration (expected %d, got %d)", decl_type->array_count, expr_type->array_count);
+                        if (decl_type->array.count != 0 && decl_type->array.count < expr_type->array.count) {
+                            diag_err(&tu->tokens, s->loc, "array initializer does not fit into declaration (expected %d, got %d)", decl_type->array.count, expr_type->array.count);
                         } else {
                             s->decl.type = cuik_make_qual_type(expr_type, decl_quals);
                             decl_type = cuik_canonical_type(s->decl.type);
@@ -1459,7 +1459,7 @@ void sema_stmt(TranslationUnit* tu, Stmt* restrict s) {
                     }
                 } else if (e->op == EXPR_STR || e->op == EXPR_WSTR) {
                     // Auto-detect array count from string
-                    if (decl_type->kind == KIND_ARRAY && decl_type->array_count == 0) {
+                    if (decl_type->kind == KIND_ARRAY && decl_type->array.count == 0) {
                         s->decl.type = cuik_make_qual_type(expr_type, decl_quals);
                         decl_type = cuik_canonical_type(s->decl.type);
                     }
@@ -1471,7 +1471,7 @@ void sema_stmt(TranslationUnit* tu, Stmt* restrict s) {
                 }
             }
 
-            if (decl_type->size == 0 || !decl_type->is_complete) {
+            if (decl_type->size == 0 || !CUIK_TYPE_IS_COMPLETE(decl_type)) {
                 diag_err(&tu->tokens, s->loc, "incomplete type used in declaration");
                 diag_note(&tu->tokens, decl_type->loc, "type declared here");
             }
@@ -1602,7 +1602,7 @@ Cuik_QualType sema_guess_type(TranslationUnit* tu, Stmt* restrict s) {
         return cuik_uncanonical_type(NULL);
     }
 
-    if (!type->is_complete) {
+    if (!CUIK_TYPE_IS_COMPLETE(type)) {
         if (type->kind == KIND_STRUCT) {
             diag_err(&tu->tokens, s->loc, "incomplete type (struct %s) in declaration", type->record.name);
         } else if (type->kind == KIND_UNION) {
@@ -1622,7 +1622,7 @@ Cuik_QualType sema_guess_type(TranslationUnit* tu, Stmt* restrict s) {
         if (type->kind == KIND_ARRAY && e->op == EXPR_INITIALIZER) {
             // check how many top level statements we have
             int array_count = sema_infer_initializer_array_count(tu, e->init.root);
-            return cuik_uncanonical_type(cuik__new_array(&tu->types, type->array_of, array_count));
+            return cuik_uncanonical_type(cuik__new_array(&tu->types, type->array.of, array_count));
         }
     }
 
@@ -1687,18 +1687,18 @@ static void sema_top_level(TranslationUnit* tu, Stmt* restrict s) {
 
                     if (s->decl.initial->op == EXPR_INITIALIZER || s->decl.initial->op == EXPR_STR || s->decl.initial->op == EXPR_WSTR) {
                         if (type->kind == KIND_ARRAY && expr_type->kind == KIND_ARRAY) {
-                            if (type_equal(cuik_canonical_type(type->array_of), cuik_canonical_type(expr_type->array_of))) {
-                                if (type->array_count != 0 && type->array_count < expr_type->array_count) {
-                                    diag_err(&tu->tokens, s->loc, "array initializer does not fit into declaration (expected %d, got %d)", type->array_count, expr_type->array_count);
+                            if (type_equal(cuik_canonical_type(type->array.of), cuik_canonical_type(expr_type->array.of))) {
+                                if (type->array.count != 0 && type->array.count < expr_type->array.count) {
+                                    diag_err(&tu->tokens, s->loc, "array initializer does not fit into declaration (expected %d, got %d)", type->array.count, expr_type->array.count);
                                 } else {
-                                    assert(expr_type->array_count);
+                                    assert(expr_type->array.count);
 
                                     // preserve qualifiers
                                     s->decl.type = cuik_make_qual_type(expr_type, quals);
                                     type = cuik_canonical_type(s->decl.type);
                                 }
                             } else {
-                                diag_err(&tu->tokens, s->loc, "array initializer type mismatch (got '%s', expected '%s')", cuik_canonical_type(expr_type->array_of), cuik_canonical_type(type->array_of));
+                                diag_err(&tu->tokens, s->loc, "array initializer type mismatch (got '%s', expected '%s')", cuik_canonical_type(expr_type->array.of), cuik_canonical_type(type->array.of));
                             }
                         }
                     }
@@ -1710,7 +1710,7 @@ static void sema_top_level(TranslationUnit* tu, Stmt* restrict s) {
                     s->decl.initial->cast_type = s->decl.type;
                 }
 
-                if (type->size == 0 || !type->is_complete) {
+                if (type->size == 0 || !CUIK_TYPE_IS_COMPLETE(type)) {
                     diag_err(&tu->tokens, s->loc, "incomplete type used in declaration");
                     diag_note(&tu->tokens, type->loc, "type declared here");
                 }

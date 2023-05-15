@@ -1,7 +1,7 @@
 ////////////////////////////////
-// C parser
+// C driver
 ////////////////////////////////
-// This module can parse C code (currently C11 with Microsoft and GNU extensions)
+// This is the build system like interface for Cuik
 #pragma once
 #include "cuik_prelude.h"
 
@@ -102,3 +102,26 @@ CUIK_API Cuik_Toolchain cuik_toolchain_darwin(void);
 
 CUIK_API Cuik_Toolchain cuik_toolchain_host(void);
 CUIK_API void cuik_toolchain_free(Cuik_Toolchain* toolchain);
+
+
+
+typedef struct Cuik_BuildStep Cuik_BuildStep;
+
+// generates Cuik compile for a single file
+CUIK_API Cuik_BuildStep* cuik_driver_cc(Cuik_DriverArgs* args, const char* source);
+
+// links against all the input steps (must all be TU producing)
+CUIK_API Cuik_BuildStep* cuik_driver_ld(Cuik_DriverArgs* args, int dep_count, Cuik_BuildStep** deps);
+
+// returns true on success
+CUIK_API bool cuik_step_run(Cuik_BuildStep* s, Cuik_IThreadpool* thread_pool);
+
+/*
+
+Cuik_BuildStep obj  = cuik_driver_cc(args, "main.o", "main.c");
+Cuik_BuildStep link = cuik_driver_ld(args, "main",   1, &obj);
+
+// runs task along with child tasks
+cuik_driver_run(&gen_obj);
+
+*/

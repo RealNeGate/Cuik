@@ -19,10 +19,11 @@ typedef struct Cuik_DriverArgs Cuik_DriverArgs;
 // Interfaces
 ////////////////////////////////////////////
 // fellas... is it ok to OOP? just this once?
+typedef void (*Cuik_TaskFn)(void*);
 typedef struct Cuik_IThreadpool {
     // runs the function fn with arg as the parameter on a thread.
     //   arg_size from Cuik is always going to be less than 64bytes
-    void (*submit)(void* user_data, void fn(void*), size_t arg_size, void* arg);
+    void (*submit)(void* user_data, Cuik_TaskFn fn, size_t arg_size, void* arg);
 
     // tries to work one job before returning (can also not work at all)
     void (*work_one_job)(void* user_data);

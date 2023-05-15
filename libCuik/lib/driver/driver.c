@@ -19,6 +19,185 @@ enum {
     TB_TASK_BATCH_SIZE = 8192,
 };
 
+struct Cuik_BuildStep {
+    enum {
+        BUILD_STEP_NONE,
+
+        BUILD_STEP_CC,
+        BUILD_STEP_LD,
+    } tag;
+    size_t dep_count;
+    Cuik_BuildStep** deps;
+
+    // returns exit status, anything but 0 is failure.
+    void(*invoke)(Cuik_BuildStep* s);
+
+    // once the step is completed, it'll decrement from the anti dep's
+    // remaining
+    Cuik_BuildStep* anti_dep;
+    bool visited;
+
+    _Atomic int errors;
+    Futex remaining;
+
+    Cuik_IThreadpool* tp;
+
+    union {
+        struct {
+            Cuik_DriverArgs* args;
+            const char* source;
+
+            Cuik_CPP* cpp;
+            TranslationUnit* tu;
+        } cc;
+
+        struct {
+            Cuik_DriverArgs* args;
+            CompilationUnit* cu;
+        } ld;
+    };
+};
+
+static void step_error(Cuik_BuildStep* s) {
+    if (s->anti_dep != NULL) {
+        s->anti_dep->errors += 1;
+    }
+}
+
+static void step_done(Cuik_BuildStep* s) {
+    if (s->anti_dep != NULL) {
+        futex_dec(&s->anti_dep->remaining);
+    }
+}
+
+static void cc_invoke(Cuik_BuildStep* s) {
+    printf("CC %s\n", s->cc.source);
+    Cuik_DriverArgs* args = s->cc.args;
+
+    // dispose the preprocessor crap since we didn't need it
+    Cuik_CPP* cpp = cuik_driver_preprocess(s->cc.source, args, true);
+    if (cpp == NULL) {
+        step_error(s);
+        goto done_no_cpp;
+    }
+
+    TokenStream* tokens = cuikpp_get_token_stream(cpp);
+    if (args->preprocess || args->test_preproc) {
+        s->cc.cpp = cpp;
+        goto done;
+    }
+
+    Cuik_ParseResult result;
+    CUIK_TIMED_BLOCK_ARGS("parse", s->cc.source) {
+        result = cuikparse_run(args->version, tokens, args->target, false);
+        s->cc.tu = result.tu;
+
+        if (result.error_count > 0) {
+            step_error(s);
+            goto done;
+        }
+    }
+
+    CompilationUnit* cu = (s->anti_dep != NULL && s->anti_dep->tag == BUILD_STEP_LD) ? s->anti_dep->ld.cu : NULL;
+    TranslationUnit* tu = result.tu;
+
+    // #pragma comment(lib, "foo.lib")
+    Cuik_ImportRequest* imports = result.imports;
+    if (cu != NULL) {
+        if (imports != NULL) {
+            cuik_lock_compilation_unit(cu);
+            for (; imports != NULL; imports = imports->next) {
+                Cuik_Path* p = cuik_malloc(sizeof(Cuik_Path));
+                cuik_path_set(p, imports->lib_name);
+                dyn_array_put(args->libraries, p);
+            }
+            cuik_unlock_compilation_unit(cu);
+        }
+
+        cuik_add_to_compilation_unit(cu, tu);
+    }
+
+    if (cuiksema_run(tu, NULL) > 0) {
+        step_error(s);
+        goto done;
+    }
+
+    done:
+    cuikdg_dump_to_file(tokens, stderr);
+
+    done_no_cpp:
+    step_done(s);
+}
+
+static void ld_invoke(Cuik_BuildStep* s) {
+    printf("LINK\n");
+
+    CUIK_TIMED_BLOCK("internal link") {
+        cuik_internal_link_compilation_unit(s->ld.cu, s->tp, s->ld.args->debug_info);
+    }
+
+    step_done(s);
+}
+
+Cuik_BuildStep* cuik_driver_cc(Cuik_DriverArgs* args, const char* source) {
+    Cuik_BuildStep* s = cuik_calloc(1, sizeof(Cuik_BuildStep));
+    s->tag = BUILD_STEP_CC;
+    s->invoke = cc_invoke;
+    s->cc.source = source;
+    s->cc.args = args;
+    return s;
+}
+
+CUIK_API Cuik_BuildStep* cuik_driver_ld(Cuik_DriverArgs* args, int dep_count, Cuik_BuildStep** deps) {
+    Cuik_BuildStep* s = cuik_calloc(1, sizeof(Cuik_BuildStep));
+    s->tag = BUILD_STEP_LD;
+    s->dep_count = dep_count;
+    s->deps = deps;
+    s->invoke = ld_invoke;
+    s->remaining = dep_count;
+    s->ld.cu = cuik_create_compilation_unit();
+    s->ld.args = args;
+
+    for (size_t i = 0; i < dep_count; i++) {
+        deps[i]->anti_dep = s;
+    }
+    return s;
+}
+
+static void step_submit(Cuik_BuildStep* s, Cuik_IThreadpool* tp, bool root) {
+    assert(!s->visited);
+    s->visited = true;
+    s->tp = tp;
+
+    // submit dependencies
+    if (s->dep_count > 0) {
+        for (size_t i = 0; i < s->dep_count; i++) {
+            step_submit(s->deps[i], tp, false);
+        }
+
+        // once dependencies are complete, we can invoke the step
+        futex_wait_eq(&s->remaining, 0);
+
+        // we can't run the step with broken deps, forward the error and early out
+        if (s->errors != 0) {
+            step_error(s);
+            return;
+        }
+    }
+
+    if (tp != NULL && !root) {
+        CUIK_CALL(tp, submit, (Cuik_TaskFn) s->invoke, sizeof(Cuik_BuildStep*), &s);
+    } else {
+        // root is the final step so we just run it synchronously
+        s->invoke(s);
+    }
+}
+
+bool cuik_step_run(Cuik_BuildStep* s, Cuik_IThreadpool* tp) {
+    step_submit(s, tp, true);
+    return s->errors == 0;
+}
+
 void cuikpp_dump_tokens(TokenStream* s) {
     const char* last_file = NULL;
     int last_line = 0;
@@ -59,12 +238,6 @@ void cuikpp_dump_tokens(TokenStream* s) {
         if (t->type == TOKEN_STRING_WIDE_SINGLE_QUOTE || t->type == TOKEN_STRING_WIDE_DOUBLE_QUOTE) {
             printf("L");
         }
-
-        /*if (t->type >= TOKEN_KW_auto) {
-            printf("\x1b[33m%.*s\x1b[0m ", (int) t->content.length, t->content.data);
-        } else {
-            printf("%.*s ", (int) t->content.length, t->content.data);
-        }*/
 
         printf("%.*s ", (int) t->content.length, t->content.data);
     }

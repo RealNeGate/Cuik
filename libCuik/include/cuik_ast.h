@@ -137,10 +137,17 @@ typedef struct {
     Expr* value;
 } C11GenericEntry;
 
+typedef enum {
+    // used by cycle checking
+    CUIK_TYPE_FLAG_COMPLETE = 1,
+    CUIK_TYPE_FLAG_PROGRESS = 2,
+} Cuik_TypeFlags;
+
 struct Cuik_Type {
     Cuik_TypeKind kind;
     int size;  // sizeof
     int align; // _Alignof
+    Cuik_TypeFlags flags;
     SourceRange loc;
 
     Atom also_known_as;
@@ -151,23 +158,21 @@ struct Cuik_Type {
     void* user_data;
     #endif
 
-    // used by cycle checking
-    bool is_complete : 1;
-    bool is_progress : 1;
-
     union {
+        char _;
+
         // Integers
         bool is_unsigned;
 
         // Arrays
         struct {
-            Cuik_QualType array_of;
-            int array_count;
+            Cuik_QualType of;
+            int count;
 
             // if non-zero, then we must execute an expression
             // parser to resolve it
-            int array_count_lexer_pos;
-        };
+            int count_lexer_pos;
+        } array;
 
         struct {
             Cuik_Type* of;
@@ -193,7 +198,7 @@ struct Cuik_Type {
         struct Cuik_TypeRecord {
             Atom name;
 
-            int kid_count;
+            int kid_count, pad;
             Member* kids;
 
             // this is the one used in type comparisons
@@ -203,14 +208,14 @@ struct Cuik_Type {
         // Enumerators
         struct {
             Atom name;
-            int count;
+            int count, pad;
 
             EnumEntry* entries;
         } enumerator;
 
         struct {
-            int count;
             Cuik_Type* base;
+            int count, pad;
         } vector;
 
         // Typeof
@@ -227,6 +232,9 @@ struct Cuik_Type {
     };
 } __attribute__((aligned(16)));
 _Static_assert(_Alignof(Cuik_Type) == 16, "we need 16byte alignment for Cuik_QualType");
+
+#define CUIK_TYPE_IS_COMPLETE(t) (((t)->flags & CUIK_TYPE_FLAG_COMPLETE) != 0)
+#define CUIK_TYPE_IS_PROGRESS(t) (((t)->flags & CUIK_TYPE_FLAG_PROGRESS) != 0)
 
 typedef enum {
     CUIK_GLSL_STORAGE_UNKNOWN,

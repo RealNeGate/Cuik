@@ -648,7 +648,6 @@ Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cu
                 diag_writer_highlight(&d, loc->loc);
             }
             diag_writer_done(&d);
-            fprintf(stderr, "\n");
         }
     }
     nl_strmap_free(parser.unresolved_symbols);

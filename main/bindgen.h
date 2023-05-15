@@ -61,9 +61,9 @@ static void print_odin_type(Cuik_Type* type, int depth, bool top) {
         }
 
         case KIND_ARRAY: {
-            Cuik_Type* base = cuik_canonical_type(type->array_of);
+            Cuik_Type* base = cuik_canonical_type(type->array.of);
 
-            printf("[%d]", type->array_count);
+            printf("[%d]", type->array.count);
             print_odin_type(base, depth, false);
             break;
         }

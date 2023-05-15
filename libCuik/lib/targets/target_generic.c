@@ -9,8 +9,8 @@ Cuik_System cuik_get_target_system(const Cuik_Target* t) { return t->system; }
 Cuik_Environment cuik_get_target_env(const Cuik_Target* t) { return t->env; }
 
 static void set_integer(Cuik_Target* target, int i, Cuik_TypeKind kind, int bytes) {
-    target->signed_ints[i] = (Cuik_Type){ kind, bytes, bytes, .is_complete = true };
-    target->unsigned_ints[i] = (Cuik_Type){ kind, bytes, bytes, .is_complete = true, .is_unsigned = true };
+    target->signed_ints[i] = (Cuik_Type){ kind, bytes, bytes, CUIK_TYPE_FLAG_COMPLETE };
+    target->unsigned_ints[i] = (Cuik_Type){ kind, bytes, bytes, CUIK_TYPE_FLAG_COMPLETE, .is_unsigned = true };
 }
 
 void cuik_target_build(Cuik_Target* target) {

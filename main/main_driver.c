@@ -103,6 +103,19 @@ int main(int argc, const char** argv) {
     }
     #endif
 
+    // compile source files
+    size_t obj_count = dyn_array_length(args.sources);
+    Cuik_BuildStep** objs = cuik_malloc(obj_count * sizeof(Cuik_BuildStep*));
+    dyn_array_for(i, args.sources) {
+        objs[i] = cuik_driver_cc(&args, args.sources[i]->data);
+    }
+
+    // link
+    Cuik_BuildStep* linked = cuik_driver_ld(&args, obj_count, objs);
+    cuik_step_run(linked, tp);
+
+    __debugbreak();
+
     if (args.live) {
         LiveCompiler l;
         do {

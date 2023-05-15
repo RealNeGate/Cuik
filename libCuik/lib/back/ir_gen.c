@@ -53,7 +53,7 @@ TB_DebugType* cuik__as_tb_debug_type(TB_Module* mod, Cuik_Type* t) {
         return (t->debug_type = tb_debug_create_ptr(mod, tb_debug_get_void(mod)));
 
         case KIND_ARRAY:
-        return (t->debug_type = tb_debug_create_array(mod, cuik__as_tb_debug_type(mod, cuik_canonical_type(t->array_of)), t->array_count));
+        return (t->debug_type = tb_debug_create_array(mod, cuik__as_tb_debug_type(mod, cuik_canonical_type(t->array.of)), t->array.count));
 
         case KIND_STRUCT:
         case KIND_UNION: {

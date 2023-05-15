@@ -851,7 +851,7 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                     }
 
                     type->record = (struct Cuik_TypeRecord){
-                        name, member_count, permanent_store, type
+                        .name = name, .kid_count = member_count, .kids = permanent_store, .nominal = type
                     };
 
                     if (!parser->is_in_global_scope) {
@@ -1094,9 +1094,9 @@ static Cuik_QualType parse_type_suffix2(Cuik_Parser* restrict parser, TokenStrea
 
             Cuik_Type t = {
                 .kind  = KIND_FUNC,
-                .is_complete = true,
                 .size  = 1,
                 .align = 1,
+                .flags = CUIK_TYPE_FLAG_COMPLETE,
                 .func = { .return_type = type },
             };
             type = cuik_uncanonical_type(TYPE_INTERN(&t));
@@ -1134,7 +1134,7 @@ static Cuik_QualType parse_type_suffix2(Cuik_Parser* restrict parser, TokenStrea
                 Cuik_Type* param_type_canon = cuik_canonical_type(param_type);
                 if (param_type_canon->kind == KIND_ARRAY) {
                     // Array parameters are desugared into pointers
-                    param_type = cuik_uncanonical_type(cuik__new_pointer(&parser->types, param_type_canon->array_of));
+                    param_type = cuik_uncanonical_type(cuik__new_pointer(&parser->types, param_type_canon->array.of));
                 } else if (param_type_canon->kind == KIND_FUNC) {
                     // Function parameters are desugared into pointers
                     param_type = cuik_uncanonical_type(cuik__new_pointer(&parser->types, param_type));
@@ -1164,9 +1164,9 @@ static Cuik_QualType parse_type_suffix2(Cuik_Parser* restrict parser, TokenStrea
 
             Cuik_Type t = {
                 .kind  = KIND_FUNC,
-                .is_complete = !parser->is_in_global_scope,
                 .size  = 1,
                 .align = 1,
+                .flags = parser->is_in_global_scope ? 0 : CUIK_TYPE_FLAG_COMPLETE,
                 .func = {
                     .return_type = type,
                     .param_list = permanent_store,
@@ -1200,7 +1200,7 @@ static Cuik_QualType parse_type_suffix2(Cuik_Parser* restrict parser, TokenStrea
             // create placeholder array type
             t = cuik__new_array(&parser->types, parse_type_suffix2(parser, s, type), 0);
             t->loc = (SourceRange){ open_brace, tokens_get_last_location(s) };
-            t->array_count_lexer_pos = current;
+            t->array.count_lexer_pos = current;
         } else {
             size_t depth = 0;
             size_t* counts = tls_save();
