@@ -76,9 +76,44 @@ static void step_done(Cuik_BuildStep* s) {
 static void irgen(Cuik_IThreadpool* restrict thread_pool, Cuik_DriverArgs* restrict args, CompilationUnit* restrict cu, TB_Module* mod);
 static void codegen(Cuik_IThreadpool* restrict thread_pool, Cuik_DriverArgs* restrict args, CompilationUnit* restrict cu, TB_Module* mod);
 
+static bool has_file_ext(const char* path) {
+    for (; *path; path++) {
+        if (*path == '/')  return false;
+        if (*path == '\\') return false;
+        if (*path == '.') return true;
+    }
+
+    return false;
+}
+
+static Cuik_Linker gimme_linker(Cuik_DriverArgs* restrict args) {
+    Cuik_Linker l = { 0 };
+
+    // Add system libpaths
+    cuiklink_apply_toolchain_libs(&l, args);
+
+    // Add input libraries
+    dyn_array_for(i, args->libraries) {
+        cuiklink_add_input_file(&l, args->libraries[i]->data);
+    }
+
+    if (!args->nocrt) {
+        #ifdef _WIN32
+        cuiklink_add_input_file(&l, "kernel32.lib");
+        cuiklink_add_input_file(&l, "ucrt.lib");
+        cuiklink_add_input_file(&l, "msvcrt.lib");
+        cuiklink_add_input_file(&l, "vcruntime.lib");
+        #endif
+    }
+
+    return l;
+}
+
 static void cc_invoke(Cuik_BuildStep* s) {
-    printf("CC %s\n", s->cc.source);
     Cuik_DriverArgs* args = s->cc.args;
+    if (args->verbose) {
+        printf("CC %s\n", s->cc.source);
+    }
 
     // dispose the preprocessor crap since we didn't need it
     Cuik_CPP* cpp = s->cc.cpp = cuik_driver_preprocess(s->cc.source, args, true);
@@ -171,10 +206,64 @@ static void cc_invoke(Cuik_BuildStep* s) {
 }
 
 static void ld_invoke(Cuik_BuildStep* s) {
-    printf("LINK\n");
+    Cuik_DriverArgs* args = s->ld.args;
+    if (args->verbose) {
+        printf("LINK\n");
+    }
 
-    __debugbreak();
-    step_done(s);
+    // TODO(NeGate): do a smarter system (just default to whatever the different platforms like)
+    TB_DebugFormat debug_fmt = (args->debug_info ? TB_DEBUGFMT_CODEVIEW : TB_DEBUGFMT_NONE);
+    Cuik_System sys = cuik_get_target_system(args->target);
+
+    Cuik_Path output_path;
+    if (args->output_name == NULL) {
+        cuik_path_set(&output_path, sys == TB_SYSTEM_WINDOWS ? "a.exe" : "a.out");
+    } else if (!has_file_ext(args->output_name) && cuik_get_target_system(args->target) == CUIK_SYSTEM_WINDOWS) {
+        cuik_path_append2(&output_path, strlen(args->output_name), args->output_name, 4, ".exe");
+    } else {
+        cuik_path_set(&output_path, args->output_name);
+    }
+
+    ////////////////////////////////
+    // generate object file
+    ////////////////////////////////
+    Cuik_Path obj_path;
+    cuik_path_append(&obj_path, &output_path, 2, ".o");
+
+    TB_Exports exports = tb_module_object_export(s->ld.cu->ir_mod, debug_fmt);
+    if (exports.count == 0) {
+        fprintf(stderr, "\x1b[31merror\x1b[0m: could not link executable\n");
+        goto done;
+    }
+
+    FILE* file = fopen(obj_path.data, "wb");
+    if (file == NULL) {
+        fprintf(stderr, "\x1b[31merror\x1b[0m: could not open file for writing! %s\n", obj_path.data);
+        goto done;
+    }
+
+    fwrite(exports.files[0].data, 1, exports.files[0].length, file);
+    fclose(file);
+
+    if (args->flavor == TB_FLAVOR_OBJECT) {
+        tb_exporter_free(exports);
+        goto done;
+    }
+
+    ////////////////////////////////
+    // run system linker
+    ////////////////////////////////
+    CUIK_TIMED_BLOCK("linker") {
+        Cuik_Linker l = gimme_linker(args);
+
+        // Add Cuik object
+        cuiklink_add_input_file(&l, obj_path.data);
+
+        cuiklink_invoke(&l, args, output_path.data, args->output_name);
+        cuiklink_deinit(&l);
+    }
+
+    done: step_done(s);
 }
 
 Cuik_BuildStep* cuik_driver_cc(Cuik_DriverArgs* args, const char* source) {
@@ -652,45 +741,9 @@ static void codegen(Cuik_IThreadpool* restrict thread_pool, Cuik_DriverArgs* res
     }
 }
 
-static Cuik_Linker gimme_linker(Cuik_DriverArgs* restrict args) {
-    Cuik_Linker l = { 0 };
-
-    // Add system libpaths
-    cuiklink_apply_toolchain_libs(&l, args);
-
-    // Add input libraries
-    dyn_array_for(i, args->libraries) {
-        cuiklink_add_input_file(&l, args->libraries[i]->data);
-    }
-
-    if (!args->nocrt) {
-        #ifdef _WIN32
-        cuiklink_add_input_file(&l, "kernel32.lib");
-        cuiklink_add_input_file(&l, "ucrt.lib");
-        cuiklink_add_input_file(&l, "msvcrt.lib");
-        cuiklink_add_input_file(&l, "vcruntime.lib");
-        #endif
-    }
-
-    return l;
-}
-
-static bool has_file_ext(const char* path) {
-    const char* last_slash = path;
-    bool has_ext = false;
-    for (; *path; path++) {
-        if (*path == '/') last_slash = path, has_ext = false;
-        if (*path == '\\') last_slash = path, has_ext = false;
-        if (*path == '.') has_ext = true;
-    }
-
-    return has_ext;
-}
-
 static bool export_output(Cuik_DriverArgs* restrict args, TB_Module* mod, const char* output_path) {
     // TODO(NeGate): do a smarter system (just default to whatever the different platforms like)
     TB_DebugFormat debug_fmt = (args->debug_info ? TB_DEBUGFMT_CODEVIEW : TB_DEBUGFMT_NONE);
-
     Cuik_System sys = cuik_get_target_system(args->target);
 
     char output_name[FILENAME_MAX];
@@ -799,52 +852,6 @@ static bool export_output(Cuik_DriverArgs* restrict args, TB_Module* mod, const 
 
         return true;
     } else {
-        char obj_output_path[FILENAME_MAX];
-        sprintf_s(
-            obj_output_path, FILENAME_MAX, "%s%s", output_path,
-            cuik_get_target_system(args->target) == CUIK_SYSTEM_WINDOWS ? ".obj" : ".o"
-        );
-
-        TB_Exports exports = tb_module_object_export(mod, debug_fmt);
-        if (exports.count == 0) {
-            fprintf(stderr, "\x1b[31merror\x1b[0m: could not link executable\n");
-            return false;
-        }
-
-        FILE* file = NULL;
-        CUIK_TIMED_BLOCK("fopen") {
-            file = fopen(obj_output_path, "wb");
-            if (file == NULL) {
-                fprintf(stderr, "\x1b[31merror\x1b[0m: could not open file for writing! %s\n", output_name);
-                return false;
-            }
-        }
-
-        CUIK_TIMED_BLOCK("fwrite") {
-            fwrite(exports.files[0].data, 1, exports.files[0].length, file);
-        }
-
-        fclose(file);
-        tb_exporter_free(exports);
-
-        if (args->flavor == TB_FLAVOR_OBJECT) {
-            return true;
-        }
-
-        // This uses the system linker which isn't fun
-        if (args->verbose) {
-            fprintf(stderr, "[1/1] LINK %s\n", output_path);
-        }
-
-        CUIK_TIMED_BLOCK("linker") {
-            Cuik_Linker l = gimme_linker(args);
-
-            // Add Cuik object
-            cuiklink_add_input_file(&l, obj_output_path);
-
-            cuiklink_invoke(&l, args, output_name, output_path);
-            cuiklink_deinit(&l);
-        }
 
         return true;
     }

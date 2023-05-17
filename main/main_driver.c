@@ -112,31 +112,8 @@ int main(int argc, const char** argv) {
 
     // link
     Cuik_BuildStep* linked = cuik_driver_ld(&args, obj_count, objs);
-    cuik_step_run(linked, tp);
-
-    __debugbreak();
-
-    if (args.live) {
-        LiveCompiler l;
-        do {
-            printf("\x1b[2J");
-            printf("OUTPUT OF %s:\n", args.sources[0]->data);
-
-            CompilationUnit* cu;
-            cuik_driver_compile(tp, &args, true, true, &cu);
-            cuik_destroy_compilation_unit(cu);
-        } while (live_compile_watch(&l, &args));
-    } else {
-        uint64_t start_time = args.verbose ? cuik_time_in_nanos() : 0;
-
-        CompilationUnit* cu;
-        status = !cuik_driver_compile(tp, &args, true, true, &cu);
-        cuik_destroy_compilation_unit(cu);
-
-        if (args.verbose) {
-            uint64_t now = cuik_time_in_nanos();
-            printf("\n\nCUIK: %f ms\n", (now - start_time) / 1000000.0);
-        }
+    if (!cuik_step_run(linked, tp)) {
+        status = 1;
     }
 
     #if CUIK_ALLOW_THREADS

@@ -159,12 +159,15 @@ typedef struct Cuik_FileLoc {
     uint32_t pos; // in bytes
 } Cuik_FileLoc;
 
+bool cuik_path_set_no_ext(Cuik_Path* restrict dst, const char* src);
 bool cuik_path_set_dir(Cuik_Path* restrict dst, const char* src);
 bool cuik_path_set(Cuik_Path* restrict dst, const char* src);
 bool cuik_path_append(Cuik_Path* restrict dst, const Cuik_Path* restrict a, size_t b_len, const char b[]);
+bool cuik_path_append2(Cuik_Path* restrict dst, size_t a_len, const char a[], size_t b_len, const char b[]);
 
 bool cuik_path_is_in(const Cuik_Path* restrict dst, const char* src);
 bool cuik_path_has_ext(const Cuik_Path* restrict dst, const char* ext);
+bool cuik_path_has_ext2(const Cuik_Path* restrict src);
 
 // Used to make iterators for the define list, for example:
 //
