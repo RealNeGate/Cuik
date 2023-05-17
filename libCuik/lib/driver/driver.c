@@ -35,6 +35,8 @@ struct Cuik_BuildStep {
     // once the step is completed, it'll decrement from the anti dep's
     // remaining
     Cuik_BuildStep* anti_dep;
+
+    bool error_root; // created an error rather than just propagating
     bool visited;
 
     _Atomic int errors;
@@ -62,6 +64,7 @@ static void step_error(Cuik_BuildStep* s) {
     if (s->anti_dep != NULL) {
         s->anti_dep->errors += 1;
     }
+    s->error_root = true;
 }
 
 static void step_done(Cuik_BuildStep* s) {
@@ -70,20 +73,25 @@ static void step_done(Cuik_BuildStep* s) {
     }
 }
 
+static void irgen(Cuik_IThreadpool* restrict thread_pool, Cuik_DriverArgs* restrict args, CompilationUnit* restrict cu, TB_Module* mod);
+static void codegen(Cuik_IThreadpool* restrict thread_pool, Cuik_DriverArgs* restrict args, CompilationUnit* restrict cu, TB_Module* mod);
+
 static void cc_invoke(Cuik_BuildStep* s) {
     printf("CC %s\n", s->cc.source);
     Cuik_DriverArgs* args = s->cc.args;
 
     // dispose the preprocessor crap since we didn't need it
-    Cuik_CPP* cpp = cuik_driver_preprocess(s->cc.source, args, true);
+    Cuik_CPP* cpp = s->cc.cpp = cuik_driver_preprocess(s->cc.source, args, true);
     if (cpp == NULL) {
         step_error(s);
         goto done_no_cpp;
     }
 
     TokenStream* tokens = cuikpp_get_token_stream(cpp);
-    if (args->preprocess || args->test_preproc) {
-        s->cc.cpp = cpp;
+    if (args->preprocess) {
+        cuikpp_dump_tokens(tokens);
+        goto done;
+    } else if (args->test_preproc) {
         goto done;
     }
 
@@ -122,20 +130,50 @@ static void cc_invoke(Cuik_BuildStep* s) {
         goto done;
     }
 
-    done:
+    if (args->syntax_only || args->types) {
+        goto done;
+    }
+
+    // we wanna display diagnostics before any of the backend stuff
     cuikdg_dump_to_file(tokens, stderr);
 
-    done_no_cpp:
-    step_done(s);
+    TB_Module* mod = cu->ir_mod;
+    cuikcg_allocate_ir2(tu, mod);
+    irgen(s->tp, args, cu, mod);
+
+    // TODO: we probably want to do the fancy threading soon
+    if (args->opt_level > 0) {
+        CUIK_TIMED_BLOCK("Optimizer") {
+            tb_module_optimize(mod, COUNTOF(passes_O1), passes_O1);
+        }
+    }
+
+    if (args->emit_ir) {
+        cuikdg_dump_to_file(tokens, stderr);
+
+        CUIK_TIMED_BLOCK("Print") {
+            TB_FOR_FUNCTIONS(f, mod) {
+                tb_function_print(f, tb_default_print_callback, stdout);
+                printf("\n\n");
+            }
+        }
+    } else if (!args->ir) {
+        CUIK_TIMED_BLOCK("CodeGen") {
+            codegen(s->tp, args, cu, mod);
+        }
+    }
+
+    goto done_no_cpp;
+
+    // these are called for early exits
+    done: cuikdg_dump_to_file(tokens, stderr);
+    done_no_cpp: step_done(s);
 }
 
 static void ld_invoke(Cuik_BuildStep* s) {
     printf("LINK\n");
 
-    CUIK_TIMED_BLOCK("internal link") {
-        cuik_internal_link_compilation_unit(s->ld.cu, s->tp, s->ld.args->debug_info);
-    }
-
+    __debugbreak();
     step_done(s);
 }
 
@@ -157,6 +195,11 @@ CUIK_API Cuik_BuildStep* cuik_driver_ld(Cuik_DriverArgs* args, int dep_count, Cu
     s->remaining = dep_count;
     s->ld.cu = cuik_create_compilation_unit();
     s->ld.args = args;
+
+    TB_FeatureSet features = { 0 };
+    s->ld.cu->ir_mod = tb_module_create(
+        args->target->arch, (TB_System) cuik_get_target_system(args->target), &features, args->run
+    );
 
     for (size_t i = 0; i < dep_count; i++) {
         deps[i]->anti_dep = s;
@@ -889,7 +932,7 @@ CUIK_API bool cuik_driver_compile(Cuik_IThreadpool* restrict thread_pool, Cuik_D
     }
 
     CUIK_TIMED_BLOCK("internal link") {
-        cuik_internal_link_compilation_unit(cu, thread_pool, args->debug_info);
+        // cuik_internal_link_compilation_unit(cu, thread_pool, args->debug_info);
     }
 
     TB_Module* mod = NULL;
@@ -932,13 +975,6 @@ CUIK_API bool cuik_driver_compile(Cuik_IThreadpool* restrict thread_pool, Cuik_D
             }
         }
 
-        if (args->opt_level >= 1) {
-            // TODO: we probably want to do the fancy threading soon
-            CUIK_TIMED_BLOCK("Optimizer") {
-                tb_module_optimize(mod, COUNTOF(passes_O1), passes_O1);
-            }
-        }
-
         if (args->ir) {
             cu->ir_mod = mod;
             *out_cu = cu;
@@ -970,7 +1006,7 @@ CUIK_API bool cuik_driver_compile(Cuik_IThreadpool* restrict thread_pool, Cuik_D
     if (args->run) {
         printf("[1/1] RUN %s\n", output_path);
 
-        // implement Cuik JIT
+        // TODO(NeGate): implement Cuik JIT
         TB_JITContext* jit = tb_module_begin_jit(mod, 0);
         void* a = NULL;
         TB_FOR_FUNCTIONS(f, mod) {

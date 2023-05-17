@@ -464,6 +464,7 @@ typedef enum ExprOp {
 
 typedef enum {
     STMT_FLAGS_HAS_IR_BACKING = 1,
+    STMT_FLAGS_IS_EXPORTED    = 2,
 } StmtFlags;
 
 struct Stmt {

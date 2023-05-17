@@ -147,7 +147,7 @@ struct CompilationUnit {
     TB_Module* ir_mod;
     #endif
 
-    NL_Strmap(Stmt*) export_table;
+    NL_Strmap(TB_Symbol*) export_table;
 
     // linked list of all TUs referenced
     TranslationUnit* head;

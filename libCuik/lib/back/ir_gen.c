@@ -12,6 +12,52 @@ static thread_local const char* function_name;
 // For aggregate returns
 static _Thread_local TB_Node* return_value_address;
 
+static TB_Symbol* get_external(CompilationUnit* restrict cu, const char* name) {
+    // if this is the first time we've seen this name, add it to the table
+    cuik_lock_compilation_unit(cu);
+
+    TB_Symbol* result = NULL;
+    ptrdiff_t search = nl_strmap_get_cstr(cu->export_table, name);
+    if (search >= 0) {
+        // Figure out what the symbol is and link it together
+        result = cu->export_table[search];
+    } else {
+        // Always creates a real external... for now
+        result = (TB_Symbol*) tb_extern_create(cu->ir_mod, name, TB_EXTERNAL_SO_LOCAL);
+    }
+
+    cuik_unlock_compilation_unit(cu);
+    return result;
+}
+
+static TB_Global* place_external(CompilationUnit* restrict cu, Stmt* s, TB_DebugType* dbg_type, TB_Linkage linkage) {
+    if (s->flags & STMT_FLAGS_IS_EXPORTED) {
+        cuik_lock_compilation_unit(cu);
+        const char* name = s->decl.name;
+
+        TB_Global* result = NULL;
+        ptrdiff_t search = nl_strmap_get_cstr(cu->export_table, name);
+        if (search >= 0) {
+            // transmute
+            TB_Symbol* s = cu->export_table[search];
+            if (s->tag == TB_SYMBOL_GLOBAL) {
+                result = tb_extern_transmute((TB_External*) s, dbg_type, linkage);
+            } else {
+                assert(s->tag == TB_SYMBOL_EXTERNAL);
+                result = (TB_Global*) s;
+            }
+        } else {
+            result = tb_global_create(cu->ir_mod, name, dbg_type, linkage);
+            nl_strmap_put_cstr(cu->export_table, name, (TB_Symbol*) result);
+        }
+
+        cuik_unlock_compilation_unit(cu);
+        return result;
+    } else {
+        return tb_global_create(cu->ir_mod, s->decl.name, dbg_type, linkage);
+    }
+}
+
 static void fallthrough_label(TB_Function* func, TB_Node* target) {
     TB_Node* curr = tb_inst_get_control(func);
     if (curr != NULL) {
@@ -612,32 +658,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
                     const char* name = (const char*) stmt->decl.name;
 
                     if (tu->parent != NULL) {
-                        // It's either a proper external or links to
-                        // a file within the compilation unit, we don't
-                        // know yet
-                        CompilationUnit* restrict cu = tu->parent;
-                        cuik_lock_compilation_unit(cu);
-
-                        ptrdiff_t search = nl_strmap_get_cstr(cu->export_table, name);
-                        if (search >= 0) {
-                            // Figure out what the symbol is and link it together
-                            Stmt* real_symbol = cu->export_table[search];
-
-                            if (real_symbol->op == STMT_FUNC_DECL) {
-                                stmt->backing.f = real_symbol->backing.f;
-                            } else if (real_symbol->op == STMT_GLOBAL_DECL) {
-                                stmt->backing.g = real_symbol->backing.g;
-                            } else {
-                                abort();
-                            }
-                        } else {
-                            // Always creates a real external in this case
-                            stmt->backing.e = tb_extern_create(tu->ir_mod, name, TB_EXTERNAL_SO_LOCAL);
-                        }
-
-                        // NOTE(NeGate): we might wanna move this mutex unlock earlier
-                        // it doesn't seem like we might need it honestly...
-                        cuik_unlock_compilation_unit(cu);
+                        stmt->backing.s = get_external(tu->parent, name);
                     } else {
                         mtx_lock(&tu->arena_mutex);
                         stmt->backing.e = tb_extern_create(tu->ir_mod, name, TB_EXTERNAL_SO_LOCAL);
@@ -1486,7 +1507,7 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
                     dbg_type = cuik__as_tb_debug_type(tu->ir_mod, cuik_canonical_type(s->decl.type));
                 }
 
-                TB_Global* g = tb_global_create(tu->ir_mod, name, dbg_type, TB_LINKAGE_PRIVATE);
+                TB_Global* g = place_external(tu->parent, s, dbg_type, TB_LINKAGE_PRIVATE);
                 tls_restore(name);
 
                 TB_ModuleSection* section = get_variable_storage(tu->ir_mod, &attrs, s->decl.type.raw & CUIK_QUAL_CONST);
@@ -1918,7 +1939,7 @@ static void ir_alloc_task(void* task) {
                         dbg_type = cuik__as_tb_debug_type(t.tu->ir_mod, cuik_canonical_type(s->decl.type));
                     }
 
-                    s->backing.g = tb_global_create(t.tu->ir_mod, name, dbg_type, linkage);
+                    s->backing.g = place_external(t.tu->parent, s, dbg_type, linkage);
                     tb_symbol_set_ordinal((TB_Symbol*) s->backing.g, t.ordinal_base + i);
                 }
             }

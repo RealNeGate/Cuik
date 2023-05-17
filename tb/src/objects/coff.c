@@ -161,19 +161,18 @@ TB_API TB_Exports tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
             if (name_len >= 8) string_table_size += name_len + 1;
         }
 
-        FOREACH_N(i, 0, m->max_threads) {
-            pool_for(TB_External, ext, m->thread_info[i].externals) if (ext->super.name) {
-                size_t name_len = strlen(ext->super.name);
-                if (name_len >= 8) string_table_size += name_len + 1;
-            }
-
-            pool_for(TB_Global, g, m->thread_info[i].globals) if (g->super.name) {
-                size_t name_len = strlen(g->super.name);
-                if (name_len >= 8) string_table_size += name_len + 1;
-            }
+        TB_FOR_EXTERNALS(ext, m) if (ext->super.name) {
+            size_t name_len = strlen(ext->super.name);
+            if (name_len >= 8) string_table_size += name_len + 1;
         }
-        output_size += string_table_size;
+
+        TB_FOR_GLOBALS(g, m) if (g->super.name) {
+            size_t name_len = strlen(g->super.name);
+            if (name_len >= 8) string_table_size += name_len + 1;
+        }
     }
+
+    output_size += string_table_size;
 
     ////////////////////////////////
     // write output

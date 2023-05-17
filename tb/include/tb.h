@@ -388,7 +388,8 @@ extern "C" {
             TB_SYMBOL_MAX,
         } tag;
 
-        // refers to the next symbol with the same tag
+        // refers to the prev or next symbol with the same tag
+        struct TB_Symbol* prev;
         struct TB_Symbol* next;
         char* name;
 
@@ -836,6 +837,7 @@ extern "C" {
 
     // this is used JIT scenarios to tell the compiler what externals map to
     TB_API TB_ExternalType tb_extern_get_type(TB_External* e);
+    TB_Global* tb_extern_transmute(TB_External* e, TB_DebugType* dbg_type, TB_Linkage linkage);
 
     TB_API TB_External* tb_extern_create(TB_Module* m, const char* name, TB_ExternalType type);
     TB_API TB_FileID tb_file_create(TB_Module* m, const char* path);
