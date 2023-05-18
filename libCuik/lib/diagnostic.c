@@ -1,8 +1,8 @@
 #include "diagnostic.h"
-#include <locale.h>
 #include <ctype.h>
 #include <stdarg.h>
 #include <stdatomic.h>
+#include <stdarg.h>
 #include "preproc/lexer.h"
 
 // We extend on stb_sprintf with support for a custom callback because

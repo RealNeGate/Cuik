@@ -921,7 +921,7 @@ TB_API void tb_inst_if(TB_Function* f, TB_Node* cond, TB_Node* if_true, TB_Node*
 }
 
 TB_API void tb_inst_branch(TB_Function* f, TB_DataType dt, TB_Node* key, TB_Node* default_label, size_t entry_count, const TB_SwitchEntry* entries) {
-    __debugbreak();
+    tb_todo();
 
     TB_Node* n = tb_alloc_node(f, TB_BRANCH, TB_TYPE_VOID, entry_count + 3, sizeof(TB_NodeBranch) + (entry_count * sizeof(TB_SwitchEntry)));
     n->inputs[0] = f->active_control_node; // control edge

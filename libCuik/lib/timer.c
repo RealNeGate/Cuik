@@ -4,12 +4,14 @@
 #include <stdarg.h>
 #include <stdatomic.h>
 
+#if defined(_AMD64_) || defined(__amd64__)
+static double rdtsc_freq;
+static uint64_t timer_start;
+#endif
+
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
-
-static double rdtsc_freq;
-static uint64_t timer_start;
 #else
 #include <time.h>
 #include <unistd.h>

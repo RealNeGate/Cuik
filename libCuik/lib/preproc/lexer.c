@@ -128,7 +128,7 @@ static unsigned char* slow_identifier_lexing(Lexer* restrict l, unsigned char* c
 // NOTE(NeGate): The input string has a fat null terminator of 16bytes to allow
 // for some optimizations overall, one of the important ones is being able to read
 // a whole 16byte SIMD register at once for any SIMD optimizations.
-static Token lexer_read(Lexer* restrict l) {
+Token lexer_read(Lexer* restrict l) {
     unsigned char* current = l->current;
     Token t = { 0 };
 
