@@ -8,8 +8,8 @@ enum {
 };
 
 enum {
-    INST_LABEL = -1,
-    INST_LINE  = -2,
+    INST_LABEL = 1024,
+    INST_LINE  = 1023,
 };
 
 static void get_data_type_size(TB_DataType dt, TB_CharUnits* out_size, TB_CharUnits* out_align) {
@@ -488,7 +488,12 @@ static DefIndex* liveness(Ctx* restrict ctx, TB_Function* f) {
 
         sorted[i] = i;
     }
+
+    #ifdef _WIN32
     qsort_s(sorted, def_count, sizeof(DefIndex), compare_defs, ctx->defs);
+    #else
+    qsort_r(sorted, def_count, sizeof(DefIndex), compare_defs, ctx->defs);
+    #endif
 
     ctx->machine_bbs = seq_bb;
     return sorted;

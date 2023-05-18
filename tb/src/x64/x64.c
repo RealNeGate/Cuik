@@ -13,9 +13,9 @@ enum {
 
 typedef enum X86_InstType {
     //   dst = COPY src
-    X86_INST_COPY = -3,
-    X86_INST_MOVE = -4,
-    X86_INST_USE  = -5,
+    X86_INST_COPY = 1022,
+    X86_INST_MOVE = 1021,
+    X86_INST_USE  = 1020,
 } X86_InstType;
 
 // for memory operands imm[0] is two fields:
