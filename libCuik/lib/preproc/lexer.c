@@ -352,7 +352,7 @@ static Token lexer_read(Lexer* restrict l) {
     return t;
 }
 
-static uint64_t parse_int(size_t len, const char* str, Cuik_IntSuffix* out_suffix) {
+uint64_t parse_int(size_t len, const char* str, Cuik_IntSuffix* out_suffix) {
     char* end;
     uint64_t i = strtoull(str, &end, 0);
 
@@ -406,7 +406,7 @@ static uint64_t parse_int(size_t len, const char* str, Cuik_IntSuffix* out_suffi
     return i;
 }
 
-static ptrdiff_t parse_char(size_t len, const char* str, int* output) {
+ptrdiff_t parse_char(size_t len, const char* str, int* output) {
     if (str[0] != '\\') {
         *output = str[0];
         return 1;
