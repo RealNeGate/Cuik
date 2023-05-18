@@ -239,7 +239,12 @@ bool cuik_canonicalize_path(Cuik_Path* restrict output, const char* input) {
     output->length = p - output->data;
     return true;
     #else
-    return realpath(input->data, output->data) != NULL;
+    if (realpath(input, output->data) == NULL) {
+        return false;
+    }
+
+    output->length = strlen(output->data);
+    return true;
     #endif
 }
 

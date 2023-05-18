@@ -288,7 +288,7 @@ static bool expand_builtin_idents(Cuik_CPP* restrict c, Token* t) {
         ResolvedSourceLoc r = cuikpp_find_location(&c->tokens, t->location);
 
         // filepath as a string
-        unsigned char* output_path_start = gimme_the_shtuffs(c, MAX_PATH + 4);
+        unsigned char* output_path_start = gimme_the_shtuffs(c, FILENAME_MAX + 4);
         unsigned char* output_path = output_path_start;
 
         bool is_wide = (token_data[0] == 'L');
@@ -299,7 +299,7 @@ static bool expand_builtin_idents(Cuik_CPP* restrict c, Token* t) {
             // TODO(NeGate): Kinda shitty but i just wanna duplicate
             // the backslashes to avoid them being treated as an escape
             const char* input_path = (const char*) r.file->filename;
-            assert(strlen(input_path) < MAX_PATH && "__FILE__ too long?");
+            assert(strlen(input_path) < FILENAME_MAX && "__FILE__ too long?");
 
             while (*input_path) {
                 if (*input_path == '\\') {
@@ -463,7 +463,7 @@ static bool subst(Cuik_CPP* restrict c, TokenNode* head, const uint8_t* subst_st
                 if (t.type == 0) break;
 
                 // dyn_array_put(out_tokens->tokens, t);
-                __debugbreak();
+                assert(0 && "TODO");
             }
 
             prev = curr, curr = curr->next;
