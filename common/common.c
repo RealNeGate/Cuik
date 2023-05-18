@@ -143,6 +143,11 @@ void futex_dec(Futex* f) {
 #include <errno.h>
 #include <linux/futex.h>
 #include <sys/syscall.h>
+#include <unistd.h>
+
+// [https://man7.org/linux/man-pages/man2/futex.2.html]
+//   glibc provides no wrapper for futex()
+#define futex(...) syscall(SYS_futex, __VA_ARGS__)
 
 void futex_signal(Futex* addr) {
     int ret = futex(addr, FUTEX_WAKE | FUTEX_PRIVATE_FLAG, 1, NULL, NULL, 0);
@@ -174,6 +179,7 @@ void futex_wait(Futex* addr, Futex val) {
     }
 }
 
+#undef futex
 #elif defined(__APPLE__)
 
 #include <errno.h>

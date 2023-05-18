@@ -31,7 +31,7 @@ if args.inspector or args.driver or args.shared:
 
 # Figure out C and linker flags
 ldflags = ""
-cflags = "-g -msse4 -Wall -Werror -Wno-unused -I common -DCUIK_ALLOW_THREADS -D_MT -U_DLL"
+cflags = "-g -msse4 -Wall -Werror -Wno-unused -Wno-deprecated-pragma -I common -DCUIK_ALLOW_THREADS -D_MT -U_DLL"
 
 if mimalloc:       cflags += " -DTB_USE_MIMALLOC -DCUIK_USE_MIMALLOC -I mimalloc/include"
 if args.libcuik:   cflags += " -I libCuik/include -DMINIZ_NO_MALLOC"

@@ -434,6 +434,8 @@ extern "C" {
 
     // this represents switch (many targets), if (one target) and goto (only default) logic.
     typedef struct { // TB_BRANCH
+        // avoid empty structs with flexible members
+        int64_t _;
         int64_t keys[/* input_count - 1 */];
     } TB_NodeBranch;
 

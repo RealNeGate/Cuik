@@ -24,7 +24,7 @@ static void* profiler_userdata;
 
 #ifdef CUIK__IS_X64
 #ifdef _WIN32
-double get_rdtsc_freq(void) {
+static double get_rdtsc_freq(void) {
     // Get time before sleep
     uint64_t qpc_begin = 0; QueryPerformanceCounter((LARGE_INTEGER *)&qpc_begin);
     uint64_t tsc_begin = __rdtsc();
@@ -53,7 +53,7 @@ double get_rdtsc_freq(void) {
 #include <unistd.h>
 #include <x86intrin.h>
 
-static inline double get_rdtsc_freq(void) {
+static double get_rdtsc_freq(void) {
     // Fast path: Load kernel-mapped memory page
     struct perf_event_attr pe = {0};
     pe.type = PERF_TYPE_HARDWARE;
@@ -62,6 +62,8 @@ static inline double get_rdtsc_freq(void) {
     pe.disabled = 1;
     pe.exclude_kernel = 1;
     pe.exclude_hv = 1;
+
+    uint64_t tsc_freq = 0;
 
     // __NR_perf_event_open == 298 (on x86_64)
     int fd = syscall(298, &pe, 0, -1, -1, 0);
