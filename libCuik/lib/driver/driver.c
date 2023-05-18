@@ -19,10 +19,17 @@ enum {
     TB_TASK_BATCH_SIZE = 8192,
 };
 
+// this is used by the worker routines
+typedef struct {
+    Cuik_BuildStep* step;
+    mtx_t* mutex;
+} BuildStepInfo;
+
 struct Cuik_BuildStep {
     enum {
         BUILD_STEP_NONE,
 
+        BUILD_STEP_SYS,
         BUILD_STEP_CC,
         BUILD_STEP_LD,
     } tag;
@@ -30,7 +37,7 @@ struct Cuik_BuildStep {
     Cuik_BuildStep** deps;
 
     // returns exit status, anything but 0 is failure.
-    void(*invoke)(Cuik_BuildStep* s);
+    void(*invoke)(BuildStepInfo* s);
 
     // once the step is completed, it'll decrement from the anti dep's
     // remaining
@@ -57,6 +64,10 @@ struct Cuik_BuildStep {
             Cuik_DriverArgs* args;
             CompilationUnit* cu;
         } ld;
+
+        struct {
+            char* data;
+        } sys;
     };
 };
 
@@ -80,10 +91,26 @@ static bool has_file_ext(const char* path) {
     for (; *path; path++) {
         if (*path == '/')  return false;
         if (*path == '\\') return false;
-        if (*path == '.') return true;
+        if (*path == '.')  return true;
     }
 
     return false;
+}
+
+static bool write_file(TB_Exports* exports, int i, const char* path) {
+    FILE* file = fopen(path, "wb");
+    if (file == NULL) {
+        fprintf(stderr, "\x1b[31merror\x1b[0m: could not open file for writing! %s\n", path);
+        return false;
+    }
+
+    if (fwrite(exports->files[i].data, 1, exports->files[i].length, file) == 1) {
+        fprintf(stderr, "\x1b[31merror\x1b[0m: could not write to file! %s (not enough storage?)\n", path);
+        return false;
+    }
+
+    fclose(file);
+    return true;
 }
 
 static Cuik_Linker gimme_linker(Cuik_DriverArgs* restrict args) {
@@ -109,10 +136,26 @@ static Cuik_Linker gimme_linker(Cuik_DriverArgs* restrict args) {
     return l;
 }
 
-static void cc_invoke(Cuik_BuildStep* s) {
+static void sys_invoke(BuildStepInfo* info) {
+    Cuik_BuildStep* s = info->step;
+
+    // TODO(NeGate): this is going to splay the diagnostics without any
+    // care for the rest of the running tasks
+    if (system(s->sys.data) != 0) {
+        step_error(s);
+    }
+
+    cuik_free(s->sys.data);
+    step_done(s);
+}
+
+static void cc_invoke(BuildStepInfo* restrict info) {
+    Cuik_BuildStep* s = info->step;
     Cuik_DriverArgs* args = s->cc.args;
     if (args->verbose) {
+        mtx_lock(info->mutex);
         printf("CC %s\n", s->cc.source);
+        mtx_unlock(info->mutex);
     }
 
     // dispose the preprocessor crap since we didn't need it
@@ -165,18 +208,29 @@ static void cc_invoke(Cuik_BuildStep* s) {
         goto done;
     }
 
-    if (args->syntax_only || args->types) {
+    if (args->syntax_only) {
+        goto done;
+    } else if (args->ast) {
+        CUIK_FOR_EACH_TU(tu, cu) {
+            cuik_dump_translation_unit(stdout, tu, true);
+        }
         goto done;
     }
 
     // we wanna display diagnostics before any of the backend stuff
+    mtx_lock(info->mutex);
     cuikdg_dump_to_file(tokens, stderr);
+    mtx_unlock(info->mutex);
 
     TB_Module* mod = cu->ir_mod;
     cuikcg_allocate_ir2(tu, mod);
     irgen(s->tp, args, cu, mod);
 
-    // TODO: we probably want to do the fancy threading soon
+    // once we've complete debug info and diagnostics we don't need line info
+    cuiklex_free_tokens(tokens);
+    cuikpp_free(cpp);
+
+    // TODO(NeGate): we probably want to do the fancy threading soon
     if (args->opt_level > 0) {
         CUIK_TIMED_BLOCK("Optimizer") {
             tb_module_optimize(mod, COUNTOF(passes_O1), passes_O1);
@@ -198,6 +252,11 @@ static void cc_invoke(Cuik_BuildStep* s) {
         }
     }
 
+    if (!args->preserve_ast) {
+        cuik_destroy_translation_unit(tu);
+    }
+
+    atoms_free();
     goto done_no_cpp;
 
     // these are called for early exits
@@ -205,10 +264,23 @@ static void cc_invoke(Cuik_BuildStep* s) {
     done_no_cpp: step_done(s);
 }
 
-static void ld_invoke(Cuik_BuildStep* s) {
+static void ld_invoke(BuildStepInfo* info) {
+    Cuik_BuildStep* s = info->step;
     Cuik_DriverArgs* args = s->ld.args;
     if (args->verbose) {
+        mtx_lock(info->mutex);
         printf("LINK\n");
+        mtx_unlock(info->mutex);
+    }
+
+    // Once the frontend is complete we don't need this... unless we wanna keep it
+    TB_Module* mod = s->ld.cu->ir_mod;
+    if (!args->preserve_ast) {
+        cuik_destroy_compilation_unit(s->ld.cu);
+    }
+
+    if (!cuik_driver_does_codegen(args)) {
+        goto done;
     }
 
     // TODO(NeGate): do a smarter system (just default to whatever the different platforms like)
@@ -227,43 +299,125 @@ static void ld_invoke(Cuik_BuildStep* s) {
     ////////////////////////////////
     // generate object file
     ////////////////////////////////
-    Cuik_Path obj_path;
-    cuik_path_append(&obj_path, &output_path, 2, ".o");
+    if (args->based && args->flavor != TB_FLAVOR_OBJECT) {
+        TB_ExecutableType exe;
+        switch (sys) {
+            case CUIK_SYSTEM_WINDOWS: exe = TB_EXECUTABLE_PE;  break;
+            case CUIK_SYSTEM_LINUX:   exe = TB_EXECUTABLE_ELF; break;
 
-    TB_Exports exports = tb_module_object_export(s->ld.cu->ir_mod, debug_fmt);
-    if (exports.count == 0) {
-        fprintf(stderr, "\x1b[31merror\x1b[0m: could not link executable\n");
+            default:
+            fprintf(stderr, "unsupported platform to link with... sorry (contact NeGate)\n");
+            goto done;
+        }
+
+        TB_Linker* l = tb_linker_create(exe, args->target->arch);
+
+        // locate libraries and feed them into TB... in theory this process
+        // can be somewhat multithreaded so we might wanna consider that.
+        int errors = 0;
+        Cuik_Linker tmp_linker = gimme_linker(args);
+        char path[FILENAME_MAX];
+        dyn_array_for(i, tmp_linker.inputs) {
+            CUIK_TIMED_BLOCK(tmp_linker.inputs[i]) {
+                if (!cuiklink_find_library(&tmp_linker, path, tmp_linker.inputs[i])) {
+                    fprintf(stderr, "could not find library: %s\n", tmp_linker.inputs[i]);
+                    step_error(s);
+                    errors++;
+                    goto skip;
+                }
+
+                FileMap fm = open_file_map(path);
+                tb_linker_append_library(
+                    l,
+                    (TB_Slice){ strlen(path), (const uint8_t*) cuik_strdup(path) },
+                    (TB_Slice){ fm.size, fm.data }
+                );
+            }
+
+            skip:;
+        }
+
+        if (errors) {
+            fprintf(stderr, "library search paths:\n");
+            dyn_array_for(i, tmp_linker.libpaths) {
+                fprintf(stderr, "  %s\n", tmp_linker.libpaths[i]);
+            }
+            goto error;
+        }
+
+        CUIK_TIMED_BLOCK("tb_linker_append_module") {
+            tb_linker_append_module(l, mod);
+        }
+
+        if (args->entrypoint) {
+            tb_linker_set_entrypoint(l, args->entrypoint);
+        }
+
+        if (args->subsystem) {
+            tb_linker_set_subsystem(l, args->subsystem);
+        }
+
+        TB_Exports exports = tb_linker_export(l);
+        if (exports.count == 0) {
+            fprintf(stderr, "\x1b[31merror\x1b[0m: could not link executable\n");
+            tb_exporter_free(exports);
+            goto error;
+        }
+
+        if (!write_file(&exports, 0, output_path.data)) {
+            tb_exporter_free(exports);
+            goto error;
+        }
+
+        error:
+        step_error(s);
+        tb_module_destroy(mod);
         goto done;
-    }
+    } else {
+        Cuik_Path obj_path;
+        cuik_path_append(&obj_path, &output_path, 2, ".o");
 
-    FILE* file = fopen(obj_path.data, "wb");
-    if (file == NULL) {
-        fprintf(stderr, "\x1b[31merror\x1b[0m: could not open file for writing! %s\n", obj_path.data);
-        goto done;
-    }
+        TB_Exports exports = tb_module_object_export(mod, debug_fmt);
+        tb_module_destroy(mod);
 
-    fwrite(exports.files[0].data, 1, exports.files[0].length, file);
-    fclose(file);
+        if (exports.count == 0) {
+            fprintf(stderr, "\x1b[31merror\x1b[0m: could not link executable\n");
+            step_error(s);
+            tb_exporter_free(exports);
+            goto done;
+        }
 
-    if (args->flavor == TB_FLAVOR_OBJECT) {
-        tb_exporter_free(exports);
-        goto done;
-    }
+        if (!write_file(&exports, 0, obj_path.data)) {
+            step_error(s);
+            tb_exporter_free(exports);
+            goto done;
+        }
 
-    ////////////////////////////////
-    // run system linker
-    ////////////////////////////////
-    CUIK_TIMED_BLOCK("linker") {
-        Cuik_Linker l = gimme_linker(args);
+        if (args->flavor == TB_FLAVOR_OBJECT) {
+            tb_exporter_free(exports);
+            goto done;
+        }
 
-        // Add Cuik object
-        cuiklink_add_input_file(&l, obj_path.data);
-
-        cuiklink_invoke(&l, args, output_path.data, args->output_name);
-        cuiklink_deinit(&l);
+        ////////////////////////////////
+        // run system linker
+        ////////////////////////////////
+        CUIK_TIMED_BLOCK("linker") {
+            Cuik_Linker l = gimme_linker(args);
+            cuiklink_add_input_file(&l, obj_path.data);
+            cuiklink_invoke(&l, args, output_path.data, args->output_name);
+            cuiklink_deinit(&l);
+        }
     }
 
     done: step_done(s);
+}
+
+Cuik_BuildStep* cuik_driver_sys(Cuik_DriverArgs* args, const char* cmd) {
+    Cuik_BuildStep* s = cuik_calloc(1, sizeof(Cuik_BuildStep));
+    s->tag = BUILD_STEP_SYS;
+    s->invoke = sys_invoke;
+    s->sys.data = cuik_strdup(cmd);
+    return s;
 }
 
 Cuik_BuildStep* cuik_driver_cc(Cuik_DriverArgs* args, const char* source) {
@@ -275,7 +429,7 @@ Cuik_BuildStep* cuik_driver_cc(Cuik_DriverArgs* args, const char* source) {
     return s;
 }
 
-CUIK_API Cuik_BuildStep* cuik_driver_ld(Cuik_DriverArgs* args, int dep_count, Cuik_BuildStep** deps) {
+Cuik_BuildStep* cuik_driver_ld(Cuik_DriverArgs* args, int dep_count, Cuik_BuildStep** deps) {
     Cuik_BuildStep* s = cuik_calloc(1, sizeof(Cuik_BuildStep));
     s->tag = BUILD_STEP_LD;
     s->dep_count = dep_count;
@@ -296,7 +450,17 @@ CUIK_API Cuik_BuildStep* cuik_driver_ld(Cuik_DriverArgs* args, int dep_count, Cu
     return s;
 }
 
-static void step_submit(Cuik_BuildStep* s, Cuik_IThreadpool* tp, bool root) {
+TranslationUnit* cuik_driver_cc_get_tu(Cuik_BuildStep* s) {
+    assert(s->tag == BUILD_STEP_CC);
+    return s->cc.tu;
+}
+
+CompilationUnit* cuik_driver_ld_get_cu(Cuik_BuildStep* s) {
+    assert(s->tag == BUILD_STEP_LD);
+    return s->ld.cu;
+}
+
+static void step_submit(Cuik_BuildStep* s, Cuik_IThreadpool* tp, mtx_t* mutex, bool root) {
     assert(!s->visited);
     s->visited = true;
     s->tp = tp;
@@ -304,7 +468,7 @@ static void step_submit(Cuik_BuildStep* s, Cuik_IThreadpool* tp, bool root) {
     // submit dependencies
     if (s->dep_count > 0) {
         for (size_t i = 0; i < s->dep_count; i++) {
-            step_submit(s->deps[i], tp, false);
+            step_submit(s->deps[i], tp, mutex, false);
         }
 
         // once dependencies are complete, we can invoke the step
@@ -317,17 +481,39 @@ static void step_submit(Cuik_BuildStep* s, Cuik_IThreadpool* tp, bool root) {
         }
     }
 
+    BuildStepInfo info = { s, mutex };
     if (tp != NULL && !root) {
-        CUIK_CALL(tp, submit, (Cuik_TaskFn) s->invoke, sizeof(Cuik_BuildStep*), &s);
+        CUIK_CALL(tp, submit, (Cuik_TaskFn) s->invoke, sizeof(info), &info);
     } else {
         // root is the final step so we just run it synchronously
-        s->invoke(s);
+        s->invoke(&info);
     }
 }
 
 bool cuik_step_run(Cuik_BuildStep* s, Cuik_IThreadpool* tp) {
-    step_submit(s, tp, true);
+    // create temporary mutex for locked operations (usually logging)
+    mtx_t m;
+    mtx_init(&m, mtx_plain);
+    step_submit(s, tp, &m, true);
+    mtx_destroy(&m);
+
     return s->errors == 0;
+}
+
+void cuik_step_free(Cuik_BuildStep* s) {
+    for (size_t i = 0; i < s->dep_count; i++) {
+        cuik_step_free(s->deps[i]);
+    }
+
+    if (s->tag == BUILD_STEP_SYS) {
+        cuik_free(s->sys.data);
+    }
+
+    cuik_free(s);
+}
+
+bool cuik_driver_does_codegen(const Cuik_DriverArgs* args) {
+    return !args->ir && !args->emit_ir && !args->test_preproc && !args->preprocess && !args->syntax_only;
 }
 
 void cuikpp_dump_tokens(TokenStream* s) {
@@ -473,113 +659,6 @@ CUIK_API Cuik_CPP* cuik_driver_preprocess_cstr(const char* source, const Cuik_Dr
 }
 
 typedef struct {
-    CompilationUnit* cu;
-    Cuik_IThreadpool* thread_pool;
-    Cuik_DriverArgs* args;
-    Cuik_CPP** preprocessors;
-    mtx_t lock;
-} SharedDriverState;
-
-typedef struct {
-    SharedDriverState* stuff;
-
-    size_t input_i;
-    const char* input;
-    Cuik_CPP* cpp;
-
-    _Atomic int* errors;
-    Futex* remaining;
-} CompilerJob;
-
-static void dump_errors(TokenStream* tokens) {
-    cuikdg_dump_to_file(tokens, stderr);
-
-    int r = cuikdg_error_count(tokens);
-    if (r) fprintf(stderr, "failed with %d errors...\n", r);
-}
-
-static void complete_job(CompilerJob* restrict job) {
-    futex_dec(job->remaining);
-
-    Cuik_DriverArgs* restrict args = job->stuff->args;
-    if (args->verbose) {
-        size_t tu_count = dyn_array_length(args->sources);
-        size_t done = tu_count - *job->remaining;
-
-        mtx_lock(&job->stuff->lock);
-        fprintf(stderr, "[%zu/%zu] CC %s\n", done, tu_count, args->sources[job->input_i]->data);
-        mtx_unlock(&job->stuff->lock);
-    }
-}
-
-static void compile_file(void* arg);
-static void preproc_file(void* arg) {
-    CompilerJob* restrict job = arg;
-    Cuik_DriverArgs* restrict args = job->stuff->args;
-
-    Cuik_CPP* cpp = cuik_driver_preprocess(job->input, args, true);
-    job->stuff->preprocessors[job->input_i] = cpp;
-    if (cpp == NULL) {
-        *job->errors += 1;
-        return;
-    }
-
-    // dispose the preprocessor crap since we didn't need it
-    if (args->preprocess || args->test_preproc) {
-        complete_job(job);
-        return;
-    }
-
-    job->cpp = cpp;
-    if (job->stuff->thread_pool != NULL) {
-        CUIK_CALL(job->stuff->thread_pool, submit, compile_file, sizeof(CompilerJob), job);
-    } else {
-        compile_file(job);
-    }
-}
-
-static void compile_file(void* arg) {
-    CompilerJob* job = arg;
-    CompilationUnit* cu = job->stuff->cu;
-    Cuik_DriverArgs* args = job->stuff->args;
-
-    Cuik_ParseResult result;
-    TokenStream* tokens = cuikpp_get_token_stream(job->cpp);
-    CUIK_TIMED_BLOCK_ARGS("parse", cuikpp_get_main_file(tokens)) {
-        result = cuikparse_run(args->version, tokens, args->target, false);
-
-        if (result.error_count > 0) {
-            *job->errors += 1;
-            complete_job(job);
-            return;
-        }
-    }
-
-    // #pragma comment(lib, "foo.lib")
-    Cuik_ImportRequest* imports = result.imports;
-    if (imports != NULL) {
-        cuik_lock_compilation_unit(cu);
-        for (; imports != NULL; imports = imports->next) {
-            Cuik_Path* p = cuik_malloc(sizeof(Cuik_Path));
-            cuik_path_set(p, imports->lib_name);
-            dyn_array_put(job->stuff->args->libraries, p);
-        }
-        cuik_unlock_compilation_unit(cu);
-    }
-
-    TranslationUnit* tu = result.tu;
-    if (cuiksema_run(tu, NULL) > 0) {
-        *job->errors += 1;
-        complete_job(job);
-        return;
-    }
-
-    cuik_set_translation_unit_user_data(tu, job->cpp);
-    cuik_add_to_compilation_unit(cu, result.tu);
-    complete_job(job);
-}
-
-typedef struct {
     TB_Module* mod;
     TranslationUnit* tu;
     int opt_level;
@@ -692,7 +771,6 @@ static void irgen(Cuik_IThreadpool* restrict thread_pool, Cuik_DriverArgs* restr
             fprintf(stderr, "Please compile with -DCUIK_ALLOW_THREADS if you wanna spin up threads");
             abort();
             #endif
-            // free(tasks);
         } else {
             CUIK_FOR_EACH_TU(tu, cu) {
                 if (cuik_get_entrypoint_status(tu) == CUIK_ENTRYPOINT_WINMAIN && args->subsystem == TB_WIN_SUBSYSTEM_UNKNOWN) {
@@ -741,337 +819,11 @@ static void codegen(Cuik_IThreadpool* restrict thread_pool, Cuik_DriverArgs* res
     }
 }
 
-static bool export_output(Cuik_DriverArgs* restrict args, TB_Module* mod, const char* output_path) {
-    // TODO(NeGate): do a smarter system (just default to whatever the different platforms like)
-    TB_DebugFormat debug_fmt = (args->debug_info ? TB_DEBUGFMT_CODEVIEW : TB_DEBUGFMT_NONE);
-    Cuik_System sys = cuik_get_target_system(args->target);
-
-    char output_name[FILENAME_MAX];
-    if (!has_file_ext(output_path) && cuik_get_target_system(args->target) == CUIK_SYSTEM_WINDOWS) {
-        // insert file extension
-        sprintf_s(output_name, FILENAME_MAX, "%s.exe", output_path);
-    } else {
-        strcpy_s(output_name, FILENAME_MAX, output_path);
-    }
-
-    if (args->based && (args->flavor == TB_FLAVOR_SHARED || args->flavor == TB_FLAVOR_EXECUTABLE)) {
-        if (args->verbose) {
-            fprintf(stderr, "[1/1] LINK %s\n", output_name);
-        }
-
-        CUIK_TIMED_BLOCK("Export linked") {
-            // TB_ExecutableType exe = tb_system_executable_format((TB_System) sys);
-            TB_Linker* l = NULL;
-            switch (sys) {
-                case CUIK_SYSTEM_WINDOWS:
-                l = tb_linker_create(TB_EXECUTABLE_PE, args->target->arch);
-                break;
-
-                case CUIK_SYSTEM_LINUX:
-                l = tb_linker_create(TB_EXECUTABLE_ELF, args->target->arch);
-                break;
-
-                default:
-                fprintf(stderr, "unsupported platform to link with... sorry\n");
-                return false;
-            }
-            int errors = 0;
-
-            // locate libraries and feed them into TB... in theory this process
-            // can be somewhat multithreaded so we might wanna consider that.
-            Cuik_Linker tmp_linker = gimme_linker(args);
-            char path[FILENAME_MAX];
-            dyn_array_for(i, tmp_linker.inputs) {
-                CUIK_TIMED_BLOCK(tmp_linker.inputs[i]) {
-                    CUIK_TIMED_BLOCK("cuiklink_find_library") {
-                        if (!cuiklink_find_library(&tmp_linker, path, tmp_linker.inputs[i])) {
-                            fprintf(stderr, "could not find library: %s\n", tmp_linker.inputs[i]);
-                            errors++;
-                            goto skip;
-                        }
-                    }
-
-                    TB_Slice s;
-                    CUIK_TIMED_BLOCK("open_file_map") {
-                        FileMap fm = open_file_map(path);
-                        s = (TB_Slice){ fm.size, fm.data };
-                    }
-
-                    CUIK_TIMED_BLOCK("tb_linker_append_library") {
-                        TB_Slice path_slice = { strlen(path), (const uint8_t*) cuik_strdup(path) };
-                        tb_linker_append_library(l, path_slice, s);
-                    }
-                }
-                skip:;
-            }
-
-            if (errors) {
-                fprintf(stderr, "library search paths:\n");
-                dyn_array_for(i, tmp_linker.libpaths) {
-                    fprintf(stderr, "  %s\n", tmp_linker.libpaths[i]);
-                }
-                return false;
-            }
-
-            CUIK_TIMED_BLOCK("tb_linker_append_module") {
-                tb_linker_append_module(l, mod);
-            }
-
-            if (args->entrypoint) {
-                tb_linker_set_entrypoint(l, args->entrypoint);
-            }
-
-            if (args->subsystem) {
-                tb_linker_set_subsystem(l, args->subsystem);
-            }
-
-            TB_Exports exports = tb_linker_export(l);
-            if (exports.count == 0) {
-                fprintf(stderr, "\x1b[31merror\x1b[0m: could not link executable\n");
-                return false;
-            }
-
-            FILE* file = NULL;
-            CUIK_TIMED_BLOCK("fopen") {
-                file = fopen(output_name, "wb");
-                if (file == NULL) {
-                    fprintf(stderr, "could not open file for writing! %s", output_name);
-                    // tb_platform_heap_free(exports.files[0].data);
-                    return false;
-                }
-            }
-
-            CUIK_TIMED_BLOCK("fwrite") {
-                fwrite(exports.files[0].data, 1, exports.files[0].length, file);
-            }
-
-            fclose(file);
-            tb_exporter_free(exports);
-            tb_linker_destroy(l);
-        }
-
-        return true;
-    } else {
-
-        return true;
-    }
-}
-
-static void free_preprocs(SharedDriverState* restrict stuff, size_t tu_count) {
-    if (stuff->preprocessors == NULL) return;
-
-    for (size_t i = 0; i < tu_count; i++) {
-        if (stuff->preprocessors[i]) {
-            TokenStream* tokens = cuikpp_get_token_stream(stuff->preprocessors[i]);
-            if (tokens) {
-                cuiklex_free_tokens(tokens);
-                cuikpp_free(stuff->preprocessors[i]);
-            }
-        }
-    }
-
-    cuik_free(stuff->preprocessors);
-    stuff->preprocessors = NULL;
-}
-
-CUIK_API bool cuik_driver_compile(Cuik_IThreadpool* restrict thread_pool, Cuik_DriverArgs* restrict args, bool destroy_cu_after_ir, bool destroy_ir, CompilationUnit** out_cu) {
-    _Atomic int parse_errors = 0;
-
-    size_t tu_count = dyn_array_length(args->sources);
-    CompilationUnit* cu = cuik_create_compilation_unit();
-
-    SharedDriverState stuff = { cu, thread_pool, args };
-    mtx_init(&stuff.lock, mtx_plain);
-
-    CUIK_TIMED_BLOCK("Frontend") {
-        Futex remaining = tu_count;
-        stuff.preprocessors = cuik_malloc(dyn_array_length(args->sources) * sizeof(Cuik_CPP*));
-
-        dyn_array_for(i, args->sources) {
-            CompilerJob job = {
-                .stuff = &stuff,
-
-                .input_i = i,
-                .input = args->sources[i]->data,
-                .errors = &parse_errors,
-                .remaining = &remaining,
-            };
-
-            if (thread_pool) {
-                CUIK_CALL(thread_pool, submit, preproc_file, sizeof(CompilerJob), &job);
-            } else {
-                preproc_file(&job);
-            }
-        }
-
-        if (thread_pool) {
-            futex_wait_eq(&remaining, 0);
-        }
-
-        for (size_t i = 0; i < tu_count; i++) {
-            if (stuff.preprocessors[i]) {
-                TokenStream* tokens = cuikpp_get_token_stream(stuff.preprocessors[i]);
-                if (tokens) {
-                    dump_errors(tokens);
-
-                    if (args->preprocess) {
-                        cuikpp_dump_tokens(tokens);
-                    }
-
-                    // print dependencies
-                    /* Cuik_File* files = cuikpp_get_files(tokens);
-                    size_t file_count = cuikpp_get_file_count(tokens);
-
-                    for (size_t j = 0; j < file_count; j++) {
-                        if (!files[j].is_system) printf("%s ", files[j].filename);
-                    }
-                    printf("\n"); */
-                }
-            }
-        }
-    }
-
-    if (parse_errors > 0) goto error;
-    if (args->preprocess || args->test_preproc) {
-        free_preprocs(&stuff, tu_count);
-        *out_cu = cu;
-        return true;
-    }
-
-    CUIK_TIMED_BLOCK("internal link") {
-        // cuik_internal_link_compilation_unit(cu, thread_pool, args->debug_info);
-    }
-
-    TB_Module* mod = NULL;
-    CUIK_TIMED_BLOCK("allocate IR") {
-        TB_FeatureSet features = { 0 };
-        mod = tb_module_create(
-            args->target->arch, (TB_System) cuik_get_target_system(args->target), &features, args->run
-        );
-
-        cuikcg_allocate_ir(cu, thread_pool, mod);
-    }
-
-    if (args->syntax_only || args->types) {
-        *out_cu = cu;
-        return true;
-    }
-
-    if (args->ast) {
-        CUIK_FOR_EACH_TU(tu, cu) {
-            cuik_dump_translation_unit(stdout, tu, true);
-        }
-
-        *out_cu = cu;
-        return true;
-    }
-
-    ////////////////////////////////
-    // backend work
-    ////////////////////////////////
-    CUIK_TIMED_BLOCK("Backend") {
-        irgen(thread_pool, args, cu, mod);
-
-        CUIK_TIMED_BLOCK("free preprocessors") {
-            free_preprocs(&stuff, tu_count);
-        }
-
-        if (destroy_cu_after_ir) {
-            CUIK_TIMED_BLOCK("free CU") {
-                cuik_destroy_compilation_unit(cu);
-            }
-        }
-
-        if (args->ir) {
-            cu->ir_mod = mod;
-            *out_cu = cu;
-            return true;
-        }
-
-        if (args->emit_ir) {
-            CUIK_TIMED_BLOCK("Print") {
-                TB_FOR_FUNCTIONS(f, mod) {
-                    tb_function_print(f, tb_default_print_callback, stdout);
-                    printf("\n\n");
-                }
-            }
-
-            goto cleanup_tb;
-        }
-
-        CUIK_TIMED_BLOCK("CodeGen") {
-            codegen(thread_pool, args, cu, mod);
-        }
-    }
-
-    char output_path[FILENAME_MAX];
-    cuik_driver_get_output_name(args, FILENAME_MAX, output_path);
-
-    ////////////////////////////////
-    // Running executable
-    ////////////////////////////////
-    if (args->run) {
-        printf("[1/1] RUN %s\n", output_path);
-
-        // TODO(NeGate): implement Cuik JIT
-        TB_JITContext* jit = tb_module_begin_jit(mod, 0);
-        void* a = NULL;
-        TB_FOR_FUNCTIONS(f, mod) {
-            a = tb_module_apply_function(jit, f);
-        }
-        tb_module_ready_jit(jit);
-
-        int x = ((int(*)(void)) a)();
-        printf("Test = %d\n", x);
-
-        tb_module_end_jit(jit);
-    } else {
-        export_output(args, mod, output_path);
-    }
-
-    cleanup_tb:
-    if (destroy_ir) {
-        tb_free_thread_resources();
-        tb_module_destroy(mod);
-    }
-
-    *out_cu = destroy_cu_after_ir ? NULL : cu;
-    return true;
-
-    error:
-    free_preprocs(&stuff, tu_count);
-    cuik_destroy_compilation_unit(cu);
-    *out_cu = NULL;
-    return false;
-}
-
-bool cuik_driver_get_output_name(Cuik_DriverArgs* args, int cap, char path[]) {
-    assert(cap >= 1);
-    if (args->output_name != NULL && strcmp(args->output_name, "$nul") == 0) {
-        path[0] = 0;
-        return true;
-    }
-
-    if (args->output_name) {
-        // raw copy
-        int r = snprintf(path, cap, "%s", args->output_name);
-        return r >= 0 && r < cap;
-    } else {
-        const char* filename = args->sources[0]->data;
-
-        const char* ext = strrchr(filename, '.');
-        size_t len = ext ? (ext - filename) : strlen(filename);
-
-        int r = snprintf(path, cap, "%.*s", (int)len, filename);
-        return r >= 0 && r < cap;
-    }
-}
-
-CUIK_API void cuik_toolchain_free(Cuik_Toolchain* toolchain) {
+void cuik_toolchain_free(Cuik_Toolchain* toolchain) {
     cuik_free(toolchain->ctx);
 }
 
-CUIK_API Cuik_Toolchain cuik_toolchain_host(void) {
+Cuik_Toolchain cuik_toolchain_host(void) {
     #ifdef _MSC_VER
     return cuik_toolchain_msvc();
     #elif __APPLE__

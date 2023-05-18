@@ -50,6 +50,7 @@ TB_Global* tb_extern_transmute(TB_External* e, TB_DebugType* dbg_type, TB_Linkag
 
     TB_Symbol* prev = e->super.prev;
     tb_atomic_ptr_cmpxchg((void**) &m->last_symbol_of_tag[TB_SYMBOL_EXTERNAL], &e->super, prev);
+    tb_atomic_size_sub(&m->symbol_count[TB_SYMBOL_EXTERNAL], 1);
 
     // convert into global
     TB_Global* g = (TB_Global*) e;

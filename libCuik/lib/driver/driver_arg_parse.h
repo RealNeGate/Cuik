@@ -95,6 +95,7 @@ CUIK_API Cuik_Arguments* cuik_alloc_args(void) {
 }
 
 CUIK_API void cuik_free_args(Cuik_Arguments* args) {
+    arena_free(&args->arena);
     cuik_free(args);
 }
 

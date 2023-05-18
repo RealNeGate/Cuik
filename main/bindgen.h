@@ -118,13 +118,24 @@ int run_bindgen(int argc, const char** argv) {
     cuik_parse_driver_args(&args, argc, argv);
 
     // we just want to type check
-    args.types = true;
+    args.syntax_only = true;
+    args.preserve_ast = true;
 
-    CompilationUnit* cu;
-    if (!cuik_driver_compile(NULL, &args, true, true, &cu)) {
+    // compile source files
+    size_t obj_count = dyn_array_length(args.sources);
+    Cuik_BuildStep** objs = cuik_malloc(obj_count * sizeof(Cuik_BuildStep*));
+    dyn_array_for(i, args.sources) {
+        objs[i] = cuik_driver_cc(&args, args.sources[i]->data);
+    }
+
+    // link (if no codegen is performed this doesn't *really* do much)
+    Cuik_BuildStep* linked = cuik_driver_ld(&args, obj_count, objs);
+    if (!cuik_step_run(linked, NULL)) {
         fprintf(stderr, "damn...\n");
         return 1;
     }
+
+    CompilationUnit* cu = cuik_driver_ld_get_cu(linked);
 
     printf("package mylib\n\nimport \"core:c\"\n\n");
     CUIK_FOR_EACH_TU(tu, cu) {

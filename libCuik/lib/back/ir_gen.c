@@ -1497,7 +1497,7 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
             if (attrs.is_static) {
                 // Static initialization
                 char* name = tls_push(1024);
-                int name_len = snprintf(name, 1024, "%s$%s@%d", function_name, s->decl.name, tu->id_gen++);
+                int name_len = snprintf(name, 1024, "%s$%s", function_name, s->decl.name);
                 if (name_len < 0 || name_len >= 1024) {
                     assert(0 && "temporary global name too long!");
                 }

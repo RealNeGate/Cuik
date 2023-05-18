@@ -105,6 +105,7 @@ struct TranslationUnit {
     struct TranslationUnit* next;
 
     void* user_data;
+    bool is_free;
 
     #ifdef CUIK_USE_TB
     TB_Module* ir_mod;
@@ -119,7 +120,6 @@ struct TranslationUnit {
 
     // token stream
     TokenStream tokens;
-    atomic_int id_gen;
 
     // common settings
     bool has_tb_debug_info;

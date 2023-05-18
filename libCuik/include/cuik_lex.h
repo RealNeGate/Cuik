@@ -97,7 +97,7 @@ typedef struct {
     //
     // TODO(NeGate): make function for doing this
     uint32_t content_length;
-    const char* content;
+    char* content;
 
     // a DynArray(uint32_t) sorted to make it possible to binary search
     //   [line] = file_pos

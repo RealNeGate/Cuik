@@ -31,6 +31,10 @@ size_t tb_atomic_size_add(size_t* dst, size_t src) {
     return InterlockedExchangeAdd64((LONG64*)dst, src);
 }
 
+size_t tb_atomic_size_sub(size_t* dst, size_t src) {
+    return InterlockedExchangeAdd64((LONG64*)dst, -src);
+}
+
 size_t tb_atomic_size_store(size_t* dst, size_t src) {
     return InterlockedExchange64((LONG64*)dst, src);
 }
@@ -69,6 +73,10 @@ size_t tb_atomic_size_load(size_t* dst) {
 
 size_t tb_atomic_size_add(size_t* dst, size_t src) {
     return atomic_fetch_add((atomic_size_t*) dst, src);
+}
+
+size_t tb_atomic_size_sub(size_t* dst, size_t src) {
+    return atomic_fetch_sub((atomic_size_t*) dst, src);
 }
 
 size_t tb_atomic_size_store(size_t* dst, size_t src) {

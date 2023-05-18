@@ -86,8 +86,7 @@ int main(int argc, const char** argv) {
 
     if (args.time) {
         char* perf_output_path = cuik_malloc(FILENAME_MAX);
-        cuik_driver_get_output_name(&args, FILENAME_MAX, perf_output_path);
-        strncat(perf_output_path, ".spall", FILENAME_MAX);
+        snprintf(perf_output_path, FILENAME_MAX, "%s.spall", args.output_name ? args.output_name : args.sources[0]->data);
 
         cuikperf_start(perf_output_path, &spall_profiler, false);
         cuik_free(perf_output_path);
@@ -110,20 +109,28 @@ int main(int argc, const char** argv) {
         objs[i] = cuik_driver_cc(&args, args.sources[i]->data);
     }
 
-    // link
+    // link (if no codegen is performed this doesn't *really* do much)
     Cuik_BuildStep* linked = cuik_driver_ld(&args, obj_count, objs);
     if (!cuik_step_run(linked, tp)) {
         status = 1;
     }
+
+    cuik_step_free(linked);
+    cuik_free(objs);
 
     #if CUIK_ALLOW_THREADS
     cuik_threadpool_destroy(tp);
     #endif
 
     if (args.time) cuikperf_stop();
-    cuik_free_driver_args(&args);
+    cuik_free_thread_resources();
 
     done:
+    // Free arguments
+    cuik_toolchain_free(&args.toolchain);
+    cuik_free_target(args.target);
+    cuik_free_driver_args(&args);
+
     #ifdef CUIK_USE_SPALL_AUTO
     spall_auto_thread_quit();
     spall_auto_quit();

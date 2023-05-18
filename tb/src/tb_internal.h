@@ -82,6 +82,7 @@ bool tb_atomic_int_cmpxchg(int* address, int old_value, int new_value);
 
 size_t tb_atomic_size_load(size_t* dst);
 size_t tb_atomic_size_add(size_t* dst, size_t src);
+size_t tb_atomic_size_sub(size_t* dst, size_t src);
 size_t tb_atomic_size_store(size_t* dst, size_t src);
 
 void* tb_atomic_ptr_exchange(void** address, void* new_value);

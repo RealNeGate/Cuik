@@ -8,8 +8,12 @@ thread_local static Arena atoms_arena;
 thread_local static size_t interner_len;
 thread_local static Atom* interner;
 
-void atoms_dump_stats(void) {
-    printf("Atoms arena: %zu MB\n", arena_get_memory_usage(&atoms_arena) / (1024*1024));
+void atoms_free(void) {
+    interner_len = 0;
+    cuik__vfree(interner, sizeof(Atom) * (1u << INTERNER_EXP));
+    arena_free(&atoms_arena);
+
+    // printf("Atoms arena: %zu MB\n", arena_get_memory_usage(&atoms_arena) / (1024*1024));
 }
 
 Atom atoms_put(size_t len, const unsigned char* str) {

@@ -41,7 +41,6 @@ struct Cuik_DriverArgs {
     bool ir              : 1;
     bool emit_ir         : 1;
     bool ast             : 1;
-    bool types           : 1;
     bool run             : 1;
     bool bake            : 1;
     bool nocrt           : 1;
@@ -54,6 +53,7 @@ struct Cuik_DriverArgs {
     bool preprocess      : 1;
     bool think           : 1;
     bool based           : 1;
+    bool preserve_ast    : 1;
 };
 
 typedef struct Cuik_Arg Cuik_Arg;
@@ -103,9 +103,13 @@ CUIK_API Cuik_Toolchain cuik_toolchain_darwin(void);
 CUIK_API Cuik_Toolchain cuik_toolchain_host(void);
 CUIK_API void cuik_toolchain_free(Cuik_Toolchain* toolchain);
 
-
-
+////////////////////////////////
+// Integrated build system API
+////////////////////////////////
 typedef struct Cuik_BuildStep Cuik_BuildStep;
+
+// performs system command
+CUIK_API Cuik_BuildStep* cuik_driver_sys(Cuik_DriverArgs* args, const char* cmd);
 
 // generates Cuik compile for a single file
 CUIK_API Cuik_BuildStep* cuik_driver_cc(Cuik_DriverArgs* args, const char* source);
@@ -113,15 +117,13 @@ CUIK_API Cuik_BuildStep* cuik_driver_cc(Cuik_DriverArgs* args, const char* sourc
 // links against all the input steps (must all be TU producing)
 CUIK_API Cuik_BuildStep* cuik_driver_ld(Cuik_DriverArgs* args, int dep_count, Cuik_BuildStep** deps);
 
+CUIK_API TranslationUnit* cuik_driver_cc_get_tu(Cuik_BuildStep* s);
+CUIK_API CompilationUnit* cuik_driver_ld_get_cu(Cuik_BuildStep* s);
+
 // returns true on success
 CUIK_API bool cuik_step_run(Cuik_BuildStep* s, Cuik_IThreadpool* thread_pool);
 
-/*
+// frees s including all dependencies
+CUIK_API void cuik_step_free(Cuik_BuildStep* s);
 
-Cuik_BuildStep obj  = cuik_driver_cc(args, "main.o", "main.c");
-Cuik_BuildStep link = cuik_driver_ld(args, "main",   1, &obj);
-
-// runs task along with child tasks
-cuik_driver_run(&gen_obj);
-
-*/
+CUIK_API bool cuik_driver_does_codegen(const Cuik_DriverArgs* args);

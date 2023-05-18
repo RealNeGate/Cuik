@@ -274,6 +274,12 @@ void cuiklex_free_tokens(TokenStream* tokens) {
         // only free the root line_map, all the others are offsets of this one
         if (tokens->files[i].file_pos_bias == 0) {
             dyn_array_destroy(tokens->files[i].line_map);
+
+            // TODO(NeGate): we theoretically can allocate file buffers which
+            // aren't in virtual memory but we'll assume not for now
+            if (tokens->files[i].content != NULL) {
+                cuik__vfree(tokens->files[i].content, tokens->files[i].content_length + 16);
+            }
         }
     }
 

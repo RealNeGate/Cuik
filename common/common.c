@@ -46,7 +46,6 @@ void* arena_alloc(Arena* arena, size_t size, size_t align) {
     } else if (arena->top == NULL || arena->top->next == NULL) {
         // Add new page
         ArenaSegment* s = cuik__valloc(ARENA_SEGMENT_SIZE);
-
         if (!s) {
             fprintf(stderr, "error: arena is out of memory!\n");
             exit(2);

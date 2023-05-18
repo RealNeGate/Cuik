@@ -36,7 +36,7 @@ void cuik_target_build(Cuik_Target* target) {
 
 void cuik_free_target(Cuik_Target* target) {
     nl_strmap_free(target->builtin_func_map);
-    free(target);
+    cuik_free(target);
 }
 
 void target_generic_set_defines(Cuik_CPP* cpp, Cuik_System sys, bool is_64bit, bool is_little_endian) {
@@ -196,20 +196,11 @@ int target_generic_pass_parameter(ShouldPassViaReg fn, TranslationUnit* tu, TB_F
 
             TB_DataType dt = TB_TYPE_VOID;
             switch (arg_type->size) {
-                case 1:
-                dt = TB_TYPE_I8;
-                break;
-                case 2:
-                dt = TB_TYPE_I16;
-                break;
-                case 4:
-                dt = TB_TYPE_I32;
-                break;
-                case 8:
-                dt = TB_TYPE_I64;
-                break;
-                default:
-                break;
+                case 1: dt = TB_TYPE_I8;  break;
+                case 2: dt = TB_TYPE_I16; break;
+                case 4: dt = TB_TYPE_I32; break;
+                case 8: dt = TB_TYPE_I64; break;
+                default: break;
             }
 
             out_param[0] = tb_inst_load(func, dt, arg_addr, arg_type->align, is_volatile);
