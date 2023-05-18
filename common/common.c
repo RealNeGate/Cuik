@@ -144,7 +144,7 @@ void futex_dec(Futex* f) {
 #include <sys/syscall.h>
 
 void futex_signal(Futex* addr) {
-    int ret = syscall(SYS_futex, addr, FUTEX_WAKE | FUTEX_PRIVATE_FLAG, 1, NULL, NULL, 0);
+    int ret = futex(addr, FUTEX_WAKE | FUTEX_PRIVATE_FLAG, 1, NULL, NULL, 0);
     if (ret == -1) {
         perror("Futex wake");
         __builtin_trap();
@@ -152,22 +152,19 @@ void futex_signal(Futex* addr) {
 }
 
 void futex_broadcast(Futex* addr) {
-    int ret = syscall(SYS_futex, addr, FUTEX_WAKE | FUTEX_PRIVATE_FLAG, INT32_MAX, NULL, NULL, 0);
+    int ret = futex(addr, FUTEX_WAKE | FUTEX_PRIVATE_FLAG, INT32_MAX, NULL, NULL, 0);
     if (ret == -1) {
-        perror("Futex wake");
         __builtin_trap();
     }
 }
 
 void futex_wait(Futex* addr, Futex val) {
     for (;;) {
-        int ret = syscall(SYS_futex, addr, FUTEX_WAIT | FUTEX_PRIVATE_FLAG, val, NULL, NULL, 0);
+        int ret = futex(addr, FUTEX_WAIT | FUTEX_PRIVATE_FLAG, val, NULL, NULL, 0);
+
         if (ret == -1) {
             if (errno != EAGAIN) {
-                perror("Futex wait");
                 __builtin_trap();
-            } else {
-                return;
             }
         } else if (ret == 0) {
             if (*addr != val) {
