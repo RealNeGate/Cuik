@@ -1,5 +1,4 @@
 #include "../front/atoms.h"
-#include <sys/stat.h>
 
 typedef struct InternalFile InternalFile;
 struct InternalFile {

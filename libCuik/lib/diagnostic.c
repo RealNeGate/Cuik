@@ -5,9 +5,13 @@
 #include <stdarg.h>
 #include "preproc/lexer.h"
 
+typedef struct {
+    va_list va;
+} VaList;
+
 // We extend on stb_sprintf with support for a custom callback because
 // diagnostic formats have extra options.
-static const char* custom_diagnostic_format(uint32_t* out_length, char ch, va_list* va);
+static const char* custom_diagnostic_format(uint32_t* out_length, char ch, VaList* va);
 
 #define STB_SPRINTF_STATIC
 #define STB_SPRINTF_IMPLEMENTATION
@@ -33,19 +37,19 @@ static char* sprintf_callback(const char* buf, void* user, int len) {
     return NULL;
 }
 
-static const char* custom_diagnostic_format(uint32_t* out_length, char ch, va_list* va) {
+static const char* custom_diagnostic_format(uint32_t* out_length, char ch, VaList* va) {
     static _Thread_local char temp_string[1024];
 
     switch (ch) {
         case 'S': {
-            String str = va_arg(*va, String);
+            String str = va_arg(va->va, String);
 
             *out_length = str.length;
             return (const char*) str.data;
         }
 
         case 'T': {
-            Cuik_Type* t = va_arg(*va, Cuik_Type*);
+            Cuik_Type* t = va_arg(va->va, Cuik_Type*);
             type_as_string(sizeof(temp_string), temp_string, t);
 
             *out_length = strlen(temp_string);

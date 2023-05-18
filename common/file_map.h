@@ -50,6 +50,7 @@ static void close_file_map(FileMap* file_map) {
 }
 #else
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
 

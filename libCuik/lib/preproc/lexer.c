@@ -28,7 +28,7 @@ static uint64_t hash_with_len(const void* data, size_t len) {
     return h;
 }
 
-static TknType classify_ident(const unsigned char* restrict str, size_t len, bool is_glsl) {
+TknType classify_ident(const unsigned char* restrict str, size_t len, bool is_glsl) {
     // Auto-generated with lexgen.c
     size_t v = (hash_with_len(str, len) * PERFECT_HASH_SEED) >> 56;
     v = keywords_table[v];
