@@ -140,13 +140,13 @@ void futex_dec(Futex* f) {
 }
 
 #ifdef __linux__
+#include <errno.h>
 #include <linux/futex.h>
 #include <sys/syscall.h>
 
 void futex_signal(Futex* addr) {
     int ret = futex(addr, FUTEX_WAKE | FUTEX_PRIVATE_FLAG, 1, NULL, NULL, 0);
     if (ret == -1) {
-        perror("Futex wake");
         __builtin_trap();
     }
 }
