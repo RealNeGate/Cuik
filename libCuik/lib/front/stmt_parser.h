@@ -1,8 +1,8 @@
 static ParseResult parse_pragma(Cuik_Parser* restrict parser, TokenStream* restrict s);
 static Stmt* parse_stmt2(Cuik_Parser* parser, TokenStream* restrict s);
 
-static Stmt* alloc_stmt(void) {
-    Stmt* stmt = ARENA_ALLOC(&local_ast_arena, Stmt);
+static Stmt* alloc_stmt(Cuik_Parser* parser) {
+    Stmt* stmt = ARENA_ALLOC(parser->arena, Stmt);
     memset(stmt, 0, sizeof(Stmt));
     return stmt;
 }
@@ -45,7 +45,7 @@ static bool parse_decl_or_expr2(Cuik_Parser* parser, TokenStream* restrict s, si
                 : parse_declarator2(parser, s, type, false);
 
             // Convert into statement
-            Stmt* n = alloc_stmt();
+            Stmt* n = alloc_stmt(parser);
             n->op = STMT_DECL;
             n->loc = decl.loc;
             n->decl = (struct StmtDecl){
@@ -85,7 +85,7 @@ static bool parse_decl_or_expr2(Cuik_Parser* parser, TokenStream* restrict s, si
                     diag_err(s, decl.loc, "non-function declarations cannot be inline");
                 }
 
-                n->attr_list = parse_attributes(s, n->attr_list);
+                n->attr_list = parse_attributes(parser, s, n->attr_list);
                 tokens_next(s);
 
                 if (tokens_get(s)->type == '{') {
@@ -112,7 +112,7 @@ static bool parse_decl_or_expr2(Cuik_Parser* parser, TokenStream* restrict s, si
         expect_char(s, ';');
         return true;
     } else {
-        Stmt* n = alloc_stmt();
+        Stmt* n = alloc_stmt(parser);
         size_t start_tkn = s->list.current; // used for error recovery
         Expr* expr = parse_expr(parser, s);
 
@@ -191,7 +191,7 @@ static ParseResult parse_stmt_or_expr2(Cuik_Parser* parser, TokenStream* restric
             *out_result = stmt;
             return PARSE_SUCCESS;
         } else {
-            Stmt* n = alloc_stmt();
+            Stmt* n = alloc_stmt(parser);
             size_t start_tkn = s->list.current; // used for error recovery
 
             Expr* expr = parse_expr(parser, s);
@@ -251,10 +251,10 @@ static Stmt* parse_stmt2(Cuik_Parser* parser, TokenStream* restrict s) {
     if (peek == '{') {
         tokens_next(s);
 
-        n = alloc_stmt();
+        n = alloc_stmt(parser);
         parse_compound_stmt2(parser, s, n);
     } else if (peek == TOKEN_KW_return) {
-        n = alloc_stmt();
+        n = alloc_stmt(parser);
         tokens_next(s);
 
         Expr* e = 0;
@@ -267,7 +267,7 @@ static Stmt* parse_stmt2(Cuik_Parser* parser, TokenStream* restrict s) {
 
         expect_with_reason(s, ';', "return");
     } else if (peek == TOKEN_KW_if) {
-        n = alloc_stmt();
+        n = alloc_stmt(parser);
         tokens_next(s);
 
         LOCAL_SCOPE {
@@ -303,7 +303,7 @@ static Stmt* parse_stmt2(Cuik_Parser* parser, TokenStream* restrict s) {
             };
         }
     } else if (peek == TOKEN_KW_switch) {
-        n = alloc_stmt();
+        n = alloc_stmt(parser);
         tokens_next(s);
 
         LOCAL_SCOPE {
@@ -328,7 +328,7 @@ static Stmt* parse_stmt2(Cuik_Parser* parser, TokenStream* restrict s) {
         }
     } else if (peek == TOKEN_KW_case) {
         // TODO(NeGate): error messages
-        n = alloc_stmt();
+        n = alloc_stmt(parser);
         assert(current_switch_or_case);
         tokens_next(s);
 
@@ -346,7 +346,7 @@ static Stmt* parse_stmt2(Cuik_Parser* parser, TokenStream* restrict s) {
             n->case_.key = key;
 
             for (intmax_t i = key; i < key_max; i++) {
-                Stmt* curr = alloc_stmt();
+                Stmt* curr = alloc_stmt(parser);
                 curr->op = STMT_CASE;
                 curr->case_ = (struct StmtCase){.key = i + 1};
 
@@ -373,7 +373,7 @@ static Stmt* parse_stmt2(Cuik_Parser* parser, TokenStream* restrict s) {
         parse_stmt_or_expr2(parser, s, &n->case_.body);
     } else if (peek == TOKEN_KW_default) {
         // TODO(NeGate): error messages
-        n = alloc_stmt();
+        n = alloc_stmt(parser);
         assert(current_switch_or_case);
         tokens_next(s);
 
@@ -394,7 +394,7 @@ static Stmt* parse_stmt2(Cuik_Parser* parser, TokenStream* restrict s) {
         parse_stmt_or_expr2(parser, s, &n->default_.body);
     } else if (peek == TOKEN_KW_break) {
         // TODO(NeGate): error messages
-        n = alloc_stmt();
+        n = alloc_stmt(parser);
         assert(current_breakable);
 
         tokens_next(s);
@@ -415,7 +415,7 @@ static Stmt* parse_stmt2(Cuik_Parser* parser, TokenStream* restrict s) {
         n->op = STMT_DISCARD;
     } else if (peek == TOKEN_KW_continue) {
         // TODO(NeGate): error messages
-        n = alloc_stmt();
+        n = alloc_stmt(parser);
         assert(current_continuable);
 
         tokens_next(s);
@@ -426,7 +426,7 @@ static Stmt* parse_stmt2(Cuik_Parser* parser, TokenStream* restrict s) {
             .target = current_continuable,
         };
     } else if (peek == TOKEN_KW_while) {
-        n = alloc_stmt();
+        n = alloc_stmt(parser);
         tokens_next(s);
 
         LOCAL_SCOPE {
@@ -457,7 +457,7 @@ static Stmt* parse_stmt2(Cuik_Parser* parser, TokenStream* restrict s) {
 
         return n;
     } else if (peek == TOKEN_KW_for) {
-        n = alloc_stmt();
+        n = alloc_stmt(parser);
         tokens_next(s);
 
         LOCAL_SCOPE {
@@ -470,7 +470,7 @@ static Stmt* parse_stmt2(Cuik_Parser* parser, TokenStream* restrict s) {
                 tokens_next(s);
             } else {
                 // NOTE(NeGate): This is just a decl list or a single expression.
-                first = alloc_stmt();
+                first = alloc_stmt(parser);
                 first->op = STMT_COMPOUND;
 
                 size_t kid_count = 0;
@@ -529,7 +529,7 @@ static Stmt* parse_stmt2(Cuik_Parser* parser, TokenStream* restrict s) {
             };
         }
     } else if (peek == TOKEN_KW_do) {
-        n = alloc_stmt();
+        n = alloc_stmt(parser);
         tokens_next(s);
 
         // Push this as a breakable statement
@@ -570,7 +570,7 @@ static Stmt* parse_stmt2(Cuik_Parser* parser, TokenStream* restrict s) {
 
         return n;
     } else if (peek == TOKEN_KW_goto) {
-        n = alloc_stmt();
+        n = alloc_stmt(parser);
         tokens_next(s);
 
         // read label name
@@ -586,7 +586,7 @@ static Stmt* parse_stmt2(Cuik_Parser* parser, TokenStream* restrict s) {
         // skip to the semicolon
         tokens_next(s);
 
-        Expr* target = alloc_expr();
+        Expr* target = alloc_expr(parser);
         ptrdiff_t search = nl_strmap_get_cstr(labels, name);
         if (search >= 0) {
             *target = (Expr){
@@ -596,7 +596,7 @@ static Stmt* parse_stmt2(Cuik_Parser* parser, TokenStream* restrict s) {
             };
         } else {
             // not defined yet, make a placeholder
-            Stmt* label_decl = alloc_stmt();
+            Stmt* label_decl = alloc_stmt(parser);
             label_decl->op = STMT_LABEL;
             label_decl->label = (struct StmtLabel){ .name = name };
             nl_strmap_put_cstr(labels, name, label_decl);
@@ -624,7 +624,7 @@ static Stmt* parse_stmt2(Cuik_Parser* parser, TokenStream* restrict s) {
         if (search >= 0) {
             n = labels[search];
         } else {
-            n = alloc_stmt();
+            n = alloc_stmt(parser);
             n->op = STMT_LABEL;
             n->loc = tokens_get_range(s);
             n->label = (struct StmtLabel){ .name = name };
@@ -676,7 +676,7 @@ static bool parse_function(Cuik_Parser* parser, TokenStream* restrict s, Stmt* d
     {
         cuik__sema_function_stmt = decl_node;
 
-        body = alloc_stmt();
+        body = alloc_stmt(parser);
         parse_compound_stmt2(parser, s, body);
 
         cuik__sema_function_stmt = NULL;

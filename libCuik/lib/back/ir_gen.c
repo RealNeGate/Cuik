@@ -660,9 +660,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
                     if (tu->parent != NULL) {
                         stmt->backing.s = get_external(tu->parent, name);
                     } else {
-                        mtx_lock(&tu->arena_mutex);
                         stmt->backing.e = tb_extern_create(tu->ir_mod, name, TB_EXTERNAL_SO_LOCAL);
-                        mtx_unlock(&tu->arena_mutex);
                     }
                 }
 

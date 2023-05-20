@@ -1,7 +1,7 @@
 #include "cuik.h"
 #include "atoms.h"
 
-enum { INTERNER_EXP = 24 };
+enum { INTERNER_EXP = 20 };
 
 thread_local static Arena atoms_arena;
 
@@ -9,16 +9,19 @@ thread_local static size_t interner_len;
 thread_local static Atom* interner;
 
 void atoms_free(void) {
-    interner_len = 0;
-    cuik__vfree(interner, sizeof(Atom) * (1u << INTERNER_EXP));
-    arena_free(&atoms_arena);
-
-    // printf("Atoms arena: %zu MB\n", arena_get_memory_usage(&atoms_arena) / (1024*1024));
+    CUIK_TIMED_BLOCK("free atoms") {
+        arena_free(&atoms_arena);
+        cuik__vfree(interner, (1u << INTERNER_EXP) * sizeof(Atom));
+        interner_len = 0;
+        interner = NULL;
+    }
 }
 
 Atom atoms_put(size_t len, const unsigned char* str) {
-    if (!interner) {
-        interner = cuik__valloc(sizeof(Atom) * (1u << INTERNER_EXP));
+    if (interner == NULL) {
+        CUIK_TIMED_BLOCK("alloc atoms") {
+            interner = cuik__valloc((1u << INTERNER_EXP) * sizeof(Atom));
+        }
     }
 
     uint32_t hash = murmur3_32(str, len);

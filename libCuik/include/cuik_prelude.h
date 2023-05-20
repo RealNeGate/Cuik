@@ -26,3 +26,14 @@ typedef enum TB_WindowsSubsystem {
     TB_WIN_SUBSYSTEM_EFI_APP,
 } TB_WindowsSubsystem;
 #endif
+
+#ifndef ARENA_H
+#define ARENA_H
+
+typedef struct ArenaSegment ArenaSegment;
+typedef struct {
+    struct ArenaSegment* base;
+    struct ArenaSegment* top;
+} Arena;
+
+#endif

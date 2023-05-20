@@ -3,20 +3,27 @@
 
 #define ARENA_SEGMENT_SIZE (16 * 1024 * 1024)
 
+// nightmare dependency issues lmao
+#ifndef ARENA_H
+#define ARENA_H
+
+typedef struct ArenaSegment ArenaSegment;
+typedef struct {
+    struct ArenaSegment* base;
+    struct ArenaSegment* top;
+} Arena;
+
+#endif
+
 // It's a linked list :)
-typedef struct ArenaSegment {
+struct ArenaSegment {
     struct ArenaSegment* next;
     size_t used;
     size_t capacity;
     size_t _pad;
 
     unsigned char data[];
-} ArenaSegment;
-
-typedef struct {
-    ArenaSegment* base;
-    ArenaSegment* top;
-} Arena;
+};
 
 #define ARENA_ALLOC(arena, T) arena_alloc(arena, sizeof(T), _Alignof(T))
 #define ARENA_ARR_ALLOC(arena, count, T) arena_alloc(arena, (count) * sizeof(T), _Alignof(T))

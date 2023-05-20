@@ -92,10 +92,7 @@ struct Cuik_GlobalSymbols {
 typedef struct Cuik_TypeTable {
     Cuik_Target* target;
     Arena* arena;
-
-    // we're hash-consing our types to avoid duplicates all over the place
-    size_t exp, count;
-    Cuik_Type** table;
+    DynArray(Cuik_Type*) tracked;
 } Cuik_TypeTable;
 
 struct TranslationUnit {
@@ -126,12 +123,9 @@ struct TranslationUnit {
 
     Cuik_Entrypoint entrypoint_status;
 
-    Arena ast_arena;
-
     // DynArray(Stmt*)
     Stmt** top_level_stmts;
 
-    mtx_t arena_mutex;
     mtx_t diag_mutex;
     NL_Strmap(Diag_UnresolvedSymbol*) unresolved_symbols;
 

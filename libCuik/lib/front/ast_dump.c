@@ -758,8 +758,7 @@ void cuik_dump_translation_unit(FILE* stream, TranslationUnit* tu, bool minimali
 void ast_dump_stats(TranslationUnit* tu, FILE* stream) {
     printf("\n~~~ AST STATS ~~~\n");
     printf("# Top level stmts: %zu\n", dyn_array_length(tu->top_level_stmts));
-    // printf("# Type Arena: %zu kB\n", arena_get_memory_usage(&tu->type_arena) / 1024);
-    printf("# AST Arena:  %zu kB\n", arena_get_memory_usage(&tu->ast_arena) / 1024);
+    // printf("# Arena:  %zu kB\n", arena_get_memory_usage(&tu->arena) / 1024);
 }
 
 void ast_dump_type(TranslationUnit* tu, Cuik_Type* ty, int depth, int offset) {

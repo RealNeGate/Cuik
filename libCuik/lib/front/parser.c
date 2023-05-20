@@ -96,16 +96,6 @@ static int align_up(int a, int b) {
     return a + (b - (a % b)) % b;
 }
 
-static Stmt* make_stmt(TranslationUnit* tu, TokenStream* restrict s) {
-    Stmt* stmt = arena_alloc(&local_ast_arena, sizeof(Stmt), _Alignof(Stmt));
-    memset(stmt, 0, sizeof(Stmt));
-    return stmt;
-}
-
-static Expr* make_expr(TranslationUnit* tu) {
-    return ARENA_ALLOC(&local_ast_arena, Expr);
-}
-
 static Symbol* find_global_symbol(Cuik_GlobalSymbols* restrict syms, const char* name) {
     ptrdiff_t search = nl_strmap_get_cstr(syms->symbols, name);
     return (search >= 0) ? &syms->symbols[search] : NULL;
@@ -200,6 +190,7 @@ struct Cuik_Parser {
     // out-of-order parsing is only done while in global scope
     bool is_in_global_scope;
 
+    Arena* arena;
     DynArray(Stmt*) top_level_stmts;
     Cuik_TypeTable types;
     Cuik_GlobalSymbols globals;
@@ -229,7 +220,7 @@ typedef enum ParseResult {
 } ParseResult;
 
 static void diag_unresolved_symbol(Cuik_Parser* parser, Atom name, SourceLoc loc) {
-    Diag_UnresolvedSymbol* d = ARENA_ALLOC(&local_ast_arena, Diag_UnresolvedSymbol);
+    Diag_UnresolvedSymbol* d = ARENA_ALLOC(parser->arena, Diag_UnresolvedSymbol);
     d->next = NULL;
     d->name = name;
     d->loc = (SourceRange){ loc, { loc.raw + strlen(name) } };
@@ -288,7 +279,6 @@ static Cuik_GlslQuals* parse_glsl_qualifiers(Cuik_Parser* restrict parser, Token
 
 #define THROW_IF_ERROR() if ((r = cuikdg_error_count(s)) > 0) return (Cuik_ParseResult){ r };
 #define TYPE_INSERT(...) type_insert(&parser->types, __VA_ARGS__)
-#define TYPE_INTERN(...) type_intern(&parser->types, __VA_ARGS__)
 
 #include "expr_parser.h"
 #include "decl_parser.h"
@@ -455,11 +445,7 @@ void cuik_destroy_translation_unit(TranslationUnit* restrict tu) {
     if (!tu->is_free) {
         tu->is_free = true;
         dyn_array_destroy(tu->top_level_stmts);
-
         nl_strmap_free(tu->globals.symbols);
-        arena_free(&tu->ast_arena);
-        free_type_table(&tu->types);
-        mtx_destroy(&tu->arena_mutex);
     }
 
     if (tu->parent == NULL) {

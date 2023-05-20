@@ -36,7 +36,7 @@ typedef struct Cuik_ParseResult {
     Cuik_ImportRequest* imports; // linked list of imported libs.
 } Cuik_ParseResult;
 
-CUIK_API Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cuik_Target* target, bool only_code_index);
+CUIK_API Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cuik_Target* target, Arena* restrict arena, bool only_code_index);
 
 // sets the user data field, returns the old value
 CUIK_API void* cuik_set_translation_unit_user_data(TranslationUnit* restrict tu, void* ud);

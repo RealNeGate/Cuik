@@ -55,7 +55,7 @@ if system == "Windows":
 		ldflags += " -o "
 	else:
 		ld = "lld-link"
-		ldflags += " -debug kernel32.lib msvcrt.lib libcmt.lib -out:"
+		ldflags += " -debug onecore.lib msvcrt.lib libcmt.lib -out:"
 
 	lib_ext = ".lib"
 	exe_ext = ".exe"

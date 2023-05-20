@@ -31,7 +31,9 @@ void cuik_init(void) {
 }
 
 void cuik_free_thread_resources(void) {
+    atoms_free();
     arena_free(&thread_arena);
+    cuik__pool_collect();
 }
 
 Cuik_Target* cuik_target_host(void) {
@@ -143,6 +145,7 @@ int sprintf_s(char* buffer, size_t len, const char* format, ...) {
         fprintf(stderr, "error: buffer overflow on sprintf_s!\n");
         abort();
     }
+
     return result;
 }
 #endif

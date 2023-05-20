@@ -56,6 +56,7 @@ struct Cuik_BuildStep {
             Cuik_DriverArgs* args;
             const char* source;
 
+            Arena arena;
             Cuik_CPP* cpp;
             TranslationUnit* tu;
         } cc;
@@ -175,7 +176,7 @@ static void cc_invoke(BuildStepInfo* restrict info) {
 
     Cuik_ParseResult result;
     CUIK_TIMED_BLOCK_ARGS("parse", s->cc.source) {
-        result = cuikparse_run(args->version, tokens, args->target, false);
+        result = cuikparse_run(args->version, tokens, args->target, &s->cc.arena, false);
         s->cc.tu = result.tu;
 
         if (result.error_count > 0) {
@@ -223,12 +224,17 @@ static void cc_invoke(BuildStepInfo* restrict info) {
     mtx_unlock(info->mutex);
 
     TB_Module* mod = cu->ir_mod;
-    cuikcg_allocate_ir2(tu, mod);
+    CUIK_TIMED_BLOCK("Allocate IR") {
+        cuikcg_allocate_ir2(tu, mod);
+    }
+
     irgen(s->tp, args, cu, mod);
 
     // once we've complete debug info and diagnostics we don't need line info
-    cuiklex_free_tokens(tokens);
-    cuikpp_free(cpp);
+    CUIK_TIMED_BLOCK("Free CPP") {
+        cuiklex_free_tokens(tokens);
+        cuikpp_free(cpp);
+    }
 
     // TODO(NeGate): we probably want to do the fancy threading soon
     if (args->opt_level > 0) {
@@ -253,10 +259,15 @@ static void cc_invoke(BuildStepInfo* restrict info) {
     }
 
     if (!args->preserve_ast) {
-        cuik_destroy_translation_unit(tu);
+        CUIK_TIMED_BLOCK("Destroy TU") {
+            cuik_destroy_translation_unit(tu);
+        }
+
+        CUIK_TIMED_BLOCK("Free arena") {
+            arena_free(&s->cc.arena);
+        }
     }
 
-    atoms_free();
     goto done_no_cpp;
 
     // these are called for early exits
@@ -482,11 +493,13 @@ static void step_submit(Cuik_BuildStep* s, Cuik_IThreadpool* tp, mtx_t* mutex, b
     }
 
     BuildStepInfo info = { s, mutex };
-    if (tp != NULL && !root) {
-        CUIK_CALL(tp, submit, (Cuik_TaskFn) s->invoke, sizeof(info), &info);
-    } else {
-        // root is the final step so we just run it synchronously
-        s->invoke(&info);
+    CUIK_TIMED_BLOCK("task invoke") {
+        if (tp != NULL && !root) {
+            CUIK_CALL(tp, submit, (Cuik_TaskFn) s->invoke, sizeof(info), &info);
+        } else {
+            // root is the final step so we just run it synchronously
+            s->invoke(&info);
+        }
     }
 }
 
@@ -711,14 +724,11 @@ typedef struct {
 
 static void codegen_job(void* arg) {
     CodegenTask task = *((CodegenTask*) arg);
+    TB_Function* f = task.start;
 
-    CUIK_TIMED_BLOCK("Codegen") {
-        TB_Function* f = task.start;
-
-        for (size_t i = 0; i < TB_TASK_BATCH_SIZE && f != NULL; i++) {
-            tb_module_compile_function(task.mod, f, TB_ISEL_FAST);
-            f = tb_next_function(f);
-        }
+    for (size_t i = 0; i < TB_TASK_BATCH_SIZE && f != NULL; i++) {
+        tb_module_compile_function(task.mod, f, TB_ISEL_FAST);
+        f = tb_next_function(f);
     }
 
     futex_dec(task.remaining);

@@ -10,8 +10,23 @@
 #include <sys/mman.h>
 #endif
 
+uint64_t cuik__page_size = 0;
+uint64_t cuik__page_mask = 0;
+
 void* cuik__valloc(size_t size) {
     #ifdef _WIN32
+    if (cuik__page_size == 0) {
+        // unsupported... sadge
+        SYSTEM_INFO si;
+        GetSystemInfo(&si);
+
+        cuik__page_size = si.dwPageSize;
+        cuik__page_mask = si.dwPageSize - 1;
+    }
+
+    // round size to page size
+    size = (size + cuik__page_mask) & ~cuik__page_mask;
+
     return VirtualAlloc(NULL, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
     #else
     return mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);

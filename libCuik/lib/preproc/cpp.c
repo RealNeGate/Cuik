@@ -213,13 +213,13 @@ Cuik_CPP* cuikpp_make(const Cuik_CPPDesc* desc) {
         .fs        = desc->fs,
         .user_data = desc->fs_data,
 
-        .stack = cuik__valloc(MAX_CPP_STACK_DEPTH * sizeof(CPPStackSlot)),
+        .stack = cuik__pool_alloc(CUIK_POOL_CPP_STACK, MAX_CPP_STACK_DEPTH * sizeof(CPPStackSlot)),
         .macros = {
             .exp = 24,
-            .keys = cuik__valloc((1u << 24) * sizeof(String)),
-            .vals = cuik__valloc((1u << 24) * sizeof(MacroDef)),
+            .keys = cuik__pool_alloc(CUIK_POOL_CPP_HT_KEYS, (1u << 24) * sizeof(String)),
+            .vals = cuik__pool_alloc(CUIK_POOL_CPP_HT_VALS, (1u << 24) * sizeof(MacroDef)),
         },
-        .the_shtuffs = cuik__valloc(THE_SHTUFFS_SIZE),
+        .the_shtuffs = cuik__pool_alloc(CUIK_POOL_CPP_SHTUFF, THE_SHTUFFS_SIZE),
     };
 
     // initialize dynamic arrays
@@ -302,9 +302,9 @@ void cuikpp_finalize(Cuik_CPP* ctx) {
     #endif
 
     CUIK_TIMED_BLOCK("cuikpp_finalize") {
-        cuik__vfree(ctx->macros.keys, (1u << ctx->macros.exp) * sizeof(String));
-        cuik__vfree(ctx->macros.vals, (1u << ctx->macros.exp) * sizeof(MacroDef));
-        cuik__vfree(ctx->stack, MAX_CPP_STACK_DEPTH * sizeof(CPPStackSlot));
+        cuik__pool_drop(CUIK_POOL_CPP_HT_KEYS, ctx->macros.keys, (1u << ctx->macros.exp) * sizeof(String));
+        cuik__pool_drop(CUIK_POOL_CPP_HT_VALS, ctx->macros.vals, (1u << ctx->macros.exp) * sizeof(MacroDef));
+        cuik__pool_drop(CUIK_POOL_CPP_STACK, ctx->stack, MAX_CPP_STACK_DEPTH * sizeof(CPPStackSlot));
 
         ctx->macros.keys = NULL;
         ctx->macros.vals = NULL;
@@ -321,7 +321,7 @@ void cuikpp_free(Cuik_CPP* ctx) {
         cuikpp_finalize(ctx);
     }
 
-    cuik__vfree((void*) ctx->the_shtuffs, THE_SHTUFFS_SIZE);
+    cuik__pool_drop(CUIK_POOL_CPP_SHTUFF, (void*) ctx->the_shtuffs, THE_SHTUFFS_SIZE);
     cuik_free(ctx);
 }
 

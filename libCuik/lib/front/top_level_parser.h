@@ -128,7 +128,7 @@ static ParseResult parse_static_assert(Cuik_Parser* restrict parser, TokenStream
 // decls ::= decl-spec (declarator (',' declarator)+)?
 static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restrict s) {
     size_t starting_point = s->list.current;
-    Cuik_Attribute* attribute_list = parse_attributes(s, NULL);
+    Cuik_Attribute* attribute_list = parse_attributes(parser, s, NULL);
     SourceLoc loc = tokens_get_location(s);
 
     // must be a declaration since it's a top level statement
@@ -161,7 +161,7 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
         // }
 
         // Convert into statement
-        Stmt* n = alloc_stmt();
+        Stmt* n = alloc_stmt(parser);
         n->op = STMT_GLOBAL_DECL;
         n->loc = decl.loc;
         n->decl = (struct StmtDecl){
@@ -208,7 +208,7 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
             // typedef is just a special storage class
             // diag_note(s, decl.loc, "Typedef: %s", decl.name);
         } else {
-            n->attr_list = parse_attributes(s, n->attr_list);
+            n->attr_list = parse_attributes(parser, s, n->attr_list);
 
             if (decl.name != NULL) {
                 // declaration endings
@@ -293,7 +293,7 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
 
                 {
                     // mark potential conflict, we'll handle it once we have more context
-                    TypeConflict* c = ARENA_ALLOC(&local_ast_arena, TypeConflict);
+                    TypeConflict* c = ARENA_ALLOC(parser->arena, TypeConflict);
                     c->old_def = old_def;
                     c->new_def = sym;
                     // insert
@@ -427,7 +427,7 @@ static void check_for_entry(TranslationUnit* restrict tu, Cuik_GlobalSymbols* re
     }
 }
 
-Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cuik_Target* target, bool only_code_index) {
+Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cuik_Target* target, Arena* restrict arena, bool only_code_index) {
     assert(s != NULL);
 
     tls_init();
@@ -439,10 +439,10 @@ Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cu
     parser.tokens = *s;
     parser.target = target;
     parser.pointer_byte_size = target->pointer_byte_size;
-    parser.static_assertions = dyn_array_create(int, 2048);
+    parser.static_assertions = dyn_array_create(int, 128);
     parser.local_static_storage_decls = dyn_array_create(Stmt*, 64);
     parser.types = init_type_table(target);
-    parser.types.arena = &parser.tu->ast_arena;
+    parser.types.arena = parser.arena = arena;
 
     // just a shorthand so it's faster to grab
     parser.default_int = (Cuik_Type*) &target->signed_ints[CUIK_BUILTIN_INT];
@@ -500,12 +500,9 @@ Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cu
         .types = parser.types,
         .globals = parser.globals,
     };
-    mtx_init(&parser.tu->arena_mutex, mtx_plain);
 
     if (only_code_index) {
         check_for_entry(parser.tu, &parser.globals);
-        arena_append(&parser.tu->ast_arena, &local_ast_arena);
-        local_ast_arena = (Arena){ 0 };
         return (Cuik_ParseResult){ .tu = parser.tu, .imports = parser.import_libs };
     }
 
@@ -555,12 +552,9 @@ Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cu
         // do record layouts and shi
         resolve_pending_exprs(&parser);
 
-        size_t type_cap = 1ull << parser.types.exp;
-        for (size_t i = 0; i < type_cap; i++) if (parser.types.table[i]) {
-            Cuik_Type* type = parser.types.table[i];
-            assert(type->align != -1);
-
-            type_layout2(&parser, &parser.tokens, type);
+        dyn_array_for(i, parser.types.tracked) {
+            assert(parser.types.tracked[i]->align != -1);
+            type_layout2(&parser, &parser.tokens, parser.types.tracked[i]);
         }
 
         // constant fold any global expressions
@@ -575,12 +569,13 @@ Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cu
         quit_phase2:;
     }
     dyn_array_destroy(pending_exprs);
+    dyn_array_destroy(parser.types.tracked);
     dyn_array_destroy(parser.static_assertions);
     THROW_IF_ERROR();
 
     CUIK_TIMED_BLOCK("phase 3") {
-        // we might have added types in phase2, update accordingly
-        parser.types = parser.tu->types;
+        // we can't track types at this point, resolving that is over
+        parser.tu->types.tracked = NULL;
 
         // allocate the local symbol tables
         local_symbols = cuik_malloc(sizeof(Symbol) * MAX_LOCAL_SYMBOLS);
@@ -654,8 +649,6 @@ Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cu
     THROW_IF_ERROR();
 
     check_for_entry(parser.tu, &parser.globals);
-    arena_append(&parser.tu->ast_arena, &local_ast_arena);
-    local_ast_arena = (Arena){ 0 };
 
     parser.tokens.diag->parser = NULL;
     return (Cuik_ParseResult){ .tu = parser.tu, .imports = parser.import_libs };

@@ -4,6 +4,7 @@
 #include "timer.c"
 #include "hash.c"
 #include "path.c"
+#include "mem_pool.c"
 
 #define NL_STRING_MAP_IMPL
 #define NL_STRING_MAP_INLINE

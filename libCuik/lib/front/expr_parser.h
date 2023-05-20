@@ -63,12 +63,12 @@ static ExprInfo get_binop(TknType ty) {
     #undef ON
 }
 
-static Expr* alloc_expr(void) {
-    return ARENA_ALLOC(&local_ast_arena, Expr);
+static Expr* alloc_expr(Cuik_Parser* parser) {
+    return ARENA_ALLOC(parser->arena, Expr);
 }
 
-static InitNode* make_init_node(TokenStream* restrict s, int mode) {
-    InitNode* n = ARENA_ALLOC(&local_ast_arena, InitNode);
+static InitNode* make_init_node(Cuik_Parser* parser, TokenStream* restrict s, int mode) {
+    InitNode* n = ARENA_ALLOC(parser->arena, InitNode);
     *n = (InitNode){ .mode = mode };
     return n;
 }
@@ -115,9 +115,9 @@ static InitNode* parse_initializer_member2(Cuik_Parser* parser, TokenStream* res
             expect_char(s, ']');
 
             if (current == NULL) {
-                current = head = make_init_node(s, INIT_ARRAY);
+                current = head = make_init_node(parser, s, INIT_ARRAY);
             } else {
-                InitNode* n = make_init_node(s, INIT_ARRAY);
+                InitNode* n = make_init_node(parser, s, INIT_ARRAY);
                 current->kid = n;
                 current->kids_count++;
                 current = n;
@@ -136,9 +136,9 @@ static InitNode* parse_initializer_member2(Cuik_Parser* parser, TokenStream* res
             tokens_next(s);
 
             if (current == NULL) {
-                current = head = make_init_node(s, INIT_MEMBER);
+                current = head = make_init_node(parser, s, INIT_MEMBER);
             } else {
-                InitNode* n = make_init_node(s, INIT_MEMBER);
+                InitNode* n = make_init_node(parser, s, INIT_MEMBER);
                 current->kid = n;
                 current->kids_count++;
                 current = n;
@@ -152,7 +152,7 @@ static InitNode* parse_initializer_member2(Cuik_Parser* parser, TokenStream* res
     }
 
     if (current == NULL) {
-        current = head = make_init_node(s, INIT_NONE);
+        current = head = make_init_node(parser, s, INIT_NONE);
     } else {
         expect_char(s, '=');
     }
@@ -192,7 +192,7 @@ static Expr* parse_initializer2(Cuik_Parser* parser, TokenStream* restrict s, Cu
     SourceLoc loc = tokens_get_location(s);
     expect_char(s, '{');
 
-    InitNode *root = ARENA_ALLOC(&local_ast_arena, InitNode), *tail = NULL;
+    InitNode *root = ARENA_ALLOC(parser->arena, InitNode), *tail = NULL;
     *root = (InitNode){ 0 };
 
     // don't expect one the first time
@@ -209,7 +209,7 @@ static Expr* parse_initializer2(Cuik_Parser* parser, TokenStream* restrict s, Cu
     }
     expect_char(s, '}');
 
-    Expr* e = alloc_expr();
+    Expr* e = alloc_expr(parser);
     *e = (Expr){
         .op = EXPR_INITIALIZER,
         .loc = { loc, tokens_get_last_location(s) },
@@ -291,7 +291,7 @@ static Expr* parse_primary_expr(Cuik_Parser* parser, TokenStream* restrict s) {
         return e;
     }
 
-    Expr* e = alloc_expr();
+    Expr* e = alloc_expr(parser);
     SourceLoc start_loc = tokens_get_location(s);
 
     switch (t->type) {
@@ -585,7 +585,7 @@ static Expr* parse_postfix(Cuik_Parser* restrict parser, TokenStream* restrict s
             if (in_sizeof) {
                 // resolve as sizeof (T)
                 SourceLoc end_loc = tokens_get_last_location(s);
-                Expr* e = alloc_expr();
+                Expr* e = alloc_expr(parser);
                 *e = (Expr){
                     .op = EXPR_SIZEOF_T,
                     .loc = { start_loc, end_loc },
@@ -610,7 +610,7 @@ static Expr* parse_postfix(Cuik_Parser* restrict parser, TokenStream* restrict s
             Cuik_Type* type = parse_glsl_type(parser, s);
             SourceLoc end_loc = tokens_get_last_location(s);
 
-            e = alloc_expr();
+            e = alloc_expr(parser);
             *e = (Expr){
                 .op = EXPR_CONSTRUCTOR,
                 .loc = { start_loc, end_loc },
@@ -631,7 +631,7 @@ static Expr* parse_postfix(Cuik_Parser* restrict parser, TokenStream* restrict s
     try_again: {
         if (tokens_get(s)->type == '[') {
             Expr* base = e;
-            e = alloc_expr();
+            e = alloc_expr(parser);
 
             tokens_next(s);
             Expr* index = parse_expr(parser, s);
@@ -664,7 +664,7 @@ static Expr* parse_postfix(Cuik_Parser* restrict parser, TokenStream* restrict s
             SourceLoc end_loc = tokens_get_last_location(s);
 
             Expr* base = e;
-            e = alloc_expr();
+            e = alloc_expr(parser);
             *e = (Expr){
                 .op = EXPR_ARROW,
                 .loc = { start_loc, end_loc },
@@ -690,7 +690,7 @@ static Expr* parse_postfix(Cuik_Parser* restrict parser, TokenStream* restrict s
 
             SourceLoc end_loc = tokens_get_last_location(s);
             Expr* base = e;
-            e = alloc_expr();
+            e = alloc_expr(parser);
             *e = (Expr){
                 .op = EXPR_DOT,
                 .loc = { start_loc, end_loc },
@@ -709,7 +709,7 @@ static Expr* parse_postfix(Cuik_Parser* restrict parser, TokenStream* restrict s
             tokens_next(s);
 
             Expr* target = e;
-            e = alloc_expr();
+            e = alloc_expr(parser);
 
             size_t param_count = 0;
             void* params = tls_save();
@@ -752,7 +752,7 @@ static Expr* parse_postfix(Cuik_Parser* restrict parser, TokenStream* restrict s
             SourceLoc end_loc = tokens_get_last_location(s);
 
             Expr* src = e;
-            e = alloc_expr();
+            e = alloc_expr(parser);
             *e = (Expr){
                 .op = is_inc ? EXPR_POST_INC : EXPR_POST_DEC,
                 .loc = { start_loc, end_loc },
@@ -796,7 +796,7 @@ static Expr* parse_unary(Cuik_Parser* restrict parser, TokenStream* restrict s, 
         SourceLoc end_loc = tokens_get_last_location(s);
         expect_closing_paren(s, opening_loc);
 
-        Expr* e = alloc_expr();
+        Expr* e = alloc_expr(parser);
         *e = (Expr){
             .op = EXPR_ALIGNOF_T,
             .loc = { start_loc, end_loc },
@@ -811,7 +811,7 @@ static Expr* parse_unary(Cuik_Parser* restrict parser, TokenStream* restrict s, 
         if (src->op != EXPR_SIZEOF_T) {
             // convert expression into sizeof content
             SourceLoc end_loc = tokens_get_last_location(s);
-            Expr* e = alloc_expr();
+            Expr* e = alloc_expr(parser);
             *e = (Expr){
                 .op = EXPR_SIZEOF,
                 .loc = src->loc,
@@ -830,7 +830,7 @@ static Expr* parse_unary(Cuik_Parser* restrict parser, TokenStream* restrict s, 
             if (op == EXPR_PLUS) return value;
 
             SourceLoc end_loc = tokens_get_last_location(s);
-            Expr* e = alloc_expr();
+            Expr* e = alloc_expr(parser);
 
             *e = (Expr){
                 .op = op,
@@ -866,7 +866,7 @@ static Expr* parse_cast(Cuik_Parser* restrict parser, TokenStream* restrict s, b
             if (in_sizeof) {
                 // resolve as sizeof (T)
                 SourceLoc end_loc = tokens_get_last_location(s);
-                Expr* e = alloc_expr();
+                Expr* e = alloc_expr(parser);
                 *e = (Expr){
                     .op = EXPR_SIZEOF_T,
                     .loc = { start_loc, end_loc },
@@ -883,7 +883,7 @@ static Expr* parse_cast(Cuik_Parser* restrict parser, TokenStream* restrict s, b
         Expr* base = parse_cast(parser, s, false);
         SourceLoc end_loc = tokens_get_last_location(s);
 
-        Expr* e = alloc_expr();
+        Expr* e = alloc_expr(parser);
         *e = (Expr){
             .op = EXPR_CAST,
             .loc = { start_loc, start_loc },
@@ -905,7 +905,7 @@ static Expr* parse_binop(Cuik_Parser* restrict parser, TokenStream* restrict s, 
     while (binop = get_binop(tokens_get(s)->type), binop.prec != 0 && binop.prec >= min_prec) {
         tokens_next(s);
 
-        Expr* e = alloc_expr();
+        Expr* e = alloc_expr(parser);
         Expr* rhs = parse_binop(parser, s, binop.prec + 1);
 
         SourceLoc end_loc = tokens_get_last_location(s);
@@ -933,7 +933,7 @@ static Expr* parse_ternary(Cuik_Parser* restrict parser, TokenStream* restrict s
         Expr* rhs = parse_ternary(parser, s);
 
         SourceLoc end_loc = tokens_get_last_location(s);
-        Expr* e = alloc_expr();
+        Expr* e = alloc_expr(parser);
         *e = (Expr){
             .op = EXPR_TERNARY,
             .loc = { start_loc, end_loc },
@@ -975,7 +975,7 @@ static Expr* parse_assignment(Cuik_Parser* restrict parser, TokenStream* restric
 
     tokens_next(s);
 
-    Expr* e = alloc_expr();
+    Expr* e = alloc_expr(parser);
     Expr* rhs = parse_assignment(parser, s);
 
     SourceLoc end_loc = tokens_get_last_location(s);
@@ -1006,7 +1006,7 @@ static Expr* parse_expr(Cuik_Parser* restrict parser, TokenStream* restrict s) {
     Expr* lhs = parse_assignment(parser, s);
 
     while (tokens_get(s)->type == TOKEN_COMMA) {
-        Expr* e = alloc_expr();
+        Expr* e = alloc_expr(parser);
         ExprOp op = EXPR_COMMA;
         tokens_next(s);
 

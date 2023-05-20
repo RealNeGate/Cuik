@@ -9,7 +9,7 @@ static int parse_glsl_layout_attrib(TokenStream* restrict s, const SourceRange* 
 
 // this code might reference docs/glsl_grammar.txt
 static Cuik_GlslQuals* parse_glsl_qualifiers(Cuik_Parser* restrict parser, TokenStream* restrict s, Cuik_Qualifiers* quals) {
-    Cuik_GlslQuals* glsl = ARENA_ALLOC(&local_ast_arena, Cuik_GlslQuals);
+    Cuik_GlslQuals* glsl = ARENA_ALLOC(parser->arena, Cuik_GlslQuals);
 
     for (;;) {
         TknType tkn_type = tokens_get(s)->type;
@@ -155,7 +155,7 @@ static ParseResult parse_decl_glsl(Cuik_Parser* restrict parser, TokenStream* re
         Decl decl = parse_declarator_glsl(parser, s, type, false);
 
         // Convert into statement
-        Stmt* n = alloc_stmt();
+        Stmt* n = alloc_stmt(parser);
         n->op = STMT_GLOBAL_DECL;
         n->loc = decl.loc;
         n->decl = (struct StmtDecl){
