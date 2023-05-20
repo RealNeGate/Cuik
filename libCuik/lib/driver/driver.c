@@ -140,8 +140,8 @@ static Cuik_Linker gimme_linker(Cuik_DriverArgs* restrict args) {
 static void sys_invoke(BuildStepInfo* info) {
     Cuik_BuildStep* s = info->step;
 
-    // TODO(NeGate): this is going to splay the diagnostics without any
-    // care for the rest of the running tasks
+    // TODO(NeGate): this is going to splay the diagnostics
+    // without any care for the rest of the running tasks.
     if (system(s->sys.data) != 0) {
         step_error(s);
     }

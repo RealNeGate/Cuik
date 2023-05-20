@@ -15,8 +15,18 @@
 #include <threads.h>
 #endif
 
-// #define STB_LEAKCHECK_IMPLEMENTATION
-// #include <stb_leakcheck.h>
+static bool leak_visit(const mi_heap_t* heap, const mi_heap_area_t* area, void* block, size_t block_size, void* arg) {
+    if (area->used && block != NULL) {
+        printf("| %p (%zu bytes)\n", block, block_size);
+    }
+    return true;
+}
+
+static void leak_detect(void) {
+    printf("Leak:\n");
+    mi_collect(true);
+    mi_heap_visit_blocks(mi_heap_get_default(), true, leak_visit, NULL);
+}
 
 int main(int argc, const char** argv) {
     #ifdef CUIK_USE_SPALL_AUTO

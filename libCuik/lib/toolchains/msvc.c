@@ -279,7 +279,6 @@ bool find_windows_kit_root(Cuik_WindowsToolchain* result) {
             RegCloseKey(main_key);
             return true;
         }
-
     }
 
     // Look for a Windows 8 entry.
