@@ -192,8 +192,9 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
                     }
                 }
 
-                ptrdiff_t sym_index = nl_strmap_puti_cstr(parser->globals.symbols, decl.name);
-                sym = &parser->globals.symbols[sym_index];
+                ptrdiff_t sym_index;
+                nl_map_puti_cstr(parser->globals.symbols, decl.name, sym_index);
+                sym = &parser->globals.symbols[sym_index].v;
                 *sym = (Symbol){
                     .name = decl.name,
                     .type = decl.type,
@@ -519,8 +520,8 @@ Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cu
         if (cuikdg_error_count(s)) break;
 
         // parse all global declarations
-        nl_strmap_for(i, parser.globals.symbols) {
-            Symbol* sym = &parser.globals.symbols[i];
+        nl_map_for(i, parser.globals.symbols) {
+            Symbol* sym = &parser.globals.symbols[i].v;
 
             if (sym->token_start != 0 && (sym->storage_class == STORAGE_STATIC_VAR || sym->storage_class == STORAGE_GLOBAL)) {
                 // Spin up a mini parser here
@@ -583,10 +584,9 @@ Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cu
 
         // TODO(NeGate): remember this code is stuff that can be made multithreaded, if we
         // care we can add that back in.
-        size_t load = nl_strmap_get_load(parser.globals.symbols);
         TokenStream tokens = *s;
-        for (size_t i = 0; i < load; i++) {
-            Symbol* sym = &parser.globals.symbols[i];
+        nl_map_for(i, parser.globals.symbols) {
+            Symbol* sym = &parser.globals.symbols[i].v;
 
             // don't worry about normal globals, those have been taken care of...
             if (sym->token_start != 0 && (sym->storage_class == STORAGE_STATIC_FUNC || sym->storage_class == STORAGE_FUNC)) {
@@ -626,26 +626,24 @@ Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cu
     //   unlike basically any other C compiler i know of we can accumulate
     //   one of the most common error messages to make it easier to read as
     //   one of these "so called" sane humans.
-    if (nl_strmap_get_load(parser.unresolved_symbols) > 0) {
-        nl_strmap_for(i, parser.unresolved_symbols) {
-            Diag_UnresolvedSymbol* loc = parser.unresolved_symbols[i];
-            cuikdg_tally_error(s);
-            diag_header(s, DIAG_ERR, "could not resolve symbol: %s", loc->name);
+    nl_map_for(i, parser.unresolved_symbols) {
+        Diag_UnresolvedSymbol* loc = parser.unresolved_symbols[i].v;
+        cuikdg_tally_error(s);
+        diag_header(s, DIAG_ERR, "could not resolve symbol: %s", loc->name);
 
-            DiagWriter d = diag_writer(s);
-            for (; loc != NULL; loc = loc->next) {
-                if (!diag_writer_is_compatible(&d, loc->loc)) {
-                    // end line
-                    diag_writer_done(&d);
-                    d = diag_writer(s);
-                }
-
-                diag_writer_highlight(&d, loc->loc);
+        DiagWriter d = diag_writer(s);
+        for (; loc != NULL; loc = loc->next) {
+            if (!diag_writer_is_compatible(&d, loc->loc)) {
+                // end line
+                diag_writer_done(&d);
+                d = diag_writer(s);
             }
-            diag_writer_done(&d);
+
+            diag_writer_highlight(&d, loc->loc);
         }
+        diag_writer_done(&d);
     }
-    nl_strmap_free(parser.unresolved_symbols);
+    nl_map_free(parser.unresolved_symbols);
     THROW_IF_ERROR();
 
     check_for_entry(parser.tu, &parser.globals);

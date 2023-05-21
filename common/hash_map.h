@@ -21,30 +21,57 @@
 #define NL_FREE(p)       free(p)
 #endif
 
-#ifdef NL_HASH_MAP_INLINE
-#define NL_HASH_MAP_API inline static
-#else
-#define NL_HASH_MAP_API extern
-#endif
-
 #define NL_Map(K, V) struct { K k; V v; }*
+#define NL_Strmap(T) struct { NL_Slice k; T v; }*
+
+typedef struct {
+    size_t length;
+    const uint8_t* data;
+} NL_Slice;
 
 /////////////////////////////////////////////////
 // public macros
 /////////////////////////////////////////////////
+#define nl_map_is_strmap(map) _Generic((map)->k, NL_Slice: true, default: false)
+
 #define nl_map_create(map, initial_cap) ((map) = ((void*) nl_map__alloc(initial_cap, sizeof(*map))->kv_table))
 
 #define nl_map_put(map, key, value)                                                  \
 do {                                                                                 \
-    NL_MapInsert ins__ = nl_map__insert((map), sizeof(*(map)), sizeof(key), &(key)); \
+    NL_MapInsert ins__ = (nl_map_is_strmap(map) ? nl_map__inserts : nl_map__insert)((map), sizeof(*(map)), sizeof(key), &(key)); \
     (map) = ins__.new_map;                                                           \
     (map)[ins__.index].v = (value);                                                  \
 } while (0)
 
-#define nl_map_get(map, key) \
-((map) != NULL ? nl_map__get(((NL_MapHeader*)(map)) - 1, sizeof(*map), sizeof(key), &(key)) : -1)
+#define nl_map_puti(map, key, out_index)                                             \
+do {                                                                                 \
+    NL_MapInsert ins__ = (nl_map_is_strmap(map) ? nl_map__inserts : nl_map__insert)((map), sizeof(*(map)), sizeof(key), &(key)); \
+    (map) = ins__.new_map;                                                           \
+    (out_index) = ins__.index;                                                       \
+} while (0)
 
+#define nl_map_put_cstr(map, key, value)                                             \
+do {                                                                                 \
+    NL_Slice key_ = { strlen(key), (const uint8_t*) (key) };                         \
+    NL_MapInsert ins__ = (nl_map_is_strmap(map) ? nl_map__inserts : nl_map__insert)((map), sizeof(*(map)), sizeof(key_), &key_); \
+    (map) = ins__.new_map;                                                           \
+    (map)[ins__.index].v = (value);                                                  \
+} while (0)
+
+#define nl_map_puti_cstr(map, key, out_index)                                        \
+do {                                                                                 \
+    NL_Slice key_ = { strlen(key), (const uint8_t*) (key) };                         \
+    NL_MapInsert ins__ = (nl_map_is_strmap(map) ? nl_map__inserts : nl_map__insert)((map), sizeof(*(map)), sizeof(key_), &key_); \
+    (map) = ins__.new_map;                                                           \
+    (out_index) = ins__.index;                                                       \
+} while (0)
+
+#define nl_map_get(map, key) ((map) != NULL ? (nl_map_is_strmap(map) ? nl_map__gets : nl_map__get)(((NL_MapHeader*)(map)) - 1, sizeof(*map), sizeof(key), &(key)) : -1)
 #define nl_map_get_checked(map, key) ((map)[nl_map__check(nl_map_get(map, key))].v)
+#define nl_map_get_cstr(map, key) ((map) != NULL ? nl_map__gets(((NL_MapHeader*)(map)) - 1, sizeof(*map), sizeof(NL_Slice), &(NL_Slice){ strlen(key), (const uint8_t*) (key) }) : -1)
+
+#define nl_map_for(it, map) \
+for (size_t it = 0; it < nl_map_get_capacity(map); it++) if ((map)[it].k.length != 0)
 
 #define nl_map_free(map) \
 do {                                              \
@@ -58,7 +85,7 @@ do {                                              \
 // internals
 /////////////////////////////////////////////////
 #define nl_map__get_header(map) (((NL_MapHeader*)(map)) - 1)
-#define nl_map_get_capacity(map) (1ull << nl_map__get_header(map)->exp)
+#define nl_map_get_capacity(map) ((map) ? 1ull << nl_map__get_header(map)->exp : 0)
 
 typedef struct {
     void* new_map;
@@ -73,12 +100,16 @@ typedef struct {
     char kv_table[];
 } NL_MapHeader;
 
-#ifndef NL_HASH_MAP_INLINE
-NL_HASH_MAP_API NL_MapHeader* nl_map__alloc(size_t cap, size_t entry_size);
-NL_HASH_MAP_API NL_MapInsert nl_map__insert(void* map, size_t entry_size, size_t key_size, const void* key);
-NL_HASH_MAP_API ptrdiff_t nl_map__get(NL_MapHeader* restrict table, size_t entry_size, size_t key_size, const void* key);
-NL_HASH_MAP_API void nl_map__free(NL_MapHeader* restrict table);
-#endif
+inline static NL_Slice nl_slice__cstr(const char* key) {
+    return (NL_Slice){strlen(key), (const uint8_t*)key};
+}
+
+NL_MapHeader* nl_map__alloc(size_t cap, size_t entry_size);
+NL_MapInsert nl_map__insert(void* map, size_t entry_size, size_t key_size, const void* key);
+NL_MapInsert nl_map__inserts(void* map, size_t entry_size, size_t key_size, const void* key);
+ptrdiff_t nl_map__get(NL_MapHeader* restrict table, size_t entry_size, size_t key_size, const void* key);
+ptrdiff_t nl_map__gets(NL_MapHeader* restrict table, size_t entry_size, size_t key_size, const void* key);
+void nl_map__free(NL_MapHeader* restrict table);
 
 inline static ptrdiff_t nl_map__check(ptrdiff_t x) {
     assert(x >= 0 && "map entry not found!");
@@ -100,11 +131,11 @@ inline static uint32_t nl_map__raw_hash(size_t len, const void *key) {
     return h;
 }
 
-NL_HASH_MAP_API void nl_map__free(NL_MapHeader* restrict table) {
+void nl_map__free(NL_MapHeader* restrict table) {
     NL_FREE(table);
 }
 
-NL_HASH_MAP_API NL_MapHeader* nl_map__alloc(size_t cap, size_t entry_size) {
+NL_MapHeader* nl_map__alloc(size_t cap, size_t entry_size) {
     cap = (cap * 4) / 3;
     if (cap < 4) cap = 4;
 
@@ -136,19 +167,47 @@ static bool nl_map__is_zero(const char* ptr, size_t size) {
     }
 }
 
-NL_HASH_MAP_API NL_MapInsert nl_map__insert(void* map, size_t entry_size, size_t key_size, const void* key) {
+NL_MapHeader* nl_map__rehash(NL_MapHeader* table, size_t entry_size, size_t key_size, bool is_strmap) {
+    size_t count = 1u << table->exp;
+
+    // Allocate bigger hashmap
+    NL_MapHeader* new_table = nl_map__alloc(count * 2, entry_size);
+    if (is_strmap) {
+        for (size_t i = 0; i < count; i++) {
+            NL_Slice* slot_entry = (NL_Slice*) &table->kv_table[i * entry_size];
+            if (slot_entry->length > 0) {
+                NL_MapInsert ins = nl_map__inserts(new_table->kv_table, entry_size, key_size, slot_entry);
+                memcpy(&new_table->kv_table[ins.index*entry_size + key_size], &slot_entry[1], entry_size - key_size);
+            }
+        }
+    } else {
+        for (size_t i = 0; i < count; i++) {
+            void* slot_entry = (NL_Slice*) &table->kv_table[i * entry_size];
+            if (!nl_map__is_zero(slot_entry, key_size)) {
+                NL_MapInsert ins = nl_map__insert(new_table->kv_table, entry_size, key_size, slot_entry);
+                memcpy(&new_table->kv_table[ins.index*entry_size + key_size], &slot_entry[1], entry_size - key_size);
+            }
+        }
+    }
+
+    nl_map__free(table);
+    return new_table;
+}
+
+NL_MapInsert nl_map__insert(void* map, size_t entry_size, size_t key_size, const void* key) {
     NL_MapHeader* table;
     if (map == NULL) {
-        table = nl_map__alloc(256, entry_size);
+        table = nl_map__alloc(1024, entry_size);
         map = table->kv_table;
     } else {
         table = ((NL_MapHeader*)map) - 1;
     }
 
     uint32_t cap = 1ull << table->exp;
-    if (table->count >= (cap * 4) / 3) {
+    if (table->count >= (cap * 3) / 4) {
         // past 75% load... resize
-        __debugbreak();
+        table = nl_map__rehash(table, entry_size, key_size, false);
+        map = table->kv_table;
     }
 
     uint32_t exp = table->exp;
@@ -171,7 +230,45 @@ NL_HASH_MAP_API NL_MapInsert nl_map__insert(void* map, size_t entry_size, size_t
     }
 }
 
-NL_HASH_MAP_API ptrdiff_t nl_map__get(NL_MapHeader* restrict table, size_t entry_size, size_t key_size, const void* key) {
+NL_MapInsert nl_map__inserts(void* map, size_t entry_size, size_t key_size, const void* key) {
+    NL_MapHeader* table;
+    if (map == NULL) {
+        table = nl_map__alloc(256, entry_size);
+        map = table->kv_table;
+    } else {
+        table = ((NL_MapHeader*)map) - 1;
+    }
+
+    uint32_t cap = 1ull << table->exp;
+    if (table->count >= (cap * 3) / 4) {
+        // past 75% load... resize
+        table = nl_map__rehash(table, entry_size, key_size, true);
+        map = table->kv_table;
+    }
+
+    const NL_Slice* key_entry = key;
+
+    uint32_t exp = table->exp;
+    uint32_t mask = (1 << table->exp) - 1;
+    uint32_t hash = nl_map__raw_hash(key_entry->length, key_entry->data);
+
+    for (size_t i = hash;;) {
+        // hash table lookup
+        uint32_t step = (hash >> (32 - exp)) | 1;
+        i = (i + step) & mask;
+
+        NL_Slice* slot_entry = (NL_Slice*) &table->kv_table[i * entry_size];
+        if (slot_entry->length == 0) {
+            table->count++;
+            memcpy(slot_entry, key, key_size);
+            return (NL_MapInsert){ map, i };
+        } else if (slot_entry->length == key_entry->length && memcmp(slot_entry->data, key_entry->data, key_entry->length) == 0) {
+            return (NL_MapInsert){ map, i };
+        }
+    }
+}
+
+ptrdiff_t nl_map__get(NL_MapHeader* restrict table, size_t entry_size, size_t key_size, const void* key) {
     uint32_t exp = table->exp;
     uint32_t mask = (1 << table->exp) - 1;
     uint32_t hash = nl_map__raw_hash(key_size, key);
@@ -190,4 +287,25 @@ NL_HASH_MAP_API ptrdiff_t nl_map__get(NL_MapHeader* restrict table, size_t entry
     }
 }
 
-#endif /* NL_HASH_MAP_IMPL */
+ptrdiff_t nl_map__gets(NL_MapHeader* restrict table, size_t entry_size, size_t key_size, const void* key) {
+    const NL_Slice* key_entry = key;
+
+    uint32_t exp = table->exp;
+    uint32_t mask = (1 << table->exp) - 1;
+    uint32_t hash = nl_map__raw_hash(key_entry->length, key_entry->data);
+
+    for (size_t i = hash;;) {
+        // hash table lookup
+        uint32_t step = (hash >> (32 - exp)) | 1;
+        i = (i + step) & mask;
+
+        NL_Slice* slot_entry = (NL_Slice*) &table->kv_table[i * entry_size];
+        if (slot_entry->length == 0) {
+            return -1;
+        } else if (slot_entry->length == key_entry->length && memcmp(slot_entry->data, key_entry->data, key_entry->length) == 0) {
+            return i;
+        }
+    }
+}
+
+#endif /* NL_MAP_IMPL */

@@ -6,9 +6,7 @@
 #include "path.c"
 #include "mem_pool.c"
 
-#define NL_STRING_MAP_IMPL
-#define NL_STRING_MAP_INLINE
-#include <string_map.h>
+#include <hash_map.h>
 #include <file_map.h>
 
 // Zip library

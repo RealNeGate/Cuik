@@ -61,7 +61,7 @@ static DirectiveResult cpp__pragma(Cuik_CPP* restrict ctx, CPPStackSlot* restric
     String pragma_type = peek(in).content;
 
     if (string_equals_cstr(&pragma_type, "once")) {
-        nl_strmap_put_cstr(ctx->include_once, slot->filepath->data, 0);
+        nl_map_put_cstr(ctx->include_once, slot->filepath->data, 0);
 
         // We gotta hit a line by now
         consume(in);
@@ -190,7 +190,7 @@ static DirectiveResult cpp__include(Cuik_CPP* restrict ctx, CPPStackSlot* restri
     }
 
     // check if in include_once list
-    ptrdiff_t search = nl_strmap_get_cstr(ctx->include_once, canonical.data);
+    ptrdiff_t search = nl_map_get_cstr(ctx->include_once, canonical.data);
     if (search >= 0) {
         return DIRECTIVE_YIELD;
     }

@@ -574,7 +574,7 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
 
                         if (name) {
                             if (parser->is_in_global_scope) {
-                                nl_strmap_put_cstr(parser->globals.tags, name, type);
+                                nl_map_put_cstr(parser->globals.tags, name, type);
                             } else if (scope.tag_count + 1 >= MAX_LOCAL_TAGS) {
                                 diag_err(s, tokens_get_range(s), "too many tags in local scopes (%d)", MAX_LOCAL_TAGS);
                             } else {
@@ -631,7 +631,7 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                         };
 
                         if (parser->is_in_global_scope) {
-                            nl_strmap_put_cstr(parser->globals.symbols, name, sym);
+                            nl_map_put_cstr(parser->globals.symbols, name, sym);
                         } else {
                             local_symbols[scope.local_count++] = sym;
                             cursor += 1;
@@ -674,7 +674,7 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                         *type = (Cuik_Type){ .kind = KIND_ENUM, .enumerator = { name } };
 
                         if (parser->is_in_global_scope) {
-                            nl_strmap_put_cstr(parser->globals.tags, name, type);
+                            nl_map_put_cstr(parser->globals.tags, name, type);
                         } else {
                             if (scope.tag_count + 1 >= MAX_LOCAL_TAGS) {
                                 diag_err(s, tokens_get_range(s), "too many tags in local scopes (%d)", MAX_LOCAL_TAGS);
@@ -753,7 +753,7 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                         // can't forward decl unnamed records so we don't track it
                         if (name) {
                             if (parser->is_in_global_scope) {
-                                nl_strmap_put_cstr(parser->globals.tags, name, type);
+                                nl_map_put_cstr(parser->globals.tags, name, type);
                             } else {
                                 if (scope.tag_count + 1 >= MAX_LOCAL_TAGS) {
                                     diag_err(s, tokens_get_range(s), "too many tags in local scopes (%d)", MAX_LOCAL_TAGS);
@@ -876,7 +876,7 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                         };
 
                         if (parser->is_in_global_scope) {
-                            nl_strmap_put_cstr(parser->globals.tags, name, type);
+                            nl_map_put_cstr(parser->globals.tags, name, type);
                         } else {
                             if (scope.tag_count + 1 >= MAX_LOCAL_TAGS) {
                                 diag_err(s, tokens_get_range(s), "too many tags in local scopes (%d)", MAX_LOCAL_TAGS);
@@ -935,7 +935,7 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                         };
                         counter += OTHER;
 
-                        nl_strmap_put_cstr(parser->globals.symbols, name, sym);
+                        nl_map_put_cstr(parser->globals.symbols, name, sym);
                     }
                     break;
                 } else {

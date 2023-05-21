@@ -17,10 +17,10 @@ static TB_Symbol* get_external(CompilationUnit* restrict cu, const char* name) {
     cuik_lock_compilation_unit(cu);
 
     TB_Symbol* result = NULL;
-    ptrdiff_t search = nl_strmap_get_cstr(cu->export_table, name);
+    ptrdiff_t search = nl_map_get_cstr(cu->export_table, name);
     if (search >= 0) {
         // Figure out what the symbol is and link it together
-        result = cu->export_table[search];
+        result = cu->export_table[search].v;
     } else {
         // Always creates a real external... for now
         result = (TB_Symbol*) tb_extern_create(cu->ir_mod, name, TB_EXTERNAL_SO_LOCAL);
@@ -36,10 +36,10 @@ static TB_Global* place_external(CompilationUnit* restrict cu, Stmt* s, TB_Debug
         const char* name = s->decl.name;
 
         TB_Global* result = NULL;
-        ptrdiff_t search = nl_strmap_get_cstr(cu->export_table, name);
+        ptrdiff_t search = nl_map_get_cstr(cu->export_table, name);
         if (search >= 0) {
             // transmute
-            TB_Symbol* s = cu->export_table[search];
+            TB_Symbol* s = cu->export_table[search].v;
             if (s->tag == TB_SYMBOL_GLOBAL) {
                 result = tb_extern_transmute((TB_External*) s, dbg_type, linkage);
             } else {
@@ -48,7 +48,7 @@ static TB_Global* place_external(CompilationUnit* restrict cu, Stmt* s, TB_Debug
             }
         } else {
             result = tb_global_create(cu->ir_mod, name, dbg_type, linkage);
-            nl_strmap_put_cstr(cu->export_table, name, (TB_Symbol*) result);
+            nl_map_put_cstr(cu->export_table, name, (TB_Symbol*) result);
         }
 
         cuik_unlock_compilation_unit(cu);
@@ -776,7 +776,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
 
                     // all builtins start with an underscore
                     if (*name == '_') {
-                        ptrdiff_t search = nl_strmap_get_cstr(tu->target->builtin_func_map, name);
+                        ptrdiff_t search = nl_map_get_cstr(tu->target->builtin_func_map, name);
                         if (search >= 0) {
                             TB_Node* val = tu->target->compile_builtin(tu, func, name, arg_count, args);
 

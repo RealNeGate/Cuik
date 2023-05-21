@@ -1,4 +1,3 @@
-#define NL_STRING_MAP_IMPL
 #include "linker.h"
 
 extern TB_LinkerVtbl tb__linker_pe, tb__linker_elf;
@@ -132,15 +131,15 @@ uint64_t tb__get_symbol_rva(TB_Linker* l, TB_LinkerSymbol* sym) {
 
 uint64_t tb__compute_rva(TB_Linker* l, TB_Module* m, const TB_Symbol* s) {
     if (s->tag == TB_SYMBOL_FUNCTION) {
-        ptrdiff_t search = nl_strmap_get_cstr(l->sections, ".text");
-        TB_LinkerSection* text = (search >= 0 ? l->sections[search] : NULL);
+        ptrdiff_t search = nl_map_get_cstr(l->sections, ".text");
+        TB_LinkerSection* text = (search >= 0 ? l->sections[search].v : NULL);
 
         TB_Function* f = (TB_Function*) s;
         assert(f->output != NULL);
         return text->address + m->text.piece->offset + f->output->code_pos;
     } else if (s->tag == TB_SYMBOL_GLOBAL) {
-        ptrdiff_t search = nl_strmap_get_cstr(l->sections, ".data");
-        TB_LinkerSection* data = (search >= 0 ? l->sections[search] : NULL);
+        ptrdiff_t search = nl_map_get_cstr(l->sections, ".data");
+        TB_LinkerSection* data = (search >= 0 ? l->sections[search].v : NULL);
 
         TB_Global* g = (TB_Global*) s;
         return data->address + m->data.piece->offset + g->pos;
@@ -207,8 +206,8 @@ void tb__append_module_section(TB_Linker* l, TB_Module* mod, TB_ModuleSection* s
 size_t tb__apply_section_contents(TB_Linker* l, uint8_t* output, size_t write_pos, TB_LinkerSection* text, TB_LinkerSection* data, TB_LinkerSection* rdata, size_t section_alignment, size_t image_base) {
     // write section contents
     // TODO(NeGate): we can actually parallelize this part of linking
-    CUIK_TIMED_BLOCK("write sections") nl_strmap_for(i, l->sections) {
-        TB_LinkerSection* s = l->sections[i];
+    CUIK_TIMED_BLOCK("write sections") nl_map_for(i, l->sections) {
+        TB_LinkerSection* s = l->sections[i].v;
         if (s->generic_flags & TB_LINKER_SECTION_DISCARD) continue;
 
         assert(s->offset == write_pos);
@@ -299,38 +298,38 @@ size_t tb__apply_section_contents(TB_Linker* l, uint8_t* output, size_t write_po
 }
 
 TB_LinkerSection* tb__find_section(TB_Linker* linker, const char* name, uint32_t flags) {
-    ptrdiff_t search = nl_strmap_get_cstr(linker->sections, name);
-    return search >= 0 ? linker->sections[search] : NULL;
+    ptrdiff_t search = nl_map_get_cstr(linker->sections, name);
+    return search >= 0 ? linker->sections[search].v : NULL;
 }
 
 TB_LinkerSection* tb__find_or_create_section(TB_Linker* linker, const char* name, uint32_t flags) {
     // allocate new section if one doesn't exist already
-    ptrdiff_t search = nl_strmap_get_cstr(linker->sections, name);
+    ptrdiff_t search = nl_map_get_cstr(linker->sections, name);
     if (search >= 0) {
         // assert(linker->sections[search]->flags == flags);
-        return linker->sections[search];
+        return linker->sections[search].v;
     }
 
     TB_LinkerSection* s = tb_platform_heap_alloc(sizeof(TB_LinkerSection));
     *s = (TB_LinkerSection){ .name = { strlen(name), (const uint8_t*) name }, .flags = flags };
-    nl_strmap_put_cstr(linker->sections, name, s);
+    nl_map_put_cstr(linker->sections, name, s);
     return s;
 }
 
 TB_LinkerSection* tb__find_or_create_section2(TB_Linker* linker, size_t name_len, const uint8_t* name_str, uint32_t flags) {
     // allocate new section if one doesn't exist already
     NL_Slice name = { name_len, name_str };
-    ptrdiff_t search = nl_strmap_get(linker->sections, name);
+    ptrdiff_t search = nl_map_get(linker->sections, name);
 
     if (search >= 0) {
         // assert(linker->sections[search]->flags == flags);
-        return linker->sections[search];
+        return linker->sections[search].v;
     }
 
     TB_LinkerSection* s = tb_platform_heap_alloc(sizeof(TB_LinkerSection));
     *s = (TB_LinkerSection){ .name = name, .flags = flags };
 
-    nl_strmap_put(linker->sections, name, s);
+    nl_map_put(linker->sections, name, s);
     return s;
 }
 
@@ -462,12 +461,12 @@ TB_UnresolvedSymbol* tb__unresolved_symbol(TB_Linker* l, TB_Slice name) {
 
     // mtx_lock(&parser->diag_mutex);
     NL_Slice name2 = { name.length, name.data };
-    ptrdiff_t search = nl_strmap_get(l->unresolved_symbols, name2);
+    ptrdiff_t search = nl_map_get(l->unresolved_symbols, name2);
     if (search < 0) {
-        search = nl_strmap_puti(l->unresolved_symbols, name2);
-        l->unresolved_symbols[search] = d;
+        nl_map_puti(l->unresolved_symbols, name2, search);
+        l->unresolved_symbols[search].v = d;
     } else {
-        TB_UnresolvedSymbol* old = l->unresolved_symbols[search];
+        TB_UnresolvedSymbol* old = l->unresolved_symbols[search].v;
         while (old->next != NULL) old = old->next;
 
         old->next = d;
@@ -545,9 +544,9 @@ static int compare_linker_sections(const void* a, const void* b) {
 }
 
 bool tb__finalize_sections(TB_Linker* l) {
-    if (nl_strmap_get_load(l->unresolved_symbols)) {
-        nl_strmap_for(i, l->unresolved_symbols) {
-            TB_UnresolvedSymbol* u = l->unresolved_symbols[i];
+    if (nl_map_get_capacity(l->unresolved_symbols) > 0) {
+        nl_map_for(i, l->unresolved_symbols) {
+            TB_UnresolvedSymbol* u = l->unresolved_symbols[i].v;
 
             fprintf(stderr, "\x1b[31merror\x1b[0m: unresolved external: %.*s\n", (int) u->name.length, u->name.data);
             size_t i = 0;
@@ -575,7 +574,7 @@ bool tb__finalize_sections(TB_Linker* l) {
             fprintf(stderr, "\n");
         }
 
-        nl_strmap_free(l->unresolved_symbols);
+        nl_map_free(l->unresolved_symbols);
         return false;
     }
 
@@ -583,8 +582,8 @@ bool tb__finalize_sections(TB_Linker* l) {
         TB_LinkerSectionPiece** array_form = NULL;
         size_t num = 0;
 
-        nl_strmap_for(i, l->sections) {
-            TB_LinkerSection* s = l->sections[i];
+        nl_map_for(i, l->sections) {
+            TB_LinkerSection* s = l->sections[i].v;
             if (s->generic_flags & TB_LINKER_SECTION_DISCARD) continue;
 
             size_t piece_count = s->piece_count;

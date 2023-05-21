@@ -1,5 +1,7 @@
 // I'd recommend not messing with the internals
 // here...
+#include <hash_map.h>
+
 #define THE_SHTUFFS_SIZE (32 << 20)
 #define CUIK__CPP_STATS 0
 
@@ -65,8 +67,7 @@ struct Cuik_CPP {
     uint64_t total_define_accesses;
     #endif
 
-    // NL_Strmap(int)
-    int* include_once;
+    NL_Strmap(int) include_once;
 
     // system libraries
     // DynArray(Cuik_IncludeDir)

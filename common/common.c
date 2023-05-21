@@ -10,6 +10,9 @@
 #include <sys/mman.h>
 #endif
 
+#define NL_MAP_IMPL
+#include <hash_map.h>
+
 uint64_t cuik__page_size = 0;
 uint64_t cuik__page_mask = 0;
 

@@ -119,12 +119,14 @@ static TB_Node* compile_builtin(TranslationUnit* tu, TB_Function* func, const ch
 #endif /* CUIK_USE_TB */
 
 Cuik_Target* cuik_target_x64(Cuik_System system, Cuik_Environment env) {
-    NL_Strmap(const char*) builtins = nl_strmap_alloc(const char*, 128);
+    BuiltinTable builtins;
+    nl_map_create(builtins, 128);
+
     target_generic_fill_builtin_table(&builtins);
-    nl_strmap_put_cstr(builtins, "_mm_getcsr", NULL);
-    nl_strmap_put_cstr(builtins, "_mm_setcsr", NULL);
-    nl_strmap_put_cstr(builtins, "__readgsqword", NULL);
-    nl_strmap_put_cstr(builtins, "__rdtsc", NULL);
+    nl_map_put_cstr(builtins, "_mm_getcsr", NULL);
+    nl_map_put_cstr(builtins, "_mm_setcsr", NULL);
+    nl_map_put_cstr(builtins, "__readgsqword", NULL);
+    nl_map_put_cstr(builtins, "__rdtsc", NULL);
 
     Cuik_Target* t = cuik_malloc(sizeof(Cuik_Target));
     *t = (Cuik_Target){

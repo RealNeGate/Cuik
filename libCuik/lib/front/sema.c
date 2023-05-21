@@ -1017,14 +1017,14 @@ Cuik_QualType cuik__sema_expr(TranslationUnit* tu, Expr* restrict e) {
         case EXPR_CALL: {
             if (e->call.target->op == EXPR_BUILTIN_SYMBOL) {
                 const char* name = (const char*) e->call.target->builtin_sym.name;
-                ptrdiff_t search = nl_strmap_get_cstr(tu->target->builtin_func_map, name);
+                ptrdiff_t search = nl_map_get_cstr(tu->target->builtin_func_map, name);
                 assert(search >= 0);
 
                 Expr** args = e->call.param_start;
                 int arg_count = e->call.param_count;
 
                 Cuik_Type* ty = tu->target->type_check_builtin(
-                    tu, e, name, tu->target->builtin_func_map[search], arg_count, args
+                    tu, e, name, tu->target->builtin_func_map[search].v, arg_count, args
                 );
 
                 return (e->type = cuik_uncanonical_type(ty ? ty : &cuik__builtin_void));
@@ -1763,7 +1763,7 @@ int cuiksema_run(TranslationUnit* restrict tu, Cuik_IThreadpool* restrict thread
                     }
                 } else if (s->op == STMT_GLOBAL_DECL || s->op == STMT_DECL) {
                     if (!s->decl.attrs.is_extern && !s->decl.attrs.is_typedef && name != NULL && cuik_canonical_type(s->decl.type)->kind != KIND_FUNC) {
-                        ptrdiff_t search = nl_strmap_get_cstr(cu->export_table, name);
+                        ptrdiff_t search = nl_map_get_cstr(cu->export_table, name);
 
                         // only enter one of them and whichever goes in, will have IR backing
                         if (search < 0) {

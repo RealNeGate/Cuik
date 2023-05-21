@@ -36,9 +36,11 @@
 #include "tb_platform.h"
 #include "bigint/BigInt.h"
 #include "dyn_array.h"
-#include <hash_map.h>
 #include "builtins.h"
 #include "pool.h"
+
+#define NL_HASH_MAP_INLINE
+#include <hash_map.h>
 
 #define FOREACH_N(it, start, end) \
 for (ptrdiff_t it = (start), end__ = (end); it < end__; ++it)

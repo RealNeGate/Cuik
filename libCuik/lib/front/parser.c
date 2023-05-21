@@ -97,8 +97,8 @@ static int align_up(int a, int b) {
 }
 
 static Symbol* find_global_symbol(Cuik_GlobalSymbols* restrict syms, const char* name) {
-    ptrdiff_t search = nl_strmap_get_cstr(syms->symbols, name);
-    return (search >= 0) ? &syms->symbols[search] : NULL;
+    ptrdiff_t search = nl_map_get_cstr(syms->symbols, name);
+    return (search >= 0) ? &syms->symbols[search].v : NULL;
 }
 
 // ( SOMETHING )
@@ -226,12 +226,12 @@ static void diag_unresolved_symbol(Cuik_Parser* parser, Atom name, SourceLoc loc
     d->loc = (SourceRange){ loc, { loc.raw + strlen(name) } };
 
     // mtx_lock(&parser->diag_mutex);
-    ptrdiff_t search = nl_strmap_get_cstr(parser->unresolved_symbols, name);
+    ptrdiff_t search = nl_map_get_cstr(parser->unresolved_symbols, name);
     if (search < 0) {
-        search = nl_strmap_puti_cstr(parser->unresolved_symbols, name);
-        parser->unresolved_symbols[search] = d;
+        nl_map_puti_cstr(parser->unresolved_symbols, name, search);
+        parser->unresolved_symbols[search].v = d;
     } else {
-        Diag_UnresolvedSymbol* old = parser->unresolved_symbols[search];
+        Diag_UnresolvedSymbol* old = parser->unresolved_symbols[search].v;
         while (old->next != NULL) old = old->next;
 
         old->next = d;
@@ -252,10 +252,10 @@ static Cuik_Type* find_tag(Cuik_Parser* restrict parser, const char* name, bool*
     }
 
     // try globals
-    ptrdiff_t search = nl_strmap_get_cstr(syms->tags, name);
+    ptrdiff_t search = nl_map_get_cstr(syms->tags, name);
 
     *is_in_scope = search >= 0 && parser->is_in_global_scope;
-    return (search >= 0) ? syms->tags[search] : NULL;
+    return (search >= 0) ? syms->tags[search].v : NULL;
 }
 
 static bool expect_char(TokenStream* restrict s, char ch) {
@@ -445,7 +445,7 @@ void cuik_destroy_translation_unit(TranslationUnit* restrict tu) {
     if (!tu->is_free) {
         tu->is_free = true;
         dyn_array_destroy(tu->top_level_stmts);
-        nl_strmap_free(tu->globals.symbols);
+        nl_map_free(tu->globals.symbols);
     }
 
     if (tu->parent == NULL) {

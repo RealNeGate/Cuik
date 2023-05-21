@@ -16,6 +16,8 @@ enum {
     CUIK_BUILTIN_LLONG
 };
 
+typedef NL_Strmap(const char*) BuiltinTable;
+
 struct Cuik_Target {
     Cuik_Environment env;
     Cuik_System system;
@@ -25,8 +27,7 @@ struct Cuik_Target {
     #endif
 
     // tells us if a name is maps to a builtin
-    // NL_Strmap(const char*)
-    const char** builtin_func_map;
+    BuiltinTable builtin_func_map;
 
     // we don't have any enforcements on primitive integers other than what
     // the spec might say.
@@ -87,4 +88,4 @@ void target_generic_set_defines(Cuik_CPP* cpp, Cuik_System sys, bool is_64bit, b
 
 // returns NULL type if it didn't handle the builtin
 Cuik_Type* target_generic_type_check_builtin(TranslationUnit* tu, Expr* e, const char* name, const char* builtin_value, int arg_count, Expr** args);
-void target_generic_fill_builtin_table(NL_Strmap(const char*)* builtins);
+void target_generic_fill_builtin_table(BuiltinTable* builtins);

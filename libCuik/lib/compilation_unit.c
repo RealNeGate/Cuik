@@ -60,7 +60,7 @@ CUIK_API void cuik_destroy_compilation_unit(CompilationUnit* restrict cu) {
         tu = next;
     }
 
-    nl_strmap_free(cu->export_table);
+    nl_map_free(cu->export_table);
     mtx_destroy(&cu->lock);
     cuik_free(cu);
 }

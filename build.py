@@ -114,7 +114,7 @@ ldflags = {ldflags}
 rule cc
   depfile = $out.d
   command = clang $in $cflags -MD -MF $out.d -c -o $out
-  description = CC $in $out
+  description = CC $out
 
 rule meta_cc
   command = clang $in -o $out
@@ -126,7 +126,7 @@ rule lexgen
 
 rule embed_cc
   command = clang $in -c -o $out
-  description = CC $in $out
+  description = CC $out
 
 """)
 

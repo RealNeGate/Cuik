@@ -193,7 +193,7 @@ static struct R_get_file_in_zip {
                     newstr[len] = 0;
 
                     // printf("  %s\n", newstr);
-                    nl_strmap_put_cstr(open_zip->listing, newstr, i);
+                    nl_map_put_cstr(open_zip->listing, newstr, i);
                 }
                 zip_entry_close(open_zip->zip);
             }
@@ -201,10 +201,10 @@ static struct R_get_file_in_zip {
     }
 
     // Load file from ZIP
-    ptrdiff_t i = nl_strmap_get_cstr(open_zip->listing, newpath);
+    ptrdiff_t i = nl_map_get_cstr(open_zip->listing, newpath);
     return (struct R_get_file_in_zip){
         open_zip,
-        i >= 0 ? open_zip->listing[i] : -1
+        i >= 0 ? open_zip->listing[i].v : -1
     };
 }
 

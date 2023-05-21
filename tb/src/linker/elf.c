@@ -130,12 +130,12 @@ static TB_Exports export(TB_Linker* l) {
     tb_out1b(&strtbl, 0); // null string in the table
 
     size_t final_section_count = 0;
-    nl_strmap_for(i, l->sections) {
-        if (l->sections[i]->generic_flags & TB_LINKER_SECTION_DISCARD) continue;
+    nl_map_for(i, l->sections) {
+        if (l->sections[i].v->generic_flags & TB_LINKER_SECTION_DISCARD) continue;
 
         // reserve space for names
-        NL_Slice name = l->sections[i]->name;
-        l->sections[i]->name_pos = tb_outs(&strtbl, name.length + 1, name.data);
+        NL_Slice name = l->sections[i].v->name;
+        l->sections[i].v->name_pos = tb_outs(&strtbl, name.length + 1, name.data);
         tb_out1b_UNSAFE(&strtbl, 0);
 
         // we're keeping it for export
@@ -157,8 +157,8 @@ static TB_Exports export(TB_Linker* l) {
     size_t section_content_size = 0;
     uint64_t virt_addr = size_of_headers;
     CUIK_TIMED_BLOCK("layout sections") {
-        nl_strmap_for(i, l->sections) {
-            TB_LinkerSection* s = l->sections[i];
+        nl_map_for(i, l->sections) {
+            TB_LinkerSection* s = l->sections[i].v;
             if (s->generic_flags & TB_LINKER_SECTION_DISCARD) continue;
 
             s->offset = size_of_headers + section_content_size;
@@ -231,8 +231,8 @@ static TB_Exports export(TB_Linker* l) {
     WRITE(&header, sizeof(header));
 
     // write program headers
-    nl_strmap_for(i, l->sections) {
-        TB_LinkerSection* s = l->sections[i];
+    nl_map_for(i, l->sections) {
+        TB_LinkerSection* s = l->sections[i].v;
         TB_Elf64_Phdr sec = {
             .type   = PT_LOAD,
             .flags  = s->flags,
@@ -248,8 +248,8 @@ static TB_Exports export(TB_Linker* l) {
     // write section headers
     memset(&output[write_pos], 0, sizeof(TB_Elf64_Shdr)), write_pos += sizeof(TB_Elf64_Shdr);
     WRITE(&strtab, sizeof(strtab));
-    nl_strmap_for(i, l->sections) {
-        TB_LinkerSection* s = l->sections[i];
+    nl_map_for(i, l->sections) {
+        TB_LinkerSection* s = l->sections[i].v;
         TB_Elf64_Shdr sec = {
             .name = s->name_pos,
             .type = SHT_PROGBITS,

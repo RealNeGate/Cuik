@@ -1,9 +1,6 @@
 #pragma once
 #include "../tb_internal.h"
 
-#define NL_STRING_MAP_INLINE
-#include <string_map.h>
-
 typedef struct TB_LinkerSymbol TB_LinkerSymbol;
 typedef struct TB_LinkerThreadInfo TB_LinkerThreadInfo;
 

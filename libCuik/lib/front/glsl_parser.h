@@ -181,8 +181,9 @@ static ParseResult parse_decl_glsl(Cuik_Parser* restrict parser, TokenStream* re
             Symbol* old_def = find_global_symbol(&parser->globals, decl.name);
             Symbol* sym = NULL;
             if (old_def == NULL) {
-                ptrdiff_t sym_index = nl_strmap_puti_cstr(parser->globals.symbols, decl.name);
-                sym = &parser->globals.symbols[sym_index];
+                ptrdiff_t sym_index;
+                nl_map_puti_cstr(parser->globals.symbols, decl.name, sym_index);
+                sym = &parser->globals.symbols[sym_index].v;
                 *sym = (Symbol){
                     .name = decl.name,
                     .type = decl.type,

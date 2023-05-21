@@ -1,4 +1,3 @@
-#define NL_MAP_IMPL
 #include <hash_map.h>
 
 typedef struct {
@@ -236,8 +235,6 @@ static bool simplify_pointers(TB_Function* f, TB_Label bb, TB_Node* n) {
 #include "../tb_internal.h"
 #include "cse.h"
 #include "fold.h"
-
-#define NL_MAP_IMPL
 #include "../hash_map.h"
 
 static bool compact_regs(TB_Function* f) {

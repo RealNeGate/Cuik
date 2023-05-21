@@ -4,10 +4,6 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
-#define NL_STRING_MAP_INLINE
-#define NL_STRING_MAP_IMPL
-#include <string_map.h>
-
 size_t tb_helper_write_text_section(size_t write_pos, TB_Module* m, uint8_t* output, uint32_t pos);
 size_t tb_helper_write_data_section(size_t write_pos, TB_Module* m, uint8_t* output, uint32_t pos);
 size_t tb_helper_write_rodata_section(size_t write_pos, TB_Module* m, uint8_t* output, uint32_t pos);
@@ -215,8 +211,8 @@ static void* get_proc(TB_JITContext* jit, const char* name) {
     }
 
     // check cache first
-    ptrdiff_t search = nl_strmap_get_cstr(jit->loaded_funcs, name);
-    if (search >= 0) return jit->loaded_funcs[search];
+    ptrdiff_t search = nl_map_get_cstr(jit->loaded_funcs, name);
+    if (search >= 0) return jit->loaded_funcs[search].v;
 
     void* addr = GetProcAddress(NULL, name);
     if (addr == NULL) addr = GetProcAddress(kernel32, name);
@@ -225,7 +221,7 @@ static void* get_proc(TB_JITContext* jit, const char* name) {
     if (addr == NULL) addr = GetProcAddress(opengl32, name);
 
     // printf("JIT: loaded %s (%p)\n", name, addr);
-    nl_strmap_put_cstr(jit->loaded_funcs, name, addr);
+    nl_map_put_cstr(jit->loaded_funcs, name, addr);
     return addr;
 }
 

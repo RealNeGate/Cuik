@@ -959,14 +959,14 @@ static TB_Exports export(TB_Linker* l) {
 
         dyn_array_for(i, info->merges) {
             NL_Slice to_name = { info->merges[i].to.length, info->merges[i].to.data };
-            ptrdiff_t to = nl_strmap_get(l->sections, to_name);
+            ptrdiff_t to = nl_map_get(l->sections, to_name);
             if (to < 0) continue;
 
             NL_Slice from_name = { info->merges[i].from.length, info->merges[i].from.data };
-            ptrdiff_t from = nl_strmap_get(l->sections, from_name);
+            ptrdiff_t from = nl_map_get(l->sections, from_name);
             if (from < 0) continue;
 
-            tb__merge_sections(l, l->sections[from], l->sections[to]);
+            tb__merge_sections(l, l->sections[from].v, l->sections[to].v);
         }
     }
 
@@ -991,8 +991,8 @@ static TB_Exports export(TB_Linker* l) {
     }
 
     size_t final_section_count = 0;
-    nl_strmap_for(i, l->sections) {
-        final_section_count += (l->sections[i]->generic_flags & TB_LINKER_SECTION_DISCARD) == 0;
+    nl_map_for(i, l->sections) {
+        final_section_count += (l->sections[i].v->generic_flags & TB_LINKER_SECTION_DISCARD) == 0;
     }
 
     size_t size_of_headers = sizeof(dos_stub)
@@ -1010,8 +1010,8 @@ static TB_Exports export(TB_Linker* l) {
     size_t section_content_size = 0;
     uint64_t virt_addr = align_up(size_of_headers, 4096); // this area is reserved for the PE header stuff
     CUIK_TIMED_BLOCK("layout sections") {
-        nl_strmap_for(i, l->sections) {
-            TB_LinkerSection* s = l->sections[i];
+        nl_map_for(i, l->sections) {
+            TB_LinkerSection* s = l->sections[i].v;
             if (s->generic_flags & TB_LINKER_SECTION_DISCARD) continue;
 
             if (s->flags & IMAGE_SCN_CNT_CODE) pe_code_size += s->total_size;
@@ -1166,8 +1166,8 @@ static TB_Exports export(TB_Linker* l) {
     WRITE(&header,     sizeof(header));
     WRITE(&opt_header, sizeof(opt_header));
 
-    nl_strmap_for(i, l->sections) {
-        TB_LinkerSection* s = l->sections[i];
+    nl_map_for(i, l->sections) {
+        TB_LinkerSection* s = l->sections[i].v;
         if (s->generic_flags & TB_LINKER_SECTION_DISCARD) continue;
 
         PE_SectionHeader sec_header = {

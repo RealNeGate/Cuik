@@ -587,19 +587,19 @@ static Stmt* parse_stmt2(Cuik_Parser* parser, TokenStream* restrict s) {
         tokens_next(s);
 
         Expr* target = alloc_expr(parser);
-        ptrdiff_t search = nl_strmap_get_cstr(labels, name);
+        ptrdiff_t search = nl_map_get_cstr(labels, name);
         if (search >= 0) {
             *target = (Expr){
                 .op = EXPR_SYMBOL,
                 .loc = loc,
-                .symbol = labels[search],
+                .symbol = labels[search].v,
             };
         } else {
             // not defined yet, make a placeholder
             Stmt* label_decl = alloc_stmt(parser);
             label_decl->op = STMT_LABEL;
             label_decl->label = (struct StmtLabel){ .name = name };
-            nl_strmap_put_cstr(labels, name, label_decl);
+            nl_map_put_cstr(labels, name, label_decl);
 
             *target = (Expr){
                 .op = EXPR_SYMBOL,
@@ -620,15 +620,15 @@ static Stmt* parse_stmt2(Cuik_Parser* parser, TokenStream* restrict s) {
         Token* t = tokens_get(s);
         Atom name = atoms_put(t->content.length, t->content.data);
 
-        ptrdiff_t search = nl_strmap_get_cstr(labels, name);
+        ptrdiff_t search = nl_map_get_cstr(labels, name);
         if (search >= 0) {
-            n = labels[search];
+            n = labels[search].v;
         } else {
             n = alloc_stmt(parser);
             n->op = STMT_LABEL;
             n->loc = tokens_get_range(s);
             n->label = (struct StmtLabel){ .name = name };
-            nl_strmap_put_cstr(labels, name, n);
+            nl_map_put_cstr(labels, name, n);
         }
 
         n->label.placed = true;
@@ -685,6 +685,6 @@ static bool parse_function(Cuik_Parser* parser, TokenStream* restrict s, Stmt* d
     decl_node->op = STMT_FUNC_DECL;
     decl_node->decl.initial_as_stmt = body;
 
-    nl_strmap_free(labels);
+    nl_map_free(labels);
     return true;
 }

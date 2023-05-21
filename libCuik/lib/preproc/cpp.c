@@ -311,7 +311,7 @@ void cuikpp_finalize(Cuik_CPP* ctx) {
         ctx->stack = NULL;
     }
 
-    nl_strmap_free(ctx->include_once);
+    nl_map_free(ctx->include_once);
 }
 
 void cuikpp_free(Cuik_CPP* ctx) {
@@ -633,7 +633,7 @@ Cuikpp_Status cuikpp_run(Cuik_CPP* restrict ctx) {
 
         if (slot->include_guard.status == INCLUDE_GUARD_EXPECTING_NOTHING) {
             // the file is practically pragma once
-            nl_strmap_put_cstr(ctx->include_once, slot->filepath->data, 0);
+            nl_map_put_cstr(ctx->include_once, slot->filepath->data, 0);
         }
 
         // write out profile entry

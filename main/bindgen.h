@@ -1,10 +1,6 @@
 
 #include <hash_map.h>
 
-#define NL_STRING_MAP_INLINE
-#define NL_STRING_MAP_IMPL
-#include <string_map.h>
-
 static NL_Strmap(int) already_defined;
 static NL_Map(Cuik_Type*, Atom) typedefs;
 
@@ -157,9 +153,9 @@ int run_bindgen(int argc, const char** argv) {
             Cuik_Type* type = cuik_canonical_type(stmts[i]->decl.type);
 
             if (stmts[i]->decl.attrs.is_typedef) {
-                ptrdiff_t search = nl_strmap_get_cstr(already_defined, name);
+                ptrdiff_t search = nl_map_get_cstr(already_defined, name);
                 if (search < 0) {
-                    nl_strmap_put_cstr(already_defined, name, 1);
+                    nl_map_put_cstr(already_defined, name, 1);
 
                     ptrdiff_t search = nl_map_get(typedefs, type);
                     if (search < 0) {
@@ -176,9 +172,9 @@ int run_bindgen(int argc, const char** argv) {
                 }
             } else if (type->kind == KIND_FUNC) {
                 // normal function
-                ptrdiff_t search = nl_strmap_get_cstr(already_defined, name);
+                ptrdiff_t search = nl_map_get_cstr(already_defined, name);
                 if (search < 0) {
-                    nl_strmap_put_cstr(already_defined, name, 1);
+                    nl_map_put_cstr(already_defined, name, 1);
 
                     printf("%s :: ", name);
                     print_odin_type(type, 0, true);

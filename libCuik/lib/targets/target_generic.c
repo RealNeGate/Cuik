@@ -35,7 +35,7 @@ void cuik_target_build(Cuik_Target* target) {
 }
 
 void cuik_free_target(Cuik_Target* target) {
-    nl_strmap_free(target->builtin_func_map);
+    nl_map_free(target->builtin_func_map);
     cuik_free(target);
 }
 
@@ -668,8 +668,8 @@ BuiltinResult target_generic_compile_builtin(TranslationUnit* tu, TB_Function* f
     }
 }
 
-void target_generic_fill_builtin_table(NL_Strmap(const char*)* builtins) {
-    #define X(name, format) nl_strmap_put_cstr(*builtins, #name, format);
+void target_generic_fill_builtin_table(BuiltinTable* builtins) {
+    #define X(name, format) nl_map_put_cstr(*builtins, #name, format);
     #include "generic_builtins.h"
 }
 #endif

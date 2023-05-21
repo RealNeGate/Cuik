@@ -350,7 +350,7 @@ static Expr* parse_primary_expr(Cuik_Parser* parser, TokenStream* restrict s) {
                 Atom name = atoms_put(t->content.length, t->content.data);
 
                 // check if it's builtin
-                ptrdiff_t builtin_search = nl_strmap_get_cstr(parser->target->builtin_func_map, name);
+                ptrdiff_t builtin_search = nl_map_get_cstr(parser->target->builtin_func_map, name);
                 if (builtin_search >= 0) {
                     *e = (Expr){
                         .op = EXPR_BUILTIN_SYMBOL,
