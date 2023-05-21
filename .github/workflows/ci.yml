@@ -55,7 +55,7 @@ jobs:
       - uses: actions/checkout@v1
       - uses: seanmiddleditch/gha-setup-ninja@master
       - name: Download LLVM
-        run: sudo apt-get install llvm-11 clang-11
+        run: sudo apt-get install llvm-11 clang-11 lld-11
 
       - name: Download Submodules
         run: git submodule update --init --recursive
