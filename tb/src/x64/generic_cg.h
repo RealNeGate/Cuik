@@ -339,6 +339,34 @@ static void reverse_bb_walk(Ctx* restrict ctx, TB_Function* f, MachineBB* bb, In
     }
 }
 
+static size_t partition(Def* defs, size_t lo, size_t hi, DefIndex* arr) {
+    int pivot = defs[arr[hi]].start; // get last element
+    size_t i = lo - 1;
+
+    FOREACH_N(j, lo, hi) {
+        if (defs[arr[j]].start <= pivot) {
+            // move forward and swap
+            i += 1;
+            tb_swap(DefIndex, arr[i], arr[j]);
+        }
+    }
+
+    i += 1;
+    tb_swap(DefIndex, arr[i], arr[hi]);
+    return i;
+}
+
+static void sort_defs(Def* defs, size_t lo, size_t hi, DefIndex* arr) {
+    if (lo < hi) {
+        // get pivot
+        size_t p = partition(defs, lo, hi, arr);
+
+        // sort both sides
+        sort_defs(defs, lo, p - 1, arr);
+        sort_defs(defs, p + 1, hi, arr);
+    }
+}
+
 // generate live intervals for virtual registers
 static DefIndex* liveness(Ctx* restrict ctx, TB_Function* f) {
     size_t def_count = dyn_array_length(ctx->defs);
@@ -478,7 +506,6 @@ static DefIndex* liveness(Ctx* restrict ctx, TB_Function* f) {
         }
     }
 
-    // sort by starting point
     DefIndex* sorted = ARENA_ARR_ALLOC(&tb__arena, def_count * 2, DefIndex);
     FOREACH_N(i, 0, def_count) {
         Def* d = &ctx->defs[i];
@@ -490,11 +517,8 @@ static DefIndex* liveness(Ctx* restrict ctx, TB_Function* f) {
         sorted[i] = i;
     }
 
-    #ifdef _WIN32
-    qsort_s(sorted, def_count, sizeof(DefIndex), compare_defs, ctx->defs);
-    #else
-    qsort_r(sorted, def_count, sizeof(DefIndex), compare_defs, ctx->defs);
-    #endif
+    // sort by starting point
+    sort_defs(ctx->defs, 0, def_count - 1, sorted);
 
     ctx->machine_bbs = seq_bb;
     return sorted;
