@@ -215,7 +215,7 @@ static TB_Exports export(TB_Linker* l) {
     };
 
     // text section crap
-    TB_LinkerSection* text = tb__find_section(l, ".text", PF_X | PF_R);
+    TB_LinkerSection* text = tb__find_section(l, ".text");
     TB_LinkerSymbol* sym = tb__find_symbol_cstr(&l->symtab, l->entrypoint);
     if (text && sym) {
         if (sym->tag == TB_LINKER_SYMBOL_NORMAL) {
@@ -262,8 +262,8 @@ static TB_Exports export(TB_Linker* l) {
         WRITE(&sec, sizeof(sec));
     }
 
-    TB_LinkerSection* data  = tb__find_section(l, ".data", PF_W | PF_R);
-    TB_LinkerSection* rdata = tb__find_section(l, ".rdata", PF_R);
+    TB_LinkerSection* data  = tb__find_section(l, ".data");
+    TB_LinkerSection* rdata = tb__find_section(l, ".rdata");
 
     // write section contents
     write_pos = tb__apply_section_contents(l, output, write_pos, text, data, rdata, 1, 0);

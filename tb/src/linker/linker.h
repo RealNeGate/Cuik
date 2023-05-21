@@ -299,7 +299,7 @@ uint64_t tb__get_symbol_rva(TB_Linker* l, TB_LinkerSymbol* sym);
 // Section management
 void tb__merge_sections(TB_Linker* linker, TB_LinkerSection* from, TB_LinkerSection* to);
 
-TB_LinkerSection* tb__find_section(TB_Linker* linker, const char* name, uint32_t flags);
+TB_LinkerSection* tb__find_section(TB_Linker* linker, const char* name);
 TB_LinkerSection* tb__find_or_create_section(TB_Linker* linker, const char* name, uint32_t flags);
 TB_LinkerSection* tb__find_or_create_section2(TB_Linker* linker, size_t name_len, const uint8_t* name_str, uint32_t flags);
 TB_LinkerSectionPiece* tb__append_piece(TB_LinkerSection* section, int kind, size_t size, const void* data, TB_Module* mod);

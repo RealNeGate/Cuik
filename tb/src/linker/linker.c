@@ -1,4 +1,5 @@
 #include "linker.h"
+#include <inttypes.h>
 
 extern TB_LinkerVtbl tb__linker_pe, tb__linker_elf;
 
@@ -297,7 +298,7 @@ size_t tb__apply_section_contents(TB_Linker* l, uint8_t* output, size_t write_po
     return write_pos;
 }
 
-TB_LinkerSection* tb__find_section(TB_Linker* linker, const char* name, uint32_t flags) {
+TB_LinkerSection* tb__find_section(TB_Linker* linker, const char* name) {
     ptrdiff_t search = nl_map_get_cstr(linker->sections, name);
     return search >= 0 ? linker->sections[search].v : NULL;
 }
@@ -477,8 +478,8 @@ TB_UnresolvedSymbol* tb__unresolved_symbol(TB_Linker* l, TB_Slice name) {
 }
 
 void tb__apply_module_relocs(TB_Linker* l, TB_Module* m, uint8_t* output) {
-    TB_LinkerSection* text  = tb__find_section(l, ".text",  IMAGE_SCN_MEM_READ  | IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_CNT_CODE);
-    TB_LinkerSection* data  = tb__find_section(l, ".data",  IMAGE_SCN_MEM_WRITE | IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA);
+    TB_LinkerSection* text  = tb__find_section(l, ".text");
+    TB_LinkerSection* data  = tb__find_section(l, ".data");
     // TB_LinkerSection* rdata = tb__find_section(l, ".rdata", IMAGE_SCN_MEM_READ  | IMAGE_SCN_CNT_INITIALIZED_DATA);
 
     uint64_t trampoline_rva = text->address + l->trampoline_pos;
@@ -569,7 +570,7 @@ bool tb__finalize_sections(TB_Linker* l) {
                 // count the rest
                 while (u) u = u->next, i++;
 
-                fprintf(stderr, "  ...and %llu more...\n", i - 5);
+                fprintf(stderr, "  ...and %zu more...\n", i - 5);
             }
             fprintf(stderr, "\n");
         }

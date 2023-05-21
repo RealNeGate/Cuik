@@ -36,7 +36,7 @@ static void* cuik__pool_alloc(int id, size_t size) {
     size = (size + cuik__page_mask) & ~cuik__page_mask;
 
     if (pool_in_use[id]) {
-        return (pool_cache[id] = VirtualAlloc(NULL, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        return (pool_cache[id] = cuik__valloc(size));
     }
 
     if (pool_cap[id] >= size) {
@@ -50,15 +50,15 @@ static void* cuik__pool_alloc(int id, size_t size) {
         // allocate for the first time
         pool_cap[id] = size;
         pool_in_use[id] = true;
-        return (pool_cache[id] = VirtualAlloc(NULL, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        return (pool_cache[id] = cuik__valloc(size));
     } else {
         // free old
-        VirtualFree(pool_cache[id], 0, MEM_RELEASE);
+        cuik__vfree(pool_cache[id], pool_cap[id]);
 
         // alloc new
         pool_cap[id] = size;
         pool_in_use[id] = true;
-        return (pool_cache[id] = VirtualAlloc(NULL, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        return (pool_cache[id] = cuik__valloc(size));
     }
 }
 
@@ -67,7 +67,7 @@ static void* cuik__pool_alloc(int id, size_t size) {
 static void cuik__pool_drop(int id, void* ptr, size_t size) {
     if (ptr != pool_cache[id]) {
         // this is new memory we allocated because the first alloc was in use
-        VirtualFree(ptr, 0, MEM_RELEASE);
+        cuik__vfree(pool_cache[id], size);
     } else {
         pool_in_use[id] = false;
     }
@@ -75,7 +75,7 @@ static void cuik__pool_drop(int id, void* ptr, size_t size) {
 
 static void cuik__pool_collect(void) {
     for (size_t i = 0; i < CUIK_POOL_MAX; i++) {
-        VirtualFree(pool_cache[i], 0, MEM_RELEASE);
+        cuik__vfree(pool_cache[i], pool_cap[i]);
         pool_cache[i] = 0;
         pool_cap[i] = 0;
     }

@@ -514,7 +514,7 @@ static void append_module(TB_Linker* l, TB_Module* m) {
 }
 
 static void apply_external_relocs(TB_Linker* l, uint8_t* output, uint64_t image_base) {
-    TB_LinkerSection* text  = tb__find_section(l, ".text", IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_CNT_CODE);
+    TB_LinkerSection* text  = tb__find_section(l, ".text");
     uint32_t trampoline_rva = text->address + l->trampoline_pos;
     uint32_t iat_pos = l->iat_pos;
 
@@ -971,10 +971,10 @@ static TB_Exports export(TB_Linker* l) {
     }
 
     // personally like merging these
-    TB_LinkerSection* rdata = tb__find_section(l, ".rdata", IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA);
-    tb__merge_sections(l, tb__find_section(l, ".00cfg", IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA), rdata);
-    tb__merge_sections(l, tb__find_section(l, ".idata", IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA), rdata);
-    tb__merge_sections(l, tb__find_section(l, ".xdata", IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA), rdata);
+    TB_LinkerSection* rdata = tb__find_section(l, ".rdata");
+    tb__merge_sections(l, tb__find_section(l, ".00cfg"), rdata);
+    tb__merge_sections(l, tb__find_section(l, ".idata"), rdata);
+    tb__merge_sections(l, tb__find_section(l, ".xdata"), rdata);
 
     garbage_collect(l);
 
@@ -1028,8 +1028,8 @@ static TB_Exports export(TB_Linker* l) {
         }
     }
 
-    TB_LinkerSection* text = tb__find_section(l, ".text", IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_CNT_CODE);
-    TB_LinkerSection* data = tb__find_section(l, ".data", IMAGE_SCN_MEM_WRITE | IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA);
+    TB_LinkerSection* text = tb__find_section(l, ".text");
+    TB_LinkerSection* data = tb__find_section(l, ".data");
 
     if (import_dirs != NULL) {
         iat_dir.virtual_address += rdata->address;
@@ -1128,12 +1128,12 @@ static TB_Exports export(TB_Linker* l) {
         opt_header.data_directories[IMAGE_DIRECTORY_ENTRY_LOAD_CONFIG] = (PE_ImageDataDirectory){ tb__get_symbol_rva(l, load_config_used_sym), 0x140 };
     }
 
-    TB_LinkerSection* pdata = tb__find_section(l, ".pdata", IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA);
+    TB_LinkerSection* pdata = tb__find_section(l, ".pdata");
     if (pdata) {
         opt_header.data_directories[IMAGE_DIRECTORY_ENTRY_EXCEPTION] = (PE_ImageDataDirectory){ pdata->address, pdata->total_size };
     }
 
-    TB_LinkerSection* reloc = tb__find_section(l, ".reloc", IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA);
+    TB_LinkerSection* reloc = tb__find_section(l, ".reloc");
     if (reloc) {
         opt_header.data_directories[IMAGE_DIRECTORY_ENTRY_BASERELOC] = (PE_ImageDataDirectory){ reloc->address, reloc->total_size };
     }
