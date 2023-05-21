@@ -62,7 +62,7 @@ if system == "Windows":
 	dll_ext = ".dll"
 	cflags += " -I c11threads -D_CRT_SECURE_NO_WARNINGS"
 elif system == "Darwin":
-	ld = "lld.ld"
+	ld = "lld"
 	ldflags += " -g -lc -o"
 
 	exe_ext = ""
@@ -70,7 +70,7 @@ elif system == "Darwin":
 	dll_ext = ".so"
 	cflags += " -std=gnu11 -I c11threads -Wno-deprecated-declarations"
 else:
-	ld = "ld.lld"
+	ld = "lld"
 	ldflags += " -g -lc -lm -lthreads -o "
 	exe_ext = ""
 	lib_ext = ".a"
