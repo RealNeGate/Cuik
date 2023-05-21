@@ -1,5 +1,9 @@
 #include <stdio.h>
 
+#ifndef _WIN32
+#include <unistd.h>
+#endif
+
 #ifdef CUIK_USE_SPALL_AUTO
 #define SPALL_BUFFER_PROFILING
 #define SPALL_BUFFER_PROFILING_GET_TIME() __rdtsc()

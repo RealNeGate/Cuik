@@ -104,7 +104,7 @@ int run_objdump(int argc, const char** argv) {
             while (current < size) {
                 TB_X86_Inst inst = tb_x86_disasm(size - current, &data[current]);
                 if (inst.type >= 0) {
-                    __debugbreak();
+                    assert(0 && "TODO");
                 }
 
                 current += inst.length;

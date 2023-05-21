@@ -62,7 +62,7 @@ static bool live_compile_watch(LiveCompiler* l, Cuik_DriverArgs* args) {
         return false;
     }
 
-    const char* source_file = args->sources[0];
+    const char* source_file = args->sources[0]->data;
     l->og_last_write = get_last_write_time(source_file);
     return false;
 }
