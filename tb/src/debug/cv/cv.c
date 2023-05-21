@@ -1,6 +1,8 @@
 #include "../../tb_internal.h"
 #include "cv.h"
 
+#include "cv_type_builder.c"
+
 // constant sized "hash map" which is used to
 // deduplicate types in the codeview
 #define MAX_TYPE_ENTRY_LOOKUP_SIZE 1024
@@ -60,11 +62,6 @@ static uint16_t get_codeview_type(TB_DataType dt) {
     }
 
     return 0x0003; // T_VOID
-}
-
-static void align_up_emitter(TB_Emitter* e, size_t u) {
-    size_t pad = align_up(e->count, u) - e->count;
-    while (pad--) tb_out1b(e, 0x00);
 }
 
 static uint16_t convert_to_codeview_type(CV_Builder* builder, TB_DebugType* type) {

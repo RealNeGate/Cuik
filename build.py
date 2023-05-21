@@ -94,8 +94,20 @@ if system == "Darwin":
 	sources.append("c11threads/threads_posix.c")
 
 if args.tb:
-	for path in Path("tb/src").rglob("*.c"):
-		sources.append(str(path))
+	sources.append("tb/src/tb.c")
+	# debug formats
+	sources.append("tb/src/debug/cv/cv.c")
+	sources.append("tb/src/debug/fut/fut.c")
+	# architectures
+	sources.append("tb/src/x64/x64.c")
+	# objects
+	sources.append("tb/src/objects/coff.c")
+	sources.append("tb/src/objects/coff_parse.c")
+	sources.append("tb/src/objects/elf64.c")
+	sources.append("tb/src/objects/macho.c")
+	# linker
+	sources.append("tb/src/linker/pe.c")
+	sources.append("tb/src/linker/elf.c")
 
 if args.inspector:
 	sources.append("inspector/main.c")

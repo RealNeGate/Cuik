@@ -1,6 +1,32 @@
 #include "tb_internal.h"
 #include "host.h"
 
+// unity build of the core TB stuff
+#include "hash.c"
+#include "analysis.c"
+#include "tb_atomic.c"
+#include "tb_internal.c"
+#include "tb_builder.c"
+#include "debug_builder.c"
+#include "ir_printer.c"
+#include "exporter.c"
+#include "symbols.c"
+
+#include "bigint/BigInt.c"
+
+// Optimizer
+#include "opt/optimizer.c"
+
+// Linker
+#include "linker/linker.c"
+
+// Platform layer
+#ifdef _WIN32
+#include "system/win32.c"
+#else
+#include "system/posix.c"
+#endif
+
 thread_local Arena tb__arena;
 
 static thread_local uint8_t* tb_thread_storage;

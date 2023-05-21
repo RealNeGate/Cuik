@@ -2,6 +2,8 @@
 #include "../x64/x64_emitter.h"
 #include "../objects/win64eh.h"
 
+#include "x64_disasm.c"
+
 enum {
     CG_REGISTER_CLASSES = 2
 };
