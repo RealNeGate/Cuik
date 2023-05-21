@@ -68,7 +68,7 @@ elif system == "Darwin":
 	exe_ext = ""
 	lib_ext = ".a"
 	dll_ext = ".so"
-	cflags += " -I c11threads -Wno-deprecated-declarations"
+	cflags += " -std=gnu11 -I c11threads -Wno-deprecated-declarations"
 else:
 	ld = "ld.lld"
 	ldflags += " -g -lc -lm -lthreads -o "

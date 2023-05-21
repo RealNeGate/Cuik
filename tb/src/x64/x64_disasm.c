@@ -44,7 +44,8 @@ TB_X86_Inst tb_x86_disasm(size_t length, const uint8_t data[length]) {
     ////////////////////////////////
     // Parse opcode
     ////////////////////////////////
-    __debugbreak();
+    // __debugbreak();
+    tb_todo();
 
     THROW_OBB(1);
     op = data[current++];

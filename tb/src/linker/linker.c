@@ -1,5 +1,4 @@
 #include "linker.h"
-#include <inttypes.h>
 
 extern TB_LinkerVtbl tb__linker_pe, tb__linker_elf;
 

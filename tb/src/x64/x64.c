@@ -301,7 +301,7 @@ static void print_operand(Val* v) {
         }
         case VAL_XMM: printf("XMM%d", v->reg); break;
         case VAL_IMM: printf("%d", v->imm); break;
-        case VAL_ABS: printf("%#llx", v->abs); break;
+        case VAL_ABS: printf("%#"PRIx64, v->abs); break;
         case VAL_MEM: {
             if (v->index == -1) {
                 printf("[%s + %d]", GPR_NAMES[v->reg], v->imm);

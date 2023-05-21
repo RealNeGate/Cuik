@@ -1,5 +1,6 @@
 #include "../tb_internal.h"
 #include "../codegen/emitter.h"
+#include <inttypes.h>
 
 enum {
     CG_VAL_UNRESOLVED = 0,
