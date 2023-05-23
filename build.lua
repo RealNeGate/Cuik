@@ -1,13 +1,28 @@
+--[[
+
+  _____       _ _     _                 _
+ | ___ \     (_) |   | |               | |
+ | |_/ /_   _ _| | __| |  ___ _   _ ___| |_ ___ _ __ ___
+ | ___ \ | | | | |/ _` | / __| | | / __| __/ _ \ '_ ` _ \
+ | |_/ / |_| | | | (_| | \__ \ |_| \__ \ ||  __/ | | | | |
+ \____/ \__,_|_|_|\__,_| |___/\__, |___/\__\___|_| |_| |_|
+                               __/ |
+                              |___/
+
+--]]
+
+-- silly little OS detection
 local is_windows = package.config:sub(1,1) == "\\"
+
 local options = {
 	opt    = false,
 	cuik   = false,
 	tb     = false,
 	driver = true,
 	shared = false,
+	spall_auto = false
 }
 
--- silly little OS detection
 src = { "common/common.c", "mimalloc/src/static.c" }
 function add_srcs(...)
     for i = 1, select("#",...) do
@@ -23,6 +38,10 @@ local ar = "llvm-ar -rcs"
 
 if options.opt then
 	cflags = cflags.." -O2 -DNDEBUG"
+end
+
+if options.spall_auto then
+	cflags = cflags.." -DCUIK_USE_SPALL_AUTO -finstrument-functions-after-inlining"
 end
 
 if is_windows then

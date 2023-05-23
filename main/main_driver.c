@@ -28,10 +28,18 @@ static void leak_detect(void) {
     mi_heap_visit_blocks(mi_heap_get_default(), true, leak_visit, NULL);
 }
 
+#ifdef CUIK_USE_SPALL_AUTO
+static void spall_die(void) {
+    spall_auto_thread_quit();
+    spall_auto_quit();
+}
+#endif
+
 int main(int argc, const char** argv) {
     #ifdef CUIK_USE_SPALL_AUTO
     spall_auto_init("perf.spall");
     spall_auto_thread_init(1, 1ull<<28ull);
+    atexit(spall_die);
     #endif
 
     int status = EXIT_SUCCESS;
@@ -140,11 +148,6 @@ int main(int argc, const char** argv) {
     cuik_toolchain_free(&args.toolchain);
     cuik_free_target(args.target);
     cuik_free_driver_args(&args);
-
-    #ifdef CUIK_USE_SPALL_AUTO
-    spall_auto_thread_quit();
-    spall_auto_quit();
-    #endif
 
     // stb_leakcheck_dumpmem();
     return status;

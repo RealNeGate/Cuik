@@ -9,7 +9,6 @@ jobs:
       - uses: seanmiddleditch/gha-setup-ninja@master
 
       - uses: leafo/gh-actions-lua@v10
-        with:
         luaVersion: "luajit-2.0.5"
 
       - name: Download Submodules
@@ -36,16 +35,20 @@ jobs:
         with:
         luaVersion: "luajit-2.0.5"
 
-      - name: Download LLVM
+      - name: Download Lua
         run: |
           brew update
+          brew install lua@5.3
+
+      - name: Download LLVM
+        run: |
           brew install llvm@14
 
       - name: Download Submodules
         run: git submodule update --init --recursive
 
       - name: Build Cuik
-        run: luajit build.lua
+        run: lua build.lua
         timeout-minutes: 10
 
       - name: upload artifacts
@@ -58,18 +61,15 @@ jobs:
     steps:
       - uses: actions/checkout@v1
       - uses: seanmiddleditch/gha-setup-ninja@master
-      - uses: leafo/gh-actions-lua@v10
-        with:
-        luaVersion: "luajit-2.0.5"
 
-      - name: Download LLVM
-        run: sudo apt-get install build-essential llvm-11 clang-11 lld
+      - name: Download LLVM & Lua
+        run: sudo apt-get install llvm-11 clang-11 lld lua5.3
 
       - name: Download Submodules
         run: git submodule update --init --recursive
 
       - name: Build Cuik
-        run: luajit build.lua
+        run: lua build.lua
         timeout-minutes: 10
 
       - name: upload artifacts
