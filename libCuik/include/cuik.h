@@ -77,7 +77,7 @@ CUIK_API Cuik_Target* cuik_target_host(void);
 ////////////////////////////////////////////
 // General Cuik stuff
 ////////////////////////////////////////////
-CUIK_API void cuik_init(void);
+CUIK_API void cuik_init(bool use_crash_handler);
 
 // This should be called before exiting
 CUIK_API void cuik_free_thread_resources(void);
@@ -103,7 +103,11 @@ CUIK_API void cuik_unlock_compilation_unit(CompilationUnit* restrict cu);
 CUIK_API void cuik_add_to_compilation_unit(CompilationUnit* restrict cu, TranslationUnit* restrict tu);
 CUIK_API void cuik_destroy_compilation_unit(CompilationUnit* restrict cu);
 CUIK_API size_t cuik_num_of_translation_units_in_compilation_unit(CompilationUnit* restrict cu);
+
+#ifdef CUIK_USE_TB
+CUIK_API void cuik_compilation_unit_set_tb_module(CompilationUnit* restrict cu, TB_Module* mod);
 CUIK_API TB_Module* cuik_compilation_unit_tb_module(CompilationUnit* restrict cu);
+#endif
 
 #include "cuik_perf.h"
 #include "cuik_lex.h"

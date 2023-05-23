@@ -2003,10 +2003,8 @@ void cuikcg_allocate_ir2(TranslationUnit* tu, TB_Module* m) {
 
             s->flags |= STMT_FLAGS_HAS_IR_BACKING;
         } else if (s->op == STMT_GLOBAL_DECL || s->op == STMT_DECL) {
-            if (!s->decl.attrs.is_static  && !s->decl.attrs.is_extern &&
-                !s->decl.attrs.is_typedef && !s->decl.attrs.is_inline &&
+            if (!s->decl.attrs.is_extern && !s->decl.attrs.is_typedef &&
                 s->decl.name && cuik_canonical_type(s->decl.type)->kind != KIND_FUNC) {
-                // only enter one of them and whichever goes in, will have IR backing
                 s->flags |= STMT_FLAGS_HAS_IR_BACKING;
             }
         }

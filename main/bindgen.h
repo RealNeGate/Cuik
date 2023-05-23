@@ -103,7 +103,7 @@ static bool is_in_sources(const Cuik_DriverArgs* args, const char* name) {
 }
 
 int run_bindgen(int argc, const char** argv) {
-    cuik_init();
+    cuik_init(true);
 
     Cuik_DriverArgs args = {
         .version = CUIK_VERSION_C23,

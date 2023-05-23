@@ -91,7 +91,7 @@ static TB_LinkerThreadInfo* get_thread_info(TB_Linker* l) {
     }
 }
 
-void append_object(TB_Linker* l, TB_Slice obj_name, TB_ObjectFile* obj) {
+void pe_append_object(TB_Linker* l, TB_Slice obj_name, TB_ObjectFile* obj) {
     TB_LinkerThreadInfo* info = get_thread_info(l);
 
     // Apply all sections (generate lookup for sections based on ordinals)
@@ -344,7 +344,7 @@ void append_object(TB_Linker* l, TB_Slice obj_name, TB_ObjectFile* obj) {
     }
 }
 
-static void append_library(TB_Linker* l, TB_Slice ar_name, TB_Slice ar_file) {
+static void pe_append_library(TB_Linker* l, TB_Slice ar_name, TB_Slice ar_file) {
     TB_ArchiveFileParser ar_parser = { 0 };
     if (!tb_archive_parse(ar_file, &ar_parser)) {
         return;
@@ -407,7 +407,7 @@ static void append_library(TB_Linker* l, TB_Slice ar_name, TB_Slice ar_file) {
             // fprintf(stderr, "%.*s\n", (int) e->name.length, e->name.data);
             CUIK_TIMED_BLOCK("append object file") {
                 e->obj->ar_name = ar_name;
-                append_object(l, e->name, e->obj);
+                pe_append_object(l, e->name, e->obj);
 
                 // tb_object_free(e->obj);
             }
@@ -417,7 +417,7 @@ static void append_library(TB_Linker* l, TB_Slice ar_name, TB_Slice ar_file) {
     tb_platform_heap_free(entries);
 }
 
-static void append_module(TB_Linker* l, TB_Module* m) {
+static void pe_append_module(TB_Linker* l, TB_Module* m) {
     CUIK_TIMED_BLOCK("layout section") {
         tb_module_layout_sections(m);
     }
@@ -628,12 +628,7 @@ static void apply_external_relocs(TB_Linker* l, uint8_t* output, uint64_t image_
     }
 }
 
-static void align_up_emitter(TB_Emitter* e, size_t u) {
-    size_t pad = align_up(e->count, u) - e->count;
-    while (pad--) tb_out1b(e, 0x00);
-}
-
-static TB_LinkerSymbol* resolve_sym(TB_Linker* l, TB_LinkerSymbol* sym, TB_Slice name, TB_Slice* alt, uint32_t reloc_i) {
+static TB_LinkerSymbol* pe_resolve_sym(TB_Linker* l, TB_LinkerSymbol* sym, TB_Slice name, TB_Slice* alt, uint32_t reloc_i) {
     // resolve any by-name symbols
     if (sym == NULL) {
         sym = tb__find_symbol(&l->symtab, name);
@@ -853,9 +848,10 @@ static void* gen_reloc_section(TB_Linker* l) {
 }
 
 #define CSTRING(str) { sizeof(str)-1, (const uint8_t*) str }
-static void init(TB_Linker* l) {
+static void pe_init(TB_Linker* l) {
     l->entrypoint = "mainCRTStartup";
     l->subsystem = TB_WIN_SUBSYSTEM_CONSOLE;
+    l->resolve_sym = pe_resolve_sym;
 
     tb__append_symbol(&l->symtab, &(TB_LinkerSymbol){
             .name = CSTRING("__ImageBase"),
@@ -882,68 +878,8 @@ static void init(TB_Linker* l) {
     add_abs("__guard_eh_cont_table");
 }
 
-static void gc_mark(TB_Linker* l, TB_LinkerSectionPiece* p) {
-    if (p == NULL || p->size == 0 || (p->flags & TB_LINKER_PIECE_LIVE) || (p->parent->generic_flags & TB_LINKER_SECTION_DISCARD)) {
-        return;
-    }
-
-    p->flags |= TB_LINKER_PIECE_LIVE;
-
-    // mark module content
-    if (p->kind == PIECE_MODULE_SECTION && p->module != NULL) {
-        gc_mark(l, p->module->text.piece);
-        gc_mark(l, p->module->data.piece);
-        gc_mark(l, p->module->rdata.piece);
-        gc_mark(l, p->module->tls.piece);
-    }
-
-    // mark any kid symbols
-    for (TB_LinkerSymbol* sym = p->first_sym; sym != NULL; sym = sym->next) {
-        gc_mark(l, tb__get_piece(l, sym));
-    }
-
-    // mark any relocations
-    dyn_array_for(i, p->abs_refs) {
-        TB_LinkerRelocAbs* r = &p->abs_refs[i].info->absolutes[p->abs_refs[i].index];
-
-        // resolve symbol
-        r->target = resolve_sym(l, r->target, r->name, r->alt, r->obj_file);
-        gc_mark(l, tb__get_piece(l, r->target));
-    }
-
-    dyn_array_for(i, p->rel_refs) {
-        TB_LinkerRelocRel* r = &p->rel_refs[i].info->relatives[p->rel_refs[i].index];
-
-        // resolve symbol
-        r->target = resolve_sym(l, r->target, r->name, r->alt, r->obj_file);
-        gc_mark(l, tb__get_piece(l, r->target));
-    }
-
-    if (p->associate) {
-        gc_mark(l, p->associate);
-    }
-}
-
-// this will resolve the sections, GC any pieces which aren't used and
-// resolve symbols.
-static bool garbage_collect(TB_Linker* l) {
-    CUIK_TIMED_BLOCK("GC sections") {
-        // mark roots
-        TB_LinkerSectionPiece* entry = tb__get_piece(l, tb__find_symbol_cstr(&l->symtab, l->entrypoint));
-        gc_mark(l, entry);
-
-        entry = tb__get_piece(l, tb__find_symbol_cstr(&l->symtab, "_tls_used"));
-        gc_mark(l, entry);
-
-        entry = tb__get_piece(l, tb__find_symbol_cstr(&l->symtab, "_load_config_used"));
-        gc_mark(l, entry);
-    }
-
-    return true;
-}
-
 #define WRITE(data, size) (memcpy(&output[write_pos], data, size), write_pos += (size))
-static TB_Exports export(TB_Linker* l) {
+static TB_Exports pe_export(TB_Linker* l) {
     PE_ImageDataDirectory imp_dir, iat_dir;
     COFF_ImportDirectory* import_dirs;
 
@@ -976,7 +912,13 @@ static TB_Exports export(TB_Linker* l) {
     tb__merge_sections(l, tb__find_section(l, ".idata"), rdata);
     tb__merge_sections(l, tb__find_section(l, ".xdata"), rdata);
 
-    garbage_collect(l);
+    // this will resolve the sections, GC any pieces which aren't used and
+    // resolve symbols.
+    CUIK_TIMED_BLOCK("GC sections") {
+        gc_mark_root(l, l->entrypoint);
+        gc_mark_root(l, "_tls_used");
+        gc_mark_root(l, "_load_config_used");
+    }
 
     if (!tb__finalize_sections(l)) {
         return (TB_Exports){ 0 };
@@ -1201,9 +1143,9 @@ static TB_Exports export(TB_Linker* l) {
 }
 
 TB_LinkerVtbl tb__linker_pe = {
-    .init           = init,
-    .append_object  = append_object,
-    .append_library = append_library,
-    .append_module  = append_module,
-    .export         = export
+    .init           = pe_init,
+    .append_object  = pe_append_object,
+    .append_library = pe_append_library,
+    .append_module  = pe_append_module,
+    .export         = pe_export
 };

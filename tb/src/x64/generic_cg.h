@@ -339,31 +339,35 @@ static void reverse_bb_walk(Ctx* restrict ctx, TB_Function* f, MachineBB* bb, In
     }
 }
 
-static size_t partition(Def* defs, size_t lo, size_t hi, DefIndex* arr) {
-    int pivot = defs[arr[hi]].start; // get last element
-    size_t i = lo - 1;
+static size_t partition(Def* defs, ptrdiff_t lo, ptrdiff_t hi, DefIndex* arr) {
+    int pivot = defs[arr[(hi - lo) / 2 + lo]].start; // middle
 
-    FOREACH_N(j, lo, hi) {
-        if (defs[arr[j]].start <= pivot) {
-            // move forward and swap
-            i += 1;
-            tb_swap(DefIndex, arr[i], arr[j]);
-        }
+    ptrdiff_t i = lo - 1, j = hi + 1;
+    for (;;) {
+        // Move the left index to the right at least once and while the element at
+        // the left index is less than the pivot
+        do { i += 1; } while (defs[arr[i]].start < pivot);
+
+        // Move the right index to the left at least once and while the element at
+        // the right index is greater than the pivot
+        do { j -= 1; } while (defs[arr[j]].start > pivot);
+
+        // If the indices crossed, return
+        if (i >= j) return j;
+
+        // Swap the elements at the left and right indices
+        tb_swap(DefIndex, arr[i], arr[j]);
     }
-
-    i += 1;
-    tb_swap(DefIndex, arr[i], arr[hi]);
-    return i;
 }
 
-static void sort_defs(Def* defs, size_t lo, size_t hi, DefIndex* arr) {
-    if (lo < hi) {
+static void cuiksort_defs(Def* defs, ptrdiff_t lo, ptrdiff_t hi, DefIndex* arr) {
+    if (lo >= 0 && hi >= 0 && lo < hi) {
         // get pivot
         size_t p = partition(defs, lo, hi, arr);
 
         // sort both sides
-        sort_defs(defs, lo, p - 1, arr);
-        sort_defs(defs, p + 1, hi, arr);
+        cuiksort_defs(defs, lo, p, arr);
+        cuiksort_defs(defs, p + 1, hi, arr);
     }
 }
 
@@ -518,7 +522,7 @@ static DefIndex* liveness(Ctx* restrict ctx, TB_Function* f) {
     }
 
     // sort by starting point
-    sort_defs(ctx->defs, 0, def_count - 1, sorted);
+    cuiksort_defs(ctx->defs, 0, def_count - 1, sorted);
 
     ctx->machine_bbs = seq_bb;
     return sorted;

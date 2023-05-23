@@ -2,19 +2,15 @@
 #include "linker.h"
 #include <tb_elf.h>
 
-static void init(TB_Linker* l) {
-    l->entrypoint = "_start";
-}
-
-static void append_object(TB_Linker* l, TB_Slice obj_name, TB_ObjectFile* obj) {
+static void elf_append_object(TB_Linker* l, TB_Slice obj_name, TB_ObjectFile* obj) {
     // implement this
 }
 
-static void append_library(TB_Linker* l, TB_Slice ar_name, TB_Slice ar_file) {
+static void elf_append_library(TB_Linker* l, TB_Slice ar_name, TB_Slice ar_file) {
     // implement this
 }
 
-static void append_module(TB_Linker* l, TB_Module* m) {
+static void elf_append_module(TB_Linker* l, TB_Module* m) {
     CUIK_TIMED_BLOCK("layout section") {
         tb_module_layout_sections(m);
     }
@@ -51,7 +47,7 @@ static void append_module(TB_Linker* l, TB_Module* m) {
     dyn_array_put(l->ir_modules, m);
 }
 
-static TB_LinkerSymbol* resolve_sym(TB_Linker* l, TB_LinkerSymbol* sym, TB_Slice name, TB_Slice* alt, uint32_t reloc_i) {
+static TB_LinkerSymbol* elf_resolve_sym(TB_Linker* l, TB_LinkerSymbol* sym, TB_Slice name, TB_Slice* alt, uint32_t reloc_i) {
     // resolve any by-name symbols
     if (sym == NULL) {
         sym = tb__find_symbol(&l->symtab, name);
@@ -70,55 +66,15 @@ static TB_LinkerSymbol* resolve_sym(TB_Linker* l, TB_LinkerSymbol* sym, TB_Slice
     return sym;
 }
 
-static void gc_mark(TB_Linker* l, TB_LinkerSectionPiece* p) {
-    if (p == NULL || p->size == 0 || (p->flags & TB_LINKER_PIECE_LIVE) || (p->parent->generic_flags & TB_LINKER_SECTION_DISCARD)) {
-        return;
-    }
-
-    p->flags |= TB_LINKER_PIECE_LIVE;
-
-    // mark module content
-    if (p->kind == PIECE_MODULE_SECTION && p->module != NULL) {
-        gc_mark(l, p->module->text.piece);
-        gc_mark(l, p->module->data.piece);
-        gc_mark(l, p->module->rdata.piece);
-        gc_mark(l, p->module->tls.piece);
-    }
-
-    // mark any kid symbols
-    for (TB_LinkerSymbol* sym = p->first_sym; sym != NULL; sym = sym->next) {
-        gc_mark(l, tb__get_piece(l, sym));
-    }
-
-    // mark any relocations
-    dyn_array_for(i, p->abs_refs) {
-        TB_LinkerRelocAbs* r = &p->abs_refs[i].info->absolutes[p->abs_refs[i].index];
-
-        // resolve symbol
-        r->target = resolve_sym(l, r->target, r->name, r->alt, r->obj_file);
-        gc_mark(l, tb__get_piece(l, r->target));
-    }
-
-    dyn_array_for(i, p->rel_refs) {
-        TB_LinkerRelocRel* r = &p->rel_refs[i].info->relatives[p->rel_refs[i].index];
-
-        // resolve symbol
-        r->target = resolve_sym(l, r->target, r->name, r->alt, r->obj_file);
-        gc_mark(l, tb__get_piece(l, r->target));
-    }
-
-    if (p->associate) {
-        gc_mark(l, p->associate);
-    }
+static void elf_init(TB_Linker* l) {
+    l->entrypoint = "_start";
+    l->resolve_sym = elf_resolve_sym;
 }
 
 #define WRITE(data, size) (memcpy(&output[write_pos], data, size), write_pos += (size))
-static TB_Exports export(TB_Linker* l) {
+static TB_Exports elf_export(TB_Linker* l) {
     CUIK_TIMED_BLOCK("GC sections") {
-        // mark roots
-        TB_LinkerSymbol* sym = tb__find_symbol_cstr(&l->symtab, l->entrypoint);
-        TB_LinkerSectionPiece* entry = tb__get_piece(l, sym);
-        gc_mark(l, entry);
+        gc_mark_root(l, l->entrypoint);
     }
 
     if (!tb__finalize_sections(l)) {
@@ -284,9 +240,9 @@ static TB_Exports export(TB_Linker* l) {
 }
 
 TB_LinkerVtbl tb__linker_elf = {
-    .init           = init,
-    .append_object  = append_object,
-    .append_library = append_library,
-    .append_module  = append_module,
-    .export         = export
+    .init           = elf_init,
+    .append_object  = elf_append_object,
+    .append_library = elf_append_library,
+    .append_module  = elf_append_module,
+    .export         = elf_export
 };

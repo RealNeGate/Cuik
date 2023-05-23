@@ -45,7 +45,7 @@ int main(int argc, const char** argv) {
         }
     }
 
-    cuik_init();
+    cuik_init(true);
 
     Cuik_DriverArgs args = {
         .version   = CUIK_VERSION_C23,

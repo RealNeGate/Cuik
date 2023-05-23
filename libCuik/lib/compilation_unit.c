@@ -5,31 +5,35 @@
 
 #include "front/parser.h"
 
-CUIK_API CompilationUnit* cuik_create_compilation_unit(void) {
+CompilationUnit* cuik_create_compilation_unit(void) {
     CompilationUnit* cu = cuik_calloc(1, sizeof(CompilationUnit));
     mtx_init(&cu->lock, mtx_plain);
     return cu;
 }
 
-CUIK_API void cuik_lock_compilation_unit(CompilationUnit* restrict cu) {
+void cuik_lock_compilation_unit(CompilationUnit* restrict cu) {
     mtx_lock(&cu->lock);
 }
 
-CUIK_API void cuik_unlock_compilation_unit(CompilationUnit* restrict cu) {
+void cuik_unlock_compilation_unit(CompilationUnit* restrict cu) {
     mtx_unlock(&cu->lock);
 }
 
-CUIK_API TranslationUnit* cuik_first_translation_unit(CompilationUnit* restrict cu) {
+TranslationUnit* cuik_first_translation_unit(CompilationUnit* restrict cu) {
     return cu->head;
 }
 
 #ifdef CUIK_USE_TB
-CUIK_API TB_Module* cuik_compilation_unit_tb_module(CompilationUnit* restrict cu) {
+void cuik_compilation_unit_set_tb_module(CompilationUnit* restrict cu, TB_Module* mod) {
+    cu->ir_mod = mod;
+}
+
+TB_Module* cuik_compilation_unit_tb_module(CompilationUnit* restrict cu) {
     return cu->ir_mod;
 }
 #endif
 
-CUIK_API void cuik_add_to_compilation_unit(CompilationUnit* restrict cu, TranslationUnit* restrict tu) {
+void cuik_add_to_compilation_unit(CompilationUnit* restrict cu, TranslationUnit* restrict tu) {
     assert(tu->next == NULL && "somehow the TU is already attached to something...");
     cuik_lock_compilation_unit(cu);
 
@@ -47,7 +51,7 @@ CUIK_API void cuik_add_to_compilation_unit(CompilationUnit* restrict cu, Transla
     cuik_unlock_compilation_unit(cu);
 }
 
-CUIK_API void cuik_destroy_compilation_unit(CompilationUnit* restrict cu) {
+void cuik_destroy_compilation_unit(CompilationUnit* restrict cu) {
     if (cu == NULL) {
         return;
     }
@@ -65,6 +69,6 @@ CUIK_API void cuik_destroy_compilation_unit(CompilationUnit* restrict cu) {
     cuik_free(cu);
 }
 
-CUIK_API size_t cuik_num_of_translation_units_in_compilation_unit(CompilationUnit* restrict cu) {
+size_t cuik_num_of_translation_units_in_compilation_unit(CompilationUnit* restrict cu) {
     return cu->count;
 }

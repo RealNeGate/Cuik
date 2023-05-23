@@ -1,20 +1,13 @@
 #include <cuik.h>
 #include "targets/targets.h"
 
-#ifdef _WIN32
-#include "back/microsoft_craziness.h"
-#define SLASH "\\"
-#else
-#define SLASH "/"
-#endif
-
 // hacky
 void hook_crash_handler(void);
 void init_timer_system(void);
 
 thread_local Arena thread_arena;
 
-void cuik_init(void) {
+void cuik_init(bool use_crash_handler) {
     #if _WIN32
     // Enable ANSI/VT sequences on windows
     HANDLE output_handle = GetStdHandle(STD_OUTPUT_HANDLE);
@@ -27,7 +20,10 @@ void cuik_init(void) {
     #endif
 
     init_timer_system();
-    hook_crash_handler();
+
+    if (use_crash_handler) {
+        hook_crash_handler();
+    }
 }
 
 void cuik_free_thread_resources(void) {

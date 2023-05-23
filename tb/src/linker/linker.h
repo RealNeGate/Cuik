@@ -243,11 +243,14 @@ struct TB_UnresolvedSymbol {
     uint32_t reloc;
 };
 
+typedef TB_LinkerSymbol* TB_SymbolResolver(TB_Linker* l, TB_LinkerSymbol* sym, TB_Slice name, TB_Slice* alt, uint32_t reloc_i);
+
 typedef struct TB_Linker {
     TB_Arch target_arch;
 
     const char* entrypoint;
     TB_WindowsSubsystem subsystem;
+    TB_SymbolResolver* resolve_sym;
 
     NL_Strmap(TB_LinkerSection*) sections;
 

@@ -643,3 +643,50 @@ bool tb__finalize_sections(TB_Linker* l) {
 
     return true;
 }
+
+static void gc_mark(TB_Linker* l, TB_LinkerSectionPiece* p) {
+    if (p == NULL || p->size == 0 || (p->flags & TB_LINKER_PIECE_LIVE) || (p->parent->generic_flags & TB_LINKER_SECTION_DISCARD)) {
+        return;
+    }
+
+    p->flags |= TB_LINKER_PIECE_LIVE;
+
+    // mark module content
+    if (p->kind == PIECE_MODULE_SECTION && p->module != NULL) {
+        gc_mark(l, p->module->text.piece);
+        gc_mark(l, p->module->data.piece);
+        gc_mark(l, p->module->rdata.piece);
+        gc_mark(l, p->module->tls.piece);
+    }
+
+    // mark any kid symbols
+    for (TB_LinkerSymbol* sym = p->first_sym; sym != NULL; sym = sym->next) {
+        gc_mark(l, tb__get_piece(l, sym));
+    }
+
+    // mark any relocations
+    dyn_array_for(i, p->abs_refs) {
+        TB_LinkerRelocAbs* r = &p->abs_refs[i].info->absolutes[p->abs_refs[i].index];
+
+        // resolve symbol
+        r->target = l->resolve_sym(l, r->target, r->name, r->alt, r->obj_file);
+        gc_mark(l, tb__get_piece(l, r->target));
+    }
+
+    dyn_array_for(i, p->rel_refs) {
+        TB_LinkerRelocRel* r = &p->rel_refs[i].info->relatives[p->rel_refs[i].index];
+
+        // resolve symbol
+        r->target = l->resolve_sym(l, r->target, r->name, r->alt, r->obj_file);
+        gc_mark(l, tb__get_piece(l, r->target));
+    }
+
+    if (p->associate) {
+        gc_mark(l, p->associate);
+    }
+}
+
+static void gc_mark_root(TB_Linker* l, const char* name) {
+    TB_LinkerSectionPiece* p = tb__get_piece(l, tb__find_symbol_cstr(&l->symtab, name));
+    gc_mark(l, p);
+}

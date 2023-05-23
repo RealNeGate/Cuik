@@ -1,21 +1,11 @@
 #include "macho.h"
 
-typedef struct TB_ModuleExporter {
-    const ICodeGen* code_gen;
-    size_t write_pos;
-} TB_ModuleExporter;
-
-#define WRITE(data, length_) write_data(e, output, length_, data)
-static void write_data(TB_ModuleExporter* e, uint8_t* output, size_t length, const void* data) {
-    memcpy(output + e->write_pos, data, length);
-    e->write_pos += length;
-}
-
+#define WRITE(data, size) (memcpy(&output[write_pos], data, size), write_pos += (size))
 TB_API TB_Exports tb_macho_write_output(TB_Module* m, const IDebugFormat* dbg) {
     TB_ModuleExporter* e = tb_platform_heap_alloc(sizeof(TB_ModuleExporter));
     memset(e, 0, sizeof(TB_ModuleExporter));
 
-    e->code_gen = tb__find_code_generator(m);
+    const ICodeGen* code_gen = tb__find_code_generator(m);
 
     //TB_TemporaryStorage* tls = tb_tls_allocate();
     TB_Emitter string_table = { 0 };
@@ -98,6 +88,7 @@ TB_API TB_Exports tb_macho_write_output(TB_Module* m, const IDebugFormat* dbg) {
     // fprintf(stderr, "TB warning: Mach-O output isn't ready yet :p sorry\n");
 
     // Allocate memory now
+    size_t write_pos = 0;
     uint8_t* restrict output = tb_platform_heap_alloc(output_size);
 
     // General layout is:
@@ -113,7 +104,7 @@ TB_API TB_Exports tb_macho_write_output(TB_Module* m, const IDebugFormat* dbg) {
     WRITE(&segment_cmd, sizeof(segment_cmd));
     WRITE(&sections, sizeof(MO_Section64) * NUMBER_OF_SECTIONS);
 
-    e->write_pos = tb_helper_write_section(m, e->write_pos, &m->text, output, sections[0].offset);
+    write_pos = tb_helper_write_section(m, write_pos, &m->text, output, sections[0].offset);
 
     // emit section contents
     FOREACH_N(i, 0, NUMBER_OF_SECTIONS) {

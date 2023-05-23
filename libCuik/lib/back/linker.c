@@ -5,9 +5,6 @@
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
-#define SLASH "\\"
-#else
-#define SLASH "/"
 #endif
 
 void cuiklink_deinit(Cuik_Linker* l) {
