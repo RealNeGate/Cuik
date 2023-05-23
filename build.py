@@ -6,14 +6,10 @@ import subprocess
 import argparse
 from pathlib import Path
 
-# the inspector uses Raylib, be sure to change this path if you're gonna use it
-raylib_path = "C:/raylib"
-
 parser = argparse.ArgumentParser(description='Compiles Cuik + friends')
 parser.add_argument('-shared', action='store_true', help='build libCuik as shared object')
 parser.add_argument('-opt', action='store_true', help='optimize output')
 parser.add_argument('-driver', action='store_true', help='compile main driver')
-parser.add_argument('-inspector', action='store_true', help='compile inspector')
 parser.add_argument('-libcuik', action='store_true', help='compile libCuik')
 parser.add_argument('-tb', action='store_true', help='compiles TB')
 parser.add_argument('-asan', action='store_true', help='compile with ASAN')
@@ -40,10 +36,6 @@ if args.asan:      cflags += " -fsanitize=address"
 if args.opt:       cflags += " -O2 -DNDEBUG"
 if args.shared:    cflags += " -DCUIK_DLL -DTB_DLL"
 if args.autospall: cflags += " -DCUIK_USE_SPALL_AUTO -finstrument-functions-after-inlining"
-
-if args.inspector:
-	cflags += f" -I {raylib_path}/include"
-	ldflags += f" {raylib_path}/lib/raylib.lib /nodefaultlib:libcmt"
 
 system = platform.system()
 if system == "Windows":
@@ -108,9 +100,6 @@ if args.tb:
 	# linker
 	sources.append("tb/src/linker/pe.c")
 	sources.append("tb/src/linker/elf.c")
-
-if args.inspector:
-	sources.append("inspector/main.c")
 
 # main driver
 if args.driver:
@@ -201,8 +190,6 @@ for pattern in sources:
 if args.driver or args.shared:
 	ext = dll_ext if (args.shared) else exe_ext
 	ninja.write(f"build cuik{ext}: link {' '.join(objs)}\n")
-elif args.inspector:
-	ninja.write(f"build inspector{exe_ext}: link {' '.join(objs)}\n")
 elif args.libcuik:
 	ninja.write(f"build libcuik{lib_ext}: lib {' '.join(objs)}\n")
 elif args.tb:

@@ -1,16 +1,75 @@
+#####################################
 # requires GNU make
-LD      = lld-link
-LDFLAGS = -dll -debug onecore.lib msvcrt.lib libcmt.lib
+#
+# OPTIONS
+#
+#   OPT      do optimized builds
+#
+#   SHARED   generate cuik as a dynamic library
+#
+#   CUIK     compile libcuik
+#
+#   TB       compile TB
+#
+#   DRIVER   compile CLI driver (will use both CUIK and TB)
+#
+#####################################
+CC = clang
+LD = lld-link
 
-CC      = clang
-CFLAGS  = -g -msse4 -I common \
-	-Wall -Werror -Wno-unused -Wno-deprecated-pragma \
-	-DTB_USE_MIMALLOC -DCUIK_USE_MIMALLOC -I mimalloc/include \
-	-DCUIK_ALLOW_THREADS -I c11threads -D_CRT_SECURE_NO_WARNINGS
+OBJS    = bin/common.o bin/mimalloc.o
+LDFLAGS = -debug onecore.lib msvcrt.lib libcmt.lib
+CFLAGS  = -g -msse4 -I common -Wall -Werror -Wno-unused -Wno-deprecated-pragma \
+          -DTB_USE_MIMALLOC -DCUIK_USE_MIMALLOC -I mimalloc/include -DCUIK_ALLOW_THREADS
 
-OBJS := bin/common.o bin/mimalloc.o bin/threads.o
+ifdef OPT
+	CFLAGS += -O2 -DNDEBUG
+endif
 
-EXE_EXT = .exe
+ifeq ($(OS),Windows_NT)
+	AR = lib
+	EXE_EXT = .exe
+	CFLAGS += -I c11threads -D_CRT_SECURE_NO_WARNINGS
+	OBJS += bin/threads.o
+
+	# figure out what the output is
+	ifdef SHARED
+		OUTPUT = cuik.dll
+		LDFLAGS += /dll
+	else
+		# this is before the DRIVER enables TB or CUIK so we
+		# use this to detect what the library should be
+		OUTPUT = cuik.exe
+
+		ifdef TB
+			OUTPUT = tb.lib
+		endif
+
+		ifdef CUIK
+			OUTPUT = cuik.lib
+		endif
+	endif
+else
+	AR = ar
+
+	# figure out what the output is
+	ifdef SHARED
+		OUTPUT = cuik.so
+		LDFLAGS += -shared
+	else
+		# this is before the DRIVER enables TB or CUIK so we
+		# use this to detect what the library should be
+		OUTPUT = cuik
+
+		ifdef CUIK
+			OUTPUT = cuik.a
+		endif
+
+		ifdef TB
+			OUTPUT = tb.a
+		endif
+	endif
+endif
 
 ifdef DRIVER
 	CUIK = 1
@@ -28,10 +87,24 @@ ifdef TB
 	OBJS += bin/tb.o bin/tb_x64.o
 endif
 
-all: cuik.exe
+.PHONY: all
+all: $(OUTPUT)
 
+# windows side of output
 cuik.exe: $(OBJS)
-	$(LD) $(LDFLAGS) $^ -out:$@
+	$(LD) $(LDFLAGS) $^ /out:$@
+%.dll: $(OBJS)
+	$(LD) /dll $(LDFLAGS) $^ /out:$@
+%.lib: $(OBJS)
+	$(AR) /nologo /out:$@ $^
+
+# gnu side of output
+cuik: $(OBJS)
+	$(LD) $(LDFLAGS) $^ -o $@
+%.so: $(OBJS)
+	$(LD) $(LDFLAGS) $^ -o $@
+%.a: $(OBJS)
+	$(AR) -rcs $@ $^
 
 # we generate the lexer DFA via a metaprogram
 bin/lexgen$(EXE_EXT): libCuik/meta/lexgen.c

@@ -6,7 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define OUTPUT_PATH "libCuik/freestanding.c"
+#define OUTPUT_PATH "bin/freestanding.c"
 
 int main(int argc, char *argv[]) {
     if (argc < 2) {
