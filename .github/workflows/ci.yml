@@ -9,7 +9,8 @@ jobs:
       - uses: seanmiddleditch/gha-setup-ninja@master
 
       - uses: leafo/gh-actions-lua@v10
-        luaVersion: "luajit-2.0.5"
+        with:
+          luaVersion: "5.3.0"
 
       - name: Download Submodules
         run: git submodule update --init --recursive
@@ -31,9 +32,6 @@ jobs:
     steps:
       - uses: actions/checkout@v1
       - uses: seanmiddleditch/gha-setup-ninja@master
-      - uses: leafo/gh-actions-lua@v10
-        with:
-        luaVersion: "luajit-2.0.5"
 
       - name: Download Lua
         run: |
