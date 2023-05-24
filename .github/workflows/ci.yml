@@ -8,6 +8,11 @@ jobs:
       - uses: actions/checkout@v1
       - uses: seanmiddleditch/gha-setup-ninja@master
 
+      - name: vcvars64
+        shell: cmd
+        run: |
+          call "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\VC\Auxiliary\Build\vcvars64.bat
+
       - uses: leafo/gh-actions-lua@v10
         with:
           luaVersion: "5.3.0"
