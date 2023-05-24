@@ -563,68 +563,36 @@ static bool invoke_link(void* ctx, const Cuik_DriverArgs* args, Cuik_Linker* lin
     enum { CMD_LINE_MAX = 4096 };
     Cuik_WindowsToolchain* t = ctx;
 
-    static const wchar_t* subsystem_option[] = {
-        [TB_WIN_SUBSYSTEM_UNKNOWN] = L"",
-        [TB_WIN_SUBSYSTEM_WINDOWS] = L"/subsystem:windows ",
-        [TB_WIN_SUBSYSTEM_CONSOLE] = L"/subsystem:console ",
-        [TB_WIN_SUBSYSTEM_EFI_APP] = L"/subsystem:efi_application",
+    static const char* subsystem_option[] = {
+        [TB_WIN_SUBSYSTEM_UNKNOWN] = "",
+        [TB_WIN_SUBSYSTEM_WINDOWS] = "/subsystem:windows ",
+        [TB_WIN_SUBSYSTEM_CONSOLE] = "/subsystem:console ",
+        [TB_WIN_SUBSYSTEM_EFI_APP] = "/subsystem:efi_application",
     };
 
-    wchar_t cmd_line[CMD_LINE_MAX];
-    int cmd_line_len = swprintf(cmd_line, CMD_LINE_MAX,
-        L"%sbin\\Hostx64\\x64\\link.exe /nologo /machine:amd64 %s"
-        "/debug:%S /pdb:%S.pdb /out:%S /incremental:no ",
+    char cmd_line[CMD_LINE_MAX];
+    int cmd_line_len = snprintf(cmd_line, CMD_LINE_MAX,
+        "%Sbin\\Hostx64\\x64\\link.exe /nologo /machine:amd64 %s"
+        "/debug:%s /pdb:%s.pdb /out:%s /incremental:no ",
         t->vc_tools_install, subsystem_option[args->subsystem],
         args->debug_info ? "full" : "none", filename, output
     );
 
     dyn_array_for(i, linker->libpaths) {
-        cmd_line_len += swprintf(&cmd_line[cmd_line_len], CMD_LINE_MAX - cmd_line_len, L"/libpath:\"%S\" ", linker->libpaths[i]);
+        cmd_line_len += snprintf(&cmd_line[cmd_line_len], CMD_LINE_MAX - cmd_line_len, "/libpath:\"%s\" ", linker->libpaths[i]);
     }
 
     dyn_array_for(i, linker->inputs) {
-        cmd_line_len += swprintf(&cmd_line[cmd_line_len], CMD_LINE_MAX - cmd_line_len, L"%S ", linker->inputs[i]);
+        cmd_line_len += snprintf(&cmd_line[cmd_line_len], CMD_LINE_MAX - cmd_line_len, "%s ", linker->inputs[i]);
     }
 
-    STARTUPINFOW si = {
-        .cb = sizeof(STARTUPINFOW),
-        .dwFlags = STARTF_USESTDHANDLES,
-        .hStdInput = GetStdHandle(STD_INPUT_HANDLE),
-        .hStdError = GetStdHandle(STD_ERROR_HANDLE),
-        .hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE),
-    };
-
-    PROCESS_INFORMATION pi = { 0 };
-    if (!CreateProcessW(NULL, cmd_line, NULL, NULL, TRUE, 0, NULL, NULL, &si, &pi)) {
-        fprintf(stderr, "Linker command could not be executed.\n");
-        goto error;
-    }
-
-    // Wait until child process exits.
-    WaitForSingleObject(pi.hProcess, INFINITE);
-
-    DWORD exit_code = 0;
-    if (!GetExitCodeProcess(pi.hProcess, &exit_code)) {
-        fprintf(stderr, "Failed to retrieve linker exit code.\n");
-        goto error;
-    }
-
+    int exit_code = system(cmd_line);
     if (exit_code != 0) {
-        fprintf(stderr, "Linker exited with code %lu\n", exit_code);
-        goto error;
+        fprintf(stderr, "Linker exited with code %d\n", exit_code);
+        return false;
     }
 
-    // Close process and thread handles.
-    CloseHandle(pi.hProcess);
-    CloseHandle(pi.hThread);
     return true;
-
-    error:
-    // fprintf(stderr, "Linker command:\n%S\n", cmd_line);
-
-    if (pi.hProcess && pi.hProcess != INVALID_HANDLE_VALUE) CloseHandle(pi.hProcess);
-    if (pi.hThread && pi.hThread != INVALID_HANDLE_VALUE) CloseHandle(pi.hThread);
-    return false;
 }
 
 // tries to walk about `steps` slashes in the filepath and return the pointer to said
