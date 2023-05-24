@@ -187,4 +187,5 @@ if options.driver or options.shared then
 end
 
 ninja:close()
-os.execute("ninja")
+
+os.exit(os.execute("ninja"))

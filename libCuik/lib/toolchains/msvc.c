@@ -9,13 +9,6 @@
 #include <cuik.h>
 #include <common.h>
 
-#include <windows.h>
-#include <io.h>         // For _get_osfhandle
-
-#pragma comment(lib, "Advapi32.lib")
-#pragma comment(lib, "Ole32.lib")
-#pragma comment(lib, "OleAut32.lib")
-
 typedef struct {
     int windows_sdk_version; // Zero if no Windows SDK found.
 
@@ -27,6 +20,14 @@ typedef struct {
     wchar_t vs_library_path[FILENAME_MAX];
     wchar_t vs_include_path[FILENAME_MAX];
 } Cuik_WindowsToolchain;
+
+#ifdef _WIN32
+#include <windows.h>
+#include <io.h>         // For _get_osfhandle
+
+#pragma comment(lib, "Advapi32.lib")
+#pragma comment(lib, "Ole32.lib")
+#pragma comment(lib, "OleAut32.lib")
 
 // COM objects for the ridiculous Microsoft craziness.
 #undef  INTERFACE
@@ -108,7 +109,7 @@ typedef struct {
     wchar_t* best_name; // [FILENAME_MAX]
 } Version_Data;
 
-bool os_file_exists(wchar_t *name) {
+static bool os_file_exists(wchar_t *name) {
     // @Robustness: What flags do we really want to check here?
 
     int attrib = GetFileAttributesW(name);
@@ -121,7 +122,7 @@ bool os_file_exists(wchar_t *name) {
 #define concat2(a, b) concat(a, b, NULL, NULL)
 #define concat3(a, b, c) concat(a, b, c, NULL)
 #define concat4(a, b, c, d) concat(a, b, c, d)
-wchar_t *concat(wchar_t *a, wchar_t *b, wchar_t *c, wchar_t *d) {
+static wchar_t *concat(wchar_t *a, wchar_t *b, wchar_t *c, wchar_t *d) {
     // Concatenate up to 4 wide strings together. Allocated with malloc.
     // If you don't like that, use a programming language that actually
     // helps you with using custom allocators. Or just edit the code.
@@ -148,7 +149,7 @@ wchar_t *concat(wchar_t *a, wchar_t *b, wchar_t *c, wchar_t *d) {
 }
 
 typedef bool (*Visit_Proc_W)(wchar_t *short_name, Version_Data *data);
-bool visit_files_w(wchar_t *dir_name, Version_Data *data, Visit_Proc_W proc) {
+static bool visit_files_w(wchar_t *dir_name, Version_Data *data, Visit_Proc_W proc) {
     data->best_name[0] = 0;
 
     // Visit everything in one folder (non-recursively). If it's a directory
@@ -177,7 +178,7 @@ bool visit_files_w(wchar_t *dir_name, Version_Data *data, Visit_Proc_W proc) {
     return true;
 }
 
-wchar_t *find_windows_kit_root_with_key(HKEY key, wchar_t *version) {
+static wchar_t *find_windows_kit_root_with_key(HKEY key, wchar_t *version) {
     // Given a key to an already opened registry entry,
     // get the value stored under the 'version' subkey.
     // If that's not the right terminology, hey, I never do registry stuff.
@@ -203,7 +204,7 @@ wchar_t *find_windows_kit_root_with_key(HKEY key, wchar_t *version) {
     return value;
 }
 
-bool win10_best(wchar_t *short_name, Version_Data *data) {
+static bool win10_best(wchar_t *short_name, Version_Data *data) {
     // Find the Windows 10 subdirectory with the highest version number.
     int i0, i1, i2, i3;
     int success = swscanf_s(short_name, L"%d.%d.%d.%d", &i0, &i1, &i2, &i3);
@@ -229,7 +230,7 @@ bool win10_best(wchar_t *short_name, Version_Data *data) {
     return true;
 }
 
-bool win8_best(wchar_t *short_name, Version_Data *data) {
+static bool win8_best(wchar_t *short_name, Version_Data *data) {
     // Find the Windows 8 subdirectory with the highest version number.
     int i0, i1;
     int success = swscanf_s(short_name, L"winv%d.%d", &i0, &i1);
@@ -247,7 +248,7 @@ bool win8_best(wchar_t *short_name, Version_Data *data) {
     return true;
 }
 
-bool find_windows_kit_root(Cuik_WindowsToolchain* result) {
+static bool find_windows_kit_root(Cuik_WindowsToolchain* result) {
     // Information about the Windows 10 and Windows 8 development kits
     // is stored in the same place in the registry. We open a key
     // to that place, first checking preferntially for a Windows 10 kit,
@@ -313,7 +314,7 @@ bool find_windows_kit_root(Cuik_WindowsToolchain* result) {
     return false;
 }
 
-bool find_visual_studio_2017_by_fighting_through_microsoft_craziness(Cuik_WindowsToolchain *result) {
+static bool find_visual_studio_2017_by_fighting_through_microsoft_craziness(Cuik_WindowsToolchain *result) {
     /* HRESULT rc = */ CoInitialize(NULL);
     // "Subsequent valid calls return false." So ignore false.
     // if rc != S_OK  return false;
@@ -404,7 +405,7 @@ bool find_visual_studio_2017_by_fighting_through_microsoft_craziness(Cuik_Window
     return found_visual_studio_2017;
 }
 
-void find_visual_studio_by_fighting_through_microsoft_craziness(Cuik_WindowsToolchain* result) {
+static bool find_visual_studio_by_fighting_through_microsoft_craziness(Cuik_WindowsToolchain* result) {
     // The name of this procedure is kind of cryptic. Its purpose is
     // to fight through Microsoft craziness. The things that the fine
     // Visual Studio team want you to do, JUST TO FIND A SINGLE FOLDER
@@ -421,14 +422,14 @@ void find_visual_studio_by_fighting_through_microsoft_craziness(Cuik_WindowsTool
     // a useful result, we drop back to the registry-checking method.
 
     bool found_visual_studio_2017 = find_visual_studio_2017_by_fighting_through_microsoft_craziness(result);
-    if (found_visual_studio_2017)  return;
+    if (found_visual_studio_2017) return true;
 
 
     // If we get here, we didn't find Visual Studio 2017. Try earlier versions.
 
     HKEY vs7_key;
     HRESULT rc = RegOpenKeyExA(HKEY_LOCAL_MACHINE, "SOFTWARE\\Microsoft\\VisualStudio\\SxS\\VS7", 0, KEY_QUERY_VALUE, &vs7_key);
-    if (rc != S_OK)  return;
+    if (rc != S_OK) return false;
 
     // Hardcoded search for 4 prior Visual Studio versions. Is there something better to do here?
     wchar_t *versions[] = { L"14.0", L"12.0", L"11.0", L"10.0" };
@@ -444,7 +445,7 @@ void find_visual_studio_by_fighting_through_microsoft_craziness(Cuik_WindowsTool
         }
 
         wchar_t *buffer = (wchar_t *)cuik_malloc(cb_data);
-        if (!buffer) return;
+        if (!buffer) return false;
 
         rc = RegQueryValueExW(vs7_key, v, NULL, NULL, (LPBYTE)buffer, &cb_data);
         if (rc != 0) continue;
@@ -463,7 +464,7 @@ void find_visual_studio_by_fighting_through_microsoft_craziness(Cuik_WindowsTool
 
             cuik_free(buffer);
             RegCloseKey(vs7_key);
-            return;
+            return true;
         }
 
         cuik_free(buffer);
@@ -472,7 +473,19 @@ void find_visual_studio_by_fighting_through_microsoft_craziness(Cuik_WindowsTool
     RegCloseKey(vs7_key);
 
     // If we get here, we failed to find anything.
+    return false;
 }
+#else
+// during non-windows builds of Cuik we can't actually find the MSVC
+// stuff the normal way
+static bool find_windows_kit_root(Cuik_WindowsToolchain* result) {
+    return false;
+}
+
+static bool find_visual_studio_by_fighting_through_microsoft_craziness(Cuik_WindowsToolchain* result) {
+    return false;
+}
+#endif /* _WIN32 */
 
 static void add_libraries(void* ctx, const Cuik_DriverArgs* args, Cuik_Linker* l) {
     Cuik_WindowsToolchain* t = ctx;
@@ -628,6 +641,23 @@ static const wchar_t* step_out_dir(const wchar_t* path, int steps) {
     return (slashes_hit == steps) ? end : NULL;
 }
 
+static wchar_t* getenv_wide(const wchar_t* key) {
+    #ifdef _WIN32
+    return _wgetenv(key);
+    #else
+    static wchar_t tmp[1024];
+
+    char* env = getenv(tmp);
+    if (env == NULL) {
+        return env;
+    }
+
+    snprintf(tmp, 1024, "%S", key);
+    strncpy(tmp, env, 1024);
+    return tmp;
+    #endif
+}
+
 Cuik_Toolchain cuik_toolchain_msvc(void) {
     Cuik_WindowsToolchain* result = cuik_malloc(sizeof(Cuik_WindowsToolchain));
     result->vc_tools_install[0] = 0;
@@ -635,25 +665,37 @@ Cuik_Toolchain cuik_toolchain_msvc(void) {
     if (!find_windows_kit_root(result)) {
         // when installing from the mmozeiko's portable MSVC script, the registry doesn't
         // get setup so we search for the windows kit via environment variables.
-        wchar_t* sdk_libs = _wgetenv(L"SDK_LIBS");
+        wchar_t* sdk_libs = getenv_wide(L"SDK_LIBS");
         if (sdk_libs != NULL) {
             result->windows_sdk_version = 10;
 
-            wcsncpy(result->windows_sdk_include, _wgetenv(L"SDK_INCLUDE"), MAX_PATH);
-            wcsncpy(result->windows_sdk_root, _wgetenv(L"SDK_LIBS"), MAX_PATH);
+            wcsncpy(result->windows_sdk_root, sdk_libs, MAX_PATH);
+            wcsncpy(result->windows_sdk_include, getenv_wide(L"SDK_INCLUDE"), MAX_PATH);
         } else {
-            fprintf(stderr, "warning: could not locate windows SDK\n");
+            fprintf(stderr,
+                "warning: could not locate windows SDK!\n"
+                "  you can provide SDK_INCLUDE, SDK_LIBS and\n"
+                "  VCToolsInstallDir via the environment.\n"
+            );
+            return (Cuik_Toolchain){ 0 };
         }
     }
 
-    wchar_t* vc_tools_install = _wgetenv(L"VCToolsInstallDir");
+    wchar_t* vc_tools_install = getenv_wide(L"VCToolsInstallDir");
     if (vc_tools_install != NULL) {
         wcsncpy(result->vc_tools_install, vc_tools_install, MAX_PATH);
         swprintf(result->vs_include_path, MAX_PATH, L"%sinclude\\", vc_tools_install);
         swprintf(result->vs_library_path, MAX_PATH, L"%slib\\x64\\", vc_tools_install);
         swprintf(result->vs_exe_path, MAX_PATH, L"%sVC\\bin\\amd64\\", vc_tools_install);
     } else {
-        find_visual_studio_by_fighting_through_microsoft_craziness(result);
+        if (!find_visual_studio_by_fighting_through_microsoft_craziness(result)) {
+            fprintf(stderr,
+                "warning: could not locate VC tools!\n"
+                "  you can provide SDK_INCLUDE, SDK_LIBS and\n"
+                "  VCToolsInstallDir via the environment.\n"
+            );
+            return (Cuik_Toolchain){ 0 };
+        }
     }
 
     return (Cuik_Toolchain){
