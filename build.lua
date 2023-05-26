@@ -61,7 +61,7 @@ if is_windows then
 	lib_ext = ".lib"
 else
 	ld = cc
-	ldflags = ldflags.." -g -lc -lm -lthreads "
+	ldflags = ldflags.." -g -lc -lm "
 
 	if options.shared then
 		ldflags = ldflags.." -shared"

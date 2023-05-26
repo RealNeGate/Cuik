@@ -31,5 +31,5 @@ X(THREADS,     "j",        false, "enabled multithreaded compilation")
 X(TIME,        "T",        false, "profile the compile times")
 X(THINK,       "think",    false, "aids in thinking about serious problems")
 // run
-X(RUN,         "r",        false, "run the executable")
+X(RUN,         "r",        false, "JIT the executable (NOT READY)")
 #undef X

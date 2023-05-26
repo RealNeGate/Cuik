@@ -51,7 +51,7 @@ struct Cuik_Arguments {
 #define FOR_ARGS(a, arg_i) for (Cuik_Arg* a = args->_[arg_i]; a; a = a->prev)
 
 static void print_help(void) {
-    printf("OVERVIEW: Cuik C compiler\n\n");
+    printf("OVERVIEW: Cuik C compiler (built on " __DATE__ ")\n\n");
     printf("USAGE: cuik [options] file...\n\n");
     printf("OPTIONS:\n");
 
