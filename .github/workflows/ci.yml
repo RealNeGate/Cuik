@@ -19,7 +19,7 @@ jobs:
       - name: Build Cuik
         shell: cmd
         timeout-minutes: 10
-        run: luajit build.lua
+        run: lua build.lua
 
       - name: upload artifacts
         uses: actions/upload-artifact@v3
