@@ -572,7 +572,7 @@ static bool invoke_link(void* ctx, const Cuik_DriverArgs* args, Cuik_Linker* lin
 
     char cmd_line[CMD_LINE_MAX];
     int cmd_line_len = snprintf(cmd_line, CMD_LINE_MAX,
-        "%Sbin\\Hostx64\\x64\\link.exe /nologo /machine:amd64 %s"
+        "cmd /c \"\"%Sbin\\Hostx64\\x64\\link.exe\" /nologo /machine:amd64 %s"
         "/debug:%s /pdb:%s.pdb /out:%s /incremental:no ",
         t->vc_tools_install, subsystem_option[args->subsystem],
         args->debug_info ? "full" : "none", filename, output
@@ -585,6 +585,9 @@ static bool invoke_link(void* ctx, const Cuik_DriverArgs* args, Cuik_Linker* lin
     dyn_array_for(i, linker->inputs) {
         cmd_line_len += snprintf(&cmd_line[cmd_line_len], CMD_LINE_MAX - cmd_line_len, "%s ", linker->inputs[i]);
     }
+
+    cmd_line[cmd_line_len++] = '"';
+    cmd_line[cmd_line_len++] = 0;
 
     int exit_code = system(cmd_line);
     if (exit_code != 0) {

@@ -49,7 +49,7 @@ if is_windows then
 
 	ld = "lld-link"
 	cflags = cflags.." -I c11threads -D_CRT_SECURE_NO_WARNINGS"
-	ldflags = ldflags.."-debug onecore.lib msvcrt.lib libcmt.lib"
+	ldflags = ldflags.." /highentropyva:no /dynamicbase:no /debug onecore.lib msvcrt.lib libcmt.lib"
 
 	if options.shared then
 		ldflags = ldflags.." /dll"

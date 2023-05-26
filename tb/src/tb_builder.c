@@ -847,7 +847,8 @@ TB_API TB_Node* tb_inst_phi2(TB_Function* f, TB_Node* a, TB_Node* b) {
 }
 
 TB_API TB_Node* tb_inst_region(TB_Function* f) {
-    return tb_alloc_node(f, TB_REGION, TB_TYPE_VOID, 0, sizeof(TB_NodeRegion));
+    TB_Node* n = tb_alloc_node(f, TB_REGION, TB_TYPE_VOID, 0, sizeof(TB_NodeRegion));
+    return n;
 }
 
 static void add_region_pred(TB_Function* f, TB_Node* n, TB_Node* pred) {
@@ -921,25 +922,32 @@ TB_API void tb_inst_if(TB_Function* f, TB_Node* cond, TB_Node* if_true, TB_Node*
 }
 
 TB_API void tb_inst_branch(TB_Function* f, TB_DataType dt, TB_Node* key, TB_Node* default_label, size_t entry_count, const TB_SwitchEntry* entries) {
-    tb_todo();
+    assert(f->active_control_node != NULL);
 
-    TB_Node* n = tb_alloc_node(f, TB_BRANCH, TB_TYPE_VOID, entry_count + 3, sizeof(TB_NodeBranch) + (entry_count * sizeof(TB_SwitchEntry)));
+    // generate control projections
+    TB_Node* n = tb_alloc_node(f, TB_BRANCH, TB_TYPE_TUPLE, 2, sizeof(TB_NodeBranch) + (sizeof(int64_t) * entry_count));
     n->inputs[0] = f->active_control_node; // control edge
     n->inputs[1] = key;
 
-    TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
     FOREACH_N(i, 0, entry_count) {
-        br->keys[i] = entries[i].key;
-    }
-
-    FOREACH_N(i, 0, entry_count) {
-        TB_Node* target = i ? entries[i - 1].value : default_label;
+        TB_Node* target = i ? entries[i].value : default_label;
 
         TB_Node* proj = tb_alloc_node(f, TB_PROJ, TB_TYPE_CONTROL, 1, sizeof(TB_NodeProj));
         proj->inputs[0] = n;
         TB_NODE_SET_EXTRA(proj, TB_NodeProj, .index = i);
 
         add_region_pred(f, target, proj);
+    }
+
+    TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
+    FOREACH_N(i, 0, entry_count) {
+        br->keys[i] = entries[i].key;
+    }
+
+    TB_Node** succ = add_successors(f, n, 1 + entry_count);
+    succ[0] = default_label;
+    FOREACH_N(i, 0, entry_count) {
+        succ[1 + i] = entries[i].value;
     }
 
     f->active_control_node = NULL;

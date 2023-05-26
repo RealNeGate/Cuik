@@ -386,7 +386,11 @@ static void ld_invoke(BuildStepInfo* info) {
         goto done;
     } else {
         Cuik_Path obj_path;
-        cuik_path_append(&obj_path, &output_path, 2, ".o");
+        if (args->output_name == NULL) {
+            cuik_path_append(&obj_path, args->sources[0], 2, ".o");
+        } else {
+            cuik_path_append(&obj_path, &output_path, 2, ".o");
+        }
 
         TB_Exports exports = tb_module_object_export(mod, debug_fmt);
         tb_module_destroy(mod);

@@ -156,9 +156,6 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
     while (!tokens_eof(s) && tokens_get(s)->type != ';') {
         size_t start_decl_token = s->list.current;
         Decl decl = parse_declarator2(parser, s, type, false);
-        // if (decl.name == NULL) {
-        // diag_warn(s, decl.loc, "Declaration has no name");
-        // }
 
         // Convert into statement
         Stmt* n = alloc_stmt(parser);
@@ -205,10 +202,7 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
         }
 
         bool has_body = false;
-        if (attr.is_typedef) {
-            // typedef is just a special storage class
-            // diag_note(s, decl.loc, "Typedef: %s", decl.name);
-        } else {
+        if (!attr.is_typedef) {
             n->attr_list = parse_attributes(parser, s, n->attr_list);
 
             if (decl.name != NULL) {

@@ -1767,19 +1767,20 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
                 if (head->op == STMT_CASE) {
                     assert(head->case_.key < UINT32_MAX);
                     tls_push(sizeof(TB_SwitchEntry));
-                    entries[entry_count++] = (TB_SwitchEntry){.key = head->case_.key, .value = label};
-
-                    head = head->case_.next;
+                    entries[entry_count++] = (TB_SwitchEntry){ .key = head->case_.key, .value = label };
                 } else if (head->op == STMT_DEFAULT) {
                     assert(default_label == 0);
                     default_label = label;
+                }
 
-                    head = head->default_.next;
-                } else assert(0);
+                // default or case both fit
+                head = head->case_.next;
             }
 
             TB_Node* break_label = tb_inst_region(func);
-            s->backing.r = break_label;
+
+            s->backing.loop[0] = NULL;
+            s->backing.loop[1] = break_label;
 
             // default to fallthrough
             if (!default_label) {

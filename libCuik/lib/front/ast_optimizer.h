@@ -205,25 +205,16 @@ Expr* cuik__optimize_ast(Cuik_Parser* restrict parser, Expr* e) {
         case EXPR_NOT: {
             Expr* src = cuik__optimize_ast(parser, e->unary_op.src);
 
-            // ~(N - 1) => -N
             if (src->op == EXPR_INT) {
-                if (!CUIK_QUAL_TYPE_IS_NULL(e->type) && cuik_type_is_integer(cuik_canonical_type(e->type))) {
-                    e->op = EXPR_NEGATE;
-                    src->int_num.num += 1;
-                    return e;
-                } else {
-                    cuik__sema_expr(parser->tu, src);
-                    uint64_t mask = UINT64_MAX >> (cuik_canonical_type(src->type)->size*8);
-
-                    e->op = EXPR_INT;
-                    e->int_num.suffix = src->int_num.suffix;
-                    e->int_num.num = ~src->int_num.num & mask;
-                    return e;
-                }
+                e->op = EXPR_INT;
+                e->int_num.suffix = src->int_num.suffix;
+                e->int_num.num = ~src->int_num.num;
+                return e;
             }
             break;
         }
         case EXPR_NEGATE: {
+            // ~(N - 1) => -N
             Expr* src = cuik__optimize_ast(parser, e->unary_op.src);
             if (src->op == EXPR_INT) {
                 uint64_t x = src->int_num.num;

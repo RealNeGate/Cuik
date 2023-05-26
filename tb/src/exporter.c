@@ -219,7 +219,7 @@ size_t tb__layout_relocations(TB_Module* m, DynArray(TB_ModuleSection*) sections
                     f->patch_pos = output_size;
 
                     for (TB_SymbolPatch* p = f->last_patch; p; p = p->prev) {
-                        if (!p->internal) output_size += reloc_size;
+                        if (!p->internal && f->comdat.type != TB_COMDAT_NONE) output_size += reloc_size;
                     }
                 }
             }

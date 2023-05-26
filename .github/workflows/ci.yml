@@ -8,11 +8,7 @@ jobs:
       - uses: actions/checkout@v1
       - uses: seanmiddleditch/gha-setup-ninja@master
 
-      - name: vcvars64
-        shell: cmd
-        run: |
-          call "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\VC\Auxiliary\Build\vcvars64.bat
-
+      - uses: ilammy/msvc-dev-cmd@v1
       - uses: leafo/gh-actions-lua@v10
         with:
           luaVersion: "5.3.0"
@@ -23,9 +19,7 @@ jobs:
       - name: Build Cuik
         shell: cmd
         timeout-minutes: 10
-        run: |
-          call "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\VC\Auxiliary\Build\vcvars64.bat
-          luajit build.lua
+        run: luajit build.lua
 
       - name: upload artifacts
         uses: actions/upload-artifact@v3

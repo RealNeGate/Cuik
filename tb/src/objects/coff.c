@@ -142,10 +142,6 @@ TB_API TB_Exports tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
         output_size += reloc_count * sizeof(COFF_ImageReloc);
     }
 
-    TB_FOR_FUNCTIONS(f, m) if (f->output && f->comdat.type != TB_COMDAT_NONE) {
-        output_size += f->comdat.reloc_count * sizeof(COFF_ImageReloc);
-    }
-
     size_t pdata_patch_pos = output_size;
     output_size += pdata_patch_count * sizeof(COFF_ImageReloc);
 

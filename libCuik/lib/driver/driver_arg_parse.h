@@ -185,7 +185,7 @@ CUIK_API bool cuik_args_to_driver(Cuik_DriverArgs* comp_args, Cuik_Arguments* re
 
         char* ctx;
         char* arg = strtok_r(newstr, ",", &ctx);
-        while (a != NULL) {
+        while (arg != NULL) {
             Cuik_Path* p = cuik_malloc(sizeof(Cuik_Path));
             cuik_path_set(p, arg);
 

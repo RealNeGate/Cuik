@@ -345,14 +345,15 @@ static Stmt* parse_stmt2(Cuik_Parser* parser, TokenStream* restrict s) {
             assert(key_max > key);
             n->case_.key = key;
 
+            Stmt* base = n;
             for (intmax_t i = key; i < key_max; i++) {
                 Stmt* curr = alloc_stmt(parser);
                 curr->op = STMT_CASE;
                 curr->case_ = (struct StmtCase){.key = i + 1};
 
                 // Append to list
-                n->case_.next = n->case_.body = curr;
-                n = curr;
+                base->case_.next = n->case_.body = curr;
+                base = curr;
             }
         } else {
             expect_with_reason(s, ':', "case");

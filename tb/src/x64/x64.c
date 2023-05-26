@@ -453,39 +453,66 @@ static Cond isel_cmp(Ctx* restrict ctx, TB_Node* n) {
     assert(cmp_dt.width == 0 && "TODO: Implement vector compares");
 
     if (n->type >= TB_CMP_EQ && n->type <= TB_CMP_FLE) {
-        assert(!TB_IS_FLOAT_TYPE(cmp_dt) && "TODO");
-
         Cond cc = -1;
-        bool invert = false;
 
-        int32_t x;
-        int lhs = ISEL(n->inputs[0]);
-        if (try_for_imm32(ctx, n->inputs[1], &x)) {
-            if (x == 0 && (n->type == TB_CMP_EQ || n->type == TB_CMP_NE)) {
-                SUBMIT(inst_rr(TEST, cmp_dt, -1, lhs, lhs));
-            } else {
-                SUBMIT(inst_ri(CMP, cmp_dt, -1, lhs, x));
-            }
-        } else {
+        if (TB_IS_FLOAT_TYPE(cmp_dt)) {
+            int lhs = ISEL(n->inputs[0]);
             int rhs = ISEL(n->inputs[1]);
-            SUBMIT(inst_rr(CMP, cmp_dt, -1, lhs, rhs));
-        }
+            SUBMIT(inst_rr(FP_UCOMI, n->dt, -1, lhs, rhs));
 
-        switch (n->type) {
-            case TB_CMP_EQ: cc = E; break;
-            case TB_CMP_NE: cc = NE; break;
-            case TB_CMP_SLT: cc = invert ? G : L; break;
-            case TB_CMP_SLE: cc = invert ? GE : LE; break;
-            case TB_CMP_ULT: cc = invert ? A : B; break;
-            case TB_CMP_ULE: cc = invert ? NB : BE; break;
-            default: tb_unreachable();
+            switch (n->type) {
+                case TB_CMP_EQ:  cc = E; break;
+                case TB_CMP_NE:  cc = NE; break;
+                case TB_CMP_FLT: cc = B; break;
+                case TB_CMP_FLE: cc = BE; break;
+                default: tb_unreachable();
+            }
+            return cc;
+        } else {
+            bool invert = false;
+            int32_t x;
+            int lhs = ISEL(n->inputs[0]);
+            if (try_for_imm32(ctx, n->inputs[1], &x)) {
+                if (x == 0 && (n->type == TB_CMP_EQ || n->type == TB_CMP_NE)) {
+                    SUBMIT(inst_rr(TEST, cmp_dt, -1, lhs, lhs));
+                } else {
+                    SUBMIT(inst_ri(CMP, cmp_dt, -1, lhs, x));
+                }
+            } else {
+                int rhs = ISEL(n->inputs[1]);
+                SUBMIT(inst_rr(CMP, cmp_dt, -1, lhs, rhs));
+            }
+
+            switch (n->type) {
+                case TB_CMP_EQ: cc = E; break;
+                case TB_CMP_NE: cc = NE; break;
+                case TB_CMP_SLT: cc = invert ? G : L; break;
+                case TB_CMP_SLE: cc = invert ? GE : LE; break;
+                case TB_CMP_ULT: cc = invert ? A : B; break;
+                case TB_CMP_ULE: cc = invert ? NB : BE; break;
+                default: tb_unreachable();
+            }
+            return cc;
         }
-        return cc;
     }
 
     int src = ISEL(n);
-    SUBMIT(inst_rr(TEST, cmp_dt, -1, src, src));
-    return NE;
+    if (TB_IS_FLOAT_TYPE(cmp_dt)) {
+        int tmp = DEF(n, REG_CLASS_XMM);
+
+        Inst inst = {
+            .type = FP_XOR,
+            .layout = X86_OP_RR,
+            .data_type = TB_X86_TYPE_SSE_PS,
+            .regs = { tmp, USE(tmp), USE(tmp) }
+        };
+        SUBMIT(inst);
+        SUBMIT(inst_rr(FP_UCOMI, n->dt, -1, src, tmp));
+        return NE;
+    } else {
+        SUBMIT(inst_rr(TEST, cmp_dt, -1, src, src));
+        return NE;
+    }
 }
 
 static void gonna_use_reg(Ctx* restrict ctx, int reg_class, int reg_num) {
@@ -883,7 +910,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
 
             TB_DataType src_dt = src->dt;
             bool sign_ext = (type == TB_SIGN_EXT);
-            int bits_in_type = src_dt.type == TB_PTR ? 64 : src_dt.data;
+            int bits_in_type = n->dt.type == TB_PTR ? 64 : n->dt.data;
 
             dst = DEF(n, REG_CLASS_GPR);
 
