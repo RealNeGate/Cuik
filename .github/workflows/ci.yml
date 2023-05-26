@@ -26,33 +26,6 @@ jobs:
         with:
           name: cuik-windows
           path: cuik.exe
-  build_mac:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v1
-      - uses: seanmiddleditch/gha-setup-ninja@master
-
-      - name: Download Lua
-        run: |
-          brew update
-          brew install lua@5.3
-
-      - name: Download LLVM
-        run: |
-          brew install llvm@14
-
-      - name: Download Submodules
-        run: git submodule update --init --recursive
-
-      - name: Build Cuik
-        run: lua build.lua
-        timeout-minutes: 10
-
-      - name: upload artifacts
-        uses: actions/upload-artifact@v3
-        with:
-          name: cuik-macos
-          path: cuik
   build_linux:
     runs-on: ubuntu-latest
     steps:
