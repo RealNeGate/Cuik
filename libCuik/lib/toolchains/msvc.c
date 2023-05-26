@@ -641,8 +641,8 @@ Cuik_Toolchain cuik_toolchain_msvc(void) {
         if (sdk_libs != NULL) {
             result->windows_sdk_version = 10;
 
-            str_copy(result->windows_sdk_root, sdk_libs, MAX_PATH);
-            str_copy(result->windows_sdk_include, env_get("SDK_INCLUDE"), MAX_PATH);
+            str_copy(result->windows_sdk_root, sdk_libs, FILENAME_MAX);
+            str_copy(result->windows_sdk_include, env_get("SDK_INCLUDE"), FILENAME_MAX);
         } else {
             fprintf(stderr,
                 "warning: could not locate windows SDK!\n"
@@ -655,10 +655,10 @@ Cuik_Toolchain cuik_toolchain_msvc(void) {
 
     const OSChar* vc_tools_install = env_get("VCToolsInstallDir");
     if (vc_tools_install != NULL) {
-        str_copy(result->vc_tools_install, vc_tools_install, MAX_PATH);
-        str_printf(result->vs_include_path, MAX_PATH, "%sinclude\\", vc_tools_install);
-        str_printf(result->vs_library_path, MAX_PATH, "%slib\\x64\\", vc_tools_install);
-        str_printf(result->vs_exe_path, MAX_PATH, "%sVC\\bin\\amd64\\", vc_tools_install);
+        str_copy(result->vc_tools_install, vc_tools_install, FILENAME_MAX);
+        str_printf(result->vs_include_path, FILENAME_MAX, "%sinclude\\", vc_tools_install);
+        str_printf(result->vs_library_path, FILENAME_MAX, "%slib\\x64\\", vc_tools_install);
+        str_printf(result->vs_exe_path, FILENAME_MAX, "%sVC\\bin\\amd64\\", vc_tools_install);
     } else {
         if (!find_visual_studio_by_fighting_through_microsoft_craziness(result)) {
             fprintf(stderr,
