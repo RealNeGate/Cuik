@@ -2,7 +2,7 @@ name: CI
 on: [pull_request, workflow_dispatch, push]
 
 jobs:
-  build_windows_clang:
+  build_win:
     runs-on: windows-2019
     steps:
       - uses: actions/checkout@v1
@@ -47,3 +47,66 @@ jobs:
         with:
           name: cuik-linux
           path: cuik
+  release:
+    runs-on: ubuntu-latest
+    needs: [build_win, build_linux]
+    if: github.ref == 'refs/heads/master'
+
+    steps:
+      - uses: actions/checkout@v3
+      - name: delete tag
+        continue-on-error: true
+        uses: actions/github-script@v6
+        with:
+          script: |
+            github.rest.git.deleteRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: 'tags/latest',
+              sha: context.sha
+            })
+      - name: create tag
+        uses: actions/github-script@v6
+        with:
+          script: |
+            github.rest.git.createRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: 'refs/tags/latest',
+              sha: context.sha
+            })
+
+      - uses: actions/download-artifact@v3
+        run: |
+          zip -r cuik-windows.zip cuik-windows/cuik.exe
+          tar czf cuik-linux.tar.gz cuik-linux/cuik
+
+      - id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: latest
+          release_name: latest
+          draft: false
+          prerelease: true
+
+      - name: upload windows
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: cuik-windows.zip
+          asset_name: cuik-windows.zip
+          asset_content_type: application/zip
+
+      - name: upload linux
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: cuik-linux.tar.gz
+          asset_name: cuik-linux.tar.gz
+          asset_content_type: application/gzip
