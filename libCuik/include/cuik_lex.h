@@ -1,7 +1,7 @@
 #pragma once
 #include "cuik_prelude.h"
 
-#if _WIN32
+#ifdef _WIN32
 #define CUIK_PATH_SLASH_SEP '\\'
 #else
 #define CUIK_PATH_SLASH_SEP '/'

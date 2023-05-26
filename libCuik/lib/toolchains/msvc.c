@@ -9,16 +9,33 @@
 #include <cuik.h>
 #include <common.h>
 
+// OS Char specific goods
+#if _WIN32
+#define env_get(k) _wgetenv(L ## k)
+#define str_copy(dst, src, n) wcsncpy(dst, src, n)
+#define str_printf(buf, n, fmt, ...) swprintf(buf, n, L ## fmt, __VA_ARGS__)
+
+#define STR_FMT "%S"
+typedef wchar_t OSChar;
+#else
+#define str_copy(dst, src, n) strncpy(dst, src, n)
+#define env_get(k) getenv(k)
+#define str_printf(buf, n, fmt, ...) snprintf(buf, n, fmt, __VA_ARGS__)
+
+#define STR_FMT "%s"
+typedef char OSChar;
+#endif
+
 typedef struct {
     int windows_sdk_version; // Zero if no Windows SDK found.
 
-    wchar_t windows_sdk_include[FILENAME_MAX];
-    wchar_t windows_sdk_root[FILENAME_MAX];
+    OSChar windows_sdk_include[FILENAME_MAX];
+    OSChar windows_sdk_root[FILENAME_MAX];
 
-    wchar_t vs_exe_path[FILENAME_MAX];
-    wchar_t vc_tools_install[FILENAME_MAX];
-    wchar_t vs_library_path[FILENAME_MAX];
-    wchar_t vs_include_path[FILENAME_MAX];
+    OSChar vs_exe_path[FILENAME_MAX];
+    OSChar vc_tools_install[FILENAME_MAX];
+    OSChar vs_library_path[FILENAME_MAX];
+    OSChar vs_include_path[FILENAME_MAX];
 } Cuik_WindowsToolchain;
 
 #ifdef _WIN32
@@ -490,20 +507,20 @@ static bool find_visual_studio_by_fighting_through_microsoft_craziness(Cuik_Wind
 static void add_libraries(void* ctx, const Cuik_DriverArgs* args, Cuik_Linker* l) {
     Cuik_WindowsToolchain* t = ctx;
 
-    cuiklink_add_libpathf(l, "%S", t->vs_library_path);
-    cuiklink_add_libpathf(l, "%S\\um\\x64", t->windows_sdk_root);
-    cuiklink_add_libpathf(l, "%S\\ucrt\\x64", t->windows_sdk_root);
+    cuiklink_add_libpathf(l, STR_FMT, t->vs_library_path);
+    cuiklink_add_libpathf(l, STR_FMT "\\um\\x64", t->windows_sdk_root);
+    cuiklink_add_libpathf(l, STR_FMT "\\ucrt\\x64", t->windows_sdk_root);
 }
 
 static void print_verbose(void* ctx, const Cuik_DriverArgs* args) {
     Cuik_WindowsToolchain* t = ctx;
 
     printf("Includes:\n");
-    printf("  %S\\um\n",      t->windows_sdk_include);
-    printf("  %S\\shared\n",  t->windows_sdk_include);
-    printf("  %S\n",            t->vs_include_path);
+    printf("  " STR_FMT "\\um\n",      t->windows_sdk_include);
+    printf("  " STR_FMT "\\shared\n",  t->windows_sdk_include);
+    printf("  " STR_FMT "\n",            t->vs_include_path);
     if (!args->nocrt) {
-        printf("  %S\\ucrt\n", t->windows_sdk_include);
+        printf("  " STR_FMT "\\ucrt\n", t->windows_sdk_include);
     }
     printf("\n");
 }
@@ -511,11 +528,11 @@ static void print_verbose(void* ctx, const Cuik_DriverArgs* args) {
 static void set_preprocessor(void* ctx, const Cuik_DriverArgs* args, Cuik_CPP* cpp) {
     Cuik_WindowsToolchain* t = ctx;
 
-    cuikpp_add_include_directoryf(cpp, true, "%S\\um\\",      t->windows_sdk_include);
-    cuikpp_add_include_directoryf(cpp, true, "%S\\shared\\",  t->windows_sdk_include);
-    cuikpp_add_include_directoryf(cpp, true, "%S",            t->vs_include_path);
+    cuikpp_add_include_directoryf(cpp, true, STR_FMT "\\um\\",      t->windows_sdk_include);
+    cuikpp_add_include_directoryf(cpp, true, STR_FMT "\\shared\\",  t->windows_sdk_include);
+    cuikpp_add_include_directoryf(cpp, true, STR_FMT,               t->vs_include_path);
     if (!args->nocrt) {
-        cuikpp_add_include_directoryf(cpp, true, "%S\\ucrt\\", t->windows_sdk_include);
+        cuikpp_add_include_directoryf(cpp, true, STR_FMT "\\ucrt\\", t->windows_sdk_include);
     }
 
     cuikpp_define_empty_cstr(cpp, "_MT");
@@ -602,7 +619,8 @@ static bool invoke_link(void* ctx, const Cuik_DriverArgs* args, Cuik_Linker* lin
 // slash, if it can't reach then it'll return NULL
 static const wchar_t* step_out_dir(const wchar_t* path, int steps) {
     int slashes_hit = 0;
-    const wchar_t* end = path + wcslen(path);
+    const wchar_t* end = path;
+    while (*end) end++;
 
     while (slashes_hit != steps && end-- != path) {
         if (*end == '/') slashes_hit++;
@@ -612,23 +630,6 @@ static const wchar_t* step_out_dir(const wchar_t* path, int steps) {
     return (slashes_hit == steps) ? end : NULL;
 }
 
-static wchar_t* getenv_wide(const wchar_t* key) {
-    #ifdef _WIN32
-    return _wgetenv(key);
-    #else
-    static wchar_t tmp[1024];
-
-    char* env = getenv(tmp);
-    if (env == NULL) {
-        return env;
-    }
-
-    snprintf(tmp, 1024, "%S", key);
-    strncpy(tmp, env, 1024);
-    return tmp;
-    #endif
-}
-
 Cuik_Toolchain cuik_toolchain_msvc(void) {
     Cuik_WindowsToolchain* result = cuik_malloc(sizeof(Cuik_WindowsToolchain));
     result->vc_tools_install[0] = 0;
@@ -636,12 +637,12 @@ Cuik_Toolchain cuik_toolchain_msvc(void) {
     if (!find_windows_kit_root(result)) {
         // when installing from the mmozeiko's portable MSVC script, the registry doesn't
         // get setup so we search for the windows kit via environment variables.
-        wchar_t* sdk_libs = getenv_wide(L"SDK_LIBS");
+        const OSChar* sdk_libs = env_get("SDK_LIBS");
         if (sdk_libs != NULL) {
             result->windows_sdk_version = 10;
 
-            wcsncpy(result->windows_sdk_root, sdk_libs, MAX_PATH);
-            wcsncpy(result->windows_sdk_include, getenv_wide(L"SDK_INCLUDE"), MAX_PATH);
+            str_copy(result->windows_sdk_root, sdk_libs, MAX_PATH);
+            str_copy(result->windows_sdk_include, env_get("SDK_INCLUDE"), MAX_PATH);
         } else {
             fprintf(stderr,
                 "warning: could not locate windows SDK!\n"
@@ -652,12 +653,12 @@ Cuik_Toolchain cuik_toolchain_msvc(void) {
         }
     }
 
-    wchar_t* vc_tools_install = getenv_wide(L"VCToolsInstallDir");
+    const OSChar* vc_tools_install = env_get("VCToolsInstallDir");
     if (vc_tools_install != NULL) {
-        wcsncpy(result->vc_tools_install, vc_tools_install, MAX_PATH);
-        swprintf(result->vs_include_path, MAX_PATH, L"%sinclude\\", vc_tools_install);
-        swprintf(result->vs_library_path, MAX_PATH, L"%slib\\x64\\", vc_tools_install);
-        swprintf(result->vs_exe_path, MAX_PATH, L"%sVC\\bin\\amd64\\", vc_tools_install);
+        str_copy(result->vc_tools_install, vc_tools_install, MAX_PATH);
+        str_printf(result->vs_include_path, MAX_PATH, "%sinclude\\", vc_tools_install);
+        str_printf(result->vs_library_path, MAX_PATH, "%slib\\x64\\", vc_tools_install);
+        str_printf(result->vs_exe_path, MAX_PATH, "%sVC\\bin\\amd64\\", vc_tools_install);
     } else {
         if (!find_visual_studio_by_fighting_through_microsoft_craziness(result)) {
             fprintf(stderr,
