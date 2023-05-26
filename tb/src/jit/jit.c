@@ -199,6 +199,7 @@ void tb_jitheap_free_region(TB_JITHeap* c, void* ptr, size_t s) {
 }
 
 static void* get_proc(TB_JITContext* jit, const char* name) {
+    #ifdef _WIN32
     static HMODULE kernel32, user32, gdi32, opengl32;
     if (user32 == NULL) {
         kernel32 = LoadLibrary("kernel32.dll");
@@ -220,6 +221,9 @@ static void* get_proc(TB_JITContext* jit, const char* name) {
     // printf("JIT: loaded %s (%p)\n", name, addr);
     nl_map_put_cstr(jit->loaded_funcs, name, addr);
     return addr;
+    #else
+    return NULL;
+    #endif
 }
 
 static void* get_symbol_address(const TB_Symbol* s) {
@@ -259,7 +263,7 @@ TB_API void* tb_module_apply_function(TB_JITContext* jit, TB_Function* f) {
         } else if (tag == TB_SYMBOL_EXTERNAL) {
             void* addr = get_proc(jit, p->target->name);
             if (addr == NULL) {
-                __debugbreak();
+                tb_panic("Could not find procedure: %s", p->target->name);
             }
 
             ptrdiff_t rel = (intptr_t)addr - ((intptr_t)patch + 4);
