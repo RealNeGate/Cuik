@@ -60,11 +60,11 @@ if is_windows then
 	dll_ext = ".dll"
 	lib_ext = ".lib"
 else
-	ld = "ld.lld"
+	ld = cc
 	ldflags = ldflags.." -g -lc -lm -lthreads "
 
 	if options.shared then
-		ldflags = ldflags.." /dll"
+		ldflags = ldflags.." -shared"
 	end
 
 	ldflags = ldflags.." -o "
