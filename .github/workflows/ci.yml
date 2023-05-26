@@ -50,7 +50,7 @@ jobs:
   release:
     runs-on: ubuntu-latest
     needs: [build_win, build_linux]
-    if: github.ref == 'refs/heads/master'
+    if: github.ref == 'refs/heads/monorepo'
 
     steps:
       - uses: actions/checkout@v3
