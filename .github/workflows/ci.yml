@@ -77,6 +77,8 @@ jobs:
             })
 
       - uses: actions/download-artifact@v3
+
+      - name: Bundle
         run: |
           zip -r cuik-windows.zip cuik-windows/cuik.exe
           tar czf cuik-linux.tar.gz cuik-linux/cuik
