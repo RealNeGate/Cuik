@@ -21,11 +21,22 @@ jobs:
         timeout-minutes: 10
         run: lua build.lua
 
+      - name: Build Cuik DLL
+        shell: cmd
+        timeout-minutes: 10
+        run: lua build.lua -shared
+
       - name: upload artifacts
         uses: actions/upload-artifact@v3
         with:
           name: cuik-windows
           path: cuik.exe
+
+      - name: upload dll artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: cuik-windows
+          path: cuik.dll
   build_linux:
     runs-on: ubuntu-latest
     steps:
@@ -80,7 +91,7 @@ jobs:
 
       - name: Bundle
         run: |
-          zip -r cuik-windows.zip cuik-windows/cuik.exe
+          zip -r cuik-windows.zip cuik-windows/cuik.exe cuik-windows/cuik.dll
           tar czf cuik-linux.tar.gz cuik-linux/cuik
 
       - id: create_release

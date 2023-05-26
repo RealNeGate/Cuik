@@ -72,7 +72,7 @@ bool const_eval_try_offsetof_hack(Cuik_Parser* restrict parser, const Expr* e, u
                 return false;
             }
 
-            Expr* folded = cuik__optimize_ast(parser, arrow_base->cast.src);
+            Expr* folded = cuik__optimize_ast(parser, parser->tu, arrow_base->cast.src);
             if (folded->op != EXPR_INT) {
                 return false;
             }
@@ -111,7 +111,7 @@ static ConstValue gimme(const Expr* e) {
     }
 }
 
-Expr* cuik__optimize_ast(Cuik_Parser* restrict parser, Expr* e) {
+Expr* cuik__optimize_ast(Cuik_Parser* restrict parser, TranslationUnit* restrict tu, Expr* e) {
     switch (e->op) {
         case EXPR_ENUM: {
             if (e->enum_val.num->lexer_pos != 0) {
@@ -126,7 +126,7 @@ Expr* cuik__optimize_ast(Cuik_Parser* restrict parser, Expr* e) {
         }
 
         case EXPR_CAST: {
-            Expr* src = cuik__optimize_ast(parser, e->cast.src);
+            Expr* src = cuik__optimize_ast(parser, tu, e->cast.src);
 
             if (src->op == EXPR_INT) {
                 src->type = e->cast.type;
@@ -145,12 +145,12 @@ Expr* cuik__optimize_ast(Cuik_Parser* restrict parser, Expr* e) {
         }
 
         case EXPR_TERNARY: {
-            Expr* cond = cuik__optimize_ast(parser, e->ternary_op.left);
+            Expr* cond = cuik__optimize_ast(parser, tu, e->ternary_op.left);
             if (cond->op == EXPR_INT) {
                 if (cond->int_num.num != 0) {
-                    return cuik__optimize_ast(parser, e->ternary_op.middle);
+                    return cuik__optimize_ast(parser, tu, e->ternary_op.middle);
                 } else {
-                    return cuik__optimize_ast(parser, e->ternary_op.right);
+                    return cuik__optimize_ast(parser, tu, e->ternary_op.right);
                 }
             }
 
@@ -158,7 +158,7 @@ Expr* cuik__optimize_ast(Cuik_Parser* restrict parser, Expr* e) {
         }
 
         case EXPR_SIZEOF: {
-            Cuik_Type* src = cuik_canonical_type(cuik__sema_expr(parser->tu, e->x_of_expr.expr));
+            Cuik_Type* src = cuik_canonical_type(cuik__sema_expr(tu, e->x_of_expr.expr));
             if (src->size == 0) {
                 type_layout2(parser, &parser->tokens, src);
 
@@ -203,7 +203,7 @@ Expr* cuik__optimize_ast(Cuik_Parser* restrict parser, Expr* e) {
             break;
         }
         case EXPR_NOT: {
-            Expr* src = cuik__optimize_ast(parser, e->unary_op.src);
+            Expr* src = cuik__optimize_ast(parser, tu, e->unary_op.src);
 
             if (src->op == EXPR_INT) {
                 e->op = EXPR_INT;
@@ -215,7 +215,7 @@ Expr* cuik__optimize_ast(Cuik_Parser* restrict parser, Expr* e) {
         }
         case EXPR_NEGATE: {
             // ~(N - 1) => -N
-            Expr* src = cuik__optimize_ast(parser, e->unary_op.src);
+            Expr* src = cuik__optimize_ast(parser, tu, e->unary_op.src);
             if (src->op == EXPR_INT) {
                 uint64_t x = src->int_num.num;
 
@@ -250,10 +250,10 @@ Expr* cuik__optimize_ast(Cuik_Parser* restrict parser, Expr* e) {
         case EXPR_CMPLE:
         case EXPR_CMPGT:
         case EXPR_CMPLT: {
-            Expr* a = cuik__optimize_ast(parser, e->bin_op.right);
+            Expr* a = cuik__optimize_ast(parser, tu, e->bin_op.right);
 
             if (a->op == EXPR_FLOAT32 || a->op == EXPR_FLOAT64) {
-                Expr* b = cuik__optimize_ast(parser, e->bin_op.left);
+                Expr* b = cuik__optimize_ast(parser, tu, e->bin_op.left);
 
                 if (b->op == EXPR_INT || b->op == EXPR_FLOAT32 || b->op == EXPR_FLOAT64) {
                     switch (e->op) {
@@ -275,7 +275,7 @@ Expr* cuik__optimize_ast(Cuik_Parser* restrict parser, Expr* e) {
                 ExprOp op = e->op;
 
                 // TODO(NeGate): we can pull off a fancy tail recursion trick when we chain binary operators together
-                Expr* b = cuik__optimize_ast(parser, e->bin_op.left);
+                Expr* b = cuik__optimize_ast(parser, tu, e->bin_op.left);
                 if (b->op != EXPR_INT) {
                     break;
                 }

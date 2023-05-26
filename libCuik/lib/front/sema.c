@@ -449,7 +449,7 @@ static int walk_initializer_layer(TranslationUnit* tu, Cuik_Type* parent, int ba
             assert(node->expr);
 
             // TODO(NeGate): we might wanna fold the expression to have constant expressions
-            node->expr = e = cuik__optimize_ast(NULL, e);
+            node->expr = e = cuik__optimize_ast(NULL, tu, e);
 
             // normal ass scalar
             Cuik_QualType expr_type = cuik__sema_expr(tu, e);

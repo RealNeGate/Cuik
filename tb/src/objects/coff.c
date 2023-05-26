@@ -23,7 +23,7 @@ static COFF_AuxSectionSymbol section_aux_sym(COFF_SectionHeader* s, int num) {
 
 #define APPEND_SECTION(sec) if (sec.total_size) { dyn_array_put(sections, &sec); }
 #define WRITE(data, size) (memcpy(&output[write_pos], data, size), write_pos += (size))
-TB_API TB_Exports tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
+TB_Exports tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
     TB_TemporaryStorage* tls = tb_tls_allocate();
 
     CUIK_TIMED_BLOCK("layout section") {

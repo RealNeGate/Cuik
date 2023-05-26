@@ -29,7 +29,7 @@ static void put_symbol(TB_Emitter* strtbl, TB_Emitter* stab, const char* name, u
 
 #define APPEND_SECTION(sec) if (sec.total_size) { dyn_array_put(sections, &sec); }
 #define WRITE(data, size) (memcpy(&output[write_pos], data, size), write_pos += (size))
-TB_API TB_Exports tb_elf64obj_write_output(TB_Module* m, const IDebugFormat* dbg) {
+TB_Exports tb_elf64obj_write_output(TB_Module* m, const IDebugFormat* dbg) {
     CUIK_TIMED_BLOCK("layout section") {
         tb_module_layout_sections(m);
     }

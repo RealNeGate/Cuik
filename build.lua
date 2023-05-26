@@ -18,10 +18,21 @@ local options = {
 	opt    = false,
 	cuik   = false,
 	tb     = false,
-	driver = true,
+	driver = false,
 	shared = false,
 	spall_auto = false
 }
+
+-- command lines
+for i = 1, #arg do
+	if arg[i]:sub(1, 1) == "-" then
+		options[arg[i]:sub(2)] = true
+	end
+end
+
+if not options.shared and not options.cuik and not options.tb then
+	options.driver = true
+end
 
 src = { "common/common.c", "mimalloc/src/static.c" }
 function add_srcs(...)
@@ -49,9 +60,10 @@ if is_windows then
 
 	ld = "lld-link"
 	cflags = cflags.." -I c11threads -D_CRT_SECURE_NO_WARNINGS"
-	ldflags = ldflags.." /highentropyva:no /dynamicbase:no /debug onecore.lib msvcrt.lib libcmt.lib"
+	ldflags = ldflags.." /debug onecore.lib msvcrt.lib libcmt.lib"
 
 	if options.shared then
+		cflags = cflags.." -DCUIK_DLL -DTB_DLL"
 		ldflags = ldflags.." /dll"
 	end
 
@@ -71,6 +83,11 @@ else
 	exe_ext = ""
 	dll_ext = ".so"
 	lib_ext = ".a"
+end
+
+if options.shared then
+	options.cuik = true
+	options.tb = true
 end
 
 if options.driver then

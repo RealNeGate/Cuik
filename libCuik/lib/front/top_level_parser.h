@@ -557,7 +557,7 @@ Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cu
             Stmt* restrict s = parser.top_level_stmts[i];
 
             if ((s->op == STMT_DECL || s->op == STMT_GLOBAL_DECL) && s->decl.initial) {
-                s->decl.initial = cuik__optimize_ast(&parser, s->decl.initial);
+                s->decl.initial = cuik__optimize_ast(&parser, parser.tu, s->decl.initial);
             }
         }
 
@@ -600,7 +600,7 @@ Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cu
                     Stmt* restrict s = parser.local_static_storage_decls[i];
 
                     if ((s->op == STMT_DECL || s->op == STMT_GLOBAL_DECL) && s->decl.initial) {
-                        s->decl.initial = cuik__optimize_ast(&parser, s->decl.initial);
+                        s->decl.initial = cuik__optimize_ast(&parser, parser.tu, s->decl.initial);
                     }
                 }
                 dyn_array_clear(parser.local_static_storage_decls);

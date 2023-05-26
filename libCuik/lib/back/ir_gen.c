@@ -508,7 +508,7 @@ static void gen_global_initializer(TranslationUnit* tu, TB_Global* g, Cuik_Type*
                 uint64_t stride = cuik_canonical_type(base->type)->size;
                 if (stride == 0) stride = 1;
 
-                Expr* index_expr = cuik__optimize_ast(NULL, base->subscript.index);
+                Expr* index_expr = cuik__optimize_ast(NULL, tu, base->subscript.index);
                 assert(index_expr->op == EXPR_INT && "could not resolve as constant initializer");
 
                 uint64_t index = index_expr->int_num.num;

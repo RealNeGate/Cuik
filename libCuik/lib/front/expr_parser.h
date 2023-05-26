@@ -1026,7 +1026,7 @@ static Expr* parse_expr(Cuik_Parser* restrict parser, TokenStream* restrict s) {
 }
 
 static intmax_t parse_const_expr(Cuik_Parser* parser, TokenStream* restrict s) {
-    Expr* folded = cuik__optimize_ast(parser, parse_assignment(parser, s));
+    Expr* folded = cuik__optimize_ast(parser, parser->tu, parse_assignment(parser, s));
     if (folded->op != EXPR_INT) {
         diag_err(s, folded->loc, "could not parse expression as constant.");
         return 0;

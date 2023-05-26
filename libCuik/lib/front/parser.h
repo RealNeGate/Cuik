@@ -170,4 +170,4 @@ void type_layout2(Cuik_Parser* restrict parser, TokenStream* restrict tokens, Cu
 
 bool const_eval_try_offsetof_hack(Cuik_Parser* restrict parser, const Expr* e, uint64_t* out);
 
-Expr* cuik__optimize_ast(Cuik_Parser* restrict parser, Expr* e);
+Expr* cuik__optimize_ast(Cuik_Parser* restrict parser, TranslationUnit* restrict tu, Expr* e);
