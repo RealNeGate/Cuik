@@ -3,6 +3,7 @@
 <img src="logo/cuik.svg" width="256px"/>
 
 **warning: unfinished and buggy... also it doesn't compile on Linux or OSX currently, i'll get around to it**
+
 **also i've been doing dev in the monorepo branch for months, i'll be doing a merge eventually**
 
 The plan is a modern C11 compiler which can mostly work with Clang, GCC, and MSVC while also introducing some new ideas.
