@@ -1765,9 +1765,13 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
                 head->backing.r = label;
 
                 if (head->op == STMT_CASE) {
-                    assert(head->case_.key < UINT32_MAX);
-                    tls_push(sizeof(TB_SwitchEntry));
-                    entries[entry_count++] = (TB_SwitchEntry){ .key = head->case_.key, .value = label };
+                    assert(head->case_.key_max < UINT32_MAX);
+
+                    intmax_t end = head->case_.key_max;
+                    for (intmax_t i = head->case_.key; i <= end; i++) {
+                        tls_push(sizeof(TB_SwitchEntry));
+                        entries[entry_count++] = (TB_SwitchEntry){ .key = i, .value = label };
+                    }
                 } else if (head->op == STMT_DEFAULT) {
                     assert(default_label == 0);
                     default_label = label;

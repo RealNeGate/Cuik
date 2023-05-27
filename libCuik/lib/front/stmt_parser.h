@@ -336,32 +336,18 @@ static Stmt* parse_stmt2(Cuik_Parser* parser, TokenStream* restrict s) {
         top->op = STMT_CASE;
 
         intmax_t key = parse_const_expr(parser, s);
+        intmax_t key_max = key;
         if (tokens_get(s)->type == TOKEN_TRIPLE_DOT) {
             // GNU extension, case ranges
             tokens_next(s);
-            intmax_t key_max = parse_const_expr(parser, s);
-            expect_with_reason(s, ':', "case");
-
+            key_max = parse_const_expr(parser, s);
             assert(key_max > key);
-            n->case_.key = key;
-
-            Stmt* base = n;
-            for (intmax_t i = key; i < key_max; i++) {
-                Stmt* curr = alloc_stmt(parser);
-                curr->op = STMT_CASE;
-                curr->case_ = (struct StmtCase){.key = i + 1};
-
-                // Append to list
-                base->case_.next = n->case_.body = curr;
-                base = curr;
-            }
-        } else {
-            expect_with_reason(s, ':', "case");
-
-            n->case_ = (struct StmtCase){
-                .key = key, .body = 0, .next = 0
-            };
         }
+        expect_with_reason(s, ':', "case");
+
+        n->case_ = (struct StmtCase){
+            .key = key, .key_max = key_max
+        };
 
         switch (current_switch_or_case->op) {
             case STMT_CASE: current_switch_or_case->case_.next = top; break;

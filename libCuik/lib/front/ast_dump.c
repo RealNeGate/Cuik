@@ -629,7 +629,11 @@ static void dump_stmt(FILE* stream, Stmt* restrict s, int depth, bool last_node)
             break;
         }
         case STMT_CASE: {
-            fprintf(stream, "Case %"PRId64"\n", s->case_.key);
+            if (s->case_.key != s->case_.key_max) {
+                fprintf(stream, "Case %"PRId64" ... %"PRId64"\n", s->case_.key, s->case_.key_max);
+            } else {
+                fprintf(stream, "Case %"PRId64"\n", s->case_.key);
+            }
             dump_stmt(stream, s->case_.body, depth + 1, true);
             break;
         }

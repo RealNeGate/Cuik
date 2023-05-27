@@ -516,6 +516,7 @@ struct Stmt {
         } label;
         struct StmtCase {
             int64_t key;
+            int64_t key_max;
             Stmt* body;
             Stmt* next;
         } case_;
