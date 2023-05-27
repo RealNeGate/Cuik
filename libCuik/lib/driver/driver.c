@@ -244,8 +244,6 @@ static void cc_invoke(BuildStepInfo* restrict info) {
     }
 
     if (args->emit_ir) {
-        cuikdg_dump_to_file(tokens, stderr);
-
         CUIK_TIMED_BLOCK("Print") {
             TB_FOR_FUNCTIONS(f, mod) {
                 tb_function_print(f, tb_default_print_callback, stdout);
