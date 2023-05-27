@@ -41,8 +41,13 @@ TB_API const char* tb_node_get_name(TB_Node* n) {
 
         case TB_ZERO_EXT: return "zxt";
         case TB_SIGN_EXT: return "sxt";
+        case TB_FLOAT_EXT: return "fpxt";
         case TB_TRUNCATE: return "trunc";
         case TB_BITCAST: return "bitcast";
+        case TB_UINT2FLOAT: return "uint2float";
+        case TB_INT2FLOAT: return "int2float";
+        case TB_FLOAT2UINT: return "float2uint";
+        case TB_FLOAT2INT: return "float2int";
         case TB_GET_SYMBOL_ADDRESS: return "symbol";
 
         case TB_CMP_NE: return "cmp.ne";

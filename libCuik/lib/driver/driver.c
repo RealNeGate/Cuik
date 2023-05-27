@@ -223,6 +223,10 @@ static void cc_invoke(BuildStepInfo* restrict info) {
     cuikdg_dump_to_file(tokens, stderr);
     mtx_unlock(info->mutex);
 
+    if (args->debug_info) {
+        tu->has_tb_debug_info = true;
+    }
+
     TB_Module* mod = cu->ir_mod;
     CUIK_TIMED_BLOCK("Allocate IR") {
         cuikcg_allocate_ir2(tu, mod);

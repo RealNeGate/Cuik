@@ -1384,9 +1384,9 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
                             .reg = data
                         };
                     }
-
-                    return lhs;
                 }
+
+                return lhs;
             }
             case EXPR_TERNARY: {
                 TB_Node* cond = irgen_as_rvalue(tu, func, e->ternary_op.left);

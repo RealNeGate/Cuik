@@ -588,6 +588,10 @@ static ptrdiff_t spill_register(Ctx* restrict ctx, TB_Function* f, DefIndex* sor
 
     // insert spill
     Reload r = { TB_TYPE_I64, split_def };
+    if (ctx->defs[split_def].node != NULL) {
+        r.dt = ctx->defs[split_def].node->dt;
+    }
+
     spill(ctx, spill_inst, &r);
     spill_inst = spill_inst->next;
 
@@ -821,10 +825,13 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
         }
     };
 
-    /*ctx.emit.emit_asm = true;
-    if (ctx.emit.emit_asm) {
-        tb_function_print(f, tb_default_print_callback, stdout);
-    }*/
+    {
+        ctx.emit.emit_asm = true;
+        if (ctx.emit.emit_asm) {
+            tb_function_print(f, tb_default_print_callback, stdout);
+        }
+        __debugbreak();
+    }
 
     ctx.used_regs[0] = set_create(16);
     ctx.used_regs[1] = set_create(16);

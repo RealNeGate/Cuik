@@ -90,7 +90,7 @@ void tb_codeview_builder_done(CV_Builder* builder) {
         free(builder);
     }
 
-    align_up_type_record(&builder->type_section);
+    // align_up_type_record(&builder->type_section);
 }
 
 CV_TypeIndex tb_codeview_builder_add_array(CV_Builder* builder, CV_TypeIndex base, size_t count) {

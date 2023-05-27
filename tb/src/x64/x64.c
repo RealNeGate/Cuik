@@ -458,7 +458,7 @@ static Cond isel_cmp(Ctx* restrict ctx, TB_Node* n) {
         if (TB_IS_FLOAT_TYPE(cmp_dt)) {
             int lhs = ISEL(n->inputs[0]);
             int rhs = ISEL(n->inputs[1]);
-            SUBMIT(inst_rr(FP_UCOMI, n->dt, -1, lhs, rhs));
+            SUBMIT(inst_rr(FP_UCOMI, cmp_dt, -1, lhs, rhs));
 
             switch (n->type) {
                 case TB_CMP_EQ:  cc = E; break;
@@ -708,6 +708,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
 
         case TB_NEG:
         case TB_NOT: {
+            assert(n->dt.type != TB_FLOAT);
             dst = DEF(n, REG_CLASS_GPR);
             int src = ISEL(n->inputs[0]);
 
@@ -837,6 +838,23 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             break;
         }
 
+        case TB_FLOAT2INT:
+        case TB_FLOAT2UINT: {
+            TB_DataType src_dt = n->inputs[0]->dt;
+            assert(src_dt.type == TB_FLOAT);
+
+            // it's either 32bit or 64bit conversion
+            // F3 0F 2C /r            CVTTSS2SI xmm1, r/m32
+            // F3 REX.W 0F 2C /r      CVTTSS2SI xmm1, r/m64
+            // F2 0F 2C /r            CVTTSD2SI xmm1, r/m32
+            // F2 REX.W 0F 2C /r      CVTTSD2SI xmm1, r/m64
+            dst = DEF(n, REG_CLASS_GPR);
+
+            int src = ISEL(n->inputs[0]);
+            SUBMIT(inst_r(FP_CVTT, n->inputs[0]->dt, dst, src));
+            break;
+        }
+
         case TB_VA_START: {
             assert(ctx->module->target_abi == TB_ABI_WIN64 && "How does va_start even work on SysV?");
 
@@ -956,11 +974,15 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
         }
         case TB_PTR2INT:
         case TB_TRUNCATE: {
-            assert(n->dt.type != TB_FLOAT);
             int src = ISEL(n->inputs[0]);
-            dst = DEF(n, REG_CLASS_GPR);
 
-            SUBMIT(inst_copy(n->dt, dst, src));
+            if (n->dt.type == TB_FLOAT) {
+                dst = DEF(n, REG_CLASS_XMM);
+                SUBMIT(inst_r(FP_CVT, n->inputs[0]->dt, dst, src));
+            } else {
+                dst = DEF(n, REG_CLASS_GPR);
+                SUBMIT(inst_copy(n->dt, dst, src));
+            }
             break;
         }
 
@@ -1197,18 +1219,20 @@ static void spill(Ctx* restrict ctx, Inst* basepoint, Reload* r) {
     ASM printf("  \x1b[32m#   spill D%d (rbp + %d)\x1b[0m\n", r->old, r->stack_pos);
 
     // write out
+    InstType i = r->dt.type == TB_FLOAT ? FP_MOV : MOV;
     Inst* new_inst = ARENA_ALLOC(&tb__arena, Inst);
 
-    *new_inst = inst_mr(MOV, r->dt, RBP, GPR_NONE, SCALE_X1, r->stack_pos, USE(r->old));
+    *new_inst = inst_mr(i, r->dt, RBP, GPR_NONE, SCALE_X1, r->stack_pos, USE(r->old));
     new_inst->time = basepoint->time + 1;
     new_inst->next = basepoint->next;
     basepoint->next = new_inst;
 }
 
 static void reload(Ctx* restrict ctx, Inst* basepoint, Reload* r) {
+    InstType i = r->dt.type == TB_FLOAT ? FP_MOV : MOV;
     Inst* new_inst = ARENA_ALLOC(&tb__arena, Inst);
 
-    *new_inst = inst_m(MOV, r->dt, r->old, RBP, GPR_NONE, SCALE_X1, r->stack_pos);
+    *new_inst = inst_m(i, r->dt, r->old, RBP, GPR_NONE, SCALE_X1, r->stack_pos);
     new_inst->time = basepoint->time + 1;
     new_inst->next = basepoint->next;
     basepoint->next = new_inst;
