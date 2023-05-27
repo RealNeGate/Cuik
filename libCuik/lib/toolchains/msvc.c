@@ -592,7 +592,7 @@ static bool invoke_link(void* ctx, const Cuik_DriverArgs* args, Cuik_Linker* lin
         "cmd /c \"\"" STR_FMT "bin\\Hostx64\\x64\\link.exe\" /nologo /machine:amd64 %s"
         "/debug:%s /pdb:%s.pdb /out:%s /incremental:no ",
         t->vc_tools_install, subsystem_option[args->subsystem],
-        args->debug_info ? "full" : "none", filename, output
+        args->debug_info ? "full" : "none", output, output
     );
 
     dyn_array_for(i, linker->libpaths) {
@@ -605,6 +605,10 @@ static bool invoke_link(void* ctx, const Cuik_DriverArgs* args, Cuik_Linker* lin
 
     cmd_line[cmd_line_len++] = '"';
     cmd_line[cmd_line_len++] = 0;
+
+    if (args->verbose) {
+        printf("Linker command:\n%s\n\n", cmd_line);
+    }
 
     int exit_code = system(cmd_line);
     if (exit_code != 0) {

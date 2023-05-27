@@ -449,10 +449,10 @@ static Inst isel_store(Ctx* restrict ctx, TB_DataType dt, TB_Node* addr, int src
 }
 
 static Cond isel_cmp(Ctx* restrict ctx, TB_Node* n) {
-    TB_DataType cmp_dt = TB_NODE_GET_EXTRA_T(n, TB_NodeCompare)->cmp_dt;
-    assert(cmp_dt.width == 0 && "TODO: Implement vector compares");
-
     if (n->type >= TB_CMP_EQ && n->type <= TB_CMP_FLE) {
+        TB_DataType cmp_dt = TB_NODE_GET_EXTRA_T(n, TB_NodeCompare)->cmp_dt;
+        assert(cmp_dt.width == 0 && "TODO: Implement vector compares");
+
         Cond cc = -1;
 
         if (TB_IS_FLOAT_TYPE(cmp_dt)) {
@@ -497,7 +497,8 @@ static Cond isel_cmp(Ctx* restrict ctx, TB_Node* n) {
     }
 
     int src = ISEL(n);
-    if (TB_IS_FLOAT_TYPE(cmp_dt)) {
+    TB_DataType dt = n->dt;
+    if (TB_IS_FLOAT_TYPE(dt)) {
         int tmp = DEF(n, REG_CLASS_XMM);
 
         Inst inst = {
@@ -507,10 +508,10 @@ static Cond isel_cmp(Ctx* restrict ctx, TB_Node* n) {
             .regs = { tmp, USE(tmp), USE(tmp) }
         };
         SUBMIT(inst);
-        SUBMIT(inst_rr(FP_UCOMI, n->dt, -1, src, tmp));
+        SUBMIT(inst_rr(FP_UCOMI, dt, -1, src, tmp));
         return NE;
     } else {
-        SUBMIT(inst_rr(TEST, cmp_dt, -1, src, src));
+        SUBMIT(inst_rr(TEST, dt, -1, src, src));
         return NE;
     }
 }
