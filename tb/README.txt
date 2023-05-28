@@ -20,20 +20,3 @@ TildeBackend (Tilde or TB for short)
      We currently have basic ELF64, COFF64, some current work is being done for
      PE and Macho-O. We got exporting object files but wanna go further because
      linkers ain't supposed to be separate programs.
-
-  # Compiling
-
-    You'll need to install a C compiler, Ninja and Python3.
-
-    ```
-      git clone --recurse-submodules -j8 https://github.com/RealNeGate/Cuik.git
-      cd tb
-      py build.py
-    ```
-
-    If you wish to compile with optimizations add `-opt` to the args.
-    By default the C compiler will be clang, if you want to change that use `-cc=your-compiler`
-
-  # Getting Started
-
-    Coming soon
