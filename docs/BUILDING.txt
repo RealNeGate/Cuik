@@ -1,0 +1,5 @@
+# Building
+
+For the most part doing `lua build.lua` will build the CLI app, if you wish to build
+the library by itself add `-cuik` and/or `-tb` depending on what is wanted. If you wish
+for a shared object (DLL/SO) add `-shared` which by default will compile with Cuik and TB.
