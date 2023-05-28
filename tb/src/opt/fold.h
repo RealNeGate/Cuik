@@ -123,6 +123,68 @@ static bool is_commutative(TB_NodeTypeEnum type) {
     }
 }
 
+static TB_Node* do_int_fold(TB_Function* f, TB_Node* n) {
+    // if it's commutative: move constants to the right
+    if (is_commutative(n->type) && n->inputs[0]->type == TB_INTEGER_CONST && n->inputs[1]->type != TB_INTEGER_CONST) {
+        tb_swap(TB_Node*, n->inputs[0], n->inputs[1]);
+        return n;
+    }
+
+    TB_Node* a = n->inputs[0];
+    TB_Node* b = n->inputs[1];
+
+    TB_NodeTypeEnum type = n->type;
+    if (a->type == TB_INTEGER_CONST && type >= TB_CMP_EQ && type <= TB_CMP_ULE) {
+        // fully fold
+        TB_NodeInt* ai = TB_NODE_GET_EXTRA(a);
+        TB_NodeInt* bi = TB_NODE_GET_EXTRA(b);
+        assert(ai->num_words == bi->num_words);
+
+        BigInt_t *a_words = ai->words, *b_words = bi->words;
+
+        size_t num_words = ai->num_words;
+        BigInt_t* words = tb_transmute_to_int(f, n, 1);
+        bool result = false;
+        switch (type) {
+            case TB_CMP_EQ:  result = BigInt_cmp(num_words, a_words, b_words) == 0; break;
+            case TB_CMP_NE:  result = BigInt_cmp(num_words, a_words, b_words) != 0; break;
+            case TB_CMP_ULT: result = BigInt_cmp(num_words, a_words, b_words) <  0; break;
+            case TB_CMP_ULE: result = BigInt_cmp(num_words, a_words, b_words) <= 0; break;
+            default: tb_unreachable();
+        }
+
+        words[0] = result;
+        return n;
+    } else if (a->type == TB_INTEGER_CONST && type >= TB_AND && type <= TB_MUL) {
+        // fully fold
+        TB_NodeInt* ai = TB_NODE_GET_EXTRA(a);
+        TB_NodeInt* bi = TB_NODE_GET_EXTRA(b);
+        assert(ai->num_words == bi->num_words);
+
+        BigInt_t *a_words = ai->words, *b_words = bi->words;
+
+        size_t num_words = ai->num_words;
+        BigInt_t* words = tb_transmute_to_int(f, n, ai->num_words);
+        switch (type) {
+            case TB_AND: BigInt_and(num_words, a_words, b_words, words); break;
+            case TB_OR:  BigInt_or(num_words, a_words, b_words, words); break;
+            case TB_XOR: BigInt_xor(num_words, a_words, b_words, words); break;
+            case TB_ADD: BigInt_add(num_words, a_words, num_words, b_words, num_words, words); break;
+            case TB_SUB: BigInt_sub(num_words, a_words, num_words, b_words, num_words, words); break;
+            case TB_MUL: BigInt_mul_basic(num_words, a_words, b_words, words); break;
+            default: tb_unreachable();
+        }
+
+        // fixup the bits here
+        uint64_t shift = (64 - (n->dt.data % 64)), mask = (~UINT64_C(0) >> shift) << shift;
+        words[num_words-1] &= ~mask;
+        return n;
+    }
+
+    return NULL;
+}
+
+#if 0
 static bool const_fold(TB_Function* f, TB_Label bb, TB_Node* n) {
     TB_DataType dt = n->dt;
 
@@ -348,7 +410,7 @@ static bool const_fold(TB_Function* f, TB_Label bb, TB_Node* n) {
                             return true;
 
                             case TB_MUL: case TB_AND: {
-                                uint64_t* words = tb_transmute_to_int(f, bb, n, 1);
+                                uint64_t* words = tb_transmute_to_int(f, n, 1);
                                 words[0] = 0;
                                 return true;
                             }
@@ -426,3 +488,4 @@ static bool const_fold(TB_Function* f, TB_Label bb, TB_Node* n) {
     // didn't change shit :(
     return false;
 }
+#endif

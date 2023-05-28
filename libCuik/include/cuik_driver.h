@@ -128,3 +128,13 @@ CUIK_API bool cuik_step_run(Cuik_BuildStep* s, Cuik_IThreadpool* thread_pool);
 CUIK_API void cuik_step_free(Cuik_BuildStep* s);
 
 CUIK_API bool cuik_driver_does_codegen(const Cuik_DriverArgs* args);
+
+////////////////////////////////
+// Scheduling
+////////////////////////////////
+// This is used to help users multithread their actions (optimizations, codegen, etc)
+#ifdef CUIK_USE_TB
+typedef void (*CuikSched_PerFunction)(TB_Module* m, TB_Function* f, void* ctx);
+
+CUIK_API void cuiksched_per_function(Cuik_IThreadpool* restrict thread_pool, TB_Module* m, void* ctx, CuikSched_PerFunction func);
+#endif

@@ -1,5 +1,9 @@
 
-bool libcalls(TB_Function* f, TB_TemporaryStorage* tls) {
+TB_API bool tb_opt_libcalls(TB_Function* f) {
+    // TODO(NeGate): come back
+    tb_todo();
+
+    #if 0
     bool changes = false;
 
     TB_FOR_BASIC_BLOCK(bb, f) {
@@ -31,9 +35,5 @@ bool libcalls(TB_Function* f, TB_TemporaryStorage* tls) {
     }
 
     return changes;
+    #endif
 }
-
-const TB_Pass tb_opt_libcalls = {
-    .name = "Libcalls",
-    .func_run = libcalls,
-};

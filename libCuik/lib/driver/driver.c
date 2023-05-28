@@ -4,7 +4,7 @@
 #include <arena.h>
 #include <threads.h>
 #include "driver_fs.h"
-#include "driver_opts.h"
+#include "driver_sched.h"
 #include "driver_arg_parse.h"
 
 #include "../targets/targets.h"
@@ -13,11 +13,6 @@
 #ifdef CUIK_ALLOW_THREADS
 #include <stdatomic.h>
 #endif
-
-enum {
-    IRGEN_TASK_BATCH_SIZE = 8192,
-    TB_TASK_BATCH_SIZE = 8192,
-};
 
 // this is used by the worker routines
 typedef struct {
@@ -86,7 +81,6 @@ static void step_done(Cuik_BuildStep* s) {
 }
 
 static void irgen(Cuik_IThreadpool* restrict thread_pool, Cuik_DriverArgs* restrict args, CompilationUnit* restrict cu, TB_Module* mod);
-static void codegen(Cuik_IThreadpool* restrict thread_pool, Cuik_DriverArgs* restrict args, CompilationUnit* restrict cu, TB_Module* mod);
 
 static bool has_file_ext(const char* path) {
     for (; *path; path++) {
@@ -148,6 +142,10 @@ static void sys_invoke(BuildStepInfo* info) {
 
     cuik_free(s->sys.data);
     step_done(s);
+}
+
+static void compile_func(TB_Module* m, TB_Function* f, void* ctx) {
+    tb_module_compile_function(m, f, TB_ISEL_FAST);
 }
 
 static void cc_invoke(BuildStepInfo* restrict info) {
@@ -242,9 +240,7 @@ static void cc_invoke(BuildStepInfo* restrict info) {
 
     // TODO(NeGate): we probably want to do the fancy threading soon
     if (args->opt_level > 0) {
-        CUIK_TIMED_BLOCK("Optimizer") {
-            tb_module_optimize(mod, COUNTOF(passes_O1), passes_O1);
-        }
+        tb_module_optimize(mod, 0, NULL);
     }
 
     if (args->emit_ir) {
@@ -256,7 +252,7 @@ static void cc_invoke(BuildStepInfo* restrict info) {
         }
     } else if (!args->ir) {
         CUIK_TIMED_BLOCK("CodeGen") {
-            codegen(s->tp, args, cu, mod);
+            cuiksched_per_function(s->tp, mod, NULL, compile_func);
         }
     }
 
@@ -722,24 +718,6 @@ static void irgen_job(void* arg) {
     #endif
 }
 
-typedef struct {
-    TB_Module* mod;
-    TB_Function* start;
-    Futex* remaining;
-} CodegenTask;
-
-static void codegen_job(void* arg) {
-    CodegenTask task = *((CodegenTask*) arg);
-    TB_Function* f = task.start;
-
-    for (size_t i = 0; i < TB_TASK_BATCH_SIZE && f != NULL; i++) {
-        tb_module_compile_function(task.mod, f, TB_ISEL_FAST);
-        f = tb_next_function(f);
-    }
-
-    futex_dec(task.remaining);
-}
-
 static void irgen(Cuik_IThreadpool* restrict thread_pool, Cuik_DriverArgs* restrict args, CompilationUnit* restrict cu, TB_Module* mod) {
     CUIK_TIMED_BLOCK("IRGen") {
         if (thread_pool != NULL) {
@@ -803,34 +781,6 @@ static void irgen(Cuik_IThreadpool* restrict thread_pool, Cuik_DriverArgs* restr
 
                 irgen_job(&task);
             }
-        }
-    }
-}
-
-static void codegen(Cuik_IThreadpool* restrict thread_pool, Cuik_DriverArgs* restrict args, CompilationUnit* restrict cu, TB_Module* mod) {
-    if (thread_pool != NULL) {
-        #if CUIK_ALLOW_THREADS
-        size_t capacity = (tb_module_get_function_count(mod) + TB_TASK_BATCH_SIZE - 1) / TB_TASK_BATCH_SIZE;
-        Futex remaining = capacity;
-
-        size_t i = 0;
-        TB_FOR_FUNCTIONS(f, mod) {
-            if ((i % TB_TASK_BATCH_SIZE) == 0) {
-                CodegenTask task = { .mod = mod, .start = f, .remaining = &remaining };
-                CUIK_CALL(thread_pool, submit, codegen_job, sizeof(task), &task);
-            }
-
-            i += 1;
-        }
-
-        futex_wait_eq(&remaining, 0);
-        #else
-        fprintf(stderr, "Please compile with -DCUIK_ALLOW_THREADS if you wanna spin up threads");
-        abort();
-        #endif /* CUIK_ALLOW_THREADS */
-    } else {
-        TB_FOR_FUNCTIONS(f, mod) {
-            tb_module_compile_function(mod, f, TB_ISEL_FAST);
         }
     }
 }

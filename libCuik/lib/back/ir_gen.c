@@ -889,8 +889,8 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
             }
         }
         case EXPR_SUBSCRIPT: {
-            TB_Node* base = irgen_as_rvalue(tu, func, e->subscript.base);
             TB_Node* index = irgen_as_rvalue(tu, func, e->subscript.index);
+            TB_Node* base = irgen_as_rvalue(tu, func, e->subscript.base);
 
             int stride = cuik_canonical_type(e->type)->size;
             if (stride == 0) stride = 1;
@@ -1389,6 +1389,9 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
                 return lhs;
             }
             case EXPR_TERNARY: {
+                Cuik_Type* type = cuik_canonical_type(e->type);
+                TB_DataType dt = ctype_to_tbtype(type);
+
                 TB_Node* cond = irgen_as_rvalue(tu, func, e->ternary_op.left);
 
                 TB_Node* if_true = tb_inst_region(func);
@@ -1396,30 +1399,32 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e) {
                 TB_Node* exit = tb_inst_region(func);
 
                 // Cast to bool
+                TB_Node* result = tb_inst_local(func, type->size, type->align);
                 tb_inst_if(func, cond, if_true, if_false);
 
                 TB_Node* true_val;
                 {
                     tb_inst_set_control(func, if_true);
 
-                    true_val = irgen_as_rvalue(tu, func, e->ternary_op.middle);
-                    if_true = tb_inst_get_control(func);
+                    TB_Node* true_val = irgen_as_rvalue(tu, func, e->ternary_op.middle);
+                    tb_inst_store(func, dt, result, true_val, type->align, false);
+
                     tb_inst_goto(func, exit);
                 }
 
-                TB_Node* false_val;
                 {
                     tb_inst_set_control(func, if_false);
 
-                    false_val = irgen_as_rvalue(tu, func, e->ternary_op.right);
-                    if_false = tb_inst_get_control(func);
+                    TB_Node* false_val = irgen_as_rvalue(tu, func, e->ternary_op.right);
+                    tb_inst_store(func, dt, result, false_val, type->align, false);
+
                     tb_inst_goto(func, exit);
                 }
                 tb_inst_set_control(func, exit);
 
                 return (IRVal){
                     .value_type = RVALUE,
-                    .reg = tb_inst_phi2(func, false_val, true_val),
+                    .reg = tb_inst_load(func, dt, result, type->align, false),
                 };
             }
 

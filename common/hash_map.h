@@ -66,6 +66,8 @@ do {                                                                            
     (out_index) = ins__.index;                                                       \
 } while (0)
 
+#define nl_map_remove(map, key) ((map) != NULL ? nl_map__remove(map, sizeof(*map), sizeof(key), &(key)) : -1)
+
 #define nl_map_get(map, key) ((map) != NULL ? (nl_map_is_strmap(map) ? nl_map__gets : nl_map__get)(((NL_MapHeader*)(map)) - 1, sizeof(*map), sizeof(key), &(key)) : -1)
 #define nl_map_get_checked(map, key) ((map)[nl_map__check(nl_map_get(map, key))].v)
 #define nl_map_get_cstr(map, key) ((map) != NULL ? nl_map__gets(((NL_MapHeader*)(map)) - 1, sizeof(*map), sizeof(NL_Slice), &(NL_Slice){ strlen(key), (const uint8_t*) (key) }) : -1)
@@ -110,6 +112,7 @@ NL_MapInsert nl_map__inserts(void* map, size_t entry_size, size_t key_size, cons
 ptrdiff_t nl_map__get(NL_MapHeader* restrict table, size_t entry_size, size_t key_size, const void* key);
 ptrdiff_t nl_map__gets(NL_MapHeader* restrict table, size_t entry_size, size_t key_size, const void* key);
 void nl_map__free(NL_MapHeader* restrict table);
+void nl_map__remove(void* map, size_t entry_size, size_t key_size, const void* key);
 
 inline static ptrdiff_t nl_map__check(ptrdiff_t x) {
     assert(x >= 0 && "map entry not found!");
@@ -167,6 +170,19 @@ static bool nl_map__is_zero(const char* ptr, size_t size) {
     }
 }
 
+static bool nl_map__is_one(const char* ptr, size_t size) {
+    // we're almost exclusively using this code for pointer keys
+    if (size == sizeof(void*)) {
+        return *((uintptr_t*) ptr) == UINTPTR_MAX;
+    } else {
+        for (size_t i = 0; i < size; i++) {
+            if (ptr[i] != (char)0xFF) return false;
+        }
+
+        return true;
+    }
+}
+
 NL_MapHeader* nl_map__rehash(NL_MapHeader* table, size_t entry_size, size_t key_size, bool is_strmap) {
     size_t count = 1u << table->exp;
 
@@ -183,7 +199,7 @@ NL_MapHeader* nl_map__rehash(NL_MapHeader* table, size_t entry_size, size_t key_
     } else {
         for (size_t i = 0; i < count; i++) {
             void* slot_entry = (NL_Slice*) &table->kv_table[i * entry_size];
-            if (!nl_map__is_zero(slot_entry, key_size)) {
+            if (!nl_map__is_zero(slot_entry, key_size) && !nl_map__is_one(slot_entry, key_size)) {
                 NL_MapInsert ins = nl_map__insert(new_table->kv_table, entry_size, key_size, slot_entry);
                 memcpy(&new_table->kv_table[ins.index*entry_size + key_size], &slot_entry[1], entry_size - key_size);
             }
@@ -220,12 +236,39 @@ NL_MapInsert nl_map__insert(void* map, size_t entry_size, size_t key_size, const
         i = (i + step) & mask;
 
         void* slot_entry = &table->kv_table[i * entry_size];
-        if (nl_map__is_zero(slot_entry, key_size)) {
+        if (nl_map__is_zero(slot_entry, key_size) || nl_map__is_one(slot_entry, key_size)) {
             table->count++;
             memcpy(slot_entry, key, key_size);
             return (NL_MapInsert){ map, i };
         } else if (memcmp(slot_entry, key, key_size) == 0) {
             return (NL_MapInsert){ map, i };
+        }
+    }
+}
+
+void nl_map__remove(void* map, size_t entry_size, size_t key_size, const void* key) {
+    if (map == NULL) {
+        return;
+    }
+
+    NL_MapHeader* table = ((NL_MapHeader*)map) - 1;
+
+    uint32_t exp = table->exp;
+    uint32_t mask = (1 << table->exp) - 1;
+    uint32_t hash = nl_map__raw_hash(key_size, key);
+
+    for (size_t i = hash;;) {
+        // hash table lookup
+        uint32_t step = (hash >> (32 - exp)) | 1;
+        i = (i + step) & mask;
+
+        void* slot_entry = &table->kv_table[i * entry_size];
+        if (nl_map__is_zero(slot_entry, key_size)) {
+            break;
+        } else if (memcmp(slot_entry, key, key_size) == 0) {
+            table->count--;
+            memset(slot_entry, 0xFF, key_size); // mark key as TOMBSTONE
+            break;
         }
     }
 }

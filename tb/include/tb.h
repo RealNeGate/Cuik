@@ -1113,28 +1113,13 @@ extern "C" {
     TB_API void tb_inst_ret(TB_Function* f, size_t count, TB_Node** values);
 
     ////////////////////////////////
-    // Optimizer
-    ////////////////////////////////
-    typedef struct TB_Pass {
-        // it's either a module-level pass or function-level
-        bool is_module;
-        const char* name;
-
-        union {
-            bool(*func_run)(TB_Function* f);
-            bool(*mod_run)(TB_Module* m);
-        };
-    } TB_Pass;
-
-    // Applies optimizations to the entire module
-    TB_API void tb_module_optimize(TB_Module* m, size_t pass_count, const TB_Pass* passes[]);
-
-    ////////////////////////////////
     // Transformation pass library
     ////////////////////////////////
-    extern TB_API const TB_Pass tb_opt_merge_rets;
-    extern TB_API const TB_Pass tb_opt_libcalls;
-    extern TB_API const TB_Pass tb_opt_mem2reg;
+    typedef bool (*TB_FunctionPass)(TB_Function* f);
+
+    TB_API bool tb_opt_libcalls(TB_Function* f);
+
+    TB_API void tb_module_optimize(TB_Module* m, size_t pass_count, const TB_FunctionPass passes[]);
 
     ////////////////////////////////
     // IR access

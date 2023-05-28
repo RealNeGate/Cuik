@@ -96,8 +96,10 @@ void* arena_alloc(Arena* arena, size_t size, size_t align) {
 }
 
 void arena_clear(Arena* arena) {
-    arena->top = arena->base;
-    arena->base->used = 0;
+    if (arena->base != NULL) {
+        arena->top = arena->base;
+        arena->base->used = 0;
+    }
 }
 
 void arena_free(Arena* arena) {

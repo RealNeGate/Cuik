@@ -260,10 +260,11 @@ static Inst inst_line(TB_FileID file, int line) {
     };
 }
 
-static void phi_edge(Ctx* restrict ctx, TB_Node* src, TB_Node* dst) {
-    /*TB_FOR_NODE(n, f, dst) {
-        if (n->type == TB_NULL) continue;
-        if (n->type != TB_PHI) break;
+static void phi_edge(Ctx* restrict ctx, TB_Node* src, TB_Node* dst, int index) {
+    /*TB_NodeRegion* region = TB_NODE_GET_EXTRA(dst);
+    FOREACH_N(i, 0, region->phi_count) {
+        TB_Node* n = region->phis[i];
+        assert(n->type == TB_PHI);
 
         // allocate virtual register
         int* dst_vreg = &GET_VAL(n);
@@ -272,11 +273,7 @@ static void phi_edge(Ctx* restrict ctx, TB_Node* src, TB_Node* dst) {
         }
 
         // handle phis
-        TB_NodePhi* phi = TB_NODE_GET_EXTRA(n);
-        FOREACH_N(i, 0, n->input_count) if (phi->labels[i] == src) {
-            copy_value(ctx, n, USE(*dst_vreg), n->inputs[i], n->dt);
-            break;
-        }
+        copy_value(ctx, n, USE(*dst_vreg), n->inputs[index], n->dt);
     }*/
 }
 
@@ -801,7 +798,7 @@ static void schedule_effect(Ctx* restrict ctx, TB_Node* parent, TB_Node* n) {
         // copy out from active phi-edges
         TB_NodeRegion* r = TB_NODE_GET_EXTRA(parent);
         FOREACH_N(i, 0, r->succ_count) {
-            phi_edge(ctx, parent, r->succ[i]);
+            phi_edge(ctx, parent, r->succ[i], 0);
         }
     }
 
@@ -825,12 +822,9 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
         }
     };
 
-    /*{
-        ctx.emit.emit_asm = true;
-        if (ctx.emit.emit_asm) {
-            tb_function_print(f, tb_default_print_callback, stdout);
-        }
-        __debugbreak();
+    /*ctx.emit.emit_asm = true;
+    if (ctx.emit.emit_asm) {
+        tb_function_print(f, tb_default_print_callback, stdout);
     }*/
 
     ctx.used_regs[0] = set_create(16);

@@ -1,6 +1,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
+int foo() { return 2 + 2; }
+
+#if 0
 size_t* tile1(size_t* a, size_t b) { return &a[b]; }
 size_t  tile2(size_t* a, size_t b) { return a[b]; }
 size_t* tile3(size_t* a, size_t b) { return &a[b*2]; }
@@ -36,7 +39,6 @@ void bar(size_t* a, size_t b) {
     a[b] += 16;
 }
 
-#if 0
 int test(int a, int b) {
     int x, y, z;
 
