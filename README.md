@@ -5,33 +5,9 @@
 ## Resources
 
 * [discord](https://discord.gg/UFuHChZswc)
-* [build from source](https://github.com/RealNeGate/Cuik/blob/master/docs/BUILDING.txt)
-* [code structure](https://github.com/RealNeGate/Cuik/blob/master/docs/STRUCTURE.txt)
+* [build from source](https://github.com/RealNeGate/Cuik/blob/monorepo/docs/BUILDING.txt)
+* [code structure](https://github.com/RealNeGate/Cuik/blob/monorepo/docs/STRUCTURE.txt)
 
 ## Summary
 
 Cuik (pronounced 'Quick') is a new fast compiler toolchain built to replace GCC, MSVC, and LLVM. It's built in a modular design, the C11 frontend is one library (`libCuik`) along with the backend (`tb`) which can both be compiled separately.
-
-```
-# this is where the main driver goes (it does "mostly" normal CC command line interactions)
-main/
-
-# a WIP GUI app which will display info from libCuik
-inspector/
-
-# C frontend library
-libCuik/
-
-# General compiler backend library
-tb/
-
-# the general heap allocator used
-mimalloc/
-
-# the freestanding includes like stddef.h along with some helpers
-crt/
-
-# random crap
-logo/
-tests/
-```
