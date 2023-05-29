@@ -252,11 +252,11 @@ Cuik_CPP* cuikpp_make(const Cuik_CPPDesc* desc) {
     return ctx;
 }
 
-CUIK_API Cuik_File* cuikpp_get_files(TokenStream* restrict s) {
+Cuik_File* cuikpp_get_files(TokenStream* restrict s) {
     return &s->files[1];
 }
 
-CUIK_API size_t cuikpp_get_file_count(TokenStream* restrict s) {
+size_t cuikpp_get_file_count(TokenStream* restrict s) {
     return dyn_array_length(s->files) - 1;
 }
 

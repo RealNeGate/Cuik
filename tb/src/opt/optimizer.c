@@ -13,44 +13,44 @@ typedef TB_Node* (*FoldOp)(TB_Function* f, TB_Node* n);
 #include "libcalls.h"
 
 // inspired by the Hotspot's iter
-typedef struct {
+struct TB_OptQueue {
     DynArray(TB_Node*) queue;
     NL_Map(TB_Node*, int) lookup;
-} Folder;
+};
 
-static bool folder_enqueue(Folder* restrict fold, TB_Node* n) {
-    ptrdiff_t search = nl_map_get(fold->lookup, n);
+bool tb_optqueue_mark(TB_OptQueue* restrict queue, TB_Node* n) {
+    ptrdiff_t search = nl_map_get(queue->lookup, n);
     if (search >= 0) {
         return false;
     }
 
-    size_t i = dyn_array_length(fold->queue);
-    dyn_array_put(fold->queue, n);
-    nl_map_put(fold->lookup, n, i);
+    size_t i = dyn_array_length(queue->queue);
+    dyn_array_put(queue->queue, n);
+    nl_map_put(queue->lookup, n, i);
+
+    FOREACH_N(i, 0, n->input_count) {
+        tb_optqueue_mark(queue, n->inputs[i]);
+    }
     return true;
 }
 
-static void fill_queue(Folder* restrict fold, TB_Node* n) {
-    if (!folder_enqueue(fold, n)) {
+void tb_optqueue_fill_all(TB_OptQueue* restrict queue, TB_Node* n) {
+    if (!tb_optqueue_mark(queue, n)) {
         return;
-    }
-
-    FOREACH_N(i, 0, n->input_count) {
-        fill_queue(fold, n->inputs[i]);
     }
 
     // walk successors for regions
     if (n->type == TB_START || n->type == TB_REGION) {
         TB_NodeRegion* r = TB_NODE_GET_EXTRA(n);
         FOREACH_N(i, 0, r->succ_count) {
-            fill_queue(fold, r->succ[i]);
+            tb_optqueue_fill_all(queue, r->succ[i]);
         }
 
-        fill_queue(fold, r->end);
+        tb_optqueue_fill_all(queue, r->end);
     }
 }
 
-static TB_Node* do_fold_node(TB_Function* f, TB_Node* n) {
+static TB_Node* peephole_node(TB_Function* f, TB_Node* n) {
     bool redirect = false;
     FOREACH_N(i, 0, n->input_count) if (n->inputs[i]->type == TB_PASS) {
         n->inputs[i] = n->inputs[i]->inputs[0];
@@ -85,35 +85,23 @@ static TB_Node* do_fold_node(TB_Function* f, TB_Node* n) {
     }
 }
 
-static void do_fold(Folder* restrict fold, TB_Function* f) {
+static void peephole(TB_OptQueue* restrict queue, TB_Function* f) {
     log_debug("do_fold on %s", f->super.name);
 
-    if (fold->lookup == NULL) {
-        nl_map_create(fold->lookup, f->node_count);
-    }
-
-    // generate work list (put everything)
-    fill_queue(fold, f->start_node);
-
-    while (dyn_array_length(fold->queue) > 0) {
+    while (dyn_array_length(queue->queue) > 0) {
         // pull from worklist
-        TB_Node* n = dyn_array_pop(fold->queue);
-        nl_map_remove(fold->lookup, n);
+        TB_Node* n = dyn_array_pop(queue->queue);
+        nl_map_remove(queue->lookup, n);
 
         // try peephole
-        TB_Node* progress = do_fold_node(f, n);
+        TB_Node* progress = peephole_node(f, n);
         if (progress == NULL) {
             // no changes
             continue;
         }
 
         // push new value
-        folder_enqueue(fold, progress);
-
-        // push inputs to worklist
-        FOREACH_N(i, 0, n->input_count) {
-            folder_enqueue(fold, n->inputs[i]);
-        }
+        tb_optqueue_mark(queue, progress);
     }
 }
 
@@ -145,21 +133,26 @@ void tb_function_apply_passes(TB_PassManager* manager, TB_Passes passes, TB_Func
 
     const TB_Pass* restrict arr = manager->passes;
 
+    // generate work list (put everything)
+    TB_OptQueue queue = { 0 };
+
+    nl_map_create(queue.lookup, f->node_count);
+    tb_optqueue_fill_all(&queue, f->start_node);
+
     // run passes
-    Folder fold = { 0 };
     FOREACH_N(i, passes.start, passes.end) {
-        do_fold(&fold, f);
+        peephole(&queue, f);
 
         CUIK_TIMED_BLOCK_ARGS(arr[i].name, f->super.name) {
             arr[i].func_run(f);
         }
     }
 
-    do_fold(&fold, f);
+    peephole(&queue, f);
 
     arena_clear(&tb__arena);
-    nl_map_free(fold.lookup);
-    dyn_array_destroy(fold.queue);
+    nl_map_free(queue.lookup);
+    dyn_array_destroy(queue.queue);
 }
 
 void tb_module_apply_passes(TB_PassManager* manager, TB_Passes passes, TB_Module* m) {

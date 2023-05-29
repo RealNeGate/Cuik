@@ -1115,6 +1115,11 @@ extern "C" {
     ////////////////////////////////
     // Transformation pass library
     ////////////////////////////////
+    typedef struct TB_OptQueue TB_OptQueue;
+
+    TB_API bool tb_optqueue_mark(TB_OptQueue* restrict queue, TB_Node* n);
+    TB_API void tb_optqueue_fill_all(TB_OptQueue* restrict queue, TB_Node* n);
+
     typedef struct TB_Pass {
         // it's either a module-level pass or function-level
         bool is_module;
