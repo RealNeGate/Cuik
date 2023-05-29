@@ -1,6 +1,7 @@
 #include <cuik.h>
 #include <common.h>
 #include <futex.h>
+#include <log.h>
 #include <arena.h>
 #include <threads.h>
 #include "driver_fs.h"
@@ -148,6 +149,12 @@ static void compile_func(TB_Module* m, TB_Function* f, void* ctx) {
     tb_module_compile_function(m, f, TB_ISEL_FAST);
 }
 
+typedef struct { TB_PassManager* pm; TB_Passes passes; } ApplyFunc;
+static void apply_func(TB_Module* m, TB_Function* f, void* arg) {
+    ApplyFunc* a = (ApplyFunc*) arg;
+    tb_function_apply_passes(a->pm, a->passes, f);
+}
+
 static void cc_invoke(BuildStepInfo* restrict info) {
     Cuik_BuildStep* s = info->step;
     Cuik_DriverArgs* args = s->cc.args;
@@ -156,6 +163,8 @@ static void cc_invoke(BuildStepInfo* restrict info) {
         printf("CC %s\n", s->cc.source);
         mtx_unlock(info->mutex);
     }
+
+    log_debug("BuildStep %p: cc_invoke %s", s, s->cc.source);
 
     // dispose the preprocessor crap since we didn't need it
     Cuik_CPP* cpp = s->cc.cpp = cuik_driver_preprocess(s->cc.source, args, true);
@@ -238,9 +247,21 @@ static void cc_invoke(BuildStepInfo* restrict info) {
         cuikpp_free(cpp);
     }
 
-    // TODO(NeGate): we probably want to do the fancy threading soon
     if (args->opt_level > 0) {
-        tb_module_optimize(mod, 0, NULL);
+        // TODO(NeGate): generate pass list
+        DynArray(TB_Pass) passes = NULL;
+
+        // apply
+        TB_PassManager pm = { dyn_array_length(passes), &passes[0] };
+        TB_DO_PASSES(passes, &pm, mod) {
+            if (passes.module_level) {
+                tb_module_apply_passes(&pm, passes, mod);
+            } else {
+                // do parallel function passes
+                ApplyFunc a = { &pm, passes };
+                cuiksched_per_function(s->tp, mod, &a, apply_func);
+            }
+        }
     }
 
     if (args->emit_ir) {
@@ -281,6 +302,8 @@ static void ld_invoke(BuildStepInfo* info) {
         printf("LINK\n");
         mtx_unlock(info->mutex);
     }
+
+    log_debug("BuildStep %p: ld_invoke", s);
 
     // Once the frontend is complete we don't need this... unless we wanna keep it
     TB_Module* mod = s->ld.cu->ir_mod;
@@ -497,6 +520,7 @@ static void step_submit(Cuik_BuildStep* s, Cuik_IThreadpool* tp, mtx_t* mutex, b
     BuildStepInfo info = { s, mutex };
     CUIK_TIMED_BLOCK("task invoke") {
         if (tp != NULL && !root) {
+            log_debug("Punting build step %p to another thread", s);
             CUIK_CALL(tp, submit, (Cuik_TaskFn) s->invoke, sizeof(info), &info);
         } else {
             // root is the final step so we just run it synchronously

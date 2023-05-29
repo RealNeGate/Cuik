@@ -1,4 +1,5 @@
 #include "../tb_internal.h"
+#include <log.h>
 #include <stdarg.h>
 
 // NULL means no change, non-NULL will allow the neighbors to re-evaluate the folding engine.
@@ -85,6 +86,8 @@ static TB_Node* do_fold_node(TB_Function* f, TB_Node* n) {
 }
 
 static void do_fold(Folder* restrict fold, TB_Function* f) {
+    log_debug("do_fold on %s", f->super.name);
+
     if (fold->lookup == NULL) {
         nl_map_create(fold->lookup, f->node_count);
     }
@@ -92,21 +95,17 @@ static void do_fold(Folder* restrict fold, TB_Function* f) {
     // generate work list (put everything)
     fill_queue(fold, f->start_node);
 
-    // printf("canonical:\n");
     while (dyn_array_length(fold->queue) > 0) {
         // pull from worklist
         TB_Node* n = dyn_array_pop(fold->queue);
         nl_map_remove(fold->lookup, n);
 
         // try peephole
-        // printf("  - work: %p (%s)\n", n, tb_node_get_name(n));
         TB_Node* progress = do_fold_node(f, n);
         if (progress == NULL) {
             // no changes
             continue;
         }
-
-        // printf("    - success!\n");
 
         // push new value
         folder_enqueue(fold, progress);
@@ -115,33 +114,61 @@ static void do_fold(Folder* restrict fold, TB_Function* f) {
         FOREACH_N(i, 0, n->input_count) {
             folder_enqueue(fold, n->inputs[i]);
         }
-
-        // TODO(NeGate): push outputs to worklist
     }
-
-    // tb_function_print(f, tb_default_print_callback, stdout);
 }
 
-static void schedule_function_level_opts(TB_Module* m, TB_Function* f, size_t pass_count, const TB_FunctionPass passes[]) {
+bool tb_passes_iter(TB_PassManager* manager, TB_Module* m, TB_Passes* passes) {
+    // scan for function level
+    size_t start = passes->end, sync = start;
+    for (; sync < manager->count; sync++) {
+        if (manager->passes[sync].is_module) break;
+    }
+
+    if (start != sync) {
+        *passes = (TB_Passes){ false, start, sync };
+        return true;
+    }
+
+    // handle module level pass
+    if (sync < manager->count) {
+        *passes = (TB_Passes){ true, sync, sync + 1 };
+        return true;
+    }
+
+    // complete
+    return false;
+}
+
+void tb_function_apply_passes(TB_PassManager* manager, TB_Passes passes, TB_Function* f) {
+    assert(!passes.module_level);
+    log_debug("run %d passes for %s", manager->count, f->super.name);
+
+    const TB_Pass* restrict arr = manager->passes;
+
     // run passes
     Folder fold = { 0 };
-    FOREACH_N(i, 0, pass_count) {
-        CUIK_TIMED_BLOCK("fold") do_fold(&fold, f);
+    FOREACH_N(i, passes.start, passes.end) {
+        do_fold(&fold, f);
 
-        CUIK_TIMED_BLOCK_ARGS("Pass", f->super.name) {
-            passes[i](f);
+        CUIK_TIMED_BLOCK_ARGS(arr[i].name, f->super.name) {
+            arr[i].func_run(f);
         }
     }
 
-    CUIK_TIMED_BLOCK("fold") do_fold(&fold, f);
+    do_fold(&fold, f);
 
     arena_clear(&tb__arena);
     nl_map_free(fold.lookup);
     dyn_array_destroy(fold.queue);
 }
 
-void tb_module_optimize(TB_Module* m, size_t pass_count, const TB_FunctionPass passes[]) {
-    TB_FOR_FUNCTIONS(f, m) {
-        schedule_function_level_opts(m, f, pass_count, passes);
+void tb_module_apply_passes(TB_PassManager* manager, TB_Passes passes, TB_Module* m) {
+    log_debug("run %d passes for entire module %p", passes.end - passes.start, m);
+
+    const TB_Pass* restrict arr = manager->passes;
+    FOREACH_N(i, passes.start, passes.end) {
+        arr[i].mod_run(m);
     }
+
+    arena_clear(&tb__arena);
 }

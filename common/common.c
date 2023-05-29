@@ -13,6 +13,9 @@
 #define NL_MAP_IMPL
 #include <hash_map.h>
 
+#define LOG_USE_COLOR
+#include "log.c"
+
 uint64_t cuik__page_size = 0;
 uint64_t cuik__page_mask = 0;
 
@@ -32,6 +35,9 @@ void* cuik__valloc(size_t size) {
 
     return VirtualAlloc(NULL, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
     #else
+    cuik__page_size = 4096;
+    cuik__page_mask = 4095;
+
     return mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     #endif
 }

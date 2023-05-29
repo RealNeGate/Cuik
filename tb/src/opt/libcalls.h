@@ -1,5 +1,5 @@
 
-TB_API bool tb_opt_libcalls(TB_Function* f) {
+static bool libcalls(TB_Function* f) {
     // TODO(NeGate): come back
     tb_todo();
 
@@ -36,4 +36,8 @@ TB_API bool tb_opt_libcalls(TB_Function* f) {
 
     return changes;
     #endif
+}
+
+TB_Pass tb_opt_libcalls(TB_Function* f) {
+    return (TB_Pass){ .name = "Libcalls", .func_run = libcalls };
 }

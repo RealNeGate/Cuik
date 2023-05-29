@@ -1,3 +1,4 @@
+#include <log.h>
 #include <cuik.h>
 #include <dyn_array.h>
 
@@ -54,6 +55,7 @@ int main(int argc, const char** argv) {
     }
 
     cuik_init(true);
+    log_set_level(LOG_DEBUG);
 
     Cuik_DriverArgs args = {
         .version   = CUIK_VERSION_C23,

@@ -1115,11 +1115,40 @@ extern "C" {
     ////////////////////////////////
     // Transformation pass library
     ////////////////////////////////
-    typedef bool (*TB_FunctionPass)(TB_Function* f);
+    typedef struct TB_Pass {
+        // it's either a module-level pass or function-level
+        bool is_module;
+        const char* name;
 
-    TB_API bool tb_opt_libcalls(TB_Function* f);
+        union {
+            bool(*func_run)(TB_Function* f);
+            bool(*mod_run)(TB_Module* m);
+        };
+    } TB_Pass;
 
-    TB_API void tb_module_optimize(TB_Module* m, size_t pass_count, const TB_FunctionPass passes[]);
+    typedef struct {
+        bool module_level;
+        uint32_t start, end;
+    } TB_Passes;
+
+    typedef struct TB_PassManager {
+        size_t count;
+        const TB_Pass* passes;
+    } TB_PassManager;
+
+    // each iteration the user can take the function sequence and apply
+    // it to the functions (or module if module_level is true)
+    #define TB_DO_PASSES(it, pm, mod) for (TB_Passes it = { 0 }; tb_passes_iter(pm, mod, &it);)
+    TB_API bool tb_passes_iter(TB_PassManager* manager, TB_Module* m, TB_Passes* passes);
+
+    // Applies optimizations to the entire module
+    TB_API void tb_module_optimize(TB_Module* m, size_t pass_count, const TB_Pass* passes[]);
+
+    // Applies a set of function level passes onto a function
+    TB_API void tb_function_apply_passes(TB_PassManager* manager, TB_Passes passes, TB_Function* f);
+    TB_API void tb_module_apply_passes(TB_PassManager* manager, TB_Passes passes, TB_Module* m);
+
+    TB_API TB_Pass tb_opt_libcalls(TB_Function* f);
 
     ////////////////////////////////
     // IR access
@@ -1142,14 +1171,6 @@ extern "C" {
 
     TB_ObjectFile* tb_object_parse_coff(const TB_Slice file);
     void tb_object_free(TB_ObjectFile* obj);
-
-    ////////////////////////////////
-    // Test suite
-    ////////////////////////////////
-    #ifdef TB_COMPILE_TESTS
-    bool tb_x64_test_suite(void);
-    // bool tb_aarch64_test_suite(void);
-    #endif /* TB_COMPILE_TESTS */
 
     #ifdef __cplusplus
 }
