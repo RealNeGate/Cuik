@@ -27,6 +27,8 @@
 
 #ifdef _WIN32
 __declspec(dllimport) unsigned long GetCurrentThreadId(void);
+#else
+#include <unistd.h>
 #endif
 
 #define MAX_CALLBACKS 32
