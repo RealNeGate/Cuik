@@ -201,6 +201,10 @@ if options.driver or options.shared then
 	-- link code
 	local ext = options.shared and dll_ext or exe_ext
 	ninja:write([[build cuik]]..ext..[[: link ]]..obj_names.."\n")
+elseif options.cuik then
+	ninja:write([[build cuik]]..lib_ext..[[: lib ]]..obj_names.."\n")
+elseif options.tb then
+	ninja:write([[build tb]]..lib_ext..[[: lib ]]..obj_names.."\n")
 end
 
 ninja:close()
