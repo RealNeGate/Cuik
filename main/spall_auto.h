@@ -279,6 +279,7 @@ extern "C" {
 
     #elif SPALL_IS_DARWIN
 
+    #include <mach-o/dyld.h>
     #include <sys/types.h>
     #include <sys/sysctl.h>
 
@@ -377,55 +378,19 @@ extern "C" {
 
         uint64_t tsc_freq = 0;
 
-        // Fast path: Load kernel-mapped memory page
-        HMODULE ntdll = LoadLibraryA("ntdll.dll");
-        if (ntdll) {
+        // Get time before sleep
+        uint64_t qpc_begin = 0; QueryPerformanceCounter((LARGE_INTEGER *)&qpc_begin);
+        uint64_t tsc_begin = __rdtsc();
 
-            int (*NtQuerySystemInformation)(int, void *, unsigned int, unsigned int *) =
-            (int (*)(int, void *, unsigned int, unsigned int *))GetProcAddress(ntdll, "NtQuerySystemInformation");
-            if (NtQuerySystemInformation) {
+        Sleep(2);
 
-                volatile uint64_t *hypervisor_shared_page = NULL;
-                unsigned int size = 0;
+        // Get time after sleep
+        uint64_t qpc_end = qpc_begin + 1; QueryPerformanceCounter((LARGE_INTEGER *)&qpc_end);
+        uint64_t tsc_end = __rdtsc();
 
-                // SystemHypervisorSharedPageInformation == 0xc5
-                int result = (NtQuerySystemInformation)(0xc5, (void *)&hypervisor_shared_page, sizeof(hypervisor_shared_page), &size);
-
-                // success
-                if (size == sizeof(hypervisor_shared_page) && result >= 0) {
-                    // docs say ReferenceTime = ((VirtualTsc * TscScale) >> 64)
-                    //      set ReferenceTime = 10000000 = 1 second @ 10MHz, solve for VirtualTsc
-                    //       =>    VirtualTsc = 10000000 / (TscScale >> 64)
-                    tsc_freq = (10000000ull << 32) / (hypervisor_shared_page[1] >> 32);
-                    // If your build configuration supports 128 bit arithmetic, do this:
-                    // tsc_freq = ((unsigned __int128)10000000ull << (unsigned __int128)64ull) / hypervisor_shared_page[1];
-                }
-            }
-            FreeLibrary(ntdll);
-        }
-
-        // Slow path
-        if (!tsc_freq) {
-
-            // Get time before sleep
-            uint64_t qpc_begin = 0; QueryPerformanceCounter((LARGE_INTEGER *)&qpc_begin);
-            uint64_t tsc_begin = __rdtsc();
-
-            Sleep(2);
-
-            // Get time after sleep
-            uint64_t qpc_end = qpc_begin + 1; QueryPerformanceCounter((LARGE_INTEGER *)&qpc_end);
-            uint64_t tsc_end = __rdtsc();
-
-            // Do the math to extrapolate the RDTSC ticks elapsed in 1 second
-            uint64_t qpc_freq = 0; QueryPerformanceFrequency((LARGE_INTEGER *)&qpc_freq);
-            tsc_freq = (tsc_end - tsc_begin) * qpc_freq / (qpc_end - qpc_begin);
-        }
-
-        // Failure case
-        if (!tsc_freq) {
-            tsc_freq = 1000000000;
-        }
+        // Do the math to extrapolate the RDTSC ticks elapsed in 1 second
+        uint64_t qpc_freq = 0; QueryPerformanceFrequency((LARGE_INTEGER *)&qpc_freq);
+        tsc_freq = (tsc_end - tsc_begin) * qpc_freq / (qpc_end - qpc_begin);
 
         multiplier = 1000000000.0 / (double)tsc_freq;
         return multiplier;
@@ -502,7 +467,7 @@ extern "C" {
             return true;
         }
 
-        SPALL_FN SPALL_FORCEINLINE bool spall_buffer_micro_begin(uint64_t when, uint64_t addr, uint64_t caller) {
+        SPALL_FN SPALL_FORCEINLINE bool spall_buffer_micro_begin(uint64_t addr, uint64_t caller) {
             size_t ev_size = sizeof(SpallMicroBeginEvent);
             if ((spall_buffer->head + ev_size) > spall_buffer->sub_length) {
                 if (!spall_buffer_flush()) {
@@ -515,6 +480,7 @@ extern "C" {
 
             uint64_t mask = ((uint64_t)0xFF) << (8 * 7);
             uint64_t type_b = ((uint64_t)(uint8_t)SpallEventType_MicroBegin) << (8 * 7);
+            uint64_t when = __rdtsc();
             ev->type_when = (~mask & when) | type_b;
             ev->address = addr;
             ev->caller = caller;
@@ -522,7 +488,9 @@ extern "C" {
             spall_buffer->head += ev_size;
             return true;
         }
-        SPALL_FN SPALL_FORCEINLINE bool spall_buffer_micro_end(uint64_t when) {
+        SPALL_FN SPALL_FORCEINLINE bool spall_buffer_micro_end(void) {
+            uint64_t when = __rdtsc();
+
             size_t ev_size = sizeof(SpallMicroEndEvent);
             if ((spall_buffer->head + ev_size) > spall_buffer->sub_length) {
                 if (!spall_buffer_flush()) {
@@ -641,7 +609,7 @@ extern "C" {
             #endif
 
             spall_thread_running = false;
-            spall_buffer_micro_begin(__rdtsc(), (uint64_t)fn, (uint64_t)caller);
+            spall_buffer_micro_begin((uint64_t)fn, (uint64_t)caller);
             spall_thread_running = true;
         }
 
@@ -651,7 +619,7 @@ extern "C" {
             }
 
             spall_thread_running = false;
-            spall_buffer_micro_end(__rdtsc());
+            spall_buffer_micro_end();
             spall_thread_running = true;
         }
 

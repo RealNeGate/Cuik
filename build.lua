@@ -15,7 +15,7 @@
 local is_windows = package.config:sub(1,1) == "\\"
 
 local options = {
-	opt    = false,
+	debug  = false,
 	cuik   = false,
 	tb     = false,
 	driver = false,
@@ -47,7 +47,7 @@ local cflags = "-g -msse4 -I common -Wall -Werror -Wno-unused -Wno-deprecated-pr
 local cc = "clang"
 local ar = "llvm-ar -rcs"
 
-if options.opt then
+if not options.debug then
 	cflags = cflags.." -O2 -DNDEBUG"
 end
 

@@ -629,6 +629,8 @@ typedef struct {
 ////////////////////////////////
 // IR ANALYSIS
 ////////////////////////////////
+TB_API TB_Dominators tb_get_dominators(TB_Function* f);
+
 // Allocates from the heap and requires freeing with tb_function_free_postorder
 TB_API TB_PostorderWalk tb_function_get_postorder(TB_Function* f);
 TB_API void tb_function_free_postorder(TB_PostorderWalk* walk);

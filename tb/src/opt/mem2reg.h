@@ -13,10 +13,18 @@ typedef enum {
 // Region -> Value
 typedef NL_Map(TB_Node*, TB_Node*) Mem2Reg_Def;
 
+typedef struct Promotion Promotion;
+struct Promotion {
+    Promotion* next;
+    TB_Node* n;
+};
+
 typedef struct Mem2Reg_Ctx {
     TB_TemporaryStorage* tls;
     TB_Function* f;
     size_t bb_count;
+
+    TB_Node* poison;
 
     // Stack slots we're going to convert into
     // SSA form
@@ -90,15 +98,12 @@ static void ssa_replace_phi_arg(Mem2Reg_Ctx* c, TB_Function* f, TB_Node* bb, TB_
         TB_Node* top;
         if (dyn_array_length(stack[var]) == 0) {
             // this is UB land, insert poison
-            TB_Node* basepoint = tb_node_get_first_insertion_point(f, 0);
-
-            if (basepoint->type == TB_POISON) {
+            if (c->poison != NULL) {
                 // we probably already inserted a poison in this pass, nothing
                 // says we can't reuse it.
-                top = basepoint;
+                top = c->poison;
             } else {
-                top = tb_alloc_node(f, TB_POISON, TB_TYPE_VOID, 0, 0);
-                tb_insert_node(f, 0, basepoint, top);
+                top = c->poison = tb_alloc_node(f, TB_POISON, TB_TYPE_VOID, 0, 0);
             }
         } else {
             top = stack[var][dyn_array_length(stack[var]) - 1];
@@ -120,9 +125,48 @@ static void ssa_replace_phi_arg(Mem2Reg_Ctx* c, TB_Function* f, TB_Node* bb, TB_
     }
 }
 
+static void ssa_rename_node(Mem2Reg_Ctx* c, TB_Node* n, DynArray(TB_Node*)* stack) {
+    if (n->type == TB_REGION || n->type == TB_START) {
+        return;
+    }
+
+    FOREACH_N(i, 0, n->input_count) if (n->inputs[i] != NULL) {
+        ssa_rename_node(c, n->inputs[i], stack);
+    }
+
+    if (n->type == TB_LOCAL) {
+        int var = get_variable_id(c, n);
+        if (var >= 0) {
+            TB_KILL_NODE(n);
+        }
+    } else if (n->type == TB_MEMSET) {
+        int var = get_variable_id(c, n->inputs[0]);
+        if (var >= 0) {
+            dyn_array_put(stack[var], n);
+        }
+    } else if (n->type == TB_STORE) {
+        int var = get_variable_id(c, n->inputs[0]);
+        if (var >= 0) {
+            dyn_array_put(stack[var], n->inputs[1]);
+            TB_KILL_NODE(n);
+        }
+    } else if (n->type == TB_LOAD) {
+        int var = get_variable_id(c, n->inputs[0]);
+        if (var >= 0) {
+            if (dyn_array_length(stack[var]) == 0) {
+                // this is UB since it implies we've read before initializing the
+                // stack slot.
+                tb_transmute_to_poison(n);
+            } else {
+                tb_transmute_to_pass(n, stack[var][dyn_array_length(stack[var]) - 1]);
+            }
+        }
+    }
+}
+
 static void ssa_rename(Mem2Reg_Ctx* c, TB_Function* f, TB_Node* bb, DynArray(TB_Node*)* stack) {
     // push phi nodes
-    size_t* old_len = tb_tls_push(c->tls, sizeof(size_t) * f->bb_count);
+    size_t* old_len = tb_tls_push(c->tls, sizeof(size_t) * c->to_promote_count);
     FOREACH_N(var, 0, c->to_promote_count) {
         TB_Node* value = nl_map_get_checked(c->defs[var], bb);
         if (value && value->type == TB_PHI) {
@@ -133,48 +177,17 @@ static void ssa_rename(Mem2Reg_Ctx* c, TB_Function* f, TB_Node* bb, DynArray(TB_
     }
 
     // rewrite operations
-    TB_FOR_NODE(n, f, bb) {
-        if (n->type == TB_LOCAL) {
-            int var = get_variable_id(c, n);
-            if (var >= 0) {
-                TB_KILL_NODE(n);
-            }
-        } else if (n->type == TB_MEMSET) {
-            int var = get_variable_id(c, n->inputs[0]);
-            if (var >= 0) {
-                dyn_array_put(stack[var], n);
-            }
-        } else if (n->type == TB_STORE) {
-            int var = get_variable_id(c, n->inputs[0]);
-            if (var >= 0) {
-                dyn_array_put(stack[var], n->inputs[1]);
-                TB_KILL_NODE(n);
-            }
-        } else if (n->type == TB_LOAD) {
-            int var = get_variable_id(c, n->inputs[0]);
-            if (var >= 0) {
-                if (dyn_array_length(stack[var]) == 0) {
-                    // this is UB since it implies we've read before initializing the
-                    // stack slot.
-                    tb_transmute_to_poison(n);
-                } else {
-                    tb_transmute_to_pass(n, stack[var][dyn_array_length(stack[var]) - 1]);
-                }
-            }
-        }
-    }
+    TB_NodeRegion* r = TB_NODE_GET_EXTRA(bb);
+    TB_Node* end = r->end;
+    ssa_rename_node(c, end, stack);
 
     // replace phi arguments on successor
-    TB_Node* end = f->bbs[bb].end;
-    if (end) {
+    if (end != NULL) {
         if (end->type == TB_NULL || end->type == TB_RET || end->type == TB_TRAP || end->type == TB_UNREACHABLE) {
             /* RET can't do shit in this context */
         } else if (end->type == TB_BRANCH) {
-            TB_NodeBranch* br = TB_NODE_GET_EXTRA(end);
-            ssa_replace_phi_arg(c, f, bb, br->default_label, stack);
-
-            FOREACH_REVERSE_N(i, 0, br->count) {
-                ssa_replace_phi_arg(c, f, bb, br->targets[i].value, stack);
+            FOREACH_N(i, 0, r->succ_count) {
+                ssa_replace_phi_arg(c, f, bb, r->succ[i], stack);
             }
         } else {
             tb_todo();
@@ -306,7 +319,7 @@ static bool attempt_sroa(TB_Function* f, TB_TemporaryStorage* tls, TB_Node* addr
                     TB_NodeMember* member = TB_NODE_GET_EXTRA(n->inputs[0]);
                     ptrdiff_t slot = find_config(config_count, configs, member->offset);
 
-                    TB_KILL_NODE(n->inputs[0]);
+                    tb_optqueue_kill(queue, n->inputs[0]);
                     n->inputs[0] = configs[slot].new_reg;
                 } else {
                     continue;
@@ -315,13 +328,49 @@ static bool attempt_sroa(TB_Function* f, TB_TemporaryStorage* tls, TB_Node* addr
         }
     }
 
-    TB_KILL_NODE(address);
+    tb_optqueue_kill(queue, address);
     return true;
 }
 
-// NOTE(NeGate): All locals were moved into the first basic block by
-// opt_hoist_locals earlier
-bool mem2reg(TB_Function* f, TB_TemporaryStorage* tls) {
+static void insert_phis(Ctx* restrict ctx, TB_Node* parent, TB_Node* n) {
+    if (n->type != TB_REGION && n->type != TB_START) {
+        insert_phis(ctx, parent, n->inputs[0]);
+    }
+
+    if (n->type == TB_MEMSET) {
+        int var = get_variable_id(&c, n->inputs[0]);
+        if (var >= 0) {
+            // this stores the "primary type" of the specific address
+            TB_DataType dt = to_promote[var]->dt;
+            (void) dt;
+
+            tb_todo();
+            /* if (dt.type == TB_FLOAT && dt.data == TB_FLT_32) {
+                f->nodes[r].type = TB_FLOAT32_CONST;
+                f->nodes[r].dt = dt;
+                f->nodes[r].flt32.value = 0.0;
+            } else if (dt.type == TB_FLOAT && dt.data == TB_FLT_64) {
+                f->nodes[r].type = TB_FLOAT64_CONST;
+                f->nodes[r].dt = dt;
+                f->nodes[r].flt64.value = 0.0;
+            } else {
+                f->nodes[r].type = TB_INTEGER_CONST;
+                f->nodes[r].dt = dt;
+                f->nodes[r].integer.num_words = 1;
+                f->nodes[r].integer.single_word = 0;
+            } */
+
+            write_variable(&c, var, bb, n);
+        }
+    } else if (n->type == TB_STORE) {
+        int var = get_variable_id(&c, n->inputs[0]);
+        if (var >= 0) {
+            write_variable(&c, var, bb, n->inputs[1]);
+        }
+    }
+}
+
+bool mem2reg(TB_Function* f, TB_OptQueue* queue) {
     ////////////////////////////////
     // Decide which stack slots to promote
     ////////////////////////////////
@@ -329,47 +378,45 @@ bool mem2reg(TB_Function* f, TB_TemporaryStorage* tls) {
     TB_Node** to_promote = tb_tls_push(tls, 0);
 
     int changes = 0;
-    TB_FOR_BASIC_BLOCK(bb, f) {
-        TB_FOR_NODE(n, f, bb) {
-            if (n->type == TB_LOCAL) {
-                TB_DataType dt;
-                int use_count;
-                Coherency coherence = tb_get_stack_slot_coherency(f, n, &dt, &use_count);
+    dyn_array_for(i, queue->locals) {
+        TB_Node* n = queue->locals[i];
 
-                switch (coherence) {
-                    case COHERENCY_GOOD: {
-                        tb_tls_push(tls, sizeof(TB_Node*));
-                        to_promote[to_promote_count++] = n;
+        TB_DataType dt;
+        int use_count;
+        Coherency coherence = tb_get_stack_slot_coherency(f, n, &dt, &use_count);
 
-                        n->dt = dt;
+        switch (coherence) {
+            case COHERENCY_GOOD: {
+                tb_tls_push(tls, sizeof(TB_Node*));
+                to_promote[to_promote_count++] = n;
 
-                        OPTIMIZER_LOG(n, "promoting to IR register");
-                        break;
-                    }
-                    case COHERENCY_UNINITIALIZED: {
-                        OPTIMIZER_LOG(n, "could not mem2reg a stack slot (uninitialized)");
-                        break;
-                    }
-                    case COHERENCY_VOLATILE: {
-                        OPTIMIZER_LOG(n, "could not mem2reg a stack slot (volatile load/store)");
-                        break;
-                    }
-                    case COHERENCY_USES_ADDRESS: {
-                        if (n->type == TB_LOCAL && attempt_sroa(f, tls, n, use_count)) {
-                            OPTIMIZER_LOG(n, "SROA on stack structure");
-                            changes++;
-                        } else {
-                            OPTIMIZER_LOG(n, "could not mem2reg a stack slot (uses pointer arithmatic)");
-                        }
-                        break;
-                    }
-                    case COHERENCY_BAD_DATA_TYPE: {
-                        OPTIMIZER_LOG(n, "could not mem2reg a stack slot (data type is too inconsistent)");
-                        break;
-                    }
-                    default: tb_todo();
-                }
+                n->dt = dt;
+
+                log_debug("%p promoting to IR register", n);
+                break;
             }
+            case COHERENCY_UNINITIALIZED: {
+                log_debug("%p could not mem2reg a stack slot (uninitialized)", n);
+                break;
+            }
+            case COHERENCY_VOLATILE: {
+                log_debug("%p could not mem2reg a stack slot (volatile load/store)", n);
+                break;
+            }
+            case COHERENCY_USES_ADDRESS: {
+                if (n->type == TB_LOCAL && attempt_sroa(f, tls, n, use_count)) {
+                    log_debug("SROA on %p", n);
+                    changes++;
+                } else {
+                    log_debug("%p could not mem2reg (uses pointer arithmatic)");
+                }
+                break;
+            }
+            case COHERENCY_BAD_DATA_TYPE: {
+                log_debug("%p could not mem2reg (data type is too inconsistent)");
+                break;
+            }
+            default: tb_todo();
         }
     }
 
@@ -379,68 +426,30 @@ bool mem2reg(TB_Function* f, TB_TemporaryStorage* tls) {
     }
 
     Mem2Reg_Ctx c = { 0 };
-    c.tls = tls;
+    c.tls = tb_tls_steal();
     c.f = f;
 
     c.to_promote_count = to_promote_count;
     c.to_promote = to_promote;
 
-    c.bb_count = f->bb_count;
-    c.defs = tb_tls_push(tls, to_promote_count * sizeof(Mem2Reg_Def));
+    c.defs = tb_tls_push(c.tls, to_promote_count * sizeof(Mem2Reg_Def));
     memset(c.defs, 0, to_promote_count * sizeof(Mem2Reg_Def));
 
-    // Calculate all the immediate predecessors
-    c.preds = tb_get_temp_predeccesors(f, tls);
+    c.order = tb_function_get_postorder(f);
 
     // find dominators
-    c.doms = tb_tls_push(tls, f->bb_count * sizeof(TB_Node*));
-    tb_get_dominators(f, c.preds, c.doms);
+    c.doms = tb_get_dominators(f);
+    tb_get_dominators(f, c.doms, c.preds);
 
-    TB_DominanceFrontiers df = tb_get_dominance_frontiers(f, c.preds, c.doms);
+    TB_DominanceFrontiers df = tb_get_dominance_frontiers(f, c.doms, &c.order);
 
     ////////////////////////////////
     // Phase 1: Insert phi functions
     ////////////////////////////////
     // Identify the final value of all the variables in the function per basic block
-    FOREACH_N(bb, 0, f->bb_count) {
-        TB_FOR_NODE(n, f, bb) {
-            switch (n->type) {
-                case TB_MEMSET: {
-                    int var = get_variable_id(&c, n->inputs[0]);
-                    if (var >= 0) {
-                        // this stores the "primary type" of the specific address
-                        TB_DataType dt = to_promote[var]->dt;
-                        (void) dt;
-
-                        tb_todo();
-                        /* if (dt.type == TB_FLOAT && dt.data == TB_FLT_32) {
-                            f->nodes[r].type = TB_FLOAT32_CONST;
-                            f->nodes[r].dt = dt;
-                            f->nodes[r].flt32.value = 0.0;
-                        } else if (dt.type == TB_FLOAT && dt.data == TB_FLT_64) {
-                            f->nodes[r].type = TB_FLOAT64_CONST;
-                            f->nodes[r].dt = dt;
-                            f->nodes[r].flt64.value = 0.0;
-                        } else {
-                            f->nodes[r].type = TB_INTEGER_CONST;
-                            f->nodes[r].dt = dt;
-                            f->nodes[r].integer.num_words = 1;
-                            f->nodes[r].integer.single_word = 0;
-                        } */
-
-                        write_variable(&c, var, bb, n);
-                    }
-                    break;
-                }
-                case TB_STORE: {
-                    int var = get_variable_id(&c, n->inputs[0]);
-                    if (var >= 0) {
-                        write_variable(&c, var, bb, n->inputs[1]);
-                    }
-                    break;
-                }
-            }
-        }
+    FOREACH_REVERSE_N(i, 0, c.order.count) {
+        TB_Node* end = TB_NODE_GET_EXTRA_T(c.order.traversal[i], TB_NodeRegion)->end;
+        insert_phis(&ctx, c.order.traversal[i], end);
     }
 
     // for each global name we'll insert phi nodes
@@ -608,8 +617,6 @@ static Coherency tb_get_stack_slot_coherency(TB_Function* f, TB_Node* address, T
     return COHERENCY_GOOD;
 }
 
-const TB_Pass tb_opt_mem2reg = {
-    .name = "Mem2Reg",
-    .func_run = mem2reg,
-};
-
+TB_Pass tb_opt_mem2reg(void) {
+    return (TB_Pass){ .name = "Mem2Reg", .func_run = mem2reg };
+}

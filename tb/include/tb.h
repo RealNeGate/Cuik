@@ -1117,7 +1117,7 @@ extern "C" {
     ////////////////////////////////
     typedef struct TB_OptQueue TB_OptQueue;
 
-    TB_API bool tb_optqueue_mark(TB_OptQueue* restrict queue, TB_Node* n);
+    TB_API bool tb_optqueue_mark(TB_OptQueue* restrict queue, TB_Node* n, bool mark_kids);
     TB_API void tb_optqueue_fill_all(TB_OptQueue* restrict queue, TB_Node* n);
 
     typedef struct TB_Pass {
@@ -1126,7 +1126,7 @@ extern "C" {
         const char* name;
 
         union {
-            bool(*func_run)(TB_Function* f);
+            bool(*func_run)(TB_Function* f, TB_OptQueue* queue);
             bool(*mod_run)(TB_Module* m);
         };
     } TB_Pass;
@@ -1153,7 +1153,9 @@ extern "C" {
     TB_API void tb_function_apply_passes(TB_PassManager* manager, TB_Passes passes, TB_Function* f);
     TB_API void tb_module_apply_passes(TB_PassManager* manager, TB_Passes passes, TB_Module* m);
 
-    TB_API TB_Pass tb_opt_libcalls(TB_Function* f);
+    TB_API TB_Pass tb_opt_mem2reg(void);
+    TB_API TB_Pass tb_opt_libcalls(void);
+    TB_API TB_Pass tb_opt_identity(void);
 
     ////////////////////////////////
     // IR access

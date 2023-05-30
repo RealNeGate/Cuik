@@ -38,6 +38,7 @@ enum { LOG_TRACE, LOG_DEBUG, LOG_INFO, LOG_WARN, LOG_ERROR, LOG_FATAL };
 #define log_warn(...)  log_log(LOG_WARN,  __FILE__, __LINE__, __VA_ARGS__)
 #define log_error(...) log_log(LOG_ERROR, __FILE__, __LINE__, __VA_ARGS__)
 #define log_fatal(...) log_log(LOG_FATAL, __FILE__, __LINE__, __VA_ARGS__)
+#define log_watch(fmt, var) log_log(LOG_DEBUG, __FILE__, __LINE__, #var " = " fmt, (uint64_t)var)
 #else
 #define log_trace(...) (__VA_ARGS__, 0)
 #define log_debug(...) (__VA_ARGS__, 0)
@@ -45,6 +46,7 @@ enum { LOG_TRACE, LOG_DEBUG, LOG_INFO, LOG_WARN, LOG_ERROR, LOG_FATAL };
 #define log_warn(...)  (__VA_ARGS__, 0)
 #define log_error(...) (__VA_ARGS__, 0)
 #define log_fatal(...) (__VA_ARGS__, 0)
+#define log_watch(fmt, var) (var, 0)
 #endif
 
 const char* log_level_string(int level);

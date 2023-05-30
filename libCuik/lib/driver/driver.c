@@ -250,6 +250,7 @@ static void cc_invoke(BuildStepInfo* restrict info) {
     if (args->opt_level > 0) {
         // TODO(NeGate): generate pass list
         DynArray(TB_Pass) passes = NULL;
+        dyn_array_put(passes, tb_opt_identity());
 
         // apply
         TB_PassManager pm = { dyn_array_length(passes), &passes[0] };

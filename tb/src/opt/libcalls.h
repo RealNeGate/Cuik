@@ -1,5 +1,5 @@
 
-static bool libcalls(TB_Function* f) {
+static bool libcalls(TB_Function* f, TB_OptQueue* queue) {
     // TODO(NeGate): come back
     tb_todo();
 
@@ -38,6 +38,6 @@ static bool libcalls(TB_Function* f) {
     #endif
 }
 
-TB_Pass tb_opt_libcalls(TB_Function* f) {
+TB_Pass tb_opt_libcalls(void) {
     return (TB_Pass){ .name = "Libcalls", .func_run = libcalls };
 }

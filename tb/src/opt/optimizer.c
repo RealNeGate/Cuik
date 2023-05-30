@@ -1,9 +1,5 @@
 #include "../tb_internal.h"
 #include <log.h>
-#include <stdarg.h>
-
-// NULL means no change, non-NULL will allow the neighbors to re-evaluate the folding engine.
-typedef TB_Node* (*FoldOp)(TB_Function* f, TB_Node* n);
 
 // unity build with all the passes
 #include "dce.h"
@@ -11,14 +7,38 @@ typedef TB_Node* (*FoldOp)(TB_Function* f, TB_Node* n);
 #include "canonical.h"
 // #include "mem2reg.h"
 #include "libcalls.h"
+#include "identity.h"
 
 // inspired by the Hotspot's iter
 struct TB_OptQueue {
     DynArray(TB_Node*) queue;
     NL_Map(TB_Node*, int) lookup;
+
+    // we wanna track locals because it's nice and easy
+    DynArray(TB_Node*) locals;
 };
 
-bool tb_optqueue_mark(TB_OptQueue* restrict queue, TB_Node* n) {
+void tb_optqueue_local_spawn(TB_OptQueue* restrict queue, TB_Node* n) {
+    dyn_array_for(i, queue->locals) if (queue->locals[i] == n) {
+        return;
+    }
+
+    dyn_array_put(queue->locals, n);
+}
+
+void tb_optqueue_kill(TB_OptQueue* restrict queue, TB_Node* n) {
+    if (n->type == TB_LOCAL) {
+        // remove from local list
+        dyn_array_for(i, queue->locals) if (queue->locals[i] == n) {
+            dyn_array_remove(queue->locals, i);
+            return;
+        }
+    }
+
+    TB_KILL_NODE(n);
+}
+
+bool tb_optqueue_mark(TB_OptQueue* restrict queue, TB_Node* n, bool mark_kids) {
     ptrdiff_t search = nl_map_get(queue->lookup, n);
     if (search >= 0) {
         return false;
@@ -28,15 +48,19 @@ bool tb_optqueue_mark(TB_OptQueue* restrict queue, TB_Node* n) {
     dyn_array_put(queue->queue, n);
     nl_map_put(queue->lookup, n, i);
 
-    FOREACH_N(i, 0, n->input_count) {
-        tb_optqueue_mark(queue, n->inputs[i]);
+    FOREACH_N(i, 0, n->input_count) if (n->inputs[i] != NULL) {
+        tb_optqueue_mark(queue, n->inputs[i], false);
     }
     return true;
 }
 
 void tb_optqueue_fill_all(TB_OptQueue* restrict queue, TB_Node* n) {
-    if (!tb_optqueue_mark(queue, n)) {
+    if (!tb_optqueue_mark(queue, n, false)) {
         return;
+    }
+
+    FOREACH_N(i, 0, n->input_count) if (n->inputs[i] != NULL) {
+        tb_optqueue_fill_all(queue, n->inputs[i]);
     }
 
     // walk successors for regions
@@ -50,9 +74,9 @@ void tb_optqueue_fill_all(TB_OptQueue* restrict queue, TB_Node* n) {
     }
 }
 
-static TB_Node* peephole_node(TB_Function* f, TB_Node* n) {
+static TB_Node* peephole_node(TB_OptQueue* restrict queue, TB_Function* f, TB_Node* n) {
     bool redirect = false;
-    FOREACH_N(i, 0, n->input_count) if (n->inputs[i]->type == TB_PASS) {
+    FOREACH_N(i, 0, n->input_count) if (n->inputs[i] != NULL && n->inputs[i]->type == TB_PASS) {
         n->inputs[i] = n->inputs[i]->inputs[0];
         redirect = true;
     }
@@ -62,6 +86,10 @@ static TB_Node* peephole_node(TB_Function* f, TB_Node* n) {
     }
 
     switch (n->type) {
+        case TB_LOCAL:
+        tb_optqueue_local_spawn(queue, n);
+        return NULL;
+
         // integer ops
         case TB_AND:
         case TB_OR:
@@ -94,14 +122,14 @@ static void peephole(TB_OptQueue* restrict queue, TB_Function* f) {
         nl_map_remove(queue->lookup, n);
 
         // try peephole
-        TB_Node* progress = peephole_node(f, n);
+        TB_Node* progress = peephole_node(queue, f, n);
         if (progress == NULL) {
             // no changes
             continue;
         }
 
         // push new value
-        tb_optqueue_mark(queue, progress);
+        tb_optqueue_mark(queue, progress, true);
     }
 }
 
@@ -144,7 +172,8 @@ void tb_function_apply_passes(TB_PassManager* manager, TB_Passes passes, TB_Func
         peephole(&queue, f);
 
         CUIK_TIMED_BLOCK_ARGS(arr[i].name, f->super.name) {
-            arr[i].func_run(f);
+            log_debug("run %s on %s", arr[i].name, f->super.name);
+            arr[i].func_run(f, &queue);
         }
     }
 

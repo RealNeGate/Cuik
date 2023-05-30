@@ -345,6 +345,8 @@ void pe_append_object(TB_Linker* l, TB_Slice obj_name, TB_ObjectFile* obj) {
 }
 
 static void pe_append_library(TB_Linker* l, TB_Slice ar_name, TB_Slice ar_file) {
+    log_debug("linking against %.*s", (int) ar_name.length, ar_name.data);
+
     TB_ArchiveFileParser ar_parser = { 0 };
     if (!tb_archive_parse(ar_file, &ar_parser)) {
         return;
@@ -647,8 +649,12 @@ static TB_LinkerSymbol* pe_resolve_sym(TB_Linker* l, TB_LinkerSymbol* sym, TB_Sl
     if (sym->tag == TB_LINKER_SYMBOL_THUNK) {
         TB_LinkerSymbol* isym = sym->thunk.import_sym;
         isym->import.thunk = tb__find_or_create_import(l, isym);
+
+        log_debug("import %.*s from DLL (thunk)", (int) isym->name.length, isym->name.data);
     } else if (sym->tag == TB_LINKER_SYMBOL_IMPORT) {
         sym->import.thunk = tb__find_or_create_import(l, sym);
+
+        log_debug("import %.*s from DLL", (int) name.length, name.data);
     }
 
     return sym;
