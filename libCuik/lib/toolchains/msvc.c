@@ -299,6 +299,8 @@ static bool find_windows_kit_root(Cuik_WindowsToolchain* result) {
             RegCloseKey(main_key);
             return true;
         }
+
+        cuik_free(windows10_lib);
     }
 
     // Look for a Windows 8 entry.
@@ -623,7 +625,7 @@ static bool invoke_link(void* ctx, const Cuik_DriverArgs* args, Cuik_Linker* lin
 
 // tries to walk about `steps` slashes in the filepath and return the pointer to said
 // slash, if it can't reach then it'll return NULL
-static const wchar_t* step_out_dir(const wchar_t* path, int steps) {
+static const OSChar* step_out_dir(const OSChar* path, int steps) {
     int slashes_hit = 0;
     const wchar_t* end = path;
     while (*end) end++;
@@ -636,30 +638,25 @@ static const wchar_t* step_out_dir(const wchar_t* path, int steps) {
     return (slashes_hit == steps) ? end : NULL;
 }
 
-static const OSChar* find_last_semicolon_or_bust(const OSChar* path) {
-    const OSChar* semicolon = str_rfind(path, ';');
-    return semicolon ? semicolon : path;
-}
-
 Cuik_Toolchain cuik_toolchain_msvc(void) {
     Cuik_WindowsToolchain* result = cuik_malloc(sizeof(Cuik_WindowsToolchain));
     result->vc_tools_install[0] = 0;
 
-    if (!find_windows_kit_root(result)) {
-        // when installing from the mmozeiko's portable MSVC script, the registry doesn't
-        // get setup so we search for the windows kit via environment variables.
-        const OSChar* sdk_libs = env_get("SDK_LIBS");
-        if (sdk_libs != NULL) {
-            result->windows_sdk_version = 10;
+    // when installing from the mmozeiko's portable MSVC script, the registry doesn't
+    // get setup so we search for the windows kit via environment variables.
+    const OSChar* sdk_dir = env_get("WindowsSDKDir");
+    const OSChar* version = env_get("WindowsSDKVersion");
 
-            str_copy(result->windows_sdk_root, find_last_semicolon_or_bust(sdk_libs), FILENAME_MAX);
+    if (sdk_dir != NULL && version != NULL) {
+        result->windows_sdk_version = 10;
 
-            const OSChar* sdk_include = env_get("SDK_INCLUDE");
-            str_copy(result->windows_sdk_include, find_last_semicolon_or_bust(sdk_include), FILENAME_MAX);
-        } else {
+        swprintf_s(result->windows_sdk_include, MAX_PATH, L"%s\\Include\\%s", sdk_dir, version);
+        swprintf_s(result->windows_sdk_root,    MAX_PATH, L"%s\\Lib\\%s", sdk_dir, version);
+    } else {
+        if (!find_windows_kit_root(result)) {
             fprintf(stderr,
                 "warning: could not locate windows SDK!\n"
-                "  you can provide SDK_INCLUDE, SDK_LIBS and\n"
+                "  you can provide WindowsSDKDir, WindowsSDKVersion and\n"
                 "  VCToolsInstallDir via the environment.\n"
             );
             return (Cuik_Toolchain){ 0 };
