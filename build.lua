@@ -42,7 +42,7 @@ function add_srcs(...)
 end
 
 local ldflags = ""
-local cflags = "-g -msse4 -I common -Wall -Werror -Wno-unused -Wno-deprecated-pragma -DTB_USE_MIMALLOC -DCUIK_USE_MIMALLOC -I mimalloc/include -DCUIK_ALLOW_THREADS"
+local cflags = "-g -msse4 -I common -Wall -Werror -Wno-unused -Wno-deprecated -DTB_USE_MIMALLOC -DCUIK_USE_MIMALLOC -I mimalloc/include -DCUIK_ALLOW_THREADS"
 
 local cc = "clang"
 local ar = "llvm-ar -rcs"

@@ -1,3 +1,7 @@
+#ifdef _WIN32
+#pragma comment(lib, "Advapi32.lib")
+#endif
+
 // This is the TB unity build
 #include "tb.c"
 #include "hash.c"
