@@ -541,11 +541,12 @@ static Stmt* parse_stmt2(Cuik_Parser* parser, TokenStream* restrict s) {
             }
             tokens_next(s);
 
+            SourceLoc opening_loc = tokens_get_location(s);
             expect_char(s, '(');
 
             Expr* cond = parse_expr(parser, s);
 
-            expect_char(s, ')');
+            expect_closing_paren(s, opening_loc);
             expect_char(s, ';');
 
             n->op = STMT_DO_WHILE;

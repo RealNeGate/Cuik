@@ -41,6 +41,7 @@ X(__c11_atomic_fetch_and, "v.")
 // microsoft extensions
 X(_byteswap_ulong, "ii")
 
+X(__noop, "v.")
 X(__assume, "vb")
 X(__debugbreak, "vv")
 X(__va_start, "vc**.")

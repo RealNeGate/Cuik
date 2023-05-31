@@ -172,7 +172,7 @@ static char* parse_directive_path(Cuik_CPP* restrict ctx, CPPStackSlot* restrict
 }
 
 static DirectiveResult cpp__include(Cuik_CPP* restrict ctx, CPPStackSlot* restrict slot, TokenArray* restrict in) {
-    SourceLoc loc = peek(in).location;
+    SourceRange loc = get_token_range(&in->tokens[in->current]);
 
     bool is_lib_include;
     char* filename = parse_directive_path(ctx, slot, in, &is_lib_include);
@@ -184,7 +184,6 @@ static DirectiveResult cpp__include(Cuik_CPP* restrict ctx, CPPStackSlot* restri
     Cuik_Path canonical;
     LocateResult l = locate_file(ctx, is_lib_include, slot->directory, filename, &canonical);
     if ((l & LOCATE_FOUND) == 0) {
-        SourceRange loc = get_token_range(&in->tokens[in->current]);
         diag_err(&ctx->tokens, loc, "couldn't find file: %s", filename);
         return DIRECTIVE_ERROR;
     }
@@ -203,7 +202,7 @@ static DirectiveResult cpp__include(Cuik_CPP* restrict ctx, CPPStackSlot* restri
     *new_slot = (CPPStackSlot){
         .filepath = alloced_filepath,
         .directory = alloc_directory_path(canonical.data),
-        .loc = loc
+        .loc = loc.start
     };
 
     // read new file & lex
@@ -400,7 +399,7 @@ static DirectiveResult cpp__endif(Cuik_CPP* restrict ctx, CPPStackSlot* restrict
 }
 
 static DirectiveResult cpp__embed(Cuik_CPP* restrict ctx, CPPStackSlot* restrict slot, TokenArray* restrict in) {
-    SourceLoc loc = peek(in).location;
+    SourceRange loc = get_token_range(&in->tokens[in->current]);
     TokenStream* restrict s = &ctx->tokens;
 
     bool is_lib_include;
@@ -413,7 +412,6 @@ static DirectiveResult cpp__embed(Cuik_CPP* restrict ctx, CPPStackSlot* restrict
     Cuik_Path canonical;
     LocateResult l = locate_file(ctx, is_lib_include, slot->directory, filename, &canonical);
     if ((l & LOCATE_FOUND) == 0) {
-        SourceRange loc = get_token_range(&in->tokens[in->current]);
         diag_err(&ctx->tokens, loc, "couldn't find file: %s", filename);
         return DIRECTIVE_ERROR;
     }
@@ -423,11 +421,11 @@ static DirectiveResult cpp__embed(Cuik_CPP* restrict ctx, CPPStackSlot* restrict
 
     // convert #embed path => _Embed(path)
     unsigned char* str = gimme_the_shtuffs_fill(ctx, "_Embed");
-    Token t = (Token){ TOKEN_KW_Embed, false, false, loc, { 7, str } };
+    Token t = (Token){ TOKEN_KW_Embed, false, false, loc.start, { 7, str } };
     dyn_array_put(s->list.tokens, t);
 
     str = gimme_the_shtuffs_fill(ctx, "(");
-    t = (Token){ '(', false, false, loc, { 1, str } };
+    t = (Token){ '(', false, false, loc.start, { 1, str } };
     dyn_array_put(s->list.tokens, t);
 
     Cuik_FileResult next_file;
@@ -436,13 +434,13 @@ static DirectiveResult cpp__embed(Cuik_CPP* restrict ctx, CPPStackSlot* restrict
         return DIRECTIVE_ERROR;
     }
 
-    t = (Token){ TOKEN_MAGIC_EMBED_STRING, false, false, loc };
+    t = (Token){ TOKEN_MAGIC_EMBED_STRING, false, false, loc.start };
     t.content.length = next_file.length;
     t.content.data = (const unsigned char*) next_file.data;
     dyn_array_put(s->list.tokens, t);
 
     str = gimme_the_shtuffs_fill(ctx, ")");
-    t = (Token){ ')', false, false, loc, { 1, str } };
+    t = (Token){ ')', false, false, loc.start, { 1, str } };
     dyn_array_put(s->list.tokens, t);
 
     return DIRECTIVE_SUCCESS;
@@ -527,8 +525,8 @@ static String get_pp_tokens_until_newline(Cuik_CPP* ctx, TokenArray* in) {
     }
 
     if (is_str) {
-        str.data += 1;
-        str.length -= 1;
+        str.data -= 1;
+        str.length += 1;
     }
 
     return str;

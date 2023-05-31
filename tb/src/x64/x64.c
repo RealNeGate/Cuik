@@ -579,6 +579,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
 
                         int pos = 16 + (p->index * 8);
                         nl_map_put(ctx->stack_slots, curr->inputs[1], pos);
+                        nl_map_put(ctx->values, curr, -1); // marks as visited (stores don't return so we can -1)
 
                         has_param_slots = true;
                     }

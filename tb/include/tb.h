@@ -347,7 +347,6 @@ extern "C" {
     // represents byte counts
     typedef uint32_t TB_CharUnits;
 
-    typedef unsigned int TB_AttributeID;
     typedef unsigned int TB_FileID;
 
     // SO refers to shared objects which mean either shared libraries (.so or .dll)

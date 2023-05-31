@@ -988,7 +988,7 @@ static Expr* parse_assignment(Cuik_Parser* restrict parser, TokenStream* restric
     return e;
 }
 
-static Expr* parse_expr(Cuik_Parser* restrict parser, TokenStream* restrict s) {
+static void parse_pragma_expr(Cuik_Parser* restrict parser, TokenStream* restrict s) {
     if (tokens_get(s)->type == TOKEN_KW_Pragma) {
         tokens_next(s);
 
@@ -1001,6 +1001,10 @@ static Expr* parse_expr(Cuik_Parser* restrict parser, TokenStream* restrict s) {
             expect_char(s, ')');
         }
     }
+}
+
+static Expr* parse_expr(Cuik_Parser* restrict parser, TokenStream* restrict s) {
+    parse_pragma_expr(parser, s);
 
     SourceLoc start_loc = tokens_get_location(s);
     Expr* lhs = parse_assignment(parser, s);
@@ -1022,6 +1026,7 @@ static Expr* parse_expr(Cuik_Parser* restrict parser, TokenStream* restrict s) {
         lhs = e;
     }
 
+    parse_pragma_expr(parser, s);
     return lhs;
 }
 

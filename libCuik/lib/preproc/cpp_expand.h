@@ -462,8 +462,10 @@ static bool subst(Cuik_CPP* restrict c, TokenNode* head, const uint8_t* subst_st
                 Token t = lexer_read(&scratch);
                 if (t.type == 0) break;
 
-                // dyn_array_put(out_tokens->tokens, t);
-                assert(0 && "TODO");
+                TokenNode* n = tls_push(sizeof(TokenNode));
+                n->next = NULL, n->t = t;
+
+                curr->next = n, prev = curr, curr = n;
             }
 
             prev = curr, curr = curr->next;

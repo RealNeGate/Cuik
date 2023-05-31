@@ -128,7 +128,7 @@ Expr* cuik__optimize_ast(Cuik_Parser* restrict parser, TranslationUnit* restrict
         case EXPR_CAST: {
             Expr* src = cuik__optimize_ast(parser, tu, e->cast.src);
 
-            if (src->op == EXPR_INT) {
+            if (src->op == EXPR_INT && cuik_type_is_integer(cuik_canonical_type(e->cast.type))) {
                 src->type = e->cast.type;
                 return src;
             }
