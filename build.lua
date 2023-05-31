@@ -20,6 +20,7 @@ local options = {
 	tb     = false,
 	driver = false,
 	shared = false,
+	lld    = false,
 	spall_auto = false
 }
 
@@ -58,9 +59,14 @@ end
 if is_windows then
 	add_srcs("c11threads/threads_msvc.c")
 
-	ld = "lld-link"
+	if options.lld then
+		ld = "lld-link"
+	else
+		ld = "link"
+	end
+
 	cflags = cflags.." -I c11threads -D_CRT_SECURE_NO_WARNINGS"
-	ldflags = ldflags.." /debug onecore.lib msvcrt.lib libcmt.lib"
+	ldflags = ldflags.." /nologo /debug onecore.lib msvcrt.lib libcmt.lib"
 
 	if options.shared then
 		cflags = cflags.." -DCUIK_DLL -DTB_DLL"
@@ -74,6 +80,10 @@ if is_windows then
 else
 	ld = cc
 	ldflags = ldflags.." -g -lc -lm "
+
+	if options.shared then
+		ldflags = ldflags.." -fuse-ld=lld"
+	end
 
 	if options.shared then
 		ldflags = ldflags.." -shared"
