@@ -14,6 +14,7 @@
 #define env_get(k) _wgetenv(L ## k)
 #define str_copy(dst, src, n) wcsncpy(dst, src, n)
 #define str_printf(buf, n, fmt, ...) swprintf(buf, n, L ## fmt, __VA_ARGS__)
+#define str_rfind(a, b) wcsrchr(a, b)
 
 #define STR_FMT "%S"
 typedef wchar_t OSChar;
@@ -21,6 +22,7 @@ typedef wchar_t OSChar;
 #define str_copy(dst, src, n) strncpy(dst, src, n)
 #define env_get(k) getenv(k)
 #define str_printf(buf, n, fmt, ...) snprintf(buf, n, fmt, __VA_ARGS__)
+#define str_rfind(a, b) strrchr(a, b)
 
 #define STR_FMT "%s"
 typedef char OSChar;
@@ -634,6 +636,11 @@ static const wchar_t* step_out_dir(const wchar_t* path, int steps) {
     return (slashes_hit == steps) ? end : NULL;
 }
 
+static const OSChar* find_last_semicolon_or_bust(const OSChar* path) {
+    const OSChar* semicolon = str_rfind(path, ';');
+    return semicolon ? semicolon : path;
+}
+
 Cuik_Toolchain cuik_toolchain_msvc(void) {
     Cuik_WindowsToolchain* result = cuik_malloc(sizeof(Cuik_WindowsToolchain));
     result->vc_tools_install[0] = 0;
@@ -645,8 +652,10 @@ Cuik_Toolchain cuik_toolchain_msvc(void) {
         if (sdk_libs != NULL) {
             result->windows_sdk_version = 10;
 
-            str_copy(result->windows_sdk_root, sdk_libs, FILENAME_MAX);
-            str_copy(result->windows_sdk_include, env_get("SDK_INCLUDE"), FILENAME_MAX);
+            str_copy(result->windows_sdk_root, find_last_semicolon_or_bust(sdk_libs), FILENAME_MAX);
+
+            const OSChar* sdk_include = env_get("SDK_INCLUDE");
+            str_copy(result->windows_sdk_include, find_last_semicolon_or_bust(sdk_include), FILENAME_MAX);
         } else {
             fprintf(stderr,
                 "warning: could not locate windows SDK!\n"
