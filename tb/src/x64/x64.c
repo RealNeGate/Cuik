@@ -530,6 +530,17 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
         return ctx->values[search].v;
     }
 
+    // set line info
+    for (TB_Attrib* a = n->first_attrib; a; a = a->next) if (a->type == TB_ATTRIB_LOCATION) {
+        // check if it's changed
+        if (ctx->last_file != a->loc.file || ctx->last_line != a->loc.line) {
+            ctx->last_file = a->loc.file;
+            ctx->last_line = a->loc.line;
+
+            SUBMIT(inst_line(ctx->last_file, ctx->last_line));
+        }
+    }
+
     TB_NodeTypeEnum type = n->type;
     int dst = -1;
 
@@ -1291,11 +1302,12 @@ static void emit_code(Ctx* restrict ctx) {
             continue;
         } else if (inst->type == INST_LINE) {
             TB_Function* f = ctx->f;
-            f->lines[f->line_count++] = (TB_Line) {
+            TB_Line l = {
                 .file = inst->imm[0],
                 .line = inst->imm[1],
                 .pos = GET_CODE_POS(&ctx->emit)
             };
+            dyn_array_put(f->lines, l);
             continue;
         } else if (inst->type == X86_INST_USE) {
             continue;

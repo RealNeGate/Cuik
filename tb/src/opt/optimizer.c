@@ -159,6 +159,8 @@ void tb_function_apply_passes(TB_PassManager* manager, TB_Passes passes, TB_Func
     assert(!passes.module_level);
     log_debug("run %d passes for %s", manager->count, f->super.name);
 
+    f->file = 0; // don't add line info automatically to optimizer-generated nodes
+
     const TB_Pass* restrict arr = manager->passes;
 
     // generate work list (put everything)

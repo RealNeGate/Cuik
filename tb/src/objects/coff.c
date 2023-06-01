@@ -393,8 +393,7 @@ TB_Exports tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
 
             TB_FOR_FUNCTIONS(f, m) if (f->super.name && f->output) {
                 TB_FunctionOutput* out_f = f->output;
-                uint32_t sym = f->super.symbol_id;
-                uint32_t pos = f->comdat.type != TB_COMDAT_NONE ? 0 : out_f->code_pos;
+                uint32_t sym = f->comdat.type != TB_COMDAT_NONE ? f->super.symbol_id : 0;
 
                 relocs[j + 0] = (COFF_ImageReloc){
                     .Type = IMAGE_REL_AMD64_ADDR32NB,

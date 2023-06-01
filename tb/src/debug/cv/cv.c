@@ -259,9 +259,7 @@ static TB_SectionGroup codeview_generate_debug_info(TB_Module* m, TB_TemporarySt
 
                 // Layout crap
                 uint32_t body_start = out_f->prologue_length;
-
-                size_t line_count = f->line_count;
-                TB_Line* restrict lines = f->lines;
+                DynArray(TB_Line) lines = f->lines;
 
                 tb_out4b(&debugs_out, 0x000000F2);
                 size_t field_length_patch = debugs_out.count;
@@ -287,7 +285,7 @@ static TB_SectionGroup codeview_generate_debug_info(TB_Module* m, TB_TemporarySt
                 TB_FileID last_file = 0;
                 uint32_t current_line_count = 0;
 
-                FOREACH_N(line_id, 0, line_count) {
+                dyn_array_for(line_id, lines) {
                     TB_Line line = lines[line_id];
 
                     if (last_file != line.file) {

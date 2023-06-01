@@ -944,6 +944,8 @@ extern "C" {
     // the user_data is expected to be a valid FILE*
     TB_API void tb_default_print_callback(void* user_data, const char* fmt, ...);
 
+    TB_API void tb_inst_set_location(TB_Function* f, TB_FileID file, int line);
+
     // this only allows for power of two vector types
     TB_API TB_DataType tb_vector_type(TB_DataTypeEnum type, int width);
 
@@ -965,7 +967,6 @@ extern "C" {
     TB_API void tb_inst_set_control(TB_Function* f, TB_Node* control);
     TB_API TB_Node* tb_inst_get_control(TB_Function* f);
 
-    TB_API void tb_inst_loc(TB_Function* f, TB_FileID file, int line);
     TB_API TB_Node* tb_inst_region(TB_Function* f);
 
     TB_API void tb_inst_unreachable(TB_Function* f);

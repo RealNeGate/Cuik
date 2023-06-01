@@ -1449,7 +1449,7 @@ static void emit_location(TranslationUnit* tu, TB_Function* func, SourceLoc loc)
             last_file_id = tb_file_create(tu->ir_mod, rloc.file->filename);
         }
 
-        tb_inst_loc(func, last_file_id, rloc.line);
+        tb_inst_set_location(func, last_file_id, rloc.line);
     }
 }
 

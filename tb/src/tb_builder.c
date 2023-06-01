@@ -122,6 +122,12 @@ TB_Node* tb_alloc_node(TB_Function* f, int type, TB_DataType dt, int input_count
         memset(n->extra, 0, n->extra_count);
     }
 
+    if (f->file > 0) {
+        TB_Attrib* a = tb_platform_heap_alloc(sizeof(TB_Attrib));
+        *a = (TB_Attrib) { .type = TB_ATTRIB_LOCATION, .loc = { f->file, f->line } };
+        append_attrib(f, n, a);
+    }
+
     return n;
 }
 
@@ -305,11 +311,8 @@ TB_API TB_Node* tb_inst_poison(TB_Function* f) {
     return tb_alloc_node(f, TB_POISON, TB_TYPE_VOID, 0, 0);
 }
 
-TB_API void tb_inst_loc(TB_Function* f, TB_FileID file, int line) {
-    tb_assume(line >= 0);
-
-    TB_Node* n = tb_alloc_node(f, TB_LINE_INFO, TB_TYPE_VOID, 0, sizeof(TB_NodeLine));
-    TB_NODE_SET_EXTRA(n, TB_NodeLine, .file = file, .line = line);
+TB_API void tb_inst_set_location(TB_Function* f, TB_FileID file, int line) {
+    f->file = file, f->line = line;
 }
 
 TB_API TB_Node* tb_inst_local(TB_Function* f, uint32_t size, TB_CharUnits alignment) {

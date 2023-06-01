@@ -239,6 +239,7 @@ typedef struct TB_Line {
 typedef enum {
     TB_ATTRIB_NONE,
     TB_ATTRIB_VARIABLE,
+    TB_ATTRIB_LOCATION,
 } TB_AttribType;
 
 struct TB_Attrib {
@@ -250,15 +251,17 @@ struct TB_Attrib {
             char* name;
             TB_DebugType* storage;
         } var;
+        struct {
+            TB_FileID file;
+            int line;
+        } loc;
     };
 };
 
 typedef struct TB_StackSlot {
-    TB_Reg source;
     // TODO(NeGate): support complex variable descriptions
     // currently we only support stack relative
-    int position;
-
+    int32_t position;
     const char* name;
     TB_DebugType* storage_type;
 } TB_StackSlot;
@@ -316,18 +319,17 @@ struct TB_Function {
     TB_Node* start_node;
     TB_Node* active_control_node;
 
-    // refers to one of the returns, each will store a pointer to
-    // the next creating a linked list
-    TB_Node* first_return;
-
     // Nodes allocator (micro block alloc)
     size_t control_node_count;
     size_t node_count;
     TB_NodePage *head, *tail;
 
+    // IR building: current line
+    TB_FileID file;
+    int line;
+
     // Part of the debug info
-    size_t line_count;
-    TB_Line* lines;
+    DynArray(TB_Line) lines;
 
     // Compilation output
     union {

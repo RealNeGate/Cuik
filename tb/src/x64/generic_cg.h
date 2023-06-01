@@ -127,6 +127,10 @@ typedef struct {
 
     MachineBBs machine_bbs;
 
+    // Line info
+    TB_FileID last_file;
+    int last_line;
+
     // Stack
     uint32_t stack_usage;
     NL_Map(TB_Node*, int) stack_slots;
@@ -898,7 +902,7 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
     //  Label patching: we make sure any local labels
     patch_local_labels(&ctx);
 
-    if (f->line_count > 0) {
+    if (dyn_array_length(f->lines)) {
         f->lines[0].pos = 0;
     }
 
@@ -909,8 +913,22 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
         .code_size = ctx.emit.count,
         .stack_usage = ctx.stack_usage,
         .prologue_epilogue_metadata = ctx.regs_to_save,
-        // .stack_slots = ctx.stack_slots
     };
+
+    // convert into TB_StackSlot
+    FOREACH_N(i, 0, nl_map_get_capacity(ctx.stack_slots)) if (ctx.stack_slots[i].k != NULL) {
+        TB_Node* n = ctx.stack_slots[i].k;
+        for (TB_Attrib* a = n->first_attrib; a != NULL; a = a->next) {
+            if (a->type == TB_ATTRIB_VARIABLE) {
+                TB_StackSlot s = {
+                    .position = ctx.stack_slots[i].v,
+                    .storage_type = a->var.storage,
+                    .name = a->var.name,
+                };
+                dyn_array_put(func_out.stack_slots, s);
+            }
+        }
+    }
 
     tb_function_free_postorder(&ctx.order);
     arena_clear(&tb__arena);
