@@ -1,6 +1,7 @@
 #include "../tb_internal.h"
 #include "../codegen/emitter.h"
 #include <inttypes.h>
+#include <log.h>
 
 enum {
     CG_VAL_UNRESOLVED = 0,
@@ -375,16 +376,18 @@ static void cuiksort_defs(Def* defs, ptrdiff_t lo, ptrdiff_t hi, DefIndex* arr) 
 // generate live intervals for virtual registers
 static DefIndex* liveness(Ctx* restrict ctx, TB_Function* f) {
     size_t def_count = dyn_array_length(ctx->defs);
+    Arena* arena = &tb__arena;
 
     // find BB boundaries in sequences
     MachineBBs seq_bb = NULL;
-    ARENA_ARR_ALLOC(&tb__arena, ctx->order.count, MachineBB);
+    nl_map_create(seq_bb, ctx->order.count);
 
     FOREACH_N(i, 0, ctx->order.count) {
         MachineBB bb = {
-            .gen = set_create(def_count), .kill = set_create(def_count),
-            .live_in = set_create(def_count), .live_out = set_create(def_count)
+            .gen = set_create_in_arena(arena, def_count), .kill = set_create_in_arena(arena, def_count),
+            .live_in = set_create_in_arena(arena, def_count), .live_out = set_create_in_arena(arena, def_count)
         };
+
         nl_map_put(seq_bb, ctx->order.traversal[i], bb);
     }
 

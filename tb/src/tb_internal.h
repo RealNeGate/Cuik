@@ -684,9 +684,7 @@ do {                                         \
 } while (0)
 #endif
 
-#define CALL_NODE_PARAM_COUNT(n) (n->call.param_end - n->call.param_start)
-
-#if 0
+#if 1
 uint64_t cuik_time_in_nanos(void);
 void cuikperf_region_start(uint64_t now, const char* fmt, const char* extra);
 void cuikperf_region_end(void);
