@@ -16,6 +16,7 @@
 #define str_printf(buf, n, fmt, ...) swprintf(buf, n, L ## fmt, __VA_ARGS__)
 #define str_rfind(a, b) wcsrchr(a, b)
 
+#define SLASH "\\"
 #define STR_FMT "%S"
 typedef wchar_t OSChar;
 #else
@@ -24,6 +25,7 @@ typedef wchar_t OSChar;
 #define str_printf(buf, n, fmt, ...) snprintf(buf, n, fmt, __VA_ARGS__)
 #define str_rfind(a, b) strrchr(a, b)
 
+#define SLASH "/"
 #define STR_FMT "%s"
 typedef char OSChar;
 #endif
@@ -512,19 +514,19 @@ static void add_libraries(void* ctx, const Cuik_DriverArgs* args, Cuik_Linker* l
     Cuik_WindowsToolchain* t = ctx;
 
     cuiklink_add_libpathf(l, STR_FMT, t->vs_library_path);
-    cuiklink_add_libpathf(l, STR_FMT "\\um\\x64", t->windows_sdk_root);
-    cuiklink_add_libpathf(l, STR_FMT "\\ucrt\\x64", t->windows_sdk_root);
+    cuiklink_add_libpathf(l, STR_FMT SLASH"um"SLASH"x64", t->windows_sdk_root);
+    cuiklink_add_libpathf(l, STR_FMT SLASH"ucrt"SLASH"x64", t->windows_sdk_root);
 }
 
 static void print_verbose(void* ctx, const Cuik_DriverArgs* args) {
     Cuik_WindowsToolchain* t = ctx;
 
     printf("Includes:\n");
-    printf("  " STR_FMT "\\um\n",      t->windows_sdk_include);
-    printf("  " STR_FMT "\\shared\n",  t->windows_sdk_include);
+    printf("  " STR_FMT SLASH"um\n",     t->windows_sdk_include);
+    printf("  " STR_FMT SLASH"shared\n", t->windows_sdk_include);
     printf("  " STR_FMT "\n",            t->vs_include_path);
     if (!args->nocrt) {
-        printf("  " STR_FMT "\\ucrt\n", t->windows_sdk_include);
+        printf("  " STR_FMT SLASH"ucrt\n", t->windows_sdk_include);
     }
     printf("\n");
 }
@@ -532,11 +534,11 @@ static void print_verbose(void* ctx, const Cuik_DriverArgs* args) {
 static void set_preprocessor(void* ctx, const Cuik_DriverArgs* args, Cuik_CPP* cpp) {
     Cuik_WindowsToolchain* t = ctx;
 
-    cuikpp_add_include_directoryf(cpp, true, STR_FMT "\\um\\",      t->windows_sdk_include);
-    cuikpp_add_include_directoryf(cpp, true, STR_FMT "\\shared\\",  t->windows_sdk_include);
-    cuikpp_add_include_directoryf(cpp, true, STR_FMT,               t->vs_include_path);
+    cuikpp_add_include_directoryf(cpp, true, STR_FMT SLASH"um"SLASH,       t->windows_sdk_include);
+    cuikpp_add_include_directoryf(cpp, true, STR_FMT SLASH"shared"SLASH,   t->windows_sdk_include);
+    cuikpp_add_include_directoryf(cpp, true, STR_FMT,                      t->vs_include_path);
     if (!args->nocrt) {
-        cuikpp_add_include_directoryf(cpp, true, STR_FMT "\\ucrt\\", t->windows_sdk_include);
+        cuikpp_add_include_directoryf(cpp, true, STR_FMT SLASH"ucrt"SLASH, t->windows_sdk_include);
     }
 
     cuikpp_define_empty_cstr(cpp, "_MT");
@@ -650,8 +652,8 @@ Cuik_Toolchain cuik_toolchain_msvc(void) {
     if (sdk_dir != NULL && version != NULL) {
         result->windows_sdk_version = 10;
 
-        str_printf(result->windows_sdk_include, FILENAME_MAX, "%s\\Include\\%s", sdk_dir, version);
-        str_printf(result->windows_sdk_root,    FILENAME_MAX, "%s\\Lib\\%s", sdk_dir, version);
+        str_printf(result->windows_sdk_include, FILENAME_MAX, "%s"SLASH"Include"SLASH"%s", sdk_dir, version);
+        str_printf(result->windows_sdk_root,    FILENAME_MAX, "%s"SLASH"Lib"SLASH"%s", sdk_dir, version);
     } else {
         if (!find_windows_kit_root(result)) {
             fprintf(stderr,
@@ -666,9 +668,9 @@ Cuik_Toolchain cuik_toolchain_msvc(void) {
     const OSChar* vc_tools_install = env_get("VCToolsInstallDir");
     if (vc_tools_install != NULL) {
         str_copy(result->vc_tools_install, vc_tools_install, FILENAME_MAX);
-        str_printf(result->vs_include_path, FILENAME_MAX, "%sinclude\\", vc_tools_install);
-        str_printf(result->vs_library_path, FILENAME_MAX, "%slib\\x64\\", vc_tools_install);
-        str_printf(result->vs_exe_path, FILENAME_MAX, "%sVC\\bin\\amd64\\", vc_tools_install);
+        str_printf(result->vs_include_path, FILENAME_MAX, "%sinclude"SLASH, vc_tools_install);
+        str_printf(result->vs_library_path, FILENAME_MAX, "%slib"SLASH"x64"SLASH, vc_tools_install);
+        str_printf(result->vs_exe_path, FILENAME_MAX, "%sVC"SLASH"bin"SLASH"amd64"SLASH, vc_tools_install);
     } else {
         if (!find_visual_studio_by_fighting_through_microsoft_craziness(result)) {
             fprintf(stderr,

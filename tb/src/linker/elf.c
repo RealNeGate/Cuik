@@ -151,7 +151,7 @@ static TB_Exports elf_export(TB_Linker* l) {
             [EI_OSABI]      = 0,
             [EI_ABIVERSION] = 0
         },
-        .type = ET_EXEC, // executable
+        .type = ET_DYN, // executable
         .version = 1,
         .machine = machine,
         .entry = 0,
