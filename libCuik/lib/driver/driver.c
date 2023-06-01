@@ -661,6 +661,7 @@ CUIK_API Cuik_CPP* cuik_driver_preprocess(const char* filepath, const Cuik_Drive
     CUIK_TIMED_BLOCK("cuikpp_make") {
         cpp = cuikpp_make(&(Cuik_CPPDesc){
                 .version       = args->version,
+                .case_insensitive = args->toolchain.case_insensitive,
                 .filepath      = filepath,
                 .locate        = cuikpp_locate_file,
                 .fs            = cuikpp_default_fs,
@@ -677,6 +678,7 @@ CUIK_API Cuik_CPP* cuik_driver_preprocess_str(String source, const Cuik_DriverAr
     CUIK_TIMED_BLOCK("cuikpp_make") {
         cpp = cuikpp_make(&(Cuik_CPPDesc){
                 .version       = args->version,
+                .case_insensitive = args->toolchain.case_insensitive,
                 .fs_data       = &source,
                 .locate        = cuikpp_locate_file,
                 .fs            = cuikpp_default_fs,
@@ -693,6 +695,7 @@ CUIK_API Cuik_CPP* cuik_driver_preprocess_cstr(const char* source, const Cuik_Dr
     CUIK_TIMED_BLOCK("cuikpp_make") {
         cpp = cuikpp_make(&(Cuik_CPPDesc){
                 .version       = args->version,
+                .case_insensitive = args->toolchain.case_insensitive,
                 .fs_data       = &(String){ strlen(source), (const unsigned char*) source },
                 .locate        = cuikpp_locate_file,
                 .fs            = cuikpp_default_fs,

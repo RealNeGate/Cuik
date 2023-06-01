@@ -185,6 +185,10 @@ static DirectiveResult cpp__include(Cuik_CPP* restrict ctx, CPPStackSlot* restri
     LocateResult l = locate_file(ctx, is_lib_include, slot->directory, filename, &canonical);
     if ((l & LOCATE_FOUND) == 0) {
         diag_err(&ctx->tokens, loc, "couldn't find file: %s", filename);
+        dyn_array_for(i, ctx->system_include_dirs) {
+            Cuik_Path* p = ctx->system_include_dirs[i].path;
+            diag_note(&ctx->tokens, loc, "also tried %s%s", p->data, filename);
+        }
         return DIRECTIVE_ERROR;
     }
 
@@ -211,7 +215,7 @@ static DirectiveResult cpp__include(Cuik_CPP* restrict ctx, CPPStackSlot* restri
     #endif
 
     Cuik_FileResult next_file;
-    if (!ctx->fs(ctx->user_data, &canonical, &next_file)) {
+    if (!ctx->fs(ctx->user_data, &canonical, &next_file, ctx->case_insensitive)) {
         fprintf(stderr, "\x1b[31merror\x1b[0m: file doesn't exist.\n");
         return DIRECTIVE_ERROR;
     }
@@ -429,7 +433,7 @@ static DirectiveResult cpp__embed(Cuik_CPP* restrict ctx, CPPStackSlot* restrict
     dyn_array_put(s->list.tokens, t);
 
     Cuik_FileResult next_file;
-    if (!ctx->fs(ctx->user_data, &canonical, &next_file)) {
+    if (!ctx->fs(ctx->user_data, &canonical, &next_file, ctx->case_insensitive)) {
         fprintf(stderr, "\x1b[31merror\x1b[0m: file doesn't exist.\n");
         return DIRECTIVE_ERROR;
     }

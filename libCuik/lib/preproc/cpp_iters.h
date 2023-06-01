@@ -2,6 +2,13 @@
 CUIK_API void cuikpp_add_include_directory(Cuik_CPP* ctx, bool is_system, const char dir[]) {
     Cuik_IncludeDir d = { is_system, gimme_the_shtuffs(ctx, sizeof(Cuik_Path)) };
     cuik_path_set(d.path, dir);
+
+    char last = d.path->data[d.path->length - 1];
+    if (last != '/' && last != '\\') {
+        d.path->data[d.path->length++] = CUIK_PATH_SLASH_SEP;
+        d.path->data[d.path->length] = 0;
+    }
+
     dyn_array_put(ctx->system_include_dirs, d);
 }
 
@@ -12,6 +19,12 @@ CUIK_API void cuikpp_add_include_directoryf(Cuik_CPP* ctx, bool is_system, const
     va_start(ap, fmt);
     d.path->length = vsnprintf(d.path->data, FILENAME_MAX, fmt, ap);
     va_end(ap);
+
+    char last = d.path->data[d.path->length - 1];
+    if (last != '/' && last != '\\') {
+        d.path->data[d.path->length++] = CUIK_PATH_SLASH_SEP;
+        d.path->data[d.path->length] = 0;
+    }
 
     dyn_array_put(ctx->system_include_dirs, d);
 }
@@ -29,7 +42,7 @@ CUIK_API bool cuikpp_find_include_include(Cuik_CPP* ctx, char output[FILENAME_MA
     return false;
 }
 
-Cuik_File* cuikpp_next_file(Cuik_CPP* ctx, Cuik_File* f) {
+Cuik_FileEntry* cuikpp_next_file(Cuik_CPP* ctx, Cuik_FileEntry* f) {
     // first element
     if (f == NULL) return &ctx->tokens.files[0];
 

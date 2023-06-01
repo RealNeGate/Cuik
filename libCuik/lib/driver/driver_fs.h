@@ -86,7 +86,7 @@ static void append_input_path(Cuik_DriverArgs* args, const char* path) {
         // filtered_append(args, path, star[1] == '*');
     } else {
         Cuik_Path* newstr = cuik_malloc(sizeof(Cuik_Path));
-        if (cuik_canonicalize_path(newstr, path)) {
+        if (cuikfs_canonicalize(newstr, path, args->toolchain.case_insensitive)) {
             if (cuik_path_has_ext(newstr, "a") || cuik_path_has_ext(newstr, "lib")) {
                 dyn_array_put(args->libraries, newstr);
             } else {

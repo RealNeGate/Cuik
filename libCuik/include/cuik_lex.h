@@ -102,7 +102,7 @@ typedef struct {
     // a DynArray(uint32_t) sorted to make it possible to binary search
     //   [line] = file_pos
     uint32_t* line_map;
-} Cuik_File;
+} Cuik_FileEntry;
 
 typedef struct Token {
     // it's a TknType but GCC doesn't like incomplete enums
@@ -144,18 +144,18 @@ typedef struct TokenStream {
     // DynArray(MacroInvoke)
     MacroInvoke* invokes;
 
-    // DynArray(Cuik_File)
-    Cuik_File* files;
+    // DynArray(Cuik_FileEntry)
+    Cuik_FileEntry* files;
 } TokenStream;
 
 typedef struct ResolvedSourceLoc {
-    Cuik_File* file;
+    Cuik_FileEntry* file;
     const char* line_str;
     uint32_t line, column;
 } ResolvedSourceLoc;
 
 typedef struct Cuik_FileLoc {
-    Cuik_File* file;
+    Cuik_FileEntry* file;
     uint32_t pos; // in bytes
 } Cuik_FileLoc;
 
@@ -188,9 +188,9 @@ CUIK_API bool cuikpp_next_define(Cuik_CPP* ctx, Cuik_DefineIter* src);
 
 // This is an iterator for include search list in the preprocessor:
 //
-// Cuik_File* f = NULL;
+// Cuik_FileEntry* f = NULL;
 // while ((f = cuikpp_next_file(f)))
-CUIK_API Cuik_File* cuikpp_next_file(Cuik_CPP* ctx, Cuik_File* f);
+CUIK_API Cuik_FileEntry* cuikpp_next_file(Cuik_CPP* ctx, Cuik_FileEntry* f);
 
 ////////////////////////////////
 // Preprocessor module
@@ -201,12 +201,13 @@ typedef struct Cuik_FileResult {
 } Cuik_FileResult;
 
 // returns true if it found the file, it'll also return the canonical name
-typedef bool (*Cuikpp_LocateFile)(void* user_data, const Cuik_Path* restrict input, Cuik_Path* output);
-typedef bool (*Cuikpp_GetFile)(void* user_data, const Cuik_Path* restrict input, Cuik_FileResult* out_result);
+typedef bool (*Cuikpp_LocateFile)(void* user_data, const Cuik_Path* restrict input, Cuik_Path* output, bool case_insensitive);
+typedef bool (*Cuikpp_GetFile)(void* user_data, const Cuik_Path* restrict input, Cuik_FileResult* out_result, bool case_insensitive);
 
 typedef struct {
     const char* filepath;
     Cuik_Version version;
+    bool case_insensitive;
 
     // some callbacks :P
     void* diag_data;
@@ -236,7 +237,7 @@ CUIK_API void cuiklex_free_tokens(TokenStream* tokens);
 CUIK_API Token* cuikpp_get_tokens(TokenStream* restrict s);
 CUIK_API size_t cuikpp_get_token_count(TokenStream* restrict s);
 
-CUIK_API Cuik_File* cuikpp_get_files(TokenStream* restrict s);
+CUIK_API Cuik_FileEntry* cuikpp_get_files(TokenStream* restrict s);
 CUIK_API size_t cuikpp_get_file_count(TokenStream* restrict s);
 
 ////////////////////////////////
@@ -251,7 +252,7 @@ CUIK_API ResolvedSourceLoc cuikpp_find_location2(TokenStream* tokens, Cuik_FileL
 CUIK_API Cuik_FileLoc cuikpp_find_location_in_bytes(TokenStream* tokens, SourceLoc loc);
 
 // returns NULL on an invalid source location
-CUIK_API Cuik_File* cuikpp_find_file(TokenStream* tokens, SourceLoc loc);
+CUIK_API Cuik_FileEntry* cuikpp_find_file(TokenStream* tokens, SourceLoc loc);
 
 // returns NULL for non-macros
 CUIK_API MacroInvoke* cuikpp_find_macro(TokenStream* tokens, SourceLoc loc);
@@ -272,14 +273,8 @@ static bool cuiklex_is_macro_loc(SourceLoc loc) {
 // simplifies whitespace for the lexer
 CUIK_API void cuiklex_canonicalize(size_t length, char* data);
 
-// Used by cuikpp_default_packet_handler, it canonicalizes paths according to the OS
-// NOTE: it doesn't guarentee the paths map to existing files.
-//
-// returns true on success
-CUIK_API bool cuik_canonicalize_path(Cuik_Path* restrict output, const char* input);
-
-bool cuikpp_locate_file(void* user_data, const Cuik_Path* restrict input, Cuik_Path* output);
-CUIK_API bool cuikpp_default_fs(void* user_data, const Cuik_Path* restrict input, Cuik_FileResult* out_result);
+CUIK_API bool cuikpp_locate_file(void* user_data, const Cuik_Path* restrict input, Cuik_Path* output, bool case_insensitive);
+CUIK_API bool cuikpp_default_fs(void* user_data, const Cuik_Path* restrict input, Cuik_FileResult* out_result, bool case_insensitive);
 
 // Returns entire preprocessor on input state
 CUIK_API Cuikpp_Status cuikpp_run(Cuik_CPP* restrict ctx);

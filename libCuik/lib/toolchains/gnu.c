@@ -1,5 +1,8 @@
 #include <cuik.h>
 #include <common.h>
+#include <log.h>
+
+static int dummy;
 
 static void add_libraries(void* ctx, const Cuik_DriverArgs* args, Cuik_Linker* l) {
 }
@@ -48,9 +51,13 @@ static bool invoke_link(void* ctx, const Cuik_DriverArgs* args, Cuik_Linker* lin
     return false;
 }
 
+static void* init(void) {
+    return NULL;
+}
+
 Cuik_Toolchain cuik_toolchain_gnu(void) {
     return (Cuik_Toolchain){
-        // .ctx = result,
+        .init = init,
         .set_preprocessor = set_preprocessor,
         .add_libraries = add_libraries,
         .invoke_link = invoke_link

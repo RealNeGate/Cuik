@@ -8,6 +8,7 @@
 //
 #include <cuik.h>
 #include <common.h>
+#include <log.h>
 
 // OS Char specific goods
 #if _WIN32
@@ -534,11 +535,11 @@ static void print_verbose(void* ctx, const Cuik_DriverArgs* args) {
 static void set_preprocessor(void* ctx, const Cuik_DriverArgs* args, Cuik_CPP* cpp) {
     Cuik_WindowsToolchain* t = ctx;
 
-    cuikpp_add_include_directoryf(cpp, true, STR_FMT SLASH"um"SLASH,       t->windows_sdk_include);
-    cuikpp_add_include_directoryf(cpp, true, STR_FMT SLASH"shared"SLASH,   t->windows_sdk_include);
-    cuikpp_add_include_directoryf(cpp, true, STR_FMT,                      t->vs_include_path);
+    cuikpp_add_include_directoryf(cpp, true, STR_FMT SLASH"um",     t->windows_sdk_include);
+    cuikpp_add_include_directoryf(cpp, true, STR_FMT SLASH"shared", t->windows_sdk_include);
+    cuikpp_add_include_directoryf(cpp, true, STR_FMT,               t->vs_include_path);
     if (!args->nocrt) {
-        cuikpp_add_include_directoryf(cpp, true, STR_FMT SLASH"ucrt"SLASH, t->windows_sdk_include);
+        cuikpp_add_include_directoryf(cpp, true, STR_FMT SLASH"ucrt", t->windows_sdk_include);
     }
 
     cuikpp_define_empty_cstr(cpp, "_MT");
@@ -640,7 +641,7 @@ static const OSChar* step_out_dir(const OSChar* path, int steps) {
     return (slashes_hit == steps) ? end : NULL;
 }
 
-Cuik_Toolchain cuik_toolchain_msvc(void) {
+static void* init(void) {
     Cuik_WindowsToolchain* result = cuik_malloc(sizeof(Cuik_WindowsToolchain));
     result->vc_tools_install[0] = 0;
 
@@ -661,15 +662,15 @@ Cuik_Toolchain cuik_toolchain_msvc(void) {
                 "  you can provide WindowsSDKDir, WindowsSDKVersion and\n"
                 "  VCToolsInstallDir via the environment.\n"
             );
-            return (Cuik_Toolchain){ 0 };
+            return NULL;
         }
     }
 
     const OSChar* vc_tools_install = env_get("VCToolsInstallDir");
     if (vc_tools_install != NULL) {
         str_copy(result->vc_tools_install, vc_tools_install, FILENAME_MAX);
-        str_printf(result->vs_include_path, FILENAME_MAX, "%sinclude"SLASH, vc_tools_install);
-        str_printf(result->vs_library_path, FILENAME_MAX, "%slib"SLASH"x64"SLASH, vc_tools_install);
+        str_printf(result->vs_include_path, FILENAME_MAX, "%s"SLASH"include"SLASH, vc_tools_install);
+        str_printf(result->vs_library_path, FILENAME_MAX, "%s"SLASH"lib"SLASH"x64"SLASH, vc_tools_install);
         str_printf(result->vs_exe_path, FILENAME_MAX, "%sVC"SLASH"bin"SLASH"amd64"SLASH, vc_tools_install);
     } else {
         if (!find_visual_studio_by_fighting_through_microsoft_craziness(result)) {
@@ -678,12 +679,17 @@ Cuik_Toolchain cuik_toolchain_msvc(void) {
                 "  you can provide SDK_INCLUDE, SDK_LIBS and\n"
                 "  VCToolsInstallDir via the environment.\n"
             );
-            return (Cuik_Toolchain){ 0 };
+            return NULL;
         }
     }
 
+    return result;
+}
+
+Cuik_Toolchain cuik_toolchain_msvc(void) {
     return (Cuik_Toolchain){
-        .ctx = result,
+        .init = init,
+        .case_insensitive = true,
         .set_preprocessor = set_preprocessor,
         .add_libraries = add_libraries,
         .invoke_link = invoke_link,

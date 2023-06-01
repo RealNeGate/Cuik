@@ -152,6 +152,32 @@ CUIK_API bool cuik_args_to_driver(Cuik_DriverArgs* comp_args, Cuik_Arguments* re
         return false;
     }
 
+    Cuik_Arg* target = args->_[ARG_TARGET];
+    if (target) {
+        bool success = false;
+        for (size_t i = 0; i < TARGET_OPTION_COUNT; i++) {
+            if (strcmp(target->value, target_options[i].key) == 0) {
+                TargetOption* o = &target_options[i];
+                comp_args->target = o->target(o->system, o->env);
+                comp_args->toolchain = o->toolchain();
+                success = true;
+                break;
+            }
+        }
+
+        if (!success) {
+            fprintf(stderr, "unknown target: %s\n", target->value);
+            fprintf(stderr, "Supported targets:\n");
+            for (size_t i = 0; i < TARGET_OPTION_COUNT; i++) {
+                fprintf(stderr, "    %s\n", target_options[i].key);
+            }
+            fprintf(stderr, "\n");
+        }
+    }
+
+    // initialize toolchain
+    comp_args->toolchain.ctx = comp_args->toolchain.init();
+
     if (args->_[ARG_OUTPUT]) {
         comp_args->output_name = cuik_strdup(args->_[ARG_OUTPUT]->value);
     }
@@ -167,7 +193,7 @@ CUIK_API bool cuik_args_to_driver(Cuik_DriverArgs* comp_args, Cuik_Arguments* re
     FOR_ARGS(a, ARG_INCLUDE) {
         // resolve a fullpath
         Cuik_Path* newstr = cuik_malloc(sizeof(Cuik_Path));
-        if (cuik_canonicalize_path(newstr, a->value)) {
+        if (cuikfs_canonicalize(newstr, a->value, comp_args->toolchain.case_insensitive)) {
             size_t end = newstr->length;
             if (newstr->data[end - 1] != '\\' && newstr->data[end - 1] != '/') {
                 assert(end+2 < FILENAME_MAX);
@@ -226,29 +252,6 @@ CUIK_API bool cuik_args_to_driver(Cuik_DriverArgs* comp_args, Cuik_Arguments* re
     Cuik_Arg* entry = args->_[ARG_ENTRY];
     if (entry) {
         comp_args->entrypoint = entry->value;
-    }
-
-    Cuik_Arg* target = args->_[ARG_TARGET];
-    if (target) {
-        bool success = false;
-        for (size_t i = 0; i < TARGET_OPTION_COUNT; i++) {
-            if (strcmp(target->value, target_options[i].key) == 0) {
-                TargetOption* o = &target_options[i];
-                comp_args->target = o->target(o->system, o->env);
-                comp_args->toolchain = o->toolchain();
-                success = true;
-                break;
-            }
-        }
-
-        if (!success) {
-            fprintf(stderr, "unknown target: %s\n", target->value);
-            fprintf(stderr, "Supported targets:\n");
-            for (size_t i = 0; i < TARGET_OPTION_COUNT; i++) {
-                fprintf(stderr, "    %s\n", target_options[i].key);
-            }
-            fprintf(stderr, "\n");
-        }
     }
 
     Cuik_Arg* threads = args->_[ARG_THREADS];

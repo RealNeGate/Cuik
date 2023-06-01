@@ -134,9 +134,8 @@ static void print_line(TokenStream* tokens, ResolvedSourceLoc start, size_t tkn_
     // underline
     size_t start_pos = start.column > dist_from_line_start ? start.column - dist_from_line_start : 0;
     sprintfcb(tokens->diag, "        ");
-    sprintfcb(tokens->diag, "\x1b[32m");
-
     for (size_t i = 0; i < start_pos; i++) sprintfcb(tokens->diag, " ");
+    sprintfcb(tokens->diag, "\x1b[32m");
     sprintfcb(tokens->diag, "^");
     for (size_t i = 1; i < tkn_len; i++) sprintfcb(tokens->diag, "~");
 
@@ -184,7 +183,7 @@ static void print_line_with_backtrace(TokenStream* tokens, SourceLoc loc, Source
     }
 
     if (m != NULL) {
-        Cuik_File* next_file = cuikpp_find_file(tokens, m->call_site);
+        Cuik_FileEntry* next_file = cuikpp_find_file(tokens, m->call_site);
         print_line_with_backtrace(tokens, m->call_site, offset_source_loc(m->call_site, m->name.length));
         if (next_file->filename != l.file->filename) {
             sprintfcb(tokens->diag, "  expanded from %s:\n", l.file->filename);

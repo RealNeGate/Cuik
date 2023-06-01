@@ -6,8 +6,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-// #include "stb_leakcheck.h"
-
 // Cuik currently uses mimalloc so we wrap those calls here
 #ifdef CUIK_USE_MIMALLOC
 #include <mimalloc.h>
@@ -68,15 +66,15 @@ do {                  \
     b = temp;         \
 } while (0)
 
-void tls_init(void);
-void tls_reset(void);
+void  tls_init(void);
+void  tls_reset(void);
 void* tls_push(size_t size);
 void* tls_pop(size_t size);
 void* tls_save(void);
-void tls_restore(void* p);
+void  tls_restore(void* p);
 
 void* cuik__valloc(size_t sz);
-void cuik__vfree(void* p, size_t sz);
+void  cuik__vfree(void* p, size_t sz);
 
 static bool memeq(const void* a, size_t al, const void* b, size_t bl) {
     return al == bl && memcmp(a, b, al) == 0;

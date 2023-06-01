@@ -115,6 +115,7 @@ CUIK_API TB_Module* cuik_compilation_unit_tb_module(CompilationUnit* restrict cu
 #include "cuik_parse.h"
 #include "cuik_link.h"
 #include "cuik_driver.h"
+#include "cuik_fs.h"
 
 #ifdef CUIK_USE_TB
 #include "cuik_irgen.h"

@@ -8,13 +8,13 @@
 struct Cuik_Toolchain {
     // we expect this to be heap allocated because cuik_toolchain_free
     void* ctx;
+    bool case_insensitive;
 
-    void(*add_libraries)(void* ctx, const Cuik_DriverArgs* args, Cuik_Linker* linker);
-    void(*set_preprocessor)(void* ctx, const Cuik_DriverArgs* args, Cuik_CPP* cpp);
-
-    bool(*invoke_link)(void* ctx, const Cuik_DriverArgs* args, Cuik_Linker* linker, const char* output, const char* filename);
-
-    void(*print_verbose)(void* ctx, const Cuik_DriverArgs* args);
+    void* (*init)(void);
+    void  (*add_libraries)(void* ctx, const Cuik_DriverArgs* args, Cuik_Linker* linker);
+    void  (*set_preprocessor)(void* ctx, const Cuik_DriverArgs* args, Cuik_CPP* cpp);
+    bool  (*invoke_link)(void* ctx, const Cuik_DriverArgs* args, Cuik_Linker* linker, const char* output, const char* filename);
+    void  (*print_verbose)(void* ctx, const Cuik_DriverArgs* args);
 };
 
 struct Cuik_DriverArgs {

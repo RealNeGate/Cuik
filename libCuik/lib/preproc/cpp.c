@@ -150,23 +150,27 @@ static LocateResult locate_file(Cuik_CPP* ctx, bool search_lib_first, const Cuik
     size_t og_path_len = strlen(og_path);
 
     Cuik_Path tmp;
-    if (!search_lib_first &&
-        cuik_path_append(&tmp, dir, og_path_len, og_path) &&
-        ctx->locate(ctx->user_data, &tmp, canonical)) {
-        return LOCATE_FOUND;
-    }
-
-    dyn_array_for(i, ctx->system_include_dirs) {
-        if (cuik_path_append(&tmp, ctx->system_include_dirs[i].path, og_path_len, og_path) &&
-            ctx->locate(ctx->user_data, &tmp, canonical)) {
-            return LOCATE_FOUND | (ctx->system_include_dirs[i].is_system << 1);
+    if (!search_lib_first && cuik_path_append(&tmp, dir, og_path_len, og_path)) {
+        ctx->total_fstats++;
+        if (ctx->locate(ctx->user_data, &tmp, canonical, ctx->case_insensitive)) {
+            return LOCATE_FOUND;
         }
     }
 
-    if (search_lib_first &&
-        cuik_path_append(&tmp, dir, og_path_len, og_path) &&
-        ctx->locate(ctx->user_data, &tmp, canonical)) {
-        return LOCATE_FOUND;
+    dyn_array_for(i, ctx->system_include_dirs) {
+        if (cuik_path_append(&tmp, ctx->system_include_dirs[i].path, og_path_len, og_path)) {
+            ctx->total_fstats++;
+            if (ctx->locate(ctx->user_data, &tmp, canonical, ctx->case_insensitive)) {
+                return LOCATE_FOUND | (ctx->system_include_dirs[i].is_system << 1);
+            }
+        }
+    }
+
+    if (search_lib_first && cuik_path_append(&tmp, dir, og_path_len, og_path)) {
+        ctx->total_fstats++;
+        if (ctx->locate(ctx->user_data, &tmp, canonical, ctx->case_insensitive)) {
+            return LOCATE_FOUND;
+        }
     }
 
     return false;
@@ -199,7 +203,7 @@ bool cuikpp_is_in_main_file(TokenStream* tokens, SourceLoc loc) {
         return false;
     }
 
-    Cuik_File* f = &tokens->files[loc.raw >> SourceLoc_FilePosBits];
+    Cuik_FileEntry* f = &tokens->files[loc.raw >> SourceLoc_FilePosBits];
     return f->filename == tokens->filepath;
 }
 
@@ -212,6 +216,7 @@ Cuik_CPP* cuikpp_make(const Cuik_CPPDesc* desc) {
         .locate    = desc->locate,
         .fs        = desc->fs,
         .user_data = desc->fs_data,
+        .case_insensitive = desc->case_insensitive,
 
         .stack = cuik__pool_alloc(CUIK_POOL_CPP_STACK, MAX_CPP_STACK_DEPTH * sizeof(CPPStackSlot)),
         .macros = {
@@ -229,16 +234,14 @@ Cuik_CPP* cuikpp_make(const Cuik_CPPDesc* desc) {
     ctx->tokens.filepath = filepath;
     ctx->tokens.list.tokens = dyn_array_create(Token, 4096);
     ctx->tokens.invokes = dyn_array_create(MacroInvoke, 4096);
-    ctx->tokens.files = dyn_array_create(Cuik_File, 256);
+    ctx->tokens.files = dyn_array_create(Cuik_FileEntry, 256);
 
     // MacroID 0 is a null invocation
     dyn_array_put(ctx->tokens.invokes, (MacroInvoke){ 0 });
 
     // FileID 0 is the builtin macro file or the NULL file depending on who you ask
-    dyn_array_put(ctx->tokens.files, (Cuik_File){ .filename = "<builtin>", .content_length = (1u << SourceLoc_FilePosBits) - 1u });
+    dyn_array_put(ctx->tokens.files, (Cuik_FileEntry){ .filename = "<builtin>", .content_length = (1u << SourceLoc_FilePosBits) - 1u });
     tls_init();
-
-    ctx->state1 = CUIK__CPP_FIRST_FILE;
 
     {
         ctx->stack_ptr = 1;
@@ -252,7 +255,7 @@ Cuik_CPP* cuikpp_make(const Cuik_CPPDesc* desc) {
     return ctx;
 }
 
-Cuik_File* cuikpp_get_files(TokenStream* restrict s) {
+Cuik_FileEntry* cuikpp_get_files(TokenStream* restrict s) {
     return &s->files[1];
 }
 
@@ -326,7 +329,7 @@ void cuikpp_free(Cuik_CPP* ctx) {
 }
 
 // we can infer the column and line from doing a binary search on the TokenStream's line map
-static ResolvedSourceLoc find_location(Cuik_File* file, uint32_t file_pos) {
+static ResolvedSourceLoc find_location(Cuik_FileEntry* file, uint32_t file_pos) {
     if (file->line_map == NULL) {
         return (ResolvedSourceLoc){
             .file = file,
@@ -371,7 +374,7 @@ MacroInvoke* cuikpp_find_macro(TokenStream* tokens, SourceLoc loc) {
     return &tokens->invokes[macro_id];
 }
 
-Cuik_File* cuikpp_find_file(TokenStream* tokens, SourceLoc loc) {
+Cuik_FileEntry* cuikpp_find_file(TokenStream* tokens, SourceLoc loc) {
     while (loc.raw & SourceLoc_IsMacro) {
         uint32_t macro_id = (loc.raw >> SourceLoc_MacroOffsetBits) & ((1u << SourceLoc_MacroIDBits) - 1);
         loc = tokens->invokes[macro_id].call_site;
@@ -383,14 +386,14 @@ Cuik_File* cuikpp_find_file(TokenStream* tokens, SourceLoc loc) {
 Cuik_FileLoc cuikpp_find_location_in_bytes(TokenStream* tokens, SourceLoc loc) {
     assert((loc.raw & SourceLoc_IsMacro) == 0);
     assert((loc.raw >> SourceLoc_FilePosBits) < dyn_array_length(tokens->files));
-    Cuik_File* f = &tokens->files[loc.raw >> SourceLoc_FilePosBits];
+    Cuik_FileEntry* f = &tokens->files[loc.raw >> SourceLoc_FilePosBits];
     uint32_t pos = loc.raw & ((1u << SourceLoc_FilePosBits) - 1);
 
     return (Cuik_FileLoc){ f, pos };
 
     /*if ((loc.raw & SourceLoc_IsMacro) == 0) {
         assert((loc.raw >> SourceLoc_FilePosBits) < dyn_array_length(tokens->files));
-        Cuik_File* f = &tokens->files[loc.raw >> SourceLoc_FilePosBits];
+        Cuik_FileEntry* f = &tokens->files[loc.raw >> SourceLoc_FilePosBits];
         uint32_t pos = loc.raw & ((1u << SourceLoc_FilePosBits) - 1);
 
         return (Cuik_FileLoc){ f, pos };
@@ -462,7 +465,7 @@ static void compute_line_map(TokenStream* s, bool is_system, int depth, SourceLo
         size_t chunk_end = i + single_file_limit;
         if (chunk_end > length) chunk_end = length;
 
-        dyn_array_put(s->files, (Cuik_File){ filename, is_system, depth, include_site, i, chunk_end - i, &data[i], line_map });
+        dyn_array_put(s->files, (Cuik_FileEntry){ filename, is_system, depth, include_site, i, chunk_end - i, &data[i], line_map });
         i += single_file_limit;
     } while (i < length);
 }
@@ -487,7 +490,7 @@ Cuikpp_Status cuikpp_run(Cuik_CPP* restrict ctx) {
     #endif
 
     Cuik_FileResult main_file;
-    if (!ctx->fs(ctx->user_data, slot->filepath, &main_file)) {
+    if (!ctx->fs(ctx->user_data, slot->filepath, &main_file, ctx->case_insensitive)) {
         fprintf(stderr, "\x1b[31merror\x1b[0m: file \"%s\" doesn't exist.\n", slot->filepath->data);
         return CUIKPP_ERROR;
     }

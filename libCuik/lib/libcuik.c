@@ -10,6 +10,7 @@
 #include <file_map.h>
 
 // Zip library
+#include "fs.c"
 #include "zip/zip.c"
 
 // Preprocessor & Lexer

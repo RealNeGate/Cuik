@@ -3,7 +3,7 @@
 #include <hash_map.h>
 
 #define THE_SHTUFFS_SIZE (32 << 20)
-#define CUIK__CPP_STATS 0
+#define CUIK__CPP_STATS 1
 
 #define MACRO_DEF_TOMBSTONE SIZE_MAX
 
@@ -23,6 +23,7 @@ typedef struct {
 
 struct Cuik_CPP {
     Cuik_Version version;
+    bool case_insensitive;
 
     // file system stuff
     Cuikpp_LocateFile locate;
@@ -37,18 +38,6 @@ struct Cuik_CPP {
 
     // powers __COUNTER__
     int unique_counter;
-
-    // we got a little state machine design
-    // to emulate some bootleg coroutines :P
-    enum {
-        CUIK__CPP_NONE,
-        CUIK__CPP_FIRST_FILE,
-        CUIK__CPP_LIB_INCLUDE, // <foo.h>
-        CUIK__CPP_USR_INCLUDE, // "bar.h"
-        CUIK__CPP_CANONICALIZE,
-        CUIK__CPP_GET_FILE,
-    } state1;
-    int state2;
 
     // preprocessor stack
     int stack_ptr;
