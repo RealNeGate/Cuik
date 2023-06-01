@@ -627,7 +627,7 @@ static bool invoke_link(void* ctx, const Cuik_DriverArgs* args, Cuik_Linker* lin
 // slash, if it can't reach then it'll return NULL
 static const OSChar* step_out_dir(const OSChar* path, int steps) {
     int slashes_hit = 0;
-    const wchar_t* end = path;
+    const OSChar* end = path;
     while (*end) end++;
 
     while (slashes_hit != steps && end-- != path) {
@@ -650,8 +650,8 @@ Cuik_Toolchain cuik_toolchain_msvc(void) {
     if (sdk_dir != NULL && version != NULL) {
         result->windows_sdk_version = 10;
 
-        swprintf_s(result->windows_sdk_include, MAX_PATH, L"%s\\Include\\%s", sdk_dir, version);
-        swprintf_s(result->windows_sdk_root,    MAX_PATH, L"%s\\Lib\\%s", sdk_dir, version);
+        str_printf(result->windows_sdk_include, FILENAME_MAX, "%s\\Include\\%s", sdk_dir, version);
+        str_printf(result->windows_sdk_root,    FILENAME_MAX, "%s\\Lib\\%s", sdk_dir, version);
     } else {
         if (!find_windows_kit_root(result)) {
             fprintf(stderr,
