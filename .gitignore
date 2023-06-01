@@ -63,6 +63,7 @@ inspector/SDL2/
 *.json
 *.flint
 *.ttf
+cuik
 
 tests/the_fuzzer/
 tests/stb_image.c
