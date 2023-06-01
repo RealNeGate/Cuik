@@ -22,6 +22,7 @@ X(DEBUG,       "g",        false, "compile with debug information")
 // linker
 X(NOLIBC,      "nostdlib", false, "don't include and link against the default CRT")
 X(LIB,         "l",        true,  "add library name to the linking")
+X(LIBDIR,      "L",        true,  "add library directory to search paths")
 X(BASED,       "based",    false, "use the TB linker (EXPERIMENTAL)")
 X(SUBSYSTEM,   "subsystem",true,  "set windows subsystem (windows only... of course)")
 X(ENTRY,       "e",        true,  "set entrypoint")

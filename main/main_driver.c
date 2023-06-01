@@ -59,13 +59,21 @@ int main(int argc, const char** argv) {
 
     Cuik_DriverArgs args = {
         .version   = CUIK_VERSION_C23,
-        .target    = cuik_target_host(),
-        .toolchain = cuik_toolchain_host(),
         .flavor    = TB_FLAVOR_EXECUTABLE,
     };
 
     if (!cuik_parse_driver_args(&args, argc - 1, argv + 1)) {
         return EXIT_SUCCESS;
+    }
+
+    // default to host target
+    if (args.target == NULL) {
+        args.target = cuik_target_host();
+    }
+
+    // default to host toolchain (if none applied)
+    if (args.toolchain.ctx == NULL) {
+        args.toolchain = cuik_toolchain_host();
     }
 
     if (dyn_array_length(args.sources) == 0) {

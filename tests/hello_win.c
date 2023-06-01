@@ -1,4 +1,4 @@
-#pragma comment(lib, "user32.lib")
+#pragma comment(lib, "User32.Lib")
 
 __declspec(dllimport) extern int MessageBoxA(
     void*        hWnd,

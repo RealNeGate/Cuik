@@ -31,12 +31,13 @@ typedef struct TargetOption {
     Cuik_Target* (*target)(Cuik_System, Cuik_Environment);
     Cuik_System system;
     Cuik_Environment env;
+    Cuik_Toolchain (*toolchain)(void);
 } TargetOption;
 
 static TargetOption target_options[] = {
-    { "x64_windows_msvc",         cuik_target_x64,       CUIK_SYSTEM_WINDOWS,     CUIK_ENV_MSVC },
-    { "x64_macos_gnu",            cuik_target_x64,       CUIK_SYSTEM_MACOS,       CUIK_ENV_GNU  },
-    { "x64_linux_gnu",            cuik_target_x64,       CUIK_SYSTEM_LINUX,       CUIK_ENV_GNU  },
+    { "x64_windows_msvc",         cuik_target_x64,       CUIK_SYSTEM_WINDOWS,     CUIK_ENV_MSVC, cuik_toolchain_msvc   },
+    { "x64_macos_gnu",            cuik_target_x64,       CUIK_SYSTEM_MACOS,       CUIK_ENV_GNU,  cuik_toolchain_darwin },
+    { "x64_linux_gnu",            cuik_target_x64,       CUIK_SYSTEM_LINUX,       CUIK_ENV_GNU,  cuik_toolchain_gnu    },
 };
 enum { TARGET_OPTION_COUNT = sizeof(target_options) / sizeof(target_options[0]) };
 
@@ -180,6 +181,12 @@ CUIK_API bool cuik_args_to_driver(Cuik_DriverArgs* comp_args, Cuik_Arguments* re
         }
     }
 
+    FOR_ARGS(a, ARG_LIBDIR) {
+        Cuik_Path* p = cuik_malloc(sizeof(Cuik_Path));
+        cuik_path_set(p, a->value);
+        dyn_array_put(comp_args->libpaths, p);
+    }
+
     FOR_ARGS(a, ARG_LIB) {
         char* newstr = cuik_strdup(a->value);
 
@@ -228,6 +235,7 @@ CUIK_API bool cuik_args_to_driver(Cuik_DriverArgs* comp_args, Cuik_Arguments* re
             if (strcmp(target->value, target_options[i].key) == 0) {
                 TargetOption* o = &target_options[i];
                 comp_args->target = o->target(o->system, o->env);
+                comp_args->toolchain = o->toolchain();
                 success = true;
                 break;
             }

@@ -115,6 +115,10 @@ static Cuik_Linker gimme_linker(Cuik_DriverArgs* restrict args) {
     // Add system libpaths
     cuiklink_apply_toolchain_libs(&l, args);
 
+    dyn_array_for(i, args->libpaths) {
+        cuiklink_add_libpath(&l, args->libpaths[i]->data);
+    }
+
     // Add input libraries
     dyn_array_for(i, args->libraries) {
         cuiklink_add_input_file(&l, args->libraries[i]->data);
@@ -191,6 +195,8 @@ static void cc_invoke(BuildStepInfo* restrict info) {
             goto done;
         }
     }
+
+    log_debug("BuildStep %p: parsed file", s);
 
     CompilationUnit* cu = (s->anti_dep != NULL && s->anti_dep->tag == BUILD_STEP_LD) ? s->anti_dep->ld.cu : NULL;
     TranslationUnit* tu = result.tu;
@@ -819,6 +825,8 @@ Cuik_Toolchain cuik_toolchain_host(void) {
     return cuik_toolchain_msvc();
     #elif __APPLE__
     return cuik_toolchain_darwin();
+    #elif __linux__
+    return cuik_toolchain_gnu();
     #else
     return (Cuik_Toolchain){ 0 };
     #endif

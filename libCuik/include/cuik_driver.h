@@ -34,6 +34,7 @@ struct Cuik_DriverArgs {
     DynArray(Cuik_Path*) sources;
     DynArray(Cuik_Path*) includes;
     DynArray(Cuik_Path*) libraries;
+    DynArray(Cuik_Path*) libpaths;
     DynArray(char*) defines;
 
     TB_WindowsSubsystem subsystem;
@@ -95,11 +96,9 @@ CUIK_API Cuik_CPP* cuik_driver_preprocess_cstr(const char* source, const Cuik_Dr
 CUIK_API void cuik_apply_tb_toolchain_libs(TB_Linker* l);
 #endif
 
-#ifdef _WIN32
 CUIK_API Cuik_Toolchain cuik_toolchain_msvc(void);
-#elif __APPLE__
 CUIK_API Cuik_Toolchain cuik_toolchain_darwin(void);
-#endif
+CUIK_API Cuik_Toolchain cuik_toolchain_gnu(void);
 
 CUIK_API Cuik_Toolchain cuik_toolchain_host(void);
 CUIK_API void cuik_toolchain_free(Cuik_Toolchain* toolchain);
