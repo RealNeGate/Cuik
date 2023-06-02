@@ -139,7 +139,7 @@ bool cuikfs_get_length(Cuik_File* file, size_t* out_length) {
         return false;
     }
 
-    *out_length = file_size;
+    *out_length = file_size.QuadPart;
     return true;
     #else
     struct stat file_stats;
