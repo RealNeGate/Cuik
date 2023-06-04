@@ -38,8 +38,8 @@ TB_Exports tb_elf64obj_write_output(TB_Module* m, const IDebugFormat* dbg) {
 
     uint16_t machine = 0;
     switch (m->target_arch) {
-        case TB_ARCH_X86_64: machine = EM_X86_64; break;
-        case TB_ARCH_AARCH64: machine = EM_AARCH64; break;
+        case TB_ARCH_X86_64: machine = TB_EM_X86_64; break;
+        case TB_ARCH_AARCH64: machine = TB_EM_AARCH64; break;
         default: tb_todo();
     }
 
@@ -49,17 +49,17 @@ TB_Exports tb_elf64obj_write_output(TB_Module* m, const IDebugFormat* dbg) {
 
     TB_Elf64_Ehdr header = {
         .ident = {
-            [EI_MAG0]       = 0x7F, // magic number
-            [EI_MAG1]       = 'E',
-            [EI_MAG2]       = 'L',
-            [EI_MAG3]       = 'F',
-            [EI_CLASS]      = 2, // 64bit ELF file
-            [EI_DATA]       = 1, // little-endian
-            [EI_VERSION]    = 1, // 1.0
-            [EI_OSABI]      = 0,
-            [EI_ABIVERSION] = 0
+            [TB_EI_MAG0]       = 0x7F, // magic number
+            [TB_EI_MAG1]       = 'E',
+            [TB_EI_MAG2]       = 'L',
+            [TB_EI_MAG3]       = 'F',
+            [TB_EI_CLASS]      = 2, // 64bit ELF file
+            [TB_EI_DATA]       = 1, // little-endian
+            [TB_EI_VERSION]    = 1, // 1.0
+            [TB_EI_OSABI]      = 0,
+            [TB_EI_ABIVERSION] = 0
         },
-        .type = ET_REL, // relocatable
+        .type = TB_ET_REL, // relocatable
         .version = 1,
         .machine = machine,
         .entry = 0,
@@ -105,7 +105,7 @@ TB_Exports tb_elf64obj_write_output(TB_Module* m, const IDebugFormat* dbg) {
 
     TB_Elf64_Shdr strtab = {
         .name = tb_outstr_nul_UNSAFE(&strtbl, ".strtab"),
-        .type = SHT_STRTAB,
+        .type = TB_SHT_STRTAB,
         .flags = 0,
         .addralign = 1,
         .size = strtbl.count,
@@ -149,8 +149,8 @@ TB_Exports tb_elf64obj_write_output(TB_Module* m, const IDebugFormat* dbg) {
     dyn_array_for(i, sections) {
         TB_Elf64_Shdr sec = {
             .name = sections[i]->name_pos,
-            .type = SHT_PROGBITS,
-            .flags = SHF_ALLOC | ((sections[i] == &m->text) ? SHF_EXECINSTR : SHF_WRITE),
+            .type = TB_SHT_PROGBITS,
+            .flags = TB_SHF_ALLOC | ((sections[i] == &m->text) ? TB_SHF_EXECINSTR : TB_SHF_WRITE),
             .addralign = 16,
             .size = sections[i]->total_size,
             .offset = sections[i]->raw_data_pos,
@@ -161,8 +161,8 @@ TB_Exports tb_elf64obj_write_output(TB_Module* m, const IDebugFormat* dbg) {
     dyn_array_for(i, sections) if (sections[i]->reloc_count) {
         TB_Elf64_Shdr sec = {
             .name = sections[i]->name_pos - 5,
-            .type = SHT_RELA,
-            .flags = SHF_INFO_LINK,
+            .type = TB_SHT_RELA,
+            .flags = TB_SHF_INFO_LINK,
             .addralign = 16,
             .info = 1 + i,
             .size = sections[i]->reloc_count * sizeof(TB_Elf64_Rela),
@@ -300,48 +300,48 @@ TB_API TB_Exports tb_elf64obj_write_output(TB_Module* m, const IDebugFormat* dbg
 
     Elf64_Shdr sections[S_MAX] = {
         [S_STRTAB] = {
-            .sh_type = SHT_STRTAB,
+            .sh_type = TB_SHT_STRTAB,
             .sh_flags = 0,
             .sh_addralign = 1
         },
         [S_TEXT] = {
-            .sh_type = SHT_PROGBITS,
-            .sh_flags = SHF_EXECINSTR | SHF_ALLOC,
+            .sh_type = TB_SHT_PROGBITS,
+            .sh_flags = TB_SHF_EXECINSTR | TB_SHF_ALLOC,
             .sh_addralign = 16
         },
         [S_TEXT_REL] = {
-            .sh_type = SHT_RELA,
-            .sh_flags = SHF_INFO_LINK,
+            .sh_type = TB_SHT_RELA,
+            .sh_flags = TB_SHF_INFO_LINK,
             .sh_link = 7,
             .sh_info = S_TEXT,
             .sh_addralign = 16,
             .sh_entsize = sizeof(Elf64_Rela)
         },
         [S_DATA] = {
-            .sh_type = SHT_PROGBITS,
-            .sh_flags = SHF_ALLOC | SHF_WRITE,
+            .sh_type = TB_SHT_PROGBITS,
+            .sh_flags = TB_SHF_ALLOC | TB_SHF_WRITE,
             .sh_addralign = 16
         },
         [S_DATA_REL] = {
-            .sh_type = SHT_RELA,
-            .sh_flags = SHF_INFO_LINK,
+            .sh_type = TB_SHT_RELA,
+            .sh_flags = TB_SHF_INFO_LINK,
             .sh_link = 7,
             .sh_info = S_DATA,
             .sh_addralign = 16,
             .sh_entsize = sizeof(Elf64_Rela)
         },
         [S_RODATA] = {
-            .sh_type = SHT_PROGBITS,
-            .sh_flags = SHF_ALLOC,
+            .sh_type = TB_SHT_PROGBITS,
+            .sh_flags = TB_SHF_ALLOC,
             .sh_addralign = 16
         },
         [S_BSS] = {
-            .sh_type = SHT_NOBITS,
-            .sh_flags = SHF_ALLOC | SHF_WRITE,
+            .sh_type = TB_SHT_NOBITS,
+            .sh_flags = TB_SHF_ALLOC | TB_SHF_WRITE,
             .sh_addralign = 16
         },
         [S_STAB] = {
-            .sh_type = SHT_SYMTAB,
+            .sh_type = TB_SHT_SYMTAB,
             .sh_flags = 0, .sh_addralign = 1,
             .sh_link = 1, .sh_info = first_nonlocal_symbol_id,
             .sh_entsize = sizeof(Elf64_Sym)

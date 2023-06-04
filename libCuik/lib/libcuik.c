@@ -1,4 +1,5 @@
-// Our precious libCuik unity build
+// Our precious libCuik unity build, ideally a lot of the smaller components will
+// become single header libs maybe even the entire thing.
 #include "tls.c"
 #include "str.c"
 #include "timer.c"
@@ -9,15 +10,23 @@
 #include <hash_map.h>
 #include <file_map.h>
 
+#define CUIK_FS_IMPL
+#include <cuik_fs.h>
+
 // Zip library
-#include "fs.c"
 #include "zip/zip.c"
 
 // Preprocessor & Lexer
 #include "preproc/lexer.c"
 #include "preproc/cpp.c"
 
+#define CUIK_AST_IMPL
+#include <cuik_ast.h>
+
 // Parser
+#define CUIK_SYMTAB_IMPL
+#include <cuik_symtab.h>
+
 #include "front/ast_dump.c"
 #include "front/atoms.c"
 #include "front/types.c"

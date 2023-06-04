@@ -15,11 +15,12 @@
 local is_windows = package.config:sub(1,1) == "\\"
 
 local options = {
-	debug  = true,
+	debug  = false,
 	cuik   = false,
 	tb     = false,
 	driver = false,
 	shared = false,
+	test   = false,
 	lld    = false,
 	spall_auto = false
 }
@@ -79,17 +80,19 @@ if is_windows then
 	lib_ext = ".lib"
 else
 	ld = cc
+	cflags = cflags.." -D_GNU_SOURCE"
 	ldflags = ldflags.." -g -lc -lm "
 
-	if options.shared then
+	if options.lld then
 		ldflags = ldflags.." -fuse-ld=lld"
 	end
 
 	if options.shared then
+		cflags = cflags.." -fPIC"
 		ldflags = ldflags.." -shared"
 	end
 
-	ldflags = ldflags.." -o "
+	ldflags = ldflags.." -g -o "
 	exe_ext = ""
 	dll_ext = ".so"
 	lib_ext = ".a"
@@ -219,4 +222,10 @@ end
 
 ninja:close()
 
-os.exit(os.execute("ninja"))
+if os.execute("ninja") ~= 0 then
+	os.exit(1)
+end
+
+if options.test then
+	dofile("tests.lua")
+end

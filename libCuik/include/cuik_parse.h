@@ -19,9 +19,6 @@ typedef enum Cuik_Entrypoint {
     CUIK_ENTRYPOINT_WINMAIN,
 } Cuik_Entrypoint;
 
-// Standard parsing
-typedef struct Cuik_GlobalSymbols Cuik_GlobalSymbols;
-
 // This is generated from
 //    #pragma comment(lib, "somelib.lib")
 typedef struct Cuik_ImportRequest {

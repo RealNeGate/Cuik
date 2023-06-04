@@ -324,7 +324,7 @@ static Expr* parse_primary_expr(Cuik_Parser* parser, TokenStream* restrict s) {
                 break;
             }
 
-            Symbol* sym = find_local_symbol(s);
+            Symbol* sym = find_symbol(parser, s);
             if (sym != NULL) {
                 if (sym->storage_class == STORAGE_PARAM) {
                     *e = (Expr){
@@ -345,7 +345,6 @@ static Expr* parse_primary_expr(Cuik_Parser* parser, TokenStream* restrict s) {
                     };
                 }
             } else {
-                // We'll defer any global identifier resolution
                 Token* t = tokens_get(s);
                 Atom name = atoms_put(t->content.length, t->content.data);
 
@@ -357,29 +356,12 @@ static Expr* parse_primary_expr(Cuik_Parser* parser, TokenStream* restrict s) {
                         .builtin_sym = { name },
                     };
                 } else {
-                    Symbol* symbol_search = find_global_symbol(&parser->globals, (const char*)name);
-                    if (symbol_search != NULL) {
-                        if (symbol_search->storage_class == STORAGE_ENUM) {
-                            *e = (Expr){
-                                .op = EXPR_ENUM,
-                                .type = symbol_search->type,
-                                .enum_val = { &cuik_canonical_type(symbol_search->type)->enumerator.entries[symbol_search->enum_value] },
-                            };
-                        } else {
-                            *e = (Expr){
-                                .op = EXPR_SYMBOL,
-                                .symbol = symbol_search->stmt,
-                            };
-                        }
-                    } else {
-                        diag_unresolved_symbol(parser, name, start_loc);
-                        // diag_err(s, get_token_range(t), "could not resolve symbol: %s", name);
+                    diag_unresolved_symbol(parser, name, start_loc);
 
-                        *e = (Expr){
-                            .op = EXPR_UNKNOWN_SYMBOL,
-                            .unknown_sym = name,
-                        };
-                    }
+                    *e = (Expr){
+                        .op = EXPR_UNKNOWN_SYMBOL,
+                        .unknown_sym = name,
+                    };
                 }
             }
 
@@ -573,7 +555,7 @@ static Expr* parse_postfix(Cuik_Parser* restrict parser, TokenStream* restrict s
         tokens_next(s);
 
         assert(!parser->is_in_global_scope && "cannot resolve is_typename in global scope");
-        if (!is_typename(&parser->globals, s)) {
+        if (!is_typename(parser, s)) {
             s->list.current = fallback;
             goto normal_path;
         }
@@ -606,7 +588,7 @@ static Expr* parse_postfix(Cuik_Parser* restrict parser, TokenStream* restrict s
 
     bool use_constructor = false;
     if (e == NULL) {
-        if (parser->version == CUIK_VERSION_GLSL && is_typename(&parser->globals, s)) {
+        if (parser->version == CUIK_VERSION_GLSL && is_typename(parser, s)) {
             Cuik_Type* type = parse_glsl_type(parser, s);
             SourceLoc end_loc = tokens_get_last_location(s);
 
@@ -853,7 +835,7 @@ static Expr* parse_cast(Cuik_Parser* restrict parser, TokenStream* restrict s, b
         tokens_next(s);
 
         assert(!parser->is_in_global_scope && "cannot resolve is_typename in global scope");
-        if (!is_typename(&parser->globals, s)) {
+        if (!is_typename(parser, s)) {
             // this is not a cast
             s->list.current = fallback;
             goto normal_path;

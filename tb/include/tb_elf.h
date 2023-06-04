@@ -3,102 +3,102 @@
 
 #include <stdint.h>
 
-#define EI_MAG0       0
-#define EI_MAG1       1
-#define EI_MAG2       2
-#define EI_MAG3       3
-#define EI_CLASS      4  /* Class of machine. */
-#define EI_DATA       5  /* Data format. */
-#define EI_VERSION    6  /* ELF format version. */
-#define EI_OSABI      7  /* Operating system / ABI identification */
-#define EI_ABIVERSION 8  /* ABI version */
-#define OLD_EI_BRAND  8  /* Start of architecture identification. */
-#define EI_PAD        9  /* Start of padding (per SVR4 ABI). */
-#define EI_NIDENT     16 /* Size of e_ident array. */
+#define TB_EI_MAG0       0
+#define TB_EI_MAG1       1
+#define TB_EI_MAG2       2
+#define TB_EI_MAG3       3
+#define TB_EI_CLASS      4  /* Class of machine. */
+#define TB_EI_DATA       5  /* Data format. */
+#define TB_EI_VERSION    6  /* ELF format version. */
+#define TB_EI_OSABI      7  /* Operating system / ABI identification */
+#define TB_EI_ABIVERSION 8  /* ABI version */
+#define TB_OLD_EI_BRAND  8  /* Start of architecture identification. */
+#define TB_EI_PAD        9  /* Start of padding (per SVR4 ABI). */
+#define TB_EI_NIDENT     16 /* Size of e_ident array. */
 
 /* Values for e_type. */
-#define ET_NONE   0      /* Unknown type. */
-#define ET_REL    1      /* Relocatable. */
-#define ET_EXEC   2      /* Executable. */
-#define ET_DYN    3      /* Shared object. */
-#define ET_CORE   4      /* Core file. */
-#define ET_LOOS   0xfe00 /* First operating system specific. */
-#define ET_HIOS   0xfeff /* Last operating system-specific. */
-#define ET_LOPROC 0xff00 /* First processor-specific. */
-#define ET_HIPROC 0xffff /* Last processor-specific. */
+#define TB_ET_NONE   0      /* Unknown type. */
+#define TB_ET_REL    1      /* Relocatable. */
+#define TB_ET_EXEC   2      /* Executable. */
+#define TB_ET_DYN    3      /* Shared object. */
+#define TB_ET_CORE   4      /* Core file. */
+#define TB_ET_LOOS   0xfe00 /* First operating system specific. */
+#define TB_ET_HIOS   0xfeff /* Last operating system-specific. */
+#define TB_ET_LOPROC 0xff00 /* First processor-specific. */
+#define TB_ET_HIPROC 0xffff /* Last processor-specific. */
 
 /* Values for e_machine. */
-#define EM_NONE    0   /* Unknown machine. */
-#define EM_X86_64  62  /* Advanced Micro Devices x86-64 */
-#define EM_AARCH64 183 /* AArch64 (64-bit ARM) */
+#define TB_EM_NONE    0   /* Unknown machine. */
+#define TB_EM_X86_64  62  /* Advanced Micro Devices x86-64 */
+#define TB_EM_AARCH64 183 /* AArch64 (64-bit ARM) */
 
 /* sh_type */
-#define SHT_NULL     0 /* inactive */
-#define SHT_PROGBITS 1 /* program defined information */
-#define SHT_SYMTAB   2 /* symbol table section */
-#define SHT_STRTAB   3 /* string table section */
-#define SHT_RELA     4 /* relocation section with addends */
-#define SHT_NOBITS   8 /* no space section */
+#define TB_SHT_NULL     0 /* inactive */
+#define TB_SHT_PROGBITS 1 /* program defined information */
+#define TB_SHT_SYMTAB   2 /* symbol table section */
+#define TB_SHT_STRTAB   3 /* string table section */
+#define TB_SHT_RELA     4 /* relocation section with addends */
+#define TB_SHT_NOBITS   8 /* no space section */
 
 /* Flags for sh_flags. */
-#define SHF_WRITE            0x1        /* Section contains writable data. */
-#define SHF_ALLOC            0x2        /* Section occupies memory. */
-#define SHF_EXECINSTR        0x4        /* Section contains instructions. */
-#define SHF_MERGE            0x10       /* Section may be merged. */
-#define SHF_STRINGS          0x20       /* Section contains strings. */
-#define SHF_INFO_LINK        0x40       /* sh_info holds section index. */
-#define SHF_LINK_ORDER       0x80       /* Special ordering requirements. */
-#define SHF_OS_NONCONFORMING 0x100      /* OS-specific processing required. */
-#define SHF_GROUP            0x200      /* Member of section group. */
-#define SHF_TLS              0x400      /* Section contains TLS data. */
-#define SHF_MASKOS           0x0ff00000 /* OS-specific semantics. */
-#define SHF_MASKPROC         0xf0000000 /* Processor-specific semantics. */
+#define TB_SHF_WRITE            0x1        /* Section contains writable data. */
+#define TB_SHF_ALLOC            0x2        /* Section occupies memory. */
+#define TB_SHF_EXECINSTR        0x4        /* Section contains instructions. */
+#define TB_SHF_MERGE            0x10       /* Section may be merged. */
+#define TB_SHF_STRINGS          0x20       /* Section contains strings. */
+#define TB_SHF_INFO_LINK        0x40       /* sh_info holds section index. */
+#define TB_SHF_LINK_ORDER       0x80       /* Special ordering requirements. */
+#define TB_SHF_OS_NONCONFORMING 0x100      /* OS-specific processing required. */
+#define TB_SHF_GROUP            0x200      /* Member of section group. */
+#define TB_SHF_TLS              0x400      /* Section contains TLS data. */
+#define TB_SHF_MASKOS           0x0ff00000 /* OS-specific semantics. */
+#define TB_SHF_MASKPROC         0xf0000000 /* Processor-specific semantics. */
 
 /* Values for p_flags. */
-#define PF_X		0x1        /* Executable. */
-#define PF_W		0x2        /* Writable. */
-#define PF_R		0x4        /* Readable. */
-#define PF_MASKOS   0x0ff00000 /* Operating system-specific. */
-#define PF_MASKPROC 0xf0000000 /* Processor-specific. */
+#define TB_PF_X		0x1        /* Executable. */
+#define TB_PF_W		0x2        /* Writable. */
+#define TB_PF_R		0x4        /* Readable. */
+#define TB_PF_MASKOS   0x0ff00000 /* Operating system-specific. */
+#define TB_PF_MASKPROC 0xf0000000 /* Processor-specific. */
 
 /* Values for p_type. */
-#define PT_NULL      0	/* Unused entry. */
-#define PT_LOAD      1	/* Loadable segment. */
-#define PT_DYNAMIC   2	/* Dynamic linking information segment. */
-#define PT_INTERP    3	/* Pathname of interpreter. */
-#define PT_NOTE      4	/* Auxiliary information. */
-#define PT_SHLIB     5	/* Reserved (not used). */
-#define PT_PHDR      6	/* Location of program header itself. */
-#define PT_TLS       7	/* Thread local storage segment */
+#define TB_PT_NULL      0	/* Unused entry. */
+#define TB_PT_LOAD      1	/* Loadable segment. */
+#define TB_PT_DYNAMIC   2	/* Dynamic linking information segment. */
+#define TB_PT_INTERP    3	/* Pathname of interpreter. */
+#define TB_PT_NOTE      4	/* Auxiliary information. */
+#define TB_PT_SHLIB     5	/* Reserved (not used). */
+#define TB_PT_PHDR      6	/* Location of program header itself. */
+#define TB_PT_TLS       7	/* Thread local storage segment */
 
 /* Values for relocation */
-#define R_X86_64_NONE     0
-#define R_X86_64_64       1
-#define R_X86_64_PC32     2
-#define R_X86_64_GOT32    3
-#define R_X86_64_PLT32    4
-#define R_X86_64_GOTPCREL 9
+#define TB_R_X86_64_NONE     0
+#define TB_R_X86_64_64       1
+#define TB_R_X86_64_PC32     2
+#define TB_R_X86_64_GOT32    3
+#define TB_R_X86_64_PLT32    4
+#define TB_R_X86_64_GOTPCREL 9
 
 // ST_TYPE
-#define ELF64_STT_NOTYPE  0
-#define ELF64_STT_OBJECT  1
-#define ELF64_STT_FUNC    2
-#define ELF64_STT_SECTION 3
+#define TB_ELF64_STT_NOTYPE  0
+#define TB_ELF64_STT_OBJECT  1
+#define TB_ELF64_STT_FUNC    2
+#define TB_ELF64_STT_SECTION 3
 
 // ST_INFO
-#define ELF64_STB_LOCAL  0
-#define ELF64_STB_GLOBAL 1
-#define ELF64_STB_WEAK   2
+#define TB_ELF64_STB_LOCAL  0
+#define TB_ELF64_STB_GLOBAL 1
+#define TB_ELF64_STB_WEAK   2
 
 /* Macros for accessing the fields of st_info. */
-#define ELF64_ST_BIND(info) ((info) >> 4)
-#define ELF64_ST_TYPE(info) ((info) & 0xf)
+#define TB_ELF64_ST_BIND(info) ((info) >> 4)
+#define TB_ELF64_ST_TYPE(info) ((info) & 0xf)
 
-#define ELF64_ST_INFO(b, t) (((b) << 4) | ((t) & 0xF))
+#define TB_ELF64_ST_INFO(b, t) (((b) << 4) | ((t) & 0xF))
 
-#define ELF64_R_SYM(i)     ((i) >> 32u)
-#define ELF64_R_TYPE(i)    ((i)&0xffffffffULL)
-#define ELF64_R_INFO(s, t) (((uint64_t)(s) << 32ULL) + ((uint64_t)(t) & 0xffffffffULL))
+#define TB_ELF64_R_SYM(i)     ((i) >> 32u)
+#define TB_ELF64_R_TYPE(i)    ((i)&0xffffffffULL)
+#define TB_ELF64_R_INFO(s, t) (((uint64_t)(s) << 32ULL) + ((uint64_t)(t) & 0xffffffffULL))
 
 // http://web.mit.edu/freebsd/head/sys/sys/elf64.h
 // https://cirosantilli.com/elf-hello-world#minimal-elf-file

@@ -178,12 +178,10 @@ static ParseResult parse_decl_glsl(Cuik_Parser* restrict parser, TokenStream* re
                 st_class = STORAGE_GLOBAL;
             }
 
-            Symbol* old_def = find_global_symbol(&parser->globals, decl.name);
             Symbol* sym = NULL;
+            Symbol* old_def = cuik_symtab_lookup(parser->symbols, decl.name);
             if (old_def == NULL) {
-                ptrdiff_t sym_index;
-                nl_map_puti_cstr(parser->globals.symbols, decl.name, sym_index);
-                sym = &parser->globals.symbols[sym_index].v;
+                sym = CUIK_SYMTAB_PUT(parser->symbols, decl.name, Symbol);
                 *sym = (Symbol){
                     .name = decl.name,
                     .type = decl.type,

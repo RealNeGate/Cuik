@@ -174,7 +174,7 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
         if (decl.name != NULL) {
             // Check for duplicates
             assert(!CUIK_QUAL_TYPE_IS_NULL(decl.type));
-            old_def = sym = find_global_symbol(&parser->globals, decl.name);
+            old_def = sym = cuik_symtab_lookup(parser->symbols, decl.name);
             if (old_def == NULL) {
                 if (attr.is_typedef) {
                     Cuik_Type* t = cuik_canonical_type(decl.type);
@@ -189,9 +189,7 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
                     }
                 }
 
-                ptrdiff_t sym_index;
-                nl_map_puti_cstr(parser->globals.symbols, decl.name, sym_index);
-                sym = &parser->globals.symbols[sym_index].v;
+                sym = CUIK_SYMTAB_PUT(parser->symbols, decl.name, Symbol);
                 *sym = (Symbol){
                     .name = decl.name,
                     .type = decl.type,
@@ -378,7 +376,7 @@ static void resolve_pending_exprs(Cuik_Parser* parser) {
 
             int align = 0;
             SourceLoc loc = tokens_get_location(&mini_lex);
-            if (is_typename(&parser->globals, &mini_lex)) {
+            if (is_typename(parser, &mini_lex)) {
                 Cuik_Type* new_align = cuik_canonical_type(parse_typename2(parser, &mini_lex));
                 if (new_align == NULL || new_align->align) {
                     diag_err(&mini_lex, type->loc, "_Alignas cannot operate with incomplete");
@@ -405,23 +403,16 @@ static void resolve_pending_exprs(Cuik_Parser* parser) {
     }
 }
 
-static void check_for_entry(TranslationUnit* restrict tu, Cuik_GlobalSymbols* restrict globals) {
-    Symbol* sym = find_global_symbol(globals, "WinMain");
+static Cuik_Entrypoint check_for_entry(Cuik_Parser* parser) {
+    Symbol* sym = cuik_symtab_lookup(parser->symbols, atoms_putc("WinMain"));
     if (sym != NULL && sym->storage_class == STORAGE_FUNC && sym->token_start != 0) {
-        tu->entrypoint_status = CUIK_ENTRYPOINT_WINMAIN;
+        return CUIK_ENTRYPOINT_WINMAIN;
     }
 
-    sym = find_global_symbol(globals, "wmain");
-    if (sym != NULL && sym->storage_class == STORAGE_FUNC && sym->token_start != 0) {
-        tu->entrypoint_status = CUIK_ENTRYPOINT_MAIN;
-    }
-
-    sym = find_global_symbol(globals, "main");
-    if (sym != NULL && sym->storage_class == STORAGE_FUNC && sym->token_start != 0) {
-        tu->entrypoint_status = CUIK_ENTRYPOINT_MAIN;
-    }
+    return CUIK_ENTRYPOINT_MAIN;
 }
 
+static _Thread_local TokenStream* error_tokens;
 Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cuik_Target* target, Arena* restrict arena, bool only_code_index) {
     assert(s != NULL);
 
@@ -445,6 +436,11 @@ Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cu
     parser.top_level_stmts = dyn_array_create(Stmt*, 1024);
     parser.tokens.diag->parser = &parser;
 
+    parser.symbols = cuik_symtab_create(NULL);
+    parser.tags = cuik_symtab_create(&(Cuik_Type*){ NULL });
+
+    error_tokens = &parser.tokens;
+
     if (parser.version == CUIK_VERSION_GLSL) {
         #define X(name) parser.glsl.name = atoms_putc(#name);
         #include "glsl_keywords.h"
@@ -457,6 +453,7 @@ Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cu
     }
 
     // Phase 1: resolve all top level statements
+    log_debug("%p: parse phase 1", &parser);
     CUIK_TIMED_BLOCK("phase 1") {
         while (!tokens_eof(s)) {
             // skip any top level "null" statements
@@ -493,16 +490,17 @@ Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cu
         .tokens = *s,
         .top_level_stmts = parser.top_level_stmts,
         .types = parser.types,
-        .globals = parser.globals,
     };
 
+    parser.tu->entrypoint_status = check_for_entry(&parser);
+
     if (only_code_index) {
-        check_for_entry(parser.tu, &parser.globals);
         return (Cuik_ParseResult){ .tu = parser.tu, .imports = parser.import_libs };
     }
 
     // Phase 2: resolve top level types, layout records and
     // anything else so that we have a complete global symbol table
+    log_debug("%p: parse phase 2", &parser);
     CUIK_TIMED_BLOCK("phase 2") {
         // check if any previous placeholders are still placeholders
         for (Cuik_Type* type = parser.first_placeholder; type != NULL; type = type->placeholder.next) {
@@ -514,8 +512,8 @@ Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cu
         if (cuikdg_error_count(s)) break;
 
         // parse all global declarations
-        nl_map_for(i, parser.globals.symbols) {
-            Symbol* sym = &parser.globals.symbols[i].v;
+        CUIK_SYMTAB_FOR_GLOBALS(i, parser.symbols) {
+            Symbol* sym = cuik_symtab_global_at(parser.symbols, i);
 
             if (sym->token_start != 0 && (sym->storage_class == STORAGE_STATIC_VAR || sym->storage_class == STORAGE_GLOBAL)) {
                 // Spin up a mini parser here
@@ -568,19 +566,16 @@ Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cu
     dyn_array_destroy(parser.static_assertions);
     THROW_IF_ERROR();
 
+    log_debug("%p: parse phase 3", &parser);
     CUIK_TIMED_BLOCK("phase 3") {
         // we can't track types at this point, resolving that is over
         parser.tu->types.tracked = NULL;
 
-        // allocate the local symbol tables
-        local_symbols = cuik_malloc(sizeof(Symbol) * MAX_LOCAL_SYMBOLS);
-        local_tags = cuik_malloc(sizeof(TagEntry) * MAX_LOCAL_TAGS);
-
         // TODO(NeGate): remember this code is stuff that can be made multithreaded, if we
         // care we can add that back in.
         TokenStream tokens = *s;
-        nl_map_for(i, parser.globals.symbols) {
-            Symbol* sym = &parser.globals.symbols[i].v;
+        CUIK_SYMTAB_FOR_GLOBALS(i, parser.symbols) {
+            Symbol* sym = cuik_symtab_global_at(parser.symbols, i);
 
             // don't worry about normal globals, those have been taken care of...
             if (sym->token_start != 0 && (sym->storage_class == STORAGE_STATIC_FUNC || sym->storage_class == STORAGE_FUNC)) {
@@ -591,9 +586,9 @@ Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cu
                 symbol_chain_start = symbol_chain_current = NULL;
 
                 // Some sanity checks in case a local symbol is acting funny.
-                assert(scope.local_start == 0 && scope.local_count == 0);
+                cuik_scope_open(parser.symbols), cuik_scope_open(parser.tags);
                 parse_function(&parser, &tokens, sym->stmt);
-                scope.local_start = scope.local_count = 0;
+                cuik_scope_close(parser.symbols), cuik_scope_close(parser.tags);
 
                 // constant fold any static-locals
                 dyn_array_for(i, parser.local_static_storage_decls) {
@@ -609,10 +604,9 @@ Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cu
                 sym->stmt->decl.first_symbol = symbol_chain_start;
             }
         }
-
-        cuik_free(local_symbols), local_symbols = NULL;
-        cuik_free(local_tags), local_tags = NULL;
     }
+    cuik_symtab_destroy(parser.symbols);
+    cuik_symtab_destroy(parser.tags);
     dyn_array_destroy(parser.local_static_storage_decls);
     THROW_IF_ERROR();
 
@@ -640,8 +634,7 @@ Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cu
     nl_map_free(parser.unresolved_symbols);
     THROW_IF_ERROR();
 
-    check_for_entry(parser.tu, &parser.globals);
-
+    error_tokens = NULL;
     parser.tokens.diag->parser = NULL;
     return (Cuik_ParseResult){ .tu = parser.tu, .imports = parser.import_libs };
 }

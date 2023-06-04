@@ -151,7 +151,10 @@ static LocateResult locate_file(Cuik_CPP* ctx, bool search_lib_first, const Cuik
 
     Cuik_Path tmp;
     if (!search_lib_first && cuik_path_append(&tmp, dir, og_path_len, og_path)) {
+        #if CUIK__CPP_STATS
         ctx->total_fstats++;
+        #endif
+
         if (ctx->locate(ctx->user_data, &tmp, canonical, ctx->case_insensitive)) {
             return LOCATE_FOUND;
         }
@@ -159,7 +162,10 @@ static LocateResult locate_file(Cuik_CPP* ctx, bool search_lib_first, const Cuik
 
     dyn_array_for(i, ctx->system_include_dirs) {
         if (cuik_path_append(&tmp, ctx->system_include_dirs[i].path, og_path_len, og_path)) {
+            #if CUIK__CPP_STATS
             ctx->total_fstats++;
+            #endif
+
             if (ctx->locate(ctx->user_data, &tmp, canonical, ctx->case_insensitive)) {
                 return LOCATE_FOUND | (ctx->system_include_dirs[i].is_system << 1);
             }
@@ -167,7 +173,10 @@ static LocateResult locate_file(Cuik_CPP* ctx, bool search_lib_first, const Cuik
     }
 
     if (search_lib_first && cuik_path_append(&tmp, dir, og_path_len, og_path)) {
+        #if CUIK__CPP_STATS
         ctx->total_fstats++;
+        #endif
+
         if (ctx->locate(ctx->user_data, &tmp, canonical, ctx->case_insensitive)) {
             return LOCATE_FOUND;
         }

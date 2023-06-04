@@ -16,7 +16,7 @@ static void set_preprocessor(void* ctx, const Cuik_DriverArgs* args, Cuik_CPP* c
     // things we don't handle yet so we just remove them
     cuikpp_define_empty_cstr(cpp, "__THROWNL");
 
-    #if 1
+    #if 0
     cuikpp_define_cstr(cpp, "__uint8_t", "unsigned char");
     cuikpp_define_cstr(cpp, "__uint16_t", "unsigned short");
     cuikpp_define_cstr(cpp, "__uint32_t", "unsigned int");
