@@ -559,7 +559,7 @@ void cuik_step_free(Cuik_BuildStep* s) {
 }
 
 bool cuik_driver_does_codegen(const Cuik_DriverArgs* args) {
-    return !args->ir && !args->emit_ir && !args->test_preproc && !args->preprocess && !args->syntax_only;
+    return !args->ir && !args->emit_ir && !args->test_preproc && !args->preprocess && !args->syntax_only && !args->ast;
 }
 
 void cuikpp_dump_tokens(TokenStream* s) {

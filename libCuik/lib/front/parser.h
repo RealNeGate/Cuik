@@ -81,14 +81,6 @@ typedef struct Diag_UnresolvedSymbol {
     SourceRange loc;
 } Diag_UnresolvedSymbol;
 
-// Global symbols are handled using a string maps because they generally
-// get huge enough to warrant it, for local symbols we do linear searches
-// since it makes it easier to represent stack frames and lookup.
-struct Cuik_GlobalSymbols {
-    NL_Strmap(Cuik_Type*) tags;
-    NL_Strmap(Symbol) symbols;
-};
-
 typedef struct Cuik_TypeTable {
     Cuik_Target* target;
     Arena* arena;
@@ -129,7 +121,6 @@ struct TranslationUnit {
     NL_Strmap(Diag_UnresolvedSymbol*) unresolved_symbols;
 
     Cuik_TypeTable types;
-    Cuik_GlobalSymbols globals;
 };
 
 struct CompilationUnit {

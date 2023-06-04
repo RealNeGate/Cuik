@@ -25,7 +25,9 @@
 //
 //  * add qualifiers to type pretty printer
 //
-#pragma once
+#ifndef CUIK_AST_H
+#define CUIK_AST_H
+
 #include "cuik_prelude.h"
 
 typedef char* Atom;
@@ -783,16 +785,7 @@ static Cuik_Type* cuik_canonical_type(const Cuik_QualType t) {
 //   cuik_get_direct_type(T*)
 //     return T, *level is 1
 //
-static Cuik_QualType cuik_get_direct_type(Cuik_QualType type, int* level) {
-    int l = 0;
-    while (cuik_canonical_type(type)->kind == KIND_PTR) {
-        type = cuik_canonical_type(type)->ptr_to;
-        l += 1;
-    }
-
-    if (level != NULL) *level = l;
-    return type;
-}
+CUIK_API Cuik_QualType cuik_get_direct_type(Cuik_QualType type, int* level);
 
 CUIK_API const char* cuik_stmt_decl_name(Stmt* stmt);
 CUIK_API Cuik_QualType cuik_stmt_decl_type(Stmt* stmt);
@@ -844,3 +837,21 @@ for (Cuik_ExprIter it = { .parent = (parent_) }; cuik_next_expr_kid(&it);)
 
 CUIK_API bool cuik_next_expr_kid(Cuik_ExprIter* it);
 CUIK_API bool cuik_next_stmt_kid(Cuik_StmtIter* it);
+
+#endif // CUIK_AST_H
+
+#ifdef CUIK_AST_IMPL
+#undef CUIK_AST_IMPL // dumb style of include guard
+
+Cuik_QualType cuik_get_direct_type(Cuik_QualType type, int* level) {
+    int l = 0;
+    while (cuik_canonical_type(type)->kind == KIND_PTR) {
+        type = cuik_canonical_type(type)->ptr_to;
+        l += 1;
+    }
+
+    if (level != NULL) *level = l;
+    return type;
+}
+
+#endif // CUIK_AST_IMPL

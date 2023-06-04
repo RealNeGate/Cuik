@@ -3,7 +3,7 @@
 #include <hash_map.h>
 
 #define THE_SHTUFFS_SIZE (32 << 20)
-#define CUIK__CPP_STATS 1
+#define CUIK__CPP_STATS 0
 
 #define MACRO_DEF_TOMBSTONE SIZE_MAX
 

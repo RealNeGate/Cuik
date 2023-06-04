@@ -1,1 +1,0 @@
-rm *.o *.obj *.pdb *.exe

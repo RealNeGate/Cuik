@@ -15,9 +15,9 @@ static void elf_append_module(TB_Linker* l, TB_Module* m) {
         tb_module_layout_sections(m);
     }
 
-    tb__append_module_section(l, m, &m->text, ".text", PF_X | PF_R);
-    tb__append_module_section(l, m, &m->data, ".data", PF_W | PF_R);
-    tb__append_module_section(l, m, &m->rdata, ".rdata", PF_R);
+    tb__append_module_section(l, m, &m->text, ".text", TB_PF_X | TB_PF_R);
+    tb__append_module_section(l, m, &m->data, ".data", TB_PF_W | TB_PF_R);
+    tb__append_module_section(l, m, &m->rdata, ".rdata", TB_PF_R);
 
     CUIK_TIMED_BLOCK("apply symbols") {
         static const enum TB_SymbolTag tags[] = { TB_SYMBOL_FUNCTION, TB_SYMBOL_GLOBAL };
@@ -100,7 +100,7 @@ static TB_Exports elf_export(TB_Linker* l) {
 
     TB_Elf64_Shdr strtab = {
         .name = tb_outstr_nul_UNSAFE(&strtbl, ".strtab"),
-        .type = SHT_STRTAB,
+        .type = TB_SHT_STRTAB,
         .flags = 0,
         .addralign = 1,
         .size = strtbl.count,
@@ -131,8 +131,8 @@ static TB_Exports elf_export(TB_Linker* l) {
 
     uint16_t machine = 0;
     switch (l->target_arch) {
-        case TB_ARCH_X86_64: machine = EM_X86_64; break;
-        case TB_ARCH_AARCH64: machine = EM_AARCH64; break;
+        case TB_ARCH_X86_64: machine = TB_EM_X86_64; break;
+        case TB_ARCH_AARCH64: machine = TB_EM_AARCH64; break;
         default: tb_todo();
     }
 
@@ -141,17 +141,17 @@ static TB_Exports elf_export(TB_Linker* l) {
     uint8_t* restrict output = tb_platform_heap_alloc(output_size);
     TB_Elf64_Ehdr header = {
         .ident = {
-            [EI_MAG0]       = 0x7F, // magic number
-            [EI_MAG1]       = 'E',
-            [EI_MAG2]       = 'L',
-            [EI_MAG3]       = 'F',
-            [EI_CLASS]      = 2, // 64bit ELF file
-            [EI_DATA]       = 1, // little-endian
-            [EI_VERSION]    = 1, // 1.0
-            [EI_OSABI]      = 0,
-            [EI_ABIVERSION] = 0
+            [TB_EI_MAG0]       = 0x7F, // magic number
+            [TB_EI_MAG1]       = 'E',
+            [TB_EI_MAG2]       = 'L',
+            [TB_EI_MAG3]       = 'F',
+            [TB_EI_CLASS]      = 2, // 64bit ELF file
+            [TB_EI_DATA]       = 1, // little-endian
+            [TB_EI_VERSION]    = 1, // 1.0
+            [TB_EI_OSABI]      = 0,
+            [TB_EI_ABIVERSION] = 0
         },
-        .type = ET_DYN, // executable
+        .type = TB_ET_DYN, // executable
         .version = 1,
         .machine = machine,
         .entry = 0,
@@ -190,7 +190,7 @@ static TB_Exports elf_export(TB_Linker* l) {
     nl_map_for(i, l->sections) {
         TB_LinkerSection* s = l->sections[i].v;
         TB_Elf64_Phdr sec = {
-            .type   = PT_LOAD,
+            .type   = TB_PT_LOAD,
             .flags  = s->flags,
             .offset = s->offset,
             .vaddr  = s->address,
@@ -208,8 +208,8 @@ static TB_Exports elf_export(TB_Linker* l) {
         TB_LinkerSection* s = l->sections[i].v;
         TB_Elf64_Shdr sec = {
             .name = s->name_pos,
-            .type = SHT_PROGBITS,
-            .flags = SHF_ALLOC | ((s->flags & PF_X) ? SHF_EXECINSTR : 0) | ((s->flags & PF_W) ? SHF_WRITE : 0),
+            .type = TB_SHT_PROGBITS,
+            .flags = TB_SHF_ALLOC | ((s->flags & TB_PF_X) ? TB_SHF_EXECINSTR : 0) | ((s->flags & TB_PF_W) ? TB_SHF_WRITE : 0),
             .addralign = 1,
             .size = s->total_size,
             .addr = s->address,

@@ -3,10 +3,6 @@
 #include "../back/ir_gen.h"
 #include "../targets/targets.h"
 
-// when you're not in the semantic phase, we don't
-// rewrite the contents of the DOT and ARROW exprs
-// because it may screw with things
-thread_local bool in_the_semantic_phase;
 thread_local Stmt* cuik__sema_function_stmt;
 
 // two simple temporary buffers to represent type_as_string results
@@ -1790,11 +1786,9 @@ int cuiksema_run(TranslationUnit* restrict tu, Cuik_IThreadpool* restrict thread
     // go through all top level statements and type check
     // NOTE(NeGate): we can multithread this... it's not helpful tho
     CUIK_TIMED_BLOCK("sema: type check") {
-        in_the_semantic_phase = true;
         for (size_t i = 0; i < count; i++) {
             sema_top_level(tu, tu->top_level_stmts[i]);
         }
-        in_the_semantic_phase = false;
     }
 
     return cuikdg_error_count(&tu->tokens);

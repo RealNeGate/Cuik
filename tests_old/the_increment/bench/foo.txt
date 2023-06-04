@@ -1,0 +1,133 @@
+Microsoft (R) COFF/PE Dumper Version 14.34.31937.0
+Copyright (C) Microsoft Corporation.  All rights reserved.
+
+
+Dump of file csel.obj
+
+File Type: COFF OBJECT
+
+hash_ident:
+  0000000000000000: C7 C0 00 00 00 00  mov         eax,0
+  0000000000000006: 48 C7 C1 00 00 00  mov         rcx,0
+                    00
+  000000000000000D: 49 89 CB           mov         r11,rcx
+  0000000000000010: 41 89 C2           mov         r10d,eax
+  0000000000000013: 48 89 D0           mov         rax,rdx
+  0000000000000016: 48 C1 E8 02        shr         rax,2
+  000000000000001A: 49 39 C3           cmp         r11,rax
+  000000000000001D: 0F 82 6C 00 00 00  jb          000000000000008F
+  0000000000000023: 8B 01              mov         eax,dword ptr [rcx]
+  0000000000000025: 4C 89 C9           mov         rcx,r9
+  0000000000000028: 48 83 C1 FE        add         rcx,0FFFFFFFFFFFFFFFEh
+  000000000000002C: 48 B9 51 2D 9E CC  mov         rcx,0CC9E2D51h
+                    00 00 00 00
+  0000000000000036: 0F AF C1           imul        eax,ecx
+  0000000000000039: 89 C1              mov         ecx,eax
+  000000000000003B: C1 E1 0F           shl         ecx,0Fh
+  000000000000003E: C1 E8 11           shr         eax,11h
+  0000000000000041: 89 C8              mov         eax,ecx
+  0000000000000043: 09 C0              or          eax,eax
+  0000000000000045: C7 C1 93 35 87 1B  mov         ecx,1B873593h
+  000000000000004B: 0F AF C1           imul        eax,ecx
+  000000000000004E: 44 89 D1           mov         ecx,r10d
+  0000000000000051: 31 C1              xor         ecx,eax
+  0000000000000053: C1 E1 0D           shl         ecx,0Dh
+  0000000000000056: 44 89 D0           mov         eax,r10d
+  0000000000000059: 31 C0              xor         eax,eax
+  000000000000005B: C1 E8 13           shr         eax,13h
+  000000000000005E: 89 C8              mov         eax,ecx
+  0000000000000060: 09 C0              or          eax,eax
+  0000000000000062: C7 C1 05 00 00 00  mov         ecx,5
+  0000000000000068: 0F AF C1           imul        eax,ecx
+  000000000000006B: 48 B9 64 6B 54 E6  mov         rcx,0E6546B64h
+                    00 00 00 00
+  0000000000000075: 01 C8              add         eax,ecx
+  0000000000000077: C7 C1 13 00 00 00  mov         ecx,13h
+  000000000000007D: 4C 89 D9           mov         rcx,r11
+  0000000000000080: 48 83 C1 01        add         rcx,1
+  0000000000000084: 49 89 CB           mov         r11,rcx
+  0000000000000087: 41 89 C2           mov         r10d,eax
+  000000000000008A: E9 84 FF FF FF     jmp         0000000000000013
+  000000000000008F: C7 C0 00 00 00 00  mov         eax,0
+  0000000000000095: 48 C7 C1 02 00 00  mov         rcx,2
+                    00
+  000000000000009C: 4C 89 C3           mov         rbx,r8
+  000000000000009F: 48 83 C3 FE        add         rbx,0FFFFFFFFFFFFFFFEh
+  00000000000000A3: 48 89 D1           mov         rcx,rdx
+  00000000000000A6: 48 D3 E9           shr         rcx,cl
+  00000000000000A9: 48 89 D1           mov         rcx,rdx
+  00000000000000AC: 48 83 E1 03        and         rcx,3
+  00000000000000B0: 80 F9 01           cmp         cl,1
+  00000000000000B3: 0F 84 56 00 00 00  je          000000000000010F
+  00000000000000B9: 80 F9 02           cmp         cl,2
+  00000000000000BC: 0F 84 2C 00 00 00  je          00000000000000EE
+  00000000000000C2: 80 F9 03           cmp         cl,3
+  00000000000000C5: 0F 84 05 00 00 00  je          00000000000000D0
+  00000000000000CB: E9 8E 00 00 00     jmp         000000000000015E
+  00000000000000D0: 48 89 F9           mov         rcx,rdi
+  00000000000000D3: 48 83 C1 E0        add         rcx,0FFFFFFFFFFFFFFE0h
+  00000000000000D7: 0F B6 19           movzx       ebx,byte ptr [rcx]
+  00000000000000DA: C1 E3 10           shl         ebx,10h
+  00000000000000DD: 31 D8              xor         eax,ebx
+  00000000000000DF: C7 C0 10 00 00 00  mov         eax,10h
+  00000000000000E5: 8A 01              mov         al,byte ptr [rcx]
+  00000000000000E7: 48 C7 C0 02 00 00  mov         rax,2
+                    00
+  00000000000000EE: 48 89 F0           mov         rax,rsi
+  00000000000000F1: 48 83 C0 E0        add         rax,0FFFFFFFFFFFFFFE0h
+  00000000000000F5: 0F B6 08           movzx       ecx,byte ptr [rax]
+  00000000000000F8: C1 E1 08           shl         ecx,8
+  00000000000000FB: 44 89 E1           mov         ecx,r12d
+  00000000000000FE: 31 C9              xor         ecx,ecx
+  0000000000000100: C7 C1 08 00 00 00  mov         ecx,8
+  0000000000000106: 8A 00              mov         al,byte ptr [rax]
+  0000000000000108: 48 C7 C0 01 00 00  mov         rax,1
+                    00
+  000000000000010F: 48 89 D0           mov         rax,rdx
+  0000000000000112: 48 83 C0 E0        add         rax,0FFFFFFFFFFFFFFE0h
+  0000000000000116: 0F B6 00           movzx       eax,byte ptr [rax]
+  0000000000000119: 89 D8              mov         eax,ebx
+  000000000000011B: 31 C0              xor         eax,eax
+  000000000000011D: 48 C7 C1 00 00 00  mov         rcx,0
+                    00
+  0000000000000124: 48 B9 51 2D 9E CC  mov         rcx,0CC9E2D51h
+                    00 00 00 00
+  000000000000012E: 89 C1              mov         ecx,eax
+  0000000000000130: 0F AF C9           imul        ecx,ecx
+  0000000000000133: C1 E1 0F           shl         ecx,0Fh
+  0000000000000136: 48 BB 51 2D 9E CC  mov         rbx,0CC9E2D51h
+                    00 00 00 00
+  0000000000000140: 0F AF C3           imul        eax,ebx
+  0000000000000143: C1 E8 11           shr         eax,11h
+  0000000000000146: 89 C8              mov         eax,ecx
+  0000000000000148: 09 C0              or          eax,eax
+  000000000000014A: C7 C1 93 35 87 1B  mov         ecx,1B873593h
+  0000000000000150: 0F AF C1           imul        eax,ecx
+  0000000000000153: 44 89 D0           mov         eax,r10d
+  0000000000000156: 31 C0              xor         eax,eax
+  0000000000000158: C7 C0 11 00 00 00  mov         eax,11h
+  000000000000015E: 48 89 C8           mov         rax,rcx
+  0000000000000161: 48 31 D0           xor         rax,rdx
+  0000000000000164: 48 89 C9           mov         rcx,rcx
+  0000000000000167: 48 31 D1           xor         rcx,rdx
+  000000000000016A: 48 C1 E9 10        shr         rcx,10h
+  000000000000016E: 48 31 C8           xor         rax,rcx
+  0000000000000171: 48 C7 C1 6B CA EB  mov         rcx,0FFFFFFFF85EBCA6Bh
+                    85
+  0000000000000178: 48 0F AF C1        imul        rax,rcx
+  000000000000017C: 89 C1              mov         ecx,eax
+  000000000000017E: C1 E9 0D           shr         ecx,0Dh
+  0000000000000181: 31 C8              xor         eax,ecx
+  0000000000000183: 48 B9 35 AE B2 C2  mov         rcx,0C2B2AE35h
+                    00 00 00 00
+  000000000000018D: 0F AF C1           imul        eax,ecx
+  0000000000000190: 89 C1              mov         ecx,eax
+  0000000000000192: C1 E9 10           shr         ecx,10h
+  0000000000000195: 31 C8              xor         eax,ecx
+  0000000000000197: C3                 ret
+
+  Summary
+
+         1A0 .debug$S
+          50 .debug$T
+         198 .text

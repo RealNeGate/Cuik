@@ -21,11 +21,6 @@ static const Cuik_Warnings DEFAULT_WARNINGS = { 0 };
 #define PARSE_MUNCH_SIZE (131072)
 
 typedef struct {
-    Atom key;
-    Cuik_Type* value;
-} TagEntry;
-
-typedef struct {
     enum {
         PENDING_ALIGNAS,
         PENDING_BITWIDTH,
@@ -35,20 +30,6 @@ typedef struct {
     Cuik_Type* type;
     size_t start, end;
 } PendingExpr;
-
-thread_local static struct LexicalScope {
-    // current values
-    int local_start, local_count;
-    int tag_count;
-
-    // this is the first tag in the current scope
-    int tag_scope_start;
-} scope;
-
-// starting point is used to disable the function literals
-// from reading from their parent function
-thread_local static Symbol* local_symbols;
-thread_local static TagEntry* local_tags;
 
 // Global symbol stuff
 thread_local static DynArray(PendingExpr) pending_exprs;
@@ -65,7 +46,8 @@ thread_local static Expr* symbol_chain_current;
 static bool expect_char(TokenStream* restrict s, char ch);
 static bool expect_closing_paren(TokenStream* restrict s, SourceLoc opening);
 static bool expect_with_reason(TokenStream* restrict s, char ch, const char* reason);
-static Symbol* find_local_symbol(TokenStream* restrict s);
+static Symbol* find_symbol(Cuik_Parser* parser, TokenStream* restrict s);
+static Cuik_Type* find_tag(Cuik_Parser* parser, Cuik_Atom name);
 
 static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s);
 static Stmt* parse_stmt_or_expr(TranslationUnit* tu, TokenStream* restrict s);
@@ -80,7 +62,7 @@ static Decl parse_declarator(TranslationUnit* restrict tu, TokenStream* restrict
 // It's like parse_expr but it doesn't do anything with comma operators to avoid
 // parsing issues.
 static Expr* parse_initializer(TranslationUnit* tu, TokenStream* restrict s, Cuik_QualType type);
-static bool is_typename(Cuik_GlobalSymbols* syms, TokenStream* restrict s);
+static bool is_typename(Cuik_Parser* restrict parser, TokenStream* restrict s);
 static _Noreturn void generic_error(TranslationUnit* tu, TokenStream* restrict s, const char* msg);
 
 // Usage:
@@ -88,17 +70,12 @@ static _Noreturn void generic_error(TranslationUnit* tu, TokenStream* restrict s
 //      /* do parse work */
 //  }
 #define LOCAL_SCOPE \
-for (struct LexicalScope saved = scope, *_i_ = (scope.tag_scope_start = saved.tag_count, &saved); _i_; _i_ = NULL, scope = saved)
+for (int i = (cuik_scope_open(parser->symbols), cuik_scope_open(parser->tags), 0); i != 1; i = 1, cuik_scope_close(parser->tags), cuik_scope_close(parser->symbols))
 
 static int align_up(int a, int b) {
     if (b == 0) return 0;
 
     return a + (b - (a % b)) % b;
-}
-
-static Symbol* find_global_symbol(Cuik_GlobalSymbols* restrict syms, const char* name) {
-    ptrdiff_t search = nl_map_get_cstr(syms->symbols, name);
-    return (search >= 0) ? &syms->symbols[search].v : NULL;
 }
 
 // ( SOMETHING )
@@ -138,7 +115,8 @@ static size_t skip_expression_in_parens(TokenStream* restrict s, TknType* out_te
 static size_t skip_expression_in_enum(TokenStream* restrict s, TknType* out_terminator) {
     size_t saved = s->list.current;
 
-    // our basic bitch expectations
+    // our basic bitch expectations of how this function will turn out.
+    // it might flip on us but that's alright
     *out_terminator = ',';
 
     int depth = 1;
@@ -190,10 +168,13 @@ struct Cuik_Parser {
     // out-of-order parsing is only done while in global scope
     bool is_in_global_scope;
 
+    // there's 2 namespaces in C
+    Cuik_SymbolTable* symbols;
+    Cuik_SymbolTable* tags;
+
     Arena* arena;
     DynArray(Stmt*) top_level_stmts;
     Cuik_TypeTable types;
-    Cuik_GlobalSymbols globals;
 
     Cuik_Type* first_placeholder;
     TypeConflict* first_conflict;
@@ -237,25 +218,6 @@ static void diag_unresolved_symbol(Cuik_Parser* parser, Atom name, SourceLoc loc
         old->next = d;
     }
     // mtx_unlock(&parser->diag_mutex);
-}
-
-static Cuik_Type* find_tag(Cuik_Parser* restrict parser, const char* name, bool* is_in_scope) {
-    Cuik_GlobalSymbols* restrict syms = &parser->globals;
-
-    // try locals
-    size_t i = scope.tag_count;
-    while (i--) {
-        if (strcmp((const char*) local_tags[i].key, name) == 0) {
-            *is_in_scope = i >= scope.tag_scope_start;
-            return local_tags[i].value;
-        }
-    }
-
-    // try globals
-    ptrdiff_t search = nl_map_get_cstr(syms->tags, name);
-
-    *is_in_scope = search >= 0 && parser->is_in_global_scope;
-    return (search >= 0) ? syms->tags[search].v : NULL;
 }
 
 static bool expect_char(TokenStream* restrict s, char ch) {
@@ -445,7 +407,6 @@ void cuik_destroy_translation_unit(TranslationUnit* restrict tu) {
     if (!tu->is_free) {
         tu->is_free = true;
         dyn_array_destroy(tu->top_level_stmts);
-        nl_map_free(tu->globals.symbols);
     }
 
     if (tu->parent == NULL) {
@@ -469,22 +430,9 @@ size_t cuik_num_of_top_level_stmts(TranslationUnit* restrict tu) {
     return dyn_array_length(tu->top_level_stmts);
 }
 
-static Symbol* find_local_symbol(TokenStream* restrict s) {
+static Symbol* find_symbol(Cuik_Parser* parser, TokenStream* restrict s) {
     Token* t = tokens_get(s);
-
-    // Try local variables
-    size_t i = scope.local_count;
-    size_t start = scope.local_start;
-    while (i-- > start) {
-        const char* sym = local_symbols[i].name;
-        size_t sym_length = strlen(sym);
-
-        if (memeq(t->content.data, t->content.length, sym, sym_length)) {
-            return &local_symbols[i];
-        }
-    }
-
-    return NULL;
+    return cuik_symtab_lookup(parser->symbols, atoms_put(t->content.length, t->content.data));
 }
 
 ////////////////////////////////

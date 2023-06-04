@@ -4,9 +4,6 @@
 
 #include "parser.h"
 
-extern atomic_int sema_error_count;
-extern thread_local bool in_the_semantic_phase;
-
 bool type_compatible(TranslationUnit* tu, Cuik_Type* a, Cuik_Type* b, Expr* a_expr);
 
 // Semantics pass
