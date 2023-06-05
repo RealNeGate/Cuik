@@ -157,7 +157,7 @@ void cuikfs_close(Cuik_File* file) {
 bool cuikfs_get_length(Cuik_File* file, size_t* out_length) {
     #ifdef _WIN32
     LARGE_INTEGER file_size;
-    if (GetFileSizeEx((HANDLE) file, &file_size)) {
+    if (!GetFileSizeEx((HANDLE) file, &file_size)) {
         return false;
     }
 

@@ -198,10 +198,10 @@ NL_MapHeader* nl_map__rehash(NL_MapHeader* table, size_t entry_size, size_t key_
         }
     } else {
         for (size_t i = 0; i < count; i++) {
-            void* slot_entry = (NL_Slice*) &table->kv_table[i * entry_size];
+            const char* slot_entry = (const char*) &table->kv_table[i * entry_size];
             if (!nl_map__is_zero(slot_entry, key_size) && !nl_map__is_one(slot_entry, key_size)) {
                 NL_MapInsert ins = nl_map__insert(new_table->kv_table, entry_size, key_size, slot_entry);
-                memcpy(&new_table->kv_table[ins.index*entry_size + key_size], &slot_entry[1], entry_size - key_size);
+                memcpy(&new_table->kv_table[ins.index*entry_size + key_size], &slot_entry[key_size], entry_size - key_size);
             }
         }
     }
