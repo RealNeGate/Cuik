@@ -120,6 +120,13 @@ struct TranslationUnit {
     mtx_t diag_mutex;
     NL_Strmap(Diag_UnresolvedSymbol*) unresolved_symbols;
 
+    Cuik_Type* va_list;
+    struct {
+        Stmt* va_arg_gp;
+        Stmt* va_arg_fp;
+        Stmt* va_arg_mem;
+    } sysv_abi;
+
     Cuik_TypeTable types;
 };
 

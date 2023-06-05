@@ -664,7 +664,7 @@ Cuik_QualType cuik__sema_expr(TranslationUnit* tu, Expr* restrict e) {
         }
         case EXPR_VA_ARG: {
             Cuik_Type* va_list_type = cuik_canonical_type(cuik__sema_expr(tu, e->va_arg_.src));
-            if (va_list_type->kind != KIND_PTR && cuik_canonical_type(va_list_type->ptr_to)->kind != KIND_CHAR) {
+            if (!type_equal(va_list_type, tu->va_list)) {
                 type_as_string(sizeof(temp_string0), temp_string0, va_list_type);
                 diag_err(&tu->tokens, e->loc, "va_arg must take in a va_list in the first argument (got %s)", temp_string0);
             }

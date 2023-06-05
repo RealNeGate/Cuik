@@ -93,7 +93,7 @@ typedef enum TknType {
 } TknType;
 
 enum {
-    FIRST_GLSL_KEYWORD = TOKEN_KW_layout
+    FIRST_GLSL_KEYWORD = TOKEN_KW_discard
 };
 
 #undef TKN2

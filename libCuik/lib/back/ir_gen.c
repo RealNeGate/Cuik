@@ -442,92 +442,108 @@ TB_ModuleSection* get_variable_storage(TB_Module* m, const Attribs* attrs, bool 
 
 static void gen_global_initializer(TranslationUnit* tu, TB_Global* g, Cuik_Type* type, Expr* initial, size_t offset) {
     assert(type != NULL);
-
-    if (initial != NULL) {
-        if (initial->op == EXPR_STR || initial->op == EXPR_WSTR) {
-            size_t len = initial->str.end - initial->str.start;
-
-            if (type->kind == KIND_PTR) {
-                TB_Global* dummy = tb_global_create(tu->ir_mod, NULL, NULL, TB_LINKAGE_PRIVATE);
-                tb_global_set_storage(tu->ir_mod, tb_module_get_rdata(tu->ir_mod), dummy, 0, len, 1);
-
-                char* dst = tb_global_add_region(tu->ir_mod, dummy, 0, len);
-                memcpy(dst, initial->str.start, len);
-
-                tb_global_add_symbol_reloc(tu->ir_mod, g, offset, (TB_Symbol*) dummy);
-            } else {
-                char* dst = tb_global_add_region(tu->ir_mod, g, offset, type->size);
-                memcpy(dst, initial->str.start, len);
-            }
-        } else if (initial->op == EXPR_INT || initial->op == EXPR_FLOAT32 || initial->op == EXPR_FLOAT64) {
-            void* region = tb_global_add_region(tu->ir_mod, g, offset, type->size);
-
-            Cuik_Type* expr_type = cuik_canonical_type(initial->type);
-            Cuik_Type* cast_type = cuik_canonical_type(initial->cast_type);
-            if (initial->op == EXPR_INT && (cast_type->kind == KIND_FLOAT || cast_type->kind == KIND_DOUBLE)) {
-                initial->op = cast_type->kind == KIND_DOUBLE ? EXPR_FLOAT64 : EXPR_FLOAT32;
-
-                if (cuik_type_is_signed(expr_type)) {
-                    int64_t old = initial->int_num.num;
-                    initial->float_num = (double) old;
-                } else {
-                    uint64_t old = initial->int_num.num;
-                    initial->float_num = (double) old;
-                }
-            }
-
-            if (initial->op == EXPR_INT) {
-                uint64_t value = initial->int_num.num;
-                memcpy(region, &value, type->size);
-            } else if (initial->op == EXPR_FLOAT32) {
-                float value = initial->float_num;
-
-                _Static_assert(sizeof(float) == sizeof(uint32_t), "Wtf is your float?");
-                memcpy(region, &value, sizeof(value));
-            } else if (initial->op == EXPR_FLOAT64) {
-                double value = initial->float_num;
-
-                _Static_assert(sizeof(double) == sizeof(uint64_t), "Wtf is your double?");
-                memcpy(region, &value, sizeof(value));
-            }
-        } else if (initial->op == EXPR_INITIALIZER) {
-            Cuik_Type* t = cuik_canonical_type(initial->init.type);
-            if (t->kind == KIND_VOID) {
-                t = type;
-            }
-
-            // Initialize all const expressions
-            eval_global_initializer(tu, g, initial->init.root, offset);
-        } else if (initial->op == EXPR_ADDR) {
-            void* region = tb_global_add_region(tu->ir_mod, g, offset, type->size);
-            uint64_t offset = 0;
-
-            // &some_global[a][b][c]
-            Expr* base = initial->unary_op.src;
-            while (base->op == EXPR_SUBSCRIPT) {
-                uint64_t stride = cuik_canonical_type(base->type)->size;
-                if (stride == 0) stride = 1;
-
-                Expr* index_expr = cuik__optimize_ast(NULL, tu, base->subscript.index);
-                assert(index_expr->op == EXPR_INT && "could not resolve as constant initializer");
-
-                uint64_t index = index_expr->int_num.num;
-                offset += (index * stride);
-                base = base->subscript.base;
-            }
-            assert(base->op == EXPR_SYMBOL && "could not resolve as constant initializer");
-
-            // TODO(NeGate): Assumes we're on a 64bit target...
-            memcpy(region, &offset, sizeof(uint64_t));
-
-            Stmt* stmt = base->symbol;
-            assert(stmt->op == STMT_GLOBAL_DECL && "could not resolve as constant initializer");
-            tb_global_add_symbol_reloc(tu->ir_mod, g, offset, stmt->backing.s);
-        } else {
-            fprintf(stderr, "internal compiler error: cannot compile global initializer as constant (%s).\n", tu->filepath);
-            abort();
-        }
+    if (initial == NULL) {
+        return;
     }
+
+    if (initial->op == EXPR_CAST) {
+        Cuik_Type* from = cuik_canonical_type(initial->cast.src->type);
+        Cuik_Type* to = cuik_canonical_type(initial->cast.type);
+
+        if (to->kind == KIND_PTR && (cuik_type_is_integer(from) || from->kind == KIND_PTR)) {
+            gen_global_initializer(tu, g, to, initial->cast.src, offset);
+            return;
+        }
+    } else if (initial->op == EXPR_STR || initial->op == EXPR_WSTR) {
+        size_t len = initial->str.end - initial->str.start;
+
+        if (type->kind == KIND_PTR) {
+            TB_Global* dummy = tb_global_create(tu->ir_mod, NULL, NULL, TB_LINKAGE_PRIVATE);
+            tb_global_set_storage(tu->ir_mod, tb_module_get_rdata(tu->ir_mod), dummy, len, cuik_canonical_type(type->ptr_to)->align, 1);
+
+            char* dst = tb_global_add_region(tu->ir_mod, dummy, 0, len);
+            memcpy(dst, initial->str.start, len);
+
+            tb_global_add_symbol_reloc(tu->ir_mod, g, offset, (TB_Symbol*) dummy);
+        } else {
+            char* dst = tb_global_add_region(tu->ir_mod, g, offset, type->size);
+            memcpy(dst, initial->str.start, len);
+        }
+        return;
+    } else if (initial->op == EXPR_INT || initial->op == EXPR_FLOAT32 || initial->op == EXPR_FLOAT64) {
+        void* region = tb_global_add_region(tu->ir_mod, g, offset, type->size);
+
+        Cuik_Type* expr_type = cuik_canonical_type(initial->type);
+        Cuik_Type* cast_type = cuik_canonical_type(initial->cast_type);
+        if (initial->op == EXPR_INT && (cast_type->kind == KIND_FLOAT || cast_type->kind == KIND_DOUBLE)) {
+            initial->op = cast_type->kind == KIND_DOUBLE ? EXPR_FLOAT64 : EXPR_FLOAT32;
+
+            if (cuik_type_is_signed(expr_type)) {
+                int64_t old = initial->int_num.num;
+                initial->float_num = (double) old;
+            } else {
+                uint64_t old = initial->int_num.num;
+                initial->float_num = (double) old;
+            }
+        }
+
+        if (initial->op == EXPR_INT) {
+            uint64_t value = initial->int_num.num;
+            memcpy(region, &value, type->size);
+        } else if (initial->op == EXPR_FLOAT32) {
+            float value = initial->float_num;
+
+            _Static_assert(sizeof(float) == sizeof(uint32_t), "Wtf is your float?");
+            memcpy(region, &value, sizeof(value));
+        } else if (initial->op == EXPR_FLOAT64) {
+            double value = initial->float_num;
+
+            _Static_assert(sizeof(double) == sizeof(uint64_t), "Wtf is your double?");
+            memcpy(region, &value, sizeof(value));
+        }
+        return;
+    } else if (initial->op == EXPR_INITIALIZER) {
+        Cuik_Type* t = cuik_canonical_type(initial->init.type);
+        if (t->kind == KIND_VOID) {
+            t = type;
+        }
+
+        // Initialize all const expressions
+        eval_global_initializer(tu, g, initial->init.root, offset);
+        return;
+    } else if (initial->op == EXPR_SYMBOL && cuik_canonical_type(initial->type)->kind == KIND_FUNC) {
+        tb_global_add_symbol_reloc(tu->ir_mod, g, offset, initial->symbol->backing.s);
+        return;
+    } else if (initial->op == EXPR_ADDR) {
+        void* region = tb_global_add_region(tu->ir_mod, g, offset, type->size);
+        uint64_t offset = 0;
+
+        // &some_global[a][b][c]
+        Expr* base = initial->unary_op.src;
+        while (base->op == EXPR_SUBSCRIPT) {
+            uint64_t stride = cuik_canonical_type(base->type)->size;
+            if (stride == 0) stride = 1;
+
+            Expr* index_expr = cuik__optimize_ast(NULL, tu, base->subscript.index);
+            assert(index_expr->op == EXPR_INT && "could not resolve as constant initializer");
+
+            uint64_t index = index_expr->int_num.num;
+            offset += (index * stride);
+            base = base->subscript.base;
+        }
+        assert(base->op == EXPR_SYMBOL && "could not resolve as constant initializer");
+
+        // TODO(NeGate): Assumes we're on a 64bit target...
+        memcpy(region, &offset, sizeof(uint64_t));
+
+        Stmt* stmt = base->symbol;
+        assert(stmt->op == STMT_GLOBAL_DECL && "could not resolve as constant initializer");
+        tb_global_add_symbol_reloc(tu->ir_mod, g, offset, stmt->backing.s);
+        return;
+    }
+
+    fprintf(stderr, "internal compiler error: cannot compile global initializer as constant (%s).\n", tu->filepath);
+    abort();
 }
 
 static void insert_label(TB_Function* func) {
@@ -1745,6 +1761,8 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
             break;
         }
         case STMT_CASE: {
+            log_info("    Impl %p", s);
+
             assert(s->backing.r);
             while (s->case_.body && s->case_.body->op == STMT_CASE) {
                 fallthrough_label(func, s->backing.r);
@@ -1761,10 +1779,13 @@ void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
             size_t entry_count = 0;
             TB_SwitchEntry* entries = tls_save();
 
+            log_info("Switch %p", s);
             TB_Node* default_label = 0;
             while (head) {
                 // reserve label
                 assert(head->op == STMT_CASE || head->op == STMT_DEFAULT);
+
+                log_info("  Mark %p", head);
 
                 TB_Node* label = tb_inst_region(func);
                 head->backing.r = label;

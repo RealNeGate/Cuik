@@ -15,36 +15,44 @@ static void set_preprocessor(void* ctx, const Cuik_DriverArgs* args, Cuik_CPP* c
 
     // things we don't handle yet so we just remove them
     cuikpp_define_empty_cstr(cpp, "__THROWNL");
+    cuikpp_define_empty_cstr(cpp, "__USER_LABEL_PREFIX__");
 
-    #if 0
-    cuikpp_define_cstr(cpp, "__uint8_t", "unsigned char");
-    cuikpp_define_cstr(cpp, "__uint16_t", "unsigned short");
-    cuikpp_define_cstr(cpp, "__uint32_t", "unsigned int");
-    cuikpp_define_cstr(cpp, "__uint64_t", "unsigned long long");
-
-    cuikpp_define_cstr(cpp, "__int8_t", "char");
-    cuikpp_define_cstr(cpp, "__int16_t", "short");
-    cuikpp_define_cstr(cpp, "__int32_t", "int");
-    cuikpp_define_cstr(cpp, "__int64_t", "long long");
-    #endif
-
-    // pretend to be GCC
-    cuikpp_define_cstr(cpp, "__inline", "inline");
-    cuikpp_define_cstr(cpp, "__restrict", "restrict");
-    cuikpp_define_cstr(cpp, "__gnuc_va_list", "char*");
-    cuikpp_define_empty_cstr(cpp, "__extension__");
-    cuikpp_define_empty_cstr(cpp, "__asm__()");
-    // cuikpp_define_cstr(cpp, "_ISOC11_SOURCE", "1");
-    // cuikpp_define_cstr(cpp, "__USE_ISOC11", "1");
-
-    cuikpp_define_cstr(cpp, "__GNUC_MINOR__", "2");
-    cuikpp_define_cstr(cpp, "__GNUC_PATCHLEVEL__", "1");
-    cuikpp_define_cstr(cpp, "__GNUC_STDC_INLINE__", "1");
-    cuikpp_define_cstr(cpp, "__GNUC__", "4");
-    cuikpp_define_cstr(cpp, "__GXX_ABI_VERSION", "1002");
-
-    // cuikpp_define_cstr(cpp, "__GNUC__", "9");
-    // cuikpp_define_empty_cstr(cpp, "_GNU_SOURCE");
+    cuikpp_define_cstr(cpp, "_LP64", "1");
+    cuikpp_define_cstr(cpp, "__C99_MACRO_WITH_VA_ARGS", "1");
+    cuikpp_define_cstr(cpp, "__ELF__", "1");
+    cuikpp_define_cstr(cpp, "__LP64__", "1");
+    cuikpp_define_cstr(cpp, "__SIZEOF_DOUBLE__", "8");
+    cuikpp_define_cstr(cpp, "__SIZEOF_FLOAT__", "4");
+    cuikpp_define_cstr(cpp, "__SIZEOF_INT__", "4");
+    cuikpp_define_cstr(cpp, "__SIZEOF_LONG_DOUBLE__", "8");
+    cuikpp_define_cstr(cpp, "__SIZEOF_LONG_LONG__", "8");
+    cuikpp_define_cstr(cpp, "__SIZEOF_LONG__", "8");
+    cuikpp_define_cstr(cpp, "__SIZEOF_POINTER__", "8");
+    cuikpp_define_cstr(cpp, "__SIZEOF_PTRDIFF_T__", "8");
+    cuikpp_define_cstr(cpp, "__SIZEOF_SHORT__", "2");
+    cuikpp_define_cstr(cpp, "__SIZEOF_SIZE_T__", "8");
+    cuikpp_define_cstr(cpp, "__SIZE_TYPE__", "unsigned long");
+    cuikpp_define_cstr(cpp, "__STDC_HOSTED__", "1");
+    cuikpp_define_cstr(cpp, "__STDC_NO_COMPLEX__", "1");
+    cuikpp_define_cstr(cpp, "__STDC_UTF_16__", "1");
+    cuikpp_define_cstr(cpp, "__STDC_UTF_32__", "1");
+    cuikpp_define_cstr(cpp, "__STDC_VERSION__", "201112L");
+    cuikpp_define_cstr(cpp, "__STDC__", "1");
+    cuikpp_define_cstr(cpp, "__alignof__", "_Alignof");
+    cuikpp_define_cstr(cpp, "__amd64", "1");
+    cuikpp_define_cstr(cpp, "__amd64__", "1");
+    cuikpp_define_cstr(cpp, "__const__", "const");
+    cuikpp_define_cstr(cpp, "__gnu_linux__", "1");
+    cuikpp_define_cstr(cpp, "__inline__", "inline");
+    cuikpp_define_cstr(cpp, "__linux", "1");
+    cuikpp_define_cstr(cpp, "__linux__", "1");
+    cuikpp_define_cstr(cpp, "__signed__", "signed");
+    cuikpp_define_cstr(cpp, "__typeof__", "typeof");
+    cuikpp_define_cstr(cpp, "__unix", "1");
+    cuikpp_define_cstr(cpp, "__unix__", "1");
+    cuikpp_define_cstr(cpp, "__volatile__", "volatile");
+    cuikpp_define_cstr(cpp, "linux", "1");
+    cuikpp_define_cstr(cpp, "unix", "1");
 }
 
 static bool invoke_link(void* ctx, const Cuik_DriverArgs* args, Cuik_Linker* linker, const char* output, const char* filename) {

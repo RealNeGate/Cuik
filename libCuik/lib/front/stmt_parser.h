@@ -328,9 +328,6 @@ static Stmt* parse_stmt2(Cuik_Parser* parser, TokenStream* restrict s) {
         assert(current_switch_or_case);
         tokens_next(s);
 
-        Stmt* top = n;
-        top->op = STMT_CASE;
-
         intmax_t key = parse_const_expr(parser, s);
         intmax_t key_max = key;
         if (tokens_get(s)->type == TOKEN_TRIPLE_DOT) {
@@ -341,14 +338,15 @@ static Stmt* parse_stmt2(Cuik_Parser* parser, TokenStream* restrict s) {
         }
         expect_with_reason(s, ':', "case");
 
+        n->op = STMT_CASE;
         n->case_ = (struct StmtCase){
             .key = key, .key_max = key_max
         };
 
         switch (current_switch_or_case->op) {
-            case STMT_CASE: current_switch_or_case->case_.next = top; break;
-            case STMT_DEFAULT: current_switch_or_case->default_.next = top; break;
-            case STMT_SWITCH: current_switch_or_case->switch_.next = top; break;
+            case STMT_CASE: current_switch_or_case->case_.next = n; break;
+            case STMT_DEFAULT: current_switch_or_case->default_.next = n; break;
+            case STMT_SWITCH: current_switch_or_case->switch_.next = n; break;
             default: __builtin_unreachable();
         }
         current_switch_or_case = n;

@@ -198,14 +198,13 @@ static DirectiveResult cpp__include(Cuik_CPP* restrict ctx, CPPStackSlot* restri
         return DIRECTIVE_YIELD;
     }
 
-    Cuik_Path* alloced_filepath = ARENA_ALLOC(&thread_arena, Cuik_Path);
-    *alloced_filepath = canonical;
+    Cuik_Path* alloced_filepath = alloc_path(ctx, canonical.data);
 
     // insert incomplete new stack slot
     CPPStackSlot* restrict new_slot = &ctx->stack[ctx->stack_ptr++];
     *new_slot = (CPPStackSlot){
         .filepath = alloced_filepath,
-        .directory = alloc_directory_path(canonical.data),
+        .directory = alloc_directory_path(ctx, canonical.data),
         .loc = loc.start
     };
 

@@ -419,120 +419,6 @@ Cuik_Type* target_generic_type_check_builtin(TranslationUnit* tu, Expr* e, const
     } else {
         return return_type;
     }
-
-    #if 0
-    if (strcmp(name, "__va_start") == 0) {
-        if (arg_count != 2) {
-            diag_err(&tu->tokens, e->loc, "%s requires 2 arguments", name);
-            return &cuik__builtin_int;
-        }
-
-        // only type check the first param
-        args[0]->cast_type = cuik__new_pointer(&tu->types, cuik_uncanonical_type(&cuik__builtin_char));
-        cuik__type_check_args(tu, e, 1, args);
-
-        // second is completely generic so long as it's a parameter
-        if (args[1]->op != EXPR_PARAM) {
-            diag_err(&tu->tokens, e->loc, "va_start's second parameter must be a parameter name", name);
-            return &cuik__builtin_int;
-        }
-
-        args[1]->cast_type = sema_expr(tu, args[1]);
-        return &cuik__builtin_void;
-    } else if (strcmp(name, "__builtin_expect") == 0) {
-        if (arg_count != 2) {
-            diag_err(&tu->tokens, e->loc, "%s requires 2 arguments", name);
-            return &cuik__builtin_void;
-        }
-
-        Cuik_Type* ty = get_common_type(
-            tu, sema_expr(tu, args[0]), sema_expr(tu, args[1])
-        );
-
-        args[0]->cast_type = ty;
-        args[1]->cast_type = ty;
-        return args[0]->cast_type;
-    } else if (strcmp(name, "__builtin_syscall") == 0) {
-        if (arg_count < 1) {
-            diag_err(&tu->tokens, e->loc, "%s requires at least one argument (the syscall number)", name);
-            return &cuik__builtin_void;
-        }
-
-        // fn(syscall number, ...)
-        args[0]->cast_type = &cuik__builtin_int;
-        cuik__type_check_args(tu, e, 1, args);
-
-        for (size_t i = 1; i < arg_count; i++) {
-            args[i]->cast_type = sema_expr(tu, args[i]);
-        }
-
-        return &cuik__builtin_long;
-    } else if (strcmp(name, "__builtin_trap") == 0) {
-        if (arg_count != 0) {
-            diag_err(&tu->tokens, e->loc, "%s doesn't require arguments", name);
-        }
-
-        return &cuik__builtin_void;
-    } else if (strcmp(name, "__c11_atomic_compare_exchange_strong") == 0) {
-        if (arg_count != 5) {
-            diag_err(&tu->tokens, e->loc, "%s requires 5 arguments", name);
-            return &cuik__builtin_int;
-        }
-
-        Cuik_Type* base_type = expect_pointer(tu, e, args[0]);
-
-        // fn(T* obj, T* expected, T desired, int succ, int fail)
-        args[0]->cast_type = args[0]->type;
-        args[1]->cast_type = args[0]->type;
-        args[2]->cast_type = base_type;
-        args[3]->cast_type = cuik_uncanonical_type(&cuik__builtin_int);
-        args[4]->cast_type = cuik_uncanonical_type(&cuik__builtin_int);
-
-        cuik__type_check_args(tu, e, arg_count, args);
-        return &cuik__builtin_bool;
-    } else if (strcmp(name, "__assume") == 0) {
-        if (arg_count != 1) {
-            diag_err(&tu->tokens, e->loc, "%s requires 1 argument", name);
-        }
-
-        // fn(int)
-        args[0]->cast_type = &cuik__builtin_int;
-
-        cuik__type_check_args(tu, e, arg_count, args);
-        return &cuik__builtin_void;
-    } else if (strcmp(name, "__builtin_unreachable") == 0 || strcmp(name, "__debugbreak") == 0) {
-        if (arg_count != 0) {
-            diag_err(&tu->tokens, e->loc, "%s requires 0 arguments", name);
-        }
-
-        return &cuik__builtin_void;
-    } else if (strcmp(name, "_InterlockedExchange") == 0) {
-        if (arg_count != 2) {
-            diag_err(&tu->tokens, e->loc, "%s requires 2 arguments", name);
-        }
-
-        // fn(long* obj, long val)
-        args[0]->cast_type = cuik__new_pointer(&tu->types, cuik_uncanonical_type(&cuik__builtin_int));
-        args[1]->cast_type = &cuik__builtin_int;
-
-        cuik__type_check_args(tu, e, arg_count, args);
-        return &cuik__builtin_int;
-    } else if (strcmp(name, "_InterlockedCompareExchange") == 0) {
-        if (arg_count != 3) {
-            diag_err(&tu->tokens, e->loc, "%s requires 3 arguments", name);
-        }
-
-        // fn(long* obj, long exchange, long comparand)
-        args[0]->cast_type = cuik__new_pointer(&tu->types, cuik_uncanonical_type(&cuik__builtin_in));
-        args[1]->cast_type = &cuik__builtin_int;
-        args[2]->cast_type = &cuik__builtin_int;
-
-        cuik__type_check_args(tu, e, arg_count, args);
-        return &cuik__builtin_int;
-    } else {
-        return NULL;
-    }
-    #endif
 }
 
 #define ZZZ(x) (BuiltinResult){ x }
@@ -660,6 +546,33 @@ BuiltinResult target_generic_compile_builtin(TranslationUnit* tu, TB_Function* f
 
         tb_inst_store(func, TB_TYPE_PTR, dst, tb_inst_va_start(func, src.reg), 8, false);
         return ZZZ(TB_NULL_REG);
+    } else if (strcmp(name, "__va_arg") == 0) {
+        // classify value
+        TB_Node* src = irgen_as_rvalue(tu, func, args[0]);
+        Cuik_Type* ty = cuik_canonical_type(args[0]->type);
+
+        TB_Symbol* target = NULL;
+        if (cuik_type_is_integer(ty) || ty->kind == KIND_PTR) {
+            target = tu->sysv_abi.va_arg_gp->backing.s;
+        } else if (cuik_type_is_float(ty)) {
+            target = tu->sysv_abi.va_arg_gp->backing.s;
+        } else {
+            target = tu->sysv_abi.va_arg_mem->backing.s;
+        }
+
+        assert(target == NULL && "missing va_arg support functions");
+
+        TB_Node* params[] = {
+            src,
+            tb_inst_uint(func, TB_TYPE_I64, ty->size),
+            tb_inst_uint(func, TB_TYPE_I64, ty->align)
+        };
+
+        // va_arg(ap, sizeof(T), _Alignof(T))
+        TB_FunctionPrototype* proto = tb_function_get_prototype((TB_Function*) target);
+        TB_Node* result = tb_inst_call(func, proto, tb_inst_get_symbol_address(func, target), 3, params).single;
+
+        return ZZZ(result);
     } else if (strcmp(name, "_umul128") == 0) {
         fprintf(stderr, "TODO _umul128\n");
         return ZZZ(tb_inst_uint(func, TB_TYPE_I64, 0));

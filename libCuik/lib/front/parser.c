@@ -176,6 +176,7 @@ struct Cuik_Parser {
     DynArray(Stmt*) top_level_stmts;
     Cuik_TypeTable types;
 
+    Cuik_Type* va_list;
     Cuik_Type* first_placeholder;
     TypeConflict* first_conflict;
 

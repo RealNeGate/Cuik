@@ -47,12 +47,11 @@ static void trim_the_shtuffs(Cuik_CPP* restrict c, void* new_top);
 static bool push_scope(Cuik_CPP* restrict ctx, TokenArray* restrict in, bool initial);
 static bool pop_scope(Cuik_CPP* restrict ctx, TokenArray* restrict in);
 
-static void print_token_stream(TokenArray* in, size_t start, size_t end);
-
 static void expand(Cuik_CPP* restrict c, TokenNode* restrict head, uint32_t parent_macro, TokenArray* rest);
 static TokenList expand_ident(Cuik_CPP* restrict c, TokenArray* in, TokenNode* head, uint32_t parent_macro, TokenArray* rest);
 
-static Cuik_Path* alloc_directory_path(const char* filepath);
+static Cuik_Path* alloc_path(Cuik_CPP* restrict ctx, const char* filepath);
+static Cuik_Path* alloc_directory_path(Cuik_CPP* restrict ctx, const char* filepath);
 static void compute_line_map(TokenStream* s, bool is_system, int depth, SourceLoc include_site, const char* filename, char* data, size_t length);
 
 enum {
@@ -255,10 +254,8 @@ Cuik_CPP* cuikpp_make(const Cuik_CPPDesc* desc) {
     {
         ctx->stack_ptr = 1;
         ctx->stack[0] = (CPPStackSlot){ 0 };
-        ctx->stack[0].filepath = gimme_the_shtuffs(ctx, sizeof(Cuik_Path));
-        ctx->stack[0].directory = gimme_the_shtuffs(ctx, sizeof(Cuik_Path));
-        cuik_path_set(ctx->stack[0].filepath, filepath);
-        cuik_path_set_dir(ctx->stack[0].directory, filepath);
+        ctx->stack[0].filepath = alloc_path(ctx, filepath);
+        ctx->stack[0].directory = alloc_directory_path(ctx, filepath);
     }
 
     return ctx;
@@ -479,8 +476,18 @@ static void compute_line_map(TokenStream* s, bool is_system, int depth, SourceLo
     } while (i < length);
 }
 
-static Cuik_Path* alloc_directory_path(const char* filepath) {
-    Cuik_Path* new_dir = ARENA_ALLOC(&thread_arena, Cuik_Path);
+static Cuik_Path* alloc_path(Cuik_CPP* restrict ctx, const char* filepath) {
+    size_t len = strlen(filepath);
+
+    Cuik_Path* new_path = gimme_the_shtuffs(ctx, sizeof(Cuik_PathFlex) + len + 1);
+    cuik_path_set(new_path, filepath);
+    return new_path;
+}
+
+static Cuik_Path* alloc_directory_path(Cuik_CPP* restrict ctx, const char* filepath) {
+    size_t len = strlen(filepath);
+
+    Cuik_Path* new_dir = gimme_the_shtuffs(ctx, sizeof(Cuik_PathFlex) + len + 1);
     cuik_path_set_dir(new_dir, filepath);
     return new_dir;
 }
@@ -548,13 +555,12 @@ Cuikpp_Status cuikpp_run(Cuik_CPP* restrict ctx) {
                         first.type = classify_ident(first.content.data, first.content.length, is_glsl);
                         dyn_array_put(s->list.tokens, first);
                     } else {
-                        in->current -= 1;
-
                         // SLOW PATH BECAUSE IT NEEDS TO SPAWN POSSIBLY METRIC SHIT LOADS
                         // OF TOKENS AND EXPAND WITH THE AVERAGE C PREPROCESSOR SPOOKIES
                         if (expand_builtin_idents(ctx, &first)) {
                             dyn_array_put(s->list.tokens, first);
                         } else {
+                            in->current -= 1;
                             void* savepoint = tls_save();
 
                             TokenList l = expand_ident(ctx, in, NULL, 0, NULL);
@@ -671,17 +677,6 @@ TokenStream* cuikpp_get_token_stream(Cuik_CPP* ctx) {
     return &ctx->tokens;
 }
 
-static void print_token_stream(TokenArray* in, size_t start, size_t end) {
-    int last_line = 0;
-
-    printf("Tokens: ");
-    for (size_t i = start; i < end; i++) {
-        Token* t = &in->tokens[i];
-        printf("%.*s ", (int) t->content.length, t->content.data);
-    }
-    printf("\n\n");
-}
-
 void cuikpp_dump_defines(Cuik_CPP* ctx) {
     int count = 0;
 
@@ -749,12 +744,4 @@ static bool pop_scope(Cuik_CPP* restrict ctx, TokenArray* restrict in) {
 
     ctx->depth--;
     return true;
-}
-
-static void expect(TokenArray* restrict in, char ch) {
-    Token t = consume(in);
-    if (t.type != ch) {
-        // report(REPORT_ERROR, NULL, in, tokens_get_location_index(in), "expected '%c' got '%.*s'", ch, (int) t.content.length, t.content.data);
-        abort();
-    }
 }

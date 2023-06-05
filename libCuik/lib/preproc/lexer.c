@@ -45,12 +45,12 @@ TknType classify_ident(const unsigned char* restrict str, size_t len, bool is_gl
     int kw_len = __builtin_ffs(_mm_movemask_epi8(_mm_cmpeq_epi8(kw128, _mm_set1_epi8('\0')))) - 1;
 
     // NOTE(NeGate): Fancy x86 strcmp crap :)
-    int result = _mm_cmpestri(kw128, kw_len,
-        str128, len,
+    int result = _mm_cmpestri(kw128, kw_len, str128, len,
         _SIDD_UBYTE_OPS |
         _SIDD_CMP_EQUAL_EACH |
         _SIDD_NEGATIVE_POLARITY |
-        _SIDD_UNIT_MASK);
+        _SIDD_UNIT_MASK
+    );
 
     return result == 16 ? (0x10000000 + v) : TOKEN_IDENTIFIER;
     #else

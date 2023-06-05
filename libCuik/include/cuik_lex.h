@@ -42,6 +42,11 @@ typedef struct String {
 
 typedef struct {
     uint16_t length;
+    char data[];
+} Cuik_PathFlex;
+
+typedef struct {
+    uint16_t length;
     char data[FILENAME_MAX];
 } Cuik_Path;
 

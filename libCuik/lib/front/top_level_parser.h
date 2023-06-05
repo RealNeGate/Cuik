@@ -197,6 +197,10 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
                     .stmt = n
                 };
             }
+
+            if (strcmp(decl.name, "va_list") == 0) {
+                parser->va_list = cuik_canonical_type(decl.type);
+            }
         }
 
         bool has_body = false;
@@ -412,7 +416,6 @@ static Cuik_Entrypoint check_for_entry(Cuik_Parser* parser) {
     return CUIK_ENTRYPOINT_MAIN;
 }
 
-static _Thread_local TokenStream* error_tokens;
 Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cuik_Target* target, Arena* restrict arena, bool only_code_index) {
     assert(s != NULL);
 
@@ -438,8 +441,6 @@ Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cu
 
     parser.symbols = cuik_symtab_create(NULL);
     parser.tags = cuik_symtab_create(&(Cuik_Type*){ NULL });
-
-    error_tokens = &parser.tokens;
 
     if (parser.version == CUIK_VERSION_GLSL) {
         #define X(name) parser.glsl.name = atoms_putc(#name);
@@ -490,6 +491,7 @@ Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cu
         .tokens = *s,
         .top_level_stmts = parser.top_level_stmts,
         .types = parser.types,
+        .va_list = parser.va_list,
     };
 
     parser.tu->entrypoint_status = check_for_entry(&parser);
@@ -571,6 +573,10 @@ Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cu
         // we can't track types at this point, resolving that is over
         parser.tu->types.tracked = NULL;
 
+        Cuik_Atom va_arg_fp = atoms_putc("__va_arg_fp");
+        Cuik_Atom va_arg_gp = atoms_putc("__va_arg_gp");
+        Cuik_Atom va_arg_mem = atoms_putc("__va_arg_mem");
+
         // TODO(NeGate): remember this code is stuff that can be made multithreaded, if we
         // care we can add that back in.
         TokenStream tokens = *s;
@@ -584,6 +590,11 @@ Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cu
 
                 // intitialize use list
                 symbol_chain_start = symbol_chain_current = NULL;
+
+                Cuik_Atom name = sym->stmt->decl.name;
+                if (name == va_arg_fp) parser.tu->sysv_abi.va_arg_fp  = sym->stmt;
+                else if (name == va_arg_gp) parser.tu->sysv_abi.va_arg_gp  = sym->stmt;
+                else if (name == va_arg_mem) parser.tu->sysv_abi.va_arg_mem = sym->stmt;
 
                 // Some sanity checks in case a local symbol is acting funny.
                 cuik_scope_open(parser.symbols), cuik_scope_open(parser.tags);
@@ -634,7 +645,6 @@ Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cu
     nl_map_free(parser.unresolved_symbols);
     THROW_IF_ERROR();
 
-    error_tokens = NULL;
     parser.tokens.diag->parser = NULL;
     return (Cuik_ParseResult){ .tu = parser.tu, .imports = parser.import_libs };
 }
