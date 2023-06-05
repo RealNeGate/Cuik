@@ -2,9 +2,6 @@
 
 #define WRITE(data, size) (memcpy(&output[write_pos], data, size), write_pos += (size))
 TB_Exports tb_macho_write_output(TB_Module* m, const IDebugFormat* dbg) {
-    TB_ModuleExporter* e = tb_platform_heap_alloc(sizeof(TB_ModuleExporter));
-    memset(e, 0, sizeof(TB_ModuleExporter));
-
     const ICodeGen* code_gen = tb__find_code_generator(m);
 
     //TB_TemporaryStorage* tls = tb_tls_allocate();
@@ -114,6 +111,5 @@ TB_Exports tb_macho_write_output(TB_Module* m, const IDebugFormat* dbg) {
     // fwrite(string_table.data, string_table.count, 1, f);
 
     tb_platform_heap_free(string_table.data);
-    tb_platform_heap_free(e);
     return (TB_Exports){ .count = 1, .files = { { output_size, output } } };
 }
