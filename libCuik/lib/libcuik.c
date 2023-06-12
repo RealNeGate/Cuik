@@ -5,16 +5,12 @@
 #include "timer.c"
 #include "hash.c"
 #include "path.c"
-#include "mem_pool.c"
 
 #include <hash_map.h>
 #include <file_map.h>
 
 #define CUIK_FS_IMPL
 #include <cuik_fs.h>
-
-// Zip library
-#include "zip/zip.c"
 
 // Preprocessor & Lexer
 #include "preproc/lexer.c"
@@ -34,15 +30,17 @@
 #include "front/sema.c"
 #include "front/visitors.c"
 
-// Targets
-#include "targets/target_generic.c"
-#include "targets/x64_desc.c"
-
 // IR Gen
 #ifdef CUIK_USE_TB
 #include "back/ir_gen.c"
-#include "back/linker.c"
 #endif
+
+// Linker support
+#include "back/linker.c"
+
+// Targets
+#include "targets/target_generic.c"
+#include "targets/x64_desc.c"
 
 // Compilation units
 #include "compilation_unit.c"

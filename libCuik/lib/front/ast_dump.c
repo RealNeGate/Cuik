@@ -1,3 +1,4 @@
+#if 0
 // It's only *sorta* part of the semantics pass
 #include "sema.h"
 
@@ -811,3 +812,4 @@ void ast_dump_type(TranslationUnit* tu, Cuik_Type* ty, int depth, int offset) {
         printf("STATS:\n  sizeof = %d\n  alignof = %d\n", ty->size, ty->align);
     }
 }
+#endif

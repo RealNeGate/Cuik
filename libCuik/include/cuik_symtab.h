@@ -19,15 +19,15 @@ CUIK_API void cuik_scope_close(Cuik_SymbolTable* st);
 
 // define a symbol, the pointer returned is stable across the lifetime (until it's popped
 // off by a scope)
-CUIK_API void* cuik_symtab_put(Cuik_SymbolTable* st, Atom name, size_t size, size_t align);
+CUIK_API void* cuik_symtab_put(Cuik_SymbolTable* st, Cuik_Atom name, size_t size, size_t align);
 #define CUIK_SYMTAB_PUT(st, name, T) ((T*) cuik_symtab_put(st, name, sizeof(T), _Alignof(T)))
 
-CUIK_API void* cuik_symtab_lookup(Cuik_SymbolTable* st, Atom name);
+CUIK_API void* cuik_symtab_lookup(Cuik_SymbolTable* st, Cuik_Atom name);
 #define CUIK_SYMTAB_LOOKUP(st, name, T) *((T*) cuik_symtab_lookup(st, name))
 
 // Alternative to cuik_symtab_lookup (NOT AN "UPDATE"), this time we write to *in_scope
 // if the value exists in the scope we're currently in
-CUIK_API void* cuik_symtab_lookup2(Cuik_SymbolTable* st, Atom name, bool* in_scope);
+CUIK_API void* cuik_symtab_lookup2(Cuik_SymbolTable* st, Cuik_Atom name, bool* in_scope);
 #define CUIK_SYMTAB_LOOKUP2(st, name, in_scope, T) *((T*) cuik_symtab_lookup2(st, name, in_scope))
 
 // use of the globals iterator when we're not in the TU which IMPL
@@ -131,7 +131,7 @@ void* cuik_symtab_put(Cuik_SymbolTable* st, Cuik_Atom name, size_t size, size_t 
     return ptr;
 }
 
-void* cuik_symtab_lookup(Cuik_SymbolTable* st, Atom name) {
+void* cuik_symtab_lookup(Cuik_SymbolTable* st, Cuik_Atom name) {
     for (size_t i = st->local_count; i--;) {
         if (st->locals[i].k == name) {
             return st->locals[i].v;
@@ -142,7 +142,7 @@ void* cuik_symtab_lookup(Cuik_SymbolTable* st, Atom name) {
     return search >= 0 ? st->globals[search].v : st->not_found;
 }
 
-void* cuik_symtab_lookup2(Cuik_SymbolTable* st, Atom name, bool* in_scope) {
+void* cuik_symtab_lookup2(Cuik_SymbolTable* st, Cuik_Atom name, bool* in_scope) {
     for (size_t i = st->local_count; i--;) {
         if (st->locals[i].k == name) {
             *in_scope = (st->top && st->top->start >= i);

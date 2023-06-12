@@ -429,7 +429,6 @@ Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cu
     parser.target = target;
     parser.pointer_byte_size = target->pointer_byte_size;
     parser.static_assertions = dyn_array_create(int, 128);
-    parser.local_static_storage_decls = dyn_array_create(Stmt*, 64);
     parser.types = init_type_table(target);
     parser.types.arena = parser.arena = arena;
 
@@ -489,6 +488,7 @@ Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cu
         .warnings = &DEFAULT_WARNINGS,
         .target = target,
         .tokens = *s,
+        .arena = arena,
         .top_level_stmts = parser.top_level_stmts,
         .types = parser.types,
         .va_list = parser.va_list,
@@ -523,19 +523,18 @@ Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cu
                 mini_lex.list.current = sym->token_start;
 
                 // intitialize use list
-                symbol_chain_start = symbol_chain_current = NULL;
+                symbol_chain_start = NULL;
 
-                Expr* e = NULL;
                 if (tokens_get(&mini_lex)->type == '{') {
-                    e = parse_initializer2(&parser, &mini_lex, CUIK_QUAL_TYPE_NULL);
+                    parse_initializer2(&parser, &mini_lex, CUIK_QUAL_TYPE_NULL);
                 } else {
-                    e = parse_assignment(&parser, &mini_lex);
+                    parse_assignment(&parser, &mini_lex);
                     if (mini_lex.list.current != sym->token_end) {
                         diag_err(&mini_lex, tokens_get_range(&mini_lex), "Failed to parse expression");
                     }
                 }
 
-                sym->stmt->decl.initial = e;
+                sym->stmt->decl.initial = complete_expr(&parser);
 
                 // finalize use list
                 sym->stmt->decl.first_symbol = symbol_chain_start;
@@ -550,15 +549,6 @@ Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cu
         dyn_array_for(i, parser.types.tracked) {
             assert(parser.types.tracked[i]->align != -1);
             type_layout2(&parser, &parser.tokens, parser.types.tracked[i]);
-        }
-
-        // constant fold any global expressions
-        dyn_array_for(i, parser.top_level_stmts) {
-            Stmt* restrict s = parser.top_level_stmts[i];
-
-            if ((s->op == STMT_DECL || s->op == STMT_GLOBAL_DECL) && s->decl.initial) {
-                s->decl.initial = cuik__optimize_ast(&parser, parser.tu, s->decl.initial);
-            }
         }
 
         quit_phase2:;
@@ -589,7 +579,7 @@ Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cu
                 tokens.list.current = sym->token_start;
 
                 // intitialize use list
-                symbol_chain_start = symbol_chain_current = NULL;
+                symbol_chain_start = NULL;
 
                 Cuik_Atom name = sym->stmt->decl.name;
                 if (name == va_arg_fp) parser.tu->sysv_abi.va_arg_fp  = sym->stmt;
@@ -601,16 +591,6 @@ Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cu
                 parse_function(&parser, &tokens, sym->stmt);
                 cuik_scope_close(parser.symbols), cuik_scope_close(parser.tags);
 
-                // constant fold any static-locals
-                dyn_array_for(i, parser.local_static_storage_decls) {
-                    Stmt* restrict s = parser.local_static_storage_decls[i];
-
-                    if ((s->op == STMT_DECL || s->op == STMT_GLOBAL_DECL) && s->decl.initial) {
-                        s->decl.initial = cuik__optimize_ast(&parser, parser.tu, s->decl.initial);
-                    }
-                }
-                dyn_array_clear(parser.local_static_storage_decls);
-
                 // finalize use list
                 sym->stmt->decl.first_symbol = symbol_chain_start;
             }
@@ -618,7 +598,6 @@ Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cu
     }
     cuik_symtab_destroy(parser.symbols);
     cuik_symtab_destroy(parser.tags);
-    dyn_array_destroy(parser.local_static_storage_decls);
     THROW_IF_ERROR();
 
     // output accumulated diagnostics:

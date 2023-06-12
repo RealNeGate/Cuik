@@ -7,12 +7,14 @@
 // This file is included into parser.h, it's parser of the parser module and is
 // completely static
 static Cuik_QualType parse_typename2(Cuik_Parser* restrict parser, TokenStream* restrict s);
-static Expr* parse_expr(Cuik_Parser* restrict parser, TokenStream* restrict s);
-static Expr* parse_cast(Cuik_Parser* restrict parser, TokenStream* restrict s, bool in_sizeof);
-static Expr* parse_unary(Cuik_Parser* restrict parser, TokenStream* restrict s, bool in_sizeof);
-static Expr* parse_assignment(Cuik_Parser* restrict parser, TokenStream* restrict s);
-static Expr* parse_initializer2(Cuik_Parser* restrict parser, TokenStream* restrict s, Cuik_QualType type);
+static void parse_expr(Cuik_Parser* restrict parser, TokenStream* restrict s);
+static void parse_cast(Cuik_Parser* restrict parser, TokenStream* restrict s, bool in_sizeof);
+static void parse_unary(Cuik_Parser* restrict parser, TokenStream* restrict s, bool in_sizeof);
+static void parse_assignment(Cuik_Parser* restrict parser, TokenStream* restrict s);
+static void parse_initializer2(Cuik_Parser* restrict parser, TokenStream* restrict s, Cuik_QualType type);
 static intmax_t parse_const_expr(Cuik_Parser* parser, TokenStream* restrict s);
+
+static Cuik_Expr* parse_expr2(Cuik_Parser* restrict parser, TokenStream* restrict s);
 
 typedef struct {
     char prec;
@@ -25,7 +27,7 @@ static ExprOp get_unary(TknType ty) {
         ON(TIMES,              DEREF);
         ON(EXCLAMATION,        LOGICAL_NOT);
         ON(MINUS,              NEGATE);
-        ON(PLUS,               PLUS); // this is a hack, it'll be treated as empty even tho it says EXPR_PLUS
+        ON(PLUS,               NONE);
         ON(TILDE,              NOT);
         ON(AND,                ADDR);
         ON(INCREMENT,          PRE_INC);
@@ -61,6 +63,34 @@ static ExprInfo get_binop(TknType ty) {
         default: return (ExprInfo){ 0 };
     }
     #undef ON
+}
+
+static Subexpr* push_expr(Cuik_Parser* parser) {
+    if (parser->expr == NULL) {
+        parser->expr = ARENA_ALLOC(parser->arena, Cuik_Expr);
+        *parser->expr = (Cuik_Expr){ .exprs = tls_push(0), .first_symbol = SIZE_MAX };
+    }
+
+    return tls_push(sizeof(Subexpr));
+}
+
+static Subexpr* peek_expr(Cuik_Parser* parser) {
+    Subexpr* end = tls_push(0);
+    return &end[-1];
+}
+
+static Cuik_Expr* complete_expr(Cuik_Parser* parser) {
+    Cuik_Expr* e = parser->expr;
+
+    // move to more permanent storage
+    size_t count = e->count = ((Subexpr*) tls_push(0)) - e->exprs;
+    Subexpr* exprs = ARENA_ARR_ALLOC(parser->arena, count, Subexpr);
+    memcpy(exprs, e->exprs, count * sizeof(Subexpr));
+    tls_restore(e->exprs);
+
+    e->exprs = exprs;
+    parser->expr = NULL;
+    return e;
 }
 
 static Expr* alloc_expr(Cuik_Parser* parser) {
@@ -181,14 +211,15 @@ static InitNode* parse_initializer_member2(Cuik_Parser* parser, TokenStream* res
         expect_char(s, '}');
     } else {
         // parse without comma operator
-        current->expr = parse_assignment(parser, s);
+        parse_assignment(parser, s);
+        current->expr = complete_expr(parser);
     }
     current->loc = (SourceRange){ loc, tokens_get_last_location(s) };
 
     return head;
 }
 
-static Expr* parse_initializer2(Cuik_Parser* parser, TokenStream* restrict s, Cuik_QualType type) {
+static void parse_initializer2(Cuik_Parser* parser, TokenStream* restrict s, Cuik_QualType type) {
     SourceLoc loc = tokens_get_location(s);
     expect_char(s, '{');
 
@@ -209,23 +240,21 @@ static Expr* parse_initializer2(Cuik_Parser* parser, TokenStream* restrict s, Cu
     }
     expect_char(s, '}');
 
-    Expr* e = alloc_expr(parser);
-    *e = (Expr){
+    *push_expr(parser) = (Subexpr){
         .op = EXPR_INITIALIZER,
         .loc = { loc, tokens_get_last_location(s) },
         .init = { type, root },
     };
-    return e;
 }
 
-static void parse_string_literal(Cuik_Parser* parser, TokenStream* restrict s, Expr* e) {
+static void parse_string_literal(Cuik_Parser* parser, TokenStream* restrict s, Subexpr* e) {
     size_t saved_lexer_pos = s->list.current;
     size_t total_len = 0;
     while (!tokens_eof(s)) {
         Token* t = tokens_get(s);
         if (t->type == TOKEN_STRING_DOUBLE_QUOTE || t->type == TOKEN_STRING_WIDE_DOUBLE_QUOTE) {
             total_len += t->content.length - 2;
-        } else if (memeq(t->content.data, t->content.length, "__func__", sizeof("__func__") - 1)) {
+        } else if (string_equals_cstr(&t->content, "__func__")) {
             if (cuik__sema_function_stmt) total_len += strlen(cuik__sema_function_stmt->decl.name);
             else total_len += 3; // "???"
         } else {
@@ -247,7 +276,7 @@ static void parse_string_literal(Cuik_Parser* parser, TokenStream* restrict s, E
         if (t->type == TOKEN_STRING_DOUBLE_QUOTE || t->type == TOKEN_STRING_WIDE_DOUBLE_QUOTE) {
             memcpy(&buffer[curr], t->content.data + 1, t->content.length - 2);
             curr += t->content.length - 2;
-        } else if (memeq(t->content.data, t->content.length, "__func__", sizeof("__func__") - 1)) {
+        } else if (string_equals_cstr(&t->content, "__func__")) {
             if (cuik__sema_function_stmt) {
                 size_t len = strlen(cuik__sema_function_stmt->decl.name);
                 memcpy(&buffer[curr], cuik__sema_function_stmt->decl.name, len);
@@ -275,48 +304,51 @@ static void parse_string_literal(Cuik_Parser* parser, TokenStream* restrict s, E
 //   string-literal
 //   ( expression )
 //   generic-selection
-static Expr* parse_primary_expr(Cuik_Parser* parser, TokenStream* restrict s) {
+static void parse_primary_expr(Cuik_Parser* parser, TokenStream* restrict s) {
     Token* t = tokens_get(s);
 
     if (t->type == '(') {
         SourceLoc start_loc = tokens_get_location(s);
         tokens_next(s);
 
-        Expr* e = parse_expr(parser, s);
+        parse_expr(parser, s);
         expect_closing_paren(s, start_loc);
 
+        Subexpr* e = peek_expr(parser);
         e->has_parens = true;
         e->loc.start = start_loc;
         e->loc.end = tokens_get_last_location(s);
-        return e;
+        return;
     }
 
-    Expr* e = alloc_expr(parser);
+    Subexpr* e = NULL;
     SourceLoc start_loc = tokens_get_location(s);
 
     switch (t->type) {
         case TOKEN_IDENTIFIER: {
-            if (memeq(t->content.data, t->content.length, "__va_arg", sizeof("__va_arg") - 1)) {
+            if (string_equals_cstr(&t->content, "__va_arg")) {
                 tokens_next(s);
 
                 expect_char(s, '(');
-                Expr* src = parse_assignment(parser, s);
+                parse_assignment(parser, s);
                 expect_char(s, ',');
                 Cuik_QualType type = parse_typename2(parser, s);
                 expect_char(s, ')');
 
                 tokens_prev(s);
 
-                *e = (Expr){
+                e = push_expr(parser);
+                *e = (Subexpr){
                     .op = EXPR_VA_ARG,
-                    .va_arg_ = { src, type },
+                    .va_arg_ = { type },
                 };
                 break;
-            } else if (!parser->is_in_global_scope && memeq(t->content.data, t->content.length, "__func__", sizeof("__func__") - 1)) {
+            } else if (!parser->is_in_global_scope && string_equals_cstr(&t->content, "__func__")) {
                 tokens_next(s);
-
                 Atom name = cuik__sema_function_stmt->decl.name;
-                *e = (Expr){
+
+                e = push_expr(parser);
+                *e = (Subexpr){
                     .op = EXPR_STR,
                     .str.start = (const unsigned char*) name,
                     .str.end = (const unsigned char*) &name[strlen(name)],
@@ -324,24 +356,25 @@ static Expr* parse_primary_expr(Cuik_Parser* parser, TokenStream* restrict s) {
                 break;
             }
 
+            e = push_expr(parser);
+
             Symbol* sym = find_symbol(parser, s);
             if (sym != NULL) {
                 if (sym->storage_class == STORAGE_PARAM) {
-                    *e = (Expr){
+                    *e = (Subexpr){
                         .op = EXPR_PARAM,
                         .param_num = sym->param_num
                     };
                 } else if (sym->storage_class == STORAGE_ENUM) {
-                    *e = (Expr){
+                    *e = (Subexpr){
                         .op = EXPR_ENUM,
-                        .type = sym->type,
-                        .enum_val = { &cuik_canonical_type(sym->type)->enumerator.entries[sym->enum_value] },
+                        .enum_val = { sym->type, &cuik_canonical_type(sym->type)->enumerator.entries[sym->enum_value] },
                     };
                 } else {
                     assert(sym->stmt != NULL);
-                    *e = (Expr){
+                    *e = (Subexpr){
                         .op = EXPR_SYMBOL,
-                        .symbol = sym->stmt,
+                        .sym = { sym->stmt },
                     };
                 }
             } else {
@@ -351,16 +384,16 @@ static Expr* parse_primary_expr(Cuik_Parser* parser, TokenStream* restrict s) {
                 // check if it's builtin
                 ptrdiff_t builtin_search = nl_map_get_cstr(parser->target->builtin_func_map, name);
                 if (builtin_search >= 0) {
-                    *e = (Expr){
+                    *e = (Subexpr){
                         .op = EXPR_BUILTIN_SYMBOL,
                         .builtin_sym = { name },
                     };
                 } else {
                     diag_unresolved_symbol(parser, name, start_loc);
 
-                    *e = (Expr){
+                    *e = (Subexpr){
                         .op = EXPR_UNKNOWN_SYMBOL,
-                        .unknown_sym = name,
+                        .unknown_sym = { name },
                     };
                 }
             }
@@ -368,12 +401,15 @@ static Expr* parse_primary_expr(Cuik_Parser* parser, TokenStream* restrict s) {
             // unknown symbols, symbols and enumerator entries participate in the
             // symbol chain, aka... don't append non-parameters :P
             if (e->op != EXPR_PARAM && e->op != EXPR_ENUM) {
-                if (symbol_chain_current != NULL) {
-                    symbol_chain_current->next_symbol_in_chain = e;
-                    symbol_chain_current = e;
-                } else {
-                    symbol_chain_start = symbol_chain_current = e;
+                if (symbol_chain_start != parser->expr) {
+                    parser->expr->next_in_chain = symbol_chain_start;
+                    symbol_chain_start = parser->expr;
                 }
+
+                // append to list inside of the expression
+                ptrdiff_t i = e - parser->expr->exprs;
+                e->sym.next_symbol = parser->expr->first_symbol;
+                parser->expr->first_symbol = i;
             }
             break;
         }
@@ -390,9 +426,10 @@ static Expr* parse_primary_expr(Cuik_Parser* parser, TokenStream* restrict s) {
                 }
             }
 
-            *e = (Expr){
+            e = push_expr(parser);
+            *e = (Subexpr){
                 .op = is_float32 ? EXPR_FLOAT32 : EXPR_FLOAT64,
-                .float_num = f,
+                .float_lit = f,
             };
             break;
         }
@@ -402,9 +439,10 @@ static Expr* parse_primary_expr(Cuik_Parser* parser, TokenStream* restrict s) {
             Cuik_IntSuffix suffix;
             uint64_t i = parse_int(t->content.length, (const char*) t->content.data, &suffix);
 
-            *e = (Expr){
+            e = push_expr(parser);
+            *e = (Subexpr){
                 .op = EXPR_INT,
-                .int_num = { i, suffix },
+                .int_lit = { i, suffix },
             };
             break;
         }
@@ -419,7 +457,8 @@ static Expr* parse_primary_expr(Cuik_Parser* parser, TokenStream* restrict s) {
                 diag_err(s, get_token_range(t), "invalid character literal");
             }
 
-            *e = (Expr){
+            e = push_expr(parser);
+            *e = (Subexpr){
                 .op = t->type == TOKEN_STRING_SINGLE_QUOTE ? EXPR_CHAR : EXPR_WCHAR,
                 .char_lit = ch,
             };
@@ -436,14 +475,12 @@ static Expr* parse_primary_expr(Cuik_Parser* parser, TokenStream* restrict s) {
             tokens_next(s);
 
             Cuik_QualType char_type = cuik_uncanonical_type(&parser->target->signed_ints[CUIK_BUILTIN_CHAR]);
-            *e = (Expr){
+
+            e = push_expr(parser);
+            *e = (Subexpr){
                 .op = EXPR_STR,
-                .type = cuik_uncanonical_type(cuik__new_array(&parser->types, char_type, content.length)),
                 .has_visited = true,
-                .str = {
-                    content.data,
-                    content.data + content.length,
-                }
+                .str = { content.data, content.data + content.length }
             };
 
             expect_closing_paren(s, opening_loc);
@@ -454,9 +491,12 @@ static Expr* parse_primary_expr(Cuik_Parser* parser, TokenStream* restrict s) {
         case TOKEN_STRING_DOUBLE_QUOTE:
         case TOKEN_STRING_WIDE_DOUBLE_QUOTE: {
             bool is_wide = (tokens_get(s)->type == TOKEN_STRING_WIDE_DOUBLE_QUOTE);
-            *e = (Expr){
+
+            e = push_expr(parser);
+            *e = (Subexpr){
                 .op = is_wide ? EXPR_WSTR : EXPR_STR,
             };
+
             parse_string_literal(parser, s, e);
             tokens_prev(s);
             break;
@@ -469,12 +509,11 @@ static Expr* parse_primary_expr(Cuik_Parser* parser, TokenStream* restrict s) {
             expect_char(s, '(');
 
             // controlling expression followed by a comma
-            Expr* controlling_expr = parse_assignment(parser, s);
+            parse_assignment(parser, s);
 
-            *e = (Expr){
-                .op = EXPR_GENERIC,
-                .generic_ = {.controlling_expr = controlling_expr},
-            };
+            e = push_expr(parser);
+            *e = (Subexpr){ .op = EXPR_GENERIC };
+
             expect_char(s, ',');
 
             size_t entry_count = 0;
@@ -490,7 +529,9 @@ static Expr* parse_primary_expr(Cuik_Parser* parser, TokenStream* restrict s) {
 
                     default_loc = tokens_get_range(s);
                     expect_char(s, ':');
-                    Expr* expr = parse_assignment(parser, s);
+
+                    parse_assignment(parser, s);
+                    Cuik_Expr* expr = complete_expr(parser);
 
                     // the default case is like a normal entry but without a type :p
                     tls_push(sizeof(C11GenericEntry));
@@ -501,9 +542,10 @@ static Expr* parse_primary_expr(Cuik_Parser* parser, TokenStream* restrict s) {
                 } else {
                     Cuik_QualType type = parse_typename2(parser, s);
                     assert(!CUIK_QUAL_TYPE_IS_NULL(type) && "TODO: error recovery");
-
                     expect_char(s, ':');
-                    Expr* expr = parse_assignment(parser, s);
+
+                    parse_assignment(parser, s);
+                    Cuik_Expr* expr = complete_expr(parser);
 
                     tls_push(sizeof(C11GenericEntry));
                     entries[entry_count++] = (C11GenericEntry){
@@ -540,12 +582,11 @@ static Expr* parse_primary_expr(Cuik_Parser* parser, TokenStream* restrict s) {
 
     e->loc.start = start_loc;
     e->loc.end = tokens_get_last_location(s);
-    return e;
 }
 
-static Expr* parse_postfix(Cuik_Parser* restrict parser, TokenStream* restrict s, bool in_sizeof) {
+static void parse_postfix(Cuik_Parser* restrict parser, TokenStream* restrict s, bool in_sizeof) {
     SourceLoc start_loc = tokens_get_location(s);
-    Expr* e = NULL;
+    bool has_expr = false;
 
     // initializer list handling:
     //   '(' type-name ')' '{' initializer-list '}'
@@ -565,35 +606,38 @@ static Expr* parse_postfix(Cuik_Parser* restrict parser, TokenStream* restrict s
 
         if (tokens_get(s)->type != '{') {
             if (in_sizeof) {
+                // HACKY but it does get us to the 'sizeof' as opposed to the paren
+                start_loc = s->list.tokens[s->list.current - 4].location;
+
                 // resolve as sizeof (T)
                 SourceLoc end_loc = tokens_get_last_location(s);
-                Expr* e = alloc_expr(parser);
-                *e = (Expr){
+                *push_expr(parser) = (Subexpr){
                     .op = EXPR_SIZEOF_T,
                     .loc = { start_loc, end_loc },
                     .x_of_type = { type },
                 };
-                return e;
+                return;
             } else {
                 s->list.current = fallback;
+                has_expr = true;
                 goto normal_path;
             }
         }
 
-        e = parse_initializer2(parser, s, type);
+        parse_initializer2(parser, s, type);
     }
 
     normal_path:
     start_loc = tokens_get_location(s);
 
     bool use_constructor = false;
-    if (e == NULL) {
+    if (!has_expr) {
         if (parser->version == CUIK_VERSION_GLSL && is_typename(parser, s)) {
             Cuik_Type* type = parse_glsl_type(parser, s);
             SourceLoc end_loc = tokens_get_last_location(s);
 
-            e = alloc_expr(parser);
-            *e = (Expr){
+            Subexpr* e = push_expr(parser);
+            *e = (Subexpr){
                 .op = EXPR_CONSTRUCTOR,
                 .loc = { start_loc, end_loc },
                 .constructor = { type },
@@ -603,7 +647,7 @@ static Expr* parse_postfix(Cuik_Parser* restrict parser, TokenStream* restrict s
                 diag_err(s, e->loc, "Expected parenthesis after constructor name");
             }
         } else {
-            e = parse_primary_expr(parser, s);
+            parse_primary_expr(parser, s);
         }
     }
 
@@ -612,22 +656,18 @@ static Expr* parse_postfix(Cuik_Parser* restrict parser, TokenStream* restrict s
     // piece of the expression.
     try_again: {
         if (tokens_get(s)->type == '[') {
-            Expr* base = e;
-            e = alloc_expr(parser);
-
             tokens_next(s);
-            Expr* index = parse_expr(parser, s);
+            parse_expr(parser, s);
             expect_char(s, ']');
 
             SourceLoc end_loc = tokens_get_last_location(s);
-            *e = (Expr){
+            *push_expr(parser) = (Subexpr){
                 .op = EXPR_SUBSCRIPT,
                 .loc = { start_loc, end_loc },
-                .subscript = { base, index },
             };
 
             if (use_constructor) {
-                diag_err(s, e->loc, "Cannot get element of type");
+                diag_err(s, (SourceRange){ start_loc, end_loc }, "Cannot get element of type");
             }
             goto try_again;
         }
@@ -644,17 +684,14 @@ static Expr* parse_postfix(Cuik_Parser* restrict parser, TokenStream* restrict s
             tokens_next(s);
 
             SourceLoc end_loc = tokens_get_last_location(s);
-
-            Expr* base = e;
-            e = alloc_expr(parser);
-            *e = (Expr){
+            *push_expr(parser) = (Subexpr){
                 .op = EXPR_ARROW,
                 .loc = { start_loc, end_loc },
-                .dot_arrow = { .base = base, .name = name },
+                .dot_arrow = { .name = name },
             };
 
             if (use_constructor) {
-                diag_err(s, e->loc, "Cannot get member of type");
+                diag_err(s, (SourceRange){ start_loc, end_loc }, "Cannot get member of type");
             }
             goto try_again;
         }
@@ -671,16 +708,14 @@ static Expr* parse_postfix(Cuik_Parser* restrict parser, TokenStream* restrict s
             tokens_next(s);
 
             SourceLoc end_loc = tokens_get_last_location(s);
-            Expr* base = e;
-            e = alloc_expr(parser);
-            *e = (Expr){
+            *push_expr(parser) = (Subexpr){
                 .op = EXPR_DOT,
                 .loc = { start_loc, end_loc },
-                .dot_arrow = { .base = base, .name = name },
+                .dot_arrow = { .name = name },
             };
 
             if (use_constructor) {
-                diag_err(s, e->loc, "Cannot get member of type");
+                diag_err(s, (SourceRange){ start_loc, end_loc }, "Cannot get member of type");
             }
             goto try_again;
         }
@@ -690,12 +725,7 @@ static Expr* parse_postfix(Cuik_Parser* restrict parser, TokenStream* restrict s
             SourceLoc open_loc = tokens_get_location(s);
             tokens_next(s);
 
-            Expr* target = e;
-            e = alloc_expr(parser);
-
-            size_t param_count = 0;
-            void* params = tls_save();
-
+            int param_count = 0;
             while (!tokens_eof(s) && tokens_get(s)->type != ')') {
                 if (param_count) {
                     if (tokens_get(s)->type != ',') {
@@ -705,26 +735,18 @@ static Expr* parse_postfix(Cuik_Parser* restrict parser, TokenStream* restrict s
                     tokens_next(s);
                 }
 
-                Expr* e = parse_assignment(parser, s);
-                *((Expr**)tls_push(sizeof(Expr*))) = e;
+                parse_assignment(parser, s);
                 param_count++;
             }
 
             expect_closing_paren(s, open_loc);
             SourceLoc end_loc = tokens_get_last_location(s);
 
-            // Copy parameter refs into more permanent storage
-            Expr** param_start = arena_alloc(&thread_arena, param_count * sizeof(Expr*), _Alignof(Expr*));
-            memcpy(param_start, params, param_count * sizeof(Expr*));
-
-            *e = (Expr){
+            *push_expr(parser) = (Subexpr){
                 .op = EXPR_CALL,
                 .loc = { start_loc, end_loc },
-                .call = { target, param_count, param_start },
+                .call = { param_count },
             };
-            // diag_note(s, e->loc, "EXPR");
-
-            tls_restore(params);
             goto try_again;
         }
 
@@ -733,21 +755,18 @@ static Expr* parse_postfix(Cuik_Parser* restrict parser, TokenStream* restrict s
             tokens_next(s);
             SourceLoc end_loc = tokens_get_last_location(s);
 
-            Expr* src = e;
-            e = alloc_expr(parser);
-            *e = (Expr){
+            *push_expr(parser) = (Subexpr){
                 .op = is_inc ? EXPR_POST_INC : EXPR_POST_DEC,
                 .loc = { start_loc, end_loc },
-                .unary_op.src = src,
             };
 
             if (use_constructor) {
-                diag_err(s, e->loc, "Cannot increment or decrement type");
+                diag_err(s, (SourceRange){ start_loc, end_loc }, "Cannot increment or decrement type");
             }
             goto try_again;
         }
 
-        return e;
+        return;
     }
 }
 
@@ -762,7 +781,7 @@ static Expr* parse_postfix(Cuik_Parser* restrict parser, TokenStream* restrict s
 //
 // unary-operator: one of
 //     & * + - ~ !
-static Expr* parse_unary(Cuik_Parser* restrict parser, TokenStream* restrict s, bool in_sizeof) {
+static void parse_unary(Cuik_Parser* restrict parser, TokenStream* restrict s, bool in_sizeof) {
     SourceLoc start_loc = tokens_get_location(s);
     TknType tkn = tokens_get(s)->type;
 
@@ -778,56 +797,47 @@ static Expr* parse_unary(Cuik_Parser* restrict parser, TokenStream* restrict s, 
         SourceLoc end_loc = tokens_get_last_location(s);
         expect_closing_paren(s, opening_loc);
 
-        Expr* e = alloc_expr(parser);
-        *e = (Expr){
+        *push_expr(parser) = (Subexpr){
             .op = EXPR_ALIGNOF_T,
             .loc = { start_loc, end_loc },
             .x_of_type = { type },
         };
-        return e;
+        return;
     } else if (tkn == TOKEN_KW_sizeof) {
         tokens_next(s);
         assert(!parser->is_in_global_scope && "cannot resolve is_typename in global scope");
 
-        Expr* src = parse_unary(parser, s, true);
-        if (src->op != EXPR_SIZEOF_T) {
+        parse_unary(parser, s, true);
+        if (peek_expr(parser)->op != EXPR_SIZEOF_T) {
             // convert expression into sizeof content
             SourceLoc end_loc = tokens_get_last_location(s);
-            Expr* e = alloc_expr(parser);
-            *e = (Expr){
+            *push_expr(parser) = (Subexpr){
                 .op = EXPR_SIZEOF,
-                .loc = src->loc,
-                .x_of_expr = { src },
+                .loc = { start_loc, end_loc },
             };
-            return e;
-        } else {
-            return src;
         }
     } else {
         ExprOp op = get_unary(tkn);
 
         if (op != EXPR_NONE) {
             tokens_next(s);
-            Expr* value = parse_cast(parser, s, in_sizeof);
-            if (op == EXPR_PLUS) return value;
+            parse_cast(parser, s, in_sizeof);
 
-            SourceLoc end_loc = tokens_get_last_location(s);
-            Expr* e = alloc_expr(parser);
-
-            *e = (Expr){
-                .op = op,
-                .loc = { start_loc, end_loc },
-                .unary_op.src = value
-            };
-            return e;
+            if (op != EXPR_NONE) {
+                SourceLoc end_loc = tokens_get_last_location(s);
+                *push_expr(parser) = (Subexpr){
+                    .op = op,
+                    .loc = { start_loc, end_loc },
+                };
+            }
         } else {
             // either
-            return parse_postfix(parser, s, in_sizeof);
+            parse_postfix(parser, s, in_sizeof);
         }
     }
 }
 
-static Expr* parse_cast(Cuik_Parser* restrict parser, TokenStream* restrict s, bool in_sizeof) {
+static void parse_cast(Cuik_Parser* restrict parser, TokenStream* restrict s, bool in_sizeof) {
     SourceLoc start_loc = tokens_get_location(s);
 
     size_t fallback = s->list.current;
@@ -848,13 +858,12 @@ static Expr* parse_cast(Cuik_Parser* restrict parser, TokenStream* restrict s, b
             if (in_sizeof) {
                 // resolve as sizeof (T)
                 SourceLoc end_loc = tokens_get_last_location(s);
-                Expr* e = alloc_expr(parser);
-                *e = (Expr){
+                *push_expr(parser) = (Subexpr){
                     .op = EXPR_SIZEOF_T,
                     .loc = { start_loc, end_loc },
                     .x_of_type = { type },
                 };
-                return e;
+                return;
             } else {
                 // this is an initializer list not a normal cast
                 s->list.current = fallback;
@@ -862,78 +871,66 @@ static Expr* parse_cast(Cuik_Parser* restrict parser, TokenStream* restrict s, b
             }
         }
 
-        Expr* base = parse_cast(parser, s, false);
-        SourceLoc end_loc = tokens_get_last_location(s);
+        parse_cast(parser, s, false);
 
-        Expr* e = alloc_expr(parser);
-        *e = (Expr){
+        SourceLoc end_loc = tokens_get_last_location(s);
+        *push_expr(parser) = (Subexpr){
             .op = EXPR_CAST,
             .loc = { start_loc, start_loc },
-            .cast = { base, type },
+            .cast = { type },
         };
-        return e;
+        return;
     }
 
     normal_path:
-    return parse_unary(parser, s, false);
+    parse_unary(parser, s, false);
 }
 
-static Expr* parse_binop(Cuik_Parser* restrict parser, TokenStream* restrict s, int min_prec) {
+static void parse_binop(Cuik_Parser* restrict parser, TokenStream* restrict s, int min_prec) {
     // This precendence climber is always left associative
     SourceLoc start_loc = tokens_get_location(s);
-    Expr* result = parse_cast(parser, s, false);
+    parse_cast(parser, s, false);
 
     ExprInfo binop;
     while (binop = get_binop(tokens_get(s)->type), binop.prec != 0 && binop.prec >= min_prec) {
         tokens_next(s);
 
-        Expr* e = alloc_expr(parser);
-        Expr* rhs = parse_binop(parser, s, binop.prec + 1);
+        parse_binop(parser, s, binop.prec + 1);
 
         SourceLoc end_loc = tokens_get_last_location(s);
-        *e = (Expr){
+        *push_expr(parser) = (Subexpr){
             .op = binop.op,
             .loc = { start_loc, end_loc },
-            .bin_op = { result, rhs },
         };
-        result = e;
     }
-
-    return result;
 }
 
 // ternary
-static Expr* parse_ternary(Cuik_Parser* restrict parser, TokenStream* restrict s) {
+static void parse_ternary(Cuik_Parser* restrict parser, TokenStream* restrict s) {
     SourceLoc start_loc = tokens_get_location(s);
-    Expr* lhs = parse_binop(parser, s, 0);
+    parse_binop(parser, s, 0);
 
     if (tokens_get(s)->type == '?') {
         tokens_next(s);
 
-        Expr* mhs = parse_expr(parser, s);
+        parse_expr(parser, s);
         expect_char(s, ':');
-        Expr* rhs = parse_ternary(parser, s);
+        parse_ternary(parser, s);
 
         SourceLoc end_loc = tokens_get_last_location(s);
-        Expr* e = alloc_expr(parser);
-        *e = (Expr){
+        *push_expr(parser) = (Subexpr){
             .op = EXPR_TERNARY,
-            .loc = { start_loc, end_loc },
-            .ternary_op = {lhs, mhs, rhs},
+            .loc = { start_loc, end_loc }
         };
-
-        return e;
-    } else {
-        return lhs;
     }
 }
 
 // = += -= *= /= %= <<= >>= &= ^= |=
 //
 // NOTE(NeGate): a=b=c is a=(b=c) not (a=b)=c
-static Expr* parse_assignment(Cuik_Parser* restrict parser, TokenStream* restrict s) {
+static void parse_assignment(Cuik_Parser* restrict parser, TokenStream* restrict s) {
     SourceLoc start_loc = tokens_get_location(s);
-    Expr* lhs = parse_ternary(parser, s);
+    parse_ternary(parser, s);
 
     ExprOp op = EXPR_NONE;
     switch (tokens_get(s)->type) {
@@ -952,22 +949,17 @@ static Expr* parse_assignment(Cuik_Parser* restrict parser, TokenStream* restric
     }
 
     if (op == EXPR_NONE) {
-        return lhs;
+        return;
     }
 
     tokens_next(s);
-
-    Expr* e = alloc_expr(parser);
-    Expr* rhs = parse_assignment(parser, s);
+    parse_assignment(parser, s);
 
     SourceLoc end_loc = tokens_get_last_location(s);
-
-    *e = (Expr){
+    *push_expr(parser) = (Subexpr){
         .op = op,
         .loc = { start_loc, end_loc },
-        .bin_op = { lhs, rhs },
     };
-    return e;
 }
 
 static void parse_pragma_expr(Cuik_Parser* restrict parser, TokenStream* restrict s) {
@@ -985,39 +977,42 @@ static void parse_pragma_expr(Cuik_Parser* restrict parser, TokenStream* restric
     }
 }
 
-static Expr* parse_expr(Cuik_Parser* restrict parser, TokenStream* restrict s) {
+static void parse_expr(Cuik_Parser* restrict parser, TokenStream* restrict s) {
     parse_pragma_expr(parser, s);
 
     SourceLoc start_loc = tokens_get_location(s);
-    Expr* lhs = parse_assignment(parser, s);
+    parse_assignment(parser, s);
 
     while (tokens_get(s)->type == TOKEN_COMMA) {
-        Expr* e = alloc_expr(parser);
         ExprOp op = EXPR_COMMA;
         tokens_next(s);
 
         SourceLoc end_loc = tokens_get_last_location(s);
 
-        Expr* rhs = parse_assignment(parser, s);
-        *e = (Expr){
+        parse_assignment(parser, s);
+        *push_expr(parser) = (Subexpr){
             .op = op,
             .loc = { start_loc, end_loc },
-            .bin_op = { lhs, rhs },
         };
-
-        lhs = e;
     }
 
     parse_pragma_expr(parser, s);
-    return lhs;
+}
+
+static Cuik_Expr* parse_expr2(Cuik_Parser* restrict parser, TokenStream* restrict s) {
+    parse_expr(parser, s);
+    return complete_expr(parser);
 }
 
 static intmax_t parse_const_expr(Cuik_Parser* parser, TokenStream* restrict s) {
-    Expr* folded = cuik__optimize_ast(parser, parser->tu, parse_assignment(parser, s));
-    if (folded->op != EXPR_INT) {
-        diag_err(s, folded->loc, "could not parse expression as constant.");
+    parse_assignment(parser, s);
+    Cuik_Expr* e = complete_expr(parser);
+
+    Cuik_ConstInt value;
+    if (!const_eval_int(parser, e, &value)) {
+        diag_err(s, e->exprs[e->count - 1].loc, "could not parse expression as constant.");
         return 0;
     }
 
-    return (intmax_t) folded->int_num.num;
+    return value;
 }

@@ -18,7 +18,7 @@ local options = {
 	debug  = false,
 	cuik   = false,
 	tb     = false,
-	driver = false,
+	driver = true,
 	shared = false,
 	test   = false,
 	lld    = false,
@@ -44,7 +44,7 @@ function add_srcs(...)
 end
 
 local ldflags = ""
-local cflags = "-g -msse4 -I common -Wall -Werror -Wno-unused -Wno-deprecated -DTB_USE_MIMALLOC -DCUIK_USE_MIMALLOC -I mimalloc/include -DCUIK_ALLOW_THREADS"
+local cflags = "-ferror-limit=20 -g -msse4 -I common -Wall -Werror -Wno-unused -Wno-deprecated -DTB_USE_MIMALLOC -DCUIK_USE_MIMALLOC -I mimalloc/include -DCUIK_ALLOW_THREADS"
 
 local cc = "clang"
 local ar = "llvm-ar -rcs"
@@ -175,13 +175,13 @@ command("libCuik/lib/preproc/keywords.h libCuik/lib/preproc/dfa.h", "bin/lexgen"
 -- package freestanding headers into C file
 local x = {}
 if is_windows then
-	local cmd = io.popen("dir /B crt\\include\\*.h")
+	local cmd = io.popen("dir /B headers\\*.h")
 	for c in cmd:lines() do
-		x[#x + 1] = "crt/include/"..c
+		x[#x + 1] = "headers/"..c
 	end
 	cmd:close()
 else
-	local cmd = io.popen("find crt/include/*.h -maxdepth 1")
+	local cmd = io.popen("find headers/*.h -maxdepth 1")
 	for c in cmd:lines() do
 		x[#x + 1] = c
 	end

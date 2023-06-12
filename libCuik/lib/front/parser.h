@@ -4,6 +4,7 @@
 #include <threads.h>
 #include <stdatomic.h>
 #include <dyn_array.h>
+#include <inttypes.h>
 
 #ifdef CUIK_USE_TB
 #include <tb.h>
@@ -16,14 +17,6 @@
 
 #define MAX_LOCAL_SYMBOLS (1 << 20)
 #define MAX_LOCAL_TAGS (1 << 16)
-
-typedef struct ConstValue {
-    bool is_signed;
-    union {
-        intmax_t signed_value;
-        uintmax_t unsigned_value;
-    };
-} ConstValue;
 
 typedef struct Decl {
     Cuik_QualType type;
@@ -93,6 +86,7 @@ struct TranslationUnit {
     // chain of TUs for the compilation unit
     struct TranslationUnit* next;
 
+    Arena* arena;
     void* user_data;
     bool is_free;
 
@@ -136,9 +130,8 @@ struct CompilationUnit {
 
     #ifdef CUIK_USE_TB
     TB_Module* ir_mod;
-    #endif
-
     NL_Strmap(TB_Symbol*) export_table;
+    #endif
 
     // linked list of all TUs referenced
     TranslationUnit* head;

@@ -160,9 +160,9 @@ typedef struct TB_InitObj {
 
 struct TB_Global {
     TB_Symbol super;
+    TB_Linkage linkage;
 
     TB_ModuleSection* parent;
-    TB_Linkage linkage;
 
     // layout stuff
     void* address; // JIT-only
@@ -311,9 +311,9 @@ struct TB_NodePage {
 
 struct TB_Function {
     TB_Symbol super;
+    TB_Linkage linkage;
 
     TB_FunctionPrototype* prototype;
-    TB_Linkage linkage;
     TB_Comdat comdat;
 
     TB_Node* start_node;

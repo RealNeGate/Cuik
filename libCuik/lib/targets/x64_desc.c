@@ -19,47 +19,6 @@ static void set_defines(const Cuik_Target* target, Cuik_CPP* cpp) {
     }
 }
 
-// TODO(NeGate): Add some type checking utilities to match against a list of types since that's kinda important :p
-static Cuik_Type* type_check_builtin(TranslationUnit* tu, Expr* e, const char* name, const char* builtin_value, int arg_count, Expr** args) {
-    Cuik_Type* t = target_generic_type_check_builtin(tu, e, name, builtin_value, arg_count, args);
-    if (t != NULL) {
-        return t;
-    }
-
-    Cuik_Type* target_signed_ints = tu->target->signed_ints;
-    Cuik_Type* target_unsigned_ints = tu->target->unsigned_ints;
-
-    if (strcmp(name, "_mm_setcsr") == 0) {
-        if (arg_count != 1) {
-            diag_err(&tu->tokens, e->loc, "parameter mismatch (got %s, expected %d)", name, 1);
-            return &cuik__builtin_void;
-        }
-
-        Cuik_Type* arg_type = sema_expr(tu, args[0]);
-        Cuik_Type* int_type = &target_unsigned_ints[CUIK_BUILTIN_INT];
-        if (!type_compatible(tu, arg_type, int_type, args[0])) {
-            diag_err(&tu->tokens, args[0]->loc, "Could not implicitly convert type %!T into %!T.", arg_type, int_type);
-            return &cuik__builtin_void;
-        }
-
-        args[0]->cast_type = cuik_uncanonical_type(int_type);
-        return &cuik__builtin_void;
-    } else if (strcmp(name, "_mm_getcsr") == 0) {
-        if (arg_count != 0) {
-            diag_err(&tu->tokens, e->loc, "%s requires 0 arguments", name);
-        }
-
-        return &target_unsigned_ints[CUIK_BUILTIN_INT];
-    } else if (strcmp(name, "__rdtsc") == 0) {
-        return &target_unsigned_ints[CUIK_BUILTIN_LLONG];
-    } else if (strcmp(name, "__readgsqword") == 0) {
-        return &target_unsigned_ints[CUIK_BUILTIN_SHORT];
-    } else {
-        diag_err(&tu->tokens, e->loc, "unimplemented builtin %s", name);
-        return &cuik__builtin_void;
-    }
-}
-
 #ifdef CUIK_USE_TB
 // on Win64 all structs that have a size of 1,2,4,8
 // or any scalars are passed via registers
@@ -91,11 +50,11 @@ static int deduce_parameter_usage(TranslationUnit* tu, Cuik_QualType type) {
     return 1;
 }
 
-static int pass_parameter(TranslationUnit* tu, TB_Function* func, Expr* e, bool is_vararg, TB_Node** out_param) {
-    return target_generic_pass_parameter(win64_should_pass_via_reg, tu, func, e, is_vararg, out_param);
+static int pass_parameter(TranslationUnit* tu, TB_Function* func, IRVal arg, bool is_vararg, TB_Node** out_param) {
+    return target_generic_pass_parameter(win64_should_pass_via_reg, tu, func, arg, is_vararg, out_param);
 }
 
-static TB_Node* compile_builtin(TranslationUnit* tu, TB_Function* func, const char* name, int arg_count, Expr** args) {
+static TB_Node* compile_builtin(TranslationUnit* tu, TB_Function* func, const char* name, int arg_count, IRVal* args) {
     BuiltinResult r = target_generic_compile_builtin(tu, func, name, arg_count, args);
     if (!r.failure) {
         return r.r;
@@ -103,7 +62,7 @@ static TB_Node* compile_builtin(TranslationUnit* tu, TB_Function* func, const ch
 
     // x64 specific builtins
     if (strcmp(name, "_mm_setcsr") == 0) {
-        return tb_inst_x86_ldmxcsr(func, irgen_as_rvalue(tu, func, args[0]));
+        return tb_inst_x86_ldmxcsr(func, cvt2rval(tu, func, &args[0]));
     } else if (strcmp(name, "_mm_getcsr") == 0) {
         return tb_inst_x86_stmxcsr(func);
     } else if (strcmp(name, "__rdtsc") == 0) {
@@ -123,10 +82,13 @@ Cuik_Target* cuik_target_x64(Cuik_System system, Cuik_Environment env) {
     nl_map_create(builtins, 128);
 
     target_generic_fill_builtin_table(&builtins);
-    nl_map_put_cstr(builtins, "_mm_getcsr", NULL);
-    nl_map_put_cstr(builtins, "_mm_setcsr", NULL);
-    nl_map_put_cstr(builtins, "__readgsqword", NULL);
-    nl_map_put_cstr(builtins, "__rdtsc", NULL);
+
+    #define X(name, format) nl_map_put_cstr(builtins, #name, format);
+    X("_mm_getcsr",    "v i");
+    X("_mm_setcsr",    "i v");
+    X("__readgsqword", " s");
+    X("__rdtsc",       " L");
+    #undef X
 
     Cuik_Target* t = cuik_malloc(sizeof(Cuik_Target));
     *t = (Cuik_Target){
@@ -150,7 +112,6 @@ Cuik_Target* cuik_target_x64(Cuik_System system, Cuik_Environment env) {
         .pass_parameter = pass_parameter,
         .compile_builtin = compile_builtin,
         #endif /* CUIK_USE_TB */
-        .type_check_builtin = type_check_builtin,
     };
 
     // on MSVC, long means 32bit and this is necessary because of stuff like

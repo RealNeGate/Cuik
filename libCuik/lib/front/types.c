@@ -207,6 +207,18 @@ bool type_equal(Cuik_Type* ty1, Cuik_Type* ty2) {
     return true;
 }
 
+// returns the number of bytes written
+static size_t cstr_copy(size_t len, char* dst, const char* src) {
+    size_t i = 0;
+    while (src[i]) {
+        assert(i < len);
+
+        dst[i] = src[i];
+        i += 1;
+    }
+    return i;
+}
+
 size_t type_as_string(size_t max_len, char* buffer, Cuik_Type* type) {
     if (type == NULL) {
         size_t i = cstr_copy(max_len, buffer, "nil");

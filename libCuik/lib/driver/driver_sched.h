@@ -1,3 +1,4 @@
+#ifdef CUIK_USE_TB
 enum {
     IRGEN_TASK_BATCH_SIZE = 8192,
     TB_TASK_BATCH_SIZE = 8192,
@@ -51,3 +52,4 @@ void cuiksched_per_function(Cuik_IThreadpool* restrict thread_pool, TB_Module* m
         }
     }
 }
+#endif

@@ -56,7 +56,23 @@ static void set_preprocessor(void* ctx, const Cuik_DriverArgs* args, Cuik_CPP* c
 }
 
 static bool invoke_link(void* ctx, const Cuik_DriverArgs* args, Cuik_Linker* linker, const char* output, const char* filename) {
-    return false;
+    enum { CMD_LINE_MAX = 4096 };
+
+    char cmd_line[CMD_LINE_MAX];
+    int cmd_line_len = snprintf(cmd_line, CMD_LINE_MAX, "clang %s -o %s ", args->debug_info ? "-g" : "", output);
+
+    dyn_array_for(i, linker->inputs) {
+        cmd_line_len += snprintf(&cmd_line[cmd_line_len], CMD_LINE_MAX - cmd_line_len, "%s ", linker->inputs[i]);
+    }
+
+    printf("Command: %s\n", cmd_line);
+    int exit_code = system(cmd_line);
+    if (exit_code != 0) {
+        fprintf(stderr, "Linker exited with code %d\n", exit_code);
+        return false;
+    }
+
+    return true;
 }
 
 static void* init(void) {

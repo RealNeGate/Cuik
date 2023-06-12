@@ -13,10 +13,6 @@
 //   Stmt          - statements (declarations count here) generally introduce sequence
 //                   points.
 //
-//   Expr          - all expressions have some type and during type checking a new
-//                   "cast type" is produced which represents the potential type
-//                   promotion and is the type actually used by the parent node.
-//
 // TODO:
 //
 //  * rename all the bare types to use Cuik_
@@ -31,9 +27,15 @@
 #include "cuik_prelude.h"
 
 typedef char* Atom;
-typedef struct Expr Expr;
+typedef struct Cuik_Expr Cuik_Expr;
+typedef struct Subexpr Subexpr;
 typedef struct Stmt Stmt;
 typedef struct Cuik_Type Cuik_Type;
+
+typedef uint64_t Cuik_ConstInt;
+
+// LEGACY, WE'RE REMOVING IT SOON
+typedef struct Expr Expr;
 
 typedef enum Cuik_Qualifiers {
     CUIK_QUAL_CONST    = (1u << 0u),
@@ -136,7 +138,7 @@ typedef struct {
 
 typedef struct {
     Cuik_QualType key;
-    Expr* value;
+    Cuik_Expr* value;
 } C11GenericEntry;
 
 typedef enum {
@@ -222,7 +224,7 @@ struct Cuik_Type {
 
         // Typeof
         struct {
-            Expr* src;
+            Cuik_Expr* src;
         } typeof_;
 
         struct {
@@ -321,7 +323,7 @@ typedef struct InitNode {
     uint32_t offset;
     Cuik_QualType type;
 
-    Expr* expr;
+    Cuik_Expr* expr;
     InitNodeDesignator mode;
 
     // we're lisp-pilled:
@@ -392,7 +394,6 @@ typedef enum ExprOp {
     EXPR_GENERIC, // C11's _Generic
     EXPR_VA_ARG,
 
-    EXPR_FUNCTION, // function literal
     EXPR_INITIALIZER,
 
     EXPR_CAST,
@@ -467,6 +468,7 @@ typedef enum ExprOp {
 typedef enum {
     STMT_FLAGS_HAS_IR_BACKING = 1,
     STMT_FLAGS_IS_EXPORTED    = 2,
+    STMT_FLAGS_IS_RESOLVING   = 4,
 } StmtFlags;
 
 struct Stmt {
@@ -498,10 +500,10 @@ struct Stmt {
             int kids_count;
         } compound;
         struct StmtExpr {
-            Expr* expr;
+            Cuik_Expr* expr;
         } expr;
         struct StmtReturn {
-            Expr* expr;
+            Cuik_Expr* expr;
         } return_;
         struct StmtContinue {
             Stmt* target; // loop
@@ -510,7 +512,7 @@ struct Stmt {
             Stmt* target; // either a loop or switch
         } break_;
         struct StmtGoto {
-            Expr* target;
+            Cuik_Expr* target;
         } goto_;
         struct StmtLabel {
             Atom name;
@@ -527,7 +529,7 @@ struct Stmt {
             Stmt* next;
         } default_;
         struct StmtSwitch {
-            Expr* condition;
+            Cuik_Expr* condition;
             Stmt* body;
 
             // points to the first case or default,
@@ -542,33 +544,33 @@ struct Stmt {
 
             // acceleration structure for scrubbing for symbols
             // it's a linked list
-            Expr* first_symbol;
+            Cuik_Expr* first_symbol;
 
             // NOTE(NeGate): This represents a stmtindex if it's a
             // FUNC_DECL
             union {
                 Stmt* initial_as_stmt;
-                Expr* initial;
+                Cuik_Expr* initial;
             };
 
             Attribs attrs;
         } decl;
         struct StmtFor {
             Stmt* first;
-            Expr* cond;
+            Cuik_Expr* cond;
             Stmt* body;
-            Expr* next;
+            Cuik_Expr* next;
         } for_;
         struct StmtWhile {
-            Expr* cond;
+            Cuik_Expr* cond;
             Stmt* body;
         } while_;
         struct StmtDoWhile {
-            Expr* cond;
+            Cuik_Expr* cond;
             Stmt* body;
         } do_while;
         struct StmtIf {
-            Expr* cond;
+            Cuik_Expr* cond;
             Stmt* body;
             Stmt* next;
         } if_;
@@ -715,6 +717,140 @@ struct Expr {
 _Static_assert(offsetof(Expr, next_symbol_in_chain) == offsetof(Expr, next_symbol_in_chain2), "these should be aliasing");
 _Static_assert(offsetof(Expr, next_symbol_in_chain) == offsetof(Expr, builtin_sym.next_symbol_in_chain), "these should be aliasing");
 
+struct Subexpr {
+    SourceRange loc;
+    ExprOp op : 8;
+
+    // some flags:
+    int has_parens : 1;
+    int has_visited : 1;
+
+    union {
+        uint32_t char_lit;
+        double float_lit;
+
+        struct {
+            uint64_t lit;
+            Cuik_IntSuffix suffix;
+        } int_lit;
+
+        struct {
+            uint8_t len;
+            uint8_t indices[4];
+        } swizzle;
+
+        struct {
+            Cuik_Type* type;
+        } constructor;
+
+        struct {
+            Atom name;
+            ptrdiff_t next_symbol;
+        } unknown_sym;
+
+        struct {
+            Atom name;
+            ptrdiff_t next_symbol;
+        } builtin_sym;
+
+        struct {
+            Stmt* stmt;
+            ptrdiff_t next_symbol;
+        } sym;
+
+        // EXPR_PARAM
+        int param_num;
+
+        struct {
+            Cuik_QualType type;
+            EnumEntry* num;
+        } enum_val;
+
+        struct {
+            Cuik_QualType type;
+        } va_arg_;
+
+        struct {
+            Cuik_QualType type;
+        } cast;
+
+        // represent both quoted literals
+        struct {
+            const unsigned char* start;
+            const unsigned char* end;
+        } str;
+
+        // either sizeof(T) or _Alignof(T)
+        struct {
+            Cuik_QualType type;
+        } x_of_type;
+
+        struct {
+            Cuik_QualType type;
+            InitNode* root;
+        } init;
+
+        struct {
+            // if case_count == 0, then controlling_expr is the matched expression
+            int case_count;
+            C11GenericEntry* cases;
+        } generic_;
+
+        struct {
+            uint32_t offset;
+
+            // during semantics we'll switch between DOT or ARROW to DOT_R or ARROW_R
+            // which means we use the member field
+            union {
+                Member* member;
+                Atom name;
+            };
+        } dot_arrow;
+
+        struct {
+            int param_count;
+        } call;
+    };
+};
+
+// # COMPRESSED EXPRESSIONS
+//   To represent a metric shitload of expressions in Cuik we compact them
+//   using a postfix notation. Instead of using pointers to refer to inputs
+//   it's implicit to this position in the expression stream.
+//
+//     1 x y * +                     +
+//                                  / \
+//                    versus       1   *
+//                                    / \
+//                                   x   y
+//
+// # CAST TYPE
+//   an Expr's cast_type is the type it'll be desugared into.
+//
+//     a + b where a and b are 16bit
+//
+//   their cast_type might be int because of C's
+//   promotion rules.
+//
+// # SYMBOL CHAIN
+//   an EXPR_SYMBOL or EXPR_UNKNOWN_SYMBOL will be part of a linked list which
+//   is used for knowing when symbols are in use.
+//
+struct Cuik_Expr {
+    size_t count;
+    bool visited;
+
+    ptrdiff_t first_symbol;
+    Cuik_Expr* next_in_chain;
+
+    // constructed during type checking
+    Cuik_QualType* types;
+    Cuik_QualType* cast_types;
+
+    // constructed during parse time
+    Subexpr* exprs;
+};
+
 static bool cuik_type_is_signed(const Cuik_Type* t) { return (t->kind >= KIND_CHAR && t->kind <= KIND_LLONG) && !t->is_unsigned; }
 static bool cuik_type_is_unsigned(const Cuik_Type* t) { return (t->kind >= KIND_CHAR && t->kind <= KIND_LLONG) && t->is_unsigned; }
 
@@ -808,35 +944,8 @@ CUIK_API void cuik_dump_translation_unit(FILE* stream, TranslationUnit* tu, bool
 CUIK_API void cuik_dump(FILE* stream, size_t count, Stmt** top_level, bool minimalist);
 CUIK_API void cuik_dump_expr(FILE* stream, Expr* e, int depth);
 
-////////////////////////////////////////////
-// Iterators
-////////////////////////////////////////////
-typedef struct {
-    // public
-    Expr* expr;
-
-    // internal
-    size_t index_;
-    Expr* parent_;
-} Cuik_ExprIter;
-
-typedef struct {
-    // public
-    Stmt* stmt;
-
-    // internal
-    size_t index_;
-    Stmt* parent_;
-} Cuik_StmtIter;
-
-#define CUIK_FOR_KID_IN_STMT(it, parent_) \
-for (Cuik_StmtIter it = { .parent = (parent_) }; cuik_next_stmt_kid(&it);)
-
-#define CUIK_FOR_KID_IN_EXPR(it, parent_) \
-for (Cuik_ExprIter it = { .parent = (parent_) }; cuik_next_expr_kid(&it);)
-
-CUIK_API bool cuik_next_expr_kid(Cuik_ExprIter* it);
-CUIK_API bool cuik_next_stmt_kid(Cuik_StmtIter* it);
+CUIK_API int cuik_get_expr_arity(Subexpr* e);
+CUIK_API const char* cuik_get_expr_name(Subexpr* e);
 
 #endif // CUIK_AST_H
 

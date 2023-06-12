@@ -40,8 +40,7 @@ thread_local static Stmt* current_breakable;
 thread_local static Stmt* current_continuable;
 
 // we build a chain in that lets us know what symbols are used by a function
-thread_local static Expr* symbol_chain_start;
-thread_local static Expr* symbol_chain_current;
+thread_local static Cuik_Expr* symbol_chain_start;
 
 static bool expect_char(TokenStream* restrict s, char ch);
 static bool expect_closing_paren(TokenStream* restrict s, SourceLoc opening);
@@ -162,9 +161,6 @@ struct Cuik_Parser {
     Cuik_ImportRequest* import_libs;
     DynArray(int) static_assertions;
 
-    // this is all the globals including the static locals
-    DynArray(Stmt*) local_static_storage_decls;
-
     // out-of-order parsing is only done while in global scope
     bool is_in_global_scope;
 
@@ -179,6 +175,9 @@ struct Cuik_Parser {
     Cuik_Type* va_list;
     Cuik_Type* first_placeholder;
     TypeConflict* first_conflict;
+
+    // used when expression building
+    Cuik_Expr* expr;
 
     struct {
         // these are unique entries in the string interner so
@@ -243,12 +242,12 @@ static Cuik_GlslQuals* parse_glsl_qualifiers(Cuik_Parser* restrict parser, Token
 #define THROW_IF_ERROR() if ((r = cuikdg_error_count(s)) > 0) return (Cuik_ParseResult){ r };
 #define TYPE_INSERT(...) type_insert(&parser->types, __VA_ARGS__)
 
+#include "expr_fold.h"
 #include "expr_parser.h"
 #include "decl_parser.h"
 #include "stmt_parser.h"
 #include "glsl_parser.h"
 #include "top_level_parser.h"
-#include "ast_optimizer.h"
 
 void type_layout2(Cuik_Parser* restrict parser, TokenStream* restrict tokens, Cuik_Type* type) {
     if (CUIK_TYPE_IS_COMPLETE(type)) return;

@@ -64,7 +64,10 @@ void cuik_destroy_compilation_unit(CompilationUnit* restrict cu) {
         tu = next;
     }
 
+    #ifdef CUIK_USE_TB
     nl_map_free(cu->export_table);
+    #endif
+
     mtx_destroy(&cu->lock);
     cuik_free(cu);
 }

@@ -75,23 +75,3 @@ void  tls_restore(void* p);
 
 void* cuik__valloc(size_t sz);
 void  cuik__vfree(void* p, size_t sz);
-
-static bool memeq(const void* a, size_t al, const void* b, size_t bl) {
-    return al == bl && memcmp(a, b, al) == 0;
-}
-
-static bool cstr_equals(const char* str1, const char* str2) {
-    return strcmp(str1, str2) == 0;
-}
-
-// returns the number of bytes written
-static size_t cstr_copy(size_t len, char* dst, const char* src) {
-    size_t i = 0;
-    while (src[i]) {
-        assert(i < len);
-
-        dst[i] = src[i];
-        i += 1;
-    }
-    return i;
-}

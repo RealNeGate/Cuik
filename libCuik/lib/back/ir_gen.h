@@ -14,16 +14,18 @@ typedef enum IRValType {
 
     LVALUE,
     LVALUE_BITS,
+    LVALUE_EXPR,
     LVALUE_LABEL,
-    LVALUE_SYMBOL,
 } IRValType;
 
 typedef struct IRVal {
     IRValType value_type;
+    Cuik_QualType type, cast_type;
 
     union {
         TB_Node* reg;
         TB_Symbol* sym;
+        Subexpr* e;
         struct {
             TB_Node* reg;
 
@@ -75,8 +77,8 @@ static TB_DataType ctype_to_tbtype(const Cuik_Type* t) {
 int count_max_tb_init_objects(InitNode* root_node);
 TB_DebugType* cuik__as_tb_debug_type(TB_Module* mod, Cuik_Type* t);
 
-TB_Node* irgen_as_rvalue(TranslationUnit* tu, TB_Function* func, Expr* e);
-IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Expr* e);
-void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s);
+static void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s);
+static TB_Node* irgen_as_rvalue(TranslationUnit* tu, TB_Function* func, Cuik_Expr* e);
+static IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Cuik_Expr* e);
 
 #endif

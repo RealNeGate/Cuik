@@ -478,23 +478,20 @@ static DirectiveResult skip_directive_body(TokenArray* restrict in) {
             t = peek(in);
 
             if (t.type == TOKEN_IDENTIFIER) {
-                if (memeq(t.content.data, t.content.length, "if", 2) ||
-                    memeq(t.content.data, t.content.length, "ifdef", 5) ||
-                    memeq(t.content.data, t.content.length, "ifndef", 6)) {
+                if (string_equals_cstr(&t.content, "if") ||
+                    string_equals_cstr(&t.content, "ifdef") ||
+                    string_equals_cstr(&t.content, "ifndef")) {
                     depth++;
-                } else if (memeq(t.content.data, t.content.length, "elif", 4) ||
-                    memeq(t.content.data, t.content.length, "else", 4)) {
+                } else if (string_equals_cstr(&t.content, "elif") || string_equals_cstr(&t.content, "else")) {
                     // else/elif does both entering a scope and exiting one
                     if (depth == 0) {
                         in->current -= 1;
-                        // report(REPORT_INFO, NULL, in, tokens_get_location_index(in), "SKIP END");
                         return DIRECTIVE_SUCCESS;
                     }
-                } else if (memeq(t.content.data, t.content.length, "endif", 5)) {
+                } else if (string_equals_cstr(&t.content, "endif")) {
                     if (depth == 0) {
                         // revert both the identifier and hash
                         in->current -= 1;
-                        // report(REPORT_INFO, NULL, in, tokens_get_location_index(in), "SKIP END");
                         return DIRECTIVE_SUCCESS;
                     }
                     depth--;

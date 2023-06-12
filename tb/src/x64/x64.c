@@ -1078,9 +1078,10 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
                 int src = isel(ctx, param);
 
                 if (TB_IS_FLOAT_TYPE(param_dt) || param_dt.width) {
-                    if (i - 2 < desc->gpr_count) {
+                    int xmm_id = is_sysv ? xmms_used++ : i - 2;
+                    if (xmm_id < desc->gpr_count) {
                         // hint src into XMM
-                        XMM target_xmm = i - 2;
+                        XMM target_xmm = xmm_id;
                         if (ctx->defs[src].hint < 0) {
                             ctx->defs[src].hint = target_xmm;
                         }
@@ -1125,6 +1126,12 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
                 SUBMIT(inst_copy(n->dt, fake_dst, num));
                 SUBMIT(inst_nullary(SYSCALL));
             } else {
+                // the number of float parameters is written into AL
+                if (is_sysv) {
+                    int rax = DEF_FORCED(n, REG_CLASS_GPR, RAX, fake_dst);
+                    SUBMIT(inst_i(MOV, TB_TYPE_I64, rax, xmms_used));
+                }
+
                 if (target->type == TB_GET_SYMBOL_ADDRESS) {
                     TB_NodeSymbol* s = TB_NODE_GET_EXTRA(target);
                     SUBMIT(inst_call(n->dt, fake_dst, s->sym));
@@ -1174,6 +1181,38 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             SUBMIT(inst_copy(TB_TYPE_I8, rax, USE(src)));
             //   rep stosb
             Inst i = inst_nullary(STOSB);
+            i.prefix |= INST_REP;
+            SUBMIT(i);
+            break;
+        }
+        case TB_MEMCPY: {
+            int rsi = DEF_FORCED(n, REG_CLASS_GPR, RSI, -1);
+            int rdi = DEF_FORCED(n, REG_CLASS_GPR, RDI, rsi);
+            int rcx = DEF_FORCED(n, REG_CLASS_GPR, RCX, rsi);
+
+            // clobber inputs
+            Clobbers* clobbers = arena_alloc(&tb__arena, sizeof(Clobbers) + (3 * sizeof(MachineReg)), _Alignof(Clobbers));
+            clobbers->count = 3;
+            clobbers->_[0] = (MachineReg){ REG_CLASS_GPR, RDI };
+            clobbers->_[1] = (MachineReg){ REG_CLASS_GPR, RCX };
+            clobbers->_[2] = (MachineReg){ REG_CLASS_GPR, RSI };
+            ctx->defs[rsi].clobbers = clobbers;
+
+            // rep movsb
+            //   mov rdi, ADDRESS
+            int addr = isel(ctx, n->inputs[1]);
+            hint(ctx, addr, RDI);
+            SUBMIT(inst_copy(TB_TYPE_PTR, rdi, USE(addr)));
+            //   mov rcx, SIZE
+            int size = isel(ctx, n->inputs[3]);
+            hint(ctx, size, RCX);
+            SUBMIT(inst_copy(TB_TYPE_I64, rcx, USE(size)));
+            //   mov rsi, SRC
+            int src = isel(ctx, n->inputs[2]);
+            hint(ctx, src, RSI);
+            SUBMIT(inst_copy(TB_TYPE_PTR, rsi, USE(src)));
+            //   rep movsb
+            Inst i = inst_nullary(MOVSB);
             i.prefix |= INST_REP;
             SUBMIT(i);
             break;

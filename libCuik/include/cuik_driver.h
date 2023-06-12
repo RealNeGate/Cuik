@@ -19,7 +19,10 @@ struct Cuik_Toolchain {
 
 struct Cuik_DriverArgs {
     Cuik_Version version;
+
+    #ifdef CUIK_USE_TB
     TB_OutputFlavor flavor;
+    #endif
 
     Cuik_Target* target;
     Cuik_Toolchain toolchain;

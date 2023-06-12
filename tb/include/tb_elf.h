@@ -72,12 +72,14 @@
 #define TB_PT_TLS       7	/* Thread local storage segment */
 
 /* Values for relocation */
-#define TB_R_X86_64_NONE     0
-#define TB_R_X86_64_64       1
-#define TB_R_X86_64_PC32     2
-#define TB_R_X86_64_GOT32    3
-#define TB_R_X86_64_PLT32    4
-#define TB_R_X86_64_GOTPCREL 9
+typedef enum {
+    TB_ELF_X86_64_NONE     = 0,
+    TB_ELF_X86_64_64       = 1,
+    TB_ELF_X86_64_PC32     = 2,
+    TB_ELF_X86_64_GOT32    = 3,
+    TB_ELF_X86_64_PLT32    = 4,
+    TB_ELF_X86_64_GOTPCREL = 9,
+} TB_ELF_RelocType;
 
 // ST_TYPE
 #define TB_ELF64_STT_NOTYPE  0

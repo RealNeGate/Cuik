@@ -81,8 +81,6 @@ static void step_done(Cuik_BuildStep* s) {
     }
 }
 
-static void irgen(Cuik_IThreadpool* restrict thread_pool, Cuik_DriverArgs* restrict args, CompilationUnit* restrict cu, TB_Module* mod);
-
 static bool has_file_ext(const char* path) {
     for (; *path; path++) {
         if (*path == '/')  return false;
@@ -91,22 +89,6 @@ static bool has_file_ext(const char* path) {
     }
 
     return false;
-}
-
-static bool write_file(TB_Exports* exports, int i, const char* path) {
-    FILE* file = fopen(path, "wb");
-    if (file == NULL) {
-        fprintf(stderr, "\x1b[31merror\x1b[0m: could not open file for writing! %s\n", path);
-        return false;
-    }
-
-    if (fwrite(exports->files[i].data, 1, exports->files[i].length, file) == 1) {
-        fprintf(stderr, "\x1b[31merror\x1b[0m: could not write to file! %s (not enough storage?)\n", path);
-        return false;
-    }
-
-    fclose(file);
-    return true;
 }
 
 static Cuik_Linker gimme_linker(Cuik_DriverArgs* restrict args) {
@@ -149,6 +131,25 @@ static void sys_invoke(BuildStepInfo* info) {
     step_done(s);
 }
 
+#ifdef CUIK_USE_TB
+static void irgen(Cuik_IThreadpool* restrict thread_pool, Cuik_DriverArgs* restrict args, CompilationUnit* restrict cu, TB_Module* mod);
+
+static bool write_file(TB_Exports* exports, int i, const char* path) {
+    FILE* file = fopen(path, "wb");
+    if (file == NULL) {
+        fprintf(stderr, "\x1b[31merror\x1b[0m: could not open file for writing! %s\n", path);
+        return false;
+    }
+
+    if (fwrite(exports->files[i].data, 1, exports->files[i].length, file) == 1) {
+        fprintf(stderr, "\x1b[31merror\x1b[0m: could not write to file! %s (not enough storage?)\n", path);
+        return false;
+    }
+
+    fclose(file);
+    return true;
+}
+
 static void compile_func(TB_Module* m, TB_Function* f, void* ctx) {
     tb_module_compile_function(m, f, TB_ISEL_FAST);
 }
@@ -158,6 +159,7 @@ static void apply_func(TB_Module* m, TB_Function* f, void* arg) {
     ApplyFunc* a = (ApplyFunc*) arg;
     tb_function_apply_passes(a->pm, a->passes, f);
 }
+#endif
 
 static void cc_invoke(BuildStepInfo* restrict info) {
     Cuik_BuildStep* s = info->step;
@@ -226,7 +228,8 @@ static void cc_invoke(BuildStepInfo* restrict info) {
         goto done;
     } else if (args->ast) {
         CUIK_FOR_EACH_TU(tu, cu) {
-            cuik_dump_translation_unit(stdout, tu, true);
+            log_error("Cannot dump translation unit... TODO");
+            // cuik_dump_translation_unit(stdout, tu, true);
         }
         goto done;
     }
@@ -240,6 +243,7 @@ static void cc_invoke(BuildStepInfo* restrict info) {
         tu->has_tb_debug_info = true;
     }
 
+    #ifdef CUIK_USE_TB
     TB_Module* mod = cu->ir_mod;
     CUIK_TIMED_BLOCK("Allocate IR") {
         cuikcg_allocate_ir2(tu, mod);
@@ -283,6 +287,7 @@ static void cc_invoke(BuildStepInfo* restrict info) {
             cuiksched_per_function(s->tp, mod, NULL, compile_func);
         }
     }
+    #endif
 
     if (!args->preserve_ast) {
         CUIK_TIMED_BLOCK("Destroy TU") {
@@ -312,8 +317,11 @@ static void ld_invoke(BuildStepInfo* info) {
 
     log_debug("BuildStep %p: ld_invoke", s);
 
-    // Once the frontend is complete we don't need this... unless we wanna keep it
+    // Without the backend, we can't link... it's basically just stubbed out
+    #ifdef CUIK_USE_TB
     TB_Module* mod = s->ld.cu->ir_mod;
+
+    // Once the frontend is complete we don't need this... unless we wanna keep it
     if (!args->preserve_ast) {
         cuik_destroy_compilation_unit(s->ld.cu);
     }
@@ -451,6 +459,7 @@ static void ld_invoke(BuildStepInfo* info) {
             cuiklink_deinit(&l);
         }
     }
+    #endif
 
     done: step_done(s);
 }
@@ -482,10 +491,12 @@ Cuik_BuildStep* cuik_driver_ld(Cuik_DriverArgs* args, int dep_count, Cuik_BuildS
     s->ld.cu = cuik_create_compilation_unit();
     s->ld.args = args;
 
+    #ifdef CUIK_USE_TB
     TB_FeatureSet features = { 0 };
     s->ld.cu->ir_mod = tb_module_create(
         args->target->arch, (TB_System) cuik_get_target_system(args->target), &features, args->run
     );
+    #endif
 
     for (size_t i = 0; i < dep_count; i++) {
         deps[i]->anti_dep = s;
@@ -707,6 +718,7 @@ CUIK_API Cuik_CPP* cuik_driver_preprocess_cstr(const char* source, const Cuik_Dr
     return run_cpp(cpp, args, should_finalize) ? cpp : NULL;
 }
 
+#ifdef CUIK_USE_TB
 typedef struct {
     TB_Module* mod;
     TranslationUnit* tu;
@@ -818,6 +830,7 @@ static void irgen(Cuik_IThreadpool* restrict thread_pool, Cuik_DriverArgs* restr
         }
     }
 }
+#endif
 
 void cuik_toolchain_free(Cuik_Toolchain* toolchain) {
     cuik_free(toolchain->ctx);

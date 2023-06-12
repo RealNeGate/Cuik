@@ -280,18 +280,14 @@ static TokenList line_into_list(TokenArray* restrict in) {
 }
 
 static bool expand_builtin_idents(Cuik_CPP* restrict c, Token* t) {
-    size_t token_length = t->content.length;
-    const unsigned char* token_data = t->content.data;
-
-    if (memeq(token_data, token_length, "__FILE__", 8) ||
-        memeq(token_data, token_length, "L__FILE__", 9)) {
+    if (string_equals_cstr(&t->content, "__FILE__") || string_equals_cstr(&t->content, "L__FILE__")) {
         ResolvedSourceLoc r = cuikpp_find_location(&c->tokens, t->location);
 
         // filepath as a string
         unsigned char* output_path_start = gimme_the_shtuffs(c, FILENAME_MAX + 4);
         unsigned char* output_path = output_path_start;
 
-        bool is_wide = (token_data[0] == 'L');
+        bool is_wide = (t->content.data[0] == 'L');
         if (is_wide) *output_path++ = 'L';
 
         *output_path++ = '\"';
@@ -319,7 +315,7 @@ static bool expand_builtin_idents(Cuik_CPP* restrict c, Token* t) {
         t->type = is_wide ? TOKEN_STRING_WIDE_DOUBLE_QUOTE : TOKEN_STRING_DOUBLE_QUOTE;
         t->content = string_from_range(output_path_start, output_path - 1);
         return true;
-    } else if (memeq(token_data, token_length, "__COUNTER__", 11)) {
+    } else if (string_equals_cstr(&t->content, "__COUNTER__")) {
         // line number as a string
         unsigned char* out = gimme_the_shtuffs(c, 10);
         size_t length = sprintf_s((char*)out, 10, "%d", c->unique_counter);
@@ -328,7 +324,7 @@ static bool expand_builtin_idents(Cuik_CPP* restrict c, Token* t) {
         t->type = TOKEN_INTEGER;
         t->content = (String){ length, out };
         return true;
-    } else if (memeq(token_data, token_length, "__LINE__", 8)) {
+    } else if (string_equals_cstr(&t->content, "__LINE__")) {
         ResolvedSourceLoc r = cuikpp_find_location(&c->tokens, t->location);
 
         // line number as a string
@@ -860,8 +856,6 @@ static void expand(Cuik_CPP* restrict c, TokenNode* restrict head, uint32_t pare
                 if ((t->location.raw & SourceLoc_IsMacro) == 0) {
                     uint32_t pos = t->location.raw & ((1u << SourceLoc_FilePosBits) - 1);
                     t->location = encode_macro_loc(parent_macro, pos);
-                } else {
-                    t->location = encode_macro_loc(parent_macro, 0);
                 }
             }
         } else {

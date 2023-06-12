@@ -104,6 +104,7 @@ CUIK_API void cuikdg_dump_to_file(TokenStream* tokens, FILE* out) {
     Arena* arena = &tokens->diag->buffer;
     for (ArenaSegment* s = arena->base; s != NULL; s = s->next) {
         fwrite(s->data, s->used, 1, stderr);
+        // printf("Total: %zu\n", s->used);
     }
 }
 

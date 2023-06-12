@@ -29,7 +29,6 @@ void cuik_init(bool use_crash_handler) {
 void cuik_free_thread_resources(void) {
     atoms_free();
     arena_free(&thread_arena);
-    cuik__pool_collect();
 }
 
 Cuik_Target* cuik_target_host(void) {

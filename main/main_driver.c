@@ -8,9 +8,12 @@
 // hacky but i dont care
 #include <file_map.h>
 
+#ifdef CUIK_USE_TB
 #include "objdump.h"
-#include "bindgen.h"
 #include "link.h"
+#endif
+
+#include "bindgen.h"
 
 #if CUIK_ALLOW_THREADS
 #include <threads.h>
@@ -45,13 +48,12 @@ int main(int argc, const char** argv) {
 
     int status = EXIT_SUCCESS;
     if (argc >= 2) {
-        if (strcmp(argv[1], "-objdump") == 0) {
-            return run_objdump(argc - 2, argv + 2);
-        } else if (strcmp(argv[1], "-link") == 0) {
-            return run_link(argc - 2, argv + 2);
-        } else if (strcmp(argv[1], "-bindgen") == 0) {
-            return run_bindgen(argc - 2, argv + 2);
-        }
+        #ifdef CUIK_USE_TB
+        if (strcmp(argv[1], "-objdump") == 0) return run_objdump(argc - 2, argv + 2);
+        if (strcmp(argv[1], "-link")    == 0) return run_link(argc - 2, argv + 2);
+        #endif
+
+        if (strcmp(argv[1], "-bindgen") == 0) return run_bindgen(argc - 2, argv + 2);
     }
 
     cuik_init(true);
@@ -59,8 +61,11 @@ int main(int argc, const char** argv) {
 
     Cuik_DriverArgs args = {
         .version   = CUIK_VERSION_C23,
-        .flavor    = TB_FLAVOR_EXECUTABLE,
         .toolchain = cuik_toolchain_host(),
+
+        #ifdef CUIK_USE_TB
+        .flavor    = TB_FLAVOR_EXECUTABLE,
+        #endif
     };
 
     if (!cuik_parse_driver_args(&args, argc - 1, argv + 1)) {

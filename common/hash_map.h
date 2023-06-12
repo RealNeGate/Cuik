@@ -6,6 +6,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stddef.h>
+#include <assert.h>
 
 #if defined(TB_USE_MIMALLOC) || defined(CUIK_USE_MIMALLOC)
 #include <mimalloc.h>

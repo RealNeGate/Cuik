@@ -1,8 +1,16 @@
-// Halfway through implementing this ELF64 exporter i realized that my new best friend is
-// COFF, ELF is a bitch.
 #include "../tb_internal.h"
 #include <tb_elf.h>
 #include <log.h>
+
+static bool is_nonlocal(const TB_Symbol* s) {
+    if (s->tag == TB_SYMBOL_GLOBAL) {
+        return ((TB_Global*) s)->linkage == TB_LINKAGE_PUBLIC;
+    } else if (s->tag == TB_SYMBOL_FUNCTION) {
+        return ((TB_Function*) s)->linkage == TB_LINKAGE_PUBLIC;
+    } else {
+        return true;
+    }
+}
 
 static void put_symbol(TB_Emitter* stab, uint32_t name, uint8_t sym_info, uint16_t section_index, uint64_t value, uint64_t size) {
     // Emit symbol
@@ -76,7 +84,7 @@ TB_Exports tb_elf64obj_write_output(TB_Module* m, const IDebugFormat* dbg) {
 
     size_t output_size = sizeof(TB_Elf64_Ehdr);
     dyn_array_for(i, sections) {
-        sections[i]->section_num = 1 + i;
+        sections[i]->section_num = 3 + i;
         sections[i]->raw_data_pos = output_size;
         output_size += sections[i]->total_size;
     }
@@ -100,6 +108,10 @@ TB_Exports tb_elf64obj_write_output(TB_Module* m, const IDebugFormat* dbg) {
         put_symbol(&local_symtab, sections[i]->name_pos, TB_ELF64_ST_INFO(TB_ELF64_STB_LOCAL, TB_ELF64_STT_SECTION), 1 + i, 0, 0);
     }
 
+    dyn_array_for(i, sections) if (sections[i]->reloc_count) {
+        put_symbol(&local_symtab, sections[i]->name_pos - 5, TB_ELF64_ST_INFO(TB_ELF64_STB_LOCAL, TB_ELF64_STT_SECTION), 1 + i, 0, 0);
+    }
+
     assert(dbg_section_count == 0);
 
     int text_sec_num = m->text.section_num;
@@ -111,16 +123,36 @@ TB_Exports tb_elf64obj_write_output(TB_Module* m, const IDebugFormat* dbg) {
         int t = (f->linkage == TB_LINKAGE_PUBLIC) ? TB_ELF64_STB_GLOBAL : TB_ELF64_STB_LOCAL;
 
         TB_Emitter* stab = (f->linkage == TB_LINKAGE_PUBLIC) ? &global_symtab : &local_symtab;
+        f->super.symbol_id = stab->count / sizeof(TB_Elf64_Sym);
+
         put_symbol(stab, name, TB_ELF64_ST_INFO(t, TB_ELF64_STT_FUNC), text_sec_num, out_f->code_pos, out_f->code_size);
     }
 
+    int counter = 0;
     TB_FOR_GLOBALS(g, m) {
-        uint32_t name = g->super.name ? tb_outstr_nul_UNSAFE(&strtbl, g->super.name) : 0;
+        uint32_t name = 0;
+        if (g->super.name) {
+            name = tb_outstr_nul_UNSAFE(&strtbl, g->super.name);
+        } else {
+            char buf[8];
+            snprintf(buf, 8, "$%06d", counter++);
+            name = tb_outstr_nul_UNSAFE(&strtbl, buf);
+        }
+
         int t = (g->linkage == TB_LINKAGE_PUBLIC) ? TB_ELF64_STB_GLOBAL : TB_ELF64_STB_LOCAL;
 
         int sec_num = g->parent->section_num;
         TB_Emitter* stab = (g->linkage == TB_LINKAGE_PUBLIC) ? &global_symtab : &local_symtab;
+        g->super.symbol_id = stab->count / sizeof(TB_Elf64_Sym);
+
         put_symbol(stab, name, TB_ELF64_ST_INFO(t, TB_ELF64_STT_OBJECT), sec_num, g->pos, 0);
+    }
+
+    TB_FOR_EXTERNALS(ext, m) if (ext->super.name) {
+        uint32_t name = tb_outstr_nul_UNSAFE(&strtbl, ext->super.name);
+        ext->super.symbol_id = global_symtab.count / sizeof(TB_Elf64_Sym);
+
+        put_symbol(&global_symtab, name, TB_ELF64_ST_INFO(TB_ELF64_STB_GLOBAL, 0), 0, 0, 0);
     }
 
     uint32_t symtab_name = tb_outstr_nul_UNSAFE(&strtbl, ".symtab");
@@ -150,7 +182,6 @@ TB_Exports tb_elf64obj_write_output(TB_Module* m, const IDebugFormat* dbg) {
     header.shnum = section_count + 1;
     // sections plus the NULL section at the start
     output_size += (1 + section_count) * sizeof(TB_Elf64_Shdr);
-    log_debug("%d sections", header.shnum);
 
     ////////////////////////////////
     // write output
@@ -166,12 +197,41 @@ TB_Exports tb_elf64obj_write_output(TB_Module* m, const IDebugFormat* dbg) {
     }
 
     // write relocation arrays
+    size_t local_sym_count = local_symtab.count / sizeof(TB_Elf64_Sym);
     dyn_array_for(i, sections) if (sections[i]->reloc_count > 0) {
         assert(sections[i]->reloc_pos == write_pos);
         TB_Elf64_Rela* rels = (TB_Elf64_Rela*) &output[write_pos];
 
-        // a
-        *rels = (TB_Elf64_Rela){ 0 };
+        if (sections[i]->kind == TB_MODULE_SECTION_TEXT) {
+            TB_FOR_FUNCTIONS(f, m) if (f->super.name && f->output) {
+                for (TB_SymbolPatch* p = f->last_patch; p; p = p->prev) {
+                    if (p->internal) continue;
+
+                    TB_FunctionOutput* out_f = p->source->output;
+                    size_t actual_pos = out_f->prologue_length + p->pos;
+                    if (f->comdat.type == TB_COMDAT_NONE) {
+                        actual_pos += out_f->code_pos;
+                    }
+
+                    size_t symbol_id = p->target->symbol_id;
+                    if (is_nonlocal(p->target)) {
+                        symbol_id += local_sym_count;
+                    }
+                    assert(symbol_id != 0);
+                    log_debug("%d", symbol_id);
+
+                    TB_ELF_RelocType type = p->target->tag == TB_SYMBOL_GLOBAL ? TB_ELF_X86_64_PC32 : TB_ELF_X86_64_PLT32;
+                    *rels++ = (TB_Elf64_Rela){
+                        .offset = actual_pos,
+                        // check when we should prefer R_X86_64_GOTPCREL
+                        .info   = TB_ELF64_R_INFO(symbol_id, type),
+                        .addend = -4
+                    };
+                }
+            }
+        } else {
+
+        }
 
         write_pos += sections[i]->reloc_count * sizeof(TB_Elf64_Rela);
     }
@@ -205,7 +265,8 @@ TB_Exports tb_elf64obj_write_output(TB_Module* m, const IDebugFormat* dbg) {
             .type = TB_SHT_RELA,
             .flags = TB_SHF_INFO_LINK,
             .addralign = 16,
-            .info = 1 + i,
+            .info = 3 + i,
+            .link = 2,
             .size = sections[i]->reloc_count * sizeof(TB_Elf64_Rela),
             .offset = sections[i]->reloc_pos,
             .entsize = sizeof(TB_Elf64_Rela)

@@ -109,7 +109,6 @@ int run_bindgen(int argc, const char** argv) {
         .version = CUIK_VERSION_C23,
         .target = cuik_target_host(),
         .toolchain = cuik_toolchain_host(),
-        .flavor = TB_FLAVOR_EXECUTABLE,
     };
     cuik_parse_driver_args(&args, argc, argv);
 
