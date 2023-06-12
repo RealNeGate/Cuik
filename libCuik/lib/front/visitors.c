@@ -87,7 +87,7 @@ int cuik_get_expr_arity(Subexpr* e) {
 
         default:
         log_error("Missing case! %d", e->op);
-        assert(0);
+        abort();
     }
 }
 
@@ -175,12 +175,12 @@ CUIK_API const char* cuik_get_expr_name(Subexpr* e) {
         case EXPR_ALIGNOF_T:      return "AlignofT"; // on type
 
         case EXPR_PRE_INC:        return "PreIncrement";
-        case EXPR_PRE_DEC:        return "PostIncrement";
+        case EXPR_PRE_DEC:        return "PreDecrement";
         case EXPR_POST_INC:       return "PostIncrement";
         case EXPR_POST_DEC:       return "PostDecrement";
 
         default:
         log_error("Missing case! %d", e->op);
-        assert(0);
+        abort();
     }
 }
