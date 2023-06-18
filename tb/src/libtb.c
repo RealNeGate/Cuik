@@ -18,13 +18,16 @@
 // Optimizer
 #include "opt/optimizer.c"
 
+// Parsers
+#define TB_COFF_IMPL
+#include <tb_coff.h>
+
 // Debug
 #include "debug/cv/cv.c"
 #include "debug/fut/fut.c"
 
 // Objects
 #include "objects/coff.c"
-#include "objects/coff_parse.c"
 #include "objects/elf64.c"
 #include "objects/macho.c"
 

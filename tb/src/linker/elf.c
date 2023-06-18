@@ -2,7 +2,7 @@
 #include "linker.h"
 #include <tb_elf.h>
 
-static void elf_append_object(TB_Linker* l, TB_Slice obj_name, TB_ObjectFile* obj) {
+static void elf_append_object(TB_Linker* l, TB_Slice obj_name, TB_Slice content) {
     // implement this
 }
 
@@ -15,9 +15,11 @@ static void elf_append_module(TB_Linker* l, TB_Module* m) {
         tb_module_layout_sections(m);
     }
 
-    tb__append_module_section(l, m, &m->text, ".text", TB_PF_X | TB_PF_R);
-    tb__append_module_section(l, m, &m->data, ".data", TB_PF_W | TB_PF_R);
-    tb__append_module_section(l, m, &m->rdata, ".rdata", TB_PF_R);
+    TB_LinkerInputHandle mod_index = tb__track_module(l, 0, m);
+
+    tb__append_module_section(l, mod_index, &m->text, ".text", TB_PF_X | TB_PF_R);
+    tb__append_module_section(l, mod_index, &m->data, ".data", TB_PF_W | TB_PF_R);
+    tb__append_module_section(l, mod_index, &m->rdata, ".rdata", TB_PF_R);
 
     CUIK_TIMED_BLOCK("apply symbols") {
         static const enum TB_SymbolTag tags[] = { TB_SYMBOL_FUNCTION, TB_SYMBOL_GLOBAL };

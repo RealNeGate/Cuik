@@ -91,13 +91,21 @@ static TB_LinkerThreadInfo* get_thread_info(TB_Linker* l) {
     }
 }
 
-void pe_append_object(TB_Linker* l, TB_Slice obj_name, TB_ObjectFile* obj) {
+void pe_append_object(TB_Linker* l, TB_Slice obj_name, TB_Slice content) {
+    TB_COFF_Parser parser = { obj_name, content };
+    tb_coff_parse_init(&parser);
+
     TB_LinkerThreadInfo* info = get_thread_info(l);
+
+    // insert into object files (TODO: mark archive as parent)
+    TB_LinkerInputHandle obj_file = tb__track_object(l, 0, obj_name);
 
     // Apply all sections (generate lookup for sections based on ordinals)
     TB_LinkerSectionPiece *text_piece = NULL, *pdata_piece = NULL;
-    FOREACH_N(i, 0, obj->section_count) {
-        TB_ObjectSection* s = &obj->sections[i];
+    TB_ObjectSection* sections = malloc(parser.section_count * sizeof(TB_ObjectSection));
+    FOREACH_N(i, 0, parser.section_count) {
+        TB_ObjectSection* restrict s = &sections[i];
+        tb_coff_parse_section(&parser, i, s);
 
         // trim the dollar sign (if applies)
         uint32_t order = 0;
@@ -115,9 +123,7 @@ void pe_append_object(TB_Linker* l, TB_Slice obj_name, TB_ObjectFile* obj) {
         }
 
         size_t drectve_len = sizeof(".drectve")-1;
-        if (s->name.length == drectve_len &&
-            memcmp(s->name.data, ".drectve", drectve_len) == 0 &&
-            s->raw_data.length > 3) {
+        if (s->name.length == drectve_len && memcmp(s->name.data, ".drectve", drectve_len) == 0 && s->raw_data.length > 3) {
             const uint8_t* curr = s->raw_data.data + 3;
             const uint8_t* end = s->raw_data.data + s->raw_data.length;
 
@@ -185,10 +191,9 @@ void pe_append_object(TB_Linker* l, TB_Slice obj_name, TB_ObjectFile* obj) {
             raw_data = NULL;
         }
 
-        TB_LinkerSectionPiece* p = tb__append_piece(ls, PIECE_NORMAL, s->raw_data.length, raw_data, NULL);
+        TB_LinkerSectionPiece* p = tb__append_piece(ls, PIECE_NORMAL, s->raw_data.length, raw_data, obj_file);
         s->user_data = p;
 
-        p->obj = obj;
         p->order = order;
         p->flags = 1;
         // p->vsize = s->virtual_size;
@@ -205,19 +210,25 @@ void pe_append_object(TB_Linker* l, TB_Slice obj_name, TB_ObjectFile* obj) {
         text_piece->associate = pdata_piece;
     }
 
-    size_t obj_file_i = dyn_array_length(l->object_files);
-    dyn_array_put(l->object_files, obj);
-
     // Append all symbols
-    COFF_AuxSectionSymbol* comdat_aux = NULL;
-    CUIK_TIMED_BLOCK("apply symbols") FOREACH_N(i, 0, obj->symbol_count) {
-        TB_ObjectSymbol* restrict sym = &obj->symbols[i];
+    size_t sym_count = 0;
+    TB_ObjectSymbol* syms = malloc(sizeof(TB_ObjectSymbol) * parser.symbol_count);
 
-        if (sym->section_num > 0) {
+    COFF_AuxSectionSymbol* comdat_aux = NULL;
+    CUIK_TIMED_BLOCK("apply symbols") {
+        size_t i = 0;
+        while (i < parser.symbol_count) {
+            TB_ObjectSymbol* restrict sym = &syms[sym_count++];
+            i += tb_coff_parse_symbol(&parser, i, sym);
+
+            if (sym->section_num <= 0) {
+                continue;
+            }
+
             // TB_Slice sec_name = og_sort[sym->section_num - 1]->name;
             // printf("    %.*s = %.*s:%d\n", (int) sym->name.length, sym->name.data, (int) sec_name.length, sec_name.data, sym->value);
 
-            TB_ObjectSection* sec = &obj->sections[sym->section_num - 1];
+            TB_ObjectSection* sec = &sections[sym->section_num - 1];
             if (sec->name.length == sym->name.length && memcmp(sym->name.data, sec->name.data, sym->name.length) == 0) {
                 // we're a section symbol
                 // COMDAT is how linkers handle merging of inline functions in C++
@@ -281,8 +292,8 @@ void pe_append_object(TB_Linker* l, TB_Slice obj_name, TB_ObjectFile* obj) {
         }
     }
 
-    CUIK_TIMED_BLOCK("parse relocations") FOREACH_N(i, 0, obj->section_count) {
-        TB_ObjectSection* restrict s = &obj->sections[i];
+    CUIK_TIMED_BLOCK("parse relocations") FOREACH_N(i, 0, parser.section_count) {
+        TB_ObjectSection* restrict s = &sections[i];
         TB_LinkerSectionPiece* restrict p = s->user_data;
 
         // some relocations point to sections within the same object file, we resolve
@@ -292,7 +303,7 @@ void pe_append_object(TB_Linker* l, TB_Slice obj_name, TB_ObjectFile* obj) {
 
             // resolve address used in relocation, symbols are sorted so we can binary search
             TB_ObjectSymbol key = { .ordinal = reloc->symbol_index };
-            TB_ObjectSymbol* restrict src_symbol = bsearch(&key, obj->symbols, obj->symbol_count, sizeof(TB_ObjectSymbol), symbol_cmp);
+            TB_ObjectSymbol* restrict src_symbol = bsearch(&key, syms, sym_count, sizeof(TB_ObjectSymbol), symbol_cmp);
 
             if (reloc->type == TB_OBJECT_RELOC_ADDR64) {
                 TB_LinkerRelocAbs r = {
@@ -300,7 +311,7 @@ void pe_append_object(TB_Linker* l, TB_Slice obj_name, TB_ObjectFile* obj) {
                     .name = src_symbol->name,
                     .src_piece = p,
                     .src_offset = reloc->virtual_address,
-                    .obj_file = obj_file_i
+                    .input = obj_file
                 };
 
                 if (src_symbol->type == TB_OBJECT_SYMBOL_WEAK_EXTERN) {
@@ -309,7 +320,7 @@ void pe_append_object(TB_Linker* l, TB_Slice obj_name, TB_ObjectFile* obj) {
 
                     TB_ObjectSymbol* restrict alt_sym = bsearch(
                         &(TB_ObjectSymbol){ .ordinal = *weak_sym },
-                        obj->symbols, obj->symbol_count, sizeof(TB_ObjectSymbol),
+                        syms, sym_count, sizeof(TB_ObjectSymbol),
                         symbol_cmp
                     );
 
@@ -326,7 +337,7 @@ void pe_append_object(TB_Linker* l, TB_Slice obj_name, TB_ObjectFile* obj) {
                     .name = src_symbol->name,
                     .src_piece = p,
                     .src_offset = reloc->virtual_address,
-                    .obj_file = obj_file_i,
+                    .input = obj_file,
                     .addend = reloc->addend,
                     .type = reloc->type
                 };
@@ -408,8 +419,7 @@ static void pe_append_library(TB_Linker* l, TB_Slice ar_name, TB_Slice ar_file) 
         } else {
             // fprintf(stderr, "%.*s\n", (int) e->name.length, e->name.data);
             CUIK_TIMED_BLOCK("append object file") {
-                e->obj->ar_name = ar_name;
-                pe_append_object(l, e->name, e->obj);
+                pe_append_object(l, e->name, e->content);
 
                 // tb_object_free(e->obj);
             }
@@ -427,10 +437,12 @@ static void pe_append_module(TB_Linker* l, TB_Module* m) {
     // Target specific: resolve internal call patches
     tb__find_code_generator(m)->emit_call_patches(m);
 
+    TB_LinkerInputHandle mod_index = tb__track_module(l, 0, m);
+
     // Convert module into sections which we can then append to the output
-    tb__append_module_section(l, m, &m->text, ".text", IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_CNT_CODE);
-    tb__append_module_section(l, m, &m->data, ".data", IMAGE_SCN_MEM_WRITE | IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA);
-    tb__append_module_section(l, m, &m->rdata, ".rdata", IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA);
+    tb__append_module_section(l, mod_index, &m->text, ".text", IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_CNT_CODE);
+    tb__append_module_section(l, mod_index, &m->data, ".data", IMAGE_SCN_MEM_WRITE | IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA);
+    tb__append_module_section(l, mod_index, &m->rdata, ".rdata", IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA);
 
     const ICodeGen* restrict code_gen = tb__find_code_generator(m);
     if (m->compiled_function_count > 0 && code_gen->emit_win64eh_unwind_info) {
@@ -451,7 +463,7 @@ static void pe_append_module(TB_Linker* l, TB_Module* m) {
                 }
             }
 
-            TB_LinkerSectionPiece* x = tb__append_piece(rdata, PIECE_NORMAL, xdata.count, xdata.data, m);
+            TB_LinkerSectionPiece* x = tb__append_piece(rdata, PIECE_NORMAL, xdata.count, xdata.data, mod_index);
             TB_FOR_FUNCTIONS(f, m) {
                 TB_FunctionOutput* out_f = f->output;
 
@@ -461,7 +473,7 @@ static void pe_append_module(TB_Linker* l, TB_Module* m) {
         }
 
         TB_LinkerSection* pdata = tb__find_or_create_section(l, ".pdata", IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA);
-        m->text.piece->associate = tb__append_piece(pdata, PIECE_PDATA, m->compiled_function_count * 12, NULL, m);
+        m->text.piece->associate = tb__append_piece(pdata, PIECE_PDATA, m->compiled_function_count * 12, NULL, mod_index);
     }
 
     if (m->data.total_size > 0) CUIK_TIMED_BLOCK(".reloc") {
@@ -485,7 +497,7 @@ static void pe_append_module(TB_Linker* l, TB_Module* m) {
 
         if (reloc_size > 0) {
             TB_LinkerSection* reloc = tb__find_or_create_section(l, ".reloc", IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA);
-            m->data.piece->associate = tb__append_piece(reloc, PIECE_RELOC, reloc_size, NULL, m);
+            m->data.piece->associate = tb__append_piece(reloc, PIECE_RELOC, reloc_size, NULL, mod_index);
         }
     }
 
@@ -759,7 +771,7 @@ static COFF_ImportDirectory* gen_imports(TB_Linker* l, PE_ImageDataDirectory* im
     // We put both the IAT and ILT into the rdata, the PE loader doesn't care but it
     // means the user can't edit these... at least not easily
     TB_LinkerSection* rdata = tb__find_or_create_section(l, ".rdata", IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA);
-    TB_LinkerSectionPiece* import_piece = tb__append_piece(rdata, PIECE_NORMAL, total_size, output, NULL);
+    TB_LinkerSectionPiece* import_piece = tb__append_piece(rdata, PIECE_NORMAL, total_size, output, 0);
 
     *imp_dir = (PE_ImageDataDirectory){ import_piece->offset, import_dir_size };
     *iat_dir = (PE_ImageDataDirectory){ import_piece->offset + import_dir_size, iat_size };
@@ -806,7 +818,7 @@ static COFF_ImportDirectory* gen_imports(TB_Linker* l, PE_ImageDataDirectory* im
 
     {
         TB_LinkerSection* text = tb__find_or_create_section(l, ".text", IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_CNT_CODE);
-        TB_LinkerSectionPiece* piece = tb__append_piece(text, PIECE_NORMAL, l->trampolines.count, l->trampolines.data, NULL);
+        TB_LinkerSectionPiece* piece = tb__append_piece(text, PIECE_NORMAL, l->trampolines.count, l->trampolines.data, 0);
         l->trampoline_pos = piece->offset;
     }
     return import_dirs;
@@ -845,7 +857,7 @@ static void* gen_reloc_section(TB_Linker* l) {
         void* reloc = tb_platform_heap_alloc(reloc_sec_size);
 
         TB_LinkerSection* reloc_sec = tb__find_or_create_section(l, ".reloc", IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA);
-        l->main_reloc = tb__append_piece(reloc_sec, PIECE_NORMAL, reloc_sec_size, reloc, NULL);
+        l->main_reloc = tb__append_piece(reloc_sec, PIECE_NORMAL, reloc_sec_size, reloc, 0);
 
         return reloc;
     } else {
@@ -1101,7 +1113,7 @@ static TB_Exports pe_export(TB_Linker* l) {
                 tb_todo();
             }
         } else {
-            printf("tblink: could not find entrypoint!\n");
+            printf("tblink: could not find entrypoint! %s\n", l->entrypoint);
         }
     }
 

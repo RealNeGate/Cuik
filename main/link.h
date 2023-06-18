@@ -6,7 +6,7 @@ int run_link(int argc, const char** argv) {
     const char* output_name = "a.exe";
     DynArray(const char*) input_files = NULL;
 
-    for (int i = 1; i < argc; i++) {
+    for (int i = 0; i < argc; i++) {
         const char* arg = argv[i];
 
         if (arg[0] != '-') {
@@ -45,6 +45,8 @@ int run_link(int argc, const char** argv) {
                 errors++;
                 continue;
             }
+
+            tb_linker_append_library(l, path_slice, (TB_Slice){ fm.size, fm.data });
         } else {
             // normal object files
             path_slice = (TB_Slice){ strlen(path), (const uint8_t*) path };
@@ -55,9 +57,10 @@ int run_link(int argc, const char** argv) {
                 errors++;
                 continue;
             }
-        }
 
-        tb_linker_append_library(l, path_slice, (TB_Slice){ fm.size, fm.data });
+            TB_Slice data = { fm.size, fm.data };
+            // tb_linker_append_object(l, path_slice, tb_object_parse_coff(data));
+        }
     }
 
     if (errors) {

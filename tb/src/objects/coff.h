@@ -105,59 +105,8 @@ typedef struct {
     uint32_t import_address_table; // RVA; Thunk table
 } COFF_ImportDirectory;
 
-typedef struct COFF_SectionHeader {
-    char name[8];
-    union {
-        uint32_t physical_address;
-        uint32_t virtual_size;
-    } misc;
-    uint32_t virtual_address;
-    uint32_t raw_data_size;
-    uint32_t raw_data_pos;
-    uint32_t pointer_to_reloc;
-    uint32_t pointer_to_lineno;
-    uint16_t num_reloc;
-    uint16_t num_lineno;
-    uint32_t characteristics;
-} COFF_SectionHeader;
-static_assert(sizeof(COFF_SectionHeader) == 40, "COFF Section header size != 40 bytes");
-
-typedef struct COFF_FileHeader {
-    uint16_t machine;
-    uint16_t section_count;
-    uint32_t timestamp;
-    uint32_t symbol_table;
-    uint32_t symbol_count;
-    uint16_t optional_header_size;
-    uint16_t flags;
-} COFF_FileHeader;
-static_assert(sizeof(COFF_FileHeader) == 20, "COFF File header size != 20 bytes");
-
 // NOTE: Symbols, relocations, and line numbers are 2 byte packed
 #pragma pack(push, 2)
-typedef struct COFF_ImageReloc {
-    union {
-        uint32_t VirtualAddress;
-        uint32_t RelocCount;
-    };
-    uint32_t SymbolTableIndex;
-    uint16_t Type;
-} COFF_ImageReloc;
-static_assert(sizeof(COFF_ImageReloc) == 10, "COFF Image Relocation size != 10 bytes");
-
-typedef struct COFF_Symbol {
-    union {
-        uint8_t  short_name[8];
-        uint32_t long_name[2];
-    };
-    uint32_t value;
-    int16_t  section_number;
-    uint16_t type;
-    uint8_t  storage_class;
-    uint8_t  aux_symbols_count;
-} COFF_Symbol;
-static_assert(sizeof(COFF_Symbol) == 18, "COFF Symbol size != 18 bytes");
-
 typedef struct COFF_AuxSectionSymbol {
     uint32_t length;       // section length
     uint16_t reloc_count;  // number of relocation entries
@@ -185,28 +134,6 @@ typedef struct {
 #pragma pack(pop)
 
 #pragma pack(push, 1)
-typedef struct {
-    uint16_t e_magic;    // Magic number
-    uint16_t e_cblp;     // Bytes on last page of file
-    uint16_t e_cp;       // Pages in file
-    uint16_t e_crlc;     // Relocations
-    uint16_t e_cparhdr;  // Size of header in paragraphs
-    uint16_t e_minalloc; // Minimum extra paragraphs needed
-    uint16_t e_maxalloc; // Maximum extra paragraphs needed
-    uint16_t e_ss;       // Initial (relative) SS value
-    uint16_t e_sp;       // Initial SP value
-    uint16_t e_csum;     // Checksum
-    uint16_t e_ip;       // Initial IP value
-    uint16_t e_cs;       // Initial (relative) CS value
-    uint16_t e_lfarlc;   // File address of relocation table
-    uint16_t e_ovno;     // Overlay number
-    uint16_t e_res[4];   // Reserved words
-    uint16_t e_oemid;    // OEM identifier (for e_oeminfo)
-    uint16_t e_oeminfo;  // OEM information; e_oemid specific
-    uint16_t e_res2[10]; // Reserved words
-    uint32_t e_lfanew;   // File address of new exe header
-} PE_DosHeader;
-
 typedef struct {
     uint32_t virtual_address;
     uint32_t size;

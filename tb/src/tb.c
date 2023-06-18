@@ -537,21 +537,9 @@ void tb_emit_symbol_patch(TB_Module* m, TB_Function* source, const TB_Symbol* ta
     source->patch_count += 1;
 }
 
-//
-// OBJECT FILE
-//
-void tb_object_free(TB_ObjectFile* obj) {
-    FOREACH_N(i, 0, obj->section_count) {
-        tb_platform_heap_free(obj->sections[i].relocations);
-    }
-    tb_platform_heap_free(obj);
-}
-
-//
-// EMITTER CODE
-//
-// Simple linear allocation for the backend's to output code with
-//
+// EMITTER CODE:
+//   Simple linear allocation for the
+//   backend's to output code with.
 void* tb_out_reserve(TB_Emitter* o, size_t count) {
     if (o->count + count >= o->capacity) {
         if (o->capacity == 0) {

@@ -7,6 +7,8 @@
 #endif
 
 #include "tb.h"
+#include "tb_formats.h"
+
 #include <limits.h>
 #include <time.h>
 #include <stdalign.h>

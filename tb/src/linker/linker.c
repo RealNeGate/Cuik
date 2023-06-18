@@ -38,8 +38,8 @@ TB_API void tb_linker_set_entrypoint(TB_Linker* l, const char* name) {
     l->entrypoint = name;
 }
 
-TB_API void tb_linker_append_object(TB_Linker* l, TB_Slice obj_name, TB_ObjectFile* obj) {
-    l->vtbl.append_object(l, obj_name, obj);
+TB_API void tb_linker_append_object(TB_Linker* l, TB_Slice obj_name, TB_Slice content) {
+    l->vtbl.append_object(l, obj_name, content);
 }
 
 TB_API void tb_linker_append_module(TB_Linker* l, TB_Module* m) {
@@ -56,16 +56,6 @@ TB_API TB_Exports tb_linker_export(TB_Linker* l) {
 
 TB_API void tb_linker_destroy(TB_Linker* l) {
     tb_platform_heap_free(l);
-}
-
-TB_Slice tb__get_piece_name(TB_LinkerSectionPiece* restrict p) {
-    switch (p->kind) {
-        case PIECE_NORMAL: return p->obj->name;
-        case PIECE_MODULE_SECTION: return (TB_Slice){ sizeof("<tb module>")-1, (const uint8_t*) "<tb module>" };
-        case PIECE_PDATA: return (TB_Slice){ sizeof(".pdata")-1, (const uint8_t*) ".pdata" };
-        case PIECE_RELOC: return (TB_Slice){ sizeof(".reloc")-1, (const uint8_t*) ".reloc" };
-        default: tb_todo();
-    }
 }
 
 TB_LinkerSectionPiece* tb__get_piece(TB_Linker* l, TB_LinkerSymbol* restrict sym) {
@@ -196,7 +186,7 @@ void tb__merge_sections(TB_Linker* linker, TB_LinkerSection* from, TB_LinkerSect
     #endif
 }
 
-void tb__append_module_section(TB_Linker* l, TB_Module* mod, TB_ModuleSection* section, const char* name, uint32_t flags) {
+void tb__append_module_section(TB_Linker* l, TB_LinkerInputHandle mod, TB_ModuleSection* section, const char* name, uint32_t flags) {
     if (section->total_size > 0) {
         TB_LinkerSection* ls = tb__find_or_create_section(l, name, flags);
         section->piece = tb__append_piece(ls, PIECE_MODULE_SECTION, section->total_size, section, mod);
@@ -213,7 +203,7 @@ size_t tb__apply_section_contents(TB_Linker* l, uint8_t* output, size_t write_po
         assert(s->offset == write_pos);
         for (TB_LinkerSectionPiece* p = s->first; p != NULL; p = p->next) {
             uint8_t* p_out = &output[write_pos];
-            TB_Module* m = p->module;
+            TB_LinkerInput in = l->inputs[p->input];
 
             switch (p->kind) {
                 case PIECE_NORMAL: {
@@ -223,11 +213,12 @@ size_t tb__apply_section_contents(TB_Linker* l, uint8_t* output, size_t write_po
                     break;
                 }
                 case PIECE_MODULE_SECTION: {
-                    tb_helper_write_section(m, 0, (TB_ModuleSection*) p->data, p_out, 0);
+                    tb_helper_write_section(in.module, 0, (TB_ModuleSection*) p->data, p_out, 0);
                     break;
                 }
                 case PIECE_PDATA: {
                     uint32_t* p_out32 = (uint32_t*) p_out;
+                    TB_Module* m = in.module;
 
                     uint32_t text_rva = text->address + m->text.piece->offset;
                     uint32_t rdata_rva = m->xdata->parent->address + m->xdata->offset;
@@ -246,6 +237,8 @@ size_t tb__apply_section_contents(TB_Linker* l, uint8_t* output, size_t write_po
                     break;
                 }
                 case PIECE_RELOC: {
+                    TB_Module* m = in.module;
+
                     // TODO(NeGate): currently windows only
                     uint32_t data_rva  = data->address + m->data.piece->offset;
                     uint32_t data_file = data->offset  + m->data.piece->offset;
@@ -333,7 +326,7 @@ TB_LinkerSection* tb__find_or_create_section2(TB_Linker* linker, size_t name_len
     return s;
 }
 
-TB_LinkerSectionPiece* tb__append_piece(TB_LinkerSection* section, int kind, size_t size, const void* data, TB_Module* mod) {
+TB_LinkerSectionPiece* tb__append_piece(TB_LinkerSection* section, int kind, size_t size, const void* data, TB_LinkerInputHandle input) {
     // allocate some space for it, we might wanna make the total_size increment atomic
     TB_LinkerSectionPiece* piece = tb_platform_heap_alloc(sizeof(TB_LinkerSectionPiece));
     *piece = (TB_LinkerSectionPiece){
@@ -343,7 +336,7 @@ TB_LinkerSectionPiece* tb__append_piece(TB_LinkerSection* section, int kind, siz
         .size   = size,
         .vsize  = size,
         .data   = data,
-        .module = mod
+        .input  = input
     };
     section->total_size += size;
     section->piece_count += 1;
@@ -355,6 +348,28 @@ TB_LinkerSectionPiece* tb__append_piece(TB_LinkerSection* section, int kind, siz
         section->last = piece;
     }
     return piece;
+}
+
+TB_LinkerInputHandle tb__track_module(TB_Linker* l, TB_LinkerInputHandle parent, TB_Module* mod) {
+    log_debug("%p: track module %p", l, mod);
+    TB_LinkerInput entry = { TB_LINKER_INPUT_MODULE, parent, .module = mod };
+
+    size_t i = dyn_array_length(l->inputs);
+    assert(i < 0xFFFF);
+
+    dyn_array_put(l->inputs, entry);
+    return i;
+}
+
+TB_LinkerInputHandle tb__track_object(TB_Linker* l, TB_LinkerInputHandle parent, TB_Slice name) {
+    log_debug("%p: track object %.*s", l, (int) name.length, name.data);
+    TB_LinkerInput entry = { TB_LINKER_INPUT_OBJECT, parent, .name = name };
+
+    size_t i = dyn_array_length(l->inputs);
+    assert(i < 0xFFFF);
+
+    dyn_array_put(l->inputs, entry);
+    return i;
 }
 
 // murmur3 32-bit without UB unaligned accesses
@@ -551,15 +566,15 @@ bool tb__finalize_sections(TB_Linker* l) {
             fprintf(stderr, "\x1b[31merror\x1b[0m: unresolved external: %.*s\n", (int) u->name.length, u->name.data);
             size_t i = 0;
             for (; u && i < 5; u = u->next, i++) {
-                if (u->reloc & 0x80000000) {
-                    fprintf(stderr, "  in <tb-module %d>\n", u->reloc & 0x7FFFFFFF);
-                } else {
-                    TB_Slice ar_name = as_filename(l->object_files[u->reloc]->ar_name);
-                    TB_Slice obj_name = as_filename(l->object_files[u->reloc]->name);
+                // walk input stack
+                TB_LinkerInputHandle curr = u->reloc;
+                while (curr != 0) {
+                    TB_LinkerInput* input = &l->inputs[curr];
 
-                    if (ar_name.length) {
-                        fprintf(stderr, "  in %.*s(%.*s)\n", (int) ar_name.length, ar_name.data, (int) obj_name.length, obj_name.data);
+                    if (input->tag == TB_LINKER_INPUT_MODULE) {
+                        fprintf(stderr, "  in <tb-module %d>\n", u->reloc & 0x7FFFFFFF);
                     } else {
+                        TB_Slice obj_name = as_filename(input->name);
                         fprintf(stderr, "  in %.*s\n", (int) obj_name.length, obj_name.data);
                     }
                 }
@@ -652,11 +667,13 @@ static void gc_mark(TB_Linker* l, TB_LinkerSectionPiece* p) {
     p->flags |= TB_LINKER_PIECE_LIVE;
 
     // mark module content
-    if (p->kind == PIECE_MODULE_SECTION && p->module != NULL) {
-        gc_mark(l, p->module->text.piece);
-        gc_mark(l, p->module->data.piece);
-        gc_mark(l, p->module->rdata.piece);
-        gc_mark(l, p->module->tls.piece);
+    if (l->inputs[p->input].tag == TB_LINKER_INPUT_MODULE) {
+        TB_Module* m = l->inputs[p->input].module;
+
+        gc_mark(l, m->text.piece);
+        gc_mark(l, m->data.piece);
+        gc_mark(l, m->rdata.piece);
+        gc_mark(l, m->tls.piece);
     }
 
     // mark any kid symbols
@@ -669,7 +686,7 @@ static void gc_mark(TB_Linker* l, TB_LinkerSectionPiece* p) {
         TB_LinkerRelocAbs* r = &p->abs_refs[i].info->absolutes[p->abs_refs[i].index];
 
         // resolve symbol
-        r->target = l->resolve_sym(l, r->target, r->name, r->alt, r->obj_file);
+        r->target = l->resolve_sym(l, r->target, r->name, r->alt, r->input);
         gc_mark(l, tb__get_piece(l, r->target));
     }
 
@@ -677,7 +694,7 @@ static void gc_mark(TB_Linker* l, TB_LinkerSectionPiece* p) {
         TB_LinkerRelocRel* r = &p->rel_refs[i].info->relatives[p->rel_refs[i].index];
 
         // resolve symbol
-        r->target = l->resolve_sym(l, r->target, r->name, r->alt, r->obj_file);
+        r->target = l->resolve_sym(l, r->target, r->name, r->alt, r->input);
         gc_mark(l, tb__get_piece(l, r->target));
     }
 

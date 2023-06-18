@@ -314,6 +314,8 @@ NL_MapInsert nl_map__inserts(void* map, size_t entry_size, size_t key_size, cons
 }
 
 ptrdiff_t nl_map__get(NL_MapHeader* restrict table, size_t entry_size, size_t key_size, const void* key) {
+    if (table == NULL) return -1;
+
     uint32_t exp = table->exp;
     uint32_t mask = (1 << table->exp) - 1;
     uint32_t hash = nl_map__raw_hash(key_size, key);
@@ -333,6 +335,8 @@ ptrdiff_t nl_map__get(NL_MapHeader* restrict table, size_t entry_size, size_t ke
 }
 
 ptrdiff_t nl_map__gets(NL_MapHeader* restrict table, size_t entry_size, size_t key_size, const void* key) {
+    if (table == NULL) return -1;
+
     const NL_Slice* key_entry = key;
 
     uint32_t exp = table->exp;

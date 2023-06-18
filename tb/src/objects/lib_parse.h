@@ -47,7 +47,7 @@ bool tb_archive_parse(TB_Slice file, TB_ArchiveFileParser* restrict out_parser) 
         fprintf(stderr, "TB archive parser: first archive member name is invalid\n");
         return false;
     }
-    size_t first_content_length = parse_decimal_int(sizeof(first->size), first->size);
+    size_t first_content_length = tb__parse_decimal_int(sizeof(first->size), first->size);
 
     file_offset += sizeof(COFF_ArchiveMemberHeader) + first_content_length;
     file_offset = (file_offset + 1u) & ~1u;
@@ -58,7 +58,7 @@ bool tb_archive_parse(TB_Slice file, TB_ArchiveFileParser* restrict out_parser) 
         fprintf(stderr, "TB archive parser: second archive member name is invalid\n");
         return false;
     }
-    size_t second_content_length = parse_decimal_int(sizeof(second->size), second->size);
+    size_t second_content_length = tb__parse_decimal_int(sizeof(second->size), second->size);
 
     // Extract number of symbols
     if (second_content_length >= 8) {
@@ -76,7 +76,7 @@ bool tb_archive_parse(TB_Slice file, TB_ArchiveFileParser* restrict out_parser) 
     // Process long name member
     COFF_ArchiveMemberHeader* longnames = (COFF_ArchiveMemberHeader*) &file.data[file_offset];
     if (memcmp(longnames->name, (char[16]) { "//              " }, 16) == 0) {
-        size_t longname_content_length = parse_decimal_int(sizeof(second->size), second->size);
+        size_t longname_content_length = tb__parse_decimal_int(sizeof(second->size), second->size);
         out_parser->strtbl = (TB_Slice){ longname_content_length, longnames->contents };
 
         // Advance
@@ -95,12 +95,12 @@ size_t tb_archive_parse_entries(TB_ArchiveFileParser* restrict parser, size_t st
 
     FOREACH_N(i, start, count) {
         COFF_ArchiveMemberHeader* restrict sym = (COFF_ArchiveMemberHeader*) &file.data[parser->members[i]];
-        size_t len = parse_decimal_int(sizeof(sym->size), sym->size);
+        size_t len = tb__parse_decimal_int(sizeof(sym->size), sym->size);
 
         TB_Slice sym_name = { strchr(sym->name, ' ') - sym->name, (uint8_t*) sym->name };
         if (sym_name.data[0] == '/') {
             // name is actually just an index into the long names table
-            size_t num = parse_decimal_int(sym_name.length - 1, (char*)sym_name.data + 1);
+            size_t num = tb__parse_decimal_int(sym_name.length - 1, (char*)sym_name.data + 1);
             sym_name = (TB_Slice){ strlen((const char*) &strtbl.data[num]), &strtbl.data[num] };
         }
 
@@ -133,18 +133,7 @@ size_t tb_archive_parse_entries(TB_ArchiveFileParser* restrict parser, size_t st
             // printf("%s : %s : %d\n", dll_path, imported_symbol, import->name_type);
             out_entry[entry_count++] = (TB_ArchiveEntry){ { strlen(dll_path), (const uint8_t*) dll_path }, .import_name = import_name, .ordinal = import->ordinal_hint };
         } else {
-            TB_ObjectFile* long_mode = tb_object_parse_coff((TB_Slice){ len, sym->contents });
-
-            FOREACH_N(j, 0, long_mode->section_count) {
-                TB_ObjectSection* sec = &long_mode->sections[j];
-                if (sec->name.length >= sizeof(".idata")-1 && memcmp(sec->name.data, ".idata", sizeof(".idata")-1) == 0) {
-                    tb_object_free(long_mode);
-                    goto skip;
-                }
-            }
-
-            long_mode->name = sym_name;
-            out_entry[entry_count++] = (TB_ArchiveEntry){ sym_name, .obj = long_mode };
+            out_entry[entry_count++] = (TB_ArchiveEntry){ sym_name, .content = { len, sym->contents } };
         }
 
         skip:;

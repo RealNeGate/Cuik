@@ -4,6 +4,30 @@
 typedef struct TB_LinkerSymbol TB_LinkerSymbol;
 typedef struct TB_LinkerThreadInfo TB_LinkerThreadInfo;
 
+// this is our packed object file handle (0 is a null entry)
+typedef uint16_t TB_LinkerInputHandle;
+
+typedef enum {
+    TB_LINKER_INPUT_NULL,
+
+    TB_LINKER_INPUT_ARCHIVE, // .lib .a
+    TB_LINKER_INPUT_OBJECT,  // .obj .o
+    TB_LINKER_INPUT_MODULE,  // TB_Module*
+} TB_LinkerInputTag;
+
+// usually it's object files
+typedef struct {
+    uint16_t tag;
+    uint16_t parent;
+
+    union {
+        TB_Module* module;
+
+        // compress into string handle
+        TB_Slice name;
+    };
+} TB_LinkerInput;
+
 typedef enum {
     TB_LINKER_PIECE_IMMUTABLE = 1,
 
@@ -33,10 +57,7 @@ struct TB_LinkerSectionPiece {
         PIECE_RELOC,
     } kind;
 
-    union {
-        TB_Module* module;
-        TB_ObjectFile* obj;
-    };
+    TB_LinkerInputHandle input;
     TB_LinkerSection* parent;
 
     TB_LinkerSymbol* first_sym;
@@ -177,8 +198,7 @@ struct TB_LinkerRelocRel {
     TB_LinkerSectionPiece* src_piece;
     uint32_t src_offset;
 
-    // 0 is NULL
-    uint32_t obj_file;
+    TB_LinkerInputHandle input;
 
     uint16_t addend;
     uint16_t type;
@@ -197,8 +217,7 @@ struct TB_LinkerRelocAbs {
     TB_LinkerSectionPiece* src_piece;
     uint32_t src_offset;
 
-    // 0 is NULL
-    uint32_t obj_file;
+    TB_LinkerInputHandle input;
 };
 
 typedef struct {
@@ -229,7 +248,7 @@ struct TB_LinkerThreadInfo {
 // Format-specific vtable:
 typedef struct TB_LinkerVtbl {
     void (*init)(TB_Linker* l);
-    void (*append_object)(TB_Linker* l, TB_Slice obj_name, TB_ObjectFile* obj);
+    void (*append_object)(TB_Linker* l, TB_Slice obj_name, TB_Slice content);
     void (*append_library)(TB_Linker* l, TB_Slice ar_name, TB_Slice ar_file);
     void (*append_module)(TB_Linker* l, TB_Module* m);
     TB_Exports (*export)(TB_Linker* l);
@@ -254,10 +273,14 @@ typedef struct TB_Linker {
 
     NL_Strmap(TB_LinkerSection*) sections;
 
+    // we keep track of which object files exist in a
+    // compact form, it's not like there's any dudplicate
+    // entries so we don't need a hash map or something.
+    DynArray(TB_LinkerInput) inputs;
+
     // for relocations
     TB_LinkerThreadInfo* first_thread_info;
 
-    DynArray(TB_ObjectFile*) object_files;
     DynArray(TB_Module*) ir_modules;
     TB_SymbolTable symtab;
 
@@ -285,12 +308,14 @@ TB_UnresolvedSymbol* tb__unresolved_symbol(TB_Linker* l, TB_Slice name);
 TB_LinkerSectionPiece* tb__get_piece(TB_Linker* l, TB_LinkerSymbol* restrict sym);
 
 // TB helpers
-TB_Slice tb__get_piece_name(TB_LinkerSectionPiece* restrict p);
-
 size_t tb__get_symbol_pos(TB_Symbol* s);
-void tb__append_module_section(TB_Linker* l, TB_Module* m, TB_ModuleSection* section, const char* name, uint32_t flags);
+void tb__append_module_section(TB_Linker* l, TB_LinkerInputHandle mod, TB_ModuleSection* section, const char* name, uint32_t flags);
 
 ImportThunk* tb__find_or_create_import(TB_Linker* l, TB_LinkerSymbol* restrict sym);
+
+// Inputs
+TB_LinkerInputHandle tb__track_module(TB_Linker* l, TB_LinkerInputHandle parent, TB_Module* mod);
+TB_LinkerInputHandle tb__track_object(TB_Linker* l, TB_LinkerInputHandle parent, TB_Slice name);
 
 // Symbol table
 TB_LinkerSymbol* tb__find_symbol_cstr(TB_SymbolTable* restrict symtab, const char* name);
@@ -305,7 +330,7 @@ void tb__merge_sections(TB_Linker* linker, TB_LinkerSection* from, TB_LinkerSect
 TB_LinkerSection* tb__find_section(TB_Linker* linker, const char* name);
 TB_LinkerSection* tb__find_or_create_section(TB_Linker* linker, const char* name, uint32_t flags);
 TB_LinkerSection* tb__find_or_create_section2(TB_Linker* linker, size_t name_len, const uint8_t* name_str, uint32_t flags);
-TB_LinkerSectionPiece* tb__append_piece(TB_LinkerSection* section, int kind, size_t size, const void* data, TB_Module* mod);
+TB_LinkerSectionPiece* tb__append_piece(TB_LinkerSection* section, int kind, size_t size, const void* data, TB_LinkerInputHandle input);
 
 size_t tb__pad_file(uint8_t* output, size_t write_pos, char pad, size_t align);
 void tb__apply_module_relocs(TB_Linker* l, TB_Module* m, uint8_t* output);
