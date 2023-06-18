@@ -188,7 +188,9 @@ TB_Exports tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
                 .raw_data_pos = sections[i]->raw_data_pos,
                 .pointer_to_reloc = sections[i]->reloc_pos
             };
-            strncpy(header.name, sections[i]->name, 8);
+
+            size_t len = strlen(sections[i]->name);
+            memcpy(header.name, sections[i]->name, len > 8 ? 8 : len);
 
             if (sections[i]->reloc_count >= 0xFFFF) {
                 header.num_reloc = 0xFFFF;

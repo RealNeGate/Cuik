@@ -281,7 +281,10 @@ void futex_wait(Futex* addr, Futex val) {
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
+#ifndef __GNUC__
+#pragma comment(lib, "advapi32.lib")
 #pragma comment(lib, "Synchronization.lib")
+#endif
 
 void futex_signal(Futex* addr) {
     WakeByAddressSingle((void*) addr);

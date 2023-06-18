@@ -534,15 +534,13 @@ do {                                 \
 } while (0)
 
 
-#ifdef _WIN32
-#define tb_assert_once(msg) (fprintf(stderr, "%s:%d: assert_once \"%s\"\n", __FILE__, __LINE__, msg), __debugbreak())
+#if defined(_WIN32) && !defined(__GNUC__)
 #define tb_panic(...)                     \
 do {                                      \
     printf(__VA_ARGS__);                  \
     __fastfail(FAST_FAIL_FATAL_APP_EXIT); \
 } while (0)
 #else
-#define tb_assert_once(msg) (fprintf(stderr, "%s:%d: assert_once \"%s\"\n", __FILE__, __LINE__, msg), __builtin_debugtrap())
 #define tb_panic(...)                     \
 do {                                      \
     printf(__VA_ARGS__);                  \
@@ -684,7 +682,7 @@ do {                                         \
 } while (0)
 #endif
 
-#if 1
+#if 0
 uint64_t cuik_time_in_nanos(void);
 void cuikperf_region_start(uint64_t now, const char* fmt, const char* extra);
 void cuikperf_region_end(void);

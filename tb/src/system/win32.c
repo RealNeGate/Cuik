@@ -5,7 +5,9 @@
 // NOTE(NeGate): i'm sorry but i had to do it to em
 // this is just a random hack around mimalloc needing toupper but having weird
 // CRT compat issues
+#ifndef __GNUC__
 #pragma comment(linker, "/alternatename:__imp_toupper=toupper")
+#endif
 
 void* guard_malloc(size_t size) {
     size_t baseline = 4096 - (size % 4096);

@@ -73,12 +73,16 @@ CV_Builder tb_codeview_builder_create(size_t cache_size, CV_TypeEntry* cache) {
     TB_Emitter e = { 0 };
     tb_out4b(&e, 0x00000004);
 
+    if (cache == NULL) {
+        cache = tb_platform_heap_alloc(cache_size * sizeof(CV_TypeEntry));
+    }
+
     return (CV_Builder){
         .type_section = e,
 
         .needs_to_free_lookup = (cache == NULL),
         .lookup_table_size = cache_size,
-        .lookup_table = cache ? cache : calloc(cache_size, sizeof(CV_TypeEntry)),
+        .lookup_table = cache,
 
         // user defined types start at 0x1000
         .type_entry_count = 0x1000,
@@ -87,7 +91,7 @@ CV_Builder tb_codeview_builder_create(size_t cache_size, CV_TypeEntry* cache) {
 
 void tb_codeview_builder_done(CV_Builder* builder) {
     if (builder->needs_to_free_lookup) {
-        free(builder);
+        tb_platform_heap_free(builder);
     }
 
     // align_up_type_record(&builder->type_section);
@@ -158,7 +162,7 @@ CV_TypeIndex tb_codeview_builder_add_arg_list(CV_Builder* builder, size_t count,
     // use allocated space if we couldn't fit
     Arglist* data = (Arglist*) tmp;
     size_t length = sizeof(Arglist) + ((count + has_varargs) * sizeof(CV_TypeIndex));
-    if (length >= SMALL_ARR_CAP) data = malloc(length);
+    if (length >= SMALL_ARR_CAP) data = tb_platform_heap_alloc(length);
 
     data->len = length - 2;
     data->type = LF_ARGLIST;
@@ -171,7 +175,7 @@ CV_TypeIndex tb_codeview_builder_add_arg_list(CV_Builder* builder, size_t count,
     }
 
     CV_TypeIndex type = find_or_make_cv_type(builder, length, data);
-    if (length >= SMALL_ARR_CAP) free(data);
+    if (length >= SMALL_ARR_CAP) tb_platform_heap_free(data);
 
     return type;
 }

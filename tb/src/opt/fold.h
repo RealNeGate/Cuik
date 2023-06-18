@@ -89,7 +89,7 @@ static ArithResult single_word_arith_fold(TB_NodeTypeEnum node_type, TB_DataType
             return (ArithResult){ (ai >> bi) };
         }
         case TB_SAR: {
-            tb_assert_once("Idk if this works");
+            assert(0 && "Idk if this works");
 
             bool sign_bit = BEXTR(ai, dt.data - 1);
             uint64_t mask = (~UINT64_C(0) >> (64 - dt.data)) << dt.data;

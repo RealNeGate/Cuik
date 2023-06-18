@@ -22,6 +22,7 @@ local options = {
 	shared = false,
 	test   = false,
 	lld    = false,
+	gcc    = false,
 	spall_auto = false
 }
 
@@ -44,10 +45,14 @@ function add_srcs(...)
 end
 
 local ldflags = ""
-local cflags = "-ferror-limit=20 -g -msse4 -I common -Wall -Werror -Wno-unused -Wno-deprecated -DTB_USE_MIMALLOC -DCUIK_USE_MIMALLOC -I mimalloc/include -DCUIK_ALLOW_THREADS"
+local cflags = " -g -msse4 -I common -Wall -Werror -Wno-unused -Wno-deprecated -DTB_USE_MIMALLOC -DCUIK_USE_MIMALLOC -I mimalloc/include -DCUIK_ALLOW_THREADS"
 
-local cc = "clang"
-local ar = "llvm-ar -rcs"
+if options.gcc then
+	cflags = cflags.." -Wno-enum-compare -Wno-array-bounds"
+end
+
+local cc = options.gcc and "gcc" or "clang"
+local ar = options.gcc and "ar"  or "llvm-ar"
 
 if not options.debug then
 	cflags = cflags.." -O2 -DNDEBUG"
@@ -74,7 +79,7 @@ if is_windows then
 		ldflags = ldflags.." /dll"
 	end
 
-	ldflags = ldflags.." /out:"
+	ldflags = ldflags.." /defaultlib:libcmt /out:"
 	exe_ext = ".exe"
 	dll_ext = ".dll"
 	lib_ext = ".lib"
@@ -98,7 +103,7 @@ else
 	lib_ext = ".a"
 end
 
-if options.shared then
+if options.shared and not options.cuik and not options.tb then
 	options.cuik = true
 	options.tb = true
 end
@@ -151,7 +156,7 @@ ninja:write("ldflags = "..ldflags.."\n")
 
 rule("cc", {
 	depfile = "$out.d",
-	command = "clang $in $cflags -MD -MF $out.d -c -o $out",
+	command = cc.." $in $cflags -MD -MF $out.d -c -o $out",
 	description = "CC $out"
 })
 rule("link", {
@@ -160,7 +165,7 @@ rule("link", {
 })
 rule("lib", {
 	depfile = "$out.d",
-	command = ar.." $out $in",
+	command = ar.." -rcs $out $in",
 	description = "LIB $out"
 })
 rule("run", {
