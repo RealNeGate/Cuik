@@ -4,10 +4,10 @@
 
 static int dummy;
 
-static void add_libraries(void* ctx, const Cuik_DriverArgs* args, Cuik_Linker* l) {
+static void add_libraries(void* ctx, bool nocrt, Cuik_Linker* l) {
 }
 
-static void set_preprocessor(void* ctx, const Cuik_DriverArgs* args, Cuik_CPP* cpp) {
+static void set_preprocessor(void* ctx, bool nocrt, Cuik_CPP* cpp) {
     cuikpp_add_include_directory(cpp, true, "/usr/lib/gcc/x86_64-linux-gnu/9/include/");
     cuikpp_add_include_directory(cpp, true, "/usr/include/x86_64-linux-gnu/");
     cuikpp_add_include_directory(cpp, true, "/usr/local/include/");

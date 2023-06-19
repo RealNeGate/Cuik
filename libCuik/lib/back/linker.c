@@ -11,8 +11,8 @@ void cuiklink_deinit(Cuik_Linker* l) {
     dyn_array_destroy(l->libpaths);
 }
 
-void cuiklink_apply_toolchain_libs(Cuik_Linker* l, Cuik_DriverArgs* args) {
-    args->toolchain.add_libraries(args->toolchain.ctx, args, l);
+void cuiklink_apply_toolchain_libs(Cuik_Linker* l, bool nocrt) {
+    l->toolchain.add_libraries(l->toolchain.ctx, nocrt, l);
 }
 
 void cuiklink_add_libpath(Cuik_Linker* l, const char filepath[]) {

@@ -30,7 +30,7 @@ typedef struct {
     bool poison;
 } ArithResult;
 
-static ArithResult single_word_arith_fold(TB_NodeTypeEnum node_type, TB_DataType dt, uint64_t ai, uint64_t bi, TB_ArithmaticBehavior ab) {
+static ArithResult single_word_arith_fold(TB_NodeTypeEnum node_type, TB_DataType dt, uint64_t ai, uint64_t bi, TB_ArithmeticBehavior ab) {
     uint64_t shift = 64-dt.data;
     uint64_t mask = ~UINT64_C(0) >> shift;
 

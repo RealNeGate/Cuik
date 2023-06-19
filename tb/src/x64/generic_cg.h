@@ -829,7 +829,7 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
         }
     };
 
-    /*ctx.emit.emit_asm = true;
+    /* ctx.emit.emit_asm = true;
     if (ctx.emit.emit_asm) {
         tb_function_print(f, tb_default_print_callback, stdout);
     }*/

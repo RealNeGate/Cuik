@@ -64,6 +64,7 @@ static work_t* ask_for_work(threadpool_t* threadpool, uint32_t* save) {
 static bool do_work(threadpool_t* threadpool) {
     uint32_t save;
     work_t* job = NULL;
+    work_t tmp;
 
     do {
         job = ask_for_work(threadpool, &save);
@@ -72,10 +73,13 @@ static bool do_work(threadpool_t* threadpool) {
             return true;
         }
 
+        // copy out before we commit
+        tmp = *job;
+
         // don't continue until we successfully commited the queue pop
     } while (!atomic_compare_exchange_strong(&threadpool->queue, &save, save + 0x10000));
 
-    job->fn(job->arg);
+    tmp.fn(tmp.arg);
     threadpool->jobs_done -= 1;
     return false;
 }

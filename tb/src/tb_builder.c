@@ -131,7 +131,7 @@ TB_Node* tb_alloc_node(TB_Function* f, int type, TB_DataType dt, int input_count
     return n;
 }
 
-static TB_Node* tb_bin_arith(TB_Function* f, int type, TB_ArithmaticBehavior arith_behavior, TB_Node* a, TB_Node* b) {
+static TB_Node* tb_bin_arith(TB_Function* f, int type, TB_ArithmeticBehavior arith_behavior, TB_Node* a, TB_Node* b) {
     tb_assume(TB_DATA_TYPE_EQUALS(a->dt, b->dt));
 
     TB_Node* n = tb_alloc_node(f, type, a->dt, 2, sizeof(TB_NodeBinopInt));
@@ -586,15 +586,15 @@ TB_API TB_Node* tb_inst_xor(TB_Function* f, TB_Node* a, TB_Node* b) {
     return tb_bin_arith(f, TB_XOR, 0, a, b);
 }
 
-TB_API TB_Node* tb_inst_add(TB_Function* f, TB_Node* a, TB_Node* b, TB_ArithmaticBehavior arith_behavior) {
+TB_API TB_Node* tb_inst_add(TB_Function* f, TB_Node* a, TB_Node* b, TB_ArithmeticBehavior arith_behavior) {
     return tb_bin_arith(f, TB_ADD, arith_behavior, a, b);
 }
 
-TB_API TB_Node* tb_inst_sub(TB_Function* f, TB_Node* a, TB_Node* b, TB_ArithmaticBehavior arith_behavior) {
+TB_API TB_Node* tb_inst_sub(TB_Function* f, TB_Node* a, TB_Node* b, TB_ArithmeticBehavior arith_behavior) {
     return tb_bin_arith(f, TB_SUB, arith_behavior, a, b);
 }
 
-TB_API TB_Node* tb_inst_mul(TB_Function* f, TB_Node* a, TB_Node* b, TB_ArithmaticBehavior arith_behavior) {
+TB_API TB_Node* tb_inst_mul(TB_Function* f, TB_Node* a, TB_Node* b, TB_ArithmeticBehavior arith_behavior) {
     return tb_bin_arith(f, TB_MUL, arith_behavior, a, b);
 }
 
@@ -608,7 +608,7 @@ TB_API TB_Node* tb_inst_mod(TB_Function* f, TB_Node* a, TB_Node* b, bool signedn
     return tb_bin_arith(f, signedness ? TB_SMOD : TB_UMOD, 0, a, b);
 }
 
-TB_API TB_Node* tb_inst_shl(TB_Function* f, TB_Node* a, TB_Node* b, TB_ArithmaticBehavior arith_behavior) {
+TB_API TB_Node* tb_inst_shl(TB_Function* f, TB_Node* a, TB_Node* b, TB_ArithmeticBehavior arith_behavior) {
     return tb_bin_arith(f, TB_SHL, arith_behavior, a, b);
 }
 

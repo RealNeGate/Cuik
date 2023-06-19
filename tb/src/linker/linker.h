@@ -264,6 +264,9 @@ struct TB_UnresolvedSymbol {
 
 typedef TB_LinkerSymbol* TB_SymbolResolver(TB_Linker* l, TB_LinkerSymbol* sym, TB_Slice name, TB_Slice* alt, uint32_t reloc_i);
 
+// 1 << QEXP is the size of the queue
+#define QEXP 6
+
 typedef struct TB_Linker {
     TB_Arch target_arch;
 
@@ -289,6 +292,15 @@ typedef struct TB_Linker {
 
     NL_Strmap(TB_UnresolvedSymbol*) unresolved_symbols;
 
+    // Message pump:
+    //   this is how the user and linker communicate
+    //
+    // both head and tail exist in the queue field, it's a skeeto trick:
+    //    https://github.com/skeeto/scratch/blob/master/misc/queue.c
+    _Atomic uint32_t queue;
+    _Atomic uint32_t queue_count;
+    TB_LinkerMsg* messages;
+
     // Windows specific:
     //   on windows, we use DLLs to interact with the OS so
     //   there needs to be a way to load these immediately,
@@ -301,6 +313,8 @@ typedef struct TB_Linker {
 
     TB_LinkerVtbl vtbl;
 } TB_Linker;
+
+void tb_linker_send_msg(TB_Linker* l, TB_LinkerMsg* msg);
 
 // Error handling
 TB_UnresolvedSymbol* tb__unresolved_symbol(TB_Linker* l, TB_Slice name);

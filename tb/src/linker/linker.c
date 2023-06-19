@@ -1,5 +1,11 @@
 #include "linker.h"
 
+#if __STDC_VERSION__ < 201112L || defined(__STDC_NO_ATOMICS__)
+#error "Missing C11 support for stdatomic.h"
+#endif
+
+#include <stdatomic.h>
+
 extern TB_LinkerVtbl tb__linker_pe, tb__linker_elf;
 
 TB_API TB_ExecutableType tb_system_executable_format(TB_System s) {
@@ -14,11 +20,15 @@ TB_API TB_Linker* tb_linker_create(TB_ExecutableType exe, TB_Arch arch) {
     TB_Linker* l = tb_platform_heap_alloc(sizeof(TB_Linker));
     memset(l, 0, sizeof(TB_Linker));
     l->target_arch = arch;
+    l->messages = tb_platform_heap_alloc((1u << QEXP) * sizeof(TB_LinkerMsg));
 
     l->symtab.exp = 14;
     CUIK_TIMED_BLOCK("tb_platform_valloc") {
         l->symtab.ht = tb_platform_valloc((1u << l->symtab.exp) * sizeof(TB_LinkerSymbol));
     }
+
+    TB_LinkerInput null_entry = { 0 };
+    dyn_array_put(l->inputs, null_entry);
 
     switch (exe) {
         case TB_EXECUTABLE_PE:  l->vtbl = tb__linker_pe;  break;
@@ -28,6 +38,56 @@ TB_API TB_Linker* tb_linker_create(TB_ExecutableType exe, TB_Arch arch) {
 
     l->vtbl.init(l);
     return l;
+}
+
+void tb_linker_send_msg(TB_Linker* l, TB_LinkerMsg* msg) {
+    ptrdiff_t i = 0;
+    for (;;) {
+        // might wanna change the memory order on this atomic op
+        uint32_t r = l->queue;
+
+        uint32_t mask = (1u << QEXP) - 1;
+        uint32_t head = r & mask;
+        uint32_t tail = (r >> 16) & mask;
+        uint32_t next = (head + 1u) & mask;
+        if (r & 0x8000) { // avoid overflow on commit
+            l->queue &= ~0x8000;
+        }
+
+        // it don't fit...
+        if (next != tail) {
+            i = head;
+            break;
+        }
+    }
+
+    l->messages[i] = *msg;
+    l->queue_count += 1;
+    l->queue += 1;
+}
+
+TB_API bool tb_linker_get_msg(TB_Linker* l, TB_LinkerMsg* out_msg) {
+    // pop work off the queue
+    uint32_t r;
+    TB_LinkerMsg* msg = NULL;
+    do {
+        r = l->queue;
+        uint32_t mask = (1u << QEXP) - 1;
+        uint32_t head = r & mask;
+        uint32_t tail = (r >> 16) & mask;
+
+        if (head == tail) {
+            return false;
+        }
+
+        // copy out before we commit
+        *out_msg = l->messages[tail];
+
+        // don't continue until we successfully commited the queue pop
+    } while (!atomic_compare_exchange_strong(&l->queue, &r, r + 0x10000));
+
+    l->queue_count -= 1;
+    return true;
 }
 
 TB_API void tb_linker_set_subsystem(TB_Linker* l, TB_WindowsSubsystem subsystem) {
@@ -568,16 +628,29 @@ bool tb__finalize_sections(TB_Linker* l) {
             for (; u && i < 5; u = u->next, i++) {
                 // walk input stack
                 TB_LinkerInputHandle curr = u->reloc;
+                fprintf(stderr, "  in ");
+
+                int depth = 0;
                 while (curr != 0) {
                     TB_LinkerInput* input = &l->inputs[curr];
 
+                    depth++;
+                    if (depth) {
+                        fprintf(stderr, "(");
+                    }
+
                     if (input->tag == TB_LINKER_INPUT_MODULE) {
-                        fprintf(stderr, "  in <tb-module %d>\n", u->reloc & 0x7FFFFFFF);
+                        fprintf(stderr, "<tb-module %p>\n", input->module);
                     } else {
                         TB_Slice obj_name = as_filename(input->name);
-                        fprintf(stderr, "  in %.*s\n", (int) obj_name.length, obj_name.data);
+                        fprintf(stderr, "%.*s", (int) obj_name.length, obj_name.data);
                     }
+
+                    curr = input->parent;
                 }
+
+                while (depth--) fprintf(stderr, ")");
+                fprintf(stderr, "\n");
             }
 
             if (u) {

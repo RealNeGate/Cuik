@@ -511,7 +511,7 @@ static bool find_visual_studio_by_fighting_through_microsoft_craziness(Cuik_Wind
 }
 #endif /* _WIN32 */
 
-static void add_libraries(void* ctx, const Cuik_DriverArgs* args, Cuik_Linker* l) {
+static void add_libraries(void* ctx, bool nocrt, Cuik_Linker* l) {
     Cuik_WindowsToolchain* t = ctx;
 
     cuiklink_add_libpathf(l, STR_FMT, t->vs_library_path);
@@ -519,26 +519,26 @@ static void add_libraries(void* ctx, const Cuik_DriverArgs* args, Cuik_Linker* l
     cuiklink_add_libpathf(l, STR_FMT SLASH"ucrt"SLASH"x64", t->windows_sdk_root);
 }
 
-static void print_verbose(void* ctx, const Cuik_DriverArgs* args) {
+static void print_verbose(void* ctx, bool nocrt) {
     Cuik_WindowsToolchain* t = ctx;
 
     printf("Includes:\n");
     printf("  " STR_FMT SLASH"um\n",     t->windows_sdk_include);
     printf("  " STR_FMT SLASH"shared\n", t->windows_sdk_include);
     printf("  " STR_FMT "\n",            t->vs_include_path);
-    if (!args->nocrt) {
+    if (!nocrt) {
         printf("  " STR_FMT SLASH"ucrt\n", t->windows_sdk_include);
     }
     printf("\n");
 }
 
-static void set_preprocessor(void* ctx, const Cuik_DriverArgs* args, Cuik_CPP* cpp) {
+static void set_preprocessor(void* ctx, bool nocrt, Cuik_CPP* cpp) {
     Cuik_WindowsToolchain* t = ctx;
 
     cuikpp_add_include_directoryf(cpp, true, STR_FMT SLASH"um",     t->windows_sdk_include);
     cuikpp_add_include_directoryf(cpp, true, STR_FMT SLASH"shared", t->windows_sdk_include);
     cuikpp_add_include_directoryf(cpp, true, STR_FMT,               t->vs_include_path);
-    if (!args->nocrt) {
+    if (!nocrt) {
         cuikpp_add_include_directoryf(cpp, true, STR_FMT SLASH"ucrt", t->windows_sdk_include);
     }
 

@@ -1,10 +1,10 @@
 #include <cuik.h>
 #include <common.h>
 
-static void add_libraries(void* ctx, const Cuik_DriverArgs* args, Cuik_Linker* l) {
+static void add_libraries(void* ctx, bool nocrt, Cuik_Linker* l) {
 }
 
-static void set_preprocessor(void* ctx, const Cuik_DriverArgs* args, Cuik_CPP* cpp) {
+static void set_preprocessor(void* ctx, bool nocrt, Cuik_CPP* cpp) {
     cuikpp_define_cstr(cpp, "__APPLE__", "1");
     cuikpp_define_cstr(cpp, "__MACH__" , "1");
     cuikpp_define_cstr(cpp, "__weak", "// __attribute__((objc_gc(weak))");

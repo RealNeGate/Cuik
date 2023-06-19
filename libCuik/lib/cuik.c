@@ -104,7 +104,7 @@ void cuik_set_standard_defines(Cuik_CPP* cpp, const Cuik_DriverArgs* args) {
     cuikpp_define_cstr(cpp, "typeof", "_Typeof");
 
     cuikpp_add_include_directory(cpp, true, "$cuik/");
-    args->toolchain.set_preprocessor(args->toolchain.ctx, args, cpp);
+    args->toolchain.set_preprocessor(args->toolchain.ctx, args->nocrt, cpp);
 
     if (args->target != NULL) {
         args->target->set_defines(args->target, cpp);

@@ -32,10 +32,10 @@
 #endif
 
 // These are flags
-typedef enum TB_ArithmaticBehavior {
+typedef enum TB_ArithmeticBehavior {
     TB_ARITHMATIC_NSW = 1,
     TB_ARITHMATIC_NUW = 2,
-} TB_ArithmaticBehavior;
+} TB_ArithmeticBehavior;
 
 typedef enum TB_DebugFormat {
     TB_DEBUGFMT_NONE,
@@ -454,7 +454,7 @@ typedef struct { // any compare operator
 } TB_NodeCompare;
 
 typedef struct { // any integer binary operator
-    TB_ArithmaticBehavior ab;
+    TB_ArithmeticBehavior ab;
 } TB_NodeBinopInt;
 
 typedef struct {
@@ -653,11 +653,26 @@ typedef struct TB_Linker TB_Linker;
 typedef struct TB_LinkerSection TB_LinkerSection;
 typedef struct TB_LinkerSectionPiece TB_LinkerSectionPiece;
 
+typedef struct {
+    enum {
+        TB_LINKER_MSG_NULL,
+
+        // pragma comment(lib, "blah")
+        TB_LINKER_MSG_IMPORT,
+    } tag;
+    union {
+        // pragma lib request
+        TB_Slice import_path;
+    };
+} TB_LinkerMsg;
+
 TB_API TB_ExecutableType tb_system_executable_format(TB_System s);
 
 TB_API TB_Linker* tb_linker_create(TB_ExecutableType type, TB_Arch arch);
 TB_API TB_Exports tb_linker_export(TB_Linker* l);
 TB_API void tb_linker_destroy(TB_Linker* l);
+
+TB_API bool tb_linker_get_msg(TB_Linker* l, TB_LinkerMsg* msg);
 
 // windows only
 TB_API void tb_linker_set_subsystem(TB_Linker* l, TB_WindowsSubsystem subsystem);
@@ -886,9 +901,9 @@ TB_API TB_Node* tb_inst_get_symbol_address(TB_Function* f, TB_Symbol* target);
 TB_API TB_Node* tb_inst_select(TB_Function* f, TB_Node* cond, TB_Node* a, TB_Node* b);
 
 // Integer arithmatic
-TB_API TB_Node* tb_inst_add(TB_Function* f, TB_Node* a, TB_Node* b, TB_ArithmaticBehavior arith_behavior);
-TB_API TB_Node* tb_inst_sub(TB_Function* f, TB_Node* a, TB_Node* b, TB_ArithmaticBehavior arith_behavior);
-TB_API TB_Node* tb_inst_mul(TB_Function* f, TB_Node* a, TB_Node* b, TB_ArithmaticBehavior arith_behavior);
+TB_API TB_Node* tb_inst_add(TB_Function* f, TB_Node* a, TB_Node* b, TB_ArithmeticBehavior arith_behavior);
+TB_API TB_Node* tb_inst_sub(TB_Function* f, TB_Node* a, TB_Node* b, TB_ArithmeticBehavior arith_behavior);
+TB_API TB_Node* tb_inst_mul(TB_Function* f, TB_Node* a, TB_Node* b, TB_ArithmeticBehavior arith_behavior);
 TB_API TB_Node* tb_inst_div(TB_Function* f, TB_Node* a, TB_Node* b, bool signedness);
 TB_API TB_Node* tb_inst_mod(TB_Function* f, TB_Node* a, TB_Node* b, bool signedness);
 
@@ -905,7 +920,7 @@ TB_API TB_Node* tb_inst_and(TB_Function* f, TB_Node* a, TB_Node* b);
 TB_API TB_Node* tb_inst_or(TB_Function* f, TB_Node* a, TB_Node* b);
 TB_API TB_Node* tb_inst_xor(TB_Function* f, TB_Node* a, TB_Node* b);
 TB_API TB_Node* tb_inst_sar(TB_Function* f, TB_Node* a, TB_Node* b);
-TB_API TB_Node* tb_inst_shl(TB_Function* f, TB_Node* a, TB_Node* b, TB_ArithmaticBehavior arith_behavior);
+TB_API TB_Node* tb_inst_shl(TB_Function* f, TB_Node* a, TB_Node* b, TB_ArithmeticBehavior arith_behavior);
 TB_API TB_Node* tb_inst_shr(TB_Function* f, TB_Node* a, TB_Node* b);
 
 // Atomics

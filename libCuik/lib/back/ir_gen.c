@@ -360,7 +360,7 @@ static TB_Node* inc_or_dec(TranslationUnit* tu, TB_Function* func, IRVal address
             : tb_inst_member_access(func, loaded, -stride);
     } else {
         TB_Node* one = tb_inst_uint(func, dt, 1);
-        TB_ArithmaticBehavior ab = type->is_unsigned ? 0 : TB_ARITHMATIC_NSW;
+        TB_ArithmeticBehavior ab = type->is_unsigned ? 0 : TB_ARITHMATIC_NSW;
 
         operation = is_inc
             ? tb_inst_add(func, loaded, one, ab)
@@ -1138,7 +1138,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Cuik_Expr* e) {
                     default: TODO();
                 }
             } else {
-                TB_ArithmaticBehavior ab = type->is_unsigned ? 0 : TB_ARITHMATIC_NSW;
+                TB_ArithmeticBehavior ab = type->is_unsigned ? 0 : TB_ARITHMATIC_NSW;
 
                 switch (e->op) {
                     case EXPR_PLUS:    data = tb_inst_add(func, l, r, ab);                 break;
@@ -1374,7 +1374,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Cuik_Expr* e) {
                     tb_inst_store(func, dt, lhs.reg, data, type->align, is_volatile);
                 } else {
                     TB_Node* r = cvt2rval(tu, func, rhs, e->bin_op.right);
-                    TB_ArithmaticBehavior ab = type->is_unsigned ? 0 : TB_ARITHMATIC_NSW;
+                    TB_ArithmeticBehavior ab = type->is_unsigned ? 0 : TB_ARITHMATIC_NSW;
 
                     switch (e->op) {
                         case EXPR_ASSIGN:         data = r;                                           break;
@@ -1808,6 +1808,57 @@ static IRVal irgen_subexpr(TranslationUnit* tu, TB_Function* func, Cuik_Expr* _,
                 .phi = { true_lbl, false_lbl },
             };
         }
+        case EXPR_PLUS:
+        case EXPR_MINUS:
+        case EXPR_TIMES:
+        case EXPR_SLASH:
+        case EXPR_PERCENT:
+        case EXPR_AND:
+        case EXPR_OR:
+        case EXPR_XOR:
+        case EXPR_SHL:
+        case EXPR_SHR: {
+            TB_Node* l = RVAL(0);
+            TB_Node* r = RVAL(1);
+            Cuik_Type* restrict type = cuik_canonical_type(GET_TYPE());
+
+            TB_Node* data;
+            if (type->kind == KIND_FLOAT || type->kind == KIND_DOUBLE) {
+                switch (e->op) {
+                    case EXPR_PLUS:  data = tb_inst_fadd(func, l, r); break;
+                    case EXPR_MINUS: data = tb_inst_fsub(func, l, r); break;
+                    case EXPR_TIMES: data = tb_inst_fmul(func, l, r); break;
+                    case EXPR_SLASH: data = tb_inst_fdiv(func, l, r); break;
+                    default: TODO();
+                }
+            } else {
+                TB_ArithmeticBehavior ab = type->is_unsigned ? 0 : TB_ARITHMATIC_NSW;
+
+                switch (e->op) {
+                    case EXPR_PLUS:    data = tb_inst_add(func, l, r, ab);                 break;
+                    case EXPR_MINUS:   data = tb_inst_sub(func, l, r, ab);                 break;
+                    case EXPR_TIMES:   data = tb_inst_mul(func, l, r, ab);                 break;
+                    case EXPR_SLASH:   data = tb_inst_div(func, l, r, !type->is_unsigned); break;
+                    case EXPR_PERCENT: data = tb_inst_mod(func, l, r, !type->is_unsigned); break;
+                    case EXPR_AND:     data = tb_inst_and(func, l, r);                     break;
+                    case EXPR_OR:      data = tb_inst_or(func, l, r);                      break;
+                    case EXPR_XOR:     data = tb_inst_xor(func, l, r);                     break;
+                    case EXPR_SHL:     data = tb_inst_shl(func, l, r, ab);                 break;
+                    case EXPR_SHR:     data = type->is_unsigned ? tb_inst_shr(func, l, r) : tb_inst_sar(func, l, r); break;
+                    default: TODO();
+                }
+
+                if (type->kind == KIND_BOOL) {
+                    // convert into proper bool
+                    data = tb_inst_cmp_ne(func, data, tb_inst_uint(func, TB_TYPE_BOOL, 0));
+                }
+            }
+
+            return (IRVal){
+                .value_type = RVALUE,
+                .reg = data,
+            };
+        }
         case EXPR_CMPEQ:
         case EXPR_CMPNE: {
             TB_Node* l = RVAL(0);
@@ -1910,7 +1961,7 @@ static IRVal irgen_subexpr(TranslationUnit* tu, TB_Function* func, Cuik_Expr* _,
                     : tb_inst_member_access(func, loaded, -stride);
             } else {
                 TB_Node* one = tb_inst_uint(func, dt, 1);
-                TB_ArithmaticBehavior ab = type->is_unsigned ? 0 : TB_ARITHMATIC_NSW;
+                TB_ArithmeticBehavior ab = type->is_unsigned ? 0 : TB_ARITHMATIC_NSW;
 
                 operation = is_inc
                     ? tb_inst_add(func, loaded, one, ab)
@@ -2062,7 +2113,7 @@ static IRVal irgen_subexpr(TranslationUnit* tu, TB_Function* func, Cuik_Expr* _,
                     tb_inst_store(func, dt, lhs.reg, data, type->align, is_volatile);
                 } else {
                     TB_Node* r = cvt2rval(tu, func, &rhs);
-                    TB_ArithmaticBehavior ab = type->is_unsigned ? 0 : TB_ARITHMATIC_NSW;
+                    TB_ArithmeticBehavior ab = type->is_unsigned ? 0 : TB_ARITHMATIC_NSW;
 
                     switch (e->op) {
                         case EXPR_ASSIGN:         data = r;                                           break;

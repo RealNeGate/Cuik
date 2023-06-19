@@ -34,6 +34,15 @@ static int symbol_cmp(const void* a, const void* b) {
     return sym_a->ordinal - sym_b->ordinal;
 }
 
+// true if we replace the old one
+static bool process_comdat(int select, TB_LinkerSectionPiece* old_p, TB_LinkerSectionPiece* new_p) {
+    switch (select) {
+        case 2: return false;                     // any
+        case 6: return new_p->size > old_p->size; // largest
+        default: tb_todo();
+    }
+}
+
 // Musl's impl for this
 int strncasecmp(const char *_l, const char *_r, size_t n) {
     const unsigned char *l=(void *)_l, *r=(void *)_r;
@@ -102,7 +111,7 @@ void pe_append_object(TB_Linker* l, TB_Slice obj_name, TB_Slice content) {
 
     // Apply all sections (generate lookup for sections based on ordinals)
     TB_LinkerSectionPiece *text_piece = NULL, *pdata_piece = NULL;
-    TB_ObjectSection* sections = malloc(parser.section_count * sizeof(TB_ObjectSection));
+    TB_ObjectSection* sections = tb_platform_heap_alloc(parser.section_count * sizeof(TB_ObjectSection));
     FOREACH_N(i, 0, parser.section_count) {
         TB_ObjectSection* restrict s = &sections[i];
         tb_coff_parse_section(&parser, i, s);
@@ -123,19 +132,24 @@ void pe_append_object(TB_Linker* l, TB_Slice obj_name, TB_Slice content) {
         }
 
         size_t drectve_len = sizeof(".drectve")-1;
+
         if (s->name.length == drectve_len && memcmp(s->name.data, ".drectve", drectve_len) == 0 && s->raw_data.length > 3) {
             const uint8_t* curr = s->raw_data.data + 3;
-            const uint8_t* end = s->raw_data.data + s->raw_data.length;
+            const uint8_t* end_directive = s->raw_data.data + s->raw_data.length;
 
-            while (curr != end && *curr == '/') {
-                if (strprefix((const char*) curr, "/merge:", end - curr)) {
+            while (curr != end_directive) {
+                const uint8_t* end = curr;
+                while (end != end_directive && *end != ' ') end++;
+
+                log_info("directive: %.*s", (int) (end - curr), curr);
+
+                if (curr == end_directive) {
+                    break;
+                } else if (strprefix((const char*) curr, "/merge:", end - curr)) {
                     curr += sizeof("/merge:")-1;
 
                     const uint8_t* equals = curr;
                     while (*equals && *equals != '=') equals++;
-
-                    const uint8_t* end = equals;
-                    while (*end && *end != ' ') end++;
 
                     if (*equals == '=') {
                         TB_LinkerCmd cmd = {
@@ -145,15 +159,16 @@ void pe_append_object(TB_Linker* l, TB_Slice obj_name, TB_Slice content) {
                         dyn_array_put(info->merges, cmd);
                     }
 
-                    curr = end+1;
+                } else if (strprefix((const char*) curr, "/defaultlib:", end - curr)) {
+                    curr += sizeof("/defaultlib:")-1;
+
+                    TB_LinkerMsg m = { .tag = TB_LINKER_MSG_IMPORT, .import_path = { end - curr, curr } };
+                    tb_linker_send_msg(l, &m);
                 } else if (strprefix((const char*) curr, "/alternatename:", end - curr)) {
                     curr += sizeof("/alternatename:")-1;
 
                     const uint8_t* equals = curr;
                     while (*equals && *equals != '=') equals++;
-
-                    const uint8_t* end = equals;
-                    while (*end && *end != ' ') end++;
 
                     if (*equals == '=') {
                         TB_LinkerCmd cmd = {
@@ -162,12 +177,12 @@ void pe_append_object(TB_Linker* l, TB_Slice obj_name, TB_Slice content) {
                         };
                         dyn_array_put(info->alternates, cmd);
                     }
-
-                    curr = end+1;
                 } else {
-                    // printf("%s\n", curr);
+                    log_warn("unknown linker directive: %.*s", (int) (end - curr), curr);
                     break;
                 }
+
+                curr = end+1;
             }
 
             continue;
@@ -212,7 +227,7 @@ void pe_append_object(TB_Linker* l, TB_Slice obj_name, TB_Slice content) {
 
     // Append all symbols
     size_t sym_count = 0;
-    TB_ObjectSymbol* syms = malloc(sizeof(TB_ObjectSymbol) * parser.symbol_count);
+    TB_ObjectSymbol* syms = tb_platform_heap_alloc(sizeof(TB_ObjectSymbol) * parser.symbol_count);
 
     COFF_AuxSectionSymbol* comdat_aux = NULL;
     CUIK_TIMED_BLOCK("apply symbols") {
@@ -225,10 +240,9 @@ void pe_append_object(TB_Linker* l, TB_Slice obj_name, TB_Slice content) {
                 continue;
             }
 
-            // TB_Slice sec_name = og_sort[sym->section_num - 1]->name;
-            // printf("    %.*s = %.*s:%d\n", (int) sym->name.length, sym->name.data, (int) sec_name.length, sec_name.data, sym->value);
-
             TB_ObjectSection* sec = &sections[sym->section_num - 1];
+            // log_debug("%.*s = %.*s:%d", (int) sym->name.length, sym->name.data, (int) sec->name.length, sec->name.data, sym->value);
+
             if (sec->name.length == sym->name.length && memcmp(sym->name.data, sec->name.data, sym->name.length) == 0) {
                 // we're a section symbol
                 // COMDAT is how linkers handle merging of inline functions in C++
@@ -236,58 +250,66 @@ void pe_append_object(TB_Linker* l, TB_Slice obj_name, TB_Slice content) {
                     // the next symbol is the actual COMDAT symbol
                     comdat_aux = sym->extra;
                 }
-            } else {
-                TB_LinkerSectionPiece* p = sec->user_data;
-                assert(p != NULL);
 
-                TB_LinkerSymbol s = {
-                    .name = sym->name,
-                    .tag = TB_LINKER_SYMBOL_NORMAL,
-                    .object_name = obj_name,
-                    .normal = { p, sym->value }
-                };
+                // sections without a piece are ok
+                if (sec->user_data == NULL) {
+                    continue;
+                }
+            }
 
-                TB_LinkerSymbol* lnk_s = NULL;
-                if (sym->type == TB_OBJECT_SYMBOL_STATIC) {
-                    lnk_s = tb_platform_heap_alloc(sizeof(TB_LinkerSymbol));
-                    *lnk_s = s;
-                } else if (sym->type == TB_OBJECT_SYMBOL_WEAK_EXTERN) {
-                    if (comdat_aux) {
-                        assert(0 && "COMDAT and weak external?");
-                        comdat_aux = NULL;
-                    }
+            TB_LinkerSectionPiece* p = sec->user_data;
+            assert(p != NULL);
 
-                    fprintf(stderr, "%.*s\n", (int) sym->name.length, sym->name.data);
-                    lnk_s = tb__append_symbol(&l->symtab, &s);
-                } else if (sym->type == TB_OBJECT_SYMBOL_EXTERN) {
-                    if (comdat_aux) {
-                        s.flags |= TB_LINKER_SYMBOL_COMDAT;
+            TB_LinkerSymbol s = {
+                .name = sym->name,
+                .tag = TB_LINKER_SYMBOL_NORMAL,
+                .object_name = obj_name,
+                .normal = { p, sym->value }
+            };
 
-                        // check if it already exists as a COMDAT
-                        TB_LinkerSymbol* old = tb__find_symbol(&l->symtab, sym->name);
-                        if (old && (old->flags & TB_LINKER_SYMBOL_COMDAT)) {
-                            if (comdat_aux->selection == 2) {
-                                // comdat any, any duplicates will be ignored
-                                p->size = 0;
-                            } else {
-                                tb_todo();
-                            }
+            TB_LinkerSymbol* lnk_s = NULL;
+            if (sym->type == TB_OBJECT_SYMBOL_STATIC) {
+                lnk_s = tb_platform_heap_alloc(sizeof(TB_LinkerSymbol));
+                *lnk_s = s;
+            } else if (sym->type == TB_OBJECT_SYMBOL_WEAK_EXTERN) {
+                if (comdat_aux) {
+                    assert(0 && "COMDAT and weak external?");
+                    comdat_aux = NULL;
+                }
+
+                fprintf(stderr, "%.*s\n", (int) sym->name.length, sym->name.data);
+                lnk_s = tb__append_symbol(&l->symtab, &s);
+            } else if (sym->type == TB_OBJECT_SYMBOL_EXTERN) {
+                if (comdat_aux) {
+                    s.flags |= TB_LINKER_SYMBOL_COMDAT;
+
+                    // check if it already exists as a COMDAT
+                    TB_LinkerSymbol* old = tb__find_symbol(&l->symtab, sym->name);
+                    if (old && (old->flags & TB_LINKER_SYMBOL_COMDAT)) {
+                        assert(old->tag == TB_LINKER_SYMBOL_NORMAL);
+
+                        bool replace = process_comdat(comdat_aux->selection, old->normal.piece, p);
+                        if (replace) {
+                            old->normal.piece->size = 0;
                         } else {
-                            lnk_s = tb__append_symbol(&l->symtab, &s);
+                            p->size = 0;
                         }
-
-                        comdat_aux = NULL;
                     } else {
                         lnk_s = tb__append_symbol(&l->symtab, &s);
                     }
-                }
 
-                // add to the section piece's symbol list
-                if (lnk_s) {
-                    lnk_s->next = p->first_sym;
-                    p->first_sym = lnk_s;
-                    sym->user_data = lnk_s;
+                    comdat_aux = NULL;
+                } else {
+                    lnk_s = tb__append_symbol(&l->symtab, &s);
                 }
+            }
+
+            // add to the section piece's symbol list
+            if (lnk_s) {
+                lnk_s->next = p->first_sym;
+                p->first_sym = lnk_s;
+
+                sym->user_data = lnk_s;
             }
         }
     }
@@ -353,6 +375,9 @@ void pe_append_object(TB_Linker* l, TB_Slice obj_name, TB_Slice content) {
             }
         }
     }
+
+    tb_platform_heap_free(sections);
+    tb_platform_heap_free(syms);
 }
 
 static void pe_append_library(TB_Linker* l, TB_Slice ar_name, TB_Slice ar_file) {
@@ -420,8 +445,6 @@ static void pe_append_library(TB_Linker* l, TB_Slice ar_name, TB_Slice ar_file) 
             // fprintf(stderr, "%.*s\n", (int) e->name.length, e->name.data);
             CUIK_TIMED_BLOCK("append object file") {
                 pe_append_object(l, e->name, e->content);
-
-                // tb_object_free(e->obj);
             }
         }
     }
@@ -685,7 +708,7 @@ static COFF_ImportDirectory* gen_imports(TB_Linker* l, PE_ImageDataDirectory* im
                     TB_Slice name = { strlen(ext->super.name), (uint8_t*) ext->super.name };
                     TB_LinkerSymbol* sym = tb__find_symbol(&l->symtab, name);
                     if (sym == NULL) {
-                        tb__unresolved_symbol(l, name)->reloc = 0x80000000 | j;
+                        tb__unresolved_symbol(l, name)->reloc = j;
                         continue;
                     }
 

@@ -227,9 +227,8 @@ end
 
 ninja:close()
 
-if os.execute("ninja") ~= 0 then
-	os.exit(1)
-end
+local res = os.execute("ninja")
+print(res)
 
 if options.test then
 	dofile("tests.lua")

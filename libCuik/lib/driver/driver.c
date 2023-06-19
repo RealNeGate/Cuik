@@ -92,10 +92,10 @@ static bool has_file_ext(const char* path) {
 }
 
 static Cuik_Linker gimme_linker(Cuik_DriverArgs* restrict args) {
-    Cuik_Linker l = { 0 };
+    Cuik_Linker l = { .toolchain = args->toolchain };
 
     // Add system libpaths
-    cuiklink_apply_toolchain_libs(&l, args);
+    cuiklink_apply_toolchain_libs(&l, args->nocrt);
 
     dyn_array_for(i, args->libpaths) {
         cuiklink_add_libpath(&l, args->libpaths[i]->data);

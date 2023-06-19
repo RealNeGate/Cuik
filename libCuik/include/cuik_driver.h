@@ -5,16 +5,18 @@
 #pragma once
 #include "cuik_prelude.h"
 
+typedef struct Cuik_Linker Cuik_Linker;
+
 struct Cuik_Toolchain {
     // we expect this to be heap allocated because cuik_toolchain_free
     void* ctx;
     bool case_insensitive;
 
     void* (*init)(void);
-    void  (*add_libraries)(void* ctx, const Cuik_DriverArgs* args, Cuik_Linker* linker);
-    void  (*set_preprocessor)(void* ctx, const Cuik_DriverArgs* args, Cuik_CPP* cpp);
+    void  (*add_libraries)(void* ctx, bool nocrt, Cuik_Linker* linker);
+    void  (*set_preprocessor)(void* ctx, bool nocrt, Cuik_CPP* cpp);
+    void  (*print_verbose)(void* ctx, bool nocrt);
     bool  (*invoke_link)(void* ctx, const Cuik_DriverArgs* args, Cuik_Linker* linker, const char* output, const char* filename);
-    void  (*print_verbose)(void* ctx, const Cuik_DriverArgs* args);
 };
 
 struct Cuik_DriverArgs {
@@ -105,6 +107,37 @@ CUIK_API Cuik_Toolchain cuik_toolchain_gnu(void);
 
 CUIK_API Cuik_Toolchain cuik_toolchain_host(void);
 CUIK_API void cuik_toolchain_free(Cuik_Toolchain* toolchain);
+
+////////////////////////////////////////////
+// Linker
+////////////////////////////////////////////
+// This is a wrapper over the system linker, eventually TB will be capable of
+// this job but until then...
+struct Cuik_Linker {
+    Cuik_Toolchain toolchain;
+
+    DynArray(char*) inputs;
+    DynArray(char*) libpaths;
+};
+
+// True if success
+CUIK_API bool cuiklink_init(Cuik_Linker* l);
+CUIK_API void cuiklink_deinit(Cuik_Linker* l);
+
+// uses the system library paths located by cuik_find_system_deps
+CUIK_API void cuiklink_apply_toolchain_libs(Cuik_Linker* l, bool nocrt);
+
+// Adds a directory to the library searches
+CUIK_API void cuiklink_add_libpath(Cuik_Linker* l, const char* filepath);
+CUIK_API void cuiklink_add_libpathf(Cuik_Linker* l, const char* fmt, ...);
+
+// This can be a static library or object file
+CUIK_API void cuiklink_add_input_file(Cuik_Linker* l, const char* filepath);
+
+CUIK_API bool cuiklink_find_library(Cuik_Linker* l, char output[FILENAME_MAX], const char* filepath);
+
+// return true if it succeeds
+CUIK_API bool cuiklink_invoke(Cuik_Linker* l, Cuik_DriverArgs* args, const char* output, const char* filename);
 
 ////////////////////////////////
 // Integrated build system API
