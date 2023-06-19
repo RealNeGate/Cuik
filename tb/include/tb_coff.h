@@ -113,12 +113,12 @@ static_assert(sizeof(COFF_Symbol) == 18,        "COFF Symbol size != 18 bytes");
 bool tb_coff_parse_init(TB_COFF_Parser* restrict parser) {
     TB_Slice file = parser->file;
 
-    if (file.length >= sizeof(COFF_FileHeader)) return false;
+    if (file.length < sizeof(COFF_FileHeader)) return false;
     COFF_FileHeader* header = (COFF_FileHeader*) &parser->file.data[0];
 
     // locate string table (it spans until the end of the file)
     size_t string_table_pos = header->symbol_table + (header->symbol_count * sizeof(COFF_Symbol));
-    if (file.length >= string_table_pos) return false;
+    if (file.length < string_table_pos) return false;
 
     parser->symbol_count = header->symbol_count;
     parser->symbol_table = header->symbol_table;
@@ -150,7 +150,7 @@ bool tb_coff_parse_section(TB_COFF_Parser* restrict parser, size_t i, TB_ObjectS
     TB_Slice file = parser->file;
     size_t section_offset = sizeof(COFF_FileHeader) + (i * sizeof(COFF_SectionHeader));
 
-    if (file.length >= section_offset + sizeof(COFF_SectionHeader)) {
+    if (file.length < section_offset + sizeof(COFF_SectionHeader)) {
         return false;
     }
 
@@ -239,7 +239,7 @@ size_t tb_coff_parse_symbol(TB_COFF_Parser* restrict parser, size_t i, TB_Object
     TB_Slice file = parser->file;
     size_t symbol_offset = parser->symbol_table + (i * sizeof(COFF_Symbol));
 
-    if (file.length >= symbol_offset + sizeof(COFF_Symbol)) {
+    if (file.length < symbol_offset + sizeof(COFF_Symbol)) {
         return 0;
     }
 

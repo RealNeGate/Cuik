@@ -59,7 +59,7 @@ int run_link(int argc, const char** argv) {
             }
 
             TB_Slice data = { fm.size, fm.data };
-            // tb_linker_append_object(l, path_slice, tb_object_parse_coff(data));
+            tb_linker_append_object(l, path_slice, data);
         }
     }
 

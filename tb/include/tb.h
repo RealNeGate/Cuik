@@ -668,12 +668,12 @@ TB_API void tb_linker_set_entrypoint(TB_Linker* l, const char* name);
 TB_API void tb_linker_append_module(TB_Linker* l, TB_Module* m);
 
 // Adds object file to output
-// TB_API void tb_linker_append_object(TB_Linker* l, TB_Slice obj_name, TB_ObjectFile* obj);
+TB_API void tb_linker_append_object(TB_Linker* l, TB_Slice obj_name, TB_Slice content);
 
 // Adds static library to output
 //   this can include imports (wrappers for DLL symbols) along with
 //   normal sections.
-TB_API void tb_linker_append_library(TB_Linker* l, TB_Slice ar_name, TB_Slice ar_file);
+TB_API void tb_linker_append_library(TB_Linker* l, TB_Slice ar_name, TB_Slice content);
 
 ////////////////////////////////
 // JIT compilation
