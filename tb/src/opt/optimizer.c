@@ -360,50 +360,56 @@ static void generate_use_lists(TB_OptQueue* restrict queue, TB_Function* f) {
 }
 
 void tb_function_apply_passes(TB_PassManager* manager, TB_Passes passes, TB_Function* f) {
-    assert(!passes.module_level);
-    f->file = 0; // don't add line info automatically to optimizer-generated nodes
+    CUIK_TIMED_BLOCK("optimize function") {
+        assert(!passes.module_level);
+        f->file = 0; // don't add line info automatically to optimizer-generated nodes
 
-    const TB_Pass* restrict arr = manager->passes;
-    log_debug("run %d passes for %s", passes.end - passes.start, f->super.name);
+        const TB_Pass* restrict arr = manager->passes;
+        log_debug("run %d passes for %s", passes.end - passes.start, f->super.name);
 
-    // generate work list (put everything)
-    TB_OptQueue queue = { 0 };
+        // generate work list (put everything)
+        TB_OptQueue queue = { 0 };
 
-    CUIK_TIMED_BLOCK("nl_map_create") {
-        nl_map_create(queue.lookup, f->node_count);
-    }
+        CUIK_TIMED_BLOCK("nl_map_create") {
+            nl_map_create(queue.lookup, f->node_count);
+        }
 
-    CUIK_TIMED_BLOCK("tb_optqueue_fill_all") {
-        tb_optqueue_fill_all(&queue, f->start_node);
-    }
+        CUIK_TIMED_BLOCK("tb_optqueue_fill_all") {
+            tb_optqueue_fill_all(&queue, f->start_node);
+        }
 
-    // find all outgoing edges
-    CUIK_TIMED_BLOCK("generate_use_lists") {
-        generate_use_lists(&queue, f);
-    }
+        // find all outgoing edges
+        CUIK_TIMED_BLOCK("generate_use_lists") {
+            generate_use_lists(&queue, f);
+        }
 
-    printf("\n\nORIGINAL:\n");
-    tb_function_print(f, tb_default_print_callback, stdout);
+        #ifndef NDEBUG
+        printf("\n\nORIGINAL:\n");
+        tb_function_print(f, tb_default_print_callback, stdout);
+        #endif
 
-    // run passes
-    FOREACH_N(i, passes.start, passes.end) {
+        // run passes
+        FOREACH_N(i, passes.start, passes.end) {
+            peephole(&queue, f);
+
+            #ifndef NDEBUG
+            printf("\n\nAFTER PEEP:\n");
+            tb_function_print(f, tb_default_print_callback, stdout);
+            #endif
+
+            CUIK_TIMED_BLOCK_ARGS(arr[i].name, f->super.name) {
+                log_debug("run %s on %s", arr[i].name, f->super.name);
+                arr[i].func_run(f, &queue);
+            }
+        }
+
         peephole(&queue, f);
 
-        printf("\n\nAFTER PEEP:\n");
-        tb_function_print(f, tb_default_print_callback, stdout);
-
-        CUIK_TIMED_BLOCK_ARGS(arr[i].name, f->super.name) {
-            log_debug("run %s on %s", arr[i].name, f->super.name);
-            arr[i].func_run(f, &queue);
-        }
+        arena_clear(&tb__arena);
+        nl_map_free(queue.users);
+        nl_map_free(queue.lookup);
+        dyn_array_destroy(queue.queue);
     }
-
-    peephole(&queue, f);
-
-    arena_clear(&tb__arena);
-    nl_map_free(queue.users);
-    nl_map_free(queue.lookup);
-    dyn_array_destroy(queue.queue);
 }
 
 void tb_module_apply_passes(TB_PassManager* manager, TB_Passes passes, TB_Module* m) {

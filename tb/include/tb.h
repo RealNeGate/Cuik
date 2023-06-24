@@ -516,7 +516,8 @@ typedef struct {
     size_t succ_count;
     TB_Node** succ;
 
-    TB_Node* projs[];
+    size_t proj_count;
+    TB_Node** projs;
 } TB_NodeRegion;
 
 typedef struct {

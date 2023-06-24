@@ -267,9 +267,9 @@ static Inst inst_line(TB_FileID file, int line) {
 }
 
 static void phi_edge(Ctx* restrict ctx, TB_Node* src, TB_Node* dst, int index) {
-    /*TB_NodeRegion* region = TB_NODE_GET_EXTRA(dst);
-    FOREACH_N(i, 0, region->phi_count) {
-        TB_Node* n = region->phis[i];
+    TB_NodeRegion* region = TB_NODE_GET_EXTRA(dst);
+    FOREACH_N(i, 0, region->proj_count) {
+        TB_Node* n = region->projs[i];
         assert(n->type == TB_PHI);
 
         // allocate virtual register
@@ -280,7 +280,7 @@ static void phi_edge(Ctx* restrict ctx, TB_Node* src, TB_Node* dst, int index) {
 
         // handle phis
         copy_value(ctx, n, USE(*dst_vreg), n->inputs[index], n->dt);
-    }*/
+    }
 }
 
 #define SUBMIT(i) append_inst(ctx, i)

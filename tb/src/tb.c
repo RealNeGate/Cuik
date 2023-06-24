@@ -7,6 +7,8 @@ static thread_local uint8_t* tb_thread_storage;
 static thread_local int tid;
 static tb_atomic_int total_tid;
 
+static void* alloc_from_node_arena(TB_Function* f, size_t necessary_size);
+
 ICodeGen* tb__find_code_generator(TB_Module* m) {
     switch (m->target_arch) {
         case TB_ARCH_X86_64: return &tb__x64_codegen;
@@ -304,6 +306,8 @@ TB_API void tb_function_set_prototype(TB_Function* f, TB_FunctionPrototype* p) {
     TB_NodeRegion* start = TB_NODE_GET_EXTRA(f->start_node);
     start->succ_count = 0;
     start->succ = NULL;
+    start->proj_count = param_count;
+    start->projs = alloc_from_node_arena(f, param_count * sizeof(TB_Node*));
 
     // create parameter projections
     TB_PrototypeParam* rets = TB_PROTOTYPE_RETURNS(p);

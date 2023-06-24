@@ -50,6 +50,14 @@ static int get_variable_id(Mem2Reg_Ctx* restrict c, TB_Node* r) {
     return -1;
 }
 
+static int find_traversal_index2(Mem2Reg_Ctx* restrict ctx, TB_Node* bb) {
+    FOREACH_N(i, 0, ctx->order.count) {
+        if (ctx->order.traversal[i] == bb) return i;
+    }
+
+    tb_todo();
+}
+
 // This doesn't really generate a PHI node, it just produces a NULL node which will
 // be mutated into a PHI node by the rest of the code.
 static TB_Node* new_phi(Mem2Reg_Ctx* restrict c, TB_Function* f, int var, TB_Node* block, TB_DataType dt) {
@@ -93,6 +101,10 @@ static void add_phi_operand(Mem2Reg_Ctx* restrict c, TB_Function* f, TB_Node* ph
 
 static void write_variable(Mem2Reg_Ctx* c, int var, TB_Node* block, TB_Node* value) {
     log_debug("write_variable(ctx=%p, var=%d, block=%p, value=%p)", c, var, block, value);
+    if (c->defs[var] == NULL) {
+        nl_map_create(c->defs[var], 16);
+    }
+
     nl_map_put(c->defs[var], block, value);
 }
 
@@ -483,6 +495,11 @@ bool mem2reg(TB_Function* f, TB_OptQueue* queue) {
         insert_phis(&c, c.order.traversal[i], end);
     }
 
+    size_t* all_phi_count = tb_tls_push(tls, c.order.count * sizeof(size_t));
+    memset(all_phi_count, 0, c.order.count * sizeof(size_t));
+
+    TB_Node** all_phis = tb_tls_push(tls, c.order.count * c.to_promote_count * sizeof(TB_Node*));
+
     // for each global name we'll insert phi nodes
     TB_Node** phi_queue = tb_tls_push(tls, c.order.count * sizeof(TB_Node*));
 
@@ -525,6 +542,11 @@ bool mem2reg(TB_Function* f, TB_OptQueue* queue) {
                     if (search < 0) {
                         phi_reg = new_phi(&c, f, var, l, dt);
                         nl_map_put(c.defs[var], l, phi_reg);
+
+                        // track in all PHIs
+                        int bb_id = find_traversal_index2(&c, l);
+                        int id = all_phi_count[bb_id]++;
+                        all_phis[bb_id*c.to_promote_count + id] = phi_reg;
                     } else {
                         phi_reg = c.defs[var][search].v;
 
@@ -534,6 +556,11 @@ bool mem2reg(TB_Function* f, TB_OptQueue* queue) {
                             add_phi_operand(&c, f, phi_reg, l, old_reg);
 
                             nl_map_put(c.defs[var], l, phi_reg);
+
+                            // track in all PHIs
+                            int bb_id = find_traversal_index2(&c, l);
+                            int id = all_phi_count[bb_id]++;
+                            all_phis[bb_id*c.to_promote_count + id] = phi_reg;
                         }
                     }
 
@@ -547,6 +574,22 @@ bool mem2reg(TB_Function* f, TB_OptQueue* queue) {
         }
     }
     tb_tls_restore(tls, phi_queue);
+
+    // write out phi nodes so that the regions can find them
+    FOREACH_N(i, 0, c.order.count) {
+        if (all_phi_count[i] == 0) continue;
+
+        // allocate projections
+        TB_Node* bb = c.order.traversal[i];
+        TB_NodeRegion* r = TB_NODE_GET_EXTRA(bb);
+        r->proj_count = all_phi_count[i];
+        r->projs = alloc_from_node_arena(f, all_phi_count[i] * sizeof(TB_Node*));
+
+        FOREACH_N(j, 0, all_phi_count[i]) {
+            assert(all_phis[i*c.to_promote_count + j]->inputs[0] == bb);
+            r->projs[j] = all_phis[i*c.to_promote_count + j];
+        }
+    }
 
     ////////////////////////////////
     // Phase 2: Rename loads and stores

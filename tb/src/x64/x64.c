@@ -545,9 +545,19 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
     int dst = -1;
 
     switch (type) {
-        case TB_REGION: break;
         case TB_LINE_INFO: break;
 
+        case TB_REGION: {
+            TB_NodeRegion* r = TB_NODE_GET_EXTRA(n);
+
+            // allocate all the region parameters
+            FOREACH_N(i, 0, r->proj_count) {
+                TB_Node* proj = r->projs[i];
+                int param = DEF(proj, classify_reg_class(proj->dt));
+                nl_map_put(ctx->values, proj, param);
+            }
+            break;
+        }
         case TB_START: {
             TB_NodeRegion* start = TB_NODE_GET_EXTRA(n);
             const TB_FunctionPrototype* restrict proto = ctx->f->prototype;
@@ -1246,10 +1256,6 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             SUBMIT(i);
             break;
         }
-
-        case TB_PHI:
-        dst = DEF(n, classify_reg_class(n->dt));
-        break;
 
         // x86 intrinsics
         case TB_DEBUGBREAK: {
