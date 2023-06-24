@@ -256,7 +256,7 @@ void tb__append_module_section(TB_Linker* l, TB_LinkerInputHandle mod, TB_Module
 size_t tb__apply_section_contents(TB_Linker* l, uint8_t* output, size_t write_pos, TB_LinkerSection* text, TB_LinkerSection* data, TB_LinkerSection* rdata, size_t section_alignment, size_t image_base) {
     // write section contents
     // TODO(NeGate): we can actually parallelize this part of linking
-    CUIK_TIMED_BLOCK("write sections") nl_map_for(i, l->sections) {
+    CUIK_TIMED_BLOCK("write sections") nl_map_for_str(i, l->sections) {
         TB_LinkerSection* s = l->sections[i].v;
         if (s->generic_flags & TB_LINKER_SECTION_DISCARD) continue;
 
@@ -620,7 +620,7 @@ static int compare_linker_sections(const void* a, const void* b) {
 
 bool tb__finalize_sections(TB_Linker* l) {
     if (nl_map_get_capacity(l->unresolved_symbols) > 0) {
-        nl_map_for(i, l->unresolved_symbols) {
+        nl_map_for_str(i, l->unresolved_symbols) {
             TB_UnresolvedSymbol* u = l->unresolved_symbols[i].v;
 
             fprintf(stderr, "\x1b[31merror\x1b[0m: unresolved external: %.*s\n", (int) u->name.length, u->name.data);
@@ -670,7 +670,7 @@ bool tb__finalize_sections(TB_Linker* l) {
         TB_LinkerSectionPiece** array_form = NULL;
         size_t num = 0;
 
-        nl_map_for(i, l->sections) {
+        nl_map_for_str(i, l->sections) {
             TB_LinkerSection* s = l->sections[i].v;
             if (s->generic_flags & TB_LINKER_SECTION_DISCARD) continue;
 

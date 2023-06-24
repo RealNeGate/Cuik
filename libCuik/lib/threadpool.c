@@ -75,8 +75,6 @@ static bool do_work(threadpool_t* threadpool) {
 
         // copy out before we commit
         tmp = *job;
-
-        // don't continue until we successfully commited the queue pop
     } while (!atomic_compare_exchange_strong(&threadpool->queue, &save, save + 0x10000));
 
     tmp.fn(tmp.arg);

@@ -4,6 +4,8 @@
 // The callbacks are global and a user may even hook in using the cuikperf_start
 // and cuikperf_stop, or by using CUIK_TIMED_BLOCK
 #pragma once
+#include "cuik_prelude.h"
+
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdio.h>

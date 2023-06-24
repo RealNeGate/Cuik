@@ -11,6 +11,7 @@ X(RDTSC,     "rdtsc",       BYTE_EXT,   0x31)
 
 X(NOT,       "not",         UNARY,      .op_i = 0xF7, 0x02)
 X(NEG,       "neg",         UNARY,      .op_i = 0xF7, 0x03)
+X(MUL,       "mul",         UNARY,      .op_i = 0xF7, 0x04)
 X(DIV,       "div",         UNARY,      .op_i = 0xF7, 0x06)
 X(IDIV,      "idiv",        UNARY,      .op_i = 0xF7, 0x07)
 X(CALL,      "call",        UNARY,      0xE8,   0xFF, 0x02)

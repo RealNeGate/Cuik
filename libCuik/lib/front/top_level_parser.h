@@ -604,7 +604,7 @@ Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cu
     //   unlike basically any other C compiler i know of we can accumulate
     //   one of the most common error messages to make it easier to read as
     //   one of these "so called" sane humans.
-    nl_map_for(i, parser.unresolved_symbols) {
+    nl_map_for_str(i, parser.unresolved_symbols) {
         Diag_UnresolvedSymbol* loc = parser.unresolved_symbols[i].v;
         cuikdg_tally_error(s);
         diag_header(s, DIAG_ERR, "could not resolve symbol: %s", loc->name);

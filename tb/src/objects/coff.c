@@ -1,4 +1,5 @@
 #include "coff.h"
+#include <cuik_perf.h>
 
 static int compare_relocs(const void* a, const void* b) {
     const COFF_ImageReloc* aa = (const COFF_ImageReloc*) a;

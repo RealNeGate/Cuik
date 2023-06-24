@@ -74,8 +74,11 @@ do {                                                                            
 #define nl_map_get_checked(map, key) ((map)[nl_map__check(nl_map_get(map, key))].v)
 #define nl_map_get_cstr(map, key) ((map) != NULL ? nl_map__gets(((NL_MapHeader*)(map)) - 1, sizeof(*map), sizeof(NL_Slice), &(NL_Slice){ strlen(key), (const uint8_t*) (key) }) : -1)
 
-#define nl_map_for(it, map) \
+#define nl_map_for_str(it, map) \
 for (size_t it = 0; it < nl_map_get_capacity(map); it++) if ((map)[it].k.length != 0)
+
+#define nl_map_for(it, map) \
+for (size_t it = 0; it < nl_map_get_capacity(map); it++) if ((map)[it].k != 0 && (map)[it].k != (void*) (uintptr_t) -1)
 
 #define nl_map_free(map) \
 do {                                              \
@@ -121,7 +124,7 @@ inline static ptrdiff_t nl_map__check(ptrdiff_t x) {
     return x;
 }
 
-#endif /* NL_MAP_H */
+#endif /* NL_HASH_MAP_H */
 
 #ifdef NL_MAP_IMPL
 

@@ -21,12 +21,7 @@
 #define thread_local _Thread_local
 #endif
 
-#ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-
-#define strtok_r(a, b, c) strtok_s(a, b, c)
-#else
+#ifndef _WIN32
 // NOTE(NeGate): I love how we assume that if it's not windows
 // its just posix, these are the only options i guess
 #include <fcntl.h>
@@ -43,6 +38,9 @@
 
 #define NL_HASH_MAP_INLINE
 #include <hash_map.h>
+
+#include <hash_set.h>
+#include <cuik_perf.h>
 
 #define FOREACH_N(it, start, end) \
 for (ptrdiff_t it = (start), end__ = (end); it < end__; ++it)
@@ -484,14 +482,6 @@ typedef struct {
     TB_SectionGroup (*generate_debug_info)(TB_Module* m, TB_TemporaryStorage* tls, const ICodeGen* code_gen, const char* path);
 } IDebugFormat;
 
-// Macro enjoyer
-#define tb_swap(T, a, b) \
-do {                     \
-    T temp = a;          \
-    a = b;               \
-    b = temp;            \
-} while (0)
-
 #ifndef NDEBUG
 #define TB_DEBUG_BUILD 1
 #else
@@ -618,7 +608,7 @@ uint32_t tb_get4b(TB_Emitter* o, uint32_t pos);
 // CFG analysis
 ////////////////////////////////
 typedef NL_Map(TB_Node*, TB_Node*) TB_Dominators;
-typedef NL_Map(TB_Node*, char) TB_FrontierSet;
+typedef NL_HashSet TB_FrontierSet;
 typedef NL_Map(TB_Node*, TB_FrontierSet) TB_DominanceFrontiers;
 
 typedef struct {
@@ -684,24 +674,8 @@ do {                                         \
 } while (0)
 #endif
 
-#if 0
-uint64_t cuik_time_in_nanos(void);
-void cuikperf_region_start(uint64_t now, const char* fmt, const char* extra);
-void cuikperf_region_end(void);
-
-#define CUIK_TIMED_BLOCK(label) for (uint64_t __i = (cuikperf_region_start(cuik_time_in_nanos(), label, NULL), 0); __i < 1; __i++, cuikperf_region_end())
-#define CUIK_TIMED_BLOCK_ARGS(label, extra) for (uint64_t __i = (cuikperf_region_start(cuik_time_in_nanos(), label, extra), 0); __i < 1; __i++, cuikperf_region_end())
-#else
-#define CUIK_TIMED_BLOCK(label)
-#define CUIK_TIMED_BLOCK_ARGS(label, extra)
-#endif
-
 TB_Node* tb_alloc_node(TB_Function* f, int type, TB_DataType dt, int input_count, size_t extra);
 void tb_insert_node(TB_Function* f, TB_Label bb, TB_Node* a, TB_Node* b);
-
-void tb_transmute_to_pass(TB_Node* n, TB_Node* point_to);
-void tb_transmute_to_poison(TB_Node* n);
-uint64_t* tb_transmute_to_int(TB_Function* f, TB_Node* n, int num_words);
 
 ////////////////////////////////
 // EXPORTER HELPER

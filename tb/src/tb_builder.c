@@ -876,9 +876,8 @@ static TB_Node** add_successors(TB_Function* f, TB_Node* terminator, size_t coun
 }
 
 TB_API void tb_inst_goto(TB_Function* f, TB_Node* target) {
-    TB_Node* n = tb_alloc_node(f, TB_BRANCH, TB_TYPE_VOID, 2, sizeof(TB_NodeBranch));
+    TB_Node* n = tb_alloc_node(f, TB_BRANCH, TB_TYPE_VOID, 1, sizeof(TB_NodeBranch));
     n->inputs[0] = f->active_control_node; // control edge
-    n->inputs[1] = NULL;
 
     TB_Node** succ = add_successors(f, n, 1);
     succ[0] = target;

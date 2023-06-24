@@ -7,7 +7,7 @@ typedef struct TB_MultiplyResult {
 } TB_MultiplyResult;
 
 #if defined(_MSC_VER) && !defined(__clang__)
-inline static int tb_clz(uint32_t x) {
+inline static int tb_clz64(uint64_t x) {
     return _lzcnt_u64(x);
 }
 
@@ -45,6 +45,12 @@ inline static bool tb_sub_overflow(uint64_t a, uint64_t b, uint64_t* result) {
     return c > a;
 }
 
+#pragma intrinsic(_udiv128)
+inline static uint64_t tb_div128(uint64_t ahi, uint64_t alo, uint64_t b) {
+    uint64_t rem;
+    return _udiv128(ahi, alo, b, &rem);
+}
+
 #pragma intrinsic(_umul128)
 inline static TB_MultiplyResult tb_mul64x128(uint64_t a, uint64_t b) {
     uint64_t hi;
@@ -52,8 +58,8 @@ inline static TB_MultiplyResult tb_mul64x128(uint64_t a, uint64_t b) {
     return (TB_MultiplyResult) { lo, hi };
 }
 #else
-inline static int tb_clz(uint32_t x) {
-    return __builtin_clz(x);
+inline static int tb_clz64(uint64_t x) {
+    return __builtin_clzll(x);
 }
 
 inline static int tb_ffs(uint32_t x) {
@@ -88,5 +94,15 @@ inline static TB_MultiplyResult tb_mul64x128(uint64_t a, uint64_t b) {
     __uint128_t product = (__uint128_t)a * (__uint128_t)b;
 
     return (TB_MultiplyResult) { (uint64_t)(product & 0xFFFFFFFFFFFFFFFF), (uint64_t)(product >> 64) };
+}
+
+inline static uint64_t tb_div128(uint64_t ahi, uint64_t alo, uint64_t b) {
+    // We don't want 128 bit software division
+    uint64_t d, e;
+    __asm__("divq %[b]"
+        : "=a"(d), "=d"(e)
+        : [b] "r"(b), "a"(alo), "d"(ahi)
+    );
+    return d;
 }
 #endif

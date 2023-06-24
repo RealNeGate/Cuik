@@ -294,87 +294,6 @@ TB_Node* cvt2lval(TranslationUnit* tu, TB_Function* func, IRVal* v) {
     }
 }
 
-/*TB_Node* irgen_as_rvalue(TranslationUnit* tu, TB_Function* func, Cuik_Expr* e) {
-    return cvt2rval(tu, func, irgen_expr(tu, func, e));
-}
-
-TB_Node* irgen_as_lvalue(TranslationUnit* tu, TB_Function* func, Cuik_Expr* e) {
-    IRVal v = irgen_expr(tu, func, e);
-
-    if (v.value_type == LVALUE) {
-        return v.reg;
-    } else if (v.value_type == LVALUE_SYMBOL) {
-        return tb_inst_get_symbol_address(func, v.sym);
-    } else if (v.value_type == RVALUE) {
-        Cuik_QualType qt = e->cast_types[e->count - 1];
-        Cuik_Type* t = cuik_canonical_type(qt);
-        bool is_volatile = CUIK_QUAL_TYPE_HAS(qt, CUIK_QUAL_VOLATILE);
-
-        // spawn a lil temporary
-        TB_DataType dt = v.reg->dt;
-
-        TB_Node* temporary = tb_inst_local(func, t->size, t->align);
-        tb_inst_store(func, dt, temporary, v.reg, t->align, is_volatile);
-        return temporary;
-    } else {
-        abort();
-    }
-}
-
-static TB_Node* inc_or_dec(TranslationUnit* tu, TB_Function* func, IRVal address, Cuik_Expr* e, Cuik_Type* type, bool postfix, bool is_inc, bool is_volatile) {
-    TB_DataType dt = ctype_to_tbtype(type);
-    bool is_atomic = false;
-
-    TB_Node* loaded = TB_NULL_REG;
-    if (is_atomic) {
-        TB_Node* stride;
-        if (type->kind == KIND_PTR) {
-            // pointer arithmatic
-            stride = tb_inst_uint(func, TB_TYPE_PTR, cuik_canonical_type(type->ptr_to)->size);
-        } else {
-            stride = tb_inst_uint(func, ctype_to_tbtype(type), 1);
-        }
-
-        loaded = is_inc
-            ? tb_inst_atomic_add(func, address.reg, stride, TB_MEM_ORDER_SEQ_CST)
-            : tb_inst_atomic_sub(func, address.reg, stride, TB_MEM_ORDER_SEQ_CST);
-
-        // for pre-increment atomics we can just stop here since we've done the arithmatic.
-        //
-        // for post-increment we need to redo the arithmatic on the loaded value (it's
-        // already been done to the value in memory so we don't writeback)
-        if (!postfix) {
-            return loaded;
-        }
-    } else {
-        loaded = cvt2rval(tu, func, address, e);
-    }
-
-    TB_Node* operation;
-    if (type->kind == KIND_PTR) {
-        // pointer arithmatic
-        int32_t stride = cuik_canonical_type(type->ptr_to)->size;
-
-        operation = is_inc
-            ? tb_inst_member_access(func, loaded,  stride)
-            : tb_inst_member_access(func, loaded, -stride);
-    } else {
-        TB_Node* one = tb_inst_uint(func, dt, 1);
-        TB_ArithmeticBehavior ab = type->is_unsigned ? 0 : TB_ARITHMATIC_NSW;
-
-        operation = is_inc
-            ? tb_inst_add(func, loaded, one, ab)
-            : tb_inst_sub(func, loaded, one, ab);
-    }
-
-    if (!is_atomic) {
-        assert(address.value_type == LVALUE);
-        tb_inst_store(func, dt, address.reg, operation, type->align, is_volatile);
-    }
-
-    return postfix ? loaded : operation;
-}*/
-
 int count_max_tb_init_objects(InitNode* root_node) {
     int sum = root_node->kids_count;
     for (InitNode* k = root_node->kid; k != NULL; k = k->next) {
@@ -1620,6 +1539,18 @@ static IRVal irgen_subexpr(TranslationUnit* tu, TB_Function* func, Cuik_Expr* _,
             return (IRVal){
                 .value_type = LVALUE,
                 .reg = reg
+            };
+        }
+        case EXPR_SUBSCRIPT: {
+            TB_Node* index = RVAL(0);
+            TB_Node* base = RVAL(1);
+
+            int stride = cuik_canonical_type(GET_TYPE())->size;
+            if (stride == 0) stride = 1;
+
+            return (IRVal){
+                .value_type = LVALUE,
+                .reg = tb_inst_array_access(func, base, index, stride),
             };
         }
         case EXPR_DEREF: {

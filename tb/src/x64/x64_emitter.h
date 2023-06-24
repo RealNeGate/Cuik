@@ -148,7 +148,7 @@ static void inst2(TB_CGEmitter* restrict e, InstType type, const Val* a, const V
 
     bool dir = b->type == VAL_MEM || b->type == VAL_GLOBAL;
     if (dir || inst->op == 0x63 || inst->op == 0xAF || inst->cat == INST_BINOP_EXT2) {
-        tb_swap(const Val*, a, b);
+        SWAP(const Val*, a, b);
     }
 
     // operand size
@@ -260,7 +260,7 @@ static void inst2sse(TB_CGEmitter* restrict e, InstType type, const Val* a, cons
     bool is_double = (dt == TB_X86_TYPE_SSE_PD || dt == TB_X86_TYPE_SSE_SD);
 
     if (supports_mem_dst && dir) {
-        tb_swap(const Val*, a, b);
+        SWAP(const Val*, a, b);
     }
 
     uint8_t rx = a->reg;

@@ -315,6 +315,11 @@ typedef enum TB_NodeTypeEnum {
     TB_CMP_FLT,
     TB_CMP_FLE,
 
+    // Special ops
+    // does full multiplication (64x64=128 and so on) returning
+    // the low and high values in separate projections
+    TB_MULPAIR,
+
     // PHI
     TB_PHI, // fn(r: region, x: []data)
 
@@ -456,6 +461,10 @@ typedef struct { // any compare operator
 typedef struct { // any integer binary operator
     TB_ArithmeticBehavior ab;
 } TB_NodeBinopInt;
+
+typedef struct { // TB_MULPAIR
+    TB_Node *lo, *hi;
+} TB_NodeMulPair;
 
 typedef struct {
     TB_CharUnits align;
@@ -993,6 +1002,7 @@ TB_API void tb_inst_ret(TB_Function* f, size_t count, TB_Node** values);
 typedef struct TB_OptQueue TB_OptQueue;
 
 TB_API bool tb_optqueue_mark(TB_OptQueue* restrict queue, TB_Node* n, bool mark_kids);
+TB_API void tb_optqueue_kill(TB_OptQueue* restrict queue, TB_Node* n);
 TB_API void tb_optqueue_fill_all(TB_OptQueue* restrict queue, TB_Node* n);
 
 typedef struct TB_Pass {

@@ -22,7 +22,7 @@ struct Promotion {
 typedef struct Mem2Reg_Ctx {
     TB_TemporaryStorage* tls;
     TB_Function* f;
-    size_t bb_count;
+    TB_OptQueue* restrict queue;
 
     TB_Node* poison;
 
@@ -39,7 +39,7 @@ typedef struct Mem2Reg_Ctx {
 } Mem2Reg_Ctx;
 
 static int bits_in_data_type(int pointer_size, TB_DataType dt);
-static Coherency tb_get_stack_slot_coherency(TB_Function* f, TB_Node* address, TB_DataType* dt, int* out_use_count);
+static Coherency tb_get_stack_slot_coherency(TB_OptQueue* queue, TB_Function* f, TB_Node* address, TB_DataType* dt, int* out_use_count);
 
 static int get_variable_id(Mem2Reg_Ctx* restrict c, TB_Node* r) {
     // TODO(NeGate): Maybe we speed this up... maybe it doesn't matter :P
@@ -55,8 +55,9 @@ static int get_variable_id(Mem2Reg_Ctx* restrict c, TB_Node* r) {
 static TB_Node* new_phi(Mem2Reg_Ctx* restrict c, TB_Function* f, int var, TB_Node* block, TB_DataType dt) {
     TB_Node* n = tb_alloc_node(f, TB_PHI, dt, 1 + block->input_count, 0);
     n->inputs[0] = block;
+    FOREACH_N(i, 0, block->input_count) n->inputs[1 + i] = NULL;
 
-    OPTIMIZER_LOG(n, "Insert new PHI node (in L%d)", block);
+    log_debug("%p: insert new PHI node (in %p)", n, block);
     return n;
 }
 
@@ -73,27 +74,35 @@ static void add_phi_operand(Mem2Reg_Ctx* restrict c, TB_Function* f, TB_Node* ph
 
     assert(phi_node->type == TB_PHI);
     TB_Node* phi_region = phi_node->inputs[0];
-    OPTIMIZER_LOG(phi_node, "  adding r%d to PHI", reg);
+    log_debug("%p: adding %p to PHI", phi_node, node);
 
     // the slot to fill is based on the predecessor list of the region
-    FOREACH_N(i, 0, bb->input_count) {
-        if (phi_region->inputs[i] == bb) {
-            phi_node->inputs[i+1] = node;
-            return;
+    FOREACH_N(i, 0, phi_region->input_count) {
+        TB_Node* pred = phi_region->inputs[i];
+        while (pred->type != TB_REGION && pred->type != TB_START) pred = pred->inputs[0];
+
+        if (pred == bb) {
+            set_input(c->queue, phi_node, node, i+1);
+            break;
         }
     }
 
+    tb_optqueue_mark(c->queue, phi_node, true);
     // tb_unreachable();
 }
 
 static void write_variable(Mem2Reg_Ctx* c, int var, TB_Node* block, TB_Node* value) {
+    log_debug("write_variable(ctx=%p, var=%d, block=%p, value=%p)", c, var, block, value);
     nl_map_put(c->defs[var], block, value);
 }
 
 static void ssa_replace_phi_arg(Mem2Reg_Ctx* c, TB_Function* f, TB_Node* bb, TB_Node* dst, DynArray(TB_Node*)* stack) {
     FOREACH_N(var, 0, c->to_promote_count) {
-        TB_Node* phi_reg = nl_map_get_checked(c->defs[var], dst);
-        if (phi_reg == NULL || phi_reg->type != TB_PHI) continue;
+        ptrdiff_t search = nl_map_get(c->defs[var], dst);
+        if (search < 0) continue;
+
+        TB_Node* phi_reg = c->defs[var][search].v;
+        if (phi_reg->type != TB_PHI) continue;
 
         TB_Node* top;
         if (dyn_array_length(stack[var]) == 0) {
@@ -113,7 +122,7 @@ static void ssa_replace_phi_arg(Mem2Reg_Ctx* c, TB_Function* f, TB_Node* bb, TB_
         FOREACH_N(j, 0, phi_reg->input_count) {
             if (dst->inputs[j] == bb) {
                 // try to replace
-                phi_reg->inputs[j] = top;
+                set_input(c->queue, phi_reg, top, j);
                 found = true;
                 break;
             }
@@ -126,51 +135,64 @@ static void ssa_replace_phi_arg(Mem2Reg_Ctx* c, TB_Function* f, TB_Node* bb, TB_
 }
 
 static void ssa_rename_node(Mem2Reg_Ctx* c, TB_Node* n, DynArray(TB_Node*)* stack) {
-    if (n->type == TB_REGION || n->type == TB_START) {
-        return;
+    if (n->type != TB_REGION && n->type != TB_START) {
+        ssa_rename_node(c, n->inputs[0], stack);
     }
 
-    FOREACH_N(i, 0, n->input_count) if (n->inputs[i] != NULL) {
-        ssa_rename_node(c, n->inputs[i], stack);
+    // find promoted stack slots
+    bool kill = false;
+    if (n->type == TB_STORE) {
+        int var = get_variable_id(c, n->inputs[1]);
+        if (var >= 0) {
+            // push new store value onto the stack
+            dyn_array_put(stack[var], n->inputs[2]);
+            kill = true;
+        }
     }
 
-    if (n->type == TB_LOCAL) {
-        int var = get_variable_id(c, n);
-        if (var >= 0) {
-            TB_KILL_NODE(n);
-        }
-    } else if (n->type == TB_MEMSET) {
-        int var = get_variable_id(c, n->inputs[0]);
-        if (var >= 0) {
-            dyn_array_put(stack[var], n);
-        }
-    } else if (n->type == TB_STORE) {
-        int var = get_variable_id(c, n->inputs[0]);
-        if (var >= 0) {
-            dyn_array_put(stack[var], n->inputs[1]);
-            TB_KILL_NODE(n);
-        }
-    } else if (n->type == TB_LOAD) {
-        int var = get_variable_id(c, n->inputs[0]);
-        if (var >= 0) {
-            if (dyn_array_length(stack[var]) == 0) {
-                // this is UB since it implies we've read before initializing the
-                // stack slot.
-                tb_transmute_to_poison(n);
-            } else {
-                tb_transmute_to_pass(n, stack[var][dyn_array_length(stack[var]) - 1]);
+    // check for any loads and replace them
+    for (User* u = find_users(c->queue, n); u; u = u->next) {
+        TB_Node* use = u->n;
+
+        if (use->type == TB_LOAD) {
+            int var = get_variable_id(c, use->inputs[1]);
+            if (var >= 0) {
+                TB_Node* val;
+                if (dyn_array_length(stack[var]) == 0) {
+                    // this is UB since it implies we've read before initializing the
+                    // stack slot.
+                    val = c->poison;
+                    log_warn("%p: found load-before-init in mem2reg, this is UB", use);
+                } else {
+                    val = stack[var][dyn_array_length(stack[var]) - 1];
+                }
+
+                tb_transmute_to_pass(c->queue, use, val);
+                tb_optqueue_mark(c->queue, use, true);
             }
         }
+    }
+
+    if (kill) {
+        log_info("%p: pass to %p", n, n->inputs[0]);
+        log_info("  user %p", find_users(c->queue, n->inputs[0])->n);
+
+        tb_transmute_to_pass(c->queue, n, n->inputs[0]);
+        tb_optqueue_mark(c->queue, n, true);
+
+        // tb_optqueue_kill(c->queue, n);
     }
 }
 
 static void ssa_rename(Mem2Reg_Ctx* c, TB_Function* f, TB_Node* bb, DynArray(TB_Node*)* stack) {
+    assert(bb);
+
     // push phi nodes
     size_t* old_len = tb_tls_push(c->tls, sizeof(size_t) * c->to_promote_count);
     FOREACH_N(var, 0, c->to_promote_count) {
-        TB_Node* value = nl_map_get_checked(c->defs[var], bb);
-        if (value && value->type == TB_PHI) {
-            dyn_array_put(stack[var], value);
+        ptrdiff_t search = nl_map_get(c->defs[var], bb);
+        if (search >= 0 && c->defs[var][search].v->type == TB_PHI) {
+            dyn_array_put(stack[var], c->defs[var][search].v);
         }
 
         old_len[var] = dyn_array_length(stack[var]);
@@ -179,6 +201,8 @@ static void ssa_rename(Mem2Reg_Ctx* c, TB_Function* f, TB_Node* bb, DynArray(TB_
     // rewrite operations
     TB_NodeRegion* r = TB_NODE_GET_EXTRA(bb);
     TB_Node* end = r->end;
+
+    // for through all uses and replace their accessors
     ssa_rename_node(c, end, stack);
 
     // replace phi arguments on successor
@@ -196,9 +220,9 @@ static void ssa_rename(Mem2Reg_Ctx* c, TB_Function* f, TB_Node* bb, DynArray(TB_
 
     // for each successor s of the BB in the dominator
     //    rename(s)
-    FOREACH_N(s, 1, f->bb_count) {
-        if (c->doms[s] == bb) {
-            ssa_rename(c, f, s, stack);
+    nl_map_for(i, c->doms) {
+        if (c->doms[i].v == bb && c->doms[i].k != bb) {
+            ssa_rename(c, f, c->doms[i].k, stack);
         }
     }
 
@@ -246,6 +270,7 @@ static ptrdiff_t compatible_with_configs(size_t config_count, AggregateConfig* c
     return -2;
 }
 
+#if 0
 static bool attempt_sroa(TB_Function* f, TB_TemporaryStorage* tls, TB_Node* address, int use_count) {
     size_t config_count = 0;
     AggregateConfig* configs = tb_tls_push(tls, 0);
@@ -253,6 +278,10 @@ static bool attempt_sroa(TB_Function* f, TB_TemporaryStorage* tls, TB_Node* addr
     int pointer_size = tb__find_code_generator(f->super.module)->pointer_size;
 
     int acceptable_use_count = 0;
+    FOREACH_REVERSE_N(i, 0, ctx.order.count) {
+        TB_Node* bb = ctx.order.traversal[i];
+    }
+
     TB_FOR_BASIC_BLOCK(bb, f) {
         TB_FOR_NODE(n, f, bb) {
             if (n->type == TB_MEMSET && n->inputs[0] == address) {
@@ -331,17 +360,18 @@ static bool attempt_sroa(TB_Function* f, TB_TemporaryStorage* tls, TB_Node* addr
     tb_optqueue_kill(queue, address);
     return true;
 }
+#endif
 
-static void insert_phis(Ctx* restrict ctx, TB_Node* parent, TB_Node* n) {
-    if (n->type != TB_REGION && n->type != TB_START) {
+static void insert_phis(Mem2Reg_Ctx* restrict ctx, TB_Node* parent, TB_Node* n) {
+    if (n->type != TB_REGION && n->type != TB_START && n->type != TB_PHI) {
         insert_phis(ctx, parent, n->inputs[0]);
     }
 
     if (n->type == TB_MEMSET) {
-        int var = get_variable_id(&c, n->inputs[0]);
+        int var = get_variable_id(ctx, n->inputs[1]);
         if (var >= 0) {
             // this stores the "primary type" of the specific address
-            TB_DataType dt = to_promote[var]->dt;
+            TB_DataType dt = ctx->to_promote[var]->dt;
             (void) dt;
 
             tb_todo();
@@ -360,22 +390,24 @@ static void insert_phis(Ctx* restrict ctx, TB_Node* parent, TB_Node* n) {
                 f->nodes[r].integer.single_word = 0;
             } */
 
-            write_variable(&c, var, bb, n);
+            write_variable(ctx, var, parent, n);
         }
     } else if (n->type == TB_STORE) {
-        int var = get_variable_id(&c, n->inputs[0]);
+        int var = get_variable_id(ctx, n->inputs[1]);
         if (var >= 0) {
-            write_variable(&c, var, bb, n->inputs[1]);
+            write_variable(ctx, var, parent, n->inputs[2]);
         }
     }
 }
 
 bool mem2reg(TB_Function* f, TB_OptQueue* queue) {
+    TB_TemporaryStorage* tls = tb_tls_steal();
+
     ////////////////////////////////
     // Decide which stack slots to promote
     ////////////////////////////////
     size_t to_promote_count = 0;
-    TB_Node** to_promote = tb_tls_push(tls, 0);
+    TB_Node** to_promote = tb_tls_push(tls, sizeof(TB_Node*) * dyn_array_length(queue->locals));
 
     int changes = 0;
     dyn_array_for(i, queue->locals) {
@@ -383,7 +415,7 @@ bool mem2reg(TB_Function* f, TB_OptQueue* queue) {
 
         TB_DataType dt;
         int use_count;
-        Coherency coherence = tb_get_stack_slot_coherency(f, n, &dt, &use_count);
+        Coherency coherence = tb_get_stack_slot_coherency(queue, f, n, &dt, &use_count);
 
         switch (coherence) {
             case COHERENCY_GOOD: {
@@ -404,12 +436,11 @@ bool mem2reg(TB_Function* f, TB_OptQueue* queue) {
                 break;
             }
             case COHERENCY_USES_ADDRESS: {
-                if (n->type == TB_LOCAL && attempt_sroa(f, tls, n, use_count)) {
+                /*if (n->type == TB_LOCAL && attempt_sroa(f, tls, n, use_count)) {
                     log_debug("SROA on %p", n);
                     changes++;
                 } else {
-                    log_debug("%p could not mem2reg (uses pointer arithmatic)");
-                }
+                }*/
                 break;
             }
             case COHERENCY_BAD_DATA_TYPE: {
@@ -428,6 +459,7 @@ bool mem2reg(TB_Function* f, TB_OptQueue* queue) {
     Mem2Reg_Ctx c = { 0 };
     c.tls = tb_tls_steal();
     c.f = f;
+    c.queue = queue;
 
     c.to_promote_count = to_promote_count;
     c.to_promote = to_promote;
@@ -439,7 +471,6 @@ bool mem2reg(TB_Function* f, TB_OptQueue* queue) {
 
     // find dominators
     c.doms = tb_get_dominators(f);
-    tb_get_dominators(f, c.doms, c.preds);
 
     TB_DominanceFrontiers df = tb_get_dominance_frontiers(f, c.doms, &c.order);
 
@@ -449,71 +480,73 @@ bool mem2reg(TB_Function* f, TB_OptQueue* queue) {
     // Identify the final value of all the variables in the function per basic block
     FOREACH_REVERSE_N(i, 0, c.order.count) {
         TB_Node* end = TB_NODE_GET_EXTRA_T(c.order.traversal[i], TB_NodeRegion)->end;
-        insert_phis(&ctx, c.order.traversal[i], end);
+        insert_phis(&c, c.order.traversal[i], end);
     }
 
     // for each global name we'll insert phi nodes
-    size_t queue_count;
-    TB_Node** queue = tb_tls_push(tls, f->bb_count * sizeof(TB_Node*));
-    Set ever_worked = set_create(f->bb_count);
-    Set has_already = set_create(f->bb_count);
+    TB_Node** phi_queue = tb_tls_push(tls, c.order.count * sizeof(TB_Node*));
 
+    NL_HashSet ever_worked = nl_hashset_alloc(c.order.count);
+    NL_HashSet has_already = nl_hashset_alloc(c.order.count);
     FOREACH_N(var, 0, c.to_promote_count) {
-        set_clear(&ever_worked);
-        set_clear(&has_already);
-        queue_count = 0;
+        nl_hashset_clear(&ever_worked);
+        nl_hashset_clear(&has_already);
 
-        FOREACH_N(bb, 0, f->bb_count) {
-            TB_Node* r = nl_map_get_checked(c.defs[var], bb);
-            if (r != 0) {
-                set_put(&ever_worked, bb);
-                queue[queue_count++] = bb;
+        size_t queue_count = 0;
+        FOREACH_REVERSE_N(i, 0, c.order.count) {
+            TB_Node* bb = c.order.traversal[i];
+
+            ptrdiff_t search = nl_map_get(c.defs[var], bb);
+            if (search >= 0) {
+                nl_hashset_put(&ever_worked, bb);
+                phi_queue[queue_count++] = bb;
             }
         }
 
         // it's a global name
         if (queue_count > 1) {
             // insert phi per dominance of the blocks it's defined in
-            size_t i = 0;
-            while (i < queue_count) {
-                TB_Node* bb = queue[i];
+            for (size_t i = 0; i < queue_count; i++) {
+                TB_Node* bb = phi_queue[i];
                 TB_Node* value = nl_map_get_checked(c.defs[var], bb);
                 TB_DataType dt = value->dt;
 
-                Set* frontier = &df._[bb];
-                size_t n = (frontier->capacity + 63) / 64;
-                FOREACH_N(k, 0, n) if (frontier->data[k]) {
-                    uint64_t bits = frontier->data[k];
+                ptrdiff_t search = nl_map_get(df, bb);
+                if (search < 0) continue;
 
-                    FOREACH_N(b, 0, 64) if (bits & (1ull << b)) {
-                        TB_Node* l = k*64 + b;
-                        if (!set_first_time(&has_already, l)) continue;
+                TB_FrontierSet* frontier = &df[search].v;
+                nl_hashset_for(it, frontier) {
+                    TB_Node* l = *it;
+                    if (!nl_hashset_put(&has_already, l)) continue;
 
-                        TB_Node* phi_reg = c.current_def[(var * f->bb_count) + l];
-                        if (phi_reg == NULL) {
-                            phi_reg = new_phi(&c, f, var, l, dt);
-                        } else if (phi_reg->type != TB_PHI) {
+                    search = nl_map_get(c.defs[var], l);
+
+                    TB_Node* phi_reg = NULL;
+                    if (search < 0) {
+                        phi_reg = new_phi(&c, f, var, l, dt);
+                        nl_map_put(c.defs[var], l, phi_reg);
+                    } else {
+                        phi_reg = c.defs[var][search].v;
+
+                        if (phi_reg->type != TB_PHI) {
                             TB_Node* old_reg = phi_reg;
                             phi_reg = new_phi(&c, f, var, l, dt);
                             add_phi_operand(&c, f, phi_reg, l, old_reg);
-                        }
 
-                        c.current_def[(var * f->bb_count) + l] = phi_reg;
-                        add_phi_operand(&c, f, phi_reg, bb, value);
-
-                        if (set_first_time(&ever_worked, l)) {
-                            queue[queue_count++] = l;
+                            nl_map_put(c.defs[var], l, phi_reg);
                         }
                     }
-                }
 
-                i += 1;
+                    add_phi_operand(&c, f, phi_reg, bb, value);
+
+                    if (nl_hashset_put(&ever_worked, l)) {
+                        phi_queue[queue_count++] = l;
+                    }
+                }
             }
         }
     }
-    set_free(&ever_worked);
-    set_free(&has_already);
-    tb_tls_restore(tls, queue);
+    tb_tls_restore(tls, phi_queue);
 
     ////////////////////////////////
     // Phase 2: Rename loads and stores
@@ -523,8 +556,18 @@ bool mem2reg(TB_Function* f, TB_OptQueue* queue) {
         stack[var] = dyn_array_create(TB_Node*, 16);
     }
 
-    ssa_rename(&c, f, 0, stack);
-    tb_free_dominance_frontiers(f, &df);
+    ssa_rename(&c, f, f->start_node, stack);
+
+    // don't need these anymore
+    FOREACH_N(var, 0, c.to_promote_count) {
+        tb_optqueue_kill(c.queue, c.to_promote[var]);
+    }
+
+    // annoying nested hash map freeing
+    nl_map_for(i, df) {
+        nl_hashset_free(df[i].v);
+    }
+    nl_map_free(df);
 
     return true;
 }
@@ -543,22 +586,7 @@ static int bits_in_data_type(int pointer_size, TB_DataType dt) {
 
 // NOTE(NeGate): a stack slot is coherent when all loads and stores share
 // the same type and alignment along with not needing any address usage.
-static Coherency tb_get_stack_slot_coherency(TB_Function* f, TB_Node* address, TB_DataType* out_dt, int* out_use_count) {
-    // if there's a difference between the times we want the value and the
-    // times we want the address, then some address calculations are being done
-    // and thus we can't mem2reg
-    int use_count = 0;
-    TB_FOR_BASIC_BLOCK(bb, f) {
-        TB_FOR_NODE(n, f, bb) {
-            TB_FOR_INPUT_IN_NODE(in, n) {
-                if (*in == address) use_count += 1;
-            }
-        }
-    }
-    *out_use_count = use_count;
-
-    int value_based_use_count = 0;
-
+static Coherency tb_get_stack_slot_coherency(TB_OptQueue* queue, TB_Function* f, TB_Node* address, TB_DataType* out_dt, int* out_use_count) {
     ICodeGen* cg = tb__find_code_generator(f->super.module);
     int pointer_size = cg->pointer_size;
     int char_size = cg->minimum_addressable_size;
@@ -567,47 +595,47 @@ static Coherency tb_get_stack_slot_coherency(TB_Function* f, TB_Node* address, T
     TB_DataType dt = TB_TYPE_VOID;
     bool initialized = false;
     int dt_bits = 0;
-    TB_FOR_BASIC_BLOCK(bb, f) {
-        TB_FOR_NODE(n, f, bb) {
-            if (n->type == TB_MEMSET && n->inputs[0] == address && tb_node_is_constant_zero(n->inputs[1])) {
-                TB_NodeInt* size = TB_NODE_GET_EXTRA(n->inputs[2]);
 
-                if (n->inputs[2]->type == TB_INTEGER_CONST && size->num_words == 1) {
-                    // untyped zeroing store
-                    // we're hoping all data types match in size to continue along
-                    int bits = char_size * size->words[0];
+    int use_count = 0;
+    for (User* use = find_users(queue, address); use; use = use->next) {
+        TB_Node* n = use->n;
+        if (n->type == TB_MEMSET && n->inputs[1] == address && tb_node_is_constant_zero(n->inputs[2])) {
+            TB_NodeInt* size = TB_NODE_GET_EXTRA(n->inputs[2]);
 
-                    if (bits == 0 || (dt_bits > 0 && bits != dt_bits)) {
-                        return COHERENCY_BAD_DATA_TYPE;
-                    }
-                    dt_bits = bits;
-                    value_based_use_count += 1;
+            if (n->inputs[3]->type == TB_INTEGER_CONST && size->num_words == 1) {
+                // untyped zeroing store
+                // we're hoping all data types match in size to continue along
+                int bits = char_size * size->words[0];
+
+                if (bits == 0 || (dt_bits > 0 && bits != dt_bits)) {
+                    return COHERENCY_BAD_DATA_TYPE;
                 }
-            } else if ((n->type == TB_LOAD || n->type == TB_STORE) && n->inputs[0] == address) {
-                value_based_use_count += 1;
-
-                if (TB_NODE_GET_EXTRA_T(n, TB_NodeMemAccess)->is_volatile) {
-                    return COHERENCY_VOLATILE;
-                } else {
-                    if (!initialized) {
-                        dt = n->dt;
-                        initialized = true;
-                    }
-
-                    // we're hoping all data types match in size to continue along
-                    int bits = bits_in_data_type(pointer_size, dt);
-                    if (bits == 0 || (dt_bits > 0 && bits != dt_bits)) {
-                        return COHERENCY_BAD_DATA_TYPE;
-                    }
-                    dt_bits = bits;
-                }
+                dt_bits = bits;
             }
-        }
-    }
+        } else if ((n->type == TB_LOAD || n->type == TB_STORE) && n->inputs[1] == address) {
+            if (TB_NODE_GET_EXTRA_T(n, TB_NodeMemAccess)->is_volatile) {
+                return COHERENCY_VOLATILE;
+            } else {
+                if (!initialized) {
+                    dt = n->dt;
+                    initialized = true;
+                }
 
-    if (value_based_use_count != use_count) {
-        return COHERENCY_USES_ADDRESS;
+                // we're hoping all data types match in size to continue along
+                int bits = bits_in_data_type(pointer_size, dt);
+                if (bits == 0 || (dt_bits > 0 && bits != dt_bits)) {
+                    return COHERENCY_BAD_DATA_TYPE;
+                }
+                dt_bits = bits;
+            }
+        } else {
+            log_debug("%p uses pointer arithmatic (%s)", address, tb_node_get_name(n));
+            return COHERENCY_USES_ADDRESS;
+        }
+
+        use_count += 1;
     }
+    *out_use_count = use_count;
 
     if (!initialized) {
         return COHERENCY_UNINITIALIZED;

@@ -10,6 +10,7 @@ TB_API void tb_default_print_callback(void* user_data, const char* fmt, ...) {
 
 TB_API const char* tb_node_get_name(TB_Node* n) {
     switch (n->type) {
+        case TB_NULL: return "BAD";
         case TB_LINE_INFO: return "line";
 
         case TB_START:  return "start";
@@ -80,6 +81,7 @@ TB_API const char* tb_node_get_name(TB_Node* n) {
         case TB_FMUL: return "fmul";
         case TB_FDIV: return "fdiv";
 
+        case TB_MULPAIR: return "mulpair";
         case TB_LOAD: return "load";
         case TB_STORE: return "store";
 
@@ -269,13 +271,15 @@ static int tb_print_node(TB_Function* f, TB_PrinterCtx* ctx, TB_PrintCallback ca
 
     FOREACH_N(i, 0, n->input_count) if (n->inputs[i]) {
         int kid = tb_print_node(f, ctx, callback, user_data, n->inputs[i]);
-        P("  r%d -> r%d", id, kid);
+        P("  r%d -> r%d", kid, id);
 
         if ((n->type == TB_PROJ && n->dt.type == TB_CONTROL) || (i == 0 && tb_has_effects(n))) {
             P(" [color=\"red\"]");
         }
 
-        if (n->type == TB_PROJ) {
+        if (n->type == TB_PHI && i > 0) {
+            P(" [label=\"%zu\"];\n", i - 1);
+        } else if (n->type == TB_PROJ) {
             P(" [label=\"%d\"];\n", TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index);
         } else {
             P("\n");
@@ -295,7 +299,7 @@ static int tb_print_node(TB_Function* f, TB_PrinterCtx* ctx, TB_PrintCallback ca
 }
 
 TB_API void tb_function_print(TB_Function* f, TB_PrintCallback callback, void* user_data) {
-    P("digraph %s {\n  rankdir=\"BT\"\n", f->super.name);
+    P("digraph %s {\n  rankdir=\"TB\"\n", f->super.name);
     TB_PrinterCtx ctx = { 0 };
 
     tb_print_node(f, &ctx, callback, user_data, f->start_node);

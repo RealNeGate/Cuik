@@ -2,6 +2,7 @@
 #include "../codegen/emitter.h"
 #include <inttypes.h>
 #include <log.h>
+#include <cuik_perf.h>
 
 enum {
     CG_VAL_UNRESOLVED = 0,
@@ -242,7 +243,7 @@ static void insert_sorted_def(Ctx* restrict ctx, DefIndex* sorted, size_t count,
 static size_t estimate_hash_map_size(size_t s) {
     // allocate values map and active, for linear scan
     size_t ht_cap = tb_next_pow2((s * 8) / 5);
-    size_t ht_exp = 32 - tb_clz(ht_cap - 1);
+    size_t ht_exp = 64 - tb_clz64(ht_cap - 1);
 
     assert(ht_cap == (1u << ht_exp));
     return ht_exp;
@@ -358,7 +359,7 @@ static size_t partition(Def* defs, ptrdiff_t lo, ptrdiff_t hi, DefIndex* arr) {
         if (i >= j) return j;
 
         // Swap the elements at the left and right indices
-        tb_swap(DefIndex, arr[i], arr[j]);
+        SWAP(DefIndex, arr[i], arr[j]);
     }
 }
 

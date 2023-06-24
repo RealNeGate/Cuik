@@ -686,7 +686,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
         }
         case TB_FLOAT64_CONST: {
             assert(n->dt.type == TB_FLOAT && n->dt.width == 0);
-            uint64_t imm = (Cvt_F64U64) { .f = TB_NODE_GET_EXTRA_T(n, TB_NodeFloat64)->value }.i;
+            uint64_t imm = (Cvt_F64U64){ .f = TB_NODE_GET_EXTRA_T(n, TB_NodeFloat64)->value }.i;
 
             dst = DEF(n, REG_CLASS_XMM);
             if (imm == 0) {
@@ -755,6 +755,35 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             int lhs = ISEL(n->inputs[0]);
             int rhs = ISEL(n->inputs[1]);
             SUBMIT(inst_rr(IMUL, n->dt, dst, lhs, rhs));
+            break;
+        }
+        case TB_MULPAIR: {
+            dst = DEF(n, REG_CLASS_GPR);
+
+            int fake_dst = DEF(n, REG_CLASS_GPR);
+
+            // mov rax, lhs
+            int lhs = ISEL(n->inputs[0]);
+            int rax = DEF_FORCED(n, REG_CLASS_GPR, RAX, fake_dst);
+            SUBMIT(inst_copy(n->dt, rax, lhs));
+
+            int rhs = ISEL(n->inputs[1]);
+            int rdx = DEF_FORCED(n, REG_CLASS_GPR, RDX, fake_dst);
+            SUBMIT(inst_use(rdx));
+
+            SUBMIT(inst_r(MUL, n->dt, -1, rhs));
+            SUBMIT(inst_copy(n->dt, fake_dst, USE(rax))); // use fake_dst
+
+            // returns into both lo and hi
+            TB_NodeMulPair* p = TB_NODE_GET_EXTRA(n);
+
+            int lo = DEF(n, REG_CLASS_GPR);
+            int hi = DEF(n, REG_CLASS_GPR);
+            nl_map_put(ctx->values, p->lo, lo);
+            nl_map_put(ctx->values, p->hi, hi);
+
+            SUBMIT(inst_copy(n->dt, lo, USE(rdx)));      // hi
+            SUBMIT(inst_copy(n->dt, hi, USE(fake_dst))); // lo
             break;
         }
         case TB_UDIV:
@@ -1232,6 +1261,16 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             SUBMIT(inst_nullary(RDTSC));
             break;
         }*/
+
+        case TB_PROJ: {
+            isel(ctx, n->inputs[0]);
+
+            ptrdiff_t search = nl_map_get(ctx->values, n);
+            assert(search >= 0);
+
+            dst = ctx->values[search].v;
+            break;
+        }
 
         case TB_NULL: break;
         default: tb_todo();

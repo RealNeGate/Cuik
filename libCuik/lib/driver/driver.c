@@ -260,7 +260,7 @@ static void cc_invoke(BuildStepInfo* restrict info) {
     if (args->opt_level > 0) {
         // TODO(NeGate): generate pass list
         DynArray(TB_Pass) passes = NULL;
-        dyn_array_put(passes, tb_opt_identity());
+        dyn_array_put(passes, tb_opt_mem2reg());
 
         // apply
         TB_PassManager pm = { dyn_array_length(passes), &passes[0] };
@@ -632,7 +632,10 @@ void cuik_free_driver_args(Cuik_DriverArgs* args) {
 }
 
 static bool run_cpp(Cuik_CPP* cpp, const Cuik_DriverArgs* args, bool should_finalize) {
-    cuik_set_standard_defines(cpp, args);
+    CUIK_TIMED_BLOCK("cuik_set_standard_defines") {
+        cuik_set_standard_defines(cpp, args);
+    }
+
     dyn_array_for(i, args->includes) {
         cuikpp_add_include_directory(cpp, false, args->includes[i]->data);
     }

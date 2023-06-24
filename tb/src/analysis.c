@@ -48,6 +48,11 @@ static int find_traversal_index(DomContext* ctx, TB_Node* bb) {
     tb_todo();
 }
 
+static TB_Node* find_region(TB_Node* n) {
+    while (n->type != TB_REGION && n->type != TB_START) n = n->inputs[0];
+    return n;
+}
+
 TB_API TB_DominanceFrontiers tb_get_dominance_frontiers(TB_Function* f, TB_Dominators doms, const TB_PostorderWalk* order) {
     TB_DominanceFrontiers df = NULL;
 
@@ -56,11 +61,18 @@ TB_API TB_DominanceFrontiers tb_get_dominance_frontiers(TB_Function* f, TB_Domin
 
         if (bb->input_count >= 2) {
             FOREACH_N(k, 0, bb->input_count) {
-                TB_Node* runner = bb->inputs[k];
+                TB_Node* runner = find_region(bb->inputs[k]);
+
                 while (runner != 0 && runner != nl_map_get_checked(doms, bb)) {
                     // add to frontier set
-                    TB_FrontierSet* set = &nl_map_get_checked(df, runner);
-                    nl_map_put(*set, bb, 0);
+                    ptrdiff_t search = nl_map_get(df, runner);
+                    TB_FrontierSet* set = NULL;
+                    if (search < 0) {
+                        nl_map_puti(df, runner, search);
+                        df[search].v = nl_hashset_alloc(2); // these won't be big
+                    }
+
+                    nl_hashset_put(&df[search].v, bb);
                     runner = nl_map_get_checked(doms, runner);
                 }
             }
@@ -71,8 +83,8 @@ TB_API TB_DominanceFrontiers tb_get_dominance_frontiers(TB_Function* f, TB_Domin
 }
 
 TB_API void tb_free_dominance_frontiers(TB_Function* f, TB_DominanceFrontiers frontiers, const TB_PostorderWalk* order) {
-    FOREACH_N(i, 0, nl_map_get_capacity(frontiers)) if (frontiers[i].k != NULL) {
-        nl_map_free(frontiers[i].v);
+    nl_map_for(i, frontiers) {
+        nl_hashset_free(frontiers[i].v);
     }
     nl_map_free(frontiers);
 }
@@ -88,6 +100,7 @@ TB_API TB_Dominators tb_get_dominators(TB_Function* f) {
 
     // identify post order traversal order
     ctx.order = tb_function_get_postorder(f);
+    int entry_dom = ctx.order.count - 1;
 
     bool changed = true;
     while (changed) {
@@ -96,11 +109,11 @@ TB_API TB_Dominators tb_get_dominators(TB_Function* f) {
         // for all nodes, b, in reverse postorder (except start node)
         FOREACH_REVERSE_N(i, 0, ctx.order.count - 1) {
             TB_Node* b = ctx.order.traversal[i];
-            TB_Node* new_idom = b->inputs[0];
+            TB_Node* new_idom = find_region(b->inputs[0]);
 
             // for all other predecessors, p, of b
             FOREACH_N(j, 1, b->input_count) {
-                TB_Node* p = b->inputs[j];
+                TB_Node* p = find_region(b->inputs[j]);
 
                 // if doms[p] already calculated
                 ptrdiff_t search_p = nl_map_get(doms, p);
@@ -112,13 +125,15 @@ TB_API TB_Dominators tb_get_dominators(TB_Function* f) {
                         // while (finger1 < finger2)
                         //   finger1 = doms[finger1]
                         while (a < b) {
-                            a = find_traversal_index(&ctx, nl_map_get_checked(doms, ctx.order.traversal[a]));
+                            ptrdiff_t search = nl_map_get(doms, ctx.order.traversal[a]);
+                            a = search >= 0 ? find_traversal_index(&ctx, doms[search].v) : entry_dom;
                         }
 
                         // while (finger2 < finger1)
                         //   finger2 = doms[finger2]
                         while (b < a) {
-                            b = find_traversal_index(&ctx, nl_map_get_checked(doms, ctx.order.traversal[b]));
+                            ptrdiff_t search = nl_map_get(doms, ctx.order.traversal[b]);
+                            b = search >= 0 ? find_traversal_index(&ctx, doms[search].v) : entry_dom;
                         }
                     }
 
@@ -127,9 +142,10 @@ TB_API TB_Dominators tb_get_dominators(TB_Function* f) {
             }
 
             ptrdiff_t search_b = nl_map_get(doms, b);
-            assert(search_b >= 0);
-
-            if (doms[search_b].v != new_idom) {
+            if (search_b < 0) {
+                nl_map_put(doms, b, new_idom);
+                changed = true;
+            } else if (doms[search_b].v != new_idom) {
                 doms[search_b].v = new_idom;
                 changed = true;
             }

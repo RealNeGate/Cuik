@@ -123,10 +123,12 @@ static bool is_commutative(TB_NodeTypeEnum type) {
     }
 }
 
-static TB_Node* do_int_fold(TB_Function* f, TB_Node* n) {
+static TB_Node* do_int_fold(TB_Function* f, TB_OptQueue* restrict queue, TB_Node* n) {
     // if it's commutative: move constants to the right
     if (is_commutative(n->type) && n->inputs[0]->type == TB_INTEGER_CONST && n->inputs[1]->type != TB_INTEGER_CONST) {
-        tb_swap(TB_Node*, n->inputs[0], n->inputs[1]);
+        TB_Node* tmp = n->inputs[0];
+        set_input(queue, n, n->inputs[1], 0);
+        set_input(queue, n, tmp, 1);
         return n;
     }
 
@@ -141,9 +143,10 @@ static TB_Node* do_int_fold(TB_Function* f, TB_Node* n) {
         assert(ai->num_words == bi->num_words);
 
         BigInt_t *a_words = ai->words, *b_words = bi->words;
+        TB_Node* new_n = tb_transmute_to_int(f, queue, n->dt, ai->num_words);
 
         size_t num_words = ai->num_words;
-        BigInt_t* words = tb_transmute_to_int(f, n, 1);
+        BigInt_t* words = TB_NODE_GET_EXTRA_T(new_n, TB_NodeInt)->words;
         bool result = false;
         switch (type) {
             case TB_CMP_EQ:  result = BigInt_cmp(num_words, a_words, b_words) == 0; break;
@@ -154,7 +157,7 @@ static TB_Node* do_int_fold(TB_Function* f, TB_Node* n) {
         }
 
         words[0] = result;
-        return n;
+        return new_n;
     } else if (a->type == TB_INTEGER_CONST && type >= TB_AND && type <= TB_MUL) {
         // fully fold
         TB_NodeInt* ai = TB_NODE_GET_EXTRA(a);
@@ -162,9 +165,10 @@ static TB_Node* do_int_fold(TB_Function* f, TB_Node* n) {
         assert(ai->num_words == bi->num_words);
 
         BigInt_t *a_words = ai->words, *b_words = bi->words;
+        TB_Node* new_n = tb_transmute_to_int(f, queue, n->dt, ai->num_words);
 
         size_t num_words = ai->num_words;
-        BigInt_t* words = tb_transmute_to_int(f, n, ai->num_words);
+        BigInt_t* words = TB_NODE_GET_EXTRA_T(new_n, TB_NodeInt)->words;
         switch (type) {
             case TB_AND: BigInt_and(num_words, a_words, b_words, words); break;
             case TB_OR:  BigInt_or(num_words, a_words, b_words, words); break;
@@ -178,7 +182,56 @@ static TB_Node* do_int_fold(TB_Function* f, TB_Node* n) {
         // fixup the bits here
         uint64_t shift = (64 - (n->dt.data % 64)), mask = (~UINT64_C(0) >> shift) << shift;
         words[num_words-1] &= ~mask;
-        return n;
+        return new_n;
+    }
+
+    return NULL;
+}
+
+static TB_Node* try_idiv_fold(TB_Function* f, TB_OptQueue* restrict queue, TB_Node* n) {
+    bool is_signed = n->type == TB_SDIV;
+
+    // if we have a constant denominator we may be able to reduce the division into a
+    // multiply and shift-right
+    if (n->inputs[1]->type == TB_INTEGER_CONST) {
+        // https://gist.github.com/B-Y-P/5872dbaaf768c204480109007f64a915
+        TB_DataType dt = n->dt;
+        TB_Node* x = n->inputs[0];
+
+        // we haven't implemented the large int case
+        TB_NodeInt* bi = TB_NODE_GET_EXTRA(n->inputs[1]);
+        if (bi->num_words != 1 || bi->words[0] >= (1ull << 63ull)) return NULL;
+
+        uint64_t y = bi->words[0];
+        uint64_t sh = (64 - tb_clz64(y)) - 1;     // sh = ceil(log2(y)) + w - 64
+
+        #ifndef NDEBUG
+        uint64_t sh2 = 0;
+        while(y > (1ull << sh2)){ sh2++; }        // sh' = ceil(log2(y))
+        sh2 += 63 - 64;                           // sh  = ceil(log2(y)) + w - 64
+
+        assert(sh == sh2);
+        #endif
+
+        // 128bit division here can overflow so we need to handle that case
+        uint64_t a = tb_div128(1ull << sh, y - 1, y);
+
+        // now we can take a and sh and do:
+        //   x / y  => mulhi(x, a) >> sh
+        TB_Node* mul_node = tb_alloc_node(f, TB_MULPAIR, dt, 2, sizeof(TB_NodeMulPair));
+        set_input(queue, mul_node, x, 0);
+        set_input(queue, mul_node, make_int_node(f, queue, dt, a), 1);
+
+        TB_Node* lo = make_proj_node(f, queue, dt, mul_node, 0);
+        TB_Node* hi = make_proj_node(f, queue, dt, mul_node, 1);
+        TB_NODE_SET_EXTRA(mul_node, TB_NodeMulPair, .lo = lo, .hi = hi);
+
+        TB_Node* sh_node = tb_alloc_node(f, TB_SHR, dt, 2, sizeof(TB_NodeBinopInt));
+        set_input(queue, sh_node, hi, 0);
+        set_input(queue, sh_node, make_int_node(f, queue, dt, sh), 1);
+        TB_NODE_SET_EXTRA(sh_node, TB_NodeBinopInt, .ab = 0);
+
+        return sh_node;
     }
 
     return NULL;
@@ -202,7 +255,7 @@ static bool const_fold(TB_Function* f, TB_Label bb, TB_Node* n) {
                 assert(src->dt.type == TB_INT && src->dt.data > 0);
                 TB_NodeInt* src_i = TB_NODE_GET_EXTRA(src);
 
-                uint64_t* words = tb_transmute_to_int(n, src_i->num_words);
+                uint64_t* words = tb_transmute_to_int(n, queue, src_i->num_words);
                 BigInt_copy(src->num_words, words, src_i->words);
                 BigInt_not(src->num_words, words);
                 BigInt_inc(src->num_words, words);
@@ -220,7 +273,7 @@ static bool const_fold(TB_Function* f, TB_Label bb, TB_Node* n) {
                 assert(src->dt.type == TB_INT && src->dt.data > 0);
                 TB_NodeInt* src_i = TB_NODE_GET_EXTRA(src);
 
-                uint64_t* words = tb_transmute_to_int(f, bb, n, src_i->num_words);
+                uint64_t* words = tb_transmute_to_int(f, queue, n, src_i->num_words);
                 BigInt_copy(src_i->num_words, words, src_i->words);
                 BigInt_not(src_i->num_words, words);
                 return true;
@@ -242,7 +295,7 @@ static bool const_fold(TB_Function* f, TB_Label bb, TB_Node* n) {
                     is_signed = BigInt_bextr(src_i->num_words, src_i->words, src->dt.data-1);
                 }
 
-                uint64_t* words = tb_transmute_to_int(f, bb, n, dst_num_words);
+                uint64_t* words = tb_transmute_to_int(f, queue, n, dst_num_words);
                 BigInt_copy(src_i->num_words, words, src_i->words);
 
                 FOREACH_N(i, src_i->num_words, dst_num_words) {
@@ -267,7 +320,7 @@ static bool const_fold(TB_Function* f, TB_Label bb, TB_Node* n) {
                 TB_NodeInt* src_i = TB_NODE_GET_EXTRA(src);
 
                 size_t dst_num_words = (n->dt.data + (BigIntWordSize*8) - 1) / (BigIntWordSize*8);
-                uint64_t* words = tb_transmute_to_int(f, bb, n, dst_num_words);
+                uint64_t* words = tb_transmute_to_int(f, queue, n, dst_num_words);
                 BigInt_copy(dst_num_words, words, src_i->words);
 
                 // fixup the bits here

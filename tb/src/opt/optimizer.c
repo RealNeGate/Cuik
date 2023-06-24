@@ -1,13 +1,13 @@
 #include "../tb_internal.h"
 #include <log.h>
+#include <cuik_perf.h>
 
-// unity build with all the passes
-#include "dce.h"
-#include "fold.h"
-#include "canonical.h"
-// #include "mem2reg.h"
-#include "libcalls.h"
-#include "identity.h"
+typedef struct User User;
+struct User {
+    User* next;
+    TB_Node* n;
+    int slot;
+};
 
 // inspired by the Hotspot's iter
 struct TB_OptQueue {
@@ -16,7 +16,85 @@ struct TB_OptQueue {
 
     // we wanna track locals because it's nice and easy
     DynArray(TB_Node*) locals;
+
+    // outgoing edges are incrementally updated every time we
+    // run a rewrite rule
+    NL_Map(TB_Node*, User*) users;
 };
+
+static User* find_users(TB_OptQueue* restrict queue, TB_Node* n);
+static void add_user(TB_OptQueue* restrict queue, TB_Node* n, TB_Node* in, int slot, User* recycled);
+static User* remove_user(TB_OptQueue* restrict queue, TB_Node* n, int slot);
+
+static void set_input(TB_OptQueue* restrict queue, TB_Node* n, TB_Node* in, int slot);
+
+// transmutations let us generate new nodes from old ones
+void tb_transmute_to_pass(TB_OptQueue* restrict queue, TB_Node* n, TB_Node* point_to);
+void tb_transmute_to_poison(TB_OptQueue* restrict queue, TB_Node* n);
+TB_Node* tb_transmute_to_int(TB_Function* f, TB_OptQueue* restrict queue, TB_DataType dt, int num_words);
+
+// node creation helpers
+TB_Node* make_int_node(TB_Function* f, TB_OptQueue* restrict queue, TB_DataType dt, uint64_t x);
+TB_Node* make_proj_node(TB_Function* f, TB_OptQueue* restrict queue, TB_DataType dt, TB_Node* src, int i);
+
+// unity build with all the passes
+#include "dce.h"
+#include "fold.h"
+#include "canonical.h"
+#include "mem2reg.h"
+#include "libcalls.h"
+#include "identity.h"
+
+TB_Node* make_int_node(TB_Function* f, TB_OptQueue* restrict queue, TB_DataType dt, uint64_t x) {
+    TB_Node* n = tb_alloc_node(f, TB_INTEGER_CONST, dt, 0, sizeof(TB_NodeInt) + sizeof(uint64_t));
+    TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
+    i->num_words = 1;
+    i->words[0] = x;
+    return n;
+}
+
+TB_Node* tb_transmute_to_int(TB_Function* f, TB_OptQueue* restrict queue, TB_DataType dt, int num_words) {
+    TB_Node* new_n = tb_alloc_node(f, TB_INTEGER_CONST, dt, 0, sizeof(TB_NodeInt) + (num_words * sizeof(uint64_t)));
+    TB_NodeInt* i = TB_NODE_GET_EXTRA(new_n);
+    i->num_words = num_words;
+    return new_n;
+}
+
+TB_Node* make_proj_node(TB_Function* f, TB_OptQueue* restrict queue, TB_DataType dt, TB_Node* src, int i) {
+    TB_Node* n = tb_alloc_node(f, TB_PROJ, dt, 1, sizeof(TB_NodeProj));
+    set_input(queue, n, src, 0);
+    TB_NODE_SET_EXTRA(n, TB_NodeProj, .index = i);
+    return n;
+}
+
+void tb_transmute_to_poison(TB_OptQueue* restrict queue, TB_Node* n) {
+    // remove old users
+    FOREACH_N(i, 0, n->input_count) {
+        remove_user(queue, n, i);
+    }
+
+    n->type = TB_POISON;
+    n->input_count = 0;
+    n->extra_count = 0;
+}
+
+void tb_transmute_to_pass(TB_OptQueue* restrict queue, TB_Node* n, TB_Node* point_to) {
+    assert(n->input_count >= 1 && "TODO: Too small to transmute");
+
+    // remove old users
+    User* recycled = NULL;
+    FOREACH_N(i, 0, n->input_count) {
+        User* r = remove_user(queue, n, i);
+        if (r) recycled = r;
+    }
+
+    n->type = TB_PASS;
+    n->input_count = 1;
+    n->extra_count = 0;
+    n->dt = point_to->dt;
+    n->inputs[0] = point_to;
+    add_user(queue, n, point_to, 0, recycled);
+}
 
 void tb_optqueue_local_spawn(TB_OptQueue* restrict queue, TB_Node* n) {
     dyn_array_for(i, queue->locals) if (queue->locals[i] == n) {
@@ -27,15 +105,96 @@ void tb_optqueue_local_spawn(TB_OptQueue* restrict queue, TB_Node* n) {
 }
 
 void tb_optqueue_kill(TB_OptQueue* restrict queue, TB_Node* n) {
-    if (n->type == TB_LOCAL) {
+    if (n->type == TB_LOCAL && queue->locals != NULL) {
         // remove from local list
         dyn_array_for(i, queue->locals) if (queue->locals[i] == n) {
             dyn_array_remove(queue->locals, i);
-            return;
+            break;
         }
     }
 
+    FOREACH_N(i, 0, n->input_count) {
+        remove_user(queue, n, i);
+    }
+
+    nl_map_remove(queue->users, n);
     TB_KILL_NODE(n);
+}
+
+static User* remove_user(TB_OptQueue* restrict queue, TB_Node* n, int slot) {
+    // early out: there was no previous input
+    if (n->inputs[slot] == NULL) return NULL;
+
+    TB_Node* old = n->inputs[slot];
+    User* old_use = find_users(queue, old);
+    if (old_use == NULL) return NULL;
+
+    // remove old user (this must pass unless our users go desync'd)
+    for (User* prev = NULL; old_use; prev = old_use, old_use = old_use->next) {
+        if (old_use->slot == slot && old_use->n == n) {
+            // remove
+            if (prev) prev->next = old_use->next;
+            else if (old_use->next == NULL) {
+                nl_map_remove(queue->users, old);
+            } else {
+                nl_map_put(queue->users, old, old_use->next);
+            }
+
+            return old_use;
+        }
+    }
+
+    log_error("Failed to remove non-existent user %p from %p (slot %d)", old, n, slot);
+    log_error("Users:");
+    nl_map_for(i, queue->users) {
+        log_error("  %p %s", queue->users[i].k, tb_node_get_name(queue->users[i].k));
+        for (User* u = queue->users[i].v; u; u = u->next) {
+            log_error("    %p %d", u->n, u->slot);
+        }
+    }
+
+    assert(0 && "we tried to remove something which didn't exist? (user list has desync'd)");
+    return NULL;
+}
+
+static void set_input(TB_OptQueue* restrict queue, TB_Node* n, TB_Node* in, int slot) {
+    // recycle the user
+    User* old_use = remove_user(queue, n, slot);
+
+    n->inputs[slot] = in;
+    add_user(queue, n, in, slot, old_use);
+}
+
+static void add_user(TB_OptQueue* restrict queue, TB_Node* n, TB_Node* in, int slot, User* recycled) {
+    // just generate a new user list (if the slots don't match)
+    User* use = find_users(queue, in);
+    if (use == NULL) {
+        use = recycled ? recycled : ARENA_ALLOC(&tb__arena, User);
+        use->next = NULL;
+        use->n = n;
+        use->slot = slot;
+
+        nl_map_put(queue->users, in, use);
+    } else {
+        // the slot might've already existed, let's check
+        User* prev = NULL;
+        for (; use != NULL; prev = use, use = use->next) {
+            if (use->n == n && use->slot == slot) return;
+        }
+
+        use = recycled ? recycled : ARENA_ALLOC(&tb__arena, User);
+        use->next = NULL;
+        use->n = n;
+        use->slot = slot;
+
+        assert(prev);
+        prev->next = use;
+    }
+}
+
+static User* find_users(TB_OptQueue* restrict queue, TB_Node* n) {
+    ptrdiff_t search = nl_map_get(queue->users, n);
+    return search >= 0 ? queue->users[search].v : NULL;
 }
 
 bool tb_optqueue_mark(TB_OptQueue* restrict queue, TB_Node* n, bool mark_kids) {
@@ -44,22 +203,33 @@ bool tb_optqueue_mark(TB_OptQueue* restrict queue, TB_Node* n, bool mark_kids) {
         return false;
     }
 
+    log_debug("  %p: push %s", n, tb_node_get_name(n));
+
     size_t i = dyn_array_length(queue->queue);
     dyn_array_put(queue->queue, n);
     nl_map_put(queue->lookup, n, i);
 
-    FOREACH_N(i, 0, n->input_count) if (n->inputs[i] != NULL) {
-        tb_optqueue_mark(queue, n->inputs[i], false);
+    // mark all users
+    if (mark_kids) {
+        for (User* use = find_users(queue, n); use; use = use->next) {
+            tb_optqueue_mark(queue, use->n, false);
+        }
     }
+
     return true;
 }
 
 void tb_optqueue_fill_all(TB_OptQueue* restrict queue, TB_Node* n) {
-    if (!tb_optqueue_mark(queue, n, false)) {
+    ptrdiff_t search = nl_map_get(queue->lookup, n);
+    if (search >= 0) {
         return;
     }
 
-    FOREACH_N(i, 0, n->input_count) if (n->inputs[i] != NULL) {
+    size_t i = dyn_array_length(queue->queue);
+    dyn_array_put(queue->queue, n);
+    nl_map_put(queue->lookup, n, i);
+
+    FOREACH_N(i, 0, n->input_count) {
         tb_optqueue_fill_all(queue, n->inputs[i]);
     }
 
@@ -75,21 +245,12 @@ void tb_optqueue_fill_all(TB_OptQueue* restrict queue, TB_Node* n) {
 }
 
 static TB_Node* peephole_node(TB_OptQueue* restrict queue, TB_Function* f, TB_Node* n) {
-    bool redirect = false;
-    FOREACH_N(i, 0, n->input_count) if (n->inputs[i] != NULL && n->inputs[i]->type == TB_PASS) {
-        n->inputs[i] = n->inputs[i]->inputs[0];
-        redirect = true;
-    }
-
-    if (redirect) {
+    FOREACH_N(i, 0, n->input_count) if (n->inputs[i]->type == TB_PASS) {
+        set_input(queue, n, n->inputs[i]->inputs[0], i);
         return n;
     }
 
     switch (n->type) {
-        case TB_LOCAL:
-        tb_optqueue_local_spawn(queue, n);
-        return NULL;
-
         // integer ops
         case TB_AND:
         case TB_OR:
@@ -106,7 +267,12 @@ static TB_Node* peephole_node(TB_OptQueue* restrict queue, TB_Function* f, TB_No
         case TB_CMP_SLE:
         case TB_CMP_ULT:
         case TB_CMP_ULE:
-        return do_int_fold(f, n);
+        return do_int_fold(f, queue, n);
+
+        // division
+        case TB_SDIV:
+        case TB_UDIV:
+        return try_idiv_fold(f, queue, n);
 
         // no changes
         default: return NULL;
@@ -114,22 +280,40 @@ static TB_Node* peephole_node(TB_OptQueue* restrict queue, TB_Function* f, TB_No
 }
 
 static void peephole(TB_OptQueue* restrict queue, TB_Function* f) {
-    log_debug("do_fold on %s", f->super.name);
+    CUIK_TIMED_BLOCK_ARGS("peephole", f->super.name) {
+        // time complexity assertion lmao
+        #ifndef NDEBUG
+        int m = 0, n = dyn_array_length(queue->queue);
+        #endif
 
-    while (dyn_array_length(queue->queue) > 0) {
-        // pull from worklist
-        TB_Node* n = dyn_array_pop(queue->queue);
-        nl_map_remove(queue->lookup, n);
+        while (dyn_array_length(queue->queue) > 0) {
+            // pull from worklist
+            TB_Node* n = dyn_array_pop(queue->queue);
+            nl_map_remove(queue->lookup, n);
 
-        // try peephole
-        TB_Node* progress = peephole_node(queue, f, n);
-        if (progress == NULL) {
-            // no changes
-            continue;
+            #ifndef NDEBUG
+            m += 1;
+            #endif
+
+            // try peephole
+            TB_Node* progress = peephole_node(queue, f, n);
+            if (progress == NULL) {
+                // no changes
+                continue;
+            } else if (progress != n) {
+                // transmute the node into pass automatically
+                tb_transmute_to_pass(queue, n, progress);
+            }
+
+            // push new value
+            tb_optqueue_mark(queue, progress, true);
         }
 
-        // push new value
-        tb_optqueue_mark(queue, progress, true);
+        #ifndef NDEBUG
+        if (m+n > m*2) {
+            log_debug("peephole %s: O(%d + %d) <= O(%d*2)", f->super.name, m, n, m);
+        }
+        #endif
     }
 }
 
@@ -155,23 +339,58 @@ bool tb_passes_iter(TB_PassManager* manager, TB_Module* m, TB_Passes* passes) {
     return false;
 }
 
+static void generate_use_lists(TB_OptQueue* restrict queue, TB_Function* f) {
+    dyn_array_for(i, queue->queue) {
+        TB_Node* n = queue->queue[i];
+
+        if (n->type == TB_LOCAL) {
+            // we don't need to check for duplicates here, the queue is uniques
+            log_debug("Local: %p", n);
+            dyn_array_put(queue->locals, n);
+        }
+
+        log_debug("Outs: %s", tb_node_get_name(n));
+        FOREACH_N(i, 0, n->input_count) {
+            add_user(queue, n, n->inputs[i], i, NULL);
+
+            log_debug("- %s", tb_node_get_name(n->inputs[i]));
+            tb_optqueue_mark(queue, n->inputs[i], false);
+        }
+    }
+}
+
 void tb_function_apply_passes(TB_PassManager* manager, TB_Passes passes, TB_Function* f) {
     assert(!passes.module_level);
-    log_debug("run %d passes for %s", manager->count, f->super.name);
-
     f->file = 0; // don't add line info automatically to optimizer-generated nodes
 
     const TB_Pass* restrict arr = manager->passes;
+    log_debug("run %d passes for %s", passes.end - passes.start, f->super.name);
 
     // generate work list (put everything)
     TB_OptQueue queue = { 0 };
 
-    nl_map_create(queue.lookup, f->node_count);
-    tb_optqueue_fill_all(&queue, f->start_node);
+    CUIK_TIMED_BLOCK("nl_map_create") {
+        nl_map_create(queue.lookup, f->node_count);
+    }
+
+    CUIK_TIMED_BLOCK("tb_optqueue_fill_all") {
+        tb_optqueue_fill_all(&queue, f->start_node);
+    }
+
+    // find all outgoing edges
+    CUIK_TIMED_BLOCK("generate_use_lists") {
+        generate_use_lists(&queue, f);
+    }
+
+    printf("\n\nORIGINAL:\n");
+    tb_function_print(f, tb_default_print_callback, stdout);
 
     // run passes
     FOREACH_N(i, passes.start, passes.end) {
         peephole(&queue, f);
+
+        printf("\n\nAFTER PEEP:\n");
+        tb_function_print(f, tb_default_print_callback, stdout);
 
         CUIK_TIMED_BLOCK_ARGS(arr[i].name, f->super.name) {
             log_debug("run %s on %s", arr[i].name, f->super.name);
@@ -182,6 +401,7 @@ void tb_function_apply_passes(TB_PassManager* manager, TB_Passes passes, TB_Func
     peephole(&queue, f);
 
     arena_clear(&tb__arena);
+    nl_map_free(queue.users);
     nl_map_free(queue.lookup);
     dyn_array_destroy(queue.queue);
 }

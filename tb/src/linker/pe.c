@@ -974,7 +974,7 @@ static TB_Exports pe_export(TB_Linker* l) {
     }
 
     size_t final_section_count = 0;
-    nl_map_for(i, l->sections) {
+    nl_map_for_str(i, l->sections) {
         final_section_count += (l->sections[i].v->generic_flags & TB_LINKER_SECTION_DISCARD) == 0;
     }
 
@@ -993,7 +993,7 @@ static TB_Exports pe_export(TB_Linker* l) {
     size_t section_content_size = 0;
     uint64_t virt_addr = align_up(size_of_headers, 4096); // this area is reserved for the PE header stuff
     CUIK_TIMED_BLOCK("layout sections") {
-        nl_map_for(i, l->sections) {
+        nl_map_for_str(i, l->sections) {
             TB_LinkerSection* s = l->sections[i].v;
             if (s->generic_flags & TB_LINKER_SECTION_DISCARD) continue;
 
@@ -1149,7 +1149,7 @@ static TB_Exports pe_export(TB_Linker* l) {
     WRITE(&header,     sizeof(header));
     WRITE(&opt_header, sizeof(opt_header));
 
-    nl_map_for(i, l->sections) {
+    nl_map_for_str(i, l->sections) {
         TB_LinkerSection* s = l->sections[i].v;
         if (s->generic_flags & TB_LINKER_SECTION_DISCARD) continue;
 
