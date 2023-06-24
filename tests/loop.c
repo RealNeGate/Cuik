@@ -1,3 +1,4 @@
+#include <stddef.h>
 
 #if 0
 int foo(int x) {
@@ -11,8 +12,8 @@ int bar(int x) {
 
 int baz(int* arr, int n) {
     int sum = 0;
-    for (int i = 0; i < n; i++) {
-        sum += arr[n - i - 1];
+    for (size_t i = 0; i < n; i++) {
+        sum += arr[i];
     }
 
     return sum;

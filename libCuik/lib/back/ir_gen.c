@@ -1542,8 +1542,8 @@ static IRVal irgen_subexpr(TranslationUnit* tu, TB_Function* func, Cuik_Expr* _,
             };
         }
         case EXPR_SUBSCRIPT: {
-            TB_Node* index = RVAL(0);
-            TB_Node* base = RVAL(1);
+            TB_Node* base = RVAL(0);
+            TB_Node* index = RVAL(1);
 
             int stride = cuik_canonical_type(GET_TYPE())->size;
             if (stride == 0) stride = 1;

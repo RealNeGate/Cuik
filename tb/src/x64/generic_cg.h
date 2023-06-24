@@ -266,20 +266,28 @@ static Inst inst_line(TB_FileID file, int line) {
     };
 }
 
-static void phi_edge(Ctx* restrict ctx, TB_Node* src, TB_Node* dst, int index) {
+static void phi_edge(Ctx* restrict ctx, TB_Node* dst, int index) {
     TB_NodeRegion* region = TB_NODE_GET_EXTRA(dst);
     FOREACH_N(i, 0, region->proj_count) {
         TB_Node* n = region->projs[i];
         assert(n->type == TB_PHI);
 
         // allocate virtual register
-        int* dst_vreg = &GET_VAL(n);
-        if (*dst_vreg < 0) {
-            *dst_vreg = DEF(n, classify_reg_class(n->dt));
+        ptrdiff_t search = nl_map_get(ctx->values, n);
+        int dst_vreg = -1;
+        if (search < 0) {
+            dst_vreg = DEF(n, classify_reg_class(n->dt));
+            nl_map_put(ctx->values, n, dst_vreg);
+
+            log_debug("values[%p] = %d", n, dst_vreg);
+        } else {
+            dst_vreg = ctx->values[search].v;
+            log_debug("reuse values[%p] (%d)", n, dst_vreg);
         }
 
         // handle phis
-        copy_value(ctx, n, USE(*dst_vreg), n->inputs[index], n->dt);
+        log_debug("phi %p: %d", n, dst_vreg);
+        copy_value(ctx, n, USE(dst_vreg), n->inputs[1 + index], n->dt);
     }
 }
 
@@ -806,7 +814,18 @@ static void schedule_effect(Ctx* restrict ctx, TB_Node* parent, TB_Node* n) {
         // copy out from active phi-edges
         TB_NodeRegion* r = TB_NODE_GET_EXTRA(parent);
         FOREACH_N(i, 0, r->succ_count) {
-            phi_edge(ctx, parent, r->succ[i], 0);
+            TB_Node* dst = r->succ[i];
+
+            // find predecessor index and do that edge
+            FOREACH_N(j, 0, dst->input_count) {
+                TB_Node* pred = dst->inputs[j];
+                while (pred->type != TB_REGION && pred->type != TB_START) pred = pred->inputs[0];
+
+                if (pred == parent) {
+                    phi_edge(ctx, dst, j);
+                    break;
+                }
+            }
         }
     }
 
@@ -830,8 +849,8 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
         }
     };
 
-    /* ctx.emit.emit_asm = true;
-    if (ctx.emit.emit_asm) {
+    ctx.emit.emit_asm = true;
+    /*if (ctx.emit.emit_asm) {
         tb_function_print(f, tb_default_print_callback, stdout);
     }*/
 
@@ -874,7 +893,7 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
         nl_map_put(ctx.emit.labels, bb, 0);
 
         // mark fallthrough
-        ctx.fallthrough = NULL;
+        ctx.fallthrough = i > 0 ? ctx.order.traversal[i - 1] : NULL;
         if (bb) {
             append_inst(&ctx, inst_label(bb));
         }

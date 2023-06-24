@@ -553,8 +553,12 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             // allocate all the region parameters
             FOREACH_N(i, 0, r->proj_count) {
                 TB_Node* proj = r->projs[i];
-                int param = DEF(proj, classify_reg_class(proj->dt));
-                nl_map_put(ctx->values, proj, param);
+
+                ptrdiff_t search = nl_map_get(ctx->values, proj);
+                if (search < 0) {
+                    int param = DEF(proj, classify_reg_class(proj->dt));
+                    nl_map_put(ctx->values, proj, param);
+                }
             }
             break;
         }
@@ -950,11 +954,13 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
                 }
 
                 // we ain't gotta worry about regalloc here, we dippin
-                int fake_dst = DEF_FORCED(n, REG_CLASS_GPR, RAX, -1);
-                SUBMIT(inst_copy(n->inputs[1]->dt, fake_dst, USE(src_vreg)));
+                int rax = DEF_FORCED(n, REG_CLASS_GPR, RAX, -1);
+                SUBMIT(inst_copy(n->inputs[1]->dt, rax, USE(src_vreg)));
             }
 
-            SUBMIT(inst_jmp(NULL));
+            if (ctx->fallthrough != NULL) {
+                SUBMIT(inst_jmp(NULL));
+            }
             break;
         }
 
@@ -1043,15 +1049,27 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             TB_Node** succ = r->succ;
 
             if (r->succ_count == 1) {
-                SUBMIT(inst_jmp(succ[0]));
+                if (ctx->fallthrough != succ[0]) {
+                    SUBMIT(inst_jmp(succ[0]));
+                }
             } else if (r->succ_count == 2) {
                 TB_DataType dt = n->inputs[1]->dt;
 
                 // if-like branch
                 if (br->keys[0] == 0) {
                     Cond cc = isel_cmp(ctx, n->inputs[1]);
-                    SUBMIT(inst_jcc(succ[0], cc));
-                    SUBMIT(inst_jmp(succ[1]));
+
+                    // if flipping avoids a jmp, do that
+                    TB_Node *f = succ[0], *t = succ[1];
+                    if (ctx->fallthrough == f) {
+                        SUBMIT(inst_jcc(t, cc ^ 1));
+                    } else {
+                        SUBMIT(inst_jcc(f, cc));
+
+                        if (ctx->fallthrough != t) {
+                            SUBMIT(inst_jmp(t));
+                        }
+                    }
                 } else {
                     int key = USE(ISEL(n->inputs[1]));
 
