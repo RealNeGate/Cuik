@@ -183,6 +183,17 @@ static TB_Node* do_int_fold(TB_Function* f, TB_OptQueue* restrict queue, TB_Node
         uint64_t shift = (64 - (n->dt.data % 64)), mask = (~UINT64_C(0) >> shift) << shift;
         words[num_words-1] &= ~mask;
         return new_n;
+    } else if (tb_node_is_constant_zero(b)) {
+        if (type == TB_MUL) {
+            size_t num_words = TB_NODE_GET_EXTRA_T(b, TB_NodeInt)->num_words;
+
+            TB_Node* new_n = tb_transmute_to_int(f, queue, n->dt, num_words);
+            BigInt_t* words = TB_NODE_GET_EXTRA_T(new_n, TB_NodeInt)->words;
+            memset(words, 0, sizeof(BigInt_t));
+            return new_n;
+        } else if (type == TB_ADD) {
+            return a;
+        }
     }
 
     return NULL;

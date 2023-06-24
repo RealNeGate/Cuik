@@ -664,6 +664,11 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             dst = DEF(n, REG_CLASS_GPR);
 
             uint64_t x = i->words[0];
+
+            // mask off bits
+            int bits_in_type = n->dt.type == TB_PTR ? 64 : n->dt.data;
+            x &= (1ull << bits_in_type) - 1;
+
             if (!fits_into_int32(x)) {
                 // movabs reg, imm64
                 SUBMIT(inst_i64(MOVABS, n->dt, dst, x));
@@ -1311,10 +1316,10 @@ static void copy_value(Ctx* restrict ctx, TB_Node* phi, int dst, TB_Node* src, T
         if (src->inputs[0] == phi && try_tile(ctx, src->inputs[1])) {
             int32_t x;
             if (try_for_imm32(ctx, src->inputs[1], &x)) {
-                SUBMIT(inst_ri(ADD, dt, dst, USE(dst), x));
+                SUBMIT(inst_ri(ADD, dt, USE(dst), dst, x));
             } else {
                 int other = ISEL(src->inputs[1]);
-                SUBMIT(inst_rr(ADD, dt, dst, USE(dst), other));
+                SUBMIT(inst_rr(ADD, dt, USE(dst), dst, other));
             }
             return;
         }
