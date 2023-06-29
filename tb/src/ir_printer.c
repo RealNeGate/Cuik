@@ -11,7 +11,6 @@ TB_API void tb_default_print_callback(void* user_data, const char* fmt, ...) {
 TB_API const char* tb_node_get_name(TB_Node* n) {
     switch (n->type) {
         case TB_NULL: return "BAD";
-        case TB_LINE_INFO: return "line";
 
         case TB_START:  return "start";
         case TB_RET:    return "ret";

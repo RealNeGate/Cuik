@@ -237,7 +237,7 @@ static TB_Node* cvt2rval(TranslationUnit* tu, TB_Function* func, IRVal* v) {
 
             tb_inst_set_control(func, merger);
             // we're expecting the predecessors to be ordered as FALSE then TRUE
-            reg = tb_inst_phi2(func, zero, one);
+            reg = tb_inst_phi2(func, v->phi.parent, zero, one);
             break;
         }
         case LVALUE: {
@@ -353,12 +353,20 @@ TB_ModuleSection* get_variable_storage(TB_Module* m, const Attribs* attrs, bool 
     }
 }
 
+static void eval_global_initializer(TranslationUnit* tu, TB_Global* g, InitNode* n, int offset);
 static void gen_global_initializer(TranslationUnit* tu, TB_Global* g, Cuik_Type* type, Cuik_Expr* e, size_t offset) {
     assert(type != NULL);
     size_t type_size = type->size;
 
     // defaults to zeros because that's how TB initializers work
     if (e == NULL) {
+        return;
+    }
+
+    // try to emit global initializer
+    if (get_root_subexpr(e)->op == EXPR_INITIALIZER) {
+        Subexpr* s = get_root_subexpr(e);
+        eval_global_initializer(tu, g, s->init.root, offset);
         return;
     }
 
@@ -991,7 +999,7 @@ IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Cuik_Expr* e) {
 
             return (IRVal){
                 .value_type = RVALUE_PHI,
-                .phi = { true_lbl, false_lbl },
+                .phi = { try_rhs_lbl, true_lbl, false_lbl },
             };
         }
         case EXPR_COMMA: {
@@ -1663,6 +1671,27 @@ static IRVal irgen_subexpr(TranslationUnit* tu, TB_Function* func, Cuik_Expr* _,
                     };
                 }
             }
+        }
+        case EXPR_ADDR: {
+            IRVal src = GET_ARG(0);
+
+            assert(src.value_type == LVALUE);
+            src.value_type = RVALUE;
+            return src;
+        }
+        case EXPR_CAST: {
+            TB_Node* src = RVAL(0);
+            Cuik_Type* t = cuik_canonical_type(e->cast.type);
+
+            // stuff like ((void) x)
+            if (t->kind == KIND_VOID) {
+                return (IRVal){.value_type = RVALUE, .reg = 0};
+            }
+
+            return (IRVal){
+                .value_type = RVALUE,
+                .reg = src
+            };
         }
         case EXPR_NEGATE: {
             return (IRVal){

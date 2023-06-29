@@ -1,6 +1,5 @@
 #include "../tb_internal.h"
 #include <log.h>
-#include <cuik_perf.h>
 
 typedef struct User User;
 struct User {
@@ -16,6 +15,11 @@ struct TB_OptQueue {
 
     // we wanna track locals because it's nice and easy
     DynArray(TB_Node*) locals;
+
+    #ifdef DO_CSE
+    // this is used to do CSE
+    NL_HashSet cse_nodes;
+    #endif
 
     // outgoing edges are incrementally updated every time we
     // run a rewrite rule
@@ -38,6 +42,10 @@ TB_Node* make_int_node(TB_Function* f, TB_OptQueue* restrict queue, TB_DataType 
 TB_Node* make_proj_node(TB_Function* f, TB_OptQueue* restrict queue, TB_DataType dt, TB_Node* src, int i);
 
 // unity build with all the passes
+#ifdef DO_CSE
+#include "cse.h"
+#endif
+
 #include "dce.h"
 #include "fold.h"
 #include "canonical.h"
@@ -301,6 +309,16 @@ static void peephole(TB_OptQueue* restrict queue, TB_Function* f) {
                 // no changes
                 continue;
             } else if (progress != n) {
+                #ifdef DO_CSE
+                if (progress->input_count == 0) {
+                    // try CSE, reuse if it dominates the progress node
+                    TB_Node* potential_reuse = nl_hashset_put2(&queue->cse_nodes, progress, cse_hash, cse_compare);
+                    if (potential_reuse != NULL) {
+                        progress = potential_reuse;
+                    }
+                }
+                #endif
+
                 // transmute the node into pass automatically
                 tb_transmute_to_pass(queue, n, progress);
             }
@@ -362,13 +380,17 @@ static void generate_use_lists(TB_OptQueue* restrict queue, TB_Function* f) {
 void tb_function_apply_passes(TB_PassManager* manager, TB_Passes passes, TB_Function* f) {
     CUIK_TIMED_BLOCK("optimize function") {
         assert(!passes.module_level);
-        f->file = 0; // don't add line info automatically to optimizer-generated nodes
+        f->line_attrib = NULL; // don't add line info automatically to optimizer-generated nodes
 
         const TB_Pass* restrict arr = manager->passes;
         log_debug("run %d passes for %s", passes.end - passes.start, f->super.name);
 
         // generate work list (put everything)
         TB_OptQueue queue = { 0 };
+
+        #ifdef DO_CSE
+        queue.cse_nodes = nl_hashset_alloc(f->node_count);
+        #endif
 
         CUIK_TIMED_BLOCK("nl_map_create") {
             nl_map_create(queue.lookup, f->node_count);
@@ -404,6 +426,10 @@ void tb_function_apply_passes(TB_PassManager* manager, TB_Passes passes, TB_Func
         }
 
         peephole(&queue, f);
+
+        #ifdef DO_CSE
+        nl_hashset_free(queue.cse_nodes);
+        #endif
 
         arena_clear(&tb__arena);
         nl_map_free(queue.users);

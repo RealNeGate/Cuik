@@ -40,7 +40,7 @@
 #include <hash_map.h>
 
 #include <hash_set.h>
-#include <cuik_perf.h>
+#include <perf.h>
 
 #define FOREACH_N(it, start, end) \
 for (ptrdiff_t it = (start), end__ = (end); it < end__; ++it)
@@ -140,6 +140,8 @@ typedef struct TB_File {
 struct TB_External {
     TB_Symbol super;
     TB_ExternalType type;
+
+    void* thunk; // JIT will cache a thunk here because it's helpful
 };
 
 typedef struct TB_InitObj {
@@ -271,6 +273,11 @@ typedef struct TB_Comdat {
     uint32_t reloc_count;
 } TB_Comdat;
 
+typedef struct {
+    uint32_t ip; // relative to the function body.
+    TB_Safepoint* sp;
+} TB_SafepointKey;
+
 typedef struct TB_FunctionOutput {
     TB_Linkage linkage;
     int result;
@@ -286,27 +293,29 @@ typedef struct TB_FunctionOutput {
 
     uint8_t* code;
 
-    // relative to the export-specific text section
-    size_t code_pos;
+    size_t code_pos; // relative to the export-specific text section
     size_t code_size;
 
     // export-specific
     uint32_t unwind_info;
 
     DynArray(TB_StackSlot) stack_slots;
+
+    // safepoints are stored into a binary tree to allow
+    // for scanning neighbors really quickly
+    TB_SafepointKey* safepoints;
 } TB_FunctionOutput;
 
-// usually 1024 byte regions
+// usually 1984 (2048 - 64) byte regions
 typedef struct TB_NodePage TB_NodePage;
-
-enum {
-    TB_NODE_PAGE_GENERAL_CAP = 1024 - (sizeof(TB_NodePage*) + sizeof(size_t[2])),
-};
-
 struct TB_NodePage {
     TB_NodePage* next;
     size_t used, cap;
     char data[];
+};
+
+enum {
+    TB_NODE_PAGE_GENERAL_CAP = 1984 - sizeof(TB_NodePage),
 };
 
 struct TB_Function {
@@ -319,14 +328,15 @@ struct TB_Function {
     TB_Node* start_node;
     TB_Node* active_control_node;
 
+    size_t safepoint_count;
+
     // Nodes allocator (micro block alloc)
     size_t control_node_count;
     size_t node_count;
     TB_NodePage *head, *tail;
 
     // IR building: current line
-    TB_FileID file;
-    int line;
+    TB_Attrib* line_attrib;
 
     // Part of the debug info
     DynArray(TB_Line) lines;

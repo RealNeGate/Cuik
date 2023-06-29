@@ -1,5 +1,26 @@
 #include "../tb_internal.h"
 
+uint32_t cse_hash(void* a) {
+    TB_Node* n = a;
+    return 0;
+}
+
+bool cse_compare(void* a, void* b) {
+    TB_Node *x = a, *y = b;
+    if (x->type != y->type) return false;
+
+    switch (x->type) {
+        case TB_INTEGER_CONST: {
+            TB_NodeInt* ai = TB_NODE_GET_EXTRA(x);
+            TB_NodeInt* bi = TB_NODE_GET_EXTRA(y);
+
+            return ai->num_words == bi->num_words && memcmp(ai->words, bi->words, ai->num_words * sizeof(BigInt_t)) == 0;
+        }
+        default: return false;
+    }
+}
+
+#if 0
 // this is a conservative algorithm, if we don't handle a node in here
 // it'll just fail to compare
 static bool is_node_the_same(TB_Node* a, TB_Node* b) {
@@ -100,33 +121,6 @@ static bool is_node_the_same(TB_Node* a, TB_Node* b) {
     void* a_start = &a->integer;
     void* b_start = &b->integer;
     return memcmp(a_start, b_start, bytes) == 0;
-}
-
-typedef struct {
-    size_t count;
-    TB_Reg* regs;
-} BasicBlockDefs;
-
-static BasicBlockDefs* generate_def_table(TB_Function* f, TB_TemporaryStorage* tls) {
-    BasicBlockDefs* table = tb_tls_push(tls, f->bb_count * sizeof(BasicBlockDefs));
-
-    TB_FOR_BASIC_BLOCK(bb, f) {
-        table[bb].count = 0;
-        table[bb].regs = tb_tls_push(tls, 0);
-
-        TB_FOR_NODE(r, f, bb) {
-            TB_Node* n = &f->nodes[r];
-
-            if (!TB_IS_NODE_SIDE_EFFECT(n->type) && n->type != TB_LOAD) {
-                tb_tls_push(tls, sizeof(TB_Reg));
-
-                size_t i = table[bb].count++;
-                table[bb].regs[i] = r;
-            }
-        }
-    }
-
-    return table;
 }
 
 static TB_Reg find_similar_def_in_bb(TB_Function* f, BasicBlockDefs* bb_defs, TB_Reg r) {
@@ -251,3 +245,4 @@ static bool cse(TB_Function* f) {
     // don't free CSE, doesn't matter
     return changes;
 }
+#endif

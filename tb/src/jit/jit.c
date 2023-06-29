@@ -261,9 +261,14 @@ TB_API void* tb_module_apply_function(TB_JITContext* jit, TB_Function* f) {
             int32_t rel32 = (intptr_t)addr - ((intptr_t)patch + 4);
             *patch += rel32;
         } else if (tag == TB_SYMBOL_EXTERNAL) {
-            void* addr = get_proc(jit, p->target->name);
+            TB_External* e = (TB_External*) p->target;
+
+            void* addr = e->thunk ? e->thunk : p->target->address;
             if (addr == NULL) {
-                tb_panic("Could not find procedure: %s", p->target->name);
+                addr = get_proc(jit, p->target->name);
+                if (addr == NULL) {
+                    tb_panic("Could not find procedure: %s", p->target->name);
+                }
             }
 
             ptrdiff_t rel = (intptr_t)addr - ((intptr_t)patch + 4);
@@ -282,6 +287,7 @@ TB_API void* tb_module_apply_function(TB_JITContext* jit, TB_Function* f) {
 
                 // write final address into the thunk
                 memcpy(thunk + 6, &addr, sizeof(void*));
+                e->thunk = thunk;
 
                 int32_t rel32 = (intptr_t)thunk - ((intptr_t)patch + 4);
                 *patch += rel32;

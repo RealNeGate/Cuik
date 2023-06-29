@@ -207,11 +207,13 @@ typedef enum TB_NodeTypeEnum {
     TB_PROJ,
 
     // metadata
-    TB_LINE_INFO,
     TB_KEEPALIVE,
 
     TB_CALL,  // normal call
     TB_SCALL, // system call
+
+    // Managed ops
+    TB_SAFEPOINT,
 
     // Memory operations
     TB_STORE, // fn(r: control, addr: data, src: data)
@@ -511,6 +513,10 @@ typedef struct {
 } TB_NodeCall;
 
 typedef struct {
+    uint32_t id;
+} TB_NodeSafepoint;
+
+typedef struct {
     TB_Node* end;
 
     size_t succ_count;
@@ -519,11 +525,6 @@ typedef struct {
     size_t proj_count;
     TB_Node** projs;
 } TB_NodeRegion;
-
-typedef struct {
-    TB_Label label;
-    TB_Node* val;
-} TB_PhiInput;
 
 typedef struct TB_MultiOutput {
     size_t count;
@@ -559,6 +560,15 @@ typedef enum {
     TB_EXECUTABLE_PE,
     TB_EXECUTABLE_ELF,
 } TB_ExecutableType;
+
+typedef struct {
+    TB_Node* node; // type == TB_SAFEPOINT
+    void* userdata;
+
+    uint32_t ip;    // relative to the function body.
+    uint32_t count; // same as node->input_count
+    int32_t values[];
+} TB_Safepoint;
 
 // *******************************
 // Public macros
@@ -811,6 +821,12 @@ TB_API void tb_debug_complete_record(TB_DebugType* type, TB_DebugType** members,
 #define TB_FOR_INPUT_IN_NODE(it, parent) for (TB_Node **it = parent->inputs, **__end = it + (parent)->input_count; it != __end; it++)
 
 ////////////////////////////////
+// Compiled code introspection
+////////////////////////////////
+// this is relative to the start of the function (the start of the prologue)
+TB_API TB_Safepoint* tb_safepoint_get(TB_Function* f, uint32_t relative_ip);
+
+////////////////////////////////
 // Symbols
 ////////////////////////////////
 TB_API bool tb_symbol_is_comdat(const TB_Symbol* s);
@@ -990,7 +1006,10 @@ TB_API TB_Node* tb_inst_x86_rsqrt(TB_Function* f, TB_Node* a);
 TB_API TB_Node* tb_inst_syscall(TB_Function* f, TB_DataType dt, TB_Node* syscall_num, size_t param_count, TB_Node** params);
 TB_API TB_MultiOutput tb_inst_call(TB_Function* f, TB_FunctionPrototype* proto, TB_Node* target, size_t param_count, TB_Node** params);
 
-TB_API TB_Node* tb_inst_phi2(TB_Function* f, TB_Node* a, TB_Node* b);
+// Managed
+TB_API TB_Node* tb_inst_safepoint(TB_Function* f, size_t param_count, TB_Node** params);
+
+TB_API TB_Node* tb_inst_phi2(TB_Function* f, TB_Node* region, TB_Node* a, TB_Node* b);
 TB_API void tb_inst_goto(TB_Function* f, TB_Node* target);
 TB_API void tb_inst_if(TB_Function* f, TB_Node* cond, TB_Node* true_case, TB_Node* false_case);
 TB_API void tb_inst_branch(TB_Function* f, TB_DataType dt, TB_Node* key, TB_Node* default_case, size_t entry_count, const TB_SwitchEntry* keys);

@@ -4,7 +4,6 @@
 // The callbacks are global and a user may even hook in using the cuikperf_start
 // and cuikperf_stop, or by using CUIK_TIMED_BLOCK
 #pragma once
-#include "cuik_prelude.h"
 
 #include <stdint.h>
 #include <stdbool.h>
@@ -19,17 +18,17 @@ typedef struct Cuik_IProfiler {
     void (*end_plot)(void* user_data, uint64_t nanos);
 } Cuik_IProfiler;
 
-CUIK_API void cuikperf_start(void* ud, const Cuik_IProfiler* profiler, bool lock_on_plot);
-CUIK_API void cuikperf_stop(void);
-CUIK_API bool cuikperf_is_active(void);
+void cuikperf_start(void* ud, const Cuik_IProfiler* profiler, bool lock_on_plot);
+void cuikperf_stop(void);
+bool cuikperf_is_active(void);
 
 // the absolute values here don't have to mean anything, it's just about being able
 // to measure between two points.
-CUIK_API uint64_t cuik_time_in_nanos(void);
+uint64_t cuik_time_in_nanos(void);
 
 // Reports a region of time to the profiler callback
-CUIK_API void cuikperf_region_start(uint64_t now, const char* fmt, const char* extra);
-CUIK_API void cuikperf_region_end(void);
+void cuikperf_region_start(uint64_t now, const char* fmt, const char* extra);
+void cuikperf_region_end(void);
 
 // Usage:
 // CUIK_TIMED_BLOCK("Beans %d", 5) {

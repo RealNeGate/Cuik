@@ -1,4 +1,5 @@
 #include <stddef.h>
+#include <stdio.h>
 
 int foo(int x) {
     return x / 3;
@@ -15,4 +16,11 @@ int baz(int* arr, int n) {
     }
 
     return sum;
+}
+
+int arr[] = { 1, 2, 3, 4 };
+
+int main() {
+    printf("%d\n", baz(arr, 4));
+    return 0;
 }

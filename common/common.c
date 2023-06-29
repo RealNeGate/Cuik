@@ -22,10 +22,22 @@
 uint64_t cuik__page_size = 0;
 uint64_t cuik__page_mask = 0;
 
+void cuik_init_terminal(void) {
+    #if _WIN32
+    // Enable ANSI/VT sequences on windows
+    HANDLE output_handle = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (output_handle != INVALID_HANDLE_VALUE) {
+        DWORD old_mode;
+        if (GetConsoleMode(output_handle, &old_mode)) {
+            SetConsoleMode(output_handle, old_mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+        }
+    }
+    #endif
+}
+
 void* cuik__valloc(size_t size) {
     #ifdef _WIN32
     if (cuik__page_size == 0) {
-        // unsupported... sadge
         SYSTEM_INFO si;
         GetSystemInfo(&si);
 

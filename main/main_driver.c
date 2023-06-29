@@ -9,7 +9,7 @@
 #include <file_map.h>
 
 #ifdef CUIK_USE_TB
-// #include "objdump.h"
+#include "objdump.h"
 #include "link.h"
 #endif
 
@@ -51,7 +51,7 @@ int main(int argc, const char** argv) {
     int status = EXIT_SUCCESS;
     if (argc >= 2) {
         #ifdef CUIK_USE_TB
-        // if (strcmp(argv[1], "-objdump") == 0) return run_objdump(argc - 2, argv + 2);
+        if (strcmp(argv[1], "-objdump") == 0) return run_objdump(argc - 2, argv + 2);
         if (strcmp(argv[1], "-link")    == 0) return run_link(argc - 2, argv + 2);
         #endif
 

@@ -21,9 +21,26 @@ local options = {
 	driver = false,
 	shared = false,
 	test   = false,
+	forth  = false,
 	lld    = false,
 	gcc    = false,
 	spall_auto = false
+}
+
+-- Cuik/TB are broken down into several pieces
+local modules = {
+	common = { srcs={"common/common.c", "common/perf.c"} },
+	cuik   = { srcs={"libCuik/lib/libcuik.c", "libCuik/lib/toolchains/msvc.c", "libCuik/lib/toolchains/gnu.c", "libCuik/lib/toolchains/darwin.c"}, flags="-I libCuik/include" },
+	tb     = { srcs={"tb/src/libtb.c", "tb/src/x64/x64.c"}, flags="-I tb/include -DCUIK_USE_TB" },
+
+	-- executables:
+	--   Cuik command line
+	driver = { is_exe=true, srcs={"main/main_driver.c"}, deps={"common", "cuik", "tb"} },
+	--   forth
+	forth  = { is_exe=true, srcs={"forth/forth.c"}, deps={"common", "tb"}, flags="-I libCuik/include" },
+
+	-- external dependencies
+	mimalloc = { srcs={"mimalloc/src/static.c"} }
 }
 
 -- command lines
@@ -31,17 +48,6 @@ for i = 1, #arg do
 	if arg[i]:sub(1, 1) == "-" then
 		options[arg[i]:sub(2)] = true
 	end
-end
-
-if not options.shared and not options.cuik and not options.tb then
-	options.driver = true
-end
-
-src = { "common/common.c", "mimalloc/src/static.c" }
-function add_srcs(...)
-    for i = 1, select("#",...) do
-        src[#src + 1] = select(i,...)
-    end
 end
 
 local ldflags = ""
@@ -62,8 +68,10 @@ if options.spall_auto then
 	cflags = cflags.." -DCUIK_USE_SPALL_AUTO -finstrument-functions-after-inlining"
 end
 
+local src = {}
+
 if is_windows then
-	add_srcs("c11threads/threads_msvc.c")
+	src[#src + 1] = "c11threads/threads_msvc.c"
 
 	if options.lld then
 		ld = "lld-link"
@@ -103,28 +111,40 @@ else
 	lib_ext = ".a"
 end
 
-if options.shared and not options.cuik and not options.tb then
-	options.cuik = true
-	options.tb = true
+local is_exe = false
+
+-- resolve dependencies
+function walk(name)
+	if options.shared and modules[name].is_exe then
+		print("error: "..name.." is an executable, it cannot be compiled with -shared")
+		exit(1)
+	end
+
+	-- print("Building "..name)
+
+	if modules[name].is_exe then
+		is_exe = true
+	end
+
+	if modules[name].flags then
+		cflags = cflags.." "..modules[name].flags
+	end
+
+	for i,v in ipairs(modules[name].srcs) do
+		src[#src + 1] = v
+	end
+
+	local deps = modules[name].deps
+	if deps then
+		for i,v in ipairs(deps) do walk(v) end
+	end
 end
 
-if options.driver then
-	add_srcs("main/main_driver.c")
-	options.cuik = true
-	options.tb = true
-end
+walk("mimalloc")
 
-if options.cuik then
-	cflags = cflags.." -I libCuik/include -DMINIZ_NO_MALLOC"
-	add_srcs(
-		"libCuik/lib/libcuik.c",
-		"libCuik/lib/toolchains/msvc.c", "libCuik/lib/toolchains/gnu.c", "libCuik/lib/toolchains/darwin.c"
-	)
-end
-
-if options.tb then
-	cflags = cflags.." -I tb/include -DCUIK_USE_TB"
-	add_srcs("tb/src/libtb.c", "tb/src/x64/x64.c")
+-- whatever the options says to compile, do that
+for k,v in pairs(options) do
+	if v and modules[k] then walk(k) end
 end
 
 -- generate ninja files
@@ -214,22 +234,22 @@ end
 
 local obj_names = table.concat(objs, " ")
 
+local exe_name = "cuik"
+if options.tb then exe_name = "tb" end
+if options.forth then exe_name = "forth" end
+
 -- link or archive
-if options.driver or options.shared then
-	-- link code
-	local ext = options.shared and dll_ext or exe_ext
-	ninja:write([[build cuik]]..ext..[[: link ]]..obj_names.."\n")
-elseif options.cuik then
-	ninja:write([[build cuik]]..lib_ext..[[: lib ]]..obj_names.."\n")
-elseif options.tb then
-	ninja:write([[build tb]]..lib_ext..[[: lib ]]..obj_names.."\n")
+if options.shared then
+	ninja:write([[build ]]..exe_name..dll_ext..[[: link ]]..obj_names.."\n")
+elseif is_exe then
+	ninja:write([[build ]]..exe_name..exe_ext..[[: link ]]..obj_names.."\n")
+else
+	ninja:write([[build ]]..exe_name..lib_ext..[[: lib ]]..obj_names.."\n")
 end
 
 ninja:close()
 
 local res = os.execute("ninja")
-print(res)
-
 if options.test then
 	dofile("tests.lua")
 end

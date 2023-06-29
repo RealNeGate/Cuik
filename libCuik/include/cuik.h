@@ -109,7 +109,7 @@ CUIK_API void cuik_compilation_unit_set_tb_module(CompilationUnit* restrict cu, 
 CUIK_API TB_Module* cuik_compilation_unit_tb_module(CompilationUnit* restrict cu);
 #endif
 
-#include "cuik_perf.h"
+#include <perf.h> // from common
 #include "cuik_lex.h"
 #include "cuik_ast.h"
 #include "cuik_parse.h"

@@ -383,6 +383,24 @@ TB_API void tb_global_set_storage(TB_Module* m, TB_ModuleSection* section, TB_Gl
     mtx_unlock(&m->lock);
 }
 
+TB_API TB_Safepoint* tb_safepoint_get(TB_Function* f, uint32_t relative_ip) {
+    size_t left = 0;
+    size_t right = f->safepoint_count;
+
+    uint32_t ip = relative_ip - f->output->prologue_length;
+
+    const TB_SafepointKey* keys = f->output->safepoints;
+    while (left < right) {
+        size_t middle = (left + right) / 2;
+
+        if (keys[middle].ip == ip) return keys[left].sp;
+        if (keys[middle].ip < ip) left = middle + 1;
+        else right = middle;
+    }
+
+    return NULL;
+}
+
 TB_API TB_ModuleSection* tb_module_get_text(TB_Module* m) {
     return &m->text;
 }

@@ -1,6 +1,6 @@
 #include <common.h>
+#include <perf.h>
 #include <threads.h>
-#include <cuik.h>
 #include <stdarg.h>
 #include <stdatomic.h>
 

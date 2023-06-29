@@ -7,6 +7,11 @@
 
 #include "cuik_prelude.h"
 
+typedef struct {
+    uint16_t length;
+    char data[FILENAME_MAX];
+} Cuik_Path;
+
 typedef struct Cuik_File Cuik_File;
 
 // if case_insensitive is set on a case sensitive and there's multiple files conflicting

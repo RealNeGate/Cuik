@@ -33,6 +33,7 @@ typedef struct IRVal {
             short width;
         } bits;
         struct {
+            TB_Node* parent;
             TB_Node* if_true;
             TB_Node* if_false;
         } phi;

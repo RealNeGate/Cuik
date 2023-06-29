@@ -2,7 +2,6 @@
 // become single header libs maybe even the entire thing.
 #include "tls.c"
 #include "str.c"
-#include "timer.c"
 #include "hash.c"
 #include "path.c"
 

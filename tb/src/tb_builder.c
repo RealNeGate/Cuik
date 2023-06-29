@@ -122,10 +122,8 @@ TB_Node* tb_alloc_node(TB_Function* f, int type, TB_DataType dt, int input_count
         memset(n->extra, 0, n->extra_count);
     }
 
-    if (f->file > 0) {
-        TB_Attrib* a = tb_platform_heap_alloc(sizeof(TB_Attrib));
-        *a = (TB_Attrib) { .type = TB_ATTRIB_LOCATION, .loc = { f->file, f->line } };
-        append_attrib(f, n, a);
+    if (f->line_attrib != NULL) {
+        append_attrib(f, n, f->line_attrib);
     }
 
     return n;
@@ -312,7 +310,9 @@ TB_API TB_Node* tb_inst_poison(TB_Function* f) {
 }
 
 TB_API void tb_inst_set_location(TB_Function* f, TB_FileID file, int line) {
-    f->file = file, f->line = line;
+    TB_Attrib* a = alloc_from_node_arena(f, sizeof(TB_Attrib));
+    *a = (TB_Attrib) { .type = TB_ATTRIB_LOCATION, .loc = { file, line } };
+    f->line_attrib = a;
 }
 
 TB_API TB_Node* tb_inst_local(TB_Function* f, uint32_t size, TB_CharUnits alignment) {
@@ -433,11 +433,20 @@ TB_API TB_Node* tb_inst_get_symbol_address(TB_Function* f, TB_Symbol* target) {
     return n;
 }
 
+TB_API TB_Node* tb_inst_safepoint(TB_Function* f, size_t param_count, TB_Node** params) {
+    TB_Node* n = tb_alloc_node(f, TB_SAFEPOINT, TB_TYPE_CONTROL, param_count, sizeof(TB_NodeSafepoint));
+    memcpy(n->inputs, params, param_count * sizeof(TB_Node*));
+    TB_NODE_SET_EXTRA(n, TB_NodeProj, .index = f->safepoint_count++);
+
+    f->active_control_node = n;
+    return n;
+}
+
 TB_API TB_Node* tb_inst_syscall(TB_Function* f, TB_DataType dt, TB_Node* syscall_num, size_t param_count, TB_Node** params) {
     TB_Node* n = tb_alloc_node(f, TB_SCALL, dt, 2 + param_count, 0);
     n->inputs[0] = f->active_control_node;
     n->inputs[1] = syscall_num;
-    memcpy(n->inputs + 2, params, param_count * sizeof(TB_Node*));
+    memcpy(n->inputs, params, param_count * sizeof(TB_Node*));
 
     f->active_control_node = n;
     return n;
@@ -840,12 +849,25 @@ TB_API TB_Node* tb_inst_cmp_fge(TB_Function* f, TB_Node* a, TB_Node* b) {
     return tb_inst_cmp(f, TB_CMP_FLE, b, a);
 }
 
-TB_API TB_Node* tb_inst_phi2(TB_Function* f, TB_Node* a, TB_Node* b) {
+TB_API TB_Node* tb_inst_phi2(TB_Function* f, TB_Node* region, TB_Node* a, TB_Node* b) {
     tb_assume(TB_DATA_TYPE_EQUALS(a->dt, b->dt));
 
-    TB_Node* n = tb_alloc_node(f, TB_PHI, a->dt, 2, 0);
-    n->inputs[0] = a;
-    n->inputs[1] = b;
+    TB_Node* n = tb_alloc_node(f, TB_PHI, a->dt, 3, 0);
+    n->inputs[0] = region;
+    n->inputs[1] = a;
+    n->inputs[2] = b;
+
+    // add new phi to region (NOT EFFICIENT)
+    TB_NodeRegion* r = TB_NODE_GET_EXTRA(region);
+
+    size_t old_count = r->proj_count++;
+    TB_Node** new_projs = alloc_from_node_arena(f, r->proj_count * sizeof(TB_Node*));
+    if (old_count != 0) {
+        memcpy(new_projs, r->projs, old_count * sizeof(TB_Node*));
+    }
+
+    new_projs[old_count] = n;
+    r->projs = new_projs;
     return n;
 }
 
@@ -893,34 +915,37 @@ TB_API void tb_inst_goto(TB_Function* f, TB_Node* target) {
 }
 
 TB_API void tb_inst_if(TB_Function* f, TB_Node* cond, TB_Node* if_true, TB_Node* if_false) {
+    #if 0
     if (cond->type == TB_INTEGER_CONST && TB_NODE_GET_EXTRA_T(cond, TB_NodeInt)->num_words == 1) {
         // peephole
         TB_NodeInt* i = TB_NODE_GET_EXTRA(cond);
         tb_inst_goto(f, i->words[0] ? if_true : if_false);
-    } else {
-        // generate control projections
-        TB_Node* n = tb_alloc_node(f, TB_BRANCH, TB_TYPE_TUPLE, 2, sizeof(TB_NodeBranch) + sizeof(int64_t));
-        n->inputs[0] = f->active_control_node; // control edge
-        n->inputs[1] = cond;
-
-        FOREACH_N(i, 0, 2) {
-            TB_Node* target = i ? if_false : if_true;
-
-            TB_Node* proj = tb_alloc_node(f, TB_PROJ, TB_TYPE_CONTROL, 1, sizeof(TB_NodeProj));
-            proj->inputs[0] = n;
-            TB_NODE_SET_EXTRA(proj, TB_NodeProj, .index = i);
-
-            add_region_pred(f, target, proj);
-        }
-
-        TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
-        br->keys[0] = 0;
-
-        TB_Node** succ = add_successors(f, n, 2);
-        succ[0] = if_true;
-        succ[1] = if_false;
-        f->active_control_node = NULL;
+        return;
     }
+    #endif
+
+    // generate control projections
+    TB_Node* n = tb_alloc_node(f, TB_BRANCH, TB_TYPE_TUPLE, 2, sizeof(TB_NodeBranch) + sizeof(int64_t));
+    n->inputs[0] = f->active_control_node; // control edge
+    n->inputs[1] = cond;
+
+    FOREACH_N(i, 0, 2) {
+        TB_Node* target = i ? if_false : if_true;
+
+        TB_Node* proj = tb_alloc_node(f, TB_PROJ, TB_TYPE_CONTROL, 1, sizeof(TB_NodeProj));
+        proj->inputs[0] = n;
+        TB_NODE_SET_EXTRA(proj, TB_NodeProj, .index = i);
+
+        add_region_pred(f, target, proj);
+    }
+
+    TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
+    br->keys[0] = 0;
+
+    TB_Node** succ = add_successors(f, n, 2);
+    succ[0] = if_true;
+    succ[1] = if_false;
+    f->active_control_node = NULL;
 }
 
 TB_API void tb_inst_branch(TB_Function* f, TB_DataType dt, TB_Node* key, TB_Node* default_label, size_t entry_count, const TB_SwitchEntry* entries) {

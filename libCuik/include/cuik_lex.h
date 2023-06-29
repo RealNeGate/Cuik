@@ -1,5 +1,6 @@
 #pragma once
 #include "cuik_prelude.h"
+#include "cuik_fs.h"
 
 #ifdef _WIN32
 #define CUIK_PATH_SLASH_SEP '\\'
@@ -44,11 +45,6 @@ typedef struct {
     uint16_t length;
     char data[];
 } Cuik_PathFlex;
-
-typedef struct {
-    uint16_t length;
-    char data[FILENAME_MAX];
-} Cuik_Path;
 
 typedef enum Cuik_ExtensionFlags {
     CUIK_EXTENSIONS_MSVC  = (1u << 0u),

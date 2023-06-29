@@ -1,4 +1,5 @@
 #include <tb_x64.h>
+#include <tb_coff.h>
 
 int run_objdump(int argc, const char** argv) {
     #ifdef _WIN32
@@ -18,17 +19,20 @@ int run_objdump(int argc, const char** argv) {
         return EXIT_FAILURE;
     }
 
-    TB_ObjectFile* file = tb_object_parse_coff((TB_Slice){ fm.size, fm.data });
-    if (file == NULL) {
+    TB_COFF_Parser parser = { { strlen(argv[0]), (const uint8_t*) argv[0] }, { fm.size, fm.data } };
+    if (!tb_coff_parse_init(&parser)) {
         // TODO(NeGate): make better errors
         fprintf(stderr, "\x1b[31merror\x1b[0m: '%s' was not a valid COFF object!\n", argv[0]);
         return EXIT_FAILURE;
     }
 
+    TB_ObjectSection* sections = cuik_malloc(parser.section_count * sizeof(TB_ObjectSection));
+
     printf("SECTIONS:\n");
     printf("Idx Name          Size     Address          Type\n");
-    for (size_t i = 0; i < file->section_count; i++) {
-        TB_ObjectSection* s = &file->sections[i];
+    for (size_t i = 0; i < parser.section_count; i++) {
+        TB_ObjectSection* restrict s = &sections[i];
+        tb_coff_parse_section(&parser, i, s);
 
         char name[9];
         int len = s->name.length > 8 ? 8 : s->name.length;
@@ -59,12 +63,13 @@ int run_objdump(int argc, const char** argv) {
 
     printf("\nSYMBOLS:\n");
     printf("Index Value    Section  Storage   Name\n");
-    for (size_t i = 0; i < file->symbol_count; i++) {
-        TB_ObjectSymbol* s = &file->symbols[i];
+    for (size_t i = 0; i < parser.symbol_count;) {
+        TB_ObjectSymbol s;
+        i += tb_coff_parse_symbol(&parser, i, &s);
 
-        printf("%5u %08x ", s->ordinal, s->value);
-        if (s->section_num > 0) {
-            TB_ObjectSection* sec = &file->sections[s->section_num - 1];
+        printf("%5u %08x ", s.ordinal, s.value);
+        if (s.section_num > 0) {
+            TB_ObjectSection* sec = &sections[s.section_num - 1];
 
             char name[9];
             int len = sec->name.length > 8 ? 8 : sec->name.length;
@@ -76,20 +81,20 @@ int run_objdump(int argc, const char** argv) {
             printf("*none*   ");
         }
 
-        switch (s->type) {
+        switch (s.type) {
             case TB_OBJECT_SYMBOL_EXTERN:      printf("EXTERN  "); break;
             case TB_OBJECT_SYMBOL_WEAK_EXTERN: printf("WEAK    "); break;
             case TB_OBJECT_SYMBOL_STATIC:      printf("STATIC  "); break;
             default: printf("???     "); break;
         }
-        printf("| %.*s\n", (int) s->name.length, s->name.data);
+        printf("| %.*s\n", (int) s.name.length, s.name.data);
     }
 
     printf("\n");
 
     // print disassembly
-    for (size_t i = 0; i < file->section_count; i++) {
-        TB_ObjectSection* s = &file->sections[i];
+    for (size_t i = 0; i < parser.section_count; i++) {
+        TB_ObjectSection* s = &sections[i];
 
         size_t size = s->raw_data.length;
         if (size == 0) {
@@ -98,7 +103,7 @@ int run_objdump(int argc, const char** argv) {
         }
 
         const uint8_t* data = s->raw_data.data;
-        if (s->flags & TB_COFF_SECTION_CODE) {
+        if (0) { // s->flags & TB_COFF_SECTION_CODE) {
             // dump assembly
             size_t current = 0;
             while (current < size) {

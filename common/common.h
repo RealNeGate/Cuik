@@ -66,6 +66,8 @@ do {                  \
     b = temp;         \
 } while (0)
 
+void  cuik_init_terminal(void);
+
 void  tls_init(void);
 void  tls_reset(void);
 void* tls_push(size_t size);
