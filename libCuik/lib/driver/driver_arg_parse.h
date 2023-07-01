@@ -256,20 +256,24 @@ CUIK_API bool cuik_args_to_driver(Cuik_DriverArgs* comp_args, Cuik_Arguments* re
 
     Cuik_Arg* threads = args->_[ARG_THREADS];
     if (threads) {
-        #ifdef CUIK_ALLOW_THREADS
-        #ifdef _WIN32
-        SYSTEM_INFO sysinfo;
-        GetSystemInfo(&sysinfo);
+        if (threads->value != arg_is_set) {
+            comp_args->threads = atoi(threads->value);
+        } else {
+            #ifdef CUIK_ALLOW_THREADS
+            #ifdef _WIN32
+            SYSTEM_INFO sysinfo;
+            GetSystemInfo(&sysinfo);
 
-        int n = sysinfo.dwNumberOfProcessors - 1;
-        comp_args->threads = (n < 1 ? 1 : n);
-        #else
-        assert(0 && "TODO(NeGate): implement core count detection on this platform");
-        comp_args->threads = 1;
-        #endif
-        #else
-        printf("warning: Cuik was not built with threading support, this option will be ignored.\n");
-        #endif
+            int n = sysinfo.dwNumberOfProcessors - 1;
+            comp_args->threads = (n < 1 ? 1 : n);
+            #else
+            assert(0 && "TODO(NeGate): implement core count detection on this platform");
+            comp_args->threads = 1;
+            #endif
+            #else
+            printf("warning: Cuik was not built with threading support, this option will be ignored.\n");
+            #endif
+        }
     }
 
     #ifdef CUIK_USE_TB

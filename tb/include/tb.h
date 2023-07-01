@@ -863,7 +863,10 @@ TB_API void tb_function_set_prototype(TB_Function* f, TB_FunctionPrototype* p);
 TB_API TB_FunctionPrototype* tb_function_get_prototype(TB_Function* f);
 
 TB_API void tb_function_print(TB_Function* f, TB_PrintCallback callback, void* user_data);
-TB_API void tb_function_free(TB_Function* f);
+
+// this is a memory optimization for when you're done with IR but still need the
+// function.
+TB_API void tb_function_drop_ir(TB_Function* f);
 
 TB_API void tb_inst_set_control(TB_Function* f, TB_Node* control);
 TB_API TB_Node* tb_inst_get_control(TB_Function* f);

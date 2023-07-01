@@ -51,7 +51,7 @@ for i = 1, #arg do
 end
 
 local ldflags = ""
-local cflags = " -g -msse4 -I common -Wall -Werror -Wno-unused -Wno-deprecated -DTB_USE_MIMALLOC -DCUIK_USE_MIMALLOC -I mimalloc/include -DCUIK_ALLOW_THREADS"
+local cflags = " -g -msse4 -I common -Wall -Werror -Wno-unused -Wno-deprecated -DTB_USE_MIMALLOC -DMI_SKIP_COLLECT_ON_EXIT -DCUIK_USE_MIMALLOC -I mimalloc/include -DCUIK_ALLOW_THREADS"
 
 if options.gcc then
 	cflags = cflags.." -Wno-enum-compare -Wno-array-bounds"

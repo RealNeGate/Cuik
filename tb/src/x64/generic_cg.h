@@ -647,7 +647,8 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
     //   fixed and which need allocation. For now regalloc is handled
     //   immediately but in theory it could be delayed until all selection
     //   is done.
-    CUIK_TIMED_BLOCK("isel") FOREACH_REVERSE_N(i, 0, ctx.order.count) {
+    // CUIK_TIMED_BLOCK("isel")
+    FOREACH_REVERSE_N(i, 0, ctx.order.count) {
         TB_Node* bb = ctx.order.traversal[i];
         nl_map_put(ctx.emit.labels, bb, 0);
 
@@ -662,15 +663,18 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
     }
 
     DefIndex* sorted = NULL;
-    CUIK_TIMED_BLOCK("build intervals") {
+    // CUIK_TIMED_BLOCK("build intervals")
+    {
         sorted = liveness(&ctx, f);
     }
 
-    CUIK_TIMED_BLOCK("linear scan") {
+    // CUIK_TIMED_BLOCK("linear scan")
+    {
         reg_alloc(&ctx, f, sorted);
     }
 
-    CUIK_TIMED_BLOCK("emit sequences") {
+    // CUIK_TIMED_BLOCK("emit sequences")
+    {
         // Arch-specific: convert instruction buffer into actual instructions
         emit_code(&ctx);
     }

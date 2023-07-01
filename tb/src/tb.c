@@ -141,7 +141,7 @@ TB_API bool tb_module_compile_function(TB_Module* m, TB_Function* f, TB_ISelMode
         isel_mode = TB_ISEL_FAST;
     }
 
-    CUIK_TIMED_BLOCK_ARGS("CompileFunc", f->super.name) {
+    CUIK_TIMED_BLOCK_ARGS("compile func", f->super.name) {
         uint8_t* local_buffer = &region->data[region->size];
         size_t local_capacity = region->capacity - region->size;
 
@@ -154,7 +154,7 @@ TB_API bool tb_module_compile_function(TB_Module* m, TB_Function* f, TB_ISelMode
     }
 
     // prologue & epilogue insertion
-    {
+    CUIK_TIMED_BLOCK_ARGS("pro & epi insertion", f->super.name) {
         uint8_t buffer[PROEPI_BUFFER];
         uint8_t* base = &region->data[region->size];
         size_t body_size = func_out->code_size;
@@ -183,6 +183,16 @@ TB_API bool tb_module_compile_function(TB_Module* m, TB_Function* f, TB_ISelMode
     return true;
 }
 
+TB_API void tb_function_drop_ir(TB_Function* f) {
+    TB_NodePage* p = f->head;
+    while (p) {
+        TB_NodePage* next = p->next;
+        tb_platform_vfree(p, 4096);
+        p = next;
+    }
+    f->head = f->tail = NULL;
+}
+
 TB_API size_t tb_module_get_function_count(TB_Module* m) {
     return m->symbol_count[TB_SYMBOL_FUNCTION];
 }
@@ -191,15 +201,7 @@ TB_API void tb_module_kill_symbol(TB_Module* m, TB_Symbol* sym) {
     switch (sym->tag) {
         case TB_SYMBOL_TOMBSTONE: break;
         case TB_SYMBOL_FUNCTION: {
-            TB_Function* f = (TB_Function*) sym;
-
-            // free node arena
-            TB_NodePage* p = f->head;
-            while (p) {
-                TB_NodePage* next = p->next;
-                tb_platform_vfree(p, 4096);
-                p = next;
-            }
+            tb_function_drop_ir((TB_Function*) sym);
             break;
         }
         case TB_SYMBOL_EXTERNAL: break;
@@ -561,10 +563,11 @@ void tb_emit_symbol_patch(TB_Module* m, TB_Function* source, const TB_Symbol* ta
 
     mtx_lock(&m->lock);
     TB_SymbolPatch* p = ARENA_ALLOC(&m->arena, TB_SymbolPatch);
+    mtx_unlock(&m->lock);
+
     *p = (TB_SymbolPatch){ .prev = source->last_patch, .source = source, .target = target, .pos = pos };
     source->last_patch = p;
     source->patch_count += 1;
-    mtx_unlock(&m->lock);
 }
 
 // EMITTER CODE:

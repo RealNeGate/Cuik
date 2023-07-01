@@ -132,6 +132,62 @@ static void sys_invoke(BuildStepInfo* info) {
 }
 
 #ifdef CUIK_USE_TB
+enum { GC_WORKLIST_EXP = 12 };
+
+static _Atomic uint32_t gc_worklist_queue;
+static void* gc_worklist[1u << GC_WORKLIST_EXP];
+
+static void queue_push(uint32_t exp, _Atomic uint32_t* queue, void** elems, void* val) {
+    uint32_t mask = (1u << exp) - 1;
+
+    for (;;) {
+        // might wanna change the memory order on this atomic op
+        uint32_t r = *queue;
+
+        uint32_t head = r & mask;
+        uint32_t tail = (r >> 16) & mask;
+        uint32_t next = (head + 1u) & mask;
+        if (r & 0x8000) { // avoid overflow on commit
+            *queue &= ~0x8000;
+        }
+
+        // it don't fit...
+        if (next != tail) {
+            elems[head] = val;
+
+            // commit
+            *queue += 1;
+            return;
+        }
+
+        log_warn("the queue is choked up!");
+    }
+}
+
+static void* queue_pop(uint32_t exp, _Atomic uint32_t* queue, void** elems) {
+    uint32_t mask = (1u << exp) - 1;
+
+    uint32_t r;
+    ptrdiff_t elem = -1;
+    void* tmp;
+
+    do {
+        r = *queue;
+        uint32_t head = r & mask;
+        uint32_t tail = (r >> 16) & mask;
+
+        if (head == tail) {
+            // take a nap if we ain't find shit
+            return NULL;
+        }
+
+        // copy out before we commit
+        tmp = elems[tail];
+    } while (!atomic_compare_exchange_strong(queue, &r, r + 0x10000));
+
+    return tmp;
+}
+
 static void irgen(Cuik_IThreadpool* restrict thread_pool, Cuik_DriverArgs* restrict args, CompilationUnit* restrict cu, TB_Module* mod);
 
 static bool write_file(TB_Exports* exports, int i, const char* path) {
@@ -273,6 +329,16 @@ static void cc_invoke(BuildStepInfo* restrict info) {
                 cuiksched_per_function(s->tp, mod, &a, apply_func);
             }
         }
+
+        // debug builds will compile functions right after IRgen
+        // to save on total memory usage, this code path is for
+        // optimized code since it needs to know what neighbors it's
+        // got for IPO.
+        if (!args->ir) {
+            CUIK_TIMED_BLOCK("CodeGen") {
+                cuiksched_per_function(s->tp, mod, NULL, compile_func);
+            }
+        }
     }
 
     if (args->emit_ir) {
@@ -281,10 +347,6 @@ static void cc_invoke(BuildStepInfo* restrict info) {
                 tb_function_print(f, tb_default_print_callback, stdout);
                 printf("\n\n");
             }
-        }
-    } else if (!args->ir) {
-        CUIK_TIMED_BLOCK("CodeGen") {
-            cuiksched_per_function(s->tp, mod, NULL, compile_func);
         }
     }
     #endif
@@ -740,24 +802,26 @@ static void irgen_job(void* arg) {
     IRGenTask task = *((IRGenTask*) arg);
     TB_Module* mod = task.mod;
 
-    CUIK_TIMED_BLOCK("IRGen") {
-        size_t i = 0;
-        while (i < task.count) {
-            // skip all the typedefs
-            if (task.stmts[i]->decl.attrs.is_typedef || !task.stmts[i]->decl.attrs.is_used) {
-                i += 1;
-                continue;
-            }
+    bool no_opt = task.opt_level == 0;
+    for (size_t i = 0; i < task.count; i++) {
+        // skip all the typedefs
+        if (task.stmts[i]->decl.attrs.is_typedef || !task.stmts[i]->decl.attrs.is_used) {
+            continue;
+        }
 
-            const char* name = task.stmts[i]->decl.name;
-            if (name == NULL) {
-                // these are untracked in the gen ir because they don't map to named IR stuff
-                cuikcg_top_level(task.tu, mod, task.stmts[i]);
-            } else {
-                cuikcg_top_level(task.tu, mod, task.stmts[i]);
-            }
+        const char* name = task.stmts[i]->decl.name;
+        TB_Symbol* s;
+        CUIK_TIMED_BLOCK("IRGen") {
+            s = cuikcg_top_level(task.tu, mod, task.stmts[i]);
+        }
 
-            i += 1;
+        // unoptimized builds can just compile functions without
+        // the rest of the functions being ready.
+        if (no_opt && s->tag == TB_SYMBOL_FUNCTION) {
+            tb_module_compile_function(mod, (TB_Function*) s, TB_ISEL_FAST);
+
+            // push to GC thread
+            queue_push(GC_WORKLIST_EXP, &gc_worklist_queue, (void**) &gc_worklist[0], s);
         }
     }
 
@@ -767,68 +831,73 @@ static void irgen_job(void* arg) {
 }
 
 static void irgen(Cuik_IThreadpool* restrict thread_pool, Cuik_DriverArgs* restrict args, CompilationUnit* restrict cu, TB_Module* mod) {
-    CUIK_TIMED_BLOCK("IRGen") {
-        if (thread_pool != NULL) {
-            #if CUIK_ALLOW_THREADS
-            size_t task_capacity = 0;
-            CUIK_FOR_EACH_TU(tu, cu) {
-                if (cuik_get_entrypoint_status(tu) == CUIK_ENTRYPOINT_WINMAIN && args->subsystem == TB_WIN_SUBSYSTEM_UNKNOWN) {
-                    args->subsystem = TB_WIN_SUBSYSTEM_WINDOWS;
-                }
-
-                size_t c = cuik_num_of_top_level_stmts(tu);
-                task_capacity += (c + (IRGEN_TASK_BATCH_SIZE - 1)) / IRGEN_TASK_BATCH_SIZE;
+    if (thread_pool != NULL) {
+        #if CUIK_ALLOW_THREADS
+        size_t task_capacity = 0;
+        CUIK_FOR_EACH_TU(tu, cu) {
+            if (cuik_get_entrypoint_status(tu) == CUIK_ENTRYPOINT_WINMAIN && args->subsystem == TB_WIN_SUBSYSTEM_UNKNOWN) {
+                args->subsystem = TB_WIN_SUBSYSTEM_WINDOWS;
             }
 
-            IRGenTask* tasks = cuik_malloc(task_capacity * sizeof(IRGenTask));
-            atomic_size_t tasks_remaining = task_capacity;
+            size_t c = cuik_num_of_top_level_stmts(tu);
+            task_capacity += (c + (IRGEN_TASK_BATCH_SIZE - 1)) / IRGEN_TASK_BATCH_SIZE;
+        }
 
-            size_t task_count = 0;
-            CUIK_FOR_EACH_TU(tu, cu) {
-                size_t top_level_count = cuik_num_of_top_level_stmts(tu);
-                Stmt** top_level = cuik_get_top_level_stmts(tu);
-                for (size_t i = 0; i < top_level_count; i += 8192) {
-                    size_t end = i + 8192;
-                    if (end >= top_level_count) end = top_level_count;
+        IRGenTask* tasks = cuik_malloc(task_capacity * sizeof(IRGenTask));
+        atomic_size_t tasks_remaining = task_capacity;
 
-                    assert(task_count < task_capacity);
-                    IRGenTask task = {
-                        .mod = mod,
-                        .tu = tu,
-                        .opt_level = args->opt_level,
-                        .stmts = &top_level[i],
-                        .count = end - i,
-                        .remaining = &tasks_remaining
-                    };
+        size_t task_count = 0;
+        CUIK_FOR_EACH_TU(tu, cu) {
+            size_t top_level_count = cuik_num_of_top_level_stmts(tu);
+            Stmt** top_level = cuik_get_top_level_stmts(tu);
+            for (size_t i = 0; i < top_level_count; i += 8192) {
+                size_t end = i + 8192;
+                if (end >= top_level_count) end = top_level_count;
 
-                    CUIK_CALL(thread_pool, submit, irgen_job, sizeof(task), &task);
-                }
-            }
-
-            // "highway robbery on steve jobs" job stealing amirite...
-            while (atomic_load(&tasks_remaining) != 0) {
-                CUIK_CALL(thread_pool, work_one_job);
-            }
-            #else
-            fprintf(stderr, "Please compile with -DCUIK_ALLOW_THREADS if you wanna spin up threads");
-            abort();
-            #endif
-        } else {
-            CUIK_FOR_EACH_TU(tu, cu) {
-                if (cuik_get_entrypoint_status(tu) == CUIK_ENTRYPOINT_WINMAIN && args->subsystem == TB_WIN_SUBSYSTEM_UNKNOWN) {
-                    args->subsystem = TB_WIN_SUBSYSTEM_WINDOWS;
-                }
-
-                size_t c = cuik_num_of_top_level_stmts(tu);
+                assert(task_count < task_capacity);
                 IRGenTask task = {
                     .mod = mod,
                     .tu = tu,
-                    .stmts = cuik_get_top_level_stmts(tu),
-                    .count = c
+                    .opt_level = args->opt_level,
+                    .stmts = &top_level[i],
+                    .count = end - i,
+                    .remaining = &tasks_remaining
                 };
 
-                irgen_job(&task);
+                CUIK_CALL(thread_pool, submit, irgen_job, sizeof(task), &task);
             }
+        }
+
+        // while the other threads work we chunk at collecting garbage
+        while (atomic_load(&tasks_remaining) != 0) {
+            thrd_yield();
+
+            TB_Function* f;
+            while ((f = queue_pop(GC_WORKLIST_EXP, &gc_worklist_queue, (void**) &gc_worklist[0])) != NULL) {
+                CUIK_TIMED_BLOCK("GC phase") {
+                    tb_function_drop_ir(f);
+                }
+            }
+        }
+        #else
+        fprintf(stderr, "Please compile with -DCUIK_ALLOW_THREADS if you wanna spin up threads");
+        abort();
+        #endif
+    } else {
+        CUIK_FOR_EACH_TU(tu, cu) {
+            if (cuik_get_entrypoint_status(tu) == CUIK_ENTRYPOINT_WINMAIN && args->subsystem == TB_WIN_SUBSYSTEM_UNKNOWN) {
+                args->subsystem = TB_WIN_SUBSYSTEM_WINDOWS;
+            }
+
+            size_t c = cuik_num_of_top_level_stmts(tu);
+            IRGenTask task = {
+                .mod = mod,
+                .tu = tu,
+                .stmts = cuik_get_top_level_stmts(tu),
+                .count = c
+            };
+
+            irgen_job(&task);
         }
     }
 }

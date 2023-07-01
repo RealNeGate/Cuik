@@ -44,7 +44,6 @@ void cuiksched_per_function(Cuik_IThreadpool* restrict thread_pool, TB_Module* m
         }
 
         futex_wait_eq(&remaining, 0);
-        log_debug("Done!");
         #else
         fprintf(stderr, "Please compile with -DCUIK_ALLOW_THREADS if you wanna spin up threads");
         abort();
