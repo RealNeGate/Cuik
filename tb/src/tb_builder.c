@@ -78,7 +78,7 @@ static void* alloc_from_node_arena(TB_Function* f, size_t necessary_size) {
     if (f->tail == NULL || f->tail->used + necessary_size >= f->tail->cap) {
         size_t cap = necessary_size < TB_NODE_PAGE_GENERAL_CAP ? TB_NODE_PAGE_GENERAL_CAP : tb_next_pow2(necessary_size);
 
-        TB_NodePage* page = tb_platform_heap_alloc(sizeof(TB_NodePage) + cap);
+        TB_NodePage* page = tb_platform_valloc(sizeof(TB_NodePage) + cap);
         page->next = NULL;
         page->used = necessary_size;
         page->cap  = cap;
@@ -95,6 +95,7 @@ static void* alloc_from_node_arena(TB_Function* f, size_t necessary_size) {
         f->tail->used += necessary_size;
         return dst;
     }
+
     // return tb_platform_heap_alloc(necessary_size);
 }
 

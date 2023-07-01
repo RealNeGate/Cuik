@@ -126,9 +126,14 @@ TB_API bool tb_module_compile_function(TB_Module* m, TB_Function* f, TB_ISelMode
     assert(id < TB_MAX_THREADS);
 
     TB_CodeRegion* region = get_or_allocate_code_region(m, id);
-    mtx_lock(&m->lock);
-    TB_FunctionOutput* func_out = ARENA_ALLOC(&m->arena, TB_FunctionOutput);
-    mtx_unlock(&m->lock);
+
+    size_t align_mask = _Alignof(TB_FunctionOutput) - 1;
+    region->size = (region->size + align_mask) & ~align_mask;
+    assert(region->size + sizeof(TB_FunctionOutput) < region->capacity);
+
+    // allocate the TB_FunctionOutput in the code region
+    TB_FunctionOutput* func_out = (TB_FunctionOutput*) &region->data[region->size];
+    region->size += sizeof(TB_FunctionOutput);
 
     if (isel_mode == TB_ISEL_COMPLEX && code_gen->complex_path == NULL) {
         // TODO(NeGate): we need better logging...
@@ -144,6 +149,7 @@ TB_API bool tb_module_compile_function(TB_Module* m, TB_Function* f, TB_ISelMode
             *func_out = code_gen->complex_path(f, &m->features, local_buffer, local_capacity);
         } else {
             *func_out = code_gen->fast_path(f, &m->features, local_buffer, local_capacity);
+            assert(func_out->code);
         }
     }
 
@@ -191,7 +197,7 @@ TB_API void tb_module_kill_symbol(TB_Module* m, TB_Symbol* sym) {
             TB_NodePage* p = f->head;
             while (p) {
                 TB_NodePage* next = p->next;
-                tb_platform_heap_free(p);
+                tb_platform_vfree(p, 4096);
                 p = next;
             }
             break;
@@ -553,10 +559,12 @@ void tb_emit_symbol_patch(TB_Module* m, TB_Function* source, const TB_Symbol* ta
     assert(id < TB_MAX_THREADS);
     assert(pos == (uint32_t)pos);
 
+    mtx_lock(&m->lock);
     TB_SymbolPatch* p = ARENA_ALLOC(&m->arena, TB_SymbolPatch);
     *p = (TB_SymbolPatch){ .prev = source->last_patch, .source = source, .target = target, .pos = pos };
     source->last_patch = p;
     source->patch_count += 1;
+    mtx_unlock(&m->lock);
 }
 
 // EMITTER CODE:

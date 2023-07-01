@@ -39,6 +39,73 @@ static void spall_die(void) {
 }
 #endif
 
+static void test_diag(void) {
+    // printf("\x1b[31merror\x1b[0m");
+
+    typedef struct {
+        const char* message;
+        const char* inner;
+        const char* tooltip;
+        SourceLoc loc;
+    } ErrorEntry;
+
+    static ErrorEntry entries[2] = {
+        {
+            "I can't do subscript [] with this value, it's not an array or pointer:",
+            "apples[16]\x1b[0m",
+            NULL,
+            { .raw = 1 },
+        },
+        {
+            "This is a struct so you can access it via the dot operator.",
+            "apples.some_member",
+            "press ENTER to view the options"
+        }
+    };
+
+    #define GRAY_TEXT  "\x1b[242m"
+    #define GREEN_TEXT "\x1b[32m"
+    #define RESET_TEXT "\x1b[0m"
+
+    int selected = 0;
+    for (;;) {
+
+        int line_count = 0;
+        printf("\x1b[31mERROR\x1b[0m: ");
+        for (int i = 0; i < 2; i++) {
+            printf("%s\n\n", entries[i].message);
+            line_count += 2;
+
+            const char* color = selected == i ? GREEN_TEXT "<--" RESET_TEXT : "";
+            if (entries[i].loc.raw != 0) {
+                printf("%4d| %s" RESET_TEXT " %s\n", 11, entries[i].inner, color);
+                printf("      " GREEN_TEXT "^~~~~~" RESET_TEXT "\n");
+                line_count += 2;
+            } else {
+                printf("      %s %s\n", entries[i].inner, color);
+                line_count += 1;
+            }
+
+            if (entries[i].tooltip) {
+                printf("      " GRAY_TEXT "%s" RESET_TEXT "\n", entries[i].tooltip);
+                line_count += 1;
+            }
+        }
+
+        int ch = getchar();
+        if (ch == 'w') {
+            if (selected > 0) selected -= 1;
+        } else if (ch == 's') {
+            if (selected < 1) selected += 1;
+        }
+
+        // redraw
+        printf("\x1b[%dF\x1b[0J", line_count);
+    }
+
+    __debugbreak();
+}
+
 int main(int argc, const char** argv) {
     #ifdef CUIK_USE_SPALL_AUTO
     spall_auto_init("perf.spall");
@@ -59,6 +126,7 @@ int main(int argc, const char** argv) {
     }
 
     log_set_level(LOG_DEBUG);
+    // test_diag();
 
     Cuik_DriverArgs args = {
         .version   = CUIK_VERSION_C23,
@@ -128,7 +196,7 @@ int main(int argc, const char** argv) {
     if (args.threads > 1) {
         if (args.verbose) printf("Starting with %d threads...\n", args.threads);
 
-        tp = cuik_threadpool_create(args.threads - 1, 4096);
+        tp = cuik_threadpool_create(args.threads - 1);
     }
     #endif
 

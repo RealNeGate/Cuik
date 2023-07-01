@@ -514,15 +514,16 @@ CompilationUnit* cuik_driver_ld_get_cu(Cuik_BuildStep* s) {
     return s->ld.cu;
 }
 
-static void step_submit(Cuik_BuildStep* s, Cuik_IThreadpool* tp, mtx_t* mutex, bool root) {
+static void step_submit(Cuik_BuildStep* s, Cuik_IThreadpool* tp, mtx_t* mutex, bool has_siblings) {
     assert(!s->visited);
     s->visited = true;
     s->tp = tp;
 
     // submit dependencies
-    if (s->dep_count > 0) {
+    size_t dep_count = s->dep_count;
+    if (dep_count > 0) {
         for (size_t i = 0; i < s->dep_count; i++) {
-            step_submit(s->deps[i], tp, mutex, false);
+            step_submit(s->deps[i], tp, mutex, dep_count > 1);
         }
 
         // once dependencies are complete, we can invoke the step
@@ -537,11 +538,11 @@ static void step_submit(Cuik_BuildStep* s, Cuik_IThreadpool* tp, mtx_t* mutex, b
 
     BuildStepInfo info = { s, mutex };
     CUIK_TIMED_BLOCK("task invoke") {
-        if (tp != NULL && !root) {
+        if (tp != NULL && has_siblings) {
             log_debug("Punting build step %p to another thread", s);
             CUIK_CALL(tp, submit, (Cuik_TaskFn) s->invoke, sizeof(info), &info);
         } else {
-            // root is the final step so we just run it synchronously
+            // we're an only child, there's no reason to multithread
             s->invoke(&info);
         }
     }
@@ -551,7 +552,7 @@ bool cuik_step_run(Cuik_BuildStep* s, Cuik_IThreadpool* tp) {
     // create temporary mutex for locked operations (usually logging)
     mtx_t m;
     mtx_init(&m, mtx_plain);
-    step_submit(s, tp, &m, true);
+    step_submit(s, tp, &m, false);
     mtx_destroy(&m);
 
     return s->errors == 0;
@@ -632,27 +633,27 @@ void cuik_free_driver_args(Cuik_DriverArgs* args) {
 }
 
 static bool run_cpp(Cuik_CPP* cpp, const Cuik_DriverArgs* args, bool should_finalize) {
-    CUIK_TIMED_BLOCK("cuik_set_standard_defines") {
+    CUIK_TIMED_BLOCK("set CPP options") {
         cuik_set_standard_defines(cpp, args);
-    }
 
-    dyn_array_for(i, args->includes) {
-        cuikpp_add_include_directory(cpp, false, args->includes[i]->data);
-    }
+        dyn_array_for(i, args->includes) {
+            cuikpp_add_include_directory(cpp, false, args->includes[i]->data);
+        }
 
-    dyn_array_for(i, args->defines) {
-        const char* equal = strchr(args->defines[i], '=');
+        dyn_array_for(i, args->defines) {
+            const char* equal = strchr(args->defines[i], '=');
 
-        if (equal == NULL) {
-            cuikpp_define_empty_cstr(cpp, args->defines[i]);
-        } else {
-            cuikpp_define(
-                cpp,
-                // before equals
-                equal - args->defines[i], args->defines[i],
-                // after equals
-                strlen(equal + 1), equal + 1
-            );
+            if (equal == NULL) {
+                cuikpp_define_empty_cstr(cpp, args->defines[i]);
+            } else {
+                cuikpp_define(
+                    cpp,
+                    // before equals
+                    equal - args->defines[i], args->defines[i],
+                    // after equals
+                    strlen(equal + 1), equal + 1
+                );
+            }
         }
     }
 
@@ -753,9 +754,7 @@ static void irgen_job(void* arg) {
                 // these are untracked in the gen ir because they don't map to named IR stuff
                 cuikcg_top_level(task.tu, mod, task.stmts[i]);
             } else {
-                CUIK_TIMED_BLOCK_ARGS("FunctionIR", name) {
-                    cuikcg_top_level(task.tu, mod, task.stmts[i]);
-                }
+                cuikcg_top_level(task.tu, mod, task.stmts[i]);
             }
 
             i += 1;

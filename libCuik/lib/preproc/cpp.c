@@ -127,8 +127,9 @@ static TokenArray convert_to_token_list(Cuik_CPP* restrict c, uint32_t file_id, 
         .current = (unsigned char*) data,
     };
 
+    size_t expected = 32 + ((length + 2) / 3);
     TokenArray list = { 0 };
-    list.tokens = dyn_array_create(Token, 32 + ((length + 7) / 8));
+    list.tokens = dyn_array_create(Token, expected);
 
     for (;;) {
         Token t = lexer_read(&l);
@@ -240,7 +241,6 @@ Cuik_CPP* cuikpp_make(const Cuik_CPPDesc* desc) {
 
     ctx->tokens.diag = cuikdg_make(desc->diag, desc->diag_data);
     ctx->tokens.filepath = filepath;
-    ctx->tokens.list.tokens = dyn_array_create(Token, 4096);
     ctx->tokens.invokes = dyn_array_create(MacroInvoke, 4096);
     ctx->tokens.files = dyn_array_create(Cuik_FileEntry, 256);
 
@@ -506,9 +506,11 @@ Cuikpp_Status cuikpp_run(Cuik_CPP* restrict ctx) {
     #endif
 
     Cuik_FileResult main_file;
-    if (!ctx->fs(ctx->user_data, slot->filepath, &main_file, ctx->case_insensitive)) {
-        fprintf(stderr, "\x1b[31merror\x1b[0m: file \"%s\" doesn't exist.\n", slot->filepath->data);
-        return CUIKPP_ERROR;
+    CUIK_TIMED_BLOCK("load main file") {
+        if (!ctx->fs(ctx->user_data, slot->filepath, &main_file, ctx->case_insensitive)) {
+            fprintf(stderr, "\x1b[31merror\x1b[0m: file \"%s\" doesn't exist.\n", slot->filepath->data);
+            return CUIKPP_ERROR;
+        }
     }
 
     #if CUIK__CPP_STATS
@@ -518,7 +520,9 @@ Cuikpp_Status cuikpp_run(Cuik_CPP* restrict ctx) {
 
     // initialize the lexer in the stack slot & record the file entry
     slot->file_id = dyn_array_length(ctx->tokens.files);
-    slot->tokens = convert_to_token_list(ctx, dyn_array_length(ctx->tokens.files), main_file.length, main_file.data);
+    CUIK_TIMED_BLOCK("convert to tokens") {
+        slot->tokens = convert_to_token_list(ctx, dyn_array_length(ctx->tokens.files), main_file.length, main_file.data);
+    }
     compute_line_map(&ctx->tokens, false, 0, (SourceLoc){ 0 }, slot->filepath->data, main_file.data, main_file.length);
 
     // continue along to the actual preprocessing now
@@ -531,6 +535,12 @@ Cuikpp_Status cuikpp_run(Cuik_CPP* restrict ctx) {
     }
 
     TokenStream* restrict s = &ctx->tokens;
+
+    // estimate a good final token count, if we get this right we'll zip past without resizes
+    size_t expected = dyn_array_length(slot->tokens.tokens);
+    if (expected < 4096) expected = 4096;
+    s->list.tokens = dyn_array_create(Token, expected);
+
     for (;;) yield: {
         slot = &ctx->stack[ctx->stack_ptr - 1];
 

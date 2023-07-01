@@ -158,7 +158,7 @@ static void parse_compound_stmt2(Cuik_Parser* parser, TokenStream* restrict s, S
         expect_char(s, '}');
         node->loc.end = tokens_get_last_location(s);
 
-        Stmt** permanent_storage = arena_alloc(&thread_arena, kid_count * sizeof(Stmt*), _Alignof(Stmt*));
+        Stmt** permanent_storage = arena_alloc(parser->arena, kid_count * sizeof(Stmt*), _Alignof(Stmt*));
         memcpy(permanent_storage, kids, kid_count * sizeof(Stmt*));
 
         node->compound = (struct StmtCompound){
@@ -459,7 +459,7 @@ static Stmt* parse_stmt2(Cuik_Parser* parser, TokenStream* restrict s) {
                 {
                     parse_decl_or_expr2(parser, s, &kid_count);
                 }
-                Stmt** permanent_storage = arena_alloc(&thread_arena, kid_count * sizeof(Stmt*), _Alignof(Stmt*));
+                Stmt** permanent_storage = arena_alloc(parser->arena, kid_count * sizeof(Stmt*), _Alignof(Stmt*));
                 memcpy(permanent_storage, kids, kid_count * sizeof(Stmt*));
 
                 first->compound = (struct StmtCompound){
@@ -653,7 +653,7 @@ static bool parse_function(Cuik_Parser* parser, TokenStream* restrict s, Stmt* d
     // skip { for parse_compound_stmt
     tokens_next(s);
     Stmt* body;
-    {
+    CUIK_TIMED_BLOCK("body") {
         cuik__sema_function_stmt = decl_node;
 
         body = alloc_stmt(parser);

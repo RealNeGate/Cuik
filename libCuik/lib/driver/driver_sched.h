@@ -21,7 +21,6 @@ static void per_func_task(void* arg) {
         task.func(task.mod, f, task.ctx);
         f = tb_next_function(f);
     }
-
     futex_dec(task.remaining);
 }
 
@@ -31,17 +30,21 @@ void cuiksched_per_function(Cuik_IThreadpool* restrict thread_pool, TB_Module* m
         size_t capacity = (tb_module_get_function_count(mod) + TB_TASK_BATCH_SIZE - 1) / TB_TASK_BATCH_SIZE;
         Futex remaining = capacity;
 
-        size_t i = 0;
-        TB_FOR_FUNCTIONS(f, mod) {
-            if ((i % TB_TASK_BATCH_SIZE) == 0) {
-                PerFunction task = { .mod = mod, .start = f, .remaining = &remaining, .ctx = ctx, .func = func };
-                CUIK_CALL(thread_pool, submit, per_func_task, sizeof(task), &task);
-            }
+        TB_Function* f = tb_first_function(mod);
+        while (f != NULL) {
+            PerFunction task = { .mod = mod, .start = f, .remaining = &remaining, .ctx = ctx, .func = func };
+            CUIK_CALL(thread_pool, submit, per_func_task, sizeof(task), &task);
 
-            i += 1;
+            // skip to the next batch, this is kinda slow but
+            // a submittion happened already so there's work
+            // being done elsewhere... ideally
+            for (size_t i = 0; f != NULL && i < TB_TASK_BATCH_SIZE; i++) {
+                f = tb_next_function(f);
+            }
         }
 
         futex_wait_eq(&remaining, 0);
+        log_debug("Done!");
         #else
         fprintf(stderr, "Please compile with -DCUIK_ALLOW_THREADS if you wanna spin up threads");
         abort();

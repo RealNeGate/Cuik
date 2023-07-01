@@ -33,8 +33,22 @@ static bool const_eval_int(Cuik_Parser* restrict parser, Cuik_Expr* e, Cuik_Cons
                 break;
             }
 
+            case EXPR_ENUM: {
+                if (s->enum_val.num->lexer_pos != 0) {
+                    type_layout2(parser, &parser->tokens, cuik_canonical_type(s->enum_val.type));
+                }
+                result = s->enum_val.num->value;
+                break;
+            }
+
             case EXPR_CAST: {
                 Cuik_Type* t = cuik_canonical_type(s->cast.type);
+
+                // &((T*)0)->x
+                if (i + 2 < e->count && exprs[i+1].op == EXPR_ARROW && exprs[i+2].op == EXPR_ADDR) {
+                    __debugbreak();
+                }
+
                 if (!cuik_type_is_integer(t)) {
                     diag_err(&parser->tokens, s->loc, "Cannot perform constant cast to %!T", cuik_canonical_type(s->cast.type));
                     return false;
@@ -46,12 +60,15 @@ static bool const_eval_int(Cuik_Parser* restrict parser, Cuik_Expr* e, Cuik_Cons
             }
 
             // operators
+            case EXPR_NEGATE:result = -args[0];           break;
             case EXPR_PLUS:  result = args[0] + args[1];  break;
             case EXPR_MINUS: result = args[0] - args[1];  break;
             case EXPR_TIMES: result = args[0] * args[1];  break;
             case EXPR_SLASH: result = args[0] / args[1];  break;
             case EXPR_SHL:   result = args[0] << args[1]; break;
             case EXPR_SHR:   result = args[0] >> args[1]; break;
+            case EXPR_AND:   result = args[0] & args[1];  break;
+            case EXPR_OR:    result = args[0] | args[1];  break;
 
             // comparisons
             case EXPR_CMPEQ: result = args[0] == args[1]; break;
@@ -76,7 +93,7 @@ static bool const_eval_int(Cuik_Parser* restrict parser, Cuik_Expr* e, Cuik_Cons
     return true;
 
     failure:
-    diag_err(&parser->tokens, e->exprs[i].loc, "could not parse subexpression as constant.");
+    diag_err(&parser->tokens, e->exprs[i].loc, "could not parse subexpression '%s' as constant.", cuik_get_expr_name(&e->exprs[i]));
     return false;
 }
 

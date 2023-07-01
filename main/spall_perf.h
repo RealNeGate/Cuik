@@ -26,9 +26,11 @@ void spallperf__start_thread(void) {
     #ifdef CUIK_USE_SPALL_AUTO
     spall_auto_thread_init(1, 1ull<<28ull);
     #else
-    size_t size = 4 * 1024 * 1024;
-    muh_buffer = (SpallBuffer){ malloc(size), size };
-    spall_buffer_init(&ctx, &muh_buffer);
+    if (cuikperf_is_active()) {
+        size_t size = 4 * 1024 * 1024;
+        muh_buffer = (SpallBuffer){ malloc(size), size };
+        spall_buffer_init(&ctx, &muh_buffer);
+    }
     #endif
 }
 
@@ -36,7 +38,9 @@ void spallperf__stop_thread(void) {
     #ifdef CUIK_USE_SPALL_AUTO
     spall_auto_thread_quit();
     #else
-    spall_buffer_quit(&ctx, &muh_buffer);
+    if (cuikperf_is_active()) {
+        spall_buffer_quit(&ctx, &muh_buffer);
+    }
     #endif
 }
 

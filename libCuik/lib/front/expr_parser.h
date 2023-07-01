@@ -265,7 +265,7 @@ static void parse_string_literal(Cuik_Parser* parser, TokenStream* restrict s, S
     }
 
     size_t curr = 0;
-    char* buffer = arena_alloc(&thread_arena, total_len + 3, 4);
+    char* buffer = arena_alloc(parser->arena, total_len + 3, 4);
 
     buffer[curr++] = '\"';
 
@@ -562,7 +562,7 @@ static void parse_primary_expr(Cuik_Parser* parser, TokenStream* restrict s) {
             expect_closing_paren(s, opening_loc);
 
             // move it to a more permanent storage
-            C11GenericEntry* dst = arena_alloc(&thread_arena, entry_count * sizeof(C11GenericEntry), _Alignof(C11GenericEntry));
+            C11GenericEntry* dst = arena_alloc(parser->arena, entry_count * sizeof(C11GenericEntry), _Alignof(C11GenericEntry));
             memcpy(dst, entries, entry_count * sizeof(C11GenericEntry));
 
             e->generic_.case_count = entry_count;
@@ -1010,7 +1010,7 @@ static intmax_t parse_const_expr(Cuik_Parser* parser, TokenStream* restrict s) {
 
     Cuik_ConstInt value;
     if (!const_eval_int(parser, e, &value)) {
-        diag_err(s, e->exprs[e->count - 1].loc, "could not parse expression as constant.");
+        // the const_eval_int will handle errors
         return 0;
     }
 

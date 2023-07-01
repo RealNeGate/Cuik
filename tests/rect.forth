@@ -6,6 +6,7 @@
 
 
 
+
 \ simple condition
 : bar if{ 65 emit }else{ 66 emit } ;
 : baz 65 emit ;
@@ -24,7 +25,7 @@ baz baz baz baz baz baz
 
 
 \ simple loop
-\ : loop dup if{ 65 emit 1 - loop }else{ drop } ;
+: loop dup if{ 65 emit 1 - loop }else{ drop } ;
 
 
 
@@ -36,6 +37,6 @@ baz baz baz baz baz baz
 \ 4  foo . 32 emit
 
 
-\ 10 emit
-\ 10 loop
+10 emit
+10 loop
 

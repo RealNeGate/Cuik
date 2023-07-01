@@ -596,13 +596,11 @@ static void schedule_effect(Ctx* restrict ctx, TB_Node* parent, TB_Node* n) {
 
 // Codegen through here is done in phases
 static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_FeatureSet* features, uint8_t* out, size_t out_capacity) {
-    TB_TemporaryStorage* tls = tb_tls_allocate();
-
     Ctx ctx = {
         .module = f->super.module,
         .f = f,
         .target_abi = f->super.module->target_abi,
-        .safepoints = tb_platform_heap_alloc(f->safepoint_count * sizeof(TB_SafepointKey)),
+        .safepoints = f->safepoint_count ? tb_platform_heap_alloc(f->safepoint_count * sizeof(TB_SafepointKey)) : NULL,
         .emit = {
             .f = f,
             .data = out,
@@ -610,8 +608,8 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
         }
     };
 
-    ctx.emit.emit_asm = true;
-    /* if (ctx.emit.emit_asm) {
+    /* ctx.emit.emit_asm = true;
+    if (ctx.emit.emit_asm) {
         tb_function_print(f, tb_default_print_callback, stdout);
     }*/
 
@@ -685,6 +683,7 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
 
     //  Label patching: we make sure any local labels
     patch_local_labels(&ctx);
+    nl_map_free(ctx.emit.labels);
 
     if (dyn_array_length(f->lines)) {
         f->lines[0].pos = 0;
@@ -703,6 +702,9 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
     // convert into TB_StackSlot
     FOREACH_N(i, 0, nl_map_get_capacity(ctx.stack_slots)) if (ctx.stack_slots[i].k != NULL) {
         TB_Node* n = ctx.stack_slots[i].k;
+
+        // could be costly if you had more than like 2-3 attributes per stack slot... which you
+        // wouldn't do right?
         for (TB_Attrib* a = n->first_attrib; a != NULL; a = a->next) {
             if (a->type == TB_ATTRIB_VARIABLE) {
                 TB_StackSlot s = {

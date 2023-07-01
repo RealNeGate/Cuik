@@ -40,6 +40,7 @@ CUIK_API void* cuik_symtab_global_at(Cuik_SymbolTable* st, size_t it);
 #undef CUIK_SYMTAB_IMPL
 
 #include <common.h>
+#include <arena.h>
 #include <hash_map.h>
 
 typedef struct { Cuik_Atom k; void* v; } Cuik_SymbolNamePair;
@@ -54,7 +55,7 @@ struct Cuik_Scope {
 
 // simple hash table for the globals, every other scope is reverse
 // linear searched for now.
-enum { CUIK__MAX_LOCALS = 1<<14 };
+enum { CUIK__MAX_LOCALS = 1<<14, CUIK__BUFFER_CAP = 1u<<20u };
 struct Cuik_SymbolTable {
     NL_Map(Cuik_Atom, void*) globals;
 
@@ -62,6 +63,8 @@ struct Cuik_SymbolTable {
     size_t watermark;
     uint8_t* buffer;
     void* not_found;
+
+    Arena globals_arena;
 
     size_t local_count;
     Cuik_SymbolNamePair locals[CUIK__MAX_LOCALS];
@@ -71,28 +74,40 @@ Cuik_SymbolTable* cuik_symtab_create(void* not_found) {
     Cuik_SymbolTable* st = cuik_malloc(sizeof(Cuik_SymbolTable));
     nl_map_create(st->globals, 2048);
     st->watermark = 0;
-    st->buffer = cuik_malloc(1u << 20u);
+    st->buffer = cuik_malloc(CUIK__BUFFER_CAP);
     st->local_count = 0;
     st->top = NULL;
+    st->globals_arena = (Arena){ 0 };
     st->not_found = not_found;
     return st;
 }
 
 void cuik_symtab_destroy(Cuik_SymbolTable* st) {
+    arena_free(&st->globals_arena);
     nl_map_free(st->globals);
     cuik_free(st->buffer);
     cuik_free(st);
 }
 
 void cuik_symtab_clear(Cuik_SymbolTable* st) {
+    arena_free(&st->globals_arena);
+    nl_map_free(st->globals);
+
     st->watermark = st->local_count = 0;
+    st->top = NULL;
+
     assert(0 && "TODO");
 }
 
-static void* cuik_symtab__alloc(Cuik_SymbolTable* st, size_t size, size_t align) {
-    void* ptr = &st->buffer[st->watermark];
+static void* cuik_symtab__alloc(Cuik_SymbolTable* st, size_t size, size_t align, bool is_global) {
+    if (is_global) {
+        return arena_alloc(&st->globals_arena, size, align);
+    }
 
     size_t align_mask = align - 1;
+    assert(st->watermark + size + align_mask < CUIK__BUFFER_CAP);
+
+    void* ptr = &st->buffer[st->watermark];
     st->watermark = (st->watermark + size + align_mask) & ~align_mask;
     return ptr;
 }
@@ -102,7 +117,7 @@ void cuik_scope_open(Cuik_SymbolTable* st) {
     size_t wm = st->watermark;
 
     // allocate scope
-    Cuik_Scope* scope = cuik_symtab__alloc(st, sizeof(Cuik_Scope), _Alignof(Cuik_Scope));
+    Cuik_Scope* scope = cuik_symtab__alloc(st, sizeof(Cuik_Scope), _Alignof(Cuik_Scope), false);
     scope->last = st->top;
     scope->watermark = wm;
     scope->start = st->local_count;
@@ -119,7 +134,7 @@ void cuik_scope_close(Cuik_SymbolTable* st) {
 }
 
 void* cuik_symtab_put(Cuik_SymbolTable* st, Cuik_Atom name, size_t size, size_t align) {
-    void* ptr = cuik_symtab__alloc(st, size, align);
+    void* ptr = cuik_symtab__alloc(st, size, align, st->top == NULL);
 
     if (st->top == NULL) {
         // put into global scope

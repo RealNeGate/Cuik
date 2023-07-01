@@ -19,11 +19,16 @@
 #define LOG_USE_COLOR
 #include "log.c"
 
+#include "perf.h"
+
 uint64_t cuik__page_size = 0;
 uint64_t cuik__page_mask = 0;
 
 void cuik_init_terminal(void) {
     #if _WIN32
+    // Raw input mode
+    SetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), ENABLE_PROCESSED_INPUT);
+
     // Enable ANSI/VT sequences on windows
     HANDLE output_handle = GetStdHandle(STD_OUTPUT_HANDLE);
     if (output_handle != INVALID_HANDLE_VALUE) {
@@ -83,6 +88,12 @@ void* arena_alloc(Arena* arena, size_t size, size_t align) {
         ptr = &arena->top->data[arena->top->used];
         arena->top->used += size;
     } else if (arena->top == NULL || arena->top->next == NULL) {
+        if (cuikperf_is_active()) {
+            char p[20];
+            snprintf(p, 20, "%p", arena);
+            cuikperf_region_start(cuik_time_in_nanos(), "arena chunk", p);
+        }
+
         // Add new page
         ArenaSegment* s = cuik__valloc(ARENA_SEGMENT_SIZE);
         if (!s) {
@@ -101,6 +112,10 @@ void* arena_alloc(Arena* arena, size_t size, size_t align) {
         else arena->base = s;
 
         arena->top = s;
+
+        if (cuikperf_is_active()) {
+            cuikperf_region_end();
+        }
     } else {
         ArenaSegment* s = arena->top->next;
         s->used = (size + align_mask) & ~align_mask;

@@ -19,8 +19,8 @@ extern void tb_free_thread_resources(void);
 extern void spallperf__start_thread(void);
 extern void spallperf__stop_thread(void);
 
-// 1 << QEXP is the size of the queue per thread
-#define QEXP 6
+// 1 << QEXP is the size of the queue per pool
+#define QEXP 7
 
 typedef _Atomic uint32_t atomic_uint32_t;
 typedef void work_routine(void*);
@@ -84,7 +84,7 @@ static bool do_work(threadpool_t* threadpool) {
 
 static int thread_func(void* arg) {
     threadpool_t* threadpool = arg;
-    // spallperf__start_thread();
+    spallperf__start_thread();
 
     CUIK_TIMED_BLOCK("thread") {
         while (threadpool->running) {
@@ -98,7 +98,7 @@ static int thread_func(void* arg) {
         }
     }
 
-    // spallperf__stop_thread();
+    spallperf__stop_thread();
     // tb_free_thread_resources();
     // cuik_free_thread_resources();
     return 0;
@@ -165,27 +165,24 @@ int threadpool_get_thread_count(threadpool_t* threadpool) {
 }
 
 static void threadpool__submit(void* user_data, Cuik_TaskFn fn, size_t arg_size, void* arg) {
-    threadpool_submit((threadpool_t*) user_data, fn, arg_size, arg);
+    threadpool_submit(user_data, fn, arg_size, arg);
 }
 
 static void threadpool__work_one_job(void* user_data) {
-    threadpool_work_one_job((threadpool_t*) user_data);
+    threadpool_work_one_job(user_data);
 }
 
-Cuik_IThreadpool* cuik_threadpool_create(int worker_count, int workqueue_size) {
-    if (worker_count == 0 || workqueue_size == 0) {
+Cuik_IThreadpool* cuik_threadpool_create(int worker_count) {
+    if (worker_count == 0) {
         return NULL;
     }
 
-    if ((workqueue_size & (workqueue_size - 1)) != 0) {
-        return NULL;
-    }
-
+    size_t workqueue_size = 1u << QEXP;
     threadpool_t* tp = cuik_calloc(1, sizeof(threadpool_t));
     tp->super.submit = threadpool__submit;
     tp->super.work_one_job = threadpool__work_one_job;
-    tp->work = malloc(workqueue_size * sizeof(work_t));
-    tp->threads = malloc(worker_count * sizeof(thrd_t));
+    tp->work = cuik_malloc(workqueue_size * sizeof(work_t));
+    tp->threads = cuik_malloc(worker_count * sizeof(thrd_t));
     tp->thread_count = worker_count;
     tp->running = true;
 

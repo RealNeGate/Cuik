@@ -30,7 +30,7 @@ typedef struct Cuik_IThreadpool {
 } Cuik_IThreadpool;
 
 // for doing calls on the interfaces
-#define CUIK_CALL(object, action, ...) ((object)->action((object) + 1, ##__VA_ARGS__))
+#define CUIK_CALL(object, action, ...) ((object)->action((object), ##__VA_ARGS__))
 
 ////////////////////////////////////////////
 // Target descriptor
@@ -83,7 +83,7 @@ CUIK_API void cuik_init(bool use_crash_handler);
 CUIK_API void cuik_free_thread_resources(void);
 
 #ifdef CUIK_ALLOW_THREADS
-CUIK_API Cuik_IThreadpool* cuik_threadpool_create(int threads, int workqueue_size);
+CUIK_API Cuik_IThreadpool* cuik_threadpool_create(int threads);
 CUIK_API void cuik_threadpool_destroy(Cuik_IThreadpool* thread_pool);
 #endif
 

@@ -306,7 +306,6 @@ typedef struct TB_FunctionOutput {
     TB_SafepointKey* safepoints;
 } TB_FunctionOutput;
 
-// usually 1984 (2048 - 64) byte regions
 typedef struct TB_NodePage TB_NodePage;
 struct TB_NodePage {
     TB_NodePage* next;
@@ -315,7 +314,7 @@ struct TB_NodePage {
 };
 
 enum {
-    TB_NODE_PAGE_GENERAL_CAP = 1984 - sizeof(TB_NodePage),
+    TB_NODE_PAGE_GENERAL_CAP = 4096 - sizeof(TB_NodePage),
 };
 
 struct TB_Function {
