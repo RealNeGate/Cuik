@@ -47,6 +47,9 @@
 #define COUNTOF(...) (sizeof(__VA_ARGS__) / sizeof(__VA_ARGS__[0]))
 #endif
 
+#define LIKELY(x)      __builtin_expect(!!(x), 1)
+#define UNLIKELY(x)    __builtin_expect(!!(x), 0)
+
 #ifdef NDEBUG
 #define TODO() __builtin_unreachable()
 #else

@@ -1,18 +1,15 @@
 #include "cuik.h"
 #include "atoms.h"
 
-enum { INTERNER_EXP = 20 };
+enum { INTERNER_EXP = 24 };
 
 thread_local static Arena atoms_arena;
-
-thread_local static size_t interner_len;
 thread_local static Atom* interner;
 
 void atoms_free(void) {
     CUIK_TIMED_BLOCK("free atoms") {
         arena_free(&atoms_arena);
         cuik__vfree(interner, (1u << INTERNER_EXP) * sizeof(Atom));
-        interner_len = 0;
         interner = NULL;
     }
 }
@@ -24,31 +21,28 @@ Atom atoms_put(size_t len, const unsigned char* str) {
         }
     }
 
+    uint32_t mask = (1 << INTERNER_EXP) - 1;
     uint32_t hash = murmur3_32(str, len);
-    for (size_t i = hash;;) {
-        // hash table lookup
-        uint32_t mask = (1 << INTERNER_EXP) - 1;
-        uint32_t step = (hash >> (32 - INTERNER_EXP)) | 1;
-        i = (i + step) & mask;
+    size_t first = hash & mask, i = first;
 
-        if (interner[i] == NULL) {
-            // empty slot
-            if (interner_len >= (1u << INTERNER_EXP)) {
-                printf("Atoms arena: out of memory!\n");
-                abort();
-            }
-
+    do {
+        // linear probe
+        if (LIKELY(interner[i] == NULL)) {
             Atom newstr = arena_alloc(&atoms_arena, len + 1, 1);
             memcpy(newstr, str, len);
             newstr[len] = 0;
 
-            interner_len++;
             interner[i] = newstr;
             return newstr;
         } else if (len == strlen(interner[i]) && memcmp(str, interner[i], len) == 0) {
             return interner[i];
         }
-    }
+
+        i = (i + 1) & mask;
+    } while (i != first);
+
+    log_error("atoms arena: out of memory!\n");
+    abort();
 }
 
 Atom atoms_putc(const char* str) {

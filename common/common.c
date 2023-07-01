@@ -88,11 +88,11 @@ void* arena_alloc(Arena* arena, size_t size, size_t align) {
         ptr = &arena->top->data[arena->top->used];
         arena->top->used += size;
     } else if (arena->top == NULL || arena->top->next == NULL) {
-        if (cuikperf_is_active()) {
+        /*if (cuikperf_is_active()) {
             char p[20];
             snprintf(p, 20, "%p", arena);
             cuikperf_region_start(cuik_time_in_nanos(), "arena chunk", p);
-        }
+        }*/
 
         // Add new page
         ArenaSegment* s = cuik__valloc(ARENA_SEGMENT_SIZE);
@@ -113,9 +113,9 @@ void* arena_alloc(Arena* arena, size_t size, size_t align) {
 
         arena->top = s;
 
-        if (cuikperf_is_active()) {
+        /*if (cuikperf_is_active()) {
             cuikperf_region_end();
-        }
+        }*/
     } else {
         ArenaSegment* s = arena->top->next;
         s->used = (size + align_mask) & ~align_mask;

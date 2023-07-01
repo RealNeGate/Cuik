@@ -56,22 +56,12 @@ static void* dyn_array_internal_reserve(void* ptr, size_t type_size, size_t extr
     if (header->size + extra >= header->capacity) {
         header->capacity = (header->size + extra) * 2;
 
-        if (cuikperf_is_active()) {
-            cuikperf_region_start(cuik_time_in_nanos(), "resize", NULL);
-            DynArrayHeader* new_ptr = cuik_realloc(header, sizeof(DynArrayHeader) + (type_size * header->capacity));
-            if (!new_ptr) {
-                fprintf(stderr, "error: out of memory!");
-                abort();
-            }
-            cuikperf_region_end();
-            return &new_ptr->data[0];
-        } else {
-            DynArrayHeader* new_ptr = cuik_realloc(header, sizeof(DynArrayHeader) + (type_size * header->capacity));
-            if (!new_ptr) {
-                fprintf(stderr, "error: out of memory!");
-                abort();
-            }
+        DynArrayHeader* new_ptr = cuik_realloc(header, sizeof(DynArrayHeader) + (type_size * header->capacity));
+        if (!new_ptr) {
+            fprintf(stderr, "error: out of memory!");
+            abort();
         }
+        return &new_ptr->data[0];
     }
 
     return ptr;

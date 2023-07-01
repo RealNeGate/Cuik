@@ -513,11 +513,21 @@ Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cu
 
         if (cuikdg_error_count(s)) break;
 
-        // parse all global declarations
-        CUIK_SYMTAB_FOR_GLOBALS(i, parser.symbols) {
-            Symbol* sym = cuik_symtab_global_at(parser.symbols, i);
+        // parse all global declarations (we're walking the arena because it's
+        // faster than walking the hash map, cache locality amirite)
+        for (ArenaSegment* segment = parser.symbols->globals_arena.base; segment; segment = segment->next) {
+            size_t count = segment->used / sizeof(Symbol);
+            Symbol* syms = (Symbol*) segment->data;
 
-            if (sym->token_start != 0 && (sym->storage_class == STORAGE_STATIC_VAR || sym->storage_class == STORAGE_GLOBAL)) {
+            // CUIK_SYMTAB_FOR_GLOBALS(i, parser.symbols) {
+            // Symbol* sym = cuik_symtab_global_at(parser.symbols, i);
+
+            for (size_t i = 0; i < count; i++) {
+                Symbol* restrict sym = &syms[i];
+                if (sym->token_start == 0 || (sym->storage_class != STORAGE_STATIC_VAR && sym->storage_class != STORAGE_GLOBAL)) {
+                    continue;
+                }
+
                 // Spin up a mini parser here
                 TokenStream mini_lex = *s;
                 mini_lex.list.current = sym->token_start;

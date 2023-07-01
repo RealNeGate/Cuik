@@ -157,7 +157,3 @@ bool type_equal(Cuik_Type* a, Cuik_Type* b);
 size_t type_as_string(size_t max_len, char* buffer, Cuik_Type* type);
 
 void type_layout2(Cuik_Parser* restrict parser, TokenStream* restrict tokens, Cuik_Type* type);
-
-bool const_eval_try_offsetof_hack(Cuik_Parser* restrict parser, const Expr* e, uint64_t* out);
-
-Expr* cuik__optimize_ast(Cuik_Parser* restrict parser, TranslationUnit* restrict tu, Expr* e);

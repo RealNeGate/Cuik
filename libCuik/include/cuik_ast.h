@@ -599,9 +599,6 @@ struct Expr {
     union {
         struct {
             Atom name;
-
-            // aliases with next_symbol_in_chain
-            Expr* next_symbol_in_chain;
         } builtin_sym;
 
         struct {
@@ -714,8 +711,6 @@ struct Expr {
         } int_num;
     };
 };
-_Static_assert(offsetof(Expr, next_symbol_in_chain) == offsetof(Expr, next_symbol_in_chain2), "these should be aliasing");
-_Static_assert(offsetof(Expr, next_symbol_in_chain) == offsetof(Expr, builtin_sym.next_symbol_in_chain), "these should be aliasing");
 
 struct Subexpr {
     SourceRange loc;
@@ -750,7 +745,6 @@ struct Subexpr {
 
         struct {
             Atom name;
-            ptrdiff_t next_symbol;
         } builtin_sym;
 
         struct {

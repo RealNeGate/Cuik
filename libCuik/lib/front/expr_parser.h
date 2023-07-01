@@ -398,9 +398,10 @@ static void parse_primary_expr(Cuik_Parser* parser, TokenStream* restrict s) {
                 }
             }
 
-            // unknown symbols, symbols and enumerator entries participate in the
-            // symbol chain, aka... don't append non-parameters :P
-            if (e->op != EXPR_PARAM && e->op != EXPR_ENUM) {
+            // only known symbols participate in the global collection phase,
+            // and if it's an EXPR_SYMBOL then sym != NULL so we don't check
+            // that here
+            if (e->op == EXPR_SYMBOL && (sym->storage_class == STORAGE_GLOBAL || sym->storage_class == STORAGE_FUNC)) {
                 if (symbol_chain_start != parser->expr) {
                     parser->expr->next_in_chain = symbol_chain_start;
                     symbol_chain_start = parser->expr;

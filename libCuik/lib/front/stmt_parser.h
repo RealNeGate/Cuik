@@ -653,7 +653,7 @@ static bool parse_function(Cuik_Parser* parser, TokenStream* restrict s, Stmt* d
     // skip { for parse_compound_stmt
     tokens_next(s);
     Stmt* body;
-    CUIK_TIMED_BLOCK("body") {
+    {
         cuik__sema_function_stmt = decl_node;
 
         body = alloc_stmt(parser);
