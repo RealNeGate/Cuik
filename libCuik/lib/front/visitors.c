@@ -82,8 +82,9 @@ int cuik_get_expr_arity(Subexpr* e) {
         case EXPR_LOGICAL_OR:
         return 2;
 
+        // ternary only keeps the condition here
         case EXPR_TERNARY:
-        return 3;
+        return 1;
 
         default:
         log_error("Missing case! %d", e->op);

@@ -411,8 +411,8 @@ static void parse_primary_expr(Cuik_Parser* parser, TokenStream* restrict s) {
                 ptrdiff_t i = e - parser->expr->exprs;
                 e->sym.next_symbol = parser->expr->first_symbol;
                 parser->expr->first_symbol = i;
-            }            break;
-
+            }
+            break;
         }
 
         case TOKEN_FLOAT: {
@@ -914,14 +914,30 @@ static void parse_ternary(Cuik_Parser* restrict parser, TokenStream* restrict s)
     if (tokens_get(s)->type == '?') {
         tokens_next(s);
 
+        // ternaries are weird because we need to convert the left and right sides
+        // into their own separate Cuik_Expr but we've already got stuff in progress
+        // so we'll temporarily hide it.
+        Cuik_Expr* hide = parser->expr;
+        parser->expr = NULL;
+
+        // left expression
         parse_expr(parser, s);
+        Cuik_Expr* left = complete_expr(parser);
+
         expect_char(s, ':');
+
+        // right expression
         parse_ternary(parser, s);
+        Cuik_Expr* right = complete_expr(parser);
+
+        // we can unhide the condition now
+        parser->expr = hide;
 
         SourceLoc end_loc = tokens_get_last_location(s);
         *push_expr(parser) = (Subexpr){
             .op = EXPR_TERNARY,
-            .loc = { start_loc, end_loc }
+            .loc = { start_loc, end_loc },
+            .ternary = { left, right }
         };
     }
 }

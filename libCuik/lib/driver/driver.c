@@ -334,7 +334,7 @@ static void cc_invoke(BuildStepInfo* restrict info) {
         // to save on total memory usage, this code path is for
         // optimized code since it needs to know what neighbors it's
         // got for IPO.
-        if (!args->ir) {
+        if (!args->ir && !args->emit_ir) {
             CUIK_TIMED_BLOCK("CodeGen") {
                 cuiksched_per_function(s->tp, mod, NULL, compile_func);
             }

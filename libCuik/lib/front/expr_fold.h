@@ -79,7 +79,13 @@ static bool const_eval_int(Cuik_Parser* restrict parser, Cuik_Expr* e, Cuik_Cons
             case EXPR_CMPLT: result = args[0] < args[1];  break;
 
             // misc
-            case EXPR_TERNARY: result = args[0] ? args[1] : args[2]; break;
+            case EXPR_TERNARY: {
+                if (!const_eval_int(parser, args[0] ? s->ternary.left : s->ternary.right, &result)) {
+                    diag_err(&parser->tokens, s->loc, "Cannot fold ternary");
+                    return false;
+                }
+                break;
+            }
 
             default: goto failure;
         }

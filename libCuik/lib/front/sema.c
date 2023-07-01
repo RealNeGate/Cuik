@@ -1139,11 +1139,10 @@ Cuik_QualType cuik__sema_subexpr(TranslationUnit* tu, Cuik_Expr* restrict _, Sub
 
         case EXPR_SIZEOF: {
             Cuik_Type* src = cuik_canonical_type(GET_TYPE(0));
+            if (src->size == 0) {
+                diag_err(&tu->tokens, e->loc, "cannot get the sizeof an incomplete type");
+            }
 
-            //assert(src->size && "Something went wrong...");
-            e->op = EXPR_INT;
-            e->int_lit.suffix = INT_SUFFIX_ULL;
-            e->int_lit.lit = src->size;
             return cuik_uncanonical_type(tu->target->size_type);
         }
 
@@ -1504,11 +1503,12 @@ Cuik_QualType cuik__sema_subexpr(TranslationUnit* tu, Cuik_Expr* restrict _, Sub
             }
             SET_CAST(0, cuik_uncanonical_type(&cuik__builtin_bool));
 
-            Cuik_QualType ty1 = GET_TYPE(1);
-            Cuik_QualType ty2 = GET_TYPE(2);
+            Cuik_QualType ty1 = cuik__sema_expr(tu, e->ternary.left);
+            Cuik_QualType ty2 = cuik__sema_expr(tu, e->ternary.right);
 
             // if either side is a zero then it's malleable
-            if (!is_constant_zero(&GET_EXPR(1)) && !is_constant_zero(&GET_EXPR(2))) {
+            if (!is_constant_zero(get_root_subexpr(e->ternary.left)) &&
+                !is_constant_zero(get_root_subexpr(e->ternary.right))) {
                 implicit_conversion(tu, ty1, ty2, &GET_EXPR(1));
             }
 
@@ -1520,8 +1520,8 @@ Cuik_QualType cuik__sema_subexpr(TranslationUnit* tu, Cuik_Expr* restrict _, Sub
                 type = cuik_uncanonical_type(get_common_type(&tu->types, cuik_canonical_type(ty1), cuik_canonical_type(ty2)));
             }
 
-            SET_CAST(1, type);
-            SET_CAST(2, type);
+            set_root_cast(e->ternary.left, type);
+            set_root_cast(e->ternary.right, type);
             return type;
         }
 

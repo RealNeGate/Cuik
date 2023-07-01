@@ -802,6 +802,11 @@ struct Subexpr {
         } dot_arrow;
 
         struct {
+            // the sides aren't in the same Cuik_Expr because they're conditionally run
+            Cuik_Expr *left, *right;
+        } ternary;
+
+        struct {
             int param_count;
         } call;
     };
