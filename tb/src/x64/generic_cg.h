@@ -641,6 +641,7 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
     // allocate more stuff now that we've run stats on the IR
     ctx.emit.return_label = 0;
     nl_map_create(ctx.emit.labels, f->control_node_count);
+    nl_map_create(ctx.stack_slots, 8);
 
     // Instruction selection:
     //   we just decide which instructions to emit, which operands are

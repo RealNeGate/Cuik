@@ -817,7 +817,7 @@ static void irgen_job(void* arg) {
 
         // unoptimized builds can just compile functions without
         // the rest of the functions being ready.
-        if (no_opt && s->tag == TB_SYMBOL_FUNCTION) {
+        if (no_opt && s != NULL && s->tag == TB_SYMBOL_FUNCTION) {
             tb_module_compile_function(mod, (TB_Function*) s, TB_ISEL_FAST);
 
             // push to GC thread
