@@ -401,7 +401,7 @@ static void parse_primary_expr(Cuik_Parser* parser, TokenStream* restrict s) {
             // only known symbols participate in the global collection phase,
             // and if it's an EXPR_SYMBOL then sym != NULL so we don't check
             // that here
-            if (e->op == EXPR_SYMBOL && (sym->storage_class == STORAGE_GLOBAL || sym->storage_class == STORAGE_FUNC)) {
+            if (e->op == EXPR_SYMBOL && sym->storage_class != STORAGE_PARAM && sym->storage_class != STORAGE_ENUM && sym->storage_class != STORAGE_TYPEDEF && sym->storage_class != STORAGE_LOCAL) {
                 if (symbol_chain_start != parser->expr) {
                     parser->expr->next_in_chain = symbol_chain_start;
                     symbol_chain_start = parser->expr;
@@ -411,8 +411,8 @@ static void parse_primary_expr(Cuik_Parser* parser, TokenStream* restrict s) {
                 ptrdiff_t i = e - parser->expr->exprs;
                 e->sym.next_symbol = parser->expr->first_symbol;
                 parser->expr->first_symbol = i;
-            }
-            break;
+            }            break;
+
         }
 
         case TOKEN_FLOAT: {

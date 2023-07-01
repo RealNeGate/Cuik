@@ -2064,16 +2064,16 @@ static void sema_mark_decl(TranslationUnit* tu, Stmt* restrict s) {
     // log_debug("mark %s", s->decl.name);
     s->decl.attrs.is_used = true;
 
+    if (s->op == STMT_FUNC_DECL) {
+        s->flags |= STMT_FLAGS_HAS_IR_BACKING;
+    }
+
     Cuik_Expr* restrict e = s->decl.first_symbol;
     while (e != NULL) {
-        // log_debug("  expr %p", e);
-
         // mark subexpressions
         for (ptrdiff_t i = e->first_symbol; i >= 0; i = e->exprs[i].sym.next_symbol) {
             Stmt* kid = e->exprs[i].sym.stmt;
             assert(e->exprs[i].op == EXPR_SYMBOL);
-
-            // log_debug("    kid %p", kid);
 
             if (!kid->decl.attrs.is_used) {
                 sema_mark_decl(tu, kid);
@@ -2093,22 +2093,15 @@ int cuiksema_run(TranslationUnit* restrict tu, Cuik_IThreadpool* restrict thread
             Stmt* restrict s = tu->top_level_stmts[i];
             assert(s->op == STMT_FUNC_DECL || s->op == STMT_DECL || s->op == STMT_GLOBAL_DECL);
 
-            if (tu->parent != NULL) {
-                CompilationUnit* cu = tu->parent;
-                const char* name = s->decl.name;
-                if (s->op == STMT_FUNC_DECL) {
-                    if (!s->decl.attrs.is_static && !s->decl.attrs.is_inline) {
-                        s->flags |= STMT_FLAGS_IS_EXPORTED;
-                    }
-
-                    if (s->decl.attrs.is_used) {
-                        s->flags |= STMT_FLAGS_HAS_IR_BACKING;
-                    }
-                } else if (s->op == STMT_GLOBAL_DECL || s->op == STMT_DECL) {
-                    if (!s->decl.attrs.is_extern && !s->decl.attrs.is_typedef && name != NULL && cuik_canonical_type(s->decl.type)->kind != KIND_FUNC) {
-                        s->flags |= STMT_FLAGS_HAS_IR_BACKING;
-                        s->flags |= STMT_FLAGS_IS_EXPORTED;
-                    }
+            const char* name = s->decl.name;
+            if (s->op == STMT_FUNC_DECL) {
+                if (!s->decl.attrs.is_static && !s->decl.attrs.is_inline) {
+                    s->flags |= STMT_FLAGS_IS_EXPORTED;
+                }
+            } else if (s->op == STMT_GLOBAL_DECL || s->op == STMT_DECL) {
+                if (!s->decl.attrs.is_extern && !s->decl.attrs.is_typedef && name != NULL && cuik_canonical_type(s->decl.type)->kind != KIND_FUNC) {
+                    s->flags |= STMT_FLAGS_HAS_IR_BACKING;
+                    s->flags |= STMT_FLAGS_IS_EXPORTED;
                 }
             }
 

@@ -32,8 +32,8 @@ typedef enum StorageClass {
     STORAGE_STATIC_CONST, // .rdata
 
     STORAGE_FUNC,
-    STORAGE_PARAM,
     STORAGE_GLOBAL,
+    STORAGE_PARAM,
     STORAGE_LOCAL,
     STORAGE_ENUM,
     STORAGE_TYPEDEF
