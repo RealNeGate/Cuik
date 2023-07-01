@@ -62,7 +62,7 @@ static TB_Node* compile_builtin(TranslationUnit* tu, TB_Function* func, const ch
 
     // x64 specific builtins
     if (strcmp(name, "_mm_setcsr") == 0) {
-        return tb_inst_x86_ldmxcsr(func, cvt2rval(tu, func, &args[0]));
+        return tb_inst_x86_ldmxcsr(func, cvt2rval(tu, func, &args[1]));
     } else if (strcmp(name, "_mm_getcsr") == 0) {
         return tb_inst_x86_stmxcsr(func);
     } else if (strcmp(name, "__rdtsc") == 0) {

@@ -1161,6 +1161,13 @@ static IRVal irgen_subexpr(TranslationUnit* tu, TB_Function* func, Cuik_Expr* _,
                 .reg = tb_inst_sint(func, TB_TYPE_I64, src->size),
             };
         }
+        case EXPR_SIZEOF_T: {
+            Cuik_Type* src = cuik_canonical_type(e->x_of_type.type);
+            return (IRVal){
+                .value_type = RVALUE,
+                .reg = tb_inst_sint(func, TB_TYPE_I64, src->size),
+            };
+        }
         case EXPR_ENUM: {
             return (IRVal){
                 .value_type = RVALUE,
@@ -1210,6 +1217,12 @@ static IRVal irgen_subexpr(TranslationUnit* tu, TB_Function* func, Cuik_Expr* _,
             return (IRVal){
                 .value_type = LVALUE,
                 .reg = pre
+            };
+        }
+        case EXPR_BUILTIN_SYMBOL: {
+            return (IRVal){
+                .value_type = LVALUE_EXPR,
+                .e = e,
             };
         }
         case EXPR_SYMBOL: {
@@ -1268,6 +1281,50 @@ static IRVal irgen_subexpr(TranslationUnit* tu, TB_Function* func, Cuik_Expr* _,
                 .value_type = LVALUE,
                 .reg = reg
             };
+        }
+        case EXPR_DOT_R: {
+            TB_Node* src = RVAL(0);
+
+            Member* member = e->dot_arrow.member;
+            assert(member != NULL);
+
+            if (member->is_bitfield) {
+                return (IRVal){
+                    .value_type = LVALUE_BITS,
+                    .bits = {
+                        .reg = tb_inst_member_access(func, src, e->dot_arrow.offset),
+                        .offset = member->bit_offset,
+                        .width = member->bit_width,
+                    },
+                };
+            } else {
+                return (IRVal){
+                    .value_type = LVALUE,
+                    .reg = tb_inst_member_access(func, src, e->dot_arrow.offset),
+                };
+            }
+        }
+        case EXPR_ARROW_R: {
+            TB_Node* src = RVAL(0);
+
+            Member* member = e->dot_arrow.member;
+            assert(member != NULL);
+
+            if (member->is_bitfield) {
+                return (IRVal){
+                    .value_type = LVALUE_BITS,
+                    .bits = {
+                        .reg = tb_inst_member_access(func, src, e->dot_arrow.offset),
+                        .offset = member->bit_offset,
+                        .width = member->bit_width,
+                    },
+                };
+            } else {
+                return (IRVal){
+                    .value_type = LVALUE,
+                    .reg = tb_inst_member_access(func, src, e->dot_arrow.offset),
+                };
+            }
         }
         case EXPR_SUBSCRIPT: {
             TB_Node* base = RVAL(0);

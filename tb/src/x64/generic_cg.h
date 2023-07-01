@@ -135,6 +135,7 @@ typedef struct {
     // Stack
     uint32_t stack_usage;
     NL_Map(TB_Node*, int) stack_slots;
+    DynArray(TB_StackSlot) debug_stack_slots;
 
     // Reg alloc
     DefIndex* active;
@@ -204,6 +205,22 @@ static void reload(Ctx* restrict ctx, Inst* basepoint, Reload* r);
 // references an allocated
 #define USE(x) (-((x) + 2))
 #define USE_VAL(n) (-(GET_VAL(n) + 2))
+
+static void add_debug_local(Ctx* restrict ctx, TB_Node* n, int pos) {
+    // could be costly if you had more than like 2-3 attributes per stack slot... which you
+    // wouldn't do right?
+    for (TB_Attrib* a = n->first_attrib; a != NULL; a = a->next) {
+        if (a->type == TB_ATTRIB_VARIABLE) {
+            TB_StackSlot s = {
+                .position = pos,
+                .storage_type = a->var.storage,
+                .name = a->var.name,
+            };
+            dyn_array_put(ctx->debug_stack_slots, s);
+            break;
+        }
+    }
+}
 
 static void add_active(Ctx* restrict ctx, DefIndex di) {
     int end = ctx->defs[di].end;
@@ -642,6 +659,7 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
     ctx.emit.return_label = 0;
     nl_map_create(ctx.emit.labels, f->control_node_count);
     nl_map_create(ctx.stack_slots, 8);
+    dyn_array_create(ctx.debug_stack_slots, 8);
 
     // Instruction selection:
     //   we just decide which instructions to emit, which operands are
@@ -701,25 +719,19 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
         .code_size = ctx.emit.count,
         .stack_usage = ctx.stack_usage,
         .prologue_epilogue_metadata = ctx.regs_to_save,
-        .safepoints = ctx.safepoints
+        .safepoints = ctx.safepoints,
+        .stack_slots = ctx.debug_stack_slots
     };
 
     // convert into TB_StackSlot
     FOREACH_N(i, 0, nl_map_get_capacity(ctx.stack_slots)) if (ctx.stack_slots[i].k != NULL) {
         TB_Node* n = ctx.stack_slots[i].k;
 
-        // could be costly if you had more than like 2-3 attributes per stack slot... which you
-        // wouldn't do right?
-        for (TB_Attrib* a = n->first_attrib; a != NULL; a = a->next) {
-            if (a->type == TB_ATTRIB_VARIABLE) {
-                TB_StackSlot s = {
-                    .position = ctx.stack_slots[i].v,
-                    .storage_type = a->var.storage,
-                    .name = a->var.name,
-                };
-                dyn_array_put(func_out.stack_slots, s);
-            }
+        // reject parameters, we've handled them already
+        if (ctx.stack_slots[i].v >= 0) {
+            continue;
         }
+
     }
 
     tb_function_free_postorder(&ctx.order);

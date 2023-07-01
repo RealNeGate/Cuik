@@ -429,7 +429,7 @@ static TB_SectionGroup codeview_generate_debug_info(TB_Module* m, TB_TemporarySt
 
                 // Create return type... if it's multiple returns use a struct
                 CV_TypeIndex return_type = T_VOID;
-                if (proto->return_count) {
+                if (proto->return_count == 1) {
                     const TB_PrototypeParam* ret = &TB_PROTOTYPE_RETURNS(proto)[0];
                     return_type = ret->debug_type ? convert_to_codeview_type(&builder, ret->debug_type) : get_codeview_type(ret->dt);
                 }

@@ -358,36 +358,36 @@ static void parse_primary_expr(Cuik_Parser* parser, TokenStream* restrict s) {
 
             e = push_expr(parser);
 
-            Symbol* sym = find_symbol(parser, s);
-            if (sym != NULL) {
-                if (sym->storage_class == STORAGE_PARAM) {
-                    *e = (Subexpr){
-                        .op = EXPR_PARAM,
-                        .param_num = sym->param_num
-                    };
-                } else if (sym->storage_class == STORAGE_ENUM) {
-                    *e = (Subexpr){
-                        .op = EXPR_ENUM,
-                        .enum_val = { sym->type, &cuik_canonical_type(sym->type)->enumerator.entries[sym->enum_value] },
-                    };
-                } else {
-                    assert(sym->stmt != NULL);
-                    *e = (Subexpr){
-                        .op = EXPR_SYMBOL,
-                        .sym = { sym->stmt },
-                    };
-                }
-            } else {
-                Token* t = tokens_get(s);
-                Atom name = atoms_put(t->content.length, t->content.data);
+            Token* t = tokens_get(s);
+            Atom name = atoms_put(t->content.length, t->content.data);
 
-                // check if it's builtin
-                ptrdiff_t builtin_search = nl_map_get_cstr(parser->target->builtin_func_map, name);
-                if (builtin_search >= 0) {
-                    *e = (Subexpr){
-                        .op = EXPR_BUILTIN_SYMBOL,
-                        .builtin_sym = { name },
-                    };
+            Symbol* sym = NULL;
+            ptrdiff_t builtin_search = nl_map_get_cstr(parser->target->builtin_func_map, name);
+            if (builtin_search >= 0) {
+                *e = (Subexpr){
+                    .op = EXPR_BUILTIN_SYMBOL,
+                    .builtin_sym = { name },
+                };
+            } else {
+                sym = cuik_symtab_lookup(parser->symbols, name);
+                if (sym != NULL) {
+                    if (sym->storage_class == STORAGE_PARAM) {
+                        *e = (Subexpr){
+                            .op = EXPR_PARAM,
+                            .param_num = sym->param_num
+                        };
+                    } else if (sym->storage_class == STORAGE_ENUM) {
+                        *e = (Subexpr){
+                            .op = EXPR_ENUM,
+                            .enum_val = { sym->type, &cuik_canonical_type(sym->type)->enumerator.entries[sym->enum_value] },
+                        };
+                    } else {
+                        assert(sym->stmt != NULL);
+                        *e = (Subexpr){
+                            .op = EXPR_SYMBOL,
+                            .sym = { sym->stmt },
+                        };
+                    }
                 } else {
                     diag_unresolved_symbol(parser, name, start_loc);
 
@@ -576,8 +576,10 @@ static void parse_primary_expr(Cuik_Parser* parser, TokenStream* restrict s) {
 
         default:
         diag_err(s, tokens_get_range(s), "could not parse expression");
-        tokens_prev(s);
-        break;
+
+        e = push_expr(parser);
+        *e = (Subexpr){ .op = EXPR_NONE };
+        return;
     }
     tokens_next(s);
 
@@ -832,7 +834,9 @@ static void parse_unary(Cuik_Parser* restrict parser, TokenStream* restrict s, b
                 };
             }
         } else {
-            // either
+            // skip unary +
+            if (tkn == TOKEN_PLUS) tokens_next(s);
+
             parse_postfix(parser, s, in_sizeof);
         }
     }

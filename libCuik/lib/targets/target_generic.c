@@ -58,7 +58,7 @@ void target_generic_fill_builtin_table(BuiltinTable* builtins) {
     X(__noop, ". v");
     X(__assume, "b v");
     X(__debugbreak, "v v");
-    X(__va_start, "c* v");
+    X(__va_start, "c**T v");
     X(__va_arg, "c*T v");
     X(_umul128, "LLL* L");
     X(_mul128, "LLL* L");
@@ -294,14 +294,14 @@ static int get_memory_order_val(TB_Node* n) {
 #define RVAL(i) cvt2rval(tu, func, &args[i])
 BuiltinResult target_generic_compile_builtin(TranslationUnit* tu, TB_Function* func, const char* name, int arg_count, IRVal* args) {
     if (strcmp(name, "_InterlockedExchange") == 0) {
-        TB_Node* dst = RVAL(0);
-        TB_Node* src = RVAL(1);
+        TB_Node* dst = RVAL(1);
+        TB_Node* src = RVAL(2);
 
         return ZZZ(tb_inst_atomic_xchg(func, dst, src, TB_MEM_ORDER_SEQ_CST));
     } else if (strcmp(name, "__c11_atomic_compare_exchange_strong") == 0) {
-        TB_Node* addr = RVAL(0);
-        TB_Node* comparand = RVAL(1);
-        TB_Node* exchange = RVAL(2);
+        TB_Node* addr = RVAL(1);
+        TB_Node* comparand = RVAL(2);
+        TB_Node* exchange = RVAL(3);
 
         Cuik_Type* cast_type = cuik_canonical_type(args[1].cast_type);
         assert(cast_type->kind == KIND_PTR);
@@ -313,9 +313,9 @@ BuiltinResult target_generic_compile_builtin(TranslationUnit* tu, TB_Function* f
         TB_Node* r = tb_inst_atomic_cmpxchg(func, addr, comparand, exchange, TB_MEM_ORDER_SEQ_CST, TB_MEM_ORDER_SEQ_CST);
         return ZZZ(r);
     } else if (strcmp(name, "_InterlockedCompareExchange") == 0) {
-        TB_Node* addr = RVAL(0);
-        TB_Node* exchange = RVAL(1);
-        TB_Node* comparand = RVAL(2);
+        TB_Node* addr = RVAL(1);
+        TB_Node* exchange = RVAL(2);
+        TB_Node* comparand = RVAL(3);
 
         TB_Node* r = tb_inst_atomic_cmpxchg(func, addr, comparand, exchange, TB_MEM_ORDER_SEQ_CST, TB_MEM_ORDER_SEQ_CST);
         return ZZZ(r);
@@ -326,45 +326,45 @@ BuiltinResult target_generic_compile_builtin(TranslationUnit* tu, TB_Function* f
         printf("TODO __c11_atomic_signal_fence!");
         abort();
     } else if (strcmp(name, "_byteswap_ulong") == 0) {
-        TB_Node* src = RVAL(0);
+        TB_Node* src = RVAL(1);
         return ZZZ(tb_inst_bswap(func, src));
     } else if (strcmp(name, "__builtin_clz") == 0) {
-        TB_Node* src = RVAL(0);
+        TB_Node* src = RVAL(1);
         return ZZZ(tb_inst_clz(func, src));
     } else if (strcmp(name, "__c11_atomic_exchange") == 0) {
-        TB_Node* dst = RVAL(0);
-        TB_Node* src = RVAL(1);
-        int order = get_memory_order_val(RVAL(2));
+        TB_Node* dst = RVAL(1);
+        TB_Node* src = RVAL(2);
+        int order = get_memory_order_val(RVAL(3));
 
         return ZZZ(tb_inst_atomic_xchg(func, dst, src, order));
     } else if (strcmp(name, "__c11_atomic_load") == 0) {
-        TB_Node* addr = RVAL(0);
+        TB_Node* addr = RVAL(1);
 
         Cuik_Type* cast_type = cuik_canonical_type(args[0].cast_type);
         assert(cast_type->kind == KIND_PTR);
         TB_DataType dt = ctype_to_tbtype(cuik_canonical_type(cast_type->ptr_to));
-        int order = get_memory_order_val(RVAL(1));
+        int order = get_memory_order_val(RVAL(2));
 
         return ZZZ(tb_inst_atomic_load(func, addr, dt, order));
     } else if (strcmp(name, "__c11_atomic_fetch_add") == 0) {
-        TB_Node* dst = RVAL(0);
-        TB_Node* src = RVAL(1);
-        int order = get_memory_order_val(RVAL(2));
+        TB_Node* dst = RVAL(1);
+        TB_Node* src = RVAL(2);
+        int order = get_memory_order_val(RVAL(3));
 
         return ZZZ(tb_inst_atomic_add(func, dst, src, order));
     } else if (strcmp(name, "__c11_atomic_fetch_sub") == 0) {
-        TB_Node* dst = RVAL(0);
-        TB_Node* src = RVAL(1);
-        int order = get_memory_order_val(RVAL(2));
+        TB_Node* dst = RVAL(1);
+        TB_Node* src = RVAL(2);
+        int order = get_memory_order_val(RVAL(3));
 
         return ZZZ(tb_inst_atomic_sub(func, dst, src, order));
     } else if (strcmp(name, "__builtin_mul_overflow") == 0) {
         Cuik_Type* type = cuik_canonical_type(args[0].cast_type);
         TB_DataType dt = ctype_to_tbtype(type);
 
-        TB_Node* a = RVAL(0);
-        TB_Node* b = RVAL(1);
-        TB_Node* c = RVAL(2);
+        TB_Node* a = RVAL(1);
+        TB_Node* b = RVAL(2);
+        TB_Node* c = RVAL(3);
 
         TB_Node* result = tb_inst_mul(func, a, b, 0);
         tb_inst_store(func, dt, c, result, type->align, false);
@@ -375,17 +375,17 @@ BuiltinResult target_generic_compile_builtin(TranslationUnit* tu, TB_Function* f
         tb_inst_set_control(func, tb_inst_region(func));
         return ZZZ(TB_NULL_REG);
     } else if (strcmp(name, "__builtin_expect") == 0) {
-        TB_Node* dst = RVAL(0);
+        TB_Node* dst = RVAL(1);
         return ZZZ(dst);
     } else if (strcmp(name, "__builtin_trap") == 0) {
         tb_inst_trap(func);
         tb_inst_set_control(func, tb_inst_region(func));
         return ZZZ(TB_NULL_REG);
     } else if (strcmp(name, "__builtin_syscall") == 0) {
-        TB_Node* num = RVAL(0);
+        TB_Node* num = RVAL(1);
         TB_Node** arg_regs = tls_push((arg_count - 1) * sizeof(TB_Node*));
-        for (size_t i = 1; i < arg_count; i++) {
-            arg_regs[i - 1] = RVAL(i);
+        for (size_t i = 2; i < arg_count; i++) {
+            arg_regs[i - 2] = RVAL(i);
         }
 
         TB_Node* result = tb_inst_syscall(func, TB_TYPE_I64, num, arg_count - 1, arg_regs);
@@ -393,7 +393,7 @@ BuiltinResult target_generic_compile_builtin(TranslationUnit* tu, TB_Function* f
 
         return ZZZ(result);
     } else if (strcmp(name, "__assume") == 0) {
-        TB_Node* cond = RVAL(0);
+        TB_Node* cond = RVAL(1);
         TB_Node* no_reach = tb_inst_region(func);
         TB_Node* skip = tb_inst_region(func);
 
@@ -407,15 +407,15 @@ BuiltinResult target_generic_compile_builtin(TranslationUnit* tu, TB_Function* f
         tb_inst_debugbreak(func);
         return ZZZ(TB_NULL_REG);
     } else if (strcmp(name, "__va_start") == 0) {
-        TB_Node* dst = RVAL(0);
-        IRVal src = args[1];
+        TB_Node* dst = RVAL(1);
+        IRVal src = args[2];
         assert(src.value_type == LVALUE);
 
         tb_inst_store(func, TB_TYPE_PTR, dst, tb_inst_va_start(func, src.reg), 8, false);
         return ZZZ(TB_NULL_REG);
     } else if (strcmp(name, "__va_arg") == 0) {
         // classify value
-        TB_Node* src = RVAL(0);
+        TB_Node* src = RVAL(1);
         Cuik_Type* ty = cuik_canonical_type(args[0].type);
 
         TB_Symbol* target = NULL;

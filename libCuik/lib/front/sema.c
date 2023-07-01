@@ -564,6 +564,8 @@ static bool is_assignable_expr(Subexpr* e) {
         case EXPR_SUBSCRIPT:
         case EXPR_ARROW:
         case EXPR_DOT:
+        case EXPR_ARROW_R:
+        case EXPR_DOT_R:
         case EXPR_SYMBOL:
         case EXPR_PARAM:
         return true;
@@ -1146,11 +1148,24 @@ Cuik_QualType cuik__sema_subexpr(TranslationUnit* tu, Cuik_Expr* restrict _, Sub
             return cuik_uncanonical_type(tu->target->size_type);
         }
 
+        case EXPR_SIZEOF_T: {
+            Cuik_Type* src = cuik_canonical_type(e->x_of_type.type);
+            if (src->size == 0) {
+                diag_err(&tu->tokens, e->loc, "cannot get the sizeof an incomplete type");
+            }
+
+            return cuik_uncanonical_type(tu->target->size_type);
+        }
+
         case EXPR_ADDR: {
             uint64_t dst;
             Cuik_QualType src = GET_TYPE(0);
             Cuik_QualType ptr_to = cuik_uncanonical_type(cuik__new_pointer(&tu->types, src));
             return ptr_to;
+        }
+        case EXPR_BUILTIN_SYMBOL: {
+            // placeholder type, the call will handle things
+            return cuik_uncanonical_type(&cuik__builtin_void);
         }
         case EXPR_SYMBOL: {
             Stmt* restrict sym = e->sym.stmt;
@@ -1288,7 +1303,7 @@ Cuik_QualType cuik__sema_subexpr(TranslationUnit* tu, Cuik_Expr* restrict _, Sub
 
                 int arg_count = e->call.param_count;
                 Cuik_Type* ty = sema_builtin(
-                    tu, _, tu->target->builtin_func_map[search].v, arg_count, args + 1
+                    tu, _, tu->target->builtin_func_map[search].v, arg_count + 1, args
                 );
 
                 return cuik_uncanonical_type(ty);
@@ -1509,7 +1524,7 @@ Cuik_QualType cuik__sema_subexpr(TranslationUnit* tu, Cuik_Expr* restrict _, Sub
             // if either side is a zero then it's malleable
             if (!is_constant_zero(get_root_subexpr(e->ternary.left)) &&
                 !is_constant_zero(get_root_subexpr(e->ternary.right))) {
-                implicit_conversion(tu, ty1, ty2, &GET_EXPR(1));
+                implicit_conversion(tu, ty1, ty2, get_root_subexpr(e->ternary.left));
             }
 
             Cuik_QualType type = CUIK_QUAL_TYPE_NULL;

@@ -371,6 +371,8 @@ static int get_stack_slot(Ctx* restrict ctx, TB_Node* n) {
 
         int pos = STACK_ALLOC(local->size, local->align);
         nl_map_put(ctx->stack_slots, n, pos);
+
+        add_debug_local(ctx, n, pos);
         return pos;
     }
 }
@@ -603,7 +605,13 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
 
                         int pos = 16 + (p->index * 8);
                         nl_map_put(ctx->stack_slots, curr->inputs[1], pos);
-                        nl_map_put(ctx->values, curr, -1); // marks as visited (stores don't return so we can -1)
+
+                        if (p->index > 4 && ctx->target_abi == TB_ABI_WIN64) {
+                            nl_map_put(ctx->values, curr, -1); // marks as visited (stores don't return so we can -1)
+                        }
+
+                        // add parameter to debug info
+                        add_debug_local(ctx, curr->inputs[1], pos);
 
                         has_param_slots = true;
                     }
